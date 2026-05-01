@@ -304,6 +304,35 @@ def _remap_to_block_palette(f:JVGFrame,blk:JVMBlock):
         f.encoded_data,f.row_count=_encode_rle_game(f.pixels,alpha,f.width,f.height)
     f._palette=None
 
+def _align_anchor(new_f:JVGFrame,old_f:JVGFrame,mode:str="bottom_center")->None:
+    """将新帧的偏移 (x_max, y_max) 对齐到旧帧锚点, 保持其在游戏中的视觉位置。
+
+    游戏引擎中 x_max/y_max 为精灵右下角相对实体锚点的偏移 (signed int16)。
+    当替换图尺寸与原图不同时, 需要重新计算使视觉锚点保持一致。
+    模式:
+      - bottom_center: 底边中心对齐 (适合角色精灵, 锚点在脚底)
+      - center:        bbox 中心对齐 (适合物体/特效)
+      - topleft:       左上角对齐 (保持 x_off, y_off 不变)
+    """
+    if old_f.width<=0 or old_f.height<=0: return
+    if new_f.width<=0 or new_f.height<=0: return
+    old_xm=_u16s(old_f.x_max); old_ym=_u16s(old_f.y_max)
+    old_x_off=old_xm-old_f.width+1; old_y_off=old_ym-old_f.height+1
+    if mode=="bottom_center":
+        old_cx=old_xm-(old_f.width-1)/2.0
+        new_x_off=int(round(old_cx-(new_f.width-1)/2.0))
+        new_f.x_max=(new_x_off+new_f.width-1)&0xFFFF
+        new_f.y_max=old_ym&0xFFFF  # 底边保持
+    elif mode=="center":
+        old_cx=old_xm-(old_f.width-1)/2.0; old_cy=old_ym-(old_f.height-1)/2.0
+        new_x_off=int(round(old_cx-(new_f.width-1)/2.0))
+        new_y_off=int(round(old_cy-(new_f.height-1)/2.0))
+        new_f.x_max=(new_x_off+new_f.width-1)&0xFFFF
+        new_f.y_max=(new_y_off+new_f.height-1)&0xFFFF
+    else:  # topleft
+        new_f.x_max=(old_x_off+new_f.width-1)&0xFFFF
+        new_f.y_max=(old_y_off+new_f.height-1)&0xFFFF
+
 def import_images(paths:List[str])->List[JVGFrame]:
     frames=[]
     for p in sorted(paths,key=lambda p:Path(p).name.lower()):
@@ -431,6 +460,7 @@ class JVGEditor:
         bf=ttk.LabelFrame(lf,text="图片操作",padding=4); bf.pack(fill=tk.X,padx=4,pady=4)
         ttk.Button(bf,text="添加图片",command=self._add_images).pack(fill=tk.X,pady=2)
         ttk.Button(bf,text="替换选中",command=self._replace_frame).pack(fill=tk.X,pady=2)
+        ttk.Button(bf,text="导入组图",command=self._batch_replace_gridsheet).pack(fill=tk.X,pady=2)
         ttk.Button(bf,text="删除选中",command=self._del_frame).pack(fill=tk.X,pady=2)
 
         ef=ttk.LabelFrame(lf,text="导出",padding=4); ef.pack(fill=tk.X,padx=4,pady=4)
@@ -571,10 +601,12 @@ class JVGEditor:
         frames=import_images([paths[0]])  # only first file
         if frames:
             new_f=frames[0]
+            old_f=blk.frames[self._sel_fi]
+            _align_anchor(new_f,old_f,mode="bottom_center")  # 保持原帧视觉锚点
             if new_f._palette: _remap_to_block_palette(new_f,blk)
             blk.frames[self._sel_fi]=new_f
             self._sync_list(); self._kill_anim(); self._refresh_view()
-            self._info.config(text=f"已替换帧 #{self._sel_fi}")
+            self._info.config(text=f"已替换帧 #{self._sel_fi} (偏移已自动对齐)")
 
     def _del_frame(self):
         if not self.jvg or self._bi<0: return
@@ -582,6 +614,85 @@ class JVGEditor:
         if self._sel_fi>=0 and self._sel_fi<blk.frame_count:
             del blk.frames[self._sel_fi]
             self._sel_fi=-1; self._sync_list(); self._kill_anim(); self._refresh_view()
+
+    def _batch_replace_gridsheet(self):
+        """导入组图: 选择一张已导出的 Gridsheet 图片, 按用户输入的 cols/rows/gap 拆分替换每一帧。
+
+        流程:
+          1) 只对有效帧 (width>0 and height>0) 进行替换 (与 export 一致);
+          2) 用户直接输入 columns / rows / padding, cell 尺寸 = (img_w - (cols-1)*pad)/cols;
+          3) 用当前有效帧的 min_vl/min_vt 作为虚拟坐标原点;
+          4) 每个 cell 扫描非透明 bbox, 据此重建新帧 x_max/y_max。
+        """
+        if not self.jvg or self._bi<0: return messagebox.showinfo("提示","请先选择分组")
+        blk=self.jvg.blocks[self._bi]
+        # 仅选取有效帧 (与 export_gridsheet 完全一致的过滤)
+        valid_list=[(i,f) for i,f in enumerate(blk.frames) if f.width>0 and f.height>0]
+        n_valid=len(valid_list)
+        if n_valid==0: return messagebox.showinfo("提示","分组没有有效帧")
+        path=filedialog.askopenfilename(title="选择 Gridsheet 图片",
+                                        filetypes=[("图片","*.png *.bmp *.jpg *.jpeg")])
+        if not path: return
+        # 打开图片
+        try: gs=Image.open(path).convert('RGBA')
+        except Exception as e: return messagebox.showerror("打开失败",str(e))
+        gs_w,gs_h=gs.size
+        # 参数输入: columns / rows / padding (用户直接指定, 不再反推)
+        cur_cols=self._tile_cols.get() if self._tile_cols.get()>0 else max(1,int(math.ceil(math.sqrt(n_valid))))
+        cols=simpledialog.askinteger("导入组图",f"columns (共 {n_valid} 帧):",parent=self.root,
+                                     initialvalue=cur_cols,minvalue=1,maxvalue=256)
+        if cols is None: return
+        cur_rows=max(1,int(math.ceil(n_valid/cols)))
+        rows=simpledialog.askinteger("导入组图",f"rows (共 {n_valid} 帧, cols={cols}):",parent=self.root,
+                                     initialvalue=cur_rows,minvalue=1,maxvalue=256)
+        if rows is None: return
+        cur_pad=max(0,self._padding.get())
+        pad=simpledialog.askinteger("导入组图","padding / gap (像素):",parent=self.root,
+                                    initialvalue=cur_pad,minvalue=0,maxvalue=256)
+        if pad is None: return
+        # 容量校验
+        if cols*rows<n_valid:
+            if not messagebox.askyesno("容量不足",
+                f"cols×rows = {cols}×{rows} = {cols*rows} < 有效帧数 {n_valid}\n"
+                f"后 {n_valid-cols*rows} 帧将不会被替换。是否继续?"):
+                return
+        # 按用户输入直接计算 cell 尺寸
+        cw_num=gs_w-max(0,cols-1)*pad
+        ch_num=gs_h-max(0,rows-1)*pad
+        if cw_num<=0 or ch_num<=0 or cw_num%cols!=0 or ch_num%rows!=0:
+            return messagebox.showerror("尺寸错误",
+                f"图片尺寸 {gs_w}×{gs_h} 无法整除为 {cols}×{rows} 个 cell (pad={pad})\n"
+                f"cw_num={cw_num}, ch_num={ch_num}\n请确认 columns / rows / padding 参数")
+        cw=cw_num//cols; ch=ch_num//rows
+        # 虚拟坐标原点 (与 export_gridsheet 一致)
+        vrs=[(_u16s(f.x_max)-f.width+1,_u16s(f.y_max)-f.height+1) for _,f in valid_list]
+        min_vl=min(r[0] for r in vrs); min_vt=min(r[1] for r in vrs)
+        # 逐帧裁剪替换
+        self._info.config(text=f"导入组图中 0/{n_valid}..."); self.root.update()
+        replaced=0; skipped=0
+        max_cells=cols*rows
+        for cell_idx,(blk_fi,_old_f) in enumerate(valid_list):
+            if cell_idx>=max_cells:
+                skipped+=1; continue
+            ri=cell_idx//cols; ci=cell_idx%cols
+            cx=ci*(cw+pad); cy=ri*(ch+pad)
+            if cx+cw>gs_w or cy+ch>gs_h:
+                skipped+=1; continue
+            cell=gs.crop((cx,cy,cx+cw,cy+ch))
+            bbox=cell.getchannel('A').getbbox()
+            if bbox is None:
+                skipped+=1; continue
+            l,t,r,b=bbox
+            sub=cell.crop((l,t,r,b))
+            new_f=_pil_frame(sub)
+            # 按 cell 内 bbox 位置反推游戏坐标 (保留帧间相对运动)
+            new_f.x_max=(min_vl+r-1)&0xFFFF
+            new_f.y_max=(min_vt+b-1)&0xFFFF
+            if new_f._palette: _remap_to_block_palette(new_f,blk)
+            blk.frames[blk_fi]=new_f
+            replaced+=1
+        self._sync_list(); self._kill_anim(); self._refresh_view()
+        self._info.config(text=f"导入组图完成: 替换 {replaced}/{n_valid} 帧, 跳过 {skipped} 空cell (cell={cw}×{ch})")
 
     def _nav(self,d:int):
         if self._view!="single": return
