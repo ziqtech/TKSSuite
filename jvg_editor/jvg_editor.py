@@ -110,13 +110,44 @@ def load_jvg(filepath:str)->JVGFile:
     return jvg
 
 # ── JVG 编码器 ─────────────────────────────────────────
-def _encode_rle_simple(px:bytes,w:int,h:int)->bytes:
-    buf=bytearray()
-    for row in range(h-1,-1,-1): d=px[row*w:(row+1)*w]; buf+=struct.pack("<HH",0,w)+d[::-1]
-    return bytes(buf)
+def _encode_rle_game(pixels:bytes,alpha:bytes,w:int,h:int,screen_w:int=SCREEN_W)->Tuple[bytes,int]:
+    """按游戏 sub_4544EC 渲染逻辑生成 RLE 数据
+
+    游戏渲染循环 (sub_4544EC.c L134-150):
+        dest = screen + 2*(y_max*640 + x_max)   # 起点 = 右下角
+        while (rle_pairs--):
+            dest -= 2*skip                       # 向左跳过 skip 像素
+            while (run--):
+                *dest = palette[*src++]          # 写像素
+                dest -= 2                        # 向左移
+    关键: dest 在内存中线性递减, 跨行必须 skip = screen_w - w 补偿行距,
+    否则所有行会被写到同一屏幕行, 产生横条异常 (正是用户截图中的白条)。
+    透明像素(alpha==0)通过累积 skip 跳过, 不占用 run data。
+    """
+    buf=bytearray(); pair_count=0
+    for row in range(h-1,-1,-1):
+        # 行起始 skip: 首行为0, 后续行补偿屏幕行距 (dest 从上一行左外侧跳到本行右端)
+        pending=(screen_w-w) if row<h-1 else 0
+        col=w-1; row_emitted=False
+        while col>=0:
+            # 累计连续透明像素
+            t0=col
+            while col>=0 and alpha[row*w+col]==0: col-=1
+            pending+=t0-col
+            if col<0: break
+            # 收集连续不透明像素 (注意: RLE 数据也是从右到左, 因为 dest 向左走)
+            run=bytearray()
+            while col>=0 and alpha[row*w+col]!=0 and len(run)<0xFFFF:
+                run.append(pixels[row*w+col]); col-=1
+            buf+=struct.pack("<HH",min(pending,0xFFFF),len(run)); buf+=bytes(run)
+            pair_count+=1; pending=0; row_emitted=True
+        # 全透明行也需输出一对 (skip, 0), 防止 skip 累积溢出 uint16
+        if not row_emitted:
+            buf+=struct.pack("<HH",min(pending,0xFFFF),0); pair_count+=1
+    return bytes(buf),pair_count
 
 def _count_rle_pairs(data:bytes)->int:
-    """统计 RLE (skip,run) 对数 — sub_4544EC.c L46: word_A5AECA = row_count"""
+    """统计 RLE (skip,run) 对数 — sub_4544EC.c L46: word_A5AECA"""
     if not data: return 0
     c=0; pos=0
     while pos+4<=len(data):
@@ -156,8 +187,10 @@ def save_jvg(jvg:JVGFile,filepath:str):
                 rc=_count_rle_pairs(enc)
                 struct.pack_into("<H",fd,len(fd)-2,rc)
             elif f.pixels and f.width>0 and f.height>0:
-                enc=_encode_rle_simple(f.pixels,f.width,f.height)
-                struct.pack_into("<H",fd,len(fd)-2,f.height)
+                # 为导入帧按游戏渲染格式生成 RLE (含跨行 skip 与 alpha 透明处理)
+                alpha=f.alpha if f.alpha and len(f.alpha)==f.width*f.height else bytes([255]*(f.width*f.height))
+                enc,rc=_encode_rle_game(f.pixels,alpha,f.width,f.height)
+                struct.pack_into("<H",fd,len(fd)-2,rc)
             else:
                 enc=b""
             fd+=enc
@@ -214,34 +247,57 @@ def _pil_frame(img:'Image.Image')->JVGFrame:
     frame.y_max=(h-1 if h-1<32768 else h-1-65536)
     return frame
 
-def _remap_to_block_palette(f:JVGFrame,blk_pal:PaletteRGB565):
-    """将帧像素索引从 f._palette 重映射到 blk_palette (颜色最近匹配)"""
+def _remap_to_block_palette(f:JVGFrame,blk:JVMBlock):
+    """将导入帧重映射到块调色板: 扫描块中所有帧已使用的索引, 仅使用空位,
+    保证原始帧不受影响。同时更新 encoded_data。"""
     if not f._palette or not f.pixels: return
-    # 构建 f._palette 的 RGB888 查找表
+    # 1. 扫描块中所有原始帧已使用的调色板索引 (仅检查有 encoded_data 的帧)
+    used_by_original=set()
+    for of in blk.frames:
+        if of is f: continue  # 跳过自身
+        if of.pixels:
+            for b in of.pixels: used_by_original.add(b)
+    # 2. 构建可用索引: blk.palette 中值为0 且不被原始帧使用的空位
     f_colors=[None]*256
     for i in range(256):
         e=f._palette.entries[i]; f_colors[i]=(((e>>11)&0x1F)<<3,((e>>5)&0x3F)<<2,(e&0x1F)<<3)
-    # 构建 blk_palette 的 RGB888 查找表
-    b_colors=[None]*256
-    for i in range(256):
-        e=blk_pal.entries[i]; b_colors[i]=(((e>>11)&0x1F)<<3,((e>>5)&0x3F)<<2,(e&0x1F)<<3)
-    # 对帧的每个颜色找块调色板中最近的颜色
+    available=[i for i in range(1,256) if i not in used_by_original]
+    # 3. 对导入帧中实际使用的颜色, 分配空位并写入调色板
+    used=set(f.pixels)
     remap=[0]*256
-    for fi in range(256):
-        fc=f_colors[fi]
-        if fc is None: remap[fi]=0; continue
-        best,best_dist=0,999999
+    for fi in sorted(used):
+        if fi>=256 or f_colors[fi] is None or f._palette.entries[fi]==0: continue
+        # 尝试精确匹配已有颜色
+        fc=f_colors[fi]; exact=None
         for bi in range(256):
-            bc=b_colors[bi]
-            d=abs(fc[0]-bc[0])+abs(fc[1]-bc[1])+abs(fc[2]-bc[2])
-            if d<best_dist: best,best_dist=bi,d
-        remap[fi]=best
-    # 重映射像素
+            e=blk.palette.entries[bi]; bc=(((e>>11)&0x1F)<<3,((e>>5)&0x3F)<<2,(e&0x1F)<<3)
+            if fc==bc and (bi not in used_by_original or bi==fi): exact=bi; break
+        if exact is not None: remap[fi]=exact; continue
+        # 分配新空位
+        if available:
+            slot=available.pop(0)
+            blk.palette.entries[slot]=f._palette.entries[fi]
+            remap[fi]=slot
+        else:
+            # 无空位时找最近颜色
+            best,best_dist=0,999999
+            for bi in range(256):
+                e=blk.palette.entries[bi]; bc=(((e>>11)&0x1F)<<3,((e>>5)&0x3F)<<2,(e&0x1F)<<3)
+                d=abs(fc[0]-bc[0])+abs(fc[1]-bc[1])+abs(fc[2]-bc[2])
+                if d<best_dist: best,best_dist=bi,d
+            remap[fi]=best
+    # 4. 未使用的颜色映射到0
+    for fi in range(256):
+        if fi not in used: remap[fi]=0
+    # 5. 重映射像素
     px=bytearray(f.pixels)
     for i in range(len(px)):
         if px[i]<256: px[i]=remap[px[i]]
     f.pixels=bytes(px)
-    f._palette=None  # 不再需要独立调色板
+    if f.width>0 and f.height>0:
+        alpha=f.alpha if f.alpha and len(f.alpha)==f.width*f.height else bytes([255]*(f.width*f.height))
+        f.encoded_data,f.row_count=_encode_rle_game(f.pixels,alpha,f.width,f.height)
+    f._palette=None
 
 def import_images(paths:List[str])->List[JVGFrame]:
     frames=[]
@@ -495,13 +551,8 @@ class JVGEditor:
         frames=import_images(list(paths))
         if frames:
             blk=self.jvg.blocks[self._bi]
-            # Merge palettes + remap pixel indices
             for f in frames:
-                if f._palette:
-                    for i in range(256):
-                        if f._palette.entries[i]!=0 and blk.palette.entries[i]==0:
-                            blk.palette.entries[i]=f._palette.entries[i]
-                    _remap_to_block_palette(f,blk.palette)
+                if f._palette: _remap_to_block_palette(f,blk)
             blk.frames.extend(frames)
             self._sync_list(); self._refresh_view()
             self._info.config(text=f"导入 {len(frames)} 帧")
@@ -515,11 +566,7 @@ class JVGEditor:
         frames=import_images([paths[0]])  # only first file
         if frames:
             new_f=frames[0]
-            if new_f._palette:
-                for i in range(256):
-                    if new_f._palette.entries[i]!=0 and blk.palette.entries[i]==0:
-                        blk.palette.entries[i]=new_f._palette.entries[i]
-                _remap_to_block_palette(new_f,blk.palette)
+            if new_f._palette: _remap_to_block_palette(new_f,blk)
             blk.frames[self._sel_fi]=new_f
             self._sync_list(); self._kill_anim(); self._refresh_view()
             self._info.config(text=f"已替换帧 #{self._sel_fi}")
