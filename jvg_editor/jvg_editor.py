@@ -304,6 +304,97 @@ def _remap_to_block_palette(f:JVGFrame,blk:JVMBlock):
         f.encoded_data,f.row_count=_encode_rle_game(f.pixels,alpha,f.width,f.height)
     f._palette=None
 
+def _batch_quantize_subs_to_block(subs:List['Image.Image'],blk:'JVMBlock',
+                                   keep_frame_indices:List[int])->List['JVGFrame']:
+    """批量统一量化: 把多张 RGBA sub 图一次性量化为共享调色板, 写入 block.palette 的空位。
+
+    避免逐帧独立量化导致的调色板槽位争抢 → 颜色退化(掉色)。
+
+    Args:
+        subs: 每个将要替换的帧对应的 RGBA 子图 (已裁剪到 bbox 大小)
+        blk: 目标 block (其 palette 会被更新)
+        keep_frame_indices: 不会被替换的帧索引列表, 其调色板槽位必须保留
+
+    Returns:
+        与 subs 一一对应的 JVGFrame 列表, 已填充 width/height/alpha/pixels/encoded_data。
+        x_max/y_max 设为默认值, 调用者应自行覆盖。
+    """
+    if not subs: return []
+    # 1. 收集"保留帧"已使用的槽位 (含索引 0 = 透明)
+    used_by_kept={0}
+    for ki in keep_frame_indices:
+        if 0<=ki<len(blk.frames):
+            kf=blk.frames[ki]
+            if kf.pixels:
+                for b in kf.pixels: used_by_kept.add(b)
+    available=[i for i in range(256) if i not in used_by_kept]
+    n_avail=len(available)
+    # 2. 收集所有 sub 的非透明像素, 合并为采样条
+    rgb_bytes=bytearray()
+    for s in subs:
+        if s.mode!='RGBA': s_rgba=s.convert('RGBA')
+        else: s_rgba=s
+        a=s_rgba.getchannel('A').tobytes()
+        rgb=s_rgba.convert('RGB').tobytes()
+        for i,av in enumerate(a):
+            if av>=128:
+                rgb_bytes+=rgb[i*3:i*3+3]
+    n_px=len(rgb_bytes)//3
+    # 采样压缩避免量化过慢 (100w 像素足够保留颜色分布)
+    MAX_PX=1_000_000
+    if n_px>MAX_PX:
+        step=(n_px+MAX_PX-1)//MAX_PX
+        sampled=bytearray()
+        for i in range(0,n_px,step):
+            sampled+=rgb_bytes[i*3:i*3+3]
+        rgb_bytes=sampled; n_px=len(rgb_bytes)//3
+    # 3. 生成共享 palette 图
+    pal_img=None; n_colors=0
+    if n_px>0 and n_avail>0:
+        strip=Image.frombytes('RGB',(n_px,1),bytes(rgb_bytes))
+        n_colors=min(n_avail,255)
+        pal_img=strip.quantize(colors=n_colors,method=Image.Quantize.MEDIANCUT)
+    # 4. 写入 block.palette 的空位, 记录 pal_idx -> block_slot
+    slot_map=[]
+    if pal_img is not None:
+        raw_pal=pal_img.getpalette() or [0]*768
+        for pi in range(n_colors):
+            r=raw_pal[pi*3] if pi*3+2<len(raw_pal) else 0
+            g=raw_pal[pi*3+1] if pi*3+1<len(raw_pal) else 0
+            b=raw_pal[pi*3+2] if pi*3+2<len(raw_pal) else 0
+            blk_slot=available[pi]
+            blk.palette.entries[blk_slot]=((r>>3)<<11)|((g>>2)<<5)|(b>>3)
+            slot_map.append(blk_slot)
+    # 5. 对每个 sub 用共享 palette 做量化 (dither=0 避免抖动破坏纯色块)
+    results=[]
+    for s in subs:
+        if s.mode!='RGBA': s_rgba=s.convert('RGBA')
+        else: s_rgba=s
+        w,h=s_rgba.size
+        a_data=s_rgba.getchannel('A').tobytes()
+        alpha=bytes(255 if av>=128 else 0 for av in a_data)
+        if pal_img is not None:
+            rgb=s_rgba.convert('RGB')
+            q=rgb.quantize(palette=pal_img,dither=0)
+            idx_data=q.tobytes()
+            pixels=bytearray(w*h)
+            for i in range(w*h):
+                if alpha[i]==0:
+                    pixels[i]=0
+                else:
+                    pi=idx_data[i] if i<len(idx_data) else 0
+                    pixels[i]=slot_map[pi] if pi<len(slot_map) else 0
+        else:
+            pixels=bytearray(w*h)  # 全透明
+        frame=JVGFrame(); frame.width=w; frame.height=h
+        frame.alpha=alpha; frame.pixels=bytes(pixels)
+        frame.encoded_data,frame.row_count=_encode_rle_game(frame.pixels,frame.alpha,w,h)
+        frame.x_max=(w-1 if w-1<32768 else w-1-65536)
+        frame.y_max=(h-1 if h-1<32768 else h-1-65536)
+        frame._palette=None
+        results.append(frame)
+    return results
+
 def _align_anchor(new_f:JVGFrame,old_f:JVGFrame,mode:str="bottom_center")->None:
     """将新帧的偏移 (x_max, y_max) 对齐到旧帧锚点, 保持其在游戏中的视觉位置。
 
@@ -423,9 +514,9 @@ class JVGEditor:
         fm.add_command(label="另存为...",command=self._save_as)
         fm.add_separator()
         em=tk.Menu(fm,tearoff=0)
-        em.add_command(label="导出当前帧为PNG",command=lambda:self._export("single"))
-        em.add_command(label="导出当前分组(逐帧PNG)",command=lambda:self._export("group"))
-        em.add_command(label="导出当前分组(Gridsheet)",command=lambda:self._export("grid"))
+        em.add_command(label="导出选中",command=lambda:self._export("single"))
+        em.add_command(label="导出分组",command=lambda:self._export("group"))
+        em.add_command(label="导出图集",command=lambda:self._export("grid"))
         fm.add_cascade(label="导出",menu=em)
         fm.add_separator()
         fm.add_command(label="退出",command=self._on_close)
@@ -457,16 +548,16 @@ class JVGEditor:
         self._blist.pack(fill=tk.BOTH,expand=True,padx=4,pady=2)
         self._blist.bind("<<ListboxSelect>>",self._on_block_sel)
 
-        bf=ttk.LabelFrame(lf,text="图片操作",padding=4); bf.pack(fill=tk.X,padx=4,pady=4)
+        bf=ttk.LabelFrame(lf,text="操作",padding=4); bf.pack(fill=tk.X,padx=4,pady=4)
         ttk.Button(bf,text="添加图片",command=self._add_images).pack(fill=tk.X,pady=2)
         ttk.Button(bf,text="替换选中",command=self._replace_frame).pack(fill=tk.X,pady=2)
-        ttk.Button(bf,text="导入组图",command=self._batch_replace_gridsheet).pack(fill=tk.X,pady=2)
+        ttk.Button(bf,text="导入图集",command=self._batch_replace_gridsheet).pack(fill=tk.X,pady=2)
         ttk.Button(bf,text="删除选中",command=self._del_frame).pack(fill=tk.X,pady=2)
 
         ef=ttk.LabelFrame(lf,text="导出",padding=4); ef.pack(fill=tk.X,padx=4,pady=4)
-        ttk.Button(ef,text="当前帧PNG",command=lambda:self._export("single")).pack(fill=tk.X,pady=1)
-        ttk.Button(ef,text="分组序列PNG",command=lambda:self._export("group")).pack(fill=tk.X,pady=1)
-        ttk.Button(ef,text="分组Gridsheet",command=lambda:self._export("grid")).pack(fill=tk.X,pady=1)
+        ttk.Button(ef,text="导出选中",command=lambda:self._export("single")).pack(fill=tk.X,pady=1)
+        ttk.Button(ef,text="导出分组",command=lambda:self._export("group")).pack(fill=tk.X,pady=1)
+        ttk.Button(ef,text="导出图集",command=lambda:self._export("grid")).pack(fill=tk.X,pady=1)
 
         # ── RIGHT panel ──────────────────────────────
         self._rp=ttk.PanedWindow(self.pw,orient=tk.VERTICAL); self.pw.add(self._rp,weight=1)
@@ -667,10 +758,12 @@ class JVGEditor:
         # 虚拟坐标原点 (与 export_gridsheet 一致)
         vrs=[(_u16s(f.x_max)-f.width+1,_u16s(f.y_max)-f.height+1) for _,f in valid_list]
         min_vl=min(r[0] for r in vrs); min_vt=min(r[1] for r in vrs)
-        # 逐帧裁剪替换
-        self._info.config(text=f"导入组图中 0/{n_valid}..."); self.root.update()
-        replaced=0; skipped=0
+        # 第一遍: 裁剪出每个有效帧对应的 sub 图 + 记录 x_max/y_max
+        self._info.config(text=f"导入组图: 裁剪 cell..."); self.root.update()
+        subs=[]; metas=[]  # metas: (blk_fi, new_x_max, new_y_max)
+        replace_set=set()
         max_cells=cols*rows
+        skipped=0
         for cell_idx,(blk_fi,_old_f) in enumerate(valid_list):
             if cell_idx>=max_cells:
                 skipped+=1; continue
@@ -684,15 +777,20 @@ class JVGEditor:
                 skipped+=1; continue
             l,t,r,b=bbox
             sub=cell.crop((l,t,r,b))
-            new_f=_pil_frame(sub)
-            # 按 cell 内 bbox 位置反推游戏坐标 (保留帧间相对运动)
-            new_f.x_max=(min_vl+r-1)&0xFFFF
-            new_f.y_max=(min_vt+b-1)&0xFFFF
-            if new_f._palette: _remap_to_block_palette(new_f,blk)
-            blk.frames[blk_fi]=new_f
-            replaced+=1
+            new_x_max=(min_vl+r-1)&0xFFFF
+            new_y_max=(min_vt+b-1)&0xFFFF
+            subs.append(sub); metas.append((blk_fi,new_x_max,new_y_max))
+            replace_set.add(blk_fi)
+        # 第二遍: 统一量化 (共享调色板, 避免掉色)
+        self._info.config(text=f"导入组图: 统一量化 {len(subs)} 帧..."); self.root.update()
+        keep_indices=[i for i in range(len(blk.frames)) if i not in replace_set]
+        new_frames=_batch_quantize_subs_to_block(subs,blk,keep_indices)
+        # 第三遍: 写回 block
+        for (blk_fi,xm,ym),nf in zip(metas,new_frames):
+            nf.x_max=xm; nf.y_max=ym
+            blk.frames[blk_fi]=nf
         self._sync_list(); self._kill_anim(); self._refresh_view()
-        self._info.config(text=f"导入组图完成: 替换 {replaced}/{n_valid} 帧, 跳过 {skipped} 空cell (cell={cw}×{ch})")
+        self._info.config(text=f"导入组图完成: 替换 {len(new_frames)}/{n_valid} 帧, 跳过 {skipped} 空cell (cell={cw}×{ch})")
 
     def _nav(self,d:int):
         if self._view!="single": return
