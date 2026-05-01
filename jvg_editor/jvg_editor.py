@@ -366,9 +366,21 @@ class JVGEditor:
                     command=lambda:self._refresh_view()).pack(side=tk.LEFT,padx=2)
         ttk.Separator(tb,orient=tk.VERTICAL).pack(side=tk.LEFT,fill=tk.Y,padx=4,pady=2)
         ttk.Label(tb,text="速度:").pack(side=tk.LEFT)
+        def _validate_speed(P):
+            if P=="": return True
+            try: v=int(P); return 10<=v<=2000
+            except: return False
+        vcmd=(self.root.register(_validate_speed),'%P')
         self._speed=tk.IntVar(value=120)
-        ttk.Scale(tb,from_=30,to=500,variable=self._speed,orient=tk.HORIZONTAL,length=100).pack(side=tk.LEFT,padx=2)
-        ttk.Label(tb,textvariable=self._speed).pack(side=tk.LEFT)
+        ttk.Spinbox(tb,textvariable=self._speed,width=5,from_=10,to=2000,increment=10,
+                    validate='key',validatecommand=vcmd).pack(side=tk.LEFT,padx=2)
+        ttk.Label(tb,text="ms").pack(side=tk.LEFT)
+        ttk.Separator(tb,orient=tk.VERTICAL).pack(side=tk.LEFT,fill=tk.Y,padx=4,pady=2)
+        self._zoom=tk.DoubleVar(value=1.0)
+        self._zoom_label=ttk.Label(tb,text="100%",width=5)
+        self._zoom_label.pack(side=tk.RIGHT)
+        ttk.Button(tb,text="+",width=2,command=lambda:self._zoom_step(0.5)).pack(side=tk.RIGHT,padx=1)
+        ttk.Button(tb,text="−",width=2,command=lambda:self._zoom_step(-0.5)).pack(side=tk.RIGHT,padx=1)
         self._info=ttk.Label(tb,text=""); self._info.pack(side=tk.RIGHT,padx=8)
 
         # Canvas area
@@ -380,7 +392,15 @@ class JVGEditor:
         self._canvas.grid(row=0,column=0,sticky="nsew"); vsb.grid(row=0,column=1,sticky="ns")
         hsb.grid(row=1,column=0,sticky="ew"); cf.grid_rowconfigure(0,weight=1); cf.grid_columnconfigure(0,weight=1)
         self._canvas.bind("<Configure>",lambda e:self._refresh_view())
-        self._canvas.bind("<MouseWheel>",lambda e:self._canvas.yview_scroll(-e.delta//120,"units"))
+        self._canvas.bind("<MouseWheel>",self._on_mousewheel)
+        # Pan via click-drag
+        self._pan_x=0; self._pan_y=0; self._pan_start=None
+        self._canvas.bind("<ButtonPress-2>",self._pan_start_fn)
+        self._canvas.bind("<B2-Motion>",self._pan_move_fn)
+        self._canvas.bind("<ButtonRelease-2>",self._pan_end_fn)
+        # Ctrl+Left drag also pans
+        self._canvas.bind("<Control-ButtonPress-1>",self._pan_start_fn)
+        self._canvas.bind("<Control-B1-Motion>",self._pan_move_fn)
 
         # Detail panel at bottom
         self._detail=tk.Text(self._rp,height=4,state=tk.DISABLED,font=("Consolas",9),
@@ -444,7 +464,14 @@ class JVGEditor:
         self._info.config(text="正在导入..."); self.root.update()
         frames=import_images(list(paths))
         if frames:
-            blk=self.jvg.blocks[self._bi]; blk.frames.extend(frames)
+            blk=self.jvg.blocks[self._bi]
+            # Merge imported frame palettes into block palette
+            for f in frames:
+                if f._palette:
+                    for i in range(256):
+                        if f._palette.entries[i]!=0 and blk.palette.entries[i]==0:
+                            blk.palette.entries[i]=f._palette.entries[i]
+            blk.frames.extend(frames)
             self._sync_list(); self._refresh_view()
             self._info.config(text=f"导入 {len(frames)} 帧")
 
@@ -461,6 +488,24 @@ class JVGEditor:
         blk=self.jvg.blocks[self._bi]; self._fi=(self._fi+d)%max(1,blk.frame_count)
         self._sel_fi=self._fi; self._refresh_view()
 
+    # ── Zoom & Pan ──────────────────────────────────
+    def _zoom_step(self,delta:float):
+        z=max(0.5,min(5.0,self._zoom.get()+delta)); self._zoom.set(z)
+        self._zoom_label.config(text=f"{int(z*100)}%")
+        self._kill_anim(); self._refresh_view()
+    def _on_mousewheel(self,ev):
+        if ev.state&0x4:  # Ctrl+Wheel → horizontal scroll
+            self._canvas.xview_scroll(-ev.delta//120,"units")
+        else:  # normal → zoom
+            delta=0.5 if ev.delta>0 else -0.5; self._zoom_step(delta)
+    def _pan_start_fn(self,ev): self._pan_start=(ev.x,ev.y)
+    def _pan_move_fn(self,ev):
+        if self._pan_start:
+            dx=ev.x-self._pan_start[0]; dy=ev.y-self._pan_start[1]
+            self._canvas.xview_scroll(-dx,"units"); self._canvas.yview_scroll(-dy,"units")
+            self._pan_start=(ev.x,ev.y)
+    def _pan_end_fn(self,ev): self._pan_start=None
+
     # ── Views ────────────────────────────────────────
     def _set_view(self,mode:str): self._view=mode; self._kill_anim(); self._refresh_view()
 
@@ -468,6 +513,7 @@ class JVGEditor:
         return f._palette if f._palette else blk.palette
 
     def _f2tk(self,f:JVGFrame,pal:PaletteRGB565,scale:float=1.0)->Optional[ImageTk.PhotoImage]:
+        scale*=self._zoom.get()
         w,h=f.width,f.height
         if w<=0 or h<=0: return None
         pr=pal.to_rgb888(); rgba=bytearray(w*h*4)
@@ -502,30 +548,28 @@ class JVGEditor:
 
     def _render_tile(self,frames,blk):
         cols=self._tile_cols.get()
+        z=self._zoom.get()
         if cols<=0:
             cw=self._canvas.winfo_width()
-            # estimate: need at least 80px per frame
-            cols=max(1,(cw-10)//80)
-        x,y,rh=10,10,0; col=0; fw=max(32,80 if cols<=4 else 64)
+            cols=max(1,int((cw-10)/(80*z)))
+        x,y,rh=10,10,0; col=0; fw=int(max(32,80 if cols<=4 else 64)*z)
         for fi,f in enumerate(frames):
             if f.width<=0: continue
             pal=self._get_pal(blk,f); scale=fw/max(f.width,f.height)
-            img=self._f2tk(f,pal,scale)
+            img=self._f2tk(f,pal,scale/z)  # _f2tk already multiplies by z
             if not img: continue
             self._photos[fi]=img
             tid=self._canvas.create_image(x,y,anchor=tk.NW,image=img,tags=("frame",str(fi)))
             self._canvas.tag_bind(tid,"<Button-1>",lambda e,i=fi:self._on_frame_click(i))
-            # highlight selected frame
             if fi==self._sel_fi:
                 dw,dh=int(f.width*scale),int(f.height*scale)
                 self._canvas.create_rectangle(x,y,x+dw,y+dh,outline="#0f0",width=2,tags=("sel",))
-            # frame number
             self._canvas.create_text(x+2,y+2,text=str(fi),fill="#0f0",font=("",7),anchor=tk.NW)
             x+=fw+4; rh=max(rh,int(f.height*scale)); col+=1
             if col>=cols: x=10; y+=rh+8; rh=0; col=0
         y+=rh+20
         self._canvas.configure(scrollregion=(0,0,max(600,cols*(fw+4)+20),y))
-        self._info.config(text=f"平铺 — {len(frames)}帧, 列数={cols}")
+        self._info.config(text=f"平铺 — {len(frames)}帧, 列数={cols}, {int(z*100)}%")
 
     def _render_single(self,frames,blk):
         if self._fi>=len(frames): self._fi=0
