@@ -115,38 +115,68 @@ def _encode_rle_simple(px:bytes,w:int,h:int)->bytes:
     for row in range(h-1,-1,-1): d=px[row*w:(row+1)*w]; buf+=struct.pack("<HH",0,w)+d[::-1]
     return bytes(buf)
 
-def _count_rle_rows(data:bytes,fw:int)->int:
-    if not data or fw<=0: return 0
+def _count_rle_pairs(data:bytes)->int:
+    """统计 RLE (skip,run) 对数 — sub_4544EC.c L46: word_A5AECA = row_count"""
+    if not data: return 0
     c=0; pos=0
     while pos+4<=len(data):
-        _,rw=struct.unpack("<HH",data[pos:pos+4])
-        if rw==fw: c+=1
-        pos+=4+rw
+        _,rw=struct.unpack("<HH",data[pos:pos+4]); pos+=4+rw; c+=1
     return c
 
 def save_jvg(jvg:JVGFile,filepath:str):
+    """保存为原游戏兼容格式 (sub_453BD0 加载器兼容)
+
+    关键: @JVG data_size = sum of @JVM data_size (仅帧像素数据, 不含JVM头/Stream1/调色板)
+    """
     buf=bytearray()
-    buf+=JVG_MAGIC; buf+=struct.pack("<I",len(jvg.blocks)); buf+=struct.pack("<I",len(jvg.blocks))
-    buf+=struct.pack("<I",0); buf+=struct.pack("<I",jvg.total_frames); buf+=bytes(12)
+    total_data_size=0  # sum of @JVM data_size only
+    buf+=JVG_MAGIC
+    buf+=struct.pack("<I",len(jvg.blocks))            # version
+    buf+=struct.pack("<I",len(jvg.blocks))            # block_count
+    buf+=struct.pack("<I",0)                           # total_data_size placeholder
+    buf+=struct.pack("<I",jvg.total_frames)           # total sub-images
+    buf+=bytes(12)
+
     for blk in jvg.blocks:
-        n=blk.frame_count; buf+=JVM_MAGIC; buf+=struct.pack("<I",n); buf+=struct.pack("<I",0)
-        dsp=len(buf); buf+=struct.pack("<I",0); buf+=bytes(16)
+        n=blk.frame_count
+        buf+=JVM_MAGIC
+        buf+=struct.pack("<I",n)
+        buf+=struct.pack("<I",0)                       # reserved
+        dsp=len(buf)
+        buf+=struct.pack("<I",0)                       # data_size placeholder
+        buf+=bytes(16)
+
+        # Encode frames
         fd=bytearray(); co=[0]
         for f in blk.frames:
             meta=struct.pack("<8H",f.x_max&0xFFFF,f.y_max&0xFFFF,f.width,f.height,0,0,0,0)
             fd+=meta
             if f.encoded_data:
-                enc=f.encoded_data; rc=_count_rle_rows(enc,f.width)
+                enc=f.encoded_data
+                rc=_count_rle_pairs(enc)
                 struct.pack_into("<H",fd,len(fd)-2,rc)
             elif f.pixels and f.width>0 and f.height>0:
                 enc=_encode_rle_simple(f.pixels,f.width,f.height)
                 struct.pack_into("<H",fd,len(fd)-2,f.height)
-            else: enc=b""
-            fd+=enc; co.append(co[-1]+16+len(enc))
+            else:
+                enc=b""
+            fd+=enc
+            co.append(co[-1]+16+len(enc))
+
+        block_data_size=co[-1]  # = sum of (16+encoded_len) per frame
+        total_data_size+=block_data_size
+
+        # Stream1 (N+1 cumulative offsets)
         for off in co: buf+=struct.pack("<I",off)
+        # Palette (256 × RGB565)
         for e in blk.palette.entries: buf+=struct.pack("<H",e&0xFFFF)
-        buf+=fd; struct.pack_into("<I",buf,dsp,co[-1])
-    struct.pack_into("<I",buf,12,len(buf)-HEADER_SIZE)
+        # Frame data
+        buf+=fd
+        # Fix up @JVM data_size
+        struct.pack_into("<I",buf,dsp,block_data_size)
+
+    # Fix up @JVG total_data_size = sum of @JVM data_size only (NOT including headers)
+    struct.pack_into("<I",buf,12,total_data_size)
     Path(filepath).write_bytes(bytes(buf))
 
 # ── 图像导入 (PIL量化) ───────────────────────────────
@@ -329,7 +359,11 @@ class JVGEditor:
         ttk.Label(tb,text="列数:").pack(side=tk.LEFT)
         self._tile_cols=tk.IntVar(value=0)
         ttk.Spinbox(tb,textvariable=self._tile_cols,width=4,from_=0,to=32,
-                    command=lambda:getattr(self,'_refresh_view',lambda:0)()).pack(side=tk.LEFT,padx=2)
+                    command=lambda:self._refresh_view()).pack(side=tk.LEFT,padx=2)
+        ttk.Label(tb,text=" gap:").pack(side=tk.LEFT)
+        self._padding=tk.IntVar(value=1)
+        ttk.Spinbox(tb,textvariable=self._padding,width=3,from_=0,to=16,
+                    command=lambda:self._refresh_view()).pack(side=tk.LEFT,padx=2)
         ttk.Separator(tb,orient=tk.VERTICAL).pack(side=tk.LEFT,fill=tk.Y,padx=4,pady=2)
         ttk.Label(tb,text="速度:").pack(side=tk.LEFT)
         self._speed=tk.IntVar(value=120)
@@ -589,8 +623,8 @@ class JVGEditor:
         elif mode=="grid":
             d=filedialog.askdirectory(title="选择导出目录")
             if not d: return
-            export_gridsheet(blk,d,columns=self._tile_cols.get())
-            self._info.config(text=f"已导出 gridsheet 到 {d}")
+            export_gridsheet(blk,d,padding=self._padding.get(),columns=self._tile_cols.get())
+            self._info.config(text=f"已导出 gridsheet (padding={self._padding.get()}) 到 {d}")
 
 # ── Entry ──────────────────────────────────────────
 def main():
