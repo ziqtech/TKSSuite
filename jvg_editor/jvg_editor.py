@@ -214,6 +214,35 @@ def _pil_frame(img:'Image.Image')->JVGFrame:
     frame.y_max=(h-1 if h-1<32768 else h-1-65536)
     return frame
 
+def _remap_to_block_palette(f:JVGFrame,blk_pal:PaletteRGB565):
+    """将帧像素索引从 f._palette 重映射到 blk_palette (颜色最近匹配)"""
+    if not f._palette or not f.pixels: return
+    # 构建 f._palette 的 RGB888 查找表
+    f_colors=[None]*256
+    for i in range(256):
+        e=f._palette.entries[i]; f_colors[i]=(((e>>11)&0x1F)<<3,((e>>5)&0x3F)<<2,(e&0x1F)<<3)
+    # 构建 blk_palette 的 RGB888 查找表
+    b_colors=[None]*256
+    for i in range(256):
+        e=blk_pal.entries[i]; b_colors[i]=(((e>>11)&0x1F)<<3,((e>>5)&0x3F)<<2,(e&0x1F)<<3)
+    # 对帧的每个颜色找块调色板中最近的颜色
+    remap=[0]*256
+    for fi in range(256):
+        fc=f_colors[fi]
+        if fc is None: remap[fi]=0; continue
+        best,best_dist=0,999999
+        for bi in range(256):
+            bc=b_colors[bi]
+            d=abs(fc[0]-bc[0])+abs(fc[1]-bc[1])+abs(fc[2]-bc[2])
+            if d<best_dist: best,best_dist=bi,d
+        remap[fi]=best
+    # 重映射像素
+    px=bytearray(f.pixels)
+    for i in range(len(px)):
+        if px[i]<256: px[i]=remap[px[i]]
+    f.pixels=bytes(px)
+    f._palette=None  # 不再需要独立调色板
+
 def import_images(paths:List[str])->List[JVGFrame]:
     frames=[]
     for p in sorted(paths,key=lambda p:Path(p).name.lower()):
@@ -340,6 +369,7 @@ class JVGEditor:
 
         bf=ttk.LabelFrame(lf,text="图片操作",padding=4); bf.pack(fill=tk.X,padx=4,pady=4)
         ttk.Button(bf,text="添加图片",command=self._add_images).pack(fill=tk.X,pady=2)
+        ttk.Button(bf,text="替换选中",command=self._replace_frame).pack(fill=tk.X,pady=2)
         ttk.Button(bf,text="删除选中",command=self._del_frame).pack(fill=tk.X,pady=2)
 
         ef=ttk.LabelFrame(lf,text="导出",padding=4); ef.pack(fill=tk.X,padx=4,pady=4)
@@ -465,15 +495,34 @@ class JVGEditor:
         frames=import_images(list(paths))
         if frames:
             blk=self.jvg.blocks[self._bi]
-            # Merge imported frame palettes into block palette
+            # Merge palettes + remap pixel indices
             for f in frames:
                 if f._palette:
                     for i in range(256):
                         if f._palette.entries[i]!=0 and blk.palette.entries[i]==0:
                             blk.palette.entries[i]=f._palette.entries[i]
+                    _remap_to_block_palette(f,blk.palette)
             blk.frames.extend(frames)
             self._sync_list(); self._refresh_view()
             self._info.config(text=f"导入 {len(frames)} 帧")
+
+    def _replace_frame(self):
+        if not self.jvg or self._bi<0 or self._sel_fi<0: return messagebox.showinfo("提示","请先在平铺视图中点击选中一帧")
+        blk=self.jvg.blocks[self._bi]
+        if self._sel_fi>=blk.frame_count: return
+        paths=filedialog.askopenfilenames(title="选择替换图片",filetypes=[("图片","*.png *.bmp *.jpg *.jpeg")])
+        if not paths: return
+        frames=import_images([paths[0]])  # only first file
+        if frames:
+            new_f=frames[0]
+            if new_f._palette:
+                for i in range(256):
+                    if new_f._palette.entries[i]!=0 and blk.palette.entries[i]==0:
+                        blk.palette.entries[i]=new_f._palette.entries[i]
+                _remap_to_block_palette(new_f,blk.palette)
+            blk.frames[self._sel_fi]=new_f
+            self._sync_list(); self._kill_anim(); self._refresh_view()
+            self._info.config(text=f"已替换帧 #{self._sel_fi}")
 
     def _del_frame(self):
         if not self.jvg or self._bi<0: return
@@ -494,10 +543,12 @@ class JVGEditor:
         self._zoom_label.config(text=f"{int(z*100)}%")
         self._kill_anim(); self._refresh_view()
     def _on_mousewheel(self,ev):
-        if ev.state&0x4:  # Ctrl+Wheel → horizontal scroll
-            self._canvas.xview_scroll(-ev.delta//120,"units")
-        else:  # normal → zoom
+        if ev.state&0x4:  # Ctrl+Wheel → zoom
             delta=0.5 if ev.delta>0 else -0.5; self._zoom_step(delta)
+        elif ev.state&0x1:  # Shift+Wheel → horizontal scroll
+            self._canvas.xview_scroll(-ev.delta//120,"units")
+        else:  # default → vertical scroll
+            self._canvas.yview_scroll(-ev.delta//120,"units")
     def _pan_start_fn(self,ev): self._pan_start=(ev.x,ev.y)
     def _pan_move_fn(self,ev):
         if self._pan_start:
@@ -549,26 +600,29 @@ class JVGEditor:
     def _render_tile(self,frames,blk):
         cols=self._tile_cols.get()
         z=self._zoom.get()
+        # Default: show at original size. Auto-calc columns from canvas width.
         if cols<=0:
             cw=self._canvas.winfo_width()
-            cols=max(1,int((cw-10)/(80*z)))
-        x,y,rh=10,10,0; col=0; fw=int(max(32,80 if cols<=4 else 64)*z)
+            # estimate max frame width at current zoom
+            max_w=max((f.width for f in frames if f.width>0),default=64)
+            cols=max(1,int((cw-10)/(max_w*z+6)))
+        x,y,rh=10,10,0; col=0
         for fi,f in enumerate(frames):
             if f.width<=0: continue
-            pal=self._get_pal(blk,f); scale=fw/max(f.width,f.height)
-            img=self._f2tk(f,pal,scale/z)  # _f2tk already multiplies by z
+            pal=self._get_pal(blk,f)
+            img=self._f2tk(f,pal,1.0)  # _f2tk already applies zoom internally
             if not img: continue
             self._photos[fi]=img
+            dw,dh=int(f.width*z),int(f.height*z)
             tid=self._canvas.create_image(x,y,anchor=tk.NW,image=img,tags=("frame",str(fi)))
             self._canvas.tag_bind(tid,"<Button-1>",lambda e,i=fi:self._on_frame_click(i))
             if fi==self._sel_fi:
-                dw,dh=int(f.width*scale),int(f.height*scale)
                 self._canvas.create_rectangle(x,y,x+dw,y+dh,outline="#0f0",width=2,tags=("sel",))
             self._canvas.create_text(x+2,y+2,text=str(fi),fill="#0f0",font=("",7),anchor=tk.NW)
-            x+=fw+4; rh=max(rh,int(f.height*scale)); col+=1
+            x+=dw+4; rh=max(rh,dh); col+=1
             if col>=cols: x=10; y+=rh+8; rh=0; col=0
         y+=rh+20
-        self._canvas.configure(scrollregion=(0,0,max(600,cols*(fw+4)+20),y))
+        self._canvas.configure(scrollregion=(0,0,max(600,cols*(int(max((f.width for f in frames if f.width>0),default=64)*z)+4)+20),y))
         self._info.config(text=f"平铺 — {len(frames)}帧, 列数={cols}, {int(z*100)}%")
 
     def _render_single(self,frames,blk):
