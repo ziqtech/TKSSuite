@@ -120,30 +120,35 @@ def _encode_rle_game(pixels:bytes,alpha:bytes,w:int,h:int,screen_w:int=SCREEN_W)
             while (run--):
                 *dest = palette[*src++]          # 写像素
                 dest -= 2                        # 向左移
-    关键: dest 在内存中线性递减, 跨行必须 skip = screen_w - w 补偿行距,
-    否则所有行会被写到同一屏幕行, 产生横条异常 (正是用户截图中的白条)。
-    透明像素(alpha==0)通过累积 skip 跳过, 不占用 run data。
+    关键点:
+      1) dest 内存线性递减, 跨行必须 skip = screen_w - w 补偿屏幕行距;
+      2) 透明像素(alpha==0)通过累积 skip 跳过, 不写 run data;
+      3) skip 必须在行间累积 (若上一行最后不透明段左侧还有透明像素, 这些
+         偏移量要并入下一行的跳跃距离), 否则累积 1px 偏差会形成斜纹。
     """
     buf=bytearray(); pair_count=0
+    pending=0  # 跨行累积 skip
+    first=True
     for row in range(h-1,-1,-1):
-        # 行起始 skip: 首行为0, 后续行补偿屏幕行距 (dest 从上一行左外侧跳到本行右端)
-        pending=(screen_w-w) if row<h-1 else 0
-        col=w-1; row_emitted=False
+        # 行切换: 从上一行左外一格跳到本行右外一格, 需要 (screen_w-w) 个像素的回跳
+        if not first: pending+=screen_w-w
+        first=False
+        col=w-1
         while col>=0:
             # 累计连续透明像素
             t0=col
             while col>=0 and alpha[row*w+col]==0: col-=1
             pending+=t0-col
             if col<0: break
-            # 收集连续不透明像素 (注意: RLE 数据也是从右到左, 因为 dest 向左走)
+            # 如 pending 溢出 uint16, 拆成若干空对 (0xFFFF,0) 先消耗
+            while pending>0xFFFF:
+                buf+=struct.pack("<HH",0xFFFF,0); pair_count+=1; pending-=0xFFFF
+            # 收集连续不透明段 (从右到左, 匹配 dest 向左移动)
             run=bytearray()
             while col>=0 and alpha[row*w+col]!=0 and len(run)<0xFFFF:
                 run.append(pixels[row*w+col]); col-=1
-            buf+=struct.pack("<HH",min(pending,0xFFFF),len(run)); buf+=bytes(run)
-            pair_count+=1; pending=0; row_emitted=True
-        # 全透明行也需输出一对 (skip, 0), 防止 skip 累积溢出 uint16
-        if not row_emitted:
-            buf+=struct.pack("<HH",min(pending,0xFFFF),0); pair_count+=1
+            buf+=struct.pack("<HH",pending,len(run)); buf+=bytes(run)
+            pair_count+=1; pending=0
     return bytes(buf),pair_count
 
 def _count_rle_pairs(data:bytes)->int:
