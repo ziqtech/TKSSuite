@@ -219,6 +219,8 @@ class SpriteSheetCanvas(tk.Canvas):
         self.bind("<Button-1>", self._on_press)
         self.bind("<B1-Motion>", self._on_drag)
         self.bind("<ButtonRelease-1>", self._on_release)
+        self.bind("<Control-Button-1>", self._on_ctrl_click)
+        self.bind("<Shift-Button-1>", self._on_shift_click)
         self.bind("<MouseWheel>", self._on_mousewheel)
 
     # ── 坐标计算 ───────────────────────────────────────────
@@ -248,8 +250,9 @@ class SpriteSheetCanvas(tk.Canvas):
     def _idx_at_pos(self, x: int, y: int) -> int:
         """返回鼠标位置对应的帧索引, 无匹配返回 -1"""
         p, cw, ch = self.model.padding, self.model.cell_width, self.model.cell_height
-        col = (x - HEADER_COL_W) // (cw + p)
-        row = (y - HEADER_ROW_H) // (ch + p)
+        # canvasx/y 返回 float, 必须强转 int, 否则 selection 允许存 float 会引发 range/下标报错
+        col = int((x - HEADER_COL_W) // (cw + p))
+        row = int((y - HEADER_ROW_H) // (ch + p))
         # 检查是否在 cell 内部 (不在 padding 区域)
         cx = x - HEADER_COL_W - col * (cw + p)
         cy = y - HEADER_ROW_H - row * (ch + p)
@@ -262,13 +265,13 @@ class SpriteSheetCanvas(tk.Canvas):
         p, cw, ch = self.model.padding, self.model.cell_width, self.model.cell_height
         # 行头区域
         if x < HEADER_COL_W and y >= HEADER_ROW_H:
-            row = (y - HEADER_ROW_H) // (ch + p)
+            row = int((y - HEADER_ROW_H) // (ch + p))
             cy = y - HEADER_ROW_H - row * (ch + p)
             if 0 <= row < self.model.rows and cy < ch:
                 return ("row", row)
         # 列头区域
         if y < HEADER_ROW_H and x >= HEADER_COL_W:
-            col = (x - HEADER_COL_W) // (cw + p)
+            col = int((x - HEADER_COL_W) // (cw + p))
             cx = x - HEADER_COL_W - col * (cw + p)
             if 0 <= col < self.model.columns and cx < cw:
                 return ("col", col)
@@ -395,6 +398,9 @@ class SpriteSheetCanvas(tk.Canvas):
         return -1
 
     def _on_press(self, event):
+        # 若修饰键按下, 由专用 handler 处理 (避免 double-fire 破坏拖拽状态)
+        if (event.state & 0x0004) or (event.state & 0x0001):
+            return
         x, y = self.canvasx(event.x), self.canvasy(event.y)
 
         # 检测 header 点击
@@ -406,41 +412,62 @@ class SpriteSheetCanvas(tk.Canvas):
 
         idx = self._idx_at_pos(x, y)
         if idx < 0:
-            # 点击空白 → 清除选中
             if self.selection:
                 self.selection.clear()
+                if hasattr(self.editor, "image_list"):
+                    self.editor.image_list._selected_idx = -1
                 self.redraw()
             if hasattr(self.editor, "_on_selection_changed"):
                 self.editor._on_selection_changed()
             return
 
-        ctrl = (event.state & 0x0004) != 0
-        shift = (event.state & 0x0001) != 0
+        # 普通点击 → 可能开始拖拽
+        self._drag_info = {"from_idx": idx, "start_x": x, "start_y": y,
+                           "moved": False}
+        self._last_click_idx = idx
+        if idx not in self.selection:
+            self.selection = {idx}
+        # 同步 image_list 主选中 (供 "上移/下移" 按钮依赖)
+        if hasattr(self.editor, "image_list"):
+            self.editor.image_list._selected_idx = idx
+        self.redraw()
+        if hasattr(self.editor, "_on_selection_changed"):
+            self.editor._on_selection_changed()
 
-        if ctrl:
-            # Ctrl+点击: 切换单项选中
+    def _on_ctrl_click(self, event):
+        """Ctrl+点击: 切换选中 (不会触发 _on_press)"""
+        x, y = self.canvasx(event.x), self.canvasy(event.y)
+        # 先清除可能残留的 drag 状态
+        self._drag_info = None
+        idx = self._idx_at_pos(x, y)
+        if idx >= 0:
             if idx in self.selection:
                 self.selection.discard(idx)
             else:
                 self.selection.add(idx)
             self._last_click_idx = idx
+            # 同步 image_list 主选中 (选中集中选择主帧)
+            if hasattr(self.editor, "image_list"):
+                if self.selection:
+                    primary = idx if idx in self.selection else min(self.selection)
+                    self.editor.image_list._selected_idx = primary
+                else:
+                    self.editor.image_list._selected_idx = -1
             self.redraw()
             if hasattr(self.editor, "_on_selection_changed"):
                 self.editor._on_selection_changed()
-        elif shift and self._last_click_idx >= 0:
-            # Shift+点击: 范围选中
+
+    def _on_shift_click(self, event):
+        """Shift+点击: 范围选中 (不会触发 _on_press)"""
+        x, y = self.canvasx(event.x), self.canvasy(event.y)
+        self._drag_info = None
+        idx = self._idx_at_pos(x, y)
+        if idx >= 0 and self._last_click_idx >= 0:
             lo, hi = min(self._last_click_idx, idx), max(self._last_click_idx, idx)
             self.selection = set(range(lo, hi + 1))
-            self.redraw()
-            if hasattr(self.editor, "_on_selection_changed"):
-                self.editor._on_selection_changed()
-        else:
-            # 普通点击 → 可能开始拖拽
-            self._drag_info = {"from_idx": idx, "start_x": x, "start_y": y,
-                               "moved": False}
-            self._last_click_idx = idx
-            if idx not in self.selection:
-                self.selection = {idx}
+            # 同步 image_list 主选中 → 末帧
+            if hasattr(self.editor, "image_list"):
+                self.editor.image_list._selected_idx = idx
             self.redraw()
             if hasattr(self.editor, "_on_selection_changed"):
                 self.editor._on_selection_changed()
@@ -525,8 +552,8 @@ class SpriteSheetCanvas(tk.Canvas):
             self.redraw()
 
     def _show_frame_drag_indicator(self, cx: int, cy: int) -> None:
-        """绘制帧拖拽时的目标指示器"""
-        self.redraw()
+        """绘制帧拖拽目标指示器 (仅更新指示器, 不重建全部)"""
+        self.delete("drag_target")
         to_idx = self._idx_at_pos(cx, cy)
         if to_idx >= 0:
             r, c = divmod(to_idx, self.model.columns)
@@ -536,8 +563,8 @@ class SpriteSheetCanvas(tk.Canvas):
 
     def _show_header_drag_indicator(self, hdr_type: str, hdr_idx: int,
                                      cx: int, cy: int) -> None:
-        """绘制行/列拖拽目标指示器 (使用位置检测, 不限于 header 区域)"""
-        self.redraw()
+        """绘制行/列拖拽目标指示器 (仅更新指示器, 不重建全部)"""
+        self.delete("hdr_target")
         if hdr_type == "row":
             target = self._row_at_y(cy)
             if target >= 0 and target != hdr_idx:
@@ -1117,15 +1144,16 @@ class SettingsPanel(ttk.Frame):
     def _move_row(self, delta: int):
         sel = self.editor.canvas.selection
         if not sel:
-            # 尝试用第一帧确定行
             if self.model.frame_count == 0:
                 return
+            # 自动选择第一个非空帧
             for i, f in enumerate(self.model.frames):
                 if f is not None:
                     sel = {i}
+                    self.editor.canvas.selection = sel
                     break
-            if not sel:
-                return
+        if not sel:
+            return
         idx = min(sel)
         r = idx // self.model.columns
         target = r + delta
@@ -1142,9 +1170,10 @@ class SettingsPanel(ttk.Frame):
             for i, f in enumerate(self.model.frames):
                 if f is not None:
                     sel = {i}
+                    self.editor.canvas.selection = sel
                     break
-            if not sel:
-                return
+        if not sel:
+            return
         idx = min(sel)
         c = idx % self.model.columns
         target = c + delta
@@ -1282,10 +1311,27 @@ class InlinePreviewView(ttk.Frame):
 
         self._disp = tk.Label(self, bg="#1a1a1a")
         self._disp.pack(fill="both", expand=True, padx=4, pady=2)
+        # 监听 _disp 的第一次有效尺寸 → 重新 prerender (避免首次切换时由于 widget 未布局导致预渲染偏小)
+        self._last_disp_size: Tuple[int, int] = (0, 0)
+        self._disp.bind("<Configure>", self._on_disp_configure)
 
         self._scale = ttk.Scale(self, from_=0, to=1, orient="horizontal",
                                  command=self._on_scale)
         self._scale.pack(side="bottom", fill="x", padx=4, pady=2)
+
+    def _on_disp_configure(self, event):
+        """显示区尺寸变化时重新预渲染 (避免首次切换时由于小尺寸预渲染后看起来变大)"""
+        new_size = (event.width, event.height)
+        # 变化足够大才重新渲染, 避免频繁重建
+        if not self._frames:
+            self._last_disp_size = new_size
+            return
+        ow, oh = self._last_disp_size
+        if abs(new_size[0] - ow) < 8 and abs(new_size[1] - oh) < 8:
+            return
+        self._last_disp_size = new_size
+        self._prerender()
+        self._show_frame(self._current)
 
     def set_mode(self, mode: str):
         self._mode = mode
@@ -1316,6 +1362,12 @@ class InlinePreviewView(ttk.Frame):
             self._scale.configure(to=max(n - 1, 1))
         except Exception:
             pass
+        # 强制完成布局后再取 _disp 尺寸 → 避免首次切换预渲染偏小
+        try:
+            self.update_idletasks()
+        except Exception:
+            pass
+        self._last_disp_size = (self._disp.winfo_width(), self._disp.winfo_height())
         # 预渲染: 确定统一显示尺寸, 一次性 resize 所有帧
         self._prerender()
         self._show_frame(self._current)
