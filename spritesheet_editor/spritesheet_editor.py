@@ -811,6 +811,39 @@ class SpriteSheetCanvas(tk.Canvas):
         self.editor._on_model_changed()
         self.redraw()
 
+    def move_selected_up(self) -> None:
+        """选中帧上移一个位置 (delta = -columns)"""
+        cols = max(1, int(self.model.columns))
+        moved = []
+        # 正序遍历: 先移动靠上的, 避免覆盖
+        for idx in sorted(self.selection):
+            target = idx - cols
+            if target >= 0 and target not in self.selection:
+                self.model.swap_frames(idx, target)
+                moved.append(target)
+            else:
+                moved.append(idx)
+        self.selection = set(moved)
+        self.editor._on_model_changed()
+        self.redraw()
+
+    def move_selected_down(self) -> None:
+        """选中帧下移一个位置 (delta = +columns)"""
+        cols = max(1, int(self.model.columns))
+        total = len(self.model.frames)
+        moved = []
+        # 逆序遍历: 先移动靠下的, 避免覆盖
+        for idx in sorted(self.selection, reverse=True):
+            target = idx + cols
+            if target < total and target not in self.selection:
+                self.model.swap_frames(idx, target)
+                moved.append(target)
+            else:
+                moved.append(idx)
+        self.selection = set(moved)
+        self.editor._on_model_changed()
+        self.redraw()
+
 
 # ── 左侧图片列表面板 ───────────────────────────────────────
 class ImageListPanel(ttk.Frame):
@@ -1424,13 +1457,29 @@ class SettingsPanel(ttk.Frame):
                     break
         if not sel:
             return
+        cols = max(1, int(self.model.columns))
         idx = min(sel)
-        r = idx // self.model.columns
+        r = idx // cols
         target = r + delta
         if 0 <= target < self.model.rows:
             self.model.swap_rows(r, target)
+            # 同步选中帧指示位: r ↔ target 行的帧位置随之互换
+            new_sel = set()
+            for s in sel:
+                sr, sc = divmod(s, cols)
+                if sr == r:
+                    new_sel.add(target * cols + sc)
+                elif sr == target:
+                    new_sel.add(r * cols + sc)
+                else:
+                    new_sel.add(s)
+            self.editor.canvas.selection = new_sel
             self.editor._on_model_changed()
             self._update_output_info()
+            try:
+                self.editor.canvas.redraw()
+            except Exception:
+                pass
 
     def _move_col(self, delta: int):
         sel = self.editor.canvas.selection
@@ -1444,13 +1493,29 @@ class SettingsPanel(ttk.Frame):
                     break
         if not sel:
             return
+        cols = max(1, int(self.model.columns))
         idx = min(sel)
-        c = idx % self.model.columns
+        c = idx % cols
         target = c + delta
         if 0 <= target < self.model.columns:
             self.model.swap_cols(c, target)
+            # 同步选中帧指示位: c ↔ target 列的帧位置随之互换
+            new_sel = set()
+            for s in sel:
+                sr, sc = divmod(s, cols)
+                if sc == c:
+                    new_sel.add(sr * cols + target)
+                elif sc == target:
+                    new_sel.add(sr * cols + c)
+                else:
+                    new_sel.add(s)
+            self.editor.canvas.selection = new_sel
             self.editor._on_model_changed()
             self._update_output_info()
+            try:
+                self.editor.canvas.redraw()
+            except Exception:
+                pass
 
     def _on_tex_fmt_changed(self):
         """纹理格式切换: 更新像素格式可选项并回默认值"""
@@ -2037,6 +2102,19 @@ class SpriteSheetEditor(tk.Tk):
                               accelerator="Ctrl+Left")
         edit_menu.add_command(label="选中帧右移", command=self.canvas.move_selected_right,
                               accelerator="Ctrl+Right")
+        edit_menu.add_command(label="选中帧上移", command=self.canvas.move_selected_up,
+                              accelerator="Ctrl+Up")
+        edit_menu.add_command(label="选中帧下移", command=self.canvas.move_selected_down,
+                              accelerator="Ctrl+Down")
+        edit_menu.add_separator()
+        edit_menu.add_command(label="当前列左移", command=lambda: self.settings._move_col(-1),
+                              accelerator="Shift+Left")
+        edit_menu.add_command(label="当前列右移", command=lambda: self.settings._move_col(1),
+                              accelerator="Shift+Right")
+        edit_menu.add_command(label="当前行上移", command=lambda: self.settings._move_row(-1),
+                              accelerator="Shift+Up")
+        edit_menu.add_command(label="当前行下移", command=lambda: self.settings._move_row(1),
+                              accelerator="Shift+Down")
         menubar.add_cascade(label="编辑", menu=edit_menu)
 
         view_menu = tk.Menu(menubar, tearoff=0)
@@ -2051,8 +2129,31 @@ class SpriteSheetEditor(tk.Tk):
         self.bind_all("<Control-a>", lambda e: self.canvas.select_all())
         self.bind_all("<Escape>", lambda e: self.canvas.select_none())
         self.bind_all("<Delete>", lambda e: self.canvas.delete_selected())
-        self.bind_all("<Control-Left>", lambda e: self.canvas.move_selected_left())
-        self.bind_all("<Control-Right>", lambda e: self.canvas.move_selected_right())
+        # 选中帧 ←→↑↓ 移动 (Ctrl+方向键)
+        self.bind_all("<Control-Left>", lambda e: self._shortcut_move(e, self.canvas.move_selected_left))
+        self.bind_all("<Control-Right>", lambda e: self._shortcut_move(e, self.canvas.move_selected_right))
+        self.bind_all("<Control-Up>", lambda e: self._shortcut_move(e, self.canvas.move_selected_up))
+        self.bind_all("<Control-Down>", lambda e: self._shortcut_move(e, self.canvas.move_selected_down))
+        # 当前行 / 当前列移动 (Shift+方向键)
+        self.bind_all("<Shift-Left>", lambda e: self._shortcut_move(e, lambda: self.settings._move_col(-1)))
+        self.bind_all("<Shift-Right>", lambda e: self._shortcut_move(e, lambda: self.settings._move_col(1)))
+        self.bind_all("<Shift-Up>", lambda e: self._shortcut_move(e, lambda: self.settings._move_row(-1)))
+        self.bind_all("<Shift-Down>", lambda e: self._shortcut_move(e, lambda: self.settings._move_row(1)))
+
+    def _shortcut_move(self, event, func):
+        """方向键移动快捷键统一入口: 在输入控件中不劫持文本编辑行为"""
+        try:
+            w = event.widget
+            # Entry / Spinbox / Text / Combobox 等输入元素 → 放行默认行为
+            if isinstance(w, (tk.Entry, tk.Text, tk.Spinbox, ttk.Entry, ttk.Spinbox, ttk.Combobox)):
+                return None
+        except Exception:
+            pass
+        try:
+            func()
+        except Exception:
+            pass
+        return "break"
 
     def _build_layout(self):
         """构建整体布局: 工具栏(上) + 三栏主区域(下)"""
