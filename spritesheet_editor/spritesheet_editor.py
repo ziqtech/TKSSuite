@@ -33,6 +33,33 @@ PIXEL_FORMATS: dict[str, str] = {
     "RGB565":   "16-bit RGB (5R 6G 5B)",
     "RGBA5551": "16-bit RGBA (5R 5G 5B 1A)",
     "RGBA4444": "16-bit RGBA (4 bits/channel)",
+    "PNG-8 (256色)": "8-bit 索引调色板 (最多 256 色)",
+}
+
+# 纹理格式 → 可用的像素格式列表
+TEXTURE_FORMATS: dict[str, List[str]] = {
+    "PNG-32": ["RGBA8888", "RGB888", "RGB565", "RGBA5551", "RGBA4444"],
+    "PNG-8":  ["PNG-8 (256色)"],
+}
+
+# 像素格式详细说明 (面板中展示)
+PIXEL_FORMAT_DESC: dict[str, str] = {
+    "RGBA8888": "32-bit RGBA，每通道 8 位。完整色彩 + Alpha，最高质量，文件较大。",
+    "RGB888":   "24-bit RGB，无 Alpha。不支持透明像素。",
+    "RGB565":   "16-bit RGB (5R 6G 5B)。色彩量化，文件更小，无 Alpha。",
+    "RGBA5551": "16-bit RGBA (5R 5G 5B 1A)。1 位 Alpha，仅支持透明/不透明。",
+    "RGBA4444": "16-bit RGBA，每通道 4 位。色彩 + Alpha 都量化，体积较小。",
+    "PNG-8 (256色)": "8-bit 索引调色板，最多 256 色，文件最小，仅支持 1 位透明。",
+}
+
+# Alpha 处理模式
+ALPHA_MODES: List[str] = ["无", "清除透明像素", "减少边界伪影", "预乘 Alpha"]
+
+ALPHA_MODE_DESC: dict[str, str] = {
+    "无":       "透明像素从精灵复制到精灵表而不做任何更改。如果将其他信息存储在透明像素的颜色值中，请选择此模式以确保不会损坏。",
+    "清除透明像素": "透明像素的颜色值设置为 0 (透明黑色)。可以有更好的压缩率。",
+    "减少边界伪影": "透明像素获得最邻近的实心像素的颜色值。如果在缩放/旋转后在精灵的边框处观察到黑色阴影，请选择此模式。",
+    "预乘 Alpha":   "所有颜色值都与 Alpha 值相乘。某些框架需要这样才能更快地渲染纹理。",
 }
 
 HEADER_ROW_H = 28   # 列头高度
@@ -83,6 +110,30 @@ def _quantize_rgba4444(img: Image.Image) -> Image.Image:
     return result
 
 
+def _quantize_png8(img: Image.Image) -> Image.Image:
+    """量化为 PNG-8 索引调色板 (最多 256 色，保留 1 位透明)"""
+    img = img.convert("RGBA")
+    w, h = img.size
+    alpha = img.getchannel("A")
+    rgb = img.convert("RGB")
+    # 留出 index 255 作为透明索引
+    try:
+        q = rgb.quantize(colors=255, method=Image.Quantize.MEDIANCUT, dither=0)
+    except Exception:
+        q = rgb.quantize(colors=255)
+    q_data = list(q.getdata())
+    a_data = list(alpha.getdata())
+    new_data = [255 if a_data[i] < 128 else q_data[i] for i in range(w * h)]
+    pal = list(q.getpalette() or [])
+    while len(pal) < 768:
+        pal.append(0)
+    result = Image.new("P", (w, h))
+    result.putpalette(pal)
+    result.putdata(new_data)
+    result.info["transparency"] = 255
+    return result
+
+
 def convert_pixel_format(img: Image.Image, fmt: str) -> Image.Image:
     """按指定格式转换图像像素"""
     if fmt == "RGBA8888":
@@ -95,6 +146,96 @@ def convert_pixel_format(img: Image.Image, fmt: str) -> Image.Image:
         return _quantize_rgba5551(img)
     elif fmt == "RGBA4444":
         return _quantize_rgba4444(img)
+    elif fmt == "PNG-8 (256色)":
+        return _quantize_png8(img)
+    return img
+
+
+# ── Alpha 处理 ─────────────────────────────────────
+def _alpha_clear_transparent(img: Image.Image) -> Image.Image:
+    """将 alpha=0 的像素 RGB 清零"""
+    img = img.convert("RGBA")
+    w, h = img.size
+    result = img.copy()
+    px = result.load()
+    for y in range(h):
+        for x in range(w):
+            r, g, b, a = px[x, y]
+            if a == 0:
+                px[x, y] = (0, 0, 0, 0)
+    return result
+
+
+def _alpha_premultiply(img: Image.Image) -> Image.Image:
+    """对 RGB 预乘 alpha"""
+    img = img.convert("RGBA")
+    w, h = img.size
+    result = img.copy()
+    px = result.load()
+    for y in range(h):
+        for x in range(w):
+            r, g, b, a = px[x, y]
+            if a < 255:
+                f = a / 255.0
+                px[x, y] = (int(r * f), int(g * f), int(b * f), a)
+    return result
+
+
+def _alpha_reduce_border(img: Image.Image, iterations: int = 4) -> Image.Image:
+    """透明像素从附近不透明像素扩散取色 (减少缩放边界黑阴影)"""
+    img = img.convert("RGBA")
+    w, h = img.size
+    data = list(img.getdata())
+    for _ in range(max(1, iterations)):
+        new_data = list(data)
+        changed = False
+        for y in range(h):
+            for x in range(w):
+                idx = y * w + x
+                r, g, b, a = data[idx]
+                if a != 0:
+                    continue
+                rsum = gsum = bsum = 0
+                n = 0
+                for dy in (-1, 0, 1):
+                    ny = y + dy
+                    if ny < 0 or ny >= h:
+                        continue
+                    for dx in (-1, 0, 1):
+                        if dx == 0 and dy == 0:
+                            continue
+                        nx = x + dx
+                        if nx < 0 or nx >= w:
+                            continue
+                        nr, ng, nb, na = data[ny * w + nx]
+                        if na != 0:
+                            rsum += nr
+                            gsum += ng
+                            bsum += nb
+                            n += 1
+                if n > 0:
+                    new_data[idx] = (rsum // n, gsum // n, bsum // n, 0)
+                    changed = True
+        data = new_data
+        if not changed:
+            break
+    result = Image.new("RGBA", (w, h))
+    result.putdata(data)
+    return result
+
+
+def apply_alpha_mode(img: Image.Image, mode: str) -> Image.Image:
+    """应用 Alpha 处理模式"""
+    if img.mode != "RGBA":
+        img = img.convert("RGBA")
+    if mode == "无":
+        return img
+    if mode == "清除透明像素":
+        return _alpha_clear_transparent(img)
+    if mode == "减少边界伪影":
+        return _alpha_reduce_border(img)
+    if mode == "预乘 Alpha":
+        return _alpha_premultiply(img)
     return img
 
 
@@ -678,8 +819,15 @@ class ImageListPanel(ttk.Frame):
         header.pack(fill="x", padx=4, pady=(4, 2))
         ttk.Label(header, textvariable=self._title_var,
                   font=("", 9, "bold")).pack(side="left")
+        # 清空 / 下移 / 上移 — 按 pack(side="right") 顺序在右侧从右向左排列
         ttk.Button(header, text="清空", command=self._clear_all, width=4).pack(
             side="right", padx=1)
+        ttk.Button(header, text="▼下移",
+                   command=lambda: self.editor.canvas.move_selected_right(),
+                   width=5).pack(side="right", padx=1)
+        ttk.Button(header, text="▲上移",
+                   command=lambda: self.editor.canvas.move_selected_left(),
+                   width=5).pack(side="right", padx=1)
 
         list_container = ttk.Frame(self)
         list_container.pack(fill="both", expand=True, padx=2, pady=2)
@@ -1140,17 +1288,58 @@ class SettingsPanel(ttk.Frame):
         export_frame = ttk.LabelFrame(self, text="导出", padding=8)
         export_frame.pack(fill="x", padx=4, pady=4)
 
-        ttk.Label(export_frame, text="像素格式:", font=("", 8)).pack(anchor="w")
-        self._fmt_var = tk.StringVar(value="RGBA8888")
-        fmt_combo = ttk.Combobox(export_frame, textvariable=self._fmt_var,
-                                  values=list(PIXEL_FORMATS.keys()),
-                                  state="readonly", width=16)
-        fmt_combo.pack(fill="x", pady=2)
+        # 纹理格式 (决定像素格式的可选项)
+        row_tex = ttk.Frame(export_frame)
+        row_tex.pack(fill="x", pady=2)
+        ttk.Label(row_tex, text="纹理格式:", width=8).pack(side="left")
+        self._tex_fmt_var = tk.StringVar(value="PNG-32")
+        tex_combo = ttk.Combobox(row_tex, textvariable=self._tex_fmt_var,
+                                  values=list(TEXTURE_FORMATS.keys()),
+                                  state="readonly", width=12)
+        tex_combo.pack(side="left", fill="x", expand=True)
+        tex_combo.bind("<<ComboboxSelected>>",
+                       lambda e: self._on_tex_fmt_changed())
 
-        ttk.Button(export_frame, text="保存 (快速)",
-                   command=self.editor._save).pack(fill="x", pady=1)
-        ttk.Button(export_frame, text="导出 (选择格式)...",
-                   command=self._export_with_fmt).pack(fill="x", pady=1)
+        # 像素格式 (根据纹理格式动态更新)
+        row_pix = ttk.Frame(export_frame)
+        row_pix.pack(fill="x", pady=2)
+        ttk.Label(row_pix, text="像素格式:", width=8).pack(side="left")
+        self._fmt_var = tk.StringVar(value="RGBA8888")
+        self._fmt_combo = ttk.Combobox(row_pix, textvariable=self._fmt_var,
+                                        values=TEXTURE_FORMATS["PNG-32"],
+                                        state="readonly", width=12)
+        self._fmt_combo.pack(side="left", fill="x", expand=True)
+        self._fmt_combo.bind("<<ComboboxSelected>>",
+                              lambda e: self._refresh_export_info())
+
+        # 透明处理 (Alpha 处理)
+        row_alpha = ttk.Frame(export_frame)
+        row_alpha.pack(fill="x", pady=2)
+        ttk.Label(row_alpha, text="透明处理:", width=8).pack(side="left")
+        self._alpha_mode_var = tk.StringVar(value="清除透明像素")
+        alpha_combo = ttk.Combobox(row_alpha, textvariable=self._alpha_mode_var,
+                                    values=ALPHA_MODES,
+                                    state="readonly", width=12)
+        alpha_combo.pack(side="left", fill="x", expand=True)
+        alpha_combo.bind("<<ComboboxSelected>>",
+                         lambda e: self._refresh_export_info())
+
+        # 格式说明 (像素格式 + Alpha 模式详细说明)
+        ttk.Label(export_frame, text="格式说明:", font=("", 8)).pack(anchor="w", pady=(4, 0))
+        self._fmt_desc = tk.Text(export_frame, height=5, width=28, bg="#2a2a2a",
+                                  fg="#cccccc", font=("", 8), state="disabled",
+                                  relief="flat", borderwidth=0, wrap="word")
+        self._fmt_desc.pack(fill="x", pady=(0, 2))
+
+        # 格式预览 (预估导出尺寸 / 大小)
+        ttk.Label(export_frame, text="格式预览:", font=("", 8)).pack(anchor="w", pady=(2, 0))
+        self._fmt_preview = tk.Text(export_frame, height=4, width=28, bg="#2a2a2a",
+                                     fg="#aaccff", font=("Consolas", 8), state="disabled",
+                                     relief="flat", borderwidth=0)
+        self._fmt_preview.pack(fill="x", pady=(0, 4))
+
+        ttk.Button(export_frame, text="保存 Spritesheet...",
+                   command=self._save_current_fmt).pack(fill="x", pady=1)
         # 拆分模式下可用: 批量导出每一帧
         self._btn_export_each = ttk.Button(export_frame,
                                             text="导出全部 (每帧)",
@@ -1159,8 +1348,9 @@ class SettingsPanel(ttk.Frame):
         try: self._btn_export_each.state(["disabled"])
         except Exception: pass
 
-        # 实时更新输出信息
+        # 实时更新输出信息 / 导出面板
         self._update_output_info()
+        self._refresh_export_info()
 
     def _on_param_changed(self):
         """参数变更实时应用到模型并刷新预览"""
@@ -1174,6 +1364,10 @@ class SettingsPanel(ttk.Frame):
             return
         self.editor._on_model_changed()
         self._update_output_info()
+        try:
+            self._refresh_export_info()
+        except Exception:
+            pass
 
     def _auto_detect(self):
         self.model.auto_detect_cell_size()
@@ -1222,23 +1416,74 @@ class SettingsPanel(ttk.Frame):
             self.editor._on_model_changed()
             self._update_output_info()
 
-    def _export_with_fmt(self):
-        """使用面板中选择的格式直接导出"""
+    def _on_tex_fmt_changed(self):
+        """纹理格式切换: 更新像素格式可选项并回默认值"""
+        tex = self._tex_fmt_var.get()
+        options = TEXTURE_FORMATS.get(tex, ["RGBA8888"])
+        self._fmt_combo.configure(values=options)
+        # 当前像素格式不在新纹理格式的选项内 → 重置为第一项
+        if self._fmt_var.get() not in options:
+            self._fmt_var.set(options[0])
+        self._refresh_export_info()
+
+    def _refresh_export_info(self):
+        """更新格式说明 + 格式预览"""
+        fmt = self._fmt_var.get()
+        alpha_mode = self._alpha_mode_var.get()
+        # 格式说明: 像素格式 → Alpha 模式
+        pix_desc = PIXEL_FORMAT_DESC.get(fmt, "")
+        alpha_desc = ALPHA_MODE_DESC.get(alpha_mode, "")
+        desc = f"【{fmt}】\n{pix_desc}\n\n【{alpha_mode}】\n{alpha_desc}"
+        self._fmt_desc.configure(state="normal")
+        self._fmt_desc.delete("1.0", "end")
+        self._fmt_desc.insert("1.0", desc)
+        self._fmt_desc.configure(state="disabled")
+
+        # 格式预览: 尺寸 / 位深 / 预估大小
+        lines: List[str] = []
+        m = self.model
+        try:
+            ss = m.build_spritesheet()
+            w, h = ss.size
+            # 位深估算
+            bpp_map = {
+                "RGBA8888": 32, "RGB888": 24,
+                "RGB565": 16, "RGBA5551": 16, "RGBA4444": 16,
+                "PNG-8 (256色)": 8,
+            }
+            bpp = bpp_map.get(fmt, 32)
+            raw_kb = w * h * bpp // 8 // 1024
+            lines.append(f"尺寸: {w} × {h} px")
+            lines.append(f"纹理格式: {self._tex_fmt_var.get()}")
+            lines.append(f"像素格式: {fmt} ({bpp}-bit)")
+            lines.append(f"预估原始: ~{raw_kb} KB (PNG 压缩后更小)")
+        except Exception:
+            lines.append("(无数据)")
+        self._fmt_preview.configure(state="normal")
+        self._fmt_preview.delete("1.0", "end")
+        self._fmt_preview.insert("1.0", "\n".join(lines))
+        self._fmt_preview.configure(state="disabled")
+
+    def _save_current_fmt(self):
+        """按当前面板的纹理/像素/Alpha 设置保存完整精灵表"""
         m = self.model
         if m.frame_count == 0:
             messagebox.showinfo("提示", "没有帧数据可导出")
             return
         ss = m.build_spritesheet()
+        alpha_mode = self._alpha_mode_var.get()
+        ss = apply_alpha_mode(ss, alpha_mode)
         fmt = self._fmt_var.get()
         converted = convert_pixel_format(ss, fmt)
         fp = filedialog.asksaveasfilename(
-            title=f"导出 Spritesheet ({fmt})",
+            title=f"保存 Spritesheet ({self._tex_fmt_var.get()} / {fmt})",
             defaultextension=".png",
             filetypes=[("PNG 图片", "*.png")])
         if not fp:
             return
         converted.save(fp, "PNG")
-        self.editor._status_var.set(f"已导出 ({fmt}): {Path(fp).name}")
+        self.editor._status_var.set(
+            f"已保存 ({self._tex_fmt_var.get()} / {fmt} / {alpha_mode}): {Path(fp).name}")
         self._update_output_info()
 
     def _update_output_info(self):
@@ -1271,6 +1516,10 @@ class SettingsPanel(ttk.Frame):
         self._cw_var.set(self.model.cell_width)
         self._ch_var.set(self.model.cell_height)
         self._update_output_info()
+        try:
+            self._refresh_export_info()
+        except Exception:
+            pass
 
 
 # ── 预览窗口 ──────────────────────────────────────────────
@@ -1937,16 +2186,8 @@ class SpriteSheetEditor(tk.Tk):
             side="left", padx=2)
         ttk.Separator(toolbar, orient="vertical").pack(
             side="left", fill="y", padx=4, pady=2)
-        ttk.Button(toolbar, text="保存", command=self._save).pack(side="left", padx=2)
-        ttk.Button(toolbar, text="导出...", command=self._export).pack(side="left", padx=2)
-        ttk.Separator(toolbar, orient="vertical").pack(
-            side="left", fill="y", padx=4, pady=2)
         ttk.Button(toolbar, text="删除", command=self._delete_from_list).pack(
             side="left", padx=2)
-        ttk.Button(toolbar, text="▲上移", command=self.canvas.move_selected_left,
-                   width=5).pack(side="left", padx=1)
-        ttk.Button(toolbar, text="▼下移", command=self.canvas.move_selected_right,
-                   width=5).pack(side="left", padx=1)
 
         self._status_var = tk.StringVar(value="就绪")
         ttk.Label(toolbar, textvariable=self._status_var, foreground="#888888").pack(
@@ -2055,8 +2296,19 @@ class SpriteSheetEditor(tk.Tk):
         self._filepath = str(path)
         self._source_sheet = img  # 保留原图, 方便后续按新参数 “重新拆分”
 
-        # 直接使用右侧栏当前参数拆分 (取消拆分弹窗)
-        self.model.split_spritesheet(img)
+        # 基于图片尺寸 + 当前 cols/rows/padding 自动计算 cell 大小
+        m = self.model
+        cols = max(1, int(m.columns))
+        rows = max(1, int(m.rows))
+        pad = max(0, int(m.padding))
+        iw, ih = img.size
+        cell_w = max(1, (iw - max(0, cols - 1) * pad) // cols)
+        cell_h = max(1, (ih - max(0, rows - 1) * pad) // rows)
+        m.cell_width = cell_w
+        m.cell_height = cell_h
+
+        # 使用右侧栏参数直接拆分 (取消拆分弹窗)
+        m.split_spritesheet(img)
         # 重置路径追踪和选中: 拆分后的帧没有独立源文件路径
         self.image_list._image_paths = []
         self.image_list._path_by_id = {}
@@ -2065,16 +2317,15 @@ class SpriteSheetEditor(tk.Tk):
         self.canvas._drag_info = None
         self.canvas._header_drag = None
         self.canvas._last_click_idx = -1
-        self.settings.refresh_values()
+        self.settings.refresh_values()  # 回写 cell_w/cell_h 到右栏
         self._on_model_changed()
-        m = self.model
         self._status_var.set(
             f"已拆分: {path.name} → {m.frame_count} 帧 "
             f"(cols={m.columns} rows={m.rows} "
             f"cell={m.cell_width}×{m.cell_height} pad={m.padding})")
 
     def _resplit(self):
-        """按当前右侧参数重新拆分已加载的 Spritesheet"""
+        """按当前右侧 cols/rows/padding 重新计算 cell 并拆分"""
         img = getattr(self, "_source_sheet", None)
         if img is None:
             messagebox.showinfo("提示", "请先通过《导入拆分》加载一张 Spritesheet")
@@ -2083,7 +2334,18 @@ class SpriteSheetEditor(tk.Tk):
             if not messagebox.askyesno("确认",
                     "重新拆分将丢弃当前排序和删除, 确定继续吗?"):
                 return
-        self.model.split_spritesheet(img)
+
+        m = self.model
+        cols = max(1, int(m.columns))
+        rows = max(1, int(m.rows))
+        pad = max(0, int(m.padding))
+        iw, ih = img.size
+        cell_w = max(1, (iw - max(0, cols - 1) * pad) // cols)
+        cell_h = max(1, (ih - max(0, rows - 1) * pad) // rows)
+        m.cell_width = cell_w
+        m.cell_height = cell_h
+
+        m.split_spritesheet(img)
         self.image_list._image_paths = []
         self.image_list._path_by_id = {}
         self.image_list._selected_idx = -1
@@ -2091,8 +2353,8 @@ class SpriteSheetEditor(tk.Tk):
         self.canvas._drag_info = None
         self.canvas._header_drag = None
         self.canvas._last_click_idx = -1
+        self.settings.refresh_values()  # 回写 cell_w/cell_h 到右栏
         self._on_model_changed()
-        m = self.model
         self._status_var.set(
             f"已重新拆分 → {m.frame_count} 帧 "
             f"(cols={m.columns} rows={m.rows} "
@@ -2116,19 +2378,23 @@ class SpriteSheetEditor(tk.Tk):
         if not outdir:
             return
         fmt = self.settings._fmt_var.get()
+        alpha_mode = self.settings._alpha_mode_var.get()
+        tex_fmt = self.settings._tex_fmt_var.get()
         count = 0
         for idx in indices:
             f = m.get_frame(idx)
             if f is None:
                 continue
             try:
-                converted = convert_pixel_format(f, fmt)
+                processed = apply_alpha_mode(f, alpha_mode)
+                converted = convert_pixel_format(processed, fmt)
                 fp = Path(outdir) / f"frame_{idx:03d}.png"
                 converted.save(fp, "PNG")
                 count += 1
             except Exception as e:
                 print(f"导出失败 #{idx}: {e}")
-        self._status_var.set(f"已导出 {count}/{len(indices)} 帧 → {outdir} ({fmt})")
+        self._status_var.set(
+            f"已导出 {count}/{len(indices)} 帧 → {outdir} ({tex_fmt} / {fmt} / {alpha_mode})")
 
     # ── 工作模式 / 预览模式 ──────────────────────────────────
     def _apply_workflow_mode(self):
