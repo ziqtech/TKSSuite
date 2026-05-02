@@ -219,8 +219,6 @@ class SpriteSheetCanvas(tk.Canvas):
         self.bind("<Button-1>", self._on_press)
         self.bind("<B1-Motion>", self._on_drag)
         self.bind("<ButtonRelease-1>", self._on_release)
-        self.bind("<Control-Button-1>", self._on_ctrl_click)
-        self.bind("<Shift-Button-1>", self._on_shift_click)
         self.bind("<MouseWheel>", self._on_mousewheel)
 
     # ── 坐标计算 ───────────────────────────────────────────
@@ -354,56 +352,79 @@ class SpriteSheetCanvas(tk.Canvas):
                               fill="#303030", outline="#606060", tags="corner")
 
     # ── 鼠标事件 ───────────────────────────────────────────
+    def _row_at_y(self, y: float) -> int:
+        """根据 y 坐标确定所在行 (返回 -1 表示不在任何行中)"""
+        p, ch = self.model.padding, self.model.cell_height
+        ri = int((y - HEADER_ROW_H) // (ch + p))
+        ry = y - HEADER_ROW_H - ri * (ch + p)
+        if 0 <= ri < self.model.rows and 0 <= ry < ch:
+            return ri
+        return -1
+
+    def _col_at_x(self, x: float) -> int:
+        """根据 x 坐标确定所在列 (返回 -1 表示不在任何列中)"""
+        p, cw = self.model.padding, self.model.cell_width
+        ci = int((x - HEADER_COL_W) // (cw + p))
+        cx = x - HEADER_COL_W - ci * (cw + p)
+        if 0 <= ci < self.model.columns and 0 <= cx < cw:
+            return ci
+        return -1
+
     def _on_press(self, event):
         x, y = self.canvasx(event.x), self.canvasy(event.y)
+
         # 检测 header 点击
         hdr = self._header_at_pos(x, y)
         if hdr:
             self._header_drag = (hdr[0], hdr[1], x, y)
-            self.redraw()  # 点中后立即给予高亮反馈
+            self.redraw()
             return
 
         idx = self._idx_at_pos(x, y)
-        if idx >= 0:
-            self._drag_info = {"from_idx": idx, "start_x": x, "start_y": y,
-                               "moved": False}
-            self._last_click_idx = idx
-            if idx not in self.selection:
-                self.selection = {idx}
-            # 同步列表选中
-            if hasattr(self.editor, "image_list"):
-                self.editor.image_list._selected_idx = idx
-            self.redraw()
-        else:
-            # 点击空白区域 → 清除选中
+        if idx < 0:
+            # 点击空白 → 清除选中
             if self.selection:
                 self.selection.clear()
                 if hasattr(self.editor, "image_list"):
                     self.editor.image_list._selected_idx = -1
                 self.redraw()
-        # 联动内嵌预览
-        if hasattr(self.editor, "_on_selection_changed"):
-            self.editor._on_selection_changed()
+            if hasattr(self.editor, "_on_selection_changed"):
+                self.editor._on_selection_changed()
+            return
 
-    def _on_ctrl_click(self, event):
-        x, y = self.canvasx(event.x), self.canvasy(event.y)
-        idx = self._idx_at_pos(x, y)
-        if idx >= 0:
+        ctrl = (event.state & 0x0004) != 0
+        shift = (event.state & 0x0001) != 0
+
+        if ctrl:
+            # Ctrl+点击: 切换单项选中
             if idx in self.selection:
                 self.selection.discard(idx)
             else:
                 self.selection.add(idx)
             self._last_click_idx = idx
+            if hasattr(self.editor, "image_list"):
+                self.editor.image_list._selected_idx = idx
             self.redraw()
             if hasattr(self.editor, "_on_selection_changed"):
                 self.editor._on_selection_changed()
-
-    def _on_shift_click(self, event):
-        x, y = self.canvasx(event.x), self.canvasy(event.y)
-        idx = self._idx_at_pos(x, y)
-        if idx >= 0 and self._last_click_idx >= 0:
+        elif shift and self._last_click_idx >= 0:
+            # Shift+点击: 范围选中
             lo, hi = min(self._last_click_idx, idx), max(self._last_click_idx, idx)
             self.selection = set(range(lo, hi + 1))
+            if hasattr(self.editor, "image_list"):
+                self.editor.image_list._selected_idx = idx
+            self.redraw()
+            if hasattr(self.editor, "_on_selection_changed"):
+                self.editor._on_selection_changed()
+        else:
+            # 普通点击 → 可能开始拖拽
+            self._drag_info = {"from_idx": idx, "start_x": x, "start_y": y,
+                               "moved": False}
+            self._last_click_idx = idx
+            if idx not in self.selection:
+                self.selection = {idx}
+            if hasattr(self.editor, "image_list"):
+                self.editor.image_list._selected_idx = idx
             self.redraw()
             if hasattr(self.editor, "_on_selection_changed"):
                 self.editor._on_selection_changed()
@@ -435,34 +456,35 @@ class SpriteSheetCanvas(tk.Canvas):
     def _on_release(self, event):
         x, y = self.canvasx(event.x), self.canvasy(event.y)
 
-        # Header 释放
+        # Header 释放 (用 _row_at_y / _col_at_x 检测目标, 允许光标在画布内)
         if self._header_drag:
             hdr_type, hdr_idx = self._header_drag[0], self._header_drag[1]
-            target = self._header_at_pos(x, y)
-            # 先清除 drag 状态, 再触发模型变更, 避免 redraw 时高亮残留
             self._header_drag = None
-            if target and target[0] == hdr_type and target[1] != hdr_idx:
+            if hdr_type == "row":
+                target = self._row_at_y(y)
+            else:
+                target = self._col_at_x(x)
+            if target >= 0 and target != hdr_idx:
                 cols = self.model.columns
-                # 映射旧 selection 到交换后的新位置
                 old_sel = set(self.selection)
                 new_sel: Set[int] = set()
                 for si in old_sel:
                     sr, sc = divmod(si, cols)
                     if hdr_type == "row":
                         if sr == hdr_idx:
-                            sr = target[1]
-                        elif sr == target[1]:
+                            sr = target
+                        elif sr == target:
                             sr = hdr_idx
-                    else:  # col
+                    else:
                         if sc == hdr_idx:
-                            sc = target[1]
-                        elif sc == target[1]:
+                            sc = target
+                        elif sc == target:
                             sc = hdr_idx
                     new_sel.add(sr * cols + sc)
                 if hdr_type == "row":
-                    self.model.swap_rows(hdr_idx, target[1])
+                    self.model.swap_rows(hdr_idx, target)
                 else:
-                    self.model.swap_cols(hdr_idx, target[1])
+                    self.model.swap_cols(hdr_idx, target)
                 self.selection = new_sel
                 self.editor._on_model_changed()
             else:
@@ -498,17 +520,19 @@ class SpriteSheetCanvas(tk.Canvas):
 
     def _show_header_drag_indicator(self, hdr_type: str, hdr_idx: int,
                                      cx: int, cy: int) -> None:
-        """绘制行/列拖拽目标指示器"""
+        """绘制行/列拖拽目标指示器 (使用位置检测, 不限于 header 区域)"""
         self.redraw()
-        target = self._header_at_pos(cx, cy)
-        if target and target[0] == hdr_type and target[1] != hdr_idx:
-            if hdr_type == "row":
-                _, y, _, y2 = self._row_header_bbox(target[1])
+        if hdr_type == "row":
+            target = self._row_at_y(cy)
+            if target >= 0 and target != hdr_idx:
+                _, y, _, y2 = self._row_header_bbox(target)
                 tw = self._total_size()[0]
                 self.create_rectangle(0, y, tw, y2, outline="#ffcc00", width=2,
                                       dash=(4, 2), tags="hdr_target")
-            elif hdr_type == "col":
-                x, _, x2, _ = self._col_header_bbox(target[1])
+        else:
+            target = self._col_at_x(cx)
+            if target >= 0 and target != hdr_idx:
+                x, _, x2, _ = self._col_header_bbox(target)
                 th = self._total_size()[1]
                 self.create_rectangle(x, 0, x2, th, outline="#ffcc00", width=2,
                                       dash=(4, 2), tags="hdr_target")
