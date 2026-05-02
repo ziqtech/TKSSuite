@@ -2263,6 +2263,18 @@ class SpriteSheetEditor(tk.Tk):
         ttk.Label(toolbar, textvariable=self._status_var, foreground="#888888").pack(
             side="right", padx=16)
 
+        # 点击右栏外任意位置 → 取消右栏控件焦点 (避免 Spinbox 抢快捷键)
+        self.bind("<Button-1>", self._on_defocus_click, add=True)
+
+    def _on_defocus_click(self, event):
+        """点击右栏外任意位置 → 取消右栏内控件焦点, 保证快捷键生效"""
+        w = event.widget
+        while w is not None:
+            if w is self.settings:
+                return
+            w = w.master
+        self.focus_set()
+
     def _on_model_changed(self):
         """模型变更后刷新所有视图"""
         self.canvas.redraw()
