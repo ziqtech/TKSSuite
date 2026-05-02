@@ -356,6 +356,8 @@ class SpriteSheetCanvas(tk.Canvas):
         self._header_drag: Optional[dict] = None
         self._last_click_idx: int = -1
         self._drawing_size: Tuple[int, int] = (0, 0)
+        # 缩放 (仅影响画布显示, 不改变 model 实际 cell 尺寸)
+        self._zoom: float = 1.0
 
         self.bind("<Button-1>", self._on_press)
         self.bind("<B1-Motion>", self._on_drag)
@@ -364,33 +366,60 @@ class SpriteSheetCanvas(tk.Canvas):
         self.bind("<Shift-Button-1>", self._on_shift_click)
         self.bind("<MouseWheel>", self._on_mousewheel)
 
-    # ── 坐标计算 ───────────────────────────────────────────
+    # ── 缩放 ───────────────────────────────────────
+    def _eff_size(self) -> Tuple[int, int, int]:
+        """按当前缩放计算画布上的 (cell_w, cell_h, padding)"""
+        z = max(0.05, float(self._zoom))
+        cw = max(1, int(round(self.model.cell_width * z)))
+        ch = max(1, int(round(self.model.cell_height * z)))
+        p = max(0, int(round(self.model.padding * z)))
+        return cw, ch, p
+
+    def set_zoom(self, z: float) -> None:
+        z = max(0.1, min(8.0, float(z)))
+        if abs(z - self._zoom) < 0.001:
+            return
+        self._zoom = z
+        self.redraw()
+        # 同步缩放指示标签 (若存在)
+        try:
+            self.editor._grid_zoom_label.config(text=f"{int(z * 100)}%")
+        except Exception:
+            pass
+
+    def zoom_step(self, delta: float) -> None:
+        self.set_zoom(self._zoom + delta)
+
+    def zoom_reset(self) -> None:
+        self.set_zoom(1.0)
+
+    # ── 坐标计算 ───────────────────────────────────
     def _cell_bbox(self, row: int, col: int) -> Tuple[int, int, int, int]:
-        p = self.model.padding
-        cw, ch = self.model.cell_width, self.model.cell_height
+        cw, ch, p = self._eff_size()
         x = HEADER_COL_W + col * (cw + p)
         y = HEADER_ROW_H + row * (ch + p)
         return x, y, x + cw, y + ch
 
     def _row_header_bbox(self, row: int) -> Tuple[int, int, int, int]:
         _, y, _, _ = self._cell_bbox(row, 0)
-        cw, ch = self.model.cell_width, self.model.cell_height
+        cw, ch, p = self._eff_size()
         return 0, y, HEADER_COL_W, y + ch
 
     def _col_header_bbox(self, col: int) -> Tuple[int, int, int, int]:
         x, _, _, _ = self._cell_bbox(0, col)
-        cw, ch = self.model.cell_width, self.model.cell_height
+        cw, ch, p = self._eff_size()
         return x, 0, x + cw, HEADER_ROW_H
 
     def _total_size(self) -> Tuple[int, int]:
         m = self.model
-        w = HEADER_COL_W + m.columns * (m.cell_width + m.padding) - m.padding
-        h = HEADER_ROW_H + m.rows * (m.cell_height + m.padding) - m.padding
+        cw, ch, p = self._eff_size()
+        w = HEADER_COL_W + m.columns * (cw + p) - p
+        h = HEADER_ROW_H + m.rows * (ch + p) - p
         return max(w, 100), max(h, 100)
 
     def _idx_at_pos(self, x: int, y: int) -> int:
         """返回鼠标位置对应的帧索引, 无匹配返回 -1"""
-        p, cw, ch = self.model.padding, self.model.cell_width, self.model.cell_height
+        cw, ch, p = self._eff_size()
         # canvasx/y 返回 float, 必须强转 int, 否则 selection 允许存 float 会引发 range/下标报错
         col = int((x - HEADER_COL_W) // (cw + p))
         row = int((y - HEADER_ROW_H) // (ch + p))
@@ -403,7 +432,7 @@ class SpriteSheetCanvas(tk.Canvas):
 
     def _header_at_pos(self, x: int, y: int) -> Optional[Tuple[str, int]]:
         """检测是否点击了 row/col header, 返回 ('row', r) 或 ('col', c) 或 None"""
-        p, cw, ch = self.model.padding, self.model.cell_width, self.model.cell_height
+        cw, ch, p = self._eff_size()
         # 行头区域
         if x < HEADER_COL_W and y >= HEADER_ROW_H:
             row = int((y - HEADER_ROW_H) // (ch + p))
@@ -430,8 +459,8 @@ class SpriteSheetCanvas(tk.Canvas):
 
         p, cw, ch = m.padding, m.cell_width, m.cell_height
         cols, rows = m.columns, m.rows
-
-        # 背景
+        # 画布实际使用缩放后的尺寸 (cw/ch/p 为逻辑尺寸, eff_* 为画布像素)
+        eff_cw, eff_ch, eff_p = self._eff_size()
         self.create_rectangle(0, 0, tw, th, fill="#3a3a3a", outline="", tags="bg")
 
         for i, frame in enumerate(m.frames):
@@ -448,7 +477,7 @@ class SpriteSheetCanvas(tk.Canvas):
             if frame is not None:
                 try:
                     photo = ImageTk.PhotoImage(
-                        frame.resize((cw, ch), Image.NEAREST))
+                        frame.resize((eff_cw, eff_ch), Image.NEAREST))
                     self._photos[(r, c)] = photo
                     self.create_image(x, y, image=photo, anchor="nw",
                                       tags=f"img_{i}")
@@ -473,16 +502,16 @@ class SpriteSheetCanvas(tk.Canvas):
         if len(self.selection) == 1:
             sel_idx = next(iter(self.selection))
             sr, sc = divmod(sel_idx, cols)
-            p, cw, ch = self.model.padding, self.model.cell_width, self.model.cell_height
+            cw_e, ch_e, p_e = self._eff_size()
             tw = self._total_size()[0]
             th = self._total_size()[1]
             # 高亮行
-            ry = HEADER_ROW_H + sr * (ch + p)
-            self.create_rectangle(HEADER_COL_W, ry, tw, ry + ch,
+            ry = HEADER_ROW_H + sr * (ch_e + p_e)
+            self.create_rectangle(HEADER_COL_W, ry, tw, ry + ch_e,
                                   outline="#a0d0ff", width=1, dash=(2, 2), tags="row_hl")
             # 高亮列
-            cx = HEADER_COL_W + sc * (cw + p)
-            self.create_rectangle(cx, HEADER_ROW_H, cx + cw, th,
+            cx = HEADER_COL_W + sc * (cw_e + p_e)
+            self.create_rectangle(cx, HEADER_ROW_H, cx + cw_e, th,
                                   outline="#a0d0ff", width=1, dash=(2, 2), tags="col_hl")
             # 行头高亮
             rhx, rhy, rhx2, rhy2 = self._row_header_bbox(sr)
@@ -500,7 +529,7 @@ class SpriteSheetCanvas(tk.Canvas):
                         and self._header_drag[1] == r else "#404040"
             self.create_rectangle(x, y, x2, y2, fill=hdr_fill, outline="#606060",
                                   tags=f"row_hdr_{r}")
-            self.create_text(x + HEADER_COL_W // 2, y + (ch) // 2,
+            self.create_text(x + HEADER_COL_W // 2, y + (eff_ch) // 2,
                              text=f"R{r}", fill="#aaaaaa", font=("", 8),
                              tags=f"row_hdr_{r}")
 
@@ -511,7 +540,7 @@ class SpriteSheetCanvas(tk.Canvas):
                         and self._header_drag[1] == c else "#404040"
             self.create_rectangle(x, y, x2, y2, fill=hdr_fill, outline="#606060",
                                   tags=f"col_hdr_{c}")
-            self.create_text(x + cw // 2, y + HEADER_ROW_H // 2,
+            self.create_text(x + eff_cw // 2, y + HEADER_ROW_H // 2,
                              text=f"C{c}", fill="#aaaaaa", font=("", 8),
                              tags=f"col_hdr_{c}")
 
@@ -522,7 +551,7 @@ class SpriteSheetCanvas(tk.Canvas):
     # ── 鼠标事件 ───────────────────────────────────────────
     def _row_at_y(self, y: float) -> int:
         """根据 y 坐标确定所在行 (返回 -1 表示不在任何行中)"""
-        p, ch = self.model.padding, self.model.cell_height
+        cw, ch, p = self._eff_size()
         ri = int((y - HEADER_ROW_H) // (ch + p))
         ry = y - HEADER_ROW_H - ri * (ch + p)
         if 0 <= ri < self.model.rows and 0 <= ry < ch:
@@ -531,7 +560,7 @@ class SpriteSheetCanvas(tk.Canvas):
 
     def _col_at_x(self, x: float) -> int:
         """根据 x 坐标确定所在列 (返回 -1 表示不在任何列中)"""
-        p, cw = self.model.padding, self.model.cell_width
+        cw, ch, p = self._eff_size()
         ci = int((x - HEADER_COL_W) // (cw + p))
         cx = x - HEADER_COL_W - ci * (cw + p)
         if 0 <= ci < self.model.columns and 0 <= cx < cw:
@@ -722,7 +751,16 @@ class SpriteSheetCanvas(tk.Canvas):
                                       dash=(4, 2), tags="hdr_target")
 
     def _on_mousewheel(self, event):
-        self.yview_scroll(int(-1 * (event.delta / 120)), "units")
+        # Ctrl+滾轮 = 缩放
+        if event.state & 0x4:
+            delta = 0.25 if event.delta > 0 else -0.25
+            self.zoom_step(delta)
+            return "break"
+        # Shift+滾轮 = 水平滚动, 其他 = 垂直滚动
+        if event.state & 0x1:
+            self.xview_scroll(int(-1 * (event.delta / 120)), "units")
+        else:
+            self.yview_scroll(int(-1 * (event.delta / 120)), "units")
 
     # ── 公开方法 ────────────────────────────────────────────
     def update_model(self) -> None:
@@ -1340,13 +1378,11 @@ class SettingsPanel(ttk.Frame):
 
         ttk.Button(export_frame, text="保存 Spritesheet...",
                    command=self._save_current_fmt).pack(fill="x", pady=1)
-        # 拆分模式下可用: 批量导出每一帧
+        # 批量导出每一帧 (组合 / 拆分模式都可用, 按当前排序导出)
         self._btn_export_each = ttk.Button(export_frame,
                                             text="导出全部 (每帧)",
                                             command=self.editor._export_all_frames)
         self._btn_export_each.pack(fill="x", pady=1)
-        try: self._btn_export_each.state(["disabled"])
-        except Exception: pass
 
         # 实时更新输出信息 / 导出面板
         self._update_output_info()
@@ -1710,29 +1746,18 @@ class InlinePreviewView(ttk.Frame):
             self._rebuild_timeline()
 
     def _prerender(self):
-        """预渲染所有帧为 PhotoImage 缓存"""
+        """预渲染所有帧为 PhotoImage 缓存 (1:1 = 原图像素)"""
         self._rendered: List[Optional[ImageTk.PhotoImage]] = []
         n = len(self._frames)
         if n == 0:
             return
         try:
-            dw = max(self._disp.winfo_width(), 100)
-            dh = max(self._disp.winfo_height(), 100)
-        except Exception:
-            dw, dh = 400, 300
-        # 取所有帧中的最大尺寸来计算缩放
-        max_w = max(f.width for f in self._frames)
-        max_h = max(f.height for f in self._frames)
-        try:
             zoom = max(0.1, float(self._zoom_var.get()))
         except Exception:
             zoom = 1.0
-        base_scale = min(dw / max(max_w, 1), dh / max(max_h, 1), 8.0)
-        scale = max(base_scale * zoom, 0.05)
-        disp_w = max(1, int(max_w * scale))
-        disp_h = max(1, int(max_h * scale))
+        # 缩放基准 = 原图 100%, 不再适应窗口 (zoom=1.0 即 1像素:1像素)
+        scale = max(zoom, 0.05)
         for f in self._frames:
-            # 按各帧自己的比例缩放, 保留原尺寸差异
             fw = max(1, int(f.width * scale))
             fh = max(1, int(f.height * scale))
             if fw == f.width and fh == f.height:
@@ -2125,6 +2150,23 @@ class SpriteSheetEditor(tk.Tk):
                              command=self._on_preview_mode_changed).pack(
                 side="left", padx=2)
 
+        # 网格模式专用缩放控件 (右侧, 按 pack(side="right") 顺序从右到左)
+        self._grid_zoom_label = ttk.Label(preview_bar, text="100%", width=5)
+        self._grid_zoom_label.pack(side="right", padx=2)
+        self._grid_zoom_btns: List = []
+        b_plus = ttk.Button(preview_bar, text="+", width=2,
+                             command=lambda: self.canvas.zoom_step(0.25))
+        b_plus.pack(side="right", padx=1)
+        b_minus = ttk.Button(preview_bar, text="−", width=2,
+                              command=lambda: self.canvas.zoom_step(-0.25))
+        b_minus.pack(side="right", padx=1)
+        b_one = ttk.Button(preview_bar, text="1:1", width=3,
+                            command=lambda: self.canvas.zoom_reset())
+        b_one.pack(side="right", padx=1)
+        ttk.Label(preview_bar, text="缩放:", foreground="#888888").pack(
+            side="right", padx=(8, 2))
+        self._grid_zoom_btns = [b_plus, b_minus, b_one, self._grid_zoom_label]
+
         # stack 容器: 承载 grid_container 与 preview_view (互斥显示)
         self._center_stack = ttk.Frame(center)
         self._center_stack.pack(side="top", fill="both", expand=True)
@@ -2407,10 +2449,8 @@ class SpriteSheetEditor(tk.Tk):
                 self._btn_import_split.state(["disabled"])
             except Exception:
                 pass
-            # 合并模式: 禁用拆分相关按钮
+            # 合并模式: 仅禁用重新拆分
             try: self.settings._btn_resplit.state(["disabled"])
-            except Exception: pass
-            try: self.settings._btn_export_each.state(["disabled"])
             except Exception: pass
         else:
             self.image_list.set_title("导入的精灵组")
@@ -2419,10 +2459,8 @@ class SpriteSheetEditor(tk.Tk):
                 self._btn_import_split.state(["!disabled"])
             except Exception:
                 pass
-            # 拆分模式: 启用 重新拆分 / 批量导出
+            # 拆分模式: 启用 重新拆分
             try: self.settings._btn_resplit.state(["!disabled"])
-            except Exception: pass
-            try: self.settings._btn_export_each.state(["!disabled"])
             except Exception: pass
 
     def _on_workflow_mode_changed(self):
@@ -2468,6 +2506,14 @@ class SpriteSheetEditor(tk.Tk):
             self.preview_view.pack(fill="both", expand=True)
             self.preview_view.set_mode("single" if mode == "single" else "anim")
             self._refresh_inline_preview(keep_idx=False)
+        # 网格缩放控件仅在 grid 模式下启用 (其他模式下 InlinePreviewView 自带缩放控件)
+        try:
+            grid_active = (mode == "grid")
+            for w in getattr(self, "_grid_zoom_btns", []):
+                if isinstance(w, ttk.Button):
+                    w.state(["!disabled"] if grid_active else ["disabled"])
+        except Exception:
+            pass
 
     def _refresh_inline_preview(self, keep_idx: bool = True):
         """根据当前预览模式 & 范围收集帧, 喂给 InlinePreviewView"""
