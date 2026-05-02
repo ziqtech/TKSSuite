@@ -794,7 +794,8 @@ class ImageListPanel(ttk.Frame):
             }
             self._rows.append(info)
 
-            # 左列表为纯展示, 不做事件绑定
+            # 绑定事件, 支持点击/Ctrl/Shift 选中 + 拖拽排序
+            self._bind_row_events(info)
 
             shown += 1
 
@@ -803,6 +804,22 @@ class ImageListPanel(ttk.Frame):
         self._info_var.set(
             f"{shown} 张 | 网格 {self.editor.model.columns}×{self.editor.model.rows}={total}")
         self._refresh_bg()
+
+    def _bind_row_events(self, info: dict):
+        mi = info["mi"]
+        widgets = [info["row_frame"], info["text_col"],
+                   info["thumb_lbl"], info["name_lbl"], info["size_lbl"]]
+        for w in widgets:
+            if w is None:
+                continue
+            try:
+                w.bind("<ButtonPress-1>", lambda e, m=mi: self._on_row_press(e, m))
+                w.bind("<B1-Motion>", lambda e, m=mi: self._on_row_drag(e, m))
+                w.bind("<ButtonRelease-1>", lambda e, m=mi: self._on_row_release(e, m))
+                w.bind("<Control-Button-1>", lambda e, m=mi: self._on_row_ctrl(e, m))
+                w.bind("<Shift-Button-1>", lambda e, m=mi: self._on_row_shift(e, m))
+            except Exception:
+                pass
 
     def _refresh_bg(self):
         """仅根据选中/拖拽状态更新每行的背景色, 不重建部件 → 消除闪烁"""
@@ -840,6 +857,15 @@ class ImageListPanel(ttk.Frame):
         self._apply_selection(set(), -1)
 
     def _on_row_press(self, event, mi: int):
+        # 再次点击同一个已唯一选中的行 → 取消选中 (联动到预览区)
+        sel = set(self.editor.canvas.selection)
+        if sel == {mi}:
+            self._anchor_idx = -1
+            self._drag_from_mi = -1
+            self._drag_started = False
+            self._drag_over_mi = -1
+            self._apply_selection(set(), -1)
+            return "break"
         self._anchor_idx = mi
         self._drag_from_mi = mi
         self._drag_started = False
@@ -1071,6 +1097,13 @@ class SettingsPanel(ttk.Frame):
         ttk.Button(grid_frame, text="自动检测 Cell 大小",
                    command=self._auto_detect).pack(fill="x", pady=4)
 
+        # 拆分模式下可用: 使用当前参数重新拆分已导入的 Spritesheet
+        self._btn_resplit = ttk.Button(grid_frame, text="重新拆分",
+                                        command=self.editor._resplit)
+        self._btn_resplit.pack(fill="x", pady=2)
+        try: self._btn_resplit.state(["disabled"])
+        except Exception: pass
+
         # ── 输出信息 ──
         info_frame = ttk.LabelFrame(self, text="输出信息", padding=8)
         info_frame.pack(fill="x", padx=4, pady=4)
@@ -1118,6 +1151,13 @@ class SettingsPanel(ttk.Frame):
                    command=self.editor._save).pack(fill="x", pady=1)
         ttk.Button(export_frame, text="导出 (选择格式)...",
                    command=self._export_with_fmt).pack(fill="x", pady=1)
+        # 拆分模式下可用: 批量导出每一帧
+        self._btn_export_each = ttk.Button(export_frame,
+                                            text="导出全部 (每帧)",
+                                            command=self.editor._export_all_frames)
+        self._btn_export_each.pack(fill="x", pady=1)
+        try: self._btn_export_each.state(["disabled"])
+        except Exception: pass
 
         # 实时更新输出信息
         self._update_output_info()
@@ -1257,6 +1297,11 @@ class InlinePreviewView(ttk.Frame):
         self._pingpong_var = tk.BooleanVar(value=False)
         # 预览范围 (仅动画模式生效)
         self._range_var = tk.StringVar(value="all")
+        # 缩放 (单帧/动画模式均生效, 参考 jvg_editor)
+        self._zoom_var = tk.DoubleVar(value=1.0)
+        # 时间轴缩略图缓存
+        self._tl_photos: List[ImageTk.PhotoImage] = []
+        self._tl_cell: int = 44  # timeline cell size
 
         self._build()
 
@@ -1305,19 +1350,48 @@ class InlinePreviewView(ttk.Frame):
                                            command=self._on_range_change)
         self._range_sel.pack(side="left", padx=2)
 
+        # 缩放控件 (右侧)
+        self._zoom_label = ttk.Label(self._ctrl, text="100%", width=5)
+        self._zoom_label.pack(side="right", padx=2)
+        ttk.Button(self._ctrl, text="+", width=2,
+                   command=lambda: self._zoom_step(0.25)).pack(side="right", padx=1)
+        ttk.Button(self._ctrl, text="−", width=2,
+                   command=lambda: self._zoom_step(-0.25)).pack(side="right", padx=1)
+        ttk.Button(self._ctrl, text="1:1", width=3,
+                   command=self._zoom_reset).pack(side="right", padx=1)
+
         self._counter_var = tk.StringVar(value="0/0")
         ttk.Label(self._ctrl, textvariable=self._counter_var,
                   width=10).pack(side="right", padx=4)
 
+        # 底部: 时间轴 + 进度条 (先 pack 进度条, 再 pack 时间轴 → timeline 在进度条上方)
+        self._scale = ttk.Scale(self, from_=0, to=1, orient="horizontal",
+                                 command=self._on_scale)
+        self._scale.pack(side="bottom", fill="x", padx=4, pady=2)
+
+        # 时间轴 (仅动画模式可见)
+        tl_frame = ttk.Frame(self)
+        self._timeline_frame = tl_frame
+        self._timeline = tk.Canvas(tl_frame, bg="#222222", height=self._tl_cell + 14,
+                                    highlightthickness=0)
+        tl_scroll = ttk.Scrollbar(tl_frame, orient="horizontal",
+                                   command=self._timeline.xview)
+        self._timeline.configure(xscrollcommand=tl_scroll.set)
+        tl_scroll.pack(side="bottom", fill="x")
+        self._timeline.pack(side="top", fill="x")
+        self._timeline.bind("<MouseWheel>",
+            lambda e: self._timeline.xview_scroll(-1 if e.delta > 0 else 1, "units"))
+        # 默认不显示, 由 set_mode 控制
+
+        # 中间: 显示区 (最后 pack, 填充剩余空间)
         self._disp = tk.Label(self, bg="#1a1a1a")
         self._disp.pack(fill="both", expand=True, padx=4, pady=2)
         # 监听 _disp 的第一次有效尺寸 → 重新 prerender (避免首次切换时由于 widget 未布局导致预渲染偏小)
         self._last_disp_size: Tuple[int, int] = (0, 0)
         self._disp.bind("<Configure>", self._on_disp_configure)
-
-        self._scale = ttk.Scale(self, from_=0, to=1, orient="horizontal",
-                                 command=self._on_scale)
-        self._scale.pack(side="bottom", fill="x", padx=4, pady=2)
+        # Ctrl+滚轮 = 缩放 (参考 jvg_editor)
+        self._disp.bind("<MouseWheel>", self._on_mousewheel)
+        self.bind("<MouseWheel>", self._on_mousewheel)
 
     def _on_disp_configure(self, event):
         """显示区尺寸变化时重新预渲染 (避免首次切换时由于小尺寸预渲染后看起来变大)"""
@@ -1341,11 +1415,22 @@ class InlinePreviewView(ttk.Frame):
                        self._range_all, self._range_sel):
                 try: w.state(["disabled"])
                 except Exception: pass
+            # 单帧模式: 隐藏时间轴
+            try: self._timeline_frame.pack_forget()
+            except Exception: pass
         else:
             for w in (self._btn_play, self._loop_cb, self._pingpong_cb,
                        self._range_all, self._range_sel):
                 try: w.state(["!disabled"])
                 except Exception: pass
+            # 动画模式: 显示时间轴 (在进度条上方)
+            try:
+                self._timeline_frame.pack(side="bottom", fill="x",
+                                           before=self._disp, padx=4, pady=(0, 2))
+            except Exception:
+                try: self._timeline_frame.pack(side="bottom", fill="x", padx=4, pady=(0, 2))
+                except Exception: pass
+            self._rebuild_timeline()
 
     def set_frames(self, frames: List[Image.Image], keep_idx: bool = True):
         """预渲染所有帧 (jvg_editor 风格), 避免动画时 resize"""
@@ -1371,6 +1456,9 @@ class InlinePreviewView(ttk.Frame):
         # 预渲染: 确定统一显示尺寸, 一次性 resize 所有帧
         self._prerender()
         self._show_frame(self._current)
+        # 重建时间轴 (仅动画模式可见)
+        if self._mode == "anim":
+            self._rebuild_timeline()
 
     def _prerender(self):
         """预渲染所有帧为 PhotoImage 缓存"""
@@ -1386,15 +1474,22 @@ class InlinePreviewView(ttk.Frame):
         # 取所有帧中的最大尺寸来计算缩放
         max_w = max(f.width for f in self._frames)
         max_h = max(f.height for f in self._frames)
-        scale = min(dw / max(max_w, 1), dh / max(max_h, 1), 8.0)
-        scale = max(scale, 0.05)
+        try:
+            zoom = max(0.1, float(self._zoom_var.get()))
+        except Exception:
+            zoom = 1.0
+        base_scale = min(dw / max(max_w, 1), dh / max(max_h, 1), 8.0)
+        scale = max(base_scale * zoom, 0.05)
         disp_w = max(1, int(max_w * scale))
         disp_h = max(1, int(max_h * scale))
         for f in self._frames:
-            if disp_w == f.width and disp_h == f.height:
+            # 按各帧自己的比例缩放, 保留原尺寸差异
+            fw = max(1, int(f.width * scale))
+            fh = max(1, int(f.height * scale))
+            if fw == f.width and fh == f.height:
                 disp_img = f
             else:
-                disp_img = f.resize((disp_w, disp_h), Image.NEAREST)
+                disp_img = f.resize((fw, fh), Image.NEAREST)
             self._rendered.append(ImageTk.PhotoImage(disp_img))
 
     def _show_frame(self, idx: int):
@@ -1417,6 +1512,8 @@ class InlinePreviewView(ttk.Frame):
             self._scale.set(idx)
         except Exception:
             pass
+        # 时间轴高亮更新
+        self._update_timeline_highlight()
 
     def _toggle_play(self):
         if self._mode != "anim":
@@ -1511,6 +1608,118 @@ class InlinePreviewView(ttk.Frame):
 
     def _next_frame(self):
         self._show_frame(self._current + 1)
+
+    # ── 缩放 ──────────────────────────────
+    def _zoom_step(self, delta: float):
+        try:
+            z = float(self._zoom_var.get())
+        except Exception:
+            z = 1.0
+        z = max(0.1, min(8.0, z + delta))
+        self._zoom_var.set(z)
+        try:
+            self._zoom_label.config(text=f"{int(z * 100)}%")
+        except Exception:
+            pass
+        if self._frames:
+            self._prerender()
+            self._show_frame(self._current)
+
+    def _zoom_reset(self):
+        self._zoom_var.set(1.0)
+        try:
+            self._zoom_label.config(text="100%")
+        except Exception:
+            pass
+        if self._frames:
+            self._prerender()
+            self._show_frame(self._current)
+
+    def _on_mousewheel(self, ev):
+        # Ctrl+滚轮 = 缩放
+        if ev.state & 0x4:
+            delta = 0.25 if ev.delta > 0 else -0.25
+            self._zoom_step(delta)
+            return "break"
+        return None
+
+    # ── 时间轴 ────────────────────────────
+    def _rebuild_timeline(self):
+        """重建时间轴缩略图 (动画模式下调用)"""
+        self._timeline.delete("all")
+        self._tl_photos = []
+        n = len(self._frames)
+        if n == 0:
+            self._timeline.configure(scrollregion=(0, 0, 0, 0))
+            return
+        sz = self._tl_cell
+        gap = 2
+        y0 = 6
+        for i, f in enumerate(self._frames):
+            x0 = 4 + i * (sz + gap)
+            tag = f"tl_{i}"
+            # 单元格背景
+            self._timeline.create_rectangle(x0, y0, x0 + sz, y0 + sz,
+                                             fill="#2a2a2a", outline="#555555",
+                                             tags=(tag,))
+            # 缩略图
+            try:
+                ratio = min(sz / max(f.width, 1), sz / max(f.height, 1))
+                tw = max(1, int(f.width * ratio))
+                th = max(1, int(f.height * ratio))
+                thumb = f.resize((tw, th), Image.NEAREST)
+                photo = ImageTk.PhotoImage(thumb)
+                self._tl_photos.append(photo)
+                px = x0 + (sz - tw) // 2
+                py = y0 + (sz - th) // 2
+                self._timeline.create_image(px, py, image=photo, anchor="nw",
+                                             tags=(tag,))
+            except Exception:
+                pass
+            # 序号
+            self._timeline.create_text(x0 + 2, y0 + 1, text=str(i),
+                                        anchor="nw", fill="#cccccc",
+                                        font=("", 7), tags=(tag,))
+            # 点击跳转
+            self._timeline.tag_bind(tag, "<Button-1>",
+                lambda e, idx=i: self._on_timeline_click(idx))
+        total_w = 4 + n * (sz + gap) + 4
+        total_h = sz + 14
+        self._timeline.configure(scrollregion=(0, 0, total_w, total_h))
+        self._update_timeline_highlight()
+
+    def _update_timeline_highlight(self):
+        """仅更新当前帧高亮框, 避免全重建"""
+        try:
+            self._timeline.delete("tl_hl")
+        except Exception:
+            return
+        if self._mode != "anim" or not self._frames:
+            return
+        n = len(self._frames)
+        if self._current >= n:
+            return
+        sz = self._tl_cell
+        gap = 2
+        x0 = 4 + self._current * (sz + gap)
+        y0 = 6
+        self._timeline.create_rectangle(x0 - 1, y0 - 1, x0 + sz + 1, y0 + sz + 1,
+                                         outline="#ffcc00", width=2, tags="tl_hl")
+        # 自动滚动使当前帧可见
+        try:
+            total = 4 + n * (sz + gap) + 4
+            vw = self._timeline.winfo_width()
+            if vw > 0 and total > vw:
+                center = x0 + sz / 2
+                frac = max(0, min(1, (center - vw / 2) / max(1, total - vw)))
+                self._timeline.xview_moveto(frac)
+        except Exception:
+            pass
+
+    def _on_timeline_click(self, idx: int):
+        if 0 <= idx < len(self._frames):
+            self.stop()
+            self._show_frame(idx)
 
 
 
@@ -1844,30 +2053,82 @@ class SpriteSheetEditor(tk.Tk):
             return
 
         self._filepath = str(path)
+        self._source_sheet = img  # 保留原图, 方便后续按新参数 “重新拆分”
 
-        # 弹出设置对话框确认网格参数
-        dlg = SplitDialog(self, img)
-        self.wait_window(dlg)
+        # 直接使用右侧栏当前参数拆分 (取消拆分弹窗)
+        self.model.split_spritesheet(img)
+        # 重置路径追踪和选中: 拆分后的帧没有独立源文件路径
+        self.image_list._image_paths = []
+        self.image_list._path_by_id = {}
+        self.image_list._selected_idx = -1
+        self.canvas.selection.clear()
+        self.canvas._drag_info = None
+        self.canvas._header_drag = None
+        self.canvas._last_click_idx = -1
+        self.settings.refresh_values()
+        self._on_model_changed()
+        m = self.model
+        self._status_var.set(
+            f"已拆分: {path.name} → {m.frame_count} 帧 "
+            f"(cols={m.columns} rows={m.rows} "
+            f"cell={m.cell_width}×{m.cell_height} pad={m.padding})")
 
-        if dlg.result:
-            cols, rows, padding, cw, ch = dlg.result
-            self.model.columns = cols
-            self.model.rows = rows
-            self.model.padding = padding
-            self.model.cell_width = cw
-            self.model.cell_height = ch
-            self.model.split_spritesheet(img)
-            # 重置路径追踪和选中: 拆分后的帧没有独立源文件路径
-            self.image_list._image_paths = []
-            self.image_list._path_by_id = {}
-            self.image_list._selected_idx = -1
-            self.canvas.selection.clear()
-            self.canvas._drag_info = None
-            self.canvas._header_drag = None
-            self.canvas._last_click_idx = -1
-            self.settings.refresh_values()
-            self._on_model_changed()
-            self._status_var.set(f"已拆分: {path.name} → {self.model.frame_count} 帧")
+    def _resplit(self):
+        """按当前右侧参数重新拆分已加载的 Spritesheet"""
+        img = getattr(self, "_source_sheet", None)
+        if img is None:
+            messagebox.showinfo("提示", "请先通过《导入拆分》加载一张 Spritesheet")
+            return
+        if self.model.frame_count > 0:
+            if not messagebox.askyesno("确认",
+                    "重新拆分将丢弃当前排序和删除, 确定继续吗?"):
+                return
+        self.model.split_spritesheet(img)
+        self.image_list._image_paths = []
+        self.image_list._path_by_id = {}
+        self.image_list._selected_idx = -1
+        self.canvas.selection.clear()
+        self.canvas._drag_info = None
+        self.canvas._header_drag = None
+        self.canvas._last_click_idx = -1
+        self._on_model_changed()
+        m = self.model
+        self._status_var.set(
+            f"已重新拆分 → {m.frame_count} 帧 "
+            f"(cols={m.columns} rows={m.rows} "
+            f"cell={m.cell_width}×{m.cell_height} pad={m.padding})")
+
+    def _export_all_frames(self):
+        """批量导出每一帧 — 有选中则导出选中, 没有则导出全部"""
+        m = self.model
+        if m.frame_count == 0:
+            messagebox.showinfo("提示", "没有帧数据可导出")
+            return
+        sel = self.canvas.selection
+        if sel:
+            indices = sorted(i for i in sel if 0 <= i < len(m.frames) and m.frames[i] is not None)
+        else:
+            indices = [i for i, f in enumerate(m.frames) if f is not None]
+        if not indices:
+            messagebox.showinfo("提示", "没有可导出的帧")
+            return
+        outdir = filedialog.askdirectory(title="选择导出目录")
+        if not outdir:
+            return
+        fmt = self.settings._fmt_var.get()
+        count = 0
+        for idx in indices:
+            f = m.get_frame(idx)
+            if f is None:
+                continue
+            try:
+                converted = convert_pixel_format(f, fmt)
+                fp = Path(outdir) / f"frame_{idx:03d}.png"
+                converted.save(fp, "PNG")
+                count += 1
+            except Exception as e:
+                print(f"导出失败 #{idx}: {e}")
+        self._status_var.set(f"已导出 {count}/{len(indices)} 帧 → {outdir} ({fmt})")
 
     # ── 工作模式 / 预览模式 ──────────────────────────────────
     def _apply_workflow_mode(self):
@@ -1880,6 +2141,11 @@ class SpriteSheetEditor(tk.Tk):
                 self._btn_import_split.state(["disabled"])
             except Exception:
                 pass
+            # 合并模式: 禁用拆分相关按钮
+            try: self.settings._btn_resplit.state(["disabled"])
+            except Exception: pass
+            try: self.settings._btn_export_each.state(["disabled"])
+            except Exception: pass
         else:
             self.image_list.set_title("导入的精灵组")
             try:
@@ -1887,6 +2153,11 @@ class SpriteSheetEditor(tk.Tk):
                 self._btn_import_split.state(["!disabled"])
             except Exception:
                 pass
+            # 拆分模式: 启用 重新拆分 / 批量导出
+            try: self.settings._btn_resplit.state(["!disabled"])
+            except Exception: pass
+            try: self.settings._btn_export_each.state(["!disabled"])
+            except Exception: pass
 
     def _on_workflow_mode_changed(self):
         """工作模式切换: 若有数据则提示用户是否清空"""
@@ -1961,6 +2232,11 @@ class SpriteSheetEditor(tk.Tk):
 
     def _on_selection_changed(self):
         """供 canvas / image_list 在选中变化时调用"""
+        # 同步左侧列表高亮 (canvas 选中 → 左侧列表背景色)
+        try:
+            self.image_list._refresh_bg()
+        except Exception:
+            pass
         mode = self._preview_mode.get()
         if mode == "grid":
             return
