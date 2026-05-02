@@ -325,6 +325,30 @@ class SpriteSheetCanvas(tk.Canvas):
             x, y, x2, y2 = self._cell_bbox(r, c)
             self.create_rectangle(x, y, x2, y2, outline="#80c0ff", width=2, tags="sel_border")
 
+        # 单选时高亮整行/整列
+        if len(self.selection) == 1:
+            sel_idx = next(iter(self.selection))
+            sr, sc = divmod(sel_idx, cols)
+            p, cw, ch = self.model.padding, self.model.cell_width, self.model.cell_height
+            tw = self._total_size()[0]
+            th = self._total_size()[1]
+            # 高亮行
+            ry = HEADER_ROW_H + sr * (ch + p)
+            self.create_rectangle(HEADER_COL_W, ry, tw, ry + ch,
+                                  outline="#a0d0ff", width=1, dash=(2, 2), tags="row_hl")
+            # 高亮列
+            cx = HEADER_COL_W + sc * (cw + p)
+            self.create_rectangle(cx, HEADER_ROW_H, cx + cw, th,
+                                  outline="#a0d0ff", width=1, dash=(2, 2), tags="col_hl")
+            # 行头高亮
+            rhx, rhy, rhx2, rhy2 = self._row_header_bbox(sr)
+            self.create_rectangle(rhx, rhy, rhx2, rhy2,
+                                  fill="#607080", outline="#80c0ff", tags="row_hdr_hl")
+            # 列头高亮
+            chx, chy, chx2, chy2 = self._col_header_bbox(sc)
+            self.create_rectangle(chx, chy, chx2, chy2,
+                                  fill="#607080", outline="#80c0ff", tags="col_hdr_hl")
+
         # 行头
         for r in range(rows):
             x, y, x2, y2 = self._row_header_bbox(r)
@@ -385,8 +409,6 @@ class SpriteSheetCanvas(tk.Canvas):
             # 点击空白 → 清除选中
             if self.selection:
                 self.selection.clear()
-                if hasattr(self.editor, "image_list"):
-                    self.editor.image_list._selected_idx = -1
                 self.redraw()
             if hasattr(self.editor, "_on_selection_changed"):
                 self.editor._on_selection_changed()
@@ -402,8 +424,6 @@ class SpriteSheetCanvas(tk.Canvas):
             else:
                 self.selection.add(idx)
             self._last_click_idx = idx
-            if hasattr(self.editor, "image_list"):
-                self.editor.image_list._selected_idx = idx
             self.redraw()
             if hasattr(self.editor, "_on_selection_changed"):
                 self.editor._on_selection_changed()
@@ -411,8 +431,6 @@ class SpriteSheetCanvas(tk.Canvas):
             # Shift+点击: 范围选中
             lo, hi = min(self._last_click_idx, idx), max(self._last_click_idx, idx)
             self.selection = set(range(lo, hi + 1))
-            if hasattr(self.editor, "image_list"):
-                self.editor.image_list._selected_idx = idx
             self.redraw()
             if hasattr(self.editor, "_on_selection_changed"):
                 self.editor._on_selection_changed()
@@ -423,8 +441,6 @@ class SpriteSheetCanvas(tk.Canvas):
             self._last_click_idx = idx
             if idx not in self.selection:
                 self.selection = {idx}
-            if hasattr(self.editor, "image_list"):
-                self.editor.image_list._selected_idx = idx
             self.redraw()
             if hasattr(self.editor, "_on_selection_changed"):
                 self.editor._on_selection_changed()
@@ -661,8 +677,6 @@ class ImageListPanel(ttk.Frame):
             canvas.yview_scroll(int(-1 * (ev.delta / 120)), "units")
         canvas.bind("<Enter>", lambda e: canvas.bind_all("<MouseWheel>", _mw))
         canvas.bind("<Leave>", lambda e: canvas.unbind_all("<MouseWheel>"))
-        # 点击列表空白区域 → 清除选中
-        canvas.bind("<Button-1>", lambda e: self._on_blank_click())
         self._list_canvas = canvas
 
         self._info_var = tk.StringVar(value="未导入图片")
@@ -753,20 +767,7 @@ class ImageListPanel(ttk.Frame):
             }
             self._rows.append(info)
 
-            # 绑定事件
-            widgets = [w for w in [row, text_col, thumb_lbl, name_lbl, size_lbl]
-                       if w is not None]
-            for w in widgets:
-                w.bind("<Button-1>",
-                       lambda e, i=mi: self._on_row_press(e, i))
-                w.bind("<Shift-Button-1>",
-                       lambda e, i=mi: self._on_row_shift(e, i))
-                w.bind("<Control-Button-1>",
-                       lambda e, i=mi: self._on_row_ctrl(e, i))
-                w.bind("<B1-Motion>",
-                       lambda e, i=mi: self._on_row_drag(e, i))
-                w.bind("<ButtonRelease-1>",
-                       lambda e, i=mi: self._on_row_release(e, i))
+            # 左列表为纯展示, 不做事件绑定
 
             shown += 1
 
@@ -1301,6 +1302,7 @@ class InlinePreviewView(ttk.Frame):
                 except Exception: pass
 
     def set_frames(self, frames: List[Image.Image], keep_idx: bool = True):
+        """预渲染所有帧 (jvg_editor 风格), 避免动画时 resize"""
         old_idx = self._current
         self._frames = [f for f in frames if f is not None]
         n = len(self._frames)
@@ -1314,10 +1316,34 @@ class InlinePreviewView(ttk.Frame):
             self._scale.configure(to=max(n - 1, 1))
         except Exception:
             pass
+        # 预渲染: 确定统一显示尺寸, 一次性 resize 所有帧
+        self._prerender()
         self._show_frame(self._current)
 
-    def current_range(self) -> str:
-        return self._range_var.get()
+    def _prerender(self):
+        """预渲染所有帧为 PhotoImage 缓存"""
+        self._rendered: List[Optional[ImageTk.PhotoImage]] = []
+        n = len(self._frames)
+        if n == 0:
+            return
+        try:
+            dw = max(self._disp.winfo_width(), 100)
+            dh = max(self._disp.winfo_height(), 100)
+        except Exception:
+            dw, dh = 400, 300
+        # 取所有帧中的最大尺寸来计算缩放
+        max_w = max(f.width for f in self._frames)
+        max_h = max(f.height for f in self._frames)
+        scale = min(dw / max(max_w, 1), dh / max(max_h, 1), 8.0)
+        scale = max(scale, 0.05)
+        disp_w = max(1, int(max_w * scale))
+        disp_h = max(1, int(max_h * scale))
+        for f in self._frames:
+            if disp_w == f.width and disp_h == f.height:
+                disp_img = f
+            else:
+                disp_img = f.resize((disp_w, disp_h), Image.NEAREST)
+            self._rendered.append(ImageTk.PhotoImage(disp_img))
 
     def _show_frame(self, idx: int):
         n = len(self._frames)
@@ -1331,19 +1357,9 @@ class InlinePreviewView(ttk.Frame):
             return
         idx = max(0, min(idx, n - 1))
         self._current = idx
-        frame = self._frames[idx]
-        try:
-            dw = max(self._disp.winfo_width(), 100)
-            dh = max(self._disp.winfo_height(), 100)
-        except Exception:
-            dw, dh = 400, 300
-        w, h = frame.width, frame.height
-        scale = min(dw / max(w, 1), dh / max(h, 1), 8.0)
-        scale = max(scale, 0.05)
-        disp_img = frame.resize((max(1, int(w * scale)), max(1, int(h * scale))),
-                                 Image.NEAREST)
-        self._photo = ImageTk.PhotoImage(disp_img)
-        self._disp.configure(image=self._photo)
+        if hasattr(self, "_rendered") and idx < len(self._rendered):
+            self._photo = self._rendered[idx]
+            self._disp.configure(image=self._photo)
         self._counter_var.set(f"{idx + 1}/{n}")
         try:
             self._scale.set(idx)
@@ -1666,9 +1682,9 @@ class SpriteSheetEditor(tk.Tk):
             side="left", fill="y", padx=4, pady=2)
         ttk.Button(toolbar, text="删除", command=self._delete_from_list).pack(
             side="left", padx=2)
-        ttk.Button(toolbar, text="▲上移", command=lambda: self.image_list.move_selected(-1),
+        ttk.Button(toolbar, text="▲上移", command=self.canvas.move_selected_left,
                    width=5).pack(side="left", padx=1)
-        ttk.Button(toolbar, text="▼下移", command=lambda: self.image_list.move_selected(1),
+        ttk.Button(toolbar, text="▼下移", command=self.canvas.move_selected_right,
                    width=5).pack(side="left", padx=1)
 
         self._status_var = tk.StringVar(value="就绪")
@@ -1704,7 +1720,6 @@ class SpriteSheetEditor(tk.Tk):
         self.settings.model = self.model
         self.image_list._image_paths.clear()
         self.image_list._path_by_id.clear()
-        self.image_list._selected_idx = -1
         self.canvas.selection.clear()
         self.canvas._drag_info = None
         self.canvas._header_drag = None
@@ -1756,23 +1771,7 @@ class SpriteSheetEditor(tk.Tk):
 
     def _delete_from_list(self):
         """删除选中图片: 优先使用画布多选(批量), 其次 image_list 单选"""
-        sel = self.canvas.selection
-        if len(sel) > 1:
-            # 多选: 批量从模型中彻底 pop 选中帧
-            indices = sorted(sel, reverse=True)
-            frames = list(self.model.frames)
-            for idx in indices:
-                if 0 <= idx < len(frames) and frames[idx] is not None:
-                    removed = frames.pop(idx)
-                    self.image_list._path_by_id.pop(id(removed), None)
-            self.model.frames = frames
-            self.canvas.selection.clear()
-            self.image_list._selected_idx = -1
-            self._on_model_changed()
-        elif self.image_list.selected_image_idx() >= 0:
-            self.image_list.remove_selected()
-        elif sel:
-            # 单选且 image_list 未同步
+        if self.canvas.selection:
             self.canvas.delete_selected()
 
     def _import_spritesheet(self):
