@@ -376,14 +376,14 @@ class SpriteSheetCanvas(tk.Canvas):
         return cw, ch, p
 
     def set_zoom(self, z: float) -> None:
-        z = max(0.1, min(8.0, float(z)))
+        z = max(0.5, min(5.0, float(z)))
         if abs(z - self._zoom) < 0.001:
             return
         self._zoom = z
         self.redraw()
         # 同步缩放指示标签 (若存在)
         try:
-            self.editor._grid_zoom_label.config(text=f"{int(z * 100)}%")
+            self.editor._zoom_label.config(text=f"{int(z * 100)}%")
         except Exception:
             pass
 
@@ -1376,7 +1376,7 @@ class SettingsPanel(ttk.Frame):
                                      relief="flat", borderwidth=0)
         self._fmt_preview.pack(fill="x", pady=(0, 4))
 
-        ttk.Button(export_frame, text="保存 Spritesheet...",
+        ttk.Button(export_frame, text="保存图集...",
                    command=self._save_current_fmt).pack(fill="x", pady=1)
         # 批量导出每一帧 (组合 / 拆分模式都可用, 按当前排序导出)
         self._btn_export_each = ttk.Button(export_frame,
@@ -1512,7 +1512,7 @@ class SettingsPanel(ttk.Frame):
         fmt = self._fmt_var.get()
         converted = convert_pixel_format(ss, fmt)
         fp = filedialog.asksaveasfilename(
-            title=f"保存 Spritesheet ({self._tex_fmt_var.get()} / {fmt})",
+            title=f"保存图集 ({self._tex_fmt_var.get()} / {fmt})",
             defaultextension=".png",
             filetypes=[("PNG 图片", "*.png")])
         if not fp:
@@ -1635,16 +1635,6 @@ class InlinePreviewView(ttk.Frame):
                                            command=self._on_range_change)
         self._range_sel.pack(side="left", padx=2)
 
-        # 缩放控件 (右侧)
-        self._zoom_label = ttk.Label(self._ctrl, text="100%", width=5)
-        self._zoom_label.pack(side="right", padx=2)
-        ttk.Button(self._ctrl, text="+", width=2,
-                   command=lambda: self._zoom_step(0.25)).pack(side="right", padx=1)
-        ttk.Button(self._ctrl, text="−", width=2,
-                   command=lambda: self._zoom_step(-0.25)).pack(side="right", padx=1)
-        ttk.Button(self._ctrl, text="1:1", width=3,
-                   command=self._zoom_reset).pack(side="right", padx=1)
-
         self._counter_var = tk.StringVar(value="0/0")
         ttk.Label(self._ctrl, textvariable=self._counter_var,
                   width=10).pack(side="right", padx=4)
@@ -1752,7 +1742,7 @@ class InlinePreviewView(ttk.Frame):
         if n == 0:
             return
         try:
-            zoom = max(0.1, float(self._zoom_var.get()))
+            zoom = max(0.5, float(self._zoom_var.get()))
         except Exception:
             zoom = 1.0
         # 缩放基准 = 原图 100%, 不再适应窗口 (zoom=1.0 即 1像素:1像素)
@@ -1889,10 +1879,10 @@ class InlinePreviewView(ttk.Frame):
             z = float(self._zoom_var.get())
         except Exception:
             z = 1.0
-        z = max(0.1, min(8.0, z + delta))
+        z = max(0.5, min(5.0, z + delta))
         self._zoom_var.set(z)
         try:
-            self._zoom_label.config(text=f"{int(z * 100)}%")
+            self.editor._zoom_label.config(text=f"{int(z * 100)}%")
         except Exception:
             pass
         if self._frames:
@@ -1902,7 +1892,7 @@ class InlinePreviewView(ttk.Frame):
     def _zoom_reset(self):
         self._zoom_var.set(1.0)
         try:
-            self._zoom_label.config(text="100%")
+            self.editor._zoom_label.config(text="100%")
         except Exception:
             pass
         if self._frames:
@@ -1997,63 +1987,6 @@ class InlinePreviewView(ttk.Frame):
 
 
 
-# ── 导出对话框 ─────────────────────────────────────────────
-class ExportDialog(tk.Toplevel):
-    """导出设置对话框"""
-
-    def __init__(self, parent, img: Image.Image):
-        super().__init__(parent)
-        self.title("导出 Spritesheet")
-        self.img = img
-        self.result: Optional[Tuple[Image.Image, str]] = None  # (image, format_name)
-
-        self.transient(parent)
-        self.grab_set()
-
-        ttk.Label(self, text="选择像素格式:", font=("", 10, "bold")).pack(
-            padx=16, pady=(16, 8))
-
-        self._fmt_var = tk.StringVar(value="RGBA8888")
-        for fmt_name, desc in PIXEL_FORMATS.items():
-            ttk.Radiobutton(self, text=f"{fmt_name} - {desc}",
-                            variable=self._fmt_var, value=fmt_name).pack(
-                anchor="w", padx=24, pady=2)
-
-        ttk.Label(self, text="\n预览信息:", font=("", 9)).pack(padx=16, pady=(8, 0))
-        self._info_var = tk.StringVar()
-        ttk.Label(self, textvariable=self._info_var, foreground="#888888").pack(
-            padx=16, pady=(2, 0))
-        self._update_info()
-
-        self._fmt_var.trace("w", lambda *a: self._update_info())
-
-        btn_frame = ttk.Frame(self)
-        btn_frame.pack(fill="x", padx=16, pady=16)
-        ttk.Button(btn_frame, text="导出", command=self._on_export).pack(
-            side="right", padx=4)
-        ttk.Button(btn_frame, text="取消", command=self.destroy).pack(
-            side="right", padx=4)
-
-        self.wait_window()
-
-    def _update_info(self):
-        try:
-            converted = convert_pixel_format(self.img, self._fmt_var.get())
-            w, h = converted.size
-            mode = converted.mode
-            est_bytes = w * h * (4 if "A" in mode else 3)
-            self._info_var.set(
-                f"尺寸: {w}x{h}  模式: {mode}  预估: {est_bytes // 1024} KB")
-        except Exception as e:
-            self._info_var.set(f"错误: {e}")
-
-    def _on_export(self):
-        fmt = self._fmt_var.get()
-        converted = convert_pixel_format(self.img, fmt)
-        self.result = (converted, fmt)
-        self.destroy()
-
-
 # ── 主编辑器窗口 ─────────────────────────────────────────────
 class SpriteSheetEditor(tk.Tk):
     """Spritesheet 编辑器主窗口"""
@@ -2082,12 +2015,11 @@ class SpriteSheetEditor(tk.Tk):
 
         file_menu = tk.Menu(menubar, tearoff=0)
         file_menu.add_command(label="导入图片(合并)", command=self._import_images)
-        file_menu.add_command(label="导入 Spritesheet(拆分)", command=self._import_spritesheet)
+        file_menu.add_command(label="导入图集(拆分)", command=self._import_spritesheet)
         file_menu.add_separator()
         file_menu.add_command(label="新建空白", command=self._new)
         file_menu.add_separator()
-        file_menu.add_command(label="保存 Spritesheet", command=self._save, accelerator="Ctrl+S")
-        file_menu.add_command(label="导出 Spritesheet...", command=self._export)
+        file_menu.add_command(label="保存图集", command=self._save, accelerator="Ctrl+S")
         file_menu.add_separator()
         file_menu.add_command(label="退出", command=self.quit)
         menubar.add_cascade(label="文件", menu=file_menu)
@@ -2150,22 +2082,17 @@ class SpriteSheetEditor(tk.Tk):
                              command=self._on_preview_mode_changed).pack(
                 side="left", padx=2)
 
-        # 网格模式专用缩放控件 (右侧, 按 pack(side="right") 顺序从右到左)
-        self._grid_zoom_label = ttk.Label(preview_bar, text="100%", width=5)
-        self._grid_zoom_label.pack(side="right", padx=2)
-        self._grid_zoom_btns: List = []
-        b_plus = ttk.Button(preview_bar, text="+", width=2,
-                             command=lambda: self.canvas.zoom_step(0.25))
-        b_plus.pack(side="right", padx=1)
-        b_minus = ttk.Button(preview_bar, text="−", width=2,
-                              command=lambda: self.canvas.zoom_step(-0.25))
-        b_minus.pack(side="right", padx=1)
-        b_one = ttk.Button(preview_bar, text="1:1", width=3,
-                            command=lambda: self.canvas.zoom_reset())
-        b_one.pack(side="right", padx=1)
+        # 共享缩放控件 (网格 / 单帧 / 动画 三模式共用)
+        self._zoom_label = ttk.Label(preview_bar, text="100%", width=5)
+        self._zoom_label.pack(side="right", padx=2)
+        ttk.Button(preview_bar, text="+", width=2,
+                   command=lambda: self._shared_zoom_step(0.25)).pack(side="right", padx=1)
+        ttk.Button(preview_bar, text="−", width=2,
+                   command=lambda: self._shared_zoom_step(-0.25)).pack(side="right", padx=1)
+        ttk.Button(preview_bar, text="1:1", width=3,
+                   command=self._shared_zoom_reset).pack(side="right", padx=1)
         ttk.Label(preview_bar, text="缩放:", foreground="#888888").pack(
             side="right", padx=(8, 2))
-        self._grid_zoom_btns = [b_plus, b_minus, b_one, self._grid_zoom_label]
 
         # stack 容器: 承载 grid_container 与 preview_view (互斥显示)
         self._center_stack = ttk.Frame(center)
@@ -2217,7 +2144,7 @@ class SpriteSheetEditor(tk.Tk):
         self._btn_import_merge = ttk.Button(toolbar, text="导入图片",
                                              command=self._import_images)
         self._btn_import_merge.pack(side="left", padx=2)
-        self._btn_import_split = ttk.Button(toolbar, text="导入拆分",
+        self._btn_import_split = ttk.Button(toolbar, text="导入图集",
                                              command=self._import_spritesheet)
         self._btn_import_split.pack(side="left", padx=2)
         ttk.Separator(toolbar, orient="vertical").pack(
@@ -2319,9 +2246,9 @@ class SpriteSheetEditor(tk.Tk):
             self.canvas.delete_selected()
 
     def _import_spritesheet(self):
-        """导入 Spritesheet 并拆分"""
+        """导入图集并拆分"""
         fp = filedialog.askopenfilename(
-            title="选择 Spritesheet 图片",
+            title="选择图集图片",
             filetypes=[("PNG 图片", "*.png"), ("所有图片", "*.png *.bmp *.jpg"),
                        ("所有文件", "*.*")])
         if not fp:
@@ -2493,28 +2420,57 @@ class SpriteSheetEditor(tk.Tk):
             "已切换到组合模式" if self._workflow_mode.get() == "merge"
             else "已切换到拆分模式")
 
+    # ── 共享缩放 (网格/单帧/动画 三模式共用一套控件) ──────
+    def _shared_zoom_step(self, delta: float):
+        if self._preview_mode.get() == "grid":
+            self.canvas.zoom_step(delta)
+        else:
+            self.preview_view._zoom_step(delta)
+
+    def _shared_zoom_reset(self):
+        if self._preview_mode.get() == "grid":
+            self.canvas.zoom_reset()
+        else:
+            self.preview_view._zoom_reset()
+
     def _on_preview_mode_changed(self):
         """预览模式切换: grid / single / anim"""
         mode = self._preview_mode.get()
+        prev_mode = self._prev_display_mode if hasattr(self, '_prev_display_mode') else 'grid'
+        self._prev_display_mode = mode
+
+        # 缩放同步: 切换模式时把当前缩放比例带到目标模式
+        if prev_mode == "grid" and mode != "grid":
+            # grid → preview: 同步 canvas 缩放到 preview
+            try:
+                self.preview_view._zoom_var.set(self.canvas._zoom)
+            except Exception:
+                pass
+        elif prev_mode != "grid" and mode == "grid":
+            # preview → grid: 同步 preview 缩放到 canvas
+            try:
+                self.canvas.set_zoom(float(self.preview_view._zoom_var.get()))
+            except Exception:
+                pass
+
         # 互斥 pack
         self._grid_container.pack_forget()
         self.preview_view.pack_forget()
         if mode == "grid":
             self.preview_view.stop()
             self._grid_container.pack(fill="both", expand=True)
+            # 同步缩放标签
+            self._zoom_label.config(text=f"{int(self.canvas._zoom * 100)}%")
         else:
             self.preview_view.pack(fill="both", expand=True)
             self.preview_view.set_mode("single" if mode == "single" else "anim")
             self._refresh_inline_preview(keep_idx=False)
-        # 网格缩放控件仅在 grid 模式下启用 (其他模式下 InlinePreviewView 自带缩放控件)
-        try:
-            grid_active = (mode == "grid")
-            for w in getattr(self, "_grid_zoom_btns", []):
-                if isinstance(w, ttk.Button):
-                    w.state(["!disabled"] if grid_active else ["disabled"])
-        except Exception:
-            pass
-
+            # 同步缩放标签
+            try:
+                z = float(self.preview_view._zoom_var.get())
+                self._zoom_label.config(text=f"{int(z * 100)}%")
+            except Exception:
+                pass
     def _refresh_inline_preview(self, keep_idx: bool = True):
         """根据当前预览模式 & 范围收集帧, 喂给 InlinePreviewView"""
         mode = self._preview_mode.get()
@@ -2597,47 +2553,10 @@ class SpriteSheetEditor(tk.Tk):
                 frames.append(frame.copy())
         return frames
 
-    # ── 保存 / 导出 ─────────────────────────────────────────
+    # ── 保存 ─────────────────────────────────────────────────
     def _save(self):
-        """保存 Spritesheet (RGBA8888)"""
-        if not self.model.frames:
-            messagebox.showinfo("提示", "没有帧数据可保存")
-            return
-
-        fp = filedialog.asksaveasfilename(
-            title="保存 Spritesheet",
-            defaultextension=".png",
-            filetypes=[("PNG 图片", "*.png")])
-        if not fp:
-            return
-
-        ss = self.model.build_spritesheet()
-        ss.save(fp, "PNG")
-        self._filepath = fp
-        self._status_var.set(f"已保存: {Path(fp).name}")
-
-    def _export(self):
-        """导出 (可选像素格式)"""
-        if not self.model.frames:
-            messagebox.showinfo("提示", "没有帧数据可导出")
-            return
-
-        ss = self.model.build_spritesheet()
-        dlg = ExportDialog(self, ss)
-        if dlg.result is None:
-            return
-
-        converted, fmt = dlg.result
-
-        fp = filedialog.asksaveasfilename(
-            title=f"导出 Spritesheet ({fmt})",
-            defaultextension=".png",
-            filetypes=[("PNG 图片", "*.png")])
-        if not fp:
-            return
-
-        converted.save(fp, "PNG")
-        self._status_var.set(f"已导出 ({fmt}): {Path(fp).name}")
+        """保存图集 (使用右侧面板的纹理/像素/Alpha 设置)"""
+        self.settings._save_current_fmt()
 
 
 # ── 导入合并对话框 ──────────────────────────────────────────
