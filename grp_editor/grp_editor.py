@@ -426,7 +426,7 @@ class GRPEditor:
         self._pan_x, self._pan_y = 0, 0; self._pan_start = None
         self._tk_img = None; self._pil_img = None
         self._audio_playing = False; self._audio_proc = None; self._audio_tmp = None
-        self._wave_anim_job = None; self._wave_start_time = 0
+        self._wave_anim_job = None; self._wave_start_time: float = 0
 
         self._setup_menu(); self._setup_ui()
         if filepath and os.path.exists(filepath): self._open(filepath)
@@ -730,6 +730,8 @@ class GRPEditor:
 
     def _draw_audio_view(self, sec: GRPAudioSection):
         """Premiere 风格波形: 全宽填充波形 + 时间轴 + 播放头"""
+        # 清除之前的波形元素 (避免 _stop_audio 重绘时叠加)
+        self._canvas.delete("wave", "prog", "prog_overlay", "wave_bg")
         cw = self._canvas.winfo_width() or 400; ch = self._canvas.winfo_height() or 300
         margin_l, margin_r = 60, 40
         wave_w = cw - margin_l - margin_r
@@ -770,8 +772,8 @@ class GRPEditor:
             # 绘制填充波形 (每个像素列从 min 到 max 画竖线)
             played_cols = 0
             if self._audio_playing and sec._duration > 0:
-                self._wave_elapsed = getattr(self, '_wave_elapsed', 0)
-                played_cols = int((self._wave_elapsed / sec._duration) * len(cols_data))
+                elapsed = __import__('time').time() - self._wave_start_time
+                played_cols = int(min(elapsed / sec._duration, 1.0) * len(cols_data))
 
             for ci, (vmin, vmax) in enumerate(cols_data):
                 x = wx + ci
@@ -800,23 +802,19 @@ class GRPEditor:
 
         # ── 播放头 ──
         if self._audio_playing and sec._duration > 0 and sec.has_samples:
-            self._wave_elapsed = getattr(self, '_wave_elapsed', 0) + 0.04
-            px = wx + int((self._wave_elapsed / sec._duration) * wave_w) if sec._duration > 0 else wx
+            elapsed = __import__('time').time() - self._wave_start_time
+            progress = min(elapsed / sec._duration, 1.0) if sec._duration > 0 else 0
+            px = wx + int(progress * wave_w)
             px = min(px, wx + wave_w)
             # 播放头红线
             self._canvas.create_line(px, wy, px, wy + wave_h, fill="#ff3040", width=2, tags=("prog",))
             # 播放头顶部三角
             self._canvas.create_polygon(px-5, wy, px+5, wy, px, wy+8,
                                          fill="#ff3040", outline="#ff3040", tags=("prog",))
-            # 已播放区域遮罩 (微弱高亮)
-            self._canvas.create_rectangle(wx, wy, px, wy + wave_h,
-                                           fill="", outline="", stipple="gray25",
-                                           tags=("prog_overlay",))
             self._wave_anim_job = self.root.after(40, lambda: self._draw_audio_progress(sec))
 
     def _draw_audio_progress(self, sec: GRPAudioSection):
         if not self._audio_playing: return
-        self._canvas.delete("wave", "prog", "prog_overlay")
         self._draw_audio_view(sec)
 
     # ── Zoom & Pan ────────────────────────────────────
@@ -930,37 +928,37 @@ class GRPEditor:
         try:
             tmp = tempfile.NamedTemporaryFile(suffix='.wav', delete=False); tmp.close()
             Path(tmp.name).write_bytes(sec._raw)
-            self._audio_tmp = tmp.name; self._wave_elapsed = 0
+            self._audio_tmp = tmp.name
+            import time
+            self._wave_start_time = time.time()
 
             if sys.platform == 'win32':
                 import winsound
-                # winsound 延迟最低, 适合短音频; SND_ASYNC 不阻塞 UI
                 winsound.PlaySound(tmp.name, winsound.SND_ASYNC | winsound.SND_FILENAME)
                 self._audio_playing = True; self._btn_play.configure(text="■ 停止")
-                # 用 polls 检查播放是否结束
+                # 立即绘制带播放头的波形, 启动动画循环
+                self._draw_audio_view(sec)
                 self._poll_audio_done(sec)
             else:
                 player = 'aplay' if shutil.which('aplay') else ('afplay' if sys.platform == 'darwin' else 'paplay')
                 self._audio_proc = subprocess.Popen([player, tmp.name],
                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 self._audio_playing = True; self._btn_play.configure(text="■ 停止")
+                self._draw_audio_view(sec)
                 self.root.after(int(sec._duration * 1000) + 200, self._stop_audio)
         except Exception as e:
             self._status_lbl.config(text=f"播放失败: {e}")
 
     def _poll_audio_done(self, sec: GRPAudioSection):
-        """轮询 winsound 异步播放状态"""
+        """轮询 winsound 异步播放状态 (使用 wall-clock 时间)"""
         if not self._audio_playing: return
-        import winsound
         try:
-            # 尝试检测播放状态 (winsound 没有直接 API, 用定时器估算)
-            elapsed = getattr(self, '_wave_elapsed', 0) + 0.05
-            self._wave_elapsed = elapsed
+            elapsed = __import__('time').time() - self._wave_start_time
             dur = sec._duration if sec._duration > 0 else 1.0
-            if elapsed >= dur + 0.1:  # 超时则停止
+            if elapsed >= dur + 0.15:  # 超时停止 (留 150ms 余量)
                 self._stop_audio()
             else:
-                self.root.after(50, lambda: self._poll_audio_done(sec))
+                self.root.after(80, lambda: self._poll_audio_done(sec))
         except:
             self._stop_audio()
 
@@ -974,11 +972,16 @@ class GRPEditor:
                 self._audio_proc.terminate(); self._audio_proc = None
         except: pass
         self._audio_playing = False; self._btn_play.configure(text="▶ 播放")
-        self._canvas.delete("wave", "prog", "prog_overlay", "wave_bg")
         if self._wave_anim_job: self.root.after_cancel(self._wave_anim_job); self._wave_anim_job = None
+        # 只删除进度元素, 保留波形
+        self._canvas.delete("prog", "prog_overlay")
         if self._audio_tmp:
             try: os.unlink(self._audio_tmp)
             except: pass; self._audio_tmp = None
+        # 重绘波形 (不带播放头)
+        sec = self._get_sec()
+        if isinstance(sec, GRPAudioSection):
+            self._draw_audio_view(sec)
 
     def _replace_audio(self):
         sec = self._get_sec()
