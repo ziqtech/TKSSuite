@@ -589,17 +589,28 @@ class GRPEditor:
         self._sec_detail.config(state=tk.NORMAL); self._sec_detail.delete(1.0, tk.END)
         sec = self._get_sec()
         if isinstance(sec, GRPSection):
-            info = (f"区段 #{sec.index:03d} — 图像\n尺寸: {sec.width}×{sec.height}\n"
+            info = (f"区段 #{sec.index:03d} — 图像\n尺寸: {sec.width}x{sec.height}\n"
                     f"Frame A: {sec.comp_a}B  Frame B: {sec.comp_b}B\n")
             if sec.is_decoded_b:
                 info += f"遮罩: {'RLE 双层' if sec.has_layer2 else 'RLE 单层'}\n"
                 if sec.layer1:
                     vals = sorted(Counter(sec.layer1).items())
-                    info += f"L1值域: {len(vals)}种 ({', '.join(f'{v}:{c}' for v,c in vals[:6])}{'...' if len(vals)>6 else ''})\n"
+                    info += f"L1值域: {len(vals)}种\n"
+                    info += '  ' + ', '.join(f'{v}={c}' for v,c in vals[:8])
+                    if len(vals) > 8: info += f' ...共{len(vals)}种'
+                    info += '\n'
                 if sec.has_layer2 and sec.layer2:
                     vals2 = sorted(Counter(sec.layer2).items())
-                    info += f"L2值域: {len(vals2)}种 ({', '.join(f'{v}:{c}' for v,c in vals2[:6])}{'...' if len(vals2)>6 else ''})\n"
-            info += f"A:{'OK' if sec.is_decoded_a else '待解码'} B:{'OK' if sec.is_decoded_b else '待解码'}"
+                    info += f"L2值域: {len(vals2)}种\n"
+                    items = []
+                    for v,c in vals2[:8]:
+                        clr = _collision_color(v)
+                        items.append(f'#{v}({c}px)')
+                    info += '  ' + ', '.join(items)
+                    if len(vals2) > 8: info += f' ...共{len(vals2)}种'
+                    info += '\n'
+            info += f"A:{'OK' if sec.is_decoded_a else '待解码'} B:{'OK' if sec.is_decoded_b else '待解码'}\n"
+            info += "\n导出: Layer1/Layer2 为精确值灰度图, 带 .txt 值域说明"
         elif isinstance(sec, GRPAudioSection):
             info = f"区段 #{sec.index:03d} — 音频\n大小: {sec.size}B"
             if sec._wav_info: info += f"\n格式: {sec._wav_info}\n时长: {sec._duration:.2f}s"
@@ -883,24 +894,49 @@ class GRPEditor:
         except Exception as e: messagebox.showerror("替换失败", str(e))
 
     def _replace_layer_byte(self, sec: GRPSection, layer: str):
-        p = filedialog.askopenfilename(title=f"替换 {layer}", filetypes=[("PNG", "*.png"), ("BMP", "*.bmp")])
+        """导入 Layer: 读取原始灰度值作为精确的游戏数据字节。
+
+        Layer1: 每个像素的灰度值 = 遮挡深度 (0~255)
+        Layer2: 每个像素的灰度值 = 碰撞类型ID (0=可行走, 1~N=各类型)
+
+        支持 PNG (灰度/索引/RGB) 和 BMP 格式。
+        导入时自动转为灰度读取精确字节, 不会做拉伸或颜色映射。
+        """
+        p = filedialog.askopenfilename(
+            title=f"替换 {layer} (灰度图, 像素值=游戏数据值)",
+            filetypes=[("图片", "*.png *.bmp *.jpg")])
         if not p: return
         try:
-            img = Image.open(p).convert("L")
+            img = Image.open(p)
+            # 如果是索引模式 (Layer2 导出后直接编辑), 转为灰度保留索引值
+            if img.mode == "P":
+                # 索引 PNG: 每个像素的 palette index 就是碰撞类型
+                data = img.tobytes()
+            else:
+                img = img.convert("L")
+                data = img.tobytes()
             if img.size != (sec.width, sec.height):
                 if not messagebox.askyesno("尺寸不匹配",
                     f"导入 {img.size[0]}×{img.size[1]} ≠ 原 {sec.width}×{sec.height}。缩放?"): return
+                img = Image.frombytes("L", img.size, data) if img.mode != "P" else img
                 img = img.resize((sec.width, sec.height), Image.NEAREST)
-            data = img.tobytes()
+                if img.mode == "P": data = img.tobytes()
+                else: data = img.tobytes()
             if layer == "L1": sec._layer1 = data
             else: sec._layer2 = data; sec.has_layer2 = True
             sec._decoded_b = True; sec._modified_b = True
             self._pil_img = None; self._tk_img = None
             self._refresh_view(); self._update_detail()
-            self._status_lbl.config(text=f"{layer} 已替换 → {Path(p).name}")
+            self._status_lbl.config(text=f"{layer} 已替换 → {Path(p).name} (精确值映射)")
         except Exception as e: messagebox.showerror("替换失败", str(e))
 
     def _export_layer(self):
+        """导出当前层。
+
+        Frame A: 真彩 RGBA PNG (可直接查看)
+        Layer 1: 原始灰度 PNG (像素值 = 遮挡深度) + 值域说明文件
+        Layer 2: 索引色 PNG (palette index = 碰撞类型) 或灰度 PNG + 值域说明文件
+        """
         sec = self._get_sec()
         if sec is None: return
         if isinstance(sec, GRPAudioSection): self._export_audio(sec); return
@@ -910,15 +946,69 @@ class GRPEditor:
             if p and sec._raw: Path(p).write_bytes(sec._raw)
             return
         if not isinstance(sec, GRPSection): return
-        rgba = self._get_layer_rgba(sec, self._sel_layer)
-        if rgba is None: return
+
+        w, h = sec.width, sec.height
         suffix = {"A": "frameA", "L1": "layer1", "L2": "layer2"}.get(self._sel_layer, "layer")
         p = filedialog.asksaveasfilename(title=f"导出 {self._sel_layer}", defaultextension=".png",
                                           filetypes=[("PNG", "*.png")],
                                           initialfile=f"sec{sec.index:03d}_{suffix}.png")
         if not p: return
-        export_png_rgba(sec.width, sec.height, bytes(rgba), p)
+
+        if self._sel_layer == "A":
+            rgba = self._get_layer_rgba(sec, "A")
+            if rgba is None: return
+            export_png_rgba(w, h, bytes(rgba), p)
+
+        elif self._sel_layer == "L1":
+            if not sec.is_decoded_b: _decode_section_b(self.grp, sec)
+            data = sec.layer1
+            if not data: return
+            # 原始灰度 PNG: 像素值 = 实际遮挡深度 (不拉伸)
+            img = Image.frombytes("L", (w, h), data[:w*h])
+            img.save(p, "PNG")
+            # 写入值域说明文件
+            self._export_value_legend(p, data, "Layer 1 — 前景遮挡深度")
+
+        elif self._sel_layer == "L2":
+            if not sec.is_decoded_b: _decode_section_b(self.grp, sec)
+            data = sec.layer2
+            if not data: return
+            # 构建索引调色板: palette[i] = 碰撞类型 i 的显示颜色
+            pal = bytearray(768)
+            for v in range(256):
+                c = _collision_color(v)
+                pal[v*3] = c[0]; pal[v*3+1] = c[1]; pal[v*3+2] = c[2]
+            img = Image.frombytes("P", (w, h), data[:w*h])
+            img.putpalette(bytes(pal))
+            img.save(p, "PNG")
+            # 写入值域说明文件
+            self._export_value_legend(p, data, "Layer 2 — 地形碰撞类型")
+
         self._status_lbl.config(text=f"已导出: {Path(p).name}")
+
+    def _export_value_legend(self, png_path: str, data: bytes, title: str):
+        """导出值域说明文件, 方便用户知道每个灰度值代表什么"""
+        legend_path = str(Path(png_path).with_suffix('.txt'))
+        vals = sorted(Counter(data).items())
+        lines = [f"# {title}", f"# 像素值 → 含义", ""]
+        for v, cnt in vals:
+            if v == 0:
+                lines.append(f"  {v:3d} (共{cnt:6d}px) = 空白/无数据")
+            elif title.startswith("Layer 1"):
+                lines.append(f"  {v:3d} (共{cnt:6d}px) = 遮挡深度等级 {v}")
+            else:
+                lines.append(f"  {v:3d} (共{cnt:6d}px) = 碰撞类型 #{v}  ({_collision_color(v)[:3]})")
+        lines.append("")
+        lines.append("# 编辑指南:")
+        if title.startswith("Layer 1"):
+            lines.append("#   - 在图片编辑器中使用灰度值 0~255 的铅笔/画笔工具")
+            lines.append("#   - 灰度值 0 = 无遮挡 (透明区域)")
+            lines.append("#   - 灰度值 N = 深度等级 N (值越大, 遮挡优先级越高)")
+        else:
+            lines.append("#   - 在图片编辑器中使用索引色模式 (保留调色板)")
+            lines.append("#   - 或用铅笔工具涂特定灰度值 (0=可行走, 1~N=碰撞类型)")
+            lines.append("#   - 保存为 PNG 索引色格式以保留碰撞类型ID")
+        Path(legend_path).write_text('\n'.join(lines), encoding='utf-8')
 
     # ── Audio ─────────────────────────────────────────
     def _toggle_audio(self):
