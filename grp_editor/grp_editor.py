@@ -733,11 +733,11 @@ class GRPEditor:
             if not data: return None
             rgba = bytearray(total * 4)
             if layer == "L1":
-                vals = [b for b in data]; vmin = min(vals) if vals else 0
-                vmax = max(vals) if vals else 255; rng = max(vmax - vmin, 1)
+                # 使用伪彩 LUT 着色, 与伪彩导出一致
                 for i in range(min(len(data), total)):
-                    v = int((data[i] - vmin) * 255 / rng)
-                    rgba[i*4:i*4+3] = bytes([v]*3); rgba[i*4+3] = 0 if data[i] == 0 else 200
+                    c = _L1_VAL2RGB.get(data[i], (0, 0, 0))
+                    rgba[i*4] = c[0]; rgba[i*4+1] = c[1]; rgba[i*4+2] = c[2]
+                    rgba[i*4+3] = 0 if data[i] == 0 else 220
             else:
                 for i in range(min(len(data), total)):
                     rgba[i*4:i*4+4] = bytes(_collision_color(data[i]))
