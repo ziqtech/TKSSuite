@@ -80,7 +80,8 @@ def lzss_compress(data: bytes) -> bytes:
         for i, (is_lit, _) in enumerate(entries):
             if is_lit: flag |= (1 << i)
         buf.append(flag)
-        for _, d in entries: buf.extend(d); entries.clear()
+        for _, d in entries: buf.extend(d)
+        entries.clear()
     pos = 0
     while pos < n:
         bl, bo = 0, 0
@@ -154,7 +155,7 @@ def rgba_to_rgb565(rgba_bytes: bytes, w: int, h: int) -> bytes:
 # ═══════════════════════════════════════════════════════════
 
 class GRPSection:
-    """图像区段"""
+    """图像区段 — 保留原始压缩数据用于未修改区段的原样保存"""
     def __init__(self, index: int, offset: int, width: int, height: int,
                  comp_a: int, comp_b: int):
         self.index = index; self.offset = offset
@@ -163,6 +164,11 @@ class GRPSection:
         self._pixels: Optional[bytes] = None; self._decoded_a = False
         self._layer1: Optional[bytes] = None; self._layer2: Optional[bytes] = None
         self._decoded_b = False; self.has_layer2 = False
+        # 原始压缩数据 (用于未修改区段的原样保存)
+        self._orig_frame_a: Optional[bytes] = None
+        self._orig_frame_b: Optional[bytes] = None
+        self._orig_fb_declared: int = 0
+        self._modified_a = False; self._modified_b = False
 
     @property
     def pixels(self) -> Optional[bytes]: return self._pixels
@@ -296,6 +302,12 @@ def load_grp(filepath: str, idx_path: Optional[str] = None) -> GRPFile:
             if (1 <= w <= 4096 and 1 <= h <= 4096 and
                 12 + ca + cb == sz and ca > 0 and cb > 0):
                 sec = GRPSection(idx, so, w, h, ca, cb)
+                # 保存原始压缩数据 (修改时才重新编码)
+                fa_off = so + 12; fb_off = fa_off + ca
+                sec._orig_frame_a = data[fa_off:fa_off + ca]
+                sec._orig_frame_b = data[fb_off:fb_off + cb]
+                if cb >= 4:
+                    sec._orig_fb_declared = struct.unpack_from("<I", data, fb_off)[0]
                 grp.sections.append(sec)
                 continue
         # 尝试音频: 以 RIFF 头开头
@@ -336,22 +348,42 @@ def _decode_section_b(grp: GRPFile, sec: GRPSection):
     sec._decoded_b = True
 
 def save_grp(grp: GRPFile, filepath: str, idx_path: Optional[str] = None):
-    buf = bytearray(); offsets = [0]
+    """保存 GRP — 未修改的区段原样写入, 已修改的重新编码后写入"""
+    buf = bytearray(); offsets = []
     for kind, idx, obj in grp.all_sorted():
-        offsets.append(len(buf))
+        offsets.append(len(buf))  # 当前 section 起始偏移
         if kind == 'IMG':
             sec = obj
-            lzss_data = lzss_compress(sec._pixels) if sec._pixels else b""
-            comp_a = len(lzss_data) + 4
-            if sec.has_layer2 and sec._layer1 and sec._layer2:
-                fb_raw = (sec._layer1 + sec._layer2)[:sec.width * sec.height * 2]
-            elif sec._layer1:
-                fb_raw = sec._layer1[:sec.width * sec.height]
-            else: fb_raw = b""
-            fb_enc = rle_bp_compress(fb_raw); comp_b = len(fb_enc) + 4
+            # ── 确定 Frame A 数据 ──
+            if sec._modified_a and sec._pixels:
+                fa_body = lzss_compress(sec._pixels)
+                comp_a = len(fa_body) + 4  # +4 for uncompressed size header
+                fa_data = struct.pack("<I", sec.uncomp_a) + fa_body
+            else:
+                comp_a = sec.comp_a
+                fa_data = sec._orig_frame_a if sec._orig_frame_a else (
+                    struct.pack("<I", sec.uncomp_a) + b"\x00" * (sec.comp_a - 4))
+
+            # ── 确定 Frame B 数据 ──
+            if sec._modified_b:
+                if sec.has_layer2 and sec._layer1 and sec._layer2:
+                    fb_raw = (sec._layer1 + sec._layer2)[:sec.width * sec.height * 2]
+                elif sec._layer1:
+                    fb_raw = sec._layer1[:sec.width * sec.height]
+                else: fb_raw = b""
+                fb_body = rle_bp_compress(fb_raw)
+                comp_b = len(fb_body) + 4
+                fb_data = struct.pack("<I", len(fb_raw)) + fb_body
+            else:
+                comp_b = sec.comp_b
+                fb_data = sec._orig_frame_b if sec._orig_frame_b else (
+                    struct.pack("<I", sec._orig_fb_declared) + b"\x00" * (sec.comp_b - 4))
+
+            # ── 写入 header + Frame A + Frame B ──
             buf += struct.pack("<HHII", sec.width, sec.height, comp_a, comp_b)
-            buf += struct.pack("<I", sec.uncomp_a); buf += lzss_data
-            buf += struct.pack("<I", len(fb_raw)); buf += fb_enc
+            buf += fa_data
+            buf += fb_data
+
         elif kind == 'AUD':
             if obj._raw: buf += obj._raw
         else:  # DATA
@@ -388,7 +420,7 @@ def export_png_rgba(w: int, h: int, rgba: bytes, path: str):
 
 class GRPEditor:
     def __init__(self, root: tk.Tk, filepath: Optional[str] = None):
-        self.root = root; self.root.title("GRP 资源包编辑器"); self.root.geometry("1360x840")
+        self.root = root; self.root.title("GRP 资源包编辑器"); self.root.geometry("1360x900")
         self.grp: Optional[GRPFile] = None
         self._sel_idx = -1; self._sel_layer = "A"
         self._zoom = tk.DoubleVar(value=1.0)
@@ -466,14 +498,17 @@ class GRPEditor:
         self._sec_count_lbl = ttk.Label(lh, text=""); self._sec_count_lbl.pack(side=tk.RIGHT)
 
         lsf = ttk.Frame(lf); lsf.pack(fill=tk.BOTH, expand=True, padx=4, pady=2)
-        self._sec_list = tk.Listbox(lsf, exportselection=False, font=("Consolas", 9))
-        sl_sb = ttk.Scrollbar(lsf, orient=tk.VERTICAL, command=self._sec_list.yview)
-        self._sec_list.configure(yscrollcommand=sl_sb.set)
-        self._sec_list.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        sl_sb.pack(side=tk.RIGHT, fill=tk.Y)
-        self._sec_list.bind("<<ListboxSelect>>", self._on_section_select)
+        # ttk.Treeview: 自带滚动条, 大数据量下比 Listbox 更可靠
+        self._sec_tree = ttk.Treeview(lsf, columns=("info",), show="headings",
+                                       selectmode="browse", height=20)
+        self._sec_tree.heading("info", text="区段列表")
+        self._sec_tree.column("info", width=240, anchor=tk.W)
+        self._sec_tree.pack(fill=tk.BOTH, expand=True)
+        self._sec_tree.bind("<<TreeviewSelect>>", self._on_section_select)
+        # 鼠标滚轮滚动
+        self._sec_tree.bind("<MouseWheel>", lambda e: self._sec_tree.yview_scroll(-e.delta//120, "units"))
 
-        self._sec_detail = tk.Text(lf, height=7, state=tk.DISABLED, font=("Consolas", 8),
+        self._sec_detail = tk.Text(lf, height=5, state=tk.DISABLED, font=("Consolas", 8),
                                     wrap=tk.NONE, padx=4, pady=2)
         self._sec_detail.pack(fill=tk.X, padx=4, pady=(2, 4))
 
@@ -528,26 +563,29 @@ class GRPEditor:
 
     # ── Section list ──────────────────────────────────
     def _sync_list(self):
-        self._sec_list.delete(0, tk.END)
+        for item in self._sec_tree.get_children():
+            self._sec_tree.delete(item)
         if not self.grp: return
         for kind, idx, obj in self.grp.all_sorted():
-            self._sec_list.insert(tk.END, f"[{kind}] #{idx:03d}  {obj.type_label}")
+            self._sec_tree.insert("", tk.END, iid=str(idx),
+                                  values=(f"[{kind}] #{idx:03d}  {obj.type_label}",))
         self._sec_count_lbl.config(text=f"{self.grp.total_sections} sections")
         if self.grp.total_sections > 0:
-            self._sec_list.selection_set(0); self._on_section_select()
+            fid = str(self.grp.all_sorted()[0][1])
+            self._sec_tree.selection_set(fid); self._sec_tree.see(fid)
+            self._sel_idx = int(fid)
+            self._refresh_view(); self._update_detail(); self._update_buttons()
 
     def _on_section_select(self, ev=None):
-        sel = self._sec_list.curselection()
+        sel = self._sec_tree.selection()
         if not self.grp or not sel: return
-        items = self.grp.all_sorted()
-        if sel[0] < len(items):
-            self._sel_idx = items[sel[0]][1]
-            sec = self._get_sec()
-            if isinstance(sec, GRPSection): self._sel_layer = "A"
-            self._stop_audio(); self._pil_img = None; self._tk_img = None
-            self._pan_x = self._pan_y = 0
-            if isinstance(sec, GRPSection): self._fit_to_window()
-            self._refresh_view(); self._update_detail(); self._update_buttons()
+        self._sel_idx = int(sel[0])
+        sec = self._get_sec()
+        if isinstance(sec, GRPSection): self._sel_layer = "A"
+        self._stop_audio(); self._pil_img = None; self._tk_img = None
+        self._pan_x = self._pan_y = 0
+        if isinstance(sec, GRPSection): self._fit_to_window()
+        self._refresh_view(); self._update_detail(); self._update_buttons()
 
     def _update_detail(self):
         self._sec_detail.config(state=tk.NORMAL); self._sec_detail.delete(1.0, tk.END)
@@ -584,10 +622,9 @@ class GRPEditor:
     def _open(self, p: str):
         try:
             self._status_lbl.config(text=f"加载中: {Path(p).name}..."); self.root.update()
-            self._stop_audio(); self.grp = load_grp(p); self._sync_list()
+            self._stop_audio(); self.grp = load_grp(p)
             self._sel_idx = -1; self._sel_layer = "A"
-            if self.grp.total_sections > 0:
-                self._sec_list.selection_set(0); self._on_section_select()
+            self._sync_list()
             self._refresh_view()
             ni, na, nd = len(self.grp.sections), len(self.grp.audio_sections), len(self.grp.data_sections)
             extra = f"  ({ni}IMG + {na}AUD" + (f" + {nd}DATA" if nd else "") + ")"
@@ -647,6 +684,8 @@ class GRPEditor:
         return None
 
     # ── Canvas refresh ────────────────────────────────
+    _MAX_DISPLAY_DIM = 1200  # 预览最大尺寸 (像素), 超过则自动缩放
+
     def _refresh_view(self):
         self._canvas.delete("all")
         sec = self._get_sec()
@@ -661,24 +700,35 @@ class GRPEditor:
             self._draw_audio_view(sec); return
 
         if isinstance(sec, GRPSection):
+            w, h = sec.width, sec.height
+            # 自动解码
             rgba = self._get_layer_rgba(sec, self._sel_layer)
             if rgba is None:
                 cw = self._canvas.winfo_width() or 400; ch = self._canvas.winfo_height() or 300
                 self._canvas.create_text(cw//2, ch//2, text="Layer 2 不可用 (单层遮罩)", fill="#666", font=("", 12))
                 return
-            w, h = sec.width, sec.height; z = self._zoom.get(); sw, sh = int(w * z), int(h * z)
+
+            # 构建 PIL 图像 (首次) 或复用缓存
             if self._pil_img is None and HAS_PIL:
                 self._pil_img = Image.frombytes("RGBA", (w, h), bytes(rgba))
             if self._pil_img is None: return
-            display = self._pil_img if z == 1.0 else self._pil_img.resize((max(1,sw), max(1,sh)), Image.NEAREST)
+
+            # 显示缩放: 大图自动缩小到 _MAX_DISPLAY_DIM 以内
+            z = self._zoom.get()
+            max_dim = max(w, h)
+            auto_scale = min(1.0, self._MAX_DISPLAY_DIM / max_dim) if max_dim > self._MAX_DISPLAY_DIM else 1.0
+            disp_scale = z * auto_scale
+            sw, sh = max(1, int(w * disp_scale)), max(1, int(h * disp_scale))
+            display = self._pil_img if disp_scale == 1.0 else self._pil_img.resize((sw, sh), Image.NEAREST)
             self._tk_img = ImageTk.PhotoImage(display)
+
             cw = self._canvas.winfo_width() or 400; ch = self._canvas.winfo_height() or 300
             x = max(0, (cw - sw) // 2) + self._pan_x; y = max(0, (ch - sh) // 2) + self._pan_y
             self._canvas.create_image(x, y, anchor=tk.NW, image=self._tk_img, tags=("img",))
             self._canvas.configure(scrollregion=(0, 0, max(cw, sw + 40), max(ch, sh + 40)))
-            self._zlbl.config(text=f"{int(z * 100)}%")
+            self._zlbl.config(text=f"{int(z*100)}%")
             names = {"A": "Frame A", "L1": "Layer 1 (遮挡)", "L2": "Layer 2 (碰撞)"}
-            self._info_lbl.config(text=f"#{sec.index:03d} {w}×{h} | {names.get(self._sel_layer,'')}")
+            self._info_lbl.config(text=f"#{sec.index:03d} {w}x{h} | {names.get(self._sel_layer,'')}")
 
     def _draw_audio_view(self, sec: GRPAudioSection):
         """绘制音频视图: 信息 + 波形"""
@@ -792,7 +842,8 @@ class GRPEditor:
                     f"导入 {img.size[0]}×{img.size[1]} ≠ 原 {sec.width}×{sec.height}。缩放?"): return
                 img = img.resize((sec.width, sec.height), Image.LANCZOS)
             sec._pixels = rgba_to_rgb565(img.tobytes(), sec.width, sec.height)
-            sec._decoded_a = True; self._pil_img = None; self._tk_img = None
+            sec._decoded_a = True; sec._modified_a = True
+            self._pil_img = None; self._tk_img = None
             self._refresh_view(); self._status_lbl.config(text=f"Frame A 已替换 → {Path(p).name}")
         except Exception as e: messagebox.showerror("替换失败", str(e))
 
@@ -808,7 +859,8 @@ class GRPEditor:
             data = img.tobytes()
             if layer == "L1": sec._layer1 = data
             else: sec._layer2 = data; sec.has_layer2 = True
-            sec._decoded_b = True; self._pil_img = None; self._tk_img = None
+            sec._decoded_b = True; sec._modified_b = True
+            self._pil_img = None; self._tk_img = None
             self._refresh_view(); self._update_detail()
             self._status_lbl.config(text=f"{layer} 已替换 → {Path(p).name}")
         except Exception as e: messagebox.showerror("替换失败", str(e))
