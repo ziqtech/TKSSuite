@@ -486,6 +486,9 @@ class GRPEditor:
         fm.add_command(label="打开 GRP... Ctrl+O", command=self._open_dlg)
         fm.add_command(label="保存 Ctrl+S", command=self._save)
         fm.add_command(label="另存为... Ctrl+Shift+S", command=self._save_as)
+        fm.add_separator()
+        fm.add_command(label="导出 L1 色板", command=lambda: self._export_color_swatch("L1"))
+        fm.add_command(label="导出 L2 色板", command=lambda: self._export_color_swatch("L2"))
         fm.add_separator(); fm.add_command(label="退出", command=self._on_close)
         mb.add_cascade(label="文件", menu=fm)
         vm = tk.Menu(mb, tearoff=0)
@@ -494,7 +497,10 @@ class GRPEditor:
         vm.add_command(label="放大", command=lambda: self._zoom_step(0.25))
         vm.add_command(label="缩小", command=lambda: self._zoom_step(-0.25))
         mb.add_cascade(label="视图", menu=vm)
-        mb.add_cascade(label="帮助", menu=tk.Menu(mb, tearoff=0))
+        hm = tk.Menu(mb, tearoff=0)
+        hm.add_command(label="伪彩工作流说明", command=self._show_pseudo_help)
+        hm.add_command(label="关于 GRP 格式", command=self._show_about)
+        mb.add_cascade(label="帮助", menu=hm)
         self.root.config(menu=mb)
         for k, cb in [("<Control-o>", self._open_dlg), ("<Control-s>", self._save),
                        ("<Control-Shift-s>", self._save_as)]:
@@ -508,11 +514,11 @@ class GRPEditor:
         ttk.Button(tb, text="保存", command=self._save).pack(side=tk.LEFT, padx=2)
         ttk.Separator(tb, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=6, pady=2)
 
-        self._btn_a = ttk.Button(tb, text="○ Frame A", command=lambda: self._switch_layer("A"))
+        self._btn_a = ttk.Button(tb, text="○ 主图", command=lambda: self._switch_layer("A"))
         self._btn_a.pack(side=tk.LEFT, padx=1)
-        self._btn_l1 = ttk.Button(tb, text="○ Layer 1", command=lambda: self._switch_layer("L1"))
+        self._btn_l1 = ttk.Button(tb, text="○ 前景层", command=lambda: self._switch_layer("L1"))
         self._btn_l1.pack(side=tk.LEFT, padx=1)
-        self._btn_l2 = ttk.Button(tb, text="○ Layer 2", command=lambda: self._switch_layer("L2"))
+        self._btn_l2 = ttk.Button(tb, text="○ 碰撞层", command=lambda: self._switch_layer("L2"))
         self._btn_l2.pack(side=tk.LEFT, padx=1)
 
         ttk.Separator(tb, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=6, pady=2)
@@ -535,7 +541,6 @@ class GRPEditor:
         self._zlbl = ttk.Label(tb, text="100%", width=5); self._zlbl.pack(side=tk.LEFT)
         ttk.Button(tb, text="+", width=2, command=lambda: self._zoom_step(0.25)).pack(side=tk.LEFT, padx=1)
         ttk.Button(tb, text="⊡", width=2, command=self._fit_to_window).pack(side=tk.LEFT, padx=2)
-        self._pixel_lbl = ttk.Label(tb, text="", foreground="#666"); self._pixel_lbl.pack(side=tk.RIGHT, padx=8)
         self._info_lbl = ttk.Label(tb, text=""); self._info_lbl.pack(side=tk.RIGHT, padx=8)
 
         # Main layout
@@ -578,6 +583,8 @@ class GRPEditor:
         self._status_lbl = ttk.Label(sf, text="就绪 — 打开 GRP 文件", foreground="#888")
         self._status_lbl.pack(side=tk.LEFT)
         ttk.Label(sf, text="Ctrl+滚轮=缩放 | 拖拽=平移", foreground="#aaa").pack(side=tk.RIGHT)
+        self._pixel_lbl = ttk.Label(sf, text="", foreground="#666")
+        self._pixel_lbl.pack(side=tk.RIGHT, padx=(0, 16))
         self._update_buttons()
 
     def _bind_events(self):
@@ -597,7 +604,8 @@ class GRPEditor:
         self._btn_play.configure(state=s if is_aud else d)
         self._btn_replace_aud.configure(state=s if is_aud else d)
         for b, t in [(self._btn_a, "A"), (self._btn_l1, "L1"), (self._btn_l2, "L2")]:
-            b.configure(text=f"{'●' if is_img and self._sel_layer == t else '○'} {t.replace('A','Frame A')}")
+            label = {"A": "主图", "L1": "前景层", "L2": "碰撞层"}.get(t, t)
+            b.configure(text=f"{'●' if is_img and self._sel_layer == t else '○'} {label}")
 
     def _is_img(self): return isinstance(self._get_sec(), GRPSection)
     def _is_aud(self): return isinstance(self._get_sec(), GRPAudioSection)
@@ -766,7 +774,7 @@ class GRPEditor:
             rgba = self._get_layer_rgba(sec, self._sel_layer)
             if rgba is None:
                 cw = self._canvas.winfo_width() or 400; ch = self._canvas.winfo_height() or 300
-                self._canvas.create_text(cw//2, ch//2, text="Layer 2 不可用 (单层遮罩)", fill="#666", font=("", 12))
+                self._canvas.create_text(cw//2, ch//2, text="碰撞层不可用 (单层遮罩)", fill="#666", font=("", 12))
                 return
 
             # 构建 PIL 图像 (首次) 或复用缓存
@@ -788,7 +796,7 @@ class GRPEditor:
             self._canvas.create_image(x, y, anchor=tk.NW, image=self._tk_img, tags=("img",))
             self._canvas.configure(scrollregion=(0, 0, max(cw, sw + 40), max(ch, sh + 40)))
             self._zlbl.config(text=f"{int(z*100)}%")
-            names = {"A": "Frame A", "L1": "Layer 1 (遮挡)", "L2": "Layer 2 (碰撞)"}
+            names = {"A": "主图", "L1": "前景层 (遮挡)", "L2": "碰撞层 (地形)"}
             self._info_lbl.config(text=f"#{sec.index:03d} {w}x{h} | {names.get(self._sel_layer,'')}")
 
     def _draw_audio_view(self, sec: GRPAudioSection):
@@ -1149,6 +1157,92 @@ class GRPEditor:
             self._status_lbl.config(text=f"{self._sel_layer} 伪彩图已导入并解析为精确数据！")
         except Exception as e:
             messagebox.showerror("导入失败", str(e))
+
+    def _export_color_swatch(self, layer: str):
+        """导出完整 256 色色板参考图 — 不需选中区段, 直接指定 L1/L2"""
+
+
+        p = filedialog.asksaveasfilename(
+            title=f"导出 {layer} 色板参考",
+            defaultextension=".png", filetypes=[("PNG", "*.png")],
+            initialfile=f"{layer}_ColorSwatch.png")
+        if not p: return
+
+        try:
+            lut = _L1_VAL2RGB if layer == "L1" else _L2_VAL2RGB
+            cols, size = 16, 28  # 16 列, 每格 28px
+            rows = 256 // cols    # 16 行
+            w, h = cols * size, rows * size
+
+            pal_img = Image.new("RGB", (w, h), "white")
+            draw = ImageDraw.Draw(pal_img)
+            # 尝试加载字体
+            font = None
+            try:
+                from PIL import ImageFont
+                font = ImageFont.truetype("consola.ttf", 9)
+            except: pass
+
+            for v in range(256):
+                r, c = v // cols, v % cols
+                x, y = c * size, r * size
+                color = lut[v]
+                draw.rectangle([x, y, x + size - 1, y + size - 1], fill=color, outline="#333")
+                # 值标签 (白色/黑色自适应)
+                brightness = color[0] * 0.299 + color[1] * 0.587 + color[2] * 0.114
+                txt_color = "black" if brightness > 128 else "white"
+                if font:
+                    draw.text((x + 2, y + 2), str(v), fill=txt_color, font=font)
+                else:
+                    draw.text((x + 2, y + 2), str(v), fill=txt_color)
+
+            pal_img.save(p, "PNG")
+
+            # 同时导出说明文件
+            txt_path = str(Path(p).with_suffix('.txt'))
+            layer_name = "Layer 1 — 前景遮挡深度" if layer == "L1" else "Layer 2 — 地形碰撞类型"
+            lines = [f"# {layer_name}  色板参考", "",
+                     "# 用法: 在 PS/GIMP 中打开此 PNG, 用吸管取色, 然后在你的图片中涂色。",
+                     "# 每个格子的数字 = 游戏中的实际值 (Layer1=深度等级, Layer2=碰撞类型ID)",
+                     "# 格子的颜色 = 该值对应的 RGB 颜色 (取色后直接使用即可)",
+                     "# 0 = 空白/可行走 (黑色)", ""]
+            for v in range(256):
+                c = lut[v]
+                lines.append(f"  {v:3d}  RGB({c[0]:3d},{c[1]:3d},{c[2]:3d})")
+            Path(txt_path).write_text('\n'.join(lines), encoding='utf-8')
+            self._status_lbl.config(text=f"色板已导出: {Path(p).name}  (+ .txt 值表)")
+        except Exception as e:
+            messagebox.showerror("导出失败", str(e))
+
+    def _show_pseudo_help(self):
+        messagebox.showinfo("伪彩工作流说明",
+            "=== 伪彩色导出/导入工作流 ===\n\n"
+            "1. 选中 Layer1(遮挡深度) 或 Layer2(碰撞类型)\n"
+            "2. 点击「伪彩导出」→ 得到带 RGB 颜色的 PNG\n"
+            "3. 用「L1色板」/「L2色板」导出 256 色参考图\n"
+            "4. 在 PS/GIMP 中:\n"
+            "   - 打开色板 PNG, 用吸管取目标值的颜色\n"
+            "   - 在伪彩图上用铅笔工具(禁用抗锯齿)涂色\n"
+            "   - 保存为 PNG\n"
+            "5. 点击「伪彩导入」→ 编辑器自动:\n"
+            "   - 根据 RGB 颜色查表还原为整数值\n"
+            "   - 轻微色差通过最近邻算法自动校正\n\n"
+            "=== Layer1 深度值含义 ===\n"
+            "  0 = 无遮挡(透明), 值越大遮挡优先度越高\n\n"
+            "=== Layer2 碰撞类型含义 ===\n"
+            "  0 = 可行走, 1~N = 各类地形障碍")
+
+    def _show_about(self):
+        messagebox.showinfo("关于 GRP 格式",
+            "GRP — 三国群侠传 通用资源包\n\n"
+            "格式特征:\n"
+            "  - 无文件级魔数, 通过 .IDX 索引定位区段\n"
+            "  - 图像: Frame A(RGB565 LZSS) + Frame B(RLE byte-pair)\n"
+            "    Layer 1 = 前景遮挡深度值\n"
+            "    Layer 2 = 地形碰撞类型值\n"
+            "  - 音频: 原始 WAV 数据(SSF/SWS/SMG)\n"
+            "  - 数据: 索引/元数据(不可编辑)\n\n"
+            "逆向依据: sub_451600 / sub_411308 / sub_410E18 / sub_452B14")
 
     # ── Audio ─────────────────────────────────────────
     def _toggle_audio(self):
