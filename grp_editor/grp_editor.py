@@ -22,7 +22,7 @@ from typing import List, Optional, Tuple
 from collections import Counter
 
 HAS_PIL = False
-try:    from PIL import Image, ImageTk; HAS_PIL = True
+try:    from PIL import Image, ImageTk, ImageDraw; HAS_PIL = True
 except ImportError: pass
 
 # ── 常量 ──────────────────────────────────────────────────
@@ -40,6 +40,51 @@ def _collision_color(val: int):
     h = (val * 67 + 150) % 360; x = int(255 * (1 - abs((h / 60) % 2 - 1)))
     r,g,b = [(255,x,0),(x,255,0),(0,255,x),(0,x,255),(x,0,255),(255,0,x)][int(h//60)]
     return (r,g,b,200)
+
+# ═══════════════════════════════════════════════════════════
+# 伪彩色映射表 (LUT) - 用于在PS中直观编辑 Layer1 / Layer2
+# ═══════════════════════════════════════════════════════════
+_L1_VAL2RGB = {}; _L1_RGB2VAL = {}
+_L2_VAL2RGB = {}; _L2_RGB2VAL = {}
+
+def _distinct_color(val: int, seed: int) -> tuple:
+    """为 0~255 生成高对比且视觉离散的 RGB 颜色 (金色角分布)"""
+    if val == 0: return (0, 0, 0)
+    hue = ((val * 137.508 + seed * 47) % 360)
+    h_sector = hue / 60.0
+    x = int(255 * (1 - abs(h_sector % 2 - 1)))
+    r, g, b = [(255, x, 0), (x, 255, 0), (0, 255, x),
+               (0, x, 255), (x, 0, 255), (255, 0, x)][int(h_sector) % 6]
+    return (r, g, b)
+
+for _v in range(256):
+    # Layer 1 (深度): 离散高对比色 — 每个深度值一个独立颜色, 视觉可区分
+    c1 = _distinct_color(_v, seed=31)
+    # 确保唯一 (reserved seed 确保不会有碰撞, 但安全起见)
+    while c1 in _L1_RGB2VAL: c1 = ((c1[0] + 1) % 256, c1[1], c1[2])
+    _L1_VAL2RGB[_v] = c1; _L1_RGB2VAL[c1] = _v
+
+    # Layer 2 (碰撞): 优先复用 _COLLISION_COLORS, 其他用离散色
+    if _v == 0:
+        c2 = (0, 0, 0)
+    elif _v in _COLLISION_COLORS:
+        r, g, b, _a = _COLLISION_COLORS[_v]; c2 = (r, g, b)
+    else:
+        c2 = _distinct_color(_v, seed=73)
+    while c2 in _L2_RGB2VAL: c2 = ((c2[0] + 1) % 256, c2[1], c2[2])
+    _L2_VAL2RGB[_v] = c2; _L2_RGB2VAL[c2] = _v
+
+
+def _nearest_color(rgb: tuple, lut_rev: dict) -> int:
+    """在 LUT 中查找最近似颜色, 兜底反锯齿/色彩空间偏移"""
+    if rgb in lut_rev: return lut_rev[rgb]
+    r, g, b = rgb
+    best_val, best_dist = 0, 999999
+    for color, val in lut_rev.items():
+        cr, cg, cb = color
+        dist = (r - cr)**2 + (g - cg)**2 + (b - cb)**2
+        if dist < best_dist: best_val, best_dist = val, dist
+    return best_val
 
 
 # ═══════════════════════════════════════════════════════════
@@ -477,6 +522,13 @@ class GRPEditor:
         self._btn_play.pack(side=tk.LEFT, padx=2)
         self._btn_replace_aud = ttk.Button(tb, text="替换音频", command=self._replace_audio)
         self._btn_replace_aud.pack(side=tk.LEFT, padx=2)
+        
+        ttk.Separator(tb, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=6, pady=2)
+        
+        # [新增] 伪彩色工作流按钮
+        ttk.Button(tb, text="伪彩导出", command=self._export_pseudo).pack(side=tk.LEFT, padx=2)
+        ttk.Button(tb, text="伪彩导入", command=self._import_pseudo).pack(side=tk.LEFT, padx=2)
+
         ttk.Separator(tb, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=6, pady=2)
 
         ttk.Button(tb, text="−", width=2, command=lambda: self._zoom_step(-0.25)).pack(side=tk.LEFT, padx=1)
@@ -1009,6 +1061,94 @@ class GRPEditor:
             lines.append("#   - 或用铅笔工具涂特定灰度值 (0=可行走, 1~N=碰撞类型)")
             lines.append("#   - 保存为 PNG 索引色格式以保留碰撞类型ID")
         Path(legend_path).write_text('\n'.join(lines), encoding='utf-8')
+
+    # ── [新增] 伪彩色导入/导出逻辑 ──────────────────────
+    def _export_pseudo(self):
+        """导出当前层的伪彩图及配套吸色板"""
+        sec = self._get_sec()
+        if not isinstance(sec, GRPSection) or self._sel_layer not in ("L1", "L2"):
+            messagebox.showinfo("提示", "请先选中 Layer 1 (遮挡) 或 Layer 2 (碰撞)！")
+            return
+
+        if not sec.is_decoded_b: _decode_section_b(self.grp, sec)
+        data = sec.layer1 if self._sel_layer == "L1" else sec.layer2
+        if not data: return
+
+        p = filedialog.asksaveasfilename(
+            title=f"导出 {self._sel_layer} 伪彩图", 
+            defaultextension=".png", 
+            filetypes=[("PNG", "*.png")],
+            initialfile=f"sec{sec.index:03d}_{self._sel_layer}_Color.png"
+        )
+        if not p: return
+
+        try:
+            lut = _L1_VAL2RGB if self._sel_layer == "L1" else _L2_VAL2RGB
+            
+            # 1. 导出主图 (RGB模式)
+            rgb_bytes = bytearray(sec.width * sec.height * 3)
+            for i, val in enumerate(data[:sec.width * sec.height]):
+                c = lut.get(val, (0,0,0))
+                rgb_bytes[i*3] = c[0]; rgb_bytes[i*3+1] = c[1]; rgb_bytes[i*3+2] = c[2]
+            
+            img = Image.frombytes("RGB", (sec.width, sec.height), bytes(rgb_bytes))
+            img.save(p, "PNG")
+
+            # 2. 导出"配套吸色板" (只列出当前图层使用到的值，方便PS吸色)
+            if HAS_PIL:
+                pal_size = 24  # 每个色块的大小
+                vals = sorted(set(data[:sec.width * sec.height]))
+                cols = min(16, len(vals))
+                rows = (len(vals) - 1) // 16 + 1
+                pal_img = Image.new("RGB", (max(1, cols) * pal_size, max(1, rows) * pal_size), "black")
+                draw = ImageDraw.Draw(pal_img)
+                
+                for idx, val in enumerate(vals):
+                    x = (idx % 16) * pal_size; y = (idx // 16) * pal_size
+                    draw.rectangle([x, y, x + pal_size - 1, y + pal_size - 1], fill=lut.get(val, (0,0,0)))
+                
+                pal_path = str(Path(p).with_name(Path(p).stem + "_Palette.png"))
+                pal_img.save(pal_path, "PNG")
+
+            self._status_lbl.config(text=f"已导出伪彩图及配套吸色板: {Path(p).name}")
+        except Exception as e:
+            messagebox.showerror("导出失败", str(e))
+
+    def _import_pseudo(self):
+        """导入在外部编辑好的伪彩图，精准还原为数据字节"""
+        sec = self._get_sec()
+        if not isinstance(sec, GRPSection) or self._sel_layer not in ("L1", "L2"):
+            messagebox.showinfo("提示", "请先选中 Layer 1 或 Layer 2！")
+            return
+
+        p = filedialog.askopenfilename(
+            title=f"导入伪彩图以替换 {self._sel_layer}", 
+            filetypes=[("PNG", "*.png"), ("图片", "*.bmp")]
+        )
+        if not p: return
+
+        try:
+            # 强制转换为 RGB (24-bit)，自动去除透明度通道，确保引擎兼容性
+            img = Image.open(p).convert("RGB")
+            if img.size != (sec.width, sec.height):
+                if not messagebox.askyesno("尺寸不匹配", f"尺寸不一致，强制缩放？"): return
+                img = img.resize((sec.width, sec.height), Image.NEAREST)
+
+            lut_rev = _L1_RGB2VAL if self._sel_layer == "L1" else _L2_RGB2VAL
+            pixels = img.getdata()
+
+            # 精确查表 + 最近邻 fallback (处理反锯齿/色彩空间偏移)
+            out_bytes = bytes([_nearest_color(p, lut_rev) for p in pixels])
+
+            if self._sel_layer == "L1": sec._layer1 = out_bytes
+            else: sec._layer2 = out_bytes; sec.has_layer2 = True
+
+            sec._decoded_b = True; sec._modified_b = True
+            self._pil_img = None; self._tk_img = None
+            self._refresh_view(); self._update_detail()
+            self._status_lbl.config(text=f"{self._sel_layer} 伪彩图已导入并解析为精确数据！")
+        except Exception as e:
+            messagebox.showerror("导入失败", str(e))
 
     # ── Audio ─────────────────────────────────────────
     def _toggle_audio(self):
