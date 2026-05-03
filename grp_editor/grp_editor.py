@@ -211,18 +211,17 @@ class GRPAudioSection:
                 ch, sr, sw, nf = wf.getnchannels(), wf.getframerate(), wf.getsampwidth(), wf.getnframes()
                 self._wav_info = f"{ch}ch {sr}Hz {sw*8}bit"
                 self._duration = nf / sr if sr > 0 else 0
-                # 读取采样用于波形可视化 (最多取 8000 个点)
+                # 读取全部采样用于 Premiere 风格波形
                 if nf > 0 and sw > 0:
-                    frames = wf.readframes(min(nf, 8000))
-                    if sw == 1: fmt = f"<{len(frames)}b"
-                    elif sw == 2: fmt = f"<{len(frames)//2}h"
-                    else: fmt = f"<{len(frames)//sw}i"
-                    try:
-                        raw_samples = struct.unpack(fmt, frames[:struct.calcsize(fmt)])
-                        # 降采样到最多 800 个点用于显示
-                        step = max(1, len(raw_samples) // 800)
-                        self._samples = [raw_samples[i] for i in range(0, len(raw_samples), step)]
-                    except: pass
+                    frames = wf.readframes(nf)
+                    if sw == 1: fmt, n_per = f"<{len(frames)}b", len(frames)
+                    elif sw == 2: fmt, n_per = f"<{len(frames)//2}h", len(frames)//2
+                    else: fmt, n_per = f"<{len(frames)//sw}i", len(frames)//sw
+                    raw = struct.unpack(fmt, frames[:struct.calcsize(fmt)])
+                    # 如果立体声, 合并为单声道取平均幅度
+                    if ch == 2:
+                        raw = [(raw[i] + raw[i+1]) // 2 for i in range(0, len(raw)-1, 2)]
+                    self._samples = list(raw)
         except Exception: pass
 
 class GRPDataSection:
@@ -498,15 +497,15 @@ class GRPEditor:
         self._sec_count_lbl = ttk.Label(lh, text=""); self._sec_count_lbl.pack(side=tk.RIGHT)
 
         lsf = ttk.Frame(lf); lsf.pack(fill=tk.BOTH, expand=True, padx=4, pady=2)
-        # ttk.Treeview: 自带滚动条, 大数据量下比 Listbox 更可靠
-        self._sec_tree = ttk.Treeview(lsf, columns=("info",), show="headings",
-                                       selectmode="browse", height=20)
-        self._sec_tree.heading("info", text="区段列表")
-        self._sec_tree.column("info", width=240, anchor=tk.W)
-        self._sec_tree.pack(fill=tk.BOTH, expand=True)
-        self._sec_tree.bind("<<TreeviewSelect>>", self._on_section_select)
-        # 鼠标滚轮滚动
-        self._sec_tree.bind("<MouseWheel>", lambda e: self._sec_tree.yview_scroll(-e.delta//120, "units"))
+        self._sec_list = tk.Listbox(lsf, exportselection=False, font=("Consolas", 9),
+                                     activestyle='none', highlightthickness=1)
+        sl_sb = tk.Scrollbar(lsf, orient=tk.VERTICAL, command=self._sec_list.yview,
+                              width=14)  # 加宽确保可抓取
+        self._sec_list.configure(yscrollcommand=sl_sb.set)
+        self._sec_list.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        sl_sb.pack(side=tk.RIGHT, fill=tk.Y)
+        self._sec_list.bind("<<ListboxSelect>>", self._on_section_select)
+        self._sec_list.bind("<MouseWheel>", lambda e: self._sec_list.yview_scroll(-e.delta//120, "units"))
 
         self._sec_detail = tk.Text(lf, height=5, state=tk.DISABLED, font=("Consolas", 8),
                                     wrap=tk.NONE, padx=4, pady=2)
@@ -563,29 +562,28 @@ class GRPEditor:
 
     # ── Section list ──────────────────────────────────
     def _sync_list(self):
-        for item in self._sec_tree.get_children():
-            self._sec_tree.delete(item)
+        self._sec_list.delete(0, tk.END)
         if not self.grp: return
         for kind, idx, obj in self.grp.all_sorted():
-            self._sec_tree.insert("", tk.END, iid=str(idx),
-                                  values=(f"[{kind}] #{idx:03d}  {obj.type_label}",))
+            self._sec_list.insert(tk.END, f"[{kind}] #{idx:03d}  {obj.type_label}")
         self._sec_count_lbl.config(text=f"{self.grp.total_sections} sections")
         if self.grp.total_sections > 0:
-            fid = str(self.grp.all_sorted()[0][1])
-            self._sec_tree.selection_set(fid); self._sec_tree.see(fid)
-            self._sel_idx = int(fid)
+            self._sec_list.selection_set(0)
+            self._sel_idx = self.grp.all_sorted()[0][1]
             self._refresh_view(); self._update_detail(); self._update_buttons()
 
     def _on_section_select(self, ev=None):
-        sel = self._sec_tree.selection()
+        sel = self._sec_list.curselection()
         if not self.grp or not sel: return
-        self._sel_idx = int(sel[0])
-        sec = self._get_sec()
-        if isinstance(sec, GRPSection): self._sel_layer = "A"
-        self._stop_audio(); self._pil_img = None; self._tk_img = None
-        self._pan_x = self._pan_y = 0
-        if isinstance(sec, GRPSection): self._fit_to_window()
-        self._refresh_view(); self._update_detail(); self._update_buttons()
+        items = self.grp.all_sorted()
+        if sel[0] < len(items):
+            self._sel_idx = items[sel[0]][1]
+            sec = self._get_sec()
+            if isinstance(sec, GRPSection): self._sel_layer = "A"
+            self._stop_audio(); self._pil_img = None; self._tk_img = None
+            self._pan_x = self._pan_y = 0
+            if isinstance(sec, GRPSection): self._fit_to_window()
+            self._refresh_view(); self._update_detail(); self._update_buttons()
 
     def _update_detail(self):
         self._sec_detail.config(state=tk.NORMAL); self._sec_detail.delete(1.0, tk.END)
@@ -731,56 +729,95 @@ class GRPEditor:
             self._info_lbl.config(text=f"#{sec.index:03d} {w}x{h} | {names.get(self._sel_layer,'')}")
 
     def _draw_audio_view(self, sec: GRPAudioSection):
-        """绘制音频视图: 信息 + 波形"""
+        """Premiere 风格波形: 全宽填充波形 + 时间轴 + 播放头"""
         cw = self._canvas.winfo_width() or 400; ch = self._canvas.winfo_height() or 300
-        cx, cy = cw // 2, ch // 2
+        margin_l, margin_r = 60, 40
+        wave_w = cw - margin_l - margin_r
 
-        # 音频信息
-        lines = [f"音频区段 #{sec.index:03d}", f"大小: {sec.size}B"]
-        if sec._wav_info: lines.append(f"格式: {sec._wav_info}")
-        if sec._duration > 0: lines.append(f"时长: {sec._duration:.2f}s")
-        for i, line in enumerate(lines):
-            self._canvas.create_text(cx, cy - 80 + i * 24, text=line, fill="#333", font=("", 12))
+        # ── 顶部信息条 ──
+        info = f"音频 #{sec.index:03d}  |  {sec.size}B"
+        if sec._wav_info: info += f"  |  {sec._wav_info}"
+        if sec._duration > 0: info += f"  |  {sec._duration:.2f}s"
+        self._canvas.create_text(cw//2, 16, text=info, fill="#444", font=("", 9))
 
-        # 波形可视化
+        # ── 波形区域 ──
+        wave_top, wave_h = 40, ch - 100
+        wave_mid = wave_top + wave_h // 2
+        wx, wy = margin_l, wave_top
+
+        # 背景
+        self._canvas.create_rectangle(wx, wy, wx + wave_w, wy + wave_h,
+                                       fill="#1a1a1a", outline="#444", tags=("wave_bg",))
+
         if sec.has_samples and sec._samples:
             samples = sec._samples; n = len(samples)
-            wave_w = min(cw - 80, 700); wave_h = 160
-            wx = cx - wave_w // 2; wy = cy + 10
-            # 背景
-            self._canvas.create_rectangle(wx, wy, wx + wave_w, wy + wave_h, fill="#f5f5f5", outline="#ccc")
-            # 中线
-            self._canvas.create_line(wx, wy + wave_h // 2, wx + wave_w, wy + wave_h // 2, fill="#ccc", dash=(4, 4))
-            # 波形
-            if n > 1:
-                max_val = max(abs(min(samples)), abs(max(samples)), 1)
-                points = []
-                for i, s in enumerate(samples):
-                    x = wx + i * wave_w / (n - 1)
-                    y = wy + wave_h // 2 - (s / max_val) * (wave_h // 2 - 4)
-                    points.extend([x, y])
-                if len(points) >= 4:
-                    self._canvas.create_line(points, fill="#2060c0", width=1, tags=("wave",))
+            max_val = max(abs(min(samples)), abs(max(samples)), 1)
+            half_h = wave_h // 2 - 6
 
-            # 播放进度指示器
+            # 降采样以匹配画布宽度 (每个像素列取 min/max)
+            px_per_col = max(1, n / wave_w)
+            cols_data = []  # [(col_min, col_max), ...]
+            for col in range(wave_w):
+                si = int(col * px_per_col)
+                ei = min(n, int((col + 1) * px_per_col))
+                if si >= n: break
+                seg = samples[si:ei]
+                if seg:
+                    cols_data.append((min(seg), max(seg)))
+                else:
+                    cols_data.append((0, 0))
+
+            # 绘制填充波形 (每个像素列从 min 到 max 画竖线)
+            played_cols = 0
             if self._audio_playing and sec._duration > 0:
-                elapsed = (self._wave_start_time and
-                          (tk.Misc.GetDouble(self.root, 'after', 'info') or
-                           __import__('time').time() - self._wave_start_time)) if hasattr(self, '_wave_elapsed') else 0
-                self._wave_elapsed = getattr(self, '_wave_elapsed', 0) + 0.05
-                progress = min(self._wave_elapsed / sec._duration, 1.0)
-                px = wx + int(progress * wave_w)
-                self._canvas.create_line(px, wy, px, wy + wave_h, fill="#e00", width=2, tags=("prog",))
-                # 继续动画
-                self._wave_anim_job = self.root.after(50, lambda: self._draw_audio_progress(sec))
+                self._wave_elapsed = getattr(self, '_wave_elapsed', 0)
+                played_cols = int((self._wave_elapsed / sec._duration) * len(cols_data))
+
+            for ci, (vmin, vmax) in enumerate(cols_data):
+                x = wx + ci
+                y_top = wave_mid - int((vmax / max_val) * half_h)
+                y_bot = wave_mid - int((vmin / max_val) * half_h)
+                if y_top == y_bot: y_top -= 1  # 静音显示细线
+                color = "#4a9eff" if ci <= played_cols else "#607890"
+                self._canvas.create_line(x, y_top, x, y_bot, fill=color, tags=("wave",))
+
+            # 中线
+            self._canvas.create_line(wx, wave_mid, wx + wave_w, wave_mid,
+                                      fill="#555", dash=(2, 6), tags=("wave",))
+
+            # ── 时间轴 ──
+            timeline_y = wy + wave_h + 8
+            self._canvas.create_line(wx, timeline_y, wx + wave_w, timeline_y, fill="#666")
+            for tick_sec in range(0, int(sec._duration) + 2):
+                tx = wx + int((tick_sec / sec._duration) * wave_w) if sec._duration > 0 else wx
+                if tx <= wx + wave_w:
+                    self._canvas.create_line(tx, timeline_y, tx, timeline_y + 6, fill="#888")
+                    self._canvas.create_text(tx, timeline_y + 16, text=f"{tick_sec}s",
+                                              fill="#888", font=("", 7))
         else:
-            self._canvas.create_text(cx, cy + 60, text="(无波形数据)", fill="#aaa", font=("", 10))
+            self._canvas.create_text(wx + wave_w//2, wave_mid, text="无波形数据",
+                                      fill="#555", font=("", 10))
+
+        # ── 播放头 ──
+        if self._audio_playing and sec._duration > 0 and sec.has_samples:
+            self._wave_elapsed = getattr(self, '_wave_elapsed', 0) + 0.04
+            px = wx + int((self._wave_elapsed / sec._duration) * wave_w) if sec._duration > 0 else wx
+            px = min(px, wx + wave_w)
+            # 播放头红线
+            self._canvas.create_line(px, wy, px, wy + wave_h, fill="#ff3040", width=2, tags=("prog",))
+            # 播放头顶部三角
+            self._canvas.create_polygon(px-5, wy, px+5, wy, px, wy+8,
+                                         fill="#ff3040", outline="#ff3040", tags=("prog",))
+            # 已播放区域遮罩 (微弱高亮)
+            self._canvas.create_rectangle(wx, wy, px, wy + wave_h,
+                                           fill="", outline="", stipple="gray25",
+                                           tags=("prog_overlay",))
+            self._wave_anim_job = self.root.after(40, lambda: self._draw_audio_progress(sec))
 
     def _draw_audio_progress(self, sec: GRPAudioSection):
-        """更新播放进度"""
         if not self._audio_playing: return
-        self._wave_elapsed = getattr(self, '_wave_elapsed', 0) + 0.05
-        self._canvas.delete("prog"); self._draw_audio_view(sec)
+        self._canvas.delete("wave", "prog", "prog_overlay")
+        self._draw_audio_view(sec)
 
     # ── Zoom & Pan ────────────────────────────────────
     def _set_zoom(self, z: float):
@@ -893,44 +930,55 @@ class GRPEditor:
         try:
             tmp = tempfile.NamedTemporaryFile(suffix='.wav', delete=False); tmp.close()
             Path(tmp.name).write_bytes(sec._raw)
-            self._audio_tmp = tmp.name; self._wave_elapsed = 0; self._wave_start_time = __import__('time').time()
+            self._audio_tmp = tmp.name; self._wave_elapsed = 0
 
             if sys.platform == 'win32':
-                # 使用 Windows Media Player / 默认播放器 (最可靠)
-                self._audio_proc = subprocess.Popen(
-                    ['powershell', '-c',
-                     f'(New-Object Media.SoundPlayer "{tmp.name}").PlaySync()'],
-                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                import winsound
+                # winsound 延迟最低, 适合短音频; SND_ASYNC 不阻塞 UI
+                winsound.PlaySound(tmp.name, winsound.SND_ASYNC | winsound.SND_FILENAME)
                 self._audio_playing = True; self._btn_play.configure(text="■ 停止")
-                # 异步检查播放完成
-                self.root.after(200, self._check_audio_done)
+                # 用 polls 检查播放是否结束
+                self._poll_audio_done(sec)
             else:
                 player = 'aplay' if shutil.which('aplay') else ('afplay' if sys.platform == 'darwin' else 'paplay')
                 self._audio_proc = subprocess.Popen([player, tmp.name],
                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 self._audio_playing = True; self._btn_play.configure(text="■ 停止")
-                self.root.after(300, self._check_audio_done)
+                self.root.after(int(sec._duration * 1000) + 200, self._stop_audio)
         except Exception as e:
             self._status_lbl.config(text=f"播放失败: {e}")
+
+    def _poll_audio_done(self, sec: GRPAudioSection):
+        """轮询 winsound 异步播放状态"""
+        if not self._audio_playing: return
+        import winsound
+        try:
+            # 尝试检测播放状态 (winsound 没有直接 API, 用定时器估算)
+            elapsed = getattr(self, '_wave_elapsed', 0) + 0.05
+            self._wave_elapsed = elapsed
+            dur = sec._duration if sec._duration > 0 else 1.0
+            if elapsed >= dur + 0.1:  # 超时则停止
+                self._stop_audio()
+            else:
+                self.root.after(50, lambda: self._poll_audio_done(sec))
+        except:
+            self._stop_audio()
 
     def _stop_audio(self):
         if not self._audio_playing: return
         try:
-            if self._audio_proc:
+            if sys.platform == 'win32':
+                import winsound
+                winsound.PlaySound(None, winsound.SND_PURGE)
+            elif self._audio_proc:
                 self._audio_proc.terminate(); self._audio_proc = None
         except: pass
         self._audio_playing = False; self._btn_play.configure(text="▶ 播放")
-        self._canvas.delete("prog")
+        self._canvas.delete("wave", "prog", "prog_overlay", "wave_bg")
         if self._wave_anim_job: self.root.after_cancel(self._wave_anim_job); self._wave_anim_job = None
         if self._audio_tmp:
             try: os.unlink(self._audio_tmp)
             except: pass; self._audio_tmp = None
-
-    def _check_audio_done(self):
-        if self._audio_proc and self._audio_proc.poll() is not None:
-            self._stop_audio()
-        elif self._audio_playing:
-            self.root.after(200, self._check_audio_done)
 
     def _replace_audio(self):
         sec = self._get_sec()
