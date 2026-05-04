@@ -507,7 +507,7 @@ class ShopEditor:
                         value="random", command=self._on_cond_mode).pack(side=tk.LEFT)
         ttk.Radiobutton(cond_mode_frame, text="始终", variable=self.cond_mode,
                         value="always", command=self._on_cond_mode).pack(side=tk.LEFT, padx=(6, 0))
-        ttk.Radiobutton(cond_mode_frame, text="偏移:", variable=self.cond_mode,
+        ttk.Radiobutton(cond_mode_frame, text="幸运:", variable=self.cond_mode,
                         value="custom", command=self._on_cond_mode).pack(side=tk.LEFT, padx=(6, 0))
         self.edit_cond = ttk.Spinbox(cond_mode_frame, from_=-999, to=999, width=6,
                                       command=self._on_cond_changed)
@@ -516,9 +516,9 @@ class ShopEditor:
         # 实时概率表
         self.cond_table_frame = ttk.Frame(right_frame)
         self.cond_table_frame.pack(fill=tk.X, pady=(4, 8))
-        self.cond_table_text = tk.Text(self.cond_table_frame, height=6, width=32,
-                                        font=('Consolas', 8), state='disabled',
-                                        bg='#f8f8f8', relief='flat', borderwidth=0)
+        self.cond_table_text = tk.Text(self.cond_table_frame, height=9, width=34,
+                                        font=('Microsoft YaHei UI', 8), state='disabled',
+                                        bg='#f8f8f8', relief='flat', borderwidth=0, padx=4, pady=4)
         self.cond_table_text.pack(fill=tk.X)
 
         # 操作按钮
@@ -666,13 +666,10 @@ class ShopEditor:
         self._apply_filter()
 
     def _cond_str(self, cond):
-        """condition 显示文本 (逆向自 sub_4244CC 第95-109行)
-        逻辑: v9=max(0, level-cond), 随机0-99 < v9 才显示
-        cond=1 走独立随机抽选分支"""
+        """condition 显示文本 (sub_4244CC: 概率=clamp(幸运-cond,0,100)%)"""
         if cond == 1:
             return "随机抽选"
-        # cond!=1: 显示概率 = clamp(level - cond, 0, 100)%
-        return f"偏移{cond:+d}"
+        return f"幸运{cond:+d}"  # 例: 幸运+2, 幸运-100
 
     def _refresh_table(self):
         for item in self.tree.get_children():
@@ -783,7 +780,7 @@ class ShopEditor:
         self._refresh_cond_table()
 
     def _refresh_cond_table(self):
-        """刷新条件概率表 (逆向自 sub_4244CC: 概率=clamp(等级-cond,0,100)%)"""
+        """刷新条件概率表 (sub_4244CC: v19=最高幸运LUK, 概率=clamp(v19-cond,0,100)%)"""
         self.cond_table_text.configure(state='normal')
         self.cond_table_text.delete('1.0', tk.END)
 
@@ -798,29 +795,29 @@ class ShopEditor:
             self.cond_table_text.configure(state='disabled')
             return
 
-        lines = []
-        first_show = max(1, offset + 1)   # 首次有概率>0的等级
-        full_show = offset + 100           # 达到100%的等级
+        # 翻译为通俗语言
+        if offset > 0:
+            desc = f"队伍幸运 ＞ {offset} 时开始出现"
+        elif offset == 0:
+            desc = f"队伍幸运 ≥ 1 时开始出现"
+        else:
+            desc = f"队伍幸运 ≥ 0 时已有 {min(100, -offset)}% 概率"
 
-        # 显示关键节点
-        prev_prob = -1
-        for lv in range(1, full_show + 2):
-            prob = max(0, min(100, lv - offset))
-            if prob != prev_prob and (prob % 25 == 0 or prob >= 100 or lv <= first_show + 5):
-                lines.append(f"  Lv{lv:>3d} → {prob:>3d}%")
-                prev_prob = prob
-            if prob >= 100:
-                break
+        first_luk = max(0, offset + 1)      # 首次出现需要的幸运
+        always_luk = offset + 100             # 100%需要的幸运
 
-        # 最多显示14行
-        if len(lines) > 14:
-            keep = set()
-            for i, ln in enumerate(lines):
-                if i == 0 or i == len(lines)-1 or i % max(1, len(lines)//12) == 0:
-                    keep.add(i)
-            lines = [ln for i, ln in enumerate(lines) if i in keep]
+        lines = [f"  {desc}"]
+        lines.append(f"  每多1点幸运, 概率+1%")
+        lines.append("")
 
-        header = f"  偏移={offset:+d}  |  概率=clamp(Lv{offset:+d},0,100)%"
+        # 关键节点: 按25%步进
+        for pct in [25, 50, 75, 100]:
+            need_luk = offset + pct
+            if need_luk >= 0:
+                label = "必定出现" if pct >= 100 else ""
+                lines.append(f"  幸运 ≥ {need_luk:>3d}  →  {pct:>3d}%  {label}")
+
+        header = f"  条件值: {offset:+d}"
         self.cond_table_text.insert('1.0', header + '\n' + '\n'.join(lines))
         self.cond_table_text.configure(state='disabled')
 
@@ -1066,10 +1063,10 @@ class ShopEditor:
             "3. 右侧面板: 修改区域/物品/出现条件/显示标志, 点「应用修改」保存到内存\n"
             "4. 文件 → 保存 (Ctrl+S): 将内存中的修改写入 TKShop.dat\n"
             "5. + 新增记录: 在240条中查找空槽位复用\n"
-            "6. 出现条件:\n"
+            "6. 出现条件 (基于队伍最高幸运 LUK):\n"
             "   - 随机: 每次进入商店时随机抽选 (最多5件)\n"
-            "   - 始终: 设为-100, 任意等级都100%出现\n"
-            "   - 偏移: 出现概率 = (等级 - 偏移值)%, 最高100%\n"
+            "   - 始终: 设为-100, 任意幸运值都100%出现\n"
+            "   - 幸运: 出现概率 = clamp(幸运 - 条件值, 0, 100)%\n"
             "7. 物品与区域有兼容性限制 (由游戏代码决定):\n"
             "   选择物品后区域下方会显示是否兼容及建议放置的商店")
 
