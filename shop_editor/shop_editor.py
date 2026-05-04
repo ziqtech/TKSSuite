@@ -215,35 +215,6 @@ def lzss_compress(data):
 # TKItem 名称加载 (逆向自 sub_424A2C, sub_4067E8)
 # ============================================================
 
-def load_tkitem_names(item_dat_path):
-    """
-    从 TKItem.dat 加载物品名称列表
-
-    TKItem 记录: 64 字节 (32×int16), 600条
-    基址: word_77CBCA
-    field[0] = item_id
-    field[2] = name_id → TKT (word_77CBCE[32*idx], sub_4067E8)
-    """
-    with open(item_dat_path, 'rb') as f:
-        raw = f.read()
-
-    decompressed = lzss_decompress(raw)
-
-    REC_SIZE = 64
-    names = []
-    for i in range(600):
-        offset = i * REC_SIZE
-        if offset + REC_SIZE > len(decompressed):
-            break
-        item_id = struct.unpack_from('<h', decompressed, offset)[0]
-        name_id = struct.unpack_from('<h', decompressed, offset + 4)[0]
-        # Try to load TKT if available, otherwise use IDs
-        name = f"Item#{item_id}" if item_id else f"(空-{i})"
-        names.append((i, item_id, name_id, name))
-
-    return names
-
-
 def load_tkitem_with_tkt(item_dat_path, tkt_dat_path):
     """
     加载 TKItem 并关联 TKT 名称, 同时提取 equip_type 用于分类筛选
@@ -276,8 +247,16 @@ def load_tkitem_with_tkt(item_dat_path, tkt_dat_path):
         decrypted = bytes([b ^ 0xFF for b in encrypted])
         id_table_size = count * 4
         offset_table_size = count * 4
+        # TKT ID 0-9 是系统消息 (sub_4067E8):
+        #   0=啊！1=虎牢關之役 2=你的智慧上升了！！3=你的仁德上升了！！
+        #   4=你的勇氣上升了！！5=你的醫術上升了！！6=THE END 7=... 8=無法使用 9=得到銀兩
+        # 这些不是物品名称, 必须跳过。
+        SYSTEM_IDS = set(range(0, 10))
+
         for i in range(count):
             eid = struct.unpack_from('<i', decrypted, i * 4)[0]
+            if eid in SYSTEM_IDS:
+                continue
             off = struct.unpack_from('<I', decrypted, id_table_size + i * 4)[0]
             text_base = id_table_size + offset_table_size
             abs_off = text_base + off
@@ -293,10 +272,16 @@ def load_tkitem_with_tkt(item_dat_path, tkt_dat_path):
 
     result = []
     for idx, item_id, tab_code, name_id, equip_type in items_raw:
-        name = tkt_lookup.get(name_id, "")
-        if name and name != '0':
-            name = name.split('\n')[0].strip()
-        if not name:
+        # name_id<=0 是无效引用, TKT 中某些条目值为字面量 "0"
+        if name_id > 0 and name_id in tkt_lookup:
+            name = tkt_lookup[name_id]
+            if name and name != '0':
+                name = name.split('\n')[0].strip()
+            else:
+                name = ""
+        else:
+            name = ""
+        if not name or name == "0":
             name = f"Item#{item_id}" if item_id else f"(空-{idx})"
         result.append((idx, item_id, tab_code, name_id, equip_type, name))
 
@@ -924,8 +909,8 @@ class ShopEditor:
             cat = cat_var.get()
             allowed = self.ITEM_CATEGORIES.get(cat)
             for idx, item_id, tab_code, name_id, equip_type, name in self.items:
-                # 跳过空名称
-                if not name or name.startswith("(空") or name == "0":
+                # 跳过无效名称: TKT未填充的占位槽 (Item#1=item_id=1的225个占位, (空-N=全零槽)
+                if not name or name.startswith("(空") or name.startswith("Item#") or name == "0":
                     continue
                 if q and q not in name.lower():
                     continue
