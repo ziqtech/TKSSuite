@@ -797,11 +797,11 @@ class ShopEditor:
 
         # 翻译为通俗语言
         if offset > 0:
-            desc = f"队伍幸运 ＞ {offset} 时开始出现"
+            desc = f"队伍最大幸运 ＞ {offset} 时开始出现"
         elif offset == 0:
-            desc = f"队伍幸运 ≥ 1 时开始出现"
+            desc = f"队伍最大幸运 ≥ 1 时开始出现"
         else:
-            desc = f"队伍幸运 ≥ 0 时已有 {min(100, -offset)}% 概率"
+            desc = f"队伍最大幸运 ≥ 0 时已有 {min(100, -offset)}% 概率"
 
         first_luk = max(0, offset + 1)      # 首次出现需要的幸运
         always_luk = offset + 100             # 100%需要的幸运
@@ -821,19 +821,6 @@ class ShopEditor:
         self.cond_table_text.insert('1.0', header + '\n' + '\n'.join(lines))
         self.cond_table_text.configure(state='disabled')
 
-    # 物品分类映射 (基于 field[1] tab_code, sub_4246D8 用此字段过滤商店)
-    # word_77CBCC[32*item_ref] = item.tab_code → 与 a1[31+slot] 比较
-    ITEM_CATEGORIES = {
-        "全部": None,
-        "消耗品": [0],
-        "书籍": [1],
-        "武器": [2],
-        "防具": [3],
-        "饰品": [4],
-        "特殊": [5],
-    }
-    ITEM_CAT_ORDER = ["全部", "消耗品", "书籍", "武器", "防具", "饰品", "特殊"]
-
     # tab_code → 商店区域约束 (sub_4233C4 switch + sub_4246D8 过滤)
     TAB_TO_SHOP = {
         0: [0, 3],       # 消耗品 → 药店, 杂货
@@ -848,8 +835,8 @@ class ShopEditor:
         """弹出物品选择对话框, 带搜索和分类筛选"""
         dialog = tk.Toplevel(self.root)
         dialog.title("选择物品")
-        dialog.geometry("520x480")
-        dialog.minsize(420, 360)
+        dialog.geometry("600x520")
+        dialog.minsize(500, 420)
         dialog.transient(self.root)
         dialog.grab_set()
 
@@ -862,11 +849,6 @@ class ShopEditor:
         search_var = tk.StringVar()
         search_entry = ttk.Entry(top_frame, textvariable=search_var, width=24)
         search_entry.grid(row=0, column=1, padx=5, sticky='we')
-        ttk.Label(top_frame, text="分类:").grid(row=0, column=2, padx=(10, 0), sticky='w')
-        cat_var = tk.StringVar(value="全部")
-        cat_combo = ttk.Combobox(top_frame, textvariable=cat_var, state='readonly',
-                                  values=self.ITEM_CAT_ORDER, width=12)
-        cat_combo.grid(row=0, column=3, padx=5, sticky='w')
         top_frame.grid_columnconfigure(1, weight=1)
         search_entry.focus_set()
 
@@ -874,14 +856,16 @@ class ShopEditor:
         list_frame = ttk.Frame(dialog)
         list_frame.pack(fill=tk.BOTH, expand=True, padx=8, pady=5)
 
-        columns = ('idx', 'cat', 'name')
+        columns = ('idx', 'cat', 'shops', 'name')
         tree = ttk.Treeview(list_frame, columns=columns, show='headings', selectmode='browse', height=18)
         tree.heading('idx', text='索引', command=lambda: self._sort_item_tree(tree, 'idx', False))
         tree.heading('cat', text='分类', command=lambda: self._sort_item_tree(tree, 'cat', False))
+        tree.heading('shops', text='可用商店', command=lambda: self._sort_item_tree(tree, 'shops', False))
         tree.heading('name', text='物品名称', command=lambda: self._sort_item_tree(tree, 'name', False))
-        tree.column('idx', width=42, anchor='center')
-        tree.column('cat', width=72, anchor='center')
-        tree.column('name', width=360, anchor='w')
+        tree.column('idx', width=38, anchor='center')
+        tree.column('cat', width=56, anchor='center')
+        tree.column('shops', width=128, anchor='center')
+        tree.column('name', width=310, anchor='w')
 
         vsb = ttk.Scrollbar(list_frame, orient=tk.VERTICAL, command=tree.yview)
         tree.configure(yscrollcommand=vsb.set)
@@ -892,29 +876,57 @@ class ShopEditor:
                                             dialog.destroy()] if tree.selection() else None)
 
         def _cat_name(tab_code):
-            """tab_code → 分类名 (sub_4246D8: word_77CBCC[32*idx] = item.tab_code)"""
-            return {0: "消耗品", 1: "书籍", 2: "武器", 3: "防具", 4: "饰品", 5: "特殊"}.get(tab_code, f"其他({tab_code})")
+            return {0: "消耗品", 1: "书籍", 2: "武器", 3: "防具", 4: "饰品", 5: "特殊"}.get(tab_code, f"其他")
+
+        def _shops_for_tab(tab_code):
+            area_ids = self.TAB_TO_SHOP.get(tab_code, [])
+            if not area_ids:
+                return "无"
+            return ", ".join(AREA_NAMES.get(a, str(a)) for a in area_ids)
+
+        # 双筛选: 物品分类 + 可用商店
+        CAT_FILTERS = {"全部分类": None, "消耗品": [0], "书籍": [1], "武器": [2], "防具": [3], "饰品": [4], "特殊": [5]}
+        SHOP_FILTERS = {"全部商店": None}
+        for aid, aname in sorted(AREA_NAMES.items()):
+            SHOP_FILTERS[aname] = aid
+
+        # 第二行: 分类 + 商店筛选
+        filter_row = ttk.Frame(dialog, padding=(8, 0, 8, 0))
+        filter_row.pack(fill=tk.X)
+        ttk.Label(filter_row, text="分类:").pack(side=tk.LEFT)
+        cat_var = tk.StringVar(value="全部分类")
+        cat_combo = ttk.Combobox(filter_row, textvariable=cat_var, state='readonly',
+                                  values=list(CAT_FILTERS.keys()), width=10)
+        cat_combo.pack(side=tk.LEFT, padx=2)
+        cat_combo.bind('<<ComboboxSelected>>', lambda e: refresh_list())
+        ttk.Label(filter_row, text="  商店:").pack(side=tk.LEFT, padx=(10, 0))
+        shop_var = tk.StringVar(value="全部商店")
+        shop_combo = ttk.Combobox(filter_row, textvariable=shop_var, state='readonly',
+                                   values=list(SHOP_FILTERS.keys()), width=10)
+        shop_combo.pack(side=tk.LEFT, padx=2)
+        shop_combo.bind('<<ComboboxSelected>>', lambda e: refresh_list())
 
         def refresh_list(*args):
             tree.delete(*tree.get_children())
             q = search_var.get().strip().lower()
-            cat = cat_var.get()
-            allowed = self.ITEM_CATEGORIES.get(cat)
+            cat_allowed = CAT_FILTERS.get(cat_var.get())       # None or [tab_codes]
+            filter_aid = SHOP_FILTERS.get(shop_var.get())      # None or area_id
             for idx, item_id, tab_code, name_id, equip_type, name in self.items:
-                # 跳过无效名称: TKT未填充的占位槽 (Item#1=item_id=1的225个占位, (空-N=全零槽)
                 if not name or name.startswith("(空") or name.startswith("Item#") or name == "0":
                     continue
                 if q and q not in name.lower():
                     continue
-                if allowed is not None and tab_code not in allowed:
+                if cat_allowed is not None and tab_code not in cat_allowed:
                     continue
-                tree.insert('', 'end', values=(idx, _cat_name(tab_code), name))
+                if filter_aid is not None:
+                    if filter_aid not in self.TAB_TO_SHOP.get(tab_code, []):
+                        continue
+                tree.insert('', 'end', values=(idx, _cat_name(tab_code), _shops_for_tab(tab_code), name))
             if tree.get_children():
                 tree.selection_set(tree.get_children()[0])
 
         refresh_list()
         search_var.trace_add('write', refresh_list)
-        cat_combo.bind('<<ComboboxSelected>>', refresh_list)
 
         # 按钮区
         btn_frame = ttk.Frame(dialog, padding=(8, 0, 8, 8))
