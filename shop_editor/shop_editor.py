@@ -404,6 +404,12 @@ class ShopEditor:
         file_menu.add_separator()
         file_menu.add_command(label="退出", command=self.root.quit)
         menubar.add_cascade(label="文件", menu=file_menu)
+
+        help_menu = tk.Menu(menubar, tearoff=0)
+        help_menu.add_command(label="使用说明", command=self._show_help)
+        help_menu.add_command(label="关于", command=self._show_about)
+        menubar.add_cascade(label="帮助", menu=help_menu)
+
         self.root.bind('<Control-o>', lambda e: self._load_tks_dir())
 
         # ---- 工具栏 ----
@@ -440,12 +446,12 @@ class ShopEditor:
         left_frame = ttk.Frame(paned)
         paned.add(left_frame, weight=3)
 
-        columns = ('index', 'area_id', 'area_name', 'item_ref', 'item_name', 'condition', 'display')
+        columns = ('index', 'area_id', 'area_name', 'item_ref', 'item_name', 'condition')
         self.tree = ttk.Treeview(left_frame, columns=columns, show='headings', selectmode='browse')
         col_config = [
             ('index', '索引', 42), ('area_id', '区域ID', 45), ('area_name', '区域名称', 70),
-            ('item_ref', '物品索引', 58), ('item_name', '物品名称', 180),
-            ('condition', '出现条件', 72), ('display', '显示', 36),
+            ('item_ref', '物品索引', 58), ('item_name', '物品名称', 195),
+            ('condition', '出现条件', 72),
         ]
         for col_id, col_name, width in col_config:
             self.tree.heading(col_id, text=col_name, command=lambda c=col_id: self._sort_by(c))
@@ -456,7 +462,6 @@ class ShopEditor:
         self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         vsb.pack(side=tk.RIGHT, fill=tk.Y)
 
-        self.tree.tag_configure('active', background='#e6ffe6')
         self.tree.tag_configure('random', foreground='#cc6600')
         self.tree.bind('<<TreeviewSelect>>', self._on_tree_select)
 
@@ -494,7 +499,7 @@ class ShopEditor:
         ttk.Label(right_frame, text="", foreground='gray').pack(anchor=tk.W, pady=(0, 8))  # spacer
 
         # condition — 三模式: 随机抽选 / 始终显示 / 自定义偏移 + 实时概率表
-        ttk.Label(right_frame, text="出现条件 (condition, sub_4244CC):").pack(anchor=tk.W)
+        ttk.Label(right_frame, text="出现条件:").pack(anchor=tk.W)
         self.cond_mode = tk.StringVar(value="custom")
         cond_mode_frame = ttk.Frame(right_frame)
         cond_mode_frame.pack(fill=tk.X, pady=(0, 2))
@@ -515,12 +520,6 @@ class ShopEditor:
                                         font=('Consolas', 8), state='disabled',
                                         bg='#f8f8f8', relief='flat', borderwidth=0)
         self.cond_table_text.pack(fill=tk.X)
-
-        # display
-        ttk.Label(right_frame, text="显示标志 (display):").pack(anchor=tk.W)
-        self.edit_display = tk.BooleanVar(value=False)
-        ttk.Checkbutton(right_frame, text="可购买/已显示 (sub_4244CC: byte_9508A6)",
-                        variable=self.edit_display).pack(anchor=tk.W, pady=(0, 12))
 
         # 操作按钮
         btn_frame = ttk.Frame(right_frame)
@@ -681,18 +680,16 @@ class ShopEditor:
         for idx in self.filtered_indices:
             rec = self.records[idx]
             iname = self.item_names.get(rec['item_ref'], f"Item#{rec['item_ref']}")
-            tags = []
-            if rec['display'] == 1: tags.append('active')
-            if rec['condition'] == 1: tags.append('random')
+            tags = ['random'] if rec['condition'] == 1 else []
             self.tree.insert('', 'end',
                              values=(rec['index'], rec['area_id'], area_label(rec['area_id']),
-                                     rec['item_ref'], iname, self._cond_str(rec['condition']), rec['display']),
+                                     rec['item_ref'], iname, self._cond_str(rec['condition'])),
                              tags=tags)
 
     def _sort_by(self, col):
         reverse = getattr(self, '_sort_reverse', False)
         km = {'index': 'index', 'area_id': 'area_id', 'item_ref': 'item_ref',
-              'condition': 'condition', 'display': 'display'}
+              'condition': 'condition'}
         self.filtered_indices.sort(key=lambda i: self.records[i].get(km.get(col, 'index'), 0), reverse=reverse)
         self._sort_reverse = not reverse
         self._refresh_table()
@@ -732,8 +729,6 @@ class ShopEditor:
             self.cond_mode.set("custom")
         self.edit_cond.set(str(cond))
         self._on_cond_mode()
-        # display
-        self.edit_display.set(rec['display'] == 1)
 
     def _get_item_tab(self, item_ref):
         """获取物品的 tab_code (field[1])"""
@@ -799,7 +794,7 @@ class ShopEditor:
 
         if offset == 1:
             self.cond_table_text.insert('1.0',
-                "  (随机抽选模式)\n  sub_4244CC: sub_452AC0(50000)\n  最多同时出现5件商品")
+                "  (随机抽选模式)\n  每次进入商店时随机判定\n  最多同时出现5件商品")
             self.cond_table_text.configure(state='disabled')
             return
 
@@ -964,7 +959,6 @@ class ShopEditor:
             rec['area_id'] = self._area_name_by_id.get(area_name, 0)
             rec['item_ref'] = int(self._editing_item_idx.get())
             rec['condition'] = int(self.edit_cond.get())
-            rec['display'] = 1 if self.edit_display.get() else 0
             self._dirty = True
             self._refresh_cond_table()
             self._apply_filter()
@@ -986,7 +980,7 @@ class ShopEditor:
             return
         self.records[self._editing_idx] = {
             'index': self._editing_idx, 'area_id': 0, 'item_ref': 0,
-            'condition': 0, 'display': 0, 'reserved': 0
+            'condition': 0, 'display': 0, 'reserved': 0  # display 保持为0(运行时由 sub_4244CC 设置)
         }
         self._dirty = True
         self._apply_filter()
@@ -1056,13 +1050,35 @@ class ShopEditor:
         if not path:
             return
         with open(path, 'w', encoding='utf-8-sig') as f:
-            f.write("索引,区域ID,区域名称,物品索引,物品名称,出现条件(原始),出现条件(文本),显示标志\n")
+            f.write("索引,区域ID,区域名称,物品索引,物品名称,出现条件(原始),出现条件(文本)\n")
             for rec in self.records:
                 iname = self.item_names.get(rec['item_ref'], f"Item#{rec['item_ref']}")
                 f.write(f"{rec['index']},{rec['area_id']},{area_label(rec['area_id'])},"
-                        f"{rec['item_ref']},{iname},{rec['condition']},{self._cond_str(rec['condition'])},{rec['display']}\n")
+                        f"{rec['item_ref']},{iname},{rec['condition']},{self._cond_str(rec['condition'])}\n")
         self.status_var.set(f"已导出 CSV: {path}")
         messagebox.showinfo("导出成功", f"已导出 {len(self.records)} 条")
+
+    def _show_help(self):
+        messagebox.showinfo("使用说明",
+            "TKShop.dat 可视化编辑器\n\n"
+            "1. 文件 → 加载 TKS 目录: 选择包含 TKShop.dat / TKItem.dat / TKT.dat 的目录\n"
+            "2. 左侧表格: 单击行查看/编辑, 支持区域过滤和关键词搜索\n"
+            "3. 右侧面板: 修改区域/物品/出现条件/显示标志, 点「应用修改」保存到内存\n"
+            "4. 文件 → 保存 (Ctrl+S): 将内存中的修改写入 TKShop.dat\n"
+            "5. + 新增记录: 在240条中查找空槽位复用\n"
+            "6. 出现条件:\n"
+            "   - 随机: 每次进入商店时随机抽选 (最多5件)\n"
+            "   - 始终: 设为-100, 任意等级都100%出现\n"
+            "   - 偏移: 出现概率 = (等级 - 偏移值)%, 最高100%\n"
+            "7. 物品与区域有兼容性限制 (由游戏代码决定):\n"
+            "   选择物品后区域下方会显示是否兼容及建议放置的商店")
+
+    def _show_about(self):
+        messagebox.showinfo("关于",
+            "TKShop.dat 可视化编辑器 v1.0\n\n"
+            "基于《三国群侠传》(TKS) 逆向工程\n"
+            "支持 TKShop.dat 的加载、编辑、保存\n"
+            "自动关联 TKItem.dat + TKT.dat 显示物品名称")
 
 
 # ============================================================
