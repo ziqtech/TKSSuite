@@ -1,49 +1,26 @@
 #!/usr/bin/env python3
 """
-TKItem.dat 可视化编辑器 v2.2 (对照 Maker.exe UI 布局)
+TKItem.dat 可视化编辑器 v3.0 (严格对照 Maker.exe TksModify.dll UI 布局 + TKS.exe 反编译)
 
-记录结构: 32 x int16 = 64 字节, 共 600 条. 基址 word_77CBCA, 索引步长 32 字.
-
-【字段映射实测验证】通过实际读取六破散 (record #19) 反推 Maker UI 字段位置:
-  六破散 desc: "非常狠毒的毒藥，中毒者五感皆痺、內息散亂…"
-    offset 52 = 0x001F -> 破兵/碎甲/昏眩/封锁/羁绊 (导致状态 mask1)
-    offset 58 = 0x2000 -> 明镜                    (解除状态 mask2)
-
-因此 Maker UI 字段位置 (与 TKS.exe 代码变量名不直接对应):
-  [44] v15[22]   Maker UI 未显示 (sub_42234C 单选; 本编辑器作为隐含字段透传)
-  [52] v15[26]   UI "导致状态 1-16"  (位掩码, bit i = 状态 i)
-  [54] v15[27]   UI "导致状态 17-32" (位掩码, bit i = 状态 16+i)
-  [56] v15[28]   UI "解除状态 1-16"  (位掩码)
-  [58] v15[29]   UI "解除状态 17-32" (位掩码)
-
-其他字段 (按字节偏移, int16 索引 = offset/2):
-  [0]  item_id         物品代码 (10000=金钱)
-  [2]  page_code       页面号/商店过滤键
-  [4]  name_id         名称 TKT 代码
-  [6]  desc_id         说明 TKT 代码
-  [8]  image           形象/图标
-  [10] use_right       使用权限/装备类型
-  [12] battle_anim     战场动画
-  [14] hp_bonus        增加生命
-  [16] hp_heal         恢复生命
-  [18] mp_bonus        增加内力
-  [20] mp_heal         恢复内力
-  [22] atk             增加攻击
-  [24] def_            增加防御
-  [26] hit             增加命中
-  [28] dodge           增加闪避
-  [30] speed           增加速度
-  [32] luck            增加幸运
-  [34] spirit          增加悟性
-  [36] vitality        增加体力
-  [38] jp_bonus        增加JP
-  [40] ring_flag       戒指判定/位掩码
-  [42] attach_skill    附加技能 (sub_422BBC)
-  [46] learn_skill1    装备后学习技能 1 (byte_757FB8)
-  [48] learn_skill2    装备后学习技能 2
-  [50] medicine        增加医术
-  [60] combat_flag     战斗相关判断
-  [62] price           价格
+【v3.0 变更】基于反编译源码 (sub_41E40C/sub_42234C/sub_422BBC) + Maker 文案 + 实测数据验证:
+  1. 字段 [22] offset 44: "装备后学习技能" (v15[22] -> char+176+v15[22]=10, 装备时学会)
+     ※实测验证: 蟬翼刀#178 [22]=135=技能"蟬翼刀"; 虎紋刀#177 [22]=134=技能"虎紋刀"
+  2. 字段 [23] offset 46: "使用后学习技能1" (v15[23] -> byte_757FB8[1054*a2+v15[23]]=10, 使用时)
+     ※实测验证: 遁甲天書#79 [23]=24=技能"瀚力術"
+  3. 字段 [24] offset 48: "使用后学习技能2"
+     ※实测验证: 遁甲天書#79 [24]=25=技能"遲緩術"
+  4. 字段 [26] offset 52: "导致状态 1-16" (Maker UI 标签)
+     ※实测验证: 紅顏知己[27]=0x1000 bit12=28迷恋; 大骨鎚[27]=0xC bit2/3=18禁制+19定身
+     (反编译 a2[67]=v9[26] 只是保存, 战斗时读取作状态 mask 使用)
+  5. 字段 [27] offset 54: "导致状态 17-32"
+  6. 字段 [28] offset 56: "解除状态 1-16"
+  7. 字段 [29] offset 58: "解除状态 17-32"
+  8. 字段 [25] offset 50: "增加医术" (Maker UI 文案; word_75688A += v15[25])
+  9. 使用权限 (equip_type) 值语义实测:
+     0=饰品/坐骑(111条), 1=消耗品/刀(39条), 2=书籍(97条), 3=药品(26条), 4=特殊(18条),
+     8=矛(8条), 16=弓弩(12条), 32=大刀(12条), 64=戟(6条), 128=锤(6条)
+ 10. 记录数硬限制: 600 条 (sub_45343C 加载 38400 字节 = 600x64; sub_42F8D4 遍历 < 600)
+ 11. 空槽 (40 条可新增物品): #560-#599, item_id=0 & name_id=0 & desc_id=600
 """
 
 import struct, os, tkinter as tk
@@ -144,10 +121,9 @@ def load_tkskill_names(sp, tkt):
     return names
 
 # ============================================================
-# 常量 (逆向 sub_41E40C / sub_42234C + Maker.exe TksModify.dll 字符串)
+# 常量 (Maker.exe TksModify.dll 文案 + TKS.exe 反编译)
 # ============================================================
-# 状态名 (31 种, 取自 Maker.exe TksModify.dll; 含两个"连计")
-# 状态索引 0..30 = Maker UI 列表索引
+# 31 种状态 (bit 0..30; Maker UI 状态列表)
 STATUS_NAMES = [
     "破兵","碎甲","昏眩","封锁","羁绊","蓄力","刚体","集中",
     "云身","神行","无视","伪装","御风","死战","连计","连计",
@@ -155,78 +131,90 @@ STATUS_NAMES = [
     "虚弱","麻痹","沈睡","中毒","迷恋","明镜","针灸",
 ]
 
-# 使用权限 (逆向未枚举, 沿用装备类型经验值)
-USE_RIGHT = {0:"消耗/书籍", 1:"近战武器", 2:"远程武器", 3:"防具", 4:"饰品",
-             8:"特殊8", 16:"特殊16", 32:"特殊32", 64:"特殊64", 128:"特殊128"}
+# 使用权限 (equip_type) 实测值语义 — 2026-05 probe 数据完全匹配用户观察
+#  sub_41928C: word_77CBD4[32 * item_idx] & word_757FA4[527 * char_idx] 作位与权限校验
+USE_RIGHT = {
+    0:   "饰品/坐骑",
+    1:   "消耗品/刀",
+    2:   "书籍",
+    3:   "药品",
+    4:   "特殊",
+    8:   "矛类武器",
+    16:  "弓弩武器",
+    32:  "大刀类武器",
+    64:  "戟类武器",
+    128: "锤类武器",
+}
 USE_RIGHT_VALUES = [f"{k}-{v}" for k,v in sorted(USE_RIGHT.items())]
 
-# 页面号 (商店分页, 游戏内 6 类)
+# 页面号 (tab_code, Maker UI 未显示; 商店分页, 0-5)
 PAGE_NAMES = {0:"消耗品", 1:"书籍", 2:"武器", 3:"防具", 4:"饰品", 5:"特殊"}
 PAGE_VALUES = [f"{k}-{v}" for k,v in sorted(PAGE_NAMES.items())]
 
-ITEM_REC = 64; ITEM_CNT = 600
+ITEM_REC = 64; ITEM_CNT = 600  # 游戏硬编码: sub_45343C(aTkitemDat, word_77CBCA, 38400)
 FONT = ('Microsoft YaHei UI', 9); FONT_S = ('Microsoft YaHei UI', 8)
+W_INPUT = 12
 
-# 统一编辑控件宽度 (问题 4: 每个输入框/下拉框宽度保持一致)
-W_INPUT = 12  # Entry / Combobox 统一宽度
-
-# 顶部基础属性网格 (对照 Maker.exe 修改器 5 列布局)
-# (键名, 偏移, 标签, 类型, 宽度, 逆向注释)
+# ============================================================
+# 字段定义 - 严格按 Maker UI 文案 + 反编译证据
+# (键, 字节偏移, UI标签, 类型, 宽度, 反编译注释)
+# ============================================================
+# 顶部基础属性网格 (Maker UI 可见字段 22 条; 技能/状态在下方分组)
 GRID_FIELDS = [
-    ("item_id",      0, "物品代码",       'int',       W_INPUT, "v15[0] 物品ID; 10000=金钱(sub_40CE30)"),
-    ("page_code",    2, "页面号",         'page',      W_INPUT, "v15[1] 商店页(word_77CBCC, sub_4246D8)"),
-    ("name_id",      4, "名称代码",       'tkt',       W_INPUT, "v15[2] TKT.dat 文本 ID (word_77CBCE)"),
-    ("desc_id",      6, "说明代码",       'tkt',       W_INPUT, "v15[3] TKT 说明文本 ID"),
-    ("image",        8, "形象",           'int',       W_INPUT, "v15[4] 图标 (word_77CBD2)"),
+    ("item_id",      0, "物品代码",       'int',       W_INPUT, "v15[0] sub_40CE30 查找主键"),
+    ("name_id",      4, "名称代码",       'tkt',       W_INPUT, "v15[2] TKT 文本 ID (word_77CBCE)"),
+    ("desc_id",      6, "说明代码",       'tkt',       W_INPUT, "v15[3] TKT 说明 ID (word_77CBD0)"),
+    ("icon",         8, "形象",           'int',       W_INPUT, "v15[4] 图标索引 +130"),
+    ("equip_type",  10, "使用权限",       'use_right', W_INPUT, "v15[5] 装备/使用位标志"),
 
-    ("use_right",   10, "使用权限",       'use_right', W_INPUT, "v15[5] 装备类型/槽位限制"),
-    ("battle_anim", 12, "战场动画",       'int',       W_INPUT, "v15[6] 战斗特效动画"),
-    ("hp_bonus",    14, "增加生命",       'int',       W_INPUT, "v15[7] HP 上限+值;>1000=百分比(sub_41E40C)"),
-    ("hp_heal",     16, "恢复生命",       'int',       W_INPUT, "v15[8] 当前 HP 回复"),
-    ("mp_bonus",    18, "增加内力",       'int',       W_INPUT, "v15[9] MP 上限+值;同百分比规则"),
+    ("battle_anim", 12, "战场动画",       'int',       W_INPUT, "v15[6] 武器攻击范围/动画"),
+    ("hp_inc",      14, "增加生命",       'int',       W_INPUT, "v15[7] HP上限; >1000=百分比"),
+    ("hp_heal",     16, "恢复生命",       'int',       W_INPUT, "v15[8] 当前HP回复; >1000=百分比"),
+    ("mp_inc",      18, "增加内力",       'int',       W_INPUT, "v15[9] MP上限; >1000=百分比"),
+    ("mp_heal",     20, "恢复内力",       'int',       W_INPUT, "v15[10] 当前MP回复; >1000=百分比"),
 
-    ("mp_heal",     20, "恢复内力",       'int',       W_INPUT, "v15[10] 当前 MP 回复"),
-    ("atk",         22, "增加攻击",       'int',       W_INPUT, "v15[11] word_757F1E +="),
-    ("def_",        24, "增加防御",       'int',       W_INPUT, "v15[12] word_757F22 +="),
-    ("hit",         26, "增加命中",       'int',       W_INPUT, "v15[13] word_757F26 +="),
-    ("dodge",       28, "增加闪避",       'int',       W_INPUT, "v15[14] word_757F2A +="),
+    ("atk",         22, "增加攻击",       'int',       W_INPUT, "v15[11] STR(武力) word_757F1E +="),
+    ("def_",        24, "增加防御",       'int',       W_INPUT, "v15[12] INT(智力) word_757F22 +="),
+    ("hit",         26, "增加命中",       'int',       W_INPUT, "v15[13] CMD(统御) word_757F26 +="),
+    ("dodge",       28, "增加闪避",       'int',       W_INPUT, "v15[14] AGI(敏捷) word_757F2A +="),
+    ("spd",         30, "增加速度",       'int',       W_INPUT, "v15[15] SPD word_757F2E +=, 上限100"),
 
-    ("speed",       30, "增加速度",       'int',       W_INPUT, "v15[15] word_757F2E +="),
-    ("luck",        32, "增加幸运",       'int',       W_INPUT, "v15[16] word_757F32 +="),
-    ("spirit",      34, "增加悟性",       'int',       W_INPUT, "v15[17] word_757F3A +="),
-    ("vitality",    36, "增加体力",       'int',       W_INPUT, "v15[18] word_757F36 +="),
-    ("jp_bonus",    38, "增加JP",         'int',       W_INPUT, "v15[19] word_757F46 += (sub_41E40C)"),
+    ("luk",         32, "增加幸运",       'int',       W_INPUT, "v15[16] LUK word_757F32 +=, 商店条件基准"),
+    ("spi",         34, "增加悟性",       'int',       W_INPUT, "v15[17] SPI word_757F3A +="),
+    ("vit",         36, "增加移动",       'int',       W_INPUT, "v15[18] VIT word_757F36 +="),
+    ("ring_flag",   38, "戒指判定",       'int',       W_INPUT, "v15[19] word_757F46 +="),
+    ("combat_flag", 40, "战斗相关判定",   'int',       W_INPUT, "v15[20] word_757F4A |=, a2[33] |="),
 
-    ("ring_flag",   40, "戒指判定",       'int',       W_INPUT, "v15[20] 位掩码 a2[33]|=v9[20]"),
-    ("medicine",    50, "增加医术",       'int',       W_INPUT, "v15[25] word_75688A += (sub_41E40C)"),
-    ("combat_flag", 60, "战斗相关判断",   'int',       W_INPUT, "v15[30] dword_755C80|= (sub_41F784)"),
+    ("medicine",    50, "增加医术",       'int',       W_INPUT, "v15[25] word_75688A += (Maker UI 文案)"),
     ("price",       62, "价格",           'int',       W_INPUT, "v15[31] word_77CC08 买卖价"),
 ]
 
-# 附加技能组 (按 Maker UI 命名: 附加技能 / 装备后学习技能 1 / 2)
+# 技能组 (Maker UI 4 个独立字段; 全部对应 byte_757FB8 全局技能等级表, 等级 10)
 SKILL_FIELDS = [
-    ("attach_skill", 42, "附加技能",         "v15[21] sub_422BBC 装备时附加的技能 (主动/被动)"),
-    ("learn_skill1", 46, "装备后学习技能1",  "v15[23] byte_757FB8[v15[23]]=10 (装备/使用时学会)"),
-    ("learn_skill2", 48, "装备后学习技能2",  "v15[24] byte_757FB8[v15[24]]=10 (装备/使用时学会)"),
+    ("attach_skill",    42, "附加技能",         "v15[21] sub_422BBC 装备时应用 skill type=1/2/3 效果"),
+    ("equip_learn",     44, "装备后学习技能",   "v15[22] sub_42234C 装备时 byte_757FB8[1054*char+v15[22]]=10"),
+    ("use_learn1",      46, "使用后学习技能1",  "v15[23] sub_41E40C 使用时 byte_757FB8[1054*char+v15[23]]=10"),
+    ("use_learn2",      48, "使用后学习技能2",  "v15[24] sub_41E40C 使用时 byte_757FB8[1054*char+v15[24]]=10"),
 ]
 
-# 隐含数据字段 (Maker UI 未显示, 但 TKItem 记录仍占用; 保留读写以免丢数据)
-# v15[22] offset 44: 实测六破散此字段=0, 非"导致状态"单选. sub_42234C 中按 byte 偏移写入
-#                    角色状态区; Maker 修改器未在 UI 中暴露编辑, 故作为隐含字段透传.
-HIDDEN_FIELDS = [
-    ("_u22", 44, "保留 v15[22]", 'int', W_INPUT, "v15[22] sub_42234C byte offset (Maker UI 未显示)"),
-]
-
-# 导致状态 (2 x 16 位掩码, v15[26]/v15[27] offset 52/54) —— 实测验证, Maker UI 标签
+# 导致状态 (v15[26]/v15[27] offset 52/54; Maker UI "导致状态 1-16 / 17-32")
+# 装备时 sub_42234C: a2[67]=v9[26], a2[68]=v9[27] (战斗代码读取 a2[67]/a2[68] 作状态 mask)
+# 实测验证: 干將莫邪[26]=0x03(破兵+碎甲); 紅顏知己[27]=0x1000(迷恋); 大骨鎚[27]=0xC(禁制+定身)
 CAUSE_MASK_FIELDS = [
-    ("cause_mask1", 52, "导致状态 1-16",  "v15[26] mask bit i -> 状态 i (六破散=0x001F 破兵..羁绊)"),
-    ("cause_mask2", 54, "导致状态 17-32", "v15[27] mask bit i -> 状态 16+i"),
+    ("cause_mask1", 52, "导致状态 1-16",  "v15[26] a2[67]=v9[26] 战斗时作 mask bit i -> 状态 i"),
+    ("cause_mask2", 54, "导致状态 17-32", "v15[27] a2[68]=v9[27] 战斗时作 mask bit i -> 状态 16+i"),
 ]
 
-# 解除状态 (2 x 16 位掩码, v15[28]/v15[29] offset 56/58) —— 实测验证, Maker UI 标签
+# 解除状态 (v15[28]/v15[29] offset 56/58; sub_41E40C 使用时按位清除角色状态)
 CURE_MASK_FIELDS = [
-    ("cure_mask1", 56, "解除状态 1-16",  "v15[28] mask bit i -> 状态 i"),
-    ("cure_mask2", 58, "解除状态 17-32", "v15[29] mask bit i -> 状态 16+i (六破散=0x2000 明镜)"),
+    ("cure_mask1", 56, "解除状态 1-16",  "v15[28] (v15[28] & (1<<(s-1))) 清除状态 1-16"),
+    ("cure_mask2", 58, "解除状态 17-32", "v15[29] (v15[29] & (1<<(s-17))) 清除状态 17-32"),
+]
+
+# 隐含字段 (Maker UI 未显示, 但 TKItem 记录占用; 读写透传)
+HIDDEN_FIELDS = [
+    ("tab_code",     2, "页面号",       'page', W_INPUT, "v15[1] 商店分页 (sub_4246D8)"),
+    ("extra_flags", 60, "额外标志",     'int',  W_INPUT, "v15[30] word_77CC06 OR-> dword_755C80 (sub_41F784)"),
 ]
 
 ALL_FIELDS = (GRID_FIELDS + HIDDEN_FIELDS +
@@ -234,12 +222,28 @@ ALL_FIELDS = (GRID_FIELDS + HIDDEN_FIELDS +
               [(k,o,l,'mask',W_INPUT,c) for k,o,l,c in CAUSE_MASK_FIELDS] +
               [(k,o,l,'mask',W_INPUT,c) for k,o,l,c in CURE_MASK_FIELDS])
 
-def is_empty_item(rec):
-    """占位空槽: item_id == 0 或 1 (惯用, sub_40CE30 以 word_77CBCA 起列表匹配)."""
-    return rec['item_id'] == 0 or rec['item_id'] == 1
+# ============================================================
+# 空槽/显示名辅助
+# ============================================================
+def is_empty_item(rec, tkt=None):
+    """严格空槽: item_id in (0,1) 或 name_id<=0 或 tkt 中无对应名称.
+    - #560-#599 真空槽: id=0 & name_id=0 (可新增物品复用)
+    - id=1 占位: 约 225 条游戏保留记录 (#550-559 等)
+    - 无 TKT 名: 孤立记录, 无法显示
+    """
+    if rec.get('item_id', 0) in (0, 1): return True
+    if rec.get('name_id', 0) <= 0: return True
+    if tkt is not None:
+        nm = tkt.get(rec['name_id'], "")
+        if not nm or not nm.strip(): return True
+    return False
+
+def is_pure_empty_slot(rec):
+    """真·空槽 (可作新增物品起始模板): item_id==0 AND name_id==0."""
+    return rec.get('item_id', 0) == 0 and rec.get('name_id', 0) == 0
 
 def item_display_name(rec, tkt):
-    if is_empty_item(rec):
+    if is_empty_item(rec, tkt):
         return f"(空槽 #{rec['index']})"
     nid = rec['name_id']
     if nid > 0 and nid in tkt:
@@ -257,7 +261,6 @@ def load_items(fp):
         if off + ITEM_REC > len(dec): break
         fields = struct.unpack_from('<' + 'h'*32, dec, off)
         rec = {'index': i}
-        # 按每字段声明的字节偏移读取 (fo//2 = int16 索引)
         for k, fo, _, _, _, _ in ALL_FIELDS:
             rec[k] = fields[fo // 2]
         recs.append(rec)
@@ -265,6 +268,7 @@ def load_items(fp):
 
 def save_items(fp, recs):
     buf = bytearray(ITEM_CNT * ITEM_REC)
+    # 空槽模板 (#560-#599 原始值: name_id=0, desc_id=600) 在保存时保持 desc_id=600
     for rec in recs[:ITEM_CNT]:
         i = rec['index']; off = i * ITEM_REC
         for k, fo, _, _, _, _ in ALL_FIELDS:
@@ -282,8 +286,8 @@ def save_items(fp, recs):
 class ItemEditor:
     def __init__(self, root):
         self.root = root
-        self.root.title("TKItem.dat 可视化编辑器 v2.2 (对照 Maker.exe UI 布局)")
-        self.root.geometry("1320x760"); self.root.minsize(1100, 620)
+        self.root.title("TKItem.dat 可视化编辑器 v3.0 (对照 Maker.exe TksModify.dll)")
+        self.root.geometry("1360x780"); self.root.minsize(1120, 640)
         self.item_path = self.tkt_path = self.skill_path = None
         self.records = []; self.tkt = {}; self.skill_names = {}
         self.filtered_indices = []; self._dirty = False
@@ -294,7 +298,6 @@ class ItemEditor:
 
     # ----------- UI 构建 -----------
     def _build_ui(self):
-        # 菜单
         mb = tk.Menu(self.root); self.root.config(menu=mb)
         fm = tk.Menu(mb, tearoff=0)
         fm.add_command(label="加载 TKS 目录…", command=self._load_tks_dir, accelerator="Ctrl+O")
@@ -303,14 +306,19 @@ class ItemEditor:
         fm.add_command(label="导出 CSV…", command=self._export_csv)
         fm.add_separator(); fm.add_command(label="退出", command=self.root.quit)
         mb.add_cascade(label="文件", menu=fm)
+        em = tk.Menu(mb, tearoff=0)
+        em.add_command(label="新建物品 (填充空槽)", command=self._new_item, accelerator="Ctrl+N")
+        em.add_command(label="复制当前到空槽", command=self._copy_record)
+        em.add_command(label="清空当前记录", command=self._clear_current)
+        mb.add_cascade(label="编辑", menu=em)
         hm = tk.Menu(mb, tearoff=0)
-        hm.add_command(label="字段来源", command=self._show_field_ref)
+        hm.add_command(label="字段来源 (逆向+Maker)", command=self._show_field_ref)
         hm.add_command(label="关于", command=self._show_about)
         mb.add_cascade(label="帮助", menu=hm)
         self.root.bind('<Control-o>', lambda e: self._load_tks_dir())
         self.root.bind('<Control-s>', lambda e: self._save())
+        self.root.bind('<Control-n>', lambda e: self._new_item())
 
-        # 工具栏
         tb = ttk.Frame(self.root); tb.pack(fill=tk.X, padx=5, pady=(5,0))
         ttk.Label(tb, text="搜索:").pack(side=tk.LEFT)
         self.sv = tk.StringVar()
@@ -324,26 +332,26 @@ class ItemEditor:
                      state='readonly', width=10).pack(side=tk.LEFT, padx=2)
         ttk.Label(tb, text="权限:").pack(side=tk.LEFT, padx=(6,0))
         ttk.Combobox(tb, textvariable=self.filter_right, values=["全部权限"]+USE_RIGHT_VALUES,
-                     state='readonly', width=13).pack(side=tk.LEFT, padx=2)
+                     state='readonly', width=16).pack(side=tk.LEFT, padx=2)
         ttk.Checkbutton(tb, text="仅非空", variable=self.filter_empty,
                         command=self._apply_filter).pack(side=tk.LEFT, padx=6)
         self.filter_page.trace_add('write', lambda *a: self._apply_filter())
         self.filter_right.trace_add('write', lambda *a: self._apply_filter())
         ttk.Separator(tb, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=6)
+        ttk.Button(tb, text="新建物品", command=self._new_item).pack(side=tk.LEFT, padx=2)
         ttk.Button(tb, text="重新加载", command=self._reload).pack(side=tk.LEFT, padx=2)
         self.status_var = tk.StringVar(value="请通过 文件 → 加载 TKS 目录 打开数据")
         ttk.Label(tb, textvariable=self.status_var, foreground="gray").pack(side=tk.RIGHT, padx=10)
 
-        # 主分栏
         paned = ttk.PanedWindow(self.root, orient=tk.HORIZONTAL)
         paned.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
 
-        # 左侧表格
+        # 左表
         lf = ttk.Frame(paned); paned.add(lf, weight=2)
         cols = ('index','item_id','page','name','right','price')
         self.tree = ttk.Treeview(lf, columns=cols, show='headings', selectmode='browse')
         cc = [('index','#',40),('item_id','ID',50),('page','页面',55),
-              ('name','物品名称',220),('right','权限',55),('price','价格',55)]
+              ('name','物品名称',220),('right','权限',90),('price','价格',55)]
         for cid,cn,cw in cc:
             self.tree.heading(cid, text=cn, command=lambda c=cid: self._sort_by(c))
             self.tree.column(cid, width=cw, anchor='center' if cid != 'name' else 'w', minwidth=cw)
@@ -352,15 +360,13 @@ class ItemEditor:
         self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True); vsb.pack(side=tk.RIGHT, fill=tk.Y)
         self.tree.bind('<<TreeviewSelect>>', self._on_tree_select)
 
-        # 右侧编辑区
+        # 右编辑
         rf = ttk.Frame(paned); paned.add(rf, weight=3)
         self.edit_frame = rf
 
-        # 记录头
         self.lbl_rec_idx = ttk.Label(rf, text="未选中", font=('', 11, 'bold'))
         self.lbl_rec_idx.pack(anchor=tk.W, pady=(0,4), padx=4)
 
-        # 可滚动编辑容器
         canvas = tk.Canvas(rf, highlightthickness=0)
         sb = ttk.Scrollbar(rf, orient=tk.VERTICAL, command=canvas.yview)
         self.edit_inner = ttk.Frame(canvas)
@@ -372,59 +378,59 @@ class ItemEditor:
 
         self._edit_vars = {}; self._edit_extras = {}
 
-        # --- 名称/说明文本预览区 (问题 5: 独立预览, 不在下拉框下 inline) ---
+        # 文本预览
         pv_lf = ttk.LabelFrame(self.edit_inner, text="文本预览 (TKT.dat)", padding=4)
         pv_lf.grid(row=0, column=0, sticky='ew', padx=2, pady=2)
         pv_lf.columnconfigure(1, weight=1)
         ttk.Label(pv_lf, text="名称:", font=FONT_S, foreground='#666').grid(
             row=0, column=0, sticky='nw', padx=(2,4), pady=1)
         self.preview_name = ttk.Label(pv_lf, text="(未选中)", foreground='#3366cc',
-                                       font=FONT, wraplength=680, justify='left')
+                                       font=FONT, wraplength=700, justify='left')
         self.preview_name.grid(row=0, column=1, sticky='ew', pady=1)
         ttk.Label(pv_lf, text="说明:", font=FONT_S, foreground='#666').grid(
             row=1, column=0, sticky='nw', padx=(2,4), pady=1)
         self.preview_desc = ttk.Label(pv_lf, text="(未选中)", foreground='#228B22',
-                                       font=FONT, wraplength=680, justify='left')
+                                       font=FONT, wraplength=700, justify='left')
         self.preview_desc.grid(row=1, column=1, sticky='ew', pady=1)
 
-        # --- 基础属性网格 (对照修改器图: 5列) ---
-        grid_lf = ttk.LabelFrame(self.edit_inner, text="基础属性 (Maker.exe 布局)", padding=4)
+        # 基础属性网格
+        grid_lf = ttk.LabelFrame(self.edit_inner, text="基础属性 (Maker.exe UI 布局)", padding=4)
         grid_lf.grid(row=1, column=0, sticky='ew', padx=2, pady=2)
         COLS = 5
         for fi, (fn, fo, fl, ft, fw, cmt) in enumerate(GRID_FIELDS):
             row, col = fi // COLS, fi % COLS
             self._build_field(grid_lf, row, col, fn, fo, fl, ft, fw, cmt)
 
-        # --- 状态组 (Maker UI 实测: 导致=52/54 mask, 解除=56/58 mask, 各 2 个 mask) ---
+        # 技能组 (4 字段)
+        sk_lf = ttk.LabelFrame(self.edit_inner,
+                                text="技能 (Maker UI 4 字段; sub_422BBC / byte_757FB8)", padding=4)
+        sk_lf.grid(row=2, column=0, sticky='ew', padx=2, pady=2)
+        for si, (fn, fo, fl, cmt) in enumerate(SKILL_FIELDS):
+            self._build_field(sk_lf, 0, si, fn, fo, fl, 'skill', W_INPUT, cmt)
+
+        # 状态组
         st_lf = ttk.LabelFrame(self.edit_inner,
-                                text="状态 (位掩码; bit i = 对应状态名)", padding=4)
-        st_lf.grid(row=2, column=0, sticky='ew', padx=2, pady=2)
+                                text="状态位掩码 (Maker UI 导致/解除; bit i = 状态表第 i 项)", padding=4)
+        st_lf.grid(row=3, column=0, sticky='ew', padx=2, pady=2)
         for ci, (fn, fo, fl, cmt) in enumerate(CAUSE_MASK_FIELDS):
             self._build_field(st_lf, 0, ci, fn, fo, fl, 'mask', W_INPUT, cmt)
         for ci, (fn, fo, fl, cmt) in enumerate(CURE_MASK_FIELDS):
             self._build_field(st_lf, 0, 2+ci, fn, fo, fl, 'mask', W_INPUT, cmt)
 
-        # --- 附加技能组 (3 条技能字段) ---
-        sk_lf = ttk.LabelFrame(self.edit_inner,
-                                text="技能 (sub_422BBC / byte_757FB8)", padding=4)
-        sk_lf.grid(row=3, column=0, sticky='ew', padx=2, pady=2)
-        for si, (fn, fo, fl, cmt) in enumerate(SKILL_FIELDS):
-            self._build_field(sk_lf, 0, si, fn, fo, fl, 'skill', W_INPUT, cmt)
+        # 隐含字段
+        hd_lf = ttk.LabelFrame(self.edit_inner,
+                                text="隐含数据 (Maker UI 未显示, 保留原始数据透传)", padding=4)
+        hd_lf.grid(row=4, column=0, sticky='ew', padx=2, pady=2)
+        for hi, (fn, fo, fl, ft, fw, cmt) in enumerate(HIDDEN_FIELDS):
+            self._build_field(hd_lf, 0, hi, fn, fo, fl, ft, fw, cmt)
 
-        # 注: 原"装备防御"分组已按需求 6 移除. v15[26]/v15[27] 数据仍读写
-        #     (见 HIDDEN_FIELDS), 但不暴露编辑 UI, 避免混淆.
-        # 为 HIDDEN_FIELDS 预创建 StringVar, 让 load/save 能透传原始数据
-        for fn, _fo, _fl, _ft, _fw, _cmt in HIDDEN_FIELDS:
-            self._edit_vars[fn] = tk.StringVar()
-
-        # --- 按钮条 ---
         bf = ttk.Frame(self.edit_inner)
-        bf.grid(row=4, column=0, sticky='ew', pady=(8,0))
+        bf.grid(row=5, column=0, sticky='ew', pady=(8,0))
         ttk.Button(bf, text="应用修改", command=self._apply_edit).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0,2))
         ttk.Button(bf, text="复制到空槽", command=self._copy_record).pack(side=tk.LEFT, padx=2)
         ttk.Button(bf, text="重置为当前", command=self._reset_edit).pack(side=tk.LEFT, padx=2)
+        ttk.Button(bf, text="清空此记录", command=self._clear_current).pack(side=tk.LEFT, padx=2)
 
-        # 底部路径栏
         pf = ttk.LabelFrame(self.root, text="当前加载"); pf.pack(fill=tk.X, padx=5, pady=(0,2))
         self.lbl_item = ttk.Label(pf, text="", foreground="gray"); self.lbl_item.pack(side=tk.LEFT, padx=10, pady=2)
         ttk.Separator(pf, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y)
@@ -433,11 +439,8 @@ class ItemEditor:
         self.lbl_skill = ttk.Label(pf, text="", foreground="gray"); self.lbl_skill.pack(side=tk.LEFT, padx=10, pady=2)
 
     def _build_field(self, parent, row, col, fn, fo, fl, ft, fw, cmt):
-        """根据类型构建单个字段编辑控件. 所有控件统一使用 W_INPUT 宽度 (问题 4)."""
         frm = ttk.Frame(parent); frm.grid(row=row, column=col, sticky='nw', padx=3, pady=2)
-        # 标签 (含 tooltip)
-        lbl = ttk.Label(frm, text=fl, font=FONT_S)
-        lbl.pack(anchor=tk.W)
+        lbl = ttk.Label(frm, text=fl, font=FONT_S); lbl.pack(anchor=tk.W)
         self._bind_tooltip(lbl, f"[{fo:02d}] {cmt}")
 
         if ft == 'page':
@@ -447,17 +450,16 @@ class ItemEditor:
             self._edit_vars[fn] = tk.StringVar()
         elif ft == 'use_right':
             cb = ttk.Combobox(frm, state='readonly', values=USE_RIGHT_VALUES,
-                              width=W_INPUT, font=FONT)
+                              width=W_INPUT+3, font=FONT)
             cb.pack(fill=tk.X); self._edit_extras[fn] = cb
             self._edit_vars[fn] = tk.StringVar()
         elif ft == 'tkt':
-            # 问题 5: 不在下拉框下显示 inline 文本; 文本预览区统一渲染
             box = ttk.Frame(frm); box.pack(fill=tk.X)
             ev = tk.StringVar(); self._edit_vars[fn] = ev
             ttk.Entry(box, textvariable=ev, width=W_INPUT, font=FONT).pack(side=tk.LEFT)
             ttk.Button(box, text="…", width=2,
                        command=lambda f=fn: self._pick_tkt(f)).pack(side=tk.LEFT, padx=1)
-            self._edit_extras[fn] = None  # 占位, populate 时不写 inline
+            self._edit_extras[fn] = None
         elif ft == 'skill':
             box = ttk.Frame(frm); box.pack(fill=tk.X)
             ev = tk.StringVar(); self._edit_vars[fn] = ev
@@ -468,7 +470,6 @@ class ItemEditor:
                                               font=FONT_S, wraplength=160)
             self._edit_extras[fn].pack(anchor=tk.W)
         elif ft == 'mask':
-            # 导致/解除状态 统一 mask 类型; 按字段名决定按钮文案 & 标签颜色
             is_cause = fn.startswith('cause_')
             btn_text = "选择导致状态…" if is_cause else "选择解除状态…"
             color = '#CC3333' if is_cause else '#3366cc'
@@ -478,11 +479,10 @@ class ItemEditor:
                                               font=FONT_S, wraplength=180)
             self._edit_extras[fn].pack(anchor=tk.W)
             self._edit_vars[fn] = tk.StringVar()
-        else:  # int
+        else:
             ev = tk.StringVar(); self._edit_vars[fn] = ev
             ttk.Entry(frm, textvariable=ev, width=W_INPUT, font=FONT).pack(fill=tk.X)
 
-    # ----------- Tooltip -----------
     def _bind_tooltip(self, widget, text):
         tip = {'win': None}
         def _enter(e):
@@ -491,7 +491,7 @@ class ItemEditor:
             w = tk.Toplevel(widget); w.wm_overrideredirect(True)
             w.wm_geometry(f"+{x}+{y}")
             ttk.Label(w, text=text, background='#FFFFE0', relief='solid', borderwidth=1,
-                      font=FONT_S, wraplength=380, padding=3).pack()
+                      font=FONT_S, wraplength=420, padding=3).pack()
             tip['win'] = w
         def _leave(e):
             if tip['win']: tip['win'].destroy(); tip['win'] = None
@@ -556,18 +556,20 @@ class ItemEditor:
         q = self.sv.get().strip().lower(); self.filtered_indices = []
         fpg = self.filter_page.get(); frg = self.filter_right.get()
         for rec in self.records:
-            if self.filter_empty.get() and is_empty_item(rec): continue
+            if self.filter_empty.get() and is_empty_item(rec, self.tkt): continue
             if fpg and not fpg.startswith("全部"):
-                if rec['page_code'] != int(fpg.split('-')[0]): continue
+                if rec['tab_code'] != int(fpg.split('-')[0]): continue
             if frg and not frg.startswith("全部"):
-                if rec['use_right'] != int(frg.split('-')[0]): continue
+                if rec['equip_type'] != int(frg.split('-')[0]): continue
             if q:
                 nm = item_display_name(rec, self.tkt)
-                if q not in f"{rec['index']} {rec['item_id']} {rec['page_code']} {nm}".lower():
+                if q not in f"{rec['index']} {rec['item_id']} {rec['tab_code']} {nm}".lower():
                     continue
             self.filtered_indices.append(rec['index'])
         self._refresh_table()
-        self.status_var.set(f"显示 {len(self.filtered_indices)}/{len(self.records)} | Ctrl+S 保存")
+        empty_cnt = sum(1 for r in self.records if is_pure_empty_slot(r))
+        self.status_var.set(
+            f"显示 {len(self.filtered_indices)}/{len(self.records)} | 真空槽剩余 {empty_cnt}/40 | Ctrl+S 保存")
 
     def _clear_filter(self):
         self.sv.set(""); self.filter_page.set("全部页面")
@@ -576,19 +578,19 @@ class ItemEditor:
 
     def _refresh_table(self):
         for it in self.tree.get_children(): self.tree.delete(it)
-        rt_short = {0:"消耗",1:"近战",2:"远程",3:"防具",4:"饰品"}
         for idx in self.filtered_indices:
             r = self.records[idx]
-            rt = rt_short.get(r['use_right'], f"#{r['use_right']}") if r['use_right'] else "—"
+            et = r['equip_type']
+            rt = USE_RIGHT.get(et, f"#{et}") if et or et == 0 else "—"
             self.tree.insert('', 'end', values=(
                 r['index'], r['item_id'],
-                PAGE_NAMES.get(r['page_code'], '?'),
+                PAGE_NAMES.get(r['tab_code'], '?'),
                 item_display_name(r, self.tkt),
                 rt, r['price']))
 
     def _sort_by(self, col):
         rev = getattr(self, '_sort_reverse', False)
-        km = {'item_id':'item_id', 'page':'page_code', 'price':'price', 'right':'use_right'}
+        km = {'item_id':'item_id', 'page':'tab_code', 'price':'price', 'right':'equip_type'}
         self.filtered_indices.sort(key=lambda i: self.records[i].get(km.get(col, 'index'), 0), reverse=rev)
         self._sort_reverse = not rev; self._refresh_table()
 
@@ -603,10 +605,9 @@ class ItemEditor:
         self._editing_idx = rec['index']
         self.lbl_rec_idx.config(text=(
             f"记录 #{rec['index']}   物品代码={rec['item_id']}   "
-            f"页面号={PAGE_NAMES.get(rec['page_code'],'?')}   "
+            f"页面号={PAGE_NAMES.get(rec['tab_code'],'?')}   "
             f"名称={item_display_name(rec, self.tkt)}"
         ))
-        # 预览区: 名称/说明完整文本 (问题 5)
         nid = rec.get('name_id', 0) or 0
         did = rec.get('desc_id', 0) or 0
         n_txt = self.tkt.get(int(nid), "") if nid > 0 else ""
@@ -624,14 +625,12 @@ class ItemEditor:
                 cb = self._edit_extras[fn]
                 if not self._set_combobox(cb, val): cb.set(sv)
             elif ft == 'tkt':
-                # 不再渲染 inline 文本, 已移动到顶部预览区
                 pass
             elif ft == 'skill':
                 sid = int(val) if val else -1
                 nm = self.skill_names.get(sid, "(无)")
-                self._edit_extras[fn].config(text=nm[:30] if sid >= 0 else "(无)")
+                self._edit_extras[fn].config(text=nm[:30] if sid > 0 else "(无)")
             elif ft == 'mask':
-                # 导致/解除状态 mask 摘要
                 self._update_status_label(fn, int(val) if val else 0)
 
     def _set_combobox(self, cb, val):
@@ -640,7 +639,6 @@ class ItemEditor:
         return False
 
     def _update_status_label(self, fn, mask):
-        """导致/解除 状态 mask 摘要: *_mask1 对应状态 0-15, *_mask2 对应 16-30."""
         base = 0 if fn.endswith('_mask1') else 16
         sel = []
         for i in range(16):
@@ -648,14 +646,14 @@ class ItemEditor:
                 sel.append(STATUS_NAMES[base + i])
         self._edit_extras[fn].config(text=", ".join(sel) if sel else "(无)")
 
-    # ----------- 弹窗: 导致/解除 状态 mask 多选 -----------
+    # ----------- 弹窗: 状态 mask 多选 -----------
     def _pick_status(self, fn):
         is_cause = fn.startswith('cause_')
         title = "选择导致状态 (位掩码)" if is_cause else "选择解除状态 (位掩码)"
         dlg = tk.Toplevel(self.root); dlg.title(title)
         dlg.geometry("360x480"); dlg.transient(self.root); dlg.grab_set()
         base = 0 if fn.endswith('_mask1') else 16
-        cur_mask = int(self._edit_vars[fn].get() or 0)
+        cur_mask = int(self._edit_vars[fn].get() or 0) & 0xFFFF
         vars_ = []
         wrap = ttk.Frame(dlg, padding=8); wrap.pack(fill=tk.BOTH, expand=True)
         for i in range(16):
@@ -670,7 +668,10 @@ class ItemEditor:
             m = 0
             for i, v in enumerate(vars_):
                 if v.get(): m |= (1 << i)
-            self._edit_vars[fn].set(str(m)); self._update_status_label(fn, m); dlg.destroy()
+            # 转回有符号 int16
+            if m >= 0x8000: m -= 0x10000
+            self._edit_vars[fn].set(str(m))
+            self._update_status_label(fn, m & 0xFFFF); dlg.destroy()
         ttk.Button(bf, text="全选", command=lambda: [v.set(True) for v in vars_]).pack(side=tk.LEFT)
         ttk.Button(bf, text="全清", command=lambda: [v.set(False) for v in vars_]).pack(side=tk.LEFT, padx=4)
         ttk.Button(bf, text="取消", command=dlg.destroy).pack(side=tk.RIGHT, padx=2)
@@ -703,15 +704,13 @@ class ItemEditor:
             if sel:
                 v = tree.item(sel[0])['values']
                 self._edit_vars[fn].set(str(v[0]))
-                # 更新顶部预览区 (问题 5)
                 try:
                     tid = int(v[0]); txt = self.tkt.get(tid, "")
                     if fn == 'name_id':
                         self.preview_name.config(text=txt if txt else "(无 / TKT 未提供)")
                     elif fn == 'desc_id':
                         self.preview_desc.config(text=txt if txt else "(无 / TKT 未提供)")
-                except Exception:
-                    pass
+                except Exception: pass
                 dlg.destroy()
         tree.bind('<Double-1>', lambda e: _sel())
         bf = ttk.Frame(dlg, padding=5); bf.pack(fill=tk.X)
@@ -764,7 +763,6 @@ class ItemEditor:
                     rec[fn] = int(sv.split('-')[0]) if '-' in sv else int(sv)
                 else:
                     v = int(self._edit_vars[fn].get())
-                    # int16 范围保护
                     if v > 32767: v = 32767
                     if v < -32768: v = -32768
                     rec[fn] = v
@@ -780,22 +778,79 @@ class ItemEditor:
         if hasattr(self, '_editing_idx'):
             self._populate_edit(self.records[self._editing_idx])
 
+    def _clear_current(self):
+        """把当前选中记录清为空槽模板 (恢复 #560-599 原始值)."""
+        if not hasattr(self, '_editing_idx'):
+            messagebox.showinfo("提示", "请先选择一条记录"); return
+        if not messagebox.askyesno("确认清空",
+            f"将记录 #{self._editing_idx} 清为空槽模板 (item_id=0, name_id=0, desc_id=600).\n确定?"):
+            return
+        rec = self.records[self._editing_idx]
+        for fn, _, _, _, _, _ in ALL_FIELDS:
+            rec[fn] = 0
+        rec['desc_id'] = 600  # 空槽模板的默认 desc_id
+        self._dirty = True
+        self._apply_filter(); self._populate_edit(rec)
+        self.status_var.set(f"记录 #{self._editing_idx} 已清空")
+
     def _copy_record(self):
-        if not hasattr(self, '_editing_idx'): return
+        if not hasattr(self, '_editing_idx'):
+            messagebox.showinfo("提示", "请先选择一条记录"); return
         src = self.records[self._editing_idx]
         for i, rec in enumerate(self.records):
-            if is_empty_item(rec):
+            if is_pure_empty_slot(rec):
                 for fn, fo, fl, ft, fw, cmt in ALL_FIELDS:
                     rec[fn] = src[fn]
                 rec['index'] = i
-                rec['item_id'] = 0
                 self._dirty = True; self._apply_filter()
                 for child in self.tree.get_children():
                     if int(self.tree.item(child)['values'][0]) == i:
                         self.tree.selection_set(child); self.tree.see(child); break
                 self.status_var.set(f"已复制到空槽 #{i}")
                 return
-        messagebox.showwarning("已满", "600 条记录无空槽")
+        messagebox.showwarning("已满", "无真·空槽 (id=0 的记录) 可复制到.\n可先使用『清空此记录』释放一个槽位.")
+
+    def _new_item(self):
+        """新增物品: 在空槽 #560-#599 中找第一条 item_id=0 的记录, 填入默认值并选中.
+        游戏硬编码限制 600 条, 无法扩容; 但 #560-#599 40 条空槽可用.
+        """
+        if not self.records:
+            messagebox.showinfo("提示", "请先加载 TKItem.dat"); return
+        target = None
+        for rec in self.records:
+            if is_pure_empty_slot(rec):
+                target = rec; break
+        if target is None:
+            messagebox.showwarning("已满",
+                "600 条记录上限已满 (sub_45343C 硬编码 38400 字节)\n"
+                "无真·空槽 (id=0) 可用. 可使用『清空此记录』释放一个旧记录."
+            )
+            return
+        # 填入默认值 (参考 #560-599 原始模板)
+        for fn, _, _, _, _, _ in ALL_FIELDS:
+            target[fn] = 0
+        # 估算一个未占用的 item_id (避免碰撞)
+        used_ids = {r['item_id'] for r in self.records if r['item_id'] > 0}
+        new_id = 600
+        while new_id in used_ids and new_id < 9999:
+            new_id += 1
+        target['item_id'] = new_id
+        target['desc_id'] = 600  # 模板默认
+        target['price'] = 1
+        target['tab_code'] = 0
+        self._dirty = True
+        self._apply_filter()
+        # 选中新记录
+        for child in self.tree.get_children():
+            if int(self.tree.item(child)['values'][0]) == target['index']:
+                self.tree.selection_set(child); self.tree.see(child); break
+        self._populate_edit(target)
+        messagebox.showinfo("新建物品",
+            f"已在空槽 #{target['index']} 创建新物品\n"
+            f"初始 item_id={new_id} (请改为你想要的值)\n"
+            f"请填写 名称代码/说明代码/其他属性, 然后 Ctrl+S 保存."
+        )
+        self.status_var.set(f"新建物品: #{target['index']} item_id={new_id}")
 
     # ----------- 保存/导出 -----------
     def _save(self):
@@ -829,25 +884,32 @@ class ItemEditor:
 
     # ----------- 帮助 -----------
     def _show_field_ref(self):
-        lines = ["TKItem.dat 字段映射 (实测六破散 + Maker.exe UI 对照):", ""]
-        lines.append("顶部基础属性网格 (对照 Maker.exe 修改器布局):")
+        lines = ["TKItem.dat 字段映射 v3.0 (反编译 + Maker.exe TksModify.dll 实证):", ""]
+        lines.append("【基础属性 (Maker UI 可见字段 22 条)】")
         for fn, fo, fl, ft, fw, cmt in GRID_FIELDS:
             lines.append(f"  [{fo:02d}] {fl:<12s}  {cmt}")
-        lines.append(""); lines.append("导致状态 mask (实测: 六破散 offset 52 = 0x001F):")
-        for fn, fo, fl, cmt in CAUSE_MASK_FIELDS:
-            lines.append(f"  [{fo:02d}] {fl:<12s}  {cmt}")
-        lines.append(""); lines.append("解除状态 mask (实测: 六破散 offset 58 = 0x2000 明镜):")
-        for fn, fo, fl, cmt in CURE_MASK_FIELDS:
-            lines.append(f"  [{fo:02d}] {fl:<12s}  {cmt}")
-        lines.append(""); lines.append("技能组:")
+        lines.append(""); lines.append("【技能 (Maker UI 4 字段)】")
         for fn, fo, fl, cmt in SKILL_FIELDS:
             lines.append(f"  [{fo:02d}] {fl:<12s}  {cmt}")
-        lines.append(""); lines.append("隐含数据 (Maker 未显 UI, 但 TKItem 记录保留):")
+        lines.append(""); lines.append("【导致状态 (Maker UI; 战斗时读取角色 a2[67]/a2[68])】")
+        for fn, fo, fl, cmt in CAUSE_MASK_FIELDS:
+            lines.append(f"  [{fo:02d}] {fl:<12s}  {cmt}")
+        lines.append(""); lines.append("【解除状态 (sub_41E40C 使用物品时清除)】")
+        for fn, fo, fl, cmt in CURE_MASK_FIELDS:
+            lines.append(f"  [{fo:02d}] {fl:<12s}  {cmt}")
+        lines.append(""); lines.append("【隐含数据 (Maker UI 未显示, 但 TKItem 记录占用)】")
         for fn, fo, fl, ft, fw, cmt in HIDDEN_FIELDS:
             lines.append(f"  [{fo:02d}] {fl:<12s}  {cmt}")
+        lines.append(""); lines.append("【使用权限 (equip_type) 实测值】")
+        for k, v in sorted(USE_RIGHT.items()):
+            lines.append(f"  #{k:<3d}  {v}")
+        lines.append(""); lines.append("【记录数硬限制】")
+        lines.append("  600 条 x 64 字节 = 38400 字节 (sub_45343C 固定加载量)")
+        lines.append("  sub_42F8D4 搜索循环 `while (v3 < 600)` 是硬编码")
+        lines.append("  #560-#599 (40条) 为真空槽, 可用于新增物品 (item_id=0, name_id=0)")
 
-        dlg = tk.Toplevel(self.root); dlg.title("字段来源 (逆向佐证)")
-        dlg.geometry("780x540"); dlg.transient(self.root)
+        dlg = tk.Toplevel(self.root); dlg.title("字段来源 v3.0 (逆向+Maker 实证)")
+        dlg.geometry("820x580"); dlg.transient(self.root)
         tx = tk.Text(dlg, font=('Consolas', 9), wrap='none')
         sb1 = ttk.Scrollbar(dlg, orient=tk.VERTICAL, command=tx.yview)
         sb2 = ttk.Scrollbar(dlg, orient=tk.HORIZONTAL, command=tx.xview)
@@ -858,11 +920,17 @@ class ItemEditor:
 
     def _show_about(self):
         messagebox.showinfo("关于",
-            "TKItem.dat 可视化编辑器 v2.2\n\n"
-            "基于《三国群侠传》 TKS.exe 逆向 + Maker.exe 修改器布局对照开发\n"
-            "600 条记录 x 32 字段\n\n"
-            "核心依据: sub_45343C 装载, sub_41E40C 使用, sub_42234C 装备,\n"
-            "sub_424A2C 显示, sub_4246D8 商店过滤, sub_41F784 战斗标志"
+            "TKItem.dat 可视化编辑器 v3.0\n\n"
+            "基于《三国群侠传》 TKS.exe 反编译 + Maker.exe TksModify.dll 文案对照\n"
+            "600 条记录 x 32 字段 (int16 x 32 = 64 字节)\n\n"
+            "核心反编译函数:\n"
+            "  sub_45343C  数据载入 (硬编码 38400 字节)\n"
+            "  sub_41E40C  物品使用 (消耗品 / 使用后学习技能 / 解除状态)\n"
+            "  sub_42234C  装备应用 (装备后学习技能 / 导致状态)\n"
+            "  sub_422BBC  附加技能 type=1/2/3 效果展开\n"
+            "  sub_42F8D4  物品查找 (< 600 循环)\n"
+            "  sub_424A2C  背包/商店显示\n\n"
+            "v3.0 修正 v2.2 的错误字段映射 (原将 [22] 误标导致状态)"
         )
 
 
