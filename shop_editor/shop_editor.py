@@ -160,17 +160,22 @@ def lzss_compress(data):
                 break
 
         if best_len >= min_match:
-            out_tokens.append((False, best_offset, best_len))
-            for j in range(best_len):
-                window[win_pos] = src[pos + j]
-                win_pos = (win_pos + 1) & 0xFFF
-            pos += best_len
-        else:
-            b = src[pos]
-            out_tokens.append((True, b, 0))
-            window[win_pos] = b
-            win_pos = (win_pos + 1) & 0xFFF
-            pos += 1
+            # 防止读写重叠: 压缩时窗口引用区域与写入区域重叠会导致解压错误
+            if win_pos <= best_offset + best_len:
+                best_len = win_pos - best_offset
+            if best_len >= min_match:
+                out_tokens.append((False, best_offset, best_len))
+                for j in range(best_len):
+                    window[win_pos] = src[pos + j]
+                    win_pos = (win_pos + 1) & 0xFFF
+                pos += best_len
+                continue
+        # literal (无匹配或截断后<3)
+        b = src[pos]
+        out_tokens.append((True, b, 0))
+        window[win_pos] = b
+        win_pos = (win_pos + 1) & 0xFFF
+        pos += 1
 
     # 打包 flag 字节 + 数据流
     stream = bytearray()
