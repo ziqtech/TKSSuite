@@ -246,14 +246,26 @@ def load_tkitem_names(item_dat_path):
 
 def load_tkitem_with_tkt(item_dat_path, tkt_dat_path):
     """
-    加载 TKItem 并关联 TKT 名称
-    TKT 结构 (sub_401E88):
-      [total_size:4][count:4][ID表:count×4][偏移表:count×4][文本区]
-      XOR 0xFF 加密
-    """
-    names = load_tkitem_names(item_dat_path)
+    加载 TKItem 并关联 TKT 名称, 同时提取 equip_type 用于分类筛选
 
-    # Load TKT
+    field[0]=item_id, field[1]=tab_code, field[5]=equip_type (word_77CBD4, sub_41928C)
+    """
+    # 先解压原始记录
+    with open(item_dat_path, 'rb') as f:
+        raw = f.read()
+    decompressed = lzss_decompress(raw)
+    REC_SIZE = 64
+
+    items_raw = []
+    for i in range(min(600, len(decompressed) // REC_SIZE)):
+        off = i * REC_SIZE
+        item_id = struct.unpack_from('<h', decompressed, off)[0]
+        tab_code = struct.unpack_from('<h', decompressed, off + 2)[0]
+        name_id = struct.unpack_from('<h', decompressed, off + 4)[0]
+        equip_type = struct.unpack_from('<h', decompressed, off + 10)[0]  # field[5]
+        items_raw.append((i, item_id, tab_code, name_id, equip_type))
+
+    # 加载 TKT
     tkt_lookup = {}
     if tkt_dat_path and os.path.exists(tkt_dat_path):
         with open(tkt_dat_path, 'rb') as f:
@@ -264,7 +276,6 @@ def load_tkitem_with_tkt(item_dat_path, tkt_dat_path):
         decrypted = bytes([b ^ 0xFF for b in encrypted])
         id_table_size = count * 4
         offset_table_size = count * 4
-
         for i in range(count):
             eid = struct.unpack_from('<i', decrypted, i * 4)[0]
             off = struct.unpack_from('<I', decrypted, id_table_size + i * 4)[0]
@@ -274,24 +285,20 @@ def load_tkitem_with_tkt(item_dat_path, tkt_dat_path):
                 end = abs_off
                 while end < len(decrypted) and decrypted[end] != 0:
                     end += 1
-                text = decrypted[abs_off:end]
-                text = text.replace(b'\x1e', b'\n')
+                text = decrypted[abs_off:end].replace(b'\x1e', b'\n')
                 try:
                     tkt_lookup[eid] = text.decode('big5', errors='replace')
                 except:
                     tkt_lookup[eid] = text.decode('gbk', errors='replace')
 
-    # Apply TKT names
     result = []
-    for idx, item_id, name_id, fallback in names:
-        if name_id and name_id in tkt_lookup:
-            name = tkt_lookup[name_id]
-            # Take first line only
+    for idx, item_id, tab_code, name_id, equip_type in items_raw:
+        name = tkt_lookup.get(name_id, "")
+        if name and name != '0':
             name = name.split('\n')[0].strip()
-            if name and name != '0':
-                result.append((idx, item_id, name_id, name))
-                continue
-        result.append((idx, item_id, name_id, fallback))
+        if not name:
+            name = f"Item#{item_id}" if item_id else f"(空-{idx})"
+        result.append((idx, item_id, tab_code, name_id, equip_type, name))
 
     return result
 
@@ -311,15 +318,15 @@ REC_SIZE = 8
 
 
 def load_shop_data(filepath):
-    """加载 TKShop.dat"""
+    """加载 TKShop.dat (固定 240 条, sub_45343C a3=1920)"""
     with open(filepath, 'rb') as f:
         raw = f.read()
 
     decompressed = lzss_decompress(raw)
-    count = len(decompressed) // REC_SIZE
+    FIXED_COUNT = 240
     records = []
 
-    for i in range(count):
+    for i in range(FIXED_COUNT):
         offset = i * REC_SIZE
         if offset + REC_SIZE > len(decompressed):
             break
@@ -342,10 +349,15 @@ def load_shop_data(filepath):
 
 
 def save_shop_data(filepath, records):
-    """保存 TKShop.dat (LZSS 压缩)"""
-    count = len(records)
-    buf = bytearray(count * REC_SIZE)
-    for rec in records:
+    """保存 TKShop.dat (LZSS 压缩)
+
+    sub_45343C 调用: sub_45343C("TKShop.dat", &unk_9508A0, 1920)
+    第19行检查: if (decompressed_size <= 1920) ... else ERROR
+    必须恰好 240 条记录 (1920 字节), 否则游戏拒绝加载!
+    """
+    FIXED_COUNT = 240
+    buf = bytearray(FIXED_COUNT * REC_SIZE)
+    for rec in records[:FIXED_COUNT]:
         i = rec['index']
         offset = i * REC_SIZE
         struct.pack_into('<h', buf, offset, rec['area_id'])
@@ -473,26 +485,28 @@ class ShopEditor:
         self.lbl_rec_idx = ttk.Label(right_frame, text="未选中", font=('', 10, 'bold'))
         self.lbl_rec_idx.pack(anchor=tk.W, pady=(0, 10))
 
-        # area_id
-        ttk.Label(right_frame, text="区域ID (area_id):").pack(anchor=tk.W)
-        self.edit_area = ttk.Combobox(right_frame, state='readonly', width=14,
-                                       values=[f"{k}" for k in AREA_NAMES.keys()])
-        self.edit_area.pack(fill=tk.X, pady=(0, 2))
-        area_hint = " | ".join([f"{k}={v}" for k, v in sorted(AREA_NAMES.items())])
-        ttk.Label(right_frame, text=area_hint, foreground='gray', wraplength=280).pack(anchor=tk.W, pady=(0, 8))
+        # area_id — 直接显示名称
+        ttk.Label(right_frame, text="区域:").pack(anchor=tk.W)
+        self._area_name_by_id = {v: k for k, v in AREA_NAMES.items()}   # "药店"→0
+        area_names = [v for k, v in sorted(AREA_NAMES.items())]
+        self.edit_area_combo = ttk.Combobox(right_frame, state='readonly', width=14, values=area_names)
+        self.edit_area_combo.pack(fill=tk.X, pady=(0, 2))
+        self.edit_area_combo.bind('<<ComboboxSelected>>', self._on_area_changed)
+        # 兼容性警告标签
+        self.lbl_compat = ttk.Label(right_frame, text="", foreground='#888888', wraplength=280)
+        self.lbl_compat.pack(anchor=tk.W, pady=(0, 6))
 
-        # item_ref
-        ttk.Label(right_frame, text="物品索引 (item_ref):").pack(anchor=tk.W)
-        item_search_frame = ttk.Frame(right_frame)
-        item_search_frame.pack(fill=tk.X, pady=(0, 2))
-        self.edit_item = ttk.Entry(item_search_frame, width=8)
-        self.edit_item.pack(side=tk.LEFT)
-        self.edit_item_search = ttk.Entry(item_search_frame, width=18)
-        self.edit_item_search.pack(side=tk.LEFT, padx=(4, 0))
-        ttk.Label(item_search_frame, text="🔍", foreground='gray').pack(side=tk.LEFT)
-        self.edit_item_search.bind('<KeyRelease>', self._on_item_search)
-        self.lbl_item_name = ttk.Label(right_frame, text="物品: (未选择)", foreground='blue', wraplength=280)
-        self.lbl_item_name.pack(anchor=tk.W, pady=(0, 8))
+        # item_ref — 按钮 + 弹窗选择
+        ttk.Label(right_frame, text="物品:").pack(anchor=tk.W)
+        item_frame = ttk.Frame(right_frame)
+        item_frame.pack(fill=tk.X, pady=(0, 2))
+        self._editing_item_idx = tk.StringVar(value="")
+        ttk.Label(item_frame, textvariable=self._editing_item_idx, width=6,
+                  font=('', 9, 'bold')).pack(side=tk.LEFT)
+        self.lbl_item_name = ttk.Label(item_frame, text="(未选择)", foreground='blue', anchor=tk.W)
+        self.lbl_item_name.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(6, 0))
+        ttk.Button(item_frame, text="选择物品…", command=self._pick_item).pack(side=tk.RIGHT)
+        ttk.Label(right_frame, text="", foreground='gray').pack(anchor=tk.W, pady=(0, 8))  # spacer
 
         # condition — 三模式: 随机抽选 / 始终显示 / 自定义偏移 + 实时概率表
         ttk.Label(right_frame, text="出现条件 (condition, sub_4244CC):").pack(anchor=tk.W)
@@ -582,8 +596,10 @@ class ShopEditor:
 
         # 加载 TKItem + TKT
         if self.item_path and os.path.exists(self.item_path):
-            self.items = load_tkitem_with_tkt(self.item_path, self.tkt_path or "")
-            self.item_names = {idx: name for idx, item_id, name_id, name in self.items}
+            items_raw = load_tkitem_with_tkt(self.item_path, self.tkt_path or "")
+            self.items = items_raw  # [(idx, item_id, tab_code, name_id, equip_type, name), ...]
+            self.item_names = {it[0]: it[5] for it in items_raw}  # idx → name
+            self.item_equip_types = {it[0]: it[4] for it in items_raw}  # idx → equip_type
 
         # 加载 TKShop
         try:
@@ -600,23 +616,29 @@ class ShopEditor:
 
     def _set_edit_enabled(self, enabled):
         """启用/禁用编辑面板"""
-        state = 'readonly' if enabled else 'disabled'
         for child in self.edit_frame.winfo_children():
-            self._set_widget_state(child, tk.NORMAL if enabled else tk.DISABLED)
+            self._set_widget_state(child, enabled)
 
-    def _set_widget_state(self, widget, state):
+    def _set_widget_state(self, widget, enabled):
         try:
-            if isinstance(widget, (ttk.Entry, ttk.Spinbox, ttk.Combobox)):
-                widget.configure(state=state)
+            if isinstance(widget, (ttk.Entry, ttk.Spinbox)):
+                widget.configure(state='normal' if enabled else 'disabled')
+            elif isinstance(widget, ttk.Combobox):
+                widget.configure(state='readonly' if enabled else 'disabled')
             elif isinstance(widget, ttk.Checkbutton):
-                if state == tk.DISABLED:
-                    widget.state(['disabled'])
-                else:
+                if enabled:
                     widget.state(['!disabled'])
+                else:
+                    widget.state(['disabled'])
+            elif isinstance(widget, ttk.Radiobutton):
+                if enabled:
+                    widget.state(['!disabled'])
+                else:
+                    widget.state(['disabled'])
         except:
             pass
         for child in widget.winfo_children():
-            self._set_widget_state(child, state)
+            self._set_widget_state(child, enabled)
 
     def _update_path_labels(self):
         green, red = "#228B22", "#CC3333"
@@ -708,13 +730,14 @@ class ShopEditor:
         """将记录数据填入右侧编辑面板"""
         self._editing_idx = rec['index']
         self.lbl_rec_idx.config(text=f"记录 #{rec['index']}")
-        self.edit_area.set(str(rec['area_id']))
-        self.edit_item.delete(0, tk.END)
-        self.edit_item.insert(0, str(rec['item_ref']))
-        self.edit_item_search.delete(0, tk.END)
+        # area
+        self.edit_area_combo.set(AREA_NAMES.get(rec['area_id'], str(rec['area_id'])))
+        # item
+        self._editing_item_idx.set(str(rec['item_ref']))
         iname = self.item_names.get(rec['item_ref'], f"Item#{rec['item_ref']}")
-        self.lbl_item_name.config(text=f"物品: {iname}")
-        # condition: 根据值推断模式
+        self.lbl_item_name.config(text=iname, foreground='blue')
+        self._update_compat_label(rec['area_id'], rec['item_ref'])
+        # condition
         cond = rec['condition']
         if cond == 1:
             self.cond_mode.set("random")
@@ -723,8 +746,42 @@ class ShopEditor:
         else:
             self.cond_mode.set("custom")
         self.edit_cond.set(str(cond))
-        self._on_cond_mode()  # 刷新概率表
+        self._on_cond_mode()
+        # display
         self.edit_display.set(rec['display'] == 1)
+
+    def _get_item_tab(self, item_ref):
+        """获取物品的 tab_code (field[1])"""
+        for it in self.items:
+            if it[0] == item_ref:
+                return it[2]
+        return -1
+
+    def _update_compat_label(self, area_id, item_ref):
+        """更新区域兼容性标签 (sub_4246D8: tab_code 过滤)"""
+        item_tab = self._get_item_tab(item_ref)
+        allowed = self.TAB_TO_SHOP.get(item_tab, [])
+        if area_id in allowed:
+            self.lbl_compat.config(text="✓ 该物品可在此商店出现", foreground='#228B22')
+        elif not allowed:
+            self.lbl_compat.config(text="⚠ 该物品不会在任何商店出现", foreground='#CC3333')
+        else:
+            shop_names = [AREA_NAMES.get(a, str(a)) for a in allowed]
+            self.lbl_compat.config(
+                text=f"⚠ 不兼容! 该物品仅适用于: {', '.join(shop_names)}",
+                foreground='#CC3333')
+
+    def _on_area_changed(self, event=None):
+        """区域下拉框变化 → 刷新兼容性提示"""
+        if not hasattr(self, '_editing_idx'):
+            return
+        try:
+            item_ref = int(self._editing_item_idx.get())
+        except ValueError:
+            return
+        area_name = self.edit_area_combo.get()
+        area_id = self._area_name_by_id.get(area_name, 0)
+        self._update_compat_label(area_id, item_ref)
 
     def _on_cond_mode(self):
         """条件模式切换: 随机→cond=1, 始终→cond=-100, 偏移→可输入"""
@@ -787,17 +844,129 @@ class ShopEditor:
         self.cond_table_text.insert('1.0', header + '\n' + '\n'.join(lines))
         self.cond_table_text.configure(state='disabled')
 
-    def _on_item_search(self, event):
-        """物品搜索框输入 → 实时匹配"""
-        q = self.edit_item_search.get().strip().lower()
-        if len(q) < 2:
-            return
-        matches = [(i, n) for i, n in self.item_names.items() if q in n.lower()]
-        if matches:
-            idx, name = matches[0]
-            self.edit_item.delete(0, tk.END)
-            self.edit_item.insert(0, str(idx))
-            self.lbl_item_name.config(text=f"物品: {name}", foreground='blue')
+    # 物品分类映射 (基于 field[1] tab_code, sub_4246D8 用此字段过滤商店)
+    # word_77CBCC[32*item_ref] = item.tab_code → 与 a1[31+slot] 比较
+    ITEM_CATEGORIES = {
+        "全部": None,
+        "消耗品": [0],
+        "书籍": [1],
+        "武器": [2],
+        "防具": [3],
+        "饰品": [4],
+        "特殊": [5],
+    }
+    ITEM_CAT_ORDER = ["全部", "消耗品", "书籍", "武器", "防具", "饰品", "特殊"]
+
+    # tab_code → 商店区域约束 (sub_4233C4 switch + sub_4246D8 过滤)
+    TAB_TO_SHOP = {
+        0: [0, 3],       # 消耗品 → 药店, 杂货
+        1: [1, 3],       # 书籍 → 道具店, 杂货
+        2: [2],          # 武器 → 武器防具
+        3: [2],          # 防具 → 武器防具
+        4: [4],          # 饰品 → 饰品店
+        5: [],           # 特殊 → 不显示在商店
+    }
+
+    def _pick_item(self):
+        """弹出物品选择对话框, 带搜索和分类筛选"""
+        dialog = tk.Toplevel(self.root)
+        dialog.title("选择物品")
+        dialog.geometry("520x480")
+        dialog.minsize(420, 360)
+        dialog.transient(self.root)
+        dialog.grab_set()
+
+        result = tk.IntVar(value=-1)
+
+        # 搜索 + 分类
+        top_frame = ttk.Frame(dialog, padding=(8, 8, 8, 0))
+        top_frame.pack(fill=tk.X)
+        ttk.Label(top_frame, text="搜索:").grid(row=0, column=0, sticky='w')
+        search_var = tk.StringVar()
+        search_entry = ttk.Entry(top_frame, textvariable=search_var, width=24)
+        search_entry.grid(row=0, column=1, padx=5, sticky='we')
+        ttk.Label(top_frame, text="分类:").grid(row=0, column=2, padx=(10, 0), sticky='w')
+        cat_var = tk.StringVar(value="全部")
+        cat_combo = ttk.Combobox(top_frame, textvariable=cat_var, state='readonly',
+                                  values=self.ITEM_CAT_ORDER, width=12)
+        cat_combo.grid(row=0, column=3, padx=5, sticky='w')
+        top_frame.grid_columnconfigure(1, weight=1)
+        search_entry.focus_set()
+
+        # 列表
+        list_frame = ttk.Frame(dialog)
+        list_frame.pack(fill=tk.BOTH, expand=True, padx=8, pady=5)
+
+        columns = ('idx', 'cat', 'name')
+        tree = ttk.Treeview(list_frame, columns=columns, show='headings', selectmode='browse', height=18)
+        tree.heading('idx', text='索引', command=lambda: self._sort_item_tree(tree, 'idx', False))
+        tree.heading('cat', text='分类', command=lambda: self._sort_item_tree(tree, 'cat', False))
+        tree.heading('name', text='物品名称', command=lambda: self._sort_item_tree(tree, 'name', False))
+        tree.column('idx', width=42, anchor='center')
+        tree.column('cat', width=72, anchor='center')
+        tree.column('name', width=360, anchor='w')
+
+        vsb = ttk.Scrollbar(list_frame, orient=tk.VERTICAL, command=tree.yview)
+        tree.configure(yscrollcommand=vsb.set)
+        tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        vsb.pack(side=tk.RIGHT, fill=tk.Y)
+
+        tree.bind('<Double-1>', lambda e: [result.set(int(tree.item(tree.selection()[0])['values'][0])),
+                                            dialog.destroy()] if tree.selection() else None)
+
+        def _cat_name(tab_code):
+            """tab_code → 分类名 (sub_4246D8: word_77CBCC[32*idx] = item.tab_code)"""
+            return {0: "消耗品", 1: "书籍", 2: "武器", 3: "防具", 4: "饰品", 5: "特殊"}.get(tab_code, f"其他({tab_code})")
+
+        def refresh_list(*args):
+            tree.delete(*tree.get_children())
+            q = search_var.get().strip().lower()
+            cat = cat_var.get()
+            allowed = self.ITEM_CATEGORIES.get(cat)
+            for idx, item_id, tab_code, name_id, equip_type, name in self.items:
+                # 跳过空名称
+                if not name or name.startswith("(空") or name == "0":
+                    continue
+                if q and q not in name.lower():
+                    continue
+                if allowed is not None and tab_code not in allowed:
+                    continue
+                tree.insert('', 'end', values=(idx, _cat_name(tab_code), name))
+            if tree.get_children():
+                tree.selection_set(tree.get_children()[0])
+
+        refresh_list()
+        search_var.trace_add('write', refresh_list)
+        cat_combo.bind('<<ComboboxSelected>>', refresh_list)
+
+        # 按钮区
+        btn_frame = ttk.Frame(dialog, padding=(8, 0, 8, 8))
+        btn_frame.pack(fill=tk.X)
+        ttk.Label(btn_frame, text=f"共 {len(self.items)} 件物品  |  双击行快速选择",
+                  foreground='gray').pack(side=tk.LEFT, pady=6)
+        ttk.Button(btn_frame, text="确定", width=8, command=lambda: [
+            result.set(int(tree.item(tree.selection()[0])['values'][0])),
+            dialog.destroy()
+        ] if tree.selection() else None).pack(side=tk.RIGHT, padx=2)
+        ttk.Button(btn_frame, text="取消", width=8, command=dialog.destroy).pack(side=tk.RIGHT, padx=2)
+
+        dialog.wait_window()
+
+        picked = result.get()
+        if picked >= 0:
+            self._editing_item_idx.set(str(picked))
+            self.lbl_item_name.config(text=self.item_names.get(picked, f"Item#{picked}"), foreground='blue')
+
+    @staticmethod
+    def _sort_item_tree(tree, col, reverse):
+        items = [(tree.set(child, col), child) for child in tree.get_children('')]
+        try:
+            items.sort(key=lambda x: int(x[0]), reverse=reverse)
+        except ValueError:
+            items.sort(key=lambda x: x[0], reverse=reverse)
+        for i, (_, child) in enumerate(items):
+            tree.move(child, '', i)
+        tree.heading(col, command=lambda: ShopEditor._sort_item_tree(tree, col, not reverse))
 
     def _apply_edit(self):
         """应用右侧面板的修改到内存记录"""
@@ -805,8 +974,10 @@ class ShopEditor:
             return
         try:
             rec = self.records[self._editing_idx]
-            rec['area_id'] = int(self.edit_area.get())
-            rec['item_ref'] = int(self.edit_item.get())
+            # area: 名称 → ID
+            area_name = self.edit_area_combo.get()
+            rec['area_id'] = self._area_name_by_id.get(area_name, 0)
+            rec['item_ref'] = int(self._editing_item_idx.get())
             rec['condition'] = int(self.edit_cond.get())
             rec['display'] = 1 if self.edit_display.get() else 0
             self._dirty = True
@@ -836,24 +1007,32 @@ class ShopEditor:
         self._apply_filter()
 
     def _add_record(self):
-        """在末尾新增一条空记录 (追加到 240 条之后)"""
-        if len(self.records) >= 400:
-            messagebox.showwarning("已达上限", "记录数已达 400 条上限")
-            return
-        new_idx = len(self.records)
-        self.records.append({
-            'index': new_idx, 'area_id': 0, 'item_ref': 0,
-            'condition': 0, 'display': 0, 'reserved': 0
-        })
-        self._dirty = True
-        self._apply_filter()
-        # 选中新记录
-        for child in self.tree.get_children():
-            if int(self.tree.item(child)['values'][0]) == new_idx:
-                self.tree.selection_set(child)
-                self.tree.see(child)
-                break
-        self.status_var.set(f"已新增记录 #{new_idx} (共 {len(self.records)} 条)")
+        """在 240 条中找空槽 (全为零) 复用; 没有空槽则提示已满
+
+        sub_45343C 硬编码 1920 字节 (240 条): 不能超出此限制。
+        """
+        FIXED_COUNT = 240
+        # 确保有 240 条
+        while len(self.records) < FIXED_COUNT:
+            self.records.append({
+                'index': len(self.records), 'area_id': 0, 'item_ref': 0,
+                'condition': 0, 'display': 0, 'reserved': 0
+            })
+
+        # 找空槽
+        for rec in self.records[:FIXED_COUNT]:
+            if rec['area_id'] == 0 and rec['item_ref'] == 0 and rec['condition'] == 0:
+                self._dirty = True
+                self._apply_filter()
+                for child in self.tree.get_children():
+                    if int(self.tree.item(child)['values'][0]) == rec['index']:
+                        self.tree.selection_set(child)
+                        self.tree.see(child)
+                        break
+                self.status_var.set(f"选中空槽 #{rec['index']}, 请在右侧编辑后应用修改")
+                return
+
+        messagebox.showwarning("已满", "240 条记录全部非空, 无法新增。\n请先删除一条旧记录腾出空槽。")
 
     # ================================================================
     # 保存 & 导出
