@@ -260,7 +260,7 @@ USE_RIGHT = {
 USE_RIGHT_VALUES = [f"{k}-{v}" for k,v in sorted(USE_RIGHT.items())]
 
 # 页面号 (tab_code, Maker UI 未显示; 商店分页, 0-5)
-PAGE_NAMES = {0:"消耗品", 1:"书籍", 2:"武器", 3:"防具", 4:"饰品", 5:"特殊"}
+PAGE_NAMES = {0:"药品", 1:"道具", 2:"武器", 3:"防具", 4:"饰品", 5:"特殊"}
 PAGE_VALUES = [f"{k}-{v}" for k,v in sorted(PAGE_NAMES.items())]
 
 ITEM_REC = 64; ITEM_CNT = 600  # 游戏硬编码: sub_45343C(aTkitemDat, word_77CBCA, 38400)
@@ -323,7 +323,7 @@ CURE_MASK_FIELDS = [
 
 # 隐含字段 (TKItem 记录占用但 Maker UI 未显示，读写透传保留原始数据)
 HIDDEN_FIELDS = [
-    ("tab_code",     2, "页面号",       'page', W_INPUT, "物品在商店中的分页编号 (0=消耗品,1=书籍,2=武器,3=防具,4=饰品,5=特殊)"),
+    ("tab_code",     2, "页面号",       'page', W_INPUT, "物品在商店中的分页编号 (0=药品,1=道具,2=武器,3=防具,4=饰品,5=特殊)"),
     ("extra_flags", 60, "额外标志",     'int',  W_INPUT, "额外位标志，装备时 OR 到战斗全局标志 (v15[30])"),
 ]
 
@@ -1280,7 +1280,7 @@ class ItemEditor:
             "600 条记录 x 32 字段 (int16 x 32 = 64 字节)\n\n"
             "核心反编译函数:\n"
             "  sub_45343C  数据载入 (硬编码 38400 字节)\n"
-            "  sub_41E40C  物品使用 (消耗品 / 使用后学习技能 / 解除状态)\n"
+            "  sub_41E40C  物品使用 (药品 / 使用后学习技能 / 解除状态)\n"
             "  sub_42234C  装备应用 (装备后学习技能 / 导致状态)\n"
             "  sub_422BBC  附加技能 type=1/2/3 效果展开\n"
             "  sub_42F8D4  物品查找 (< 600 循环)\n"
