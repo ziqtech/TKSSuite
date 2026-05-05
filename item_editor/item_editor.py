@@ -115,6 +115,26 @@ def load_tkt(tkt_path):
             if s and s != '0': lookup[eid] = s.split('\n')[0].strip()
     return lookup
 
+def load_tkt_full(tkt_path):
+    """加载 TKT 全部文本（保留完整多行内容，\x1e 转为换行）"""
+    if not tkt_path or not os.path.exists(tkt_path): return {}
+    with open(tkt_path, 'rb') as f: raw = f.read()
+    ts = struct.unpack_from('<I', raw, 0)[0]; cnt = struct.unpack_from('<I', raw, 4)[0]
+    enc = raw[8:8+ts]; dec = bytes([b ^ 0xFF for b in enc])
+    idsz, ofsz = cnt*4, cnt*4; lookup = {}; SKIP = set(range(0,10))
+    for i in range(cnt):
+        eid = struct.unpack_from('<i', dec, i*4)[0]
+        if eid in SKIP: continue
+        off = struct.unpack_from('<I', dec, idsz + i*4)[0]; ao = idsz + ofsz + off
+        if ao < len(dec):
+            end = ao
+            while end < len(dec) and dec[end] != 0: end += 1
+            txt = dec[ao:end].replace(b'\x1e', b'\n')
+            try: s = txt.decode('big5', errors='replace')
+            except: s = txt.decode('gbk', errors='replace')
+            if s and s != '0': lookup[eid] = s.strip()
+    return lookup
+
 def load_tkskill_names(sp, tkt):
     if not sp or not os.path.exists(sp): return {}
     with open(sp, 'rb') as f: raw = f.read()
@@ -169,60 +189,58 @@ W_INPUT = 12
 # ============================================================
 # 顶部基础属性网格 (Maker UI 可见字段 22 条; 技能/状态在下方分组)
 GRID_FIELDS = [
-    ("item_id",      0, "物品代码",       'int',       W_INPUT, "v15[0] sub_40CE30 查找主键"),
-    ("name_id",      4, "名称代码",       'tkt',       W_INPUT, "v15[2] TKT 文本 ID (word_77CBCE)"),
-    ("desc_id",      6, "说明代码",       'tkt',       W_INPUT, "v15[3] TKT 说明 ID (word_77CBD0)"),
-    ("icon",         8, "形象",           'int',       W_INPUT, "v15[4] 图标索引 +130"),
-    ("equip_type",  10, "使用权限",       'use_right', W_INPUT, "v15[5] 装备/使用位标志"),
+    ("item_id",      0, "物品代码",       'int',       W_INPUT, "物品唯一标识，全游戏查找主键 (v15[0])"),
+    ("name_id",      4, "名称代码",       'tkt',       W_INPUT, "TKT 文本数据库 ID，用于物品显示名称 (v15[2])"),
+    ("desc_id",      6, "说明代码",       'tkt',       W_INPUT, "TKT 文本数据库 ID，用于物品描述文本 (v15[3])"),
+    ("icon",         8, "形象",           'int',       W_INPUT, "背包/商店显示图标的精灵索引，实际值 +130 (v15[4])"),
+    ("equip_type",  10, "使用权限",       'use_right', W_INPUT, "角色武器专精位掩码，控制谁可装备/使用此物品 (v15[5])"),
 
-    ("battle_anim", 12, "战场动画",       'int',       W_INPUT, "v15[6] 武器攻击范围/动画"),
-    ("hp_inc",      14, "增加生命",       'int',       W_INPUT, "v15[7] HP上限; >1000=百分比"),
-    ("hp_heal",     16, "恢复生命",       'int',       W_INPUT, "v15[8] 当前HP回复; >1000=百分比"),
-    ("mp_inc",      18, "增加内力",       'int',       W_INPUT, "v15[9] MP上限; >1000=百分比"),
-    ("mp_heal",     20, "恢复内力",       'int',       W_INPUT, "v15[10] 当前MP回复; >1000=百分比"),
+    ("battle_anim", 12, "战场动画",       'int',       W_INPUT, "战斗中使用物品时的动画效果/攻击范围参数 (v15[6])"),
+    ("hp_inc",      14, "增加生命",       'int',       W_INPUT, "永久增加生命上限，≤1000固定值，>1000为百分比加成 (v15[7])"),
+    ("hp_heal",     16, "恢复生命",       'int',       W_INPUT, "使用后回复当前 HP，≤1000固定值，>1000为百分比回复 (v15[8])"),
+    ("mp_inc",      18, "增加内力",       'int',       W_INPUT, "永久增加内力上限，≤1000固定值，>1000为百分比加成 (v15[9])"),
+    ("mp_heal",     20, "恢复内力",       'int',       W_INPUT, "使用后回复当前 MP，≤1000固定值，>1000为百分比回复 (v15[10])"),
 
-    ("atk",         22, "增加攻击",       'int',       W_INPUT, "v15[11] STR(武力) word_757F1E +="),
-    ("def_",        24, "增加防御",       'int',       W_INPUT, "v15[12] INT(智力) word_757F22 +="),
-    ("hit",         26, "增加命中",       'int',       W_INPUT, "v15[13] CMD(统御) word_757F26 +="),
-    ("dodge",       28, "增加闪避",       'int',       W_INPUT, "v15[14] AGI(敏捷) word_757F2A +="),
-    ("spd",         30, "增加速度",       'int',       W_INPUT, "v15[15] SPD word_757F2E +=, 上限100"),
+    ("atk",         22, "增加攻击",       'int',       W_INPUT, "武力(STR)永久加成，同时增加基础值和当前值 (v15[11])"),
+    ("def_",        24, "增加防御",       'int',       W_INPUT, "智力(INT)永久加成，同时增加基础值和当前值 (v15[12])"),
+    ("hit",         26, "增加命中",       'int',       W_INPUT, "统御(CMD)永久加成，同时增加基础值和当前值 (v15[13])"),
+    ("dodge",       28, "增加闪避",       'int',       W_INPUT, "敏捷(AGI)永久加成，同时增加基础值和当前值 (v15[14])"),
+    ("spd",         30, "增加速度",       'int',       W_INPUT, "速度(SPD)永久加成，上限100 (v15[15])"),
 
-    ("luk",         32, "增加幸运",       'int',       W_INPUT, "v15[16] LUK word_757F32 +=, 商店条件基准"),
-    ("spi",         34, "增加悟性",       'int',       W_INPUT, "v15[17] SPI word_757F3A +="),
-    ("vit",         36, "增加移动",       'int',       W_INPUT, "v15[18] VIT word_757F36 +="),
-    ("ring_flag",   38, "戒指判定",       'int',       W_INPUT, "v15[19] word_757F46 +="),
-    ("combat_flag", 40, "战斗相关判定",   'int',       W_INPUT, "v15[20] word_757F4A |=, a2[33] |="),
+    ("luk",         32, "增加幸运",       'int',       W_INPUT, "运气(LUK)永久加成，商店物品出现条件的基准值 (v15[16])"),
+    ("spi",         34, "增加悟性",       'int',       W_INPUT, "精神(SPI)悟性永久加成 (v15[17])"),
+    ("vit",         36, "增加移动",       'int',       W_INPUT, "体力(VIT)移动永久加成 (v15[18])"),
+    ("ring_flag",   38, "戒指判定",       'int',       W_INPUT, "暴击率/魅力值加成 (v15[19])"),
+    ("combat_flag", 40, "战斗相关判定",   'int',       W_INPUT, "位掩码标志，装备/使用后 OR 到角色特殊能力标志 (v15[20])"),
 
-    ("medicine",    50, "增加医术",       'int',       W_INPUT, "v15[25] word_75688A += (Maker UI 文案)"),
-    ("price",       62, "价格",           'int',       W_INPUT, "v15[31] word_77CC08 买卖价"),
+    ("medicine",    50, "增加医术",       'int',       W_INPUT, "使用后获得的医术点数，累加到全局医术计数 (v15[25])"),
+    ("price",       62, "价格",           'int',       W_INPUT, "物品买卖价格，商店卖出时折半 (v15[31])"),
 ]
 
-# 技能组 (Maker UI 4 个独立字段; 全部对应 byte_757FB8 全局技能等级表, 等级 10)
+# 技能组 (4 个字段; 全部对应全局技能等级表)
 SKILL_FIELDS = [
-    ("attach_skill",    42, "附加技能",         "v15[21] sub_422BBC 装备时应用 skill type=1/2/3 效果"),
-    ("equip_learn",     44, "装备后学习技能",   "v15[22] sub_42234C 装备时 byte_757FB8[1054*char+v15[22]]=10"),
-    ("use_learn1",      46, "使用后学习技能1",  "v15[23] sub_41E40C 使用时 byte_757FB8[1054*char+v15[23]]=10"),
-    ("use_learn2",      48, "使用后学习技能2",  "v15[24] sub_41E40C 使用时 byte_757FB8[1054*char+v15[24]]=10"),
+    ("attach_skill",    42, "附加技能",         "装备此物品后附带的主动/被动技能，值为 TKSkill 索引 (v15[21])"),
+    ("equip_learn",     44, "装备后学习技能",   "装备此物品后自动学会的技能，等级设为 10 (v15[22])"),
+    ("use_learn1",      46, "使用后学习技能1",  "使用此物品时学会的第一个技能，等级设为 10 (v15[23])"),
+    ("use_learn2",      48, "使用后学习技能2",  "使用此物品时学会的第二个技能，等级设为 10 (v15[24])"),
 ]
 
-# 导致状态 (v15[26]/v15[27] offset 52/54; Maker UI "导致状态 1-16 / 17-32")
-# 装备时 sub_42234C: a2[67]=v9[26], a2[68]=v9[27] (战斗代码读取 a2[67]/a2[68] 作状态 mask)
-# 实测验证: 干將莫邪[26]=0x03(破兵+碎甲); 紅顏知己[27]=0x1000(迷恋); 大骨鎚[27]=0xC(禁制+定身)
+# 导致状态 (装备/命中时让目标进入异常状态; 干將莫邪[26]=0x03=破兵+碎甲; 紅顏知己[27]=0x1000=迷恋)
 CAUSE_MASK_FIELDS = [
-    ("cause_mask1", 52, "导致状态 1-16",  "v15[26] a2[67]=v9[26] 战斗时作 mask bit i -> 状态 i"),
-    ("cause_mask2", 54, "导致状态 17-32", "v15[27] a2[68]=v9[27] 战斗时作 mask bit i -> 状态 16+i"),
+    ("cause_mask1", 52, "导致状态 1-16",  "装备/命中时让目标进入的状态位掩码，每位对应状态表第 i 项 (v15[26])"),
+    ("cause_mask2", 54, "导致状态 17-32", "装备/命中时让目标进入的状态位掩码，每位对应状态表第 16+i 项 (v15[27])"),
 ]
 
-# 解除状态 (v15[28]/v15[29] offset 56/58; sub_41E40C 使用时按位清除角色状态)
+# 解除状态 (使用物品时按位清除角色异常状态)
 CURE_MASK_FIELDS = [
-    ("cure_mask1", 56, "解除状态 1-16",  "v15[28] (v15[28] & (1<<(s-1))) 清除状态 1-16"),
-    ("cure_mask2", 58, "解除状态 17-32", "v15[29] (v15[29] & (1<<(s-17))) 清除状态 17-32"),
+    ("cure_mask1", 56, "解除状态 1-16",  "使用物品时解除的状态位掩码，每位对应状态表第 i 项 (v15[28])"),
+    ("cure_mask2", 58, "解除状态 17-32", "使用物品时解除的状态位掩码，每位对应状态表第 16+i 项 (v15[29])"),
 ]
 
-# 隐含字段 (Maker UI 未显示, 但 TKItem 记录占用; 读写透传)
+# 隐含字段 (TKItem 记录占用但 Maker UI 未显示，读写透传保留原始数据)
 HIDDEN_FIELDS = [
-    ("tab_code",     2, "页面号",       'page', W_INPUT, "v15[1] 商店分页 (sub_4246D8)"),
-    ("extra_flags", 60, "额外标志",     'int',  W_INPUT, "v15[30] word_77CC06 OR-> dword_755C80 (sub_41F784)"),
+    ("tab_code",     2, "页面号",       'page', W_INPUT, "物品在商店中的分页编号 (0=消耗品,1=书籍,2=武器,3=防具,4=饰品,5=特殊)"),
+    ("extra_flags", 60, "额外标志",     'int',  W_INPUT, "额外位标志，装备时 OR 到战斗全局标志 (v15[30])"),
 ]
 
 ALL_FIELDS = (GRID_FIELDS + HIDDEN_FIELDS +
@@ -294,10 +312,10 @@ def save_items(fp, recs):
 class ItemEditor:
     def __init__(self, root):
         self.root = root
-        self.root.title("TKItem.dat 可视化编辑器 v3.0 (对照 Maker.exe TksModify.dll)")
-        self.root.geometry("1360x780"); self.root.minsize(1120, 640)
+        self.root.title("TKItem.dat 可视化编辑器")
+        self.root.geometry("1360x860"); self.root.minsize(1120, 700)
         self.item_path = self.tkt_path = self.skill_path = None
-        self.records = []; self.tkt = {}; self.skill_names = {}
+        self.records = []; self.tkt = {}; self.tkt_full = {}; self.skill_names = {}
         self.filtered_indices = []; self._dirty = False
         self.filter_page = tk.StringVar(value="全部页面")
         self.filter_right = tk.StringVar(value="全部权限")
@@ -359,7 +377,7 @@ class ItemEditor:
         cols = ('index','item_id','page','name','right','price')
         self.tree = ttk.Treeview(lf, columns=cols, show='headings', selectmode='browse')
         cc = [('index','#',40),('item_id','ID',50),('page','页面',55),
-              ('name','物品名称',220),('right','权限',90),('price','价格',55)]
+              ('name','物品名称',150),('right','权限',90),('price','价格',55)]
         for cid,cn,cw in cc:
             self.tree.heading(cid, text=cn, command=lambda c=cid: self._sort_by(c))
             self.tree.column(cid, width=cw, anchor='center' if cid != 'name' else 'w', minwidth=cw)
@@ -368,41 +386,97 @@ class ItemEditor:
         self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True); vsb.pack(side=tk.RIGHT, fill=tk.Y)
         self.tree.bind('<<TreeviewSelect>>', self._on_tree_select)
 
-        # 右编辑
+        # 右编辑 — 使用 grid 布局确保按钮栏与编辑区宽度一致
         rf = ttk.Frame(paned); paned.add(rf, weight=3)
         self.edit_frame = rf
+        rf.grid_rowconfigure(1, weight=1); rf.grid_columnconfigure(0, weight=1)
 
         self.lbl_rec_idx = ttk.Label(rf, text="未选中", font=('', 11, 'bold'))
-        self.lbl_rec_idx.pack(anchor=tk.W, pady=(0,4), padx=4)
+        self.lbl_rec_idx.grid(row=0, column=0, columnspan=2, sticky='w', padx=4, pady=(0,4))
 
         canvas = tk.Canvas(rf, highlightthickness=0)
         sb = ttk.Scrollbar(rf, orient=tk.VERTICAL, command=canvas.yview)
         self.edit_inner = ttk.Frame(canvas)
         self.edit_inner.bind('<Configure>', lambda e: canvas.configure(scrollregion=canvas.bbox('all')))
-        canvas.create_window((0,0), window=self.edit_inner, anchor='nw')
+        self._canvas_win = canvas.create_window((0,0), window=self.edit_inner, anchor='nw')
         canvas.configure(yscrollcommand=sb.set)
-        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True); sb.pack(side=tk.RIGHT, fill=tk.Y)
+        # 让 edit_inner 宽度始终跟随 canvas，确保编辑区与按钮栏对齐
+        canvas.bind('<Configure>', lambda e: canvas.itemconfigure(self._canvas_win, width=e.width))
+        canvas.grid(row=1, column=0, sticky='nsew')
+        sb.grid(row=1, column=1, sticky='ns')
         self._bind_mousewheel(canvas)
+
+        # 按钮栏 — 固定底部，仅占 column 0 与编辑区同宽
+        bf = ttk.Frame(rf)
+        bf.grid(row=2, column=0, sticky='ew', pady=(2,0))
+        ttk.Button(bf, text="清空此记录", command=self._clear_current, width=12).pack(side=tk.RIGHT)
+        ttk.Button(bf, text="重置为当前", command=self._reset_edit, width=12).pack(side=tk.RIGHT, padx=2)
+        ttk.Button(bf, text="复制到空槽", command=self._copy_record, width=12).pack(side=tk.RIGHT, padx=2)
+        ttk.Button(bf, text="应用修改", command=self._apply_edit, width=12).pack(side=tk.LEFT)
 
         self._edit_vars = {}; self._edit_extras = {}
 
         # 文本预览
-        pv_lf = ttk.LabelFrame(self.edit_inner, text="文本预览 (TKT.dat)", padding=4)
+        pv_lf = ttk.LabelFrame(self.edit_inner, text="文本预览", padding=4)
         pv_lf.grid(row=0, column=0, sticky='ew', padx=2, pady=2)
-        pv_lf.columnconfigure(1, weight=1)
-        ttk.Label(pv_lf, text="名称:", font=FONT_S, foreground='#666').grid(
+        for c in range(1, 5): pv_lf.columnconfigure(c, weight=1)
+        LBL_CLR = '#666'  # 统一标签颜色
+        # 名称
+        ttk.Label(pv_lf, text="名称:", font=FONT_S, foreground=LBL_CLR).grid(
             row=0, column=0, sticky='nw', padx=(2,4), pady=1)
         self.preview_name = ttk.Label(pv_lf, text="(未选中)", foreground='#3366cc',
                                        font=FONT, wraplength=700, justify='left')
-        self.preview_name.grid(row=0, column=1, sticky='ew', pady=1)
-        ttk.Label(pv_lf, text="说明:", font=FONT_S, foreground='#666').grid(
+        self.preview_name.grid(row=0, column=1, columnspan=4, sticky='ew', pady=1)
+        # 说明 (多行, 去除白色背景)
+        self.preview_desc = tk.Text(pv_lf, height=4, width=60, font=FONT,
+                                     foreground='#228B22', wrap='word',
+                                     relief='flat', borderwidth=0,
+                                     state='disabled', bg=self.root.cget('bg'))
+        ttk.Label(pv_lf, text="说明:", font=FONT_S, foreground=LBL_CLR).grid(
             row=1, column=0, sticky='nw', padx=(2,4), pady=1)
-        self.preview_desc = ttk.Label(pv_lf, text="(未选中)", foreground='#228B22',
-                                       font=FONT, wraplength=700, justify='left')
-        self.preview_desc.grid(row=1, column=1, sticky='ew', pady=1)
+        self.preview_desc.grid(row=1, column=1, columnspan=4, sticky='ew', pady=1)
+        # 技能预览 (一行四列, col 0=附加技能 左对齐标签)
+        self._preview_skills = []
+        skill_labels = ["附加技能", "装备后学习技能", "使用后学习技能1", "使用后学习技能2"]
+        for ci, slbl in enumerate(skill_labels):
+            col = 1+ci
+            if ci == 0:
+                # 第一列: col 0 放标签, col 1 放值
+                ttk.Label(pv_lf, text=f"{slbl}:", font=FONT_S, foreground=LBL_CLR).grid(
+                    row=2, column=0, sticky='nw', padx=(2,4), pady=1)
+                lbl = ttk.Label(pv_lf, text="—", foreground='#228B22',
+                               font=FONT, wraplength=170, justify='left')
+                lbl.grid(row=2, column=1, sticky='ew', padx=2, pady=1)
+            else:
+                # 其余列: 标签+值放在同一列
+                frm = ttk.Frame(pv_lf)
+                frm.grid(row=2, column=col, sticky='ew', padx=2, pady=1)
+                ttk.Label(frm, text=f"{slbl}:", font=FONT_S, foreground=LBL_CLR).pack(side=tk.LEFT)
+                lbl = ttk.Label(frm, text="—", foreground='#228B22', font=FONT, wraplength=120)
+                lbl.pack(side=tk.LEFT, padx=(2,0))
+            self._preview_skills.append(lbl)
+        # 状态预览 (一行四列, col 0=导致状态 1-16 左对齐标签)
+        self._preview_statuses = []
+        status_labels = ["导致状态 1-16", "导致状态 17-32", "解除状态 1-16", "解除状态 17-32"]
+        status_val_colors = ['#CC3333', '#CC3333', '#3366cc', '#3366cc']
+        for ci, (slbl, sc) in enumerate(zip(status_labels, status_val_colors)):
+            col = 1+ci
+            if ci == 0:
+                ttk.Label(pv_lf, text=f"{slbl}:", font=FONT_S, foreground=LBL_CLR).grid(
+                    row=3, column=0, sticky='nw', padx=(2,4), pady=1)
+                lbl = ttk.Label(pv_lf, text="(无)", foreground=sc,
+                               font=FONT, wraplength=170, justify='left')
+                lbl.grid(row=3, column=1, sticky='ew', padx=2, pady=1)
+            else:
+                frm = ttk.Frame(pv_lf)
+                frm.grid(row=3, column=col, sticky='ew', padx=2, pady=1)
+                ttk.Label(frm, text=f"{slbl}:", font=FONT_S, foreground=LBL_CLR).pack(side=tk.LEFT)
+                lbl = ttk.Label(frm, text="(无)", foreground=sc, font=FONT, wraplength=120)
+                lbl.pack(side=tk.LEFT, padx=(2,0))
+            self._preview_statuses.append(lbl)
 
         # 基础属性网格
-        grid_lf = ttk.LabelFrame(self.edit_inner, text="基础属性 (Maker.exe UI 布局)", padding=4)
+        grid_lf = ttk.LabelFrame(self.edit_inner, text="基础属性", padding=4)
         grid_lf.grid(row=1, column=0, sticky='ew', padx=2, pady=2)
         COLS = 5
         for fi, (fn, fo, fl, ft, fw, cmt) in enumerate(GRID_FIELDS):
@@ -411,14 +485,14 @@ class ItemEditor:
 
         # 技能组 (4 字段)
         sk_lf = ttk.LabelFrame(self.edit_inner,
-                                text="技能 (Maker UI 4 字段; sub_422BBC / byte_757FB8)", padding=4)
+                                text="技能", padding=4)
         sk_lf.grid(row=2, column=0, sticky='ew', padx=2, pady=2)
         for si, (fn, fo, fl, cmt) in enumerate(SKILL_FIELDS):
             self._build_field(sk_lf, 0, si, fn, fo, fl, 'skill', W_INPUT, cmt)
 
         # 状态组
         st_lf = ttk.LabelFrame(self.edit_inner,
-                                text="状态位掩码 (Maker UI 导致/解除; bit i = 状态表第 i 项)", padding=4)
+                                text="状态位掩码 (导致/解除)", padding=4)
         st_lf.grid(row=3, column=0, sticky='ew', padx=2, pady=2)
         for ci, (fn, fo, fl, cmt) in enumerate(CAUSE_MASK_FIELDS):
             self._build_field(st_lf, 0, ci, fn, fo, fl, 'mask', W_INPUT, cmt)
@@ -427,17 +501,10 @@ class ItemEditor:
 
         # 隐含字段
         hd_lf = ttk.LabelFrame(self.edit_inner,
-                                text="隐含数据 (Maker UI 未显示, 保留原始数据透传)", padding=4)
+                                text="隐含数据 (保留原始数据)", padding=4)
         hd_lf.grid(row=4, column=0, sticky='ew', padx=2, pady=2)
         for hi, (fn, fo, fl, ft, fw, cmt) in enumerate(HIDDEN_FIELDS):
             self._build_field(hd_lf, 0, hi, fn, fo, fl, ft, fw, cmt)
-
-        bf = ttk.Frame(self.edit_inner)
-        bf.grid(row=5, column=0, sticky='ew', pady=(8,0))
-        ttk.Button(bf, text="应用修改", command=self._apply_edit).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0,2))
-        ttk.Button(bf, text="复制到空槽", command=self._copy_record).pack(side=tk.LEFT, padx=2)
-        ttk.Button(bf, text="重置为当前", command=self._reset_edit).pack(side=tk.LEFT, padx=2)
-        ttk.Button(bf, text="清空此记录", command=self._clear_current).pack(side=tk.LEFT, padx=2)
 
         pf = ttk.LabelFrame(self.root, text="当前加载"); pf.pack(fill=tk.X, padx=5, pady=(0,2))
         self.lbl_item = ttk.Label(pf, text="", foreground="gray"); self.lbl_item.pack(side=tk.LEFT, padx=10, pady=2)
@@ -527,7 +594,11 @@ class ItemEditor:
     def _reload(self):
         if not self.item_path: return
         self.status_var.set("加载中…"); self.root.update()
-        if self.tkt_path: self.tkt = load_tkt(self.tkt_path)
+        if self.tkt_path:
+            self.tkt = load_tkt(self.tkt_path)
+            self.tkt_full = load_tkt_full(self.tkt_path)
+        else:
+            self.tkt_full = {}
         if self.skill_path: self.skill_names = load_tkskill_names(self.skill_path, self.tkt)
         try:
             self.records = load_items(self.item_path); self._dirty = False
@@ -618,10 +689,34 @@ class ItemEditor:
         ))
         nid = rec.get('name_id', 0) or 0
         did = rec.get('desc_id', 0) or 0
+        # 名称 — 使用 tkt (首行)
         n_txt = self.tkt.get(int(nid), "") if nid > 0 else ""
-        d_txt = self.tkt.get(int(did), "") if did > 0 else ""
         self.preview_name.config(text=n_txt if n_txt else "(无 / TKT 未提供)")
-        self.preview_desc.config(text=d_txt if d_txt else "(无 / TKT 未提供)")
+        # 说明 — 使用 tkt_full (完整多行文本)
+        d_txt = self.tkt_full.get(int(did), "") if did > 0 else ""
+        self.preview_desc.configure(state='normal')
+        self.preview_desc.delete('1.0', 'end')
+        self.preview_desc.insert('1.0', d_txt if d_txt else "(无 / TKT 未提供)")
+        self.preview_desc.configure(state='disabled')
+        # 技能预览 (一行四列)
+        skill_keys = ['attach_skill', 'equip_learn', 'use_learn1', 'use_learn2']
+        for si, sk in enumerate(skill_keys):
+            sid = int(rec.get(sk, 0)) if rec.get(sk, 0) else -1
+            if sid > 0:
+                nm = self.skill_names.get(sid, f"技能#{sid}")
+                self._preview_skills[si].config(text=nm)
+            else:
+                self._preview_skills[si].config(text="—")
+        # 状态预览 (一行四列)
+        status_keys = ['cause_mask1', 'cause_mask2', 'cure_mask1', 'cure_mask2']
+        for si, sk in enumerate(status_keys):
+            mask = int(rec.get(sk, 0)) if rec.get(sk, 0) else 0
+            base = 0 if sk.endswith('_mask1') else 16
+            names = []
+            for i in range(16):
+                if mask & (1 << i) and base + i < len(STATUS_NAMES):
+                    names.append(STATUS_NAMES[base + i])
+            self._preview_statuses[si].config(text=", ".join(names) if names else "(无)")
 
         for fn, fo, fl, ft, fw, cmt in ALL_FIELDS:
             val = rec[fn]; sv = str(val)
@@ -652,7 +747,12 @@ class ItemEditor:
         for i in range(16):
             if mask & (1 << i) and base + i < len(STATUS_NAMES):
                 sel.append(STATUS_NAMES[base + i])
-        self._edit_extras[fn].config(text=", ".join(sel) if sel else "(无)")
+        txt = ", ".join(sel) if sel else "(无)"
+        self._edit_extras[fn].config(text=txt)
+        # 同步更新文本预览中的状态标签
+        status_keys = ['cause_mask1', 'cause_mask2', 'cure_mask1', 'cure_mask2']
+        if fn in status_keys:
+            self._preview_statuses[status_keys.index(fn)].config(text=txt)
 
     # ----------- 弹窗: 状态 mask 多选 -----------
     def _pick_status(self, fn):
@@ -713,11 +813,16 @@ class ItemEditor:
                 v = tree.item(sel[0])['values']
                 self._edit_vars[fn].set(str(v[0]))
                 try:
-                    tid = int(v[0]); txt = self.tkt.get(tid, "")
+                    tid = int(v[0])
                     if fn == 'name_id':
+                        txt = self.tkt.get(tid, "")
                         self.preview_name.config(text=txt if txt else "(无 / TKT 未提供)")
                     elif fn == 'desc_id':
-                        self.preview_desc.config(text=txt if txt else "(无 / TKT 未提供)")
+                        txt = self.tkt_full.get(tid, "")
+                        self.preview_desc.configure(state='normal')
+                        self.preview_desc.delete('1.0', 'end')
+                        self.preview_desc.insert('1.0', txt if txt else "(无 / TKT 未提供)")
+                        self.preview_desc.configure(state='disabled')
                 except Exception: pass
                 dlg.destroy()
         tree.bind('<Double-1>', lambda e: _sel())
@@ -753,6 +858,10 @@ class ItemEditor:
                 v = tree.item(sel[0])['values']
                 self._edit_vars[fn].set(str(v[0]))
                 self._edit_extras[fn].config(text=str(v[1])[:30])
+                # 同步更新文本预览中的技能标签
+                skill_keys = ['attach_skill', 'equip_learn', 'use_learn1', 'use_learn2']
+                if fn in skill_keys:
+                    self._preview_skills[skill_keys.index(fn)].config(text=str(v[1]))
                 dlg.destroy()
         tree.bind('<Double-1>', lambda e: _sel())
         bf = ttk.Frame(dlg, padding=5); bf.pack(fill=tk.X)
