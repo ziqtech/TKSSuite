@@ -157,6 +157,79 @@ def load_tkskill_names(sp, tkt):
     return names
 
 # ============================================================
+# Mu.JVG 物品图标加载 (icon + 130 = 精灵索引)
+# ============================================================
+def load_mu_sprites(mu_path):
+    """加载 Mu.JVG 并返回 PIL Image 列表 (PIL 可用时) 或 None"""
+    try:
+        from PIL import Image
+    except ImportError:
+        return None
+    if not mu_path or not os.path.exists(mu_path): return None
+    with open(mu_path, 'rb') as f: data = f.read()
+    if len(data) < 32 or data[:4] != b'@JVG': return None
+    bc = struct.unpack_from('<I', data, 8)[0]
+    off = 32; sprites = []
+    for bi in range(bc):
+        if off + 32 > len(data) or data[off:off+4] != b'@JVM': break
+        sc = struct.unpack_from('<I', data, off+4)[0]; ds = struct.unpack_from('<I', data, off+12)[0]
+        s1 = off + 32; co = [struct.unpack_from('<I', data, s1+j*4)[0] for j in range(sc+1)]
+        po = s1 + (sc+1)*4
+        pal_entries = []
+        for j in range(256):
+            e = struct.unpack_from('<H', data, po+j*2)[0]
+            r = ((e>>11)&0x1F)<<3; g = ((e>>5)&0x3F)<<2; b = (e&0x1F)<<3
+            pal_entries.extend([r,g,b])
+        pal_bytes = bytes(pal_entries)
+        dr = po + 512
+        for si in range(sc):
+            mo = dr + co[si]; ws = struct.unpack_from('<8H', data, mo)
+            w, h = ws[2], ws[3]
+            if w <= 0 or h <= 0:
+                sprites.append(None)
+                continue
+            eo = mo + 16; ed = data[eo:eo+co[si+1]-co[si]-16]
+            # RLE 解码 (对齐 jvg_editor _decode_rle)
+            total = w*h; px = bytearray(total); alpha = bytearray(total)
+            recs = []; rp = 0
+            while rp + 4 <= len(ed):
+                sk = struct.unpack_from('<H', ed, rp)[0]; rw = struct.unpack_from('<H', ed, rp+2)[0]; rp += 4
+                rw = min(rw, len(ed)-rp); rd = ed[rp:rp+rw] if rw>0 else b''; rp += rw
+                recs.append((sk, rw, rd))
+            if not recs: continue
+            simple = (recs[0][0]==0 and recs[0][1]==w and all(r[1]==w for r in recs))
+            if simple:
+                for ri, (_, rw, rpix) in enumerate(recs):
+                    if ri >= h: break
+                    tr = h-1-ri
+                    for c in range(min(rw, len(rpix))): px[tr*w+c] = rpix[rw-1-c]; alpha[tr*w+c] = 255
+            else:
+                scr_w = 640; gap = max(scr_w-w, 0); bp = total-1; pg = 0
+                for sa, rw, rpix in recs:
+                    rem = sa-pg; pg = 0
+                    if rem < 0: rem = 0
+                    while rem > 0 and bp >= 0:
+                        col = (total-1-bp)%w; tb = w-col
+                        if rem <= tb: bp -= rem; rem = 0
+                        else: bp -= tb; rem -= tb+gap; rem = max(rem, 0)
+                    cb = (total-1-bp)%w if bp >= 0 else 0
+                    al = min(rw, len(rpix))
+                    for k in range(al):
+                        if 0 <= bp < total: px[bp] = rpix[k]; alpha[bp] = 255
+                        bp -= 1
+                    pg = gap if al > 0 and cb+al >= w else 0
+            # 创建 PIL Image (alpha 通道由 RLE 解码器提供, 不依赖 palette index 0)
+            if w > 0 and h > 0:
+                img = Image.frombytes('P', (w, h), bytes(px))
+                img.putpalette(pal_bytes)
+                rgba = img.convert('RGBA')
+                a_img = Image.frombytes('L', (w, h), bytes(alpha))
+                rgba.putalpha(a_img)
+                sprites.append(rgba)
+        off += 32 + (sc+1)*4 + 512 + ds
+    return sprites
+
+# ============================================================
 # 常量 (Maker.exe TksModify.dll 文案 + TKS.exe 反编译)
 # ============================================================
 # 31 种状态 (bit 0..30; Maker UI 状态列表)
@@ -203,7 +276,7 @@ GRID_FIELDS = [
     ("item_id",      0, "物品代码",       'int',       W_INPUT, "物品唯一标识，全游戏查找主键 (v15[0])"),
     ("name_id",      4, "名称代码",       'tkt',       W_INPUT, "TKT 文本数据库 ID，用于物品显示名称 (v15[2])"),
     ("desc_id",      6, "说明代码",       'tkt',       W_INPUT, "TKT 文本数据库 ID，用于物品描述文本 (v15[3])"),
-    ("icon",         8, "形象",           'int',       W_INPUT, "背包/商店显示图标的精灵索引，实际值 +130 (v15[4])"),
+    ("icon",         8, "形象",           'icon',      W_INPUT, "背包/商店显示图标的精灵索引，实际值 +130 (v15[4])"),
     ("equip_type",  10, "使用权限",       'use_right', W_INPUT, "角色武器专精位掩码，控制谁可装备/使用此物品 (v15[5])"),
 
     ("battle_anim", 12, "战场动画",       'int',       W_INPUT, "战斗中使用物品时的动画效果/攻击范围参数 (v15[6])"),
@@ -325,8 +398,9 @@ class ItemEditor:
         self.root = root
         self.root.title("TKItem.dat 可视化编辑器")
         self.root.geometry("1360x860"); self.root.minsize(1120, 700)
-        self.item_path = self.tkt_path = self.skill_path = None
+        self.item_path = self.tkt_path = self.skill_path = self.mu_path = None
         self.records = []; self.tkt = {}; self.tkt_full = {}; self.skill_names = {}
+        self._mu_sprites = []; self._icon_photos = {}  # 图标缓存 (idx -> PhotoImage)
         self.filtered_indices = []; self._dirty = False
         self.filter_page = tk.StringVar(value="全部页面")
         self.filter_right = tk.StringVar(value="全部权限")
@@ -383,12 +457,14 @@ class ItemEditor:
         paned = ttk.PanedWindow(self.root, orient=tk.HORIZONTAL)
         paned.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
 
-        # 左表
+        # 左表 (tree headings 模式以支持 #0 列显示图标)
         lf = ttk.Frame(paned); paned.add(lf, weight=2)
         cols = ('index','item_id','page','name','right','price')
-        self.tree = ttk.Treeview(lf, columns=cols, show='headings', selectmode='browse')
-        cc = [('index','#',40),('item_id','ID',50),('page','页面',55),
-              ('name','物品名称',150),('right','权限',90),('price','价格',55)]
+        self.tree = ttk.Treeview(lf, columns=cols, show='tree headings', selectmode='browse')
+        self.tree.column('#0', width=36, minwidth=36, stretch=False, anchor='center')
+        self.tree.heading('#0', text='')
+        cc = [('index','#',38),('item_id','ID',42),('page','页面',48),
+              ('name','物品名称',140),('right','权限',82),('price','价格',48)]
         for cid,cn,cw in cc:
             self.tree.heading(cid, text=cn, command=lambda c=cid: self._sort_by(c))
             self.tree.column(cid, width=cw, anchor='center' if cid != 'name' else 'w', minwidth=cw)
@@ -396,6 +472,7 @@ class ItemEditor:
         self.tree.configure(yscrollcommand=vsb.set)
         self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True); vsb.pack(side=tk.RIGHT, fill=tk.Y)
         self.tree.bind('<<TreeviewSelect>>', self._on_tree_select)
+        self._tree_photos = []  # 防止 GC
 
         # 右编辑
         rf = ttk.Frame(paned); paned.add(rf, weight=3)
@@ -438,12 +515,14 @@ class ItemEditor:
         pv_lf.grid(row=0, column=0, sticky='ew', padx=2, pady=2)
         for c in range(1, 5): pv_lf.columnconfigure(c, weight=1)
         LBL_CLR = '#666'  # 统一标签颜色
-        # 名称
+        # 名称 + 图标
         ttk.Label(pv_lf, text="名称:", font=FONT_S, foreground=LBL_CLR).grid(
             row=0, column=0, sticky='nw', padx=(2,4), pady=1)
         self.preview_name = ttk.Label(pv_lf, text="(未选中)", foreground='#3366cc',
-                                       font=FONT, wraplength=700, justify='left')
-        self.preview_name.grid(row=0, column=1, columnspan=4, sticky='ew', pady=1)
+                                       font=FONT, wraplength=620, justify='left')
+        self.preview_name.grid(row=0, column=1, columnspan=3, sticky='ew', pady=1)
+        self.preview_icon = ttk.Label(pv_lf, text="")
+        self.preview_icon.grid(row=0, column=4, sticky='e', padx=(0,4), pady=1)
         # 说明 (多行, 去除白色背景)
         self.preview_desc = tk.Text(pv_lf, height=4, width=60, font=FONT,
                                      foreground='#228B22', wrap='word',
@@ -571,6 +650,14 @@ class ItemEditor:
                                               font=FONT_S, wraplength=180)
             self._edit_extras[fn].pack(anchor=tk.W)
             self._edit_vars[fn] = tk.StringVar()
+        elif ft == 'icon':
+            box = ttk.Frame(frm); box.pack(fill=tk.X)
+            ev = tk.StringVar(); self._edit_vars[fn] = ev
+            ttk.Entry(box, textvariable=ev, width=W_INPUT, font=FONT).pack(side=tk.LEFT)
+            ttk.Button(box, text="…", width=2,
+                       command=lambda f=fn: self._pick_icon(f)).pack(side=tk.LEFT, padx=1)
+            self._edit_extras[fn] = ttk.Label(frm, text="", font=FONT_S)
+            self._edit_extras[fn].pack(anchor=tk.W)
         else:
             ev = tk.StringVar(); self._edit_vars[fn] = ev
             ttk.Entry(frm, textvariable=ev, width=W_INPUT, font=FONT).pack(fill=tk.X)
@@ -606,6 +693,8 @@ class ItemEditor:
         self.item_path = it
         self.tkt_path = tk_ if os.path.exists(tk_) else None
         self.skill_path = sk if os.path.exists(sk) else None
+        self.mu_path = os.path.join(d, "Mu.JVG")
+        if not os.path.exists(self.mu_path): self.mu_path = None
         self._reload()
 
     def _reload(self):
@@ -617,6 +706,9 @@ class ItemEditor:
         else:
             self.tkt_full = {}
         if self.skill_path: self.skill_names = load_tkskill_names(self.skill_path, self.tkt)
+        if self.mu_path:
+            self._mu_sprites = load_mu_sprites(self.mu_path) or []
+            self._icon_photos.clear()
         try:
             self.records = load_items(self.item_path); self._dirty = False
             self.status_var.set(f"{len(self.records)} 条 | TKT {len(self.tkt)} 条 | 技能 {len(self.skill_names)} 条")
@@ -673,12 +765,16 @@ class ItemEditor:
         self._apply_filter()
 
     def _refresh_table(self):
+        self._tree_photos.clear()
         for it in self.tree.get_children(): self.tree.delete(it)
         for idx in self.filtered_indices:
             r = self.records[idx]
             et = r['equip_type']
             rt = USE_RIGHT.get(et, f"#{et}") if et or et == 0 else "—"
-            self.tree.insert('', 'end', values=(
+            photo = self._get_icon_photo(r['icon'], (24,24))
+            self._tree_photos.append(photo)
+            self.tree.insert('', 'end', image=photo if photo else '',
+                           values=(
                 r['index'], r['item_id'],
                 PAGE_NAMES.get(r['tab_code'], '?'),
                 item_display_name(r, self.tkt),
@@ -752,6 +848,9 @@ class ItemEditor:
                 self._edit_extras[fn].config(text=nm[:30] if sid > 0 else "(无)")
             elif ft == 'mask':
                 self._update_status_label(fn, int(val) if val else 0)
+            elif ft == 'icon':
+                ival = int(val) if val else 0
+                self._update_icon_preview(ival)
 
     def _set_combobox(self, cb, val):
         for i, t in enumerate(cb['values']):
@@ -784,6 +883,104 @@ class ItemEditor:
         y = ry + (rh - h) // 2
         dlg.geometry(f"+{x}+{y}")
         dlg.deiconify()
+
+    # ----------- 图标 -----------
+    def _get_icon_photo(self, icon_val, size=(48,48)):
+        """获取图标的 PhotoImage (缓存), icon_val 为游戏原始值 (实际显示值 +130)"""
+        if not self._mu_sprites: return None
+        idx = icon_val + 130
+        if idx < 0 or idx >= len(self._mu_sprites): return None
+        cache_key = (idx, size)
+        if cache_key in self._icon_photos:
+            return self._icon_photos[cache_key]
+        try:
+            from PIL import Image, ImageTk
+            img = self._mu_sprites[idx].resize(size, Image.NEAREST)
+            photo = ImageTk.PhotoImage(img)
+            self._icon_photos[cache_key] = photo
+            return photo
+        except Exception:
+            return None
+
+    def _pick_icon(self, fn):
+        """弹窗选择物品图标"""
+        if not self._mu_sprites:
+            messagebox.showinfo("提示", "未加载 Mu.JVG 图标文件"); return
+        dlg = tk.Toplevel(self.root); dlg.title("选择图标 (索引 = 游戏值 + 130)")
+        dlg.transient(self.root); dlg.grab_set()
+        self._center_dialog(dlg, 780, 560)
+        dlg.grid_rowconfigure(0, weight=1); dlg.grid_columnconfigure(0, weight=1)
+        dlg.resizable(True, True)
+        cur_val = int(self._edit_vars[fn].get() or 0)
+        cvs = tk.Canvas(dlg, highlightthickness=0)
+        sb = ttk.Scrollbar(dlg, orient=tk.VERTICAL, command=cvs.yview)
+        grid_frame = ttk.Frame(cvs)
+        cvs.create_window((0,0), window=grid_frame, anchor='nw')
+        cvs.configure(yscrollcommand=sb.set)
+        cvs.grid(row=0, column=0, sticky='nsew', padx=4, pady=(4,0))
+        sb.grid(row=0, column=1, sticky='ns', pady=(4,0))
+        def _mw(e): cvs.yview_scroll(int(-1*(e.delta/120)), "units")
+        cvs.bind("<Enter>", lambda e: cvs.bind_all("<MouseWheel>", _mw))
+        cvs.bind("<Leave>", lambda e: cvs.unbind_all("<MouseWheel>"))
+        bf = ttk.Frame(dlg, padding=4)
+        bf.grid(row=1, column=0, columnspan=2, sticky='ew')
+        ttk.Button(bf, text="取消", command=dlg.destroy).pack(side=tk.RIGHT, padx=2)
+        ttk.Label(bf, text="点击图标选择，索引 = 游戏精灵索引 - 130", foreground='#666', font=FONT_S).pack(side=tk.LEFT, padx=4)
+
+        # 响应式图标网格
+        CELL_W = 46; _last_cols = [0]
+        def _build_grid(cols=None):
+            if cols is None:
+                cols = max(5, (cvs.winfo_width() - 4) // CELL_W)
+                if cols <= 0: cols = 10
+            if cols == _last_cols[0]: return
+            _last_cols[0] = cols
+            for w in grid_frame.winfo_children(): w.destroy()
+            photo_refs = []
+            for si in range(len(self._mu_sprites)):
+                game_idx = si - 130
+                row, col = divmod(si, cols)
+                frm = ttk.Frame(grid_frame)
+                frm.grid(row=row, column=col, padx=1, pady=1)
+                photo = self._get_icon_photo(game_idx, (40,40))
+                if game_idx == cur_val:
+                    frm.configure(relief='solid', borderwidth=2)
+                    ttk.Separator(frm, orient=tk.HORIZONTAL).pack(fill=tk.X, padx=1)
+                if photo:
+                    photo_refs.append(photo)
+                    lbl = ttk.Label(frm, image=photo)
+                else:
+                    lbl = ttk.Label(frm, text=str(game_idx), font=FONT_S, width=5)
+                lbl.pack()
+                ttk.Label(frm, text=str(game_idx), font=('', 7)).pack()
+                frm.bind('<Button-1>', lambda e, v=game_idx: (
+                    self._edit_vars[fn].set(str(v)),
+                    self._update_icon_preview(v), dlg.destroy()))
+                lbl.bind('<Button-1>', lambda e, v=game_idx: (
+                    self._edit_vars[fn].set(str(v)),
+                    self._update_icon_preview(v), dlg.destroy()))
+            grid_frame.update_idletasks()
+            cvs.configure(scrollregion=cvs.bbox('all'))
+            # 滚动到选中位置
+            if cur_val >= -130:
+                si = cur_val + 130
+                row_h = grid_frame.winfo_children()[0].winfo_reqheight() + 2 if grid_frame.winfo_children() else 52
+                y = (si // cols) * row_h
+                total_h = cvs.bbox('all')[3] if cvs.bbox('all') else 1
+                cvs.yview_moveto(min(1.0, max(0, y - 100) / total_h))
+
+        cvs.bind('<Configure>', lambda e: _build_grid(), add='+')
+        dlg.after(100, _build_grid)
+        dlg.wait_window()
+
+    def _update_icon_preview(self, icon_val):
+        """更新预览区的图标"""
+        photo = self._get_icon_photo(icon_val, (40,40))
+        if photo:
+            self.preview_icon.configure(image=photo, text="")
+            self.preview_icon.image = photo
+        else:
+            self.preview_icon.configure(image="", text=f"[图标 {icon_val}]")
 
     # ----------- 弹窗: 状态 mask 多选 -----------
     def _pick_status(self, fn):
