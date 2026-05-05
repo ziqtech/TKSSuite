@@ -239,6 +239,31 @@ STATUS_NAMES = [
     "误导","混乱","禁制","定身","诅咒","封印","燃烧","冰冻",
     "虚弱","麻痹","沈睡","中毒","迷恋","明镜","针灸",
 ]
+STATUS_ICON_BASE = 242  # Mu.JVG 中 31 个 30x30 状态图标起始精灵索引
+
+# 战斗结算效果 (combat_flag, field [20]) — sub_42234C: a2[33] |= v9[20]; 战斗结算时按位检查
+COMBAT_FLAG_OPTIONS = [
+    (0,  "无"),
+    (1,  "JP×2~3 (無方戒)"),
+    (2,  "战后全恢复+异常全解 (無雙戒)"),
+    (4,  "经验×2~3平分队友 (無嗔戒)"),
+    (8,  "经验独得 (無道戒)"),
+    (3,  "JP×2~3 + 全恢复"),
+    (5,  "JP×2~3 + 经验分享"),
+    (6,  "全恢复 + 经验分享"),
+    (9,  "JP×2~3 + 经验独得"),
+    (10, "全恢复 + 经验独得"),
+    (12, "经验分享 + 经验独得"),
+    (15, "全部效果"),
+]
+EXTRA_FLAG_BITS = [
+    (0, "偽裝",   "遇敌率降低 (随机阈值140 vs 100); sub_4084E0 bit0"),
+    (1, "隱藏",   "遇敌率大幅降低 (随机阈值200); 战斗时序+50%; sub_4084E0 bit1"),
+    (2, "虛無",   "完全跳过遇敌; sub_4084E0 bit2"),
+    (3, "無常",   "战斗时序加速 (敌方计时条额外扣减); sub_431E70 bit3"),
+    (4, "無心",   "位4 (无对应逆向证据)"),
+    (5, "六無玄冥","战斗时序强效加速 (敌方计时条强制扣减); sub_431E70 bit5"),
+]
 
 # 使用权限 (equip_type) — 位掩码，每位对应角色武器专精体系
 #  sub_41928C: word_77CBD4[32*idx] & word_757FA4[527*char] → 权限位与校验
@@ -294,8 +319,8 @@ GRID_FIELDS = [
     ("luk",         32, "增加幸运",       'int',       W_INPUT, "运气(LUK)永久加成，商店物品出现条件的基准值 (v15[16])"),
     ("spi",         34, "增加悟性",       'int',       W_INPUT, "精神(SPI)悟性永久加成 (v15[17])"),
     ("vit",         36, "增加移动",       'int',       W_INPUT, "体力(VIT)移动永久加成 (v15[18])"),
-    ("ring_flag",   38, "戒指判定",       'int',       W_INPUT, "暴击率/魅力值加成 (v15[19])"),
-    ("combat_flag", 40, "战斗相关判定",   'int',       W_INPUT, "位掩码标志，装备/使用后 OR 到角色特殊能力标志 (v15[20])"),
+    ("jp_bonus",    38, "增加技能点",     'int',       W_INPUT, "技能点数(JP); sub_41E40C: word_757F46+=v15[19] 使用时增加; sub_41E248学习技能时消耗; sub_4189BC判定技能可用性。Maker.exe原标签'戒指判定'(误) (v15[19])"),
+    ("combat_flag", 40, "战斗结算效果",   'combat_flag', W_INPUT, "战斗结算位掩码; sub_42234C: a2[33]|=v9[20]; 战斗结束后按位触发奖励效果 (v15[20])"),
 
     ("medicine",    50, "增加医术",       'int',       W_INPUT, "使用后获得的医术点数，累加到全局医术计数 (v15[25])"),
     ("price",       62, "价格",           'int',       W_INPUT, "物品买卖价格，商店卖出时折半 (v15[31])"),
@@ -324,7 +349,7 @@ CURE_MASK_FIELDS = [
 # 隐含字段 (TKItem 记录占用但 Maker UI 未显示，读写透传保留原始数据)
 HIDDEN_FIELDS = [
     ("tab_code",     2, "页面号",       'page', W_INPUT, "物品在商店中的分页编号 (0=药品,1=道具,2=武器,3=防具,4=饰品,5=特殊)"),
-    ("extra_flags", 60, "额外标志",     'int',  W_INPUT, "额外位标志，装备时 OR 到战斗全局标志 (v15[30])"),
+    ("extra_flags", 60, "额外标志",     'extra_flags', W_INPUT, "地图/战斗全局标志(sub_41F784 OR到dword_755C80) (v15[30])"),
 ]
 
 ALL_FIELDS = (GRID_FIELDS + HIDDEN_FIELDS +
@@ -464,7 +489,7 @@ class ItemEditor:
         self.tree.column('#0', width=36, minwidth=36, stretch=False, anchor='center')
         self.tree.heading('#0', text='')
         cc = [('index','#',38),('item_id','ID',42),('page','页面',48),
-              ('name','物品名称',140),('right','权限',82),('price','价格',48)]
+              ('name','物品名称',100),('right','权限',82),('price','价格',48)]
         for cid,cn,cw in cc:
             self.tree.heading(cid, text=cn, command=lambda c=cid: self._sort_by(c))
             self.tree.column(cid, width=cw, anchor='center' if cid != 'name' else 'w', minwidth=cw)
@@ -511,7 +536,7 @@ class ItemEditor:
         self._edit_vars = {}; self._edit_extras = {}
 
         # 文本预览
-        pv_lf = ttk.LabelFrame(self.edit_inner, text="文本预览", padding=4)
+        pv_lf = ttk.LabelFrame(self.edit_inner, text="物品预览", padding=4)
         pv_lf.grid(row=0, column=0, sticky='ew', padx=2, pady=2)
         for c in range(1, 5): pv_lf.columnconfigure(c, weight=1)
         LBL_CLR = '#666'  # 统一标签颜色
@@ -533,7 +558,7 @@ class ItemEditor:
         self.preview_desc.grid(row=1, column=1, columnspan=4, sticky='ew', pady=1)
         # 技能预览 (一行四列, col 0=附加技能 左对齐标签)
         self._preview_skills = []
-        skill_labels = ["附加技能", "装备后学习 ⚠", "使用后学习1", "使用后学习2"]
+        skill_labels = ["附加技能", "装备后学习", "使用后学习1", "使用后学习2"]
         for ci, slbl in enumerate(skill_labels):
             col = 1+ci
             if ci == 0:
@@ -556,20 +581,19 @@ class ItemEditor:
         status_labels = ["导致状态 1-16", "导致状态 17-32", "解除状态 1-16", "解除状态 17-32"]
         status_val_colors = ['#CC3333', '#CC3333', '#3366cc', '#3366cc']
         for ci, (slbl, sc) in enumerate(zip(status_labels, status_val_colors)):
-            col = 1+ci
             if ci == 0:
                 ttk.Label(pv_lf, text=f"{slbl}:", font=FONT_S, foreground=LBL_CLR).grid(
                     row=3, column=0, sticky='nw', padx=(2,4), pady=1)
-                lbl = ttk.Label(pv_lf, text="(无)", foreground=sc,
-                               font=FONT, wraplength=170, justify='left')
-                lbl.grid(row=3, column=1, sticky='ew', padx=2, pady=1)
+                val_frame = ttk.Frame(pv_lf)
+                val_frame.grid(row=3, column=1, sticky='w', padx=2, pady=1)
             else:
-                frm = ttk.Frame(pv_lf)
-                frm.grid(row=3, column=col, sticky='ew', padx=2, pady=1)
-                ttk.Label(frm, text=f"{slbl}:", font=FONT_S, foreground=LBL_CLR).pack(side=tk.LEFT)
-                lbl = ttk.Label(frm, text="(无)", foreground=sc, font=FONT, wraplength=120)
-                lbl.pack(side=tk.LEFT, padx=(2,0))
-            self._preview_statuses.append(lbl)
+                outer = ttk.Frame(pv_lf)
+                outer.grid(row=3, column=1+ci, sticky='w', padx=2, pady=1)
+                ttk.Label(outer, text=f"{slbl}:", font=FONT_S, foreground=LBL_CLR).pack(side=tk.LEFT)
+                val_frame = ttk.Frame(outer)
+                val_frame.pack(side=tk.LEFT, padx=(2,0))
+            val_frame._val_color = sc
+            self._preview_statuses.append(val_frame)
 
         # 基础属性网格
         grid_lf = ttk.LabelFrame(self.edit_inner, text="基础属性", padding=4)
@@ -621,7 +645,7 @@ class ItemEditor:
             self._edit_vars[fn] = tk.StringVar()
         elif ft == 'use_right':
             cb = ttk.Combobox(frm, state='readonly', values=USE_RIGHT_VALUES,
-                              width=W_INPUT+3, font=FONT)
+                              width=18, font=FONT)
             cb.pack(fill=tk.X); self._edit_extras[fn] = cb
             self._edit_vars[fn] = tk.StringVar()
         elif ft == 'tkt':
@@ -646,10 +670,26 @@ class ItemEditor:
             color = '#CC3333' if is_cause else '#3366cc'
             ttk.Button(frm, text=btn_text, width=W_INPUT+3,
                        command=lambda f=fn: self._pick_status(f)).pack(fill=tk.X)
-            self._edit_extras[fn] = ttk.Label(frm, text="", foreground=color,
-                                              font=FONT_S, wraplength=180)
-            self._edit_extras[fn].pack(anchor=tk.W)
+            extras = ttk.Frame(frm)
+            extras.pack(anchor=tk.W, fill=tk.X)
+            self._edit_extras[fn] = (extras, ttk.Label(extras, text="(无)", foreground=color,
+                                                        font=FONT_S, wraplength=180))
+            self._edit_extras[fn][1].pack(anchor=tk.W)
             self._edit_vars[fn] = tk.StringVar()
+        elif ft == 'combat_flag':
+            cb = ttk.Combobox(frm, state='readonly',
+                              values=[f"{v}-{d}" for v,d in COMBAT_FLAG_OPTIONS],
+                              width=28, font=FONT)
+            cb.pack(fill=tk.X); self._edit_extras[fn] = cb
+            self._edit_vars[fn] = tk.StringVar()
+        elif ft == 'extra_flags':
+            box = ttk.Frame(frm); box.pack(fill=tk.X)
+            ev = tk.StringVar(); self._edit_vars[fn] = ev
+            ttk.Entry(box, textvariable=ev, width=W_INPUT, font=FONT).pack(side=tk.LEFT)
+            ttk.Button(box, text="…", width=2,
+                       command=lambda f=fn: self._pick_extra_flags(f)).pack(side=tk.LEFT, padx=1)
+            self._edit_extras[fn] = ttk.Label(frm, text="", foreground='#666', font=FONT_S, wraplength=180)
+            self._edit_extras[fn].pack(anchor=tk.W)
         elif ft == 'icon':
             box = ttk.Frame(frm); box.pack(fill=tk.X)
             ev = tk.StringVar(); self._edit_vars[fn] = ev
@@ -825,11 +865,11 @@ class ItemEditor:
         for si, sk in enumerate(status_keys):
             mask = int(rec.get(sk, 0)) if rec.get(sk, 0) else 0
             base = 0 if sk.endswith('_mask1') else 16
-            names = []
+            sel = []
             for i in range(16):
                 if mask & (1 << i) and base + i < len(STATUS_NAMES):
-                    names.append(STATUS_NAMES[base + i])
-            self._preview_statuses[si].config(text=", ".join(names) if names else "(无)")
+                    sel.append((base + i, STATUS_NAMES[base + i]))
+            self._update_preview_status(si, sel)
 
         for fn, fo, fl, ft, fw, cmt in ALL_FIELDS:
             val = rec[fn]; sv = str(val)
@@ -840,6 +880,9 @@ class ItemEditor:
             elif ft == 'use_right':
                 cb = self._edit_extras[fn]
                 if not self._set_combobox(cb, val): cb.set(sv)
+            elif ft == 'combat_flag':
+                cb = self._edit_extras[fn]
+                if not self._set_combobox(cb, val): cb.set(sv)
             elif ft == 'tkt':
                 pass
             elif ft == 'skill':
@@ -848,6 +891,8 @@ class ItemEditor:
                 self._edit_extras[fn].config(text=nm[:30] if sid > 0 else "(无)")
             elif ft == 'mask':
                 self._update_status_label(fn, int(val) if val else 0)
+            elif ft == 'extra_flags':
+                self._update_extra_flags_label(fn, int(val) if val else 0)
             elif ft == 'icon':
                 ival = int(val) if val else 0
                 self._update_icon_preview(ival)
@@ -862,13 +907,33 @@ class ItemEditor:
         sel = []
         for i in range(16):
             if mask & (1 << i) and base + i < len(STATUS_NAMES):
-                sel.append(STATUS_NAMES[base + i])
-        txt = ", ".join(sel) if sel else "(无)"
-        self._edit_extras[fn].config(text=txt)
-        # 同步更新文本预览中的状态标签
+                sel.append((base + i, STATUS_NAMES[base + i]))
+        extras_frame, txt_lbl = self._edit_extras[fn]
+        for w in extras_frame.winfo_children():
+            if w != txt_lbl: w.destroy()
+        if sel:
+            txt_lbl.config(text="")
+            txt_lbl.pack_forget()
+            COLS = 3  # 每行最多3个状态
+            for si, (idx, nm) in enumerate(sel):
+                row, col = divmod(si, COLS)
+                cell = ttk.Frame(extras_frame)
+                cell.grid(row=row, column=col, sticky='w', padx=(0, 6), pady=1)
+                nl = ttk.Label(cell, text=nm, foreground=txt_lbl.cget('foreground'), font=FONT_S)
+                nl.pack(side=tk.LEFT)
+                photo = self._get_icon_photo(STATUS_ICON_BASE + idx - 130, (18,18))
+                if photo:
+                    il = ttk.Label(cell, image=photo)
+                    il.image = photo
+                    il.pack(side=tk.LEFT, padx=(1,0))
+        else:
+            txt_lbl.config(text="(无)")
+            txt_lbl.pack(anchor=tk.W)
+        # 同步更新预览区状态
         status_keys = ['cause_mask1', 'cause_mask2', 'cure_mask1', 'cure_mask2']
         if fn in status_keys:
-            self._preview_statuses[status_keys.index(fn)].config(text=txt)
+            si = status_keys.index(fn)
+            self._update_preview_status(si, sel)
 
     def _center_dialog(self, dlg, w, h):
         """将弹窗定位到主窗口中心（先隐藏避免闪烁）"""
@@ -982,6 +1047,57 @@ class ItemEditor:
         else:
             self.preview_icon.configure(image="", text=f"[图标 {icon_val}]")
 
+    def _pick_extra_flags(self, fn):
+        """弹窗选择额外标志位"""
+        dlg = tk.Toplevel(self.root); dlg.title("选择额外标志 (位掩码)")
+        dlg.transient(self.root); dlg.grab_set()
+        self._center_dialog(dlg, 400, 280)
+        cur_val = int(self._edit_vars[fn].get() or 0) & 0xFFFF
+        wrap = ttk.Frame(dlg, padding=8); wrap.pack(fill=tk.BOTH, expand=True)
+        vars_ = []
+        for bit, name, desc in EXTRA_FLAG_BITS:
+            v = tk.BooleanVar(value=bool(cur_val & (1 << bit)))
+            row = ttk.Frame(wrap); row.pack(anchor=tk.W, fill=tk.X, pady=1)
+            ttk.Checkbutton(row, text=f"bit{bit} {name}", variable=v).pack(side=tk.LEFT)
+            ttk.Label(row, text=desc, foreground='#999', font=('', 7)).pack(side=tk.LEFT, padx=(8,0))
+            vars_.append((bit, v))
+        bf = ttk.Frame(dlg, padding=4); bf.pack(side=tk.BOTTOM, fill=tk.X)
+        def _ok():
+            m = 0
+            for bit, v in vars_:
+                if v.get(): m |= (1 << bit)
+            if m >= 0x8000: m -= 0x10000
+            self._edit_vars[fn].set(str(m))
+            self._update_extra_flags_label(fn, m); dlg.destroy()
+        ttk.Button(bf, text="全选", command=lambda: [v.set(True) for _, v in vars_]).pack(side=tk.LEFT)
+        ttk.Button(bf, text="全清", command=lambda: [v.set(False) for _, v in vars_]).pack(side=tk.LEFT, padx=4)
+        ttk.Button(bf, text="取消", command=dlg.destroy).pack(side=tk.RIGHT, padx=2)
+        ttk.Button(bf, text="确定", command=_ok).pack(side=tk.RIGHT, padx=2)
+        dlg.wait_window()
+
+    def _update_extra_flags_label(self, fn, val):
+        """更新额外标志的标签显示"""
+        mask = val & 0xFFFF
+        sel = [name for bit, name, _ in EXTRA_FLAG_BITS if mask & (1 << bit)]
+        self._edit_extras[fn].config(text=", ".join(sel) if sel else "(无)")
+
+    def _update_preview_status(self, si, sel):
+        """更新预览区中单个状态列 (含图标, 每行最多3个)"""
+        frame = self._preview_statuses[si]
+        for w in frame.winfo_children(): w.destroy()
+        COLS = 3
+        for i, (idx, nm) in enumerate(sel):
+            row, col = divmod(i, COLS)
+            cell = ttk.Frame(frame)
+            cell.grid(row=row, column=col, sticky='w', padx=(0, 4))
+            photo = self._get_icon_photo(STATUS_ICON_BASE + idx - 130, (16,16))
+            if photo:
+                il = ttk.Label(cell, image=photo)
+                il.image = photo
+                il.pack(side=tk.LEFT)
+            ttk.Label(cell, text=nm, font=('', 7),
+                     foreground=frame._val_color).pack(side=tk.LEFT)
+
     # ----------- 弹窗: 状态 mask 多选 -----------
     def _pick_status(self, fn):
         is_cause = fn.startswith('cause_')
@@ -996,9 +1112,14 @@ class ItemEditor:
         for i in range(16):
             idx = base + i
             if idx >= len(STATUS_NAMES): break
+            row_frm = ttk.Frame(wrap)
+            row_frm.pack(anchor=tk.W, fill=tk.X, pady=1)
+            photo = self._get_icon_photo(STATUS_ICON_BASE + idx - 130, (20,20))
+            if photo:
+                ttk.Label(row_frm, image=photo).pack(side=tk.LEFT, padx=(0,4))
             v = tk.BooleanVar(value=bool(cur_mask & (1 << i)))
-            ttk.Checkbutton(wrap, text=f"{idx}. {STATUS_NAMES[idx]}",
-                             variable=v).pack(anchor=tk.W, pady=1)
+            ttk.Checkbutton(row_frm, text=f"{idx}. {STATUS_NAMES[idx]}",
+                             variable=v).pack(side=tk.LEFT)
             vars_.append(v)
         bf = ttk.Frame(dlg); bf.pack(fill=tk.X, padx=8, pady=8)
         def _ok():
@@ -1112,9 +1233,9 @@ class ItemEditor:
         rec = self.records[self._editing_idx]
         for fn, fo, fl, ft, fw, cmt in ALL_FIELDS:
             try:
-                if ft in ('page', 'use_right'):
+                if ft in ('page', 'use_right', 'combat_flag'):
                     sv = self._edit_extras[fn].get()
-                    rec[fn] = int(sv.split('-')[0]) if '-' in sv else int(sv)
+                    rec[fn] = int(sv.split('-', 1)[0]) if '-' in sv else int(sv)
                 else:
                     v = int(self._edit_vars[fn].get())
                     if v > 32767: v = 32767
