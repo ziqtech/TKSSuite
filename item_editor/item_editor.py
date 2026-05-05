@@ -57,29 +57,38 @@ def lzss_decompress(data):
     return bytes(out[:ts])
 
 def lzss_compress(data):
-    src = data; sl = len(src); w = bytearray([0x20]*4096); wp = 4078
+    src = data; sl = len(src)
+    # 极速优化：使用线性 bytes 并借助底层 C 实现的 rfind 替代缓慢的纯 Python O(N^2) 搜索
+    # 初始化完整的 4096 字节虚拟历史记录与当前数据拼接
+    flat_bytes = bytes(bytearray([0x20]*4096) + src)
+    
     tokens = []; pos = 0
     while pos < sl:
-        bl, bo = 0, 0; ms = min(18, sl - pos)
-        for length in range(ms, 2, -1):
-            if bl >= length: break
-            pat = src[pos:pos+length]
-            # 从最近写入位置向前搜索，重复数据可快速命中
-            for dist in range(1, 4096):
-                ro = (wp - dist) & 0xFFF
-                ok = True
-                for j in range(length):
-                    if w[(ro+j)&0xFFF] != pat[j]: ok = False; break
-                if ok: bl = length; bo = ro; break
-            if bl >= length: break
+        curr = 4096 + pos
+        ms = min(18, sl - pos)
+        bl, bo = 0, 0
+        
+        if ms >= 3:
+            for length in range(ms, 2, -1):
+                pat = flat_bytes[curr : curr + length]
+                end_idx = curr + length - 1
+                start_idx = max(0, curr - 4096)
+                
+                # 寻找在 4096 窗口内最近的匹配项
+                idx = flat_bytes.rfind(pat, start_idx, end_idx)
+                if idx != -1:
+                    bl = length
+                    # 将绝对索引直接转换为 Ring Buffer 的偏移量
+                    bo = (idx - 18) & 0xFFF
+                    break
+        
         if bl >= 3:
-            if wp <= bo + bl: bl = wp - bo
-            if bl >= 3:
-                tokens.append((False, bo, bl))
-                for j in range(bl): w[wp] = src[pos+j]; wp = (wp+1)&0xFFF
-                pos += bl; continue
-        tokens.append((True, src[pos], 0))
-        w[wp] = src[pos]; wp = (wp+1)&0xFFF; pos += 1
+            tokens.append((False, bo, bl))
+            pos += bl
+        else:
+            tokens.append((True, src[pos], 0))
+            pos += 1
+            
     stream = bytearray(); ti = 0
     while ti < len(tokens):
         fb = 0; be = min(ti+8, len(tokens))
