@@ -64,11 +64,13 @@ def lzss_compress(data):
         for length in range(ms, 2, -1):
             if bl >= length: break
             pat = src[pos:pos+length]
-            for off in range(4096):
+            # 从最近写入位置向前搜索，重复数据可快速命中
+            for dist in range(1, 4096):
+                ro = (wp - dist) & 0xFFF
                 ok = True
                 for j in range(length):
-                    if w[(off+j)&0xFFF] != pat[j]: ok = False; break
-                if ok: bl = length; bo = off; break
+                    if w[(ro+j)&0xFFF] != pat[j]: ok = False; break
+                if ok: bl = length; bo = ro; break
             if bl >= length: break
         if bl >= 3:
             if wp <= bo + bl: bl = wp - bo
@@ -219,10 +221,10 @@ GRID_FIELDS = [
 
 # 技能组 (4 个字段; 全部对应全局技能等级表)
 SKILL_FIELDS = [
-    ("attach_skill",    42, "附加技能",         "装备此物品后附带的主动/被动技能，值为 TKSkill 索引 (v15[21])"),
-    ("equip_learn",     44, "装备后学习技能",   "装备此物品后自动学会的技能，等级设为 10 (v15[22])"),
-    ("use_learn1",      46, "使用后学习技能1",  "使用此物品时学会的第一个技能，等级设为 10 (v15[23])"),
-    ("use_learn2",      48, "使用后学习技能2",  "使用此物品时学会的第二个技能，等级设为 10 (v15[24])"),
+    ("attach_skill",    42, "附加技能",         "装备后直接施加技能被动效果(属性加成等)，不写入技能栏 (v15[21])"),
+    ("equip_learn",     44, "装备后学习技能",   "⚠ 仅升级已有技能(1-19→10级)，不会从零教会！未习得技能无效果 (v15[22])"),
+    ("use_learn1",      46, "使用后学习技能1",  "使用时学会技能(10级)；负数索引可从零教会全局技能 (v15[23])"),
+    ("use_learn2",      48, "使用后学习技能2",  "使用时学会技能(10级)；负数索引可从零教会全局技能 (v15[24])"),
 ]
 
 # 导致状态 (装备/命中时让目标进入异常状态; 干將莫邪[26]=0x03=破兵+碎甲; 紅顏知己[27]=0x1000=迷恋)
@@ -443,7 +445,7 @@ class ItemEditor:
         self.preview_desc.grid(row=1, column=1, columnspan=4, sticky='ew', pady=1)
         # 技能预览 (一行四列, col 0=附加技能 左对齐标签)
         self._preview_skills = []
-        skill_labels = ["附加技能", "装备后学习技能", "使用后学习技能1", "使用后学习技能2"]
+        skill_labels = ["附加技能", "装备后学习 ⚠", "使用后学习1", "使用后学习2"]
         for ci, slbl in enumerate(skill_labels):
             col = 1+ci
             if ci == 0:
@@ -760,12 +762,27 @@ class ItemEditor:
         if fn in status_keys:
             self._preview_statuses[status_keys.index(fn)].config(text=txt)
 
+    def _center_dialog(self, dlg, w, h):
+        """将弹窗定位到主窗口中心（先隐藏避免闪烁）"""
+        dlg.withdraw()
+        dlg.geometry(f"{w}x{h}")
+        dlg.update_idletasks()
+        rx = self.root.winfo_rootx()
+        ry = self.root.winfo_rooty()
+        rw = self.root.winfo_width()
+        rh = self.root.winfo_height()
+        x = rx + (rw - w) // 2
+        y = ry + (rh - h) // 2
+        dlg.geometry(f"+{x}+{y}")
+        dlg.deiconify()
+
     # ----------- 弹窗: 状态 mask 多选 -----------
     def _pick_status(self, fn):
         is_cause = fn.startswith('cause_')
         title = "选择导致状态 (位掩码)" if is_cause else "选择解除状态 (位掩码)"
         dlg = tk.Toplevel(self.root); dlg.title(title)
-        dlg.geometry("360x480"); dlg.transient(self.root); dlg.grab_set()
+        dlg.transient(self.root); dlg.grab_set()
+        self._center_dialog(dlg, 360, 520)
         base = 0 if fn.endswith('_mask1') else 16
         cur_mask = int(self._edit_vars[fn].get() or 0) & 0xFFFF
         vars_ = []
@@ -795,23 +812,27 @@ class ItemEditor:
     # ----------- 弹窗: TKT -----------
     def _pick_tkt(self, fn):
         dlg = tk.Toplevel(self.root); dlg.title("选择 TKT 文本")
-        dlg.geometry("520x500"); dlg.transient(self.root); dlg.grab_set()
+        dlg.transient(self.root); dlg.grab_set()
+        self._center_dialog(dlg, 520, 550)
+        cur_val = int(self._edit_vars[fn].get() or 0)  # 当前选中值
         sf = ttk.Frame(dlg, padding=5); sf.pack(fill=tk.X)
         ttk.Label(sf, text="搜索:").pack(side=tk.LEFT)
         qv = tk.StringVar()
         ttk.Entry(sf, textvariable=qv, width=30, font=FONT).pack(side=tk.LEFT, padx=5)
         lf2 = ttk.Frame(dlg); lf2.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
-        tree = ttk.Treeview(lf2, columns=('id','text'), show='headings', selectmode='browse', height=20)
+        tree = ttk.Treeview(lf2, columns=('id','text'), show='headings', selectmode='browse', height=22)
         tree.heading('id', text='ID'); tree.heading('text', text='文本')
         tree.column('id', width=60, anchor='center'); tree.column('text', width=420, anchor='w')
         vsb = ttk.Scrollbar(lf2, orient=tk.VERTICAL, command=tree.yview)
         tree.configure(yscrollcommand=vsb.set); tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         vsb.pack(side=tk.RIGHT, fill=tk.Y)
+        _tkt_items = sorted(self.tkt.items(), key=lambda x: x[0])
         def _refresh(q=""):
             tree.delete(*tree.get_children()); ql = q.strip().lower()
-            for eid, txt in sorted(self.tkt.items(), key=lambda x: x[0]):
+            for eid, txt in _tkt_items:
                 if ql and ql not in txt.lower(): continue
-                tree.insert('', 'end', values=(eid, txt[:80]))
+                iid = tree.insert('', 'end', values=(eid, txt[:80]))
+                if eid == cur_val: tree.selection_set(iid); tree.see(iid)
         _refresh(); qv.trace_add('write', lambda *a: _refresh(qv.get()))
         def _sel():
             sel = tree.selection()
@@ -840,23 +861,27 @@ class ItemEditor:
     # ----------- 弹窗: 技能 -----------
     def _pick_skill(self, fn):
         dlg = tk.Toplevel(self.root); dlg.title("选择技能")
-        dlg.geometry("460x500"); dlg.transient(self.root); dlg.grab_set()
+        dlg.transient(self.root); dlg.grab_set()
+        self._center_dialog(dlg, 460, 550)
+        cur_val = int(self._edit_vars[fn].get() or 0)  # 当前选中值
         sf = ttk.Frame(dlg, padding=5); sf.pack(fill=tk.X)
         ttk.Label(sf, text="搜索:").pack(side=tk.LEFT)
         qv = tk.StringVar()
         ttk.Entry(sf, textvariable=qv, width=30, font=FONT).pack(side=tk.LEFT, padx=5)
         lf2 = ttk.Frame(dlg); lf2.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
-        tree = ttk.Treeview(lf2, columns=('idx','name'), show='headings', selectmode='browse', height=20)
+        tree = ttk.Treeview(lf2, columns=('idx','name'), show='headings', selectmode='browse', height=22)
         tree.heading('idx', text='索引'); tree.heading('name', text='技能名称')
         tree.column('idx', width=50, anchor='center'); tree.column('name', width=380, anchor='w')
         vsb = ttk.Scrollbar(lf2, orient=tk.VERTICAL, command=tree.yview)
         tree.configure(yscrollcommand=vsb.set); tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         vsb.pack(side=tk.RIGHT, fill=tk.Y)
+        _skill_items = sorted(self.skill_names.items(), key=lambda x: x[0])
         def _refresh(q=""):
             tree.delete(*tree.get_children()); ql = q.strip().lower()
-            for idx, nm in sorted(self.skill_names.items(), key=lambda x: x[0]):
+            for idx, nm in _skill_items:
                 if ql and ql not in nm.lower(): continue
-                tree.insert('', 'end', values=(idx, nm[:60]))
+                iid = tree.insert('', 'end', values=(idx, nm[:60]))
+                if idx == cur_val: tree.selection_set(iid); tree.see(iid)
         _refresh(); qv.trace_add('write', lambda *a: _refresh(qv.get()))
         def _sel():
             sel = tree.selection()
@@ -987,6 +1012,7 @@ class ItemEditor:
                 with open(self.item_path + ".bak", 'wb') as d: d.write(s.read())
         except: pass
         try:
+            self.status_var.set("正在保存…"); self.root.update()
             save_items(self.item_path, self.records); self._dirty = False
             self.status_var.set(f"已保存 → {self.item_path}")
             messagebox.showinfo("保存成功", f"已保存\n备份: {self.item_path}.bak")
