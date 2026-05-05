@@ -386,33 +386,39 @@ class ItemEditor:
         self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True); vsb.pack(side=tk.RIGHT, fill=tk.Y)
         self.tree.bind('<<TreeviewSelect>>', self._on_tree_select)
 
-        # 右编辑 — 使用 grid 布局确保按钮栏与编辑区宽度一致
+        # 右编辑
         rf = ttk.Frame(paned); paned.add(rf, weight=3)
         self.edit_frame = rf
-        rf.grid_rowconfigure(1, weight=1); rf.grid_columnconfigure(0, weight=1)
 
         self.lbl_rec_idx = ttk.Label(rf, text="未选中", font=('', 11, 'bold'))
-        self.lbl_rec_idx.grid(row=0, column=0, columnspan=2, sticky='w', padx=4, pady=(0,4))
+        self.lbl_rec_idx.pack(anchor=tk.W, pady=(0,4), padx=4)
 
-        canvas = tk.Canvas(rf, highlightthickness=0)
-        sb = ttk.Scrollbar(rf, orient=tk.VERTICAL, command=canvas.yview)
-        self.edit_inner = ttk.Frame(canvas)
-        self.edit_inner.bind('<Configure>', lambda e: canvas.configure(scrollregion=canvas.bbox('all')))
-        self._canvas_win = canvas.create_window((0,0), window=self.edit_inner, anchor='nw')
-        canvas.configure(yscrollcommand=sb.set)
-        # 让 edit_inner 宽度始终跟随 canvas，确保编辑区与按钮栏对齐
-        canvas.bind('<Configure>', lambda e: canvas.itemconfigure(self._canvas_win, width=e.width))
-        canvas.grid(row=1, column=0, sticky='nsew')
-        sb.grid(row=1, column=1, sticky='ns')
-        self._bind_mousewheel(canvas)
+        # middle: 编辑区容器, 左侧放 canvas+按钮栏, 右侧放滚动条
+        middle = ttk.Frame(rf)
+        middle.pack(fill=tk.BOTH, expand=True)
+        left_col = ttk.Frame(middle)
+        left_col.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        sb = ttk.Scrollbar(middle, orient=tk.VERTICAL)
+        sb.pack(side=tk.RIGHT, fill=tk.Y)
 
-        # 按钮栏 — 固定底部，仅占 column 0 与编辑区同宽
-        bf = ttk.Frame(rf)
-        bf.grid(row=2, column=0, sticky='ew', pady=(2,0))
+        # 按钮栏 — 固定在 left_col 底部, 不参与滚动
+        bf = ttk.Frame(left_col)
+        bf.pack(side=tk.BOTTOM, fill=tk.X, pady=(2,0))
         ttk.Button(bf, text="清空此记录", command=self._clear_current, width=12).pack(side=tk.RIGHT)
         ttk.Button(bf, text="重置为当前", command=self._reset_edit, width=12).pack(side=tk.RIGHT, padx=2)
         ttk.Button(bf, text="复制到空槽", command=self._copy_record, width=12).pack(side=tk.RIGHT, padx=2)
         ttk.Button(bf, text="应用修改", command=self._apply_edit, width=12).pack(side=tk.LEFT)
+
+        canvas = tk.Canvas(left_col, highlightthickness=0)
+        canvas.pack(fill=tk.BOTH, expand=True)
+        self.edit_inner = ttk.Frame(canvas)
+        self.edit_inner.columnconfigure(0, weight=1)
+        self.edit_inner.bind('<Configure>', lambda e: canvas.configure(scrollregion=canvas.bbox('all')))
+        self._canvas_win = canvas.create_window((0,0), window=self.edit_inner, anchor='nw')
+        # edit_inner 宽度通过 column minsize 强制跟随 canvas, 高度由内容自然撑开
+        canvas.bind('<Configure>', lambda e: self.edit_inner.columnconfigure(0, minsize=e.width))
+        canvas.configure(yscrollcommand=sb.set)
+        self._bind_mousewheel(canvas)
 
         self._edit_vars = {}; self._edit_extras = {}
 
