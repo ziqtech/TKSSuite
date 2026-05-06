@@ -178,21 +178,22 @@ W_INPUT = 12
 # ============================================================
 
 BASIC_FIELDS = [
-    ("skill_id",    0, "技能ID",     'tkt',     "技能名称 TKT 文本ID (sub_438F28)"),
-    ("name_extra",  2, "名称附加ID", 'int',     "技能序号/子类型标识 (sub_438F28)"),
+    ("skill_text_id",    0, "技能名称文本ID",     'tkt',     "技能名称 TKT 文本ID (sub_438F28)"),
+    ("skill_desc_id",  2, "技能说明文本ID", 'int',     "技能说明 TKT 文本ID = skill_text_id + 400 (sub_438F28)"),
     ("type",        4, "技能类型",   'type',    "sub_422BBC v6[2]: 0=指令 1=主动 2=被动 3=移动"),
     ("jp_cost",     6, "技能点数",   'int',     "学习技能所需点数 (Maker.exe: 学习耗费JP)"),
 ]
 
-# 技能树引用表: off8=父节点, off10=深度标识, off12-38=7组(子引用,关系类型)
+# 技能树引用表: off8=父技能ID, off10=深度标识, off12-38=7组(子技能ID,关系类型)
+# 注意: 所有引用值均为技能ID (= 列表中的 # 列), 即 TKSkill.dat 中的记录索引
 TREE_FIELDS = [
-    ("tree_parent", 8, "父技能引用", 'int',     "父技能记录索引-1: 异术子=32→父33, 系列→下一技能索引"),
+    ("tree_parent", 8, "父技能ID",   'int',     "父技能ID: 异术子ID=32→父ID=33, 系列→下一技能ID (sub_438F28)"),
     ("tree_flag",  10, "技能深度",   'int',     "技能树深度标识: 20=树成员 (同组技能一致)"),
 ]
 for i in range(7):
     TREE_FIELDS.append(
-        ("ref_skill%d" % (i+1), 12 + i*4, "引用技能%d" % (i+1), 'int',
-         "技能引用%d — 指向关联技能的记录索引" % (i+1)))
+        ("ref_skill%d" % (i+1), 12 + i*4, "引用技能ID%d" % (i+1), 'int',
+         "关联技能ID — 指向目标技能的技能ID (=列表#列)"))
     TREE_FIELDS.append(
         ("ref_type%d" % (i+1),  14 + i*4, "引用关系%d" % (i+1), 'int',
          "关系类型%d: 1=特殊 2=链接 3=下级 6=主技能 10=进阶" % (i+1)))
@@ -228,17 +229,13 @@ ADVANCED_FIELDS = [
     ("cost_res3",   82, "耗费灵魂",     'int',     "幻灵技能灵魂消耗 (Maker.exe: 耗费灵魂, sub_438AFC: word_78621C)"),
     ("loyalty_mod", 84, "好感度修正",    'int',     "好感度/忠诚度修正 (sub_4458B0: word_78621E)"),
     ("mp_cost",     86, "耗费内力",    'int',     "技能消耗内力值 — 与TKT描述一致 (word_786220)"),
-    ("trigger_prob",88, "触发概率",      'int',     "type=2 被动技能触发概率 → 角色 reaction_trigger"),
-    ("effect_level",88, "效果等级",      'byte',    "type=1→状态免疫等级; type=2→效果等级 (@offset 88 byte)"),
+    ("trigger_prob",88, "触发概率",      'int',     "type=1→状态免疫等级; type=2→被动技能触发概率 (offset 88 int16)"),
     ("sub_count",   90, "子技能数量",    'int',     "技能组头子技能数 (-1=独立技能, ≥0=母技能有子技能)"),
     ("atk_type",    92, "攻击类型",      'atk_type',"sub_447DAC: 0=自身, -1=近战, 1+=法术类别"),
 ]
 
 ALL_FIELDS = (BASIC_FIELDS + TREE_FIELDS + EFFECT_FIELDS + IMMUNE_FIELDS +
-              [f for f in ADVANCED_FIELDS if f[3] != 'byte'])
-
-# effect_level is a byte at offset 88, stored separately
-BYTE_FIELDS = [("effect_level", 88, "效果等级(byte)", 'byte', "type=1→状态免疫等级; type=2→效果等级")]
+              list(ADVANCED_FIELDS))
 
 # ============================================================
 # 类型相关字段分组 (用于 UI 提示)
@@ -247,14 +244,14 @@ BYTE_FIELDS = [("effect_level", 88, "效果等级(byte)", 'byte', "type=1→状�
 TYPE_HINT_FIELDS = {
     1: ["hp_pct","mp_pct","atk_pct","def_pct","hit_pct","eva_pct","spd_pct",
         "move_up","atk_count","heal_move","mp_move","mp_reduce","exp_bonus","jp_bonus","magic_def"],
-    2: ["trigger_prob","effect_level","mp_reduce","exp_bonus","jp_bonus","magic_def"],
+    2: ["trigger_prob","mp_reduce","exp_bonus","jp_bonus","magic_def"],
     3: ["special_flags","heal_move","mp_move","atk_count","move_up"],
     0: ["sub_count"],
 }
 
 TYPE_HINT_LABELS = {
     1: "主动技能: 百分比属性加成 → 角色战斗属性",
-    2: "被动技能: 触发概率 + 效果等级 → 角色反应系统",
+    2: "被动技能: 触发概率 → 角色反应系统",
     3: "移动技能: 特殊标志 + 移动能力 → 角色地图能力",
     0: "指令技能: 技能组根节点, 含子技能列表",
 }
@@ -264,7 +261,7 @@ TYPE_HINT_LABELS = {
 # ============================================================
 
 def skill_name(rec, tkt):
-    sid = rec.get('skill_id', 0)
+    sid = rec.get('skill_text_id', 0)
     if sid and sid in tkt:
         return tkt[sid].split('\n')[0].strip()
     if sid and -sid in tkt:
@@ -281,8 +278,6 @@ def load_skills(fp):
         rec = {'index': i}
         for k, fo, _, _, _ in ALL_FIELDS:
             rec[k] = fields[fo // 2]
-        # shared offset 88: trigger_prob (int16) holds full value, effect_level holds lo byte
-        rec['effect_level'] = dec[off + 88]
         recs.append(rec)
     return recs
 
@@ -291,12 +286,7 @@ def save_skills(fp, recs):
     for rec in recs[:SKILL_CNT]:
         i = rec['index']; off = i * SKILL_REC
         for k, fo, _, _, _ in ALL_FIELDS:
-            if fo == 88: continue  # handled below as combined value
             struct.pack_into('<h', buf, off + fo, rec[k])
-        # Shared offset 88: combine trigger_prob hi-byte with effect_level lo-byte
-        combined = (rec.get('trigger_prob', 0) & 0xFF00) | (rec.get('effect_level', 0) & 0xFF)
-        if combined > 32767: combined -= 65536
-        struct.pack_into('<h', buf, off + 88, combined)
     compressed = lzss_compress(bytes(buf))
     if lzss_decompress(compressed) != bytes(buf):
         raise RuntimeError("压缩回写验证失败!")
@@ -368,10 +358,10 @@ class SkillEditor:
 
         # Left: TreeView
         lf = ttk.Frame(paned); paned.add(lf, weight=2)
-        cols = ('index', 'skill_id', 'type', 'name', 'jp_cost', 'mp_cost')
+        cols = ('index', 'skill_text_id', 'type', 'name', 'jp_cost', 'mp_cost')
         self.tree = ttk.Treeview(lf, columns=cols, show='headings', selectmode='browse')
-        cc = [('index', '#', 38), ('skill_id', 'ID', 60), ('type', '类型', 72),
-              ('name', '技能名称', 160), ('jp_cost', '技能点数', 40), ('mp_cost', '耗费内力', 42)]
+        cc = [('index', '技能ID', 52), ('skill_text_id', '文本ID', 52), ('type', '类型', 72),
+              ('name', '技能名称', 160), ('jp_cost', '技能点数', 38), ('mp_cost', '耗费内力', 38)]
         for cid, cn, cw in cc:
             self.tree.heading(cid, text=cn, command=lambda c=cid: self._sort_by(c))
             self.tree.column(cid, width=cw, anchor='center' if cid != 'name' else 'w', minwidth=cw)
@@ -553,7 +543,7 @@ class SkillEditor:
             self.tkt_full = load_tkt_full(self.tkt_path)
         try:
             self.records = load_skills(self.skill_path); self._dirty = False
-            nonempty = sum(1 for r in self.records if r['skill_id'] != 0)
+            nonempty = sum(1 for r in self.records if r['skill_text_id'] != 0)
             self.status_var.set(
                 f"{len(self.records)} 条 | 有效 {nonempty} | TKT {len(self.tkt)} 条")
         except Exception as e:
@@ -595,16 +585,16 @@ class SkillEditor:
         q = self.sv.get().strip().lower(); self.filtered_indices = []
         ftype = self.filter_type.get()
         for rec in self.records:
-            if rec['skill_id'] == 0: continue  # skip empty slots
+            if rec['skill_text_id'] == 0: continue  # skip empty slots
             if ftype and not ftype.startswith("全部"):
                 if rec['type'] != int(ftype.split('-')[0]): continue
             if q:
                 nm = skill_name(rec, self.tkt)
-                if q not in f"{rec['index']} {rec['skill_id']} {nm} {SKILL_TYPES.get(rec['type'], '')}".lower():
+                if q not in f"{rec['index']} {rec['skill_text_id']} {nm} {SKILL_TYPES.get(rec['type'], '')}".lower():
                     continue
             self.filtered_indices.append(rec['index'])
         self._refresh_table()
-        nonempty = sum(1 for r in self.records if r['skill_id'] != 0)
+        nonempty = sum(1 for r in self.records if r['skill_text_id'] != 0)
         msg = f"显示 {len(self.filtered_indices)}/{nonempty} | Ctrl+S 保存"
         if self._dirty: msg += " [已修改]"
         self.status_var.set(msg)
@@ -621,7 +611,7 @@ class SkillEditor:
             if r['type'] == 0: tags = ['cmd']
             elif r['type'] == 2: tags = ['passive']
             self.tree.insert('', 'end',
-                             values=(r['index'], r['skill_id'], stype,
+                             values=(r['index'], r['skill_text_id'], stype,
                                      skill_name(r, self.tkt), r['jp_cost'], r['mp_cost']),
                              tags=tags)
 
@@ -631,7 +621,7 @@ class SkillEditor:
             self.filtered_indices.sort(
                 key=lambda i: skill_name(self.records[i], self.tkt).lower(), reverse=rev)
         else:
-            km = {'skill_id': 'skill_id', 'type': 'type', 'jp_cost': 'jp_cost', 'mp_cost': 'mp_cost'}
+            km = {'skill_text_id': 'skill_text_id', 'type': 'type', 'jp_cost': 'jp_cost', 'mp_cost': 'mp_cost'}
             self.filtered_indices.sort(
                 key=lambda i: self.records[i].get(km.get(col, 'index'), 0), reverse=rev)
         self._sort_reverse = not rev; self._refresh_table()
@@ -639,12 +629,12 @@ class SkillEditor:
     # ----------- 编辑 -----------
 
     def _new_skill(self):
-        """查找第一个空槽(skill_id=0)，设置默认模板"""
+        """查找第一个空槽(skill_text_id=0)，设置默认模板"""
         if not self.records:
             messagebox.showinfo("提示", "请先加载数据"); return
         for rec in self.records:
-            if rec['skill_id'] == 0:
-                rec['skill_id'] = rec['index'] + 1
+            if rec['skill_text_id'] == 0:
+                rec['skill_text_id'] = rec['index'] + 1
                 rec['type'] = 1; rec['jp_cost'] = 1
                 rec['sub_count'] = -1; rec['atk_type'] = -1
                 self._dirty = True; self._apply_filter()
@@ -659,10 +649,10 @@ class SkillEditor:
         """复制当前选中记录到下一个空槽"""
         if not hasattr(self, '_editing_idx'): return
         src = self.records[self._editing_idx]
-        if src['skill_id'] == 0:
+        if src['skill_text_id'] == 0:
             messagebox.showinfo("提示", "当前记录为空, 无需复制"); return
         for rec in self.records:
-            if rec['skill_id'] == 0:
+            if rec['skill_text_id'] == 0:
                 idx_bak = rec['index']
                 rec.update({k: v for k, v in src.items() if k != 'index'})
                 rec['index'] = idx_bak
@@ -678,13 +668,13 @@ class SkillEditor:
         """清空当前记录的所有字段"""
         if not hasattr(self, '_editing_idx'): return
         rec = self.records[self._editing_idx]
-        if rec['skill_id'] == 0:
+        if rec['skill_text_id'] == 0:
             messagebox.showinfo("提示", "当前记录已经为空"); return
         if not messagebox.askyesno("确认清空", f"确定清空记录 #{rec['index']}?"):
             return
         for k, fo, _, _, _ in ALL_FIELDS:
             rec[k] = 0
-        rec['effect_level'] = 0; rec['sub_count'] = -1
+        rec['sub_count'] = -1
         self._dirty = True; self._apply_filter()
         self._populate_edit(rec)
         self.status_var.set(f"已清空记录 #{rec['index']}")
@@ -699,12 +689,12 @@ class SkillEditor:
         self._editing_idx = rec['index']
         stype = SKILL_TYPES.get(rec['type'], f"#{rec['type']}")
         self.lbl_rec_idx.config(text=(
-            f"记录 #{rec['index']}    技能ID={rec['skill_id']}    "
+            f"技能 #{rec['index']}    文本ID={rec['skill_text_id']}    "
             f"类型={stype}   名称={skill_name(rec, self.tkt)}"
         ))
 
         # Preview
-        nid = rec.get('skill_id', 0)
+        nid = rec.get('skill_text_id', 0)
         n_txt = self.tkt.get(nid, "") if nid > 0 else ""
         self.preview_name.config(text=n_txt.split('\n')[0].strip() if n_txt else "(无 / TKT 未提供)")
         did = nid + 400
@@ -721,7 +711,7 @@ class SkillEditor:
         sc = rec.get('sub_count', -1)
         if sc >= 0:
             self.preview_sub.config(
-                text=f"子技能: {sc} 个 (索引 {rec['index']+1} – {rec['index']+sc})")
+                text=f"子技能: {sc} 个 (技能ID {rec['index']+1} – {rec['index']+sc})")
         else:
             self.preview_sub.config(text="")
 
@@ -751,10 +741,6 @@ class SkillEditor:
                 cb = self._edit_extras[fn]
                 for i, t in enumerate(cb['values']):
                     if t.startswith(f"{val}-"): cb.current(i); break
-        # effect_level (byte)
-        fn = 'effect_level'
-        self._edit_vars.get(fn, tk.StringVar()).set(str(rec.get(fn, 0)))
-
     def _update_type_hints(self, skill_type):
         """Highlight groups relevant to this skill type"""
         # Row 2 = EFFECT_FIELDS, Row 3 = IMMUNE_FIELDS, Row 4 = ADVANCED_FIELDS
@@ -768,7 +754,7 @@ class SkillEditor:
             2: {
                 2: "效果加成 (被动技能多数不适用)",
                 3: "▼ 状态免疫 + 格挡/连击 (被动技能核心)",
-                4: "▼ 高级属性 (触发概率 + 效果等级 为核心)",
+                4: "▼ 高级属性 (触发概率 为核心)",
             },
             3: {
                 2: "▼ 特殊标志 + 自愈/回气/移动 (移动技能核心)",
@@ -865,7 +851,7 @@ class SkillEditor:
                 try:
                     tid = int(v[0])
                     txt = self.tkt.get(tid, "")
-                    if fn == 'skill_id':
+                    if fn == 'skill_text_id':
                         self.preview_name.config(text=txt.split('\n')[0].strip() if txt else "(无)")
                 except: pass
                 dlg.destroy()
@@ -953,22 +939,10 @@ class SkillEditor:
                     rec[fn] = v
             except ValueError:
                 rec[fn] = 0
-        # byte fields + shared-offset sync (trigger_prob/effect_level both at offset 88)
-        try:
-            rec['effect_level'] = int(self._edit_vars['effect_level'].get()) & 0xFF
-        except ValueError:
-            rec['effect_level'] = 0
-        # effect_level is the low byte of trigger_prob (shared offset 88)
-        rec['trigger_prob'] = (rec['trigger_prob'] & 0xFF00) | (rec['effect_level'] & 0xFF)
-        # clamp to signed int16
-        if rec['trigger_prob'] > 32767:
-            rec['trigger_prob'] -= 65536
         # 验证并警告 (逆向依据: sub_422BBC/sub_447DAC)
         warnings = []
         if rec['type'] not in (0, 1, 2, 3):
             warnings.append(f"技能类型 {rec['type']} 超出有效范围 0-3 (sub_422BBC)")
-        if rec.get('effect_level', 0) < 0 or rec.get('effect_level', 0) > 255:
-            warnings.append("效果等级应为 0-255 (byte字段)")
         sc = rec.get('sub_count', -1)
         if sc < -1 or sc > 349:
             warnings.append(f"子技能数量 {sc} 超出有效范围 -1~349")
@@ -1019,13 +993,12 @@ class SkillEditor:
         if not p: return
         csv_fields = ALL_FIELDS
         with open(p, 'w', encoding='utf-8-sig') as f:
-            hdr = ['索引', '名称', '类型'] + [fl for _, _, fl, _, _ in csv_fields] + ['effect_level(byte)']
+            hdr = ['索引', '名称', '类型'] + [fl for _, _, fl, _, _ in csv_fields]
             f.write(','.join(hdr) + '\n')
             for rec in self.records:
-                if rec['skill_id'] == 0: continue
+                if rec['skill_text_id'] == 0: continue
                 row = [str(rec['index']), skill_name(rec, self.tkt), SKILL_TYPES.get(rec['type'], str(rec['type']))]
                 row += [str(rec[fn]) for fn, _, _, _, _ in csv_fields]
-                row.append(str(rec.get('effect_level', 0)))
                 f.write(','.join(row) + '\n')
         self.status_var.set(f"已导出: {p}")
 
