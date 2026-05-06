@@ -18,6 +18,19 @@ TKSkill.dat 格式 (每条 94 字节, 共 350 条):
   python skill_editor.py
 """
 
+"""
+游戏实际数据：
+技能名称|耗费内力|基础伤害|学习点数|时序值Delay|目标距离
+---
+土崩術|100|120|160|120|4
+狂風術|25|80|40|120|8
+龍戰於野|40|攻击力+100？|450|150|0
+紫玉刀|30|攻击力|100|120|1
+火  箭|10|5%|40|80|7
+劍  七|70|120|270|140|0
+劍 十 一|90|600|540|160|5
+"""
+
 import struct, os, sys, tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 
@@ -26,6 +39,7 @@ from tkinter import ttk, messagebox, filedialog
 # ============================================================
 
 def lzss_decompress(data):
+    """LZSS 解压 — sub_452B14: 4096窗口, 0x20填充, 起始位4078"""
     if len(data) < 12: return b''
     ts = struct.unpack_from('<I', data, 0)[0]
     bs = struct.unpack_from('<I', data, 4)[0]
@@ -50,19 +64,19 @@ def lzss_decompress(data):
     return bytes(out[:ts])
 
 def lzss_compress(data):
+    """LZSS 压缩 — sub_452B14 逆向: 4096窗口, 0x20填充, 起始位4078"""
     src = data; sl = len(src)
-    flat_bytes = bytes(bytearray([0x20] * 4096) + src)
+    flat = bytes(bytearray([0x20] * 4096) + src)
     tokens = []; pos = 0
     while pos < sl:
         curr = 4096 + pos; ms = min(18, sl - pos); bl, bo = 0, 0
         if ms >= 3:
             for length in range(ms, 2, -1):
-                pat = flat_bytes[curr:curr + length]
-                end_idx = curr + length - 1
-                start_idx = max(0, curr - 4096)
-                idx = flat_bytes.rfind(pat, start_idx, end_idx)
-                if idx != -1:
-                    bl = length; bo = (idx - 18) & 0xFFF; break
+                pat = flat[curr:curr + length]
+                end = curr + length - 1
+                start = max(0, curr - 4096)
+                idx = flat.rfind(pat, start, end)
+                if idx != -1: bl = length; bo = (idx - 18) & 0xFFF; break
         if bl >= 3:
             tokens.append((False, bo, bl)); pos += bl
         else:
@@ -74,10 +88,12 @@ def lzss_compress(data):
             if tokens[i][0]: fb |= (1 << (i - ti))
         stream.append(fb)
         for i in range(ti, be):
-            if tokens[i][0]: stream.append(tokens[i][1])
+            if tokens[i][0]:
+                stream.append(tokens[i][1])
             else:
                 off, length = tokens[i][1], tokens[i][2]; el = length - 3
-                stream.append(off & 0xFF); stream.append(((off >> 4) & 0xF0) | (el & 0x0F))
+                stream.append(off & 0xFF)
+                stream.append(((off >> 4) & 0xF0) | (el & 0x0F))
         ti = be
     ds = sl; bd = struct.pack('<I', ds) + bytes(stream)
     return struct.pack('<II', ds, len(bd)) + bd
@@ -96,7 +112,8 @@ def load_tkt(tkt_path):
     for i in range(cnt):
         eid = struct.unpack_from('<i', dec, i * 4)[0]
         if eid in SKIP: continue
-        off = struct.unpack_from('<I', dec, idsz + i * 4)[0]; ao = idsz + ofsz + off
+        off = struct.unpack_from('<I', dec, idsz + i * 4)[0]
+        ao = idsz + ofsz + off
         if ao < len(dec):
             end = ao
             while end < len(dec) and dec[end] != 0: end += 1
@@ -116,7 +133,8 @@ def load_tkt_full(tkt_path):
     for i in range(cnt):
         eid = struct.unpack_from('<i', dec, i * 4)[0]
         if eid in SKIP: continue
-        off = struct.unpack_from('<I', dec, idsz + i * 4)[0]; ao = idsz + ofsz + off
+        off = struct.unpack_from('<I', dec, idsz + i * 4)[0]
+        ao = idsz + ofsz + off
         if ao < len(dec):
             end = ao
             while end < len(dec) and dec[end] != 0: end += 1
@@ -160,30 +178,30 @@ W_INPUT = 12
 # ============================================================
 
 BASIC_FIELDS = [
-    ("skill_id",    0, "技能ID",     'tkt',     "技能唯一标识 → TKT.dat 名称文本 (正数匹配)"),
-    ("name_extra",  2, "名称附加ID", 'int',     "技能名称附加参数 (sub_438F28)"),
-    ("type",        4, "技能类型",   'type',    "0=指令(母技能) 1=主动 2=被动 3=移动"),
-    ("level",       6, "技能等级",   'int',     "技能等级/阶"),
-    ("mp_cost",     8, "消耗MP",     'int',     "MP 消耗量"),
-    ("range",      10, "效果范围",   'int',     "20=远程/法术, 0=自身, 其他=距离"),
-    ("base_effect",12, "基础效果值", 'int',     "基础效果数值"),
-    ("base_damage",14, "基础伤害",   'int',     "基础伤害值"),
+    ("skill_id",    0, "技能ID",     'tkt',     "技能名称 TKT 文本ID (sub_438F28)"),
+    ("name_extra",  2, "名称附加ID", 'int',     "技能序号/子类型标识 (sub_438F28)"),
+    ("type",        4, "技能类型",   'type',    "sub_422BBC v6[2]: 0=指令 1=主动 2=被动 3=移动"),
+    ("jp_cost",       6, "学习耗费JP", 'int',     "学习技能所需点数 (Maker.exe: 学习耗费JP)"),
+    ("category",    8, "分类标识",   'int',     "技能分类标识: 32=异术 10=仙术 43=武術 (非MP)"),
+    ("range",      10, "效果范围",   'int',     "效果范围 (待逆向验证)"),
+    ("base_effect",12, "基础效果值", 'int',     "基础效果数值 (待逆向验证)"),
+    ("base_damage",14, "基础伤害",   'int',     "基础伤害值 (待逆向验证)"),
 ]
 
 EFFECT_FIELDS = [
-    ("icon",        40, "图标索引",      'int',     "技能图标索引 (sub_438AFC: word_7861F2)"),
-    ("hp_pct",      42, "生命加成%",     'int',     "百分比 HP 加成 (sub_422BBC: a2[8]+=v6[21]*a2[7]/100)"),
-    ("self_heal",   44, "自愈/状态修正", 'int',     "type=1→状态修正值(a2[22]); type=3→自愈值(a2[39]+=v6[22]); sub_422BBC"),
-    ("mp_pct",      46, "内力加成%",     'int',     "百分比 MP 加成 (a2[10]+=v6[23]*a2[9]/100)"),
-    ("mp_regen",    48, "回气/闪避",     'int',     "type=1→闪避修正值; type=3→回气值(a2[40]+=v6[24]); sub_422BBC"),
-    ("atk_pct",     50, "攻击加成%",     'int',     "百分比攻击加成 (a2[12]+=v6[25]*a2[11]/100)"),
-    ("def_pct",     52, "防御加成%",     'int',     "百分比防御加成 (a2[14]+=v6[26]*a2[13]/100)"),
-    ("hit_pct",     54, "命中加成%",     'int',     "百分比命中加成 (a2[16]+=v6[27]*a2[15]/100)"),
-    ("eva_pct",     56, "闪避加成%",     'int',     "百分比闪避加成 (a2[18]+=v6[28]*a2[17]/100)"),
-    ("spd_pct",     58, "速度加成%",     'int',     "百分比速度加成 (a2[20]+=v6[29]*a2[19]/100)"),
-    ("spd_bonus",   60, "速度固定加成",  'int',     "type=1→速度固定值(a2[24]+=v6[30]); type=3→移动力; sub_422BBC"),
-    ("move_bonus",  62, "移动加成",      'int',     "type=1→角色移动力[32]"),
-    ("special_flags",64,"特殊标志",      'flags',   "仅type=3有效: a2[38]|=v6[32]; bit0=飘浮 bit1=飙行 bit2=搜宝 bit3=解陷"),
+    ("timing",      40, "时序值Delay",   'int',     "技能行动时序值 (Maker.exe: 改变时序, sub_438AFC: word_7861F2)"),
+    ("hp_pct",      42, "生命加成%",     'int',     "HP%加成 (sub_422BBC: a2[8]+=v6[21]*a2[7]/100)"),
+    ("self_heal",   44, "自愈/状态修正", 'int',     "type=1→状态修正(a2[22]); type=3→自愈(a2[39]+=v6[22]); sub_422BBC"),
+    ("mp_pct",      46, "内力加成%",     'int',     "MP%加成 (sub_422BBC: a2[10]+=v6[23]*a2[9]/100)"),
+    ("mp_regen",    48, "回气/闪避",     'int',     "type=1→闪避修正; type=3→回气(a2[40]+=v6[24]); sub_422BBC"),
+    ("atk_pct",     50, "攻击加成%",     'int',     "攻击%加成 (sub_422BBC: a2[12]+=v6[25]*a2[11]/100)"),
+    ("def_pct",     52, "防御加成%",     'int',     "防御%加成 (sub_422BBC: a2[14]+=v6[26]*a2[13]/100)"),
+    ("hit_pct",     54, "命中加成%",     'int',     "命中%加成 (sub_422BBC: a2[16]+=v6[27]*a2[15]/100)"),
+    ("eva_pct",     56, "闪避加成%",     'int',     "闪避%加成 (sub_422BBC: a2[18]+=v6[28]*a2[17]/100)"),
+    ("spd_pct",     58, "速度加成%",     'int',     "速度%加成 (sub_422BBC: a2[20]+=v6[29]*a2[19]/100)"),
+    ("spd_bonus",   60, "速度固定加成",  'int',     "type=1→速度+(a2[24]+=v6[30]); type=3→移动力; sub_422BBC"),
+    ("atk_count",   62, "增攻击次数",    'int',     "增加攻击次数: 二連=2 三連=3 (Maker.exe: 增攻击次数)"),
+    ("special_flags",64,"特殊标志",      'flags',   "type=3: a2[38]|=v6[32]; bit0=飘浮 bit1=飙行 bit2=搜宝 bit3=解陷"),
     ("counter",     66, "反击加成",      'int',     "反击率加成 (sub_422BBC: a2[34]+=v6[33])"),
 ]
 
@@ -194,13 +212,13 @@ IMMUNE_FIELDS = [
     ("block",       74, "格挡加成",      'int',     "格挡率加成 (sub_422BBC: →character[37])"),
     ("calc",        76, "精算加成",      'int',     "精算/暴击率加成 (sub_422BBC: a2[35]+=v6[38])"),
     ("cost_gold",   78, "消耗金钱",      'int',     "资源消耗1·金钱 (sub_438AFC: word_786218)"),
-    ("cost_res2",   80, "消耗资源2",     'int',     "资源消耗2 (sub_438AFC: word_78621A)"),
+    ("cost_res2",   80, "耗费兽元",     'int',     "召唤技能兽元消耗 (Maker.exe: 耗费兽元, sub_438AFC: word_78621A)"),
 ]
 
 ADVANCED_FIELDS = [
-    ("cost_res3",   82, "消耗资源3",     'int',     "资源消耗3 (sub_438AFC: word_78621C)"),
+    ("cost_res3",   82, "耗费灵魂",     'int',     "幻灵技能灵魂消耗 (Maker.exe: 耗费灵魂, sub_438AFC: word_78621C)"),
     ("loyalty_mod", 84, "好感度修正",    'int',     "好感度/忠诚度修正 (sub_4458B0: word_78621E)"),
-    ("unknown_43",  86, "上下文修正",    'int',     "word_786220: sub_438F28/sub_447DAC引用, 语义随上下文变化"),
+    ("mp_cost",     86, "耗费内力",    'int',     "技能消耗内力值 — 与TKT描述一致 (word_786220)"),
     ("trigger_prob",88, "触发概率",      'int',     "type=2 被动技能触发概率 → 角色 reaction_trigger"),
     ("effect_level",88, "效果等级",      'byte',    "type=1→状态免疫等级; type=2→效果等级 (@offset 88 byte)"),
     ("sub_count",   90, "子技能数量",    'int',     "技能组头子技能数 (-1=独立技能, ≥0=母技能有子技能)"),
@@ -226,9 +244,9 @@ BYTE_FIELDS = [("effect_level", 88, "效果等级(byte)", 'byte', "type=1→状�
 
 TYPE_HINT_FIELDS = {
     1: ["hp_pct","mp_pct","atk_pct","def_pct","hit_pct","eva_pct","spd_pct",
-        "spd_bonus","move_bonus","self_heal","mp_regen","counter","combo","block","calc"],
+        "spd_bonus","atk_count","self_heal","mp_regen","counter","combo","block","calc"],
     2: ["trigger_prob","effect_level","counter","combo","block","calc"],
-    3: ["special_flags","self_heal","mp_regen","move_bonus","spd_bonus"],
+    3: ["special_flags","self_heal","mp_regen","atk_count","spd_bonus"],
     0: ["sub_count"],
 }
 
@@ -348,10 +366,10 @@ class SkillEditor:
 
         # Left: TreeView
         lf = ttk.Frame(paned); paned.add(lf, weight=2)
-        cols = ('index', 'skill_id', 'type', 'name', 'level', 'mp_cost')
+        cols = ('index', 'skill_id', 'type', 'name', 'jp_cost', 'mp_cost')
         self.tree = ttk.Treeview(lf, columns=cols, show='headings', selectmode='browse')
-        cc = [('index', '#', 38), ('skill_id', '技能ID', 60), ('type', '类型', 72),
-              ('name', '技能名称', 160), ('level', '等级', 40), ('mp_cost', 'MP', 42)]
+        cc = [('index', '#', 38), ('skill_id', 'ID', 60), ('type', '类型', 72),
+              ('name', '技能名称', 160), ('jp_cost', 'JP', 40), ('mp_cost', 'MP', 42)]
         for cid, cn, cw in cc:
             self.tree.heading(cid, text=cn, command=lambda c=cid: self._sort_by(c))
             self.tree.column(cid, width=cw, anchor='center' if cid != 'name' else 'w', minwidth=cw)
@@ -400,7 +418,7 @@ class SkillEditor:
         self.preview_name = ttk.Label(pv_lf, text="(未选中)", foreground='#3366cc',
                                        font=FONT, wraplength=600, justify='left')
         self.preview_name.grid(row=0, column=1, columnspan=3, sticky='ew', pady=1)
-        self.preview_desc = tk.Text(pv_lf, height=4, width=60, font=FONT,
+        self.preview_desc = tk.Text(pv_lf, height=8, width=70, font=FONT,
                                      foreground='#228B22', wrap='word',
                                      relief='flat', borderwidth=0,
                                      state='disabled', bg=self.root.cget('bg'))
@@ -608,7 +626,7 @@ class SkillEditor:
             elif r['type'] == 2: tags = ['passive']
             self.tree.insert('', 'end',
                              values=(r['index'], r['skill_id'], stype,
-                                     skill_name(r, self.tkt), r['level'], r['mp_cost']),
+                                     skill_name(r, self.tkt), r['jp_cost'], r['mp_cost']),
                              tags=tags)
 
     def _sort_by(self, col):
@@ -617,7 +635,7 @@ class SkillEditor:
             self.filtered_indices.sort(
                 key=lambda i: skill_name(self.records[i], self.tkt).lower(), reverse=rev)
         else:
-            km = {'skill_id': 'skill_id', 'type': 'type', 'level': 'level', 'mp_cost': 'mp_cost'}
+            km = {'skill_id': 'skill_id', 'type': 'type', 'jp_cost': 'jp_cost', 'mp_cost': 'mp_cost'}
             self.filtered_indices.sort(
                 key=lambda i: self.records[i].get(km.get(col, 'index'), 0), reverse=rev)
         self._sort_reverse = not rev; self._refresh_table()
@@ -631,7 +649,7 @@ class SkillEditor:
         for rec in self.records:
             if rec['skill_id'] == 0:
                 rec['skill_id'] = rec['index'] + 1
-                rec['type'] = 1; rec['level'] = 1
+                rec['type'] = 1; rec['jp_cost'] = 1
                 rec['sub_count'] = -1; rec['atk_type'] = -1
                 self._dirty = True; self._apply_filter()
                 for child in self.tree.get_children():
@@ -701,8 +719,8 @@ class SkillEditor:
         self.preview_desc.configure(state='disabled')
         # type hint
         hint = TYPE_HINT_LABELS.get(rec['type'], "")
-        self.preview_type.config(text=f"类型: {stype} | Lv.{rec['level']} | MP={rec['mp_cost']} | 范围={rec['range']} | {hint}" if hint else
-                                  f"类型: {stype} | Lv.{rec['level']} | MP={rec['mp_cost']} | 范围={rec['range']}")
+        self.preview_type.config(text=f"类型: {stype} | JP={rec['jp_cost']} | MP={rec['mp_cost']} | 范围={rec['range']} | {hint}" if hint else
+                                  f"类型: {stype} | JP={rec['jp_cost']} | MP={rec['mp_cost']} | 范围={rec['range']}")
         # sub count
         sc = rec.get('sub_count', -1)
         if sc >= 0:
@@ -777,7 +795,7 @@ class SkillEditor:
                     lbl.config(text="", foreground='#888')
 
     def _update_mask_label(self, fn, mask):
-        base = 0 if fn.endswith('_mask1') else 16
+        base = 0 if fn == 'immunity1' else 16
         extras_frame, txt_lbl = self._edit_extras[fn]
         for w in extras_frame.winfo_children():
             if w != txt_lbl: w.destroy()
@@ -866,7 +884,7 @@ class SkillEditor:
         dlg = tk.Toplevel(self.root); dlg.title(title)
         dlg.transient(self.root); dlg.grab_set()
         self._center_dialog(dlg, 360, 520)
-        base = 0 if fn.endswith('_mask1') else 16
+        base = 0 if fn == 'immunity1' else 16
         cur_mask = int(self._edit_vars.get(fn, tk.StringVar()).get() or 0) & 0xFFFF
         vars_ = []
         wrap = ttk.Frame(dlg, padding=8); wrap.pack(fill=tk.BOTH, expand=True)
@@ -963,8 +981,8 @@ class SkillEditor:
             warnings.append(f"攻击类型 {at} 超出有效范围 -1~8 (sub_447DAC)")
         if rec.get('mp_cost', 0) < 0:
             warnings.append("消耗MP不应为负值")
-        if rec.get('level', 0) < 0:
-            warnings.append("技能等级不应为负值")
+        if rec.get('jp_cost', 0) < 0:
+            warnings.append("学习耗费JP不应为负值")
         if warnings:
             messagebox.showwarning("数据验证警告",
                 "以下字段值可能存在问题:\n\n" + "\n".join(f"• {w}" for w in warnings) +
