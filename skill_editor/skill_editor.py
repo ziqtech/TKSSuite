@@ -8,7 +8,7 @@ TKSkill.dat 可视化编辑器
   - sub_422BBC: 被动技能属性加成 (type=1/2/3 分支)
   - sub_438F28: 技能列表/技能组层次结构 (sub_count, atk_type)
   - sub_447DAC: 攻击类型判定 (field[46]+1)
-  - sub_4458B0: 好感度修正 (field[42])
+  - sub_4458B0: 调整时序 (field[42])
   - sub_438AFC: 图标/消耗资源读取 (field[20],[39],[40],[41])
 
 TKSkill.dat 格式 (每条 94 字节, 共 350 条):
@@ -16,19 +16,6 @@ TKSkill.dat 格式 (每条 94 字节, 共 350 条):
 
 用法:
   python skill_editor.py
-"""
-
-"""
-游戏实际数据：
-技能名称|耗费内力|基础伤害|学习点数|时序值Delay|目标距离
----
-土崩術|100|120|160|120|4
-狂風術|25|80|40|120|8
-龍戰於野|40|攻击力+100？|450|150|0
-紫玉刀|30|攻击力|100|120|1
-火  箭|10|5%|40|80|7
-劍  七|70|120|270|140|0
-劍 十 一|90|600|540|160|5
 """
 
 import struct, os, sys, tkinter as tk
@@ -153,8 +140,7 @@ SKILL_REC = 94; SKILL_CNT = 350  # sub_45343C: 32900 = 94 × 350
 SKILL_TYPES = {0: "指令技能", 1: "主动技能", 2: "被动技能", 3: "移动技能"}
 SKILL_TYPE_VALUES = [f"{k}-{v}" for k, v in sorted(SKILL_TYPES.items())]
 
-ATK_TYPE_VALUES = ["-1-近战", "0-自身", "1-法术1", "2-法术2", "3-法术3",
-                   "4-法术4", "5-法术5", "6-法术6", "7-法术7", "8-法术8"]
+ATK_TYPE_VALUES = ["-1-近战攻击", "0-物理攻击", "1-术法攻击", "10-召唤攻击"]
 
 STATUS_NAMES = [
     "破兵","碎甲","昏眩","封锁","羁绊","蓄力","刚体","集中",
@@ -184,19 +170,17 @@ BASIC_FIELDS = [
     ("jp_cost",     6, "技能点数",   'int',     "学习技能所需点数 (Maker.exe: 学习耗费JP)"),
 ]
 
-# 技能树引用表: off8=父技能ID, off10=深度标识, off12-38=7组(子技能ID,关系类型)
+# 技能树引用表: off8-38=8组(改变技能,改变类型)
 # 注意: 所有引用值均为技能ID (= 列表中的 # 列), 即 TKSkill.dat 中的记录索引
-TREE_FIELDS = [
-    ("tree_parent", 8, "父技能ID",   'int',     "父技能ID: 异术子ID=32→父ID=33, 系列→下一技能ID (sub_438F28)"),
-    ("tree_flag",  10, "技能深度",   'int',     "技能树深度标识: 20=树成员 (同组技能一致)"),
-]
-for i in range(7):
+# Pair 0 约定: type=0→ref_type=20(前组尾链); type=1/2/3→ref_type=10(升级链)
+TREE_FIELDS = []
+for i in range(8):
     TREE_FIELDS.append(
-        ("ref_skill%d" % (i+1), 12 + i*4, "引用技能ID%d" % (i+1), 'int',
-         "关联技能ID — 指向目标技能的技能ID (=列表#列)"))
+        ("ref_skill%d" % i, 8 + i*4, "改变技能%d" % i, 'int',
+         "学会后改变技能%d — 指向目标技能的记录索引" % i))
     TREE_FIELDS.append(
-        ("ref_type%d" % (i+1),  14 + i*4, "引用关系%d" % (i+1), 'int',
-         "关系类型%d: 1=特殊 2=链接 3=下级 6=主技能 10=进阶" % (i+1)))
+        ("ref_type%d" % i, 10 + i*4, "改变类型%d" % i, 'int',
+         "改变类型%d: 20=前组尾链 10=升级链 6=主技能 5=进阶前 3=下级 2=链接 1=特殊" % i))
 
 EFFECT_FIELDS = [
     ("timing",      40, "时序值Delay",   'int',     "技能行动时序值 (Maker.exe: 改变时序, sub_438AFC: word_7861F2)"),
@@ -227,11 +211,14 @@ IMMUNE_FIELDS = [
 
 ADVANCED_FIELDS = [
     ("cost_res3",   82, "耗费灵魂",     'int',     "幻灵技能灵魂消耗 (Maker.exe: 耗费灵魂, sub_438AFC: word_78621C)"),
-    ("loyalty_mod", 84, "好感度修正",    'int',     "好感度/忠诚度修正 (sub_4458B0: word_78621E)"),
+    ("turn_shift",  84, "调整时序", 'int',     "敌人行动时序偏移: 正=后移N位, 负=前移N位 (Maker: 敌人损回合, sub_4458B0: word_78621E)"),
     ("mp_cost",     86, "耗费内力",    'int',     "技能消耗内力值 — 与TKT描述一致 (word_786220)"),
     ("trigger_prob",88, "触发概率",      'int',     "type=1→状态免疫等级; type=2→被动技能触发概率 (offset 88 int16)"),
     ("sub_count",   90, "子技能数量",    'int',     "技能组头子技能数 (-1=独立技能, ≥0=母技能有子技能)"),
-    ("atk_type",    92, "攻击类型",      'atk_type',"sub_447DAC: 0=自身, -1=近战, 1+=法术类别"),
+    ("atk_type",    92, "攻击类型",      'atk_type',"攻击伤害类别, 战斗引擎 3 处分支: "
+     "①sub_4389B0: 1=术法受抗性减半时序伤害; "
+     "②sub_4458B0: -1=近战不受国士无双免疫(无条件物理路径), 0=单目标物理, ≥1=术法受法术反弹; "
+     "③sub_447DAC: byte_9D6C78=LOBYTE(field[46])+1, 0=近战 1=物理 2=术法 11=召唤"),
 ]
 
 ALL_FIELDS = (BASIC_FIELDS + TREE_FIELDS + EFFECT_FIELDS + IMMUNE_FIELDS +
@@ -430,7 +417,7 @@ class SkillEditor:
         self._build_field_group("状态免疫", IMMUNE_FIELDS, 3, 4)
         self._build_field_group("高级属性", ADVANCED_FIELDS, 4, 4)
         # Skill tree reference table
-        self._build_field_group("技能树引用表 (off10=深度标识, off12-38=7组引用)", TREE_FIELDS, 5, 6)
+        self._build_field_group("技能树引用表 (8组: 改变技能 / 改变类型)", TREE_FIELDS, 5, 6)
 
         # Bottom path bar
         pf = ttk.LabelFrame(self.root, text="当前加载"); pf.pack(fill=tk.X, padx=5, pady=(0, 2))
@@ -705,8 +692,8 @@ class SkillEditor:
         self.preview_desc.configure(state='disabled')
         # type hint
         hint = TYPE_HINT_LABELS.get(rec['type'], "")
-        self.preview_type.config(text=f"类型: {stype} | 技能点数={rec['jp_cost']} | 耗费内力={rec['mp_cost']} | 深度={rec['tree_flag']} | {hint}" if hint else
-                                  f"类型: {stype} | 技能点数={rec['jp_cost']} | 耗费内力={rec['mp_cost']} | 深度={rec['tree_flag']}")
+        self.preview_type.config(text=f"类型: {stype} | 技能点数={rec['jp_cost']} | 耗费内力={rec['mp_cost']} | Pair0类型={rec['ref_type0']} | {hint}" if hint else
+                                  f"类型: {stype} | 技能点数={rec['jp_cost']} | 耗费内力={rec['mp_cost']} | Pair0类型={rec['ref_type0']}")
         # sub count
         sc = rec.get('sub_count', -1)
         if sc >= 0:
@@ -749,7 +736,7 @@ class SkillEditor:
             1: {
                 2: "▼ 主动技能核心加成 (百分比属性 → 角色战斗值)",
                 3: "▼ 状态免疫 (可选, 格挡/连击/精算)",
-                4: "▼ 高级属性 (消耗资源/好感度/攻击类型)",
+                4: "▼ 高级属性 (消耗资源/调整时序/攻击类型)",
             },
             2: {
                 2: "效果加成 (被动技能多数不适用)",
@@ -759,7 +746,7 @@ class SkillEditor:
             3: {
                 2: "▼ 特殊标志 + 自愈/回气/移动 (移动技能核心)",
                 3: "状态免疫 (移动技能不太适用)",
-                4: "▼ 高级属性 (消耗/好感度)",
+                4: "▼ 高级属性 (消耗/调整时序)",
             },
             0: {
                 2: "效果加成 (指令技能不太适用)",
@@ -947,8 +934,8 @@ class SkillEditor:
         if sc < -1 or sc > 349:
             warnings.append(f"子技能数量 {sc} 超出有效范围 -1~349")
         at = rec.get('atk_type', -1)
-        if at < -1 or at > 8:
-            warnings.append(f"攻击类型 {at} 超出有效范围 -1~8 (sub_447DAC)")
+        if at < -1 or at > 10:
+            warnings.append(f"攻击类型 {at} 超出有效范围 -1~10 (sub_447DAC/sub_4458B0)")
         if rec.get('mp_cost', 0) < 0:
             warnings.append("耗费内力不应为负值")
         if rec.get('jp_cost', 0) < 0:
@@ -1006,11 +993,11 @@ class SkillEditor:
 
     def _show_field_ref(self):
         groups = [
-            ("基础标识区 (offset 0–16)", BASIC_FIELDS),
+            ("基础标识区 (offset 0–6)", BASIC_FIELDS),
+            ("技能树引用区 (offset 8–38)", TREE_FIELDS),
             ("效果加成区 (offset 40–68)", EFFECT_FIELDS),
             ("状态免疫区 (offset 68–82)", IMMUNE_FIELDS),
             ("高级属性区 (offset 82–94)", ADVANCED_FIELDS),
-            ("保留字段 (offset 16–40)", RESERVED_FIELDS),
         ]
         lines = ["TKSkill.dat 字段映射 (反编译依据):", ""]
         for title, fields in groups:
@@ -1022,7 +1009,7 @@ class SkillEditor:
         lines.append("  sub_422BBC  被动技能属性加成 (type=1/2/3 分支)")
         lines.append("  sub_438F28  技能列表/技能组层次结构")
         lines.append("  sub_447DAC  攻击类型判定 (field[46]+1)")
-        lines.append("  sub_4458B0  好感度修正 (field[42])")
+        lines.append("  sub_4458B0  调整时序 (field[42])")
         lines.append("  sub_438AFC  图标/资源消耗读取")
         lines.append(""); lines.append("【记录数】")
         lines.append("  350 条 × 94 字节 = 32,900 字节 (sub_45343C 固定)")
@@ -1045,7 +1032,7 @@ class SkillEditor:
             "  sub_422BBC  被动技能属性加成\n"
             "  sub_438F28  技能组层次结构\n"
             "  sub_447DAC  攻击类型判定\n"
-            "  sub_4458B0  好感度修正\n"
+            "  sub_4458B0  调整时序\n"
             "  sub_438AFC  图标/消耗读取"
         )
 
