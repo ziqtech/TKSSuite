@@ -181,12 +181,21 @@ BASIC_FIELDS = [
     ("skill_id",    0, "技能ID",     'tkt',     "技能名称 TKT 文本ID (sub_438F28)"),
     ("name_extra",  2, "名称附加ID", 'int',     "技能序号/子类型标识 (sub_438F28)"),
     ("type",        4, "技能类型",   'type',    "sub_422BBC v6[2]: 0=指令 1=主动 2=被动 3=移动"),
-    ("jp_cost",       6, "技能点数", 'int',     "学习技能所需点数 (Maker.exe: 学习耗费JP)"),
-    ("category",    8, "分类标识",   'int',     "技能分类标识: 32=异术 10=仙术 43=武術 (非MP)"),
-    ("range",      10, "效果范围",   'int',     "效果范围 (待逆向验证)"),
-    ("base_effect",12, "基础效果值", 'int',     "基础效果数值 (待逆向验证)"),
-    ("base_damage",14, "基础伤害",   'int',     "基础伤害值 (待逆向验证)"),
+    ("jp_cost",     6, "技能点数",   'int',     "学习技能所需点数 (Maker.exe: 学习耗费JP)"),
 ]
+
+# 技能树引用表: off8=父节点, off10=深度标识, off12-38=7组(子引用,关系类型)
+TREE_FIELDS = [
+    ("tree_parent", 8, "父技能引用", 'int',     "父技能记录索引-1: 异术子=32→父33, 系列→下一技能索引"),
+    ("tree_flag",  10, "技能深度",   'int',     "技能树深度标识: 20=树成员 (同组技能一致)"),
+]
+for i in range(7):
+    TREE_FIELDS.append(
+        ("ref_skill%d" % (i+1), 12 + i*4, "引用技能%d" % (i+1), 'int',
+         "技能引用%d — 指向关联技能的记录索引" % (i+1)))
+    TREE_FIELDS.append(
+        ("ref_type%d" % (i+1),  14 + i*4, "引用关系%d" % (i+1), 'int',
+         "关系类型%d: 1=特殊 2=链接 3=下级 6=主技能 10=进阶" % (i+1)))
 
 EFFECT_FIELDS = [
     ("timing",      40, "时序值Delay",   'int',     "技能行动时序值 (Maker.exe: 改变时序, sub_438AFC: word_7861F2)"),
@@ -225,15 +234,8 @@ ADVANCED_FIELDS = [
     ("atk_type",    92, "攻击类型",      'atk_type',"sub_447DAC: 0=自身, -1=近战, 1+=法术类别"),
 ]
 
-RESERVED_FIELDS = [
-    (f"reserved_{i:02d}", 16 + i*2, f"保留[{8+i}]", 'int',
-     f"保留字段 offset {16 + i*2} — 无反编译引用")
-    for i in range(12)
-]
-
-ALL_FIELDS = (BASIC_FIELDS + EFFECT_FIELDS + IMMUNE_FIELDS +
-              [f for f in ADVANCED_FIELDS if f[3] != 'byte'] +
-              RESERVED_FIELDS)
+ALL_FIELDS = (BASIC_FIELDS + TREE_FIELDS + EFFECT_FIELDS + IMMUNE_FIELDS +
+              [f for f in ADVANCED_FIELDS if f[3] != 'byte'])
 
 # effect_level is a byte at offset 88, stored separately
 BYTE_FIELDS = [("effect_level", 88, "效果等级(byte)", 'byte', "type=1→状态免疫等级; type=2→效果等级")]
@@ -437,14 +439,8 @@ class SkillEditor:
         self._build_field_group("效果加成 (主动技能核心)", EFFECT_FIELDS, 2, 5)
         self._build_field_group("状态免疫", IMMUNE_FIELDS, 3, 4)
         self._build_field_group("高级属性", ADVANCED_FIELDS, 4, 4)
-        # Reserved fields (collapsed by default — we keep them compact)
-        res_lf = ttk.LabelFrame(self.edit_inner, text="保留字段 (透传原始值)", padding=2)
-        res_lf.grid(row=5, column=0, sticky='ew', padx=2, pady=2)
-        self._reserved_frame = ttk.Frame(res_lf)
-        self._reserved_frame.pack(fill=tk.X, padx=2, pady=2)
-        for ri, (fn, fo, fl, ft, cmt) in enumerate(RESERVED_FIELDS):
-            row, col = divmod(ri, 6)
-            self._build_field(self._reserved_frame, row, col, fn, fo, fl, ft, W_INPUT, cmt)
+        # Skill tree reference table
+        self._build_field_group("技能树引用表 (off10=深度标识, off12-38=7组引用)", TREE_FIELDS, 5, 6)
 
         # Bottom path bar
         pf = ttk.LabelFrame(self.root, text="当前加载"); pf.pack(fill=tk.X, padx=5, pady=(0, 2))
@@ -719,8 +715,8 @@ class SkillEditor:
         self.preview_desc.configure(state='disabled')
         # type hint
         hint = TYPE_HINT_LABELS.get(rec['type'], "")
-        self.preview_type.config(text=f"类型: {stype} | 技能点数={rec['jp_cost']} | 耗费内力={rec['mp_cost']} | 范围={rec['range']} | {hint}" if hint else
-                                  f"类型: {stype} | 技能点数={rec['jp_cost']} | 耗费内力={rec['mp_cost']} | 范围={rec['range']}")
+        self.preview_type.config(text=f"类型: {stype} | 技能点数={rec['jp_cost']} | 耗费内力={rec['mp_cost']} | 深度={rec['tree_flag']} | {hint}" if hint else
+                                  f"类型: {stype} | 技能点数={rec['jp_cost']} | 耗费内力={rec['mp_cost']} | 深度={rec['tree_flag']}")
         # sub count
         sc = rec.get('sub_count', -1)
         if sc >= 0:
