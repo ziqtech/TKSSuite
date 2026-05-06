@@ -181,7 +181,7 @@ BASIC_FIELDS = [
     ("skill_id",    0, "技能ID",     'tkt',     "技能名称 TKT 文本ID (sub_438F28)"),
     ("name_extra",  2, "名称附加ID", 'int',     "技能序号/子类型标识 (sub_438F28)"),
     ("type",        4, "技能类型",   'type',    "sub_422BBC v6[2]: 0=指令 1=主动 2=被动 3=移动"),
-    ("jp_cost",       6, "学习耗费JP", 'int',     "学习技能所需点数 (Maker.exe: 学习耗费JP)"),
+    ("jp_cost",       6, "技能点数", 'int',     "学习技能所需点数 (Maker.exe: 学习耗费JP)"),
     ("category",    8, "分类标识",   'int',     "技能分类标识: 32=异术 10=仙术 43=武術 (非MP)"),
     ("range",      10, "效果范围",   'int',     "效果范围 (待逆向验证)"),
     ("base_effect",12, "基础效果值", 'int',     "基础效果数值 (待逆向验证)"),
@@ -369,7 +369,7 @@ class SkillEditor:
         cols = ('index', 'skill_id', 'type', 'name', 'jp_cost', 'mp_cost')
         self.tree = ttk.Treeview(lf, columns=cols, show='headings', selectmode='browse')
         cc = [('index', '#', 38), ('skill_id', 'ID', 60), ('type', '类型', 72),
-              ('name', '技能名称', 160), ('jp_cost', 'JP', 40), ('mp_cost', 'MP', 42)]
+              ('name', '技能名称', 160), ('jp_cost', '技能点数', 40), ('mp_cost', '耗费内力', 42)]
         for cid, cn, cw in cc:
             self.tree.heading(cid, text=cn, command=lambda c=cid: self._sort_by(c))
             self.tree.column(cid, width=cw, anchor='center' if cid != 'name' else 'w', minwidth=cw)
@@ -719,8 +719,8 @@ class SkillEditor:
         self.preview_desc.configure(state='disabled')
         # type hint
         hint = TYPE_HINT_LABELS.get(rec['type'], "")
-        self.preview_type.config(text=f"类型: {stype} | JP={rec['jp_cost']} | MP={rec['mp_cost']} | 范围={rec['range']} | {hint}" if hint else
-                                  f"类型: {stype} | JP={rec['jp_cost']} | MP={rec['mp_cost']} | 范围={rec['range']}")
+        self.preview_type.config(text=f"类型: {stype} | 技能点数={rec['jp_cost']} | 耗费内力={rec['mp_cost']} | 范围={rec['range']} | {hint}" if hint else
+                                  f"类型: {stype} | 技能点数={rec['jp_cost']} | 耗费内力={rec['mp_cost']} | 范围={rec['range']}")
         # sub count
         sc = rec.get('sub_count', -1)
         if sc >= 0:
@@ -980,9 +980,9 @@ class SkillEditor:
         if at < -1 or at > 8:
             warnings.append(f"攻击类型 {at} 超出有效范围 -1~8 (sub_447DAC)")
         if rec.get('mp_cost', 0) < 0:
-            warnings.append("消耗MP不应为负值")
+            warnings.append("耗费内力不应为负值")
         if rec.get('jp_cost', 0) < 0:
-            warnings.append("学习耗费JP不应为负值")
+            warnings.append("技能点数不应为负值")
         if warnings:
             messagebox.showwarning("数据验证警告",
                 "以下字段值可能存在问题:\n\n" + "\n".join(f"• {w}" for w in warnings) +
