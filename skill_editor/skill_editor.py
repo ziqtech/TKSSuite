@@ -170,17 +170,17 @@ BASIC_FIELDS = [
     ("jp_cost",     6, "技能点数",   'int',     "学习技能所需点数 (Maker.exe: 学习耗费JP)"),
 ]
 
-# 技能树引用表: off8-38=8组(影响技能,影响类型)
-# 注意: 所有引用值均为技能ID (= 列表中的 # 列), 即 TKSkill.dat 中的记录索引
-# Pair 0 约定: type=0→ref_type=20(前组尾链); type=1/2/3→ref_type=10(升级链)
+# 技能树引用表: off8-38=8组(目标技能,技能进度)
+# 注意: ref_skill=目标技能记录索引, ref_type=学习进度权重(数值累加至≥10时目标技能可学习)
+# Pair 0 约定: type=0→ref_type=20(归组标记,不计入进度); type=1/2/3→ref_type=10(升级自足)
 TREE_FIELDS = []
 for i in range(8):
     TREE_FIELDS.append(
-        ("ref_skill%d" % i, 8 + i*4, "影响技能%d" % i, 'skill_pick',
-         "学会后影响技能%d — 指向目标技能的记录索引" % i))
+        ("ref_skill%d" % i, 8 + i*4, "目标技能%d" % i, 'skill_pick',
+         "学会后受影响的目标技能%d — 指向目标技能的记录索引" % i))
     TREE_FIELDS.append(
-        ("ref_type%d" % i, 10 + i*4, "影响类型%d" % i, 'int',
-         "影响类型%d: 20=前组尾链 10=升级链 6=主技能 5=进阶前 3=下级 2=链接 1=特殊" % i))
+        ("ref_type%d" % i, 10 + i*4, "技能进度%d" % i, 'int',
+         "技能学习进度权重%d: 累加到目标技能的byte_757FB8进度, 达≥10时可学习; 20=归组标记(不计入进度)" % i))
 
 EFFECT_FIELDS = [
     ("timing",      40, "时序值Delay",   'int',     "技能行动时序值 (Maker.exe: 改变时序, sub_438AFC: word_7861F2)"),
@@ -313,7 +313,7 @@ class SkillEditor:
         mb.add_cascade(label="编辑", menu=em)
         hm = tk.Menu(mb, tearoff=0)
         hm.add_command(label="字段参考 (逆向来源)", command=self._show_field_ref)
-        hm.add_command(label="影响类型说明", command=self._show_ref_type_help)
+        hm.add_command(label="技能进度权重说明", command=self._show_ref_type_help)
         hm.add_command(label="关于", command=self._show_about)
         mb.add_cascade(label="帮助", menu=hm)
         self.root.bind('<Control-o>', lambda e: self._load_tks_dir())
@@ -418,7 +418,7 @@ class SkillEditor:
         self._build_field_group("状态免疫", IMMUNE_FIELDS, 3, 4)
         self._build_field_group("高级属性", ADVANCED_FIELDS, 4, 4)
         # Skill tree reference table
-        self._build_field_group("技能树引用表 (8组: 影响技能 / 影响类型)", TREE_FIELDS, 5, 6)
+        self._build_field_group("技能树引用表 (8组: 目标技能 / 技能进度权重)", TREE_FIELDS, 5, 6)
 
         # Bottom path bar
         pf = ttk.LabelFrame(self.root, text="当前加载"); pf.pack(fill=tk.X, padx=5, pady=(0, 2))
@@ -702,8 +702,8 @@ class SkillEditor:
         self.preview_desc.configure(state='disabled')
         # type hint
         hint = TYPE_HINT_LABELS.get(rec['type'], "")
-        self.preview_type.config(text=f"类型: {stype} | 技能点数={rec['jp_cost']} | 耗费内力={rec['mp_cost']} | Pair0类型={rec['ref_type0']} | {hint}" if hint else
-                                  f"类型: {stype} | 技能点数={rec['jp_cost']} | 耗费内力={rec['mp_cost']} | Pair0类型={rec['ref_type0']}")
+        self.preview_type.config(text=f"类型: {stype} | 技能点数={rec['jp_cost']} | 耗费内力={rec['mp_cost']} | Pair0标记={rec['ref_type0']} | {hint}" if hint else
+                                  f"类型: {stype} | 技能点数={rec['jp_cost']} | 耗费内力={rec['mp_cost']} | Pair0标记={rec['ref_type0']}")
         # sub count
         sc = rec.get('sub_count', -1)
         if sc >= 0:
@@ -1097,58 +1097,54 @@ class SkillEditor:
         tx.insert('1.0', '\n'.join(lines)); tx.config(state='disabled')
 
     def _show_ref_type_help(self):
-        """影响类型说明 — 基于逆向工程数据归纳 (1100+ 条引用)"""
+        """技能进度权重说明 — 基于逆向工程代码 (sub_41E248) + 数据验证"""
         text = """\
-影响类型说明
+技能进度权重说明
 ═══════════════════════════════════════════════
-基于 TKSkill.dat 全部 8 组引用对 (off8-38) 的数据归纳。
-每个"影响技能→影响类型"定义了"学会当前技能后对目标技能产生的效果"。
+ref_type 不是枚举语义，而是「技能学习进度」的数值权重。
+游戏运行时累计到 byte_757FB8[角色][目标技能]，达 ≥10 时可学习。
 
-  20 前组尾链 (172次, Pair 0 专用)
-     "我的母技能是它" — 子技能反向标记归属的技能组。
-     所有子技能的 Pair 0 都指向母技能，类型=20。
-     例: 合擊 →20→ 武術技能 (合擊说"我属于武術组")
+逆向依据: sub_41E248 (技能学习时处理引用对)
+  target_progress += LOBYTE(ref_type);  // 数值累加
+  if (v4[1] == 20) source_progress = 30;  // 仅 20 触发归组标记
 
-  10 升级链 (114次)
-     "下一级学它" — 线性升级路径，学会前置后解锁下一级。
-     3级被动技能链、飞虹六式、心剑均用此链接。
-     例: 移動＋1 →10→ 移動＋2 →10→ 移動＋3
+有效值范围
+  数值 1~8: 学习进度累加权重，多技能拼凑至 ≥10
+  数值 10:  自足解锁 (学会前置立即解锁)
+  数值 20:  Pair 0 专用归组标记 (不计入进度，仅触发了技能学会)
+  数值 0:   空 (无效果)
+  >20 无效: sub_41E248 的 >=1 && <10 前置条件 + ==20 精确匹配限制
 
-  6 主技能 (29次)
-     "我的终极形态是它" — 标记组内的重点/专精技能。
-     異術组中每个基础法术都指向其终极版本。
-     例: 火焰術 →6→ 熔岩術 (火焰的终极形态)
+凑 10 策略示例 (逆自异術组全部 5 个子目标)
+  熔岩術: 火焰術(6) + 狂風術(2) + 滾木術(2) = 10
+  毒氣術: 火焰術(2) + 土崩術(6) + 滾木術(2) = 10
+  落雷術: 火焰術(2) + 洪水術(2) + 滾木術(6) = 10
+  冰雪術: 洪水術(6) + 土崩術(2) + 狂風術(2) = 10
+  海嘯術: 洪水術(2) + 土崩術(2) + 狂風術(6) = 10
 
-  5 进阶前 (65次)
-     "学它之前要先学我" — 跨组前置条件。
-     与 type=10 不同: type=10 是同链顺序升级, type=5 是跨越技能组的先决条件。
-     例: 生命＋40％ →5→ 攻擊＋30％ (想学攻击30%? 先把生命练到40%)
+凑 10 策略示例 (逆自兵法组全部 3 个阵法)
+  七星陣: 漩渦(2)+火焰(3)+滾木(3)+瘴氣(2) = 10
+  八卦陣: 山崩(2)+泥沼(3)+漩渦(3)+火焰(2) = 10
+  猛獸陣: 山崩(3)+泥沼(2)+滾木(2)+瘴氣(3) = 10
 
-  3 下级 (117次)
-     "它是我的下级/基础技能" — 从属或基础关系。
-     最常见于武術指向四種破壞技, 法术指向角色绝技。
-     例: 合擊 →3→ 破元擊 (合擊是破元擊的前置基础)
+常用数值含义
+  6: 大半格 — 搭配 2+2 达到 10
+  5: 半格   — 搭配 5 达到 10, 或 5+3+2 达到 10
+  4: 小半格 — 通常 4+4+4≥10 (三前置)
+  3: 小份   — 3+3+2+2=10 (四前置)
+  2: 凑数   — 灵活填补至 10
+  1: 微量   — 极少用, 额外加分项
+  8: 大半   — 8+2=10 或特定组合引导
+  7: 未用   — 但在累加系统中同样有效 (7+3=10)
 
-  2 链接 (55次)
-     "学了我也联动它" — 同组或跨组的软关联。
-     異術互链、歌谣互链、陷阱与阵法互链。
-     例: 火焰術 →2→ 毒氣術 (火毒不分家)
-
-  1 特殊 (7次)
-     "学完触发终极奖励" — 指向最终奖励技能。
-     几乎所有 type=1 都指向"國士無雙"(#330)或"四連擊"(#275)。
-     例: 七星陣 →1→ 國士無雙 (兵法终极成就)
-
-  8 变异 (8次)
-     "特殊进阶形态" — 罕见的特殊关联。
-     仅出现于个别武技和舞蹈中。
-     例: 迴斬 →8→ 劈天式 (迴斬的进阶变体)
-
-  4 跨界 (23次)
-     "跨系统联动" — 连接不同技能大类。
-     物品能力→战斗技能、被动→主动的桥梁。
-     例: 使用物品 →4→ 武器破壞"""
-        dlg = tk.Toplevel(self.root); dlg.title("影响类型说明 — 逆向工程分析")
+进度值状态机 (422EF4.c + 438F28.c + 41E248.c 交叉验证)
+  0:        不可见
+  1~9:      部分解锁 (等待更多累加)
+  10~19:    在可学习列表中出现
+  20:       已学会 (sub_count>0 的母/组技能)
+  30:       已学会 (sub_count=-1 的独立技能)
+  40:       装备加成后临时上限 (卸装后由 sub_42234C 降回 20 or 30)"""
+        dlg = tk.Toplevel(self.root); dlg.title("技能进度权重说明 — 逆向工程分析")
         dlg.geometry("680x620"); dlg.transient(self.root)
         tx = tk.Text(dlg, font=('Microsoft YaHei UI', 9), wrap='word', padx=10, pady=10)
         sb = ttk.Scrollbar(dlg, orient=tk.VERTICAL, command=tx.yview)
