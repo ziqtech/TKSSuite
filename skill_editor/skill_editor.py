@@ -313,6 +313,7 @@ class SkillEditor:
         mb.add_cascade(label="编辑", menu=em)
         hm = tk.Menu(mb, tearoff=0)
         hm.add_command(label="字段参考 (逆向来源)", command=self._show_field_ref)
+        hm.add_command(label="影响类型说明", command=self._show_ref_type_help)
         hm.add_command(label="关于", command=self._show_about)
         mb.add_cascade(label="帮助", menu=hm)
         self.root.bind('<Control-o>', lambda e: self._load_tks_dir())
@@ -1094,6 +1095,72 @@ class SkillEditor:
         sb1.pack(side=tk.RIGHT, fill=tk.Y)
         tx.pack(fill=tk.BOTH, expand=True)
         tx.insert('1.0', '\n'.join(lines)); tx.config(state='disabled')
+
+    def _show_ref_type_help(self):
+        """影响类型说明 — 基于逆向工程数据归纳 (1100+ 条引用)"""
+        text = """\
+影响类型说明
+═══════════════════════════════════════════════
+基于 TKSkill.dat 全部 8 组引用对 (off8-38) 的数据归纳。
+每个"影响技能→影响类型"定义了"学会当前技能后对目标技能产生的效果"。
+
+  20 前组尾链 (172次, Pair 0 专用)
+     "我的母技能是它" — 子技能反向标记归属的技能组。
+     所有子技能的 Pair 0 都指向母技能，类型=20。
+     例: 合擊 →20→ 武術技能 (合擊说"我属于武術组")
+
+  10 升级链 (114次)
+     "下一级学它" — 线性升级路径，学会前置后解锁下一级。
+     3级被动技能链、飞虹六式、心剑均用此链接。
+     例: 移動＋1 →10→ 移動＋2 →10→ 移動＋3
+
+  6 主技能 (29次)
+     "我的终极形态是它" — 标记组内的重点/专精技能。
+     異術组中每个基础法术都指向其终极版本。
+     例: 火焰術 →6→ 熔岩術 (火焰的终极形态)
+
+  5 进阶前 (65次)
+     "学它之前要先学我" — 跨组前置条件。
+     与 type=10 不同: type=10 是同链顺序升级, type=5 是跨越技能组的先决条件。
+     例: 生命＋40％ →5→ 攻擊＋30％ (想学攻击30%? 先把生命练到40%)
+
+  3 下级 (117次)
+     "它是我的下级/基础技能" — 从属或基础关系。
+     最常见于武術指向四種破壞技, 法术指向角色绝技。
+     例: 合擊 →3→ 破元擊 (合擊是破元擊的前置基础)
+
+  2 链接 (55次)
+     "学了我也联动它" — 同组或跨组的软关联。
+     異術互链、歌谣互链、陷阱与阵法互链。
+     例: 火焰術 →2→ 毒氣術 (火毒不分家)
+
+  1 特殊 (7次)
+     "学完触发终极奖励" — 指向最终奖励技能。
+     几乎所有 type=1 都指向"國士無雙"(#330)或"四連擊"(#275)。
+     例: 七星陣 →1→ 國士無雙 (兵法终极成就)
+
+  8 变异 (8次)
+     "特殊进阶形态" — 罕见的特殊关联。
+     仅出现于个别武技和舞蹈中。
+     例: 迴斬 →8→ 劈天式 (迴斬的进阶变体)
+
+  4 跨界 (23次)
+     "跨系统联动" — 连接不同技能大类。
+     物品能力→战斗技能、被动→主动的桥梁。
+     例: 使用物品 →4→ 武器破壞"""
+        dlg = tk.Toplevel(self.root); dlg.title("影响类型说明 — 逆向工程分析")
+        dlg.geometry("680x620"); dlg.transient(self.root)
+        tx = tk.Text(dlg, font=('Microsoft YaHei UI', 9), wrap='word', padx=10, pady=10)
+        sb = ttk.Scrollbar(dlg, orient=tk.VERTICAL, command=tx.yview)
+        tx.configure(yscrollcommand=sb.set)
+        sb.pack(side=tk.RIGHT, fill=tk.Y)
+        tx.pack(fill=tk.BOTH, expand=True)
+        tx.insert('1.0', text); tx.config(state='disabled')
+        # bold the type headers
+        for lineno, line in enumerate(text.split('\n'), 1):
+            if line.startswith('  ') and not line.startswith('    '):
+                tx.tag_add('bold', f'{lineno}.0', f'{lineno}.end')
+        tx.tag_configure('bold', font=('Microsoft YaHei UI', 9, 'bold'))
 
     def _show_about(self):
         messagebox.showinfo("关于",
