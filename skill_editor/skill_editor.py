@@ -884,7 +884,7 @@ class SkillEditor:
         lf2 = ttk.Frame(dlg); lf2.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
         tree = ttk.Treeview(lf2, columns=('index', 'id', 'type', 'name'),
                             show='headings', selectmode='browse', height=20)
-        tree.heading('index', text='#'); tree.column('index', width=40, anchor='center')
+        tree.heading('index', text='技能ID'); tree.column('index', width=52, anchor='center')
         tree.heading('id', text='文本ID'); tree.column('id', width=60, anchor='center')
         tree.heading('type', text='类型'); tree.column('type', width=70, anchor='center')
         tree.heading('name', text='技能名称'); tree.column('name', width=340, anchor='w')
@@ -912,7 +912,7 @@ class SkillEditor:
             if sel:
                 v = tree.item(sel[0])['values']
                 self._edit_vars[fn].set(str(v[0]))
-                self._edit_extras[fn].config(text=f"#{v[0]} {v[3]}"[:30])
+                self._edit_extras[fn].config(text=f"{v[3]}"[:30])
                 dlg.destroy()
         tree.bind('<Double-1>', lambda e: _sel())
         bf = ttk.Frame(dlg, padding=5); bf.pack(fill=tk.X)
