@@ -191,26 +191,26 @@ BASIC_FIELDS = [
 EFFECT_FIELDS = [
     ("timing",      40, "时序值Delay",   'int',     "技能行动时序值 (Maker.exe: 改变时序, sub_438AFC: word_7861F2)"),
     ("hp_pct",      42, "生命加成%",     'int',     "HP%加成 (sub_422BBC: a2[8]+=v6[21]*a2[7]/100)"),
-    ("self_heal",   44, "自愈/状态修正", 'int',     "type=1→状态修正(a2[22]); type=3→自愈(a2[39]+=v6[22]); sub_422BBC"),
+    ("heal_move",   44, "移动每格恢复生命%", 'int',  "移动每格恢复生命%: 自癒1=2 自癒2=3 自癒3=4 (sub_422BBC: v6[22])"),
     ("mp_pct",      46, "内力加成%",     'int',     "MP%加成 (sub_422BBC: a2[10]+=v6[23]*a2[9]/100)"),
-    ("mp_regen",    48, "回气/闪避",     'int',     "type=1→闪避修正; type=3→回气(a2[40]+=v6[24]); sub_422BBC"),
+    ("mp_move",     48, "移动每格恢复内力%", 'int',  "移动每格恢复内力%: 回气1=2 回气2=3 回气3=4 (sub_422BBC: v6[24])"),
     ("atk_pct",     50, "攻击加成%",     'int',     "攻击%加成 (sub_422BBC: a2[12]+=v6[25]*a2[11]/100)"),
     ("def_pct",     52, "防御加成%",     'int',     "防御%加成 (sub_422BBC: a2[14]+=v6[26]*a2[13]/100)"),
     ("hit_pct",     54, "命中加成%",     'int',     "命中%加成 (sub_422BBC: a2[16]+=v6[27]*a2[15]/100)"),
     ("eva_pct",     56, "闪避加成%",     'int',     "闪避%加成 (sub_422BBC: a2[18]+=v6[28]*a2[17]/100)"),
     ("spd_pct",     58, "速度加成%",     'int',     "速度%加成 (sub_422BBC: a2[20]+=v6[29]*a2[19]/100)"),
-    ("spd_bonus",   60, "速度固定加成",  'int',     "type=1→速度+(a2[24]+=v6[30]); type=3→移动力; sub_422BBC"),
+    ("move_up",     60, "增加移动",      'int',     "移动力增加值: 移动+1=2, 移动+2=3 (Maker.exe: 增加移动)"),
     ("atk_count",   62, "增攻击次数",    'int',     "增加攻击次数: 二連=2 三連=3 (Maker.exe: 增攻击次数)"),
     ("special_flags",64,"特殊标志",      'flags',   "type=3: a2[38]|=v6[32]; bit0=飘浮 bit1=飙行 bit2=搜宝 bit3=解陷"),
-    ("counter",     66, "反击加成",      'int',     "反击率加成 (sub_422BBC: a2[34]+=v6[33])"),
+    ("mp_reduce",   66, "内力消耗减少%", 'int',     "施展指令技能内力减少% (Maker.exe: 内息百分比)"),
 ]
 
 IMMUNE_FIELDS = [
     ("immunity1",   68, "状态免疫 1-16",  'mask',  "状态免疫位掩码 (状态 1-16)"),
     ("immunity2",   70, "状态免疫 17-32", 'mask',  "状态免疫位掩码 (状态 17-32)"),
-    ("combo",       72, "连击加成",      'int',     "连击率加成 (sub_422BBC: →character[36])"),
-    ("block",       74, "格挡加成",      'int',     "格挡率加成 (sub_422BBC: →character[37])"),
-    ("calc",        76, "精算加成",      'int',     "精算/暴击率加成 (sub_422BBC: a2[35]+=v6[38])"),
+    ("exp_bonus",   72, "战斗经验增加%", 'int',     "战斗经验值增加% (Maker.exe: 鬼才百分比)"),
+    ("jp_bonus",   74, "战斗技能点增加%", 'int',     "战斗技能点数增加% (Maker.exe: 天才百分比)"),
+    ("magic_def",   76, "所受法伤减少%", 'int',     "减少法术伤害% (Maker.exe: 抗魔百分比)"),
     ("cost_gold",   78, "消耗金钱",      'int',     "资源消耗1·金钱 (sub_438AFC: word_786218)"),
     ("cost_res2",   80, "耗费兽元",     'int',     "召唤技能兽元消耗 (Maker.exe: 耗费兽元, sub_438AFC: word_78621A)"),
 ]
@@ -244,9 +244,9 @@ BYTE_FIELDS = [("effect_level", 88, "效果等级(byte)", 'byte', "type=1→状�
 
 TYPE_HINT_FIELDS = {
     1: ["hp_pct","mp_pct","atk_pct","def_pct","hit_pct","eva_pct","spd_pct",
-        "spd_bonus","atk_count","self_heal","mp_regen","counter","combo","block","calc"],
-    2: ["trigger_prob","effect_level","counter","combo","block","calc"],
-    3: ["special_flags","self_heal","mp_regen","atk_count","spd_bonus"],
+        "move_up","atk_count","heal_move","mp_move","mp_reduce","exp_bonus","jp_bonus","magic_def"],
+    2: ["trigger_prob","effect_level","mp_reduce","exp_bonus","jp_bonus","magic_def"],
+    3: ["special_flags","heal_move","mp_move","atk_count","move_up"],
     0: ["sub_count"],
 }
 
@@ -821,7 +821,7 @@ class SkillEditor:
         self._edit_extras[fn].config(text=", ".join(sel) if sel else "(无)")
 
     def _on_type_change(self):
-        """When type combobox changes, update type hint labels"""
+        """When type exp_bonusbox changes, update type hint labels"""
         try:
             new_type = int(self._edit_extras['type'].get().split('-')[0])
             self._update_type_hints(new_type)
