@@ -19,8 +19,8 @@ WarPC.dat 格式 (每条 1054 字节, 共 143 角色):
   [0]   name_id      — 角色名称 TKT ID
   [1]   portrait     — 立绘/精灵索引 (+211=JVG资源)
   [2]   level        — 等级
-  [3]   faction      — 阵营/势力
-  [4]   type_id      — 种族/类型 (未验证语义)
+  [3]   role         — 身份 (0=敌方 -1=我方)
+  [4]   exp_to_next  — 升级所需经验 (大多数=100; 敌方版较高: 呂布5092 張角7292)
 
   [5]   cur_hp       — 当前生命 (cap at hp_max)
   [6]   cur_mp       — 当前内力 (cap at mp_max)
@@ -40,6 +40,9 @@ WarPC.dat 格式 (每条 1054 字节, 共 143 角色):
   [25]  wis_base     — 悟性(基础)    [26]  wis_cur  — 悟性(当前)  ※TKItem[17]=spi
 
   [31]  field_31     — 等级强相关 (r=0.992), 疑似技能点数/累计经验
+
+  [268] jp_reward    — 战后JP点 (直接值, 无等级缩放; 盜賊嘍嘍=2 西羌王=100)
+  [269] gold_reward  — 战后金钱基数 (实际获得 = 基数 × 2; 盜賊=20→40 小混混=25→50)
 
   [32]-[42] runtime  — 运行时状态 (sub_42234C 初始化, 非角色固有属性, 语义未验证)
 
@@ -176,8 +179,8 @@ IDENTITY_FIELDS = [
     ("name_id",    0,  "名称TKT ID",  "角色名称 → TKT.dat (sub_4067E8)"),
     ("portrait",   2,  "立绘索引",    "立绘/精灵索引 (+211=JVG精灵资源)"),
     ("level",      4,  "等级",        "角色等级 (数值显示)"),
-    ("faction",    6,  "阵营",        "阵营/势力归属"),
-    ("type_id",    8,  "种族类型",    "种族/类型 (100=人类?)"),
+    ("role",       6,  "身份",        "0=敌方 -1=我方"),
+    ("exp_to_next", 8,  "升级所需经验","升至下一级所需经验; 绝大多数角色=100, 敌方版较高(呂布5092 張角7292)"),
 ]
 
 HPMP_FIELDS = [
@@ -241,6 +244,26 @@ STATUS_FIELDS = [
     ("cause_mask2", 136, "状态掩码2",  "导致状态掩码2 (17-32; 来自装备 v9[27])"),
 ]
 
+# 战后奖励 — 实测验证: 盜賊嘍嘍 field[268]=2→JP=2, field[269]=20→Lv3 Gold=40
+BATTLE_REWARD_FIELDS = [
+    ("jp_reward",   536, "战后JP点",   "击败后获得技能点数 (直接值, 无等级缩放); 盜賊嘍嘍=2 西羌王=100"),
+    ("gold_reward", 538, "战后金钱基数","击败后获得金钱基数; 实际获得=基数×2; 盜賊嘍嘍=20→40 小混混=25→50"),
+]
+
+# 成长率 [264]-[266] — 五爪金龍验证: 初期27 中期24 后期21
+GROWTH_FIELDS = [
+    ("growth_early", 528, "成长率初期", "成长率初期; 五爪金龍=27 西羌王=27 呂布=20"),
+    ("growth_mid",   530, "成长率中期", "成长率中期; 五爪金龍=24 西羌王=24 呂布=25"),
+    ("growth_late",  532, "成长率后期", "成长率后期; 五爪金龍=21 西羌王=21 呂布=25"),
+]
+
+# 可掉落物品 [270]-[272] — 五爪金龍验证: 顛海神珠(537) 金龍魂(234) 虎項龍紋鎧(8081)
+DROP_ITEM_FIELDS = [
+    ("drop_item0", 540, "掉落物品0",  "可掉落物品0 ID; 五爪金龍=顛海神珠(537)"),
+    ("drop_item1", 542, "掉落物品1",  "可掉落物品1 ID; 五爪金龍=金龍魂(234)"),
+    ("drop_item2", 544, "掉落物品2",  "可掉落物品2 ID; 五爪金龍=虎項龍紋鎧(8081)"),
+]
+
 # 技能效果槽 [51]-[66]
 SKILL_EFF_FIELDS = []
 for i in range(16):
@@ -302,7 +325,7 @@ class WarpcEditor:
         self.root.title("WarPC.dat 可视化编辑器 v1.0")
         self.root.geometry("1320x820"); self.root.minsize(1050, 650)
         self.warpc_path = self.tkt_path = None
-        self.records = []; self.tkt = {}; self.skill_names = {}; self._skill_types = {}; self.item_names = {}
+        self.records = []; self.tkt = {}; self.skill_names = {}; self._skill_types = {}; self.item_names = {}; self.item_idx_names = {}; self._idx_to_id = {}; self._id_to_idx = {}
         self.filtered_indices = []; self._dirty = False
         self._edit_vars = {}; self._edit_extras = {}; self._tab_grids = {}
         self._build_ui(); self._set_edit_enabled(False)
@@ -345,11 +368,11 @@ class WarpcEditor:
 
         # Left: TreeView
         lf = ttk.Frame(paned); paned.add(lf, weight=1)
-        cols = ('index', 'name', 'level', 'faction', 'hp', 'mp')
+        cols = ('index', 'name', 'level', 'role', 'hp', 'mp')
         self.tree = ttk.Treeview(lf, columns=cols, show='headings', selectmode='browse')
         cc = [
             ('index', '#', 40), ('name', '角色名称', 130), ('level', '等级', 45),
-            ('faction', '阵营', 50), ('hp', 'HP', 70), ('mp', 'MP', 70),
+            ('role', '身份', 50), ('hp', 'HP', 70), ('mp', 'MP', 70),
         ]
         for cid, cn, cw in cc:
             self.tree.heading(cid, text=cn, command=lambda c=cid: self._sort_by(c))
@@ -450,6 +473,10 @@ class WarpcEditor:
         grid2 = ttk.Frame(lf2); grid2.pack(fill=tk.X)
         self._build_field_widget(grid2, 0, 0, "field_31", 62, "[31]", W_INPUT,
                                  "等级强相关; Lv1=0, Lv10=150, Lv20=265, Lv35=400; 疑似技能点数或累计经验")
+        # 战后奖励 [268]-[269]
+        self._build_section(parent, "成长率 [264]-[266] (五爪金龍: 初期27 中期24 后期21)", GROWTH_FIELDS, 7)
+        self._build_section(parent, "战后奖励 [268]-[269] (Gold=基数×2; JP=直接值)", BATTLE_REWARD_FIELDS, 8)
+        self._build_section(parent, "可掉落物品 [270]-[272] (五爪金龍验证: 顛海神珠/金龍魂/虎項龍紋鎧)", DROP_ITEM_FIELDS, 9, ft='item_pick')
 
     def _build_stat_row(self, parent):
         """八属性 — 一行八列, 每列(名称 + 基础 + 当前)"""
@@ -483,7 +510,7 @@ class WarpcEditor:
 
     def _build_tab2(self, parent):
         """装备与技能"""
-        self._build_section(parent, "装备索引缓存 [69]-[72] (运行时; sub_4173F8 从物品ID计算)", EQUIP_FIELDS[:4], 0)
+        self._build_section(parent, "装备索引 [69]-[72] (TKItem数组下标; 运行时缓存)", EQUIP_FIELDS[:4], 0, ft='item_pick')
         self._build_section(parent, "装备物品 ID [73]-[76] (DAT原始; 查 TKItem.field[0])", EQUIP_FIELDS[4:], 1, ft='item_pick')
         self._build_section(parent, "装备技能 [82]-[87] (6字段; sub_42234C/sub_422BBC; Maker验证: 周倉)", EQUIP_SKILL_FIELDS, 2, ft='skill_pick')
         self._build_section(parent, "技能效果槽 [51]-[66] (16个; sub_42234C 初始化为 0)", SKILL_EFF_FIELDS, 3)
@@ -535,7 +562,12 @@ class WarpcEditor:
         lbl = ttk.Label(frm, text=fl, font=FONT_S); lbl.pack(anchor=tk.W)
         self._bind_tooltip(lbl, f"[{fo//2}] byte {fo}: {cmt}")
         ev = tk.StringVar(); self._edit_vars[fn] = ev
-        if ft in ('skill_pick', 'item_pick'):
+        if fn == 'role':
+            cb = ttk.Combobox(frm, state='readonly', values=['-1-我方', '0-敌方'],
+                              width=fw + 3, font=FONT)
+            cb.pack(fill=tk.X)
+            self._edit_extras[fn] = cb
+        elif ft in ('skill_pick', 'item_pick'):
             pick_fn = self._pick_skill if ft == 'skill_pick' else self._pick_item
             box = ttk.Frame(frm); box.pack(fill=tk.X)
             ttk.Entry(box, textvariable=ev, width=fw, font=FONT).pack(side=tk.LEFT)
@@ -605,27 +637,34 @@ class WarpcEditor:
             return {}, {}
 
     def _load_item_names(self):
-        """加载 TKItem.dat → {item_id: item_name} 查找表"""
+        """加载 TKItem.dat → {item_id: item_name} + {item_index: item_name}"""
         tks_dir = os.path.dirname(self.warpc_path) if self.warpc_path else ''
         it_path = os.path.join(tks_dir, 'TKItem.dat')
         if not os.path.exists(it_path):
-            return {}
+            return {}, {}
         try:
             with open(it_path, 'rb') as f:
                 dec = lzss_decompress(f.read())
-            lookup = {}
+            id_lookup = {}; idx_lookup = {}; idx_to_id = {}; id_to_idx = {}
             for i in range(600):
                 off = i * 64
                 if off + 10 > len(dec): break
                 item_id = struct.unpack_from('<h', dec, off)[0]
                 name_id = struct.unpack_from('<h', dec, off + 4)[0]
-                if item_id > 0 and name_id > 0 and name_id in self.tkt:
-                    lookup[item_id] = self.tkt[name_id].split('\n')[0].strip()[:25]
+                if name_id > 0 and name_id in self.tkt:
+                    nm = self.tkt[name_id].split('\n')[0].strip()[:25]
                 elif item_id > 0:
-                    lookup[item_id] = f'物品#{item_id}'
-            return lookup
+                    nm = f'物品#{item_id}'
+                else:
+                    continue
+                if item_id > 0:
+                    id_lookup[item_id] = nm
+                    idx_to_id[i] = item_id
+                    id_to_idx[item_id] = i
+                idx_lookup[i] = nm
+            return id_lookup, idx_lookup, idx_to_id, id_to_idx
         except Exception:
-            return {}
+            return {}, {}, {}, {}
 
     def _reload(self):
         if not self.warpc_path: return
@@ -635,7 +674,7 @@ class WarpcEditor:
         try:
             self.records = load_warpc(self.warpc_path); self._dirty = False
             self.skill_names, self._skill_types = self._load_skill_names()
-            self.item_names = self._load_item_names()
+            self.item_names, self.item_idx_names, self._idx_to_id, self._id_to_idx = self._load_item_names()
             nonempty = sum(1 for r in self.records if any(v != 0 for v in r['fields']))
             self.status_var.set(
                 f"{len(self.records)} 角色 (1054字节/角色) | 有效 {nonempty} | TKT {len(self.tkt)} 条 | 物品 {len(self.item_names)} 技能 {len(self.skill_names)}")
@@ -713,15 +752,16 @@ class WarpcEditor:
             nm = self._char_name(r)
             hp_str = f"{f[5]}/{f[8]}" if f[5] or f[8] else ""
             mp_str = f"{f[6]}/{f[10]}" if f[6] or f[10] else ""
+            role_str = '我方' if f[3] == -1 else ('敌方' if f[3] == 0 else str(f[3]))
             self.tree.insert('', 'end',
-                             values=(r['index'], nm, f[2], f[3], hp_str, mp_str))
+                             values=(r['index'], nm, f[2], role_str, hp_str, mp_str))
 
     def _sort_by(self, col):
         rev = getattr(self, '_sort_reverse', False)
         if col == 'name':
             self.filtered_indices.sort(key=lambda i: self._char_name(self.records[i]).lower(), reverse=rev)
-        elif col in ('level', 'faction'):
-            self.filtered_indices.sort(key=lambda i: self.records[i]['fields'][{'level':2,'faction':3}[col]], reverse=rev)
+        elif col in ('level', 'role'):
+            self.filtered_indices.sort(key=lambda i: self.records[i]['fields'][{'level':2,'role':3}[col]], reverse=rev)
         else:
             self.filtered_indices.sort(reverse=rev)
         self._sort_reverse = not rev; self._refresh_table()
@@ -741,14 +781,22 @@ class WarpcEditor:
 
         self.lbl_rec_idx.config(text=(
             f"角色 #{rec['index']}    {nm}    "
-            f"等级={f[2]}  阵营={f[3]}    "
+            f"等级={f[2]}  身份={'我方' if f[3]==-1 else ('敌方' if f[3]==0 else str(f[3]))}    "
             f"HP={f[5]}/{f[8]}  MP={f[6]}/{f[10]}"
         ))
+
+        # Populate role combobox
+        role_val = f[3]
+        if 'role' in self._edit_extras:
+            cb = self._edit_extras['role']
+            for i, item in enumerate(cb['values']):
+                if item.startswith(f'{role_val}-'):
+                    cb.current(i); break
 
         # Populate all known fields
         all_named_fields = (IDENTITY_FIELDS + HPMP_FIELDS + STAT_FIELDS +
                            RUNTIME_STATE_FIELDS + EQUIP_FIELDS + EQUIP_SKILL_FIELDS +
-                           STATUS_FIELDS + SKILL_EFF_FIELDS)
+                           STATUS_FIELDS + SKILL_EFF_FIELDS + GROWTH_FIELDS + BATTLE_REWARD_FIELDS + DROP_ITEM_FIELDS)
         for fn, fo, _, _ in all_named_fields:
             sv = str(f[fo // 2])
             if fn in self._edit_vars:
@@ -773,12 +821,34 @@ class WarpcEditor:
                 else:
                     self._edit_extras[fn].config(text=f'技能#{sid}')
 
+        # Resolve item names for equip_idx fields
+        for fn, fo, _, _ in EQUIP_FIELDS[:4]:
+            idx = f[fo // 2]
+            if fn in self._edit_extras:
+                if idx == -1:
+                    self._edit_extras[fn].config(text='(未装备)')
+                elif hasattr(self, 'item_idx_names') and idx in self.item_idx_names:
+                    self._edit_extras[fn].config(text=self.item_idx_names[idx])
+                else:
+                    self._edit_extras[fn].config(text=f'物品#{idx}')
+
+        # Resolve item names for drop item fields
+        for fn, fo, _, _ in DROP_ITEM_FIELDS:
+            iid = f[fo // 2]
+            if fn in self._edit_extras:
+                if iid == 0:
+                    self._edit_extras[fn].config(text='(无)')
+                elif hasattr(self, 'item_names') and iid in self.item_names:
+                    self._edit_extras[fn].config(text=self.item_names[iid])
+                else:
+                    self._edit_extras[fn].config(text=f'物品#{iid}')
+
         # Resolve item names for equip_id fields
         for fn, fo, _, _ in EQUIP_FIELDS[4:]:
             iid = f[fo // 2]
             if fn in self._edit_extras:
-                if iid == 0:
-                    self._edit_extras[fn].config(text='(空)')
+                if iid == -1:
+                    self._edit_extras[fn].config(text='(未装备)')
                 elif hasattr(self, 'item_names') and iid in self.item_names:
                     self._edit_extras[fn].config(text=self.item_names[iid])
                 else:
@@ -868,8 +938,9 @@ class WarpcEditor:
         dlg.wait_window()
 
     def _pick_item(self, fn):
-        """弹出物品选择对话框 — 加载 TKItem.dat 显示物品名称"""
+        """弹出物品选择对话框 — 装备索引(按TKItem下标)或装备ID"""
         if not self.records: return
+        is_idx = fn.startswith('equip_idx')
         dlg = tk.Toplevel(self.root); dlg.title('选择物品')
         dlg.transient(self.root); dlg.grab_set()
         self._center_dialog(dlg, 550, 550)
@@ -881,25 +952,48 @@ class WarpcEditor:
         ttk.Entry(sf, textvariable=qv, width=30, font=FONT).pack(side=tk.LEFT, padx=5)
 
         lf2 = ttk.Frame(dlg); lf2.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
-        tree = ttk.Treeview(lf2, columns=('id', 'name'),
+        id_label = '物品#' if is_idx else '物品ID'
+        tree = ttk.Treeview(lf2, columns=('key', 'name'),
                             show='headings', selectmode='browse', height=20)
-        tree.heading('id', text='物品ID'); tree.column('id', width=80, anchor='center')
+        tree.heading('key', text=id_label); tree.column('key', width=80, anchor='center')
         tree.heading('name', text='物品名称'); tree.column('name', width=430, anchor='w')
         vsb = ttk.Scrollbar(lf2, orient=tk.VERTICAL, command=tree.yview)
         tree.configure(yscrollcommand=vsb.set); tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         vsb.pack(side=tk.RIGHT, fill=tk.Y)
 
-        items = sorted(self.item_names.items(), key=lambda x: x[0])
+        lookup = self.item_idx_names if is_idx else self.item_names
+        items = sorted(lookup.items(), key=lambda x: x[0])
 
         def _refresh(q=''):
             tree.delete(*tree.get_children())
             ql = q.strip().lower()
-            for iid_val, nm in items:
-                if ql and ql not in f'{iid_val} {nm}'.lower(): continue
-                iid = tree.insert('', 'end', values=(iid_val, nm))
-                if iid_val == cur_val: tree.selection_set(iid); tree.see(iid)
+            for key_val, nm in items:
+                if ql and ql not in f'{key_val} {nm}'.lower(): continue
+                iid = tree.insert('', 'end', values=(key_val, nm))
+                if key_val == cur_val: tree.selection_set(iid); tree.see(iid)
         _refresh()
         qv.trace_add('write', lambda *a: _refresh(qv.get()))
+
+        def _sync_pair(key_val, nm):
+            """双向同步: equip_idx ↔ equip_id"""
+            slot = fn[-1]  # '0','1','2','3'
+            if is_idx:
+                pair_fn = f'equip_id{slot}'
+                pair_val = self._idx_to_id.get(key_val, 0)
+            else:
+                pair_fn = f'equip_idx{slot}'
+                pair_val = self._id_to_idx.get(key_val, -1)
+            if pair_fn in self._edit_vars:
+                self._edit_vars[pair_fn].set(str(pair_val))
+            if pair_fn in self._edit_extras:
+                if pair_val == -1:
+                    self._edit_extras[pair_fn].config(text='(未装备)')
+                elif is_idx:
+                    self._edit_extras[pair_fn].config(
+                        text=self.item_names.get(pair_val, f'物品#{pair_val}'))
+                else:
+                    self._edit_extras[pair_fn].config(
+                        text=self.item_idx_names.get(pair_val, f'物品#{pair_val}'))
 
         def _sel():
             sel = tree.selection()
@@ -908,14 +1002,28 @@ class WarpcEditor:
                 self._edit_vars[fn].set(str(v[0]))
                 if fn in self._edit_extras:
                     self._edit_extras[fn].config(text=v[1] if v[1] else '')
+                _sync_pair(v[0], v[1])
                 dlg.destroy()
         tree.bind('<Double-1>', lambda e: _sel())
-        bf = ttk.Frame(dlg, padding=5); bf.pack(fill=tk.X)
-        ttk.Button(bf, text='清空', command=lambda: [
-            self._edit_vars[fn].set('0'),
-            self._edit_extras[fn].config(text='') if fn in self._edit_extras else None,
+        clear_val = '-1' if is_idx else '0'
+        clear_text = '(未装备)' if is_idx else ''
+        def _clear():
+            self._edit_vars[fn].set(clear_val)
+            if fn in self._edit_extras:
+                self._edit_extras[fn].config(text=clear_text)
+            # also clear paired field
+            slot = fn[-1]
+            if is_idx:
+                pair_fn = f'equip_id{slot}'
+            else:
+                pair_fn = f'equip_idx{slot}'
+            if pair_fn in self._edit_vars:
+                self._edit_vars[pair_fn].set('0' if is_idx else '-1')
+            if pair_fn in self._edit_extras:
+                self._edit_extras[pair_fn].config(text='' if is_idx else '(未装备)')
             dlg.destroy()
-        ]).pack(side=tk.LEFT, padx=2)
+        bf = ttk.Frame(dlg, padding=5); bf.pack(fill=tk.X)
+        ttk.Button(bf, text='清空', command=_clear).pack(side=tk.LEFT, padx=2)
         ttk.Button(bf, text='取消', command=dlg.destroy).pack(side=tk.RIGHT, padx=2)
         ttk.Button(bf, text='确定', command=_sel).pack(side=tk.RIGHT, padx=2)
         dlg.wait_window()
@@ -927,10 +1035,15 @@ class WarpcEditor:
         rec = self.records[self._editing_idx]
         f = rec['fields']
 
+        # Apply role combobox
+        if 'role' in self._edit_extras:
+            sv = self._edit_extras['role'].get()
+            f[3] = int(sv.split('-', 1)[0]) if '-' in sv else int(sv)
+
         # Apply named fields
         all_named_fields = (IDENTITY_FIELDS + HPMP_FIELDS + STAT_FIELDS +
                            RUNTIME_STATE_FIELDS + EQUIP_FIELDS + EQUIP_SKILL_FIELDS +
-                           STATUS_FIELDS + SKILL_EFF_FIELDS)
+                           STATUS_FIELDS + SKILL_EFF_FIELDS + GROWTH_FIELDS + BATTLE_REWARD_FIELDS + DROP_ITEM_FIELDS)
         for fn, fo, _, _ in all_named_fields:
             if fn in self._edit_vars:
                 try:
@@ -1009,7 +1122,7 @@ class WarpcEditor:
         p = filedialog.asksaveasfilename(defaultextension=".csv", filetypes=[("CSV", "*.csv")])
         if not p: return
         with open(p, 'w', encoding='utf-8-sig') as f:
-            hdr = ['索引', '名称', '等级', '阵营', '类型', 'HP当前', 'HP上限', 'MP当前', 'MP上限']
+            hdr = ['索引', '名称', '等级', '身份', '类型', 'HP当前', 'HP上限', 'MP当前', 'MP上限']
             for name in STAT_NAMES:
                 hdr += [f'{name}(基础)', f'{name}(当前)']
             hdr += [f'field[{i}]' for i in range(27, 527)]
@@ -1041,6 +1154,7 @@ class WarpcEditor:
             ("装备技能 [82]-[87] (6字段; Maker验证: 周倉)", EQUIP_SKILL_FIELDS),
             ("状态掩码", STATUS_FIELDS),
             ("技能效果槽(16个)", SKILL_EFF_FIELDS),
+            ("战后奖励 [268]-[269] (实测: 盜賊嘍嘍JP=2 Gold基数=20→Lv3得40)", BATTLE_REWARD_FIELDS),
         ]:
             lines.append(f"【{title}】")
             for fn, fo, fl, cmt in fields:
