@@ -201,20 +201,32 @@ for i, (name, short, bo) in enumerate(zip(STAT_NAMES, STAT_SHORTS, STAT_BASE_OFF
     STAT_FIELDS.append((f"{short}_cur", bo + 2, f"{name}(当前)",
                         f"{name}当前值 (基础+装备; sub_42234C L63-70 a2[{12+i*2}]+=v9[{11+i}])"))
 
-# 运行时状态 [32]-[42] — sub_42234C 初始化, 非角色固有属性
-# 语义未验证, 旧名(反击/精算/连击/格挡)均为臆测, 标注为运行时状态
-RUNTIME_STATE_FIELDS = [
-    ("atk_count",   64,  "攻击次数",    "攻击次数 (sub_42234C=1; sub_422BBC: a2[32]+=v6[31])"),
-    ("field_33",    66,  "运行时[33]",  "装备特殊标志 OR (sub_42234C L73: a2[33]|=v9[20]) — 语义未验证"),
-    ("field_34",    68,  "运行时[34]",  "sub_42234C 初始化为 0 — 语义未验证"),
-    ("field_35",    70,  "运行时[35]",  "sub_42234C 初始化为 0 — 语义未验证"),
-    ("field_36",    72,  "运行时[36]",  "sub_42234C 初始化为 0 — 语义未验证"),
-    ("field_37",    74,  "运行时[37]",  "sub_42234C 初始化为 0 — 语义未验证"),
-    ("field_38",    76,  "运行时[38]",  "sub_42234C 初始化为 0 — 语义未验证"),
-    ("field_39",    78,  "运行时[39]",  "sub_42234C 初始化为 0 — 语义未验证"),
-    ("field_40",    80,  "运行时[40]",  "sub_42234C 初始化为 0 — 语义未验证"),
-    ("field_41",    82,  "运行时[41]",  "sub_422BBC type=2 写入反应组编号 — 语义未验证"),
-    ("field_42",    84,  "运行时[42]",  "sub_422BBC v6[44] 写入触发概率 — 语义未验证"),
+# 技能加成区 [32]-[40] — sub_422BBC 应用 TKSkill 效果, sub_42234C 初始化
+SKILL_BONUS_FIELDS = [
+    ("atk_count",   64,  "攻击次数",       "攻击次数 (sub_42234C=1; sub_422BBC L29: a2[32]+=v6[31]=TKSkill增攻次)"),
+    ("special_flag",66,  "特殊能力标志",   "来自装备 TKItem[20] (sub_42234C L73: a2[33]|=v9[20])"),
+    ("mp_reduce",   68,  "内力消耗减少%",  "内息百分比 来自主动技能 TKSkill[33] (sub_422BBC L29: a2[34]+=v6[33])"),
+    ("magic_def",   70,  "所受法伤减少%",  "抗魔百分比 来自主动技能 TKSkill[38] (sub_422BBC L45: a2[35]+=v6[38])"),
+    ("exp_bonus",   72,  "战斗经验增加%",  "鬼才百分比 来自主动技能 TKSkill[36] (sub_422BBC L43: a2[36]+=v6[36])"),
+    ("jp_bonus",    74,  "战斗技能点增加%","天才百分比 来自主动技能 TKSkill[37] (sub_422BBC L44: a2[37]+=v6[37])"),
+    ("move_flags",  76,  "移动特殊标志",   "来自移动技能 TKSkill[32] (sub_422BBC L124: a2[38]|=v6[32]; bit0飘浮bit1飙行bit2搜宝bit3解陷)"),
+    ("heal_move",   78,  "移动恢复生命%",  "自愈百分比 来自移动技能 TKSkill[22] (sub_422BBC L125: a2[39]+=v6[22])"),
+    ("mp_move",     80,  "移动恢复内力%",  "回气百分比 来自移动技能 TKSkill[24] (sub_422BBC L126: a2[40]+=v6[24])"),
+]
+
+# 角色五维 [27]-[31] — 曹操验证: 智慧5 仁德-1 勇气10 医术0 技能点数400
+CHAR_ATTR_FIELDS = [
+    ("wisdom",      54,  "智慧",        "智慧值 (曹操=5 司马懿=20)"),
+    ("benevolence", 56,  "仁德",        "仁德值 (曹操=-1 司马懿=-5)"),
+    ("courage",     58,  "勇气",        "勇气值 (曹操=10 司马懿=0)"),
+    ("medicine",    60,  "医术",        "医术值 (曹操=0 司马懿=10; sub_40E11C case4→word_75688A capped 100)"),
+    ("jp_total",    62,  "技能点数",    "累计技能点数 (曹操=400 司马懿=300; r=0.992与等级相关; sub_422A5C入队累加)"),
+]
+
+# 待验证 [41]-[42] — sub_422BBC type=2 写入, 语义待确认
+UNVERIFIED_4142 = [
+    ("field_41",    82,  "待验证[41]",    "sub_422BBC type=2 写入反应组编号(1-10) — 待验证"),
+    ("field_42",    84,  "待验证[42]",    "sub_422BBC 写入 v6[44]=TKSkill触发概率 — 待验证"),
 ]
 
 EQUIP_FIELDS = [
@@ -456,24 +468,10 @@ class WarpcEditor:
         self._build_section(parent, "HP / MP", HPMP_FIELDS, 1)
         # 八属性 — 一行八列紧凑布局
         self._build_stat_row(parent)
-        self._build_section(parent, "运行时状态 [32]-[42] (sub_42234C 初始化, 语义未验证)", RUNTIME_STATE_FIELDS, 3)
-        self._build_section(parent, "状态掩码 (来源于装备; sub_42234C L94-95)", STATUS_FIELDS, 4)
-        self._build_section(parent, "未验证字段 [27]-[30] (无反编译引用)", [], 5)
-        lf = ttk.LabelFrame(parent, text="未验证字段 [27]-[30] (无反编译直接引用)", padding=4)
-        lf.grid(row=5, column=0, sticky='ew', padx=2, pady=2)
-        grid = ttk.Frame(lf); grid.pack(fill=tk.X)
-        for j in range(4):
-            off = 54 + j*2
-            fn = f"field_{off//2}"
-            self._build_field_widget(grid, j // 8, j % 8, fn, off, f"[{27+j}]", W_INPUT,
-                                     "无反编译直接引用")
-        # field[31] separately — strong level correlation
-        self._build_section(parent, "field[31] (等级强相关 r=0.992, 疑似技能点数/累计经验)", [], 6)
-        lf2 = ttk.LabelFrame(parent, text="field[31] (与等级高度相关 r=0.992)", padding=4)
-        lf2.grid(row=6, column=0, sticky='ew', padx=2, pady=2)
-        grid2 = ttk.Frame(lf2); grid2.pack(fill=tk.X)
-        self._build_field_widget(grid2, 0, 0, "field_31", 62, "[31]", W_INPUT,
-                                 "等级强相关; Lv1=0, Lv10=150, Lv20=265, Lv35=400; 疑似技能点数或累计经验")
+        self._build_section(parent, "技能加成 [32]-[40] (sub_422BBC TKSkill效果; sub_42234C初始=0)", SKILL_BONUS_FIELDS, 3)
+        self._build_section(parent, "待验证 [41]-[42] (sub_422BBC type=2 写入)", UNVERIFIED_4142, 4)
+        self._build_section(parent, "状态掩码 (来源于装备; sub_42234C L94-95)", STATUS_FIELDS, 5)
+        self._build_section(parent, "角色五维 [27]-[31] (曹操验证: 智慧5 仁德-1 勇气10 医术0 技能点400)", CHAR_ATTR_FIELDS, 6)
         # 战后奖励 [268]-[269]
         self._build_section(parent, "成长率 [264]-[266] (五爪金龍: 初期27 中期24 后期21)", GROWTH_FIELDS, 7)
         self._build_section(parent, "战后奖励 [268]-[269] (Gold=基数×2; JP=直接值)", BATTLE_REWARD_FIELDS, 8)
@@ -796,8 +794,8 @@ class WarpcEditor:
 
         # Populate all known fields
         all_named_fields = (IDENTITY_FIELDS + HPMP_FIELDS + STAT_FIELDS +
-                           RUNTIME_STATE_FIELDS + EQUIP_FIELDS + EQUIP_SKILL_FIELDS +
-                           STATUS_FIELDS + SKILL_EFF_FIELDS + GROWTH_FIELDS + BATTLE_REWARD_FIELDS + DROP_ITEM_FIELDS)
+                           SKILL_BONUS_FIELDS + EQUIP_FIELDS + EQUIP_SKILL_FIELDS +
+                           STATUS_FIELDS + SKILL_EFF_FIELDS + CHAR_ATTR_FIELDS + UNVERIFIED_4142 + GROWTH_FIELDS + BATTLE_REWARD_FIELDS + DROP_ITEM_FIELDS)
         for fn, fo, _, _ in all_named_fields:
             sv = str(f[fo // 2])
             if fn in self._edit_vars:
@@ -862,9 +860,6 @@ class WarpcEditor:
             if fn in self._edit_vars:
                 self._edit_vars[fn].set(str(f[bo // 2]))
         # field[31]
-        if "field_31" in self._edit_vars:
-            self._edit_vars["field_31"].set(str(f[31]))
-
         # Tab 3: all raw fields
         for j in range(WARPC_FIELD_COUNT):
             fn = f"raw_{j}"
@@ -1043,8 +1038,8 @@ class WarpcEditor:
 
         # Apply named fields
         all_named_fields = (IDENTITY_FIELDS + HPMP_FIELDS + STAT_FIELDS +
-                           RUNTIME_STATE_FIELDS + EQUIP_FIELDS + EQUIP_SKILL_FIELDS +
-                           STATUS_FIELDS + SKILL_EFF_FIELDS + GROWTH_FIELDS + BATTLE_REWARD_FIELDS + DROP_ITEM_FIELDS)
+                           SKILL_BONUS_FIELDS + EQUIP_FIELDS + EQUIP_SKILL_FIELDS +
+                           STATUS_FIELDS + SKILL_EFF_FIELDS + CHAR_ATTR_FIELDS + UNVERIFIED_4142 + GROWTH_FIELDS + BATTLE_REWARD_FIELDS + DROP_ITEM_FIELDS)
         for fn, fo, _, _ in all_named_fields:
             if fn in self._edit_vars:
                 try:
@@ -1065,16 +1060,6 @@ class WarpcEditor:
                         f[bo // 2] = int(self._edit_vars[fn].get())
                     except ValueError:
                         pass
-
-        for j in range(4):
-            fn = f"field_{(54+j*2)//2}"
-            if fn in self._edit_vars:
-                try: f[(54+j*2)//2] = int(self._edit_vars[fn].get())
-                except ValueError: pass
-        # field[31]
-        if "field_31" in self._edit_vars:
-            try: f[31] = int(self._edit_vars["field_31"].get())
-            except ValueError: pass
 
         # 收集已由命名字段覆盖的 int16 索引, 避免 raw 循环用旧值覆盖
         named_indices = set()
@@ -1171,7 +1156,7 @@ class WarpcEditor:
         for title, fields in [
             ("基本信息", IDENTITY_FIELDS), ("HP/MP", HPMP_FIELDS),
             ("八属性 (攻击/防御/命中/闪避/速度/幸运/悟性/移动)", STAT_FIELDS),
-            ("运行时状态 [32]-[42] (语义未验证)", RUNTIME_STATE_FIELDS),
+            ("技能加成 [32]-[42] (sub_422BBC TKSkill效果验证)", SKILL_BONUS_FIELDS),
             ("装备索引", EQUIP_FIELDS[:4]), ("装备ID", EQUIP_FIELDS[4:]),
             ("装备技能 [82]-[87] (6字段; Maker验证: 周倉)", EQUIP_SKILL_FIELDS),
             ("状态掩码", STATUS_FIELDS),
