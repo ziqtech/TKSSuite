@@ -204,7 +204,7 @@ for i, (name, short, bo) in enumerate(zip(STAT_NAMES, STAT_SHORTS, STAT_BASE_OFF
 # 运行时状态 [32]-[42] — sub_42234C 初始化, 非角色固有属性
 # 语义未验证, 旧名(反击/精算/连击/格挡)均为臆测, 标注为运行时状态
 RUNTIME_STATE_FIELDS = [
-    ("field_32",    64,  "运行时[32]",  "sub_42234C 初始化为 1 (行动标志) — 语义未验证"),
+    ("atk_count",   64,  "攻击次数",    "攻击次数 (sub_42234C=1; sub_422BBC: a2[32]+=v6[31])"),
     ("field_33",    66,  "运行时[33]",  "装备特殊标志 OR (sub_42234C L73: a2[33]|=v9[20]) — 语义未验证"),
     ("field_34",    68,  "运行时[34]",  "sub_42234C 初始化为 0 — 语义未验证"),
     ("field_35",    70,  "运行时[35]",  "sub_42234C 初始化为 0 — 语义未验证"),
@@ -251,6 +251,7 @@ BATTLE_REWARD_FIELDS = [
 ]
 
 # 成长率 [264]-[266] — 五爪金龍验证: 初期27 中期24 后期21
+# 等级 >= 21 中期，等级 >= 41 后期
 GROWTH_FIELDS = [
     ("growth_early", 528, "成长率初期", "成长率初期; 五爪金龍=27 西羌王=27 呂布=20"),
     ("growth_mid",   530, "成长率中期", "成长率中期; 五爪金龍=24 西羌王=24 呂布=25"),
@@ -259,9 +260,9 @@ GROWTH_FIELDS = [
 
 # 可掉落物品 [270]-[272] — 五爪金龍验证: 顛海神珠(537) 金龍魂(234) 虎項龍紋鎧(8081)
 DROP_ITEM_FIELDS = [
-    ("drop_item0", 540, "掉落物品0",  "可掉落物品0 ID; 五爪金龍=顛海神珠(537)"),
-    ("drop_item1", 542, "掉落物品1",  "可掉落物品1 ID; 五爪金龍=金龍魂(234)"),
-    ("drop_item2", 544, "掉落物品2",  "可掉落物品2 ID; 五爪金龍=虎項龍紋鎧(8081)"),
+    ("drop_item0", 540, "必掉落物品",  "可掉落物品0 ID; 五爪金龍=顛海神珠(537)"),
+    ("drop_item1", 542, "高概率掉落",  "可掉落物品1 ID; 五爪金龍=金龍魂(234)"),
+    ("drop_item2", 544, "低概率掉落",  "可掉落物品2 ID; 五爪金龍=虎項龍紋鎧(8081)"),
 ]
 
 # 技能效果槽 [51]-[66]
@@ -1075,8 +1076,20 @@ class WarpcEditor:
             try: f[31] = int(self._edit_vars["field_31"].get())
             except ValueError: pass
 
-        # Apply all raw fields from tab3
+        # 收集已由命名字段覆盖的 int16 索引, 避免 raw 循环用旧值覆盖
+        named_indices = set()
+        for _, fo, _, _ in all_named_fields:
+            named_indices.add(fo // 2)
+        for _, off, cnt, _ in UNVERIFIED_RANGES:
+            for j in range(cnt):
+                named_indices.add((off + j*2) // 2)
+        for j in range(4):
+            named_indices.add((54 + j*2) // 2)
+        named_indices.add(31)
+
+        # Apply all raw fields from tab3 (跳过已由命名字段处理的)
         for j in range(WARPC_FIELD_COUNT):
+            if j in named_indices: continue
             fn = f"raw_{j}"
             if fn in self._edit_vars:
                 try:
@@ -1087,10 +1100,19 @@ class WarpcEditor:
                 except ValueError:
                     pass
 
-        self._dirty = True; self._apply_filter()
+        self._dirty = True
+        # 仅更新当前行, 临时解绑避免 _on_tree_select→_populate_edit 覆盖编辑区
+        nm = self._char_name(rec)
+        hp_str = f"{f[5]}/{f[8]}" if f[5] or f[8] else ""
+        mp_str = f"{f[6]}/{f[10]}" if f[6] or f[10] else ""
+        role_str = '我方' if f[3] == -1 else ('敌方' if f[3] == 0 else str(f[3]))
+        self.tree.unbind('<<TreeviewSelect>>')
         for child in self.tree.get_children():
             if int(self.tree.item(child)['values'][0]) == rec['index']:
-                self.tree.selection_set(child); self.tree.see(child); break
+                self.tree.item(child, values=(rec['index'], nm, f[2], role_str, hp_str, mp_str))
+                self.tree.selection_set(child); self.tree.see(child)
+                break
+        self.tree.bind('<<TreeviewSelect>>', self._on_tree_select)
         self.status_var.set(f"角色 #{rec['index']} 已修改 (内存, 未保存)")
 
     def _reset_edit(self):
