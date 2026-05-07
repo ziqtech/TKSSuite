@@ -36,8 +36,8 @@ WarPC.dat 格式 (每条 1054 字节, 共 143 角色):
   [17]  eva_base     — 闪避(基础)    [18]  eva_cur  — 闪避(当前)
   [19]  spd_base     — 速度(基础)    [20]  spd_cur  — 速度(当前)
   [21]  luk_base     — 幸运(基础)    [22]  luk_cur  — 幸运(当前)
-  [23]  mov_base     — 移动(基础)    [24]  mov_cur  — 移动(当前)
-  [25]  wis_base     — 悟性(基础)    [26]  wis_cur  — 悟性(当前)
+  [23]  mov_base     — 移动(基础)    [24]  mov_cur  — 移动(当前)  ※TKItem[18]=vit
+  [25]  wis_base     — 悟性(基础)    [26]  wis_cur  — 悟性(当前)  ※TKItem[17]=spi
 
   [31]  field_31     — 等级强相关 (r=0.992), 疑似技能点数/累计经验
 
@@ -168,8 +168,8 @@ W_INPUT = 8
 
 # 统计名称 (8 通用属性, sub_42234C + sub_41E40C 验证)
 # TKItem[11-18] → WarPC[11-26]: 攻击/防御/命中/闪避/速度/幸运/悟性/移动
-STAT_NAMES = ["攻击", "防御", "命中", "闪避", "速度", "幸运", "悟性", "移动"]
-STAT_SHORTS = ["atk", "def", "hit", "eva", "spd", "luk", "wis", "mov"]
+STAT_NAMES = ["攻击", "防御", "命中", "闪避", "速度", "幸运", "移动", "悟性"]
+STAT_SHORTS = ["atk", "def", "hit", "eva", "spd", "luk", "mov", "wis"]
 
 # 核心字段 — 已验证 (格式: key, offset, label, comment)
 IDENTITY_FIELDS = [
@@ -302,7 +302,7 @@ class WarpcEditor:
         self.root.title("WarPC.dat 可视化编辑器 v1.0")
         self.root.geometry("1320x820"); self.root.minsize(1050, 650)
         self.warpc_path = self.tkt_path = None
-        self.records = []; self.tkt = {}; self.skill_names = {}; self._skill_types = {}
+        self.records = []; self.tkt = {}; self.skill_names = {}; self._skill_types = {}; self.item_names = {}
         self.filtered_indices = []; self._dirty = False
         self._edit_vars = {}; self._edit_extras = {}; self._tab_grids = {}
         self._build_ui(); self._set_edit_enabled(False)
@@ -419,6 +419,12 @@ class WarpcEditor:
         ttk.Separator(pf, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y)
         self.lbl_tkt = ttk.Label(pf, text="", foreground="gray")
         self.lbl_tkt.pack(side=tk.LEFT, padx=10, pady=2)
+        ttk.Separator(pf, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y)
+        self.lbl_item = ttk.Label(pf, text="", foreground="gray")
+        self.lbl_item.pack(side=tk.LEFT, padx=10, pady=2)
+        ttk.Separator(pf, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y)
+        self.lbl_skill = ttk.Label(pf, text="", foreground="gray")
+        self.lbl_skill.pack(side=tk.LEFT, padx=10, pady=2)
 
     def _build_tab1(self, parent):
         """核心属性 — 基本信息 + HP/MP + 8属性 + 战斗能力 + 状态掩码"""
@@ -478,7 +484,7 @@ class WarpcEditor:
     def _build_tab2(self, parent):
         """装备与技能"""
         self._build_section(parent, "装备索引缓存 [69]-[72] (运行时; sub_4173F8 从物品ID计算)", EQUIP_FIELDS[:4], 0)
-        self._build_section(parent, "装备物品 ID [73]-[76] (DAT原始; 查 TKItem.field[0])", EQUIP_FIELDS[4:], 1)
+        self._build_section(parent, "装备物品 ID [73]-[76] (DAT原始; 查 TKItem.field[0])", EQUIP_FIELDS[4:], 1, ft='item_pick')
         self._build_section(parent, "装备技能 [82]-[87] (6字段; sub_42234C/sub_422BBC; Maker验证: 周倉)", EQUIP_SKILL_FIELDS, 2, ft='skill_pick')
         self._build_section(parent, "技能效果槽 [51]-[66] (16个; sub_42234C 初始化为 0)", SKILL_EFF_FIELDS, 3)
         # unverified ranges on tab2
@@ -529,12 +535,14 @@ class WarpcEditor:
         lbl = ttk.Label(frm, text=fl, font=FONT_S); lbl.pack(anchor=tk.W)
         self._bind_tooltip(lbl, f"[{fo//2}] byte {fo}: {cmt}")
         ev = tk.StringVar(); self._edit_vars[fn] = ev
-        if ft == 'skill_pick':
+        if ft in ('skill_pick', 'item_pick'):
+            pick_fn = self._pick_skill if ft == 'skill_pick' else self._pick_item
             box = ttk.Frame(frm); box.pack(fill=tk.X)
             ttk.Entry(box, textvariable=ev, width=fw, font=FONT).pack(side=tk.LEFT)
             ttk.Button(box, text='…', width=2,
-                       command=lambda f=fn: self._pick_skill(f)).pack(side=tk.LEFT, padx=1)
-            self._edit_extras[fn] = ttk.Label(frm, text='', foreground='#3366cc',
+                       command=lambda f=fn: pick_fn(f)).pack(side=tk.LEFT, padx=1)
+            color = '#3366cc' if ft == 'skill_pick' else '#CC6633'
+            self._edit_extras[fn] = ttk.Label(frm, text='', foreground=color,
                                                font=FONT_S, wraplength=150)
             self._edit_extras[fn].pack(anchor=tk.W)
         else:
@@ -596,6 +604,29 @@ class WarpcEditor:
         except Exception:
             return {}, {}
 
+    def _load_item_names(self):
+        """加载 TKItem.dat → {item_id: item_name} 查找表"""
+        tks_dir = os.path.dirname(self.warpc_path) if self.warpc_path else ''
+        it_path = os.path.join(tks_dir, 'TKItem.dat')
+        if not os.path.exists(it_path):
+            return {}
+        try:
+            with open(it_path, 'rb') as f:
+                dec = lzss_decompress(f.read())
+            lookup = {}
+            for i in range(600):
+                off = i * 64
+                if off + 10 > len(dec): break
+                item_id = struct.unpack_from('<h', dec, off)[0]
+                name_id = struct.unpack_from('<h', dec, off + 4)[0]
+                if item_id > 0 and name_id > 0 and name_id in self.tkt:
+                    lookup[item_id] = self.tkt[name_id].split('\n')[0].strip()[:25]
+                elif item_id > 0:
+                    lookup[item_id] = f'物品#{item_id}'
+            return lookup
+        except Exception:
+            return {}
+
     def _reload(self):
         if not self.warpc_path: return
         self.status_var.set("加载中…"); self.root.update()
@@ -604,9 +635,10 @@ class WarpcEditor:
         try:
             self.records = load_warpc(self.warpc_path); self._dirty = False
             self.skill_names, self._skill_types = self._load_skill_names()
+            self.item_names = self._load_item_names()
             nonempty = sum(1 for r in self.records if any(v != 0 for v in r['fields']))
             self.status_var.set(
-                f"{len(self.records)} 角色 (1054字节/角色) | 有效 {nonempty} | TKT {len(self.tkt)} 条 | 技能 {len(self.skill_names)} 条")
+                f"{len(self.records)} 角色 (1054字节/角色) | 有效 {nonempty} | TKT {len(self.tkt)} 条 | 物品 {len(self.item_names)} 技能 {len(self.skill_names)}")
         except Exception as e:
             messagebox.showerror("加载失败", str(e)); self.records = []
         self._update_paths(); self._set_edit_enabled(True); self._apply_filter()
@@ -633,12 +665,17 @@ class WarpcEditor:
 
     def _update_paths(self):
         g, r = "#228B22", "#CC3333"
-        def _f(lb, p):
-            if not p: lb.config(text="(未加载)", foreground=r)
+        def _f(lb, p, label=''):
+            if not p: lb.config(text=f"({label}未加载)", foreground=r)
             elif not os.path.exists(p): lb.config(text=f"(不存在){p}", foreground=r)
-            else: lb.config(text=p, foreground=g)
-        _f(self.lbl_warpc, self.warpc_path)
-        _f(self.lbl_tkt, self.tkt_path)
+            else: lb.config(text=f"{label}: {p}" if label else p, foreground=g)
+        _f(self.lbl_warpc, self.warpc_path, 'WarPC')
+        _f(self.lbl_tkt, self.tkt_path, 'TKT')
+        tks_dir = os.path.dirname(self.warpc_path) if self.warpc_path else ''
+        it_path = os.path.join(tks_dir, 'TKItem.dat') if tks_dir else ''
+        sk_path = os.path.join(tks_dir, 'TKSkill.dat') if tks_dir else ''
+        _f(self.lbl_item, it_path if os.path.exists(it_path) else None, 'TKItem')
+        _f(self.lbl_skill, sk_path if os.path.exists(sk_path) else None, 'TKSkill')
 
     # ----------- 筛选/列表 -----------
 
@@ -736,6 +773,17 @@ class WarpcEditor:
                 else:
                     self._edit_extras[fn].config(text=f'技能#{sid}')
 
+        # Resolve item names for equip_id fields
+        for fn, fo, _, _ in EQUIP_FIELDS[4:]:
+            iid = f[fo // 2]
+            if fn in self._edit_extras:
+                if iid == 0:
+                    self._edit_extras[fn].config(text='(空)')
+                elif hasattr(self, 'item_names') and iid in self.item_names:
+                    self._edit_extras[fn].config(text=self.item_names[iid])
+                else:
+                    self._edit_extras[fn].config(text=f'物品#{iid}')
+
         # Additional unverified on tab1 (field [27]-[30])
         for j in range(4):
             bo = 54 + j*2
@@ -813,6 +861,59 @@ class WarpcEditor:
         ttk.Button(bf, text='清空', command=lambda: [
             self._edit_vars[fn].set('-1'),
             self._edit_extras[fn].config(text='(未装备)') if fn in self._edit_extras else None,
+            dlg.destroy()
+        ]).pack(side=tk.LEFT, padx=2)
+        ttk.Button(bf, text='取消', command=dlg.destroy).pack(side=tk.RIGHT, padx=2)
+        ttk.Button(bf, text='确定', command=_sel).pack(side=tk.RIGHT, padx=2)
+        dlg.wait_window()
+
+    def _pick_item(self, fn):
+        """弹出物品选择对话框 — 加载 TKItem.dat 显示物品名称"""
+        if not self.records: return
+        dlg = tk.Toplevel(self.root); dlg.title('选择物品')
+        dlg.transient(self.root); dlg.grab_set()
+        self._center_dialog(dlg, 550, 550)
+        cur_val = int(self._edit_vars[fn].get() or 0)
+
+        sf = ttk.Frame(dlg, padding=5); sf.pack(fill=tk.X)
+        ttk.Label(sf, text='搜索:').pack(side=tk.LEFT)
+        qv = tk.StringVar()
+        ttk.Entry(sf, textvariable=qv, width=30, font=FONT).pack(side=tk.LEFT, padx=5)
+
+        lf2 = ttk.Frame(dlg); lf2.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        tree = ttk.Treeview(lf2, columns=('id', 'name'),
+                            show='headings', selectmode='browse', height=20)
+        tree.heading('id', text='物品ID'); tree.column('id', width=80, anchor='center')
+        tree.heading('name', text='物品名称'); tree.column('name', width=430, anchor='w')
+        vsb = ttk.Scrollbar(lf2, orient=tk.VERTICAL, command=tree.yview)
+        tree.configure(yscrollcommand=vsb.set); tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        vsb.pack(side=tk.RIGHT, fill=tk.Y)
+
+        items = sorted(self.item_names.items(), key=lambda x: x[0])
+
+        def _refresh(q=''):
+            tree.delete(*tree.get_children())
+            ql = q.strip().lower()
+            for iid_val, nm in items:
+                if ql and ql not in f'{iid_val} {nm}'.lower(): continue
+                iid = tree.insert('', 'end', values=(iid_val, nm))
+                if iid_val == cur_val: tree.selection_set(iid); tree.see(iid)
+        _refresh()
+        qv.trace_add('write', lambda *a: _refresh(qv.get()))
+
+        def _sel():
+            sel = tree.selection()
+            if sel:
+                v = tree.item(sel[0])['values']
+                self._edit_vars[fn].set(str(v[0]))
+                if fn in self._edit_extras:
+                    self._edit_extras[fn].config(text=v[1] if v[1] else '')
+                dlg.destroy()
+        tree.bind('<Double-1>', lambda e: _sel())
+        bf = ttk.Frame(dlg, padding=5); bf.pack(fill=tk.X)
+        ttk.Button(bf, text='清空', command=lambda: [
+            self._edit_vars[fn].set('0'),
+            self._edit_extras[fn].config(text='') if fn in self._edit_extras else None,
             dlg.destroy()
         ]).pack(side=tk.LEFT, padx=2)
         ttk.Button(bf, text='取消', command=dlg.destroy).pack(side=tk.RIGHT, padx=2)
