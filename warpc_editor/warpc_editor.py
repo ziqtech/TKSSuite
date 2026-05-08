@@ -165,6 +165,26 @@ WARPC_DECOMPRESSED = 150722
 FONT = ('Microsoft YaHei UI', 9); FONT_S = ('Microsoft YaHei UI', 8)
 W_INPUT = 8
 
+# 标志位定义 — 用于 checkbox 弹窗选择
+COMBAT_FLAG_BITS = [
+    (0, "JP×2~3",           "战后技能点数×2~3 (無方戒; TKItem[20] bit0)"),
+    (1, "战后全恢复+异常全解", "战斗结束HP/MP全恢复+清除异常 (無雙戒; bit1)"),
+    (2, "经验×2~3平分队友",   "战斗经验×2~3并平分队友 (無嗔戒; bit2)"),
+    (3, "经验独得",           "战斗经验归一人独享 (無道戒; bit3)"),
+]
+
+MOVE_FLAG_BITS = [
+    (0, "飘浮", "地形通行无阻 (sub_422BBC bit0)"),
+    (1, "飙行", "移动范围扩大 (sub_422BBC bit1)"),
+    (2, "搜宝", "获得额外宝物 (sub_422BBC bit2)"),
+    (3, "解陷", "自动解除陷阱 (sub_422BBC bit3)"),
+]
+
+FLAG_DEFS = {
+    'special_flag': ("特殊能力标志", COMBAT_FLAG_BITS),
+    'move_flags':   ("移动特殊标志", MOVE_FLAG_BITS),
+}
+
 # ============================================================
 # 字段定义 — 按功能分组, 基于反编译验证
 # ============================================================
@@ -554,7 +574,8 @@ class WarpcEditor:
         lf.grid(row=row, column=0, sticky='ew', padx=2, pady=2)
         grid = ttk.Frame(lf); grid.pack(fill=tk.X)
         for fi, (fn, fo, fl, cmt) in enumerate(fields):
-            self._build_field_widget(grid, fi // cols, fi % cols, fn, fo, fl, W_INPUT, cmt, ft)
+            field_ft = 'flags' if fn in FLAG_DEFS else ft
+            self._build_field_widget(grid, fi // cols, fi % cols, fn, fo, fl, W_INPUT, cmt, field_ft)
 
     def _build_field_widget(self, parent, row, col, fn, fo, fl, fw, cmt, ft='int'):
         frm = ttk.Frame(parent); frm.grid(row=row, column=col, sticky='nw', padx=2, pady=1)
@@ -575,6 +596,15 @@ class WarpcEditor:
             color = '#3366cc' if ft == 'skill_pick' else '#CC6633'
             self._edit_extras[fn] = ttk.Label(frm, text='', foreground=color,
                                                font=FONT_S, wraplength=150)
+            self._edit_extras[fn].pack(anchor=tk.W)
+        elif ft == 'flags':
+            box = ttk.Frame(frm); box.pack(fill=tk.X)
+            ev = tk.StringVar(); self._edit_vars[fn] = ev
+            ttk.Entry(box, textvariable=ev, width=fw, font=FONT).pack(side=tk.LEFT)
+            ttk.Button(box, text="…", width=2,
+                       command=lambda f=fn: self._pick_flags(f)).pack(side=tk.LEFT, padx=1)
+            self._edit_extras[fn] = ttk.Label(frm, text="", foreground='#666',
+                                               font=FONT_S, wraplength=180)
             self._edit_extras[fn].pack(anchor=tk.W)
         else:
             ttk.Entry(frm, textvariable=ev, width=fw, font=FONT).pack(fill=tk.X)
@@ -853,6 +883,15 @@ class WarpcEditor:
                 else:
                     self._edit_extras[fn].config(text=f'物品#{iid}')
 
+        # Update flag labels (special_flag, move_flags)
+        for fn in FLAG_DEFS:
+            if fn in self._edit_extras and fn in self._edit_vars:
+                try:
+                    val = int(self._edit_vars[fn].get())
+                    self._update_flags_label(fn, val)
+                except ValueError:
+                    self._update_flags_label(fn, 0)
+
         # Additional unverified on tab1 (field [27]-[30])
         for j in range(4):
             bo = 54 + j*2
@@ -1023,6 +1062,44 @@ class WarpcEditor:
         ttk.Button(bf, text='取消', command=dlg.destroy).pack(side=tk.RIGHT, padx=2)
         ttk.Button(bf, text='确定', command=_sel).pack(side=tk.RIGHT, padx=2)
         dlg.wait_window()
+
+    def _pick_flags(self, fn):
+        """弹窗选择标志位 (Checkbox 位掩码)"""
+        if fn not in FLAG_DEFS: return
+        title, bits = FLAG_DEFS[fn]
+        dlg = tk.Toplevel(self.root); dlg.title(f"选择{title} (位掩码)")
+        dlg.transient(self.root); dlg.grab_set()
+        self._center_dialog(dlg, 400, 250)
+        cur_val = int(self._edit_vars[fn].get() or 0) & 0xFFFF
+        wrap = ttk.Frame(dlg, padding=8); wrap.pack(fill=tk.BOTH, expand=True)
+        vars_ = []
+        for bit, name, desc in bits:
+            v = tk.BooleanVar(value=bool(cur_val & (1 << bit)))
+            row = ttk.Frame(wrap); row.pack(anchor=tk.W, fill=tk.X, pady=1)
+            ttk.Checkbutton(row, text=f"bit{bit} {name}", variable=v).pack(side=tk.LEFT)
+            ttk.Label(row, text=desc, foreground='#999', font=('', 7)).pack(side=tk.LEFT, padx=(8, 0))
+            vars_.append((bit, v))
+        bf = ttk.Frame(dlg, padding=4); bf.pack(side=tk.BOTTOM, fill=tk.X)
+        def _ok():
+            m = 0
+            for bit, v in vars_:
+                if v.get(): m |= (1 << bit)
+            if m >= 0x8000: m -= 0x10000
+            self._edit_vars[fn].set(str(m))
+            self._update_flags_label(fn, m); dlg.destroy()
+        ttk.Button(bf, text="全选", command=lambda: [v.set(True) for _, v in vars_]).pack(side=tk.LEFT)
+        ttk.Button(bf, text="全清", command=lambda: [v.set(False) for _, v in vars_]).pack(side=tk.LEFT, padx=4)
+        ttk.Button(bf, text="取消", command=dlg.destroy).pack(side=tk.RIGHT, padx=2)
+        ttk.Button(bf, text="确定", command=_ok).pack(side=tk.RIGHT, padx=2)
+        dlg.wait_window()
+
+    def _update_flags_label(self, fn, val):
+        """更新标志位的标签显示"""
+        if fn not in FLAG_DEFS: return
+        mask = val & 0xFFFF
+        _, bits = FLAG_DEFS[fn]
+        sel = [name for bit, name, _ in bits if mask & (1 << bit)]
+        self._edit_extras[fn].config(text=", ".join(sel) if sel else "(无)")
 
     # ----------- 编辑应用 -----------
 
