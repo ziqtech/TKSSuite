@@ -265,24 +265,23 @@ EXTRA_FLAG_BITS = [
     (5, "战斗时序强效",   "敌方计时条强制扣减(更强效); sub_431E70 bit5 (六無玄冥石)"),
 ]
 
-# 使用权限 (equip_type) — 位掩码，每位对应角色武器专精体系
+# 使用权限 (equip_type) — 多选位掩码，选项根据页面号动态切换
 #  sub_41928C: word_77CBD4[32*idx] & word_757FA4[527*char] → 权限位与校验
-#  sub_41F318: 参考物品 100→bit0, 107→bit1, 112→bit2, 113→bit3, 114→bit4, 115→bit5
-#  sub_4307CC: equip_type→战斗动画类型 1→1, 2→6, 4→5, 8→4, 16→3, 32→2
-#  实测验证: bit0=刀/道具/轻衣, bit1=剑/书籍/铠甲, bit2=枪/秘笈, bit3-7=矛/弓/大刀/戟/锤
-USE_RIGHT = {
-    0:   "通用/饰品",       # 坐骑、饰品、任务物品 — 所有角色可用
-    1:   "刀/道具/轻衣",    # 刀类武器 + 消耗品 + 轻便衣物/披风/袍
-    2:   "剑/书籍/铠甲",    # 剑类武器 + 书籍 + 重甲防具
-    3:   "药品/食物",       # 治疗物品，刀剑通用 (bit0|bit1)
-    4:   "枪/秘笈",         # 枪类武器 + 特殊秘笈/法宝
-    8:   "矛类",            # 矛/槊长兵器
-    16:  "弓弩",            # 弓/弩/箭远程武器
-    32:  "大刀",            # 长柄大刀
-    64:  "戟类",            # 戟/戈
-    128: "锤类",            # 锤/鎚重兵器
+USE_RIGHT_OPTIONS = {
+    0: [(1, "战斗"), (2, "非战斗")],                              # 药品
+    1: [(1, "战斗"), (2, "非战斗"), (4, "主角限定")],              # 道具
+    2: [(1, "刀"), (2, "剑"), (4, "枪"), (8, "矛"),
+        (16, "弓"), (32, "大刀"), (64, "戟"), (128, "锤")],      # 武器
+    3: [(1, "衣袍"), (2, "铠甲")],                                # 防具
+    4: [(0, "通用")],                                             # 饰品
+    5: [(0, "通用")],                                             # 特殊
 }
-USE_RIGHT_VALUES = [f"{k}-{v}" for k,v in sorted(USE_RIGHT.items())]
+
+def _use_right_label(val, page):
+    """根据页面号解析使用权限为可读文本"""
+    opts = USE_RIGHT_OPTIONS.get(page, [])
+    sel = [name for bit, name in opts if bit == 0 or (val & bit)]
+    return ", ".join(sel) if sel else "(无)"
 
 # 页面号 (tab_code, Maker UI 未显示; 商店分页, 0-5)
 PAGE_NAMES = {0:"药品", 1:"道具", 2:"武器", 3:"防具", 4:"饰品", 5:"特殊"}
@@ -467,8 +466,9 @@ class ItemEditor:
         ttk.Combobox(tb, textvariable=self.filter_page, values=["全部页面"]+PAGE_VALUES,
                      state='readonly', width=10).pack(side=tk.LEFT, padx=2)
         ttk.Label(tb, text="权限:").pack(side=tk.LEFT, padx=(6,0))
-        ttk.Combobox(tb, textvariable=self.filter_right, values=["全部权限"]+USE_RIGHT_VALUES,
-                     state='readonly', width=16).pack(side=tk.LEFT, padx=2)
+        self.filter_right_cb = ttk.Combobox(tb, textvariable=self.filter_right, values=["全部权限"],
+                                            state='readonly', width=16)
+        self.filter_right_cb.pack(side=tk.LEFT, padx=2)
         ttk.Checkbutton(tb, text="仅非空", variable=self.filter_empty,
                         command=self._apply_filter).pack(side=tk.LEFT, padx=6)
         self.filter_page.trace_add('write', lambda *a: self._apply_filter())
@@ -644,10 +644,14 @@ class ItemEditor:
             cb.pack(fill=tk.X); self._edit_extras[fn] = cb
             self._edit_vars[fn] = tk.StringVar()
         elif ft == 'use_right':
-            cb = ttk.Combobox(frm, state='readonly', values=USE_RIGHT_VALUES,
-                              width=18, font=FONT)
-            cb.pack(fill=tk.X); self._edit_extras[fn] = cb
-            self._edit_vars[fn] = tk.StringVar()
+            box = ttk.Frame(frm); box.pack(fill=tk.X)
+            ev = tk.StringVar(); self._edit_vars[fn] = ev
+            ttk.Entry(box, textvariable=ev, width=W_INPUT, font=FONT).pack(side=tk.LEFT)
+            ttk.Button(box, text="…", width=2,
+                       command=lambda f=fn: self._pick_use_right(f)).pack(side=tk.LEFT, padx=1)
+            self._edit_extras[fn] = ttk.Label(frm, text="", foreground='#666',
+                                               font=FONT_S, wraplength=180)
+            self._edit_extras[fn].pack(anchor=tk.W)
         elif ft == 'tkt':
             box = ttk.Frame(frm); box.pack(fill=tk.X)
             ev = tk.StringVar(); self._edit_vars[fn] = ev
@@ -780,15 +784,46 @@ class ItemEditor:
         _f(self.lbl_skill, self.skill_path)
 
     # ----------- 筛选/列表 -----------
-    def _apply_filter(self):
+    def _update_right_options(self, page_filter_value):
+        """根据页面筛选值动态填充权限下拉框选项"""
+        if page_filter_value.startswith("全部"):
+            # 全部页面: 收集所有唯一选项
+            seen = set()
+            all_opts = []
+            for page in sorted(USE_RIGHT_OPTIONS):
+                for bit, name in USE_RIGHT_OPTIONS[page]:
+                    key = (bit, name)
+                    if key not in seen:
+                        seen.add(key)
+                        all_opts.append(f"{bit}-{name}")
+        else:
+            page = int(page_filter_value.split('-')[0])
+            opts = USE_RIGHT_OPTIONS.get(page, [])
+            all_opts = [f"{bit}-{name}" for bit, name in opts]
+        new_vals = ["全部权限"] + all_opts
+        current_vals = list(self.filter_right_cb['values'])
+        if new_vals != current_vals:
+            self.filter_right_cb['values'] = new_vals
+            self._guard_right_reset = True
+            self.filter_right.set("全部权限")
+            self._guard_right_reset = False
+
+    def _apply_filter(self, *_):
+        if getattr(self, '_guard_right_reset', False):
+            return
         q = self.sv.get().strip().lower(); self.filtered_indices = []
+        self._update_right_options(self.filter_page.get())
         fpg = self.filter_page.get(); frg = self.filter_right.get()
         for rec in self.records:
             if self.filter_empty.get() and is_empty_item(rec, self.tkt): continue
             if fpg and not fpg.startswith("全部"):
                 if rec['tab_code'] != int(fpg.split('-')[0]): continue
             if frg and not frg.startswith("全部"):
-                if rec['equip_type'] != int(frg.split('-')[0]): continue
+                bit = int(frg.split('-')[0])
+                if bit == 0:
+                    if rec['equip_type'] != 0: continue
+                else:
+                    if (rec['equip_type'] & bit) == 0: continue
             if q:
                 nm = item_display_name(rec, self.tkt)
                 if q not in f"{rec['index']} {rec['item_id']} {rec['tab_code']} {nm}".lower():
@@ -810,7 +845,7 @@ class ItemEditor:
         for idx in self.filtered_indices:
             r = self.records[idx]
             et = r['equip_type']
-            rt = USE_RIGHT.get(et, f"#{et}") if et or et == 0 else "—"
+            rt = _use_right_label(et, r.get('tab_code', 0)) if et or et == 0 else "—"
             photo = self._get_icon_photo(r['icon'], (24,24))
             self._tree_photos.append(photo)
             self.tree.insert('', 'end', image=photo if photo else '',
@@ -878,8 +913,8 @@ class ItemEditor:
                 cb = self._edit_extras[fn]
                 if not self._set_combobox(cb, val): cb.set(sv)
             elif ft == 'use_right':
-                cb = self._edit_extras[fn]
-                if not self._set_combobox(cb, val): cb.set(sv)
+                page = rec.get('tab_code', 0)
+                self._edit_extras[fn].config(text=_use_right_label(int(val) if val else 0, page))
             elif ft == 'combat_flag':
                 cb = self._edit_extras[fn]
                 if not self._set_combobox(cb, val): cb.set(sv)
@@ -1081,6 +1116,42 @@ class ItemEditor:
         sel = [name for bit, name, _ in EXTRA_FLAG_BITS if mask & (1 << bit)]
         self._edit_extras[fn].config(text=", ".join(sel) if sel else "(无)")
 
+    def _pick_use_right(self, fn):
+        """弹窗选择使用权限 (根据当前页面号动态切换选项)"""
+        if not self.records: return
+        page = self.records[self._editing_idx].get('tab_code', 0)
+        opts = USE_RIGHT_OPTIONS.get(page, [])
+        # 仅有一个值为0的选项时，直接设为0
+        if len(opts) == 1 and opts[0][0] == 0:
+            self._edit_vars[fn].set("0")
+            self._edit_extras[fn].config(text=_use_right_label(0, page))
+            return
+        dlg = tk.Toplevel(self.root); dlg.title("选择使用权限 (多选位掩码)")
+        dlg.transient(self.root); dlg.grab_set()
+        self._center_dialog(dlg, 320, 60 + max(len(opts), 2) * 28)
+        cur_val = int(self._edit_vars[fn].get() or 0) & 0xFFFF
+        wrap = ttk.Frame(dlg, padding=8); wrap.pack(fill=tk.BOTH, expand=True)
+        vars_ = []
+        for bit, name in opts:
+            v = tk.BooleanVar(value=bool(cur_val & bit))
+            row = ttk.Frame(wrap); row.pack(anchor=tk.W, fill=tk.X, pady=1)
+            ttk.Checkbutton(row, text=f"{bit}-{name}" if bit != 0 else name, variable=v).pack(side=tk.LEFT)
+            vars_.append((bit, v))
+        bf = ttk.Frame(dlg, padding=4); bf.pack(side=tk.BOTTOM, fill=tk.X)
+        def _ok():
+            m = 0
+            for bit, v in vars_:
+                if v.get(): m += bit
+            if m >= 0x8000: m -= 0x10000
+            self._edit_vars[fn].set(str(m))
+            self._edit_extras[fn].config(text=_use_right_label(m, page))
+            dlg.destroy()
+        ttk.Button(bf, text="全选", command=lambda: [v.set(True) for _, v in vars_]).pack(side=tk.LEFT)
+        ttk.Button(bf, text="全清", command=lambda: [v.set(False) for _, v in vars_]).pack(side=tk.LEFT, padx=4)
+        ttk.Button(bf, text="取消", command=dlg.destroy).pack(side=tk.RIGHT, padx=2)
+        ttk.Button(bf, text="确定", command=_ok).pack(side=tk.RIGHT, padx=2)
+        dlg.wait_window()
+
     def _update_preview_status(self, si, sel):
         """更新预览区中单个状态列 (含图标, 每行最多3个)"""
         frame = self._preview_statuses[si]
@@ -1233,7 +1304,7 @@ class ItemEditor:
         rec = self.records[self._editing_idx]
         for fn, fo, fl, ft, fw, cmt in ALL_FIELDS:
             try:
-                if ft in ('page', 'use_right', 'combat_flag'):
+                if ft in ('page', 'combat_flag'):
                     sv = self._edit_extras[fn].get()
                     rec[fn] = int(sv.split('-', 1)[0]) if '-' in sv else int(sv)
                 else:
@@ -1377,8 +1448,8 @@ class ItemEditor:
         for fn, fo, fl, ft, fw, cmt in HIDDEN_FIELDS:
             lines.append(f"  [{fo:02d}] {fl:<12s}  {cmt}")
         lines.append(""); lines.append("【使用权限 (equip_type) 实测值】")
-        for k, v in sorted(USE_RIGHT.items()):
-            lines.append(f"  #{k:<3d}  {v}")
+        for page, opts in sorted(USE_RIGHT_OPTIONS.items()):
+            lines.append(f"  页面{page}({PAGE_NAMES.get(page,'?')}): {opts}")
         lines.append(""); lines.append("【记录数硬限制】")
         lines.append("  600 条 x 64 字节 = 38400 字节 (sub_45343C 固定加载量)")
         lines.append("  sub_42F8D4 搜索循环 `while (v3 < 600)` 是硬编码")
