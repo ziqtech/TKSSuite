@@ -165,6 +165,14 @@ WARPC_DECOMPRESSED = 150722
 FONT = ('Microsoft YaHei UI', 9); FONT_S = ('Microsoft YaHei UI', 8)
 W_INPUT = 8
 
+# 状态效果名称 (共31种, 索引0-30; sub_41E40C 使用 status_id 1-32)
+STATUS_NAMES = [
+    "破兵","碎甲","昏眩","封锁","羁绊","蓄力","刚体","集中",
+    "云身","神行","无视","伪装","御风","死战","连计","连计",
+    "误导","混乱","禁制","定身","诅咒","封印","燃烧","冰冻",
+    "虚弱","麻痹","沈睡","中毒","迷恋","明镜","针灸",
+]
+
 # 标志位定义 — 用于 checkbox 弹窗选择
 COMBAT_FLAG_BITS = [
     (0, "JP×2~3",           "战后技能点数×2~3 (無方戒; TKItem[20] bit0)"),
@@ -243,6 +251,13 @@ CHAR_ATTR_FIELDS = [
     ("jp_total",    62,  "技能点数",    "累计技能点数 (曹操=400 司马懿=300; r=0.992与等级相关; sub_422A5C入队累加)"),
 ]
 
+# 身上状态槽 [43]-[50] — sub_41E40C 验证: 8个状态效果槽, 每槽(status_id:byte, duration:byte)
+STATUS_SLOT_FIELDS = []
+for i in range(8):
+    STATUS_SLOT_FIELDS.append(
+        (f"status_slot{i}", 86 + i*2, f"状态槽{i}",
+         f"身上状态效果槽{i} (sub_41E40C: v8+{i*2}); 低字节=状态ID(1-32) 高字节=持续回合"))
+
 # 待验证 [41]-[42] — sub_422BBC type=2 写入, 语义待确认
 UNVERIFIED_4142 = [
     ("field_41",    82,  "待验证[41]",    "sub_422BBC type=2 写入反应组编号(1-10) — 待验证"),
@@ -306,7 +321,6 @@ for i in range(16):
 # 未验证字段 (偏移范围)
 UNVERIFIED_RANGES = [
     ("未验证 27-31",  54, 5,  "字段 [27]-[31] — 无反编译直接引用, 示例值: 50,50,50,25,0"),
-    ("未验证 43-50",  86, 8,  "字段 [43]-[50] — 无反编译直接引用, 示例全=-256"),
     ("未验证 77-81", 154, 5,  "字段 [77]-[81] — 无反编译直接引用; [78]装备相关,[79]装备类型位掩码"),
     ("未验证 88-101",176,14,  "字段 [88]-[101] — 无反编译直接引用; [88-89]部分角色有值"),
 ]
@@ -491,11 +505,12 @@ class WarpcEditor:
         self._build_section(parent, "技能加成 [32]-[40] (sub_422BBC TKSkill效果; sub_42234C初始=0)", SKILL_BONUS_FIELDS, 3)
         self._build_section(parent, "待验证 [41]-[42] (sub_422BBC type=2 写入)", UNVERIFIED_4142, 4)
         self._build_section(parent, "状态掩码 (来源于装备; sub_42234C L94-95)", STATUS_FIELDS, 5)
-        self._build_section(parent, "角色五维 [27]-[31] (曹操验证: 智慧5 仁德-1 勇气10 医术0 技能点400)", CHAR_ATTR_FIELDS, 6)
+        self._build_status_slots(parent, 6)
+        self._build_section(parent, "角色五维 [27]-[31] (曹操验证: 智慧5 仁德-1 勇气10 医术0 技能点400)", CHAR_ATTR_FIELDS, 7)
         # 战后奖励 [268]-[269]
-        self._build_section(parent, "成长率 [264]-[266] (五爪金龍: 初期27 中期24 后期21)", GROWTH_FIELDS, 7)
-        self._build_section(parent, "战后奖励 [268]-[269] (Gold=基数×2; JP=直接值)", BATTLE_REWARD_FIELDS, 8)
-        self._build_section(parent, "可掉落物品 [270]-[272] (五爪金龍验证: 顛海神珠/金龍魂/虎項龍紋鎧)", DROP_ITEM_FIELDS, 9, ft='item_pick')
+        self._build_section(parent, "成长率 [264]-[266] (五爪金龍: 初期27 中期24 后期21)", GROWTH_FIELDS, 8)
+        self._build_section(parent, "战后奖励 [268]-[269] (Gold=基数×2; JP=直接值)", BATTLE_REWARD_FIELDS, 9)
+        self._build_section(parent, "可掉落物品 [270]-[272] (五爪金龍验证: 顛海神珠/金龍魂/虎項龍紋鎧)", DROP_ITEM_FIELDS, 10, ft='item_pick')
 
     def _build_stat_row(self, parent):
         """八属性 — 一行八列, 每列(名称 + 基础 + 当前)"""
@@ -526,6 +541,31 @@ class WarpcEditor:
             ev_c = tk.StringVar(); self._edit_vars[fn_cur] = ev_c
             ttk.Entry(frm_c, textvariable=ev_c, width=5, font=FONT, justify='center').pack(side=tk.RIGHT)
             self._bind_tooltip(frm_c, f"[{bo//2+1}] {name}当前值 (基础+装备; sub_42234C L63-70)")
+
+    def _build_status_slots(self, parent, row):
+        """身上状态 [43]-[50] — 8槽, 每槽(status_id, duration)"""
+        lf = ttk.LabelFrame(parent, text="身上状态 [43]-[50] (sub_41E40C 验证: 8槽×2字节=状态ID+持续回合)", padding=4)
+        lf.grid(row=row, column=0, sticky='ew', padx=2, pady=2)
+        self._status_widgets = []
+        status_options = ["(无)"] + [f"{i+1}-{STATUS_NAMES[i]}" for i in range(len(STATUS_NAMES))]
+        for si, (fn, fo, fl, cmt) in enumerate(STATUS_SLOT_FIELDS):
+            r, c = divmod(si, 4)
+            col = ttk.Frame(lf); col.grid(row=r, column=c, sticky='n', padx=2, pady=1)
+            # Title row: 槽N状态 | 回合
+            ttl = ttk.Frame(col); ttl.pack(fill=tk.X)
+            lbl = ttk.Label(ttl, text=f"状态{si}", font=FONT)
+            lbl.pack(side=tk.LEFT)
+            self._bind_tooltip(lbl, f"[{fo//2}] bo={fo}: {cmt}")
+            ttk.Label(ttl, text="持续回合", font=FONT, foreground='#888').pack(side=tk.RIGHT)
+            # Input row: Combobox | Entry
+            inp = ttk.Frame(col); inp.pack(fill=tk.X, pady=(1, 0))
+            cb = ttk.Combobox(inp, values=status_options, state='readonly', width=6, font=FONT)
+            cb.pack(side=tk.LEFT, fill=tk.X, expand=True)
+            ev_dur = tk.StringVar(value="0")
+            ttk.Entry(inp, textvariable=ev_dur, width=4, font=FONT, justify='center').pack(side=tk.RIGHT, padx=(1, 0))
+            # Store widgets
+            self._status_widgets.append((fn, fo, cb, ev_dur))
+            self._edit_vars[fn] = tk.StringVar()  # hidden int16 value
 
     def _build_tab2(self, parent):
         """装备与技能"""
@@ -825,11 +865,23 @@ class WarpcEditor:
         # Populate all known fields
         all_named_fields = (IDENTITY_FIELDS + HPMP_FIELDS + STAT_FIELDS +
                            SKILL_BONUS_FIELDS + EQUIP_FIELDS + EQUIP_SKILL_FIELDS +
-                           STATUS_FIELDS + SKILL_EFF_FIELDS + CHAR_ATTR_FIELDS + UNVERIFIED_4142 + GROWTH_FIELDS + BATTLE_REWARD_FIELDS + DROP_ITEM_FIELDS)
+                           STATUS_FIELDS + STATUS_SLOT_FIELDS + SKILL_EFF_FIELDS + CHAR_ATTR_FIELDS + UNVERIFIED_4142 + GROWTH_FIELDS + BATTLE_REWARD_FIELDS + DROP_ITEM_FIELDS)
         for fn, fo, _, _ in all_named_fields:
             sv = str(f[fo // 2])
             if fn in self._edit_vars:
                 self._edit_vars[fn].set(sv)
+
+        # Populate status slot widgets
+        if hasattr(self, '_status_widgets'):
+            for fn, fo, cb, ev_dur in self._status_widgets:
+                v = f[fo // 2]
+                sid = v & 0xFF
+                dur = (v >> 8) & 0xFF
+                if sid == 0 or sid > len(STATUS_NAMES):
+                    cb.current(0)
+                else:
+                    cb.current(sid)
+                ev_dur.set(str(dur) if sid != 0 and dur != 0xFF else "0")
 
         # Unverified ranges
         for _, off, cnt, _ in UNVERIFIED_RANGES:
@@ -1113,10 +1165,27 @@ class WarpcEditor:
             sv = self._edit_extras['role'].get()
             f[3] = int(sv.split('-', 1)[0]) if '-' in sv else int(sv)
 
+        # Sync status slot UI widgets → StringVars
+        if hasattr(self, '_status_widgets'):
+            for fn, fo, cb, ev_dur in self._status_widgets:
+                sid = cb.current()  # 0="(无)", 1="1-破兵", ...
+                if sid == 0:
+                    v = -256  # empty slot sentinel (0xFF00)
+                else:
+                    try:
+                        dur = int(ev_dur.get())
+                        if dur < 0: dur = 1
+                        if dur > 255: dur = 255
+                    except ValueError:
+                        dur = 1
+                    v = (sid & 0xFF) | ((dur & 0xFF) << 8)
+                    if v >= 0x8000: v -= 0x10000
+                self._edit_vars[fn].set(str(v))
+
         # Apply named fields
         all_named_fields = (IDENTITY_FIELDS + HPMP_FIELDS + STAT_FIELDS +
                            SKILL_BONUS_FIELDS + EQUIP_FIELDS + EQUIP_SKILL_FIELDS +
-                           STATUS_FIELDS + SKILL_EFF_FIELDS + CHAR_ATTR_FIELDS + UNVERIFIED_4142 + GROWTH_FIELDS + BATTLE_REWARD_FIELDS + DROP_ITEM_FIELDS)
+                           STATUS_FIELDS + STATUS_SLOT_FIELDS + SKILL_EFF_FIELDS + CHAR_ATTR_FIELDS + UNVERIFIED_4142 + GROWTH_FIELDS + BATTLE_REWARD_FIELDS + DROP_ITEM_FIELDS)
         for fn, fo, _, _ in all_named_fields:
             if fn in self._edit_vars:
                 try:
