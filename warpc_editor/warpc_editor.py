@@ -287,8 +287,8 @@ EQUIP_SKILL_FIELDS = [
 ]
 
 STATUS_FIELDS = [
-    ("cause_mask1", 134, "状态掩码1",  "导致状态掩码1 (1-16; 来自装备 v9[26])"),
-    ("cause_mask2", 136, "状态掩码2",  "导致状态掩码2 (17-32; 来自装备 v9[27])"),
+    ("cause_mask1", 134, "攻击导致状态 1-16",  "攻击/命中时让目标进入的状态位掩码 (bit0-15; 来自装备 v9[26])"),
+    ("cause_mask2", 136, "攻击导致状态 17-32", "攻击/命中时让目标进入的状态位掩码 (bit16-31; 来自装备 v9[27])"),
 ]
 
 # 战后奖励 — 实测验证: 盜賊嘍嘍 field[268]=2→JP=2, field[269]=20→Lv3 Gold=40
@@ -312,6 +312,31 @@ DROP_ITEM_FIELDS = [
     ("drop_item2", 544, "低概率掉落",  "可掉落物品2 ID; 五爪金龍=虎項龍紋鎧(8081)"),
 ]
 
+# 角色使用/装备权限 [78]-[80] — 来自物品编辑器 USE_RIGHT_OPTIONS 验证
+# sub_41928C: word_77CBD4[32*idx] & word_757FA4[527*char] → 装备/使用时按位与校验
+# 主角#0 验证: [78]=7(战斗|非战斗|主角限定) [79]=63(刀|剑|枪|矛|弓|大刀) [80]=3(衣袍|铠甲)
+CHAR_USE_RIGHT_FIELDS = [
+    ("use_right_item",   156, "道具权限",  "药品/道具使用权限位掩码 (1=战斗 2=非战斗 4=主角限定); 主角#0=7"),
+    ("use_right_weapon", 158, "武器权限",  "武器装备权限位掩码 (1=刀 2=剑 4=枪 8=矛 16=弓 32=大刀 64=戟 128=锤); 主角#0=63"),
+    ("use_right_armor",  160, "防具权限",  "防具装备权限位掩码 (1=衣袍 2=铠甲); 主角#0=3"),
+]
+
+# 权限字段 → (弹窗标题, [(bit, 名称, 描述), ...])
+USE_RIGHT_DEFS = {
+    'use_right_item': ("道具使用权限", [
+        (1, "战斗", "可在战斗中使用"),
+        (2, "非战斗", "可在非战斗中使用"),
+        (4, "主角限定", "仅主角可使用"),
+    ]),
+    'use_right_weapon': ("武器装备权限", [
+        (1, "刀", ""), (2, "剑", ""), (4, "枪", ""), (8, "矛", ""),
+        (16, "弓", ""), (32, "大刀", ""), (64, "戟", ""), (128, "锤", ""),
+    ]),
+    'use_right_armor': ("防具装备权限", [
+        (1, "衣袍", ""), (2, "铠甲", ""),
+    ]),
+}
+
 # 技能效果槽 [51]-[66]
 SKILL_EFF_FIELDS = []
 for i in range(16):
@@ -321,7 +346,8 @@ for i in range(16):
 # 未验证字段 (偏移范围)
 UNVERIFIED_RANGES = [
     ("未验证 27-31",  54, 5,  "字段 [27]-[31] — 无反编译直接引用, 示例值: 50,50,50,25,0"),
-    ("未验证 77-81", 154, 5,  "字段 [77]-[81] — 无反编译直接引用; [78]装备相关,[79]装备类型位掩码"),
+    ("保留零字段 [77]", 154, 1, "字段 [77] — 全143条为0, 保留字段"),
+    ("保留零字段 [81]", 162, 1, "字段 [81] — 全143条为0, 保留字段"),
     ("未验证 88-101",176,14,  "字段 [88]-[101] — 无反编译直接引用; [88-89]部分角色有值"),
 ]
 
@@ -504,13 +530,14 @@ class WarpcEditor:
         self._build_stat_row(parent)
         self._build_section(parent, "技能加成 [32]-[40] (sub_422BBC TKSkill效果; sub_42234C初始=0)", SKILL_BONUS_FIELDS, 3)
         self._build_section(parent, "待验证 [41]-[42] (sub_422BBC type=2 写入)", UNVERIFIED_4142, 4)
-        self._build_section(parent, "状态掩码 (来源于装备; sub_42234C L94-95)", STATUS_FIELDS, 5)
+        self._build_section(parent, "攻击导致状态 (来源于装备; sub_42234C L94-95)", STATUS_FIELDS, 5, ft='mask')
         self._build_status_slots(parent, 6)
         self._build_section(parent, "角色五维 [27]-[31] (曹操验证: 智慧5 仁德-1 勇气10 医术0 技能点400)", CHAR_ATTR_FIELDS, 7)
+        self._build_section(parent, "使用/装备权限 [78]-[80] (sub_41928C 验证: 主角#0 道具=7 武器=63 防具=3)", CHAR_USE_RIGHT_FIELDS, 8)
         # 战后奖励 [268]-[269]
-        self._build_section(parent, "成长率 [264]-[266] (五爪金龍: 初期27 中期24 后期21)", GROWTH_FIELDS, 8)
-        self._build_section(parent, "战后奖励 [268]-[269] (Gold=基数×2; JP=直接值)", BATTLE_REWARD_FIELDS, 9)
-        self._build_section(parent, "可掉落物品 [270]-[272] (五爪金龍验证: 顛海神珠/金龍魂/虎項龍紋鎧)", DROP_ITEM_FIELDS, 10, ft='item_pick')
+        self._build_section(parent, "成长率 [264]-[266] (五爪金龍: 初期27 中期24 后期21)", GROWTH_FIELDS, 9)
+        self._build_section(parent, "战后奖励 [268]-[269] (Gold=基数×2; JP=直接值)", BATTLE_REWARD_FIELDS, 10)
+        self._build_section(parent, "可掉落物品 [270]-[272] (五爪金龍验证: 顛海神珠/金龍魂/虎項龍紋鎧)", DROP_ITEM_FIELDS, 11, ft='item_pick')
 
     def _build_stat_row(self, parent):
         """八属性 — 一行八列, 每列(名称 + 基础 + 当前)"""
@@ -614,7 +641,14 @@ class WarpcEditor:
         lf.grid(row=row, column=0, sticky='ew', padx=2, pady=2)
         grid = ttk.Frame(lf); grid.pack(fill=tk.X)
         for fi, (fn, fo, fl, cmt) in enumerate(fields):
-            field_ft = 'flags' if fn in FLAG_DEFS else ft
+            if fn in FLAG_DEFS:
+                field_ft = 'flags'
+            elif fn in USE_RIGHT_DEFS:
+                field_ft = 'use_right'
+            elif fn.startswith('cause_mask'):
+                field_ft = 'mask'
+            else:
+                field_ft = ft
             self._build_field_widget(grid, fi // cols, fi % cols, fn, fo, fl, W_INPUT, cmt, field_ft)
 
     def _build_field_widget(self, parent, row, col, fn, fo, fl, fw, cmt, ft='int'):
@@ -646,6 +680,25 @@ class WarpcEditor:
             self._edit_extras[fn] = ttk.Label(frm, text="", foreground='#666',
                                                font=FONT_S, wraplength=180)
             self._edit_extras[fn].pack(anchor=tk.W)
+        elif ft == 'use_right':
+            box = ttk.Frame(frm); box.pack(fill=tk.X)
+            ev = tk.StringVar(); self._edit_vars[fn] = ev
+            ttk.Entry(box, textvariable=ev, width=fw, font=FONT).pack(side=tk.LEFT)
+            ttk.Button(box, text="…", width=2,
+                       command=lambda f=fn: self._pick_use_right(f)).pack(side=tk.LEFT, padx=1)
+            self._edit_extras[fn] = ttk.Label(frm, text="", foreground='#666',
+                                               font=FONT_S, wraplength=180)
+            self._edit_extras[fn].pack(anchor=tk.W)
+        elif ft == 'mask':
+            is_cause = fn.startswith('cause_')
+            btn_text = "选择导致状态…" if is_cause else "选择解除状态…"
+            color = '#CC3333' if is_cause else '#3366cc'
+            ttk.Button(frm, text=btn_text, width=fw + 3,
+                       command=lambda f=fn: self._pick_status(f)).pack(fill=tk.X)
+            self._edit_extras[fn] = ttk.Label(frm, text="(无)", foreground=color,
+                                               font=FONT_S, wraplength=180)
+            self._edit_extras[fn].pack(anchor=tk.W)
+            self._edit_vars[fn] = tk.StringVar()
         else:
             ttk.Entry(frm, textvariable=ev, width=fw, font=FONT).pack(fill=tk.X)
 
@@ -865,7 +918,7 @@ class WarpcEditor:
         # Populate all known fields
         all_named_fields = (IDENTITY_FIELDS + HPMP_FIELDS + STAT_FIELDS +
                            SKILL_BONUS_FIELDS + EQUIP_FIELDS + EQUIP_SKILL_FIELDS +
-                           STATUS_FIELDS + STATUS_SLOT_FIELDS + SKILL_EFF_FIELDS + CHAR_ATTR_FIELDS + UNVERIFIED_4142 + GROWTH_FIELDS + BATTLE_REWARD_FIELDS + DROP_ITEM_FIELDS)
+                           STATUS_FIELDS + STATUS_SLOT_FIELDS + SKILL_EFF_FIELDS + CHAR_ATTR_FIELDS + CHAR_USE_RIGHT_FIELDS + UNVERIFIED_4142 + GROWTH_FIELDS + BATTLE_REWARD_FIELDS + DROP_ITEM_FIELDS)
         for fn, fo, _, _ in all_named_fields:
             sv = str(f[fo // 2])
             if fn in self._edit_vars:
@@ -943,6 +996,20 @@ class WarpcEditor:
                     self._update_flags_label(fn, val)
                 except ValueError:
                     self._update_flags_label(fn, 0)
+
+        # Update use_right labels (use_right_item, use_right_weapon, use_right_armor)
+        for fn in USE_RIGHT_DEFS:
+            if fn in self._edit_extras and fn in self._edit_vars:
+                try:
+                    val = int(self._edit_vars[fn].get())
+                    self._update_use_right_label(fn, val)
+                except ValueError:
+                    self._update_use_right_label(fn, 0)
+
+        # Update status mask labels (cause_mask1, cause_mask2)
+        for fn, fo, _, _ in STATUS_FIELDS:
+            if fn in self._edit_extras:
+                self._update_status_label(fn, f[fo // 2])
 
         # Additional unverified on tab1 (field [27]-[30])
         for j in range(4):
@@ -1153,6 +1220,86 @@ class WarpcEditor:
         sel = [name for bit, name, _ in bits if mask & (1 << bit)]
         self._edit_extras[fn].config(text=", ".join(sel) if sel else "(无)")
 
+    def _pick_use_right(self, fn):
+        """弹窗选择使用/装备权限 (位掩码多选)"""
+        if fn not in USE_RIGHT_DEFS: return
+        title, opts = USE_RIGHT_DEFS[fn]
+        dlg = tk.Toplevel(self.root); dlg.title(f"选择{title} (位掩码)")
+        dlg.transient(self.root); dlg.grab_set()
+        self._center_dialog(dlg, 360, 60 + max(len(opts), 2) * 32)
+        cur_val = int(self._edit_vars[fn].get() or 0) & 0xFFFF
+        wrap = ttk.Frame(dlg, padding=8); wrap.pack(fill=tk.BOTH, expand=True)
+        vars_ = []
+        for bit, name, desc in opts:
+            v = tk.BooleanVar(value=bool(cur_val & bit))
+            row = ttk.Frame(wrap); row.pack(anchor=tk.W, fill=tk.X, pady=1)
+            ttk.Checkbutton(row, text=f"{name}", variable=v).pack(side=tk.LEFT)
+            if desc:
+                ttk.Label(row, text=desc, foreground='#999', font=('', 7)).pack(side=tk.LEFT, padx=(8, 0))
+            vars_.append((bit, v))
+        bf = ttk.Frame(dlg, padding=4); bf.pack(side=tk.BOTTOM, fill=tk.X)
+        def _ok():
+            m = 0
+            for bit, v in vars_:
+                if v.get(): m += bit
+            if m >= 0x8000: m -= 0x10000
+            self._edit_vars[fn].set(str(m))
+            self._update_use_right_label(fn, m); dlg.destroy()
+        ttk.Button(bf, text="全选", command=lambda: [v.set(True) for _, v in vars_]).pack(side=tk.LEFT)
+        ttk.Button(bf, text="全清", command=lambda: [v.set(False) for _, v in vars_]).pack(side=tk.LEFT, padx=4)
+        ttk.Button(bf, text="取消", command=dlg.destroy).pack(side=tk.RIGHT, padx=2)
+        ttk.Button(bf, text="确定", command=_ok).pack(side=tk.RIGHT, padx=2)
+        dlg.wait_window()
+
+    def _update_use_right_label(self, fn, val):
+        """更新权限字段的标签显示"""
+        if fn not in USE_RIGHT_DEFS: return
+        _, opts = USE_RIGHT_DEFS[fn]
+        mask = val & 0xFFFF
+        sel = [name for bit, name, _ in opts if (mask & bit)]
+        self._edit_extras[fn].config(text=", ".join(sel) if sel else "(无)")
+
+    def _pick_status(self, fn):
+        """弹窗选择状态位掩码 (16个复选框, 对齐物品编辑器)"""
+        is_cause = fn.startswith('cause_')
+        title = "选择导致状态 (位掩码)" if is_cause else "选择解除状态 (位掩码)"
+        dlg = tk.Toplevel(self.root); dlg.title(title)
+        dlg.transient(self.root); dlg.grab_set()
+        self._center_dialog(dlg, 320, 500)
+        base = 0 if fn.endswith('_mask1') else 16
+        cur_mask = int(self._edit_vars[fn].get() or 0) & 0xFFFF
+        vars_ = []
+        wrap = ttk.Frame(dlg, padding=8); wrap.pack(fill=tk.BOTH, expand=True)
+        for i in range(16):
+            idx = base + i
+            if idx >= len(STATUS_NAMES): break
+            v = tk.BooleanVar(value=bool(cur_mask & (1 << i)))
+            ttk.Checkbutton(wrap, text=f"{idx}. {STATUS_NAMES[idx]}",
+                             variable=v).pack(anchor=tk.W, pady=1)
+            vars_.append(v)
+        bf = ttk.Frame(dlg); bf.pack(fill=tk.X, padx=8, pady=8)
+        def _ok():
+            m = 0
+            for i, v in enumerate(vars_):
+                if v.get(): m |= (1 << i)
+            if m >= 0x8000: m -= 0x10000
+            self._edit_vars[fn].set(str(m))
+            self._update_status_label(fn, m & 0xFFFF); dlg.destroy()
+        ttk.Button(bf, text="全选", command=lambda: [v.set(True) for v in vars_]).pack(side=tk.LEFT)
+        ttk.Button(bf, text="全清", command=lambda: [v.set(False) for v in vars_]).pack(side=tk.LEFT, padx=4)
+        ttk.Button(bf, text="取消", command=dlg.destroy).pack(side=tk.RIGHT, padx=2)
+        ttk.Button(bf, text="确定", command=_ok).pack(side=tk.RIGHT, padx=2)
+        dlg.wait_window()
+
+    def _update_status_label(self, fn, mask):
+        """更新状态掩码标签显示 (逗号分隔的状态名列表)"""
+        base = 0 if fn.endswith('_mask1') else 16
+        sel = []
+        for i in range(16):
+            if mask & (1 << i) and base + i < len(STATUS_NAMES):
+                sel.append(STATUS_NAMES[base + i])
+        self._edit_extras[fn].config(text=", ".join(sel) if sel else "(无)")
+
     # ----------- 编辑应用 -----------
 
     def _apply_edit(self):
@@ -1185,7 +1332,7 @@ class WarpcEditor:
         # Apply named fields
         all_named_fields = (IDENTITY_FIELDS + HPMP_FIELDS + STAT_FIELDS +
                            SKILL_BONUS_FIELDS + EQUIP_FIELDS + EQUIP_SKILL_FIELDS +
-                           STATUS_FIELDS + STATUS_SLOT_FIELDS + SKILL_EFF_FIELDS + CHAR_ATTR_FIELDS + UNVERIFIED_4142 + GROWTH_FIELDS + BATTLE_REWARD_FIELDS + DROP_ITEM_FIELDS)
+                           STATUS_FIELDS + STATUS_SLOT_FIELDS + SKILL_EFF_FIELDS + CHAR_ATTR_FIELDS + CHAR_USE_RIGHT_FIELDS + UNVERIFIED_4142 + GROWTH_FIELDS + BATTLE_REWARD_FIELDS + DROP_ITEM_FIELDS)
         for fn, fo, _, _ in all_named_fields:
             if fn in self._edit_vars:
                 try:
@@ -1303,9 +1450,10 @@ class WarpcEditor:
             ("基本信息", IDENTITY_FIELDS), ("HP/MP", HPMP_FIELDS),
             ("八属性 (攻击/防御/命中/闪避/速度/幸运/悟性/移动)", STAT_FIELDS),
             ("技能加成 [32]-[42] (sub_422BBC TKSkill效果验证)", SKILL_BONUS_FIELDS),
+            ("使用/装备权限 [78]-[80] (sub_41928C 验证: 主角#0 道具=7 武器=63 防具=3)", CHAR_USE_RIGHT_FIELDS),
             ("装备索引", EQUIP_FIELDS[:4]), ("装备ID", EQUIP_FIELDS[4:]),
             ("装备技能 [82]-[87] (6字段; Maker验证: 周倉)", EQUIP_SKILL_FIELDS),
-            ("状态掩码", STATUS_FIELDS),
+            ("攻击导致状态 [67]-[68] (sub_42234C L94-95; 来自装备)", STATUS_FIELDS),
             ("技能效果槽(16个)", SKILL_EFF_FIELDS),
             ("战后奖励 [268]-[269] (实测: 盜賊嘍嘍JP=2 Gold基数=20→Lv3得40)", BATTLE_REWARD_FIELDS),
         ]:
