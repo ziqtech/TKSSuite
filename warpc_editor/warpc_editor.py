@@ -47,7 +47,7 @@ WarPC.dat 格式 (每条 1054 字节, 共 143 角色):
   [32]-[42] runtime  — 运行时状态 (sub_42234C 初始化, 非角色固有属性, 语义未验证)
 
   [51]-[66] status_resist — 状态抵抗 (32状态×1byte; sub_42234C 初始化为 0)
-  [88]-[259] skill_learn — 技能学习状态 (344技能×1byte; Maker Frm_WarPC: 不会/等待学/可以学/独立技学会/父技学会/支技能学会)
+  [88]-[259] skill_learn — 技能学习状态 (344技能×1byte; 反编译验证: 不会/等待学(1~9进展累积)/可以学(≥10)/父技学会(20)/独立技学会(30))
 
   [67]  cause_mask1  — 导致状态掩码1 (1-16; 来自装备 v9[26])
   [68]  cause_mask2  — 导致状态掩码2 (17-32; 来自装备 v9[27])
@@ -434,16 +434,18 @@ USE_RIGHT_DEFS = {
 # UI 由 _build_status_resist 构建, 数据通过 _status_resist_widgets 读写
 
 # 技能学习状态 [88]-[259] — 344个技能×1byte, 存储在172个int16的高低字节中
-# Maker Frm_WarPC 暴露: 从"兵  法"到"回氣  ３"(TKSkill #0-#343), 每技能6种状态选择
+# 反编译验证 (sub_41E248/sub_42234C/sub_4189BC/sub_422EF4 交叉验证):
+#   状态机: 0→1~9(进展)→10(可学)→20(父技)/30(独立技). 值40为临时态不出现在存档.
+#   与 skill_editor 的 ref_type 联动: ref_type 1-8累加到此byte(sub_41E248 L24),
+#   ref_type 10自足解锁(≥10), ref_type 20归组标记(源技能→30)
 # UI 由 _build_skill_learn 构建, 数据通过 _skill_learn_widgets 读写
 SKILL_LEARN_COUNT = 344  # TKSkill #0-#343
 SKILL_LEARN_STATES = [
-    "0-不会",
-    "1-等待学",
-    "10-可以学",
-    "20-独立技学会",
-    "20-父技学会",
-    "30-支技能学会",
+    "0-不会", # 列表不会出现，角色也不会
+    "1-等待学", # 待学习技能列表中不显示，能学但还没学，累计大于等于10时出现在待学习技能列表中
+    "10-可以学", # 待学习技能列表中有显示
+    "20-组技能学会", # 以独立技能或者技能组的方式学会，如果子技能数大于0起分组作用无法使用，如果子技能-1则为独立技能
+    "30-子技能学会", # 以子技能的方式学会，在可装备技能列表里不可被单独装备，只能装备它的组级技能
 ]
 
 # 尾部未分析区域
@@ -748,7 +750,7 @@ class WarpcEditor:
 
     def _build_skill_learn(self, parent, row):
         """技能学习状态 — 344技能×1byte, 存储在[88]-[259]的每个字节中"""
-        lf = ttk.LabelFrame(parent, text="技能学习状态 [88]-[259] (344技能×1byte; Maker Frm_WarPC: 不会/等待学/可以学/独立技学会/父技学会/支技能学会)", padding=4)
+        lf = ttk.LabelFrame(parent, text="技能学习状态 [88]-[259] (344技能×1byte; 反编译验证: 不会/等待学(1~9进展累积)/可以学(≥10)/父技学会(20)/独立技学会(30))", padding=4)
         lf.grid(row=row, column=0, sticky='ew', padx=2, pady=2)
         for c in range(4):
             lf.columnconfigure(c, weight=1, minsize=180)
@@ -762,7 +764,7 @@ class WarpcEditor:
             inp = ttk.Frame(col); inp.pack(fill=tk.X)
             lbl = ttk.Label(inp, text=sname, font=FONT, width=10)
             lbl.pack(side=tk.LEFT)
-            self._bind_tooltip(lbl, f"[{field_idx}] {byte_pos}字节: {sname}学习状态")
+            self._bind_tooltip(lbl, f"[{field_idx}] {byte_pos}字节: {sname} 0不会 1~9进展 10可学 20父技 30独立技")
             cb = ttk.Combobox(inp, values=SKILL_LEARN_STATES, state='readonly',
                               width=10, font=FONT)
             cb.pack(side=tk.RIGHT, padx=(1, 0))
@@ -1779,7 +1781,7 @@ class WarpcEditor:
                 lines.append(f"  [{fo//2:3d}] bo={fo:4d} {fl:<14s} {cmt}")
         lines.append("")
         lines.append("【技能学习状态】")
-        lines.append(f"  [{88}-{259}] Maker Frm_WarPC: 不会/等待学/可以学/独立技学会/父技学会/支技能学会")
+        lines.append(f"  [{88}-{259}] 反编译验证: 不会/等待学(1~9进展累积)/可以学(≥10)/父技学会(20)/独立技学会(30)")
         lines.append(f"  344技能×1byte (TKSkill #0-#343), 存储在172个int16的高低字节中")
         lines.append("")
         lines.append("【尾部未分析区域】")
