@@ -17,7 +17,7 @@ WarPC.dat 格式 (每条 1054 字节, 共 143 角色):
 
 字段布局 (仅列出反编译已验证的字段; 未验证字段标注 "未验证"):
   [0]   name_id      — 角色名称 TKT ID
-  [1]   portrait     — 立绘/精灵索引 (+211=JVG资源)
+  [1]   portrait     — 头像索引 (×2=Fa.JVG大幅图, ×2+1=缩略图)
   [2]   level        — 等级
   [3]   role         — 身份 (0=敌方 -1=我方)
   [4]   exp_to_next  — 升级所需经验 (大多数=100; 敌方版较高: 呂布5092 張角7292)
@@ -153,6 +153,74 @@ def load_tkt(tkt_path):
             if s and s != '0': lookup[eid] = s
     return lookup
 
+def load_jvg_sprites(jvg_path):
+    """加载 Fa.JVG 并返回 PIL Image 列表 (PIL 不可用时返回 None)"""
+    try:
+        from PIL import Image
+    except ImportError:
+        return None
+    if not jvg_path or not os.path.exists(jvg_path): return None
+    with open(jvg_path, 'rb') as f: data = f.read()
+    if len(data) < 32 or data[:4] != b'@JVG': return None
+    bc = struct.unpack_from('<I', data, 8)[0]
+    off = 32; sprites = []
+    for bi in range(bc):
+        if off + 32 > len(data) or data[off:off+4] != b'@JVM': break
+        sc = struct.unpack_from('<I', data, off+4)[0]; ds = struct.unpack_from('<I', data, off+12)[0]
+        s1 = off + 32; co = [struct.unpack_from('<I', data, s1+j*4)[0] for j in range(sc+1)]
+        po = s1 + (sc+1)*4
+        pal_entries = []
+        for j in range(256):
+            e = struct.unpack_from('<H', data, po+j*2)[0]
+            r = ((e>>11)&0x1F)<<3; g = ((e>>5)&0x3F)<<2; b = (e&0x1F)<<3
+            pal_entries.extend([r,g,b])
+        pal_bytes = bytes(pal_entries)
+        dr = po + 512
+        for si in range(sc):
+            mo = dr + co[si]; ws = struct.unpack_from('<8H', data, mo)
+            w, h = ws[2], ws[3]
+            if w <= 0 or h <= 0:
+                sprites.append(None)
+                continue
+            eo = mo + 16; ed = data[eo:eo+co[si+1]-co[si]-16]
+            total = w*h; px = bytearray(total); alpha = bytearray(total)
+            recs = []; rp = 0
+            while rp + 4 <= len(ed):
+                sk = struct.unpack_from('<H', ed, rp)[0]; rw = struct.unpack_from('<H', ed, rp+2)[0]; rp += 4
+                rw = min(rw, len(ed)-rp); rd = ed[rp:rp+rw] if rw>0 else b''; rp += rw
+                recs.append((sk, rw, rd))
+            if not recs: continue
+            simple = (recs[0][0]==0 and recs[0][1]==w and all(r[1]==w for r in recs))
+            if simple:
+                for ri, (_, rw, rpix) in enumerate(recs):
+                    if ri >= h: break
+                    tr = h-1-ri
+                    for c in range(min(rw, len(rpix))): px[tr*w+c] = rpix[rw-1-c]; alpha[tr*w+c] = 255
+            else:
+                scr_w = 640; gap = max(scr_w-w, 0); bp = total-1; pg = 0
+                for sa, rw, rpix in recs:
+                    rem = sa-pg; pg = 0
+                    if rem < 0: rem = 0
+                    while rem > 0 and bp >= 0:
+                        col = (total-1-bp)%w; tb = w-col
+                        if rem <= tb: bp -= rem; rem = 0
+                        else: bp -= tb; rem -= tb+gap; rem = max(rem, 0)
+                    cb = (total-1-bp)%w if bp >= 0 else 0
+                    al = min(rw, len(rpix))
+                    for k in range(al):
+                        if 0 <= bp < total: px[bp] = rpix[k]; alpha[bp] = 255
+                        bp -= 1
+                    pg = gap if al > 0 and cb+al >= w else 0
+            if w > 0 and h > 0:
+                img = Image.frombytes('P', (w, h), bytes(px))
+                img.putpalette(pal_bytes)
+                rgba = img.convert('RGBA')
+                a_img = Image.frombytes('L', (w, h), bytes(alpha))
+                rgba.putalpha(a_img)
+                sprites.append(rgba)
+        off += 32 + (sc+1)*4 + 512 + ds
+    return sprites
+
 # ============================================================
 # 常量
 # ============================================================
@@ -205,7 +273,7 @@ STAT_SHORTS = ["atk", "def", "hit", "eva", "spd", "luk", "mov", "wis"]
 # 核心字段 — 已验证 (格式: key, offset, label, comment)
 IDENTITY_FIELDS = [
     ("name_id",    0,  "名称TKT ID",  "角色名称 → TKT.dat (sub_4067E8)"),
-    ("portrait",   2,  "立绘索引",    "立绘/精灵索引 (+211=JVG精灵资源)"),
+    ("portrait",   2,  "头像索引",    "头像索引 ×2 = Fa.JVG 大幅图, ×2+1 = 缩略图"),
     ("level",      4,  "等级",        "角色等级 (数值显示)"),
     ("role",       6,  "身份",        "0=敌方 -1=我方"),
     ("exp_to_next", 8,  "升级所需经验","升至下一级所需经验; 绝大多数角色=100, 敌方版较高(呂布5092 張角7292)"),
@@ -421,6 +489,7 @@ class WarpcEditor:
         self.records = []; self.tkt = {}; self.skill_names = {}; self._skill_types = {}; self.item_names = {}; self.item_idx_names = {}; self._idx_to_id = {}; self._id_to_idx = {}
         self.filtered_indices = []; self._dirty = False
         self._edit_vars = {}; self._edit_extras = {}; self._tab_grids = {}
+        self._fa_sprites = []; self._fa_photos = {}; self._tree_photos = []
         self._build_ui(); self._set_edit_enabled(False)
         sw = self.root.winfo_screenwidth(); sh = self.root.winfo_screenheight()
         x = (sw - 1320) // 2; y = (sh - 820) // 2
@@ -465,7 +534,11 @@ class WarpcEditor:
         # Left: TreeView
         lf = ttk.Frame(paned); paned.add(lf, weight=1)
         cols = ('index', 'name', 'level', 'role', 'hp', 'mp')
-        self.tree = ttk.Treeview(lf, columns=cols, show='headings', selectmode='browse')
+        self.tree = ttk.Treeview(lf, columns=cols, show='tree headings', selectmode='browse')
+        self.tree.column('#0', width=28, minwidth=28, stretch=False, anchor='center')
+        self.tree.heading('#0', text='')
+        self.tree.tag_configure('ally', foreground='#2266CC')
+        self.tree.tag_configure('enemy', foreground='#CC3333')
         cc = [
             ('index', '#', 40), ('name', '角色名称', 130), ('level', '等级', 45),
             ('role', '身份', 50), ('hp', 'HP', 70), ('mp', 'MP', 70),
@@ -482,8 +555,11 @@ class WarpcEditor:
         rf = ttk.Frame(paned); paned.add(rf, weight=3)
         self.edit_frame = rf
 
-        self.lbl_rec_idx = ttk.Label(rf, text="未选中", font=('', 11, 'bold'))
-        self.lbl_rec_idx.pack(anchor=tk.W, pady=(0, 4), padx=4)
+        hdr = ttk.Frame(rf); hdr.pack(fill=tk.X, pady=(0, 4), padx=4)
+        self.lbl_rec_idx = ttk.Label(hdr, text="未选中", font=('', 11, 'bold'))
+        self.lbl_rec_idx.pack(side=tk.LEFT)
+        self.lbl_avatar = ttk.Label(hdr, text="")
+        self.lbl_avatar.pack(side=tk.RIGHT, padx=(8, 0))
 
         self.notebook = ttk.Notebook(rf)
         self.notebook.pack(fill=tk.BOTH, expand=True)
@@ -544,6 +620,9 @@ class WarpcEditor:
         ttk.Separator(pf, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y)
         self.lbl_skill = ttk.Label(pf, text="", foreground="gray")
         self.lbl_skill.pack(side=tk.LEFT, padx=10, pady=2)
+        ttk.Separator(pf, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y)
+        self.lbl_fa = ttk.Label(pf, text="", foreground="gray")
+        self.lbl_fa.pack(side=tk.LEFT, padx=10, pady=2)
 
     def _build_tab1(self, parent):
         """核心属性 — 基本信息 + HP/MP + 8属性 + 战斗能力 + 状态掩码"""
@@ -616,6 +695,24 @@ class WarpcEditor:
             # Store widgets
             self._status_widgets.append((fn, fo, cb, ev_dur))
             self._edit_vars[fn] = tk.StringVar()  # hidden int16 value
+
+    def _get_fa_photo(self, sprite_idx, size=(24,24)):
+        """从 Fa.JVG 精灵集中获取 PhotoImage (缓存)"""
+        if not self._fa_sprites: return None
+        if sprite_idx < 0 or sprite_idx >= len(self._fa_sprites): return None
+        sprite = self._fa_sprites[sprite_idx]
+        if sprite is None: return None
+        cache_key = (sprite_idx, size)
+        if cache_key in self._fa_photos:
+            return self._fa_photos[cache_key]
+        try:
+            from PIL import ImageTk
+            img = sprite.resize(size, ImageTk.Image.NEAREST)
+            photo = ImageTk.PhotoImage(img)
+            self._fa_photos[cache_key] = photo
+            return photo
+        except Exception:
+            return None
 
     def _build_status_resist(self, parent, row):
         """状态抵抗 — 32状态×1byte, 存储在[51]-[66]的每个字节中"""
@@ -843,6 +940,10 @@ class WarpcEditor:
         self.status_var.set("加载中…"); self.root.update()
         if self.tkt_path:
             self.tkt = load_tkt(self.tkt_path)
+        tks_dir = os.path.dirname(self.warpc_path)
+        fa_path = os.path.join(tks_dir, 'Fa.JVG')
+        self._fa_sprites = load_jvg_sprites(fa_path) or []
+        self._fa_photos.clear()
         try:
             self.records = load_warpc(self.warpc_path); self._dirty = False
             self.skill_names, self._skill_types = self._load_skill_names()
@@ -887,6 +988,8 @@ class WarpcEditor:
         sk_path = os.path.join(tks_dir, 'TKSkill.dat') if tks_dir else ''
         _f(self.lbl_item, it_path if os.path.exists(it_path) else None, 'TKItem')
         _f(self.lbl_skill, sk_path if os.path.exists(sk_path) else None, 'TKSkill')
+        fa_path = os.path.join(tks_dir, 'Fa.JVG') if tks_dir else ''
+        _f(self.lbl_fa, fa_path if os.path.exists(fa_path) else None, 'Fa.JVG')
 
     # ----------- 筛选/列表 -----------
 
@@ -917,6 +1020,7 @@ class WarpcEditor:
         self.sv.set(""); self._apply_filter()
 
     def _refresh_table(self):
+        self._tree_photos.clear()
         for it in self.tree.get_children(): self.tree.delete(it)
         for idx in self.filtered_indices:
             r = self.records[idx]
@@ -924,9 +1028,14 @@ class WarpcEditor:
             nm = self._char_name(r)
             hp_str = f"{f[5]}/{f[8]}" if f[5] or f[8] else ""
             mp_str = f"{f[6]}/{f[10]}" if f[6] or f[10] else ""
-            role_str = '我方' if f[3] == -1 else ('敌方' if f[3] == 0 else str(f[3]))
-            self.tree.insert('', 'end',
-                             values=(r['index'], nm, f[2], role_str, hp_str, mp_str))
+            role_val = f[3]; role_str = '我方' if role_val == -1 else ('敌方' if role_val == 0 else str(role_val))
+            tag = 'ally' if role_val == -1 else ('enemy' if role_val == 0 else '')
+            portrait = f[1]; thumb_idx = portrait * 2 + 1 if portrait >= 0 else 0
+            photo = self._get_fa_photo(thumb_idx, (24, 24))
+            self._tree_photos.append(photo)
+            self.tree.insert('', 'end', image=photo if photo else '',
+                             values=(r['index'], nm, f[2], role_str, hp_str, mp_str),
+                             tags=(tag,) if tag else ())
 
     def _sort_by(self, col):
         rev = getattr(self, '_sort_reverse', False)
@@ -956,6 +1065,13 @@ class WarpcEditor:
             f"等级={f[2]}  身份={'我方' if f[3]==-1 else ('敌方' if f[3]==0 else str(f[3]))}    "
             f"HP={f[5]}/{f[8]}  MP={f[6]}/{f[10]}"
         ))
+        portrait = f[1]; large_idx = portrait * 2 if portrait >= 0 else 0
+        photo = self._get_fa_photo(large_idx, (80, 80))
+        if photo:
+            self.lbl_avatar.configure(image=photo, text="")
+            self.lbl_avatar.image = photo
+        else:
+            self.lbl_avatar.configure(image="", text="")
 
         # Populate role combobox
         role_val = f[3]
@@ -1470,11 +1586,13 @@ class WarpcEditor:
         nm = self._char_name(rec)
         hp_str = f"{f[5]}/{f[8]}" if f[5] or f[8] else ""
         mp_str = f"{f[6]}/{f[10]}" if f[6] or f[10] else ""
-        role_str = '我方' if f[3] == -1 else ('敌方' if f[3] == 0 else str(f[3]))
+        role_val = f[3]; role_str = '我方' if role_val == -1 else ('敌方' if role_val == 0 else str(role_val))
+        tag = 'ally' if role_val == -1 else ('enemy' if role_val == 0 else '')
         self.tree.unbind('<<TreeviewSelect>>')
         for child in self.tree.get_children():
             if int(self.tree.item(child)['values'][0]) == rec['index']:
-                self.tree.item(child, values=(rec['index'], nm, f[2], role_str, hp_str, mp_str))
+                self.tree.item(child, values=(rec['index'], nm, f[2], role_str, hp_str, mp_str),
+                               tags=(tag,) if tag else ())
                 self.tree.selection_set(child); self.tree.see(child)
                 break
         self.tree.bind('<<TreeviewSelect>>', self._on_tree_select)
