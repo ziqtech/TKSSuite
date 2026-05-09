@@ -312,13 +312,15 @@ DROP_ITEM_FIELDS = [
     ("drop_item2", 544, "低概率掉落",  "可掉落物品2 ID; 五爪金龍=虎項龍紋鎧(8081)"),
 ]
 
-# 角色使用/装备权限 [78]-[80] — 来自物品编辑器 USE_RIGHT_OPTIONS 验证
+# 角色使用/装备权限 [77]-[81] — 来自物品编辑器 USE_RIGHT_OPTIONS 验证
 # sub_41928C: word_77CBD4[32*idx] & word_757FA4[527*char] → 装备/使用时按位与校验
-# 主角#0 验证: [78]=7(战斗|非战斗|主角限定) [79]=63(刀|剑|枪|矛|弓|大刀) [80]=3(衣袍|铠甲)
+# 主角#0 验证: [77]=? [78]=7(战斗|非战斗|主角限定) [79]=63(刀|剑|枪|矛|弓|大刀) [80]=3(衣袍|铠甲) [81]=?
 CHAR_USE_RIGHT_FIELDS = [
-    ("use_right_item",   156, "道具权限",  "药品/道具使用权限位掩码 (1=战斗 2=非战斗 4=主角限定); 主角#0=7"),
-    ("use_right_weapon", 158, "武器权限",  "武器装备权限位掩码 (1=刀 2=剑 4=枪 8=矛 16=弓 32=大刀 64=戟 128=锤); 主角#0=63"),
-    ("use_right_armor",  160, "防具权限",  "防具装备权限位掩码 (1=衣袍 2=铠甲); 主角#0=3"),
+    ("use_right_medicine",  154, "药品权限",   "药品使用权限位掩码 (待验证); 全143条原始值=0"),
+    ("use_right_item",      156, "道具权限",   "药品/道具使用权限位掩码 (1=战斗 2=非战斗 4=主角限定); 主角#0=7"),
+    ("use_right_weapon",    158, "武器权限",   "武器装备权限位掩码 (1=刀 2=剑 4=枪 8=矛 16=弓 32=大刀 64=戟 128=锤); 主角#0=63"),
+    ("use_right_armor",     160, "防具权限",   "防具装备权限位掩码 (1=衣袍 2=铠甲); 主角#0=3"),
+    ("use_right_accessory", 162, "饰品权限",   "饰品装备权限位掩码 (待验证); 全143条原始值=0"),
 ]
 
 # 权限字段 → (弹窗标题, [(bit, 名称, 描述), ...])
@@ -342,8 +344,6 @@ USE_RIGHT_DEFS = {
 
 # 未验证字段 (偏移范围)
 UNVERIFIED_RANGES = [
-    ("保留零字段 [77]", 154, 1, "字段 [77] — 全143条为0, 保留字段"),
-    ("保留零字段 [81]", 162, 1, "字段 [81] — 全143条为0, 保留字段"),
     ("未验证 88-101",176,14,  "字段 [88]-[101] — 无反编译直接引用; [88-89]部分角色有值"),
 ]
 
@@ -531,7 +531,7 @@ class WarpcEditor:
         self._build_section(parent, "攻击导致状态 (来源于装备; sub_42234C L94-95)", STATUS_FIELDS, 5, ft='mask')
         self._build_status_slots(parent, 6)
         self._build_section(parent, "角色五维 [27]-[31] (曹操验证: 智慧5 仁德-1 勇气10 医术0 技能点400)", CHAR_ATTR_FIELDS, 7)
-        self._build_section(parent, "使用/装备权限 [78]-[80] (sub_41928C 验证: 主角#0 道具=7 武器=63 防具=3)", CHAR_USE_RIGHT_FIELDS, 8)
+        self._build_section(parent, "使用/装备权限 [77]-[81] (sub_41928C 验证: 主角#0 [77]=? [78]=7 [79]=63 [80]=3 [81]=?)", CHAR_USE_RIGHT_FIELDS, 8)
         # 战后奖励 [268]-[269]
         self._build_section(parent, "成长率 [264]-[266] (五爪金龍: 初期27 中期24 后期21)", GROWTH_FIELDS, 9)
         self._build_section(parent, "战后奖励 [268]-[269] (Gold=基数×2; JP=直接值)", BATTLE_REWARD_FIELDS, 10)
@@ -1492,7 +1492,7 @@ class WarpcEditor:
             ("基本信息", IDENTITY_FIELDS), ("HP/MP", HPMP_FIELDS),
             ("八属性 (攻击/防御/命中/闪避/速度/幸运/悟性/移动)", STAT_FIELDS),
             ("技能加成 [32]-[42] (sub_422BBC TKSkill效果验证)", SKILL_BONUS_FIELDS),
-            ("使用/装备权限 [78]-[80] (sub_41928C 验证: 主角#0 道具=7 武器=63 防具=3)", CHAR_USE_RIGHT_FIELDS),
+            ("使用/装备权限 [77]-[81] (sub_41928C 验证: 主角#0 药品[77]=? 道具[78]=7 武器[79]=63 防具[80]=3 饰品[81]=?)", CHAR_USE_RIGHT_FIELDS),
             ("装备索引", EQUIP_FIELDS[:4]), ("装备ID", EQUIP_FIELDS[4:]),
             ("装备技能 [82]-[87] (6字段; Maker验证: 周倉)", EQUIP_SKILL_FIELDS),
             ("攻击导致状态 [67]-[68] (sub_42234C L94-95; 来自装备)", STATUS_FIELDS),
