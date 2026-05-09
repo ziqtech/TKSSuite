@@ -47,6 +47,7 @@ WarPC.dat 格式 (每条 1054 字节, 共 143 角色):
   [32]-[42] runtime  — 运行时状态 (sub_42234C 初始化, 非角色固有属性, 语义未验证)
 
   [51]-[66] status_resist — 状态抵抗 (32状态×1byte; sub_42234C 初始化为 0)
+  [88]-[259] skill_learn — 技能学习状态 (344技能×1byte; Maker Frm_WarPC: 不会/等待学/可以学/独立技学会/父技学会/支技能学会)
 
   [67]  cause_mask1  — 导致状态掩码1 (1-16; 来自装备 v9[26])
   [68]  cause_mask2  — 导致状态掩码2 (17-32; 来自装备 v9[27])
@@ -432,14 +433,23 @@ USE_RIGHT_DEFS = {
 # 状态抵抗 — 32状态×1byte抵抗力, 存储在[51]-[66]的高低字节中
 # UI 由 _build_status_resist 构建, 数据通过 _status_resist_widgets 读写
 
-# 未验证字段 (偏移范围)
-UNVERIFIED_RANGES = [
-    ("未验证 88-101",176,14,  "字段 [88]-[101] — 无反编译直接引用; [88-89]部分角色有值"),
+# 技能学习状态 [88]-[259] — 344个技能×1byte, 存储在172个int16的高低字节中
+# Maker Frm_WarPC 暴露: 从"兵  法"到"回氣  ３"(TKSkill #0-#343), 每技能6种状态选择
+# UI 由 _build_skill_learn 构建, 数据通过 _skill_learn_widgets 读写
+SKILL_LEARN_COUNT = 344  # TKSkill #0-#343
+SKILL_LEARN_STATES = [
+    "0-不会",
+    "1-等待学",
+    "10-可以学",
+    "20-独立技学会",
+    "20-父技学会",
+    "30-支技能学会",
 ]
 
-# 超出已验证范围的大段尾部
-TAIL_START = 101  # int16 offset
+# 尾部未分析区域
+TAIL_START = 260  # int16 offset (技能学习状态结束于 [259])
 TAIL_END = 527
+UNVERIFIED_RANGES = []  # 全部未验证范围已查明
 
 # ============================================================
 # 数据加载/保存
@@ -736,21 +746,36 @@ class WarpcEditor:
             ttk.Entry(inp, textvariable=ev, width=5, font=FONT, justify='center').pack(side=tk.RIGHT, padx=(1, 0))
             self._status_resist_widgets.append((i, ev))
 
+    def _build_skill_learn(self, parent, row):
+        """技能学习状态 — 344技能×1byte, 存储在[88]-[259]的每个字节中"""
+        lf = ttk.LabelFrame(parent, text="技能学习状态 [88]-[259] (344技能×1byte; Maker Frm_WarPC: 不会/等待学/可以学/独立技学会/父技学会/支技能学会)", padding=4)
+        lf.grid(row=row, column=0, sticky='ew', padx=2, pady=2)
+        for c in range(4):
+            lf.columnconfigure(c, weight=1, minsize=180)
+        self._skill_learn_widgets = []; self._skill_learn_labels = []
+        for i in range(SKILL_LEARN_COUNT):
+            r, c = divmod(i, 4)
+            col = ttk.Frame(lf); col.grid(row=r, column=c, sticky='n', padx=2, pady=1)
+            sname = self.skill_names.get(i, f"技能#{i}") if self.skill_names else f"技能#{i}"
+            field_idx = 88 + i // 2; byte_pos = "高" if i % 2 else "低"
+            # Input row: label (skill name) | combobox
+            inp = ttk.Frame(col); inp.pack(fill=tk.X)
+            lbl = ttk.Label(inp, text=sname, font=FONT, width=10)
+            lbl.pack(side=tk.LEFT)
+            self._bind_tooltip(lbl, f"[{field_idx}] {byte_pos}字节: {sname}学习状态")
+            cb = ttk.Combobox(inp, values=SKILL_LEARN_STATES, state='readonly',
+                              width=10, font=FONT)
+            cb.pack(side=tk.RIGHT, padx=(1, 0))
+            self._skill_learn_widgets.append((i, cb))
+            self._skill_learn_labels.append(lbl)
+
     def _build_tab2(self, parent):
         """装备与技能"""
         self._build_section(parent, "装备索引 [69]-[72] (TKItem数组下标; 运行时缓存)", EQUIP_FIELDS[:4], 0, ft='item_pick')
         self._build_section(parent, "装备物品 ID [73]-[76] (DAT原始; 查 TKItem.field[0])", EQUIP_FIELDS[4:], 1, ft='item_pick')
         self._build_section(parent, "装备技能 [82]-[87] (6字段; sub_42234C/sub_422BBC; Maker验证: 周倉)", EQUIP_SKILL_FIELDS, 2, ft='skill_pick')
         self._build_status_resist(parent, 3)
-        # unverified ranges on tab2
-        for row, (title, off, cnt, cmt) in enumerate(UNVERIFIED_RANGES, 4):
-            lf = ttk.LabelFrame(parent, text=f"{title} ({cmt[:40]}...)", padding=4)
-            lf.grid(row=row, column=0, sticky='ew', padx=2, pady=2)
-            grid = ttk.Frame(lf); grid.pack(fill=tk.X)
-            for j in range(cnt):
-                bo = off + j*2
-                fn = f"field_{bo//2}"
-                self._build_field_widget(grid, j // 8, j % 8, fn, bo, f"[{bo//2}]", 7, cmt)
+        self._build_skill_learn(parent, 4)
 
     def _build_tab3(self, parent):
         """全部 527 字段的紧凑网格"""
@@ -953,6 +978,11 @@ class WarpcEditor:
         try:
             self.records = load_warpc(self.warpc_path); self._dirty = False
             self.skill_names, self._skill_types = self._load_skill_names()
+            if hasattr(self, '_skill_learn_labels'):
+                for i, lbl in enumerate(self._skill_learn_labels):
+                    if i < len(self._skill_learn_labels):
+                        sname = self.skill_names.get(i, f"技能#{i}") if self.skill_names else f"技能#{i}"
+                        lbl.config(text=sname)
             self.item_names, self.item_idx_names, self._idx_to_id, self._id_to_idx = self._load_item_names()
             nonempty = sum(1 for r in self.records if any(v != 0 for v in r['fields']))
             self.status_var.set(
@@ -1125,13 +1155,16 @@ class WarpcEditor:
                 byte_val = (unsigned >> (8 * is_high)) & 0xFF
                 ev.set(str(byte_val))
 
-        # Unverified ranges
-        for _, off, cnt, _ in UNVERIFIED_RANGES:
-            for j in range(cnt):
-                bo = off + j*2
-                fn = f"field_{bo//2}"
-                if fn in self._edit_vars:
-                    self._edit_vars[fn].set(str(f[bo // 2]))
+        # Populate skill learn widgets
+        if hasattr(self, '_skill_learn_widgets'):
+            for skill_idx, cb in self._skill_learn_widgets:
+                field_idx = 88 + skill_idx // 2
+                is_high = skill_idx % 2
+                unsigned = f[field_idx] & 0xFFFF
+                byte_val = (unsigned >> (8 * is_high)) & 0xFF
+                for vi, item in enumerate(cb['values']):
+                    if item.startswith(f'{byte_val}-'):
+                        cb.current(vi); break
 
         # Resolve skill names for equip skill fields
         for fn, fo, _, _ in EQUIP_SKILL_FIELDS:
@@ -1606,6 +1639,22 @@ class WarpcEditor:
                     new_val -= 0x10000
                 f[field_idx] = new_val
 
+        # Apply skill learn widgets
+        if hasattr(self, '_skill_learn_widgets'):
+            for skill_idx, cb in self._skill_learn_widgets:
+                sv = cb.get()
+                byte_val = int(sv.split('-', 1)[0]) if '-' in sv else 0
+                field_idx = 88 + skill_idx // 2
+                is_high = skill_idx % 2
+                unsigned = f[field_idx] & 0xFFFF
+                if is_high:
+                    new_val = (unsigned & 0x00FF) | (byte_val << 8)
+                else:
+                    new_val = (unsigned & 0xFF00) | byte_val
+                if new_val >= 0x8000:
+                    new_val -= 0x10000
+                f[field_idx] = new_val
+
         # Apply named fields
         all_named_fields = (IDENTITY_FIELDS + HPMP_FIELDS + STAT_FIELDS +
                            SKILL_BONUS_FIELDS + EQUIP_FIELDS + EQUIP_SKILL_FIELDS +
@@ -1620,26 +1669,15 @@ class WarpcEditor:
                 except ValueError:
                     pass
 
-        # Apply unverified
-        for _, off, cnt, _ in UNVERIFIED_RANGES:
-            for j in range(cnt):
-                bo = off + j*2
-                fn = f"field_{bo//2}"
-                if fn in self._edit_vars:
-                    try:
-                        f[bo // 2] = int(self._edit_vars[fn].get())
-                    except ValueError:
-                        pass
-
         # 收集已由命名字段覆盖的 int16 索引, 避免 raw 循环用旧值覆盖
         named_indices = set()
         for _, fo, _, _ in all_named_fields:
             named_indices.add(fo // 2)
-        for _, off, cnt, _ in UNVERIFIED_RANGES:
-            for j in range(cnt):
-                named_indices.add((off + j*2) // 2)
         # 状态抵抗占用的 [51]-[66] 由 _status_resist_widgets 处理
         for j in range(51, 67):
+            named_indices.add(j)
+        # 技能学习状态占用的 [88]-[259] 由 _skill_learn_widgets 处理
+        for j in range(88, 260):
             named_indices.add(j)
 
         # Apply all raw fields from tab3 (跳过已由命名字段处理的)
@@ -1740,9 +1778,9 @@ class WarpcEditor:
             for fn, fo, fl, cmt in fields:
                 lines.append(f"  [{fo//2:3d}] bo={fo:4d} {fl:<14s} {cmt}")
         lines.append("")
-        lines.append("【未验证字段范围】")
-        for title, off, cnt, cmt in UNVERIFIED_RANGES:
-            lines.append(f"  [{off//2}-{(off+cnt*2)//2-1}] {title} ({cmt})")
+        lines.append("【技能学习状态】")
+        lines.append(f"  [{88}-{259}] Maker Frm_WarPC: 不会/等待学/可以学/独立技学会/父技学会/支技能学会")
+        lines.append(f"  344技能×1byte (TKSkill #0-#343), 存储在172个int16的高低字节中")
         lines.append("")
         lines.append("【尾部未分析区域】")
         lines.append(f"  [{TAIL_START}-{TAIL_END-1}] (426 字段) — 无反编译引用")
