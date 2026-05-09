@@ -242,19 +242,11 @@ STATUS_NAMES = [
 STATUS_ICON_BASE = 242  # Mu.JVG 中 31 个 30x30 状态图标起始精灵索引
 
 # 战斗结算效果 (combat_flag, field [20]) — sub_42234C: a2[33] |= v9[20]; 战斗结算时按位检查
-COMBAT_FLAG_OPTIONS = [
-    (0,  "无"),
-    (1,  "JP×2~3 (無方戒)"),
-    (2,  "战后全恢复+异常全解 (無雙戒)"),
-    (4,  "经验×2~3平分队友 (無嗔戒)"),
-    (8,  "经验独得 (無道戒)"),
-    (3,  "JP×2~3 + 全恢复"),
-    (5,  "JP×2~3 + 经验分享"),
-    (6,  "全恢复 + 经验分享"),
-    (9,  "JP×2~3 + 经验独得"),
-    (10, "全恢复 + 经验独得"),
-    (12, "经验分享 + 经验独得"),
-    (15, "全部效果"),
+COMBAT_FLAG_BITS = [
+    (1, "JP×2~3",              "战后技能点数×2~3 (無方戒; bit0)"),
+    (2, "战后全恢复+异常全解",  "战斗结束HP/MP全恢复+清除异常 (無雙戒; bit1)"),
+    (4, "经验×2~3平分队友",    "战斗经验×2~3并平分队友 (無嗔戒; bit2)"),
+    (8, "经验独得",            "战斗经验归一人独享 (無道戒; bit3)"),
 ]
 EXTRA_FLAG_BITS = [
     (0, "遇敌率降低",     "随机阈值140→遇敌率↓; 战斗时序+30%; sub_4084E0 bit0 (偽裝戒指)"),
@@ -681,11 +673,13 @@ class ItemEditor:
             self._edit_extras[fn][1].pack(anchor=tk.W)
             self._edit_vars[fn] = tk.StringVar()
         elif ft == 'combat_flag':
-            cb = ttk.Combobox(frm, state='readonly',
-                              values=[f"{v}-{d}" for v,d in COMBAT_FLAG_OPTIONS],
-                              width=28, font=FONT)
-            cb.pack(fill=tk.X); self._edit_extras[fn] = cb
-            self._edit_vars[fn] = tk.StringVar()
+            box = ttk.Frame(frm); box.pack(fill=tk.X)
+            ev = tk.StringVar(); self._edit_vars[fn] = ev
+            ttk.Entry(box, textvariable=ev, width=W_INPUT, font=FONT).pack(side=tk.LEFT)
+            ttk.Button(box, text="…", width=2,
+                       command=lambda f=fn: self._pick_combat_flags(f)).pack(side=tk.LEFT, padx=1)
+            self._edit_extras[fn] = ttk.Label(frm, text="", foreground='#666', font=FONT_S, wraplength=180)
+            self._edit_extras[fn].pack(anchor=tk.W)
         elif ft == 'extra_flags':
             box = ttk.Frame(frm); box.pack(fill=tk.X)
             ev = tk.StringVar(); self._edit_vars[fn] = ev
@@ -916,8 +910,7 @@ class ItemEditor:
                 page = rec.get('tab_code', 0)
                 self._edit_extras[fn].config(text=_use_right_label(int(val) if val else 0, page))
             elif ft == 'combat_flag':
-                cb = self._edit_extras[fn]
-                if not self._set_combobox(cb, val): cb.set(sv)
+                self._update_combat_flags_label(fn, int(val) if val else 0)
             elif ft == 'tkt':
                 pass
             elif ft == 'skill':
@@ -1116,6 +1109,40 @@ class ItemEditor:
         sel = [name for bit, name, _ in EXTRA_FLAG_BITS if mask & (1 << bit)]
         self._edit_extras[fn].config(text=", ".join(sel) if sel else "(无)")
 
+    def _pick_combat_flags(self, fn):
+        """弹窗选择战斗结算效果 (位掩码多选)"""
+        dlg = tk.Toplevel(self.root); dlg.title("选择战斗结算效果 (位掩码)")
+        dlg.transient(self.root); dlg.grab_set()
+        self._center_dialog(dlg, 420, 210)
+        cur_val = int(self._edit_vars[fn].get() or 0) & 0xFFFF
+        wrap = ttk.Frame(dlg, padding=8); wrap.pack(fill=tk.BOTH, expand=True)
+        vars_ = []
+        for bit, name, desc in COMBAT_FLAG_BITS:
+            v = tk.BooleanVar(value=bool(cur_val & bit))
+            row = ttk.Frame(wrap); row.pack(anchor=tk.W, fill=tk.X, pady=1)
+            ttk.Checkbutton(row, text=name, variable=v).pack(side=tk.LEFT)
+            ttk.Label(row, text=desc, foreground='#999', font=('', 7)).pack(side=tk.LEFT, padx=(8, 0))
+            vars_.append((bit, v))
+        bf = ttk.Frame(dlg, padding=4); bf.pack(side=tk.BOTTOM, fill=tk.X)
+        def _ok():
+            m = 0
+            for bit, v in vars_:
+                if v.get(): m |= bit
+            if m >= 0x8000: m -= 0x10000
+            self._edit_vars[fn].set(str(m))
+            self._update_combat_flags_label(fn, m); dlg.destroy()
+        ttk.Button(bf, text="全选", command=lambda: [v.set(True) for _, v in vars_]).pack(side=tk.LEFT)
+        ttk.Button(bf, text="全清", command=lambda: [v.set(False) for _, v in vars_]).pack(side=tk.LEFT, padx=4)
+        ttk.Button(bf, text="取消", command=dlg.destroy).pack(side=tk.RIGHT, padx=2)
+        ttk.Button(bf, text="确定", command=_ok).pack(side=tk.RIGHT, padx=2)
+        dlg.wait_window()
+
+    def _update_combat_flags_label(self, fn, val):
+        """更新战斗结算效果的标签显示"""
+        mask = val & 0xFFFF
+        sel = [name for bit, name, _ in COMBAT_FLAG_BITS if mask & bit]
+        self._edit_extras[fn].config(text=", ".join(sel) if sel else "(无)")
+
     def _pick_use_right(self, fn):
         """弹窗选择使用权限 (根据当前页面号动态切换选项)"""
         if not self.records: return
@@ -1304,7 +1331,7 @@ class ItemEditor:
         rec = self.records[self._editing_idx]
         for fn, fo, fl, ft, fw, cmt in ALL_FIELDS:
             try:
-                if ft in ('page', 'combat_flag'):
+                if ft == 'page':
                     sv = self._edit_extras[fn].get()
                     rec[fn] = int(sv.split('-', 1)[0]) if '-' in sv else int(sv)
                 else:

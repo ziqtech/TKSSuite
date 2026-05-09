@@ -46,7 +46,7 @@ WarPC.dat 格式 (每条 1054 字节, 共 143 角色):
 
   [32]-[42] runtime  — 运行时状态 (sub_42234C 初始化, 非角色固有属性, 语义未验证)
 
-  [51]-[66] skill_eff — 技能效果槽 (16个; sub_42234C 初始化为 0)
+  [51]-[66] status_resist — 状态抵抗 (32状态×1byte; sub_42234C 初始化为 0)
 
   [67]  cause_mask1  — 导致状态掩码1 (1-16; 来自装备 v9[26])
   [68]  cause_mask2  — 导致状态掩码2 (17-32; 来自装备 v9[27])
@@ -337,11 +337,8 @@ USE_RIGHT_DEFS = {
     ]),
 }
 
-# 技能效果槽 [51]-[66]
-SKILL_EFF_FIELDS = []
-for i in range(16):
-    SKILL_EFF_FIELDS.append(
-        (f"skill_eff{i}", 102 + i*2, f"技能效果{i}", f"技能效果槽{i} (sub_42234C 初始化为 0)"))
+# 状态抵抗 — 32状态×1byte抵抗力, 存储在[51]-[66]的高低字节中
+# UI 由 _build_status_resist 构建, 数据通过 _status_resist_widgets 读写
 
 # 未验证字段 (偏移范围)
 UNVERIFIED_RANGES = [
@@ -594,12 +591,34 @@ class WarpcEditor:
             self._status_widgets.append((fn, fo, cb, ev_dur))
             self._edit_vars[fn] = tk.StringVar()  # hidden int16 value
 
+    def _build_status_resist(self, parent, row):
+        """状态抵抗 — 32状态×1byte, 存储在[51]-[66]的每个字节中"""
+        lf = ttk.LabelFrame(parent, text="状态抵抗 [51]-[66] (32状态×1byte抵抗力; sub_42234C初始化为0)", padding=4)
+        lf.grid(row=row, column=0, sticky='ew', padx=2, pady=2)
+        for c in range(8):
+            lf.columnconfigure(c, weight=1, minsize=100)
+        self._status_resist_widgets = []
+        for i in range(32):
+            r, c = divmod(i, 8)
+            col = ttk.Frame(lf); col.grid(row=r, column=c, sticky='n', padx=2, pady=1)
+            sname = STATUS_NAMES[i] if i < len(STATUS_NAMES) else f"状态{i+1}"
+            field_idx = 51 + i // 2
+            byte_pos = "高" if i % 2 else "低"
+            # Input row: label (status name) | entry
+            inp = ttk.Frame(col); inp.pack(fill=tk.X)
+            lbl = ttk.Label(inp, text=sname, font=FONT, width=6)
+            lbl.pack(side=tk.LEFT)
+            self._bind_tooltip(lbl, f"[{field_idx}] {byte_pos}字节: {sname}抵抗力")
+            ev = tk.StringVar(value="0")
+            ttk.Entry(inp, textvariable=ev, width=5, font=FONT, justify='center').pack(side=tk.RIGHT, padx=(1, 0))
+            self._status_resist_widgets.append((i, ev))
+
     def _build_tab2(self, parent):
         """装备与技能"""
         self._build_section(parent, "装备索引 [69]-[72] (TKItem数组下标; 运行时缓存)", EQUIP_FIELDS[:4], 0, ft='item_pick')
         self._build_section(parent, "装备物品 ID [73]-[76] (DAT原始; 查 TKItem.field[0])", EQUIP_FIELDS[4:], 1, ft='item_pick')
         self._build_section(parent, "装备技能 [82]-[87] (6字段; sub_42234C/sub_422BBC; Maker验证: 周倉)", EQUIP_SKILL_FIELDS, 2, ft='skill_pick')
-        self._build_section(parent, "技能效果槽 [51]-[66] (16个; sub_42234C 初始化为 0)", SKILL_EFF_FIELDS, 3)
+        self._build_status_resist(parent, 3)
         # unverified ranges on tab2
         for row, (title, off, cnt, cmt) in enumerate(UNVERIFIED_RANGES, 4):
             lf = ttk.LabelFrame(parent, text=f"{title} ({cmt[:40]}...)", padding=4)
@@ -918,7 +937,7 @@ class WarpcEditor:
         # Populate all known fields
         all_named_fields = (IDENTITY_FIELDS + HPMP_FIELDS + STAT_FIELDS +
                            SKILL_BONUS_FIELDS + EQUIP_FIELDS + EQUIP_SKILL_FIELDS +
-                           STATUS_FIELDS + STATUS_SLOT_FIELDS + SKILL_EFF_FIELDS + CHAR_ATTR_FIELDS + CHAR_USE_RIGHT_FIELDS + UNVERIFIED_4142 + GROWTH_FIELDS + BATTLE_REWARD_FIELDS + DROP_ITEM_FIELDS)
+                           STATUS_FIELDS + STATUS_SLOT_FIELDS + CHAR_ATTR_FIELDS + CHAR_USE_RIGHT_FIELDS + UNVERIFIED_4142 + GROWTH_FIELDS + BATTLE_REWARD_FIELDS + DROP_ITEM_FIELDS)
         for fn, fo, _, _ in all_named_fields:
             sv = str(f[fo // 2])
             if fn in self._edit_vars:
@@ -935,6 +954,15 @@ class WarpcEditor:
                 else:
                     cb.current(sid)
                 ev_dur.set(str(dur) if sid != 0 and dur != 0xFF else "0")
+
+        # Populate status resist widgets
+        if hasattr(self, '_status_resist_widgets'):
+            for byte_idx, ev in self._status_resist_widgets:
+                field_idx = 51 + byte_idx // 2
+                is_high = byte_idx % 2
+                unsigned = f[field_idx] & 0xFFFF
+                byte_val = (unsigned >> (8 * is_high)) & 0xFF
+                ev.set(str(byte_val))
 
         # Unverified ranges
         for _, off, cnt, _ in UNVERIFIED_RANGES:
@@ -1329,10 +1357,30 @@ class WarpcEditor:
                     if v >= 0x8000: v -= 0x10000
                 self._edit_vars[fn].set(str(v))
 
+        # Apply status resist widgets
+        if hasattr(self, '_status_resist_widgets'):
+            for byte_idx, ev in self._status_resist_widgets:
+                try:
+                    byte_val = int(ev.get())
+                    if byte_val < 0: byte_val = 0
+                    if byte_val > 255: byte_val = 255
+                except ValueError:
+                    continue
+                field_idx = 51 + byte_idx // 2
+                is_high = byte_idx % 2
+                unsigned = f[field_idx] & 0xFFFF
+                if is_high:
+                    new_val = (unsigned & 0x00FF) | (byte_val << 8)
+                else:
+                    new_val = (unsigned & 0xFF00) | byte_val
+                if new_val >= 0x8000:
+                    new_val -= 0x10000
+                f[field_idx] = new_val
+
         # Apply named fields
         all_named_fields = (IDENTITY_FIELDS + HPMP_FIELDS + STAT_FIELDS +
                            SKILL_BONUS_FIELDS + EQUIP_FIELDS + EQUIP_SKILL_FIELDS +
-                           STATUS_FIELDS + STATUS_SLOT_FIELDS + SKILL_EFF_FIELDS + CHAR_ATTR_FIELDS + CHAR_USE_RIGHT_FIELDS + UNVERIFIED_4142 + GROWTH_FIELDS + BATTLE_REWARD_FIELDS + DROP_ITEM_FIELDS)
+                           STATUS_FIELDS + STATUS_SLOT_FIELDS + CHAR_ATTR_FIELDS + CHAR_USE_RIGHT_FIELDS + UNVERIFIED_4142 + GROWTH_FIELDS + BATTLE_REWARD_FIELDS + DROP_ITEM_FIELDS)
         for fn, fo, _, _ in all_named_fields:
             if fn in self._edit_vars:
                 try:
@@ -1364,6 +1412,9 @@ class WarpcEditor:
         for j in range(4):
             named_indices.add((54 + j*2) // 2)
         named_indices.add(31)
+        # 状态抵抗占用的 [51]-[66] 由 _status_resist_widgets 处理
+        for j in range(51, 67):
+            named_indices.add(j)
 
         # Apply all raw fields from tab3 (跳过已由命名字段处理的)
         for j in range(WARPC_FIELD_COUNT):
@@ -1454,7 +1505,7 @@ class WarpcEditor:
             ("装备索引", EQUIP_FIELDS[:4]), ("装备ID", EQUIP_FIELDS[4:]),
             ("装备技能 [82]-[87] (6字段; Maker验证: 周倉)", EQUIP_SKILL_FIELDS),
             ("攻击导致状态 [67]-[68] (sub_42234C L94-95; 来自装备)", STATUS_FIELDS),
-            ("技能效果槽(16个)", SKILL_EFF_FIELDS),
+            ("状态抵抗 (32状态×1byte, 占16个int16[51]-[66]; sub_42234C初始化为0)", []),
             ("战后奖励 [268]-[269] (实测: 盜賊嘍嘍JP=2 Gold基数=20→Lv3得40)", BATTLE_REWARD_FIELDS),
         ]:
             lines.append(f"【{title}】")
