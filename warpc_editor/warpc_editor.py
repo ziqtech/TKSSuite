@@ -258,10 +258,32 @@ for i in range(8):
         (f"status_slot{i}", 86 + i*2, f"状态槽{i}",
          f"身上状态效果槽{i} (sub_41E40C: v8+{i*2}); 低字节=状态ID(1-32) 高字节=持续回合"))
 
-# 待验证 [41]-[42] — sub_422BBC type=2 写入, 语义待确认
-UNVERIFIED_4142 = [
-    ("field_41",    82,  "待验证[41]",    "sub_422BBC type=2 写入反应组编号(1-10) — 待验证"),
-    ("field_42",    84,  "待验证[42]",    "sub_422BBC 写入 v6[44]=TKSkill触发概率 — 待验证"),
+# 反应组 [41]-[42] — 运行时字段, sub_422BBC type=2 写入, sub_42234C 初始化为0
+# [41] 反应组编号 (1-10), 由被动技能索引区间判定:
+#   303-305=近戰反擊 306-308=遠程反擊 309-311=法術反彈 312-314=先發制人
+#   315-317=時序回饋 318-320=損傷賠償 321-323=環境探索 324-326=國色天香
+#   327-329=有福同享 330+=國士無雙
+# [42] 触发概率 = TKSkill[44] (技能编辑器 offset 88)
+# 反应组语义: 被动技能的触发行为分类, 当角色被攻击时游戏据此决定触发哪种被动反应.
+#   值为派生数据 — sub_42234C 初始化为0, sub_422BBC 根据角色装备的被动技能自动计算,
+#   不是角色固有属性. 反编译中仅 sub_422BBC 写入, 读取端在未导出的战斗函数中.
+REACTION_FIELDS = [
+    ("reaction_group",  82,  "反应组",   "被动技能反应组编号 1-10 (sub_422BBC type=2; 初始化=0)"),
+    ("reaction_trigger",84,  "触发概率", "被动技能触发概率 %%, 来自 TKSkill[44] (sub_422BBC: a2[42]=v6[44])"),
+]
+
+REACTION_GROUP_VALUES = [
+    "0-无",
+    "1-近戰反擊",
+    "2-遠程反擊",
+    "3-法術反彈",
+    "4-先發制人",
+    "5-時序回饋",
+    "6-損傷賠償",
+    "7-環境探索",
+    "8-國色天香",
+    "9-有福同享",
+    "10-國士無雙",
 ]
 
 EQUIP_FIELDS = [
@@ -400,6 +422,9 @@ class WarpcEditor:
         self.filtered_indices = []; self._dirty = False
         self._edit_vars = {}; self._edit_extras = {}; self._tab_grids = {}
         self._build_ui(); self._set_edit_enabled(False)
+        sw = self.root.winfo_screenwidth(); sh = self.root.winfo_screenheight()
+        x = (sw - 1320) // 2; y = (sh - 820) // 2
+        self.root.geometry(f'1320x820+{x}+{y}')
 
     # ----------- UI 构建 -----------
 
@@ -527,7 +552,7 @@ class WarpcEditor:
         # 八属性 — 一行八列紧凑布局
         self._build_stat_row(parent)
         self._build_section(parent, "技能加成 [32]-[40] (sub_422BBC TKSkill效果; sub_42234C初始=0)", SKILL_BONUS_FIELDS, 3)
-        self._build_section(parent, "待验证 [41]-[42] (sub_422BBC type=2 写入)", UNVERIFIED_4142, 4)
+        self._build_section(parent, "反应组 [41]-[42] (运行时字段; sub_422BBC type=2 写入, sub_42234C 初始化为0)", REACTION_FIELDS, 4)
         self._build_section(parent, "攻击导致状态 (来源于装备; sub_42234C L94-95)", STATUS_FIELDS, 5, ft='mask')
         self._build_status_slots(parent, 6)
         self._build_section(parent, "角色五维 [27]-[31] (曹操验证: 智慧5 仁德-1 勇气10 医术0 技能点400)", CHAR_ATTR_FIELDS, 7)
@@ -678,6 +703,11 @@ class WarpcEditor:
         ev = tk.StringVar(); self._edit_vars[fn] = ev
         if fn == 'role':
             cb = ttk.Combobox(frm, state='readonly', values=['-1-我方', '0-敌方'],
+                              width=fw + 3, font=FONT)
+            cb.pack(fill=tk.X)
+            self._edit_extras[fn] = cb
+        elif fn == 'reaction_group':
+            cb = ttk.Combobox(frm, state='readonly', values=REACTION_GROUP_VALUES,
                               width=fw + 3, font=FONT)
             cb.pack(fill=tk.X)
             self._edit_extras[fn] = cb
@@ -935,10 +965,18 @@ class WarpcEditor:
                 if item.startswith(f'{role_val}-'):
                     cb.current(i); break
 
+        # Populate reaction_group combobox
+        rg_val = f[41]
+        if 'reaction_group' in self._edit_extras:
+            cb = self._edit_extras['reaction_group']
+            for i, item in enumerate(cb['values']):
+                if item.startswith(f'{rg_val}-'):
+                    cb.current(i); break
+
         # Populate all known fields
         all_named_fields = (IDENTITY_FIELDS + HPMP_FIELDS + STAT_FIELDS +
                            SKILL_BONUS_FIELDS + EQUIP_FIELDS + EQUIP_SKILL_FIELDS +
-                           STATUS_FIELDS + STATUS_SLOT_FIELDS + CHAR_ATTR_FIELDS + CHAR_USE_RIGHT_FIELDS + UNVERIFIED_4142 + GROWTH_FIELDS + BATTLE_REWARD_FIELDS + DROP_ITEM_FIELDS)
+                           STATUS_FIELDS + STATUS_SLOT_FIELDS + CHAR_ATTR_FIELDS + CHAR_USE_RIGHT_FIELDS + REACTION_FIELDS + GROWTH_FIELDS + BATTLE_REWARD_FIELDS + DROP_ITEM_FIELDS)
         for fn, fo, _, _ in all_named_fields:
             sv = str(f[fo // 2])
             if fn in self._edit_vars:
@@ -1333,6 +1371,13 @@ class WarpcEditor:
         if 'role' in self._edit_extras:
             sv = self._edit_extras['role'].get()
             f[3] = int(sv.split('-', 1)[0]) if '-' in sv else int(sv)
+            self._edit_vars['role'].set(str(f[3]))
+
+        # Apply reaction_group combobox
+        if 'reaction_group' in self._edit_extras:
+            sv = self._edit_extras['reaction_group'].get()
+            f[41] = int(sv.split('-', 1)[0]) if '-' in sv else int(sv)
+            self._edit_vars['reaction_group'].set(str(f[41]))
 
         # Sync status slot UI widgets → StringVars
         if hasattr(self, '_status_widgets'):
@@ -1374,7 +1419,7 @@ class WarpcEditor:
         # Apply named fields
         all_named_fields = (IDENTITY_FIELDS + HPMP_FIELDS + STAT_FIELDS +
                            SKILL_BONUS_FIELDS + EQUIP_FIELDS + EQUIP_SKILL_FIELDS +
-                           STATUS_FIELDS + STATUS_SLOT_FIELDS + CHAR_ATTR_FIELDS + CHAR_USE_RIGHT_FIELDS + UNVERIFIED_4142 + GROWTH_FIELDS + BATTLE_REWARD_FIELDS + DROP_ITEM_FIELDS)
+                           STATUS_FIELDS + STATUS_SLOT_FIELDS + CHAR_ATTR_FIELDS + CHAR_USE_RIGHT_FIELDS + REACTION_FIELDS + GROWTH_FIELDS + BATTLE_REWARD_FIELDS + DROP_ITEM_FIELDS)
         for fn, fo, _, _ in all_named_fields:
             if fn in self._edit_vars:
                 try:

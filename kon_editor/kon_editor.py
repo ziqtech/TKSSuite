@@ -247,6 +247,9 @@ class KonEditor:
         self.records = []; self.tkt = {}
         self.filtered_indices = []; self._dirty = False
         self._build_ui(); self._set_edit_enabled(False)
+        sw = self.root.winfo_screenwidth(); sh = self.root.winfo_screenheight()
+        x = (sw - 1320) // 2; y = (sh - 820) // 2
+        self.root.geometry(f'1320x820+{x}+{y}')
 
     # ----------- UI 构建 -----------
 

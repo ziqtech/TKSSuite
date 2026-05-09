@@ -480,6 +480,9 @@ class GRPEditor:
         if filepath and os.path.exists(filepath): self._open(filepath)
         else: self._new_empty()
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
+        sw = self.root.winfo_screenwidth(); sh = self.root.winfo_screenheight()
+        x = (sw - 1360) // 2; y = (sh - 900) // 2
+        self.root.geometry(f'1360x900+{x}+{y}')
         self.root.after(100, self._bind_events)
 
     # ── Menu ──────────────────────────────────────────

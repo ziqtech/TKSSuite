@@ -2076,6 +2076,9 @@ class SpriteSheetEditor(tk.Tk):
 
         if filepath:
             self._load_spritesheet(Path(filepath))
+        sw = self.winfo_screenwidth(); sh = self.winfo_screenheight()
+        x = (sw - 1180) // 2; y = (sh - 740) // 2
+        self.geometry(f'1180x740+{x}+{y}')
 
     def _build_menu(self):
         menubar = tk.Menu(self)

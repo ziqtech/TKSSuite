@@ -296,6 +296,9 @@ class SkillEditor:
         self.filtered_indices = []; self._dirty = False
         self.filter_type = tk.StringVar(value="全部类型")
         self._build_ui(); self._set_edit_enabled(False)
+        sw = self.root.winfo_screenwidth(); sh = self.root.winfo_screenheight()
+        x = (sw - 1260) // 2; y = (sh - 820) // 2
+        self.root.geometry(f'1260x820+{x}+{y}')
 
     # ----------- UI 构建 -----------
 

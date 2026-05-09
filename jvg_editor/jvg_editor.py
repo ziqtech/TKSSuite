@@ -507,6 +507,9 @@ class JVGEditor:
         if filepath and os.path.exists(filepath): self._open(filepath)
         else: self._new()
         self.root.protocol("WM_DELETE_WINDOW",self._on_close)
+        sw = self.root.winfo_screenwidth(); sh = self.root.winfo_screenheight()
+        x = (sw - 1280) // 2; y = (sh - 800) // 2
+        self.root.geometry(f'1280x800+{x}+{y}')
 
     def _setup_menu(self):
         mb=tk.Menu(self.root)

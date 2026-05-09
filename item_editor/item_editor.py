@@ -424,6 +424,9 @@ class ItemEditor:
         self.filter_right = tk.StringVar(value="全部权限")
         self.filter_empty = tk.BooleanVar(value=True)
         self._build_ui(); self._set_edit_enabled(False)
+        sw = self.root.winfo_screenwidth(); sh = self.root.winfo_screenheight()
+        x = (sw - 1360) // 2; y = (sh - 860) // 2
+        self.root.geometry(f'1360x860+{x}+{y}')
 
     # ----------- UI 构建 -----------
     def _build_ui(self):

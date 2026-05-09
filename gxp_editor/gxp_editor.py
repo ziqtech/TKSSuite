@@ -379,6 +379,9 @@ class GXPEditor:
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
         # 延迟绑定鼠标事件 (canvas 创建后)
         self.root.after(100, self._bind_canvas_events)
+        sw = self.root.winfo_screenwidth(); sh = self.root.winfo_screenheight()
+        x = (sw - 1100) // 2; y = (sh - 750) // 2
+        self.root.geometry(f'1100x750+{x}+{y}')
 
     # ── Menu ──────────────────────────────────────────
 

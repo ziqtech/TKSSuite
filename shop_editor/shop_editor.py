@@ -394,6 +394,9 @@ class ShopEditor:
         self._build_ui()
         self._update_path_labels()
         self._set_edit_enabled(False)
+        sw = self.root.winfo_screenwidth(); sh = self.root.winfo_screenheight()
+        x = (sw - 1050) // 2; y = (sh - 620) // 2
+        self.root.geometry(f'1050x620+{x}+{y}')
 
     # ================================================================
     # UI: 菜单栏 + 工具栏 + 左右分栏 + 底部状态
