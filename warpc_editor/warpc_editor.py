@@ -484,7 +484,7 @@ class WarpcEditor:
         self.root.title("WarPC.dat 可视化编辑器 v1.0")
         ico = os.path.join(os.path.dirname(__file__), 'TKS.ico')
         if os.path.exists(ico): self.root.iconbitmap(default=ico)
-        self.root.geometry("1320x820"); self.root.minsize(1050, 650)
+        self.root.geometry("1500x820"); self.root.minsize(1050, 650)
         self.warpc_path = self.tkt_path = None
         self.records = []; self.tkt = {}; self.skill_names = {}; self._skill_types = {}; self.item_names = {}; self.item_idx_names = {}; self._idx_to_id = {}; self._id_to_idx = {}
         self.filtered_indices = []; self._dirty = False
@@ -492,8 +492,8 @@ class WarpcEditor:
         self._fa_sprites = []; self._fa_photos = {}; self._tree_photos = []
         self._build_ui(); self._set_edit_enabled(False)
         sw = self.root.winfo_screenwidth(); sh = self.root.winfo_screenheight()
-        x = (sw - 1320) // 2; y = (sh - 820) // 2
-        self.root.geometry(f'1320x820+{x}+{y}')
+        x = (sw - 1500) // 2; y = (sh - 820) // 2
+        self.root.geometry(f'1500x820+{x}+{y}')
 
     # ----------- UI 构建 -----------
 
@@ -846,6 +846,12 @@ class WarpcEditor:
                                                font=FONT_S, wraplength=180)
             self._edit_extras[fn].pack(anchor=tk.W)
             self._edit_vars[fn] = tk.StringVar()
+        elif fn == 'portrait':
+            box = ttk.Frame(frm); box.pack(fill=tk.X)
+            ev = tk.StringVar(); self._edit_vars[fn] = ev
+            ttk.Entry(box, textvariable=ev, width=fw, font=FONT).pack(side=tk.LEFT)
+            ttk.Button(box, text="…", width=2,
+                       command=lambda: self._pick_portrait()).pack(side=tk.LEFT, padx=1)
         else:
             ttk.Entry(frm, textvariable=ev, width=fw, font=FONT).pack(fill=tk.X)
 
@@ -1066,7 +1072,7 @@ class WarpcEditor:
             f"HP={f[5]}/{f[8]}  MP={f[6]}/{f[10]}"
         ))
         portrait = f[1]; large_idx = portrait * 2 if portrait >= 0 else 0
-        photo = self._get_fa_photo(large_idx, (80, 80))
+        photo = self._get_fa_photo(large_idx, (70, 70))
         if photo:
             self.lbl_avatar.configure(image=photo, text="")
             self.lbl_avatar.image = photo
@@ -1395,6 +1401,74 @@ class WarpcEditor:
         _, bits = FLAG_DEFS[fn]
         sel = [name for bit, name, _ in bits if mask & (1 << bit)]
         self._edit_extras[fn].config(text=", ".join(sel) if sel else "(无)")
+
+    def _pick_portrait(self):
+        """弹窗选择头像 — 展示 Fa.JVG 中所有大幅图 (偶数索引)"""
+        if not self._fa_sprites:
+            messagebox.showinfo("提示", "未加载 Fa.JVG 头像文件"); return
+        fn = 'portrait'; cur_val = int(self._edit_vars[fn].get() or 0)
+        dlg = tk.Toplevel(self.root); dlg.title("选择头像 (Fa.JVG 大幅图)")
+        dlg.transient(self.root); dlg.grab_set()
+        self._center_dialog(dlg, 800, 560)
+        dlg.grid_rowconfigure(0, weight=1); dlg.grid_columnconfigure(0, weight=1)
+        dlg.resizable(True, True)
+        cvs = tk.Canvas(dlg, highlightthickness=0)
+        sb = ttk.Scrollbar(dlg, orient=tk.VERTICAL, command=cvs.yview)
+        grid_frame = ttk.Frame(cvs)
+        cvs.create_window((0,0), window=grid_frame, anchor='nw')
+        cvs.configure(yscrollcommand=sb.set)
+        cvs.grid(row=0, column=0, sticky='nsew', padx=4, pady=(4,0))
+        sb.grid(row=0, column=1, sticky='ns', pady=(4,0))
+        def _mw(e): cvs.yview_scroll(int(-1*(e.delta/120)), "units")
+        cvs.bind("<Enter>", lambda e: cvs.bind_all("<MouseWheel>", _mw))
+        cvs.bind("<Leave>", lambda e: cvs.unbind_all("<MouseWheel>"))
+        bf = ttk.Frame(dlg, padding=4)
+        bf.grid(row=1, column=0, columnspan=2, sticky='ew')
+        ttk.Button(bf, text="取消", command=dlg.destroy).pack(side=tk.RIGHT, padx=2)
+        ttk.Label(bf, text="点击头像选择，数字为头像索引", foreground='#666', font=FONT_S).pack(side=tk.LEFT, padx=4)
+
+        # 收集所有大幅图 (偶数索引)
+        large_indices = [(si, si // 2) for si in range(0, len(self._fa_sprites), 2)
+                         if self._fa_sprites[si] is not None]
+        CELL_W = 68; _last_cols = [0]
+        def _build_grid(cols=None):
+            if cols is None:
+                cols = max(4, (cvs.winfo_width() - 4) // CELL_W)
+                if cols <= 0: cols = 6
+            if cols == _last_cols[0]: return
+            _last_cols[0] = cols
+            for w in grid_frame.winfo_children(): w.destroy()
+            photo_refs = []
+            for sprite_idx, portrait_idx in large_indices:
+                row, col = divmod(portrait_idx, cols)
+                frm = ttk.Frame(grid_frame)
+                frm.grid(row=row, column=col, padx=1, pady=1)
+                photo = self._get_fa_photo(sprite_idx, (64, 64))
+                if portrait_idx == cur_val:
+                    frm.configure(relief='solid', borderwidth=2)
+                    ttk.Separator(frm, orient=tk.HORIZONTAL).pack(fill=tk.X, padx=1)
+                if photo:
+                    photo_refs.append(photo)
+                    lbl = ttk.Label(frm, image=photo)
+                else:
+                    lbl = ttk.Label(frm, text=str(portrait_idx), font=FONT_S, width=8)
+                lbl.pack()
+                ttk.Label(frm, text=str(portrait_idx), font=('', 7)).pack()
+                frm.bind('<Button-1>', lambda e, v=portrait_idx: (
+                    self._edit_vars[fn].set(str(v)), dlg.destroy()))
+                lbl.bind('<Button-1>', lambda e, v=portrait_idx: (
+                    self._edit_vars[fn].set(str(v)), dlg.destroy()))
+            grid_frame.update_idletasks()
+            cvs.configure(scrollregion=cvs.bbox('all'))
+            if cur_val >= 0:
+                row_h = grid_frame.winfo_children()[0].winfo_reqheight() + 2 if grid_frame.winfo_children() else 70
+                y = (cur_val // cols) * row_h
+                total_h = cvs.bbox('all')[3] if cvs.bbox('all') else 1
+                cvs.yview_moveto(min(1.0, max(0, y - 100) / total_h))
+
+        cvs.bind('<Configure>', lambda e: _build_grid(), add='+')
+        dlg.after(100, _build_grid)
+        dlg.wait_window()
 
     def _pick_use_right(self, fn):
         """弹窗选择使用/装备权限 (位掩码多选)"""
