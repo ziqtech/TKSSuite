@@ -496,7 +496,10 @@ def export_gridsheet(blk:JVMBlock,outdir:str,padding:int=1,columns:int=0):
 # ── GUI 编辑器 ──────────────────────────────────────────
 class JVGEditor:
     def __init__(self,root:tk.Tk,filepath:Optional[str]=None):
-        self.root=root; self.root.title("JVG 图集编辑器"); self.root.geometry("1280x800")
+        self.root=root; self.root.title("JVG 图集编辑器")
+        ico = os.path.join(os.path.dirname(__file__), 'TKS.ico')
+        if os.path.exists(ico): self.root.iconbitmap(default=ico)
+        self.root.geometry("1280x800")
         self.jvg:Optional[JVGFile]=None; self._bi=-1; self._fi=0; self._sel_fi=-1
         self._view="tile"; self._tile_cols=tk.IntVar(value=0); self._anim_job=None
         self._photos={}; self._detail_imgs={}

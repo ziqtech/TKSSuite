@@ -240,6 +240,8 @@ class KonEditor:
     def __init__(self, root):
         self.root = root
         self.root.title("TKKon.dat 可视化编辑器 v2.0")
+        ico = os.path.join(os.path.dirname(__file__), 'TKS.ico')
+        if os.path.exists(ico): self.root.iconbitmap(default=ico)
         self.root.geometry("1320x820"); self.root.minsize(1050, 650)
         self.kon_path = self.tkt_path = None
         self.records = []; self.tkt = {}

@@ -357,6 +357,8 @@ class GXPEditor:
     def __init__(self, root: tk.Tk, filepath: Optional[str] = None):
         self.root = root
         self.root.title("GXP 图像编辑器")
+        ico = os.path.join(os.path.dirname(__file__), 'TKS.ico')
+        if os.path.exists(ico): self.root.iconbitmap(default=ico)
         self.root.geometry("1100x750")
 
         self.img: Optional[GXPImage] = None

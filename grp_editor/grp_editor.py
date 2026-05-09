@@ -464,7 +464,10 @@ def export_png_rgba(w: int, h: int, rgba: bytes, path: str):
 
 class GRPEditor:
     def __init__(self, root: tk.Tk, filepath: Optional[str] = None):
-        self.root = root; self.root.title("GRP 资源包编辑器"); self.root.geometry("1360x900")
+        self.root = root; self.root.title("GRP 资源包编辑器")
+        ico = os.path.join(os.path.dirname(__file__), 'TKS.ico')
+        if os.path.exists(ico): self.root.iconbitmap(default=ico)
+        self.root.geometry("1360x900")
         self.grp: Optional[GRPFile] = None
         self._sel_idx = -1; self._sel_layer = "A"
         self._zoom = tk.DoubleVar(value=1.0)

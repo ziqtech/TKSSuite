@@ -377,6 +377,8 @@ class ShopEditor:
     def __init__(self, root):
         self.root = root
         self.root.title("TKShop.dat 可视化编辑器")
+        ico = os.path.join(os.path.dirname(__file__), 'TKS.ico')
+        if os.path.exists(ico): self.root.iconbitmap(default=ico)
         self.root.geometry("1050x620")
         self.root.minsize(900, 500)
 

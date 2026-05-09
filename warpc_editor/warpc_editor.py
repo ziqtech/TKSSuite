@@ -342,7 +342,6 @@ USE_RIGHT_DEFS = {
 
 # 未验证字段 (偏移范围)
 UNVERIFIED_RANGES = [
-    ("未验证 27-31",  54, 5,  "字段 [27]-[31] — 无反编译直接引用, 示例值: 50,50,50,25,0"),
     ("保留零字段 [77]", 154, 1, "字段 [77] — 全143条为0, 保留字段"),
     ("保留零字段 [81]", 162, 1, "字段 [81] — 全143条为0, 保留字段"),
     ("未验证 88-101",176,14,  "字段 [88]-[101] — 无反编译直接引用; [88-89]部分角色有值"),
@@ -393,6 +392,8 @@ class WarpcEditor:
     def __init__(self, root):
         self.root = root
         self.root.title("WarPC.dat 可视化编辑器 v1.0")
+        ico = os.path.join(os.path.dirname(__file__), 'TKS.ico')
+        if os.path.exists(ico): self.root.iconbitmap(default=ico)
         self.root.geometry("1320x820"); self.root.minsize(1050, 650)
         self.warpc_path = self.tkt_path = None
         self.records = []; self.tkt = {}; self.skill_names = {}; self._skill_types = {}; self.item_names = {}; self.item_idx_names = {}; self._idx_to_id = {}; self._id_to_idx = {}
@@ -1039,13 +1040,6 @@ class WarpcEditor:
             if fn in self._edit_extras:
                 self._update_status_label(fn, f[fo // 2])
 
-        # Additional unverified on tab1 (field [27]-[30])
-        for j in range(4):
-            bo = 54 + j*2
-            fn = f"field_{bo//2}"
-            if fn in self._edit_vars:
-                self._edit_vars[fn].set(str(f[bo // 2]))
-        # field[31]
         # Tab 3: all raw fields
         for j in range(WARPC_FIELD_COUNT):
             fn = f"raw_{j}"
@@ -1409,9 +1403,6 @@ class WarpcEditor:
         for _, off, cnt, _ in UNVERIFIED_RANGES:
             for j in range(cnt):
                 named_indices.add((off + j*2) // 2)
-        for j in range(4):
-            named_indices.add((54 + j*2) // 2)
-        named_indices.add(31)
         # 状态抵抗占用的 [51]-[66] 由 _status_resist_widgets 处理
         for j in range(51, 67):
             named_indices.add(j)

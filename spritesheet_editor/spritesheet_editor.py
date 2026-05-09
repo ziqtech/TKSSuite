@@ -2059,6 +2059,8 @@ class SpriteSheetEditor(tk.Tk):
     def __init__(self, filepath: Optional[str] = None):
         super().__init__()
         self.title("Spritesheet Editor - 精灵表编辑器")
+        ico = os.path.join(os.path.dirname(__file__), 'TKS.ico')
+        if os.path.exists(ico): self.iconbitmap(default=ico)
         self.geometry("1180x740")
         self.model = SpriteSheetModel()
         self._filepath: Optional[str] = None

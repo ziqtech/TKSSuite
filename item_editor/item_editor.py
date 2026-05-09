@@ -413,6 +413,8 @@ class ItemEditor:
     def __init__(self, root):
         self.root = root
         self.root.title("TKItem.dat 可视化编辑器")
+        ico = os.path.join(os.path.dirname(__file__), 'TKS.ico')
+        if os.path.exists(ico): self.root.iconbitmap(default=ico)
         self.root.geometry("1360x860"); self.root.minsize(1120, 700)
         self.item_path = self.tkt_path = self.skill_path = self.mu_path = None
         self.records = []; self.tkt = {}; self.tkt_full = {}; self.skill_names = {}
