@@ -1,12 +1,47 @@
 #!/usr/bin/env python3
 """
-TKAct.dat 多图层 2D 精灵动画编辑器 v2.3
+TKAct.dat 多图层 2D 精灵动画编辑器 v2.4.3
 =============================================================
 修订依据:
   - v2.0/v2.1: 逆向工作区/TKS_AI分析act_editor记录.md
   - v2.2    : 逆向工作区/TKS_AI修正TKAct.dat实际JVG绑定.md
   - v2.3    : 尾部 64B 逆向确认为"音效触发表"
               (sub_4434BC L111-119 预加载 + L627-636 触发)
+  - v2.4    : layer_type 语义精细化 + 预览图像混合模式生效
+              (sub_4434BC L305/L414/L460/L518 四段位置分流)
+  - v2.4.1  : 修复预览 sprite 周围显示黑色底色的问题
+              (Windows Tk Canvas 对 RGBA PhotoImage 的 alpha 合成
+               在多 sprite 叠加场景下不稳定, 改由 PIL 自合成后
+               一次性以 RGB 贴图)
+  - v2.4.2  : [已被 v2.4.3 覆写] 错误地将 mode=2 标注为 50% 半透.
+  - v2.4.3  : ★ mode=2 的真实语义是"加法饱和混合 (additive)", 非 alpha 半透.
+              核心证据 sub_453554 L43-52 初始化混合查表:
+                  word_A3AD30[i+j] = min(i+j, 31)    (非 (i+j)/2)
+                  word_A3ADB0[k+m] = min(k+m, 63)
+                  word_A39D30[α*v] = α * v / 32     (alpha 预乘表)
+              所有 mode=2 分支都是加法:
+                  param=0/>31 → full additive: dst = min(dst+src, 31)
+                  0<p<=31     → scaled:        dst = min(dst+src*p/32, 31)
+              黑色 src 贡献 0 不改变 dst → "黑色像素被过滤" 现象的根源,
+              亮色相加钳顶 → 饱和度饱满, 正是游戏发光特效的经典外观.
+              PIL 实现: ImageChops.add + alpha mask + 可选 point 预乘.
+
+  v2.4 新增:
+    · layer_type 语义按实测重新标注 (与 sub_4434BC 反编译完全一致):
+        t=1  角色攻击动作    (Aa.jvg, 攻击者位置, L305 <3 分支)
+        t=2  技能攻击特效    (Af.jvg, 攻击者位置, L305 <3 分支)
+        t=3  受击特效        (Af.jvg, 受击方位置, L414 ==3 延迟段)
+        t=4  命中锚点坐标    (sub_42F9C8 计算屏幕位置, 不渲染)
+        t=5  全屏特效        (屏幕中心 320,300, L518 ==5 分支)
+    · 预览引入 6 种图像混合模式 (对应 sub_4434BC L320-339 switch):
+        0 正常      sub_4544EC  直接 blit
+        1 闪烁/染色 sub_454D24  按 blend_param 偏色 (param 0 或 >31 不变)
+        2 加法/发光 sub_4559D0  additive 饱和混合 (非半透!):
+                                  = 0/>31    dst = min(dst+src, 31/63)
+                                  0<p<=31    dst = min(dst+src*p/32, 31/63)
+        3 阴影      sub_458020  RGB→(R/3,G/3,B/3), a6=a7=0 写死, 忽略 param
+        4 负片      sub_459168  RGB 取反, 无 param
+        5 水平翻转  sub_458D08  X 轴镜像 (反编译证据: 目标指针 -=2 逆写)
 
   v2.0 修正要点:
     1. 前 32 字节 = 4 方向 × 8 字节 的图层绘制顺序 (z-order)
@@ -61,7 +96,7 @@ from tkinter import ttk, messagebox, filedialog
 
 HAS_PIL = False
 try:
-    from PIL import Image, ImageTk
+    from PIL import Image, ImageTk, ImageChops
     HAS_PIL = True
 except ImportError:
     pass
@@ -272,34 +307,49 @@ ACT_DECOMPRESSED = 509600
 DIRECTION_LABELS = ["方向0 (下)", "方向1 (上)", "方向2 (左)", "方向3 (右)"]
 
 # 图层类型 (sub_4434BC: *(_WORD*)dword_9D0690)
-#   引擎按 "==1 vs !=1" 切换贴图源:
+#   引擎按 "==1 vs !=1" 切换贴图源 (sub_42FEE0 验证):
 #     type == 1 : v32 = dword_951924  →  Aa.jvg  (主角动作库)
 #     type != 1 : v32 = dword_951930  →  Af.jvg  (特效/物件库)
-#   渲染阶段:
-#     type <  3 : 主渲染段 (sub_4434BC L305)
-#     type == 3 : 延迟渲染段 (sub_4434BC L402), 仍用 Af.jvg
-#     type == 4 : 坐标锚点 (sub_42F9C8), 不渲染
-#     type == 5 : 结束标记 (v28=1), 不渲染
+#   渲染位置分流 (按 layer_type 4 段互斥):
+#     type <  3 : L305 主段渲染, 坐标 = 攻击者位置 + 图层 offset
+#                 → type=1 角色攻击动作; type=2 技能攻击特效 (从角色发出)
+#     type == 3 : L414 延迟段, 遍历地图格子, 仅在命中目标格再绘制
+#                 → 受击特效 (以受击方位置为锚点)
+#     type == 4 : L149 v29=1 触发 sub_42F9C8 计算屏幕锚点; L460 在锚点位置绘制
+#                 → "命中闪光" 坐标同步锚, 真实绘制另走 sub_42F9C8 的屏幕映射
+#     type == 5 : L156 v28=1; L518 固定屏幕中心 (320, 300) 绘制
+#                 → 全屏特效 (如 boss 大招闪白、屏幕变色等)
 # ⚠ 历史纠错: v2.1 曾把贴图源误标为 Cha.jvg / Ani.jvg;
 #   实测 sub_42FEE0 显示 dword_951924 = Aa.jvg, dword_951930 = Af.jvg.
 #   Cha.jvg 由 sub_458020(dword_755AF0, ...) 直接绘制, 不经 ACT 图层.
 LAYER_TYPE_LABELS = {
     0: "0 空",
-    1: "1 Aa.jvg 主角动作 · 主段",
-    2: "2 Af.jvg 特效/物件 · 主段",
-    3: "3 Af.jvg 特效/物件 · 延迟段",
-    4: "4 坐标锚点 (不渲染)",
-    5: "5 结束标记 (不渲染)",
+    1: "1 角色攻击动作 (Aa.jvg, 攻击者位置)",
+    2: "2 技能攻击特效 (Af.jvg, 攻击者位置)",
+    3: "3 受击特效     (Af.jvg, 受击方位置)",
+    4: "4 命中锚点坐标 (sub_42F9C8, 不渲染)",
+    5: "5 全屏特效     (屏幕中心 320,300)",
 }
 
 # 混合模式 (sub_4434BC: switch(+22) → 6 个渲染函数)
+#   每个函数的近似语义 (逆向结论, 预览按此模拟):
+#     0 sub_4544EC  直接 blit, 透明色 key (alpha=0 跳过), 无任何像素变换
+#     1 sub_454D24  带参数 a6=+24 的染色 blit; 0 或 >31 时视觉无变化
+#     2 sub_4559D0  加法饱和混合 (additive); 查表 word_A3AD30[i+j]=min(i+j,31)
+#                  (sub_453554 L43-52 初始化, 非 (a+b)/2 半透!)
+#                    · a6=0        → sub_455B98/_456150   full additive: dst=min(dst+src,31/63)
+#                    · 0<a6<=31    → sub_4573A0/_4579D0   scaled additive: dst=min(dst+src*a6/32,31)
+#                    · a6>31       → 递归 (0,0) 退化 full additive (实测 48 次 a6=80)
+#     3 sub_458020  阴影剪影, 4434BC.c L332 调用时 a6=a7=0 写死 → 固走阴影分支
+#     4 sub_459168  负片/反色 (走 sub_4591CC/sub_459854 的反相通道)
+#     5 sub_458D08  水平翻转 (证据: L111/L136 目标指针 dword_A5AEB4 -=2 逆写)
 BLEND_MODE_LABELS = {
-    0: "0 正常 sub_4544EC",
-    1: "1 闪烁 sub_454D24",
-    2: "2 半透叠加 sub_4559D0",
-    3: "3 阴影 sub_458020",
-    4: "4 负片 sub_459168",
-    5: "5 另类 sub_458D08",
+    0: "0 正常",
+    1: "1 闪烁/染色",
+    2: "2 加法/发光",
+    3: "3 阴影剪影",
+    4: "4 负片反色",
+    5: "5 水平翻转",
 }
 
 # 方向感知 (sub_4434BC L308: if(+4==4) v34=v33 else v34=0)
@@ -683,7 +733,8 @@ class ActEditor:
         # JVG 数据 (预览用, 完整解码)
         self._aa_data = None
         self._af_data = None
-        self._jvg_cache = {}     # {(src, block, frame): PhotoImage}
+        self._jvg_cache = {}     # {(src, block, frame): PhotoImage}   无缩放缓存
+        self._pil_cache = {}     # {(src, block, frame): PIL.Image}    原始 RGBA, 供混合/缩放
 
         # JVG 轻量探针 (block 帧数列表)
         self._aa_counts = []
@@ -1392,6 +1443,7 @@ class ActEditor:
         self._aa_data = None
         self._af_data = None
         self._jvg_cache.clear()
+        self._pil_cache.clear()
         self.status_var.set("加载中…")
         self.root.update()
         try:
@@ -1913,6 +1965,204 @@ class ActEditor:
         except Exception:
             return None
 
+    def _preview_get_pil(self, src, block_idx, frame_idx):
+        """返回原始 PIL RGBA Image (未经混合/缩放), 供 _preview_redraw 作为
+        混合/缩放的输入. (src, block, frame) 为缓存键."""
+        key = (src, block_idx, frame_idx)
+        cached = self._pil_cache.get(key)
+        if cached is not None:
+            return cached
+        jvg = self._aa_data if src == 'aa' else self._af_data
+        if jvg is None or block_idx < 0 or block_idx >= len(jvg.blocks):
+            return None
+        blk = jvg.blocks[block_idx]
+        if frame_idx < 0 or frame_idx >= blk.frame_count:
+            return None
+        f = blk.frames[frame_idx]
+        if f.width <= 0 or f.height <= 0:
+            return None
+        pal_rgb = blk.palette.to_rgb888()
+        rgba = bytearray(f.width * f.height * 4)
+        for py in range(f.height):
+            base = py * f.width
+            for px in range(f.width):
+                p = base + px
+                if p < len(f.alpha) and f.alpha[p] == 0:
+                    continue
+                idx = f.pixels[p] if p < len(f.pixels) else 0
+                o = p * 4
+                rgba[o] = pal_rgb[idx * 3]
+                rgba[o + 1] = pal_rgb[idx * 3 + 1]
+                rgba[o + 2] = pal_rgb[idx * 3 + 2]
+                rgba[o + 3] = 255
+        try:
+            img = Image.frombytes('RGBA', (f.width, f.height), bytes(rgba))
+            self._pil_cache[key] = img
+            return img
+        except Exception:
+            return None
+
+    def _apply_blend(self, pil_img, mode, param):
+        """对 PIL RGBA 图像应用混合模式近似变换 (sub_4434BC +22 switch).
+
+        各 case 在 sub_4434BC 的原始调用 (a6=+24=blend_param, a7=0 除 case1):
+          case 0: sub_4544EC(..., -1)                        无 param
+          case 1: sub_454D24(..., param, -1)                 a6=param
+          case 2: sub_4559D0(..., param, 0, -1)              a6=param, a7=0
+          case 3: sub_458020(..., 0, 0, -1)                  ★ a6=a7=0 写死
+          case 4: sub_459168(..., -1)                        无 param
+          case 5: sub_458D08(..., -1)                        无 param
+
+        ★ v2.4.3 重大修正: mode=2 的真实语义是 "加法饱和混合 (additive saturation)",
+          而非 alpha 半透. 核心证据在 sub_453554 (查表初始化):
+              word_A3AD30[i+j] = min(i+j, 31)   // i,j ∈ [0,31]  (5-bit)
+              word_A3ADB0[k+m] = min(k+m, 63)   // k,m ∈ [0,63]  (RGB565 G 通道)
+              word_A39D30[α][v] = α * v / 32    // alpha 预乘表
+          mode=2 三个子分支 (sub_4559D0 L16-42):
+            param == 0         → sub_455B98/_456150:
+                dst.RGB = min(dst + src,       31/63)  # full additive
+            0 < param <= 31    → sub_4573A0/_4579D0:
+                src' = src * param / 32                # 预乘 alpha
+                dst.RGB = min(dst + src',      31/63)  # scaled additive
+            param > 31 或 < 0  → 递归 (0,0) 即退化为 full additive
+          这种混合下黑色像素 (0,0,0) 不贡献于背景 ⇒ "黑色像素看起来像被过滤".
+          亮色相加后饱和 ⇒ "饱和度非常高", 正是游戏特效/闪光/技能的经典外观.
+
+          ★ 由于 additive 需要访问背景像素, mode=2 不能在这里单独修改 sprite;
+            此处仅做直通, 由 _preview_redraw 合成循环用 ImageChops.add 实现.
+
+        mode=3/4/5 在 ACT 调用点 param 被忽略 (case3 a6=a7=0 固定走阴影分支,
+        case4/5 不传 param), 故此处也忽略 param.
+        """
+        if pil_img is None:
+            return None
+        if mode == 0 or mode not in (1, 2, 3, 4, 5):
+            return pil_img
+        # mode=2 的加法混合必须访问 dst, 由合成阶段处理; 此处原样返回
+        if mode == 2:
+            return pil_img
+
+        if mode == 5:
+            # 5 水平翻转: sub_458D08 证据为目标指针 -=2 逆写像素
+            try:
+                return pil_img.transpose(Image.FLIP_LEFT_RIGHT)
+            except Exception:
+                return pil_img
+
+        # 其余模式均需逐像素操作
+        try:
+            src = pil_img.tobytes()
+        except Exception:
+            return pil_img
+        buf = bytearray(src)
+        n = len(buf) // 4
+
+        if mode == 1:
+            # 1 染色: 把 param 视作 tint 色调索引, 无效值 (0 或 >31) 不变色
+            p = int(param) & 0xFFFF
+            if p == 0 or p > 31:
+                return pil_img
+            p &= 0x1F
+            # 近似色轮: 红 / 黄 / 绿 / 蓝 四段
+            if p < 8:
+                tr, tg, tb = 255, 0, 0
+            elif p < 16:
+                tr, tg, tb = 255, 255, 0
+            elif p < 24:
+                tr, tg, tb = 0, 255, 0
+            else:
+                tr, tg, tb = 0, 0, 255
+            for i in range(n):
+                o = i * 4
+                if buf[o + 3] == 0:
+                    continue
+                buf[o]     = (buf[o]     + tr) >> 1
+                buf[o + 1] = (buf[o + 1] + tg) >> 1
+                buf[o + 2] = (buf[o + 2] + tb) >> 1
+
+        elif mode == 3:
+            # 3 阴影: RGB→(R/3,G/3,B/3), alpha 降到 60% (param 忽略)
+            for i in range(n):
+                o = i * 4
+                if buf[o + 3] == 0:
+                    continue
+                buf[o]     //= 3
+                buf[o + 1] //= 3
+                buf[o + 2] //= 3
+                buf[o + 3] = int(buf[o + 3] * 0.6)
+
+        elif mode == 4:
+            # 4 负片: RGB 取反 (param 忽略)
+            for i in range(n):
+                o = i * 4
+                if buf[o + 3] == 0:
+                    continue
+                buf[o]     = 255 - buf[o]
+                buf[o + 1] = 255 - buf[o + 1]
+                buf[o + 2] = 255 - buf[o + 2]
+
+        try:
+            return Image.frombytes('RGBA', pil_img.size, bytes(buf))
+        except Exception:
+            return pil_img
+
+    def _composite_additive(self, composite, rgba_src, dx, dy, param):
+        """对 composite (RGB) 在 (dx, dy) 处应用 additive 饱和加法, src 透明区域不贡献.
+
+        对应游戏反编译:
+          sub_455B98 / sub_456150  (param = 0, 或 > 31 递归到 0):
+              dst.RGB = word_A3AD30[dst.RGB + src.RGB]    # = min(dst+src, 31)
+          sub_4573A0 / sub_4579D0  (0 < param <= 31):
+              src' = word_A39D30[64*param + src.RGB]      # = param*src/32
+              dst.RGB = word_A3AD30[dst.RGB + src'.RGB]   # = min(dst+src', 31)
+
+        PIL 实现 (RGB24 空间等价):
+          1. 按 sprite 的 alpha 通道生成 "src 贡献图" (alpha=0 位置 RGB→0)
+          2. 若 0 < param <= 31: 对贡献图所有通道乘 param/32
+          3. 用 ImageChops.add(dst_region, contrib) 做饱和加法
+        """
+        if composite is None or rgba_src is None:
+            return
+        sw, sh = rgba_src.size
+        cw, ch = composite.size
+        # 交集裁剪: sprite 在画布上的可见矩形
+        l = max(0, dx)
+        t = max(0, dy)
+        r = min(cw, dx + sw)
+        b = min(ch, dy + sh)
+        if r <= l or b <= t:
+            return
+        # src 内部对应的可见子区域
+        sl, st = l - dx, t - dy
+        sr, sb = r - dx, b - dy
+        try:
+            sub = rgba_src.crop((sl, st, sr, sb))
+            if sub.mode != 'RGBA':
+                sub = sub.convert('RGBA')
+            # 用 alpha 作掩膜: alpha=0 位置 RGB 填 0, 其他位置保留原 RGB
+            alpha = sub.split()[3]
+            src_rgb = sub.convert('RGB')
+            zero_bg = Image.new('RGB', sub.size, (0, 0, 0))
+            masked = Image.composite(src_rgb, zero_bg, alpha)
+            # 可变 alpha 预乘 (对应 sub_4579D0 L117-119 查 A39D30 预乘表)
+            try:
+                p = int(param)
+            except Exception:
+                p = 0
+            if 0 < p <= 31:
+                factor = p / 32.0
+                masked = masked.point(lambda v, f=factor: int(v * f))
+            # 对 composite 对应矩形做饱和加法 (ImageChops.add = min(a+b, 255))
+            dst_crop = composite.crop((l, t, r, b))
+            blended = ImageChops.add(dst_crop, masked)
+            composite.paste(blended, (l, t))
+        except Exception:
+            # 加法失败时退化为 alpha 合成, 保证预览不中断
+            try:
+                composite.paste(rgba_src, (dx, dy), rgba_src)
+            except Exception:
+                pass
+
     def _preview_reload(self):
         self._preview_stop()
         if self._editing_idx is None:
@@ -2195,49 +2445,86 @@ class ActEditor:
                        '#ffff44', '#44ffff', '#ff8888', '#88ff88']
         info = [f"方向{direction} | 可见{len(sprites)}图层 | Tick:{tick}"]
 
+        # ============================================================
+        # ★ v2.4.1 修复: 在 PIL 层合成所有 sprite 再一次性贴到 Tk canvas,
+        # 绕开 Windows Tk Canvas 对 RGBA PhotoImage alpha 合成的局限
+        # (alpha=0 像素会显示成黑色 "底色" 的历史问题根源)
+        # ★ v2.4.3 修正: mode=2 走加法饱和混合 (additive) 而非 alpha 半透,
+        #               依据 sub_453554 L43-52 查表 word_A3AD30[i+j]=min(i+j,31)
+        # 合成画布尺寸 = bbox * scale, 初始底色 = canvas bg (#1a1a2e)
+        # ============================================================
+        comp_w = max(1, int(bw * scale))
+        comp_h = max(1, int(bh * scale))
+        CANVAS_BG_RGB = (0x1a, 0x1a, 0x2e)
+        try:
+            composite = Image.new('RGB', (comp_w, comp_h), CANVAS_BG_RGB)
+        except Exception:
+            composite = None
+        # composite 贴到 canvas 的左上角: 对应游戏坐标 (bbox_l, bbox_t)
+        comp_ox, comp_oy = to_cv(bbox_l, bbox_t)
+
         for sp in sprites:
             (slot, eff_dir, L, src, blk, cur_abs, frame,
              ox, oy, spr_l, spr_t, spr_r, spr_b, stopped) = sp
 
             pk = L[1]
-            tup = self._preview_get_frame(src, pk, cur_abs)
-            if not tup:
+            blend_mode = L[11]
+            blend_param = L[12]
+            # 可读 blend 标签 (用于 info 行显示)
+            _bm_label = {
+                0: '正常', 1: '染色', 2: '加法',
+                3: '阴影', 4: '负片', 5: '翻转',
+            }.get(blend_mode, f'?{blend_mode}')
+            _effective = True
+            if blend_mode == 0:
+                _effective = False
+            elif blend_mode == 2:
+                # mode=2 任何 param 都有效 (加法混合, p 只影响 src 预乘强度)
+                _effective = True
+            elif blend_mode == 1:
+                _effective = 0 < blend_param <= 31
+            _eff_tag = '' if _effective or blend_mode in (3, 4, 5) else '~'
+
+            # 1) 取原始 PIL RGBA (无缩放无混合)
+            pil = self._preview_get_pil(src, pk, cur_abs)
+            if pil is None:
                 continue
-            img, _f, _blk = tup
+
+            # 2) 应用像素级变换 (mode=1/3/4/5); mode=2 原样返回由合成阶段处理
+            pil_blended = self._apply_blend(pil, blend_mode, blend_param)
+            if pil_blended is None:
+                continue
 
             cx, cy = to_cv(spr_l, spr_t)
             nw = max(1, int(frame.width * scale))
             nh = max(1, int(frame.height * scale))
             color = slot_colors[(slot - 1) % len(slot_colors)]
 
-            if nw == frame.width and nh == frame.height:
-                c.create_image(cx, cy, image=img, anchor=tk.NW)
-            else:
-                try:
-                    pal_rgb = blk.palette.to_rgb888()
-                    rgba = bytearray(frame.width * frame.height * 4)
-                    for py in range(frame.height):
-                        base = py * frame.width
-                        for px in range(frame.width):
-                            p = base + px
-                            if p < len(frame.alpha) and frame.alpha[p] == 0:
-                                continue
-                            idx = (frame.pixels[p]
-                                   if p < len(frame.pixels) else 0)
-                            o = p * 4
-                            rgba[o] = pal_rgb[idx * 3]
-                            rgba[o + 1] = pal_rgb[idx * 3 + 1]
-                            rgba[o + 2] = pal_rgb[idx * 3 + 2]
-                            rgba[o + 3] = 255
-                    pil_img = Image.frombytes(
-                        'RGBA', (frame.width, frame.height), bytes(rgba))
-                    pil_img = pil_img.resize((nw, nh), Image.NEAREST)
-                    stk = ImageTk.PhotoImage(pil_img)
-                    scaled_cache.append(stk)
-                    c.create_image(cx, cy, image=stk, anchor=tk.NW)
-                except Exception:
-                    c.create_image(cx, cy, image=img, anchor=tk.NW)
+            # 3) 缩放 → 按 blend_mode 合成到 composite 画布上
+            try:
+                if nw == frame.width and nh == frame.height:
+                    final_img = pil_blended
+                else:
+                    final_img = pil_blended.resize((nw, nh), Image.NEAREST)
+                if composite is not None:
+                    # 目标位置 = sprite 在合成图上的左上角像素坐标
+                    dx = int(round((spr_l - bbox_l) * scale))
+                    dy = int(round((spr_t - bbox_t) * scale))
+                    if blend_mode == 2:
+                        # ★ additive 加法饱和混合 (sub_4559D0 全分支):
+                        #   param == 0  或  > 31  → full additive (scale=1.0)
+                        #   0 < param <= 31       → src 先乘 param/32 再加
+                        #   公式 (每通道): dst = min(dst + src * α, 255)
+                        #   黑色 (0,0,0) 贡献为 0, 不改变 dst → "黑色被过滤"
+                        self._composite_additive(
+                            composite, final_img, dx, dy, blend_param)
+                    else:
+                        # 其余 mode: 标准 alpha 合成 (paste with mask)
+                        composite.paste(final_img, (dx, dy), final_img)
+            except Exception:
+                continue
 
+            # sprite 外边框 + 序号标签 (直接画到 canvas, 不走 PIL)
             rx, ry = to_cv(spr_r, spr_b)
             c.create_rectangle(cx, cy, rx + 1, ry + 1,
                                outline=color, width=1)
@@ -2248,9 +2535,30 @@ class ActEditor:
                 f"  #{slot} src={src} blk={pk} t={L[0]} dir={eff_dir} "
                 f"f={cur_abs+1}/{blk.frame_count} "
                 f"off=({ox:+d},{oy:+d}) "
+                f"blend={blend_mode}/{_bm_label}{_eff_tag}(p={blend_param}) "
                 f"int={L[21]} delay={L[22]} "
                 f"[{L[17]}..{L[18]}] loop={L[19]}"
                 f"{' [STOP]' if stopped else ''}")
+
+        # 4) 合成图一次性贴到 canvas (RGB 模式, 不触及 tk alpha)
+        if composite is not None:
+            try:
+                comp_tk = ImageTk.PhotoImage(composite)
+                scaled_cache.append(comp_tk)
+                # ★ z-order: 合成图要在 sprite 边框/文字之下
+                # 但前面已 create_rectangle/text, 所以此处加 tag 后 lower
+                img_id = c.create_image(comp_ox, comp_oy,
+                                        image=comp_tk, anchor=tk.NW)
+                c.tag_lower(img_id)
+                # 原点十字也需要在合成图之上 -> 重绘
+                c.create_line(ox_c - 16, oy_c, ox_c + 16, oy_c,
+                              fill='#00ff00', width=2)
+                c.create_line(ox_c, oy_c - 16, ox_c, oy_c + 16,
+                              fill='#00ff00', width=2)
+                c.create_text(ox_c + 18, oy_c + 4, text="原点", fill='#0f0',
+                              font=("Consolas", 7), anchor=tk.NW)
+            except Exception:
+                pass
 
         self._preview_scaled_cache = scaled_cache
         for li, line in enumerate(info[:14]):
@@ -2307,24 +2615,33 @@ class ActEditor:
     def _show_about(self):
         messagebox.showinfo(
             "关于",
-            "TKAct.dat 多图层 2D 精灵动画编辑器 v2.2\n\n"
+            "TKAct.dat 多图层 2D 精灵动画编辑器 v2.4.3\n\n"
             "修订依据:\n"
             "  · 逆向工作区/TKS_AI分析act_editor记录.md (v2.0/v2.1)\n"
-            "  · 逆向工作区/TKS_AI修正TKAct.dat实际JVG绑定.md (v2.2)\n\n"
+            "  · 逆向工作区/TKS_AI修正TKAct.dat实际JVG绑定.md (v2.2)\n"
+            "  · sub_4434BC / sub_451780 / sub_458D08 反编译 (v2.3/v2.4)\n\n"
             "650 条 × 784 字节 = 509,600 字节\n\n"
-            "v2.2 关键修正:\n"
-            "  · 图层贴图源: 实际是 Aa.jvg / Af.jvg, 不是 Cha.jvg / Ani.jvg\n"
-            "  · type==1 → Aa.jvg (dword_951924, 主角动作库, 158 blocks)\n"
-            "  · type!=1 → Af.jvg (dword_951930, 特效/物件库, 367 blocks)\n"
-            "  · Cha.jvg 由 sub_458020(dword_755AF0, ...) 直接绘制基础行走图,\n"
-            "    不经 ACT 图层系统, 故不再作为编辑器资源\n\n"
-            "v2.0 累积修正 (保留):\n"
-            "  · 前 32 字节 = 4 方向 × 8 字节 (非 8 组)\n"
-            "  · layer_type = 贴图源+渲染阶段 组合标识\n"
-            "  · tick_interval / start_delay 作为可编辑数据字段\n"
-            "  · blend_mode / direction_mode / dir_frame_offset 语义命名\n"
-            "  · 尾部按 16 对 (value, count) 展示\n\n"
-            "逆向来源: sub_4434BC / sub_42FEE0 / sub_45408C / sub_45410C")
+            "v2.4.3 重大修正:\n"
+            "  · mode=2 的真实语义是加法饱和混合 (additive), 非 alpha 半透!\n"
+            "    查表 word_A3AD30[i+j]=min(i+j,31) (sub_453554 L43-52)\n"
+            "    param=0/>31 → dst=min(dst+src,31)       (full additive)\n"
+            "    0<p<=31     → dst=min(dst+src*p/32,31)  (scaled additive)\n"
+            "  · 黑色像素贡献 0 → 自然被 \"过滤\", 亮色钳顶 → 饱和度饱满.\n\n"
+            "v2.4.1 修复:\n"
+            "  · 预览 sprite 周围黑底 (Tk Canvas RGBA alpha 合成)\n"
+            "    → 改由 PIL 自合成, 一次性以 RGB 贴图\n\n"
+            "v2.4 关键修正:\n"
+            "  · layer_type 语义按实测精细化 (与 sub_4434BC L305/414/460/518 分流一致):\n"
+            "    t=1 角色攻击动作 (Aa.jvg, 攻击者位置)\n"
+            "    t=2 技能攻击特效 (Af.jvg, 攻击者位置)\n"
+            "    t=3 受击特效 (Af.jvg, 受击方位置, 延迟段)\n"
+            "    t=4 命中锚点 (sub_42F9C8 计算, 不渲染)\n"
+            "    t=5 全屏特效 (屏幕中心 320,300)\n"
+            "  · 预览应用 6 种图像混合模式 (blend_mode +22):\n"
+            "    0 正常 / 1 染色 / 2 加法 / 3 阴影 / 4 负片 / 5 水平翻转\n\n"
+            "v2.3: 尾部 64B = 音效触发表 + SWS.GRP 实时播放\n"
+            "v2.2: 贴图源 = Aa.jvg / Af.jvg (非 Cha / Ani)\n"
+            "逆向来源: sub_4434BC / sub_42FEE0 / sub_451780 / sub_458D08")
 
 
 def main():
