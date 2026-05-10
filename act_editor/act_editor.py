@@ -1916,7 +1916,7 @@ class ActEditor:
             L = entry['layers'][slot - 1]
             if L[0] == 0:
                 continue
-            eff_dir = direction if L[2] == 4 else 0
+            eff_dir = direction if (L[2] == 4 or L[0] < 3) else 0
             out.append((slot, eff_dir, L))
         return out
 
@@ -2277,10 +2277,11 @@ class ActEditor:
                 n = blk.frame_count
                 if n <= 0:
                     continue
-                eff_dir = direction if L[2] == 4 else 0
+                eff_dir = direction if (L[2] == 4 or L[0] < 3) else 0
                 ox = L[3 + eff_dir]
                 oy = L[7 + eff_dir]
-                base_x = PREVIEW_ENEMY_X if L[0] == 3 else 0
+                # t=3/t=4 偏移到假想敌 (t=4 游戏中锚点=鼠标格坐标, 预览放敌方)
+                base_x = PREVIEW_ENEMY_X if L[0] in (3, 4) else 0
                 # 取全部帧的最大外接矩形 (仅 header, 无 RLE)
                 for fi in range(n):
                     f = blk.frames[fi]
@@ -2340,9 +2341,11 @@ class ActEditor:
 
     def _preview_tick(self):
         self._preview_tick_idx += 1
-        # 音效触发: sub_4434BC L627-636 每 tick 检查 v5[1] == word_9D03A0
         self._preview_sync_sfx()
-        self._preview_redraw()
+        all_stopped = self._preview_redraw()
+        if all_stopped:
+            # 全部图层播放完毕 → 停止自动推进, 停留最后一帧
+            return
         speed = max(10, self._preview_speed.get())
         self._preview_job = self.root.after(speed, self._preview_tick)
 
@@ -2432,7 +2435,9 @@ class ActEditor:
 
         tick = self._preview_tick_idx
         sprites = []
-        dyn_x, dyn_y = [], []  # 仅作 bbox 未缓存时的回退
+        dyn_x, dyn_y = [], []
+        n_stoppable = 0   # loop=-2 的图层数 (会停止的)
+        n_stopped = 0     # 已停止的图层数
         for slot, eff_dir, L in layers:
             v = self._preview_vis_vars.get(slot)
             if v is not None and not v.get():
@@ -2448,6 +2453,11 @@ class ActEditor:
                 continue
 
             cur_abs, stopped = self._compute_layer_frame(L, tick)
+            if L[19] == -2:
+                n_stoppable += 1
+                if stopped:
+                    n_stopped += 1
+                    continue
             if L[2] == 4:
                 cur_abs += L[16] * eff_dir
             cur_abs = cur_abs % n_frames if n_frames > 0 else 0
@@ -2456,7 +2466,10 @@ class ActEditor:
             ox = L[3 + eff_dir]
             oy = L[7 + eff_dir]
             # t=3 受击图层偏移到假想敌位置
-            enemy_x = PREVIEW_ENEMY_X if L[0] == 3 else 0
+            # t=4 也偏移到敌方 (游戏中 t=4 锚点 = 鼠标点击的地图格子坐标,
+            #   sub_4429C8 转换后存入 word_9D6F80/82, 不属于攻击方/受击方;
+            #   预览无战场格子输入, 暂放敌方侧)
+            enemy_x = PREVIEW_ENEMY_X if L[0] in (3, 4) else 0
             spr_l = frame.x_off + ox + enemy_x
             spr_t = frame.y_off + oy
             spr_r = spr_l + frame.width - 1
@@ -2464,7 +2477,7 @@ class ActEditor:
             dyn_x.extend([spr_l, spr_r, -ox - enemy_x])
             dyn_y.extend([spr_t, spr_b, -oy])
             sprites.append((slot, eff_dir, L, src, blk, cur_abs, frame,
-                            ox, oy, spr_l, spr_t, spr_r, spr_b, stopped))
+                            ox, oy, spr_l, spr_t, spr_r, spr_b, False))
 
         if not sprites:
             c.create_text(200, 100,
@@ -2650,10 +2663,20 @@ class ActEditor:
             except Exception:
                 pass
 
+        # loop=-2 的图层全部停止 → 动画结束 (loop=-1/>=0 的图层会无限循环)
+        all_stopped = n_stoppable > 0 and n_stopped >= n_stoppable
+        if all_stopped:
+            c.create_text(cw // 2, ch - 16,
+                          text=f"■ 播放完毕 (tick {tick})",
+                          fill='#ff0', font=("Consolas", 10))
+
         self._preview_scaled_cache = scaled_cache
+        info.append(f"loop=-2: {n_stopped}/{n_stoppable}")
         for li, line in enumerate(info[:14]):
             c.create_text(8, 8 + li * 14, text=line, fill="#0f0",
                           font=("Consolas", 8), anchor=tk.NW)
+
+        return all_stopped
 
     def _on_close(self):
         self._preview_stop()
