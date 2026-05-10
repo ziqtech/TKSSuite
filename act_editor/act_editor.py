@@ -297,6 +297,7 @@ ACT_ENTRY_SIZE = 784
 ACT_ENTRY_COUNT = 650
 ACT_LAYER_SIZE = 80            # 每图层 80 字节 = 40 int16
 ACT_MAX_LAYER = 8              # 方向表字节值域 1..8
+PREVIEW_ENEMY_X = 160          # 预览: 假想敌 X 偏移 (t=3 受击图层渲染位置)
 ACT_HEADER_SIZE = 80
 ACT_PARAM_OFFSET = 32          # 条目级参数区起点
 ACT_TAIL_OFFSET = 720
@@ -2249,22 +2250,18 @@ class ActEditor:
         self._preview_redraw()
 
     def _compute_entry_bbox(self, entry):
-        """计算条目级固定包围盒 (bbox_l, bbox_t, bbox_r, bbox_b).
-        遍历:
-          · 全部 4 个方向 (z-order 不同 → 激活图层可能不同)
-          · 每图层 first..last 全部帧
-          · 同时把原点 (0,0) 纳入, 保证原点在画布内
-        需要 JVG 已加载, 否则返回 None (退化到旧的动态 bbox).
-        """
+        """计算条目级固定包围盒 (遍历全部帧取最大外接矩形).
+        仅访问 JVG header 字段 (width/height/x_off/y_off), 不触发 RLE 解码,
+        故即使逐帧遍历也很快.
+        同时纳入原点 (0,0) 和假想敌位置 (PREVIEW_ENEMY_X, 0)."""
         if self._aa_data is None and self._af_data is None:
             return None
-        xs = [0]
+        xs = [0, PREVIEW_ENEMY_X]
         ys = [0]
         for direction in range(4):
             order = [v for v in entry['dirs'][direction] if v]
             if not order:
-                from_active = sorted(entry_active_layers(entry))
-                order = from_active
+                order = sorted(entry_active_layers(entry))
             for slot in order:
                 if slot < 1 or slot > ACT_MAX_LAYER:
                     continue
@@ -2277,25 +2274,19 @@ class ActEditor:
                 if jvg is None or pk < 0 or pk >= len(jvg.blocks):
                     continue
                 blk = jvg.blocks[pk]
-                n_frames = blk.frame_count
-                if n_frames <= 0:
+                n = blk.frame_count
+                if n <= 0:
                     continue
                 eff_dir = direction if L[2] == 4 else 0
                 ox = L[3 + eff_dir]
                 oy = L[7 + eff_dir]
-                first = max(0, min(n_frames - 1, L[17]))
-                last = max(first, min(n_frames - 1, L[18]))
-                # 若带方向帧偏移, 要扩展到 last + L[16]*3 范围内覆盖
-                if L[2] == 4 and L[16]:
-                    extra = L[16] * 3
-                    last = min(n_frames - 1, max(last, last + extra))
-                for fi in range(first, last + 1):
-                    if fi < 0 or fi >= n_frames:
-                        continue
+                base_x = PREVIEW_ENEMY_X if L[0] == 3 else 0
+                # 取全部帧的最大外接矩形 (仅 header, 无 RLE)
+                for fi in range(n):
                     f = blk.frames[fi]
                     if f.width <= 0 or f.height <= 0:
                         continue
-                    l = f.x_off + ox
+                    l = f.x_off + ox + base_x
                     t = f.y_off + oy
                     r = l + f.width - 1
                     b = t + f.height - 1
@@ -2303,7 +2294,8 @@ class ActEditor:
                     ys.extend([t, b])
         if len(xs) < 2 or len(ys) < 2:
             return None
-        return (min(xs), min(ys), max(xs), max(ys))
+        # 四周加 10px 余量防止边缘裁切
+        return (min(xs) - 10, min(ys) - 10, max(xs) + 10, max(ys) + 10)
 
     def _preview_update_vis(self):
         for w in self._preview_vis_frame.winfo_children():
@@ -2463,11 +2455,13 @@ class ActEditor:
 
             ox = L[3 + eff_dir]
             oy = L[7 + eff_dir]
-            spr_l = frame.x_off + ox
+            # t=3 受击图层偏移到假想敌位置
+            enemy_x = PREVIEW_ENEMY_X if L[0] == 3 else 0
+            spr_l = frame.x_off + ox + enemy_x
             spr_t = frame.y_off + oy
             spr_r = spr_l + frame.width - 1
             spr_b = spr_t + frame.height - 1
-            dyn_x.extend([spr_l, spr_r, -ox])
+            dyn_x.extend([spr_l, spr_r, -ox - enemy_x])
             dyn_y.extend([spr_t, spr_b, -oy])
             sprites.append((slot, eff_dir, L, src, blk, cur_abs, frame,
                             ox, oy, spr_l, spr_t, spr_r, spr_b, stopped))
@@ -2503,13 +2497,28 @@ class ActEditor:
         def to_cv(gx, gy):
             return (off_x + gx * scale, off_y + gy * scale)
 
+        # 角色原点 (绿色)
         ox_c, oy_c = to_cv(0, 0)
         c.create_line(ox_c - 16, oy_c, ox_c + 16, oy_c,
                       fill='#00ff00', width=2)
         c.create_line(ox_c, oy_c - 16, ox_c, oy_c + 16,
                       fill='#00ff00', width=2)
-        c.create_text(ox_c + 18, oy_c + 4, text="原点", fill='#0f0',
+        c.create_text(ox_c + 18, oy_c + 4, text="攻击方", fill='#0f0',
                       font=("Consolas", 7), anchor=tk.NW)
+
+        # 假想敌位置 (红色)
+        ex_c, ey_c = to_cv(PREVIEW_ENEMY_X, 0)
+        c.create_line(ex_c - 16, ey_c, ex_c + 16, ey_c,
+                      fill='#ff4444', width=2)
+        c.create_line(ex_c, ey_c - 16, ex_c, ey_c + 16,
+                      fill='#ff4444', width=2)
+        c.create_text(ex_c + 18, ey_c + 4, text="受击方", fill='#f44',
+                      font=("Consolas", 7), anchor=tk.NW)
+        # 假想敌人形占位
+        c.create_rectangle(ex_c - 15, ey_c - 40, ex_c + 15, ey_c,
+                           fill='#442222', outline='#884444', width=1)
+        c.create_text(ex_c, ey_c - 20, text="敌", fill='#f44',
+                      font=("Consolas", 9))
 
         scaled_cache = []
         slot_colors = ['#4488ff', '#ff8844', '#44ff88', '#ff44ff',
