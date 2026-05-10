@@ -270,8 +270,90 @@ def _cleanup_sws_tempfiles():
 
 
 # ------------------------------------------------------------
-# JVG 加载 (从 jvg_editor 导入)
+# JVG 按需加载器 (只解码当前条目引用的块, 不加载全量 40MB+347MB)
 # ------------------------------------------------------------
+
+class _LazyJvgReader:
+    """JVG 文件按需读取: 首次扫描仅解析头部 (块偏移+帧数), 不解码像素.
+    get_block(idx) 时才 RLE 解码该块的帧, 并缓存."""
+
+    def __init__(self, path):
+        self.path = path
+        self._offsets = []    # 每块的起始偏移
+        self._sub_counts = [] # 每块的帧数
+        self._cache = {}      # {idx: JVMBlock}
+        try:
+            with open(path, 'rb') as f:
+                data = f.read()
+        except Exception:
+            self._valid = False
+            return
+        if len(data) < 32 or data[0:4] != b'@JVG':
+            self._valid = False
+            return
+        self._data = data
+        self._valid = True
+        bc = struct.unpack('<I', data[8:12])[0]
+        off = 32
+        for _ in range(bc):
+            if off + 32 > len(data) or data[off:off+4] != b'@JVM':
+                break
+            sc = struct.unpack('<I', data[off+4:off+8])[0]
+            ds = struct.unpack('<I', data[off+12:off+16])[0]
+            self._sub_counts.append(sc)
+            self._offsets.append(off)
+            off += 32 + (sc + 1) * 4 + 512 + ds
+
+    @property
+    def valid(self):
+        return self._valid
+
+    @property
+    def block_count(self):
+        return len(self._offsets)
+
+    @property
+    def frame_counts(self):
+        return list(self._sub_counts)
+
+    def get_block(self, idx):
+        if idx < 0 or idx >= len(self._offsets):
+            return None
+        if idx in self._cache:
+            return self._cache[idx]
+        jvg_mod = _get_jvg_loader()
+        if not jvg_mod:
+            return None
+        off = self._offsets[idx]
+        end = (self._offsets[idx+1] if idx+1 < len(self._offsets)
+               else len(self._data))
+        raw = self._data[off:end]
+        sc = self._sub_counts[idx]
+        # 解析 JVM 块 (直接复制 jvg_editor 的 load_jvg 内联逻辑)
+        s1 = 32
+        co = [struct.unpack('<I', raw[s1+j*4:s1+j*4+4])[0] for j in range(sc+1)]
+        po = s1 + (sc+1)*4
+        blk = jvg_mod.JVMBlock(f"blk_{idx:03d}")
+        for j in range(256):
+            blk.palette.entries[j] = struct.unpack('<H', raw[po+j*2:po+j*2+2])[0]
+        dr = po + 512
+        for si in range(sc):
+            mo = dr + co[si]
+            ws = struct.unpack('<8H', raw[mo:mo+16])
+            f = jvg_mod.JVGFrame()
+            f.x_max = ws[0]; f.y_max = ws[1]
+            f.width = ws[2]; f.height = ws[3]
+            f.row_count = ws[7]
+            eo = mo + 16
+            f.encoded_data = raw[eo:eo+co[si+1]-co[si]-16]
+            if f.width > 0 and f.height > 0:
+                f.pixels, f.alpha = jvg_mod._decode_rle(
+                    f.encoded_data, f.width, f.height)
+            blk.frames.append(f)
+        self._cache[idx] = blk
+        return blk
+
+
 _jvg_loader = None
 
 
@@ -387,33 +469,6 @@ W_INPUT_S = 6
 # ============================================================
 # JVG 轻量帧数探针  (不解码像素, 仅读 @JVG header + 各 @JVM sub_count)
 # ============================================================
-
-def scan_jvg_frame_counts(path):
-    """读取 JVG 文件, 返回每个 block 的帧数列表 List[int].
-    失败/文件不存在时返回 []. 只解析头部结构, 耗时常 <10ms."""
-    try:
-        with open(path, 'rb') as f:
-            data = f.read()
-    except Exception:
-        return []
-    if len(data) < 32 or data[0:4] != b'@JVG':
-        return []
-    try:
-        block_count = struct.unpack('<I', data[8:12])[0]
-    except struct.error:
-        return []
-    counts = []
-    off = 32
-    for _ in range(block_count):
-        if off + 32 > len(data) or data[off:off + 4] != b'@JVM':
-            break
-        sub_count = struct.unpack('<I', data[off + 4:off + 8])[0]
-        data_size = struct.unpack('<I', data[off + 12:off + 16])[0]
-        counts.append(sub_count)
-        # @JVM 总大小 = 32 头 + (sub_count+1)*4 偏移表 + 512 调色板 + data_size
-        off += 32 + (sub_count + 1) * 4 + 512 + data_size
-    return counts
-
 
 # 常见 "总帧数 → (方向数, 每方向帧数)" 推断优先级表
 # (基于 Aa.jvg/Af.jvg 实测分布: Aa 全是 4 的倍数; Af 多为单向)
@@ -730,7 +785,6 @@ class ActEditor:
         self.act_path = None
         self.aa_path = None      # Aa.jvg (layer_type==1 的贴图源)
         self.af_path = None      # Af.jvg (layer_type!=1 的贴图源)
-        self.sound_dir = None    # TKS/Sound 目录 (legacy fallback, 可缺失)
         self.sws_grp = None      # _SWSGrp 实例 (sub_451780 A2C22C=1 分支)
         self.entries = []
         self.filtered_indices = []
@@ -1204,7 +1258,7 @@ class ActEditor:
                             lambda *a, idx=pair: self._refresh_tail_file_lbl(idx))
 
     def _refresh_tail_file_lbl(self, pair_idx):
-        """根据 sound_id 刷新该对的文件标签 (优先 SWS.GRP, 回退 Sound/)"""
+        """根据 sound_id 刷新该对的文件标签 (SWS.GRP)"""
         if pair_idx >= len(self._tail_file_lbls):
             return
         lbl = self._tail_file_lbls[pair_idx]
@@ -1215,56 +1269,33 @@ class ActEditor:
         if sid <= 0:
             lbl.config(text="(空位)", foreground='#AAA')
             return
-        # 优先走 SWS.GRP
-        if self.sws_grp is not None:
-            info = self.sws_grp.wav_info(sid)
-            if info is not None:
-                ch, sr, bits, dur = info
-                lbl.config(
-                    text=(f"SWS#{sid:03d}  {ch}ch {sr}Hz {bits}bit "
-                          f"{dur:.2f}s"),
-                    foreground='#093')
-                return
-            if sid >= self.sws_grp.section_count:
-                lbl.config(
-                    text=f"SWS#{sid}  ✗ 超出段数({self.sws_grp.section_count})",
-                    foreground='#C33')
-                return
-            lbl.config(text=f"SWS#{sid:03d}  (非 WAV 段)", foreground='#C60')
+        if self.sws_grp is None:
+            lbl.config(text=f"SWS#{sid:04d}  (未加载 TKS 目录)",
+                       foreground='#C60')
             return
-        # 回退到 Sound/
-        if self.sound_dir:
-            base = f"{sid:04d}"
-            for ext in ('.wav', '.WAV', '.mp3', '.MP3'):
-                p = os.path.join(self.sound_dir, base + ext)
-                if os.path.exists(p):
-                    lbl.config(text=os.path.basename(p), foreground='#093')
-                    return
-            lbl.config(text=f"sound\\{sid:04d}.wav  ✗ 未找到",
-                       foreground='#C33')
+        info = self.sws_grp.wav_info(sid)
+        if info is not None:
+            ch, sr, bits, dur = info
+            lbl.config(
+                text=(f"SWS#{sid:03d}  {ch}ch {sr}Hz {bits}bit "
+                      f"{dur:.2f}s"),
+                foreground='#093')
             return
-        lbl.config(text=f"SWS#{sid:04d}  (未加载 TKS 目录)",
-                   foreground='#C60')
+        if sid >= self.sws_grp.section_count:
+            lbl.config(
+                text=f"SWS#{sid}  X 超出段数({self.sws_grp.section_count})",
+                foreground='#C33')
+            return
+        lbl.config(text=f"SWS#{sid:03d}  (非 WAV 段)", foreground='#C60')
 
     def _resolve_sound_path(self, sid):
-        """解析 sound_id → 可播放的 .wav 本地路径.
-        优先 SWS.GRP (提取到临时文件), 回退 Sound/ 目录. 返回 None 表示缺失."""
-        if sid <= 0:
+        """解析 sound_id -> 可播放的 .wav 本地路径 (SWS.GRP)."""
+        if sid <= 0 or self.sws_grp is None:
             return None
-        if self.sws_grp is not None:
-            p = self.sws_grp.extract_to_temp(sid)
-            if p:
-                return p
-        if self.sound_dir:
-            base = f"{sid:04d}"
-            for ext in ('.wav', '.WAV', '.mp3', '.MP3'):
-                p = os.path.join(self.sound_dir, base + ext)
-                if os.path.exists(p):
-                    return p
-        return None
+        return self.sws_grp.extract_to_temp(sid)
 
     def _on_tail_preview(self, pair_idx):
-        """试听按钮: 播放该对 sound_id 指向的音效"""
+        """试听按钮: 播放该对 sound_id 指向的音效 (SWS.GRP)"""
         try:
             sid = int(self._tail_vars[pair_idx * 2].get() or 0)
         except ValueError:
@@ -1272,25 +1303,20 @@ class ActEditor:
         if sid <= 0:
             self.status_var.set(f"尾部 #{pair_idx:02d}: sound_id=0 空位, 无音效")
             return
-        if self.sws_grp is None and not self.sound_dir:
+        if self.sws_grp is None:
             messagebox.showinfo(
                 "未加载音效源",
-                "请先通过 文件 → 加载 TKS 目录 来定位 SWS.GRP")
+                "请先通过 文件 -> 加载 TKS 目录 来定位 SWS.GRP")
             return
         p = self._resolve_sound_path(sid)
         if not p:
-            src = "SWS.GRP" if self.sws_grp is not None else "Sound/"
-            self.status_var.set(f"未找到音效 sid={sid} (来源: {src})")
+            self.status_var.set(f"未找到音效 sid={sid} (SWS.GRP)")
             return
         alias = _mci_play_async(p)
         if alias is None:
             self.status_var.set(f"播放失败: sid={sid}")
         else:
-            # 判断来源: SWS 提取的文件名会带 'tkact_sws_' 前缀
-            src_tag = "SWS" if "tkact_sws_" in os.path.basename(p) else "Sound/"
-            self.status_var.set(f"▶ sid={sid} (来自 {src_tag})")
-
-    # -------- Tab: 动画预览 --------
+            self.status_var.set(f"> sid={sid} (SWS)")
 
     def _build_preview_ui(self):
         main = ttk.Frame(self.preview_frame, padding=5)
@@ -1418,13 +1444,6 @@ class ActEditor:
             return None
         aa = _pick("Aa.jvg", "Aa.JVG", "aa.jvg")
         af = _pick("Af.jvg", "Af.JVG", "af.jvg")
-        # Sound 目录 (sub_451780 fallback 路径, 实际资源不完整)
-        sd = None
-        for name in ("Sound", "sound", "SOUND"):
-            p = os.path.join(d, name)
-            if os.path.isdir(p):
-                sd = p
-                break
         # SWS.GRP + SWS.IDX = 实际运行时音效源 (sub_451780 A2C22C=1 分支)
         sws_path = _pick("SWS.GRP", "SWS.grp", "sws.grp")
         swi_path = _pick("SWS.IDX", "SWS.idx", "sws.idx")
@@ -1439,7 +1458,6 @@ class ActEditor:
         self.act_path = act
         self.aa_path = aa
         self.af_path = af
-        self.sound_dir = sd
         self.sws_grp = sws
         self._reload()
 
@@ -1472,11 +1490,15 @@ class ActEditor:
             self.lbl_path.config(text="TKAct: (未加载)", foreground=r)
         else:
             self.lbl_path.config(text=f"TKAct: {self.act_path}", foreground=g)
-        # 探针: 轻量扫描 JVG 获取 block 帧数 (不解码像素)
-        self._aa_counts = (scan_jvg_frame_counts(self.aa_path)
-                           if self.aa_path else [])
-        self._af_counts = (scan_jvg_frame_counts(self.af_path)
-                           if self.af_path else [])
+        # 探针: _LazyJvgReader 扫描 JVG 头部获取 block 帧数 (不解码像素)
+        if self.aa_path and not self._aa_counts:
+            r = _LazyJvgReader(self.aa_path)
+            if r.valid:
+                self._aa_counts = r.frame_counts
+        if self.af_path and not self._af_counts:
+            r = _LazyJvgReader(self.af_path)
+            if r.valid:
+                self._af_counts = r.frame_counts
         aa_note = (f"{len(self._aa_counts)} blocks"
                    if self._aa_counts else "✗")
         af_note = (f"{len(self._af_counts)} blocks"
@@ -1484,25 +1506,12 @@ class ActEditor:
         # SWS.GRP 状态 (主音效源)
         if self.sws_grp is not None:
             sws_note = f"{self.sws_grp.section_count} 段"
-            sws_ok = True
         else:
             sws_note = "✗"
-            sws_ok = False
-        # Sound 目录状态 (fallback)
-        if self.sound_dir and os.path.isdir(self.sound_dir):
-            try:
-                n_snd = sum(1 for f in os.listdir(self.sound_dir)
-                            if f.lower().endswith(('.wav', '.mp3')))
-                snd_note = f"{n_snd} 文件"
-            except Exception:
-                snd_note = "?"
-        else:
-            snd_note = "✗"
         self.lbl_jvg.config(
             text=(f"Aa.jvg (主角动作): {aa_note}   |   "
                   f"Af.jvg (特效/物件): {af_note}   |   "
-                  f"SWS.GRP: {sws_note}   |   "
-                  f"Sound/: {snd_note}"),
+                  f"SWS.GRP: {sws_note}"),
             foreground=g if (self._aa_counts or self._af_counts) else r)
 
     # ----------- 筛选/列表 -----------
@@ -1921,16 +1930,22 @@ class ActEditor:
         return out
 
     def _preview_load_jvg(self):
+        """按需加载 JVG 索引 (只扫描头部, 不解码像素)"""
         if not HAS_PIL:
             return False
-        jvg_mod = _get_jvg_loader()
-        if not jvg_mod:
+        if _get_jvg_loader() is None:
             return False
         try:
             if self.aa_path and not self._aa_data:
-                self._aa_data = jvg_mod.load_jvg(self.aa_path)
+                r = _LazyJvgReader(self.aa_path)
+                if r.valid:
+                    self._aa_data = r
+                    self._aa_counts = r.frame_counts
             if self.af_path and not self._af_data:
-                self._af_data = jvg_mod.load_jvg(self.af_path)
+                r = _LazyJvgReader(self.af_path)
+                if r.valid:
+                    self._af_data = r
+                    self._af_counts = r.frame_counts
         except Exception:
             pass
         return (self._aa_data is not None) or (self._af_data is not None)
@@ -1941,9 +1956,9 @@ class ActEditor:
         if cached is not None:
             return cached
         jvg = self._aa_data if src == 'aa' else self._af_data
-        if jvg is None or block_idx < 0 or block_idx >= len(jvg.blocks):
+        if jvg is None or block_idx < 0 or block_idx >= jvg.block_count:
             return None
-        blk = jvg.blocks[block_idx]
+        blk = jvg.get_block(block_idx)
         if frame_idx < 0 or frame_idx >= blk.frame_count:
             return None
         f = blk.frames[frame_idx]
@@ -1980,9 +1995,9 @@ class ActEditor:
         if cached is not None:
             return cached
         jvg = self._aa_data if src == 'aa' else self._af_data
-        if jvg is None or block_idx < 0 or block_idx >= len(jvg.blocks):
+        if jvg is None or block_idx < 0 or block_idx >= jvg.block_count:
             return None
-        blk = jvg.blocks[block_idx]
+        blk = jvg.get_block(block_idx)
         if frame_idx < 0 or frame_idx >= blk.frame_count:
             return None
         f = blk.frames[frame_idx]
@@ -2271,9 +2286,9 @@ class ActEditor:
                 src = 'aa' if L[0] == 1 else 'af'
                 jvg = self._aa_data if src == 'aa' else self._af_data
                 pk = L[1]
-                if jvg is None or pk < 0 or pk >= len(jvg.blocks):
+                if jvg is None or pk < 0 or pk >= jvg.block_count:
                     continue
-                blk = jvg.blocks[pk]
+                blk = jvg.get_block(pk)
                 n = blk.frame_count
                 if n <= 0:
                     continue
@@ -2351,11 +2366,11 @@ class ActEditor:
 
     def _preview_sync_sfx(self):
         """扫描 tail 16 对, 若 trigger_tick == 当前 tick 则播放 sound_id.
-        音效源优先 SWS.GRP (sub_451780 A2C22C=1 分支), 回退 Sound/.
+        音效源: SWS.GRP (sub_451780 A2C22C=1 分支).
         使用 _preview_played_ticks 防重放 (同一对 tick 只触发 1 次)."""
         if self._editing_idx is None:
             return
-        if self.sws_grp is None and not self.sound_dir:
+        if self.sws_grp is None:
             return
         entry = self.entries[self._editing_idx]
         tail = entry.get('tail') or []
@@ -2445,9 +2460,9 @@ class ActEditor:
             src = 'aa' if L[0] == 1 else 'af'
             pk = L[1]
             jvg = self._aa_data if src == 'aa' else self._af_data
-            if jvg is None or pk < 0 or pk >= len(jvg.blocks):
+            if jvg is None or pk < 0 or pk >= jvg.block_count:
                 continue
-            blk = jvg.blocks[pk]
+            blk = jvg.get_block(pk)
             n_frames = blk.frame_count
             if n_frames <= 0:
                 continue
