@@ -7,36 +7,37 @@ TKKon.dat 可视化编辑器 v2.0
   - sub_452B14:     LZSS 解压引擎 (4096窗口, 0x20填充, 起始位4078)
   - sub_4173F8:     TKKon 加载入口 → &unk_9D0698, 26000
   - sub_4434BC:     运行时条件处理 — 按 word_9D069E[20*i] 索引,
-                    stride=40字节(20×int16), 确认 [3]=条件ID
+                    stride=40字节(20×int16), 确认 [3]=精灵索引
   - Maker.exe sub_4027FF: 校验解压后大小 26000 = 40 × 650
 
 关键发现 (修正旧版 13×int16/1000条 错误):
   - 26000 = 40 × 650 (非 26 × 1000)
   - 每条 20 个 int16 (40 字节), 共 650 条
-  - field[3] 为顺序索引 0..649, 是游戏内条件唯一ID
+  - field[3] 为精灵/动画索引 (0..639, -1=无), 反编译 sub_4434BC: word_9D069E[20*i] 用于索引784字节动画表
+  - field[10]-[13] 为4个状态位掩码字段 (导致/解除 各1-16/17-32)
   - field[15]-[18] 在所有650条中恒为0 (未使用)
 
 字段布局 (20 × int16, 40字节/条):
-  [0]  cond_type   — 条件类型/场景文本 → TKT (256=匈奴民帳, 512=草原, 768/1024/1280/1536...)
-  [1]  target1     — 目标/次级场景 → TKT
-  [2]  mode        — 模式/标志 (1, 2, 256, 257, 258...)
-  [3]  cond_id     — ★条件唯一ID (0..649, 顺序递增, 反编译 word_9D069E[20*i])
-  [4]  value       — 参数值/终止标记 (-1=终止, 20/30/40/60/80/120等数值)
-  [5]  param5      — 参数5 (21条使用)
-  [6]  param6      — 参数6 (33条使用)
-  [7]  param7      — 参数7 (1条使用)
-  [8]  dialog1     — 对话文本ID1 → TKT (30条使用)
-  [9]  dialog2     — 对话文本ID2 → TKT (16条使用)
-  [10] param10     — 参数10 (84条使用, 位标志/数值)
-  [11] param11     — 参数11 (107条使用, 位标志/数值)
-  [12] param12     — 参数12 (26条使用, 大数值)
-  [13] param13     — 参数13 (62条使用, 大数值)
-  [14] param14     — 参数14 (7条使用)
-  [15] unused15    — 未使用 (始终为0)
-  [16] unused16    — 未使用 (始终为0)
-  [17] unused17    — 未使用 (始终为0)
-  [18] unused18    — 未使用 (始终为0)
-  [19] end_flag    — 结束标记 (0=无 1= 3= 4=; 219条非零)
+  [0]  cond_type         — 条件类型/场景文本 → TKT (256=匈奴民帳, 512=草原, 768/1024/1280/1536...)
+  [1]  target1           — 目标/次级场景 → TKT
+  [2]  mode              — 模式/标志 (1, 2, 256, 257, 258...)
+  [3]  sprite_idx        — 精灵/动画索引 (0..639, -1=无; 反编译 word_9D069E[20*i] → 784字节动画表)
+  [4]  value             — 参数值/终止标记 (-1=终止, 20/30/40/60/80/120等数值)
+  [5]  param5            — 参数5 (21条使用)
+  [6]  param6            — 参数6 (33条使用)
+  [7]  param7            — 参数7 (1条使用)
+  [8]  dialog1           — 对话文本ID1 → TKT (30条使用)
+  [9]  dialog2           — 对话文本ID2 → TKT (16条使用)
+  [10] inflict_status_lo — 导致状态 1-16  (位掩码, bit0=状态1..bit15=状态16; 84条使用)
+  [11] inflict_status_hi — 导致状态 17-32 (位掩码, bit0=状态17..bit15=状态32; 107条使用)
+  [12] remove_status_lo  — 解除状态 1-16  (位掩码, bit0=状态1..bit15=状态16; 26条使用)
+  [13] remove_status_hi  — 解除状态 17-32 (位掩码, bit0=状态17..bit15=状态32; 62条使用)
+  [14] param14           — 参数14 (7条使用)
+  [15] unused15          — 未使用 (始终为0)
+  [16] unused16          — 未使用 (始终为0)
+  [17] unused17          — 未使用 (始终为0)
+  [18] unused18          — 未使用 (始终为0)
+  [19] end_flag          — 结束标记 (0=无 1= 3= 4=; 219条非零)
 
 用法:
   python kon_editor.py
@@ -143,6 +144,14 @@ KON_CNT = 650      # 26000 / 40
 KON_FIELD_COUNT = 20
 KON_DECOMPRESSED = 26000
 
+# 31 种状态 (bit 0..30; 对应 TksModify.dll Maker UI 状态列表)
+STATUS_NAMES = [
+    "破兵","碎甲","昏眩","封锁","羁绊","蓄力","刚体","集中",
+    "云身","神行","无视","伪装","御风","死战","连计","连计",
+    "误导","混乱","禁制","定身","诅咒","封印","燃烧","冰冻",
+    "虚弱","麻痹","沈睡","中毒","迷恋","明镜","针灸",
+]
+
 FONT = ('Microsoft YaHei UI', 9); FONT_S = ('Microsoft YaHei UI', 8)
 W_INPUT = 12
 
@@ -151,26 +160,26 @@ W_INPUT = 12
 # ============================================================
 
 KON_FIELDS = [
-    ("cond_type",   0,  "条件类型",   "条件类型/场景文本 → TKT (256=匈奴民帳, 512=草原之黃巾賊, 768/1024/1280/1536…)"),
-    ("target1",     2,  "目标1",      "目标/次级场景 → TKT (256=匈奴民帳, 512=江岸…)"),
-    ("mode",        4,  "模式标志",   "模式/标志 (1=啊！, 2=虎牢關之役, 256/257/258…)"),
-    ("cond_id",     6,  "★条件ID",   "条件唯一ID (0..649, 顺序递增) — 反编译 word_9D069E[20*i] 索引源"),
-    ("value",       8,  "参数值",     "参数值/终止标记 (-1=终止, 20/30/40/60/80/120 等数值)"),
-    ("param5",      10, "参数5",      "参数5 (21条使用)"),
-    ("param6",      12, "参数6",      "参数6 (33条使用)"),
-    ("param7",      14, "参数7",      "参数7 (1条使用)"),
-    ("dialog1",     16, "对话文本1",  "对话文本ID1 → TKT (30条使用)"),
-    ("dialog2",     18, "对话文本2",  "对话文本ID2 → TKT (16条使用)"),
-    ("param10",     20, "参数10",     "参数10 (84条使用, 位标志/数值)"),
-    ("param11",     22, "参数11",     "参数11 (107条使用, 位标志/数值)"),
-    ("param12",     24, "参数12",     "参数12 (26条使用, 大数值; 32767=任意)"),
-    ("param13",     26, "参数13",     "参数13 (62条使用, 大数值; 32767=任意)"),
-    ("param14",     28, "参数14",     "参数14 (7条使用)"),
-    ("unused15",    30, "未使用15",   "● 始终为0 (650条中0条非零)"),
-    ("unused16",    32, "未使用16",   "● 始终为0 (650条中0条非零)"),
-    ("unused17",    34, "未使用17",   "● 始终为0 (650条中0条非零)"),
-    ("unused18",    36, "未使用18",   "● 始终为0 (650条中0条非零)"),
-    ("end_flag",    38, "结束标记",   "结束/类型标记 (0/1/3/4; 219条非零)"),
+    ("cond_type",        0,  "条件类型",      "条件类型/场景文本 → TKT (256=匈奴民帳, 512=草原之黃巾賊, 768/1024/1280/1536…)"),
+    ("target1",          2,  "目标1",         "目标/次级场景 → TKT (256=匈奴民帳, 512=江岸…)"),
+    ("mode",             4,  "模式标志",      "模式/标志 (1=啊！, 2=虎牢關之役, 256/257/258…)"),
+    ("cond_id",          6,  "动画索引",      "精灵/动画定义索引 (0..639, -1=无) — 反编译 sub_4434BC: word_9D069E[20*i] → 784字节动画表"),
+    ("value",            8,  "参数值",        "参数值/终止标记 (-1=终止, 20/30/40/60/80/120 等数值)"),
+    ("param5",           10, "参数5",         "参数5 (21条使用)"),
+    ("param6",           12, "参数6",         "参数6 (33条使用)"),
+    ("param7",           14, "参数7",         "参数7 (1条使用)"),
+    ("dialog1",          16, "对话文本1",     "对话文本ID1 → TKT (30条使用)"),
+    ("dialog2",          18, "对话文本2",     "对话文本ID2 → TKT (16条使用)"),
+    ("inflict_status_lo", 20, "导致状态1-16",  "施加状态位掩码低16位 (bit0=状态1,…,bit15=状态16; 84条使用)"),
+    ("inflict_status_hi", 22, "导致状态17-32", "施加状态位掩码高16位 (bit0=状态17,…,bit15=状态32; 107条使用)"),
+    ("remove_status_lo",  24, "解除状态1-16",  "移除状态位掩码低16位 (bit0=状态1,…,bit15=状态16; 26条使用)"),
+    ("remove_status_hi",  26, "解除状态17-32", "移除状态位掩码高16位 (bit0=状态17,…,bit15=状态32; 62条使用)"),
+    ("param14",          28, "参数14",        "参数14 (7条使用)"),
+    ("unused15",         30, "未使用15",      "● 始终为0 (650条中0条非零)"),
+    ("unused16",         32, "未使用16",      "● 始终为0 (650条中0条非零)"),
+    ("unused17",         34, "未使用17",      "● 始终为0 (650条中0条非零)"),
+    ("unused18",         36, "未使用18",      "● 始终为0 (650条中0条非零)"),
+    ("end_flag",         38, "结束标记",      "结束/类型标记 (0/1/3/4; 219条非零)"),
 ]
 
 ACTIVE_FIELDS = [f for f in KON_FIELDS if not f[0].startswith('unused')]
@@ -203,7 +212,7 @@ def kon_record_name(rec, tkt):
         if v != 0:
             t = resolve_kon_val(v, tkt)
             if t: return t[:25]
-    return f"条件#{rec.get('cond_id', rec['index'])}"
+    return f"动画#{rec.get('cond_id', rec['index'])}"
 
 def load_kon(fp):
     with open(fp, 'rb') as f: raw = f.read()
@@ -304,7 +313,7 @@ class KonEditor:
         self.tree = ttk.Treeview(lf, columns=cols, show='headings', selectmode='browse')
         cc = [
             ('index', '记录#', 50),
-            ('cond_id', '条件ID', 55),
+            ('cond_id', '动画ID', 55),
             ('cond_type', '类型', 65),
             ('tkt_name', 'TKT解析/名称', 230),
             ('value', '参数值', 55),
@@ -369,7 +378,7 @@ class KonEditor:
         # Field groups — active fields only, skip unused
         self._build_field_group("核心属性 (offset 0–8)", ACTIVE_FIELDS[:5], 1, 5)
         self._build_field_group("参数区 (offset 10–18)", ACTIVE_FIELDS[5:10], 2, 5)
-        self._build_field_group("扩展参数 (offset 20–28)", ACTIVE_FIELDS[10:15], 3, 5)
+        self._build_field_group("状态位掩码 (offset 20–28)", ACTIVE_FIELDS[10:15], 3, 5)
         self._build_field_group("未使用 (offset 30–36) + 结束标记", KON_FIELDS[15:], 4, 5)
 
         # Bottom path bar
@@ -397,17 +406,32 @@ class KonEditor:
         lbl.pack(anchor=tk.W)
         self._bind_tooltip(lbl, f"[{fo:02d}] {cmt}")
 
-        box = ttk.Frame(frm); box.pack(fill=tk.X)
-        ev = tk.StringVar(); self._edit_vars[fn] = ev
-        ent = ttk.Entry(box, textvariable=ev, width=fw, font=FONT)
-        if readonly:
-            ent.configure(state='readonly', foreground='#AAA')
-        ent.pack(side=tk.LEFT)
-        # TKT 文本解析显示 (for non-unused fields)
-        if not readonly:
-            self._edit_extras[fn] = ttk.Label(frm, text="", foreground='#3366cc',
-                                               font=FONT_S, wraplength=180)
-            self._edit_extras[fn].pack(anchor=tk.W)
+        is_mask = 'status' in fn
+        if is_mask:
+            # 状态位掩码: 按钮 + 状态名标签
+            inf = fn.startswith('inflict')
+            btn_text = "选择导致状态…" if inf else "选择解除状态…"
+            color = '#CC3333' if inf else '#3366cc'
+            ttk.Button(frm, text=btn_text, width=fw + 6,
+                       command=lambda f=fn: self._pick_status(f)).pack(fill=tk.X)
+            self._edit_vars[fn] = tk.StringVar()
+            extras_frame = ttk.Frame(frm)
+            extras_frame.pack(anchor=tk.W, fill=tk.X)
+            self._edit_extras[fn] = (extras_frame, ttk.Label(extras_frame, text="(无)",
+                                       foreground=color, font=FONT_S, wraplength=180))
+            self._edit_extras[fn][1].pack(anchor=tk.W)
+        else:
+            box = ttk.Frame(frm); box.pack(fill=tk.X)
+            ev = tk.StringVar(); self._edit_vars[fn] = ev
+            ent = ttk.Entry(box, textvariable=ev, width=fw, font=FONT)
+            if readonly:
+                ent.configure(state='readonly', foreground='#AAA')
+            ent.pack(side=tk.LEFT)
+            # TKT 文本解析显示 (for non-unused fields)
+            if not readonly:
+                self._edit_extras[fn] = ttk.Label(frm, text="", foreground='#3366cc',
+                                                   font=FONT_S, wraplength=180)
+                self._edit_extras[fn].pack(anchor=tk.W)
 
     def _bind_tooltip(self, widget, text):
         tip = {'win': None}
@@ -427,6 +451,72 @@ class KonEditor:
         def _mw(e): canvas.yview_scroll(int(-1 * (e.delta / 120)), "units")
         canvas.bind("<Enter>", lambda e: canvas.bind_all("<MouseWheel>", _mw))
         canvas.bind("<Leave>", lambda e: canvas.unbind_all("<MouseWheel>"))
+
+    def _center_dialog(self, dlg, w, h):
+        dlg.withdraw()
+        dlg.geometry(f"{w}x{h}")
+        dlg.update_idletasks()
+        rx = self.root.winfo_rootx(); ry = self.root.winfo_rooty()
+        rw = self.root.winfo_width(); rh = self.root.winfo_height()
+        x = rx + (rw - w) // 2; y = ry + (rh - h) // 2
+        dlg.geometry(f"+{x}+{y}")
+        dlg.deiconify()
+
+    # ----------- 弹窗: 状态 mask 多选 -----------
+    def _pick_status(self, fn):
+        inf = fn.startswith('inflict')
+        title = "选择导致状态 (位掩码)" if inf else "选择解除状态 (位掩码)"
+        dlg = tk.Toplevel(self.root); dlg.title(title)
+        dlg.transient(self.root); dlg.grab_set()
+        self._center_dialog(dlg, 320, 520)
+        base = 0 if fn.endswith('_lo') else 16
+        cur_mask = int(self._edit_vars[fn].get() or 0) & 0xFFFF
+        vars_ = []
+        wrap = ttk.Frame(dlg, padding=8); wrap.pack(fill=tk.BOTH, expand=True)
+        for i in range(16):
+            idx = base + i
+            if idx >= len(STATUS_NAMES): break
+            v = tk.BooleanVar(value=bool(cur_mask & (1 << i)))
+            ttk.Checkbutton(wrap, text=f"{idx}. {STATUS_NAMES[idx]}",
+                            variable=v).pack(anchor=tk.W, pady=1)
+            vars_.append(v)
+        bf = ttk.Frame(dlg); bf.pack(fill=tk.X, padx=8, pady=8)
+        def _ok():
+            m = 0
+            for i, v in enumerate(vars_):
+                if v.get(): m |= (1 << i)
+            if m >= 0x8000: m -= 0x10000
+            self._edit_vars[fn].set(str(m))
+            self._update_status_label(fn, m & 0xFFFF); dlg.destroy()
+        ttk.Button(bf, text="全选", command=lambda: [v.set(True) for v in vars_]).pack(side=tk.LEFT)
+        ttk.Button(bf, text="全清", command=lambda: [v.set(False) for v in vars_]).pack(side=tk.LEFT, padx=4)
+        ttk.Button(bf, text="取消", command=dlg.destroy).pack(side=tk.RIGHT, padx=2)
+        ttk.Button(bf, text="确定", command=_ok).pack(side=tk.RIGHT, padx=2)
+        dlg.wait_window()
+
+    def _update_status_label(self, fn, mask):
+        base = 0 if fn.endswith('_lo') else 16
+        inf = fn.startswith('inflict')
+        color = '#CC3333' if inf else '#3366cc'
+        sel = []
+        for i in range(16):
+            if mask & (1 << i) and base + i < len(STATUS_NAMES):
+                sel.append((base + i, STATUS_NAMES[base + i]))
+        extras_frame, txt_lbl = self._edit_extras[fn]
+        for w in extras_frame.winfo_children():
+            if w != txt_lbl: w.destroy()
+        if sel:
+            txt_lbl.config(text="")
+            txt_lbl.pack_forget()
+            COLS = 3
+            for si, (idx, nm) in enumerate(sel):
+                row, col = divmod(si, COLS)
+                cell = ttk.Frame(extras_frame)
+                cell.grid(row=row, column=col, sticky='w', padx=(0, 6), pady=1)
+                ttk.Label(cell, text=nm, foreground=color, font=FONT_S).pack(side=tk.LEFT)
+        else:
+            txt_lbl.config(text="(无)")
+            txt_lbl.pack(anchor=tk.W)
 
     # ----------- 数据加载 -----------
 
@@ -603,7 +693,7 @@ class KonEditor:
         cid = rec.get('cond_id', 0)
 
         self.lbl_rec_idx.config(text=(
-            f"记录 #{rec['index']}    条件ID={cid}    类型={ct}"
+            f"记录 #{rec['index']}    动画ID={cid}    类型={ct}"
             + (f" ({ct_txt})" if ct_txt else "")
             + (f"    名称={nm}" if nm else "")
         ))
@@ -630,8 +720,11 @@ class KonEditor:
             val = rec.get(fn, 0); sv = str(val)
             self._edit_vars.get(fn, tk.StringVar()).set(sv)
             if fn in self._edit_extras:
-                resolved = resolve_kon_val(int(val) if val else 0, self.tkt)
-                self._edit_extras[fn].config(text=resolved)
+                if 'status' in fn:
+                    self._update_status_label(fn, int(val) if val else 0)
+                else:
+                    resolved = resolve_kon_val(int(val) if val else 0, self.tkt)
+                    self._edit_extras[fn].config(text=resolved)
 
     # ----------- 编辑应用 -----------
 
@@ -682,7 +775,7 @@ class KonEditor:
         p = filedialog.asksaveasfilename(defaultextension=".csv", filetypes=[("CSV", "*.csv")])
         if not p: return
         with open(p, 'w', encoding='utf-8-sig') as f:
-            hdr = ['记录索引', '条件ID', 'TKT解析名称'] + [fn for fn, _, _, _ in KON_FIELDS]
+            hdr = ['记录索引', '动画ID', 'TKT解析名称'] + [fn for fn, _, _, _ in KON_FIELDS]
             f.write(','.join(hdr) + '\n')
             for rec in self.records:
                 if all(rec[fn] == 0 for fn, _, _, _ in KON_FIELDS): continue
@@ -703,7 +796,7 @@ class KonEditor:
         lines.append("  旧版: 13×int16 (26字节) × 1000条 = 26000 ← 错误!")
         lines.append("  修正: 20×int16 (40字节) × 650条  = 26000 ← 正确!")
         lines.append("  证据: sub_4434BC 按 word_9D069E[20*i] (stride=40字节) 索引;")
-        lines.append("        field[3] 在所有 650 条中为 0..649 顺序递增的唯一ID")
+        lines.append("        field[3] 为精灵/动画索引, 值范围0..639 (-1=无)")
         lines.append("")
         lines.append("【字段详情】")
         for fn, fo, fl, cmt in KON_FIELDS:
@@ -734,7 +827,8 @@ class KonEditor:
             "2026-05 修正版: 650条 × 40字节 (20×int16)\n\n"
             "旧版错误: 误用 1000条 × 26字节 (13×int16)\n"
             "修正依据: sub_4434BC (word_9D069E[20*i]),\n"
-            "          field[3] 顺序索引 0..649 验证\n\n"
+            "          field[3] 为精灵索引 0..639\n"
+            "          field[10-13] 为状态位掩码\n\n"
             "逆向来源:\n"
             "  sub_4173F8  TKKon 加载\n"
             "  sub_4434BC  条件运行时处理\n"
