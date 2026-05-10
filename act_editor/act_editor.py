@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-TKAct.dat 多图层 2D 精灵动画编辑器 v2.4.3
+TKAct.dat 多图层 2D 精灵动画编辑器 v2.4.4
 =============================================================
 修订依据:
   - v2.0/v2.1: 逆向工作区/TKS_AI分析act_editor记录.md
@@ -14,17 +14,19 @@ TKAct.dat 多图层 2D 精灵动画编辑器 v2.4.3
                在多 sprite 叠加场景下不稳定, 改由 PIL 自合成后
                一次性以 RGB 贴图)
   - v2.4.2  : [已被 v2.4.3 覆写] 错误地将 mode=2 标注为 50% 半透.
-  - v2.4.3  : ★ mode=2 的真实语义是"加法饱和混合 (additive)", 非 alpha 半透.
-              核心证据 sub_453554 L43-52 初始化混合查表:
-                  word_A3AD30[i+j] = min(i+j, 31)    (非 (i+j)/2)
-                  word_A3ADB0[k+m] = min(k+m, 63)
-                  word_A39D30[α*v] = α * v / 32     (alpha 预乘表)
-              所有 mode=2 分支都是加法:
-                  param=0/>31 → full additive: dst = min(dst+src, 31)
-                  0<p<=31     → scaled:        dst = min(dst+src*p/32, 31)
-              黑色 src 贡献 0 不改变 dst → "黑色像素被过滤" 现象的根源,
-              亮色相加钳顶 → 饱和度饱满, 正是游戏发光特效的经典外观.
-              PIL 实现: ImageChops.add + alpha mask + 可选 point 预乘.
+  - v2.4.3  : mode=2 是加法饱和混合 (additive), 非 alpha 半透.
+              查表 word_A3AD30[i+j]=min(i+j,31) (sub_453554 L43-52)
+              param=0/>31 → full additive; 0<p<=31 → scaled additive.
+  - v2.4.4  : ★ mode=3/4 修正 (之前实现完全错误, 依据 sub_45871C / sub_459854):
+              mode=3 (sub_45871C L118-134): per-channel 减法钳 0
+                    dst.RGB = max(dst - src, 0)          # 非 RGB/3 阴影!
+                    黑色 src 不改变 dst, 亮色 src 压暗 dst → "挖洞变暗".
+              mode=4 (sub_459854 L109-124): 按 src 亮度 alpha-blend
+                    α = word_A3AEB0[src] & 0x1F          # NTSC 灰度 5-bit
+                    α==0 跳过; α>28 覆盖;
+                    其他 dst = dst*(32-α)/32 + src*α/32  # 非 RGB 取反!
+                    亮色强覆盖、暗色弱显现 → 烟雾/光雾/软粒子风格.
+              PIL 实现: ImageChops.subtract / Image.composite + luma mask.
 
   v2.4 新增:
     · layer_type 语义按实测重新标注 (与 sub_4434BC 反编译完全一致):
@@ -36,12 +38,12 @@ TKAct.dat 多图层 2D 精灵动画编辑器 v2.4.3
     · 预览引入 6 种图像混合模式 (对应 sub_4434BC L320-339 switch):
         0 正常      sub_4544EC  直接 blit
         1 闪烁/染色 sub_454D24  按 blend_param 偏色 (param 0 或 >31 不变)
-        2 加法/发光 sub_4559D0  additive 饱和混合 (非半透!):
+        2 加法/发光 sub_4559D0  additive 饱和混合:
                                   = 0/>31    dst = min(dst+src, 31/63)
                                   0<p<=31    dst = min(dst+src*p/32, 31/63)
-        3 阴影      sub_458020  RGB→(R/3,G/3,B/3), a6=a7=0 写死, 忽略 param
-        4 负片      sub_459168  RGB 取反, 无 param
-        5 水平翻转  sub_458D08  X 轴镜像 (反编译证据: 目标指针 -=2 逆写)
+        3 减法/压暗 sub_458020→45871C: dst = max(dst-src, 0) 每通道
+        4 亮度融合  sub_459168→459854: α=Y(src), dst = dst*(32-α)/32+src*α/32
+        5 水平翻转  sub_458D08  X 轴镜像
 
   v2.0 修正要点:
     1. 前 32 字节 = 4 方向 × 8 字节 的图层绘制顺序 (z-order)
@@ -340,15 +342,19 @@ LAYER_TYPE_LABELS = {
 #                    · a6=0        → sub_455B98/_456150   full additive: dst=min(dst+src,31/63)
 #                    · 0<a6<=31    → sub_4573A0/_4579D0   scaled additive: dst=min(dst+src*a6/32,31)
 #                    · a6>31       → 递归 (0,0) 退化 full additive (实测 48 次 a6=80)
-#     3 sub_458020  阴影剪影, 4434BC.c L332 调用时 a6=a7=0 写死 → 固走阴影分支
-#     4 sub_459168  负片/反色 (走 sub_4591CC/sub_459854 的反相通道)
+#     3 sub_458020  减法饱和混合 (a6=a7=0 走 sub_45871C L118-134):
+#                    dst.RGB = max(dst - src, 0) per-channel (非 RGB/3!)
+#     4 sub_459168  按 src 亮度的 alpha blend (走 sub_459854 L109-124):
+#                    α = Y(src)                      # NTSC 灰度 5-bit
+#                    α==0 跳过; α>28 覆盖;
+#                    其他 dst = dst*(32-α)/32 + src*α/32  (非 RGB 取反!)
 #     5 sub_458D08  水平翻转 (证据: L111/L136 目标指针 dword_A5AEB4 -=2 逆写)
 BLEND_MODE_LABELS = {
     0: "0 正常",
     1: "1 闪烁/染色",
     2: "2 加法/发光",
-    3: "3 阴影剪影",
-    4: "4 负片反色",
+    3: "3 减法/压暗",
+    4: "4 亮度融合",
     5: "5 水平翻转",
 }
 
@@ -2013,23 +2019,20 @@ class ActEditor:
           case 4: sub_459168(..., -1)                        无 param
           case 5: sub_458D08(..., -1)                        无 param
 
-        ★ v2.4.3 重大修正: mode=2 的真实语义是 "加法饱和混合 (additive saturation)",
-          而非 alpha 半透. 核心证据在 sub_453554 (查表初始化):
-              word_A3AD30[i+j] = min(i+j, 31)   // i,j ∈ [0,31]  (5-bit)
-              word_A3ADB0[k+m] = min(k+m, 63)   // k,m ∈ [0,63]  (RGB565 G 通道)
-              word_A39D30[α][v] = α * v / 32    // alpha 预乘表
-          mode=2 三个子分支 (sub_4559D0 L16-42):
-            param == 0         → sub_455B98/_456150:
-                dst.RGB = min(dst + src,       31/63)  # full additive
-            0 < param <= 31    → sub_4573A0/_4579D0:
-                src' = src * param / 32                # 预乘 alpha
-                dst.RGB = min(dst + src',      31/63)  # scaled additive
-            param > 31 或 < 0  → 递归 (0,0) 即退化为 full additive
-          这种混合下黑色像素 (0,0,0) 不贡献于背景 ⇒ "黑色像素看起来像被过滤".
-          亮色相加后饱和 ⇒ "饱和度非常高", 正是游戏特效/闪光/技能的经典外观.
+        ★ v2.4.3 修正: mode=2 是 additive (加法饱和混合, 非 alpha 半透).
+        ★ v2.4.4 修正: mode=3/4 之前实现错误, 依据反编译修正:
+          mode=3 (sub_45871C L118-134):  per-channel 减法钳 0
+              dst.RGB = max(dst.RGB - src.RGB, 0)
+              黑色 src 不改变 dst, 亮色 src 压暗 dst → "挖洞变暗"效果
+          mode=4 (sub_459854 L109-124):  按 src 亮度的 alpha-blend
+              α = word_A3AEB0[src] & 0x1F  # NTSC 灰度 Y=(11R+59G+30B)/100, 取 5-bit
+              if α == 0:     dst 不变 (src 黑色跳过)
+              elif α > 28:   dst = src (不透明覆盖)
+              else:          dst = dst*(32-α)/32 + src*α/32  (α 级 alpha blend)
+              亮色强覆盖、暗色弱显现 → 烟雾/光雾/软粒子风格
 
-          ★ 由于 additive 需要访问背景像素, mode=2 不能在这里单独修改 sprite;
-            此处仅做直通, 由 _preview_redraw 合成循环用 ImageChops.add 实现.
+          mode=2/3/4 都需要访问 dst (背景), 故此处 _apply_blend 仅直通,
+          实际混合由 _preview_redraw 合成阶段对应的 _composite_* 方法实现.
 
         mode=3/4/5 在 ACT 调用点 param 被忽略 (case3 a6=a7=0 固定走阴影分支,
         case4/5 不传 param), 故此处也忽略 param.
@@ -2038,8 +2041,8 @@ class ActEditor:
             return None
         if mode == 0 or mode not in (1, 2, 3, 4, 5):
             return pil_img
-        # mode=2 的加法混合必须访问 dst, 由合成阶段处理; 此处原样返回
-        if mode == 2:
+        # mode=2/3/4 的混合必须访问 dst, 由合成阶段处理; 此处原样返回
+        if mode in (2, 3, 4):
             return pil_img
 
         if mode == 5:
@@ -2079,27 +2082,6 @@ class ActEditor:
                 buf[o]     = (buf[o]     + tr) >> 1
                 buf[o + 1] = (buf[o + 1] + tg) >> 1
                 buf[o + 2] = (buf[o + 2] + tb) >> 1
-
-        elif mode == 3:
-            # 3 阴影: RGB→(R/3,G/3,B/3), alpha 降到 60% (param 忽略)
-            for i in range(n):
-                o = i * 4
-                if buf[o + 3] == 0:
-                    continue
-                buf[o]     //= 3
-                buf[o + 1] //= 3
-                buf[o + 2] //= 3
-                buf[o + 3] = int(buf[o + 3] * 0.6)
-
-        elif mode == 4:
-            # 4 负片: RGB 取反 (param 忽略)
-            for i in range(n):
-                o = i * 4
-                if buf[o + 3] == 0:
-                    continue
-                buf[o]     = 255 - buf[o]
-                buf[o + 1] = 255 - buf[o + 1]
-                buf[o + 2] = 255 - buf[o + 2]
 
         try:
             return Image.frombytes('RGBA', pil_img.size, bytes(buf))
@@ -2158,6 +2140,95 @@ class ActEditor:
             composite.paste(blended, (l, t))
         except Exception:
             # 加法失败时退化为 alpha 合成, 保证预览不中断
+            try:
+                composite.paste(rgba_src, (dx, dy), rgba_src)
+            except Exception:
+                pass
+
+    def _composite_subtract(self, composite, rgba_src, dx, dy):
+        """对 composite 在 (dx, dy) 处应用 "减法饱和混合" (sub_45871C).
+
+        游戏反编译 L118-134 per-channel:
+            if src.R >= dst.R: v13 = 0       else: v13 = dst.R - src.R
+            if src.G >= dst.G: v11 = 0       else: v11 = dst.G - src.G
+            if src.B >= dst.B: v9  = 0       else: v9  = dst.B - src.B
+            dst = v9 | (32*v11) | (v13<<10)
+        等价于: dst.RGB = max(dst - src, 0)  每通道独立  → ImageChops.subtract.
+
+        sprite 透明区 (alpha=0) 的 RGB 必须置 0 (减 0 不改变 dst).
+        """
+        if composite is None or rgba_src is None:
+            return
+        sw, sh = rgba_src.size
+        cw, ch = composite.size
+        l = max(0, dx); t = max(0, dy)
+        r = min(cw, dx + sw); b = min(ch, dy + sh)
+        if r <= l or b <= t:
+            return
+        sl, st = l - dx, t - dy
+        sr, sb = r - dx, b - dy
+        try:
+            sub = rgba_src.crop((sl, st, sr, sb))
+            if sub.mode != 'RGBA':
+                sub = sub.convert('RGBA')
+            alpha = sub.split()[3]
+            src_rgb = sub.convert('RGB')
+            zero_bg = Image.new('RGB', sub.size, (0, 0, 0))
+            masked = Image.composite(src_rgb, zero_bg, alpha)
+            dst_crop = composite.crop((l, t, r, b))
+            blended = ImageChops.subtract(dst_crop, masked)
+            composite.paste(blended, (l, t))
+        except Exception:
+            try:
+                composite.paste(rgba_src, (dx, dy), rgba_src)
+            except Exception:
+                pass
+
+    def _composite_luma_alpha(self, composite, rgba_src, dx, dy):
+        """对 composite 在 (dx, dy) 处应用 "按 src 亮度做 alpha blend" (sub_459854).
+
+        游戏反编译 L109-124:
+            α = word_A3AEB0[src] & 0x1F      # NTSC 灰度 5-bit (0..31)
+            if α == 0:     dst 不变            (src 黑色 → 跳过)
+            elif α > 28:   dst = src          (不透明覆盖)
+            else:          dst = dst*(32-α)/32 + src*α/32   (α 级 alpha blend)
+
+        word_A3AEB0 在 sub_453554 L63-102 初始化为 Y = (11R+59G+30B)/100.
+        此处把 5-bit α 等价映射到 8-bit mask ∈ [0,255] 用 Image.composite 实现:
+            mask = 0                   when α_8 == 0 or sprite 透明
+            mask = 255                 when α_5 > 28  (即 α_8 > 224)
+            mask = α_8                 otherwise      (线性 alpha)
+        """
+        if composite is None or rgba_src is None:
+            return
+        sw, sh = rgba_src.size
+        cw, ch = composite.size
+        l = max(0, dx); t = max(0, dy)
+        r = min(cw, dx + sw); b = min(ch, dy + sh)
+        if r <= l or b <= t:
+            return
+        sl, st = l - dx, t - dy
+        sr, sb = r - dx, b - dy
+        try:
+            sub = rgba_src.crop((sl, st, sr, sb))
+            if sub.mode != 'RGBA':
+                sub = sub.convert('RGBA')
+            alpha = sub.split()[3]
+            src_rgb = sub.convert('RGB')
+            # PIL convert('L') 使用 ITU-R 601-2 luma (0.299R+0.587G+0.114B),
+            # 与游戏 (0.30, 0.59, 0.11) 几乎一致 (差 <0.2%), 直接复用.
+            luma = src_rgb.convert('L')
+            # 构造 mask: 0 → 0, >224 → 255, 其余 → luma 本身
+            mask_luma = luma.point(
+                lambda v: 0 if v == 0 else (255 if v > 224 else v))
+            # 再与 sprite alpha 做"与" (alpha=0 处 mask=0)
+            alpha_bin = alpha.point(lambda v: 255 if v > 0 else 0)
+            mask = ImageChops.multiply(mask_luma, alpha_bin)
+            dst_crop = composite.crop((l, t, r, b))
+            # Image.composite(src, dst, mask): out = src*mask/255 + dst*(1-mask/255)
+            blended = Image.composite(src_rgb, dst_crop, mask)
+            composite.paste(blended, (l, t))
+        except Exception:
             try:
                 composite.paste(rgba_src, (dx, dy), rgba_src)
             except Exception:
@@ -2473,7 +2544,7 @@ class ActEditor:
             # 可读 blend 标签 (用于 info 行显示)
             _bm_label = {
                 0: '正常', 1: '染色', 2: '加法',
-                3: '阴影', 4: '负片', 5: '翻转',
+                3: '减法', 4: '亮度融合', 5: '翻转',
             }.get(blend_mode, f'?{blend_mode}')
             _effective = True
             if blend_mode == 0:
@@ -2518,6 +2589,16 @@ class ActEditor:
                         #   黑色 (0,0,0) 贡献为 0, 不改变 dst → "黑色被过滤"
                         self._composite_additive(
                             composite, final_img, dx, dy, blend_param)
+                    elif blend_mode == 3:
+                        # ★ 减法饱和混合 (sub_45871C L118-134):
+                        #   dst.RGB = max(dst - src, 0) 每通道独立
+                        self._composite_subtract(
+                            composite, final_img, dx, dy)
+                    elif blend_mode == 4:
+                        # ★ 按 src 亮度的 alpha blend (sub_459854 L109-124):
+                        #   α = NTSC 灰度 Y(src)  → 按 α 值线性融合 src 与 dst
+                        self._composite_luma_alpha(
+                            composite, final_img, dx, dy)
                     else:
                         # 其余 mode: 标准 alpha 合成 (paste with mask)
                         composite.paste(final_img, (dx, dy), final_img)
@@ -2615,18 +2696,20 @@ class ActEditor:
     def _show_about(self):
         messagebox.showinfo(
             "关于",
-            "TKAct.dat 多图层 2D 精灵动画编辑器 v2.4.3\n\n"
+            "TKAct.dat 多图层 2D 精灵动画编辑器 v2.4.4\n\n"
             "修订依据:\n"
             "  · 逆向工作区/TKS_AI分析act_editor记录.md (v2.0/v2.1)\n"
             "  · 逆向工作区/TKS_AI修正TKAct.dat实际JVG绑定.md (v2.2)\n"
             "  · sub_4434BC / sub_451780 / sub_458D08 反编译 (v2.3/v2.4)\n\n"
             "650 条 × 784 字节 = 509,600 字节\n\n"
-            "v2.4.3 重大修正:\n"
-            "  · mode=2 的真实语义是加法饱和混合 (additive), 非 alpha 半透!\n"
-            "    查表 word_A3AD30[i+j]=min(i+j,31) (sub_453554 L43-52)\n"
-            "    param=0/>31 → dst=min(dst+src,31)       (full additive)\n"
-            "    0<p<=31     → dst=min(dst+src*p/32,31)  (scaled additive)\n"
-            "  · 黑色像素贡献 0 → 自然被 \"过滤\", 亮色钳顶 → 饱和度饱满.\n\n"
+            "v2.4.4 重大修正 (mode=3/4 之前实现完全错误):\n"
+            "  · mode=3 实为\"减法钳 0\" (sub_45871C L118-134):\n"
+            "    dst.RGB = max(dst - src, 0) 每通道 → \"挖洞变暗\"\n"
+            "  · mode=4 实为\"按亮度 alpha-blend\" (sub_459854 L109-124):\n"
+            "    α=Y(src); α==0 跳过; α>28 覆盖; 其他 α 级线性融合\n\n"
+            "v2.4.3 修正:\n"
+            "  · mode=2 是加法饱和混合 (additive), 非 alpha 半透\n"
+            "    查表 word_A3AD30[i+j]=min(i+j,31) (sub_453554 L43-52)\n\n"
             "v2.4.1 修复:\n"
             "  · 预览 sprite 周围黑底 (Tk Canvas RGBA alpha 合成)\n"
             "    → 改由 PIL 自合成, 一次性以 RGB 贴图\n\n"
@@ -2638,7 +2721,7 @@ class ActEditor:
             "    t=4 命中锚点 (sub_42F9C8 计算, 不渲染)\n"
             "    t=5 全屏特效 (屏幕中心 320,300)\n"
             "  · 预览应用 6 种图像混合模式 (blend_mode +22):\n"
-            "    0 正常 / 1 染色 / 2 加法 / 3 阴影 / 4 负片 / 5 水平翻转\n\n"
+            "    0 正常 / 1 染色 / 2 加法 / 3 减法 / 4 亮度融合 / 5 水平翻转\n\n"
             "v2.3: 尾部 64B = 音效触发表 + SWS.GRP 实时播放\n"
             "v2.2: 贴图源 = Aa.jvg / Af.jvg (非 Cha / Ani)\n"
             "逆向来源: sub_4434BC / sub_42FEE0 / sub_451780 / sub_458D08")
