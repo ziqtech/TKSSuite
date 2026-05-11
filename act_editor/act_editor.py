@@ -93,7 +93,7 @@ TKAct.dat 多图层 2D 精灵动画编辑器 v2.4.4
   sub_451C38: 播放已加载音效缓冲 (eax = 资源表, edx = sound_id)
 """
 
-import os, sys, struct, tkinter as tk
+import os, sys, struct, copy, tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 
 HAS_PIL = False
@@ -782,6 +782,7 @@ class ActEditor:
             self.root.iconbitmap(default=ico)
         self.root.geometry("1320x860")
         self.root.minsize(1080, 680)
+        self.root.state('zoomed')  # 默认全屏
 
         self.act_path = None
         self.aa_path = None      # Aa.jvg (layer_type==1 的贴图源)
@@ -876,10 +877,12 @@ class ActEditor:
         # Main PanedWindow
         paned = ttk.PanedWindow(self.root, orient=tk.HORIZONTAL)
         paned.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        self.main_paned = paned
 
-        # Left: TreeView
+        # Left: TreeView (缩小宽度, 给编辑区留空间)
         lf = ttk.Frame(paned)
         paned.add(lf, weight=1)
+        lf.configure(width=260)
         cols = ('index', 'summary', 'n_layer')
         self.tree = ttk.Treeview(lf, columns=cols, show='headings',
                                  selectmode='browse')
@@ -901,9 +904,9 @@ class ActEditor:
         self.tree.tag_configure('active', foreground='#228B22')
         self.tree.tag_configure('empty', foreground='#AAAAAA')
 
-        # Right: Edit panel
+        # Right: Edit panel (更大权重, 给编辑区更多空间)
         rf = ttk.Frame(paned)
-        paned.add(rf, weight=3)
+        paned.add(rf, weight=4)
         self.edit_frame = rf
 
         top_bar = ttk.Frame(rf)
@@ -924,25 +927,22 @@ class ActEditor:
         self.dir_frame = ttk.Frame(self.nb)
         self.nb.add(self.dir_frame, text="方向与绘制顺序")
 
-        # Tab 2: 图层编辑 (8 子 Tab, 每个按语义分组)
-        self.layer_nb = ttk.Notebook(self.nb)
-        self.nb.add(self.layer_nb, text="图层编辑")
-        self._layer_frames = []
+        # Tab 2: 时间轴与预览 (统一视图: 预览 + 时间轴 + 音效标记)
+        self.unified_frame = ttk.Frame(self.nb)
+        self.nb.add(self.unified_frame, text="时间轴与预览")
         self._layer_vars = []   # [{key: StringVar, '_type_combo': Combobox, ...}] × 8
-        for s in range(1, ACT_MAX_LAYER + 1):
-            sf = ttk.Frame(self.layer_nb)
-            self.layer_nb.add(sf, text=f"#{s}")
-            self._layer_frames.append(sf)
+        self._tl_selected_layer = None
+        self._tl_zoom = 40
+        self._tl_playhead = 0
+        self._tl_last_layers_info = []
+        self._edit_snapshot = None
+        self._tl_edit_enabled = False
 
         # Tab 3: 条目级参数
         self.param_frame = ttk.Frame(self.nb)
         self.nb.add(self.param_frame, text="条目级参数")
 
-        # Tab 4: 动画预览
-        self.preview_frame = ttk.Frame(self.nb)
-        self.nb.add(self.preview_frame, text="动画预览")
-
-        # Tab 5: 尾部数据 (16 对)
+        # Tab 4: 尾部数据 (16 对)
         self.tail_frame = ttk.Frame(self.nb)
         self.nb.add(self.tail_frame, text="尾部数据")
 
@@ -956,10 +956,14 @@ class ActEditor:
         self.lbl_jvg.pack(side=tk.LEFT, padx=10, pady=2)
 
         self._build_direction_ui()
-        self._build_layer_uis()
+        self._build_unified_ui()
         self._build_param_ui()
-        self._build_preview_ui()
         self._build_tail_ui()
+
+        # 默认选中时间轴与预览 Tab
+        self.nb.select(self.unified_frame)
+        # 左侧列表最小宽度 (延迟确保窗口已渲染)
+        self.root.after(200, lambda: self.main_paned.sashpos(0, 200))
 
     # -------- Tab: 方向与绘制顺序 --------
 
@@ -1014,81 +1018,950 @@ class ActEditor:
 
     # -------- Tab: 图层编辑 --------
 
-    def _build_layer_uis(self):
-        self._layer_vars = []
-        for s in range(1, ACT_MAX_LAYER + 1):
-            sf = self._layer_frames[s - 1]
+    # -------- Tab: 时间轴编辑 (替代旧8子Tab) --------
 
-            canvas = tk.Canvas(sf, highlightthickness=0)
-            sb = ttk.Scrollbar(sf, orient=tk.VERTICAL, command=canvas.yview)
-            inner = ttk.Frame(canvas)
-            inner.bind('<Configure>',
-                       lambda e, c=canvas: c.configure(scrollregion=c.bbox('all')))
-            canvas.create_window((0, 0), window=inner, anchor='nw')
-            canvas.configure(yscrollcommand=sb.set)
-            canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-            sb.pack(side=tk.RIGHT, fill=tk.Y)
+    def _build_unified_ui(self):
+        """构建统一面板: 预览 + 时间轴 + 音效标记 + 缩略图"""
+        main = ttk.Frame(self.unified_frame, padding=5)
+        main.pack(fill=tk.BOTH, expand=True)
 
-            def _mw(e, c=canvas):
-                c.yview_scroll(int(-1 * (e.delta / 120)), "units")
+        # ====== 控制栏 (合并) ======
+        ctrl = ttk.Frame(main)
+        ctrl.pack(fill=tk.X, pady=(0, 3))
 
-            canvas.bind("<Enter>",
-                        lambda e, c=canvas: c.bind_all("<MouseWheel>", _mw))
-            canvas.bind("<Leave>",
-                        lambda e, c=canvas: c.unbind_all("<MouseWheel>"))
+        # 步进 + 播放控制
+        ttk.Button(ctrl, text="◀◀", width=3,
+                   command=self._tl_goto_first).pack(side=tk.LEFT, padx=1)
+        ttk.Button(ctrl, text="◀", width=3,
+                   command=self._tl_step_prev).pack(side=tk.LEFT, padx=1)
+        ttk.Button(ctrl, text="▶", command=self._preview_play,
+                   width=3).pack(side=tk.LEFT, padx=1)
+        ttk.Button(ctrl, text="⏸", command=self._preview_stop,
+                   width=3).pack(side=tk.LEFT, padx=1)
+        ttk.Button(ctrl, text="▶▶", width=3,
+                   command=self._tl_goto_last).pack(side=tk.LEFT, padx=1)
 
-            vars_row = {}
+        ttk.Separator(ctrl, orient=tk.VERTICAL).pack(
+            side=tk.LEFT, fill=tk.Y, padx=4)
 
-            # 头部: 图层号与类型
-            head = ttk.Frame(inner, padding=(4, 4))
-            head.pack(fill=tk.X, anchor=tk.W)
-            ttk.Label(head, text=f"图层 #{s}", font=('', 11, 'bold')
-                      ).pack(side=tk.LEFT)
-            ttk.Label(head, text="类型:", font=FONT).pack(side=tk.LEFT,
-                                                         padx=(12, 2))
-            type_var = tk.StringVar()
-            vars_row['layer_type'] = type_var
-            type_combo = ttk.Combobox(
-                head, textvariable=type_var,
-                values=list(LAYER_TYPE_LABELS.values()),
-                width=26, state='readonly', font=FONT)
-            type_combo.pack(side=tk.LEFT, padx=2)
-            vars_row['_type_combo'] = type_combo
-            self._layer_vars.append(vars_row)
+        # 方向选择
+        ttk.Label(ctrl, text="方向:", font=FONT_S).pack(side=tk.LEFT)
+        self._preview_dir_var = tk.IntVar(value=0)
+        for d in range(4):
+            ttk.Radiobutton(ctrl, text=DIRECTION_SHORT[d],
+                            variable=self._preview_dir_var, value=d,
+                            command=self._preview_redraw,
+                            width=5).pack(side=tk.LEFT)
 
-            # 探针面板 (显示 JVG 实际帧数/推断布局/ACT 切片比例)
-            probe_row = ttk.Frame(inner, padding=(4, 0))
-            probe_row.pack(fill=tk.X, anchor=tk.W)
-            probe_lbl = ttk.Label(
-                probe_row, text="", font=FONT_S,
-                foreground='#556', justify='left')
-            probe_lbl.pack(side=tk.LEFT, anchor='w')
-            vars_row['_probe_lbl'] = probe_lbl
-            self._bind_tooltip(
-                probe_lbl,
-                "JVG 帧数探针 — 自动对比此图层的 (type, jvg_block_index)\n"
-                "  · 实际帧数 ← 从 Aa.jvg / Af.jvg 头部扫描得到\n"
-                "  · 推断布局 ← 按 4 方向优先匹配得出\n"
-                "  · ACT 切片 ← 由当前 dfo/first/last 字段决定")
+        ttk.Separator(ctrl, orient=tk.VERTICAL).pack(
+            side=tk.LEFT, fill=tk.Y, padx=4)
 
-            # 按语义分组渲染字段
-            for grp_name, fields in FIELD_GROUPS:
-                lf_grp = ttk.LabelFrame(inner, text=grp_name, padding=4)
-                lf_grp.pack(fill=tk.X, padx=4, pady=3, anchor=tk.W)
+        ttk.Label(ctrl, text="周期(ms):", font=FONT_S).pack(side=tk.LEFT)
+        self._preview_speed = tk.IntVar(value=50)
+        ttk.Spinbox(ctrl, textvariable=self._preview_speed,
+                    from_=10, to=500, increment=10, width=5,
+                    font=FONT).pack(side=tk.LEFT, padx=2)
 
-                self._render_field_group(lf_grp, fields, vars_row)
+        ttk.Separator(ctrl, orient=tk.VERTICAL).pack(
+            side=tk.LEFT, fill=tk.Y, padx=4)
 
-            # 字段变化时刷新探针 (layer_type 由 combo 的 bind 处理)
-            for fn in ('jvg_block_index', 'dir_frame_offset',
-                       'first_frame', 'last_frame', 'direction_mode'):
-                if fn in vars_row:
-                    vars_row[fn].trace_add(
-                        'write',
-                        lambda *_a, idx=s-1: self._update_layer_probe(idx))
-            type_combo.bind(
-                '<<ComboboxSelected>>',
-                lambda _e, idx=s-1: self._update_layer_probe(idx),
-                add='+')
+        # 时间轴缩放
+        ttk.Label(ctrl, text="缩放:", font=FONT_S).pack(side=tk.LEFT)
+        ttk.Button(ctrl, text="−", width=2,
+                   command=self._tl_zoom_out).pack(side=tk.LEFT, padx=1)
+        ttk.Button(ctrl, text="+", width=2,
+                   command=self._tl_zoom_in).pack(side=tk.LEFT, padx=1)
+        self._tl_zoom_lbl = ttk.Label(ctrl, text="40px/t",
+                                      font=('', 7))
+
+        ttk.Separator(ctrl, orient=tk.VERTICAL).pack(
+            side=tk.LEFT, fill=tk.Y, padx=4)
+
+        ttk.Button(ctrl, text="归零", width=4,
+                   command=self._tl_reset_playhead).pack(side=tk.LEFT, padx=1)
+        self._tl_tick_lbl = ttk.Label(ctrl, text="tick:0", font=FONT_S, width=7)
+        self._tl_tick_lbl.pack(side=tk.LEFT, padx=2)
+
+        # 图层可见性 (第二行)
+        vis_row = ttk.Frame(main)
+        vis_row.pack(fill=tk.X, pady=(0, 3))
+        ttk.Label(vis_row, text="图层可见:", font=FONT_S).pack(side=tk.LEFT)
+        self._preview_vis_frame = ttk.Frame(vis_row)
+        self._preview_vis_frame.pack(side=tk.LEFT, fill=tk.X)
+        self._preview_vis_vars = {}
+        self._tl_zoom_lbl.pack(side=tk.LEFT, padx=2)
+
+        # 编辑模式开关
+        ttk.Separator(ctrl, orient=tk.VERTICAL).pack(
+            side=tk.LEFT, fill=tk.Y, padx=4)
+        self._edit_mode_var = tk.BooleanVar(value=False)
+        self._edit_mode_btn = ttk.Checkbutton(
+            ctrl, text="编辑模式", variable=self._edit_mode_var,
+            command=self._toggle_edit_mode)
+        self._edit_mode_btn.pack(side=tk.LEFT, padx=4)
+
+        # 图层面板开关
+        self._layer_panel_visible = tk.BooleanVar(value=False)
+        ttk.Checkbutton(ctrl, text="☰ 图层", variable=self._layer_panel_visible,
+                        command=self._toggle_layer_panel).pack(
+                            side=tk.LEFT, padx=4)
+
+        # ====== 垂直分割: 预览区 + 时间轴区 (可拖动调整) ======
+        main_vpw = ttk.PanedWindow(main, orient=tk.VERTICAL)
+        main_vpw.pack(fill=tk.BOTH, expand=True)
+
+        # 上部: PanedWindow (左预览画布 + 右图层卡片)
+        upper_pw = ttk.PanedWindow(main_vpw, orient=tk.HORIZONTAL)
+        main_vpw.add(upper_pw, weight=3)
+
+        # 左: 预览画布 (主区域)
+        preview_outer = ttk.Frame(upper_pw)
+        upper_pw.add(preview_outer, weight=1)
+
+        # 右: 图层卡片列表 (默认隐藏, 点击 ☰ 图层 展开)
+        right_outer = ttk.Frame(upper_pw, width=240)
+        upper_pw.add(right_outer, weight=0)
+        upper_pw.forget(right_outer)  # 默认隐藏
+        self._tl_layer_panel = right_outer
+        self._tl_layer_pw = upper_pw
+
+        right_canvas = tk.Canvas(right_outer, width=240, highlightthickness=0)
+        right_sb = ttk.Scrollbar(right_outer, orient=tk.VERTICAL,
+                                 command=right_canvas.yview)
+        right_inner = ttk.Frame(right_canvas)
+        right_inner.bind('<Configure>',
+                         lambda e, c=right_canvas: c.configure(
+                             scrollregion=c.bbox('all')))
+        right_canvas.create_window((0, 0), window=right_inner, anchor='nw')
+        right_canvas.configure(yscrollcommand=right_sb.set)
+        right_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        right_sb.pack(side=tk.RIGHT, fill=tk.Y)
+
+        def _rmw(e, c=right_canvas):
+            c.yview_scroll(int(-1 * (e.delta / 120)), "units")
+
+        right_canvas.bind("<Enter>",
+                          lambda e, c=right_canvas: c.bind_all(
+                              "<MouseWheel>", _rmw))
+        right_canvas.bind("<Leave>",
+                          lambda e, c=right_canvas: c.unbind_all(
+                              "<MouseWheel>"))
+
+        self._preview_canvas = tk.Canvas(preview_outer, bg='#1a1a2e',
+                                         highlightthickness=0)
+        self._preview_canvas.pack(fill=tk.BOTH, expand=True)
+        self._preview_canvas.bind('<Configure>', lambda e: self._preview_redraw())
+        self._preview_canvas.bind('<Left>', lambda e: self._preview_step_back())
+        self._preview_canvas.bind('<Right>', lambda e: self._preview_step_next())
+        self._preview_canvas.bind('<space>', lambda e: (
+            self._preview_play() if not self._preview_job else self._preview_stop()))
+        self._preview_canvas.bind('<Button-1>', self._pv_on_press, add='+')
+        self._preview_canvas.bind('<B1-Motion>', self._pv_on_drag, add='+')
+        self._preview_canvas.bind('<ButtonRelease-1>', self._pv_on_release, add='+')
+        self._preview_canvas.bind('<Motion>', self._pv_on_motion, add='+')
+        self._pv_drag_state = None
+        self._preview_sprite_boxes = []
+
+        if not HAS_PIL:
+            self._preview_canvas.create_text(
+                200, 100, text="需要 Pillow 库:\npip install Pillow",
+                fill="#888", font=("", 11))
+
+        # ====== 下部: 时间轴画布 (可上下滚动) ======
+        tl_frame = ttk.Frame(main_vpw)
+        main_vpw.add(tl_frame, weight=2)
+
+        self._tl_canvas = tk.Canvas(tl_frame, bg='#f5f5f5',
+                                    highlightthickness=0)
+        tl_hsb = ttk.Scrollbar(tl_frame, orient=tk.HORIZONTAL,
+                               command=self._tl_canvas.xview)
+        tl_vsb = ttk.Scrollbar(tl_frame, orient=tk.VERTICAL,
+                               command=self._tl_canvas.yview)
+        self._tl_canvas.configure(xscrollcommand=tl_hsb.set,
+                                  yscrollcommand=tl_vsb.set)
+        self._tl_canvas.grid(row=0, column=0, sticky='nsew')
+        tl_vsb.grid(row=0, column=1, sticky='ns')
+        tl_hsb.grid(row=1, column=0, sticky='ew')
+        tl_frame.grid_rowconfigure(0, weight=1)
+        tl_frame.grid_columnconfigure(0, weight=1)
+
+        self._tl_canvas.bind("<MouseWheel>", self._tl_on_mousewheel)
+        self._tl_canvas.bind("<Button-1>", self._tl_on_click)
+        self._tl_canvas.bind("<B1-Motion>", self._tl_on_drag)
+        self._tl_canvas.bind("<ButtonRelease-1>", self._tl_on_release)
+        self._tl_canvas.bind("<Motion>", self._tl_on_motion)
+        self._tl_drag_state = None
+
+        # ====== 底部: 帧缩略图选择器 ======
+        self._thumb_frame = ttk.Frame(main, height=56)
+        self._thumb_frame.pack(fill=tk.X, pady=(3, 0))
+        self._thumb_canvas = tk.Canvas(self._thumb_frame, height=56,
+                                       bg='#e8e8e8', highlightthickness=0)
+        self._thumb_canvas.pack(fill=tk.X)
+        self._thumb_canvas.create_text(140, 28,
+                                       text="(选择图层查看帧缩略图)",
+                                       fill='#999', font=FONT_S)
+        self._thumb_images = []
+
+        # ====== 构建图层卡片 ======
+        self._tl_track_colors = ['#e74c3c', '#3498db', '#f39c12', '#2ecc71',
+                                 '#9b59b6', '#1abc9c', '#e67e22', '#95a5a6']
+        self._tl_cards = []
+        for s in range(ACT_MAX_LAYER):
+            card = self._build_timeline_card(right_inner, s)
+            self._tl_cards.append(card)
+
+        self._tl_right_canvas = right_canvas
+        self._tl_right_inner = right_inner
+
+        # 默认编辑模式关闭: 禁用手动编辑交互
+        self._set_timeline_interactive(False)
+
+    def _toggle_edit_mode(self):
+        """切换编辑模式"""
+        en = self._edit_mode_var.get()
+        self._set_timeline_interactive(en)
+        self.status_var.set("编辑模式: 开启" if en else "编辑模式: 关闭 (预览优先)")
+
+    def _toggle_layer_panel(self):
+        """显示/隐藏图层面板"""
+        if self._layer_panel_visible.get():
+            self._tl_layer_pw.add(self._tl_layer_panel, weight=0)
+        else:
+            self._tl_layer_pw.forget(self._tl_layer_panel)
+
+    def _set_timeline_interactive(self, en):
+        """启用/禁用时间轴编辑交互 (不影响预览)"""
+        # 轨道边缘拖拽和图层选择仅在编辑模式下可用
+        self._tl_edit_enabled = en
+        if not en:
+            self._tl_selected_layer = None
+            self._tl_refresh_thumbnails()
+
+    def _build_timeline_card(self, parent, layer_idx):
+        """构建紧凑图层卡片: 头部 + 详细区域(可折叠)"""
+        s = layer_idx + 1
+        vars_row = {}
+        self._layer_vars.append(vars_row)
+
+        # 卡片容器
+        card = ttk.Frame(parent, relief='ridge', borderwidth=1)
+        card.pack(fill=tk.X, padx=2, pady=2)
+
+        # ---- 头部 ----
+        head = ttk.Frame(card)
+        head.pack(fill=tk.X, padx=4, pady=(4, 2))
+
+        lbl = ttk.Label(head, text=f"#{s}", font=('', 10, 'bold'), width=3)
+        lbl.pack(side=tk.LEFT)
+        vars_row['_card_label'] = lbl
+
+        type_var = tk.StringVar()
+        vars_row['layer_type'] = type_var
+        type_combo = ttk.Combobox(head, textvariable=type_var,
+                                  values=list(LAYER_TYPE_LABELS.values()),
+                                  width=22, state='readonly', font=FONT_S)
+        type_combo.pack(side=tk.LEFT, padx=2)
+        vars_row['_type_combo'] = type_combo
+
+        def _select_card(e, idx=layer_idx):
+            self._tl_select_layer(idx)
+
+        for w in (card, head, lbl, type_combo):
+            w.bind('<Button-1>', _select_card)
+
+        # ---- 紧凑属性行 ----
+        row1 = ttk.Frame(card)
+        row1.pack(fill=tk.X, padx=4, pady=1)
+
+        # blend_mode
+        bv = tk.StringVar()
+        vars_row['blend_mode'] = bv
+        blend_combo = ttk.Combobox(row1, textvariable=bv,
+                                   values=list(BLEND_MODE_LABELS.values()),
+                                   width=14, font=FONT_S, state='readonly')
+        blend_combo.pack(side=tk.LEFT, padx=(0, 2))
+        vars_row['_blend_mode_combo'] = blend_combo
+
+        # loop_behavior
+        lv = tk.StringVar()
+        vars_row['loop_behavior'] = lv
+        loop_combo = ttk.Combobox(row1, textvariable=lv,
+                                  values=list(LOOP_BEHAVIOR_LABELS.values()),
+                                  width=20, font=FONT_S, state='readonly')
+        loop_combo.pack(side=tk.LEFT, padx=2)
+        vars_row['_loop_behavior_combo'] = loop_combo
+
+        # 帧范围标签 (点击后可在缩略图区调整)
+        frame_lbl = ttk.Label(row1, text="[0..0]", font=FONT_S, width=10,
+                              anchor='center')
+        frame_lbl.pack(side=tk.LEFT, padx=2)
+        vars_row['_frame_lbl'] = frame_lbl
+        frame_lbl.bind('<Button-1>', _select_card)
+
+        # start_delay
+        ttk.Label(row1, text="延迟:", font=FONT_S).pack(side=tk.LEFT,
+                                                        padx=(8, 0))
+        sdv = tk.StringVar(value="0")
+        vars_row['start_delay'] = sdv
+        sd_entry = ttk.Entry(row1, textvariable=sdv, width=4, font=FONT_S)
+        sd_entry.pack(side=tk.LEFT, padx=1)
+
+        # tick_interval
+        ttk.Label(row1, text="间隔:", font=FONT_S).pack(side=tk.LEFT, padx=(4, 0))
+        tiv = tk.StringVar(value="0")
+        vars_row['tick_interval'] = tiv
+        ti_entry = ttk.Entry(row1, textvariable=tiv, width=4, font=FONT_S)
+        ti_entry.pack(side=tk.LEFT, padx=1)
+
+        # ---- 详细区域 (默认折叠) ----
+        detail_frame = ttk.Frame(card)
+        vars_row['_detail_frame'] = detail_frame
+        vars_row['_detail_expanded'] = False
+
+        # Toggle按钮
+        toggle_btn = ttk.Button(card, text="▼ 展开详情", width=12,
+                                command=lambda idx=layer_idx: self._tl_toggle_detail(idx))
+        toggle_btn.pack(anchor=tk.W, padx=4, pady=(0, 2))
+        vars_row['_toggle_btn'] = toggle_btn
+
+        # 详细字段 (从 FIELD_GROUPS 构建, 排除已在紧凑行显示的)
+        COMPACT_FIELDS = {'layer_type', 'blend_mode', 'loop_behavior',
+                          'start_delay', 'tick_interval'}
+        for grp_name, fields in FIELD_GROUPS:
+            # 筛掉已显示的
+            remaining = [(fn, idx, label, w, c) for (fn, idx, label, w, c) in fields
+                         if fn not in COMPACT_FIELDS]
+            if not remaining:
+                continue
+            lf_grp = ttk.LabelFrame(detail_frame, text=grp_name, padding=3)
+            lf_grp.pack(fill=tk.X, padx=2, pady=1, anchor=tk.W)
+            self._render_field_group(lf_grp, remaining, vars_row)
+
+        # JVG 探针
+        probe_lbl = ttk.Label(detail_frame, text="", font=FONT_S,
+                              foreground='#556', justify='left')
+        probe_lbl.pack(fill=tk.X, padx=4, pady=(2, 0), anchor=tk.W)
+        vars_row['_probe_lbl'] = probe_lbl
+
+        # 字段变化时刷新探针
+        for fn in ('jvg_block_index', 'dir_frame_offset',
+                   'first_frame', 'last_frame', 'direction_mode'):
+            if fn in vars_row:
+                vars_row[fn].trace_add(
+                    'write',
+                    lambda *_a, idx=layer_idx: self._update_layer_probe(idx))
+        type_combo.bind('<<ComboboxSelected>>',
+                        lambda _e, idx=layer_idx: self._update_layer_probe(idx),
+                        add='+')
+
+        return card
+
+    def _tl_toggle_detail(self, layer_idx):
+        """展开/折叠图层卡片的详细属性"""
+        vr = self._layer_vars[layer_idx]
+        df = vr['_detail_frame']
+        btn = vr['_toggle_btn']
+        if vr['_detail_expanded']:
+            df.pack_forget()
+            btn.config(text="▼ 展开详情")
+            vr['_detail_expanded'] = False
+        else:
+            df.pack(fill=tk.X, padx=2, pady=(0, 4), after=btn)
+            btn.config(text="▲ 收起详情")
+            vr['_detail_expanded'] = True
+
+    def _tl_select_layer(self, layer_idx):
+        """选中图层: 高亮卡片, 联动缩略图区和时间轴"""
+        self._tl_selected_layer = layer_idx
+        # 刷新缩略图 (Step 3 实现)
+        self._tl_refresh_thumbnails()
+        # 重绘时间轴高亮
+        self._tl_redraw()
+
+    # ---- 时间轴绘制 ----
+
+    def _tl_redraw(self):
+        """重绘时间轴画布"""
+        c = self._tl_canvas
+        c.delete("all")
+        if self._editing_idx is None:
+            return
+        entry = self.entries[self._editing_idx]
+        zoom = self._tl_zoom
+        margin = 30
+        track_h = 28
+        track_gap = 4
+        ruler_h = 22
+
+        # 计算总 tick 数
+        max_tick = 0
+        layers_info = []
+        for s in range(ACT_MAX_LAYER):
+            L = entry['layers'][s]
+            if L[0] == 0:
+                continue
+            delay = L[22]
+            interval = max(1, L[21])
+            first = L[17]
+            last = L[18]
+            span = max(1, last - first + 1)
+            dur = delay + span * interval
+            if dur > max_tick:
+                max_tick = dur
+            layers_info.append((s, L[0], delay, span * interval, L[19], L[21]))
+
+        self._tl_last_layers_info = layers_info
+        max_tick = max(max_tick, 10)
+        total_w = margin * 2 + int(max_tick * zoom) + 200
+
+        # 画布可滚动区域 (含音效标记行)
+        content_h = ruler_h + len(layers_info) * (track_h + track_gap) + 40
+        c.configure(scrollregion=(0, 0, total_w, content_h))
+
+        # 刻度尺
+        tick_step = max(1, int(20 / zoom))  # 约每20px一个刻度标
+        for t in range(0, max_tick + tick_step, tick_step):
+            x = margin + int(t * zoom)
+            c.create_line(x, ruler_h - 4, x, ruler_h, fill='#999')
+            if t % max(1, tick_step * 5) == 0 or t == 0:
+                c.create_text(x, ruler_h - 8, text=str(t), font=FONT_S,
+                              fill='#666', anchor='s')
+
+        # 轨道条
+        for i, (s, ltype, delay, play_ticks, loop, interval) in enumerate(layers_info):
+            y = ruler_h + i * (track_h + track_gap) + 4
+            color = self._tl_track_colors[s % 8]
+            is_selected = (s == self._tl_selected_layer)
+
+            # 可见性切换 (左侧, 可点击)
+            vis_var = self._preview_vis_vars.get(s + 1)
+            vis_on = vis_var.get() if vis_var else True
+            vis_x = 18
+            vis_tag = f'vis_{s}'
+            eye_char = '●' if vis_on else '○'
+            eye_color = color if vis_on else '#bbb'
+            c.create_text(vis_x, y + track_h // 2, text=eye_char,
+                          font=('', 10), fill=eye_color, anchor='center',
+                          tags=(vis_tag,))
+            # 透明点击区域 (扩大命中范围)
+            c.create_rectangle(0, y, 30, y + track_h,
+                               fill='', outline='', tags=(vis_tag,))
+
+            # 图层标签
+            c.create_text(34, y + track_h // 2, text=f"#{s+1}",
+                          font=('', 9, 'bold'), fill=color, anchor='w')
+
+            # 延迟区 (灰色)
+            if delay > 0:
+                dx = margin
+                dw = int(delay * zoom)
+                c.create_rectangle(dx, y, dx + dw, y + track_h,
+                                   fill='#ddd', outline='#ccc')
+
+            # 播放区 (彩色)
+            px = margin + int(delay * zoom)
+            pw = max(4, int(play_ticks * zoom))
+            c.create_rectangle(px, y, px + pw, y + track_h,
+                               fill=color, outline=('' if is_selected else color),
+                               width=(3 if is_selected else 1))
+
+            # 帧范围文字
+            L = entry['layers'][s]
+            c.create_text(px + 4, y + track_h // 2,
+                          text=f"[{L[17]}..{L[18]}] loop={L[19]}",
+                          font=FONT_S, fill='#fff', anchor='w')
+
+            # loop标记
+            loop_mark = ""
+            if L[19] == -1:
+                loop_mark = "↻"
+            elif L[19] == -2:
+                loop_mark = "■"
+            elif L[19] >= 0:
+                loop_mark = f"↷{L[19]}"
+            if loop_mark:
+                c.create_text(px + pw + 4, y + track_h // 2, text=loop_mark,
+                              font=FONT_S, fill=color, anchor='w')
+
+            # 存储轨道bbox用于点击检测
+            vars_row = self._layer_vars[s]
+            vars_row['_track_bbox'] = (px, y, px + pw, y + track_h)
+            vars_row['_delay_bbox'] = (margin, y, px, y + track_h)
+            vars_row['_track_layer'] = s
+
+        # 播放头 (用 tag 标记, 支持增量更新)
+        ph_x = margin + int(self._tl_playhead * zoom)
+        ph_bottom = ruler_h + len(layers_info) * (track_h + track_gap) + 10
+        c.create_line(ph_x, 0, ph_x, ph_bottom,
+                      fill='red', width=2, tags='playhead')
+        c.create_polygon(ph_x - 5, 0, ph_x + 5, 0, ph_x, 8,
+                         fill='red', outline='red', tags='playhead')
+        self._tl_ph_bottom = ph_bottom
+
+        # ---- 音效标记 (从 tail 数据) ----
+        sfx_y = ruler_h + len(layers_info) * (track_h + track_gap) + 14
+        tail = entry.get('tail') or []
+        sfx_colors = ['#e91e63', '#9c27b0', '#3f51b5', '#009688',
+                      '#ff9800', '#795548', '#607d8b', '#4caf50']
+        sfx_markers = []
+        for i in range(16):
+            sid = tail[i * 2] if i * 2 < len(tail) else 0
+            trig = tail[i * 2 + 1] if i * 2 + 1 < len(tail) else 0
+            if sid == 0 or trig < 0:
+                continue
+            sx = margin + int(trig * zoom)
+            color = sfx_colors[i % len(sfx_colors)]
+            # 音符图标
+            c.create_text(sx, sfx_y, text="♪", fill=color,
+                          font=("", 10, "bold"), tags=('sfx',))
+            # 标签
+            c.create_text(sx, sfx_y + 12, text=f"sid={sid}",
+                          font=("", 6), fill=color, anchor='n', tags=('sfx',))
+            # 竖线连接到轨道
+            c.create_line(sx, sfx_y - 10, sx, sfx_y - 4, fill=color,
+                          width=1, dash=(2, 2), tags=('sfx',))
+            sfx_markers.append((sx, sfx_y, sid, trig, i))
+
+        # 存储音效标记用于点击检测
+        self._tl_sfx_markers = sfx_markers
+
+    def _tl_update_playhead(self):
+        """增量更新播放头位置 (不重绘轨道, 用于播放时跟随)"""
+        c = self._tl_canvas
+        zoom = self._tl_zoom
+        margin = 30
+        ph_x = margin + int(self._tl_playhead * zoom)
+        ph_bottom = getattr(self, '_tl_ph_bottom', 100)
+        # 移动现有播放头元素
+        for item in c.find_withtag('playhead'):
+            coords = c.coords(item)
+            if len(coords) == 4:  # line: x1,y1,x2,y2
+                c.coords(item, ph_x, coords[1], ph_x, coords[3])
+            elif len(coords) == 6:  # polygon triangle
+                c.coords(item, ph_x - 5, 0, ph_x + 5, 0, ph_x, 8)
+        # 更新滚动区域
+        c.configure(scrollregion=c.bbox('all'))
+
+    def _tl_calc_duration(self, entry):
+        """计算动画总tick时长"""
+        max_tick = 0
+        for s in range(ACT_MAX_LAYER):
+            L = entry['layers'][s]
+            if L[0] == 0:
+                continue
+            delay = L[22]
+            interval = max(1, L[21])
+            first = L[17]
+            last = L[18]
+            span = max(1, last - first + 1)
+            dur = delay + span * interval
+            if dur > max_tick:
+                max_tick = dur
+        return max_tick
+
+    # ---- 时间轴交互 ----
+
+    def _tl_hit_test(self, canvas_x, canvas_y):
+        """检测鼠标位置命中的轨道元素.
+        返回 (layer_idx, 'playhead'|'left_edge'|'right_edge'|'body'|None, tick)"""
+        c = self._tl_canvas
+        x = c.canvasx(canvas_x)
+        y = c.canvasy(canvas_y)
+        zoom = self._tl_zoom
+        margin = 30
+        edge_margin = 6
+        ruler_h = 22
+        track_h = 28
+        track_gap = 4
+
+        tick = max(0, int((x - margin) / zoom + 0.5))
+
+        # 检测是否在刻度尺区 (选中播放头)
+        if y < ruler_h:
+            return None, 'playhead', tick
+
+        for s in range(ACT_MAX_LAYER):
+            vr = self._layer_vars[s]
+            bb = vr.get('_track_bbox')
+            db = vr.get('_delay_bbox')
+            if bb is None or db is None:
+                continue
+
+            # 轨道 Y 范围
+            ty = bb[1]
+            by = bb[3]
+            if not (ty <= y <= by):
+                continue
+
+            # 左边缘 (延迟区右边界 = 播放区左边界)
+            left_x = bb[0]
+            if db[2] > db[0] and abs(x - left_x) <= edge_margin:
+                return s, 'left_edge', tick
+
+            # 右边缘 (播放区右边界)
+            right_x = bb[2]
+            if abs(x - right_x) <= edge_margin:
+                return s, 'right_edge', tick
+
+            # 轨道体内
+            if db[0] <= x <= bb[2]:
+                return s, 'body', tick
+
+        # 检测音效标记
+        for (sx, sy, sid, trig, i) in getattr(self, '_tl_sfx_markers', []):
+            if abs(x - sx) < 10 and abs(y - sy) < 12:
+                return i, 'sfx', trig
+
+        return None, 'playhead', tick
+
+    def _tl_on_click(self, event):
+        """点击时间轴: 移动播放头 / 选中图层 / 开始拖拽边缘 / 试听音效 / 切换可见性"""
+        self._tl_drag_state = None
+
+        # 检测可见性点击 (左侧 vis 区域)
+        c = self._tl_canvas
+        x = c.canvasx(event.x)
+        y = c.canvasy(event.y)
+        zoom = self._tl_zoom
+        margin = 30
+        ruler_h = 22
+        track_h = 28
+        track_gap = 4
+
+        # 检查是否在轨道区域点击了可见性开关
+        if 0 <= x < 30:
+            for i, (s, ltype, delay, play_ticks, loop, interval) in enumerate(
+                getattr(self, '_tl_last_layers_info', [])):
+                ty = ruler_h + i * (track_h + track_gap) + 4
+                if ty <= y <= ty + track_h:
+                    # 切换该图层可见性
+                    vis_var = self._preview_vis_vars.get(s + 1)
+                    if vis_var is not None:
+                        vis_var.set(not vis_var.get())
+                        self._preview_redraw()
+                        self._tl_redraw()
+                    return
+
+        layer_idx, hit_type, tick = self._tl_hit_test(event.x, event.y)
+        edit_ok = getattr(self, '_tl_edit_enabled', False)
+
+        if hit_type == 'sfx':
+            if edit_ok:
+                self._tl_drag_state = ('sfx', layer_idx)
+                return
+            entry = self.entries[self._editing_idx] if self._editing_idx is not None else None
+            if entry:
+                tail = entry.get('tail') or []
+                sid = tail[layer_idx * 2] if layer_idx * 2 < len(tail) else 0
+                if sid and self.sws_grp:
+                    self._play_sound_preview(sid)
+        elif hit_type in ('left_edge', 'right_edge') and edit_ok:
+            self._tl_drag_state = (layer_idx, hit_type)
+        elif hit_type == 'body':
+            if edit_ok:
+                self._tl_select_layer(layer_idx)
+                # 记录拖拽起点, 用于平移轨道
+                L = self.entries[self._editing_idx]['layers'][layer_idx]
+                self._tl_drag_state = ('track_move', layer_idx, tick, L[22])
+            else:
+                # 非编辑模式: 仅选中图层(用于缩略图), 不移动播放头
+                self._tl_select_layer(layer_idx)
+        else:
+            # 刻度尺区 或 非编辑模式的轨道体: 移动播放头
+            self._tl_playhead = tick
+            self._tl_tick_lbl.config(text=f"tick: {tick}")
+            self._tl_redraw()
+            self._tl_sync_preview(tick)
+
+    def _play_sound_preview(self, sid):
+        """试听指定 sound_id"""
+        if self.sws_grp is None:
+            return
+        try:
+            p = self._resolve_sound_path(sid)
+            if p:
+                alias = _mci_play_async(p)
+                self.status_var.set(f"试听 sid={sid}")
+            else:
+                self.status_var.set(f"未找到音效 sid={sid}")
+        except Exception:
+            self.status_var.set(f"播放失败 sid={sid}")
+
+    def _tl_on_drag(self, event):
+        """拖拽: 播放头 / 轨道边缘 / 音效标记"""
+        layer_idx, hit_type, tick = self._tl_hit_test(event.x, event.y)
+
+        if self._tl_drag_state is not None:
+            ds = self._tl_drag_state
+
+            # 音效标记拖拽
+            if ds[0] == 'sfx':
+                sfx_idx = ds[1]
+                if self._editing_idx is not None:
+                    entry = self.entries[self._editing_idx]
+                    tail = entry.get('tail') or []
+                    if sfx_idx * 2 + 1 < len(tail):
+                        tail[sfx_idx * 2 + 1] = max(0, tick)
+                        self._dirty = True
+                        self._tl_redraw()
+                return
+
+            # 轨道体平移拖拽
+            if ds[0] == 'track_move':
+                _, dlayer_idx, start_tick, start_delay = ds
+                if self._editing_idx is not None:
+                    entry = self.entries[self._editing_idx]
+                    L = entry['layers'][dlayer_idx]
+                    new_delay = max(0, start_delay + (tick - start_tick))
+                    L[22] = new_delay
+                    self._dirty = True
+                    vr = self._layer_vars[dlayer_idx]
+                    sdv = vr.get('start_delay')
+                    if sdv is not None:
+                        sdv.set(str(new_delay))
+                    self._tl_redraw()
+                return
+
+            # 轨道边缘拖拽
+            dlayer_idx, dhit_type = ds
+            if self._editing_idx is not None:
+                entry = self.entries[self._editing_idx]
+                L = entry['layers'][dlayer_idx]
+
+                if dhit_type == 'right_edge':
+                    delay = L[22]
+                    interval = max(1, L[21])
+                    first = L[17]
+                    play_ticks = max(0, tick - delay)
+                    new_span = max(1, play_ticks // interval)
+                    L[18] = max(first, first + new_span - 1)
+
+                elif dhit_type == 'left_edge':
+                    L[22] = max(0, tick)
+
+                self._dirty = True
+                vr = self._layer_vars[dlayer_idx]
+                fl = vr.get('_frame_lbl')
+                if fl is not None:
+                    fl.config(text=f"[{L[17]}..{L[18]}]")
+                sdv = vr.get('start_delay')
+                if sdv is not None:
+                    sdv.set(str(L[22]))
+                self._tl_redraw()
+            return
+
+        # 拖拽播放头
+        self._tl_playhead = tick
+        self._tl_tick_lbl.config(text=f"tick: {tick}")
+        self._tl_redraw()
+
+    def _tl_on_release(self, event):
+        """释放鼠标: 同步预览, 应用修改"""
+        was_sfx = (self._tl_drag_state is not None
+                   and self._tl_drag_state[0] == 'sfx')
+        self._tl_drag_state = None
+        if self._editing_idx is not None:
+            entry = self.entries[self._editing_idx]
+            if was_sfx:
+                # 音效拖拽: 刷新尾部数据UI
+                tail = entry.get('tail') or []
+                for k in range(32):
+                    self._tail_vars[k].set(str(tail[k]))
+            self._populate_edit(entry)
+        self._tl_sync_preview(self._tl_playhead)
+
+    def _tl_on_motion(self, event):
+        """鼠标移动: 改变光标样式"""
+        layer_idx, hit_type, _ = self._tl_hit_test(event.x, event.y)
+        edit_ok = getattr(self, '_tl_edit_enabled', False)
+        if hit_type == 'sfx' and edit_ok:
+            self._tl_canvas.configure(cursor='hand2')
+        elif hit_type in ('left_edge', 'right_edge') and edit_ok:
+            self._tl_canvas.configure(cursor='sb_h_double_arrow')
+        else:
+            self._tl_canvas.configure(cursor='')
+
+    def _tl_sync_preview(self, tick):
+        """将预览同步到指定tick: 停止播放, 渲染指定tick帧"""
+        self._preview_stop()
+        self._preview_tick_idx = tick
+        self._preview_redraw()
+
+    def _tl_on_mousewheel(self, event):
+        """鼠标滚轮: 上下滚动 / Ctrl+滚轮缩放"""
+        if event.state & 0x4:  # Ctrl pressed
+            delta = 1 if event.delta > 0 else -1
+            self._tl_zoom = max(2, min(40, self._tl_zoom + delta * 2))
+            self._tl_zoom_lbl.config(text=f"{self._tl_zoom}px/t")
+            self._tl_redraw()
+        else:
+            self._tl_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+
+    def _tl_zoom_in(self):
+        self._tl_zoom = min(40, self._tl_zoom + 2)
+        self._tl_zoom_lbl.config(text=f"{self._tl_zoom}px/tick")
+        self._tl_redraw()
+
+    def _tl_zoom_out(self):
+        self._tl_zoom = max(2, self._tl_zoom - 2)
+        self._tl_zoom_lbl.config(text=f"{self._tl_zoom}px/tick")
+        self._tl_redraw()
+
+    def _tl_reset_playhead(self):
+        self._tl_playhead = 0
+        self._tl_tick_lbl.config(text="tick: 0")
+        self._tl_redraw()
+        self._tl_sync_preview(0)
+
+    def _tl_step_next(self):
+        self._tl_playhead += 1
+        self._tl_tick_lbl.config(text=f"tick: {self._tl_playhead}")
+        self._tl_redraw()
+        self._tl_sync_preview(self._tl_playhead)
+
+    def _tl_step_prev(self):
+        self._tl_playhead = max(0, self._tl_playhead - 1)
+        self._tl_tick_lbl.config(text=f"tick: {self._tl_playhead}")
+        self._tl_redraw()
+        self._tl_sync_preview(self._tl_playhead)
+
+    def _tl_goto_first(self):
+        self._tl_playhead = 0
+        self._tl_tick_lbl.config(text="tick: 0")
+        self._tl_redraw()
+        self._tl_sync_preview(0)
+
+    def _tl_goto_last(self):
+        if self._editing_idx is not None:
+            entry = self.entries[self._editing_idx]
+            self._tl_playhead = self._tl_calc_duration(entry)
+        else:
+            self._tl_playhead = 0
+        self._tl_tick_lbl.config(text=f"tick: {self._tl_playhead}")
+        self._tl_redraw()
+        self._tl_sync_preview(self._tl_playhead)
+
+    # ---- 缩略图 ----
+
+    def _tl_refresh_thumbnails(self):
+        """刷新帧缩略图条: 解码选中图层JVG块的所有帧, 显示为缩略图"""
+        c = self._thumb_canvas
+        c.delete("all")
+        self._thumb_images = []
+
+        if self._tl_selected_layer is None:
+            c.create_text(140, 28, text="(选择图层查看帧缩略图)",
+                          fill='#999', font=FONT_S)
+            return
+        if self._editing_idx is None:
+            return
+        if not self._preview_load_jvg():
+            c.create_text(140, 28, text="(未加载 JVG)",
+                          fill='#999', font=FONT_S)
+            return
+
+        entry = self.entries[self._editing_idx]
+        L = entry['layers'][self._tl_selected_layer]
+        ltype = L[0]
+        block_idx = L[1]
+        if ltype == 0 or block_idx <= 0:
+            c.create_text(140, 28, text="(该图层未关联 JVG 块)",
+                          fill='#999', font=FONT_S)
+            return
+
+        # 确定 JVG 来源
+        src = 'aa' if ltype == 1 else 'af'
+        jvg = self._aa_data if src == 'aa' else self._af_data
+        if jvg is None or block_idx >= jvg.block_count:
+            c.create_text(140, 28, text="(JVG 块不存在)",
+                          fill='#999', font=FONT_S)
+            return
+
+        blk = jvg.get_block(block_idx)
+        total_frames = blk.frame_count
+        if total_frames == 0:
+            return
+
+        first = L[17]
+        last = L[18]
+        dfo = L[16]
+
+        # 缩略图参数
+        thumb_h = 40
+        thumb_spacing = 4
+        margin = 4
+        c.configure(height=thumb_h + 20)
+
+        # 解码并缩放所有帧
+        for fi in range(total_frames):
+            pil_img = self._preview_get_pil(src, block_idx, fi)
+            if pil_img is None:
+                continue
+            w, h = pil_img.size
+            if h <= 0:
+                continue
+            ratio = thumb_h / h
+            tw = max(1, int(w * ratio))
+            thumb = pil_img.resize((tw, thumb_h), Image.NEAREST)
+            tk_img = ImageTk.PhotoImage(thumb)
+            self._thumb_images.append(tk_img)
+
+            x = margin + fi * (thumb_h + thumb_spacing)
+            c.create_image(x, 8, image=tk_img, anchor='nw',
+                           tags=('thumb', f'frame_{fi}'))
+
+        if not self._thumb_images:
+            return
+
+        # 总宽度
+        total_w = margin + total_frames * (thumb_h + thumb_spacing)
+        c.configure(scrollregion=(0, 0, total_w, thumb_h + 20))
+
+        # 方向帧偏移标记
+        if dfo > 0:
+            for di in range(0, total_frames, dfo):
+                x = margin + di * (thumb_h + thumb_spacing)
+                c.create_line(x, thumb_h + 8, x, thumb_h + 16,
+                              fill='#3498db', width=1, tags='dfo')
+                c.create_text(x, thumb_h + 18, text=str(di),
+                              font=('', 6), fill='#3498db', anchor='n', tags='dfo')
+
+        # 高亮选中范围 [first..last]
+        fx = margin + first * (thumb_h + thumb_spacing) - 1
+        lx = margin + last * (thumb_h + thumb_spacing) + thumb_h + 1
+        c.create_rectangle(fx, 6, lx, thumb_h + 10,
+                           outline='#e74c3c', width=2, tags='selection')
+        c.create_text(fx + 2, 8, text=f"first={first}",
+                      font=('', 7, 'bold'), fill='#e74c3c', anchor='nw',
+                      tags='selection')
+        c.create_text(lx - 2, 8, text=f"last={last}",
+                      font=('', 7, 'bold'), fill='#e74c3c', anchor='ne',
+                      tags='selection')
+
+        # 点击缩略图选择帧范围
+        def _on_thumb_click(e):
+            fi = int((c.canvasx(e.x) - margin) / (thumb_h + thumb_spacing) + 0.5)
+            fi = max(0, min(total_frames - 1, fi))
+            if fi < first:
+                L[17] = fi  # 调整 first
+            elif fi > last:
+                L[18] = fi  # 调整 last
+            else:
+                # 点击范围内 → 切换到精确定位
+                if hasattr(self, '_thumb_last_click'):
+                    del self._thumb_last_click
+                L[17] = fi
+                L[18] = fi
+            self._dirty = True
+            self._populate_layer(self._tl_selected_layer, L)
+            self._tl_refresh_thumbnails()
+            self._tl_redraw()
+            self._preview_stop()
+            self._preview_tick_idx = 0
+            self._preview_redraw()
+
+        c.bind("<Button-1>", _on_thumb_click, add='+')
 
     def _render_field_group(self, parent, fields, vars_row):
         """在 parent 内以每行 4 列网格渲染字段"""
@@ -1319,52 +2192,6 @@ class ActEditor:
         else:
             self.status_var.set(f"> sid={sid} (SWS)")
 
-    def _build_preview_ui(self):
-        main = ttk.Frame(self.preview_frame, padding=5)
-        main.pack(fill=tk.BOTH, expand=True)
-
-        ctrl = ttk.Frame(main)
-        ctrl.pack(fill=tk.X, pady=(0, 2))
-
-        ttk.Label(ctrl, text="方向:", font=FONT_S).pack(side=tk.LEFT)
-        self._preview_dir_var = tk.IntVar(value=0)
-        for d in range(4):
-            ttk.Radiobutton(ctrl, text=DIRECTION_SHORT[d],
-                            variable=self._preview_dir_var, value=d,
-                            command=self._preview_redraw,
-                            width=5).pack(side=tk.LEFT)
-
-        ttk.Separator(ctrl, orient=tk.VERTICAL).pack(
-            side=tk.LEFT, fill=tk.Y, padx=6)
-
-        ttk.Label(ctrl, text="tick 周期(ms):", font=FONT_S).pack(side=tk.LEFT)
-        self._preview_speed = tk.IntVar(value=50)
-        ttk.Spinbox(ctrl, textvariable=self._preview_speed,
-                    from_=10, to=500, increment=10, width=5,
-                    font=FONT).pack(side=tk.LEFT, padx=2)
-
-        ttk.Button(ctrl, text="▶", command=self._preview_play,
-                   width=3).pack(side=tk.LEFT, padx=1)
-        ttk.Button(ctrl, text="⏸", command=self._preview_stop,
-                   width=3).pack(side=tk.LEFT, padx=1)
-
-        ttk.Separator(ctrl, orient=tk.VERTICAL).pack(
-            side=tk.LEFT, fill=tk.Y, padx=6)
-
-        self._preview_vis_frame = ttk.Frame(ctrl)
-        self._preview_vis_frame.pack(side=tk.LEFT, fill=tk.X)
-        self._preview_vis_vars = {}
-
-        self._preview_canvas = tk.Canvas(main, bg='#1a1a2e',
-                                         highlightthickness=0)
-        self._preview_canvas.pack(fill=tk.BOTH, expand=True)
-        self._preview_canvas.bind('<Configure>',
-                                  lambda e: self._preview_redraw())
-
-        if not HAS_PIL:
-            self._preview_canvas.create_text(
-                200, 100, text="需要 Pillow 库:\npip install Pillow",
-                fill="#888", font=("", 11))
 
     # -------- 通用辅助 --------
 
@@ -1575,7 +2402,15 @@ class ActEditor:
         if not sel:
             return
         idx = int(self.tree.item(sel[0])['values'][0])
-        self._populate_edit(self.entries[idx])
+        # 保存编辑前快照 (用于重置)
+        entry = self.entries[idx]
+        self._edit_snapshot = {
+            'dirs': [list(d) for d in entry['dirs']],
+            'param16': list(entry['param16']),
+            'layers': [list(L) for L in entry['layers']],
+            'tail': list(entry['tail']),
+        }
+        self._populate_edit(entry)
 
     def _populate_edit(self, entry):
         self._editing_idx = entry['index']
@@ -1601,16 +2436,19 @@ class ActEditor:
 
         for s in range(ACT_MAX_LAYER):
             t = entry['layers'][s][0]
-            if t == 0:
-                self.layer_nb.tab(s, text=f"#{s+1} (空)")
-            else:
-                full = LAYER_TYPE_LABELS.get(t, str(t))
-                parts = full.split(' ', 1)
-                lab = (parts[1].split('(')[0].strip()
-                       if len(parts) > 1 else full)
-                self.layer_nb.tab(s, text=f"#{s+1} {lab}")
+            lbl = self._layer_vars[s].get('_card_label')
+            if lbl is not None:
+                if t == 0:
+                    lbl.config(text=f"#{s+1} (空)", foreground='#888')
+                else:
+                    full = LAYER_TYPE_LABELS.get(t, str(t))
+                    parts = full.split(' ', 1)
+                    lab = (parts[1].split('(')[0].strip()
+                           if len(parts) > 1 else full)
+                    lbl.config(text=f"#{s+1} {lab}", foreground='#000')
 
         self._preview_reload()
+        self._tl_redraw()
 
     def _populate_layer(self, layer_idx, vals):
         vars_row = self._layer_vars[layer_idx]
@@ -1636,6 +2474,10 @@ class ActEditor:
                 vars_row[fn].set(str(v))
 
         self._update_layer_probe(layer_idx)
+        # 更新紧凑卡片帧范围标签
+        fl = vars_row.get('_frame_lbl')
+        if fl is not None:
+            fl.config(text=f"[{vals[17]}..{vals[18]}]")
 
     # ----------- JVG 帧数探针 -----------
 
@@ -1802,8 +2644,18 @@ class ActEditor:
         self.status_var.set(f"动画 #{entry['index']} 已修改 (内存, 未保存)")
 
     def _reset_edit(self):
-        if self._editing_idx is not None:
-            self._populate_edit(self.entries[self._editing_idx])
+        """恢复到编辑前的快照状态 (含图层可见性)"""
+        if self._editing_idx is not None and self._edit_snapshot is not None:
+            snap = self._edit_snapshot
+            entry = self.entries[self._editing_idx]
+            entry['dirs'] = [list(d) for d in snap['dirs']]
+            entry['param16'] = list(snap['param16'])
+            entry['layers'] = [list(L) for L in snap['layers']]
+            entry['tail'] = list(snap['tail'])
+            self._dirty = False
+            self._preview_vis_vars.clear()  # 重置可见性
+            self._populate_edit(entry)
+            self.status_var.set("已重置为编辑前的状态")
 
     def _copy_entry(self):
         if self._editing_idx is None:
@@ -2315,6 +3167,8 @@ class ActEditor:
         return (min(xs) - 10, min(ys) - 10, max(xs) + 10, max(ys) + 10)
 
     def _preview_update_vis(self):
+        # 保存现有可见性状态
+        saved_vis = {slot: v.get() for slot, v in self._preview_vis_vars.items()}
         for w in self._preview_vis_frame.winfo_children():
             w.destroy()
         self._preview_vis_vars.clear()
@@ -2326,7 +3180,9 @@ class ActEditor:
             return
         for slot in sorted(slots):
             t = entry['layers'][slot - 1][0]
-            var = tk.BooleanVar(value=True)
+            # 优先恢复之前保存的状态, 否则默认可见
+            default_vis = saved_vis.get(slot, True)
+            var = tk.BooleanVar(value=default_vis)
             cb = ttk.Checkbutton(self._preview_vis_frame,
                                  text=f"#{slot}(t={t})",
                                  variable=var,
@@ -2349,7 +3205,6 @@ class ActEditor:
         if self._preview_job:
             self.root.after_cancel(self._preview_job)
             self._preview_job = None
-        # 关闭所有 MCI 别名, 防止音效残留
         if self._preview_sfx_aliases:
             for a in list(self._preview_sfx_aliases):
                 _mci_close(a)
@@ -2359,11 +3214,53 @@ class ActEditor:
         self._preview_tick_idx += 1
         self._preview_sync_sfx()
         all_stopped = self._preview_redraw()
+        self._tl_playhead = self._preview_tick_idx
+        self._tl_tick_lbl.config(text=f"tick: {self._tl_playhead}")
+        self._tl_update_playhead()
         if all_stopped:
-            # 全部图层播放完毕 → 停止自动推进, 停留最后一帧
             return
         speed = max(10, self._preview_speed.get())
         self._preview_job = self.root.after(speed, self._preview_tick)
+
+    def _preview_step_first(self):
+        self._preview_stop()
+        self._preview_tick_idx = 0
+        self._tl_tick_lbl.config(text="0")
+        self._tl_playhead = 0
+        self._tl_tick_lbl.config(text="tick: 0")
+        self._tl_redraw()
+        self._preview_redraw()
+
+    def _preview_step_back(self):
+        self._preview_stop()
+        self._preview_tick_idx = max(0, self._preview_tick_idx - 1)
+        self._tl_tick_lbl.config(text=str(self._preview_tick_idx))
+        self._tl_playhead = self._preview_tick_idx
+        self._tl_tick_lbl.config(text=f"tick: {self._tl_playhead}")
+        self._tl_redraw()
+        self._preview_redraw()
+
+    def _preview_step_next(self):
+        self._preview_stop()
+        self._preview_tick_idx += 1
+        self._tl_tick_lbl.config(text=str(self._preview_tick_idx))
+        self._tl_playhead = self._preview_tick_idx
+        self._tl_tick_lbl.config(text=f"tick: {self._tl_playhead}")
+        self._tl_redraw()
+        self._preview_redraw()
+
+    def _preview_step_last(self):
+        self._preview_stop()
+        if self._editing_idx is not None:
+            entry = self.entries[self._editing_idx]
+            self._preview_tick_idx = self._tl_calc_duration(entry)
+        else:
+            self._preview_tick_idx = 0
+        self._tl_tick_lbl.config(text=str(self._preview_tick_idx))
+        self._tl_playhead = self._preview_tick_idx
+        self._tl_tick_lbl.config(text=f"tick: {self._tl_playhead}")
+        self._tl_redraw()
+        self._preview_redraw()
 
     def _preview_sync_sfx(self):
         """扫描 tail 16 对, 若 trigger_tick == 当前 tick 则播放 sound_id.
@@ -2433,6 +3330,7 @@ class ActEditor:
     def _preview_redraw(self):
         c = self._preview_canvas
         c.delete("all")
+        self._preview_sprite_boxes = []  # 精灵画布边界 (用于拖拽定位)
 
         if self._editing_idx is None:
             return
@@ -2650,6 +3548,10 @@ class ActEditor:
             c.create_text(cx + 2, cy + 2, text=f"#{slot}",
                           fill=color, font=("Consolas", 6), anchor=tk.NW)
 
+            # 记录精灵画布边界 (用于画布拖拽定位)
+            self._preview_sprite_boxes.append(
+                (slot, eff_dir, cx, cy, max(cx, rx), max(cy, ry), ox, oy))
+
             info.append(
                 f"  #{slot} src={src} blk={pk} t={L[0]} dir={eff_dir} "
                 f"f={cur_abs+1}/{blk.frame_count} "
@@ -2693,6 +3595,79 @@ class ActEditor:
                           font=("Consolas", 8), anchor=tk.NW)
 
         return all_stopped
+
+    # ---- 画布拖拽定位 ----
+
+    def _pv_hit_test(self, cx, cy):
+        """检测画布坐标命中的精灵. 返回 (slot, eff_dir) 或 None"""
+        for (slot, eff_dir, sx, sy, ex, ey, ox, oy) in self._preview_sprite_boxes:
+            if sx <= cx <= ex and sy <= cy <= ey:
+                return (slot, eff_dir, ox, oy, sx, sy)
+        return None
+
+    def _pv_on_press(self, event):
+        hit = self._pv_hit_test(event.x, event.y)
+        if hit:
+            slot, eff_dir, ox, oy, sx, sy = hit
+            self._pv_drag_state = (slot, eff_dir, ox, oy, event.x, event.y, sx, sy)
+            self._preview_stop()
+            self._preview_canvas.configure(cursor='fleur')
+        else:
+            self._pv_drag_state = None
+
+    def _pv_on_drag(self, event):
+        if self._pv_drag_state is None:
+            return
+        slot, eff_dir, ox, oy, px, py, sx, sy = self._pv_drag_state
+        dx = event.x - px
+        dy = event.y - py
+
+        if self._editing_idx is None:
+            return
+        entry = self.entries[self._editing_idx]
+        L = entry['layers'][slot - 1]
+
+        # 计算缩放因子 (近似, 从最近的 bbox)
+        cw = self._preview_canvas.winfo_width()
+        ch = self._preview_canvas.winfo_height()
+        if self._preview_bbox is not None:
+            bbox_l, bbox_t, bbox_r, bbox_b = self._preview_bbox
+        else:
+            return
+        margin = 40
+        bw = max(bbox_r - bbox_l, 1)
+        bh = max(bbox_b - bbox_t, 1)
+        scale = min((cw - margin * 2) / bw, (ch - margin * 2) / bh, 3.0)
+
+        # 画布像素 → 游戏坐标
+        gdx = int(dx / scale)
+        gdy = int(dy / scale)
+
+        new_ox = L[3 + eff_dir] + gdx
+        new_oy = L[7 + eff_dir] + gdy
+
+        L[3 + eff_dir] = max(-32768, min(32767, new_ox))
+        L[7 + eff_dir] = max(-32768, min(32767, new_oy))
+
+        self._dirty = True
+        self._pv_drag_state = (slot, eff_dir, L[3 + eff_dir], L[7 + eff_dir],
+                               event.x, event.y, sx + gdx, sy + gdy)
+        self._populate_layer(slot - 1, L)
+        self._preview_redraw()
+
+    def _pv_on_release(self, event):
+        if self._pv_drag_state is not None and self._editing_idx is not None:
+            entry = self.entries[self._editing_idx]
+            self._populate_edit(entry)
+        self._pv_drag_state = None
+        self._preview_canvas.configure(cursor='')
+
+    def _pv_on_motion(self, event):
+        hit = self._pv_hit_test(event.x, event.y)
+        if hit:
+            self._preview_canvas.configure(cursor='hand2')
+        else:
+            self._preview_canvas.configure(cursor='')
 
     def _on_close(self):
         self._preview_stop()
