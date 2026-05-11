@@ -908,7 +908,7 @@ class ActEditor:
         # Left: TreeView (缩小宽度, 给编辑区留空间)
         lf = ttk.Frame(paned)
         paned.add(lf, weight=1)
-        lf.configure(width=260)
+        lf.configure(width=345)
         cols = ('index', 'summary', 'n_layer')
         self.tree = ttk.Treeview(lf, columns=cols, show='headings',
                                  selectmode='browse')
@@ -991,7 +991,7 @@ class ActEditor:
         # 默认选中时间轴与预览 Tab
         self.nb.select(self.unified_frame)
         # 左侧列表最小宽度 (延迟确保窗口已渲染)
-        self.root.after(200, lambda: self.main_paned.sashpos(0, 200))
+        self.root.after(345, lambda: self.main_paned.sashpos(0, 345))
 
     # -------- Tab: 方向与绘制顺序 --------
 
@@ -1085,7 +1085,7 @@ class ActEditor:
             side=tk.LEFT, fill=tk.Y, padx=4)
 
         ttk.Label(ctrl, text="周期(ms):", font=FONT_S).pack(side=tk.LEFT)
-        self._preview_speed = tk.IntVar(value=50)
+        self._preview_speed = tk.IntVar(value=120)
         ttk.Spinbox(ctrl, textvariable=self._preview_speed,
                     from_=10, to=500, increment=10, width=5,
                     font=FONT).pack(side=tk.LEFT, padx=2)
@@ -1387,13 +1387,14 @@ class ActEditor:
         probe_lbl.pack(fill=tk.X, padx=4, pady=(2, 0), anchor=tk.W)
         vars_row['_probe_lbl'] = probe_lbl
 
-        # 字段变化时刷新探针
+        # 字段变化时刷新探针; jvg_block_index 变化时自动填充帧参数
         for fn in ('jvg_block_index', 'dir_frame_offset',
                    'first_frame', 'last_frame', 'direction_mode'):
             if fn in vars_row:
                 vars_row[fn].trace_add(
                     'write',
-                    lambda *_a, idx=layer_idx: self._update_layer_probe(idx))
+                    lambda *_a, idx=layer_idx, f=fn:
+                        self._on_layer_field_change(idx, f))
         type_combo.bind('<<ComboboxSelected>>',
                         lambda _e, idx=layer_idx: self._update_layer_probe(idx),
                         add='+')
@@ -2800,6 +2801,7 @@ class ActEditor:
         self._tl_redraw()
 
     def _populate_layer(self, layer_idx, vals):
+        self._auto_fill_enabled = False  # 加载数据时禁止自动填充
         vars_row = self._layer_vars[layer_idx]
         t = vals[0]
         combo = vars_row.get('_type_combo')
@@ -2822,6 +2824,7 @@ class ActEditor:
             else:
                 vars_row[fn].set(str(v))
 
+        self._auto_fill_enabled = True
         self._update_layer_probe(layer_idx)
         # 更新紧凑卡片帧范围标签
         fl = vars_row.get('_frame_lbl')
@@ -2928,6 +2931,66 @@ class ActEditor:
             text=(f"{src_name}[{blk}]  实际 {n_frames} 帧   {layout_desc}{info}\n"
                   f"    {span_desc}   切片量 {used}/{n_frames} ({pct}%){warn}"),
             foreground=color)
+
+    def _on_layer_field_change(self, layer_idx, field_name):
+        """图层字段变更回调: 刷新探针; jvg_block_index 变更时自动填充帧参数."""
+        self._update_layer_probe(layer_idx)
+        if (field_name == 'jvg_block_index'
+                and getattr(self, '_auto_fill_enabled', True)):
+            self._auto_fill_jvg_params(layer_idx)
+
+    def _auto_fill_jvg_params(self, layer_idx):
+        """根据 jvg_block_index 自动填充方向/帧参数 (默认 4 方向布局).
+        例如 block #116 共 48 帧 → 48/4=12 → first=0, last=11, dfo=12,
+        direction_mode=4."""
+        vr = self._layer_vars[layer_idx]
+
+        # 读取当前 jvg_block_index
+        try:
+            blk = int((vr.get('jvg_block_index', tk.StringVar()).get() or '0'))
+        except (ValueError, AttributeError):
+            return
+        if blk <= 0:
+            return
+
+        # 从 layer_type 确定 JVG 来源
+        combo = vr.get('_type_combo')
+        type_str = combo.get() if combo else ''
+        try:
+            ltype = int(type_str.split(' ', 1)[0]) if type_str else 0
+        except ValueError:
+            ltype = 0
+        if ltype == 1:
+            counts = self._aa_counts
+        elif ltype in (2, 3):
+            counts = self._af_counts
+        else:
+            return
+
+        if not counts or blk >= len(counts):
+            return
+        n_frames = counts[blk]
+        if n_frames <= 0:
+            return
+
+        # 推断布局: 优先 4 方向, 否则 2 方向, 否则 1 方向
+        dirs, per, _ = infer_jvg_layout(n_frames)
+        if dirs < 1:
+            return
+
+        # 自动填充 (loop 默认为 last_frame, 即播完后停在末帧)
+        if 'direction_mode' in vr:
+            vr['direction_mode'].set(f'{dirs} {"四向感知" if dirs == 4 else "双向感知" if dirs == 2 else f"{dirs}向"}')
+        if 'first_frame' in vr:
+            vr['first_frame'].set('0')
+        if 'last_frame' in vr:
+            vr['last_frame'].set(str(per - 1))
+        if 'dir_frame_offset' in vr:
+            vr['dir_frame_offset'].set(str(per))
+        if 'loop_behavior' in vr:
+            vr['loop_behavior'].set(str(per - 1))
+
+        self._update_layer_probe(layer_idx)
 
     def _apply_edit(self):
         if self._editing_idx is None:
