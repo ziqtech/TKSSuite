@@ -3757,6 +3757,13 @@ class ActEditor:
             interval = max(1, L[21])
             eff_tick = max(0, tick - delay)
             frame_adv = eff_tick // interval
+
+            # start_delay 期间: 图层不渲染, 不计入停止判断
+            if tick < delay:
+                _layer_diag.append(
+                    f"#{slot} L={L[19]} 延迟中(delay={delay})")
+                continue
+
             _layer_diag.append(
                 f"#{slot} L={L[19]} fadv={frame_adv}/{span}"
                 f"{' STOP' if stopped else ''}")
