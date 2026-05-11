@@ -1940,28 +1940,50 @@ class ActEditor:
                       tags='selection')
 
         # 点击缩略图选择帧范围
+        _thumb_state = {'anchor': None}  # 闭包内保存 Shift+点击锚点
+
         def _on_thumb_click(e):
             fi = int((c.canvasx(e.x) - margin) / (thumb_h + thumb_spacing) + 0.5)
             fi = max(0, min(total_frames - 1, fi))
-            if fi < first:
-                L[17] = fi  # 调整 first
-            elif fi > last:
-                L[18] = fi  # 调整 last
+
+            if e.state & 0x1:  # Shift+点击 → 扩展范围
+                if _thumb_state['anchor'] is not None:
+                    L[17] = min(_thumb_state['anchor'], fi)
+                    L[18] = max(_thumb_state['anchor'], fi)
             else:
-                # 点击范围内 → 切换到精确定位
-                if hasattr(self, '_thumb_last_click'):
-                    del self._thumb_last_click
+                # 普通点击 → 设置锚点并定位到该帧
+                _thumb_state['anchor'] = fi
                 L[17] = fi
                 L[18] = fi
+
             self._dirty = True
             self._populate_layer(self._tl_selected_layer, L)
-            self._tl_refresh_thumbnails()
             self._tl_redraw()
             self._preview_stop()
             self._preview_tick_idx = 0
             self._preview_redraw()
+            # 刷新缩略图高亮(不重建绑定)
+            self._tl_draw_thumb_selection(L[17], L[18], total_frames, dfo)
 
-        c.bind("<Button-1>", _on_thumb_click, add='+')
+        c.bind("<Button-1>", _on_thumb_click)
+
+    def _tl_draw_thumb_selection(self, first, last, total_frames, dfo=0):
+        """轻量刷新: 仅更新缩略图选中框 (不解码帧, 不重建绑定)"""
+        c = self._thumb_canvas
+        c.delete('selection')
+        thumb_h = 40
+        thumb_spacing = 4
+        margin = 4
+        fx = margin + first * (thumb_h + thumb_spacing) - 1
+        lx = margin + last * (thumb_h + thumb_spacing) + thumb_h + 1
+        c.create_rectangle(fx, 6, lx, thumb_h + 10,
+                           outline='#e74c3c', width=2, tags='selection')
+        c.create_text(fx + 2, 8, text=f"first={first}",
+                      font=('', 7, 'bold'), fill='#e74c3c', anchor='nw',
+                      tags='selection')
+        c.create_text(lx - 2, 8, text=f"last={last}",
+                      font=('', 7, 'bold'), fill='#e74c3c', anchor='ne',
+                      tags='selection')
 
     def _render_field_group(self, parent, fields, vars_row):
         """在 parent 内以每行 4 列网格渲染字段"""
