@@ -93,7 +93,29 @@ TKAct.dat 多图层 2D 精灵动画编辑器 v2.4.4
   sub_451C38: 播放已加载音效缓冲 (eax = 资源表, edx = sound_id)
 """
 
-import os, sys, struct, copy, tkinter as tk
+class LRUCache:
+    """固定容量的 LRU 缓存, 兼容 dict 的 get/set/clear 接口."""
+    def __init__(self, capacity=500):
+        self.cache = collections.OrderedDict()
+        self.capacity = capacity
+
+    def get(self, key):
+        if key not in self.cache:
+            return None
+        self.cache.move_to_end(key)
+        return self.cache[key]
+
+    def __setitem__(self, key, value):
+        self.cache[key] = value
+        self.cache.move_to_end(key)
+        if len(self.cache) > self.capacity:
+            self.cache.popitem(last=False)
+
+    def clear(self):
+        self.cache.clear()
+
+
+import os, sys, struct, copy, time, collections, tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 
 HAS_PIL = False
@@ -796,8 +818,8 @@ class ActEditor:
         # JVG 数据 (预览用, 完整解码)
         self._aa_data = None
         self._af_data = None
-        self._jvg_cache = {}     # {(src, block, frame): PhotoImage}   无缩放缓存
-        self._pil_cache = {}     # {(src, block, frame): PIL.Image}    原始 RGBA, 供混合/缩放
+        self._jvg_cache = LRUCache(capacity=500)
+        self._pil_cache = LRUCache(capacity=500)
 
         # JVG 轻量探针 (block 帧数列表)
         self._aa_counts = []
@@ -806,13 +828,17 @@ class ActEditor:
         # 预览状态
         self._preview_job = None
         self._preview_tick_idx = 0
+        self._is_playing = False
+        self._last_time = 0.0
+        self._tick_accumulator = 0.0
         # 固定包围盒 (切换条目时算一次, 避免随方向/tick 抖动)
-        #   {'l':..,'r':..,'t':..,'b':..}  世界坐标, 含原点(0,0)
         self._preview_bbox = None
         # 预览音效: 已触发 tick 集合 (防止同一 tick 反复播放)
         self._preview_played_ticks = set()
-        # MCI 别名池: [(alias, 开始时间, 大致时长)] —— 由 _preview_stop 清理
+        # MCI 别名池: [(alias, ...)] —— 由 _preview_stop 清理
         self._preview_sfx_aliases = []
+        # Scrubbing 节流 job ID
+        self._scrub_job = None
 
         self._build_ui()
         self._set_edit_enabled(False)
@@ -1153,8 +1179,6 @@ class ActEditor:
         self._preview_canvas.bind('<Configure>', lambda e: self._preview_redraw())
         self._preview_canvas.bind('<Left>', lambda e: self._preview_step_back())
         self._preview_canvas.bind('<Right>', lambda e: self._preview_step_next())
-        self._preview_canvas.bind('<space>', lambda e: (
-            self._preview_play() if not self._preview_job else self._preview_stop()))
         self._preview_canvas.bind('<Button-1>', self._pv_on_press, add='+')
         self._preview_canvas.bind('<B1-Motion>', self._pv_on_drag, add='+')
         self._preview_canvas.bind('<ButtonRelease-1>', self._pv_on_release, add='+')
@@ -1191,6 +1215,16 @@ class ActEditor:
         self._tl_canvas.bind("<ButtonRelease-1>", self._tl_on_release)
         self._tl_canvas.bind("<Motion>", self._tl_on_motion)
         self._tl_drag_state = None
+
+        # 时间轴: 鼠标中键拖拽平移
+        self._tl_canvas.bind("<Button-2>", self._tl_pan_start)
+        self._tl_canvas.bind("<B2-Motion>", self._tl_pan_move)
+
+        # NLE 快捷键 (J/K/L + 空格, 全局绑定)
+        self.root.bind('<KeyPress-j>', self._nle_play_reverse)
+        self.root.bind('<KeyPress-k>', lambda e: self._preview_stop())
+        self.root.bind('<KeyPress-l>', self._nle_play_forward)
+        self.root.bind('<space>', self._nle_toggle_playback)
 
         # ====== 底部: 帧缩略图选择器 ======
         self._thumb_frame = ttk.Frame(main, height=56)
@@ -1560,6 +1594,31 @@ class ActEditor:
                 max_tick = dur
         return max_tick
 
+    def _tl_snap_tick(self, raw_tick, exclude_layer, threshold):
+        """磁吸: 将 raw_tick 吸附到最近的 snap 点 (playhead / 其他图层边缘).
+        exclude_layer: 当前拖拽的图层索引, 排除自身避免吸附到自己.
+        返回吸附后的 tick (或原始值, 如果无近点)."""
+        if self._editing_idx is None:
+            return raw_tick
+        entry = self.entries[self._editing_idx]
+        points = [self._tl_playhead]  # 播放头
+        for s in range(8):
+            if s == exclude_layer:
+                continue
+            L = entry['layers'][s]
+            if L[0] == 0:
+                continue
+            # 左边缘 = start_delay
+            points.append(L[22])
+            # 右边缘 = start_delay + span * interval
+            first = L[17]
+            last = L[18]
+            interval = max(1, L[21])
+            span = max(1, last - first + 1)
+            points.append(L[22] + span * interval)
+        best = min(points, key=lambda p: abs(p - raw_tick))
+        return best if abs(best - raw_tick) <= threshold else raw_tick
+
     # ---- 时间轴交互 ----
 
     def _tl_hit_test(self, canvas_x, canvas_y):
@@ -1689,8 +1748,10 @@ class ActEditor:
             self.status_var.set(f"播放失败 sid={sid}")
 
     def _tl_on_drag(self, event):
-        """拖拽: 播放头 / 轨道边缘 / 音效标记"""
+        """拖拽: 播放头 / 轨道边缘 / 音效标记
+        Shift 按下时启用磁吸 (吸附到 playhead 和其他图层边缘)."""
         layer_idx, hit_type, tick = self._tl_hit_test(event.x, event.y)
+        SNAP_THRESHOLD = 2
 
         if self._tl_drag_state is not None:
             ds = self._tl_drag_state
@@ -1713,7 +1774,12 @@ class ActEditor:
                 if self._editing_idx is not None:
                     entry = self.entries[self._editing_idx]
                     L = entry['layers'][dlayer_idx]
-                    new_delay = max(0, start_delay + (tick - start_tick))
+                    raw_delay = start_delay + (tick - start_tick)
+                    if event.state & 0x0001:  # Shift → 磁吸
+                        new_delay = max(0, self._tl_snap_tick(
+                            max(0, raw_delay), dlayer_idx, SNAP_THRESHOLD))
+                    else:
+                        new_delay = max(0, raw_delay)
                     L[22] = new_delay
                     self._dirty = True
                     vr = self._layer_vars[dlayer_idx]
@@ -1735,10 +1801,18 @@ class ActEditor:
                     first = L[17]
                     play_ticks = max(0, tick - delay)
                     new_span = max(1, play_ticks // interval)
-                    L[18] = max(first, first + new_span - 1)
+                    new_end = max(first, first + new_span - 1)
+                    if event.state & 0x0001:  # Shift → 磁吸右边缘
+                        new_end = self._tl_snap_tick(
+                            new_end, dlayer_idx, SNAP_THRESHOLD)
+                        new_end = max(first, new_end)
+                    L[18] = new_end
 
                 elif dhit_type == 'left_edge':
-                    L[22] = max(0, tick)
+                    t = tick
+                    if event.state & 0x0001:  # Shift → 磁吸左边缘
+                        t = self._tl_snap_tick(t, dlayer_idx, SNAP_THRESHOLD)
+                    L[22] = max(0, t)
 
                 self._dirty = True
                 vr = self._layer_vars[dlayer_idx]
@@ -1751,20 +1825,26 @@ class ActEditor:
                 self._tl_redraw()
             return
 
-        # 拖拽播放头
+        # 拖拽播放头 (Scrubbing: 节流渲染, 最多 30ms 一次)
         self._tl_playhead = tick
         self._tl_tick_lbl.config(text=f"tick: {tick}")
         self._tl_redraw()
+        if self._scrub_job is not None:
+            self.root.after_cancel(self._scrub_job)
+        self._scrub_job = self.root.after(
+            30, lambda: self._tl_sync_preview(self._tl_playhead))
 
     def _tl_on_release(self, event):
         """释放鼠标: 同步预览, 应用修改"""
+        if self._scrub_job is not None:
+            self.root.after_cancel(self._scrub_job)
+            self._scrub_job = None
         was_sfx = (self._tl_drag_state is not None
                    and self._tl_drag_state[0] == 'sfx')
         self._tl_drag_state = None
         if self._editing_idx is not None:
             entry = self.entries[self._editing_idx]
             if was_sfx:
-                # 音效拖拽: 刷新尾部数据UI
                 tail = entry.get('tail') or []
                 for k in range(32):
                     self._tail_vars[k].set(str(tail[k]))
@@ -1789,12 +1869,22 @@ class ActEditor:
         self._preview_redraw()
 
     def _tl_on_mousewheel(self, event):
-        """鼠标滚轮: 上下滚动 / Ctrl+滚轮缩放"""
-        if event.state & 0x4:  # Ctrl pressed
+        """鼠标滚轮: 上下滚动 / Ctrl+滚轮 或 Alt+滚轮 缩放 (以鼠标位置为中心)"""
+        if event.state & 0x4 or event.state & 0x20000:  # Ctrl 或 Alt
+            # 记录缩放前鼠标对应的 tick
+            old_zoom = self._tl_zoom
+            old_cx = self._tl_canvas.canvasx(event.x)
+            old_tick = old_cx / max(1, old_zoom)
+
             delta = 1 if event.delta > 0 else -1
             self._tl_zoom = max(2, min(40, self._tl_zoom + delta * 2))
             self._tl_zoom_lbl.config(text=f"{self._tl_zoom}px/t")
             self._tl_redraw()
+
+            # 缩放后滚动使 old_tick 保持在鼠标位置
+            new_cx = old_tick * self._tl_zoom
+            dx = new_cx - old_cx
+            self._tl_canvas.xview_scroll(int(dx), "units")
         else:
             self._tl_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
 
@@ -1841,6 +1931,36 @@ class ActEditor:
         self._tl_tick_lbl.config(text=f"tick: {self._tl_playhead}")
         self._tl_redraw()
         self._tl_sync_preview(self._tl_playhead)
+
+    # ---- NLE 快捷键处理 ----
+
+    def _nle_play_forward(self, event=None):
+        """L 键: 播放 (多次按可实现倍速, 当前简化实现为播放/继续)."""
+        if not getattr(self, '_is_playing', False):
+            self._preview_play()
+
+    def _nle_play_reverse(self, event=None):
+        """J 键: 倒放/后退一帧."""
+        self._preview_stop()
+        self._preview_step_back()
+
+    def _nle_toggle_playback(self, event=None):
+        """空格键: 播放/暂停切换. 焦点在输入框时忽略."""
+        w = self.root.focus_get()
+        if isinstance(w, (tk.Entry, ttk.Entry, ttk.Spinbox)):
+            return
+        if getattr(self, '_is_playing', False):
+            self._preview_stop()
+        else:
+            self._preview_play()
+
+    # ---- 时间轴画布导航 ----
+
+    def _tl_pan_start(self, event):
+        self._tl_canvas.scan_mark(event.x, event.y)
+
+    def _tl_pan_move(self, event):
+        self._tl_canvas.scan_dragto(event.x, event.y, gain=1)
 
     # ---- 缩略图 ----
 
@@ -3221,9 +3341,13 @@ class ActEditor:
         self._preview_stop()
         self._preview_tick_idx = 0
         self._preview_played_ticks = set()
-        self._preview_tick()
+        self._last_time = time.perf_counter()
+        self._tick_accumulator = 0.0
+        self._is_playing = True
+        self._preview_tick_loop()
 
     def _preview_stop(self):
+        self._is_playing = False
         if self._preview_job:
             self.root.after_cancel(self._preview_job)
             self._preview_job = None
@@ -3232,17 +3356,41 @@ class ActEditor:
                 _mci_close(a)
             self._preview_sfx_aliases = []
 
-    def _preview_tick(self):
-        self._preview_tick_idx += 1
-        self._preview_sync_sfx()
-        all_stopped = self._preview_redraw()
-        self._tl_playhead = self._preview_tick_idx
-        self._tl_tick_lbl.config(text=f"tick: {self._tl_playhead}")
-        self._tl_update_playhead()
-        if all_stopped:
+    def _preview_tick_loop(self):
+        """Delta Time 播放循环: 用 perf_counter 精确计时, 必要时跳帧补偿."""
+        if not getattr(self, '_is_playing', False):
             return
-        speed = max(10, self._preview_speed.get())
-        self._preview_job = self.root.after(speed, self._preview_tick)
+
+        cur = time.perf_counter()
+        dt = cur - self._last_time
+        self._last_time = cur
+
+        tick_duration = max(10, self._preview_speed.get()) / 1000.0
+        self._tick_accumulator += dt
+
+        ticks_to_advance = 0
+        while self._tick_accumulator >= tick_duration:
+            ticks_to_advance += 1
+            self._tick_accumulator -= tick_duration
+
+        if ticks_to_advance > 0:
+            old_tick = self._preview_tick_idx
+            self._preview_tick_idx += ticks_to_advance
+
+            # 补齐跳帧期间错过的所有音效触发
+            for missed_tick in range(old_tick + 1, self._preview_tick_idx + 1):
+                self._preview_sync_sfx_for_tick(missed_tick)
+
+            all_stopped = self._preview_redraw()
+            self._tl_playhead = self._preview_tick_idx
+            self._tl_tick_lbl.config(text=f"tick: {self._tl_playhead}")
+            self._tl_update_playhead()
+
+            if all_stopped:
+                self._is_playing = False
+                return
+
+        self._preview_job = self.root.after(5, self._preview_tick_loop)
 
     def _preview_step_first(self):
         self._preview_stop()
@@ -3285,24 +3433,26 @@ class ActEditor:
         self._preview_redraw()
 
     def _preview_sync_sfx(self):
-        """扫描 tail 16 对, 若 trigger_tick == 当前 tick 则播放 sound_id.
-        音效源: SWS.GRP (sub_451780 A2C22C=1 分支).
-        使用 _preview_played_ticks 防重放 (同一对 tick 只触发 1 次)."""
+        """兼容旧接口: 为当前 tick 触发音效."""
+        self._preview_sync_sfx_for_tick(self._preview_tick_idx)
+
+    def _preview_sync_sfx_for_tick(self, tick):
+        """为指定 tick 触发音效 (供 Delta Time 跳帧补偿使用).
+        音效源: SWS.GRP (sub_451780 A2C22C=1 分支)."""
         if self._editing_idx is None:
             return
         if self.sws_grp is None:
             return
         entry = self.entries[self._editing_idx]
         tail = entry.get('tail') or []
-        cur_tick = self._preview_tick_idx
         for i in range(16):
             sid = tail[i * 2] if i * 2 < len(tail) else 0
             trig = tail[i * 2 + 1] if i * 2 + 1 < len(tail) else 0
             if sid == 0:
                 continue
-            if trig != cur_tick:
+            if trig != tick:
                 continue
-            key = (i, cur_tick)
+            key = (i, tick)
             if key in self._preview_played_ticks:
                 continue
             self._preview_played_ticks.add(key)
