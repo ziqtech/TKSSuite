@@ -957,7 +957,9 @@ class ActEditor:
         self.unified_frame = ttk.Frame(self.nb)
         self.nb.add(self.unified_frame, text="时间轴与预览")
         self._layer_vars = []   # [{key: StringVar, '_type_combo': Combobox, ...}] × 8
-        self._tl_selected_layer = None
+        self._tl_selected_layers = set()
+        self._marquee_start = None
+        self._tl_track_h = 28
         self._tl_zoom = 40
         self._tl_playhead = 0
         self._tl_last_layers_info = []
@@ -1225,6 +1227,13 @@ class ActEditor:
         self.root.bind('<KeyPress-k>', lambda e: self._preview_stop())
         self.root.bind('<KeyPress-l>', self._nle_play_forward)
         self.root.bind('<space>', self._nle_toggle_playback)
+        # 上下方向键: 轨道穿梭
+        self.root.bind('<Up>', self._nle_track_up)
+        self.root.bind('<Down>', self._nle_track_down)
+
+        # 时间轴右键菜单 + Shift+滚轮轨道高度
+        self._tl_canvas.bind("<Button-3>", self._tl_on_right_click)
+        self._tl_canvas.bind("<Shift-MouseWheel>", self._tl_on_shift_mousewheel)
 
         # ====== 底部: 帧缩略图选择器 ======
         self._thumb_frame = ttk.Frame(main, height=56)
@@ -1269,7 +1278,7 @@ class ActEditor:
         # 轨道边缘拖拽和图层选择仅在编辑模式下可用
         self._tl_edit_enabled = en
         if not en:
-            self._tl_selected_layer = None
+            self._tl_selected_layers.clear()
             self._tl_refresh_thumbnails()
 
     def _build_timeline_card(self, parent, layer_idx):
@@ -1407,10 +1416,9 @@ class ActEditor:
 
     def _tl_select_layer(self, layer_idx):
         """选中图层: 高亮卡片, 联动缩略图区和时间轴"""
-        self._tl_selected_layer = layer_idx
-        # 刷新缩略图 (Step 3 实现)
+        self._tl_selected_layers.clear()
+        self._tl_selected_layers.add(layer_idx)
         self._tl_refresh_thumbnails()
-        # 重绘时间轴高亮
         self._tl_redraw()
 
     # ---- 时间轴绘制 ----
@@ -1424,7 +1432,7 @@ class ActEditor:
         entry = self.entries[self._editing_idx]
         zoom = self._tl_zoom
         margin = 30
-        track_h = 28
+        track_h = getattr(self, '_tl_track_h', 28)
         track_gap = 4
         ruler_h = 22
 
@@ -1466,7 +1474,7 @@ class ActEditor:
         for i, (s, ltype, delay, play_ticks, loop, interval) in enumerate(layers_info):
             y = ruler_h + i * (track_h + track_gap) + 4
             color = self._tl_track_colors[s % 8]
-            is_selected = (s == self._tl_selected_layer)
+            is_selected = (s in getattr(self, '_tl_selected_layers', set()))
 
             # 可见性切换 (左侧, 可点击)
             vis_var = self._preview_vis_vars.get(s + 1)
@@ -1497,7 +1505,8 @@ class ActEditor:
             px = margin + int(delay * zoom)
             pw = max(4, int(play_ticks * zoom))
             c.create_rectangle(px, y, px + pw, y + track_h,
-                               fill=color, outline=('' if is_selected else color),
+                               fill=color,
+                               outline=('#fff' if is_selected else color),
                                width=(3 if is_selected else 1))
 
             # 帧范围文字
@@ -1631,12 +1640,12 @@ class ActEditor:
         margin = 30
         edge_margin = 6
         ruler_h = 22
-        track_h = 28
+        track_h = getattr(self, '_tl_track_h', 28)
         track_gap = 4
 
         tick = max(0, int((x - margin) / zoom + 0.5))
 
-        # 检测是否在刻度尺区 (选中播放头)
+        # 严格: 只有刻度尺区才返回 playhead
         if y < ruler_h:
             return None, 'playhead', tick
 
@@ -1672,20 +1681,21 @@ class ActEditor:
             if abs(x - sx) < 10 and abs(y - sy) < 12:
                 return i, 'sfx', trig
 
-        return None, 'playhead', tick
+        return None, 'empty', tick
 
     def _tl_on_click(self, event):
-        """点击时间轴: 移动播放头 / 选中图层 / 开始拖拽边缘 / 试听音效 / 切换可见性"""
+        """点击时间轴: 移动播放头 / 选中图层 / 开始拖拽 / 试听音效 / 切换可见性
+        Shift+点击空白→框选; Shift+点击片段→追加选择; 点击标尺→移动播放头"""
         self._tl_drag_state = None
+        self._marquee_start = None
 
         # 检测可见性点击 (左侧 vis 区域)
         c = self._tl_canvas
         x = c.canvasx(event.x)
         y = c.canvasy(event.y)
-        zoom = self._tl_zoom
         margin = 30
         ruler_h = 22
-        track_h = 28
+        track_h = getattr(self, '_tl_track_h', 28)
         track_gap = 4
 
         # 检查是否在轨道区域点击了可见性开关
@@ -1694,7 +1704,6 @@ class ActEditor:
                 getattr(self, '_tl_last_layers_info', [])):
                 ty = ruler_h + i * (track_h + track_gap) + 4
                 if ty <= y <= ty + track_h:
-                    # 切换该图层可见性
                     vis_var = self._preview_vis_vars.get(s + 1)
                     if vis_var is not None:
                         vis_var.set(not vis_var.get())
@@ -1719,15 +1728,33 @@ class ActEditor:
             self._tl_drag_state = (layer_idx, hit_type)
         elif hit_type == 'body':
             if edit_ok:
-                self._tl_select_layer(layer_idx)
-                # 记录拖拽起点, 用于平移轨道
-                L = self.entries[self._editing_idx]['layers'][layer_idx]
-                self._tl_drag_state = ('track_move', layer_idx, tick, L[22])
+                # 多选: 未按 Shift 且点击不在集合 → 清空后单选
+                if not (event.state & 0x0001):
+                    if layer_idx not in self._tl_selected_layers:
+                        self._tl_selected_layers.clear()
+                        self._tl_selected_layers.add(layer_idx)
+                else:
+                    self._tl_selected_layers.add(layer_idx)
+                self._tl_refresh_thumbnails()
+                # 记录编组拖拽起点: 所有选中图层的原始 start_delay
+                entry = self.entries[self._editing_idx]
+                orig_delays = {}
+                for sel_idx in self._tl_selected_layers:
+                    L = entry['layers'][sel_idx]
+                    orig_delays[sel_idx] = L[22]
+                self._tl_drag_state = ('batch_move', tick, orig_delays)
+                self._tl_redraw()
             else:
-                # 非编辑模式: 仅选中图层(用于缩略图), 不移动播放头
                 self._tl_select_layer(layer_idx)
-        else:
-            # 刻度尺区 或 非编辑模式的轨道体: 移动播放头
+        elif hit_type == 'empty':
+            if edit_ok:
+                # 记录框选起点, Shift 追加否则清空
+                self._marquee_start = (x, y)
+                if not (event.state & 0x0001):
+                    self._tl_selected_layers.clear()
+                self._tl_redraw()
+            # 非编辑模式点空白无操作
+        elif hit_type == 'playhead':
             self._tl_playhead = tick
             self._tl_tick_lbl.config(text=f"tick: {tick}")
             self._tl_redraw()
@@ -1748,8 +1775,21 @@ class ActEditor:
             self.status_var.set(f"播放失败 sid={sid}")
 
     def _tl_on_drag(self, event):
-        """拖拽: 播放头 / 轨道边缘 / 音效标记
+        """拖拽: 播放头 / 轨道边缘 / 音效标记 / 框选 / 编组移动
         Shift 按下时启用磁吸 (吸附到 playhead 和其他图层边缘)."""
+        c = self._tl_canvas
+        x = c.canvasx(event.x)
+        y = c.canvasy(event.y)
+
+        # 框选绘制: 画虚线矩形
+        if getattr(self, '_marquee_start', None) is not None:
+            x0, y0 = self._marquee_start
+            c.delete('marquee')
+            c.create_rectangle(x0, y0, x, y,
+                               outline='#3498db', width=1, dash=(4, 4),
+                               tags='marquee')
+            return
+
         layer_idx, hit_type, tick = self._tl_hit_test(event.x, event.y)
         SNAP_THRESHOLD = 2
 
@@ -1786,6 +1826,39 @@ class ActEditor:
                     sdv = vr.get('start_delay')
                     if sdv is not None:
                         sdv.set(str(new_delay))
+                    self._tl_redraw()
+                return
+
+            # 编组拖拽: 批量移动所有选中图层
+            if ds[0] == 'batch_move':
+                start_tick, orig_delays = ds[1], ds[2]
+                if self._editing_idx is not None:
+                    delta_tick = tick - start_tick
+
+                    # 边界钳制: 最左的图层不能拖到 0 以下
+                    min_orig = min(orig_delays.values())
+                    if min_orig + delta_tick < 0:
+                        delta_tick = -min_orig
+
+                    # Shift 磁吸: 以鼠标所在图层为锚点
+                    if event.state & 0x0001 and layer_idx is not None:
+                        anchor_orig = orig_delays.get(layer_idx)
+                        if anchor_orig is not None:
+                            anchor_raw = anchor_orig + delta_tick
+                            snapped = max(0, self._tl_snap_tick(
+                                anchor_raw, -1, SNAP_THRESHOLD))
+                            delta_tick = snapped - anchor_orig
+
+                    entry = self.entries[self._editing_idx]
+                    for sel_idx, orig_delay in orig_delays.items():
+                        L = entry['layers'][sel_idx]
+                        L[22] = orig_delay + delta_tick
+                        vr = self._layer_vars[sel_idx]
+                        sdv = vr.get('start_delay')
+                        if sdv is not None:
+                            sdv.set(str(L[22]))
+
+                    self._dirty = True
                     self._tl_redraw()
                 return
 
@@ -1835,7 +1908,31 @@ class ActEditor:
             30, lambda: self._tl_sync_preview(self._tl_playhead))
 
     def _tl_on_release(self, event):
-        """释放鼠标: 同步预览, 应用修改"""
+        """释放鼠标: 结算框选 / 同步预览 / 应用修改"""
+        c = self._tl_canvas
+
+        # 结算框选: AABB 碰撞检测, 框中的图层加入选中集合
+        if getattr(self, '_marquee_start', None) is not None:
+            x0, y0 = self._marquee_start
+            x1 = c.canvasx(event.x)
+            y1 = c.canvasy(event.y)
+            min_x, max_x = min(x0, x1), max(x0, x1)
+            min_y, max_y = min(y0, y1), max(y0, y1)
+
+            for s in range(ACT_MAX_LAYER):
+                bb = self._layer_vars[s].get('_track_bbox')
+                if bb is not None:
+                    # AABB 相交测试
+                    hit = not (max_x < bb[0] or min_x > bb[2]
+                               or max_y < bb[1] or min_y > bb[3])
+                    if hit:
+                        self._tl_selected_layers.add(s)
+
+            self._marquee_start = None
+            c.delete('marquee')
+            self._tl_refresh_thumbnails()
+            self._tl_redraw()
+
         if self._scrub_job is not None:
             self.root.after_cancel(self._scrub_job)
             self._scrub_job = None
@@ -1962,6 +2059,114 @@ class ActEditor:
     def _tl_pan_move(self, event):
         self._tl_canvas.scan_dragto(event.x, event.y, gain=1)
 
+    # ---- 轨道高度 (Shift+滚轮) ----
+
+    def _tl_on_shift_mousewheel(self, event):
+        """Shift+滚轮: 调整轨道高度 20~80px"""
+        delta = 1 if event.delta > 0 else -1
+        self._tl_track_h = max(20, min(80, self._tl_track_h + delta * 4))
+        self._tl_redraw()
+
+    # ---- 轨道键盘导航 (Up/Down) ----
+
+    def _nle_track_up(self, event=None):
+        """上方向键: 选中上一个非空图层"""
+        if not getattr(self, '_tl_edit_enabled', False) or self._editing_idx is None:
+            return
+        if isinstance(self.root.focus_get(), (tk.Entry, ttk.Entry, ttk.Spinbox)):
+            return
+        entry = self.entries[self._editing_idx]
+        current = min(self._tl_selected_layers) if self._tl_selected_layers else ACT_MAX_LAYER
+        for s in range(current - 1, -1, -1):
+            if entry['layers'][s][0] != 0:
+                self._tl_select_layer(s)
+                return
+
+    def _nle_track_down(self, event=None):
+        """下方向键: 选中下一个非空图层"""
+        if not getattr(self, '_tl_edit_enabled', False) or self._editing_idx is None:
+            return
+        if isinstance(self.root.focus_get(), (tk.Entry, ttk.Entry, ttk.Spinbox)):
+            return
+        entry = self.entries[self._editing_idx]
+        current = max(self._tl_selected_layers) if self._tl_selected_layers else -1
+        for s in range(current + 1, ACT_MAX_LAYER):
+            if entry['layers'][s][0] != 0:
+                self._tl_select_layer(s)
+                return
+
+    # ---- 右键上下文菜单 ----
+
+    def _tl_on_right_click(self, event):
+        """右键轨道: 弹出快捷操作菜单"""
+        if not getattr(self, '_tl_edit_enabled', False):
+            return
+        layer_idx, hit_type, _ = self._tl_hit_test(event.x, event.y)
+        if layer_idx is None:
+            return
+        if hit_type not in ('body', 'left_edge', 'right_edge'):
+            return
+        if self._editing_idx is None:
+            return
+
+        self._tl_select_layer(layer_idx)
+        L = self.entries[self._editing_idx]['layers'][layer_idx]
+        menu = tk.Menu(self.root, tearoff=0)
+
+        vis_var = self._preview_vis_vars.get(layer_idx + 1)
+        is_vis = vis_var.get() if vis_var else True
+        menu.add_command(
+            label="隐藏图层" if is_vis else "显示图层",
+            command=lambda: self._quick_toggle_vis(layer_idx))
+
+        menu.add_separator()
+
+        blend_menu = tk.Menu(menu, tearoff=0)
+        for val, label in BLEND_MODE_LABELS.items():
+            blend_menu.add_command(
+                label=label,
+                command=lambda v=val: self._quick_set_blend(layer_idx, v))
+        menu.add_cascade(label="混合模式", menu=blend_menu)
+
+        menu.add_separator()
+        menu.add_command(label="清空该图层数据",
+                         command=lambda: self._quick_clear_layer(layer_idx))
+
+        menu.tk_popup(event.x_root, event.y_root)
+
+    def _quick_toggle_vis(self, layer_idx):
+        vis_var = self._preview_vis_vars.get(layer_idx + 1)
+        if vis_var:
+            vis_var.set(not vis_var.get())
+            self._preview_redraw()
+            self._tl_redraw()
+
+    def _quick_set_blend(self, layer_idx, mode_val):
+        if self._editing_idx is not None:
+            L = self.entries[self._editing_idx]['layers'][layer_idx]
+            L[11] = mode_val
+            self._dirty = True
+            self._populate_layer(layer_idx, L)
+            self._preview_redraw()
+
+    def _quick_clear_layer(self, layer_idx):
+        """清空图层: 把该层除 layer_type=0 外的关键字段归零"""
+        if self._editing_idx is None:
+            return
+        if not messagebox.askyesno("确认", f"确定清空图层 #{layer_idx + 1} 的所有数据?"):
+            return
+        L = self.entries[self._editing_idx]['layers'][layer_idx]
+        for i in range(len(L)):
+            L[i] = 0
+        L[0] = 0
+        self._dirty = True
+        self._tl_selected_layers.discard(layer_idx)
+        self._tl_refresh_thumbnails()
+        self._tl_redraw()
+        self._preview_redraw()
+        self._populate_layer(layer_idx, L)
+        self.status_var.set(f"图层 #{layer_idx + 1} 已清空")
+
     # ---- 缩略图 ----
 
     def _tl_refresh_thumbnails(self):
@@ -1970,7 +2175,7 @@ class ActEditor:
         c.delete("all")
         self._thumb_images = []
 
-        if self._tl_selected_layer is None:
+        if not self._tl_selected_layers:
             c.create_text(140, 28, text="(选择图层查看帧缩略图)",
                           fill='#999', font=FONT_S)
             return
@@ -1981,8 +2186,10 @@ class ActEditor:
                           fill='#999', font=FONT_S)
             return
 
+        # 多选时取最小索引图层作为缩略图代表
+        display_layer = min(self._tl_selected_layers)
         entry = self.entries[self._editing_idx]
-        L = entry['layers'][self._tl_selected_layer]
+        L = entry['layers'][display_layer]
         ltype = L[0]
         block_idx = L[1]
         if ltype == 0 or block_idx <= 0:
@@ -2077,7 +2284,7 @@ class ActEditor:
                 L[18] = fi
 
             self._dirty = True
-            self._populate_layer(self._tl_selected_layer, L)
+            self._populate_layer(display_layer, L)
             self._tl_redraw()
             self._preview_stop()
             self._preview_tick_idx = 0
@@ -3468,8 +3675,10 @@ class ActEditor:
           start_delay (+44): 先倒数; 期间不播放
           tick_interval (+42): 每积累此值 tick 翻帧 (0 视作 1)
           first..last (+34..+36): 播放区间
-          loop_behavior (+38): -1 回到 first, -2 停止, ≥0 跳到该帧
-        返回 (cur_frame, stopped)"""
+          loop_behavior (+38): -1 无限循环, -2 播完停止,
+                               ≥0 首轮播完后跳至该帧并循环
+        返回 (cur_frame, stopped): stopped 表示首轮播放完成
+        (loop=-1 永不为 True; loop=-2/>=0 在 frame_adv>=span 时为 True)"""
         start_delay = L[22]
         tick_interval = L[21]
         first = L[17]
@@ -3496,7 +3705,7 @@ class ActEditor:
                 return first + frame_adv, False
             rem = frame_adv - span
             tail = max(1, last - loop + 1)
-            return loop + (rem % tail), False
+            return loop + (rem % tail), True
         return first + (frame_adv % span), False
 
     def _preview_redraw(self):
@@ -3524,26 +3733,41 @@ class ActEditor:
         dyn_x, dyn_y = [], []
         n_stoppable = 0   # loop=-2 的图层数 (会停止的)
         n_stopped = 0     # 已停止的图层数
+        _layer_diag = []  # 诊断: 每层状态
         for slot, eff_dir, L in layers:
             v = self._preview_vis_vars.get(slot)
             if v is not None and not v.get():
+                _layer_diag.append(f"#{slot} 隐藏")
                 continue
             src = 'aa' if L[0] == 1 else 'af'
             pk = L[1]
             jvg = self._aa_data if src == 'aa' else self._af_data
             if jvg is None or pk < 0 or pk >= jvg.block_count:
+                _layer_diag.append(f"#{slot} JVG缺失")
                 continue
             blk = jvg.get_block(pk)
             n_frames = blk.frame_count
             if n_frames <= 0:
+                _layer_diag.append(f"#{slot} 0帧")
                 continue
 
             cur_abs, stopped = self._compute_layer_frame(L, tick)
-            if L[19] == -2:
+            span = max(1, L[18] - L[17] + 1)
+            delay = L[22]
+            interval = max(1, L[21])
+            eff_tick = max(0, tick - delay)
+            frame_adv = eff_tick // interval
+            _layer_diag.append(
+                f"#{slot} L={L[19]} fadv={frame_adv}/{span}"
+                f"{' STOP' if stopped else ''}")
+            # 游戏停止逻辑: loop=-1 无限循环不参与; 其余所有值首轮播完后停止
+            if L[19] != -1:
                 n_stoppable += 1
                 if stopped:
                     n_stopped += 1
-                    continue
+                    if L[19] == -2:
+                        continue  # loop=-2 停止后不渲染
+                    # loop>=0: 计入停止但继续渲染 (tail loop 阶段)
             if L[2] == 4:
                 cur_abs += L[16] * eff_dir
             cur_abs = cur_abs % n_frames if n_frames > 0 else 0
@@ -3753,7 +3977,7 @@ class ActEditor:
             except Exception:
                 pass
 
-        # loop=-2 的图层全部停止 → 动画结束 (loop=-1/>=0 的图层会无限循环)
+        # 所有 loop!=-1 的图层首轮播完后停止 (loop=-1 无限循环不参与判断)
         all_stopped = n_stoppable > 0 and n_stopped >= n_stoppable
         if all_stopped:
             c.create_text(cw // 2, ch - 16,
@@ -3762,7 +3986,10 @@ class ActEditor:
 
         self._preview_scaled_cache = scaled_cache
         info.append(f"loop=-2: {n_stopped}/{n_stoppable}")
-        for li, line in enumerate(info[:14]):
+        # 诊断: 每层推进状态
+        for diag in _layer_diag:
+            info.append(diag)
+        for li, line in enumerate(info[:20]):
             c.create_text(8, 8 + li * 14, text=line, fill="#0f0",
                           font=("Consolas", 8), anchor=tk.NW)
 
