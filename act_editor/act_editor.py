@@ -389,7 +389,8 @@ ACT_DECOMPRESSED = 509600
 # 方向顺序 — sub_4434BC 以字节下标 v33 ∈ [0,3] 索引方向组;
 # 实测 entry #0 的 4 组 z-order 呈 "前/后朝向反转" 模式,
 # 下/右使用 [3,4,1,2], 上/左使用 [1,2,3,4], 故与常见 RPG 四方向一致:
-DIRECTION_LABELS = ["方向0 (下)", "方向1 (上)", "方向2 (左)", "方向3 (右)"]
+DIRECTION_LABELS = ["方向0 (右上)", "方向1 (右下)", "方向2 (左下)", "方向3 (左上)"]
+DIRECTION_SHORT = ["右上", "右下", "左下", "左上"]
 
 # 图层类型 (sub_4434BC: *(_WORD*)dword_9D0690)
 #   引擎按 "==1 vs !=1" 切换贴图源 (sub_42FEE0 验证):
@@ -1328,7 +1329,7 @@ class ActEditor:
         ttk.Label(ctrl, text="方向:", font=FONT_S).pack(side=tk.LEFT)
         self._preview_dir_var = tk.IntVar(value=0)
         for d in range(4):
-            ttk.Radiobutton(ctrl, text=DIRECTION_LABELS[d][:3],
+            ttk.Radiobutton(ctrl, text=DIRECTION_SHORT[d],
                             variable=self._preview_dir_var, value=d,
                             command=self._preview_redraw,
                             width=5).pack(side=tk.LEFT)
