@@ -1,43 +1,44 @@
 #!/usr/bin/env python3
 """
-TKKon.dat 可视化编辑器 v2.0
+TKKon.dat 可视化编辑器 v3.0
 =============================================================
-逆向依据 (2026-05 重新分析修正):
+逆向依据 (2026-05 v3.0 字段语义修正):
   - sub_45343C:     DAT 文件统一加载 (LZSS 解压, 40字节/条, 650条)
   - sub_452B14:     LZSS 解压引擎 (4096窗口, 0x20填充, 起始位4078)
   - sub_4173F8:     TKKon 加载入口 → &unk_9D0698, 26000
-  - sub_4434BC:     运行时条件处理 — 按 word_9D069E[20*i] 索引,
-                    stride=40字节(20×int16), 确认 [3]=精灵索引
   - Maker.exe sub_4027FF: 校验解压后大小 26000 = 40 × 650
 
-关键发现 (修正旧版 13×int16/1000条 错误):
-  - 26000 = 40 × 650 (非 26 × 1000)
-  - 每条 20 个 int16 (40 字节), 共 650 条
-  - field[3] 为精灵/动画索引 (0..639, -1=无), 反编译 sub_4434BC: word_9D069E[20*i] 用于索引784字节动画表
-  - field[10]-[13] 为4个状态位掩码字段 (导致/解除 各1-16/17-32)
-  - field[15]-[18] 在所有650条中恒为0 (未使用)
+v3.0 语义修正 (基于 sub_43D53C/43D8B0/43E980/4458B0):
+  - field[0-2] 不是 TKT 文本引用! 旧版通过TKT查表得到场景名称是虚假关联
+  - field[0] = 执行模式 (高字节=攻击距离, 低字节=范围形状)
+  - field[1] = 目标参数 (高字节=扩展范围, 低字节=扩展模式)
+  - field[2] = 阵营过滤 (低字节=阵营匹配, 高字节=目标类型)
+  - field[4] = 伤害基础值 (非"泛型参数值", -1=ATK, >1000/2000/3000=编码)
+  - field[5] = 内力伤害    field[6] = 附加命中
+  - field[8] = HP回复      field[9] = MP回复 (战斗中=数值, 剧情可能=对话ID→TKT)
+  - field[19] = 执行标志 (低字节bit2=伤害类型物理/魔法)
 
 字段布局 (20 × int16, 40字节/条):
-  [0]  cond_type         — 条件类型/场景文本 → TKT (256=匈奴民帳, 512=草原, 768/1024/1280/1536...)
-  [1]  target1           — 目标/次级场景 → TKT
-  [2]  mode              — 模式/标志 (1, 2, 256, 257, 258...)
-  [3]  sprite_idx        — 精灵/动画索引 (0..639, -1=无; 反编译 word_9D069E[20*i] → 784字节动画表)
-  [4]  value             — 参数值/终止标记 (-1=终止, 20/30/40/60/80/120等数值)
-  [5]  param5            — 参数5 (21条使用)
-  [6]  param6            — 参数6 (33条使用)
-  [7]  param7            — 参数7 (1条使用)
-  [8]  dialog1           — 对话文本ID1 → TKT (30条使用)
-  [9]  dialog2           — 对话文本ID2 → TKT (16条使用)
-  [10] inflict_status_lo — 导致状态 1-16  (位掩码, bit0=状态1..bit15=状态16; 84条使用)
-  [11] inflict_status_hi — 导致状态 17-32 (位掩码, bit0=状态17..bit15=状态32; 107条使用)
-  [12] remove_status_lo  — 解除状态 1-16  (位掩码, bit0=状态1..bit15=状态16; 26条使用)
-  [13] remove_status_hi  — 解除状态 17-32 (位掩码, bit0=状态17..bit15=状态32; 62条使用)
-  [14] param14           — 参数14 (7条使用)
+  [0]  exec_mode         — 执行模式/攻击范围 (高=距离, 低=形状)
+  [1]  target_param      — 目标选择参数
+  [2]  target_filter     — 阵营过滤
+  [3]  cond_id           — TKAct.dat 动画索引 (0..649)
+  [4]  damage_base       — 伤害基础值
+  [5]  mp_damage         — 内力伤害基础值
+  [6]  accuracy          — 附加命中值
+  [7]  extra_damage      — 附加伤害值
+  [8]  hp_restore        — HP回复基础值 (可能=对话ID→TKT)
+  [9]  mp_restore        — MP回复基础值 (可能=对话ID→TKT)
+  [10] inflict_status_lo — 导致状态 1-16  (位掩码)
+  [11] inflict_status_hi — 导致状态 17-32 (位掩码)
+  [12] remove_status_lo  — 解除状态 1-16  (位掩码)
+  [13] remove_status_hi  — 解除状态 17-32 (位掩码)
+  [14] timing_mod        — 时序修正 (行动顺序增减)
   [15] unused15          — 未使用 (始终为0)
   [16] unused16          — 未使用 (始终为0)
   [17] unused17          — 未使用 (始终为0)
   [18] unused18          — 未使用 (始终为0)
-  [19] end_flag          — 结束标记 (0=无 1= 3= 4=; 219条非零)
+  [19] exec_flags        — 执行标志 (低=伤害类型, 高=结束标记)
 
 用法:
   python kon_editor.py
@@ -160,26 +161,26 @@ W_INPUT = 12
 # ============================================================
 
 KON_FIELDS = [
-    ("cond_type",        0,  "条件类型",      "条件类型/场景文本 → TKT (256=匈奴民帳, 512=草原之黃巾賊, 768/1024/1280/1536…)"),
-    ("target1",          2,  "目标1",         "目标/次级场景 → TKT (256=匈奴民帳, 512=江岸…)"),
-    ("mode",             4,  "模式标志",      "模式/标志 (1=啊！, 2=虎牢關之役, 256/257/258…)"),
-    ("cond_id",          6,  "动画索引",      "精灵/动画定义索引 (0..639, -1=无) — 反编译 sub_4434BC: word_9D069E[20*i] → 784字节动画表"),
-    ("value",            8,  "参数值",        "参数值/终止标记 (-1=终止, 20/30/40/60/80/120 等数值)"),
-    ("param5",           10, "参数5",         "参数5 (21条使用)"),
-    ("param6",           12, "参数6",         "参数6 (33条使用)"),
-    ("param7",           14, "参数7",         "参数7 (1条使用)"),
-    ("dialog1",          16, "对话文本1",     "对话文本ID1 → TKT (30条使用)"),
-    ("dialog2",          18, "对话文本2",     "对话文本ID2 → TKT (16条使用)"),
+    ("exec_mode",        0,  "执行模式",      "高字节=攻击距离(负=自身, 0=单格, 1-3=近战, 6+=远程); 低字节=范围形状(0=菱形) — sub_43D53C:33/41, sub_4458B0:289/303"),
+    ("target_param",     2,  "目标参数",      "高字节=扩展范围(-2=仅自身); 低字节=扩展模式(0=菱形扩展, 非0=直接标记) — sub_43D8B0:44-45"),
+    ("target_filter",    4,  "阵营过滤",      "低字节=阵营匹配(0=对立, 1=同阵营, 2=任意); 高字节=目标类型(0=全部, 1=友方, 2=敌方) — sub_43D53C:129-160"),
+    ("cond_id",          6,  "动画索引",      "TKAct.dat 条目索引 (0..649, -1=无) — sub_4434BC: word_9D069E[20*i]"),
+    ("damage_base",      8,  "伤害基础值",    "伤害基础值 (-1=单位攻击力, >0=固定值, >1000/2000/3000=不同编码公式) — sub_43E980:69-161"),
+    ("mp_damage",        10, "内力伤害",      "内力(MP)伤害基础值, 编码同伤害基础值 (33条使用) — sub_43E980:392"),
+    ("accuracy",         12, "附加命中",      "命中率计算基准值, 与目标闪避联合计算 (33条使用) — sub_43E980:179"),
+    ("extra_damage",     14, "附加伤害",      "附加伤害值 (1条使用, 极少)"),
+    ("hp_restore",       16, "HP回复",       "HP回复基础值, 编码同伤害基础值 — sub_43E980:479"),
+    ("mp_restore",       18, "MP回复",       "MP回复基础值, 编码同伤害基础值 — sub_43E980:517"),
     ("inflict_status_lo", 20, "导致状态1-16",  "施加状态位掩码低16位 (bit0=状态1,…,bit15=状态16; 84条使用)"),
     ("inflict_status_hi", 22, "导致状态17-32", "施加状态位掩码高16位 (bit0=状态17,…,bit15=状态32; 107条使用)"),
     ("remove_status_lo",  24, "解除状态1-16",  "移除状态位掩码低16位 (bit0=状态1,…,bit15=状态16; 26条使用)"),
     ("remove_status_hi",  26, "解除状态17-32", "移除状态位掩码高16位 (bit0=状态17,…,bit15=状态32; 62条使用)"),
-    ("param14",          28, "参数14",        "参数14 (7条使用)"),
+    ("timing_mod",       28, "时序修正",      "行动顺序修正值 (负=加速/提前, 正=减速/延后; 7条使用) — sub_432314 + 4400DC.asm:4429EF"),
     ("unused15",         30, "未使用15",      "● 始终为0 (650条中0条非零)"),
     ("unused16",         32, "未使用16",      "● 始终为0 (650条中0条非零)"),
     ("unused17",         34, "未使用17",      "● 始终为0 (650条中0条非零)"),
     ("unused18",         36, "未使用18",      "● 始终为0 (650条中0条非零)"),
-    ("end_flag",         38, "结束标记",      "结束/类型标记 (0/1/3/4; 219条非零)"),
+    ("exec_flags",       38, "执行标志",      "低字节bit2=伤害类型(0=魔法, 1=物理); 高字节=结束标记(0/1/3/4; 219条非零) — sub_43E980:193/333"),
 ]
 
 ACTIVE_FIELDS = [f for f in KON_FIELDS if not f[0].startswith('unused')]
@@ -188,31 +189,81 @@ ACTIVE_FIELDS = [f for f in KON_FIELDS if not f[0].startswith('unused')]
 # 数据加载/保存
 # ============================================================
 
-def resolve_kon_val(val, tkt):
-    """解析 int16 值 → TKT 文本或特殊标记"""
-    if val == 0: return ""
-    if val in (-1, 65535): return "(终止)"
-    if val == 32767: return "(最大值/任意)"
-    if val > 0 and val in tkt:
-        txt = tkt[val].split('\n')[0].strip()
-        return txt[:35] if txt else ""
-    if val < 0 and -val in tkt:
-        txt = tkt[-val].split('\n')[0].strip()
-        return txt[:35] if txt else ""
+def resolve_kon_val(field_name, val, tkt):
+    """解析 int16 值 → 特殊标记 (已弃用TKT查表, 仅返回空)"""
     return ""
 
 def kon_record_name(rec, tkt):
-    """生成条件记录的可读名称"""
-    ct = rec.get('cond_type', 0)
-    if ct != 0:
-        ct_txt = resolve_kon_val(ct, tkt)
-        if ct_txt: return ct_txt[:25]
-    for fld in ['target1', 'dialog1', 'dialog2']:
-        v = rec.get(fld, 0)
-        if v != 0:
-            t = resolve_kon_val(v, tkt)
-            if t: return t[:25]
-    return f"动画#{rec.get('cond_id', rec['index'])}"
+    """生成记录的可读名称 — 距离/面积/动画索引"""
+    cid = rec.get('cond_id', 0)
+    parts = []
+    em = rec.get('exec_mode', 0)
+    tp = rec.get('target_param', 0)
+    if em < 0:
+        parts.append("自身")
+    elif em != 0:
+        rh = (em >> 8) & 0xFF
+        rl = em & 0xFF
+        shape = "菱" if rl == 0 else f"形{rl}"
+        if rh > 0:
+            parts.append(f"{shape}{rh}")
+    # 攻击面积
+    tp_hi = (tp >> 8) & 0xFF
+    if tp_hi > 0:
+        parts.append(f"面{tp_hi}")
+    desc = " ".join(parts) if parts else ""
+    if cid >= 0:
+        return f"动画#{cid} {desc}".strip()
+    return f"空槽-#{rec['index']}"
+
+def describe_exec_mode(val):
+    """解析 exec_mode → 可读描述 (高字节=攻击距离, 低字节=范围形状)"""
+    if val < 0:
+        return "自身目标"
+    hi = (val >> 8) & 0xFF
+    lo = val & 0xFF
+    if hi == 0 and lo == 0:
+        return "单格"
+    shape = "菱形" if lo == 0 else f"形状{lo}"
+    parts = []
+    if hi > 0:
+        parts.append(f"距离={hi}格")
+    parts.append(f"形状={shape}")
+    return "  ".join(parts)
+
+def describe_target_param(val):
+    """解析 target_param → 可读描述 (高字节=攻击面积, 低字节=扩展模式)"""
+    if val < 0:
+        return f"特殊({val})"
+    hi = (val >> 8) & 0xFF
+    lo = val & 0xFF
+    if hi == 0 and lo == 0:
+        return "无扩展(单体)"
+    mode = "菱形扩展" if lo == 0 else "直接标记"
+    parts = []
+    if hi > 0:
+        parts.append(f"面积={hi}格")
+    parts.append(f"模式={mode}")
+    return "  ".join(parts)
+
+def describe_target_filter(val):
+    """解析 target_filter → 可读描述 (低字节=阵营匹配, 高字节=目标类型)"""
+    lo = val & 0xFF
+    hi = (val >> 8) & 0xFF
+    faction_map = {0: "对立", 1: "同阵营", 2: "任意"}
+    target_map = {0: "全部", 1: "友方", 2: "敌方"}
+    f_text = faction_map.get(lo, f"阵营{lo}")
+    t_text = target_map.get(hi, f"类型{hi}")
+    return f"目标={t_text}  阵营={f_text}"
+
+def describe_exec_flags(val):
+    """解析 exec_flags → 可读描述 (低字节bit2=伤害类型, 高字节=结束标记)"""
+    lo = val & 0xFF
+    hi = (val >> 8) & 0xFF
+    dmg_type = "物理" if (lo & 4) else "魔法"
+    end_map = {0: "无", 1: "标记1", 3: "标记3", 4: "标记4"}
+    end_text = end_map.get(hi, str(hi))
+    return f"伤害={dmg_type}  结束={end_text}"
 
 def load_kon(fp):
     with open(fp, 'rb') as f: raw = f.read()
@@ -248,13 +299,14 @@ def save_kon(fp, recs):
 class KonEditor:
     def __init__(self, root):
         self.root = root
-        self.root.title("TKKon.dat 可视化编辑器 v2.0")
+        self.root.title("TKKon.dat 可视化编辑器 v3.0")
         ico = os.path.join(os.path.dirname(__file__), 'TKS.ico')
         if os.path.exists(ico): self.root.iconbitmap(default=ico)
         self.root.geometry("1320x820"); self.root.minsize(1050, 650)
         self.kon_path = self.tkt_path = None
         self.records = []; self.tkt = {}
         self.filtered_indices = []; self._dirty = False
+        self._edit_split = {}  # fn → (hi_spin, lo_spin, hi_var, lo_var)  for exec_mode/target_param
         self._build_ui(); self._set_edit_enabled(False)
         sw = self.root.winfo_screenwidth(); sh = self.root.winfo_screenheight()
         x = (sw - 1320) // 2; y = (sh - 820) // 2
@@ -272,7 +324,7 @@ class KonEditor:
         fm.add_separator(); fm.add_command(label="退出", command=self.root.quit)
         mb.add_cascade(label="文件", menu=fm)
         em = tk.Menu(mb, tearoff=0)
-        em.add_command(label="新建条件", command=self._new_record, accelerator="Ctrl+N")
+        em.add_command(label="新建条目", command=self._new_record, accelerator="Ctrl+N")
         em.add_command(label="复制当前记录", command=self._copy_record)
         em.add_command(label="清空当前记录", command=self._clear_current)
         mb.add_cascade(label="编辑", menu=em)
@@ -308,16 +360,16 @@ class KonEditor:
         paned.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
 
         # Left: TreeView
-        lf = ttk.Frame(paned); paned.add(lf, weight=2)
-        cols = ('index', 'cond_id', 'cond_type', 'tkt_name', 'value', 'end_flag')
+        lf = ttk.Frame(paned); paned.add(lf, weight=1)
+        cols = ('index', 'cond_id', 'exec_mode', 'tkt_name', 'damage_base', 'exec_flags')
         self.tree = ttk.Treeview(lf, columns=cols, show='headings', selectmode='browse')
         cc = [
             ('index', '记录#', 50),
             ('cond_id', '动画ID', 55),
-            ('cond_type', '类型', 65),
-            ('tkt_name', 'TKT解析/名称', 230),
-            ('value', '参数值', 55),
-            ('end_flag', '结束', 45),
+            ('exec_mode', '执行模式', 75),
+            ('tkt_name', '名称', 160),
+            ('damage_base', '伤害基础', 65),
+            ('exec_flags', '标志', 45),
         ]
         for cid, cn, cw in cc:
             self.tree.heading(cid, text=cn, command=lambda c=cid: self._sort_by(c))
@@ -358,7 +410,7 @@ class KonEditor:
         self._edit_vars = {}; self._edit_extras = {}
 
         # Preview panel
-        pv_lf = ttk.LabelFrame(self.edit_inner, text="条件预览", padding=4)
+        pv_lf = ttk.LabelFrame(self.edit_inner, text="动作预览", padding=4)
         pv_lf.grid(row=0, column=0, sticky='ew', padx=2, pady=2)
         for c in range(4): pv_lf.columnconfigure(c, weight=1)
         LBL_CLR = '#666'
@@ -376,10 +428,10 @@ class KonEditor:
         self.preview_info.grid(row=1, column=1, columnspan=3, sticky='ew', pady=1)
 
         # Field groups — active fields only, skip unused
-        self._build_field_group("核心属性 (offset 0–8)", ACTIVE_FIELDS[:5], 1, 5)
-        self._build_field_group("参数区 (offset 10–18)", ACTIVE_FIELDS[5:10], 2, 5)
+        self._build_field_group("战斗执行参数 (offset 0–8)", ACTIVE_FIELDS[:5], 1, 5)
+        self._build_field_group("伤害/回复参数 (offset 10–18)", ACTIVE_FIELDS[5:10], 2, 5)
         self._build_field_group("状态位掩码 (offset 20–28)", ACTIVE_FIELDS[10:15], 3, 5)
-        self._build_field_group("未使用 (offset 30–36) + 结束标记", KON_FIELDS[15:], 4, 5)
+        self._build_field_group("未使用 (offset 30–36) + 执行标志", KON_FIELDS[15:], 4, 5)
 
         # Bottom path bar
         pf = ttk.LabelFrame(self.root, text="当前加载"); pf.pack(fill=tk.X, padx=5, pady=(0, 2))
@@ -407,7 +459,37 @@ class KonEditor:
         self._bind_tooltip(lbl, f"[{fo:02d}] {cmt}")
 
         is_mask = 'status' in fn
-        if is_mask:
+        is_split = fn in ('exec_mode', 'target_param', 'target_filter', 'exec_flags')
+        if is_split:
+            # 高/低字节拆分编辑
+            box = ttk.Frame(frm); box.pack(fill=tk.X)
+            if fn == 'exec_mode':
+                hi_label, hi_from, hi_to = "距离", -1, 127
+                lo_label, lo_from, lo_to = "形状", 0, 255
+            elif fn == 'target_param':
+                hi_label, hi_from, hi_to = "面积", 0, 127
+                lo_label, lo_from, lo_to = "模式", 0, 255
+            elif fn == 'target_filter':
+                hi_label, hi_from, hi_to = "目标", 0, 255
+                lo_label, lo_from, lo_to = "阵营", 0, 255
+            else:  # exec_flags
+                hi_label, hi_from, hi_to = "结束", 0, 255
+                lo_label, lo_from, lo_to = "伤害", 0, 255
+            hi_var = tk.StringVar(value="0")
+            lo_var = tk.StringVar(value="0")
+            hi_spin = ttk.Spinbox(box, textvariable=hi_var, from_=hi_from, to=hi_to, width=5, font=FONT)
+            lo_spin = ttk.Spinbox(box, textvariable=lo_var, from_=lo_from, to=lo_to, width=5, font=FONT)
+            ttk.Label(box, text=hi_label, font=FONT_S).pack(side=tk.LEFT)
+            hi_spin.pack(side=tk.LEFT, padx=1)
+            ttk.Label(box, text=lo_label, font=FONT_S).pack(side=tk.LEFT, padx=(6, 1))
+            lo_spin.pack(side=tk.LEFT, padx=1)
+            self._edit_split[fn] = (hi_spin, lo_spin, hi_var, lo_var)
+            # extras 标签 (分解显示)
+            if not readonly:
+                self._edit_extras[fn] = ttk.Label(frm, text="", foreground='#228B22',
+                                                   font=FONT_S, wraplength=180)
+                self._edit_extras[fn].pack(anchor=tk.W)
+        elif is_mask:
             # 状态位掩码: 按钮 + 状态名标签
             inf = fn.startswith('inflict')
             btn_text = "选择导致状态…" if inf else "选择解除状态…"
@@ -585,7 +667,7 @@ class KonEditor:
                     continue
             if q:
                 nm = kon_record_name(rec, self.tkt)
-                search_text = f"{rec['index']} {rec['cond_id']} {rec['cond_type']} {nm} " \
+                search_text = f"{rec['index']} {rec['cond_id']} {rec['exec_mode']} {nm} " \
                               f"{' '.join(str(rec[fn]) for fn,_,_,_ in KON_FIELDS)}".lower()
                 if q not in search_text:
                     continue
@@ -607,12 +689,12 @@ class KonEditor:
             nm = kon_record_name(r, self.tkt)
             has_data = any(r[fn] != 0 for fn, _, _, _ in KON_FIELDS)
             tags = ['active'] if has_data else ['empty']
-            val_str = str(r['value']) if r['value'] != 0 else ""
-            if r['value'] == -1: val_str = "终止"
-            ef = r['end_flag']
+            val_str = str(r['damage_base']) if r['damage_base'] != 0 else ""
+            if r['damage_base'] == -1: val_str = "终止"
+            ef = r['exec_flags']
             ef_str = str(ef) if ef != 0 else ""
             self.tree.insert('', 'end',
-                             values=(r['index'], r['cond_id'], r['cond_type'],
+                             values=(r['index'], r['cond_id'], r['exec_mode'],
                                      nm if nm else f"(空-#{idx})",
                                      val_str, ef_str),
                              tags=tags)
@@ -623,8 +705,8 @@ class KonEditor:
             self.filtered_indices.sort(
                 key=lambda i: kon_record_name(self.records[i], self.tkt).lower(), reverse=rev)
         else:
-            km = {'cond_id': 'cond_id', 'cond_type': 'cond_type', 'value': 'value',
-                  'end_flag': 'end_flag'}
+            km = {'cond_id': 'cond_id', 'exec_mode': 'exec_mode', 'damage_base': 'damage_base',
+                  'exec_flags': 'exec_flags'}
             self.filtered_indices.sort(
                 key=lambda i: self.records[i].get(km.get(col, 'index'), 0), reverse=rev)
         self._sort_reverse = not rev; self._refresh_table()
@@ -636,16 +718,16 @@ class KonEditor:
             messagebox.showinfo("提示", "请先加载数据"); return
         for rec in self.records:
             if all(rec[fn] == 0 for fn, _, _, _ in KON_FIELDS):
-                rec['cond_type'] = 256; rec['target1'] = 256
+                rec['exec_mode'] = 0; rec['target_param'] = 0
                 rec['cond_id'] = rec['index']
-                rec['value'] = -1; rec['end_flag'] = 4
+                rec['damage_base'] = -1; rec['exec_flags'] = 4
                 self._dirty = True; self._apply_filter()
                 for child in self.tree.get_children():
                     if int(self.tree.item(child)['values'][0]) == rec['index']:
                         self.tree.selection_set(child); self.tree.see(child); break
                 self._populate_edit(rec)
-                self.status_var.set(f"已创建新条件 → 槽位 #{rec['index']} (ID={rec['cond_id']})"); return
-        messagebox.showwarning("槽位已满", f"所有 {KON_CNT} 个槽位均已占用")
+                self.status_var.set(f"已创建新条目 → 槽位 #{rec['index']} (ID={rec['cond_id']})"); return
+        messagebox.showwarning("槽位已满", f"所有 {KON_CNT} 个记录槽位均已占用")
 
     def _copy_record(self):
         if not hasattr(self, '_editing_idx'): return
@@ -663,21 +745,21 @@ class KonEditor:
                         self.tree.selection_set(child); self.tree.see(child); break
                 self._populate_edit(rec)
                 self.status_var.set(f"已复制 #{src['index']} → #{rec['index']}"); return
-        messagebox.showwarning("槽位已满", f"所有 {KON_CNT} 个槽位均已占用")
+        messagebox.showwarning("槽位已满", f"所有 {KON_CNT} 个记录槽位均已占用")
 
     def _clear_current(self):
         if not hasattr(self, '_editing_idx'): return
         rec = self.records[self._editing_idx]
         if all(rec[fn] == 0 for fn, _, _, _ in KON_FIELDS):
             messagebox.showinfo("提示", "当前记录已经为空"); return
-        if not messagebox.askyesno("确认清空", f"确定清空条件 #{rec['index']} 的所有字段?"):
+        if not messagebox.askyesno("确认清空", f"确定清空记录 #{rec['index']} 的所有字段?"):
             return
         for fn, _, _, _ in KON_FIELDS:
             rec[fn] = 0
-        rec['cond_id'] = 0; rec['index'] = rec['index']  # preserve index
+        rec['index'] = rec['index']  # preserve index
         self._dirty = True; self._apply_filter()
         self._populate_edit(rec)
-        self.status_var.set(f"已清空条件 #{rec['index']}")
+        self.status_var.set(f"已清空记录 #{rec['index']}")
 
     def _on_tree_select(self, event):
         sel = self.tree.selection()
@@ -688,32 +770,42 @@ class KonEditor:
     def _populate_edit(self, rec):
         self._editing_idx = rec['index']
         nm = kon_record_name(rec, self.tkt)
-        ct = rec.get('cond_type', 0)
-        ct_txt = resolve_kon_val(ct, self.tkt)
+        em = rec.get('exec_mode', 0)
         cid = rec.get('cond_id', 0)
+        tp = rec.get('target_param', 0)
+
+        em_text = describe_exec_mode(em) if em != 0 else ""
+        tp_text = describe_target_param(tp) if tp != 0 else ""
+        detail = "  |  ".join(filter(None, [em_text, tp_text]))
 
         self.lbl_rec_idx.config(text=(
-            f"记录 #{rec['index']}    动画ID={cid}    类型={ct}"
-            + (f" ({ct_txt})" if ct_txt else "")
-            + (f"    名称={nm}" if nm else "")
+            f"记录 #{rec['index']}    动画ID={cid}"
+            + (f"    {detail}" if detail else "")
+            + (f"    [{nm}]" if nm else "")
         ))
 
         # Preview
-        self.preview_name.config(text=nm if nm else "(无TKT匹配)")
+        self.preview_name.config(text=nm if nm else "(空槽)")
         info_parts = []
-        t1 = rec.get('target1', 0)
-        if t1: info_parts.append(f"目标1={t1}" + (f"({resolve_kon_val(t1, self.tkt)})" if resolve_kon_val(t1, self.tkt) else ""))
-        m = rec.get('mode', 0)
-        if m: info_parts.append(f"模式={m}" + (f"({resolve_kon_val(m, self.tkt)})" if resolve_kon_val(m, self.tkt) else ""))
-        v = rec.get('value', 0)
-        if v: info_parts.append(f"参数值={v}")
-        d1 = rec.get('dialog1', 0)
-        if d1: info_parts.append(f"对话1={d1}" + (f"({resolve_kon_val(d1, self.tkt)})" if resolve_kon_val(d1, self.tkt) else ""))
-        d2 = rec.get('dialog2', 0)
-        if d2: info_parts.append(f"对话2={d2}" + (f"({resolve_kon_val(d2, self.tkt)})" if resolve_kon_val(d2, self.tkt) else ""))
-        ef = rec.get('end_flag', 0)
-        if ef: info_parts.append(f"结束标记={ef}")
-        self.preview_info.config(text=" | ".join(info_parts) if info_parts else "(空条件)")
+        # 攻击距离/面积分解
+        em_desc = describe_exec_mode(em)
+        if em_desc and em_desc != "单格":
+            info_parts.append(f"攻击={em_desc}")
+        tp = rec.get('target_param', 0)
+        tp_desc = describe_target_param(tp)
+        if tp_desc and tp_desc != "无扩展(单体)":
+            info_parts.append(f"效果={tp_desc}")
+        tf = rec.get('target_filter', 0)
+        if tf: info_parts.append(describe_target_filter(tf))
+        db = rec.get('damage_base', 0)
+        if db: info_parts.append(f"伤害基础={db}")
+        hr = rec.get('hp_restore', 0)
+        if hr: info_parts.append(f"HP回复={hr}")
+        mr = rec.get('mp_restore', 0)
+        if mr: info_parts.append(f"MP回复={mr}")
+        ef = rec.get('exec_flags', 0)
+        if ef: info_parts.append(describe_exec_flags(ef))
+        self.preview_info.config(text=" | ".join(info_parts) if info_parts else "(空动作)")
 
         # 填充编辑控件
         for fn, fo, fl, _ in KON_FIELDS:
@@ -723,16 +815,47 @@ class KonEditor:
                 if 'status' in fn:
                     self._update_status_label(fn, int(val) if val else 0)
                 else:
-                    resolved = resolve_kon_val(int(val) if val else 0, self.tkt)
-                    self._edit_extras[fn].config(text=resolved)
+                    resolved = resolve_kon_val(fn, int(val) if val else 0, self.tkt)
+                    self._edit_extras[fn].config(text=resolved, foreground='#3366cc')
+        # 高/低字节拆分字段：赋值 spinbox + 显示分解描述
+        _split_desc = {
+            'exec_mode': describe_exec_mode,
+            'target_param': describe_target_param,
+            'target_filter': describe_target_filter,
+            'exec_flags': describe_exec_flags,
+        }
+        for fn, desc_fn in _split_desc.items():
+            val = rec.get(fn, 0)
+            hi, lo = divmod(val & 0xFFFF, 256)
+            if fn == 'exec_mode' and hi >= 128:
+                hi = hi - 256  # 负值 → 自身
+            if fn in self._edit_split:
+                _, _, hi_var, lo_var = self._edit_split[fn]
+                hi_var.set(str(hi))
+                lo_var.set(str(lo))
+            if fn in self._edit_extras:
+                self._edit_extras[fn].config(text=desc_fn(val), foreground='#228B22')
 
     # ----------- 编辑应用 -----------
 
     def _apply_edit(self):
         if not hasattr(self, '_editing_idx'): return
         rec = self.records[self._editing_idx]
+        # 拆分字段: 从 spinbox 读 hi/lo 打包为 int16
+        for fn in ('exec_mode', 'target_param', 'target_filter', 'exec_flags'):
+            if fn in self._edit_split:
+                _, _, hi_var, lo_var = self._edit_split[fn]
+                try:
+                    hi = int(hi_var.get()) & 0xFF
+                    lo = int(lo_var.get()) & 0xFF
+                    combined = (hi << 8) | lo
+                    if combined >= 0x8000:
+                        combined -= 0x10000
+                    rec[fn] = combined
+                except ValueError:
+                    pass
         for fn, fo, fl, _ in KON_FIELDS:
-            if fn.startswith('unused'): continue  # skip unused readonly fields
+            if fn.startswith('unused') or fn in self._edit_split: continue
             try:
                 v = int(self._edit_vars[fn].get())
                 if v > 32767: v = 32767
@@ -788,15 +911,14 @@ class KonEditor:
     # ----------- 帮助 -----------
 
     def _show_field_ref(self):
-        lines = ["TKKon.dat 字段映射 v2.0 (重新分析修正)", ""]
+        lines = ["TKKon.dat 字段映射 v3.0 (2026-05 语义修正)", ""]
         lines.append(f"【记录布局】{KON_CNT} 条 × {KON_REC} 字节 = {KON_DECOMPRESSED} 字节")
         lines.append(f"  20 × int16 (小端序) 共 {KON_REC} 字节/条")
         lines.append("")
-        lines.append("【★ 2026-05 修正要点】")
-        lines.append("  旧版: 13×int16 (26字节) × 1000条 = 26000 ← 错误!")
-        lines.append("  修正: 20×int16 (40字节) × 650条  = 26000 ← 正确!")
-        lines.append("  证据: sub_4434BC 按 word_9D069E[20*i] (stride=40字节) 索引;")
-        lines.append("        field[3] 为精灵/动画索引, 值范围0..639 (-1=无)")
+        lines.append("【★ v3.0 修正: 字段语义完全重分析】")
+        lines.append("  v2.0 错误: field[0-2] 被误判为 TKT 文本引用, 解析出场景名称")
+        lines.append("  v3.0 修正: field[0-2] 是战斗引擎操作参数, 与TKT无关")
+        lines.append("  证据: sub_43D53C/43D8B0/43E980 中的高/低字节分支判断")
         lines.append("")
         lines.append("【字段详情】")
         for fn, fo, fl, cmt in KON_FIELDS:
@@ -805,11 +927,13 @@ class KonEditor:
             lines.append(f"       {cmt}")
         lines.append("")
         lines.append("【反编译函数引用】")
-        lines.append("  sub_4173F8: sub_45343C(aTkkonDat, &unk_9D0698, 26000)")
-        lines.append("  sub_4434BC: word_9D069E[20*i] 索引 (offset 6, stride 40=20×int16)")
+        lines.append("  sub_43D53C: 目标区域标记 (使用 field[0]低/高字节, field[2]低/高字节)")
+        lines.append("  sub_43D8B0: 目标验证过滤 (使用 field[1]低/高字节, field[2]低字节)")
+        lines.append("  sub_43E980: AI技能评估/伤害计算 (使用 field[4-9] 作为伤害/回复值)")
+        lines.append("  sub_4458B0: 技能执行主函数 (field[0]高字节作为攻击距离判定)")
+        lines.append("  sub_4434BC: 动画运行时 (field[3] → TKAct 动画条目)")
+        lines.append("  sub_4173F8: TKKon 加载入口")
         lines.append("  Maker.exe sub_4027FF: 解压后大小校验 v19 == 26000")
-        lines.append("  sub_45343C:  DAT 统一加载 (LZSS 解压)")
-        lines.append("  sub_452B14:  LZSS 解压引擎")
 
         dlg = tk.Toplevel(self.root); dlg.title("字段参考 v2.0 (修正版)")
         dlg.geometry("680x560"); dlg.transient(self.root)
@@ -822,18 +946,21 @@ class KonEditor:
 
     def _show_about(self):
         messagebox.showinfo("关于",
-            "TKKon.dat 可视化编辑器 v2.0\n\n"
+            "TKKon.dat 可视化编辑器 v3.0\n\n"
             "基于《三国群侠传》 TKS.exe 反编译\n"
-            "2026-05 修正版: 650条 × 40字节 (20×int16)\n\n"
-            "旧版错误: 误用 1000条 × 26字节 (13×int16)\n"
-            "修正依据: sub_4434BC (word_9D069E[20*i]),\n"
-            "          field[3] 为精灵索引 0..639\n"
-            "          field[10-13] 为状态位掩码\n\n"
+            "2026-05 v3.0: 字段语义完全修正\n\n"
+            "v3.0 修正:\n"
+            "  field[0-2] = 战斗引擎操作参数 (非TKT文本!)\n"
+            "  field[4-9] = 伤害/回复/命中基础值\n"
+            "  field[19] = 执行标志 (含伤害类型)\n"
+            "  TKT解析仅用于 hp_restore/mp_restore\n\n"
             "逆向来源:\n"
-            "  sub_4173F8  TKKon 加载\n"
-            "  sub_4434BC  条件运行时处理\n"
-            "  sub_45343C  DAT 统一加载\n"
-            "  sub_452B14  LZSS 解压引擎"
+            "  sub_43D53C  目标区域标记\n"
+            "  sub_43D8B0  目标过滤验证\n"
+            "  sub_43E980  AI评估/伤害计算\n"
+            "  sub_4458B0  技能执行\n"
+            "  sub_4434BC  动画运行时\n"
+            "  sub_4173F8  TKKon 加载"
         )
 
 
