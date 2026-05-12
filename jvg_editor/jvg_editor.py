@@ -35,8 +35,28 @@ class PaletteRGB565:
 class JVGFrame:
     def __init__(self):
         self.x_max=0; self.y_max=0; self.width=0; self.height=0
-        self.row_count=0; self.pixels=b""; self.alpha=b""; self.encoded_data=b""
+        self.row_count=0; self._pixels:Optional[bytes]=None; self._alpha:Optional[bytes]=None
+        self.encoded_data=b""
         self._palette: Optional[PaletteRGB565] = None  # per-frame palette for imports
+
+    @property
+    def pixels(self)->bytes:
+        if self._pixels is None and self.encoded_data and self.width>0 and self.height>0:
+            self._pixels,self._alpha=_decode_rle(self.encoded_data,self.width,self.height)
+        return self._pixels if self._pixels is not None else b""
+
+    @pixels.setter
+    def pixels(self,val:bytes): self._pixels=val
+
+    @property
+    def alpha(self)->bytes:
+        if self._alpha is None and self.encoded_data and self.width>0 and self.height>0:
+            self._pixels,self._alpha=_decode_rle(self.encoded_data,self.width,self.height)
+        return self._alpha if self._alpha is not None else b""
+
+    @alpha.setter
+    def alpha(self,val:bytes): self._alpha=val
+
     @property
     def x_off(self)->int: v=self.x_max; return (v-65536 if v>=32768 else v)-self.width+1
     @property
@@ -104,7 +124,6 @@ def load_jvg(filepath:str)->JVGFile:
             mo=dr+co[si]; ws=struct.unpack("<8H",data[mo:mo+16])
             f=JVGFrame(); f.x_max=ws[0]; f.y_max=ws[1]; f.width=ws[2]; f.height=ws[3]; f.row_count=ws[7]
             eo=mo+16; f.encoded_data=data[eo:eo+co[si+1]-co[si]-16]
-            if f.width>0 and f.height>0: f.pixels,f.alpha=_decode_rle(f.encoded_data,f.width,f.height)
             blk.frames.append(f)
         off+=32+(sc+1)*4+512+ds; jvg.blocks.append(blk)
     return jvg
