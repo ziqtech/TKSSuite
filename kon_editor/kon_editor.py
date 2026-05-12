@@ -16,7 +16,7 @@ v3.0 语义修正 (基于 sub_43D53C/43D8B0/43E980/4458B0):
   - field[4] = 伤害基础值 (非"泛型参数值", -1=ATK, >1000/2000/3000=编码)
   - field[5] = 内力伤害    field[6] = 附加命中
   - field[8] = HP回复      field[9] = MP回复 (战斗中=数值, 剧情可能=对话ID→TKT)
-  - field[19] = 执行标志 (低字节bit2=伤害类型物理/魔法)
+  - field[19] = 执行标志 (bit0=隐藏施法者, bit2=物理/魔法, 高字节未使用)
 
 字段布局 (20 × int16, 40字节/条):
   [0]  exec_mode         — 执行模式/攻击范围 (高=距离, 低=形状)
@@ -38,7 +38,7 @@ v3.0 语义修正 (基于 sub_43D53C/43D8B0/43E980/4458B0):
   [16] unused16          — 未使用 (始终为0)
   [17] unused17          — 未使用 (始终为0)
   [18] unused18          — 未使用 (始终为0)
-  [19] exec_flags        — 执行标志 (低=伤害类型, 高=结束标记)
+  [19] exec_flags        — 执行标志 (bit0=施法者可见, bit2=物理伤害, 高字节未使用)
 
 用法:
   python kon_editor.py
@@ -160,9 +160,15 @@ W_INPUT = 12
 # 字段定义 (key, byte_offset, ui_label, comment)
 # ============================================================
 
+# exec_flags 源码验证 (sub_4434BC:355-391, sub_43E980:192):
+#   0 (bit0=0，bit2=0): 隐藏施法者待机动画, 技能动画包含角色动作 — 法术攻击, 例 #7 治疗术
+#   1 (bit0=1，bit2=0): 保持施法者待机动画, 技能动画仅特效 — Buff/自身技能, 例 #562 御风行
+#   3 (bit0=1，bit1=1): 保持施法者待机动画, 物品使用逻辑 — 例 #551 霹雳车 #550 麒麟角
+#   4 (bit0=0, bit2=1): 隐藏待机, 物理伤害公式 — 普通攻击, 例 #456 盗贼普攻
+
 KON_FIELDS = [
-    ("exec_mode",        0,  "执行模式",      "高字节=攻击距离(负=自身, 0=单格, 1-3=近战, 6+=远程); 低字节=范围形状(0=菱形) — sub_43D53C:33/41, sub_4458B0:289/303"),
-    ("target_param",     2,  "目标参数",      "高字节=扩展范围(-2=仅自身); 低字节=扩展模式(0=菱形扩展, 非0=直接标记) — sub_43D8B0:44-45"),
+    ("exec_mode",        0,  "执行模式",      "高字节=攻击距离(负=自身, 0=单格, 1-3=近战, 6+=远程); 低字节=范围开关(0=菱形范围, 非0=无范围) — sub_43D53C:45-47"),
+    ("target_param",     2,  "目标参数",      "高字节=效果面积(格数); 低字节=扩散开关(0=菱形扩散, 非0=无扩散/单体) — sub_43D8B0:56-65"),
     ("target_filter",    4,  "阵营过滤",      "低字节=阵营匹配(0=对立, 1=同阵营, 2=任意); 高字节=目标类型(0=全部, 1=友方, 2=敌方) — sub_43D53C:129-160"),
     ("cond_id",          6,  "动画索引",      "TKAct.dat 条目索引 (0..649, -1=无) — sub_4434BC: word_9D069E[20*i]"),
     ("damage_base",      8,  "伤害基础值",    "伤害基础值 (-1=单位攻击力, >0=固定值, >1000/2000/3000=不同编码公式) — sub_43E980:69-161"),
@@ -180,7 +186,7 @@ KON_FIELDS = [
     ("unused16",         32, "未使用16",      "● 始终为0 (650条中0条非零)"),
     ("unused17",         34, "未使用17",      "● 始终为0 (650条中0条非零)"),
     ("unused18",         36, "未使用18",      "● 始终为0 (650条中0条非零)"),
-    ("exec_flags",       38, "执行标志",      "低字节bit2=伤害类型(0=魔法, 1=物理); 高字节=结束标记(0/1/3/4; 219条非零) — sub_43E980:193/333"),
+    ("exec_flags",       38, "执行标志",      "0=法术(隐藏待机), 1=Buff(保持待机), 3=物品(保持待机), 4=物理(隐藏待机); bit2=伤害类型 — sub_4434BC:355, sub_43E980:193"),
 ]
 
 ACTIVE_FIELDS = [f for f in KON_FIELDS if not f[0].startswith('unused')]
@@ -203,10 +209,8 @@ def kon_record_name(rec, tkt):
         parts.append("自身")
     elif em != 0:
         rh = (em >> 8) & 0xFF
-        rl = em & 0xFF
-        shape = "菱" if rl == 0 else f"形{rl}"
         if rh > 0:
-            parts.append(f"{shape}{rh}")
+            parts.append(f"距{rh}")
     # 攻击面积
     tp_hi = (tp >> 8) & 0xFF
     if tp_hi > 0:
@@ -217,33 +221,33 @@ def kon_record_name(rec, tkt):
     return f"空槽-#{rec['index']}"
 
 def describe_exec_mode(val):
-    """解析 exec_mode → 可读描述 (高字节=攻击距离, 低字节=范围形状)"""
+    """解析 exec_mode → 可读描述 (高字节=攻击距离, 低字节=范围开关)"""
     if val < 0:
         return "自身目标"
     hi = (val >> 8) & 0xFF
     lo = val & 0xFF
     if hi == 0 and lo == 0:
         return "单格"
-    shape = "菱形" if lo == 0 else f"形状{lo}"
+    range_text = "菱形范围" if lo == 0 else "无范围"
     parts = []
     if hi > 0:
         parts.append(f"距离={hi}格")
-    parts.append(f"形状={shape}")
+    parts.append(range_text)
     return "  ".join(parts)
 
 def describe_target_param(val):
-    """解析 target_param → 可读描述 (高字节=攻击面积, 低字节=扩展模式)"""
+    """解析 target_param → 可读描述 (高字节=攻击面积, 低字节=扩散开关)"""
     if val < 0:
         return f"特殊({val})"
     hi = (val >> 8) & 0xFF
     lo = val & 0xFF
     if hi == 0 and lo == 0:
-        return "无扩展(单体)"
-    mode = "菱形扩展" if lo == 0 else "直接标记"
+        return "无扩散(单体)"
+    spread_text = "菱形扩散" if lo == 0 else "无扩散"
     parts = []
     if hi > 0:
         parts.append(f"面积={hi}格")
-    parts.append(f"模式={mode}")
+    parts.append(spread_text)
     return "  ".join(parts)
 
 def describe_target_filter(val):
@@ -257,13 +261,13 @@ def describe_target_filter(val):
     return f"目标={t_text}  阵营={f_text}"
 
 def describe_exec_flags(val):
-    """解析 exec_flags → 可读描述 (低字节bit2=伤害类型, 高字节=结束标记)"""
+    """解析 exec_flags → 位掩码描述"""
     lo = val & 0xFF
-    hi = (val >> 8) & 0xFF
-    dmg_type = "物理" if (lo & 4) else "魔法"
-    end_map = {0: "无", 1: "标记1", 3: "标记3", 4: "标记4"}
-    end_text = end_map.get(hi, str(hi))
-    return f"伤害={dmg_type}  结束={end_text}"
+    parts = []
+    parts.append("显示待机" if (lo & 1) else "隐藏待机")
+    if lo & 2: parts.append("物品")
+    parts.append("物理" if (lo & 4) else "魔法")
+    return "  ".join(parts)
 
 def load_kon(fp):
     with open(fp, 'rb') as f: raw = f.read()
@@ -306,7 +310,7 @@ class KonEditor:
         self.kon_path = self.tkt_path = None
         self.records = []; self.tkt = {}
         self.filtered_indices = []; self._dirty = False
-        self._edit_split = {}  # fn → (hi_spin, lo_spin, hi_var, lo_var)  for exec_mode/target_param
+        self._edit_split = {}  # split spinboxes / bitmask checkboxes
         self._build_ui(); self._set_edit_enabled(False)
         sw = self.root.winfo_screenwidth(); sh = self.root.winfo_screenheight()
         x = (sw - 1320) // 2; y = (sh - 820) // 2
@@ -459,22 +463,37 @@ class KonEditor:
         self._bind_tooltip(lbl, f"[{fo:02d}] {cmt}")
 
         is_mask = 'status' in fn
-        is_split = fn in ('exec_mode', 'target_param', 'target_filter', 'exec_flags')
-        if is_split:
+        is_split = fn in ('exec_mode', 'target_param', 'target_filter')
+        is_bitmask = fn == 'exec_flags'
+        if is_bitmask:
+            box = ttk.Frame(frm); box.pack(fill=tk.X)
+            v_bit0 = tk.BooleanVar(); v_bit1 = tk.BooleanVar(); v_bit2 = tk.BooleanVar()
+            cb0 = ttk.Checkbutton(box, text="显示待机动画", variable=v_bit0)
+            cb0.pack(side=tk.LEFT, padx=(0, 4))
+            cb1 = ttk.Checkbutton(box, text="使用物品", variable=v_bit1)
+            cb1.pack(side=tk.LEFT, padx=(0, 4))
+            cb2 = ttk.Checkbutton(box, text="物理攻击", variable=v_bit2)
+            cb2.pack(side=tk.LEFT)
+            self._bind_tooltip(cb0, "勾选时显示人物待机动画（默认不勾选，大部分攻击动画中已包含人物形象）")
+            self._bind_tooltip(cb1, "由使用物品触发的动画")
+            self._bind_tooltip(cb2, "使用物理伤害公式（计入防御力）")
+            self._edit_split[fn] = (v_bit0, v_bit1, v_bit2)
+            if not readonly:
+                self._edit_extras[fn] = ttk.Label(frm, text="", foreground='#228B22',
+                                                   font=FONT_S, wraplength=220)
+                self._edit_extras[fn].pack(anchor=tk.W)
+        elif is_split:
             # 高/低字节拆分编辑
             box = ttk.Frame(frm); box.pack(fill=tk.X)
             if fn == 'exec_mode':
                 hi_label, hi_from, hi_to = "距离", -1, 127
-                lo_label, lo_from, lo_to = "形状", 0, 255
+                lo_label, lo_from, lo_to = "范围", 0, 255
             elif fn == 'target_param':
                 hi_label, hi_from, hi_to = "面积", 0, 127
-                lo_label, lo_from, lo_to = "模式", 0, 255
+                lo_label, lo_from, lo_to = "扩散", 0, 255
             elif fn == 'target_filter':
                 hi_label, hi_from, hi_to = "目标", 0, 255
                 lo_label, lo_from, lo_to = "阵营", 0, 255
-            else:  # exec_flags
-                hi_label, hi_from, hi_to = "结束", 0, 255
-                lo_label, lo_from, lo_to = "伤害", 0, 255
             hi_var = tk.StringVar(value="0")
             lo_var = tk.StringVar(value="0")
             hi_spin = ttk.Spinbox(box, textvariable=hi_var, from_=hi_from, to=hi_to, width=5, font=FONT)
@@ -793,7 +812,7 @@ class KonEditor:
             info_parts.append(f"攻击={em_desc}")
         tp = rec.get('target_param', 0)
         tp_desc = describe_target_param(tp)
-        if tp_desc and tp_desc != "无扩展(单体)":
+        if tp_desc and tp_desc != "无扩散(单体)":
             info_parts.append(f"效果={tp_desc}")
         tf = rec.get('target_filter', 0)
         if tf: info_parts.append(describe_target_filter(tf))
@@ -822,7 +841,6 @@ class KonEditor:
             'exec_mode': describe_exec_mode,
             'target_param': describe_target_param,
             'target_filter': describe_target_filter,
-            'exec_flags': describe_exec_flags,
         }
         for fn, desc_fn in _split_desc.items():
             val = rec.get(fn, 0)
@@ -835,6 +853,17 @@ class KonEditor:
                 lo_var.set(str(lo))
             if fn in self._edit_extras:
                 self._edit_extras[fn].config(text=desc_fn(val), foreground='#228B22')
+        # exec_flags 位掩码复选框
+        if 'exec_flags' in self._edit_split:
+            lo = rec.get('exec_flags', 0) & 0xFF
+            v0, v1, v2 = self._edit_split['exec_flags']
+            v0.set(bool(lo & 1))
+            v1.set(bool(lo & 2))
+            v2.set(bool(lo & 4))
+        if 'exec_flags' in self._edit_extras:
+            self._edit_extras['exec_flags'].config(
+                text=describe_exec_flags(rec.get('exec_flags', 0)),
+                foreground='#228B22')
 
     # ----------- 编辑应用 -----------
 
@@ -842,7 +871,7 @@ class KonEditor:
         if not hasattr(self, '_editing_idx'): return
         rec = self.records[self._editing_idx]
         # 拆分字段: 从 spinbox 读 hi/lo 打包为 int16
-        for fn in ('exec_mode', 'target_param', 'target_filter', 'exec_flags'):
+        for fn in ('exec_mode', 'target_param', 'target_filter'):
             if fn in self._edit_split:
                 _, _, hi_var, lo_var = self._edit_split[fn]
                 try:
@@ -854,6 +883,11 @@ class KonEditor:
                     rec[fn] = combined
                 except ValueError:
                     pass
+        # exec_flags 位掩码: 从复选框打包 (保留高字节)
+        if 'exec_flags' in self._edit_split:
+            v0, v1, v2 = self._edit_split['exec_flags']
+            lo = (1 if v0.get() else 0) | (2 if v1.get() else 0) | (4 if v2.get() else 0)
+            rec['exec_flags'] = lo
         for fn, fo, fl, _ in KON_FIELDS:
             if fn.startswith('unused') or fn in self._edit_split: continue
             try:
