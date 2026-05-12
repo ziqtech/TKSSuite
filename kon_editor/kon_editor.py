@@ -12,7 +12,7 @@ v3.0 语义修正 (基于 sub_43D53C/43D8B0/43E980/4458B0):
   - field[0-2] 不是 TKT 文本引用! 旧版通过TKT查表得到场景名称是虚假关联
   - field[0] = 执行模式 (高字节=攻击距离, 低字节=范围形状)
   - field[1] = 目标参数 (高字节=扩展范围, 低字节=扩展模式)
-  - field[2] = 阵营过滤 (低字节=阵营匹配, 高字节=目标类型)
+  - field[2] = 目标过滤 (高字节=目标格子类型[全部/仅角色/仅空地], 低字节=阵营匹配[对立/同阵营/任意])
   - field[4] = 伤害基础值 (非"泛型参数值", -1=ATK, >1000/2000/3000=编码)
   - field[5] = 内力伤害    field[6] = 附加命中
   - field[8] = HP回复      field[9] = MP回复 (战斗中=数值, 剧情可能=对话ID→TKT)
@@ -21,7 +21,7 @@ v3.0 语义修正 (基于 sub_43D53C/43D8B0/43E980/4458B0):
 字段布局 (20 × int16, 40字节/条):
   [0]  exec_mode         — 执行模式/攻击范围 (高=距离, 低=形状)
   [1]  target_param      — 目标选择参数
-  [2]  target_filter     — 阵营过滤
+  [2]  target_filter     — 目标过滤 (格子类型 + 阵营匹配)
   [3]  cond_id           — TKAct.dat 动画索引 (0..649)
   [4]  damage_base       — 伤害基础值
   [5]  mp_damage         — 内力伤害基础值
@@ -167,9 +167,9 @@ W_INPUT = 12
 #   4 (bit0=0, bit2=1): 隐藏待机, 物理伤害公式 — 普通攻击, 例 #456 盗贼普攻
 
 KON_FIELDS = [
-    ("exec_mode",        0,  "执行模式",      "高字节=攻击距离(负=自身, 0=单格, 1-3=近战, 6+=远程); 低字节=范围开关(0=菱形范围, 非0=无范围) — sub_43D53C:45-47"),
-    ("target_param",     2,  "目标参数",      "高字节=效果面积(格数); 低字节=扩散开关(0=菱形扩散, 非0=无扩散/单体) — sub_43D8B0:56-65"),
-    ("target_filter",    4,  "阵营过滤",      "低字节=阵营匹配(0=对立, 1=同阵营, 2=任意); 高字节=目标类型(0=全部, 1=友方, 2=敌方) — sub_43D53C:129-160"),
+    ("exec_mode",        0,  "执行模式",      "高字节=攻击距离(负=自身, 0=单格, 1-3=近战, 6+=远程); 低字节=范围开关(0=启用菱形, 1=禁用) — sub_43D53C:45-47"),
+    ("target_param",     2,  "目标参数",      "高字节=效果面积(格数); 低字节=扩散开关(0=启用菱形, 1=禁用/单体) — sub_43D8B0:56-65"),
+    ("target_filter",    4,  "目标过滤",      "高字节=目标格子(0=全部, 1=仅角色, 2=仅空地[召唤]); 低字节=阵营匹配(0=对立/敌方, 1=同阵营/友方, 2=任意/不分敌我) — sub_43D53C:127-155, sub_43D8B0:v17"),
     ("cond_id",          6,  "动画索引",      "TKAct.dat 条目索引 (0..649, -1=无) — sub_4434BC: word_9D069E[20*i]"),
     ("damage_base",      8,  "伤害基础值",    "伤害基础值 (-1=单位攻击力, >0=固定值, >1000/2000/3000=不同编码公式) — sub_43E980:69-161"),
     ("mp_damage",        10, "内力伤害",      "内力(MP)伤害基础值, 编码同伤害基础值 (33条使用) — sub_43E980:392"),
@@ -228,7 +228,7 @@ def describe_exec_mode(val):
     lo = val & 0xFF
     if hi == 0 and lo == 0:
         return "单格"
-    range_text = "菱形范围" if lo == 0 else "无范围"
+    range_text = "" if lo == 0 else "[范围禁用]"
     parts = []
     if hi > 0:
         parts.append(f"距离={hi}格")
@@ -243,7 +243,7 @@ def describe_target_param(val):
     lo = val & 0xFF
     if hi == 0 and lo == 0:
         return "无扩散(单体)"
-    spread_text = "菱形扩散" if lo == 0 else "无扩散"
+    spread_text = "" if lo == 0 else "[扩散禁用]"
     parts = []
     if hi > 0:
         parts.append(f"面积={hi}格")
@@ -251,14 +251,21 @@ def describe_target_param(val):
     return "  ".join(parts)
 
 def describe_target_filter(val):
-    """解析 target_filter → 可读描述 (低字节=阵营匹配, 高字节=目标类型)"""
+    """解析 target_filter → 可读描述 (高=目标格子类型, 低=阵营匹配)
+
+    逆向依据 sub_43D53C (byte_9D6C2D=HI, byte_9D6C2C=LO):
+      *v6 < 0 (空地): HI ∈ {0,2} 时标记
+      *v6 >= 0 (活人): HI ∈ {0,1} 时按 LO 做阵营 switch
+    sub_43D8B0 v17=byte_9D6C2C:
+      LO=0 对立阵营, LO=1 同阵营, LO=2 任意(含特殊状态)
+    """
     lo = val & 0xFF
     hi = (val >> 8) & 0xFF
-    faction_map = {0: "对立", 1: "同阵营", 2: "任意"}
-    target_map = {0: "全部", 1: "友方", 2: "敌方"}
+    target_map = {0: "全部", 1: "仅角色", 2: "仅空地"}
+    faction_map = {0: "对立阵营", 1: "同阵营", 2: "任意阵营"}
+    t_text = target_map.get(hi, f"目标{hi}")
     f_text = faction_map.get(lo, f"阵营{lo}")
-    t_text = target_map.get(hi, f"类型{hi}")
-    return f"目标={t_text}  阵营={f_text}"
+    return f"{t_text}  {f_text}"
 
 def describe_exec_flags(val):
     """解析 exec_flags → 位掩码描述"""
@@ -485,24 +492,40 @@ class KonEditor:
         elif is_split:
             # 高/低字节拆分编辑
             box = ttk.Frame(frm); box.pack(fill=tk.X)
+            is_toggle = fn in ('exec_mode', 'target_param')
+            is_filter = fn == 'target_filter'
             if fn == 'exec_mode':
                 hi_label, hi_from, hi_to = "距离", -1, 127
-                lo_label, lo_from, lo_to = "范围", 0, 255
+                lo_label = "范围"
             elif fn == 'target_param':
                 hi_label, hi_from, hi_to = "面积", 0, 127
-                lo_label, lo_from, lo_to = "扩散", 0, 255
-            elif fn == 'target_filter':
-                hi_label, hi_from, hi_to = "目标", 0, 255
-                lo_label, lo_from, lo_to = "阵营", 0, 255
+                lo_label = "扩散"
+            else:  # target_filter
+                hi_label = "格子"
+                lo_label = "阵营"
             hi_var = tk.StringVar(value="0")
             lo_var = tk.StringVar(value="0")
-            hi_spin = ttk.Spinbox(box, textvariable=hi_var, from_=hi_from, to=hi_to, width=5, font=FONT)
-            lo_spin = ttk.Spinbox(box, textvariable=lo_var, from_=lo_from, to=lo_to, width=5, font=FONT)
-            ttk.Label(box, text=hi_label, font=FONT_S).pack(side=tk.LEFT)
-            hi_spin.pack(side=tk.LEFT, padx=1)
-            ttk.Label(box, text=lo_label, font=FONT_S).pack(side=tk.LEFT, padx=(6, 1))
-            lo_spin.pack(side=tk.LEFT, padx=1)
-            self._edit_split[fn] = (hi_spin, lo_spin, hi_var, lo_var)
+            if is_filter:
+                hi_combo = ttk.Combobox(box, textvariable=hi_var,
+                                         values=["全部", "仅角色", "仅空地"],
+                                         state='readonly', width=6, font=FONT)
+                lo_combo = ttk.Combobox(box, textvariable=lo_var,
+                                         values=["对立阵营", "同阵营", "任意阵营"],
+                                         state='readonly', width=8, font=FONT)
+                ttk.Label(box, text=hi_label, font=FONT_S).pack(side=tk.LEFT)
+                hi_combo.pack(side=tk.LEFT, padx=1)
+                ttk.Label(box, text=lo_label, font=FONT_S).pack(side=tk.LEFT, padx=(6, 1))
+                lo_combo.pack(side=tk.LEFT, padx=1)
+                self._edit_split[fn] = (hi_combo, lo_combo, hi_var, lo_var)
+            else:
+                hi_spin = ttk.Spinbox(box, textvariable=hi_var, from_=hi_from, to=hi_to, width=5, font=FONT)
+                ttk.Label(box, text=hi_label, font=FONT_S).pack(side=tk.LEFT)
+                hi_spin.pack(side=tk.LEFT, padx=1)
+                ttk.Label(box, text=lo_label, font=FONT_S).pack(side=tk.LEFT, padx=(6, 1))
+                lo_combo = ttk.Combobox(box, textvariable=lo_var, values=["启用", "禁用"],
+                                         state='readonly', width=5, font=FONT)
+                lo_combo.pack(side=tk.LEFT, padx=1)
+                self._edit_split[fn] = (hi_spin, lo_combo, hi_var, lo_var)
             # extras 标签 (分解显示)
             if not readonly:
                 self._edit_extras[fn] = ttk.Label(frm, text="", foreground='#228B22',
@@ -850,7 +873,13 @@ class KonEditor:
             if fn in self._edit_split:
                 _, _, hi_var, lo_var = self._edit_split[fn]
                 hi_var.set(str(hi))
-                lo_var.set(str(lo))
+                if fn in ('exec_mode', 'target_param'):
+                    lo_var.set("启用" if lo == 0 else "禁用")
+                elif fn == 'target_filter':
+                    hi_var.set(["全部", "仅角色", "仅空地"][hi] if hi < 3 else str(hi))
+                    lo_var.set(["对立阵营", "同阵营", "任意阵营"][lo] if lo < 3 else str(lo))
+                else:
+                    lo_var.set(str(lo))
             if fn in self._edit_extras:
                 self._edit_extras[fn].config(text=desc_fn(val), foreground='#228B22')
         # exec_flags 位掩码复选框
@@ -875,8 +904,17 @@ class KonEditor:
             if fn in self._edit_split:
                 _, _, hi_var, lo_var = self._edit_split[fn]
                 try:
-                    hi = int(hi_var.get()) & 0xFF
-                    lo = int(lo_var.get()) & 0xFF
+                    if fn == 'target_filter':
+                        hi_map = {"全部": 0, "仅角色": 1, "仅空地": 2}
+                        lo_map = {"对立阵营": 0, "同阵营": 1, "任意阵营": 2}
+                        hi = hi_map.get(hi_var.get(), 0)
+                        lo = lo_map.get(lo_var.get(), 0)
+                    else:
+                        hi = int(hi_var.get()) & 0xFF
+                        if fn in ('exec_mode', 'target_param'):
+                            lo = 0 if lo_var.get() == "启用" else 1
+                        else:
+                            lo = int(lo_var.get()) & 0xFF
                     combined = (hi << 8) | lo
                     if combined >= 0x8000:
                         combined -= 0x10000
