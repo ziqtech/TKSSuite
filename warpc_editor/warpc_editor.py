@@ -498,7 +498,7 @@ class WarpcEditor:
         if os.path.exists(ico): self.root.iconbitmap(default=ico)
         self.root.geometry("1500x820"); self.root.minsize(1050, 650)
         self.warpc_path = self.tkt_path = None
-        self.records = []; self.tkt = {}; self.skill_names = {}; self._skill_types = {}; self.item_names = {}; self.item_idx_names = {}; self._idx_to_id = {}; self._id_to_idx = {}
+        self.records = []; self.tkt = {}; self.skill_names = {}; self._skill_types = {}; self.tkkon_names = {}; self.item_names = {}; self.item_idx_names = {}; self._idx_to_id = {}; self._id_to_idx = {}
         self.filtered_indices = []; self._dirty = False
         self._edit_vars = {}; self._edit_extras = {}; self._tab_grids = {}
         self._fa_sprites = []; self._fa_photos = {}; self._tree_photos = []
@@ -598,8 +598,8 @@ class WarpcEditor:
         self.t2_inner.bind('<Configure>', lambda e: t2_canvas.configure(scrollregion=t2_canvas.bbox('all')))
         self._bind_mousewheel(t2_canvas)
 
-        # Tab 3: 全部字段 (raw grid)
-        tab3 = ttk.Frame(self.notebook); self.notebook.add(tab3, text="全部字段")
+        # Tab 3: 技能效果判定
+        tab3 = ttk.Frame(self.notebook); self.notebook.add(tab3, text="技能效果判定")
         t3_canvas = tk.Canvas(tab3, highlightthickness=0)
         t3_sb = ttk.Scrollbar(tab3, orient=tk.VERTICAL, command=t3_canvas.yview)
         t3_canvas.configure(yscrollcommand=t3_sb.set)
@@ -609,6 +609,17 @@ class WarpcEditor:
         self.t3_inner.bind('<Configure>', lambda e: t3_canvas.configure(scrollregion=t3_canvas.bbox('all')))
         self._bind_mousewheel(t3_canvas)
 
+        # Tab 4: 全部字段 (raw grid)
+        tab4 = ttk.Frame(self.notebook); self.notebook.add(tab4, text="全部字段")
+        t4_canvas = tk.Canvas(tab4, highlightthickness=0)
+        t4_sb = ttk.Scrollbar(tab4, orient=tk.VERTICAL, command=t4_canvas.yview)
+        t4_canvas.configure(yscrollcommand=t4_sb.set)
+        self.t4_inner = ttk.Frame(t4_canvas)
+        t4_canvas.create_window((0, 0), window=self.t4_inner, anchor='nw')
+        t4_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True); t4_sb.pack(side=tk.RIGHT, fill=tk.Y)
+        self.t4_inner.bind('<Configure>', lambda e: t4_canvas.configure(scrollregion=t4_canvas.bbox('all')))
+        self._bind_mousewheel(t4_canvas)
+
         # Bottom buttons
         bf = ttk.Frame(rf); bf.pack(side=tk.BOTTOM, fill=tk.X, pady=(2, 0))
         ttk.Button(bf, text="应用修改", command=self._apply_edit, width=12).pack(side=tk.LEFT)
@@ -617,7 +628,8 @@ class WarpcEditor:
         # Build tab contents
         self._build_tab1(self.t1_inner)
         self._build_tab2(self.t2_inner)
-        self._build_tab3(self.t3_inner)
+        self._build_tab4(self.t3_inner)
+        self._build_tab3(self.t4_inner)
 
         # Bottom path bar
         pf = ttk.LabelFrame(self.root, text="当前加载"); pf.pack(fill=tk.X, padx=5, pady=(0, 2))
@@ -759,6 +771,7 @@ class WarpcEditor:
             r, c = divmod(i, 4)
             col = ttk.Frame(lf); col.grid(row=r, column=c, sticky='n', padx=2, pady=1)
             sname = self.skill_names.get(i, f"技能#{i}") if self.skill_names else f"技能#{i}"
+            if i == 343: sname = "普通攻击"
             field_idx = 88 + i // 2; byte_pos = "高" if i % 2 else "低"
             # Input row: label (skill name) | combobox
             inp = ttk.Frame(col); inp.pack(fill=tk.X)
@@ -770,6 +783,127 @@ class WarpcEditor:
             cb.pack(side=tk.RIGHT, padx=(1, 0))
             self._skill_learn_widgets.append((i, cb))
             self._skill_learn_labels.append(lbl)
+
+    def _build_tab4(self, parent):
+        """技能效果判定 Tab"""
+        self._build_skill_effect(parent, 0)
+
+    def _build_skill_effect(self, parent, row):
+        """技能效果判定 — WarPC[273+idx]→TKKon ID; 全部type=0指令技能, 末尾为普通攻击"""
+        active_indices = [i for i in range(350)
+                          if self._skill_types.get(i) == 0] if self._skill_types else []
+        max_slots = WARPC_FIELD_COUNT - 273  # 254, [273]..[526]
+        count = min(len(active_indices), max_slots)
+        lf = ttk.LabelFrame(parent, text=(
+            f"技能效果判定 [273]-[{273+count-1}] "
+            f"({count}个指令技能; TKKon ID 0~649)"
+        ), padding=4)
+        lf.grid(row=row, column=0, sticky='ew', padx=2, pady=2)
+        for c in range(4):
+            lf.columnconfigure(c, weight=1, minsize=180)
+
+        self._skill_effect_widgets = []        # list of (idx, StringVar)
+        self._skill_effect_labels = []         # list of skill-name Labels
+        self._skill_effect_name_labels = []    # list of TKKon-name Labels
+
+        for i in range(count):
+            r, c = divmod(i, 4)
+            col = ttk.Frame(lf); col.grid(row=r, column=c, sticky='nw', padx=2, pady=1)
+
+            skill_idx = active_indices[i]
+            if skill_idx == 344:
+                sname = "普通攻击"
+            else:
+                sname = self.skill_names.get(skill_idx, f"技能#{skill_idx}") if self.skill_names else f"技能#{skill_idx}"
+            tip = f"[{273+i}] idx={i}: TKSkill#{skill_idx} {sname} → TKKon ID"
+
+            inp = ttk.Frame(col); inp.pack(fill=tk.X)
+            lbl = ttk.Label(inp, text=sname, font=FONT, width=10, anchor=tk.W)
+            lbl.pack(side=tk.LEFT)
+            self._bind_tooltip(lbl, tip)
+            self._skill_effect_labels.append(lbl)
+
+            inp2 = ttk.Frame(col); inp2.pack(fill=tk.X, pady=(0, 2))
+            ev = tk.StringVar(value="-1")
+            ttk.Entry(inp2, textvariable=ev, width=6, font=FONT, justify='center').pack(side=tk.LEFT)
+            ttk.Button(inp2, text='…', width=2,
+                       command=lambda f=i, sv=ev: self._pick_tkkon(f, sv)).pack(side=tk.LEFT, padx=(2, 0))
+            self._skill_effect_widgets.append((i, ev))
+
+            # TKKon 名称标签
+            kon_name = self._resolve_tkkon_name(-1)
+            name_lbl = ttk.Label(col, text=kon_name, foreground='#888', font=FONT_S, wraplength=120)
+            name_lbl.pack(anchor=tk.W, fill=tk.X)
+            self._skill_effect_name_labels.append(name_lbl)
+            ev.trace_add('write',
+                         lambda *a, idx=i, sv=ev: self._update_kon_name_label(idx, sv))
+
+    def _resolve_tkkon_name(self, kon_id):
+        """解析 TKKon ID → 名称"""
+        if kon_id < 0:
+            return "(未设置)"
+        if self.tkkon_names and kon_id in self.tkkon_names:
+            return self.tkkon_names[kon_id]
+        return f"TKKon#{kon_id}"
+
+    def _update_kon_name_label(self, idx, ev):
+        """更新指定行的 TKKon 名称标签"""
+        if not hasattr(self, '_skill_effect_name_labels'):
+            return
+        if idx >= len(self._skill_effect_name_labels):
+            return
+        try:
+            kon_id = int(ev.get())
+        except (ValueError, TypeError):
+            return
+        self._skill_effect_name_labels[idx].config(text=self._resolve_tkkon_name(kon_id))
+
+    def _pick_tkkon(self, idx, ev):
+        """弹窗选择 TKKon.dat 条目 — 单选"""
+        if not self.records: return
+        dlg = tk.Toplevel(self.root); dlg.title(f'选择 TKKon (技能效果判定 idx={idx})')
+        dlg.transient(self.root); dlg.grab_set()
+        self._center_dialog(dlg, 550, 550)
+        cur_val = int(ev.get() or 0)
+
+        sf = ttk.Frame(dlg, padding=5); sf.pack(fill=tk.X)
+        ttk.Label(sf, text='搜索:').pack(side=tk.LEFT)
+        qv = tk.StringVar()
+        ttk.Entry(sf, textvariable=qv, width=30, font=FONT).pack(side=tk.LEFT, padx=5)
+
+        lf2 = ttk.Frame(dlg); lf2.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        tree = ttk.Treeview(lf2, columns=('id', 'name'),
+                            show='headings', selectmode='browse', height=20)
+        tree.heading('id', text='TKKon#'); tree.column('id', width=70, anchor='center')
+        tree.heading('name', text='名称 (tkkon_names.csv)'); tree.column('name', width=440, anchor='w')
+        vsb = ttk.Scrollbar(lf2, orient=tk.VERTICAL, command=tree.yview)
+        tree.configure(yscrollcommand=vsb.set); tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        vsb.pack(side=tk.RIGHT, fill=tk.Y)
+
+        items = sorted(self.tkkon_names.items(), key=lambda x: x[0]) if self.tkkon_names else []
+
+        def _refresh(q=''):
+            tree.delete(*tree.get_children())
+            ql = q.strip().lower()
+            for cid, nm in items:
+                if ql and ql not in f'{cid} {nm}'.lower(): continue
+                iid = tree.insert('', 'end', values=(cid, nm))
+                if cid == cur_val: tree.selection_set(iid); tree.see(iid)
+        _refresh()
+        qv.trace_add('write', lambda *a: _refresh(qv.get()))
+
+        def _sel():
+            sel = tree.selection()
+            if sel:
+                v = int(tree.item(sel[0])['values'][0])
+                ev.set(str(v))
+                dlg.destroy()
+        tree.bind('<Double-1>', lambda e: _sel())
+        bf = ttk.Frame(dlg, padding=5); bf.pack(fill=tk.X)
+        ttk.Button(bf, text='清空', command=lambda: [ev.set('-1'), dlg.destroy()]).pack(side=tk.LEFT, padx=2)
+        ttk.Button(bf, text='取消', command=dlg.destroy).pack(side=tk.RIGHT, padx=2)
+        ttk.Button(bf, text='确定', command=_sel).pack(side=tk.RIGHT, padx=2)
+        dlg.wait_window()
 
     def _build_tab2(self, parent):
         """装备与技能"""
@@ -938,6 +1072,27 @@ class WarpcEditor:
         except Exception:
             return {}, {}
 
+    def _load_tkkon_names(self):
+        """加载 TKKon ID→名称 配置表 (tkkon_names.csv)"""
+        name_csv = os.path.join(os.path.dirname(__file__), 'tkkon_names.csv')
+        if not os.path.exists(name_csv):
+            return {}
+        try:
+            import csv
+            lookup = {}
+            with open(name_csv, 'r', encoding='utf-8-sig') as f:
+                reader = csv.reader(f)
+                next(reader, None)  # skip header
+                for row in reader:
+                    if len(row) >= 2 and row[0].strip().isdigit():
+                        idx = int(row[0])
+                        name = row[1].strip()
+                        if name:
+                            lookup[idx] = name
+            return lookup
+        except Exception:
+            return {}
+
     def _load_item_names(self):
         """加载 TKItem.dat → {item_id: item_name} + {item_index: item_name}"""
         tks_dir = os.path.dirname(self.warpc_path) if self.warpc_path else ''
@@ -980,15 +1135,22 @@ class WarpcEditor:
         try:
             self.records = load_warpc(self.warpc_path); self._dirty = False
             self.skill_names, self._skill_types = self._load_skill_names()
+            self.tkkon_names = self._load_tkkon_names()
             if hasattr(self, '_skill_learn_labels'):
                 for i, lbl in enumerate(self._skill_learn_labels):
                     if i < len(self._skill_learn_labels):
                         sname = self.skill_names.get(i, f"技能#{i}") if self.skill_names else f"技能#{i}"
+                        if i == 343: sname = "普通攻击"
                         lbl.config(text=sname)
+            if hasattr(self, 't3_inner'):
+                for w in self.t3_inner.winfo_children():
+                    w.destroy()
+                self._build_tab4(self.t3_inner)
             self.item_names, self.item_idx_names, self._idx_to_id, self._id_to_idx = self._load_item_names()
             nonempty = sum(1 for r in self.records if any(v != 0 for v in r['fields']))
+            tkkon_count = len(getattr(self, 'tkkon_names', {}))
             self.status_var.set(
-                f"{len(self.records)} 角色 (1054字节/角色) | 有效 {nonempty} | TKT {len(self.tkt)} 条 | 物品 {len(self.item_names)} 技能 {len(self.skill_names)}")
+                f"{len(self.records)} 角色 (1054字节/角色) | 有效 {nonempty} | TKT {len(self.tkt)} 条 | 物品 {len(self.item_names)} 技能 {len(self.skill_names)} TKKon {tkkon_count}")
         except Exception as e:
             messagebox.showerror("加载失败", str(e)); self.records = []
         self._update_paths(); self._set_edit_enabled(True); self._apply_filter()
@@ -1167,6 +1329,13 @@ class WarpcEditor:
                 for vi, item in enumerate(cb['values']):
                     if item.startswith(f'{byte_val}-'):
                         cb.current(vi); break
+
+        # Populate skill effect widgets
+        if hasattr(self, '_skill_effect_widgets'):
+            for i, ev in self._skill_effect_widgets:
+                field_idx = 273 + i
+                if field_idx < WARPC_FIELD_COUNT:
+                    ev.set(str(f[field_idx]))
 
         # Resolve skill names for equip skill fields
         for fn, fo, _, _ in EQUIP_SKILL_FIELDS:
@@ -1657,6 +1826,19 @@ class WarpcEditor:
                     new_val -= 0x10000
                 f[field_idx] = new_val
 
+        # Apply skill effect widgets — write to [273 + idx]
+        if hasattr(self, '_skill_effect_widgets'):
+            for i, ev in self._skill_effect_widgets:
+                field_idx = 273 + i
+                if field_idx >= WARPC_FIELD_COUNT: continue
+                try:
+                    v = int(ev.get())
+                    if v > 32767: v = 32767
+                    if v < -32768: v = -32768
+                    f[field_idx] = v
+                except ValueError:
+                    pass
+
         # Apply named fields
         all_named_fields = (IDENTITY_FIELDS + HPMP_FIELDS + STAT_FIELDS +
                            SKILL_BONUS_FIELDS + EQUIP_FIELDS + EQUIP_SKILL_FIELDS +
@@ -1681,6 +1863,10 @@ class WarpcEditor:
         # 技能学习状态占用的 [88]-[259] 由 _skill_learn_widgets 处理
         for j in range(88, 260):
             named_indices.add(j)
+        # 技能效果判定占用的 [273]-[273+count-1] 由 _skill_effect_widgets 处理
+        if hasattr(self, '_skill_effect_widgets'):
+            for i, _ in self._skill_effect_widgets:
+                named_indices.add(273 + i)
 
         # Apply all raw fields from tab3 (跳过已由命名字段处理的)
         for j in range(WARPC_FIELD_COUNT):
@@ -1784,8 +1970,14 @@ class WarpcEditor:
         lines.append(f"  [{88}-{259}] 反编译验证: 不会/等待学(1~9进展累积)/可以学(≥10)/父技学会(20)/独立技学会(30)")
         lines.append(f"  344技能×1byte (TKSkill #0-#343), 存储在172个int16的高低字节中")
         lines.append("")
+        lines.append("【技能效果判定】")
+        lines.append(f"  [273]-[273+count-1] sub_4307CC/sub_435D68 验证: 技能→TKKon动画映射表")
+        lines.append(f"  全部type=0指令技能(末尾为普通攻击); 每字段=int16 TKKon ID (0~649)")
+        lines.append(f"  TKKon[cond_id].field[3]=TKAct动画索引 → JVG 帧渲染")
+        lines.append(f"  Maker: '技能效果判定' 标签页, 编辑形式类似技能学习状态, 可弹窗选择TKKon条目")
+        lines.append("")
         lines.append("【尾部未分析区域】")
-        lines.append(f"  [{TAIL_START}-{TAIL_END-1}] (426 字段) — 无反编译引用")
+        lines.append(f"  [{TAIL_START}-{TAIL_END-1}] (部分字段已分析: [273+]=技能效果判定, [525]=待机动画)")
         lines.append("")
         lines.append("【核心反编译函数】")
         lines.append("  sub_42234C  装备/技能/属性应用 (字段 [5-10]/[11-26]/[32-42]/[67-72]/[86-87])")
