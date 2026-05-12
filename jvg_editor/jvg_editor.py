@@ -440,7 +440,7 @@ def _rgba_png(w:int,h:int,rgba:bytearray)->bytes:
     for row in range(h): raw.append(0); raw.extend(rgba[row*w*4:(row+1)*w*4])
     png+=ch(b"IDAT",zlib.compress(bytes(raw),9)); png+=ch(b"IEND",b""); return png
 
-def frame_to_rgba(f:JVGFrame,pal:PaletteRGB565)->bytearray:
+def frame_to_rgba(f:JVGFrame,pal:PaletteRGB565,greenscreen_set:Optional[set]=None)->bytearray:
     pr=pal.to_rgb888(); w,h=f.width,f.height; rgba=bytearray(w*h*4)
     for y in range(h):
         for x in range(w):
@@ -448,18 +448,19 @@ def frame_to_rgba(f:JVGFrame,pal:PaletteRGB565)->bytearray:
             a=f.alpha[p] if p<len(f.alpha) else 0
             if a==0: continue
             idx=f.pixels[p] if p<len(f.pixels) else 0
+            if greenscreen_set and idx in greenscreen_set: continue
             rgba[off]=pr[idx*3]; rgba[off+1]=pr[idx*3+1]; rgba[off+2]=pr[idx*3+2]; rgba[off+3]=255
     return rgba
 
-def export_single(f:JVGFrame,pal:PaletteRGB565,path:str):
-    rgba=frame_to_rgba(f,pal); Path(path).write_bytes(_rgba_png(f.width,f.height,rgba))
+def export_single(f:JVGFrame,pal:PaletteRGB565,path:str,greenscreen_set:Optional[set]=None):
+    rgba=frame_to_rgba(f,pal,greenscreen_set); Path(path).write_bytes(_rgba_png(f.width,f.height,rgba))
 
-def export_group(blk:JVMBlock,outdir:str,prefix:str="frame"):
+def export_group(blk:JVMBlock,outdir:str,prefix:str="frame",greenscreen_set:Optional[set]=None):
     os.makedirs(outdir,exist_ok=True)
     for fi,f in enumerate(blk.frames):
-        export_single(f,blk.palette,os.path.join(outdir,f"{prefix}_{fi:03d}.png"))
+        export_single(f,blk.palette,os.path.join(outdir,f"{prefix}_{fi:03d}.png"),greenscreen_set)
 
-def export_gridsheet(blk:JVMBlock,outdir:str,padding:int=1,columns:int=0):
+def export_gridsheet(blk:JVMBlock,outdir:str,padding:int=1,columns:int=0,greenscreen_set:Optional[set]=None):
     """按游戏虚拟坐标导出 gridsheet — 所有帧同cell大小,偏移位置完美还原"""
     frames=[f for f in blk.frames if f.width>0 and f.height>0]
     if not frames: return
@@ -485,6 +486,7 @@ def export_gridsheet(blk:JVMBlock,outdir:str,padding:int=1,columns:int=0):
                 p=py*f.width+px
                 if p<len(f.alpha) and f.alpha[p]==0: continue
                 idx=f.pixels[p] if p<len(f.pixels) else 0
+                if greenscreen_set and idx in greenscreen_set: continue
                 dx,dy=cx+ox+px,cy+oy+py
                 if 0<=dx<aw and 0<=dy<ah:
                     off=(dy*aw+dx)*4; atlas[off]=pr[idx*3]; atlas[off+1]=pr[idx*3+1]; atlas[off+2]=pr[idx*3+2]; atlas[off+3]=255
@@ -502,6 +504,7 @@ class JVGEditor:
         self.root.geometry("1280x800")
         self.jvg:Optional[JVGFile]=None; self._bi=-1; self._fi=0; self._sel_fi=-1
         self._view="tile"; self._tile_cols=tk.IntVar(value=0); self._anim_job=None
+        self._greenscreen_remove=tk.BooleanVar(value=True)
         self._photos={}; self._detail_imgs={}
         self._setup_menu(); self._setup_ui()
         if filepath and os.path.exists(filepath): self._open(filepath)
@@ -582,6 +585,8 @@ class JVGEditor:
         self._padding=tk.IntVar(value=1)
         ttk.Spinbox(tb,textvariable=self._padding,width=3,from_=0,to=16,
                     command=lambda:self._refresh_view()).pack(side=tk.LEFT,padx=2)
+        ttk.Checkbutton(tb,text="去绿幕",variable=self._greenscreen_remove,
+                        command=lambda:self._refresh_view()).pack(side=tk.LEFT,padx=4)
         ttk.Separator(tb,orient=tk.VERTICAL).pack(side=tk.LEFT,fill=tk.Y,padx=4,pady=2)
         ttk.Label(tb,text="速度:").pack(side=tk.LEFT)
         def _validate_speed(P):
@@ -834,12 +839,16 @@ class JVGEditor:
         scale*=self._zoom.get()
         w,h=f.width,f.height
         if w<=0 or h<=0: return None
+        no_green=self._greenscreen_remove.get()
+        if no_green:
+            green_set={i for i,e in enumerate(pal.entries) if e==0x07E0}
         pr=pal.to_rgb888(); rgba=bytearray(w*h*4)
         for y in range(h):
             for x in range(w):
                 p=y*w+x; off=p*4
                 if p<len(f.alpha) and f.alpha[p]==0: continue
                 idx=f.pixels[p] if p<len(f.pixels) else 0
+                if no_green and idx in green_set: continue
                 rgba[off]=pr[idx*3]; rgba[off+1]=pr[idx*3+1]; rgba[off+2]=pr[idx*3+2]; rgba[off+3]=255
         img=Image.frombytes('RGBA',(w,h),bytes(rgba))
         if scale!=1.0: img=img.resize((max(1,int(w*scale)),max(1,int(h*scale))),Image.NEAREST)
@@ -932,9 +941,12 @@ class JVGEditor:
         cx=(cw-scw)//2; cy=(ch-sch)//2
         # 预渲染所有帧
         self._anim_data=[]
+        no_green=self._greenscreen_remove.get()
         for fi,f in enumerate(frames):
             if f.width<=0: self._anim_data.append(None); continue
             pal=self._get_pal(blk,f); pr=pal.to_rgb888()
+            if no_green:
+                green_set={i for i,e in enumerate(pal.entries) if e==0x07E0}
             ox=(_u16s(f.x_max)-f.width+1-min_vl); oy=(_u16s(f.y_max)-f.height+1-min_vt)
             rgba=bytearray(scw*sch*4)
             for py in range(f.height):
@@ -942,6 +954,7 @@ class JVGEditor:
                     p=py*f.width+px
                     if p<len(f.alpha) and f.alpha[p]==0: continue
                     idx=f.pixels[p] if p<len(f.pixels) else 0
+                    if no_green and idx in green_set: continue
                     dx=int((ox+px)*scale); dy=int((oy+py)*scale)
                     if 0<=dx<scw and 0<=dy<sch:
                         off=(dy*scw+dx)*4; rgba[off]=pr[idx*3]; rgba[off+1]=pr[idx*3+1]; rgba[off+2]=pr[idx*3+2]; rgba[off+3]=255
@@ -972,6 +985,9 @@ class JVGEditor:
     def _export(self,mode:str):
         if not self.jvg or self._bi<0: return
         blk=self.jvg.blocks[self._bi]
+        gs=None
+        if self._greenscreen_remove.get():
+            gs={i for i,e in enumerate(blk.palette.entries) if e==0x07E0}
         if mode=="single":
             if self._sel_fi<0 or self._sel_fi>=blk.frame_count:
                 messagebox.showinfo("提示","请先在平铺视图中点击选中一帧")
@@ -979,16 +995,16 @@ class JVGEditor:
             p=filedialog.asksaveasfilename(title="导出帧",defaultextension=".png",filetypes=[("PNG","*.png")])
             if not p: return
             f=blk.frames[self._sel_fi]; pal=self._get_pal(blk,f)
-            export_single(f,pal,p); self._info.config(text=f"已导出 {Path(p).name}")
+            export_single(f,pal,p,gs); self._info.config(text=f"已导出 {Path(p).name}")
         elif mode=="group":
             d=filedialog.askdirectory(title="选择导出目录")
             if not d: return
-            export_group(blk,d)
+            export_group(blk,d,greenscreen_set=gs)
             self._info.config(text=f"已导出 {blk.frame_count} 帧到 {d}")
         elif mode=="grid":
             d=filedialog.askdirectory(title="选择导出目录")
             if not d: return
-            export_gridsheet(blk,d,padding=self._padding.get(),columns=self._tile_cols.get())
+            export_gridsheet(blk,d,padding=self._padding.get(),columns=self._tile_cols.get(),greenscreen_set=gs)
             self._info.config(text=f"已导出 gridsheet (padding={self._padding.get()}) 到 {d}")
 
 # ── Entry ──────────────────────────────────────────

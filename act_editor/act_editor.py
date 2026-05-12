@@ -814,6 +814,7 @@ class ActEditor:
         self.filtered_indices = []
         self._dirty = False
         self._editing_idx = None
+        self._greenscreen_remove = tk.BooleanVar(value=True)
         self.names = {}
 
         # JVG 数据 (预览用, 完整解码)
@@ -893,6 +894,10 @@ class ActEditor:
         self.show_empty = tk.BooleanVar(value=True)
         ttk.Checkbutton(tb, text="显示空条目", variable=self.show_empty,
                         command=self._apply_filter).pack(side=tk.LEFT, padx=2)
+        ttk.Checkbutton(tb, text="去绿幕", variable=self._greenscreen_remove,
+                        command=lambda: (self._jvg_cache.clear(),
+                                         self._pil_cache.clear(),
+                                         self._preview_redraw())).pack(side=tk.LEFT, padx=2)
         ttk.Separator(tb, orient=tk.VERTICAL).pack(
             side=tk.LEFT, fill=tk.Y, padx=6)
         ttk.Button(tb, text="重新加载", command=self._reload).pack(
@@ -3243,6 +3248,9 @@ class ActEditor:
         if f.width <= 0 or f.height <= 0:
             return None
         pal_rgb = blk.palette.to_rgb888()
+        no_green = self._greenscreen_remove.get()
+        if no_green:
+            green_set = {i for i, e in enumerate(blk.palette.entries) if e == 0x07E0}
         rgba = bytearray(f.width * f.height * 4)
         for py in range(f.height):
             base = py * f.width
@@ -3251,6 +3259,8 @@ class ActEditor:
                 if p < len(f.alpha) and f.alpha[p] == 0:
                     continue
                 idx = f.pixels[p] if p < len(f.pixels) else 0
+                if no_green and idx in green_set:
+                    continue
                 o = p * 4
                 rgba[o] = pal_rgb[idx * 3]
                 rgba[o + 1] = pal_rgb[idx * 3 + 1]
@@ -3282,6 +3292,9 @@ class ActEditor:
         if f.width <= 0 or f.height <= 0:
             return None
         pal_rgb = blk.palette.to_rgb888()
+        no_green = self._greenscreen_remove.get()
+        if no_green:
+            green_set = {i for i, e in enumerate(blk.palette.entries) if e == 0x07E0}
         rgba = bytearray(f.width * f.height * 4)
         for py in range(f.height):
             base = py * f.width
@@ -3290,6 +3303,8 @@ class ActEditor:
                 if p < len(f.alpha) and f.alpha[p] == 0:
                     continue
                 idx = f.pixels[p] if p < len(f.pixels) else 0
+                if no_green and idx in green_set:
+                    continue
                 o = p * 4
                 rgba[o] = pal_rgb[idx * 3]
                 rgba[o + 1] = pal_rgb[idx * 3 + 1]
