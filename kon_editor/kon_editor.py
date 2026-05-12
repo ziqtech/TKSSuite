@@ -199,8 +199,29 @@ def resolve_kon_val(field_name, val, tkt):
     """解析 int16 值 → 特殊标记 (已弃用TKT查表, 仅返回空)"""
     return ""
 
-def kon_record_name(rec, tkt):
-    """生成记录的可读名称 — 距离/面积/动画索引"""
+def load_tkkon_names(csv_path):
+    """加载 TKKon ID→名称 配置表"""
+    names = {}
+    if not csv_path or not os.path.exists(csv_path):
+        return names
+    with open(csv_path, 'r', encoding='utf-8-sig') as f:
+        reader = __import__('csv').reader(f)
+        next(reader, None)  # skip header
+        for row in reader:
+            if len(row) >= 2 and row[0].strip().isdigit():
+                idx = int(row[0])
+                name = row[1].strip()
+                if name:
+                    names[idx] = name
+    return names
+
+def kon_record_name(rec, tkt, names=None):
+    """生成记录的可读名称 — 优先使用配置表名称，其次动画索引"""
+    idx = rec['index']
+    # 优先使用配置表名称
+    if names and idx in names and names[idx]:
+        return names[idx]
+    # 回退：动画索引+参数描述
     cid = rec.get('cond_id', 0)
     parts = []
     em = rec.get('exec_mode', 0)
@@ -211,14 +232,13 @@ def kon_record_name(rec, tkt):
         rh = (em >> 8) & 0xFF
         if rh > 0:
             parts.append(f"距{rh}")
-    # 攻击面积
     tp_hi = (tp >> 8) & 0xFF
     if tp_hi > 0:
         parts.append(f"面{tp_hi}")
     desc = " ".join(parts) if parts else ""
     if cid >= 0:
         return f"动画#{cid} {desc}".strip()
-    return f"空槽-#{rec['index']}"
+    return f"空槽-#{idx}"
 
 def describe_exec_mode(val):
     """解析 exec_mode → 可读描述 (高字节=攻击距离, 低字节=范围开关)"""
@@ -315,7 +335,7 @@ class KonEditor:
         if os.path.exists(ico): self.root.iconbitmap(default=ico)
         self.root.geometry("1320x820"); self.root.minsize(1050, 650)
         self.kon_path = self.tkt_path = None
-        self.records = []; self.tkt = {}
+        self.records = []; self.tkt = {}; self.names = {}
         self.filtered_indices = []; self._dirty = False
         self._edit_split = {}  # split spinboxes / bitmask checkboxes
         self._build_ui(); self._set_edit_enabled(False)
@@ -372,15 +392,15 @@ class KonEditor:
 
         # Left: TreeView
         lf = ttk.Frame(paned); paned.add(lf, weight=1)
-        cols = ('index', 'cond_id', 'exec_mode', 'tkt_name', 'damage_base', 'exec_flags')
+        cols = ('index', 'cond_id', 'atk_range', 'tkt_name', 'atk_area', 'damage_base')
         self.tree = ttk.Treeview(lf, columns=cols, show='headings', selectmode='browse')
         cc = [
-            ('index', '记录#', 50),
-            ('cond_id', '动画ID', 55),
-            ('exec_mode', '执行模式', 75),
-            ('tkt_name', '名称', 160),
-            ('damage_base', '伤害基础', 65),
-            ('exec_flags', '标志', 45),
+            ('index', '序号', 38),
+            ('cond_id', '动画', 40),
+            ('atk_range', '距离', 42),
+            ('tkt_name', '名称', 100),
+            ('atk_area', '范围', 42),
+            ('damage_base', '伤害', 50),
         ]
         for cid, cn, cw in cc:
             self.tree.heading(cid, text=cn, command=lambda c=cid: self._sort_by(c))
@@ -393,7 +413,7 @@ class KonEditor:
         self.tree.tag_configure('empty', foreground='#AAAAAA')    # 空记录
 
         # Right: Edit panel
-        rf = ttk.Frame(paned); paned.add(rf, weight=3)
+        rf = ttk.Frame(paned); paned.add(rf, weight=4)
         self.edit_frame = rf
 
         self.lbl_rec_idx = ttk.Label(rf, text="未选中", font=('', 11, 'bold'))
@@ -660,6 +680,9 @@ class KonEditor:
         self.status_var.set("加载中…"); self.root.update()
         if self.tkt_path:
             self.tkt = load_tkt(self.tkt_path)
+        # 加载名称配置表
+        name_csv = os.path.join(os.path.dirname(__file__), 'tkkon_names.csv')
+        self.names = load_tkkon_names(name_csv)
         try:
             self.records = load_kon(self.kon_path); self._dirty = False
             nonempty = sum(1 for r in self.records
@@ -708,7 +731,7 @@ class KonEditor:
                 if all(rec[fn] == 0 for fn, _, _, _ in KON_FIELDS):
                     continue
             if q:
-                nm = kon_record_name(rec, self.tkt)
+                nm = kon_record_name(rec, self.tkt, self.names)
                 search_text = f"{rec['index']} {rec['cond_id']} {rec['exec_mode']} {nm} " \
                               f"{' '.join(str(rec[fn]) for fn,_,_,_ in KON_FIELDS)}".lower()
                 if q not in search_text:
@@ -728,27 +751,39 @@ class KonEditor:
         for it in self.tree.get_children(): self.tree.delete(it)
         for idx in self.filtered_indices:
             r = self.records[idx]
-            nm = kon_record_name(r, self.tkt)
+            nm = kon_record_name(r, self.tkt, self.names)
             has_data = any(r[fn] != 0 for fn, _, _, _ in KON_FIELDS)
             tags = ['active'] if has_data else ['empty']
-            val_str = str(r['damage_base']) if r['damage_base'] != 0 else ""
-            if r['damage_base'] == -1: val_str = "终止"
-            ef = r['exec_flags']
-            ef_str = str(ef) if ef != 0 else ""
+            # 攻击距离: exec_mode 高字节
+            em = r['exec_mode'] & 0xFFFF
+            em_hi = (em >> 8) & 0xFF
+            if em_hi >= 128:
+                dist_str = "自身"
+            elif em_hi == 0:
+                dist_str = ""
+            else:
+                dist_str = str(em_hi)
+            # 攻击范围: target_param 高字节
+            tp = r['target_param'] & 0xFFFF
+            tp_hi = (tp >> 8) & 0xFF
+            area_str = str(tp_hi) if tp_hi > 0 else ""
+            # 伤害基础值: 有数字就显示, 没有不显示
+            db = r['damage_base']
+            dmg_str = str(db) if db != 0 else ""
             self.tree.insert('', 'end',
-                             values=(r['index'], r['cond_id'], r['exec_mode'],
+                             values=(r['index'], r['cond_id'], dist_str,
                                      nm if nm else f"(空-#{idx})",
-                                     val_str, ef_str),
+                                     area_str, dmg_str),
                              tags=tags)
 
     def _sort_by(self, col):
         rev = getattr(self, '_sort_reverse', False)
         if col == 'tkt_name':
             self.filtered_indices.sort(
-                key=lambda i: kon_record_name(self.records[i], self.tkt).lower(), reverse=rev)
+                key=lambda i: kon_record_name(self.records[i], self.tkt, self.names).lower(), reverse=rev)
         else:
-            km = {'cond_id': 'cond_id', 'exec_mode': 'exec_mode', 'damage_base': 'damage_base',
-                  'exec_flags': 'exec_flags'}
+            km = {'cond_id': 'cond_id', 'atk_range': 'exec_mode', 'atk_area': 'target_param',
+                  'damage_base': 'damage_base'}
             self.filtered_indices.sort(
                 key=lambda i: self.records[i].get(km.get(col, 'index'), 0), reverse=rev)
         self._sort_reverse = not rev; self._refresh_table()
@@ -811,7 +846,7 @@ class KonEditor:
 
     def _populate_edit(self, rec):
         self._editing_idx = rec['index']
-        nm = kon_record_name(rec, self.tkt)
+        nm = kon_record_name(rec, self.tkt, self.names)
         em = rec.get('exec_mode', 0)
         cid = rec.get('cond_id', 0)
         tp = rec.get('target_param', 0)
@@ -975,7 +1010,7 @@ class KonEditor:
             for rec in self.records:
                 if all(rec[fn] == 0 for fn, _, _, _ in KON_FIELDS): continue
                 row = [str(rec['index']), str(rec.get('cond_id', '')),
-                       kon_record_name(rec, self.tkt)]
+                       kon_record_name(rec, self.tkt, self.names)]
                 row += [str(rec[fn]) for fn, _, _, _ in KON_FIELDS]
                 f.write(','.join(row) + '\n')
         self.status_var.set(f"已导出: {p}")

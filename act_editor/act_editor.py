@@ -814,6 +814,7 @@ class ActEditor:
         self.filtered_indices = []
         self._dirty = False
         self._editing_idx = None
+        self.names = {}
 
         # JVG 数据 (预览用, 完整解码)
         self._aa_data = None
@@ -909,13 +910,14 @@ class ActEditor:
         lf = ttk.Frame(paned)
         paned.add(lf, weight=1)
         lf.configure(width=345)
-        cols = ('index', 'summary', 'n_layer')
+        cols = ('index', 'name', 'summary', 'n_layer')
         self.tree = ttk.Treeview(lf, columns=cols, show='headings',
                                  selectmode='browse')
         cc = [
-            ('index', '动画#', 55),
-            ('summary', '图层组成 (#图层(type))', 220),
-            ('n_layer', '图层数', 60),
+            ('index', '序号', 42),
+            ('name', '名称', 100),
+            ('summary', '图层组成', 150),
+            ('n_layer', '层数', 42),
         ]
         for cid, cn, cw in cc:
             self.tree.heading(cid, text=cn,
@@ -2651,6 +2653,15 @@ class ActEditor:
         self.root.update()
         try:
             self.entries = load_act(self.act_path)
+            # 加载名称配置表
+            name_csv = os.path.join(os.path.dirname(__file__), 'tkkon_names.csv')
+            self.names = {}
+            if os.path.exists(name_csv):
+                with open(name_csv, 'r', encoding='utf-8-sig') as f:
+                    for line in f:
+                        parts = line.strip().split(',', 1)
+                        if len(parts) == 2 and parts[0].strip().isdigit():
+                            self.names[int(parts[0])] = parts[1].strip()
             self._dirty = False
             nonempty = sum(1 for e in self.entries if not entry_is_empty(e))
             self.status_var.set(
@@ -2725,8 +2736,10 @@ class ActEditor:
             n_layer = len(entry_active_layers(entry))
             has_data = not entry_is_empty(entry)
             tags = ['active'] if has_data else ['empty']
+            idx = entry['index']
+            nm = self.names.get(idx, '')
             self.tree.insert('', 'end',
-                             values=(entry['index'],
+                             values=(idx, nm,
                                      entry_summary(entry), n_layer),
                              tags=tags)
 
