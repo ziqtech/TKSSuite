@@ -576,7 +576,7 @@ class MatEditor:
         """启动精灵动画循环 (~200ms/帧)"""
         if self._vis_anim_timer: return  # 已在运行
         mode = DISPLAY_MODES.get(self._vis_display_mode.get(), 'wire')
-        if mode == 'wire': return
+        if mode in ('wire', 'cha'): return
         def _tick():
             if DISPLAY_MODES.get(self._vis_display_mode.get(), 'wire') == 'wire':
                 self._vis_anim_timer = None; return
@@ -616,8 +616,11 @@ class MatEditor:
         if jvg and blk_idx < jvg.block_count:
             blk = jvg.blocks[blk_idx]
             if blk.frames:
-                if idx not in self._vis_anim_frame: self._vis_anim_frame[idx] = 0
-                anim = self._vis_anim_frame[idx]
+                if mode == 'ani':
+                    if idx not in self._vis_anim_frame: self._vis_anim_frame[idx] = 0
+                    anim = self._vis_anim_frame[idx]
+                else:
+                    anim = 0
                 fi, fpd = _get_dir_frame(blk, r['d13'], r['d16'], r['d53'], anim)
                 sprite = _jvg_sprite_to_tk(jvg, blk_idx, fi)
                 sx = x + blk.frames[fi].x_off; sy = y + blk.frames[fi].y_off
@@ -663,7 +666,7 @@ class MatEditor:
             jvg = self._cha_jvg; bi = r['d51']
         if jvg and bi < jvg.block_count and jvg.blocks[bi].frames:
             blk = jvg.blocks[bi]
-            anim = self._vis_anim_frame.get(idx, 0)
+            anim = self._vis_anim_frame.get(idx, 0) if mode == 'ani' else 0
             fi, _ = _get_dir_frame(blk, r['d13'], r['d16'], r['d53'], anim)
             sprite = _jvg_sprite_to_tk(jvg, bi, fi)
             sx = x + blk.frames[fi].x_off; sy = y + blk.frames[fi].y_off
@@ -820,7 +823,7 @@ class MatEditor:
             self.status_var.set(
                 f"{REC_COUNT}条 | 有效{nonempty} | TKMat场景{len(scenes)} | "
                 f"SC.GRP {self._sc_grp_section_count}区段")
-            sc = ["全部"]+sorted(f"{s}: {scene_name(self.tkt_scenes,s)}" for s in scenes)
+            sc = ["全部"]+[f"{s}: {scene_name(self.tkt_scenes,s)}" for s in sorted(scenes)]
             self.cb_scene['values'] = sc
         except Exception as e:
             messagebox.showerror("加载失败", str(e)); self.records = []
