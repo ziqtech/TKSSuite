@@ -30,14 +30,14 @@ TYPE_COLORS = {0:"#AAA",5:"#2196F3",10:"#4CAF50",15:"#FF9800",16:"#795548",
 TYPE_COLORS_RGBA = {0:(170,170,170),5:(33,150,243),10:(76,175,80),15:(255,152,0),
                     16:(121,85,72),20:(156,39,176),110:(233,30,99),200:(244,67,54)}
 DIR_MODES = {0:"静态",4:"NPC四方向",8:"玩家八方向"}
-DISPLAY_MODES = {"动画":"ani","角色":"cha","线框":"wire"}
+DISPLAY_MODES = {"游戏默认":"auto","动画":"ani","角色":"cha","线框":"wire"}
 _JVG_CACHE = {}  # filepath → JVGFile
 _SPRITE_CACHE = {}  # (filepath, global_idx) → PhotoImage
 
 BASIC_FIELDS = [
     ("type",0,"实体类型","实体类型: 5=入口 10=地形 15=障碍 16=建筑 20=事件 110=机关 200=NPC"),
     ("scene_id",1,"场景ID","所属场景 (-1=全局)。TKT_ID = scene_id + 300"),
-    ("flags",2,"标志位","sub_40C5A4/40C648: bit0=启用 bit1=活跃"),
+    ("flags",2,"标志位","位域。bit0=启用 bit1=可见 bit2=可交互 bit3=提示 bit4=忙碌 bit5=恢复 bit16=动画循环"),
     ("param",3,"扩展参数","扩展参数 (道具数量/金钱等)"),]
 POS_FIELDS = [
     ("x",10,"坐标X","世界坐标X (像素)。sub_407070: a1[10]=x"),
@@ -254,9 +254,17 @@ class MatEditor:
         self._vis_entities = {}; self._vis_selected = None; self._vis_drag = None
         self._sc_grp_section_count = 0
         self._ani_jvg = None; self._cha_jvg = None  # JVG 精灵数据
-        self._vis_display_mode = tk.StringVar(value="动画")  # 动画/角色/线框
+        self._vis_display_mode = tk.StringVar(value="游戏默认")
         self._vis_anim_timer = None  # 动画循环 timer ID
         self._vis_anim_frame = {}  # entity_idx → current cycle frame offset
+        self._bit_enable = tk.BooleanVar(value=False)    # d2 bit0: 启用
+        self._bit_visible = tk.BooleanVar(value=False)   # d2 bit1: 可见
+        self._bit_pickable = tk.BooleanVar(value=False)  # d2 bit2: 可拾取
+        self._bit_hint = tk.BooleanVar(value=False)      # d2 bit3: 提示标记
+        self._bit_busy = tk.BooleanVar(value=False)      # d2 bit4: 忙碌
+        self._bit_resume = tk.BooleanVar(value=False)    # d2 bit5: 恢复
+        self._bit_animloop = tk.BooleanVar(value=False)  # d2 bit16: 动画循环
+        self._sync_lock = False
 
         self._build_ui(); self._set_edit_enabled(False)
         sw,sh = self.root.winfo_screenwidth(),self.root.winfo_screenheight()
@@ -381,6 +389,30 @@ class MatEditor:
         self._build_group("脚本",SCRIPT_FIELDS,3)
         self._build_group("交互/角色",INTERACT_FIELDS,4)
         self._build_group("运行时(只读)",RUNTIME_FIELDS,5)
+        # flags ↔ checkbutton 双向同步 (bit0~5 + bit16)
+        self._sync_lock = False
+        _bit_vars = [(self._bit_enable,1), (self._bit_visible,2), (self._bit_pickable,4),
+                     (self._bit_hint,8), (self._bit_busy,0x10), (self._bit_resume,0x20),
+                     (self._bit_animloop,0x10000)]
+        def _on_cb(*args):
+            if self._sync_lock: return
+            self._sync_lock = True
+            try: flags=int(self._edit_vars['flags'].get())
+            except ValueError: flags=0
+            for bv,mask in _bit_vars:
+                if bv.get(): flags|=mask
+                else: flags&=~mask
+            self._edit_vars['flags'].set(str(flags))
+            self._sync_lock = False
+        def _on_flags(*args):
+            if self._sync_lock: return
+            self._sync_lock = True
+            try: flags=int(self._edit_vars['flags'].get())
+            except ValueError: self._sync_lock=False; return
+            for bv,mask in _bit_vars: bv.set((flags&mask)!=0)
+            self._sync_lock = False
+        self._edit_vars['flags'].trace_add('write',_on_flags)
+        for bv,_ in _bit_vars: bv.trace_add('write',_on_cb)
         bf=ttk.Frame(rf); bf.pack(side=tk.BOTTOM,fill=tk.X,pady=(2,0))
         ttk.Button(bf,text="应用修改",command=self._apply_edit,width=12).pack(side=tk.LEFT)
         ttk.Button(bf,text="重置",command=self._reset_edit,width=8).pack(side=tk.LEFT,padx=2)
@@ -400,12 +432,31 @@ class MatEditor:
             elif key=='dir_mode':
                 cb=ttk.Combobox(frm,state='readonly',values=[f"{k}-{v}" for k,v in DIR_MODES.items()],width=14,font=FONT)
                 cb.pack(fill=tk.X); self._edit_vars[key]=cb
+            elif key=='flags':
+                ev=tk.StringVar(); self._edit_vars[key]=ev
+                ttk.Entry(frm,textvariable=ev,width=14,font=FONT).pack(fill=tk.X)
+                cbf=ttk.Frame(frm); cbf.pack(fill=tk.X, pady=(2,0))
+                # 位域 checkbutton: 第一行 bit0~3, 第二行 bit4~5+bit16
+                bits_r1=[("_bit_enable","启用","bit0=启用(Enabled): 参与游戏循环和脚本执行。SetEnabled(40BE30), Disable(40C5A4)清除, Enable(40C648)设置"),
+                         ("_bit_visible","显示","bit1=可见(Visible): 渲染到屏幕。SetVisible(40BEDC), Disable清除, Enable设置"),
+                         ("_bit_pickable","可交互","bit2=可交互(Interactive): 写入鼠标拾取缓冲区, 可被点击触发交互(对话/开锁/拾物)。406864:117渲染写入word_78E276, 410B74鼠标点击读出, 408E5C交互校验"),
+                         ("_bit_hint","提示","bit3=提示标记(Hint): 显示浮动提示。SetHint(40B650)控制")]
+                bits_r2=[("_bit_busy","忙碌","bit4=忙碌(Busy): 脚本交互执行中, 阻塞移动。引擎交互状态机管理"),
+                         ("_bit_resume","恢复","bit5=恢复(Resume): 交互结束恢复标记。引擎交互状态机管理"),
+                         ("_bit_animloop","循环动画","bit16=动画循环(AnimLoop): 动画循环播放。SetAni(40C1A4)控制")]
+                for ri,row_bits in enumerate([bits_r1,bits_r2]):
+                    rf=ttk.Frame(cbf); rf.pack(fill=tk.X)
+                    for attr,text,ttip in row_bits:
+                        cb=ttk.Checkbutton(rf,text=text,variable=getattr(self,attr))
+                        cb.pack(side=tk.LEFT,padx=1)
+                        self._bind_tooltip(cb,ttip)
             else:
                 ev=tk.StringVar(); self._edit_vars[key]=ev
                 ttk.Entry(frm,textvariable=ev,width=14,font=FONT).pack(fill=tk.X)
             if key=='scene_id':
                 nl=ttk.Label(frm,text="",foreground='#3366cc',font=FONT_S,wraplength=150)
                 nl.pack(anchor=tk.W); self._edit_vars['_scene_label']=nl
+        return lf
 
     def _bind_tooltip(self,widget,text):
         tip={'win':None}
@@ -425,10 +476,9 @@ class MatEditor:
         # 顶部场景选择 + 筛选
         top = ttk.Frame(vf); top.pack(fill=tk.X, padx=5, pady=(5,0))
         ttk.Label(top, text="场景:").pack(side=tk.LEFT)
-        self._vis_scene_combo = ttk.Combobox(top, textvariable=self._vis_scene_id,
-                                             state='readonly', width=25)
+        self._vis_scene_combo = ttk.Combobox(top, state='readonly', width=25)
         self._vis_scene_combo.pack(side=tk.LEFT, padx=2)
-        self._vis_scene_combo.bind('<<ComboboxSelected>>', lambda e: self._vis_load_scene())
+        self._vis_scene_combo.bind('<<ComboboxSelected>>', lambda e: self._on_vis_combo_select())
         ttk.Separator(top, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=8)
         for tval in [5,10,15,16,20,110,200]:
             ttk.Checkbutton(top, text=ENTITY_TYPES.get(tval,f"T{tval}"),
@@ -512,11 +562,21 @@ class MatEditor:
         for sid, sname, cnt in scenes:
             self._vis_tree.insert('', 'end', values=(str(sid), sname, str(cnt)))
 
+    def _on_vis_combo_select(self):
+        val = self._vis_scene_combo.get()
+        try: sid = int(val.split(':')[0])
+        except ValueError: return
+        self._vis_scene_id.set(sid)
+        self._vis_stop_anim()
+        self._vis_load_scene()
+
     def _on_vis_scene_select(self, event):
         sel = self._vis_tree.selection()
         if not sel: return
         sid = int(self._vis_tree.item(sel[0], 'values')[0])
         self._vis_scene_id.set(sid)
+        for v in self._vis_scene_combo['values']:
+            if v.startswith(f"{sid}:"): self._vis_scene_combo.set(v); break
         self._vis_stop_anim()
         self._vis_load_scene()
 
@@ -573,12 +633,13 @@ class MatEditor:
         self._vis_start_anim()
 
     def _vis_start_anim(self):
-        """启动精灵动画循环 (~200ms/帧)"""
-        if self._vis_anim_timer: return  # 已在运行
-        mode = DISPLAY_MODES.get(self._vis_display_mode.get(), 'wire')
+        """启动精灵动画循环 (~200ms/帧); auto/ani 模式开, cha/wire 模式关"""
+        if self._vis_anim_timer: return
+        mode = DISPLAY_MODES.get(self._vis_display_mode.get(), 'auto')
         if mode in ('wire', 'cha'): return
         def _tick():
-            if DISPLAY_MODES.get(self._vis_display_mode.get(), 'wire') == 'wire':
+            m = DISPLAY_MODES.get(self._vis_display_mode.get(), 'auto')
+            if m in ('wire', 'cha'):
                 self._vis_anim_timer = None; return
             updated = False
             for idx in list(self._vis_anim_frame.keys()):
@@ -604,26 +665,44 @@ class MatEditor:
         color = '#%02x%02x%02x' % TYPE_COLORS_RGBA.get(tval, (128,128,128))
         idx = r['index']
         items = []
-        mode = DISPLAY_MODES.get(self._vis_display_mode.get(), 'wire')
+        mode = DISPLAY_MODES.get(self._vis_display_mode.get(), 'auto')
 
-        # 动画/角色模式: [64]/[51] 是 block 索引, 按 [13]朝向 + [53]方向模式 + [16]每向帧数 选择帧
+        # JVG 精灵选择: auto模式按d70逐实体判断 (sub_405CBC逻辑)
+        #   type 200: d70=1→Ani.JVG+d64(行走动画) d70=0→Cha.JVG+d51(立绘)
+        #   type 20/110: Ani.JVG+d64
         sprite = None; sx = x; sy = y
-        jvg = None; blk_idx = 0
-        if mode == 'ani' and tval in (200, 20, 110) and r['d64'] > 0 and self._ani_jvg:
-            jvg = self._ani_jvg; blk_idx = r['d64']
-        elif mode == 'cha' and tval == 200 and r['d51'] > 0 and self._cha_jvg:
-            jvg = self._cha_jvg; blk_idx = r['d51']
+        jvg = None; blk_idx = 0; should_animate = False
+        if mode == 'wire':
+            pass
+        elif mode == 'auto':
+            if tval == 200:
+                if r['d70'] == 1 and r['d64'] > 0 and self._ani_jvg:
+                    jvg = self._ani_jvg; blk_idx = r['d64']; should_animate = True
+                elif r['d51'] > 0 and self._cha_jvg:
+                    jvg = self._cha_jvg; blk_idx = r['d51']
+            elif tval in (20, 110) and r['d64'] > 0 and self._ani_jvg:
+                jvg = self._ani_jvg; blk_idx = r['d64']; should_animate = True
+        elif mode == 'ani':
+            if tval in (200, 20, 110) and r['d64'] > 0 and self._ani_jvg:
+                jvg = self._ani_jvg; blk_idx = r['d64']; should_animate = True
+        elif mode == 'cha':
+            if tval == 200 and r['d51'] > 0 and self._cha_jvg:
+                jvg = self._cha_jvg; blk_idx = r['d51']
+            elif tval in (20, 110) and r['d64'] > 0 and self._ani_jvg:
+                jvg = self._ani_jvg; blk_idx = r['d64']
         if jvg and blk_idx < jvg.block_count:
             blk = jvg.blocks[blk_idx]
             if blk.frames:
-                if mode == 'ani':
+                if should_animate:
                     if idx not in self._vis_anim_frame: self._vis_anim_frame[idx] = 0
                     anim = self._vis_anim_frame[idx]
                 else:
                     anim = 0
                 fi, fpd = _get_dir_frame(blk, r['d13'], r['d16'], r['d53'], anim)
-                sprite = _jvg_sprite_to_tk(jvg, blk_idx, fi)
-                sx = x + blk.frames[fi].x_off; sy = y + blk.frames[fi].y_off
+                if fi < len(blk.frames):
+                    sprite = _jvg_sprite_to_tk(jvg, blk_idx, fi)
+                    if sprite:
+                        sx = x + blk.frames[fi].x_off; sy = y + blk.frames[fi].y_off
 
         if sprite and mode != 'wire':
             items.append(self._vis_canvas.create_image(sx, sy, anchor='nw', image=sprite, tags=('entity', f'e{idx}')))
@@ -655,21 +734,37 @@ class MatEditor:
         tval = r['d0']
         x, y = r['d10'], r['d11']
         hcolor = '#FFD700'; idx = r['index']; items = []
-        mode = DISPLAY_MODES.get(self._vis_display_mode.get(), 'wire')
+        mode = DISPLAY_MODES.get(self._vis_display_mode.get(), 'auto')
 
-        # 精灵模式: 按朝向选帧
+        # JVG 精灵选择 (高亮版): 与 _vis_draw_entity 同等逻辑
         sprite = None; sx = x; sy = y
-        jvg = None; bi = 0
-        if mode == 'ani' and tval in (200, 20, 110) and r['d64'] > 0 and self._ani_jvg:
-            jvg = self._ani_jvg; bi = r['d64']
-        elif mode == 'cha' and tval == 200 and r['d51'] > 0 and self._cha_jvg:
-            jvg = self._cha_jvg; bi = r['d51']
+        jvg = None; bi = 0; should_animate = False
+        if mode == 'wire':
+            pass
+        elif mode == 'auto':
+            if tval == 200:
+                if r['d70'] == 1 and r['d64'] > 0 and self._ani_jvg:
+                    jvg = self._ani_jvg; bi = r['d64']; should_animate = True
+                elif r['d51'] > 0 and self._cha_jvg:
+                    jvg = self._cha_jvg; bi = r['d51']
+            elif tval in (20, 110) and r['d64'] > 0 and self._ani_jvg:
+                jvg = self._ani_jvg; bi = r['d64']; should_animate = True
+        elif mode == 'ani':
+            if tval in (200, 20, 110) and r['d64'] > 0 and self._ani_jvg:
+                jvg = self._ani_jvg; bi = r['d64']; should_animate = True
+        elif mode == 'cha':
+            if tval == 200 and r['d51'] > 0 and self._cha_jvg:
+                jvg = self._cha_jvg; bi = r['d51']
+            elif tval in (20, 110) and r['d64'] > 0 and self._ani_jvg:
+                jvg = self._ani_jvg; bi = r['d64']
         if jvg and bi < jvg.block_count and jvg.blocks[bi].frames:
             blk = jvg.blocks[bi]
-            anim = self._vis_anim_frame.get(idx, 0) if mode == 'ani' else 0
+            anim = self._vis_anim_frame.get(idx, 0) if should_animate else 0
             fi, _ = _get_dir_frame(blk, r['d13'], r['d16'], r['d53'], anim)
-            sprite = _jvg_sprite_to_tk(jvg, bi, fi)
-            sx = x + blk.frames[fi].x_off; sy = y + blk.frames[fi].y_off
+            if fi < len(blk.frames):
+                sprite = _jvg_sprite_to_tk(jvg, bi, fi)
+                if sprite:
+                    sx = x + blk.frames[fi].x_off; sy = y + blk.frames[fi].y_off
 
         if sprite and mode != 'wire':
             items.append(self._vis_canvas.create_image(sx, sy, anchor='nw', image=sprite, tags=('entity', f'e{idx}')))
@@ -902,6 +997,7 @@ class MatEditor:
         self._show_record(self.records[idx])
 
     def _show_record(self,rec):
+        self._sync_lock=True
         idx=rec['index']; tval=rec['d0']; tname=ENTITY_TYPES.get(tval,f"未知({tval})")
         sname=scene_name(self.tkt_scenes,rec['d1'])
         self.lbl_title.config(text=f"实体 #{idx} [{tname}] {sname} ({rec['d10']},{rec['d11']})")
@@ -913,11 +1009,25 @@ class MatEditor:
         for key,di,label,cmt in RUNTIME_FIELDS:
             if key in self._edit_vars: self._edit_vars[key].set(str(rec[f'd{di}']))
         if '_scene_label' in self._edit_vars: self._edit_vars['_scene_label'].config(text=sname)
+        flags=rec['d2']
+        self._bit_enable.set((flags&1)!=0)
+        self._bit_visible.set((flags&2)!=0)
+        self._bit_pickable.set((flags&4)!=0)
+        self._bit_hint.set((flags&8)!=0)
+        self._bit_busy.set((flags&0x10)!=0)
+        self._bit_resume.set((flags&0x20)!=0)
+        self._bit_animloop.set((flags&0x10000)!=0)
+        self._sync_lock=False
     def _clear_form(self):
+        self._sync_lock=True
         for key,var in self._edit_vars.items():
             if isinstance(var,tk.StringVar): var.set("")
             elif isinstance(var,ttk.Combobox): var.set("")
         if '_scene_label' in self._edit_vars: self._edit_vars['_scene_label'].config(text="")
+        for bv in (self._bit_enable,self._bit_visible,self._bit_pickable,
+                    self._bit_hint,self._bit_busy,self._bit_resume,self._bit_animloop):
+            bv.set(False)
+        self._sync_lock=False
 
     def _read_form(self):
         vals={}
