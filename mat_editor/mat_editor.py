@@ -30,6 +30,9 @@ TYPE_COLORS = {0:"#AAA",5:"#2196F3",10:"#4CAF50",15:"#FF9800",16:"#795548",
 TYPE_COLORS_RGBA = {0:(170,170,170),5:(33,150,243),10:(76,175,80),15:(255,152,0),
                     16:(121,85,72),20:(156,39,176),110:(233,30,99),200:(244,67,54)}
 DIR_MODES = {0:"静态",4:"NPC四方向",8:"玩家八方向"}
+DISPLAY_MODES = {"动画":"ani","角色":"cha","线框":"wire"}
+_JVG_CACHE = {}  # filepath → JVGFile
+_SPRITE_CACHE = {}  # (filepath, global_idx) → PhotoImage
 
 BASIC_FIELDS = [
     ("type",0,"实体类型","实体类型: 5=入口 10=地形 15=障碍 16=建筑 20=事件 110=机关 200=NPC"),
@@ -125,6 +128,78 @@ def is_empty(rec): return rec['d0']==0
 def has_data(rec): return rec['d0']!=0
 
 # ============================================================
+# JVG 精灵帧辅助
+# ============================================================
+def _get_jvg(filepath):
+    """加载 JVG 文件 (缓存)"""
+    if filepath in _JVG_CACHE: return _JVG_CACHE[filepath]
+    if not os.path.exists(filepath): return None
+    _grp_dir = os.path.normpath(os.path.join(os.path.dirname(__file__),'..','grp_editor'))
+    _jvg_dir = os.path.normpath(os.path.join(os.path.dirname(__file__),'..','jvg_editor'))
+    for d in [_grp_dir, _jvg_dir]:
+        if d not in sys.path: sys.path.insert(0, d)
+    try:
+        from jvg_editor import load_jvg
+        jvg = load_jvg(filepath)
+        _JVG_CACHE[filepath] = jvg
+        return jvg
+    except ImportError:
+        return None
+
+def _get_jvg_frame(jvg, global_idx):
+    """按全局索引获取 JVG (block, frame_in_block)"""
+    if not jvg or global_idx < 0: return None, None, None
+    for blk in jvg.blocks:
+        if global_idx < blk.frame_count:
+            return blk, blk.frames[global_idx], global_idx
+        global_idx -= blk.frame_count
+    return None, None, None
+
+def _jvg_sprite_to_tk(jvg, block_idx, frame_idx=0):
+    """从 JVG 的 block[block_idx].frames[frame_idx] 提取 PhotoImage (缓存)"""
+    key = (id(jvg), block_idx, frame_idx)
+    if key in _SPRITE_CACHE: return _SPRITE_CACHE[key]
+    if not jvg or block_idx < 0 or block_idx >= jvg.block_count: return None
+    blk = jvg.blocks[block_idx]
+    if frame_idx < 0 or frame_idx >= blk.frame_count: return None
+    frame = blk.frames[frame_idx]
+    if frame.width <= 0 or frame.height <= 0: return None
+    pr = blk.palette.to_rgb888()
+    rgba = bytearray(frame.width * frame.height * 4)
+    px, al = frame.pixels, frame.alpha
+    for y in range(frame.height):
+        for x in range(frame.width):
+            p = y * frame.width + x; off = p * 4
+            if p < len(al) and al[p] == 0: continue
+            ci = px[p] if p < len(px) else 0
+            rgba[off] = pr[ci*3]; rgba[off+1] = pr[ci*3+1]
+            rgba[off+2] = pr[ci*3+2]; rgba[off+3] = 255
+    from PIL import Image, ImageTk
+    img = Image.frombytes('RGBA', (frame.width, frame.height), bytes(rgba))
+    ptk = ImageTk.PhotoImage(img)
+    _SPRITE_CACHE[key] = ptk
+    return ptk
+
+def _get_dir_frame(blk, d13, d16, d53, anim_cycle=0):
+    """按朝向计算 JVG block 内的帧索引。
+    sub_4077E4: [14] = [17] + [52] + [16] * dir_mult
+    [16] 是 sub_4540E8 返回的总帧数, 需按方向数折算 fpd (frames_per_direction)
+    帧在 block 内按方向分组: [dir0_f0..dir0_fn][dir1_f0..dir1_fn]... """
+    if not blk or blk.frame_count == 0: return 0, 1
+    if d53 == 4:
+        fpd = max(1, blk.frame_count // 4)
+        dir_grp = max(0, min(3, (d13 - 1) >> 1))
+    elif d53 == 8:
+        fpd = max(1, blk.frame_count // 8)
+        dir_grp = max(0, min(7, d13 - 1))
+    else:
+        fpd = blk.frame_count; dir_grp = 0
+    base = dir_grp * fpd
+    frame = base + (anim_cycle % fpd)
+    if frame >= blk.frame_count: frame = base
+    return frame, fpd
+
+# ============================================================
 # SC.GRP 场景背景加载
 # ============================================================
 def load_scene_background(sc_grp_path, sc_idx_path, scene_id):
@@ -177,7 +252,11 @@ class MatEditor:
         self._vis_show_types = {t:tk.BooleanVar(value=True) for t in [5,10,15,16,20,110,200]}
         self._vis_bg_image = None; self._vis_bg_id = None
         self._vis_entities = {}; self._vis_selected = None; self._vis_drag = None
-        self._sc_grp_section_count = 0  # SC.GRP 权威 section 数
+        self._sc_grp_section_count = 0
+        self._ani_jvg = None; self._cha_jvg = None  # JVG 精灵数据
+        self._vis_display_mode = tk.StringVar(value="动画")  # 动画/角色/线框
+        self._vis_anim_timer = None  # 动画循环 timer ID
+        self._vis_anim_frame = {}  # entity_idx → current cycle frame offset
 
         self._build_ui(); self._set_edit_enabled(False)
         sw,sh = self.root.winfo_screenwidth(),self.root.winfo_screenheight()
@@ -214,6 +293,7 @@ class MatEditor:
         # Notebook
         self.notebook = ttk.Notebook(self.root)
         self.notebook.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        self.notebook.bind('<<NotebookTabChanged>>', self._on_tab_changed)
 
         # Tab 1: 参数模式
         self.param_frame = ttk.Frame(self.notebook)
@@ -355,6 +435,12 @@ class MatEditor:
                             variable=self._vis_show_types[tval],
                             command=self._vis_redraw).pack(side=tk.LEFT, padx=2)
         ttk.Separator(top, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=8)
+        ttk.Label(top, text="单位显示:").pack(side=tk.LEFT)
+        cb_mode = ttk.Combobox(top, textvariable=self._vis_display_mode,
+                               values=list(DISPLAY_MODES.keys()), state='readonly', width=6)
+        cb_mode.pack(side=tk.LEFT, padx=2)
+        cb_mode.bind('<<ComboboxSelected>>', lambda e: (self._vis_stop_anim(), self._vis_load_scene()))
+        ttk.Separator(top, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=8)
         ttk.Button(top, text="刷新地图", command=self._vis_load_scene).pack(side=tk.LEFT, padx=2)
         self._vis_status = tk.StringVar(value="")
         ttk.Label(top, textvariable=self._vis_status, foreground="gray").pack(side=tk.RIGHT, padx=10)
@@ -431,6 +517,7 @@ class MatEditor:
         if not sel: return
         sid = int(self._vis_tree.item(sel[0], 'values')[0])
         self._vis_scene_id.set(sid)
+        self._vis_stop_anim()
         self._vis_load_scene()
 
     def _vis_load_scene(self):
@@ -438,6 +525,11 @@ class MatEditor:
         sid = self._vis_scene_id.get()
         self._vis_canvas.delete('all')
         self._vis_entities.clear(); self._vis_selected = None; self._vis_drag = None
+        self._vis_anim_frame.clear()  # 新场景重置动画帧
+        # 限制精灵缓存: 保留最近 200 个
+        if len(_SPRITE_CACHE) > 200:
+            for k in list(_SPRITE_CACHE.keys())[:len(_SPRITE_CACHE)-200]:
+                del _SPRITE_CACHE[k]
 
         if not self.records: return
 
@@ -477,6 +569,30 @@ class MatEditor:
         self._vis_canvas.configure(scrollregion=(0, 0, w, h))
 
         self._vis_status.set(f"SC.GRP #{sid}: {sname} — {len(ents)} 个实体")
+        # 动画模式下启动帧循环
+        self._vis_start_anim()
+
+    def _vis_start_anim(self):
+        """启动精灵动画循环 (~200ms/帧)"""
+        if self._vis_anim_timer: return  # 已在运行
+        mode = DISPLAY_MODES.get(self._vis_display_mode.get(), 'wire')
+        if mode == 'wire': return
+        def _tick():
+            if DISPLAY_MODES.get(self._vis_display_mode.get(), 'wire') == 'wire':
+                self._vis_anim_timer = None; return
+            updated = False
+            for idx in list(self._vis_anim_frame.keys()):
+                self._vis_anim_frame[idx] += 1
+                updated = True
+            if updated:
+                self._vis_redraw()
+            self._vis_anim_timer = self.root.after(200, _tick)
+        self._vis_anim_timer = self.root.after(200, _tick)
+
+    def _vis_stop_anim(self):
+        if self._vis_anim_timer:
+            self.root.after_cancel(self._vis_anim_timer)
+            self._vis_anim_timer = None
 
     def _vis_draw_entity(self, r):
         """在画布上绘制单个实体"""
@@ -488,28 +604,43 @@ class MatEditor:
         color = '#%02x%02x%02x' % TYPE_COLORS_RGBA.get(tval, (128,128,128))
         idx = r['index']
         items = []
+        mode = DISPLAY_MODES.get(self._vis_display_mode.get(), 'wire')
 
-        if tval == 10:  # 地形块 — 使用 bound 区域
+        # 动画/角色模式: [64]/[51] 是 block 索引, 按 [13]朝向 + [53]方向模式 + [16]每向帧数 选择帧
+        sprite = None; sx = x; sy = y
+        jvg = None; blk_idx = 0
+        if mode == 'ani' and tval in (200, 20, 110) and r['d64'] > 0 and self._ani_jvg:
+            jvg = self._ani_jvg; blk_idx = r['d64']
+        elif mode == 'cha' and tval == 200 and r['d51'] > 0 and self._cha_jvg:
+            jvg = self._cha_jvg; blk_idx = r['d51']
+        if jvg and blk_idx < jvg.block_count:
+            blk = jvg.blocks[blk_idx]
+            if blk.frames:
+                if idx not in self._vis_anim_frame: self._vis_anim_frame[idx] = 0
+                anim = self._vis_anim_frame[idx]
+                fi, fpd = _get_dir_frame(blk, r['d13'], r['d16'], r['d53'], anim)
+                sprite = _jvg_sprite_to_tk(jvg, blk_idx, fi)
+                sx = x + blk.frames[fi].x_off; sy = y + blk.frames[fi].y_off
+
+        if sprite and mode != 'wire':
+            items.append(self._vis_canvas.create_image(sx, sy, anchor='nw', image=sprite, tags=('entity', f'e{idx}')))
+            items.append(self._vis_canvas.create_text(x, y-4, text=f"#{idx}", fill='#FFD700', font=('',6), tags=('entity',f'e{idx}')))
+        elif tval == 10:  # 地形块
             bx, by = r['d18'], r['d19']
             bw = r['d20'] if r['d20'] > 0 else 40
             bh = r['d21'] if r['d21'] > 0 else 40
-            items.append(self._vis_canvas.create_rectangle(
-                bx, by, bx+bw, by+bh, outline=color, width=2, tags=('entity', f'e{idx}')))
-            # 标签
-            items.append(self._vis_canvas.create_text(
-                bx+bw//2, by+bh//2, text=f"T{idx}", fill=color, font=('',7), tags=('entity',f'e{idx}')))
-        elif tval == 5:  # 传送点 — 菱形
+            items.append(self._vis_canvas.create_rectangle(bx, by, bx+bw, by+bh, outline=color, width=2, tags=('entity', f'e{idx}')))
+            items.append(self._vis_canvas.create_text(bx+bw//2, by+bh//2, text=f"T{idx}", fill=color, font=('',7), tags=('entity',f'e{idx}')))
+        elif tval == 5:
             s = 12
-            items.append(self._vis_canvas.create_polygon(
-                x, y-s, x+s, y, x, y+s, x-s, y, outline=color, fill='', width=2,
-                tags=('entity', f'e{idx}')))
+            items.append(self._vis_canvas.create_polygon(x, y-s, x+s, y, x, y+s, x-s, y, outline=color, fill='', width=2, tags=('entity', f'e{idx}')))
             items.append(self._vis_canvas.create_text(x, y-16, text=f"P{idx}", fill=color, font=('',7), tags=('entity',f'e{idx}')))
-        elif tval == 200:  # NPC — 小人图标
+        elif tval == 200:
             s = 10
             items.append(self._vis_canvas.create_oval(x-s, y-s-4, x+s, y+s-4, outline=color, width=2, tags=('entity',f'e{idx}')))
             items.append(self._vis_canvas.create_line(x, y+6, x, y+14, fill=color, width=2, tags=('entity',f'e{idx}')))
             items.append(self._vis_canvas.create_text(x, y-20, text=f"N{idx}", fill=color, font=('',7), tags=('entity',f'e{idx}')))
-        else:  # 其他 — 矩形
+        else:
             s = 10
             items.append(self._vis_canvas.create_rectangle(x-s, y-s, x+s, y+s, outline=color, width=2, tags=('entity',f'e{idx}')))
             items.append(self._vis_canvas.create_text(x, y-16, text=f"#{idx}", fill=color, font=('',7), tags=('entity',f'e{idx}')))
@@ -517,35 +648,49 @@ class MatEditor:
         self._vis_entities[idx] = items
 
     def _vis_draw_entity_highlighted(self, r):
-        """绘制高亮选中的实体 (金黄色, 更粗线条)"""
+        """绘制高亮选中的实体 (金黄边框)"""
         tval = r['d0']
         x, y = r['d10'], r['d11']
-        color = '#FFD700'  # 金黄色高亮
-        idx = r['index']
-        items = []
-        if tval == 10:
+        hcolor = '#FFD700'; idx = r['index']; items = []
+        mode = DISPLAY_MODES.get(self._vis_display_mode.get(), 'wire')
+
+        # 精灵模式: 按朝向选帧
+        sprite = None; sx = x; sy = y
+        jvg = None; bi = 0
+        if mode == 'ani' and tval in (200, 20, 110) and r['d64'] > 0 and self._ani_jvg:
+            jvg = self._ani_jvg; bi = r['d64']
+        elif mode == 'cha' and tval == 200 and r['d51'] > 0 and self._cha_jvg:
+            jvg = self._cha_jvg; bi = r['d51']
+        if jvg and bi < jvg.block_count and jvg.blocks[bi].frames:
+            blk = jvg.blocks[bi]
+            anim = self._vis_anim_frame.get(idx, 0)
+            fi, _ = _get_dir_frame(blk, r['d13'], r['d16'], r['d53'], anim)
+            sprite = _jvg_sprite_to_tk(jvg, bi, fi)
+            sx = x + blk.frames[fi].x_off; sy = y + blk.frames[fi].y_off
+
+        if sprite and mode != 'wire':
+            items.append(self._vis_canvas.create_image(sx, sy, anchor='nw', image=sprite, tags=('entity', f'e{idx}')))
+            fw, fh = sprite.width(), sprite.height()
+            items.append(self._vis_canvas.create_rectangle(sx, sy, sx+fw, sy+fh, outline=hcolor, width=2, tags=('entity',f'e{idx}')))
+            items.append(self._vis_canvas.create_text(x, y-4, text=f"#{idx}", fill=hcolor, font=('',7,'bold'), tags=('entity',f'e{idx}')))
+        elif tval == 10:
             bx, by = r['d18'], r['d19']
-            bw = r['d20'] if r['d20'] > 0 else 40
-            bh = r['d21'] if r['d21'] > 0 else 40
-            items.append(self._vis_canvas.create_rectangle(
-                bx, by, bx+bw, by+bh, outline=color, width=3, tags=('entity', f'e{idx}')))
-            items.append(self._vis_canvas.create_text(
-                bx+bw//2, by+bh//2, text=f"T{idx}", fill=color, font=('',8,'bold'), tags=('entity',f'e{idx}')))
+            bw = r['d20'] if r['d20']>0 else 40; bh = r['d21'] if r['d21']>0 else 40
+            items.append(self._vis_canvas.create_rectangle(bx, by, bx+bw, by+bh, outline=hcolor, width=3, tags=('entity',f'e{idx}')))
+            items.append(self._vis_canvas.create_text(bx+bw//2, by+bh//2, text=f"T{idx}", fill=hcolor, font=('',8,'bold'), tags=('entity',f'e{idx}')))
         elif tval == 5:
-            s = 12
-            items.append(self._vis_canvas.create_polygon(
-                x, y-s, x+s, y, x, y+s, x-s, y, outline=color, fill='', width=3,
-                tags=('entity', f'e{idx}')))
-            items.append(self._vis_canvas.create_text(x, y-16, text=f"P{idx}", fill=color, font=('',8,'bold'), tags=('entity',f'e{idx}')))
+            s=12
+            items.append(self._vis_canvas.create_polygon(x, y-s, x+s, y, x, y+s, x-s, y, outline=hcolor, fill='', width=3, tags=('entity',f'e{idx}')))
+            items.append(self._vis_canvas.create_text(x, y-16, text=f"P{idx}", fill=hcolor, font=('',8,'bold'), tags=('entity',f'e{idx}')))
         elif tval == 200:
-            s = 10
-            items.append(self._vis_canvas.create_oval(x-s, y-s-4, x+s, y+s-4, outline=color, width=3, tags=('entity',f'e{idx}')))
-            items.append(self._vis_canvas.create_line(x, y+6, x, y+14, fill=color, width=3, tags=('entity',f'e{idx}')))
-            items.append(self._vis_canvas.create_text(x, y-20, text=f"N{idx}", fill=color, font=('',8,'bold'), tags=('entity',f'e{idx}')))
+            s=10
+            items.append(self._vis_canvas.create_oval(x-s, y-s-4, x+s, y+s-4, outline=hcolor, width=3, tags=('entity',f'e{idx}')))
+            items.append(self._vis_canvas.create_line(x, y+6, x, y+14, fill=hcolor, width=3, tags=('entity',f'e{idx}')))
+            items.append(self._vis_canvas.create_text(x, y-20, text=f"N{idx}", fill=hcolor, font=('',8,'bold'), tags=('entity',f'e{idx}')))
         else:
-            s = 10
-            items.append(self._vis_canvas.create_rectangle(x-s, y-s, x+s, y+s, outline=color, width=3, tags=('entity',f'e{idx}')))
-            items.append(self._vis_canvas.create_text(x, y-16, text=f"#{idx}", fill=color, font=('',8,'bold'), tags=('entity',f'e{idx}')))
+            s=10
+            items.append(self._vis_canvas.create_rectangle(x-s, y-s, x+s, y+s, outline=hcolor, width=3, tags=('entity',f'e{idx}')))
+            items.append(self._vis_canvas.create_text(x, y-16, text=f"#{idx}", fill=hcolor, font=('',8,'bold'), tags=('entity',f'e{idx}')))
         self._vis_entities[idx] = items
 
     def _vis_redraw(self):
@@ -665,6 +810,9 @@ class MatEditor:
                     self._sc_grp_section_count = len(offs) - 1
             except Exception:
                 pass
+        # 加载 Ani.JVG / Cha.JVG
+        self._ani_jvg = _get_jvg(os.path.join(d, "Ani.JVG"))
+        self._cha_jvg = _get_jvg(os.path.join(d, "Cha.JVG"))
         try:
             self.records = load_mat(self.dat_path); self._dirty = False
             nonempty = sum(1 for r in self.records if has_data(r))
@@ -690,7 +838,13 @@ class MatEditor:
             elif isinstance(w,(ttk.Checkbutton,ttk.Radiobutton,ttk.Button)): w.state(['!disabled'] if en else ['disabled'])
         except: pass
         for c in w.winfo_children(): self._set_ws(c, en)
+    def _on_tab_changed(self, event):
+        tab = self.notebook.index(self.notebook.select())
+        if tab != 1:  # 非可视化模式
+            self._vis_stop_anim()
+
     def _on_close(self):
+        self._vis_stop_anim()
         if self._dirty and not messagebox.askyesno("未保存","有未保存的修改, 确定退出?"): return
         self.root.destroy()
     def _update_path(self):
