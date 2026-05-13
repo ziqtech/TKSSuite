@@ -57,6 +57,14 @@ REC_COUNT = 5000
 FILE_SIZE = 80000
 FIELD_COUNT = 8
 
+# TKMat.Dat 交叉引用常量
+MAT_REC_SIZE = 384
+MAT_REC_COUNT = 6000
+MAT_DWORD_COUNT = 96
+SCENE_NAME_TKT_BASE = 300
+ENTITY_TYPES = {0:"空槽",5:"入口/传送点",10:"地形块",15:"障碍物",16:"建筑/门",
+                20:"事件对象",110:"特殊机关",200:"NPC/角色"}
+
 # ============================================================
 # 字段语义定义
 # 严格依据反编译代码 — 每个字段标注证据函数和行号
@@ -156,6 +164,59 @@ def save_defunit(fp, recs):
     return True
 
 
+def load_mat_entities(fp):
+    """加载 TKMat.Dat 实体关键字段用于交叉引用"""
+    with open(fp, 'rb') as f:
+        raw = f.read()
+    if len(raw) != MAT_REC_SIZE * MAT_REC_COUNT:
+        return []
+    ents = []
+    for i in range(MAT_REC_COUNT):
+        off = i * MAT_REC_SIZE
+        dw = struct.unpack_from('<' + 'i' * MAT_DWORD_COUNT, raw, off)
+        if dw[0] != 0:  # 非空实体
+            ents.append({
+                'index': i, 'type': dw[0], 'scene_id': dw[1],
+                'flags': dw[2], 'x': dw[10], 'y': dw[11],
+                'direction': dw[13], 'cur_define': dw[28],
+                'defunit_idx': dw[44], 'char_id': dw[50],
+                'picture_id': dw[51], 'dir_mode': dw[53],
+                'sub_model': dw[64], 'moving': dw[70],
+            })
+    return ents
+
+
+def load_tkt_scene_names(tkt_path):
+    """加载 TKT.dat 场景名称"""
+    if not tkt_path or not os.path.exists(tkt_path):
+        return {}
+    with open(tkt_path, 'rb') as f:
+        raw = f.read()
+    total_size = struct.unpack_from('<I', raw, 0)[0]
+    count = struct.unpack_from('<I', raw, 4)[0]
+    dec = bytes(b ^ 0xFF for b in raw[8:8 + total_size])
+    id_sz, off_sz = count * 4, count * 4
+    tb = id_sz + off_sz
+    lookup = {}
+    for i in range(count):
+        eid = struct.unpack_from('<i', dec, i * 4)[0]
+        off = struct.unpack_from('<I', dec, id_sz + i * 4)[0]
+        ao = tb + off
+        if ao >= len(dec):
+            continue
+        end = ao
+        while end < len(dec) and dec[end] != 0:
+            end += 1
+        txt = dec[ao:end].replace(b'\x1e', b'\n')
+        try:
+            s = txt.decode('big5', errors='replace')
+        except Exception:
+            s = txt.decode('gbk', errors='replace')
+        if s:
+            lookup[eid] = s.split('\n')[0].strip()
+    return lookup
+
+
 # ============================================================
 # 空记录检测 (sub_402E88: *(DWORD*)(buf+16*i)==0 → LABEL_10)
 # ============================================================
@@ -226,7 +287,12 @@ class DefUnitEditor:
         self.root.minsize(950, 560)
 
         self.dat_path = None
+        self.mat_path = None
+        self.tkt_path = None
         self.records = []
+        self.mat_entities = []    # TKMat.Dat 实体列表 (交叉引用)
+        self.mat_entity_map = {}  # index -> entity dict
+        self.tkt_scenes = {}      # TKT 场景名称
         self.filtered_indices = []
         self.chain_next = {}   # f6 链表映射
         self.chain_heads = []  # 链表头
@@ -404,6 +470,15 @@ class DefUnitEditor:
                                     justify='left')
         self.chain_info.pack(anchor=tk.W, padx=2)
 
+        # TKMat.Dat 实体交叉引用
+        lf_mat = ttk.LabelFrame(self.edit_inner,
+                                text="TKMat.Dat 实体引用 [f1=实体ID]", padding=4)
+        lf_mat.grid(row=3, column=0, sticky='ew', padx=2, pady=2)
+        self.mat_info = ttk.Label(lf_mat, text="(未加载)", font=FONT_S,
+                                  foreground='#3366cc', wraplength=600,
+                                  justify='left')
+        self.mat_info.pack(anchor=tk.W, padx=2)
+
         # 底部按钮
         bf = ttk.Frame(rf)
         bf.pack(side=tk.BOTTOM, fill=tk.X, pady=(2, 0))
@@ -462,7 +537,7 @@ class DefUnitEditor:
     # ----------- 数据加载 (加载目录模式) -----------
 
     def _load_tks_dir(self):
-        """加载 TKS 游戏目录"""
+        """加载 TKS 游戏目录 (TKDefUnit.dat + TKMat.Dat + TKT.dat)"""
         d = filedialog.askdirectory(title="选择 TKS 游戏目录")
         if not d:
             return
@@ -471,6 +546,11 @@ class DefUnitEditor:
             messagebox.showwarning("文件缺失", f"未找到 TKDefUnit.dat\n{d}")
             return
         self.dat_path = du
+        # 交叉引用文件 (可选)
+        mat_p = os.path.join(d, "TKMat.Dat")
+        tkt_p = os.path.join(d, "TKT.dat")
+        self.mat_path = mat_p if os.path.exists(mat_p) else None
+        self.tkt_path = tkt_p if os.path.exists(tkt_p) else None
         self._reload()
 
     def _reload(self):
@@ -483,10 +563,23 @@ class DefUnitEditor:
             self._dirty = False
             self.chain_next, self.chain_heads = build_chains(self.records)
             self._chain_highlight = set()
+            # 加载 TKMat.Dat 交叉引用
+            if self.mat_path:
+                self.mat_entities = load_mat_entities(self.mat_path)
+                self.mat_entity_map = {e['index']: e for e in self.mat_entities}
+            else:
+                self.mat_entities = []
+                self.mat_entity_map = {}
+            # 加载 TKT 场景名
+            if self.tkt_path:
+                self.tkt_scenes = load_tkt_scene_names(self.tkt_path)
+            else:
+                self.tkt_scenes = {}
             nonempty = sum(1 for r in self.records if has_data(r))
             self.status_var.set(
                 f"{REC_COUNT} 条 | 有效 {nonempty} | "
-                f"链表 {len(self.chain_heads)} 条")
+                f"链表 {len(self.chain_heads)} 条"
+                f"{' | TKMat '+str(len(self.mat_entities))+'实体' if self.mat_entities else ''}")
         except Exception as e:
             messagebox.showerror("加载失败", str(e))
             self.records = []
@@ -614,6 +707,9 @@ class DefUnitEditor:
         # 链表信息
         self._update_chain_display(idx)
 
+        # TKMat.Dat 实体交叉引用
+        self._update_mat_info(rec['f1'])
+
     def _update_chain_display(self, idx):
         """更新链表追踪显示 (sub_4066F0)"""
         if idx in self.chain_next or idx in self.chain_next.values():
@@ -638,10 +734,32 @@ class DefUnitEditor:
             self.chain_info.config(
                 text="(此记录不在链表中 — f6=0 且无其他节点指向它)")
 
+    def _update_mat_info(self, entity_id):
+        """显示 f1 对应的 TKMat.Dat 实体信息"""
+        if not self.mat_entity_map or entity_id not in self.mat_entity_map:
+            self.mat_info.config(
+                text="(未加载 TKMat.Dat 或实体不存在)")
+            return
+        e = self.mat_entity_map[entity_id]
+        tname = ENTITY_TYPES.get(e['type'], f"未知({e['type']})")
+        sid = e['scene_id']
+        sname = self.tkt_scenes.get(SCENE_NAME_TKT_BASE + sid, f"场景{sid}") if sid >= 0 else "全局"
+        info = (
+            f"实体 #{entity_id}  [{tname}]  场景: {sname} (ID={sid})\n"
+            f"坐标: ({e['x']}, {e['y']})  朝向: {e['direction']}  "
+            f"方向模式: {e['dir_mode']}  移动中: {'是' if e['moving'] else '否'}\n"
+            f"DEFINE: {e['cur_define']}  "
+            f"DefUnit索引: {e['defunit_idx']}  "
+            f"图片ID: {e['picture_id']}  子模型: {e['sub_model']}  "
+            f"char_id: {e['char_id']}"
+        )
+        self.mat_info.config(text=info)
+
     def _clear_edit(self):
         for fi in range(FIELD_COUNT):
             self._edit_vars[f'f{fi}'].set("")
         self.chain_info.config(text="")
+        self.mat_info.config(text="(未加载)")
 
     def _read_form(self):
         vals = {}
@@ -748,6 +866,7 @@ class DefUnitEditor:
         self.chain_next, self.chain_heads = build_chains(self.records)
         self._apply_filter()
         self._show_record(self.records[idx])
+        self.mat_info.config(text="(已清空)")
 
     def _goto_empty(self):
         for rec in self.records:

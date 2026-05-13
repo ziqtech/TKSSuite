@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-TKMat.Dat 地图实体编辑器 v2.0 — 参数模式 + 可视化模式
+TKMat.Dat 地图实体编辑器 v2.1 — 三栏一体布局
 =============================================================
 逆向依据:
   sub_412688:21: TKMat.Dat → dword_51AF40 (2304000B, 6000×384B)
@@ -238,7 +238,7 @@ def load_scene_background(sc_grp_path, sc_idx_path, scene_id):
 class MatEditor:
     def __init__(self, root):
         self.root = root
-        self.root.title("TKMat.Dat 地图实体编辑器 v2.0")
+        self.root.title("TKMat.Dat 地图实体编辑器 v2.1")
         ico = os.path.join(os.path.dirname(__file__), 'TKS.ico')
         if os.path.exists(ico): self.root.iconbitmap(default=ico)
         self.root.geometry("1280x820"); self.root.minsize(1024,640)
@@ -255,8 +255,10 @@ class MatEditor:
         self._sc_grp_section_count = 0
         self._ani_jvg = None; self._cha_jvg = None  # JVG 精灵数据
         self._vis_display_mode = tk.StringVar(value="游戏默认")
-        self._vis_anim_timer = None  # 动画循环 timer ID
-        self._vis_anim_frame = {}  # entity_idx → current cycle frame offset
+        self._vis_anim_playing = False      # 动画播放状态(默认暂停)
+        self._vis_anim_timer = None         # 动画循环 timer ID
+        self._vis_anim_frame = {}           # entity_idx → current cycle frame offset
+        self._vis_play_btn = None           # 播放按钮引用
         self._bit_enable = tk.BooleanVar(value=False)    # d2 bit0: 启用
         self._bit_visible = tk.BooleanVar(value=False)   # d2 bit1: 可见
         self._bit_pickable = tk.BooleanVar(value=False)  # d2 bit2: 可拾取
@@ -268,10 +270,12 @@ class MatEditor:
 
         self._build_ui(); self._set_edit_enabled(False)
         sw,sh = self.root.winfo_screenwidth(),self.root.winfo_screenheight()
-        self.root.geometry(f'1280x820+{(sw-1280)//2}+{(sh-820)//2}')
+        w,h = int(sw*0.85), int(sh*0.85)
+        self.root.geometry(f'{w}x{h}+{(sw-w)//2}+{(sh-h)//2}')
 
     # =========== UI 构建 ===========
     def _build_ui(self):
+        # 菜单栏 (不变)
         mb = tk.Menu(self.root); self.root.config(menu=mb)
         fm = tk.Menu(mb,tearoff=0)
         fm.add_command(label="加载 TKS 目录…",command=self._load_dir,accelerator="Ctrl+O")
@@ -298,20 +302,16 @@ class MatEditor:
         self.root.bind('<Control-n>',lambda e:self._new_record())
         self.root.protocol("WM_DELETE_WINDOW",self._on_close)
 
-        # Notebook
-        self.notebook = ttk.Notebook(self.root)
-        self.notebook.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
-        self.notebook.bind('<<NotebookTabChanged>>', self._on_tab_changed)
+        # 三栏水平布局
+        main_pw = ttk.PanedWindow(self.root, orient=tk.HORIZONTAL)
+        main_pw.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
 
-        # Tab 1: 参数模式
-        self.param_frame = ttk.Frame(self.notebook)
-        self.notebook.add(self.param_frame, text="参数模式")
-        self._build_param_mode()
-
-        # Tab 2: 可视化模式
-        self.visual_frame = ttk.Frame(self.notebook)
-        self.notebook.add(self.visual_frame, text="可视化模式")
-        self._build_visual_mode()
+        # 左侧面板
+        self._build_left_panel(main_pw)
+        # 中间面板
+        self._build_center_panel(main_pw)
+        # 右侧编辑面板
+        self._build_right_panel(main_pw)
 
         # 底部路径栏
         pf = ttk.LabelFrame(self.root, text="当前加载")
@@ -319,77 +319,154 @@ class MatEditor:
         self.lbl_path = ttk.Label(pf, text="", foreground="gray")
         self.lbl_path.pack(side=tk.LEFT, padx=10, pady=2)
 
-    # =========== 参数模式 ===========
-    def _build_param_mode(self):
-        # 工具栏
-        tb = ttk.Frame(self.param_frame); tb.pack(fill=tk.X, padx=5, pady=(5,0))
+        # 初始 sash 位置: 2:6:3 → 左~18% 中~55% 右~27%
+        def _set_sash(tries=0):
+            self.root.update_idletasks()
+            w = self.root.winfo_width()
+            if w > 100:
+                main_pw.sashpos(0, int(w * 2 / 11))
+                main_pw.sashpos(1, int(w * 8 / 11))
+            elif tries < 5:
+                self.root.after(200, lambda: _set_sash(tries+1))
+        self.root.after(200, _set_sash)
+
+    # =========== 左侧面板: 场景列表 + 实体列表 ===========
+    def _build_left_panel(self, main_pw):
+        left_frame = ttk.Frame(main_pw)
+        main_pw.add(left_frame, weight=2)
+        left_pw = ttk.PanedWindow(left_frame, orient=tk.VERTICAL)
+        left_pw.pack(fill=tk.BOTH, expand=True)
+
+        # 上方: 场景列表 (SC.GRP 区段)
+        scene_frame = ttk.LabelFrame(left_pw, text="场景列表 (SC.GRP)", padding=2)
+        left_pw.add(scene_frame, weight=2)
+        cols = ('sid', 'sname', 'cnt')
+        self._vis_tree = ttk.Treeview(scene_frame, columns=cols, show='headings', selectmode='browse')
+        self._vis_tree.heading('sid', text='SC#'); self._vis_tree.column('sid', width=45, anchor='center')
+        self._vis_tree.heading('sname', text='场景名称'); self._vis_tree.column('sname', width=120)
+        self._vis_tree.heading('cnt', text='实体'); self._vis_tree.column('cnt', width=40, anchor='center')
+        vsb0 = ttk.Scrollbar(scene_frame, orient=tk.VERTICAL, command=self._vis_tree.yview)
+        self._vis_tree.configure(yscrollcommand=vsb0.set)
+        self._vis_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True); vsb0.pack(side=tk.RIGHT, fill=tk.Y)
+        self._vis_tree.bind('<<TreeviewSelect>>', self._on_vis_scene_select)
+
+        # 下方: 实体列表 + 搜索工具栏
+        entity_frame = ttk.LabelFrame(left_pw, text="实体列表", padding=2)
+        left_pw.add(entity_frame, weight=1)
+        # 搜索/筛选工具栏
+        tb = ttk.Frame(entity_frame); tb.pack(fill=tk.X, pady=(0,2))
         ttk.Label(tb,text="搜索:").pack(side=tk.LEFT)
         self.search_var = tk.StringVar()
-        e_s = ttk.Entry(tb,textvariable=self.search_var,width=16)
+        e_s = ttk.Entry(tb,textvariable=self.search_var,width=12)
         e_s.pack(side=tk.LEFT,padx=2)
         e_s.bind('<Return>',lambda e:self._apply_filter())
-        ttk.Button(tb,text="搜索",command=self._apply_filter,width=5).pack(side=tk.LEFT,padx=1)
-        ttk.Button(tb,text="清除",command=self._clear_filter,width=5).pack(side=tk.LEFT,padx=1)
-        ttk.Separator(tb,orient=tk.VERTICAL).pack(side=tk.LEFT,fill=tk.Y,padx=8)
+        ttk.Button(tb,text="搜索",command=self._apply_filter,width=4).pack(side=tk.LEFT,padx=1)
+        ttk.Button(tb,text="清除",command=self._clear_filter,width=4).pack(side=tk.LEFT,padx=1)
+        ttk.Separator(tb,orient=tk.VERTICAL).pack(side=tk.LEFT,fill=tk.Y,padx=4)
         ttk.Label(tb,text="类型:").pack(side=tk.LEFT)
         self.filter_type = tk.StringVar(value="全部")
         tc = ["全部"]+[f"{k}-{v}" for k,v in sorted(ENTITY_TYPES.items()) if k!=0]
-        cb=ttk.Combobox(tb,textvariable=self.filter_type,values=tc,state='readonly',width=14)
+        cb=ttk.Combobox(tb,textvariable=self.filter_type,values=tc,state='readonly',width=12)
         cb.pack(side=tk.LEFT,padx=2)
         cb.bind('<<ComboboxSelected>>',lambda e:self._apply_filter())
-        ttk.Separator(tb,orient=tk.VERTICAL).pack(side=tk.LEFT,fill=tk.Y,padx=8)
+        ttk.Separator(tb,orient=tk.VERTICAL).pack(side=tk.LEFT,fill=tk.Y,padx=4)
         ttk.Label(tb,text="场景:").pack(side=tk.LEFT)
         self.filter_scene=tk.StringVar(value="全部")
-        self.cb_scene=ttk.Combobox(tb,textvariable=self.filter_scene,values=["全部"],state='readonly',width=18)
+        self.cb_scene=ttk.Combobox(tb,textvariable=self.filter_scene,values=["全部"],state='readonly',width=14)
         self.cb_scene.pack(side=tk.LEFT,padx=2)
         self.cb_scene.bind('<<ComboboxSelected>>',lambda e:self._apply_filter())
-        ttk.Separator(tb,orient=tk.VERTICAL).pack(side=tk.LEFT,fill=tk.Y,padx=8)
+        ttk.Separator(tb,orient=tk.VERTICAL).pack(side=tk.LEFT,fill=tk.Y,padx=4)
         self.show_empty=tk.BooleanVar(value=False)
-        ttk.Checkbutton(tb,text="显示空槽",variable=self.show_empty,command=self._apply_filter).pack(side=tk.LEFT,padx=2)
-        ttk.Separator(tb,orient=tk.VERTICAL).pack(side=tk.LEFT,fill=tk.Y,padx=8)
-        ttk.Button(tb,text="重新加载",command=self._reload).pack(side=tk.LEFT,padx=2)
+        ttk.Checkbutton(tb,text="空槽",variable=self.show_empty,command=self._apply_filter).pack(side=tk.LEFT,padx=1)
+        ttk.Separator(tb,orient=tk.VERTICAL).pack(side=tk.LEFT,fill=tk.Y,padx=4)
+        ttk.Button(tb,text="重载",command=self._reload,width=4).pack(side=tk.LEFT,padx=1)
         self.status_var=tk.StringVar(value="请通过 文件 → 加载 TKS 目录 打开数据")
-        ttk.Label(tb,textvariable=self.status_var,foreground="gray").pack(side=tk.RIGHT,padx=10)
-
-        paned=ttk.PanedWindow(self.param_frame,orient=tk.HORIZONTAL)
-        paned.pack(fill=tk.BOTH,expand=True,padx=5,pady=5)
-        # 左侧列表
-        lf=ttk.Frame(paned); paned.add(lf,weight=2)
-        cols=('index','type','scene','x','y')
-        self.tree=ttk.Treeview(lf,columns=cols,show='headings',selectmode='browse')
-        for cid,cn,cw in [('index','索引',55),('type','类型',100),('scene','场景',140),('x','X',55),('y','Y',55)]:
+        ttk.Label(tb,textvariable=self.status_var,foreground="gray",font=FONT_S).pack(side=tk.RIGHT,padx=4)
+        # 实体 Treeview
+        cols2 = ('index','type','scene','x','y')
+        self.tree = ttk.Treeview(entity_frame, columns=cols2, show='headings', selectmode='browse')
+        for cid,cn,cw in [('index','索引',45),('type','类型',85),('scene','场景',110),('x','X',45),('y','Y',45)]:
             self.tree.heading(cid,text=cn,command=lambda c=cid:self._sort_by(c))
             self.tree.column(cid,width=cw,anchor='center' if cid in('index','x','y') else 'w',minwidth=cw)
-        vsb=ttk.Scrollbar(lf,orient=tk.VERTICAL,command=self.tree.yview)
+        vsb = ttk.Scrollbar(entity_frame, orient=tk.VERTICAL, command=self.tree.yview)
         self.tree.configure(yscrollcommand=vsb.set)
-        self.tree.pack(side=tk.LEFT,fill=tk.BOTH,expand=True); vsb.pack(side=tk.RIGHT,fill=tk.Y)
-        self.tree.bind('<<TreeviewSelect>>',self._on_select)
-        for tv,cl in TYPE_COLORS.items(): self.tree.tag_configure(f'type{tv}',foreground=cl)
+        self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True); vsb.pack(side=tk.RIGHT, fill=tk.Y)
+        self.tree.bind('<<TreeviewSelect>>', self._on_select)
+        for tv,cl in TYPE_COLORS.items(): self.tree.tag_configure(f'type{tv}', foreground=cl)
 
-        # 右侧编辑面板
-        rf=ttk.Frame(paned); paned.add(rf,weight=3); self.edit_frame=rf
-        self.lbl_title=ttk.Label(rf,text="未选中",font=FONT_B)
-        self.lbl_title.pack(anchor=tk.W,pady=(0,6),padx=4)
-        mid=ttk.Frame(rf); mid.pack(fill=tk.BOTH,expand=True)
-        lc=ttk.Frame(mid); lc.pack(side=tk.LEFT,fill=tk.BOTH,expand=True)
-        scb=ttk.Scrollbar(mid,orient=tk.VERTICAL); scb.pack(side=tk.RIGHT,fill=tk.Y)
-        canvas=tk.Canvas(lc,highlightthickness=0); canvas.pack(fill=tk.BOTH,expand=True)
-        self.edit_inner=ttk.Frame(canvas); self.edit_inner.columnconfigure(0,weight=1)
-        self.edit_inner.bind('<Configure>',lambda e:canvas.configure(scrollregion=canvas.bbox('all')))
-        canvas.create_window((0,0),window=self.edit_inner,anchor='nw')
+    # =========== 中间面板: 地图预览 ===========
+    def _build_center_panel(self, main_pw):
+        center_frame = ttk.Frame(main_pw)
+        main_pw.add(center_frame, weight=6)
+
+        # 顶部工具栏
+        top = ttk.Frame(center_frame); top.pack(fill=tk.X, pady=(0,2))
+        ttk.Label(top, text="场景:").pack(side=tk.LEFT)
+        self._vis_scene_combo = ttk.Combobox(top, state='readonly', width=20)
+        self._vis_scene_combo.pack(side=tk.LEFT, padx=2)
+        self._vis_scene_combo.bind('<<ComboboxSelected>>', lambda e: self._on_vis_combo_select())
+        ttk.Separator(top, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=3)
+        for tval in [5,10,15,16,20,110,200]:
+            ttk.Checkbutton(top, text=ENTITY_TYPES.get(tval,f"T{tval}"),
+                            variable=self._vis_show_types[tval],
+                            command=self._vis_redraw).pack(side=tk.LEFT, padx=1)
+        ttk.Separator(top, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=3)
+        ttk.Label(top, text="显示:").pack(side=tk.LEFT)
+        cb_mode = ttk.Combobox(top, textvariable=self._vis_display_mode,
+                               values=list(DISPLAY_MODES.keys()), state='readonly', width=6)
+        cb_mode.pack(side=tk.LEFT, padx=2)
+        cb_mode.bind('<<ComboboxSelected>>', lambda e: self._on_display_mode_change())
+        ttk.Separator(top, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=3)
+        # 动画播放按钮
+        self._vis_play_btn = ttk.Button(top, text="▶", command=self._vis_toggle_anim, width=3)
+        self._vis_play_btn.pack(side=tk.LEFT, padx=1)
+        self._bind_tooltip(self._vis_play_btn, "播放/暂停精灵动画")
+        ttk.Separator(top, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=3)
+        ttk.Button(top, text="刷新", command=self._vis_load_scene, width=4).pack(side=tk.LEFT, padx=1)
+        self._vis_info = ttk.Label(top, text="", font=FONT_S, foreground='#666')
+        self._vis_info.pack(side=tk.RIGHT, padx=4)
+
+        # 地图画布
+        cf = ttk.Frame(center_frame); cf.pack(fill=tk.BOTH, expand=True)
+        self._vis_canvas = tk.Canvas(cf, bg='#1a1a2e', highlightthickness=0, cursor='crosshair')
+        hsb = ttk.Scrollbar(cf, orient=tk.HORIZONTAL, command=self._vis_canvas.xview)
+        vsb2 = ttk.Scrollbar(cf, orient=tk.VERTICAL, command=self._vis_canvas.yview)
+        self._vis_canvas.configure(xscrollcommand=hsb.set, yscrollcommand=vsb2.set)
+        self._vis_canvas.grid(row=0, column=0, sticky='nsew')
+        hsb.grid(row=1, column=0, sticky='ew'); vsb2.grid(row=0, column=1, sticky='ns')
+        cf.rowconfigure(0, weight=1); cf.columnconfigure(0, weight=1)
+
+        self._vis_canvas.bind('<Button-1>', self._vis_canvas_click)
+        self._vis_canvas.bind('<B1-Motion>', self._vis_canvas_drag)
+        self._vis_canvas.bind('<ButtonRelease-1>', self._vis_canvas_release)
+        self._vis_canvas.bind('<MouseWheel>', lambda e: self._vis_canvas.yview_scroll(int(-1*(e.delta/120)),"units"))
+
+    # =========== 右侧面板: 编辑区 ===========
+    def _build_right_panel(self, main_pw):
+        rf = ttk.Frame(main_pw); main_pw.add(rf, weight=3); self.edit_frame = rf
+        self.lbl_title = ttk.Label(rf, text="未选中", font=FONT_B)
+        self.lbl_title.pack(anchor=tk.W, pady=(0,4), padx=4)
+        mid = ttk.Frame(rf); mid.pack(fill=tk.BOTH, expand=True)
+        lc = ttk.Frame(mid); lc.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scb = ttk.Scrollbar(mid, orient=tk.VERTICAL); scb.pack(side=tk.RIGHT, fill=tk.Y)
+        canvas = tk.Canvas(lc, highlightthickness=0); canvas.pack(fill=tk.BOTH, expand=True)
+        self.edit_inner = ttk.Frame(canvas); self.edit_inner.columnconfigure(0, weight=1)
+        self.edit_inner.bind('<Configure>', lambda e: canvas.configure(scrollregion=canvas.bbox('all')))
+        canvas.create_window((0,0), window=self.edit_inner, anchor='nw')
         canvas.configure(yscrollcommand=scb.set)
-        canvas.bind('<Configure>',lambda e:self.edit_inner.columnconfigure(0,minsize=e.width))
-        def _mw(e): canvas.yview_scroll(int(-1*(e.delta/120)),"units")
-        canvas.bind("<Enter>",lambda e:canvas.bind_all("<MouseWheel>",_mw))
-        canvas.bind("<Leave>",lambda e:canvas.unbind_all("<MouseWheel>"))
-        self._edit_vars={}
-        self._build_group("基础属性",BASIC_FIELDS,0)
-        self._build_group("位置",POS_FIELDS,1)
-        self._build_group("动画",ANIM_FIELDS,2)
-        self._build_group("脚本",SCRIPT_FIELDS,3)
-        self._build_group("交互/角色",INTERACT_FIELDS,4)
-        self._build_group("运行时(只读)",RUNTIME_FIELDS,5)
-        # flags ↔ checkbutton 双向同步 (bit0~5 + bit16)
+        canvas.bind('<Configure>', lambda e: self.edit_inner.columnconfigure(0, minsize=e.width))
+        def _mw(e): canvas.yview_scroll(int(-1*(e.delta/120)), "units")
+        canvas.bind("<Enter>", lambda e: canvas.bind_all("<MouseWheel>", _mw))
+        canvas.bind("<Leave>", lambda e: canvas.unbind_all("<MouseWheel>"))
+        # 构建编辑字段组 + 位域 checkbutton 双向同步
+        self._edit_vars = {}
+        self._build_group("基础属性", BASIC_FIELDS, 0)
+        self._build_group("位置", POS_FIELDS, 1)
+        self._build_group("动画", ANIM_FIELDS, 2)
+        self._build_group("脚本", SCRIPT_FIELDS, 3)
+        self._build_group("交互/角色", INTERACT_FIELDS, 4)
+        self._build_group("运行时(只读)", RUNTIME_FIELDS, 5)
+        # flags ↔ checkbutton 双向同步
         self._sync_lock = False
         _bit_vars = [(self._bit_enable,1), (self._bit_visible,2), (self._bit_pickable,4),
                      (self._bit_hint,8), (self._bit_busy,0x10), (self._bit_resume,0x20),
@@ -397,26 +474,27 @@ class MatEditor:
         def _on_cb(*args):
             if self._sync_lock: return
             self._sync_lock = True
-            try: flags=int(self._edit_vars['flags'].get())
-            except ValueError: flags=0
-            for bv,mask in _bit_vars:
-                if bv.get(): flags|=mask
-                else: flags&=~mask
+            try: flags = int(self._edit_vars['flags'].get())
+            except ValueError: flags = 0
+            for bv, mask in _bit_vars:
+                if bv.get(): flags |= mask
+                else: flags &= ~mask
             self._edit_vars['flags'].set(str(flags))
             self._sync_lock = False
         def _on_flags(*args):
             if self._sync_lock: return
             self._sync_lock = True
-            try: flags=int(self._edit_vars['flags'].get())
-            except ValueError: self._sync_lock=False; return
-            for bv,mask in _bit_vars: bv.set((flags&mask)!=0)
+            try: flags = int(self._edit_vars['flags'].get())
+            except ValueError: self._sync_lock = False; return
+            for bv, mask in _bit_vars: bv.set((flags & mask) != 0)
             self._sync_lock = False
-        self._edit_vars['flags'].trace_add('write',_on_flags)
-        for bv,_ in _bit_vars: bv.trace_add('write',_on_cb)
-        bf=ttk.Frame(rf); bf.pack(side=tk.BOTTOM,fill=tk.X,pady=(2,0))
-        ttk.Button(bf,text="应用修改",command=self._apply_edit,width=12).pack(side=tk.LEFT)
-        ttk.Button(bf,text="重置",command=self._reset_edit,width=8).pack(side=tk.LEFT,padx=2)
-        ttk.Button(bf,text="跳转到空槽…",command=self._goto_empty,width=12).pack(side=tk.RIGHT,padx=2)
+        self._edit_vars['flags'].trace_add('write', _on_flags)
+        for bv, _ in _bit_vars: bv.trace_add('write', _on_cb)
+        # 按钮
+        bf = ttk.Frame(rf); bf.pack(side=tk.BOTTOM, fill=tk.X, pady=(2,0))
+        ttk.Button(bf, text="应用修改", command=self._apply_edit, width=12).pack(side=tk.LEFT)
+        ttk.Button(bf, text="重置", command=self._reset_edit, width=8).pack(side=tk.LEFT, padx=2)
+        ttk.Button(bf, text="跳转到空槽…", command=self._goto_empty, width=12).pack(side=tk.RIGHT, padx=2)
 
     def _build_group(self,title,fields,row):
         lf=ttk.LabelFrame(self.edit_inner,text=title,padding=4)
@@ -470,72 +548,6 @@ class MatEditor:
             if tip['win']: tip['win'].destroy(); tip['win']=None
         widget.bind('<Enter>',_enter); widget.bind('<Leave>',_leave)
 
-    # =========== 可视化模式 ===========
-    def _build_visual_mode(self):
-        vf = self.visual_frame
-        # 顶部场景选择 + 筛选
-        top = ttk.Frame(vf); top.pack(fill=tk.X, padx=5, pady=(5,0))
-        ttk.Label(top, text="场景:").pack(side=tk.LEFT)
-        self._vis_scene_combo = ttk.Combobox(top, state='readonly', width=25)
-        self._vis_scene_combo.pack(side=tk.LEFT, padx=2)
-        self._vis_scene_combo.bind('<<ComboboxSelected>>', lambda e: self._on_vis_combo_select())
-        ttk.Separator(top, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=8)
-        for tval in [5,10,15,16,20,110,200]:
-            ttk.Checkbutton(top, text=ENTITY_TYPES.get(tval,f"T{tval}"),
-                            variable=self._vis_show_types[tval],
-                            command=self._vis_redraw).pack(side=tk.LEFT, padx=2)
-        ttk.Separator(top, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=8)
-        ttk.Label(top, text="单位显示:").pack(side=tk.LEFT)
-        cb_mode = ttk.Combobox(top, textvariable=self._vis_display_mode,
-                               values=list(DISPLAY_MODES.keys()), state='readonly', width=6)
-        cb_mode.pack(side=tk.LEFT, padx=2)
-        cb_mode.bind('<<ComboboxSelected>>', lambda e: (self._vis_stop_anim(), self._vis_load_scene()))
-        ttk.Separator(top, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=8)
-        ttk.Button(top, text="刷新地图", command=self._vis_load_scene).pack(side=tk.LEFT, padx=2)
-        self._vis_status = tk.StringVar(value="")
-        ttk.Label(top, textvariable=self._vis_status, foreground="gray").pack(side=tk.RIGHT, padx=10)
-
-        # 主区域：左侧场景列表 + 右侧地图
-        paned = ttk.PanedWindow(vf, orient=tk.HORIZONTAL)
-        paned.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
-
-        # 左侧：场景列表
-        lf = ttk.Frame(paned); paned.add(lf, weight=1)
-        cols = ('sid', 'sname', 'cnt')
-        self._vis_tree = ttk.Treeview(lf, columns=cols, show='headings', selectmode='browse')
-        self._vis_tree.heading('sid', text='SC#'); self._vis_tree.column('sid', width=45, anchor='center')
-        self._vis_tree.heading('sname', text='场景名称 (TKT[SC+300])'); self._vis_tree.column('sname', width=160)
-        self._vis_tree.heading('cnt', text='实体'); self._vis_tree.column('cnt', width=45, anchor='center')
-        vsb = ttk.Scrollbar(lf, orient=tk.VERTICAL, command=self._vis_tree.yview)
-        self._vis_tree.configure(yscrollcommand=vsb.set)
-        self._vis_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True); vsb.pack(side=tk.RIGHT, fill=tk.Y)
-        self._vis_tree.bind('<<TreeviewSelect>>', self._on_vis_scene_select)
-
-        # 右侧：地图画布
-        rf = ttk.Frame(paned); paned.add(rf, weight=4)
-        # 信息栏
-        info_bar = ttk.Frame(rf); info_bar.pack(fill=tk.X)
-        self._vis_info = ttk.Label(info_bar, text="", font=FONT_S, foreground='#666')
-        self._vis_info.pack(side=tk.LEFT, padx=4)
-
-        # Canvas + 滚动条
-        cf = ttk.Frame(rf); cf.pack(fill=tk.BOTH, expand=True)
-        self._vis_canvas = tk.Canvas(cf, bg='#1a1a2e', highlightthickness=0, cursor='crosshair')
-        hsb = ttk.Scrollbar(cf, orient=tk.HORIZONTAL, command=self._vis_canvas.xview)
-        vsb2 = ttk.Scrollbar(cf, orient=tk.VERTICAL, command=self._vis_canvas.yview)
-        self._vis_canvas.configure(xscrollcommand=hsb.set, yscrollcommand=vsb2.set)
-        self._vis_canvas.grid(row=0, column=0, sticky='nsew')
-        hsb.grid(row=1, column=0, sticky='ew'); vsb2.grid(row=0, column=1, sticky='ns')
-        cf.rowconfigure(0, weight=1); cf.columnconfigure(0, weight=1)
-
-        self._vis_canvas.bind('<Button-1>', self._vis_canvas_click)
-        self._vis_canvas.bind('<B1-Motion>', self._vis_canvas_drag)
-        self._vis_canvas.bind('<ButtonRelease-1>', self._vis_canvas_release)
-        self._vis_canvas.bind('<MouseWheel>', lambda e: self._vis_canvas.yview_scroll(int(-1*(e.delta/120)),"units"))
-
-        # 编辑弹窗（轻量）
-        self._vis_edit_win = None
-
     # =========== 可视化模式逻辑 ===========
     def _vis_populate_scenes(self):
         """以 SC.GRP section 顺序填充场景列表 (SC.GRP 为权威源)"""
@@ -562,6 +574,25 @@ class MatEditor:
         for sid, sname, cnt in scenes:
             self._vis_tree.insert('', 'end', values=(str(sid), sname, str(cnt)))
 
+    def _sync_entity_filter_to_scene(self, sid):
+        """场景选中后同步筛选左侧实体列表为该场景的实体"""
+        for v in self.cb_scene['values']:
+            if v == "全部": continue
+            try:
+                if int(v.split(':')[0]) == sid:
+                    self.filter_scene.set(v); break
+            except ValueError: continue
+        self._apply_filter()
+
+    def _sync_entity_list_select(self, idx):
+        """在实体列表中选中并滚动到指定实体"""
+        for item in self.tree.get_children():
+            if self.tree.item(item, 'values')[0] == str(idx):
+                self.tree.selection_set(item)
+                self.tree.see(item)
+                return True
+        return False
+
     def _on_vis_combo_select(self):
         val = self._vis_scene_combo.get()
         try: sid = int(val.split(':')[0])
@@ -569,6 +600,7 @@ class MatEditor:
         self._vis_scene_id.set(sid)
         self._vis_stop_anim()
         self._vis_load_scene()
+        self._sync_entity_filter_to_scene(sid)
 
     def _on_vis_scene_select(self, event):
         sel = self._vis_tree.selection()
@@ -579,6 +611,7 @@ class MatEditor:
             if v.startswith(f"{sid}:"): self._vis_scene_combo.set(v); break
         self._vis_stop_anim()
         self._vis_load_scene()
+        self._sync_entity_filter_to_scene(sid)
 
     def _vis_load_scene(self):
         """加载场景到画布"""
@@ -612,7 +645,7 @@ class MatEditor:
         ents = [r for r in self.records if has_data(r) and r['d1'] == sid]
         sname = scene_name(self.tkt_scenes, sid)
         if not ents:
-            self._vis_status.set(f"SC.GRP #{sid}: {sname} — 无实体 (空场景)")
+            self._vis_info.config(text=f"SC.GRP #{sid}: {sname} — 无实体 (空场景)")
             self._vis_canvas.configure(scrollregion=(0,0,MAX_MAP_W,MAX_MAP_H))
             return
 
@@ -628,9 +661,10 @@ class MatEditor:
         h = max(MAX_MAP_H, maxy - miny + 200)
         self._vis_canvas.configure(scrollregion=(0, 0, w, h))
 
-        self._vis_status.set(f"SC.GRP #{sid}: {sname} — {len(ents)} 个实体")
-        # 动画模式下启动帧循环
-        self._vis_start_anim()
+        self._vis_info.config(text=f"SC.GRP #{sid}: {sname} — {len(ents)} 个实体")
+        # 动画模式: 若正在播放则恢复, 否则不自动启动
+        if self._vis_anim_playing:
+            self._vis_start_anim()
 
     def _vis_start_anim(self):
         """启动精灵动画循环 (~200ms/帧); auto/ani 模式开, cha/wire 模式关"""
@@ -838,6 +872,10 @@ class MatEditor:
             tname = ENTITY_TYPES.get(rec['d0'], '?')
             self._vis_info.config(text=f"选中: #{found} [{tname}] 坐标({rec['d10']},{rec['d11']}) — 拖拽可移动")
             self._vis_drag = (found, cx, cy, rec['d10'], rec['d11'])
+            # 同步左侧实体列表选中 + 右侧编辑面板
+            self._sync_entity_list_select(found)
+            self._current_param_idx = found
+            self._show_record(rec)
         else:
             self._vis_selected = None
             self._vis_drag = None
@@ -879,6 +917,25 @@ class MatEditor:
             # 如果参数模式也打开了同一实体，同步显示
             if hasattr(self, '_current_param_idx') and self._current_param_idx == eidx:
                 self._show_record(rec)
+
+    # ---- 动画播放控制 ----
+    def _vis_toggle_anim(self):
+        """切换动画播放/暂停"""
+        if self._vis_anim_playing:
+            self._vis_stop_anim()
+            self._vis_anim_playing = False
+            if self._vis_play_btn: self._vis_play_btn.config(text="▶")
+        else:
+            self._vis_anim_playing = True
+            self._vis_start_anim()
+            if self._vis_play_btn: self._vis_play_btn.config(text="⏸")
+
+    def _on_display_mode_change(self):
+        """显示模式切换: 停止动画, 重置播放状态, 重载场景"""
+        self._vis_stop_anim()
+        self._vis_anim_playing = False
+        if self._vis_play_btn: self._vis_play_btn.config(text="▶")
+        self._vis_load_scene()
 
     # =========== 数据加载 ===========
     def _load_dir(self):
@@ -924,8 +981,18 @@ class MatEditor:
             messagebox.showerror("加载失败", str(e)); self.records = []
         self._update_path(); self._set_edit_enabled(True)
         self._apply_filter()
-        # 填充可视化模式的场景列表
+        # 填充场景列表并自动选中第一个有效场景
         self._vis_populate_scenes()
+        children = self._vis_tree.get_children()
+        if children:
+            first = children[1] if len(children) > 1 else children[0]  # 跳过场景0(大地图,太卡)
+            self._vis_tree.selection_set(first)
+            sid = int(self._vis_tree.item(first, 'values')[0])
+            self._vis_scene_id.set(sid)
+            for v in self._vis_scene_combo['values']:
+                if v.startswith(f"{sid}:"): self._vis_scene_combo.set(v); break
+            self._vis_load_scene()
+            self._sync_entity_filter_to_scene(sid)
 
     def _set_edit_enabled(self, en):
         for c in self.edit_frame.winfo_children(): self._set_ws(c, en)
@@ -936,11 +1003,6 @@ class MatEditor:
             elif isinstance(w,(ttk.Checkbutton,ttk.Radiobutton,ttk.Button)): w.state(['!disabled'] if en else ['disabled'])
         except: pass
         for c in w.winfo_children(): self._set_ws(c, en)
-    def _on_tab_changed(self, event):
-        tab = self.notebook.index(self.notebook.select())
-        if tab != 1:  # 非可视化模式
-            self._vis_stop_anim()
-
     def _on_close(self):
         self._vis_stop_anim()
         if self._dirty and not messagebox.askyesno("未保存","有未保存的修改, 确定退出?"): return
@@ -994,7 +1056,22 @@ class MatEditor:
         if not sel: self.lbl_title.config(text="未选中"); self._clear_form(); return
         idx=int(self.tree.item(sel[0],'values')[0])
         self._current_param_idx = idx
-        self._show_record(self.records[idx])
+        rec = self.records[idx]
+        self._show_record(rec)
+        # 同步高亮中间地图：若实体在当前场景中则高亮
+        if rec['d1'] == self._vis_scene_id.get() and idx in self._vis_entities:
+            if self._vis_selected is not None and self._vis_selected != idx:
+                old = self._vis_selected
+                if old in self._vis_entities:
+                    for iid in self._vis_entities[old]: self._vis_canvas.delete(iid)
+                    del self._vis_entities[old]
+                    self._vis_draw_entity(self.records[old])
+            self._vis_selected = idx
+            for iid in self._vis_entities.get(idx, []): self._vis_canvas.delete(iid)
+            if idx in self._vis_entities: del self._vis_entities[idx]
+            self._vis_draw_entity_highlighted(rec)
+            tname = ENTITY_TYPES.get(rec['d0'], '?')
+            self._vis_info.config(text=f"选中: #{idx} [{tname}] 坐标({rec['d10']},{rec['d11']})")
 
     def _show_record(self,rec):
         self._sync_lock=True
@@ -1050,10 +1127,16 @@ class MatEditor:
         rec=self.records[idx]
         for key,val in new_vals.items(): rec[key]=val
         self._dirty=True; self._show_record(rec); self._apply_filter()
-        # 如果可视化模式在看同一场景，重绘
+        self._sync_entity_list_select(idx)  # 刷新后重新选中
+        # 如果可视化模式在看同一场景，重绘实体
         if rec['d1'] == self._vis_scene_id.get():
             for iid in self._vis_entities.get(idx, []): self._vis_canvas.delete(iid)
             self._vis_draw_entity(rec)
+            # 若该实体正被高亮选中，重绘为高亮版
+            if self._vis_selected == idx:
+                for iid in self._vis_entities.get(idx, []): self._vis_canvas.delete(iid)
+                if idx in self._vis_entities: del self._vis_entities[idx]
+                self._vis_draw_entity_highlighted(rec)
     def _reset_edit(self):
         sel=self.tree.selection()
         if not sel: return
@@ -1114,12 +1197,13 @@ class MatEditor:
         messagebox.showinfo("统计信息",msg)
     def _save(self):
         if not self.dat_path: self._save_as(); return
-        try: save_mat(self.dat_path,self.records); self._dirty=False; self.status_var.set("已保存")
+        if not messagebox.askyesno("确认保存", f"保存到 {self.dat_path}?"): return
+        try: save_mat(self.dat_path,self.records); self._dirty=False; self.status_var.set(f"已保存 — {os.path.basename(self.dat_path)}")
         except Exception as e: messagebox.showerror("保存失败",str(e))
     def _save_as(self):
         fp=filedialog.asksaveasfilename(title="另存 TKMat.Dat",defaultextension=".Dat",filetypes=[("DAT 文件","*.Dat;*.dat"),("所有文件","*.*")])
         if not fp: return
-        try: save_mat(fp,self.records); self.dat_path=fp; self._dirty=False; self._update_path(); self.status_var.set("已保存")
+        try: save_mat(fp,self.records); self.dat_path=fp; self._dirty=False; self._update_path(); self.status_var.set(f"已保存 — {os.path.basename(fp)}")
         except Exception as e: messagebox.showerror("保存失败",str(e))
     def _export_csv(self):
         fp=filedialog.asksaveasfilename(title="导出 CSV",defaultextension=".csv",filetypes=[("CSV 文件","*.csv")])
