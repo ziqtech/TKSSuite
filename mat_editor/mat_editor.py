@@ -1324,12 +1324,23 @@ class MatEditor:
 
     # =========== 脚本标签页 — 链列表 ===========
 
+    def _clear_script_editor(self):
+        """清空脚本编辑器"""
+        self._save_editor_to_define()
+        self.script_text.config(state='normal')
+        self.script_text.delete('1.0', tk.END)
+        self.script_text.config(state='disabled')
+        self._current_edit_define_id = None
+        self.script_info_lbl.config(text="(未选中 DEFINE)")
+
     def _refresh_chain_list(self):
         """刷新 DefUnit 链 Treeview (按子场景 A/B/C 分组)"""
         self.chain_tree.delete(*self.chain_tree.get_children())
         if not self.records: return
         rec = self.records[self._current_param_idx] if hasattr(self, '_current_param_idx') and 0 <= self._current_param_idx < len(self.records) else None
-        if not rec or not has_data(rec): return
+        if not rec or not has_data(rec):
+            self._clear_script_editor()
+            return
         entity_id = rec['index']
         for sub_name, h_di, mx_di, cur_di in [('A', 39, 30, 33), ('B', 40, 31, 34), ('C', 41, 32, 35)]:
             h = rec.get(f'd{h_di}', 0); mx = rec.get(f'd{mx_di}', 0)
@@ -1356,6 +1367,10 @@ class MatEditor:
         # 更新信息标签
         total = len(self.chain_tree.get_children())
         self.chain_info_lbl.config(text=f"{entity_id=}, {total} 条节点")
+        if total == 0:
+            self._clear_script_editor()
+            self.script_info_lbl.config(text="(无关联 DEFINE)")
+            return
         # 自动选中当前项 (cur=1 的链头)
         for item in self.chain_tree.get_children():
             tags = self.chain_tree.item(item, 'tags')
@@ -1656,14 +1671,9 @@ class MatEditor:
         self.du_text.delete('1.0', tk.END)
         self.du_text.config(state='disabled')
         # 清空脚本标签页
-        self._save_editor_to_define()
+        self._clear_script_editor()
         self.chain_tree.delete(*self.chain_tree.get_children())
-        self.script_text.config(state='normal')
-        self.script_text.delete('1.0', tk.END)
-        self.script_text.config(state='disabled')
-        self._current_edit_define_id = None
         self.chain_info_lbl.config(text="")
-        self.script_info_lbl.config(text="(未选中 DEFINE)")
         for bv in (self._bit_enable,self._bit_visible,self._bit_pickable,
                     self._bit_hint,self._bit_busy,self._bit_resume,self._bit_animloop):
             bv.set(False)
