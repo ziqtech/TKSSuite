@@ -495,6 +495,9 @@ class GRPEditor:
         fm.add_separator()
         fm.add_command(label="导出 L1 色板", command=lambda: self._export_color_swatch("L1"))
         fm.add_command(label="导出 L2 色板", command=lambda: self._export_color_swatch("L2"))
+        fm.add_separator()
+        fm.add_command(label="新增区段...", command=self._add_section)
+        fm.add_command(label="删除当前区段", command=self._delete_section)
         fm.add_separator(); fm.add_command(label="退出", command=self._on_close)
         mb.add_cascade(label="文件", menu=fm)
         vm = tk.Menu(mb, tearoff=0)
@@ -540,6 +543,11 @@ class GRPEditor:
         # [新增] 伪彩色工作流按钮
         ttk.Button(tb, text="伪彩导出", command=self._export_pseudo).pack(side=tk.LEFT, padx=2)
         ttk.Button(tb, text="伪彩导入", command=self._import_pseudo).pack(side=tk.LEFT, padx=2)
+
+        ttk.Separator(tb, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=6, pady=2)
+
+        ttk.Button(tb, text="+区段", command=self._add_section).pack(side=tk.LEFT, padx=2)
+        ttk.Button(tb, text="−区段", command=self._delete_section).pack(side=tk.LEFT, padx=2)
 
         ttk.Separator(tb, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=6, pady=2)
 
@@ -1219,6 +1227,122 @@ class GRPEditor:
             self._status_lbl.config(text=f"色板已导出: {Path(p).name}  (+ .txt 值表)")
         except Exception as e:
             messagebox.showerror("导出失败", str(e))
+
+    # ── Add / Delete Section ─────────────────────────
+    def _add_section(self):
+        if not self.grp: return
+        menu = tk.Menu(self.root, tearoff=0)
+        menu.add_command(label="新增图像区段...", command=self._add_image_section)
+        menu.add_command(label="新增音频区段...", command=self._add_audio_section)
+        menu.add_command(label="新增数据区段...", command=self._add_data_section)
+        menu.tk_popup(self.root.winfo_pointerx(), self.root.winfo_pointery())
+
+    def _next_index(self):
+        """分配新区段索引"""
+        max_idx = -1
+        for s in self.grp.sections: max_idx = max(max_idx, s.index)
+        for a in self.grp.audio_sections: max_idx = max(max_idx, a.index)
+        for d in self.grp.data_sections: max_idx = max(max_idx, d.index)
+        return max_idx + 1
+
+    def _add_image_section(self):
+        dlg = tk.Toplevel(self.root); dlg.title("新增图像区段")
+        dlg.resizable(False, False); dlg.transient(self.root); dlg.grab_set()
+        f = ttk.Frame(dlg, padding=12); f.pack()
+        ttk.Label(f, text="宽度:").grid(row=0, column=0, sticky='e', padx=(0,4))
+        w_var = tk.StringVar(value="800")
+        ttk.Entry(f, textvariable=w_var, width=8).grid(row=0, column=1)
+        ttk.Label(f, text="高度:").grid(row=1, column=0, sticky='e', padx=(0,4))
+        h_var = tk.StringVar(value="600")
+        ttk.Entry(f, textvariable=h_var, width=8).grid(row=1, column=1)
+        png_var = tk.StringVar()
+        png_lbl = ttk.Label(f, text="", foreground='#666', font=("",8))
+        png_lbl.grid(row=3, column=0, columnspan=2)
+        def _choose_png():
+            p = filedialog.askopenfilename(title="选择PNG图片", filetypes=[("PNG","*.png"),("All","*.*")])
+            if not p: return
+            png_var.set(p); png_lbl.config(text=os.path.basename(p))
+            if HAS_PIL:
+                try:
+                    img = Image.open(p)
+                    w_var.set(str(img.width)); h_var.set(str(img.height))
+                except Exception: pass
+        ttk.Button(f, text="选择PNG图片...", command=_choose_png).grid(row=2, column=0, columnspan=2, pady=(8,0))
+        bf = ttk.Frame(f); bf.grid(row=4, column=0, columnspan=2, pady=(12,0))
+        def _ok():
+            try:
+                w = int(w_var.get()); h = int(h_var.get())
+                if w < 1 or h < 1 or w > 4096 or h > 4096: raise ValueError
+            except ValueError:
+                messagebox.showwarning("输入错误", "宽度/高度必须是 1-4096 整数"); return
+            new_idx = self._next_index()
+            ca = w * h * 2 + 4  # LZSS compressed estimate (worst case)
+            cb = w * h * 2 + 4  # RLE worst case
+            sec = GRPSection(new_idx, 0, w, h, ca, cb)
+            sec._decoded_a = True; sec._modified_a = True
+            sec._decoded_b = True; sec._modified_b = True
+            # Frame A: RGB565 初始数据
+            png_path = png_var.get()
+            if HAS_PIL and png_path and os.path.exists(png_path):
+                try:
+                    img = Image.open(png_path).convert("RGBA")
+                    if img.size != (w, h): img = img.resize((w, h), Image.LANCZOS)
+                    sec._pixels = rgba_to_rgb565(img.tobytes(), w, h)
+                except Exception: sec._pixels = b'\x00' * (w * h * 2)
+            else:
+                sec._pixels = b'\x00' * (w * h * 2)
+            # Frame B: 单层全0遮罩
+            sec._layer1 = b'\x00' * (w * h)
+            sec._orig_frame_a = struct.pack("<I", w*h*2) + lzss_compress(sec._pixels)
+            sec.comp_a = len(sec._orig_frame_a)
+            fb_raw = sec._layer1[:w*h]
+            fb_body = rle_bp_compress(fb_raw)
+            sec._orig_fb_declared = len(fb_raw)
+            fb_data = struct.pack("<I", len(fb_raw)) + fb_body
+            sec._orig_frame_b = fb_data; sec.comp_b = len(fb_data)
+            self.grp.sections.append(sec)
+            self._sync_list(); self._status_lbl.config(text=f"已新增图像区段 #{new_idx} ({w}x{h})")
+            dlg.destroy()
+        ttk.Button(bf, text="确定", command=_ok).pack(side=tk.LEFT, padx=4)
+        ttk.Button(bf, text="取消", command=dlg.destroy).pack(side=tk.LEFT)
+        w_e = f.grid_slaves(row=0, column=1)[0]; w_e.focus_set()
+
+    def _add_audio_section(self):
+        p = filedialog.askopenfilename(title="导入 WAV 音频", filetypes=[("WAV","*.wav"),("All","*.*")])
+        if not p: return
+        try:
+            raw = Path(p).read_bytes()
+            new_idx = self._next_index()
+            sec = GRPAudioSection(new_idx, 0, len(raw), raw)
+            sec.parse_wav()
+            self.grp.audio_sections.append(sec)
+            self._sync_list(); self._status_lbl.config(text=f"已新增音频区段 #{new_idx} ({len(raw)}B)")
+        except Exception as e: messagebox.showerror("导入失败", str(e))
+
+    def _add_data_section(self):
+        p = filedialog.askopenfilename(title="导入数据文件", filetypes=[("All","*.*")])
+        if not p: return
+        try:
+            raw = Path(p).read_bytes()
+            new_idx = self._next_index()
+            sec = GRPDataSection(new_idx, 0, len(raw), raw)
+            self.grp.data_sections.append(sec)
+            self._sync_list(); self._status_lbl.config(text=f"已新增数据区段 #{new_idx} ({len(raw)}B)")
+        except Exception as e: messagebox.showerror("导入失败", str(e))
+
+    def _delete_section(self):
+        sec = self._get_sec()
+        if sec is None: return
+        idx = sec.index
+        label = sec.type_label
+        if not messagebox.askyesno("确认删除", f"删除区段 #{idx:03d} — {label}\n此操作不可恢复！"): return
+        self._stop_audio()
+        if isinstance(sec, GRPSection): self.grp.sections.remove(sec)
+        elif isinstance(sec, GRPAudioSection): self.grp.audio_sections.remove(sec)
+        elif isinstance(sec, GRPDataSection): self.grp.data_sections.remove(sec)
+        self._sel_idx = -1; self._pil_img = None; self._tk_img = None
+        self._sync_list(); self._refresh_view()
+        self._status_lbl.config(text=f"已删除区段 #{idx:03d}")
 
     def _show_pseudo_help(self):
         messagebox.showinfo("伪彩工作流说明",
