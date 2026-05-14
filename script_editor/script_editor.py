@@ -742,7 +742,7 @@ class ScriptEditor:
         new_define = {
             'define_id': new_id,
             'comment': comment or '',
-            'body_lines': ['{', '\t', ''],
+            'body_lines': ['{', '\t', '}; end'],
             'line_start': -1,
             'line_end': -1,
             'header_line': f"DEFINE {new_id}",
@@ -750,6 +750,7 @@ class ScriptEditor:
         self.defines.append(new_define)
         self._dirty = True
 
+        self.search_var.set('')      # 清除搜索过滤，确保新项可见
         self._apply_filter()
         # 选中新添加的项
         new_idx = len(self.defines) - 1
