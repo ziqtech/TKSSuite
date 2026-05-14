@@ -41,12 +41,16 @@ BASIC_FIELDS = [
     ("type",0,"实体类型","实体类型: 5=入口 10=地形 15=障碍 16=建筑 20=事件 110=机关 200=NPC"),
     ("scene_id",1,"场景ID","所属场景 (-1=全局)。TKT_ID = scene_id + 300"),
     ("flags",2,"标志位","位域。bit0=启用 bit1=可见 bit2=可交互 bit3=提示 bit4=忙碌 bit5=恢复 bit16=动画循环"),
-    ("param",3,"扩展参数","扩展参数 (道具数量/金钱等)"),]
+    ("param",3,"扩展参数","扩展参数 (道具数量/金钱等)"),
+    ("hint_id",23,"提示文本ID","鼠标悬停提示的TKT文本ID。传送点(type=10): 设为 300+目标场景ID 以显示目标场景名。sub_412390"),
+    ("cursor_id",8,"光标动画","鼠标悬停光标动画编号。传送点(type=10)设为3显示开门动画。sub_411BA4/sub_412390"),]
 POS_FIELDS = [
     ("x",10,"坐标X","世界坐标X (像素)。sub_407070: a1[10]=x"),
     ("y",11,"坐标Y","世界坐标Y (像素)。sub_407070: a1[11]=y"),
     ("bound_x",18,"碰撞X","碰撞盒/区域X起点。sub_410B74"),
     ("bound_y",19,"碰撞Y","碰撞盒/区域Y起点。sub_410B74"),
+    ("bound_w",20,"碰撞宽","碰撞盒/区域宽度。仅地形块(type=10)使用"),
+    ("bound_h",21,"碰撞高","碰撞盒/区域高度。仅地形块(type=10)使用"),
     ("direction",13,"朝向","朝向 1~8。sub_4077E4"),]
 ANIM_FIELDS = [
     ("anim_set",9,"动画集ID","动画集索引。sub_405CBC: dword_755AC0[v2[9]]"),
@@ -67,7 +71,7 @@ INTERACT_FIELDS = [
     ("access_mask",51,"访问掩码","传送点: 访问标志位 (bitmask, 位=朝向-1); NPC: 图片ID。sub_4081F8:17"),
     ("target_scene",52,"目标场景","传送点(type=10): 目标场景ID; NPC: 动画句柄(运行时)。sub_4081F8:30"),]
 RUNTIME_FIELDS = [
-    ("tick",4,"tick","Tick周期(运行时)"),("sub_flags",8,"子标志",""),
+    ("tick",4,"tick","Tick周期(运行时)"),
     ("timer",12,"计时器",""),("frame_idx",14,"帧索引",""),
     ("frame_count",16,"总帧数",""),("frame_cur",17,"帧计数",""),
     ("script_PC",42,"脚本PC",""),("saved_PC",43,"保存PC",""),
@@ -534,6 +538,8 @@ class MatEditor:
         self._bind_tooltip(self._vis_play_btn, "播放/暂停精灵动画")
         ttk.Separator(top, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=3)
         ttk.Button(top, text="刷新", command=self._vis_load_scene, width=4).pack(side=tk.LEFT, padx=1)
+        ttk.Separator(top, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=3)
+        ttk.Button(top, text="新增实体", command=self._new_record, width=8).pack(side=tk.LEFT, padx=1)
         self._vis_info = ttk.Label(top, text="", font=FONT_S, foreground='#666')
         self._vis_info.pack(side=tk.RIGHT, padx=4)
 
@@ -1056,8 +1062,10 @@ class MatEditor:
             self._vis_draw_entity_highlighted(self.records[found])
             rec = self.records[found]
             tname = ENTITY_TYPES.get(rec['d0'], '?')
-            self._vis_info.config(text=f"选中: #{found} [{tname}] 坐标({rec['d10']},{rec['d11']}) — 拖拽可移动")
-            self._vis_drag = (found, cx, cy, rec['d10'], rec['d11'])
+            pos_x = rec['d18'] if rec['d0'] == 10 else rec['d10']
+            pos_y = rec['d19'] if rec['d0'] == 10 else rec['d11']
+            self._vis_info.config(text=f"选中: #{found} [{tname}] 坐标({pos_x},{pos_y}) — 拖拽可移动")
+            self._vis_drag = (found, cx, cy, pos_x, pos_y)
             # 同步左侧实体列表选中 + 右侧编辑面板
             self._sync_entity_list_select(found)
             self._current_param_idx = found
@@ -1076,8 +1084,12 @@ class MatEditor:
         dx, dy = int(cx - sx), int(cy - sy)
         new_x, new_y = ox + dx, oy + dy
 
-        self.records[eidx]['d10'] = new_x
-        self.records[eidx]['d11'] = new_y
+        rec = self.records[eidx]
+        if rec['d0'] == 10:
+            rec['d18'], rec['d19'] = new_x, new_y
+            rec['d10'], rec['d11'] = new_x, new_y  # 同步坐标字段
+        else:
+            rec['d10'], rec['d11'] = new_x, new_y
         self._dirty = True
 
         # 重绘该实体
@@ -1099,7 +1111,9 @@ class MatEditor:
             rec = self.records[eidx]
             cx = self._vis_canvas.canvasx(event.x)
             cy = self._vis_canvas.canvasy(event.y)
-            self._vis_drag = (eidx, cx, cy, rec['d10'], rec['d11'])
+            pos_x = rec['d18'] if rec['d0'] == 10 else rec['d10']
+            pos_y = rec['d19'] if rec['d0'] == 10 else rec['d11']
+            self._vis_drag = (eidx, cx, cy, pos_x, pos_y)
             # 如果参数模式也打开了同一实体，同步显示
             if hasattr(self, '_current_param_idx') and self._current_param_idx == eidx:
                 self._show_record(rec)
@@ -1305,7 +1319,9 @@ class MatEditor:
             if idx in self._vis_entities: del self._vis_entities[idx]
             self._vis_draw_entity_highlighted(rec)
             tname = ENTITY_TYPES.get(rec['d0'], '?')
-            self._vis_info.config(text=f"选中: #{idx} [{tname}] 坐标({rec['d10']},{rec['d11']})")
+            pos_x = rec['d18'] if rec['d0'] == 10 else rec['d10']
+            pos_y = rec['d19'] if rec['d0'] == 10 else rec['d11']
+            self._vis_info.config(text=f"选中: #{idx} [{tname}] 坐标({pos_x},{pos_y})")
 
     def _trace_defunit_chain(self, head_idx, max_n, cur_n):
         """追踪 DefUnit 链表, 返回节点字符串列表。
@@ -1342,7 +1358,7 @@ class MatEditor:
         """刷新 DefUnit 链 Treeview (按子场景 A/B/C 分组)"""
         self.chain_tree.delete(*self.chain_tree.get_children())
         if not self.records: return
-        rec = self.records[self._current_param_idx] if hasattr(self, '_current_param_idx') and 0 <= self._current_param_idx < len(self.records) else None
+        rec = self.records[self._current_param_idx] if hasattr(self, '_current_param_idx') and self._current_param_idx is not None and 0 <= self._current_param_idx < len(self.records) else None
         if not rec or not has_data(rec):
             self._clear_script_editor()
             return
@@ -1485,7 +1501,7 @@ class MatEditor:
 
     def _add_chain_entry(self, sub_scene):
         """新增 DefUnit 节点到指定子场景"""
-        rec = self.records[self._current_param_idx] if hasattr(self, '_current_param_idx') and 0 <= self._current_param_idx < len(self.records) else None
+        rec = self.records[self._current_param_idx] if hasattr(self, '_current_param_idx') and self._current_param_idx is not None and 0 <= self._current_param_idx < len(self.records) else None
         if not rec or not has_data(rec): return
         entity_id = rec['index']
 
@@ -1697,10 +1713,14 @@ class MatEditor:
         return vals
     def _apply_edit(self):
         sel=self.tree.selection()
-        if not sel: return
+        if sel:
+            idx=int(self.tree.item(sel[0],'values')[0])
+        elif hasattr(self,'_current_param_idx') and self._current_param_idx is not None:
+            idx=self._current_param_idx
+        else:
+            return
         new_vals=self._read_form()
         if new_vals is None: messagebox.showwarning("输入错误","字段值必须是整数"); return
-        idx=int(self.tree.item(sel[0],'values')[0])
         rec=self.records[idx]
         for key,val in new_vals.items(): rec[key]=val
         self._dirty=True; self._show_record(rec); self._apply_filter()
@@ -1716,8 +1736,13 @@ class MatEditor:
                 self._vis_draw_entity_highlighted(rec)
     def _reset_edit(self):
         sel=self.tree.selection()
-        if not sel: return
-        self._show_record(self.records[int(self.tree.item(sel[0],'values')[0])])
+        if sel:
+            idx=int(self.tree.item(sel[0],'values')[0])
+        elif hasattr(self,'_current_param_idx') and self._current_param_idx is not None:
+            idx=self._current_param_idx
+        else:
+            return
+        self._show_record(self.records[idx])
 
     # =========== 新增/复制/清空 ===========
     def _new_record(self):
@@ -1726,12 +1751,63 @@ class MatEditor:
         for rec in self.records:
             if is_empty(rec): empty_idx=rec['index']; break
         if empty_idx is None: messagebox.showinfo("无空槽",f"所有{REC_COUNT}条记录均已占用"); return
+
+        # 类型/场景选择对话框
+        win=tk.Toplevel(self.root)
+        win.title("新增实体")
+        win.transient(self.root); win.grab_set(); win.resizable(False,False)
+
+        ttk.Label(win,text="实体类型:").grid(row=0,column=0,padx=10,pady=(10,5),sticky='w')
+        type_var=tk.StringVar()
+        tc=[f"{k}-{v}" for k,v in sorted(ENTITY_TYPES.items()) if k!=0]
+        cb_type=ttk.Combobox(win,textvariable=type_var,values=tc,state='readonly',width=22)
+        cb_type.grid(row=0,column=1,padx=10,pady=(10,5),sticky='w')
+        cb_type.current(6)  # 200-NPC/角色
+
+        ttk.Label(win,text="场景 ID:").grid(row=1,column=0,padx=10,pady=5,sticky='w')
+        scene_var=tk.IntVar(value=self._vis_scene_id.get())
+        entry_scene=ttk.Entry(win,textvariable=scene_var,width=10)
+        entry_scene.grid(row=1,column=1,padx=10,pady=5,sticky='w')
+        lbl_sn=ttk.Label(win,text=scene_name(self.tkt_scenes,self._vis_scene_id.get()),
+                          foreground='#666',font=FONT_S)
+        lbl_sn.grid(row=1,column=2,padx=5,pady=5,sticky='w')
+        def _on_sv(*_):
+            try: lbl_sn.config(text=scene_name(self.tkt_scenes,scene_var.get()))
+            except: pass
+        scene_var.trace_add('write',_on_sv)
+
+        confirmed=[False]
+        def _ok(): confirmed[0]=True; win.destroy()
+        win.protocol("WM_DELETE_WINDOW",win.destroy)
+        bf=ttk.Frame(win); bf.grid(row=2,column=0,columnspan=3,pady=(5,10))
+        ttk.Button(bf,text="确定",command=_ok).pack(side=tk.LEFT,padx=8)
+        ttk.Button(bf,text="取消",command=win.destroy).pack(side=tk.LEFT,padx=8)
+        win.wait_window()
+        if not confirmed[0]: return
+
+        # 创建实体
+        try: sel_type=int(type_var.get().split('-')[0])
+        except ValueError: return
+        sel_scene=scene_var.get()
         rec=self.records[empty_idx]
         for di in range(DWORD_COUNT): rec[f'd{di}']=0
-        rec['d0']=200; rec['d1']=-1
+        rec['d0']=sel_type; rec['d1']=sel_scene
+        rec['d2']=3       # 启用+可见
+        rec['d8']=3 if sel_type==10 else 0  # 传送点光标动画=开门
+        rec['d10']=400; rec['d11']=384  # 地图中心附近
+        rec['d18']=400; rec['d19']=384  # 地形块用 bound_x/y 定位
+        rec['d20']=40; rec['d21']=40    # 地形块默认大小
+
         self._dirty=True; self._apply_filter()
         for item in self.tree.get_children():
-            if self.tree.item(item,'values')[0]==str(empty_idx): self.tree.selection_set(item); self.tree.see(item); self._show_record(rec); break
+            if self.tree.item(item,'values')[0]==str(empty_idx):
+                self.tree.selection_set(item); self.tree.see(item); self._show_record(rec); break
+
+        # 若在当前场景则绘入画布
+        if sel_scene==self._vis_scene_id.get():
+            for iid in self._vis_entities.get(empty_idx,[]): self._vis_canvas.delete(iid)
+            if empty_idx in self._vis_entities: del self._vis_entities[empty_idx]
+            self._vis_draw_entity(rec)
     def _copy_record(self):
         sel=self.tree.selection()
         if not sel: messagebox.showinfo("提示","请先选择记录"); return
