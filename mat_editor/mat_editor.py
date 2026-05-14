@@ -30,6 +30,7 @@ TYPE_COLORS = {0:"#AAA",5:"#2196F3",10:"#4CAF50",15:"#FF9800",16:"#795548",
 TYPE_COLORS_RGBA = {0:(170,170,170),5:(33,150,243),10:(76,175,80),15:(255,152,0),
                     16:(121,85,72),20:(156,39,176),110:(233,30,99),200:(244,67,54)}
 DIR_MODES = {0:"静态",4:"NPC四方向",8:"玩家八方向"}
+ANIM_SETS = {0:"空(无动画)",1:"Cha.JVG(角色)",4:"Ani.JVG(动画)",5:"Cur.JVG(光标)"}
 DISPLAY_MODES = {"游戏默认":"auto","动画":"ani","角色":"cha","线框":"wire"}
 _JVG_CACHE = {}  # filepath → JVGFile
 _SPRITE_CACHE = {}  # (filepath, global_idx) → PhotoImage
@@ -509,6 +510,9 @@ class MatEditor:
                 cb.pack(fill=tk.X); self._edit_vars[key]=cb
             elif key=='dir_mode':
                 cb=ttk.Combobox(frm,state='readonly',values=[f"{k}-{v}" for k,v in DIR_MODES.items()],width=14,font=FONT)
+                cb.pack(fill=tk.X); self._edit_vars[key]=cb
+            elif key=='anim_set':
+                cb=ttk.Combobox(frm,state='readonly',values=[f"{k}-{v}" for k,v in ANIM_SETS.items()],width=16,font=FONT)
                 cb.pack(fill=tk.X); self._edit_vars[key]=cb
             elif key=='flags':
                 ev=tk.StringVar(); self._edit_vars[key]=ev
@@ -1082,6 +1086,7 @@ class MatEditor:
             val=rec[f'd{di}']
             if key=='type': self._edit_vars[key].set(f"{val}-{ENTITY_TYPES.get(val,'未知')}")
             elif key=='dir_mode': self._edit_vars[key].set(f"{val}-{DIR_MODES.get(val,'其他')}" if val in DIR_MODES else f"{val}-其他")
+            elif key=='anim_set': self._edit_vars[key].set(f"{val}-{ANIM_SETS.get(val,'未知')}" if val in ANIM_SETS else f"{val}-未知")
             else: self._edit_vars[key].set(str(val))
         for key,di,label,cmt in RUNTIME_FIELDS:
             if key in self._edit_vars: self._edit_vars[key].set(str(rec[f'd{di}']))
