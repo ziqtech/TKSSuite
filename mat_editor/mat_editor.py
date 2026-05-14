@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-TKMat.Dat 地图实体编辑器 v2.1 — 三栏一体布局
+TKMat.Dat 地图实体编辑器 v2.2 — 融合脚本编辑
 =============================================================
 逆向依据:
   sub_412688:21: TKMat.Dat → dword_51AF40 (2304000B, 6000×384B)
@@ -8,6 +8,8 @@ TKMat.Dat 地图实体编辑器 v2.1 — 三栏一体布局
   sub_405CBC: 实体类型分支渲染 (5/10/15/16/20/110/200)
   sub_4077E4: 朝向 [13], sub_407070: 坐标 [10][11]
   sub_40EBD4: 脚本PC[42]/DefUnit索引[44]/子场景[30-35]
+  sub_4066F0: DefUnit链遍历 [39-41]
+  sub_402E88: TKDefUnit.dat 加载 (5000×16B)
 
 用法:
   python mat_editor.py
@@ -22,6 +24,7 @@ from tkinter import ttk, messagebox, filedialog
 # ============================================================
 REC_SIZE = 384; REC_COUNT = 6000; FILE_SIZE = 2304000; DWORD_COUNT = 96
 SCENE_NAME_TKT_BASE = 300
+DEFUNIT_REC_SIZE = 16; DEFUNIT_REC_COUNT = 5000; DEFUNIT_FILE_SIZE = 80000
 
 ENTITY_TYPES = {0:"空槽",5:"入口/传送点",10:"地形块",15:"障碍物",16:"建筑/门",
                 20:"事件对象",110:"特殊机关",200:"NPC/角色"}
@@ -51,12 +54,13 @@ ANIM_FIELDS = [
     ("dir_mode",53,"方向模式","4=NPC四方向 8=玩家八方向 0=静态。sub_4077E4"),
     ("sub_model",64,"子模型ID","子角色动画模型ID"),("anim_speed",69,"动画速度","动画播放速度"),]
 SCRIPT_FIELDS = [
-    ("defunit_idx",44,"DefUnit索引","DefUnit记录索引。sub_40EBD4:18"),
+    ("defunit_idx",44,"DefUnit索引","文件值=-1为正常; 运行时由 sub_4066F0 沿链遍历计算填入。sub_40EBD4:18 读取"),
     ("cur_define",28,"当前DEFINE","当前DEFINE脚本号"),
-    ("max_A",30,"子场景最大A","子场景A最大阶段数"),
+    ("max_A",30,"子场景最大A","子场景A DefUnit链长度"),
     ("max_B",31,"子场景最大B",""),("max_C",32,"子场景最大C",""),
-    ("cur_A",33,"子场景当前A",""),("cur_B",34,"子场景当前B",""),("cur_C",35,"子场景当前C",""),
-    ("head_A",39,"DefUnit链头A","子场景A链头。sub_4066F0"),
+    ("cur_A",33,"子场景当前A","当前在链中的位置(1-based)。SetNowDef可修改"),
+    ("cur_B",34,"子场景当前B",""),("cur_C",35,"子场景当前C",""),
+    ("head_A",39,"DefUnit链头A","子场景A的 TKDefUnit 链表头索引。sub_4066F0:39 从这开始遍历"),
     ("head_B",40,"DefUnit链头B",""),("head_C",41,"DefUnit链头C",""),]
 INTERACT_FIELDS = [
     ("char_id",50,"所需角色ID","条件角色。sub_4081F8"),
@@ -74,7 +78,88 @@ RUNTIME_FIELDS = [
 ALL_EDIT_FIELDS = BASIC_FIELDS+POS_FIELDS+ANIM_FIELDS+SCRIPT_FIELDS+INTERACT_FIELDS
 FONT = ('Microsoft YaHei UI', 9); FONT_S = ('Microsoft YaHei UI', 8)
 FONT_B = ('Microsoft YaHei UI', 11, 'bold')
+FONT_MONO = ('Consolas', 10)
 MAX_MAP_W, MAX_MAP_H = 1024, 768
+
+# ============================================================
+# TKD.dat 脚本 I/O (来自 script_editor.py)
+# ============================================================
+
+def load_tkd(filepath):
+    with open(filepath, 'rb') as f:
+        data = f.read()
+    decoded = bytes([b ^ 0xFF for b in data])
+    try:
+        text = decoded.decode('big5', errors='replace')
+    except Exception:
+        text = decoded.decode('gbk', errors='replace')
+    return text
+
+def save_tkd(filepath, text):
+    try:
+        encoded = text.encode('big5')
+    except (UnicodeEncodeError, UnicodeDecodeError):
+        encoded = text.encode('gbk', errors='replace')
+    encrypted = bytes([b ^ 0xFF for b in encoded])
+    with open(filepath, 'wb') as f:
+        f.write(encrypted)
+
+def parse_defines(text):
+    lines = text.split('\n')
+    defines = []
+    current = None
+    header_lines = []; pending_prefix = []; seen_first_define = False
+    for i, line in enumerate(lines):
+        raw_line = line.rstrip('\r')
+        stripped = raw_line.strip()
+        if stripped.startswith('DEFINE') and not stripped.startswith('//'):
+            parts = stripped.split(None, 1)
+            define_id = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 0
+            if not seen_first_define: seen_first_define = True
+            current = {'define_id': define_id, 'comment': '',
+                       'prefix_lines': list(pending_prefix), 'body_lines': [],
+                       'line_start': i, 'line_end': -1, 'header_line': raw_line}
+            pending_prefix = []
+        elif stripped.startswith('};') and current is not None:
+            current['line_end'] = i
+            current['comment'] = stripped[2:].replace(' end', '').strip()
+            current['body_lines'].append(raw_line)
+            defines.append(current); current = None
+        elif current is not None:
+            current['body_lines'].append(raw_line)
+        else:
+            if not seen_first_define and stripped and not stripped.startswith('//'):
+                header_lines.append(raw_line)
+            elif not seen_first_define and stripped.startswith('////'):
+                header_lines.append(raw_line)
+            else:
+                pending_prefix.append(raw_line)
+    return defines, '\n'.join(header_lines)
+
+def rebuild_text(defines, header):
+    parts = []
+    if header:
+        for hl in header.split('\n'): parts.append(hl)
+    for d in defines:
+        for pl in d.get('prefix_lines', []): parts.append(pl)
+        parts.append(d['header_line'])
+        for bl in d['body_lines']: parts.append(bl)
+    parts.append(''); parts.append('')
+    return '\r\n'.join(parts)
+
+SCRIPT_COMMANDS = [
+    'SetSwitch', 'End', 'CheckFlag', 'Enable', 'Disable', 'SetWalk',
+    'WaitWalk', 'SetPos', 'TalkB', 'TalkA', 'War', 'ChangeScene',
+    'FadeIn', 'FadeOut', 'PlayerAct', 'SetCursor', 'SetWait',
+    'SetNowDef', 'SetFlag', 'AddFlag', 'SetVar', 'Random',
+    'SetBlock', 'SetTick', 'SetShadow', 'SetAni', 'SetCamera',
+    'SetPlayer', 'SetEnabled', 'SetVisible', 'SetHint', 'SetScene',
+    'SetChaPic', 'SetGlobal', 'WaitInput', 'Camera', 'Music',
+    'SceneBGM', 'SetWord', 'Nop', 'CheckResult', 'MenuChoice',
+    'CheckTeam', 'CheckMember', 'ShowText', 'SceneFade', 'SetPosFade',
+    'WaitTimer', 'Yield', 'Jump', 'Else', 'MiniGame', 'Note',
+    'StopSound', 'BlackTalk', 'TalkA',
+]
 
 # ============================================================
 # TKT 场景名
@@ -127,6 +212,17 @@ def save_mat(fp, recs):
 
 def is_empty(rec): return rec['d0']==0
 def has_data(rec): return rec['d0']!=0
+
+def save_defunit(fp, defunit_recs):
+    """保存 TKDefUnit.dat — 5000 条 × 16 字节"""
+    buf = bytearray(DEFUNIT_FILE_SIZE)
+    for rec in defunit_recs:
+        off = rec['index'] * DEFUNIT_REC_SIZE
+        for fi in range(8):
+            struct.pack_into('<H', buf, off + fi * 2, rec.get(f'f{fi}', 0))
+    with open(fp, 'wb') as f:
+        f.write(bytes(buf))
+    return True
 
 # ============================================================
 # JVG 精灵帧辅助
@@ -239,7 +335,7 @@ def load_scene_background(sc_grp_path, sc_idx_path, scene_id):
 class MatEditor:
     def __init__(self, root):
         self.root = root
-        self.root.title("TKMat.Dat 地图实体编辑器 v2.1")
+        self.root.title("TKMat.Dat 地图实体编辑器 v2.2")
         ico = os.path.join(os.path.dirname(__file__), 'TKS.ico')
         if os.path.exists(ico): self.root.iconbitmap(default=ico)
         self.root.geometry("1280x820"); self.root.minsize(1024,640)
@@ -260,6 +356,8 @@ class MatEditor:
         self._vis_anim_timer = None         # 动画循环 timer ID
         self._vis_anim_frame = {}           # entity_idx → current cycle frame offset
         self._vis_play_btn = None           # 播放按钮引用
+        self.defunit_recs = []; self.defunit_next = {}; self.defunit_entity = {}  # DefUnit链
+        self.tkd_defines = []; self.tkd_header = ''; self.tkd_define_map = {}  # TKD脚本
         self._bit_enable = tk.BooleanVar(value=False)    # d2 bit0: 启用
         self._bit_visible = tk.BooleanVar(value=False)   # d2 bit1: 可见
         self._bit_pickable = tk.BooleanVar(value=False)  # d2 bit2: 可拾取
@@ -457,7 +555,15 @@ class MatEditor:
         rf = ttk.Frame(main_pw); main_pw.add(rf, weight=3); self.edit_frame = rf
         self.lbl_title = ttk.Label(rf, text="未选中", font=FONT_B)
         self.lbl_title.pack(anchor=tk.W, pady=(0,4), padx=4)
-        mid = ttk.Frame(rf); mid.pack(fill=tk.BOTH, expand=True)
+
+        # Notebook 双标签
+        self.notebook = ttk.Notebook(rf)
+        self.notebook.pack(fill=tk.BOTH, expand=True)
+
+        # === Tab "参数" — 现有字段编辑区 ===
+        tab_param = ttk.Frame(self.notebook)
+        self.notebook.add(tab_param, text="参数")
+        mid = ttk.Frame(tab_param); mid.pack(fill=tk.BOTH, expand=True)
         lc = ttk.Frame(mid); lc.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scb = ttk.Scrollbar(mid, orient=tk.VERTICAL); scb.pack(side=tk.RIGHT, fill=tk.Y)
         canvas = tk.Canvas(lc, highlightthickness=0); canvas.pack(fill=tk.BOTH, expand=True)
@@ -477,6 +583,12 @@ class MatEditor:
         self._build_group("脚本", SCRIPT_FIELDS, 3)
         self._build_group("交互/角色", INTERACT_FIELDS, 4)
         self._build_group("运行时(只读)", RUNTIME_FIELDS, 5)
+        # DefUnit 链信息 (只读)
+        du_f = ttk.LabelFrame(self.edit_inner, text="DefUnit链 (TKDefUnit.dat)", padding=4)
+        du_f.grid(row=6, column=0, sticky='ew', padx=2, pady=2)
+        self.du_text = tk.Text(du_f, height=6, width=40, font=FONT_S,
+            state='disabled', wrap='word', bg='#f8f8f8', relief='flat')
+        self.du_text.pack(fill=tk.X, padx=2, pady=2)
         # flags ↔ checkbutton 双向同步
         self._sync_lock = False
         _bit_vars = [(self._bit_enable,1), (self._bit_visible,2), (self._bit_pickable,4),
@@ -501,7 +613,13 @@ class MatEditor:
             self._sync_lock = False
         self._edit_vars['flags'].trace_add('write', _on_flags)
         for bv, _ in _bit_vars: bv.trace_add('write', _on_cb)
-        # 按钮
+
+        # === Tab "脚本" — 占位 (稍后 _build_script_tab 填充) ===
+        self.tab_script = ttk.Frame(self.notebook)
+        self.notebook.add(self.tab_script, text="脚本")
+        self._build_script_tab()
+
+        # 按钮 (Notebook 外面底部)
         bf = ttk.Frame(rf); bf.pack(side=tk.BOTTOM, fill=tk.X, pady=(2,0))
         ttk.Button(bf, text="应用修改", command=self._apply_edit, width=12).pack(side=tk.LEFT)
         ttk.Button(bf, text="重置", command=self._reset_edit, width=8).pack(side=tk.LEFT, padx=2)
@@ -549,6 +667,59 @@ class MatEditor:
                 nl=ttk.Label(frm,text="",foreground='#3366cc',font=FONT_S,wraplength=150)
                 nl.pack(anchor=tk.W); self._edit_vars['_scene_label']=nl
         return lf
+
+    def _build_script_tab(self):
+        """构建 Tab "脚本" — DefUnit 链列表 + 脚本编辑器"""
+        pw = ttk.PanedWindow(self.tab_script, orient=tk.VERTICAL)
+        pw.pack(fill=tk.BOTH, expand=True)
+
+        # 上方: DefUnit 链编辑区
+        top_f = ttk.LabelFrame(pw, text="DefUnit 链节点", padding=4)
+        pw.add(top_f, weight=3)
+        tb = ttk.Frame(top_f); tb.pack(fill=tk.X, pady=(0,2))
+        ttk.Button(tb, text="新增到A", command=lambda: self._add_chain_entry('A'), width=8).pack(side=tk.LEFT, padx=1)
+        ttk.Button(tb, text="新增到B", command=lambda: self._add_chain_entry('B'), width=8).pack(side=tk.LEFT, padx=1)
+        ttk.Button(tb, text="新增到C", command=lambda: self._add_chain_entry('C'), width=8).pack(side=tk.LEFT, padx=1)
+        ttk.Button(tb, text="删除选中", command=self._delete_chain_entry, width=8).pack(side=tk.LEFT, padx=1)
+        ttk.Button(tb, text="刷新", command=self._refresh_chain_list, width=5).pack(side=tk.LEFT, padx=(8,0))
+        self.chain_info_lbl = ttk.Label(tb, text="", font=FONT_S, foreground='#666')
+        self.chain_info_lbl.pack(side=tk.RIGHT, padx=4)
+
+        cols_chain = ('sub', 'du_idx', 'define_id', 'block_id', 'mark')
+        self.chain_tree = ttk.Treeview(top_f, columns=cols_chain, show='headings', selectmode='browse')
+        col_defs_chain = [('sub', '子场景', 40), ('du_idx', 'DefUnit#', 60),
+                          ('define_id', 'DEFINE ID', 110), ('block_id', 'f0', 35),
+                          ('mark', '标记', 50)]
+        for cid, cn, cw in col_defs_chain:
+            self.chain_tree.heading(cid, text=cn)
+            self.chain_tree.column(cid, width=cw, anchor='center' if cid != 'define_id' else 'w', minwidth=cw)
+        csb = ttk.Scrollbar(top_f, orient=tk.VERTICAL, command=self.chain_tree.yview)
+        self.chain_tree.configure(yscrollcommand=csb.set)
+        self.chain_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True); csb.pack(side=tk.RIGHT, fill=tk.Y)
+        self.chain_tree.bind('<<TreeviewSelect>>', self._on_chain_select)
+
+        # 下方: 脚本编辑器
+        bot_f = ttk.LabelFrame(pw, text="DEFINE 脚本", padding=4)
+        pw.add(bot_f, weight=5)
+        self.script_info_lbl = ttk.Label(bot_f, text="(未选中 DEFINE)", font=FONT_S, foreground='#666')
+        self.script_info_lbl.pack(anchor=tk.W, pady=(0,3))
+        ef = ttk.Frame(bot_f); ef.pack(fill=tk.BOTH, expand=True)
+        self.script_text = tk.Text(ef, font=FONT_MONO, wrap=tk.NONE, undo=True,
+                                   tabs=('4c',), bg='#fafafa')
+        ssb_y = ttk.Scrollbar(ef, orient=tk.VERTICAL, command=self.script_text.yview)
+        ssb_x = ttk.Scrollbar(ef, orient=tk.HORIZONTAL, command=self.script_text.xview)
+        self.script_text.configure(yscrollcommand=ssb_y.set, xscrollcommand=ssb_x.set)
+        self.script_text.grid(row=0, column=0, sticky='nsew')
+        ssb_y.grid(row=0, column=1, sticky='ns'); ssb_x.grid(row=1, column=0, sticky='ew')
+        ef.rowconfigure(0, weight=1); ef.columnconfigure(0, weight=1)
+        self.script_text.bind('<KeyRelease>', self._on_script_edit)
+        # 语法高亮 tag 配置
+        for tag, fg in [('keyword','#0000FF'), ('comment','#008000'), ('number','#B07000'),
+                         ('command','#7B30D0'), ('block','#C00000')]:
+            self.script_text.tag_configure(tag, foreground=fg)
+        self.script_text.config(state='disabled')
+        self._current_edit_define_id = None
+        self._script_dirty = False
 
     def _bind_tooltip(self,widget,text):
         tip={'win':None}
@@ -969,6 +1140,33 @@ class MatEditor:
         # 读取 SC.GRP section 数作为场景权威源
         self._sc_grp_section_count = 0
         d = os.path.dirname(self.dat_path)
+        # 加载 TKDefUnit.dat — 用于 DefUnit 链查看
+        self.defunit_recs = []; self.defunit_next = {}; self.defunit_entity = {}
+        du_p = os.path.join(d, "TKDefUnit.Dat")
+        if os.path.exists(du_p):
+            try:
+                with open(du_p, 'rb') as f: du_raw = f.read()
+                for i in range(DEFUNIT_REC_COUNT):
+                    off = i * DEFUNIT_REC_SIZE
+                    fields = struct.unpack_from('<HHHHHHHH', du_raw, off)
+                    f0, f1, f6 = fields[0], fields[1], fields[6]
+                    if f0 == 0 and f1 == 0: continue
+                    rec = {'index': i, 'f0': f0, 'f1': f1, 'f2': fields[2],
+                           'f3': fields[3], 'f4': fields[4], 'f5': fields[5],
+                           'f6': f6, 'f7': fields[7]}
+                    self.defunit_recs.append(rec)
+                    if f6 != 0: self.defunit_next[i] = f6
+                    self.defunit_entity.setdefault(f1, []).append(i)
+            except Exception: pass
+        # 加载 TKD.dat — 用于脚本编辑
+        self.tkd_defines = []; self.tkd_header = ''; self.tkd_define_map = {}
+        tkd_p = os.path.join(d, "TKD.dat")
+        if os.path.exists(tkd_p):
+            try:
+                tkd_text = load_tkd(tkd_p)
+                self.tkd_defines, self.tkd_header = parse_defines(tkd_text)
+                self.tkd_define_map = {d['define_id']: d for d in self.tkd_defines}
+            except Exception: pass
         grp_path = os.path.join(d, "SC.GRP"); idx_path = os.path.join(d, "SC.IDX")
         if os.path.exists(grp_path) and os.path.exists(idx_path):
             try:
@@ -1020,7 +1218,8 @@ class MatEditor:
         for c in w.winfo_children(): self._set_ws(c, en)
     def _on_close(self):
         self._vis_stop_anim()
-        if self._dirty and not messagebox.askyesno("未保存","有未保存的修改, 确定退出?"): return
+        dirty = self._dirty or self._script_dirty
+        if dirty and not messagebox.askyesno("未保存","有未保存的修改 (含脚本), 确定退出?"): return
         self.root.destroy()
     def _update_path(self):
         G,R="#228B22","#CC3333"
@@ -1103,6 +1302,303 @@ class MatEditor:
             tname = ENTITY_TYPES.get(rec['d0'], '?')
             self._vis_info.config(text=f"选中: #{idx} [{tname}] 坐标({rec['d10']},{rec['d11']})")
 
+    def _trace_defunit_chain(self, head_idx, max_n, cur_n):
+        """追踪 DefUnit 链表, 返回节点字符串列表。
+        sub_4066F0: 沿 f6 走 max 步, cur 标记当前位置"""
+        if head_idx <= 0 or max_n <= 0:
+            return []
+        nodes = []; idx = head_idx; visited = set()
+        for step in range(max_n):
+            if idx in visited:
+                nodes.append(f"(循环→{idx})"); break
+            visited.add(idx)
+            rec = next((r for r in self.defunit_recs if r['index'] == idx), None)
+            if rec is None:
+                nodes.append(f"#{idx}(空槽)"); break
+            define_id = (rec['f1'] << 16) | rec['f0']
+            mark = " ◀" if (step + 1) == cur_n else ""
+            nodes.append(f"#{idx}→DEFINE {define_id}{mark}")
+            idx = rec['f6']
+            if idx == 0: break
+        return nodes
+
+    # =========== 脚本标签页 — 链列表 ===========
+
+    def _refresh_chain_list(self):
+        """刷新 DefUnit 链 Treeview (按子场景 A/B/C 分组)"""
+        self.chain_tree.delete(*self.chain_tree.get_children())
+        if not self.records: return
+        rec = self.records[self._current_param_idx] if hasattr(self, '_current_param_idx') and 0 <= self._current_param_idx < len(self.records) else None
+        if not rec or not has_data(rec): return
+        entity_id = rec['index']
+        for sub_name, h_di, mx_di, cur_di in [('A', 39, 30, 33), ('B', 40, 31, 34), ('C', 41, 32, 35)]:
+            h = rec.get(f'd{h_di}', 0); mx = rec.get(f'd{mx_di}', 0)
+            cur = rec.get(f'd{cur_di}', 0)
+            if h <= 0 or mx <= 0: continue
+            # 插入分组标题
+            head_iid = self.chain_tree.insert('', 'end', values=(f'子场景{sub_name}', '', '', '', f'head=#{h} max={mx}'), tags=('group',))
+            # 遍历链
+            idx = h; visited_chain = set()
+            for step in range(mx):
+                if idx in visited_chain: break
+                visited_chain.add(idx)
+                du_rec = next((r for r in self.defunit_recs if r['index'] == idx), None)
+                if du_rec is None: break
+                define_id = (du_rec['f1'] << 16) | du_rec['f0']
+                marks = []
+                if (step + 1) == cur: marks.append('当前')
+                if step == 0: marks.append('链头')
+                self.chain_tree.insert('', 'end', values=(f'  {sub_name}', str(idx), str(define_id), str(du_rec['f0']), ','.join(marks)),
+                                       tags=('entry',))
+                idx = du_rec['f6']
+                if idx == 0: break
+        self.chain_tree.tag_configure('group', font=FONT_B, foreground='#3366cc')
+        # 更新信息标签
+        total = len(self.chain_tree.get_children())
+        self.chain_info_lbl.config(text=f"{entity_id=}, {total} 条节点")
+        # 自动选中当前项 (cur=1 的链头)
+        for item in self.chain_tree.get_children():
+            tags = self.chain_tree.item(item, 'tags')
+            if 'entry' in tags:
+                self.chain_tree.selection_set(item)
+                self.chain_tree.see(item)
+                self._on_chain_select()
+                break
+
+    def _on_chain_select(self, event=None):
+        """选中链列表项 → 保存当前编辑 → 加载新 DEFINE"""
+        sel = self.chain_tree.selection()
+        if not sel: return
+        tags = self.chain_tree.item(sel[0], 'tags')
+        if 'group' in tags: return  # 分组标题不可选
+        vals = self.chain_tree.item(sel[0], 'values')
+        if not vals or not vals[2].isdigit(): return
+        define_id = int(vals[2])
+        du_idx = int(vals[1]) if vals[1].isdigit() else 0
+        # 保存当前编辑
+        self._save_editor_to_define()
+        # 加载新 DEFINE
+        self._load_define_to_editor(define_id)
+        self.chain_info_lbl.config(text=f"DefUnit #{du_idx} → DEFINE {define_id}")
+
+    # =========== 脚本标签页 — 编辑器 ===========
+
+    def _load_define_to_editor(self, define_id):
+        """加载 DEFINE 块脚本到 Text 编辑器"""
+        self._current_edit_define_id = define_id
+        self.script_text.config(state='normal')
+        self.script_text.delete('1.0', tk.END)
+        d = self.tkd_define_map.get(define_id)
+        if d:
+            self.script_text.insert('1.0', '\n'.join(d.get('body_lines', [])))
+            comment = d.get('comment', '')
+            self.script_info_lbl.config(text=f"DEFINE {define_id}" + (f" — {comment}" if comment else ""))
+        else:
+            # 新 DEFINE (内存中尚未持久化)
+            self.script_text.insert('1.0', '{\nEnd(0)\n}; end\n')
+            self.script_info_lbl.config(text=f"DEFINE {define_id} (新建)")
+        self._apply_syntax_highlight()
+        self.script_text.edit_reset()
+        self._script_dirty = False
+
+    def _save_editor_to_define(self):
+        """将 Text 编辑器内容写回 self.tkd_defines"""
+        if self._current_edit_define_id is None: return
+        text = self.script_text.get('1.0', 'end-1c')
+        d = self.tkd_define_map.get(self._current_edit_define_id)
+        if d is None:
+            # 新建 DEFINE
+            d = {'define_id': self._current_edit_define_id, 'comment': '', 'prefix_lines': [],
+                 'body_lines': [], 'line_start': -1, 'line_end': -1,
+                 'header_line': f'DEFINE {self._current_edit_define_id}'}
+            # 提取注释 (body 第一行可能是 };comment end)
+            for line in text.split('\n'):
+                s = line.strip()
+                if s.startswith('};'):
+                    d['comment'] = s[2:].replace(' end', '').strip()
+                    break
+            self.tkd_defines.append(d)
+            self.tkd_define_map[self._current_edit_define_id] = d
+        # 更新 body_lines
+        d['body_lines'] = text.split('\n')
+        # 更新注释
+        for line in reversed(d['body_lines']):
+            s = line.strip()
+            if s.startswith('};'):
+                d['comment'] = s[2:].replace(' end', '').strip()
+                break
+
+    def _on_script_edit(self, event=None):
+        """脚本编辑事件 — 标记脏状态, 触发语法高亮"""
+        self._script_dirty = True
+        self._apply_syntax_highlight()
+
+    def _apply_syntax_highlight(self, event=None):
+        """语法高亮 (来自 script_editor.py)"""
+        for tag in ('keyword', 'comment', 'number', 'command', 'block'):
+            self.script_text.tag_remove(tag, '1.0', tk.END)
+        content = self.script_text.get('1.0', tk.END)
+        lines = content.split('\n')
+        for i, line in enumerate(lines):
+            ln = i + 1
+            stripped = line.strip()
+            comment_start = line.find('//')
+            if comment_start >= 0:
+                self.script_text.tag_add('comment', f"{ln}.{comment_start}", f"{ln}.{len(line)}")
+            if stripped.startswith('{') or stripped.startswith('}'):
+                self.script_text.tag_add('block', f"{ln}.0", f"{ln}.{len(line)}")
+            if stripped.startswith('DEFINE'):
+                self.script_text.tag_add('keyword', f"{ln}.0", f"{ln}.{len(line)}")
+            for cmd in SCRIPT_COMMANDS:
+                idx = 0
+                while True:
+                    pos = line.find(cmd + '(', idx)
+                    if pos < 0: break
+                    self.script_text.tag_add('command', f"{ln}.{pos}", f"{ln}.{pos + len(cmd)}")
+                    idx = pos + 1
+            import re
+            for m in re.finditer(r'-?\d+', line):
+                if comment_start >= 0 and m.start() >= comment_start: continue
+                self.script_text.tag_add('number', f"{ln}.{m.start()}", f"{ln}.{m.end()}")
+
+    # =========== 链增删 ===========
+
+    def _add_chain_entry(self, sub_scene):
+        """新增 DefUnit 节点到指定子场景"""
+        rec = self.records[self._current_param_idx] if hasattr(self, '_current_param_idx') and 0 <= self._current_param_idx < len(self.records) else None
+        if not rec or not has_data(rec): return
+        entity_id = rec['index']
+
+        # 找空 DefUnit 槽
+        empty_idx = None
+        for r in self.defunit_recs:
+            if r['f0'] == 0 and r['f1'] == 0:
+                empty_idx = r['index']  # 实际上未加载空记录, 需要查全局
+                break
+        # 查全局 (遍历 5000 条)
+        if empty_idx is None:
+            for i in range(DEFUNIT_REC_COUNT):
+                existing = next((r for r in self.defunit_recs if r['index'] == i), None)
+                if existing is None:
+                    empty_idx = i; break
+        if empty_idx is None:
+            messagebox.showinfo("无空槽", f"TKDefUnit.dat 所有 {DEFUNIT_REC_COUNT} 条记录均已占用"); return
+
+        # 确定 DEFINE ID 和 block_id
+        # 使用 entity 当前最大的 f0+1 (在同一组 256+ 内)
+        existing_blocks = [r['f0'] for r in self.defunit_recs if r['f1'] == entity_id and r['f0'] >= 256]
+        new_f0 = max(existing_blocks) + 1 if existing_blocks else 256
+        if new_f0 > 266: new_f0 = max(existing_blocks) + 1  # 超出 256-266 范围则递增
+        define_id = (entity_id << 16) | new_f0
+
+        # 创建新 DefUnit 记录
+        new_rec = {'index': empty_idx, 'f0': new_f0, 'f1': entity_id,
+                   'f2': 0, 'f3': 0, 'f4': 0, 'f5': 0, 'f6': 0, 'f7': 0}
+        self.defunit_recs.append(new_rec)
+        self.defunit_entity.setdefault(entity_id, []).append(empty_idx)
+
+        # 更新链: 找到链尾, 修改其 f6 指向新节点
+        h_di, mx_di, cur_di = {'A': (39, 30, 33), 'B': (40, 31, 34), 'C': (41, 32, 35)}[sub_scene]
+        head = rec.get(f'd{h_di}', 0); mx = rec.get(f'd{mx_di}', 0)
+        if head == 0 or mx == 0:
+            # 链之前为空
+            rec[f'd{h_di}'] = empty_idx
+            rec[f'd{mx_di}'] = 1
+            rec[f'd{cur_di}'] = 1
+        else:
+            # 找到链尾
+            idx = head; tail = head
+            for _ in range(mx):
+                du_r = next((r for r in self.defunit_recs if r['index'] == idx), None)
+                if du_r is None or du_r['f6'] == 0: break
+                idx = du_r['f6']; tail = idx
+            # tail 是最后一个节点
+            du_tail = next((r for r in self.defunit_recs if r['index'] == tail), None)
+            if du_tail:
+                du_tail['f6'] = empty_idx
+            rec[f'd{mx_di}'] = mx + 1
+
+        # 在 tkd_defines 中插入空模板 DEFINE
+        if define_id not in self.tkd_define_map:
+            d = {'define_id': define_id, 'comment': '', 'prefix_lines': [],
+                 'body_lines': ['{', 'End(0)', '}; end'], 'line_start': -1, 'line_end': -1,
+                 'header_line': f'DEFINE {define_id}'}
+            self.tkd_defines.append(d)
+            self.tkd_define_map[define_id] = d
+
+        self._dirty = True; self._script_dirty = True
+        self._refresh_chain_list()
+        # 选中新节点
+        for item in self.chain_tree.get_children():
+            if self.chain_tree.item(item, 'values')[1] == str(empty_idx):
+                self.chain_tree.selection_set(item)
+                self.chain_tree.see(item)
+                self._on_chain_select()
+                break
+        messagebox.showinfo("新增成功", f"DefUnit #{empty_idx} → DEFINE {define_id} ({sub_scene}场景)")
+
+    def _delete_chain_entry(self):
+        """删除选中的 DefUnit 节点"""
+        sel = self.chain_tree.selection()
+        if not sel: return
+        vals = self.chain_tree.item(sel[0], 'values')
+        tags = self.chain_tree.item(sel[0], 'tags')
+        if 'group' in tags: return
+        if not vals or not vals[1].isdigit(): return
+        du_idx = int(vals[1])
+        define_id = int(vals[2]) if vals[2].isdigit() else 0
+        du_rec = next((r for r in self.defunit_recs if r['index'] == du_idx), None)
+        if du_rec is None: return
+        entity_id = du_rec['f1']
+
+        if not messagebox.askyesno("确认删除", f"删除 DefUnit #{du_idx} → DEFINE {define_id}?\n此操作同时从 TKD.dat 删除对应 DEFINE 块。"):
+            return
+
+        # 找到链中前驱节点
+        rec = self.records[self._current_param_idx]
+        for sub_name, h_di, mx_di, cur_di in [('A', 39, 30, 33), ('B', 40, 31, 34), ('C', 41, 32, 35)]:
+            h = rec.get(f'd{h_di}', 0); mx = rec.get(f'd{mx_di}', 0)
+            if h <= 0: continue
+            prev = None; idx = h
+            for _ in range(mx):
+                if idx == du_idx: break
+                prev = idx
+                du_r = next((r for r in self.defunit_recs if r['index'] == idx), None)
+                idx = du_r['f6'] if du_r else 0
+            if idx != du_idx: continue  # 不在这个链中
+            # 更新前驱的 f6
+            if prev is None:
+                rec[f'd{h_di}'] = du_rec['f6']  # 删除的是头
+            else:
+                prev_rec = next((r for r in self.defunit_recs if r['index'] == prev), None)
+                if prev_rec:
+                    prev_rec['f6'] = du_rec['f6']
+            rec[f'd{mx_di}'] = max(0, mx - 1)
+            cur = rec.get(f'd{cur_di}', 0)
+            if cur > mx - 1:
+                rec[f'd{cur_di}'] = max(1, mx - 1)
+            break
+
+        # 清零 DefUnit 记录
+        du_rec['f0'] = du_rec['f1'] = du_rec['f6'] = 0
+        self.defunit_recs = [r for r in self.defunit_recs if r['index'] != du_idx]
+        if entity_id in self.defunit_entity and du_idx in self.defunit_entity[entity_id]:
+            self.defunit_entity[entity_id].remove(du_idx)
+
+        # 从 tkd_defines 删除
+        if define_id in self.tkd_define_map:
+            d = self.tkd_define_map.pop(define_id)
+            if d in self.tkd_defines:
+                self.tkd_defines.remove(d)
+
+        self._dirty = True; self._script_dirty = True
+        # 清空编辑器
+        self.script_text.config(state='normal')
+        self.script_text.delete('1.0', tk.END)
+        self.script_text.config(state='disabled')
+        self._current_edit_define_id = None
+        self._refresh_chain_list()
+
     def _show_record(self,rec):
         self._sync_lock=True
         idx=rec['index']; tval=rec['d0']; tname=ENTITY_TYPES.get(tval,f"未知({tval})")
@@ -1117,6 +1613,26 @@ class MatEditor:
         for key,di,label,cmt in RUNTIME_FIELDS:
             if key in self._edit_vars: self._edit_vars[key].set(str(rec[f'd{di}']))
         if '_scene_label' in self._edit_vars: self._edit_vars['_scene_label'].config(text=sname)
+        # 更新 DefUnit 链显示
+        self.du_text.config(state='normal')
+        self.du_text.delete('1.0', tk.END)
+        if self.defunit_recs:
+            chains = []
+            for sub_name, h_di, mx_di, cur_di in [
+                ('A', 39, 30, 33), ('B', 40, 31, 34), ('C', 41, 32, 35)]:
+                h = rec.get(f'd{h_di}', 0); mx = rec.get(f'd{mx_di}', 0)
+                cur = rec.get(f'd{cur_di}', 0)
+                if h > 0 and mx > 0:
+                    nodes = self._trace_defunit_chain(h, mx, cur)
+                    if nodes:
+                        chains.append(f"子场景{sub_name} (head=#{h} max={mx} cur={cur}):\n  {' → '.join(nodes)}")
+            if chains:
+                self.du_text.insert('1.0', '\n'.join(chains))
+            elif has_data(rec):
+                self.du_text.insert('1.0', '(无 DefUnit 链)')
+        else:
+            self.du_text.insert('1.0', '(未加载 TKDefUnit.dat)')
+        self.du_text.config(state='disabled')
         flags=rec['d2']
         self._bit_enable.set((flags&1)!=0)
         self._bit_visible.set((flags&2)!=0)
@@ -1126,12 +1642,28 @@ class MatEditor:
         self._bit_resume.set((flags&0x20)!=0)
         self._bit_animloop.set((flags&0x10000)!=0)
         self._sync_lock=False
+        # 刷新脚本标签页链列表
+        self._refresh_chain_list()
+
     def _clear_form(self):
         self._sync_lock=True
         for key,var in self._edit_vars.items():
             if isinstance(var,tk.StringVar): var.set("")
             elif isinstance(var,ttk.Combobox): var.set("")
         if '_scene_label' in self._edit_vars: self._edit_vars['_scene_label'].config(text="")
+        # 清空 DefUnit 链显示
+        self.du_text.config(state='normal')
+        self.du_text.delete('1.0', tk.END)
+        self.du_text.config(state='disabled')
+        # 清空脚本标签页
+        self._save_editor_to_define()
+        self.chain_tree.delete(*self.chain_tree.get_children())
+        self.script_text.config(state='normal')
+        self.script_text.delete('1.0', tk.END)
+        self.script_text.config(state='disabled')
+        self._current_edit_define_id = None
+        self.chain_info_lbl.config(text="")
+        self.script_info_lbl.config(text="(未选中 DEFINE)")
         for bv in (self._bit_enable,self._bit_visible,self._bit_pickable,
                     self._bit_hint,self._bit_busy,self._bit_resume,self._bit_animloop):
             bv.set(False)
@@ -1227,15 +1759,37 @@ class MatEditor:
         for tval in sorted(tc.keys()): msg+=f"  {tval}-{ENTITY_TYPES.get(tval,'?')}: {tc[tval]} ({tc[tval]/ne*100:.1f}%)\n"
         messagebox.showinfo("统计信息",msg)
     def _save(self):
-        if not self.dat_path: self._save_as(); return
-        if not messagebox.askyesno("确认保存", f"保存到 {self.dat_path}?"): return
-        try: save_mat(self.dat_path,self.records); self._dirty=False; self.status_var.set(f"已保存 — {os.path.basename(self.dat_path)}")
-        except Exception as e: messagebox.showerror("保存失败",str(e))
+        d = os.path.dirname(self.dat_path) if self.dat_path else None
+        if not d: self._save_as(); return
+        # 保存当前脚本编辑
+        self._save_editor_to_define()
+        # 确认对话框
+        du_p = os.path.join(d, "TKDefUnit.Dat")
+        tkd_p = os.path.join(d, "TKD.dat")
+        files_msg = f"TKMat.Dat: {self.dat_path}\nTKDefUnit.Dat: {du_p}\nTKD.dat: {tkd_p}"
+        if not messagebox.askyesno("确认保存 — 将写入以下 3 个文件", files_msg): return
+        # 写入
+        errors = []
+        try: save_mat(self.dat_path, self.records)
+        except Exception as e: errors.append(f"TKMat.Dat: {e}")
+        try: save_defunit(du_p, self.defunit_recs)
+        except Exception as e: errors.append(f"TKDefUnit.Dat: {e}")
+        try:
+            tkd_text = rebuild_text(self.tkd_defines, self.tkd_header)
+            save_tkd(tkd_p, tkd_text)
+        except Exception as e: errors.append(f"TKD.dat: {e}")
+        if errors:
+            messagebox.showerror("保存失败", '\n'.join(errors))
+        else:
+            self._dirty = False; self._script_dirty = False
+            self.status_var.set(f"已保存 — 3 个文件")
+
     def _save_as(self):
-        fp=filedialog.asksaveasfilename(title="另存 TKMat.Dat",defaultextension=".Dat",filetypes=[("DAT 文件","*.Dat;*.dat"),("所有文件","*.*")])
+        fp = filedialog.asksaveasfilename(title="另存 TKMat.Dat (同时保存 DefUnit/TKD 到同目录)",
+            defaultextension=".Dat", filetypes=[("DAT 文件","*.Dat;*.dat"),("所有文件","*.*")])
         if not fp: return
-        try: save_mat(fp,self.records); self.dat_path=fp; self._dirty=False; self._update_path(); self.status_var.set(f"已保存 — {os.path.basename(fp)}")
-        except Exception as e: messagebox.showerror("保存失败",str(e))
+        self.dat_path = fp
+        self._save()
     def _export_csv(self):
         fp=filedialog.asksaveasfilename(title="导出 CSV",defaultextension=".csv",filetypes=[("CSV 文件","*.csv")])
         if not fp: return
@@ -1254,7 +1808,11 @@ class MatEditor:
              " [30-35]sub-scene [39-41]chain heads [42-43]PC [44]defunit_idx [53]dir_mode")
         messagebox.showinfo("字段说明",msg)
     def _show_about(self):
-        messagebox.showinfo("关于","TKMat.Dat 地图实体编辑器 v2.0\n\n模式: 参数模式 + 可视化模式\n逆向依据: sub_412688, sub_405CBC\n格式: 6000条 × 384B = 2,304,000B")
+        messagebox.showinfo("关于","TKMat.Dat 地图实体编辑器 v2.2\n\n"
+            "模式: 参数 + 可视化 + 脚本编辑\n"
+            "逆向依据: sub_412688, sub_405CBC, sub_4066F0, sub_40EBD4\n"
+            "格式: TKMat 6000×384B + TKDefUnit 5000×16B + TKD脚本\n"
+            "保存时一次性写入三个文件")
 
 # ============================================================
 def main():
