@@ -32,7 +32,6 @@ TYPE_COLORS = {0:"#AAA",5:"#2196F3",10:"#4CAF50",15:"#FF9800",16:"#795548",
                20:"#9C27B0",110:"#E91E63",200:"#F44336"}
 TYPE_COLORS_RGBA = {0:(170,170,170),5:(33,150,243),10:(76,175,80),15:(255,152,0),
                     16:(121,85,72),20:(156,39,176),110:(233,30,99),200:(244,67,54)}
-DIR_MODES = {0:"静态",4:"NPC四方向",8:"玩家八方向"}
 ANIM_SETS = {0:"空(无动画)",1:"Cha.JVG(角色)",4:"Ani.JVG(动画)",5:"Cur.JVG(光标)"}
 DISPLAY_MODES = {"游戏默认":"auto","动画":"ani","角色":"cha","线框":"wire"}
 _JVG_CACHE = {}  # filepath → JVGFile
@@ -51,7 +50,8 @@ POS_FIELDS = [
     ("direction",13,"朝向","朝向 1~8。sub_4077E4"),]
 ANIM_FIELDS = [
     ("anim_set",9,"动画集ID","动画集索引。sub_405CBC: dword_755AC0[v2[9]]"),
-    ("dir_mode",53,"方向模式","4=NPC四方向 8=玩家八方向 0=静态。sub_4077E4"),
+    ("dir_mode",53,"目标X/方向模式","传送点(type=10): 目标X坐标 sub_4081F8:30; NPC(type=200): 方向模式(0=静态/4=四方向/8=八方向) sub_4077E4"),
+    ("target_y",54,"目标Y坐标","传送点(type=10): 目标Y坐标。sub_4081F8:30"),
     ("sub_model",64,"子模型ID","子角色动画模型ID"),("anim_speed",69,"动画速度","动画播放速度"),]
 SCRIPT_FIELDS = [
     ("defunit_idx",44,"DefUnit索引","文件值=-1为正常; 运行时由 sub_4066F0 沿链遍历计算填入。sub_40EBD4:18 读取"),
@@ -63,16 +63,18 @@ SCRIPT_FIELDS = [
     ("head_A",39,"DefUnit链头A","子场景A的 TKDefUnit 链表头索引。sub_4066F0:39 从这开始遍历"),
     ("head_B",40,"DefUnit链头B",""),("head_C",41,"DefUnit链头C",""),]
 INTERACT_FIELDS = [
-    ("char_id",50,"所需角色ID","条件角色。sub_4081F8"),
-    ("picture_id",51,"图片ID","角色图片/访问掩码"),
-    ("anim_handle",52,"动画句柄","主动画句柄(运行时)"),]
+    ("char_id",50,"条件角色","传送点: 所需角色ID在队伍中; NPC: 条件角色。sub_4081F8:15"),
+    ("access_mask",51,"访问掩码","传送点: 访问标志位 (bitmask, 位=朝向-1); NPC: 图片ID。sub_4081F8:17"),
+    ("target_scene",52,"目标场景","传送点(type=10): 目标场景ID; NPC: 动画句柄(运行时)。sub_4081F8:30"),]
 RUNTIME_FIELDS = [
     ("tick",4,"tick","Tick周期(运行时)"),("sub_flags",8,"子标志",""),
     ("timer",12,"计时器",""),("frame_idx",14,"帧索引",""),
     ("frame_count",16,"总帧数",""),("frame_cur",17,"帧计数",""),
     ("script_PC",42,"脚本PC",""),("saved_PC",43,"保存PC",""),
-    ("saved_x",56,"保存X",""),("saved_y",57,"保存Y",""),
-    ("dest_x",60,"目标X",""),("dest_y",61,"目标Y",""),
+    ("target_dir",56,"目标朝向","传送点(type=10): 目标朝向(1-8) sub_4081F8:30; NPC: 保存X(运行时)"),
+    ("saved_y",57,"保存Y",""),
+    ("alt_tele_x",60,"备选传送X","传送点(type=10): 备选传送后X坐标 sub_4081F8:31"),
+    ("alt_tele_y",61,"备选传送Y","传送点(type=10): 备选传送后Y坐标 sub_4081F8:31"),
     ("sub_handle",65,"子句柄",""),("cur_frame",67,"当前帧",""),
     ("max_frame",68,"最大帧",""),("moving",70,"移动中",""),]
 ALL_EDIT_FIELDS = BASIC_FIELDS+POS_FIELDS+ANIM_FIELDS+SCRIPT_FIELDS+INTERACT_FIELDS
@@ -635,9 +637,6 @@ class MatEditor:
             if cmt: self._bind_tooltip(lbl,f"[{di:02d}] {cmt}")
             if key=='type':
                 cb=ttk.Combobox(frm,state='readonly',values=[f"{k}-{v}" for k,v in sorted(ENTITY_TYPES.items())],width=14,font=FONT)
-                cb.pack(fill=tk.X); self._edit_vars[key]=cb
-            elif key=='dir_mode':
-                cb=ttk.Combobox(frm,state='readonly',values=[f"{k}-{v}" for k,v in DIR_MODES.items()],width=14,font=FONT)
                 cb.pack(fill=tk.X); self._edit_vars[key]=cb
             elif key=='anim_set':
                 cb=ttk.Combobox(frm,state='readonly',values=[f"{k}-{v}" for k,v in ANIM_SETS.items()],width=16,font=FONT)
@@ -1622,7 +1621,6 @@ class MatEditor:
         for key,di,label,cmt in ALL_EDIT_FIELDS:
             val=rec[f'd{di}']
             if key=='type': self._edit_vars[key].set(f"{val}-{ENTITY_TYPES.get(val,'未知')}")
-            elif key=='dir_mode': self._edit_vars[key].set(f"{val}-{DIR_MODES.get(val,'其他')}" if val in DIR_MODES else f"{val}-其他")
             elif key=='anim_set': self._edit_vars[key].set(f"{val}-{ANIM_SETS.get(val,'未知')}" if val in ANIM_SETS else f"{val}-未知")
             else: self._edit_vars[key].set(str(val))
         for key,di,label,cmt in RUNTIME_FIELDS:
@@ -1815,7 +1813,9 @@ class MatEditor:
     def _show_field_ref(self):
         msg=("TKMat.Dat 实体表字段说明\n"+'─'*50+"\n\n加载: sub_412688:21\n结构: 6000条×384B(96×int32)\n\n已证实字段:\n"
              " [0]type [1]scene_id [2]flags [3]timer [4]tick\n [10][11]x/y [13]direction [18][19]bound\n"
-             " [30-35]sub-scene [39-41]chain heads [42-43]PC [44]defunit_idx [53]dir_mode")
+             " [30-35]sub-scene [39-41]chain heads [42-43]PC [44]defunit_idx\n"
+             " [50]条件角色 [51]访问掩码 [52]目标场景 [53]目标X [54]目标Y [56]目标朝向\n"
+             "注意: [52-56]字段语义与实体类型相关 (type=10: 传送参数; type=200: 动画参数)")
         messagebox.showinfo("字段说明",msg)
     def _show_about(self):
         messagebox.showinfo("关于","TKMat.Dat 地图实体编辑器 v2.2\n\n"
