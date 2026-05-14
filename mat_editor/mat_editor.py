@@ -254,7 +254,7 @@ class MatEditor:
         self._vis_bg_image = None; self._vis_bg_id = None
         self._vis_entities = {}; self._vis_selected = None; self._vis_drag = None
         self._sc_grp_section_count = 0
-        self._ani_jvg = None; self._cha_jvg = None  # JVG 精灵数据
+        self._ani_jvg = None; self._cha_jvg = None; self._cur_jvg = None  # JVG 精灵数据
         self._vis_display_mode = tk.StringVar(value="游戏默认")
         self._vis_anim_playing = False      # 动画播放状态(默认暂停)
         self._vis_anim_timer = None         # 动画循环 timer ID
@@ -319,6 +319,16 @@ class MatEditor:
         pf.pack(fill=tk.X, padx=5, pady=(0,2))
         self.lbl_path = ttk.Label(pf, text="", foreground="gray")
         self.lbl_path.pack(side=tk.LEFT, padx=10, pady=2)
+        ttk.Separator(pf, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=4)
+        self.lbl_cha = ttk.Label(pf, text="Cha", foreground="gray", font=FONT_S)
+        self.lbl_cha.pack(side=tk.LEFT, padx=3, pady=2)
+        self.lbl_ani = ttk.Label(pf, text="Ani", foreground="gray", font=FONT_S)
+        self.lbl_ani.pack(side=tk.LEFT, padx=3, pady=2)
+        self.lbl_cur = ttk.Label(pf, text="Cur", foreground="gray", font=FONT_S)
+        self.lbl_cur.pack(side=tk.LEFT, padx=3, pady=2)
+        ttk.Separator(pf, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=4)
+        self.lbl_sc = ttk.Label(pf, text="SC", foreground="gray", font=FONT_S)
+        self.lbl_sc.pack(side=tk.LEFT, padx=3, pady=2)
 
         # 初始 sash 位置: 2:6:3 → 左~18% 中~55% 右~27%
         def _set_sash(tries=0):
@@ -969,9 +979,10 @@ class MatEditor:
                     self._sc_grp_section_count = len(offs) - 1
             except Exception:
                 pass
-        # 加载 Ani.JVG / Cha.JVG
+        # 加载 Ani.JVG / Cha.JVG / Cur.JVG
         self._ani_jvg = _get_jvg(os.path.join(d, "Ani.JVG"))
         self._cha_jvg = _get_jvg(os.path.join(d, "Cha.JVG"))
+        self._cur_jvg = _get_jvg(os.path.join(d, "Cur.JVG"))
         try:
             self.records = load_mat(self.dat_path); self._dirty = False
             nonempty = sum(1 for r in self.records if has_data(r))
@@ -1016,6 +1027,21 @@ class MatEditor:
         if not self.dat_path: self.lbl_path.config(text="(未加载)",foreground=R)
         elif not os.path.exists(self.dat_path): self.lbl_path.config(text=f"(不存在){self.dat_path}",foreground=R)
         else: self.lbl_path.config(text=self.dat_path,foreground=G)
+        for lbl, jvg, name in [(self.lbl_cha, self._cha_jvg, "Cha.JVG"),
+                                (self.lbl_ani, self._ani_jvg, "Ani.JVG"),
+                                (self.lbl_cur, self._cur_jvg, "Cur.JVG")]:
+            if jvg is not None:
+                lbl.config(text=f"{name}✓", foreground=G)
+            elif self.dat_path and os.path.exists(self.dat_path):
+                lbl.config(text=f"{name}✗", foreground=R)
+            else:
+                lbl.config(text=name, foreground="gray")
+        if self._sc_grp_section_count > 0:
+            self.lbl_sc.config(text=f"SC.GRP✓({self._sc_grp_section_count})", foreground=G)
+        elif self.dat_path and os.path.exists(self.dat_path):
+            self.lbl_sc.config(text="SC.GRP✗", foreground=R)
+        else:
+            self.lbl_sc.config(text="SC.GRP", foreground="gray")
 
     # =========== 筛选/列表 (参数模式) ===========
     def _apply_filter(self):
