@@ -766,6 +766,8 @@ class MatEditor:
                 if int(v.split(':')[0]) == sid:
                     self.filter_scene.set(v); break
             except ValueError: continue
+        else:
+            self.filter_scene.set(f"{sid}: {scene_name(self.tkt_scenes, sid)}")
         self._apply_filter()
 
     def _sync_entity_list_select(self, idx):
@@ -1271,6 +1273,10 @@ class MatEditor:
         if sel_idx:
             for item in self.tree.get_children():
                 if self.tree.item(item,'values')[0]==sel_idx: self.tree.selection_set(item); self.tree.see(item); break
+        if not self.tree.selection():
+            self._current_param_idx = None
+            self.lbl_title.config(text="未选中")
+            self._clear_form()
     def _sort_by(self,col):
         ci={'index':0,'type':1,'scene':2,'x':3,'y':4}.get(col,0)
         items=[(self.tree.item(item,'values'),item) for item in self.tree.get_children()]
