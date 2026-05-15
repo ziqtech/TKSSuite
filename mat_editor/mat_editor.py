@@ -45,7 +45,8 @@ BASIC_FIELDS = [
     ("hint_id",23,"提示文本ID","鼠标悬停提示的TKT文本ID。传送点(type=10): 设为 300+目标场景ID 以显示目标场景名。sub_412390"),
     ("cursor_id",8,"光标动画","鼠标悬停光标动画编号。传送点(type=10)设为3显示开门动画。sub_411BA4/sub_412390"),
     ("blend_mode",24,"混合模式","sub_406864:39 — 主精灵渲染混合: 0=正常 1=染色 2=加法发光 3=减法压暗 4=亮度alpha 5=水平翻转"),
-    ("blend_param",25,"混合参数","sub_406864:45/54 — d24=1时颜色索引, d24=2时加法缩放(0或>31=全加法)"),]
+    ("blend_param",25,"混合参数","sub_406864:45/54 — d24=1时颜色索引, d24=2时加法缩放(0或>31=全加法)"),
+    ("shadow_frame",55,"阴影帧","sub_406864:37 — Cha.JVG全局帧索引。0=无阴影, 1=小阴影(39×23), 2=大阴影(65×33)"),]
 POS_FIELDS = [
     ("x",10,"坐标X","世界坐标X (像素)。sub_407070: a1[10]=x"),
     ("y",11,"坐标Y","世界坐标Y (像素)。sub_407070: a1[11]=y"),
@@ -415,6 +416,133 @@ def _get_dir_frame(blk, d13, d16, d53, anim_cycle=0):
     return frame, fpd
 
 # ============================================================
+# PIL 图像合成 (sub_406864 switch d24 → 严格按逆向实现)
+# ============================================================
+_RGBA_CACHE = {}  # (jvg_id, block_idx, frame_idx) → PIL.Image(RGBA)
+
+def _get_jvg_frame_rgba(jvg, block_idx, frame_idx):
+    """取 JVG 帧为 PIL RGBA Image (缓存), 供合成函数使用"""
+    key = (id(jvg), block_idx, frame_idx)
+    if key in _RGBA_CACHE: return _RGBA_CACHE[key].copy()
+    if not jvg or block_idx < 0 or block_idx >= jvg.block_count: return None
+    blk = jvg.blocks[block_idx]
+    if frame_idx < 0 or frame_idx >= blk.frame_count: return None
+    frame = blk.frames[frame_idx]
+    if frame.width <= 0 or frame.height <= 0: return None
+    pr = blk.palette.to_rgb888()
+    rgba = bytearray(frame.width * frame.height * 4)
+    px, al = frame.pixels, frame.alpha
+    for y in range(frame.height):
+        for x in range(frame.width):
+            p = y * frame.width + x; off = p * 4
+            if p < len(al) and al[p] == 0: continue
+            ci = px[p] if p < len(px) else 0
+            rgba[off] = pr[ci*3]; rgba[off+1] = pr[ci*3+1]
+            rgba[off+2] = pr[ci*3+2]; rgba[off+3] = 255
+    from PIL import Image
+    img = Image.frombytes('RGBA', (frame.width, frame.height), bytes(rgba))
+    _RGBA_CACHE[key] = img.copy()
+    return img
+
+def _pil_normal(composite, rgba_src, dx, dy):
+    """mode 0: 正常 alpha 贴图"""
+    if composite is None or rgba_src is None: return
+    try:
+        composite.paste(rgba_src, (dx, dy), rgba_src)
+    except Exception:
+        pass
+
+def _pil_tint(rgba_src, param):
+    """mode 1: 染色 — sub_454D24 按 param 5-bit RGB 分量缩放通道。
+    param=0 或 >31 → 不变; 0<param<=31 → R*=r/31, G*=g/31, B*=b/31"""
+    if rgba_src is None: return None
+    if param <= 0 or param > 31: return rgba_src
+    r_tint = (param >> 10) & 0x1F; g_tint = (param >> 5) & 0x1F; b_tint = param & 0x1F
+    r_ch, g_ch, b_ch, a_ch = rgba_src.split()
+    r_ch = r_ch.point(lambda v: int(v * r_tint / 31))
+    g_ch = g_ch.point(lambda v: int(v * g_tint / 31))
+    b_ch = b_ch.point(lambda v: int(v * b_tint / 31))
+    from PIL import Image
+    return Image.merge('RGBA', (r_ch, g_ch, b_ch, a_ch))
+
+def _pil_additive(composite, rgba_src, dx, dy, param):
+    """mode 2: 加法饱和混合 — sub_4559D0/sub_4573A0
+    param=0或>31 → full min(dst+src, 255); 0<param<=31 → min(dst+src*param/32, 255)"""
+    if composite is None or rgba_src is None: return
+    try:
+        from PIL import Image, ImageChops
+        sw, sh = rgba_src.size; cw, ch = composite.size
+        l = max(0, dx); t = max(0, dy)
+        r = min(cw, dx + sw); b = min(ch, dy + sh)
+        if r <= l or b <= t: return
+        sl, st = l - dx, t - dy; sr, sb = r - dx, b - dy
+        sub = rgba_src.crop((sl, st, sr, sb))
+        if sub.mode != 'RGBA': sub = sub.convert('RGBA')
+        alpha = sub.split()[3]
+        src_rgb = sub.convert('RGB')
+        zero_bg = Image.new('RGB', sub.size, (0, 0, 0))
+        masked = Image.composite(src_rgb, zero_bg, alpha)
+        if 0 < param <= 31:
+            factor = param / 32.0
+            masked = masked.point(lambda v, f=factor: int(v * f))
+        dst_crop = composite.crop((l, t, r, b))
+        blended = ImageChops.add(dst_crop, masked)  # saturated: min(a+b, 255)
+        composite.paste(blended, (l, t))
+    except Exception:
+        try: composite.paste(rgba_src, (dx, dy), rgba_src)
+        except Exception: pass
+
+def _pil_subtract(composite, rgba_src, dx, dy):
+    """mode 3: 减法饱和混合 — sub_45871C
+    dst.RGB = max(dst - src, 0) 逐通道独立"""
+    if composite is None or rgba_src is None: return
+    try:
+        from PIL import Image, ImageChops
+        sw, sh = rgba_src.size; cw, ch = composite.size
+        l = max(0, dx); t = max(0, dy)
+        r = min(cw, dx + sw); b = min(ch, dy + sh)
+        if r <= l or b <= t: return
+        sl, st = l - dx, t - dy; sr, sb = r - dx, b - dy
+        sub = rgba_src.crop((sl, st, sr, sb))
+        if sub.mode != 'RGBA': sub = sub.convert('RGBA')
+        alpha = sub.split()[3]
+        src_rgb = sub.convert('RGB')
+        zero_bg = Image.new('RGB', sub.size, (0, 0, 0))
+        masked = Image.composite(src_rgb, zero_bg, alpha)
+        dst_crop = composite.crop((l, t, r, b))
+        blended = ImageChops.subtract(dst_crop, masked)  # saturated: max(a-b, 0)
+        composite.paste(blended, (l, t))
+    except Exception:
+        try: composite.paste(rgba_src, (dx, dy), rgba_src)
+        except Exception: pass
+
+def _pil_luma_alpha(composite, rgba_src, dx, dy):
+    """mode 4: 按 src 亮度做 alpha blend — sub_459854
+    α = NTSC_luma_5bit(src); α=0跳过; α>28覆盖; else dst*(32-α)/32+src*α/32"""
+    if composite is None or rgba_src is None: return
+    try:
+        from PIL import Image, ImageChops
+        sw, sh = rgba_src.size; cw, ch = composite.size
+        l = max(0, dx); t = max(0, dy)
+        r = min(cw, dx + sw); b = min(ch, dy + sh)
+        if r <= l or b <= t: return
+        sl, st = l - dx, t - dy; sr, sb = r - dx, b - dy
+        sub = rgba_src.crop((sl, st, sr, sb))
+        if sub.mode != 'RGBA': sub = sub.convert('RGBA')
+        src_alpha = sub.split()[3]
+        src_rgb = sub.convert('RGB')
+        luma = src_rgb.convert('L')  # ITU-R 601-2: 0.299R+0.587G+0.114B (游戏用 0.30/0.59/0.11, 差<0.2%)
+        mask_luma = luma.point(lambda v: 0 if v == 0 else (255 if v > 224 else v))
+        alpha_bin = src_alpha.point(lambda v: 255 if v > 0 else 0)
+        mask = ImageChops.multiply(mask_luma, alpha_bin)
+        dst_crop = composite.crop((l, t, r, b))
+        blended = Image.composite(src_rgb, dst_crop, mask)
+        composite.paste(blended, (l, t))
+    except Exception:
+        try: composite.paste(rgba_src, (dx, dy), rgba_src)
+        except Exception: pass
+
+# ============================================================
 # SC.GRP 场景背景加载
 # ============================================================
 def load_scene_background(sc_grp_path, sc_idx_path, scene_id):
@@ -441,9 +569,9 @@ def load_scene_background(sc_grp_path, sc_idx_path, scene_id):
         if not sec.pixels: return None
 
         rgba = rgb565_to_rgba(sec.pixels, sec.width, sec.height)
-        from PIL import Image, ImageTk
+        from PIL import Image
         img = Image.frombytes('RGBA', (sec.width, sec.height), bytes(rgba))
-        return ImageTk.PhotoImage(img)
+        return img.convert('RGB')  # 背景转 RGB 供 PIL 合成
     except Exception:
         return None
 
@@ -466,7 +594,8 @@ class MatEditor:
         self._vis_scene_id = tk.IntVar(value=0)
         self._vis_show_types = {t:tk.BooleanVar(value=True) for t in [5,10,15,16,20,110,200]}
         self._vis_bg_image = None; self._vis_bg_id = None
-        self._vis_entities = {}; self._vis_selected = None; self._vis_drag = None
+        self._vis_entities = {}; self._vis_hit_regions = {}
+        self._vis_selected = None; self._vis_drag = None
         self._sc_grp_section_count = 0
         self._ani_jvg = None; self._cha_jvg = None; self._cur_jvg = None  # JVG 精灵数据
         self._vis_display_mode = tk.StringVar(value="游戏默认")
@@ -763,6 +892,9 @@ class MatEditor:
             elif key=='blend_mode':
                 cb=ttk.Combobox(frm,state='readonly',values=["0-正常","1-染色","2-加法发光","3-减法压暗","4-亮度alpha","5-水平翻转"],width=16,font=FONT)
                 cb.pack(fill=tk.X); self._edit_vars[key]=cb
+            elif key=='shadow_frame':
+                cb=ttk.Combobox(frm,state='readonly',values=["0-无阴影","1-小阴影(39×23)","2-大阴影(65×33)"],width=16,font=FONT)
+                cb.pack(fill=tk.X); self._edit_vars[key]=cb
             elif key=='flags':
                 ev=tk.StringVar(); self._edit_vars[key]=ev
                 ttk.Entry(frm,textvariable=ev,width=14,font=FONT).pack(fill=tk.X)
@@ -925,61 +1057,49 @@ class MatEditor:
         self._sync_entity_filter_to_scene(sid)
 
     def _vis_load_scene(self):
-        """加载场景到画布"""
+        """加载场景到画布 (PIL 预合成)"""
         sid = self._vis_scene_id.get()
         self._vis_canvas.delete('all')
         self._vis_entities.clear(); self._vis_selected = None; self._vis_drag = None
-        self._vis_anim_frame.clear()  # 新场景重置动画帧
-        # 限制精灵缓存: 保留最近 200 个
-        if len(_SPRITE_CACHE) > 200:
-            for k in list(_SPRITE_CACHE.keys())[:len(_SPRITE_CACHE)-200]:
-                del _SPRITE_CACHE[k]
-
+        self._vis_hit_regions = {}
+        self._vis_anim_frame.clear()
+        # 限制缓存
+        for cache in (_SPRITE_CACHE, _SHADOW_CACHE, _BLEND_CACHE, _RGBA_CACHE):
+            if len(cache) > 300:
+                for k in list(cache.keys())[:len(cache)-300]: del cache[k]
         if not self.records: return
 
-        # 尝试加载背景
-        self._vis_bg_id = None
+        # 背景 PIL Image
+        self._vis_bg_pil = None; self._vis_bg_image = None
         if self.dat_path:
             d = os.path.dirname(self.dat_path)
-            grp_path = os.path.join(d, "SC.GRP")
-            idx_path = os.path.join(d, "SC.IDX")
+            grp_path = os.path.join(d, "SC.GRP"); idx_path = os.path.join(d, "SC.IDX")
             if os.path.exists(grp_path):
                 try:
                     bg = load_scene_background(grp_path, idx_path, sid)
-                    if bg:
-                        self._vis_bg_image = bg  # keep reference
-                        self._vis_bg_id = self._vis_canvas.create_image(0, 0, anchor='nw', image=bg)
-                except Exception:
-                    pass
+                    if bg: self._vis_bg_pil = bg
+                except Exception: pass
 
-        # 收集场景实体 (scene_id 匹配 SC.GRP section ID)
         ents = [r for r in self.records if has_data(r) and r['d1'] == sid]
         sname = scene_name(self.tkt_scenes, sid)
         if not ents:
             self._vis_info.config(text=f"SC.GRP #{sid}: {sname} — 无实体 (空场景)")
             self._vis_canvas.configure(scrollregion=(0,0,MAX_MAP_W,MAX_MAP_H))
             return
-
-        # 绘制实体 (按Y坐标排序，Y值大的在上面)
         ents.sort(key=lambda r: r['d19'] if r['d0'] == 10 else r['d11'])
-        for r in ents:
-            self._vis_draw_entity(r)
 
-        # 更新滚动区域
+        # 画布尺寸
         xs = [r['d10'] for r in ents]; ys = [r['d11'] for r in ents]
-        minx, maxx = min(xs)-50, max(xs)+50
-        miny, maxy = min(ys)-50, max(ys)+50
-        w = max(MAX_MAP_W, maxx - minx + 200)
-        h = max(MAX_MAP_H, maxy - miny + 200)
+        minx, maxx = min(xs)-50, max(xs)+50; miny, maxy = min(ys)-50, max(ys)+50
+        w = max(MAX_MAP_W, maxx - minx + 200); h = max(MAX_MAP_H, maxy - miny + 200)
         self._vis_canvas.configure(scrollregion=(0, 0, w, h))
 
+        self._vis_render_scene(ents, w, h)
         self._vis_info.config(text=f"SC.GRP #{sid}: {sname} — {len(ents)} 个实体")
-        # 动画模式: 若正在播放则恢复, 否则不自动启动
-        if self._vis_anim_playing:
-            self._vis_start_anim()
+        if self._vis_anim_playing: self._vis_start_anim()
 
     def _vis_start_anim(self):
-        """启动精灵动画循环 (~200ms/帧); auto/ani 模式开, cha/wire 模式关"""
+        """启动精灵动画循环 (~200ms/帧)"""
         if self._vis_anim_timer: return
         mode = DISPLAY_MODES.get(self._vis_display_mode.get(), 'auto')
         if mode in ('wire', 'cha'): return
@@ -987,12 +1107,9 @@ class MatEditor:
             m = DISPLAY_MODES.get(self._vis_display_mode.get(), 'auto')
             if m in ('wire', 'cha'):
                 self._vis_anim_timer = None; return
-            updated = False
             for idx in list(self._vis_anim_frame.keys()):
                 self._vis_anim_frame[idx] += 1
-                updated = True
-            if updated:
-                self._vis_redraw()
+            self._vis_redraw()
             self._vis_anim_timer = self.root.after(200, _tick)
         self._vis_anim_timer = self.root.after(200, _tick)
 
@@ -1001,270 +1118,197 @@ class MatEditor:
             self.root.after_cancel(self._vis_anim_timer)
             self._vis_anim_timer = None
 
-    def _vis_draw_entity(self, r):
-        """在画布上绘制单个实体"""
-        tval = r['d0']
-        if not self._vis_show_types.get(tval, tk.BooleanVar(value=True)).get():
-            return
-
-        x, y = r['d10'], r['d11']
-        color = '#%02x%02x%02x' % TYPE_COLORS_RGBA.get(tval, (128,128,128))
-        idx = r['index']
-        items = []
+    def _vis_render_scene(self, ents, w, h):
+        """PIL 预合成整个场景并显示到 Canvas"""
+        from PIL import Image, ImageDraw, ImageTk, ImageOps
         mode = DISPLAY_MODES.get(self._vis_display_mode.get(), 'auto')
 
-        # JVG 精灵选择: auto模式按d70逐实体判断 (sub_405CBC逻辑)
-        #   type 200: d70=1→Ani.JVG+d64(行走动画) d70=0→Cha.JVG+d51(立绘)
-        #   type 20/110: Ani.JVG+d64
-        sprite = None; sx = x; sy = y
-        jvg = None; blk_idx = 0; should_animate = False
-        if mode == 'wire':
-            pass
-        elif mode == 'auto':
-            if tval == 200:
-                if r['d70'] == 1 and r['d64'] > 0 and self._ani_jvg:
-                    jvg = self._ani_jvg; blk_idx = r['d64']; should_animate = True
-                elif r['d51'] > 0 and self._cha_jvg:
-                    jvg = self._cha_jvg; blk_idx = r['d51']
-            elif tval in (20, 110) and r['d64'] > 0 and self._ani_jvg:
-                jvg = self._ani_jvg; blk_idx = r['d64']; should_animate = True
-        elif mode == 'ani':
-            if tval in (200, 20, 110) and r['d64'] > 0 and self._ani_jvg:
-                jvg = self._ani_jvg; blk_idx = r['d64']; should_animate = True
-        elif mode == 'cha':
-            if tval == 200 and r['d51'] > 0 and self._cha_jvg:
-                jvg = self._cha_jvg; blk_idx = r['d51']
-            elif tval in (20, 110) and r['d64'] > 0 and self._ani_jvg:
-                jvg = self._ani_jvg; blk_idx = r['d64']
-        if jvg and blk_idx < jvg.block_count:
-            blk = jvg.blocks[blk_idx]
-            if blk.frames:
-                if should_animate:
-                    if idx not in self._vis_anim_frame: self._vis_anim_frame[idx] = 0
-                    anim = self._vis_anim_frame[idx]
+        # 背景
+        if self._vis_bg_pil:
+            composite = self._vis_bg_pil.copy()
+            # 扩展到画布尺寸
+            if composite.width < w or composite.height < h:
+                new_bg = Image.new('RGB', (w, h), (26, 26, 46))
+                new_bg.paste(composite, (0, 0))
+                composite = new_bg
+        else:
+            composite = Image.new('RGB', (w, h), (26, 26, 46))  # 深蓝黑底色
+
+        for r in ents:
+            tval = r['d0']
+            if not self._vis_show_types.get(tval, tk.BooleanVar(value=True)).get():
+                continue
+            idx = r['index']; x = r['d10']; y = r['d11']
+            color = TYPE_COLORS_RGBA.get(tval, (128,128,128))
+
+            # JVG 精灵选择 (与旧逻辑一致)
+            sprite_rgba = None; shadow_rgba = None
+            sx = sy = 0; jvg = None; blk_idx = 0; should_animate = False
+            if mode != 'wire':
+                if mode == 'auto':
+                    if tval == 200:
+                        if r['d70'] == 1 and r['d64'] > 0 and self._ani_jvg:
+                            jvg = self._ani_jvg; blk_idx = r['d64']; should_animate = True
+                        elif r['d51'] > 0 and self._cha_jvg:
+                            jvg = self._cha_jvg; blk_idx = r['d51']
+                    elif tval in (20, 110) and r['d64'] > 0 and self._ani_jvg:
+                        jvg = self._ani_jvg; blk_idx = r['d64']; should_animate = True
+                elif mode == 'ani':
+                    if tval in (200, 20, 110) and r['d64'] > 0 and self._ani_jvg:
+                        jvg = self._ani_jvg; blk_idx = r['d64']; should_animate = True
+                elif mode == 'cha':
+                    if tval == 200 and r['d51'] > 0 and self._cha_jvg:
+                        jvg = self._cha_jvg; blk_idx = r['d51']
+                    elif tval in (20, 110) and r['d64'] > 0 and self._ani_jvg:
+                        jvg = self._ani_jvg; blk_idx = r['d64']
+            if jvg and blk_idx < jvg.block_count:
+                blk = jvg.blocks[blk_idx]
+                if blk.frames:
+                    if should_animate and idx not in self._vis_anim_frame:
+                        self._vis_anim_frame[idx] = 0
+                    anim = self._vis_anim_frame.get(idx, 0) if should_animate else 0
+                    fi, fpd = _get_dir_frame(blk, r['d13'], r['d16'], r['d53'], anim)
+                    if fi < len(blk.frames):
+                        blend_mode = r.get('d24', 0); blend_param = r.get('d25', 0)
+                        sprite_rgba = _get_jvg_frame_rgba(jvg, blk_idx, fi)
+                        if sprite_rgba:
+                            sx = x + blk.frames[fi].x_off; sy = y + blk.frames[fi].y_off
+                            # mode 5: 水平翻转
+                            if blend_mode == 5:
+                                sprite_rgba = ImageOps.mirror(sprite_rgba)
+                            # mode 1: 染色
+                            if blend_mode == 1:
+                                sprite_rgba = _pil_tint(sprite_rgba, blend_param)
+                            # 阴影: sub_406864:37 — d55>0时以该值为Cha.JVG全局帧索引绘阴影
+                            shadow_fi = r.get('d55', 0)
+                            if shadow_fi > 0 and (tval == 200 or tval == 20) and jvg is self._cha_jvg and jvg.block_count > 0:
+                                blk0 = jvg.blocks[0]
+                                if blk0.frames and shadow_fi < blk0.frame_count:
+                                    shadow_rgba = _get_jvg_frame_rgba(jvg, 0, shadow_fi)
+                            # 存储命中区域
+                            fw = sprite_rgba.width; fh = sprite_rgba.height
+                            self._vis_hit_regions[idx] = (sx, sy, sx+fw, sy+fh)
+                            # 合成
+                            if shadow_rgba:
+                                _pil_subtract(composite, shadow_rgba, x + jvg.blocks[0].frames[shadow_fi].x_off,
+                                             y + jvg.blocks[0].frames[shadow_fi].y_off)
+                            blend_func = {0:_pil_normal, 2:_pil_additive, 3:_pil_subtract, 4:_pil_luma_alpha,
+                                          5:_pil_normal}.get(blend_mode, _pil_normal)
+                            if blend_mode == 2:
+                                _pil_additive(composite, sprite_rgba, sx, sy, blend_param)
+                            elif blend_mode == 3:
+                                _pil_subtract(composite, sprite_rgba, sx, sy)
+                            elif blend_mode == 4:
+                                _pil_luma_alpha(composite, sprite_rgba, sx, sy)
+                            else:
+                                _pil_normal(composite, sprite_rgba, sx, sy)
+
+            # 无精灵时画几何形状
+            if sprite_rgba is None and mode == 'wire' and jvg and blk_idx < jvg.block_count:
+                blk = jvg.blocks[blk_idx]
+                if blk.frames:
+                    fi, _ = _get_dir_frame(blk, r['d13'], r['d16'], r['d53'], 0)
+                    self._vis_hit_regions[idx] = (x-10, y-10, x+10, y+10)
+            elif sprite_rgba is None:
+                # 几何形状绘制
+                dr = ImageDraw.Draw(composite)
+                if tval == 10:
+                    bx, by = r['d18'], r['d19']
+                    bw = r['d20'] if r['d20'] > 0 else 40; bh = r['d21'] if r['d21'] > 0 else 40
+                    dr.rectangle([bx, by, bx+bw, by+bh], outline=color, width=2)
+                    self._vis_hit_regions[idx] = (bx, by, bx+bw, by+bh)
+                elif tval == 5:
+                    s = 12
+                    dr.polygon([x, y-s, x+s, y, x, y+s, x-s, y], outline=color)
+                    self._vis_hit_regions[idx] = (x-s, y-s, x+s, y+s)
                 else:
-                    anim = 0
-                fi, fpd = _get_dir_frame(blk, r['d13'], r['d16'], r['d53'], anim)
-                if fi < len(blk.frames):
-                    sprite = _get_blended_sprite(jvg, blk_idx, fi, r.get('d24', 0), r.get('d25', 0))
-                    if sprite:
-                        sx = x + blk.frames[fi].x_off; sy = y + blk.frames[fi].y_off
+                    s = 10
+                    dr.rectangle([x-s, y-s, x+s, y+s], outline=color, width=2)
+                    self._vis_hit_regions[idx] = (x-s, y-s, x+s, y+s)
 
-        # 逆: sub_406864:37 / sub_43339C:68 — 主精灵前先绘阴影
-        # Cha.JVG block[0] 经实测: frames[0]=1x480工具帧, frames[1]=39x23小阴影, frames[2]=65x33大阴影
-        # sub_43BF20:41 — 原游戏通过角色数据表选择阴影大小; 此处以角色精灵宽度近似
-        shadow_sprite = None; shadow_sx = shadow_sy = 0
-        if (tval == 200 or tval == 20) and jvg is self._cha_jvg and jvg.block_count > 0:
-            blk0 = jvg.blocks[0]
-            if blk0.frames and len(blk0.frames) >= 3:
-                char_w = blk.frames[fi].width if blk_idx < jvg.block_count and blk_idx != 0 and blk.frames else 0
-                shadow_fi = 2 if char_w > 50 else 1
-                shadow_sprite = _make_subtractive_shadow(jvg, 0, shadow_fi)
-                if shadow_sprite:
-                    shadow_sx = x + blk0.frames[shadow_fi].x_off
-                    shadow_sy = y + blk0.frames[shadow_fi].y_off
-        if shadow_sprite and mode != 'wire':
-            items.append(self._vis_canvas.create_image(shadow_sx, shadow_sy, anchor='nw', image=shadow_sprite, tags=('entity', f'e{idx}')))
-        if sprite and mode != 'wire':
-            items.append(self._vis_canvas.create_image(sx, sy, anchor='nw', image=sprite, tags=('entity', f'e{idx}')))
-            items.append(self._vis_canvas.create_text(x, y-4, text=f"#{idx}", fill='#FFD700', font=('',6), tags=('entity',f'e{idx}')))
-        elif tval == 10:  # 地形块
-            bx, by = r['d18'], r['d19']
-            bw = r['d20'] if r['d20'] > 0 else 40
-            bh = r['d21'] if r['d21'] > 0 else 40
-            items.append(self._vis_canvas.create_rectangle(bx, by, bx+bw, by+bh, outline=color, width=2, tags=('entity', f'e{idx}')))
-            items.append(self._vis_canvas.create_text(bx+bw//2, by+bh//2, text=f"T{idx}", fill=color, font=('',7), tags=('entity',f'e{idx}')))
-        elif tval == 5:
-            s = 12
-            items.append(self._vis_canvas.create_polygon(x, y-s, x+s, y, x, y+s, x-s, y, outline=color, fill='', width=2, tags=('entity', f'e{idx}')))
-            items.append(self._vis_canvas.create_text(x, y-16, text=f"P{idx}", fill=color, font=('',7), tags=('entity',f'e{idx}')))
-        elif tval == 200:
-            s = 10
-            items.append(self._vis_canvas.create_oval(x-s, y-s-4, x+s, y+s-4, outline=color, width=2, tags=('entity',f'e{idx}')))
-            items.append(self._vis_canvas.create_line(x, y+6, x, y+14, fill=color, width=2, tags=('entity',f'e{idx}')))
-            items.append(self._vis_canvas.create_text(x, y-20, text=f"N{idx}", fill=color, font=('',7), tags=('entity',f'e{idx}')))
-        else:
-            s = 10
-            items.append(self._vis_canvas.create_rectangle(x-s, y-s, x+s, y+s, outline=color, width=2, tags=('entity',f'e{idx}')))
-            items.append(self._vis_canvas.create_text(x, y-16, text=f"#{idx}", fill=color, font=('',7), tags=('entity',f'e{idx}')))
+            # 标签
+            label = f"#{idx}"
+            if tval == 10: label = f"T{idx}"
+            elif tval == 5: label = f"P{idx}"
+            elif tval == 200: label = f"N{idx}"
+            dr = ImageDraw.Draw(composite)
+            dr.text((x, y-16), label, fill=color)
 
-        self._vis_entities[idx] = items
+        # 选中实体高亮覆盖
+        if self._vis_selected is not None and self._vis_selected in self._vis_hit_regions:
+            x1, y1, x2, y2 = self._vis_hit_regions[self._vis_selected]
+            dr = ImageDraw.Draw(composite)
+            dr.rectangle([x1-2, y1-2, x2+2, y2+2], outline=(255, 215, 0), width=2)
 
-    def _vis_draw_entity_highlighted(self, r):
-        """绘制高亮选中的实体 (金黄边框)"""
-        tval = r['d0']
-        x, y = r['d10'], r['d11']
-        hcolor = '#FFD700'; idx = r['index']; items = []
-        mode = DISPLAY_MODES.get(self._vis_display_mode.get(), 'auto')
-
-        # JVG 精灵选择 (高亮版): 与 _vis_draw_entity 同等逻辑
-        sprite = None; sx = x; sy = y
-        jvg = None; bi = 0; should_animate = False
-        if mode == 'wire':
-            pass
-        elif mode == 'auto':
-            if tval == 200:
-                if r['d70'] == 1 and r['d64'] > 0 and self._ani_jvg:
-                    jvg = self._ani_jvg; bi = r['d64']; should_animate = True
-                elif r['d51'] > 0 and self._cha_jvg:
-                    jvg = self._cha_jvg; bi = r['d51']
-            elif tval in (20, 110) and r['d64'] > 0 and self._ani_jvg:
-                jvg = self._ani_jvg; bi = r['d64']; should_animate = True
-        elif mode == 'ani':
-            if tval in (200, 20, 110) and r['d64'] > 0 and self._ani_jvg:
-                jvg = self._ani_jvg; bi = r['d64']; should_animate = True
-        elif mode == 'cha':
-            if tval == 200 and r['d51'] > 0 and self._cha_jvg:
-                jvg = self._cha_jvg; bi = r['d51']
-            elif tval in (20, 110) and r['d64'] > 0 and self._ani_jvg:
-                jvg = self._ani_jvg; bi = r['d64']
-        if jvg and bi < jvg.block_count and jvg.blocks[bi].frames:
-            blk = jvg.blocks[bi]
-            anim = self._vis_anim_frame.get(idx, 0) if should_animate else 0
-            fi, _ = _get_dir_frame(blk, r['d13'], r['d16'], r['d53'], anim)
-            if fi < len(blk.frames):
-                sprite = _get_blended_sprite(jvg, bi, fi, r.get('d24', 0), r.get('d25', 0))
-                if sprite:
-                    sx = x + blk.frames[fi].x_off; sy = y + blk.frames[fi].y_off
-
-        # 逆: sub_406864:72 / sub_43339C:68 — 主精灵前先绘阴影 (高亮版)
-        shadow_sprite = None; shadow_sx = shadow_sy = 0
-        if (tval == 200 or tval == 20) and jvg is self._cha_jvg and jvg.block_count > 0:
-            blk0 = jvg.blocks[0]
-            if blk0.frames and len(blk0.frames) >= 3:
-                char_w = blk.frames[fi].width if bi < jvg.block_count and bi != 0 and blk.frames else 0
-                shadow_fi = 2 if char_w > 50 else 1
-                shadow_sprite = _make_subtractive_shadow(jvg, 0, shadow_fi)
-                if shadow_sprite:
-                    shadow_sx = x + blk0.frames[shadow_fi].x_off
-                    shadow_sy = y + blk0.frames[shadow_fi].y_off
-        if shadow_sprite and mode != 'wire':
-            items.append(self._vis_canvas.create_image(shadow_sx, shadow_sy, anchor='nw', image=shadow_sprite, tags=('entity', f'e{idx}')))
-        if sprite and mode != 'wire':
-            items.append(self._vis_canvas.create_image(sx, sy, anchor='nw', image=sprite, tags=('entity', f'e{idx}')))
-            fw, fh = sprite.width(), sprite.height()
-            items.append(self._vis_canvas.create_rectangle(sx, sy, sx+fw, sy+fh, outline=hcolor, width=2, tags=('entity',f'e{idx}')))
-            items.append(self._vis_canvas.create_text(x, y-4, text=f"#{idx}", fill=hcolor, font=('',7,'bold'), tags=('entity',f'e{idx}')))
-        elif tval == 10:
-            bx, by = r['d18'], r['d19']
-            bw = r['d20'] if r['d20']>0 else 40; bh = r['d21'] if r['d21']>0 else 40
-            items.append(self._vis_canvas.create_rectangle(bx, by, bx+bw, by+bh, outline=hcolor, width=3, tags=('entity',f'e{idx}')))
-            items.append(self._vis_canvas.create_text(bx+bw//2, by+bh//2, text=f"T{idx}", fill=hcolor, font=('',8,'bold'), tags=('entity',f'e{idx}')))
-        elif tval == 5:
-            s=12
-            items.append(self._vis_canvas.create_polygon(x, y-s, x+s, y, x, y+s, x-s, y, outline=hcolor, fill='', width=3, tags=('entity',f'e{idx}')))
-            items.append(self._vis_canvas.create_text(x, y-16, text=f"P{idx}", fill=hcolor, font=('',8,'bold'), tags=('entity',f'e{idx}')))
-        elif tval == 200:
-            s=10
-            items.append(self._vis_canvas.create_oval(x-s, y-s-4, x+s, y+s-4, outline=hcolor, width=3, tags=('entity',f'e{idx}')))
-            items.append(self._vis_canvas.create_line(x, y+6, x, y+14, fill=hcolor, width=3, tags=('entity',f'e{idx}')))
-            items.append(self._vis_canvas.create_text(x, y-20, text=f"N{idx}", fill=hcolor, font=('',8,'bold'), tags=('entity',f'e{idx}')))
-        else:
-            s=10
-            items.append(self._vis_canvas.create_rectangle(x-s, y-s, x+s, y+s, outline=hcolor, width=3, tags=('entity',f'e{idx}')))
-            items.append(self._vis_canvas.create_text(x, y-16, text=f"#{idx}", fill=hcolor, font=('',8,'bold'), tags=('entity',f'e{idx}')))
-        self._vis_entities[idx] = items
+        # 转 PhotoImage 显示
+        self._vis_bg_image = ImageTk.PhotoImage(composite)
+        self._vis_canvas.create_image(0, 0, anchor='nw', image=self._vis_bg_image)
 
     def _vis_redraw(self):
         """重新绘制当前场景"""
         sid = self._vis_scene_id.get()
         self._vis_canvas.delete('all')
-        self._vis_entities.clear(); self._vis_selected = None
-        if self._vis_bg_id:
-            self._vis_bg_id = self._vis_canvas.create_image(0,0,anchor='nw',image=self._vis_bg_image)
+        self._vis_hit_regions = {}
         if not self.records: return
-        # 按Y坐标排序绘制 (Y值大的在上面)
         ents = [r for r in self.records if has_data(r) and r['d1'] == sid]
+        if not ents: return
         ents.sort(key=lambda r: r['d19'] if r['d0'] == 10 else r['d11'])
-        for r in ents:
-            self._vis_draw_entity(r)
+        xs = [r['d10'] for r in ents]; ys = [r['d11'] for r in ents]
+        w = max(MAX_MAP_W, max(xs)-min(xs)+250); h = max(MAX_MAP_H, max(ys)-min(ys)+250)
+        self._vis_render_scene(ents, w, h)
 
-    # ---- 画布交互 ----
     def _vis_canvas_click(self, event):
-        """点击画布：选中实体"""
-        cx = self._vis_canvas.canvasx(event.x)
-        cy = self._vis_canvas.canvasy(event.y)
-        # 重绘以清除旧选中高亮
-        if self._vis_selected is not None:
-            old = self._vis_selected
-            if old in self._vis_entities:
-                for iid in self._vis_entities[old]:
-                    self._vis_canvas.delete(iid)
-                del self._vis_entities[old]
-                self._vis_draw_entity(self.records[old])
-        # 查找点击的实体
-        overlapping = self._vis_canvas.find_overlapping(cx-5, cy-5, cx+5, cy+5)
+        """点击画布：选中实体 (PIL 合成 → 矩形命中)"""
+        cx = int(self._vis_canvas.canvasx(event.x))
+        cy = int(self._vis_canvas.canvasy(event.y))
+        self._vis_selected = None; self._vis_drag = None
         found = None
-        for iid in overlapping:
-            tags = self._vis_canvas.gettags(iid)
-            for t in tags:
-                if t.startswith('e') and t[1:].isdigit():
-                    found = int(t[1:])
-                    break
-            if found is not None: break
-
-        if found is not None and found in self._vis_entities:
+        for idx, (x1, y1, x2, y2) in self._vis_hit_regions.items():
+            if x1 <= cx <= x2 and y1 <= cy <= y2:
+                found = idx
+        if found is not None:
             self._vis_selected = found
-            # 删除后重绘为高亮版本
-            for iid in self._vis_entities[found]:
-                self._vis_canvas.delete(iid)
-            del self._vis_entities[found]
-            self._vis_draw_entity_highlighted(self.records[found])
             rec = self.records[found]
             tname = ENTITY_TYPES.get(rec['d0'], '?')
             pos_x = rec['d18'] if rec['d0'] == 10 else rec['d10']
             pos_y = rec['d19'] if rec['d0'] == 10 else rec['d11']
             self._vis_info.config(text=f"选中: #{found} [{tname}] 坐标({pos_x},{pos_y}) — 拖拽可移动")
             self._vis_drag = (found, cx, cy, pos_x, pos_y)
-            # 同步左侧实体列表选中 + 右侧编辑面板
             self._sync_entity_list_select(found)
             self._current_param_idx = found
             self._show_record(rec)
         else:
-            self._vis_selected = None
-            self._vis_drag = None
             self._vis_info.config(text="")
+        self._vis_redraw()
 
     def _vis_canvas_drag(self, event):
         """拖拽实体移动"""
         if self._vis_drag is None: return
         eidx, sx, sy, ox, oy = self._vis_drag
-        cx = self._vis_canvas.canvasx(event.x)
-        cy = self._vis_canvas.canvasy(event.y)
-        dx, dy = int(cx - sx), int(cy - sy)
+        cx = int(self._vis_canvas.canvasx(event.x))
+        cy = int(self._vis_canvas.canvasy(event.y))
+        dx, dy = cx - sx, cy - sy
         new_x, new_y = ox + dx, oy + dy
-
         rec = self.records[eidx]
         if rec['d0'] == 10:
             rec['d18'], rec['d19'] = new_x, new_y
-            rec['d10'], rec['d11'] = new_x, new_y  # 同步坐标字段
+            rec['d10'], rec['d11'] = new_x, new_y
         else:
             rec['d10'], rec['d11'] = new_x, new_y
         self._dirty = True
-
-        # 重绘该实体
-        for iid in self._vis_entities.get(eidx, []):
-            self._vis_canvas.delete(iid)
-        if eidx in self._vis_entities:
-            del self._vis_entities[eidx]
-        if self._vis_selected == eidx:
-            self._vis_draw_entity_highlighted(self.records[eidx])
-        else:
-            self._vis_draw_entity(self.records[eidx])
         self._vis_info.config(text=f"移动: #{eidx} → ({new_x},{new_y})")
+        self._vis_redraw()
 
     def _vis_canvas_release(self, event):
-        """释放拖拽"""
+        """释放拖拽 — 更新拖拽锚点"""
         if self._vis_drag:
-            # 重新设置拖拽起点为当前位置
-            eidx, _, _, _, _ = self._vis_drag
+            eidx = self._vis_drag[0]
             rec = self.records[eidx]
-            cx = self._vis_canvas.canvasx(event.x)
-            cy = self._vis_canvas.canvasy(event.y)
-            pos_x = rec['d18'] if rec['d0'] == 10 else rec['d10']
-            pos_y = rec['d19'] if rec['d0'] == 10 else rec['d11']
-            self._vis_drag = (eidx, cx, cy, pos_x, pos_y)
-            # 如果参数模式也打开了同一实体，同步显示
+            cx = int(self._vis_canvas.canvasx(event.x))
+            cy = int(self._vis_canvas.canvasy(event.y))
+            px = rec['d18'] if rec['d0'] == 10 else rec['d10']
+            py = rec['d19'] if rec['d0'] == 10 else rec['d11']
+            self._vis_drag = (eidx, cx, cy, px, py)
             if hasattr(self, '_current_param_idx') and self._current_param_idx == eidx:
                 self._show_record(rec)
 
@@ -1456,18 +1500,10 @@ class MatEditor:
         self._current_param_idx = idx
         rec = self.records[idx]
         self._show_record(rec)
-        # 同步高亮中间地图：若实体在当前场景中则高亮
-        if rec['d1'] == self._vis_scene_id.get() and idx in self._vis_entities:
-            if self._vis_selected is not None and self._vis_selected != idx:
-                old = self._vis_selected
-                if old in self._vis_entities:
-                    for iid in self._vis_entities[old]: self._vis_canvas.delete(iid)
-                    del self._vis_entities[old]
-                    self._vis_draw_entity(self.records[old])
+        # 同步高亮中间地图：若实体在当前场景中则高亮并重绘
+        if rec['d1'] == self._vis_scene_id.get():
             self._vis_selected = idx
-            for iid in self._vis_entities.get(idx, []): self._vis_canvas.delete(iid)
-            if idx in self._vis_entities: del self._vis_entities[idx]
-            self._vis_draw_entity_highlighted(rec)
+            self._vis_redraw()
             tname = ENTITY_TYPES.get(rec['d0'], '?')
             pos_x = rec['d18'] if rec['d0'] == 10 else rec['d10']
             pos_y = rec['d19'] if rec['d0'] == 10 else rec['d11']
@@ -1793,9 +1829,11 @@ class MatEditor:
         for key,di,label,cmt in ALL_EDIT_FIELDS:
             val=rec[f'd{di}']
             BLEND_MODES = {0:"正常",1:"染色",2:"加法发光",3:"减法压暗",4:"亮度alpha",5:"水平翻转"}
+            SHADOW_LABELS = {0:"无阴影",1:"小阴影(39×23)",2:"大阴影(65×33)"}
             if key=='type': self._edit_vars[key].set(f"{val}-{ENTITY_TYPES.get(val,'未知')}")
             elif key=='anim_set': self._edit_vars[key].set(f"{val}-{ANIM_SETS.get(val,'未知')}" if val in ANIM_SETS else f"{val}-未知")
             elif key=='blend_mode': self._edit_vars[key].set(f"{val}-{BLEND_MODES.get(val,'未知')}")
+            elif key=='shadow_frame': self._edit_vars[key].set(f"{val}-{SHADOW_LABELS.get(val,'未知')}")
             else: self._edit_vars[key].set(str(val))
         for key,di,label,cmt in RUNTIME_FIELDS:
             if key in self._edit_vars: self._edit_vars[key].set(str(rec[f'd{di}']))
@@ -1856,15 +1894,9 @@ class MatEditor:
         for key,val in new_vals.items(): rec[key]=val
         self._dirty=True; self._show_record(rec); self._apply_filter()
         self._sync_entity_list_select(idx)  # 刷新后重新选中
-        # 如果可视化模式在看同一场景，重绘实体
+        # 如果可视化模式在看同一场景，重绘
         if rec['d1'] == self._vis_scene_id.get():
-            for iid in self._vis_entities.get(idx, []): self._vis_canvas.delete(iid)
-            self._vis_draw_entity(rec)
-            # 若该实体正被高亮选中，重绘为高亮版
-            if self._vis_selected == idx:
-                for iid in self._vis_entities.get(idx, []): self._vis_canvas.delete(iid)
-                if idx in self._vis_entities: del self._vis_entities[idx]
-                self._vis_draw_entity_highlighted(rec)
+            self._vis_redraw()
     def _reset_edit(self):
         sel=self.tree.selection()
         if sel:
@@ -1934,11 +1966,9 @@ class MatEditor:
             if self.tree.item(item,'values')[0]==str(empty_idx):
                 self.tree.selection_set(item); self.tree.see(item); self._show_record(rec); break
 
-        # 若在当前场景则绘入画布
+        # 若在当前场景则重绘
         if sel_scene==self._vis_scene_id.get():
-            for iid in self._vis_entities.get(empty_idx,[]): self._vis_canvas.delete(iid)
-            if empty_idx in self._vis_entities: del self._vis_entities[empty_idx]
-            self._vis_draw_entity(rec)
+            self._vis_redraw()
     def _copy_record(self):
         sel=self.tree.selection()
         if not sel: messagebox.showinfo("提示","请先选择记录"); return
