@@ -434,6 +434,14 @@ class MatEditor:
         self.lbl_sc = ttk.Label(pf, text="SC", foreground="gray", font=FONT_S)
         self.lbl_sc.pack(side=tk.LEFT, padx=3, pady=2)
 
+        # 状态栏
+        sb = ttk.Frame(self.root)
+        sb.pack(side=tk.BOTTOM, fill=tk.X, padx=5, pady=(0,3))
+        self._vis_info = ttk.Label(sb, text="", font=FONT_S, foreground='#666')
+        self._vis_info.pack(side=tk.LEFT, padx=4)
+        self._vis_coord_label = ttk.Label(sb, text="", font=FONT_S, foreground='#999')
+        self._vis_coord_label.pack(side=tk.RIGHT, padx=4)
+
         # 初始 sash 位置: 2:6:3 → 左~18% 中~55% 右~27%
         def _set_sash(tries=0):
             self.root.update_idletasks()
@@ -540,8 +548,6 @@ class MatEditor:
         ttk.Button(top, text="刷新", command=self._vis_load_scene, width=4).pack(side=tk.LEFT, padx=1)
         ttk.Separator(top, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=3)
         ttk.Button(top, text="新增实体", command=self._new_record, width=8).pack(side=tk.LEFT, padx=1)
-        self._vis_info = ttk.Label(top, text="", font=FONT_S, foreground='#666')
-        self._vis_info.pack(side=tk.RIGHT, padx=4)
 
         # 地图画布
         cf = ttk.Frame(center_frame); cf.pack(fill=tk.BOTH, expand=True)
@@ -557,6 +563,7 @@ class MatEditor:
         self._vis_canvas.bind('<B1-Motion>', self._vis_canvas_drag)
         self._vis_canvas.bind('<ButtonRelease-1>', self._vis_canvas_release)
         self._vis_canvas.bind('<MouseWheel>', lambda e: self._vis_canvas.xview_scroll(int(-1*(e.delta/120)),"units") if e.state & 0x1 else self._vis_canvas.yview_scroll(int(-1*(e.delta/120)),"units"))
+        self._vis_canvas.bind('<Motion>', lambda e: self._vis_coord_label.config(text=f"坐标: ({int(self._vis_canvas.canvasx(e.x))}, {int(self._vis_canvas.canvasy(e.y))})"))
 
     # =========== 右侧面板: 编辑区 ===========
     def _build_right_panel(self, main_pw):
@@ -591,12 +598,6 @@ class MatEditor:
         self._build_group("脚本", SCRIPT_FIELDS, 3)
         self._build_group("交互/角色", INTERACT_FIELDS, 4)
         self._build_group("运行时(只读)", RUNTIME_FIELDS, 5)
-        # DefUnit 链信息 (只读)
-        du_f = ttk.LabelFrame(self.edit_inner, text="DefUnit链 (TKDefUnit.dat)", padding=4)
-        du_f.grid(row=6, column=0, sticky='ew', padx=2, pady=2)
-        self.du_text = tk.Text(du_f, height=6, width=40, font=FONT_S,
-            state='disabled', wrap='word', bg='#f8f8f8', relief='flat')
-        self.du_text.pack(fill=tk.X, padx=2, pady=2)
         # flags ↔ checkbutton 双向同步
         self._sync_lock = False
         _bit_vars = [(self._bit_enable,1), (self._bit_visible,2), (self._bit_pickable,4),
@@ -844,7 +845,8 @@ class MatEditor:
             self._vis_canvas.configure(scrollregion=(0,0,MAX_MAP_W,MAX_MAP_H))
             return
 
-        # 绘制实体
+        # 绘制实体 (按Y坐标排序，Y值大的在上面)
+        ents.sort(key=lambda r: r['d19'] if r['d0'] == 10 else r['d11'])
         for r in ents:
             self._vis_draw_entity(r)
 
@@ -933,6 +935,21 @@ class MatEditor:
                     if sprite:
                         sx = x + blk.frames[fi].x_off; sy = y + blk.frames[fi].y_off
 
+        # 逆: sub_406864:37 / sub_43339C:68 — 主精灵前先绘阴影
+        # Cha.JVG block[0] 经实测: frames[0]=1x480工具帧, frames[1]=39x23小阴影, frames[2]=65x33大阴影
+        # sub_43BF20:41 — 原游戏通过角色数据表选择阴影大小; 此处以角色精灵宽度近似
+        shadow_sprite = None; shadow_sx = shadow_sy = 0
+        if (tval == 200 or tval == 20) and jvg is self._cha_jvg and jvg.block_count > 0:
+            blk0 = jvg.blocks[0]
+            if blk0.frames and len(blk0.frames) >= 3:
+                char_w = blk.frames[fi].width if blk_idx < jvg.block_count and blk_idx != 0 and blk.frames else 0
+                shadow_fi = 2 if char_w > 50 else 1
+                shadow_sprite = _jvg_sprite_to_tk(jvg, 0, shadow_fi)
+                if shadow_sprite:
+                    shadow_sx = x + blk0.frames[shadow_fi].x_off
+                    shadow_sy = y + blk0.frames[shadow_fi].y_off
+        if shadow_sprite and mode != 'wire':
+            items.append(self._vis_canvas.create_image(shadow_sx, shadow_sy, anchor='nw', image=shadow_sprite, tags=('entity', f'e{idx}')))
         if sprite and mode != 'wire':
             items.append(self._vis_canvas.create_image(sx, sy, anchor='nw', image=sprite, tags=('entity', f'e{idx}')))
             items.append(self._vis_canvas.create_text(x, y-4, text=f"#{idx}", fill='#FFD700', font=('',6), tags=('entity',f'e{idx}')))
@@ -995,6 +1012,19 @@ class MatEditor:
                 if sprite:
                     sx = x + blk.frames[fi].x_off; sy = y + blk.frames[fi].y_off
 
+        # 逆: sub_406864:72 / sub_43339C:68 — 主精灵前先绘阴影 (高亮版)
+        shadow_sprite = None; shadow_sx = shadow_sy = 0
+        if (tval == 200 or tval == 20) and jvg is self._cha_jvg and jvg.block_count > 0:
+            blk0 = jvg.blocks[0]
+            if blk0.frames and len(blk0.frames) >= 3:
+                char_w = blk.frames[fi].width if bi < jvg.block_count and bi != 0 and blk.frames else 0
+                shadow_fi = 2 if char_w > 50 else 1
+                shadow_sprite = _jvg_sprite_to_tk(jvg, 0, shadow_fi)
+                if shadow_sprite:
+                    shadow_sx = x + blk0.frames[shadow_fi].x_off
+                    shadow_sy = y + blk0.frames[shadow_fi].y_off
+        if shadow_sprite and mode != 'wire':
+            items.append(self._vis_canvas.create_image(shadow_sx, shadow_sy, anchor='nw', image=shadow_sprite, tags=('entity', f'e{idx}')))
         if sprite and mode != 'wire':
             items.append(self._vis_canvas.create_image(sx, sy, anchor='nw', image=sprite, tags=('entity', f'e{idx}')))
             fw, fh = sprite.width(), sprite.height()
@@ -1028,9 +1058,11 @@ class MatEditor:
         if self._vis_bg_id:
             self._vis_bg_id = self._vis_canvas.create_image(0,0,anchor='nw',image=self._vis_bg_image)
         if not self.records: return
-        for r in self.records:
-            if has_data(r) and r['d1'] == sid:
-                self._vis_draw_entity(r)
+        # 按Y坐标排序绘制 (Y值大的在上面)
+        ents = [r for r in self.records if has_data(r) and r['d1'] == sid]
+        ents.sort(key=lambda r: r['d19'] if r['d0'] == 10 else r['d11'])
+        for r in ents:
+            self._vis_draw_entity(r)
 
     # ---- 画布交互 ----
     def _vis_canvas_click(self, event):
@@ -1652,27 +1684,7 @@ class MatEditor:
             if key in self._edit_vars: self._edit_vars[key].set(str(rec[f'd{di}']))
         if '_scene_label' in self._edit_vars: self._edit_vars['_scene_label'].config(text=sname)
         if '_hint_label' in self._edit_vars:
-            hid=rec['d23']; self._edit_vars['_hint_label'].config(text=self.tkt_scenes.get(hid,""))
-        # 更新 DefUnit 链显示
-        self.du_text.config(state='normal')
-        self.du_text.delete('1.0', tk.END)
-        if self.defunit_recs:
-            chains = []
-            for sub_name, h_di, mx_di, cur_di in [
-                ('A', 39, 30, 33), ('B', 40, 31, 34), ('C', 41, 32, 35)]:
-                h = rec.get(f'd{h_di}', 0); mx = rec.get(f'd{mx_di}', 0)
-                cur = rec.get(f'd{cur_di}', 0)
-                if h > 0 and mx > 0:
-                    nodes = self._trace_defunit_chain(h, mx, cur)
-                    if nodes:
-                        chains.append(f"子场景{sub_name} (head=#{h} max={mx} cur={cur}):\n  {' → '.join(nodes)}")
-            if chains:
-                self.du_text.insert('1.0', '\n'.join(chains))
-            elif has_data(rec):
-                self.du_text.insert('1.0', '(无 DefUnit 链)')
-        else:
-            self.du_text.insert('1.0', '(未加载 TKDefUnit.dat)')
-        self.du_text.config(state='disabled')
+            hid=rec['d23']; self._edit_vars['_hint_label'].config(text="" if hid==0 else self.tkt_scenes.get(hid,""))
         flags=rec['d2']
         self._bit_enable.set((flags&1)!=0)
         self._bit_visible.set((flags&2)!=0)
@@ -1692,10 +1704,6 @@ class MatEditor:
             elif isinstance(var,ttk.Combobox): var.set("")
         if '_scene_label' in self._edit_vars: self._edit_vars['_scene_label'].config(text="")
         if '_hint_label' in self._edit_vars: self._edit_vars['_hint_label'].config(text="")
-        # 清空 DefUnit 链显示
-        self.du_text.config(state='normal')
-        self.du_text.delete('1.0', tk.END)
-        self.du_text.config(state='disabled')
         # 清空脚本标签页
         self._clear_script_editor()
         self.chain_tree.delete(*self.chain_tree.get_children())
