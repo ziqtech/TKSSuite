@@ -1763,15 +1763,19 @@ class WarpcEditor:
 
         # Apply role combobox
         if 'role' in self._edit_extras:
-            sv = self._edit_extras['role'].get()
-            f[3] = int(sv.split('-', 1)[0]) if '-' in sv else int(sv)
-            self._edit_vars['role'].set(str(f[3]))
+            sv = self._edit_extras['role'].get().strip()
+            if sv:
+                sep = sv.find('-', 1) if sv.startswith('-') else sv.find('-')
+                f[3] = int(sv[:sep]) if sep >= 0 else int(sv)
+                self._edit_vars['role'].set(str(f[3]))
 
         # Apply reaction_group combobox
         if 'reaction_group' in self._edit_extras:
-            sv = self._edit_extras['reaction_group'].get()
-            f[41] = int(sv.split('-', 1)[0]) if '-' in sv else int(sv)
-            self._edit_vars['reaction_group'].set(str(f[41]))
+            sv = self._edit_extras['reaction_group'].get().strip()
+            if sv:
+                sep = sv.find('-', 1) if sv.startswith('-') else sv.find('-')
+                f[41] = int(sv[:sep]) if sep >= 0 else int(sv)
+                self._edit_vars['reaction_group'].set(str(f[41]))
 
         # Sync status slot UI widgets → StringVars
         if hasattr(self, '_status_widgets'):
@@ -1814,7 +1818,8 @@ class WarpcEditor:
         if hasattr(self, '_skill_learn_widgets'):
             for skill_idx, cb in self._skill_learn_widgets:
                 sv = cb.get()
-                byte_val = int(sv.split('-', 1)[0]) if '-' in sv else 0
+                sep = sv.find('-', 1) if sv.startswith('-') else sv.find('-')
+                byte_val = int(sv[:sep]) if sep >= 0 else 0
                 field_idx = 88 + skill_idx // 2
                 is_high = skill_idx % 2
                 unsigned = f[field_idx] & 0xFFFF

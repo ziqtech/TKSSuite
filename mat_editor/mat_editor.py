@@ -46,7 +46,7 @@ BASIC_FIELDS = [
     ("cursor_id",8,"光标动画","鼠标悬停光标动画编号。传送点(type=10)设为3显示开门动画。sub_411BA4/sub_412390"),
     ("blend_mode",24,"混合模式","sub_406864:39 — 主精灵渲染混合: 0=正常 1=染色 2=加法发光 3=减法压暗 4=亮度alpha 5=水平翻转"),
     ("blend_param",25,"混合参数","sub_406864:45/54 — d24=1时颜色索引, d24=2时加法缩放(0或>31=全加法)"),
-    ("shadow_frame",55,"阴影帧","sub_406864:37 — Cha.JVG全局帧索引。0=无阴影, 1=小阴影(39×23), 2=大阴影(65×33)"),]
+    ("shadow_frame",55,"阴影帧","type=16:把手1概率 type=110:组1Ymin type=200:Cha.JVG阴影帧(0=无1=小2=大)。sub_406864:37,sub_4084E0,sub_408B30"),]
 POS_FIELDS = [
     ("x",10,"坐标X","世界坐标X (像素)。sub_407070: a1[10]=x"),
     ("y",11,"坐标Y","世界坐标Y (像素)。sub_407070: a1[11]=y"),
@@ -57,9 +57,9 @@ POS_FIELDS = [
     ("direction",13,"朝向","朝向 1~8。sub_4077E4"),]
 ANIM_FIELDS = [
     ("anim_set",9,"动画集ID","动画集索引。sub_405CBC: dword_755AC0[v2[9]]"),
-    ("dir_mode",53,"目标X/方向模式","传送点(type=10): 目标X坐标 sub_4081F8:30; NPC(type=200): 方向模式(0=静态/4=四方向/8=八方向) sub_4077E4"),
-    ("target_y",54,"目标Y坐标","传送点(type=10): 目标Y坐标。sub_4081F8:30"),
-    ("sub_model",64,"子模型ID","子角色动画模型ID"),("anim_speed",69,"动画速度","动画播放速度"),]
+    ("dir_mode",53,"目标X/方向模式","type=5:目标X type=16:把手2道具 type=110:组1Xmin type=200:方向模式(0=静态/4=四向/8=八向)。sub_4081F8:30,sub_4084E0,sub_408B30,sub_4077E4"),
+    ("target_y",54,"目标Y坐标","type=5:目标Y type=16:把手3道具 type=110:组1Xmax type=200:目标Y。sub_4081F8:30,sub_4084E0,sub_408B30"),
+    ("sub_model",64,"子模型ID","type=110:组3Ymax type=200:Ani.JVG块(行走动画)。sub_405CBC,sub_408B30"),("anim_speed",69,"动画速度","动画播放速度"),]
 SCRIPT_FIELDS = [
     ("defunit_idx",44,"DefUnit索引","文件值=-1为正常; 运行时由 sub_4066F0 沿链遍历计算填入。sub_40EBD4:18 读取"),
     ("cur_define",28,"当前DEFINE","当前DEFINE脚本号"),
@@ -70,21 +70,81 @@ SCRIPT_FIELDS = [
     ("head_A",39,"DefUnit链头A","子场景A的 TKDefUnit 链表头索引。sub_4066F0:39 从这开始遍历"),
     ("head_B",40,"DefUnit链头B",""),("head_C",41,"DefUnit链头C",""),]
 INTERACT_FIELDS = [
-    ("char_id",50,"条件角色","传送点: 所需角色ID在队伍中; NPC: 条件角色。sub_4081F8:15"),
-    ("access_mask",51,"访问掩码","传送点: 访问标志位 (bitmask, 位=朝向-1); NPC: 图片ID。sub_4081F8:17"),
-    ("target_scene",52,"目标场景","传送点(type=10): 目标场景ID; NPC: 动画句柄(运行时)。sub_4081F8:30"),]
+    ("char_id",50,"条件角色","type=5:需求场景 type=15:需求场景 type=16:需求场景 type=110:帧计数器 type=200:条件角色。sub_4081F8:15, sub_408B30"),
+    ("access_mask",51,"访问掩码","type=5:队伍位掩码 type=15:队伍位掩码 type=16:队伍位掩码 type=200:立绘ID(Cha.JVG块)。sub_4081F8:17"),
+    ("target_scene",52,"目标场景","type=5:目标地图ID type=16:把手1道具 type=110:行为模式(0=掉落1=清除) type=200:动画句柄(运行时)。sub_4081F8:30, sub_4084E0, sub_408B30"),]
 RUNTIME_FIELDS = [
     ("tick",4,"tick","Tick周期(运行时)"),
     ("timer",12,"计时器",""),("frame_idx",14,"帧索引",""),
     ("frame_count",16,"总帧数",""),("frame_cur",17,"帧计数",""),
     ("script_PC",42,"脚本PC",""),("saved_PC",43,"保存PC",""),
-    ("target_dir",56,"目标朝向","传送点(type=10): 目标朝向(1-8) sub_4081F8:30; NPC: 保存X(运行时)"),
-    ("saved_y",57,"保存Y",""),
-    ("alt_tele_x",60,"备选传送X","传送点(type=10): 备选传送后X坐标 sub_4081F8:31"),
-    ("alt_tele_y",61,"备选传送Y","传送点(type=10): 备选传送后Y坐标 sub_4081F8:31"),
-    ("sub_handle",65,"子句柄",""),("cur_frame",67,"当前帧",""),
-    ("max_frame",68,"最大帧",""),("moving",70,"移动中",""),]
+    ("target_dir",56,"目标朝向","type=5:目标朝向(1-8) type=16:把手2概率 type=110:组1Ymax type=200:寻路X(运行时)。sub_4081F8:30,sub_4084E0,sub_408B30"),
+    ("saved_y",57,"保存Y","type=5:相机X type=16:把手3概率 type=110:组2Xmin type=200:寻路Y(运行时)。sub_4081F8,sub_4084E0,sub_408B30"),
+    ("alt_tele_x",60,"备选传送X","type=5:相机偏移X type=110:组2Ymax type=200:备选传送X。sub_4081F8:31,sub_408B30"),
+    ("alt_tele_y",61,"备选传送Y","type=5:相机偏移Y type=16:冷却计时 type=110:组3Xmin type=200:备选传送Y。sub_4081F8:31,sub_4084E0,sub_408B30"),
+    ("sub_handle",65,"子句柄","type=16:目标地图 type=110:组3Xmax? type=200:动画基址(运行时)。sub_4084E0,sub_408B30"),("cur_frame",67,"当前帧",""),
+    ("max_frame",68,"最大帧",""),("moving",70,"移动中",""),
+    ("priority",22,"优先级/α","sub_406864:35 — 实体优先级/像素透明度。sub_406E50 计算, 决定简单/变换渲染分支"),
+    ("sprite_off_x",26,"精灵偏移X","sub_406864:30 — 精灵 X 屏幕偏移, 叠加到坐标"),
+    ("sprite_off_y",27,"精灵偏移Y","sub_406864:31 — 精灵 Y 屏幕偏移, 叠加到坐标"),]
 ALL_EDIT_FIELDS = BASIC_FIELDS+POS_FIELDS+ANIM_FIELDS+SCRIPT_FIELDS+INTERACT_FIELDS
+
+# 类型相关字段映射: type → {dword: (label, comment)}
+# 仅列出与 type=200(NPC) 默认语义不同的字段
+_TYPE_LABELS = {
+    5: {  # 入口/传送点 sub_4081F8
+        50:("需求场景",""), 51:("队伍位掩码",""),
+        52:("目标地图ID",""), 53:("目标X","传送后X坐标"),
+        54:("目标Y","传送后Y坐标"), 56:("目标朝向","传送后玩家朝向1-8"),
+        57:("相机X","相机目标X"), 58:("相机Y",""),
+        59:("相机Z",""), 60:("相机偏移X",""),
+        61:("相机偏移Y",""), 62:("过程锁","非零时锁定"),
+    },
+    10: {  # 地形块 sub_405CBC + sub_40DC1C
+        62:("连线组数","连线组数量>0启用"),
+        63:("线1-启用",""), 64:("线1-X1",""), 65:("线1-Y1",""), 66:("线1-X2",""), 67:("线1-Y2",""),
+        68:("线2-启用",""), 69:("线2-X1",""), 70:("线2-Y1",""), 71:("线2-X2",""), 72:("线2-Y2",""),
+        73:("线3-启用",""), 74:("线3-X1",""), 75:("线3-Y1",""), 76:("线3-X2",""), 77:("线3-Y2",""),
+        78:("线4-启用",""), 79:("线4-X1",""), 80:("线4-Y1",""), 81:("线4-X2",""), 82:("线4-Y2",""),
+        83:("线5-启用",""), 84:("线5-X1",""), 85:("线5-Y1",""), 86:("线5-X2",""), 87:("线5-Y2",""),
+    },
+    15: {  # 障碍物 sub_408408
+        34:("触发开关","非零可触发"), 50:("需求场景",""),
+        51:("队伍位掩码",""),
+    },
+    16: {  # 建筑/门 sub_4084E0
+        50:("需求场景",""), 51:("队伍位掩码",""),
+        52:("把手1道具",""), 53:("把手2道具",""),
+        54:("把手3道具",""), 55:("把手1概率",""),
+        56:("把手2概率",""), 57:("把手3概率",""),
+        61:("冷却计时",""), 62:("目标地图",""),
+    },
+    110: {  # 特殊机关 sub_408B30
+        50:("帧计数器",""), 52:("行为模式","0=随机掉落 1=清除标志"),
+        53:("组1-Xmin",""), 54:("组1-Xmax",""), 55:("组1-Ymin",""), 56:("组1-Ymax",""),
+        57:("组2-Xmin",""), 58:("组2-Xmax",""), 59:("组2-Ymin",""), 60:("组2-Ymax",""),
+        61:("组3-Xmin",""), 62:("组3-Xmax",""), 63:("组3-Ymin",""), 64:("组3-Ymax",""),
+    },
+    200: {  # NPC/角色 sub_406864 + sub_405CBC
+        50:("条件角色",""), 51:("立绘ID","Cha.JVG块索引"),
+        52:("动画句柄","运行时"), 53:("方向模式","4=四向 8=八向 0=静态"),
+        55:("阴影帧","Cha.JVG全局帧索引"), 56:("寻路X","运行时"),
+        57:("寻路Y","运行时"), 64:("子模型","Ani.JVG块索引"),
+        65:("动画基址","运行时"), 66:("动画间隔","随机动画帧间隔"),
+        67:("帧起点","动画帧循环起点"), 68:("帧终点","动画帧终点=max-1"),
+        70:("移动模式","0=静止 1=行走"),
+        71:("事件1帧",""),72:("事件1动作",""), 73:("事件2帧",""),74:("事件2动作",""),
+        75:("事件3帧",""),76:("事件3动作",""), 77:("事件4帧",""),78:("事件4动作",""),
+        79:("事件5帧",""),80:("事件5动作",""), 81:("事件6帧",""),82:("事件6动作",""),
+        83:("事件7帧",""),84:("事件7动作",""), 85:("事件8帧",""),86:("事件8动作",""),
+        87:("事件9帧",""),88:("事件9动作",""), 89:("事件10帧",""),90:("事件10动作",""),
+        91:("事件11帧",""),92:("事件11动作",""),
+        93:("事件12帧",""),94:("事件12动作",""),
+        95:("事件13帧",""),
+    },
+}
+# 注意: type=20(事件对象) 字段语义与 type=200 相同
+
 FONT = ('Microsoft YaHei UI', 9); FONT_S = ('Microsoft YaHei UI', 8)
 FONT_B = ('Microsoft YaHei UI', 11, 'bold')
 FONT_MONO = ('Consolas', 10)
@@ -833,6 +893,7 @@ class MatEditor:
         canvas.bind("<Leave>", lambda e: canvas.unbind_all("<MouseWheel>"))
         # 构建编辑字段组 + 位域 checkbutton 双向同步
         self._edit_vars = {}
+        self._param_labels = {}  # di → (label_widget, default_text, default_tooltip)
         self._build_group("基础属性", BASIC_FIELDS, 0)
         self._build_group("位置", POS_FIELDS, 1)
         self._build_group("动画", ANIM_FIELDS, 2)
@@ -869,6 +930,11 @@ class MatEditor:
         self.notebook.add(self.tab_script, text="脚本")
         self._build_script_tab()
 
+        # === Tab "全部" — 所有 96 dword 按序显示 ===
+        self.tab_all = ttk.Frame(self.notebook)
+        self.notebook.add(self.tab_all, text="全部")
+        self._build_all_tab()
+
         # 按钮 (Notebook 外面底部)
         bf = ttk.Frame(rf); bf.pack(side=tk.BOTTOM, fill=tk.X, pady=(2,0))
         ttk.Button(bf, text="应用修改", command=self._apply_edit, width=12).pack(side=tk.LEFT)
@@ -883,6 +949,8 @@ class MatEditor:
             r,c=divmod(fi,3); frm=ttk.Frame(grid); frm.grid(row=r,column=c,sticky='nw',padx=4,pady=2)
             lbl=ttk.Label(frm,text=f"[{di:02d}] {label}",font=FONT_S); lbl.pack(anchor=tk.W)
             if cmt: self._bind_tooltip(lbl,f"[{di:02d}] {cmt}")
+            # 存储标签引用 + 默认文本 + tooltip, 供 _show_record 动态更新
+            self._param_labels[di] = (lbl, label, cmt)
             if key=='type':
                 cb=ttk.Combobox(frm,state='readonly',values=[f"{k}-{v}" for k,v in sorted(ENTITY_TYPES.items())],width=14,font=FONT)
                 cb.pack(fill=tk.X); self._edit_vars[key]=cb
@@ -1014,6 +1082,87 @@ class MatEditor:
         self._vis_scene_combo['values'] = combo_vals
         for sid, sname, cnt in scenes:
             self._vis_tree.insert('', 'end', values=(str(sid), sname, str(cnt)))
+
+    def _build_all_tab(self):
+        """Tab '全部': 按 d0~d95 顺序展示全部 96 个字段"""
+        mid = ttk.Frame(self.tab_all); mid.pack(fill=tk.BOTH, expand=True)
+        lc = ttk.Frame(mid); lc.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scb = ttk.Scrollbar(mid, orient=tk.VERTICAL); scb.pack(side=tk.RIGHT, fill=tk.Y)
+        canvas = tk.Canvas(lc, highlightthickness=0); canvas.pack(fill=tk.BOTH, expand=True)
+        inner = ttk.Frame(canvas)
+        inner.bind('<Configure>', lambda e: canvas.configure(scrollregion=canvas.bbox('all')))
+        canvas.create_window((0,0), window=inner, anchor='nw')
+        canvas.configure(yscrollcommand=scb.set)
+        scb.configure(command=canvas.yview)
+        def _mw(e): canvas.yview_scroll(int(-1*(e.delta/120)), "units")
+        canvas.bind("<Enter>", lambda e: canvas.bind_all("<MouseWheel>", _mw))
+        canvas.bind("<Leave>", lambda e: canvas.unbind_all("<MouseWheel>"))
+
+        # 构建所有已知字段映射: di → (name, label, comment)
+        known = {}
+        for fields in (BASIC_FIELDS, POS_FIELDS, ANIM_FIELDS, SCRIPT_FIELDS, INTERACT_FIELDS, RUNTIME_FIELDS):
+            for name, di, label, cmt in fields:
+                known[di] = (name, label, cmt)
+
+        # 每行 4 个字段, 独立 key 避免与 "参数"tab 的 Combobox 冲突
+        self._all_labels = {}  # di → label_widget
+        for di in range(96):
+            r, c = divmod(di, 4)
+            frm = ttk.Frame(inner); frm.grid(row=r, column=c, sticky='nw', padx=2, pady=1)
+            if di in known:
+                name, label, cmt = known[di]
+                key = f'raw_{di}'
+                lbl = ttk.Label(frm, text=f"[{di:02d}] {label}", font=FONT_S)
+            else:
+                key = f'd{di}'; label = f'd{di}'; cmt = ""
+                lbl = ttk.Label(frm, text=f"[{di:02d}] d{di}", font=FONT_S, foreground='#888')
+            lbl.pack(anchor=tk.W)
+            if cmt: self._bind_tooltip(lbl, f"[{di:02d}] {cmt}")
+            ev = tk.StringVar(); self._edit_vars[key] = ev
+            ttk.Entry(frm, textvariable=ev, width=10, font=FONT_S).pack(fill=tk.X)
+            self._all_labels[di] = lbl
+
+    def _update_param_labels(self, tval):
+        """根据实体类型更新'参数'tab的字段标签和tooltip"""
+        type_labels = _TYPE_LABELS.get(tval, {})
+        if tval == 20: type_labels = _TYPE_LABELS.get(200, {})
+        known = {}
+        for fields in (BASIC_FIELDS, POS_FIELDS, ANIM_FIELDS, SCRIPT_FIELDS, INTERACT_FIELDS, RUNTIME_FIELDS):
+            for name, di, label, cmt in fields:
+                known[di] = (label, cmt)
+        for di, (lbl, def_label, def_cmt) in self._param_labels.items():
+            if di in type_labels:
+                tl, tc = type_labels[di]
+                lbl.config(text=f"[{di:02d}] {tl}", foreground='#cc6600')
+                tt = f"[{di:02d}] {tl}"
+                if tc: tt += f": {tc}"
+                self._bind_tooltip(lbl, tt)
+            else:
+                lbl.config(text=f"[{di:02d}] {def_label}", foreground='black')
+                if def_cmt: self._bind_tooltip(lbl, f"[{di:02d}] {def_cmt}")
+
+    def _update_all_tab_labels(self, tval):
+        """根据实体类型更新'全部'tab的字段标签"""
+        type_labels = _TYPE_LABELS.get(tval, {})
+        # type=20 与 type=200 共享语义
+        if tval == 20:
+            type_labels = _TYPE_LABELS.get(200, {})
+        known = {}
+        for fields in (BASIC_FIELDS, POS_FIELDS, ANIM_FIELDS, SCRIPT_FIELDS, INTERACT_FIELDS, RUNTIME_FIELDS):
+            for name, di, label, cmt in fields:
+                known[di] = (name, label, cmt)
+        for di in range(96):
+            if di not in self._all_labels: continue
+            lbl = self._all_labels[di]
+            if di in type_labels:
+                tl, tc = type_labels[di]
+                lbl.config(text=f"[{di:02d}] {tl}", foreground='#cc6600')  # 橙色=类型特有
+                if tc: self._bind_tooltip(lbl, f"[{di:02d}] {tl}: {tc}")
+            elif di in known:
+                name, label, cmt = known[di]
+                lbl.config(text=f"[{di:02d}] {label}", foreground='black')
+            else:
+                lbl.config(text=f"[{di:02d}] d{di}", foreground='#888')
 
     def _sync_entity_filter_to_scene(self, sid):
         """场景选中后同步筛选左侧实体列表为该场景的实体"""
@@ -1837,6 +1986,12 @@ class MatEditor:
             else: self._edit_vars[key].set(str(val))
         for key,di,label,cmt in RUNTIME_FIELDS:
             if key in self._edit_vars: self._edit_vars[key].set(str(rec[f'd{di}']))
+        # 填充"全部"标签页的字段 (raw_N 已知 + dN 未知)
+        for di in range(96):
+            for prefix in ('raw_', 'd'):
+                key = f'{prefix}{di}'
+                if key in self._edit_vars:
+                    self._edit_vars[key].set(str(rec[f'd{di}']))
         if '_scene_label' in self._edit_vars: self._edit_vars['_scene_label'].config(text=sname)
         if '_hint_label' in self._edit_vars:
             hid=rec['d23']; self._edit_vars['_hint_label'].config(text="" if hid==0 else self.tkt_scenes.get(hid,""))
@@ -1849,6 +2004,9 @@ class MatEditor:
         self._bit_resume.set((flags&0x20)!=0)
         self._bit_animloop.set((flags&0x10000)!=0)
         self._sync_lock=False
+        # 根据实体类型动态更新参数tab + 全部tab标签
+        self._update_param_labels(tval)
+        self._update_all_tab_labels(tval)
         # 刷新脚本标签页链列表
         self._refresh_chain_list()
 
@@ -1859,6 +2017,9 @@ class MatEditor:
             elif isinstance(var,ttk.Combobox): var.set("")
         if '_scene_label' in self._edit_vars: self._edit_vars['_scene_label'].config(text="")
         if '_hint_label' in self._edit_vars: self._edit_vars['_hint_label'].config(text="")
+        # 恢复参数tab标签为默认
+        for di, (lbl, def_label, _) in self._param_labels.items():
+            lbl.config(text=f"[{di:02d}] {def_label}", foreground='black')
         # 清空脚本标签页
         self._clear_script_editor()
         self.chain_tree.delete(*self.chain_tree.get_children())
@@ -1869,16 +2030,31 @@ class MatEditor:
         self._sync_lock=False
 
     def _read_form(self):
-        vals={}
-        for key,di,label,cmt in ALL_EDIT_FIELDS:
-            var=self._edit_vars[key]
-            if isinstance(var,ttk.Combobox):
-                try: v=int(var.get().split('-')[0])
-                except: return None
-            else:
-                try: v=int(var.get())
-                except: return None
-            vals[f'd{di}']=v
+        vals = {}
+        # 已覆盖的索引 (避免 "全部"tab 的 raw_/d_ 覆盖 "参数"tab 的值)
+        covered = set()
+        for fields in (ALL_EDIT_FIELDS, RUNTIME_FIELDS):
+            for key, di, label, cmt in fields:
+                if key not in self._edit_vars: continue
+                var = self._edit_vars[key]
+                if isinstance(var, ttk.Combobox):
+                    try: v = int(var.get().split('-')[0])
+                    except: return None
+                else:
+                    try: v = int(var.get())
+                    except: return None
+                vals[f'd{di}'] = v
+                covered.add(di)
+        # 填充 "全部"tab 的未知字段
+        for di in range(96):
+            if di in covered: continue
+            for prefix in ('raw_', 'd'):
+                key = f'{prefix}{di}'
+                if key in self._edit_vars:
+                    try: v = int(self._edit_vars[key].get())
+                    except: return None
+                    vals[f'd{di}'] = v
+                    break
         return vals
     def _apply_edit(self):
         sel=self.tree.selection()
