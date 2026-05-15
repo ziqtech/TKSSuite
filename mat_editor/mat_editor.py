@@ -556,7 +556,7 @@ class MatEditor:
         self._vis_canvas.bind('<Button-1>', self._vis_canvas_click)
         self._vis_canvas.bind('<B1-Motion>', self._vis_canvas_drag)
         self._vis_canvas.bind('<ButtonRelease-1>', self._vis_canvas_release)
-        self._vis_canvas.bind('<MouseWheel>', lambda e: self._vis_canvas.yview_scroll(int(-1*(e.delta/120)),"units"))
+        self._vis_canvas.bind('<MouseWheel>', lambda e: self._vis_canvas.xview_scroll(int(-1*(e.delta/120)),"units") if e.state & 0x1 else self._vis_canvas.yview_scroll(int(-1*(e.delta/120)),"units"))
 
     # =========== 右侧面板: 编辑区 ===========
     def _build_right_panel(self, main_pw):
@@ -671,6 +671,9 @@ class MatEditor:
             if key=='scene_id':
                 nl=ttk.Label(frm,text="",foreground='#3366cc',font=FONT_S,wraplength=150)
                 nl.pack(anchor=tk.W); self._edit_vars['_scene_label']=nl
+            if key=='hint_id':
+                hl=ttk.Label(frm,text="",foreground='#3366cc',font=FONT_S,wraplength=150)
+                hl.pack(anchor=tk.W); self._edit_vars['_hint_label']=hl
         return lf
 
     def _build_script_tab(self):
@@ -1648,6 +1651,8 @@ class MatEditor:
         for key,di,label,cmt in RUNTIME_FIELDS:
             if key in self._edit_vars: self._edit_vars[key].set(str(rec[f'd{di}']))
         if '_scene_label' in self._edit_vars: self._edit_vars['_scene_label'].config(text=sname)
+        if '_hint_label' in self._edit_vars:
+            hid=rec['d23']; self._edit_vars['_hint_label'].config(text=self.tkt_scenes.get(hid,""))
         # 更新 DefUnit 链显示
         self.du_text.config(state='normal')
         self.du_text.delete('1.0', tk.END)
@@ -1686,6 +1691,7 @@ class MatEditor:
             if isinstance(var,tk.StringVar): var.set("")
             elif isinstance(var,ttk.Combobox): var.set("")
         if '_scene_label' in self._edit_vars: self._edit_vars['_scene_label'].config(text="")
+        if '_hint_label' in self._edit_vars: self._edit_vars['_hint_label'].config(text="")
         # 清空 DefUnit 链显示
         self.du_text.config(state='normal')
         self.du_text.delete('1.0', tk.END)
