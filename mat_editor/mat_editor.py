@@ -43,7 +43,9 @@ BASIC_FIELDS = [
     ("flags",2,"标志位","位域。bit0=启用 bit1=可见 bit2=可交互 bit3=提示 bit4=忙碌 bit5=恢复 bit16=动画循环"),
     ("param",3,"扩展参数","扩展参数 (道具数量/金钱等)"),
     ("hint_id",23,"提示文本ID","鼠标悬停提示的TKT文本ID。传送点(type=10): 设为 300+目标场景ID 以显示目标场景名。sub_412390"),
-    ("cursor_id",8,"光标动画","鼠标悬停光标动画编号。传送点(type=10)设为3显示开门动画。sub_411BA4/sub_412390"),]
+    ("cursor_id",8,"光标动画","鼠标悬停光标动画编号。传送点(type=10)设为3显示开门动画。sub_411BA4/sub_412390"),
+    ("blend_mode",24,"混合模式","sub_406864:39 — 主精灵渲染混合: 0=正常 1=染色 2=加法发光 3=减法压暗 4=亮度alpha 5=水平翻转"),
+    ("blend_param",25,"混合参数","sub_406864:45/54 — d24=1时颜色索引, d24=2时加法缩放(0或>31=全加法)"),]
 POS_FIELDS = [
     ("x",10,"坐标X","世界坐标X (像素)。sub_407070: a1[10]=x"),
     ("y",11,"坐标Y","世界坐标Y (像素)。sub_407070: a1[11]=y"),
@@ -281,6 +283,116 @@ def _jvg_sprite_to_tk(jvg, block_idx, frame_idx=0):
     img = Image.frombytes('RGBA', (frame.width, frame.height), bytes(rgba))
     ptk = ImageTk.PhotoImage(img)
     _SPRITE_CACHE[key] = ptk
+    return ptk
+
+_SHADOW_CACHE = {}  # (jvg_id, block_idx, frame_idx) → PhotoImage (减法混合近似)
+
+def _make_subtractive_shadow(jvg, block_idx, frame_idx):
+    """将 JVG 阴影帧转为减法混合近似: 黑底 + alpha=src亮度
+    sub_45871C: dst=max(dst-src,0) → Canvas alpha 近似: dst*(1-L/255)"""
+    key = (id(jvg), block_idx, frame_idx)
+    if key in _SHADOW_CACHE: return _SHADOW_CACHE[key]
+    if not jvg or block_idx < 0 or block_idx >= jvg.block_count: return None
+    blk = jvg.blocks[block_idx]
+    if frame_idx < 0 or frame_idx >= blk.frame_count: return None
+    frame = blk.frames[frame_idx]
+    if frame.width <= 0 or frame.height <= 0: return None
+    pr = blk.palette.to_rgb888()
+    rgba = bytearray(frame.width * frame.height * 4)
+    px, al = frame.pixels, frame.alpha
+    for y in range(frame.height):
+        for x in range(frame.width):
+            p = y * frame.width + x; off = p * 4
+            if p < len(al) and al[p] == 0: continue
+            ci = px[p] if p < len(px) else 0
+            r, g, b = pr[ci*3], pr[ci*3+1], pr[ci*3+2]
+            L = int(0.299*r + 0.587*g + 0.114*b)  # NTSC 亮度
+            rgba[off] = 0; rgba[off+1] = 0; rgba[off+2] = 0; rgba[off+3] = L
+    from PIL import Image, ImageTk
+    img = Image.frombytes('RGBA', (frame.width, frame.height), bytes(rgba))
+    ptk = ImageTk.PhotoImage(img)
+    _SHADOW_CACHE[key] = ptk
+    return ptk
+
+_BLEND_CACHE = {}  # (jvg_id, blk_idx, frame_idx, mode, param) → PhotoImage
+
+def _get_blended_sprite(jvg, block_idx, frame_idx, mode=0, param=0):
+    """取 JVG 精灵帧并按混合模式处理，带缓存。
+    mode: 0=正常 1=染色 2=加法发光 3=减法压暗 4=亮度alpha 5=水平翻转"""
+    if mode == 0:
+        return _jvg_sprite_to_tk(jvg, block_idx, frame_idx)
+    key = (id(jvg), block_idx, frame_idx, mode, param)
+    if key in _BLEND_CACHE: return _BLEND_CACHE[key]
+    if not jvg or block_idx < 0 or block_idx >= jvg.block_count: return None
+    blk = jvg.blocks[block_idx]
+    if frame_idx < 0 or frame_idx >= blk.frame_count: return None
+    frame = blk.frames[frame_idx]
+    if frame.width <= 0 or frame.height <= 0: return None
+    pr = blk.palette.to_rgb888()
+    rgba = bytearray(frame.width * frame.height * 4)
+    px, al = frame.pixels, frame.alpha
+    for y in range(frame.height):
+        for x in range(frame.width):
+            p = y * frame.width + x; off = p * 4
+            if p < len(al) and al[p] == 0: continue
+            ci = px[p] if p < len(px) else 0
+            rgba[off] = pr[ci*3]; rgba[off+1] = pr[ci*3+1]
+            rgba[off+2] = pr[ci*3+2]; rgba[off+3] = 255
+    from PIL import Image, ImageTk, ImageOps
+    img = Image.frombytes('RGBA', (frame.width, frame.height), bytes(rgba))
+    if mode == 5:
+        img = ImageOps.mirror(img)
+    elif mode == 1:
+        # 染色: 按 param 颜色值乘入 RGB 通道 (sub_454D24)
+        from PIL import ImageChops
+        r_tint = (param >> 10) & 0x1F; g_tint = (param >> 5) & 0x1F; b_tint = param & 0x1F
+        if param > 0 and param <= 31:
+            sf_r = r_tint / 31.0; sf_g = g_tint / 31.0; sf_b = b_tint / 31.0
+            r_ch, g_ch, b_ch, a_ch = img.split()
+            r_ch = r_ch.point(lambda v: int(v * sf_r))
+            g_ch = g_ch.point(lambda v: int(v * sf_g))
+            b_ch = b_ch.point(lambda v: int(v * sf_b))
+            img = Image.merge('RGBA', (r_ch, g_ch, b_ch, a_ch))
+    elif mode == 2:
+        # 加法发光近似: 白色半透明叠加 (sub_4559D0)
+        # param=0或>31 → scale=1.0; 0<param<=31 → scale=param/32
+        scale = 1.0 if param == 0 or param > 31 else param / 32.0
+        if scale > 0:
+            r_ch, g_ch, b_ch, a_ch = img.split()
+            # 像素越亮 → 加法贡献越大; alpha = 亮度 * scale
+            lum = r_ch.point(lambda v: int(v * 0.299)) if False else r_ch
+            from PIL import ImageChops
+            lum = ImageChops.add(
+                ImageChops.add(
+                    r_ch.point(lambda v: int(v * 0.299)),
+                    g_ch.point(lambda v: int(v * 0.587))),
+                b_ch.point(lambda v: int(v * 0.114)))
+            new_a = lum.point(lambda v: int(min(255, v * scale)))
+            white = Image.new('L', img.size, 255)
+            img = Image.merge('RGBA', (white, white, white, new_a))
+    elif mode == 3:
+        # 减法压暗: 同阴影处理 — 黑底+亮度为alpha (sub_45871C)
+        px_new = img.load()
+        for y in range(img.height):
+            for x in range(img.width):
+                r, g, b, a = px_new[x, y]
+                if a == 0: continue
+                L = int(0.299*r + 0.587*g + 0.114*b)
+                px_new[x, y] = (0, 0, 0, L)
+    elif mode == 4:
+        # 亮度 alpha: 按 src 亮度修改 alpha 通道 (sub_459854)
+        r_ch, g_ch, b_ch, a_ch = img.split()
+        from PIL import ImageChops
+        lum = ImageChops.add(
+            ImageChops.add(
+                r_ch.point(lambda v: int(v * 0.299)),
+                g_ch.point(lambda v: int(v * 0.587))),
+            b_ch.point(lambda v: int(v * 0.114)))
+        # 亮度 0~255 → 5-bit (0~31) → alpha 0~255
+        new_a = lum.point(lambda v: int(v * 31 / 255) * 8)
+        img = Image.merge('RGBA', (r_ch, g_ch, b_ch, new_a))
+    ptk = ImageTk.PhotoImage(img)
+    _BLEND_CACHE[key] = ptk
     return ptk
 
 def _get_dir_frame(blk, d13, d16, d53, anim_cycle=0):
@@ -648,6 +760,9 @@ class MatEditor:
             elif key=='anim_set':
                 cb=ttk.Combobox(frm,state='readonly',values=[f"{k}-{v}" for k,v in ANIM_SETS.items()],width=16,font=FONT)
                 cb.pack(fill=tk.X); self._edit_vars[key]=cb
+            elif key=='blend_mode':
+                cb=ttk.Combobox(frm,state='readonly',values=["0-正常","1-染色","2-加法发光","3-减法压暗","4-亮度alpha","5-水平翻转"],width=16,font=FONT)
+                cb.pack(fill=tk.X); self._edit_vars[key]=cb
             elif key=='flags':
                 ev=tk.StringVar(); self._edit_vars[key]=ev
                 ttk.Entry(frm,textvariable=ev,width=14,font=FONT).pack(fill=tk.X)
@@ -931,7 +1046,7 @@ class MatEditor:
                     anim = 0
                 fi, fpd = _get_dir_frame(blk, r['d13'], r['d16'], r['d53'], anim)
                 if fi < len(blk.frames):
-                    sprite = _jvg_sprite_to_tk(jvg, blk_idx, fi)
+                    sprite = _get_blended_sprite(jvg, blk_idx, fi, r.get('d24', 0), r.get('d25', 0))
                     if sprite:
                         sx = x + blk.frames[fi].x_off; sy = y + blk.frames[fi].y_off
 
@@ -944,7 +1059,7 @@ class MatEditor:
             if blk0.frames and len(blk0.frames) >= 3:
                 char_w = blk.frames[fi].width if blk_idx < jvg.block_count and blk_idx != 0 and blk.frames else 0
                 shadow_fi = 2 if char_w > 50 else 1
-                shadow_sprite = _jvg_sprite_to_tk(jvg, 0, shadow_fi)
+                shadow_sprite = _make_subtractive_shadow(jvg, 0, shadow_fi)
                 if shadow_sprite:
                     shadow_sx = x + blk0.frames[shadow_fi].x_off
                     shadow_sy = y + blk0.frames[shadow_fi].y_off
@@ -1008,7 +1123,7 @@ class MatEditor:
             anim = self._vis_anim_frame.get(idx, 0) if should_animate else 0
             fi, _ = _get_dir_frame(blk, r['d13'], r['d16'], r['d53'], anim)
             if fi < len(blk.frames):
-                sprite = _jvg_sprite_to_tk(jvg, bi, fi)
+                sprite = _get_blended_sprite(jvg, bi, fi, r.get('d24', 0), r.get('d25', 0))
                 if sprite:
                     sx = x + blk.frames[fi].x_off; sy = y + blk.frames[fi].y_off
 
@@ -1019,7 +1134,7 @@ class MatEditor:
             if blk0.frames and len(blk0.frames) >= 3:
                 char_w = blk.frames[fi].width if bi < jvg.block_count and bi != 0 and blk.frames else 0
                 shadow_fi = 2 if char_w > 50 else 1
-                shadow_sprite = _jvg_sprite_to_tk(jvg, 0, shadow_fi)
+                shadow_sprite = _make_subtractive_shadow(jvg, 0, shadow_fi)
                 if shadow_sprite:
                     shadow_sx = x + blk0.frames[shadow_fi].x_off
                     shadow_sy = y + blk0.frames[shadow_fi].y_off
@@ -1677,8 +1792,10 @@ class MatEditor:
         self.lbl_title.config(text=f"实体 #{idx} [{tname}] {sname} ({rec['d10']},{rec['d11']})")
         for key,di,label,cmt in ALL_EDIT_FIELDS:
             val=rec[f'd{di}']
+            BLEND_MODES = {0:"正常",1:"染色",2:"加法发光",3:"减法压暗",4:"亮度alpha",5:"水平翻转"}
             if key=='type': self._edit_vars[key].set(f"{val}-{ENTITY_TYPES.get(val,'未知')}")
             elif key=='anim_set': self._edit_vars[key].set(f"{val}-{ANIM_SETS.get(val,'未知')}" if val in ANIM_SETS else f"{val}-未知")
+            elif key=='blend_mode': self._edit_vars[key].set(f"{val}-{BLEND_MODES.get(val,'未知')}")
             else: self._edit_vars[key].set(str(val))
         for key,di,label,cmt in RUNTIME_FIELDS:
             if key in self._edit_vars: self._edit_vars[key].set(str(rec[f'd{di}']))
