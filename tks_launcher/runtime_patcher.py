@@ -42,6 +42,17 @@ INVALID_HANDLE_VALUE = ctypes.c_void_p(-1).value
 PAGE_EXECUTE_READ = 0x20
 PAGE_EXECUTE_READWRITE = 0x40
 PAGE_READWRITE = 0x04
+MEM_COMMIT = 0x1000
+MEM_RESERVE = 0x2000
+MEM_RELEASE = 0x8000
+
+# VirtualAllocEx / VirtualFreeEx for dynamic cave allocation
+kernel32.VirtualAllocEx.restype = ctypes.c_void_p
+kernel32.VirtualAllocEx.argtypes = [
+    wt.HANDLE, ctypes.c_void_p, ctypes.c_size_t, wt.DWORD, wt.DWORD]
+kernel32.VirtualFreeEx.restype = wt.BOOL
+kernel32.VirtualFreeEx.argtypes = [
+    wt.HANDLE, ctypes.c_void_p, ctypes.c_size_t, wt.DWORD]
 
 
 class PROCESSENTRY32(ctypes.Structure):
@@ -273,6 +284,166 @@ def apply_patch(pid, base_address, patches, dry_run=False):
 
     kernel32.CloseHandle(proc)
     return success, fail, results
+
+
+# ============================================================================
+# LZSS 解压 (for WarPC.dat reading)
+# ============================================================================
+
+def lzss_decompress(data):
+    """Minimal LZSS decompress matching sub_452B14."""
+    if len(data) < 12:
+        return b''
+    total_size = struct.unpack_from('<I', data, 0)[0]
+    block_size = struct.unpack_from('<I', data, 4)[0]
+    window = bytearray([0x20] * 4096)
+    wp = 4078
+    output = bytearray()
+    flags = 0
+    pos = 12
+    bc = 4
+    while bc < block_size and len(output) < total_size:
+        flags >>= 1
+        if (flags & 0x100) == 0:
+            if pos >= len(data):
+                break
+            flags = data[pos] | 0xFF00
+            pos += 1
+            bc += 1
+        if flags & 1:
+            if pos >= len(data):
+                break
+            b = data[pos]
+            pos += 1
+            bc += 1
+            output.append(b)
+            window[wp] = b
+            wp = (wp + 1) & 0xFFF
+        else:
+            if pos + 1 >= len(data):
+                break
+            b1, b2 = data[pos], data[pos + 1]
+            pos += 2
+            bc += 2
+            ro = ((b2 & 0xF0) << 4) | b1
+            rl = (b2 & 0x0F) + 2
+            for j in range(rl + 1):
+                b = window[(j + ro) & 0xFFF]
+                output.append(b)
+                window[wp] = b
+                wp = (wp + 1) & 0xFFF
+    return bytes(output[:total_size])
+
+
+# ============================================================================
+# AwkSprite 动态补丁
+# ============================================================================
+
+# Cave 代码模板 (51 字节). Hook 在 cmp [ebp-6],0 之后 (RVA 0x309A6).
+# 读取 WarPC WORD[260] (byte offset 520 = 0x208).
+# 若 WORD[260]!=0: [ebp-6] = WORD[260]-6, 原 +6 后结果 = WORD[260].
+CAVE_TEMPLATE = bytes([
+    0x50, 0x51,                                           # push eax,ecx
+    0x0F, 0xBF, 0x45, 0xFA,                               # movsx eax,[ebp-6]
+    0x66, 0x85, 0xC0,                                     # test ax,ax
+    0x74, 0x25,                                           # jz .done (v26==0 → ZF=1)
+    0x69, 0xC0, 0x1E, 0x04, 0x00, 0x00,                   # imul eax,0x41E
+    0x05, 0x08, 0x7F, 0x75, 0x00,                         # add eax,0x757F08
+    0x0F, 0xB7, 0x88, 0x08, 0x02, 0x00, 0x00,             # movzx ecx,[eax+0x208]
+    0x66, 0x85, 0xC9,                                     # test cx,cx
+    0x75, 0x04,                                           # jnz .use_custom
+    0x85, 0xC0,                                           # test eax,eax (ZF=0)
+    0xEB, 0x0A,                                           # jmp .done
+    # .use_custom:
+    0x83, 0xE9, 0x06,                                     # sub ecx,6
+    0x66, 0x89, 0x4D, 0xFA,                               # mov [ebp-6],cx
+    0x66, 0x85, 0xC9,                                     # test cx,cx (ZF based on v26)
+    # .done:
+    0x59, 0x58,                                           # pop ecx,eax
+    0xC3,                                                  # ret
+])
+
+HOOK_RVA = 0x309A6  # cmp [ebp-6],0 at sub_4307CC
+
+
+def build_awksprite_patches(base_addr, cave_addr):
+    """Build the AwkSprite cave + hook patches.
+    base_addr: module base (e.g. 0x400000)
+    cave_addr: absolute address from VirtualAllocEx
+    """
+    patches = []
+    # Cave code (51 bytes) — use RVA = cave - base so addr = base + RVA = cave
+    cave_rva = cave_addr - base_addr
+    patches.append({
+        'rva': cave_rva,
+        'data': CAVE_TEMPLATE,
+        'desc': f'AwkSprite PATH1 cave@0x{cave_addr:08X}: read WarPC WORD[260] (51B)',
+    })
+    # Hook: replace cmp [ebp-6],0 with call cave
+    # call offset = cave_abs - (base + HOOK_RVA + 5)
+    hook_abs = base_addr + HOOK_RVA
+    call_off = cave_addr - (hook_abs + 5)
+    call_bytes = b'\xE8' + struct.pack('<i', call_off)
+    patches.append({
+        'rva': HOOK_RVA,
+        'data': call_bytes,
+        'desc': f'AwkSprite PATH1: hook cmp [ebp-6],0 -> cave@0x{cave_addr:08X}',
+    })
+    return patches
+
+
+def inject_warpc_data(pid):
+    """Inject WORD[260] values from WarPC.dat into game memory."""
+    warpc_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                              '..', '..', 'WarPC.dat')
+    # Try alongside the exe too
+    alt_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'WarPC.dat')
+    for p in [warpc_path, alt_path, 'WarPC.dat']:
+        if os.path.exists(p):
+            warpc_path = p
+            break
+    else:
+        print("  [WARN] WarPC.dat not found for AwkSprite data inject")
+        return
+
+    with open(warpc_path, 'rb') as f:
+        compressed = f.read()
+    dec = lzss_decompress(compressed)
+    if len(dec) < 143 * 1054:
+        print("  [WARN] WarPC.dat decompressed size mismatch")
+        return
+
+    proc = kernel32.OpenProcess(
+        PROCESS_VM_READ | PROCESS_VM_WRITE | PROCESS_VM_OPERATION, False, pid)
+    if not proc:
+        print("  [WARN] Cannot open process for AwkSprite data inject")
+        return
+
+    WARPC_BASE = 0x757F08
+    REC_SIZE = 1054
+    FIELD_OFFSET = 520  # WORD[260]
+
+    count = 0
+    for i in range(143):
+        off = i * REC_SIZE + FIELD_OFFSET
+        val = struct.unpack_from('<h', dec, off)[0]
+        if val != 0:
+            addr = WARPC_BASE + off
+            data = struct.pack('<h', val)
+            old_protect = wt.DWORD()
+            kernel32.VirtualProtectEx(proc, ctypes.c_void_p(addr),
+                                      2, PAGE_EXECUTE_READWRITE,
+                                      ctypes.byref(old_protect))
+            written = ctypes.c_size_t(0)
+            buf = ctypes.create_string_buffer(data)
+            kernel32.WriteProcessMemory(proc, ctypes.c_void_p(addr),
+                                        buf, 2, ctypes.byref(written))
+            kernel32.VirtualProtectEx(proc, ctypes.c_void_p(addr),
+                                      2, old_protect, ctypes.byref(wt.DWORD()))
+            count += 1
+
+    kernel32.CloseHandle(proc)
+    print(f"  AwkSprite data inject: {count} chars with non-zero WORD[260]")
 
 
 # ============================================================================
@@ -529,9 +700,35 @@ def main():
             # 持续监控
             watch_memory(child_pid, info['base'], patches, duration=60)
     else:
-        print(f"\n■ 应用补丁...")
+        print(f"\n■ 应用补丁 (config)...")
         success, fail, results = apply_patch(child_pid, info['base'], patches, args.dry_run)
         _print_results(results, success, fail)
+
+        # ---- AwkSprite 动态补丁 ----
+        if not args.dry_run and not args.verify:
+            base = info['base']
+            proc = kernel32.OpenProcess(
+                PROCESS_VM_READ | PROCESS_VM_WRITE | PROCESS_VM_OPERATION,
+                False, child_pid)
+            cave_addr = 0
+            if proc:
+                cave_addr = kernel32.VirtualAllocEx(
+                    proc, ctypes.c_void_p(0), 64,
+                    MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE)
+                kernel32.CloseHandle(proc)
+            if cave_addr:
+                print(f"\n■ AwkSprite cave: 0x{cave_addr:08X} (dynamic alloc)")
+                awk_patches = build_awksprite_patches(base, cave_addr)
+                awk_success, awk_fail, awk_results = apply_patch(
+                    child_pid, base, awk_patches)
+                _print_results(awk_results, awk_success, awk_fail)
+                success += awk_success
+                fail += awk_fail
+                # 注入 WarPC WORD[260] 数据
+                inject_warpc_data(child_pid)
+            else:
+                print("  [WARN] VirtualAllocEx failed, AwkSprite patch skipped")
+
         if success > 0 and fail == 0:
             print(f"\n■ 验证补丁已写入内存...")
             v_success, v_fail, v_results = apply_patch(child_pid, info['base'], patches, dry_run=True)
@@ -552,14 +749,16 @@ def main():
 def _print_results(results, success, fail):
     print(f"\n  结果: 成功 {success}, 失败 {fail}")
     for r in results:
-        old_hex = ' '.join(f'{b:02X}' for b in r['old'])
-        new_hex = ' '.join(f'{b:02X}' for b in r['new'])
+        old_hex = ' '.join(f'{b:02X}' for b in r.get('old', b''))
+        new_data = r.get('new')
+        new_hex = ' '.join(f'{b:02X}' for b in new_data) if new_data else '(N/A)'
         status_icon = {
             'patched': '✓', 'already_patched': '=', 'would_patch': '~', 'failed': '✗'
         }.get(r['status'], '?')
         print(f"    [{status_icon}] 0x{r['addr']:08X} (RVA=0x{r['rva']:08X})")
-        print(f"         {old_hex} → {new_hex}")
-        if r['desc']:
+        if r['status'] != 'failed':
+            print(f"         {old_hex} → {new_hex}")
+        if r.get('desc'):
             print(f"         {r['desc']}")
         if r['status'] == 'failed':
             print(f"         ERROR: {r.get('error', 'unknown')}")
