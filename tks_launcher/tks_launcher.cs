@@ -147,37 +147,30 @@ class TKSLauncher
         0xC3                                                  // ret
     };
 
-    // PortraitCave1 (46B): hook at RVA 0x17A50 (add ax,0xD3; push eax).
-    // Verified: ECX = char_idx * 527, AX = portrait value from [ecx*2+0x757F0A].
-    // WarPC record = 0x757F08 + ecx*2 (since ecx*2 = char_idx*1054).
+    // PortraitCave1 (41B): hook at RVA 0x17A50 (add ax,0xD3; push eax).
+    // Verified: ECX = char_idx * 527, AX = portrait from [ecx*2+0x757F0A].
+    // Both paths share identical epilogue (add esp,8; pop edx; xchg; jmp).
     static readonly byte[] PortraitCave1 = new byte[] {
         0x50,                               // push eax           ; save raw portrait
         0x51,                               // push ecx           ; save ecx*527
         0x52,                               // push edx           ; save scratch
-        0x8B, 0xC1,                         // mov eax, ecx       ; eax = ecx (= char_idx*527)
+        0x8B, 0xC1,                         // mov eax, ecx       ; eax = ecx
         0x03, 0xC0,                         // add eax, eax       ; eax = char_idx*1054
         0x05, 0x08, 0x7F, 0x75, 0x00,       // add eax, 0x757F08  ; eax = WarPC record
         0x0F, 0xB7, 0x80, 0x0A, 0x02, 0x00, 0x00, // movzx eax,[eax+0x20A] ; WORD[261]
         0x66, 0x85, 0xC0,                   // test ax, ax
-        0x75, 0x0D,                         // jnz .override
-        // .no_override: restore eax (raw portrait), add 0xD3
-        0x5A,                               // pop edx
-        0x59,                               // pop ecx
-        0x58,                               // pop eax            ; restore raw portrait
-        0x87, 0x0C, 0x24,                   // xchg ecx, [esp]    ; ecx=ret_addr
-        0x66, 0x05, 0xD3, 0x00,             // add ax, 0xD3
-        0x50,                               // push eax           ; result
-        0x51,                               // push ecx           ; ret_addr
-        0xC3,                               // ret
-        // .override: use WORD[261] as result
+        0x75, 0x08,                         // jnz .shared_exit   ; override? → skip normal
+        // Normal: compute result from raw portrait saved at [esp+8]
+        0x8B, 0x44, 0x24, 0x08,             // mov eax, [esp+8]   ; eax = raw portrait
+        0x66, 0x05, 0xD3, 0x00,             // add ax, 0xD3       ; eax = result
+        // === Shared exit (both paths) ===
         0x83, 0xC4, 0x08,                   // add esp, 8         ; discard edx,ecx
         0x5A,                               // pop edx            ; discard saved eax
         0x87, 0x04, 0x24,                   // xchg eax, [esp]    ; eax=ret_addr, [esp]=result
-        0x50,                               // push eax           ; ret_addr
-        0xC3,                               // ret
+        0xFF, 0xE0,                         // jmp eax
     };
 
-    // PortraitCave2 (47B): hook at RVA 0x17E1A (add dx,0xD3; push edx).
+    // PortraitCave2 (42B): hook at RVA 0x17E1A (add dx,0xD3; push edx).
     // Verified: EAX = char_idx * 527, DX = portrait from [eax*2+0x757F0A].
     static readonly byte[] PortraitCave2 = new byte[] {
         0x52,                               // push edx           ; save raw portrait
@@ -187,23 +180,16 @@ class TKSLauncher
         0x05, 0x08, 0x7F, 0x75, 0x00,       // add eax, 0x757F08  ; eax = WarPC record
         0x0F, 0xB7, 0x80, 0x0A, 0x02, 0x00, 0x00, // movzx eax,[eax+0x20A] ; WORD[261]
         0x66, 0x85, 0xC0,                   // test ax, ax
-        0x75, 0x0D,                         // jnz .override
-        // .no_override: restore dx (raw portrait), add 0xD3
-        0x58,                               // pop eax            ; restore char_idx*527
-        0x59,                               // pop ecx            ; restore scratch
-        0x5A,                               // pop edx            ; restore raw portrait
-        0x87, 0x0C, 0x24,                   // xchg ecx, [esp]    ; ecx=ret_addr
-        0x66, 0x83, 0xC2, 0xD3,             // add dx, 0xD3
-        0x52,                               // push edx           ; result
-        0x51,                               // push ecx           ; ret_addr
-        0xC3,                               // ret
-        // .override: use WORD[261] as result
-        0x0F, 0xB7, 0xD0,                   // movzx edx, ax      ; edx = WORD[261]
+        0x75, 0x08,                         // jnz .shared_exit   ; override? → skip normal
+        // Normal: compute result from raw portrait saved at [esp+8]
+        0x8B, 0x44, 0x24, 0x08,             // mov eax, [esp+8]   ; eax = raw portrait
+        0x66, 0x05, 0xD3, 0x00,             // add ax, 0xD3       ; eax = result
+        // === Shared exit (both paths) ===
+        0x0F, 0xB7, 0xD0,                   // movzx edx, ax      ; edx = result
         0x83, 0xC4, 0x08,                   // add esp, 8         ; discard eax,ecx
         0x59,                               // pop ecx            ; discard saved edx
         0x87, 0x14, 0x24,                   // xchg edx, [esp]    ; edx=ret_addr, [esp]=result
-        0x52,                               // push edx           ; ret_addr
-        0xC3,                               // ret
+        0xFF, 0xE2,                         // jmp edx
     };
 
     // Helper: write a 16-bit value to process memory
@@ -216,7 +202,7 @@ class TKSLauncher
     }
 
     // Build the full patch list from dynamic cave address
-    // Layout: cave+0=AwkSprite(51B), cave+64=PortraitCave1(46B), cave+128=PortraitCave2(47B)
+    // Layout: cave+0=AwkSprite(51B), cave+64=PortraitCave1(45B), cave+128=PortraitCave2(46B)
     static Patch[] BuildPatches(IntPtr baseAddr, IntPtr caveAddr)
     {
         long cave = caveAddr.ToInt64();
@@ -242,7 +228,7 @@ class TKSLauncher
         });
 
         // --- Portrait PATH1 cave + hook (selected member) ---
-        // Verified: RVA 0x17A50, ECX=char_idx, 5B (add ax,0xD3 + push eax)
+        // Verified: RVA 0x17A50, ECX=char_idx*527, 5B (add ax,0xD3 + push eax)
         long pcave1 = cave + 64;
         int p1HookRva = 0x17A50;
         int p1CallOff = (int)(pcave1 - baseVA) - (p1HookRva + 5);
@@ -252,7 +238,7 @@ class TKSLauncher
 
         list.Add(new Patch {
             RVA = (int)(pcave1 - baseVA), Data = PortraitCave1,
-            Desc = string.Format("Portrait PATH1 cave@0x{0:X8} (selected, 46B)", pcave1)
+            Desc = string.Format("Portrait PATH1 cave@0x{0:X8} (selected, 41B)", pcave1)
         });
         list.Add(new Patch {
             RVA = p1HookRva, Data = p1CallData,
@@ -260,7 +246,7 @@ class TKSLauncher
         });
 
         // --- Portrait PATH2 cave + hook (non-selected member) ---
-        // Verified: RVA 0x17E1A, EAX=char_idx, 6B (add dx,0xD3 + push edx)
+        // Verified: RVA 0x17E1A, EAX=char_idx*527, 6B (add dx,0xD3 + push edx)
         long pcave2 = cave + 128;
         int p2HookRva = 0x17E1A;
         int p2CallOff = (int)(pcave2 - baseVA) - (p2HookRva + 5);
@@ -271,7 +257,7 @@ class TKSLauncher
 
         list.Add(new Patch {
             RVA = (int)(pcave2 - baseVA), Data = PortraitCave2,
-            Desc = string.Format("Portrait PATH2 cave@0x{0:X8} (non-selected, 47B)", pcave2)
+            Desc = string.Format("Portrait PATH2 cave@0x{0:X8} (non-selected, 42B)", pcave2)
         });
         list.Add(new Patch {
             RVA = p2HookRva, Data = p2CallData,
@@ -302,7 +288,7 @@ class TKSLauncher
         IntPtr hProc = OpenProcess(PROCESS_VM_READ | PROCESS_VM_WRITE | PROCESS_VM_OPERATION, false, childPid);
         if (hProc == IntPtr.Zero) return;
 
-        int count = 0;
+        int w260Count = 0;
         int portraitCount = 0;
         const int WARPC_BASE = 0x757F08;
         const int REC_SIZE = 1054;
@@ -315,9 +301,9 @@ class TKSLauncher
             if (w260 != 0)
             {
                 WriteMem16(hProc, WARPC_BASE + baseOff + 520, w260);
-                count++;
+                w260Count++;
             }
-            // WORD[261] (portrait override)
+            // WORD[261] (portrait override) — cave reads this at runtime
             short w261 = BitConverter.ToInt16(dec, baseOff + 522);
             if (w261 != 0)
             {
@@ -326,9 +312,9 @@ class TKSLauncher
             }
         }
         CloseHandle(hProc);
-        Console.WriteLine(string.Format("  Data inject: {0} W260, {1} W261", count, portraitCount));
+        Console.WriteLine(string.Format("  Data inject: {0} W260, {1} W261", w260Count, portraitCount));
         System.IO.File.WriteAllText("tks_launcher.log",
-            string.Format("patches=9 inject_w260={0} w261={1}", count, portraitCount));
+            string.Format("patches=9 inject_w260={0} w261={1}", w260Count, portraitCount));
     }
 
     // Minimal LZSS decompress (matching sub_452B14)
@@ -574,12 +560,10 @@ class TKSLauncher
         if (hDiag != IntPtr.Zero)
         {
             int nread;
-            // Dump 16 bytes at PATH1 hook (RVA 0x17A50)
             byte[] p1Pre = new byte[16];
             if (ReadProcessMemory(hDiag, (IntPtr)(baseAddr.ToInt64() + 0x17A50), p1Pre, 16, out nread))
                 Console.WriteLine(string.Format("  [DIAG] PATH1@0x17A50 pre: [{0}]",
                     BitConverter.ToString(p1Pre, 0, nread)));
-            // Dump 16 bytes at PATH2 hook (RVA 0x17E1A)
             byte[] p2Pre = new byte[16];
             if (ReadProcessMemory(hDiag, (IntPtr)(baseAddr.ToInt64() + 0x17E1A), p2Pre, 16, out nread))
                 Console.WriteLine(string.Format("  [DIAG] PATH2@0x17E1A pre: [{0}]",
@@ -628,20 +612,20 @@ class TKSLauncher
                 log += string.Format(" awk_cave=[{0}]", BitConverter.ToString(awkCaveBuf).Substring(0, 20)+"...");
             if (ReadProcessMemory(hV, (IntPtr)(baseAddr.ToInt64() + 0x309A6), hookBuf, 5, out read))
                 log += string.Format(" awk_hook=[{0}]", BitConverter.ToString(hookBuf));
-            // Portrait PATH1 cave + hook (RVA 0x17A50, 5B)
-            byte[] p1CaveBuf = new byte[46];
-            if (ReadProcessMemory(hV, (IntPtr)(caveAddr.ToInt64() + 64), p1CaveBuf, 46, out read))
+            // Portrait PATH1 cave + hook
+            byte[] p1CaveBuf = new byte[41];
+            if (ReadProcessMemory(hV, (IntPtr)(caveAddr.ToInt64() + 64), p1CaveBuf, 41, out read))
                 log += string.Format(" p1_cave=[{0}]", BitConverter.ToString(p1CaveBuf).Substring(0, 20)+"...");
             if (ReadProcessMemory(hV, (IntPtr)(baseAddr.ToInt64() + 0x17A50), hookBuf, 5, out read))
                 log += string.Format(" p1_hook=[{0}]", BitConverter.ToString(hookBuf));
-            // Portrait PATH2 cave + hook (RVA 0x17E1A, 6B)
-            byte[] p2CaveBuf = new byte[47];
-            if (ReadProcessMemory(hV, (IntPtr)(caveAddr.ToInt64() + 128), p2CaveBuf, 47, out read))
+            // Portrait PATH2 cave + hook
+            byte[] p2CaveBuf = new byte[42];
+            if (ReadProcessMemory(hV, (IntPtr)(caveAddr.ToInt64() + 128), p2CaveBuf, 42, out read))
                 log += string.Format(" p2_cave=[{0}]", BitConverter.ToString(p2CaveBuf).Substring(0, 20)+"...");
             byte[] p2HookBuf = new byte[6];
             if (ReadProcessMemory(hV, (IntPtr)(baseAddr.ToInt64() + 0x17E1A), p2HookBuf, 6, out read))
                 log += string.Format(" p2_hook=[{0}]", BitConverter.ToString(p2HookBuf));
-            // Read WORD[261] for char 85,86 from game memory
+            // Read WORD[261] for char 85,86
             byte[] w261 = new byte[2];
             if (ReadProcessMemory(hV, (IntPtr)(0x757F08 + 85*1054 + 522), w261, 2, out read))
                 log += string.Format(" W261[85]=0x{0:X4}", BitConverter.ToInt16(w261, 0));

@@ -392,38 +392,30 @@ def build_awksprite_patches(base_addr, cave_addr):
     return patches
 
 
-# PortraitCave1 (46B): hook at RVA 0x17A50 (add ax,0xD3; push eax).
+# PortraitCave1 (41B): hook at RVA 0x17A50 (add ax,0xD3; push eax).
 # Verified: ECX = char_idx * 527, AX = portrait from [ecx*2+0x757F0A].
-# WarPC record = 0x757F08 + ecx*2 (since ecx*2 = char_idx*1054).
-# Reads WarPC WORD[261] (offset 0x20A). If non-zero, uses as override.
+# Both paths share identical epilogue (add esp,8; pop; xchg; jmp).
 PORTRAIT_CAVE1 = bytes([
     0x50,                               # push eax           ; save raw portrait
-    0x51,                               # push ecx           ; save ecx (= char_idx*527)
+    0x51,                               # push ecx           ; save ecx*527
     0x52,                               # push edx           ; save scratch
     0x8B, 0xC1,                         # mov eax, ecx       ; eax = ecx
     0x03, 0xC0,                         # add eax, eax       ; eax = char_idx*1054
     0x05, 0x08, 0x7F, 0x75, 0x00,       # add eax, 0x757F08  ; eax = WarPC record
     0x0F, 0xB7, 0x80, 0x0A, 0x02, 0x00, 0x00,  # movzx eax,[eax+0x20A] ; WORD[261]
     0x66, 0x85, 0xC0,                   # test ax, ax
-    0x75, 0x0D,                         # jnz .override
-    # .no_override: restore eax (raw portrait), add 0xD3
-    0x5A,                               # pop edx
-    0x59,                               # pop ecx
-    0x58,                               # pop eax            ; restore raw portrait
-    0x87, 0x0C, 0x24,                   # xchg ecx, [esp]    ; ecx=ret_addr
-    0x66, 0x05, 0xD3, 0x00,             # add ax, 0xD3
-    0x50,                               # push eax           ; result
-    0x51,                               # push ecx           ; ret_addr
-    0xC3,                               # ret
-    # .override: use WORD[261] as result
+    0x75, 0x08,                         # jnz .shared_exit   ; override→skip normal
+    # Normal: read raw portrait from [esp+8] (saved_eax slot), add 0xD3
+    0x8B, 0x44, 0x24, 0x08,             # mov eax, [esp+8]   ; eax = raw portrait
+    0x66, 0x05, 0xD3, 0x00,             # add ax, 0xD3       ; eax = result
+    # === Shared exit (both paths) ===
     0x83, 0xC4, 0x08,                   # add esp, 8         ; discard edx,ecx
     0x5A,                               # pop edx            ; discard saved eax
     0x87, 0x04, 0x24,                   # xchg eax, [esp]    ; eax=ret_addr, [esp]=result
-    0x50,                               # push eax           ; ret_addr
-    0xC3,                               # ret
+    0xFF, 0xE0,                         # jmp eax
 ])
 
-# PortraitCave2 (47B): hook at RVA 0x17E1A (add dx,0xD3; push edx).
+# PortraitCave2 (42B): hook at RVA 0x17E1A (add dx,0xD3; push edx).
 # Verified: EAX = char_idx * 527, DX = portrait from [eax*2+0x757F0A].
 PORTRAIT_CAVE2 = bytes([
     0x52,                               # push edx           ; save raw portrait
@@ -433,23 +425,16 @@ PORTRAIT_CAVE2 = bytes([
     0x05, 0x08, 0x7F, 0x75, 0x00,       # add eax, 0x757F08  ; eax = WarPC record
     0x0F, 0xB7, 0x80, 0x0A, 0x02, 0x00, 0x00,  # movzx eax,[eax+0x20A] ; WORD[261]
     0x66, 0x85, 0xC0,                   # test ax, ax
-    0x75, 0x0D,                         # jnz .override
-    # .no_override: restore dx (raw portrait), add 0xD3
-    0x58,                               # pop eax            ; restore char_idx*527
-    0x59,                               # pop ecx            ; restore scratch
-    0x5A,                               # pop edx            ; restore raw portrait
-    0x87, 0x0C, 0x24,                   # xchg ecx, [esp]    ; ecx=ret_addr
-    0x66, 0x83, 0xC2, 0xD3,             # add dx, 0xD3
-    0x52,                               # push edx           ; result
-    0x51,                               # push ecx           ; ret_addr
-    0xC3,                               # ret
-    # .override: use WORD[261] as result
-    0x0F, 0xB7, 0xD0,                   # movzx edx, ax      ; edx = WORD[261]
+    0x75, 0x08,                         # jnz .shared_exit   ; override→skip normal
+    # Normal: read raw portrait from [esp+8] (saved_edx slot), add 0xD3
+    0x8B, 0x44, 0x24, 0x08,             # mov eax, [esp+8]   ; eax = raw portrait
+    0x66, 0x05, 0xD3, 0x00,             # add ax, 0xD3       ; eax = result
+    # === Shared exit (both paths) ===
+    0x0F, 0xB7, 0xD0,                   # movzx edx, ax      ; edx = result
     0x83, 0xC4, 0x08,                   # add esp, 8         ; discard eax,ecx
     0x59,                               # pop ecx            ; discard saved edx
     0x87, 0x14, 0x24,                   # xchg edx, [esp]    ; edx=ret_addr, [esp]=result
-    0x52,                               # push edx           ; ret_addr
-    0xC3,                               # ret
+    0xFF, 0xE2,                         # jmp edx
 ])
 
 PORTRAIT_HOOK1_RVA = 0x17A50  # Verified: add ax,0xD3; push eax (5B)
@@ -464,7 +449,7 @@ def build_portrait_patches(base_addr, cave_base):
     pcave1_rva = pcave1 - base_addr
     patches.append({
         'rva': pcave1_rva, 'data': PORTRAIT_CAVE1,
-        'desc': f'Portrait PATH1 cave@0x{pcave1:08X} (selected, 46B)',
+        'desc': f'Portrait PATH1 cave@0x{pcave1:08X} (selected, 41B)',
     })
     call1_off = pcave1 - (base_addr + PORTRAIT_HOOK1_RVA + 5)
     patches.append({
@@ -477,7 +462,7 @@ def build_portrait_patches(base_addr, cave_base):
     pcave2_rva = pcave2 - base_addr
     patches.append({
         'rva': pcave2_rva, 'data': PORTRAIT_CAVE2,
-        'desc': f'Portrait PATH2 cave@0x{pcave2:08X} (non-selected, 47B)',
+        'desc': f'Portrait PATH2 cave@0x{pcave2:08X} (non-selected, 42B)',
     })
     call2_off = pcave2 - (base_addr + PORTRAIT_HOOK2_RVA + 5)
     patches.append({
