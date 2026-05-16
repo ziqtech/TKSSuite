@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-WarPC.dat 可视化编辑器 v1.1
+WarPC.dat 可视化编辑器 v1.3
 =============================================================
 逆向依据:
   - sub_45343C:     DAT 文件统一加载 (LZSS 解压, 1054字节/角色, 143角色)
@@ -279,6 +279,7 @@ IDENTITY_FIELDS = [
     ("role",       6,  "身份",        "0=敌方 -1=我方"),
     ("exp_to_next", 8,  "升级所需经验","升至下一级所需经验; 绝大多数角色=100, 敌方版较高(呂布5092 張角7292)"),
     ("entity_link", 526, "地图实体ID",  "离队后在地图上显示的NPC实体ID → TKMat.dat; sub_41EEC0→sub_40C648 启用此实体使其回到原位"),
+    ("awk_sprite_id", 534, "战场图集索引（补丁专用）", "战斗中Awk.JVG/Awt.JVG块号 — 配合运行时补丁使用; 0=使用原硬编码公式(我方PATH1:WarPC索引+6, 敌方PATH2:WarPC记录号+12); 非0=补丁直接使用此值作为武器精灵块; 替代sub_4307CC:120/+236的硬编码偏移"),
 ]
 
 HPMP_FIELDS = [
@@ -494,7 +495,7 @@ def set_field(rec, byte_off, val):
 class WarpcEditor:
     def __init__(self, root):
         self.root = root
-        self.root.title("WarPC.dat 可视化编辑器 v1.1")
+        self.root.title("WarPC.dat 可视化编辑器 v1.3")
         ico = os.path.join(os.path.dirname(__file__), 'TKS.ico')
         if os.path.exists(ico): self.root.iconbitmap(default=ico)
         self.root.geometry("1500x820"); self.root.minsize(1050, 650)
@@ -2003,7 +2004,7 @@ class WarpcEditor:
 
     def _show_about(self):
         messagebox.showinfo("关于",
-            "WarPC.dat 可视化编辑器 v1.1\n\n"
+            "WarPC.dat 可视化编辑器 v1.3\n\n"
             "基于《三国群侠传》 TKS.exe 反编译\n"
             "143 角色 × 1054 字节 (527×int16)\n\n"
             "逆向依据:\n"
