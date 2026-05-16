@@ -392,6 +392,102 @@ def build_awksprite_patches(base_addr, cave_addr):
     return patches
 
 
+# PortraitCave1 (46B): hook at RVA 0x17A50 (add ax,0xD3; push eax).
+# Verified: ECX = char_idx * 527, AX = portrait from [ecx*2+0x757F0A].
+# WarPC record = 0x757F08 + ecx*2 (since ecx*2 = char_idx*1054).
+# Reads WarPC WORD[261] (offset 0x20A). If non-zero, uses as override.
+PORTRAIT_CAVE1 = bytes([
+    0x50,                               # push eax           ; save raw portrait
+    0x51,                               # push ecx           ; save ecx (= char_idx*527)
+    0x52,                               # push edx           ; save scratch
+    0x8B, 0xC1,                         # mov eax, ecx       ; eax = ecx
+    0x03, 0xC0,                         # add eax, eax       ; eax = char_idx*1054
+    0x05, 0x08, 0x7F, 0x75, 0x00,       # add eax, 0x757F08  ; eax = WarPC record
+    0x0F, 0xB7, 0x80, 0x0A, 0x02, 0x00, 0x00,  # movzx eax,[eax+0x20A] ; WORD[261]
+    0x66, 0x85, 0xC0,                   # test ax, ax
+    0x75, 0x0D,                         # jnz .override
+    # .no_override: restore eax (raw portrait), add 0xD3
+    0x5A,                               # pop edx
+    0x59,                               # pop ecx
+    0x58,                               # pop eax            ; restore raw portrait
+    0x87, 0x0C, 0x24,                   # xchg ecx, [esp]    ; ecx=ret_addr
+    0x66, 0x05, 0xD3, 0x00,             # add ax, 0xD3
+    0x50,                               # push eax           ; result
+    0x51,                               # push ecx           ; ret_addr
+    0xC3,                               # ret
+    # .override: use WORD[261] as result
+    0x83, 0xC4, 0x08,                   # add esp, 8         ; discard edx,ecx
+    0x5A,                               # pop edx            ; discard saved eax
+    0x87, 0x04, 0x24,                   # xchg eax, [esp]    ; eax=ret_addr, [esp]=result
+    0x50,                               # push eax           ; ret_addr
+    0xC3,                               # ret
+])
+
+# PortraitCave2 (47B): hook at RVA 0x17E1A (add dx,0xD3; push edx).
+# Verified: EAX = char_idx * 527, DX = portrait from [eax*2+0x757F0A].
+PORTRAIT_CAVE2 = bytes([
+    0x52,                               # push edx           ; save raw portrait
+    0x51,                               # push ecx           ; save scratch
+    0x50,                               # push eax           ; save eax (= char_idx*527)
+    0x03, 0xC0,                         # add eax, eax       ; eax = char_idx*1054
+    0x05, 0x08, 0x7F, 0x75, 0x00,       # add eax, 0x757F08  ; eax = WarPC record
+    0x0F, 0xB7, 0x80, 0x0A, 0x02, 0x00, 0x00,  # movzx eax,[eax+0x20A] ; WORD[261]
+    0x66, 0x85, 0xC0,                   # test ax, ax
+    0x75, 0x0D,                         # jnz .override
+    # .no_override: restore dx (raw portrait), add 0xD3
+    0x58,                               # pop eax            ; restore char_idx*527
+    0x59,                               # pop ecx            ; restore scratch
+    0x5A,                               # pop edx            ; restore raw portrait
+    0x87, 0x0C, 0x24,                   # xchg ecx, [esp]    ; ecx=ret_addr
+    0x66, 0x83, 0xC2, 0xD3,             # add dx, 0xD3
+    0x52,                               # push edx           ; result
+    0x51,                               # push ecx           ; ret_addr
+    0xC3,                               # ret
+    # .override: use WORD[261] as result
+    0x0F, 0xB7, 0xD0,                   # movzx edx, ax      ; edx = WORD[261]
+    0x83, 0xC4, 0x08,                   # add esp, 8         ; discard eax,ecx
+    0x59,                               # pop ecx            ; discard saved edx
+    0x87, 0x14, 0x24,                   # xchg edx, [esp]    ; edx=ret_addr, [esp]=result
+    0x52,                               # push edx           ; ret_addr
+    0xC3,                               # ret
+])
+
+PORTRAIT_HOOK1_RVA = 0x17A50  # Verified: add ax,0xD3; push eax (5B)
+PORTRAIT_HOOK2_RVA = 0x17E1A  # Verified: add dx,0xD3; push edx (6B)
+
+
+def build_portrait_patches(base_addr, cave_base):
+    """Build Portrait cave + hook patches. Caves at cave_base+64 and cave_base+128."""
+    patches = []
+    # PATH1 (selected) cave at cave_base+64. RVA 0x17A50, 5B original → 5B call
+    pcave1 = cave_base + 64
+    pcave1_rva = pcave1 - base_addr
+    patches.append({
+        'rva': pcave1_rva, 'data': PORTRAIT_CAVE1,
+        'desc': f'Portrait PATH1 cave@0x{pcave1:08X} (selected, 46B)',
+    })
+    call1_off = pcave1 - (base_addr + PORTRAIT_HOOK1_RVA + 5)
+    patches.append({
+        'rva': PORTRAIT_HOOK1_RVA,
+        'data': b'\xE8' + struct.pack('<i', call1_off),
+        'desc': f'Portrait PATH1: hook add ax,0xD3 -> cave@0x{pcave1:08X}',
+    })
+    # PATH2 (non-selected) cave at cave_base+128. RVA 0x17E1A, 6B original → 6B (call+NOP)
+    pcave2 = cave_base + 128
+    pcave2_rva = pcave2 - base_addr
+    patches.append({
+        'rva': pcave2_rva, 'data': PORTRAIT_CAVE2,
+        'desc': f'Portrait PATH2 cave@0x{pcave2:08X} (non-selected, 47B)',
+    })
+    call2_off = pcave2 - (base_addr + PORTRAIT_HOOK2_RVA + 5)
+    patches.append({
+        'rva': PORTRAIT_HOOK2_RVA,
+        'data': b'\xE8' + struct.pack('<i', call2_off) + b'\x90',
+        'desc': f'Portrait PATH2: hook add dx,0xD3 -> cave@0x{pcave2:08X}',
+    })
+    return patches
+
+
 def inject_warpc_data(pid):
     """Inject WORD[260] values from WarPC.dat into game memory."""
     warpc_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
@@ -421,15 +517,16 @@ def inject_warpc_data(pid):
 
     WARPC_BASE = 0x757F08
     REC_SIZE = 1054
-    FIELD_OFFSET = 520  # WORD[260]
 
-    count = 0
+    w260_count = 0
+    w261_count = 0
     for i in range(143):
-        off = i * REC_SIZE + FIELD_OFFSET
-        val = struct.unpack_from('<h', dec, off)[0]
-        if val != 0:
-            addr = WARPC_BASE + off
-            data = struct.pack('<h', val)
+        base_off = i * REC_SIZE
+        # WORD[260] (AwkSprite)
+        w260 = struct.unpack_from('<h', dec, base_off + 520)[0]
+        if w260 != 0:
+            addr = WARPC_BASE + base_off + 520
+            data = struct.pack('<h', w260)
             old_protect = wt.DWORD()
             kernel32.VirtualProtectEx(proc, ctypes.c_void_p(addr),
                                       2, PAGE_EXECUTE_READWRITE,
@@ -440,10 +537,26 @@ def inject_warpc_data(pid):
                                         buf, 2, ctypes.byref(written))
             kernel32.VirtualProtectEx(proc, ctypes.c_void_p(addr),
                                       2, old_protect, ctypes.byref(wt.DWORD()))
-            count += 1
+            w260_count += 1
+        # WORD[261] (portrait override)
+        w261 = struct.unpack_from('<h', dec, base_off + 522)[0]
+        if w261 != 0:
+            addr = WARPC_BASE + base_off + 522
+            data = struct.pack('<h', w261)
+            old_protect = wt.DWORD()
+            kernel32.VirtualProtectEx(proc, ctypes.c_void_p(addr),
+                                      2, PAGE_EXECUTE_READWRITE,
+                                      ctypes.byref(old_protect))
+            written = ctypes.c_size_t(0)
+            buf = ctypes.create_string_buffer(data)
+            kernel32.WriteProcessMemory(proc, ctypes.c_void_p(addr),
+                                        buf, 2, ctypes.byref(written))
+            kernel32.VirtualProtectEx(proc, ctypes.c_void_p(addr),
+                                      2, old_protect, ctypes.byref(wt.DWORD()))
+            w261_count += 1
 
     kernel32.CloseHandle(proc)
-    print(f"  AwkSprite data inject: {count} chars with non-zero WORD[260]")
+    print(f"  Data inject: {w260_count} W260, {w261_count} W261")
 
 
 # ============================================================================
@@ -713,7 +826,7 @@ def main():
             cave_addr = 0
             if proc:
                 cave_addr = kernel32.VirtualAllocEx(
-                    proc, ctypes.c_void_p(0), 64,
+                    proc, ctypes.c_void_p(0), 256,
                     MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE)
                 kernel32.CloseHandle(proc)
             if cave_addr:
@@ -724,8 +837,15 @@ def main():
                 _print_results(awk_results, awk_success, awk_fail)
                 success += awk_success
                 fail += awk_fail
-                # 注入 WarPC WORD[260] 数据
+                # 注入 WarPC WORD[260]/WORD[261] 数据
                 inject_warpc_data(child_pid)
+                # Portrait 补丁
+                portrait_patches = build_portrait_patches(base, cave_addr)
+                p_success, p_fail, p_results = apply_patch(
+                    child_pid, base, portrait_patches)
+                _print_results(p_results, p_success, p_fail)
+                success += p_success
+                fail += p_fail
             else:
                 print("  [WARN] VirtualAllocEx failed, AwkSprite patch skipped")
 
