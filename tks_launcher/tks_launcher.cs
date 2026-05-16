@@ -25,6 +25,12 @@ class TKSLauncher
     [DllImport("kernel32.dll")]
     static extern bool VirtualProtectEx(IntPtr hProcess, IntPtr lpAddress, int dwSize, uint flNewProtect, out uint lpflOldProtect);
 
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern IntPtr VirtualAllocEx(IntPtr hProcess, IntPtr lpAddress, uint dwSize, uint flAllocationType, uint flProtect);
+
+    [DllImport("kernel32.dll")]
+    static extern bool VirtualFreeEx(IntPtr hProcess, IntPtr lpAddress, uint dwSize, uint dwFreeType);
+
     [DllImport("kernel32.dll")]
     static extern bool CloseHandle(IntPtr hObject);
 
@@ -47,6 +53,9 @@ class TKSLauncher
     const uint PROCESS_VM_WRITE = 0x0020;
     const uint PROCESS_VM_OPERATION = 0x0008;
     const uint PAGE_EXECUTE_READWRITE = 0x40;
+    const uint MEM_COMMIT = 0x1000;
+    const uint MEM_RESERVE = 0x2000;
+    const uint MEM_RELEASE = 0x8000;
     const uint TH32CS_SNAPPROCESS = 0x00000002;
     const uint TH32CS_SNAPMODULE = 0x00000008;
     const uint TH32CS_SNAPMODULE32 = 0x00000010;
@@ -90,21 +99,172 @@ class TKSLauncher
         public int RVA;
         public byte[] Data;
         public string Desc;
+        // if true, RVA is relative to dynamically allocated cave address
+        public bool Dynamic;
     }
 
-    static readonly Patch[] Patches = new Patch[]
+    // Static patches (RVA = baseAddr + RVA)
+    static readonly Patch[] StaticPatches = new Patch[]
     {
         new Patch {
-            RVA = 0xDA15,
-            Data = new byte[] { 0xC8, 0x87 },
+            RVA = 0xDA15, Data = new byte[] { 0xC8, 0x87 },
             Desc = "TeamMember: cmp 0x1E->0xC8, jg->ja (sub_40DA00)"
         },
         new Patch {
-            RVA = 0xE6C1,
-            Data = new byte[] { 0xC8, 0x76 },
+            RVA = 0xE6C1, Data = new byte[] { 0xC8, 0x76 },
             Desc = "CheckTeam: cmp 0x1E->0xC8, jle->jbe (sub_40E65C)"
         },
+        // PATH2: +12→+0 (敌方精灵块=WarPC记录号)
+        new Patch {
+            RVA = 0x31165, Data = new byte[] { 0x00 },
+            Desc = "AwkSprite PATH2: +12→+0"
+        },
     };
+
+    // Cave body: 51 bytes. Hook AFTER call sub_432668 (at cmp [ebp-6],0).
+    // Reads WarPC WORD[260] (byte offset 520 = 0x208).
+    // If WORD[260]!=0: v26 = WORD[260]-6, then +6 gives WORD[260].
+    // Sets ZF properly for the original jnz at 0x4309AD.
+    static readonly byte[] CaveTemplate = new byte[] {
+        0x50, 0x51,                                           // push eax,ecx
+        0x0F, 0xBF, 0x45, 0xFA,                               // movsx eax,[ebp-6]
+        0x66, 0x85, 0xC0,                                     // test ax,ax
+        0x74, 0x25,                                           // jz .done (v26==0)
+        0x69, 0xC0, 0x1E, 0x04, 0x00, 0x00,                   // imul eax,0x41E
+        0x05, 0x08, 0x7F, 0x75, 0x00,                         // add eax,0x757F08
+        0x0F, 0xB7, 0x88, 0x08, 0x02, 0x00, 0x00,             // movzx ecx,[eax+0x208]
+        0x66, 0x85, 0xC9,                                     // test cx,cx
+        0x75, 0x04,                                           // jnz .use_custom
+        0x85, 0xC0,                                           // test eax,eax (ZF=0)
+        0xEB, 0x0A,                                           // jmp .done
+        // .use_custom:
+        0x83, 0xE9, 0x06,                                     // sub ecx,6
+        0x66, 0x89, 0x4D, 0xFA,                               // mov [ebp-6],cx
+        0x66, 0x85, 0xC9,                                     // test cx,cx (ZF)
+        // .done:
+        0x59, 0x58,                                           // pop ecx,eax
+        0xC3                                                  // ret
+    };
+
+    // Build the full patch list from dynamic cave address
+    static Patch[] BuildPatches(IntPtr baseAddr, IntPtr caveAddr)
+    {
+        long cave = caveAddr.ToInt64();
+        long baseVA = baseAddr.ToInt64();
+
+        // Cave is self-contained (no internal call), just need the hook call
+        byte[] caveData = (byte[])CaveTemplate.Clone();
+
+        // Hook at cmp [ebp-6],0 (RVA 0x309A6), AFTER call sub_432668
+        int hookRva = 0x309A6;
+        int callOff = (int)(cave - baseVA) - (hookRva + 5);
+        byte[] callData = new byte[5];
+        callData[0] = 0xE8;
+        BitConverter.GetBytes(callOff).CopyTo(callData, 1);
+
+        var list = new List<Patch>(StaticPatches);
+        list.Add(new Patch {
+            RVA = (int)(cave - baseVA), Data = caveData,
+            Desc = "AwkSprite PATH1 cave: hook after sub_432668→读WORD[260]→v26=WORD[260]-6 (51B)"
+        });
+        list.Add(new Patch {
+            RVA = hookRva, Data = callData,
+            Desc = string.Format("AwkSprite PATH1: hook→cave(0x{0:X8})", cave)
+        });
+        return list.ToArray();
+    }
+
+    // Inject WORD[260] values from WarPC.dat into game memory
+    static void InjectWarPCData(int childPid)
+    {
+        string warpcPath = "WarPC.dat";
+        if (!System.IO.File.Exists(warpcPath))
+        {
+            Console.WriteLine("  [WARN] WarPC.dat not found, skip data inject");
+            return;
+        }
+
+        byte[] compressed = System.IO.File.ReadAllBytes(warpcPath);
+        byte[] dec = LzssDecompress(compressed);
+        if (dec.Length < 143 * 1054)
+        {
+            Console.WriteLine("  [WARN] WarPC.dat decompressed size mismatch, skip data inject");
+            return;
+        }
+
+        IntPtr hProc = OpenProcess(PROCESS_VM_READ | PROCESS_VM_WRITE | PROCESS_VM_OPERATION, false, childPid);
+        if (hProc == IntPtr.Zero) return;
+
+        int count = 0;
+        const int WARPC_BASE = 0x757F08;
+        const int REC_SIZE = 1054;
+        const int FIELD_OFFSET = 520; // WORD[260]
+
+        for (int i = 0; i < 143; i++)
+        {
+            int off = i * REC_SIZE + FIELD_OFFSET;
+            short val = BitConverter.ToInt16(dec, off);
+            if (val != 0)
+            {
+                IntPtr addr = (IntPtr)(WARPC_BASE + off);
+                byte[] data = BitConverter.GetBytes(val);
+                int written;
+                uint oldProt;
+                VirtualProtectEx(hProc, addr, 2, PAGE_EXECUTE_READWRITE, out oldProt);
+                WriteProcessMemory(hProc, addr, data, 2, out written);
+                VirtualProtectEx(hProc, addr, 2, oldProt, out oldProt);
+                count++;
+            }
+        }
+        CloseHandle(hProc);
+        Console.WriteLine(string.Format("  AwkSprite data inject: {0} chars with non-zero WORD[260]", count));
+        System.IO.File.WriteAllText("tks_launcher.log",
+            string.Format("patches=6 inject_chars={0}", count));
+    }
+
+    // Minimal LZSS decompress (matching sub_452B14)
+    static byte[] LzssDecompress(byte[] data)
+    {
+        if (data.Length < 12) return new byte[0];
+        int totalSize = BitConverter.ToInt32(data, 0);
+        int blockSize = BitConverter.ToInt32(data, 4);
+        byte[] window = new byte[4096];
+        for (int i = 0; i < 4096; i++) window[i] = 0x20;
+        int wp = 4078;
+        byte[] output = new byte[totalSize];
+        int flags = 0, pos = 12, bc = 4, outPos = 0;
+        while (bc < blockSize && outPos < totalSize)
+        {
+            flags >>= 1;
+            if ((flags & 0x100) == 0)
+            {
+                if (pos >= data.Length) break;
+                flags = data[pos++] | 0xFF00;
+                bc++;
+            }
+            if ((flags & 1) != 0)
+            {
+                if (pos >= data.Length) break;
+                byte b = data[pos++]; bc++;
+                output[outPos++] = b;
+                window[wp] = b; wp = (wp + 1) & 0xFFF;
+            }
+            else
+            {
+                if (pos + 1 >= data.Length) break;
+                byte b1 = data[pos++], b2 = data[pos++]; bc += 2;
+                int ro = ((b2 & 0xF0) << 4) | b1;
+                int rl = (b2 & 0x0F) + 2;
+                for (int j = 0; j <= rl && outPos < totalSize; j++)
+                {
+                    byte b = window[(j + ro) & 0xFFF];
+                    output[outPos++] = b;
+                    window[wp] = b; wp = (wp + 1) & 0xFFF;
+                }
+            }
+        }
+        return output;
+    }
 
     static List<PROCESSENTRY32> GetChildProcesses(int parentPid)
     {
@@ -241,9 +401,6 @@ class TKSLauncher
         Console.WriteLine("========================================");
         Console.WriteLine("TKS Launcher - 自动运行时补丁启动器");
         Console.WriteLine("========================================");
-        Console.WriteLine(string.Format("  补丁数量: {0}", Patches.Length));
-        foreach (var p in Patches)
-            Console.WriteLine(string.Format("    RVA=0x{0:X8}  bytes=[{1}]  {2}", p.RVA, BitConverter.ToString(p.Data), p.Desc));
 
         Console.WriteLine(string.Format("\n启动 {0}...", tksPath));
         Process tksProc;
@@ -303,11 +460,65 @@ class TKSLauncher
         }
         Console.WriteLine(string.Format("  模块基址: 0x{0:X8}", baseAddr.ToInt64()));
 
+        // Allocate executable memory for AwkSprite cave
+        IntPtr hProc = OpenProcess(PROCESS_VM_READ | PROCESS_VM_WRITE | PROCESS_VM_OPERATION, false, childPid);
+        IntPtr caveAddr = IntPtr.Zero;
+        if (hProc != IntPtr.Zero)
+        {
+            caveAddr = VirtualAllocEx(hProc, IntPtr.Zero, 64, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
+            CloseHandle(hProc);
+        }
+        if (caveAddr == IntPtr.Zero)
+            Console.WriteLine("  [WARN] VirtualAllocEx failed, AwkSprite cave skipped");
+        else
+            Console.WriteLine(string.Format("  AwkSprite cave: 0x{0:X8} (dynamic alloc)", caveAddr.ToInt64()));
+
+        Patch[] patches = BuildPatches(baseAddr, caveAddr);
+        Console.WriteLine(string.Format("  补丁数量: {0}", patches.Length));
+        foreach (var p in patches)
+            Console.WriteLine(string.Format("    RVA=0x{0:X8}  bytes=[{1}]  {2}", p.RVA, BitConverter.ToString(p.Data), p.Desc));
+
         Console.WriteLine("\n应用补丁...");
-        bool ok = ApplyPatches(childPid, baseAddr, Patches, false);
+        bool ok = ApplyPatches(childPid, baseAddr, patches, false);
 
         Console.WriteLine("\n验证补丁...");
-        ApplyPatches(childPid, baseAddr, Patches, true);
+        ApplyPatches(childPid, baseAddr, patches, true);
+
+        // Inject WORD[260] from WarPC.dat into game memory
+        InjectWarPCData(childPid);
+
+        // Verify hook + data + cave
+        string log = string.Format("ok={0} cave=0x{1:X8} base=0x{2:X8}",
+            ok, caveAddr.ToInt64(), baseAddr.ToInt64());
+        IntPtr hV = OpenProcess(PROCESS_VM_READ, false, childPid);
+        if (hV != IntPtr.Zero)
+        {
+            int read;
+            // Verify cave bytes
+            byte[] caveBuf = new byte[51];
+            if (ReadProcessMemory(hV, caveAddr, caveBuf, 51, out read))
+                log += string.Format(" cave=[{0}]", BitConverter.ToString(caveBuf).Substring(0,20)+"...");
+            else
+                log += " cave_read=FAIL";
+            // Verify hook bytes at 0x4309A6
+            IntPtr hookAddr = (IntPtr)(baseAddr.ToInt64() + 0x309A6);
+            byte[] hookBuf = new byte[5];
+            if (ReadProcessMemory(hV, hookAddr, hookBuf, 5, out read))
+                log += string.Format(" hook=[{0}]", BitConverter.ToString(hookBuf));
+            else
+                log += " hook_read=FAIL";
+            // Team
+            byte[] teamBuf = new byte[12];
+            if (ReadProcessMemory(hV, (IntPtr)0x75688C, teamBuf, 12, out read))
+            {
+                log += " team=[";
+                for (int i = 0; i < 6; i++)
+                    log += BitConverter.ToInt16(teamBuf, i*2) + ",";
+                log += "]";
+            }
+            CloseHandle(hV);
+        }
+        System.IO.File.WriteAllText("tks_launcher.log", log);
 
         if (ok)
         {
