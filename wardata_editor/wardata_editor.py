@@ -19,7 +19,7 @@ WarData.dat 格式 (每条498字节, 219条, flat binary — sub_42FDF8):
   [2-7]   byte[6] must_chars  — sub_4307CC:51 v20=&unk_9537DA (+1编码; 0/255=空)
   [8-29]  byte[22] (reserved) — 反编译未引用
   [30-31] uint16  name_id     — sub_43A8D8:39 word_9537F6→sub_4067E8(TKT)
-  [32-33] uint16  warway_idx  — sub_42FE70:16; War.dll标签"地图编号"
+  [32-33] uint16  map_id  — sub_42FE70:16; War.dll标签"地图编号"
   [34-69] uint16[18] enemy_id — sub_4307CC:219; War.dll标签"人物编号" (WarPC索引)
   [70-87] byte[18]  enemy_lv  — sub_4307CC:260; sub_444FD4:79; War.dll标签"等级范围"
   [88-105] byte[18] enemy_grp — sub_4307CC:217; sub_444FD4:26; War.dll标签"人物归属"
@@ -74,71 +74,11 @@ except ImportError:
 # ── 常量 ──────────────────────────────────────────────
 WAR_REC_SIZE = 498    # sub_42FDF8: 498字节/条
 WAR_REC_COUNT = 219   # 109062 / 498 = 219
-WARWAY_SIZE = 1024    # sub_42FE70: 1024字节/条
-WARWAY_COUNT = 100    # 102400 / 1024 = 100
-GRID_W = 32           # sub_431428: 32x32战斗网格
-GRID_H = 32
 WSC_ENTRIES = 84      # WSC.IDX: 336/4 = 84条目
 
 FONT = ('Microsoft YaHei UI', 9)
 FONT_S = ('Microsoft YaHei UI', 8)
 W_INPUT = 12
-
-# ═══════════════════════════════════════════════════════════
-# 地形瓦片渲染 (基于 wm.JVG 纹理风格的程序化生成)
-# sub_42FEE0:138 sub_453BD0(dword_951938, "Wm.jvg") — JVG格式为
-#   @JVG/@JVM多层容器, 每帧LZSS压缩像素+RGB555调色板, 懒加载解码。
-#   完全逆向需独立工程, 此处以程序化瓦片替代, 保留JVG解码接口。
-# ═══════════════════════════════════════════════════════════
-
-def _generate_terrain_tiles(cell_size: int) -> dict:
-    """生成地形瓦片 PIL Image 字典, key=WarWay网格值(-1,0,1-5).
-    返回 {val: PIL.Image}, 调用方负责转换为 PhotoImage."""
-    if not HAS_PIL:
-        return {}
-    tiles = {}
-    s = max(cell_size, 4)
-    styles = {
-        -1: {'fill': (120, 45, 45), 'outline': (170, 80, 80), 'pattern': 'blocked'},
-        0:  {'fill': (80, 70, 55), 'outline': (110, 100, 80), 'pattern': 'ground'},
-        1:  {'fill': (130, 120, 50), 'outline': (170, 160, 80), 'pattern': 'zone'},
-        2:  {'fill': (55, 120, 55), 'outline': (80, 160, 80), 'pattern': 'zone'},
-        3:  {'fill': (55, 55, 130), 'outline': (80, 80, 170), 'pattern': 'zone'},
-        4:  {'fill': (130, 55, 130), 'outline': (170, 80, 170), 'pattern': 'zone'},
-        5:  {'fill': (55, 130, 130), 'outline': (80, 170, 170), 'pattern': 'zone'},
-    }
-    for val, st in styles.items():
-        img = Image.new('RGBA', (s, s), (0, 0, 0, 0))
-        draw = ImageDraw.Draw(img)
-        fg = st['fill']
-        ol = st['outline']
-
-        if st['pattern'] == 'blocked':
-            draw.rectangle([1, 1, s-2, s-2], fill=fg, outline=ol, width=1)
-            if s >= 8:
-                for i in range(0, s, max(3, s//8)):
-                    draw.line([(i, 0), (s, s-i)], fill=(*[min(255, c+30) for c in fg], 120), width=1)
-                    draw.line([(0, i), (s-i, s)], fill=(*[min(255, c+30) for c in fg], 80), width=1)
-        elif st['pattern'] == 'ground':
-            draw.rectangle([1, 1, s-2, s-2], fill=(*fg, 60), outline=(*ol, 40), width=1)
-        elif st['pattern'] == 'zone':
-            draw.rectangle([1, 1, s-2, s-2], fill=(*fg, 80), outline=(*ol, 120), width=1)
-            if s >= 8:
-                cw = max(2, s//6)
-                draw.rectangle([2, 2, 2+cw, 2+cw], fill=ol)
-                draw.rectangle([s-3-cw, 2, s-3, 2+cw], fill=ol)
-                draw.rectangle([2, s-3-cw, 2+cw, s-3], fill=ol)
-                draw.rectangle([s-3-cw, s-3-cw, s-3, s-3], fill=ol)
-
-        tiles[val] = img
-    return tiles
-
-
-def _pil_to_phototk(tiles: dict) -> dict:
-    """将 PIL Image 字典转换为 ImageTk.PhotoImage 字典"""
-    if not tiles:
-        return {}
-    return {k: ImageTk.PhotoImage(v) for k, v in tiles.items()}
 
 # ═══════════════════════════════════════════════════════════
 # LZSS 解压 (sub_452B14, 兼容 grp_editor 格式)
@@ -264,7 +204,7 @@ def load_wardata(filepath: str) -> list:
         rec['must_chars'] = list(chunk[2:8])  # 6 bytes, +1 encoded
         # offset 8-29: reserved (22 bytes)
         rec['battle_name_id'] = struct.unpack_from('<H', chunk, 30)[0]  # sub_43A8D8:39 word_9537F6→TKT文本
-        rec['warway_idx'] = struct.unpack_from('<H', chunk, 32)[0]
+        rec['map_id'] = struct.unpack_from('<H', chunk, 32)[0]
 
         # 18敌军槽位
         rec['enemy_ids'] = list(struct.unpack_from('<' + 'H' * 18, chunk, 34))
@@ -319,7 +259,7 @@ def save_wardata(filepath: str, records: list):
         for j in range(6):
             chunk[2 + j] = rec['must_chars'][j] & 0xFF
         struct.pack_into('<H', chunk, 30, rec['battle_name_id'])
-        struct.pack_into('<H', chunk, 32, rec['warway_idx'])
+        struct.pack_into('<H', chunk, 32, rec['map_id'])
 
         for j in range(18):
             struct.pack_into('<H', chunk, 34 + j * 2, rec['enemy_ids'][j])
@@ -367,35 +307,6 @@ def save_wardata(filepath: str, records: list):
         buf[off:off + WAR_REC_SIZE] = chunk
 
     # 备份旧文件
-    if os.path.exists(filepath):
-        bak = filepath + '.bak'
-        if not os.path.exists(bak):
-            Path(filepath).rename(bak)
-    Path(filepath).write_bytes(bytes(buf))
-
-
-def load_warway(filepath: str) -> list:
-    """加载 WarWay.dat, 返回100个32x32字节网格的列表"""
-    data = Path(filepath).read_bytes()
-    grids = []
-    for i in range(WARWAY_COUNT):
-        off = i * WARWAY_SIZE
-        if off + WARWAY_SIZE > len(data):
-            break
-        # 转为有符号字节列表 (32x32 = 1024)
-        raw = data[off:off + WARWAY_SIZE]
-        grid = [b if b < 128 else b - 256 for b in raw]
-        grids.append(grid)
-    return grids
-
-
-def save_warway(filepath: str, grids: list):
-    """保存 WarWay.dat"""
-    buf = bytearray(WARWAY_COUNT * WARWAY_SIZE)
-    for i, grid in enumerate(grids[:WARWAY_COUNT]):
-        off = i * WARWAY_SIZE
-        for j, v in enumerate(grid[:WARWAY_SIZE]):
-            buf[off + j] = v & 0xFF
     if os.path.exists(filepath):
         bak = filepath + '.bak'
         if not os.path.exists(bak):
@@ -501,14 +412,12 @@ class WarDataEditor:
 
         # 数据状态
         self.wardata_path = None
-        self.warway_path = None
         self.wsc_grp_path = None
         self.wsc_idx_path = None
         self.tkt_path = None
         self.warpc_path = None
         self.warpc_names = {}
         self.records = []
-        self.warway_grids = []
         self.wsc_offsets = []
         self.tkt = {}
         self._dirty = False
@@ -516,7 +425,6 @@ class WarDataEditor:
 
         # 场景预览状态
         self._wsc_cache = {}
-        self._terrain_tile_cache = {}  # {cell_size: {val: PhotoImage}}
         self._preview_zoom = 0.5
         self._preview_offset_x = 0
         self._preview_offset_y = 0
@@ -626,29 +534,26 @@ class WarDataEditor:
         self.notebook = ttk.Notebook(rf)
         self.notebook.pack(fill=tk.BOTH, expand=True)
 
-        # 7个标签页 (内容将在后续任务中构建)
+        # 6个标签页
         self.tab_scene = ttk.Frame(self.notebook)
         self.tab_enemy = ttk.Frame(self.notebook)
         self.tab_ally = ttk.Frame(self.notebook)
-        self.tab_terrain = ttk.Frame(self.notebook)
         self.tab_drops = ttk.Frame(self.notebook)
         self.tab_params = ttk.Frame(self.notebook)
-        self.tab_hex = ttk.Frame(self.notebook)
+        self.tab_allparams = ttk.Frame(self.notebook)
 
         self.notebook.add(self.tab_scene, text="场景预览")
         self.notebook.add(self.tab_enemy, text="敌军配置")
         self.notebook.add(self.tab_ally, text="友军配置")
-        self.notebook.add(self.tab_terrain, text="战场地形")
         self.notebook.add(self.tab_drops, text="宝物/奖励")
         self.notebook.add(self.tab_params, text="战场参数")
-        self.notebook.add(self.tab_hex, text="原始Hex")
+        self.notebook.add(self.tab_allparams, text="全部参数")
 
         self._build_params_tab()
-        self._build_hex_tab()
+        self._build_allparams_tab()
         self._build_enemy_tab()
         self._build_ally_tab()
         self._build_drops_tab()
-        self._build_terrain_tab()
         self._build_scene_tab()
 
     def _set_edit_enabled(self, enabled: bool):
@@ -664,14 +569,13 @@ class WarDataEditor:
             return
 
         wd = os.path.join(d, 'WarData.dat')
-        ww = os.path.join(d, 'WarWay.dat')
         wsc_g = os.path.join(d, 'WSC.GRP')
         wsc_i = os.path.join(d, 'WSC.IDX')
         tkt = os.path.join(d, 'TKT.dat')
         warpc = os.path.join(d, 'WarPC.dat')
 
         missing = []
-        for p, n in [(wd, 'WarData.dat'), (ww, 'WarWay.dat'), (wsc_g, 'WSC.GRP'),
+        for p, n in [(wd, 'WarData.dat'), (wsc_g, 'WSC.GRP'),
                       (wsc_i, 'WSC.IDX'), (tkt, 'TKT.dat'), (warpc, 'WarPC.dat')]:
             if not os.path.exists(p):
                 missing.append(n)
@@ -684,17 +588,12 @@ class WarDataEditor:
                 f"以下文件未找到, 相关功能将受限:\n  " + "\n  ".join(missing))
 
         self.wardata_path = wd
-        self.warway_path = ww if os.path.exists(ww) else None
         self.wsc_grp_path = wsc_g if os.path.exists(wsc_g) else None
         self.wsc_idx_path = wsc_i if os.path.exists(wsc_i) else None
         self.tkt_path = tkt if os.path.exists(tkt) else None
         self.warpc_path = warpc if os.path.exists(warpc) else None
 
         self.records = load_wardata(self.wardata_path)
-        if self.warway_path:
-            self.warway_grids = load_warway(self.warway_path)
-        else:
-            self.warway_grids = []
         if self.wsc_idx_path:
             self.wsc_offsets = load_wsc_idx(self.wsc_idx_path)
         else:
@@ -708,14 +607,20 @@ class WarDataEditor:
 
         self.lbl_wardata.config(text=f"WarData: {self.wardata_path} ({len(self.records)}场)")
         n_bg = len(self.wsc_offsets) - 1 if self.wsc_offsets else 0
-        self.status_var.set(f"已加载 {len(self.records)} 场战斗, "
-                           f"{len(self.warway_grids)} 地形, {n_bg} 背景")
+        self.status_var.set(f"已加载 {len(self.records)} 场战斗, {n_bg} 背景")
 
     def _char_name(self, warpc_idx):
-        """WarPC角色索引 → 角色名称 (via WarPC.name_id → TKT)"""
+        """WarPC角色索引 → 角色名称 (via WarPC.name_id → TKT)
+        WarPC[0-34]=玩家/独特角色, WarPC[35-142]=敌军角色.
+        must_chars 用 v-1 解码得到 0-34 的玩家索引。
+        enemy_ids 需 +35 得到敌军索引, 调用方应使用 _enemy_name()."""
         if warpc_idx in self.warpc_names:
             return self.warpc_names[warpc_idx]
         return f"PC#{warpc_idx}" if warpc_idx >= 0 else "?"
+
+    def _enemy_name(self, enemy_id):
+        """敌军角色ID → 角色名称 (enemy_id + 35 = WarPC索引)"""
+        return self._char_name(enemy_id + 35)
 
     def _battle_name(self, rec):
         """生成战斗名称 — 使用 battle_id 或 must_chars 推断"""
@@ -748,8 +653,6 @@ class WarDataEditor:
         if not self.wardata_path:
             return
         self.records = load_wardata(self.wardata_path)
-        if self.warway_path:
-            self.warway_grids = load_warway(self.warway_path)
         self._refresh_tree()
         self._dirty = False
         self.status_var.set("已重新加载")
@@ -769,20 +672,17 @@ class WarDataEditor:
         """将记录填充到各标签页的编辑控件"""
         self._current_idx = rec['index']
         self._populate_params_tab(rec)
+        self._populate_allparams_tab(rec)
         self._populate_enemy_tab(rec)
         self._populate_ally_tab(rec)
         self._populate_drops_tab(rec)
-        self._populate_hex(rec)
         self._redraw_scene()
-        self._redraw_terrain()
 
     def _save(self):
         if not self.wardata_path or not self.records:
             return
         self._apply_current_edit()
         save_wardata(self.wardata_path, self.records)
-        if self.warway_path and self.warway_grids:
-            save_warway(self.warway_path, self.warway_grids)
         self._dirty = False
         self.status_var.set("已保存")
 
@@ -804,6 +704,7 @@ class WarDataEditor:
             return
         rec = self.records[self._current_idx]
         self._apply_params_tab(rec)
+        self._apply_allparams_tab(rec)
         self._apply_enemy_tab(rec)
         self._apply_ally_tab(rec)
         self._apply_drops_tab(rec)
@@ -828,7 +729,7 @@ class WarDataEditor:
             'flags': 0,
             'must_chars': [0] * 6,
             'battle_name_id': 0,
-            'warway_idx': 0,
+            'map_id': 0,
             'enemy_ids': [0] * 18,
             'enemy_lv': [0] * 18,
             'enemy_group': [0] * 18,
@@ -900,7 +801,7 @@ sub_436BD4: 战场主初始化 — sub_42FDF8(a1)→sub_42FE70()→sub_4307CC(a2
 [2-7]  byte[6] must_chars  — sub_4307CC:51 v20=&unk_9537DA; 6字节(+1编码, 0/255=空)
 [8-29] byte[22] (保留)      — 反编译未引用
 [30]   uint16  name_id     — sub_43A8D8:39,41,122 word_9537F6→sub_4067E8(TKT) 战场名称
-[32]   uint16  warway_idx  — sub_42FE70:16 word_9537F8<<10; sub_436BD4:34
+[32]   uint16  map_id  — sub_42FE70:16 word_9537F8<<10; sub_436BD4:34
 [34-69] uint16[18] enemy_id — sub_4307CC:219 word_9537FA; sub_444FD4:27 (WarPC索引)
 [70-87] byte[18] enemy_lv  — sub_4307CC:260 *(v9-18); sub_444FD4:30,79 byte_95381E
 [88-105] byte[18] enemy_grp — sub_4307CC:217 byte_953830; sub_444FD4:26 (AI编组)
@@ -990,13 +891,9 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
         self._build_field(pf, row, 0, "战场ID", self.pvars['battle_id'],
             tooltip="[offset 0] 战场唯一标识ID (sub_436BD4: word_4EB728 = a1)")
 
-        self.pvars['warway_idx'] = tk.StringVar()
-        self._build_field(pf, row, 1, "WarWay索引", self.pvars['warway_idx'],
-            tooltip="[offset 32] WarWay.dat 地形索引 (sub_42FE70: word_9537F8 << 10)")
-
-        self.pvars['wsc_idx'] = tk.StringVar()
-        self._build_field(pf, row, 2, "WSC背景索引", self.pvars['wsc_idx'],
-            tooltip="WSC.GRP 背景图条目 (0-83)")
+        self.pvars['map_id'] = tk.StringVar()
+        self._build_field(pf, row, 1, "地图编号", self.pvars['map_id'],
+            tooltip="[offset 32] uint16 WSC.GRP背景索引(0-82), 场景预览自动使用")
 
         row += 1
 
@@ -1049,7 +946,7 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
 
     def _populate_params_tab(self, rec):
         self.pvars['battle_id'].set(str(rec['battle_id']))
-        self.pvars['warway_idx'].set(str(rec['warway_idx']))
+        self.pvars['map_id'].set(str(rec['map_id']))
         self.pvars['battle_name_id'].set(str(rec['battle_name_id']))
         self.pvars['battle_turn_limit'].set(str(rec['battle_turn_limit']))
         self.pvars['flags'].set(str(rec['flags']))
@@ -1064,12 +961,237 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
             else:
                 self.must_char_labels[i].config(text="")
 
+    # ═══════════════════════════════════════════════════════════
+    # 全部参数标签页
+    # ═══════════════════════════════════════════════════════════
+
+    def _build_allparams_tab(self):
+        ap = ttk.Frame(self.tab_allparams)
+        canvas = tk.Canvas(ap, highlightthickness=0)
+        canvas.pack(fill=tk.BOTH, expand=True, padx=2)
+        sb = ttk.Scrollbar(ap, orient=tk.VERTICAL, command=canvas.yview)
+        sb.pack(side=tk.RIGHT, fill=tk.Y)
+        canvas.configure(yscrollcommand=sb.set)
+        inner = ttk.Frame(canvas)
+        canvas.create_window((0, 0), window=inner, anchor='nw')
+        inner.bind('<Configure>', lambda e: canvas.configure(scrollregion=canvas.bbox('all')))
+
+        self.apvars = {}
+        row = 0
+
+        # ── 基本信息 ──
+        ttk.Label(inner, text="基本信息", font=FONT).grid(row=row, column=0, columnspan=4, sticky='w', pady=(5, 2))
+        row += 1
+
+        self.apvars['battle_id'] = tk.StringVar()
+        self._build_field(inner, row, 0, "战场ID", self.apvars['battle_id'],
+            tooltip="[offset 0] uint16 战场唯一标识", width=8)
+        self.apvars['map_id'] = tk.StringVar()
+        self._build_field(inner, row, 1, "地图编号", self.apvars['map_id'],
+            tooltip="[offset 32] uint16 WarWay.dat地形索引", width=8)
+        self.apvars['battle_name_id'] = tk.StringVar()
+        self._build_field(inner, row, 2, "名称文本ID", self.apvars['battle_name_id'],
+            tooltip="[offset 30] uint16 TKT文本ID, 0=无", width=8)
+        self.apvars['battle_turn_limit'] = tk.StringVar()
+        self._build_field(inner, row, 3, "回合限制", self.apvars['battle_turn_limit'],
+            tooltip="[offset 482] uint16 >0时限制回合数", width=8)
+        row += 1
+
+        # flags
+        self.apvars['flags'] = tk.StringVar()
+        self._build_field(inner, row, 0, "Flags", self.apvars['flags'],
+            tooltip="[offset 0] bit1=失败条件 bit2=随机敌军", width=8)
+        self.apflag_bit1 = tk.BooleanVar()
+        ttk.Checkbutton(inner, text="bit1:失败后继续", variable=self.apflag_bit1,
+                        command=self._on_apflag_change).grid(row=row, column=1, sticky='w')
+        self.apflag_bit2 = tk.BooleanVar()
+        ttk.Checkbutton(inner, text="bit2:随机敌军数", variable=self.apflag_bit2,
+                        command=self._on_apflag_change).grid(row=row, column=2, sticky='w')
+        row += 1
+
+        # default enemy xy
+        self.apvars['def_enemy_x'] = tk.StringVar()
+        self._build_field(inner, row, 0, "默认敌X", self.apvars['def_enemy_x'],
+            tooltip="[offset 478] byte X=0时默认坐标", width=8)
+        self.apvars['def_enemy_y'] = tk.StringVar()
+        self._build_field(inner, row, 1, "默认敌Y", self.apvars['def_enemy_y'],
+            tooltip="[offset 480] byte X=0时默认坐标", width=8)
+        row += 1
+
+        # ── 强制出战 ──
+        ttk.Label(inner, text="强制出战 (6槽, +1编码):", font=FONT).grid(
+            row=row, column=0, columnspan=4, sticky='w', pady=(8, 2))
+        row += 1
+        self.apvars['must_chars'] = []
+        for i in range(6):
+            var = tk.StringVar()
+            self.apvars['must_chars'].append(var)
+            c = i % 3; r = row + i // 3
+            frm = ttk.Frame(inner); frm.grid(row=r, column=c, sticky='w', padx=3, pady=1)
+            ttk.Label(frm, text=f"槽{i}:", font=FONT_S, width=3).pack(side=tk.LEFT)
+            ttk.Entry(frm, textvariable=var, width=6, font=FONT).pack(side=tk.LEFT, padx=2)
+        row += 2
+
+        # ── 敌军快速列表 ──
+        ttk.Label(inner, text="敌军快速列表 (槽/ID/Lv/组/X/Y/朝向/Flag):", font=FONT).grid(
+            row=row, column=0, columnspan=4, sticky='w', pady=(8, 2))
+        row += 1
+        # Header
+        for j, (h, w) in enumerate([('#',3),('ID',5),('Lv',3),('组',3),('X',3),('Y',3),('向',5),('F',5)]):
+            ttk.Label(inner, text=h, font=FONT_S, width=w).grid(row=row, column=j, padx=1)
+        row += 1
+        self.ap_enemy_vars = []
+        for i in range(18):
+            vr = {}
+            ttk.Label(inner, text=str(i), font=FONT_S).grid(row=row, column=0)
+            for j, (k, w) in enumerate([('id',6),('lv',4),('grp',4),('x',3),('y',3),('facing',5),('flags',5)]):
+                if j >= 1:  # skip 'id' as first widget column
+                    pass
+                vr[k] = tk.StringVar()
+                wgt = ttk.Spinbox(inner, textvariable=vr[k], from_=0, to=65535, width=w, font=('', 7)) \
+                    if k in ('id', 'facing', 'flags') else \
+                    ttk.Entry(inner, textvariable=vr[k], width=w, font=('', 7))
+                wgt.grid(row=row, column=j+1, padx=1)
+            self.ap_enemy_vars.append(vr)
+            row += 1
+
+        # ── 友军快速列表 ──
+        ttk.Label(inner, text="友军快速列表 (槽/网格位/朝向):", font=FONT).grid(
+            row=row, column=0, columnspan=4, sticky='w', pady=(8, 2))
+        row += 1
+        for j, (h, w) in enumerate([('#',3),('网格位',7),('朝向',5)]):
+            ttk.Label(inner, text=h, font=FONT_S, width=w).grid(row=row, column=j, padx=1)
+        row += 1
+        self.ap_ally_vars = []
+        for i in range(6):
+            vr = {}
+            ttk.Label(inner, text=str(i), font=FONT_S).grid(row=row, column=0)
+            for k, w in [('pos',7),('facing',5)]:
+                vr[k] = tk.StringVar()
+                ttk.Entry(inner, textvariable=vr[k], width=w, font=('', 7)).grid(
+                    row=row, column={'pos':1,'facing':2}[k], padx=1)
+            self.ap_ally_vars.append(vr)
+            row += 1
+
+        # ── 宝物快速列表 ──
+        ttk.Label(inner, text="宝物快速列表 (槽/主物品ID/副物品/X/Y/min/max/数量):", font=FONT).grid(
+            row=row, column=0, columnspan=8, sticky='w', pady=(8, 2))
+        row += 1
+        for j, (h, w) in enumerate([('#',3),('主ID',6),('副ID',6),('X',3),('Y',3),('min',4),('max',4),('数量',5)]):
+            ttk.Label(inner, text=h, font=FONT_S, width=w).grid(row=row, column=j, padx=1)
+        row += 1
+        self.ap_trea_vars = []
+        for i in range(28):
+            vr = {}
+            ttk.Label(inner, text=str(i), font=FONT_S).grid(row=row, column=0)
+            for j, (k, w) in enumerate([('tid',6),('sub',6),('x',3),('y',3),('min',4),('max',4),('qty',5)]):
+                vr[k] = tk.StringVar()
+                wgt = ttk.Entry(inner, textvariable=vr[k], width=w, font=('', 7))
+                wgt.grid(row=row, column=j+1, padx=1)
+            self.ap_trea_vars.append(vr)
+            row += 1
+
+    def _on_apflag_change(self):
+        flags = 0
+        if self.apflag_bit1.get(): flags |= 2
+        if self.apflag_bit2.get(): flags |= 4
+        self.apvars['flags'].set(str(flags))
+        self._dirty = True
+
+    def _populate_allparams_tab(self, rec):
+        self.apvars['battle_id'].set(str(rec['battle_id']))
+        self.apvars['map_id'].set(str(rec['map_id']))
+        self.apvars['battle_name_id'].set(str(rec['battle_name_id']))
+        self.apvars['battle_turn_limit'].set(str(rec['battle_turn_limit']))
+        self.apvars['flags'].set(str(rec['flags']))
+        self.apflag_bit1.set((rec['flags'] & 2) != 0)
+        self.apflag_bit2.set((rec['flags'] & 4) != 0)
+        self.apvars['def_enemy_x'].set(str(rec['default_enemy_x']))
+        self.apvars['def_enemy_y'].set(str(rec['default_enemy_y']))
+        for i in range(6):
+            v = rec['must_chars'][i]
+            self.apvars['must_chars'][i].set(str(v) if v else '')
+        for i in range(18):
+            self.ap_enemy_vars[i]['id'].set(str(rec['enemy_ids'][i]) if rec['enemy_ids'][i] else '')
+            self.ap_enemy_vars[i]['lv'].set(str(rec['enemy_lv'][i]))
+            self.ap_enemy_vars[i]['grp'].set(str(rec['enemy_group'][i]))
+            self.ap_enemy_vars[i]['x'].set(str(rec['enemy_xy'][i*2]))
+            self.ap_enemy_vars[i]['y'].set(str(rec['enemy_xy'][i*2+1]))
+            self.ap_enemy_vars[i]['facing'].set(str(rec['enemy_facing'][i]))
+            self.ap_enemy_vars[i]['flags'].set(str(rec['enemy_flags'][i]))
+        for i in range(6):
+            self.ap_ally_vars[i]['pos'].set(str(rec['ally_pos'][i]))
+            self.ap_ally_vars[i]['facing'].set(str(rec['ally_facing'][i]))
+        for i in range(28):
+            self.ap_trea_vars[i]['tid'].set(str(rec['trea_id'][i]) if rec['trea_id'][i] else '')
+            self.ap_trea_vars[i]['sub'].set(str(rec['trea_sub'][i]) if i < 10 and rec['trea_sub'][i] else '')
+            self.ap_trea_vars[i]['x'].set(str(rec['trea_xy'][i*2]))
+            self.ap_trea_vars[i]['y'].set(str(rec['trea_xy'][i*2+1]))
+            self.ap_trea_vars[i]['min'].set(str(rec['trea_lv'][i*2]))
+            self.ap_trea_vars[i]['max'].set(str(rec['trea_lv'][i*2+1]))
+            self.ap_trea_vars[i]['qty'].set(str(rec['trea_quant'][i]) if i < 10 else '')
+
+    def _apply_allparams_tab(self, rec):
+        try: rec['battle_id'] = int(self.apvars['battle_id'].get() or 0) & 0xFFFF
+        except: pass
+        try: rec['map_id'] = int(self.apvars['map_id'].get() or 0) & 0xFFFF
+        except: pass
+        try: rec['battle_name_id'] = int(self.apvars['battle_name_id'].get() or 0) & 0xFFFF
+        except: pass
+        try: rec['battle_turn_limit'] = int(self.apvars['battle_turn_limit'].get() or 0) & 0xFFFF
+        except: pass
+        try: rec['flags'] = int(self.apvars['flags'].get() or 0) & 0xFF
+        except: pass
+        try: rec['default_enemy_x'] = int(self.apvars['def_enemy_x'].get() or 0) & 0xFF
+        except: pass
+        try: rec['default_enemy_y'] = int(self.apvars['def_enemy_y'].get() or 0) & 0xFF
+        except: pass
+        for i in range(6):
+            try: rec['must_chars'][i] = int(self.apvars['must_chars'][i].get() or 0) & 0xFF
+            except: pass
+        for i in range(18):
+            try: rec['enemy_ids'][i] = int(self.ap_enemy_vars[i]['id'].get() or 0)
+            except: pass
+            try: rec['enemy_lv'][i] = int(self.ap_enemy_vars[i]['lv'].get() or 0) & 0xFF
+            except: pass
+            try: rec['enemy_group'][i] = int(self.ap_enemy_vars[i]['grp'].get() or 0) & 0xFF
+            except: pass
+            try: rec['enemy_xy'][i*2] = int(self.ap_enemy_vars[i]['x'].get() or 0)
+            except: pass
+            try: rec['enemy_xy'][i*2+1] = int(self.ap_enemy_vars[i]['y'].get() or 0)
+            except: pass
+            try: rec['enemy_facing'][i] = int(self.ap_enemy_vars[i]['facing'].get() or 0) & 0xFFFF
+            except: pass
+            try: rec['enemy_flags'][i] = int(self.ap_enemy_vars[i]['flags'].get() or 0) & 0xFFFF
+            except: pass
+        for i in range(6):
+            try: rec['ally_pos'][i] = int(self.ap_ally_vars[i]['pos'].get() or 0) & 0xFFFF
+            except: pass
+            try: rec['ally_facing'][i] = int(self.ap_ally_vars[i]['facing'].get() or 0) & 0xFF
+            except: pass
+        for i in range(28):
+            try: rec['trea_id'][i] = int(self.ap_trea_vars[i]['tid'].get() or 0) & 0xFFFF
+            except: pass
+            if i < 10:
+                try: rec['trea_sub'][i] = int(self.ap_trea_vars[i]['sub'].get() or 0) & 0xFFFF
+                except: pass
+                try: rec['trea_quant'][i] = int(self.ap_trea_vars[i]['qty'].get() or 0) & 0xFFFF
+                except: pass
+            try: rec['trea_xy'][i*2] = int(self.ap_trea_vars[i]['x'].get() or 0)
+            except: pass
+            try: rec['trea_xy'][i*2+1] = int(self.ap_trea_vars[i]['y'].get() or 0)
+            except: pass
+            try: rec['trea_lv'][i*2] = int(self.ap_trea_vars[i]['min'].get() or 0) & 0xFF
+            except: pass
+            try: rec['trea_lv'][i*2+1] = int(self.ap_trea_vars[i]['max'].get() or 0) & 0xFF
+            except: pass
+
     def _apply_params_tab(self, rec):
         try:
             rec['battle_id'] = int(self.pvars['battle_id'].get() or 0) & 0xFFFF
         except: pass
         try:
-            rec['warway_idx'] = int(self.pvars['warway_idx'].get() or 0) & 0xFFFF
+            rec['map_id'] = int(self.pvars['map_id'].get() or 0) & 0xFFFF
         except: pass
         try:
             rec['battle_name_id'] = int(self.pvars['battle_name_id'].get() or 0) & 0xFFFF
@@ -1084,65 +1206,6 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
             try:
                 rec['must_chars'][i] = int(self.pvars['must_chars'][i].get() or 0) & 0xFF
             except: pass
-
-    # ═══════════════════════════════════════════════════════════
-    # Hex 标签页
-    # ═══════════════════════════════════════════════════════════
-
-    def _build_hex_tab(self):
-        hf = ttk.Frame(self.tab_hex)
-        hf.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
-
-        ttk.Label(hf, text="偏移    | 00 01 02 03 04 05 06 07 08 09 0A 0B 0C 0D 0E 0F | ASCII",
-                  font=('Consolas', 9)).pack(anchor=tk.W, pady=(0, 4))
-
-        self.hex_text = tk.Text(hf, font=('Consolas', 9), wrap='none',
-                                width=80, height=35)
-        self.hex_text.pack(fill=tk.BOTH, expand=True)
-        self.hex_text.bind('<FocusOut>', self._on_hex_focus_out)
-
-        ttk.Label(hf, text="直接编辑十六进制值后失焦即应用",
-                  font=FONT_S, foreground='gray').pack(anchor=tk.W, pady=(2, 0))
-
-    def _populate_hex(self, rec):
-        self.hex_text.config(state='normal')
-        self.hex_text.delete('1.0', tk.END)
-        chunk = rec['_raw']
-        lines = []
-        for i in range(0, WAR_REC_SIZE, 16):
-            hex_part = ' '.join(f'{b:02x}' for b in chunk[i:i+16])
-            ascii_part = ''.join(chr(b) if 32 <= b < 127 else '.' for b in chunk[i:i+16])
-            lines.append(f'{i:04x}  | {hex_part:<48s} | {ascii_part}')
-        self.hex_text.insert('1.0', '\n'.join(lines))
-        self.hex_text.config(state='disabled')
-
-    def _on_hex_focus_out(self, event):
-        if self._current_idx < 0:
-            return
-        text = self.hex_text.get('1.0', '1.end')
-        new_raw = bytearray(WAR_REC_SIZE)
-        for line in text.split('\n'):
-            line = line.strip()
-            if not line or '|' not in line:
-                continue
-            parts = line.split('|')
-            if len(parts) < 2:
-                continue
-            addr_part = parts[0].strip()
-            hex_part = parts[1].strip()
-            try:
-                addr = int(addr_part, 16)
-            except:
-                continue
-            hex_bytes = hex_part.split()
-            for j, hb in enumerate(hex_bytes):
-                if addr + j < WAR_REC_SIZE:
-                    try:
-                        new_raw[addr + j] = int(hb, 16)
-                    except:
-                        pass
-        self.records[self._current_idx]['_raw'] = bytes(new_raw)
-        self._dirty = True
 
     # ═══════════════════════════════════════════════════════════
     # 敌军配置标签页
@@ -1232,7 +1295,7 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
             self.enemy_vars[i]['flag_lbl'].config(text='/'.join(flag_parts) if flag_parts else '')
 
             if eid:
-                self.enemy_name_labels[i].config(text=self._char_name(eid)[:14])
+                self.enemy_name_labels[i].config(text=self._enemy_name(eid)[:14])
             else:
                 self.enemy_name_labels[i].config(text="(空)")
 
@@ -1446,10 +1509,6 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
         ttk.Checkbutton(ctrl, text="背景", variable=self.show_bg,
                         command=self._redraw_scene).pack(side=tk.LEFT, padx=2)
 
-        self.show_terrain = tk.BooleanVar(value=True)
-        ttk.Checkbutton(ctrl, text="地格", variable=self.show_terrain,
-                        command=self._redraw_scene).pack(side=tk.LEFT, padx=2)
-
         self.show_units = tk.BooleanVar(value=True)
         ttk.Checkbutton(ctrl, text="单位", variable=self.show_units,
                         command=self._redraw_scene).pack(side=tk.LEFT, padx=2)
@@ -1462,11 +1521,7 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
                      state='readonly', width=5).pack(side=tk.LEFT, padx=2)
         self.zoom_var.trace_add('write', lambda *a: self._on_zoom_change())
 
-        ttk.Label(ctrl, text="WSC背景:", font=FONT_S).pack(side=tk.LEFT, padx=(10, 2))
-        self.wsc_sel_var = tk.StringVar(value='0')
-        ttk.Spinbox(ctrl, textvariable=self.wsc_sel_var, from_=0, to=83, width=4,
-                    command=self._on_wsc_change).pack(side=tk.LEFT, padx=2)
-        ttk.Label(ctrl, text="(手动选择背景条目)", font=FONT_S, foreground='gray').pack(side=tk.LEFT, padx=2)
+        ttk.Label(ctrl, text="背景=map_id(WSC)", font=FONT_S, foreground='gray').pack(side=tk.LEFT, padx=(10, 2))
 
         self.scene_info_var = tk.StringVar(value="")
         ttk.Label(ctrl, textvariable=self.scene_info_var, foreground='#3366cc',
@@ -1518,9 +1573,6 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
         self._wsc_cache[wsc_idx] = (photo, new_w, new_h)
         return (photo, new_w, new_h)
 
-    def _on_wsc_change(self):
-        self._redraw_scene()
-
     def _on_zoom_change(self):
         zs = self.zoom_var.get().rstrip('%')
         try:
@@ -1528,7 +1580,6 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
         except:
             return
         self._wsc_cache.clear()
-        self._terrain_tile_cache.clear()
         self._redraw_scene()
 
     def _redraw_scene(self):
@@ -1546,55 +1597,17 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
         offset_x = 20
         offset_y = 20
 
-        # ── 图层1: WSC 背景 ──
+        # ── 图层1: WSC 背景 (map_id字段) ──
         if self.show_bg.get() and HAS_PIL:
-            try:
-                wsc_idx = int(self.wsc_sel_var.get())
-            except:
+            wsc_idx = rec['map_id']
+            if wsc_idx < 0 or wsc_idx >= len(self.wsc_offsets) - 1:
                 wsc_idx = 0
             bg = self._load_wsc_background(wsc_idx)
             if bg:
                 photo, pw, ph = bg
                 canvas.create_image(offset_x, offset_y, anchor='nw', image=photo)
 
-        # ── 图层2: WarWay 地格 (wm.JVG风格瓦片) ──
-        if self.show_terrain.get() and self.warway_grids:
-            ww_idx = rec['warway_idx']
-            if ww_idx < len(self.warway_grids):
-                grid = self.warway_grids[ww_idx]
-                # 获取或生成当前缩放级别的瓦片 (PIL→PhotoImage)
-                if HAS_PIL:
-                    if cell_size not in self._terrain_tile_cache:
-                        pil_tiles = _generate_terrain_tiles(cell_size)
-                        self._terrain_tile_cache[cell_size] = _pil_to_phototk(pil_tiles) if pil_tiles else {}
-                    tiles = self._terrain_tile_cache[cell_size]
-                    for y in range(GRID_H):
-                        for x in range(GRID_W):
-                            v = grid[y * GRID_W + x]
-                            if v not in tiles:
-                                continue
-                            x1 = offset_x + x * cell_size
-                            y1 = offset_y + y * cell_size
-                            canvas.create_image(
-                                x1, y1, anchor='nw', image=tiles[v],
-                                tags=('terrain', f'tile_{x}_{y}'))
-                else:
-                    # 回退: 纯色矩形 (PIL不可用时)
-                    terrain_colors = {-1: '#883333', 0: None, 1: '#888833',
-                                      2: '#338833', 3: '#333388', 4: '#883388', 5: '#338888'}
-                    for y in range(GRID_H):
-                        for x in range(GRID_W):
-                            v = grid[y * GRID_W + x]
-                            color = terrain_colors.get(v)
-                            if color:
-                                x1 = offset_x + x * cell_size
-                                y1 = offset_y + y * cell_size
-                                canvas.create_rectangle(
-                                    x1, y1, x1 + cell_size, y1 + cell_size,
-                                    fill=color, outline='', stipple='gray25',
-                                    tags=('terrain', f'tile_{x}_{y}'))
-
-        # ── 图层3: 单位标记 ──
+        # ── 图层2: 单位标记 ──
         if self.show_units.get():
             # 敌军 (红色)
             for i in range(18):
@@ -1606,7 +1619,7 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
                 cx = offset_x + ex * cell_size + cell_size // 2
                 cy = offset_y + ey * cell_size + cell_size // 2
                 r = max(4, cell_size // 3)
-                name = self._char_name(eid)[:4]
+                name = self._enemy_name(eid)[:4]
                 canvas.create_oval(cx - r, cy - r, cx + r, cy + r,
                                    fill='#cc3333', outline='white', width=1,
                                    tags=('unit', 'enemy', f'enemy_{i}'))
@@ -1649,7 +1662,7 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
         offset_x, offset_y = 20, 20
         gx = int((canvas_x - offset_x) / cell_size)
         gy = int((canvas_y - offset_y) / cell_size)
-        if 0 <= gx < GRID_W and 0 <= gy < GRID_H:
+        if 0 <= gx < 32 and 0 <= gy < 32:
             return (gx, gy)
         return None
 
@@ -1677,28 +1690,18 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
             self.scene_info_var.set("")
             return
         gx, gy = g
-        terrain_val = "?"
-        if (self._current_idx >= 0 and self.warway_grids and
-            self.records[self._current_idx]['warway_idx'] < len(self.warway_grids)):
-            grid = self.warway_grids[self.records[self._current_idx]['warway_idx']]
-            terrain_val = grid[gy * GRID_W + gx]
-
-        terrain_names = {-1: '障碍', 0: '可通行', 1: '区域1', 2: '区域2',
-                         3: '区域3', 4: '区域4', 5: '区域5'}
-        tname = terrain_names.get(terrain_val, str(terrain_val))
-
         unit = self._find_unit_at(gx, gy)
         if unit:
             utype, uidx = unit
             rec = self.records[self._current_idx]
             if utype == 'enemy':
                 eid = rec['enemy_ids'][uidx]
-                uname = self._char_name(eid)
-                self.scene_info_var.set(f"({gx},{gy}) 地格:{tname} | 敌军:{uname} Lv.{rec['enemy_lv'][uidx]}")
+                uname = self._enemy_name(eid)
+                self.scene_info_var.set(f"({gx},{gy}) 敌军:{uname} Lv.{rec['enemy_lv'][uidx]}")
             else:
-                self.scene_info_var.set(f"({gx},{gy}) 地格:{tname} | 友军槽{uidx}")
+                self.scene_info_var.set(f"({gx},{gy}) 友军槽{uidx}")
         else:
-            self.scene_info_var.set(f"({gx},{gy}) 地格:{tname}")
+            self.scene_info_var.set(f"({gx},{gy})")
 
     def _on_scene_wheel(self, event):
         zooms = [0.25, 0.33, 0.5, 0.66, 0.75, 1.0]
@@ -1715,7 +1718,6 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
                     break
         self.zoom_var.set(f"{int(self._preview_zoom * 100)}%")
         self._wsc_cache.clear()
-        self._terrain_tile_cache.clear()
         self._redraw_scene()
 
     # ── Task 12: Scene interactivity ──
@@ -1769,142 +1771,6 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
         self.scene_canvas.yview_scroll(-dy, 'units')
         self._pan_start_x = event.x
         self._pan_start_y = event.y
-
-    # ═══════════════════════════════════════════════════════════
-    # 战场地形编辑器 (WarWay 32x32网格)
-    # ═══════════════════════════════════════════════════════════
-
-    TERRAIN_COLORS = {
-        -1: '#883333', 0: '#444444', 1: '#888833',
-        2: '#338833', 3: '#333388', 4: '#883388', 5: '#338888',
-    }
-
-    def _build_terrain_tab(self):
-        """战场地形编辑器 — 32x32 WarWay 网格"""
-        tf = ttk.Frame(self.tab_terrain)
-        tf.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
-
-        ctrl = ttk.Frame(tf)
-        ctrl.pack(fill=tk.X, pady=(0, 4))
-
-        ttk.Label(ctrl, text="绘制模式:", font=FONT_S).pack(side=tk.LEFT, padx=2)
-        self.terrain_mode = tk.StringVar(value='0')
-        modes = [('-1', '障碍'), ('0', '可通行'), ('1', '区域1'),
-                 ('2', '区域2'), ('3', '区域3'), ('4', '区域4'), ('5', '区域5')]
-        for val, name in modes:
-            ttk.Radiobutton(ctrl, text=name, value=val, variable=self.terrain_mode).pack(
-                side=tk.LEFT, padx=1)
-
-        ttk.Separator(ctrl, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=6)
-        ttk.Button(ctrl, text="全部可通行", command=self._terrain_fill_zero).pack(side=tk.LEFT, padx=2)
-        ttk.Button(ctrl, text="全部障碍", command=self._terrain_fill_blocked).pack(side=tk.LEFT, padx=2)
-
-        self.terrain_info_var = tk.StringVar(value="点击单元格修改地格类型")
-        ttk.Label(ctrl, textvariable=self.terrain_info_var, foreground='gray',
-                  font=FONT_S).pack(side=tk.RIGHT, padx=10)
-
-        self.terrain_canvas = tk.Canvas(tf, width=512, height=512, bg='#222222',
-                                         highlightthickness=0)
-        self.terrain_canvas.pack(fill=tk.BOTH, expand=True)
-        self.terrain_canvas.bind('<Button-1>', self._on_terrain_click)
-        self.terrain_canvas.bind('<B1-Motion>', self._on_terrain_drag)
-
-        # Bind resize to redraw
-        self.tab_terrain.bind('<Configure>', lambda e: self._redraw_terrain())
-
-    def _redraw_terrain(self):
-        """重绘地形编辑器"""
-        canvas = self.terrain_canvas
-        canvas.delete('all')
-
-        if self._current_idx < 0 or not self.warway_grids:
-            return
-
-        rec = self.records[self._current_idx]
-        ww_idx = rec['warway_idx']
-        if ww_idx >= len(self.warway_grids):
-            return
-
-        grid = self.warway_grids[ww_idx]
-        cw = max(canvas.winfo_width(), 1)
-        ch = max(canvas.winfo_height(), 1)
-        cell_size = min((cw - 2) // GRID_W, (ch - 2) // GRID_H)
-        if cell_size < 1:
-            cell_size = 1
-
-        for y in range(GRID_H):
-            for x in range(GRID_W):
-                v = grid[y * GRID_W + x]
-                color = self.TERRAIN_COLORS.get(v, '#888888')
-                x1 = x * cell_size + 1
-                y1 = y * cell_size + 1
-                x2 = x1 + cell_size - 1
-                y2 = y1 + cell_size - 1
-                canvas.create_rectangle(x1, y1, x2, y2,
-                    fill=color, outline='#555555' if cell_size > 4 else '',
-                    tags=('cell', f'cell_{x}_{y}'))
-
-    def _on_terrain_click(self, event):
-        self._terrain_paint(event.x, event.y)
-
-    def _on_terrain_drag(self, event):
-        self._terrain_paint(event.x, event.y)
-
-    def _terrain_paint(self, canvas_x, canvas_y):
-        if self._current_idx < 0 or not self.warway_grids:
-            return
-        rec = self.records[self._current_idx]
-        ww_idx = rec['warway_idx']
-        if ww_idx >= len(self.warway_grids):
-            return
-
-        cw = max(self.terrain_canvas.winfo_width(), 1)
-        ch = max(self.terrain_canvas.winfo_height(), 1)
-        cell_size = min((cw - 2) // GRID_W, (ch - 2) // GRID_H)
-        if cell_size < 1:
-            return
-
-        gx = canvas_x // cell_size
-        gy = canvas_y // cell_size
-        if not (0 <= gx < GRID_W and 0 <= gy < GRID_H):
-            return
-
-        val = int(self.terrain_mode.get())
-        self.warway_grids[ww_idx][gy * GRID_W + gx] = val
-        self._dirty = True
-
-        # 局部重绘
-        color = self.TERRAIN_COLORS.get(val, '#888888')
-        x1 = gx * cell_size + 1
-        y1 = gy * cell_size + 1
-        x2 = x1 + cell_size - 1
-        y2 = y1 + cell_size - 1
-        self.terrain_canvas.create_rectangle(x1, y1, x2, y2,
-            fill=color, outline='#555555' if cell_size > 4 else '',
-            tags=('cell', f'cell_{gx}_{gy}'))
-
-        terrain_names = {-1: '障碍', 0: '可通行', 1: '区域1', 2: '区域2',
-                         3: '区域3', 4: '区域4', 5: '区域5'}
-        self.terrain_info_var.set(f"({gx},{gy}) -> {terrain_names.get(val, str(val))}")
-
-    def _terrain_fill_zero(self):
-        self._terrain_fill_all(0)
-
-    def _terrain_fill_blocked(self):
-        self._terrain_fill_all(-1)
-
-    def _terrain_fill_all(self, val):
-        if self._current_idx < 0 or not self.warway_grids:
-            return
-        rec = self.records[self._current_idx]
-        ww_idx = rec['warway_idx']
-        if ww_idx >= len(self.warway_grids):
-            return
-        for i in range(WARWAY_SIZE):
-            self.warway_grids[ww_idx][i] = val
-        self._dirty = True
-        self._redraw_terrain()
-
 
 if __name__ == '__main__':
     root = tk.Tk()
