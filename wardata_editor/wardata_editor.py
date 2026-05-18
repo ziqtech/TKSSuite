@@ -491,10 +491,6 @@ class WarDataEditor:
         # 场景预览状态
         self._wsc_cache = {}
         self._preview_zoom = 0.5
-        self._preview_offset_x = 0
-        self._preview_offset_y = 0
-        self._scene_origin_x = 650   # grid(0,0)屏幕X, 背景中心(sub_42F9C8 dword_4E7DF0)
-        self._scene_origin_y = 30    # grid(0,0)屏幕Y, 背景顶部(sub_42F9C8 dword_4E7DF4)
         self._drag_target = None
         self._drag_start_x = 0
         self._drag_start_y = 0
@@ -1807,18 +1803,14 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
         self._redraw_scene()
 
     def _grid_to_screen(self, gx, gy):
-        """等距投影: 网格坐标 → 屏幕坐标
-        sub_42F9C8: screen_X = dword_4E7DF0 + 56*(X-10) - 56*(Y-15)
-                    screen_Y = dword_4E7DF4 + 28*(X-10) + 28*(Y-15)
-        56×28 为硬编码投影系数, 所有分辨率通用
+        """等距投影: 网格坐标 → WSC背景图像像素坐标 (经zoom缩放后为canvas坐标)
+        sub_42F9C8: px = dword_4E7DF0 + 56*(gx-10) - 56*(gy-15)
+                    py = dword_4E7DF4 + 28*(gx-10) + 28*(gy-15)
+        dword_4E7DF0=359, dword_4E7DF4=365, 偏移10/15为PE .data段编译时常量
         """
         zoom = self._preview_zoom
-        tile_w = int(56 * zoom)  # sub_42F9C8: 56*(X-Y)
-        tile_h = int(28 * zoom)  # sub_42F9C8: 28*(X+Y)
-        ox = self._scene_origin_x
-        oy = self._scene_origin_y
-        sx = ox + (gx - gy) * tile_w
-        sy = oy + (gx + gy) * tile_h
+        sx = round((359 + 56 * (gx - 10) - 56 * (gy - 15)) * zoom)
+        sy = round((365 + 28 * (gx - 10) + 28 * (gy - 15)) * zoom)
         return sx, sy
 
     def _redraw_scene(self):
@@ -1848,30 +1840,11 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
                 photo, bg_w, bg_h, *_ = bg
                 canvas.create_image(0, 0, anchor='nw', image=photo)
 
-        # ── 预加载 WarWay (用于计算摄像机中心 + 渲染网格) ──
+        # ── 预加载 WarWay (用于渲染网格) ──
         warway = load_warway(self.warway_path, rec['map_id']) if self.warway_path else None
 
-        # ── grid原点定位 (对标 sub_42F9C8 dword_4E7DF0/dword_4E7DF4 + sub_410848) ──
-        # 游戏WSC背景为预渲染等距场景, sub_410848 根据战场通行区域设置摄像机
-        # 游戏WSC背景为预渲染等距场景, sub_410848 根据战场通行区域设置摄像机
-        # 从WarWay可通行区域(>=0)计算几何中心, 对齐到WSC背景图中心
-        if warway:
-            passable_cx, passable_cy, passable_n = 0, 0, 0
-            for gy in range(32):
-                for gx in range(32):
-                    if warway[gy * 32 + gx] >= 0:  # sub_43D0E8:104 可通行判断
-                        passable_cx += gx
-                        passable_cy += gy
-                        passable_n += 1
-            cx = passable_cx // passable_n if passable_n else 15
-            cy = passable_cy // passable_n if passable_n else 15
-        else:
-            cx, cy = 15, 15
-        # 等距投影: 通行区域中心 → screen, 对齐到WSC背景中心
-        grid_center_x = 10 + bg_w // 2 if bg_w else 650
-        grid_center_y = 10 + bg_h // 2 if bg_h else 490
-        self._scene_origin_x = grid_center_x - (cx - cy) * tile_w
-        self._scene_origin_y = grid_center_y - (cx + cy) * tile_h
+        # grid原点由 _grid_to_screen 固定使用游戏常量 (dword_4E7DF0=359, dword_4E7DF4=365, 偏移10/15)
+        # 这些是PE .data段编译时常量, 不随WSC分辨率变化, 所有战场通用
 
         # ── 图层2: WarWay 网格 (sub_42F9C8 等距投影) ──
         if self.show_grid.get() and warway:
@@ -1983,20 +1956,23 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
     # ── 场景交互 ──
 
     def _scene_to_grid(self, canvas_x, canvas_y):
-        """屏幕坐标 → 等距网格坐标 (逆推 sub_42F9C8 + sub_410848)"""
+        """canvas坐标 → 等距网格坐标 (逆推 sub_42F9C8)
+        逆公式: gx = (px/56 + py/28) / 2 + 10
+                 gy = (py/28 - px/56) / 2 + 15
+        其中 px, py 为WSC背景图像像素坐标 (= canvas / zoom)
+        """
         zoom = self._preview_zoom
-        tile_w = int(56 * zoom)  # sub_42F9C8: 56*(X-Y)
-        tile_h = int(28 * zoom)  # sub_42F9C8: 28*(X+Y)
-        ox = self._scene_origin_x
-        oy = self._scene_origin_y
-        # 逆等距投影: sx = ox + (X-Y)*tile_w, sy = oy + (X+Y)*tile_h
-        # → X = ((sx-ox)/tile_w + (sy-oy)/tile_h) / 2
-        # → Y = ((sy-oy)/tile_h - (sx-ox)/tile_w) / 2
-        rel_x = canvas_x - ox
-        rel_y = canvas_y - oy
-        gx = (rel_x / tile_w + rel_y / tile_h) / 2
-        gy = (rel_y / tile_h - rel_x / tile_w) / 2
-        gx, gy = int(gx), int(gy)
+        if zoom <= 0:
+            return None
+        px = canvas_x / zoom - 359  # 减去 dword_4E7DF0
+        py = canvas_y / zoom - 365  # 减去 dword_4E7DF4
+        # 逆等距: px = 56*(gx-10) - 56*(gy-15), py = 28*(gx-10) + 28*(gy-15)
+        # 令 a=gx-10, b=gy-15: px=56*(a-b), py=28*(a+b)
+        # → a = (px/56 + py/28)/2, b = (py/28 - px/56)/2
+        a = (px / 56 + py / 28) / 2
+        b = (py / 28 - px / 56) / 2
+        gx = round(a + 10)
+        gy = round(b + 15)
         if 0 <= gx < 32 and 0 <= gy < 32:
             return (gx, gy)
         return None
