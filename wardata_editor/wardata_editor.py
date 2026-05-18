@@ -23,22 +23,21 @@ WarData.dat 格式 (每条498字节, 219条, flat binary — sub_42FDF8):
   [34-69] uint16[18] enemy_id — sub_4307CC:219; War.dll标签"人物编号" (WarPC索引)
   [70-87] byte[18]  enemy_lv  — sub_4307CC:260; sub_444FD4:79; War.dll标签"等级范围"
   [88-105] byte[18] enemy_grp — sub_4307CC:217; sub_444FD4:26; War.dll标签"人物归属"
-  [106-141] byte[36] enemy_xy — sub_4307CC:227; sub_444FD4:48; War.dll标签"敌人位置"
+  [106-141] byte[36] enemy_lv_range — sub_4307CC:227; sub_444FD4:48; level params(18 pairs a3,a4)
                                 18对X,Y(int8), X=106+2*i, Y=107+2*i
-  [142-177] uint16[18] enemy_facing — War.dll标签"敌人朝向"; 18个敌人朝向值(uint16)
-  [178-189] uint16[6] ally_pos  — War.dll标签"我方位置"; 6个友军网格位置(uint16编码)
+  [142-177] byte[36]  enemy_xy — sub_431428:94-98 grid coords(18 pairs int8 X,Y); War.dll"敌人朝向"
+  [178-189] byte[12]  ally_xy   — sub_431428:74 unk_95388A; 6对X,Y(int8), 同enemy_xy格式
   [190-207] byte[18] enemy_del  — sub_4307CC:242 v9[102]; sub_444FD4:61; War.dll标签"属性加成"
   [208-213] byte[6] ally_facing — War.dll标签"我方朝向"; 6个友军朝向值(byte)
   [214-269] byte[56] trea_xy    — sub_431428:204 (char*)v43-172/-171; 28组宝物坐标(int8对)
   [270-325] byte[56] trea_lv    — sub_431428:296 (char*)v45-116/-115; 28组宝物等级(min,max)
   [326-345] uint16[10] trea_sub — sub_431428:202; War.dll标签"物品编号" (前10组宝物副物品)
-  [346-365] uint16[10] trea_quant — sub_434510:36; War.dll标签"物品数量" (10个uint16)
-  [366-385] byte[20] (reserved) — 反编译未引用, 数据全零
+  [346-385] uint16[20] trea_quant — sub_434510:36-37 word_953932/953934; 10对quantity(min,max) uint16
   [386-441] uint16[28] trea_id — sub_431428:199,295 unk_95395A; 28组宝物主物品(TKItem索引)
   [442-477] uint16[18] enemy_flg — sub_4307CC:263 v5[204]; sub_444FD4:81 word_953992
                                   bit0=精英, bit1=特殊, bit13/14=阵营标记
-  [478]    byte    def_enemy_x — sub_430578:17 byte_9539B6
-  [480]    byte    def_enemy_y — sub_430578:18 byte_9539B8
+  [478]    byte    default_lv_p1 — sub_430578:17 byte_9539B6; level param default 1
+  [480]    byte    default_lv_p2 — sub_430578:18 byte_9539B8; level param default 2
   [482-483] uint16 turn_limit — sub_43CA64:29 word_9539BA (>0时回合限制)
   [484-497] byte[14] (reserved) — 反编译未引用; 全219条数据为零
 
@@ -210,13 +209,13 @@ def load_wardata(filepath: str) -> list:
         rec['enemy_ids'] = list(struct.unpack_from('<' + 'H' * 18, chunk, 34))
         rec['enemy_lv'] = list(chunk[70:88])
         rec['enemy_group'] = list(chunk[88:106])
-        rec['enemy_xy'] = list(struct.unpack_from('<' + 'b' * 36, chunk, 106))  # X=106+2*i, Y=107+2*i
+        rec['enemy_lv_range'] = list(struct.unpack_from('<' + 'b' * 36, chunk, 106))  # lv params (a3,a4), sub_430578  # X=106+2*i, Y=107+2*i
 
         # 敌人朝向: War.dll标签"敌人朝向"; sub_431428:94 (char*)v32+108
-        rec['enemy_facing'] = list(struct.unpack_from('<' + 'H' * 18, chunk, 142))
+        rec['enemy_xy'] = list(struct.unpack_from('<' + 'b' * 36, chunk, 142))  # grid coords (18 pairs X,Y), sub_431428  # byte[36] place_req, sub_431428:94-98
 
-        # 友军位置: War.dll标签"我方位置"; sub_431428:74 unk_95388A
-        rec['ally_pos'] = list(struct.unpack_from('<' + 'H' * 6, chunk, 178))
+        # 友军坐标: sub_431428:74 unk_95388A — 6对int8 (X,Y), 同 enemy_xy格式
+        rec['ally_xy'] = list(struct.unpack_from('<' + 'b' * 12, chunk, 178))
 
         # 敌军行动延迟: sub_4307CC:242 v9[102]; sub_444FD4:61; War.dll标签"属性加成"
         rec['enemy_delay'] = list(chunk[190:208])
@@ -228,15 +227,15 @@ def load_wardata(filepath: str) -> list:
         rec['trea_xy'] = list(struct.unpack_from('<' + 'b' * 56, chunk, 214))   # X,Y坐标 28对
         rec['trea_lv'] = list(chunk[270:326])                                    # 等级/数量范围 28对
         rec['trea_sub'] = list(struct.unpack_from('<' + 'H' * 10, chunk, 326))   # 副物品 10组
-        rec['trea_quant'] = list(struct.unpack_from('<' + 'H' * 10, chunk, 346)) # sub_434510; War.dll标签"物品数量"
+        rec['trea_quant'] = list(struct.unpack_from('<' + 'H' * 20, chunk, 346)) # 10对(min,max), sub_434510:36-37
         rec['trea_id'] = list(struct.unpack_from('<' + 'H' * 28, chunk, 386))    # 主物品ID 28组
 
         # 敌军标志位: sub_4307CC:263 v5[204]; sub_444FD4:81 word_953992
         rec['enemy_flags'] = list(struct.unpack_from('<' + 'H' * 18, chunk, 442))
 
         # 默认敌军坐标: sub_430578:17-18 byte_9539B6/byte_9539B8
-        rec['default_enemy_x'] = chunk[478]
-        rec['default_enemy_y'] = chunk[480]
+        rec['default_lv_p1'] = chunk[478]  # lv param default 1, sub_430578:17
+        rec['default_lv_p2'] = chunk[480]  # lv param default 2, sub_430578:18
         rec['battle_turn_limit'] = struct.unpack_from('<H', chunk, 482)[0]  # sub_43CA64:29 word_9539BA
 
         # 保存原始字节 (用于未解析字段)
@@ -266,15 +265,15 @@ def save_wardata(filepath: str, records: list):
             chunk[88 + j] = rec['enemy_group'][j] & 0xFF
 
         for j in range(36):
-            struct.pack_into('<b', chunk, 106 + j, rec['enemy_xy'][j])
+            struct.pack_into('<b', chunk, 106 + j, rec['enemy_lv_range'][j])
 
-        # 敌人朝向: uint16[18] at offset 142-177
-        for j in range(18):
-            struct.pack_into('<H', chunk, 142 + j * 2, rec['enemy_facing'][j])
+        # 敌人朝向/place_req: byte[36] at offset 142-177
+        for j in range(36):
+            struct.pack_into('<b', chunk, 142 + j, rec['enemy_xy'][j])
 
-        # 友军位置: uint16[6] at offset 178-189
+        # 友军坐标: int8[12] at offset 178-189
         for j in range(6):
-            struct.pack_into('<H', chunk, 178 + j * 2, rec['ally_pos'][j])
+            struct.pack_into('<b', chunk, 178 + j, rec['ally_xy'][j])
 
         for j in range(18):
             chunk[190 + j] = rec['enemy_delay'][j] & 0xFF
@@ -290,8 +289,8 @@ def save_wardata(filepath: str, records: list):
         for j in range(10):
             struct.pack_into('<H', chunk, 326 + j * 2, rec['trea_sub'][j])
 
-        for j in range(10):
-            struct.pack_into('<H', chunk, 346 + j * 2, rec['trea_quant'][j])
+        for j in range(20):
+            struct.pack_into('<H', chunk, 346 + j, rec['trea_quant'][j])
 
         for j in range(28):
             struct.pack_into('<H', chunk, 386 + j * 2, rec['trea_id'][j])
@@ -299,8 +298,8 @@ def save_wardata(filepath: str, records: list):
         for j in range(18):
             struct.pack_into('<H', chunk, 442 + j * 2, rec['enemy_flags'][j])
 
-        chunk[478] = rec['default_enemy_x'] & 0xFF
-        chunk[480] = rec['default_enemy_y'] & 0xFF
+        chunk[478] = rec['default_lv_p1'] & 0xFF  # lv param default 1
+        chunk[480] = rec['default_lv_p2'] & 0xFF  # lv param default 2
         struct.pack_into('<H', chunk, 482, rec['battle_turn_limit'])
 
         buf[off:off + WAR_REC_SIZE] = chunk
@@ -395,6 +394,57 @@ def load_warpc_names(warpc_path: str, tkt: dict) -> dict:
     return names
 
 
+def load_tkitem_names(tkitem_path: str, tkt: dict) -> dict:
+    """加载 TKItem.dat, 返回 {item_index: item_name} 映射
+    TKItem 每条64字节(32×int16), LZSS压缩, field[2]=name_id → TKT
+    """
+    if not tkitem_path or not os.path.exists(tkitem_path):
+        return {}
+    with open(tkitem_path, 'rb') as f:
+        raw = f.read()
+    ts = struct.unpack_from('<I', raw, 0)[0]
+    bs = struct.unpack_from('<I', raw, 4)[0]
+    w = bytearray([0x20] * 4096); wp = 4078
+    out = bytearray(); flags = 0; pos = 12; bc = 4
+    while bc < bs:
+        flags >>= 1
+        if (flags & 0x100) == 0:
+            if pos >= len(raw): break
+            flags = raw[pos] | 0xFF00; pos += 1; bc += 1
+        if flags & 1:
+            if pos >= len(raw): break
+            b = raw[pos]; pos += 1; bc += 1
+            out.append(b); w[wp] = b; wp = (wp + 1) & 0xFFF
+        else:
+            if pos + 1 >= len(raw): break
+            b1, b2 = raw[pos], raw[pos + 1]; pos += 2; bc += 2
+            ro = ((b2 & 0xF0) << 4) | b1; rl = (b2 & 0x0F) + 2
+            for j in range(rl + 1):
+                b = w[(j + ro) & 0xFFF]; out.append(b)
+                w[wp] = b; wp = (wp + 1) & 0xFFF
+    dec = bytes(out[:ts])
+
+    ITEM_REC = 64
+    count = len(dec) // ITEM_REC
+    by_index = {}   # 记录索引 → 名称 (trea_id 用)
+    by_item_id = {} # item_id → 名称   (trea_sub 用)
+    for i in range(count):
+        off = i * ITEM_REC
+        item_id = struct.unpack_from('<h', dec, off)[0]
+        name_id = struct.unpack_from('<h', dec, off + 4)[0]
+        if item_id <= 1:  # 空槽/占位
+            continue
+        if name_id and name_id in tkt:
+            item_name = tkt[name_id]
+        elif name_id:
+            item_name = f"Item#{item_id}"
+        else:
+            continue
+        by_index[i] = item_name
+        by_item_id[item_id] = item_name
+    return (by_index, by_item_id)
+
+
 # ═══════════════════════════════════════════════════════════
 # GUI 编辑器
 # ═══════════════════════════════════════════════════════════
@@ -416,6 +466,9 @@ class WarDataEditor:
         self.tkt_path = None
         self.warpc_path = None
         self.warpc_names = {}
+        self.tkitem_path = None
+        self.tkitem_names = {}
+        self.tkitem_names_by_id = {}
         self.records = []
         self.wsc_offsets = []
         self.tkt = {}
@@ -572,10 +625,12 @@ class WarDataEditor:
         wsc_i = os.path.join(d, 'WSC.IDX')
         tkt = os.path.join(d, 'TKT.dat')
         warpc = os.path.join(d, 'WarPC.dat')
+        tkitem = os.path.join(d, 'TKItem.dat')
 
         missing = []
         for p, n in [(wd, 'WarData.dat'), (wsc_g, 'WSC.GRP'),
-                      (wsc_i, 'WSC.IDX'), (tkt, 'TKT.dat'), (warpc, 'WarPC.dat')]:
+                      (wsc_i, 'WSC.IDX'), (tkt, 'TKT.dat'), (warpc, 'WarPC.dat'),
+                      (tkitem, 'TKItem.dat')]:
             if not os.path.exists(p):
                 missing.append(n)
 
@@ -591,6 +646,7 @@ class WarDataEditor:
         self.wsc_idx_path = wsc_i if os.path.exists(wsc_i) else None
         self.tkt_path = tkt if os.path.exists(tkt) else None
         self.warpc_path = warpc if os.path.exists(warpc) else None
+        self.tkitem_path = tkitem if os.path.exists(tkitem) else None
 
         self.records = load_wardata(self.wardata_path)
         if self.wsc_idx_path:
@@ -599,6 +655,10 @@ class WarDataEditor:
             self.wsc_offsets = []
         self.tkt = load_tkt(self.tkt_path) if self.tkt_path else {}
         self.warpc_names = load_warpc_names(self.warpc_path, self.tkt) if self.warpc_path else {}
+        if self.tkitem_path:
+            self.tkitem_names, self.tkitem_names_by_id = load_tkitem_names(self.tkitem_path, self.tkt)
+        else:
+            self.tkitem_names, self.tkitem_names_by_id = {}, {}
 
         self._refresh_tree()
         self._set_edit_enabled(True)
@@ -652,6 +712,11 @@ class WarDataEditor:
         if not self.wardata_path:
             return
         self.records = load_wardata(self.wardata_path)
+        if self.tkt_path:
+            self.tkt = load_tkt(self.tkt_path)
+            self.warpc_names = load_warpc_names(self.warpc_path, self.tkt) if self.warpc_path else {}
+            if self.tkitem_path:
+                self.tkitem_names, self.tkitem_names_by_id = load_tkitem_names(self.tkitem_path, self.tkt)
         self._refresh_tree()
         self._dirty = False
         self.status_var.set("已重新加载")
@@ -732,19 +797,19 @@ class WarDataEditor:
             'enemy_ids': [0] * 18,
             'enemy_lv': [0] * 18,
             'enemy_group': [0] * 18,
-            'enemy_xy': [0] * 36,
+            'enemy_lv_range': [0] * 36,  # lv params (a3,a4)
             'enemy_delay': [0] * 18,
-            'enemy_facing': [0] * 18,  # uint16[18] "敌人朝向"
-            'ally_pos': [0] * 6,       # uint16[6]  "我方位置"
+            'enemy_xy': [0] * 36,     # byte[36] grid coords (18 pairs X,Y)
+            'ally_xy': [0] * 12,      # int8[12] 6对(X,Y), 同 enemy_xy格式
             'ally_facing': [0] * 6,    # byte[6]    "我方朝向"
             'trea_xy': [0] * 56,
             'trea_lv': [0] * 56,
             'trea_sub': [0] * 10,
-            'trea_quant': [0] * 10,
+            'trea_quant': [0] * 20,  # 10对(min,max) uint16
             'trea_id': [0] * 28,
             'enemy_flags': [0] * 18,
-            'default_enemy_x': 0,
-            'default_enemy_y': 0,
+            'default_lv_p1': 0,  # lv param default 1
+            'default_lv_p2': 0,  # lv param default 2
             'battle_turn_limit': 0,
             '_raw': bytes(template),
         }
@@ -803,21 +868,20 @@ sub_436BD4: 战场主初始化 — sub_42FDF8(a1)→sub_42FE70()→sub_4307CC(a2
 [34-69] uint16[18] enemy_id — sub_4307CC:219 word_9537FA; sub_444FD4:27 (WarPC索引)
 [70-87] byte[18] enemy_lv  — sub_4307CC:260 *(v9-18); sub_444FD4:30,79 byte_95381E
 [88-105] byte[18] enemy_grp — sub_4307CC:217 byte_953830; sub_444FD4:26 (AI编组)
-[106-141] byte[36] enemy_xy — sub_4307CC:227; sub_444FD4:48 byte_953842/953843
-             X=106+2*i, Y=107+2*i (int8, 0-31)
-[142-177] byte[36] place_req — sub_431428:138 unk_953866; 24槽stride2(1字节值/槽)
-[178-189] byte[12] ally_xy — sub_431428:74,164 unk_95388A; ≤6对(与place_req[18-23]重叠)
+[106-141] byte[36] enemy_lv_range — sub_430578 a3,a4; 18对 level params (int8)
+[142-177] byte[36] enemy_xy — sub_431428:94-98 unk_953866; 18对int8 grid X,Y; War.dll“敌人朝向”
+[178-189] byte[12] ally_xy — sub_431428:74 unk_95388A; 6对int8 X,Y, 同 enemy_xy格式
 [190-207] byte[18] enemy_del — sub_4307CC:242 v9[102]; sub_444FD4:61 byte_953896
 [208-213] byte[6] (保留)     — 反编译未引用
 [214-269] byte[56] trea_xy  — sub_431428:204 *(v43-172/-171) 28组宝物坐标(int8对)
 [270-325] byte[56] trea_lv  — sub_431428:296 *(v45-116/-115) 28组宝物等级/数量(min,max)
 [326-345] uint16[10] trea_sub — sub_431428:202 *(v43-30) 前10组宝物副物品
-[346-385] uint16[20] trea_quant — sub_434510:36,46 word_953932/953934 宝物数量/级距
+[346-385] uint16[20] trea_quant — sub_434510:36-37 word_953932/953934; 10对(min,max) quantity
 [386-441] uint16[28] trea_id — sub_431428:199,295 unk_95395A 28组宝物主物品ID
 [442-477] uint16[18] enemy_flg — sub_4307CC:263 v5[204]; sub_444FD4:81 word_953992
             bit0=精英, bit1=特殊, bit13=阵营, bit14=形象, bit15=特殊类型
-[478]    byte    def_enemy_x — sub_430578:17 byte_9539B6 (X=0时默认坐标)
-[480]    byte    def_enemy_y — sub_430578:18 byte_9539B8 (X=0时默认坐标)
+[478]    byte    default_lv_p1 — sub_430578:17 byte_9539B6 (level param default 1)
+[480]    byte    default_lv_p2 — sub_430578:18 byte_9539B8 (level param default 2)
 [482-483] uint16 turn_limit — sub_43CA64:29,32,109 word_9539BA (>0时回合限制)
 [484-497] byte[14] (尾部保留) — 反编译未明确引用
 
@@ -1046,11 +1110,12 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
             ('ID\nu16[034-069]', 5, '[34-69] uint16[18] enemy_id — sub_4307CC:219'),
             ('Lv\nu8[070-087]', 4, '[70-87] byte[18] enemy_lv — sub_4307CC:260'),
             ('组\nu8[088-105]', 4, '[88-105] byte[18] enemy_grp — sub_4307CC:217'),
-            ('X\ni8[106-141]', 3, '[106-141] byte[36] enemy_xy — X=106+2*i'),
-            ('Y\ni8[106-141]', 3, 'Y=107+2*i (int8, 0-31)'),
-            ('朝向\nu16[142-177]', 5, '[142-177] uint16[18] enemy_facing — War.dll"敌人朝向"'),
-            ('延迟\nu8[190-207]', 4, '[190-207] byte[18] enemy_del — sub_4307CC:242; War.dll"属性加成"'),
-            ('标志\nu16[442-477]', 5, '[442-477] uint16[18] enemy_flg — bit0=精英 bit1=特殊'),
+            ('LvP1\ni8[106-141]', 4, '[106-141] byte[36] enemy_lv_range — sub_430578 a3, LvP1=106+2*i'),
+            ('LvP2\ni8[106-141]', 4, 'sub_430578 a4, LvP2=107+2*i (int8)'),
+            ('X\ni8[142-177]', 3, '[142-177] byte[36] enemy_xy — sub_431428:94 X=142+2*i'),
+            ('Y\ni8[142-177]', 3, 'sub_431428:97 Y=143+2*i (int8, 0-31)'),
+            ('延迟\nu8[190-207]', 4, '[190-207] byte[18] enemy_del — sub_4307CC:242; sub_444FD4:61'),
+            ('标志\nu16[442-477]', 5, '[442-477] uint16[18] enemy_flg — bit0=elite bit1=special'),
         ]
         for j, (h, w, tip) in enumerate(enemy_cols):
             lbl = ttk.Label(inner, text=h, font=('', 6), width=w, anchor='n')
@@ -1062,12 +1127,12 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
         for i in range(18):
             vr = {}
             ttk.Label(inner, text=str(i), font=FONT_S).grid(row=row, column=0)
-            for j, (k, w) in enumerate([('id',5),('lv',4),('grp',4),('x',3),('y',3),('facing',5),('delay',4),('flags',5)]):
+            for j, (k, w) in enumerate([('id',5),('lv',4),('grp',4),('x',3),('y',3),('pr_x',4),('pr_y',4),('delay',4),('flags',5)]):
                 vr[k] = tk.StringVar()
-                if k in ('id', 'facing', 'flags'):
+                if k in ('id', 'flags'):
                     wgt = ttk.Spinbox(inner, textvariable=vr[k], from_=0, to=65535, width=w, font=('', 7))
-                elif k == 'delay':
-                    wgt = ttk.Spinbox(inner, textvariable=vr[k], from_=0, to=255, width=w, font=('', 7))
+                elif k in ('x', 'y', 'pr_x', 'pr_y', 'delay'):
+                    wgt = ttk.Spinbox(inner, textvariable=vr[k], from_=-128, to=127, width=w, font=('', 7))
                 else:
                     wgt = ttk.Entry(inner, textvariable=vr[k], width=w, font=('', 7))
                 wgt.grid(row=row, column=j+1, padx=1)
@@ -1082,7 +1147,8 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
         row += 1
         ally_cols = [
             ('#', 3, ''),
-            ('网格位\nu16[178-189]', 8, '[178-189] uint16[6] ally_pos — War.dll"我方位置"'),
+            ('X\ni8[178-189]', 4, '[178-189] byte[12] ally_xy — sub_431428:74 X=178+2*i'),
+            ('Y\ni8[178-189]', 4, 'Y=179+2*i (int8, 0-31)'),
             ('朝向\nu8[208-213]', 6, '[208-213] byte[6] ally_facing — War.dll"我方朝向"'),
         ]
         for j, (h, w, tip) in enumerate(ally_cols):
@@ -1095,7 +1161,7 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
         for i in range(6):
             vr = {}
             ttk.Label(inner, text=str(i), font=FONT_S).grid(row=row, column=0)
-            for k, w, col in [('pos',8,1),('facing',6,2)]:
+            for k, w, col in [('x',4,1),('y',4,2),('facing',6,3)]:
                 vr[k] = tk.StringVar()
                 ttk.Entry(inner, textvariable=vr[k], width=w, font=('', 7)).grid(
                     row=row, column=col, padx=1)
@@ -1116,7 +1182,8 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
             ('Y\ni8[214-269]', 3, 'Y=215+2*i (int8对)'),
             ('min\nu8[270-325]', 4, '[270-325] byte[56] trea_lv — min=270+2*i'),
             ('max\nu8[270-325]', 4, 'max=271+2*i'),
-            ('数量\nu16[346-365]', 5, '[346-365] uint16[10] trea_quant — sub_434510:36; 仅前10组'),
+            ('QtMin\nu16[346-385]', 5, '[346-385] uint16[20] trea_quant min — sub_434510:36 word_953932; 10对'),
+            ('QtMax\nu16[346-385]', 5, 'trea_quant max — sub_434510:37 word_953934'),
         ]
         for j, (h, w, tip) in enumerate(trea_cols):
             lbl = ttk.Label(inner, text=h, font=('', 6), width=w, anchor='n')
@@ -1128,17 +1195,13 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
         for i in range(28):
             vr = {}
             ttk.Label(inner, text=str(i), font=FONT_S).grid(row=row, column=0)
-            for j, (k, w) in enumerate([('tid',6),('sub',6),('x',3),('y',3),('min',4),('max',4),('qty',5)]):
+            for j, (k, w) in enumerate([('tid',6),('sub',6),('x',3),('y',3),('min',4),('max',4),('qty_min',5),('qty_max',5)]):
                 vr[k] = tk.StringVar()
                 wgt = ttk.Entry(inner, textvariable=vr[k], width=w, font=('', 7))
                 wgt.grid(row=row, column=j+1, padx=1)
             self.ap_trea_vars.append(vr)
             row += 1
 
-        # [366-385] reserved
-        ttk.Label(inner, text="[366-385] (保留20字节 — 反编译未引用, 数据全零)", font=FONT_S,
-                  foreground='gray').grid(row=row, column=0, columnspan=8, sticky='w', pady=(2, 0))
-        row += 1
 
         # ═══════════════════════════════════════════════════════
         # [478-497] 其他
@@ -1148,11 +1211,11 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
         row += 1
 
         self.apvars['def_enemy_x'] = tk.StringVar()
-        self._build_field(inner, row, 0, "[478] 默认敌军X byte", self.apvars['def_enemy_x'],
-            tooltip="sub_430578:17 byte_9539B6 — X=0时的默认坐标", width=8)
+        self._build_field(inner, row, 0, "[478] 默认LvP1 byte", self.apvars['def_enemy_x'],
+            tooltip="sub_430578:17 byte_9539B6 — level param default 1", width=8)
         self.apvars['def_enemy_y'] = tk.StringVar()
-        self._build_field(inner, row, 1, "[480] 默认敌军Y byte", self.apvars['def_enemy_y'],
-            tooltip="sub_430578:18 byte_9539B8", width=8)
+        self._build_field(inner, row, 1, "[480] 默认LvP2 byte", self.apvars['def_enemy_y'],
+            tooltip="sub_430578:18 byte_9539B8 — level param default 2", width=8)
         self.apvars['battle_turn_limit'] = tk.StringVar()
         self._build_field(inner, row, 2, "[482-483] 回合限制 uint16", self.apvars['battle_turn_limit'],
             tooltip="sub_43CA64:29 word_9539BA — >0时限制回合数", width=8)
@@ -1176,8 +1239,8 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
         self.apvars['flags'].set(str(rec['flags']))
         self.apflag_bit1.set((rec['flags'] & 2) != 0)
         self.apflag_bit2.set((rec['flags'] & 4) != 0)
-        self.apvars['def_enemy_x'].set(str(rec['default_enemy_x']))
-        self.apvars['def_enemy_y'].set(str(rec['default_enemy_y']))
+        self.apvars['def_enemy_x'].set(str(rec['default_lv_p1']))
+        self.apvars['def_enemy_y'].set(str(rec['default_lv_p2']))
         for i in range(6):
             v = rec['must_chars'][i]
             self.apvars['must_chars'][i].set(str(v) if v else '')
@@ -1185,13 +1248,15 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
             self.ap_enemy_vars[i]['id'].set(str(rec['enemy_ids'][i]) if rec['enemy_ids'][i] else '')
             self.ap_enemy_vars[i]['lv'].set(str(rec['enemy_lv'][i]))
             self.ap_enemy_vars[i]['grp'].set(str(rec['enemy_group'][i]))
-            self.ap_enemy_vars[i]['x'].set(str(rec['enemy_xy'][i*2]))
-            self.ap_enemy_vars[i]['y'].set(str(rec['enemy_xy'][i*2+1]))
-            self.ap_enemy_vars[i]['facing'].set(str(rec['enemy_facing'][i]))
+            self.ap_enemy_vars[i]['x'].set(str(rec['enemy_lv_range'][i*2]))
+            self.ap_enemy_vars[i]['y'].set(str(rec['enemy_lv_range'][i*2+1]))
+            self.ap_enemy_vars[i]['pr_x'].set(str(rec['enemy_xy'][i*2]))
+            self.ap_enemy_vars[i]['pr_y'].set(str(rec['enemy_xy'][i*2+1]))
             self.ap_enemy_vars[i]['delay'].set(str(rec['enemy_delay'][i]))
             self.ap_enemy_vars[i]['flags'].set(str(rec['enemy_flags'][i]))
         for i in range(6):
-            self.ap_ally_vars[i]['pos'].set(str(rec['ally_pos'][i]))
+            self.ap_ally_vars[i]['x'].set(str(rec['ally_xy'][i*2]))
+            self.ap_ally_vars[i]['y'].set(str(rec['ally_xy'][i*2+1]))
             self.ap_ally_vars[i]['facing'].set(str(rec['ally_facing'][i]))
         for i in range(28):
             self.ap_trea_vars[i]['tid'].set(str(rec['trea_id'][i]) if rec['trea_id'][i] else '')
@@ -1200,7 +1265,8 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
             self.ap_trea_vars[i]['y'].set(str(rec['trea_xy'][i*2+1]))
             self.ap_trea_vars[i]['min'].set(str(rec['trea_lv'][i*2]))
             self.ap_trea_vars[i]['max'].set(str(rec['trea_lv'][i*2+1]))
-            self.ap_trea_vars[i]['qty'].set(str(rec['trea_quant'][i]) if i < 10 else '')
+            self.ap_trea_vars[i]['qty_min'].set(str(rec['trea_quant'][i*2]) if i < 10 else '')
+            self.ap_trea_vars[i]['qty_max'].set(str(rec['trea_quant'][i*2+1]) if i < 10 else '')
 
     def _apply_allparams_tab(self, rec):
         try: rec['battle_id'] = int(self.apvars['battle_id'].get() or 0) & 0xFFFF
@@ -1213,9 +1279,9 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
         except: pass
         try: rec['flags'] = int(self.apvars['flags'].get() or 0) & 0xFF
         except: pass
-        try: rec['default_enemy_x'] = int(self.apvars['def_enemy_x'].get() or 0) & 0xFF
+        try: rec['default_lv_p1'] = int(self.apvars['def_enemy_x'].get() or 0) & 0xFF
         except: pass
-        try: rec['default_enemy_y'] = int(self.apvars['def_enemy_y'].get() or 0) & 0xFF
+        try: rec['default_lv_p2'] = int(self.apvars['def_enemy_y'].get() or 0) & 0xFF
         except: pass
         for i in range(6):
             try: rec['must_chars'][i] = int(self.apvars['must_chars'][i].get() or 0) & 0xFF
@@ -1227,18 +1293,22 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
             except: pass
             try: rec['enemy_group'][i] = int(self.ap_enemy_vars[i]['grp'].get() or 0) & 0xFF
             except: pass
-            try: rec['enemy_xy'][i*2] = int(self.ap_enemy_vars[i]['x'].get() or 0)
+            try: rec['enemy_lv_range'][i*2] = int(self.ap_enemy_vars[i]['x'].get() or 0)
             except: pass
-            try: rec['enemy_xy'][i*2+1] = int(self.ap_enemy_vars[i]['y'].get() or 0)
+            try: rec['enemy_lv_range'][i*2+1] = int(self.ap_enemy_vars[i]['y'].get() or 0)
             except: pass
-            try: rec['enemy_facing'][i] = int(self.ap_enemy_vars[i]['facing'].get() or 0) & 0xFFFF
+            try: rec['enemy_xy'][i*2] = int(self.ap_enemy_vars[i]['pr_x'].get() or 0)
+            except: pass
+            try: rec['enemy_xy'][i*2+1] = int(self.ap_enemy_vars[i]['pr_y'].get() or 0)
             except: pass
             try: rec['enemy_delay'][i] = int(self.ap_enemy_vars[i]['delay'].get() or 0) & 0xFF
             except: pass
             try: rec['enemy_flags'][i] = int(self.ap_enemy_vars[i]['flags'].get() or 0) & 0xFFFF
             except: pass
         for i in range(6):
-            try: rec['ally_pos'][i] = int(self.ap_ally_vars[i]['pos'].get() or 0) & 0xFFFF
+            try: rec['ally_xy'][i*2] = int(self.ap_ally_vars[i]['x'].get() or 0)
+            except: pass
+            try: rec['ally_xy'][i*2+1] = int(self.ap_ally_vars[i]['y'].get() or 0)
             except: pass
             try: rec['ally_facing'][i] = int(self.ap_ally_vars[i]['facing'].get() or 0) & 0xFF
             except: pass
@@ -1248,7 +1318,9 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
             if i < 10:
                 try: rec['trea_sub'][i] = int(self.ap_trea_vars[i]['sub'].get() or 0) & 0xFFFF
                 except: pass
-                try: rec['trea_quant'][i] = int(self.ap_trea_vars[i]['qty'].get() or 0) & 0xFFFF
+                try: rec['trea_quant'][i*2] = int(self.ap_trea_vars[i]['qty_min'].get() or 0) & 0xFFFF
+                except: pass
+                try: rec['trea_quant'][i*2+1] = int(self.ap_trea_vars[i]['qty_max'].get() or 0) & 0xFFFF
                 except: pass
             try: rec['trea_xy'][i*2] = int(self.ap_trea_vars[i]['x'].get() or 0)
             except: pass
@@ -1288,20 +1360,22 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
         ef = ttk.Frame(self.tab_enemy)
         ef.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
 
-        headers = ['槽', '角色ID', '角色名', '等级', 'AI编组', 'X', 'Y', '朝向', '精英/特殊']
-        widths = [3, 5, 12, 4, 4, 3, 3, 5, 8]
+        headers = ['槽', '角色ID', '角色名', '等级', 'AI编组', 'LvP1', 'LvP2', 'X', 'Y', '延迟', '精英/特殊']
+        widths = [3, 5, 12, 4, 4, 3, 3, 4, 4, 4, 8]
         for j, (h, w) in enumerate(zip(headers, widths)):
             lbl = ttk.Label(ef, text=h, font=FONT_S, width=w)
             lbl.grid(row=0, column=j, padx=1)
             # 添加反编译来源 tooltip
             tips = {
-                1: '[offset 34] sub_4307CC:222 *v5 — 敌军WarPC角色索引',
-                3: '[offset 70] sub_4307CC:260 *(v9-18) — <10杂兵, >=10精英',
-                4: '[offset 88] sub_4307CC:226 *v9 — 传入sub_430578 AI编组',
-                5: '[offset 106] sub_4307CC:227 *((BYTE*)v5+72) — X坐标(int8,0-31)',
-                6: '[offset 107] Y坐标(int8,0-31)',
-                7: '[offset 142] War.dll"敌人朝向" — 朝向值(uint16)',
-                8: '[offset 442] enemy_flags — bit0=精英,bit1=特殊,bit13/14=阵营',
+                1: '[offset 34] sub_4307CC:222 *v5 — enemy WarPC index',
+                3: '[offset 70] sub_4307CC:260 *(v9-18) — <10 grunt, >=10 elite',
+                4: '[offset 88] sub_4307CC:226 *v9 — AI group',
+                5: '[offset 106] sub_430578 a3 — level param 1 (int8)',
+                6: '[offset 107] sub_430578 a4 — level param 2 (int8)',
+                7: '[offset 142] sub_431428:94 *((char*)v32+108) — grid X(int8,0-31)',
+                8: '[offset 143] sub_431428:97 *((char*)v32+109) — grid Y(int8,0-31)',
+                9: '[offset 190] sub_4307CC:242 v9[102]; sub_444FD4:61 — action delay',
+                10: '[offset 442] enemy_flags — bit0=elite,bit1=special,bit13/14=faction',
             }
             if j in tips:
                 self._bind_tooltip(lbl, tips[j])
@@ -1328,19 +1402,27 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
             ttk.Entry(ef, textvariable=vars_row['group'], width=5, font=FONT).grid(row=row, column=4, padx=1)
 
             vars_row['x'] = tk.StringVar()
-            ttk.Spinbox(ef, textvariable=vars_row['x'], from_=0, to=31, width=4, font=FONT).grid(
+            ttk.Spinbox(ef, textvariable=vars_row['x'], from_=-128, to=127, width=4, font=FONT).grid(
                 row=row, column=5, padx=1)
 
             vars_row['y'] = tk.StringVar()
-            ttk.Spinbox(ef, textvariable=vars_row['y'], from_=0, to=31, width=3, font=FONT).grid(
+            ttk.Spinbox(ef, textvariable=vars_row['y'], from_=-128, to=127, width=4, font=FONT).grid(
                 row=row, column=6, padx=1)
 
-            vars_row['facing'] = tk.StringVar()
-            ttk.Spinbox(ef, textvariable=vars_row['facing'], from_=0, to=65535, width=5, font=FONT).grid(
+            vars_row['pr_x'] = tk.StringVar()
+            ttk.Spinbox(ef, textvariable=vars_row['pr_x'], from_=0, to=31, width=4, font=FONT).grid(
                 row=row, column=7, padx=1)
 
+            vars_row['pr_y'] = tk.StringVar()
+            ttk.Spinbox(ef, textvariable=vars_row['pr_y'], from_=0, to=31, width=4, font=FONT).grid(
+                row=row, column=8, padx=1)
+
+            vars_row['delay'] = tk.StringVar()
+            ttk.Spinbox(ef, textvariable=vars_row['delay'], from_=0, to=255, width=5, font=FONT).grid(
+                row=row, column=9, padx=1)
+
             vars_row['flags'] = tk.StringVar()
-            frm_flags = ttk.Frame(ef); frm_flags.grid(row=row, column=8, padx=1)
+            frm_flags = ttk.Frame(ef); frm_flags.grid(row=row, column=10, padx=1)
             ttk.Entry(frm_flags, textvariable=vars_row['flags'], width=5, font=FONT).pack(side=tk.LEFT)
             vars_row['flag_lbl'] = ttk.Label(frm_flags, text="", foreground='#cc6633', font=('', 7), width=4)
             vars_row['flag_lbl'].pack(side=tk.LEFT)
@@ -1353,9 +1435,11 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
             self.enemy_vars[i]['id'].set(str(eid) if eid else '')
             self.enemy_vars[i]['lv'].set(str(rec['enemy_lv'][i]))
             self.enemy_vars[i]['group'].set(str(rec['enemy_group'][i]))
-            self.enemy_vars[i]['x'].set(str(rec['enemy_xy'][i * 2]) if i * 2 < len(rec['enemy_xy']) else '0')
-            self.enemy_vars[i]['y'].set(str(rec['enemy_xy'][i * 2 + 1]) if i * 2 + 1 < len(rec['enemy_xy']) else '0')
-            self.enemy_vars[i]['facing'].set(str(rec['enemy_facing'][i]))
+            self.enemy_vars[i]['x'].set(str(rec['enemy_lv_range'][i * 2]))
+            self.enemy_vars[i]['y'].set(str(rec['enemy_lv_range'][i * 2 + 1]))
+            self.enemy_vars[i]['pr_x'].set(str(rec['enemy_xy'][i * 2]))
+            self.enemy_vars[i]['pr_y'].set(str(rec['enemy_xy'][i * 2 + 1]))
+            self.enemy_vars[i]['delay'].set(str(rec['enemy_delay'][i]))
             self.enemy_vars[i]['flags'].set(str(rec['enemy_flags'][i]))
             # 标志位解读 (sub_4307CC:264-298; sub_444FD4:82-102)
             f = rec['enemy_flags'][i]
@@ -1384,13 +1468,19 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
                 rec['enemy_group'][i] = int(self.enemy_vars[i]['group'].get() or 0) & 0xFF
             except: pass
             try:
-                rec['enemy_xy'][i * 2] = int(self.enemy_vars[i]['x'].get() or 0)
+                rec['enemy_lv_range'][i * 2] = int(self.enemy_vars[i]['x'].get() or 0)
             except: pass
             try:
-                rec['enemy_xy'][i * 2 + 1] = int(self.enemy_vars[i]['y'].get() or 0)
+                rec['enemy_lv_range'][i * 2 + 1] = int(self.enemy_vars[i]['y'].get() or 0)
             except: pass
             try:
-                rec['enemy_facing'][i] = int(self.enemy_vars[i]['facing'].get() or 0) & 0xFFFF
+                rec['enemy_xy'][i * 2] = int(self.enemy_vars[i]['pr_x'].get() or 0)
+            except: pass
+            try:
+                rec['enemy_xy'][i * 2 + 1] = int(self.enemy_vars[i]['pr_y'].get() or 0)
+            except: pass
+            try:
+                rec['enemy_delay'][i] = int(self.enemy_vars[i]['delay'].get() or 0) & 0xFF
             except: pass
             try:
                 rec['enemy_flags'][i] = int(self.enemy_vars[i]['flags'].get() or 0) & 0xFFFF
@@ -1404,40 +1494,46 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
         af = ttk.Frame(self.tab_ally)
         af.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
 
-        ttk.Label(af, text="友军位置+朝向 (War.dll标签\"我方位置\"+\"我方朝向\"):",
-                  font=FONT_S).grid(row=0, column=0, columnspan=8, sticky='w', pady=(0, 4))
+        ttk.Label(af, text="友军坐标+朝向 (sub_431428:74 unk_95388A — int8字节对):",
+                  font=FONT_S).grid(row=0, column=0, columnspan=4, sticky='w', pady=(0, 4))
 
-        headers = ['槽', '网格位置', '朝向']
+        headers = ['槽', 'X', 'Y', '朝向']
         for j, h in enumerate(headers):
-            ttk.Label(af, text=h, font=FONT_S, width=8 if j==1 else 6).grid(
+            ttk.Label(af, text=h, font=FONT_S, width=4 if j in (1,2) else 5 if j==3 else 3).grid(
                 row=1, column=j, padx=1)
 
-        self.ally_vars = []  # ally_pos: uint16 encoded grid index
-        self.ally_facing_vars = []  # ally_facing: byte
+        self.ally_vars = []  # ally_xy: int8 pairs
         for i in range(6):
             row = i + 2
             ttk.Label(af, text=str(i), font=FONT_S).grid(row=row, column=0)
             vars_row = {}
-            vars_row['pos'] = tk.StringVar()
-            ttk.Spinbox(af, textvariable=vars_row['pos'], from_=0, to=1023, width=8, font=FONT).grid(
+            vars_row['x'] = tk.StringVar()
+            ttk.Spinbox(af, textvariable=vars_row['x'], from_=0, to=31, width=4, font=FONT).grid(
                 row=row, column=1, padx=1)
+            vars_row['y'] = tk.StringVar()
+            ttk.Spinbox(af, textvariable=vars_row['y'], from_=0, to=31, width=4, font=FONT).grid(
+                row=row, column=2, padx=1)
             vars_row['facing'] = tk.StringVar()
             ttk.Spinbox(af, textvariable=vars_row['facing'], from_=0, to=255, width=6, font=FONT).grid(
-                row=row, column=2, padx=1)
+                row=row, column=3, padx=1)
             self.ally_vars.append(vars_row)
 
-        ttk.Label(af, text="\n格位=(Y<<5)|X, 朝向=0-7(八方), 255=无效):",
-                  font=FONT_S).grid(row=9, column=0, columnspan=8, sticky='w')
+        ttk.Label(af, text="\nX,Y: int8(0-31), -1=无效; 朝向: 0-7(八方), 255=无效",
+                  font=FONT_S).grid(row=9, column=0, columnspan=4, sticky='w')
 
     def _populate_ally_tab(self, rec):
         for i in range(6):
-            self.ally_vars[i]['pos'].set(str(rec['ally_pos'][i]))
+            self.ally_vars[i]['x'].set(str(rec['ally_xy'][i * 2]))
+            self.ally_vars[i]['y'].set(str(rec['ally_xy'][i * 2 + 1]))
             self.ally_vars[i]['facing'].set(str(rec['ally_facing'][i]))
 
     def _apply_ally_tab(self, rec):
         for i in range(6):
             try:
-                rec['ally_pos'][i] = int(self.ally_vars[i]['pos'].get() or 0) & 0xFFFF
+                rec['ally_xy'][i * 2] = int(self.ally_vars[i]['x'].get() or 0)
+            except: pass
+            try:
+                rec['ally_xy'][i * 2 + 1] = int(self.ally_vars[i]['y'].get() or 0)
             except: pass
             try:
                 rec['ally_facing'][i] = int(self.ally_vars[i]['facing'].get() or 0) & 0xFF
@@ -1462,9 +1558,9 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
             row=0, column=0, columnspan=10, sticky='w', pady=(2, 4))
 
         # 表头
-        hdr = ['#', 'X', 'Y', 'LvMin', 'LvMax', '主物品ID', '主物品名', '副物品', '副物品名']
+        hdr = ['#', 'X', 'Y', 'LvMin', 'LvMax', '主物品ID', '主物品名', '副物品', '副物品名', 'QtyMin', 'QtyMax']
         for j, h in enumerate(hdr):
-            ttk.Label(inner, text=h, font=FONT_S, width=8 if j >= 5 else 5).grid(
+            ttk.Label(inner, text=h, font=FONT_S, width=8 if 5 <= j <= 6 or j >= 9 else 5).grid(
                 row=1, column=j, padx=1)
 
         self.trea_vars = []
@@ -1510,6 +1606,12 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
                 slbl = ttk.Label(inner, text="", foreground='#cc6633', font=FONT_S, width=10, anchor='w')
                 slbl.grid(row=row, column=8, padx=1)
                 vr['slbl'] = slbl
+                vr['qty_min'] = tk.StringVar()
+                ttk.Entry(inner, textvariable=vr['qty_min'], width=5, font=FONT).grid(
+                    row=row, column=9, padx=1)
+                vr['qty_max'] = tk.StringVar()
+                ttk.Entry(inner, textvariable=vr['qty_max'], width=5, font=FONT).grid(
+                    row=row, column=10, padx=1)
             else:
                 vr['sub'] = None
 
@@ -1525,8 +1627,8 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
 
             tid = rec['trea_id'][i]
             vr['tid'].set(str(tid) if tid else '')
-            if tid and tid in self.tkt:
-                self.trea_name_labels[i].config(text=self.tkt[tid][:10])
+            if tid and tid in self.tkitem_names:
+                self.trea_name_labels[i].config(text=self.tkitem_names[tid][:10])
             elif tid:
                 self.trea_name_labels[i].config(text=f"Item#{tid}")
             else:
@@ -1535,12 +1637,14 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
             if i < 10 and vr['sub'] is not None:
                 sub = rec['trea_sub'][i]
                 vr['sub'].set(str(sub) if sub else '')
-                if sub and sub in self.tkt:
-                    vr['slbl'].config(text=self.tkt[sub][:10])
+                if sub and sub in self.tkitem_names_by_id:
+                    vr['slbl'].config(text=self.tkitem_names_by_id[sub][:10])
                 elif sub:
                     vr['slbl'].config(text=f"Item#{sub}")
                 else:
                     vr['slbl'].config(text="")
+                vr['qty_min'].set(str(rec['trea_quant'][i*2]))
+                vr['qty_max'].set(str(rec['trea_quant'][i*2+1]))
 
     def _apply_drops_tab(self, rec):
         for i in range(28):
@@ -1563,6 +1667,12 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
             if i < 10 and vr['sub'] is not None:
                 try:
                     rec['trea_sub'][i] = int(vr['sub'].get() or 0) & 0xFFFF
+                except: pass
+                try:
+                    rec['trea_quant'][i*2] = int(vr['qty_min'].get() or 0) & 0xFFFF
+                except: pass
+                try:
+                    rec['trea_quant'][i*2+1] = int(vr['qty_max'].get() or 0) & 0xFFFF
                 except: pass
 
     # ═══════════════════════════════════════════════════════════
@@ -1682,7 +1792,7 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
 
         # ── 图层2: 单位标记 ──
         if self.show_units.get():
-            # 敌军 (红色)
+            # 敌军 (红色) — enemy_xy from offset 142 (grid coords)
             for i in range(18):
                 eid = rec['enemy_ids'][i]
                 if eid <= 0:
@@ -1700,13 +1810,12 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
                                    fill='#ff6666', font=('', max(6, int(6*zoom))),
                                    tags=('unit',))
 
-            # 友军 (蓝色, uint16网格索引编码)
+            # 友军 (蓝色, int8字节对)
             for i in range(6):
-                pos = rec['ally_pos'][i]
-                if pos == 0:
+                ax = rec['ally_xy'][i*2]
+                ay = rec['ally_xy'][i*2+1]
+                if ax == 0 and ay == 0:
                     continue
-                ay = pos >> 5
-                ax = pos & 0x1F
                 cx = offset_x + ax * cell_size + cell_size // 2
                 cy = offset_y + ay * cell_size + cell_size // 2
                 r = max(4, cell_size // 3)
@@ -1750,9 +1859,8 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
                 if ex == gx and ey == gy:
                     return ('enemy', i)
         for i in range(6):
-            pos = rec['ally_pos'][i]
-            ay = pos >> 5
-            ax = pos & 0x1F
+            ax = rec['ally_xy'][i*2]
+            ay = rec['ally_xy'][i*2+1]
             if ax == gx and ay == gy:
                 return ('ally', i)
         return None
@@ -1821,7 +1929,8 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
             rec['enemy_xy'][uidx * 2] = gx
             rec['enemy_xy'][uidx * 2 + 1] = gy
         else:
-            rec['ally_pos'][uidx] = (gy << 5) | gx
+            rec['ally_xy'][uidx * 2] = gx
+            rec['ally_xy'][uidx * 2 + 1] = gy
         self._dirty = True
         self._redraw_scene()
 
