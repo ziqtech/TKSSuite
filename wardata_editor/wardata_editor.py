@@ -282,8 +282,8 @@ def save_wardata(filepath: str, records: list):
         for j in range(36):
             struct.pack_into('<b', chunk, 142 + j, rec['enemy_xy'][j])
 
-        # 友军坐标: int8[12] at offset 178-189
-        for j in range(6):
+        # 友军坐标: int8[12] at offset 178-189 (6对 X,Y)
+        for j in range(12):
             struct.pack_into('<b', chunk, 178 + j, rec['ally_xy'][j])
 
         for j in range(18):
@@ -301,7 +301,7 @@ def save_wardata(filepath: str, records: list):
             struct.pack_into('<H', chunk, 326 + j * 2, rec['trea_sub'][j])
 
         for j in range(20):
-            struct.pack_into('<H', chunk, 346 + j, rec['trea_quant'][j])
+            struct.pack_into('<H', chunk, 346 + j * 2, rec['trea_quant'][j])
 
         for j in range(28):
             struct.pack_into('<H', chunk, 386 + j * 2, rec['trea_id'][j])
@@ -1850,7 +1850,9 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
         if self.show_grid.get() and warway:
                 for gy in range(32):
                     for gx in range(32):
-                        val = warway[gy * 32 + gx]
+                        raw = warway[gy * 32 + gx]
+                        # sub_4355C4/sub_431428: 地形值为 signed int8
+                        val = raw if raw < 128 else raw - 256
                         sx, sy = self._grid_to_screen(gx, gy)
                         # sub_42F9C8: isometric diamond at (sx,sy) with half-width tile_w, half-height tile_h
                         pts = [
@@ -1859,10 +1861,10 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
                             (sx, sy + tile_h),
                             (sx - tile_w, sy),
                         ]
-                        if val == 0xFF or val == -1:  # WarWay -1 = 永久障碍
+                        if val == -1:  # WarWay -1 (0xFF) = 永久障碍
                             color = '#553322'
                             outline = '#332211'
-                        elif val < 0:  # WarWay < -1 = 临时修改
+                        elif val < -1:  # WarWay < -1 = 临时障碍(sub_4355C4每回合+1直到0)
                             color = '#665544'
                             outline = '#443322'
                         elif val == 0:  # WarWay 0 = 普通地面
