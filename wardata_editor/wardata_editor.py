@@ -562,22 +562,23 @@ class WarDataEditor:
         # ── 底部状态栏 ──
         pf = ttk.LabelFrame(self.root, text="当前加载")
         pf.pack(fill=tk.X, padx=5, pady=(0, 2))
-        self.lbl_wardata = ttk.Label(pf, text="", foreground="gray")
+        self.lbl_wardata = ttk.Label(pf, text="请通过 文件→加载 TKS 目录 打开游戏数据 (Ctrl+O)", foreground="gray")
         self.lbl_wardata.pack(side=tk.LEFT, padx=10, pady=2)
 
     def _build_left_panel(self):
         lf = ttk.Frame(self.paned); self.paned.add(lf, weight=1)
-        cols = ('index', 'battle_id', 'enemy_count', 'name')
+        cols = ('index', 'enemy_count', 'trea_count', 'map_info', 'flags_info')
         self.tree = ttk.Treeview(lf, columns=cols, show='headings', selectmode='browse')
         col_config = [
-            ('index', '序号', 50),
-            ('battle_id', '战场ID', 60),
-            ('enemy_count', '敌军数', 50),
-            ('name', '名称/描述', 180),
+            ('index', '序号', 40),
+            ('enemy_count', '敌军', 40),
+            ('trea_count', '宝物', 40),
+            ('map_info', '地图', 50),
+            ('flags_info', '参数', 120),
         ]
         for cid, cn, cw in col_config:
             self.tree.heading(cid, text=cn)
-            self.tree.column(cid, width=cw, anchor='center' if cid != 'name' else 'w', minwidth=cw)
+            self.tree.column(cid, width=cw, anchor='center' if cid != 'flags_info' else 'w', minwidth=cw)
         vsb = ttk.Scrollbar(lf, orient=tk.VERTICAL, command=self.tree.yview)
         self.tree.configure(yscrollcommand=vsb.set)
         self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
@@ -588,9 +589,15 @@ class WarDataEditor:
         self.tree.delete(*self.tree.get_children())
         for rec in self.records:
             enemy_count = sum(1 for eid in rec['enemy_ids'] if eid > 0)
-            name = self._battle_name(rec)
+            trea_count = sum(1 for i in range(28) if rec['trea_id'][i] > 0 or (i < 10 and rec['trea_sub'][i] > 0))
+            map_info = f"{rec['map_id']}"
+            flags = rec['flags']
+            flag_parts = []
+            if flags & 2: flag_parts.append('续')
+            if flags & 4: flag_parts.append('随')
+            flags_info = ','.join(flag_parts) if flag_parts else '-'
             self.tree.insert('', 'end',
-                values=(rec['index'], rec['battle_id'], enemy_count, name))
+                values=(rec['index'], enemy_count, trea_count, map_info, flags_info))
 
     def _build_right_panel(self):
         rf = ttk.Frame(self.paned); self.paned.add(rf, weight=3)
@@ -677,8 +684,19 @@ class WarDataEditor:
         self._set_edit_enabled(True)
         self._dirty = False
 
-        self.lbl_wardata.config(text=f"WarData: {self.wardata_path} ({len(self.records)}场)")
+        # 底部状态栏: 显示目录名 + 加载状态
+        d = os.path.dirname(self.wardata_path)
+        dir_name = os.path.basename(d)
+        files_ok = []
+        if self.warway_path: files_ok.append('WarWay')
+        if self.wsc_grp_path: files_ok.append('WSC')
+        if self.tkt_path: files_ok.append('TKT')
+        if self.warpc_path: files_ok.append('WarPC')
+        if self.tkitem_path: files_ok.append('TKItem')
         n_bg = len(self.wsc_offsets) - 1 if self.wsc_offsets else 0
+        self.lbl_wardata.config(
+            text=f"{dir_name}/  {len(self.records)}场战斗  {n_bg}背景  [{', '.join(files_ok)}]",
+            foreground='black')
         self.status_var.set(f"已加载 {len(self.records)} 场战斗, {n_bg} 背景")
 
     def _char_name(self, warpc_idx):
@@ -710,12 +728,18 @@ class WarDataEditor:
         query = self.search_var.get().strip().lower()
         self.tree.delete(*self.tree.get_children())
         for rec in self.records:
-            name = self._battle_name(rec).lower()
-            if query and query not in name and query not in str(rec['battle_id']):
+            if query and query not in str(rec['index']) and query not in str(rec['map_id']):
                 continue
             enemy_count = sum(1 for eid in rec['enemy_ids'] if eid > 0)
+            trea_count = sum(1 for i in range(28) if rec['trea_id'][i] > 0 or (i < 10 and rec['trea_sub'][i] > 0))
+            map_info = f"{rec['map_id']}"
+            flags = rec['flags']
+            flag_parts = []
+            if flags & 2: flag_parts.append('续')
+            if flags & 4: flag_parts.append('随')
+            flags_info = ','.join(flag_parts) if flag_parts else '-'
             self.tree.insert('', 'end',
-                values=(rec['index'], rec['battle_id'], enemy_count, self._battle_name(rec)))
+                values=(rec['index'], enemy_count, trea_count, map_info, flags_info))
 
     def _clear_filter(self):
         self.search_var.set('')
@@ -1649,7 +1673,9 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
 
             tid = rec['trea_id'][i]
             vr['tid'].set(str(tid))
-            if tid and tid in self.tkitem_names:
+            if tid == 10000:
+                self.trea_name_labels[i].config(text="金钱")
+            elif tid and tid in self.tkitem_names:
                 self.trea_name_labels[i].config(text=self.tkitem_names[tid][:10])
             elif tid:
                 self.trea_name_labels[i].config(text=f"Item#{tid}")
@@ -1659,7 +1685,9 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
             if i < 10 and vr['sub'] is not None:
                 sub = rec['trea_sub'][i]
                 vr['sub'].set(str(sub))
-                if sub and sub in self.tkitem_names_by_id:
+                if sub == 10000:
+                    vr['slbl'].config(text="金钱")
+                elif sub and sub in self.tkitem_names_by_id:
                     vr['slbl'].config(text=self.tkitem_names_by_id[sub][:10])
                 elif sub:
                     vr['slbl'].config(text=f"Item#{sub}")
@@ -1746,6 +1774,20 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
         self.scene_info_var = tk.StringVar(value="")
         ttk.Label(ctrl, textvariable=self.scene_info_var, foreground='#3366cc',
                   font=FONT_S).pack(side=tk.RIGHT, padx=10)
+
+        # 地形图例
+        legend = ttk.Frame(sf); legend.pack(fill=tk.X, padx=2, pady=(0, 2))
+        terrain_legend = [
+            ('障碍(-1)', '#553322'), ('临时障碍', '#665544'),
+            ('区域1', '#aa6633'), ('区域2', '#3366aa'), ('区域3', '#aa44aa'),
+            ('区域4', '#33aa66'), ('区域5', '#aaaa33'),
+        ]
+        for label, color in terrain_legend:
+            f = ttk.Frame(legend); f.pack(side=tk.LEFT, padx=3)
+            c = tk.Canvas(f, width=10, height=10, highlightthickness=0)
+            c.create_rectangle(0, 0, 10, 10, fill=color, outline=color)
+            c.pack(side=tk.LEFT)
+            ttk.Label(f, text=label, font=('Microsoft YaHei UI', 7)).pack(side=tk.LEFT, padx=1)
 
         # Canvas 容器
         canvas_frame = ttk.Frame(sf); canvas_frame.pack(fill=tk.BOTH, expand=True)
@@ -1870,9 +1912,15 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
                         elif val == 0:  # WarWay 0 = 普通地面
                             color = ''
                             outline = '#334422'
-                        else:  # WarWay 1-5 = 特殊区域 (PlaceReq)
-                            color = '#224433'
-                            outline = '#44aa44'
+                        else:  # WarWay 1-5 = 特殊区域 (PlaceReq), 各区域不同颜色
+                            zone_colors = {
+                                1: ('#332211', '#aa6633'),  # 区域1: 棕色
+                                2: ('#112233', '#3366aa'),  # 区域2: 蓝色
+                                3: ('#332233', '#aa44aa'),  # 区域3: 紫色
+                                4: ('#113322', '#33aa66'),  # 区域4: 青绿
+                                5: ('#333311', '#aaaa33'),  # 区域5: 黄色
+                            }
+                            color, outline = zone_colors.get(val, ('#224433', '#44aa44'))
 
                         # 透明度: stipple 模拟 (tkinter Canvas 不支持 RGBA)
                         alpha = self.grid_alpha.get().rstrip('%')
@@ -1902,8 +1950,13 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
                 tx = rec['trea_xy'][i * 2]
                 ty = rec['trea_xy'][i * 2 + 1]
                 # 显示名称: 优先主物品名, 否则副物品名
-                if tid > 0:
+                # Item#10000 = 金钱(sentinel), 反编译 sub_40CE30:23
+                if tid == 10000:
+                    label = "金钱"
+                elif tid > 0:
                     label = self.tkitem_names.get(tid, f"Item#{tid}")[:6]
+                elif sub_id == 10000:
+                    label = "金钱"
                 else:
                     label = self.tkitem_names_by_id.get(sub_id, f"Sub#{sub_id}")[:6]
                 if tx >= 0 and ty >= 0 and tx < 32 and ty < 32:
