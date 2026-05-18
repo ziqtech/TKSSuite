@@ -490,6 +490,7 @@ class WarDataEditor:
 
         # 场景预览状态
         self._wsc_cache = {}
+        self._wsc_res_cache = {}  # map_id → (width, height)
         self._preview_zoom = 0.5
         self._drag_target = None
         self._drag_start_x = 0
@@ -562,42 +563,97 @@ class WarDataEditor:
         # ── 底部状态栏 ──
         pf = ttk.LabelFrame(self.root, text="当前加载")
         pf.pack(fill=tk.X, padx=5, pady=(0, 2))
-        self.lbl_wardata = ttk.Label(pf, text="请通过 文件→加载 TKS 目录 打开游戏数据 (Ctrl+O)", foreground="gray")
+        self.lbl_wardata = ttk.Label(pf, text="", foreground="gray")
         self.lbl_wardata.pack(side=tk.LEFT, padx=10, pady=2)
+        ttk.Separator(pf, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y)
+        self.lbl_warway = ttk.Label(pf, text="", foreground="gray")
+        self.lbl_warway.pack(side=tk.LEFT, padx=10, pady=2)
+        ttk.Separator(pf, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y)
+        self.lbl_wsc = ttk.Label(pf, text="", foreground="gray")
+        self.lbl_wsc.pack(side=tk.LEFT, padx=10, pady=2)
+        ttk.Separator(pf, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y)
+        self.lbl_tkt = ttk.Label(pf, text="", foreground="gray")
+        self.lbl_tkt.pack(side=tk.LEFT, padx=10, pady=2)
+        ttk.Separator(pf, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y)
+        self.lbl_extra = ttk.Label(pf, text="", foreground="gray")
+        self.lbl_extra.pack(side=tk.LEFT, padx=10, pady=2)
 
     def _build_left_panel(self):
         lf = ttk.Frame(self.paned); self.paned.add(lf, weight=1)
-        cols = ('index', 'enemy_count', 'trea_count', 'map_info', 'flags_info')
+        cols = ('index', 'map_info', 'enemy_count', 'trea_count', 'chars_info', 'flags_info')
         self.tree = ttk.Treeview(lf, columns=cols, show='headings', selectmode='browse')
         col_config = [
             ('index', '序号', 40),
-            ('enemy_count', '敌军', 40),
-            ('trea_count', '宝物', 40),
-            ('map_info', '地图', 50),
-            ('flags_info', '参数', 120),
+            ('map_info', '地图', 80),
+            ('enemy_count', '敌军数', 40),
+            ('trea_count', '宝物树', 40),
+            ('chars_info', '参战人物', 130),
+            ('flags_info', '参数', 80),
         ]
         for cid, cn, cw in col_config:
             self.tree.heading(cid, text=cn)
-            self.tree.column(cid, width=cw, anchor='center' if cid != 'flags_info' else 'w', minwidth=cw)
+            self.tree.column(cid, width=cw, anchor='center' if cid not in ('chars_info', 'flags_info') else 'w', minwidth=cw)
         vsb = ttk.Scrollbar(lf, orient=tk.VERTICAL, command=self.tree.yview)
         self.tree.configure(yscrollcommand=vsb.set)
         self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         vsb.pack(side=tk.RIGHT, fill=tk.Y)
         self.tree.bind('<<TreeviewSelect>>', self._on_tree_select)
 
+    def _get_wsc_resolution(self, map_id):
+        """获取 WSC 背景图原始分辨率 (仅读header, 缓存)"""
+        if map_id in self._wsc_res_cache:
+            return self._wsc_res_cache[map_id]
+        if not self.wsc_grp_path or not self.wsc_offsets:
+            return None
+        if map_id < 0 or map_id >= len(self.wsc_offsets) - 1:
+            return None
+        # 仅读取 header 获取分辨率, 避免完整LZSS解压
+        try:
+            data = Path(self.wsc_grp_path).read_bytes()
+            offset = self.wsc_offsets[map_id]
+            if offset + 12 > len(data):
+                return None
+            w, h = struct.unpack_from('<HH', data, offset)
+            if w == 0 or h == 0 or w > 4096 or h > 4096:
+                return None
+            self._wsc_res_cache[map_id] = (w, h)
+            return (w, h)
+        except Exception:
+            return None
+
     def _refresh_tree(self):
         self.tree.delete(*self.tree.get_children())
         for rec in self.records:
             enemy_count = sum(1 for eid in rec['enemy_ids'] if eid > 0)
             trea_count = sum(1 for i in range(28) if rec['trea_id'][i] > 0 or (i < 10 and rec['trea_sub'][i] > 0))
-            map_info = f"{rec['map_id']}"
+            # 地图列: map_id + 分辨率
+            mid = rec['map_id']
+            res = self._get_wsc_resolution(mid)
+            if res:
+                map_info = f"{mid} ({res[0]}x{res[1]})"
+            else:
+                map_info = str(mid)
+            # 参战人物: 敌军角色 (enemy_ids), 去重后前三个，多余显示"等"
+            enemy_names = []
+            seen = set()
+            for eid in rec['enemy_ids']:
+                if eid > 0 and eid not in seen:
+                    seen.add(eid)
+                    enemy_names.append(self._enemy_name(eid))
+            if enemy_names:
+                names = [n[:4] for n in enemy_names[:3]]
+                chars_info = ','.join(names)
+                if len(enemy_names) > 3:
+                    chars_info += '等'
+            else:
+                chars_info = '-'
             flags = rec['flags']
             flag_parts = []
             if flags & 2: flag_parts.append('续')
             if flags & 4: flag_parts.append('随')
             flags_info = ','.join(flag_parts) if flag_parts else '-'
             self.tree.insert('', 'end',
-                values=(rec['index'], enemy_count, trea_count, map_info, flags_info))
+                values=(rec['index'], map_info, enemy_count, trea_count, chars_info, flags_info))
 
     def _build_right_panel(self):
         rf = ttk.Frame(self.paned); self.paned.add(rf, weight=3)
@@ -629,6 +685,30 @@ class WarDataEditor:
     def _set_edit_enabled(self, enabled: bool):
         state = 'normal' if enabled else 'disabled'
         # Will be expanded as tabs are built
+
+    def _update_paths(self):
+        """更新底部状态栏各文件路径显示 (与 item_editor 样式一致)"""
+        g, r = "#228B22", "#CC3333"
+        def _f(lb, p):
+            if not p: lb.config(text="(未加载)", foreground=r)
+            elif not os.path.exists(p): lb.config(text=f"(不存在){p}", foreground=r)
+            else: lb.config(text=p, foreground=g)
+        _f(self.lbl_wardata, self.wardata_path)
+        _f(self.lbl_warway, self.warway_path)
+        if self.wsc_grp_path:
+            _f(self.lbl_wsc, self.wsc_grp_path)
+        else:
+            self.lbl_wsc.config(text="WSC: (未加载)", foreground=r)
+        _f(self.lbl_tkt, self.tkt_path)
+        extra_parts = []
+        if self.warpc_path and os.path.exists(self.warpc_path):
+            extra_parts.append(f"WarPC: {len(self.warpc_names)}人")
+        if self.tkitem_path and os.path.exists(self.tkitem_path):
+            extra_parts.append(f"TKItem: {len(self.tkitem_names)}件")
+        if extra_parts:
+            self.lbl_extra.config(text=" | ".join(extra_parts), foreground=g)
+        else:
+            self.lbl_extra.config(text="(WarPC/TKItem: 未加载)", foreground=r)
 
     # ── Task 6: File loading ──
 
@@ -680,24 +760,15 @@ class WarDataEditor:
         else:
             self.tkitem_names, self.tkitem_names_by_id = {}, {}
 
+        self._wsc_cache.clear()
+        self._wsc_res_cache.clear()
         self._refresh_tree()
         self._set_edit_enabled(True)
         self._dirty = False
 
-        # 底部状态栏: 显示目录名 + 加载状态
-        d = os.path.dirname(self.wardata_path)
-        dir_name = os.path.basename(d)
-        files_ok = []
-        if self.warway_path: files_ok.append('WarWay')
-        if self.wsc_grp_path: files_ok.append('WSC')
-        if self.tkt_path: files_ok.append('TKT')
-        if self.warpc_path: files_ok.append('WarPC')
-        if self.tkitem_path: files_ok.append('TKItem')
-        n_bg = len(self.wsc_offsets) - 1 if self.wsc_offsets else 0
-        self.lbl_wardata.config(
-            text=f"{dir_name}/  {len(self.records)}场战斗  {n_bg}背景  [{', '.join(files_ok)}]",
-            foreground='black')
-        self.status_var.set(f"已加载 {len(self.records)} 场战斗, {n_bg} 背景")
+        # 底部状态栏: 各文件路径 (与 item_editor 样式一致)
+        self._update_paths()
+        self.status_var.set(f"已加载 {len(self.records)} 场战斗")
 
     def _char_name(self, warpc_idx):
         """WarPC角色索引 → 角色名称 (via WarPC.name_id → TKT)
@@ -728,18 +799,41 @@ class WarDataEditor:
         query = self.search_var.get().strip().lower()
         self.tree.delete(*self.tree.get_children())
         for rec in self.records:
-            if query and query not in str(rec['index']) and query not in str(rec['map_id']):
+            # 搜索范围: 序号/地图ID/敌军角色名
+            enemy_names = []
+            seen = set()
+            for eid in rec['enemy_ids']:
+                if eid > 0 and eid not in seen:
+                    seen.add(eid)
+                    enemy_names.append(self._enemy_name(eid))
+            char_names = ','.join(enemy_names) if enemy_names else ''
+            if query and query not in str(rec['index']) and query not in str(rec['map_id']) \
+               and query not in char_names.lower():
                 continue
             enemy_count = sum(1 for eid in rec['enemy_ids'] if eid > 0)
             trea_count = sum(1 for i in range(28) if rec['trea_id'][i] > 0 or (i < 10 and rec['trea_sub'][i] > 0))
-            map_info = f"{rec['map_id']}"
+            # 地图列: map_id + 分辨率
+            mid = rec['map_id']
+            res = self._get_wsc_resolution(mid)
+            if res:
+                map_info = f"{mid} ({res[0]}x{res[1]})"
+            else:
+                map_info = str(mid)
+            # 参战人物: 敌军角色 (enemy_ids), 去重后前三个，多余显示"等"
+            if enemy_names:
+                names = [n[:4] for n in enemy_names[:3]]
+                chars_info = ','.join(names)
+                if len(enemy_names) > 3:
+                    chars_info += '等'
+            else:
+                chars_info = '-'
             flags = rec['flags']
             flag_parts = []
             if flags & 2: flag_parts.append('续')
             if flags & 4: flag_parts.append('随')
             flags_info = ','.join(flag_parts) if flag_parts else '-'
             self.tree.insert('', 'end',
-                values=(rec['index'], enemy_count, trea_count, map_info, flags_info))
+                values=(rec['index'], map_info, enemy_count, trea_count, chars_info, flags_info))
 
     def _clear_filter(self):
         self.search_var.set('')
@@ -1747,7 +1841,7 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
                         command=self._redraw_scene).pack(side=tk.LEFT, padx=2)
 
         ttk.Label(ctrl, text=" 透明度:", font=FONT_S).pack(side=tk.LEFT)
-        self.grid_alpha = tk.StringVar(value="50%")
+        self.grid_alpha = tk.StringVar(value="25%")
         ttk.Combobox(ctrl, textvariable=self.grid_alpha,
                      values=['0%', '25%', '50%', '75%', '100%'],
                      state='readonly', width=4).pack(side=tk.LEFT, padx=2)
@@ -1763,6 +1857,22 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
 
         ttk.Separator(ctrl, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=6)
 
+        # 地形类型独立显示/隐藏勾选框
+        self.show_obstacle = tk.BooleanVar(value=True)
+        ttk.Checkbutton(ctrl, text="障碍", variable=self.show_obstacle,
+                        command=self._redraw_scene).pack(side=tk.LEFT, padx=2)
+
+        self.show_temp_obstacle = tk.BooleanVar(value=True)
+        ttk.Checkbutton(ctrl, text="临时障碍", variable=self.show_temp_obstacle,
+                        command=self._redraw_scene).pack(side=tk.LEFT, padx=2)
+
+        self.show_zone = [tk.BooleanVar(value=True) for _ in range(5)]
+        for zi in range(5):
+            ttk.Checkbutton(ctrl, text=f"区域{zi+1}", variable=self.show_zone[zi],
+                            command=self._redraw_scene).pack(side=tk.LEFT, padx=2)
+
+        ttk.Separator(ctrl, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=6)
+
         ttk.Label(ctrl, text="缩放:", font=FONT_S).pack(side=tk.LEFT)
         self.zoom_var = tk.StringVar(value="50%")
         ttk.Combobox(ctrl, textvariable=self.zoom_var, values=['25%', '33%', '50%', '66%', '75%', '100%'],
@@ -1773,16 +1883,16 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
 
         self.scene_info_var = tk.StringVar(value="")
         ttk.Label(ctrl, textvariable=self.scene_info_var, foreground='#3366cc',
-                  font=FONT_S).pack(side=tk.RIGHT, padx=10)
+                  font=FONT).pack(side=tk.RIGHT, padx=10)
 
-        # 地形图例
+        # 地形图例色块
         legend = ttk.Frame(sf); legend.pack(fill=tk.X, padx=2, pady=(0, 2))
-        terrain_legend = [
-            ('障碍(-1)', '#553322'), ('临时障碍', '#665544'),
+        terrain_colors = [
+            ('障碍', '#553322'), ('临时障碍', '#665544'),
             ('区域1', '#aa6633'), ('区域2', '#3366aa'), ('区域3', '#aa44aa'),
             ('区域4', '#33aa66'), ('区域5', '#aaaa33'),
         ]
-        for label, color in terrain_legend:
+        for label, color in terrain_colors:
             f = ttk.Frame(legend); f.pack(side=tk.LEFT, padx=3)
             c = tk.Canvas(f, width=10, height=10, highlightthickness=0)
             c.create_rectangle(0, 0, 10, 10, fill=color, outline=color)
@@ -1904,15 +2014,21 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
                             (sx - tile_w, sy),
                         ]
                         if val == -1:  # WarWay -1 (0xFF) = 永久障碍
+                            if not self.show_obstacle.get():
+                                continue
                             color = '#553322'
                             outline = '#332211'
                         elif val < -1:  # WarWay < -1 = 临时障碍(sub_4355C4每回合+1直到0)
+                            if not self.show_temp_obstacle.get():
+                                continue
                             color = '#665544'
                             outline = '#443322'
                         elif val == 0:  # WarWay 0 = 普通地面
                             color = ''
                             outline = '#334422'
                         else:  # WarWay 1-5 = 特殊区域 (PlaceReq), 各区域不同颜色
+                            if not self.show_zone[val - 1].get():
+                                continue
                             zone_colors = {
                                 1: ('#332211', '#aa6633'),  # 区域1: 棕色
                                 2: ('#112233', '#3366aa'),  # 区域2: 蓝色
@@ -1969,7 +2085,7 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
                                             fill=fill_c, outline=outline_c, width=1,
                                             tags=('trea', f'trea_{i}'))
                     canvas.create_text(sx, sy - r - 6, text=label,
-                                       fill=fill_c, font=('', max(5, int(5*zoom))),
+                                       fill=fill_c, font=('', max(8, int(10*zoom))),
                                        tags=('trea',))
                 elif tx < 0:
                     zone = abs(tx)
@@ -1981,9 +2097,9 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
                     labels = [lbl for _, lbl in items]
                     txt = f"Z{zone}:" + ",".join(labels)
                     canvas.create_text(zr_x, bg_h - 15, text=txt, anchor='nw',
-                                       fill='#FFD700', font=('', max(6, int(6*zoom))),
+                                       fill='#FFD700', font=('', max(9, int(11*zoom))),
                                        tags=('trea', 'zone_req'))
-                    zr_x += len(txt) * max(5, int(5*zoom)) + 10
+                    zr_x += len(txt) * max(7, int(8*zoom)) + 10
 
         # ── 图层4: 单位 (enemy_xy offset 142, ally_xy offset 178, sub_431428) ──
         # sub_431428: enemy_xy -1~-5 = 随机区域请求(从WarWay对应区域随机选取), 0~31 = 固定坐标
@@ -2004,7 +2120,7 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
                                        fill='#cc3333', outline='white', width=1,
                                        tags=('unit', 'enemy', f'enemy_{i}'))
                     canvas.create_text(sx, sy + r + 8, text=name,
-                                       fill='#ff6666', font=('', max(6, int(6*zoom))),
+                                       fill='#ff6666', font=('', max(8, int(10*zoom))),
                                        tags=('unit',))
                 elif ex < 0:
                     zone = abs(ex)
@@ -2016,9 +2132,9 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
                     labels = [self._enemy_name(eid)[:4] for _, eid in entries]
                     txt = f"Z{zone}:" + ",".join(labels)
                     canvas.create_text(ezr_x, 20, text=txt, anchor='nw',
-                                       fill='#ff6666', font=('', max(6, int(6*zoom))),
+                                       fill='#ff6666', font=('', max(9, int(11*zoom))),
                                        tags=('unit', 'enemy', 'zone_req'))
-                    ezr_x += len(txt) * max(5, int(5*zoom)) + 10
+                    ezr_x += len(txt) * max(7, int(8*zoom)) + 10
 
             # 友军 (蓝色) — ally_xy [178-189]
             for i in range(6):
@@ -2043,7 +2159,7 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
                 name = self._char_name(cid)[:4]
                 canvas.create_text(10 + i * 60, 5,
                                    text=f"[{name}]", fill='#66ccff',
-                                   font=FONT_S, anchor='nw', tags=('unit',))
+                                   font=FONT, anchor='nw', tags=('unit',))
 
         canvas.configure(scrollregion=canvas.bbox('all'))
 
