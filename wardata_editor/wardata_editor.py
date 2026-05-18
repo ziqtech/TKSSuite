@@ -14,8 +14,8 @@ WarData.dat 可视化编辑器
 WarData.dat 格式 (每条498字节, 219条, flat binary — sub_42FDF8):
   字段通过 TKS.exe反编译 + War.dll官方编辑器(战场编辑器v2.0) 双重验证:
 
-  [0]     uint16  battle_id   — sub_42FDF8:17 fread→byte_9537D8; sub_436BD4:30 word_4EB728=a1
   [0]     byte    flags       — sub_4307CC:200 &4=随机敌军; sub_43CA64:102 &2=失败条件
+  [1]     byte    (reserved)  — 反编译未引用; 原误读为battle_id高字节, sub_436BD4:30 word_4EB728=a1实为函数参数
   [2-7]   byte[6] must_chars  — sub_4307CC:51 v20=&unk_9537DA (+1编码; 0/255=空)
   [8-29]  byte[22] (reserved) — 反编译未引用
   [30-31] uint16  name_id     — sub_43A8D8:39 word_9537F6→sub_4067E8(TKT)
@@ -199,8 +199,8 @@ def load_wardata(filepath: str) -> list:
 
         rec = {'index': i}
         # 解析已知字段
-        rec['battle_id'] = struct.unpack_from('<H', chunk, 0)[0]
-        rec['flags'] = chunk[0]  # byte, bit1/bit2
+        rec['battle_id'] = i  # 战场序号即记录索引, 文件offset0不存储battle_id
+        rec['flags'] = chunk[0]  # byte, bit1/bit2 (sub_4307CC:200, sub_43CA64:102)
         rec['must_chars'] = list(chunk[2:8])  # 6 bytes, +1 encoded
         # offset 8-29: reserved (22 bytes)
         rec['battle_name_id'] = struct.unpack_from('<H', chunk, 30)[0]  # sub_43A8D8:39 word_9537F6→TKT文本
@@ -254,8 +254,7 @@ def save_wardata(filepath: str, records: list):
         chunk = bytearray(rec['_raw'])
 
         # 回写已知字段
-        struct.pack_into('<H', chunk, 0, rec['battle_id'])
-        chunk[0] = rec['flags'] & 0xFF
+        chunk[0] = rec['flags'] & 0xFF  # offset 0: flags (byte)
         for j in range(6):
             chunk[2 + j] = rec['must_chars'][j] & 0xFF
         struct.pack_into('<H', chunk, 30, rec['battle_name_id'])
@@ -765,8 +764,7 @@ class WarDataEditor:
         rec['index'] = new_idx
         rec['battle_id'] = new_idx
         rec['_raw'] = bytearray(src['_raw'])
-        rec['_raw'][0] = new_idx & 0xFF
-        rec['_raw'][1] = (new_idx >> 8) & 0xFF
+        # 保留 flags (byte0) 不变, offset0-1不在文件中存储battle_id
         self.records.append(rec)
         self._refresh_tree()
         self._dirty = True
@@ -796,8 +794,8 @@ sub_42FE70: fopen("WarWay.dat","rb") → fseek(word_9537F8<<10) → fread(&unk_9
 sub_436BD4: 战场主初始化 — sub_42FDF8(a1)→sub_42FE70()→sub_4307CC(a2)→sub_431428()
 
 === 字段布局 (byte_9537D8 偏移, 498字节/条, 219条) ===
-[0]    uint16  battle_id   — sub_42FDF8:17 fread→byte_9537D8; sub_436BD4:30 word_4EB728=a1
 [0]    byte    flags       — sub_4307CC:200 &4=随机敌军数; sub_43CA64:102 &2=失败条件
+[1]    byte    (reserved)  — 反编译未引用; sub_436BD4:30 word_4EB728=a1是函数参数,非文件字段
 [2-7]  byte[6] must_chars  — sub_4307CC:51 v20=&unk_9537DA; 6字节(+1编码, 0/255=空)
 [8-29] byte[22] (保留)      — 反编译未引用
 [30]   uint16  name_id     — sub_43A8D8:39,41,122 word_9537F6→sub_4067E8(TKT) 战场名称
@@ -888,8 +886,8 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
         row = 0
 
         self.pvars['battle_id'] = tk.StringVar()
-        self._build_field(pf, row, 0, "战场ID", self.pvars['battle_id'],
-            tooltip="[offset 0] 战场唯一标识ID (sub_436BD4: word_4EB728 = a1)")
+        self._build_field(pf, row, 0, "战场序号", self.pvars['battle_id'],
+            tooltip="记录索引号(0-218), 非文件存储字段; word_4EB728 来自sub_436BD4函数参数")
 
         self.pvars['map_id'] = tk.StringVar()
         self._build_field(pf, row, 1, "地图编号", self.pvars['map_id'],
@@ -967,118 +965,164 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
 
     def _build_allparams_tab(self):
         ap = ttk.Frame(self.tab_allparams)
+        ap.pack(fill=tk.BOTH, expand=True)
         canvas = tk.Canvas(ap, highlightthickness=0)
-        canvas.pack(fill=tk.BOTH, expand=True, padx=2)
         sb = ttk.Scrollbar(ap, orient=tk.VERTICAL, command=canvas.yview)
         sb.pack(side=tk.RIGHT, fill=tk.Y)
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         canvas.configure(yscrollcommand=sb.set)
         inner = ttk.Frame(canvas)
-        canvas.create_window((0, 0), window=inner, anchor='nw')
-        inner.bind('<Configure>', lambda e: canvas.configure(scrollregion=canvas.bbox('all')))
+        self._ap_win_id = canvas.create_window((0, 0), window=inner, anchor='nw')
+
+        def _on_canvas_conf(event):
+            if event.width > 1:
+                canvas.itemconfig(self._ap_win_id, width=event.width)
+
+        canvas.bind('<Configure>', _on_canvas_conf, add='+')
+        inner.bind('<Configure>', lambda e: canvas.configure(scrollregion=canvas.bbox('all')), add='+')
+        canvas.bind('<MouseWheel>', lambda e: canvas.yview_scroll(int(-e.delta / 120), 'units'), add='+')
 
         self.apvars = {}
         row = 0
 
-        # ── 基本信息 ──
-        ttk.Label(inner, text="基本信息", font=FONT).grid(row=row, column=0, columnspan=4, sticky='w', pady=(5, 2))
+        # ═══════════════════════════════════════════════════════
+        # [000-033] 记录头
+        # ═══════════════════════════════════════════════════════
+        ttk.Label(inner, text="[000-033] 记录头", font=FONT).grid(
+            row=row, column=0, columnspan=6, sticky='w', pady=(5, 2))
         row += 1
 
+        # [index] 战场序号 + [000] flags
         self.apvars['battle_id'] = tk.StringVar()
-        self._build_field(inner, row, 0, "战场ID", self.apvars['battle_id'],
-            tooltip="[offset 0] uint16 战场唯一标识", width=8)
-        self.apvars['map_id'] = tk.StringVar()
-        self._build_field(inner, row, 1, "地图编号", self.apvars['map_id'],
-            tooltip="[offset 32] uint16 WarWay.dat地形索引", width=8)
-        self.apvars['battle_name_id'] = tk.StringVar()
-        self._build_field(inner, row, 2, "名称文本ID", self.apvars['battle_name_id'],
-            tooltip="[offset 30] uint16 TKT文本ID, 0=无", width=8)
-        self.apvars['battle_turn_limit'] = tk.StringVar()
-        self._build_field(inner, row, 3, "回合限制", self.apvars['battle_turn_limit'],
-            tooltip="[offset 482] uint16 >0时限制回合数", width=8)
-        row += 1
-
-        # flags
+        self._build_field(inner, row, 0, "[index] 战场序号", self.apvars['battle_id'],
+            tooltip="记录索引号(0-218), 非文件存储字段; word_4EB728 来自sub_436BD4函数参数a1", width=8)
         self.apvars['flags'] = tk.StringVar()
-        self._build_field(inner, row, 0, "Flags", self.apvars['flags'],
-            tooltip="[offset 0] bit1=失败条件 bit2=随机敌军", width=8)
+        self._build_field(inner, row, 1, "[000] Flags byte", self.apvars['flags'],
+            tooltip="bit1(&2)=失败条件(sub_43CA64:102) bit2(&4)=随机敌军(sub_4307CC:200)", width=8)
         self.apflag_bit1 = tk.BooleanVar()
         ttk.Checkbutton(inner, text="bit1:失败后继续", variable=self.apflag_bit1,
-                        command=self._on_apflag_change).grid(row=row, column=1, sticky='w')
+                        command=self._on_apflag_change).grid(row=row, column=2, sticky='w')
         self.apflag_bit2 = tk.BooleanVar()
         ttk.Checkbutton(inner, text="bit2:随机敌军数", variable=self.apflag_bit2,
-                        command=self._on_apflag_change).grid(row=row, column=2, sticky='w')
+                        command=self._on_apflag_change).grid(row=row, column=3, sticky='w')
         row += 1
 
-        # default enemy xy
-        self.apvars['def_enemy_x'] = tk.StringVar()
-        self._build_field(inner, row, 0, "默认敌X", self.apvars['def_enemy_x'],
-            tooltip="[offset 478] byte X=0时默认坐标", width=8)
-        self.apvars['def_enemy_y'] = tk.StringVar()
-        self._build_field(inner, row, 1, "默认敌Y", self.apvars['def_enemy_y'],
-            tooltip="[offset 480] byte X=0时默认坐标", width=8)
-        row += 1
-
-        # ── 强制出战 ──
-        ttk.Label(inner, text="强制出战 (6槽, +1编码):", font=FONT).grid(
-            row=row, column=0, columnspan=4, sticky='w', pady=(8, 2))
+        # [002-007] must_chars
+        ttk.Label(inner, text="[002-007] 强制出战 byte[6] (+1编码,0/255=空):", font=FONT_S).grid(
+            row=row, column=0, columnspan=6, sticky='w', pady=(4, 1))
         row += 1
         self.apvars['must_chars'] = []
+        frm_mc = ttk.Frame(inner); frm_mc.grid(row=row, column=0, columnspan=6, sticky='w', padx=3)
         for i in range(6):
             var = tk.StringVar()
             self.apvars['must_chars'].append(var)
-            c = i % 3; r = row + i // 3
-            frm = ttk.Frame(inner); frm.grid(row=r, column=c, sticky='w', padx=3, pady=1)
-            ttk.Label(frm, text=f"槽{i}:", font=FONT_S, width=3).pack(side=tk.LEFT)
-            ttk.Entry(frm, textvariable=var, width=6, font=FONT).pack(side=tk.LEFT, padx=2)
-        row += 2
-
-        # ── 敌军快速列表 ──
-        ttk.Label(inner, text="敌军快速列表 (槽/ID/Lv/组/X/Y/朝向/Flag):", font=FONT).grid(
-            row=row, column=0, columnspan=4, sticky='w', pady=(8, 2))
+            ttk.Label(frm_mc, text=f"槽{i}:", font=FONT_S).pack(side=tk.LEFT)
+            ttk.Entry(frm_mc, textvariable=var, width=5, font=FONT).pack(side=tk.LEFT, padx=(0, 6))
         row += 1
-        # Header
-        for j, (h, w) in enumerate([('#',3),('ID',5),('Lv',3),('组',3),('X',3),('Y',3),('向',5),('F',5)]):
-            ttk.Label(inner, text=h, font=FONT_S, width=w).grid(row=row, column=j, padx=1)
+
+        # [008-029] reserved
+        ttk.Label(inner, text="[008-029] (保留22字节 — 反编译未引用, 数据全零)", font=FONT_S,
+                  foreground='gray').grid(row=row, column=0, columnspan=6, sticky='w', pady=(2, 0))
+        row += 1
+
+        # [030-033] name_id + map_id
+        self.apvars['battle_name_id'] = tk.StringVar()
+        self._build_field(inner, row, 0, "[030-031] 名称文本ID uint16", self.apvars['battle_name_id'],
+            tooltip="sub_43A8D8:39 word_9537F6→sub_4067E8(TKT)", width=8)
+        self.apvars['map_id'] = tk.StringVar()
+        self._build_field(inner, row, 1, "[032-033] 地图编号 uint16", self.apvars['map_id'],
+            tooltip="sub_42FE70:16 word_9537F8<<10; sub_436BD4:34", width=8)
+        row += 1
+
+        # ═══════════════════════════════════════════════════════
+        # [034-177] 敌军配置
+        # ═══════════════════════════════════════════════════════
+        ttk.Label(inner, text="[034-177] 敌军配置 ×18", font=FONT).grid(
+            row=row, column=0, columnspan=9, sticky='w', pady=(10, 2))
+        row += 1
+        # 表头: 字段名+偏移
+        enemy_cols = [
+            ('#', 3, ''),
+            ('ID\nu16[034-069]', 5, '[34-69] uint16[18] enemy_id — sub_4307CC:219'),
+            ('Lv\nu8[070-087]', 4, '[70-87] byte[18] enemy_lv — sub_4307CC:260'),
+            ('组\nu8[088-105]', 4, '[88-105] byte[18] enemy_grp — sub_4307CC:217'),
+            ('X\ni8[106-141]', 3, '[106-141] byte[36] enemy_xy — X=106+2*i'),
+            ('Y\ni8[106-141]', 3, 'Y=107+2*i (int8, 0-31)'),
+            ('朝向\nu16[142-177]', 5, '[142-177] uint16[18] enemy_facing — War.dll"敌人朝向"'),
+            ('延迟\nu8[190-207]', 4, '[190-207] byte[18] enemy_del — sub_4307CC:242; War.dll"属性加成"'),
+            ('标志\nu16[442-477]', 5, '[442-477] uint16[18] enemy_flg — bit0=精英 bit1=特殊'),
+        ]
+        for j, (h, w, tip) in enumerate(enemy_cols):
+            lbl = ttk.Label(inner, text=h, font=('', 6), width=w, anchor='n')
+            lbl.grid(row=row, column=j, padx=1)
+            if tip:
+                self._bind_tooltip(lbl, tip)
         row += 1
         self.ap_enemy_vars = []
         for i in range(18):
             vr = {}
             ttk.Label(inner, text=str(i), font=FONT_S).grid(row=row, column=0)
-            for j, (k, w) in enumerate([('id',6),('lv',4),('grp',4),('x',3),('y',3),('facing',5),('flags',5)]):
-                if j >= 1:  # skip 'id' as first widget column
-                    pass
+            for j, (k, w) in enumerate([('id',5),('lv',4),('grp',4),('x',3),('y',3),('facing',5),('delay',4),('flags',5)]):
                 vr[k] = tk.StringVar()
-                wgt = ttk.Spinbox(inner, textvariable=vr[k], from_=0, to=65535, width=w, font=('', 7)) \
-                    if k in ('id', 'facing', 'flags') else \
-                    ttk.Entry(inner, textvariable=vr[k], width=w, font=('', 7))
+                if k in ('id', 'facing', 'flags'):
+                    wgt = ttk.Spinbox(inner, textvariable=vr[k], from_=0, to=65535, width=w, font=('', 7))
+                elif k == 'delay':
+                    wgt = ttk.Spinbox(inner, textvariable=vr[k], from_=0, to=255, width=w, font=('', 7))
+                else:
+                    wgt = ttk.Entry(inner, textvariable=vr[k], width=w, font=('', 7))
                 wgt.grid(row=row, column=j+1, padx=1)
             self.ap_enemy_vars.append(vr)
             row += 1
 
-        # ── 友军快速列表 ──
-        ttk.Label(inner, text="友军快速列表 (槽/网格位/朝向):", font=FONT).grid(
-            row=row, column=0, columnspan=4, sticky='w', pady=(8, 2))
+        # ═══════════════════════════════════════════════════════
+        # [178-213] 友军配置
+        # ═══════════════════════════════════════════════════════
+        ttk.Label(inner, text="[178-213] 友军配置 ×6", font=FONT).grid(
+            row=row, column=0, columnspan=4, sticky='w', pady=(10, 2))
         row += 1
-        for j, (h, w) in enumerate([('#',3),('网格位',7),('朝向',5)]):
-            ttk.Label(inner, text=h, font=FONT_S, width=w).grid(row=row, column=j, padx=1)
+        ally_cols = [
+            ('#', 3, ''),
+            ('网格位\nu16[178-189]', 8, '[178-189] uint16[6] ally_pos — War.dll"我方位置"'),
+            ('朝向\nu8[208-213]', 6, '[208-213] byte[6] ally_facing — War.dll"我方朝向"'),
+        ]
+        for j, (h, w, tip) in enumerate(ally_cols):
+            lbl = ttk.Label(inner, text=h, font=('', 6), width=w, anchor='n')
+            lbl.grid(row=row, column=j, padx=1)
+            if tip:
+                self._bind_tooltip(lbl, tip)
         row += 1
         self.ap_ally_vars = []
         for i in range(6):
             vr = {}
             ttk.Label(inner, text=str(i), font=FONT_S).grid(row=row, column=0)
-            for k, w in [('pos',7),('facing',5)]:
+            for k, w, col in [('pos',8,1),('facing',6,2)]:
                 vr[k] = tk.StringVar()
                 ttk.Entry(inner, textvariable=vr[k], width=w, font=('', 7)).grid(
-                    row=row, column={'pos':1,'facing':2}[k], padx=1)
+                    row=row, column=col, padx=1)
             self.ap_ally_vars.append(vr)
             row += 1
 
-        # ── 宝物快速列表 ──
-        ttk.Label(inner, text="宝物快速列表 (槽/主物品ID/副物品/X/Y/min/max/数量):", font=FONT).grid(
-            row=row, column=0, columnspan=8, sticky='w', pady=(8, 2))
+        # ═══════════════════════════════════════════════════════
+        # [214-441] 宝物配置
+        # ═══════════════════════════════════════════════════════
+        ttk.Label(inner, text="[214-441] 宝物配置 ×28", font=FONT).grid(
+            row=row, column=0, columnspan=8, sticky='w', pady=(10, 2))
         row += 1
-        for j, (h, w) in enumerate([('#',3),('主ID',6),('副ID',6),('X',3),('Y',3),('min',4),('max',4),('数量',5)]):
-            ttk.Label(inner, text=h, font=FONT_S, width=w).grid(row=row, column=j, padx=1)
+        trea_cols = [
+            ('#', 3, ''),
+            ('主物品\nu16[386-441]', 6, '[386-441] uint16[28] trea_id — sub_431428:199,295'),
+            ('副物品\nu16[326-345]', 6, '[326-345] uint16[10] trea_sub — sub_431428:202; 仅前10组'),
+            ('X\ni8[214-269]', 3, '[214-269] byte[56] trea_xy — X=214+2*i'),
+            ('Y\ni8[214-269]', 3, 'Y=215+2*i (int8对)'),
+            ('min\nu8[270-325]', 4, '[270-325] byte[56] trea_lv — min=270+2*i'),
+            ('max\nu8[270-325]', 4, 'max=271+2*i'),
+            ('数量\nu16[346-365]', 5, '[346-365] uint16[10] trea_quant — sub_434510:36; 仅前10组'),
+        ]
+        for j, (h, w, tip) in enumerate(trea_cols):
+            lbl = ttk.Label(inner, text=h, font=('', 6), width=w, anchor='n')
+            lbl.grid(row=row, column=j, padx=1)
+            if tip:
+                self._bind_tooltip(lbl, tip)
         row += 1
         self.ap_trea_vars = []
         for i in range(28):
@@ -1090,6 +1134,32 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
                 wgt.grid(row=row, column=j+1, padx=1)
             self.ap_trea_vars.append(vr)
             row += 1
+
+        # [366-385] reserved
+        ttk.Label(inner, text="[366-385] (保留20字节 — 反编译未引用, 数据全零)", font=FONT_S,
+                  foreground='gray').grid(row=row, column=0, columnspan=8, sticky='w', pady=(2, 0))
+        row += 1
+
+        # ═══════════════════════════════════════════════════════
+        # [478-497] 其他
+        # ═══════════════════════════════════════════════════════
+        ttk.Label(inner, text="[478-497] 其他", font=FONT).grid(
+            row=row, column=0, columnspan=4, sticky='w', pady=(10, 2))
+        row += 1
+
+        self.apvars['def_enemy_x'] = tk.StringVar()
+        self._build_field(inner, row, 0, "[478] 默认敌军X byte", self.apvars['def_enemy_x'],
+            tooltip="sub_430578:17 byte_9539B6 — X=0时的默认坐标", width=8)
+        self.apvars['def_enemy_y'] = tk.StringVar()
+        self._build_field(inner, row, 1, "[480] 默认敌军Y byte", self.apvars['def_enemy_y'],
+            tooltip="sub_430578:18 byte_9539B8", width=8)
+        self.apvars['battle_turn_limit'] = tk.StringVar()
+        self._build_field(inner, row, 2, "[482-483] 回合限制 uint16", self.apvars['battle_turn_limit'],
+            tooltip="sub_43CA64:29 word_9539BA — >0时限制回合数", width=8)
+        row += 1
+
+        ttk.Label(inner, text="[484-497] (保留14字节 — 反编译未引用, 全219条数据为零)", font=FONT_S,
+                  foreground='gray').grid(row=row, column=0, columnspan=4, sticky='w')
 
     def _on_apflag_change(self):
         flags = 0
@@ -1118,6 +1188,7 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
             self.ap_enemy_vars[i]['x'].set(str(rec['enemy_xy'][i*2]))
             self.ap_enemy_vars[i]['y'].set(str(rec['enemy_xy'][i*2+1]))
             self.ap_enemy_vars[i]['facing'].set(str(rec['enemy_facing'][i]))
+            self.ap_enemy_vars[i]['delay'].set(str(rec['enemy_delay'][i]))
             self.ap_enemy_vars[i]['flags'].set(str(rec['enemy_flags'][i]))
         for i in range(6):
             self.ap_ally_vars[i]['pos'].set(str(rec['ally_pos'][i]))
@@ -1161,6 +1232,8 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
             try: rec['enemy_xy'][i*2+1] = int(self.ap_enemy_vars[i]['y'].get() or 0)
             except: pass
             try: rec['enemy_facing'][i] = int(self.ap_enemy_vars[i]['facing'].get() or 0) & 0xFFFF
+            except: pass
+            try: rec['enemy_delay'][i] = int(self.ap_enemy_vars[i]['delay'].get() or 0) & 0xFF
             except: pass
             try: rec['enemy_flags'][i] = int(self.ap_enemy_vars[i]['flags'].get() or 0) & 0xFFFF
             except: pass
