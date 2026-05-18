@@ -30,7 +30,7 @@ WarData.dat 格式 (每条498字节, 219条, flat binary — sub_42FDF8):
   [190-207] byte[18] enemy_del  — sub_4307CC:242 v9[102]; sub_444FD4:61; War.dll标签"属性加成"
   [208-213] byte[6] ally_facing — War.dll标签"我方朝向"; 6个友军朝向值(byte)
   [214-269] byte[56] trea_xy    — sub_431428:204 (char*)v43-172/-171; 28组宝物坐标(int8对)
-  [270-325] byte[56] trea_lv    — sub_431428:296 (char*)v45-116/-115; 28组宝物等级(min,max)
+  [270-325] byte[56] trea_qty   — sub_431428:296 (char*)v45-116/-115; 28组主物品数量(min,max) byte
   [326-345] uint16[10] trea_sub — sub_431428:202; War.dll标签"物品编号" (前10组宝物副物品)
   [346-385] uint16[20] trea_quant — sub_434510:36-37 word_953932/953934; 10对quantity(min,max) uint16
   [386-441] uint16[28] trea_id — sub_431428:199,295 unk_95395A; 28组宝物主物品(TKItem索引)
@@ -217,7 +217,7 @@ def load_wardata(filepath: str) -> list:
         # 友军坐标: sub_431428:74 unk_95388A — 6对int8 (X,Y), 同 enemy_xy格式
         rec['ally_xy'] = list(struct.unpack_from('<' + 'b' * 12, chunk, 178))
 
-        # 敌军行动延迟: sub_4307CC:242 v9[102]; sub_444FD4:61; War.dll标签"属性加成"
+        # 敌军时序(Delay): sub_4307CC:242 v9[102]; sub_444FD4:61; War.dll标签"属性加成"
         rec['enemy_delay'] = list(chunk[190:208])
 
         # 友军朝向: War.dll标签"我方朝向"
@@ -225,7 +225,7 @@ def load_wardata(filepath: str) -> list:
 
         # 28组treasure数据 (sub_431428:198-323)
         rec['trea_xy'] = list(struct.unpack_from('<' + 'b' * 56, chunk, 214))   # X,Y坐标 28对
-        rec['trea_lv'] = list(chunk[270:326])                                    # 等级/数量范围 28对
+        rec['trea_qty'] = list(chunk[270:326])                                    # 主物品数量(min,max) 28对 byte
         rec['trea_sub'] = list(struct.unpack_from('<' + 'H' * 10, chunk, 326))   # 副物品 10组
         rec['trea_quant'] = list(struct.unpack_from('<' + 'H' * 20, chunk, 346)) # 10对(min,max), sub_434510:36-37
         rec['trea_id'] = list(struct.unpack_from('<' + 'H' * 28, chunk, 386))    # 主物品ID 28组
@@ -284,7 +284,7 @@ def save_wardata(filepath: str, records: list):
             struct.pack_into('<b', chunk, 214 + j, rec['trea_xy'][j])
 
         for j in range(56):
-            chunk[270 + j] = rec['trea_lv'][j] & 0xFF
+            chunk[270 + j] = rec['trea_qty'][j] & 0xFF
 
         for j in range(10):
             struct.pack_into('<H', chunk, 326 + j * 2, rec['trea_sub'][j])
@@ -803,7 +803,7 @@ class WarDataEditor:
             'ally_xy': [0] * 12,      # int8[12] 6对(X,Y), 同 enemy_xy格式
             'ally_facing': [0] * 6,    # byte[6]    "我方朝向"
             'trea_xy': [0] * 56,
-            'trea_lv': [0] * 56,
+            'trea_qty': [0] * 56,  # 主物品数量(min,max) 28对 byte
             'trea_sub': [0] * 10,
             'trea_quant': [0] * 20,  # 10对(min,max) uint16
             'trea_id': [0] * 28,
@@ -874,7 +874,7 @@ sub_436BD4: 战场主初始化 — sub_42FDF8(a1)→sub_42FE70()→sub_4307CC(a2
 [190-207] byte[18] enemy_del — sub_4307CC:242 v9[102]; sub_444FD4:61 byte_953896
 [208-213] byte[6] (保留)     — 反编译未引用
 [214-269] byte[56] trea_xy  — sub_431428:204 *(v43-172/-171) 28组宝物坐标(int8对)
-[270-325] byte[56] trea_lv  — sub_431428:296 *(v45-116/-115) 28组宝物等级/数量(min,max)
+[270-325] byte[56] trea_qty — sub_431428:296 *(v45-116/-115); 28组主物品数量(min,max) byte
 [326-345] uint16[10] trea_sub — sub_431428:202 *(v43-30) 前10组宝物副物品
 [346-385] uint16[20] trea_quant — sub_434510:36-37 word_953932/953934; 10对(min,max) quantity
 [386-441] uint16[28] trea_id — sub_431428:199,295 unk_95395A 28组宝物主物品ID
@@ -1114,7 +1114,7 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
             ('LvP2\ni8[106-141]', 4, 'sub_430578 a4, LvP2=107+2*i (int8)'),
             ('X\ni8[142-177]', 3, '[142-177] byte[36] enemy_xy — sub_431428:94 X=142+2*i'),
             ('Y\ni8[142-177]', 3, 'sub_431428:97 Y=143+2*i (int8, 0-31)'),
-            ('延迟\nu8[190-207]', 4, '[190-207] byte[18] enemy_del — sub_4307CC:242; sub_444FD4:61'),
+            ('时序Delay\nu8[190-207]', 6, '[190-207] byte[18] enemy_del — sub_4307CC:242; sub_444FD4:61'),
             ('标志\nu16[442-477]', 5, '[442-477] uint16[18] enemy_flg — bit0=elite bit1=special'),
         ]
         for j, (h, w, tip) in enumerate(enemy_cols):
@@ -1180,8 +1180,8 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
             ('副物品\nu16[326-345]', 6, '[326-345] uint16[10] trea_sub — sub_431428:202; 仅前10组'),
             ('X\ni8[214-269]', 3, '[214-269] byte[56] trea_xy — X=214+2*i'),
             ('Y\ni8[214-269]', 3, 'Y=215+2*i (int8对)'),
-            ('min\nu8[270-325]', 4, '[270-325] byte[56] trea_lv — min=270+2*i'),
-            ('max\nu8[270-325]', 4, 'max=271+2*i'),
+            ('数Min\nu8[270-325]', 4, '[270-325] byte[56] trea_qty — main qty min=270+2*i'),
+            ('数Max\nu8[270-325]', 4, 'main qty max=271+2*i'),
             ('QtMin\nu16[346-385]', 5, '[346-385] uint16[20] trea_quant min — sub_434510:36 word_953932; 10对'),
             ('QtMax\nu16[346-385]', 5, 'trea_quant max — sub_434510:37 word_953934'),
         ]
@@ -1263,8 +1263,8 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
             self.ap_trea_vars[i]['sub'].set(str(rec['trea_sub'][i]) if i < 10 and rec['trea_sub'][i] else '')
             self.ap_trea_vars[i]['x'].set(str(rec['trea_xy'][i*2]))
             self.ap_trea_vars[i]['y'].set(str(rec['trea_xy'][i*2+1]))
-            self.ap_trea_vars[i]['min'].set(str(rec['trea_lv'][i*2]))
-            self.ap_trea_vars[i]['max'].set(str(rec['trea_lv'][i*2+1]))
+            self.ap_trea_vars[i]['min'].set(str(rec['trea_qty'][i*2]))
+            self.ap_trea_vars[i]['max'].set(str(rec['trea_qty'][i*2+1]))
             self.ap_trea_vars[i]['qty_min'].set(str(rec['trea_quant'][i*2]) if i < 10 else '')
             self.ap_trea_vars[i]['qty_max'].set(str(rec['trea_quant'][i*2+1]) if i < 10 else '')
 
@@ -1326,9 +1326,9 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
             except: pass
             try: rec['trea_xy'][i*2+1] = int(self.ap_trea_vars[i]['y'].get() or 0)
             except: pass
-            try: rec['trea_lv'][i*2] = int(self.ap_trea_vars[i]['min'].get() or 0) & 0xFF
+            try: rec['trea_qty'][i*2] = int(self.ap_trea_vars[i]['min'].get() or 0) & 0xFF
             except: pass
-            try: rec['trea_lv'][i*2+1] = int(self.ap_trea_vars[i]['max'].get() or 0) & 0xFF
+            try: rec['trea_qty'][i*2+1] = int(self.ap_trea_vars[i]['max'].get() or 0) & 0xFF
             except: pass
 
     def _apply_params_tab(self, rec):
@@ -1360,8 +1360,8 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
         ef = ttk.Frame(self.tab_enemy)
         ef.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
 
-        headers = ['槽', '角色ID', '角色名', '等级', 'AI编组', 'LvP1', 'LvP2', 'X', 'Y', '延迟', '精英/特殊']
-        widths = [3, 5, 12, 4, 4, 3, 3, 4, 4, 4, 8]
+        headers = ['槽', '角色ID', '角色名', '等级', 'AI编组', 'LvP1', 'LvP2', 'X', 'Y', '时序Delay', '精英/特殊']
+        widths = [4, 7, 14, 5, 7, 5, 5, 4, 4, 5, 10]
         for j, (h, w) in enumerate(zip(headers, widths)):
             lbl = ttk.Label(ef, text=h, font=FONT_S, width=w)
             lbl.grid(row=0, column=j, padx=1)
@@ -1545,22 +1545,31 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
 
     def _build_drops_tab(self):
         """28组treasure: X,Y坐标(offset214) + 等级范围(offset270) + 主物品(offset386) + 副物品(offset326前10组)"""
-        df = self.tab_drops  # 复用现有Frame引用
-        # 滚动容器
-        canvas = tk.Canvas(df, highlightthickness=0); canvas.pack(fill=tk.BOTH, expand=True, padx=2)
-        sb = ttk.Scrollbar(df, orient=tk.VERTICAL, command=canvas.yview)
-        sb.pack(side=tk.RIGHT, fill=tk.Y)
-        canvas.configure(yscrollcommand=sb.set)
-        inner = ttk.Frame(canvas); canvas.create_window((0, 0), window=inner, anchor='nw')
-        inner.bind('<Configure>', lambda e: canvas.configure(scrollregion=canvas.bbox('all')))
+        df = self.tab_drops
+        # 滚动容器 (垂直+水平)
+        canvas = tk.Canvas(df, highlightthickness=0)
+        vsb = ttk.Scrollbar(df, orient=tk.VERTICAL, command=canvas.yview)
+        hsb = ttk.Scrollbar(df, orient=tk.HORIZONTAL, command=canvas.xview)
+        vsb.pack(side=tk.RIGHT, fill=tk.Y)
+        hsb.pack(side=tk.BOTTOM, fill=tk.X)
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        canvas.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
+        inner = ttk.Frame(canvas)
+        self._drops_win = canvas.create_window((0, 0), window=inner, anchor='nw')
+
+        def _drops_canvas_conf(event):
+            canvas.configure(scrollregion=canvas.bbox('all'))
+        inner.bind('<Configure>', _drops_canvas_conf)
+        canvas.bind('<MouseWheel>', lambda e: canvas.yview_scroll(int(-e.delta / 120), 'units'))
 
         ttk.Label(inner, text="战场宝物/奖励 (sub_431428 treasure系统) — 28组:", font=FONT).grid(
-            row=0, column=0, columnspan=10, sticky='w', pady=(2, 4))
+            row=0, column=0, columnspan=11, sticky='w', pady=(2, 4))
 
         # 表头
-        hdr = ['#', 'X', 'Y', 'LvMin', 'LvMax', '主物品ID', '主物品名', '副物品', '副物品名', 'QtyMin', 'QtyMax']
-        for j, h in enumerate(hdr):
-            ttk.Label(inner, text=h, font=FONT_S, width=8 if 5 <= j <= 6 or j >= 9 else 5).grid(
+        hdr = ['#', 'X', 'Y', '数量Min', '数量Max', '主物品ID', '主物品名', '副物品', '副物品名', '副QtMin', '副QtMax']
+        hdr_widths = [4, 4, 4, 10, 10, 10, 14, 10, 14, 10, 10]
+        for j, (h, w) in enumerate(zip(hdr, hdr_widths)):
+            ttk.Label(inner, text=h, font=FONT_S, width=w).grid(
                 row=1, column=j, padx=1)
 
         self.trea_vars = []
@@ -1580,12 +1589,12 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
             ttk.Spinbox(inner, textvariable=vr['y'], from_=-128, to=127, width=4, font=FONT).grid(
                 row=row, column=2, padx=1)
 
-            # Level min (from trea_lv[i*2])
+            # Main qty min (from trea_qty[i*2])
             vr['lvmin'] = tk.StringVar()
             ttk.Entry(inner, textvariable=vr['lvmin'], width=5, font=FONT).grid(
                 row=row, column=3, padx=1)
 
-            # Level max (from trea_lv[i*2+1])
+            # Main qty max (from trea_qty[i*2+1])
             vr['lvmax'] = tk.StringVar()
             ttk.Entry(inner, textvariable=vr['lvmax'], width=5, font=FONT).grid(
                 row=row, column=4, padx=1)
@@ -1622,8 +1631,8 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
             vr = self.trea_vars[i]
             vr['x'].set(str(rec['trea_xy'][i * 2]))
             vr['y'].set(str(rec['trea_xy'][i * 2 + 1]))
-            vr['lvmin'].set(str(rec['trea_lv'][i * 2]))
-            vr['lvmax'].set(str(rec['trea_lv'][i * 2 + 1]))
+            vr['lvmin'].set(str(rec['trea_qty'][i * 2]))
+            vr['lvmax'].set(str(rec['trea_qty'][i * 2 + 1]))
 
             tid = rec['trea_id'][i]
             vr['tid'].set(str(tid) if tid else '')
@@ -1656,10 +1665,10 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
                 rec['trea_xy'][i * 2 + 1] = int(vr['y'].get() or 0)
             except: pass
             try:
-                rec['trea_lv'][i * 2] = int(vr['lvmin'].get() or 0) & 0xFF
+                rec['trea_qty'][i * 2] = int(vr['lvmin'].get() or 0) & 0xFF
             except: pass
             try:
-                rec['trea_lv'][i * 2 + 1] = int(vr['lvmax'].get() or 0) & 0xFF
+                rec['trea_qty'][i * 2 + 1] = int(vr['lvmax'].get() or 0) & 0xFF
             except: pass
             try:
                 rec['trea_id'][i] = int(vr['tid'].get() or 0) & 0xFFFF
