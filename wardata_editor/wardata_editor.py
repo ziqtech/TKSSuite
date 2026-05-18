@@ -875,6 +875,10 @@ class WarDataEditor:
 
     def _save(self):
         if not self.wardata_path or not self.records:
+            messagebox.showinfo("提示", "请先加载数据")
+            return
+        if not messagebox.askyesno("确认保存",
+            f"保存 {len(self.records)} 条到:\n{self.wardata_path}\n\n原文件将被覆盖 (生成 .bak)."):
             return
         self._apply_current_edit()
         save_wardata(self.wardata_path, self.records)
@@ -2205,7 +2209,9 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
         return None
 
     def _on_scene_hover(self, event):
-        g = self._scene_to_grid(event.x, event.y)
+        cx = self.scene_canvas.canvasx(event.x)
+        cy = self.scene_canvas.canvasy(event.y)
+        g = self._scene_to_grid(cx, cy)
         if g is None:
             self.scene_info_var.set("")
             return
@@ -2248,21 +2254,25 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
 
     def _on_scene_click(self, event):
         """左键点击 — 选择/开始拖拽单位"""
-        g = self._scene_to_grid(event.x, event.y)
+        cx = self.scene_canvas.canvasx(event.x)
+        cy = self.scene_canvas.canvasy(event.y)
+        g = self._scene_to_grid(cx, cy)
         if g is None:
             return
         gx, gy = g
         unit = self._find_unit_at(gx, gy)
         if unit:
             self._drag_target = unit
-            self._drag_start_x = event.x
-            self._drag_start_y = event.y
+            self._drag_start_x = cx
+            self._drag_start_y = cy
 
     def _on_scene_drag(self, event):
         """左键拖拽 — 移动单位"""
         if not self._drag_target:
             return
-        g = self._scene_to_grid(event.x, event.y)
+        cx = self.scene_canvas.canvasx(event.x)
+        cy = self.scene_canvas.canvasy(event.y)
+        g = self._scene_to_grid(cx, cy)
         if g is None:
             return
         gx, gy = g
