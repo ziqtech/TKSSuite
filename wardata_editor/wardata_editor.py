@@ -187,6 +187,17 @@ def load_wsc_entry(grp_path: str, idx_offsets: list, entry_index: int):
 # WarData.dat 加载/保存 (sub_42FDF8: 498字节/条, flat binary)
 # ═══════════════════════════════════════════════════════════
 
+def load_warway(filepath: str, map_id: int) -> bytes:
+    """加载 WarWay.dat 中指定 map_id 的 1024 字节 32x32 网格"""
+    if not filepath or not os.path.exists(filepath):
+        return None
+    data = Path(filepath).read_bytes()
+    off = map_id * 1024
+    if off + 1024 > len(data):
+        return None
+    return data[off:off + 1024]
+
+
 def load_wardata(filepath: str) -> list:
     """加载 WarData.dat, 返回 dict 列表 (每条498字节解析为字段)"""
     data = Path(filepath).read_bytes()
@@ -461,6 +472,8 @@ class WarDataEditor:
 
         # 数据状态
         self.wardata_path = None
+        self.warway_path = None
+        self.warway_grid = None
         self.wsc_grp_path = None
         self.wsc_idx_path = None
         self.tkt_path = None
@@ -480,6 +493,8 @@ class WarDataEditor:
         self._preview_zoom = 0.5
         self._preview_offset_x = 0
         self._preview_offset_y = 0
+        self._scene_origin_x = 650   # grid(0,0)屏幕X, 背景中心(sub_42F9C8 dword_4E7DF0)
+        self._scene_origin_y = 30    # grid(0,0)屏幕Y, 背景顶部(sub_42F9C8 dword_4E7DF4)
         self._drag_target = None
         self._drag_start_x = 0
         self._drag_start_y = 0
@@ -621,6 +636,7 @@ class WarDataEditor:
             return
 
         wd = os.path.join(d, 'WarData.dat')
+        ww = os.path.join(d, 'WarWay.dat')
         wsc_g = os.path.join(d, 'WSC.GRP')
         wsc_i = os.path.join(d, 'WSC.IDX')
         tkt = os.path.join(d, 'TKT.dat')
@@ -628,7 +644,7 @@ class WarDataEditor:
         tkitem = os.path.join(d, 'TKItem.dat')
 
         missing = []
-        for p, n in [(wd, 'WarData.dat'), (wsc_g, 'WSC.GRP'),
+        for p, n in [(wd, 'WarData.dat'), (ww, 'WarWay.dat'), (wsc_g, 'WSC.GRP'),
                       (wsc_i, 'WSC.IDX'), (tkt, 'TKT.dat'), (warpc, 'WarPC.dat'),
                       (tkitem, 'TKItem.dat')]:
             if not os.path.exists(p):
@@ -642,6 +658,7 @@ class WarDataEditor:
                 f"以下文件未找到, 相关功能将受限:\n  " + "\n  ".join(missing))
 
         self.wardata_path = wd
+        self.warway_path = ww if os.path.exists(ww) else None
         self.wsc_grp_path = wsc_g if os.path.exists(wsc_g) else None
         self.wsc_idx_path = wsc_i if os.path.exists(wsc_i) else None
         self.tkt_path = tkt if os.path.exists(tkt) else None
@@ -1016,7 +1033,7 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
         self.flag_bit2.set((rec['flags'] & 4) != 0)
         for i in range(6):
             v = rec['must_chars'][i]
-            self.pvars['must_chars'][i].set(str(v) if v else '')
+            self.pvars['must_chars'][i].set(str(v))
             if v and v != 255:
                 cid = v - 1
                 self.must_char_labels[i].config(text=self._char_name(cid)[:12])
@@ -1243,9 +1260,9 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
         self.apvars['def_enemy_y'].set(str(rec['default_lv_p2']))
         for i in range(6):
             v = rec['must_chars'][i]
-            self.apvars['must_chars'][i].set(str(v) if v else '')
+            self.apvars['must_chars'][i].set(str(v))
         for i in range(18):
-            self.ap_enemy_vars[i]['id'].set(str(rec['enemy_ids'][i]) if rec['enemy_ids'][i] else '')
+            self.ap_enemy_vars[i]['id'].set(str(rec['enemy_ids'][i]))
             self.ap_enemy_vars[i]['lv'].set(str(rec['enemy_lv'][i]))
             self.ap_enemy_vars[i]['grp'].set(str(rec['enemy_group'][i]))
             self.ap_enemy_vars[i]['x'].set(str(rec['enemy_lv_range'][i*2]))
@@ -1259,8 +1276,8 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
             self.ap_ally_vars[i]['y'].set(str(rec['ally_xy'][i*2+1]))
             self.ap_ally_vars[i]['facing'].set(str(rec['ally_facing'][i]))
         for i in range(28):
-            self.ap_trea_vars[i]['tid'].set(str(rec['trea_id'][i]) if rec['trea_id'][i] else '')
-            self.ap_trea_vars[i]['sub'].set(str(rec['trea_sub'][i]) if i < 10 and rec['trea_sub'][i] else '')
+            self.ap_trea_vars[i]['tid'].set(str(rec['trea_id'][i]))
+            self.ap_trea_vars[i]['sub'].set(str(rec['trea_sub'][i]) if i < 10 else '')
             self.ap_trea_vars[i]['x'].set(str(rec['trea_xy'][i*2]))
             self.ap_trea_vars[i]['y'].set(str(rec['trea_xy'][i*2+1]))
             self.ap_trea_vars[i]['min'].set(str(rec['trea_qty'][i*2]))
@@ -1432,7 +1449,7 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
     def _populate_enemy_tab(self, rec):
         for i in range(18):
             eid = rec['enemy_ids'][i]
-            self.enemy_vars[i]['id'].set(str(eid) if eid else '')
+            self.enemy_vars[i]['id'].set(str(eid))
             self.enemy_vars[i]['lv'].set(str(rec['enemy_lv'][i]))
             self.enemy_vars[i]['group'].set(str(rec['enemy_group'][i]))
             self.enemy_vars[i]['x'].set(str(rec['enemy_lv_range'][i * 2]))
@@ -1566,8 +1583,8 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
             row=0, column=0, columnspan=11, sticky='w', pady=(2, 4))
 
         # 表头
-        hdr = ['#', 'X', 'Y', '数量Min', '数量Max', '主物品ID', '主物品名', '副物品', '副物品名', '副QtMin', '副QtMax']
-        hdr_widths = [4, 4, 4, 10, 10, 10, 14, 10, 14, 10, 10]
+        hdr = ['#', 'X', 'Y', '数量Min', '数量Max', '主物品ID', '主物品名', '副物品', '副物品名', '副物品数量Min', '副物品数量Max']
+        hdr_widths = [4, 4, 4, 10, 10, 10, 14, 10, 14, 14, 14]
         for j, (h, w) in enumerate(zip(hdr, hdr_widths)):
             ttk.Label(inner, text=h, font=FONT_S, width=w).grid(
                 row=1, column=j, padx=1)
@@ -1635,7 +1652,7 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
             vr['lvmax'].set(str(rec['trea_qty'][i * 2 + 1]))
 
             tid = rec['trea_id'][i]
-            vr['tid'].set(str(tid) if tid else '')
+            vr['tid'].set(str(tid))
             if tid and tid in self.tkitem_names:
                 self.trea_name_labels[i].config(text=self.tkitem_names[tid][:10])
             elif tid:
@@ -1645,7 +1662,7 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
 
             if i < 10 and vr['sub'] is not None:
                 sub = rec['trea_sub'][i]
-                vr['sub'].set(str(sub) if sub else '')
+                vr['sub'].set(str(sub))
                 if sub and sub in self.tkitem_names_by_id:
                     vr['slbl'].config(text=self.tkitem_names_by_id[sub][:10])
                 elif sub:
@@ -1701,8 +1718,23 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
         ttk.Checkbutton(ctrl, text="背景", variable=self.show_bg,
                         command=self._redraw_scene).pack(side=tk.LEFT, padx=2)
 
+        self.show_grid = tk.BooleanVar(value=True)
+        ttk.Checkbutton(ctrl, text="网格", variable=self.show_grid,
+                        command=self._redraw_scene).pack(side=tk.LEFT, padx=2)
+
+        ttk.Label(ctrl, text=" 透明度:", font=FONT_S).pack(side=tk.LEFT)
+        self.grid_alpha = tk.StringVar(value="50%")
+        ttk.Combobox(ctrl, textvariable=self.grid_alpha,
+                     values=['0%', '25%', '50%', '75%', '100%'],
+                     state='readonly', width=4).pack(side=tk.LEFT, padx=2)
+        self.grid_alpha.trace_add('write', lambda *a: self._redraw_scene())
+
         self.show_units = tk.BooleanVar(value=True)
         ttk.Checkbutton(ctrl, text="单位", variable=self.show_units,
+                        command=self._redraw_scene).pack(side=tk.LEFT, padx=2)
+
+        self.show_trea = tk.BooleanVar(value=True)
+        ttk.Checkbutton(ctrl, text="宝物", variable=self.show_trea,
                         command=self._redraw_scene).pack(side=tk.LEFT, padx=2)
 
         ttk.Separator(ctrl, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=6)
@@ -1774,8 +1806,25 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
         self._wsc_cache.clear()
         self._redraw_scene()
 
+    def _grid_to_screen(self, gx, gy):
+        """等距投影: 网格坐标 → 屏幕坐标
+        sub_42F9C8: screen_X = dword_4E7DF0 + 56*(X-10) - 56*(Y-15)
+                    screen_Y = dword_4E7DF4 + 28*(X-10) + 28*(Y-15)
+        56×28 为硬编码投影系数, 所有分辨率通用
+        """
+        zoom = self._preview_zoom
+        tile_w = int(56 * zoom)  # sub_42F9C8: 56*(X-Y)
+        tile_h = int(28 * zoom)  # sub_42F9C8: 28*(X+Y)
+        ox = self._scene_origin_x
+        oy = self._scene_origin_y
+        sx = ox + (gx - gy) * tile_w
+        sy = oy + (gx + gy) * tile_h
+        return sx, sy
+
     def _redraw_scene(self):
-        """重绘场景 (背景 + 地格 + 单位)"""
+        """重绘场景 (背景 + 网格 + 单位 + 宝物)
+        游戏坐标体系: sub_42F9C8 等距投影, 所有元素(WSC背景/网格/单位)共享同一坐标系
+        """
         canvas = self.scene_canvas
         canvas.delete('all')
 
@@ -1784,75 +1833,170 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
 
         rec = self.records[self._current_idx]
         zoom = self._preview_zoom
+        # sub_42F9C8 硬编码投影系数: 56*(X-Y), 28*(X+Y), 所有WSC分辨率通用
+        tile_w = int(56 * zoom)
+        tile_h = int(28 * zoom)
 
-        cell_size = int(16 * zoom)
-        offset_x = 20
-        offset_y = 20
-
-        # ── 图层1: WSC 背景 (map_id字段) ──
+        # ── 图层1: WSC 背景 ──
+        bg_w, bg_h = 0, 0
         if self.show_bg.get() and HAS_PIL:
             wsc_idx = rec['map_id']
             if wsc_idx < 0 or wsc_idx >= len(self.wsc_offsets) - 1:
                 wsc_idx = 0
             bg = self._load_wsc_background(wsc_idx)
             if bg:
-                photo, pw, ph = bg
-                canvas.create_image(offset_x, offset_y, anchor='nw', image=photo)
+                photo, bg_w, bg_h, *_ = bg
+                canvas.create_image(0, 0, anchor='nw', image=photo)
 
-        # ── 图层2: 单位标记 ──
+        # ── 预加载 WarWay (用于计算摄像机中心 + 渲染网格) ──
+        warway = load_warway(self.warway_path, rec['map_id']) if self.warway_path else None
+
+        # ── grid原点定位 (对标 sub_42F9C8 dword_4E7DF0/dword_4E7DF4 + sub_410848) ──
+        # 游戏WSC背景为预渲染等距场景, sub_410848 根据战场通行区域设置摄像机
+        # 游戏WSC背景为预渲染等距场景, sub_410848 根据战场通行区域设置摄像机
+        # 从WarWay可通行区域(>=0)计算几何中心, 对齐到WSC背景图中心
+        if warway:
+            passable_cx, passable_cy, passable_n = 0, 0, 0
+            for gy in range(32):
+                for gx in range(32):
+                    if warway[gy * 32 + gx] >= 0:  # sub_43D0E8:104 可通行判断
+                        passable_cx += gx
+                        passable_cy += gy
+                        passable_n += 1
+            cx = passable_cx // passable_n if passable_n else 15
+            cy = passable_cy // passable_n if passable_n else 15
+        else:
+            cx, cy = 15, 15
+        # 等距投影: 通行区域中心 → screen, 对齐到WSC背景中心
+        grid_center_x = 10 + bg_w // 2 if bg_w else 650
+        grid_center_y = 10 + bg_h // 2 if bg_h else 490
+        self._scene_origin_x = grid_center_x - (cx - cy) * tile_w
+        self._scene_origin_y = grid_center_y - (cx + cy) * tile_h
+
+        # ── 图层2: WarWay 网格 (sub_42F9C8 等距投影) ──
+        if self.show_grid.get() and warway:
+                for gy in range(32):
+                    for gx in range(32):
+                        val = warway[gy * 32 + gx]
+                        sx, sy = self._grid_to_screen(gx, gy)
+                        # sub_42F9C8: isometric diamond at (sx,sy) with half-width tile_w, half-height tile_h
+                        pts = [
+                            (sx, sy - tile_h),
+                            (sx + tile_w, sy),
+                            (sx, sy + tile_h),
+                            (sx - tile_w, sy),
+                        ]
+                        if val == 0xFF or val == -1:  # WarWay -1 = 永久障碍
+                            color = '#553322'
+                            outline = '#332211'
+                        elif val < 0:  # WarWay < -1 = 临时修改
+                            color = '#665544'
+                            outline = '#443322'
+                        elif val == 0:  # WarWay 0 = 普通地面
+                            color = ''
+                            outline = '#334422'
+                        else:  # WarWay 1-5 = 特殊区域 (PlaceReq)
+                            color = '#224433'
+                            outline = '#44aa44'
+
+                        # 透明度: stipple 模拟 (tkinter Canvas 不支持 RGBA)
+                        alpha = self.grid_alpha.get().rstrip('%')
+                        stipple_map = {'0': '', '25': 'gray75', '50': 'gray50', '75': 'gray25', '100': 'gray12'}
+                        stipple = stipple_map.get(alpha, 'gray50')
+                        if alpha == '100':
+                            color = ''  # 100%透明 = 无填充
+                        if color:
+                            canvas.create_polygon(pts, fill=color, outline=outline, width=1,
+                                                  stipple=stipple, tags=('grid',))
+                        else:
+                            canvas.create_polygon(pts, fill='', outline=outline, width=1,
+                                                  tags=('grid',))
+
+        # ── 图层3: 宝物 (trea_xy offset 214-269, sub_431428) ──
+        if self.show_trea.get():
+            for i in range(28):
+                tid = rec['trea_id'][i]
+                if tid <= 0:
+                    continue
+                tx = rec['trea_xy'][i * 2]
+                ty = rec['trea_xy'][i * 2 + 1]
+                if tx < 0 or ty < 0 or tx >= 32 or ty >= 32:
+                    continue
+                sx, sy = self._grid_to_screen(tx, ty)
+                r = max(3, tile_h // 2)
+                item_name = self.tkitem_names.get(tid, f"Item#{tid}")[:4]
+                canvas.create_rectangle(sx - r, sy - r, sx + r, sy + r,
+                                        fill='#FFD700', outline='#B8860B', width=1,
+                                        tags=('trea', f'trea_{i}'))
+                canvas.create_text(sx, sy - r - 6, text=item_name,
+                                   fill='#FFD700', font=('', max(5, int(5*zoom))),
+                                   tags=('trea',))
+
+        # ── 图层4: 单位 (enemy_xy offset 142, ally_xy offset 178, sub_431428) ──
         if self.show_units.get():
-            # 敌军 (红色) — enemy_xy from offset 142 (grid coords)
+            # 敌军 (红色) — enemy_xy [142-177]
             for i in range(18):
                 eid = rec['enemy_ids'][i]
                 if eid <= 0:
                     continue
                 ex = rec['enemy_xy'][i * 2]
                 ey = rec['enemy_xy'][i * 2 + 1]
-                cx = offset_x + ex * cell_size + cell_size // 2
-                cy = offset_y + ey * cell_size + cell_size // 2
-                r = max(4, cell_size // 3)
+                if ex < 0 or ey < 0 or ex >= 32 or ey >= 32:
+                    continue
+                sx, sy = self._grid_to_screen(ex, ey)
+                r = max(5, tile_h // 2)
                 name = self._enemy_name(eid)[:4]
-                canvas.create_oval(cx - r, cy - r, cx + r, cy + r,
+                canvas.create_oval(sx - r, sy - r, sx + r, sy + r,
                                    fill='#cc3333', outline='white', width=1,
                                    tags=('unit', 'enemy', f'enemy_{i}'))
-                canvas.create_text(cx, cy + r + 2, text=name,
+                canvas.create_text(sx, sy + r + 8, text=name,
                                    fill='#ff6666', font=('', max(6, int(6*zoom))),
                                    tags=('unit',))
 
-            # 友军 (蓝色, int8字节对)
+            # 友军 (蓝色) — ally_xy [178-189]
             for i in range(6):
                 ax = rec['ally_xy'][i*2]
                 ay = rec['ally_xy'][i*2+1]
                 if ax == 0 and ay == 0:
                     continue
-                cx = offset_x + ax * cell_size + cell_size // 2
-                cy = offset_y + ay * cell_size + cell_size // 2
-                r = max(4, cell_size // 3)
-                canvas.create_oval(cx - r, cy - r, cx + r, cy + r,
+                if ax < 0 or ay < 0 or ax >= 32 or ay >= 32:
+                    continue
+                sx, sy = self._grid_to_screen(ax, ay)
+                r = max(5, tile_h // 2)
+                canvas.create_oval(sx - r, sy - r, sx + r, sy + r,
                                    fill='#3366cc', outline='white', width=1,
                                    tags=('unit', 'ally', f'ally_{i}'))
 
-            # 强制出战角色名称
+            # 强制出战角色名称 — must_chars [2-7]
             for i in range(6):
                 cv = rec['must_chars'][i]
                 if cv <= 0:
                     continue
                 cid = cv - 1
                 name = self._char_name(cid)[:4]
-                canvas.create_text(offset_x + 5 + i * 60, offset_y - 10,
+                canvas.create_text(10 + i * 60, 5,
                                    text=f"[{name}]", fill='#66ccff',
-                                   font=FONT_S, anchor='sw', tags=('unit',))
+                                   font=FONT_S, anchor='nw', tags=('unit',))
 
         canvas.configure(scrollregion=canvas.bbox('all'))
 
     # ── 场景交互 ──
 
     def _scene_to_grid(self, canvas_x, canvas_y):
+        """屏幕坐标 → 等距网格坐标 (逆推 sub_42F9C8 + sub_410848)"""
         zoom = self._preview_zoom
-        cell_size = int(16 * zoom)
-        offset_x, offset_y = 20, 20
-        gx = int((canvas_x - offset_x) / cell_size)
-        gy = int((canvas_y - offset_y) / cell_size)
+        tile_w = int(56 * zoom)  # sub_42F9C8: 56*(X-Y)
+        tile_h = int(28 * zoom)  # sub_42F9C8: 28*(X+Y)
+        ox = self._scene_origin_x
+        oy = self._scene_origin_y
+        # 逆等距投影: sx = ox + (X-Y)*tile_w, sy = oy + (X+Y)*tile_h
+        # → X = ((sx-ox)/tile_w + (sy-oy)/tile_h) / 2
+        # → Y = ((sy-oy)/tile_h - (sx-ox)/tile_w) / 2
+        rel_x = canvas_x - ox
+        rel_y = canvas_y - oy
+        gx = (rel_x / tile_w + rel_y / tile_h) / 2
+        gy = (rel_y / tile_h - rel_x / tile_w) / 2
+        gx, gy = int(gx), int(gy)
         if 0 <= gx < 32 and 0 <= gy < 32:
             return (gx, gy)
         return None
