@@ -1125,8 +1125,8 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
             ('组\nu8[088-105]', 4, '[88-105] byte[18] enemy_grp — sub_4307CC:217'),
             ('LvP1\ni8[106-141]', 4, '[106-141] byte[36] enemy_lv_range — sub_430578 a3, LvP1=106+2*i'),
             ('LvP2\ni8[106-141]', 4, 'sub_430578 a4, LvP2=107+2*i (int8)'),
-            ('X\ni8[142-177]', 3, '[142-177] byte[36] enemy_xy — sub_431428:94 X=142+2*i'),
-            ('Y\ni8[142-177]', 3, 'sub_431428:97 Y=143+2*i (int8, 0-31)'),
+            ('X\ni8[142-177]', 3, '[142-177] byte[36] enemy_xy — sub_431428:94 X=142+2*i; -1~-5=随机区域请求'),
+            ('Y\ni8[142-177]', 3, 'sub_431428:97 Y=143+2*i; 0~31=固定位置, 负值=区域请求'),
             ('时序Delay\nu8[190-207]', 6, '[190-207] byte[18] enemy_del — sub_4307CC:242; sub_444FD4:61'),
             ('标志\nu16[442-477]', 5, '[442-477] uint16[18] enemy_flg — bit0=elite bit1=special'),
         ]
@@ -1160,8 +1160,8 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
         row += 1
         ally_cols = [
             ('#', 3, ''),
-            ('X\ni8[178-189]', 4, '[178-189] byte[12] ally_xy — sub_431428:74 X=178+2*i'),
-            ('Y\ni8[178-189]', 4, 'Y=179+2*i (int8, 0-31)'),
+            ('X\ni8[178-189]', 4, '[178-189] byte[12] ally_xy — sub_431428:74 X=178+2*i; 0=不使用'),
+            ('Y\ni8[178-189]', 4, 'Y=179+2*i (int8); 0,0=该槽位无友军'),
             ('朝向\nu8[208-213]', 6, '[208-213] byte[6] ally_facing — War.dll"我方朝向"'),
         ]
         for j, (h, w, tip) in enumerate(ally_cols):
@@ -1191,8 +1191,8 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
             ('#', 3, ''),
             ('主物品\nu16[386-441]', 6, '[386-441] uint16[28] trea_id — sub_431428:199,295'),
             ('副物品\nu16[326-345]', 6, '[326-345] uint16[10] trea_sub — sub_431428:202; 仅前10组'),
-            ('X\ni8[214-269]', 3, '[214-269] byte[56] trea_xy — X=214+2*i'),
-            ('Y\ni8[214-269]', 3, 'Y=215+2*i (int8对)'),
+            ('X\ni8[214-269]', 3, '[214-269] byte[56] trea_xy — X=214+2*i; -1~-5=随机区域请求'),
+            ('Y\ni8[214-269]', 3, 'Y=215+2*i (int8); 0~31=固定位置, 负值=区域请求'),
             ('数Min\nu8[270-325]', 4, '[270-325] byte[56] trea_qty — main qty min=270+2*i'),
             ('数Max\nu8[270-325]', 4, 'main qty max=271+2*i'),
             ('QtMin\nu16[346-385]', 5, '[346-385] uint16[20] trea_quant min — sub_434510:36 word_953932; 10对'),
@@ -1224,11 +1224,11 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
         row += 1
 
         self.apvars['def_enemy_x'] = tk.StringVar()
-        self._build_field(inner, row, 0, "[478] 默认LvP1 byte", self.apvars['def_enemy_x'],
-            tooltip="sub_430578:17 byte_9539B6 — level param default 1", width=8)
+        self._build_field(inner, row, 0, "[478] 默认等级下限 byte", self.apvars['def_enemy_x'],
+            tooltip="sub_430578:17 byte_9539B6 — 默认等级下限(当enemy_lv_range为0时使用)", width=8)
         self.apvars['def_enemy_y'] = tk.StringVar()
-        self._build_field(inner, row, 1, "[480] 默认LvP2 byte", self.apvars['def_enemy_y'],
-            tooltip="sub_430578:18 byte_9539B8 — level param default 2", width=8)
+        self._build_field(inner, row, 1, "[480] 默认等级上限 byte", self.apvars['def_enemy_y'],
+            tooltip="sub_430578:18 byte_9539B8 — 默认等级上限(当enemy_lv_range为0时使用)", width=8)
         self.apvars['battle_turn_limit'] = tk.StringVar()
         self._build_field(inner, row, 2, "[482-483] 回合限制 uint16", self.apvars['battle_turn_limit'],
             tooltip="sub_43CA64:29 word_9539BA — >0时限制回合数", width=8)
@@ -1385,8 +1385,8 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
                 4: '[offset 88] sub_4307CC:226 *v9 — AI group',
                 5: '[offset 106] sub_430578 a3 — level param 1 (int8)',
                 6: '[offset 107] sub_430578 a4 — level param 2 (int8)',
-                7: '[offset 142] sub_431428:94 *((char*)v32+108) — grid X(int8,0-31)',
-                8: '[offset 143] sub_431428:97 *((char*)v32+109) — grid Y(int8,0-31)',
+                7: '[offset 142] sub_431428:94 *((char*)v32+108) — grid X(int8); -1~-5=随机区域请求',
+                8: '[offset 143] sub_431428:97 *((char*)v32+109) — grid Y(int8); 0~31=固定位置, 负值=区域请求',
                 9: '[offset 190] sub_4307CC:242 v9[102]; sub_444FD4:61 — action delay',
                 10: '[offset 442] enemy_flags — bit0=elite,bit1=special,bit13/14=faction',
             }
@@ -1531,7 +1531,7 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
                 row=row, column=3, padx=1)
             self.ally_vars.append(vars_row)
 
-        ttk.Label(af, text="\nX,Y: int8(0-31), -1=无效; 朝向: 0-7(八方), 255=无效",
+        ttk.Label(af, text="\nX,Y: int8(0-31), 0=不使用; 朝向: 0-7(八方), 255=无效",
                   font=FONT_S).grid(row=9, column=0, columnspan=4, sticky='w')
 
     def _populate_ally_tab(self, rec):
@@ -1886,45 +1886,84 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
                                                   tags=('grid',))
 
         # ── 图层3: 宝物 (trea_xy offset 214-269, sub_431428) ──
+        # sub_431428:199-323 宝物系统
+        #   trea_id[i]>0 或 trea_sub[i]>0(i<10) 时放置宝物
+        #   -1~-5 = 随机区域请求(从WarWay对应区域随机选取), 0~31 = 固定坐标
         if self.show_trea.get():
+            trea_zone_requests = {}  # {zone_id: [(index, label), ...]}
             for i in range(28):
                 tid = rec['trea_id'][i]
-                if tid <= 0:
+                sub_id = rec['trea_sub'][i] if i < 10 else 0
+                # sub_431428:202 — trea_id>0 或 trea_sub>0 均可触发宝物放置
+                if tid <= 0 and sub_id <= 0:
                     continue
                 tx = rec['trea_xy'][i * 2]
                 ty = rec['trea_xy'][i * 2 + 1]
-                if tx < 0 or ty < 0 or tx >= 32 or ty >= 32:
-                    continue
-                sx, sy = self._grid_to_screen(tx, ty)
-                r = max(3, tile_h // 2)
-                item_name = self.tkitem_names.get(tid, f"Item#{tid}")[:4]
-                canvas.create_rectangle(sx - r, sy - r, sx + r, sy + r,
-                                        fill='#FFD700', outline='#B8860B', width=1,
-                                        tags=('trea', f'trea_{i}'))
-                canvas.create_text(sx, sy - r - 6, text=item_name,
-                                   fill='#FFD700', font=('', max(5, int(5*zoom))),
-                                   tags=('trea',))
+                # 显示名称: 优先主物品名, 否则副物品名
+                if tid > 0:
+                    label = self.tkitem_names.get(tid, f"Item#{tid}")[:6]
+                else:
+                    label = self.tkitem_names_by_id.get(sub_id, f"Sub#{sub_id}")[:6]
+                if tx >= 0 and ty >= 0 and tx < 32 and ty < 32:
+                    sx, sy = self._grid_to_screen(tx, ty)
+                    r = max(3, tile_h // 2)
+                    # 仅有副物品时用不同颜色
+                    fill_c = '#FFD700' if tid > 0 else '#FFA500'
+                    outline_c = '#B8860B' if tid > 0 else '#CC8800'
+                    canvas.create_rectangle(sx - r, sy - r, sx + r, sy + r,
+                                            fill=fill_c, outline=outline_c, width=1,
+                                            tags=('trea', f'trea_{i}'))
+                    canvas.create_text(sx, sy - r - 6, text=label,
+                                       fill=fill_c, font=('', max(5, int(5*zoom))),
+                                       tags=('trea',))
+                elif tx < 0:
+                    zone = abs(tx)
+                    trea_zone_requests.setdefault(zone, []).append((i, label))
+            # 渲染宝物区域请求标记(画布底部)
+            if trea_zone_requests:
+                zr_x = 10
+                for zone, items in sorted(trea_zone_requests.items()):
+                    labels = [lbl for _, lbl in items]
+                    txt = f"Z{zone}:" + ",".join(labels)
+                    canvas.create_text(zr_x, bg_h - 15, text=txt, anchor='nw',
+                                       fill='#FFD700', font=('', max(6, int(6*zoom))),
+                                       tags=('trea', 'zone_req'))
+                    zr_x += len(txt) * max(5, int(5*zoom)) + 10
 
         # ── 图层4: 单位 (enemy_xy offset 142, ally_xy offset 178, sub_431428) ──
+        # sub_431428: enemy_xy -1~-5 = 随机区域请求(从WarWay对应区域随机选取), 0~31 = 固定坐标
         if self.show_units.get():
             # 敌军 (红色) — enemy_xy [142-177]
+            enemy_zone_requests = {}  # {zone_id: [(slot, enemy_id), ...]}
             for i in range(18):
                 eid = rec['enemy_ids'][i]
                 if eid <= 0:
                     continue
                 ex = rec['enemy_xy'][i * 2]
                 ey = rec['enemy_xy'][i * 2 + 1]
-                if ex < 0 or ey < 0 or ex >= 32 or ey >= 32:
-                    continue
-                sx, sy = self._grid_to_screen(ex, ey)
-                r = max(5, tile_h // 2)
-                name = self._enemy_name(eid)[:4]
-                canvas.create_oval(sx - r, sy - r, sx + r, sy + r,
-                                   fill='#cc3333', outline='white', width=1,
-                                   tags=('unit', 'enemy', f'enemy_{i}'))
-                canvas.create_text(sx, sy + r + 8, text=name,
-                                   fill='#ff6666', font=('', max(6, int(6*zoom))),
-                                   tags=('unit',))
+                if ex >= 0 and ey >= 0 and ex < 32 and ey < 32:
+                    sx, sy = self._grid_to_screen(ex, ey)
+                    r = max(5, tile_h // 2)
+                    name = self._enemy_name(eid)[:4]
+                    canvas.create_oval(sx - r, sy - r, sx + r, sy + r,
+                                       fill='#cc3333', outline='white', width=1,
+                                       tags=('unit', 'enemy', f'enemy_{i}'))
+                    canvas.create_text(sx, sy + r + 8, text=name,
+                                       fill='#ff6666', font=('', max(6, int(6*zoom))),
+                                       tags=('unit',))
+                elif ex < 0:
+                    zone = abs(ex)
+                    enemy_zone_requests.setdefault(zone, []).append((i, eid))
+            # 渲染敌军区域请求标记(画布顶部)
+            if enemy_zone_requests:
+                ezr_x = 10
+                for zone, entries in sorted(enemy_zone_requests.items()):
+                    labels = [self._enemy_name(eid)[:4] for _, eid in entries]
+                    txt = f"Z{zone}:" + ",".join(labels)
+                    canvas.create_text(ezr_x, 20, text=txt, anchor='nw',
+                                       fill='#ff6666', font=('', max(6, int(6*zoom))),
+                                       tags=('unit', 'enemy', 'zone_req'))
+                    ezr_x += len(txt) * max(5, int(5*zoom)) + 10
 
             # 友军 (蓝色) — ally_xy [178-189]
             for i in range(6):
@@ -2007,7 +2046,11 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
             if utype == 'enemy':
                 eid = rec['enemy_ids'][uidx]
                 uname = self._enemy_name(eid)
-                self.scene_info_var.set(f"({gx},{gy}) 敌军:{uname} Lv.{rec['enemy_lv'][uidx]}")
+                ex = rec['enemy_xy'][uidx * 2]
+                if ex < 0:
+                    self.scene_info_var.set(f"({gx},{gy}) 敌军:{uname} Lv.{rec['enemy_lv'][uidx]} [区域请求Z{abs(ex)}]")
+                else:
+                    self.scene_info_var.set(f"({gx},{gy}) 敌军:{uname} Lv.{rec['enemy_lv'][uidx]}")
             else:
                 self.scene_info_var.set(f"({gx},{gy}) 友军槽{uidx}")
         else:
