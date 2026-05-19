@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-WarPC.dat 可视化编辑器 v1.4
+WarPC.dat 可视化编辑器 v1.5
 =============================================================
 逆向依据:
   - sub_45343C:     DAT 文件统一加载 (LZSS 解压, 1054字节/角色, 143角色)
@@ -473,9 +473,11 @@ def load_warpc(fp):
     return recs
 
 def save_warpc(fp, recs):
-    buf = bytearray(WARPC_CNT * WARPC_REC)
-    for rec in recs[:WARPC_CNT]:
-        i = rec['index']; off = i * WARPC_REC
+    count = len(recs)
+    buf = bytearray(count * WARPC_REC)
+    for i, rec in enumerate(recs):
+        rec['index'] = i
+        off = i * WARPC_REC
         struct.pack_into('<' + 'h' * WARPC_FIELD_COUNT, buf, off, *rec['fields'])
     compressed = lzss_compress(bytes(buf))
     if lzss_decompress(compressed) != bytes(buf):
@@ -496,7 +498,7 @@ def set_field(rec, byte_off, val):
 class WarpcEditor:
     def __init__(self, root):
         self.root = root
-        self.root.title("WarPC.dat 可视化编辑器 v1.4")
+        self.root.title("WarPC.dat 可视化编辑器 v1.5")
         ico = os.path.join(os.path.dirname(__file__), 'TKS.ico')
         if os.path.exists(ico): self.root.iconbitmap(default=ico)
         self.root.geometry("1500x820"); self.root.minsize(1050, 650)
@@ -539,6 +541,11 @@ class WarpcEditor:
         ttk.Button(tb, text="清除", command=self._clear_filter, width=5).pack(side=tk.LEFT, padx=1)
         ttk.Separator(tb, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=6)
         ttk.Button(tb, text="重新加载", command=self._reload).pack(side=tk.LEFT, padx=2)
+        ttk.Separator(tb, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=6)
+        ttk.Button(tb, text="新增", command=self._add_new, width=5).pack(side=tk.LEFT, padx=1)
+        ttk.Button(tb, text="复制", command=self._copy_record, width=5).pack(side=tk.LEFT, padx=1)
+        ttk.Button(tb, text="导出", command=self._export_warpc, width=5).pack(side=tk.LEFT, padx=1)
+        ttk.Button(tb, text="导入", command=self._import_warpc, width=5).pack(side=tk.LEFT, padx=1)
         self.status_var = tk.StringVar(value="请通过 文件 → 加载 TKS 目录 打开数据")
         ttk.Label(tb, textvariable=self.status_var, foreground="gray").pack(side=tk.RIGHT, padx=10)
 
@@ -1215,7 +1222,7 @@ class WarpcEditor:
             self.filtered_indices.append(rec['index'])
         self._refresh_table()
         nonempty = sum(1 for r in self.records if any(v != 0 for v in r['fields']))
-        msg = f"显示 {len(self.filtered_indices)}/{WARPC_CNT} (有效 {nonempty}) | Ctrl+S 保存"
+        msg = f"显示 {len(self.filtered_indices)}/{len(self.records)} (有效 {nonempty}) | Ctrl+S 保存"
         if self._dirty: msg += " [已修改]"
         self.status_var.set(msg)
 
@@ -1910,6 +1917,113 @@ class WarpcEditor:
         if hasattr(self, '_editing_idx'):
             self._populate_edit(self.records[self._editing_idx])
 
+    # ----------- 新增/复制/导出/导入 -----------
+
+    def _add_new(self):
+        """新增一条空白角色数据"""
+        if not hasattr(self, 'records') or not self.records:
+            messagebox.showinfo("提示", "请先加载数据")
+            return
+        new_idx = len(self.records)
+        fields = [0] * WARPC_FIELD_COUNT
+        fields[3] = 0   # role = 敌方 (default)
+        fields[4] = 100 # exp_to_next = 100
+        self.records.append({'index': new_idx, 'fields': fields})
+        self._dirty = True
+        self._apply_filter()
+        # 选中新记录
+        for child in self.tree.get_children():
+            if int(self.tree.item(child)['values'][0]) == new_idx:
+                self.tree.selection_set(child)
+                self.tree.see(child)
+                break
+        self.status_var.set(f"已新增角色 #{new_idx} (内存, 未保存)")
+
+    def _copy_record(self):
+        """复制当前选中行数据到最后新增一条"""
+        sel = self.tree.selection()
+        if not sel:
+            messagebox.showinfo("提示", "请先在左侧列表选中要复制的角色")
+            return
+        src_idx = int(self.tree.item(sel[0])['values'][0])
+        src = self.records[src_idx]
+        new_idx = len(self.records)
+        new_fields = list(src['fields'])  # 深拷贝
+        self.records.append({'index': new_idx, 'fields': new_fields})
+        self._dirty = True
+        self._apply_filter()
+        for child in self.tree.get_children():
+            if int(self.tree.item(child)['values'][0]) == new_idx:
+                self.tree.selection_set(child)
+                self.tree.see(child)
+                break
+        src_name = self._char_name(src)
+        self.status_var.set(f"已复制 #{src_idx} {src_name} → #{new_idx} (内存, 未保存)")
+
+    def _export_warpc(self):
+        """导出当前选中角色为 .warpc 文件"""
+        sel = self.tree.selection()
+        if not sel:
+            messagebox.showinfo("提示", "请先在左侧列表选中要导出的角色")
+            return
+        idx = int(self.tree.item(sel[0])['values'][0])
+        rec = self.records[idx]
+        name = self._char_name(rec)
+        safe_name = "".join(c for c in name if c not in r'\/:*?"<>|' and ord(c) >= 32)
+        if not safe_name:
+            safe_name = f"角色_{idx}"
+        default_name = f"{safe_name}.warpc"
+        fp = filedialog.asksaveasfilename(
+            defaultextension=".warpc",
+            filetypes=[("WarPC 单角色文件", "*.warpc")],
+            initialfile=default_name
+        )
+        if not fp:
+            return
+        # 格式: magic 'WPC1' (4B) + 1054B raw field data
+        magic = b'WPC1'
+        raw = struct.pack('<' + 'h' * WARPC_FIELD_COUNT, *rec['fields'])
+        with open(fp, 'wb') as f:
+            f.write(magic + raw)
+        self.status_var.set(f"已导出: {os.path.basename(fp)}")
+
+    def _import_warpc(self):
+        """导入 .warpc 文件到列表最后新增一行"""
+        if not self.records:
+            messagebox.showinfo("提示", "请先加载数据")
+            return
+        fp = filedialog.askopenfilename(
+            filetypes=[("WarPC 单角色文件", "*.warpc"), ("所有文件", "*.*")]
+        )
+        if not fp:
+            return
+        try:
+            with open(fp, 'rb') as f:
+                data = f.read()
+            if len(data) < 4 or data[:4] != b'WPC1':
+                messagebox.showerror("格式错误", "不是有效的 .warpc 文件 (缺少 WPC1 标识)")
+                return
+            raw = data[4:]
+            expected_size = WARPC_FIELD_COUNT * 2  # 1054
+            if len(raw) < expected_size:
+                messagebox.showerror("格式错误",
+                    f"文件数据不足: 需要 {expected_size} 字节, 实际 {len(raw)} 字节")
+                return
+            fields = list(struct.unpack_from('<' + 'h' * WARPC_FIELD_COUNT, raw, 0))
+            new_idx = len(self.records)
+            self.records.append({'index': new_idx, 'fields': fields})
+            self._dirty = True
+            self._apply_filter()
+            for child in self.tree.get_children():
+                if int(self.tree.item(child)['values'][0]) == new_idx:
+                    self.tree.selection_set(child)
+                    self.tree.see(child)
+                    break
+            imported_name = self._char_name(self.records[new_idx])
+            self.status_var.set(f"已导入: {os.path.basename(fp)} → #{new_idx} {imported_name} (内存, 未保存)")
+        except Exception as e:
+            messagebox.showerror("导入失败", str(e))
+
     # ----------- 保存/导出 -----------
 
     def _save(self):
@@ -2005,7 +2119,7 @@ class WarpcEditor:
 
     def _show_about(self):
         messagebox.showinfo("关于",
-            "WarPC.dat 可视化编辑器 v1.4\n\n"
+            "WarPC.dat 可视化编辑器 v1.5\n\n"
             "基于《三国群侠传》 TKS.exe 反编译\n"
             "143 角色 × 1054 字节 (527×int16)\n\n"
             "逆向依据:\n"
