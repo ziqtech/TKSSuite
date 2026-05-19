@@ -1926,8 +1926,25 @@ class WarpcEditor:
             return
         new_idx = len(self.records)
         fields = [0] * WARPC_FIELD_COUNT
-        fields[3] = 0   # role = 敌方 (default)
-        fields[4] = 100 # exp_to_next = 100
+        fields[3] = -1   # role = 我方
+        fields[4] = 100  # exp_to_next = 100
+        fields[2] = 1    # level = 1
+        # HP/MP 基础值
+        fields[5] = 50   # cur_hp
+        fields[6] = 25   # cur_mp
+        fields[7] = 50   # hp_base
+        fields[8] = 50   # hp_max
+        fields[9] = 25   # mp_base
+        fields[10] = 25  # mp_max
+        # 8 属性基础值 (atk/def/hit/eva/spd/luk/mov/wis)
+        for si in range(8):
+            fields[22 + si * 4] = 10     # stat_base
+            fields[22 + si * 4 + 2] = 10 # stat_cur
+        # 攻击次数
+        fields[32] = 1
+        # 技能槽初始化 (word offset 82-87, 6个槽位)
+        for si in range(82, 88):
+            fields[si] = -1
         self.records.append({'index': new_idx, 'fields': fields})
         self._dirty = True
         self._apply_filter()

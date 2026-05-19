@@ -310,8 +310,10 @@ class TKSLauncher
     };
 
     // 已验证的 RVA 列表: 代码中所有引用 150722 (0x24CE2) 的位置
+    // 注意: C7 45 EC (mov [ebp-14],imm32) 前缀3字节, 立即数在+3
+    //       C7 44 24 0C (mov [esp+0C],imm32) 前缀4字节, 立即数在+4
     static readonly int[] WarpcSizeRVAs = new int[] {
-        0x3FBD, 0x10F60, 0x110D8, 0x126A5, 0x173FC
+        0x3FBC, 0x10F60, 0x110D7, 0x126A5, 0x173FC
     };
 
     /// <summary>
@@ -426,9 +428,70 @@ class TKSLauncher
             }
             Console.WriteLine(string.Format("  字段基址修补: {0} 处 (范围 0x{1:X8}-0x{2:X8})",
                 fieldPatches, rangeStart, rangeEnd));
+
+            // 诊断: 修补后重新扫描, 检查是否还有未修补的 0x757F08 引用
+            {
+                int missedCount = 0;
+                string missedLocations = "";
+                byte[] verifyBuf = new byte[scanSize];
+                if (ReadProcessMemory(hProc, (IntPtr)scanStart, verifyBuf, scanSize, out nw) && nw > 0)
+                {
+                    int vSize = Math.Min(nw, scanSize);
+                    for (int i = 0; i <= vSize - 4; i++)
+                    {
+                        int val = BitConverter.ToInt32(verifyBuf, i);
+                        if (val >= rangeStart && val < rangeEnd)
+                        {
+                            int rva = scanStart + i - (int)baseAddr.ToInt64();
+                            missedLocations += string.Format(" 0x{0:X}", rva);
+                            missedCount++;
+                            if (missedCount >= 20) { missedLocations += " ..."; break; }
+                        }
+                    }
+                }
+                if (missedCount > 0)
+                    Console.WriteLine(string.Format("  [WARN] 修补后仍有 {0} 处未修补的 WarPC 引用:{1}", missedCount, missedLocations));
+                else
+                    Console.WriteLine("  修补验证: 所有 WarPC 引用已修补");
+
+                // 特别检查 sub_43BF20 (战斗回写函数, RVA 0x3BF20)
+                int bf20Rva = 0x3BF20;
+                IntPtr bf20Addr = (IntPtr)(baseAddr.ToInt64() + bf20Rva);
+                byte[] bf20Buf = new byte[256];
+                if (ReadProcessMemory(hProc, bf20Addr, bf20Buf, 256, out nw) && nw > 0)
+                {
+                    string bf20Hex = BitConverter.ToString(bf20Buf, 0, Math.Min(nw, 80));
+                    Console.WriteLine(string.Format("  [DIAG] sub_43BF20@0x{0:X8}: [{1}]", bf20Addr.ToInt64(), bf20Hex));
+                    for (int i = 0; i <= nw - 4; i++)
+                    {
+                        int val = BitConverter.ToInt32(bf20Buf, i);
+                        if (val == WARPC_BASE)
+                        {
+                            Console.WriteLine(string.Format("  [WARN] sub_43BF20+0x{0:X}: 仍有未修补的 0x{1:X8}!", i, WARPC_BASE));
+                        }
+                    }
+                }
+            }
         }
 
         // 扫描动态 cave 内存 — 不再需要, cave 已在 BuildPatches 中预修补
+
+        // 诊断: 先读取所有 size RVA 的原值
+        Console.WriteLine("  诊断 Size RVA 原值:");
+        foreach (int rva in WarpcSizeRVAs)
+        {
+            IntPtr pAddr = (IntPtr)(baseAddr.ToInt64() + rva);
+            byte[] oldVal = new byte[4];
+            int nr;
+            if (!ReadProcessMemory(hProc, pAddr, oldVal, 4, out nr) || nr < 4)
+            {
+                Console.WriteLine(string.Format("    0x{0:X}: ReadProcessMemory 失败 (nr={1})", rva, nr));
+                continue;
+            }
+            int oldInt = BitConverter.ToInt32(oldVal, 0);
+            string status = (oldInt == WARPC_ORIG_SIZE) ? "OK" : "MISMATCH";
+            Console.WriteLine(string.Format("    0x{0:X}: 0x{1:X8} {2}", rva, oldInt, status));
+        }
 
         foreach (int rva in WarpcSizeRVAs)
         {
@@ -440,8 +503,8 @@ class TKSLauncher
             int oldInt = BitConverter.ToInt32(oldVal, 0);
             if (oldInt != WARPC_ORIG_SIZE)
             {
-                Console.WriteLine(string.Format("  [WARN] RVA 0x{0:X} 原值 0x{1:X8} != 预期 {2}, 跳过",
-                    rva, oldInt, WARPC_ORIG_SIZE));
+                Console.WriteLine(string.Format("  [WARN] RVA 0x{0:X} 原值 0x{1:X8} != 预期 0x24CE2, 跳过",
+                    rva, oldInt));
                 continue;
             }
             WriteProcessMemory(hProc, pAddr, newSizeLE, 4, out nw);
@@ -989,6 +1052,32 @@ class TKSLauncher
                     log += string.Format(" W261[143]=0x{0:X4}", BitConverter.ToInt16(w261, 0));
                 if (ReadProcessMemory(hV, (IntPtr)(newBase + 144*1054 + 522), w261, 2, out read))
                     log += string.Format(" W261[144]=0x{0:X4}", BitConverter.ToInt16(w261, 0));
+                // 诊断: 读取新角色的关键字段 (等级/经验/名称ID)
+                byte[] charField = new byte[10];
+                if (ReadProcessMemory(hV, (IntPtr)(newBase + 143*1054), charField, 10, out read))
+                {
+                    short nameId = BitConverter.ToInt16(charField, 0);
+                    short level = BitConverter.ToInt16(charField, 4);  // word offset 2
+                    short exp = BitConverter.ToInt16(charField, 6);    // word offset 3
+                    short growth = BitConverter.ToInt16(charField, 8); // word offset 4
+                    log += string.Format(" CHAR143=name{0},lv{1},exp{2},gr{3}", nameId, level, exp, growth);
+                }
+                if (ReadProcessMemory(hV, (IntPtr)(newBase + 144*1054), charField, 10, out read))
+                {
+                    short nameId = BitConverter.ToInt16(charField, 0);
+                    short level = BitConverter.ToInt16(charField, 4);
+                    short exp = BitConverter.ToInt16(charField, 6);
+                    short growth = BitConverter.ToInt16(charField, 8);
+                    log += string.Format(" CHAR144=name{0},lv{1},exp{2},gr{3}", nameId, level, exp, growth);
+                }
+                // 诊断: 读取技能槽 (word offset 82-87)
+                byte[] skillBuf = new byte[12];
+                if (ReadProcessMemory(hV, (IntPtr)(newBase + 143*1054 + 164), skillBuf, 12, out read))
+                {
+                    short sk0 = BitConverter.ToInt16(skillBuf, 0);
+                    short sk1 = BitConverter.ToInt16(skillBuf, 2);
+                    log += string.Format(" SK143=[{0},{1}]", sk0, sk1);
+                }
             }
             // Also check old buffer for comparison
             if (ReadProcessMemory(hV, (IntPtr)(0x757F08 + 85*1054 + 522), w261, 2, out read))
