@@ -201,9 +201,26 @@ class TKSLauncher
         VirtualProtectEx(hProc, (IntPtr)addr, 2, old, out old);
     }
 
+    // Replace all occurrences of oldVal (4B LE) with newVal in byte array
+    static void ReplaceAddrInBytes(byte[] data, int oldAddr, int newAddr)
+    {
+        byte[] oldLE = BitConverter.GetBytes(oldAddr);
+        byte[] newLE = BitConverter.GetBytes(newAddr);
+        for (int i = 0; i <= data.Length - 4; i++)
+        {
+            if (data[i] == oldLE[0] && data[i+1] == oldLE[1] &&
+                data[i+2] == oldLE[2] && data[i+3] == oldLE[3])
+            {
+                data[i] = newLE[0]; data[i+1] = newLE[1];
+                data[i+2] = newLE[2]; data[i+3] = newLE[3];
+                i += 3;
+            }
+        }
+    }
+
     // Build the full patch list from dynamic cave address
-    // Layout: cave+0=AwkSprite(51B), cave+64=PortraitCave1(45B), cave+128=PortraitCave2(46B)
-    static Patch[] BuildPatches(IntPtr baseAddr, IntPtr caveAddr)
+    // warpcBaseAddr: if non-zero, caves will use this instead of 0x757F08
+    static Patch[] BuildPatches(IntPtr baseAddr, IntPtr caveAddr, int warpcBaseAddr)
     {
         long cave = caveAddr.ToInt64();
         long baseVA = baseAddr.ToInt64();
@@ -212,6 +229,7 @@ class TKSLauncher
 
         // --- AwkSprite cave + hook ---
         byte[] awkCaveData = (byte[])CaveTemplate.Clone();
+        if (warpcBaseAddr != 0) ReplaceAddrInBytes(awkCaveData, WARPC_BASE, warpcBaseAddr);
         int awkHookRva = 0x309A6;
         int awkCallOff = (int)(cave - baseVA) - (awkHookRva + 5);
         byte[] awkCallData = new byte[5];
@@ -228,16 +246,17 @@ class TKSLauncher
         });
 
         // --- Portrait PATH1 cave + hook (selected member) ---
-        // Verified: RVA 0x17A50, ECX=char_idx*527, 5B (add ax,0xD3 + push eax)
         long pcave1 = cave + 64;
         int p1HookRva = 0x17A50;
         int p1CallOff = (int)(pcave1 - baseVA) - (p1HookRva + 5);
         byte[] p1CallData = new byte[5];
         p1CallData[0] = 0xE8;
         BitConverter.GetBytes(p1CallOff).CopyTo(p1CallData, 1);
+        byte[] p1CaveData = (byte[])PortraitCave1.Clone();
+        if (warpcBaseAddr != 0) ReplaceAddrInBytes(p1CaveData, WARPC_BASE, warpcBaseAddr);
 
         list.Add(new Patch {
-            RVA = (int)(pcave1 - baseVA), Data = PortraitCave1,
+            RVA = (int)(pcave1 - baseVA), Data = p1CaveData,
             Desc = string.Format("Portrait PATH1 cave@0x{0:X8} (selected, 41B)", pcave1)
         });
         list.Add(new Patch {
@@ -246,7 +265,6 @@ class TKSLauncher
         });
 
         // --- Portrait PATH2 cave + hook (non-selected member) ---
-        // Verified: RVA 0x17E1A, EAX=char_idx*527, 6B (add dx,0xD3 + push edx)
         long pcave2 = cave + 128;
         int p2HookRva = 0x17E1A;
         int p2CallOff = (int)(pcave2 - baseVA) - (p2HookRva + 5);
@@ -254,9 +272,11 @@ class TKSLauncher
         p2CallData[0] = 0xE8;
         BitConverter.GetBytes(p2CallOff).CopyTo(p2CallData, 1);
         p2CallData[5] = 0x90; // NOP: pad from 5B to 6B
+        byte[] p2CaveData = (byte[])PortraitCave2.Clone();
+        if (warpcBaseAddr != 0) ReplaceAddrInBytes(p2CaveData, WARPC_BASE, warpcBaseAddr);
 
         list.Add(new Patch {
-            RVA = (int)(pcave2 - baseVA), Data = PortraitCave2,
+            RVA = (int)(pcave2 - baseVA), Data = p2CaveData,
             Desc = string.Format("Portrait PATH2 cave@0x{0:X8} (non-selected, 42B)", pcave2)
         });
         list.Add(new Patch {
@@ -267,9 +287,289 @@ class TKSLauncher
         return list.ToArray();
     }
 
-    // Inject WORD[260] values from WarPC.dat into game memory
+    // ============================================================
+    // WarPC 缓冲区动态扩展 — 突破 143 角色硬编码限制
+    // ============================================================
+
+    const int WARPC_BASE = 0x757F08;
+    const int WARPC_REC_SIZE = 1054;
+    const int WARPC_ORIG_COUNT = 143;
+    const int WARPC_ORIG_SIZE = 150722; // = 143 * 1054 = 0x24CE2
+
+    static bool _warpcExpanded = false;
+    static byte[] _warpcFullData = null;
+    static IntPtr _warpcNewBuf = IntPtr.Zero;
+
+    // 已验证的 RVA 列表: 代码中所有引用 word_757F08 (0x757F08) 的位置
+    // 每个 RVA 指向一个 4 字节立即数 08 7F 75 00
+    static readonly int[] WarpcAddrRVAs = new int[] {
+        0x03FC8, 0x040BD, 0x0DB0F, 0x10FB5, 0x1118A, 0x1228B, 0x122E1, 0x126AA,
+        0x17401, 0x176FF, 0x17ABC, 0x180F4, 0x18ADD, 0x18C2D, 0x198B8, 0x1A1E1,
+        0x1E2E1, 0x1E318, 0x1EC3A, 0x20B03, 0x222CF, 0x2277F, 0x2329B, 0x24E35,
+        0x30994, 0x30D20, 0x310F8, 0x3BFAC, 0x450AE
+    };
+
+    // 已验证的 RVA 列表: 代码中所有引用 150722 (0x24CE2) 的位置
+    static readonly int[] WarpcSizeRVAs = new int[] {
+        0x3FBD, 0x10F60, 0x110D8, 0x126A5, 0x173FC
+    };
+
+    /// <summary>
+    /// 游戏启动前: 若 WarPC.dat 角色数大于143, 创建截断版本让游戏正常加载
+    /// </summary>
+    static void PrepareWarPcForGame()
+    {
+        string warpcPath = "WarPC.dat";
+        if (!System.IO.File.Exists(warpcPath)) return;
+
+        string bakPath = warpcPath + ".orig";
+
+        // 如果存在 .orig 备份, 说明上次启动可能崩溃, 先恢复
+        if (System.IO.File.Exists(bakPath))
+        {
+            System.IO.File.Copy(bakPath, warpcPath, true);
+            System.IO.File.Delete(bakPath);
+            Console.WriteLine("  检测到上次未恢复的 .orig 备份, 已自动恢复 WarPC.dat");
+        }
+
+        byte[] compressed = System.IO.File.ReadAllBytes(warpcPath);
+        byte[] dec = LzssDecompress(compressed);
+        int count = dec.Length / WARPC_REC_SIZE;
+        if (count <= WARPC_ORIG_COUNT) return;
+
+        _warpcExpanded = true;
+        _warpcFullData = dec;
+        Console.WriteLine(string.Format("  WarPC.dat 检测到扩展数据: {0} 角色 (原始 {1})", count, WARPC_ORIG_COUNT));
+
+        // 截取前143角色 → 压缩 → 写入临时文件
+        byte[] truncated = new byte[WARPC_ORIG_SIZE];
+        Array.Copy(dec, 0, truncated, 0, WARPC_ORIG_SIZE);
+        byte[] truncatedCompressed = LzssCompress(truncated);
+        if (!System.IO.File.Exists(bakPath))
+            System.IO.File.Copy(warpcPath, bakPath, true);
+        System.IO.File.WriteAllBytes(warpcPath, truncatedCompressed);
+        Console.WriteLine(string.Format("  已创建截断版 WarPC.dat ({0} 角色), 备份为 .orig", WARPC_ORIG_COUNT));
+    }
+
+    /// <summary>
+    /// 游戏加载后: 恢复原始 WarPC.dat, 分配动态缓冲区, 注入完整数据, 修补所有引用
+    /// </summary>
+    static void ExpandWarPcBuffer(int childPid, IntPtr baseAddr, int moduleSize, IntPtr caveAddr)
+    {
+        if (!_warpcExpanded || _warpcNewBuf == IntPtr.Zero) return;
+
+        int newSize = _warpcFullData.Length;
+        uint access = PROCESS_VM_READ | PROCESS_VM_WRITE | PROCESS_VM_OPERATION;
+
+        IntPtr hProc = OpenProcess(access, false, childPid);
+        if (hProc == IntPtr.Zero) { Console.WriteLine("  [ERROR] 无法打开进程进行 WarPC 扩展"); return; }
+
+        IntPtr newBuf = _warpcNewBuf;
+        Console.WriteLine(string.Format("  修补代码引用: 缓冲区 0x{0:X8}, 大小 {1}", newBuf.ToInt64(), newSize));
+
+        // 精确修补: 在已验证的 RVA 位置替换 4 字节立即数
+        byte[] newAddrLE = BitConverter.GetBytes((int)newBuf.ToInt64());
+        byte[] newSizeLE = BitConverter.GetBytes(newSize);
+        int addrPatches = 0, sizePatches = 0, fieldPatches = 0;
+        int nw;
+        int scanStart = 0, scanEnd = 0;  // for log
+
+        foreach (int rva in WarpcAddrRVAs)
+        {
+            IntPtr pAddr = (IntPtr)(baseAddr.ToInt64() + rva);
+            byte[] oldVal = new byte[4];
+            int nr;
+            if (!ReadProcessMemory(hProc, pAddr, oldVal, 4, out nr)) continue;
+            if (nr < 4) continue;
+            int oldInt = BitConverter.ToInt32(oldVal, 0);
+            if (oldInt != WARPC_BASE)
+            {
+                Console.WriteLine(string.Format("  [WARN] RVA 0x{0:X} 原值 0x{1:X8} != 预期 0x{2:X8}, 跳过",
+                    rva, oldInt, WARPC_BASE));
+                continue;
+            }
+            WriteProcessMemory(hProc, pAddr, newAddrLE, 4, out nw);
+            addrPatches++;
+        }
+
+        // 扫描字段级基址: [WARPC_BASE, WARPC_BASE + WARPC_REC_SIZE) 范围内所有地址
+        // 这些是 0x757F08+field_offset 形式的预计算常量 (如 0x757F0E, 0x758116 等)
+        // 偏移 = 原址 - WARPC_BASE → 新址 = newBuf + 偏移
+        {
+            int rangeStart = WARPC_BASE;
+            int rangeEnd = WARPC_BASE + WARPC_REC_SIZE;  // exclusive
+            int moduleStart = (int)baseAddr.ToInt64();
+            // 扫描模块内所有代码段 (0x401000 到 BSS 之前)
+            // 不再限定 0x4E6000 — 游戏代码延续到 0xA66000+
+            scanStart = 0x401000;
+            scanEnd = Math.Min(moduleStart + moduleSize, 0x700000);
+            int scanSize = scanEnd - scanStart;
+
+            byte[] codeBuf = new byte[scanSize];
+            if (ReadProcessMemory(hProc, (IntPtr)scanStart, codeBuf, scanSize, out nw) && nw > 0)
+            {
+                int effectiveSize = Math.Min(nw, scanSize);
+                for (int i = 0; i <= effectiveSize - 4; i++)
+                {
+                    int val = BitConverter.ToInt32(codeBuf, i);
+                    if (val >= rangeStart && val < rangeEnd)
+                    {
+                        int offset = val - WARPC_BASE;
+                        int newVal = (int)newBuf.ToInt64() + offset;
+                        byte[] newBytes = BitConverter.GetBytes(newVal);
+                        IntPtr pAddr = (IntPtr)(scanStart + i);
+                        WriteProcessMemory(hProc, pAddr, newBytes, 4, out nw);
+                        fieldPatches++;
+                        i += 3;  // skip past the 4-byte value
+                    }
+                }
+            }
+            Console.WriteLine(string.Format("  字段基址修补: {0} 处 (范围 0x{1:X8}-0x{2:X8})",
+                fieldPatches, rangeStart, rangeEnd));
+        }
+
+        // 扫描动态 cave 内存 — 不再需要, cave 已在 BuildPatches 中预修补
+
+        foreach (int rva in WarpcSizeRVAs)
+        {
+            IntPtr pAddr = (IntPtr)(baseAddr.ToInt64() + rva);
+            byte[] oldVal = new byte[4];
+            int nr;
+            if (!ReadProcessMemory(hProc, pAddr, oldVal, 4, out nr)) continue;
+            if (nr < 4) continue;
+            int oldInt = BitConverter.ToInt32(oldVal, 0);
+            if (oldInt != WARPC_ORIG_SIZE)
+            {
+                Console.WriteLine(string.Format("  [WARN] RVA 0x{0:X} 原值 0x{1:X8} != 预期 {2}, 跳过",
+                    rva, oldInt, WARPC_ORIG_SIZE));
+                continue;
+            }
+            WriteProcessMemory(hProc, pAddr, newSizeLE, 4, out nw);
+            sizePatches++;
+        }
+
+        CloseHandle(hProc);
+        Console.WriteLine(string.Format("  已修补: {0} 个基址 + {1} 个字段基址 + {2} 个大小常量",
+            addrPatches, fieldPatches, sizePatches));
+        Console.WriteLine(string.Format("  扫描范围: 0x{0:X8}-0x{1:X8}, 新buf=0x{2:X8}, 新size={3}",
+            scanStart, scanEnd, newBuf.ToInt64(), newSize));
+        Console.WriteLine("  Cave 地址已在 BuildPatches 中预修补, 无需后期扫描");
+        System.IO.File.WriteAllText("tks_launcher.log",
+            string.Format("warpc_expand=1 new_buf=0x{0:X8} new_size={1} addr={2} field={3} size={4} scan=0x{5:X8}-0x{6:X8}",
+                newBuf.ToInt64(), newSize, addrPatches, fieldPatches, sizePatches, scanStart, scanEnd));
+    }
+
+    // LZSS 压缩 — 与游戏 sub_452B14 配对 (用于截断文件生成)
+    static byte[] LzssCompress(byte[] data)
+    {
+        int sl = data.Length;
+        byte[] flat = new byte[4096 + sl];
+        for (int i = 0; i < 4096; i++) flat[i] = 0x20;
+        Array.Copy(data, 0, flat, 4096, sl);
+
+        var headerFlags = new System.Collections.Generic.List<byte>();
+        var tokenData = new System.Collections.Generic.List<byte>();
+        int pos = 0;
+
+        while (pos < sl)
+        {
+            int curr = 4096 + pos;
+            int ms = Math.Min(18, sl - pos);
+            int bestLen = 0, bestOff = 0;
+            if (ms >= 3)
+            {
+                for (int length = ms; length > 2; length--)
+                {
+                    int start = Math.Max(0, curr - 4096);
+                    bestOff = -1;
+                    // 从右向左搜索 (与 Python rfind 一致), j < curr 排除自匹配
+                    for (int j = curr - 1; j >= start; j--)
+                    {
+                        int k;
+                        for (k = 0; k < length && flat[j + k] == flat[curr + k]; k++) ;
+                        if (k >= length) { bestOff = j; break; }
+                    }
+                    if (bestOff >= 0) { bestLen = length; break; }
+                }
+            }
+            if (bestLen >= 3)
+            {
+                int bo = (bestOff - 18) & 0xFFF;
+                headerFlags.Add(0); // literal=0: back-reference
+                tokenData.Add((byte)(bo & 0xFF));
+                tokenData.Add((byte)(((bo >> 4) & 0xF0) | ((bestLen - 3) & 0x0F)));
+                pos += bestLen;
+            }
+            else
+            {
+                headerFlags.Add(1); // literal=1: raw byte
+                tokenData.Add(data[pos]);
+                pos++;
+            }
+        }
+
+        // 组装: 每8个flag打包为一个flag字节, 然后按顺序输出token数据
+        var stream = new System.Collections.Generic.List<byte>();
+        int hi = 0;  // headerFlags 索引
+        int tp = 0;  // tokenData 索引 (变长: literal=1B, backref=2B)
+        while (hi < headerFlags.Count)
+        {
+            int fb = 0;
+            int be = Math.Min(hi + 8, headerFlags.Count);
+            for (int i = hi; i < be; i++)
+                if (headerFlags[i] != 0) fb |= (1 << (i - hi));
+            stream.Add((byte)fb);
+            for (int i = hi; i < be; i++)
+            {
+                if (headerFlags[i] != 0)
+                {
+                    stream.Add(tokenData[tp]);   // 1 byte literal
+                    tp += 1;
+                }
+                else
+                {
+                    stream.Add(tokenData[tp]);     // offset lo
+                    stream.Add(tokenData[tp + 1]); // offset hi + length
+                    tp += 2;
+                }
+            }
+            hi = be;
+        }
+
+        // 构建内部 LZSS 块: [解压大小:4B][LZSS流...]
+        byte[] lzssBlock = new byte[4 + stream.Count];
+        BitConverter.GetBytes(sl).CopyTo(lzssBlock, 0);
+        stream.CopyTo(lzssBlock, 4);
+
+        // 构建完整文件: [解压大小:4B][压缩块大小:4B][LZSS块...]
+        byte[] result = new byte[8 + lzssBlock.Length];
+        BitConverter.GetBytes(sl).CopyTo(result, 0);
+        BitConverter.GetBytes(lzssBlock.Length).CopyTo(result, 4);
+        Array.Copy(lzssBlock, 0, result, 8, lzssBlock.Length);
+
+        // 回写验证 — 用完整文件格式解压
+        byte[] testDec = LzssDecompress(result);
+        if (testDec.Length != sl)
+            throw new System.IO.InvalidDataException(
+                string.Format("LZSS 压缩回写验证失败: 长度 {0} != {1}", testDec.Length, sl));
+        for (int i = 0; i < sl; i++)
+            if (testDec[i] != data[i])
+                throw new System.IO.InvalidDataException(
+                    string.Format("LZSS 压缩回写验证失败: 偏移 {0} 不匹配", i));
+
+        return result;
+    }
+
+    // Inject WORD[260]/WORD[261] values from WarPC.dat into game memory
     static void InjectWarPCData(int childPid)
     {
+        // 如果已通过 ExpandWarPcBuffer 扩展缓冲区, 完整数据已写入新缓冲区
+        if (_warpcExpanded)
+        {
+            Console.WriteLine("  Data inject: 已通过 ExpandWarPcBuffer 完成");
+            return;
+        }
+
         string warpcPath = "WarPC.dat";
         if (!System.IO.File.Exists(warpcPath))
         {
@@ -279,7 +579,7 @@ class TKSLauncher
 
         byte[] compressed = System.IO.File.ReadAllBytes(warpcPath);
         byte[] dec = LzssDecompress(compressed);
-        if (dec.Length < 143 * 1054)
+        if (dec.Length < WARPC_ORIG_SIZE)
         {
             Console.WriteLine("  [WARN] WarPC.dat decompressed size mismatch, skip data inject");
             return;
@@ -290,20 +590,17 @@ class TKSLauncher
 
         int w260Count = 0;
         int portraitCount = 0;
-        const int WARPC_BASE = 0x757F08;
-        const int REC_SIZE = 1054;
+        int count = Math.Min(dec.Length / WARPC_REC_SIZE, WARPC_ORIG_COUNT);
 
-        for (int i = 0; i < 143; i++)
+        for (int i = 0; i < count; i++)
         {
-            int baseOff = i * REC_SIZE;
-            // WORD[260] (AwkSprite)
+            int baseOff = i * WARPC_REC_SIZE;
             short w260 = BitConverter.ToInt16(dec, baseOff + 520);
             if (w260 != 0)
             {
                 WriteMem16(hProc, WARPC_BASE + baseOff + 520, w260);
                 w260Count++;
             }
-            // WORD[261] (portrait override) — cave reads this at runtime
             short w261 = BitConverter.ToInt16(dec, baseOff + 522);
             if (w261 != 0)
             {
@@ -497,6 +794,9 @@ class TKSLauncher
         Console.WriteLine("TKS Launcher - 自动运行时补丁启动器");
         Console.WriteLine("========================================");
 
+        // 游戏启动前: 检查 WarPC.dat 是否扩展, 必要时创建截断版
+        PrepareWarPcForGame();
+
         Console.WriteLine(string.Format("\n启动 {0}...", tksPath));
         Process tksProc;
         try
@@ -571,6 +871,58 @@ class TKSLauncher
             CloseHandle(hDiag);
         }
 
+        // 获取模块大小
+        IntPtr hMod = OpenProcess(PROCESS_VM_READ, false, childPid);
+        int modSize = 0;
+        if (hMod != IntPtr.Zero)
+        {
+            IntPtr snap = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE | TH32CS_SNAPMODULE32, childPid);
+            if (snap != INVALID_HANDLE_VALUE)
+            {
+                MODULEENTRY32 me = new MODULEENTRY32();
+                me.dwSize = (uint)Marshal.SizeOf(typeof(MODULEENTRY32));
+                if (Module32First(snap, ref me))
+                    modSize = (int)me.modBaseSize;
+                CloseHandle(snap);
+            }
+            CloseHandle(hMod);
+        }
+        Console.WriteLine(string.Format("  模块大小: 0x{0:X} ({0} bytes)", modSize));
+
+        // 若 WarPC 扩展, 在 BuildPatches 之前分配缓冲区并写入数据
+        // 这样 cave 数组可以在写入前直接嵌入正确地址
+        int warpcBaseForCaves = 0;
+        if (_warpcExpanded && _warpcFullData != null)
+        {
+            // 恢复原始 WarPC.dat
+            string wpPath = "WarPC.dat";
+            string bakPath = wpPath + ".orig";
+            if (System.IO.File.Exists(bakPath))
+            {
+                System.IO.File.Copy(bakPath, wpPath, true);
+                System.IO.File.Delete(bakPath);
+                Console.WriteLine("  已恢复原始 WarPC.dat");
+            }
+
+            int newSize = _warpcFullData.Length;
+            IntPtr hWarpc = OpenProcess(PROCESS_VM_READ | PROCESS_VM_WRITE | PROCESS_VM_OPERATION, false, childPid);
+            if (hWarpc != IntPtr.Zero)
+            {
+                IntPtr newBuf = VirtualAllocEx(hWarpc, IntPtr.Zero, (uint)newSize,
+                    MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
+                if (newBuf != IntPtr.Zero)
+                {
+                    int wr;
+                    WriteProcessMemory(hWarpc, newBuf, _warpcFullData, newSize, out wr);
+                    _warpcNewBuf = newBuf;
+                    warpcBaseForCaves = (int)newBuf.ToInt64();
+                    Console.WriteLine(string.Format("  WarPC 缓冲区: 0x{0:X8} ({1} 字节, {2} 角色)",
+                        warpcBaseForCaves, newSize, newSize / WARPC_REC_SIZE));
+                }
+                CloseHandle(hWarpc);
+            }
+        }
+
         // Allocate executable memory for AwkSprite cave
         IntPtr hProc = OpenProcess(PROCESS_VM_READ | PROCESS_VM_WRITE | PROCESS_VM_OPERATION, false, childPid);
         IntPtr caveAddr = IntPtr.Zero;
@@ -584,7 +936,7 @@ class TKSLauncher
         else
             Console.WriteLine(string.Format("  AwkSprite cave: 0x{0:X8} (dynamic alloc)", caveAddr.ToInt64()));
 
-        Patch[] patches = BuildPatches(baseAddr, caveAddr);
+        Patch[] patches = BuildPatches(baseAddr, caveAddr, warpcBaseForCaves);
         Console.WriteLine(string.Format("  补丁数量: {0}", patches.Length));
         foreach (var p in patches)
             Console.WriteLine(string.Format("    RVA=0x{0:X8}  bytes=[{1}]  {2}", p.RVA, BitConverter.ToString(p.Data), p.Desc));
@@ -594,6 +946,9 @@ class TKSLauncher
 
         Console.WriteLine("\n验证补丁...");
         ApplyPatches(childPid, baseAddr, patches, true);
+
+        // WarPC 代码引用修补 (缓冲区已在 BuildPatches 之前分配)
+        ExpandWarPcBuffer(childPid, baseAddr, modSize, caveAddr);
 
         // Inject WORD[260]/WORD[261] from WarPC.dat into game memory
         InjectWarPCData(childPid);
@@ -625,8 +980,17 @@ class TKSLauncher
             byte[] p2HookBuf = new byte[6];
             if (ReadProcessMemory(hV, (IntPtr)(baseAddr.ToInt64() + 0x17E1A), p2HookBuf, 6, out read))
                 log += string.Format(" p2_hook=[{0}]", BitConverter.ToString(p2HookBuf));
-            // Read WORD[261] for char 85,86
+            // Read WORD[261] for new characters (143,144) from new buffer
             byte[] w261 = new byte[2];
+            if (_warpcNewBuf != IntPtr.Zero)
+            {
+                long newBase = _warpcNewBuf.ToInt64();
+                if (ReadProcessMemory(hV, (IntPtr)(newBase + 143*1054 + 522), w261, 2, out read))
+                    log += string.Format(" W261[143]=0x{0:X4}", BitConverter.ToInt16(w261, 0));
+                if (ReadProcessMemory(hV, (IntPtr)(newBase + 144*1054 + 522), w261, 2, out read))
+                    log += string.Format(" W261[144]=0x{0:X4}", BitConverter.ToInt16(w261, 0));
+            }
+            // Also check old buffer for comparison
             if (ReadProcessMemory(hV, (IntPtr)(0x757F08 + 85*1054 + 522), w261, 2, out read))
                 log += string.Format(" W261[85]=0x{0:X4}", BitConverter.ToInt16(w261, 0));
             if (ReadProcessMemory(hV, (IntPtr)(0x757F08 + 86*1054 + 522), w261, 2, out read))
