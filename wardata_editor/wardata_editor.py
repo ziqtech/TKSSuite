@@ -22,7 +22,7 @@ WarData.dat 格式 (每条498字节, 219条, flat binary — sub_42FDF8):
   [32-33] uint16  map_id  — sub_42FE70:16; War.dll标签"地图编号"
   [34-69] uint16[18] enemy_id — sub_4307CC:219; War.dll标签"人物编号" (WarPC索引)
   [70-87] byte[18]  enemy_lv  — sub_4307CC:260; sub_444FD4:79; War.dll标签"等级范围"
-  [88-105] byte[18] enemy_grp — sub_4307CC:217; sub_444FD4:26; War.dll标签"人物归属"
+  [88-105] byte[18] enemy_grp — sub_4307CC:217; sub_444FD4:26; 属性加成倍率(sub_4302D8:53); 0=普通士兵(可增援), >=1=将领(HP×N倍加成)
   [106-141] byte[36] enemy_lv_range — sub_4307CC:227; sub_444FD4:48; level params(18 pairs a3,a4)
                                 18对X,Y(int8), X=106+2*i, Y=107+2*i
   [142-177] byte[36]  enemy_xy — sub_431428:94-98 grid coords(18 pairs int8 X,Y); War.dll"敌人朝向"
@@ -219,7 +219,7 @@ def load_wardata(filepath: str) -> list:
         # 18敌军槽位
         rec['enemy_ids'] = list(struct.unpack_from('<' + 'H' * 18, chunk, 34))
         rec['enemy_lv'] = list(chunk[70:88])
-        rec['enemy_group'] = list(chunk[88:106])
+        rec['enemy_power'] = list(chunk[88:106])  # 属性加成倍率: 0=普通士兵, >=1=将领(Boss)属性加成
         rec['enemy_lv_range'] = list(struct.unpack_from('<' + 'b' * 36, chunk, 106))  # lv params (a3,a4), sub_430578  # X=106+2*i, Y=107+2*i
 
         # 敌人朝向: War.dll标签"敌人朝向"; sub_431428:94 (char*)v32+108
@@ -273,7 +273,7 @@ def save_wardata(filepath: str, records: list):
         for j in range(18):
             struct.pack_into('<H', chunk, 34 + j * 2, rec['enemy_ids'][j])
             chunk[70 + j] = rec['enemy_lv'][j] & 0xFF
-            chunk[88 + j] = rec['enemy_group'][j] & 0xFF
+            chunk[88 + j] = rec['enemy_power'][j] & 0xFF
 
         for j in range(36):
             struct.pack_into('<b', chunk, 106 + j, rec['enemy_lv_range'][j])
@@ -586,7 +586,7 @@ class WarDataEditor:
             ('index', '序号', 40),
             ('map_info', '地图', 80),
             ('enemy_count', '敌军数', 40),
-            ('trea_count', '宝物树', 40),
+            ('trea_count', '宝物数', 40),
             ('chars_info', '参战人物', 130),
             ('flags_info', '参数', 80),
         ]
@@ -931,7 +931,7 @@ class WarDataEditor:
             'map_id': 0,
             'enemy_ids': [0] * 18,
             'enemy_lv': [0] * 18,
-            'enemy_group': [0] * 18,
+            'enemy_power': [0] * 18,  # 属性加成倍率: 0=普通士兵, >=1=将领属性加成(HP×N倍等)
             'enemy_lv_range': [0] * 36,  # lv params (a3,a4)
             'enemy_delay': [0] * 18,
             'enemy_xy': [0] * 36,     # byte[36] grid coords (18 pairs X,Y)
@@ -1002,7 +1002,7 @@ sub_436BD4: 战场主初始化 — sub_42FDF8(a1)→sub_42FE70()→sub_4307CC(a2
 [32]   uint16  map_id  — sub_42FE70:16 word_9537F8<<10; sub_436BD4:34
 [34-69] uint16[18] enemy_id — sub_4307CC:219 word_9537FA; sub_444FD4:27 (WarPC索引)
 [70-87] byte[18] enemy_lv  — sub_4307CC:260 *(v9-18); sub_444FD4:30,79 byte_95381E
-[88-105] byte[18] enemy_grp — sub_4307CC:217 byte_953830; sub_444FD4:26 (AI编组)
+[88-105] byte[18] enemy_grp — sub_4307CC:217 byte_953830; sub_444FD4:26 (属性加成倍率: 0=士兵可增援, >=1=将领HP×N倍, 见sub_4302D8:53)
 [106-141] byte[36] enemy_lv_range — sub_430578 a3,a4; 18对 level params (int8)
 [142-177] byte[36] enemy_xy — sub_431428:94-98 unk_953866; 18对int8 grid X,Y; War.dll“敌人朝向”
 [178-189] byte[12] ally_xy — sub_431428:74 unk_95388A; 6对int8 X,Y, 同 enemy_xy格式
@@ -1244,7 +1244,7 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
             ('#', 3, ''),
             ('ID\nu16[034-069]', 5, '[34-69] uint16[18] enemy_id — sub_4307CC:219'),
             ('Lv\nu8[070-087]', 4, '[70-87] byte[18] enemy_lv — sub_4307CC:260'),
-            ('组\nu8[088-105]', 4, '[88-105] byte[18] enemy_grp — sub_4307CC:217'),
+            ('加成\nu8[088-105]', 4, '[88-105] byte[18] enemy_grp — 属性加成倍率; sub_4307CC:217'),
             ('LvP1\ni8[106-141]', 4, '[106-141] byte[36] enemy_lv_range — sub_430578 a3, LvP1=106+2*i'),
             ('LvP2\ni8[106-141]', 4, 'sub_430578 a4, LvP2=107+2*i (int8)'),
             ('X\ni8[142-177]', 3, '[142-177] byte[36] enemy_xy — sub_431428:94 X=142+2*i; -1~-5=随机区域请求'),
@@ -1262,7 +1262,7 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
         for i in range(18):
             vr = {}
             ttk.Label(inner, text=str(i), font=FONT_S).grid(row=row, column=0)
-            for j, (k, w) in enumerate([('id',5),('lv',4),('grp',4),('x',3),('y',3),('pr_x',4),('pr_y',4),('delay',4),('flags',5)]):
+            for j, (k, w) in enumerate([('id',5),('lv',4),('power',4),('x',3),('y',3),('pr_x',4),('pr_y',4),('delay',4),('flags',5)]):
                 vr[k] = tk.StringVar()
                 if k in ('id', 'flags'):
                     wgt = ttk.Spinbox(inner, textvariable=vr[k], from_=0, to=65535, width=w, font=('', 7))
@@ -1382,7 +1382,7 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
         for i in range(18):
             self.ap_enemy_vars[i]['id'].set(str(rec['enemy_ids'][i]))
             self.ap_enemy_vars[i]['lv'].set(str(rec['enemy_lv'][i]))
-            self.ap_enemy_vars[i]['grp'].set(str(rec['enemy_group'][i]))
+            self.ap_enemy_vars[i]['power'].set(str(rec['enemy_power'][i]))
             self.ap_enemy_vars[i]['x'].set(str(rec['enemy_lv_range'][i*2]))
             self.ap_enemy_vars[i]['y'].set(str(rec['enemy_lv_range'][i*2+1]))
             self.ap_enemy_vars[i]['pr_x'].set(str(rec['enemy_xy'][i*2]))
@@ -1426,7 +1426,7 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
             except: pass
             try: rec['enemy_lv'][i] = int(self.ap_enemy_vars[i]['lv'].get() or 0) & 0xFF
             except: pass
-            try: rec['enemy_group'][i] = int(self.ap_enemy_vars[i]['grp'].get() or 0) & 0xFF
+            try: rec['enemy_power'][i] = int(self.ap_enemy_vars[i]['power'].get() or 0) & 0xFF
             except: pass
             try: rec['enemy_lv_range'][i*2] = int(self.ap_enemy_vars[i]['x'].get() or 0)
             except: pass
@@ -1495,7 +1495,7 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
         ef = ttk.Frame(self.tab_enemy)
         ef.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
 
-        headers = ['槽', '角色ID', '角色名', '等级', 'AI编组', 'LvP1', 'LvP2', 'X', 'Y', '时序Delay', '精英/特殊']
+        headers = ['槽', '角色ID', '角色名', '等级', '属性加成倍率', 'LvP1', 'LvP2', 'X', 'Y', '时序Delay', '精英/特殊']
         widths = [4, 7, 14, 5, 7, 5, 5, 4, 4, 5, 10]
         for j, (h, w) in enumerate(zip(headers, widths)):
             lbl = ttk.Label(ef, text=h, font=FONT_S, width=w)
@@ -1504,7 +1504,7 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
             tips = {
                 1: '[offset 34] sub_4307CC:222 *v5 — enemy WarPC index',
                 3: '[offset 70] sub_4307CC:260 *(v9-18) — <10 grunt, >=10 elite',
-                4: '[offset 88] sub_4307CC:226 *v9 — AI group',
+                4: '[offset 88] 属性加成倍率 — sub_4302D8:53; 0=普通士兵(可增援), >=1=将领(HP×N倍等属性加成)',
                 5: '[offset 106] sub_430578 a3 — level param 1 (int8)',
                 6: '[offset 107] sub_430578 a4 — level param 2 (int8)',
                 7: '[offset 142] sub_431428:94 *((char*)v32+108) — grid X(int8); -1~-5=随机区域请求',
@@ -1533,8 +1533,8 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
             ttk.Spinbox(ef, textvariable=vars_row['lv'], from_=0, to=255, width=5, font=FONT).grid(
                 row=row, column=3, padx=1)
 
-            vars_row['group'] = tk.StringVar()
-            ttk.Entry(ef, textvariable=vars_row['group'], width=5, font=FONT).grid(row=row, column=4, padx=1)
+            vars_row['power'] = tk.StringVar()
+            ttk.Entry(ef, textvariable=vars_row['power'], width=5, font=FONT).grid(row=row, column=4, padx=1)
 
             vars_row['x'] = tk.StringVar()
             ttk.Spinbox(ef, textvariable=vars_row['x'], from_=-128, to=127, width=4, font=FONT).grid(
@@ -1569,7 +1569,7 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
             eid = rec['enemy_ids'][i]
             self.enemy_vars[i]['id'].set(str(eid))
             self.enemy_vars[i]['lv'].set(str(rec['enemy_lv'][i]))
-            self.enemy_vars[i]['group'].set(str(rec['enemy_group'][i]))
+            self.enemy_vars[i]['power'].set(str(rec['enemy_power'][i]))
             self.enemy_vars[i]['x'].set(str(rec['enemy_lv_range'][i * 2]))
             self.enemy_vars[i]['y'].set(str(rec['enemy_lv_range'][i * 2 + 1]))
             self.enemy_vars[i]['pr_x'].set(str(rec['enemy_xy'][i * 2]))
@@ -1600,7 +1600,7 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
                 rec['enemy_lv'][i] = int(self.enemy_vars[i]['lv'].get() or 0) & 0xFF
             except: pass
             try:
-                rec['enemy_group'][i] = int(self.enemy_vars[i]['group'].get() or 0) & 0xFF
+                rec['enemy_power'][i] = int(self.enemy_vars[i]['power'].get() or 0) & 0xFF
             except: pass
             try:
                 rec['enemy_lv_range'][i * 2] = int(self.enemy_vars[i]['x'].get() or 0)
