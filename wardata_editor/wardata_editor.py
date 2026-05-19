@@ -1105,7 +1105,7 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
         row += 1
 
         self.pvars['flags'] = tk.StringVar()
-        self._build_field(pf, row, 0, "Flags (byte)", self.pvars['flags'],
+        self._build_field(pf, row, 0, "参数标志", self.pvars['flags'],
             tooltip="[offset 0] bit1=失败条件(sub_43CA64:102), bit2=随机敌军数(sub_4307CC:200)")
 
         self.flag_bit1 = tk.BooleanVar()
