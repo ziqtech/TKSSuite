@@ -227,9 +227,9 @@ def load_jvg_sprites(jvg_path):
 # ============================================================
 
 WARPC_REC = 1054      # 527 × int16
-WARPC_CNT = 143
 WARPC_FIELD_COUNT = 527
-WARPC_DECOMPRESSED = 150722
+WARPC_ORIG_COUNT = 143       # 原游戏硬编码角色数 (Maker.exe sub_4027FF)
+WARPC_ORIG_SIZE = 150722     # = 143 × 1054
 
 FONT = ('Microsoft YaHei UI', 9); FONT_S = ('Microsoft YaHei UI', 8)
 W_INPUT = 8
@@ -463,10 +463,11 @@ UNVERIFIED_RANGES = []  # 全部未验证范围已查明
 def load_warpc(fp):
     with open(fp, 'rb') as f: raw = f.read()
     dec = lzss_decompress(raw)
-    if len(dec) != WARPC_DECOMPRESSED:
-        raise ValueError(f"解压后大小 {len(dec)} 不等于预期 {WARPC_DECOMPRESSED} (Maker.exe sub_4027FF)")
+    if len(dec) % WARPC_REC != 0:
+        raise ValueError(f"解压后大小 {len(dec)} 不是 {WARPC_REC} 的整数倍 (每条记录 {WARPC_REC} 字节)")
     recs = []
-    for i in range(WARPC_CNT):
+    cnt = len(dec) // WARPC_REC
+    for i in range(cnt):
         off = i * WARPC_REC
         vals = struct.unpack_from('<' + 'h' * WARPC_FIELD_COUNT, dec, off)
         recs.append({'index': i, 'fields': list(vals)})
@@ -1136,6 +1137,27 @@ class WarpcEditor:
     def _reload(self):
         if not self.warpc_path: return
         self.status_var.set("加载中…"); self.root.update()
+
+        # 检测 tks_launcher 未恢复的 .orig 备份, 提示用户恢复
+        orig_path = self.warpc_path + ".orig"
+        if os.path.exists(orig_path):
+            if messagebox.askyesno("检测到未恢复的备份",
+                f"发现 WarPC.dat.orig 备份文件\n\n"
+                f"这通常表示上次 tks_launcher 未能正常恢复原始文件\n"
+                f"（游戏崩溃或被强制终止）。\n\n"
+                f"当前 WarPC.dat: {self.warpc_path}\n"
+                f"备份文件: {orig_path}\n\n"
+                f"是否从备份恢复？"):
+                try:
+                    bak = orig_path + ".editor_bak"
+                    if not os.path.exists(bak):
+                        import shutil
+                        shutil.copy2(self.warpc_path, bak)
+                    os.replace(orig_path, self.warpc_path)
+                    self.status_var.set("已从 .orig 备份恢复 WarPC.dat")
+                except Exception as e:
+                    messagebox.showerror("恢复失败", str(e))
+
         if self.tkt_path:
             self.tkt = load_tkt(self.tkt_path)
         tks_dir = os.path.dirname(self.warpc_path)
@@ -2086,7 +2108,9 @@ class WarpcEditor:
 
     def _show_field_ref(self):
         lines = ["WarPC.dat 字段映射 (反编译依据):", ""]
-        lines.append(f"【记录布局】{WARPC_CNT} 角色 × {WARPC_REC} 字节 = {WARPC_DECOMPRESSED} 字节")
+        cnt = len(self.records) if self.records else WARPC_ORIG_COUNT
+        lines.append(f"【记录布局】{cnt} 角色 × {WARPC_REC} 字节 = {cnt * WARPC_REC} 字节")
+        lines.append(f"  原游戏 143 角色 ({WARPC_ORIG_SIZE} 字节), 编辑器支持动态扩展")
         lines.append(f"  {WARPC_FIELD_COUNT} × int16 (小端序) 共 {WARPC_REC} 字节/角色")
         lines.append("")
         lines.append("【已验证字段 (反编译直接引用)】")
@@ -2135,10 +2159,12 @@ class WarpcEditor:
         tx.insert('1.0', '\n'.join(lines)); tx.config(state='disabled')
 
     def _show_about(self):
+        cnt = len(self.records) if self.records else WARPC_ORIG_COUNT
         messagebox.showinfo("关于",
             "WarPC.dat 可视化编辑器 v1.5\n\n"
             "基于《三国群侠传》 TKS.exe 反编译\n"
-            "143 角色 × 1054 字节 (527×int16)\n\n"
+            f"{cnt} 角色 × {WARPC_REC} 字节 ({WARPC_FIELD_COUNT}×int16)\n"
+            f"原游戏: {WARPC_ORIG_COUNT} 角色 ({WARPC_ORIG_SIZE} 字节), 支持动态扩展\n\n"
             "逆向依据:\n"
             "  sub_42234C  装备/技能/属性应用\n"
             "  sub_41E40C  物品使用效果\n"
