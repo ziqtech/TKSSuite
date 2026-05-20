@@ -1,6 +1,34 @@
 ﻿/*
  * TKS Launcher - 自动运行时内存补丁启动器
  *
+ * 本启动器针对 TKS.exe 游戏进程进行运行时内存修补，突破以下硬编码限制:
+ *
+ * [补丁一] 入队数量限制 (sub_40DA00 / sub_40E65C)
+ *   原始限制: 队伍最多容纳 30 人 (cmp 0x1E, jg/jle)
+ *   修补效果: 扩展为最多 200 人 (cmp 0xC8, ja/jbe), 同时将有符号比较改为无符号比较
+ *
+ * [补丁二] 战场角色形象 (AwkSprite PATH1/PATH2 + cave)
+ *   原始问题: 新角色 (idx>=36) 战场形象从 WORD[260] 自定义字段读取, 但默认回退逻辑
+ *            用 +12 偏移导致超出精灵表范围, 显示错乱
+ *   修补效果: PATH2 偏移改为 +0; PATH1 通过动态 cave 检查 WORD[260], 非零时使用自定义值
+ *
+ * [补丁三] 队伍头像显示 (PortraitCave1 / PortraitCave2)
+ *   原始问题: 头像计算公式固定为 portrait_idx + 0xD3, 新角色无自定义头像时显示错误
+ *   修补效果: 通过动态 cave 检查 WORD[261], 非零时直接使用该值作为 GRP 帧索引,
+ *            否则回退到原始 add 0xD3 逻辑
+ *
+ * [补丁四] 战斗经验回写 (sub_43BF20)
+ *   原始问题: 战斗结束回写函数用 movsx 读取 byte_9DF888 (参战角色索引), 当角色索引
+ *            >= 128 时, 符号扩展为负数, 与 word_75688C (队伍索引) 比较永远不等,
+ *            导致新角色经验/等级不被写回 WarPC 缓冲区
+ *   修补效果: 将 movsx 改为 movzx (无符号扩展), 使索引 128~255 的角色正确回写
+ *
+ * [补丁五] WarPC 缓冲区动态扩展 (突破 143 角色限制)
+ *   原始问题: 游戏在 BSS 段预分配 143*1054=150722 字节 WarPC 缓冲区 (word_757F08),
+ *            代码中 29 处引用基址 0x757F08, 5 处引用大小 150722, 无法容纳更多角色
+ *   修补效果: 动态分配新缓冲区 (VirtualAllocEx), 写入完整 WarPC 数据, 修补所有代码
+ *            引用 (基址 + 字段级偏移 + 大小常量) 指向新缓冲区
+ *
  * 用法: 把编译后的 TKSLauncher.exe 放到游戏目录，双击运行即可
  * 编译: C:\Windows\Microsoft.NET\Framework\v4.0.30319\csc.exe /target:winexe /win32icon:TKS.ico /out:TKSLauncher.exe tks_launcher.cs
  */
@@ -103,9 +131,19 @@ class TKSLauncher
         public bool Dynamic;
     }
 
-    // Static patches (RVA = baseAddr + RVA)
+    // ============================================================
+    // 静态补丁列表 (直接修改游戏代码中的固定字节)
+    // RVA = 相对于模块基址的偏移 (ImageBase 通常为 0x400000)
+    // ============================================================
     static readonly Patch[] StaticPatches = new Patch[]
     {
+        // ────────────────────────────────────────────────────────
+        // [补丁一] 入队数量限制
+        // 原始: sub_40DA00 中 cmp al, 0x1E (30); jg skip → 最多入队30人
+        //       sub_40E65C 中 cmp al, 0x1E (30); jle ok  → 队伍满30人时拒绝
+        // 修补: 将比较值改为 0xC8 (200), 同时 jg→ja / jle→jbe (有符号→无符号)
+        //       避免角色索引高位为1时被误判为负数
+        // ────────────────────────────────────────────────────────
         new Patch {
             RVA = 0xDA15, Data = new byte[] { 0xC8, 0x87 },
             Desc = "TeamMember: cmp 0x1E->0xC8, jg->ja (sub_40DA00)"
@@ -114,18 +152,47 @@ class TKSLauncher
             RVA = 0xE6C1, Data = new byte[] { 0xC8, 0x76 },
             Desc = "CheckTeam: cmp 0x1E->0xC8, jle->jbe (sub_40E65C)"
         },
+
+        // ────────────────────────────────────────────────────────
+        // [补丁二] 战场角色形象 (AwkSprite PATH2)
+        // 原始: sub_4309A6 附近, 角色 JVG 精灵选择时对索引 +12 偏移
+        //       导致新角色 (idx>=36) 超出精灵映射表, 战场显示错乱
+        // 修补: 将 +12 偏移改为 +0, 配合 PATH1 的 cave 做正确映射
+        // 注意: PATH1 (cave) 通过 BuildPatches 动态生成, 检查 WORD[260]
+        //       若非零则使用自定义战场精灵索引
+        // ────────────────────────────────────────────────────────
         new Patch {
             RVA = 0x31165, Data = new byte[] { 0x00 },
             Desc = "AwkSprite PATH2: +12→+0"
         },
-        // Portrait patches REMOVED — static add→add,0 approach was breaking battle.
-        // Replaced by inline caves below (PortraitCave1 / PortraitCave2).
+
+        // ────────────────────────────────────────────────────────
+        // [补丁四] 战斗经验回写 (sub_43BF20)
+        // 原始: 战斗结束后, sub_43BF20 将临时战斗数据写回 WarPC 缓冲区
+        //       使用 movsx (0F BE) 读取 byte_9DF888[i] (参战角色索引)
+        //       与 word_75688C[i] (队伍角色索引, signed word) 比较
+        //       当角色索引 >= 128 时:
+        //         byte 0x8F 经 movsx 扩展为 -113 (0xFFFFFF8F)
+        //         word 143 经 movsx 扩展为 +143 (0x0000008F)
+        //         比较不等 → 回写逻辑被跳过 → 经验/等级不更新!
+        // 修补: 将 movsx (0F BE) 改为 movzx (0F B6), 无符号扩展
+        //       byte 0x8F → 143, 与 word 143 正确匹配
+        // ────────────────────────────────────────────────────────
+        new Patch {
+            RVA = 0x3BF5C, Data = new byte[] { 0xB6 },
+            Desc = "BattleWriteback: movsx->movzx byte_9DF888 (fix idx>=128 exp writeback)"
+        },
     };
 
-    // Cave body: 51 bytes. Hook AFTER call sub_432668 (at cmp [ebp-6],0).
-    // Reads WarPC WORD[260] (byte offset 520 = 0x208).
-    // If WORD[260]!=0: v26 = WORD[260]-6, then +6 gives WORD[260].
-    // Sets ZF properly for the original jnz at 0x4309AD.
+    // ============================================================
+    // [补丁二] 战场角色形象 - PATH1 动态 Cave (51 字节)
+    // 动态分配到进程内存, hook 在 sub_432668 调用后 (cmp [ebp-6],0 处)
+    //
+    // 逻辑: 读取当前参战角色的 WarPC WORD[260] (byte offset 520 = 0x208)
+    //       若 WORD[260] != 0: 使用自定义战场精灵索引 (WORD[260]-6)
+    //       若 WORD[260] == 0: 使用原始默认映射逻辑
+    //       正确设置 ZF 供后续 jnz 判断
+    // ============================================================
     static readonly byte[] CaveTemplate = new byte[] {
         0x50, 0x51,                                           // push eax,ecx
         0x0F, 0xBF, 0x45, 0xFA,                               // movsx eax,[ebp-6]
@@ -147,9 +214,15 @@ class TKSLauncher
         0xC3                                                  // ret
     };
 
-    // PortraitCave1 (41B): hook at RVA 0x17A50 (add ax,0xD3; push eax).
-    // Verified: ECX = char_idx * 527, AX = portrait from [ecx*2+0x757F0A].
-    // Both paths share identical epilogue (add esp,8; pop edx; xchg; jmp).
+    // ============================================================
+    // [补丁三] 队伍头像显示 - PATH1 动态 Cave (41 字节)
+    // Hook 在 RVA 0x17A50 (sub_41762C 中的 "add ax, 0xD3; push eax" 处)
+    //
+    // 逻辑: 此处处理当前选中队员的头像
+    //       ECX = char_idx * 527, AX = WarPC[char_idx].portrait (WORD[1])
+    //       检查 WORD[261] (byte offset 522 = 0x20A): 若非零则直接使用作为 GRP 帧索引
+    //       否则回退到原始逻辑: portrait + 0xD3
+    // ============================================================
     static readonly byte[] PortraitCave1 = new byte[] {
         0x50,                               // push eax           ; save raw portrait
         0x51,                               // push ecx           ; save ecx*527
@@ -170,8 +243,14 @@ class TKSLauncher
         0xFF, 0xE0,                         // jmp eax
     };
 
-    // PortraitCave2 (42B): hook at RVA 0x17E1A (add dx,0xD3; push edx).
-    // Verified: EAX = char_idx * 527, DX = portrait from [eax*2+0x757F0A].
+    // ============================================================
+    // [补丁三] 队伍头像显示 - PATH2 动态 Cave (42 字节)
+    // Hook 在 RVA 0x17E1A (sub_417F84 中的 "add dx, 0xD3; push edx" 处)
+    //
+    // 逻辑: 此处处理非选中队员的头像 (列表显示)
+    //       EAX = char_idx * 527, DX = WarPC[char_idx].portrait (WORD[1])
+    //       同样检查 WORD[261]: 非零则直接使用, 否则回退 portrait + 0xD3
+    // ============================================================
     static readonly byte[] PortraitCave2 = new byte[] {
         0x52,                               // push edx           ; save raw portrait
         0x51,                               // push ecx           ; save scratch
@@ -218,8 +297,11 @@ class TKSLauncher
         }
     }
 
-    // Build the full patch list from dynamic cave address
-    // warpcBaseAddr: if non-zero, caves will use this instead of 0x757F08
+    // ============================================================
+    // 动态补丁构建: 结合 cave 地址和 WarPC 新缓冲区地址生成完整补丁列表
+    // 包含: 静态补丁 + AwkSprite cave + hook + Portrait cave*2 + hook*2
+    // warpcBaseAddr: 若非零, 将 cave 中硬编码的 0x757F08 替换为新缓冲区地址
+    // ============================================================
     static Patch[] BuildPatches(IntPtr baseAddr, IntPtr caveAddr, int warpcBaseAddr)
     {
         long cave = caveAddr.ToInt64();
