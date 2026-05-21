@@ -100,6 +100,18 @@
  *            这样每次检查前都强制清零 stream+8 错误标志,
  *            后续 je/jne 依然按 ZF=1 走正确分支, slot 7-9 能重新读取。
  *
+ * [补丁十五] 存档界面新角色队伍头像显示修复
+ *   原始问题: sub_41AB94 渲染存档列表队伍头像时:
+ *              sub_4544EC(..., *(char *)(...) + 211, ...);
+ *            二重问题: 一是 signed char ID 在 ID >= 128 时被 sign-extend 为负数
+ *            (如 ID=143 → (char)=-113, +211=98, 帧位错位); 二是新角色 (143-145)
+ *            应当使用 WarPC 中的 WORD[261] 作为自定义头像帧, 不是 ID+211。
+ *   修补效果: 扫描 sub_41AB94 函数体内所有 "add eax, 0xD3" (5字节 05 D3 00 00 00)
+ *            指令, 替换为 call 到 ArchivePortraitCave (动态分配 44 字节)。
+ *            cave 内部: (1) movzx 将 signed ID 转为 unsigned (修复 sign-extend);
+ *            (2) 读取 WarPC[ID].WORD[261]; (3) 非零使用 WORD[261] 作 frame,
+ *            否则 fallback 到 unsigned ID + 211。与队伍头像 cave 逻辑一致。
+ *
  * 用法: 把编译后的 TKSLauncher.exe 放到游戏目录，双击运行即可
  * 编译: C:\Windows\Microsoft.NET\Framework\v4.0.30319\csc.exe /target:winexe /win32icon:TKS.ico /out:TKSLauncher.exe tks_launcher.cs
  */
@@ -378,6 +390,63 @@ class TKSLauncher
     };
 
     // ============================================================
+    // [补丁十五] 存档界面队伍头像 - Cave (动态分配, 约 38 字节)
+    // Hook 在 sub_41AB94 中的 "movsx eax, byte [...]; add eax, 0xD3" 模式处
+    //
+    // 背景: sub_41AB94 渲染存档列表队伍头像时, 处理逻辑:
+    //   sub_4544EC(..., *(char *)(...) + 211, ...);
+    //                    ^^^^^^^^^^^^^^^^ 从 N.sav 读出的 1 字节 ID
+    // 问题二重:
+    //   1. (char) 是 signed char, ID >= 128 时 sign-extend 为负数
+    //      (如 ID=143 → (char)=-113, +211=98, 帧位错误)
+    //   2. 新角色 (143-145) 需要使用 WORD[261] 作为自定义头像帧, 不能用 ID+211
+    //
+    // 逻辑:
+    //   1. 入口 hook 替换 "movsx eax, byte [...]; add eax, 0xD3"
+    //      (movsx 4-7 字节 + add 5 字节) 为 call cave
+    //   2. cave 里复现原 movsx 逻辑但用 movzx (修复 sign extension)
+    //   3. 读取 WarPC[ID].WORD[261]
+    //   4. 非零 → 使用 WORD[261] 作为 frame
+    //   5. 为零 → 默认 frame = ID + 211 (unsigned ID)
+    //
+    // 入口约定: 调用 cave 前, 需在某寄存器准备好 ID byte 的有效地址
+    //   由于存档不同编译模式, hook 在运行时扫描定位
+    // ============================================================
+    static readonly byte[] ArchivePortraitCave = new byte[] {
+        // 入口约定 (hook 替换 5 字节 "66 05 D3 00 50" = add ax, 0xD3 + push eax):
+        //   eax = movsx 后的 signed char ID (32-bit sign-extended)
+        //   [esp] = call 推入的返回地址 (= hook+5, 指向原 push eax 后的下一条指令)
+        //
+        // 出口约定:
+        //   栈上需保留 frame 代替被覆盖的 push eax,
+        //   使用 xchg+jmp 技巧: 跳回返回地址 [esp]后栈上留 frame
+        0x52,                               // [00] push edx
+        0x51,                               // [01] push ecx
+        // 修复 sign-extend: 取低 8 位作 unsigned ID
+        0x0F, 0xB6, 0xC0,                   // [02..04] movzx eax, al   ; eax = unsigned ID
+        0x8B, 0xC8,                         // [05..06] mov ecx, eax    ; save unsigned ID
+        // 计算 WarPC[ID] 地址
+        0x69, 0xC0, 0x1E, 0x04, 0x00, 0x00, // [07..12] imul eax, eax, 1054
+        0x05, 0x08, 0x7F, 0x75, 0x00,       // [13..17] add eax, 0x757F08 (启动器会替换为 newBuf)
+        // 读 WORD[261] (offset 0x20A)
+        0x0F, 0xB7, 0x90, 0x0A, 0x02, 0x00, 0x00, // [18..24] movzx edx, [eax+0x20A]
+        0x66, 0x85, 0xD2,                   // [25..27] test dx, dx
+        0x75, 0x09,                         // [28..29] jnz +9 跳到 [39]
+        // 默认: frame = unsigned ID + 211
+        0x8B, 0xC1,                         // [30..31] mov eax, ecx     ; eax = unsigned ID
+        0x05, 0xD3, 0x00, 0x00, 0x00,       // [32..36] add eax, 0xD3    ; eax = ID + 211
+        0xEB, 0x02,                         // [37..38] jmp +2 跳到 [41]
+        // .use_custom: ([39])
+        0x8B, 0xC2,                         // [39..40] mov eax, edx     ; eax = WORD[261]
+        // .done: ([41])
+        0x59,                               // [41] pop ecx
+        0x5A,                               // [42] pop edx
+        // 关键: 交换返回地址与 frame, 跳回 hook 下一条指令 后栈上留 frame
+        0x87, 0x04, 0x24,                   // [43..45] xchg eax, [esp]  ; eax=ret, [esp]=frame
+        0xFF, 0xE0                          // [46..47] jmp eax
+    };
+
+    // ============================================================
     // [补丁三] 队伍头像显示 - PATH2 动态 Cave (42 字节)
     // Hook 在 RVA 0x17E1A (sub_417F84 中的 "add dx, 0xD3; push edx" 处)
     //
@@ -500,8 +569,23 @@ class TKSLauncher
             Desc = string.Format("Portrait PATH2: hook add dx,0xD3 -> cave@0x{0:X8}", pcave2)
         });
 
+        // --- Archive Portrait cave (存档界面队伍头像, 补丁十五) ---
+        // 使用 cave + 192 位置 (足够距离 PortraitCave2 的 128 + 42 字节)
+        long arcCave = cave + 192;
+        byte[] arcCaveData = (byte[])ArchivePortraitCave.Clone();
+        if (warpcBaseAddr != 0) ReplaceAddrInBytes(arcCaveData, WARPC_BASE, warpcBaseAddr);
+        list.Add(new Patch {
+            RVA = (int)(arcCave - baseVA), Data = arcCaveData,
+            Desc = string.Format("Archive Portrait cave@0x{0:X8} (存档列表队伍头像)", arcCave)
+        });
+        // 保存 cave 地址供后续 Patch_ArchivePortrait_Hook 使用
+        _archivePortraitCaveAddr = (int)arcCave;
+
         return list.ToArray();
     }
+
+    // 存档界面队伍头像 cave 地址 (补丁十五)
+    static int _archivePortraitCaveAddr = 0;
 
     // ============================================================
     // WarPC 缓冲区动态扩展 — 突破 143 角色硬编码限制
@@ -1566,6 +1650,118 @@ class TKSLauncher
         CloseHandle(hProc);
     }
 
+    // ============================================================
+    // [补丁十五] 存档界面队伍头像 hook
+    //
+    // 扫描 sub_41AB94 函数体内的 "add eax, 0xD3" (5 字节: 05 D3 00 00 00)
+    // 指令, 将其替换为到 ArchivePortraitCave 的 5 字节 "call rel32"。
+    // sub_41AB94 中该指令可能出现多次 (选中/未选中处理), 全部 hook。
+    // ============================================================
+    static void PatchArchivePortrait(int childPid, IntPtr baseAddr)
+    {
+        const int SUB_41AB94_RVA = 0x1AB94;
+        const int SCAN_SIZE = 0x500;  // sub_41AB94 函数体 ~1280 字节
+        Log("\n--- [补丁十五] 存档界面队伍头像 hook ---");
+
+        if (_archivePortraitCaveAddr == 0)
+        {
+            Log("  [WARN] ArchivePortraitCave 未分配, 跳过");
+            return;
+        }
+
+        IntPtr hProc = OpenProcess(PROCESS_VM_READ | PROCESS_VM_WRITE | PROCESS_VM_OPERATION,
+            false, childPid);
+        if (hProc == IntPtr.Zero) { Log("  [ERROR] OpenProcess 失败"); return; }
+
+        IntPtr addr = (IntPtr)(baseAddr.ToInt64() + SUB_41AB94_RVA);
+        byte[] buf = new byte[SCAN_SIZE];
+        int nr;
+        if (!ReadProcessMemory(hProc, addr, buf, SCAN_SIZE, out nr) || nr < 64)
+        {
+            Log(string.Format("  [ERROR] 读取 sub_41AB94@0x{0:X8} 失败 (nr={1})",
+                addr.ToInt64(), nr));
+            CloseHandle(hProc);
+            return;
+        }
+
+        Log(string.Format("  sub_41AB94@0x{0:X8} 函数体扫描 {1} 字节",
+            addr.ToInt64(), nr));
+        Log(string.Format("  ArchivePortraitCave 地址: 0x{0:X8}", _archivePortraitCaveAddr));
+        Log(string.Format("  函数头 32 字节: [{0}]",
+            BitConverter.ToString(buf, 0, Math.Min(32, nr))));
+
+        // 完整 dump sub_41AB94 函数体到日志供诊断 (每行 32 字节)
+        Log("\n  [完整 dump] sub_41AB94 函数体:");
+        for (int line = 0; line < nr; line += 32)
+        {
+            int len = Math.Min(32, nr - line);
+            Log(string.Format("    +0x{0:X4}: {1}",
+                line, BitConverter.ToString(buf, line, len)));
+        }
+
+        // 扫描多种可能的 "+ 211" 指令编码:
+        //  A) 05 D3 00 00 00          add eax, 0xD3       (5 字节)
+        //  B) 66 05 D3 00              add ax, 0xD3        (4 字节)
+        //  C) 83 C0 D3 不存在 (D3 sign-extend = -45 不是 211)
+        //  D) lea eax, [reg + 0xD3]   8D ?? D3 / 8D ?? D3 00 00 00
+        // 同时 dump 所有包含 D3 的位置供诊断
+        Log("\n  [诊断] 扫描函数体中所有包含 'D3' 的位置:");
+        for (int i = 0; i < nr; i++)
+        {
+            if (buf[i] == 0xD3)
+            {
+                int contextStart = Math.Max(0, i - 5);
+                int contextLen = Math.Min(nr - contextStart, 12);
+                Log(string.Format("    RVA 0x{0:X} ctx=[{1}]",
+                    SUB_41AB94_RVA + i,
+                    BitConverter.ToString(buf, contextStart, contextLen)));
+            }
+        }
+
+        // 扫描模式 "66 05 D3 00 50" (add ax, 0xD3 + push eax, 共 5 字节)
+        // 该模式与 PortraitCave1 hook 位置 0x17A50 一致
+        int patched = 0;
+        var diag = new System.Text.StringBuilder();
+        for (int i = 0; i <= nr - 5; i++)
+        {
+            if (buf[i] == 0x66 && buf[i+1] == 0x05 && buf[i+2] == 0xD3
+                && buf[i+3] == 0x00 && buf[i+4] == 0x50)
+            {
+                int hookRva = SUB_41AB94_RVA + i;
+                IntPtr hookAddr = (IntPtr)(baseAddr.ToInt64() + hookRva);
+                long hookEnd = hookAddr.ToInt64() + 5;
+                int callOff = (int)(_archivePortraitCaveAddr - hookEnd);
+                byte[] callData = new byte[5];
+                callData[0] = 0xE8;
+                BitConverter.GetBytes(callOff).CopyTo(callData, 1);
+
+                uint oldProt;
+                VirtualProtectEx(hProc, hookAddr, 5, PAGE_EXECUTE_READWRITE, out oldProt);
+                int nw;
+                bool ok = WriteProcessMemory(hProc, hookAddr, callData, 5, out nw);
+                VirtualProtectEx(hProc, hookAddr, 5, oldProt, out oldProt);
+
+                if (ok && nw == 5)
+                {
+                    patched++;
+                    diag.AppendLine(string.Format(
+                        "  [OK] hook (66 05 D3 00 50 = add ax,0xD3 + push eax) @ RVA 0x{0:X} → call cave",
+                        hookRva));
+                }
+                i += 4;
+            }
+        }
+
+        Log(diag.ToString().TrimEnd());
+        Log(string.Format("  共 hook {0} 处 add ax+push eax 指令", patched));
+
+        if (patched == 0)
+        {
+            Log("  [WARN] 未找到 66 05 D3 00 50 模式, 请查看上面 'D3' 扫描结果诊断实际编码");
+        }
+        CloseHandle(hProc);
+    }
+
     // Inject WORD[260]/WORD[261] values from WarPC.dat into game memory
     static void InjectWarPCData(int childPid)
     {
@@ -2028,6 +2224,19 @@ class TKSLauncher
         //   会重新正常读取。sub_41C120 返回值不受影响 (仍为 true)。
         // ============================================================
         Patch41C120(childPid, baseAddr);
+
+        // ============================================================
+        // [补丁十五] 修复存档界面新角色队伍头像显示问题
+        //
+        // 背景: sub_41AB94 渲染存档列表队伍头像时:
+        //   sub_4544EC(..., *(char *)(...) + 211, ...);
+        // 问题二重: signed char ID 在 ID>=128 时 sign-extend 为负数;
+        //   新角色 (143/144/145) 需要使用 WORD[261] 作为自定义头像帧。
+        //
+        // 修复: 扫描 sub_41AB94 内的 "add eax, 0xD3" (= 05 D3 00 00 00) 指令,
+        //   替换为 call ArchivePortraitCave。cave 复现 movzx ID + WORD[261] 优先逻辑。
+        // ============================================================
+        PatchArchivePortrait(childPid, baseAddr);
 
         // Inject WORD[260]/WORD[261] from WarPC.dat into game memory
         InjectWarPCData(childPid);
