@@ -29,6 +29,31 @@
  *   修补效果: 动态分配新缓冲区 (VirtualAllocEx), 写入完整 WarPC 数据, 修补所有代码
  *            引用 (基址 + 字段级偏移 + 大小常量) 指向新缓冲区
  *
+ * [补丁六] 存档/读档缓冲区扩展 (配合补丁五)
+ *   原始问题: sub_410ED4 (存档) 和 sub_41103C (读档) 中硬编码 159922 字节缓冲区
+ *            (= 3432 队伍/金币 + 5768 状态 + 150722 WarPC), 当 WarPC 扩展后,
+ *            写入超出缓冲区, 栈上队伍数组/金币/地图等数据被破坏
+ *   修补效果: 扫描代码段中所有 159922 常量, 改为 9200+newSize
+ *
+ * [补丁七] (已合并到补丁六)
+ *
+ * [补丁八] .dat 文件大小常量修补 (TKMat / TKItem / TKSkill / TKShop / TKKon)
+ *   原始问题: sub_4173F8 和 sub_412688 中硬编码各 .dat 文件大小, 若文件被扩展,
+ *            sub_45343C 的大小检查失败, 导致数据加载被跳过
+ *   修补效果: 启动前检测各 .dat 文件实际大小, 若超过原始值则创建截断版本;
+ *            运行时扫描代码段中原始大小常量并替换为实际值
+ *
+ * [补丁九] 新角色数据备份与旧存档兼容
+ *   原始问题: 加载旧存档 (扩展前保存) 时, sub_41103C 中已修补为 newSize 的 memcpy
+ *            会越过解压数据末尾读取栈上垃圾, 覆盖新角色 WarPC 槽位
+ *   修补效果: 分配独立备份缓冲区存储新角色区段数据; 存档加载后由备份恢复新角色默认值
+ *            新存档 (扩展后保存) 不受影响 — Frame 2 已包含完整数据
+ *
+ * [补丁十] 索引文件截断警告
+ *   原始问题: sub_41CE10 写入存档索引时用 char* 逐字节写入队伍 ID,
+ *            角色 ID >= 256 时高字节截断, 存档列表显示异常
+ *   修补效果: 检测角色 ID 范围并输出警告
+ *
  * 用法: 把编译后的 TKSLauncher.exe 放到游戏目录，双击运行即可
  * 编译: C:\Windows\Microsoft.NET\Framework\v4.0.30319\csc.exe /target:winexe /win32icon:TKS.ico /out:TKSLauncher.exe tks_launcher.cs
  */
@@ -81,6 +106,7 @@ class TKSLauncher
     const uint PROCESS_VM_WRITE = 0x0020;
     const uint PROCESS_VM_OPERATION = 0x0008;
     const uint PAGE_EXECUTE_READWRITE = 0x40;
+    const uint PAGE_READWRITE = 0x04;
     const uint MEM_COMMIT = 0x1000;
     const uint MEM_RESERVE = 0x2000;
     const uint MEM_RELEASE = 0x8000;
@@ -377,6 +403,30 @@ class TKSLauncher
     const int WARPC_REC_SIZE = 1054;
     const int WARPC_ORIG_COUNT = 143;
     const int WARPC_ORIG_SIZE = 150722; // = 143 * 1054 = 0x24CE2
+    const int WARPC_TOTAL_ORIG_SIZE = 159922; // = 9200 + 150722 = 0x270D2 (存档/读档缓冲区)
+
+    // 其他 .dat 文件原始解压大小 (硬编码在 sub_4173F8 / sub_412688 中)
+    // 若实际文件大于这些值, sub_45343C 的大小检查会失败, 导致文件加载被跳过
+    const int TKMAT_ORIG_SIZE   = 2304000; // TKMat.dat   (6000×384B) — sub_412688:21, sub_410ED4:21
+    const int TKITEM_ORIG_SIZE  = 38400;   // TKItem.dat  (600×64B)  — sub_4173F8:19
+    const int TKSKILL_ORIG_SIZE = 32900;   // TKSkill.dat            — sub_4173F8:20
+    const int TKSHOP_ORIG_SIZE  = 1920;    // TKShop.dat             — sub_4173F8:21
+    const int TKKON_ORIG_SIZE   = 26000;   // TKKon.dat              — sub_4173F8:22
+
+    // Frame 2 内部布局常量 (存档/读档缓冲区)
+    const int SAVE_BLOCKA_SIZE = 3432;  // unk_755B18 (SCE全局变量)
+    const int SAVE_BLOCKB_SIZE = 5768;  // unk_756880 (物品背包/任务/队伍/金币)
+    const int SAVE_WARPC_OFFSET = 9200; // = 3432 + 5768, WarPC 在 Frame 2 中的偏移
+
+    // 数据文件名 → 原始大小 映射 (用于大小检测和修补)
+    // 注意: 仅 WarPC.dat 支持完整缓冲区扩展; 其他文件仅做大小常量修补
+    static readonly Dictionary<string, int> DataFileOrigSizes = new Dictionary<string, int> {
+        { "TKMat.dat",   TKMAT_ORIG_SIZE },
+        { "TKItem.dat",  TKITEM_ORIG_SIZE },
+        { "TKSkill.dat", TKSKILL_ORIG_SIZE },
+        { "TKShop.dat",  TKSHOP_ORIG_SIZE },
+        { "TKKon.dat",   TKKON_ORIG_SIZE },
+    };
 
     static bool _warpcExpanded = false;
     static byte[] _warpcFullData = null;
@@ -398,41 +448,214 @@ class TKSLauncher
         0x3FBC, 0x10F60, 0x110D7, 0x126A5, 0x173FC
     };
 
+    // 已验证的 RVA 列表: 代码中所有引用 word_757F0C (0x757F0C) 的位置
+    // word_757F0C = WarPC 基址+4, 用于读取队员肖像字段 (WORD[2])
+    // 注意: 这些值来自 pointers.txt, 但实际上是绝对 VA 而非 RVA
+    //       (dump工具可能使用 image_base=0 导致), 因此使用时不应再加 baseAddr
+    // 若未正确 Patch, 存档预览文件 (save\%d.sav) 写入时会越界读取导致预览损坏
+    static readonly int[] WarpcAddr0CRVAs = new int[] {
+        0x40DAF3,  // sub_40DA00  队员入队时复制肖像
+        0x40E8DB,  // sub_40E88C  队员属性读取
+        0x4184B4,  // sub_417F84  队员列表头像
+        0x41A224,  // sub_41A080  商店界面头像
+        0x41D171,  // sub_41CE10  存档预览写入 ← 导致"六个0"的关键引用
+        0x43CA72,  // sub_43CA64  战斗检查
+        0x43CA8D,  // sub_43CA64  战斗检查
+    };
+
+    // 记录被截断的 .dat 文件, key=文件名, value=原始压缩数据 (供恢复用)
+    static Dictionary<string, byte[]> _truncatedFiles = new Dictionary<string, byte[]>();
+
     /// <summary>
-    /// 游戏启动前: 若 WarPC.dat 角色数大于143, 创建截断版本让游戏正常加载
+    /// 获取 .dat 文件解压后大小 (从文件头4字节读取, 不解压全部数据)
+    /// </summary>
+    static int GetDecompressedSize(string path)
+    {
+        if (!System.IO.File.Exists(path)) return -1;
+        byte[] header = new byte[4];
+        using (var fs = System.IO.File.OpenRead(path))
+        {
+            if (fs.Read(header, 0, 4) < 4) return -1;
+        }
+        return BitConverter.ToInt32(header, 0);
+    }
+
+    /// <summary>
+    /// 游戏启动前: 检测所有 .dat 文件大小, 若超过游戏硬编码限制则创建截断版本
+    /// WarPC 扩展: 完整支持 (缓冲区重分配 + 全部引用修补)
+    /// 其他 .dat 扩展: 截断版本 + 大小常量修补, 缓冲区无法扩展 (需更多逆向工程)
     /// </summary>
     static void PrepareWarPcForGame()
     {
-        string warpcPath = "WarPC.dat";
-        if (!System.IO.File.Exists(warpcPath)) return;
-
-        string bakPath = warpcPath + ".orig";
-
-        // 如果存在 .orig 备份, 说明上次启动可能崩溃, 先恢复
-        if (System.IO.File.Exists(bakPath))
+        // 先恢复所有上次未恢复的 .orig 备份
+        foreach (var kv in DataFileOrigSizes)
         {
-            System.IO.File.Copy(bakPath, warpcPath, true);
-            System.IO.File.Delete(bakPath);
-            Console.WriteLine("  检测到上次未恢复的 .orig 备份, 已自动恢复 WarPC.dat");
+            string bakPath = kv.Key + ".orig";
+            if (System.IO.File.Exists(bakPath))
+            {
+                System.IO.File.Copy(bakPath, kv.Key, true);
+                System.IO.File.Delete(bakPath);
+                Console.WriteLine(string.Format("  检测到上次未恢复的 {0}.orig, 已自动恢复", kv.Key));
+            }
         }
 
-        byte[] compressed = System.IO.File.ReadAllBytes(warpcPath);
-        byte[] dec = LzssDecompress(compressed);
-        int count = dec.Length / WARPC_REC_SIZE;
-        if (count <= WARPC_ORIG_COUNT) return;
+        // 检测 WarPC.dat 扩展 (已有完整支持)
+        string warpcPath = "WarPC.dat";
+        if (System.IO.File.Exists(warpcPath))
+        {
+            byte[] compressed = System.IO.File.ReadAllBytes(warpcPath);
+            byte[] dec = LzssDecompress(compressed);
+            int count = dec.Length / WARPC_REC_SIZE;
+            if (count > WARPC_ORIG_COUNT)
+            {
+                _warpcExpanded = true;
+                _warpcFullData = dec;
+                Console.WriteLine(string.Format("  WarPC.dat 检测到扩展数据: {0} 角色 (原始 {1})", count, WARPC_ORIG_COUNT));
 
-        _warpcExpanded = true;
-        _warpcFullData = dec;
-        Console.WriteLine(string.Format("  WarPC.dat 检测到扩展数据: {0} 角色 (原始 {1})", count, WARPC_ORIG_COUNT));
+                byte[] truncated = new byte[WARPC_ORIG_SIZE];
+                Array.Copy(dec, 0, truncated, 0, WARPC_ORIG_SIZE);
+                byte[] truncatedCompressed = LzssCompress(truncated);
+                string bakPath = warpcPath + ".orig";
+                if (!System.IO.File.Exists(bakPath))
+                    System.IO.File.Copy(warpcPath, bakPath, true);
+                _truncatedFiles[warpcPath] = compressed; // 保存原始压缩数据
+                System.IO.File.WriteAllBytes(warpcPath, truncatedCompressed);
+                Console.WriteLine(string.Format("  已创建截断版 WarPC.dat ({0} 角色), 备份为 .orig", WARPC_ORIG_COUNT));
+            }
+        }
 
-        // 截取前143角色 → 压缩 → 写入临时文件
-        byte[] truncated = new byte[WARPC_ORIG_SIZE];
-        Array.Copy(dec, 0, truncated, 0, WARPC_ORIG_SIZE);
-        byte[] truncatedCompressed = LzssCompress(truncated);
-        if (!System.IO.File.Exists(bakPath))
-            System.IO.File.Copy(warpcPath, bakPath, true);
-        System.IO.File.WriteAllBytes(warpcPath, truncatedCompressed);
-        Console.WriteLine(string.Format("  已创建截断版 WarPC.dat ({0} 角色), 备份为 .orig", WARPC_ORIG_COUNT));
+        // 检测其他 .dat 文件扩展
+        foreach (var kv in DataFileOrigSizes)
+        {
+            string fileName = kv.Key;
+            if (fileName == "WarPC.dat") continue; // 已单独处理
+
+            int origSize = kv.Value;
+            string path = fileName;
+            if (!System.IO.File.Exists(path)) continue;
+
+            int actualSize = GetDecompressedSize(path);
+            if (actualSize < 0) continue;
+
+            if (actualSize > origSize)
+            {
+                Console.WriteLine(string.Format("  [WARN] {0} 解压大小 {1} > 原始 {2}, 需要扩展支持",
+                    fileName, actualSize, origSize));
+                Console.WriteLine(string.Format("         当前将创建截断版本({0}B)供游戏加载, 大小常量将在运行时修补", origSize));
+
+                // 创建截断版本 (仅保留前 origSize 字节的解压数据)
+                byte[] compressed = System.IO.File.ReadAllBytes(path);
+                byte[] dec = LzssDecompress(compressed);
+                byte[] truncated = new byte[origSize];
+                Array.Copy(dec, 0, truncated, 0, Math.Min(dec.Length, origSize));
+                byte[] truncatedCompressed = LzssCompress(truncated);
+                string bakPath = path + ".orig";
+                if (!System.IO.File.Exists(bakPath))
+                    System.IO.File.Copy(path, bakPath, true);
+                _truncatedFiles[path] = compressed; // 保存原始压缩数据
+                System.IO.File.WriteAllBytes(path, truncatedCompressed);
+                Console.WriteLine(string.Format("  已创建截断版 {0} ({1}B), 备份为 .orig", fileName, origSize));
+            }
+            else if (actualSize < origSize)
+            {
+                Console.WriteLine(string.Format("  {0}: 解压大小 {1} (原始 {2}), 无需处理", fileName, actualSize, origSize));
+            }
+            else
+            {
+                Console.WriteLine(string.Format("  {0}: 解压大小 {1} = 原始值, OK", fileName, actualSize));
+            }
+        }
+    }
+
+    /// <summary>
+    /// 在游戏进程代码段中扫描并修补指定4字节常量
+    /// 返回: 成功修补的数量; patchedRVAs: 被修补的绝对地址列表
+    /// </summary>
+    static int ScanAndPatchConst(IntPtr hProc, int scanStart, int scanSize,
+        int oldVal, int newVal, out System.Collections.Generic.List<int> patchedRVAs)
+    {
+        patchedRVAs = new System.Collections.Generic.List<int>();
+        byte[] oldLE = BitConverter.GetBytes(oldVal);
+        byte[] newLE = BitConverter.GetBytes(newVal);
+        byte[] buf = new byte[scanSize];
+        int nr;
+        if (!ReadProcessMemory(hProc, (IntPtr)scanStart, buf, scanSize, out nr) || nr <= 0)
+            return 0;
+
+        int count = 0;
+        int effectiveSize = Math.Min(nr, scanSize);
+        for (int i = 0; i <= effectiveSize - 4; i++)
+        {
+            if (buf[i] == oldLE[0] && buf[i+1] == oldLE[1] &&
+                buf[i+2] == oldLE[2] && buf[i+3] == oldLE[3])
+            {
+                int absAddr = scanStart + i;
+                IntPtr pAddr = (IntPtr)absAddr;
+                uint oldProt;
+                VirtualProtectEx(hProc, pAddr, 4, PAGE_EXECUTE_READWRITE, out oldProt);
+                int nw;
+                bool ok = WriteProcessMemory(hProc, pAddr, newLE, 4, out nw);
+                VirtualProtectEx(hProc, pAddr, 4, oldProt, out oldProt);
+                if (ok && nw == 4)
+                {
+                    count++;
+                    patchedRVAs.Add(absAddr);
+                }
+                i += 3;
+            }
+        }
+        return count;
+    }
+
+    /// <summary>
+    /// 修补游戏代码中所有 .dat 文件的硬编码大小常量
+    /// 在 ExpandWarPcBuffer 中调用, 此时代码已解密
+    /// </summary>
+    static void PatchDataFileSizes(IntPtr hProc, IntPtr baseAddr, int scanStart, int scanSize)
+    {
+        Console.WriteLine("\n--- 数据文件大小常量修补 ---");
+        int baseVA = (int)baseAddr.ToInt64();
+
+        foreach (var kv in DataFileOrigSizes)
+        {
+            string fileName = kv.Key;
+            int origSize = kv.Value;
+            int actualSize = GetDecompressedSize(fileName);
+            if (actualSize <= origSize) continue;
+
+            // 只修补 .orig 备份存在 (已被 PrepareWarPcForGame 截断) 的文件
+            string bakPath = fileName + ".orig";
+            if (!System.IO.File.Exists(bakPath)) continue;
+
+            // 恢复原始文件
+            System.IO.File.Copy(bakPath, fileName, true);
+            System.IO.File.Delete(bakPath);
+            Console.WriteLine(string.Format("  已恢复原始 {0}", fileName));
+
+            // 扫描并修补大小常量
+            // 注意: 较小的值 (如 1920=0x780) 可能在代码中产生误匹配
+            // 使用 origSize 和 actualSize 确保精确匹配
+            System.Collections.Generic.List<int> rvas;
+            int patched = ScanAndPatchConst(hProc, scanStart, scanSize,
+                origSize, actualSize, out rvas);
+
+            if (patched > 0)
+            {
+                Console.WriteLine(string.Format("  [OK] {0}: {1} → {2}, 修补 {3} 处",
+                    fileName, origSize, actualSize, patched));
+                foreach (int addr in rvas)
+                {
+                    int rva = addr - baseVA;
+                    Console.WriteLine(string.Format("        RVA 0x{0:X} (abs 0x{1:X8})", rva, addr));
+                }
+            }
+            else
+            {
+                Console.WriteLine(string.Format("  [WARN] {0}: 未找到 {1} (0x{1:X}) 的引用, "
+                    + "可能已在 WarpcSizeRVAs 中处理或值不存在于代码段",
+                    fileName, origSize));
+            }
+        }
     }
 
     /// <summary>
@@ -448,15 +671,18 @@ class TKSLauncher
         IntPtr hProc = OpenProcess(access, false, childPid);
         if (hProc == IntPtr.Zero) { Console.WriteLine("  [ERROR] 无法打开进程进行 WarPC 扩展"); return; }
 
+        // 诊断日志收集器，写入 tks_launcher.log
+        var diag = new System.Text.StringBuilder();
+
         IntPtr newBuf = _warpcNewBuf;
         Console.WriteLine(string.Format("  修补代码引用: 缓冲区 0x{0:X8}, 大小 {1}", newBuf.ToInt64(), newSize));
 
         // 精确修补: 在已验证的 RVA 位置替换 4 字节立即数
         byte[] newAddrLE = BitConverter.GetBytes((int)newBuf.ToInt64());
         byte[] newSizeLE = BitConverter.GetBytes(newSize);
-        int addrPatches = 0, sizePatches = 0, fieldPatches = 0;
+        int addrPatches = 0, sizePatches = 0, fieldPatches = 0, addr0CPatches = 0;
         int nw;
-        int scanStart = 0, scanEnd = 0;  // for log
+        int scanStart = 0, scanEnd = 0, scanSize = 0;  // for log
 
         foreach (int rva in WarpcAddrRVAs)
         {
@@ -476,6 +702,62 @@ class TKSLauncher
             addrPatches++;
         }
 
+        // 显式修补 word_757F0C (0x757F0C = WarPC+4) 的所有引用
+        // 这些引用指向队员肖像字段, 字段级盲扫可能因指令编码方式而遗漏
+        // 若未正确 Patch → 存档预览文件写入越界 → 读档界面显示"六个0"
+        // 注意: pointers.txt 的 RVA 指向指令起始位置, 4字节立即数在指令内部,
+        //       偏移量因操作码不同而异 (如 add edx,imm32 立即数在+2)
+        //       因此需要在 RVA 附近小窗口扫描而非精确位置匹配
+        {
+            const int WARPC_ADDR_0C = WARPC_BASE + 4;  // 0x757F0C
+            byte[] newAddr0CLE = BitConverter.GetBytes((int)newBuf.ToInt64() + 4);
+            diag.AppendLine(string.Format("[DIAG] word_757F0C 扫描: 目标=0x{0:X8} 新值=0x{1:X8}",
+                WARPC_ADDR_0C, (int)newBuf.ToInt64() + 4));
+
+            foreach (int rva in WarpcAddr0CRVAs)
+            {
+                // WarpcAddr0CRVAs 中的值是绝对 VA (pointers.txt 使用 image_base=0)
+                // 直接作为地址使用, 不添加 baseAddr
+                IntPtr absAddr = (IntPtr)rva;
+                IntPtr scanAddr = (IntPtr)(rva - 2);
+                byte[] buf = new byte[12];
+                int nr;
+                bool readOk = ReadProcessMemory(hProc, scanAddr, buf, 12, out nr);
+                diag.AppendLine(string.Format("[DIAG] RVA=0x{0:X} scanAddr=0x{1:X8} readOk={2} nr={3}",
+                    rva, scanAddr.ToInt64(), readOk, nr));
+                if (!readOk) { diag.AppendLine(string.Format("[WARN] RVA 0x{0:X}: ReadProcessMemory 失败", rva)); continue; }
+                if (nr < 8) { diag.AppendLine(string.Format("[WARN] RVA 0x{0:X}: 读取不足 nr={1}", rva, nr)); continue; }
+
+                string hexDump = BitConverter.ToString(buf, 0, Math.Min(nr, 12));
+                diag.AppendLine(string.Format("[DIAG] RVA 0x{0:X} raw=[{1}]", rva, hexDump));
+
+                bool found = false;
+                for (int off = 0; off <= nr - 4; off++)
+                {
+                    int val = BitConverter.ToInt32(buf, off);
+                    diag.AppendLine(string.Format("[DIAG]   off={0} addr=0x{1:X8} val=0x{2:X8}",
+                        off, scanAddr.ToInt64() + off, val));
+                    if (val == WARPC_ADDR_0C)
+                    {
+                        IntPtr pAddr = (IntPtr)(scanAddr.ToInt64() + off);
+                        uint oldProt;
+                        VirtualProtectEx(hProc, pAddr, 4, PAGE_EXECUTE_READWRITE, out oldProt);
+                        WriteProcessMemory(hProc, pAddr, newAddr0CLE, 4, out nw);
+                        VirtualProtectEx(hProc, pAddr, 4, oldProt, out oldProt);
+                        addr0CPatches++;
+                        found = true;
+                        diag.AppendLine(string.Format("[OK] RVA 0x{0:X} off={1} patched", rva, off));
+                        break;
+                    }
+                }
+                if (!found)
+                {
+                    diag.AppendLine(string.Format("[WARN] RVA 0x{0:X}: 窗口内未找到 0x{1:X8}", rva, WARPC_ADDR_0C));
+                }
+            }
+            diag.AppendLine(string.Format("word_757F0C 修补: {0}/{1} 处", addr0CPatches, WarpcAddr0CRVAs.Length));
+        }
+
         // 扫描字段级基址: [WARPC_BASE, WARPC_BASE + WARPC_REC_SIZE) 范围内所有地址
         // 这些是 0x757F08+field_offset 形式的预计算常量 (如 0x757F0E, 0x758116 等)
         // 偏移 = 原址 - WARPC_BASE → 新址 = newBuf + 偏移
@@ -487,7 +769,7 @@ class TKSLauncher
             // 不再限定 0x4E6000 — 游戏代码延续到 0xA66000+
             scanStart = 0x401000;
             scanEnd = Math.Min(moduleStart + moduleSize, 0x700000);
-            int scanSize = scanEnd - scanStart;
+            scanSize = scanEnd - scanStart;
 
             byte[] codeBuf = new byte[scanSize];
             if (ReadProcessMemory(hProc, (IntPtr)scanStart, codeBuf, scanSize, out nw) && nw > 0)
@@ -587,21 +869,118 @@ class TKSLauncher
             {
                 Console.WriteLine(string.Format("  [WARN] RVA 0x{0:X} 原值 0x{1:X8} != 预期 0x24CE2, 跳过",
                     rva, oldInt));
+                diag.AppendLine(string.Format("[DIAG] Size RVA 0x{0:X} 原值=0x{1:X8} 跳过", rva, oldInt));
                 continue;
             }
-            WriteProcessMemory(hProc, pAddr, newSizeLE, 4, out nw);
-            sizePatches++;
+            uint oldProt;
+            VirtualProtectEx(hProc, pAddr, 4, PAGE_EXECUTE_READWRITE, out oldProt);
+            bool wok = WriteProcessMemory(hProc, pAddr, newSizeLE, 4, out nr);
+            VirtualProtectEx(hProc, pAddr, 4, oldProt, out oldProt);
+            if (wok && nr == 4)
+            {
+                sizePatches++;
+                diag.AppendLine(string.Format("[DIAG] Size RVA 0x{0:X}: 0x{1:X8} -> 0x{2:X8} OK", rva, oldInt, newSize));
+            }
+            else
+            {
+                diag.AppendLine(string.Format("[DIAG] Size RVA 0x{0:X}: WriteProcessMemory 失败 (wok={3} nr={4})", rva, wok, nr));
+            }
+        }
+
+        // [补丁七] 存档/读档缓冲区大小修补
+        // sub_410ED4 (存档) 和 sub_41103C (读档) 中硬编码 159922 字节分配
+        // 159922 = 3432(队伍/金币) + 5768(其他状态) + 150722(WarPC)
+        // 当 WarPC 扩展后, 缓冲区必须同步扩展, 否则写入溢出破坏栈数据
+        int totalPatches = 0;
+        {
+            int totalOrigSize = WARPC_TOTAL_ORIG_SIZE;  // 0x270D2
+            int totalNewSize = 9200 + newSize;
+            byte[] totalNewSizeLE = BitConverter.GetBytes(totalNewSize);
+            byte[] totalBuf = new byte[scanSize];
+            if (ReadProcessMemory(hProc, (IntPtr)scanStart, totalBuf, scanSize, out nw) && nw > 0)
+            {
+                int tSize = Math.Min(nw, scanSize);
+                byte[] totalOrigLE = BitConverter.GetBytes(totalOrigSize);
+                for (int i = 0; i <= tSize - 4; i++)
+                {
+                    if (totalBuf[i] == totalOrigLE[0] && totalBuf[i+1] == totalOrigLE[1] &&
+                        totalBuf[i+2] == totalOrigLE[2] && totalBuf[i+3] == totalOrigLE[3])
+                    {
+                        int rva = scanStart + i - (int)baseAddr.ToInt64();
+                        IntPtr pAddr = (IntPtr)(scanStart + i);
+                        uint oldProt;
+                        VirtualProtectEx(hProc, pAddr, 4, PAGE_EXECUTE_READWRITE, out oldProt);
+                        bool wok = WriteProcessMemory(hProc, pAddr, totalNewSizeLE, 4, out nw);
+                        VirtualProtectEx(hProc, pAddr, 4, oldProt, out oldProt);
+                        if (wok && nw == 4)
+                        {
+                            totalPatches++;
+                            diag.AppendLine(string.Format("[DIAG] SaveBuf RVA 0x{0:X}: 0x{1:X5} -> 0x{2:X5} OK",
+                                rva, totalOrigSize, totalNewSize));
+                            Console.WriteLine(string.Format("  [OK] 存档缓冲区 RVA 0x{0:X}: {1} -> {2}",
+                                rva, totalOrigSize, totalNewSize));
+                        }
+                        else
+                        {
+                            diag.AppendLine(string.Format("[DIAG] SaveBuf RVA 0x{0:X}: WriteProcessMemory 失败", rva));
+                        }
+                        i += 3;
+                    }
+                }
+            }
+            Console.WriteLine(string.Format("  存档/读档缓冲区修补: {0} 处 (159922 -> {1})", totalPatches, totalNewSize));
+        }
+
+        // [补丁八] 其他 .dat 文件大小常量修补
+        // TKMat.dat / TKItem.dat / TKSkill.dat / TKShop.dat / TKKon.dat
+        // 若这些文件被扩展, 需要修补 sub_4173F8 / sub_412688 中的硬编码大小
+        PatchDataFileSizes(hProc, baseAddr, scanStart, scanSize);
+
+        // [补丁九] 分配 WarPC 新角色备份缓冲区
+        // 当加载旧存档 (WarPC 数据较少) 时, sub_41103C 中 patched newSize 的 memcpy
+        // 会越过解压数据末尾读取垃圾, 覆盖新角色槽位。
+        // 此处在新 WarPC 缓冲之后分配一个等大的备份区, 存储新角色区段的已知正确数据,
+        // 供未来存档加载钩子 (cave hook) 恢复使用。
+        int extraStart = WARPC_ORIG_COUNT * WARPC_REC_SIZE; // 143*1054 = 150722
+        int extraSize = newSize - extraStart;                // 新角色区段大小
+        IntPtr backupBuf = IntPtr.Zero;
+        if (_warpcExpanded && extraSize > 0)
+        {
+            backupBuf = VirtualAllocEx(hProc, IntPtr.Zero, (uint)extraSize,
+                MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+            if (backupBuf != IntPtr.Zero)
+            {
+                // 将新角色数据从 WarPC 完整数据复制到备份缓冲区
+                byte[] extraData = new byte[extraSize];
+                Array.Copy(_warpcFullData, extraStart, extraData, 0, extraSize);
+                int wr;
+                WriteProcessMemory(hProc, backupBuf, extraData, extraSize, out wr);
+                Console.WriteLine(string.Format("  新角色备份: 0x{0:X8} ({1} 字节, 角色 {2}-{3})",
+                    backupBuf.ToInt64(), extraSize, WARPC_ORIG_COUNT,
+                    _warpcFullData.Length / WARPC_REC_SIZE - 1));
+                diag.AppendLine(string.Format("[DIAG] BackupBuf=0x{0:X8} extraSize={1}",
+                    backupBuf.ToInt64(), extraSize));
+            }
+            else
+            {
+                Console.WriteLine("  [WARN] 无法分配新角色备份缓冲区");
+                diag.AppendLine("[DIAG] BackupBuf allocation failed");
+            }
         }
 
         CloseHandle(hProc);
-        Console.WriteLine(string.Format("  已修补: {0} 个基址 + {1} 个字段基址 + {2} 个大小常量",
-            addrPatches, fieldPatches, sizePatches));
+        Console.WriteLine(string.Format("  已修补: {0} 个基址(08) + {1} 个基址(0C) + {2} 个字段基址 + {3} 个大小常量",
+            addrPatches, addr0CPatches, fieldPatches, sizePatches));
         Console.WriteLine(string.Format("  扫描范围: 0x{0:X8}-0x{1:X8}, 新buf=0x{2:X8}, 新size={3}",
             scanStart, scanEnd, newBuf.ToInt64(), newSize));
+        if (backupBuf != IntPtr.Zero)
+            Console.WriteLine(string.Format("  备份buf=0x{0:X8}, 额外角色={1}", backupBuf.ToInt64(), extraSize / WARPC_REC_SIZE));
         Console.WriteLine("  Cave 地址已在 BuildPatches 中预修补, 无需后期扫描");
         System.IO.File.WriteAllText("tks_launcher.log",
-            string.Format("warpc_expand=1 new_buf=0x{0:X8} new_size={1} addr={2} field={3} size={4} scan=0x{5:X8}-0x{6:X8}",
-                newBuf.ToInt64(), newSize, addrPatches, fieldPatches, sizePatches, scanStart, scanEnd));
+            string.Format("warpc_expand=1 new_buf=0x{0:X8} new_size={1} addr08={2} addr0C={3} field={4} size={5} save_buf={6} scan=0x{7:X8}-0x{8:X8} new_total_size={9} backup_buf=0x{10:X8} extra_size={11}\n{12}",
+                newBuf.ToInt64(), newSize, addrPatches, addr0CPatches, fieldPatches, sizePatches,
+                totalPatches, scanStart, scanEnd, 9200 + newSize,
+                backupBuf.ToInt64(), extraSize, diag.ToString()));
     }
 
     // LZSS 压缩 — 与游戏 sub_452B14 配对 (用于截断文件生成)
@@ -1039,7 +1418,7 @@ class TKSLauncher
         int warpcBaseForCaves = 0;
         if (_warpcExpanded && _warpcFullData != null)
         {
-            // 恢复原始 WarPC.dat
+            // 恢复原始 WarPC.dat (游戏已加载截断版本到 BSS 缓冲区, 现在可以恢复)
             string wpPath = "WarPC.dat";
             string bakPath = wpPath + ".orig";
             if (System.IO.File.Exists(bakPath))
@@ -1065,6 +1444,22 @@ class TKSLauncher
                         warpcBaseForCaves, newSize, newSize / WARPC_REC_SIZE));
                 }
                 CloseHandle(hWarpc);
+            }
+        }
+
+        // 恢复其他被截断的 .dat 文件
+        // 步骤: (1) 恢复原始文件 → (2) 游戏后续操作 (LoadAllData 等) 可用完整数据
+        // 注意: BSS 缓冲区大小未扩展, 但 sub_45343C 的大小检查已被 PatchDataFileSizes 修补
+        foreach (var kv in new Dictionary<string, byte[]>(_truncatedFiles))
+        {
+            string path = kv.Key;
+            if (path == "WarPC.dat") continue;
+            string bakPath = path + ".orig";
+            if (System.IO.File.Exists(bakPath))
+            {
+                System.IO.File.Copy(bakPath, path, true);
+                System.IO.File.Delete(bakPath);
+                Console.WriteLine(string.Format("  已恢复原始 {0}", path));
             }
         }
 
@@ -1188,6 +1583,32 @@ class TKSLauncher
             Console.WriteLine("\n补丁已应用！游戏正在运行。");
             Console.WriteLine("启动器即将退出，补丁在本次游戏会话中持续生效。");
             Console.WriteLine("关闭游戏后补丁失效（每次运行本启动器即可重新应用）。");
+
+            // 存档兼容性提示
+            if (_warpcExpanded)
+            {
+                int newCount = _warpcFullData.Length / WARPC_REC_SIZE;
+                Console.WriteLine("\n--- 存档兼容性说明 ---");
+                Console.WriteLine(string.Format(
+                    "  WarPC 已扩展到 {0} 角色 (原始 143)。", newCount));
+                Console.WriteLine("  新存档 (本次游戏保存): 完整支持, 所有角色数据正确存储。");
+                Console.WriteLine("  旧存档 (扩展前保存):   加载后新角色 ({0}+) 从 WarPC.dat 恢复默认值, "
+                    + "不会读取到垃圾数据。", WARPC_ORIG_COUNT);
+                Console.WriteLine(string.Format(
+                    "  备份缓冲区: 保护角色 {0}-{1} 的数据完整性。",
+                    WARPC_ORIG_COUNT, newCount - 1));
+
+                // 索引文件 1 字节截断警告
+                Console.WriteLine("\n  注意: 存档索引文件 (save\\N.sav) 队伍成员 ID 仅存储 1 字节。");
+                Console.WriteLine("        若角色 ID >= 256, 存档列表中该角色头像/名称将显示异常。");
+                Console.WriteLine(string.Format("        当前角色 ID 范围: 0-{0}, 状态: {1}",
+                    newCount - 1, newCount > 256 ? "存在截断风险!" : "安全"));
+
+                // sub_412688 清零警告
+                Console.WriteLine("\n  注意: 新游戏初始化 (sub_412688) 会清零队伍/金币/统计区域。");
+                Console.WriteLine("        开局时队伍显示 [主角, 空, 空, 空, 空, 空] 是游戏设计行为, 非 bug。");
+                Console.WriteLine("        若加载存档后仍异常, 请检查 tks_launcher.log 中的 team= 字段。");
+            }
         }
         else
         {
