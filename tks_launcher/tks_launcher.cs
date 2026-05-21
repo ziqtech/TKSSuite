@@ -54,6 +54,31 @@
  *            角色 ID >= 256 时高字节截断, 存档列表显示异常
  *   修补效果: 检测角色 ID 范围并输出警告
  *
+ * [补丁十一] 存档目录与索引文件健康检查 (修复"6个相同主角头像"显示异常)
+ *   原始问题: 当 save\ 目录不存在或 sub_41CE10 写入流程失败时, 索引文件
+ *            (save\N.sav, 28字节) 可能被遗留为 0 字节空文件。再次进入读档
+ *            界面时, sub_41B1A8 成功打开 0 字节文件, ReadFile 不修改 buffer,
+ *            buffer 保留 BSS 初始 0 值, 渲染函数 sub_41AB94 把全 0 解释为:
+ *              - 6 个角色 0 头像 (主角头像 × 6)
+ *              - Lv 0 × 6
+ *              - 时间戳 0 → 1970/01/01 08:00:00 (UTC+8)
+ *              - 场景 0 → "大地图"
+ *   修补效果: 启动游戏前 (1) 创建 save\ 子目录 (若不存在);
+ *            (2) 扫描 save\*.sav 删除 0 字节损坏文件 → 让游戏读档时
+ *                正确显示"空槽位", 用户可重新存档生成有效文件。
+ *
+ * [补丁十二] WarPC 缓冲区前预留 GUARD 区 (修复索引文件被截断问题)
+ *   原始问题: sub_41CE10 写入存档索引时, 需读取 6 个队员的等级
+ *            (word_757F0C[527 * *v6])。当队员 ID = -1 (空槽位) 时, 计算
+ *            地址 = newBuf+4-1054 = newBuf-1050。启动器重定向后 newBuf 之前
+ *            是未分配内存, 访问触发页错误 → sub_41DAC4 的 SEH 截断写入
+ *            流 → 索引文件 (save\N.sav) 被截断为 14 或 20 字节 (预期 28)
+ *            → 读档界面显示"6 个相同主角头像 + Lv0 + 70年初一"异常。
+ *   修补效果: 在 newBuf 前预留 64 KB GUARD 区 (常量 GUARD_SIZE), 让负偏移
+ *            访问落在合法已分配区内 (默认填 0)。sub_41DAC4 能完整读取
+ *            并写入文件, 索引写满 28 字节。同时对 sub_40DA00/sub_40E88C/
+ *            sub_417F84/sub_41A080/sub_43CA64 中的同类负偏移访问也一并修复。
+ *
  * 用法: 把编译后的 TKSLauncher.exe 放到游戏目录，双击运行即可
  * 编译: C:\Windows\Microsoft.NET\Framework\v4.0.30319\csc.exe /target:winexe /win32icon:TKS.ico /out:TKSLauncher.exe tks_launcher.cs
  */
@@ -66,6 +91,68 @@ using System.Threading;
 
 class TKSLauncher
 {
+    // ============================================================
+    // 统一日志输出: 同时写控制台和 tks_launcher.log
+    // 以前的 Console.WriteLine 都改为调用 Log() 函数
+    // ============================================================
+    const string LOG_PATH = "tks_launcher.log";
+    static System.IO.StreamWriter _logWriter = null;
+    static readonly object _logLock = new object();
+
+    static void LogInit()
+    {
+        try
+        {
+            // 覆盖同名旧日志
+            _logWriter = new System.IO.StreamWriter(LOG_PATH, false, System.Text.Encoding.UTF8);
+            _logWriter.AutoFlush = true;
+            _logWriter.WriteLine(string.Format("=== TKS Launcher 启动 {0:yyyy-MM-dd HH:mm:ss} ===",
+                DateTime.Now));
+        }
+        catch { _logWriter = null; }
+    }
+
+    static void LogClose()
+    {
+        lock (_logLock)
+        {
+            if (_logWriter != null)
+            {
+                try { _logWriter.Flush(); _logWriter.Close(); } catch { }
+                _logWriter = null;
+            }
+        }
+    }
+
+    /// <summary>
+    /// 同时输出到控制台与 tks_launcher.log
+    /// </summary>
+    static void Log(string msg)
+    {
+        System.Console.Out.WriteLine(msg);
+        lock (_logLock)
+        {
+            if (_logWriter != null)
+            {
+                try { _logWriter.WriteLine(msg); } catch { }
+            }
+        }
+    }
+
+    /// <summary>
+    /// 仅写入日志文件 (不输出控制台), 用于大量 DIAG 信息
+    /// </summary>
+    static void LogFile(string msg)
+    {
+        lock (_logLock)
+        {
+            if (_logWriter != null)
+            {
+                try { _logWriter.WriteLine(msg); } catch { }
+            }
+        }
+    }
+
     [DllImport("kernel32.dll")]
     static extern IntPtr OpenProcess(uint dwDesiredAccess, bool bInheritHandle, int dwProcessId);
 
@@ -467,6 +554,98 @@ class TKSLauncher
     static Dictionary<string, byte[]> _truncatedFiles = new Dictionary<string, byte[]>();
 
     /// <summary>
+    /// 启动游戏前: 确保 save\ 目录存在, 并清理 0 字节损坏的索引文件
+    /// (补丁十一: 修复"6个相同主角头像"显示异常)
+    ///
+    /// 背景: 若 sub_41CE10 写入流程中 sub_4C352C 打开文件后由于其它原因
+    /// (如 sub_4E50E2 失败) 导致写入流程被跳过, 文件会被遗留为 0 字节。
+    /// 下次进入读档界面时, sub_41B1A8 读 0 字节文件不会修改 buffer,
+    /// 导致显示为"主角头像×6 + Lv0 + 70年初一 + 大地图"异常。
+    /// 删除 0 字节文件后, sub_41B1A8 会走"文件不存在"分支填充 -1,
+    /// 正确显示为空槽位。
+    /// </summary>
+    static void EnsureSaveDirectoryHealthy()
+    {
+        Log("\n--- 存档目录健康检查 ---");
+        const string saveDir = "save";
+
+        // (1) 确保 save\ 目录存在
+        if (!System.IO.Directory.Exists(saveDir))
+        {
+            try
+            {
+                System.IO.Directory.CreateDirectory(saveDir);
+                Log("  已创建 save\\ 目录");
+            }
+            catch (Exception e)
+            {
+                Log(string.Format("  [WARN] 创建 save\\ 失败: {0}", e.Message));
+                return;
+            }
+        }
+        else
+        {
+            Log("  save\\ 目录已存在");
+        }
+
+        // (2) 扫描并删除 0 字节损坏的索引文件 (save\1.sav .. save\9.sav)
+        // 同时检查对应的存档数据文件 save\sav.N 是否完整
+        int deletedIdx = 0;
+        int deletedDat = 0;
+        for (int i = 1; i <= 9; i++)
+        {
+            string idxPath = string.Format("{0}\\{1}.sav", saveDir, i);
+            string datPath = string.Format("{0}\\sav.{1}", saveDir, i);
+
+            // 检查索引文件 (28 字节有效)
+            if (System.IO.File.Exists(idxPath))
+            {
+                long idxSize = new System.IO.FileInfo(idxPath).Length;
+                if (idxSize == 0)
+                {
+                    try
+                    {
+                        System.IO.File.Delete(idxPath);
+                        Log(string.Format("  删除损坏的索引文件: {0} (0 字节)", idxPath));
+                        deletedIdx++;
+
+                        // 同步删除对应的损坏数据文件 (避免读档时崩溃)
+                        if (System.IO.File.Exists(datPath))
+                        {
+                            long datSize = new System.IO.FileInfo(datPath).Length;
+                            if (datSize < 16) // 最小 Frame 1 头部 = 8 字节, 小于 16 必损坏
+                            {
+                                System.IO.File.Delete(datPath);
+                                Log(string.Format("  删除对应的损坏数据文件: {0} ({1} 字节)", datPath, datSize));
+                                deletedDat++;
+                            }
+                        }
+                    }
+                    catch (Exception e)
+                    {
+                        Log(string.Format("  [WARN] 删除 {0} 失败: {1}", idxPath, e.Message));
+                    }
+                }
+                else if (idxSize != 28)
+                {
+                    Log(string.Format("  [WARN] {0} 大小异常: {1} 字节 (预期 28)", idxPath, idxSize));
+                }
+            }
+        }
+
+        if (deletedIdx > 0 || deletedDat > 0)
+        {
+            Log(string.Format("  共清理 {0} 个 0 字节索引文件 + {1} 个损坏数据文件",
+                deletedIdx, deletedDat));
+            Log("  读档界面将正确显示空槽位, 请重新存档生成有效存档");
+        }
+        else
+        {
+            Log("  未发现损坏存档文件");
+        }
+    }
+
+    /// <summary>
     /// 获取 .dat 文件解压后大小 (从文件头4字节读取, 不解压全部数据)
     /// </summary>
     static int GetDecompressedSize(string path)
@@ -495,7 +674,7 @@ class TKSLauncher
             {
                 System.IO.File.Copy(bakPath, kv.Key, true);
                 System.IO.File.Delete(bakPath);
-                Console.WriteLine(string.Format("  检测到上次未恢复的 {0}.orig, 已自动恢复", kv.Key));
+                Log(string.Format("  检测到上次未恢复的 {0}.orig, 已自动恢复", kv.Key));
             }
         }
 
@@ -510,7 +689,7 @@ class TKSLauncher
             {
                 _warpcExpanded = true;
                 _warpcFullData = dec;
-                Console.WriteLine(string.Format("  WarPC.dat 检测到扩展数据: {0} 角色 (原始 {1})", count, WARPC_ORIG_COUNT));
+                Log(string.Format("  WarPC.dat 检测到扩展数据: {0} 角色 (原始 {1})", count, WARPC_ORIG_COUNT));
 
                 byte[] truncated = new byte[WARPC_ORIG_SIZE];
                 Array.Copy(dec, 0, truncated, 0, WARPC_ORIG_SIZE);
@@ -520,7 +699,7 @@ class TKSLauncher
                     System.IO.File.Copy(warpcPath, bakPath, true);
                 _truncatedFiles[warpcPath] = compressed; // 保存原始压缩数据
                 System.IO.File.WriteAllBytes(warpcPath, truncatedCompressed);
-                Console.WriteLine(string.Format("  已创建截断版 WarPC.dat ({0} 角色), 备份为 .orig", WARPC_ORIG_COUNT));
+                Log(string.Format("  已创建截断版 WarPC.dat ({0} 角色), 备份为 .orig", WARPC_ORIG_COUNT));
             }
         }
 
@@ -539,9 +718,9 @@ class TKSLauncher
 
             if (actualSize > origSize)
             {
-                Console.WriteLine(string.Format("  [WARN] {0} 解压大小 {1} > 原始 {2}, 需要扩展支持",
+                Log(string.Format("  [WARN] {0} 解压大小 {1} > 原始 {2}, 需要扩展支持",
                     fileName, actualSize, origSize));
-                Console.WriteLine(string.Format("         当前将创建截断版本({0}B)供游戏加载, 大小常量将在运行时修补", origSize));
+                Log(string.Format("         当前将创建截断版本({0}B)供游戏加载, 大小常量将在运行时修补", origSize));
 
                 // 创建截断版本 (仅保留前 origSize 字节的解压数据)
                 byte[] compressed = System.IO.File.ReadAllBytes(path);
@@ -554,15 +733,15 @@ class TKSLauncher
                     System.IO.File.Copy(path, bakPath, true);
                 _truncatedFiles[path] = compressed; // 保存原始压缩数据
                 System.IO.File.WriteAllBytes(path, truncatedCompressed);
-                Console.WriteLine(string.Format("  已创建截断版 {0} ({1}B), 备份为 .orig", fileName, origSize));
+                Log(string.Format("  已创建截断版 {0} ({1}B), 备份为 .orig", fileName, origSize));
             }
             else if (actualSize < origSize)
             {
-                Console.WriteLine(string.Format("  {0}: 解压大小 {1} (原始 {2}), 无需处理", fileName, actualSize, origSize));
+                Log(string.Format("  {0}: 解压大小 {1} (原始 {2}), 无需处理", fileName, actualSize, origSize));
             }
             else
             {
-                Console.WriteLine(string.Format("  {0}: 解压大小 {1} = 原始值, OK", fileName, actualSize));
+                Log(string.Format("  {0}: 解压大小 {1} = 原始值, OK", fileName, actualSize));
             }
         }
     }
@@ -613,7 +792,7 @@ class TKSLauncher
     /// </summary>
     static void PatchDataFileSizes(IntPtr hProc, IntPtr baseAddr, int scanStart, int scanSize)
     {
-        Console.WriteLine("\n--- 数据文件大小常量修补 ---");
+        Log("\n--- 数据文件大小常量修补 ---");
         int baseVA = (int)baseAddr.ToInt64();
 
         foreach (var kv in DataFileOrigSizes)
@@ -630,7 +809,7 @@ class TKSLauncher
             // 恢复原始文件
             System.IO.File.Copy(bakPath, fileName, true);
             System.IO.File.Delete(bakPath);
-            Console.WriteLine(string.Format("  已恢复原始 {0}", fileName));
+            Log(string.Format("  已恢复原始 {0}", fileName));
 
             // 扫描并修补大小常量
             // 注意: 较小的值 (如 1920=0x780) 可能在代码中产生误匹配
@@ -641,17 +820,17 @@ class TKSLauncher
 
             if (patched > 0)
             {
-                Console.WriteLine(string.Format("  [OK] {0}: {1} → {2}, 修补 {3} 处",
+                Log(string.Format("  [OK] {0}: {1} → {2}, 修补 {3} 处",
                     fileName, origSize, actualSize, patched));
                 foreach (int addr in rvas)
                 {
                     int rva = addr - baseVA;
-                    Console.WriteLine(string.Format("        RVA 0x{0:X} (abs 0x{1:X8})", rva, addr));
+                    Log(string.Format("        RVA 0x{0:X} (abs 0x{1:X8})", rva, addr));
                 }
             }
             else
             {
-                Console.WriteLine(string.Format("  [WARN] {0}: 未找到 {1} (0x{1:X}) 的引用, "
+                Log(string.Format("  [WARN] {0}: 未找到 {1} (0x{1:X}) 的引用, "
                     + "可能已在 WarpcSizeRVAs 中处理或值不存在于代码段",
                     fileName, origSize));
             }
@@ -669,13 +848,13 @@ class TKSLauncher
         uint access = PROCESS_VM_READ | PROCESS_VM_WRITE | PROCESS_VM_OPERATION;
 
         IntPtr hProc = OpenProcess(access, false, childPid);
-        if (hProc == IntPtr.Zero) { Console.WriteLine("  [ERROR] 无法打开进程进行 WarPC 扩展"); return; }
+        if (hProc == IntPtr.Zero) { Log("  [ERROR] 无法打开进程进行 WarPC 扩展"); return; }
 
         // 诊断日志收集器，写入 tks_launcher.log
         var diag = new System.Text.StringBuilder();
 
         IntPtr newBuf = _warpcNewBuf;
-        Console.WriteLine(string.Format("  修补代码引用: 缓冲区 0x{0:X8}, 大小 {1}", newBuf.ToInt64(), newSize));
+        Log(string.Format("  修补代码引用: 缓冲区 0x{0:X8}, 大小 {1}", newBuf.ToInt64(), newSize));
 
         // 精确修补: 在已验证的 RVA 位置替换 4 字节立即数
         byte[] newAddrLE = BitConverter.GetBytes((int)newBuf.ToInt64());
@@ -694,7 +873,7 @@ class TKSLauncher
             int oldInt = BitConverter.ToInt32(oldVal, 0);
             if (oldInt != WARPC_BASE)
             {
-                Console.WriteLine(string.Format("  [WARN] RVA 0x{0:X} 原值 0x{1:X8} != 预期 0x{2:X8}, 跳过",
+                Log(string.Format("  [WARN] RVA 0x{0:X} 原值 0x{1:X8} != 预期 0x{2:X8}, 跳过",
                     rva, oldInt, WARPC_BASE));
                 continue;
             }
@@ -790,7 +969,7 @@ class TKSLauncher
                     }
                 }
             }
-            Console.WriteLine(string.Format("  字段基址修补: {0} 处 (范围 0x{1:X8}-0x{2:X8})",
+            Log(string.Format("  字段基址修补: {0} 处 (范围 0x{1:X8}-0x{2:X8})",
                 fieldPatches, rangeStart, rangeEnd));
 
             // 诊断: 修补后重新扫描, 检查是否还有未修补的 0x757F08 引用
@@ -814,9 +993,9 @@ class TKSLauncher
                     }
                 }
                 if (missedCount > 0)
-                    Console.WriteLine(string.Format("  [WARN] 修补后仍有 {0} 处未修补的 WarPC 引用:{1}", missedCount, missedLocations));
+                    Log(string.Format("  [WARN] 修补后仍有 {0} 处未修补的 WarPC 引用:{1}", missedCount, missedLocations));
                 else
-                    Console.WriteLine("  修补验证: 所有 WarPC 引用已修补");
+                    Log("  修补验证: 所有 WarPC 引用已修补");
 
                 // 特别检查 sub_43BF20 (战斗回写函数, RVA 0x3BF20)
                 int bf20Rva = 0x3BF20;
@@ -825,13 +1004,13 @@ class TKSLauncher
                 if (ReadProcessMemory(hProc, bf20Addr, bf20Buf, 256, out nw) && nw > 0)
                 {
                     string bf20Hex = BitConverter.ToString(bf20Buf, 0, Math.Min(nw, 80));
-                    Console.WriteLine(string.Format("  [DIAG] sub_43BF20@0x{0:X8}: [{1}]", bf20Addr.ToInt64(), bf20Hex));
+                    Log(string.Format("  [DIAG] sub_43BF20@0x{0:X8}: [{1}]", bf20Addr.ToInt64(), bf20Hex));
                     for (int i = 0; i <= nw - 4; i++)
                     {
                         int val = BitConverter.ToInt32(bf20Buf, i);
                         if (val == WARPC_BASE)
                         {
-                            Console.WriteLine(string.Format("  [WARN] sub_43BF20+0x{0:X}: 仍有未修补的 0x{1:X8}!", i, WARPC_BASE));
+                            Log(string.Format("  [WARN] sub_43BF20+0x{0:X}: 仍有未修补的 0x{1:X8}!", i, WARPC_BASE));
                         }
                     }
                 }
@@ -841,7 +1020,7 @@ class TKSLauncher
         // 扫描动态 cave 内存 — 不再需要, cave 已在 BuildPatches 中预修补
 
         // 诊断: 先读取所有 size RVA 的原值
-        Console.WriteLine("  诊断 Size RVA 原值:");
+        Log("  诊断 Size RVA 原值:");
         foreach (int rva in WarpcSizeRVAs)
         {
             IntPtr pAddr = (IntPtr)(baseAddr.ToInt64() + rva);
@@ -849,12 +1028,12 @@ class TKSLauncher
             int nr;
             if (!ReadProcessMemory(hProc, pAddr, oldVal, 4, out nr) || nr < 4)
             {
-                Console.WriteLine(string.Format("    0x{0:X}: ReadProcessMemory 失败 (nr={1})", rva, nr));
+                Log(string.Format("    0x{0:X}: ReadProcessMemory 失败 (nr={1})", rva, nr));
                 continue;
             }
             int oldInt = BitConverter.ToInt32(oldVal, 0);
             string status = (oldInt == WARPC_ORIG_SIZE) ? "OK" : "MISMATCH";
-            Console.WriteLine(string.Format("    0x{0:X}: 0x{1:X8} {2}", rva, oldInt, status));
+            Log(string.Format("    0x{0:X}: 0x{1:X8} {2}", rva, oldInt, status));
         }
 
         foreach (int rva in WarpcSizeRVAs)
@@ -867,7 +1046,7 @@ class TKSLauncher
             int oldInt = BitConverter.ToInt32(oldVal, 0);
             if (oldInt != WARPC_ORIG_SIZE)
             {
-                Console.WriteLine(string.Format("  [WARN] RVA 0x{0:X} 原值 0x{1:X8} != 预期 0x24CE2, 跳过",
+                Log(string.Format("  [WARN] RVA 0x{0:X} 原值 0x{1:X8} != 预期 0x24CE2, 跳过",
                     rva, oldInt));
                 diag.AppendLine(string.Format("[DIAG] Size RVA 0x{0:X} 原值=0x{1:X8} 跳过", rva, oldInt));
                 continue;
@@ -917,7 +1096,7 @@ class TKSLauncher
                             totalPatches++;
                             diag.AppendLine(string.Format("[DIAG] SaveBuf RVA 0x{0:X}: 0x{1:X5} -> 0x{2:X5} OK",
                                 rva, totalOrigSize, totalNewSize));
-                            Console.WriteLine(string.Format("  [OK] 存档缓冲区 RVA 0x{0:X}: {1} -> {2}",
+                            Log(string.Format("  [OK] 存档缓冲区 RVA 0x{0:X}: {1} -> {2}",
                                 rva, totalOrigSize, totalNewSize));
                         }
                         else
@@ -928,7 +1107,7 @@ class TKSLauncher
                     }
                 }
             }
-            Console.WriteLine(string.Format("  存档/读档缓冲区修补: {0} 处 (159922 -> {1})", totalPatches, totalNewSize));
+            Log(string.Format("  存档/读档缓冲区修补: {0} 处 (159922 -> {1})", totalPatches, totalNewSize));
         }
 
         // [补丁八] 其他 .dat 文件大小常量修补
@@ -955,7 +1134,7 @@ class TKSLauncher
                 Array.Copy(_warpcFullData, extraStart, extraData, 0, extraSize);
                 int wr;
                 WriteProcessMemory(hProc, backupBuf, extraData, extraSize, out wr);
-                Console.WriteLine(string.Format("  新角色备份: 0x{0:X8} ({1} 字节, 角色 {2}-{3})",
+                Log(string.Format("  新角色备份: 0x{0:X8} ({1} 字节, 角色 {2}-{3})",
                     backupBuf.ToInt64(), extraSize, WARPC_ORIG_COUNT,
                     _warpcFullData.Length / WARPC_REC_SIZE - 1));
                 diag.AppendLine(string.Format("[DIAG] BackupBuf=0x{0:X8} extraSize={1}",
@@ -963,24 +1142,26 @@ class TKSLauncher
             }
             else
             {
-                Console.WriteLine("  [WARN] 无法分配新角色备份缓冲区");
+                Log("  [WARN] 无法分配新角色备份缓冲区");
                 diag.AppendLine("[DIAG] BackupBuf allocation failed");
             }
         }
 
         CloseHandle(hProc);
-        Console.WriteLine(string.Format("  已修补: {0} 个基址(08) + {1} 个基址(0C) + {2} 个字段基址 + {3} 个大小常量",
+        Log(string.Format("  已修补: {0} 个基址(08) + {1} 个基址(0C) + {2} 个字段基址 + {3} 个大小常量",
             addrPatches, addr0CPatches, fieldPatches, sizePatches));
-        Console.WriteLine(string.Format("  扫描范围: 0x{0:X8}-0x{1:X8}, 新buf=0x{2:X8}, 新size={3}",
+        Log(string.Format("  扫描范围: 0x{0:X8}-0x{1:X8}, 新buf=0x{2:X8}, 新size={3}",
             scanStart, scanEnd, newBuf.ToInt64(), newSize));
         if (backupBuf != IntPtr.Zero)
-            Console.WriteLine(string.Format("  备份buf=0x{0:X8}, 额外角色={1}", backupBuf.ToInt64(), extraSize / WARPC_REC_SIZE));
-        Console.WriteLine("  Cave 地址已在 BuildPatches 中预修补, 无需后期扫描");
-        System.IO.File.WriteAllText("tks_launcher.log",
-            string.Format("warpc_expand=1 new_buf=0x{0:X8} new_size={1} addr08={2} addr0C={3} field={4} size={5} save_buf={6} scan=0x{7:X8}-0x{8:X8} new_total_size={9} backup_buf=0x{10:X8} extra_size={11}\n{12}",
+            Log(string.Format("  备份buf=0x{0:X8}, 额外角色={1}", backupBuf.ToInt64(), extraSize / WARPC_REC_SIZE));
+        Log("  Cave 地址已在 BuildPatches 中预修补, 无需后期扫描");
+        // 将详细 DIAG 写入主日志 (不覆盖, 追加)
+        Log(string.Format("warpc_expand=1 new_buf=0x{0:X8} new_size={1} addr08={2} addr0C={3} field={4} size={5} save_buf={6} scan=0x{7:X8}-0x{8:X8} new_total_size={9} backup_buf=0x{10:X8} extra_size={11}",
                 newBuf.ToInt64(), newSize, addrPatches, addr0CPatches, fieldPatches, sizePatches,
                 totalPatches, scanStart, scanEnd, 9200 + newSize,
-                backupBuf.ToInt64(), extraSize, diag.ToString()));
+                backupBuf.ToInt64(), extraSize));
+        LogFile("--- ExpandWarPcBuffer DIAG ---");
+        LogFile(diag.ToString());
     }
 
     // LZSS 压缩 — 与游戏 sub_452B14 配对 (用于截断文件生成)
@@ -1090,14 +1271,14 @@ class TKSLauncher
         // 如果已通过 ExpandWarPcBuffer 扩展缓冲区, 完整数据已写入新缓冲区
         if (_warpcExpanded)
         {
-            Console.WriteLine("  Data inject: 已通过 ExpandWarPcBuffer 完成");
+            Log("  Data inject: 已通过 ExpandWarPcBuffer 完成");
             return;
         }
 
         string warpcPath = "WarPC.dat";
         if (!System.IO.File.Exists(warpcPath))
         {
-            Console.WriteLine("  [WARN] WarPC.dat not found, skip data inject");
+            Log("  [WARN] WarPC.dat not found, skip data inject");
             return;
         }
 
@@ -1105,7 +1286,7 @@ class TKSLauncher
         byte[] dec = LzssDecompress(compressed);
         if (dec.Length < WARPC_ORIG_SIZE)
         {
-            Console.WriteLine("  [WARN] WarPC.dat decompressed size mismatch, skip data inject");
+            Log("  [WARN] WarPC.dat decompressed size mismatch, skip data inject");
             return;
         }
 
@@ -1133,9 +1314,8 @@ class TKSLauncher
             }
         }
         CloseHandle(hProc);
-        Console.WriteLine(string.Format("  Data inject: {0} W260, {1} W261", w260Count, portraitCount));
-        System.IO.File.WriteAllText("tks_launcher.log",
-            string.Format("patches=9 inject_w260={0} w261={1}", w260Count, portraitCount));
+        Log(string.Format("  Data inject: {0} W260, {1} W261", w260Count, portraitCount));
+        Log(string.Format("patches=9 inject_w260={0} w261={1}", w260Count, portraitCount));
     }
 
     // Minimal LZSS decompress (matching sub_452B14)
@@ -1234,7 +1414,7 @@ class TKSLauncher
             int bytesRead;
             if (!ReadProcessMemory(proc, addr, oldData, p.Data.Length, out bytesRead))
             {
-                Console.WriteLine(string.Format("  [ERROR] ReadProcessMemory failed at RVA 0x{0:X8}", p.RVA));
+                Log(string.Format("  [ERROR] ReadProcessMemory failed at RVA 0x{0:X8}", p.RVA));
                 allOk = false;
                 continue;
             }
@@ -1245,20 +1425,20 @@ class TKSLauncher
 
             if (alreadyPatched)
             {
-                Console.WriteLine(string.Format("  [=] RVA 0x{0:X8}: already patched ({1})", p.RVA, p.Desc));
+                Log(string.Format("  [=] RVA 0x{0:X8}: already patched ({1})", p.RVA, p.Desc));
                 continue;
             }
 
             if (dryRun)
             {
-                Console.WriteLine(string.Format("  [~] RVA 0x{0:X8}: would patch ({1})", p.RVA, p.Desc));
+                Log(string.Format("  [~] RVA 0x{0:X8}: would patch ({1})", p.RVA, p.Desc));
                 continue;
             }
 
             uint oldProtect;
             if (!VirtualProtectEx(proc, addr, p.Data.Length, PAGE_EXECUTE_READWRITE, out oldProtect))
             {
-                Console.WriteLine(string.Format("  [ERROR] VirtualProtectEx failed at RVA 0x{0:X8}", p.RVA));
+                Log(string.Format("  [ERROR] VirtualProtectEx failed at RVA 0x{0:X8}", p.RVA));
                 allOk = false;
                 continue;
             }
@@ -1267,7 +1447,7 @@ class TKSLauncher
             if (!WriteProcessMemory(proc, addr, p.Data, p.Data.Length, out bytesWritten))
             {
                 VirtualProtectEx(proc, addr, p.Data.Length, oldProtect, out oldProtect);
-                Console.WriteLine(string.Format("  [ERROR] WriteProcessMemory failed at RVA 0x{0:X8}", p.RVA));
+                Log(string.Format("  [ERROR] WriteProcessMemory failed at RVA 0x{0:X8}", p.RVA));
                 allOk = false;
                 continue;
             }
@@ -1282,10 +1462,10 @@ class TKSLauncher
             string oldHex = BitConverter.ToString(oldData);
             string newHex = BitConverter.ToString(p.Data);
             if (verified)
-                Console.WriteLine(string.Format("  [OK] RVA 0x{0:X8}: {1} -> {2} ({3})", p.RVA, oldHex, newHex, p.Desc));
+                Log(string.Format("  [OK] RVA 0x{0:X8}: {1} -> {2} ({3})", p.RVA, oldHex, newHex, p.Desc));
             else
             {
-                Console.WriteLine(string.Format("  [FAIL] RVA 0x{0:X8}: verification failed ({1})", p.RVA, p.Desc));
+                Log(string.Format("  [FAIL] RVA 0x{0:X8}: verification failed ({1})", p.RVA, p.Desc));
                 allOk = false;
             }
         }
@@ -1296,6 +1476,9 @@ class TKSLauncher
 
     static int Main(string[] args)
     {
+        // 首先初始化日志写入器 (覆盖同名旧日志)
+        LogInit();
+
         string tksPath = "TKS.exe";
         int waitTimeout = 30;
 
@@ -1307,21 +1490,25 @@ class TKSLauncher
                 waitTimeout = int.Parse(args[++i]);
             else if (args[i] == "--help")
             {
-                Console.WriteLine("TKS Launcher - 自动运行时补丁启动器");
-                Console.WriteLine("用法: TKSLauncher.exe [--exe TKS.exe] [--wait 秒]");
-                Console.WriteLine("放到游戏目录双击运行即可。");
+                Log("TKS Launcher - 自动运行时补丁启动器");
+                Log("用法: TKSLauncher.exe [--exe TKS.exe] [--wait 秒]");
+                Log("放到游戏目录双击运行即可。");
                 return 0;
             }
         }
 
-        Console.WriteLine("========================================");
-        Console.WriteLine("TKS Launcher - 自动运行时补丁启动器");
-        Console.WriteLine("========================================");
+        Log("========================================");
+        Log("TKS Launcher - 自动运行时补丁启动器");
+        Log("========================================");
+
+        // 启动前: 检查存档目录健康, 清理 0 字节损坏文件
+        // (修复"6个相同主角头像"异常)
+        EnsureSaveDirectoryHealthy();
 
         // 游戏启动前: 检查 WarPC.dat 是否扩展, 必要时创建截断版
         PrepareWarPcForGame();
 
-        Console.WriteLine(string.Format("\n启动 {0}...", tksPath));
+        Log(string.Format("\n启动 {0}...", tksPath));
         Process tksProc;
         try
         {
@@ -1329,14 +1516,14 @@ class TKSLauncher
         }
         catch (Exception e)
         {
-            Console.WriteLine(string.Format("[ERROR] 无法启动 {0}: {1}", tksPath, e.Message));
-            Console.WriteLine("按任意键退出...");
+            Log(string.Format("[ERROR] 无法启动 {0}: {1}", tksPath, e.Message));
+            Log("按任意键退出...");
             Console.ReadKey();
             return 1;
         }
-        Console.WriteLine(string.Format("  TKS.exe PID = {0}", tksProc.Id));
+        Log(string.Format("  TKS.exe PID = {0}", tksProc.Id));
 
-        Console.WriteLine(string.Format("等待代码解密完成 (最多 {0} 秒)...", waitTimeout));
+        Log(string.Format("等待代码解密完成 (最多 {0} 秒)...", waitTimeout));
         int childPid = 0;
         DateTime start = DateTime.Now;
 
@@ -1344,7 +1531,7 @@ class TKSLauncher
         {
             if (tksProc.HasExited)
             {
-                Console.WriteLine(string.Format("  TKS.exe 已退出 (code={0})", tksProc.ExitCode));
+                Log(string.Format("  TKS.exe 已退出 (code={0})", tksProc.ExitCode));
                 break;
             }
 
@@ -1352,7 +1539,7 @@ class TKSLauncher
             if (children.Count > 0)
             {
                 childPid = (int)children[0].th32ProcessID;
-                Console.WriteLine(string.Format("  检测到子进程: PID={0} Name={1}", childPid, children[0].szExeFile));
+                Log(string.Format("  检测到子进程: PID={0} Name={1}", childPid, children[0].szExeFile));
                 Thread.Sleep(3000);
                 break;
             }
@@ -1361,9 +1548,9 @@ class TKSLauncher
 
         if (childPid == 0)
         {
-            Console.WriteLine("[ERROR] 超时，未检测到子进程");
+            Log("[ERROR] 超时，未检测到子进程");
             if (!tksProc.HasExited) tksProc.Kill();
-            Console.WriteLine("按任意键退出...");
+            Log("按任意键退出...");
             Console.ReadKey();
             return 1;
         }
@@ -1371,13 +1558,13 @@ class TKSLauncher
         IntPtr baseAddr = GetModuleBase(childPid);
         if (baseAddr == IntPtr.Zero)
         {
-            Console.WriteLine(string.Format("[ERROR] 无法获取子进程 {0} 的模块信息", childPid));
+            Log(string.Format("[ERROR] 无法获取子进程 {0} 的模块信息", childPid));
             if (!tksProc.HasExited) tksProc.Kill();
-            Console.WriteLine("按任意键退出...");
+            Log("按任意键退出...");
             Console.ReadKey();
             return 1;
         }
-        Console.WriteLine(string.Format("  模块基址: 0x{0:X8}", baseAddr.ToInt64()));
+        Log(string.Format("  模块基址: 0x{0:X8}", baseAddr.ToInt64()));
 
         // Pre-patch diagnostic: dump raw code bytes at hook points
         IntPtr hDiag = OpenProcess(PROCESS_VM_READ, false, childPid);
@@ -1386,11 +1573,11 @@ class TKSLauncher
             int nread;
             byte[] p1Pre = new byte[16];
             if (ReadProcessMemory(hDiag, (IntPtr)(baseAddr.ToInt64() + 0x17A50), p1Pre, 16, out nread))
-                Console.WriteLine(string.Format("  [DIAG] PATH1@0x17A50 pre: [{0}]",
+                Log(string.Format("  [DIAG] PATH1@0x17A50 pre: [{0}]",
                     BitConverter.ToString(p1Pre, 0, nread)));
             byte[] p2Pre = new byte[16];
             if (ReadProcessMemory(hDiag, (IntPtr)(baseAddr.ToInt64() + 0x17E1A), p2Pre, 16, out nread))
-                Console.WriteLine(string.Format("  [DIAG] PATH2@0x17E1A pre: [{0}]",
+                Log(string.Format("  [DIAG] PATH2@0x17E1A pre: [{0}]",
                     BitConverter.ToString(p2Pre, 0, nread)));
             CloseHandle(hDiag);
         }
@@ -1411,7 +1598,7 @@ class TKSLauncher
             }
             CloseHandle(hMod);
         }
-        Console.WriteLine(string.Format("  模块大小: 0x{0:X} ({0} bytes)", modSize));
+        Log(string.Format("  模块大小: 0x{0:X} ({0} bytes)", modSize));
 
         // 若 WarPC 扩展, 在 BuildPatches 之前分配缓冲区并写入数据
         // 这样 cave 数组可以在写入前直接嵌入正确地址
@@ -1425,23 +1612,41 @@ class TKSLauncher
             {
                 System.IO.File.Copy(bakPath, wpPath, true);
                 System.IO.File.Delete(bakPath);
-                Console.WriteLine("  已恢复原始 WarPC.dat");
+                Log("  已恢复原始 WarPC.dat");
             }
 
             int newSize = _warpcFullData.Length;
             IntPtr hWarpc = OpenProcess(PROCESS_VM_READ | PROCESS_VM_WRITE | PROCESS_VM_OPERATION, false, childPid);
             if (hWarpc != IntPtr.Zero)
             {
-                IntPtr newBuf = VirtualAllocEx(hWarpc, IntPtr.Zero, (uint)newSize,
+                // [补丁十二] WarPC 缓冲区前预留 GUARD 区 (修复索引文件被截断问题)
+                //
+                // 背景: sub_41CE10 写入存档索引时, 需依次读取 6 个队员的等级:
+                //   sub_41DAC4(v21, &word_757F0C[527 * *v6], 2);
+                // 当 word_75688C[i] = -1 (空槽位) 时, 地址计算 = newBuf+4-1054 = newBuf-1050
+                // 原始游戏中该地址落在 unk_756880 (Block B) 区域内, 合法内存不崩溃;
+                // 启动器重定向后 newBuf 之前是未分配内存, 访问会触发页错误,
+                // sub_41DAC4 的 SEH 截断写入流 → 索引文件被截断为 14/20 字节。
+                //
+                // 修复: 在 newBuf 前预留 GUARD_SIZE 字节作为"安全垫", VirtualAllocEx
+                // 返回页对齐的物理起始地址, 逻辑 newBuf = 起始 + GUARD_SIZE。
+                // 这样 newBuf - 1054 落在合法已分配区内 (默认填零),
+                // sub_41DAC4 能完整读取 0 并写入文件 → 索引写满 28 字节。
+                const uint GUARD_SIZE = 0x10000; // 64 KB 安全垫 (足够容纳 1054 字节负偏移)
+                uint totalAlloc = (uint)newSize + GUARD_SIZE;
+                IntPtr allocBase = VirtualAllocEx(hWarpc, IntPtr.Zero, totalAlloc,
                     MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
-                if (newBuf != IntPtr.Zero)
+                if (allocBase != IntPtr.Zero)
                 {
+                    IntPtr newBuf = (IntPtr)(allocBase.ToInt64() + GUARD_SIZE);
                     int wr;
                     WriteProcessMemory(hWarpc, newBuf, _warpcFullData, newSize, out wr);
                     _warpcNewBuf = newBuf;
                     warpcBaseForCaves = (int)newBuf.ToInt64();
-                    Console.WriteLine(string.Format("  WarPC 缓冲区: 0x{0:X8} ({1} 字节, {2} 角色)",
+                    Log(string.Format("  WarPC 缓冲区: 0x{0:X8} ({1} 字节, {2} 角色)",
                         warpcBaseForCaves, newSize, newSize / WARPC_REC_SIZE));
+                    Log(string.Format("  GUARD 安全垫: 0x{0:X8}-0x{1:X8} ({2} 字节, 修复空槽位负偏移访问)",
+                        allocBase.ToInt64(), allocBase.ToInt64() + GUARD_SIZE, GUARD_SIZE));
                 }
                 CloseHandle(hWarpc);
             }
@@ -1459,7 +1664,7 @@ class TKSLauncher
             {
                 System.IO.File.Copy(bakPath, path, true);
                 System.IO.File.Delete(bakPath);
-                Console.WriteLine(string.Format("  已恢复原始 {0}", path));
+                Log(string.Format("  已恢复原始 {0}", path));
             }
         }
 
@@ -1472,19 +1677,19 @@ class TKSLauncher
             CloseHandle(hProc);
         }
         if (caveAddr == IntPtr.Zero)
-            Console.WriteLine("  [WARN] VirtualAllocEx failed, AwkSprite cave skipped");
+            Log("  [WARN] VirtualAllocEx failed, AwkSprite cave skipped");
         else
-            Console.WriteLine(string.Format("  AwkSprite cave: 0x{0:X8} (dynamic alloc)", caveAddr.ToInt64()));
+            Log(string.Format("  AwkSprite cave: 0x{0:X8} (dynamic alloc)", caveAddr.ToInt64()));
 
         Patch[] patches = BuildPatches(baseAddr, caveAddr, warpcBaseForCaves);
-        Console.WriteLine(string.Format("  补丁数量: {0}", patches.Length));
+        Log(string.Format("  补丁数量: {0}", patches.Length));
         foreach (var p in patches)
-            Console.WriteLine(string.Format("    RVA=0x{0:X8}  bytes=[{1}]  {2}", p.RVA, BitConverter.ToString(p.Data), p.Desc));
+            Log(string.Format("    RVA=0x{0:X8}  bytes=[{1}]  {2}", p.RVA, BitConverter.ToString(p.Data), p.Desc));
 
-        Console.WriteLine("\n应用补丁...");
+        Log("\n应用补丁...");
         bool ok = ApplyPatches(childPid, baseAddr, patches, false);
 
-        Console.WriteLine("\n验证补丁...");
+        Log("\n验证补丁...");
         ApplyPatches(childPid, baseAddr, patches, true);
 
         // WarPC 代码引用修补 (缓冲区已在 BuildPatches 之前分配)
@@ -1570,52 +1775,145 @@ class TKSLauncher
                     log += BitConverter.ToInt16(teamBuf, i*2) + ",";
                 log += "]";
             }
+
+            // 存档索引写入 sub_41CE10 所依赖的关键全局变量 (诊断用)
+            // 若这些值全为 0, 则 sub_41CE10 写入的索引会是 28 字节全零,
+            // 导致读档界面显示"6 个相同主角头像"异常
+            byte[] gameTimeBuf = new byte[2];
+            if (ReadProcessMemory(hV, (IntPtr)0x756882, gameTimeBuf, 2, out read))
+                log += string.Format(" game_time=0x{0:X4}", BitConverter.ToUInt16(gameTimeBuf, 0));
+            byte[] sceneBuf = new byte[4];
+            if (ReadProcessMemory(hV, (IntPtr)0x755B58, sceneBuf, 4, out read))
+                log += string.Format(" scene=0x{0:X8}", BitConverter.ToInt32(sceneBuf, 0));
+            // 读取 word_756888 (金钱)
+            byte[] moneyBuf = new byte[2];
+            if (ReadProcessMemory(hV, (IntPtr)0x756888, moneyBuf, 2, out read))
+                log += string.Format(" money=0x{0:X4}", BitConverter.ToUInt16(moneyBuf, 0));
+
+            // 检查存档索引文件存在性与大小 (诊断补丁十一)
+            try
+            {
+                int validIdx = 0, zeroIdx = 0, missingIdx = 0;
+                for (int i = 1; i <= 9; i++)
+                {
+                    string p = string.Format("save\\{0}.sav", i);
+                    if (System.IO.File.Exists(p))
+                    {
+                        long sz = new System.IO.FileInfo(p).Length;
+                        if (sz == 28) validIdx++;
+                        else if (sz == 0) zeroIdx++;
+                    }
+                    else missingIdx++;
+                }
+                log += string.Format(" save_idx[ok={0},zero={1},miss={2}]",
+                    validIdx, zeroIdx, missingIdx);
+            }
+            catch { /* 忽略诊断错误 */ }
+
             CloseHandle(hV);
         }
-        // Read back inject details from InjectWarPCData's log
-        string injectLog = "";
-        if (System.IO.File.Exists("tks_launcher.log"))
-            injectLog = " " + System.IO.File.ReadAllText("tks_launcher.log").Trim();
-        System.IO.File.WriteAllText("tks_launcher.log", log + injectLog);
+
+        // 将详细状态写入主日志 (不再覆盖文件)
+        Log(log);
+
+        // ============================================================
+        // [诊断] 存档索引文件内容详细 dump
+        // 验证: 28 字节文件内容是否正确 (队员/时间戳/等级/场景)
+        // 若内容正确但读档界面仍异常, 说明问题在游戏读取流程
+        // (sub_41B1A8) 而不是存档内容
+        // ============================================================
+        Log("\n--- 存档索引文件内容详细 dump ---");
+        for (int i = 1; i <= 9; i++)
+        {
+            string idxPath = string.Format("save\\{0}.sav", i);
+            string datPath = string.Format("save\\sav.{0}", i);
+            if (!System.IO.File.Exists(idxPath))
+            {
+                Log(string.Format("  slot {0}: 不存在", i));
+                continue;
+            }
+            try
+            {
+                byte[] idx = System.IO.File.ReadAllBytes(idxPath);
+                long datSize = System.IO.File.Exists(datPath)
+                    ? new System.IO.FileInfo(datPath).Length : -1;
+                if (idx.Length != 28)
+                {
+                    Log(string.Format("  slot {0}: 大小={1} (异常) hex=[{2}]",
+                        i, idx.Length, BitConverter.ToString(idx)));
+                    continue;
+                }
+                // 解析 28 字节索引文件
+                // 0..5  : 6 字节队员 ID (signed char, -1=空)
+                // 6..7  : 2 字节游戏时间 (word_756882)
+                // 8..11 : 4 字节 Unix 时间戳
+                // 12..23: 12 字节 等级 (6 × word)
+                // 24..27: 4 字节 场景 ID (dword_755B58)
+                sbyte[] team = new sbyte[6];
+                for (int k = 0; k < 6; k++) team[k] = (sbyte)idx[k];
+                ushort gameTime = BitConverter.ToUInt16(idx, 6);
+                int unixTs = BitConverter.ToInt32(idx, 8);
+                short[] levels = new short[6];
+                for (int k = 0; k < 6; k++) levels[k] = BitConverter.ToInt16(idx, 12 + k * 2);
+                int sceneId = BitConverter.ToInt32(idx, 24);
+                DateTime tsTime = unixTs > 0
+                    ? new DateTime(1970,1,1,0,0,0,DateTimeKind.Utc).AddSeconds(unixTs).ToLocalTime()
+                    : new DateTime(1970,1,1);
+
+                Log(string.Format("  slot {0}: idx=28B dat={1}B hex=[{2}]",
+                    i, datSize, BitConverter.ToString(idx)));
+                Log(string.Format("          team=[{0},{1},{2},{3},{4},{5}] game_time={6} unix_ts=0x{7:X8}({8:yyyy-MM-dd HH:mm:ss}) scene={9}",
+                    team[0], team[1], team[2], team[3], team[4], team[5],
+                    gameTime, unixTs, tsTime, sceneId));
+                Log(string.Format("          levels=[Lv{0},Lv{1},Lv{2},Lv{3},Lv{4},Lv{5}]",
+                    levels[0], levels[1], levels[2], levels[3], levels[4], levels[5]));
+            }
+            catch (Exception e)
+            {
+                Log(string.Format("  slot {0}: 读取失败 {1}", i, e.Message));
+            }
+        }
+        Log("");
 
         if (ok)
         {
-            Console.WriteLine("\n补丁已应用！游戏正在运行。");
-            Console.WriteLine("启动器即将退出，补丁在本次游戏会话中持续生效。");
-            Console.WriteLine("关闭游戏后补丁失效（每次运行本启动器即可重新应用）。");
+            Log("\n补丁已应用！游戏正在运行。");
+            Log("启动器即将退出，补丁在本次游戏会话中持续生效。");
+            Log("关闭游戏后补丁失效（每次运行本启动器即可重新应用）。");
 
             // 存档兼容性提示
             if (_warpcExpanded)
             {
                 int newCount = _warpcFullData.Length / WARPC_REC_SIZE;
-                Console.WriteLine("\n--- 存档兼容性说明 ---");
-                Console.WriteLine(string.Format(
+                Log("\n--- 存档兼容性说明 ---");
+                Log(string.Format(
                     "  WarPC 已扩展到 {0} 角色 (原始 143)。", newCount));
-                Console.WriteLine("  新存档 (本次游戏保存): 完整支持, 所有角色数据正确存储。");
-                Console.WriteLine("  旧存档 (扩展前保存):   加载后新角色 ({0}+) 从 WarPC.dat 恢复默认值, "
-                    + "不会读取到垃圾数据。", WARPC_ORIG_COUNT);
-                Console.WriteLine(string.Format(
+                Log("  新存档 (本次游戏保存): 完整支持, 所有角色数据正确存储。");
+                Log(string.Format("  旧存档 (扩展前保存):   加载后新角色 ({0}+) 从 WarPC.dat 恢复默认值, "
+                    + "不会读取到垃圾数据。", WARPC_ORIG_COUNT));
+                Log(string.Format(
                     "  备份缓冲区: 保护角色 {0}-{1} 的数据完整性。",
                     WARPC_ORIG_COUNT, newCount - 1));
 
                 // 索引文件 1 字节截断警告
-                Console.WriteLine("\n  注意: 存档索引文件 (save\\N.sav) 队伍成员 ID 仅存储 1 字节。");
-                Console.WriteLine("        若角色 ID >= 256, 存档列表中该角色头像/名称将显示异常。");
-                Console.WriteLine(string.Format("        当前角色 ID 范围: 0-{0}, 状态: {1}",
+                Log("\n  注意: 存档索引文件 (save\\N.sav) 队伍成员 ID 仅存储 1 字节。");
+                Log("        若角色 ID >= 256, 存档列表中该角色头像/名称将显示异常。");
+                Log(string.Format("        当前角色 ID 范围: 0-{0}, 状态: {1}",
                     newCount - 1, newCount > 256 ? "存在截断风险!" : "安全"));
 
                 // sub_412688 清零警告
-                Console.WriteLine("\n  注意: 新游戏初始化 (sub_412688) 会清零队伍/金币/统计区域。");
-                Console.WriteLine("        开局时队伍显示 [主角, 空, 空, 空, 空, 空] 是游戏设计行为, 非 bug。");
-                Console.WriteLine("        若加载存档后仍异常, 请检查 tks_launcher.log 中的 team= 字段。");
+                Log("\n  注意: 新游戏初始化 (sub_412688) 会清零队伍/金币/统计区域。");
+                Log("        开局时队伍显示 [主角, 空, 空, 空, 空, 空] 是游戏设计行为, 非 bug。");
+                Log("        若加载存档后仍异常, 请检查 tks_launcher.log 中的 team= 字段。");
             }
         }
         else
         {
-            Console.WriteLine("\n[WARN] 部分补丁未应用成功");
+            Log("\n[WARN] 部分补丁未应用成功");
         }
 
         Thread.Sleep(2000);
+        LogClose();
         return 0;
     }
 }
