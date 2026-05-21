@@ -79,6 +79,27 @@
  *            并写入文件, 索引写满 28 字节。同时对 sub_40DA00/sub_40E88C/
  *            sub_417F84/sub_41A080/sub_43CA64 中的同类负偏移访问也一并修复。
  *
+ * [补丁十三] sub_4C33FC "已打开"检查修复 (修复读档列表全 0 问题)
+ *   原始问题: sub_41B1A8 循环 9 次復用同一个 v24 文件结构, sub_4C33FC 入口
+ *            检查 "if (a1+12) return 0" 在第 1 次循环后拒绝后续打开。
+ *            但 sub_41C984 关闭流后 v24+12 未被清零 → 第 2..9 次循环全部返回 0
+ *            → 读取失败 → buffer 保留 BSS 初始 0 值 → sub_41AB94 渲染出
+ *            "6 个主角头像 + Lv0 + 70/01/01 + 大地图"异常 (仅槽位 1 正常)。
+ *   修补效果: 扫描 sub_4C33FC 入口前 32 字节 "cmp byte [reg+0Ch], 0" + "je/jne"
+ *            指令，将 je short 改为 jmp short 或将 jne short 改为 NOP NOP,
+ *            让 sub_4C33FC 总是跳到 continue 重新打开文件。
+ *
+ * [补丁十四] sub_41C120 stream error 检查修复 (修复中间空槽位后的读取失败)
+ *   原始问题: 补丁十三生效后, 若存在中间空槽位 (如 slot 4-6 不存在),
+ *            sub_41B1A8 中 sub_4C352C 失败进入 if (!v1) 分支 "stream+8 |= 4"
+ *            设置 EOF 错误标志。之后槽位 (slot 7-9) 即使文件存在,
+ *            sub_41BF48/sub_41C2B8 调用 sub_41C120 检查发现错误标志返回 false
+ *            → 跳过读取 → buffer 保留 0 → 同样渲染"6 个主角头像"异常。
+ *   修补效果: 将 sub_41C120 入口 "cmp dword [reg+8], 0" 改为同长的
+ *            "and dword [reg+8], 0" (83 7X 08 00 → 83 6X 08 00),
+ *            这样每次检查前都强制清零 stream+8 错误标志,
+ *            后续 je/jne 依然按 ZF=1 走正确分支, slot 7-9 能重新读取。
+ *
  * 用法: 把编译后的 TKSLauncher.exe 放到游戏目录，双击运行即可
  * 编译: C:\Windows\Microsoft.NET\Framework\v4.0.30319\csc.exe /target:winexe /win32icon:TKS.ico /out:TKSLauncher.exe tks_launcher.cs
  */
@@ -1265,6 +1286,286 @@ class TKSLauncher
         return result;
     }
 
+    // ============================================================
+    // [补丁十三] sub_4C33FC 入口检查修补
+    //
+    // sub_4C33FC 入口 (反编译第 21 行):
+    //   if (*(_BYTE *)(a1 + 12)) return 0;
+    //
+    // 该检查让 sub_41B1A8 循环从第 2 个槽位开始全部 return 0,
+    // 导致 9 个槽位中只有第 1 个能读到文件, 其他都是 BSS 初始 0。
+    //
+    // 修补策略: 扫描入口前 32 字节 cmp + jnz 指令并用 NOP 覆盖
+    // ============================================================
+    static void Patch4C33FC(int childPid, IntPtr baseAddr)
+    {
+        const int SUB_4C33FC_RVA = 0xC33FC;
+        Log("\n--- [补丁十三] sub_4C33FC 入口检查修补 ---");
+
+        IntPtr hProc = OpenProcess(PROCESS_VM_READ | PROCESS_VM_WRITE | PROCESS_VM_OPERATION,
+            false, childPid);
+        if (hProc == IntPtr.Zero) { Log("  [ERROR] OpenProcess 失败"); return; }
+
+        IntPtr addr = (IntPtr)(baseAddr.ToInt64() + SUB_4C33FC_RVA);
+        byte[] buf = new byte[64];
+        int nr;
+        if (!ReadProcessMemory(hProc, addr, buf, 64, out nr) || nr < 32)
+        {
+            Log(string.Format("  [ERROR] 读取 sub_4C33FC@0x{0:X8} 失败 (nr={1})",
+                addr.ToInt64(), nr));
+            CloseHandle(hProc);
+            return;
+        }
+
+        Log(string.Format("  sub_4C33FC@0x{0:X8} 入口 64 字节: [{1}]",
+            addr.ToInt64(), BitConverter.ToString(buf, 0, Math.Min(nr, 64))));
+
+        // 在前 32 字节中查找 "cmp byte ptr [reg+0Ch], 0" 模式
+        // 指令编码: 80 7X 0C 00
+        //   X = 8 (eax), 9 (ecx), A (edx), B (ebx), D (ebp), E (esi), F (edi)
+        //   注: D=ebp 需要 SIB, X=4 (esp) 需要 SIB, X=C (不存在)
+        //   常见的是 X=8 (eax) 或 D (ebp+disp)
+        // 实际上反编译中 a1 是第 1 个 cdecl 参数, 可能被载入任何寄存器
+        int cmpOff = -1;
+        byte cmpModRm = 0;
+        for (int i = 0; i < Math.Min(nr, 32) - 4; i++)
+        {
+            if (buf[i] == 0x80
+                && (buf[i+1] & 0xF8) == 0x78  // 78..7F = mod=01, r/m=000..111
+                && buf[i+2] == 0x0C
+                && buf[i+3] == 0x00)
+            {
+                cmpOff = i;
+                cmpModRm = buf[i+1];
+                break;
+            }
+        }
+
+        if (cmpOff < 0)
+        {
+            Log("  [WARN] 未找到 cmp [reg+0Ch],0 指令模式, 跳过修补");
+            Log("  读档界面可能仍会显示异常, 请报告上述入口字节以供人工诊断");
+            CloseHandle(hProc);
+            return;
+        }
+
+        Log(string.Format("  找到 cmp byte ptr [reg(modrm=0x{0:X2})+0Ch], 0 位于偏移 +0x{1:X}",
+            cmpModRm, cmpOff));
+
+        // 检查后续跳转指令:
+        //   je  short (74 XX) = "如果 a1+12 == 0 (未打开) 跳到 continue"  → 原始逻辑
+        //   jne short (75 XX) = "如果 a1+12 != 0 (已打开) 跳到 return_0"
+        //   je/jne near (0F 84 XX*4 / 0F 85 XX*4) 是 near 版本
+        //
+        // 修复策略:
+        //   je  short → 改为 jmp short (EB XX), 无条件跳到 continue 跳过 return 0
+        //   jne short → 改为 NOP NOP (不跳, 继续往下执行 continue)
+        byte branchOp = buf[cmpOff + 4];
+        byte branchOp2 = buf[cmpOff + 5];
+        IntPtr branchAddr = (IntPtr)(addr.ToInt64() + cmpOff + 4);
+        bool patchOk = false;
+        string patchDesc = "";
+        byte[] patchBytes = null;
+
+        if (branchOp == 0x74)
+        {
+            // je short → jmp short (74 XX → EB XX)
+            patchBytes = new byte[] { 0xEB, branchOp2 };
+            patchDesc = string.Format("je short +0x{0:X2} → jmp short +0x{0:X2}", branchOp2);
+        }
+        else if (branchOp == 0x75)
+        {
+            // jne short → NOP NOP
+            patchBytes = new byte[] { 0x90, 0x90 };
+            patchDesc = string.Format("jne short +0x{0:X2} → NOP NOP", branchOp2);
+        }
+        else if (branchOp == 0x0F && branchOp2 == 0x84)
+        {
+            // je near → jmp near (0F 84 imm32 → E9 imm32 + 1字节 NOP)
+            // E9 是 5 字节跳转, 0F 84 是 6 字节, 需要调整 imm32 (跳转起点不同)
+            int imm32 = BitConverter.ToInt32(buf, cmpOff + 6);
+            // 0F 84 跳转从 cmp+10 处计算, E9 从 cmp+9 处计算 (差 1)
+            int newImm = imm32 + 1;
+            patchBytes = new byte[6];
+            patchBytes[0] = 0xE9;
+            BitConverter.GetBytes(newImm).CopyTo(patchBytes, 1);
+            patchBytes[5] = 0x90; // NOP 填充第 6 字节
+            patchDesc = string.Format("je near +0x{0:X8} → jmp near + NOP", imm32);
+        }
+        else if (branchOp == 0x0F && branchOp2 == 0x85)
+        {
+            // jne near → NOP × 6
+            patchBytes = new byte[] { 0x90, 0x90, 0x90, 0x90, 0x90, 0x90 };
+            patchDesc = "jne near → NOP × 6";
+        }
+        else
+        {
+            Log(string.Format("  [WARN] cmp 后未识别到 je/jne (后续=0x{0:X2} 0x{1:X2}), 跳过修补",
+                branchOp, branchOp2));
+            CloseHandle(hProc);
+            return;
+        }
+
+        Log(string.Format("  识别到分支指令: {0}", patchDesc));
+
+        uint oldProt;
+        VirtualProtectEx(hProc, branchAddr, patchBytes.Length, PAGE_EXECUTE_READWRITE, out oldProt);
+        int nw;
+        patchOk = WriteProcessMemory(hProc, branchAddr, patchBytes, patchBytes.Length, out nw);
+        VirtualProtectEx(hProc, branchAddr, patchBytes.Length, oldProt, out oldProt);
+
+        if (patchOk && nw == patchBytes.Length)
+        {
+            Log(string.Format("  [OK] sub_4C33FC+0x{0:X} 修补成功 ({1})",
+                cmpOff + 4, patchDesc));
+            // 验证写入
+            byte[] verify = new byte[patchBytes.Length];
+            ReadProcessMemory(hProc, branchAddr, verify, patchBytes.Length, out nr);
+            Log(string.Format("  验证: [{0}]", BitConverter.ToString(verify, 0, patchBytes.Length)));
+            // 诊断: dump 修补后的完整函数头
+            byte[] verify2 = new byte[32];
+            ReadProcessMemory(hProc, addr, verify2, 32, out nr);
+            Log(string.Format("  修补后函数头 32 字节: [{0}]",
+                BitConverter.ToString(verify2, 0, Math.Min(nr, 32))));
+        }
+        else
+        {
+            Log(string.Format("  [ERROR] WriteProcessMemory 失败 (ok={0} nw={1})", patchOk, nw));
+        }
+        CloseHandle(hProc);
+    }
+
+    // ============================================================
+    // [补丁十四] sub_41C120 金铢检查修补
+    //
+    // sub_41C120 入口 (反编译第 17 行):
+    //   if (*(_DWORD *)(*a1 + 8))   // 检查 stream error
+    //     { ... set fail ... }
+    //
+    // 汇编似:
+    //   mov eax, [esp+4]   ; arg a1 (stream pointer)
+    //   mov ecx, [eax]     ; *a1 (stream object)
+    //   cmp dword [ecx+8], 0
+    //   je  no_error       ; 或 jne set_fail
+    //   ... set fail ...
+    //
+    // 修补策略: 扫描入口前 32 字节 "cmp dword [reg+8], 0" 指令 (编码 83 7X 08 00),
+    //   同时在其前面的 mov [reg], imm 或类似位置插入清零。
+    //   更简单：直接把 cmp 指令改为等价的 "and dword [reg+8], 0" (调试后使用
+    //   在原位置写 mov dword [reg+8], 0 或 7 字节 mov), 在这里采用较安全
+    //   的方法: 改 cmp 为同长的 mov dword [reg+8], 0 (入口 4字节 cmp 改为
+    //   7 字节 mov 不可行, 所以改为 NOP 后面的 jne, 让 cmp 结果被忽略,
+    //   同时插入一条清零指令)。这里选择最简单的方案:
+    //     cmp dword [ecx+8], 0  (4字节)
+    //     je  no_error          (或 jne set_fail, 2 字节)
+    //   → 改为:
+    //     and dword [ecx+8], 0  (4字节: 83 6X 08 00, reg=4=AND) → 清零 stream error
+    //     je  no_error          (保留 je, ZF=1 总是跳过 set_fail)  或
+    //     jne set_fail          (保留 jne, ZF=1 不跳转, 继续到 no_error)
+    // ============================================================
+    static void Patch41C120(int childPid, IntPtr baseAddr)
+    {
+        const int SUB_41C120_RVA = 0x1C120;
+        Log("\n--- [补丁十四] sub_41C120 金铢检查修补 ---");
+
+        IntPtr hProc = OpenProcess(PROCESS_VM_READ | PROCESS_VM_WRITE | PROCESS_VM_OPERATION,
+            false, childPid);
+        if (hProc == IntPtr.Zero) { Log("  [ERROR] OpenProcess 失败"); return; }
+
+        IntPtr addr = (IntPtr)(baseAddr.ToInt64() + SUB_41C120_RVA);
+        byte[] buf = new byte[64];
+        int nr;
+        if (!ReadProcessMemory(hProc, addr, buf, 64, out nr) || nr < 16)
+        {
+            Log(string.Format("  [ERROR] 读取 sub_41C120@0x{0:X8} 失败 (nr={1})",
+                addr.ToInt64(), nr));
+            CloseHandle(hProc);
+            return;
+        }
+
+        Log(string.Format("  sub_41C120@0x{0:X8} 入口 64 字节: [{1}]",
+            addr.ToInt64(), BitConverter.ToString(buf, 0, Math.Min(nr, 64))));
+
+        // 实际汇编不是 "cmp dword [reg+8], 0", 而是:
+        //   8B 4A 08    mov ecx, [edx+8]    ; 加载 stream+8 (error flag)
+        //   85 C9       test ecx, ecx       ; 检查是否为 0
+        //   0F 94 C0    sete al             ; al = (error == 0)
+        //   83 E0 01    and eax, 1
+        //   84 C0       test al, al         ; 设置 ZF
+        //   0F 84 E5..  je near set_fail    ; ZF=1 (error 非 0) 跳到 set_fail
+        //
+        // 扫描模式 "8B 4A 08 85 C9" (mov ecx, [edx+8]; test ecx, ecx)
+        int loadOff = -1;
+        for (int i = 0; i < Math.Min(nr, 32) - 5; i++)
+        {
+            if (buf[i] == 0x8B && buf[i+1] == 0x4A && buf[i+2] == 0x08
+                && buf[i+3] == 0x85 && buf[i+4] == 0xC9)
+            {
+                loadOff = i;
+                break;
+            }
+        }
+
+        if (loadOff < 0)
+        {
+            Log("  [WARN] 未找到 mov ecx,[edx+8];test ecx,ecx 模式, 跳过修补");
+            CloseHandle(hProc);
+            return;
+        }
+
+        Log(string.Format("  找到 mov ecx,[edx+8] + test ecx,ecx 位于偏移 +0x{0:X}", loadOff));
+
+        // 验证后续是 sete al + and eax,1 + test al,al + je near (共 13 字节 从 loadOff 起)
+        if (loadOff + 13 > nr
+            || buf[loadOff + 5] != 0x0F || buf[loadOff + 6] != 0x94 || buf[loadOff + 7] != 0xC0
+            || buf[loadOff + 8] != 0x83 || buf[loadOff + 9] != 0xE0 || buf[loadOff + 10] != 0x01
+            || buf[loadOff + 11] != 0x84 || buf[loadOff + 12] != 0xC0)
+        {
+            Log("  [WARN] sete/and/test 后续模式不匹配, 跳过修补");
+            CloseHandle(hProc);
+            return;
+        }
+
+        // 替换 13 字节 为:
+        //   C7 42 08 00 00 00 00  mov dword [edx+8], 0  (7 字节) → 真正清零 stream+8
+        //   B0 01                  mov al, 1            (2 字节)
+        //   84 C0                  test al, al          (2 字节, ZF=0)
+        //   90 90                  NOP × 2             (2 字节)
+        // 后面原始的 0F 84 E5 00 00 00 (je near set_fail) 因 ZF=0 不会跳转,
+        // 函数走正常路径。最后的 return *(_DWORD*)(*a1+8) == 0 也会返回 true,
+        // 因为 stream+8 已被清零。
+        byte[] patchBytes = new byte[] {
+            0xC7, 0x42, 0x08, 0x00, 0x00, 0x00, 0x00,  // mov dword [edx+8], 0
+            0xB0, 0x01,                                 // mov al, 1
+            0x84, 0xC0,                                 // test al, al (ZF=0)
+            0x90, 0x90                                  // NOP x 2
+        };
+
+        IntPtr patchAddr = (IntPtr)(addr.ToInt64() + loadOff);
+        uint oldProt;
+        VirtualProtectEx(hProc, patchAddr, 13, PAGE_EXECUTE_READWRITE, out oldProt);
+        int nw;
+        bool ok = WriteProcessMemory(hProc, patchAddr, patchBytes, 13, out nw);
+        VirtualProtectEx(hProc, patchAddr, 13, oldProt, out oldProt);
+
+        if (ok && nw == 13)
+        {
+            Log(string.Format("  [OK] sub_41C120+0x{0:X} 清零补丁: 每次调用强制 stream+8 = 0", loadOff));
+            byte[] verify = new byte[13];
+            ReadProcessMemory(hProc, patchAddr, verify, 13, out nr);
+            Log(string.Format("  验证: [{0}]", BitConverter.ToString(verify, 0, 13)));
+            byte[] verify2 = new byte[40];
+            ReadProcessMemory(hProc, addr, verify2, 40, out nr);
+            Log(string.Format("  修补后函数头 40 字节: [{0}]",
+                BitConverter.ToString(verify2, 0, Math.Min(nr, 40))));
+        }
+        else
+        {
+            Log(string.Format("  [ERROR] WriteProcessMemory 失败 (ok={0} nw={1})", ok, nw));
+        }
+        CloseHandle(hProc);
+    }
+
     // Inject WORD[260]/WORD[261] values from WarPC.dat into game memory
     static void InjectWarPCData(int childPid)
     {
@@ -1694,6 +1995,39 @@ class TKSLauncher
 
         // WarPC 代码引用修补 (缓冲区已在 BuildPatches 之前分配)
         ExpandWarPcBuffer(childPid, baseAddr, modSize, caveAddr);
+
+        // ============================================================
+        // [补丁十三] 修复 sub_4C33FC "已打开"标志导致读档列表全 0 异常
+        //
+        // 背景: sub_41B1A8 循环 9 次復用同一个 v24 文件结构,
+        //   sub_4C352C(v24, path, 12) → sub_4C33FC 入口:
+        //     if (*(_BYTE *)(a1 + 12)) return 0;
+        //   v19=1 打开成功 → v24+12=1
+        //   v19=2..9 时 若 v24+12 未被清零 → sub_4C33FC return 0 → 读取失败
+        //   → buffer 保留 BSS 初始 0 值 → 渲染出"6 个主角头像"异常
+        //
+        // 修复: 扫描 sub_4C33FC 入口前 32 字节的 cmp [reg+0Ch],0 指令,
+        //   该指令均为 4 字节模式 "80 7X 0C 00" (其中 X = 寄存器编号),
+        //   后跟 2 字节 "75 XX" (jnz short) 或 6 字节 "0F 85 XX XX XX XX" (jnz near)。
+        //   将整个 cmp+jnz 替换为 NOP 完全跳过"已打开"检查。
+        // ============================================================
+        Patch4C33FC(childPid, baseAddr);
+
+        // ============================================================
+        // [补丁十四] 修复 sub_41C120 金铢函数 导致 slot 7-9 读取失败
+        //
+        // 背景: 在 sub_41B1A8 循环中, 若某个槽位文件不存在 (如 slot 4-6),
+        //   sub_4C352C 返回 false → if (!v1) 分支执行 "stream+8 |= 4"
+        //   设置 EOF 错误标志。之后的槽位 (slot 7-9) 即使文件存在,
+        //   sub_41BF48/sub_41C2B8 入口调用 sub_41C120 检查 stream+8,
+        //   发现错误标志返回 false → 跳过读取 → buffer 保留 0
+        //   → 渲染出"6 个主角头像 + Lv0 + 70年初一"异常。
+        //
+        // 修复: 修补 sub_41C120 入口, 让它在检查前先强制清零 stream+8,
+        //   这样任何遗留的 EOF/fail 标志都会被清除。sub_41BF48/sub_41C2B8
+        //   会重新正常读取。sub_41C120 返回值不受影响 (仍为 true)。
+        // ============================================================
+        Patch41C120(childPid, baseAddr);
 
         // Inject WORD[260]/WORD[261] from WarPC.dat into game memory
         InjectWarPCData(childPid);
