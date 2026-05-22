@@ -110,12 +110,12 @@ SEG2_BATTLE_FIELDS = [
     ("teleport_pct", 0x1640, 2, "传送进度",     "H",  "word_757F00, sub_41A080"),
 ]
 
-SEG2_INV_COUNT = ("inv_count", 0x7E8, 2, "物品种类数", "H", "word_7570A8, sub_40CD90")
+SEG2_INV_COUNT = ("inv_count", 0x828, 2, "物品种类数", "H", "word_7570A8, sub_40CD90")
 
 SEG2_INVENTORY = [
-    ("inv_items", 0x7EA, 600, "物品ID",      "word_7570AA[600]"),
-    ("inv_types", 0xD3A, 600, "物品类型索引", "word_75755A[600]"),
-    ("inv_qtys",  0x12CA,600, "物品堆叠数量", "word_757A0A[600]"),
+    ("inv_items", 0x82A, 600, "物品ID",      "word_7570AA[600]"),
+    ("inv_types", 0xCDA, 600, "物品类型索引", "word_75755A[600]"),
+    ("inv_qtys",  0x118A,600, "物品堆叠数量", "word_757A0A[600]"),
 ]
 
 # ============================================================
@@ -231,7 +231,37 @@ STATUS_NAMES = [
 SKILL_LEARN_COUNT = 344
 
 # ============================================================
-# LZSS 压缩/解压 (sub_4530A8 / sub_452B14)
+# LZSS 解压 — DAT 文件格式 (TKItem/TKSkill/WarPC 等, 双4B头)
+# sub_45343C 加载: [4B uncompressed_size][4B block_size][LZSS]
+# 与存档格式不同 (存档仅单4B头), 需要独立解压函数
+# ============================================================
+def lzss_decompress_dat(data):
+    """解压 DAT 文件 (TKItem/TKSkill/WarPC 等). 格式: [4B ts][4B bs][LZSS]"""
+    if len(data) < 12: return b''
+    ts = struct.unpack_from('<I', data, 0)[0]
+    bs = struct.unpack_from('<I', data, 4)[0]
+    w = bytearray([0x20]*4096); wp = 4078; out = bytearray(); flags = 0
+    pos = 12; bc = 4
+    while bc < bs:
+        flags >>= 1
+        if (flags & 0x100) == 0:
+            if pos >= len(data): break
+            flags = data[pos] | 0xFF00; pos += 1; bc += 1
+        if flags & 1:
+            if pos >= len(data): break
+            b = data[pos]; pos += 1; bc += 1
+            out.append(b); w[wp] = b; wp = (wp + 1) & 0xFFF
+        else:
+            if pos + 1 >= len(data): break
+            b1, b2 = data[pos], data[pos+1]; pos += 2; bc += 2
+            ro = ((b2 & 0xF0) << 4) | b1; rl = (b2 & 0x0F) + 2
+            for j in range(rl + 1):
+                b = w[(j + ro) & 0xFFF]; out.append(b)
+                w[wp] = b; wp = (wp + 1) & 0xFFF
+    return bytes(out[:ts])
+
+# ============================================================
+# LZSS 压缩/解压 — 存档格式 (sub_4530A8 / sub_452B14)
 # 窗口4096字节, 初始填充0x20, 初始位置4078, 最小匹配3, 最大匹配18
 # ============================================================
 
@@ -515,6 +545,93 @@ def load_tkt(tkt_path):
 
 
 # ============================================================
+# Mu.JVG 图标加载 (精简版, 仅取精灵列表)
+# ============================================================
+def _load_mu_sprites(mu_path):
+    """加载 Mu.JVG — 严格对照 item_editor/load_mu_sprites"""
+    try:
+        from PIL import Image
+    except ImportError:
+        return []
+    if not mu_path or not os.path.exists(mu_path): return []
+    with open(mu_path, 'rb') as f: data = f.read()
+    if len(data) < 32 or data[:4] != b'@JVG': return []
+    bc = struct.unpack_from('<I', data, 8)[0]; off = 32; sprites = []
+    for _ in range(bc):
+        if off + 32 > len(data) or data[off:off+4] != b'@JVM': break
+        sc = struct.unpack_from('<I', data, off+4)[0]; ds = struct.unpack_from('<I', data, off+12)[0]
+        s1 = off + 32; co = [struct.unpack_from('<I', data, s1+j*4)[0] for j in range(sc+1)]
+        po = s1 + (sc+1)*4
+        pal_entries = []
+        for j in range(256):
+            e = struct.unpack_from('<H', data, po+j*2)[0]
+            r = ((e>>11)&0x1F)<<3; g = ((e>>5)&0x3F)<<2; b = (e&0x1F)<<3
+            pal_entries.extend([r,g,b])
+        pal_bytes = bytes(pal_entries)
+        dr = po + 512
+        for si in range(sc):
+            mo = dr + co[si]; ws = struct.unpack_from('<8H', data, mo)
+            w, h = ws[2], ws[3]
+            if w <= 0 or h <= 0: sprites.append(None); continue
+            eo = mo + 16; ed = data[eo:eo+co[si+1]-co[si]-16]
+            total = w*h; px = bytearray(total); alpha = bytearray(total)
+            recs = []; rp = 0
+            while rp + 4 <= len(ed):
+                sk = struct.unpack_from('<H', ed, rp)[0]; rw = struct.unpack_from('<H', ed, rp+2)[0]; rp += 4
+                rw = min(rw, len(ed)-rp); rd = ed[rp:rp+rw] if rw>0 else b''; rp += rw
+                recs.append((sk, rw, rd))
+            if not recs: continue
+            simple = (recs[0][0]==0 and recs[0][1]==w and all(r[1]==w for r in recs))
+            if simple:
+                for ri, (_, rw, rpix) in enumerate(recs):
+                    if ri >= h: break
+                    tr = h-1-ri
+                    for c in range(min(rw, len(rpix))): px[tr*w+c] = rpix[rw-1-c]; alpha[tr*w+c] = 255
+            else:
+                scr_w = 640; gap = max(scr_w-w, 0); bp = total-1; pg = 0
+                for sa, rw, rpix in recs:
+                    rem = sa-pg; pg = 0
+                    if rem < 0: rem = 0
+                    while rem > 0 and bp >= 0:
+                        col = (total-1-bp)%w; tb = w-col
+                        if rem <= tb: bp -= rem; rem = 0
+                        else: bp -= tb; rem -= tb+gap; rem = max(rem, 0)
+                    cb = (total-1-bp)%w if bp >= 0 else 0
+                    al = min(rw, len(rpix))
+                    for k in range(al):
+                        if 0 <= bp < total: px[bp] = rpix[k]; alpha[bp] = 255
+                        bp -= 1
+                    pg = gap if al > 0 and cb+al >= w else 0
+            if w > 0 and h > 0:
+                img = Image.frombytes('P', (w, h), bytes(px))
+                img.putpalette(pal_bytes)
+                rgba = img.convert('RGBA')
+                a_img = Image.frombytes('L', (w, h), bytes(alpha))
+                rgba.putalpha(a_img)
+                sprites.append(rgba)
+        off += 32 + (sc+1)*4 + 512 + ds
+    return sprites
+
+def _get_icon_photo(sprites, icon_val, size=(20,20), cache=None):
+    """获取图标 PhotoImage (缓存)"""
+    if not sprites: return None
+    idx = icon_val + 130
+    if idx < 0 or idx >= len(sprites) or sprites[idx] is None: return None
+    if cache is None: cache = {}
+    ck = (idx, size)
+    if ck in cache: return cache[ck]
+    try:
+        from PIL import Image, ImageTk
+        img = sprites[idx].resize(size, Image.NEAREST)
+        photo = ImageTk.PhotoImage(img)
+        cache[ck] = photo
+        return photo
+    except Exception:
+        return None
+
+PAGE_NAMES = {0:"药品", 1:"道具", 2:"武器", 3:"防具", 4:"饰品", 5:"特殊"}
+
+# ============================================================
 # GUI - 主窗口
 # ============================================================
 
@@ -622,6 +739,34 @@ class SaveEditor:
         self._build_inventory_tab()
         self._build_global_tab()
         self._build_warpc_tab()
+
+        # 底部状态栏 — 参照 item_editor "当前加载"
+        pf = ttk.LabelFrame(self.root, text="当前加载")
+        pf.pack(fill=tk.X, padx=8, pady=(0, 4))
+        self._lbl_save = ttk.Label(pf, text="存档: (未打开)", foreground="gray", font=FONT_S)
+        self._lbl_save.pack(side=tk.LEFT, padx=10, pady=2)
+        ttk.Separator(pf, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y)
+        self._lbl_tkt = ttk.Label(pf, text="TKT: (未加载)", foreground="gray", font=FONT_S)
+        self._lbl_tkt.pack(side=tk.LEFT, padx=10, pady=2)
+        ttk.Separator(pf, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y)
+        self._lbl_item = ttk.Label(pf, text="TKItem: (未加载)", foreground="gray", font=FONT_S)
+        self._lbl_item.pack(side=tk.LEFT, padx=10, pady=2)
+        ttk.Separator(pf, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y)
+        self._lbl_mu = ttk.Label(pf, text="Mu.JVG: (未加载)", foreground="gray", font=FONT_S)
+        self._lbl_mu.pack(side=tk.LEFT, padx=10, pady=2)
+
+    def _update_load_status(self):
+        """更新底部当前加载状态 — 参照 item_editor/_update_paths"""
+        g, r = "#228B22", "#CC3333"
+        def _f(lb, p, label):
+            if not p: lb.config(text=f"{label}: (未加载)", foreground=r)
+            elif not os.path.exists(p): lb.config(text=f"{label}: (不存在)", foreground=r)
+            else: lb.config(text=f"{label}: {p}", foreground=g)
+        parent = os.path.dirname(self.save_dir.rstrip('/\\')) if self.save_dir else None
+        _f(self._lbl_save, self.save_dir, "存档")
+        _f(self._lbl_tkt, os.path.join(parent, 'TKT.dat') if parent else None, "TKT")
+        _f(self._lbl_item, os.path.join(parent, 'TKItem.dat') if parent else None, "TKItem")
+        _f(self._lbl_mu, os.path.join(parent, 'Mu.JVG') if parent else None, "Mu.JVG")
 
     # ================================================================
     # Tab 0: 存档总览
@@ -761,19 +906,22 @@ class SaveEditor:
         ttk.Button(ctrl, text="刷新列表", command=self._refresh_inventory).pack(side=tk.LEFT, padx=8)
         ttk.Button(ctrl, text="应用库存修改", command=self._apply_inventory).pack(side=tk.LEFT, padx=4)
 
-        # 物品列表 Treeview
-        cols = ('idx', 'item_id', 'name', 'qty')
+        # 物品列表 Treeview — 参照 item_editor 布局
+        cols = ('idx', 'item_id', 'page', 'name', 'qty')
         tree_f = ttk.Frame(frame)
         tree_f.pack(fill=tk.BOTH, expand=True)
-        self._inv_tree = ttk.Treeview(tree_f, columns=cols, show='headings', height=20)
-        for cid, cn, cw in [('idx', '#', 40), ('item_id', '物品ID', 70),
-                             ('name', '名称', 300), ('qty', '数量', 60)]:
+        self._inv_tree = ttk.Treeview(tree_f, columns=cols, show='tree headings', height=20)
+        self._inv_tree.column('#0', width=36, minwidth=36, stretch=False, anchor='center')
+        self._inv_tree.heading('#0', text='')
+        for cid, cn, cw in [('idx','#',38),('item_id','ID',48),('page','页面',48),
+                             ('name','物品名称',200),('qty','数量',48)]:
             self._inv_tree.heading(cid, text=cn)
-            self._inv_tree.column(cid, width=cw, anchor='center' if cw < 100 else 'w')
+            self._inv_tree.column(cid, width=cw, anchor='center' if cid != 'name' else 'w')
         vsb = ttk.Scrollbar(tree_f, orient=tk.VERTICAL, command=self._inv_tree.yview)
         self._inv_tree.configure(yscrollcommand=vsb.set)
         self._inv_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         vsb.pack(side=tk.RIGHT, fill=tk.Y)
+        self._inv_photos = []  # prevent GC
 
         # 编辑区
         edit_f = ttk.LabelFrame(frame, text="编辑选中物品", padding=8)
@@ -923,6 +1071,7 @@ class SaveEditor:
 
         # 加载外部资源
         self._load_resources()
+        self._update_load_status()
         # 加载第一个存在的槽位
         for s in range(1, 10):
             if os.path.exists(os.path.join(self.save_dir, f'sav.{s}')):
@@ -931,7 +1080,7 @@ class SaveEditor:
         messagebox.showwarning("未找到存档", f"目录中未找到任何 sav.N 文件:\n{self.save_dir}")
 
     def _load_resources(self):
-        """加载 TKT/TKItem/TKSkill 等外部资源."""
+        """加载 TKT/TKItem/TKSkill/Mu.JVG 等外部资源."""
         parent = os.path.dirname(self.save_dir.rstrip('/\\'))
         # TKT
         tkt_path = os.path.join(parent, 'TKT.dat')
@@ -944,12 +1093,21 @@ class SaveEditor:
         # TKItem
         it_path = os.path.join(parent, 'TKItem.dat')
         if os.path.exists(it_path):
-            self.item_names, self.item_idx_names = self._parse_item_dat(it_path)
+            self.item_records, self.item_names, self.item_idx_names = self._parse_item_dat(it_path)
+        # Mu.JVG 图标
+        mu_path = os.path.join(parent, 'Mu.JVG')
+        self._mu_sprites = []
+        self._icon_photos = {}
+        if os.path.exists(mu_path):
+            try:
+                self._mu_sprites = _load_mu_sprites(mu_path)
+            except Exception:
+                pass
 
     def _parse_skill_dat(self, path):
         try:
             with open(path, 'rb') as f:
-                dec = lzss_decompress(f.read())
+                dec = lzss_decompress_dat(f.read())
             names = {}
             for i in range(350):
                 off = i * 94
@@ -963,29 +1121,39 @@ class SaveEditor:
             return {}
 
     def _parse_item_dat(self, path):
+        """加载 TKItem.dat, 返回 (records_by_idx, id_names, idx_names).
+        records_by_idx: {TKItem数组下标: {item_id,name_id,tab_code,icon,...}}
+        id_names: {item_id: name}  (辅助, 装备编辑器用)
+        idx_names: {TKItem下标: name}
+        """
         try:
             with open(path, 'rb') as f:
-                dec = lzss_decompress(f.read())
-            id_lookup = {}
-            idx_lookup = {}
-            for i in range(600):
-                off = i * 64
-                if off + 10 > len(dec):
-                    break
-                item_id = struct.unpack_from('<h', dec, off)[0]
-                name_id = struct.unpack_from('<h', dec, off + 4)[0]
-                nm = ""
-                if name_id > 0 and name_id in self.tkt:
-                    nm = self.tkt[name_id].split('\n')[0].strip()[:25]
-                elif item_id > 0:
-                    nm = f'物品#{item_id}'
-                if item_id > 0:
-                    id_lookup[item_id] = nm
-                if nm:
-                    idx_lookup[i] = nm
-            return id_lookup, idx_lookup
+                dec = lzss_decompress_dat(f.read())
         except Exception:
-            return {}, {}
+            return {}, {}, {}
+        idx_records = {}; id_lookup = {}; idx_lookup = {}
+        for i in range(600):
+            off = i * 64
+            if off + 10 > len(dec): break
+            item_id = struct.unpack_from('<h', dec, off)[0]
+            name_id = struct.unpack_from('<h', dec, off + 4)[0]
+            tab_code = struct.unpack_from('<h', dec, off + 2)[0]
+            icon = struct.unpack_from('<h', dec, off + 8)[0]
+            equip_type = struct.unpack_from('<h', dec, off + 10)[0]
+            price = struct.unpack_from('<h', dec, off + 62)[0]
+            nm = ""
+            if name_id > 0 and name_id in self.tkt:
+                nm = self.tkt[name_id].split('\n')[0].strip()[:25]
+            elif item_id > 0:
+                nm = f'物品#{item_id}'
+            rec = {'item_id': item_id, 'name_id': name_id, 'tab_code': tab_code,
+                   'icon': icon, 'equip_type': equip_type, 'price': price, 'name': nm}
+            if item_id > 0:
+                id_lookup[item_id] = nm
+            idx_records[i] = rec
+            if nm:
+                idx_lookup[i] = nm
+        return idx_records, id_lookup, idx_lookup
 
     def _switch_slot(self, slot_num):
         """切换到指定槽位."""
@@ -1148,18 +1316,32 @@ class SaveEditor:
         self._inv_count_var.set(str(count))
 
         self._inv_tree.delete(*self._inv_tree.get_children())
+        self._inv_photos.clear()
+        off_items = SEG2_INVENTORY[0][1]
+        off_types = SEG2_INVENTORY[1][1]
+        off_qtys = SEG2_INVENTORY[2][1]
         for i in range(min(count, 600)):
-            item_id = struct.unpack_from('<h', self.seg2, 0x7EA + i*2)[0]
-            qty = struct.unpack_from('<H', self.seg2, 0x12CA + i*2)[0]
-            name = self.item_names.get(item_id, f"物品#{item_id}") if item_id > 0 else "(空)"
-            self._inv_tree.insert('', tk.END, values=(i, item_id, name, qty))
+            item_id = struct.unpack_from('<h', self.seg2, off_items + i*2)[0]
+            type_idx = struct.unpack_from('<H', self.seg2, off_types + i*2)[0]
+            qty = struct.unpack_from('<H', self.seg2, off_qtys + i*2)[0]
+            # 用 type_idx (TKItem数组下标) 查找物品信息
+            rec = self.item_records.get(type_idx, {})
+            name = rec.get('name', f'物品#{item_id}') if rec else f'物品#{item_id}'
+            tab = rec.get('tab_code', 0)
+            page = PAGE_NAMES.get(tab, '?')
+            icon_val = rec.get('icon', 0)
+            photo = _get_icon_photo(self._mu_sprites, icon_val, (24,24), self._icon_photos)
+            self._inv_photos.append(photo)
+            self._inv_tree.insert('', tk.END,
+                image=photo if photo else '',
+                values=(i, item_id, page, name, qty))
 
     def _on_inv_select(self, event=None):
         sel = self._inv_tree.selection()
         if sel:
             vals = self._inv_tree.item(sel[0], 'values')
             self._inv_edit_id_var.set(str(vals[1]))
-            self._inv_edit_qty_var.set(str(vals[3]))
+            self._inv_edit_qty_var.set(str(vals[4]))
 
     def _apply_inv_edit(self):
         sel = self._inv_tree.selection()
@@ -1173,8 +1355,8 @@ class SaveEditor:
         except ValueError:
             messagebox.showerror("输入错误", "请输入有效数字")
             return
-        struct.pack_into('<h', self.seg2, 0x7EA + idx*2, new_id)
-        struct.pack_into('<H', self.seg2, 0x12CA + idx*2, new_qty)
+        struct.pack_into('<h', self.seg2, SEG2_INVENTORY[0][1] + idx*2, new_id)
+        struct.pack_into('<H', self.seg2, SEG2_INVENTORY[2][1] + idx*2, new_qty)
         self._dirty = True
         self._refresh_inventory()
 
@@ -1184,18 +1366,20 @@ class SaveEditor:
             return
         vals = self._inv_tree.item(sel[0], 'values')
         idx = int(vals[0])
-        count = struct.unpack_from('<H', self.seg2, 0x7E8)[0]
+        count_off = SEG2_INV_COUNT[1]
+        arr_offs = [f[1] for f in SEG2_INVENTORY]
+        count = struct.unpack_from('<H', self.seg2, count_off)[0]
         if idx >= count:
             return
         # 移动后续物品前移
         for i in range(idx, count - 1):
-            for arr_off in [0x7EA, 0xD3A, 0x12CA]:
+            for arr_off in arr_offs:
                 v = struct.unpack_from('<H', self.seg2, arr_off + (i+1)*2)[0]
                 struct.pack_into('<H', self.seg2, arr_off + i*2, v)
         # 清除末尾
-        for arr_off in [0x7EA, 0xD3A, 0x12CA]:
+        for arr_off in arr_offs:
             struct.pack_into('<H', self.seg2, arr_off + (count-1)*2, 0)
-        struct.pack_into('<H', self.seg2, 0x7E8, count - 1)
+        struct.pack_into('<H', self.seg2, count_off, count - 1)
         self._dirty = True
         self._refresh_inventory()
 
@@ -1429,7 +1613,7 @@ class SaveEditor:
             return
         try:
             count = int(self._inv_count_var.get())
-            struct.pack_into('<H', self.seg2, 0x7E8, count & 0xFFFF)
+            struct.pack_into('<H', self.seg2, SEG2_INV_COUNT[1], count & 0xFFFF)
             self._dirty = True
             self._refresh_inventory()
         except ValueError as e:
