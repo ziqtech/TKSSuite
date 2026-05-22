@@ -19,8 +19,8 @@ WarPC.dat 格式 (每条 1054 字节, 共 143 角色):
   [0]   name_id      — 角色名称 TKT ID
   [1]   portrait     — 头像索引 (×2=Fa.JVG大幅图, ×2+1=缩略图)
   [2]   level        — 等级
-  [3]   role         — 身份 (0=敌方 -1=我方)
-  [4]   exp_to_next  — 升级所需经验 (大多数=100; 敌方版较高: 呂布5092 張角7292)
+  [3]   role         — 身份 (-1=未激活 0=已激活(sub_410674 L40入队时置0))
+  [4]   exp_to_next  — 升级所需经验 (大多数=100; BOSS版较高: 呂布5092 張角7292)
 
   [5]   cur_hp       — 当前生命 (cap at hp_max)
   [6]   cur_mp       — 当前内力 (cap at mp_max)
@@ -276,10 +276,10 @@ IDENTITY_FIELDS = [
     ("name_id",    0,  "名称TKT ID",  "角色名称 → TKT.dat (sub_4067E8)"),
     ("portrait",   2,  "头像索引",    "头像索引 ×2 = Fa.JVG 大幅图, ×2+1 = 缩略图"),
     ("level",      4,  "等级",        "角色等级 (数值显示)"),
-    ("role",       6,  "身份",        "0=敌方 -1=我方"),
-    ("exp_to_next", 8,  "升级所需经验","升至下一级所需经验; 绝大多数角色=100, 敌方版较高(呂布5092 張角7292)"),
+    ("role",       6,  "身份",        "-1=未激活 0=已激活(sub_410674 L40入队时置0)"),
+    ("exp_to_next", 8,  "升级所需经验","升至下一级所需经验; 绝大多数角色=100, BOSS版较高(呂布5092 張角7292)"),
     ("entity_link", 526, "地图实体ID",  "离队后在地图上显示的NPC实体ID → TKMat.dat; sub_41EEC0→sub_40C648 启用此实体使其回到原位"),
-    ("awk_sprite_id", 520, "战场图集索引（补丁专用）", "战斗中Awk.JVG/Awt.JVG块号 — 配合运行时补丁使用; 0=使用原硬编码公式(我方PATH1:WarPC索引+6, 敌方PATH2:WarPC记录号+12); 非0=补丁直接使用此值作为武器精灵块; 替代sub_4307CC:120/+236的硬编码偏移"),
+    ("awk_sprite_id", 520, "战场图集索引（补丁专用）", "战斗中Awk.JVG/Awt.JVG块号 — 配合运行时补丁使用; 0=使用原硬编码公式(PATH1:WarPC索引+6, PATH2:WarPC记录号+12); 非0=补丁直接使用此值作为武器精灵块; 替代sub_4307CC:120/+236的硬编码偏移"),
     ("portrait_menu_id", 522, "队伍头像ID（补丁专用）", "队伍菜单中Mu.JVG精灵块号 — 配合运行时补丁使用; 0=使用原公式(portrait+211); 非0=直接使用此值作为Mu.JVG精灵块; 替代sub_41762C:68/+111的硬编码计算"),
 ]
 
@@ -560,8 +560,8 @@ class WarpcEditor:
         self.tree = ttk.Treeview(lf, columns=cols, show='tree headings', selectmode='browse')
         self.tree.column('#0', width=28, minwidth=28, stretch=False, anchor='center')
         self.tree.heading('#0', text='')
-        self.tree.tag_configure('ally', foreground='#2266CC')
-        self.tree.tag_configure('enemy', foreground='#CC3333')
+        self.tree.tag_configure('inactive', foreground='#2266CC')
+        self.tree.tag_configure('active', foreground='#CC3333')
         cc = [
             ('index', '#', 40), ('name', '角色名称', 130), ('level', '等级', 45),
             ('role', '身份', 50), ('hp', 'HP', 70), ('mp', 'MP', 70),
@@ -971,7 +971,7 @@ class WarpcEditor:
         self._bind_tooltip(lbl, f"[{fo//2}] byte {fo}: {cmt}")
         ev = tk.StringVar(); self._edit_vars[fn] = ev
         if fn == 'role':
-            cb = ttk.Combobox(frm, state='readonly', values=['-1-我方', '0-敌方'],
+            cb = ttk.Combobox(frm, state='readonly', values=['-1-未激活', '0-已激活'],
                               width=fw + 3, font=FONT)
             cb.pack(fill=tk.X)
             self._edit_extras[fn] = cb
@@ -1260,8 +1260,8 @@ class WarpcEditor:
             nm = self._char_name(r)
             hp_str = f"{f[5]}/{f[8]}" if f[5] or f[8] else ""
             mp_str = f"{f[6]}/{f[10]}" if f[6] or f[10] else ""
-            role_val = f[3]; role_str = '我方' if role_val == -1 else ('敌方' if role_val == 0 else str(role_val))
-            tag = 'ally' if role_val == -1 else ('enemy' if role_val == 0 else '')
+            role_val = f[3]; role_str = '未激活' if role_val == -1 else ('已激活' if role_val == 0 else str(role_val))
+            tag = 'inactive' if role_val == -1 else ('active' if role_val == 0 else '')
             portrait = f[1]; thumb_idx = portrait * 2 + 1 if portrait >= 0 else 0
             photo = self._get_fa_photo(thumb_idx, (24, 24))
             self._tree_photos.append(photo)
@@ -1294,7 +1294,7 @@ class WarpcEditor:
 
         self.lbl_rec_idx.config(text=(
             f"角色 #{rec['index']}    {nm}    "
-            f"等级={f[2]}  身份={'我方' if f[3]==-1 else ('敌方' if f[3]==0 else str(f[3]))}    "
+            f"等级={f[2]}  身份={'未激活' if f[3]==-1 else ('已激活' if f[3]==0 else str(f[3]))}    "
             f"HP={f[5]}/{f[8]}  MP={f[6]}/{f[10]}"
         ))
         portrait = f[1]; large_idx = portrait * 2 if portrait >= 0 else 0
@@ -1923,8 +1923,8 @@ class WarpcEditor:
         nm = self._char_name(rec)
         hp_str = f"{f[5]}/{f[8]}" if f[5] or f[8] else ""
         mp_str = f"{f[6]}/{f[10]}" if f[6] or f[10] else ""
-        role_val = f[3]; role_str = '我方' if role_val == -1 else ('敌方' if role_val == 0 else str(role_val))
-        tag = 'ally' if role_val == -1 else ('enemy' if role_val == 0 else '')
+        role_val = f[3]; role_str = '未激活' if role_val == -1 else ('已激活' if role_val == 0 else str(role_val))
+        tag = 'inactive' if role_val == -1 else ('active' if role_val == 0 else '')
         self.tree.unbind('<<TreeviewSelect>>')
         for child in self.tree.get_children():
             if int(self.tree.item(child)['values'][0]) == rec['index']:
@@ -1948,7 +1948,7 @@ class WarpcEditor:
             return
         new_idx = len(self.records)
         fields = [0] * WARPC_FIELD_COUNT
-        fields[3] = -1   # role = 我方
+        fields[3] = -1   # role = 未激活, sub_410674 L40入队时置为0(已激活)
         fields[4] = 100  # exp_to_next = 100
         fields[2] = 1    # level = 1
         # HP/MP 基础值

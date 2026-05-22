@@ -126,7 +126,7 @@ WARPC_IDENTITY = [
     ("name_id",       0,   "名称TKT ID",   "角色名称 → TKT.dat"),
     ("portrait",      2,   "头像索引",     "Fa.JVG大幅图=×2, 缩略=×2+1"),
     ("level",         4,   "等级",         "角色等级"),
-    ("role",          6,   "身份",         "0=敌方 -1=我方"),
+    ("role",          6,   "身份",         "-1=未激活 0=已激活(sub_410674 L40入队时置0)"),
     ("exp_to_next",   8,   "升级所需经验", "绝大多数=100"),
     ("awk_sprite_id", 520, "战场图集索引", "WarPC[260], Awk.JVG块号"),
     ("portrait_menu", 522, "队伍头像ID",   "WarPC[261], Mu.JVG块号"),
@@ -875,7 +875,7 @@ class SaveEditor:
 
         self._warpc_filter_var = tk.StringVar(value="全部")
         ttk.Combobox(sf, textvariable=self._warpc_filter_var, state='readonly',
-                     values=["全部", "我方", "敌方"], width=6).pack(side=tk.LEFT)
+                     values=["全部", "未激活", "已激活"], width=8).pack(side=tk.LEFT)
         self._warpc_filter_var.trace_add('write', lambda *a: self._refresh_warpc_list())
 
         # TreeView
@@ -1247,6 +1247,14 @@ class SaveEditor:
         if self.seg3 is None:
             return
 
+        # 获取当前队伍成员 (word_75688C)
+        team_set = set()
+        if self.seg2 is not None:
+            for i in range(6):
+                tid = struct.unpack_from('<h', self.seg2, 0x0C + i*2)[0]
+                if tid >= 0:
+                    team_set.add(tid)
+
         search = self._warpc_search_var.get().strip().lower()
         if search == "搜索角色...":
             search = ""
@@ -1260,19 +1268,31 @@ class SaveEditor:
             mp = warpc_get(self.seg3, i, 12)
             name = self.tkt.get(name_id, f"ID:{name_id}") if name_id else ""
 
-            if filt == "我方" and role != -1:
-                continue
-            if filt == "敌方" and role != 0:
-                continue
+            in_team = i in team_set
+            if filt == "未激活":
+                if role != -1:
+                    continue
+            elif filt == "已激活":
+                if role != 0:
+                    continue
+
             if search and search not in str(i) and search not in name.lower():
                 continue
 
-            role_str = "我方" if role == -1 else "敌方"
-            tag = 'ally' if role == -1 else 'enemy'
+            if in_team:
+                role_str = "队伍"
+                tag = 'party'
+            elif role == -1:
+                role_str = "未激活"
+                tag = 'inactive'
+            else:
+                role_str = "已激活"
+                tag = 'active'
             tree.insert('', tk.END, values=(i, name, lv, role_str, hp, mp), tags=(tag,))
 
-        tree.tag_configure('ally', foreground='#2266CC')
-        tree.tag_configure('enemy', foreground='#CC3333')
+        tree.tag_configure('party', foreground='#228B22')
+        tree.tag_configure('inactive', foreground='#2266CC')
+        tree.tag_configure('active', foreground='#CC3333')
 
     def _on_warpc_select(self, event=None):
         sel = self._warpc_tree.selection()
@@ -1293,10 +1313,17 @@ class SaveEditor:
         if self.seg3 is None or idx < 0:
             return
 
-        # 标题
+        # 标题 (包含队伍状态)
         name_id = warpc_get(self.seg3, idx, 0)
         name = self.tkt.get(name_id, f"ID:{name_id}")
-        ttk.Label(self._warpc_right, text=f"角色 #{idx} - {name}",
+        in_team = False
+        if self.seg2 is not None:
+            for ti in range(6):
+                if struct.unpack_from('<h', self.seg2, 0x0C + ti*2)[0] == idx:
+                    in_team = True
+                    break
+        status = " [队伍中]" if in_team else ""
+        ttk.Label(self._warpc_right, text=f"角色 #{idx} - {name}{status}",
                   font=FONT_TITLE).pack(anchor=tk.W, padx=4, pady=(4, 2))
 
         # 编辑区 (可滚动)
