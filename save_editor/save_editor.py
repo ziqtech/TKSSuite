@@ -48,8 +48,8 @@ SEG1_BASIC_FIELDS = [
     ("map_id",       0x40, 4, "当前地图ID",     "I",  "dword_755B58, sub_40C044地图切换"),
     ("current_char", 0x44, 4, "当前角色ID",     "I",  "dword_755B5C, sub_40C7CC SetPlayer事件"),
     ("game_active",  0x48, 4, "游戏激活标志",    "I",  "dword_755B60, sub_41103C读档后置1"),
-    ("char_name",    0x4C, 5, "玩家名字(5B)",   "5s", "byte_755B64, sub_40D2D0名字输入"),
-    ("name_short",   0x54, 3, "名字短串(3B)",   "3s", "byte_755B6C, sub_40D2D0"),
+    ("given_name",   0x4C, 5, "名",             "big5", "byte_755B64, sub_40D2D0 strcpy→名 上限2Big5字"),
+    ("surname",      0x54, 5, "姓",             "big5", "byte_755B6C, sub_40D2D0 strcpy→姓 上限2Big5字"),
 ]
 
 SEG1_SLOT_FIELDS = [
@@ -1587,8 +1587,8 @@ class SaveEditor:
             data = self.seg1 if seg == 'seg1' else self.seg2
             if data is None or off + size > len(data):
                 continue
-            if fmt in ('5s', '3s'):
-                sv.set(data[off:off+size].hex())
+            if fmt == 'big5':
+                sv.set(self._decode_big5(data[off:off+size]))
             else:
                 sv.set(str(struct.unpack_from(fmt, data, off)[0]))
 
@@ -1821,9 +1821,8 @@ class SaveEditor:
                 if data is None:
                     continue
                 txt = sv.get()
-                if fmt in ('5s', '3s'):
-                    b = bytes.fromhex(txt)
-                    data[off:off+size] = b.ljust(size, b'\x00')[:size]
+                if fmt == 'big5':
+                    data[off:off+size] = self._encode_big5(txt, size)
                 else:
                     struct.pack_into(fmt, data, off, int(txt))
 
@@ -1960,6 +1959,33 @@ class SaveEditor:
             if tip['win']: tip['win'].destroy(); tip['win'] = None
         widget.bind('<Enter>', _enter)
         widget.bind('<Leave>', _leave)
+
+    def _decode_big5(self, raw):
+        """Big5字节串解码为文本（用于显示）."""
+        null_idx = raw.find(b'\x00')
+        if null_idx >= 0:
+            raw = raw[:null_idx]
+        if not raw:
+            return ""
+        try:
+            return raw.decode('big5')
+        except UnicodeDecodeError:
+            return raw.hex()
+
+    def _encode_big5(self, text, size):
+        """文本转为Big5字节串（简→繁转换后编码，用于保存）."""
+        text = text.strip()
+        if not text:
+            return b'\x00' * size
+        import zhconv
+        text = zhconv.convert(text, 'zh-hant')
+        try:
+            b = text.encode('big5')
+        except UnicodeEncodeError:
+            b = text.encode('big5', errors='replace')
+        max_len = size - 1
+        b = b[:max_len]
+        return b.ljust(size, b'\x00')[:size]
 
     def _on_close(self):
         if self._dirty:
