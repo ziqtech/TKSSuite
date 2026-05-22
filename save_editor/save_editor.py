@@ -103,11 +103,14 @@ SEG2_TEAM_FIELDS = [
 ]
 
 SEG2_BATTLE_FIELDS = [
-    ("encounters",   0x15FA, 2, "遭遇次数",     "H",  "word_757EBA, sub_43CA64 上限30000"),
-    ("wins",         0x15FC, 2, "胜利次数",     "H",  "word_757EBC, sub_43CA64"),
-    ("losses",       0x15FE, 2, "败北次数",     "H",  "word_757EBE, sub_43C988"),
-    ("battle_pts",   0x163E, 2, "战斗点数",     "H",  "word_757EFE, sub_40E11C"),
-    ("teleport_pct", 0x1640, 2, "传送进度",     "H",  "word_757F00, sub_41A080"),
+    # 来源: sub_41A080 (状态画面渲染) L61-67, 按显示顺序排列
+    ("wins",         0x163A, 2, "胜场数",       "H",  "word_757EBA, sub_41A080 L61 勝場數"),
+    ("losses",       0x163C, 2, "败场数",       "H",  "word_757EBC, sub_41A080 L62 敗場數"),
+    ("kills",        0x163E, 2, "杀敌数",       "H",  "word_757EBE, sub_41A080 L63 殺敵數"),
+    ("quest_pct",    0x167E, 2, "完成任务%",    "H",  "word_757EFE, sub_41A080 L64 完成任務% / sub_40E11C case10"),
+    ("special_pct",  0x1680, 2, "特殊物品%",    "H",  "word_757F00, sub_41A080 L65 特殊物品% / sub_40E11C case11"),
+    ("souls",        0x1684, 2, "收纳灵魂",      "H",  "word_757F04, sub_41A080 L66 收納靈魂"),
+    ("beasts",       0x1686, 2, "收纳兽元",      "H",  "word_757F06, sub_41A080 L67 收納獸元"),
 ]
 
 SEG2_INV_COUNT = ("inv_count", 0x828, 2, "物品种类数", "H", "word_7570A8, sub_40CD90")
@@ -878,7 +881,9 @@ class SaveEditor:
         for key, off, size, label, fmt, cmt in SEG2_BATTLE_FIELDS:
             col = ttk.Frame(lf3)
             col.pack(side=tk.LEFT, padx=10)
-            ttk.Label(col, text=label, font=FONT_S).pack()
+            lbl = ttk.Label(col, text=label, font=FONT_S)
+            lbl.pack()
+            self._bind_tooltip(lbl, cmt)
             sv = tk.StringVar(value="0")
             self._battle_vars[key] = sv
             ttk.Entry(col, textvariable=sv, width=8, font=FONT_M, justify='center').pack()
@@ -1937,6 +1942,24 @@ class SaveEditor:
             canvas.yview_scroll(int(-1 * (e.delta / 120)), "units")
         canvas.bind("<Enter>", lambda e: canvas.bind_all("<MouseWheel>", _mw))
         canvas.bind("<Leave>", lambda e: canvas.unbind_all("<MouseWheel>"))
+
+    def _bind_tooltip(self, widget, text):
+        """鼠标悬浮显示提示文本."""
+        tip = {'win': None}
+        def _enter(e):
+            if tip['win']: return
+            x = widget.winfo_rootx() + 10
+            y = widget.winfo_rooty() + widget.winfo_height() + 2
+            w = tk.Toplevel(widget)
+            w.wm_overrideredirect(True)
+            w.wm_geometry(f"+{x}+{y}")
+            ttk.Label(w, text=text, background='#FFFFE0', relief='solid', borderwidth=1,
+                      font=FONT_S, wraplength=420, padding=3).pack()
+            tip['win'] = w
+        def _leave(e):
+            if tip['win']: tip['win'].destroy(); tip['win'] = None
+        widget.bind('<Enter>', _enter)
+        widget.bind('<Leave>', _leave)
 
     def _on_close(self):
         if self._dirty:
