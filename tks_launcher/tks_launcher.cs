@@ -112,6 +112,27 @@
  *            (2) 读取 WarPC[ID].WORD[261]; (3) 非零使用 WORD[261] 作 frame,
  *            否则 fallback 到 unsigned ID + 211。与队伍头像 cave 逻辑一致。
  *
+ * [补丁十六] sub_4189BC 可装备技能列表扫描上限修正 (修复新角色技能列表 "啊！")
+ *   原始问题: sub_4189BC 构建"可装备技能列表"时按 v12 < 350 扫描全部 350 条
+ *            TKSkill 记录, 但有效记录只有 344 (idx 0~343), 末尾 idx 344~349
+ *            是空记录 (name_id=0, type=0)。这本来对原 143 个角色无影响, 因为
+ *            它们的 WarPC.skill_learn[344..349] = 0 (在 [10,40) 区间外)。
+ *            **但 skill_learn 字节范围 byte[176..519] 总共 344 个字节,
+ *              sub_4189BC 访问 skill_learn[v12] 即 byte[176+v12], 当 v12 ∈
+ *              [344, 349] 时访问 byte[520..525] = WarPC field[260..262]**, 这正是
+ *            补丁二/补丁三新角色的 awk_sprite_id 和 portrait_menu_id 字段!
+ *            新角色 (143/144/145) 一旦设置自定义战场形象或队伍头像, 其值 byte
+ *            若落在 [20, 39] 区间 ("20-组技能学会" 或 "30-子技能学会" 范围),
+ *            就会被 sub_4189BC 误判为已学会 TKSkill[344..349], 加入装备列表 →
+ *            sub_418C90 调用 sub_4067E8(0) 查 TKT 找不到 → 兜底返回 TKT 字符串
+ *            首条 "啊！" → 列表中显示 "啊！" 字样。
+ *   修补效果: 将 sub_4189BC 中两处 "cmp word [ebp-04], 0x015E" (66 81 7D FC 5E 01)
+ *            的立即数 0x015E (=350) 改为 0x0158 (=344), 让扫描严格止于 idx 343,
+ *            从此 byte[520+] 永远不被视为 skill_learn, 与 WarPC field[260+]
+ *            的字段语义不再冲突。
+ *            位置: RVA 0x18BB5 (主循环) + RVA 0x18C3F (第二段翻页判定), 各改 1 字节
+ *                  5E → 58。
+ *
  * 用法: 把编译后的 TKSLauncher.exe 放到游戏目录，双击运行即可
  * 编译: C:\Windows\Microsoft.NET\Framework\v4.0.30319\csc.exe /target:winexe /win32icon:TKS.ico /out:TKSLauncher.exe tks_launcher.cs
  */
@@ -327,6 +348,26 @@ class TKSLauncher
         new Patch {
             RVA = 0x3BF5C, Data = new byte[] { 0xB6 },
             Desc = "BattleWriteback: movsx->movzx byte_9DF888 (fix idx>=128 exp writeback)"
+        },
+
+        // ────────────────────────────────────────────────────────
+        // [补丁十六] sub_4189BC 可装备技能列表扫描上限 350→344
+        // 原始: sub_4189BC 主循环 `v12 < 350` 与第二段翻页判定 `v12 < 350`
+        //       会扫描 TKSkill[0..349], 而 [344..349] 为空记录 (name_id=0),
+        //       且 WarPC.byte[520..525] (WORD[260,261,262] = awk_sprite_id /
+        //       portrait_menu_id 等补丁专用字段) 恰好与 skill_learn[344..349]
+        //       的内存重叠。一旦新角色自定义形象/头像的低字节落在 [20,39],
+        //       game 误判 "已学 TKSkill[344..349]" → sub_4067E8(0) 返回 TKT[0] "啊！"。
+        // 修补: 将两处 "66 81 7D FC 5E 01" 中的立即数低字节 5E (=0x015E=350)
+        //       改为 58 (=0x0158=344), 让扫描严格停在 idx 343。
+        // ────────────────────────────────────────────────────────
+        new Patch {
+            RVA = 0x18BB5, Data = new byte[] { 0x58 },
+            Desc = "SkillList scan upper bound 350->344 (sub_4189BC main loop)"
+        },
+        new Patch {
+            RVA = 0x18C3F, Data = new byte[] { 0x58 },
+            Desc = "SkillList scan upper bound 350->344 (sub_4189BC page check)"
         },
     };
 
