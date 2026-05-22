@@ -133,6 +133,16 @@
  *            位置: RVA 0x18BB5 (主循环) + RVA 0x18C3F (第二段翻页判定), 各改 1 字节
  *                  5E → 58。
  *
+ * [补丁十七] 历史文本 ID 自定义 (sub_41A080)
+ *   原始问题: 角色界面「历史」标签页的文本 ID 由硬编码公式计算:
+ *             TKT_ID = word_75688C[char_idx] + 9050
+ *             新角色 (143+) 无法自定义历史文本 ID, 只能使用公式推导值
+ *             如角色#143 颜良的历史 ID = 9050+143 = 9193
+ *   修补效果: 通过动态 cave 检查 WarPC[char_idx].WORD[262] (offset 0x20C=524),
+ *             非零时直接使用该值作为 TKT ID, 否则回退到原公式 +9050。
+ *             与 warpc_editor.py v1.6 的 history_text_id 字段配合使用。
+ *             Hook 位置: RVA 0x1A749 (sub_41A080 中 add edx, 0x235A 指令)
+ *
  * 用法: 把编译后的 TKSLauncher.exe 放到游戏目录，双击运行即可
  * 编译: C:\Windows\Microsoft.NET\Framework\v4.0.30319\csc.exe /target:winexe /win32icon:TKS.ico /out:TKSLauncher.exe tks_launcher.cs
  */
@@ -488,6 +498,42 @@ class TKSLauncher
     };
 
     // ============================================================
+    // [补丁十七] 历史文本 ID 覆盖 - 动态 Cave (38 字节)
+    // Hook 在 sub_41A080: RVA 0x1A749 的 "add edx, 0x235A" (6B)
+    //
+    // 原始逻辑:
+    //   v9 = sub_4067E8(word_75688C[char_idx] + 9050);
+    //
+    // 关键认知: eax = a1[614864] = 队伍槽位 (0-5), 不是 WarPC 索引!
+    //           edx = word_75688C[eax] = WarPC 索引 (0-based, 直接对应)
+    //
+    // Cave 逻辑:
+    //   1. 以 edx (=word_75688C值) 直接作为 WarPC 索引, 读取 WORD[262] (offset 0x20C)
+    //   2. 非零 → 使用自定义值作为 TKT ID
+    //   3. 为零 → 保持原公式: edx + 9050
+    //
+    // 入口约定: call cave 前:
+    //   eax = 队伍槽位, edx = word_75688C[slot] = WarPC 索引
+    // 出口: edx = 最终历史 TKT ID, ret 回到 push edx
+    // ============================================================
+    static readonly byte[] HistoryTextCave = new byte[] {
+        0x52,                               // [00] push edx          ; 保存 word_75688C值 (默认路径用)
+        0x69, 0xD2, 0x1E, 0x04, 0x00, 0x00, // [01] imul edx, edx, 1054
+        0x81, 0xC2, 0x08, 0x7F, 0x75, 0x00, // [07] add edx, WARPC_BASE (runtime patched)
+        0x0F, 0xB7, 0x82, 0x0C, 0x02, 0x00, 0x00, // [13] movzx eax, word [edx+0x20C] ; WORD[262]
+        0x85, 0xC0,                         // [20] test eax, eax
+        0x75, 0x08,                         // [22] jnz +8  → .use_custom [32]
+        // 默认路径: edx = word_75688C值 + 9050
+        0x5A,                               // [24] pop edx           ; 恢复 word_75688C值
+        0x81, 0xC2, 0x5A, 0x23, 0x00, 0x00, // [25] add edx, 0x235A   ; +9050
+        0xC3,                               // [31] ret
+        // .use_custom: ([32])
+        0x8B, 0xD0,                         // [32] mov edx, eax      ; edx = 自定义TKT ID
+        0x83, 0xC4, 0x04,                   // [34] add esp, 4        ; 丢弃保存的 word_75688C值
+        0xC3,                               // [37] ret
+    };
+
+    // ============================================================
     // [补丁三] 队伍头像显示 - PATH2 动态 Cave (42 字节)
     // Hook 在 RVA 0x17E1A (sub_417F84 中的 "add dx, 0xD3; push edx" 处)
     //
@@ -621,6 +667,28 @@ class TKSLauncher
         });
         // 保存 cave 地址供后续 Patch_ArchivePortrait_Hook 使用
         _archivePortraitCaveAddr = (int)arcCave;
+
+        // --- History Text cave (历史文本ID, 补丁十七) ---
+        // 使用 cave + 256 位置 (ArchivePortraitCave: 192+48=240, 对齐到256)
+        long histCave = cave + 256;
+        byte[] histCaveData = (byte[])HistoryTextCave.Clone();
+        if (warpcBaseAddr != 0) ReplaceAddrInBytes(histCaveData, WARPC_BASE, warpcBaseAddr);
+        // Hook 替换 sub_41A080: RVA 0x1A749 的 "add edx, 0x235A" (6B)
+        int histHookRva = 0x1A749;
+        int histCallOff = (int)(histCave - baseVA) - (histHookRva + 5);
+        byte[] histCallData = new byte[6];
+        histCallData[0] = 0xE8;           // call rel32 (5B)
+        BitConverter.GetBytes(histCallOff).CopyTo(histCallData, 1);
+        histCallData[5] = 0x90;           // NOP pad 6B→5B
+
+        list.Add(new Patch {
+            RVA = (int)(histCave - baseVA), Data = histCaveData,
+            Desc = string.Format("HistoryText cave@0x{0:X8} (历史文本ID, 39B)", histCave)
+        });
+        list.Add(new Patch {
+            RVA = histHookRva, Data = histCallData,
+            Desc = string.Format("HistoryText: hook add edx,0x235A -> cave@0x{0:X8}", histCave)
+        });
 
         return list.ToArray();
     }
@@ -2211,7 +2279,7 @@ class TKSLauncher
         IntPtr caveAddr = IntPtr.Zero;
         if (hProc != IntPtr.Zero)
         {
-            caveAddr = VirtualAllocEx(hProc, IntPtr.Zero, 256, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
+            caveAddr = VirtualAllocEx(hProc, IntPtr.Zero, 512, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
             CloseHandle(hProc);
         }
         if (caveAddr == IntPtr.Zero)

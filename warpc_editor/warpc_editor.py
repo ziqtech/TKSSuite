@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-WarPC.dat 可视化编辑器 v1.5
+WarPC.dat 可视化编辑器 v1.6
 =============================================================
 逆向依据:
   - sub_45343C:     DAT 文件统一加载 (LZSS 解压, 1054字节/角色, 143角色)
@@ -281,6 +281,7 @@ IDENTITY_FIELDS = [
     ("entity_link", 526, "地图实体ID",  "离队后在地图上显示的NPC实体ID → TKMat.dat; sub_41EEC0→sub_40C648 启用此实体使其回到原位"),
     ("awk_sprite_id", 520, "战场图集索引（补丁专用）", "战斗中Awk.JVG/Awt.JVG块号 — 配合运行时补丁使用; 0=使用原硬编码公式(PATH1:WarPC索引+6, PATH2:WarPC记录号+12); 非0=补丁直接使用此值作为武器精灵块; 替代sub_4307CC:120/+236的硬编码偏移"),
     ("portrait_menu_id", 522, "队伍头像ID（补丁专用）", "队伍菜单中Mu.JVG精灵块号 — 配合运行时补丁使用; 0=使用原公式(portrait+211); 非0=直接使用此值作为Mu.JVG精灵块; 替代sub_41762C:68/+111的硬编码计算"),
+    ("history_text_id", 524, "历史文本ID（补丁专用）", "角色界面「历史」标签页显示的TKT文本ID — 配合运行时补丁使用; 0=使用原硬编码公式(9050+角色序号); 非0=补丁直接使用此值作为TKT ID; 替代sub_41A080:104的 word_75688C[idx]+9050"),
 ]
 
 HPMP_FIELDS = [
@@ -499,7 +500,7 @@ def set_field(rec, byte_off, val):
 class WarpcEditor:
     def __init__(self, root):
         self.root = root
-        self.root.title("WarPC.dat 可视化编辑器 v1.5")
+        self.root.title("WarPC.dat 可视化编辑器 v1.6")
         ico = os.path.join(os.path.dirname(__file__), 'TKS.ico')
         if os.path.exists(ico): self.root.iconbitmap(default=ico)
         self.root.geometry("1500x820"); self.root.minsize(1050, 650)
@@ -1024,6 +1025,11 @@ class WarpcEditor:
             ttk.Entry(box, textvariable=ev, width=fw, font=FONT).pack(side=tk.LEFT)
             ttk.Button(box, text="…", width=2,
                        command=lambda: self._pick_portrait()).pack(side=tk.LEFT, padx=1)
+        elif fn == 'history_text_id':
+            ttk.Entry(frm, textvariable=ev, width=fw, font=FONT).pack(fill=tk.X)
+            self._edit_extras[fn] = ttk.Label(frm, text='', foreground='#3366cc',
+                                               font=FONT_S, wraplength=150)
+            self._edit_extras[fn].pack(anchor=tk.W)
         else:
             ttk.Entry(frm, textvariable=ev, width=fw, font=FONT).pack(fill=tk.X)
 
@@ -1401,6 +1407,27 @@ class WarpcEditor:
                     self._edit_extras[fn].config(text=self.item_names[iid])
                 else:
                     self._edit_extras[fn].config(text=f'物品#{iid}')
+
+        # Resolve TKT text for history_text_id
+        if 'history_text_id' in self._edit_extras:
+            hid = f[524 // 2]
+            if hid == 0:
+                # 0=使用原公式, 显示计算出的默认值
+                # word_75688C[slot] 直接等于 WarPC 索引, +9050 即得历史 TKT ID
+                default_id = 9050 + rec['index']
+                if hasattr(self, 'tkt') and default_id in self.tkt:
+                    txt = self.tkt[default_id].split('\n')[0].strip()[:25]
+                    self._edit_extras['history_text_id'].config(
+                        text=f'默认→TKT#{default_id}: {txt}')
+                else:
+                    self._edit_extras['history_text_id'].config(
+                        text=f'默认→TKT#{default_id} (未找到)')
+            elif hasattr(self, 'tkt') and hid in self.tkt:
+                txt = self.tkt[hid].split('\n')[0].strip()[:25]
+                self._edit_extras['history_text_id'].config(
+                    text=f'TKT#{hid}: {txt}')
+            else:
+                self._edit_extras['history_text_id'].config(text=f'TKT#{hid} (未找到)')
 
         # Resolve item names for equip_id fields
         for fn, fo, _, _ in EQUIP_FIELDS[4:]:
@@ -2161,7 +2188,7 @@ class WarpcEditor:
     def _show_about(self):
         cnt = len(self.records) if self.records else WARPC_ORIG_COUNT
         messagebox.showinfo("关于",
-            "WarPC.dat 可视化编辑器 v1.5\n\n"
+            "WarPC.dat 可视化编辑器 v1.6\n\n"
             "基于《三国群侠传》 TKS.exe 反编译\n"
             f"{cnt} 角色 × {WARPC_REC} 字节 ({WARPC_FIELD_COUNT}×int16)\n"
             f"原游戏: {WARPC_ORIG_COUNT} 角色 ({WARPC_ORIG_SIZE} 字节), 支持动态扩展\n\n"
