@@ -896,12 +896,12 @@ class SaveEditor:
                   foreground='#888').pack(side=tk.LEFT, padx=8)
 
     # ================================================================
-    # Tab 2: 库存
+    # Tab 2: 物品
     # ================================================================
 
     def _build_inventory_tab(self):
         frame = ttk.Frame(self.nb, padding=12)
-        self.nb.add(frame, text=" 库存 ")
+        self.nb.add(frame, text=" 物品 ")
 
         ctrl = ttk.Frame(frame)
         ctrl.pack(fill=tk.X, pady=(0, 4))
@@ -909,7 +909,7 @@ class SaveEditor:
         self._inv_count_var = tk.StringVar(value="0")
         ttk.Entry(ctrl, textvariable=self._inv_count_var, width=6, font=FONT_M).pack(side=tk.LEFT, padx=4)
         ttk.Button(ctrl, text="刷新列表", command=self._refresh_inventory).pack(side=tk.LEFT, padx=8)
-        ttk.Button(ctrl, text="应用库存修改", command=self._apply_inventory).pack(side=tk.LEFT, padx=4)
+        ttk.Button(ctrl, text="应用物品修改", command=self._apply_inventory).pack(side=tk.LEFT, padx=4)
         ttk.Button(ctrl, text="新增物品", command=self._add_inv_item_dialog).pack(side=tk.LEFT, padx=8)
 
         # 物品列表 Treeview — 参照 item_editor 布局
@@ -1007,7 +1007,7 @@ class SaveEditor:
 
     def _build_warpc_tab(self):
         frame = ttk.Frame(self.nb, padding=8)
-        self.nb.add(frame, text=" 角色(WarPC) ")
+        self.nb.add(frame, text=" 角色 ")
 
         paned = ttk.PanedWindow(frame, orient=tk.HORIZONTAL)
         paned.pack(fill=tk.BOTH, expand=True)
@@ -1311,7 +1311,7 @@ class SaveEditor:
                 self._battle_vars[key].set(str(val))
 
     # ================================================================
-    # 数据填充 — 库存
+    # 数据填充 — 物品
     # ================================================================
 
     def _refresh_inventory(self):
@@ -1533,7 +1533,7 @@ class SaveEditor:
         dlg.wait_window()
 
     def _add_inv_item_to_inventory(self, type_idx, item_id, qty):
-        """添加物品到库存: 已存在则叠加数量, 不存在则新增."""
+        """添加物品: 已存在则叠加数量, 不存在则新增."""
         if self.seg2 is None:
             return
 
@@ -1560,7 +1560,7 @@ class SaveEditor:
 
         # 不存在，新增到末尾
         if count >= 600:
-            messagebox.showwarning("库存已满", "库存已达上限 600 种物品")
+            messagebox.showwarning("物品已满", "物品已达上限 600 种")
             return
 
         struct.pack_into('<h', self.seg2, off_items + count*2, item_id)
