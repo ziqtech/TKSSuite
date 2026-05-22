@@ -13,7 +13,7 @@ TKS Save Editor v2.0
   WarPC 原始大小 = 143*1054 = 150722B, 启动器扩展后可能更大
 
 索引文件格式 (N.sav, 28字节):
-  [6×1B team_ids][2B game_time][4B unix_timestamp][6×2B team_levels][4B scene_id]
+  [6×1B team_ids][2B gold][4B unix_timestamp][6×2B team_levels][4B scene_id]
 """
 
 import os, sys, struct, time, datetime
@@ -406,14 +406,14 @@ def load_index_file(path):
         return None
     # 解析 (来源: 41CE10.c:103-124)
     team_ids = [data[i] if data[i] != 0xFF else -1 for i in range(6)]
-    game_time = struct.unpack_from('<H', data, 6)[0]
+    gold = struct.unpack_from('<H', data, 6)[0]
     timestamp = struct.unpack_from('<I', data, 8)[0]
     team_levels = [struct.unpack_from('<H', data, 12 + i*2)[0] for i in range(6)]
     scene_id = struct.unpack_from('<i', data, 24)[0]
     return {
         'raw': data,
         'team_ids': team_ids,
-        'game_time': game_time,
+        'gold': gold,
         'timestamp': timestamp,
         'team_levels': team_levels,
         'scene_id': scene_id,
@@ -425,7 +425,7 @@ def save_index_file(path, meta_dict):
     data = bytearray(SAV_META_SIZE)
     for i, tid in enumerate(meta_dict['team_ids'][:6]):
         data[i] = tid & 0xFF if tid >= 0 else 0xFF
-    struct.pack_into('<H', data, 6, meta_dict['game_time'] & 0xFFFF)
+    struct.pack_into('<H', data, 6, meta_dict['gold'] & 0xFFFF)
     struct.pack_into('<I', data, 8, meta_dict['timestamp'] & 0xFFFFFFFF)
     for i, lv in enumerate(meta_dict['team_levels'][:6]):
         struct.pack_into('<H', data, 12 + i*2, lv & 0xFFFF)
@@ -637,7 +637,7 @@ class SaveEditor:
 
         # 逆向证据标注
         info_text = ("格式来源: sub_41CE10 写入 / sub_41B1A8 读取\n"
-                     "结构: [6B team_ids][2B game_time][4B timestamp][12B levels][4B scene_id]")
+                     "结构: [6B team_ids][2B gold][4B timestamp][12B levels][4B scene_id]")
         ttk.Label(top, text=info_text, font=FONT_S, foreground='#888').pack(anchor=tk.W)
 
         grid = ttk.Frame(top)
@@ -645,7 +645,7 @@ class SaveEditor:
 
         self._ov_vars = {}
         fields = [
-            ("game_time", "游戏时间"),
+            ("gold", "金钱"),
             ("timestamp", "存档时间"),
             ("scene_id", "场景ID"),
         ]
@@ -1048,7 +1048,7 @@ class SaveEditor:
     def _refresh_overview(self):
         if self.index_meta:
             m = self.index_meta
-            self._ov_vars['game_time'].set(str(m['game_time']))
+            self._ov_vars['gold'].set(str(m['gold']))
             try:
                 ts = m['timestamp']
                 dt = datetime.datetime.fromtimestamp(ts)
@@ -1493,7 +1493,7 @@ class SaveEditor:
         if self.index_meta is None:
             self.index_meta = {
                 'team_ids': [0xFF]*6,
-                'game_time': 0,
+                'gold': 0,
                 'timestamp': int(time.time()),
                 'team_levels': [0]*6,
                 'scene_id': -1,
@@ -1502,21 +1502,10 @@ class SaveEditor:
         for i in range(6):
             tid = struct.unpack_from('<h', self.seg2, 0x0C + i*2)[0]
             self.index_meta['team_ids'][i] = tid & 0xFF if tid >= 0 else 0xFF
-        # 游戏时间
-        self.index_meta['game_time'] = struct.unpack_from('<H', self.seg2, 0x02 - 0x02 + 0x02)[0]
-        # 这里需要从正确位置读: word_756882 = seg2 offset 0x02? 不对
-        # 实际: word_756882 在 seg2 的偏移是 0x02 (seg2 base = 0x756880, word_756882 = base+2)
-        # 但 sub_41CE10 写入的是 word_756882 (游戏时间计数器)
-        # 该字段在 seg2 偏移 0x02 处 → 已在金钱位! 需要修正...
-        # 查看逆向: word_756882 = 0x756882, seg2 base = 0x756880, 所以 offset in seg2 = 2
-        # 但 SEG2_CORE_FIELDS 里 gold 也是 offset 0x02! 检查...
-        # 等等, word_756882 是金钱还是游戏时间?
-        # 从 41CE10.c:111: sub_41DAC4(v21, &word_756882, 2) → 写入索引文件偏移6 = game_time
-        # 从 SEG2_CORE_FIELDS: ("gold", 0x02, 2, "金钱", "H", "word_756882...")
-        # 所以 word_756882 是金钱! 但索引文件叫它 game_time... 这是一个有趣的发现
-        # 实际上在索引文件中, 偏移6-7的确是读自 word_756882, 这个值游戏中可能同时表示时间计数
-        # 为兼容保持原逻辑
-        self.index_meta['game_time'] = struct.unpack_from('<H', self.seg2, 0x02)[0]
+        # 金钱 (word_756882 = seg2 offset 0x02)
+        # 从 41CE10.c:111: sub_41DAC4(v21, &word_756882, 2) → 写入索引文件偏移6
+        # SEG2_CORE_FIELDS 中: ("gold", 0x02, 2, "金钱", "H", "word_756882...")
+        self.index_meta['gold'] = struct.unpack_from('<H', self.seg2, 0x02)[0]
         # 时间戳 (当前时间)
         self.index_meta['timestamp'] = int(time.time())
         # 等级 (从WarPC读取: word_757F0C[527*id] = WarPC[id].level, byte offset 4)
