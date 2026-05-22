@@ -905,6 +905,7 @@ class SaveEditor:
         ttk.Entry(ctrl, textvariable=self._inv_count_var, width=6, font=FONT_M).pack(side=tk.LEFT, padx=4)
         ttk.Button(ctrl, text="刷新列表", command=self._refresh_inventory).pack(side=tk.LEFT, padx=8)
         ttk.Button(ctrl, text="应用库存修改", command=self._apply_inventory).pack(side=tk.LEFT, padx=4)
+        ttk.Button(ctrl, text="新增物品", command=self._add_inv_item_dialog).pack(side=tk.LEFT, padx=8)
 
         # 物品列表 Treeview — 参照 item_editor 布局
         cols = ('idx', 'item_id', 'page', 'name', 'qty')
@@ -1355,10 +1356,20 @@ class SaveEditor:
         except ValueError:
             messagebox.showerror("输入错误", "请输入有效数字")
             return
+        # 通过 item_id 反查 TKItem 数组下标
+        new_type = self._find_item_idx_by_id(new_id)
         struct.pack_into('<h', self.seg2, SEG2_INVENTORY[0][1] + idx*2, new_id)
+        struct.pack_into('<H', self.seg2, SEG2_INVENTORY[1][1] + idx*2, new_type)
         struct.pack_into('<H', self.seg2, SEG2_INVENTORY[2][1] + idx*2, new_qty)
         self._dirty = True
         self._refresh_inventory()
+
+    def _find_item_idx_by_id(self, item_id):
+        """通过 item_id 反查 TKItem 数组下标，找不到返回0."""
+        for arr_idx, rec in self.item_records.items():
+            if rec.get('item_id') == item_id:
+                return arr_idx
+        return 0
 
     def _delete_inv_item(self):
         sel = self._inv_tree.selection()
@@ -1382,6 +1393,181 @@ class SaveEditor:
         struct.pack_into('<H', self.seg2, count_off, count - 1)
         self._dirty = True
         self._refresh_inventory()
+
+    def _add_inv_item_dialog(self):
+        """弹出全物品选择对话框 (与 item_editor 左侧列表一致)."""
+        if not self.item_records:
+            messagebox.showinfo("提示", "请先加载存档目录 (需要TKItem.dat)")
+            return
+
+        dlg = tk.Toplevel(self.root)
+        dlg.title("新增物品 — 选择物品")
+        dlg.transient(self.root)
+        dlg.grab_set()
+        dlg.geometry("640x560")
+        dlg.minsize(480, 360)
+        # 居中
+        dlg.update_idletasks()
+        rx = self.root.winfo_rootx(); ry = self.root.winfo_rooty()
+        rw = self.root.winfo_width(); rh = self.root.winfo_height()
+        dw = dlg.winfo_width(); dh = dlg.winfo_height()
+        dlg.geometry(f"+{rx+(rw-dw)//2}+{ry+(rh-dh)//2}")
+
+        # 搜索栏 (参照 item_editor 布局)
+        sf = ttk.Frame(dlg, padding=5)
+        sf.pack(fill=tk.X)
+        ttk.Label(sf, text="搜索:", font=FONT_S).pack(side=tk.LEFT)
+        qv = tk.StringVar()
+        ttk.Entry(sf, textvariable=qv, width=22, font=FONT).pack(side=tk.LEFT, padx=5)
+        ttk.Button(sf, text="清除", command=lambda: qv.set(""), width=5).pack(side=tk.LEFT, padx=2)
+
+        ttk.Label(sf, text="页面:", font=FONT_S).pack(side=tk.LEFT, padx=(10, 2))
+        page_var = tk.StringVar(value="全部页面")
+        page_vals = ["全部页面"] + [f"{k}-{v}" for k, v in PAGE_NAMES.items()]
+        ttk.Combobox(sf, textvariable=page_var, values=page_vals,
+                     state='readonly', width=10).pack(side=tk.LEFT, padx=2)
+
+        nonempty_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(sf, text="仅非空", variable=nonempty_var).pack(side=tk.LEFT, padx=10)
+
+        # 物品列表 Treeview (与 item_editor 左侧一致: 图标列 + index/ID/页面/名称/价格)
+        tree_f = ttk.Frame(dlg)
+        tree_f.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        cols = ('index', 'item_id', 'page', 'name', 'price')
+        tree = ttk.Treeview(tree_f, columns=cols, show='tree headings', selectmode='browse')
+        tree.column('#0', width=36, minwidth=36, stretch=False, anchor='center')
+        tree.heading('#0', text='')
+        for cid, cn, cw in [('index','#',38), ('item_id','ID',42), ('page','页面',48),
+                             ('name','物品名称',200), ('price','价格',48)]:
+            tree.heading(cid, text=cn)
+            tree.column(cid, width=cw, anchor='center' if cid != 'name' else 'w')
+        vsb = ttk.Scrollbar(tree_f, orient=tk.VERTICAL, command=tree.yview)
+        tree.configure(yscrollcommand=vsb.set)
+        tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        vsb.pack(side=tk.RIGHT, fill=tk.Y)
+
+        def _mw(e): tree.yview_scroll(int(-1*(e.delta/120)), "units")
+        tree.bind("<Enter>", lambda e: tree.bind_all("<MouseWheel>", _mw))
+        tree.bind("<Leave>", lambda e: tree.unbind_all("<MouseWheel>"))
+
+        # 底部: 数量 + 按钮
+        bf = ttk.Frame(dlg, padding=5)
+        bf.pack(fill=tk.X)
+        ttk.Label(bf, text="数量:", font=FONT).pack(side=tk.LEFT)
+        qty_var = tk.StringVar(value="1")
+        ttk.Entry(bf, textvariable=qty_var, width=8, font=FONT_M, justify='center').pack(side=tk.LEFT, padx=4)
+        ttk.Label(bf, text="(上限30000)", font=FONT_S, foreground='#888').pack(side=tk.LEFT)
+
+        selected = {'idx': None, 'item_id': None}
+
+        def _do_add():
+            if selected['idx'] is None:
+                messagebox.showwarning("提示", "请先在列表中选择物品", parent=dlg)
+                return
+            try:
+                qty = int(qty_var.get())
+                if qty <= 0 or qty > 30000:
+                    raise ValueError
+            except ValueError:
+                messagebox.showerror("输入错误", "请输入有效数量 (1-30000)", parent=dlg)
+                return
+            self._add_inv_item_to_inventory(selected['idx'], selected['item_id'], qty)
+            dlg.destroy()
+
+        ttk.Button(bf, text="取消", command=dlg.destroy).pack(side=tk.RIGHT, padx=2)
+        ttk.Button(bf, text="添加", command=_do_add).pack(side=tk.RIGHT, padx=2)
+        tree.bind('<Double-1>', lambda e: _do_add())
+
+        # 填充列表 + 筛选
+        photos = []
+
+        def _refresh(*args):
+            tree.delete(*tree.get_children())
+            photos.clear()
+            q = qv.get().strip().lower()
+            pg = page_var.get()
+            ne = nonempty_var.get()
+
+            for arr_idx, rec in self.item_records.items():
+                name = rec.get('name', '')
+                item_id = rec.get('item_id', 0)
+                tab = rec.get('tab_code', 0)
+                price = rec.get('price', 0)
+                icon_val = rec.get('icon', 0)
+
+                if ne and not name:
+                    continue
+                if pg != "全部页面":
+                    if tab != int(pg.split('-')[0]):
+                        continue
+                if q:
+                    if q not in f"{arr_idx} {item_id} {name}".lower():
+                        continue
+
+                page_name = PAGE_NAMES.get(tab, '?')
+                photo = _get_icon_photo(self._mu_sprites, icon_val, (24, 24), self._icon_photos)
+                photos.append(photo)
+                tree.insert('', tk.END,
+                           image=photo if photo else '',
+                           values=(arr_idx, item_id, page_name, name, price))
+
+        qv.trace_add('write', lambda *a: _refresh())
+        page_var.trace_add('write', lambda *a: _refresh())
+        nonempty_var.trace_add('write', lambda *a: _refresh())
+
+        def _on_select(event):
+            sel = tree.selection()
+            if sel:
+                vals = tree.item(sel[0], 'values')
+                selected['idx'] = int(vals[0])
+                selected['item_id'] = int(vals[1])
+
+        tree.bind('<<TreeviewSelect>>', _on_select)
+
+        _refresh()
+        dlg.wait_window()
+
+    def _add_inv_item_to_inventory(self, type_idx, item_id, qty):
+        """添加物品到库存: 已存在则叠加数量, 不存在则新增."""
+        if self.seg2 is None:
+            return
+
+        count_off = SEG2_INV_COUNT[1]
+        off_items = SEG2_INVENTORY[0][1]
+        off_types = SEG2_INVENTORY[1][1]
+        off_qtys = SEG2_INVENTORY[2][1]
+
+        count = struct.unpack_from('<H', self.seg2, count_off)[0]
+
+        # 检查是否已存在相同物品 (通过 inv_types 即 TKItem 数组下标比较)
+        for i in range(min(count, 600)):
+            existing_type = struct.unpack_from('<H', self.seg2, off_types + i*2)[0]
+            if existing_type == type_idx:
+                old_qty = struct.unpack_from('<H', self.seg2, off_qtys + i*2)[0]
+                new_qty = min(old_qty + qty, 30000)
+                struct.pack_into('<H', self.seg2, off_qtys + i*2, new_qty)
+                self._dirty = True
+                self._refresh_inventory()
+                rec = self.item_records.get(type_idx, {})
+                name = rec.get('name', f'物品#{item_id}')
+                self._status_var.set(f"物品已存在: {name}  数量 {old_qty} → {new_qty}")
+                return
+
+        # 不存在，新增到末尾
+        if count >= 600:
+            messagebox.showwarning("库存已满", "库存已达上限 600 种物品")
+            return
+
+        struct.pack_into('<h', self.seg2, off_items + count*2, item_id)
+        struct.pack_into('<H', self.seg2, off_types + count*2, type_idx)
+        struct.pack_into('<H', self.seg2, off_qtys + count*2, qty)
+        struct.pack_into('<H', self.seg2, count_off, count + 1)
+
+        self._dirty = True
+        self._refresh_inventory()
+        rec = self.item_records.get(type_idx, {})
+        name = rec.get('name', f'物品#{item_id}')
+        self._status_var.set(f"已添加: {name} ×{qty}")
 
     # ================================================================
     # 数据填充 — 全局
