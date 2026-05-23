@@ -59,7 +59,7 @@ WarWay.dat 格式 (每条1024字节, 共100条, 32x32有符号字节网格):
 用法: python wardata_editor.py
 """
 
-import struct, os, sys, tkinter as tk
+import struct, os, sys, random, tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 from pathlib import Path
 
@@ -497,6 +497,8 @@ class WarDataEditor:
         self._drag_start_y = 0
         self._pan_start_x = 0
         self._pan_start_y = 0
+        self._last_resolved_enemies = {}
+        self._last_resolved_treas = {}
 
         self._build_ui()
         self._set_edit_enabled(False)
@@ -1969,9 +1971,160 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
         sy = round((365 + 28 * (gx - 10) + 28 * (gy - 15)) * zoom)
         return sx, sy
 
+    def _resolve_scene_placements(self, rec, warway):
+        """根据 sub_431428 + sub_4307CC 的游戏规则解析场景布置
+
+        sub_431428 放置顺序: 友军固定→敌军固定→区域放置(1-5)→宝物固定→宝物区域放置
+        sub_4307CC:200-210 flags&4 时随机敌军槽位数
+        sub_452AC0: RNG = rand() % n → Python random.randrange(n)
+
+        返回: (resolved_enemies, resolved_treas, enemy_zone_reqs, trea_zone_reqs, active_slots)
+        """
+        # ── 友军数 & 激活槽位数 (sub_4307CC:200-210) ──
+        ally_count = sum(1 for c in rec['must_chars'] if c > 0 and c != 255)
+        if ally_count < 1:
+            ally_count = 1
+        flags = rec['flags']
+        if flags & 4:
+            if random.randint(0, 999) >= 300:
+                active_slots = random.randrange(max(1, 2 * ally_count - 2)) + 3
+            else:
+                active_slots = random.randrange(ally_count // 2 + ally_count) + 1
+        else:
+            active_slots = 18
+        active_slots = min(active_slots, 18)
+
+        # ── WarWay 区域候选格收集 ──
+        zone_cells = {1: [], 2: [], 3: [], 4: [], 5: []}
+        if warway:
+            for gy in range(32):
+                for gx in range(32):
+                    raw = warway[gy * 32 + gx]
+                    val = raw if raw < 128 else raw - 256
+                    if 1 <= val <= 5:
+                        zone_cells[val].append((gx, gy))
+
+        occupied = set()
+        resolved_enemies = {}
+        resolved_treas = {}
+        enemy_zone_reqs = []
+        trea_zone_reqs = []
+
+        # ═══════════════════════════════════════════════════════
+        # 1. 友军固定位置 (sub_431428:74-87)
+        # ═══════════════════════════════════════════════════════
+        for i in range(6):
+            ax = rec['ally_xy'][i * 2]
+            ay = rec['ally_xy'][i * 2 + 1]
+            if ax > 0 and ay > 0 and 0 <= ax < 32 and 0 <= ay < 32:
+                occupied.add((ax, ay))
+
+        # ═══════════════════════════════════════════════════════
+        # 2. 敌军固定位置 (sub_431428:88-105)
+        # ═══════════════════════════════════════════════════════
+        for i in range(active_slots):
+            eid = rec['enemy_ids'][i]
+            if eid <= 0:
+                continue
+            ex = rec['enemy_xy'][i * 2]
+            ey = rec['enemy_xy'][i * 2 + 1]
+            if ex >= 0 and 0 <= ex < 32 and 0 <= ey < 32:
+                resolved_enemies[i] = (ex, ey)
+                occupied.add((ex, ey))
+
+        # ═══════════════════════════════════════════════════════
+        # 3. 区域放置 — 遍历24个战斗单位槽位 (sub_431428:106-159)
+        #    24 = 18敌军 + 6友军, 按 zone 1→5 顺序处理
+        # ═══════════════════════════════════════════════════════
+        zone_pool = {z: list(cells) for z, cells in zone_cells.items()}
+
+        def _pick_from_zone(zone):
+            """从zone候选池中随机选取一个未被占用的格"""
+            candidates = [(x, y) for (x, y) in zone_pool[zone] if (x, y) not in occupied]
+            if not candidates:
+                return None
+            gx, gy = random.choice(candidates)
+            occupied.add((gx, gy))
+            zone_pool[zone].remove((gx, gy))
+            return (gx, gy)
+
+        # sub_431428:138-158 按 zone 1→5, 遍历全部24个战斗槽 (18敌军+6友军)
+        for zone in range(1, 6):
+            # 18个敌军槽
+            for i in range(18):
+                eid = rec['enemy_ids'][i]
+                if eid <= 0 or i in resolved_enemies:
+                    continue
+                if i >= active_slots:
+                    continue
+                ex = rec['enemy_xy'][i * 2]
+                if ex != -zone:
+                    continue
+                pos = _pick_from_zone(zone)
+                if pos:
+                    resolved_enemies[i] = pos
+                else:
+                    enemy_zone_reqs.append((zone, i, eid))
+            # 6个友军槽 (兼容友军也可能有区域请求)
+            for i in range(6):
+                ax = rec['ally_xy'][i * 2]
+                if ax != -zone:
+                    continue
+                _pick_from_zone(zone)  # 友军区域放置(游戏中极少见, 静默处理)
+
+        # ═══════════════════════════════════════════════════════
+        # 4. 宝物固定位置 + 区域放置 (sub_431428:198-282)
+        # ═══════════════════════════════════════════════════════
+        # 4a. 固定位置宝物标记占用 (sub_431428:198-223)
+        for i in range(28):
+            tid = rec['trea_id'][i]
+            sub_id = rec['trea_sub'][i] if i < 10 else 0
+            if tid <= 0 and sub_id <= 0:
+                continue
+            tx = rec['trea_xy'][i * 2]
+            ty = rec['trea_xy'][i * 2 + 1]
+            if tx >= 0 and 0 <= tx < 32 and 0 <= ty < 32:
+                resolved_treas[i] = (tx, ty)
+                occupied.add((tx, ty))
+
+        # 4b. 宝物区域放置 (sub_431428:224-282)
+        for zone in range(1, 6):
+            for i in range(28):
+                if i in resolved_treas:
+                    continue
+                tid = rec['trea_id'][i]
+                sub_id = rec['trea_sub'][i] if i < 10 else 0
+                if tid <= 0 and sub_id <= 0:
+                    continue
+                tx = rec['trea_xy'][i * 2]
+                if tx != -zone:
+                    continue
+                pos = _pick_from_zone(zone)
+                if pos:
+                    resolved_treas[i] = pos
+                else:
+                    label = self._trea_label(rec, i)
+                    trea_zone_reqs.append((zone, i, label))
+
+        return resolved_enemies, resolved_treas, enemy_zone_reqs, trea_zone_reqs, active_slots
+
+    def _trea_label(self, rec, i):
+        """宝物槽的显示标签"""
+        tid = rec['trea_id'][i]
+        sub_id = rec['trea_sub'][i] if i < 10 else 0
+        if tid == 10000:
+            return "金钱"
+        elif tid > 0:
+            return self.tkitem_names.get(tid, f"Item#{tid}")[:6]
+        elif sub_id == 10000:
+            return "金钱"
+        else:
+            return self.tkitem_names_by_id.get(sub_id, f"Sub#{sub_id}")[:6]
+
     def _redraw_scene(self):
         """重绘场景 (背景 + 网格 + 单位 + 宝物)
         游戏坐标体系: sub_42F9C8 等距投影, 所有元素(WSC背景/网格/单位)共享同一坐标系
+        敌军/宝物位置按照 sub_431428 游戏规则解析: 固定位置 + 区域随机放置
         """
         canvas = self.scene_canvas
         canvas.delete('all')
@@ -1996,8 +2149,14 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
                 photo, bg_w, bg_h, *_ = bg
                 canvas.create_image(0, 0, anchor='nw', image=photo)
 
-        # ── 预加载 WarWay (用于渲染网格) ──
+        # ── 预加载 WarWay (用于渲染网格 + 场景布置解析) ──
         warway = load_warway(self.warway_path, rec['map_id']) if self.warway_path else None
+
+        # ── 按游戏规则解析场景布置 (sub_431428 + sub_4307CC) ──
+        (resolved_enemies, resolved_treas, enemy_zone_reqs,
+         trea_zone_reqs, active_slots) = self._resolve_scene_placements(rec, warway)
+        self._last_resolved_enemies = resolved_enemies
+        self._last_resolved_treas = resolved_treas
 
         # grid原点由 _grid_to_screen 固定使用游戏常量 (dword_4E7DF0=359, dword_4E7DF4=365, 偏移10/15)
         # 这些是PE .data段编译时常量, 不随WSC分辨率变化, 所有战场通用
@@ -2056,89 +2215,64 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
                                                   tags=('grid',))
 
         # ── 图层3: 宝物 (trea_xy offset 214-269, sub_431428) ──
-        # sub_431428:199-323 宝物系统
-        #   trea_id[i]>0 或 trea_sub[i]>0(i<10) 时放置宝物
-        #   -1~-5 = 随机区域请求(从WarWay对应区域随机选取), 0~31 = 固定坐标
         if self.show_trea.get():
-            trea_zone_requests = {}  # {zone_id: [(index, label), ...]}
-            for i in range(28):
+            for i, (gx, gy) in resolved_treas.items():
                 tid = rec['trea_id'][i]
-                sub_id = rec['trea_sub'][i] if i < 10 else 0
-                # sub_431428:202 — trea_id>0 或 trea_sub>0 均可触发宝物放置
-                if tid <= 0 and sub_id <= 0:
-                    continue
-                tx = rec['trea_xy'][i * 2]
-                ty = rec['trea_xy'][i * 2 + 1]
-                # 显示名称: 优先主物品名, 否则副物品名
-                # Item#10000 = 金钱(sentinel), 反编译 sub_40CE30:23
-                if tid == 10000:
-                    label = "金钱"
-                elif tid > 0:
-                    label = self.tkitem_names.get(tid, f"Item#{tid}")[:6]
-                elif sub_id == 10000:
-                    label = "金钱"
-                else:
-                    label = self.tkitem_names_by_id.get(sub_id, f"Sub#{sub_id}")[:6]
-                if tx >= 0 and ty >= 0 and tx < 32 and ty < 32:
-                    sx, sy = self._grid_to_screen(tx, ty)
-                    r = max(3, tile_h // 2)
-                    # 仅有副物品时用不同颜色
-                    fill_c = '#FFD700' if tid > 0 else '#FFA500'
-                    outline_c = '#B8860B' if tid > 0 else '#CC8800'
-                    canvas.create_rectangle(sx - r, sy - r, sx + r, sy + r,
-                                            fill=fill_c, outline=outline_c, width=1,
-                                            tags=('trea', f'trea_{i}'))
-                    canvas.create_text(sx, sy - r - 6, text=label,
-                                       fill=fill_c, font=('', max(8, int(10*zoom))),
-                                       tags=('trea',))
-                elif tx < 0:
-                    zone = abs(tx)
-                    trea_zone_requests.setdefault(zone, []).append((i, label))
-            # 渲染宝物区域请求标记(画布底部)
-            if trea_zone_requests:
+                label = self._trea_label(rec, i)
+                sx, sy = self._grid_to_screen(gx, gy)
+                r = max(3, tile_h // 2)
+                fill_c = '#FFD700' if tid > 0 else '#FFA500'
+                outline_c = '#B8860B' if tid > 0 else '#CC8800'
+                canvas.create_rectangle(sx - r, sy - r, sx + r, sy + r,
+                                        fill=fill_c, outline=outline_c, width=1,
+                                        tags=('trea', f'trea_{i}'))
+                canvas.create_text(sx, sy - r - 6, text=label,
+                                   fill=fill_c, font=('', max(8, int(10*zoom))),
+                                   tags=('trea',))
+            # 宝物区域请求标记(无法解析的, 画布底部)
+            if trea_zone_reqs:
                 zr_x = 10
-                for zone, items in sorted(trea_zone_requests.items()):
-                    labels = [lbl for _, lbl in items]
+                by_zone = {}
+                for z, i, lbl in trea_zone_reqs:
+                    by_zone.setdefault(z, []).append(lbl)
+                for zone, labels in sorted(by_zone.items()):
                     txt = f"Z{zone}:" + ",".join(labels)
                     canvas.create_text(zr_x, bg_h - 15, text=txt, anchor='nw',
                                        fill='#FFD700', font=('', max(9, int(11*zoom))),
                                        tags=('trea', 'zone_req'))
                     zr_x += len(txt) * max(7, int(8*zoom)) + 10
 
-        # ── 图层4: 单位 (enemy_xy offset 142, ally_xy offset 178, sub_431428) ──
-        # sub_431428: enemy_xy -1~-5 = 随机区域请求(从WarWay对应区域随机选取), 0~31 = 固定坐标
+        # ── 图层4: 单位 (sub_431428 解析后位置) ──
         if self.show_units.get():
-            # 敌军 (红色) — enemy_xy [142-177]
-            enemy_zone_requests = {}  # {zone_id: [(slot, enemy_id), ...]}
-            for i in range(18):
+            # 敌军 (红色) — 按 sub_431428 规则解析后的位置
+            for i, (gx, gy) in resolved_enemies.items():
                 eid = rec['enemy_ids'][i]
-                if eid <= 0:
-                    continue
-                ex = rec['enemy_xy'][i * 2]
-                ey = rec['enemy_xy'][i * 2 + 1]
-                if ex >= 0 and ey >= 0 and ex < 32 and ey < 32:
-                    sx, sy = self._grid_to_screen(ex, ey)
-                    r = max(5, tile_h // 2)
-                    name = self._enemy_name(eid)[:4]
-                    canvas.create_oval(sx - r, sy - r, sx + r, sy + r,
-                                       fill='#cc3333', outline='white', width=1,
-                                       tags=('unit', 'enemy', f'enemy_{i}'))
-                    canvas.create_text(sx, sy + r + 8, text=name,
-                                       fill='#ff6666', font=('', max(8, int(10*zoom))),
-                                       tags=('unit',))
-                elif ex < 0:
-                    zone = abs(ex)
-                    enemy_zone_requests.setdefault(zone, []).append((i, eid))
-            # 渲染敌军区域请求标记(画布顶部)
-            if enemy_zone_requests:
+                sx, sy = self._grid_to_screen(gx, gy)
+                r = max(5, tile_h // 2)
+                name = self._enemy_name(eid)[:4]
+                canvas.create_oval(sx - r, sy - r, sx + r, sy + r,
+                                   fill='#cc3333', outline='white', width=1,
+                                   tags=('unit', 'enemy', f'enemy_{i}'))
+                canvas.create_text(sx, sy + r + 8, text=name,
+                                   fill='#ff6666', font=('', max(8, int(10*zoom))),
+                                   tags=('unit',))
+            # 敌军区域请求标记(无法解析的, 画布顶部)
+            if enemy_zone_reqs:
                 ezr_x = 10
-                for zone, entries in sorted(enemy_zone_requests.items()):
-                    labels = [self._enemy_name(eid)[:4] for _, eid in entries]
+                by_zone = {}
+                for z, i, eid in enemy_zone_reqs:
+                    by_zone.setdefault(z, []).append(self._enemy_name(eid)[:4])
+                for zone, labels in sorted(by_zone.items()):
                     txt = f"Z{zone}:" + ",".join(labels)
                     canvas.create_text(ezr_x, 20, text=txt, anchor='nw',
                                        fill='#ff6666', font=('', max(9, int(11*zoom))),
                                        tags=('unit', 'enemy', 'zone_req'))
                     ezr_x += len(txt) * max(7, int(8*zoom)) + 10
+            # 激活槽位提示
+            if active_slots < 18:
+                canvas.create_text(10, 40, text=f"[激活槽位:0-{active_slots-1}]",
+                                   fill='#ff6666', font=('', max(8, int(9*zoom))),
+                                   anchor='nw', tags=('unit',))
 
             # 友军 (蓝色) — ally_xy [178-189]
             for i in range(6):
@@ -2194,13 +2328,12 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
     def _find_unit_at(self, gx, gy):
         if self._current_idx < 0:
             return None
+        # 优先使用解析后的位置 (sub_431428 规则)
+        resolved = getattr(self, '_last_resolved_enemies', {})
+        for i, (egx, egy) in resolved.items():
+            if egx == gx and egy == gy:
+                return ('enemy', i)
         rec = self.records[self._current_idx]
-        for i in range(18):
-            if rec['enemy_ids'][i] > 0:
-                ex = rec['enemy_xy'][i * 2]
-                ey = rec['enemy_xy'][i * 2 + 1]
-                if ex == gx and ey == gy:
-                    return ('enemy', i)
         for i in range(6):
             ax = rec['ally_xy'][i*2]
             ay = rec['ally_xy'][i*2+1]
@@ -2223,11 +2356,11 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
             if utype == 'enemy':
                 eid = rec['enemy_ids'][uidx]
                 uname = self._enemy_name(eid)
-                ex = rec['enemy_xy'][uidx * 2]
-                if ex < 0:
-                    self.scene_info_var.set(f"({gx},{gy}) 敌军:{uname} Lv.{rec['enemy_lv'][uidx]} [区域请求Z{abs(ex)}]")
+                orig_x = rec['enemy_xy'][uidx * 2]
+                if orig_x < 0:
+                    self.scene_info_var.set(f"({gx},{gy}) 敌军:{uname} Lv.{rec['enemy_lv'][uidx]} [区域Z{abs(orig_x)}→({gx},{gy})]")
                 else:
-                    self.scene_info_var.set(f"({gx},{gy}) 敌军:{uname} Lv.{rec['enemy_lv'][uidx]}")
+                    self.scene_info_var.set(f"({gx},{gy}) 敌军:{uname} Lv.{rec['enemy_lv'][uidx]} [固定位置]")
             else:
                 self.scene_info_var.set(f"({gx},{gy}) 友军槽{uidx}")
         else:
