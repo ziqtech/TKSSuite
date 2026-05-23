@@ -499,6 +499,7 @@ class WarDataEditor:
         self._pan_start_y = 0
         self._last_resolved_enemies = {}
         self._last_resolved_treas = {}
+        self._last_resolved_allies = {}
 
         self._build_ui()
         self._set_edit_enabled(False)
@@ -1978,7 +1979,8 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
         sub_4307CC:200-210 flags&4 时随机敌军槽位数
         sub_452AC0: RNG = rand() % n → Python random.randrange(n)
 
-        返回: (resolved_enemies, resolved_treas, enemy_zone_reqs, trea_zone_reqs, active_slots)
+        返回: (resolved_enemies, resolved_treas, enemy_zone_reqs, trea_zone_reqs,
+               active_slots, fixed_enemy_slots, fixed_trea_indices, resolved_allies)
         """
         # ── 友军数 & 激活槽位数 (sub_4307CC:200-210) ──
         ally_count = sum(1 for c in rec['must_chars'] if c > 0 and c != 255)
@@ -2007,6 +2009,9 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
         occupied = set()
         resolved_enemies = {}
         resolved_treas = {}
+        resolved_allies = {}
+        fixed_enemy_slots = set()
+        fixed_trea_indices = set()
         enemy_zone_reqs = []
         trea_zone_reqs = []
 
@@ -2030,6 +2035,7 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
             ey = rec['enemy_xy'][i * 2 + 1]
             if ex >= 0 and 0 <= ex < 32 and 0 <= ey < 32:
                 resolved_enemies[i] = (ex, ey)
+                fixed_enemy_slots.add(i)
                 occupied.add((ex, ey))
 
         # ═══════════════════════════════════════════════════════
@@ -2070,7 +2076,9 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
                 ax = rec['ally_xy'][i * 2]
                 if ax != -zone:
                     continue
-                _pick_from_zone(zone)  # 友军区域放置(游戏中极少见, 静默处理)
+                pos = _pick_from_zone(zone)
+                if pos:
+                    resolved_allies[i] = pos
 
         # ═══════════════════════════════════════════════════════
         # 4. 宝物固定位置 + 区域放置 (sub_431428:198-282)
@@ -2085,6 +2093,7 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
             ty = rec['trea_xy'][i * 2 + 1]
             if tx >= 0 and 0 <= tx < 32 and 0 <= ty < 32:
                 resolved_treas[i] = (tx, ty)
+                fixed_trea_indices.add(i)
                 occupied.add((tx, ty))
 
         # 4b. 宝物区域放置 (sub_431428:224-282)
@@ -2106,7 +2115,8 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
                     label = self._trea_label(rec, i)
                     trea_zone_reqs.append((zone, i, label))
 
-        return resolved_enemies, resolved_treas, enemy_zone_reqs, trea_zone_reqs, active_slots
+        return (resolved_enemies, resolved_treas, enemy_zone_reqs, trea_zone_reqs,
+                active_slots, fixed_enemy_slots, fixed_trea_indices, resolved_allies)
 
     def _trea_label(self, rec, i):
         """宝物槽的显示标签"""
@@ -2154,9 +2164,11 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
 
         # ── 按游戏规则解析场景布置 (sub_431428 + sub_4307CC) ──
         (resolved_enemies, resolved_treas, enemy_zone_reqs,
-         trea_zone_reqs, active_slots) = self._resolve_scene_placements(rec, warway)
+         trea_zone_reqs, active_slots, fixed_enemy_slots,
+         fixed_trea_indices, resolved_allies) = self._resolve_scene_placements(rec, warway)
         self._last_resolved_enemies = resolved_enemies
         self._last_resolved_treas = resolved_treas
+        self._last_resolved_allies = resolved_allies
 
         # grid原点由 _grid_to_screen 固定使用游戏常量 (dword_4E7DF0=359, dword_4E7DF4=365, 偏移10/15)
         # 这些是PE .data段编译时常量, 不随WSC分辨率变化, 所有战场通用
@@ -2215,17 +2227,28 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
                                                   tags=('grid',))
 
         # ── 图层3: 宝物 (trea_xy offset 214-269, sub_431428) ──
+        # 固定位置: 亮色; 区域放置: 暗色
         if self.show_trea.get():
             for i, (gx, gy) in resolved_treas.items():
                 tid = rec['trea_id'][i]
                 label = self._trea_label(rec, i)
                 sx, sy = self._grid_to_screen(gx, gy)
                 r = max(3, tile_h // 2)
-                fill_c = '#FFD700' if tid > 0 else '#FFA500'
-                outline_c = '#B8860B' if tid > 0 else '#CC8800'
+                if i in fixed_trea_indices:
+                    # 固定位置: 亮金/亮橙
+                    fill_c = '#FFD700' if tid > 0 else '#FFA500'
+                    outline_c = '#B8860B' if tid > 0 else '#CC8800'
+                else:
+                    # 区域随机放置: 暗金/暗橙
+                    fill_c = '#B8960A' if tid > 0 else '#CC7722'
+                    outline_c = '#8B6914' if tid > 0 else '#994400'
                 canvas.create_rectangle(sx - r, sy - r, sx + r, sy + r,
                                         fill=fill_c, outline=outline_c, width=1,
                                         tags=('trea', f'trea_{i}'))
+                tag_char = "固" if i in fixed_trea_indices else "随"
+                canvas.create_text(sx, sy, text=tag_char,
+                                   fill='white', font=('', max(7, int(9*zoom)), 'bold'),
+                                   tags=('trea',))
                 canvas.create_text(sx, sy - r - 6, text=label,
                                    fill=fill_c, font=('', max(8, int(10*zoom))),
                                    tags=('trea',))
@@ -2243,18 +2266,27 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
                     zr_x += len(txt) * max(7, int(8*zoom)) + 10
 
         # ── 图层4: 单位 (sub_431428 解析后位置) ──
+        # 固定位置: 亮色; 区域放置: 暗色
         if self.show_units.get():
-            # 敌军 (红色) — 按 sub_431428 规则解析后的位置
+            # 敌军 — 按 sub_431428 规则解析后的位置
             for i, (gx, gy) in resolved_enemies.items():
                 eid = rec['enemy_ids'][i]
                 sx, sy = self._grid_to_screen(gx, gy)
                 r = max(5, tile_h // 2)
                 name = self._enemy_name(eid)[:4]
+                if i in fixed_enemy_slots:
+                    fill_c, text_c = '#cc3333', '#ff6666'  # 固定位置: 亮红
+                else:
+                    fill_c, text_c = '#772222', '#cc4444'  # 区域随机: 暗红
                 canvas.create_oval(sx - r, sy - r, sx + r, sy + r,
-                                   fill='#cc3333', outline='white', width=1,
+                                   fill=fill_c, outline='white', width=1,
                                    tags=('unit', 'enemy', f'enemy_{i}'))
+                tag_char = "固" if i in fixed_enemy_slots else "随"
+                canvas.create_text(sx, sy, text=tag_char,
+                                   fill='white', font=('', max(7, int(9*zoom)), 'bold'),
+                                   tags=('unit',))
                 canvas.create_text(sx, sy + r + 8, text=name,
-                                   fill='#ff6666', font=('', max(8, int(10*zoom))),
+                                   fill=text_c, font=('', max(8, int(10*zoom))),
                                    tags=('unit',))
             # 敌军区域请求标记(无法解析的, 画布顶部)
             if enemy_zone_reqs:
@@ -2274,19 +2306,30 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
                                    fill='#ff6666', font=('', max(8, int(9*zoom))),
                                    anchor='nw', tags=('unit',))
 
-            # 友军 (蓝色) — ally_xy [178-189]
+            # 友军 — ally_xy [178-189] + 区域放置解析
             for i in range(6):
-                ax = rec['ally_xy'][i*2]
-                ay = rec['ally_xy'][i*2+1]
-                if ax == 0 and ay == 0:
-                    continue
-                if ax < 0 or ay < 0 or ax >= 32 or ay >= 32:
-                    continue
-                sx, sy = self._grid_to_screen(ax, ay)
+                if i in resolved_allies:
+                    # 区域随机放置: 青色
+                    gx, gy = resolved_allies[i]
+                    fill_c, text_c = '#226688', '#44aacc'
+                else:
+                    ax = rec['ally_xy'][i*2]
+                    ay = rec['ally_xy'][i*2+1]
+                    if ax == 0 and ay == 0:
+                        continue
+                    if ax < 0 or ay < 0 or ax >= 32 or ay >= 32:
+                        continue
+                    gx, gy = ax, ay
+                    fill_c, text_c = '#3366cc', '#6699ff'  # 固定位置: 亮蓝
+                sx, sy = self._grid_to_screen(gx, gy)
                 r = max(5, tile_h // 2)
                 canvas.create_oval(sx - r, sy - r, sx + r, sy + r,
-                                   fill='#3366cc', outline='white', width=1,
+                                   fill=fill_c, outline='white', width=1,
                                    tags=('unit', 'ally', f'ally_{i}'))
+                tag_char = "随" if i in resolved_allies else "固"
+                canvas.create_text(sx, sy, text=tag_char,
+                                   fill='white', font=('', max(7, int(9*zoom)), 'bold'),
+                                   tags=('unit',))
 
             # 强制出战角色名称 — must_chars [2-7]
             for i in range(6):
@@ -2328,11 +2371,14 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
     def _find_unit_at(self, gx, gy):
         if self._current_idx < 0:
             return None
-        # 优先使用解析后的位置 (sub_431428 规则)
         resolved = getattr(self, '_last_resolved_enemies', {})
         for i, (egx, egy) in resolved.items():
             if egx == gx and egy == gy:
                 return ('enemy', i)
+        resolved_ally = getattr(self, '_last_resolved_allies', {})
+        for i, (agx, agy) in resolved_ally.items():
+            if agx == gx and agy == gy:
+                return ('ally', i)
         rec = self.records[self._current_idx]
         for i in range(6):
             ax = rec['ally_xy'][i*2]
@@ -2362,7 +2408,11 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
                 else:
                     self.scene_info_var.set(f"({gx},{gy}) 敌军:{uname} Lv.{rec['enemy_lv'][uidx]} [固定位置]")
             else:
-                self.scene_info_var.set(f"({gx},{gy}) 友军槽{uidx}")
+                ally_orig_x = rec['ally_xy'][uidx * 2]
+                if ally_orig_x < 0:
+                    self.scene_info_var.set(f"({gx},{gy}) 友军槽{uidx} [区域Z{abs(ally_orig_x)}→({gx},{gy})]")
+                else:
+                    self.scene_info_var.set(f"({gx},{gy}) 友军槽{uidx} [固定位置]")
         else:
             self.scene_info_var.set(f"({gx},{gy})")
 
