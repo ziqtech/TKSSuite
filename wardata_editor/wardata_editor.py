@@ -2235,15 +2235,11 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
                 sx, sy = self._grid_to_screen(gx, gy)
                 r = max(3, tile_h // 2)
                 if i in fixed_trea_indices:
-                    # 固定位置: 亮金/亮橙
-                    fill_c = '#FFD700' if tid > 0 else '#FFA500'
-                    outline_c = '#B8860B' if tid > 0 else '#CC8800'
+                    fill_c = '#FF8C00'
                 else:
-                    # 区域随机放置: 暗金/暗橙
-                    fill_c = '#B8960A' if tid > 0 else '#CC7722'
-                    outline_c = '#8B6914' if tid > 0 else '#994400'
+                    fill_c = '#FFD700'
                 canvas.create_rectangle(sx - r, sy - r, sx + r, sy + r,
-                                        fill=fill_c, outline=outline_c, width=1,
+                                        fill=fill_c, outline='white', width=1,
                                         tags=('trea', f'trea_{i}'))
                 tag_char = "固" if i in fixed_trea_indices else "随"
                 canvas.create_text(sx, sy, text=tag_char,
@@ -2273,11 +2269,11 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
                 eid = rec['enemy_ids'][i]
                 sx, sy = self._grid_to_screen(gx, gy)
                 r = max(5, tile_h // 2)
-                name = self._enemy_name(eid)[:4]
+                name = self._enemy_name(eid)
                 if i in fixed_enemy_slots:
-                    fill_c, text_c = '#cc3333', '#ff6666'  # 固定位置: 亮红
+                    fill_c, text_c = '#9932CC', '#BA55D3'
                 else:
-                    fill_c, text_c = '#772222', '#cc4444'  # 区域随机: 暗红
+                    fill_c, text_c = '#cc3333', '#ff6666'
                 canvas.create_oval(sx - r, sy - r, sx + r, sy + r,
                                    fill=fill_c, outline='white', width=1,
                                    tags=('unit', 'enemy', f'enemy_{i}'))
@@ -2293,7 +2289,7 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
                 ezr_x = 10
                 by_zone = {}
                 for z, i, eid in enemy_zone_reqs:
-                    by_zone.setdefault(z, []).append(self._enemy_name(eid)[:4])
+                    by_zone.setdefault(z, []).append(self._enemy_name(eid))
                 for zone, labels in sorted(by_zone.items()):
                     txt = f"Z{zone}:" + ",".join(labels)
                     canvas.create_text(ezr_x, 20, text=txt, anchor='nw',
@@ -2309,9 +2305,8 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
             # 友军 — ally_xy [178-189] + 区域放置解析
             for i in range(6):
                 if i in resolved_allies:
-                    # 区域随机放置: 青色
                     gx, gy = resolved_allies[i]
-                    fill_c, text_c = '#226688', '#44aacc'
+                    fill_c, text_c = '#3366cc', '#6699ff'
                 else:
                     ax = rec['ally_xy'][i*2]
                     ay = rec['ally_xy'][i*2+1]
@@ -2320,7 +2315,7 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
                     if ax < 0 or ay < 0 or ax >= 32 or ay >= 32:
                         continue
                     gx, gy = ax, ay
-                    fill_c, text_c = '#3366cc', '#6699ff'  # 固定位置: 亮蓝
+                    fill_c, text_c = '#228B22', '#66CD00'
                 sx, sy = self._grid_to_screen(gx, gy)
                 r = max(5, tile_h // 2)
                 canvas.create_oval(sx - r, sy - r, sx + r, sy + r,
