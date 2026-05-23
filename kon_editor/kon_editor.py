@@ -22,7 +22,7 @@ v3.0 语义修正 (基于 sub_43D53C/43D8B0/43E980/4458B0):
   [0]  exec_mode         — 执行模式/攻击范围 (高=距离, 低=形状)
   [1]  target_param      — 目标选择参数
   [2]  target_filter     — 目标过滤 (格子类型 + 阵营匹配)
-  [3]  cond_id           — TKAct.dat 动画索引 (0..649)
+  [3]  tkact_id          — TKAct.dat 动画索引 (0..649)
   [4]  damage_base       — 伤害基础值
   [5]  mp_damage         — 内力伤害基础值
   [6]  accuracy          — 附加命中值
@@ -170,7 +170,7 @@ KON_FIELDS = [
     ("exec_mode",        0,  "执行模式",      "高字节=攻击距离(负=自身, 0=单格, 1-3=近战, 6+=远程); 低字节=范围开关(0=启用菱形, 1=禁用) — sub_43D53C:45-47"),
     ("target_param",     2,  "目标参数",      "高字节=效果面积(格数); 低字节=扩散开关(0=启用菱形, 1=禁用/单体) — sub_43D8B0:56-65"),
     ("target_filter",    4,  "目标过滤",      "高字节=目标格子(0=全部, 1=仅角色, 2=仅空地[召唤]); 低字节=阵营匹配(0=对立/敌方, 1=同阵营/友方, 2=任意/不分敌我) — sub_43D53C:127-155, sub_43D8B0:v17"),
-    ("cond_id",          6,  "动画索引",      "TKAct.dat 条目索引 (0..649, -1=无) — sub_4434BC: word_9D069E[20*i]"),
+    ("tkact_id",         6,  "TKAct动画索引",     "TKAct.dat 条目索引 (0..649, -1=无) — sub_4434BC: word_9D069E[20*i]"),
     ("damage_base",      8,  "伤害基础值",    "伤害基础值 (-1=单位攻击力, >0=固定值, >1000/2000/3000=不同编码公式) — sub_43E980:69-161"),
     ("mp_damage",        10, "内力伤害",      "内力(MP)伤害基础值, 编码同伤害基础值 (33条使用) — sub_43E980:392"),
     ("accuracy",         12, "附加命中",      "命中率计算基准值, 与目标闪避联合计算 (33条使用) — sub_43E980:179"),
@@ -222,7 +222,7 @@ def kon_record_name(rec, tkt, names=None):
     if names and idx in names and names[idx]:
         return names[idx]
     # 回退：动画索引+参数描述
-    cid = rec.get('cond_id', 0)
+    cid = rec.get('tkact_id', 0)
     parts = []
     em = rec.get('exec_mode', 0)
     tp = rec.get('target_param', 0)
@@ -392,11 +392,11 @@ class KonEditor:
 
         # Left: TreeView
         lf = ttk.Frame(paned); paned.add(lf, weight=1)
-        cols = ('index', 'cond_id', 'atk_range', 'tkt_name', 'atk_area', 'damage_base')
+        cols = ('index', 'tkact_id', 'atk_range', 'tkt_name', 'atk_area', 'damage_base')
         self.tree = ttk.Treeview(lf, columns=cols, show='headings', selectmode='browse')
         cc = [
             ('index', '序号', 38),
-            ('cond_id', '动画', 40),
+            ('tkact_id', 'TKAct', 40),
             ('atk_range', '距离', 42),
             ('tkt_name', '名称', 100),
             ('atk_area', '范围', 42),
@@ -732,7 +732,7 @@ class KonEditor:
                     continue
             if q:
                 nm = kon_record_name(rec, self.tkt, self.names)
-                search_text = f"{rec['index']} {rec['cond_id']} {rec['exec_mode']} {nm} " \
+                search_text = f"{rec['index']} {rec['tkact_id']} {rec['exec_mode']} {nm} " \
                               f"{' '.join(str(rec[fn]) for fn,_,_,_ in KON_FIELDS)}".lower()
                 if q not in search_text:
                     continue
@@ -771,7 +771,7 @@ class KonEditor:
             db = r['damage_base']
             dmg_str = str(db) if db != 0 else ""
             self.tree.insert('', 'end',
-                             values=(r['index'], r['cond_id'], dist_str,
+                             values=(r['index'], r['tkact_id'], dist_str,
                                      nm if nm else f"(空-#{idx})",
                                      area_str, dmg_str),
                              tags=tags)
@@ -782,7 +782,7 @@ class KonEditor:
             self.filtered_indices.sort(
                 key=lambda i: kon_record_name(self.records[i], self.tkt, self.names).lower(), reverse=rev)
         else:
-            km = {'cond_id': 'cond_id', 'atk_range': 'exec_mode', 'atk_area': 'target_param',
+            km = {'tkact_id': 'tkact_id', 'atk_range': 'exec_mode', 'atk_area': 'target_param',
                   'damage_base': 'damage_base'}
             self.filtered_indices.sort(
                 key=lambda i: self.records[i].get(km.get(col, 'index'), 0), reverse=rev)
@@ -796,14 +796,14 @@ class KonEditor:
         for rec in self.records:
             if all(rec[fn] == 0 for fn, _, _, _ in KON_FIELDS):
                 rec['exec_mode'] = 0; rec['target_param'] = 0
-                rec['cond_id'] = rec['index']
+                rec['tkact_id'] = rec['index']
                 rec['damage_base'] = -1; rec['exec_flags'] = 4
                 self._dirty = True; self._apply_filter()
                 for child in self.tree.get_children():
                     if int(self.tree.item(child)['values'][0]) == rec['index']:
                         self.tree.selection_set(child); self.tree.see(child); break
                 self._populate_edit(rec)
-                self.status_var.set(f"已创建新条目 → 槽位 #{rec['index']} (ID={rec['cond_id']})"); return
+                self.status_var.set(f"已创建新条目 → 槽位 #{rec['index']} (ID={rec['tkact_id']})"); return
         messagebox.showwarning("槽位已满", f"所有 {KON_CNT} 个记录槽位均已占用")
 
     def _copy_record(self):
@@ -848,7 +848,7 @@ class KonEditor:
         self._editing_idx = rec['index']
         nm = kon_record_name(rec, self.tkt, self.names)
         em = rec.get('exec_mode', 0)
-        cid = rec.get('cond_id', 0)
+        cid = rec.get('tkact_id', 0)
         tp = rec.get('target_param', 0)
 
         em_text = describe_exec_mode(em) if em != 0 else ""
@@ -1009,7 +1009,7 @@ class KonEditor:
             f.write(','.join(hdr) + '\n')
             for rec in self.records:
                 if all(rec[fn] == 0 for fn, _, _, _ in KON_FIELDS): continue
-                row = [str(rec['index']), str(rec.get('cond_id', '')),
+                row = [str(rec['index']), str(rec.get('tkact_id', '')),
                        kon_record_name(rec, self.tkt, self.names)]
                 row += [str(rec[fn]) for fn, _, _, _ in KON_FIELDS]
                 f.write(','.join(row) + '\n')
