@@ -16,10 +16,11 @@ WarPC.dat 格式 (每条 1054 字节, 共 143 角色):
   527 × int16 (小端序)
 
 Tab 分区 (按字段索引顺序排列):
-  Tab 1: 核心属性 [0]-[50]
-  Tab 2: 装备与技能 [51]-[272]
-  Tab 3: 技能效果判定 [273]+
-  Tab 4: 全部字段 (raw grid)
+  Tab 1: 核心属性 [0]-[68]
+  Tab 2: 装备与技能 [69]-[87] + [260]-[272]
+  Tab 3: 技能学习状态 [88]-[259]
+  Tab 4: 技能效果判定 [273]+
+  Tab 5: 全部字段 (raw grid)
 
 字段布局 (仅列出反编译已验证的字段; 未验证字段标注 "未验证"):
   [0]   name_id      — 角色名称 TKT ID
@@ -634,8 +635,8 @@ class WarpcEditor:
         self.notebook = ttk.Notebook(rf)
         self.notebook.pack(fill=tk.BOTH, expand=True)
 
-        # Tab 1: 核心属性 [0]-[50]
-        tab1 = ttk.Frame(self.notebook); self.notebook.add(tab1, text="核心属性 [0]-[50]")
+        # Tab 1: 核心属性 [0]-[68]
+        tab1 = ttk.Frame(self.notebook); self.notebook.add(tab1, text="核心属性 [0]-[68]")
         t1_canvas = tk.Canvas(tab1, highlightthickness=0)
         t1_sb = ttk.Scrollbar(tab1, orient=tk.VERTICAL, command=t1_canvas.yview)
         t1_canvas.configure(yscrollcommand=t1_sb.set)
@@ -645,8 +646,8 @@ class WarpcEditor:
         self.t1_inner.bind('<Configure>', lambda e: t1_canvas.configure(scrollregion=t1_canvas.bbox('all')))
         self._bind_mousewheel(t1_canvas)
 
-        # Tab 2: 装备与技能 [51]-[272]
-        tab2 = ttk.Frame(self.notebook); self.notebook.add(tab2, text="装备与技能 [51]-[272]")
+        # Tab 2: 装备与技能 [69]-[87] + [260]-[272]
+        tab2 = ttk.Frame(self.notebook); self.notebook.add(tab2, text="装备与技能 [69]-[87]")
         t2_canvas = tk.Canvas(tab2, highlightthickness=0)
         t2_sb = ttk.Scrollbar(tab2, orient=tk.VERTICAL, command=t2_canvas.yview)
         t2_canvas.configure(yscrollcommand=t2_sb.set)
@@ -656,8 +657,8 @@ class WarpcEditor:
         self.t2_inner.bind('<Configure>', lambda e: t2_canvas.configure(scrollregion=t2_canvas.bbox('all')))
         self._bind_mousewheel(t2_canvas)
 
-        # Tab 3: 技能效果判定
-        tab3 = ttk.Frame(self.notebook); self.notebook.add(tab3, text="技能效果判定")
+        # Tab 3: 技能学习状态 [88]-[259]
+        tab3 = ttk.Frame(self.notebook); self.notebook.add(tab3, text="技能学习 [88]-[259]")
         t3_canvas = tk.Canvas(tab3, highlightthickness=0)
         t3_sb = ttk.Scrollbar(tab3, orient=tk.VERTICAL, command=t3_canvas.yview)
         t3_canvas.configure(yscrollcommand=t3_sb.set)
@@ -667,8 +668,8 @@ class WarpcEditor:
         self.t3_inner.bind('<Configure>', lambda e: t3_canvas.configure(scrollregion=t3_canvas.bbox('all')))
         self._bind_mousewheel(t3_canvas)
 
-        # Tab 4: 全部字段 (raw grid)
-        tab4 = ttk.Frame(self.notebook); self.notebook.add(tab4, text="全部字段")
+        # Tab 4: 技能效果判定 [273]+
+        tab4 = ttk.Frame(self.notebook); self.notebook.add(tab4, text="技能效果判定 [273]+")
         t4_canvas = tk.Canvas(tab4, highlightthickness=0)
         t4_sb = ttk.Scrollbar(tab4, orient=tk.VERTICAL, command=t4_canvas.yview)
         t4_canvas.configure(yscrollcommand=t4_sb.set)
@@ -678,6 +679,17 @@ class WarpcEditor:
         self.t4_inner.bind('<Configure>', lambda e: t4_canvas.configure(scrollregion=t4_canvas.bbox('all')))
         self._bind_mousewheel(t4_canvas)
 
+        # Tab 5: 全部字段 (raw grid)
+        tab5 = ttk.Frame(self.notebook); self.notebook.add(tab5, text="全部字段")
+        t5_canvas = tk.Canvas(tab5, highlightthickness=0)
+        t5_sb = ttk.Scrollbar(tab5, orient=tk.VERTICAL, command=t5_canvas.yview)
+        t5_canvas.configure(yscrollcommand=t5_sb.set)
+        self.t5_inner = ttk.Frame(t5_canvas)
+        t5_canvas.create_window((0, 0), window=self.t5_inner, anchor='nw')
+        t5_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True); t5_sb.pack(side=tk.RIGHT, fill=tk.Y)
+        self.t5_inner.bind('<Configure>', lambda e: t5_canvas.configure(scrollregion=t5_canvas.bbox('all')))
+        self._bind_mousewheel(t5_canvas)
+
         # Bottom buttons
         bf = ttk.Frame(rf); bf.pack(side=tk.BOTTOM, fill=tk.X, pady=(2, 0))
         ttk.Button(bf, text="应用修改", command=self._apply_edit, width=12).pack(side=tk.LEFT)
@@ -686,8 +698,9 @@ class WarpcEditor:
         # Build tab contents
         self._build_tab1(self.t1_inner)
         self._build_tab2(self.t2_inner)
-        self._build_tab4(self.t3_inner)
-        self._build_tab3(self.t4_inner)
+        self._build_tab3(self.t3_inner)
+        self._build_tab4(self.t4_inner)
+        self._build_tab5(self.t5_inner)
 
         # Bottom path bar
         pf = ttk.LabelFrame(self.root, text="当前加载"); pf.pack(fill=tk.X, padx=5, pady=(0, 2))
@@ -707,7 +720,7 @@ class WarpcEditor:
         self.lbl_fa.pack(side=tk.LEFT, padx=10, pady=2)
 
     def _build_tab1(self, parent):
-        """核心属性 — 基本信息 [0]-[4] + HP/MP [5]-[10] + 8属性 [11]-[26] + 角色五维 [27]-[31] + 技能加成 [32]-[40] + 反应组 [41]-[42] + 身上状态 [43]-[50]"""
+        """核心属性 — 基本信息 [0]-[4] + HP/MP [5]-[10] + 8属性 [11]-[26] + 角色五维 [27]-[31] + 技能加成 [32]-[40] + 反应组 [41]-[42] + 身上状态 [43]-[50] + 状态抵抗 [51]-[66] + 攻击导致状态 [67]-[68]"""
         self._build_section(parent, "基本信息 [0]-[4]", IDENTITY_FIELDS, 0)
         self._build_section(parent, "HP / MP [5]-[10]", HPMP_FIELDS, 1)
         # 八属性 — 一行八列紧凑布局 [11]-[26]
@@ -716,6 +729,8 @@ class WarpcEditor:
         self._build_section(parent, "技能加成 [32]-[40] (sub_422BBC TKSkill效果; sub_42234C初始=0)", SKILL_BONUS_FIELDS, 4)
         self._build_section(parent, "反应组 [41]-[42] (运行时字段; sub_422BBC type=2 写入, sub_42234C 初始化为0)", REACTION_FIELDS, 5)
         self._build_status_slots(parent, 6)
+        self._build_status_resist(parent, 7)
+        self._build_section(parent, "攻击导致状态 [67]-[68] (来源于装备; sub_42234C L94-95)", STATUS_FIELDS, 8, ft='mask')
 
     def _build_stat_row(self, parent):
         """八属性 — 一行八列, 每列(名称 + 基础 + 当前)"""
@@ -835,6 +850,10 @@ class WarpcEditor:
             cb.pack(side=tk.RIGHT, padx=(1, 0))
             self._skill_learn_widgets.append((i, cb))
             self._skill_learn_labels.append(lbl)
+
+    def _build_tab3(self, parent):
+        """技能学习状态 [88]-[259]"""
+        self._build_skill_learn(parent, 0)
 
     def _build_tab4(self, parent):
         """技能效果判定 Tab"""
@@ -958,20 +977,17 @@ class WarpcEditor:
         dlg.wait_window()
 
     def _build_tab2(self, parent):
-        """装备与技能 — 状态抵抗 [51]-[66] + 攻击导致状态 [67]-[68] + 装备 [69]-[76] + 权限 [77]-[81] + 装备技能 [82]-[87] + 技能学习 [88]-[259] + 补丁 [260]-[263] + 成长率 [264]-[266] + 战后奖励 [268]-[269] + 掉落物品 [270]-[272]"""
-        self._build_status_resist(parent, 0)
-        self._build_section(parent, "攻击导致状态 [67]-[68] (来源于装备; sub_42234C L94-95)", STATUS_FIELDS, 1, ft='mask')
-        self._build_section(parent, "装备索引 [69]-[72] (TKItem数组下标; 运行时缓存)", EQUIP_FIELDS[:4], 2, ft='item_pick')
-        self._build_section(parent, "装备物品 ID [73]-[76] (DAT原始; 查 TKItem.field[0])", EQUIP_FIELDS[4:], 3, ft='item_pick')
-        self._build_section(parent, "使用/装备权限 [77]-[81] (sub_41928C 验证: 主角#0 [77]=? [78]=7 [79]=63 [80]=3 [81]=?)", CHAR_USE_RIGHT_FIELDS, 4)
-        self._build_section(parent, "装备技能 [82]-[87] (6字段; sub_42234C/sub_422BBC; Maker验证: 周倉)", EQUIP_SKILL_FIELDS, 5, ft='skill_pick')
-        self._build_skill_learn(parent, 6)
-        self._build_section(parent, "补丁专用字段 [260]-[263] (配合运行时补丁使用; 0=使用原硬编码公式)", PATCH_FIELDS, 7)
-        self._build_section(parent, "成长率 [264]-[266] (五爪金龍: 初期27 中期24 后期21)", GROWTH_FIELDS, 8)
-        self._build_section(parent, "战后奖励 [268]-[269] (Gold=基数×2; JP=直接值)", BATTLE_REWARD_FIELDS, 9)
-        self._build_section(parent, "可掉落物品 [270]-[272] (五爪金龍验证: 顛海神珠/金龍魂/虎項龍紋鎧)", DROP_ITEM_FIELDS, 10, ft='item_pick')
+        """装备与技能 — 装备 [69]-[76] + 权限 [77]-[81] + 装备技能 [82]-[87] + 补丁 [260]-[263] + 成长率 [264]-[266] + 战后奖励 [268]-[269] + 掉落物品 [270]-[272]"""
+        self._build_section(parent, "装备索引 [69]-[72] (TKItem数组下标; 运行时缓存)", EQUIP_FIELDS[:4], 0, ft='item_pick')
+        self._build_section(parent, "装备物品 ID [73]-[76] (DAT原始; 查 TKItem.field[0])", EQUIP_FIELDS[4:], 1, ft='item_pick')
+        self._build_section(parent, "使用/装备权限 [77]-[81] (sub_41928C 验证: 主角#0 [77]=? [78]=7 [79]=63 [80]=3 [81]=?)", CHAR_USE_RIGHT_FIELDS, 2)
+        self._build_section(parent, "装备技能 [82]-[87] (6字段; sub_42234C/sub_422BBC; Maker验证: 周倉)", EQUIP_SKILL_FIELDS, 3, ft='skill_pick')
+        self._build_section(parent, "补丁专用字段 [260]-[263] (配合运行时补丁使用; 0=使用原硬编码公式)", PATCH_FIELDS, 4)
+        self._build_section(parent, "成长率 [264]-[266] (五爪金龍: 初期27 中期24 后期21)", GROWTH_FIELDS, 5)
+        self._build_section(parent, "战后奖励 [268]-[269] (Gold=基数×2; JP=直接值)", BATTLE_REWARD_FIELDS, 6)
+        self._build_section(parent, "可掉落物品 [270]-[272] (五爪金龍验证: 顛海神珠/金龍魂/虎項龍紋鎧)", DROP_ITEM_FIELDS, 7, ft='item_pick')
 
-    def _build_tab3(self, parent):
+    def _build_tab5(self, parent):
         """全部 527 字段的紧凑网格"""
         self._tab3_labels = []
         self._tab3_entries = []
@@ -1226,10 +1242,10 @@ class WarpcEditor:
                         sname = self.skill_names.get(i, f"技能#{i}") if self.skill_names else f"技能#{i}"
                         if i == 343: sname = "普通攻击"
                         lbl.config(text=sname)
-            if hasattr(self, 't3_inner'):
-                for w in self.t3_inner.winfo_children():
+            if hasattr(self, 't4_inner'):
+                for w in self.t4_inner.winfo_children():
                     w.destroy()
-                self._build_tab4(self.t3_inner)
+                self._build_tab4(self.t4_inner)
             self.item_names, self.item_idx_names, self._idx_to_id, self._id_to_idx = self._load_item_names()
             nonempty = sum(1 for r in self.records if any(v != 0 for v in r['fields']))
             tkkon_count = len(getattr(self, 'tkkon_names', {}))
@@ -2254,10 +2270,11 @@ class WarpcEditor:
             "  sub_45343C  DAT 统一加载\n"
             "  sub_452B14  LZSS 解压引擎\n\n"
             "Tab 分区 (按字段索引顺序):\n"
-            "  Tab 1: 核心属性 [0]-[50]\n"
-            "  Tab 2: 装备与技能 [51]-[272]\n"
-            "  Tab 3: 技能效果判定 [273]+\n"
-            "  Tab 4: 全部字段 (raw grid)"
+            "  Tab 1: 核心属性 [0]-[68]\n"
+            "  Tab 2: 装备与技能 [69]-[87] + [260]-[272]\n"
+            "  Tab 3: 技能学习状态 [88]-[259]\n"
+            "  Tab 4: 技能效果判定 [273]+\n"
+            "  Tab 5: 全部字段 (raw grid)"
         )
 
 
