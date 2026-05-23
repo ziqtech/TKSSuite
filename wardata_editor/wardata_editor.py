@@ -500,6 +500,11 @@ class WarDataEditor:
         self._last_resolved_enemies = {}
         self._last_resolved_treas = {}
         self._last_resolved_allies = {}
+        self._last_fixed_trea_indices = set()
+        self._last_fixed_enemy_slots = set()
+        self._last_active_slots = 18
+        self._last_enemy_zone_reqs = []
+        self._last_trea_zone_reqs = []
 
         self._build_ui()
         self._set_edit_enabled(False)
@@ -583,15 +588,16 @@ class WarDataEditor:
 
     def _build_left_panel(self):
         lf = ttk.Frame(self.paned); self.paned.add(lf, weight=1)
-        cols = ('index', 'map_info', 'enemy_count', 'trea_count', 'chars_info', 'flags_info')
+        cols = ('index', 'map_info', 'enemy_count', 'trea_count', 'trea_detail', 'chars_info', 'flags_info')
         self.tree = ttk.Treeview(lf, columns=cols, show='headings', selectmode='browse')
         col_config = [
             ('index', '序号', 40),
             ('map_info', '地图', 80),
             ('enemy_count', '敌军数', 40),
             ('trea_count', '宝物数', 40),
-            ('chars_info', '参战人物', 130),
-            ('flags_info', '参数', 80),
+            ('trea_detail', '固定/随机', 64),
+            ('chars_info', '参战人物', 120),
+            ('flags_info', '参数', 70),
         ]
         for cid, cn, cw in col_config:
             self.tree.heading(cid, text=cn)
@@ -624,11 +630,27 @@ class WarDataEditor:
         except Exception:
             return None
 
+    def _trea_detail_str(self, rec):
+        """返回 "固N/随M" 字符串, N=固定位置宝物数, M=区域随机宝物数"""
+        fixed = random_trea = 0
+        for i in range(28):
+            tid = rec['trea_id'][i]
+            sub_id = rec['trea_sub'][i] if i < 10 else 0
+            if tid <= 0 and sub_id <= 0:
+                continue
+            tx = rec['trea_xy'][i * 2]
+            if tx >= 0:
+                fixed += 1
+            else:
+                random_trea += 1
+        return f"固{fixed}/随{random_trea}" if fixed or random_trea else "-"
+
     def _refresh_tree(self):
         self.tree.delete(*self.tree.get_children())
         for rec in self.records:
             enemy_count = sum(1 for eid in rec['enemy_ids'] if eid > 0)
             trea_count = sum(1 for i in range(28) if rec['trea_id'][i] > 0 or (i < 10 and rec['trea_sub'][i] > 0))
+            trea_detail = self._trea_detail_str(rec)
             # 地图列: map_id + 分辨率
             mid = rec['map_id']
             res = self._get_wsc_resolution(mid)
@@ -656,7 +678,8 @@ class WarDataEditor:
             if flags & 4: flag_parts.append('随')
             flags_info = ','.join(flag_parts) if flag_parts else '-'
             self.tree.insert('', 'end',
-                values=(rec['index'], map_info, enemy_count, trea_count, chars_info, flags_info))
+                values=(rec['index'], map_info, enemy_count, trea_count,
+                        trea_detail, chars_info, flags_info))
 
     def _build_right_panel(self):
         rf = ttk.Frame(self.paned); self.paned.add(rf, weight=3)
@@ -815,6 +838,7 @@ class WarDataEditor:
                 continue
             enemy_count = sum(1 for eid in rec['enemy_ids'] if eid > 0)
             trea_count = sum(1 for i in range(28) if rec['trea_id'][i] > 0 or (i < 10 and rec['trea_sub'][i] > 0))
+            trea_detail = self._trea_detail_str(rec)
             # 地图列: map_id + 分辨率
             mid = rec['map_id']
             res = self._get_wsc_resolution(mid)
@@ -836,7 +860,8 @@ class WarDataEditor:
             if flags & 4: flag_parts.append('随')
             flags_info = ','.join(flag_parts) if flag_parts else '-'
             self.tree.insert('', 'end',
-                values=(rec['index'], map_info, enemy_count, trea_count, chars_info, flags_info))
+                values=(rec['index'], map_info, enemy_count, trea_count,
+                        trea_detail, chars_info, flags_info))
 
     def _clear_filter(self):
         self.search_var.set('')
@@ -1886,6 +1911,12 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
                      state='readonly', width=5).pack(side=tk.LEFT, padx=2)
         self.zoom_var.trace_add('write', lambda *a: self._on_zoom_change())
 
+        ttk.Button(ctrl, text="刷新", command=self._redraw_scene, width=4).pack(side=tk.LEFT, padx=(6, 2))
+
+        ttk.Separator(ctrl, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=4)
+        self.edit_mode = tk.BooleanVar(value=False)
+        ttk.Checkbutton(ctrl, text="编辑", variable=self.edit_mode).pack(side=tk.LEFT, padx=2)
+
         ttk.Label(ctrl, text="背景=map_id(WSC)", font=FONT_S, foreground='gray').pack(side=tk.LEFT, padx=(10, 2))
 
         self.scene_info_var = tk.StringVar(value="")
@@ -2131,10 +2162,11 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
         else:
             return self.tkitem_names_by_id.get(sub_id, f"Sub#{sub_id}")[:6]
 
-    def _redraw_scene(self):
+    def _redraw_scene(self, rerandomize=True):
         """重绘场景 (背景 + 网格 + 单位 + 宝物)
         游戏坐标体系: sub_42F9C8 等距投影, 所有元素(WSC背景/网格/单位)共享同一坐标系
         敌军/宝物位置按照 sub_431428 游戏规则解析: 固定位置 + 区域随机放置
+        rerandomize=False 时复用缓存的解析位置 (拖拽时不重新随机)
         """
         canvas = self.scene_canvas
         canvas.delete('all')
@@ -2144,7 +2176,6 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
 
         rec = self.records[self._current_idx]
         zoom = self._preview_zoom
-        # sub_42F9C8 硬编码投影系数: 56*(X-Y), 28*(X+Y), 所有WSC分辨率通用
         tile_w = int(56 * zoom)
         tile_h = int(28 * zoom)
 
@@ -2163,12 +2194,26 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
         warway = load_warway(self.warway_path, rec['map_id']) if self.warway_path else None
 
         # ── 按游戏规则解析场景布置 (sub_431428 + sub_4307CC) ──
-        (resolved_enemies, resolved_treas, enemy_zone_reqs,
-         trea_zone_reqs, active_slots, fixed_enemy_slots,
-         fixed_trea_indices, resolved_allies) = self._resolve_scene_placements(rec, warway)
-        self._last_resolved_enemies = resolved_enemies
-        self._last_resolved_treas = resolved_treas
-        self._last_resolved_allies = resolved_allies
+        if rerandomize:
+            (resolved_enemies, resolved_treas, enemy_zone_reqs,
+             trea_zone_reqs, active_slots, fixed_enemy_slots,
+             fixed_trea_indices, resolved_allies) = self._resolve_scene_placements(rec, warway)
+            self._last_resolved_enemies = resolved_enemies
+            self._last_resolved_treas = resolved_treas
+            self._last_resolved_allies = resolved_allies
+            self._last_fixed_trea_indices = fixed_trea_indices
+            self._last_active_slots = active_slots
+            self._last_fixed_enemy_slots = fixed_enemy_slots
+            self._last_enemy_zone_reqs = enemy_zone_reqs
+            self._last_trea_zone_reqs = trea_zone_reqs
+        resolved_enemies = self._last_resolved_enemies
+        resolved_treas = self._last_resolved_treas
+        resolved_allies = self._last_resolved_allies
+        fixed_enemy_slots = getattr(self, '_last_fixed_enemy_slots', set())
+        fixed_trea_indices = self._last_fixed_trea_indices
+        active_slots = getattr(self, '_last_active_slots', 18)
+        enemy_zone_reqs = getattr(self, '_last_enemy_zone_reqs', [])
+        trea_zone_reqs = getattr(self, '_last_trea_zone_reqs', [])
 
         # grid原点由 _grid_to_screen 固定使用游戏常量 (dword_4E7DF0=359, dword_4E7DF4=365, 偏移10/15)
         # 这些是PE .data段编译时常量, 不随WSC分辨率变化, 所有战场通用
@@ -2382,6 +2427,17 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
                 return ('ally', i)
         return None
 
+    def _find_trea_at(self, gx, gy):
+        """查找解析后宝物位置, 返回 (trea_index, is_fixed) 或 None"""
+        if self._current_idx < 0:
+            return None
+        resolved = getattr(self, '_last_resolved_treas', {})
+        fixed = getattr(self, '_last_fixed_trea_indices', set())
+        for i, (tgx, tgy) in resolved.items():
+            if tgx == gx and tgy == gy:
+                return (i, i in fixed)
+        return None
+
     def _on_scene_hover(self, event):
         cx = self.scene_canvas.canvasx(event.x)
         cy = self.scene_canvas.canvasy(event.y)
@@ -2409,7 +2465,20 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
                 else:
                     self.scene_info_var.set(f"({gx},{gy}) 友军槽{uidx} [固定位置]")
         else:
-            self.scene_info_var.set(f"({gx},{gy})")
+            trea = self._find_trea_at(gx, gy)
+            if trea:
+                ti, is_fixed = trea
+                rec = self.records[self._current_idx]
+                tid = rec['trea_id'][ti]
+                label = self._trea_label(rec, ti)
+                sub_id = rec['trea_sub'][ti] if ti < 10 else 0
+                if tid > 0 and sub_id > 0:
+                    sub_name = self.tkitem_names_by_id.get(sub_id, f"Item#{sub_id}")[:6] if sub_id != 10000 else "金钱"
+                    label += f"+{sub_name}"
+                type_tag = "固定" if is_fixed else f"区域Z{abs(rec['trea_xy'][ti*2])}→({gx},{gy})"
+                self.scene_info_var.set(f"({gx},{gy}) 宝物#{ti} {label} [{type_tag}]")
+            else:
+                self.scene_info_var.set(f"({gx},{gy})")
 
     def _on_scene_wheel(self, event):
         zooms = [0.25, 0.33, 0.5, 0.66, 0.75, 1.0]
@@ -2431,7 +2500,9 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
     # ── Task 12: Scene interactivity ──
 
     def _on_scene_click(self, event):
-        """左键点击 — 选择/开始拖拽单位"""
+        """左键点击 — 编辑模式下选择/开始拖拽单位"""
+        if not self.edit_mode.get():
+            return
         cx = self.scene_canvas.canvasx(event.x)
         cy = self.scene_canvas.canvasy(event.y)
         g = self._scene_to_grid(cx, cy)
@@ -2459,11 +2530,13 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
         if utype == 'enemy':
             rec['enemy_xy'][uidx * 2] = gx
             rec['enemy_xy'][uidx * 2 + 1] = gy
+            self._last_resolved_enemies[uidx] = (gx, gy)
         else:
             rec['ally_xy'][uidx * 2] = gx
             rec['ally_xy'][uidx * 2 + 1] = gy
+            self._last_resolved_allies[uidx] = (gx, gy)
         self._dirty = True
-        self._redraw_scene()
+        self._redraw_scene(rerandomize=False)
 
     def _on_scene_release(self, event):
         """释放拖拽 — 同步更新编辑标签页"""
