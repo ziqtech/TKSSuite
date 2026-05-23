@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-WarPC.dat 可视化编辑器 v1.6
+WarPC.dat 可视化编辑器 v1.7
 =============================================================
 逆向依据:
   - sub_45343C:     DAT 文件统一加载 (LZSS 解压, 1054字节/角色, 143角色)
@@ -14,6 +14,12 @@ WarPC.dat 可视化编辑器 v1.6
 
 WarPC.dat 格式 (每条 1054 字节, 共 143 角色):
   527 × int16 (小端序)
+
+Tab 分区 (按字段索引顺序排列):
+  Tab 1: 核心属性 [0]-[50]
+  Tab 2: 装备与技能 [51]-[272]
+  Tab 3: 技能效果判定 [273]+
+  Tab 4: 全部字段 (raw grid)
 
 字段布局 (仅列出反编译已验证的字段; 未验证字段标注 "未验证"):
   [0]   name_id      — 角色名称 TKT ID
@@ -39,26 +45,62 @@ WarPC.dat 格式 (每条 1054 字节, 共 143 角色):
   [23]  mov_base     — 移动(基础)    [24]  mov_cur  — 移动(当前)  ※TKItem[18]=vit
   [25]  wis_base     — 悟性(基础)    [26]  wis_cur  — 悟性(当前)  ※TKItem[17]=spi
 
-  [31]  field_31     — 等级强相关 (r=0.992), 疑似技能点数/累计经验
+  [27]  wisdom       — 智慧值 (曹操=5 司马懿=20)
+  [28]  benevolence  — 仁德值 (曹操=-1 司马懿=-5)
+  [29]  courage      — 勇气值 (曹操=10 司马懿=0)
+  [30]  medicine     — 医术值 (曹操=0 司马懿=10)
+  [31]  jp_total     — 技能点数 (曹操=400 司马懿=300; r=0.992与等级相关)
 
-  [268] jp_reward    — 战后JP点 (直接值, 无等级缩放; 盜賊嘍嘍=2 西羌王=100)
-  [269] gold_reward  — 战后金钱基数 (实际获得 = 基数 × 2; 盜賊=20→40 小混混=25→50)
+  [32]  atk_count    — 攻击次数 (sub_42234C=1)
+  [33]  special_flag — 特殊能力标志 (来自装备 TKItem[20])
+  [34]  mp_reduce    — 内力消耗减少% (来自主动技能 TKSkill[33])
+  [35]  magic_def    — 所受法伤减少% (来自主动技能 TKSkill[38])
+  [36]  exp_bonus    — 战斗经验增加% (来自主动技能 TKSkill[36])
+  [37]  jp_bonus     — 战斗技能点增加% (来自主动技能 TKSkill[37])
+  [38]  move_flags   — 移动特殊标志 (来自移动技能 TKSkill[32])
+  [39]  heal_move    — 移动恢复生命% (来自移动技能 TKSkill[22])
+  [40]  mp_move      — 移动恢复内力% (来自移动技能 TKSkill[24])
 
-  [32]-[42] runtime  — 运行时状态 (sub_42234C 初始化, 非角色固有属性, 语义未验证)
+  [41]  reaction_group   — 反应组编号 1-10 (sub_422BBC type=2; 初始化=0)
+  [42]  reaction_trigger — 触发概率 %%, 来自 TKSkill[44]
+
+  [43]-[50] status_slot — 身上状态效果槽 (8槽×2字节=状态ID+持续回合)
 
   [51]-[66] status_resist — 状态抵抗 (32状态×1byte; sub_42234C 初始化为 0)
-  [88]-[259] skill_learn — 技能学习状态 (344技能×1byte; 反编译验证: 不会/等待学(1~9进展累积)/可以学(≥10)/父技学会(20)/独立技学会(30))
-
   [67]  cause_mask1  — 导致状态掩码1 (1-16; 来自装备 v9[26])
   [68]  cause_mask2  — 导致状态掩码2 (17-32; 来自装备 v9[27])
 
-  [69]-[72] equip_idx —运行时装备索引缓存 (sub_4173F8 从 [73-76] 计算)
+  [69]-[72] equip_idx — 运行时装备索引缓存 (sub_4173F8 从 [73-76] 计算)
   [73]-[76] equip_id  — 装备物品 ID (DAT 原始; 查 TKItem.field[0])
+
+  [77]  use_right_medicine  — 药品使用权限位掩码
+  [78]  use_right_item      — 道具使用权限位掩码 (1=战斗 2=非战斗 4=主角限定)
+  [79]  use_right_weapon    — 武器装备权限位掩码 (1=刀 2=剑 4=枪 8=矛 16=弓 32=大刀)
+  [80]  use_right_armor     — 防具装备权限位掩码 (1=衣袍 2=铠甲)
+  [81]  use_right_accessory — 饰品装备权限位掩码
 
   [82]-[87] equip_skill — 装备技能区 (6字段; Maker Frm_WarPC 暴露; sub_42234C/sub_422BBC 应用)
                          [82]=装备技能0 [83]=装备技能1 [84]=装备技能2 [85]=装备技能3
                          [86]=被动技能1 [87]=被动技能2
                          验证: 周倉 [82]=43武術 [83]=83輔助 [84]=273二連擊 [85]=279無隙1 [86]=303近戰反擊1 [87]=334飄浮
+
+  [88]-[259] skill_learn — 技能学习状态 (344技能×1byte; 反编译验证: 不会/等待学(1~9进展累积)/可以学(≥10)/父技学会(20)/独立技学会(30))
+
+  [260] awk_sprite_id    — 战场图集索引（补丁专用）
+  [261] portrait_menu_id — 队伍头像ID（补丁专用）
+  [262] history_text_id  — 历史文本ID（补丁专用）
+  [263] entity_link      — 地图实体ID
+
+  [264] growth_early — 成长率初期 (五爪金龍=27 西羌王=27 呂布=20)
+  [265] growth_mid   — 成长率中期 (五爪金龍=24 西羌王=24 呂布=25)
+  [266] growth_late  — 成长率后期 (五爪金龍=21 西羌王=21 呂布=25)
+
+  [268] jp_reward    — 战后JP点 (直接值, 无等级缩放; 盜賊嘍嘍=2 西羌王=100)
+  [269] gold_reward  — 战后金钱基数 (实际获得 = 基数 × 2; 盜賊=20→40 小混混=25→50)
+
+  [270]-[272] drop_item — 可掉落物品 ID (五爪金龍验证: 顛海神珠/金龍魂/虎項龍紋鎧)
+
+  [273]+ skill_effect — 技能效果判定 (TKKon ID 映射表)
 
 用法:
   python warpc_editor.py
@@ -278,10 +320,14 @@ IDENTITY_FIELDS = [
     ("level",      4,  "等级",        "角色等级 (数值显示)"),
     ("role",       6,  "身份",        "-1=未激活 0=已激活(sub_410674 L40入队时置0)"),
     ("exp_to_next", 8,  "升级所需经验","升至下一级所需经验; 绝大多数角色=100, BOSS版较高(呂布5092 張角7292)"),
-    ("entity_link", 526, "地图实体ID",  "离队后在地图上显示的NPC实体ID → TKMat.dat; sub_41EEC0→sub_40C648 启用此实体使其回到原位"),
+]
+
+# 补丁专用字段 [260]-[263] — 配合运行时补丁使用; 0=使用原硬编码公式
+PATCH_FIELDS = [
     ("awk_sprite_id", 520, "战场图集索引（补丁专用）", "战斗中Awk.JVG/Awt.JVG块号 — 配合运行时补丁使用; 0=使用原硬编码公式(PATH1:WarPC索引+6, PATH2:WarPC记录号+12); 非0=补丁直接使用此值作为武器精灵块; 替代sub_4307CC:120/+236的硬编码偏移"),
     ("portrait_menu_id", 522, "队伍头像ID（补丁专用）", "队伍菜单中Mu.JVG精灵块号 — 配合运行时补丁使用; 0=使用原公式(portrait+211); 非0=直接使用此值作为Mu.JVG精灵块; 替代sub_41762C:68/+111的硬编码计算"),
     ("history_text_id", 524, "历史文本ID（补丁专用）", "角色界面「历史」标签页显示的TKT文本ID — 配合运行时补丁使用; 0=使用原硬编码公式(9050+角色序号); 非0=补丁直接使用此值作为TKT ID; 替代sub_41A080:104的 word_75688C[idx]+9050"),
+    ("entity_link", 526, "地图实体ID",  "离队后在地图上显示的NPC实体ID → TKMat.dat; sub_41EEC0→sub_40C648 启用此实体使其回到原位"),
 ]
 
 HPMP_FIELDS = [
@@ -500,7 +546,7 @@ def set_field(rec, byte_off, val):
 class WarpcEditor:
     def __init__(self, root):
         self.root = root
-        self.root.title("WarPC.dat 可视化编辑器 v1.6")
+        self.root.title("WarPC.dat 可视化编辑器 v1.7")
         ico = os.path.join(os.path.dirname(__file__), 'TKS.ico')
         if os.path.exists(ico): self.root.iconbitmap(default=ico)
         self.root.geometry("1500x820"); self.root.minsize(1050, 650)
@@ -588,8 +634,8 @@ class WarpcEditor:
         self.notebook = ttk.Notebook(rf)
         self.notebook.pack(fill=tk.BOTH, expand=True)
 
-        # Tab 1: 核心属性
-        tab1 = ttk.Frame(self.notebook); self.notebook.add(tab1, text="核心属性")
+        # Tab 1: 核心属性 [0]-[50]
+        tab1 = ttk.Frame(self.notebook); self.notebook.add(tab1, text="核心属性 [0]-[50]")
         t1_canvas = tk.Canvas(tab1, highlightthickness=0)
         t1_sb = ttk.Scrollbar(tab1, orient=tk.VERTICAL, command=t1_canvas.yview)
         t1_canvas.configure(yscrollcommand=t1_sb.set)
@@ -599,8 +645,8 @@ class WarpcEditor:
         self.t1_inner.bind('<Configure>', lambda e: t1_canvas.configure(scrollregion=t1_canvas.bbox('all')))
         self._bind_mousewheel(t1_canvas)
 
-        # Tab 2: 装备与技能
-        tab2 = ttk.Frame(self.notebook); self.notebook.add(tab2, text="装备与技能")
+        # Tab 2: 装备与技能 [51]-[272]
+        tab2 = ttk.Frame(self.notebook); self.notebook.add(tab2, text="装备与技能 [51]-[272]")
         t2_canvas = tk.Canvas(tab2, highlightthickness=0)
         t2_sb = ttk.Scrollbar(tab2, orient=tk.VERTICAL, command=t2_canvas.yview)
         t2_canvas.configure(yscrollcommand=t2_sb.set)
@@ -661,21 +707,15 @@ class WarpcEditor:
         self.lbl_fa.pack(side=tk.LEFT, padx=10, pady=2)
 
     def _build_tab1(self, parent):
-        """核心属性 — 基本信息 + HP/MP + 8属性 + 战斗能力 + 状态掩码"""
-        self._build_section(parent, "基本信息", IDENTITY_FIELDS, 0)
-        self._build_section(parent, "HP / MP", HPMP_FIELDS, 1)
-        # 八属性 — 一行八列紧凑布局
+        """核心属性 — 基本信息 [0]-[4] + HP/MP [5]-[10] + 8属性 [11]-[26] + 角色五维 [27]-[31] + 技能加成 [32]-[40] + 反应组 [41]-[42] + 身上状态 [43]-[50]"""
+        self._build_section(parent, "基本信息 [0]-[4]", IDENTITY_FIELDS, 0)
+        self._build_section(parent, "HP / MP [5]-[10]", HPMP_FIELDS, 1)
+        # 八属性 — 一行八列紧凑布局 [11]-[26]
         self._build_stat_row(parent)
-        self._build_section(parent, "技能加成 [32]-[40] (sub_422BBC TKSkill效果; sub_42234C初始=0)", SKILL_BONUS_FIELDS, 3)
-        self._build_section(parent, "反应组 [41]-[42] (运行时字段; sub_422BBC type=2 写入, sub_42234C 初始化为0)", REACTION_FIELDS, 4)
-        self._build_section(parent, "攻击导致状态 (来源于装备; sub_42234C L94-95)", STATUS_FIELDS, 5, ft='mask')
+        self._build_section(parent, "角色五维 [27]-[31] (曹操验证: 智慧5 仁德-1 勇气10 医术0 技能点400)", CHAR_ATTR_FIELDS, 3)
+        self._build_section(parent, "技能加成 [32]-[40] (sub_422BBC TKSkill效果; sub_42234C初始=0)", SKILL_BONUS_FIELDS, 4)
+        self._build_section(parent, "反应组 [41]-[42] (运行时字段; sub_422BBC type=2 写入, sub_42234C 初始化为0)", REACTION_FIELDS, 5)
         self._build_status_slots(parent, 6)
-        self._build_section(parent, "角色五维 [27]-[31] (曹操验证: 智慧5 仁德-1 勇气10 医术0 技能点400)", CHAR_ATTR_FIELDS, 7)
-        self._build_section(parent, "使用/装备权限 [77]-[81] (sub_41928C 验证: 主角#0 [77]=? [78]=7 [79]=63 [80]=3 [81]=?)", CHAR_USE_RIGHT_FIELDS, 8)
-        # 战后奖励 [268]-[269]
-        self._build_section(parent, "成长率 [264]-[266] (五爪金龍: 初期27 中期24 后期21)", GROWTH_FIELDS, 9)
-        self._build_section(parent, "战后奖励 [268]-[269] (Gold=基数×2; JP=直接值)", BATTLE_REWARD_FIELDS, 10)
-        self._build_section(parent, "可掉落物品 [270]-[272] (五爪金龍验证: 顛海神珠/金龍魂/虎項龍紋鎧)", DROP_ITEM_FIELDS, 11, ft='item_pick')
 
     def _build_stat_row(self, parent):
         """八属性 — 一行八列, 每列(名称 + 基础 + 当前)"""
@@ -918,12 +958,18 @@ class WarpcEditor:
         dlg.wait_window()
 
     def _build_tab2(self, parent):
-        """装备与技能"""
-        self._build_section(parent, "装备索引 [69]-[72] (TKItem数组下标; 运行时缓存)", EQUIP_FIELDS[:4], 0, ft='item_pick')
-        self._build_section(parent, "装备物品 ID [73]-[76] (DAT原始; 查 TKItem.field[0])", EQUIP_FIELDS[4:], 1, ft='item_pick')
-        self._build_section(parent, "装备技能 [82]-[87] (6字段; sub_42234C/sub_422BBC; Maker验证: 周倉)", EQUIP_SKILL_FIELDS, 2, ft='skill_pick')
-        self._build_status_resist(parent, 3)
-        self._build_skill_learn(parent, 4)
+        """装备与技能 — 状态抵抗 [51]-[66] + 攻击导致状态 [67]-[68] + 装备 [69]-[76] + 权限 [77]-[81] + 装备技能 [82]-[87] + 技能学习 [88]-[259] + 补丁 [260]-[263] + 成长率 [264]-[266] + 战后奖励 [268]-[269] + 掉落物品 [270]-[272]"""
+        self._build_status_resist(parent, 0)
+        self._build_section(parent, "攻击导致状态 [67]-[68] (来源于装备; sub_42234C L94-95)", STATUS_FIELDS, 1, ft='mask')
+        self._build_section(parent, "装备索引 [69]-[72] (TKItem数组下标; 运行时缓存)", EQUIP_FIELDS[:4], 2, ft='item_pick')
+        self._build_section(parent, "装备物品 ID [73]-[76] (DAT原始; 查 TKItem.field[0])", EQUIP_FIELDS[4:], 3, ft='item_pick')
+        self._build_section(parent, "使用/装备权限 [77]-[81] (sub_41928C 验证: 主角#0 [77]=? [78]=7 [79]=63 [80]=3 [81]=?)", CHAR_USE_RIGHT_FIELDS, 4)
+        self._build_section(parent, "装备技能 [82]-[87] (6字段; sub_42234C/sub_422BBC; Maker验证: 周倉)", EQUIP_SKILL_FIELDS, 5, ft='skill_pick')
+        self._build_skill_learn(parent, 6)
+        self._build_section(parent, "补丁专用字段 [260]-[263] (配合运行时补丁使用; 0=使用原硬编码公式)", PATCH_FIELDS, 7)
+        self._build_section(parent, "成长率 [264]-[266] (五爪金龍: 初期27 中期24 后期21)", GROWTH_FIELDS, 8)
+        self._build_section(parent, "战后奖励 [268]-[269] (Gold=基数×2; JP=直接值)", BATTLE_REWARD_FIELDS, 9)
+        self._build_section(parent, "可掉落物品 [270]-[272] (五爪金龍验证: 顛海神珠/金龍魂/虎項龍紋鎧)", DROP_ITEM_FIELDS, 10, ft='item_pick')
 
     def _build_tab3(self, parent):
         """全部 527 字段的紧凑网格"""
@@ -1328,9 +1374,10 @@ class WarpcEditor:
                     cb.current(i); break
 
         # Populate all known fields
-        all_named_fields = (IDENTITY_FIELDS + HPMP_FIELDS + STAT_FIELDS +
-                           SKILL_BONUS_FIELDS + EQUIP_FIELDS + EQUIP_SKILL_FIELDS +
-                           STATUS_FIELDS + STATUS_SLOT_FIELDS + CHAR_ATTR_FIELDS + CHAR_USE_RIGHT_FIELDS + REACTION_FIELDS + GROWTH_FIELDS + BATTLE_REWARD_FIELDS + DROP_ITEM_FIELDS)
+        all_named_fields = (IDENTITY_FIELDS + HPMP_FIELDS + STAT_FIELDS + CHAR_ATTR_FIELDS +
+                           SKILL_BONUS_FIELDS + REACTION_FIELDS + STATUS_SLOT_FIELDS +
+                           STATUS_FIELDS + EQUIP_FIELDS + CHAR_USE_RIGHT_FIELDS +
+                           EQUIP_SKILL_FIELDS + PATCH_FIELDS + GROWTH_FIELDS + BATTLE_REWARD_FIELDS + DROP_ITEM_FIELDS)
         for fn, fo, _, _ in all_named_fields:
             sv = str(f[fo // 2])
             if fn in self._edit_vars:
@@ -1904,9 +1951,10 @@ class WarpcEditor:
                     pass
 
         # Apply named fields
-        all_named_fields = (IDENTITY_FIELDS + HPMP_FIELDS + STAT_FIELDS +
-                           SKILL_BONUS_FIELDS + EQUIP_FIELDS + EQUIP_SKILL_FIELDS +
-                           STATUS_FIELDS + STATUS_SLOT_FIELDS + CHAR_ATTR_FIELDS + CHAR_USE_RIGHT_FIELDS + REACTION_FIELDS + GROWTH_FIELDS + BATTLE_REWARD_FIELDS + DROP_ITEM_FIELDS)
+        all_named_fields = (IDENTITY_FIELDS + HPMP_FIELDS + STAT_FIELDS + CHAR_ATTR_FIELDS +
+                           SKILL_BONUS_FIELDS + REACTION_FIELDS + STATUS_SLOT_FIELDS +
+                           STATUS_FIELDS + EQUIP_FIELDS + CHAR_USE_RIGHT_FIELDS +
+                           EQUIP_SKILL_FIELDS + PATCH_FIELDS + GROWTH_FIELDS + BATTLE_REWARD_FIELDS + DROP_ITEM_FIELDS)
         for fn, fo, _, _ in all_named_fields:
             if fn in self._edit_vars:
                 try:
@@ -2142,15 +2190,21 @@ class WarpcEditor:
         lines.append("")
         lines.append("【已验证字段 (反编译直接引用)】")
         for title, fields in [
-            ("基本信息", IDENTITY_FIELDS), ("HP/MP", HPMP_FIELDS),
-            ("八属性 (攻击/防御/命中/闪避/速度/幸运/悟性/移动)", STAT_FIELDS),
-            ("技能加成 [32]-[42] (sub_422BBC TKSkill效果验证)", SKILL_BONUS_FIELDS),
-            ("使用/装备权限 [77]-[81] (sub_41928C 验证: 主角#0 药品[77]=? 道具[78]=7 武器[79]=63 防具[80]=3 饰品[81]=?)", CHAR_USE_RIGHT_FIELDS),
-            ("装备索引", EQUIP_FIELDS[:4]), ("装备ID", EQUIP_FIELDS[4:]),
-            ("装备技能 [82]-[87] (6字段; Maker验证: 周倉)", EQUIP_SKILL_FIELDS),
+            ("基本信息 [0]-[4]", IDENTITY_FIELDS), ("HP/MP [5]-[10]", HPMP_FIELDS),
+            ("八属性 [11]-[26] (攻击/防御/命中/闪避/速度/幸运/悟性/移动)", STAT_FIELDS),
+            ("角色五维 [27]-[31]", CHAR_ATTR_FIELDS),
+            ("技能加成 [32]-[40] (sub_422BBC TKSkill效果验证)", SKILL_BONUS_FIELDS),
+            ("反应组 [41]-[42]", REACTION_FIELDS),
+            ("身上状态 [43]-[50]", STATUS_SLOT_FIELDS),
+            ("状态抵抗 [51]-[66] (32状态×1byte)", []),
             ("攻击导致状态 [67]-[68] (sub_42234C L94-95; 来自装备)", STATUS_FIELDS),
-            ("状态抵抗 (32状态×1byte, 占16个int16[51]-[66]; sub_42234C初始化为0)", []),
+            ("装备索引 [69]-[72]", EQUIP_FIELDS[:4]), ("装备ID [73]-[76]", EQUIP_FIELDS[4:]),
+            ("使用/装备权限 [77]-[81] (sub_41928C 验证: 主角#0 药品[77]=? 道具[78]=7 武器[79]=63 防具[80]=3 饰品[81]=?)", CHAR_USE_RIGHT_FIELDS),
+            ("装备技能 [82]-[87] (6字段; Maker验证: 周倉)", EQUIP_SKILL_FIELDS),
+            ("补丁专用字段 [260]-[263]", PATCH_FIELDS),
+            ("成长率 [264]-[266] (五爪金龍: 初期27 中期24 后期21)", GROWTH_FIELDS),
             ("战后奖励 [268]-[269] (实测: 盜賊嘍嘍JP=2 Gold基数=20→Lv3得40)", BATTLE_REWARD_FIELDS),
+            ("可掉落物品 [270]-[272]", DROP_ITEM_FIELDS),
         ]:
             lines.append(f"【{title}】")
             for fn, fo, fl, cmt in fields:
@@ -2188,7 +2242,7 @@ class WarpcEditor:
     def _show_about(self):
         cnt = len(self.records) if self.records else WARPC_ORIG_COUNT
         messagebox.showinfo("关于",
-            "WarPC.dat 可视化编辑器 v1.6\n\n"
+            "WarPC.dat 可视化编辑器 v1.7\n\n"
             "基于《三国群侠传》 TKS.exe 反编译\n"
             f"{cnt} 角色 × {WARPC_REC} 字节 ({WARPC_FIELD_COUNT}×int16)\n"
             f"原游戏: {WARPC_ORIG_COUNT} 角色 ({WARPC_ORIG_SIZE} 字节), 支持动态扩展\n\n"
@@ -2198,7 +2252,12 @@ class WarpcEditor:
             "  sub_422BBC  被动技能效果计算\n"
             "  sub_4173F8  装备索引匹配\n"
             "  sub_45343C  DAT 统一加载\n"
-            "  sub_452B14  LZSS 解压引擎"
+            "  sub_452B14  LZSS 解压引擎\n\n"
+            "Tab 分区 (按字段索引顺序):\n"
+            "  Tab 1: 核心属性 [0]-[50]\n"
+            "  Tab 2: 装备与技能 [51]-[272]\n"
+            "  Tab 3: 技能效果判定 [273]+\n"
+            "  Tab 4: 全部字段 (raw grid)"
         )
 
 
