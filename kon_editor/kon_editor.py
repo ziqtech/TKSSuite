@@ -13,22 +13,23 @@ v3.0 语义修正 (基于 sub_43D53C/43D8B0/43E980/4458B0):
   - field[0] = 执行模式 (高字节=攻击距离, 低字节=范围形状)
   - field[1] = 目标参数 (高字节=扩展范围, 低字节=扩展模式)
   - field[2] = 目标过滤 (高字节=目标格子类型[全部/仅角色/仅空地], 低字节=阵营匹配[对立/同阵营/任意])
-  - field[4] = 伤害基础值 (非"泛型参数值", -1=ATK, >1000/2000/3000=编码)
-  - field[5] = 内力伤害    field[6] = 附加命中
-  - field[8] = HP回复      field[9] = MP回复 (战斗中=数值, 剧情可能=对话ID→TKT)
-  - field[19] = 执行标志 (bit0=隐藏施法者, bit2=物理/魔法, 高字节未使用)
+  - field[4] = 生命伤害 (-1=ATK, 0=无, 1~999=固定, 1001~1999=HP%, 2001~2999=ATK+N, 3001+=ATK×倍率)
+  - field[5] = 内力伤害 (同编码, >1000=内力%)    field[6] = 附加命中 (加算值)
+  - field[8] = 生命回复 (同编码, >1000=生命%回复, 仅生命<25%时触发)
+  - field[9] = 内力回复 (同编码, >1000=内力%回复, 仅内力<25%时触发)
+  - field[19] = 执行标志 (bit0=隐藏施法者, bit2=物理/法术, 高字节未使用)
 
 字段布局 (20 × int16, 40字节/条):
   [0]  exec_mode         — 执行模式/攻击范围 (高=距离, 低=形状)
   [1]  target_param      — 目标选择参数
   [2]  target_filter     — 目标过滤 (格子类型 + 阵营匹配)
   [3]  tkact_id          — TKAct.dat 动画索引 (0..649)
-  [4]  damage_base       — 伤害基础值
-  [5]  mp_damage         — 内力伤害基础值
+  [4]  hp_damage       — 生命伤害
+  [5]  mp_damage         — 内力生命伤害
   [6]  accuracy          — 附加命中值
   [7]  extra_damage      — 附加伤害值
-  [8]  hp_restore        — HP回复基础值 (可能=对话ID→TKT)
-  [9]  mp_restore        — MP回复基础值 (可能=对话ID→TKT)
+  [8]  hp_restore        — 生命回复基础值 (可能=对话ID→TKT)
+  [9]  mp_restore        — 内力回复基础值 (可能=对话ID→TKT)
   [10] inflict_status_lo — 导致状态 1-16  (位掩码)
   [11] inflict_status_hi — 导致状态 17-32 (位掩码)
   [12] remove_status_lo  — 解除状态 1-16  (位掩码)
@@ -168,15 +169,15 @@ W_INPUT = 12
 
 KON_FIELDS = [
     ("exec_mode",        0,  "执行模式",      "高字节=攻击距离(负=自身, 0=单格, 1-3=近战, 6+=远程); 低字节=范围开关(0=启用菱形, 1=禁用) — sub_43D53C:45-47"),
-    ("target_param",     2,  "目标参数",      "高字节=效果面积(格数); 低字节=扩散开关(0=启用菱形, 1=禁用/单体) — sub_43D8B0:56-65"),
+    ("target_param",     2,  "目标参数",      "高字节=效果面积(0=单体, 1+=菱形层数, -1/FF=全场, -2/FE=全场排除自身); 低字节=扩散开关(0=启用, 1=禁用) — sub_43D8B0:56-146"),
     ("target_filter",    4,  "目标过滤",      "高字节=目标格子(0=全部, 1=仅角色, 2=仅空地[召唤]); 低字节=阵营匹配(0=对立/敌方, 1=同阵营/友方, 2=任意/不分敌我) — sub_43D53C:127-155, sub_43D8B0:v17"),
     ("tkact_id",         6,  "TKAct动画索引",     "TKAct.dat 条目索引 (0..649, -1=无) — sub_4434BC: word_9D069E[20*i]"),
-    ("damage_base",      8,  "伤害基础值",    "伤害基础值 (-1=单位攻击力, >0=固定值, >1000/2000/3000=不同编码公式) — sub_43E980:69-161"),
-    ("mp_damage",        10, "内力伤害",      "内力(MP)伤害基础值, 编码同伤害基础值 (33条使用) — sub_43E980:392"),
-    ("accuracy",         12, "附加命中",      "命中率计算基准值, 与目标闪避联合计算 (33条使用) — sub_43E980:179"),
-    ("extra_damage",     14, "附加伤害",      "附加伤害值 (1条使用, 极少)"),
-    ("hp_restore",       16, "HP回复",       "HP回复基础值, 编码同伤害基础值 — sub_43E980:479"),
-    ("mp_restore",       18, "MP回复",       "MP回复基础值, 编码同伤害基础值 — sub_43E980:517"),
+    ("hp_damage",      8,  "生命伤害",    "(-1)=ATK; (0)=无; (1~999)=固定; (1001~1999)=目标生命%(val-1000); (2001~2999)=ATK+(val-2000); (3001+)=ATK×(1+(val-3000)/100) — sub_43E980:77-161,273-276"),
+    ("mp_damage",        10, "内力伤害",      "(0)=无; (1~999)=固定内力伤; (1001~1999)=目标内力%(val-1000) — sub_43E980:392-477, v38编码"),
+    ("accuracy",         12, "附加命中",      "命中率加算值 (与目标闪避联合, L179: v35=accuracy+unit_accuracy) — sub_43E980:179"),
+    ("extra_damage",     14, "附加伤害",      "附加伤害值 (极少使用) — sub_43E980 未直接使用此字段"),
+    ("hp_restore",       16, "生命回复",       "(0)=无; (1~999)=固定回复; (1001~1999)=最大生命%(val-1000); 仅生命<25%时50%触发 — sub_43E980:479-515"),
+    ("mp_restore",       18, "内力回复",       "(0)=无; (1~999)=固定回复; (1001~1999)=最大内力%(val-1000); 仅内力<25%时50%触发 — sub_43E980:517-553"),
     ("inflict_status_lo", 20, "导致状态1-16",  "施加状态位掩码低16位 (bit0=状态1,…,bit15=状态16; 84条使用)"),
     ("inflict_status_hi", 22, "导致状态17-32", "施加状态位掩码高16位 (bit0=状态17,…,bit15=状态32; 107条使用)"),
     ("remove_status_lo",  24, "解除状态1-16",  "移除状态位掩码低16位 (bit0=状态1,…,bit15=状态16; 26条使用)"),
@@ -256,8 +257,19 @@ def describe_exec_mode(val):
     return "  ".join(parts)
 
 def describe_target_param(val):
-    """解析 target_param → 可读描述 (高字节=攻击面积, 低字节=扩散开关)"""
+    """解析 target_param → 可读描述 (高字节=攻击面积, 低字节=扩散开关)
+
+    逆向依据 sub_43D8B0:56,65,78,142-146:
+      v15 (高字节) >= 0: 正常模式, v15 为菱形扩散层数
+      v15 = -1 (0xFF): 全场目标, 所有格均为候选 (L144)
+      v15 = -2 (0xFE): 全场目标, 但排除中心格 (L145-146 中心置-1)
+    """
     if val < 0:
+        hi = (val >> 8) & 0xFF
+        if hi == 255:  # -1
+            return "全场目标"
+        elif hi == 254:  # -2
+            return "全场(排除自身)"
         return f"特殊({val})"
     hi = (val >> 8) & 0xFF
     lo = val & 0xFF
@@ -293,8 +305,49 @@ def describe_exec_flags(val):
     parts = []
     parts.append("显示待机" if (lo & 1) else "隐藏待机")
     if lo & 2: parts.append("物品")
-    parts.append("物理" if (lo & 4) else "魔法")
+    parts.append("物理" if (lo & 4) else "法术")
     return "  ".join(parts)
+
+def describe_hp_damage(val):
+    """解析 hp_damage → 可读描述 (sub_43E980:77-161,273-276)
+
+    编码层级:
+      -1      → 单位ATK + 技能特殊修正 (sub_43E980:77-145 各skill_id分支)
+       0      → 无伤害 (sub_43E980:74 跳过)
+     1~999    → 固定伤害值
+    1001~1999 → 目标最大HP × (val-1000)%  (v37 = val-1000, L273-274)
+    2001~2999 → ATK + (val-2000)          (L156)
+    3001+     → ATK × (1 + (val-3000)/100) (L161)
+    """
+    if val == -1:
+        return "单位攻击力"
+    if val == 0:
+        return "无伤害"
+    if 1 <= val <= 999:
+        return f"固定伤害={val}"
+    if 1001 <= val <= 1999:
+        return f"生命%伤害={val - 1000}%"
+    if 2001 <= val <= 2999:
+        return f"攻击力+{val - 2000}"
+    if val >= 3001:
+        return f"攻击力×{100 + val - 3000}%"
+    return f"特殊({val})"
+
+def describe_resource_val(val, resource_name):
+    """解析 mp_damage/hp_restore/mp_restore → 可读描述 (sub_43E980:392-553)
+
+    共享编码:
+       0      → 无效果
+     1~999    → 固定值
+    1001~1999 → 最大值 × (val-1000)%
+    """
+    if val == 0:
+        return f"无{resource_name}"
+    if 1 <= val <= 999:
+        return f"固定{resource_name}={val}"
+    if 1001 <= val <= 1999:
+        return f"{resource_name}%={val - 1000}%"
+    return f"{resource_name}=({val})"
 
 def load_kon(fp):
     with open(fp, 'rb') as f: raw = f.read()
@@ -392,15 +445,17 @@ class KonEditor:
 
         # Left: TreeView
         lf = ttk.Frame(paned); paned.add(lf, weight=1)
-        cols = ('index', 'tkact_id', 'atk_range', 'tkt_name', 'atk_area', 'damage_base')
+        cols = ('index', 'tkact_id', 'atk_range', 'tkt_name', 'atk_area', 'hp_damage', 'target_f', 'exec_f')
         self.tree = ttk.Treeview(lf, columns=cols, show='headings', selectmode='browse')
         cc = [
             ('index', '序号', 38),
-            ('tkact_id', 'TKAct', 40),
+            ('tkact_id', '动画', 42),
             ('atk_range', '距离', 42),
-            ('tkt_name', '名称', 100),
-            ('atk_area', '范围', 42),
-            ('damage_base', '伤害', 50),
+            ('tkt_name', '名称', 95),
+            ('atk_area', '范围', 52),
+            ('hp_damage', '伤害', 55),
+            ('target_f', '目标', 55),
+            ('exec_f', '类型', 50),
         ]
         for cid, cn, cw in cc:
             self.tree.heading(cid, text=cn, command=lambda c=cid: self._sort_by(c))
@@ -411,6 +466,7 @@ class KonEditor:
         self.tree.bind('<<TreeviewSelect>>', self._on_tree_select)
         self.tree.tag_configure('active', foreground='#228B22')  # 有内容的条件
         self.tree.tag_configure('empty', foreground='#AAAAAA')    # 空记录
+        self.tree.tag_configure('tkact_minus1', foreground='#2266CC')  # tkact_id=-1
 
         # Right: Edit panel
         rf = ttk.Frame(paned); paned.add(rf, weight=4)
@@ -459,8 +515,8 @@ class KonEditor:
         self.preview_info.grid(row=1, column=1, columnspan=3, sticky='ew', pady=1)
 
         # Field groups — active fields only, skip unused
-        self._build_field_group("战斗执行参数 (offset 0–8)", ACTIVE_FIELDS[:5], 1, 5)
-        self._build_field_group("伤害/回复参数 (offset 10–18)", ACTIVE_FIELDS[5:10], 2, 5)
+        self._build_field_group("战斗执行参数 (offset 0–6)", ACTIVE_FIELDS[:4], 1, 4)
+        self._build_field_group("伤害/回复参数 (offset 8–18)", ACTIVE_FIELDS[4:10], 2, 5)
         self._build_field_group("状态位掩码 (offset 20–28)", ACTIVE_FIELDS[10:15], 3, 5)
         self._build_field_group("未使用 (offset 30–36) + 执行标志", KON_FIELDS[15:], 4, 5)
 
@@ -754,26 +810,61 @@ class KonEditor:
             nm = kon_record_name(r, self.tkt, self.names)
             has_data = any(r[fn] != 0 for fn, _, _, _ in KON_FIELDS)
             tags = ['active'] if has_data else ['empty']
+            if r['tkact_id'] == -1:
+                tags = ['tkact_minus1']
             # 攻击距离: exec_mode 高字节
             em = r['exec_mode'] & 0xFFFF
             em_hi = (em >> 8) & 0xFF
             if em_hi >= 128:
                 dist_str = "自身"
             elif em_hi == 0:
-                dist_str = ""
+                dist_str = "单格"
             else:
-                dist_str = str(em_hi)
+                dist_str = f"{em_hi}格"
             # 攻击范围: target_param 高字节
             tp = r['target_param'] & 0xFFFF
             tp_hi = (tp >> 8) & 0xFF
-            area_str = str(tp_hi) if tp_hi > 0 else ""
-            # 伤害基础值: 有数字就显示, 没有不显示
-            db = r['damage_base']
-            dmg_str = str(db) if db != 0 else ""
+            if tp_hi == 255:  # -1
+                area_str = "全场"
+            elif tp_hi == 254:  # -2
+                area_str = "排除自身"
+            elif tp_hi > 0:
+                area_str = f"{tp_hi}格"
+            else:
+                area_str = "单体"
+            # 生命伤害: 显示编码描述
+            db = r['hp_damage']
+            if db == -1:
+                dmg_str = "攻击力"
+            elif db == 0:
+                dmg_str = "-"
+            elif 1001 <= db <= 1999:
+                dmg_str = f"{db-1000}%"
+            elif 2001 <= db <= 2999:
+                dmg_str = f"攻+{db-2000}"
+            elif db >= 3001:
+                dmg_str = f"攻×{100+db-3000}%"
+            else:
+                dmg_str = str(db)
+            # 目标过滤: target_filter
+            tf = r['target_filter']
+            tf_lo = tf & 0xFF
+            tf_hi = (tf >> 8) & 0xFF
+            faction_map = {0: "敌", 1: "友", 2: "任意"}
+            target_map = {0: "", 1: "仅人", 2: "仅地"}
+            f_str = faction_map.get(tf_lo, "?")
+            t_str = target_map.get(tf_hi, "")
+            tf_str = f"{f_str}{t_str}" if t_str else f_str
+            # 执行标志: exec_flags
+            ef = r['exec_flags'] & 0xFF
+            if ef & 4:
+                ef_str = "物理"
+            else:
+                ef_str = "法术"
             self.tree.insert('', 'end',
                              values=(r['index'], r['tkact_id'], dist_str,
                                      nm if nm else f"(空-#{idx})",
-                                     area_str, dmg_str),
+                                     area_str, dmg_str, tf_str, ef_str),
                              tags=tags)
 
     def _sort_by(self, col):
@@ -783,7 +874,7 @@ class KonEditor:
                 key=lambda i: kon_record_name(self.records[i], self.tkt, self.names).lower(), reverse=rev)
         else:
             km = {'tkact_id': 'tkact_id', 'atk_range': 'exec_mode', 'atk_area': 'target_param',
-                  'damage_base': 'damage_base'}
+                  'hp_damage': 'hp_damage', 'target_f': 'target_filter', 'exec_f': 'exec_flags'}
             self.filtered_indices.sort(
                 key=lambda i: self.records[i].get(km.get(col, 'index'), 0), reverse=rev)
         self._sort_reverse = not rev; self._refresh_table()
@@ -797,7 +888,7 @@ class KonEditor:
             if all(rec[fn] == 0 for fn, _, _, _ in KON_FIELDS):
                 rec['exec_mode'] = 0; rec['target_param'] = 0
                 rec['tkact_id'] = rec['index']
-                rec['damage_base'] = -1; rec['exec_flags'] = 4
+                rec['hp_damage'] = -1; rec['exec_flags'] = 4
                 self._dirty = True; self._apply_filter()
                 for child in self.tree.get_children():
                     if int(self.tree.item(child)['values'][0]) == rec['index']:
@@ -874,23 +965,34 @@ class KonEditor:
             info_parts.append(f"效果={tp_desc}")
         tf = rec.get('target_filter', 0)
         if tf: info_parts.append(describe_target_filter(tf))
-        db = rec.get('damage_base', 0)
-        if db: info_parts.append(f"伤害基础={db}")
+        db = rec.get('hp_damage', 0)
+        if db: info_parts.append(f"伤害={describe_hp_damage(db)}")
+        mpd = rec.get('mp_damage', 0)
+        if mpd: info_parts.append(f"内伤={describe_resource_val(mpd, '内力伤害')}")
         hr = rec.get('hp_restore', 0)
-        if hr: info_parts.append(f"HP回复={hr}")
+        if hr: info_parts.append(f"生命={describe_resource_val(hr, '生命回复')}")
         mr = rec.get('mp_restore', 0)
-        if mr: info_parts.append(f"MP回复={mr}")
+        if mr: info_parts.append(f"内力={describe_resource_val(mr, '内力回复')}")
         ef = rec.get('exec_flags', 0)
         if ef: info_parts.append(describe_exec_flags(ef))
         self.preview_info.config(text=" | ".join(info_parts) if info_parts else "(空动作)")
 
         # 填充编辑控件
+        _damage_desc = {
+            'hp_damage': describe_hp_damage,
+            'mp_damage': lambda v: describe_resource_val(v, '内力伤害'),
+            'hp_restore': lambda v: describe_resource_val(v, '生命回复'),
+            'mp_restore': lambda v: describe_resource_val(v, '内力回复'),
+        }
         for fn, fo, fl, _ in KON_FIELDS:
             val = rec.get(fn, 0); sv = str(val)
             self._edit_vars.get(fn, tk.StringVar()).set(sv)
             if fn in self._edit_extras:
                 if 'status' in fn:
                     self._update_status_label(fn, int(val) if val else 0)
+                elif fn in _damage_desc:
+                    desc = _damage_desc[fn](int(val) if val else 0)
+                    self._edit_extras[fn].config(text=desc, foreground='#228B22')
                 else:
                     resolved = resolve_kon_val(fn, int(val) if val else 0, self.tkt)
                     self._edit_extras[fn].config(text=resolved, foreground='#3366cc')
@@ -1036,11 +1138,23 @@ class KonEditor:
         lines.append("【反编译函数引用】")
         lines.append("  sub_43D53C: 目标区域标记 (使用 field[0]低/高字节, field[2]低/高字节)")
         lines.append("  sub_43D8B0: 目标验证过滤 (使用 field[1]低/高字节, field[2]低字节)")
-        lines.append("  sub_43E980: AI技能评估/伤害计算 (使用 field[4-9] 作为伤害/回复值)")
+        lines.append("  sub_43E980: 伤害计算核心 (field[4-9] 编码解码)")
         lines.append("  sub_4458B0: 技能执行主函数 (field[0]高字节作为攻击距离判定)")
         lines.append("  sub_4434BC: 动画运行时 (field[3] → TKAct 动画条目)")
         lines.append("  sub_4173F8: TKKon 加载入口")
         lines.append("  Maker.exe sub_4027FF: 解压后大小校验 v19 == 26000")
+        lines.append("")
+        lines.append("【伤害字段编码规则 (sub_43E980)】")
+        lines.append("  hp_damage / mp_damage / hp_restore / mp_restore 共享编码:")
+        lines.append("    0       → 无效果")
+        lines.append("    1~999   → 固定值")
+        lines.append("    1001~1999 → 最大值的 (val-1000)% 百分比")
+        lines.append("  hp_damage 独有:")
+        lines.append("    -1      → 使用单位攻击力 (含技能特殊修正)")
+        lines.append("    2001~2999 → 攻击力 + (val-2000) 固定加算")
+        lines.append("    3001~32767 → 攻击力 × (1 + (val-3000)/100) 百分比乘算")
+        lines.append("  hp_restore 特殊条件: 仅生命<25%时50%概率触发 (sub_43E980:491)")
+        lines.append("  mp_restore 特殊条件: 仅内力<25%时50%概率触发 (sub_43E980:529)")
 
         dlg = tk.Toplevel(self.root); dlg.title("字段参考 v2.0 (修正版)")
         dlg.geometry("680x560"); dlg.transient(self.root)
