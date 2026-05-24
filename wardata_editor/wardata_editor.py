@@ -636,11 +636,8 @@ class WarDataEditor:
     def _trea_detail_str(self, rec):
         """返回宝物摘要: "固N/随M" """
         fixed = random_trea = 0
-        for i in range(28):
-            tid = rec['trap_type'][i]
-            sub_id = rec['trea_sub'][i] if i < 10 else 0
-            if tid <= 0 and sub_id <= 0:
-                continue
+        for i in range(10):
+            if rec['trea_sub'][i] <= 0: continue
             tx = rec['trap_xy'][i * 2]
             if tx >= 0: fixed += 1
             else: random_trea += 1
@@ -650,7 +647,7 @@ class WarDataEditor:
         self.tree.delete(*self.tree.get_children())
         for rec in self.records:
             enemy_count = sum(1 for eid in rec['enemy_ids'] if eid > 0)
-            trea_count = sum(1 for i in range(28) if rec['trap_type'][i] > 0 or (i < 10 and rec['trea_sub'][i] > 0))
+            trea_count = sum(1 for i in range(10) if rec['trea_sub'][i] > 0)
             trap_count = sum(1 for i in range(28) if 1 <= self._trap_type_at(rec, i) <= 6)
             trea_detail = self._trea_detail_str(rec)
             # 地图列: map_id + 分辨率
@@ -842,7 +839,7 @@ class WarDataEditor:
                and query not in char_names.lower():
                 continue
             enemy_count = sum(1 for eid in rec['enemy_ids'] if eid > 0)
-            trea_count = sum(1 for i in range(28) if rec['trap_type'][i] > 0 or (i < 10 and rec['trea_sub'][i] > 0))
+            trea_count = sum(1 for i in range(10) if rec['trea_sub'][i] > 0)
             trap_count = sum(1 for i in range(28) if 1 <= self._trap_type_at(rec, i) <= 6)
             trea_detail = self._trea_detail_str(rec)
             # 地图列: map_id + 分辨率
@@ -1715,149 +1712,98 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
     # ═══════════════════════════════════════════════════════════
 
     def _build_drops_tab(self):
-        """28组treasure: X,Y坐标(offset214) + 等级范围(offset270) + 主物品(offset386) + 副物品(offset326前10组)"""
+        """10个宝物槽位 (sub_431428:303 trea_sub) + 坐标共享28陷阱槽位"""
         df = self.tab_drops
-        # 滚动容器 (垂直+水平)
         canvas = tk.Canvas(df, highlightthickness=0)
         vsb = ttk.Scrollbar(df, orient=tk.VERTICAL, command=canvas.yview)
-        hsb = ttk.Scrollbar(df, orient=tk.HORIZONTAL, command=canvas.xview)
         vsb.pack(side=tk.RIGHT, fill=tk.Y)
-        hsb.pack(side=tk.BOTTOM, fill=tk.X)
         canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        canvas.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
+        canvas.configure(yscrollcommand=vsb.set)
         inner = ttk.Frame(canvas)
         self._drops_win = canvas.create_window((0, 0), window=inner, anchor='nw')
-
         def _drops_canvas_conf(event):
             canvas.configure(scrollregion=canvas.bbox('all'))
         inner.bind('<Configure>', _drops_canvas_conf)
         canvas.bind('<MouseWheel>', lambda e: canvas.yview_scroll(int(-e.delta / 120), 'units'))
 
-        ttk.Label(inner, text="战场宝物/奖励 (sub_431428 treasure系统) — 28组:", font=FONT).grid(
-            row=0, column=0, columnspan=11, sticky='w', pady=(2, 4))
+        ttk.Label(inner, text="隐藏宝物 (sub_431428:303 trea_sub) — 10个槽位, 与陷阱共享X/Y坐标:", font=FONT).grid(
+            row=0, column=0, columnspan=8, sticky='w', pady=(2, 4))
 
-        # 表头
-        hdr = ['#', 'X', 'Y', '数量Min', '数量Max', '主物品ID', '主物品名', '副物品', '副物品名', '副物品数量Min', '副物品数量Max']
-        hdr_widths = [4, 4, 4, 10, 10, 10, 14, 10, 14, 14, 14]
+        hdr = ['#', 'X', 'Y', '宝物ID', '宝物名称', '数量Min', '数量Max']
+        hdr_widths = [4, 4, 4, 10, 16, 10, 10]
         for j, (h, w) in enumerate(zip(hdr, hdr_widths)):
-            ttk.Label(inner, text=h, font=FONT_S, width=w).grid(
-                row=1, column=j, padx=1)
+            ttk.Label(inner, text=h, font=FONT_S, width=w).grid(row=1, column=j, padx=1)
 
         self.trea_vars = []
         self.trea_name_labels = []
-        for i in range(28):
+        for i in range(10):
             row = i + 2
             vr = {}
             ttk.Label(inner, text=str(i), font=FONT_S).grid(row=row, column=0)
 
-            # X coord (from trea_xy[i*2])
             vr['x'] = tk.StringVar()
             ttk.Spinbox(inner, textvariable=vr['x'], from_=-128, to=127, width=4, font=FONT).grid(
                 row=row, column=1, padx=1)
 
-            # Y coord (from trea_xy[i*2+1])
             vr['y'] = tk.StringVar()
             ttk.Spinbox(inner, textvariable=vr['y'], from_=-128, to=127, width=4, font=FONT).grid(
                 row=row, column=2, padx=1)
 
-            # Main qty min (from trea_qty[i*2])
-            vr['lvmin'] = tk.StringVar()
-            ttk.Entry(inner, textvariable=vr['lvmin'], width=5, font=FONT).grid(
-                row=row, column=3, padx=1)
-
-            # Main qty max (from trea_qty[i*2+1])
-            vr['lvmax'] = tk.StringVar()
-            ttk.Entry(inner, textvariable=vr['lvmax'], width=5, font=FONT).grid(
-                row=row, column=4, padx=1)
-
-            # Primary item ID (trea_id)
             vr['tid'] = tk.StringVar()
             ttk.Entry(inner, textvariable=vr['tid'], width=6, font=FONT).grid(
-                row=row, column=5, padx=1)
-            nlbl = ttk.Label(inner, text="", foreground='#3366cc', font=FONT_S, width=10, anchor='w')
-            nlbl.grid(row=row, column=6, padx=1)
+                row=row, column=3, padx=1)
+            nlbl = ttk.Label(inner, text="", foreground='#3366cc', font=FONT_S, width=12, anchor='w')
+            nlbl.grid(row=row, column=4, padx=1)
             self.trea_name_labels.append(nlbl)
 
-            # Secondary item (trea_sub, only first 10)
-            if i < 10:
-                vr['sub'] = tk.StringVar()
-                ttk.Entry(inner, textvariable=vr['sub'], width=6, font=FONT).grid(
-                    row=row, column=7, padx=1)
-                slbl = ttk.Label(inner, text="", foreground='#cc6633', font=FONT_S, width=10, anchor='w')
-                slbl.grid(row=row, column=8, padx=1)
-                vr['slbl'] = slbl
-                vr['qty_min'] = tk.StringVar()
-                ttk.Entry(inner, textvariable=vr['qty_min'], width=5, font=FONT).grid(
-                    row=row, column=9, padx=1)
-                vr['qty_max'] = tk.StringVar()
-                ttk.Entry(inner, textvariable=vr['qty_max'], width=5, font=FONT).grid(
-                    row=row, column=10, padx=1)
-            else:
-                vr['sub'] = None
+            vr['qty_min'] = tk.StringVar()
+            ttk.Entry(inner, textvariable=vr['qty_min'], width=5, font=FONT).grid(
+                row=row, column=5, padx=1)
+
+            vr['qty_max'] = tk.StringVar()
+            ttk.Entry(inner, textvariable=vr['qty_max'], width=5, font=FONT).grid(
+                row=row, column=6, padx=1)
 
             self.trea_vars.append(vr)
 
+        ttk.Label(inner,
+            text="宝物ID: 0=无, 10000=金钱, 其他=TKItem ID (sub_431428:303)\n"
+                 "坐标与陷阱tab共享trap_xy (offset 214-269), 负X=区域随机放置\n"
+                 "数量来自trea_quant (offset 346-385), sub_434510",
+            font=FONT_S, foreground='#666', justify='left').grid(
+            row=12, column=0, columnspan=8, sticky='w', pady=(10, 0))
+
     def _populate_drops_tab(self, rec):
-        for i in range(28):
+        for i in range(10):
             vr = self.trea_vars[i]
             vr['x'].set(str(rec['trap_xy'][i * 2]))
             vr['y'].set(str(rec['trap_xy'][i * 2 + 1]))
-            vr['lvmin'].set(str(rec['trap_pwr'][i * 2]))
-            vr['lvmax'].set(str(rec['trap_pwr'][i * 2 + 1]))
-
-            tid = rec['trap_type'][i]
+            tid = rec['trea_sub'][i]
             vr['tid'].set(str(tid))
             if tid == 10000:
                 self.trea_name_labels[i].config(text="金钱")
-            elif tid and tid in self.tkitem_names:
-                self.trea_name_labels[i].config(text=self.tkitem_names[tid][:10])
+            elif tid and tid in self.tkitem_names_by_id:
+                self.trea_name_labels[i].config(text=self.tkitem_names_by_id[tid][:12])
             elif tid:
                 self.trea_name_labels[i].config(text=f"Item#{tid}")
             else:
                 self.trea_name_labels[i].config(text="(空)")
-
-            if i < 10 and vr['sub'] is not None:
-                sub = rec['trea_sub'][i]
-                vr['sub'].set(str(sub))
-                if sub == 10000:
-                    vr['slbl'].config(text="金钱")
-                elif sub and sub in self.tkitem_names_by_id:
-                    vr['slbl'].config(text=self.tkitem_names_by_id[sub][:10])
-                elif sub:
-                    vr['slbl'].config(text=f"Item#{sub}")
-                else:
-                    vr['slbl'].config(text="")
-                vr['qty_min'].set(str(rec['trea_quant'][i*2]))
-                vr['qty_max'].set(str(rec['trea_quant'][i*2+1]))
+            vr['qty_min'].set(str(rec['trea_quant'][i*2]))
+            vr['qty_max'].set(str(rec['trea_quant'][i*2+1]))
 
     def _apply_drops_tab(self, rec):
-        for i in range(28):
+        for i in range(10):
             vr = self.trea_vars[i]
-            try:
-                rec['trap_xy'][i * 2] = int(vr['x'].get() or 0)
+            try: rec['trap_xy'][i*2] = int(vr['x'].get() or 0)
             except: pass
-            try:
-                rec['trap_xy'][i * 2 + 1] = int(vr['y'].get() or 0)
+            try: rec['trap_xy'][i*2+1] = int(vr['y'].get() or 0)
             except: pass
-            try:
-                rec['trap_pwr'][i * 2] = int(vr['lvmin'].get() or 0) & 0xFF
+            try: rec['trea_sub'][i] = int(vr['tid'].get() or 0) & 0xFFFF
             except: pass
-            try:
-                rec['trap_pwr'][i * 2 + 1] = int(vr['lvmax'].get() or 0) & 0xFF
+            try: rec['trea_quant'][i*2] = int(vr['qty_min'].get() or 0) & 0xFFFF
             except: pass
-            try:
-                rec['trap_type'][i] = int(vr['tid'].get() or 0) & 0xFFFF
+            try: rec['trea_quant'][i*2+1] = int(vr['qty_max'].get() or 0) & 0xFFFF
             except: pass
-            if i < 10 and vr['sub'] is not None:
-                try:
-                    rec['trea_sub'][i] = int(vr['sub'].get() or 0) & 0xFFFF
-                except: pass
-                try:
-                    rec['trea_quant'][i*2] = int(vr['qty_min'].get() or 0) & 0xFFFF
-                except: pass
-                try:
-                    rec['trea_quant'][i*2+1] = int(vr['qty_max'].get() or 0) & 0xFFFF
-                except: pass
 
     # ═══════════════════════════════════════════════════════════
     # 陷阱标签页 (sub_431428 + sub_434C0C)
@@ -2291,14 +2237,12 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
             ttype = rec['trap_type'][i]
             sub_id = rec['trea_sub'][i] if i < 10 else 0
             is_trap = 1 <= ttype <= 6
-            is_trea = sub_id > 0
+            is_trea = sub_id > 0 and i < 10
             if not is_trap and not is_trea: continue
             tx = rec['trap_xy'][i * 2]; ty = rec['trap_xy'][i * 2 + 1]
             if tx >= 0 and 0 <= tx < 32 and 0 <= ty < 32:
-                if is_trap:
-                    resolved_traps[i] = (tx, ty); fixed_trap_indices.add(i)
-                if is_trea:
-                    resolved_treas[i] = (tx, ty); fixed_trea_indices.add(i)
+                if is_trap: resolved_traps[i] = (tx, ty); fixed_trap_indices.add(i)
+                if is_trea: resolved_treas[i] = (tx, ty); fixed_trea_indices.add(i)
                 occupied.add((tx, ty))
 
         # 4b. 区域放置陷阱/宝物 (sub_431428:224-323)
@@ -2307,7 +2251,7 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
                 ttype = rec['trap_type'][i]
                 sub_id = rec['trea_sub'][i] if i < 10 else 0
                 is_trap = 1 <= ttype <= 6 and i not in resolved_traps
-                is_trea = sub_id > 0 and i not in resolved_treas
+                is_trea = sub_id > 0 and i not in resolved_treas and i < 10
                 if not is_trap and not is_trea: continue
                 tx = rec['trap_xy'][i * 2]
                 if tx != -zone: continue
@@ -2325,17 +2269,11 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
                 resolved_allies)
 
     def _trea_label(self, rec, i):
-        """宝物槽的显示标签"""
-        tid = rec['trap_type'][i]
-        sub_id = rec['trea_sub'][i] if i < 10 else 0
-        if tid == 10000:
-            return "金钱"
-        elif tid > 0:
-            return self.tkitem_names.get(tid, f"Item#{tid}")[:6]
-        elif sub_id == 10000:
-            return "金钱"
-        else:
-            return self.tkitem_names_by_id.get(sub_id, f"Sub#{sub_id}")[:6]
+        """宝物槽的显示标签 (trea_sub TKItem ID)"""
+        tid = rec['trea_sub'][i] if i < 10 else 0
+        if tid == 10000: return "金钱"
+        elif tid > 0: return self.tkitem_names_by_id.get(tid, f"Item#{tid}")[:8]
+        return ""
 
     def _redraw_scene(self, rerandomize=True):
         """重绘场景 (背景 + 网格 + 单位 + 宝物)
@@ -2490,8 +2428,8 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
 
         # ── 图层3b: 陷阱 (sub_431428:283-323) ──
         if self.show_trap.get():
-            TRAP_COLORS = {1:'#FF4444', 2:'#8B4513', 3:'#4488FF', 4:'#FF8800', 5:'#8B7355', 6:'#AA44FF'}
-            TRAP_SHORT = {1:'崩', 2:'沼', 3:'漩', 4:'火', 5:'木', 6:'瘴'}
+            TRAP_COLORS = {1:'#FFD700', 2:'#8B4513', 3:'#4488FF', 4:'#FF4444', 5:'#228B22', 6:'#FF69B4'}
+            TRAP_NAMES = {1:'山崩',2:'泥沼',3:'漩渦',4:'火焰',5:'滾木',6:'瘴氣'}
             for i, (gx, gy) in resolved_traps.items():
                 ttype = self._trap_type_at(rec, i)
                 pmin, pmax = self._trap_power_at(rec, i)
@@ -2503,22 +2441,20 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
                 pts = [(sx, sy - r), (sx - r, sy + r), (sx + r, sy + r)]
                 canvas.create_polygon(pts, fill=fc, outline=outline_c, width=1,
                                       tags=('trap', f'trap_{i}'))
-                ts = TRAP_SHORT.get(ttype, '?')
-                tag_char = '固' if is_fixed else '随'
-                canvas.create_text(sx, sy, text=ts,
+                tname = TRAP_NAMES.get(ttype, '?') + '陷阱'
+                canvas.create_text(sx, sy, text='陷',
                                    fill='white', font=('', max(7, int(9*zoom)), 'bold'),
                                    tags=('trap',))
-                canvas.create_text(sx, sy - r - 8, text=f'{tag_char}{ts} {pmin}-{pmax}',
+                canvas.create_text(sx, sy - r - 8, text=tname,
                                    fill=fc, font=('', max(8, int(10*zoom))),
                                    tags=('trap',))
             # 区域陷阱无法解析的, 在底部提示
             if trap_zone_reqs:
                 zr_x = 10
                 by_zone = {}
-                TRAP_NAMES = {1:'山崩',2:'泥沼',3:'漩渦',4:'火焰',5:'滾木',6:'瘴氣'}
                 for z, i, ttype in trap_zone_reqs:
                     by_zone.setdefault(z, []).append(
-                        f'{TRAP_SHORT.get(ttype,"?")}{i}')
+                        f'{TRAP_NAMES.get(ttype,"?")}{i}')
                 for zone, labels in sorted(by_zone.items()):
                     txt = f'⚠Z{zone}陷阱:' + ','.join(labels)
                     canvas.create_text(zr_x, bg_h - 35, text=txt, anchor='nw',
@@ -2658,13 +2594,19 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
                 return (i, i in fixed)
         return None
 
+    def _find_trap_at(self, gx, gy):
+        if self._current_idx < 0: return None
+        resolved = getattr(self, '_last_resolved_traps', {})
+        fixed = getattr(self, '_last_fixed_trap_indices', set())
+        for i, (tgx, tgy) in resolved.items():
+            if tgx == gx and tgy == gy: return (i, i in fixed)
+        return None
+
     def _on_scene_hover(self, event):
         cx = self.scene_canvas.canvasx(event.x)
         cy = self.scene_canvas.canvasy(event.y)
         g = self._scene_to_grid(cx, cy)
-        if g is None:
-            self.scene_info_var.set("")
-            return
+        if g is None: self.scene_info_var.set(""); return
         gx, gy = g
         unit = self._find_unit_at(gx, gy)
         if unit:
@@ -2684,21 +2626,30 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
                     self.scene_info_var.set(f"({gx},{gy}) 友军槽{uidx} [区域Z{abs(ally_orig_x)}→({gx},{gy})]")
                 else:
                     self.scene_info_var.set(f"({gx},{gy}) 友军槽{uidx} [固定位置]")
-        else:
-            trea = self._find_trea_at(gx, gy)
-            if trea:
-                ti, is_fixed = trea
-                rec = self.records[self._current_idx]
-                tid = rec['trap_type'][ti]
-                label = self._trea_label(rec, ti)
-                sub_id = rec['trea_sub'][ti] if ti < 10 else 0
-                if tid > 0 and sub_id > 0:
-                    sub_name = self.tkitem_names_by_id.get(sub_id, f"Item#{sub_id}")[:6] if sub_id != 10000 else "金钱"
-                    label += f"+{sub_name}"
-                type_tag = "固定" if is_fixed else f"区域Z{abs(rec['trap_xy'][ti*2])}→({gx},{gy})"
+            return
+        trea = self._find_trea_at(gx, gy)
+        if trea:
+            ti, is_fixed = trea
+            rec = self.records[self._current_idx]
+            label = self._trea_label(rec, ti)
+            type_tag = "固定" if is_fixed else f"区域Z{abs(rec['trap_xy'][ti*2])}→({gx},{gy})"
+            if label:
                 self.scene_info_var.set(f"({gx},{gy}) 宝物#{ti} {label} [{type_tag}]")
             else:
-                self.scene_info_var.set(f"({gx},{gy})")
+                self.scene_info_var.set(f"({gx},{gy}) 宝物槽#{ti} (空) [{type_tag}]")
+            return
+        trap = self._find_trap_at(gx, gy)
+        if trap:
+            ti, is_fixed = trap
+            rec = self.records[self._current_idx]
+            ttype = self._trap_type_at(rec, ti)
+            TRAP_NAMES = {1:'山崩',2:'泥沼',3:'漩渦',4:'火焰',5:'滾木',6:'瘴氣'}
+            tname = TRAP_NAMES.get(ttype, '?') + '陷阱'
+            pmin, pmax = self._trap_power_at(rec, ti)
+            type_tag = "固定" if is_fixed else f"区域Z{abs(rec['trap_xy'][ti*2])}→({gx},{gy})"
+            self.scene_info_var.set(f"({gx},{gy}) 陷阱#{ti} {tname} 威力[{pmin},{pmax}] [{type_tag}]")
+            return
+        self.scene_info_var.set(f"({gx},{gy})")
 
     def _on_scene_wheel(self, event):
         zooms = [0.25, 0.33, 0.5, 0.66, 0.75, 1.0]
