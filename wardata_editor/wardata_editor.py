@@ -29,11 +29,13 @@ WarData.dat 格式 (每条498字节, 219条, flat binary — sub_42FDF8):
   [178-189] byte[12]  ally_xy   — sub_431428:74 unk_95388A; 6对X,Y(int8), 同enemy_xy格式
   [190-207] byte[18] enemy_del  — sub_4307CC:242 v9[102]; sub_444FD4:61; War.dll标签"属性加成"
   [208-213] byte[6] ally_facing — War.dll标签"我方朝向"; 6个友军朝向值(byte)
-  [214-269] byte[56] trea_xy    — sub_431428:204 (char*)v43-172/-171; 28组宝物坐标(int8对)
-  [270-325] byte[56] trea_qty   — sub_431428:296 (char*)v45-116/-115; 28组主物品数量(min,max) byte
-  [326-345] uint16[10] trea_sub — sub_431428:202; War.dll标签"物品编号" (前10组宝物副物品)
-  [346-385] uint16[20] trea_quant — sub_434510:36-37 word_953932/953934; 10对quantity(min,max) uint16
-  [386-441] uint16[28] trea_id — sub_431428:199,295 unk_95395A; 28组宝物主物品(TKItem索引)
+  [214-269] byte[56] trap_xy    — sub_431428:204 (char*)v43-172/-171; 28组陷阱/宝物坐标(int8对, 共享)
+  [270-325] byte[56] trap_pwr   — sub_431428:296 (char*)v45-116/-115; 28组陷阱威力(min,max) byte
+  [326-345] uint16[10] trea_sub — sub_431428:202; 10组宝物物品ID (TKItem, sub_431428:303)
+  [346-385] uint16[20] trea_quant — sub_434510:36-37; 10对宝物数量(min,max) uint16
+  [386-441] uint16[28] trap_type — sub_431428:199,295 unk_95395A; 28组陷阱类型 (1=山崩 2=泥沼 3=漩渦 4=火焰 5=滾木 6=瘴氣)
+  ★ 已验证: offset 386-441 全为陷阱类型(1-6), 无TKItem ID; offset 270-325 全为陷阱威力(1-4)
+    真正的宝物数据在 trea_sub(326-345) 和 trea_quant(346-385)
   [442-477] uint16[18] enemy_flg — sub_4307CC:263 v5[204]; sub_444FD4:81 word_953992
                                   bit0=精英, bit1=特殊, bit13/14=阵营标记
   [478]    byte    default_lv_p1 — sub_430578:17 byte_9539B6; level param default 1
@@ -234,12 +236,12 @@ def load_wardata(filepath: str) -> list:
         # 友军朝向: War.dll标签"我方朝向"
         rec['ally_facing'] = list(chunk[208:214])
 
-        # 28组treasure数据 (sub_431428:198-323)
-        rec['trea_xy'] = list(struct.unpack_from('<' + 'b' * 56, chunk, 214))   # X,Y坐标 28对
-        rec['trea_qty'] = list(chunk[270:326])                                    # 主物品数量(min,max) 28对 byte
-        rec['trea_sub'] = list(struct.unpack_from('<' + 'H' * 10, chunk, 326))   # 副物品 10组
-        rec['trea_quant'] = list(struct.unpack_from('<' + 'H' * 20, chunk, 346)) # 10对(min,max), sub_434510:36-37
-        rec['trea_id'] = list(struct.unpack_from('<' + 'H' * 28, chunk, 386))    # 主物品ID 28组
+        # 28组陷阱+宝物数据 (sub_431428:198-323, 共用XY坐标)
+        rec['trap_xy'] = list(struct.unpack_from('<' + 'b' * 56, chunk, 214))    # X,Y坐标 28对 (陷阱/宝物共享)
+        rec['trap_pwr'] = list(chunk[270:326])                                     # 陷阱威力(min,max) 28对 byte
+        rec['trea_sub'] = list(struct.unpack_from('<' + 'H' * 10, chunk, 326))    # 宝物物品ID 10组 (TKItem)
+        rec['trea_quant'] = list(struct.unpack_from('<' + 'H' * 20, chunk, 346))  # 宝物数量(min,max) 10对 uint16
+        rec['trap_type'] = list(struct.unpack_from('<' + 'H' * 28, chunk, 386))   # 陷阱类型 28组 (1-6)
 
         # 敌军标志位: sub_4307CC:263 v5[204]; sub_444FD4:81 word_953992
         rec['enemy_flags'] = list(struct.unpack_from('<' + 'H' * 18, chunk, 442))
@@ -292,10 +294,10 @@ def save_wardata(filepath: str, records: list):
             chunk[208 + j] = rec['ally_facing'][j] & 0xFF
 
         for j in range(56):
-            struct.pack_into('<b', chunk, 214 + j, rec['trea_xy'][j])
+            struct.pack_into('<b', chunk, 214 + j, rec['trap_xy'][j])
 
         for j in range(56):
-            chunk[270 + j] = rec['trea_qty'][j] & 0xFF
+            chunk[270 + j] = rec['trap_pwr'][j] & 0xFF
 
         for j in range(10):
             struct.pack_into('<H', chunk, 326 + j * 2, rec['trea_sub'][j])
@@ -304,7 +306,7 @@ def save_wardata(filepath: str, records: list):
             struct.pack_into('<H', chunk, 346 + j * 2, rec['trea_quant'][j])
 
         for j in range(28):
-            struct.pack_into('<H', chunk, 386 + j * 2, rec['trea_id'][j])
+            struct.pack_into('<H', chunk, 386 + j * 2, rec['trap_type'][j])
 
         for j in range(18):
             struct.pack_into('<H', chunk, 442 + j * 2, rec['enemy_flags'][j])
@@ -588,13 +590,14 @@ class WarDataEditor:
 
     def _build_left_panel(self):
         lf = ttk.Frame(self.paned); self.paned.add(lf, weight=1)
-        cols = ('index', 'map_info', 'enemy_count', 'trea_count', 'trea_detail', 'chars_info', 'flags_info')
+        cols = ('index', 'map_info', 'enemy_count', 'trea_count', 'trap_count', 'trea_detail', 'chars_info', 'flags_info')
         self.tree = ttk.Treeview(lf, columns=cols, show='headings', selectmode='browse')
         col_config = [
             ('index', '序号', 40),
             ('map_info', '地图', 80),
             ('enemy_count', '敌军数', 40),
             ('trea_count', '宝物数', 40),
+            ('trap_count', '陷阱数', 40),
             ('trea_detail', '固定/随机', 64),
             ('chars_info', '参战人物', 120),
             ('flags_info', '参数', 70),
@@ -631,25 +634,24 @@ class WarDataEditor:
             return None
 
     def _trea_detail_str(self, rec):
-        """返回 "固N/随M" 字符串, N=固定位置宝物数, M=区域随机宝物数"""
+        """返回宝物摘要: "固N/随M" """
         fixed = random_trea = 0
         for i in range(28):
-            tid = rec['trea_id'][i]
+            tid = rec['trap_type'][i]
             sub_id = rec['trea_sub'][i] if i < 10 else 0
             if tid <= 0 and sub_id <= 0:
                 continue
-            tx = rec['trea_xy'][i * 2]
-            if tx >= 0:
-                fixed += 1
-            else:
-                random_trea += 1
+            tx = rec['trap_xy'][i * 2]
+            if tx >= 0: fixed += 1
+            else: random_trea += 1
         return f"固{fixed}/随{random_trea}" if fixed or random_trea else "-"
 
     def _refresh_tree(self):
         self.tree.delete(*self.tree.get_children())
         for rec in self.records:
             enemy_count = sum(1 for eid in rec['enemy_ids'] if eid > 0)
-            trea_count = sum(1 for i in range(28) if rec['trea_id'][i] > 0 or (i < 10 and rec['trea_sub'][i] > 0))
+            trea_count = sum(1 for i in range(28) if rec['trap_type'][i] > 0 or (i < 10 and rec['trea_sub'][i] > 0))
+            trap_count = sum(1 for i in range(28) if 1 <= self._trap_type_at(rec, i) <= 6)
             trea_detail = self._trea_detail_str(rec)
             # 地图列: map_id + 分辨率
             mid = rec['map_id']
@@ -679,18 +681,19 @@ class WarDataEditor:
             flags_info = ','.join(flag_parts) if flag_parts else '-'
             self.tree.insert('', 'end',
                 values=(rec['index'], map_info, enemy_count, trea_count,
-                        trea_detail, chars_info, flags_info))
+                        trap_count, trea_detail, chars_info, flags_info))
 
     def _build_right_panel(self):
         rf = ttk.Frame(self.paned); self.paned.add(rf, weight=3)
         self.notebook = ttk.Notebook(rf)
         self.notebook.pack(fill=tk.BOTH, expand=True)
 
-        # 6个标签页
+        # 7个标签页
         self.tab_scene = ttk.Frame(self.notebook)
         self.tab_enemy = ttk.Frame(self.notebook)
         self.tab_ally = ttk.Frame(self.notebook)
         self.tab_drops = ttk.Frame(self.notebook)
+        self.tab_traps = ttk.Frame(self.notebook)
         self.tab_params = ttk.Frame(self.notebook)
         self.tab_allparams = ttk.Frame(self.notebook)
 
@@ -698,6 +701,7 @@ class WarDataEditor:
         self.notebook.add(self.tab_enemy, text="敌军配置")
         self.notebook.add(self.tab_ally, text="友军配置")
         self.notebook.add(self.tab_drops, text="宝物/奖励")
+        self.notebook.add(self.tab_traps, text="陷阱")
         self.notebook.add(self.tab_params, text="战场参数")
         self.notebook.add(self.tab_allparams, text="全部参数")
 
@@ -706,6 +710,7 @@ class WarDataEditor:
         self._build_enemy_tab()
         self._build_ally_tab()
         self._build_drops_tab()
+        self._build_trap_tab()
         self._build_scene_tab()
 
     def _set_edit_enabled(self, enabled: bool):
@@ -837,7 +842,8 @@ class WarDataEditor:
                and query not in char_names.lower():
                 continue
             enemy_count = sum(1 for eid in rec['enemy_ids'] if eid > 0)
-            trea_count = sum(1 for i in range(28) if rec['trea_id'][i] > 0 or (i < 10 and rec['trea_sub'][i] > 0))
+            trea_count = sum(1 for i in range(28) if rec['trap_type'][i] > 0 or (i < 10 and rec['trea_sub'][i] > 0))
+            trap_count = sum(1 for i in range(28) if 1 <= self._trap_type_at(rec, i) <= 6)
             trea_detail = self._trea_detail_str(rec)
             # 地图列: map_id + 分辨率
             mid = rec['map_id']
@@ -861,7 +867,7 @@ class WarDataEditor:
             flags_info = ','.join(flag_parts) if flag_parts else '-'
             self.tree.insert('', 'end',
                 values=(rec['index'], map_info, enemy_count, trea_count,
-                        trea_detail, chars_info, flags_info))
+                        trap_count, trea_detail, chars_info, flags_info))
 
     def _clear_filter(self):
         self.search_var.set('')
@@ -899,6 +905,7 @@ class WarDataEditor:
         self._populate_enemy_tab(rec)
         self._populate_ally_tab(rec)
         self._populate_drops_tab(rec)
+        self._populate_trap_tab(rec)
         self._redraw_scene()
 
     def _save(self):
@@ -935,6 +942,7 @@ class WarDataEditor:
         self._apply_enemy_tab(rec)
         self._apply_ally_tab(rec)
         self._apply_drops_tab(rec)
+        self._apply_trap_tab(rec)
 
     def _on_close(self):
         if self._dirty:
@@ -965,11 +973,11 @@ class WarDataEditor:
             'enemy_xy': [0] * 36,     # byte[36] grid coords (18 pairs X,Y)
             'ally_xy': [0] * 12,      # int8[12] 6对(X,Y), 同 enemy_xy格式
             'ally_facing': [0] * 6,    # byte[6]    "我方朝向"
-            'trea_xy': [0] * 56,
-            'trea_qty': [0] * 56,  # 主物品数量(min,max) 28对 byte
+            'trap_xy': [0] * 56,
+            'trap_pwr': [0] * 56,  # 陷阱威力(min,max) 28对 byte
             'trea_sub': [0] * 10,
             'trea_quant': [0] * 20,  # 10对(min,max) uint16
-            'trea_id': [0] * 28,
+            'trap_type': [0] * 28,
             'enemy_flags': [0] * 18,
             'default_lv_p1': 0,  # lv param default 1
             'default_lv_p2': 0,  # lv param default 2
@@ -1339,12 +1347,12 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
         row += 1
         trea_cols = [
             ('#', 3, ''),
-            ('主物品\nu16[386-441]', 6, '[386-441] uint16[28] trea_id — sub_431428:199,295'),
+            ('陷阱类型\nu16[386-441]', 6, '[386-441] uint16[28] trap_type — 1-6 (山崩/泥沼/漩渦/火焰/滾木/瘴氣)'),
             ('副物品\nu16[326-345]', 6, '[326-345] uint16[10] trea_sub — sub_431428:202; 仅前10组'),
-            ('X\ni8[214-269]', 3, '[214-269] byte[56] trea_xy — X=214+2*i; -1~-5=随机区域请求'),
+            ('X\ni8[214-269]', 3, '[214-269] byte[56] trap_xy — X=214+2*i; 负值=区域随机'),
             ('Y\ni8[214-269]', 3, 'Y=215+2*i (int8); 0~31=固定位置, 负值=区域请求'),
-            ('数Min\nu8[270-325]', 4, '[270-325] byte[56] trea_qty — main qty min=270+2*i'),
-            ('数Max\nu8[270-325]', 4, 'main qty max=271+2*i'),
+            ('威力Min\nu8[270-325]', 4, '[270-325] byte[56] trap_pwr — power min=270+2*i'),
+            ('威力Max\nu8[270-325]', 4, 'power max=271+2*i'),
             ('QtMin\nu16[346-385]', 5, '[346-385] uint16[20] trea_quant min — sub_434510:36 word_953932; 10对'),
             ('QtMax\nu16[346-385]', 5, 'trea_quant max — sub_434510:37 word_953934'),
         ]
@@ -1422,12 +1430,12 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
             self.ap_ally_vars[i]['y'].set(str(rec['ally_xy'][i*2+1]))
             self.ap_ally_vars[i]['facing'].set(str(rec['ally_facing'][i]))
         for i in range(28):
-            self.ap_trea_vars[i]['tid'].set(str(rec['trea_id'][i]))
+            self.ap_trea_vars[i]['tid'].set(str(rec['trap_type'][i]))
             self.ap_trea_vars[i]['sub'].set(str(rec['trea_sub'][i]) if i < 10 else '')
-            self.ap_trea_vars[i]['x'].set(str(rec['trea_xy'][i*2]))
-            self.ap_trea_vars[i]['y'].set(str(rec['trea_xy'][i*2+1]))
-            self.ap_trea_vars[i]['min'].set(str(rec['trea_qty'][i*2]))
-            self.ap_trea_vars[i]['max'].set(str(rec['trea_qty'][i*2+1]))
+            self.ap_trea_vars[i]['x'].set(str(rec['trap_xy'][i*2]))
+            self.ap_trea_vars[i]['y'].set(str(rec['trap_xy'][i*2+1]))
+            self.ap_trea_vars[i]['min'].set(str(rec['trap_pwr'][i*2]))
+            self.ap_trea_vars[i]['max'].set(str(rec['trap_pwr'][i*2+1]))
             self.ap_trea_vars[i]['qty_min'].set(str(rec['trea_quant'][i*2]) if i < 10 else '')
             self.ap_trea_vars[i]['qty_max'].set(str(rec['trea_quant'][i*2+1]) if i < 10 else '')
 
@@ -1476,7 +1484,7 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
             try: rec['ally_facing'][i] = int(self.ap_ally_vars[i]['facing'].get() or 0) & 0xFF
             except: pass
         for i in range(28):
-            try: rec['trea_id'][i] = int(self.ap_trea_vars[i]['tid'].get() or 0) & 0xFFFF
+            try: rec['trap_type'][i] = int(self.ap_trea_vars[i]['tid'].get() or 0) & 0xFFFF
             except: pass
             if i < 10:
                 try: rec['trea_sub'][i] = int(self.ap_trea_vars[i]['sub'].get() or 0) & 0xFFFF
@@ -1485,13 +1493,13 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
                 except: pass
                 try: rec['trea_quant'][i*2+1] = int(self.ap_trea_vars[i]['qty_max'].get() or 0) & 0xFFFF
                 except: pass
-            try: rec['trea_xy'][i*2] = int(self.ap_trea_vars[i]['x'].get() or 0)
+            try: rec['trap_xy'][i*2] = int(self.ap_trea_vars[i]['x'].get() or 0)
             except: pass
-            try: rec['trea_xy'][i*2+1] = int(self.ap_trea_vars[i]['y'].get() or 0)
+            try: rec['trap_xy'][i*2+1] = int(self.ap_trea_vars[i]['y'].get() or 0)
             except: pass
-            try: rec['trea_qty'][i*2] = int(self.ap_trea_vars[i]['min'].get() or 0) & 0xFF
+            try: rec['trap_pwr'][i*2] = int(self.ap_trea_vars[i]['min'].get() or 0) & 0xFF
             except: pass
-            try: rec['trea_qty'][i*2+1] = int(self.ap_trea_vars[i]['max'].get() or 0) & 0xFF
+            try: rec['trap_pwr'][i*2+1] = int(self.ap_trea_vars[i]['max'].get() or 0) & 0xFF
             except: pass
 
     def _apply_params_tab(self, rec):
@@ -1792,12 +1800,12 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
     def _populate_drops_tab(self, rec):
         for i in range(28):
             vr = self.trea_vars[i]
-            vr['x'].set(str(rec['trea_xy'][i * 2]))
-            vr['y'].set(str(rec['trea_xy'][i * 2 + 1]))
-            vr['lvmin'].set(str(rec['trea_qty'][i * 2]))
-            vr['lvmax'].set(str(rec['trea_qty'][i * 2 + 1]))
+            vr['x'].set(str(rec['trap_xy'][i * 2]))
+            vr['y'].set(str(rec['trap_xy'][i * 2 + 1]))
+            vr['lvmin'].set(str(rec['trap_pwr'][i * 2]))
+            vr['lvmax'].set(str(rec['trap_pwr'][i * 2 + 1]))
 
-            tid = rec['trea_id'][i]
+            tid = rec['trap_type'][i]
             vr['tid'].set(str(tid))
             if tid == 10000:
                 self.trea_name_labels[i].config(text="金钱")
@@ -1826,19 +1834,19 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
         for i in range(28):
             vr = self.trea_vars[i]
             try:
-                rec['trea_xy'][i * 2] = int(vr['x'].get() or 0)
+                rec['trap_xy'][i * 2] = int(vr['x'].get() or 0)
             except: pass
             try:
-                rec['trea_xy'][i * 2 + 1] = int(vr['y'].get() or 0)
+                rec['trap_xy'][i * 2 + 1] = int(vr['y'].get() or 0)
             except: pass
             try:
-                rec['trea_qty'][i * 2] = int(vr['lvmin'].get() or 0) & 0xFF
+                rec['trap_pwr'][i * 2] = int(vr['lvmin'].get() or 0) & 0xFF
             except: pass
             try:
-                rec['trea_qty'][i * 2 + 1] = int(vr['lvmax'].get() or 0) & 0xFF
+                rec['trap_pwr'][i * 2 + 1] = int(vr['lvmax'].get() or 0) & 0xFF
             except: pass
             try:
-                rec['trea_id'][i] = int(vr['tid'].get() or 0) & 0xFFFF
+                rec['trap_type'][i] = int(vr['tid'].get() or 0) & 0xFFFF
             except: pass
             if i < 10 and vr['sub'] is not None:
                 try:
@@ -1850,6 +1858,162 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
                 try:
                     rec['trea_quant'][i*2+1] = int(vr['qty_max'].get() or 0) & 0xFFFF
                 except: pass
+
+    # ═══════════════════════════════════════════════════════════
+    # 陷阱标签页 (sub_431428 + sub_434C0C)
+    # ═══════════════════════════════════════════════════════════
+
+    TRAP_TYPE_NAMES = {
+        0: '0 无',
+        1: '1 山崩陷阱',
+        2: '2 泥沼陷阱',
+        3: '3 漩渦陷阱',
+        4: '4 火焰陷阱',
+        5: '5 滾木陷阱',
+        6: '6 瘴氣陷阱',
+    }
+
+    @staticmethod
+    def _trap_type_at(rec, slot):
+        """读取 slot 0-27 的陷阱类型 (sub_431428: offset 386/406)"""
+        if slot < 10:
+            return rec['trap_type'][slot]  # slots 0-9: offset 386+slot*2
+        else:
+            # slots 10-27: offset 406+(slot-10)*2 → rec['trap_type'][10+(slot-10)]
+            # trea_id spans offset 386-441 = 28 int16
+            return rec['trap_type'][slot]
+
+    @staticmethod
+    def _trap_power_at(rec, slot):
+        """读取 slot 0-27 的陷阱威力 (min, max)"""
+        if slot < 10:
+            off = slot * 2  # offset 270+slot*2
+        else:
+            off = 20 + (slot - 10) * 2  # offset 290+(slot-10)*2
+        return (rec['trap_pwr'][off], rec['trap_pwr'][off + 1])
+
+    def _build_trap_tab(self):
+        """28个陷阱槽位: X,Y坐标(共享trea_xy) + 陷阱类型 + 威力min/max"""
+        df = self.tab_traps
+        canvas = tk.Canvas(df, highlightthickness=0)
+        vsb = ttk.Scrollbar(df, orient=tk.VERTICAL, command=canvas.yview)
+        vsb.pack(side=tk.RIGHT, fill=tk.Y)
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        canvas.configure(yscrollcommand=vsb.set)
+        inner = ttk.Frame(canvas)
+        self._trap_win = canvas.create_window((0, 0), window=inner, anchor='nw')
+
+        def _trap_canvas_conf(event):
+            canvas.configure(scrollregion=canvas.bbox('all'))
+        inner.bind('<Configure>', _trap_canvas_conf)
+        canvas.bind('<MouseWheel>', lambda e: canvas.yview_scroll(int(-e.delta / 120), 'units'))
+
+        ttk.Label(inner, text="战场预置陷阱 (sub_431428:198-323) — 28个槽位, 威力每场随机:", font=FONT).grid(
+            row=0, column=0, columnspan=8, sticky='w', pady=(2, 4))
+
+        # 表头
+        hdrs = ['#', 'X', 'Y', '陷阱类型', '威力Min', '威力Max']
+        hdr_widths = [4, 4, 4, 16, 8, 8]
+        for j, (h, w) in enumerate(zip(hdrs, hdr_widths)):
+            ttk.Label(inner, text=h, font=FONT_S, width=w).grid(row=1, column=j, padx=1)
+
+        self.trap_vars = []
+        for i in range(28):
+            row = i + 2
+            vr = {}
+            ttk.Label(inner, text=str(i), font=FONT_S).grid(row=row, column=0)
+
+            vr['x'] = tk.StringVar()
+            ttk.Spinbox(inner, textvariable=vr['x'], from_=-128, to=127, width=4, font=FONT).grid(
+                row=row, column=1, padx=1)
+
+            vr['y'] = tk.StringVar()
+            ttk.Spinbox(inner, textvariable=vr['y'], from_=-128, to=127, width=4, font=FONT).grid(
+                row=row, column=2, padx=1)
+
+            vr['type'] = tk.StringVar(value='0')
+            ttk.Combobox(inner, textvariable=vr['type'],
+                         values=list(self.TRAP_TYPE_NAMES.values()),
+                         width=15, font=FONT_S, state='readonly').grid(
+                row=row, column=3, padx=1)
+
+            vr['pwr_min'] = tk.StringVar()
+            ttk.Entry(inner, textvariable=vr['pwr_min'], width=6, font=FONT).grid(
+                row=row, column=4, padx=1)
+
+            vr['pwr_max'] = tk.StringVar()
+            ttk.Entry(inner, textvariable=vr['pwr_max'], width=6, font=FONT).grid(
+                row=row, column=5, padx=1)
+
+            self.trap_vars.append(vr)
+
+        ttk.Label(inner,
+            text="陷阱类型 1-6 → TKKon[552-557] (sub_434C0C: byte_9DFA92[]+551)\n"
+                 "元素增益 (sub_434C0C:17-37): 火→火焰×2, 水→漩渦×2, 毒→瘴氣×2\n"
+                 "坐标共享宝物槽位 (trea_xy), 陷阱类型存储在trea_id区域 (offset 386+)",
+            font=FONT_S, foreground='#666', justify='left').grid(
+            row=30, column=0, columnspan=8, sticky='w', pady=(10, 0))
+
+    def _populate_trap_tab(self, rec):
+        for i in range(28):
+            vr = self.trap_vars[i]
+            tx = rec['trap_xy'][i * 2]
+            ty = rec['trap_xy'][i * 2 + 1]
+            ttype = self._trap_type_at(rec, i)
+            # 负X = 区域随机放置 (zone = |X|)
+            if tx < 0:
+                vr['x'].set(str(tx))  # 保留负值表示区域
+                vr['y'].set(str(ty))
+            else:
+                vr['x'].set(str(tx))
+                vr['y'].set(str(ty))
+            if 1 <= ttype <= 6:
+                vr['type'].set(self.TRAP_TYPE_NAMES.get(ttype, f'{ttype}'))
+            else:
+                vr['type'].set('0 无')
+            pmin, pmax = self._trap_power_at(rec, i)
+            if ttype >= 1:
+                vr['pwr_min'].set(str(pmin))
+                vr['pwr_max'].set(str(pmax))
+            else:
+                vr['pwr_min'].set('0')
+                vr['pwr_max'].set('0')
+
+    def _apply_trap_tab(self, rec):
+        for i in range(28):
+            vr = self.trap_vars[i]
+            try: rec['trap_xy'][i * 2] = int(vr['x'].get() or 0)
+            except: pass
+            try: rec['trap_xy'][i * 2 + 1] = int(vr['y'].get() or 0)
+            except: pass
+
+            # 解析陷阱类型 (取数字前缀)
+            tstr = vr['type'].get()
+            ttype = 0
+            for c in tstr:
+                if c.isdigit():
+                    ttype = int(c)
+                    break
+            ttype = max(0, min(6, ttype))
+
+            # 写入 trea_id 区域
+            if i < 10:
+                rec['trap_type'][i] = ttype
+            else:
+                rec['trap_type'][i] = ttype
+
+            # 写入威力
+            try: pmin = int(vr['pwr_min'].get() or 0) & 0xFF
+            except: pmin = 0
+            try: pmax = int(vr['pwr_max'].get() or 0) & 0xFF
+            except: pmax = 0
+
+            if i < 10:
+                off = i * 2
+            else:
+                off = 20 + (i - 10) * 2
+            rec['trap_pwr'][off] = pmin
+            rec['trap_pwr'][off + 1] = pmax
 
     # ═══════════════════════════════════════════════════════════
     # 场景预览标签页
@@ -1885,6 +2049,10 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
 
         self.show_trea = tk.BooleanVar(value=True)
         ttk.Checkbutton(ctrl, text="宝物", variable=self.show_trea,
+                        command=self._redraw_scene).pack(side=tk.LEFT, padx=2)
+
+        self.show_trap = tk.BooleanVar(value=True)
+        ttk.Checkbutton(ctrl, text="陷阱", variable=self.show_trap,
                         command=self._redraw_scene).pack(side=tk.LEFT, padx=2)
 
         ttk.Separator(ctrl, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=6)
@@ -2112,46 +2280,53 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
                     resolved_allies[i] = pos
 
         # ═══════════════════════════════════════════════════════
-        # 4. 宝物固定位置 + 区域放置 (sub_431428:198-282)
+        # 4. 陷阱 + 宝物 固定/区域放置 (sub_431428:198-323)
         # ═══════════════════════════════════════════════════════
-        # 4a. 固定位置宝物标记占用 (sub_431428:198-223)
+        resolved_traps = {}
+        fixed_trap_indices = set()
+        trap_zone_reqs = []
+
+        # 4a. 固定位置陷阱/宝物 (sub_431428:198-223)
         for i in range(28):
-            tid = rec['trea_id'][i]
+            ttype = rec['trap_type'][i]
             sub_id = rec['trea_sub'][i] if i < 10 else 0
-            if tid <= 0 and sub_id <= 0:
-                continue
-            tx = rec['trea_xy'][i * 2]
-            ty = rec['trea_xy'][i * 2 + 1]
+            is_trap = 1 <= ttype <= 6
+            is_trea = sub_id > 0
+            if not is_trap and not is_trea: continue
+            tx = rec['trap_xy'][i * 2]; ty = rec['trap_xy'][i * 2 + 1]
             if tx >= 0 and 0 <= tx < 32 and 0 <= ty < 32:
-                resolved_treas[i] = (tx, ty)
-                fixed_trea_indices.add(i)
+                if is_trap:
+                    resolved_traps[i] = (tx, ty); fixed_trap_indices.add(i)
+                if is_trea:
+                    resolved_treas[i] = (tx, ty); fixed_trea_indices.add(i)
                 occupied.add((tx, ty))
 
-        # 4b. 宝物区域放置 (sub_431428:224-282)
+        # 4b. 区域放置陷阱/宝物 (sub_431428:224-323)
         for zone in range(1, 6):
             for i in range(28):
-                if i in resolved_treas:
-                    continue
-                tid = rec['trea_id'][i]
+                ttype = rec['trap_type'][i]
                 sub_id = rec['trea_sub'][i] if i < 10 else 0
-                if tid <= 0 and sub_id <= 0:
-                    continue
-                tx = rec['trea_xy'][i * 2]
-                if tx != -zone:
-                    continue
+                is_trap = 1 <= ttype <= 6 and i not in resolved_traps
+                is_trea = sub_id > 0 and i not in resolved_treas
+                if not is_trap and not is_trea: continue
+                tx = rec['trap_xy'][i * 2]
+                if tx != -zone: continue
                 pos = _pick_from_zone(zone)
-                if pos:
-                    resolved_treas[i] = pos
-                else:
-                    label = self._trea_label(rec, i)
-                    trea_zone_reqs.append((zone, i, label))
+                if is_trap:
+                    if pos: resolved_traps[i] = pos
+                    else: trap_zone_reqs.append((zone, i, ttype))
+                if is_trea:
+                    if pos: resolved_treas[i] = pos
+                    else: trea_zone_reqs.append((zone, i, self._trea_label(rec, i)))
 
-        return (resolved_enemies, resolved_treas, enemy_zone_reqs, trea_zone_reqs,
-                active_slots, fixed_enemy_slots, fixed_trea_indices, resolved_allies)
+        return (resolved_enemies, resolved_treas, resolved_traps,
+                enemy_zone_reqs, trea_zone_reqs, trap_zone_reqs,
+                active_slots, fixed_enemy_slots, fixed_trea_indices, fixed_trap_indices,
+                resolved_allies)
 
     def _trea_label(self, rec, i):
         """宝物槽的显示标签"""
-        tid = rec['trea_id'][i]
+        tid = rec['trap_type'][i]
         sub_id = rec['trea_sub'][i] if i < 10 else 0
         if tid == 10000:
             return "金钱"
@@ -2195,22 +2370,29 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
 
         # ── 按游戏规则解析场景布置 (sub_431428 + sub_4307CC) ──
         if rerandomize:
-            (resolved_enemies, resolved_treas, enemy_zone_reqs,
-             trea_zone_reqs, active_slots, fixed_enemy_slots,
-             fixed_trea_indices, resolved_allies) = self._resolve_scene_placements(rec, warway)
+            (resolved_enemies, resolved_treas, resolved_traps,
+             enemy_zone_reqs, trea_zone_reqs, trap_zone_reqs,
+             active_slots, fixed_enemy_slots, fixed_trea_indices, fixed_trap_indices,
+             resolved_allies) = self._resolve_scene_placements(rec, warway)
             self._last_resolved_enemies = resolved_enemies
             self._last_resolved_treas = resolved_treas
+            self._last_resolved_traps = resolved_traps
             self._last_resolved_allies = resolved_allies
             self._last_fixed_trea_indices = fixed_trea_indices
+            self._last_fixed_trap_indices = fixed_trap_indices
             self._last_active_slots = active_slots
             self._last_fixed_enemy_slots = fixed_enemy_slots
             self._last_enemy_zone_reqs = enemy_zone_reqs
             self._last_trea_zone_reqs = trea_zone_reqs
+            self._last_trap_zone_reqs = trap_zone_reqs
         resolved_enemies = self._last_resolved_enemies
         resolved_treas = self._last_resolved_treas
+        resolved_traps = getattr(self, '_last_resolved_traps', {})
         resolved_allies = self._last_resolved_allies
         fixed_enemy_slots = getattr(self, '_last_fixed_enemy_slots', set())
         fixed_trea_indices = self._last_fixed_trea_indices
+        fixed_trap_indices = getattr(self, '_last_fixed_trap_indices', set())
+        trap_zone_reqs = getattr(self, '_last_trap_zone_reqs', [])
         active_slots = getattr(self, '_last_active_slots', 18)
         enemy_zone_reqs = getattr(self, '_last_enemy_zone_reqs', [])
         trea_zone_reqs = getattr(self, '_last_trea_zone_reqs', [])
@@ -2275,7 +2457,7 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
         # 固定位置: 亮色; 区域放置: 暗色
         if self.show_trea.get():
             for i, (gx, gy) in resolved_treas.items():
-                tid = rec['trea_id'][i]
+                tid = rec['trap_type'][i]
                 label = self._trea_label(rec, i)
                 sx, sy = self._grid_to_screen(gx, gy)
                 r = max(3, tile_h // 2)
@@ -2304,6 +2486,44 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
                     canvas.create_text(zr_x, bg_h - 15, text=txt, anchor='nw',
                                        fill='#FFD700', font=('', max(9, int(11*zoom))),
                                        tags=('trea', 'zone_req'))
+                    zr_x += len(txt) * max(7, int(8*zoom)) + 10
+
+        # ── 图层3b: 陷阱 (sub_431428:283-323) ──
+        if self.show_trap.get():
+            TRAP_COLORS = {1:'#FF4444', 2:'#8B4513', 3:'#4488FF', 4:'#FF8800', 5:'#8B7355', 6:'#AA44FF'}
+            TRAP_SHORT = {1:'崩', 2:'沼', 3:'漩', 4:'火', 5:'木', 6:'瘴'}
+            for i, (gx, gy) in resolved_traps.items():
+                ttype = self._trap_type_at(rec, i)
+                pmin, pmax = self._trap_power_at(rec, i)
+                sx, sy = self._grid_to_screen(gx, gy)
+                r = max(3, tile_h // 2)
+                fc = TRAP_COLORS.get(ttype, '#FF0000')
+                is_fixed = i in fixed_trap_indices
+                outline_c = 'white' if is_fixed else '#888'
+                pts = [(sx, sy - r), (sx - r, sy + r), (sx + r, sy + r)]
+                canvas.create_polygon(pts, fill=fc, outline=outline_c, width=1,
+                                      tags=('trap', f'trap_{i}'))
+                ts = TRAP_SHORT.get(ttype, '?')
+                tag_char = '固' if is_fixed else '随'
+                canvas.create_text(sx, sy, text=ts,
+                                   fill='white', font=('', max(7, int(9*zoom)), 'bold'),
+                                   tags=('trap',))
+                canvas.create_text(sx, sy - r - 8, text=f'{tag_char}{ts} {pmin}-{pmax}',
+                                   fill=fc, font=('', max(8, int(10*zoom))),
+                                   tags=('trap',))
+            # 区域陷阱无法解析的, 在底部提示
+            if trap_zone_reqs:
+                zr_x = 10
+                by_zone = {}
+                TRAP_NAMES = {1:'山崩',2:'泥沼',3:'漩渦',4:'火焰',5:'滾木',6:'瘴氣'}
+                for z, i, ttype in trap_zone_reqs:
+                    by_zone.setdefault(z, []).append(
+                        f'{TRAP_SHORT.get(ttype,"?")}{i}')
+                for zone, labels in sorted(by_zone.items()):
+                    txt = f'⚠Z{zone}陷阱:' + ','.join(labels)
+                    canvas.create_text(zr_x, bg_h - 35, text=txt, anchor='nw',
+                                       fill='#FF4444', font=('', max(9, int(11*zoom))),
+                                       tags=('trap', 'zone_req'))
                     zr_x += len(txt) * max(7, int(8*zoom)) + 10
 
         # ── 图层4: 单位 (sub_431428 解析后位置) ──
@@ -2469,13 +2689,13 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
             if trea:
                 ti, is_fixed = trea
                 rec = self.records[self._current_idx]
-                tid = rec['trea_id'][ti]
+                tid = rec['trap_type'][ti]
                 label = self._trea_label(rec, ti)
                 sub_id = rec['trea_sub'][ti] if ti < 10 else 0
                 if tid > 0 and sub_id > 0:
                     sub_name = self.tkitem_names_by_id.get(sub_id, f"Item#{sub_id}")[:6] if sub_id != 10000 else "金钱"
                     label += f"+{sub_name}"
-                type_tag = "固定" if is_fixed else f"区域Z{abs(rec['trea_xy'][ti*2])}→({gx},{gy})"
+                type_tag = "固定" if is_fixed else f"区域Z{abs(rec['trap_xy'][ti*2])}→({gx},{gy})"
                 self.scene_info_var.set(f"({gx},{gy}) 宝物#{ti} {label} [{type_tag}]")
             else:
                 self.scene_info_var.set(f"({gx},{gy})")
