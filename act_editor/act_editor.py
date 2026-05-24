@@ -814,6 +814,7 @@ class ActEditor:
         self.filtered_indices = []
         self._dirty = False
         self._editing_idx = None
+        self._clipboard = None  # 右键复制的条目数据
         self._greenscreen_remove = tk.BooleanVar(value=True)
         self.names = {}
 
@@ -934,6 +935,7 @@ class ActEditor:
         self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         vsb.pack(side=tk.RIGHT, fill=tk.Y)
         self.tree.bind('<<TreeviewSelect>>', self._on_tree_select)
+        self.tree.bind('<Button-3>', self._on_tree_right_click)
         self.tree.tag_configure('active', foreground='#228B22')
         self.tree.tag_configure('empty', foreground='#AAAAAA')
 
@@ -2779,6 +2781,57 @@ class ActEditor:
             'tail': list(entry['tail']),
         }
         self._populate_edit(entry)
+
+    def _on_tree_right_click(self, event):
+        """右键菜单: 复制/粘贴条目"""
+        # 定位点击的行
+        item = self.tree.identify_row(event.y)
+        if not item:
+            return
+        # 选中该行
+        self.tree.selection_set(item)
+        self._on_tree_select(None)
+        idx = int(self.tree.item(item)['values'][0])
+        entry = self.entries[idx]
+
+        menu = tk.Menu(self.root, tearoff=0)
+        if not entry_is_empty(entry):
+            menu.add_command(label="复制", command=lambda: self._clipboard_copy(idx))
+        if self._clipboard is not None:
+            if entry_is_empty(entry):
+                menu.add_command(label="粘贴到此", command=lambda: self._clipboard_paste(idx))
+        if menu.index('end') is None:
+            return  # 没有菜单项
+        menu.post(event.x_root, event.y_root)
+
+    def _clipboard_copy(self, idx: int):
+        """复制条目数据到剪贴板"""
+        src = self.entries[idx]
+        self._clipboard = {
+            'dirs': [list(d) for d in src['dirs']],
+            'param16': list(src['param16']),
+            'layers': [list(L) for L in src['layers']],
+            'tail': list(src['tail']),
+        }
+        self.status_var.set(f"已复制条目 #{idx} (右键空条目粘贴)")
+
+    def _clipboard_paste(self, idx: int):
+        """粘贴剪贴板数据到目标条目"""
+        entry = self.entries[idx]
+        entry['dirs'] = [list(d) for d in self._clipboard['dirs']]
+        entry['param16'] = list(self._clipboard['param16'])
+        entry['layers'] = [list(L) for L in self._clipboard['layers']]
+        entry['tail'] = list(self._clipboard['tail'])
+        self._dirty = True
+        self._apply_filter()
+        # 选中粘贴目标
+        for child in self.tree.get_children():
+            if int(self.tree.item(child)['values'][0]) == idx:
+                self.tree.selection_set(child)
+                self.tree.see(child)
+                break
+        self._populate_edit(entry)
+        self.status_var.set(f"已粘贴到条目 #{idx}")
 
     def _populate_edit(self, entry):
         self._editing_idx = entry['index']
