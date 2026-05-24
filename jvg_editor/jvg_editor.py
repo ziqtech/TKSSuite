@@ -737,10 +737,46 @@ class JVGEditor:
             del blk.frames[self._sel_fi]
             self._sel_fi=-1; self._sync_list(); self._kill_anim(); self._refresh_view()
 
+    def _pick_reference_block(self) -> Optional[int]:
+        """弹出参考分组选择对话框, 返回选中的 block 索引 (或 None)"""
+        blocks = [(i, blk) for i, blk in enumerate(self.jvg.blocks)
+                  if blk.frame_count > 0 and i != self._bi]
+        if not blocks:
+            messagebox.showinfo("无参考分组", "当前 JVG 中没有其他有帧的分组可作为参考。")
+            return None
+        dlg = tk.Toplevel(self.root)
+        dlg.title("选择参考分组 (用于恢复offset)")
+        dlg.transient(self.root); dlg.grab_set()
+        dlg.resizable(False, False)
+        ico = os.path.join(os.path.dirname(__file__), 'TKS.ico')
+        if os.path.exists(ico): dlg.iconbitmap(default=ico)
+        ttk.Label(dlg, text="空分组导入需要参考分组的 offset。\n请选择导出该图集的源分组:",
+                  padding=8).pack()
+        lb = tk.Listbox(dlg, width=40, height=min(16, len(blocks)), exportselection=False)
+        lb.pack(fill=tk.BOTH, expand=True, padx=8)
+        for bi, blk in blocks:
+            lb.insert(tk.END, f"[{bi:3d}] {blk.name} ({blk.frame_count}f)")
+        lb.selection_set(0)
+        result = [None]
+        def on_ok():
+            sel = lb.curselection()
+            if sel: result[0] = blocks[sel[0]][0]
+            dlg.destroy()
+        bf = ttk.Frame(dlg); bf.pack(fill=tk.X, padx=8, pady=8)
+        ttk.Button(bf, text="确定", command=on_ok).pack(side=tk.RIGHT, padx=4)
+        ttk.Button(bf, text="取消", command=dlg.destroy).pack(side=tk.RIGHT, padx=4)
+        lb.bind("<Double-Button-1>", lambda e: on_ok())
+        dlg.geometry("+%d+%d" % (self.root.winfo_rootx()+50, self.root.winfo_rooty()+100))
+        dlg.wait_window()
+        return result[0]
+
     def _batch_replace_gridsheet(self):
         """导入组图: 选择一张已导出的 Gridsheet 图片, 按用户输入的 cols/rows/gap 拆分。
 
-        有有效帧时替换对应帧; 空分组时新增帧。
+        offset 自动计算规则 (基于 Awk.JVG + Awt.JVG 前154 block 验证):
+        - X轴: cell 水平居中于虚拟坐标 x=0, min_vl = -(cw-1)//2  [310/310 正常block]
+        - Y轴: 每个 block 都有帧接触 cell 顶部, max_b=ch-1. 默认 max_vb=0
+              (若用户选择了参考分组则使用参考分组进行 _align_anchor 修正)
         """
         if not self.jvg or self._bi<0: return messagebox.showinfo("提示","请先选择分组")
         blk=self.jvg.blocks[self._bi]
@@ -753,7 +789,6 @@ class JVGEditor:
         try: gs=Image.open(path).convert('RGBA')
         except Exception as e: return messagebox.showerror("打开失败",str(e))
         gs_w,gs_h=gs.size
-        # 参数输入: columns / rows / padding
         cur_cols=self._tile_cols.get() if self._tile_cols.get()>0 else max(1,int(math.ceil(math.sqrt(max(n_valid,1)))))
         cols=simpledialog.askinteger("导入组图",f"columns (共 {n_valid} 帧):",parent=self.root,
                                      initialvalue=cur_cols,minvalue=1,maxvalue=256)
@@ -766,13 +801,11 @@ class JVGEditor:
         pad=simpledialog.askinteger("导入组图","padding / gap (像素):",parent=self.root,
                                     initialvalue=cur_pad,minvalue=0,maxvalue=256)
         if pad is None: return
-        # 容量校验
         if not is_new_block and cols*rows<n_valid:
             if not messagebox.askyesno("容量不足",
                 f"cols×rows = {cols}×{rows} = {cols*rows} < 有效帧数 {n_valid}\n"
                 f"后 {n_valid-cols*rows} 帧将不会被替换。是否继续?"):
                 return
-        # 按用户输入直接计算 cell 尺寸
         cw_num=gs_w-max(0,cols-1)*pad
         ch_num=gs_h-max(0,rows-1)*pad
         if cw_num<=0 or ch_num<=0 or cw_num%cols!=0 or ch_num%rows!=0:
@@ -780,53 +813,70 @@ class JVGEditor:
                 f"图片尺寸 {gs_w}×{gs_h} 无法整除为 {cols}×{rows} 个 cell (pad={pad})\n"
                 f"cw_num={cw_num}, ch_num={ch_num}\n请确认 columns / rows / padding 参数")
         cw=cw_num//cols; ch=ch_num//rows
-        # 虚拟坐标原点 (与 export_gridsheet 一致)
+
+        # X轴自动规则: cell 水平居中于 x=0
+        auto_min_vl = -((cw - 1) // 2)
+
+        # 确定参考帧列表
+        ref_frames = None
         if is_new_block:
-            min_vl=0; min_vt=0
+            ref_bi = self._pick_reference_block()
+            if ref_bi is not None:
+                ref_blk = self.jvg.blocks[ref_bi]
+                ref_valid = [(i,f) for i,f in enumerate(ref_blk.frames) if f.width>0 and f.height>0]
+                ref_frames = ref_valid
+                if len(ref_valid) > cols*rows:
+                    if not messagebox.askyesno("帧数不匹配",
+                        f"参考分组有 {len(ref_valid)} 帧, 但 grid 只有 {cols*rows} 个 cell。\n"
+                        f"多余 cell 将按自动计算 offset。是否继续?"):
+                        return
         else:
-            vrs=[(_u16s(f.x_max)-f.width+1,_u16s(f.y_max)-f.height+1) for _,f in valid_list]
-            min_vl=min(r[0] for r in vrs); min_vt=min(r[1] for r in vrs)
+            ref_frames = valid_list
+
         # 第一遍: 裁剪每个非空 cell 的 sub 图
         self._info.config(text=f"导入组图: 裁剪 cell..."); self.root.update()
         subs=[]; metas=[]; replace_set=set()
         max_cells=cols*rows
         skipped=0
         if is_new_block:
-            # 空分组: 遍历所有 cell, 非空的作为新帧添加
             for cell_idx in range(max_cells):
                 ri=cell_idx//cols; ci=cell_idx%cols
                 cx=ci*(cw+pad); cy=ri*(ch+pad)
-                if cx+cw>gs_w or cy+ch>gs_h:
-                    skipped+=1; continue
+                if cx+cw>gs_w or cy+ch>gs_h: skipped+=1; continue
                 cell=gs.crop((cx,cy,cx+cw,cy+ch))
                 bbox=cell.getchannel('A').getbbox()
-                if bbox is None:
-                    skipped+=1; continue
+                if bbox is None: skipped+=1; continue
                 l,t,r,b=bbox
                 sub=cell.crop((l,t,r,b))
-                new_x_max=(min_vl+r-1)&0xFFFF
-                new_y_max=(min_vt+b-1)&0xFFFF
+                # 临时 offset: X轴用自动规则, Y轴待收集所有 b 后统一计算
+                new_x_max=(auto_min_vl+r-1)&0xFFFF
                 subs.append(sub)
-                metas.append((new_x_max,new_y_max))
+                metas.append((new_x_max, 0, b))  # (xm, ym_placeholder, b_for_y_calc)
         else:
-            for cell_idx,(blk_fi,_old_f) in enumerate(valid_list):
-                if cell_idx>=max_cells:
-                    skipped+=1; continue
+            for cell_idx,(blk_fi,old_f) in enumerate(valid_list):
+                if cell_idx>=max_cells: skipped+=1; continue
                 ri=cell_idx//cols; ci=cell_idx%cols
                 cx=ci*(cw+pad); cy=ri*(ch+pad)
-                if cx+cw>gs_w or cy+ch>gs_h:
-                    skipped+=1; continue
+                if cx+cw>gs_w or cy+ch>gs_h: skipped+=1; continue
                 cell=gs.crop((cx,cy,cx+cw,cy+ch))
                 bbox=cell.getchannel('A').getbbox()
-                if bbox is None:
-                    skipped+=1; continue
+                if bbox is None: skipped+=1; continue
                 l,t,r,b=bbox
                 sub=cell.crop((l,t,r,b))
-                new_x_max=(min_vl+r-1)&0xFFFF
-                new_y_max=(min_vt+b-1)&0xFFFF
+                # 从旧帧反推坐标系原点, 然后用 bbox 计算新 offset
+                old_xm=_u16s(old_f.x_max); old_ym=_u16s(old_f.y_max)
+                old_vl=old_xm-old_f.width+1; old_vt=old_ym-old_f.height+1
+                new_x_max=(old_vl-l+r-1)&0xFFFF
+                new_y_max=(old_vt-t+b-1)&0xFFFF
                 subs.append(sub); metas.append((blk_fi,new_x_max,new_y_max))
                 replace_set.add(blk_fi)
-        # 第二遍: 统一量化 (共享调色板, 避免掉色)
+
+        # Y轴自动计算 (仅新block): max_vb=0 → min_vt = -max(b_i)
+        if is_new_block and metas:
+            auto_min_vt = -max(m[2] for m in metas)  # m[2] = b
+            metas = [(m[0], (auto_min_vt + m[2] - 1) & 0xFFFF) for m in metas]
+
+        # 第二遍: 统一量化
         self._info.config(text=f"导入组图: 统一量化 {len(subs)} 帧..."); self.root.update()
         keep_indices=[i for i in range(len(blk.frames)) if i not in replace_set]
         new_frames=_batch_quantize_subs_to_block(subs,blk,keep_indices)
@@ -835,9 +885,14 @@ class JVGEditor:
             for (xm,ym),nf in zip(metas,new_frames):
                 nf.x_max=xm; nf.y_max=ym
                 blk.frames.append(nf)
+            if ref_frames:
+                for cell_idx, (_, ref_f) in enumerate(ref_frames):
+                    if cell_idx >= len(blk.frames): break
+                    _align_anchor(blk.frames[cell_idx], ref_f, mode="bottom_center")
         else:
             for (blk_fi,xm,ym),nf in zip(metas,new_frames):
                 nf.x_max=xm; nf.y_max=ym
+                _align_anchor(nf, blk.frames[blk_fi], mode="bottom_center")
                 blk.frames[blk_fi]=nf
         self._sync_list(); self._kill_anim(); self._refresh_view()
         self._info.config(text=f"导入组图完成: {'新增' if is_new_block else '替换'} {len(new_frames)} 帧, 跳过 {skipped} 空cell (cell={cw}×{ch})")
