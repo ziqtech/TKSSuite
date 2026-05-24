@@ -335,6 +335,22 @@ class SpriteSheetModel:
             i1, i2 = r * cols + c1, r * cols + c2
             self.frames[i1], self.frames[i2] = self.frames[i2], self.frames[i1]
 
+    def copy_row(self, row_idx: int) -> None:
+        """复制指定行, 在下方插入新行"""
+        self.normalize()
+        if not (0 <= row_idx < self.rows):
+            return
+        cols = self.columns
+        start = row_idx * cols
+        end = start + cols
+        copied = []
+        for i in range(start, end):
+            frame = self.frames[i]
+            copied.append(frame.copy() if frame is not None else None)
+        insert_pos = (row_idx + 1) * cols
+        self.frames[insert_pos:insert_pos] = copied
+        self.rows += 1
+
     def get_frame(self, idx: int) -> Optional[Image.Image]:
         self.normalize()
         if 0 <= idx < len(self.frames):
@@ -2263,6 +2279,12 @@ class SpriteSheetEditor(tk.Tk):
             side="left", fill="y", padx=4, pady=2)
         ttk.Button(toolbar, text="删除", command=self._delete_from_list).pack(
             side="left", padx=2)
+        ttk.Separator(toolbar, orient="vertical").pack(
+            side="left", fill="y", padx=4, pady=2)
+        ttk.Button(toolbar, text="复制行", command=self._copy_row).pack(
+            side="left", padx=2)
+        ttk.Button(toolbar, text="水平翻转", command=self._flip_horizontal).pack(
+            side="left", padx=2)
 
         self._status_var = tk.StringVar(value="就绪")
         ttk.Label(toolbar, textvariable=self._status_var, foreground="#888888").pack(
@@ -2362,6 +2384,36 @@ class SpriteSheetEditor(tk.Tk):
         """删除选中图片: 优先使用画布多选(批量), 其次 image_list 单选"""
         if self.canvas.selection:
             self.canvas.delete_selected()
+
+    def _copy_row(self):
+        """复制选中帧所在行, 在下方插入新行"""
+        sel = self.canvas.selection
+        if not sel:
+            messagebox.showinfo("提示", "请先在画布上选中要复制行中的任意帧")
+            return
+        idx = min(sel)
+        row = idx // max(1, self.model.columns)
+        self.model.copy_row(row)
+        new_row = row + 1
+        cols = self.model.columns
+        new_start = new_row * cols
+        self.canvas.selection = set(range(new_start, new_start + cols))
+        self.settings._rows_var.set(self.model.rows)
+        self._on_model_changed()
+        self._status_var.set(f"已复制行 R{row} → R{new_row}")
+
+    def _flip_horizontal(self):
+        """水平翻转选中的帧"""
+        sel = self.canvas.selection
+        if not sel:
+            messagebox.showinfo("提示", "请先在画布上选中要翻转的帧")
+            return
+        for idx in sel:
+            frame = self.model.get_frame(idx)
+            if frame is not None:
+                self.model.frames[idx] = frame.transpose(Image.FLIP_LEFT_RIGHT)
+        self._on_model_changed()
+        self._status_var.set(f"已水平翻转 {len(sel)} 帧")
 
     def _import_spritesheet(self):
         """导入图集并拆分"""
