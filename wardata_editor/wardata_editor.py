@@ -689,16 +689,14 @@ class WarDataEditor:
         self.tab_scene = ttk.Frame(self.notebook)
         self.tab_enemy = ttk.Frame(self.notebook)
         self.tab_ally = ttk.Frame(self.notebook)
-        self.tab_drops = ttk.Frame(self.notebook)
-        self.tab_traps = ttk.Frame(self.notebook)
+        self.tab_drops_traps = ttk.Frame(self.notebook)
         self.tab_params = ttk.Frame(self.notebook)
         self.tab_allparams = ttk.Frame(self.notebook)
 
         self.notebook.add(self.tab_scene, text="场景预览")
         self.notebook.add(self.tab_enemy, text="敌军配置")
         self.notebook.add(self.tab_ally, text="友军配置")
-        self.notebook.add(self.tab_drops, text="宝物/奖励")
-        self.notebook.add(self.tab_traps, text="陷阱")
+        self.notebook.add(self.tab_drops_traps, text="宝物和陷阱")
         self.notebook.add(self.tab_params, text="战场参数")
         self.notebook.add(self.tab_allparams, text="全部参数")
 
@@ -706,8 +704,7 @@ class WarDataEditor:
         self._build_allparams_tab()
         self._build_enemy_tab()
         self._build_ally_tab()
-        self._build_drops_tab()
-        self._build_trap_tab()
+        self._build_drops_traps_tab()
         self._build_scene_tab()
 
     def _set_edit_enabled(self, enabled: bool):
@@ -1711,253 +1708,134 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
     # 宝物/奖励标签页 (sub_431428:198-323 treasure系统)
     # ═══════════════════════════════════════════════════════════
 
-    def _build_drops_tab(self):
-        """10个宝物槽位 (sub_431428:303 trea_sub) + 坐标共享28陷阱槽位"""
-        df = self.tab_drops
+    def _build_drops_traps_tab(self):
+        """宝物和陷阱合并标签 — 上半区宝物(10槽), 下半区陷阱(28槽), 共享X/Y"""
+        df = self.tab_drops_traps
         canvas = tk.Canvas(df, highlightthickness=0)
         vsb = ttk.Scrollbar(df, orient=tk.VERTICAL, command=canvas.yview)
         vsb.pack(side=tk.RIGHT, fill=tk.Y)
         canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         canvas.configure(yscrollcommand=vsb.set)
         inner = ttk.Frame(canvas)
-        self._drops_win = canvas.create_window((0, 0), window=inner, anchor='nw')
-        def _drops_canvas_conf(event):
-            canvas.configure(scrollregion=canvas.bbox('all'))
-        inner.bind('<Configure>', _drops_canvas_conf)
+        canvas.create_window((0, 0), window=inner, anchor='nw')
+        def _conf(event): canvas.configure(scrollregion=canvas.bbox('all'))
+        inner.bind('<Configure>', _conf)
         canvas.bind('<MouseWheel>', lambda e: canvas.yview_scroll(int(-e.delta / 120), 'units'))
 
-        ttk.Label(inner, text="隐藏宝物 (sub_431428:303 trea_sub) — 10个槽位, 与陷阱共享X/Y坐标:", font=FONT).grid(
-            row=0, column=0, columnspan=8, sticky='w', pady=(2, 4))
+        # ═══ 统一表格: 28槽位全部字段 ═══
+        self.TRAP_NAMES_MAP = {0:'0 无',1:'1 山崩陷阱',2:'2 泥沼陷阱',3:'3 漩渦陷阱',4:'4 火焰陷阱',5:'5 滾木陷阱',6:'6 瘴氣陷阱'}
+        ttk.Label(inner, text='宝物和陷阱 (sub_431428:198-323) — 28槽位, 共享X/Y, 负X=区域随机, 威力每场随机', font=FONT).grid(
+            row=0, column=0, columnspan=10, sticky='w', pady=(2,4))
 
-        hdr = ['#', 'X', 'Y', '宝物ID', '宝物名称', '数量Min', '数量Max']
-        hdr_widths = [4, 4, 4, 10, 16, 10, 10]
-        for j, (h, w) in enumerate(zip(hdr, hdr_widths)):
+        cols = [('#',3), ('X',4), ('Y',4), ('宝物ID',7), ('宝物名',12), ('数Min',5), ('数Max',5),
+                ('陷阱类型',13), ('威Min',5), ('威Max',5)]
+        for j, (h, w) in enumerate(cols):
             ttk.Label(inner, text=h, font=FONT_S, width=w).grid(row=1, column=j, padx=1)
 
-        self.trea_vars = []
-        self.trea_name_labels = []
-        for i in range(10):
-            row = i + 2
-            vr = {}
+        self.trea_vars = []; self.trea_name_labels = []; self.trap_vars = []
+        for i in range(28):
+            row = i + 2; vr = {}
             ttk.Label(inner, text=str(i), font=FONT_S).grid(row=row, column=0)
 
             vr['x'] = tk.StringVar()
-            ttk.Spinbox(inner, textvariable=vr['x'], from_=-128, to=127, width=4, font=FONT).grid(
-                row=row, column=1, padx=1)
-
+            ttk.Spinbox(inner, textvariable=vr['x'], from_=-128, to=127, width=4, font=FONT).grid(row=row, column=1, padx=1)
             vr['y'] = tk.StringVar()
-            ttk.Spinbox(inner, textvariable=vr['y'], from_=-128, to=127, width=4, font=FONT).grid(
-                row=row, column=2, padx=1)
+            ttk.Spinbox(inner, textvariable=vr['y'], from_=-128, to=127, width=4, font=FONT).grid(row=row, column=2, padx=1)
 
+            # 宝物字段 (全部28槽可编辑)
             vr['tid'] = tk.StringVar()
-            ttk.Entry(inner, textvariable=vr['tid'], width=6, font=FONT).grid(
-                row=row, column=3, padx=1)
-            nlbl = ttk.Label(inner, text="", foreground='#3366cc', font=FONT_S, width=12, anchor='w')
+            ttk.Entry(inner, textvariable=vr['tid'], width=6, font=FONT).grid(row=row, column=3, padx=1)
+            nlbl = ttk.Label(inner, text='', foreground='#3366cc', font=FONT_S, width=12, anchor='w')
             nlbl.grid(row=row, column=4, padx=1)
             self.trea_name_labels.append(nlbl)
-
             vr['qty_min'] = tk.StringVar()
-            ttk.Entry(inner, textvariable=vr['qty_min'], width=5, font=FONT).grid(
-                row=row, column=5, padx=1)
-
+            ttk.Entry(inner, textvariable=vr['qty_min'], width=5, font=FONT).grid(row=row, column=5, padx=1)
             vr['qty_max'] = tk.StringVar()
-            ttk.Entry(inner, textvariable=vr['qty_max'], width=5, font=FONT).grid(
-                row=row, column=6, padx=1)
+            ttk.Entry(inner, textvariable=vr['qty_max'], width=5, font=FONT).grid(row=row, column=6, padx=1)
+
+            # 陷阱字段 (全部28槽可编辑)
+            vr['type'] = tk.StringVar(value='0 无')
+            ttk.Combobox(inner, textvariable=vr['type'], values=list(self.TRAP_NAMES_MAP.values()),
+                         width=12, font=FONT_S, state='readonly').grid(row=row, column=7, padx=1)
+            vr['pwr_min'] = tk.StringVar()
+            ttk.Entry(inner, textvariable=vr['pwr_min'], width=5, font=FONT).grid(row=row, column=8, padx=1)
+            vr['pwr_max'] = tk.StringVar()
+            ttk.Entry(inner, textvariable=vr['pwr_max'], width=5, font=FONT).grid(row=row, column=9, padx=1)
 
             self.trea_vars.append(vr)
+            self.trap_vars.append(vr)
 
         ttk.Label(inner,
-            text="宝物ID: 0=无, 10000=金钱, 其他=TKItem ID (sub_431428:303)\n"
-                 "坐标与陷阱tab共享trap_xy (offset 214-269), 负X=区域随机放置\n"
-                 "数量来自trea_quant (offset 346-385), sub_434510",
-            font=FONT_S, foreground='#666', justify='left').grid(
-            row=12, column=0, columnspan=8, sticky='w', pady=(10, 0))
+            text='陷阱1-6→TKKon[552-557] 元素:火×2水×2毒×2 | 宝物:trea_sub+trea_quant(slot0-9) 陷阱:trap_type+trap_pwr',
+            font=FONT_S, foreground='#666').grid(row=30, column=0, columnspan=10, sticky='w', pady=(4,0))
 
     def _populate_drops_tab(self, rec):
-        for i in range(10):
+        for i in range(28):
             vr = self.trea_vars[i]
-            vr['x'].set(str(rec['trap_xy'][i * 2]))
-            vr['y'].set(str(rec['trap_xy'][i * 2 + 1]))
-            tid = rec['trea_sub'][i]
+            vr['x'].set(str(rec['trap_xy'][i*2]))
+            vr['y'].set(str(rec['trap_xy'][i*2+1]))
+            tid = rec['trea_sub'][i] if i < 10 else 0
             vr['tid'].set(str(tid))
-            if tid == 10000:
-                self.trea_name_labels[i].config(text="金钱")
-            elif tid and tid in self.tkitem_names_by_id:
-                self.trea_name_labels[i].config(text=self.tkitem_names_by_id[tid][:12])
-            elif tid:
-                self.trea_name_labels[i].config(text=f"Item#{tid}")
-            else:
-                self.trea_name_labels[i].config(text="(空)")
-            vr['qty_min'].set(str(rec['trea_quant'][i*2]))
-            vr['qty_max'].set(str(rec['trea_quant'][i*2+1]))
+            if tid == 10000: self.trea_name_labels[i].config(text='金钱')
+            elif tid and tid in self.tkitem_names_by_id: self.trea_name_labels[i].config(text=self.tkitem_names_by_id[tid][:12])
+            elif tid: self.trea_name_labels[i].config(text=f'Item#{tid}')
+            else: self.trea_name_labels[i].config(text='')
+            if i < 10:
+                vr['qty_min'].set(str(rec['trea_quant'][i*2]))
+                vr['qty_max'].set(str(rec['trea_quant'][i*2+1]))
 
     def _apply_drops_tab(self, rec):
-        for i in range(10):
+        for i in range(28):
             vr = self.trea_vars[i]
             try: rec['trap_xy'][i*2] = int(vr['x'].get() or 0)
             except: pass
             try: rec['trap_xy'][i*2+1] = int(vr['y'].get() or 0)
             except: pass
-            try: rec['trea_sub'][i] = int(vr['tid'].get() or 0) & 0xFFFF
-            except: pass
-            try: rec['trea_quant'][i*2] = int(vr['qty_min'].get() or 0) & 0xFFFF
-            except: pass
-            try: rec['trea_quant'][i*2+1] = int(vr['qty_max'].get() or 0) & 0xFFFF
-            except: pass
-
-    # ═══════════════════════════════════════════════════════════
-    # 陷阱标签页 (sub_431428 + sub_434C0C)
-    # ═══════════════════════════════════════════════════════════
-
-    TRAP_TYPE_NAMES = {
-        0: '0 无',
-        1: '1 山崩陷阱',
-        2: '2 泥沼陷阱',
-        3: '3 漩渦陷阱',
-        4: '4 火焰陷阱',
-        5: '5 滾木陷阱',
-        6: '6 瘴氣陷阱',
-    }
+            if i < 10:
+                try: rec['trea_sub'][i] = int(vr['tid'].get() or 0) & 0xFFFF
+                except: pass
+                try: rec['trea_quant'][i*2] = int(vr['qty_min'].get() or 0) & 0xFFFF
+                except: pass
+                try: rec['trea_quant'][i*2+1] = int(vr['qty_max'].get() or 0) & 0xFFFF
+                except: pass
 
     @staticmethod
     def _trap_type_at(rec, slot):
-        """读取 slot 0-27 的陷阱类型 (sub_431428: offset 386/406)"""
-        if slot < 10:
-            return rec['trap_type'][slot]  # slots 0-9: offset 386+slot*2
-        else:
-            # slots 10-27: offset 406+(slot-10)*2 → rec['trap_type'][10+(slot-10)]
-            # trea_id spans offset 386-441 = 28 int16
-            return rec['trap_type'][slot]
+        return rec['trap_type'][slot]
 
     @staticmethod
     def _trap_power_at(rec, slot):
-        """读取 slot 0-27 的陷阱威力 (min, max)"""
-        if slot < 10:
-            off = slot * 2  # offset 270+slot*2
-        else:
-            off = 20 + (slot - 10) * 2  # offset 290+(slot-10)*2
+        off = slot * 2 if slot < 10 else 20 + (slot - 10) * 2
         return (rec['trap_pwr'][off], rec['trap_pwr'][off + 1])
-
-    def _build_trap_tab(self):
-        """28个陷阱槽位: X,Y坐标(共享trea_xy) + 陷阱类型 + 威力min/max"""
-        df = self.tab_traps
-        canvas = tk.Canvas(df, highlightthickness=0)
-        vsb = ttk.Scrollbar(df, orient=tk.VERTICAL, command=canvas.yview)
-        vsb.pack(side=tk.RIGHT, fill=tk.Y)
-        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        canvas.configure(yscrollcommand=vsb.set)
-        inner = ttk.Frame(canvas)
-        self._trap_win = canvas.create_window((0, 0), window=inner, anchor='nw')
-
-        def _trap_canvas_conf(event):
-            canvas.configure(scrollregion=canvas.bbox('all'))
-        inner.bind('<Configure>', _trap_canvas_conf)
-        canvas.bind('<MouseWheel>', lambda e: canvas.yview_scroll(int(-e.delta / 120), 'units'))
-
-        ttk.Label(inner, text="战场预置陷阱 (sub_431428:198-323) — 28个槽位, 威力每场随机:", font=FONT).grid(
-            row=0, column=0, columnspan=8, sticky='w', pady=(2, 4))
-
-        # 表头
-        hdrs = ['#', 'X', 'Y', '陷阱类型', '威力Min', '威力Max']
-        hdr_widths = [4, 4, 4, 16, 8, 8]
-        for j, (h, w) in enumerate(zip(hdrs, hdr_widths)):
-            ttk.Label(inner, text=h, font=FONT_S, width=w).grid(row=1, column=j, padx=1)
-
-        self.trap_vars = []
-        for i in range(28):
-            row = i + 2
-            vr = {}
-            ttk.Label(inner, text=str(i), font=FONT_S).grid(row=row, column=0)
-
-            vr['x'] = tk.StringVar()
-            ttk.Spinbox(inner, textvariable=vr['x'], from_=-128, to=127, width=4, font=FONT).grid(
-                row=row, column=1, padx=1)
-
-            vr['y'] = tk.StringVar()
-            ttk.Spinbox(inner, textvariable=vr['y'], from_=-128, to=127, width=4, font=FONT).grid(
-                row=row, column=2, padx=1)
-
-            vr['type'] = tk.StringVar(value='0')
-            ttk.Combobox(inner, textvariable=vr['type'],
-                         values=list(self.TRAP_TYPE_NAMES.values()),
-                         width=15, font=FONT_S, state='readonly').grid(
-                row=row, column=3, padx=1)
-
-            vr['pwr_min'] = tk.StringVar()
-            ttk.Entry(inner, textvariable=vr['pwr_min'], width=6, font=FONT).grid(
-                row=row, column=4, padx=1)
-
-            vr['pwr_max'] = tk.StringVar()
-            ttk.Entry(inner, textvariable=vr['pwr_max'], width=6, font=FONT).grid(
-                row=row, column=5, padx=1)
-
-            self.trap_vars.append(vr)
-
-        ttk.Label(inner,
-            text="陷阱类型 1-6 → TKKon[552-557] (sub_434C0C: byte_9DFA92[]+551)\n"
-                 "元素增益 (sub_434C0C:17-37): 火→火焰×2, 水→漩渦×2, 毒→瘴氣×2\n"
-                 "坐标共享宝物槽位 (trea_xy), 陷阱类型存储在trea_id区域 (offset 386+)",
-            font=FONT_S, foreground='#666', justify='left').grid(
-            row=30, column=0, columnspan=8, sticky='w', pady=(10, 0))
 
     def _populate_trap_tab(self, rec):
         for i in range(28):
             vr = self.trap_vars[i]
-            tx = rec['trap_xy'][i * 2]
-            ty = rec['trap_xy'][i * 2 + 1]
-            ttype = self._trap_type_at(rec, i)
-            # 负X = 区域随机放置 (zone = |X|)
-            if tx < 0:
-                vr['x'].set(str(tx))  # 保留负值表示区域
-                vr['y'].set(str(ty))
-            else:
-                vr['x'].set(str(tx))
-                vr['y'].set(str(ty))
-            if 1 <= ttype <= 6:
-                vr['type'].set(self.TRAP_TYPE_NAMES.get(ttype, f'{ttype}'))
-            else:
-                vr['type'].set('0 无')
+            vr['x'].set(str(rec['trap_xy'][i*2]))
+            vr['y'].set(str(rec['trap_xy'][i*2+1]))
+            ttype = rec['trap_type'][i]
+            vr['type'].set(self.TRAP_NAMES_MAP.get(ttype, '0 无') if 1<=ttype<=6 else '0 无')
             pmin, pmax = self._trap_power_at(rec, i)
-            if ttype >= 1:
-                vr['pwr_min'].set(str(pmin))
-                vr['pwr_max'].set(str(pmax))
-            else:
-                vr['pwr_min'].set('0')
-                vr['pwr_max'].set('0')
+            vr['pwr_min'].set(str(pmin))
+            vr['pwr_max'].set(str(pmax))
 
     def _apply_trap_tab(self, rec):
         for i in range(28):
             vr = self.trap_vars[i]
-            try: rec['trap_xy'][i * 2] = int(vr['x'].get() or 0)
+            try: rec['trap_xy'][i*2] = int(vr['x'].get() or 0)
             except: pass
-            try: rec['trap_xy'][i * 2 + 1] = int(vr['y'].get() or 0)
+            try: rec['trap_xy'][i*2+1] = int(vr['y'].get() or 0)
             except: pass
-
-            # 解析陷阱类型 (取数字前缀)
-            tstr = vr['type'].get()
-            ttype = 0
+            tstr = vr['type'].get(); ttype = 0
             for c in tstr:
-                if c.isdigit():
-                    ttype = int(c)
-                    break
+                if c.isdigit(): ttype = int(c); break
             ttype = max(0, min(6, ttype))
-
-            # 写入 trea_id 区域
-            if i < 10:
-                rec['trap_type'][i] = ttype
-            else:
-                rec['trap_type'][i] = ttype
-
-            # 写入威力
+            rec['trap_type'][i] = ttype
             try: pmin = int(vr['pwr_min'].get() or 0) & 0xFF
             except: pmin = 0
             try: pmax = int(vr['pwr_max'].get() or 0) & 0xFF
             except: pmax = 0
-
-            if i < 10:
-                off = i * 2
-            else:
-                off = 20 + (i - 10) * 2
+            off = i * 2 if i < 10 else 20 + (i - 10) * 2
             rec['trap_pwr'][off] = pmin
             rec['trap_pwr'][off + 1] = pmax
 
