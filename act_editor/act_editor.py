@@ -2783,12 +2783,9 @@ class ActEditor:
         self._populate_edit(entry)
 
     def _on_tree_right_click(self, event):
-        """右键菜单: 复制/粘贴条目"""
-        # 定位点击的行
+        """右键菜单: 复制/粘贴/清空条目"""
         item = self.tree.identify_row(event.y)
-        if not item:
-            return
-        # 选中该行
+        if not item: return
         self.tree.selection_set(item)
         self._on_tree_select(None)
         idx = int(self.tree.item(item)['values'][0])
@@ -2797,12 +2794,30 @@ class ActEditor:
         menu = tk.Menu(self.root, tearoff=0)
         if not entry_is_empty(entry):
             menu.add_command(label="复制", command=lambda: self._clipboard_copy(idx))
+            menu.add_command(label="删除 (清空)", command=lambda: self._right_click_clear(idx))
         if self._clipboard is not None:
             if entry_is_empty(entry):
                 menu.add_command(label="粘贴到此", command=lambda: self._clipboard_paste(idx))
-        if menu.index('end') is None:
-            return  # 没有菜单项
+        if menu.index('end') is None: return
         menu.post(event.x_root, event.y_root)
+
+    def _right_click_clear(self, idx: int):
+        """右键菜单: 确认后清空指定条目"""
+        if not messagebox.askyesno("确认", f"确定要清空条目 #{idx} 吗？\n此操作不可撤销。"):
+            return
+        entry = self.entries[idx]
+        for d in range(4): entry['dirs'][d] = [0] * 8
+        entry['param16'] = [0] * 24
+        for s in range(ACT_MAX_LAYER): entry['layers'][s] = [0] * 40
+        entry['tail'] = [0] * 32
+        self._dirty = True
+        self._apply_filter()
+        if self._editing_idx == idx:
+            self._populate_edit(entry)
+            self._preview_stop()
+            self._preview_redraw()
+            self._tl_redraw()
+        self.status_var.set(f"已清空条目 #{idx}")
 
     def _clipboard_copy(self, idx: int):
         """复制条目数据到剪贴板"""
