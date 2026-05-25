@@ -29,6 +29,13 @@ import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 from collections import OrderedDict
 
+HAS_PIL = False
+try:
+    from PIL import Image, ImageTk, ImageDraw, ImageFont
+    HAS_PIL = True
+except ImportError:
+    pass
+
 # ============================================================
 # 常量 (全部来自反编译, 不可改)
 # ============================================================
@@ -59,6 +66,60 @@ TAG_PATTERN = re.compile(r'<([A-Z]+),(\d+)>')
 FONT = ('Microsoft YaHei UI', 9)
 FONT_S = ('Microsoft YaHei UI', 8)
 FONT_MONO = ('Consolas', 10)
+
+# ============================================================
+# 游戏渲染参数 (sub_44E49C 文本绘制调度)
+# ============================================================
+
+# FCOLOR 1-32 调色板 (dword_A2C524[32], RGB565 LE)
+# 来源: sub_44E49C case 2, 内存 A2C528~A2C5A4
+_GAME_PALETTE_565 = [
+    0x0000,  # index 0 (unused)
+    0x0000, 0x8410, 0x8000, 0x8400, 0x0400, 0x0410, 0x0010, 0x8010,
+    0x8200, 0x8008, 0x4400, 0x0408, 0x4010, 0x0210, 0x0000, 0x0000,
+    0xF79B, 0xC618, 0xF800, 0xFFE0, 0x07E0, 0x07FF, 0x001F, 0xF81F,
+    0xFC08, 0xFA10, 0x87E8, 0x47F0, 0x821F, 0x441F, 0x31EA, 0xFFFF,
+]
+
+
+def _rgb565_to_hex(rgb565):
+    """RGB565 → #RRGGBB (sub_451F08 case 15 色彩转换)"""
+    r5 = (rgb565 >> 11) & 0x1F
+    g6 = (rgb565 >> 5) & 0x3F
+    b5 = rgb565 & 0x1F
+    r8 = (r5 << 3) | (r5 >> 2)
+    g8 = (g6 << 2) | (g6 >> 4)
+    b8 = (b5 << 3) | (b5 >> 2)
+    return f'#{r8:02X}{g8:02X}{b8:02X}'
+
+
+GAME_COLORS = {i: _rgb565_to_hex(_GAME_PALETTE_565[i]) for i in range(1, 33)}
+
+# FSIZE 有效值 (sub_44B04C: 12/16/24/32/48, 其他→24)
+GAME_FONT_SIZES = {12, 16, 24, 32, 48}
+# 默认字号 16 (依据 sub_411624 游戏主渲染器 dword_755B04: FSIZE=16)
+DEFAULT_FONT_SIZE = 16
+
+# FTYPE 1-8 近似字体 (Mu.jvg→细明体系; pface.jvg→黑体/UI体系)
+# 游戏原字体来自 JVG 位图, 此处使用系统 CJK 字体近似
+GAME_FONT_FAMILIES = {
+    1: ('PMingLiU', 'MingLiU', 'SimSun', 'serif'),
+    2: ('MingLiU', 'PMingLiU', 'SimSun', 'serif'),
+    3: ('DFKai-SB', 'KaiTi', 'serif'),
+    4: ('SimSun', 'NSimSun', 'MingLiU', 'serif'),
+    5: ('Microsoft JhengHei', 'Microsoft YaHei', 'SimHei', 'sans-serif'),
+    6: ('SimHei', 'Microsoft YaHei', 'Microsoft JhengHei', 'sans-serif'),
+    7: ('FangSong', 'KaiTi', 'serif'),
+    8: ('KaiTi', 'DFKai-SB', 'serif'),
+}
+
+# 默认 FTYPE=2 (依据 sub_411624 主渲染器 offset 0=1 即 FTYPE raw=2, ftype index 1=MingLiU)
+DEFAULT_FTYPE = 2
+DEFAULT_FCOLOR = 32    # 白色 (0xFFFF); 游戏初始 FCOLOR=0(黑色) 但暗色背景上需要白色
+PREVIEW_BG = '#0a0a1a'  # 模拟游戏对话框暗色背景
+
+# FTYPE 反向映射: 字体族首名称 → 0-based ftype
+FTYPE_BY_FAMILY_NAME = {v[0]: k - 1 for k, v in GAME_FONT_FAMILIES.items()}
 
 
 # ============================================================
@@ -215,6 +276,502 @@ def encode_line(text):
     return bytes(out)
 
 
+# ============================================================
+# 预览区: 解析文本分段 (依据 sub_44E49C 渲染调度)
+# ============================================================
+
+def parse_styled_segments(text):
+    """将含 <TAG,n> 的 TKT 文本解析为 [(text, {style}), ...] 分段列表。
+    依据 sub_44E49C 控制码分发逻辑:
+      FCOLOR → 查调色板 dword_A2C524
+      FSIZE  → 字号 12/16/24/32/48
+      FTYPE  → 0-based 字体索引
+      FRESET → 部分/全部恢复
+    """
+    segments = []
+    current = {
+        'fg': GAME_COLORS[DEFAULT_FCOLOR],
+        'size': DEFAULT_FONT_SIZE,
+        'family': GAME_FONT_FAMILIES[DEFAULT_FTYPE],
+    }
+    # FRESET,2 恢复为"上一个颜色" (sub_44E49C a1+16)
+    prev_color = current['fg']
+    prev_family = current['family']
+    buf = []
+    i = 0
+    n = len(text)
+
+    def flush():
+        if buf:
+            segments.append((''.join(buf), dict(current)))
+            buf.clear()
+
+    while i < n:
+        m = TAG_PATTERN.match(text, i)
+        if m:
+            flush()
+            tag_name = m.group(1)
+            val = int(m.group(2))
+            if tag_name == 'FCOLOR' and 1 <= val <= 32:
+                prev_color = current['fg']
+                current['fg'] = GAME_COLORS[val]
+            elif tag_name == 'FSIZE' and val in GAME_FONT_SIZES:
+                current['size'] = val
+            elif tag_name == 'FTYPE' and 1 <= val <= 8:
+                prev_family = current['family']
+                current['family'] = GAME_FONT_FAMILIES[val]
+            elif tag_name == 'FRESET':
+                if val == 1:  # 全部恢复
+                    current['fg'] = GAME_COLORS[DEFAULT_FCOLOR]
+                    current['size'] = DEFAULT_FONT_SIZE
+                    current['family'] = GAME_FONT_FAMILIES[DEFAULT_FTYPE]
+                elif val == 2:  # 恢复颜色
+                    current['fg'] = prev_color
+                elif val == 3:  # 重新初始化 (同全部恢复)
+                    current['fg'] = GAME_COLORS[DEFAULT_FCOLOR]
+                    current['size'] = DEFAULT_FONT_SIZE
+                    current['family'] = GAME_FONT_FAMILIES[DEFAULT_FTYPE]
+                elif val == 4:  # 恢复字体类型
+                    current['family'] = prev_family
+            elif tag_name == 'TEXT':
+                buf.append(f'[文本:{val}]')
+            elif tag_name == 'VARNUM':
+                buf.append(f'[变量:{val}]')
+            elif tag_name == 'VARTXT':
+                buf.append(f'[文本变量:{val}]')
+            elif tag_name == 'NAME':
+                buf.append(f'[名称:{val}]')
+            else:
+                buf.append(text[m.start():m.end()])
+            i = m.end()
+        # <RAW,0xNN> 原样输出
+        elif text[i] == '<' and i + 6 < n:
+            rm = re.match(r'<RAW,0x([0-9A-Fa-f]{2})>', text[i:])
+            if rm:
+                flush()
+                buf.append(f'[RAW:{rm.group(1)}]')
+                i += rm.end()
+                continue
+            buf.append(text[i])
+            i += 1
+        else:
+            buf.append(text[i])
+            i += 1
+    flush()
+    return segments
+
+
+# ============================================================
+# FONT9696 位图字体解码器 (sub_44ADB0/sub_44B384/sub_44B208)
+# ============================================================
+
+class Font9696:
+    """FONT9696 自定义位图字体解码器。
+    格式: 8个FTYPE区段 × 14,915字形 × uint32偏移索引 + RLE压缩位图
+    字形: 96×96 最大, 1bpp, 3字节组RLE (sub_44B208)
+    索引: BIG5码 → 行列计算 (sub_44B384)
+    """
+    GLYPHS_PER_SECTION = 14915
+    GLYPH_BUF_SIZE = 1152  # 96×96/8
+
+    def __init__(self, path):
+        self._f = open(path, 'rb')
+        # 加载全部索引表: 8 × 14,915 = 119,320 个 uint32
+        idx_bytes = self._f.read(8 * self.GLYPHS_PER_SECTION * 4)
+        self._index = list(struct.unpack_from(
+            '<%dI' % (8 * self.GLYPHS_PER_SECTION), idx_bytes, 0))
+        self._cache = {}  # (char_code, ftype, target_h, color) → (PIL.Image, advance)
+
+    def close(self):
+        if self._f:
+            self._f.close()
+            self._f = None
+
+    def _char_index(self, char_code, ftype=0):
+        """BIG5字符码 → glyph索引。
+        high ∈ [0xA1, 0xFF], low ∈ [0x40, 0x7E] ∪ [0xA1, 0xFE]
+        """
+        if char_code < 0x80:
+            return None
+        high = (char_code >> 8) & 0xFF
+        low = char_code & 0xFF
+        if high < 0xA1:
+            return None
+        if 0x40 <= low <= 0x7E:
+            li = low - 64
+        elif 0xA1 <= low <= 0xFE:
+            li = low - 98
+        else:
+            return None
+        base = li + 157 * (high - 161)
+        if base < 0 or base >= self.GLYPHS_PER_SECTION:
+            return None
+        return base + self.GLYPHS_PER_SECTION * ftype
+
+    def _glyph_raw(self, char_code, ftype=0):
+        """获取RLE压缩字形数据"""
+        idx = self._char_index(char_code, ftype)
+        if idx is None or idx + 1 >= len(self._index):
+            return b''
+        off = self._index[idx]
+        next_off = self._index[idx + 1]
+        if off >= next_off:
+            return b''
+        self._f.seek(off)
+        return self._f.read(next_off - off)
+
+    def _decode_rle(self, data):
+        """RLE解码 → 1bpp位图 1152字节 (sub_44B208)
+        3字节组编码4个交替黑白游程, 每游程6bit (0-63)
+        """
+        bitmap = bytearray(self.GLYPH_BUF_SIZE)
+        byte_pos, bit_pos = 0, 7
+        i, n = 0, len(data)
+        while i + 2 < n:
+            b0, b1, b2 = data[i], data[i + 1], data[i + 2]
+            i += 3
+            runs = [
+                b0 & 0x3F,
+                (b0 >> 6) | ((b1 & 0xF) << 2),
+                (b1 >> 4) | ((b2 & 0x3) << 4),
+                b2 >> 2,
+            ]
+            for ri, rlen in enumerate(runs):
+                if rlen == 0:
+                    continue
+                is_black = (ri == 0 or ri == 2)
+                for _ in range(rlen):
+                    if byte_pos >= self.GLYPH_BUF_SIZE:
+                        return bytes(bitmap)
+                    if is_black:
+                        bitmap[byte_pos] |= (1 << bit_pos)
+                    bit_pos -= 1
+                    if bit_pos < 0:
+                        bit_pos = 7
+                        byte_pos += 1
+                    if byte_pos >= self.GLYPH_BUF_SIZE:
+                        return bytes(bitmap)
+        return bytes(bitmap)
+
+    def glyph_image(self, char_code, ftype=0, target_height=24, color='#FFFFFF'):
+        """获取彩色字形PIL图像 + 水平步进宽度。
+        结果缓存于 (char_code, ftype, target_height, color) 键。
+        """
+        cache_key = (char_code, ftype, target_height, color)
+        if cache_key in self._cache:
+            return self._cache[cache_key]
+
+        data = self._glyph_raw(char_code, ftype)
+        if not data:
+            # 无字形，返回半角空格
+            w = target_height // 2
+            img = Image.new('RGBA', (max(w, 1), target_height), (0, 0, 0, 0))
+            self._cache[cache_key] = (img, w)
+            return (img, w)
+
+        raw = self._decode_rle(data)
+
+        # FONT9696 位图极性: bit=1 为背景, bit=0 为笔画
+        # 反转后 bit=1 为笔画 (前景), bit=0 为背景 (透明)
+        raw = bytes(b ^ 0xFF for b in raw)
+
+        # 找包围盒
+        min_x, min_y, max_x, max_y = 96, 96, 0, 0
+        for y in range(96):
+            row_off = y * 12
+            for x in range(96):
+                bi = row_off + (x // 8)
+                if raw[bi] & (1 << (7 - (x % 8))):
+                    if x < min_x: min_x = x
+                    if y < min_y: min_y = y
+                    if x > max_x: max_x = x
+                    if y > max_y: max_y = y
+
+        if min_x > max_x:
+            w = target_height // 2
+            img = Image.new('RGBA', (max(w, 1), target_height), (0, 0, 0, 0))
+            self._cache[cache_key] = (img, w)
+            return (img, w)
+
+        gw = max_x - min_x + 1
+        gh = max_y - min_y + 1
+
+        # 提取字形到bytes (PIL frombytes 用)
+        glyph_bytes = bytearray(gw * gh)
+        for y in range(min_y, max_y + 1):
+            row_off = y * 12
+            for x in range(min_x, max_x + 1):
+                bi = row_off + (x // 8)
+                if raw[bi] & (1 << (7 - (x % 8))):
+                    glyph_bytes[(y - min_y) * gw + (x - min_x)] = 255
+
+        glyph_img = Image.frombytes('L', (gw, gh), bytes(glyph_bytes))
+
+        # 按目标高度缩放
+        scale = target_height / max(gh, 1)
+        new_w = max(int(gw * scale), 1)
+        new_h = target_height
+        glyph_img = glyph_img.resize((new_w, new_h), Image.LANCZOS)
+
+        # 依据 sub_44E49C: CJK 全宽字符 advance = char_width = 字号
+        # 字形居中在全宽画布 (target_height × target_height) 中
+        # 而非使用 bounding box 宽度作为 advance (会导致窄字间距不一致,
+        # 宽标点如顿号 override 112.5%)
+        advance = target_height
+        canvas_w = target_height
+        canvas_h = target_height
+        centered = Image.new('RGBA', (canvas_w, canvas_h), (0, 0, 0, 0))
+        x_offset = (canvas_w - new_w) // 2
+        y_offset = (canvas_h - new_h) // 2
+        centered.paste(glyph_img, (x_offset, y_offset), glyph_img)
+
+        # 着色
+        r, g, b = int(color[1:3], 16), int(color[3:5], 16), int(color[5:7], 16)
+        colored = Image.new('RGBA', (canvas_w, canvas_h), (0, 0, 0, 0))
+        alpha = centered.split()[3]
+        colored.paste(centered, (0, 0), alpha)
+        # 使用 putalpha 方式着色: 先建立纯色层, 用 alpha 通道合成
+        color_layer = Image.new('RGBA', (canvas_w, canvas_h), (r, g, b, 255))
+        result = Image.new('RGBA', (canvas_w, canvas_h), (0, 0, 0, 0))
+        result = Image.composite(color_layer, result, alpha)
+
+        self._cache[cache_key] = (result, advance)
+        return (result, advance)
+
+
+def _hex_to_rgb(hex_color):
+    """#RRGGBB → (R, G, B)"""
+    return (int(hex_color[1:3], 16), int(hex_color[3:5], 16), int(hex_color[5:7], 16))
+
+
+def _unicode_to_big5_code(ch):
+    """Unicode 字符 → BIG5 编码码点。
+    返回 (big5_code, is_cjk):
+      big5_code: 双字节 BIG5 码 (>= 0x8000) 或单字节 ASCII 码 (< 0x80)
+      is_cjk: 双字节 BIG5 字符为 True, ASCII 为 False
+      (None, False): 无法编码
+    依据 sub_44B384: FONT9696 使用 BIG5 编码索引字形。
+    """
+    try:
+        big5_bytes = ch.encode('big5')
+        if len(big5_bytes) == 2:
+            return (big5_bytes[0] << 8) | big5_bytes[1], True
+        elif len(big5_bytes) == 1:
+            return big5_bytes[0], False
+    except (UnicodeEncodeError, UnicodeDecodeError):
+        pass
+    try:
+        gbk_bytes = ch.encode('gbk')
+        if len(gbk_bytes) == 2:
+            return (gbk_bytes[0] << 8) | gbk_bytes[1], True
+        elif len(gbk_bytes) == 1:
+            return gbk_bytes[0], False
+    except (UnicodeEncodeError, UnicodeDecodeError):
+        pass
+    return None, False
+
+
+# 系统字体缓存 (ASCII/无法映射字符的回退渲染)
+_SYS_FONT_CACHE = {}
+
+
+def _get_sys_font(size, family_tuple):
+    """获取系统 TrueType 字体, 带缓存。
+    用于 FONT9696 不包含的 ASCII/符号字符回退渲染。
+    """
+    if not HAS_PIL:
+        return None
+    key = (size, family_tuple[0] if family_tuple else None)
+    if key in _SYS_FONT_CACHE:
+        return _SYS_FONT_CACHE[key]
+
+    font = None
+    # 优先使用家族字体名, 回退到常见 CJK 字体
+    candidates = list(family_tuple) if family_tuple else []
+    candidates.extend(['Microsoft YaHei', 'SimHei', 'SimSun',
+                        'MingLiU', 'PMingLiU', 'Arial'])
+
+    for name in candidates:
+        try:
+            font = ImageFont.truetype(name, size)
+            break
+        except (OSError, IOError):
+            continue
+
+    if font is None:
+        # 尝试 Windows 字体目录
+        windir = os.environ.get('WINDIR', r'C:\Windows')
+        fonts_dir = os.path.join(windir, 'Fonts')
+        for fname in ('msyh.ttc', 'msyhbd.ttc', 'simhei.ttf',
+                       'simsun.ttc', 'mingliu.ttc', 'arial.ttf'):
+            fpath = os.path.join(fonts_dir, fname)
+            if os.path.exists(fpath):
+                try:
+                    font = ImageFont.truetype(fpath, size)
+                    break
+                except (OSError, IOError):
+                    continue
+
+    if font is None:
+        try:
+            font = ImageFont.load_default(size)
+        except (TypeError, OSError):
+            font = ImageFont.load_default()
+
+    _SYS_FONT_CACHE[key] = font
+    return font
+
+
+def _render_fallback_char(ch, size, color, family_tuple, half_width=False):
+    """使用系统字体渲染单个字符, 作为 FONT9696 的回退。
+    返回 (PIL.Image, advance_width) 元组。ASCII 和无法映射到 BIG5 的字符走此路径。
+    依据 sub_44E49C: 游戏引擎对 ASCII 字符使用 word_4EC810 重映射后
+    仍经 FONT9696 渲染, 但我们无此映射表, 故用系统字体近似。
+    half_width: 是否半宽渲染 (sub_44E49C offset+66 模式, ASCII 用 size/2 宽度)
+    """
+    if not HAS_PIL:
+        return Image.new('RGBA', (1, 1), (0, 0, 0, 0)), 0
+
+    # 半宽模式: 游戏引擎用 size >> 1 作为 ASCII 字符宽度 (sub_44E49C offset+66)
+    if half_width:
+        adv = max(size // 2, 1)
+        font_obj = _get_sys_font(size, family_tuple)
+        if font_obj is None:
+            img = Image.new('RGBA', (adv, size), (0, 0, 0, 0))
+            return img, adv
+        # 渲染到全高画布, 水平居中在半宽区域内
+        r, g, b = int(color[1:3], 16), int(color[3:5], 16), int(color[5:7], 16)
+        img = Image.new('RGBA', (adv, size), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(img)
+        # 居中绘制: 使用偏移使字符水平居中于半宽区域
+        try:
+            bbox = font_obj.getbbox(ch)
+            if bbox:
+                x_off = -bbox[0] + max((adv - (bbox[2] - bbox[0])) // 2, 0)
+                y_off = -bbox[1] + max((size - (bbox[3] - bbox[1])) // 2, 0)
+            else:
+                x_off = 0
+                y_off = 0
+        except Exception:
+            x_off, y_off = 0, 0
+        draw.text((x_off, y_off), ch, fill=(r, g, b, 255), font=font_obj)
+        return img, adv
+
+    font_obj = _get_sys_font(size, family_tuple)
+    if font_obj is None:
+        w = max(size // 2, 1)
+        return Image.new('RGBA', (w, size), (0, 0, 0, 0)), w
+
+    # 获取字符边界框
+    try:
+        bbox = font_obj.getbbox(ch)
+    except Exception:
+        w = max(size // 2, 1)
+        return Image.new('RGBA', (w, size), (0, 0, 0, 0)), w
+
+    if bbox is None:
+        w = max(size // 2, 1)
+        return Image.new('RGBA', (w, size), (0, 0, 0, 0)), w
+
+    x0, y0, x1, y1 = bbox
+    w = max(x1 - x0, 1)
+    h = max(y1 - y0, 1)
+
+    # 渲染字符 (使用前景色)
+    r, g, b = int(color[1:3], 16), int(color[3:5], 16), int(color[5:7], 16)
+    img = Image.new('RGBA', (w, h), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(img)
+    draw.text((-x0, -y0), ch, fill=(r, g, b, 255), font=font_obj)
+
+    return img, w
+
+
+def _render_text_image(segments, font, line_spacing=4):
+    """将 styled segments 渲染为单个 PIL RGBA Image。
+    segments: [(text, {fg, size, family}), ...]
+    font: Font9696 实例
+    line_spacing: 行间额外像素
+    """
+    if not segments:
+        return Image.new('RGBA', (1, 1), (0, 0, 0, 0))
+
+    bg_rgb = _hex_to_rgb(PREVIEW_BG)
+
+    # 第一遍: 收集所有字形, 计算行布局
+    lines = []  # [(line_height, glyphs)]  where glyphs = [(img, advance)]
+    current_line_glyphs = []
+    current_line_height = 0
+
+    for text, style in segments:
+        ftype = FTYPE_BY_FAMILY_NAME.get(style['family'][0], 0)
+        size = style['size']
+        color = style['fg']
+
+        for ch in text:
+            if ch == '\n':
+                if current_line_glyphs:
+                    lines.append((current_line_height, current_line_glyphs))
+                current_line_glyphs = []
+                current_line_height = 0
+                continue
+
+            # 关键修复: Unicode → BIG5 编码转换
+            # FONT9696 使用 BIG5 编码索引字形 (sub_44B384)
+            # ord(ch) 返回 Unicode 码点, 需转换为 BIG5 编码
+            big5_code, is_cjk = _unicode_to_big5_code(ch)
+
+            if big5_code is not None and is_cjk:
+                # CJK 字符: FONT9696 渲染 (BIG5 双字节), 全宽
+                # 依据 sub_44E49C: CJK 字符使用完整 char_width (offset+28)
+                img, adv = font.glyph_image(big5_code, ftype, size, color)
+            elif big5_code is not None and not is_cjk:
+                # ASCII 字符: 系统字体回退, 半宽渲染
+                # 依据 sub_44E49C offset+66: 游戏主渲染器对 ASCII 使用 char_width>>1
+                img, adv = _render_fallback_char(ch, size, color, style['family'],
+                                                 half_width=True)
+            else:
+                # 无法编码到 BIG5 的字符: 系统字体回退, 半宽
+                img, adv = _render_fallback_char(ch, size, color, style['family'],
+                                                 half_width=True)
+
+            current_line_glyphs.append((img, adv))
+            current_line_height = max(current_line_height, size)
+
+    if current_line_glyphs:
+        lines.append((current_line_height, current_line_glyphs))
+
+    if not lines:
+        return Image.new('RGBA', (1, 1), (0, 0, 0, 0))
+
+    # 第二遍: 计算画布大小
+    total_h = 0
+    for lh, _glyphs in lines:
+        total_h += lh + line_spacing
+    total_h -= line_spacing if lines else 0
+
+    max_w = 0
+    for _lh, glyphs in lines:
+        line_w = sum(adv for _img, adv in glyphs)
+        max_w = max(max_w, line_w)
+
+    canvas_w = max(max_w + 20, 1)  # 左右各留10px padding
+    canvas_h = max(total_h + 20, 1)
+
+    # 第三遍: 渲染
+    canvas = Image.new('RGBA', (canvas_w, canvas_h), (*bg_rgb, 255))
+    y = 10
+    for lh, glyphs in lines:
+        x = 10
+        for img, adv in glyphs:
+            # 垂直居中
+            y_off = (lh - img.height) // 2
+            canvas.paste(img, (x, y + y_off), img)
+            x += adv
+        y += lh + line_spacing
+
+    return canvas
+
+
 def save_tkt(tkt_path, entries):
     """保存 entries 到 TKT.dat。
     依据 sub_401E88 BUILD 模式 (lines 220-371):
@@ -280,6 +837,8 @@ class TktEditor:
         self.tkt_path = None
         self.entries = []          # 当前所有条目
         self.filtered_indices = [] # 当前过滤后的索引
+        self.font9696 = None       # FONT9696 字体实例
+        self.font_path = None      # FONT9696 文件路径
         self._dirty = False
         self._current_idx = None   # 当前选中条目在 self.entries 中的索引
 
@@ -300,7 +859,7 @@ class TktEditor:
         mb = tk.Menu(self.root)
         self.root.config(menu=mb)
         fm = tk.Menu(mb, tearoff=0)
-        fm.add_command(label="打开 TKT.dat…", command=self._open_file, accelerator="Ctrl+O")
+        fm.add_command(label="加载 TKS 目录…", command=self._load_tks_dir, accelerator="Ctrl+O")
         fm.add_separator()
         fm.add_command(label="保存", command=self._save, accelerator="Ctrl+S")
         fm.add_command(label="另存为…", command=self._save_as)
@@ -319,7 +878,7 @@ class TktEditor:
         hm.add_command(label="关于", command=self._show_about)
         mb.add_cascade(label="帮助", menu=hm)
 
-        self.root.bind('<Control-o>', lambda e: self._open_file())
+        self.root.bind('<Control-o>', lambda e: self._load_tks_dir())
         self.root.bind('<Control-s>', lambda e: self._save())
         self.root.bind('<Control-n>', lambda e: self._new_entry())
         self.root.bind('<Control-f>', lambda e: self._focus_search())
@@ -349,7 +908,7 @@ class TktEditor:
         ttk.Button(tb, text="新增条目", command=self._new_entry).pack(side=tk.LEFT, padx=2)
         ttk.Button(tb, text="重新加载", command=self._reload).pack(side=tk.LEFT, padx=2)
 
-        self.status_var = tk.StringVar(value="请通过 文件 → 打开 TKT.dat 加载数据")
+        self.status_var = tk.StringVar(value="请通过 文件 → 加载 TKS 目录 打开数据")
         ttk.Label(tb, textvariable=self.status_var, foreground="gray").pack(side=tk.RIGHT, padx=10)
 
         # 主分栏
@@ -410,6 +969,21 @@ class TktEditor:
         ef.columnconfigure(0, weight=1)
         self.text_widget.bind('<KeyRelease>', self._on_text_modified)
 
+        # 预览区 — FONT9696 PIL 渲染图像 (优先) / 纯文本回退
+        preview_frame = ttk.LabelFrame(rf, text="游戏预览", padding=4)
+        preview_frame.pack(fill=tk.BOTH, expand=True, padx=4, pady=(0, 4))
+        pf_inner = ttk.Frame(preview_frame)
+        pf_inner.pack(fill=tk.BOTH, expand=True)
+        self.preview_text = tk.Text(pf_inner, bg=PREVIEW_BG, fg=GAME_COLORS[DEFAULT_FCOLOR],
+                                    font=(GAME_FONT_FAMILIES[DEFAULT_FTYPE][0], DEFAULT_FONT_SIZE),
+                                    wrap=tk.WORD, undo=False,
+                                    padx=10, pady=6, bd=0, highlightthickness=0)
+        pvsb = ttk.Scrollbar(pf_inner, orient=tk.VERTICAL, command=self.preview_text.yview)
+        self.preview_text.configure(yscrollcommand=pvsb.set)
+        self.preview_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        pvsb.pack(side=tk.RIGHT, fill=tk.Y)
+        self.preview_text.insert('1.0', '(请选择条目)')
+
         # 控制码提示
         tip_frame = ttk.Frame(rf)
         tip_frame.pack(fill=tk.X, padx=4, pady=(0, 2))
@@ -424,9 +998,58 @@ class TktEditor:
         ttk.Button(bf, text="重置", command=self._reset_edit, width=8).pack(side=tk.LEFT, padx=4)
         ttk.Button(bf, text="删除此条目", command=self._delete_entry, width=12).pack(side=tk.RIGHT)
 
+        # 底部状态栏 — 各文件路径
+        pf = ttk.LabelFrame(self.root, text="当前加载")
+        pf.pack(fill=tk.X, padx=5, pady=(0, 2))
+        self.lbl_tkt = ttk.Label(pf, text="", foreground="gray")
+        self.lbl_tkt.pack(side=tk.LEFT, padx=10, pady=2)
+        ttk.Separator(pf, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y)
+        self.lbl_font = ttk.Label(pf, text="", foreground="gray")
+        self.lbl_font.pack(side=tk.LEFT, padx=10, pady=2)
+
+    def _update_paths(self):
+        g, r = "#228B22", "#CC3333"
+        def _f(lb, p, label=''):
+            if not p:
+                lb.config(text=f"({label}未加载)", foreground=r)
+            elif not os.path.exists(p):
+                lb.config(text=f"(不存在) {p}", foreground=r)
+            else:
+                lb.config(text=f"{label}: {p}" if label else p, foreground=g)
+        _f(self.lbl_tkt, self.tkt_path, 'TKT')
+        _f(self.lbl_font, self.font_path, 'FONT9696')
+
     def _set_edit_enabled(self, enabled):
         state = 'normal' if enabled else 'disabled'
         self.text_widget.config(state=state)
+
+    def _render_preview(self):
+        """渲染预览: FONT9696 + PIL 优先, 回退纯文本"""
+        try:
+            text = self.text_widget.get('1.0', 'end-1c')
+        except Exception:
+            text = ''
+
+        pw = self.preview_text
+        pw.delete('1.0', 'end')
+
+        if not text.strip():
+            pw.insert('end', '[空条目]')
+            return
+
+        # FONT9696 PIL 渲染
+        if HAS_PIL and self.font9696:
+            try:
+                segments = parse_styled_segments(text)
+                img = _render_text_image(segments, self.font9696)
+                self._preview_photo = ImageTk.PhotoImage(img)
+                pw.image_create('end', image=self._preview_photo)
+                return
+            except Exception:
+                pw.insert('end', '[PIL渲染失败]\n')
+
+        # 回退纯文本
+        pw.insert('end', text)
 
     def _on_quit(self):
         if self._dirty:
@@ -435,17 +1058,42 @@ class TktEditor:
                 return
             if result:
                 self._save()
+        if self.font9696:
+            self.font9696.close()
+            self.font9696 = None
         self.root.quit()
 
     # ----------- 文件操作 -----------
-    def _open_file(self):
-        path = filedialog.askopenfilename(
-            title="打开 TKT.dat",
-            filetypes=[("TKT 数据库", "*.dat"), ("所有文件", "*.*")],
+    def _load_tks_dir(self):
+        d = filedialog.askdirectory(
+            title="选择 TKS 游戏目录",
             initialdir=self._guess_tks_dir()
         )
-        if path:
-            self._load_file(path)
+        if not d:
+            return
+        tkt_path = os.path.join(d, "TKT.dat")
+        if not os.path.exists(tkt_path):
+            messagebox.showerror("文件缺失", f"未找到 TKT.dat\n({d})")
+            return
+
+        # 加载 FONT9696 游戏字体 (用于预览)
+        font_path = os.path.join(d, "FONT9696")
+        if os.path.exists(font_path) and HAS_PIL:
+            try:
+                if self.font9696:
+                    self.font9696.close()
+                self.font9696 = Font9696(font_path)
+                self.font_path = font_path
+            except Exception as e:
+                self.font9696 = None
+                self.font_path = None
+                print(f"[WARN] FONT9696 加载失败: {e}", file=sys.stderr)
+        else:
+            self.font9696 = None
+            self.font_path = None
+
+        self._load_file(tkt_path)
+        self._update_paths()
 
     def _guess_tks_dir(self):
         here = os.path.dirname(os.path.abspath(__file__))
@@ -456,6 +1104,17 @@ class TktEditor:
         try:
             self.entries = load_tkt(path)
             self.tkt_path = path
+
+            # 自动加载同目录下的 FONT9696 (如果尚未加载)
+            font_path = os.path.join(os.path.dirname(path), "FONT9696")
+            if HAS_PIL and not self.font9696 and os.path.exists(font_path):
+                try:
+                    self.font9696 = Font9696(font_path)
+                    self.font_path = font_path
+                except Exception:
+                    self.font9696 = None
+                    self.font_path = None
+
             self._dirty = False
             self._current_idx = None
             self._populate_tree()
@@ -463,7 +1122,9 @@ class TktEditor:
             self.lbl_info.config(text="未选中")
             self.id_var.set('')
             self.text_widget.delete('1.0', 'end')
-            self.status_var.set(f"已加载: {os.path.basename(path)} ({len(self.entries)} 条目)")
+            font_info = " + FONT9696" if self.font9696 else ""
+            self.status_var.set(f"已加载: {os.path.basename(path)} ({len(self.entries)} 条目{font_info})")
+            self._update_paths()
             self.root.title(f"TKT.dat 编辑器 - {os.path.basename(path)}")
         except Exception as e:
             messagebox.showerror("加载失败", str(e))
@@ -583,10 +1244,15 @@ class TktEditor:
         self.text_widget.insert('1.0', e['text'])
         self._set_edit_enabled(True)
         self.lbl_dirty.config(text="")
+        self._render_preview()
 
     def _on_text_modified(self, event=None):
         if self._current_idx is not None:
             self.lbl_dirty.config(text="[未保存]")
+        # 50ms 防抖: 连续输入时合并渲染请求
+        if hasattr(self, '_preview_job') and self._preview_job:
+            self.root.after_cancel(self._preview_job)
+        self._preview_job = self.root.after(50, self._render_preview)
 
     def _apply_edit(self):
         if self._current_idx is None:
