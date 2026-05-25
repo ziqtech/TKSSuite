@@ -123,6 +123,70 @@ FTYPE_BY_FAMILY_NAME = {v[0]: k - 1 for k, v in GAME_FONT_FAMILIES.items()}
 
 
 # ============================================================
+# GB2312 ↔ Big5 转换 (依据 sub_45BB64/sub_45BCE4, 使用 g2b.dat)
+# ============================================================
+
+# 全局转换表
+_G2B_TABLE = None      # GB2312 → Big5 (原始表)
+_B2G_TABLE = None      # Big5 → GB2312 (反向表)
+
+
+def load_g2b_dat(g2b_path):
+    """加载 g2b.dat 并构建双向转换表。
+    依据 sub_45BB64: 文件大小 0x20000 (131072 字节)。
+    原始表: GB2312 码位 → Big5 码位
+    反向表: Big5 码位 → GB2312 码位
+    """
+    global _G2B_TABLE, _B2G_TABLE
+    with open(g2b_path, 'rb') as f:
+        data = f.read()
+    if len(data) != 0x20000:
+        raise ValueError(f"g2b.dat 大小错误: 期望 131072 字节, 实际 {len(data)}")
+    _G2B_TABLE = data
+
+    # 构建反向表 (Big5 → GB2312)
+    _B2G_TABLE = {}
+    for gb_code in range(0x10000):
+        idx = gb_code * 2
+        if idx + 1 < len(data):
+            big5_lo = data[idx]
+            big5_hi = data[idx + 1]
+            if big5_lo or big5_hi:  # 非零表示有效映射
+                big5_code = (big5_lo << 8) | big5_hi
+                _B2G_TABLE[big5_code] = gb_code
+    return data
+
+
+def big5_to_gb(text):
+    """将 Big5 编码文本转换为 GB2312 编码文本。
+    使用 g2b.dat 的反向映射表。
+    """
+    if _B2G_TABLE is None:
+        return text  # 未加载转换表，原样返回
+
+    result = []
+    for ch in text:
+        try:
+            big5_bytes = ch.encode('big5')
+            if len(big5_bytes) == 2:
+                big5_code = (big5_bytes[0] << 8) | big5_bytes[1]
+                if big5_code in _B2G_TABLE:
+                    gb_code = _B2G_TABLE[big5_code]
+                    gb_bytes = bytes([(gb_code >> 8) & 0xFF, gb_code & 0xFF])
+                    try:
+                        result.append(gb_bytes.decode('gb2312'))
+                    except (UnicodeEncodeError, UnicodeDecodeError):
+                        result.append(gb_bytes.decode('gbk', errors='replace'))
+                else:
+                    result.append(ch)  # 无映射，保留原字符
+            else:
+                result.append(ch)  # 单字节，保留
+        except (UnicodeEncodeError, UnicodeDecodeError):
+            result.append(ch)  # 编码失败，保留原字符
+    return ''.join(result)
+
+
+# ============================================================
 # TKT 文件 I/O (依据 sub_401E88)
 # ============================================================
 
@@ -576,21 +640,28 @@ def _unicode_to_big5_code(ch):
 _SYS_FONT_CACHE = {}
 
 
-def _get_sys_font(size, family_tuple):
+def _get_sys_font(size, family_tuple, prefer_traditional=False):
     """获取系统 TrueType 字体, 带缓存。
     用于 FONT9696 不包含的 ASCII/符号字符回退渲染。
+    prefer_traditional: True 时优先使用繁体中文字体 (MingLiU)
     """
     if not HAS_PIL:
         return None
-    key = (size, family_tuple[0] if family_tuple else None)
+    key = (size, family_tuple[0] if family_tuple else None, prefer_traditional)
     if key in _SYS_FONT_CACHE:
         return _SYS_FONT_CACHE[key]
 
     font = None
     # 优先使用家族字体名, 回退到常见 CJK 字体
     candidates = list(family_tuple) if family_tuple else []
-    candidates.extend(['Microsoft YaHei', 'SimHei', 'SimSun',
-                        'MingLiU', 'PMingLiU', 'Arial'])
+    if prefer_traditional:
+        # 繁体优先: MingLiU > PMingLiU > 其他繁体 > 通用 CJK
+        candidates.extend(['MingLiU', 'PMingLiU', 'DFKai-SB',
+                           'Microsoft JhengHei', 'SimSun', 'SimHei', 'Arial'])
+    else:
+        # 默认: 按原游戏字体家族顺序
+        candidates.extend(['Microsoft YaHei', 'SimHei', 'SimSun',
+                           'MingLiU', 'PMingLiU', 'Arial'])
 
     for name in candidates:
         try:
@@ -603,8 +674,13 @@ def _get_sys_font(size, family_tuple):
         # 尝试 Windows 字体目录
         windir = os.environ.get('WINDIR', r'C:\Windows')
         fonts_dir = os.path.join(windir, 'Fonts')
-        for fname in ('msyh.ttc', 'msyhbd.ttc', 'simhei.ttf',
-                       'simsun.ttc', 'mingliu.ttc', 'arial.ttf'):
+        if prefer_traditional:
+            font_files = ('mingliu.ttc', 'pmingliu.ttc', 'kaiu.ttf',
+                          'msjh.ttc', 'simsun.ttc', 'simhei.ttf', 'arial.ttf')
+        else:
+            font_files = ('msyh.ttc', 'msyhbd.ttc', 'simhei.ttf',
+                          'simsun.ttc', 'mingliu.ttc', 'arial.ttf')
+        for fname in font_files:
             fpath = os.path.join(fonts_dir, fname)
             if os.path.exists(fpath):
                 try:
@@ -623,20 +699,22 @@ def _get_sys_font(size, family_tuple):
     return font
 
 
-def _render_fallback_char(ch, size, color, family_tuple, half_width=False):
+def _render_fallback_char(ch, size, color, family_tuple, half_width=False,
+                            prefer_traditional=False):
     """使用系统字体渲染单个字符, 作为 FONT9696 的回退。
     返回 (PIL.Image, advance_width) 元组。ASCII 和无法映射到 BIG5 的字符走此路径。
     依据 sub_44E49C: 游戏引擎对 ASCII 字符使用 word_4EC810 重映射后
     仍经 FONT9696 渲染, 但我们无此映射表, 故用系统字体近似。
     half_width: 是否半宽渲染 (sub_44E49C offset+66 模式, ASCII 用 size/2 宽度)
+    prefer_traditional: True 时优先使用繁体字体 (MingLiU)
     """
     if not HAS_PIL:
-        return Image.new('RGBA', (1, 1), (0, 0, 0, 0)), 0
+        return Image.new('RGBA', (1, 1, 0, 0)), 0
 
     # 半宽模式: 游戏引擎用 size >> 1 作为 ASCII 字符宽度 (sub_44E49C offset+66)
     if half_width:
         adv = max(size // 2, 1)
-        font_obj = _get_sys_font(size, family_tuple)
+        font_obj = _get_sys_font(size, family_tuple, prefer_traditional)
         if font_obj is None:
             img = Image.new('RGBA', (adv, size), (0, 0, 0, 0))
             return img, adv
@@ -658,7 +736,7 @@ def _render_fallback_char(ch, size, color, family_tuple, half_width=False):
         draw.text((x_off, y_off), ch, fill=(r, g, b, 255), font=font_obj)
         return img, adv
 
-    font_obj = _get_sys_font(size, family_tuple)
+    font_obj = _get_sys_font(size, family_tuple, prefer_traditional)
     if font_obj is None:
         w = max(size // 2, 1)
         return Image.new('RGBA', (w, size), (0, 0, 0, 0)), w
@@ -687,11 +765,12 @@ def _render_fallback_char(ch, size, color, family_tuple, half_width=False):
     return img, w
 
 
-def _render_text_image(segments, font, line_spacing=4):
+def _render_text_image(segments, font, line_spacing=4, use_traditional_font=False):
     """将 styled segments 渲染为单个 PIL RGBA Image。
     segments: [(text, {fg, size, family}), ...]
     font: Font9696 实例
     line_spacing: 行间额外像素
+    use_traditional_font: True 时 CJK 字符用系统繁体字体渲染 (而非 FONT9696 简体位图)
     """
     if not segments:
         return Image.new('RGBA', (1, 1), (0, 0, 0, 0))
@@ -716,24 +795,38 @@ def _render_text_image(segments, font, line_spacing=4):
                 current_line_height = 0
                 continue
 
-            # 关键修复: Unicode → BIG5 编码转换
+            # Unicode → BIG5 编码转换
             # FONT9696 使用 BIG5 编码索引字形 (sub_44B384)
-            # ord(ch) 返回 Unicode 码点, 需转换为 BIG5 编码
+            # 注意: FONT9696 字体包含简体中文字形, Big5编码仅作索引方案
             big5_code, is_cjk = _unicode_to_big5_code(ch)
 
             if big5_code is not None and is_cjk:
-                # CJK 字符: FONT9696 渲染 (BIG5 双字节), 全宽
-                # 依据 sub_44E49C: CJK 字符使用完整 char_width (offset+28)
-                img, adv = font.glyph_image(big5_code, ftype, size, color)
+                if use_traditional_font:
+                    # 繁体字体模式: CJK 用系统繁体字体渲染, 全宽
+                    img, adv = _render_fallback_char(ch, size, color, style['family'],
+                                                      half_width=False,
+                                                      prefer_traditional=True)
+                else:
+                    # FONT9696 渲染 (BIG5 双字节), 全宽
+                    # 依据 sub_44E49C: CJK 字符使用完整 char_width (offset+28)
+                    img, adv = font.glyph_image(big5_code, ftype, size, color)
             elif big5_code is not None and not is_cjk:
                 # ASCII 字符: 系统字体回退, 半宽渲染
                 # 依据 sub_44E49C offset+66: 游戏主渲染器对 ASCII 使用 char_width>>1
                 img, adv = _render_fallback_char(ch, size, color, style['family'],
-                                                 half_width=True)
+                                                  half_width=True,
+                                                  prefer_traditional=use_traditional_font)
             else:
-                # 无法编码到 BIG5 的字符: 系统字体回退, 半宽
-                img, adv = _render_fallback_char(ch, size, color, style['family'],
-                                                 half_width=True)
+                # 无法编码到 BIG5 的字符: 系统字体回退
+                # 繁体模式下 CJK 类字符尝试全宽渲染
+                if use_traditional_font and ord(ch) > 0x7F:
+                    img, adv = _render_fallback_char(ch, size, color, style['family'],
+                                                      half_width=False,
+                                                      prefer_traditional=True)
+                else:
+                    img, adv = _render_fallback_char(ch, size, color, style['family'],
+                                                      half_width=True,
+                                                      prefer_traditional=use_traditional_font)
 
             current_line_glyphs.append((img, adv))
             current_line_height = max(current_line_height, size)
@@ -908,6 +1001,16 @@ class TktEditor:
 
         ttk.Button(tb, text="新增条目", command=self._new_entry).pack(side=tk.LEFT, padx=2)
         ttk.Button(tb, text="重新加载", command=self._reload).pack(side=tk.LEFT, padx=2)
+        ttk.Separator(tb, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=6)
+
+        # 繁简切换开关
+        # FONT9696 字体文件包含简体中文字形 (Big5编码索引)，游戏实际显示简体。
+        # 默认关闭: 使用 FONT9696 渲染 (= 游戏原始简体显示)
+        # 开启: 使用系统繁体字体渲染 (= TKT.dat 原始繁体内容)
+        self.use_traditional_font = tk.BooleanVar(value=False)
+        self.chk_traditional = ttk.Checkbutton(tb, text="繁体字体", variable=self.use_traditional_font,
+                                                 command=self._on_font_toggle)
+        self.chk_traditional.pack(side=tk.LEFT, padx=2)
 
         self.status_var = tk.StringVar(value="请通过 文件 → 加载 TKS 目录 打开数据")
         ttk.Label(tb, textvariable=self.status_var, foreground="gray").pack(side=tk.RIGHT, padx=10)
@@ -1007,6 +1110,9 @@ class TktEditor:
         ttk.Separator(pf, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y)
         self.lbl_font = ttk.Label(pf, text="", foreground="gray")
         self.lbl_font.pack(side=tk.LEFT, padx=10, pady=2)
+        ttk.Separator(pf, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y)
+        self.lbl_g2b = ttk.Label(pf, text="", foreground="gray")
+        self.lbl_g2b.pack(side=tk.LEFT, padx=10, pady=2)
 
     def _update_paths(self):
         g, r = "#228B22", "#CC3333"
@@ -1019,13 +1125,25 @@ class TktEditor:
                 lb.config(text=f"{label}: {p}" if label else p, foreground=g)
         _f(self.lbl_tkt, self.tkt_path, 'TKT')
         _f(self.lbl_font, self.font_path, 'FONT9696')
+        # g2b.dat 状态 (仅作为信息显示, 不再用于预览渲染)
+        if _B2G_TABLE is not None:
+            self.lbl_g2b.config(text="g2b.dat: 已加载", foreground=g)
+        elif _G2B_TABLE is not None:
+            self.lbl_g2b.config(text="g2b.dat: 已加载 (反向表构建失败)", foreground="#CC9900")
+        else:
+            self.lbl_g2b.config(text="(g2b.dat 未加载)", foreground=r)
 
     def _set_edit_enabled(self, enabled):
         state = 'normal' if enabled else 'disabled'
         self.text_widget.config(state=state)
 
     def _render_preview(self):
-        """渲染预览: FONT9696 + PIL 优先, 回退纯文本"""
+        """渲染预览: FONT9696 + PIL 优先, 回退纯文本
+        
+        FONT9696 字体包含简体中文位图 (以 Big5 编码索引),
+        因此 FONT9696 渲染显示的是简体字形 (与游戏实际渲染一致)。
+        开启"繁体字体"时, CJK 字符改用系统繁体字体渲染。
+        """
         try:
             text = self.text_widget.get('1.0', 'end-1c')
         except Exception:
@@ -1038,11 +1156,15 @@ class TktEditor:
             pw.insert('end', '[空条目]')
             return
 
+        # 繁体字体模式: CJK 字符用系统繁体字体渲染, 而非 FONT9696
+        use_traditional = self.use_traditional_font.get()
+
         # FONT9696 PIL 渲染
         if HAS_PIL and self.font9696:
             try:
                 segments = parse_styled_segments(text)
-                img = _render_text_image(segments, self.font9696)
+                img = _render_text_image(segments, self.font9696,
+                                          use_traditional_font=use_traditional)
                 self._preview_photo = ImageTk.PhotoImage(img)
                 pw.image_create('end', image=self._preview_photo)
                 return
@@ -1051,6 +1173,10 @@ class TktEditor:
 
         # 回退纯文本
         pw.insert('end', text)
+
+    def _on_font_toggle(self):
+        """繁简字体切换开关回调"""
+        self._render_preview()
 
     def _on_quit(self):
         if self._dirty:
@@ -1092,6 +1218,17 @@ class TktEditor:
         else:
             self.font9696 = None
             self.font_path = None
+
+        # 加载 g2b.dat 简繁转换表 (依据 sub_45BB64)
+        g2b_path = os.path.join(d, "g2b.dat")
+        if os.path.exists(g2b_path):
+            try:
+                load_g2b_dat(g2b_path)
+                print(f"[INFO] g2b.dat 已加载: {g2b_path}", file=sys.stderr)
+            except Exception as e:
+                print(f"[WARN] g2b.dat 加载失败: {e}", file=sys.stderr)
+        else:
+            print(f"[WARN] g2b.dat 不存在: {g2b_path}", file=sys.stderr)
 
         self._load_file(tkt_path)
         self._update_paths()
