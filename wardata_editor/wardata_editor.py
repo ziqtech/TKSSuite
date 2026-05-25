@@ -38,8 +38,10 @@ WarData.dat 格式 (每条498字节, 219条, flat binary — sub_42FDF8):
     真正的宝物数据在 trea_sub(326-345) 和 trea_quant(346-385)
   [442-477] uint16[18] enemy_flg — sub_4307CC:263 v5[204]; sub_444FD4:81 word_953992
                                   bit0=精英, bit1=特殊, bit13/14=阵营标记
-  [478]    byte    default_lv_p1 — sub_430578:17 byte_9539B6; level param default 1
-  [480]    byte    default_lv_p2 — sub_430578:18 byte_9539B8; level param default 2
+  [478]    byte    lv_spread_lo — sub_430578:17 byte_9539B6; 等级浮动下限, |hi-lo|→clamp(2,5)决定浮动幅度
+  [479]    byte    (reserved)   — 反编译未引用; 全219条数据为零
+  [480]    byte    lv_spread_hi — sub_430578:18 byte_9539B8; 等级浮动上限, 与lo的差值决定spread
+  [481]    byte    (reserved)   — 反编译未引用; 全219条数据为零
   [482-483] uint16 turn_limit — sub_43CA64:29 word_9539BA (>0时回合限制)
   [484-497] byte[14] (reserved) — 反编译未引用; 全219条数据为零
 
@@ -246,9 +248,9 @@ def load_wardata(filepath: str) -> list:
         # 敌军标志位: sub_4307CC:263 v5[204]; sub_444FD4:81 word_953992
         rec['enemy_flags'] = list(struct.unpack_from('<' + 'H' * 18, chunk, 442))
 
-        # 默认敌军坐标: sub_430578:17-18 byte_9539B6/byte_9539B8
-        rec['default_lv_p1'] = chunk[478]  # lv param default 1, sub_430578:17
-        rec['default_lv_p2'] = chunk[480]  # lv param default 2, sub_430578:18
+        # 等级浮动参数: sub_430578:17-18 byte_9539B6/byte_9539B8
+        rec['lv_spread_lo'] = chunk[478]  # lv param default 1, sub_430578:17
+        rec['lv_spread_hi'] = chunk[480]  # lv param default 2, sub_430578:18
         rec['battle_turn_limit'] = struct.unpack_from('<H', chunk, 482)[0]  # sub_43CA64:29 word_9539BA
 
         # 保存原始字节 (用于未解析字段)
@@ -311,8 +313,8 @@ def save_wardata(filepath: str, records: list):
         for j in range(18):
             struct.pack_into('<H', chunk, 442 + j * 2, rec['enemy_flags'][j])
 
-        chunk[478] = rec['default_lv_p1'] & 0xFF  # lv param default 1
-        chunk[480] = rec['default_lv_p2'] & 0xFF  # lv param default 2
+        chunk[478] = rec['lv_spread_lo'] & 0xFF  # lv spread range lo
+        chunk[480] = rec['lv_spread_hi'] & 0xFF  # lv spread range hi
         struct.pack_into('<H', chunk, 482, rec['battle_turn_limit'])
 
         buf[off:off + WAR_REC_SIZE] = chunk
@@ -973,8 +975,8 @@ class WarDataEditor:
             'trea_quant': [0] * 20,  # 10对(min,max) uint16
             'trap_type': [0] * 28,
             'enemy_flags': [0] * 18,
-            'default_lv_p1': 0,  # lv param default 1
-            'default_lv_p2': 0,  # lv param default 2
+            'lv_spread_lo': 0,  # lv spread range lo
+            'lv_spread_hi': 0,  # lv spread range hi
             'battle_turn_limit': 0,
             '_raw': bytes(template),
         }
@@ -1045,8 +1047,10 @@ sub_436BD4: 战场主初始化 — sub_42FDF8(a1)→sub_42FE70()→sub_4307CC(a2
 [386-441] uint16[28] trea_id — sub_431428:199,295 unk_95395A 28组宝物主物品ID
 [442-477] uint16[18] enemy_flg — sub_4307CC:263 v5[204]; sub_444FD4:81 word_953992
             bit0=精英, bit1=特殊, bit13=阵营, bit14=形象, bit15=特殊类型
-[478]    byte    default_lv_p1 — sub_430578:17 byte_9539B6 (level param default 1)
-[480]    byte    default_lv_p2 — sub_430578:18 byte_9539B8 (level param default 2)
+[478]    byte    lv_spread_lo — sub_430578:17 byte_9539B6 (等级浮动下限, |hi-lo|→clamp(2,5)=浮动幅度)
+[479]    byte    (reserved)   — 反编译未引用; 全219条为零
+[480]    byte    lv_spread_hi — sub_430578:18 byte_9539B8 (等级浮动上限)
+[481]    byte    (reserved)   — 反编译未引用; 全219条为零
 [482-483] uint16 turn_limit — sub_43CA64:29,32,109 word_9539BA (>0时回合限制)
 [484-497] byte[14] (尾部保留) — 反编译未明确引用
 
@@ -1375,12 +1379,12 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
             row=row, column=0, columnspan=4, sticky='w', pady=(10, 2))
         row += 1
 
-        self.apvars['def_enemy_x'] = tk.StringVar()
-        self._build_field(inner, row, 0, "[478] 默认等级下限 byte", self.apvars['def_enemy_x'],
-            tooltip="sub_430578:17 byte_9539B6 — 默认等级下限(当enemy_lv_range为0时使用)", width=8)
-        self.apvars['def_enemy_y'] = tk.StringVar()
-        self._build_field(inner, row, 1, "[480] 默认等级上限 byte", self.apvars['def_enemy_y'],
-            tooltip="sub_430578:18 byte_9539B8 — 默认等级上限(当enemy_lv_range为0时使用)", width=8)
+        self.apvars['lv_spread_lo'] = tk.StringVar()
+        self._build_field(inner, row, 0, "[478] 等级浮动下限 byte", self.apvars['lv_spread_lo'],
+            tooltip="sub_430578:17 byte_9539B6 — 当enemy_lv_range.X==0时使用, |hi-lo|→clamp(2,5)决定浮动幅度", width=8)
+        self.apvars['lv_spread_hi'] = tk.StringVar()
+        self._build_field(inner, row, 1, "[480] 等级浮动上限 byte", self.apvars['lv_spread_hi'],
+            tooltip="sub_430578:18 byte_9539B8 — 与lo的差值决定spread, 敌人等级=avg±spread", width=8)
         self.apvars['battle_turn_limit'] = tk.StringVar()
         self._build_field(inner, row, 2, "[482-483] 回合限制 uint16", self.apvars['battle_turn_limit'],
             tooltip="sub_43CA64:29 word_9539BA — >0时限制回合数", width=8)
@@ -1404,8 +1408,8 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
         self.apvars['flags'].set(str(rec['flags']))
         self.apflag_bit1.set((rec['flags'] & 2) != 0)
         self.apflag_bit2.set((rec['flags'] & 4) != 0)
-        self.apvars['def_enemy_x'].set(str(rec['default_lv_p1']))
-        self.apvars['def_enemy_y'].set(str(rec['default_lv_p2']))
+        self.apvars['lv_spread_lo'].set(str(rec['lv_spread_lo']))
+        self.apvars['lv_spread_hi'].set(str(rec['lv_spread_hi']))
         for i in range(6):
             v = rec['must_chars'][i]
             self.apvars['must_chars'][i].set(str(v))
@@ -1444,9 +1448,9 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
         except: pass
         try: rec['flags'] = int(self.apvars['flags'].get() or 0) & 0xFF
         except: pass
-        try: rec['default_lv_p1'] = int(self.apvars['def_enemy_x'].get() or 0) & 0xFF
+        try: rec['lv_spread_lo'] = int(self.apvars['lv_spread_lo'].get() or 0) & 0xFF
         except: pass
-        try: rec['default_lv_p2'] = int(self.apvars['def_enemy_y'].get() or 0) & 0xFF
+        try: rec['lv_spread_hi'] = int(self.apvars['lv_spread_hi'].get() or 0) & 0xFF
         except: pass
         for i in range(6):
             try: rec['must_chars'][i] = int(self.apvars['must_chars'][i].get() or 0) & 0xFF
@@ -2320,7 +2324,8 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
                 canvas.create_polygon(pts, fill=fc, outline=outline_c, width=1,
                                       tags=('trap', f'trap_{i}'))
                 tname = TRAP_NAMES.get(ttype, '?') + '陷阱'
-                canvas.create_text(sx, sy, text='陷',
+                tag_char = "固" if is_fixed else "随"
+                canvas.create_text(sx, sy, text=tag_char,
                                    fill='white', font=('', max(7, int(9*zoom)), 'bold'),
                                    tags=('trap',))
                 canvas.create_text(sx, sy - r - 8, text=tname,
