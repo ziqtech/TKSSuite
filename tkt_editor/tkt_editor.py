@@ -507,16 +507,17 @@ class Font9696:
 
         glyph_img = Image.frombytes('L', (gw, gh), bytes(glyph_bytes))
 
-        # 按目标高度缩放
-        scale = target_height / max(gh, 1)
+        # 按比例从 96×96 字格缩放 (保持字形在字格中的相对大小)
+        # 原逻辑: scale = target_height / gh → 所有字形填满高度, 标点会过大
+        # 新逻辑: scale = target_height / 96 → 字形保持在字格中的原始比例
+        scale = target_height / 96.0
         new_w = max(int(gw * scale), 1)
-        new_h = target_height
+        new_h = max(int(gh * scale), 1)
         glyph_img = glyph_img.resize((new_w, new_h), Image.LANCZOS)
 
         # 依据 sub_44E49C: CJK 全宽字符 advance = char_width = 字号
         # 字形居中在全宽画布 (target_height × target_height) 中
-        # 而非使用 bounding box 宽度作为 advance (会导致窄字间距不一致,
-        # 宽标点如顿号 override 112.5%)
+        # 字形已按 96×96 字格比例缩放, 保持游戏原始视觉比例
         advance = target_height
         canvas_w = target_height
         canvas_h = target_height
