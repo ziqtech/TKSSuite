@@ -26,7 +26,7 @@ import re
 import struct
 import sys
 import tkinter as tk
-from tkinter import ttk, messagebox, filedialog
+from tkinter import ttk, messagebox, filedialog, colorchooser
 from collections import OrderedDict
 
 HAS_PIL = False
@@ -47,21 +47,22 @@ LINE_SEPARATOR = 0x1E                # sub_401E88 行 320 (十进制 30)
 # 控制字节映射 (sub_4019D0): code -> (name, data_bytes, min_val, max_val)
 # data_bytes: TEXT=2 (v6=1), 其余=1 (v6=0)
 CONTROL_TAGS = {
-    0x01: ("FRESET", 1, 1, 4),
-    0x02: ("FCOLOR", 1, 1, 32),
-    0x04: ("FSIZE",  1, 12, 48),
-    0x05: ("FTYPE",  1, 1, 8),
-    0x14: ("TEXT",   2, 1, 32767),
-    0x15: ("VARNUM", 1, 1, 255),
-    0x16: ("VARTXT", 1, 1, 255),
-    0x1D: ("NAME",   1, 1, 2),
+    0x01: ("FRESET",  1, 1, 4),
+    0x02: ("FCOLOR",  1, 1, 32),
+    0x03: ("FCOLORD", 3, 0, 255),
+    0x04: ("FSIZE",   1, 12, 48),
+    0x05: ("FTYPE",   1, 1, 8),
+    0x14: ("TEXT",    2, 1, 32767),
+    0x15: ("VARNUM",  1, 1, 255),
+    0x16: ("VARTXT",  1, 1, 255),
+    0x1D: ("NAME",    1, 1, 2),
 }
 
 # 反向映射: tag_name -> (code, data_bytes, min_val, max_val)
 TAG_NAME_MAP = {v[0]: (code, v[1], v[2], v[3]) for code, v in CONTROL_TAGS.items()}
 
-# 标签编码正则: <TAG_NAME,number>
-TAG_PATTERN = re.compile(r'<([A-Z]+),(\d+)>')
+# 标签编码正则: <TAG_NAME,number> 或 <FCOLORD,r,g,b>
+TAG_PATTERN = re.compile(r'<([A-Z]+),(\d+(?:,\d+)*)>')
 
 FONT = ('Microsoft YaHei UI', 9)
 FONT_S = ('Microsoft YaHei UI', 8)
@@ -268,9 +269,16 @@ def decode_line(line_bytes):
                 flush()
                 if data_len == 1:
                     val = line_bytes[i + 1]
-                else:
+                    out.append(f'<{tag_name},{val}>')
+                elif data_len == 2:
                     val = line_bytes[i + 1] | (line_bytes[i + 2] << 8)
-                out.append(f'<{tag_name},{val}>')
+                    out.append(f'<{tag_name},{val}>')
+                else:
+                    # data_len == 3 (FCOLORD: r,g,b)
+                    r = line_bytes[i + 1]
+                    g = line_bytes[i + 2]
+                    b_val = line_bytes[i + 3]
+                    out.append(f'<{tag_name},{r},{g},{b_val}>')
                 i += 1 + data_len
                 continue
             else:
@@ -303,20 +311,34 @@ def encode_line(text):
     i = 0
     n = len(text)
     while i < n:
-        # 尝试匹配 <TAG,n> 标记
+        # 尝试匹配 <TAG,n> 或 <FCOLORD,r,g,b> 标记
         m = TAG_PATTERN.match(text, i)
         if m:
             tag_name = m.group(1)
-            val = int(m.group(2))
+            val_str = m.group(2)
             if tag_name in TAG_NAME_MAP:
                 code, data_len, min_val, max_val = TAG_NAME_MAP[tag_name]
-                if min_val <= val <= max_val:
-                    out.append(code)
-                    out.append(val & 0xFF)
-                    if data_len == 2:
-                        out.append((val >> 8) & 0xFF)
-                    i = m.end()
-                    continue
+                if data_len == 3:
+                    # FCOLORD: r,g,b
+                    parts = val_str.split(',')
+                    if len(parts) == 3:
+                        r, g, b = int(parts[0]), int(parts[1]), int(parts[2])
+                        if 0 <= r <= 255 and 0 <= g <= 255 and 0 <= b <= 255:
+                            out.append(code)
+                            out.append(r)
+                            out.append(g)
+                            out.append(b)
+                            i = m.end()
+                            continue
+                else:
+                    val = int(val_str)
+                    if min_val <= val <= max_val:
+                        out.append(code)
+                        out.append(val & 0xFF)
+                        if data_len == 2:
+                            out.append((val >> 8) & 0xFF)
+                        i = m.end()
+                        continue
             # 无效标签, 原样输出
             for ch in text[i:m.end()]:
                 out.extend(ch.encode('big5', errors='replace'))
@@ -375,16 +397,29 @@ def parse_styled_segments(text):
         if m:
             flush()
             tag_name = m.group(1)
-            val = int(m.group(2))
-            if tag_name == 'FCOLOR' and 1 <= val <= 32:
-                prev_color = current['fg']
-                current['fg'] = GAME_COLORS[val]
-            elif tag_name == 'FSIZE' and val in GAME_FONT_SIZES:
-                current['size'] = val
-            elif tag_name == 'FTYPE' and 1 <= val <= 8:
-                prev_family = current['family']
-                current['family'] = GAME_FONT_FAMILIES[val]
+            val_str = m.group(2)
+            if tag_name == 'FCOLOR':
+                val = int(val_str)
+                if 1 <= val <= 32:
+                    prev_color = current['fg']
+                    current['fg'] = GAME_COLORS[val]
+            elif tag_name == 'FCOLORD':
+                parts = val_str.split(',')
+                if len(parts) == 3:
+                    r, g, b = int(parts[0]), int(parts[1]), int(parts[2])
+                    prev_color = current['fg']
+                    current['fg'] = f'#{r:02X}{g:02X}{b:02X}'
+            elif tag_name == 'FSIZE':
+                val = int(val_str)
+                if val in GAME_FONT_SIZES:
+                    current['size'] = val
+            elif tag_name == 'FTYPE':
+                val = int(val_str)
+                if 1 <= val <= 8:
+                    prev_family = current['family']
+                    current['family'] = GAME_FONT_FAMILIES[val]
             elif tag_name == 'FRESET':
+                val = int(val_str)
                 if val == 1:  # 全部恢复
                     current['fg'] = GAME_COLORS[DEFAULT_FCOLOR]
                     current['size'] = DEFAULT_FONT_SIZE
@@ -1059,6 +1094,11 @@ class TktEditor:
         # 文本编辑器
         edit_frame = ttk.LabelFrame(rf, text="文本内容 (支持多行, <TAG,n> 标记)", padding=4)
         edit_frame.pack(fill=tk.BOTH, expand=True, padx=4, pady=(0, 4))
+
+        # TAG 快捷输入工具栏
+        self._build_tag_toolbar(edit_frame)
+        ttk.Separator(edit_frame, orient=tk.HORIZONTAL).pack(fill=tk.X, padx=2, pady=(0, 2))
+
         ef = ttk.Frame(edit_frame)
         ef.pack(fill=tk.BOTH, expand=True)
         self.text_widget = tk.Text(ef, font=FONT_MONO, wrap=tk.NONE, undo=True,
@@ -1091,7 +1131,7 @@ class TktEditor:
         # 控制码提示
         tip_frame = ttk.Frame(rf)
         tip_frame.pack(fill=tk.X, padx=4, pady=(0, 2))
-        tip_text = ("控制码: <FRESET,n> <FCOLOR,n> <FSIZE,n> <FTYPE,n> "
+        tip_text = ("控制码: <FRESET,n> <FCOLOR,n> <FCOLORD,r,g,b> <FSIZE,n> <FTYPE,n> "
                     "<TEXT,n> <VARNUM,n> <VARTXT,n> <NAME,n>")
         ttk.Label(tip_frame, text=tip_text, font=FONT_S, foreground='#888').pack(anchor=tk.W)
 
@@ -1480,6 +1520,218 @@ class TktEditor:
         self.text_widget.delete('1.0', 'end')
         self.status_var.set(f"已删除条目, 剩余 {len(self.entries)} 条目")
 
+    # ----------- TAG 工具栏 -----------
+    def _build_tag_toolbar(self, parent):
+        """在文本编辑器上方构建 TAG 快捷输入工具栏。"""
+        toolbar = ttk.Frame(parent)
+        toolbar.pack(fill=tk.X, padx=2, pady=2)
+        self.tag_toolbar = toolbar
+
+        # --- Group 1: 格式 (FRESET) ---
+        g1 = ttk.Frame(toolbar)
+        g1.pack(side=tk.LEFT, padx=(0, 6))
+        ttk.Label(g1, text="格式:", font=FONT_S).pack(side=tk.LEFT)
+        self.freset_var = tk.StringVar()
+        freset_cb = ttk.Combobox(g1, textvariable=self.freset_var, values=[
+            "1-全部恢复", "2-恢复颜色", "3-重新初始化", "4-恢复字体"
+        ], width=10, state='readonly', font=FONT_S)
+        freset_cb.pack(side=tk.LEFT, padx=2)
+        freset_cb.bind('<<ComboboxSelected>>', self._on_freset_select)
+
+        ttk.Separator(toolbar, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=4)
+
+        # --- Group 2: 颜色 (FCOLOR) ---
+        g2 = ttk.Frame(toolbar)
+        g2.pack(side=tk.LEFT, padx=(0, 6))
+        ttk.Label(g2, text="颜色:", font=FONT_S).pack(side=tk.LEFT)
+        # 常用颜色按钮
+        common_colors = [17, 19, 20, 23, 26]
+        for ci in common_colors:
+            hex_color = GAME_COLORS[ci]
+            btn = tk.Button(g2, width=2, height=1, bg=hex_color,
+                            activebackground=hex_color,
+                            relief=tk.RAISED, bd=1,
+                            command=lambda c=ci: self._insert_fcolor(c))
+            btn.pack(side=tk.LEFT, padx=1)
+        # 更多颜色按钮
+        ttk.Button(g2, text="更多…", width=5,
+                   command=self._show_color_palette).pack(side=tk.LEFT, padx=(2, 0))
+
+        ttk.Separator(toolbar, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=4)
+
+        # --- Group 3: 字体 (FSIZE / FTYPE) ---
+        g3 = ttk.Frame(toolbar)
+        g3.pack(side=tk.LEFT, padx=(0, 6))
+        ttk.Label(g3, text="字号:", font=FONT_S).pack(side=tk.LEFT)
+        self.fsize_var = tk.StringVar()
+        fsize_cb = ttk.Combobox(g3, textvariable=self.fsize_var,
+                                values=["12", "16", "24", "32", "48"],
+                                width=4, state='readonly', font=FONT_S)
+        fsize_cb.pack(side=tk.LEFT, padx=2)
+        fsize_cb.bind('<<ComboboxSelected>>', self._on_fsize_select)
+
+        ttk.Label(g3, text="字体:", font=FONT_S).pack(side=tk.LEFT, padx=(4, 0))
+        self.ftype_var = tk.StringVar()
+        ftype_values = [f"{i}-{name}" for i, name in {
+            1: "细明体", 2: "明体", 3: "楷体", 4: "宋体",
+            5: "微正黑", 6: "黑体", 7: "仿宋", 8: "楷体2"
+        }.items()]
+        ftype_cb = ttk.Combobox(g3, textvariable=self.ftype_var,
+                                values=ftype_values, width=8,
+                                state='readonly', font=FONT_S)
+        ftype_cb.pack(side=tk.LEFT, padx=2)
+        ftype_cb.bind('<<ComboboxSelected>>', self._on_ftype_select)
+
+        ttk.Separator(toolbar, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=4)
+
+        # --- Group 4: 特殊 (TEXT/VARNUM/VARTXT/NAME) ---
+        g4 = ttk.Frame(toolbar)
+        g4.pack(side=tk.LEFT, padx=(0, 6))
+        ttk.Label(g4, text="特殊:", font=FONT_S).pack(side=tk.LEFT)
+
+        # TEXT
+        g4t = ttk.Frame(g4)
+        g4t.pack(side=tk.LEFT, padx=1)
+        ttk.Label(g4t, text="TEXT", font=FONT_S).pack(side=tk.LEFT)
+        self.tag_text_var = tk.StringVar(value="1")
+        sp = tk.Spinbox(g4t, from_=1, to=32767, width=5,
+                        textvariable=self.tag_text_var, font=FONT_S)
+        sp.pack(side=tk.LEFT, padx=1)
+        ttk.Button(g4t, text="插入", width=3,
+                   command=lambda: self._insert_tag_with_spinbox("TEXT", self.tag_text_var, 1, 32767)).pack(side=tk.LEFT)
+
+        # VARNUM
+        g4n = ttk.Frame(g4)
+        g4n.pack(side=tk.LEFT, padx=(4, 1))
+        ttk.Label(g4n, text="NUM", font=FONT_S).pack(side=tk.LEFT)
+        self.tag_varnum_var = tk.StringVar(value="1")
+        spn = tk.Spinbox(g4n, from_=1, to=255, width=4,
+                         textvariable=self.tag_varnum_var, font=FONT_S)
+        spn.pack(side=tk.LEFT, padx=1)
+        ttk.Button(g4n, text="插入", width=3,
+                   command=lambda: self._insert_tag_with_spinbox("VARNUM", self.tag_varnum_var, 1, 255)).pack(side=tk.LEFT)
+
+        # VARTXT
+        g4x = ttk.Frame(g4)
+        g4x.pack(side=tk.LEFT, padx=(4, 1))
+        ttk.Label(g4x, text="TXT", font=FONT_S).pack(side=tk.LEFT)
+        self.tag_vartxt_var = tk.StringVar(value="1")
+        spx = tk.Spinbox(g4x, from_=1, to=255, width=4,
+                         textvariable=self.tag_vartxt_var, font=FONT_S)
+        spx.pack(side=tk.LEFT, padx=1)
+        ttk.Button(g4x, text="插入", width=3,
+                   command=lambda: self._insert_tag_with_spinbox("VARTXT", self.tag_vartxt_var, 1, 255)).pack(side=tk.LEFT)
+
+        # NAME
+        g4m = ttk.Frame(g4)
+        g4m.pack(side=tk.LEFT, padx=(4, 1))
+        ttk.Label(g4m, text="NAME", font=FONT_S).pack(side=tk.LEFT)
+        self.tag_name_var = tk.StringVar(value="1")
+        spm = tk.Spinbox(g4m, from_=1, to=2, width=3,
+                         textvariable=self.tag_name_var, font=FONT_S)
+        spm.pack(side=tk.LEFT, padx=1)
+        ttk.Button(g4m, text="插入", width=3,
+                   command=lambda: self._insert_tag_with_spinbox("NAME", self.tag_name_var, 1, 2)).pack(side=tk.LEFT)
+
+        ttk.Separator(toolbar, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=4)
+
+        # --- Group 5: RGB 颜色 (FCOLORD) ---
+        g5 = ttk.Frame(toolbar)
+        g5.pack(side=tk.LEFT)
+        ttk.Button(g5, text="RGB色", width=6,
+                   command=self._insert_fcolord).pack(side=tk.LEFT)
+
+    def _insert_tag(self, opening, closing=None):
+        """在 text_widget 中插入标签，支持选区包裹。"""
+        tw = self.text_widget
+        tw.focus_set()
+        try:
+            sel_start, sel_end = tw.tag_ranges('sel')
+        except ValueError:
+            sel_start = sel_end = None
+
+        if sel_start and sel_end:
+            selected_text = tw.get(sel_start, sel_end)
+            tw.delete(sel_start, sel_end)
+            full = opening + selected_text + (closing or '')
+            tw.insert(sel_start, full)
+            new_end = tw.index(f"{sel_start} + {len(full)} chars")
+            tw.tag_remove('sel', '1.0', 'end')
+            tw.tag_add('sel', sel_start, new_end)
+        else:
+            tw.insert(tk.INSERT, opening + (closing or ''))
+
+        self._on_text_modified()
+        self._render_preview()
+
+    def _on_freset_select(self, event=None):
+        val = self.freset_var.get()
+        if not val:
+            return
+        n = int(val.split('-')[0])
+        self._insert_tag(f"<FRESET,{n}>")
+        self.freset_var.set('')
+
+    def _insert_fcolor(self, color_idx):
+        self._insert_tag(f"<FCOLOR,{color_idx}>", "<FRESET,2>")
+
+    def _show_color_palette(self):
+        """弹出全部 32 色调色板。"""
+        top = tk.Toplevel(self.root)
+        top.title("选择颜色")
+        top.transient(self.root)
+        top.grab_set()
+        top.resizable(False, False)
+        # 居中
+        top.update_idletasks()
+        x = self.root.winfo_x() + (self.root.winfo_width() - top.winfo_width()) // 2
+        y = self.root.winfo_y() + (self.root.winfo_height() - top.winfo_height()) // 2
+        top.geometry(f"+{x}+{y}")
+
+        f = ttk.Frame(top, padding=8)
+        f.pack()
+        ttk.Label(f, text="点击颜色插入 <FCOLOR,n> 标签", font=FONT).grid(row=0, column=0, columnspan=8, pady=(0, 6))
+        for ci in range(1, 33):
+            hex_color = GAME_COLORS[ci]
+            btn = tk.Button(f, width=3, height=1, bg=hex_color,
+                            activebackground=hex_color,
+                            relief=tk.RAISED, bd=1,
+                            command=lambda c=ci: (self._insert_fcolor(c), top.destroy()))
+            btn.grid(row=1 + (ci - 1) // 8, column=(ci - 1) % 8, padx=2, pady=2)
+            # 悬停提示颜色编号
+            tk.ToolTip = lambda w, t: None  # 占位，不引入复杂tooltip
+
+    def _on_fsize_select(self, event=None):
+        val = self.fsize_var.get()
+        if not val:
+            return
+        n = int(val)
+        self._insert_tag(f"<FSIZE,{n}>", "<FRESET,1>")
+        self.fsize_var.set('')
+
+    def _on_ftype_select(self, event=None):
+        val = self.ftype_var.get()
+        if not val:
+            return
+        n = int(val.split('-')[0])
+        self._insert_tag(f"<FTYPE,{n}>", "<FRESET,4>")
+        self.ftype_var.set('')
+
+    def _insert_tag_with_spinbox(self, tag_name, var, min_val, max_val):
+        try:
+            n = int(var.get())
+        except ValueError:
+            return
+        if min_val <= n <= max_val:
+            self._insert_tag(f"<{tag_name},{n}>")
+
+    def _insert_fcolord(self):
+        color = colorchooser.askcolor(title="选择 RGB 颜色", parent=self.root)
+        if not color or not color[0]:
+            return
+        r, g, b = int(color[0][0]), int(color[0][1]), int(color[0][2])
+        self._insert_tag(f"<FCOLORD,{r},{g},{b}>", "<FRESET,2>")
+
     # ----------- 帮助 -----------
     def _show_about(self):
         messagebox.showinfo(
@@ -1488,11 +1740,12 @@ class TktEditor:
             "基于逆向工程 sub_401E88/sub_4067E8/sub_4019D0 实现。\n"
             "支持加载/编辑/保存/新增 TKT.dat 条目。\n\n"
             "控制码:\n"
-            "  <FRESET,n> n∈[1,4]    <FCOLOR,n> n∈[1,32]\n"
-            "  <FSIZE,n>  n∈[12,48]  <FTYPE,n>  n∈[1,8]\n"
-            "  <TEXT,n>   n∈[1,32767] (2字节)\n"
-            "  <VARNUM,n> n∈[1,255]  <VARTXT,n> n∈[1,255]\n"
-            "  <NAME,n>   n∈[1,2]"
+            "  <FRESET,n>  n∈[1,4]     <FCOLOR,n>  n∈[1,32]\n"
+            "  <FCOLORD,r,g,b> r,g,b∈[0,255]\n"
+            "  <FSIZE,n>   n∈[12,48]   <FTYPE,n>   n∈[1,8]\n"
+            "  <TEXT,n>    n∈[1,32767] (2字节)\n"
+            "  <VARNUM,n>  n∈[1,255]   <VARTXT,n>  n∈[1,255]\n"
+            "  <NAME,n>    n∈[1,2]"
         )
 
 
