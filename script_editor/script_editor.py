@@ -219,8 +219,8 @@ def define_display_name(d):
 COMMAND_REFERENCE = [
     # (opcode, command, args, handler, description)
     (0,  'End',          'mode',              'inline',      '结束/返回控制 — mode 选择子行为 (0-6, 0xFFFA-0xFFFF)'),
-    (1,  'TalkB',        'id,x,y,flags',      'sub_40A220',  '对话+等待 — 显示对话框并等待玩家确认'),
-    (2,  'TalkB',        'id,x,y,flags',      'sub_40A220',  '对话无等待 — 显示对话框不阻塞'),
+    (1,  'TalkB',        'entity_id,text_id,flags,extra', 'sub_40A220',  '对话+等待 — entity_id:说话实体(-1=当前,-2=调用者), text_id:TKT文本ID'),
+    (2,  'TalkB',        'entity_id,text_id,flags,extra', 'sub_40A220',  '对话无等待 — 同TalkB但不阻塞'),
     (3,  'WaitInput',    '—',                  'sub_40AEF4',  '等待输入 — 阻塞直到玩家按键'),
     (4,  'SetNowDef',    'id,x,y',            'sub_40B520',  '切换当前定义 — 改变活动实体定义'),
     (5,  'MenuOp',       '6 args',            'sub_40B1B4',  '复杂菜单/对话操作'),
@@ -252,7 +252,7 @@ COMMAND_REFERENCE = [
     (31, 'SetGlobal',    'value',             'inline',      '设置全局变量 dword_755B60'),
     (32, 'SetFlag',      'flag_id,value',     'sub_40CB08',  '设置标志(带值)'),
     (33, 'AddFlag',      'flag_id,value',     'sub_40CB4C',  '增加标志(带值)'),
-    (34, 'TalkA',        'id,x,y,flags,extra','sub_40A220',  '对话(扩展参数)'),
+    (34, 'TalkA',        'entity_id,text_id,flags,extra,color', 'sub_40A220', '对话(扩展参数) — entity_id:说话实体, text_id:TKT文本ID'),
     (35, 'SetBlock',     'id,flag',           'sub_40CB90',  '设置阻挡状态'),
     (36, 'SetVar',       'slot,value',        'inline',      '写入变量槽 word_755E80[slot]'),
     (37, 'Random',       'slot,min,max',      'inline',      '随机数 → word_755E80[slot]'),

@@ -60,9 +60,30 @@ ANIM_FIELDS = [
     ("dir_mode",53,"目标X/方向模式","type=5:目标X type=16:把手2道具 type=110:组1Xmin type=200:方向模式(0=静态/4=四向/8=八向)。sub_4081F8:30,sub_4084E0,sub_408B30,sub_4077E4"),
     ("target_y",54,"目标Y坐标","type=5:目标Y type=16:把手3道具 type=110:组1Xmax type=200:目标Y。sub_4081F8:30,sub_4084E0,sub_408B30"),
     ("sub_model",64,"子模型ID","type=110:组3Ymax type=200:Ani.JVG块(行走动画)。sub_405CBC,sub_408B30"),("anim_speed",69,"动画速度","动画播放速度"),]
+def load_tkt_all(tkt_path):
+    """加载 TKT.dat 全文数据库 (用于脚本预览解析对话文本)
+    与 load_tkt_scene_names 相同格式, 但返回完整文本而非首行"""
+    if not tkt_path or not os.path.exists(tkt_path): return {}
+    with open(tkt_path,'rb') as f: raw = f.read()
+    total_size = struct.unpack_from('<I',raw,0)[0]
+    count = struct.unpack_from('<I',raw,4)[0]
+    dec = bytes(b^0xFF for b in raw[8:8+total_size])
+    id_sz, off_sz = count*4, count*4; tb = id_sz+off_sz; lookup = {}
+    for i in range(count):
+        eid = struct.unpack_from('<i',dec,i*4)[0]
+        off = struct.unpack_from('<I',dec,id_sz+i*4)[0]; ao = tb+off
+        if ao>=len(dec): continue
+        end=ao
+        while end<len(dec) and dec[end]!=0: end+=1
+        txt=dec[ao:end].replace(b'\x1e',b'\n')
+        try: s=txt.decode('big5',errors='replace')
+        except: s=txt.decode('gbk',errors='replace')
+        if s: lookup[eid]=s
+    return lookup
+
 SCRIPT_FIELDS = [
     ("defunit_idx",44,"DefUnit索引","文件值=-1为正常; 运行时由 sub_4066F0 沿链遍历计算填入。sub_40EBD4:18 读取"),
-    ("dialog_color",28,"对话颜色","TalkA/TalkB 文字颜色索引(0~31), sub_44B028 查表 dword_A2C528"),
+    ("dialog_color",28,"对话颜色","TalkA/TalkB 文字颜色索引(0~31), 第2参数=TKT文本ID。sub_44B028 查表 dword_A2C528"),
     ("max_A",30,"子场景最大A","子场景A DefUnit链长度"),
     ("max_B",31,"子场景最大B",""),("max_C",32,"子场景最大C",""),
     ("cur_A",33,"子场景当前A","当前在链中的位置(1-based)。SetNowDef可修改"),
@@ -229,6 +250,76 @@ SCRIPT_COMMANDS = [
     'WaitTimer', 'Yield', 'Jump', 'Else', 'MiniGame', 'Note',
     'StopSound', 'BlackTalk', 'TalkA',
 ]
+
+# 脚本命令描述模板 — 用于预览窗口的人类可读描述
+# 键为命令名, 值为 lambda, 接收 (args, tkt) 返回描述字符串
+# tkt 为 TKT 全文查找表 (id→text)
+def _tkt_text(tkt, id_str, max_len=60):
+    """从 TKT 获取文本, id_str 为字符串形式的 ID, 返回截断文本或空串"""
+    try:
+        tid = int(id_str)
+        txt = tkt.get(tid, '')
+        return txt[:max_len] + ('...' if len(txt) > max_len else '') if txt else ''
+    except (ValueError, TypeError):
+        return ''
+
+SCRIPT_CMD_DESC = {
+    'End':          lambda a, t: f"结束 (模式={a[0]})" if a else "结束",
+    'TalkB':        lambda a, t: f"对话(等待) 实体#{a[0]} 文本={a[1]} — {_tkt_text(t, a[1])}" if len(a)>=2 else f"对话(等待) 实体#{a[0]}" if a else "对话(等待)",
+    'TalkA':        lambda a, t: f"对话(扩展) 实体#{a[0]} 文本={a[1]} — {_tkt_text(t, a[1])}" if len(a)>=2 else f"对话(扩展) 实体#{a[0]}" if a else "对话(扩展)",
+    'BlackTalk':    lambda a, t: f"黑屏对话 实体#{a[0]} 文本={a[1]} — {_tkt_text(t, a[1])}" if len(a)>=2 else f"黑屏对话 实体#{a[0]}" if a else "黑屏对话",
+    'WaitInput':    lambda a, t: "等待输入",
+    'SetNowDef':    lambda a, t: f"切换定义 ID={a[0]}" if a else "切换定义",
+    'MenuChoice':   lambda a, t: f"菜单选择 实体#{a[0]}" if a else "菜单选择",
+    'SetWalk':      lambda a, t: f"行走 实体#{a[0]}→({a[1]},{a[2]})" if len(a)>=3 else f"行走 实体#{a[0]}" if a else "行走",
+    'WaitWalk':     lambda a, t: f"等待行走完成 实体#{a[0]}" if a else "等待行走",
+    'SetPos':       lambda a, t: f"设置位置 实体#{a[0]}→({a[1]},{a[2]})" if len(a)>=3 else f"设置位置 实体#{a[0]}" if a else "设置位置",
+    'CheckFlag':    lambda a, t: f"检查标志 (不满足则阻塞) 标志={a[0]}" if a else "检查标志",
+    'SetEnabled':   lambda a, t: f"启用/禁用 实体#{a[0]} 标志={a[1]}" if len(a)>=2 else f"启用/禁用 实体#{a[0]}" if a else "启用/禁用",
+    'Enable':       lambda a, t: f"启用 实体#{a[0]}" if a else "启用",
+    'Disable':      lambda a, t: f"禁用 实体#{a[0]}" if a else "禁用",
+    'SetVisible':   lambda a, t: f"设置可见性 实体#{a[0]} 标志={a[1]}" if len(a)>=2 else "设置可见性",
+    'SetHint':      lambda a, t: f"设置提示 ID={a[0]} — {_tkt_text(t, a[0])}" if a else "设置提示",
+    'SetWait':      lambda a, t: f"设置等待 实体#{a[0]} 标志={a[1]}" if len(a)>=2 else "设置等待",
+    'SetFlag':      lambda a, t: f"设置标志 #{a[0]}={a[1]}" if len(a)>=2 else f"设置标志 #{a[0]}" if a else "设置标志",
+    'AddFlag':      lambda a, t: f"增加标志 #{a[0]}+{a[1]}" if len(a)>=2 else f"增加标志 #{a[0]}" if a else "增加标志",
+    'SetSwitch':    lambda a, t: f"开关[{a[0]}]={a[1]}" if len(a)>=2 else f"开关[{a[0]}]" if a else "设置开关",
+    'SetVar':       lambda a, t: f"变量[{a[0]}]={a[1]}" if len(a)>=2 else f"变量[{a[0]}]" if a else "设置变量",
+    'Random':       lambda a, t: f"随机→变量[{a[0]}] 范围[{a[1]},{a[2]}]" if len(a)>=3 else "随机",
+    'ChangeScene':  lambda a, t: f"切换场景→#{a[0]} ({a[1]},{a[2]})朝向{a[3]}" if len(a)>=4 else f"切换场景→#{a[0]}" if a else "切换场景",
+    'FadeIn':       lambda a, t: f"淡入 RGB({a[0]},{a[1]},{a[2]}) 速度={a[3]}" if len(a)>=4 else "淡入",
+    'FadeOut':      lambda a, t: f"淡出 RGB({a[0]},{a[1]},{a[2]}) 速度={a[3]}" if len(a)>=4 else "淡出",
+    'SetAni':       lambda a, t: f"设置动画 实体#{a[0]}" if a else "设置动画",
+    'SetTick':      lambda a, t: f"设置Tick回调 实体#{a[0]}" if a else "设置Tick",
+    'SetShadow':    lambda a, t: f"设置阴影 实体#{a[0]}" if a else "设置阴影",
+    'SetCamera':    lambda a, t: f"设置镜头 实体#{a[0]}" if a else "设置镜头",
+    'SetPlayer':    lambda a, t: f"设置玩家实体#{a[0]}" if a else "设置玩家",
+    'SetBlock':     lambda a, t: f"设置阻挡 实体#{a[0]}" if a else "设置阻挡",
+    'SetChaPic':    lambda a, t: f"设置角色图片 实体#{a[0]}" if a else "设置角色图片",
+    'SetGlobal':    lambda a, t: f"设置全局变量={a[0]}" if a else "设置全局变量",
+    'SetScene':     lambda a, t: f"设置场景状态 ID={a[0]}" if a else "设置场景状态",
+    'Camera':       lambda a, t: f"镜头控制 ({a[0]},{a[1]},{a[2]})" if len(a)>=3 else "镜头控制",
+    'Music':        lambda a, t: f"播放音乐 ID={a[0]}" if a else "播放音乐",
+    'SceneBGM':     lambda a, t: f"场景BGM 场景#{a[0]}" if a else "场景BGM",
+    'SetWord':      lambda a, t: f"设置字={a[0]}" if a else "设置字",
+    'ShowText':     lambda a, t: f"显示文本 ID={a[0]} — {_tkt_text(t, a[0])}" if a else "显示文本",
+    'SceneFade':    lambda a, t: f"场景过渡→#{a[0]}" if a else "场景过渡",
+    'SetPosFade':   lambda a, t: f"淡入位置 实体#{a[0]}→({a[1]},{a[2]})" if len(a)>=3 else "淡入位置",
+    'WaitTimer':    lambda a, t: f"定时等待 {a[0]}×{a[1]}ms" if len(a)>=2 else "定时等待",
+    'Yield':        lambda a, t: "让出控制权 (暂停)",
+    'Jump':         lambda a, t: f"跳转到偏移={a[0]}" if a else "跳转",
+    'Else':         lambda a, t: "否则 (条件分支)",
+    'Nop':          lambda a, t: f"空操作 (填充={a[0]})" if a else "空操作",
+    'CheckResult':  lambda a, t: f"条件跳转 变量[{a[0]}]=={a[1]}?" if len(a)>=2 else "条件跳转",
+    'CheckTeam':    lambda a, t: f"检查队伍 ID={a[0]}" if a else "检查队伍",
+    'CheckMember':  lambda a, t: f"检查成员 ID={a[0]}" if a else "检查成员",
+    'PlayerAct':    lambda a, t: f"玩家行动 ID={a[0]}" if a else "玩家行动",
+    'SetCursor':    lambda a, t: f"设置光标 ID={a[0]}" if a else "设置光标",
+    'War':          lambda a, t: f"战斗 ID={a[0]}" if a else "战斗",
+    'MiniGame':     lambda a, t: f"小游戏 ID={a[0]}" if a else "小游戏",
+    'Note':         lambda a, t: f"注释: {', '.join(a)}" if a else "注释",
+    'StopSound':    lambda a, t: "停止声音",
+}
 
 # ============================================================
 # TKT 场景名
@@ -665,6 +756,10 @@ class MatEditor:
         self._vis_play_btn = None           # 播放按钮引用
         self.defunit_recs = []; self.defunit_next = {}; self.defunit_entity = {}  # DefUnit链
         self.tkd_defines = []; self.tkd_header = ''; self.tkd_define_map = {}  # TKD脚本
+        self.tkt_all = {}  # TKT全文数据库 (用于脚本预览解析对话文本)
+        self._preview_win = None   # 脚本预览窗口
+        self._preview_step = 0     # 当前预览步骤
+        self._preview_cmds = []    # 预览解析的命令列表
         self._bit_enable = tk.BooleanVar(value=False)    # d2 bit0: 启用
         self._bit_visible = tk.BooleanVar(value=False)   # d2 bit1: 可见
         self._bit_pickable = tk.BooleanVar(value=False)  # d2 bit2: 可拾取
@@ -1022,11 +1117,15 @@ class MatEditor:
         self.chain_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True); csb.pack(side=tk.RIGHT, fill=tk.Y)
         self.chain_tree.bind('<<TreeviewSelect>>', self._on_chain_select)
 
-        # 下方: 脚本编辑器
+        # 下方: 脚本编辑器 + 预览按钮
         bot_f = ttk.LabelFrame(pw, text="DEFINE 脚本", padding=4)
         pw.add(bot_f, weight=5)
-        self.script_info_lbl = ttk.Label(bot_f, text="(未选中 DEFINE)", font=FONT_S, foreground='#666')
-        self.script_info_lbl.pack(anchor=tk.W, pady=(0,3))
+        # 脚本工具栏: 信息 + 预览按钮
+        stb = ttk.Frame(bot_f); stb.pack(fill=tk.X, pady=(0,2))
+        self.script_info_lbl = ttk.Label(stb, text="(未选中 DEFINE)", font=FONT_S, foreground='#666')
+        self.script_info_lbl.pack(side=tk.LEFT)
+        ttk.Button(stb, text="▶ 预览", command=self._preview_script, width=8).pack(side=tk.RIGHT, padx=2)
+        self._bind_tooltip(stb.winfo_children()[-1], "预览当前脚本执行流程\n解析脚本命令, 显示人类可读的执行步骤\n对话文本会自动从 TKT 解析")
         ef = ttk.Frame(bot_f); ef.pack(fill=tk.BOTH, expand=True)
         self.script_text = tk.Text(ef, font=FONT_MONO, wrap=tk.NONE, undo=True,
                                    tabs=('4c',), bg='#fafafa')
@@ -1525,6 +1624,8 @@ class MatEditor:
                 self.tkd_defines, self.tkd_header = parse_defines(tkd_text)
                 self.tkd_define_map = {d['define_id']: d for d in self.tkd_defines}
             except Exception: pass
+        # 加载 TKT 全文 (用于脚本预览对话文本解析)
+        self.tkt_all = load_tkt_all(self.tkt_path)
         grp_path = os.path.join(d, "SC.GRP"); idx_path = os.path.join(d, "SC.IDX")
         if os.path.exists(grp_path) and os.path.exists(idx_path):
             try:
@@ -1831,6 +1932,269 @@ class MatEditor:
             for m in re.finditer(r'-?\d+', line):
                 if comment_start >= 0 and m.start() >= comment_start: continue
                 self.script_text.tag_add('number', f"{ln}.{m.start()}", f"{ln}.{m.end()}")
+
+    # =========== 脚本预览 ===========
+    def _parse_script_commands(self, body_lines):
+        """解析 DEFINE body_lines 中的脚本命令, 返回 [(cmd_name, args_list, line_text, line_idx), ...]"""
+        import re
+        commands = []
+        for i, line in enumerate(body_lines):
+            stripped = line.strip()
+            # 跳过空行、注释、花括号
+            if not stripped or stripped.startswith('//') or stripped.startswith('{') or stripped.startswith('}'):
+                continue
+            # 跳过 DEFINE 头部行 (预防 body_lines 包含 header 的情况)
+            if stripped.startswith('DEFINE'):
+                continue
+            # 匹配 CommandName(args) — 参数内可含负号和空格
+            # 使用非贪婪匹配, 支持参数中包含空格的情况
+            m = re.match(r'([A-Za-z_]\w*)\s*\((.*)\)\s*$', stripped)
+            if m:
+                cmd_name = m.group(1)
+                args_str = m.group(2).strip()
+                # 按逗号分割参数, 各参数可包含空格 (去除首尾空格)
+                args = [a.strip() for a in args_str.split(',') if a.strip()] if args_str else []
+                commands.append((cmd_name, args, stripped, i))
+            elif stripped and not stripped.startswith('//'):
+                # 无括号的裸命令名 (如单独一行的 End 或 Yield)
+                m2 = re.match(r'([A-Za-z_]\w+)\s*$', stripped)
+                if m2 and m2.group(1) in SCRIPT_CMD_DESC:
+                    commands.append((m2.group(1), [], stripped, i))
+        return commands
+
+    def _format_cmd_desc(self, cmd_name, args):
+        """将命令和参数格式化为人类可读的描述"""
+        # 尝试精确描述
+        desc_fn = SCRIPT_CMD_DESC.get(cmd_name)
+        if desc_fn:
+            try:
+                return desc_fn(args, self.tkt_all)
+            except Exception:
+                pass
+        # 回退: 通用格式
+        args_str = ', '.join(args) if args else ''
+        return f"{cmd_name}({args_str})"
+
+    def _preview_script(self):
+        """预览当前 DEFINE 脚本的执行流程"""
+        # 保存当前编辑内容
+        self._save_editor_to_define()
+        if self._current_edit_define_id is None:
+            messagebox.showinfo("预览", "请先选择一个 DEFINE 脚本块")
+            return
+        d = self.tkd_define_map.get(self._current_edit_define_id)
+        if d is None:
+            messagebox.showinfo("预览", "未找到当前 DEFINE 数据")
+            return
+        body_lines = d.get('body_lines', [])
+        # 过滤花括号行
+        cmd_lines = [l for l in body_lines if l.strip() and not l.strip().startswith('{') and not l.strip().startswith('}')]
+        if not cmd_lines:
+            messagebox.showinfo("预览", "当前 DEFINE 脚本为空")
+            return
+
+        # 解析命令
+        commands = self._parse_script_commands(body_lines)
+        if not commands:
+            messagebox.showinfo("预览", "未解析到有效命令")
+            return
+        self._preview_cmds = commands
+        self._preview_step = 0
+
+        # 创建预览窗口
+        if self._preview_win and self._preview_win.winfo_exists():
+            self._preview_win.destroy()
+        win = tk.Toplevel(self.root)
+        win.title(f"脚本预览 — DEFINE {self._current_edit_define_id}")
+        win.transient(self.root)
+        ico = os.path.join(os.path.dirname(__file__), 'TKS.ico')
+        if os.path.exists(ico): win.iconbitmap(default=ico)
+        # 居中: 先隐藏, 计算, 再显示
+        win.withdraw()
+        win.geometry("780x680")
+        win.update_idletasks()
+        rw = self.root.winfo_width(); rh = self.root.winfo_height()
+        rx = self.root.winfo_rootx(); ry = self.root.winfo_rooty()
+        w = win.winfo_width(); h = win.winfo_height()
+        x = rx + (rw - w) // 2; y = ry + (rh - h) // 2
+        win.geometry(f"+{x}+{y}")
+        win.deiconify()
+
+        # 顶部信息
+        info_f = ttk.Frame(win)
+        info_f.pack(fill=tk.X, padx=8, pady=(8,4))
+        comment = d.get('comment', '')
+        info_text = f"DEFINE {self._current_edit_define_id}"
+        if comment: info_text += f"  —  {comment}"
+        info_text += f"  |  {len(commands)} 条命令"
+        ttk.Label(info_f, text=info_text, font=FONT_B).pack(side=tk.LEFT)
+        self._preview_info_lbl = ttk.Label(info_f, text="", font=FONT_S, foreground='#666')
+        self._preview_info_lbl.pack(side=tk.RIGHT)
+
+        # 命令列表 (Text widget with line numbers)
+        list_f = ttk.Frame(win)
+        list_f.pack(fill=tk.BOTH, expand=True, padx=8, pady=4)
+
+        # 左侧: 命令列表
+        cols_pv = ('step', 'cmd', 'desc')
+        self._preview_tree = ttk.Treeview(list_f, columns=cols_pv, show='headings',
+                                           selectmode='browse', height=20)
+        self._preview_tree.heading('step', text='#')
+        self._preview_tree.heading('cmd', text='命令')
+        self._preview_tree.heading('desc', text='描述')
+        self._preview_tree.column('step', width=35, anchor='center', minwidth=30)
+        self._preview_tree.column('cmd', width=110, anchor='w', minwidth=80)
+        self._preview_tree.column('desc', width=480, anchor='w', minwidth=200)
+
+        pv_sb = ttk.Scrollbar(list_f, orient=tk.VERTICAL, command=self._preview_tree.yview)
+        self._preview_tree.configure(yscrollcommand=pv_sb.set)
+        self._preview_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        pv_sb.pack(side=tk.RIGHT, fill=tk.Y)
+
+        # 配置标签颜色
+        self._preview_tree.tag_configure('talk', foreground='#7B30D0')
+        self._preview_tree.tag_configure('flow', foreground='#0066CC')
+        self._preview_tree.tag_configure('action', foreground='#333333')
+        self._preview_tree.tag_configure('branch', foreground='#CC6600')
+        self._preview_tree.tag_configure('end_tag', foreground='#CC0000')
+        self._preview_tree.tag_configure('current', background='#FFEE88')
+
+        # 填充命令列表
+        for si, (cmd_name, args, line_text, line_idx) in enumerate(commands):
+            desc = self._format_cmd_desc(cmd_name, args)
+            # 选择标签颜色
+            tag = 'action'
+            if cmd_name in ('TalkB', 'TalkA', 'BlackTalk', 'ShowText', 'MenuChoice'):
+                tag = 'talk'
+            elif cmd_name in ('End', 'Yield', 'Jump', 'Else'):
+                tag = 'flow'
+            elif cmd_name in ('CheckFlag', 'CheckResult', 'CheckFlag61', 'CheckFlag62', 'CheckFlag63', 'Check65', 'Check66', 'CheckTeam', 'CheckMember'):
+                tag = 'branch'
+            elif cmd_name == 'End':
+                tag = 'end_tag'
+            self._preview_tree.insert('', 'end', values=(str(si+1), cmd_name, desc), tags=(tag,))
+
+        # 底部: 导航按钮 + 详情
+        nav_f = ttk.Frame(win)
+        nav_f.pack(fill=tk.X, padx=8, pady=(4,8))
+
+        ttk.Button(nav_f, text="◀ 上一步", command=self._preview_prev, width=10).pack(side=tk.LEFT, padx=2)
+        ttk.Button(nav_f, text="下一步 ▶", command=self._preview_next, width=10).pack(side=tk.LEFT, padx=2)
+        ttk.Button(nav_f, text="自动播放", command=self._preview_auto_play, width=10).pack(side=tk.LEFT, padx=2)
+        ttk.Separator(nav_f, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=6)
+        ttk.Button(nav_f, text="跳到结束", command=self._preview_end, width=10).pack(side=tk.LEFT, padx=2)
+        ttk.Button(nav_f, text="重新开始", command=self._preview_reset, width=10).pack(side=tk.LEFT, padx=2)
+        ttk.Separator(nav_f, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=6)
+        ttk.Button(nav_f, text="关闭", command=win.destroy, width=8).pack(side=tk.RIGHT, padx=2)
+
+        # 详情面板
+        detail_f = ttk.LabelFrame(win, text="命令详情", padding=4)
+        detail_f.pack(fill=tk.X, padx=8, pady=(0,8))
+        self._preview_detail = tk.Text(detail_f, height=4, font=FONT_MONO, wrap=tk.WORD, bg='#fafafa')
+        self._preview_detail.pack(fill=tk.X)
+
+        # 选中事件
+        self._preview_tree.bind('<<TreeviewSelect>>', self._preview_on_select)
+
+        # 选中第一步
+        children = self._preview_tree.get_children()
+        if children:
+            self._preview_tree.selection_set(children[0])
+            self._preview_tree.see(children[0])
+
+        self._preview_win = win
+
+    def _preview_on_select(self, event=None):
+        """预览窗口: 选中命令 → 更新详情"""
+        sel = self._preview_tree.selection()
+        if not sel: return
+        vals = self._preview_tree.item(sel[0], 'values')
+        if not vals: return
+        step = int(vals[0]) - 1
+        self._preview_step = step
+        if 0 <= step < len(self._preview_cmds):
+            cmd_name, args, line_text, line_idx = self._preview_cmds[step]
+            # 详情: 原始行 + 格式化描述 + TKT 文本
+            detail = f"原始: {line_text}\n"
+            detail += f"命令: {cmd_name}({', '.join(args)})\n"
+            detail += f"描述: {self._format_cmd_desc(cmd_name, args)}\n"
+            # 如果是对话命令, 尝试解析完整文本
+            # 注意: TalkB/TalkA/BlackTalk 的第1个参数是实体ID, 第2个参数才是TTK文本ID
+            # ShowText 的第1个参数是TTK文本ID (与TalkB不同)
+            if cmd_name in ('TalkB', 'TalkA', 'BlackTalk') and len(args) >= 2:
+                tkt_text = _tkt_text(self.tkt_all, args[1], max_len=500)
+                if tkt_text:
+                    detail += f"\n━━━ TKT 对话文本 (ID={args[1]}) ━━━\n{tkt_text}"
+            elif cmd_name in ('ShowText',) and args:
+                tkt_text = _tkt_text(self.tkt_all, args[0], max_len=500)
+                if tkt_text:
+                    detail += f"\n━━━ TKT 对话文本 (ID={args[0]}) ━━━\n{tkt_text}"
+            self._preview_detail.config(state='normal')
+            self._preview_detail.delete('1.0', tk.END)
+            self._preview_detail.insert('1.0', detail)
+            self._preview_detail.config(state='disabled')
+            # 更新信息标签
+            self._preview_info_lbl.config(text=f"步骤 {step+1}/{len(self._preview_cmds)}")
+
+    def _preview_next(self):
+        """下一步"""
+        if not self._preview_cmds: return
+        self._preview_step = min(self._preview_step + 1, len(self._preview_cmds) - 1)
+        self._preview_goto_step(self._preview_step)
+
+    def _preview_prev(self):
+        """上一步"""
+        if not self._preview_cmds: return
+        self._preview_step = max(self._preview_step - 1, 0)
+        self._preview_goto_step(self._preview_step)
+
+    def _preview_end(self):
+        """跳到结束"""
+        if not self._preview_cmds: return
+        self._preview_step = len(self._preview_cmds) - 1
+        self._preview_goto_step(self._preview_step)
+
+    def _preview_reset(self):
+        """重新开始"""
+        self._preview_step = 0
+        self._preview_goto_step(0)
+
+    def _preview_auto_play(self):
+        """自动播放脚本步骤"""
+        if not self._preview_cmds: return
+        self._preview_step = 0
+        self._preview_goto_step(0)
+        self._auto_play_tick()
+
+    def _auto_play_tick(self):
+        """自动播放定时器"""
+        if self._preview_win is None or not self._preview_win.winfo_exists():
+            return
+        if self._preview_step >= len(self._preview_cmds) - 1:
+            return
+        self._preview_step += 1
+        self._preview_goto_step(self._preview_step)
+        # 根据命令类型调整速度
+        cmd_name = self._preview_cmds[self._preview_step][0]
+        delay = 800 if cmd_name in ('TalkB', 'TalkA', 'BlackTalk', 'ShowText', 'MenuChoice') else 400
+        self._preview_win.after(delay, self._auto_play_tick)
+
+    def _preview_goto_step(self, step):
+        """跳转到指定步骤"""
+        if not self._preview_win or not self._preview_win.winfo_exists(): return
+        children = self._preview_tree.get_children()
+        if 0 <= step < len(children):
+            self._preview_tree.selection_set(children[step])
+            self._preview_tree.see(children[step])
+            # 清除之前的高亮
+            for item in children:
+                self._preview_tree.item(item, tags=self._preview_tree.item(item, 'tags')[:1] if self._preview_tree.item(item, 'tags') else ())
+            # 高亮当前步骤 - 重新设置tags保留原来的颜色标签
+            for i, item in enumerate(children):
+                old_tags = self._preview_tree.item(item, 'tags')
+                base_tag = old_tags[0] if old_tags else 'action'
+                new_tags = (base_tag,) if i != step else (base_tag, 'current')
+                self._preview_tree.item(item, tags=new_tags)
 
     # =========== 链增删 ===========
 
