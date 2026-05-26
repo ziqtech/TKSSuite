@@ -62,7 +62,7 @@ ANIM_FIELDS = [
     ("sub_model",64,"子模型ID","type=110:组3Ymax type=200:Ani.JVG块(行走动画)。sub_405CBC,sub_408B30"),("anim_speed",69,"动画速度","动画播放速度"),]
 SCRIPT_FIELDS = [
     ("defunit_idx",44,"DefUnit索引","文件值=-1为正常; 运行时由 sub_4066F0 沿链遍历计算填入。sub_40EBD4:18 读取"),
-    ("cur_define",28,"当前DEFINE","当前DEFINE脚本号"),
+    ("dialog_color",28,"对话颜色","TalkA/TalkB 文字颜色索引(0~31), sub_44B028 查表 dword_A2C528"),
     ("max_A",30,"子场景最大A","子场景A DefUnit链长度"),
     ("max_B",31,"子场景最大B",""),("max_C",32,"子场景最大C",""),
     ("cur_A",33,"子场景当前A","当前在链中的位置(1-based)。SetNowDef可修改"),
