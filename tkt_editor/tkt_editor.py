@@ -463,13 +463,13 @@ def parse_styled_segments(text):
                 elif val == 4:  # 恢复字体类型
                     current['family'] = prev_family
             elif tag_name == 'TEXT':
-                buf.append(f'[文本:{val}]')
+                buf.append(f'[文本:{val_str}]')
             elif tag_name == 'VARNUM':
-                buf.append(f'[变量:{val}]')
+                buf.append(f'[变量:{val_str}]')
             elif tag_name == 'VARTXT':
-                buf.append(f'[文本变量:{val}]')
+                buf.append(f'[文本变量:{val_str}]')
             elif tag_name == 'NAME':
-                buf.append(f'[名称:{val}]')
+                buf.append('[姓]' if val_str == '1' else '[名]')
             else:
                 buf.append(text[m.start():m.end()])
             i = m.end()
@@ -1632,54 +1632,11 @@ class TktEditor:
 
         ttk.Separator(toolbar, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=4)
 
-        # --- Group 4: 特殊 (TEXT/VARNUM/VARTXT/NAME) ---
+        # --- Group 4: 姓名 (NAME) ---
         g4 = ttk.Frame(toolbar)
         g4.pack(side=tk.LEFT, padx=(0, 6))
-        ttk.Label(g4, text="特殊:", font=FONT_S).pack(side=tk.LEFT)
-
-        # TEXT
-        g4t = ttk.Frame(g4)
-        g4t.pack(side=tk.LEFT, padx=1)
-        ttk.Label(g4t, text="TEXT", font=FONT_S).pack(side=tk.LEFT)
-        self.tag_text_var = tk.StringVar(value="1")
-        sp = tk.Spinbox(g4t, from_=1, to=32767, width=5,
-                        textvariable=self.tag_text_var, font=FONT_S)
-        sp.pack(side=tk.LEFT, padx=1)
-        ttk.Button(g4t, text="插入", width=3,
-                   command=lambda: self._insert_tag_with_spinbox("TEXT", self.tag_text_var, 1, 32767)).pack(side=tk.LEFT)
-
-        # VARNUM
-        g4n = ttk.Frame(g4)
-        g4n.pack(side=tk.LEFT, padx=(4, 1))
-        ttk.Label(g4n, text="NUM", font=FONT_S).pack(side=tk.LEFT)
-        self.tag_varnum_var = tk.StringVar(value="1")
-        spn = tk.Spinbox(g4n, from_=1, to=255, width=4,
-                         textvariable=self.tag_varnum_var, font=FONT_S)
-        spn.pack(side=tk.LEFT, padx=1)
-        ttk.Button(g4n, text="插入", width=3,
-                   command=lambda: self._insert_tag_with_spinbox("VARNUM", self.tag_varnum_var, 1, 255)).pack(side=tk.LEFT)
-
-        # VARTXT
-        g4x = ttk.Frame(g4)
-        g4x.pack(side=tk.LEFT, padx=(4, 1))
-        ttk.Label(g4x, text="TXT", font=FONT_S).pack(side=tk.LEFT)
-        self.tag_vartxt_var = tk.StringVar(value="1")
-        spx = tk.Spinbox(g4x, from_=1, to=255, width=4,
-                         textvariable=self.tag_vartxt_var, font=FONT_S)
-        spx.pack(side=tk.LEFT, padx=1)
-        ttk.Button(g4x, text="插入", width=3,
-                   command=lambda: self._insert_tag_with_spinbox("VARTXT", self.tag_vartxt_var, 1, 255)).pack(side=tk.LEFT)
-
-        # NAME
-        g4m = ttk.Frame(g4)
-        g4m.pack(side=tk.LEFT, padx=(4, 1))
-        ttk.Label(g4m, text="NAME", font=FONT_S).pack(side=tk.LEFT)
-        self.tag_name_var = tk.StringVar(value="1")
-        spm = tk.Spinbox(g4m, from_=1, to=2, width=3,
-                         textvariable=self.tag_name_var, font=FONT_S)
-        spm.pack(side=tk.LEFT, padx=1)
-        ttk.Button(g4m, text="插入", width=3,
-                   command=lambda: self._insert_tag_with_spinbox("NAME", self.tag_name_var, 1, 2)).pack(side=tk.LEFT)
+        ttk.Button(g4, text="姓名", width=6,
+                   command=self._insert_name_tag).pack(side=tk.LEFT)
 
         ttk.Separator(toolbar, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=4)
 
@@ -1765,13 +1722,9 @@ class TktEditor:
         self._insert_tag(f"<FTYPE,{n}>", "<FRESET,4>")
         self.ftype_var.set('')
 
-    def _insert_tag_with_spinbox(self, tag_name, var, min_val, max_val):
-        try:
-            n = int(var.get())
-        except ValueError:
-            return
-        if min_val <= n <= max_val:
-            self._insert_tag(f"<{tag_name},{n}>")
+    def _insert_name_tag(self):
+        """插入 <NAME,1><NAME,2> 标签对"""
+        self._insert_tag("<NAME,1><NAME,2>")
 
     def _insert_fcolord(self):
         color = colorchooser.askcolor(title="选择 RGB 颜色", parent=self.root)
