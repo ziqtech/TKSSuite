@@ -117,10 +117,40 @@ GAME_FONT_FAMILIES = {
 # 默认 FTYPE=2 (依据 sub_411624 主渲染器 offset 0=1 即 FTYPE raw=2, ftype index 1=MingLiU)
 DEFAULT_FTYPE = 2
 DEFAULT_FCOLOR = 32    # 白色 (0xFFFF); 游戏初始 FCOLOR=0(黑色) 但暗色背景上需要白色
-PREVIEW_BG = '#0a0a1a'  # 模拟游戏对话框暗色背景
+PREVIEW_BG = '#313c52'  # 模拟游戏对话框暗色背景
 
 # FTYPE 反向映射: 字体族首名称 → 0-based ftype
 FTYPE_BY_FAMILY_NAME = {v[0]: k - 1 for k, v in GAME_FONT_FAMILIES.items()}
+
+# ASCII → BIG5 重映射表 (word_4EC810, 提取自 TKS.exe 运行时内存 dump)
+# 依据 sub_44B384: ASCII 字符 (< 0x80) 在 FONT9696 索引前先通过此表重映射
+# 控制字符 (0x00-0x1F) 映射到 0xA140 (全宽空格)
+WORD_4EC810 = {
+    0x20: 0xA140, 0x21: 0xA149, 0x22: 0xA1AA, 0x23: 0xA1AD,
+    0x24: 0xA243, 0x25: 0xA24D, 0x26: 0xA1AE, 0x27: 0xA1AC,
+    0x28: 0xA15D, 0x29: 0xA15E, 0x2A: 0xA1B8, 0x2B: 0xA1DE,
+    0x2C: 0xA141, 0x2D: 0xA1DF, 0x2E: 0xA145, 0x2F: 0xA241,
+    0x30: 0xA2AF, 0x31: 0xA2B0, 0x32: 0xA2B1, 0x33: 0xA2B2,
+    0x34: 0xA2B3, 0x35: 0xA2B4, 0x36: 0xA2B5, 0x37: 0xA2B6,
+    0x38: 0xA2B7, 0x39: 0xA2B8, 0x3A: 0xA14A, 0x3B: 0xA146,
+    0x3C: 0xA1E0, 0x3D: 0xA1E2, 0x3E: 0xA1E1, 0x3F: 0xA148,
+    0x40: 0xA249, 0x41: 0xA2CF, 0x42: 0xA2D0, 0x43: 0xA2D1,
+    0x44: 0xA2D2, 0x45: 0xA2D3, 0x46: 0xA2D4, 0x47: 0xA2D5,
+    0x48: 0xA2D6, 0x49: 0xA2D7, 0x4A: 0xA2D8, 0x4B: 0xA2D9,
+    0x4C: 0xA2DA, 0x4D: 0xA2DB, 0x4E: 0xA2DC, 0x4F: 0xA2DD,
+    0x50: 0xA2DE, 0x51: 0xA2DF, 0x52: 0xA2E0, 0x53: 0xA2E1,
+    0x54: 0xA2E2, 0x55: 0xA2E3, 0x56: 0xA2E4, 0x57: 0xA2E5,
+    0x58: 0xA2E6, 0x59: 0xA2E7, 0x5A: 0xA2E8, 0x5B: 0xA165,
+    0x5C: 0xA242, 0x5D: 0xA166, 0x5E: 0xA173, 0x5F: 0xA1C5,
+    0x60: 0xA1AB, 0x61: 0xA2E9, 0x62: 0xA2EA, 0x63: 0xA2EB,
+    0x64: 0xA2EC, 0x65: 0xA2ED, 0x66: 0xA2EE, 0x67: 0xA2EF,
+    0x68: 0xA2F0, 0x69: 0xA2F1, 0x6A: 0xA2F2, 0x6B: 0xA2F3,
+    0x6C: 0xA2F4, 0x6D: 0xA2F5, 0x6E: 0xA2F6, 0x6F: 0xA2F7,
+    0x70: 0xA2F8, 0x71: 0xA2F9, 0x72: 0xA2FA, 0x73: 0xA2FB,
+    0x74: 0xA2FC, 0x75: 0xA2FD, 0x76: 0xA2FE, 0x77: 0xA340,
+    0x78: 0xA341, 0x79: 0xA342, 0x7A: 0xA343, 0x7B: 0xA161,
+    0x7C: 0xA155, 0x7D: 0xA162, 0x7E: 0xA1E3, 0x7F: 0xA1BD,
+}
 
 
 # ============================================================
@@ -671,6 +701,14 @@ def _unicode_to_big5_code(ch):
     return None, False
 
 
+def _remap_ascii_for_font9696(ascii_code):
+    """将 ASCII 码 (0x00-0x7F) 通过 word_4EC810 重映射为 FONT9696 BIG5 码。
+    依据 sub_44B384: `if (char_code < 0x80) char_code = word_4EC810[char_code]`
+    返回 BIG5 码 (>= 0xA100) 或 None (无映射表)。
+    """
+    return WORD_4EC810.get(ascii_code, 0xA140)  # 未知字符映射到全宽空格
+
+
 # 系统字体缓存 (ASCII/无法映射字符的回退渲染)
 _SYS_FONT_CACHE = {}
 
@@ -846,11 +884,21 @@ def _render_text_image(segments, font, line_spacing=4, use_traditional_font=Fals
                     # 依据 sub_44E49C: CJK 字符使用完整 char_width (offset+28)
                     img, adv = font.glyph_image(big5_code, ftype, size, color)
             elif big5_code is not None and not is_cjk:
-                # ASCII 字符: 系统字体回退, 半宽渲染
-                # 依据 sub_44E49C offset+66: 游戏主渲染器对 ASCII 使用 char_width>>1
-                img, adv = _render_fallback_char(ch, size, color, style['family'],
-                                                  half_width=True,
-                                                  prefer_traditional=use_traditional_font)
+                # ASCII 字符: word_4EC810 重映射 → FONT9696 渲染
+                # 依据 sub_44B384: char_code < 0x80 → word_4EC810[char_code] → FONT9696
+                # 依据 sub_44E49C offset+66: 半宽前进 (char_width >> 1)
+                # 空格不经过 FONT9696 — 游戏直接跳白不渲染字形 (sub_44E49C)
+                if big5_code == 0x20 and not use_traditional_font:
+                    adv = max(size // 2, 1)
+                    img = Image.new('RGBA', (adv, size), (0, 0, 0, 0))
+                elif use_traditional_font:
+                    img, adv = _render_fallback_char(ch, size, color, style['family'],
+                                                      half_width=True,
+                                                      prefer_traditional=True)
+                else:
+                    remapped_code = _remap_ascii_for_font9696(big5_code)
+                    img, _ = font.glyph_image(remapped_code, ftype, size, color)
+                    adv = max(size // 2, 1)
             else:
                 # 无法编码到 BIG5 的字符: 系统字体回退
                 # 繁体模式下 CJK 类字符尝试全宽渲染
