@@ -2441,9 +2441,8 @@ class MatEditor:
             # 跳过 DEFINE 头部行 (预防 body_lines 包含 header 的情况)
             if stripped.startswith('DEFINE'):
                 continue
-            # 匹配 CommandName(args) — 参数内可含负号和空格
-            # 使用非贪婪匹配, 支持参数中包含空格的情况
-            m = re.match(r'([A-Za-z_]\w*)\s*\((.*)\)\s*$', stripped)
+            # 匹配 CommandName(args) — 支持行尾注释
+            m = re.match(r'([A-Za-z_]\w*)\s*\((.*)\)', stripped)
             if m:
                 cmd_name = m.group(1)
                 args_str = m.group(2).strip()
@@ -2559,7 +2558,8 @@ class MatEditor:
             desc = self._format_cmd_desc(cmd_name, args)
             # 选择标签颜色
             tag = 'action'
-            if cmd_name in ('TalkB', 'TalkA', 'BlackTalk', 'ShowText', 'MenuChoice'):
+            if cmd_name in ('TalkB', 'TalkA', 'BlackTalk', 'ShowText', 'MenuChoice',
+                           'SysTalk', 'SetTalkB', 'SetHint', 'DoTalkB', 'MenuTalk'):
                 tag = 'talk'
             elif cmd_name in ('End', 'Yield', 'Jump', 'Else'):
                 tag = 'flow'
@@ -2614,13 +2614,13 @@ class MatEditor:
             detail += f"命令: {cmd_name}({', '.join(args)})\n"
             detail += f"描述: {self._format_cmd_desc(cmd_name, args)}\n"
             # 如果是对话命令, 尝试解析完整文本
-            # 注意: TalkB/TalkA/BlackTalk 的第1个参数是实体ID, 第2个参数才是TTK文本ID
-            # ShowText 的第1个参数是TTK文本ID (与TalkB不同)
-            if cmd_name in ('TalkB', 'TalkA', 'BlackTalk') and len(args) >= 2:
-                tkt_text = _tkt_text(self.tkt_all, args[1], max_len=500)
+            if cmd_name in ('TalkB', 'TalkA', 'SetTalkB', 'BlackTalk') and len(args) >= 2:
+                # TalkB/TalkA/SetTalkB: args[1]=TKT文本ID; BlackTalk: args[0]=TKT文本ID
+                text_idx = 0 if cmd_name == 'BlackTalk' else 1
+                tkt_text = _tkt_text(self.tkt_all, args[text_idx], max_len=500)
                 if tkt_text:
-                    detail += f"\n━━━ TKT 对话文本 (ID={args[1]}) ━━━\n{tkt_text}"
-            elif cmd_name in ('ShowText',) and args:
+                    detail += f"\n━━━ TKT 对话文本 (ID={args[text_idx]}) ━━━\n{tkt_text}"
+            elif cmd_name in ('ShowText', 'MenuTalk', 'SysTalk') and args:
                 tkt_text = _tkt_text(self.tkt_all, args[0], max_len=500)
                 if tkt_text:
                     detail += f"\n━━━ TKT 对话文本 (ID={args[0]}) ━━━\n{tkt_text}"
