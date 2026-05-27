@@ -22,6 +22,31 @@ import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 
 # ============================================================
+# LZSS 解压 (用于 TKItem.dat)
+# ============================================================
+def lzss_decompress(data):
+    if len(data) < 12: return b''
+    ts = struct.unpack_from('<I', data, 0)[0]; bs = struct.unpack_from('<I', data, 4)[0]
+    w = bytearray([0x20]*4096); wp = 4078; out = bytearray(); flags = 0; pos = 12; bc = 4
+    while bc < bs:
+        flags >>= 1
+        if (flags & 0x100) == 0:
+            if pos >= len(data): break
+            flags = data[pos] | 0xFF00; pos += 1; bc += 1
+        if flags & 1:
+            if pos >= len(data): break
+            b = data[pos]; pos += 1; bc += 1
+            out.append(b); w[wp] = b; wp = (wp + 1) & 0xFFF
+        else:
+            if pos + 1 >= len(data): break
+            b1, b2 = data[pos], data[pos+1]; pos += 2; bc += 2
+            ro = ((b2 & 0xF0) << 4) | b1; rl = (b2 & 0x0F) + 2
+            for j in range(rl + 1):
+                b = w[(j + ro) & 0xFFF]; out.append(b)
+                w[wp] = b; wp = (wp + 1) & 0xFFF
+    return bytes(out[:ts])
+
+# ============================================================
 # 常量
 # ============================================================
 REC_SIZE = 384; REC_COUNT = 6000; FILE_SIZE = 2304000; DWORD_COUNT = 96
@@ -42,7 +67,7 @@ _SPRITE_CACHE = {}  # (filepath, global_idx) → PhotoImage
 BASIC_FIELDS = [
     ("type",0,"实体类型","实体类型: 5=入口 10=地形 15=障碍 16=建筑 20=事件 110=机关 200=NPC"),
     ("scene_id",1,"场景ID","所属场景 (-1=全局)。TKT_ID = scene_id + 300"),
-    ("flags",2,"标志位","位域。bit0=启用 bit1=可见 bit2=可交互 bit3=提示 bit4=忙碌 bit5=恢复 bit16=动画循环"),
+    ("flags",2,"标志位","位域。bit0=启用 bit1=可见 bit2=可交互 bit3=提示 bit4=忙碌 bit5=恢复 bit8=已拾取(type110) bit16=动画循环"),
     ("param",3,"扩展参数","扩展参数 (道具数量/金钱等)"),
     ("hint_id",23,"提示文本ID","鼠标悬停提示的TKT文本ID。传送点(type=10): 设为 300+目标场景ID 以显示目标场景名。sub_412390"),
     ("cursor_id",8,"光标动画","鼠标悬停光标动画编号。传送点(type=10)设为3显示开门动画。sub_411BA4/sub_412390"),
@@ -127,9 +152,9 @@ SCRIPT_FIELDS = [
     ("head_A",39,"DefUnit链头A","子场景A的 TKDefUnit 链表头索引。sub_4066F0:39 从这开始遍历"),
     ("head_B",40,"DefUnit链头B",""),("head_C",41,"DefUnit链头C",""),]
 INTERACT_FIELDS = [
-    ("cond_id",50,"条件匹配","0=无条件。type=5/15/16:与player[d22]匹配才可交互。type=110:帧计数器。type=200:条件角色。sub_4081F8:200, sub_408408:200, sub_4084E0:200, sub_408B30:200"),
-    ("dir_mask",51,"方向掩码","bit0-7对应朝向1-8, 0=任意方向。type=200:立绘ID(Cha.JVG块)。sub_4081F8:204, sub_408408:204, sub_4084E0:204"),
-    ("target_scene",52,"目标场景","type=5:目标地图ID type=16:把手1道具 type=110:行为模式(0=掉落1=清除) type=200:动画句柄(运行时)。sub_4081F8:208, sub_4084E0:208, sub_408B30:208"),]
+    ("cond_id",50,"条件匹配","0=无条件。type=5/15/16:与player[d22]匹配才可交互。type=110(d52=0):帧计数器>0启用拾取后动画。type=200:条件角色。sub_4081F8:200, sub_408408:200, sub_4084E0:200, sub_408B30:200"),
+    ("dir_mask",51,"方向掩码","bit0-7对应朝向1-8, 0=任意方向。type=110(d52=0):动画帧基偏移(frame_idx=frame_cur+d51)。type=200:立绘ID(Cha.JVG块)。sub_4081F8:204, sub_408408:204, sub_4084E0:204"),
+    ("target_scene",52,"目标场景","type=5:目标地图ID type=16:把手1道具 type=110:行为模式(0=标记bit8+动画 1=清除实体 2+=无行为)。type=200:动画句柄(运行时)。sub_4081F8:208, sub_4084E0:208, sub_408B30:208"),]
 RUNTIME_FIELDS = [
     ("tick",4,"tick","Tick周期(运行时)"),
     ("timer",12,"计时器",""),("frame_idx",14,"帧索引",""),
@@ -144,7 +169,21 @@ RUNTIME_FIELDS = [
     ("priority",22,"优先级/α","sub_406864:35 — 实体优先级/像素透明度。sub_406E50 计算, 决定简单/变换渲染分支"),
     ("sprite_off_x",26,"精灵偏移X","sub_406864:30 — 精灵 X 屏幕偏移, 叠加到坐标"),
     ("sprite_off_y",27,"精灵偏移Y","sub_406864:31 — 精灵 Y 屏幕偏移, 叠加到坐标"),]
-ALL_EDIT_FIELDS = BASIC_FIELDS+POS_FIELDS+ANIM_FIELDS+SCRIPT_FIELDS+INTERACT_FIELDS
+ITEM_FIELDS = [
+    ("item_g1_id",   53, "组1-物品ID",   "type110: 物品ID随机范围最小值; Xmin==Xmax→固定掉落"),
+    ("item_g1_idmax",54, "组1-物品上限",  "type110: 物品ID随机范围最大值"),
+    ("item_g1_qty",  55, "组1-数量",     "type110: 数量随机范围最小值; Ymin==Ymax→固定数量"),
+    ("item_g1_qtymax",56,"组1-数量上限",  "type110: 数量随机范围最大值"),
+    ("item_g2_id",   57, "组2-物品ID",   "type110: 第二组物品ID (此游戏未使用)"),
+    ("item_g2_idmax",58, "组2-物品上限",  "type110: 第二组物品ID上限"),
+    ("item_g2_qty",  59, "组2-数量",     "type110: 第二组数量"),
+    ("item_g2_qtymax",60,"组2-数量上限",  "type110: 第二组数量上限"),
+    ("item_g3_id",   61, "组3-物品ID",   "type110: 第三组物品ID (此游戏未使用)"),
+    ("item_g3_idmax",62, "组3-物品上限",  "type110: 第三组物品ID上限"),
+    ("item_g3_qty",  63, "组3-数量",     "type110: 第三组数量"),
+    ("item_g3_qtymax",64,"组3-数量上限",  "type110: 第三组数量上限"),
+]
+ALL_EDIT_FIELDS = BASIC_FIELDS+POS_FIELDS+ANIM_FIELDS+SCRIPT_FIELDS+INTERACT_FIELDS+ITEM_FIELDS
 
 # 类型相关字段映射: type → {dword: (label, comment)}
 # 仅列出与 type=200(NPC) 默认语义不同的字段
@@ -177,10 +216,21 @@ _TYPE_LABELS = {
         61:("冷却计时",""), 62:("目标地图",""),
     },
     110: {  # 特殊机关 sub_408B30
-        50:("帧计数器",""), 52:("行为模式","0=随机掉落 1=清除标志"),
-        53:("组1-Xmin",""), 54:("组1-Xmax",""), 55:("组1-Ymin",""), 56:("组1-Ymax",""),
-        57:("组2-Xmin",""), 58:("组2-Xmax",""), 59:("组2-Ymin",""), 60:("组2-Ymax",""),
-        61:("组3-Xmin",""), 62:("组3-Xmax",""), 63:("组3-Ymin",""), 64:("组3-Ymax",""),
+        50:("帧计数器","d52=0时>0启用拾取后动画; 此游戏全为0"),
+        51:("动画帧基偏移","d52=0时: frame_idx=frame_cur+d51"),
+        52:("行为模式","0=标记bit8+可选动画 1=清除实体(禁用+隐藏) 2+=无行为; 此游戏全为1"),
+        53:("组1-物品ID","随机范围最小值; Xmin==Xmax=固定掉落"),
+        54:("组1-物品ID上限","随机范围最大值"),
+        55:("组1-数量","随机范围最小值; Ymin==Ymax=固定数量"),
+        56:("组1-数量上限","随机范围最大值"),
+        57:("组2-物品ID","(此游戏未使用)"),
+        58:("组2-物品ID上限",""),
+        59:("组2-数量",""),
+        60:("组2-数量上限",""),
+        61:("组3-物品ID","(此游戏未使用)"),
+        62:("组3-物品ID上限",""),
+        63:("组3-数量",""),
+        64:("组3-数量上限",""),
     },
     200: {  # NPC/角色 sub_406864 + sub_405CBC
         50:("条件角色",""), 51:("立绘ID","Cha.JVG块索引"),
@@ -908,12 +958,16 @@ class MatEditor:
         self._vis_edit_mode = tk.BooleanVar(value=False)  # 编辑开关: 默认关闭(禁止拖动)
         self._undo_pos = None  # 单步撤销: (entity_idx, old_x, old_y)
         self._sc_grp_section_count = 0
+        self.item_names = {}  # item_id → 物品名称 (来自 TKItem.dat + TKT)
         self._ani_jvg = None; self._cha_jvg = None; self._cur_jvg = None  # JVG 精灵数据
         self._vis_display_mode = tk.StringVar(value="游戏默认")
         self._vis_anim_playing = False      # 动画播放状态(默认暂停)
         self._vis_anim_timer = None         # 动画循环 timer ID
         self._vis_anim_frame = {}           # entity_idx → current cycle frame offset
         self._vis_play_btn = None           # 播放按钮引用
+        self._vis_sel_anim_active = False  # 选中实体动画播放状态
+        self._vis_sel_anim_timer = None    # 选中实体动画 timer ID
+        self._vis_sel_anim_btn = None      # 选中动画按钮引用
         self.defunit_recs = []; self.defunit_next = {}; self.defunit_entity = {}  # DefUnit链
         self.tkd_defines = []; self.tkd_header = ''; self.tkd_define_map = {}  # TKD脚本
         self.tkt_all = {}  # TKT全文数据库 (用于脚本预览解析对话文本)
@@ -926,6 +980,7 @@ class MatEditor:
         self._bit_hint = tk.BooleanVar(value=False)      # d2 bit3: 提示标记
         self._bit_busy = tk.BooleanVar(value=False)      # d2 bit4: 忙碌
         self._bit_resume = tk.BooleanVar(value=False)    # d2 bit5: 恢复
+        self._bit_taken = tk.BooleanVar(value=False)    # d2 bit8: 已拾取(type110)
         self._bit_animloop = tk.BooleanVar(value=False)  # d2 bit16: 动画循环
         self._sync_lock = False
 
@@ -1101,6 +1156,10 @@ class MatEditor:
         self._vis_play_btn = ttk.Button(top, text="▶", command=self._vis_toggle_anim, width=3)
         self._vis_play_btn.pack(side=tk.LEFT, padx=1)
         self._bind_tooltip(self._vis_play_btn, "播放/暂停精灵动画")
+        # 选中实体动画按钮
+        self._vis_sel_anim_btn = ttk.Button(top, text="▷", command=self._vis_toggle_sel_anim, width=3)
+        self._vis_sel_anim_btn.pack(side=tk.LEFT, padx=1)
+        self._bind_tooltip(self._vis_sel_anim_btn, "播放/暂停当前选中实体的动画")
         ttk.Separator(top, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=3)
         ttk.Button(top, text="刷新", command=self._vis_load_scene, width=4).pack(side=tk.LEFT, padx=1)
         ttk.Separator(top, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=3)
@@ -1158,14 +1217,15 @@ class MatEditor:
         self._build_group("基础属性", BASIC_FIELDS, 0)
         self._build_group("位置", POS_FIELDS, 1)
         self._build_group("动画", ANIM_FIELDS, 2)
-        self._build_group("脚本", SCRIPT_FIELDS, 3)
-        self._build_group("交互/角色", INTERACT_FIELDS, 4)
-        self._build_group("运行时(只读)", RUNTIME_FIELDS, 5)
+        self._build_group("物品", ITEM_FIELDS, 3)
+        self._build_group("脚本", SCRIPT_FIELDS, 4)
+        self._build_group("交互/角色", INTERACT_FIELDS, 5)
+        self._build_group("运行时(只读)", RUNTIME_FIELDS, 6)
         # flags ↔ checkbutton 双向同步
         self._sync_lock = False
         _bit_vars = [(self._bit_enable,1), (self._bit_visible,2), (self._bit_pickable,4),
                      (self._bit_hint,8), (self._bit_busy,0x10), (self._bit_resume,0x20),
-                     (self._bit_animloop,0x10000)]
+                     (self._bit_taken,0x100), (self._bit_animloop,0x10000)]
         def _on_cb(*args):
             if self._sync_lock: return
             self._sync_lock = True
@@ -1235,6 +1295,7 @@ class MatEditor:
                          ("_bit_hint","提示","bit3=提示标记(Hint): 显示浮动提示。SetHint(40B650)控制")]
                 bits_r2=[("_bit_busy","忙碌","bit4=忙碌(Busy): 脚本交互执行中, 阻塞移动。引擎交互状态机管理"),
                          ("_bit_resume","恢复","bit5=恢复(Resume): 交互结束恢复标记。引擎交互状态机管理"),
+                         ("_bit_taken","已拾取","bit8=已拾取(Taken): type110 d52=0模式下标记已拾取, 防止重复交互。sub_408B30设置/检查"),
                          ("_bit_animloop","循环动画","bit16=动画循环(AnimLoop): 动画循环播放。SetAni(40C1A4)控制")]
                 for ri,row_bits in enumerate([bits_r1,bits_r2]):
                     rf=ttk.Frame(cbf); rf.pack(fill=tk.X)
@@ -1251,6 +1312,9 @@ class MatEditor:
             if key=='hint_id':
                 hl=ttk.Label(frm,text="",foreground='#3366cc',font=FONT_S,wraplength=150)
                 hl.pack(anchor=tk.W); self._edit_vars['_hint_label']=hl
+            if key in ('item_g1_id','item_g2_id','item_g3_id'):
+                il=ttk.Label(frm,text="",foreground='#996600',font=FONT_S,wraplength=150)
+                il.pack(anchor=tk.W); self._edit_vars[f'_{key}_label']=il
         return lf
 
     def _build_script_tab(self):
@@ -1417,7 +1481,7 @@ class MatEditor:
         type_labels = _TYPE_LABELS.get(tval, {})
         if tval == 20: type_labels = _TYPE_LABELS.get(200, {})
         known = {}
-        for fields in (BASIC_FIELDS, POS_FIELDS, ANIM_FIELDS, SCRIPT_FIELDS, INTERACT_FIELDS, RUNTIME_FIELDS):
+        for fields in (BASIC_FIELDS, POS_FIELDS, ANIM_FIELDS, ITEM_FIELDS, SCRIPT_FIELDS, INTERACT_FIELDS, RUNTIME_FIELDS):
             for name, di, label, cmt in fields:
                 known[di] = (label, cmt)
         for di, (lbl, def_label, def_cmt) in self._param_labels.items():
@@ -1438,7 +1502,7 @@ class MatEditor:
         if tval == 20:
             type_labels = _TYPE_LABELS.get(200, {})
         known = {}
-        for fields in (BASIC_FIELDS, POS_FIELDS, ANIM_FIELDS, SCRIPT_FIELDS, INTERACT_FIELDS, RUNTIME_FIELDS):
+        for fields in (BASIC_FIELDS, POS_FIELDS, ANIM_FIELDS, ITEM_FIELDS, SCRIPT_FIELDS, INTERACT_FIELDS, RUNTIME_FIELDS):
             for name, di, label, cmt in fields:
                 known[di] = (name, label, cmt)
         for di in range(96):
@@ -1500,6 +1564,7 @@ class MatEditor:
         sid = self._vis_scene_id.get()
         self._vis_canvas.delete('all')
         self._vis_entities.clear(); self._vis_selected = None; self._vis_drag = None
+        self._vis_stop_sel_anim()
         self._vis_hit_regions = {}
         self._vis_anim_frame.clear()
         # 限制缓存
@@ -1712,6 +1777,9 @@ class MatEditor:
             if x1 <= cx <= x2 and y1 <= cy <= y2:
                 found = idx
         if found is not None:
+            # 切换到不同实体时停止选中动画
+            if self._vis_sel_anim_active and self._vis_selected != found:
+                self._vis_stop_sel_anim()
             self._vis_selected = found
             rec = self.records[found]
             tname = ENTITY_TYPES.get(rec['d0'], '?')
@@ -1803,9 +1871,70 @@ class MatEditor:
             self._vis_start_anim()
             if self._vis_play_btn: self._vis_play_btn.config(text="⏸")
 
+    # ---- 选中实体动画 ----
+    def _vis_toggle_sel_anim(self):
+        """切换当前选中实体的独立动画播放"""
+        if self._vis_selected is None:
+            self._vis_info.config(text="请先选中一个实体再播放动画")
+            return
+        if self._vis_anim_playing:
+            self._vis_info.config(text="全局动画已开启，无需单独播放")
+            return
+
+        idx = self._vis_selected
+        rec = self.records[idx]
+        mode = DISPLAY_MODES.get(self._vis_display_mode.get(), 'auto')
+        # 检查该实体是否支持动画
+        tval = rec['d0']
+        can_animate = False
+        if mode in ('auto', 'ani'):
+            if tval in (200, 20, 110) and rec['d64'] > 0 and self._ani_jvg:
+                can_animate = True
+        if not can_animate:
+            tname = ENTITY_TYPES.get(tval, '?')
+            self._vis_info.config(text=f"实体 #{idx} [{tname}] 不支持动画 (需 Ani.JVG 且 d64>0)")
+            return
+
+        if self._vis_sel_anim_active:
+            self._vis_stop_sel_anim()
+        else:
+            self._vis_start_sel_anim(idx)
+
+    def _vis_start_sel_anim(self, idx):
+        """启动选中实体动画循环 (~200ms/帧)"""
+        self._vis_sel_anim_active = True
+        if self._vis_sel_anim_btn: self._vis_sel_anim_btn.config(text="⏸")
+        # 初始化帧计数器
+        self._vis_anim_frame[idx] = 0
+
+        def _tick():
+            if not self._vis_sel_anim_active:
+                return
+            m = DISPLAY_MODES.get(self._vis_display_mode.get(), 'auto')
+            if m in ('wire', 'cha'):
+                self._vis_stop_sel_anim()
+                return
+            if idx in self._vis_anim_frame:
+                self._vis_anim_frame[idx] += 1
+            self._vis_redraw()
+            self._vis_sel_anim_timer = self.root.after(200, _tick)
+
+        self._vis_sel_anim_timer = self.root.after(200, _tick)
+        tname = ENTITY_TYPES.get(self.records[idx]['d0'], '?')
+        self._vis_info.config(text=f"选中动画: #{idx} [{tname}] 播放中")
+
+    def _vis_stop_sel_anim(self):
+        """停止选中实体动画"""
+        self._vis_sel_anim_active = False
+        if self._vis_sel_anim_timer:
+            self.root.after_cancel(self._vis_sel_anim_timer)
+            self._vis_sel_anim_timer = None
+        if self._vis_sel_anim_btn: self._vis_sel_anim_btn.config(text="▷")
+
     def _on_display_mode_change(self):
         """显示模式切换: 停止动画, 重置播放状态, 重载场景"""
         self._vis_stop_anim()
+        self._vis_stop_sel_anim()
         self._vis_anim_playing = False
         if self._vis_play_btn: self._vis_play_btn.config(text="▶")
         self._vis_load_scene()
@@ -1857,6 +1986,24 @@ class MatEditor:
             except Exception: pass
         # 加载 TKT 全文 (用于脚本预览对话文本解析)
         self.tkt_all = load_tkt_all(self.tkt_path)
+        # 加载 TKItem.dat → item_id → 物品名称映射 (用于类型110物品字段显示)
+        self.item_names = {}
+        item_p = os.path.join(d, "TKItem.dat")
+        if os.path.exists(item_p) and self.tkt_scenes:
+            try:
+                with open(item_p, 'rb') as f: item_raw = f.read()
+                item_dec = lzss_decompress(item_raw)
+                ITEM_REC = 64; ITEM_CNT = 600
+                for i in range(min(ITEM_CNT, len(item_dec) // ITEM_REC)):
+                    off = i * ITEM_REC
+                    fields = struct.unpack_from('<' + 'h' * 32, item_dec, off)
+                    item_id = fields[0]       # offset 0: item_id
+                    name_id = fields[2]       # offset 4: name_id (TKT text ID)
+                    if item_id > 0 and name_id > 0:
+                        name = self.tkt_all.get(name_id, '') or self.tkt_scenes.get(name_id, '')
+                        if name:
+                            self.item_names[item_id] = name.split('\n')[0].strip()
+            except Exception: pass
         grp_path = os.path.join(d, "SC.GRP"); idx_path = os.path.join(d, "SC.IDX")
         if os.path.exists(grp_path) and os.path.exists(idx_path):
             try:
@@ -2715,6 +2862,16 @@ class MatEditor:
         if '_scene_label' in self._edit_vars: self._edit_vars['_scene_label'].config(text=sname)
         if '_hint_label' in self._edit_vars:
             hid=rec['d23']; self._edit_vars['_hint_label'].config(text="" if hid==0 else self.tkt_scenes.get(hid,""))
+        # 物品名称标签: 组1/2/3 的物品ID下方显示 (通过TKItem.dat+TKT解析)
+        for key, di in [('_item_g1_id_label', 53), ('_item_g2_id_label', 57), ('_item_g3_id_label', 61)]:
+            if key in self._edit_vars:
+                item_id = rec[f'd{di}']
+                if item_id and item_id in self.item_names:
+                    self._edit_vars[key].config(text=self.item_names[item_id])
+                elif item_id:
+                    self._edit_vars[key].config(text=f"物品 #{item_id}")
+                else:
+                    self._edit_vars[key].config(text="")
         flags=rec['d2']
         self._bit_enable.set((flags&1)!=0)
         self._bit_visible.set((flags&2)!=0)
@@ -2722,6 +2879,7 @@ class MatEditor:
         self._bit_hint.set((flags&8)!=0)
         self._bit_busy.set((flags&0x10)!=0)
         self._bit_resume.set((flags&0x20)!=0)
+        self._bit_taken.set((flags&0x100)!=0)
         self._bit_animloop.set((flags&0x10000)!=0)
         self._sync_lock=False
         # 根据实体类型动态更新参数tab + 全部tab标签
@@ -2737,6 +2895,8 @@ class MatEditor:
             elif isinstance(var,ttk.Combobox): var.set("")
         if '_scene_label' in self._edit_vars: self._edit_vars['_scene_label'].config(text="")
         if '_hint_label' in self._edit_vars: self._edit_vars['_hint_label'].config(text="")
+        for key in ('_item_g1_id_label', '_item_g2_id_label', '_item_g3_id_label'):
+            if key in self._edit_vars: self._edit_vars[key].config(text="")
         # 恢复参数tab标签为默认
         for di, (lbl, def_label, _) in self._param_labels.items():
             lbl.config(text=f"[{di:02d}] {def_label}", foreground='black')
