@@ -905,6 +905,8 @@ class MatEditor:
         self._vis_bg_image = None; self._vis_bg_id = None
         self._vis_entities = {}; self._vis_hit_regions = {}
         self._vis_selected = None; self._vis_drag = None
+        self._vis_edit_mode = tk.BooleanVar(value=False)  # 编辑开关: 默认关闭(禁止拖动)
+        self._undo_pos = None  # 单步撤销: (entity_idx, old_x, old_y)
         self._sc_grp_section_count = 0
         self._ani_jvg = None; self._cha_jvg = None; self._cur_jvg = None  # JVG 精灵数据
         self._vis_display_mode = tk.StringVar(value="游戏默认")
@@ -959,6 +961,7 @@ class MatEditor:
         self.root.bind('<Control-o>',lambda e:self._load_dir())
         self.root.bind('<Control-s>',lambda e:self._save())
         self.root.bind('<Control-n>',lambda e:self._new_record())
+        self.root.bind('<Control-z>', self._vis_canvas_undo)
         self.root.protocol("WM_DELETE_WINDOW",self._on_close)
 
         # 三栏水平布局
@@ -1100,6 +1103,11 @@ class MatEditor:
         self._bind_tooltip(self._vis_play_btn, "播放/暂停精灵动画")
         ttk.Separator(top, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=3)
         ttk.Button(top, text="刷新", command=self._vis_load_scene, width=4).pack(side=tk.LEFT, padx=1)
+        ttk.Separator(top, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=3)
+        # 编辑开关(默认关闭,防止误拖动)
+        self._vis_edit_check = ttk.Checkbutton(top, text="允许拖动", variable=self._vis_edit_mode,
+                                                command=self._on_edit_mode_change)
+        self._vis_edit_check.pack(side=tk.LEFT, padx=1)
         ttk.Separator(top, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=3)
         ttk.Button(top, text="新增实体", command=self._new_record, width=8).pack(side=tk.LEFT, padx=1)
 
@@ -1709,8 +1717,13 @@ class MatEditor:
             tname = ENTITY_TYPES.get(rec['d0'], '?')
             pos_x = rec['d18'] if rec['d0'] == 10 else rec['d10']
             pos_y = rec['d19'] if rec['d0'] == 10 else rec['d11']
-            self._vis_info.config(text=f"选中: #{found} [{tname}] 坐标({pos_x},{pos_y}) — 拖拽可移动")
-            self._vis_drag = (found, cx, cy, pos_x, pos_y)
+            # 保存拖动前位置(用于 Ctrl+Z 撤销)
+            self._undo_pos = (found, pos_x, pos_y)
+            if self._vis_edit_mode.get():
+                self._vis_info.config(text=f"选中: #{found} [{tname}] 坐标({pos_x},{pos_y}) — 拖拽可移动")
+                self._vis_drag = (found, cx, cy, pos_x, pos_y)
+            else:
+                self._vis_info.config(text=f"选中: #{found} [{tname}] 坐标({pos_x},{pos_y}) — 拖动已锁定")
             self._sync_entity_list_select(found)
             self._current_param_idx = found
             self._show_record(rec)
@@ -1721,6 +1734,7 @@ class MatEditor:
     def _vis_canvas_drag(self, event):
         """拖拽实体移动"""
         if self._vis_drag is None: return
+        if not self._vis_edit_mode.get(): return  # 编辑模式关闭时禁止拖动
         eidx, sx, sy, ox, oy = self._vis_drag
         cx = int(self._vis_canvas.canvasx(event.x))
         cy = int(self._vis_canvas.canvasy(event.y))
@@ -1748,6 +1762,34 @@ class MatEditor:
             self._vis_drag = (eidx, cx, cy, px, py)
             if hasattr(self, '_current_param_idx') and self._current_param_idx == eidx:
                 self._show_record(rec)
+
+    # ---- 编辑模式与撤销 ----
+    def _on_edit_mode_change(self):
+        """编辑开关切换: 控制光标样式和拖动权限"""
+        if self._vis_edit_mode.get():
+            self._vis_canvas.config(cursor='crosshair')
+            self._vis_info.config(text="编辑模式已开启 — 可拖动实体")
+        else:
+            self._vis_canvas.config(cursor='arrow')
+            self._vis_drag = None  # 取消进行中的拖动
+            self._vis_info.config(text="编辑模式已锁定 — 拖动已禁用 (勾选工具栏「允许拖动」可解锁)")
+
+    def _vis_canvas_undo(self, event=None):
+        """Ctrl+Z 撤销: 恢复到本次拖动前的位置"""
+        if self._undo_pos is None: return
+        eidx, old_x, old_y = self._undo_pos
+        rec = self.records[eidx]
+        if rec['d0'] == 10:
+            rec['d18'], rec['d19'] = old_x, old_y
+            rec['d10'], rec['d11'] = old_x, old_y
+        else:
+            rec['d10'], rec['d11'] = old_x, old_y
+        self._dirty = True
+        self._vis_info.config(text=f"已撤销: #{eidx} → ({old_x},{old_y})")
+        self._vis_redraw()
+        self._undo_pos = None
+        if hasattr(self, '_current_param_idx') and self._current_param_idx == eidx:
+            self._show_record(rec)
 
     # ---- 动画播放控制 ----
     def _vis_toggle_anim(self):
