@@ -2262,6 +2262,8 @@ class MatEditor:
             self.tkd_define_map[define_id] = d
 
         self._dirty = True; self._script_dirty = True
+        # 同步被修改的字段到表单 StringVars，防止 _apply_edit 用旧值覆盖
+        self._sync_form_dwords(rec, (h_di, mx_di, cur_di))
         self._refresh_chain_list()
         # 选中新节点
         for item in self.chain_tree.get_children():
@@ -2289,8 +2291,9 @@ class MatEditor:
         if not messagebox.askyesno("确认删除", f"删除 DefUnit #{du_idx} → DEFINE {define_id}?\n此操作同时从 TKD.dat 删除对应 DEFINE 块。"):
             return
 
-        # 找到链中前驱节点
+# 找到链中前驱节点
         rec = self.records[self._current_param_idx]
+        _modified_dis = []  # 记录被修改的 dword 索引，用于同步表单
         for sub_name, h_di, mx_di, cur_di in [('A', 39, 30, 33), ('B', 40, 31, 34), ('C', 41, 32, 35)]:
             h = rec.get(f'd{h_di}', 0); mx = rec.get(f'd{mx_di}', 0)
             if h <= 0: continue
@@ -2312,6 +2315,7 @@ class MatEditor:
             cur = rec.get(f'd{cur_di}', 0)
             if cur > mx - 1:
                 rec[f'd{cur_di}'] = max(1, mx - 1)
+            _modified_dis = [h_di, mx_di, cur_di]
             break
 
         # 清零 DefUnit 记录
@@ -2327,12 +2331,39 @@ class MatEditor:
                 self.tkd_defines.remove(d)
 
         self._dirty = True; self._script_dirty = True
+        # 同步被修改的字段到表单 StringVars，防止 _apply_edit 用旧值覆盖
+        if _modified_dis:
+            self._sync_form_dwords(rec, _modified_dis)
         # 清空编辑器
         self.script_text.config(state='normal')
         self.script_text.delete('1.0', tk.END)
         self.script_text.config(state='disabled')
         self._current_edit_define_id = None
         self._refresh_chain_list()
+
+    def _sync_form_dwords(self, rec, dis):
+        """同步指定 dword 索引列表对应的表单字段值，防止 _apply_edit 用旧值覆盖程序性修改。
+        同时更新命名键 (参数tab, 如 head_A) 和 raw 键 (全部tab, 如 raw_39)。"""
+        self._sync_lock = True
+        for di in dis:
+            val = str(rec[f'd{di}'])
+            # 更新命名键 (参数 tab): 从 ALL_EDIT_FIELDS/RUNTIME_FIELDS 查找 di→key 映射
+            for fields in (ALL_EDIT_FIELDS, RUNTIME_FIELDS):
+                for key, f_di, label, cmt in fields:
+                    if f_di == di and key in self._edit_vars:
+                        var = self._edit_vars[key]
+                        if isinstance(var, tk.StringVar):
+                            var.set(val)
+                        break
+            # 更新 raw 键 (全部 tab)
+            for prefix in ('raw_', 'd'):
+                key = f'{prefix}{di}'
+                if key in self._edit_vars:
+                    var = self._edit_vars[key]
+                    if isinstance(var, tk.StringVar):
+                        var.set(val)
+                    break
+        self._sync_lock = False
 
     def _show_record(self,rec):
         self._sync_lock=True
