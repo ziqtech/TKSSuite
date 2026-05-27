@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-TKMat.Dat 地图实体编辑器 v2.2 — 融合脚本编辑
+TKMat.Dat 地图实体编辑器 v2.3 — 融合脚本编辑
 =============================================================
 逆向依据:
   sub_412688:21: TKMat.Dat → dword_51AF40 (2304000B, 6000×384B)
@@ -10,6 +10,8 @@ TKMat.Dat 地图实体编辑器 v2.2 — 融合脚本编辑
   sub_40EBD4: 脚本PC[42]/DefUnit索引[44]/子场景[30-35]
   sub_4066F0: DefUnit链遍历 [39-41]
   sub_402E88: TKDefUnit.dat 加载 (5000×16B)
+  sub_409618: 主Tick循环 — A链=自动(d33>0) B链=触发(交互)
+  sub_408E5C: 玩家点击交互 — B链触发
 
 用法:
   python mat_editor.py
@@ -80,6 +82,40 @@ def load_tkt_all(tkt_path):
         except: s=txt.decode('gbk',errors='replace')
         if s: lookup[eid]=s
     return lookup
+
+def get_script_info(rec):
+    """根据逆向分析 (sub_409618/sub_408E5C/sub_4081F8等) 判断实体的脚本执行方式。
+    返回 (script_label, tick_label):
+      script_label: "A⚡B👆" 形式, A=自动(Tick), B=触发(交互), C=其他
+      tick_label: tick周期数值 (d4) 或 空"""
+    if is_empty(rec):
+        return "", ""
+    parts = []
+    cur_a = rec.get('d33', 0)
+    cur_b = rec.get('d34', 0)
+    cur_c = rec.get('d35', 0)
+    head_a = rec.get('d39', 0)
+    head_b = rec.get('d40', 0)
+    head_c = rec.get('d41', 0)
+    max_a = rec.get('d30', 0)
+    max_b = rec.get('d31', 0)
+    max_c = rec.get('d32', 0)
+    # A链: 自动运行 (sub_409618 中 d33>0 时自动执行)
+    if head_a > 0 and max_a > 0:
+        label = "A⚡" if cur_a > 0 else "A"
+        parts.append(label)
+    # B链: 触发/交互 (sub_4081F8/sub_408408/sub_4084E0/sub_408E5C 中交互时执行B链)
+    if head_b > 0 and max_b > 0:
+        label = "B👆" if cur_b > 0 else "B"
+        parts.append(label)
+    # C链: 其他/保留
+    if head_c > 0 and max_c > 0:
+        label = "C*" if cur_c > 0 else "C"
+        parts.append(label)
+    script_label = " ".join(parts)
+    tick_val = rec.get('d4', 0)
+    tick_label = str(tick_val) if tick_val > 0 else ""
+    return script_label, tick_label
 
 SCRIPT_FIELDS = [
     ("defunit_idx",44,"DefUnit索引","文件值=-1为正常; 运行时由 sub_4066F0 沿链遍历计算填入。sub_40EBD4:18 读取"),
@@ -854,7 +890,7 @@ def load_scene_background(sc_grp_path, sc_idx_path, scene_id):
 class MatEditor:
     def __init__(self, root):
         self.root = root
-        self.root.title("TKMat.Dat 地图实体编辑器 v2.2")
+        self.root.title("TKMat.Dat 地图实体编辑器 v2.3")
         ico = os.path.join(os.path.dirname(__file__), 'TKS.ico')
         if os.path.exists(ico): self.root.iconbitmap(default=ico)
         self.root.geometry("1280x820"); self.root.minsize(1024,640)
@@ -1024,11 +1060,11 @@ class MatEditor:
         self.status_var=tk.StringVar(value="请通过 文件 → 加载 TKS 目录 打开数据")
         ttk.Label(tb,textvariable=self.status_var,foreground="gray",font=FONT_S).pack(side=tk.RIGHT,padx=4)
         # 实体 Treeview
-        cols2 = ('index','type','scene','x','y')
+        cols2 = ('index','type','scene','x','y','script','tick')
         self.tree = ttk.Treeview(entity_frame, columns=cols2, show='headings', selectmode='browse')
-        for cid,cn,cw in [('index','索引',45),('type','类型',85),('scene','场景',110),('x','X',45),('y','Y',45)]:
+        for cid,cn,cw in [('index','索引',40),('type','类型',75),('scene','场景',95),('x','X',40),('y','Y',40),('script','脚本',65),('tick','Tick',38)]:
             self.tree.heading(cid,text=cn,command=lambda c=cid:self._sort_by(c))
-            self.tree.column(cid,width=cw,anchor='center' if cid in('index','x','y') else 'w',minwidth=cw)
+            self.tree.column(cid,width=cw,anchor='center' if cid in('index','x','y','tick') else 'w',minwidth=cw)
         vsb = ttk.Scrollbar(entity_frame, orient=tk.VERTICAL, command=self.tree.yview)
         self.tree.configure(yscrollcommand=vsb.set)
         self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True); vsb.pack(side=tk.RIGHT, fill=tk.Y)
@@ -1210,11 +1246,36 @@ class MatEditor:
         return lf
 
     def _build_script_tab(self):
-        """构建 Tab "脚本" — DefUnit 链列表 + 脚本编辑器"""
+        """构建 Tab "脚本" — 脚本调度信息 + DefUnit 链列表 + 脚本编辑器"""
         pw = ttk.PanedWindow(self.tab_script, orient=tk.VERTICAL)
         pw.pack(fill=tk.BOTH, expand=True)
 
-        # 上方: DefUnit 链编辑区
+        # 上方: 脚本调度信息 (基于逆向 sub_409618/sub_408E5C/sub_4081F8 等)
+        sched_f = ttk.LabelFrame(pw, text="脚本调度信息", padding=4)
+        pw.add(sched_f, weight=1)
+        self._sched_labels = {}
+        sg = ttk.Frame(sched_f); sg.pack(fill=tk.X)
+        sched_items = [
+            ('enabled', '启用', 'flags bit0=启用: 实体参与游戏循环。sub_409618: 检查d2&1'),
+            ('pickable', '可交互', 'flags bit2=可交互: 写入拾取缓冲区可被点击。sub_408E5C: 点击触发交互'),
+            ('tick', 'Tick周期', 'd4=Tick: 控制脚本执行频率。sub_409618: d5递增到d4时触发'),
+            ('timer', '定时器', 'd3=定时器: >0时实体暂停处理。sub_409618: 每帧递减'),
+            ('chain_a', 'A链(自动)', '子场景A = 自动运行(Tick)脚本。sub_409618: cur_A>0时每Tick自动执行'),
+            ('chain_b', 'B链(触发)', '子场景B = 触发(交互)脚本。sub_4081F8/408408/4084E0/408E5C: 交互时执行'),
+            ('chain_c', 'C链(其他)', '子场景C = 保留链。可能由特定游戏事件触发'),
+            ('trigger', '触发方式', '基于实体类型和逆向分析: type=5/10:接近触发 type=15:接近+条件 type=16:接近+道具 type=20/200:点击对话 type=110:点击机关'),
+        ]
+        for ri, (key, label, tip) in enumerate(sched_items):
+            r, c = divmod(ri, 4)
+            frm = ttk.Frame(sg); frm.grid(row=r, column=c, sticky='w', padx=4, pady=1)
+            lbl = ttk.Label(frm, text=f"{label}:", font=FONT_S, foreground='#555')
+            lbl.pack(side=tk.LEFT)
+            val = ttk.Label(frm, text="", font=FONT_S, foreground='black', width=16)
+            val.pack(side=tk.LEFT, padx=(2,0))
+            if tip: self._bind_tooltip(lbl, tip)
+            self._sched_labels[key] = val
+
+        # 中间: DefUnit 链编辑区
         top_f = ttk.LabelFrame(pw, text="DefUnit 链节点", padding=4)
         pw.add(top_f, weight=3)
         tb = ttk.Frame(top_f); tb.pack(fill=tk.X, pady=(0,2))
@@ -1601,6 +1662,12 @@ class MatEditor:
             if tval == 10: label = f"T{idx}"
             elif tval == 5: label = f"P{idx}"
             elif tval == 200: label = f"N{idx}"
+            # 脚本类型图标 (基于逆向 sub_409618/sub_408E5C)
+            cur_a = r.get('d33', 0); cur_b = r.get('d34', 0)
+            script_icon = ""
+            if cur_a > 0: script_icon += "⚡"  # 自动(Tick)脚本
+            if cur_b > 0: script_icon += "👆"  # 触发(交互)脚本
+            if script_icon: label = f"{label} {script_icon}"
             dr = ImageDraw.Draw(composite)
             dr.text((x, y-16), label, fill=color)
 
@@ -1847,7 +1914,8 @@ class MatEditor:
         self.tree.delete(*self.tree.get_children())
         for idx in self.filtered_indices:
             rec=self.records[idx]; tval=rec['d0']; sname=scene_name(self.tkt_scenes,rec['d1'])
-            vals=(str(idx),f"{tval}-{ENTITY_TYPES.get(tval,'未知')}",sname,str(rec['d10']),str(rec['d11']))
+            script_lbl, tick_lbl = get_script_info(rec)
+            vals=(str(idx),f"{tval}-{ENTITY_TYPES.get(tval,'未知')}",sname,str(rec['d10']),str(rec['d11']),script_lbl,tick_lbl)
             tag=f'type{tval}' if tval in TYPE_COLORS else ''
             self.tree.insert('','end',values=vals,tags=(tag,))
         if sel_idx:
@@ -1858,7 +1926,7 @@ class MatEditor:
             self.lbl_title.config(text="未选中")
             self._clear_form()
     def _sort_by(self,col):
-        ci={'index':0,'type':1,'scene':2,'x':3,'y':4}.get(col,0)
+        ci={'index':0,'type':1,'scene':2,'x':3,'y':4,'script':5,'tick':6}.get(col,0)
         items=[(self.tree.item(item,'values'),item) for item in self.tree.get_children()]
         try: items.sort(key=lambda x:(int(x[0][ci]) if x[0][ci].lstrip('-').isdigit() else 0) if ci in(0,3,4) else x[0][ci])
         except: pass
@@ -1913,20 +1981,29 @@ class MatEditor:
         self.script_info_lbl.config(text="(未选中 DEFINE)")
 
     def _refresh_chain_list(self):
-        """刷新 DefUnit 链 Treeview (按子场景 A/B/C 分组)"""
+        """刷新 DefUnit 链 Treeview (按子场景 A/B/C 分组, 标记链类型)"""
         self.chain_tree.delete(*self.chain_tree.get_children())
         if not self.records: return
         rec = self.records[self._current_param_idx] if hasattr(self, '_current_param_idx') and self._current_param_idx is not None and 0 <= self._current_param_idx < len(self.records) else None
         if not rec or not has_data(rec):
             self._clear_script_editor()
+            self._update_sched_info(None)
             return
         entity_id = rec['index']
+        # 链类型标签 (基于逆向分析 sub_409618/sub_408E5C 等)
+        chain_labels = {
+            'A': ('⚡ 自动(Tick)', 'A链=自动运行: 每Tick周期自动执行 (sub_409618: cur_A>0触发)'),
+            'B': ('👆 触发(交互)', 'B链=触发执行: 玩家交互时执行 (sub_4081F8/408408/4084E0/408E5C)'),
+            'C': ('✱ 其他', 'C链=保留: 可能由特定游戏事件触发'),
+        }
         for sub_name, h_di, mx_di, cur_di in [('A', 39, 30, 33), ('B', 40, 31, 34), ('C', 41, 32, 35)]:
             h = rec.get(f'd{h_di}', 0); mx = rec.get(f'd{mx_di}', 0)
             cur = rec.get(f'd{cur_di}', 0)
             if h <= 0 or mx <= 0: continue
-            # 插入分组标题
-            head_iid = self.chain_tree.insert('', 'end', values=(f'子场景{sub_name}', '', '', '', f'head=#{h} max={mx}'), tags=('group',))
+            # 插入分组标题 — 显示链类型
+            type_lbl, type_tip = chain_labels[sub_name]
+            cur_str = f'当前={cur}' if cur > 0 else '未激活'
+            head_iid = self.chain_tree.insert('', 'end', values=(f'{sub_name}{type_lbl}', '', '', '', f'head=#{h} max={mx} {cur_str}'), tags=('group',))
             # 遍历链
             idx = h; visited_chain = set()
             for step in range(mx):
@@ -1949,15 +2026,17 @@ class MatEditor:
         if total == 0:
             self._clear_script_editor()
             self.script_info_lbl.config(text="(无关联 DEFINE)")
-            return
-        # 自动选中当前项 (cur=1 的链头)
-        for item in self.chain_tree.get_children():
-            tags = self.chain_tree.item(item, 'tags')
-            if 'entry' in tags:
-                self.chain_tree.selection_set(item)
-                self.chain_tree.see(item)
-                self._on_chain_select()
-                break
+        else:
+            # 自动选中当前项 (cur=1 的链头)
+            for item in self.chain_tree.get_children():
+                tags = self.chain_tree.item(item, 'tags')
+                if 'entry' in tags:
+                    self.chain_tree.selection_set(item)
+                    self.chain_tree.see(item)
+                    self._on_chain_select()
+                    break
+        # 更新脚本调度信息面板
+        self._update_sched_info(rec)
 
     def _on_chain_select(self, event=None):
         """选中链列表项 → 保存当前编辑 → 加载新 DEFINE"""
@@ -1974,6 +2053,88 @@ class MatEditor:
         # 加载新 DEFINE
         self._load_define_to_editor(define_id)
         self.chain_info_lbl.config(text=f"DefUnit #{du_idx} → DEFINE {define_id}")
+
+    # =========== 脚本调度信息 (基于逆向) ===========
+
+    def _update_sched_info(self, rec):
+        """更新脚本调度信息面板。基于逆向分析:
+        sub_409618: 主Tick循环, 检查enabled/d3定时器/d4Tick周期/d33自动脚本
+        sub_408E5C: 玩家点击交互, 检查pickable/d34触发脚本
+        sub_4081F8: type=5/10接近触发
+        sub_408408: type=15条件触发
+        sub_4084E0: type=16门/建筑交互"""
+        if rec is None or is_empty(rec):
+            for key in self._sched_labels:
+                self._sched_labels[key].config(text="", foreground='black')
+            return
+        flags = rec.get('d2', 0)
+        tval = rec.get('d0', 0)
+        # 启用
+        en = (flags & 1) != 0
+        self._sched_labels['enabled'].config(
+            text="✓ 已启用" if en else "✗ 未启用",
+            foreground='#228B22' if en else '#CC3333')
+        # 可交互
+        pk = (flags & 4) != 0
+        self._sched_labels['pickable'].config(
+            text="✓ 可交互" if pk else "✗ 不可交互",
+            foreground='#228B22' if pk else '#999')
+        # Tick周期
+        tick = rec.get('d4', 0)
+        if tick > 0:
+            self._sched_labels['tick'].config(text=f"{tick} (越大越慢)", foreground='#333')
+        else:
+            self._sched_labels['tick'].config(text="0 (无Tick)", foreground='#999')
+        # 定时器
+        timer = rec.get('d3', 0)
+        if timer > 0:
+            self._sched_labels['timer'].config(text=f"{timer} (暂停中)", foreground='#CC6600')
+        else:
+            self._sched_labels['timer'].config(text="0 (正常运行)", foreground='#333')
+        # A链
+        cur_a = rec.get('d33', 0); head_a = rec.get('d39', 0); max_a = rec.get('d30', 0)
+        if head_a > 0 and max_a > 0:
+            a_status = "⚡ 自动执行中" if cur_a > 0 else "已定义(未激活)"
+            self._sched_labels['chain_a'].config(
+                text=f"✓ {a_status} [head=#{head_a},max={max_a},cur={cur_a}]",
+                foreground='#228B22' if cur_a > 0 else '#666')
+        else:
+            self._sched_labels['chain_a'].config(text="— 无", foreground='#999')
+        # B链
+        cur_b = rec.get('d34', 0); head_b = rec.get('d40', 0); max_b = rec.get('d31', 0)
+        if head_b > 0 and max_b > 0:
+            b_status = "👆 交互触发" if cur_b > 0 else "已定义(未激活)"
+            self._sched_labels['chain_b'].config(
+                text=f"✓ {b_status} [head=#{head_b},max={max_b},cur={cur_b}]",
+                foreground='#2196F3' if cur_b > 0 else '#666')
+        else:
+            self._sched_labels['chain_b'].config(text="— 无", foreground='#999')
+        # C链
+        cur_c = rec.get('d35', 0); head_c = rec.get('d41', 0); max_c = rec.get('d32', 0)
+        if head_c > 0 and max_c > 0:
+            c_status = "✱ 活跃" if cur_c > 0 else "已定义(未激活)"
+            self._sched_labels['chain_c'].config(
+                text=f"✓ {c_status} [head=#{head_c},max={max_c},cur={cur_c}]",
+                foreground='#9C27B0' if cur_c > 0 else '#666')
+        else:
+            self._sched_labels['chain_c'].config(text="— 无", foreground='#999')
+        # 触发方式 (基于实体类型和逆向分析)
+        trigger_map = {
+            5:  "接近触发 — 玩家走到传送点上 (sub_4081F8)",
+            10: "接近触发 — 玩家踩上地形块 (sub_4081F8)",
+            15: "接近+条件 — 需d34!=0且方向匹配 (sub_408408)",
+            16: "接近+道具 — 可能有道具检查 (sub_4084E0)",
+            20: "点击对话 — 点击NPC/事件对象 (sub_408E5C)",
+            110: "点击机关 — 点击触发特殊效果 (sub_408B30)",
+            200: "点击对话 — 点击NPC交互 (sub_408E5C)",
+        }
+        trigger = trigger_map.get(tval, "未知")
+        auto_note = ""
+        if cur_a > 0:
+            auto_note = " + A链自动(Tick)"
+        self._sched_labels['trigger'].config(
+            text=f"{trigger}{auto_note}",
+            foreground='#333')
 
     # =========== 脚本标签页 — 编辑器 ===========
 
@@ -2541,6 +2702,8 @@ class MatEditor:
         self._clear_script_editor()
         self.chain_tree.delete(*self.chain_tree.get_children())
         self.chain_info_lbl.config(text="")
+        # 清空调度信息
+        self._update_sched_info(None)
         for bv in (self._bit_enable,self._bit_visible,self._bit_pickable,
                     self._bit_hint,self._bit_busy,self._bit_resume,self._bit_animloop):
             bv.set(False)
@@ -2754,9 +2917,10 @@ class MatEditor:
              "注意: [52-56]字段语义与实体类型相关 (type=10: 传送参数; type=200: 动画参数)")
         messagebox.showinfo("字段说明",msg)
     def _show_about(self):
-        messagebox.showinfo("关于","TKMat.Dat 地图实体编辑器 v2.2\n\n"
-            "模式: 参数 + 可视化 + 脚本编辑\n"
-            "逆向依据: sub_412688, sub_405CBC, sub_4066F0, sub_40EBD4\n"
+        messagebox.showinfo("关于","TKMat.Dat 地图实体编辑器 v2.3\n\n"
+            "模式: 参数 + 可视化 + 脚本编辑 + 脚本调度分析\n"
+            "逆向依据: sub_412688, sub_405CBC, sub_4066F0, sub_40EBD4, sub_409618\n"
+            "脚本调度: A链=自动(Tick) B链=触发(交互) C链=其他\n"
             "格式: TKMat 6000×384B + TKDefUnit 5000×16B + TKD脚本\n"
             "保存时一次性写入三个文件")
 
