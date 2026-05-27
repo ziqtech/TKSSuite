@@ -982,6 +982,9 @@ class MatEditor:
         self._bit_resume = tk.BooleanVar(value=False)    # d2 bit5: 恢复
         self._bit_taken = tk.BooleanVar(value=False)    # d2 bit8: 已拾取(type110)
         self._bit_animloop = tk.BooleanVar(value=False)  # d2 bit16: 动画循环
+        self._bit_ev12 = tk.BooleanVar(value=False)      # d2 bit12: 事件标志
+        self._bit_ev13 = tk.BooleanVar(value=False)      # d2 bit13: 事件标志(最常用)
+        self._bit_ev14 = tk.BooleanVar(value=False)      # d2 bit14: 事件标志
         self._sync_lock = False
 
         self._build_ui(); self._set_edit_enabled(False)
@@ -1225,7 +1228,8 @@ class MatEditor:
         self._sync_lock = False
         _bit_vars = [(self._bit_enable,1), (self._bit_visible,2), (self._bit_pickable,4),
                      (self._bit_hint,8), (self._bit_busy,0x10), (self._bit_resume,0x20),
-                     (self._bit_taken,0x100), (self._bit_animloop,0x10000)]
+                     (self._bit_taken,0x100), (self._bit_animloop,0x10000),
+                     (self._bit_ev12,0x1000), (self._bit_ev13,0x2000), (self._bit_ev14,0x4000)]
         def _on_cb(*args):
             if self._sync_lock: return
             self._sync_lock = True
@@ -1288,17 +1292,25 @@ class MatEditor:
                 ev=tk.StringVar(); self._edit_vars[key]=ev
                 ttk.Entry(frm,textvariable=ev,width=14,font=FONT).pack(fill=tk.X)
                 cbf=ttk.Frame(frm); cbf.pack(fill=tk.X, pady=(2,0))
-                # 位域 checkbutton: 第一行 bit0~3, 第二行 bit4~5+bit16
-                bits_r1=[("_bit_enable","启用","bit0=启用(Enabled): 参与游戏循环和脚本执行。SetEnabled(40BE30), Disable(40C5A4)清除, Enable(40C648)设置"),
-                         ("_bit_visible","显示","bit1=可见(Visible): 渲染到屏幕。SetVisible(40BEDC), Disable清除, Enable设置"),
-                         ("_bit_pickable","可交互","bit2=可交互(Interactive): 写入鼠标拾取缓冲区, 可被点击触发交互(对话/开锁/拾物)。406864:117渲染写入word_78E276, 410B74鼠标点击读出, 408E5C交互校验"),
-                         ("_bit_hint","提示","bit3=提示标记(Hint): 显示浮动提示。SetHint(40B650)控制")]
-                bits_r2=[("_bit_busy","忙碌","bit4=忙碌(Busy): 脚本交互执行中, 阻塞移动。引擎交互状态机管理"),
-                         ("_bit_resume","恢复","bit5=恢复(Resume): 交互结束恢复标记。引擎交互状态机管理"),
-                         ("_bit_taken","已拾取","bit8=已拾取(Taken): type110 d52=0模式下标记已拾取, 防止重复交互。sub_408B30设置/检查"),
-                         ("_bit_animloop","循环动画","bit16=动画循环(AnimLoop): 动画循环播放。SetAni(40C1A4)控制")]
-                for ri,row_bits in enumerate([bits_r1,bits_r2]):
+                # 位域 checkbutton: 按实体类型显示/隐藏对应行
+                # 第1行: 通用 bit0~3
+                bits_r1=[("_bit_enable","启用","bit0=启用(Enabled): 参与游戏循环和脚本执行"),
+                         ("_bit_visible","显示","bit1=可见(Visible): 渲染到屏幕"),
+                         ("_bit_pickable","可交互","bit2=可交互(Interactive): 可被点击触发交互"),
+                         ("_bit_hint","提示","bit3=提示标记(Hint): 显示浮动提示")]
+                # 第2行: 通用 bit4~5 + type110 bit8 + 通用 bit16
+                bits_r2=[("_bit_busy","忙碌","bit4=忙碌(Busy): 脚本交互执行中, 阻塞移动"),
+                         ("_bit_resume","恢复","bit5=恢复(Resume): 交互结束恢复标记"),
+                         ("_bit_taken","已拾取","bit8=已拾取: type110 d52=0模式标记, sub_408B30检查"),
+                         ("_bit_animloop","循环动画","bit16=动画循环: 精灵动画循环播放")]
+                # 第3行: type20/200 事件标志 bit12~14 (仅事件相关实体显示)
+                bits_r3=[("_bit_ev12","事件标志A","bit12=事件标志: type20/200渲染/行为控制位"),
+                         ("_bit_ev13","事件标志B","bit13=事件标志(最常用): type20/200 共104实体使用"),
+                         ("_bit_ev14","事件标志C","bit14=事件标志: type20/200 共29实体使用")]
+                self._flags_row_frames = []
+                for ri,row_bits in enumerate([bits_r1,bits_r2,bits_r3]):
                     rf=ttk.Frame(cbf); rf.pack(fill=tk.X)
+                    self._flags_row_frames.append(rf)
                     for attr,text,ttip in row_bits:
                         cb=ttk.Checkbutton(rf,text=text,variable=getattr(self,attr))
                         cb.pack(side=tk.LEFT,padx=1)
@@ -1517,6 +1529,17 @@ class MatEditor:
                 lbl.config(text=f"[{di:02d}] {label}", foreground='black')
             else:
                 lbl.config(text=f"[{di:02d}] d{di}", foreground='#888')
+
+    def _update_flags_visibility(self, tval):
+        """根据实体类型显示/隐藏 flags 复选框行"""
+        if not hasattr(self, '_flags_row_frames') or not self._flags_row_frames:
+            return
+        # 第3行 (bit12~14): 仅 type=20(事件对象) 或 type=200(NPC) 时显示
+        row3 = self._flags_row_frames[2]
+        if tval in (20, 200):
+            row3.pack(fill=tk.X)
+        else:
+            row3.pack_forget()
 
     def _sync_entity_filter_to_scene(self, sid):
         """场景选中后同步筛选左侧实体列表为该场景的实体"""
@@ -2881,10 +2904,15 @@ class MatEditor:
         self._bit_resume.set((flags&0x20)!=0)
         self._bit_taken.set((flags&0x100)!=0)
         self._bit_animloop.set((flags&0x10000)!=0)
+        self._bit_ev12.set((flags&0x1000)!=0)
+        self._bit_ev13.set((flags&0x2000)!=0)
+        self._bit_ev14.set((flags&0x4000)!=0)
         self._sync_lock=False
         # 根据实体类型动态更新参数tab + 全部tab标签
         self._update_param_labels(tval)
         self._update_all_tab_labels(tval)
+        # 根据实体类型更新 flags 复选框行的可见性
+        self._update_flags_visibility(tval)
         # 刷新脚本标签页链列表
         self._refresh_chain_list()
 
@@ -2907,8 +2935,13 @@ class MatEditor:
         # 清空调度信息
         self._update_sched_info(None)
         for bv in (self._bit_enable,self._bit_visible,self._bit_pickable,
-                    self._bit_hint,self._bit_busy,self._bit_resume,self._bit_animloop):
+                    self._bit_hint,self._bit_busy,self._bit_resume,
+                    self._bit_taken,self._bit_animloop,
+                    self._bit_ev12,self._bit_ev13,self._bit_ev14):
             bv.set(False)
+        # 隐藏 type20 专属 flags 行
+        if hasattr(self, '_flags_row_frames') and len(self._flags_row_frames) >= 3:
+            self._flags_row_frames[2].pack_forget()
         self._sync_lock=False
 
     def _read_form(self):
