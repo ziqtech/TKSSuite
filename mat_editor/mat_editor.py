@@ -237,18 +237,48 @@ def rebuild_text(defines, header):
     parts.append(''); parts.append('')
     return '\r\n'.join(parts)
 
+# 脚本命令完整列表 — 基于 DEFCMD.LST 权威操作码表 + TKD_decoded.txt 实际用法
+# DEFCMD.LST 操作码映射 (格式: 操作码=命令名(参数数)):
+#   [Normal]
+#   0=End(1), 1=TalkB(4), 2=SetTalkB(4), 3=DoTalkB(0), 4=SetNowDef(3),
+#   5=SysTalk(6), 6=SetHint(3), 7=MenuTalk(2), 8=SetScene(2), 9=SetWalk(3),
+#   10=WaitWalk(2), 11=StopWalk(2), 12=SetEnabled(2), 13=SetVisible(2),
+#   14=SetWait(3), 15=Nop(0), 16=SetCursor(3), 17=FadeOut(4), 18=FadeIn(4),
+#   19=ChangeScene(4), 20=SetAni(7), 21=SetTick(2), 22=SetShadow(2),
+#   23=SetPos(4), 24=Disable(1), 25=Enable(1), 26=Redraw(1), 27=SetPlayer(1),
+#   28=SetCamera(1), 29=SetView(2), 30=SlideTo(3), 31=PlayerAct(1),
+#   32=SetFlag(2), 33=AddFlag(2), 34=TalkA(5), 35=Switch(2), 36=SetVar(2),
+#   37=Random(3), 38=SetFlagVar(2), 39=AddFlagVar(2), 40=GetItem(2),
+#   41=BlackTalk(4), 42=SetChaPic(2), 43=SetWeather(2), 44=ShowMenu(2),
+#   45=TeamMember(2), 46=Note(2), 47=SetBlock(2), 48=Attribute(3),
+#   49=SetSwitch(2), 50=BuyMenu(3), 51=PlaySound(2), 52=StopSound(1),
+#   53=PlayMusic(2), 54=SetMusic(2), 55=TheEnd(1), 56=Fix(1)
+#   [Special]
+#   60=CheckResult(2), 61=CheckFlag(3), 62=CheckItem(3), 63=CheckTeam(3),
+#   64=MiniGame(3), 65=CheckMember(4), 66=War(1)
+#   [NoArg]
+#   82=Else
 SCRIPT_COMMANDS = [
-    'SetSwitch', 'End', 'CheckFlag', 'Enable', 'Disable', 'SetWalk',
-    'WaitWalk', 'SetPos', 'TalkB', 'TalkA', 'War', 'ChangeScene',
-    'FadeIn', 'FadeOut', 'PlayerAct', 'SetCursor', 'SetWait',
-    'SetNowDef', 'SetFlag', 'AddFlag', 'SetVar', 'Random',
-    'SetBlock', 'SetTick', 'SetShadow', 'SetAni', 'SetCamera',
-    'SetPlayer', 'SetEnabled', 'SetVisible', 'SetHint', 'SetScene',
-    'SetChaPic', 'SetGlobal', 'WaitInput', 'Camera', 'Music',
-    'SceneBGM', 'SetWord', 'Nop', 'CheckResult', 'MenuChoice',
-    'CheckTeam', 'CheckMember', 'ShowText', 'SceneFade', 'SetPosFade',
-    'WaitTimer', 'Yield', 'Jump', 'Else', 'MiniGame', 'Note',
-    'StopSound', 'BlackTalk', 'TalkA',
+    # [Normal] — 按 DEFCMD.LST 操作码顺序排列
+    'End', 'TalkB', 'SetTalkB', 'DoTalkB', 'SetNowDef', 'SysTalk', 'SetHint',
+    'MenuTalk', 'SetScene', 'SetWalk', 'WaitWalk', 'StopWalk', 'SetEnabled',
+    'SetVisible', 'SetWait', 'Nop', 'SetCursor', 'FadeOut', 'FadeIn',
+    'ChangeScene', 'SetAni', 'SetTick', 'SetShadow', 'SetPos', 'Disable',
+    'Enable', 'Redraw', 'SetPlayer', 'SetCamera', 'SetView', 'SlideTo',
+    'PlayerAct', 'SetFlag', 'AddFlag', 'TalkA', 'Switch', 'SetVar', 'Random',
+    'SetFlagVar', 'AddFlagVar', 'GetItem', 'BlackTalk', 'SetChaPic',
+    'SetWeather', 'ShowMenu', 'TeamMember', 'Note', 'SetBlock', 'Attribute',
+    'SetSwitch', 'BuyMenu', 'PlaySound', 'StopSound', 'PlayMusic', 'SetMusic',
+    'TheEnd', 'Fix',
+    # [Special]
+    'CheckResult', 'CheckFlag', 'CheckItem', 'CheckTeam', 'MiniGame',
+    'CheckMember', 'War',
+    # [NoArg]
+    'Else',
+    # TKD 文本层额外命令 (非 DEFCMD.LST 标准但实际出现)
+    'Yield', 'Jump', 'ShowText', 'MenuChoice', 'SetPosFade', 'SceneFade',
+    'SceneBGM', 'Camera', 'WaitInput', 'SetGlobal', 'SetWord', 'WaitTimer',
+    'Music',
 ]
 
 # 脚本命令描述模板 — 用于预览窗口的人类可读描述
@@ -264,61 +294,153 @@ def _tkt_text(tkt, id_str, max_len=60):
         return ''
 
 SCRIPT_CMD_DESC = {
+    # ===== [Normal] 按 DEFCMD.LST 操作码顺序 =====
+    # opcode 0: End(1) — 结束脚本, 参数=结束模式
     'End':          lambda a, t: f"结束 (模式={a[0]})" if a else "结束",
+    # opcode 1: TalkB(4) — 阻塞式对话: 实体, 文本ID, 参数, 参数
     'TalkB':        lambda a, t: f"对话(等待) 实体#{a[0]} 文本={a[1]} — {_tkt_text(t, a[1])}" if len(a)>=2 else f"对话(等待) 实体#{a[0]}" if a else "对话(等待)",
-    'TalkA':        lambda a, t: f"对话(扩展) 实体#{a[0]} 文本={a[1]} — {_tkt_text(t, a[1])}" if len(a)>=2 else f"对话(扩展) 实体#{a[0]}" if a else "对话(扩展)",
-    'BlackTalk':    lambda a, t: f"黑屏对话 实体#{a[0]} 文本={a[1]} — {_tkt_text(t, a[1])}" if len(a)>=2 else f"黑屏对话 实体#{a[0]}" if a else "黑屏对话",
-    'WaitInput':    lambda a, t: "等待输入",
-    'SetNowDef':    lambda a, t: f"切换定义 ID={a[0]}" if a else "切换定义",
-    'MenuChoice':   lambda a, t: f"菜单选择 实体#{a[0]}" if a else "菜单选择",
-    'SetWalk':      lambda a, t: f"行走 实体#{a[0]}→({a[1]},{a[2]})" if len(a)>=3 else f"行走 实体#{a[0]}" if a else "行走",
-    'WaitWalk':     lambda a, t: f"等待行走完成 实体#{a[0]}" if a else "等待行走",
-    'SetPos':       lambda a, t: f"设置位置 实体#{a[0]}→({a[1]},{a[2]})" if len(a)>=3 else f"设置位置 实体#{a[0]}" if a else "设置位置",
-    'CheckFlag':    lambda a, t: f"检查标志 (不满足则阻塞) 标志={a[0]}" if a else "检查标志",
-    'SetEnabled':   lambda a, t: f"启用/禁用 实体#{a[0]} 标志={a[1]}" if len(a)>=2 else f"启用/禁用 实体#{a[0]}" if a else "启用/禁用",
-    'Enable':       lambda a, t: f"启用 实体#{a[0]}" if a else "启用",
-    'Disable':      lambda a, t: f"禁用 实体#{a[0]}" if a else "禁用",
-    'SetVisible':   lambda a, t: f"设置可见性 实体#{a[0]} 标志={a[1]}" if len(a)>=2 else "设置可见性",
-    'SetHint':      lambda a, t: f"设置提示 ID={a[0]} — {_tkt_text(t, a[0])}" if a else "设置提示",
-    'SetWait':      lambda a, t: f"设置等待 实体#{a[0]} 标志={a[1]}" if len(a)>=2 else "设置等待",
-    'SetFlag':      lambda a, t: f"设置标志 #{a[0]}={a[1]}" if len(a)>=2 else f"设置标志 #{a[0]}" if a else "设置标志",
-    'AddFlag':      lambda a, t: f"增加标志 #{a[0]}+{a[1]}" if len(a)>=2 else f"增加标志 #{a[0]}" if a else "增加标志",
-    'SetSwitch':    lambda a, t: f"开关[{a[0]}]={a[1]}" if len(a)>=2 else f"开关[{a[0]}]" if a else "设置开关",
-    'SetVar':       lambda a, t: f"变量[{a[0]}]={a[1]}" if len(a)>=2 else f"变量[{a[0]}]" if a else "设置变量",
-    'Random':       lambda a, t: f"随机→变量[{a[0]}] 范围[{a[1]},{a[2]}]" if len(a)>=3 else "随机",
-    'ChangeScene':  lambda a, t: f"切换场景→#{a[0]} ({a[1]},{a[2]})朝向{a[3]}" if len(a)>=4 else f"切换场景→#{a[0]}" if a else "切换场景",
-    'FadeIn':       lambda a, t: f"淡入 RGB({a[0]},{a[1]},{a[2]}) 速度={a[3]}" if len(a)>=4 else "淡入",
-    'FadeOut':      lambda a, t: f"淡出 RGB({a[0]},{a[1]},{a[2]}) 速度={a[3]}" if len(a)>=4 else "淡出",
-    'SetAni':       lambda a, t: f"设置动画 实体#{a[0]}" if a else "设置动画",
-    'SetTick':      lambda a, t: f"设置Tick回调 实体#{a[0]}" if a else "设置Tick",
-    'SetShadow':    lambda a, t: f"设置阴影 实体#{a[0]}" if a else "设置阴影",
-    'SetCamera':    lambda a, t: f"设置镜头 实体#{a[0]}" if a else "设置镜头",
-    'SetPlayer':    lambda a, t: f"设置玩家实体#{a[0]}" if a else "设置玩家",
-    'SetBlock':     lambda a, t: f"设置阻挡 实体#{a[0]}" if a else "设置阻挡",
-    'SetChaPic':    lambda a, t: f"设置角色图片 实体#{a[0]}" if a else "设置角色图片",
-    'SetGlobal':    lambda a, t: f"设置全局变量={a[0]}" if a else "设置全局变量",
+    # opcode 2: SetTalkB(4) — 设置对话不等待: 实体, 文本ID, 参数, 参数
+    'SetTalkB':     lambda a, t: f"设置对话(不等待) 实体#{a[0]} 文本={a[1]} — {_tkt_text(t, a[1])}" if len(a)>=2 else f"设置对话 实体#{a[0]}" if a else "设置对话",
+    # opcode 3: DoTalkB(0) — 执行对话显示
+    'DoTalkB':      lambda a, t: "执行对话显示",
+    # opcode 4: SetNowDef(3) — 切换当前定义: 实体, 子场景A, 子场景B
+    'SetNowDef':    lambda a, t: f"切换定义 实体#{a[0]} 子场景=({a[1]},{a[2]})" if len(a)>=3 else f"切换定义 ID={a[0]}" if a else "切换定义",
+    # opcode 5: SysTalk(6) — 系统对话
+    'SysTalk':      lambda a, t: f"系统对话 参数=({','.join(a[:6])})" if len(a)>=6 else f"系统对话" if not a else f"系统对话 参数=({','.join(a)})",
+    # opcode 6: SetHint(3) — 设置提示: 实体, 参数, 参数
+    'SetHint':      lambda a, t: f"设置提示 实体#{a[0]} — {_tkt_text(t, a[0])}" if a else "设置提示",
+    # opcode 7: MenuTalk(2) — 菜单对话
+    'MenuTalk':     lambda a, t: f"菜单对话 ID={a[0]}" if a else "菜单对话",
+    # opcode 8: SetScene(2) — 设置场景状态
     'SetScene':     lambda a, t: f"设置场景状态 ID={a[0]}" if a else "设置场景状态",
-    'Camera':       lambda a, t: f"镜头控制 ({a[0]},{a[1]},{a[2]})" if len(a)>=3 else "镜头控制",
-    'Music':        lambda a, t: f"播放音乐 ID={a[0]}" if a else "播放音乐",
-    'SceneBGM':     lambda a, t: f"场景BGM 场景#{a[0]}" if a else "场景BGM",
-    'SetWord':      lambda a, t: f"设置字={a[0]}" if a else "设置字",
-    'ShowText':     lambda a, t: f"显示文本 ID={a[0]} — {_tkt_text(t, a[0])}" if a else "显示文本",
-    'SceneFade':    lambda a, t: f"场景过渡→#{a[0]}" if a else "场景过渡",
-    'SetPosFade':   lambda a, t: f"淡入位置 实体#{a[0]}→({a[1]},{a[2]})" if len(a)>=3 else "淡入位置",
-    'WaitTimer':    lambda a, t: f"定时等待 {a[0]}×{a[1]}ms" if len(a)>=2 else "定时等待",
+    # opcode 9: SetWalk(3) — 设置行走: 实体, X, Y
+    'SetWalk':      lambda a, t: f"行走 实体#{a[0]}→({a[1]},{a[2]})" if len(a)>=3 else f"行走 实体#{a[0]}" if a else "行走",
+    # opcode 10: WaitWalk(2) — 等待行走完成: 实体, 模式
+    'WaitWalk':     lambda a, t: f"等待行走完成 实体#{a[0]}" if a else "等待行走",
+    # opcode 11: StopWalk(2) — 停止行走
+    'StopWalk':     lambda a, t: f"停止行走 实体#{a[0]}" if a else "停止行走",
+    # opcode 12: SetEnabled(2) — 启用/禁用实体: 实体, 标志
+    'SetEnabled':   lambda a, t: f"启用/禁用 实体#{a[0]} 标志={a[1]}" if len(a)>=2 else f"启用/禁用 实体#{a[0]}" if a else "启用/禁用",
+    # opcode 13: SetVisible(2) — 设置可见性: 实体, 标志
+    'SetVisible':   lambda a, t: f"设置可见性 实体#{a[0]} 标志={a[1]}" if len(a)>=2 else "设置可见性",
+    # opcode 14: SetWait(3) — 设置等待: 实体, 模式, 帧数
+    'SetWait':      lambda a, t: f"设置等待 实体#{a[0]} 标志={a[1]}" if len(a)>=2 else "设置等待",
+    # opcode 15: Nop(0) — 空操作
+    'Nop':          lambda a, t: f"空操作 (填充={a[0]})" if a else "空操作",
+    # opcode 16: SetCursor(3) — 设置光标
+    'SetCursor':    lambda a, t: f"设置光标 ({a[0]},{a[1]},{a[2]})" if len(a)>=3 else "设置光标" if a else "设置光标",
+    # opcode 17: FadeOut(4) — 淡出: R, G, B, 速度
+    'FadeOut':      lambda a, t: f"淡出 RGB({a[0]},{a[1]},{a[2]}) 速度={a[3]}" if len(a)>=4 else "淡出",
+    # opcode 18: FadeIn(4) — 淡入: R, G, B, 速度
+    'FadeIn':       lambda a, t: f"淡入 RGB({a[0]},{a[1]},{a[2]}) 速度={a[3]}" if len(a)>=4 else "淡入",
+    # opcode 19: ChangeScene(4) — 切换场景: 场景ID, X, Y, 朝向
+    'ChangeScene':  lambda a, t: f"切换场景→#{a[0]} ({a[1]},{a[2]})朝向{a[3]}" if len(a)>=4 else f"切换场景→#{a[0]}" if a else "切换场景",
+    # opcode 20: SetAni(7) — 设置动画: 实体+6参数
+    'SetAni':       lambda a, t: f"设置动画 实体#{a[0]}" if a else "设置动画",
+    # opcode 21: SetTick(2) — 设置Tick回调
+    'SetTick':      lambda a, t: f"设置Tick回调 实体#{a[0]}" if a else "设置Tick",
+    # opcode 22: SetShadow(2) — 设置阴影
+    'SetShadow':    lambda a, t: f"设置阴影 实体#{a[0]}" if a else "设置阴影",
+    # opcode 23: SetPos(4) — 设置位置: 实体, X, Y, 朝向
+    'SetPos':       lambda a, t: f"设置位置 实体#{a[0]}→({a[1]},{a[2]})朝向{a[3]}" if len(a)>=4 else f"设置位置 实体#{a[0]}" if a else "设置位置",
+    # opcode 24: Disable(1) — 禁用实体
+    'Disable':      lambda a, t: f"禁用 实体#{a[0]}" if a else "禁用",
+    # opcode 25: Enable(1) — 启用实体
+    'Enable':       lambda a, t: f"启用 实体#{a[0]}" if a else "启用",
+    # opcode 26: Redraw(1) — 重绘画面
+    'Redraw':       lambda a, t: "重绘画面",
+    # opcode 27: SetPlayer(1) — 设置玩家
+    'SetPlayer':    lambda a, t: f"设置玩家实体#{a[0]}" if a else "设置玩家",
+    # opcode 28: SetCamera(1) — 设置镜头
+    'SetCamera':    lambda a, t: f"设置镜头 实体#{a[0]}" if a else "设置镜头",
+    # opcode 29: SetView(2) — 设置视角
+    'SetView':      lambda a, t: f"设置视角 参数=({','.join(a[:2])})" if len(a)>=2 else f"设置视角" if a else "设置视角",
+    # opcode 30: SlideTo(3) — 滑动到
+    'SlideTo':      lambda a, t: f"滑动到 ({a[0]},{a[1]},{a[2]})" if len(a)>=3 else "滑动",
+    # opcode 31: PlayerAct(1) — 玩家行动
+    'PlayerAct':   lambda a, t: f"玩家行动 模式={a[0]}" if a else "玩家行动",
+    # opcode 32: SetFlag(2) — 设置标志
+    'SetFlag':      lambda a, t: f"设置标志 #{a[0]}={a[1]}" if len(a)>=2 else f"设置标志 #{a[0]}" if a else "设置标志",
+    # opcode 33: AddFlag(2) — 增加标志
+    'AddFlag':      lambda a, t: f"增加标志 #{a[0]}+{a[1]}" if len(a)>=2 else f"增加标志 #{a[0]}" if a else "增加标志",
+    # opcode 34: TalkA(5) — 即时式对话: 实体, 文本ID, 参数, 参数, 参数
+    'TalkA':        lambda a, t: f"对话(即时) 实体#{a[0]} 文本={a[1]} — {_tkt_text(t, a[1])}" if len(a)>=2 else f"对话(即时) 实体#{a[0]}" if a else "对话(即时)",
+    # opcode 35: Switch(2) — 开关切换
+    'Switch':       lambda a, t: f"开关切换 ({','.join(a[:2])})" if len(a)>=2 else "开关切换",
+    # opcode 36: SetVar(2) — 设置变量
+    'SetVar':       lambda a, t: f"变量[{a[0]}]={a[1]}" if len(a)>=2 else f"变量[{a[0]}]" if a else "设置变量",
+    # opcode 37: Random(3) — 随机: 变量槽, 最小值, 最大值
+    'Random':       lambda a, t: f"随机→变量[{a[0]}] 范围[{a[1]},{a[2]}]" if len(a)>=3 else "随机",
+    # opcode 38: SetFlagVar(2) — 设置标志变量
+    'SetFlagVar':   lambda a, t: f"标志变量 标志={a[0]},变量槽={a[1]}" if len(a)>=2 else f"标志变量 标志={a[0]}" if a else "设置标志变量",
+    # opcode 39: AddFlagVar(2) — 增加标志变量
+    'AddFlagVar':   lambda a, t: f"增加标志变量 标志={a[0]},变量槽={a[1]}" if len(a)>=2 else f"增加标志变量 标志={a[0]}" if a else "增加标志变量",
+    # opcode 40: GetItem(2) — 获得道具
+    'GetItem':      lambda a, t: f"获得道具 ID={a[0]}" if a else "获得道具",
+    # opcode 41: BlackTalk(4) — 黑屏对话/旁白
+    'BlackTalk':    lambda a, t: f"黑屏对话 文本={a[0]} — {_tkt_text(t, a[0])}" if a else "黑屏对话",
+    # opcode 42: SetChaPic(2) — 设置角色图片
+    'SetChaPic':    lambda a, t: f"设置角色图片 实体#{a[0]}" if a else "设置角色图片",
+    # opcode 43: SetWeather(2) — 设置天气
+    'SetWeather':   lambda a, t: f"设置天气 参数=({','.join(a[:2])})" if len(a)>=2 else f"设置天气" if a else "设置天气",
+    # opcode 44: ShowMenu(2) — 显示菜单
+    'ShowMenu':     lambda a, t: f"显示菜单 ID={a[0]}" if a else "显示菜单",
+    # opcode 45: TeamMember(2) — 队伍成员
+    'TeamMember':   lambda a, t: "队伍成员检查",
+    # opcode 46: Note(2) — 注释命令
+    'Note':         lambda a, t: f"注释: {', '.join(a)}" if a else "注释",
+    # opcode 47: SetBlock(2) — 设置阻挡
+    'SetBlock':     lambda a, t: f"设置阻挡 实体#{a[0]}" if a else "设置阻挡",
+    # opcode 48: Attribute(3) — 属性变更
+    'Attribute':   lambda a, t: f"属性变更 参数=({','.join(a[:3])})" if len(a)>=3 else f"属性变更" if a else "属性变更",
+    # opcode 49: SetSwitch(2) — 设置开关
+    'SetSwitch':    lambda a, t: f"开关[{a[0]}]={a[1]}" if len(a)>=2 else f"开关[{a[0]}]" if a else "设置开关",
+    # opcode 50: BuyMenu(3) — 商店菜单
+    'BuyMenu':      lambda a, t: f"商店菜单 参数=({','.join(a[:3])})" if len(a)>=3 else "商店菜单",
+    # opcode 51: PlaySound(2) — 播放音效
+    'PlaySound':    lambda a, t: f"播放音效 ID={a[0]}" if a else "播放音效",
+    # opcode 52: StopSound(1) — 停止声音
+    'StopSound':    lambda a, t: "停止声音",
+    # opcode 53: PlayMusic(2) — 播放音乐
+    'PlayMusic':    lambda a, t: f"播放音乐 ID={a[0]}" if a else "播放音乐",
+    # opcode 54: SetMusic(2) — 设置背景音乐
+    'SetMusic':     lambda a, t: f"设置音乐 ID={a[0]}" if a else "设置音乐",
+    # opcode 55: TheEnd(1) — 游戏结局
+    'TheEnd':       lambda a, t: "游戏结束",
+    # opcode 56: Fix(1) — 修正/修复命令
+    'Fix':          lambda a, t: f"修正 参数={a[0]}" if a else "修正",
+    # ===== [Special] 条件跳转类 =====
+    # opcode 60: CheckResult(2) — 检查变量结果跳转
+    'CheckResult':  lambda a, t: f"条件跳转 变量[{a[0]}]=={a[1]}?" if len(a)>=2 else "条件跳转",
+    # opcode 61: CheckFlag(3) — 检查标志条件跳转: 标志ID, 操作符, 值
+    'CheckFlag':    lambda a, t: f"检查标志 标志={a[0]}, 操作={a[1]}, 值={a[2]}" if len(a)>=3 else f"检查标志 标志={a[0]}" if a else "检查标志",
+    # opcode 62: CheckItem(3) — 检查道具条件跳转
+    'CheckItem':    lambda a, t: f"检查道具 参数=({','.join(a[:3])})" if len(a)>=3 else "检查道具",
+    # opcode 63: CheckTeam(3) — 检查队伍条件跳转
+    'CheckTeam':    lambda a, t: f"检查队伍 ID={a[0]}" if a else "检查队伍",
+    # opcode 64: MiniGame(3) — 小游戏
+    'MiniGame':     lambda a, t: f"小游戏 ID={a[0]}" if a else "小游戏",
+    # opcode 65: CheckMember(4) — 检查成员条件跳转
+    'CheckMember':  lambda a, t: f"检查成员 参数=({','.join(a[:4])})" if len(a)>=4 else f"检查成员 ID={a[0]}" if a else "检查成员",
+    # opcode 66: War(1) — 战斗
+    'War':          lambda a, t: f"战斗 ID={a[0]}" if a else "战斗",
+    # ===== [NoArg] =====
+    # opcode 82: Else — 条件分支的否则
+    'Else':         lambda a, t: "否则 (条件分支)",
+    # ===== TKD 文本层额外命令 (非 DEFCMD.LST 标准，但在脚本中实际出现或用于兼容) =====
     'Yield':        lambda a, t: "让出控制权 (暂停)",
     'Jump':         lambda a, t: f"跳转到偏移={a[0]}" if a else "跳转",
-    'Else':         lambda a, t: "否则 (条件分支)",
-    'Nop':          lambda a, t: f"空操作 (填充={a[0]})" if a else "空操作",
-    'CheckResult':  lambda a, t: f"条件跳转 变量[{a[0]}]=={a[1]}?" if len(a)>=2 else "条件跳转",
-    'CheckTeam':    lambda a, t: f"检查队伍 ID={a[0]}" if a else "检查队伍",
-    'CheckMember':  lambda a, t: f"检查成员 ID={a[0]}" if a else "检查成员",
-    'PlayerAct':    lambda a, t: f"玩家行动 ID={a[0]}" if a else "玩家行动",
-    'SetCursor':    lambda a, t: f"设置光标 ID={a[0]}" if a else "设置光标",
-    'War':          lambda a, t: f"战斗 ID={a[0]}" if a else "战斗",
-    'MiniGame':     lambda a, t: f"小游戏 ID={a[0]}" if a else "小游戏",
-    'Note':         lambda a, t: f"注释: {', '.join(a)}" if a else "注释",
-    'StopSound':    lambda a, t: "停止声音",
+    'ShowText':     lambda a, t: f"显示文本 ID={a[0]} — {_tkt_text(t, a[0])}" if a else "显示文本",
+    'MenuChoice':   lambda a, t: f"菜单选择 实体#{a[0]}" if a else "菜单选择",
+    'SetPosFade':   lambda a, t: f"淡入位置 实体#{a[0]}→({a[1]},{a[2]})" if len(a)>=3 else "淡入位置",
+    'SceneFade':    lambda a, t: f"场景过渡→#{a[0]}" if a else "场景过渡",
+    'SceneBGM':     lambda a, t: f"场景BGM 场景#{a[0]}" if a else "场景BGM",
+    'Camera':       lambda a, t: f"镜头控制 ({a[0]},{a[1]},{a[2]})" if len(a)>=3 else "镜头控制",
+    'WaitInput':    lambda a, t: "等待输入",
+    'SetGlobal':    lambda a, t: f"设置全局变量={a[0]}" if a else "设置全局变量",
+    'SetWord':      lambda a, t: f"设置字={a[0]}" if a else "设置字",
+    'WaitTimer':    lambda a, t: f"定时等待 {a[0]}×{a[1]}ms" if len(a)>=2 else "定时等待",
+    'Music':        lambda a, t: f"播放音乐 ID={a[0]}" if a else "播放音乐",
 }
 
 # ============================================================
