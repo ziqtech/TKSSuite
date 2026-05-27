@@ -379,18 +379,44 @@ def _tkt_text(tkt, id_str, max_len=60):
     except (ValueError, TypeError):
         return ''
 
+def _item_name(item_names, id_str):
+    """从 item_names 获取物品名称, id_str 为字符串形式的物品ID"""
+    try:
+        if not item_names: return ''
+        tid = int(id_str)
+        return item_names.get(tid, '')
+    except (ValueError, TypeError):
+        return ''
+
 SCRIPT_CMD_DESC = {
     # ===== [Normal] 按 DEFCMD.LST 操作码顺序 =====
     # opcode 0: End(1) — 结束脚本, 参数=结束模式
-    'End':          lambda a, t: f"结束 (模式={a[0]})" if a else "结束",
+    # End 模式速查: 0=正常返回  1=A链递增  2=B链递增  3=C链递增  4=A链重置  5=B链重置  6=C链重置
+    'End':          lambda a, t: (
+        "结束 (正常返回, 不修改链)" if not a or a[0] == '0' else
+        f"结束 → A链递增 (下一DEFINE)" if a[0] == '1' else
+        f"结束 → B链递增 (下一DEFINE)" if a[0] == '2' else
+        f"结束 → C链递增 (下一DEFINE)" if a[0] == '3' else
+        f"结束 → A链重置 (cur_A=0)" if a[0] == '4' else
+        f"结束 → B链重置 (cur_B=0)" if a[0] == '5' else
+        f"结束 → C链重置 (cur_C=0)" if a[0] == '6' else
+        f"结束 (模式={a[0]})"  # fallback for unknown modes
+    ),
     # opcode 1: TalkB(4) — 阻塞式对话: 实体, 文本ID, 参数, 参数
     'TalkB':        lambda a, t: f"对话(等待) 实体#{a[0]} 文本={a[1]} — {_tkt_text(t, a[1])}" if len(a)>=2 else f"对话(等待) 实体#{a[0]}" if a else "对话(等待)",
     # opcode 2: SetTalkB(4) — 设置对话不等待: 实体, 文本ID, 参数, 参数
     'SetTalkB':     lambda a, t: f"设置对话(不等待) 实体#{a[0]} 文本={a[1]} — {_tkt_text(t, a[1])}" if len(a)>=2 else f"设置对话 实体#{a[0]}" if a else "设置对话",
     # opcode 3: DoTalkB(0) — 执行对话显示
     'DoTalkB':      lambda a, t: "执行对话显示",
-    # opcode 4: SetNowDef(3) — 切换当前定义: 实体, 子场景A, 子场景B
-    'SetNowDef':    lambda a, t: f"切换定义 实体#{a[0]} 子场景=({a[1]},{a[2]})" if len(a)>=3 else f"切换定义 ID={a[0]}" if a else "切换定义",
+    # opcode 4: SetNowDef(3) — 切换DEFINE链位置: 实体(-1=上下文/-2=自身), 链(1=A/2=B/3=C), 新位置
+    # sub_40B520: 修改目标实体的 cur_A/B/C, 实现 DEFINE 链跳转 (相当于 goto 到链中指定位置)
+    'SetNowDef':    lambda a, t: (
+        "切换当前定义 (无参数)" if not a else
+        f"切换定义 ID={a[0]}" if len(a) < 3 else
+        f"切换DEFINE → {'自身' if a[0]=='-2' else '上下文' if a[0]=='-1' else '实体#'+a[0]} "
+        f"{'A链' if a[1]=='1' else 'B链' if a[1]=='2' else 'C链' if a[1]=='3' else '链'+a[1]} "
+        f"→位置{a[2]}"
+    ),
     # opcode 5: SysTalk(6) — 系统对话
     'SysTalk':      lambda a, t: f"系统对话 参数=({','.join(a[:6])})" if len(a)>=6 else f"系统对话" if not a else f"系统对话 参数=({','.join(a)})",
     # opcode 6: SetHint(3) — 设置提示: 实体, 参数, 参数
@@ -461,8 +487,12 @@ SCRIPT_CMD_DESC = {
     'SetFlagVar':   lambda a, t: f"标志变量 标志={a[0]},变量槽={a[1]}" if len(a)>=2 else f"标志变量 标志={a[0]}" if a else "设置标志变量",
     # opcode 39: AddFlagVar(2) — 增加标志变量
     'AddFlagVar':   lambda a, t: f"增加标志变量 标志={a[0]},变量槽={a[1]}" if len(a)>=2 else f"增加标志变量 标志={a[0]}" if a else "增加标志变量",
-    # opcode 40: GetItem(2) — 获得道具
-    'GetItem':      lambda a, t: f"获得道具 ID={a[0]}" if a else "获得道具",
+    # opcode 40: GetItem(2) — 获得道具: 道具ID, 数量
+    'GetItem':      lambda a, t, i=None: (
+        f"获得道具 {a[0]}({_item_name(i, a[0])}) ×{a[1]}" if a and len(a)>=2 and i else
+        f"获得道具 {a[0]}({_item_name(i, a[0])})" if a and i else
+        f"获得道具 ID={a[0]}" if a else "获得道具"
+    ),
     # opcode 41: BlackTalk(4) — 黑屏对话/旁白
     'BlackTalk':    lambda a, t: f"黑屏对话 文本={a[0]} — {_tkt_text(t, a[0])}" if a else "黑屏对话",
     # opcode 42: SetChaPic(2) — 设置角色图片
@@ -1371,11 +1401,11 @@ class MatEditor:
         self.chain_info_lbl = ttk.Label(tb, text="", font=FONT_S, foreground='#666')
         self.chain_info_lbl.pack(side=tk.RIGHT, padx=4)
 
-        cols_chain = ('sub', 'du_idx', 'define_id', 'block_id', 'mark')
+        cols_chain = ('seq', 'sub', 'du_idx', 'define_id', 'block_id', 'mark')
         self.chain_tree = ttk.Treeview(top_f, columns=cols_chain, show='headings', selectmode='browse')
-        col_defs_chain = [('sub', '子场景', 40), ('du_idx', 'DefUnit#', 60),
-                          ('define_id', 'DEFINE ID', 110), ('block_id', 'f0', 35),
-                          ('mark', '标记', 50)]
+        col_defs_chain = [('seq', '序号', 35), ('sub', '子场景', 35),
+                          ('du_idx', 'DefUnit#', 55), ('define_id', 'DEFINE ID', 110),
+                          ('block_id', 'f0', 35), ('mark', '标记', 50)]
         for cid, cn, cw in col_defs_chain:
             self.chain_tree.heading(cid, text=cn)
             self.chain_tree.column(cid, width=cw, anchor='center' if cid != 'define_id' else 'w', minwidth=cw)
@@ -2215,7 +2245,7 @@ class MatEditor:
             # 插入分组标题 — 显示链类型
             type_lbl, type_tip = chain_labels[sub_name]
             cur_str = f'当前={cur}' if cur > 0 else '未激活'
-            head_iid = self.chain_tree.insert('', 'end', values=(f'{sub_name}{type_lbl}', '', '', '', f'head=#{h} max={mx} {cur_str}'), tags=('group',))
+            head_iid = self.chain_tree.insert('', 'end', values=('', f'{sub_name}{type_lbl}', '', '', '', f'head=#{h} max={mx} {cur_str}'), tags=('group',))
             # 遍历链
             idx = h; visited_chain = set()
             for step in range(mx):
@@ -2227,7 +2257,7 @@ class MatEditor:
                 marks = []
                 if (step + 1) == cur: marks.append('当前')
                 if step == 0: marks.append('链头')
-                self.chain_tree.insert('', 'end', values=(f'  {sub_name}', str(idx), str(define_id), str(du_rec['f0']), ','.join(marks)),
+                self.chain_tree.insert('', 'end', values=(str(step + 1), f'  {sub_name}', str(idx), str(define_id), str(du_rec['f0']), ','.join(marks)),
                                        tags=('entry',))
                 idx = du_rec['f6']
                 if idx == 0: break
@@ -2257,9 +2287,9 @@ class MatEditor:
         tags = self.chain_tree.item(sel[0], 'tags')
         if 'group' in tags: return  # 分组标题不可选
         vals = self.chain_tree.item(sel[0], 'values')
-        if not vals or not vals[2].isdigit(): return
-        define_id = int(vals[2])
-        du_idx = int(vals[1]) if vals[1].isdigit() else 0
+        if not vals or not vals[3].isdigit(): return
+        define_id = int(vals[3])
+        du_idx = int(vals[2]) if vals[2].isdigit() else 0
         # 保存当前编辑
         self._save_editor_to_define()
         # 加载新 DEFINE
@@ -2458,11 +2488,16 @@ class MatEditor:
 
     def _format_cmd_desc(self, cmd_name, args):
         """将命令和参数格式化为人类可读的描述"""
-        # 尝试精确描述
+        # 尝试精确描述 (传递 item_names 供 GetItem 等命令解析物品名, 旧 lambda 用 TypeError 回退)
         desc_fn = SCRIPT_CMD_DESC.get(cmd_name)
         if desc_fn:
             try:
-                return desc_fn(args, self.tkt_all)
+                return desc_fn(args, self.tkt_all, self.item_names)
+            except TypeError:
+                try:
+                    return desc_fn(args, self.tkt_all)
+                except Exception:
+                    pass
             except Exception:
                 pass
         # 回退: 通用格式
@@ -2525,14 +2560,17 @@ class MatEditor:
         self._preview_info_lbl = ttk.Label(info_f, text="", font=FONT_S, foreground='#666')
         self._preview_info_lbl.pack(side=tk.RIGHT)
 
-        # 命令列表 (Text widget with line numbers)
-        list_f = ttk.Frame(win)
-        list_f.pack(fill=tk.BOTH, expand=True, padx=8, pady=4)
+        # 命令列表 + 详情面板 (PanedWindow 可拖动分割)
+        paned = ttk.PanedWindow(win, orient=tk.VERTICAL)
+        paned.pack(fill=tk.BOTH, expand=True, padx=8, pady=4)
 
-        # 左侧: 命令列表
+        # 命令列表
+        list_f = ttk.Frame(paned)
+        paned.add(list_f, weight=3)
+
         cols_pv = ('step', 'cmd', 'desc')
         self._preview_tree = ttk.Treeview(list_f, columns=cols_pv, show='headings',
-                                           selectmode='browse', height=20)
+                                           selectmode='browse', height=16)
         self._preview_tree.heading('step', text='#')
         self._preview_tree.heading('cmd', text='命令')
         self._preview_tree.heading('desc', text='描述')
@@ -2551,6 +2589,7 @@ class MatEditor:
         self._preview_tree.tag_configure('action', foreground='#333333')
         self._preview_tree.tag_configure('branch', foreground='#CC6600')
         self._preview_tree.tag_configure('end_tag', foreground='#CC0000')
+        self._preview_tree.tag_configure('getitem', foreground='#FF0000')  # 获得道具行: 纯红色
         self._preview_tree.tag_configure('current', background='#FFEE88')
 
         # 填充命令列表
@@ -2565,28 +2604,21 @@ class MatEditor:
                 tag = 'flow'
             elif cmd_name in ('CheckFlag', 'CheckResult', 'CheckFlag61', 'CheckFlag62', 'CheckFlag63', 'Check65', 'Check66', 'CheckTeam', 'CheckMember'):
                 tag = 'branch'
+            elif cmd_name in ('GetItem',):
+                tag = 'getitem'
             elif cmd_name == 'End':
                 tag = 'end_tag'
             self._preview_tree.insert('', 'end', values=(str(si+1), cmd_name, desc), tags=(tag,))
 
-        # 底部: 导航按钮 + 详情
-        nav_f = ttk.Frame(win)
-        nav_f.pack(fill=tk.X, padx=8, pady=(4,8))
-
-        ttk.Button(nav_f, text="◀ 上一步", command=self._preview_prev, width=10).pack(side=tk.LEFT, padx=2)
-        ttk.Button(nav_f, text="下一步 ▶", command=self._preview_next, width=10).pack(side=tk.LEFT, padx=2)
-        ttk.Button(nav_f, text="自动播放", command=self._preview_auto_play, width=10).pack(side=tk.LEFT, padx=2)
-        ttk.Separator(nav_f, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=6)
-        ttk.Button(nav_f, text="跳到结束", command=self._preview_end, width=10).pack(side=tk.LEFT, padx=2)
-        ttk.Button(nav_f, text="重新开始", command=self._preview_reset, width=10).pack(side=tk.LEFT, padx=2)
-        ttk.Separator(nav_f, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=6)
-        ttk.Button(nav_f, text="关闭", command=win.destroy, width=8).pack(side=tk.RIGHT, padx=2)
-
-        # 详情面板
-        detail_f = ttk.LabelFrame(win, text="命令详情", padding=4)
-        detail_f.pack(fill=tk.X, padx=8, pady=(0,8))
-        self._preview_detail = tk.Text(detail_f, height=4, font=FONT_MONO, wrap=tk.WORD, bg='#fafafa')
-        self._preview_detail.pack(fill=tk.X)
+        # 详情面板 (可拖动调整大小)
+        detail_f = ttk.LabelFrame(paned, text="命令详情", padding=4)
+        paned.add(detail_f, weight=1)
+        self._preview_detail = tk.Text(detail_f, height=5, font=FONT_MONO, wrap=tk.WORD, bg='#fafafa')
+        self._preview_detail.tag_configure('item_red', foreground='#CC0000', font=FONT_B)
+        detail_sb = ttk.Scrollbar(detail_f, orient=tk.VERTICAL, command=self._preview_detail.yview)
+        self._preview_detail.configure(yscrollcommand=detail_sb.set)
+        self._preview_detail.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        detail_sb.pack(side=tk.RIGHT, fill=tk.Y)
 
         # 选中事件
         self._preview_tree.bind('<<TreeviewSelect>>', self._preview_on_select)
@@ -2627,6 +2659,16 @@ class MatEditor:
             self._preview_detail.config(state='normal')
             self._preview_detail.delete('1.0', tk.END)
             self._preview_detail.insert('1.0', detail)
+            # GetItem: 物品名称用红色显示
+            if cmd_name == 'GetItem' and args and self.item_names:
+                try:
+                    item_id = int(args[0])
+                    item_name = self.item_names.get(item_id, '')
+                    if item_name:
+                        red_line = f"\n━━━ 物品名称 (ID={args[0]}) ━━━\n{item_name}"
+                        self._preview_detail.insert(tk.END, red_line, 'item_red')
+                except (ValueError, TypeError):
+                    pass
             self._preview_detail.config(state='disabled')
             # 更新信息标签
             self._preview_info_lbl.config(text=f"步骤 {step+1}/{len(self._preview_cmds)}")
@@ -2762,7 +2804,7 @@ class MatEditor:
         self._refresh_chain_list()
         # 选中新节点
         for item in self.chain_tree.get_children():
-            if self.chain_tree.item(item, 'values')[1] == str(empty_idx):
+            if self.chain_tree.item(item, 'values')[2] == str(empty_idx):
                 self.chain_tree.selection_set(item)
                 self.chain_tree.see(item)
                 self._on_chain_select()
@@ -2776,9 +2818,9 @@ class MatEditor:
         vals = self.chain_tree.item(sel[0], 'values')
         tags = self.chain_tree.item(sel[0], 'tags')
         if 'group' in tags: return
-        if not vals or not vals[1].isdigit(): return
-        du_idx = int(vals[1])
-        define_id = int(vals[2]) if vals[2].isdigit() else 0
+        if not vals or not vals[2].isdigit(): return
+        du_idx = int(vals[2])
+        define_id = int(vals[3]) if vals[3].isdigit() else 0
         du_rec = next((r for r in self.defunit_recs if r['index'] == du_idx), None)
         if du_rec is None: return
         entity_id = du_rec['f1']
