@@ -17,7 +17,7 @@ TKMat.Dat 地图实体编辑器 v2.3 — 融合脚本编辑
   python mat_editor.py
 """
 
-import struct, os, sys
+import struct, os, sys, re
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 
@@ -64,6 +64,129 @@ DISPLAY_MODES = {"游戏默认":"auto","动画":"ani","角色":"cha","线框":"w
 _JVG_CACHE = {}  # filepath → JVGFile
 _SPRITE_CACHE = {}  # (filepath, global_idx) → PhotoImage
 
+# ============================================================
+# TKT 文本颜色渲染 (依据 tkt_editor.py / sub_44E49C)
+# ============================================================
+# FCOLOR 1-32 调色板 (dword_A2C524[32], RGB565 LE)
+_GAME_PALETTE_565 = [
+    0x0000, 0x0000, 0x8410, 0x8000, 0x8400, 0x0400, 0x0410, 0x0010, 0x8010,
+    0x8200, 0x8008, 0x4400, 0x0408, 0x4010, 0x0210, 0x0000, 0x0000,
+    0xF79B, 0xC618, 0xF800, 0xFFE0, 0x07E0, 0x07FF, 0x001F, 0xF81F,
+    0xFC08, 0xFA10, 0x87E8, 0x47F0, 0x821F, 0x441F, 0x31EA, 0xFFFF,
+]
+
+def _rgb565_to_hex(rgb565):
+    r5 = (rgb565 >> 11) & 0x1F; g6 = (rgb565 >> 5) & 0x3F; b5 = rgb565 & 0x1F
+    r8 = (r5 << 3) | (r5 >> 2); g8 = (g6 << 2) | (g6 >> 4); b8 = (b5 << 3) | (b5 >> 2)
+    return f'#{r8:02X}{g8:02X}{b8:02X}'
+
+GAME_COLORS = {i: _rgb565_to_hex(_GAME_PALETTE_565[i]) for i in range(1, 33)}
+DEFAULT_TKT_FCOLOR = GAME_COLORS[32]  # 白色
+
+# 控制字节映射 (sub_4019D0): code -> (name, data_bytes)
+_CONTROL_TAGS = {
+    0x01: ("FRESET",  1), 0x02: ("FCOLOR",  1), 0x03: ("FCOLORD", 3),
+    0x04: ("FSIZE",   1), 0x05: ("FTYPE",   1), 0x14: ("TEXT",    2),
+    0x15: ("VARNUM",  1), 0x16: ("VARTXT",  1), 0x1D: ("NAME",    1),
+}
+_LINE_SEP = 0x1E
+
+def decode_tkt_bytes(data):
+    """将原始 TKT 字节流解码为含 <TAG,n> 标记的 UTF 文本。
+    依据 tkt_editor.py decode_line() — 控制字节 → <TAG,n>, Big5 → UTF"""
+    out = []; buf = bytearray(); i, n = 0, len(data)
+    def flush():
+        if buf:
+            try: out.append(buf.decode('big5', errors='replace'))
+            except: out.append(buf.decode('gbk', errors='replace'))
+            buf.clear()
+    while i < n:
+        b = data[i]
+        if b in _CONTROL_TAGS:
+            tag_name, dlen = _CONTROL_TAGS[b]
+            if i + dlen < n:
+                flush()
+                if dlen == 1:
+                    out.append(f'<{tag_name},{data[i+1]}>')
+                elif dlen == 2:
+                    val = data[i+1] | (data[i+2] << 8)
+                    out.append(f'<{tag_name},{val}>')
+                else:  # dlen==3: FCOLORD
+                    out.append(f'<{tag_name},{data[i+1]},{data[i+2]},{data[i+3]}>')
+                i += 1 + dlen; continue
+        if b == _LINE_SEP:
+            flush(); out.append('\n'); i += 1; continue
+        if b < 0x20:
+            flush(); out.append(f'<RAW,0x{b:02X}>'); i += 1; continue
+        if b >= 0x80 and i + 1 < n:
+            buf.append(b); buf.append(data[i+1]); i += 2
+        else:
+            buf.append(b); i += 1
+    flush()
+    return ''.join(out)
+
+_TKT_TAG_RE = re.compile(r'<([A-Z]+),(\d+(?:,\d+)*)>')
+
+def parse_tkt_colored_segments(text):
+    """将含 <FCOLOR,n>/<FCOLORD,r,g,b>/<FRESET,n> 的 TKT 文本解析为 [(text, color_hex), ...]。
+    忽略字体控制标签 (FSIZE/FTYPE/NAME 等), 只处理颜色。"""
+    segments = []
+    cur_color = DEFAULT_TKT_FCOLOR
+    prev_color = cur_color
+    buf = []
+    i, n = 0, len(text)
+
+    def flush():
+        if buf:
+            segments.append((''.join(buf), cur_color))
+            buf.clear()
+
+    while i < n:
+        m = _TKT_TAG_RE.match(text, i)
+        if m:
+            flush()
+            tag_name = m.group(1); val_str = m.group(2)
+            if tag_name == 'FCOLOR':
+                try:
+                    val = int(val_str)
+                    if 1 <= val <= 32:
+                        prev_color = cur_color
+                        cur_color = GAME_COLORS[val]
+                except ValueError: pass
+            elif tag_name == 'FCOLORD':
+                parts = val_str.split(',')
+                if len(parts) == 3:
+                    try:
+                        r, g, b = int(parts[0]), int(parts[1]), int(parts[2])
+                        if 0 <= r <= 255 and 0 <= g <= 255 and 0 <= b <= 255:
+                            prev_color = cur_color
+                            cur_color = f'#{r:02X}{g:02X}{b:02X}'
+                    except ValueError: pass
+            elif tag_name == 'FRESET':
+                try:
+                    val = int(val_str)
+                    if val == 1:
+                        cur_color = DEFAULT_TKT_FCOLOR
+                    elif val == 2:
+                        cur_color = prev_color
+                except ValueError: pass
+            # 其他标签 (TEXT/VARNUM/VARTXT/NAME/FSIZE/FTYPE) 作为文本保留
+            else:
+                buf.append(text[m.start():m.end()])
+            i = m.end()
+        elif text[i] == '<' and i + 6 < n:
+            rm = re.match(r'<RAW,0x([0-9A-Fa-f]{2})>', text[i:])
+            if rm:
+                flush()
+                buf.append(f'[RAW:{rm.group(1)}]')
+                i += rm.end()
+                continue
+            buf.append(text[i]); i += 1
+        else:
+            buf.append(text[i]); i += 1
+    flush()
+    return segments
+
 BASIC_FIELDS = [
     ("type",0,"实体类型","实体类型: 5=入口 10=地形 15=障碍 16=建筑 20=事件 110=机关 200=NPC"),
     ("scene_id",1,"场景ID","所属场景 (-1=全局)。TKT_ID = scene_id + 300"),
@@ -102,9 +225,8 @@ def load_tkt_all(tkt_path):
         if ao>=len(dec): continue
         end=ao
         while end<len(dec) and dec[end]!=0: end+=1
-        txt=dec[ao:end].replace(b'\x1e',b'\n')
-        try: s=txt.decode('big5',errors='replace')
-        except: s=txt.decode('gbk',errors='replace')
+        txt=dec[ao:end]
+        s = decode_tkt_bytes(txt)
         if s: lookup[eid]=s
     return lookup
 
@@ -575,9 +697,8 @@ def load_tkt_scene_names(tkt_path):
         if ao>=len(dec): continue
         end=ao
         while end<len(dec) and dec[end]!=0: end+=1
-        txt=dec[ao:end].replace(b'\x1e',b'\n')
-        try: s=txt.decode('big5',errors='replace')
-        except: s=txt.decode('gbk',errors='replace')
+        txt=dec[ao:end]
+        s = decode_tkt_bytes(txt)
         if s: lookup[eid]=s.split('\n')[0].strip()
     return lookup
 
@@ -2613,8 +2734,13 @@ class MatEditor:
         # 详情面板 (可拖动调整大小)
         detail_f = ttk.LabelFrame(paned, text="命令详情", padding=4)
         paned.add(detail_f, weight=1)
-        self._preview_detail = tk.Text(detail_f, height=5, font=FONT_MONO, wrap=tk.WORD, bg='#fafafa')
-        self._preview_detail.tag_configure('item_red', foreground='#CC0000', font=FONT_B)
+        self._preview_detail = tk.Text(detail_f, height=5, font=FONT_MONO, wrap=tk.WORD,
+                                        bg='#313c52', fg='#CCCCCC', insertbackground='#CCCCCC')
+        self._preview_detail.tag_configure('item_red', foreground='#FF4444', font=FONT_B)  # 亮红, 暗底更显眼
+        # 预配置 FCOLOR 1-32 颜色标签 (TKT 文本颜色渲染, 游戏调色板专为暗底设计)
+        for ci in range(1, 33):
+            self._preview_detail.tag_configure(f'tkt_c{ci}', foreground=GAME_COLORS[ci])
+        self._preview_detail._tkt_color_tags = set()  # 跟踪已配置的动态颜色标签
         detail_sb = ttk.Scrollbar(detail_f, orient=tk.VERTICAL, command=self._preview_detail.yview)
         self._preview_detail.configure(yscrollcommand=detail_sb.set)
         self._preview_detail.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
@@ -2641,37 +2767,57 @@ class MatEditor:
         self._preview_step = step
         if 0 <= step < len(self._preview_cmds):
             cmd_name, args, line_text, line_idx = self._preview_cmds[step]
-            # 详情: 原始行 + 格式化描述 + TKT 文本
-            detail = f"原始: {line_text}\n"
-            detail += f"命令: {cmd_name}({', '.join(args)})\n"
-            detail += f"描述: {self._format_cmd_desc(cmd_name, args)}\n"
-            # 如果是对话命令, 尝试解析完整文本
+            self._preview_detail.config(state='normal')
+            self._preview_detail.delete('1.0', tk.END)
+            # 基本信息
+            self._preview_detail.insert(tk.END, f"原始: {line_text}\n")
+            self._preview_detail.insert(tk.END, f"命令: {cmd_name}({', '.join(args)})\n")
+            self._preview_detail.insert(tk.END, f"描述: {self._format_cmd_desc(cmd_name, args)}\n")
+            # 对话命令: 解析 TKT 文本并用颜色渲染
             if cmd_name in ('TalkB', 'TalkA', 'SetTalkB', 'BlackTalk') and len(args) >= 2:
-                # TalkB/TalkA/SetTalkB: args[1]=TKT文本ID; BlackTalk: args[0]=TKT文本ID
                 text_idx = 0 if cmd_name == 'BlackTalk' else 1
                 tkt_text = _tkt_text(self.tkt_all, args[text_idx], max_len=500)
                 if tkt_text:
-                    detail += f"\n━━━ TKT 对话文本 (ID={args[text_idx]}) ━━━\n{tkt_text}"
+                    self._preview_detail.insert(tk.END, f"\n━━━ TKT 对话文本 (ID={args[text_idx]}) ━━━\n")
+                    self._insert_colored_tkt(tkt_text)
             elif cmd_name in ('ShowText', 'MenuTalk', 'SysTalk') and args:
                 tkt_text = _tkt_text(self.tkt_all, args[0], max_len=500)
                 if tkt_text:
-                    detail += f"\n━━━ TKT 对话文本 (ID={args[0]}) ━━━\n{tkt_text}"
-            self._preview_detail.config(state='normal')
-            self._preview_detail.delete('1.0', tk.END)
-            self._preview_detail.insert('1.0', detail)
+                    self._preview_detail.insert(tk.END, f"\n━━━ TKT 对话文本 (ID={args[0]}) ━━━\n")
+                    self._insert_colored_tkt(tkt_text)
             # GetItem: 物品名称用红色显示
             if cmd_name == 'GetItem' and args and self.item_names:
                 try:
                     item_id = int(args[0])
                     item_name = self.item_names.get(item_id, '')
                     if item_name:
-                        red_line = f"\n━━━ 物品名称 (ID={args[0]}) ━━━\n{item_name}"
-                        self._preview_detail.insert(tk.END, red_line, 'item_red')
+                        self._preview_detail.insert(tk.END, f"\n━━━ 物品名称 (ID={args[0]}) ━━━\n")
+                        self._preview_detail.insert(tk.END, item_name, 'item_red')
                 except (ValueError, TypeError):
                     pass
             self._preview_detail.config(state='disabled')
             # 更新信息标签
             self._preview_info_lbl.config(text=f"步骤 {step+1}/{len(self._preview_cmds)}")
+
+    def _insert_colored_tkt(self, text):
+        """将含 <FCOLOR,n> 等标签的 TKT 文本按颜色分段插入 _preview_detail"""
+        segments = parse_tkt_colored_segments(text)
+        for seg_text, color in segments:
+            tag = self._get_tkt_color_tag(color)
+            self._preview_detail.insert(tk.END, seg_text, tag)
+
+    def _get_tkt_color_tag(self, color_hex):
+        """获取或创建 TKT 颜色标签。FCOLOR 1-32 用预配置的 tkt_cN, FCOLORD 动态创建"""
+        # 检查是否为标准调色板颜色
+        for ci in range(1, 33):
+            if GAME_COLORS[ci] == color_hex:
+                return f'tkt_c{ci}'
+        # FCOLORD 动态颜色: 用颜色值作为 tag 名
+        tag_name = f'tkt_d{color_hex.replace("#","")}'
+        if tag_name not in getattr(self._preview_detail, '_tkt_color_tags', set()):
+            self._preview_detail.tag_configure(tag_name, foreground=color_hex)
+            self._preview_detail._tkt_color_tags.add(tag_name)
+        return tag_name
 
     def _preview_next(self):
         """下一步"""
