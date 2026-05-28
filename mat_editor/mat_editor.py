@@ -612,6 +612,33 @@ def _checkteam_desc(args):
 # arg2: 1=智慧 2=仁德 3=勇气 5=体力值恢复 6=内力值恢复 10=事件完成度 11=特殊物品
 _ATTR_NAMES = {1:"智慧", 2:"仁德", 3:"勇气", 5:"体力值恢复", 6:"内力值恢复", 10:"事件完成度", 11:"特殊物品"}
 
+# SetCursor 光标动画名称
+# SetCursor arg1→Cur.JVG块 (sub_411BA4→sub_45408C), arg2→帧延迟(dword_8242CC, sub_411D18)
+# ┌──────────┬───────┬──────────┬──────────────────────────────┐
+# │ cursor_id│ block │ 帧数/尺寸│ 语义                         │
+# ├──────────┼───────┼──────────┼──────────────────────────────┤
+# │    0     │  blk0 │ 1帧29x40│ 禁止点击                     │
+# │    1     │  blk1 │ 1帧28x40│ 正常(脚本默认)               │
+# │    2     │  blk2 │ 3帧29x26│ 对话气泡                     │
+# │    3     │  blk3 │ 3帧29x43│ 开门(传送)                   │
+# │    4     │  blk4 │ 4帧33x47│ 拾取                         │
+# │  5-8     │blk5-8 │ 1帧28x40│ 同正常(战斗/备用)            │
+# │    9     │  blk9 │ 1帧24x37│ 调查                         │
+# │   10     │ blk10 │38帧30x42│ 苍冥(特殊)                   │
+# └──────────┴───────┴──────────┴──────────────────────────────┘
+_CURSOR_BLOCKS = {0:"禁止点击", 1:"正常", 2:"对话气泡", 3:"开门", 4:"拾取", 5:"正常", 6:"正常", 7:"正常", 8:"正常", 9:"调查", 10:"苍冥"}
+
+def _setcursor_desc(args):
+    """SetCursor(Cur.JVG块, 帧延迟, 开关): arg1选择光标精灵块, arg2动画帧延迟, arg3显示开关"""
+    if not args or len(args) < 3:
+        return "设置光标"
+    ent = args[0]; spd = args[1]; en = args[2]
+    en_str = "隐藏" if en == '0' else "显示" if en == '1' else f"模式{en}"
+    block_name = _CURSOR_BLOCKS.get(int(ent) if ent.lstrip('-').isdigit() else -1, f"块{ent}")
+    spd_str = f"延迟{spd}t" if spd != '3' else ""  # 3=引擎默认, 不显示
+    ent_str = "玩家" if ent == '1' else "当前" if ent == '-1' else f"实体{ent}"
+    return f"{ent_str}光标 {en_str} [{block_name}]{' '+spd_str if spd_str else ''}"
+
 def _attribute_desc(args):
     """根据 TKD脚本注释生成 Attribute 的人类可读描述。
     Attribute(实体, 属性, 变化值): arg2=1智慧 2仁德 3勇气 5体力 6内力 10事件 11特殊"""
@@ -680,7 +707,9 @@ SCRIPT_CMD_DESC = {
     # opcode 15: Nop(0) — 空操作
     'Nop':          lambda a, t: f"空操作 (填充={a[0]})" if a else "空操作",
     # opcode 16: SetCursor(3) — 设置光标
-    'SetCursor':    lambda a, t: f"设置光标 ({a[0]},{a[1]},{a[2]})" if len(a)>=3 else "设置光标" if a else "设置光标",
+    # 逆向: sub_411BA4/sub_412390, TKMat[d8]=cursor_id
+    # 参数: (实体, 光标动画, 开关)  动画:0=默认 1=标准 3=开门(传送)  开关:0=隐藏 1=显示
+    'SetCursor':    lambda a, t: _setcursor_desc(a),
     # opcode 17: FadeOut(4) — 淡出: R, G, B, 速度
     'FadeOut':      lambda a, t: f"淡出 RGB({a[0]},{a[1]},{a[2]}) 速度={a[3]}" if len(a)>=4 else "淡出",
     # opcode 18: FadeIn(4) — 淡入: R, G, B, 速度
@@ -709,8 +738,12 @@ SCRIPT_CMD_DESC = {
     'SetView':      lambda a, t: f"设置视角 参数=({','.join(a[:2])})" if len(a)>=2 else f"设置视角" if a else "设置视角",
     # opcode 30: SlideTo(3) — 滑动到
     'SlideTo':      lambda a, t: f"滑动到 ({a[0]},{a[1]},{a[2]})" if len(a)>=3 else "滑动",
-    # opcode 31: PlayerAct(1) — 玩家行动
-    'PlayerAct':   lambda a, t: f"玩家行动 模式={a[0]}" if a else "玩家行动",
+    # opcode 31: PlayerAct(1) — 玩家操作
+    # TKD用法: PlayerAct(0)=锁定(脚本开头) PlayerAct(1)=恢复(脚本结尾)
+    'PlayerAct':   lambda a, t: (
+        "锁定玩家操作" if a and a[0] == '0' else
+        "恢复玩家操作" if a and a[0] == '1' else
+        f"玩家操作 模式={a[0]}" if a else "玩家操作"),
     # opcode 32: SetFlag(2) — 设置标志
     'SetFlag':      lambda a, t: f"设置标志 #{a[0]}={a[1]}" if len(a)>=2 else f"设置标志 #{a[0]}" if a else "设置标志",
     # opcode 33: AddFlag(2) — 增加标志
