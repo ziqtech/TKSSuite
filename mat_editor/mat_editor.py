@@ -761,7 +761,9 @@ SCRIPT_CMD_DESC = {
     # opcode 39: AddFlagVar(2) — 增加标志变量
     'AddFlagVar':   lambda a, t: f"增加标志变量 标志={a[0]},变量槽={a[1]}" if len(a)>=2 else f"增加标志变量 标志={a[0]}" if a else "增加标志变量",
     # opcode 40: GetItem(2) — 获得道具: 道具ID, 数量
+    # item_id=10000 → 金钱
     'GetItem':      lambda a, t, i=None: (
+        f"获得金钱 ×{a[1]}" if a and len(a)>=2 and a[0]=='10000' else
         f"获得道具 {a[0]}({_item_name(i, a[0])}) ×{a[1]}" if a and len(a)>=2 and i else
         f"获得道具 {a[0]}({_item_name(i, a[0])})" if a and i else
         f"获得道具 ID={a[0]}" if a else "获得道具"
