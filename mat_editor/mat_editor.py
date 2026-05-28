@@ -510,6 +510,14 @@ def _item_name(item_names, id_str):
     except (ValueError, TypeError):
         return ''
 
+def _sign_qty(qty_str):
+    """格式化数量: 正数加+号, 负数保持-号"""
+    try:
+        v = int(qty_str)
+        return f"+{v}" if v >= 0 else str(v)
+    except ValueError:
+        return qty_str
+
 # CheckTeam 角色名缓存 (由 MatEditor._reload 从 WarPC.dat + TKT.dat 动态填充)
 _char_name_cache = {}
 
@@ -760,13 +768,13 @@ SCRIPT_CMD_DESC = {
     'SetFlagVar':   lambda a, t: f"标志变量 标志={a[0]},变量槽={a[1]}" if len(a)>=2 else f"标志变量 标志={a[0]}" if a else "设置标志变量",
     # opcode 39: AddFlagVar(2) — 增加标志变量
     'AddFlagVar':   lambda a, t: f"增加标志变量 标志={a[0]},变量槽={a[1]}" if len(a)>=2 else f"增加标志变量 标志={a[0]}" if a else "增加标志变量",
-    # opcode 40: GetItem(2) — 获得道具: 道具ID, 数量
+    # opcode 40: GetItem(2) — 道具/金钱增减: 道具ID, 数量(正=获得 负=移除)
     # item_id=10000 → 金钱
     'GetItem':      lambda a, t, i=None: (
-        f"获得金钱 ×{a[1]}" if a and len(a)>=2 and a[0]=='10000' else
-        f"获得道具 {a[0]}({_item_name(i, a[0])}) ×{a[1]}" if a and len(a)>=2 and i else
-        f"获得道具 {a[0]}({_item_name(i, a[0])})" if a and i else
-        f"获得道具 ID={a[0]}" if a else "获得道具"
+        f"金钱 {_sign_qty(a[1])}" if a and len(a)>=2 and a[0]=='10000' else
+        f"道具 {a[0]}({_item_name(i, a[0])}) {_sign_qty(a[1])}" if a and len(a)>=2 and i else
+        f"道具 {a[0]}({_item_name(i, a[0])})" if a and i else
+        f"道具 ID={a[0]}" if a else "道具增减"
     ),
     # opcode 41: BlackTalk(4) — 黑屏对话/旁白
     # 逆向: sub_40B05C(text_id, x, y, color)→sub_4067E8加载TKT+sub_44B028设颜色, 循环渲染至按键
