@@ -752,9 +752,10 @@ SCRIPT_CMD_DESC = {
         "锁定玩家操作" if a and a[0] == '0' else
         "恢复玩家操作" if a and a[0] == '1' else
         f"玩家操作 模式={a[0]}" if a else "玩家操作"),
-    # opcode 32: SetFlag(2) — 设置标志
+    # opcode 32: SetFlag(2) — 设置标志 (sub_40CB08→word_756080[1024])
+    # 存储位置: 存档 Frame2 SEG1 +0x568, 1024个int16, 随存档持久化
     'SetFlag':      lambda a, t: f"设置标志 #{a[0]}={a[1]}" if len(a)>=2 else f"设置标志 #{a[0]}" if a else "设置标志",
-    # opcode 33: AddFlag(2) — 增加标志
+    # opcode 33: AddFlag(2) — 增加标志 (sub_40CB4C→word_756080[flag_id]+=value)
     'AddFlag':      lambda a, t: f"增加标志 #{a[0]}+{a[1]}" if len(a)>=2 else f"增加标志 #{a[0]}" if a else "增加标志",
     # opcode 34: TalkA(5) — 即时式对话: 实体, 文本ID, 参数, 参数, 参数
     'TalkA':        lambda a, t: f"对话(即时) 实体#{a[0]} 文本={a[1]} — {_tkt_text(t, a[1])}" if len(a)>=2 else f"对话(即时) 实体#{a[0]}" if a else "对话(即时)",
