@@ -788,8 +788,11 @@ SCRIPT_CMD_DESC = {
     'SetWeather':   lambda a, t: f"设置天气 参数=({','.join(a[:2])})" if len(a)>=2 else f"设置天气" if a else "设置天气",
     # opcode 44: ShowMenu(2) — 显示菜单
     'ShowMenu':     lambda a, t: f"显示菜单 ID={a[0]}" if a else "显示菜单",
-    # opcode 45: TeamMember(2) — 队伍成员
-    'TeamMember':   lambda a, t: "队伍成员检查",
+    # opcode 45: TeamMember(2) — 队伍成员增减 (sub_40DA00, a2=1加入/0离开, a1=0清空全队)
+    'TeamMember':   lambda a, t: (
+        f"角色{a[0]} 加入队伍" if len(a)>=2 and a[1]=='1' else
+        f"角色{a[0]} 离开队伍" if len(a)>=2 and a[1]=='0' else
+        "清空全队" if a and a[0]=='0' else "队伍成员"),
     # opcode 46: Note(2) — 注释命令
     'Note':         lambda a, t: f"注释: {', '.join(a)}" if a else "注释",
     # opcode 47: SetBlock(2) — 地形块事件开关
