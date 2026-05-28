@@ -1752,10 +1752,12 @@ class MatEditor:
         # 滚动同步: 两个 Text 共享垂直滚动
         def _on_editor_yscroll(*args):
             ssb_y.set(*args)
-            self.script_preview.yview_moveto(args[0])
+            if not self._disable_scroll_sync:
+                self.script_preview.yview_moveto(args[0])
         def _on_preview_yscroll(*args):
             psb_y.set(*args)
-            self.script_text.yview_moveto(args[0])
+            if not self._disable_scroll_sync:
+                self.script_text.yview_moveto(args[0])
         self.script_text.configure(yscrollcommand=_on_editor_yscroll)
         self.script_preview.configure(yscrollcommand=_on_preview_yscroll)
         ssb_y.configure(command=self.script_text.yview)
@@ -1782,6 +1784,8 @@ class MatEditor:
         self.script_text.config(state='disabled')
         self._current_edit_define_id = None
         self._script_dirty = False
+        self._disable_scroll_sync = False
+        self._edit_debounce = None
 
     def _bind_tooltip(self,widget,text):
         tip={'win':None}
@@ -2568,6 +2572,10 @@ class MatEditor:
         self.script_preview.config(state='disabled')
         self._current_edit_define_id = None
         self.script_info_lbl.config(text="(未选中 DEFINE)")
+        # 取消待处理的防抖更新
+        if self._edit_debounce:
+            self.root.after_cancel(self._edit_debounce)
+            self._edit_debounce = None
 
     def _refresh_chain_list(self):
         """刷新 DefUnit 链 Treeview (按子场景 A/B/C 分组, 标记链类型)"""
@@ -2774,27 +2782,40 @@ class MatEditor:
                 break
 
     def _on_script_edit(self, event=None):
-        """脚本编辑事件 — 标记脏状态, 触发语法高亮 + 行预览"""
+        """脚本编辑事件 — 标记脏状态, 防抖语法高亮 (不更新预览, 避免滚动条跳动)"""
         self._script_dirty = True
+        # 防抖: 取消之前的延迟, 150ms 无输入后执行语法高亮
+        if self._edit_debounce:
+            self.root.after_cancel(self._edit_debounce)
+        self._edit_debounce = self.root.after(150, self._do_script_update)
+        return 'break'
+
+    def _do_script_update(self):
+        """防抖后的语法高亮 (仅在用户停止输入 150ms 后调用)
+        注意: 不在此处调用 _update_line_preview, 因其清空重建预览会导致 Text 控件滚动条跳到顶部"""
+        self._edit_debounce = None
         self._apply_syntax_highlight()
-        self._update_line_preview()
 
     def _apply_syntax_highlight(self, event=None):
-        """语法高亮 (来自 script_editor.py)"""
-        for tag in ('keyword', 'comment', 'number', 'command', 'block'):
-            self.script_text.tag_remove(tag, '1.0', tk.END)
+        """语法高亮 — 逐行更新, 避免 tag_remove('1.0', tk.END) 导致全文重布局并重置滚动条"""
         content = self.script_text.get('1.0', tk.END)
         lines = content.split('\n')
+        all_tags = ('keyword', 'comment', 'number', 'command', 'block')
         for i, line in enumerate(lines):
             ln = i + 1
+            line_end = f"{ln}.{len(line)}"
+            # 仅清除当前行的高亮标签, 避免全文操作触发滚动重置
+            for tag in all_tags:
+                self.script_text.tag_remove(tag, f"{ln}.0", line_end)
+            # 重新应用该行的语法高亮
             stripped = line.strip()
             comment_start = line.find('//')
             if comment_start >= 0:
-                self.script_text.tag_add('comment', f"{ln}.{comment_start}", f"{ln}.{len(line)}")
+                self.script_text.tag_add('comment', f"{ln}.{comment_start}", line_end)
             if stripped.startswith('{') or stripped.startswith('}'):
-                self.script_text.tag_add('block', f"{ln}.0", f"{ln}.{len(line)}")
+                self.script_text.tag_add('block', f"{ln}.0", line_end)
             if stripped.startswith('DEFINE'):
-                self.script_text.tag_add('keyword', f"{ln}.0", f"{ln}.{len(line)}")
+                self.script_text.tag_add('keyword', f"{ln}.0", line_end)
             for cmd in SCRIPT_COMMANDS:
                 idx = 0
                 while True:
