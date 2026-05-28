@@ -510,6 +510,104 @@ def _item_name(item_names, id_str):
     except (ValueError, TypeError):
         return ''
 
+# CheckTeam 角色名缓存 (由 MatEditor._reload 从 WarPC.dat + TKT.dat 动态填充)
+_char_name_cache = {}
+
+def _load_char_names(tks_dir, tkt_lookup):
+    """从 WarPC.dat 加载角色名映射 index→name.
+    类似 warpc_editor 的做法: 读 WarPC 每条记录的 [0] name_id, 查 TKT 得到名称."""
+    global _char_name_cache
+    wp = os.path.join(tks_dir, 'WarPC.dat')
+    if not os.path.exists(wp):
+        return
+    try:
+        with open(wp, 'rb') as f:
+            raw = f.read()
+        dec = lzss_decompress(raw)
+        REC = 1054  # 527 int16
+        cnt = min(50, len(dec) // REC)
+        for i in range(cnt):
+            off = i * REC
+            name_id = struct.unpack_from('<h', dec, off)[0]
+            if name_id > 0 and name_id in tkt_lookup:
+                name = tkt_lookup[name_id].split('\n')[0].strip()
+                if name:
+                    _char_name_cache[i] = name
+        # 主角 (index 0): TKT#9000 是控制字符占位, 用 "主角"
+        if 0 not in _char_name_cache:
+            _char_name_cache[0] = "主角"
+    except Exception:
+        pass
+
+# CheckTeam arg1 语义映射 (基于 TKD脚本注释 + save_editor SEG2字段)
+# ┌──────┬──────────┬─────────────────────┬──────────────────────────────┐
+# │ arg1 │ 属性     │ SEG2地址            │ 证据                         │
+# ├──────┼──────────┼─────────────────────┼──────────────────────────────┤
+# │  1   │ 角色存在 │ word_75688C[6]      │ TKD: CheckTeam(1,N,0)角色操作│
+# │  2   │ 智慧     │ byte_756886         │ TKD注释: "智慧>150"          │
+# │  3   │ 仁德     │ byte_756887         │ TKD注释: "仁德>150"          │
+# │  4   │ 勇气     │ word_756888         │ TKD注释: "勇氣>150"          │
+# │  5   │ 队伍人数 │ word_75688C[6]      │ TKD: -2=有空位 1=已满        │
+# │  6   │ 医术     │ word_75688A         │ TKD注释+上限100              │
+#     │ 10   │ 事件完成度│ —                   │ 游戏内事件完成百分比       │
+# │ 11   │ 特殊物品 │ — (sub_40E11C)      │ TKD注释:"26個特殊物品"       │
+# └──────┴──────────┴─────────────────────┴──────────────────────────────┘
+_CAT_NAMES = {1:"角色", 2:"智慧", 3:"仁德", 4:"勇气", 5:"队伍人数", 6:"医术", 10:"事件完成度", 11:"特殊物品"}
+# CheckTeam arg3 比较运算符 (基于TKD脚本注释语义 + 队伍人数检查模式推断)
+_CMP_OPS = {'0':"==", '1':"≥", '-1':"<", '-2':"≤", '2':">"}
+
+def _checkteam_desc(args):
+    """根据逆向 + TKD.dat 脚本注释生成 CheckTeam 的人类可读描述。
+    ┌──────┬──────────┬──────────────────────────────────────┐
+    │ arg1 │ 语义     │ 逆向依据                             │
+    ├──────┼──────────┼──────────────────────────────────────┤
+    │  1   │ 角色存在 │ TKD: CheckTeam(1,N,0) 后跟角色操作    │
+    │  2   │ 智慧     │ TKD注释+save_editor SEG2 byte_756886 │
+    │  3   │ 仁德     │ TKD注释+save_editor SEG2 byte_756887 │
+    │  4   │ 勇气     │ TKD注释+save_editor SEG2 word_756888 │
+    │  5   │ 队伍人数 │ TKD:-2=有空位/1=已满 word_75688C[6]  │
+    │  6   │ 医术     │ TKD注释+save_editor SEG2 word_75688A │
+    │ 10   │ 随机概率 │ TKD注释:"事件概率N%触发"             │
+    │ 11   │ 特殊物品 │ TKD注释+save_editor sub_40E11C case11│
+    └──────┴──────────┴──────────────────────────────────────┘
+    arg3: 0=存在/==  1=≥  -1=<  -2=≤  2=>"""
+    if not args:
+        return "检查队伍"
+    cat = args[0] if len(args) >= 1 else '?'
+    val = args[1] if len(args) >= 2 else '?'
+    op  = args[2] if len(args) >= 3 else '0'
+
+    cat_name = _CAT_NAMES.get(int(cat) if cat.lstrip('-').isdigit() else 0, f"队伍属性{cat}")
+    op_str = _CMP_OPS.get(op, op)
+
+    if cat == '1':
+        # 角色是否在队伍中: CheckTeam(1, char_id, 0)
+        try:
+            cid = int(val)
+            cname = _char_name_cache.get(cid, f"角色#{cid}")
+            return f"判断角色 {cname} 在队中" if op == '0' else f"判断角色 {cname} {op_str} {val}"
+        except ValueError:
+            return f"判断角色 {op_str} {val}"
+    elif cat == '5':
+        # 队伍人数检查: CheckTeam(5, max_slots, op)
+        try:
+            mx = int(val)
+            if op == '-2' and mx >= 5:
+                return "判断队伍有空位"
+            elif op == '1' and mx >= 5:
+                return "判断队伍已满"
+            elif op == '0':
+                return f"判断队伍人数 {op_str} {mx}"
+        except ValueError:
+            pass
+        return f"判断队伍人数 {op_str} {val}"
+    elif cat == '10':
+        # 事件完成度: CheckTeam(10, percent, op)
+        return f"判断事件完成度 {op_str} {val}%"
+    else:
+        # 属性检查: CheckTeam(attr, threshold, op)
+        return f"判断{cat_name} {op_str} {val}"
+
 SCRIPT_CMD_DESC = {
     # ===== [Normal] 按 DEFCMD.LST 操作码顺序 =====
     # opcode 0: End(1) — 结束脚本, 参数=结束模式
@@ -655,7 +753,7 @@ SCRIPT_CMD_DESC = {
     # opcode 62: CheckItem(3) — 检查道具条件跳转
     'CheckItem':    lambda a, t: f"检查道具 参数=({','.join(a[:3])})" if len(a)>=3 else "检查道具",
     # opcode 63: CheckTeam(3) — 检查队伍条件跳转
-    'CheckTeam':    lambda a, t: f"检查队伍 ID={a[0]}" if a else "检查队伍",
+    'CheckTeam':    lambda a, t, i=None: _checkteam_desc(a),
     # opcode 64: MiniGame(3) — 小游戏
     'MiniGame':     lambda a, t: f"小游戏 ID={a[0]}" if a else "小游戏",
     # opcode 65: CheckMember(4) — 检查成员条件跳转
@@ -1544,15 +1642,59 @@ class MatEditor:
         self.script_info_lbl.pack(side=tk.LEFT)
         ttk.Button(stb, text="▶ 预览", command=self._preview_script, width=8).pack(side=tk.RIGHT, padx=2)
         self._bind_tooltip(stb.winfo_children()[-1], "预览当前脚本执行流程\n解析脚本命令, 显示人类可读的执行步骤\n对话文本会自动从 TKT 解析")
-        ef = ttk.Frame(bot_f); ef.pack(fill=tk.BOTH, expand=True)
-        self.script_text = tk.Text(ef, font=FONT_MONO, wrap=tk.NONE, undo=True,
+        # 编辑器 (左右结构: 左=编辑区, 右=行预览)
+        epw = ttk.PanedWindow(bot_f, orient=tk.HORIZONTAL)
+        epw.pack(fill=tk.BOTH, expand=True)
+
+        # 左侧: 脚本编辑区
+        ef_left = ttk.Frame(epw)
+        epw.add(ef_left, weight=3)
+        self.script_text = tk.Text(ef_left, font=FONT_MONO, wrap=tk.NONE, undo=True,
                                    tabs=('4c',), bg='#fafafa')
-        ssb_y = ttk.Scrollbar(ef, orient=tk.VERTICAL, command=self.script_text.yview)
-        ssb_x = ttk.Scrollbar(ef, orient=tk.HORIZONTAL, command=self.script_text.xview)
-        self.script_text.configure(yscrollcommand=ssb_y.set, xscrollcommand=ssb_x.set)
+        ssb_y = ttk.Scrollbar(ef_left, orient=tk.VERTICAL)
+        ssb_x = ttk.Scrollbar(ef_left, orient=tk.HORIZONTAL, command=self.script_text.xview)
+        self.script_text.configure(xscrollcommand=ssb_x.set)
         self.script_text.grid(row=0, column=0, sticky='nsew')
         ssb_y.grid(row=0, column=1, sticky='ns'); ssb_x.grid(row=1, column=0, sticky='ew')
-        ef.rowconfigure(0, weight=1); ef.columnconfigure(0, weight=1)
+        ef_left.rowconfigure(0, weight=1); ef_left.columnconfigure(0, weight=1)
+
+        # 右侧: 行功能预览
+        ef_right = ttk.Frame(epw)
+        epw.add(ef_right, weight=2)
+        self.script_preview = tk.Text(ef_right, font=FONT_MONO, wrap=tk.NONE, state='disabled',
+                                       bg='#f5f5f0', padx=4, pady=2, cursor='arrow')
+        psb_y = ttk.Scrollbar(ef_right, orient=tk.VERTICAL)
+        psb_x = ttk.Scrollbar(ef_right, orient=tk.HORIZONTAL, command=self.script_preview.xview)
+        self.script_preview.configure(xscrollcommand=psb_x.set)
+        self.script_preview.grid(row=0, column=0, sticky='nsew')
+        psb_y.grid(row=0, column=1, sticky='ns'); psb_x.grid(row=1, column=0, sticky='ew')
+        ef_right.rowconfigure(0, weight=1); ef_right.columnconfigure(0, weight=1)
+
+        # 滚动同步: 两个 Text 共享垂直滚动
+        def _on_editor_yscroll(*args):
+            ssb_y.set(*args)
+            self.script_preview.yview_moveto(args[0])
+        def _on_preview_yscroll(*args):
+            psb_y.set(*args)
+            self.script_text.yview_moveto(args[0])
+        self.script_text.configure(yscrollcommand=_on_editor_yscroll)
+        self.script_preview.configure(yscrollcommand=_on_preview_yscroll)
+        ssb_y.configure(command=self.script_text.yview)
+        psb_y.configure(command=self.script_preview.yview)
+
+        # 鼠标滚轮同步
+        def _on_editor_mwheel(event):
+            self.script_text.yview_scroll(int(-1*(event.delta/120)), "units")
+            self.script_preview.yview_scroll(int(-1*(event.delta/120)), "units")
+            return 'break'
+        self.script_text.bind('<MouseWheel>', _on_editor_mwheel)
+        self.script_preview.bind('<MouseWheel>', _on_editor_mwheel)
+        # 预览 tag 颜色
+        for tag, fg in [('pv_cmd','#333'), ('pv_comment','#AAA'), ('pv_block','#BBB'),
+                         ('pv_raw','#999'), ('pv_talk','#7B30D0'), ('pv_flow','#0066CC'),
+                         ('pv_branch','#CC6600'), ('pv_getitem','#CC0000')]:
+            self.script_preview.tag_configure(tag, foreground=fg)
+
         self.script_text.bind('<KeyRelease>', self._on_script_edit)
         # 语法高亮 tag 配置
         for tag, fg in [('keyword','#0000FF'), ('comment','#008000'), ('number','#B07000'),
@@ -2160,6 +2302,8 @@ class MatEditor:
             except Exception: pass
         # 加载 TKT 全文 (用于脚本预览对话文本解析)
         self.tkt_all = load_tkt_all(self.tkt_path)
+        # 从 WarPC.dat + TKT 加载角色名映射 (用于 CheckTeam(1,N,0) 预览)
+        _load_char_names(d, self.tkt_all)
         # 加载 TKItem.dat → item_id → 物品名称映射 (用于类型110物品字段显示)
         self.item_names = {}
         item_p = os.path.join(d, "TKItem.dat")
@@ -2340,6 +2484,9 @@ class MatEditor:
         self.script_text.config(state='normal')
         self.script_text.delete('1.0', tk.END)
         self.script_text.config(state='disabled')
+        self.script_preview.config(state='normal')
+        self.script_preview.delete('1.0', tk.END)
+        self.script_preview.config(state='disabled')
         self._current_edit_define_id = None
         self.script_info_lbl.config(text="(未选中 DEFINE)")
 
@@ -2516,6 +2663,7 @@ class MatEditor:
             self.script_text.insert('1.0', '{\nEnd(0)\n}; end\n')
             self.script_info_lbl.config(text=f"DEFINE {define_id} (新建)")
         self._apply_syntax_highlight()
+        self._update_line_preview()
         self.script_text.edit_reset()
         self._script_dirty = False
 
@@ -2547,9 +2695,10 @@ class MatEditor:
                 break
 
     def _on_script_edit(self, event=None):
-        """脚本编辑事件 — 标记脏状态, 触发语法高亮"""
+        """脚本编辑事件 — 标记脏状态, 触发语法高亮 + 行预览"""
         self._script_dirty = True
         self._apply_syntax_highlight()
+        self._update_line_preview()
 
     def _apply_syntax_highlight(self, event=None):
         """语法高亮 (来自 script_editor.py)"""
@@ -2578,6 +2727,68 @@ class MatEditor:
             for m in re.finditer(r'-?\d+', line):
                 if comment_start >= 0 and m.start() >= comment_start: continue
                 self.script_text.tag_add('number', f"{ln}.{m.start()}", f"{ln}.{m.end()}")
+
+    def _update_line_preview(self):
+        """更新右侧行功能预览面板 — 逐行解析编辑器内容并显示命令描述"""
+        import re
+        content = self.script_text.get('1.0', 'end-1c')
+        lines = content.split('\n')
+
+        self.script_preview.config(state='normal')
+        self.script_preview.delete('1.0', tk.END)
+        self.script_preview.configure(wrap=tk.NONE)  # 严禁换行
+
+        def trunc(s, max_len=28):
+            """截断文本, 超长尾部加'…' (单行强制不换行)"""
+            s = s.replace('\n', ' ').replace('\r', '')
+            if len(s) <= max_len:
+                return s
+            return s[:max_len-1] + '…'
+
+        talk_cmds = {'TalkB', 'TalkA', 'SetTalkB', 'BlackTalk', 'ShowText', 'MenuChoice',
+                     'SysTalk', 'DoTalkB', 'MenuTalk', 'SetHint'}
+        flow_cmds = {'End', 'Yield', 'Jump', 'Else', 'SetNowDef'}
+        branch_cmds = {'CheckFlag', 'CheckResult', 'CheckItem', 'CheckTeam', 'CheckMember',
+                       'Switch', 'Random'}
+
+        for i, line in enumerate(lines):
+            stripped = line.strip()
+            if i > 0:
+                self.script_preview.insert(tk.END, '\n')
+
+            if not stripped:
+                continue
+            if stripped.startswith('//'):
+                self.script_preview.insert(tk.END, trunc(stripped), 'pv_comment')
+                continue
+            if stripped in ('{', '}; end') or stripped.startswith('};'):
+                self.script_preview.insert(tk.END, trunc(stripped), 'pv_block')
+                continue
+            if stripped.startswith('DEFINE'):
+                self.script_preview.insert(tk.END, trunc(stripped), 'pv_block')
+                continue
+
+            m = re.match(r'([A-Za-z_]\w*)\s*\((.*)\)', stripped)
+            if m:
+                cmd_name = m.group(1)
+                args_str = m.group(2).strip()
+                args = [a.strip() for a in args_str.split(',') if a.strip()] if args_str else []
+                desc = self._format_cmd_desc(cmd_name, args)
+                tag = 'pv_cmd'
+                if cmd_name in talk_cmds: tag = 'pv_talk'
+                elif cmd_name in flow_cmds: tag = 'pv_flow'
+                elif cmd_name in branch_cmds: tag = 'pv_branch'
+                elif cmd_name == 'GetItem': tag = 'pv_getitem'
+                self.script_preview.insert(tk.END, trunc(desc), tag)
+            else:
+                m2 = re.match(r'([A-Za-z_]\w+)\s*$', stripped)
+                if m2 and m2.group(1) in SCRIPT_CMD_DESC:
+                    desc = self._format_cmd_desc(m2.group(1), [])
+                    self.script_preview.insert(tk.END, trunc(desc), 'pv_cmd')
+                else:
+                    self.script_preview.insert(tk.END, trunc(stripped, 40), 'pv_raw')
+
+        self.script_preview.config(state='disabled')
 
     # =========== 脚本预览 ===========
     def _parse_script_commands(self, body_lines):
