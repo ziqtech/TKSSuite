@@ -1161,6 +1161,13 @@ class TktEditor:
         ef.columnconfigure(0, weight=1)
         self.text_widget.bind('<KeyRelease>', self._on_text_modified)
 
+        # 按钮栏 (预览区上方, 确保始终可见)
+        bf = ttk.Frame(rf)
+        bf.pack(fill=tk.X, padx=4, pady=(0, 4))
+        ttk.Button(bf, text="应用修改", command=self._apply_edit, width=12).pack(side=tk.LEFT)
+        ttk.Button(bf, text="重置", command=self._reset_edit, width=8).pack(side=tk.LEFT, padx=4)
+        ttk.Button(bf, text="删除此条目", command=self._delete_entry, width=12).pack(side=tk.RIGHT)
+
         # 预览区 — FONT9696 PIL 渲染图像 (优先) / 纯文本回退
         preview_frame = ttk.LabelFrame(rf, text="游戏预览", padding=4)
         preview_frame.pack(fill=tk.BOTH, expand=True, padx=4, pady=(0, 4))
@@ -1182,13 +1189,6 @@ class TktEditor:
         tip_text = ("控制码: <FRESET,n> <FCOLOR,n> <FCOLORD,r,g,b> <FSIZE,n> <FTYPE,n> "
                     "<TEXT,n> <VARNUM,n> <VARTXT,n> <NAME,n>")
         ttk.Label(tip_frame, text=tip_text, font=FONT_S, foreground='#888').pack(anchor=tk.W)
-
-        # 按钮栏
-        bf = ttk.Frame(rf)
-        bf.pack(fill=tk.X, padx=4, pady=(0, 4))
-        ttk.Button(bf, text="应用修改", command=self._apply_edit, width=12).pack(side=tk.LEFT)
-        ttk.Button(bf, text="重置", command=self._reset_edit, width=8).pack(side=tk.LEFT, padx=4)
-        ttk.Button(bf, text="删除此条目", command=self._delete_entry, width=12).pack(side=tk.RIGHT)
 
         # 底部状态栏 — 各文件路径
         pf = ttk.LabelFrame(self.root, text="当前加载")
@@ -1372,6 +1372,8 @@ class TktEditor:
             self._do_save(path)
 
     def _do_save(self, path):
+        # 保存前先同步编辑器内容到 entries
+        self._apply_edit()
         if not messagebox.askyesno(
             "确认保存",
             f"确认保存到 {os.path.basename(path)}？\n共 {len(self.entries)} 条目"

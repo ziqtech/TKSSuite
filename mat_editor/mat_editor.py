@@ -281,7 +281,7 @@ RUNTIME_FIELDS = [
     ("tick",4,"tick","Tick周期(运行时)"),
     ("timer",12,"计时器",""),("frame_idx",14,"帧索引",""),
     ("frame_count",16,"总帧数",""),("frame_cur",17,"帧计数",""),
-    ("script_PC",42,"脚本PC",""),("saved_PC",43,"保存PC",""),
+    ("script_PC",42,"脚本PC","sub_40EBD4入口: d42作为字节码起始偏移。必须=-1(0xFFFF)表示无保存点, 否则VM从错误位置执行"),("saved_PC",43,"保存PC","End(0)时 d42=d43; d43=-1。新实体必须=-1"),
     ("target_dir",56,"目标朝向","type=5:目标朝向(1-8) type=16:把手2概率 type=110:组1Ymax type=200:寻路X(运行时)。sub_4081F8:30,sub_4084E0,sub_408B30"),
     ("saved_y",57,"保存Y","type=5:相机X type=16:把手3概率 type=110:组2Xmin type=200:寻路Y(运行时)。sub_4081F8,sub_4084E0,sub_408B30"),
     ("alt_tele_x",60,"备选传送X","type=5:相机偏移X type=110:组2Ymax type=200:备选传送X。sub_4081F8:31,sub_408B30"),
@@ -666,16 +666,18 @@ def _attribute_desc(args):
 SCRIPT_CMD_DESC = {
     # ===== [Normal] 按 DEFCMD.LST 操作码顺序 =====
     # opcode 0: End(1) — 结束脚本, 参数=结束模式
-    # End 模式速查: 0=正常返回  1=A链递增  2=B链递增  3=C链递增  4=A链重置  5=B链重置  6=C链重置
+    # 逆向: sub_40EBD4 case 0; 负值→uint16: -1=0xFFFF -2=0xFFFE ...
+    # 0xFFFF/1:A链递增 0xFFFE/2:B链递增 0xFFFD/3:C链递增
+    # 0xFFFC/4:A链重置 0xFFFB/5:B链重置 0xFFFA/6:C链重置
     'End':          lambda a, t: (
         "结束 (正常返回, 不修改链)" if not a or a[0] == '0' else
-        f"结束 → A链递增 (下一DEFINE)" if a[0] == '1' else
-        f"结束 → B链递增 (下一DEFINE)" if a[0] == '2' else
-        f"结束 → C链递增 (下一DEFINE)" if a[0] == '3' else
-        f"结束 → A链重置 (cur_A=0)" if a[0] == '4' else
-        f"结束 → B链重置 (cur_B=0)" if a[0] == '5' else
-        f"结束 → C链重置 (cur_C=0)" if a[0] == '6' else
-        f"结束 (模式={a[0]})"  # fallback for unknown modes
+        f"结束 → A链递增 (下一DEFINE)" if a[0] in ('1', '-1') else
+        f"结束 → B链递增 (下一DEFINE)" if a[0] in ('2', '-2') else
+        f"结束 → C链递增 (下一DEFINE)" if a[0] in ('3', '-3') else
+        f"结束 → A链重置 (cur_A=0)" if a[0] in ('4', '-4') else
+        f"结束 → B链重置 (cur_B=0)" if a[0] in ('5', '-5') else
+        f"结束 → C链重置 (cur_C=0)" if a[0] in ('6', '-6') else
+        f"结束 (模式={a[0]})"
     ),
     # opcode 1: TalkB(4) — 阻塞式对话: 实体, 文本ID, 参数, 参数
     'TalkB':        lambda a, t: f"对话(等待) 实体#{a[0]} 文本={a[1]} — {_tkt_text(t, a[1])}" if len(a)>=2 else f"对话(等待) 实体#{a[0]}" if a else "对话(等待)",
