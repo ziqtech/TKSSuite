@@ -1522,14 +1522,14 @@ class MatEditor:
         self.chain_info_lbl = ttk.Label(tb, text="", font=FONT_S, foreground='#666')
         self.chain_info_lbl.pack(side=tk.RIGHT, padx=4)
 
-        cols_chain = ('seq', 'sub', 'du_idx', 'define_id', 'block_id', 'mark')
+        cols_chain = ('sub', 'seq', 'du_idx', 'define_id', 'block_id', 'mark')
         self.chain_tree = ttk.Treeview(top_f, columns=cols_chain, show='headings', selectmode='browse')
-        col_defs_chain = [('seq', '序号', 35), ('sub', '子场景', 35),
-                          ('du_idx', 'DefUnit#', 55), ('define_id', 'DEFINE ID', 110),
+        col_defs_chain = [('sub', '子场景', 35), ('seq', '序号', 35),
+                          ('du_idx', 'DefUnit#', 55), ('define_id', 'DEFINE ID', 70),
                           ('block_id', 'f0', 35), ('mark', '标记', 50)]
         for cid, cn, cw in col_defs_chain:
             self.chain_tree.heading(cid, text=cn)
-            self.chain_tree.column(cid, width=cw, anchor='center' if cid != 'define_id' else 'w', minwidth=cw)
+            self.chain_tree.column(cid, width=cw, anchor='center' if cid not in ('define_id', 'sub') else 'w', minwidth=cw)
         csb = ttk.Scrollbar(top_f, orient=tk.VERTICAL, command=self.chain_tree.yview)
         self.chain_tree.configure(yscrollcommand=csb.set)
         self.chain_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True); csb.pack(side=tk.RIGHT, fill=tk.Y)
@@ -2366,7 +2366,7 @@ class MatEditor:
             # 插入分组标题 — 显示链类型
             type_lbl, type_tip = chain_labels[sub_name]
             cur_str = f'当前={cur}' if cur > 0 else '未激活'
-            head_iid = self.chain_tree.insert('', 'end', values=('', f'{sub_name}{type_lbl}', '', '', '', f'head=#{h} max={mx} {cur_str}'), tags=('group',))
+            head_iid = self.chain_tree.insert('', 'end', values=(f'{sub_name}{type_lbl}', '', '', '', '', f'head=#{h} max={mx} {cur_str}'), tags=('group',))
             # 遍历链
             idx = h; visited_chain = set()
             for step in range(mx):
@@ -2378,11 +2378,11 @@ class MatEditor:
                 marks = []
                 if (step + 1) == cur: marks.append('当前')
                 if step == 0: marks.append('链头')
-                self.chain_tree.insert('', 'end', values=(str(step + 1), f'  {sub_name}', str(idx), str(define_id), str(du_rec['f0']), ','.join(marks)),
+                self.chain_tree.insert('', 'end', values=(f'  {sub_name}', str(step + 1), str(idx), str(define_id), str(du_rec['f0']), ','.join(marks)),
                                        tags=('entry',))
                 idx = du_rec['f6']
                 if idx == 0: break
-        self.chain_tree.tag_configure('group', font=FONT_B, foreground='#3366cc')
+        self.chain_tree.tag_configure('group', foreground='#3366cc')
         # 更新信息标签
         total = len(self.chain_tree.get_children())
         self.chain_info_lbl.config(text=f"{entity_id=}, {total} 条节点")
