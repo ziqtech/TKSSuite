@@ -608,6 +608,26 @@ def _checkteam_desc(args):
         # 属性检查: CheckTeam(attr, threshold, op)
         return f"判断{cat_name} {op_str} {val}"
 
+# Attribute arg2 语义映射 (来源: TKD_decoded.txt 664处用法 + 脚本注释)
+# arg2: 1=智慧 2=仁德 3=勇气 5=体力值恢复 6=内力值恢复 10=事件完成度 11=特殊物品
+_ATTR_NAMES = {1:"智慧", 2:"仁德", 3:"勇气", 5:"体力值恢复", 6:"内力值恢复", 10:"事件完成度", 11:"特殊物品"}
+
+def _attribute_desc(args):
+    """根据 TKD脚本注释生成 Attribute 的人类可读描述。
+    Attribute(实体, 属性, 变化值): arg2=1智慧 2仁德 3勇气 5体力 6内力 10事件 11特殊"""
+    if not args or len(args) < 3:
+        return "属性变更"
+    try:
+        attr = int(args[1])
+        val = int(args[2])
+        name = _ATTR_NAMES.get(attr, f"属性{attr}")
+        sign = "+" if val >= 0 else ""
+        if attr in (5, 6) and val >= 9999:
+            return f"{name}完全恢复"
+        return f"属性变更 {name}{sign}{val}"
+    except (ValueError, TypeError):
+        return f"属性变更 ({','.join(args[:3])})"
+
 SCRIPT_CMD_DESC = {
     # ===== [Normal] 按 DEFCMD.LST 操作码顺序 =====
     # opcode 0: End(1) — 结束脚本, 参数=结束模式
@@ -728,7 +748,10 @@ SCRIPT_CMD_DESC = {
     # opcode 47: SetBlock(2) — 设置阻挡
     'SetBlock':     lambda a, t: f"设置阻挡 实体#{a[0]}" if a else "设置阻挡",
     # opcode 48: Attribute(3) — 属性变更
-    'Attribute':   lambda a, t: f"属性变更 参数=({','.join(a[:3])})" if len(a)>=3 else f"属性变更" if a else "属性变更",
+    # 来源: TKD_decoded.txt 664处用法 + 脚本注释
+    # arg2: 1=智慧 2=仁德 3=勇气 5=体力值恢复 6=内力值恢复 10=事件完成度 11=特殊物品
+    # arg3: 正=增加 负=减少
+    'Attribute':   lambda a, t: _attribute_desc(a),
     # opcode 49: SetSwitch(2) — 设置开关
     'SetSwitch':    lambda a, t: f"开关[{a[0]}]={a[1]}" if len(a)>=2 else f"开关[{a[0]}]" if a else "设置开关",
     # opcode 50: BuyMenu(3) — 商店菜单
