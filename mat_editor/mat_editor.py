@@ -767,7 +767,10 @@ SCRIPT_CMD_DESC = {
         f"获得道具 ID={a[0]}" if a else "获得道具"
     ),
     # opcode 41: BlackTalk(4) — 黑屏对话/旁白
-    'BlackTalk':    lambda a, t: f"黑屏对话 文本={a[0]} — {_tkt_text(t, a[0])}" if a else "黑屏对话",
+    # 逆向: sub_40B05C(text_id, x, y, color)→sub_4067E8加载TKT+sub_44B028设颜色, 循环渲染至按键
+    'BlackTalk':    lambda a, t: (
+        f"黑屏对话 文本={a[0]} ({a[1]},{a[2]}) 色{a[3]} — {_tkt_text(t, a[0])}" if len(a)>=4 else
+        f"黑屏对话 文本={a[0]} — {_tkt_text(t, a[0])}" if a else "黑屏对话"),
     # opcode 42: SetChaPic(2) — 设置角色图片
     'SetChaPic':    lambda a, t: f"设置角色图片 实体#{a[0]}" if a else "设置角色图片",
     # opcode 43: SetWeather(2) — 设置天气
@@ -778,8 +781,12 @@ SCRIPT_CMD_DESC = {
     'TeamMember':   lambda a, t: "队伍成员检查",
     # opcode 46: Note(2) — 注释命令
     'Note':         lambda a, t: f"注释: {', '.join(a)}" if a else "注释",
-    # opcode 47: SetBlock(2) — 设置阻挡
-    'SetBlock':     lambda a, t: f"设置阻挡 实体#{a[0]}" if a else "设置阻挡",
+    # opcode 47: SetBlock(2) — 地形块事件开关
+    # 逆向: sub_40CB90, a2=0→开启 a2=1→关闭
+    'SetBlock':     lambda a, t: (
+        f"开启地形块事件#{a[0]}" if len(a)>=2 and a[1]=='0' else
+        f"关闭地形块事件#{a[0]}" if len(a)>=2 and a[1]=='1' else
+        f"地形块事件#{a[0]}" if a else "地形块事件"),
     # opcode 48: Attribute(3) — 属性变更
     # 来源: TKD_decoded.txt 664处用法 + 脚本注释
     # arg2: 1=智慧 2=仁德 3=勇气 5=体力值恢复 6=内力值恢复 10=事件完成度 11=特殊物品
