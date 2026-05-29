@@ -710,8 +710,14 @@ SCRIPT_CMD_DESC = {
     'StopWalk':     lambda a, t: f"停止行走 实体#{a[0]}" if a else "停止行走",
     # opcode 12: SetEnabled(2) — 启用/禁用实体: 实体, 标志
     'SetEnabled':   lambda a, t: f"启用/禁用 实体#{a[0]} 标志={a[1]}" if len(a)>=2 else f"启用/禁用 实体#{a[0]}" if a else "启用/禁用",
-    # opcode 13: SetVisible(2) — 设置可见性: 实体, 标志
-    'SetVisible':   lambda a, t: f"设置可见性 实体#{a[0]} 标志={a[1]}" if len(a)>=2 else "设置可见性",
+    # opcode 13: SetVisible(2) — 设置实体可见性, 修改 flags bit1
+    # 逆向: sub_40CB?? — arg1=实体(-1=上下文 -2=自身) arg2=0隐藏/1显示
+    'SetVisible':   lambda a, t: (
+        f"显示 {'自身' if a[0]=='-2' else '上下文' if a[0]=='-1' else '实体#'+a[0]}" if len(a)>=2 and a[1]=='1' else
+        f"隐藏 {'自身' if a[0]=='-2' else '上下文' if a[0]=='-1' else '实体#'+a[0]}" if len(a)>=2 and a[1]=='0' else
+        f"设置可见性 实体#{a[0]} 标志={a[1]}" if len(a)>=2 else
+        "设置可见性"
+    ),
     # opcode 14: SetWait(3) — 设置等待: 实体, 模式, 帧数
     'SetWait':      lambda a, t: f"设置等待 实体#{a[0]} 标志={a[1]}" if len(a)>=2 else "设置等待",
     # opcode 15: Nop(0) — 空操作
@@ -761,8 +767,17 @@ SCRIPT_CMD_DESC = {
     'AddFlag':      lambda a, t: f"增加标志 #{a[0]}+{a[1]}" if len(a)>=2 else f"增加标志 #{a[0]}" if a else "增加标志",
     # opcode 34: TalkA(5) — 即时式对话: 实体, 文本ID, 参数, 参数, 参数
     'TalkA':        lambda a, t: f"对话(即时) 实体#{a[0]} 文本={a[1]} — {_tkt_text(t, a[1])}" if len(a)>=2 else f"对话(即时) 实体#{a[0]}" if a else "对话(即时)",
-    # opcode 35: Switch(2) — 开关切换
-    'Switch':       lambda a, t: f"开关切换 ({','.join(a[:2])})" if len(a)>=2 else "开关切换",
+    # opcode 35: Switch(2) — NPC状态切换 (仅限 type=200, sub_40CB90)
+    # 逆向: 修改 anim_set[9] + 移动模式[70], 不碰 flags
+    # arg2=0: anim_set→1(Cha.JVG) + 移动模式→0(静止) — NPC站桩不动
+    # arg2=1: anim_set→4(Ani.JVG) + 移动模式→1(行走) — NPC恢复正常行动
+    # TKD中成对使用: Switch(N,0)在对话/菜单前 → Switch(N,1)在结束后
+    'Switch':       lambda a, t: (
+        f"切换NPC模式·常规 {'自身' if a[0]=='-2' else '上下文' if a[0]=='-1' else 'NPC#'+a[0]}" if len(a)>=2 and a[1]=='0' else
+        f"切换NPC模式·动画 {'自身' if a[0]=='-2' else '上下文' if a[0]=='-1' else 'NPC#'+a[0]}" if len(a)>=2 and a[1]=='1' else
+        f"NPC状态切换 实体#{a[0]} 模式={a[1]}" if len(a)>=2 else
+        "NPC状态切换"
+    ),
     # opcode 36: SetVar(2) — 设置变量
     'SetVar':       lambda a, t: f"变量[{a[0]}]={a[1]}" if len(a)>=2 else f"变量[{a[0]}]" if a else "设置变量",
     # opcode 37: Random(3) — 随机: 变量槽, 最小值, 最大值
@@ -808,8 +823,9 @@ SCRIPT_CMD_DESC = {
     # arg2: 1=智慧 2=仁德 3=勇气 5=体力值恢复 6=内力值恢复 10=事件完成度 11=特殊物品
     # arg3: 正=增加 负=减少
     'Attribute':   lambda a, t: _attribute_desc(a),
-    # opcode 49: SetSwitch(2) — 设置开关
-    'SetSwitch':    lambda a, t: f"开关[{a[0]}]={a[1]}" if len(a)>=2 else f"开关[{a[0]}]" if a else "设置开关",
+    # opcode 49: SetSwitch(2) — 设置全局运行时开关 (word_755E10[32], 不存档)
+    # 与 SetFlag(存档持久)不同: SetSwitch 是临时状态, 用于UI流程/事件控制
+    'SetSwitch':    lambda a, t: f"设置全局开关[{a[0]}]={a[1]}" if len(a)>=2 else f"设置全局开关[{a[0]}]" if a else "设置全局开关",
     # opcode 50: BuyMenu(3) — 商店菜单
     'BuyMenu':      lambda a, t: f"商店菜单 参数=({','.join(a[:3])})" if len(a)>=3 else "商店菜单",
     # opcode 51: PlaySound(2) — 播放音效
