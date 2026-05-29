@@ -694,22 +694,52 @@ SCRIPT_CMD_DESC = {
         f"{'A链' if a[1]=='1' else 'B链' if a[1]=='2' else 'C链' if a[1]=='3' else '链'+a[1]} "
         f"→位置{a[2]}"
     ),
-    # opcode 5: SysTalk(6) — 系统对话
-    'SysTalk':      lambda a, t: f"系统对话 参数=({','.join(a[:6])})" if len(a)>=6 else f"系统对话" if not a else f"系统对话 参数=({','.join(a)})",
-    # opcode 6: SetHint(3) — 设置提示: 实体, 参数, 参数
-    'SetHint':      lambda a, t: f"设置提示 实体#{a[0]} — {_tkt_text(t, a[0])}" if a else "设置提示",
-    # opcode 7: MenuTalk(2) — 菜单对话
-    'MenuTalk':     lambda a, t: f"菜单对话 ID={a[0]}" if a else "菜单对话",
-    # opcode 8: SetScene(2) — 设置场景状态
-    'SetScene':     lambda a, t: f"设置场景状态 ID={a[0]}" if a else "设置场景状态",
-    # opcode 9: SetWalk(3) — 设置行走: 实体, X, Y
-    'SetWalk':      lambda a, t: f"行走 实体#{a[0]}→({a[1]},{a[2]})" if len(a)>=3 else f"行走 实体#{a[0]}" if a else "行走",
-    # opcode 10: WaitWalk(2) — 等待行走完成: 实体, 模式
-    'WaitWalk':     lambda a, t: f"等待行走完成 实体#{a[0]}" if a else "等待行走",
-    # opcode 11: StopWalk(2) — 停止行走
-    'StopWalk':     lambda a, t: f"停止行走 实体#{a[0]}" if a else "停止行走",
-    # opcode 12: SetEnabled(2) — 启用/禁用实体: 实体, 标志
-    'SetEnabled':   lambda a, t: f"启用/禁用 实体#{a[0]} 标志={a[1]}" if len(a)>=2 else f"启用/禁用 实体#{a[0]}" if a else "启用/禁用",
+    # opcode 5: SysTalk(6) — 系统对话 (sub_40B1B4)
+    # 参数: 实体, 文本ID, 颜色索引, 位置X, 位置Y, 模式(0=阻塞 1=非阻塞)
+    'SysTalk':      lambda a, t: (
+        f"系统对话 实体#{a[0]} 文本={a[1]} 色{a[2]} ({a[3]},{a[4]}) {'非阻塞' if a[5]=='1' else '阻塞'}"
+        if len(a)>=6 else f"系统对话 ({','.join(a)})" if a else "系统对话"
+    ),
+    # opcode 6: SetHint(3) — 设置提示 (sub_40B650)
+    # 参数: 实体(-1=上下文 -2=自身), 提示文本ID, 开关(0=关闭提示 >0=开启提示)
+    'SetHint':      lambda a, t: (
+        f"设置提示 {'自身' if a[0]=='-2' else '上下文' if a[0]=='-1' else '实体#'+a[0]} 文本={a[1]} {'开启' if a[2]!='0' else '关闭'}"
+        if len(a)>=3 else f"设置提示 ({','.join(a)})" if a else "设置提示"
+    ),
+    # opcode 7: MenuTalk(2) — 菜单对话 (sub_40B710)
+    # 参数: 文本ID, 变量槽(存储选择结果)
+    'MenuTalk':     lambda a, t: f"菜单对话 文本={a[0]}→变量[{a[1]}]" if len(a)>=2 else f"菜单对话 ({','.join(a)})" if a else "菜单对话",
+    # opcode 8: SetScene(2) — 设置场景状态 (sub_40BB70)
+    # 参数: 实体(-1=上下文 -2=自身), 场景ID
+    'SetScene':     lambda a, t: (
+        f"设置场景 {'自身' if a[0]=='-2' else '上下文' if a[0]=='-1' else '实体#'+a[0]} →场景{a[1]}"
+        if len(a)>=2 else f"设置场景 ({','.join(a)})" if a else "设置场景"
+    ),
+    # opcode 9: SetWalk(3) — 设置行走 (sub_40BC10)
+    # 参数: 实体(-1=上下文 -2=自身), 目标X, 目标Y (仅type=200有效)
+    'SetWalk':      lambda a, t: (
+        f"行走 {'自身' if a[0]=='-2' else '上下文' if a[0]=='-1' else '实体#'+a[0]}→({a[1]},{a[2]})"
+        if len(a)>=3 else f"行走 ({','.join(a)})" if a else "行走"
+    ),
+    # opcode 10: WaitWalk(2) — 等待行走完成 (sub_40BCC0)
+    # 参数: 实体(-1=上下文 -2=自身), 模式(0=异步 1=同步阻塞)
+    # 同步模式下脚本暂停直到行走完成; 异步模式检查flags bit4判断是否在行走
+    'WaitWalk':     lambda a, t: (
+        f"等待行走 {'自身' if a[0]=='-2' else '上下文' if a[0]=='-1' else '实体#'+a[0]} {'同步' if len(a)>=2 and a[1]!='0' else '异步'}"
+        if a else "等待行走"
+    ),
+    # opcode 11: StopWalk(2) — 停止行走 (sub_40BD84)
+    # 参数: 实体(-1=上下文 -2=自身), 方向(1-8, 0=清除方向重置动画)
+    'StopWalk':     lambda a, t: (
+        f"停止行走 {'自身' if a[0]=='-2' else '上下文' if a[0]=='-1' else '实体#'+a[0]} 方向={a[1] if len(a)>=2 and a[1]!='0' else '重置'}"
+        if a else "停止行走"
+    ),
+    # opcode 12: SetEnabled(2) — 启用/禁用实体 (sub_40BE30)
+    # 参数: 实体(-1=上下文 -2=自身), 标志(0=禁用flags bit0清零, 1=启用flags bit0置位)
+    'SetEnabled':   lambda a, t: (
+        f"{'启用' if len(a)>=2 and a[1]!='0' else '禁用'} {'自身' if a[0]=='-2' else '上下文' if a[0]=='-1' else '实体#'+a[0]}"
+        if a else "启用/禁用"
+    ),
     # opcode 13: SetVisible(2) — 设置实体可见性, 修改 flags bit1
     # 逆向: sub_40CB?? — arg1=实体(-1=上下文 -2=自身) arg2=0隐藏/1显示
     'SetVisible':   lambda a, t: (
@@ -718,42 +748,89 @@ SCRIPT_CMD_DESC = {
         f"设置可见性 实体#{a[0]} 标志={a[1]}" if len(a)>=2 else
         "设置可见性"
     ),
-    # opcode 14: SetWait(3) — 设置等待: 实体, 模式, 帧数
-    'SetWait':      lambda a, t: f"设置等待 实体#{a[0]} 标志={a[1]}" if len(a)>=2 else "设置等待",
+    # opcode 14: SetWait(3) — 设置等待/延时 (sub_40BF88)
+    # 参数: 实体(-1=上下文 -2=自身), 最小tick, 最大tick
+    # 实体param字段 = random(min, max), 用于随机延时触发
+    'SetWait':      lambda a, t: (
+        f"设置等待 {'自身' if a[0]=='-2' else '上下文' if a[0]=='-1' else '实体#'+a[0]} [{a[1]},{a[2]}]tick"
+        if len(a)>=3 else f"设置等待 ({','.join(a)})" if a else "设置等待"
+    ),
     # opcode 15: Nop(0) — 空操作
     'Nop':          lambda a, t: f"空操作 (填充={a[0]})" if a else "空操作",
     # opcode 16: SetCursor(3) — 设置光标
     # 逆向: sub_411BA4/sub_412390, TKMat[d8]=cursor_id
     # 参数: (实体, 光标动画, 开关)  动画:0=默认 1=标准 3=开门(传送)  开关:0=隐藏 1=显示
     'SetCursor':    lambda a, t: _setcursor_desc(a),
-    # opcode 17: FadeOut(4) — 淡出: R, G, B, 速度
+    # opcode 17: FadeOut(4) — 淡出 (sub_409830)
+    # 参数: R, G, B, 速度(越大越快)
     'FadeOut':      lambda a, t: f"淡出 RGB({a[0]},{a[1]},{a[2]}) 速度={a[3]}" if len(a)>=4 else "淡出",
     # opcode 18: FadeIn(4) — 淡入: R, G, B, 速度
     'FadeIn':       lambda a, t: f"淡入 RGB({a[0]},{a[1]},{a[2]}) 速度={a[3]}" if len(a)>=4 else "淡入",
-    # opcode 19: ChangeScene(4) — 切换场景: 场景ID, X, Y, 朝向
+    # opcode 19: ChangeScene(4) — 切换场景 (sub_40C044)
+    # 参数: 场景ID, 玩家X, 玩家Y, 朝向(1-8)
+    # 加载新场景文件, 设置玩家位置和朝向, 重置天气/对话等状态
     'ChangeScene':  lambda a, t: f"切换场景→#{a[0]} ({a[1]},{a[2]})朝向{a[3]}" if len(a)>=4 else f"切换场景→#{a[0]}" if a else "切换场景",
-    # opcode 20: SetAni(7) — 设置动画: 实体+6参数
-    'SetAni':       lambda a, t: f"设置动画 实体#{a[0]}" if a else "设置动画",
-    # opcode 21: SetTick(2) — 设置Tick回调
-    'SetTick':      lambda a, t: f"设置Tick回调 实体#{a[0]}" if a else "设置Tick",
-    # opcode 22: SetShadow(2) — 设置阴影
-    'SetShadow':    lambda a, t: f"设置阴影 实体#{a[0]}" if a else "设置阴影",
+    # opcode 20: SetAni(7) — 设置动画 (sub_40C1A4)
+    # 参数: 实体(-1=上下文 -2=自身), Ani.JVG块ID, 帧起点(-1=不变), 帧终点(-1=不变), 
+    #        当前帧(-1=不变), 动画速度(-1=不变), 循环标志(0=不循环 1=循环 -1=不变)
+    # 仅type=20/200有效; 设置anim_set=4(Ani.JVG), 修改子模型和动画参数
+    'SetAni':       lambda a, t: (
+        f"设置动画 {'自身' if a[0]=='-2' else '上下文' if a[0]=='-1' else '实体#'+a[0]} 块={a[1]}"
+        if len(a)>=2 else f"设置动画 ({','.join(a)})" if a else "设置动画"
+    ),
+    # opcode 21: SetTick(2) — 设置Tick周期 (sub_40C388)
+    # 参数: 实体(-1=上下文 -2=自身), tick周期值
+    # 修改实体的tick字段(dword[4]), 控制自动脚本执行频率
+    'SetTick':      lambda a, t: (
+        f"设置Tick {'自身' if a[0]=='-2' else '上下文' if a[0]=='-1' else '实体#'+a[0]}={a[1]}帧"
+        if len(a)>=2 else f"设置Tick ({','.join(a)})" if a else "设置Tick"
+    ),
+    # opcode 22: SetShadow(2) — 设置阴影 (sub_40C428)
+    # 参数: 实体(-1=上下文 -2=自身), 阴影帧(0=无 1=小 2=大)
+    # 仅type=20/200有效, 修改shadow_frame字段(dword[55])
+    'SetShadow':    lambda a, t: (
+        f"设置阴影 {'自身' if a[0]=='-2' else '上下文' if a[0]=='-1' else '实体#'+a[0]}={'无' if a[1]=='0' else '小' if a[1]=='1' else '大' if a[1]=='2' else a[1]}"
+        if len(a)>=2 else f"设置阴影 ({','.join(a)})" if a else "设置阴影"
+    ),
     # opcode 23: SetPos(4) — 设置位置: 实体, X, Y, 朝向
     'SetPos':       lambda a, t: f"设置位置 实体#{a[0]}→({a[1]},{a[2]})朝向{a[3]}" if len(a)>=4 else f"设置位置 实体#{a[0]}" if a else "设置位置",
-    # opcode 24: Disable(1) — 禁用实体
-    'Disable':      lambda a, t: f"禁用 实体#{a[0]}" if a else "禁用",
-    # opcode 25: Enable(1) — 启用实体
-    'Enable':       lambda a, t: f"启用 实体#{a[0]}" if a else "启用",
-    # opcode 26: Redraw(1) — 重绘画面
-    'Redraw':       lambda a, t: "重绘画面",
-    # opcode 27: SetPlayer(1) — 设置玩家
-    'SetPlayer':    lambda a, t: f"设置玩家实体#{a[0]}" if a else "设置玩家",
-    # opcode 28: SetCamera(1) — 设置镜头
-    'SetCamera':    lambda a, t: f"设置镜头 实体#{a[0]}" if a else "设置镜头",
-    # opcode 29: SetView(2) — 设置视角
-    'SetView':      lambda a, t: f"设置视角 参数=({','.join(a[:2])})" if len(a)>=2 else f"设置视角" if a else "设置视角",
-    # opcode 30: SlideTo(3) — 滑动到
-    'SlideTo':      lambda a, t: f"滑动到 ({a[0]},{a[1]},{a[2]})" if len(a)>=3 else "滑动",
+    # opcode 24: Disable(1) — 禁用实体 (sub_40C5A4)
+    # 参数: 实体(-1=上下文 -2=自身)
+    # 同时清除flags bit0(启用)和bit1(可见), 实体完全不可见不可交互
+    'Disable':      lambda a, t: (
+        f"禁用 {'自身' if a[0]=='-2' else '上下文' if a[0]=='-1' else '实体#'+a[0]}"
+        if a else "禁用"
+    ),
+    # opcode 25: Enable(1) — 启用实体 (sub_40C648)
+    # 参数: 实体(-1=上下文 -2=自身)
+    # 同时设置flags bit0(启用)和bit1(可见), 与Disable相反
+    'Enable':       lambda a, t: (
+        f"启用 {'自身' if a[0]=='-2' else '上下文' if a[0]=='-1' else '实体#'+a[0]}"
+        if a else "启用"
+    ),
+    # opcode 26: Redraw(1) — 重绘画面 (sub_40C6EC)
+    # 参数: 帧数(持续渲染N帧)
+    # 强制执行完整的渲染循环N帧, 包含天气/对话框/光标等所有UI元素
+    'Redraw':       lambda a, t: f"重绘 {a[0]}帧" if a else "重绘画面",
+    # opcode 27: SetPlayer(1) — 设置玩家角色 (sub_40C7CC)
+    # 参数: 实体ID(必须是type=200)
+    # 设置当前操控的玩家角色, 修改dword_755B5C和dword_8242E0
+    'SetPlayer':    lambda a, t: f"设置玩家→实体#{a[0]}" if a else "设置玩家",
+    # opcode 28: SetCamera(1) — 设置镜头跟随目标 (sub_40C854)
+    # 参数: 实体(-1=禁用镜头跟随, 其他=跟随该实体)
+    # 修改dword_8242E4, 镜头会跟随目标实体移动
+    'SetCamera':    lambda a, t: (
+        f"镜头→{'禁用' if a[0]=='-1' else '实体#'+a[0]}"
+        if a else "设置镜头"
+    ),
+    # opcode 29: SetView(2) — 设置视角 (sub_40C8E0)
+    # 参数: X, Y (世界坐标)
+    # 直接设置镜头视口位置, 与SetCamera不同的是不跟随实体
+    'SetView':      lambda a, t: f"视角→({a[0]},{a[1]})" if len(a)>=2 else f"设置视角" if a else "设置视角",
+    # opcode 30: SlideTo(3) — 平滑移动镜头 (sub_40C9E8)
+    # 参数: 目标X, 目标Y, 帧数(移动持续时间)
+    # 镜头从当前位置平滑移动到目标位置, 每帧更新
+    'SlideTo':      lambda a, t: f"镜头滑动→({a[0]},{a[1]}) {a[2]}帧" if len(a)>=3 else "镜头滑动",
     # opcode 31: PlayerAct(1) — 玩家操作
     # TKD用法: PlayerAct(0)=锁定(脚本开头) PlayerAct(1)=恢复(脚本结尾)
     'PlayerAct':   lambda a, t: (
@@ -767,27 +844,30 @@ SCRIPT_CMD_DESC = {
     'AddFlag':      lambda a, t: f"增加标志 #{a[0]}+{a[1]}" if len(a)>=2 else f"增加标志 #{a[0]}" if a else "增加标志",
     # opcode 34: TalkA(5) — 即时式对话: 实体, 文本ID, 参数, 参数, 参数
     'TalkA':        lambda a, t: f"对话(即时) 实体#{a[0]} 文本={a[1]} — {_tkt_text(t, a[1])}" if len(a)>=2 else f"对话(即时) 实体#{a[0]}" if a else "对话(即时)",
-    # opcode 35: Switch(2) — NPC状态切换 (仅限 type=200, sub_40CB90)
-    # 逆向: 修改 anim_set[9] + 移动模式[70], 不碰 flags
-    # arg2=0: anim_set→1(Cha.JVG) + 移动模式→0(静止) — NPC站桩不动
-    # arg2=1: anim_set→4(Ani.JVG) + 移动模式→1(行走) — NPC恢复正常行动
+    # opcode 35: Switch(2) — NPC状态切换 (sub_40CB90)
+    # 参数: 实体(-1=上下文 -2=自身), 模式(0=常规/站桩 1=动画/行走)
+    # 仅type=200有效; arg2=0: anim_set→1(Cha.JVG)+移动模式→0(静止)
+    # arg2=1: anim_set→4(Ani.JVG)+移动模式→1(行走)
     # TKD中成对使用: Switch(N,0)在对话/菜单前 → Switch(N,1)在结束后
     'Switch':       lambda a, t: (
-        f"切换NPC模式·常规 {'自身' if a[0]=='-2' else '上下文' if a[0]=='-1' else 'NPC#'+a[0]}" if len(a)>=2 and a[1]=='0' else
-        f"切换NPC模式·动画 {'自身' if a[0]=='-2' else '上下文' if a[0]=='-1' else 'NPC#'+a[0]}" if len(a)>=2 and a[1]=='1' else
-        f"NPC状态切换 实体#{a[0]} 模式={a[1]}" if len(a)>=2 else
-        "NPC状态切换"
+        f"切换NPC·{'常规' if a[1]=='0' else '动画'} {'自身' if a[0]=='-2' else '上下文' if a[0]=='-1' else 'NPC#'+a[0]}"
+        if len(a)>=2 else "NPC状态切换"
     ),
-    # opcode 36: SetVar(2) — 设置变量
+    # opcode 36: SetVar(2) — 设置脚本变量 (case 36)
+    # 参数: 变量槽(0-249), 值
+    # 变量存储在word_755E80[256], 超出范围会报错
     'SetVar':       lambda a, t: f"变量[{a[0]}]={a[1]}" if len(a)>=2 else f"变量[{a[0]}]" if a else "设置变量",
-    # opcode 37: Random(3) — 随机: 变量槽, 最小值, 最大值
-    'Random':       lambda a, t: f"随机→变量[{a[0]}] 范围[{a[1]},{a[2]}]" if len(a)>=3 else "随机",
+    # opcode 37: Random(3) — 随机数 (case 37)
+    # 参数: 变量槽, 最小值, 最大值
+    # 生成[min, max]范围的随机数存入变量槽; max必须>min否则报错
+    'Random':       lambda a, t: f"随机→变量[{a[0]}] [{a[1]},{a[2]}]" if len(a)>=3 else "随机",
     # opcode 38: SetFlagVar(2) — 设置标志变量
     'SetFlagVar':   lambda a, t: f"标志变量 标志={a[0]},变量槽={a[1]}" if len(a)>=2 else f"标志变量 标志={a[0]}" if a else "设置标志变量",
     # opcode 39: AddFlagVar(2) — 增加标志变量
     'AddFlagVar':   lambda a, t: f"增加标志变量 标志={a[0]},变量槽={a[1]}" if len(a)>=2 else f"增加标志变量 标志={a[0]}" if a else "增加标志变量",
-    # opcode 40: GetItem(2) — 道具/金钱增减: 道具ID, 数量(正=获得 负=移除)
-    # item_id=10000 → 金钱
+    # opcode 40: GetItem(2) — 道具/金钱增减 (sub_40CE30)
+    # 参数: 道具ID(10000=金钱), 数量(正=获得 负=移除)
+    # 道具数量上限99, 金钱上限30000; 获得时显示SysTalk提示
     'GetItem':      lambda a, t, i=None: (
         f"金钱 {_sign_qty(a[1])}" if a and len(a)>=2 and a[0]=='10000' else
         f"道具 {a[0]}({_item_name(i, a[0])}) {_sign_qty(a[1])}" if a and len(a)>=2 and i else
@@ -799,10 +879,21 @@ SCRIPT_CMD_DESC = {
     'BlackTalk':    lambda a, t: (
         f"黑屏对话 文本={a[0]} ({a[1]},{a[2]}) 色{a[3]} — {_tkt_text(t, a[0])}" if len(a)>=4 else
         f"黑屏对话 文本={a[0]} — {_tkt_text(t, a[0])}" if a else "黑屏对话"),
-    # opcode 42: SetChaPic(2) — 设置角色图片
-    'SetChaPic':    lambda a, t: f"设置角色图片 实体#{a[0]}" if a else "设置角色图片",
-    # opcode 43: SetWeather(2) — 设置天气
-    'SetWeather':   lambda a, t: f"设置天气 参数=({','.join(a[:2])})" if len(a)>=2 else f"设置天气" if a else "设置天气",
+    # opcode 42: SetChaPic(2) — 设置角色立绘 (sub_40D0CC)
+    # 参数: 实体(-1=上下文 -2=自身), Cha.JVG块ID
+    # 仅type=200有效; 修改立绘ID(dword[51])和相关动画参数
+    'SetChaPic':    lambda a, t: (
+        f"设置立绘 {'自身' if a[0]=='-2' else '上下文' if a[0]=='-1' else '实体#'+a[0]}→块{a[1]}"
+        if len(a)>=2 else f"设置立绘 ({','.join(a)})" if a else "设置立绘"
+    ),
+    # opcode 43: SetWeather(2) — 设置天气效果 (sub_40D2A0)
+    # 参数: 天气类型(0=关闭 1=雨), 保留
+    # a1=0: 清除天气粒子(sub_405B98)
+    # a1=1: 开启下雨效果(sub_405BE0), 参数: 类型=1, 粒子数=5, 最大=400, 增速=10, 速度=5
+    'SetWeather':   lambda a, t: (
+        f"天气→{'关闭' if a[0]=='0' else '下雨' if a[0]=='1' else '类型'+a[0]}"
+        if a else "设置天气"
+    ),
     # opcode 44: ShowMenu(2) — 显示菜单
     # 逆向: sub_40D2D0(__int16 a1), 参数: 0=主菜单 1=存档/读档菜单
     'ShowMenu':     lambda a, t: (
@@ -815,8 +906,10 @@ SCRIPT_CMD_DESC = {
         f"角色{a[0]} 加入队伍" if len(a)>=2 and a[1]=='1' else
         f"角色{a[0]} 离开队伍" if len(a)>=2 and a[1]=='0' else
         "清空全队" if a and a[0]=='0' else "队伍成员"),
-    # opcode 46: Note(2) — 注释命令
-    'Note':         lambda a, t: f"注释: {', '.join(a)}" if a else "注释",
+    # opcode 46: Note(2) — 注释/标记 (sub_40DBF4)
+    # 参数: 标记槽(0-999), 值
+    # 存储在word_7568D8[1000], 用于脚本状态标记, 不影响游戏逻辑
+    'Note':         lambda a, t: f"标记[{a[0]}]={a[1]}" if len(a)>=2 else f"标记 ({','.join(a)})" if a else "注释",
     # opcode 47: SetBlock(2) — 地形块事件开关
     # 逆向: sub_40CB90, a2=0→开启 a2=1→关闭
     'SetBlock':     lambda a, t: (
@@ -828,9 +921,11 @@ SCRIPT_CMD_DESC = {
     # arg2: 1=智慧 2=仁德 3=勇气 5=体力值恢复 6=内力值恢复 10=事件完成度 11=特殊物品
     # arg3: 正=增加 负=减少
     'Attribute':   lambda a, t: _attribute_desc(a),
-    # opcode 49: SetSwitch(2) — 设置全局运行时开关 (word_755E10[32], 不存档)
-    # 与 SetFlag(存档持久)不同: SetSwitch 是临时状态, 用于UI流程/事件控制
-    'SetSwitch':    lambda a, t: f"设置全局开关[{a[0]}]={a[1]}" if len(a)>=2 else f"设置全局开关[{a[0]}]" if a else "设置全局开关",
+    # opcode 49: SetSwitch(2) — 设置全局运行时开关 (case 49)
+    # 参数: 开关槽(0-31), 值
+    # 存储在word_755E10[32], 仅运行时有效不存档; 用于UI流程/事件控制
+    # 与SetFlag(存档持久)不同: SetSwitch是临时状态
+    'SetSwitch':    lambda a, t: f"开关[{a[0]}]={a[1]}" if len(a)>=2 else f"开关[{a[0]}]" if a else "设置开关",
     # opcode 50: BuyMenu(3) — 商店菜单
     # 逆向: sub_40D804(__int16 a1, __int16 a2, __int16 a3)
     # a1=商品ID, a2=商品索引, a3=商店模式(0-4: 0=武器 1=防具 2=药品 3=杂货 4=特殊)
@@ -838,38 +933,93 @@ SCRIPT_CMD_DESC = {
         f"商店菜单 商品={a[0]} 索引={a[1]} 模式={'武器' if a[2]=='0' else '防具' if a[2]=='1' else '药品' if a[2]=='2' else '杂货' if a[2]=='3' else '特殊' if a[2]=='4' else a[2]}"
         if len(a)>=3 else "商店菜单"
     ),
-    # opcode 51: PlaySound(2) — 播放音效
-    'PlaySound':    lambda a, t: f"播放音效 ID={a[0]}" if a else "播放音效",
-    # opcode 52: StopSound(1) — 停止声音
-    'StopSound':    lambda a, t: "停止声音",
-    # opcode 53: PlayMusic(2) — 播放音乐
-    'PlayMusic':    lambda a, t: f"播放音乐 ID={a[0]}" if a else "播放音乐",
-    # opcode 54: SetMusic(2) — 设置背景音乐
-    'SetMusic':     lambda a, t: f"设置音乐 ID={a[0]}" if a else "设置音乐",
-    # opcode 55: TheEnd(1) — 游戏结局
-    'TheEnd':       lambda a, t: "游戏结束",
-    # opcode 56: Fix(1) — 修正/修复命令
-    'Fix':          lambda a, t: f"修正 参数={a[0]}" if a else "修正",
+    # opcode 51: PlaySound(2) — 播放音效 (sub_451780 + sub_451C38)
+    # 参数: 音效ID, 循环(0=不循环 1=循环)
+    # 音效文件: sound\%04d.wav; 使用DirectSound播放
+    'PlaySound':    lambda a, t: (
+        f"播放音效 {a[0]} {'循环' if len(a)>=2 and a[1]!='0' else '单次'}"
+        if a else "播放音效"
+    ),
+    # opcode 52: StopSound(1) — 停止音效 (sub_451D2C)
+    # 无参数; 停止当前播放的音效
+    'StopSound':    lambda a, t: "停止音效",
+    # opcode 53: PlayMusic(2) — 播放音乐 (sub_44AC50 + sub_44AC90)
+    # 参数: 音乐ID, 循环(0=不循环 1=循环)
+    # 音乐文件: sound\%04d.mp3; 使用DirectShow播放
+    'PlayMusic':    lambda a, t: (
+        f"播放音乐 {a[0]} {'循环' if len(a)>=2 and a[1]!='0' else '单次'}"
+        if a else "播放音乐"
+    ),
+    # opcode 54: SetMusic(2) — 设置场景BGM映射 (case 54)
+    # 参数: 场景ID(0-255), 音乐ID(-1=停止当前)
+    # 存储在byte_755B74[256], 切换场景时自动播放对应BGM
+    # 如果设置的是当前场景的BGM且值<0, 则停止当前音乐
+    'SetMusic':     lambda a, t: (
+        f"场景BGM 场景{a[0]}→{'停止' if a[1]=='-1' else '音乐'+a[1]}"
+        if len(a)>=2 else f"场景BGM ({','.join(a)})" if a else "场景BGM"
+    ),
+    # opcode 55: TheEnd(1) — 游戏结局 (case 55)
+    # 参数: 结局ID(0-99)
+    # 设置word_951940 = 结局ID + 100, 然后返回-1终止脚本执行
+    # 触发游戏结局画面
+    'TheEnd':       lambda a, t: f"游戏结局 #{a[0]}" if a else "游戏结局",
+    # opcode 56: Fix(1) — 修正/空操作 (case 56)
+    # 参数: 保留
+    # 仅word_755AB2 += 2, 不执行任何操作; 可能用于版本兼容或调试
+    'Fix':          lambda a, t: f"修正(保留={a[0]})" if a else "修正",
     # ===== [Special] 条件跳转类 =====
-    # opcode 60: CheckResult(2) — 检查变量结果跳转
-    'CheckResult':  lambda a, t: f"条件跳转 变量[{a[0]}]=={a[1]}?" if len(a)>=2 else "条件跳转",
-    # opcode 61: CheckFlag(3) — 检查标志条件跳转: 标志ID, 操作符, 值
-    'CheckFlag':    lambda a, t: f"检查标志 标志={a[0]}, 操作={a[1]}, 值={a[2]}" if len(a)>=3 else f"检查标志 标志={a[0]}" if a else "检查标志",
-    # opcode 62: CheckItem(3) — 检查道具条件跳转
-    'CheckItem':    lambda a, t: f"检查道具 参数=({','.join(a[:3])})" if len(a)>=3 else "检查道具",
+    # opcode 60: CheckResult(2) — 检查变量结果跳转 (case 60)
+    # 参数: 变量槽, 期望值, 跳转偏移(隐含在字节码中)
+    # 如果word_755E50[变量槽] == 期望值, 继续执行; 否则跳转
+    # word_755E50存储上次比较操作的结果
+    'CheckResult':  lambda a, t: f"检查结果 变量[{a[0]}]=={a[1]}?" if len(a)>=2 else "检查结果",
+    # opcode 61: CheckFlag(3) — 检查标志条件跳转 (sub_40E40C)
+    # 参数: 标志ID(0-1023), 期望值, 操作符(0=== 1=>= -1=< -2=<= 2=> 3=!=)
+    # 比较word_756080[标志ID]与期望值, 结果存入dword_755AA0
+    # 字节码中隐含跳转偏移: 如果比较失败则跳转
+    'CheckFlag':    lambda a, t: (
+        f"检查标志 #{a[0]} {_CMP_OPS.get(a[2], a[2])} {a[1]}?"
+        if len(a)>=3 else f"检查标志 #{a[0]}" if a else "检查标志"
+    ),
+    # opcode 62: CheckItem(3) — 检查道具条件跳转 (sub_40E4E4)
+    # 参数: 道具ID(10000=金钱), 期望数量, 操作符(0=== 1=>= -1=< -2=<= 2=> 3=!=)
+    # 统计背包+队伍装备中的道具总数, 与期望值比较
+    # 结果存入dword_755AA0, 字节码中隐含跳转偏移
+    'CheckItem':    lambda a, t: (
+        f"检查道具 {a[0]} {_CMP_OPS.get(a[2], a[2])} {a[1]}?"
+        if len(a)>=3 else f"检查道具 {a[0]}" if a else "检查道具"
+    ),
     # opcode 63: CheckTeam(3) — 检查队伍条件跳转
     'CheckTeam':    lambda a, t, i=None: _checkteam_desc(a),
-    # opcode 64: MiniGame(3) — 小游戏
-    'MiniGame':     lambda a, t: f"小游戏 ID={a[0]}" if a else "小游戏",
-    # opcode 65: CheckMember(4) — 检查成员条件跳转
-    'CheckMember':  lambda a, t: f"检查成员 参数=({','.join(a[:4])})" if len(a)>=4 else f"检查成员 ID={a[0]}" if a else "检查成员",
-    # opcode 66: War(1) — 战斗
-    'War':          lambda a, t: f"战斗 ID={a[0]}" if a else "战斗",
+    # opcode 64: MiniGame(3) — 小游戏 (sub_40E97C)
+    # 参数: 游戏类型(1-7), 难度/参数, 跳转偏移(失败时跳转)
+    # 游戏类型: 1=华容道 2=八阵图 3=骰子 4=串珠 5=四四同数 6=拼图 7=龙蛇百变
+    # 返回dword_755AA0: 1=成功 0=失败; 失败时跳转到指定偏移
+    'MiniGame':     lambda a, t: (
+        f"小游戏 {'华容道' if a[0]=='1' else '八阵图' if a[0]=='2' else '骰子' if a[0]=='3' else '串珠' if a[0]=='4' else '四四同数' if a[0]=='5' else '拼图' if a[0]=='6' else '龙蛇百变' if a[0]=='7' else '类型'+a[0]}"
+        if a else "小游戏"
+    ),
+    # opcode 65: CheckMember(4) — 检查队伍成员属性 (sub_40E88C)
+    # 参数: 角色ID, 属性类型(0=等级), 期望值, 操作符(0=== 1=>= -1=< -2=<= 2=> 3=!=)
+    # 检查指定角色的属性值, 结果存入dword_755AA0
+    # 字节码中隐含跳转偏移: 如果比较失败则跳转
+    'CheckMember':  lambda a, t: (
+        f"检查成员 角色#{a[0]} 属性{a[1]} {_CMP_OPS.get(a[3], a[3])} {a[2]}?"
+        if len(a)>=4 else f"检查成员 ({','.join(a)})" if a else "检查成员"
+    ),
+    # opcode 66: War(1) — 战斗 (sub_40EB10)
+    # 参数: 战斗ID
+    # 触发战斗, 播放战斗BGM, 切换到战斗场景
+    # 返回dword_755AA0: 1=胜利 0=失败; 字节码中隐含跳转偏移
+    'War':          lambda a, t: f"战斗 #{a[0]}" if a else "战斗",
     # ===== [NoArg] =====
-    # opcode 82: Else — 条件分支的否则
+    # opcode 82: Else — 条件分支的否则 (case 82)
+    # 参数: 跳转偏移(隐含在字节码中)
+    # 如果dword_755AAC <= 0(上次条件为真), 跳转到指定偏移; 否则继续执行
+    # 用于实现if-else结构
     'Else':         lambda a, t: "否则 (条件分支)",
     # ===== TKD 文本层额外命令 (非 DEFCMD.LST 标准，但在脚本中实际出现或用于兼容) =====
-    'Yield':        lambda a, t: "让出控制权 (暂停)",
+    'Yield':        lambda a, t: "让出控制权 (暂停当前帧)",
     'Jump':         lambda a, t: f"跳转到偏移={a[0]}" if a else "跳转",
     'ShowText':     lambda a, t: f"显示文本 ID={a[0]} — {_tkt_text(t, a[0])}" if a else "显示文本",
     'MenuChoice':   lambda a, t: f"菜单选择 实体#{a[0]}" if a else "菜单选择",
@@ -877,7 +1027,7 @@ SCRIPT_CMD_DESC = {
     'SceneFade':    lambda a, t: f"场景过渡→#{a[0]}" if a else "场景过渡",
     'SceneBGM':     lambda a, t: f"场景BGM 场景#{a[0]}" if a else "场景BGM",
     'Camera':       lambda a, t: f"镜头控制 ({a[0]},{a[1]},{a[2]})" if len(a)>=3 else "镜头控制",
-    'WaitInput':    lambda a, t: "等待输入",
+    'WaitInput':    lambda a, t: "等待玩家输入 (按键继续)",
     'SetGlobal':    lambda a, t: f"设置全局变量={a[0]}" if a else "设置全局变量",
     'SetWord':      lambda a, t: f"设置字={a[0]}" if a else "设置字",
     'WaitTimer':    lambda a, t: f"定时等待 {a[0]}×{a[1]}ms" if len(a)>=2 else "定时等待",
