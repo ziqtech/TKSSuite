@@ -804,7 +804,12 @@ SCRIPT_CMD_DESC = {
     # opcode 43: SetWeather(2) — 设置天气
     'SetWeather':   lambda a, t: f"设置天气 参数=({','.join(a[:2])})" if len(a)>=2 else f"设置天气" if a else "设置天气",
     # opcode 44: ShowMenu(2) — 显示菜单
-    'ShowMenu':     lambda a, t: f"显示菜单 ID={a[0]}" if a else "显示菜单",
+    # 逆向: sub_40D2D0(__int16 a1), 参数: 0=主菜单 1=存档/读档菜单
+    'ShowMenu':     lambda a, t: (
+        f"显示主菜单" if a and a[0] == '0' else
+        f"显示存档菜单" if a and a[0] == '1' else
+        f"显示菜单 类型={a[0]}" if a else "显示菜单"
+    ),
     # opcode 45: TeamMember(2) — 队伍成员增减 (sub_40DA00, a2=1加入/0离开, a1=0清空全队)
     'TeamMember':   lambda a, t: (
         f"角色{a[0]} 加入队伍" if len(a)>=2 and a[1]=='1' else
@@ -827,7 +832,12 @@ SCRIPT_CMD_DESC = {
     # 与 SetFlag(存档持久)不同: SetSwitch 是临时状态, 用于UI流程/事件控制
     'SetSwitch':    lambda a, t: f"设置全局开关[{a[0]}]={a[1]}" if len(a)>=2 else f"设置全局开关[{a[0]}]" if a else "设置全局开关",
     # opcode 50: BuyMenu(3) — 商店菜单
-    'BuyMenu':      lambda a, t: f"商店菜单 参数=({','.join(a[:3])})" if len(a)>=3 else "商店菜单",
+    # 逆向: sub_40D804(__int16 a1, __int16 a2, __int16 a3)
+    # a1=商品ID, a2=商品索引, a3=商店模式(0-4: 0=武器 1=防具 2=药品 3=杂货 4=特殊)
+    'BuyMenu':      lambda a, t: (
+        f"商店菜单 商品={a[0]} 索引={a[1]} 模式={'武器' if a[2]=='0' else '防具' if a[2]=='1' else '药品' if a[2]=='2' else '杂货' if a[2]=='3' else '特殊' if a[2]=='4' else a[2]}"
+        if len(a)>=3 else "商店菜单"
+    ),
     # opcode 51: PlaySound(2) — 播放音效
     'PlaySound':    lambda a, t: f"播放音效 ID={a[0]}" if a else "播放音效",
     # opcode 52: StopSound(1) — 停止声音
