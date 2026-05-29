@@ -501,6 +501,21 @@ def _tkt_text(tkt, id_str, max_len=60):
     except (ValueError, TypeError):
         return ''
 
+def _tkt_scene(tkt, scene_id_str, max_len=20):
+    """从 TKT 获取场景名称, scene_id_str 为字符串形式的场景ID
+    场景名称存储在 TKT_ID = scene_id + 300"""
+    try:
+        sid = int(scene_id_str)
+        tkt_id = sid + 300  # SCENE_NAME_TKT_BASE = 300
+        txt = tkt.get(tkt_id, '')
+        if txt:
+            # 只取第一行作为场景名
+            name = txt.split('\n')[0].strip()
+            return name[:max_len] + ('...' if len(name) > max_len else '') if name else ''
+        return ''
+    except (ValueError, TypeError):
+        return ''
+
 def _item_name(item_names, id_str):
     """从 item_names 获取物品名称, id_str 为字符串形式的物品ID"""
     try:
@@ -769,7 +784,12 @@ SCRIPT_CMD_DESC = {
     # opcode 19: ChangeScene(4) — 切换场景 (sub_40C044)
     # 参数: 场景ID, 玩家X, 玩家Y, 朝向(1-8)
     # 加载新场景文件, 设置玩家位置和朝向, 重置天气/对话等状态
-    'ChangeScene':  lambda a, t: f"切换场景→#{a[0]} ({a[1]},{a[2]})朝向{a[3]}" if len(a)>=4 else f"切换场景→#{a[0]}" if a else "切换场景",
+    # 场景名称通过 TKT_ID = scene_id + 300 获取
+    'ChangeScene':  lambda a, t: (
+        f"切换场景→#{a[0]} {_tkt_scene(t, a[0])} ({a[1]},{a[2]})朝向{a[3]}"
+        if len(a)>=4 else
+        f"切换场景→#{a[0]} {_tkt_scene(t, a[0])}" if a else "切换场景"
+    ),
     # opcode 20: SetAni(7) — 设置动画 (sub_40C1A4)
     # 参数: 实体(-1=上下文 -2=自身), Ani.JVG块ID, 帧起点(-1=不变), 帧终点(-1=不变), 
     #        当前帧(-1=不变), 动画速度(-1=不变), 循环标志(0=不循环 1=循环 -1=不变)
@@ -1949,7 +1969,7 @@ class MatEditor:
         # 预览 tag 颜色
         for tag, fg in [('pv_cmd','#333'), ('pv_comment','#AAA'), ('pv_block','#BBB'),
                          ('pv_raw','#999'), ('pv_talk','#7B30D0'), ('pv_flow','#0066CC'),
-                         ('pv_branch','#CC6600'), ('pv_getitem','#CC0000')]:
+                         ('pv_branch','#CC6600'), ('pv_getitem','#CC0000'), ('pv_scene','#008800')]:
             self.script_preview.tag_configure(tag, foreground=fg)
 
         self.script_text.bind('<KeyRelease>', self._on_script_edit)
@@ -3055,6 +3075,7 @@ class MatEditor:
                 elif cmd_name in flow_cmds: tag = 'pv_flow'
                 elif cmd_name in branch_cmds: tag = 'pv_branch'
                 elif cmd_name == 'GetItem': tag = 'pv_getitem'
+                elif cmd_name == 'ChangeScene': tag = 'pv_scene'
                 self.script_preview.insert(tk.END, trunc(desc), tag)
             else:
                 m2 = re.match(r'([A-Za-z_]\w+)\s*$', stripped)
