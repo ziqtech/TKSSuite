@@ -152,14 +152,915 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Threading;
+using System.Windows.Forms;
 
 class TKSLauncher
 {
+    // ============================================================
+    // 模式扫描引擎 — 支持 ** 通配符的字节模式匹配
+    // ============================================================
+
+    /// <summary>
+    /// 解析十六进制模式字符串为字节数组和通配符掩码
+    /// 格式: "3C 1E ** 7F" 其中 ** 为通配符
+    /// </summary>
+    static byte[] ParsePattern(string hex, out bool[] wildcard)
+    {
+        string[] parts = hex.Split(new[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries);
+        byte[] pattern = new byte[parts.Length];
+        wildcard = new bool[parts.Length];
+        for (int i = 0; i < parts.Length; i++)
+        {
+            if (parts[i] == "**" || parts[i] == "??")
+            {
+                pattern[i] = 0;
+                wildcard[i] = true;
+            }
+            else
+            {
+                pattern[i] = Convert.ToByte(parts[i], 16);
+                wildcard[i] = false;
+            }
+        }
+        return pattern;
+    }
+
+    /// <summary>
+    /// 在字节数组中扫描匹配模式, 返回所有匹配偏移
+    /// </summary>
+    static List<int> PatternScan(byte[] data, byte[] pattern, bool[] wildcard)
+    {
+        var results = new List<int>();
+        if (pattern.Length == 0 || data.Length < pattern.Length) return results;
+        int end = data.Length - pattern.Length;
+        for (int i = 0; i <= end; i++)
+        {
+            bool match = true;
+            for (int j = 0; j < pattern.Length; j++)
+            {
+                if (!wildcard[j] && data[i + j] != pattern[j])
+                {
+                    match = false;
+                    break;
+                }
+            }
+            if (match) results.Add(i);
+        }
+        return results;
+    }
+
+    /// <summary>
+    /// 在字节数组中扫描指定 4 字节 LE 值的所有出现位置
+    /// </summary>
+    static List<int> ValueScan(byte[] data, int value)
+    {
+        var results = new List<int>();
+        byte[] target = BitConverter.GetBytes(value);
+        for (int i = 0; i <= data.Length - 4; i++)
+        {
+            if (data[i] == target[0] && data[i+1] == target[1] &&
+                data[i+2] == target[2] && data[i+3] == target[3])
+            {
+                results.Add(i);
+                i += 3;
+            }
+        }
+        return results;
+    }
+
+    /// <summary>
+    /// 自动发现 WarPC BSS 基址
+    /// 原理: 扫描代码中 150722 (0x24CE2) 的出现, 回溯找附近 BSS 地址
+    /// </summary>
+    static int DiscoverWarpcBase(byte[] codeBuf, int codeStartAddr, int fallback)
+    {
+        Log("\n--- WarPC BSS 基址自动发现 ---");
+        // 1. 找到所有 WarPC_ORIG_SIZE (150722) 的出现
+        List<int> sizeHits = ValueScan(codeBuf, WARPC_ORIG_SIZE);
+        Log(string.Format("  扫描 150722 (0x24CE2): 找到 {0} 处", sizeHits.Count));
+        foreach (int off in sizeHits)
+            Log(string.Format("    偏移 0x{0:X} (abs 0x{1:X8})", off, codeStartAddr + off));
+
+        if (sizeHits.Count == 0)
+        {
+            Log(string.Format("  [WARN] 未找到 150722, 使用 fallback 0x{0:X}", fallback));
+            return fallback;
+        }
+
+        // 2. 在每个匹配位置附近搜索 BSS 地址候选
+        var candidates = new Dictionary<int, int>(); // value -> count
+        foreach (int off in sizeHits)
+        {
+            int scanStart = Math.Max(0, off - 24);
+            int scanEnd = Math.Min(codeBuf.Length - 4, off + 8);
+            for (int i = scanStart; i <= scanEnd; i++)
+            {
+                int val = BitConverter.ToInt32(codeBuf, i);
+                // BSS 地址通常在 0x700000~0x800000 范围, 4 字节对齐
+                if (val >= 0x700000 && val < 0x800000 && (val & 3) == 0
+                    && val != WARPC_ORIG_SIZE) // 排除大小常量本身
+                {
+                    if (!candidates.ContainsKey(val))
+                        candidates[val] = 0;
+                    candidates[val]++;
+                }
+            }
+        }
+
+        // 3. 选择出现频率最高的候选
+        int bestVal = fallback;
+        int bestCount = 0;
+        foreach (var kv in candidates)
+        {
+            Log(string.Format("  候选 0x{0:X8}: 出现 {1} 次", kv.Key, kv.Value));
+            if (kv.Value > bestCount)
+            {
+                bestVal = kv.Key;
+                bestCount = kv.Value;
+            }
+        }
+
+        if (bestCount > 0)
+            Log(string.Format("  发现 WarPC 基址: 0x{0:X8} (出现 {1} 次)", bestVal, bestCount));
+        else
+            Log(string.Format("  [WARN] 未找到候选, 使用 fallback 0x{0:X}", fallback));
+
+        return bestVal;
+    }
+
+    // ============================================================
+    // JSON 配置解析 (轻量级, 不依赖外部库)
+    // ============================================================
+
+    class PatchDef
+    {
+        public string Type;
+        public string Id;
+        public string Desc;
+        public string Pattern;        // patch_bytes / patch_imm32 / cave_hook
+        public int ValueOffset;        // patch_imm32: 立即数在模式中的偏移
+        public int ExpectValue;        // patch_imm32: 预期原值
+        public string NewValueExpr;    // patch_imm32: 新值表达式 (如 "{warpc_new_size}")
+        public Dictionary<string, byte> Replace; // patch_bytes: 偏移→字节
+        public int ExpectCount;        // 预期匹配数
+        public string CaveTemplate;    // cave_hook: 模板名
+        public int CaveOffset;         // cave_hook: cave 在分配块中的偏移
+        public int HookSize;           // cave_hook: hook 指令大小
+        public string HookVerifyPattern; // cave_hook: hook 点验证模式
+        public string HookPattern;     // cave_hook: hook 点扫描模式 (可与 Pattern 不同)
+        public int HookExpectCount;    // cave_hook: 预期匹配数 (0=不限)
+        public List<int> _preScannedHits; // cave_hook: 预扫描匹配位置
+        // patch_imm32 for value scanning (no pattern, scan for value directly)
+        public bool ValueScan;         // true = 扫描值而非模式
+    }
+
+    class PatchConfig
+    {
+        public Dictionary<string, long> Variables = new Dictionary<string, long>();
+        public List<PatchDef> Patches = new List<PatchDef>();
+    }
+
+    /// <summary>
+    /// 解析 JSON 值 (支持简单的数字/字符串/布尔/对象/数组)
+    /// 不使用正则, 纯手工解析, 避免 .NET 4.0 兼容性问题
+    /// </summary>
+    static PatchConfig LoadConfig(string path)
+    {
+        if (!System.IO.File.Exists(path))
+        {
+            Log(string.Format("  [WARN] 配置文件 {0} 不存在, 使用内置默认配置", path));
+            return null;
+        }
+
+        string json = System.IO.File.ReadAllText(path, System.Text.Encoding.UTF8);
+        var config = new PatchConfig();
+
+        // 解析 variables
+        int varStart = json.IndexOf("\"variables\"");
+        if (varStart >= 0)
+        {
+            int objStart = json.IndexOf('{', varStart);
+            int objEnd = FindMatchingBrace(json, objStart);
+            if (objStart >= 0 && objEnd > objStart)
+            {
+                string varObj = json.Substring(objStart + 1, objEnd - objStart - 1);
+                ParseVariables(varObj, config.Variables);
+            }
+        }
+
+        // 解析 patches 数组
+        int patchStart = json.IndexOf("\"patches\"");
+        if (patchStart >= 0)
+        {
+            int arrStart = json.IndexOf('[', patchStart);
+            int arrEnd = FindMatchingBracket(json, arrStart);
+            if (arrStart >= 0 && arrEnd > arrStart)
+            {
+                string arr = json.Substring(arrStart + 1, arrEnd - arrStart - 1);
+                ParsePatchArray(arr, config.Patches);
+            }
+        }
+
+        Log(string.Format("  已加载配置: {0} 个变量, {1} 个补丁",
+            config.Variables.Count, config.Patches.Count));
+        return config;
+    }
+
+    static int FindMatchingBrace(string s, int start)
+    {
+        if (start < 0 || start >= s.Length || s[start] != '{') return -1;
+        int depth = 0;
+        bool inStr = false;
+        for (int i = start; i < s.Length; i++)
+        {
+            char c = s[i];
+            if (c == '"' && (i == 0 || s[i-1] != '\\')) inStr = !inStr;
+            if (inStr) continue;
+            if (c == '{') depth++;
+            else if (c == '}') { depth--; if (depth == 0) return i; }
+        }
+        return -1;
+    }
+
+    static int FindMatchingBracket(string s, int start)
+    {
+        if (start < 0 || start >= s.Length || s[start] != '[') return -1;
+        int depth = 0;
+        bool inStr = false;
+        for (int i = start; i < s.Length; i++)
+        {
+            char c = s[i];
+            if (c == '"' && (i == 0 || s[i-1] != '\\')) inStr = !inStr;
+            if (inStr) continue;
+            if (c == '[') depth++;
+            else if (c == ']') { depth--; if (depth == 0) return i; }
+        }
+        return -1;
+    }
+
+    static void ParseVariables(string obj, Dictionary<string, long> vars)
+    {
+        // 简单解析 "key": value 对
+        int i = 0;
+        while (i < obj.Length)
+        {
+            int keyStart = obj.IndexOf('"', i);
+            if (keyStart < 0) break;
+            int keyEnd = obj.IndexOf('"', keyStart + 1);
+            if (keyEnd < 0) break;
+            string key = obj.Substring(keyStart + 1, keyEnd - keyStart - 1);
+
+            int colon = obj.IndexOf(':', keyEnd);
+            if (colon < 0) break;
+
+            // 跳过空白
+            int valStart = colon + 1;
+            while (valStart < obj.Length && (obj[valStart] == ' ' || obj[valStart] == '\t')) valStart++;
+
+            if (valStart < obj.Length && obj[valStart] == '"')
+            {
+                // 字符串值 (十六进制如 "0x757F08")
+                int valEnd = obj.IndexOf('"', valStart + 1);
+                if (valEnd < 0) break;
+                string valStr = obj.Substring(valStart + 1, valEnd - valStart - 1);
+                long val;
+                if (valStr.StartsWith("0x") || valStr.StartsWith("0X"))
+                    val = Convert.ToInt64(valStr.Substring(2), 16);
+                else
+                    val = long.Parse(valStr);
+                vars[key] = val;
+                i = valEnd + 1;
+            }
+            else if (valStart < obj.Length && (char.IsDigit(obj[valStart]) || obj[valStart] == '-'))
+            {
+                // 数字值
+                int valEnd = valStart;
+                if (obj[valEnd] == '-') valEnd++;
+                while (valEnd < obj.Length && char.IsDigit(obj[valEnd])) valEnd++;
+                string valStr = obj.Substring(valStart, valEnd - valStart);
+                vars[key] = long.Parse(valStr);
+                i = valEnd;
+            }
+            else if (valStart < obj.Length && (obj[valStart] == 't' || obj[valStart] == 'f'))
+            {
+                // 布尔值
+                bool boolVal = obj[valStart] == 't';
+                vars[key] = boolVal ? 1 : 0;
+                i = valStart + (boolVal ? 4 : 5);
+            }
+            else
+            {
+                i = valStart + 1;
+            }
+        }
+    }
+
+    static void ParsePatchArray(string arr, List<PatchDef> patches)
+    {
+        int i = 0;
+        while (i < arr.Length)
+        {
+            int objStart = arr.IndexOf('{', i);
+            if (objStart < 0) break;
+            int objEnd = FindMatchingBrace(arr, objStart);
+            if (objEnd < 0) break;
+            string obj = arr.Substring(objStart + 1, objEnd - objStart - 1);
+            var def = ParsePatchObject(obj);
+            if (def != null) patches.Add(def);
+            i = objEnd + 1;
+        }
+    }
+
+    static PatchDef ParsePatchObject(string obj)
+    {
+        var def = new PatchDef();
+        def.Type = ExtractString(obj, "type");
+        def.Id = ExtractString(obj, "id");
+        def.Desc = ExtractString(obj, "desc");
+        def.Pattern = ExtractString(obj, "pattern");
+        def.ExpectCount = ExtractInt(obj, "expect_count");
+        def.HookSize = ExtractInt(obj, "hook_size");
+        def.CaveOffset = ExtractInt(obj, "cave_offset");
+        def.CaveTemplate = ExtractString(obj, "cave_template");
+        def.HookVerifyPattern = ExtractString(obj, "hook_verify");
+        def.HookPattern = ExtractString(obj, "hook_pattern");
+        def.HookExpectCount = ExtractInt(obj, "hook_expect_count");
+        def.NewValueExpr = ExtractString(obj, "new_value");
+        def.ValueOffset = ExtractInt(obj, "value_offset");
+        def.ExpectValue = ExtractInt(obj, "expect_value");
+        def.ValueScan = ExtractBool(obj, "value_scan");
+
+        // 解析 replace 对象
+        def.Replace = new Dictionary<string, byte>();
+        int repStart = obj.IndexOf("\"replace\"");
+        if (repStart >= 0)
+        {
+            int repObjStart = obj.IndexOf('{', repStart);
+            int repObjEnd = FindMatchingBrace(obj, repObjStart);
+            if (repObjStart >= 0 && repObjEnd > repObjStart)
+            {
+                string repObj = obj.Substring(repObjStart + 1, repObjEnd - repObjStart - 1);
+                int j = 0;
+                while (j < repObj.Length)
+                {
+                    int kq = repObj.IndexOf('"', j);
+                    if (kq < 0) break;
+                    int kqEnd = repObj.IndexOf('"', kq + 1);
+                    if (kqEnd < 0) break;
+                    string rkey = repObj.Substring(kq + 1, kqEnd - kq - 1);
+                    int colon = repObj.IndexOf(':', kqEnd);
+                    if (colon < 0) break;
+                    int vs2 = colon + 1;
+                    while (vs2 < repObj.Length && (repObj[vs2] == ' ' || repObj[vs2] == '\t')) vs2++;
+                    int vqStart = repObj.IndexOf('"', vs2);
+                    if (vqStart < 0) break;
+                    int vqEnd = repObj.IndexOf('"', vqStart + 1);
+                    if (vqEnd < 0) break;
+                    string rval = repObj.Substring(vqStart + 1, vqEnd - vqStart - 1);
+                    def.Replace[rkey] = Convert.ToByte(rval, 16);
+                    j = vqEnd + 1;
+                }
+            }
+        }
+
+        return def;
+    }
+
+    static string ExtractString(string obj, string key)
+    {
+        string search = "\"" + key + "\"";
+        int pos = obj.IndexOf(search);
+        if (pos < 0) return null;
+        int colon = obj.IndexOf(':', pos + search.Length);
+        if (colon < 0) return null;
+        int q1 = obj.IndexOf('"', colon + 1);
+        if (q1 < 0) return null;
+        int q2 = obj.IndexOf('"', q1 + 1);
+        if (q2 < 0) return null;
+        return obj.Substring(q1 + 1, q2 - q1 - 1);
+    }
+
+    static bool ExtractBool(string obj, string key)
+    {
+        string search = "\"" + key + "\"";
+        int pos = obj.IndexOf(search);
+        if (pos < 0) return false;
+        int colon = obj.IndexOf(':', pos + search.Length);
+        if (colon < 0) return false;
+        int valStart = colon + 1;
+        while (valStart < obj.Length && (obj[valStart] == ' ' || obj[valStart] == '\t')) valStart++;
+        if (valStart + 4 <= obj.Length && obj.Substring(valStart, 4) == "true") return true;
+        if (valStart + 5 <= obj.Length && obj.Substring(valStart, 5) == "false") return false;
+        return false;
+    }
+
+    static int ExtractInt(string obj, string key)
+    {
+        string search = "\"" + key + "\"";
+        int pos = obj.IndexOf(search);
+        if (pos < 0) return 0;
+        int colon = obj.IndexOf(':', pos + search.Length);
+        if (colon < 0) return 0;
+        int valStart = colon + 1;
+        while (valStart < obj.Length && (obj[valStart] == ' ' || obj[valStart] == '\t')) valStart++;
+        // 检查是否是十六进制字符串
+        if (valStart < obj.Length && obj[valStart] == '"')
+        {
+            int q2 = obj.IndexOf('"', valStart + 1);
+            if (q2 < 0) return 0;
+            string valStr = obj.Substring(valStart + 1, q2 - valStart - 1);
+            if (valStr.StartsWith("0x") || valStr.StartsWith("0X"))
+                return Convert.ToInt32(valStr.Substring(2), 16);
+            return int.Parse(valStr);
+        }
+        if (valStart < obj.Length && (char.IsDigit(obj[valStart]) || obj[valStart] == '-'))
+        {
+            int valEnd = valStart;
+            if (obj[valEnd] == '-') valEnd++;
+            while (valEnd < obj.Length && char.IsDigit(obj[valEnd])) valEnd++;
+            return int.Parse(obj.Substring(valStart, valEnd - valStart));
+        }
+        return 0;
+    }
+
+    /// <summary>
+    /// 解析配置中的变量引用, 如 "{warpc_new_size}"
+    /// </summary>
+    static long ResolveVar(string expr, Dictionary<string, long> vars)
+    {
+        return ResolveVarEx(expr, vars, false);
+    }
+
+    /// <summary>
+    /// 解析变量引用。strict=true 时, 未定义变量返回 long.MinValue 而非 0
+    /// </summary>
+    static long ResolveVarEx(string expr, Dictionary<string, long> vars, bool strict)
+    {
+        if (expr == null) return strict ? long.MinValue : 0;
+        if (expr.StartsWith("{") && expr.EndsWith("}"))
+        {
+            string varName = expr.Substring(1, expr.Length - 2);
+            if (vars.ContainsKey(varName))
+                return vars[varName];
+            Log(string.Format("  [WARN] 未定义变量: {0}", varName));
+            return strict ? long.MinValue : 0;
+        }
+        if (expr.StartsWith("0x") || expr.StartsWith("0X"))
+            return Convert.ToInt64(expr.Substring(2), 16);
+        return long.Parse(expr);
+    }
+
+    // ============================================================
+    // 配置驱动的补丁应用引擎
+    // ============================================================
+
+    /// <summary>
+    /// 应用所有配置驱动的补丁
+    /// </summary>
+    static bool ApplyConfigPatches(PatchConfig config, byte[] codeBuf,
+        int codeStartAddr, IntPtr hProc, int warpcBase, IntPtr caveAddr, bool minimalMode, bool noCaveMode, bool onlyPortrait, bool onlyAwk)
+    {
+        bool allOk = true;
+        int patchIdx = 0;
+        var pendingCaveHooks = new List<PatchDef>();
+
+        foreach (var def in config.Patches)
+        {
+            patchIdx++;
+            string tag = string.Format("[{0}/{1}] {2}", patchIdx, config.Patches.Count, def.Id);
+            Log(string.Format("\n  {0}: {1}", tag, def.Desc));
+
+            if (def.Type == "patch_bytes")
+            {
+                allOk &= ApplyPatchBytes(def, codeBuf, codeStartAddr, hProc);
+            }
+            else if (def.Type == "cave_hook")
+            {
+                // 预扫描: 在任何 hook 修改 codeBuf 之前, 先记录匹配位置
+                byte[] hookPattern;
+                bool[] hookWild;
+                hookPattern = ParsePattern(def.HookPattern ?? def.Pattern, out hookWild);
+                List<int> hookHits = PatternScan(codeBuf, hookPattern, hookWild);
+                if (def.HookExpectCount > 0 && hookHits.Count != def.HookExpectCount)
+                {
+                    Log(string.Format("  [{0}] {1}: Hook 模式匹配 {2} 处 (预期 {3}), 跳过",
+                        patchIdx, def.Id, hookHits.Count, def.HookExpectCount));
+                    continue;
+                }
+                // 延迟执行: 记录匹配位置, 稍后统一应用 hook
+                def._preScannedHits = hookHits;
+                pendingCaveHooks.Add(def);
+            }
+            else if (def.Type == "patch_imm32")
+            {
+                if (def.ValueScan)
+                {
+                    // 检查条件补丁: 变量未定义或值未变化时跳过
+                    long newVal = ResolveVarEx(def.NewValueExpr, config.Variables, true);
+                    if (newVal == long.MinValue)
+                    {
+                        Log(string.Format("    → 变量未定义, 跳过"));
+                        continue;
+                    }
+                    if (def.ExpectValue != 0 && newVal == def.ExpectValue)
+                    {
+                        Log(string.Format("    → 值未变化 ({0}), 跳过", def.ExpectValue));
+                        continue;
+                    }
+                    allOk &= ApplyPatchImm32ByValue(def, codeBuf, codeStartAddr, hProc, config.Variables);
+                }
+                else
+                    allOk &= ApplyPatchImm32ByPattern(def, codeBuf, codeStartAddr, hProc, config.Variables);
+            }
+            else if (def.Type == "patch_warpc_addr")
+            {
+                // WarPC 地址替换在 ExpandWarPcBuffer 中处理
+                Log(string.Format("    → 由 WarPC 扩展流程处理 (base=0x{0:X8})", warpcBase));
+            }
+            else if (def.Type == "cave_hook")
+            {
+                // 已在预扫描阶段处理, 跳过
+            }
+            else
+            {
+                Log(string.Format("  [WARN] 未知补丁类型: {0}", def.Type));
+            }
+        }
+
+        // 延迟应用 cave hooks (所有模式扫描已完成, codeBuf 未被 hook 修改)
+        if (pendingCaveHooks.Count > 0 && !minimalMode && !noCaveMode)
+        {
+            // 按参数过滤 cave hooks
+            var hooksToApply = pendingCaveHooks;
+            if (onlyPortrait)
+            {
+                hooksToApply = new List<PatchDef>();
+                foreach (var h in pendingCaveHooks)
+                    if (h.Id == "portrait_cave1" || h.Id == "portrait_cave2")
+                        hooksToApply.Add(h);
+                // 测试: 只用 portrait_cave2 (排除 portrait_cave1)
+                hooksToApply.RemoveAll(h => h.Id == "portrait_cave1");
+            }
+            else if (onlyAwk)
+            {
+                hooksToApply = new List<PatchDef>();
+                foreach (var h in pendingCaveHooks)
+                    if (h.Id == "awk_sprite_cave")
+                        hooksToApply.Add(h);
+            }
+            Log(string.Format("\n  应用 {0} 个 cave hooks...", hooksToApply.Count));
+
+            // 测试: 用旧启动器的精确方法直接应用 portrait_cave2 hook
+            if (hooksToApply.Exists(h => h.Id == "portrait_cave2"))
+            {
+                // 先写入 cave 代码
+                byte[] p2CaveData = BuildCaveTemplate("portrait2", warpcBase);
+                int p2CaveAddr = (int)(caveAddr.ToInt64() + 128);
+                int nw;
+                WriteProcessMemory(hProc, (IntPtr)p2CaveAddr, p2CaveData, p2CaveData.Length, out nw);
+                Log(string.Format("    [DIRECT] portrait2 cave at 0x{0:X8} ({1} bytes)", p2CaveAddr, p2CaveData.Length));
+
+                // 写入 hook
+                int p2HookAddr = codeStartAddr + 0x16E1A;
+                int p2CallOff = p2CaveAddr - (p2HookAddr + 5);
+                byte[] p2Call = new byte[6];
+                p2Call[0] = 0xE8;
+                BitConverter.GetBytes(p2CallOff).CopyTo(p2Call, 1);
+                p2Call[5] = 0x90;
+                uint oldProt;
+                VirtualProtectEx(hProc, (IntPtr)p2HookAddr, 6, PAGE_EXECUTE_READWRITE, out oldProt);
+                WriteProcessMemory(hProc, (IntPtr)p2HookAddr, p2Call, 6, out nw);
+                VirtualProtectEx(hProc, (IntPtr)p2HookAddr, 6, oldProt, out oldProt);
+                // 读回验证 hook 和 cave 代码
+                byte[] verify = new byte[6];
+                ReadProcessMemory(hProc, (IntPtr)p2HookAddr, verify, 6, out nw);
+                Log(string.Format("    [DIRECT] hook at 0x{0:X8}: [{1}]",
+                    p2HookAddr, BitConverter.ToString(verify)));
+                byte[] caveVerify = new byte[42];
+                ReadProcessMemory(hProc, (IntPtr)p2CaveAddr, caveVerify, 42, out nw);
+                Log(string.Format("    [DIRECT] cave at 0x{0:X8}: [{1}]",
+                    p2CaveAddr, BitConverter.ToString(caveVerify)));
+                // 移除已处理的 portrait_cave2
+                hooksToApply.RemoveAll(h => h.Id == "portrait_cave2");
+            }
+
+            foreach (var def in hooksToApply)
+            {
+                // 使用预扫描的匹配位置
+                byte[] hookPattern;
+                bool[] hookWild;
+                hookPattern = ParsePattern(def.HookPattern ?? def.Pattern, out hookWild);
+                // 临时覆盖 PatternScan 结果
+                allOk &= ApplyCaveHookWithHits(def, def._preScannedHits, codeBuf,
+                    codeStartAddr, hProc, caveAddr, warpcBase, config.Variables);
+            }
+        }
+
+        return allOk;
+    }
+
+    static bool ApplyPatchBytes(PatchDef def, byte[] codeBuf, int codeStartAddr, IntPtr hProc)
+    {
+        byte[] pattern;
+        bool[] wildcard;
+        pattern = ParsePattern(def.Pattern, out wildcard);
+        List<int> hits = PatternScan(codeBuf, pattern, wildcard);
+
+        Log(string.Format("    模式: [{0}] → 匹配 {1} 处 (预期 {2})",
+            def.Pattern, hits.Count, def.ExpectCount));
+
+        if (def.ExpectCount > 0 && hits.Count != def.ExpectCount)
+        {
+            Log(string.Format("  [WARN] 匹配数 {0} != 预期 {1}", hits.Count, def.ExpectCount));
+        }
+
+        int patched = 0;
+        foreach (int offset in hits)
+        {
+
+            // 应用替换
+            foreach (var kv in def.Replace)
+            {
+                int relOff = int.Parse(kv.Key);
+                int absAddr = codeStartAddr + offset + relOff;
+                IntPtr pAddr = (IntPtr)absAddr;
+                uint oldProt;
+                VirtualProtectEx(hProc, pAddr, 1, PAGE_EXECUTE_READWRITE, out oldProt);
+                int nw;
+                byte[] data = new byte[] { kv.Value };
+                WriteProcessMemory(hProc, pAddr, data, 1, out nw);
+                VirtualProtectEx(hProc, pAddr, 1, oldProt, out oldProt);
+
+                // 同步更新本地缓冲区
+                if (offset + relOff < codeBuf.Length)
+                    codeBuf[offset + relOff] = kv.Value;
+            }
+
+            int rva = offset;
+            Log(string.Format("    [OK] RVA 0x{0:X} (abs 0x{1:X8})", rva, codeStartAddr + offset));
+            patched++;
+        }
+
+        if (patched == 0 && def.ExpectCount > 0)
+        {
+            Log(string.Format("  [FAIL] 未找到匹配模式"));
+            return false;
+        }
+        return true;
+    }
+
+    static bool ApplyPatchImm32ByValue(PatchDef def, byte[] codeBuf,
+        int codeStartAddr, IntPtr hProc, Dictionary<string, long> vars)
+    {
+        // 直接扫描值
+        int oldVal = def.ExpectValue;
+        long newVal = ResolveVar(def.NewValueExpr, vars);
+        List<int> hits = ValueScan(codeBuf, oldVal);
+
+        Log(string.Format("    扫描值 {0} (0x{0:X}) → 匹配 {1} 处 (预期 {2})",
+            oldVal, hits.Count, def.ExpectCount));
+        Log(string.Format("    替换为 {0} (0x{0:X})", newVal));
+
+        if (def.ExpectCount > 0 && hits.Count != def.ExpectCount)
+        {
+            Log(string.Format("  [WARN] 匹配数 {0} != 预期 {1}", hits.Count, def.ExpectCount));
+        }
+
+        byte[] newLE = BitConverter.GetBytes((int)newVal);
+        int patched = 0;
+        foreach (int offset in hits)
+        {
+            int absAddr = codeStartAddr + offset;
+            IntPtr pAddr = (IntPtr)absAddr;
+            uint oldProt;
+            VirtualProtectEx(hProc, pAddr, 4, PAGE_EXECUTE_READWRITE, out oldProt);
+            int nw;
+            WriteProcessMemory(hProc, pAddr, newLE, 4, out nw);
+            VirtualProtectEx(hProc, pAddr, 4, oldProt, out oldProt);
+
+            // 同步更新本地缓冲区
+            if (offset + 4 <= codeBuf.Length)
+            {
+                codeBuf[offset] = newLE[0]; codeBuf[offset+1] = newLE[1];
+                codeBuf[offset+2] = newLE[2]; codeBuf[offset+3] = newLE[3];
+            }
+
+            Log(string.Format("    [OK] RVA 0x{0:X} (abs 0x{1:X8})", offset, absAddr));
+            patched++;
+        }
+
+        if (patched == 0 && def.ExpectCount > 0)
+        {
+            Log(string.Format("  [FAIL] 未找到值 {0} (0x{0:X})", oldVal));
+            return false;
+        }
+        return true;
+    }
+
+    static bool ApplyPatchImm32ByPattern(PatchDef def, byte[] codeBuf,
+        int codeStartAddr, IntPtr hProc, Dictionary<string, long> vars)
+    {
+        byte[] pattern;
+        bool[] wildcard;
+        pattern = ParsePattern(def.Pattern, out wildcard);
+        List<int> hits = PatternScan(codeBuf, pattern, wildcard);
+
+        Log(string.Format("    模式: [{0}] → 匹配 {1} 处 (预期 {2})",
+            def.Pattern, hits.Count, def.ExpectCount));
+
+        long newVal = ResolveVar(def.NewValueExpr, vars);
+        int oldVal = def.ExpectValue;
+        byte[] newLE = BitConverter.GetBytes((int)newVal);
+
+        int patched = 0;
+        foreach (int offset in hits)
+        {
+            int immOff = offset + def.ValueOffset;
+            // 验证原值
+            if (immOff + 4 <= codeBuf.Length)
+            {
+                int actual = BitConverter.ToInt32(codeBuf, immOff);
+                if (oldVal != 0 && actual != oldVal)
+                {
+                    Log(string.Format("    [SKIP] RVA 0x{0:X}: 原值 0x{1:X8} != 预期 0x{2:X8}",
+                        offset, actual, oldVal));
+                    continue;
+                }
+            }
+
+            int absAddr = codeStartAddr + immOff;
+            IntPtr pAddr = (IntPtr)absAddr;
+            uint oldProt;
+            VirtualProtectEx(hProc, pAddr, 4, PAGE_EXECUTE_READWRITE, out oldProt);
+            int nw;
+            WriteProcessMemory(hProc, pAddr, newLE, 4, out nw);
+            VirtualProtectEx(hProc, pAddr, 4, oldProt, out oldProt);
+
+            if (immOff + 4 <= codeBuf.Length)
+            {
+                codeBuf[immOff] = newLE[0]; codeBuf[immOff+1] = newLE[1];
+                codeBuf[immOff+2] = newLE[2]; codeBuf[immOff+3] = newLE[3];
+            }
+
+            Log(string.Format("    [OK] RVA 0x{0:X} (abs 0x{1:X8})", offset, absAddr));
+            patched++;
+        }
+
+        if (patched == 0 && def.ExpectCount > 0)
+        {
+            Log(string.Format("  [FAIL] 未找到匹配模式"));
+            return false;
+        }
+        return true;
+    }
+
+    static bool ApplyCaveHook(PatchDef def, byte[] codeBuf, int codeStartAddr,
+        IntPtr hProc, IntPtr caveAddr, int warpcBase, Dictionary<string, long> vars)
+    {
+        if (caveAddr == IntPtr.Zero)
+        {
+            Log("    [WARN] Cave 内存未分配, 跳过");
+            return false;
+        }
+
+        byte[] pattern;
+        bool[] wildcard;
+        pattern = ParsePattern(def.HookPattern ?? def.Pattern, out wildcard);
+        List<int> hits = PatternScan(codeBuf, pattern, wildcard);
+        Log(string.Format("    Hook 模式: [{0}] → 匹配 {1} 处 (预期 {2})",
+            def.HookPattern ?? def.Pattern, hits.Count,
+            def.HookExpectCount > 0 ? def.HookExpectCount.ToString() : "不限"));
+
+        if (def.HookExpectCount > 0 && hits.Count != def.HookExpectCount)
+        {
+            Log(string.Format("  [WARN] 匹配数 {0} != 预期 {1}, 跳过此 cave hook",
+                hits.Count, def.HookExpectCount));
+            return false;
+        }
+
+        return ApplyCaveHookWithHits(def, hits, codeBuf, codeStartAddr, hProc, caveAddr, warpcBase, vars);
+    }
+
+    static bool ApplyCaveHookWithHits(PatchDef def, List<int> hits, byte[] codeBuf, int codeStartAddr,
+        IntPtr hProc, IntPtr caveAddr, int warpcBase, Dictionary<string, long> vars)
+    {
+        if (hits == null || hits.Count == 0)
+        {
+            Log("    [WARN] 未找到 hook 点");
+            return false;
+        }
+
+        // 2. 构建 cave 数据 (从模板)
+        byte[] caveData = BuildCaveTemplate(def.CaveTemplate, warpcBase);
+        if (caveData == null)
+        {
+            Log(string.Format("    [WARN] 未知 cave 模板: {0}", def.CaveTemplate));
+            return false;
+        }
+
+        // 3. 写入 cave 到分配的内存
+        long caveTarget = caveAddr.ToInt64() + def.CaveOffset;
+        IntPtr cavePtr = (IntPtr)caveTarget;
+        int nw;
+        WriteProcessMemory(hProc, cavePtr, caveData, caveData.Length, out nw);
+
+        // 更新全局 cave 地址 (供 PatchArchivePortrait 使用)
+        if (def.CaveTemplate == "archive_portrait")
+            _archivePortraitCaveAddr = (int)caveTarget;
+        Log(string.Format("    Cave 写入: 0x{0:X8} ({1} bytes, 模板={2})",
+            caveTarget, caveData.Length, def.CaveTemplate));
+
+        // 4. 对每个 hook 点写入 call 指令
+        int patched = 0;
+        foreach (int offset in hits)
+        {
+            int hookAddr = codeStartAddr + offset;
+            // call 指令始终 5 字节 (E8 + 4字节偏移), 偏移从 call 之后计算
+            // NOP 填充不影响偏移计算
+            int callOffset = (int)(caveTarget - (hookAddr + 5));
+
+            // 构建 call rel32 指令
+            byte[] callInst = new byte[def.HookSize];
+            callInst[0] = 0xE8; // call rel32
+            BitConverter.GetBytes(callOffset).CopyTo(callInst, 1);
+            // 剩余字节填 NOP
+            for (int i = 5; i < def.HookSize; i++)
+                callInst[i] = 0x90;
+
+            uint oldProt;
+            VirtualProtectEx(hProc, (IntPtr)hookAddr, def.HookSize, PAGE_EXECUTE_READWRITE, out oldProt);
+            WriteProcessMemory(hProc, (IntPtr)hookAddr, callInst, def.HookSize, out nw);
+            VirtualProtectEx(hProc, (IntPtr)hookAddr, def.HookSize, oldProt, out oldProt);
+
+            // 同步更新本地缓冲区
+            for (int i = 0; i < def.HookSize && offset + i < codeBuf.Length; i++)
+                codeBuf[offset + i] = callInst[i];
+
+            Log(string.Format("    [OK] Hook RVA 0x{0:X} → call 0x{1:X8}", offset, caveTarget));
+            patched++;
+        }
+
+        return patched > 0;
+    }
+
+    static byte[] BuildCaveTemplate(string templateName, int warpcBase)
+    {
+        switch (templateName)
+        {
+            case "awk_sprite":
+            {
+                byte[] cave = (byte[])CaveTemplate.Clone();
+                ReplaceAddrInBytes(cave, WARPC_BASE, warpcBase);
+                return cave;
+            }
+            case "portrait1":
+            {
+                byte[] cave = (byte[])PortraitCave1.Clone();
+                ReplaceAddrInBytes(cave, WARPC_BASE, warpcBase);
+                return cave;
+            }
+            case "portrait2":
+            {
+                byte[] cave = (byte[])PortraitCave2.Clone();
+                Log(string.Format("    [DBG] p2 before: [{0}]", BitConverter.ToString(cave, 4, 8)));
+                Log(string.Format("    [DBG] replacing {0:X} -> {1:X}", WARPC_BASE, warpcBase));
+                ReplaceAddrInBytes(cave, WARPC_BASE, warpcBase);
+                Log(string.Format("    [DBG] p2 after:  [{0}]", BitConverter.ToString(cave, 4, 8)));
+                return cave;
+            }
+            case "archive_portrait":
+            {
+                byte[] cave = (byte[])ArchivePortraitCave.Clone();
+                ReplaceAddrInBytes(cave, WARPC_BASE, warpcBase);
+                return cave;
+            }
+            case "history_text":
+            {
+                byte[] cave = (byte[])HistoryTextCave.Clone();
+                ReplaceAddrInBytes(cave, WARPC_BASE, warpcBase);
+                return cave;
+            }
+            default:
+                return null;
+        }
+    }
+
+    /// <summary>
+    /// 从配置中解析 replace 表达式中的变量引用
+    /// </summary>
+    static byte ResolveReplaceByte(string expr, Dictionary<string, long> vars)
+    {
+        if (expr.StartsWith("{") && expr.EndsWith("}"))
+            return (byte)ResolveVar(expr, vars);
+        return Convert.ToByte(expr, 16);
+    }
+
     // ============================================================
     // 统一日志输出: 同时写控制台和 tks_launcher.log
     // 以前的 Console.WriteLine 都改为调用 Log() 函数
     // ============================================================
     const string LOG_PATH = "tks_launcher.log";
+    static string CONFIG_PATH = "tks_patches.json";
     static System.IO.StreamWriter _logWriter = null;
     static readonly object _logLock = new object();
 
@@ -198,7 +1099,7 @@ class TKSLauncher
         {
             if (_logWriter != null)
             {
-                try { _logWriter.WriteLine(msg); } catch { }
+                try { _logWriter.WriteLine(msg); _logWriter.Flush(); } catch { }
             }
         }
     }
@@ -541,24 +1442,41 @@ class TKSLauncher
     //       EAX = char_idx * 527, DX = WarPC[char_idx].portrait (WORD[1])
     //       同样检查 WORD[261]: 非零则直接使用, 否则回退 portrait + 0xD3
     // ============================================================
+    // 修正: frame index 在 dx 寄存器中（不是栈上）
+    // hook 替换了 "add dx,0xD3; push edx" (6B), call 先压入返回地址
+    // 入口: eax=char_idx*527, dx=WarPC portrait (WORD[1])
+    //
+    // 布局:
+    //   [0]  push eax                        (1B)
+    //   [1]  push ecx                        (1B)
+    //   [2]  add eax, eax                    (2B)
+    //   [4]  add eax, WARPC_BASE             (5B) ← 地址替换
+    //   [9]  movzx ecx, [eax+0x20A]          (7B)
+    //   [16] test cx, cx                      (3B)
+    //   [19] jnz .use_custom (+7) → [28]     (2B)
+    //   [21] add dx, 0xD3  (default)         (5B)
+    //   [26] jmp .done (+3) → [31]           (2B)
+    //   [28] mov dx, cx    (.use_custom)     (3B)
+    //   [31] pop ecx       (.done)           (1B)
+    //   [32] pop eax                          (1B)
+    //   [33] xchg edx, [esp]                 (3B)
+    //   [36] jmp edx                          (2B)
+    //   Total: 38 bytes
     static readonly byte[] PortraitCave2 = new byte[] {
-        0x52,                               // push edx           ; save raw portrait
-        0x51,                               // push ecx           ; save scratch
-        0x50,                               // push eax           ; save eax (= char_idx*527)
-        0x03, 0xC0,                         // add eax, eax       ; eax = char_idx*1054
-        0x05, 0x08, 0x7F, 0x75, 0x00,       // add eax, 0x757F08  ; eax = WarPC record
-        0x0F, 0xB7, 0x80, 0x0A, 0x02, 0x00, 0x00, // movzx eax,[eax+0x20A] ; WORD[261]
-        0x66, 0x85, 0xC0,                   // test ax, ax
-        0x75, 0x08,                         // jnz .shared_exit   ; override? → skip normal
-        // Normal: compute result from raw portrait saved at [esp+8]
-        0x8B, 0x44, 0x24, 0x08,             // mov eax, [esp+8]   ; eax = raw portrait
-        0x66, 0x05, 0xD3, 0x00,             // add ax, 0xD3       ; eax = result
-        // === Shared exit (both paths) ===
-        0x0F, 0xB7, 0xD0,                   // movzx edx, ax      ; edx = result
-        0x83, 0xC4, 0x08,                   // add esp, 8         ; discard eax,ecx
-        0x59,                               // pop ecx            ; discard saved edx
-        0x87, 0x14, 0x24,                   // xchg edx, [esp]    ; edx=ret_addr, [esp]=result
-        0xFF, 0xE2,                         // jmp edx
+        0x50,                               // [0]  push eax
+        0x51,                               // [1]  push ecx
+        0x03, 0xC0,                         // [2]  add eax, eax
+        0x05, 0x08, 0x7F, 0x75, 0x00,       // [4]  add eax, WARPC_BASE
+        0x0F, 0xB7, 0x88, 0x0A, 0x02, 0x00, 0x00, // [9]  movzx ecx, [eax+0x20A]
+        0x66, 0x85, 0xC9,                   // [16] test cx, cx
+        0x75, 0x07,                         // [19] jnz +7 → [28]
+        0x66, 0x81, 0xC2, 0xD3, 0x00,       // [21] add dx, 0xD3
+        0xEB, 0x03,                         // [26] jmp +3 → [31]
+        0x66, 0x89, 0xCA,                   // [28] mov dx, cx
+        0x59,                               // [31] pop ecx
+        0x58,                               // [32] pop eax
+        0x87, 0x14, 0x24,                   // [33] xchg edx, [esp]
+        0xFF, 0xE2,                         // [36] jmp edx
     };
 
     // Helper: write a 16-bit value to process memory
@@ -1053,8 +1971,10 @@ class TKSLauncher
 
     /// <summary>
     /// 游戏加载后: 恢复原始 WarPC.dat, 分配动态缓冲区, 注入完整数据, 修补所有引用
+    /// 使用 ValueScan 模式扫描替代硬编码 RVA
     /// </summary>
-    static void ExpandWarPcBuffer(int childPid, IntPtr baseAddr, int moduleSize, IntPtr caveAddr)
+    static void ExpandWarPcBuffer(int childPid, IntPtr baseAddr, int moduleSize, IntPtr caveAddr,
+        byte[] codeBuf, int codeStartAddr)
     {
         if (!_warpcExpanded || _warpcNewBuf == IntPtr.Zero) return;
 
@@ -1070,85 +1990,54 @@ class TKSLauncher
         IntPtr newBuf = _warpcNewBuf;
         Log(string.Format("  修补代码引用: 缓冲区 0x{0:X8}, 大小 {1}", newBuf.ToInt64(), newSize));
 
-        // 精确修补: 在已验证的 RVA 位置替换 4 字节立即数
         byte[] newAddrLE = BitConverter.GetBytes((int)newBuf.ToInt64());
         byte[] newSizeLE = BitConverter.GetBytes(newSize);
         int addrPatches = 0, sizePatches = 0, fieldPatches = 0, addr0CPatches = 0;
         int nw;
-        int scanStart = 0, scanEnd = 0, scanSize = 0;  // for log
+        int scanStart = codeStartAddr;
+        int scanSize = codeBuf.Length;
 
-        foreach (int rva in WarpcAddrRVAs)
+        // 使用 ValueScan 替代硬编码 WarpcAddrRVAs
         {
-            IntPtr pAddr = (IntPtr)(baseAddr.ToInt64() + rva);
-            byte[] oldVal = new byte[4];
-            int nr;
-            if (!ReadProcessMemory(hProc, pAddr, oldVal, 4, out nr)) continue;
-            if (nr < 4) continue;
-            int oldInt = BitConverter.ToInt32(oldVal, 0);
-            if (oldInt != WARPC_BASE)
+            List<int> hits = ValueScan(codeBuf, WARPC_BASE);
+            Log(string.Format("  WarPC 基址 0x{0:X8} 扫描: 找到 {1} 处", WARPC_BASE, hits.Count));
+            foreach (int off in hits)
             {
-                Log(string.Format("  [WARN] RVA 0x{0:X} 原值 0x{1:X8} != 预期 0x{2:X8}, 跳过",
-                    rva, oldInt, WARPC_BASE));
-                continue;
+                IntPtr pAddr = (IntPtr)(codeStartAddr + off);
+                WriteProcessMemory(hProc, pAddr, newAddrLE, 4, out nw);
+                // 同步更新本地缓冲区
+                codeBuf[off] = newAddrLE[0]; codeBuf[off+1] = newAddrLE[1];
+                codeBuf[off+2] = newAddrLE[2]; codeBuf[off+3] = newAddrLE[3];
+                addrPatches++;
+                int rva = off;
+                diag.AppendLine(string.Format("[OK] WarPC base RVA 0x{0:X} (abs 0x{1:X8})", rva, codeStartAddr + off));
             }
-            WriteProcessMemory(hProc, pAddr, newAddrLE, 4, out nw);
-            addrPatches++;
         }
 
-        // 显式修补 word_757F0C (0x757F0C = WarPC+4) 的所有引用
-        // 这些引用指向队员肖像字段, 字段级盲扫可能因指令编码方式而遗漏
-        // 若未正确 Patch → 存档预览文件写入越界 → 读档界面显示"六个0"
-        // 注意: pointers.txt 的 RVA 指向指令起始位置, 4字节立即数在指令内部,
-        //       偏移量因操作码不同而异 (如 add edx,imm32 立即数在+2)
-        //       因此需要在 RVA 附近小窗口扫描而非精确位置匹配
+        // 使用 ValueScan 替代硬编码 WarpcAddr0CRVAs
+        // 扫描代码中所有引用 word_757F0C (WarPC+4) 的位置
         {
             const int WARPC_ADDR_0C = WARPC_BASE + 4;  // 0x757F0C
             byte[] newAddr0CLE = BitConverter.GetBytes((int)newBuf.ToInt64() + 4);
-            diag.AppendLine(string.Format("[DIAG] word_757F0C 扫描: 目标=0x{0:X8} 新值=0x{1:X8}",
-                WARPC_ADDR_0C, (int)newBuf.ToInt64() + 4));
+            List<int> hits0C = ValueScan(codeBuf, WARPC_ADDR_0C);
+            Log(string.Format("  WarPC+4 (0x{0:X8}) 扫描: 找到 {1} 处", WARPC_ADDR_0C, hits0C.Count));
+            diag.AppendLine(string.Format("[DIAG] word_757F0C 扫描: 目标=0x{0:X8} 新值=0x{1:X8} 找到{2}处",
+                WARPC_ADDR_0C, (int)newBuf.ToInt64() + 4, hits0C.Count));
 
-            foreach (int rva in WarpcAddr0CRVAs)
+            foreach (int off in hits0C)
             {
-                // WarpcAddr0CRVAs 中的值是绝对 VA (pointers.txt 使用 image_base=0)
-                // 直接作为地址使用, 不添加 baseAddr
-                IntPtr absAddr = (IntPtr)rva;
-                IntPtr scanAddr = (IntPtr)(rva - 2);
-                byte[] buf = new byte[12];
-                int nr;
-                bool readOk = ReadProcessMemory(hProc, scanAddr, buf, 12, out nr);
-                diag.AppendLine(string.Format("[DIAG] RVA=0x{0:X} scanAddr=0x{1:X8} readOk={2} nr={3}",
-                    rva, scanAddr.ToInt64(), readOk, nr));
-                if (!readOk) { diag.AppendLine(string.Format("[WARN] RVA 0x{0:X}: ReadProcessMemory 失败", rva)); continue; }
-                if (nr < 8) { diag.AppendLine(string.Format("[WARN] RVA 0x{0:X}: 读取不足 nr={1}", rva, nr)); continue; }
-
-                string hexDump = BitConverter.ToString(buf, 0, Math.Min(nr, 12));
-                diag.AppendLine(string.Format("[DIAG] RVA 0x{0:X} raw=[{1}]", rva, hexDump));
-
-                bool found = false;
-                for (int off = 0; off <= nr - 4; off++)
-                {
-                    int val = BitConverter.ToInt32(buf, off);
-                    diag.AppendLine(string.Format("[DIAG]   off={0} addr=0x{1:X8} val=0x{2:X8}",
-                        off, scanAddr.ToInt64() + off, val));
-                    if (val == WARPC_ADDR_0C)
-                    {
-                        IntPtr pAddr = (IntPtr)(scanAddr.ToInt64() + off);
-                        uint oldProt;
-                        VirtualProtectEx(hProc, pAddr, 4, PAGE_EXECUTE_READWRITE, out oldProt);
-                        WriteProcessMemory(hProc, pAddr, newAddr0CLE, 4, out nw);
-                        VirtualProtectEx(hProc, pAddr, 4, oldProt, out oldProt);
-                        addr0CPatches++;
-                        found = true;
-                        diag.AppendLine(string.Format("[OK] RVA 0x{0:X} off={1} patched", rva, off));
-                        break;
-                    }
-                }
-                if (!found)
-                {
-                    diag.AppendLine(string.Format("[WARN] RVA 0x{0:X}: 窗口内未找到 0x{1:X8}", rva, WARPC_ADDR_0C));
-                }
+                IntPtr pAddr = (IntPtr)(codeStartAddr + off);
+                uint oldProt;
+                VirtualProtectEx(hProc, pAddr, 4, PAGE_EXECUTE_READWRITE, out oldProt);
+                WriteProcessMemory(hProc, pAddr, newAddr0CLE, 4, out nw);
+                VirtualProtectEx(hProc, pAddr, 4, oldProt, out oldProt);
+                // 同步更新本地缓冲区
+                codeBuf[off] = newAddr0CLE[0]; codeBuf[off+1] = newAddr0CLE[1];
+                codeBuf[off+2] = newAddr0CLE[2]; codeBuf[off+3] = newAddr0CLE[3];
+                addr0CPatches++;
+                diag.AppendLine(string.Format("[OK] word_757F0C RVA 0x{0:X} patched", off));
             }
-            diag.AppendLine(string.Format("word_757F0C 修补: {0}/{1} 处", addr0CPatches, WarpcAddr0CRVAs.Length));
+            Log(string.Format("  word_757F0C 修补: {0} 处", addr0CPatches));
         }
 
         // 扫描字段级基址: [WARPC_BASE, WARPC_BASE + WARPC_REC_SIZE) 范围内所有地址
@@ -1157,53 +2046,42 @@ class TKSLauncher
         {
             int rangeStart = WARPC_BASE;
             int rangeEnd = WARPC_BASE + WARPC_REC_SIZE;  // exclusive
-            int moduleStart = (int)baseAddr.ToInt64();
-            // 扫描模块内所有代码段 (0x401000 到 BSS 之前)
-            // 不再限定 0x4E6000 — 游戏代码延续到 0xA66000+
-            scanStart = 0x401000;
-            scanEnd = Math.Min(moduleStart + moduleSize, 0x700000);
-            scanSize = scanEnd - scanStart;
 
-            byte[] codeBuf = new byte[scanSize];
-            if (ReadProcessMemory(hProc, (IntPtr)scanStart, codeBuf, scanSize, out nw) && nw > 0)
+            // 使用已传入的 codeBuf 进行字段级扫描
+            int effectiveSize = codeBuf.Length;
+            for (int i = 0; i <= effectiveSize - 4; i++)
             {
-                int effectiveSize = Math.Min(nw, scanSize);
-                for (int i = 0; i <= effectiveSize - 4; i++)
+                int val = BitConverter.ToInt32(codeBuf, i);
+                if (val >= rangeStart && val < rangeEnd)
                 {
-                    int val = BitConverter.ToInt32(codeBuf, i);
-                    if (val >= rangeStart && val < rangeEnd)
-                    {
-                        int offset = val - WARPC_BASE;
-                        int newVal = (int)newBuf.ToInt64() + offset;
-                        byte[] newBytes = BitConverter.GetBytes(newVal);
-                        IntPtr pAddr = (IntPtr)(scanStart + i);
-                        WriteProcessMemory(hProc, pAddr, newBytes, 4, out nw);
-                        fieldPatches++;
-                        i += 3;  // skip past the 4-byte value
-                    }
+                    int offset = val - WARPC_BASE;
+                    int newVal = (int)newBuf.ToInt64() + offset;
+                    byte[] newBytes = BitConverter.GetBytes(newVal);
+                    IntPtr pAddr = (IntPtr)(codeStartAddr + i);
+                    WriteProcessMemory(hProc, pAddr, newBytes, 4, out nw);
+                    // 同步更新本地缓冲区
+                    codeBuf[i] = newBytes[0]; codeBuf[i+1] = newBytes[1];
+                    codeBuf[i+2] = newBytes[2]; codeBuf[i+3] = newBytes[3];
+                    fieldPatches++;
+                    i += 3;  // skip past the 4-byte value
                 }
             }
             Log(string.Format("  字段基址修补: {0} 处 (范围 0x{1:X8}-0x{2:X8})",
                 fieldPatches, rangeStart, rangeEnd));
 
-            // 诊断: 修补后重新扫描, 检查是否还有未修补的 0x757F08 引用
+            // 诊断: 修补后重新扫描, 检查是否还有未修补的引用
             {
                 int missedCount = 0;
                 string missedLocations = "";
-                byte[] verifyBuf = new byte[scanSize];
-                if (ReadProcessMemory(hProc, (IntPtr)scanStart, verifyBuf, scanSize, out nw) && nw > 0)
+                for (int i = 0; i <= codeBuf.Length - 4; i++)
                 {
-                    int vSize = Math.Min(nw, scanSize);
-                    for (int i = 0; i <= vSize - 4; i++)
+                    int val = BitConverter.ToInt32(codeBuf, i);
+                    if (val >= rangeStart && val < rangeEnd)
                     {
-                        int val = BitConverter.ToInt32(verifyBuf, i);
-                        if (val >= rangeStart && val < rangeEnd)
-                        {
-                            int rva = scanStart + i - (int)baseAddr.ToInt64();
-                            missedLocations += string.Format(" 0x{0:X}", rva);
-                            missedCount++;
-                            if (missedCount >= 20) { missedLocations += " ..."; break; }
-                        }
+                        int rva = i;
+                        missedLocations += string.Format(" 0x{0:X}", rva);
+                        missedCount++;
+                        if (missedCount >= 20) { missedLocations += " ..."; break; }
                     }
                 }
                 if (missedCount > 0)
@@ -1233,51 +2111,25 @@ class TKSLauncher
 
         // 扫描动态 cave 内存 — 不再需要, cave 已在 BuildPatches 中预修补
 
-        // 诊断: 先读取所有 size RVA 的原值
-        Log("  诊断 Size RVA 原值:");
-        foreach (int rva in WarpcSizeRVAs)
+        // 使用 ValueScan 替代硬编码 WarpcSizeRVAs
         {
-            IntPtr pAddr = (IntPtr)(baseAddr.ToInt64() + rva);
-            byte[] oldVal = new byte[4];
-            int nr;
-            if (!ReadProcessMemory(hProc, pAddr, oldVal, 4, out nr) || nr < 4)
+            List<int> sizeHits = ValueScan(codeBuf, WARPC_ORIG_SIZE);
+            Log(string.Format("  WarPC 大小 {0} (0x{0:X}) 扫描: 找到 {1} 处", WARPC_ORIG_SIZE, sizeHits.Count));
+            diag.AppendLine(string.Format("[DIAG] WarPC size 扫描: {0} 处", sizeHits.Count));
+            foreach (int off in sizeHits)
             {
-                Log(string.Format("    0x{0:X}: ReadProcessMemory 失败 (nr={1})", rva, nr));
-                continue;
+                IntPtr pAddr = (IntPtr)(codeStartAddr + off);
+                uint oldProt;
+                VirtualProtectEx(hProc, pAddr, 4, PAGE_EXECUTE_READWRITE, out oldProt);
+                bool wok = WriteProcessMemory(hProc, pAddr, newSizeLE, 4, out nw);
+                VirtualProtectEx(hProc, pAddr, 4, oldProt, out oldProt);
+                if (wok && nw == 4)
+                {
+                    sizePatches++;
+                    diag.AppendLine(string.Format("[OK] Size RVA 0x{0:X}: {1} -> {2}", off, WARPC_ORIG_SIZE, newSize));
+                }
             }
-            int oldInt = BitConverter.ToInt32(oldVal, 0);
-            string status = (oldInt == WARPC_ORIG_SIZE) ? "OK" : "MISMATCH";
-            Log(string.Format("    0x{0:X}: 0x{1:X8} {2}", rva, oldInt, status));
-        }
-
-        foreach (int rva in WarpcSizeRVAs)
-        {
-            IntPtr pAddr = (IntPtr)(baseAddr.ToInt64() + rva);
-            byte[] oldVal = new byte[4];
-            int nr;
-            if (!ReadProcessMemory(hProc, pAddr, oldVal, 4, out nr)) continue;
-            if (nr < 4) continue;
-            int oldInt = BitConverter.ToInt32(oldVal, 0);
-            if (oldInt != WARPC_ORIG_SIZE)
-            {
-                Log(string.Format("  [WARN] RVA 0x{0:X} 原值 0x{1:X8} != 预期 0x24CE2, 跳过",
-                    rva, oldInt));
-                diag.AppendLine(string.Format("[DIAG] Size RVA 0x{0:X} 原值=0x{1:X8} 跳过", rva, oldInt));
-                continue;
-            }
-            uint oldProt;
-            VirtualProtectEx(hProc, pAddr, 4, PAGE_EXECUTE_READWRITE, out oldProt);
-            bool wok = WriteProcessMemory(hProc, pAddr, newSizeLE, 4, out nr);
-            VirtualProtectEx(hProc, pAddr, 4, oldProt, out oldProt);
-            if (wok && nr == 4)
-            {
-                sizePatches++;
-                diag.AppendLine(string.Format("[DIAG] Size RVA 0x{0:X}: 0x{1:X8} -> 0x{2:X8} OK", rva, oldInt, newSize));
-            }
-            else
-            {
-                diag.AppendLine(string.Format("[DIAG] Size RVA 0x{0:X}: WriteProcessMemory 失败 (wok={3} nr={4})", rva, wok, nr));
-            }
+            Log(string.Format("  WarPC 大小常量修补: {0} 处", sizePatches));
         }
 
         // [补丁七] 存档/读档缓冲区大小修补
@@ -1365,14 +2217,13 @@ class TKSLauncher
         Log(string.Format("  已修补: {0} 个基址(08) + {1} 个基址(0C) + {2} 个字段基址 + {3} 个大小常量",
             addrPatches, addr0CPatches, fieldPatches, sizePatches));
         Log(string.Format("  扫描范围: 0x{0:X8}-0x{1:X8}, 新buf=0x{2:X8}, 新size={3}",
-            scanStart, scanEnd, newBuf.ToInt64(), newSize));
+            scanStart, scanStart + scanSize, newBuf.ToInt64(), newSize));
         if (backupBuf != IntPtr.Zero)
             Log(string.Format("  备份buf=0x{0:X8}, 额外角色={1}", backupBuf.ToInt64(), extraSize / WARPC_REC_SIZE));
-        Log("  Cave 地址已在 BuildPatches 中预修补, 无需后期扫描");
         // 将详细 DIAG 写入主日志 (不覆盖, 追加)
         Log(string.Format("warpc_expand=1 new_buf=0x{0:X8} new_size={1} addr08={2} addr0C={3} field={4} size={5} save_buf={6} scan=0x{7:X8}-0x{8:X8} new_total_size={9} backup_buf=0x{10:X8} extra_size={11}",
                 newBuf.ToInt64(), newSize, addrPatches, addr0CPatches, fieldPatches, sizePatches,
-                totalPatches, scanStart, scanEnd, 9200 + newSize,
+                totalPatches, scanStart, scanStart + scanSize, 9200 + newSize,
                 backupBuf.ToInt64(), extraSize));
         LogFile("--- ExpandWarPcBuffer DIAG ---");
         LogFile(diag.ToString());
@@ -1872,7 +2723,7 @@ class TKSLauncher
     }
 
     // Inject WORD[260]/WORD[261] values from WarPC.dat into game memory
-    static void InjectWarPCData(int childPid)
+    static void InjectWarPCData(int childPid, int warpcBase)
     {
         // 如果已通过 ExpandWarPcBuffer 扩展缓冲区, 完整数据已写入新缓冲区
         if (_warpcExpanded)
@@ -1909,7 +2760,7 @@ class TKSLauncher
             short w260 = BitConverter.ToInt16(dec, baseOff + 520);
             if (w260 != 0)
             {
-                WriteMem16(hProc, WARPC_BASE + baseOff + 520, w260);
+                WriteMem16(hProc, warpcBase + baseOff + 520, w260);
                 w260Count++;
             }
             short w261 = BitConverter.ToInt16(dec, baseOff + 522);
@@ -2082,11 +2933,23 @@ class TKSLauncher
 
     static int Main(string[] args)
     {
-        // 首先初始化日志写入器 (覆盖同名旧日志)
+        // 确定启动器自身目录 (用于定位配置文件)
+        string exeDir = System.IO.Path.GetDirectoryName(
+            System.Reflection.Assembly.GetExecutingAssembly().Location);
+        if (string.IsNullOrEmpty(exeDir))
+            exeDir = Environment.CurrentDirectory;
+
+        // 初始化日志写入器 (覆盖同名旧日志, 写到当前工作目录即游戏目录)
         LogInit();
+        LogFile("启动器目录: " + exeDir);
+        LogFile("工作目录: " + Environment.CurrentDirectory);
 
         string tksPath = "TKS.exe";
         int waitTimeout = 30;
+        bool minimalMode = false;
+        bool noCaveMode = false;
+        bool onlyPortrait = false;
+        bool onlyAwk = false;
 
         for (int i = 0; i < args.Length; i++)
         {
@@ -2094,6 +2957,14 @@ class TKSLauncher
                 tksPath = args[++i];
             else if (args[i] == "--wait" && i + 1 < args.Length)
                 waitTimeout = int.Parse(args[++i]);
+            else if (args[i] == "--minimal")
+                minimalMode = true;
+            else if (args[i] == "--no-cave")
+                noCaveMode = true;
+            else if (args[i] == "--only-portrait")
+                onlyPortrait = true;
+            else if (args[i] == "--only-awk")
+                onlyAwk = true;
             else if (args[i] == "--help")
             {
                 Log("TKS Launcher - 自动运行时补丁启动器");
@@ -2104,8 +2975,23 @@ class TKSLauncher
         }
 
         Log("========================================");
-        Log("TKS Launcher - 自动运行时补丁启动器");
+        Log("TKS Launcher - 自动运行时补丁启动器 (模式扫描版)");
         Log("========================================");
+
+        // 加载补丁配置 (从启动器自身目录)
+        string configPath = System.IO.Path.Combine(exeDir, CONFIG_PATH);
+        Log(string.Format("配置文件: {0} (存在={1})", configPath, System.IO.File.Exists(configPath)));
+        PatchConfig config = LoadConfig(configPath);
+        if (config == null)
+        {
+            Log("[ERROR] 无法加载补丁配置, 退出");
+            System.Windows.Forms.MessageBox.Show(
+                string.Format("无法加载补丁配置:\n{0}\n\n请确认 tks_patches.json 与启动器在同一目录。", configPath),
+                "TKS Launcher", System.Windows.Forms.MessageBoxButtons.OK,
+                System.Windows.Forms.MessageBoxIcon.Error);
+            LogClose();
+            return 1;
+        }
 
         // 启动前: 检查存档目录健康, 清理 0 字节损坏文件
         // (修复"6个相同主角头像"异常)
@@ -2206,7 +3092,138 @@ class TKSLauncher
         }
         Log(string.Format("  模块大小: 0x{0:X} ({0} bytes)", modSize));
 
-        // 若 WarPC 扩展, 在 BuildPatches 之前分配缓冲区并写入数据
+        // 读取代码段到本地缓冲区 (用于模式扫描)
+        int codeStart = (int)baseAddr.ToInt64() + 0x1000; // .text 段起始
+        int codeSize = Math.Min(modSize - 0x1000, 0x700000 - codeStart);
+        byte[] codeBuf = new byte[codeSize];
+        {
+            IntPtr hRead = OpenProcess(PROCESS_VM_READ, false, childPid);
+            int nread;
+            if (hRead == IntPtr.Zero || !ReadProcessMemory(hRead, (IntPtr)codeStart, codeBuf, codeSize, out nread))
+            {
+                Log("[ERROR] 无法读取代码段");
+                if (!tksProc.HasExited) tksProc.Kill();
+                LogClose();
+                return 1;
+            }
+            CloseHandle(hRead);
+            Log(string.Format("  代码段: 0x{0:X8}-0x{1:X8} ({2} bytes)", codeStart, codeStart + nread, nread));
+        }
+
+        // 自动发现 WarPC BSS 基址
+        long fallbackBase = config.Variables.ContainsKey("warpc_base")
+            ? config.Variables["warpc_base"] : WARPC_BASE;
+        int discoveredBase = DiscoverWarpcBase(codeBuf, codeStart, (int)fallbackBase);
+        config.Variables["warpc_base"] = discoveredBase;
+
+        // 诊断: dump 已知补丁位置的实际字节 (用于修正模式)
+        Log("\n--- 已知补丁位置字节 dump ---");
+        int[] knownRVAs = {
+            0xDA12,   // team_member_limit 关键位置 (cmp word [ebp+8], 0x1E)
+        };
+        foreach (int rva in knownRVAs)
+        {
+            int off = rva - 0x1000; // 转为 codeBuf 偏移
+            if (off >= 0 && off + 16 <= codeBuf.Length)
+            {
+                byte[] slice = new byte[16];
+                Array.Copy(codeBuf, off, slice, 0, 16);
+                Log(string.Format("  RVA 0x{0:X5}: [{1}]", rva, BitConverter.ToString(slice)));
+            }
+            else
+            {
+                Log(string.Format("  RVA 0x{0:X5}: 超出范围 (off=0x{1:X})", rva, off));
+            }
+        }
+
+        // 诊断: 搜索 check_team 位置的字节序列
+        {
+            string[] searchPatterns = {
+                "1E 7E 26 0F BF 55",  // 0x0E6C1 附近的上下文
+                "0C 1E 7E 26",        // 更短的匹配
+            };
+            foreach (string p in searchPatterns)
+            {
+                bool[] w;
+                byte[] pat = ParsePattern(p, out w);
+                List<int> hits = PatternScan(codeBuf, pat, w);
+                Log(string.Format("  诊断: [{0}] 出现 {1} 次", p, hits.Count));
+                foreach (int off in hits)
+                    Log(string.Format("    偏移 0x{0:X} (abs 0x{1:X8})", off, codeStart + off));
+            }
+        }
+
+        // 诊断: 扫描所有 "cmp ?, 30" 的可能编码
+        {
+            // 3C 1E = cmp al, 0x1E (2字节)
+            // 80 F8 1E = cmp al, 0x1E (3字节, ModR/M)
+            // 80 F9 1E = cmp cl, 0x1E
+            // 80 FA 1E = cmp dl, 0x1E
+            // 80 FB 1E = cmp bl, 0x1E
+            // 83 F8 1E = cmp eax, 0x1E (符号扩展)
+            // 3D 1E 00 00 00 = cmp eax, 0x1E (5字节)
+            string[] cmpPatterns = {
+                "3C 1E",           // cmp al, 0x1E
+                "80 F8 1E",        // cmp al, 0x1E (ModR/M)
+                "80 F9 1E",        // cmp cl, 0x1E
+                "80 FA 1E",        // cmp dl, 0x1E
+                "80 FB 1E",        // cmp bl, 0x1E
+                "83 F8 1E",        // cmp eax, 0x1E (符号扩展)
+                "3D 1E 00 00 00",  // cmp eax, 0x1E (完整)
+            };
+            foreach (string p in cmpPatterns)
+            {
+                bool[] w;
+                byte[] pat = ParsePattern(p, out w);
+                List<int> hits = PatternScan(codeBuf, pat, w);
+                if (hits.Count > 0)
+                {
+                    Log(string.Format("  诊断: [{0}] 出现 {1} 次", p, hits.Count));
+                    foreach (int off in hits)
+                    {
+                        int ctxStart = Math.Max(0, off - 2);
+                        int ctxLen = Math.Min(16, codeBuf.Length - ctxStart);
+                        byte[] ctx = new byte[ctxLen];
+                        Array.Copy(codeBuf, ctxStart, ctx, 0, ctxLen);
+                        Log(string.Format("    偏移 0x{0:X} (abs 0x{1:X8}) ctx=[{2}]",
+                            off, codeStart + off, BitConverter.ToString(ctx)));
+                    }
+                }
+            }
+        }
+
+        // 诊断: 扫描 awk_sprite 模式出现次数和位置
+        {
+            byte[] awkPat;
+            bool[] awkWild;
+            awkPat = ParsePattern("83 ** 0C ** ** ** ** ** 8B ** ** 0F", out awkWild);
+            List<int> awkHits = PatternScan(codeBuf, awkPat, awkWild);
+            Log(string.Format("  诊断: awk_sprite 模式 [83 ** 0C ... 8B ** ** 0F] 出现 {0} 次", awkHits.Count));
+            foreach (int off in awkHits)
+                Log(string.Format("    偏移 0x{0:X} (abs 0x{1:X8})", off, codeStart + off));
+        }
+
+        // 诊断: 扫描 movzx/movsx 指令出现次数
+        {
+            int movzxCount = 0, movsxCount = 0;
+            for (int i = 0; i < codeBuf.Length - 1; i++)
+            {
+                if (codeBuf[i] == 0x0F && codeBuf[i+1] == 0xB6) movzxCount++;
+                if (codeBuf[i] == 0x0F && codeBuf[i+1] == 0xBE) movsxCount++;
+            }
+            Log(string.Format("  诊断: 0F B6 (movzx) 出现 {0} 次, 0F BE (movsx) 出现 {1} 次",
+                movzxCount, movsxCount));
+            // 扫描 0x3BF5B 附近的 movzx/movsx
+            int nearStart = 0x3BF5B - 0x1000;
+            if (nearStart >= 0 && nearStart + 20 <= codeBuf.Length)
+            {
+                byte[] nearBytes = new byte[20];
+                Array.Copy(codeBuf, nearStart, nearBytes, 0, 20);
+                Log(string.Format("  诊断: 0x3BF5B 附近: [{0}]", BitConverter.ToString(nearBytes)));
+            }
+        }
+
+        // 若 WarPC 扩展, 在补丁应用之前分配缓冲区并写入数据
         // 这样 cave 数组可以在写入前直接嵌入正确地址
         int warpcBaseForCaves = 0;
         if (_warpcExpanded && _warpcFullData != null)
@@ -2274,7 +3291,27 @@ class TKSLauncher
             }
         }
 
-        // Allocate executable memory for AwkSprite cave
+        // 设置配置变量 (用于模式中的 {变量} 引用)
+        if (_warpcExpanded && _warpcFullData != null)
+        {
+            int newSize = _warpcFullData.Length;
+            config.Variables["warpc_new_size"] = newSize;
+            config.Variables["save_new_size"] = 9200 + newSize;
+        }
+        else
+        {
+            config.Variables["warpc_new_size"] = WARPC_ORIG_SIZE;
+            config.Variables["save_new_size"] = WARPC_TOTAL_ORIG_SIZE;
+        }
+        // .dat 文件实际大小 (若有扩展)
+        foreach (var kv in DataFileOrigSizes)
+        {
+            string varName = kv.Key.Replace(".", "_").ToLower() + "_actual_size";
+            int actual = GetDecompressedSize(kv.Key);
+            config.Variables[varName] = (actual > 0) ? actual : kv.Value;
+        }
+
+        // Allocate executable memory for caves (512 bytes for all cave templates)
         IntPtr hProc = OpenProcess(PROCESS_VM_READ | PROCESS_VM_WRITE | PROCESS_VM_OPERATION, false, childPid);
         IntPtr caveAddr = IntPtr.Zero;
         if (hProc != IntPtr.Zero)
@@ -2283,23 +3320,54 @@ class TKSLauncher
             CloseHandle(hProc);
         }
         if (caveAddr == IntPtr.Zero)
-            Log("  [WARN] VirtualAllocEx failed, AwkSprite cave skipped");
+            Log("  [WARN] VirtualAllocEx failed, caves skipped");
         else
-            Log(string.Format("  AwkSprite cave: 0x{0:X8} (dynamic alloc)", caveAddr.ToInt64()));
+            Log(string.Format("  Cave 内存: 0x{0:X8} (512 bytes)", caveAddr.ToInt64()));
 
-        Patch[] patches = BuildPatches(baseAddr, caveAddr, warpcBaseForCaves);
-        Log(string.Format("  补丁数量: {0}", patches.Length));
-        foreach (var p in patches)
-            Log(string.Format("    RVA=0x{0:X8}  bytes=[{1}]  {2}", p.RVA, BitConverter.ToString(p.Data), p.Desc));
+        // 应用配置驱动的补丁 (模式扫描 + 值扫描)
+        Log("\n=== 应用配置补丁 (模式扫描) ===");
+        hProc = OpenProcess(PROCESS_VM_READ | PROCESS_VM_WRITE | PROCESS_VM_OPERATION, false, childPid);
+        bool ok = false;
+        if (hProc != IntPtr.Zero)
+        {
+            try
+            {
+                ok = ApplyConfigPatches(config, codeBuf, codeStart, hProc,
+                warpcBaseForCaves != 0 ? warpcBaseForCaves : discoveredBase,
+                caveAddr, minimalMode, noCaveMode, onlyPortrait, onlyAwk);
+            }
+            catch (Exception ex)
+            {
+                Log(string.Format("[ERROR] ApplyConfigPatches 异常: {0}", ex.Message));
+                Log(ex.StackTrace);
+            }
+            CloseHandle(hProc);
+        }
 
-        Log("\n应用补丁...");
-        bool ok = ApplyPatches(childPid, baseAddr, patches, false);
+        // 验证补丁: 重新读取关键位置的字节
+        {
+            IntPtr hVer = OpenProcess(PROCESS_VM_READ, false, childPid);
+            if (hVer != IntPtr.Zero)
+            {
+                Log("\n--- 补丁验证 ---");
+                int[] checkRVAs = { 0xDA14, 0xE6C0, 0x31165, 0x3BF5B, 0x18BB5 };
+                string[] checkDesc = { "team_limit(C8,87)", "check_team(C8,76)", "awk_sprite(00)", "battle_wb(B6)", "skill_scan(58)" };
+                for (int i = 0; i < checkRVAs.Length; i++)
+                {
+                    IntPtr addr = (IntPtr)(baseAddr.ToInt64() + checkRVAs[i]);
+                    byte[] buf = new byte[4];
+                    int nr;
+                    if (ReadProcessMemory(hVer, addr, buf, 4, out nr))
+                        Log(string.Format("  RVA 0x{0:X5} [{1}]: [{2}]",
+                            checkRVAs[i], checkDesc[i], BitConverter.ToString(buf, 0, nr)));
+                }
+                CloseHandle(hVer);
+            }
+        }
 
-        Log("\n验证补丁...");
-        ApplyPatches(childPid, baseAddr, patches, true);
-
-        // WarPC 代码引用修补 (缓冲区已在 BuildPatches 之前分配)
-        ExpandWarPcBuffer(childPid, baseAddr, modSize, caveAddr);
+        // WarPC 代码引用修补 (使用 ValueScan 模式扫描)
+        if (!minimalMode)
+            ExpandWarPcBuffer(childPid, baseAddr, modSize, caveAddr, codeBuf, codeStart);
 
         // ============================================================
         // [补丁十三] 修复 sub_4C33FC "已打开"标志导致读档列表全 0 异常
@@ -2316,6 +3384,8 @@ class TKSLauncher
         //   后跟 2 字节 "75 XX" (jnz short) 或 6 字节 "0F 85 XX XX XX XX" (jnz near)。
         //   将整个 cmp+jnz 替换为 NOP 完全跳过"已打开"检查。
         // ============================================================
+        if (!minimalMode)
+        {
         Patch4C33FC(childPid, baseAddr);
 
         // ============================================================
@@ -2348,7 +3418,8 @@ class TKSLauncher
         PatchArchivePortrait(childPid, baseAddr);
 
         // Inject WORD[260]/WORD[261] from WarPC.dat into game memory
-        InjectWarPCData(childPid);
+        InjectWarPCData(childPid, discoveredBase);
+        } // !minimalMode
 
         // Verify cave + hooks + data
         string log = string.Format("ok={0} cave=0x{1:X8} base=0x{2:X8}",
@@ -2413,10 +3484,10 @@ class TKSLauncher
                     log += string.Format(" SK143=[{0},{1}]", sk0, sk1);
                 }
             }
-            // Also check old buffer for comparison
-            if (ReadProcessMemory(hV, (IntPtr)(0x757F08 + 85*1054 + 522), w261, 2, out read))
+            // Also check old buffer for comparison (使用发现的基址)
+            if (ReadProcessMemory(hV, (IntPtr)(discoveredBase + 85*1054 + 522), w261, 2, out read))
                 log += string.Format(" W261[85]=0x{0:X4}", BitConverter.ToInt16(w261, 0));
-            if (ReadProcessMemory(hV, (IntPtr)(0x757F08 + 86*1054 + 522), w261, 2, out read))
+            if (ReadProcessMemory(hV, (IntPtr)(discoveredBase + 86*1054 + 522), w261, 2, out read))
                 log += string.Format(" W261[86]=0x{0:X4}", BitConverter.ToInt16(w261, 0));
             // Team
             byte[] teamBuf = new byte[12];
