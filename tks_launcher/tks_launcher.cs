@@ -150,12 +150,313 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Drawing;
 using System.Runtime.InteropServices;
 using System.Threading;
 using System.Windows.Forms;
 
 class TKSLauncher
 {
+    // ============================================================
+    // 游戏内叠加窗口 - 在游戏界面上显示加载状态
+    // ============================================================
+
+    [DllImport("user32.dll", SetLastError = true)]
+    static extern IntPtr FindWindow(string lpClassName, string lpWindowName);
+
+    [DllImport("user32.dll")]
+    static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
+
+    [DllImport("user32.dll")]
+    static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
+
+    [DllImport("user32.dll")]
+    static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+
+    // 分层窗口 API - 实现真正的半透明
+    [DllImport("user32.dll")]
+    static extern int GetWindowLong(IntPtr hWnd, int nIndex);
+
+    [DllImport("user32.dll")]
+    static extern int SetWindowLong(IntPtr hWnd, int nIndex, int dwNewLong);
+
+    [DllImport("user32.dll")]
+    static extern bool SetLayeredWindowAttributes(IntPtr hwnd, uint crKey, byte bAlpha, uint dwFlags);
+
+    [DllImport("user32.dll")]
+    static extern bool UpdateLayeredWindow(IntPtr hwnd, IntPtr hdcDst, ref POINT pptDst, ref SIZE psize, IntPtr hdcSrc, ref POINT pptSrc, uint crKey, ref BLENDFUNCTION pblend, uint dwFlags);
+
+    [DllImport("user32.dll")]
+    static extern IntPtr GetDC(IntPtr hwnd);
+
+    [DllImport("user32.dll")]
+    static extern int ReleaseDC(IntPtr hwnd, IntPtr hdc);
+
+    [DllImport("gdi32.dll")]
+    static extern IntPtr CreateCompatibleDC(IntPtr hdc);
+
+    [DllImport("gdi32.dll")]
+    static extern IntPtr CreateCompatibleBitmap(IntPtr hdc, int nWidth, int nHeight);
+
+    [DllImport("gdi32.dll")]
+    static extern IntPtr SelectObject(IntPtr hdc, IntPtr hgdiobj);
+
+    [DllImport("gdi32.dll")]
+    static extern bool DeleteObject(IntPtr hObject);
+
+    [DllImport("gdi32.dll")]
+    static extern bool DeleteDC(IntPtr hdc);
+
+    [StructLayout(LayoutKind.Sequential)]
+    struct POINT
+    {
+        public int X, Y;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    struct SIZE
+    {
+        public int cx, cy;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    struct BLENDFUNCTION
+    {
+        public byte BlendOp;
+        public byte BlendFlags;
+        public byte SourceConstantAlpha;
+        public byte AlphaFormat;
+    }
+
+    const int GWL_EXSTYLE = -20;
+    const int WS_EX_LAYERED = 0x00080000;
+    const byte AC_SRC_ALPHA = 0x01;
+    const byte AC_SRC_OVER = 0x00;
+    const uint ULW_ALPHA = 0x00000002;
+
+    [StructLayout(LayoutKind.Sequential)]
+    struct RECT
+    {
+        public int Left, Top, Right, Bottom;
+    }
+
+    static readonly IntPtr HWND_TOPMOST = new IntPtr(-1);
+    const uint SWP_NOMOVE = 0x0002;
+    const uint SWP_NOSIZE = 0x0001;
+    const uint SWP_NOACTIVATE = 0x0010;
+    const uint SWP_SHOWWINDOW = 0x0040;
+    const int SW_SHOWNOACTIVATE = 4;
+
+    /// <summary>
+    /// 游戏内叠加窗口 - 使用分层窗口实现真正的透明文字
+    /// </summary>
+    class OverlayForm : Form
+    {
+        private string _statusText = "正在加载...";
+        private System.Windows.Forms.Timer _timer;
+        private IntPtr _gameHwnd;
+        private Font _font;
+        private bool _isSuccess = false;
+
+        public OverlayForm(IntPtr gameHwnd)
+        {
+            _gameHwnd = gameHwnd;
+            
+            // 窗口设置
+            this.FormBorderStyle = FormBorderStyle.None;
+            this.StartPosition = FormStartPosition.Manual;
+            this.TopMost = true;
+            this.ShowInTaskbar = false;
+            this.DoubleBuffered = false;
+            this.Size = new Size(280, 40);
+            
+            // 设置为分层窗口
+            int exStyle = GetWindowLong(this.Handle, GWL_EXSTYLE);
+            SetWindowLong(this.Handle, GWL_EXSTYLE, exStyle | WS_EX_LAYERED);
+            
+            // 字体
+            _font = new Font("Microsoft YaHei", 11f, FontStyle.Bold);
+            
+            // 初始位置
+            UpdatePosition();
+            
+            // 绘制初始内容
+            RenderOverlay();
+            
+            // 定时器: 跟随游戏窗口位置 + 刷新显示
+            _timer = new System.Windows.Forms.Timer();
+            _timer.Interval = 100;
+            _timer.Tick += Timer_Tick;
+            _timer.Start();
+        }
+
+        private void Timer_Tick(object sender, EventArgs e)
+        {
+            UpdatePosition();
+        }
+
+        private void UpdatePosition()
+        {
+            if (_gameHwnd != IntPtr.Zero)
+            {
+                RECT rect;
+                if (GetWindowRect(_gameHwnd, out rect))
+                {
+                    // 右下角位置, 留 15px 边距
+                    int x = rect.Right - this.Width - 15;
+                    int y = rect.Bottom - this.Height - 15;
+                    
+                    this.Location = new Point(x, y);
+                }
+            }
+        }
+
+        public void SetStatus(string text, bool isSuccess)
+        {
+            _statusText = text;
+            _isSuccess = isSuccess;
+            RenderOverlay();
+        }
+
+        /// <summary>
+        /// 使用 UpdateLayeredWindow 绘制带 Alpha 通道的内容
+        /// </summary>
+        private void RenderOverlay()
+        {
+            int width = this.Width;
+            int height = this.Height;
+
+            // 创建 32 位 ARGB 位图
+            IntPtr screenDC = GetDC(IntPtr.Zero);
+            IntPtr memDC = CreateCompatibleDC(screenDC);
+            IntPtr hBitmap = CreateCompatibleBitmap(screenDC, width, height);
+            IntPtr oldBitmap = SelectObject(memDC, hBitmap);
+
+            // 使用 GDI+ 在位图上绘制
+            using (Graphics g = Graphics.FromHdc(memDC))
+            {
+                g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+                g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAlias;
+
+                // 清除为完全透明
+                g.Clear(Color.Transparent);
+
+                // 选择颜色
+                Color textColor = _isSuccess ? Color.LimeGreen : Color.White;
+                
+                // 绘制文字阴影 (深色, 半透明)
+                using (SolidBrush shadowBrush = new SolidBrush(Color.FromArgb(160, 0, 0, 0)))
+                {
+                    Rectangle shadowRect = new Rectangle(2, 2, width - 4, height - 4);
+                    StringFormat sf = new StringFormat();
+                    sf.Alignment = StringAlignment.Far;
+                    sf.LineAlignment = StringAlignment.Center;
+                    g.DrawString(_statusText, _font, shadowBrush, shadowRect, sf);
+                }
+
+                // 绘制文字 (白色/绿色, 完全不透明)
+                using (SolidBrush textBrush = new SolidBrush(textColor))
+                {
+                    Rectangle textRect = new Rectangle(0, 0, width - 4, height);
+                    StringFormat sf = new StringFormat();
+                    sf.Alignment = StringAlignment.Far;
+                    sf.LineAlignment = StringAlignment.Center;
+                    g.DrawString(_statusText, _font, textBrush, textRect, sf);
+                }
+            }
+
+            // 准备 UpdateLayeredWindow 参数
+            POINT pptDst = new POINT { X = this.Left, Y = this.Top };
+            SIZE psize = new SIZE { cx = width, cy = height };
+            POINT pptSrc = new POINT { X = 0, Y = 0 };
+            BLENDFUNCTION blend = new BLENDFUNCTION();
+            blend.BlendOp = AC_SRC_OVER;
+            blend.BlendFlags = 0;
+            blend.SourceConstantAlpha = 255;  // 整体不透明度
+            blend.AlphaFormat = AC_SRC_ALPHA; // 使用源 alpha
+
+            UpdateLayeredWindow(this.Handle, screenDC, ref pptDst, ref psize, memDC, ref pptSrc, 0, ref blend, ULW_ALPHA);
+
+            // 清理
+            SelectObject(memDC, oldBitmap);
+            DeleteObject(hBitmap);
+            DeleteDC(memDC);
+            ReleaseDC(IntPtr.Zero, screenDC);
+        }
+
+        // 重写 OnPaint 为空 - 所有绘制在 UpdateLayeredWindow 中完成
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            // 不绘制任何内容
+        }
+
+        protected override void OnFormClosed(FormClosedEventArgs e)
+        {
+            if (_timer != null) { _timer.Stop(); _timer.Dispose(); }
+            if (_font != null) _font.Dispose();
+            base.OnFormClosed(e);
+        }
+    }
+
+    // 全局叠加窗口引用
+    static OverlayForm _overlay = null;
+    static Thread _overlayThread = null;
+
+    /// <summary>
+    /// 在新线程中创建叠加窗口
+    /// </summary>
+    static void ShowOverlay(IntPtr gameHwnd)
+    {
+        _overlayThread = new Thread(() =>
+        {
+            _overlay = new OverlayForm(gameHwnd);
+            _overlay.Show();
+            
+            // 设置为非激活状态, 不抢焦点
+            ShowWindow(_overlay.Handle, SW_SHOWNOACTIVATE);
+            
+            Application.Run(_overlay);
+        });
+        _overlayThread.IsBackground = true;
+        _overlayThread.Start();
+        
+        // 等待窗口创建完成
+        while (_overlay == null || !_overlay.IsHandleCreated)
+        {
+            Thread.Sleep(50);
+        }
+    }
+
+    /// <summary>
+    /// 更新叠加窗口状态
+    /// </summary>
+    static void UpdateOverlay(string status, bool isSuccess = false)
+    {
+        if (_overlay != null && _overlay.IsHandleCreated)
+        {
+            _overlay.BeginInvoke((Action)(() => _overlay.SetStatus(status, isSuccess)));
+        }
+    }
+
+    /// <summary>
+    /// 关闭叠加窗口
+    /// </summary>
+    static void CloseOverlay()
+    {
+        if (_overlay != null && _overlay.IsHandleCreated)
+        {
+            try
+            {
+                _overlay.BeginInvoke((Action)(() =>
+                {
+                    _overlay.Close();
+                    Application.ExitThread();
+                }));
+            }
+            catch { }
+        }
+    }
+
     // ============================================================
     // 模式扫描引擎 — 支持 ** 通配符的字节模式匹配
     // ============================================================
@@ -3015,6 +3316,29 @@ class TKSLauncher
         }
         Log(string.Format("  TKS.exe PID = {0}", tksProc.Id));
 
+        // 查找游戏窗口并显示叠加窗口
+        IntPtr gameHwnd = IntPtr.Zero;
+        for (int retry = 0; retry < 20; retry++)
+        {
+            Thread.Sleep(250);
+            gameHwnd = FindWindow("TForm1", null);
+            if (gameHwnd == IntPtr.Zero)
+                gameHwnd = FindWindow(null, "TK");  // 尝试按标题查找
+            if (gameHwnd != IntPtr.Zero)
+                break;
+        }
+        
+        if (gameHwnd != IntPtr.Zero)
+        {
+            Log(string.Format("  游戏窗口: 0x{0:X8}", gameHwnd.ToInt64()));
+            ShowOverlay(gameHwnd);
+            UpdateOverlay("正在等待游戏加载...");
+        }
+        else
+        {
+            Log("  [WARN] 未找到游戏窗口, 叠加提示不可用");
+        }
+
         Log(string.Format("等待代码解密完成 (最多 {0} 秒)...", waitTimeout));
         int childPid = 0;
         DateTime start = DateTime.Now;
@@ -3032,6 +3356,7 @@ class TKSLauncher
             {
                 childPid = (int)children[0].th32ProcessID;
                 Log(string.Format("  检测到子进程: PID={0} Name={1}", childPid, children[0].szExeFile));
+                UpdateOverlay("正在加载游戏补丁...");
                 Thread.Sleep(3000);
                 break;
             }
@@ -3326,6 +3651,7 @@ class TKSLauncher
 
         // 应用配置驱动的补丁 (模式扫描 + 值扫描)
         Log("\n=== 应用配置补丁 (模式扫描) ===");
+        UpdateOverlay("正在应用内存补丁...");
         hProc = OpenProcess(PROCESS_VM_READ | PROCESS_VM_WRITE | PROCESS_VM_OPERATION, false, childPid);
         bool ok = false;
         if (hProc != IntPtr.Zero)
@@ -3367,7 +3693,10 @@ class TKSLauncher
 
         // WarPC 代码引用修补 (使用 ValueScan 模式扫描)
         if (!minimalMode)
+        {
+            UpdateOverlay("正在扩展 WarPC 缓冲区...");
             ExpandWarPcBuffer(childPid, baseAddr, modSize, caveAddr, codeBuf, codeStart);
+        }
 
         // ============================================================
         // [补丁十三] 修复 sub_4C33FC "已打开"标志导致读档列表全 0 异常
@@ -3603,6 +3932,7 @@ class TKSLauncher
             Log("\n补丁已应用！游戏正在运行。");
             Log("启动器即将退出，补丁在本次游戏会话中持续生效。");
             Log("关闭游戏后补丁失效（每次运行本启动器即可重新应用）。");
+            UpdateOverlay("补丁应用成功！游戏运行中", true);
 
             // 存档兼容性提示
             if (_warpcExpanded)
@@ -3633,9 +3963,14 @@ class TKSLauncher
         else
         {
             Log("\n[WARN] 部分补丁未应用成功");
+            UpdateOverlay("补丁应用失败！", false);
         }
 
+        // 延迟关闭叠加窗口, 让用户看到结果
         Thread.Sleep(2000);
+        CloseOverlay();
+        Thread.Sleep(500);  // 等待窗口关闭
+        
         LogClose();
         return 0;
     }
