@@ -143,6 +143,19 @@
  *             与 warpc_editor.py v1.6 的 history_text_id 字段配合使用。
  *             Hook 位置: RVA 0x1A749 (sub_41A080 中 add edx, 0x235A 指令)
  *
+ * [补丁十八] 金钱上限扩展 (30000→65535) + 存档界面显示修复
+ *   原始问题: 游戏中金钱上限硬编码为 30000 (0x7530), 存储在 word_756882
+ *             多处代码检查 `if (30000 - word_756882 >= amount)` 或
+ *             `word_756882 = 30000` 限制金钱不超过 30000
+ *             另外, 存档界面显示金钱时使用 signed short (__int16),
+ *             当金钱 >= 32768 时会被解释为负数 (如 65500 → -36)
+ *   修补效果: (1) 扫描代码段中所有 30000 (0x7530) 的立即数引用, 替换为
+ *                 65535 (0xFFFF), 使金钱上限扩展为 16 位最大值
+ *             (2) 修复 sub_41AB94 中 movsx→movzx, 确保金钱显示为无符号值
+ *             涉及函数: sub_40CE30 (金钱添加), sub_411E84 (秘籍),
+ *             sub_424FE4 (购买检查), sub_43CA64 (战斗奖励),
+ *             sub_41AB94 (存档界面显示)
+ *
  * 用法: 把编译后的 TKSLauncher.exe 放到游戏目录，双击运行即可
  * 编译: C:\Windows\Microsoft.NET\Framework\v4.0.30319\csc.exe /target:winexe /win32icon:TKS.ico /out:TKSLauncher.exe tks_launcher.cs
  */
@@ -3023,6 +3036,84 @@ class TKSLauncher
         CloseHandle(hProc);
     }
 
+    // ============================================================
+    // [补丁十八] 存档界面金钱显示修复 (signed short → unsigned short)
+    //
+    // 背景: sub_41AB94 渲染存档列表时显示金钱:
+    //   sub_4175D8(a1, 390, 150*i+135, "%d", *(__int16 *)(a1 + ...));
+    // 问题: 使用 __int16 (signed short) 读取金钱值, 当金钱 >= 32768 (0x8000)
+    //       时会被解释为负数 (如 65500 = 0xFFDC → -36)
+    //
+    // 修复: 精确匹配 sub_41AB94 中加载金钱的唯一模式:
+    //   0F BF 84 41 D4 02 00 00  = movsx eax, word [ecx+eax*2+0x2D4]
+    //   其中 0x2D4 = 724 是金钱在存档索引结构中的偏移量
+    //   将 movsx (0F BF) 改为 movzx (0F B7)
+    // ============================================================
+    static void PatchGoldDisplay(int childPid, IntPtr baseAddr)
+    {
+        const int SUB_41AB94_RVA = 0x1AB94;
+        const int SCAN_SIZE = 0x600;  // sub_41AB94 函数体
+        Log("\n--- [补丁十八] 存档界面金钱显示修复 (signed→unsigned) ---");
+
+        IntPtr hProc = OpenProcess(PROCESS_VM_READ | PROCESS_VM_WRITE | PROCESS_VM_OPERATION,
+            false, childPid);
+        if (hProc == IntPtr.Zero) { Log("  [ERROR] OpenProcess 失败"); return; }
+
+        IntPtr addr = (IntPtr)(baseAddr.ToInt64() + SUB_41AB94_RVA);
+        byte[] buf = new byte[SCAN_SIZE];
+        int nr;
+        if (!ReadProcessMemory(hProc, addr, buf, SCAN_SIZE, out nr) || nr < 64)
+        {
+            Log(string.Format("  [ERROR] 读取 sub_41AB94@0x{0:X8} 失败", addr.ToInt64()));
+            CloseHandle(hProc);
+            return;
+        }
+
+        Log(string.Format("  sub_41AB94@0x{0:X8} 函数体扫描 {1} 字节", addr.ToInt64(), nr));
+
+        // 精确模式: movsx eax, word [ecx+eax*2+0x2D4]
+        // 0F BF 84 41 D4 02 00 00
+        // 其中 0x2D4 = 724 是金钱在存档索引中的偏移, 唯一标识此指令
+        byte[] goldPattern = new byte[] { 0x0F, 0xBF, 0x84, 0x41, 0xD4, 0x02, 0x00, 0x00 };
+        int patched = 0;
+
+        for (int i = 0; i <= nr - goldPattern.Length; i++)
+        {
+            bool match = true;
+            for (int j = 0; j < goldPattern.Length; j++)
+            {
+                if (buf[i + j] != goldPattern[j]) { match = false; break; }
+            }
+
+            if (match)
+            {
+                int hookRva = SUB_41AB94_RVA + i;
+                IntPtr hookAddr = (IntPtr)(baseAddr.ToInt64() + hookRva);
+
+                // 将 movsx (0F BF) 改为 movzx (0F B7), 只改 1 字节
+                uint oldProt;
+                VirtualProtectEx(hProc, hookAddr, 2, PAGE_EXECUTE_READWRITE, out oldProt);
+                int nw;
+                byte[] fix = new byte[] { 0x0F, 0xB7 };
+                bool ok = WriteProcessMemory(hProc, hookAddr, fix, 2, out nw);
+                VirtualProtectEx(hProc, hookAddr, 2, oldProt, out oldProt);
+
+                if (ok && nw == 2)
+                {
+                    patched++;
+                    Log(string.Format("    [OK] RVA 0x{0:X5}: movsx→movzx [ecx+eax*2+0x2D4] (金钱显示 signed→unsigned)", hookRva));
+                }
+            }
+        }
+
+        Log(string.Format("  共修补 {0} 处", patched));
+        if (patched == 0)
+        {
+            Log("  [WARN] 未找到金钱显示的 movsx 模式 (0F BF 84 41 D4 02 00 00)");
+        }
+        CloseHandle(hProc);
+    }
+
     // Inject WORD[260]/WORD[261] values from WarPC.dat into game memory
     static void InjectWarPCData(int childPid, int warpcBase)
     {
@@ -3745,6 +3836,16 @@ class TKSLauncher
         //   替换为 call ArchivePortraitCave。cave 复现 movzx ID + WORD[261] 优先逻辑。
         // ============================================================
         PatchArchivePortrait(childPid, baseAddr);
+
+        // ============================================================
+        // [补丁十八] 修复存档界面金钱显示 signed→unsigned
+        //
+        // 背景: sub_41AB94 渲染存档列表时显示金钱使用 __int16 (signed short)
+        //       当金钱 >= 32768 时会被解释为负数 (如 65500 → -36)
+        //
+        // 修复: 扫描 sub_41AB94 内的 movsx (0F BE) 指令, 改为 movzx (0F B6)
+        // ============================================================
+        PatchGoldDisplay(childPid, baseAddr);
 
         // Inject WORD[260]/WORD[261] from WarPC.dat into game memory
         InjectWarPCData(childPid, discoveredBase);

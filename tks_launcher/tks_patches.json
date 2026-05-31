@@ -112,6 +112,15 @@
     },
     {
       "type": "patch_imm32",
+      "id": "gold_limit",
+      "desc": "金钱上限 30000→65535 (0x7530→0xFFFF)",
+      "value_scan": true,
+      "expect_value": "0x7530",
+      "new_value": "0xFFFF",
+      "expect_count": 0
+    },
+    {
+      "type": "patch_imm32",
       "id": "tkmat_size",
       "desc": "TKMat.dat 大小常量 2304000→actual",
       "value_scan": true,
