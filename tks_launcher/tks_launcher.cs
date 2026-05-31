@@ -181,9 +181,6 @@ class TKSLauncher
     static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
 
     [DllImport("user32.dll")]
-    static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
-
-    [DllImport("user32.dll")]
     static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
 
     // 分层窗口 API - 实现真正的半透明
@@ -253,11 +250,6 @@ class TKSLauncher
         public int Left, Top, Right, Bottom;
     }
 
-    static readonly IntPtr HWND_TOPMOST = new IntPtr(-1);
-    const uint SWP_NOMOVE = 0x0002;
-    const uint SWP_NOSIZE = 0x0001;
-    const uint SWP_NOACTIVATE = 0x0010;
-    const uint SWP_SHOWWINDOW = 0x0040;
     const int SW_SHOWNOACTIVATE = 4;
 
     /// <summary>
@@ -991,10 +983,6 @@ class TKSLauncher
                 // WarPC 地址替换在 ExpandWarPcBuffer 中处理
                 Log(string.Format("    → 由 WarPC 扩展流程处理 (base=0x{0:X8})", warpcBase));
             }
-            else if (def.Type == "cave_hook")
-            {
-                // 已在预扫描阶段处理, 跳过
-            }
             else
             {
                 Log(string.Format("  [WARN] 未知补丁类型: {0}", def.Type));
@@ -1012,8 +1000,6 @@ class TKSLauncher
                 foreach (var h in pendingCaveHooks)
                     if (h.Id == "portrait_cave1" || h.Id == "portrait_cave2")
                         hooksToApply.Add(h);
-                // 测试: 只用 portrait_cave2 (排除 portrait_cave1)
-                hooksToApply.RemoveAll(h => h.Id == "portrait_cave1");
             }
             else if (onlyAwk)
             {
@@ -1024,47 +1010,9 @@ class TKSLauncher
             }
             Log(string.Format("\n  应用 {0} 个 cave hooks...", hooksToApply.Count));
 
-            // 测试: 用旧启动器的精确方法直接应用 portrait_cave2 hook
-            if (hooksToApply.Exists(h => h.Id == "portrait_cave2"))
-            {
-                // 先写入 cave 代码
-                byte[] p2CaveData = BuildCaveTemplate("portrait2", warpcBase);
-                int p2CaveAddr = (int)(caveAddr.ToInt64() + 128);
-                int nw;
-                WriteProcessMemory(hProc, (IntPtr)p2CaveAddr, p2CaveData, p2CaveData.Length, out nw);
-                Log(string.Format("    [DIRECT] portrait2 cave at 0x{0:X8} ({1} bytes)", p2CaveAddr, p2CaveData.Length));
-
-                // 写入 hook
-                int p2HookAddr = codeStartAddr + 0x16E1A;
-                int p2CallOff = p2CaveAddr - (p2HookAddr + 5);
-                byte[] p2Call = new byte[6];
-                p2Call[0] = 0xE8;
-                BitConverter.GetBytes(p2CallOff).CopyTo(p2Call, 1);
-                p2Call[5] = 0x90;
-                uint oldProt;
-                VirtualProtectEx(hProc, (IntPtr)p2HookAddr, 6, PAGE_EXECUTE_READWRITE, out oldProt);
-                WriteProcessMemory(hProc, (IntPtr)p2HookAddr, p2Call, 6, out nw);
-                VirtualProtectEx(hProc, (IntPtr)p2HookAddr, 6, oldProt, out oldProt);
-                // 读回验证 hook 和 cave 代码
-                byte[] verify = new byte[6];
-                ReadProcessMemory(hProc, (IntPtr)p2HookAddr, verify, 6, out nw);
-                Log(string.Format("    [DIRECT] hook at 0x{0:X8}: [{1}]",
-                    p2HookAddr, BitConverter.ToString(verify)));
-                byte[] caveVerify = new byte[42];
-                ReadProcessMemory(hProc, (IntPtr)p2CaveAddr, caveVerify, 42, out nw);
-                Log(string.Format("    [DIRECT] cave at 0x{0:X8}: [{1}]",
-                    p2CaveAddr, BitConverter.ToString(caveVerify)));
-                // 移除已处理的 portrait_cave2
-                hooksToApply.RemoveAll(h => h.Id == "portrait_cave2");
-            }
-
+            // 应用 cave hooks (使用预扫描的匹配位置, codeBuf 未被 hook 修改)
             foreach (var def in hooksToApply)
             {
-                // 使用预扫描的匹配位置
-                byte[] hookPattern;
-                bool[] hookWild;
-                hookPattern = ParsePattern(def.HookPattern ?? def.Pattern, out hookWild);
-                // 临时覆盖 PatternScan 结果
                 allOk &= ApplyCaveHookWithHits(def, def._preScannedHits, codeBuf,
                     codeStartAddr, hProc, caveAddr, warpcBase, config.Variables);
             }
@@ -1226,33 +1174,6 @@ class TKSLauncher
             return false;
         }
         return true;
-    }
-
-    static bool ApplyCaveHook(PatchDef def, byte[] codeBuf, int codeStartAddr,
-        IntPtr hProc, IntPtr caveAddr, int warpcBase, Dictionary<string, long> vars)
-    {
-        if (caveAddr == IntPtr.Zero)
-        {
-            Log("    [WARN] Cave 内存未分配, 跳过");
-            return false;
-        }
-
-        byte[] pattern;
-        bool[] wildcard;
-        pattern = ParsePattern(def.HookPattern ?? def.Pattern, out wildcard);
-        List<int> hits = PatternScan(codeBuf, pattern, wildcard);
-        Log(string.Format("    Hook 模式: [{0}] → 匹配 {1} 处 (预期 {2})",
-            def.HookPattern ?? def.Pattern, hits.Count,
-            def.HookExpectCount > 0 ? def.HookExpectCount.ToString() : "不限"));
-
-        if (def.HookExpectCount > 0 && hits.Count != def.HookExpectCount)
-        {
-            Log(string.Format("  [WARN] 匹配数 {0} != 预期 {1}, 跳过此 cave hook",
-                hits.Count, def.HookExpectCount));
-            return false;
-        }
-
-        return ApplyCaveHookWithHits(def, hits, codeBuf, codeStartAddr, hProc, caveAddr, warpcBase, vars);
     }
 
     static bool ApplyCaveHookWithHits(PatchDef def, List<int> hits, byte[] codeBuf, int codeStartAddr,
@@ -1750,7 +1671,7 @@ class TKSLauncher
 
     // ============================================================
     // [补丁三] 队伍头像显示 - PATH2 动态 Cave (42 字节)
-    // Hook 在 RVA 0x17E1A (sub_417F84 中的 "add dx, 0xD3; push edx" 处)
+    // Hook 在 RVA 0x17E1A (sub_41762C 中的 "add dx, 0xD3; push edx" 处)
     //
     // 逻辑: 此处处理非选中队员的头像 (列表显示)
     //       EAX = char_idx * 527, DX = WarPC[char_idx].portrait (WORD[1])
@@ -1946,11 +1867,6 @@ class TKSLauncher
     const int TKSHOP_ORIG_SIZE  = 1920;    // TKShop.dat             — sub_4173F8:21
     const int TKKON_ORIG_SIZE   = 26000;   // TKKon.dat              — sub_4173F8:22
 
-    // Frame 2 内部布局常量 (存档/读档缓冲区)
-    const int SAVE_BLOCKA_SIZE = 3432;  // unk_755B18 (SCE全局变量)
-    const int SAVE_BLOCKB_SIZE = 5768;  // unk_756880 (物品背包/任务/队伍/金币)
-    const int SAVE_WARPC_OFFSET = 9200; // = 3432 + 5768, WarPC 在 Frame 2 中的偏移
-
     // 数据文件名 → 原始大小 映射 (用于大小检测和修补)
     // 注意: 仅 WarPC.dat 支持完整缓冲区扩展; 其他文件仅做大小常量修补
     static readonly Dictionary<string, int> DataFileOrigSizes = new Dictionary<string, int> {
@@ -1964,37 +1880,6 @@ class TKSLauncher
     static bool _warpcExpanded = false;
     static byte[] _warpcFullData = null;
     static IntPtr _warpcNewBuf = IntPtr.Zero;
-
-    // 已验证的 RVA 列表: 代码中所有引用 word_757F08 (0x757F08) 的位置
-    // 每个 RVA 指向一个 4 字节立即数 08 7F 75 00
-    static readonly int[] WarpcAddrRVAs = new int[] {
-        0x03FC8, 0x040BD, 0x0DB0F, 0x10FB5, 0x1118A, 0x1228B, 0x122E1, 0x126AA,
-        0x17401, 0x176FF, 0x17ABC, 0x180F4, 0x18ADD, 0x18C2D, 0x198B8, 0x1A1E1,
-        0x1E2E1, 0x1E318, 0x1EC3A, 0x20B03, 0x222CF, 0x2277F, 0x2329B, 0x24E35,
-        0x30994, 0x30D20, 0x310F8, 0x3BFAC, 0x450AE
-    };
-
-    // 已验证的 RVA 列表: 代码中所有引用 150722 (0x24CE2) 的位置
-    // 注意: C7 45 EC (mov [ebp-14],imm32) 前缀3字节, 立即数在+3
-    //       C7 44 24 0C (mov [esp+0C],imm32) 前缀4字节, 立即数在+4
-    static readonly int[] WarpcSizeRVAs = new int[] {
-        0x3FBC, 0x10F60, 0x110D7, 0x126A5, 0x173FC
-    };
-
-    // 已验证的 RVA 列表: 代码中所有引用 word_757F0C (0x757F0C) 的位置
-    // word_757F0C = WarPC 基址+4, 用于读取队员肖像字段 (WORD[2])
-    // 注意: 这些值来自 pointers.txt, 但实际上是绝对 VA 而非 RVA
-    //       (dump工具可能使用 image_base=0 导致), 因此使用时不应再加 baseAddr
-    // 若未正确 Patch, 存档预览文件 (save\%d.sav) 写入时会越界读取导致预览损坏
-    static readonly int[] WarpcAddr0CRVAs = new int[] {
-        0x40DAF3,  // sub_40DA00  队员入队时复制肖像
-        0x40E8DB,  // sub_40E88C  队员属性读取
-        0x4184B4,  // sub_417F84  队员列表头像
-        0x41A224,  // sub_41A080  商店界面头像
-        0x41D171,  // sub_41CE10  存档预览写入 ← 导致"六个0"的关键引用
-        0x43CA72,  // sub_43CA64  战斗检查
-        0x43CA8D,  // sub_43CA64  战斗检查
-    };
 
     // 记录被截断的 .dat 文件, key=文件名, value=原始压缩数据 (供恢复用)
     static Dictionary<string, byte[]> _truncatedFiles = new Dictionary<string, byte[]>();
@@ -2277,7 +2162,7 @@ class TKSLauncher
             else
             {
                 Log(string.Format("  [WARN] {0}: 未找到 {1} (0x{1:X}) 的引用, "
-                    + "可能已在 WarpcSizeRVAs 中处理或值不存在于代码段",
+                    + "可能已被其他修补流程处理或值不存在于代码段",
                     fileName, origSize));
             }
         }
@@ -2311,7 +2196,7 @@ class TKSLauncher
         int scanStart = codeStartAddr;
         int scanSize = codeBuf.Length;
 
-        // 使用 ValueScan 替代硬编码 WarpcAddrRVAs
+        // 扫描代码中所有引用 WarPC 基址 (0x757F08) 的位置
         {
             List<int> hits = ValueScan(codeBuf, WARPC_BASE);
             Log(string.Format("  WarPC 基址 0x{0:X8} 扫描: 找到 {1} 处", WARPC_BASE, hits.Count));
@@ -2328,7 +2213,6 @@ class TKSLauncher
             }
         }
 
-        // 使用 ValueScan 替代硬编码 WarpcAddr0CRVAs
         // 扫描代码中所有引用 word_757F0C (WarPC+4) 的位置
         {
             const int WARPC_ADDR_0C = WARPC_BASE + 4;  // 0x757F0C
@@ -2425,7 +2309,7 @@ class TKSLauncher
 
         // 扫描动态 cave 内存 — 不再需要, cave 已在 BuildPatches 中预修补
 
-        // 使用 ValueScan 替代硬编码 WarpcSizeRVAs
+        // 扫描代码中所有引用 WarPC 原始大小 (150722) 的位置
         {
             List<int> sizeHits = ValueScan(codeBuf, WARPC_ORIG_SIZE);
             Log(string.Format("  WarPC 大小 {0} (0x{0:X}) 扫描: 找到 {1} 处", WARPC_ORIG_SIZE, sizeHits.Count));
@@ -2794,7 +2678,7 @@ class TKSLauncher
     }
 
     // ============================================================
-    // [补丁十四] sub_41C120 金铢检查修补
+    // [补丁十四] sub_41C120 stream error 标志修补
     //
     // sub_41C120 入口 (反编译第 17 行):
     //   if (*(_DWORD *)(*a1 + 8))   // 检查 stream error
@@ -2824,7 +2708,7 @@ class TKSLauncher
     static void Patch41C120(int childPid, IntPtr baseAddr)
     {
         const int SUB_41C120_RVA = 0x1C120;
-        Log("\n--- [补丁十四] sub_41C120 金铢检查修补 ---");
+        Log("\n--- [补丁十四] sub_41C120 stream error 标志修补 ---");
 
         IntPtr hProc = OpenProcess(PROCESS_VM_READ | PROCESS_VM_WRITE | PROCESS_VM_OPERATION,
             false, childPid);
@@ -3246,81 +3130,6 @@ class TKSLauncher
 
         CloseHandle(snap);
         return result;
-    }
-
-    static bool ApplyPatches(int pid, IntPtr baseAddr, Patch[] patches, bool dryRun)
-    {
-        uint access = PROCESS_VM_READ | PROCESS_VM_WRITE | PROCESS_VM_OPERATION;
-        IntPtr proc = OpenProcess(access, false, pid);
-        if (proc == IntPtr.Zero) return false;
-
-        bool allOk = true;
-        foreach (var p in patches)
-        {
-            IntPtr addr = (IntPtr)(baseAddr.ToInt64() + p.RVA);
-
-            byte[] oldData = new byte[p.Data.Length];
-            int bytesRead;
-            if (!ReadProcessMemory(proc, addr, oldData, p.Data.Length, out bytesRead))
-            {
-                Log(string.Format("  [ERROR] ReadProcessMemory failed at RVA 0x{0:X8}", p.RVA));
-                allOk = false;
-                continue;
-            }
-
-            bool alreadyPatched = true;
-            for (int i = 0; i < p.Data.Length; i++)
-                if (oldData[i] != p.Data[i]) { alreadyPatched = false; break; }
-
-            if (alreadyPatched)
-            {
-                Log(string.Format("  [=] RVA 0x{0:X8}: already patched ({1})", p.RVA, p.Desc));
-                continue;
-            }
-
-            if (dryRun)
-            {
-                Log(string.Format("  [~] RVA 0x{0:X8}: would patch ({1})", p.RVA, p.Desc));
-                continue;
-            }
-
-            uint oldProtect;
-            if (!VirtualProtectEx(proc, addr, p.Data.Length, PAGE_EXECUTE_READWRITE, out oldProtect))
-            {
-                Log(string.Format("  [ERROR] VirtualProtectEx failed at RVA 0x{0:X8}", p.RVA));
-                allOk = false;
-                continue;
-            }
-
-            int bytesWritten;
-            if (!WriteProcessMemory(proc, addr, p.Data, p.Data.Length, out bytesWritten))
-            {
-                VirtualProtectEx(proc, addr, p.Data.Length, oldProtect, out oldProtect);
-                Log(string.Format("  [ERROR] WriteProcessMemory failed at RVA 0x{0:X8}", p.RVA));
-                allOk = false;
-                continue;
-            }
-            VirtualProtectEx(proc, addr, p.Data.Length, oldProtect, out oldProtect);
-
-            byte[] verifyData = new byte[p.Data.Length];
-            ReadProcessMemory(proc, addr, verifyData, p.Data.Length, out bytesRead);
-            bool verified = true;
-            for (int i = 0; i < p.Data.Length; i++)
-                if (verifyData[i] != p.Data[i]) { verified = false; break; }
-
-            string oldHex = BitConverter.ToString(oldData);
-            string newHex = BitConverter.ToString(p.Data);
-            if (verified)
-                Log(string.Format("  [OK] RVA 0x{0:X8}: {1} -> {2} ({3})", p.RVA, oldHex, newHex, p.Desc));
-            else
-            {
-                Log(string.Format("  [FAIL] RVA 0x{0:X8}: verification failed ({1})", p.RVA, p.Desc));
-                allOk = false;
-            }
-        }
-
-        CloseHandle(proc);
-        return allOk;
     }
 
     static int Main(string[] args)
@@ -3809,7 +3618,7 @@ class TKSLauncher
         Patch4C33FC(childPid, baseAddr);
 
         // ============================================================
-        // [补丁十四] 修复 sub_41C120 金铢函数 导致 slot 7-9 读取失败
+        // [补丁十四] 修复 sub_41C120 stream error 标志导致 slot 7-9 读取失败
         //
         // 背景: 在 sub_41B1A8 循环中, 若某个槽位文件不存在 (如 slot 4-6),
         //   sub_4C352C 返回 false → if (!v1) 分支执行 "stream+8 |= 4"
