@@ -35,26 +35,24 @@
  *            写入超出缓冲区, 栈上队伍数组/金币/地图等数据被破坏
  *   修补效果: 扫描代码段中所有 159922 常量, 改为 9200+newSize
  *
- * [补丁七] (已合并到补丁六)
- *
- * [补丁八] .dat 文件大小常量修补 (TKMat / TKItem / TKSkill / TKShop / TKKon)
+ * [补丁七] .dat 文件大小常量修补 (TKMat / TKItem / TKSkill / TKShop / TKKon)
  *   原始问题: sub_4173F8 和 sub_412688 中硬编码各 .dat 文件大小, 若文件被扩展,
  *            sub_45343C 的大小检查失败, 导致数据加载被跳过
  *   修补效果: 启动前检测各 .dat 文件实际大小, 若超过原始值则创建截断版本;
  *            运行时扫描代码段中原始大小常量并替换为实际值
  *
- * [补丁九] 新角色数据备份与旧存档兼容
+ * [补丁八] 新角色数据备份与旧存档兼容
  *   原始问题: 加载旧存档 (扩展前保存) 时, sub_41103C 中已修补为 newSize 的 memcpy
  *            会越过解压数据末尾读取栈上垃圾, 覆盖新角色 WarPC 槽位
  *   修补效果: 分配独立备份缓冲区存储新角色区段数据; 存档加载后由备份恢复新角色默认值
  *            新存档 (扩展后保存) 不受影响 — Frame 2 已包含完整数据
  *
- * [补丁十] 索引文件截断警告
+ * [补丁九] 索引文件截断警告
  *   原始问题: sub_41CE10 写入存档索引时用 char* 逐字节写入队伍 ID,
  *            角色 ID >= 256 时高字节截断, 存档列表显示异常
  *   修补效果: 检测角色 ID 范围并输出警告
  *
- * [补丁十一] 存档目录与索引文件健康检查 (修复"6个相同主角头像"显示异常)
+ * [补丁十] 存档目录与索引文件健康检查 (修复"6个相同主角头像"显示异常)
  *   原始问题: 当 save\ 目录不存在或 sub_41CE10 写入流程失败时, 索引文件
  *            (save\N.sav, 28字节) 可能被遗留为 0 字节空文件。再次进入读档
  *            界面时, sub_41B1A8 成功打开 0 字节文件, ReadFile 不修改 buffer,
@@ -67,7 +65,7 @@
  *            (2) 扫描 save\*.sav 删除 0 字节损坏文件 → 让游戏读档时
  *                正确显示"空槽位", 用户可重新存档生成有效文件。
  *
- * [补丁十二] WarPC 缓冲区前预留 GUARD 区 (修复索引文件被截断问题)
+ * [补丁十一] WarPC 缓冲区前预留 GUARD 区 (修复索引文件被截断问题)
  *   原始问题: sub_41CE10 写入存档索引时, 需读取 6 个队员的等级
  *            (word_757F0C[527 * *v6])。当队员 ID = -1 (空槽位) 时, 计算
  *            地址 = newBuf+4-1054 = newBuf-1050。启动器重定向后 newBuf 之前
@@ -79,7 +77,7 @@
  *            并写入文件, 索引写满 28 字节。同时对 sub_40DA00/sub_40E88C/
  *            sub_417F84/sub_41A080/sub_43CA64 中的同类负偏移访问也一并修复。
  *
- * [补丁十三] sub_4C33FC "已打开"检查修复 (修复读档列表全 0 问题)
+ * [补丁十二] sub_4C33FC "已打开"检查修复 (修复读档列表全 0 问题)
  *   原始问题: sub_41B1A8 循环 9 次復用同一个 v24 文件结构, sub_4C33FC 入口
  *            检查 "if (a1+12) return 0" 在第 1 次循环后拒绝后续打开。
  *            但 sub_41C984 关闭流后 v24+12 未被清零 → 第 2..9 次循环全部返回 0
@@ -89,8 +87,8 @@
  *            指令，将 je short 改为 jmp short 或将 jne short 改为 NOP NOP,
  *            让 sub_4C33FC 总是跳到 continue 重新打开文件。
  *
- * [补丁十四] sub_41C120 stream error 检查修复 (修复中间空槽位后的读取失败)
- *   原始问题: 补丁十三生效后, 若存在中间空槽位 (如 slot 4-6 不存在),
+ * [补丁十三] sub_41C120 stream error 检查修复 (修复中间空槽位后的读取失败)
+ *   原始问题: 补丁十二生效后, 若存在中间空槽位 (如 slot 4-6 不存在),
  *            sub_41B1A8 中 sub_4C352C 失败进入 if (!v1) 分支 "stream+8 |= 4"
  *            设置 EOF 错误标志。之后槽位 (slot 7-9) 即使文件存在,
  *            sub_41BF48/sub_41C2B8 调用 sub_41C120 检查发现错误标志返回 false
@@ -100,7 +98,7 @@
  *            这样每次检查前都强制清零 stream+8 错误标志,
  *            后续 je/jne 依然按 ZF=1 走正确分支, slot 7-9 能重新读取。
  *
- * [补丁十五] 存档界面新角色队伍头像显示修复
+ * [补丁十四] 存档界面新角色队伍头像显示修复
  *   原始问题: sub_41AB94 渲染存档列表队伍头像时:
  *              sub_4544EC(..., *(char *)(...) + 211, ...);
  *            二重问题: 一是 signed char ID 在 ID >= 128 时被 sign-extend 为负数
@@ -112,7 +110,7 @@
  *            (2) 读取 WarPC[ID].WORD[261]; (3) 非零使用 WORD[261] 作 frame,
  *            否则 fallback 到 unsigned ID + 211。与队伍头像 cave 逻辑一致。
  *
- * [补丁十六] sub_4189BC 可装备技能列表扫描上限修正 (修复新角色技能列表 "啊！")
+ * [补丁十五] sub_4189BC 可装备技能列表扫描上限修正 (修复新角色技能列表 "啊！")
  *   原始问题: sub_4189BC 构建"可装备技能列表"时按 v12 < 350 扫描全部 350 条
  *            TKSkill 记录, 但有效记录只有 344 (idx 0~343), 末尾 idx 344~349
  *            是空记录 (name_id=0, type=0)。这本来对原 143 个角色无影响, 因为
@@ -133,7 +131,7 @@
  *            位置: RVA 0x18BB5 (主循环) + RVA 0x18C3F (第二段翻页判定), 各改 1 字节
  *                  5E → 58。
  *
- * [补丁十七] 历史文本 ID 自定义 (sub_41A080)
+ * [补丁十六] 历史文本 ID 自定义 (sub_41A080)
  *   原始问题: 角色界面「历史」标签页的文本 ID 由硬编码公式计算:
  *             TKT_ID = word_75688C[char_idx] + 9050
  *             新角色 (143+) 无法自定义历史文本 ID, 只能使用公式推导值
@@ -143,7 +141,7 @@
  *             与 warpc_editor.py v1.6 的 history_text_id 字段配合使用。
  *             Hook 位置: RVA 0x1A749 (sub_41A080 中 add edx, 0x235A 指令)
  *
- * [补丁十八] 金钱上限扩展 (30000→65535) + 存档界面显示修复
+ * [补丁十七] 金钱上限扩展 (30000→65535) + 存档界面显示修复
  *   原始问题: 游戏中金钱上限硬编码为 30000 (0x7530), 存储在 word_756882
  *             多处代码检查 `if (30000 - word_756882 >= amount)` 或
  *             `word_756882 = 30000` 限制金钱不超过 30000
@@ -1010,7 +1008,6 @@ class TKSLauncher
             }
             Log(string.Format("\n  应用 {0} 个 cave hooks...", hooksToApply.Count));
 
-            // 应用 cave hooks (使用预扫描的匹配位置, codeBuf 未被 hook 修改)
             foreach (var def in hooksToApply)
             {
                 allOk &= ApplyCaveHookWithHits(def, def._preScannedHits, codeBuf,
@@ -1497,7 +1494,7 @@ class TKSLauncher
         },
 
         // ────────────────────────────────────────────────────────
-        // [补丁十六] sub_4189BC 可装备技能列表扫描上限 350→344
+        // [补丁十五] sub_4189BC 可装备技能列表扫描上限 350→344
         // 原始: sub_4189BC 主循环 `v12 < 350` 与第二段翻页判定 `v12 < 350`
         //       会扫描 TKSkill[0..349], 而 [344..349] 为空记录 (name_id=0),
         //       且 WarPC.byte[520..525] (WORD[260,261,262] = awk_sprite_id /
@@ -1577,7 +1574,7 @@ class TKSLauncher
     };
 
     // ============================================================
-    // [补丁十五] 存档界面队伍头像 - Cave (动态分配, 约 38 字节)
+    // [补丁十四] 存档界面队伍头像 - Cave (动态分配, 约 38 字节)
     // Hook 在 sub_41AB94 中的 "movsx eax, byte [...]; add eax, 0xD3" 模式处
     //
     // 背景: sub_41AB94 渲染存档列表队伍头像时, 处理逻辑:
@@ -1634,7 +1631,7 @@ class TKSLauncher
     };
 
     // ============================================================
-    // [补丁十七] 历史文本 ID 覆盖 - 动态 Cave (38 字节)
+    // [补丁十六] 历史文本 ID 覆盖 - 动态 Cave (38 字节)
     // Hook 在 sub_41A080: RVA 0x1A749 的 "add edx, 0x235A" (6B)
     //
     // 原始逻辑:
@@ -1809,7 +1806,7 @@ class TKSLauncher
             Desc = string.Format("Portrait PATH2: hook add dx,0xD3 -> cave@0x{0:X8}", pcave2)
         });
 
-        // --- Archive Portrait cave (存档界面队伍头像, 补丁十五) ---
+        // --- Archive Portrait cave (存档界面队伍头像, 补丁十四) ---
         // 使用 cave + 192 位置 (足够距离 PortraitCave2 的 128 + 42 字节)
         long arcCave = cave + 192;
         byte[] arcCaveData = (byte[])ArchivePortraitCave.Clone();
@@ -1821,7 +1818,7 @@ class TKSLauncher
         // 保存 cave 地址供后续 Patch_ArchivePortrait_Hook 使用
         _archivePortraitCaveAddr = (int)arcCave;
 
-        // --- History Text cave (历史文本ID, 补丁十七) ---
+        // --- History Text cave (历史文本ID, 补丁十六) ---
         // 使用 cave + 256 位置 (ArchivePortraitCave: 192+48=240, 对齐到256)
         long histCave = cave + 256;
         byte[] histCaveData = (byte[])HistoryTextCave.Clone();
@@ -1846,7 +1843,7 @@ class TKSLauncher
         return list.ToArray();
     }
 
-    // 存档界面队伍头像 cave 地址 (补丁十五)
+    // 存档界面队伍头像 cave 地址 (补丁十四)
     static int _archivePortraitCaveAddr = 0;
 
     // ============================================================
@@ -1886,7 +1883,7 @@ class TKSLauncher
 
     /// <summary>
     /// 启动游戏前: 确保 save\ 目录存在, 并清理 0 字节损坏的索引文件
-    /// (补丁十一: 修复"6个相同主角头像"显示异常)
+    /// (补丁十: 修复"6个相同主角头像"显示异常)
     ///
     /// 背景: 若 sub_41CE10 写入流程中 sub_4C352C 打开文件后由于其它原因
     /// (如 sub_4E50E2 失败) 导致写入流程被跳过, 文件会被遗留为 0 字节。
@@ -2162,7 +2159,7 @@ class TKSLauncher
             else
             {
                 Log(string.Format("  [WARN] {0}: 未找到 {1} (0x{1:X}) 的引用, "
-                    + "可能已被其他修补流程处理或值不存在于代码段",
+                    + "可能已在大小常量扫描中处理或值不存在于代码段",
                     fileName, origSize));
             }
         }
@@ -2196,7 +2193,7 @@ class TKSLauncher
         int scanStart = codeStartAddr;
         int scanSize = codeBuf.Length;
 
-        // 扫描代码中所有引用 WarPC 基址 (0x757F08) 的位置
+        // 使用 ValueScan 替代硬编码 WarpcAddrRVAs
         {
             List<int> hits = ValueScan(codeBuf, WARPC_BASE);
             Log(string.Format("  WarPC 基址 0x{0:X8} 扫描: 找到 {1} 处", WARPC_BASE, hits.Count));
@@ -2213,6 +2210,7 @@ class TKSLauncher
             }
         }
 
+        // 使用 ValueScan 替代硬编码 WarpcAddr0CRVAs
         // 扫描代码中所有引用 word_757F0C (WarPC+4) 的位置
         {
             const int WARPC_ADDR_0C = WARPC_BASE + 4;  // 0x757F0C
@@ -2309,7 +2307,7 @@ class TKSLauncher
 
         // 扫描动态 cave 内存 — 不再需要, cave 已在 BuildPatches 中预修补
 
-        // 扫描代码中所有引用 WarPC 原始大小 (150722) 的位置
+        // 使用 ValueScan 替代硬编码 WarpcSizeRVAs
         {
             List<int> sizeHits = ValueScan(codeBuf, WARPC_ORIG_SIZE);
             Log(string.Format("  WarPC 大小 {0} (0x{0:X}) 扫描: 找到 {1} 处", WARPC_ORIG_SIZE, sizeHits.Count));
@@ -2374,12 +2372,12 @@ class TKSLauncher
             Log(string.Format("  存档/读档缓冲区修补: {0} 处 (159922 -> {1})", totalPatches, totalNewSize));
         }
 
-        // [补丁八] 其他 .dat 文件大小常量修补
+        // [补丁七] 其他 .dat 文件大小常量修补
         // TKMat.dat / TKItem.dat / TKSkill.dat / TKShop.dat / TKKon.dat
         // 若这些文件被扩展, 需要修补 sub_4173F8 / sub_412688 中的硬编码大小
         PatchDataFileSizes(hProc, baseAddr, scanStart, scanSize);
 
-        // [补丁九] 分配 WarPC 新角色备份缓冲区
+        // [补丁八] 分配 WarPC 新角色备份缓冲区
         // 当加载旧存档 (WarPC 数据较少) 时, sub_41103C 中 patched newSize 的 memcpy
         // 会越过解压数据末尾读取垃圾, 覆盖新角色槽位。
         // 此处在新 WarPC 缓冲之后分配一个等大的备份区, 存储新角色区段的已知正确数据,
@@ -2529,7 +2527,7 @@ class TKSLauncher
     }
 
     // ============================================================
-    // [补丁十三] sub_4C33FC 入口检查修补
+    // [补丁十二] sub_4C33FC 入口检查修补
     //
     // sub_4C33FC 入口 (反编译第 21 行):
     //   if (*(_BYTE *)(a1 + 12)) return 0;
@@ -2542,7 +2540,7 @@ class TKSLauncher
     static void Patch4C33FC(int childPid, IntPtr baseAddr)
     {
         const int SUB_4C33FC_RVA = 0xC33FC;
-        Log("\n--- [补丁十三] sub_4C33FC 入口检查修补 ---");
+        Log("\n--- [补丁十二] sub_4C33FC 入口检查修补 ---");
 
         IntPtr hProc = OpenProcess(PROCESS_VM_READ | PROCESS_VM_WRITE | PROCESS_VM_OPERATION,
             false, childPid);
@@ -2678,7 +2676,7 @@ class TKSLauncher
     }
 
     // ============================================================
-    // [补丁十四] sub_41C120 stream error 标志修补
+    // [补丁十三] sub_41C120 stream error 检查修补
     //
     // sub_41C120 入口 (反编译第 17 行):
     //   if (*(_DWORD *)(*a1 + 8))   // 检查 stream error
@@ -2708,7 +2706,7 @@ class TKSLauncher
     static void Patch41C120(int childPid, IntPtr baseAddr)
     {
         const int SUB_41C120_RVA = 0x1C120;
-        Log("\n--- [补丁十四] sub_41C120 stream error 标志修补 ---");
+        Log("\n--- [补丁十三] sub_41C120 stream error 检查修补 ---");
 
         IntPtr hProc = OpenProcess(PROCESS_VM_READ | PROCESS_VM_WRITE | PROCESS_VM_OPERATION,
             false, childPid);
@@ -2809,7 +2807,7 @@ class TKSLauncher
     }
 
     // ============================================================
-    // [补丁十五] 存档界面队伍头像 hook
+    // [补丁十四] 存档界面队伍头像 hook
     //
     // 扫描 sub_41AB94 函数体内的 "add eax, 0xD3" (5 字节: 05 D3 00 00 00)
     // 指令, 将其替换为到 ArchivePortraitCave 的 5 字节 "call rel32"。
@@ -2819,7 +2817,7 @@ class TKSLauncher
     {
         const int SUB_41AB94_RVA = 0x1AB94;
         const int SCAN_SIZE = 0x500;  // sub_41AB94 函数体 ~1280 字节
-        Log("\n--- [补丁十五] 存档界面队伍头像 hook ---");
+        Log("\n--- [补丁十四] 存档界面队伍头像 hook ---");
 
         if (_archivePortraitCaveAddr == 0)
         {
@@ -2921,7 +2919,7 @@ class TKSLauncher
     }
 
     // ============================================================
-    // [补丁十八] 存档界面金钱显示修复 (signed short → unsigned short)
+    // [补丁十七] 存档界面金钱显示修复 (signed short → unsigned short)
     //
     // 背景: sub_41AB94 渲染存档列表时显示金钱:
     //   sub_4175D8(a1, 390, 150*i+135, "%d", *(__int16 *)(a1 + ...));
@@ -2937,7 +2935,7 @@ class TKSLauncher
     {
         const int SUB_41AB94_RVA = 0x1AB94;
         const int SCAN_SIZE = 0x600;  // sub_41AB94 函数体
-        Log("\n--- [补丁十八] 存档界面金钱显示修复 (signed→unsigned) ---");
+        Log("\n--- [补丁十七] 存档界面金钱显示修复 (signed→unsigned) ---");
 
         IntPtr hProc = OpenProcess(PROCESS_VM_READ | PROCESS_VM_WRITE | PROCESS_VM_OPERATION,
             false, childPid);
@@ -3467,7 +3465,7 @@ class TKSLauncher
             IntPtr hWarpc = OpenProcess(PROCESS_VM_READ | PROCESS_VM_WRITE | PROCESS_VM_OPERATION, false, childPid);
             if (hWarpc != IntPtr.Zero)
             {
-                // [补丁十二] WarPC 缓冲区前预留 GUARD 区 (修复索引文件被截断问题)
+                // [补丁十一] WarPC 缓冲区前预留 GUARD 区 (修复索引文件被截断问题)
                 //
                 // 背景: sub_41CE10 写入存档索引时, 需依次读取 6 个队员的等级:
                 //   sub_41DAC4(v21, &word_757F0C[527 * *v6], 2);
@@ -3599,7 +3597,7 @@ class TKSLauncher
         }
 
         // ============================================================
-        // [补丁十三] 修复 sub_4C33FC "已打开"标志导致读档列表全 0 异常
+        // [补丁十二] 修复 sub_4C33FC "已打开"标志导致读档列表全 0 异常
         //
         // 背景: sub_41B1A8 循环 9 次復用同一个 v24 文件结构,
         //   sub_4C352C(v24, path, 12) → sub_4C33FC 入口:
@@ -3618,7 +3616,7 @@ class TKSLauncher
         Patch4C33FC(childPid, baseAddr);
 
         // ============================================================
-        // [补丁十四] 修复 sub_41C120 stream error 标志导致 slot 7-9 读取失败
+        // [补丁十三] 修复 sub_41C120 stream error 导致 slot 7-9 读取失败
         //
         // 背景: 在 sub_41B1A8 循环中, 若某个槽位文件不存在 (如 slot 4-6),
         //   sub_4C352C 返回 false → if (!v1) 分支执行 "stream+8 |= 4"
@@ -3634,7 +3632,7 @@ class TKSLauncher
         Patch41C120(childPid, baseAddr);
 
         // ============================================================
-        // [补丁十五] 修复存档界面新角色队伍头像显示问题
+        // [补丁十四] 修复存档界面新角色队伍头像显示问题
         //
         // 背景: sub_41AB94 渲染存档列表队伍头像时:
         //   sub_4544EC(..., *(char *)(...) + 211, ...);
@@ -3647,7 +3645,7 @@ class TKSLauncher
         PatchArchivePortrait(childPid, baseAddr);
 
         // ============================================================
-        // [补丁十八] 修复存档界面金钱显示 signed→unsigned
+        // [补丁十七] 修复存档界面金钱显示 signed→unsigned
         //
         // 背景: sub_41AB94 渲染存档列表时显示金钱使用 __int16 (signed short)
         //       当金钱 >= 32768 时会被解释为负数 (如 65500 → -36)
@@ -3752,7 +3750,7 @@ class TKSLauncher
             if (ReadProcessMemory(hV, (IntPtr)0x756888, moneyBuf, 2, out read))
                 log += string.Format(" money=0x{0:X4}", BitConverter.ToUInt16(moneyBuf, 0));
 
-            // 检查存档索引文件存在性与大小 (诊断补丁十一)
+            // 检查存档索引文件存在性与大小 (诊断补丁十)
             try
             {
                 int validIdx = 0, zeroIdx = 0, missingIdx = 0;
