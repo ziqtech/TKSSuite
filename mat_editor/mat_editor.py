@@ -2238,6 +2238,7 @@ class MatEditor:
             if not self._vis_show_types.get(tval, tk.BooleanVar(value=True)).get():
                 continue
             idx = r['index']; x = r['d10']; y = r['d11']
+            ox = r.get('d26', 0); oy = r.get('d27', 0)  # 精灵偏移 (sub_406864:30-31)
             color = TYPE_COLORS_RGBA.get(tval, (128,128,128))
 
             # JVG 精灵选择 (与旧逻辑一致)
@@ -2271,7 +2272,7 @@ class MatEditor:
                         blend_mode = r.get('d24', 0); blend_param = r.get('d25', 0)
                         sprite_rgba = _get_jvg_frame_rgba(jvg, blk_idx, fi)
                         if sprite_rgba:
-                            sx = x + blk.frames[fi].x_off; sy = y + blk.frames[fi].y_off
+                            sx = x + ox + blk.frames[fi].x_off; sy = y + oy + blk.frames[fi].y_off
                             # mode 5: 水平翻转
                             if blend_mode == 5:
                                 sprite_rgba = ImageOps.mirror(sprite_rgba)
@@ -2289,8 +2290,8 @@ class MatEditor:
                             self._vis_hit_regions[idx] = (sx, sy, sx+fw, sy+fh)
                             # 合成
                             if shadow_rgba:
-                                _pil_subtract(composite, shadow_rgba, x + jvg.blocks[0].frames[shadow_fi].x_off,
-                                             y + jvg.blocks[0].frames[shadow_fi].y_off)
+                                _pil_subtract(composite, shadow_rgba, x + ox + jvg.blocks[0].frames[shadow_fi].x_off,
+                                             y + oy + jvg.blocks[0].frames[shadow_fi].y_off)
                             blend_func = {0:_pil_normal, 2:_pil_additive, 3:_pil_subtract, 4:_pil_luma_alpha,
                                           5:_pil_normal}.get(blend_mode, _pil_normal)
                             if blend_mode == 2:
@@ -2307,7 +2308,7 @@ class MatEditor:
                 blk = jvg.blocks[blk_idx]
                 if blk.frames:
                     fi, _ = _get_dir_frame(blk, r['d13'], r['d16'], r['d53'], 0)
-                    self._vis_hit_regions[idx] = (x-10, y-10, x+10, y+10)
+                    self._vis_hit_regions[idx] = (x+ox-10, y+oy-10, x+ox+10, y+oy+10)
             elif sprite_rgba is None:
                 # 几何形状绘制
                 dr = ImageDraw.Draw(composite)
@@ -2318,12 +2319,14 @@ class MatEditor:
                     self._vis_hit_regions[idx] = (bx, by, bx+bw, by+bh)
                 elif tval == 5:
                     s = 12
-                    dr.polygon([x, y-s, x+s, y, x, y+s, x-s, y], outline=color)
-                    self._vis_hit_regions[idx] = (x-s, y-s, x+s, y+s)
+                    px, py = x+ox, y+oy
+                    dr.polygon([px, py-s, px+s, py, px, py+s, px-s, py], outline=color)
+                    self._vis_hit_regions[idx] = (px-s, py-s, px+s, py+s)
                 else:
                     s = 10
-                    dr.rectangle([x-s, y-s, x+s, y+s], outline=color, width=2)
-                    self._vis_hit_regions[idx] = (x-s, y-s, x+s, y+s)
+                    px, py = x+ox, y+oy
+                    dr.rectangle([px-s, py-s, px+s, py+s], outline=color, width=2)
+                    self._vis_hit_regions[idx] = (px-s, py-s, px+s, py+s)
 
             # 标签
             label = f"#{idx}"
@@ -2337,7 +2340,7 @@ class MatEditor:
             if cur_b > 0: script_icon += "👆"  # 触发(交互)脚本
             if script_icon: label = f"{label} {script_icon}"
             dr = ImageDraw.Draw(composite)
-            dr.text((x, y-16), label, fill=color)
+            dr.text((x+ox, y+oy-16), label, fill=color)
 
         # 选中实体高亮覆盖
         if self._vis_selected is not None and self._vis_selected in self._vis_hit_regions:
