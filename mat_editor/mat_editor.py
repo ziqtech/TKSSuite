@@ -209,8 +209,8 @@ BASIC_FIELDS = [
 FLAG_FIELDS = [
     ("flags",2,"标志位","位域。bit0=启用 bit1=可见 bit2=可交互 bit3=提示 bit4=忙碌 bit5=恢复 bit8=已拾取(type110) bit16=动画循环。源码: sub_406864 byte+8 bit0/1/2检查, sub_409618 byte+8 bit0启用, sub_408B30 byte+9 bit0=已拾取, sub_408E5C byte+8 bit4/5繁忙/恢复"),]
 POS_FIELDS = [
-    ("bound_x",18,"碰撞X","碰撞盒/区域X起点。源码: sub_407070 a1[18]=a2-(a1[20]>>1), 由中心X和宽度计算"),
-    ("bound_y",19,"碰撞Y","碰撞盒/区域Y起点。源码: sub_407070 a1[19]=a3-(a1[21]>>1), 由中心Y和高度计算"),
+    ("bound_x",18,"碰撞X","碰撞盒X起点。type=5可点击区域, type=10/16碰撞检测。源码: sub_408108/sub_410B74"),
+    ("bound_y",19,"碰撞Y","碰撞盒Y起点。type=5可点击区域, type=10/16碰撞检测。源码: sub_408108/sub_410B74"),
     ("bound_w",20,"碰撞宽","碰撞盒/区域宽度。type=10出入传送点和type=16随机战斗区使用。源码: sub_408108/sub_4084E0 AABB碰撞检测"),
     ("bound_h",21,"碰撞高","碰撞盒/区域高度。type=10出入传送点和type=16随机战斗区使用。源码: sub_408108/sub_4084E0 AABB碰撞检测"),]
 ANIM_FIELDS = [
@@ -2312,9 +2312,11 @@ class MatEditor:
                                 blk0 = jvg.blocks[0]
                                 if blk0.frames and shadow_fi < blk0.frame_count:
                                     shadow_rgba = _get_jvg_frame_rgba(jvg, 0, shadow_fi)
-                            # 存储命中区域
-                            fw = sprite_rgba.width; fh = sprite_rgba.height
-                            self._vis_hit_regions[idx] = (sx, sy, sx+fw, sy+fh)
+                            # 存储命中区域 (使用碰撞盒)
+                            bx, by = r['d18'], r['d19']
+                            bw = r['d20'] if r['d20'] > 0 else sprite_rgba.width
+                            bh = r['d21'] if r['d21'] > 0 else sprite_rgba.height
+                            self._vis_hit_regions[idx] = (bx, by, bx+bw, by+bh)
                             # 合成
                             if shadow_rgba:
                                 _pil_subtract(composite, shadow_rgba, x + ox + jvg.blocks[0].frames[shadow_fi].x_off,
@@ -2329,6 +2331,12 @@ class MatEditor:
                                 _pil_luma_alpha(composite, sprite_rgba, sx, sy)
                             else:
                                 _pil_normal(composite, sprite_rgba, sx, sy)
+                # 有精灵时也画碰撞盒
+                dr = ImageDraw.Draw(composite)
+                bx, by = r['d18'], r['d19']
+                bw = r['d20'] if r['d20'] > 0 else 0; bh = r['d21'] if r['d21'] > 0 else 0
+                if bw > 0 and bh > 0:
+                    dr.rectangle([bx, by, bx+bw, by+bh], outline=color, width=1)
 
             # 无精灵时画几何形状
             if sprite_rgba is None and mode == 'wire' and jvg and blk_idx < jvg.block_count:
@@ -2339,33 +2347,20 @@ class MatEditor:
             elif sprite_rgba is None:
                 # 几何形状绘制
                 dr = ImageDraw.Draw(composite)
-                if tval == 10:
-                    bx, by = r['d18'], r['d19']
-                    bw = r['d20'] if r['d20'] > 0 else 40; bh = r['d21'] if r['d21'] > 0 else 40
-                    dr.rectangle([bx, by, bx+bw, by+bh], outline=color, width=2)
-                    self._vis_hit_regions[idx] = (bx, by, bx+bw, by+bh)
-                elif tval == 16:
-                    bx, by = r['d18'], r['d19']
-                    bw = r['d20'] if r['d20'] > 0 else 40; bh = r['d21'] if r['d21'] > 0 else 40
-                    dr.rectangle([bx, by, bx+bw, by+bh], outline=color, width=2)
-                    self._vis_hit_regions[idx] = (bx, by, bx+bw, by+bh)
-                elif tval == 5:
-                    s = 12
-                    px, py = x+ox, y+oy
-                    dr.polygon([px, py-s, px+s, py, px, py+s, px-s, py], outline=color)
-                    self._vis_hit_regions[idx] = (px-s, py-s, px+s, py+s)
-                else:
-                    s = 10
-                    px, py = x+ox, y+oy
-                    dr.rectangle([px-s, py-s, px+s, py+s], outline=color, width=2)
-                    self._vis_hit_regions[idx] = (px-s, py-s, px+s, py+s)
+                bx, by = r['d18'], r['d19']
+                bw = r['d20'] if r['d20'] > 0 else 40; bh = r['d21'] if r['d21'] > 0 else 40
+                dr.rectangle([bx, by, bx+bw, by+bh], outline=color, width=2)
+                self._vis_hit_regions[idx] = (bx, by, bx+bw, by+bh)
 
             # 标签
             label = f"#{idx}"
             if tval == 10: label = f"T{idx}"
+            elif tval == 15: label = f"E{idx}"
             elif tval == 16: label = f"B{idx}"
-            elif tval == 5: label = f"P{idx}"
+            elif tval == 20: label = f"V{idx}"
+            elif tval == 110: label = f"M{idx}"
             elif tval == 200: label = f"N{idx}"
+            elif tval == 5: label = f"P{idx}"
             # 脚本类型图标 (基于逆向 sub_409618/sub_408E5C)
             cur_a = r.get('d33', 0); cur_b = r.get('d34', 0)
             script_icon = ""
@@ -2373,7 +2368,8 @@ class MatEditor:
             if cur_b > 0: script_icon += "👆"  # 触发(交互)脚本
             if script_icon: label = f"{label} {script_icon}"
             dr = ImageDraw.Draw(composite)
-            dr.text((x+ox, y+oy-16), label, fill=color)
+            bx_c = r['d18'] + r['d20'] // 2
+            dr.text((bx_c - len(label)*3, r['d19'] - 12), label, fill=color)
 
         # 选中实体高亮覆盖
         if self._vis_selected is not None and self._vis_selected in self._vis_hit_regions:
@@ -2414,8 +2410,7 @@ class MatEditor:
             self._vis_selected = found
             rec = self.records[found]
             tname = ENTITY_TYPES.get(rec['d0'], '?')
-            pos_x = rec['d18'] if rec['d0'] == 10 else rec['d10']
-            pos_y = rec['d19'] if rec['d0'] == 10 else rec['d11']
+            pos_x, pos_y = rec['d10'], rec['d11']
             # 保存拖动前位置(用于 Ctrl+Z 撤销)
             self._undo_pos = (found, pos_x, pos_y)
             if self._vis_edit_mode.get():
@@ -2440,11 +2435,10 @@ class MatEditor:
         dx, dy = cx - sx, cy - sy
         new_x, new_y = ox + dx, oy + dy
         rec = self.records[eidx]
-        if rec['d0'] == 10:
-            rec['d18'], rec['d19'] = new_x, new_y
-            rec['d10'], rec['d11'] = new_x, new_y
-        else:
-            rec['d10'], rec['d11'] = new_x, new_y
+        old_d10, old_d11 = rec['d10'], rec['d11']
+        rec['d10'], rec['d11'] = new_x, new_y
+        rec['d18'] += new_x - old_d10
+        rec['d19'] += new_y - old_d11
         self._dirty = True
         self._vis_info.config(text=f"移动: #{eidx} → ({new_x},{new_y})")
         self._vis_redraw()
@@ -2456,8 +2450,7 @@ class MatEditor:
             rec = self.records[eidx]
             cx = int(self._vis_canvas.canvasx(event.x))
             cy = int(self._vis_canvas.canvasy(event.y))
-            px = rec['d18'] if rec['d0'] == 10 else rec['d10']
-            py = rec['d19'] if rec['d0'] == 10 else rec['d11']
+            px, py = rec['d10'], rec['d11']
             self._vis_drag = (eidx, cx, cy, px, py)
             if hasattr(self, '_current_param_idx') and self._current_param_idx == eidx:
                 self._show_record(rec)
@@ -2478,11 +2471,10 @@ class MatEditor:
         if self._undo_pos is None: return
         eidx, old_x, old_y = self._undo_pos
         rec = self.records[eidx]
-        if rec['d0'] == 10:
-            rec['d18'], rec['d19'] = old_x, old_y
-            rec['d10'], rec['d11'] = old_x, old_y
-        else:
-            rec['d10'], rec['d11'] = old_x, old_y
+        cur_d10, cur_d11 = rec['d10'], rec['d11']
+        rec['d10'], rec['d11'] = old_x, old_y
+        rec['d18'] += old_x - cur_d10
+        rec['d19'] += old_y - cur_d11
         self._dirty = True
         self._vis_info.config(text=f"已撤销: #{eidx} → ({old_x},{old_y})")
         self._vis_redraw()
@@ -2767,8 +2759,7 @@ class MatEditor:
             self._vis_selected = idx
             self._vis_redraw()
             tname = ENTITY_TYPES.get(rec['d0'], '?')
-            pos_x = rec['d18'] if rec['d0'] == 10 else rec['d10']
-            pos_y = rec['d19'] if rec['d0'] == 10 else rec['d11']
+            pos_x, pos_y = rec['d10'], rec['d11']
             self._vis_info.config(text=f"选中: #{idx} [{tname}] 坐标({pos_x},{pos_y})")
 
     def _trace_defunit_chain(self, head_idx, max_n, cur_n):
