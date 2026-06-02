@@ -58,7 +58,7 @@ REC_SIZE = 384; REC_COUNT = 6000; FILE_SIZE = 2304000; DWORD_COUNT = 96
 SCENE_NAME_TKT_BASE = 300
 DEFUNIT_REC_SIZE = 16; DEFUNIT_REC_COUNT = 5000; DEFUNIT_FILE_SIZE = 80000
 
-ENTITY_TYPES = {0:"空槽",5:"脚本对象",10:"出入传送点",15:"事件触发区",16:"建筑门",
+ENTITY_TYPES = {0:"空槽",5:"脚本对象",10:"出入传送点",15:"事件触发区",16:"随机战斗区",
                 20:"事件对象",110:"特殊机关",200:"NPC角色"}
 TYPE_COLORS = {0:"#AAA",5:"#2196F3",10:"#4CAF50",15:"#FF9800",16:"#795548",
                20:"#9C27B0",110:"#E91E63",200:"#F44336"}
@@ -193,7 +193,7 @@ def parse_tkt_colored_segments(text):
     return segments
 
 BASIC_FIELDS = [
-    ("type",0,"实体类型","实体类型: 5=脚本 10=出入传送 15=触发区 16=建筑 20=事件 110=机关 200=NPC。源码: sub_405CBC *v2==10/20/110/200 分支, sub_409618 类型调度"),
+    ("type",0,"实体类型","实体类型: 5=脚本 10=出入传送 15=触发区 16=战斗区 20=事件 110=机关 200=NPC。源码: sub_405CBC *v2==10/20/110/200 分支, sub_409618 类型调度"),
     ("scene_id",1,"场景ID","所属场景 (-1=全局)。TKT_ID = scene_id + 300。源码: sub_405CBC v13[1]<0||v13[1]==dword_755B58 场景过滤"),
     ("param",3,"扩展参数","扩展参数/等待计时器。SetWait设置随机值, sub_409618 byte+12作递减等待。源码: sub_409618 if(d3!=0){d3>0则d3--}else tick执行"),
     ("tick",4,"tick","Tick周期(运行时)。源码: sub_409618 byte+16=d4, 当++d5>=d4时触发Tick执行"),
@@ -211,8 +211,8 @@ FLAG_FIELDS = [
 POS_FIELDS = [
     ("bound_x",18,"碰撞X","碰撞盒/区域X起点。源码: sub_407070 a1[18]=a2-(a1[20]>>1), 由中心X和宽度计算"),
     ("bound_y",19,"碰撞Y","碰撞盒/区域Y起点。源码: sub_407070 a1[19]=a3-(a1[21]>>1), 由中心Y和高度计算"),
-    ("bound_w",20,"碰撞宽","碰撞盒/区域宽度。仅地形块(type=10)使用。源码: sub_407070 a1[20] 碰撞宽度"),
-    ("bound_h",21,"碰撞高","碰撞盒/区域高度。仅地形块(type=10)使用。源码: sub_407070 a1[21] 碰撞高度"),]
+    ("bound_w",20,"碰撞宽","碰撞盒/区域宽度。type=10出入传送点和type=16随机战斗区使用。源码: sub_408108/sub_4084E0 AABB碰撞检测"),
+    ("bound_h",21,"碰撞高","碰撞盒/区域高度。type=10出入传送点和type=16随机战斗区使用。源码: sub_408108/sub_4084E0 AABB碰撞检测"),]
 ANIM_FIELDS = [
     ("dir_mode",53,"目标X/方向模式","type=5:目标X type=16:把手2道具 type=110:组1Xmin type=200:方向模式(0=静态/4=四向/8=八向)。源码: sub_4077E4 a1[53]==4/8方向分支, sub_4081F8 byte+212, sub_4084E0, sub_408B30"),
     ("target_y",54,"目标Y坐标","type=5:目标Y type=16:把手3道具 type=110:组1Xmax type=200:目标Y。源码: sub_4081F8 byte+216, sub_4084E0, sub_408B30"),
@@ -350,12 +350,18 @@ _TYPE_LABELS = {
         50:("条件匹配","0=无条件, 非零须与玩家ID匹配。源码: sub_408408 a2[50]>0时比较dword_8242E0+88"),
         51:("方向掩码","bit0-7对应朝向1-8, 0=任意。源码: sub_408408 a2[51]&(1<<(player_dir-1))"),
     },
-    16: {  # 建筑门 sub_4084E0
-        50:("条件匹配","0=无条件, 非零须与player[d22]匹配。源码: sub_408E5C 条件检查"), 51:("方向掩码","bit0-7对应朝向1-8, 0=任意。源码: sub_408E5C 方向掩码检查"),
-        52:("把手1道具",""), 53:("把手2道具",""),
-        54:("把手3道具",""), 55:("把手1概率",""),
-        56:("把手2概率",""), 57:("把手3概率",""),
-        61:("冷却计时",""), 62:("目标地图",""),
+    16: {  # 随机战斗区 — 玩家进入碰撞盒概率触发战斗 (sub_4084E0)
+        50:("条件匹配","0=无条件, 非零须与玩家ID匹配。源码: sub_4084E0 *(a2+200)>0时比较dword_8242E0+88"),
+        51:("方向掩码","bit0-7对应朝向1-8, 0=任意。源码: sub_4084E0 *(a2+204)&(1<<(player_dir-1))"),
+        52:("战斗组1-ID","第1组战斗ID。源码: sub_4084E0 a2+208, 随机数<阈值时选中"),
+        53:("战斗组1-概率","第1组遇敌概率阈值(0-100)。源码: sub_4084E0 v5 < v4[3]判断"),
+        54:("战斗组2-ID","第2组战斗ID。源码: sub_4084E0 a2+212"),
+        55:("战斗组2-概率","第2组遇敌概率阈值。源码: sub_4084E0"),
+        56:("战斗组3-ID","第3组战斗ID。源码: sub_4084E0 a2+216"),
+        57:("战斗组3-概率","第3组遇敌概率阈值。源码: sub_4084E0"),
+        60:("冷却基准","遇敌后冷却计时基准值。源码: sub_4084E0 *(a2+240)赋值给*(a2+244)"),
+        61:("冷却计时","当前冷却剩余(运行时递减)。源码: sub_4084E0 *(a2+244)>0时递减并return 0"),
+        62:("战斗背景ID","战斗场景背景。源码: sub_4084E0 sub_40EB10(v7, *(a2+248))第2参数"),
     },
     110: {  # 特殊机关 sub_408B30
         50:("帧计数器","d52=0时>0启用拾取后动画; 此游戏全为0。源码: sub_408B30 byte+200=d50, d52==0且d50>0时+1动画播放"),
@@ -1892,7 +1898,7 @@ class MatEditor:
             ('chain_a', 'A链(自动)', '子场景A = 自动运行(Tick)脚本。sub_409618: cur_A>0时每Tick自动执行'),
             ('chain_b', 'B链(触发)', '子场景B = 触发(交互)脚本。sub_4081F8/408408/4084E0/408E5C: 交互时执行'),
             ('chain_c', 'C链(其他)', '子场景C = 保留链。可能由特定游戏事件触发'),
-            ('trigger', '触发方式', '基于实体类型和逆向分析: type=5:仅脚本 type=10:接近传送 type=15:接近触发 type=16:接近+道具 type=20/200:点击对话 type=110:点击机关'),
+            ('trigger', '触发方式', '基于实体类型和逆向分析: type=5:仅脚本 type=10:接近传送 type=15:接近触发 type=16:接近遇敌 type=20/200:点击对话 type=110:点击机关'),
         ]
         for ri, (key, label, tip) in enumerate(sched_items):
             r, c = divmod(ri, 4)
@@ -2338,6 +2344,11 @@ class MatEditor:
                     bw = r['d20'] if r['d20'] > 0 else 40; bh = r['d21'] if r['d21'] > 0 else 40
                     dr.rectangle([bx, by, bx+bw, by+bh], outline=color, width=2)
                     self._vis_hit_regions[idx] = (bx, by, bx+bw, by+bh)
+                elif tval == 16:
+                    bx, by = r['d18'], r['d19']
+                    bw = r['d20'] if r['d20'] > 0 else 40; bh = r['d21'] if r['d21'] > 0 else 40
+                    dr.rectangle([bx, by, bx+bw, by+bh], outline=color, width=2)
+                    self._vis_hit_regions[idx] = (bx, by, bx+bw, by+bh)
                 elif tval == 5:
                     s = 12
                     px, py = x+ox, y+oy
@@ -2352,6 +2363,7 @@ class MatEditor:
             # 标签
             label = f"#{idx}"
             if tval == 10: label = f"T{idx}"
+            elif tval == 16: label = f"B{idx}"
             elif tval == 5: label = f"P{idx}"
             elif tval == 200: label = f"N{idx}"
             # 脚本类型图标 (基于逆向 sub_409618/sub_408E5C)
@@ -2879,7 +2891,7 @@ class MatEditor:
         sub_408E5C: 玩家点击交互, 检查pickable/d34触发脚本
         sub_4081F8: type=10接近传送
         sub_408408: type=15事件触发区
-        sub_4084E0: type=16建筑门交互"""
+        sub_4084E0: type=16随机战斗区"""
         if rec is None or is_empty(rec):
             for key in self._sched_labels:
                 self._sched_labels[key].config(text="", foreground='black')
@@ -2940,7 +2952,7 @@ class MatEditor:
             5:  "仅脚本 — 无专用处理, 仅执行脚本字节码 (sub_409618跳过)",
             10: "接近传送 — 玩家走近触发场景切换 (sub_4081F8→sub_40C044)",
             15: "接近触发 — 玩家进入碰撞盒自动执行脚本 (sub_408408)",
-            16: "接近+道具 — 可能有道具检查 (sub_4084E0)",
+            16: "接近遇敌 — 玩家进入碰撞盒概率触发战斗 (sub_4084E0)",
             20: "点击对话 — 点击NPC/事件对象 (sub_408E5C)",
             110: "点击机关 — 点击触发特殊效果 (sub_408B30)",
             200: "点击对话 — 点击NPC交互 (sub_408E5C)",
