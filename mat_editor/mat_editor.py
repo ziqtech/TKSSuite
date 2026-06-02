@@ -10,7 +10,8 @@ TKMat.Dat 地图实体编辑器 v2.3 — 融合脚本编辑
   sub_407070: 坐标 [10][11], 碰撞盒 [18][19][20][21] ✓已验证
   sub_406864: 渲染混合 [24](switch 0-5), blend_param[25], 优先级[22], 精灵偏移[26][27], 阴影帧[55] ✓已验证
   sub_409618: 主Tick循环 — A链=自动(d33>0) B链=触发(交互), d4=Tick周期, d3=等待计时器 ✓已验证
-  sub_4081F8: 入口/传送点 — d50条件, d51方向掩码, d52目标场景, d53/d54目标XY, d56朝向 ✓已验证
+  sub_4081F8: type=10 出入传送点 — d50条件, d51方向掩码, d52目标场景, d53/d54目标XY, d56朝向 ✓已验证
+  type=5: 脚本对象 — sub_409618 显式跳过(无专用tick), 仅执行脚本(sub_40EBD4) ✓已验证
   sub_408E5C: 玩家点击交互 — B链触发, d34条件脚本 ✓已验证
   sub_408B30: 特殊机关(110) — d50帧计数器, d51帧偏移, d52行为模式(0/1/2), d53-d64物品组 ✓已验证
   sub_40EBD4: 脚本VM — d42=PC, d43=saved_PC, d30-d32=max链, d33-d35=cur链, End模式0xFFFF-0xFFFA ✓已验证
@@ -57,8 +58,8 @@ REC_SIZE = 384; REC_COUNT = 6000; FILE_SIZE = 2304000; DWORD_COUNT = 96
 SCENE_NAME_TKT_BASE = 300
 DEFUNIT_REC_SIZE = 16; DEFUNIT_REC_COUNT = 5000; DEFUNIT_FILE_SIZE = 80000
 
-ENTITY_TYPES = {0:"空槽",5:"入口/传送点",10:"地形块",15:"障碍物",16:"建筑/门",
-                20:"事件对象",110:"特殊机关",200:"NPC/角色"}
+ENTITY_TYPES = {0:"空槽",5:"脚本对象",10:"出入传送点",15:"事件触发区",16:"建筑门",
+                20:"事件对象",110:"特殊机关",200:"NPC角色"}
 TYPE_COLORS = {0:"#AAA",5:"#2196F3",10:"#4CAF50",15:"#FF9800",16:"#795548",
                20:"#9C27B0",110:"#E91E63",200:"#F44336"}
 TYPE_COLORS_RGBA = {0:(170,170,170),5:(33,150,243),10:(76,175,80),15:(255,152,0),
@@ -192,25 +193,27 @@ def parse_tkt_colored_segments(text):
     return segments
 
 BASIC_FIELDS = [
-    ("type",0,"实体类型","实体类型: 5=入口 10=地形 15=障碍 16=建筑 20=事件 110=机关 200=NPC。源码: sub_405CBC *v2==10/20/110/200 分支, sub_409618 类型调度"),
+    ("type",0,"实体类型","实体类型: 5=脚本 10=出入传送 15=触发区 16=建筑 20=事件 110=机关 200=NPC。源码: sub_405CBC *v2==10/20/110/200 分支, sub_409618 类型调度"),
     ("scene_id",1,"场景ID","所属场景 (-1=全局)。TKT_ID = scene_id + 300。源码: sub_405CBC v13[1]<0||v13[1]==dword_755B58 场景过滤"),
-    ("flags",2,"标志位","位域。bit0=启用 bit1=可见 bit2=可交互 bit3=提示 bit4=忙碌 bit5=恢复 bit8=已拾取(type110) bit16=动画循环。源码: sub_406864 byte+8 bit0/1/2检查, sub_409618 byte+8 bit0启用, sub_408B30 byte+9 bit0=已拾取, sub_408E5C byte+8 bit4/5繁忙/恢复"),
     ("param",3,"扩展参数","扩展参数/等待计时器。SetWait设置随机值, sub_409618 byte+12作递减等待。源码: sub_409618 if(d3!=0){d3>0则d3--}else tick执行"),
-    ("hint_id",23,"提示文本ID","鼠标悬停提示的TKT文本ID。传送点(type=10): 设为 300+目标场景ID 以显示目标场景名。源码: sub_412390"),
+    ("tick",4,"tick","Tick周期(运行时)。源码: sub_409618 byte+16=d4, 当++d5>=d4时触发Tick执行"),
     ("cursor_id",8,"光标动画","鼠标悬停光标动画编号。传送点(type=10)设为3显示开门动画。源码: sub_411BA4→sub_45408C 选择Cur.JVG块, sub_412390 设置光标"),
+    ("anim_set",9,"动画集ID","动画集索引。源码: sub_405CBC dword_755AC0[v2[9]]查JVG表, sub_406864 a1[9]获取精灵资源"),
+    ("x",10,"坐标X","世界坐标X (像素)。源码: sub_407070 a1[10]=a2 设置, sub_406864 byte+40 屏幕坐标=entity[d10]-camera_x+d[d26]"),
+    ("y",11,"坐标Y","世界坐标Y (像素)。源码: sub_407070 a1[11]=a3 设置, sub_406864 byte+44 屏幕坐标=entity[d11]-camera_y+d[d27]"),
+    ("direction",13,"朝向","朝向 1~8。源码: sub_4077E4 a1[13]=a2, 仅1~8有效, type=200时更新帧索引"),
+    ("hint_id",23,"提示文本ID","鼠标悬停提示的TKT文本ID。传送点(type=10): 设为 300+目标场景ID 以显示目标场景名。源码: sub_412390"),
     ("blend_mode",24,"混合模式","主精灵渲染混合模式。源码: sub_406864 byte+96 switch(0~5): 0=正常sub_4544EC 1=染色sub_454D24 2=加法sub_4559D0 3=减法sub_458020 4=亮度alpha 5=翻转sub_458D08"),
     ("blend_param",25,"混合参数","混合参数, byte+100为WORD。源码: sub_406864 mode=1时param作颜色索引, mode=2时param作加法缩放(0或>31=全加法)"),
     ("shadow_frame",55,"阴影帧","type=200: Cha.JVG全局帧索引(0=无1=小2=大)。源码: sub_406864 byte+220 *(int*)(ptr+220)>0时调用sub_458020/sub_45AA08绘制阴影帧"),]
+FLAG_FIELDS = [
+    ("flags",2,"标志位","位域。bit0=启用 bit1=可见 bit2=可交互 bit3=提示 bit4=忙碌 bit5=恢复 bit8=已拾取(type110) bit16=动画循环。源码: sub_406864 byte+8 bit0/1/2检查, sub_409618 byte+8 bit0启用, sub_408B30 byte+9 bit0=已拾取, sub_408E5C byte+8 bit4/5繁忙/恢复"),]
 POS_FIELDS = [
-    ("x",10,"坐标X","世界坐标X (像素)。源码: sub_407070 a1[10]=a2 设置, sub_406864 byte+40 屏幕坐标=entity[d10]-camera_x+d[d26]"),
-    ("y",11,"坐标Y","世界坐标Y (像素)。源码: sub_407070 a1[11]=a3 设置, sub_406864 byte+44 屏幕坐标=entity[d11]-camera_y+d[d27]"),
     ("bound_x",18,"碰撞X","碰撞盒/区域X起点。源码: sub_407070 a1[18]=a2-(a1[20]>>1), 由中心X和宽度计算"),
     ("bound_y",19,"碰撞Y","碰撞盒/区域Y起点。源码: sub_407070 a1[19]=a3-(a1[21]>>1), 由中心Y和高度计算"),
     ("bound_w",20,"碰撞宽","碰撞盒/区域宽度。仅地形块(type=10)使用。源码: sub_407070 a1[20] 碰撞宽度"),
-    ("bound_h",21,"碰撞高","碰撞盒/区域高度。仅地形块(type=10)使用。源码: sub_407070 a1[21] 碰撞高度"),
-    ("direction",13,"朝向","朝向 1~8。源码: sub_4077E4 a1[13]=a2, 仅1~8有效, type=200时更新帧索引"),]
+    ("bound_h",21,"碰撞高","碰撞盒/区域高度。仅地形块(type=10)使用。源码: sub_407070 a1[21] 碰撞高度"),]
 ANIM_FIELDS = [
-    ("anim_set",9,"动画集ID","动画集索引。源码: sub_405CBC dword_755AC0[v2[9]]查JVG表, sub_406864 a1[9]获取精灵资源"),
     ("dir_mode",53,"目标X/方向模式","type=5:目标X type=16:把手2道具 type=110:组1Xmin type=200:方向模式(0=静态/4=四向/8=八向)。源码: sub_4077E4 a1[53]==4/8方向分支, sub_4081F8 byte+212, sub_4084E0, sub_408B30"),
     ("target_y",54,"目标Y坐标","type=5:目标Y type=16:把手3道具 type=110:组1Xmax type=200:目标Y。源码: sub_4081F8 byte+216, sub_4084E0, sub_408B30"),
     ("sub_model",64,"子模型ID","type=110:组3Ymax type=200:Ani.JVG块(行走动画)。源码: sub_405CBC v2[64]作为sub_4540E8/sub_45410C的JVG块参数"),
@@ -270,30 +273,39 @@ def get_script_info(rec):
     return script_label, tick_label
 
 SCRIPT_FIELDS = [
-    ("defunit_idx",44,"DefUnit索引","文件值=-1为正常; 运行时由 sub_4066F0 沿链遍历计算填入。源码: sub_40EBD4 line18 dword_51AF40[96*a1+44]读取DefUnit链索引, dword_753500+16*idx+4读取链数据"),
     ("dialog_color",28,"对话颜色","TalkA/TalkB 文字颜色索引(0~31), 第2参数=TKT文本ID。源码: sub_44B028 查表 dword_A2C528"),
     ("max_A",30,"子场景最大A","子场景A DefUnit链长度。源码: sub_40EBD4 byte+120=d30, End模式1: if(++d33>d30)d33=0 递增"),
-    ("max_B",31,"子场景最大B","子场景B DefUnit链长度。源码: sub_40EBD4 byte+124=d31, End模式2: if(++d34>d31)d34=0"),("max_C",32,"子场景最大C","子场景C DefUnit链长度。源码: sub_40EBD4 byte+128=d32, End模式3: if(++d35>d32)d35=0"),
-    ("cur_A",33,"子场景当前A","当前在链中的位置(1-based)。SetNowDef可修改。源码: sub_40EBD4 byte+132=d33, End模式4(0xFFFC):d33=0重置"),("cur_B",34,"子场景当前B","。源码: sub_40EBD4 byte+136=d34, End模式5(0xFFFB):d34=0重置"),("cur_C",35,"子场景当前C","。源码: sub_40EBD4 byte+140=d35, End模式6(0xFFFA):d35=0重置"),
-    ("head_A",39,"DefUnit链头A","子场景A的 TKDefUnit 链表头索引。源码: sub_4066F0 遍历链表从head开始, sub_40EBD4初始化时调用sub_4066F0(entity,0)"),("head_B",40,"DefUnit链头B",""),("head_C",41,"DefUnit链头C",""),]
+    ("max_B",31,"子场景最大B","子场景B DefUnit链长度。源码: sub_40EBD4 byte+124=d31, End模式2: if(++d34>d31)d34=0"),
+    ("max_C",32,"子场景最大C","子场景C DefUnit链长度。源码: sub_40EBD4 byte+128=d32, End模式3: if(++d35>d32)d35=0"),
+    ("cur_A",33,"子场景当前A","当前在链中的位置(1-based)。SetNowDef可修改。源码: sub_40EBD4 byte+132=d33, End模式4(0xFFFC):d33=0重置"),
+    ("cur_B",34,"子场景当前B","。源码: sub_40EBD4 byte+136=d34, End模式5(0xFFFB):d34=0重置"),
+    ("cur_C",35,"子场景当前C","。源码: sub_40EBD4 byte+140=d35, End模式6(0xFFFA):d35=0重置"),
+    ("head_A",39,"DefUnit链头A","子场景A的 TKDefUnit 链表头索引。源码: sub_4066F0 遍历链表从head开始, sub_40EBD4初始化时调用sub_4066F0(entity,0)"),
+    ("head_B",40,"DefUnit链头B",""),
+    ("head_C",41,"DefUnit链头C",""),
+    ("defunit_idx",44,"DefUnit索引","文件值=-1为正常; 运行时由 sub_4066F0 沿链遍历计算填入。源码: sub_40EBD4 line18 dword_51AF40[96*a1+44]读取DefUnit链索引, dword_753500+16*idx+4读取链数据"),]
 INTERACT_FIELDS = [
     ("cond_id",50,"条件匹配","0=无条件。type=5/15/16:与player[d22]匹配才可交互。type=110(d52=0):帧计数器>0启用拾取后动画。type=200:条件角色。源码: sub_4081F8 byte+200=d50, sub_408E5C byte+200条件检查"),
     ("dir_mask",51,"方向掩码","bit0-7对应朝向1-8, 0=任意方向。type=110(d52=0):动画帧基偏移。type=200:立绘ID(Cha.JVG块)。源码: sub_4081F8 byte+204=d51作方向掩码(d51&(1<<(player_d13-1))), sub_408B30 byte+204"),
     ("target_scene",52,"目标场景","type=5:目标地图ID type=16:把手1道具 type=110:行为模式(0=标记bit8+动画 1=清除实体 2+=无行为)。type=200:动画句柄(运行时)。源码: sub_4081F8 *(_WORD*)(a2+208)=ChangeScene参数, sub_408B30 byte+208=d52行为模式判断(V3==0标记bit8/V3==1禁用隐藏)"),]
 RUNTIME_FIELDS = [
-    ("tick",4,"tick","Tick周期(运行时)。源码: sub_409618 byte+16=d4, 当++d5>=d4时触发Tick执行"),
-    ("timer",12,"计时器","SetWait设置的等待值。注意: d3(byte+12)在sub_409618中作递减计时器, 此字段含义随上下文变化"),("frame_idx",14,"帧索引","当前渲染帧索引。源码: sub_4077E4 d14=d17+d52+d16*dir_mult, sub_405CBC设置type200/type20的帧索引"),
-    ("frame_count",16,"总帧数","JVG块内总帧数。源码: sub_405CBC v2[16]=sub_4540E8(JVG,block), sub_4077E4 d16用于方向帧计算"),("frame_cur",17,"帧计数","动画当前帧/基础帧。源码: sub_4077E4 a1[17], sub_405CBC type200行走动画"),
-    ("script_PC",42,"脚本PC","sub_40EBD4入口: d42作为字节码起始偏移。必须=-1(0xFFFF)表示无保存点, 否则VM从错误位置执行。源码: sub_40EBD4 byte+168=d42 脚本PC, byte+172=d43 保存PC, End(0)时d42=d43"),("saved_PC",43,"保存PC","End(0)时 d42=d43; d43=-1。新实体必须=-1。源码: sub_40EBD4 byte+172=d43"),
-    ("target_dir",56,"目标朝向","type=5:目标朝向(1-8) type=16:把手2概率 type=110:组1Ymin type=200:寻路X(运行时)。源码: sub_408E5C byte+224=d56, sub_4081F8 byte+224, sub_4084E0, sub_408B30"),
-    ("saved_y",57,"保存Y","type=5:相机Y偏移 type=16:把手3概率 type=110:组2Xmin type=200:寻路Y(运行时)。源码: sub_408E5C byte+228=d57, sub_4081F8, sub_4084E0, sub_408B30"),
-    ("alt_tele_x",60,"备选传送X","type=5:相机偏移X type=110:组2Ymax type=200:备选传送X。源码: sub_408E5C byte+240=d60, sub_4081F8:31,sub_408B30"),
-    ("alt_tele_y",61,"备选传送Y","type=5:相机偏移Y type=16:冷却计时 type=110:组3Xmin type=200:备选传送Y。源码: sub_408E5C byte+244=d61, sub_4081F8:31,sub_4084E0,sub_408B30"),
-    ("sub_handle",65,"子句柄","type=16:目标地图 type=110:组3Xmax? type=200:动画基址(运行时)。源码: sub_405CBC v2[65]=sub_45410C(Ani,v2[64]),sub_408B30"),("cur_frame",67,"当前帧",""),
-    ("max_frame",68,"最大帧","动画帧终点=max-1。源码: sub_405CBC if(v2[16]<=v2[68]) v2[68]=v2[16]-1"),("moving",70,"移动中","type=200移动模式: 0=静止 1=行走。源码: sub_409618 byte+280=d70, type200时检查d70==1触发行走动画"),
+    ("timer",12,"计时器","SetWait设置的等待值。注意: d3(byte+12)在sub_409618中作递减计时器, 此字段含义随上下文变化"),
+    ("frame_idx",14,"帧索引","当前渲染帧索引。源码: sub_4077E4 d14=d17+d52+d16*dir_mult, sub_405CBC设置type200/type20的帧索引"),
+    ("frame_count",16,"总帧数","JVG块内总帧数。源码: sub_405CBC v2[16]=sub_4540E8(JVG,block), sub_4077E4 d16用于方向帧计算"),
+    ("frame_cur",17,"帧计数","动画当前帧/基础帧。源码: sub_4077E4 a1[17], sub_405CBC type200行走动画"),
     ("priority",22,"优先级/α","实体优先级/像素透明度。源码: sub_406864 byte+88=d22, sub_406E50计算, 决定简单/变换渲染分支"),
     ("sprite_off_x",26,"精灵偏移X","精灵 X 屏幕偏移, 叠加到坐标。源码: sub_406864 byte+104=d26, screen_x+=sprite_off_x"),
-    ("sprite_off_y",27,"精灵偏移Y","精灵 Y 屏幕偏移, 叠加到坐标。源码: sub_406864 byte+108=d27, screen_y+=sprite_off_y"),]
+    ("sprite_off_y",27,"精灵偏移Y","精灵 Y 屏幕偏移, 叠加到坐标。源码: sub_406864 byte+108=d27, screen_y+=sprite_off_y"),
+    ("script_PC",42,"脚本PC","sub_40EBD4入口: d42作为字节码起始偏移。必须=-1(0xFFFF)表示无保存点, 否则VM从错误位置执行。源码: sub_40EBD4 byte+168=d42 脚本PC, byte+172=d43 保存PC, End(0)时d42=d43"),
+    ("saved_PC",43,"保存PC","End(0)时 d42=d43; d43=-1。新实体必须=-1。源码: sub_40EBD4 byte+172=d43"),
+    ("target_dir",56,"目标朝向","type=5:目标朝向(1-8) type=16:把手2概率 type=110:组1Ymin type=200:寻路X(运行时)。源码: sub_408E5C byte+224=d56, sub_4081F8 byte+224, sub_4084E0, sub_408B30"),
+    ("saved_y",57,"保存Y","type=5:相机Y偏移 type=16:把手3概率 type=110:组2Xmin type=200:寻路Y(运行时)。源码: sub_408E5C byte+228=d57, sub_4081F8, sub_4084E0, sub_408B30"),
+    ("alt_tele_x",60,"备选传送X","type=10:相机偏移X type=110:组2Ymax type=200:备选传送X。源码: sub_408E5C byte+240=d60, sub_4081F8:31,sub_408B30"),
+    ("alt_tele_y",61,"备选传送Y","type=10:相机偏移Y type=16:冷却计时 type=110:组3Xmin type=200:备选传送Y。源码: sub_408E5C byte+244=d61, sub_4081F8:31,sub_4084E0,sub_408B30"),
+    ("sub_handle",65,"子句柄","type=16:目标地图 type=110:组3Xmax? type=200:动画基址(运行时)。源码: sub_405CBC v2[65]=sub_45410C(Ani,v2[64]),sub_408B30"),
+    ("cur_frame",67,"当前帧",""),
+    ("max_frame",68,"最大帧","动画帧终点=max-1。源码: sub_405CBC if(v2[16]<=v2[68]) v2[68]=v2[16]-1"),
+    ("moving",70,"移动中","type=200移动模式: 0=静止 1=行走。源码: sub_409618 byte+280=d70, type200时检查d70==1触发行走动画"),]
 ITEM_FIELDS = [
     ("item_g1_id",   53, "组1-物品ID",   "type110: 物品ID随机范围最小值; Xmin==Xmax→固定掉落。源码: sub_408B30 byte+212=d53, sub_452AC0随机范围"),
     ("item_g1_idmax",54, "组1-物品上限",  "type110: 物品ID随机范围最大值。源码: sub_408B30 byte+216=d54, 若d53>=d54则固定值"),
@@ -308,31 +320,37 @@ ITEM_FIELDS = [
     ("item_g3_qty",  63, "组3-数量",     "type110: 第三组数量。源码: sub_408B30 byte+252=d63"),
     ("item_g3_qtymax",64,"组3-数量上限",  "type110: 第三组数量上限。源码: sub_408B30 byte+256=d64"),
 ]
-ALL_EDIT_FIELDS = BASIC_FIELDS+POS_FIELDS+ANIM_FIELDS+SCRIPT_FIELDS+INTERACT_FIELDS+ITEM_FIELDS
+ALL_EDIT_FIELDS = BASIC_FIELDS+FLAG_FIELDS+POS_FIELDS+ANIM_FIELDS+SCRIPT_FIELDS+INTERACT_FIELDS+ITEM_FIELDS
 
 # 类型相关字段映射: type → {dword: (label, comment)}
 # 仅列出与 type=200(NPC) 默认语义不同的字段
 _TYPE_LABELS = {
-    5: {  # 入口/传送点 sub_4081F8
-        50:("条件匹配","0=无条件, 非零须与player[d22]匹配。源码: sub_4081F8 byte+200=d50条件检查"), 51:("方向掩码","bit0-7对应朝向1-8, 0=任意。源码: sub_4081F8 byte+204=d51, d51&(1<<(player_direction-1))掩码检查"),
-        52:("目标地图ID","ChangeScene的目标场景ID。源码: sub_4081F8 *(_WORD*)(a2+208)作为ChangeScene第1参数"), 53:("目标X","传送后X坐标。源码: sub_4081F8 *(_WORD*)(a2+212)作为ChangeScene第2参数"),
-        54:("目标Y","传送后Y坐标。源码: sub_4081F8 *(_WORD*)(a2+216)作为ChangeScene第3参数"), 56:("目标朝向","传送后玩家朝向1-8。源码: sub_4081F8 *(_WORD*)(a2+224)作为ChangeScene第4参数"),
+    5: {  # 脚本对象 — 无专用tick, 仅执行脚本 (sub_409618 显式跳过)
+        # type=5 无类型特定处理, d50~d62 由脚本自由使用 (通过 SetVar/GetItem 等命令读写)
+    },
+    10: {  # 出入传送点 sub_4081F8 + 地形块连线 sub_405CBC
+        50:("条件匹配","0=无条件, 非零须与player[d22]匹配才可传送。源码: sub_4081F8 byte+200=d50条件检查"),
+        51:("方向掩码","bit0-7对应朝向1-8, 0=任意方向。源码: sub_4081F8 byte+204=d51, d51&(1<<(player_direction-1))掩码检查"),
+        52:("目标地图ID","ChangeScene的目标场景ID。源码: sub_4081F8 *(_WORD*)(a2+208)作为ChangeScene第1参数"),
+        53:("目标X","传送后X坐标。源码: sub_4081F8 *(_WORD*)(a2+212)作为ChangeScene第2参数"),
+        54:("目标Y","传送后Y坐标。源码: sub_4081F8 *(_WORD*)(a2+216)作为ChangeScene第3参数"),
+        56:("目标朝向","传送后玩家朝向1-8。源码: sub_4081F8 *(_WORD*)(a2+224)作为ChangeScene第4参数"),
         57:("相机X","相机目标X。源码: sub_408E5C byte+228=d57相机位置"), 58:("相机Y",""),
         59:("相机Z",""), 60:("相机偏移X","。源码: sub_408E5C byte+240=d60"),
-        61:("相机偏移Y","。源码: sub_408E5C byte+244=d61"), 62:("过程锁","非零时锁定。源码: sub_4081F8 byte+248=d62, 非零则跳过交互"),
-    },
-    10: {  # 地形块 sub_405CBC + sub_40DC1C
-        62:("连线组数","连线组数量>0启用。源码: sub_405CBC v2[62]>0时绘制连线"), 63:("线1-启用","。源码: sub_405CBC if(v2[63])调用sub_4526D0"), 64:("线1-X1","。源码: sub_405CBC sub_4526D0(v2[64],v2[65],v2[66],v2[67],0,dc)"), 65:("线1-Y1",""), 66:("线1-X2",""), 67:("线1-Y2",""),
+        61:("相机偏移Y","。源码: sub_408E5C byte+244=d61"),
+        62:("连线组数/过程锁","type10:连线组数量>0启用; 非零时锁定传送。源码: sub_405CBC v2[62]>0时绘制连线, sub_4081F8 byte+248=d62非零跳过"),
+        63:("线1-启用","。源码: sub_405CBC if(v2[63])调用sub_4526D0"), 64:("线1-X1","。源码: sub_405CBC sub_4526D0(v2[64],v2[65],v2[66],v2[67],0,dc)"), 65:("线1-Y1",""), 66:("线1-X2",""), 67:("线1-Y2",""),
         68:("线2-启用","。源码: sub_405CBC if(v2[68])"), 69:("线2-X1","。源码: v2[69],v2[70],v2[71],v2[72]"), 70:("线2-Y1",""), 71:("线2-X2",""), 72:("线2-Y2",""),
         73:("线3-启用","。源码: sub_405CBC if(v2[73])"), 74:("线3-X1","。源码: v2[74],v2[75],v2[76],v2[77]"), 75:("线3-Y1",""), 76:("线3-X2",""), 77:("线3-Y2",""),
         78:("线4-启用","。源码: sub_405CBC if(v2[78])"), 79:("线4-X1","。源码: v2[79],v2[80],v2[81],v2[82]"), 80:("线4-Y1",""), 81:("线4-X2",""), 82:("线4-Y2",""),
         83:("线5-启用","。源码: sub_405CBC if(v2[83])"), 84:("线5-X1","。源码: v2[84],v2[85],v2[86],v2[87]"), 85:("线5-Y1",""), 86:("线5-X2",""), 87:("线5-Y2",""),
     },
-    15: {  # 障碍物 sub_408408
-        34:("触发开关","非零可触发。源码: sub_408E5C byte+136=d34 B链脚本执行判断"), 50:("条件匹配","0=无条件, 非零须与player[d22]匹配。源码: sub_408E5C d2&1&&d34条件"),
-        51:("方向掩码","bit0-7对应朝向1-8, 0=任意。源码: sub_408E5C 方向掩码检查"),
+    15: {  # 事件触发区 — 玩家接近碰撞盒时自动触发脚本 (sub_408408)
+        34:("脚本开关","d34(cur_B)非零时触发才生效。源码: sub_408408 a2[34]==0则return 0"),
+        50:("条件匹配","0=无条件, 非零须与玩家ID匹配。源码: sub_408408 a2[50]>0时比较dword_8242E0+88"),
+        51:("方向掩码","bit0-7对应朝向1-8, 0=任意。源码: sub_408408 a2[51]&(1<<(player_dir-1))"),
     },
-    16: {  # 建筑/门 sub_4084E0
+    16: {  # 建筑门 sub_4084E0
         50:("条件匹配","0=无条件, 非零须与player[d22]匹配。源码: sub_408E5C 条件检查"), 51:("方向掩码","bit0-7对应朝向1-8, 0=任意。源码: sub_408E5C 方向掩码检查"),
         52:("把手1道具",""), 53:("把手2道具",""),
         54:("把手3道具",""), 55:("把手1概率",""),
@@ -356,7 +374,7 @@ _TYPE_LABELS = {
         63:("组3-数量","。源码: sub_408B30 byte+252=d63"),
         64:("组3-数量上限","。源码: sub_408B30 byte+256=d64"),
     },
-    200: {  # NPC/角色 sub_406864 + sub_405CBC
+    200: {  # NPC角色 sub_406864 + sub_405CBC
         50:("条件角色",""), 51:("立绘ID","Cha.JVG块索引。源码: sub_405CBC v2[51]作为sub_45410C参数获取立绘句柄"),
         52:("动画句柄","运行时。源码: sub_405CBC v2[52]=sub_45410C(ChaJVG,v2[51])保存立绘精灵句柄"), 53:("方向模式","4=四向 8=八向 0=静态。源码: sub_4077E4 a1[53]==4四向分支, a1[53]==8八向分支, sub_405CBC v2[53]"),
         55:("阴影帧","Cha.JVG全局帧索引(0=无1=小2=大)。源码: sub_406864 byte+220>0时调用sub_458020/sub_45AA08绘制阴影"), 56:("寻路X","运行时。源码: sub_408E5C byte+224=d56, 交互时保存/恢复"),
@@ -1744,12 +1762,13 @@ class MatEditor:
         self._edit_vars = {}
         self._param_labels = {}  # di → (label_widget, default_text, default_tooltip)
         self._build_group("基础属性", BASIC_FIELDS, 0)
-        self._build_group("位置", POS_FIELDS, 1)
-        self._build_group("动画", ANIM_FIELDS, 2)
-        self._build_group("物品", ITEM_FIELDS, 3)
-        self._build_group("脚本", SCRIPT_FIELDS, 4)
-        self._build_group("交互/角色", INTERACT_FIELDS, 5)
-        self._build_group("运行时(只读)", RUNTIME_FIELDS, 6)
+        self._build_group("标志位", FLAG_FIELDS, 1)
+        self._build_group("运行时(只读)", RUNTIME_FIELDS, 2)
+        self._build_group("动画", ANIM_FIELDS, 3)
+        self._build_group("位置", POS_FIELDS, 4)
+        self._build_group("脚本", SCRIPT_FIELDS, 5)
+        self._build_group("交互", INTERACT_FIELDS, 6)
+        self._build_group("物品(type110)", ITEM_FIELDS, 7)
         # flags ↔ checkbutton 双向同步
         self._sync_lock = False
         _bit_vars = [(self._bit_enable,1), (self._bit_visible,2), (self._bit_pickable,4),
@@ -1797,7 +1816,7 @@ class MatEditor:
         lf.grid(row=row,column=0,sticky='ew',padx=2,pady=2)
         grid=ttk.Frame(lf); grid.pack(fill=tk.X)
         for fi,(key,di,label,cmt) in enumerate(fields):
-            r,c=divmod(fi,3); frm=ttk.Frame(grid); frm.grid(row=r,column=c,sticky='nw',padx=4,pady=2)
+            r,c=divmod(fi,4); frm=ttk.Frame(grid); frm.grid(row=r,column=c,sticky='nw',padx=4,pady=2)
             lbl=ttk.Label(frm,text=f"[{di:02d}] {label}",font=FONT_S); lbl.pack(anchor=tk.W)
             if cmt: self._bind_tooltip(lbl,f"[{di:02d}] {cmt}")
             # 存储标签引用 + 默认文本 + tooltip, 供 _show_record 动态更新
@@ -1873,7 +1892,7 @@ class MatEditor:
             ('chain_a', 'A链(自动)', '子场景A = 自动运行(Tick)脚本。sub_409618: cur_A>0时每Tick自动执行'),
             ('chain_b', 'B链(触发)', '子场景B = 触发(交互)脚本。sub_4081F8/408408/4084E0/408E5C: 交互时执行'),
             ('chain_c', 'C链(其他)', '子场景C = 保留链。可能由特定游戏事件触发'),
-            ('trigger', '触发方式', '基于实体类型和逆向分析: type=5/10:接近触发 type=15:接近+条件 type=16:接近+道具 type=20/200:点击对话 type=110:点击机关'),
+            ('trigger', '触发方式', '基于实体类型和逆向分析: type=5:仅脚本 type=10:接近传送 type=15:接近触发 type=16:接近+道具 type=20/200:点击对话 type=110:点击机关'),
         ]
         for ri, (key, label, tip) in enumerate(sched_items):
             r, c = divmod(ri, 4)
@@ -2040,7 +2059,7 @@ class MatEditor:
 
         # 构建所有已知字段映射: di → (name, label, comment)
         known = {}
-        for fields in (BASIC_FIELDS, POS_FIELDS, ANIM_FIELDS, SCRIPT_FIELDS, INTERACT_FIELDS, RUNTIME_FIELDS):
+        for fields in (BASIC_FIELDS, FLAG_FIELDS, POS_FIELDS, ANIM_FIELDS, SCRIPT_FIELDS, INTERACT_FIELDS, RUNTIME_FIELDS):
             for name, di, label, cmt in fields:
                 known[di] = (name, label, cmt)
 
@@ -2067,7 +2086,7 @@ class MatEditor:
         type_labels = _TYPE_LABELS.get(tval, {})
         if tval == 20: type_labels = _TYPE_LABELS.get(200, {})
         known = {}
-        for fields in (BASIC_FIELDS, POS_FIELDS, ANIM_FIELDS, ITEM_FIELDS, SCRIPT_FIELDS, INTERACT_FIELDS, RUNTIME_FIELDS):
+        for fields in (BASIC_FIELDS, FLAG_FIELDS, POS_FIELDS, ANIM_FIELDS, ITEM_FIELDS, SCRIPT_FIELDS, INTERACT_FIELDS, RUNTIME_FIELDS):
             for name, di, label, cmt in fields:
                 known[di] = (label, cmt)
         for di, (lbl, def_label, def_cmt) in self._param_labels.items():
@@ -2858,9 +2877,9 @@ class MatEditor:
         """更新脚本调度信息面板。基于逆向分析:
         sub_409618: 主Tick循环, 检查enabled/d3定时器/d4Tick周期/d33自动脚本
         sub_408E5C: 玩家点击交互, 检查pickable/d34触发脚本
-        sub_4081F8: type=5/10接近触发
-        sub_408408: type=15条件触发
-        sub_4084E0: type=16门/建筑交互"""
+        sub_4081F8: type=10接近传送
+        sub_408408: type=15事件触发区
+        sub_4084E0: type=16建筑门交互"""
         if rec is None or is_empty(rec):
             for key in self._sched_labels:
                 self._sched_labels[key].config(text="", foreground='black')
@@ -2918,9 +2937,9 @@ class MatEditor:
             self._sched_labels['chain_c'].config(text="— 无", foreground='#999')
         # 触发方式 (基于实体类型和逆向分析)
         trigger_map = {
-            5:  "接近触发 — 玩家走到传送点上 (sub_4081F8)",
-            10: "接近触发 — 玩家踩上地形块 (sub_4081F8)",
-            15: "接近+条件 — 需d34!=0且方向匹配 (sub_408408)",
+            5:  "仅脚本 — 无专用处理, 仅执行脚本字节码 (sub_409618跳过)",
+            10: "接近传送 — 玩家走近触发场景切换 (sub_4081F8→sub_40C044)",
+            15: "接近触发 — 玩家进入碰撞盒自动执行脚本 (sub_408408)",
             16: "接近+道具 — 可能有道具检查 (sub_4084E0)",
             20: "点击对话 — 点击NPC/事件对象 (sub_408E5C)",
             110: "点击机关 — 点击触发特殊效果 (sub_408B30)",
@@ -3717,7 +3736,7 @@ class MatEditor:
         tc=[f"{k}-{v}" for k,v in sorted(ENTITY_TYPES.items()) if k!=0]
         cb_type=ttk.Combobox(win,textvariable=type_var,values=tc,state='readonly',width=22)
         cb_type.grid(row=0,column=1,padx=10,pady=(10,5),sticky='w')
-        cb_type.current(6)  # 200-NPC/角色
+        cb_type.current(6)  # 200-NPC角色
 
         ttk.Label(win,text="场景 ID:").grid(row=1,column=0,padx=10,pady=5,sticky='w')
         scene_var=tk.IntVar(value=self._vis_scene_id.get())
