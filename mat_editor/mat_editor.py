@@ -3783,7 +3783,7 @@ class MatEditor:
         rec['d8']=3 if sel_type==10 else 0  # 传送点光标动画=开门
         rec['d10']=400; rec['d11']=384  # 地图中心附近
         rec['d18']=400; rec['d19']=384  # 地形块用 bound_x/y 定位
-        rec['d20']=40; rec['d21']=40    # 地形块默认大小
+        rec['d20']=30 if sel_type==110 else 40; rec['d21']=30 if sel_type==110 else 24
 
         self._dirty=True; self._apply_filter()
         for item in self.tree.get_children():
