@@ -275,16 +275,16 @@ def get_script_info(rec):
 
 SCRIPT_FIELDS = [
     ("dialog_color",28,"对话颜色","TalkA/TalkB 文字颜色索引(0~31), 第2参数=TKT文本ID。源码: sub_44B028 查表 dword_A2C528"),
-    ("max_A",30,"子场景最大A","子场景A DefUnit链长度。源码: sub_40EBD4 byte+120=d30, End模式1: if(++d33>d30)d33=0 递增"),
-    ("max_B",31,"子场景最大B","子场景B DefUnit链长度。源码: sub_40EBD4 byte+124=d31, End模式2: if(++d34>d31)d34=0"),
-    ("max_C",32,"子场景最大C","子场景C DefUnit链长度。源码: sub_40EBD4 byte+128=d32, End模式3: if(++d35>d32)d35=0"),
-    ("cur_A",33,"子场景当前A","当前在链中的位置(1-based)。SetNowDef可修改。源码: sub_40EBD4 byte+132=d33, End模式4(0xFFFC):d33=0重置"),
-    ("cur_B",34,"子场景当前B","。源码: sub_40EBD4 byte+136=d34, End模式5(0xFFFB):d34=0重置"),
-    ("cur_C",35,"子场景当前C","。源码: sub_40EBD4 byte+140=d35, End模式6(0xFFFA):d35=0重置"),
-    ("head_A",39,"DefUnit链头A","子场景A的 TKDefUnit 链表头索引。源码: sub_4066F0 遍历链表从head开始, sub_40EBD4初始化时调用sub_4066F0(entity,0)"),
-    ("head_B",40,"DefUnit链头B",""),
-    ("head_C",41,"DefUnit链头C",""),
-    ("defunit_idx",44,"DefUnit索引","文件值=-1为正常; 运行时由 sub_4066F0 沿链遍历计算填入。源码: sub_40EBD4 line18 dword_51AF40[96*a1+44]读取DefUnit链索引, dword_753500+16*idx+4读取链数据"),]
+    ("max_A",30,"A链·长度","DEFINE链A 的节点总数。Tick自动执行时 cur_A 从1递增至此值后归零循环。源码: sub_40EBD4 byte+120=d30, End(1): if(++d33>d30)d33=0"),
+    ("max_B",31,"B链·长度","DEFINE链B 的节点总数。交互触发时 cur_B 从1递增至此值后归零循环。源码: sub_40EBD4 byte+124=d31, End(2): if(++d34>d31)d34=0"),
+    ("max_C",32,"C链·长度","DEFINE链C 的节点总数。保留链, 通常不使用。源码: sub_40EBD4 byte+128=d32, End(3): if(++d35>d32)d35=0"),
+    ("cur_A",33,"A链·进度","当前 Tick 执行的 DEFINE 节点位置(1-based)。SetNowDef命令可跳转。源码: sub_40EBD4 byte+132=d33, End(4):d33=0重置到起点"),
+    ("cur_B",34,"B链·进度","当前交互触发的 DEFINE 节点位置(1-based)。源码: sub_40EBD4 byte+136=d34, End(5):d34=0重置"),
+    ("cur_C",35,"C链·进度","当前 C链 DEFINE 节点位置(1-based)。源码: sub_40EBD4 byte+140=d35, End(6):d35=0重置"),
+    ("head_A",39,"A链·头索引","DEFINE链A 的首个 TKDefUnit 记录索引。sub_4066F0(entity,0)沿此遍历链表。修改后需同步 DefUnit 数据"),
+    ("head_B",40,"B链·头索引","DEFINE链B 的首个 TKDefUnit 记录索引。sub_4066F0(entity,1)沿此遍历。交互/传送/战斗触发时执行此链"),
+    ("head_C",41,"C链·头索引","DEFINE链C 的首个 TKDefUnit 记录索引。保留链, 当前游戏未使用"),
+    ("defunit_idx",44,"当前DefUnit#","运行时: sub_4066F0 链遍历时填入当前节点的 DefUnit 索引。文件中值=-1为正常(尚未遍历)。源码: sub_40EBD4 line18 dword_51AF40[96*a1+44], dword_753500+16*idx+4读取链数据"),]
 INTERACT_FIELDS = [
     ("cond_id",50,"条件匹配","0=无条件。type=5/15/16:与player[d22]匹配才可交互。type=110(d52=0):帧计数器>0启用拾取后动画。type=200:条件角色。源码: sub_4081F8 byte+200=d50, sub_408E5C byte+200条件检查"),
     ("dir_mask",51,"方向掩码","bit0-7对应朝向1-8, 0=任意方向。type=110(d52=0):动画帧基偏移。type=200:立绘ID(Cha.JVG块)。源码: sub_4081F8 byte+204=d51作方向掩码(d51&(1<<(player_d13-1))), sub_408B30 byte+204"),
@@ -301,8 +301,8 @@ RUNTIME_FIELDS = [
     ("sprite_off_y",27,"精灵偏移Y","精灵 Y 屏幕偏移, 叠加到坐标。源码: sub_406864 byte+108=d27, screen_y+=sprite_off_y"),
     ("rt_ref_id",36,"运行时引用A","运行时实体身份指针。hi16=自身索引, lo16=0。格式: entity_index<<16。纯运行时字段, 地图文件中非零值为运行时残留。源码: 运行时转储反编译中无任何实体逻辑函数引用byte+144(d36), 属未文档化的运行时内部状态"),
     ("rt_ref_id2",37,"运行时引用B","运行时实体身份指针。hi16=自身索引, lo16=256(0x100标志)。格式: (entity_index<<16)|0x100。纯运行时字段。源码: 运行时转储反编译中无任何实体逻辑函数引用byte+148(d37), 属未文档化的运行时内部状态"),
-    ("script_PC",42,"脚本PC","sub_40EBD4入口: d42作为字节码起始偏移。必须=-1(0xFFFF)表示无保存点, 否则VM从错误位置执行。源码: sub_40EBD4 byte+168=d42 脚本PC, byte+172=d43 保存PC, End(0)时d42=d43"),
-    ("saved_PC",43,"保存PC","End(0)时 d42=d43; d43=-1。新实体必须=-1。源码: sub_40EBD4 byte+172=d43"),
+    ("script_PC",42,"执行位置","[PC] 脚本字节码当前执行位置。0=链起点 -1=空闲(无脚本执行)。WaitWalk等阻塞操作将当前偏移写回此处实现断点恢复。源码: sub_40EBD4 byte+168=d42 作为 VM 入口 PC, sub_4081F8/408408/408E5C/409618 均在调用前 reset=0"),
+    ("saved_PC",43,"调用返回","[SP] 跨链调用前的执行位置保存(调用栈)。sub_4081F8/408408/408E5C 触发 B 链前: d43=d42; End(0) 恢复: d42=d43 然后 d43=-1。新实体初始=-1。源码: sub_4081F8:25 *(a2+172)=*(a2+168)"),
     ("target_dir",56,"目标朝向","type=5:目标朝向(1-8) type=16:把手2概率 type=110:组1Ymin type=200:寻路X(运行时)。源码: sub_408E5C byte+224=d56, sub_4081F8 byte+224, sub_4084E0, sub_408B30"),
     ("saved_y",57,"保存Y","type=5:相机Y偏移 type=16:把手3概率 type=110:组2Xmin type=200:寻路Y(运行时)。源码: sub_408E5C byte+228=d57, sub_4081F8, sub_4084E0, sub_408B30"),
     ("alt_tele_x",60,"备选传送X","type=10:相机偏移X type=110:组2Ymax type=200:备选传送X。源码: sub_408E5C byte+240=d60, sub_4081F8:31,sub_408B30"),
@@ -1778,14 +1778,60 @@ class MatEditor:
         # 构建编辑字段组 + 位域 checkbutton 双向同步
         self._edit_vars = {}
         self._param_labels = {}  # di → (label_widget, default_text, default_tooltip)
-        self._build_group("基础属性", BASIC_FIELDS, 0)
-        self._build_group("标志位", FLAG_FIELDS, 1)
-        self._build_group("运行时(只读)", RUNTIME_FIELDS, 2)
-        self._build_group("动画", ANIM_FIELDS, 3)
-        self._build_group("位置", POS_FIELDS, 4)
-        self._build_group("脚本", SCRIPT_FIELDS, 5)
-        self._build_group("交互", INTERACT_FIELDS, 6)
-        self._build_group("物品(type110)", ITEM_FIELDS, 7)
+
+        # === 基础属性: 左(type+scene) 右(flags) ===
+        self._build_basic_group()
+        # === 按 dword 范围分组 ===
+        # 8-28: 显示/动画/位置/渲染 (去重)
+        GROUP_8_28 = []; _seen8 = set()
+        _skip_8_28 = {12, 14, 15, 16, 17, 22, 25, 26, 27}  # 运行时/中间字段，参数面板不显示
+        for fields in (BASIC_FIELDS, RUNTIME_FIELDS, POS_FIELDS, INTERACT_FIELDS, SCRIPT_FIELDS):
+            for f in fields:
+                if 8 <= f[1] <= 28 and f[1] not in _seen8 and f[1] not in _skip_8_28:
+                    GROUP_8_28.append(f); _seen8.add(f[1])
+        # 排序: d13(朝向) 排在 d21(碰撞高) 之后
+        _order_8_28 = {13: 21.5}
+        GROUP_8_28.sort(key=lambda f: _order_8_28.get(f[1], f[1]))
+        self._build_group("显示/动画/位置 [8-28]", GROUP_8_28, 1)
+        # 30-44: 脚本/DefUnit (去重)
+        GROUP_30_44 = []; _seen30 = set()
+        for fields in (SCRIPT_FIELDS, RUNTIME_FIELDS):
+            for f in fields:
+                if 30 <= f[1] <= 44 and f[1] not in _seen30:
+                    GROUP_30_44.append(f); _seen30.add(f[1])
+        GROUP_30_44.sort(key=lambda f: f[1])
+        self._build_group("脚本/DefUnit [30-44]", GROUP_30_44, 2)
+        # 50-70: 交互/动画/物品 (去重: 同一di只保留首次出现)
+        GROUP_50_70 = []; _seen50 = set()
+        for fields in (INTERACT_FIELDS, RUNTIME_FIELDS, ANIM_FIELDS, ITEM_FIELDS):
+            for f in fields:
+                if 50 <= f[1] <= 70 and f[1] not in _seen50:
+                    GROUP_50_70.append(f); _seen50.add(f[1])
+        GROUP_50_70.sort(key=lambda f: f[1])
+        self._build_group("交互/动画/物品 [50-70]", GROUP_50_70, 3)
+        # 共享 dword 别名映射: GROUP_50_70 去重后 widget key 可能与 ALL_EDIT_FIELDS 中
+        # 其他字段列表的 key 名不同 (同 di 但不同语义名)。建立别名防止 _show_record KeyError。
+        _dword_aliases = {
+            # d53: ITEM 'item_g1_id' -> ANIM 'dir_mode' (同 di, ANIM 先出现被保留)
+            'item_g1_id': 'dir_mode',
+            # d54: ITEM 'item_g1_idmax' -> ANIM 'target_y'
+            'item_g1_idmax': 'target_y',
+            # d55: BASIC 'shadow_frame' -> ITEM 'item_g1_qty'
+            'shadow_frame': 'item_g1_qty',
+            # d56: ITEM 'item_g1_qtymax' -> RUNTIME 'target_dir'
+            'item_g1_qtymax': 'target_dir',
+            # d57: ITEM 'item_g2_id' -> RUNTIME 'saved_y'
+            'item_g2_id': 'saved_y',
+            # d60: ITEM 'item_g2_qtymax' -> RUNTIME 'alt_tele_x'
+            'item_g2_qtymax': 'alt_tele_x',
+            # d61: ITEM 'item_g3_id' -> RUNTIME 'alt_tele_y'
+            'item_g3_id': 'alt_tele_y',
+            # d64: ITEM 'item_g3_qtymax' -> ANIM 'sub_model'
+            'item_g3_qtymax': 'sub_model',
+        }
+        for alias_key, source_key in _dword_aliases.items():
+            if source_key in self._edit_vars:
+                self._edit_vars[alias_key] = self._edit_vars[source_key]
         # flags ↔ checkbutton 双向同步
         self._sync_lock = False
         _bit_vars = [(self._bit_enable,1), (self._bit_visible,2), (self._bit_pickable,4),
@@ -1828,6 +1874,63 @@ class MatEditor:
         ttk.Button(bf, text="重置", command=self._reset_edit, width=8).pack(side=tk.LEFT, padx=2)
         ttk.Button(bf, text="跳转到空槽…", command=self._goto_empty, width=12).pack(side=tk.RIGHT, padx=2)
 
+    def _build_basic_group(self):
+        """基础属性: 左侧 type+scene_id 上下排列, 右侧 flags"""
+        lf = ttk.LabelFrame(self.edit_inner, text="基础属性", padding=4)
+        lf.grid(row=0, column=0, sticky='ew', padx=2, pady=2)
+        outer = ttk.Frame(lf); outer.pack(fill=tk.X)
+        # 左侧: type + scene_id 上下排列
+        left = ttk.Frame(outer); left.pack(side=tk.LEFT, fill=tk.Y, padx=(0,8))
+        for key, di, label, cmt in [("type",0,"实体类型",""), ("scene_id",1,"场景ID","")]:
+            frm = ttk.Frame(left); frm.pack(fill=tk.X, pady=2)
+            lbl = ttk.Label(frm, text=f"[{di:02d}] {label}", font=FONT_S); lbl.pack(anchor=tk.W)
+            if cmt: self._bind_tooltip(lbl, f"[{di:02d}] {cmt}")
+            self._param_labels[di] = (lbl, label, cmt)
+            if key == 'type':
+                cb = ttk.Combobox(frm, state='readonly', values=[f"{k}-{v}" for k,v in sorted(ENTITY_TYPES.items())], width=14, font=FONT)
+                cb.pack(fill=tk.X); self._edit_vars[key] = cb
+            else:
+                ev = tk.StringVar(); self._edit_vars[key] = ev
+                ttk.Entry(frm, textvariable=ev, width=14, font=FONT).pack(fill=tk.X)
+                if key == 'scene_id':
+                    nl = ttk.Label(frm, text="", foreground='#3366cc', font=FONT_S, wraplength=150)
+                    nl.pack(anchor=tk.W); self._edit_vars['_scene_label'] = nl
+        # 右侧: flags
+        right = ttk.Frame(outer); right.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        for key, di, label, cmt in FLAG_FIELDS:
+            frm = ttk.Frame(right); frm.pack(fill=tk.X, pady=2)
+            lbl = ttk.Label(frm, text=f"[{di:02d}] {label}", font=FONT_S); lbl.pack(anchor=tk.W)
+            if cmt: self._bind_tooltip(lbl, f"[{di:02d}] {cmt}")
+            self._param_labels[di] = (lbl, label, cmt)
+            if key == 'flags':
+                ev = tk.StringVar(); self._edit_vars[key] = ev
+                cbf = ttk.Frame(frm); cbf.pack(fill=tk.X)
+                bits_r1=[("_bit_enable","启用","bit0=启用(Enabled): 参与游戏循环和脚本执行"),
+                         ("_bit_visible","显示","bit1=可见(Visible): 渲染到屏幕"),
+                         ("_bit_pickable","可交互","bit2=可交互(Interactive): 可被点击触发交互"),
+                         ("_bit_hint","提示","bit3=提示标记(Hint): 显示浮动提示")]
+                bits_r2=[("_bit_busy","忙碌","bit4=忙碌(Busy): 脚本交互执行中, 阻塞移动"),
+                         ("_bit_resume","恢复","bit5=恢复(Resume): 交互结束恢复标记"),
+                         ("_bit_taken","已拾取","bit8=已拾取: type110 d52=0模式标记, sub_408B30检查"),
+                         ("_bit_animloop","循环动画","bit16=动画循环: 精灵动画循环播放")]
+                bits_r3=[("_bit_ev12","事件标志A","bit12=事件标志: type20/200渲染/行为控制位"),
+                         ("_bit_ev13","事件标志B","bit13=事件标志(最常用): type20/200 共104实体使用"),
+                         ("_bit_ev14","事件标志C","bit14=事件标志: type20/200 共29实体使用")]
+                self._flags_row_frames = []
+                self._flags_event_cbs = []  # bit12~14 事件标志 checkbox
+                self._flags_all_cbs = []    # 所有 flags checkbox
+                self._flags_hidden = set()  # 当前隐藏的 checkbox
+                rf = ttk.Frame(cbf); rf.pack(fill=tk.X)
+                for attr, text, ttip in bits_r1 + bits_r2 + bits_r3:
+                    cb = ttk.Checkbutton(rf, text=text, variable=getattr(self, attr))
+                    self._bind_tooltip(cb, ttip)
+                    self._flags_all_cbs.append(cb)
+                    if attr in ('_bit_ev12', '_bit_ev13', '_bit_ev14'):
+                        self._flags_event_cbs.append(cb)
+                # 初始 grid 布局 + 自适应换行
+                self._flags_relayout(rf)
+                rf.bind('<Configure>', lambda e: self._flags_relayout(rf))
+
     def _build_group(self,title,fields,row):
         lf=ttk.LabelFrame(self.edit_inner,text=title,padding=4)
         lf.grid(row=row,column=0,sticky='ew',padx=2,pady=2)
@@ -1853,6 +1956,29 @@ class MatEditor:
             elif key=='cursor_id':
                 cb=ttk.Combobox(frm,state='readonly',values=[f"{k}-{v}" for k,v in sorted(_CURSOR_BLOCKS.items())],width=14,font=FONT)
                 cb.pack(fill=tk.X); self._edit_vars[key]=cb
+            elif key=='dialog_color':
+                # dialog_color 存储值 0~31, 对应 FCOLOR 1~32 (+1 偏移)
+                # 使用 Menubutton+Menu 实现带颜色的下拉选择
+                self._dialog_color_val = tk.StringVar(value='0')
+                menu_frame = ttk.Frame(frm); menu_frame.pack(fill=tk.X)
+                # 色块 + Menubutton 内联
+                self._dialog_color_swatch = tk.Canvas(menu_frame, width=18, height=18,
+                                                       highlightthickness=1, bg='#000')
+                self._dialog_color_swatch.pack(side=tk.LEFT, padx=(0,2))
+                mb = tk.Menubutton(menu_frame, text="0-FCOLOR(1)", relief=tk.RAISED,
+                                   font=FONT, width=14, anchor='w', pady=0)
+                mb.pack(side=tk.LEFT, fill=tk.X, expand=True)
+                menu = tk.Menu(mb, tearoff=0)
+                for i in range(32):
+                    hex_color = GAME_COLORS.get(i + 1, '#000')
+                    menu.add_command(
+                        label=f"{i:2d}  FCOLOR({i+1:2d})  ■",
+                        background=hex_color, foreground='#FFF',
+                        activebackground=hex_color, activeforeground='#FFF',
+                        command=lambda v=i: self._on_dialog_color_select(v))
+                mb.config(menu=menu)
+                self._edit_vars[key] = self._dialog_color_val
+                self._edit_vars['_dialog_color_mb'] = mb
             elif key=='flags':
                 ev=tk.StringVar(); self._edit_vars[key]=ev
                 ttk.Entry(frm,textvariable=ev,width=14,font=FONT).pack(fill=tk.X)
@@ -1873,13 +1999,18 @@ class MatEditor:
                          ("_bit_ev13","事件标志B","bit13=事件标志(最常用): type20/200 共104实体使用"),
                          ("_bit_ev14","事件标志C","bit14=事件标志: type20/200 共29实体使用")]
                 self._flags_row_frames = []
-                for ri,row_bits in enumerate([bits_r1,bits_r2,bits_r3]):
-                    rf=ttk.Frame(cbf); rf.pack(fill=tk.X)
-                    self._flags_row_frames.append(rf)
-                    for attr,text,ttip in row_bits:
-                        cb=ttk.Checkbutton(rf,text=text,variable=getattr(self,attr))
-                        cb.pack(side=tk.LEFT,padx=1)
-                        self._bind_tooltip(cb,ttip)
+                self._flags_event_cbs = []  # bit12~14 事件标志 checkbox
+                self._flags_all_cbs = []    # 所有 flags checkbox
+                self._flags_hidden = set()  # 当前隐藏的 checkbox
+                rf=ttk.Frame(cbf); rf.pack(fill=tk.X)
+                for attr,text,ttip in bits_r1+bits_r2+bits_r3:
+                    cb=ttk.Checkbutton(rf,text=text,variable=getattr(self,attr))
+                    self._bind_tooltip(cb,ttip)
+                    self._flags_all_cbs.append(cb)
+                    if attr in ('_bit_ev12', '_bit_ev13', '_bit_ev14'):
+                        self._flags_event_cbs.append(cb)
+                self._flags_relayout(rf)
+                rf.bind('<Configure>', lambda e: self._flags_relayout(rf))
             else:
                 ev=tk.StringVar(); self._edit_vars[key]=ev
                 ttk.Entry(frm,textvariable=ev,width=14,font=FONT).pack(fill=tk.X)
@@ -1909,9 +2040,9 @@ class MatEditor:
             ('pickable', '可交互', 'flags bit2=可交互: 写入拾取缓冲区可被点击。sub_408E5C: 点击触发交互'),
             ('tick', 'Tick周期', 'd4=Tick: 控制脚本执行频率。sub_409618: d5递增到d4时触发'),
             ('timer', '定时器', 'd3=定时器: >0时实体暂停处理。sub_409618: 每帧递减'),
-            ('chain_a', 'A链(自动)', '子场景A = 自动运行(Tick)脚本。sub_409618: cur_A>0时每Tick自动执行'),
-            ('chain_b', 'B链(触发)', '子场景B = 触发(交互)脚本。sub_4081F8/408408/4084E0/408E5C: 交互时执行'),
-            ('chain_c', 'C链(其他)', '子场景C = 保留链。可能由特定游戏事件触发'),
+            ('chain_a', 'A链(自动)', 'DEFINE链A = Tick自动执行。sub_409618: cur_A>0时每Tick调用VM, End(1)递增'),
+            ('chain_b', 'B链(触发)', 'DEFINE链B = 触发执行。sub_4081F8/408408/4084E0/408E5C: 交互时调用VM, End(2)递增'),
+            ('chain_c', 'C链(保留)', 'DEFINE链C = 保留链, 当前游戏引擎未使用。End(3)递增'),
             ('trigger', '触发方式', '基于实体类型和逆向分析: type=5:仅脚本 type=10:接近传送 type=15:接近触发 type=16:接近遇敌 type=20/200:点击对话 type=110:点击机关'),
         ]
         for ri, (key, label, tip) in enumerate(sched_items):
@@ -2143,16 +2274,48 @@ class MatEditor:
             else:
                 lbl.config(text=f"[{di:02d}] d{di}", foreground='#888')
 
-    def _update_flags_visibility(self, tval):
-        """根据实体类型显示/隐藏 flags 复选框行"""
-        if not hasattr(self, '_flags_row_frames') or not self._flags_row_frames:
+    def _flags_relayout(self, container):
+        """动态 grid 布局: 根据容器宽度自动换行排列 flags checkbox"""
+        if not hasattr(self, '_flags_all_cbs') or not self._flags_all_cbs:
             return
-        # 第3行 (bit12~14): 仅 type=20(事件对象) 或 type=200(NPC) 时显示
-        row3 = self._flags_row_frames[2]
-        if tval in (20, 200):
-            row3.pack(fill=tk.X)
-        else:
-            row3.pack_forget()
+        w = container.winfo_width()
+        if w < 20:
+            w = 400  # 默认宽度估算
+        hidden = getattr(self, '_flags_hidden', set())
+        # 估算每个 checkbox 宽度: 中文约 2 字符 + 勾选框 ~20px, 每字符约 8px
+        visible = [cb for cb in self._flags_all_cbs if cb not in hidden]
+        cols = max(1, min(len(visible), w // 90))
+        for i, cb in enumerate(visible):
+            r, c = divmod(i, cols)
+            cb.grid(row=r, column=c, sticky='w', padx=2)
+        for cb in hidden:
+            cb.grid_remove()
+        for ci in range(cols):
+            container.columnconfigure(ci, weight=1)
+
+    def _update_flags_visibility(self, tval):
+        """根据实体类型显示/隐藏 flags 事件标志 checkbox"""
+        if not hasattr(self, '_flags_event_cbs') or not self._flags_event_cbs:
+            return
+        # bit12~14 事件标志: 仅 type=20(事件对象) 或 type=200(NPC) 时显示
+        show = tval in (20, 200)
+        for cb in self._flags_event_cbs:
+            if show:
+                self._flags_hidden.discard(cb)
+            else:
+                self._flags_hidden.add(cb)
+        # 触发重新布局
+        if self._flags_all_cbs:
+            self._flags_relayout(self._flags_all_cbs[0].master)
+
+    def _on_dialog_color_select(self, val):
+        """Menubutton 颜色选择回调: 更新色块预览 + Menubutton 文本 + StringVar"""
+        hex_color = GAME_COLORS.get(val + 1, '#000')
+        self._dialog_color_swatch.configure(bg=hex_color)
+        self._dialog_color_val.set(str(val))
+        if '_dialog_color_mb' in self._edit_vars:
+            self._edit_vars['_dialog_color_mb'].configure(
+                text=f"{val}-FCOLOR({val+1})")
 
     def _sync_entity_filter_to_scene(self, sid):
         """场景选中后同步筛选左侧实体列表为该场景的实体"""
@@ -2830,9 +2993,9 @@ class MatEditor:
         entity_id = rec['index']
         # 链类型标签 (基于逆向分析 sub_409618/sub_408E5C 等)
         chain_labels = {
-            'A': ('⚡ 自动(Tick)', 'A链=自动运行: 每Tick周期自动执行 (sub_409618: cur_A>0触发)'),
-            'B': ('👆 触发(交互)', 'B链=触发执行: 玩家交互时执行 (sub_4081F8/408408/4084E0/408E5C)'),
-            'C': ('✱ 其他', 'C链=保留: 可能由特定游戏事件触发'),
+            'A': ('⚡ A链(Tick)', 'DEFINE链A: 每Tick自动执行 (sub_409618: cur_A>0触发VM)'),
+            'B': ('👆 B链(触发)', 'DEFINE链B: 交互/传送/战斗触发 (sub_4081F8/408408/4084E0/408E5C)'),
+            'C': ('✱ C链(保留)', 'DEFINE链C: 引擎保留, 当前未使用'),
         }
         for sub_name, h_di, mx_di, cur_di in [('A', 39, 30, 33), ('B', 40, 31, 34), ('C', 41, 32, 35)]:
             h = rec.get(f'd{h_di}', 0); mx = rec.get(f'd{mx_di}', 0)
@@ -3615,7 +3778,10 @@ class MatEditor:
             elif key=='blend_mode': self._edit_vars[key].set(f"{val}-{BLEND_MODES.get(val,'未知')}")
             elif key=='shadow_frame': self._edit_vars[key].set(f"{val}-{SHADOW_LABELS.get(val,'未知')}")
             elif key=='cursor_id': self._edit_vars[key].set(f"{val}-{_CURSOR_BLOCKS.get(val,'未知')}")
-            else: self._edit_vars[key].set(str(val))
+            elif key=='dialog_color':
+                self._on_dialog_color_select(val)
+            elif key in self._edit_vars:
+                self._edit_vars[key].set(str(val))
         for key,di,label,cmt in RUNTIME_FIELDS:
             if key in self._edit_vars: self._edit_vars[key].set(str(rec[f'd{di}']))
         # 填充"全部"标签页的字段 (raw_N 已知 + dN 未知)
@@ -3681,9 +3847,10 @@ class MatEditor:
                     self._bit_taken,self._bit_animloop,
                     self._bit_ev12,self._bit_ev13,self._bit_ev14):
             bv.set(False)
-        # 隐藏 type20 专属 flags 行
-        if hasattr(self, '_flags_row_frames') and len(self._flags_row_frames) >= 3:
-            self._flags_row_frames[2].pack_forget()
+        # 隐藏事件标志 checkbox
+        if hasattr(self, '_flags_event_cbs'):
+            for cb in self._flags_event_cbs:
+                self._flags_hidden.add(cb)
         self._sync_lock=False
 
     def _read_form(self):
