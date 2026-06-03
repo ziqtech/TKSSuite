@@ -286,9 +286,9 @@ SCRIPT_FIELDS = [
     ("head_C",41,"C链·头索引","DEFINE链C 的首个 TKDefUnit 记录索引。保留链, 当前游戏未使用"),
     ("defunit_idx",44,"当前DefUnit#","运行时: sub_4066F0 链遍历时填入当前节点的 DefUnit 索引。文件中值=-1为正常(尚未遍历)。源码: sub_40EBD4 line18 dword_51AF40[96*a1+44], dword_753500+16*idx+4读取链数据"),]
 INTERACT_FIELDS = [
-    ("cond_id",50,"条件匹配","0=无条件。type=5/15/16:与player[d22]匹配才可交互。type=110(d52=0):帧计数器>0启用拾取后动画。type=200:条件角色。源码: sub_4081F8 byte+200=d50, sub_408E5C byte+200条件检查"),
+    ("cond_id",50,"条件参数","语义视实体类型而定: type=10传送/15触发/16战斗→门禁阈值(须=player_d22); type=110机关→动画触发器(d52=0时>0播放拾取动画); type=200NPC→引擎不使用; type=5脚本→自由字段。源码: sub_4081F8:15/408408:13/4084E0:25 比对player_d22; sub_408B30:74 帧递增"),
     ("dir_mask",51,"方向掩码","bit0-7对应朝向1-8, 0=任意方向。type=110(d52=0):动画帧基偏移。type=200:立绘ID(Cha.JVG块)。源码: sub_4081F8 byte+204=d51作方向掩码(d51&(1<<(player_d13-1))), sub_408B30 byte+204"),
-    ("target_scene",52,"目标场景","type=5:目标地图ID type=16:把手1道具 type=110:行为模式(0=标记bit8+动画 1=清除实体 2+=无行为)。type=200:动画句柄(运行时)。源码: sub_4081F8 *(_WORD*)(a2+208)=ChangeScene参数, sub_408B30 byte+208=d52行为模式判断(V3==0标记bit8/V3==1禁用隐藏)"),
+    ("target_scene",52,"功能参数","语义视类型而定: type=10→目标地图ID(ChangeScene参数); type=16→战斗组1-ID; type=110→行为模式(0=标记+动画 1=清除隐藏 2+无, 游戏中全为1); type=5/15/20/200→引擎不使用(全为0)。源码: sub_4081F8 *(_WORD*)(a2+208)传送; sub_4084E0 a2+208战斗; sub_408B30 byte+208=d52行为模式"),
     ("interact_dist",15,"交互距离","玩家可交互的最大曼哈顿距离(像素)。0=无距离限制。源码: sub_40818C dist=|px-ex|+|py-ey|, d15==0则return 1(总是可交互), dist>d15则return 0(太远), 被sub_408E5C(点击)和sub_4099B0(接近)调用"),]
 RUNTIME_FIELDS = [
     ("tick_counter",5,"帧累加器","运行时帧累加器。每帧+1, 达到d[4](执行间隔)时归零并触发实体逻辑。源码: sub_409618 if(++d5>=d4){d5=0; 执行}。纯运行时字段, 地图文件中几乎全为0"),
@@ -296,7 +296,7 @@ RUNTIME_FIELDS = [
     ("frame_idx",14,"当前帧","当前渲染帧索引(JVG全局帧号)。sub_405CBC初始化: d14=d17+d65; sub_4077E4朝向变更: d14=d17+d52+d16*dir_mult; sub_408704动画tick: d14++并循环。sub_406864读取d14传给渲染函数决定显示哪帧"),
     ("frame_count",16,"总帧数","JVG块内总帧数。源码: sub_405CBC v2[16]=sub_4540E8(JVG,block), sub_4077E4 d16用于方向帧计算"),
     ("frame_cur",17,"帧计数","动画当前帧/基础帧。源码: sub_4077E4 a1[17], sub_405CBC type200行走动画"),
-    ("priority",22,"优先级/α","实体优先级/像素透明度。源码: sub_406864 byte+88=d22, sub_406E50计算, 决定简单/变换渲染分支"),
+    ("priority",22,"优先级/α","普通实体: 渲染优先级。玩家实体: 被脚本复用为剧情进度寄存器, 与 d50(通过条件) 配合实现门禁系统。sub_4081F8/408408/4084E0 均读取 player_d22 与实体 d50 比对。源码: sub_406864 byte+88=d22 渲染; sub_4081F8:15 门禁比对"),
     ("sprite_off_x",26,"精灵偏移X","精灵 X 屏幕偏移, 叠加到坐标。源码: sub_406864 byte+104=d26, screen_x+=sprite_off_x"),
     ("sprite_off_y",27,"精灵偏移Y","精灵 Y 屏幕偏移, 叠加到坐标。源码: sub_406864 byte+108=d27, screen_y+=sprite_off_y"),
     ("rt_ref_id",36,"运行时引用A","运行时实体身份指针。hi16=自身索引, lo16=0。格式: entity_index<<16。纯运行时字段, 地图文件中非零值为运行时残留。源码: 运行时转储反编译中无任何实体逻辑函数引用byte+144(d36), 属未文档化的运行时内部状态"),
@@ -334,7 +334,7 @@ _TYPE_LABELS = {
         # type=5 无类型特定处理, d50~d62 由脚本自由使用 (通过 SetVar/GetItem 等命令读写)
     },
     10: {  # 出入传送点 sub_4081F8 + 地形块连线 sub_405CBC
-        50:("条件匹配","0=无条件, 非零须与player[d22]匹配才可传送。源码: sub_4081F8 byte+200=d50条件检查"),
+        50:("通过条件","0=无限制, >0时须与玩家 d22 相等才可传送。源码: sub_4081F8:15 if(d50>0&&player_d22≠d50)阻断"),
         51:("方向掩码","bit0-7对应朝向1-8, 0=任意方向。源码: sub_4081F8 byte+204=d51, d51&(1<<(player_direction-1))掩码检查"),
         52:("目标地图ID","ChangeScene的目标场景ID。源码: sub_4081F8 *(_WORD*)(a2+208)作为ChangeScene第1参数"),
         53:("目标X","传送后X坐标。源码: sub_4081F8 *(_WORD*)(a2+212)作为ChangeScene第2参数"),
@@ -352,11 +352,11 @@ _TYPE_LABELS = {
     },
     15: {  # 事件触发区 — 玩家接近碰撞盒时自动触发脚本 (sub_408408)
         34:("脚本开关","d34(cur_B)非零时触发才生效。源码: sub_408408 a2[34]==0则return 0"),
-        50:("条件匹配","0=无条件, 非零须与玩家ID匹配。源码: sub_408408 a2[50]>0时比较dword_8242E0+88"),
+        50:("通过条件","0=无限制, >0时须与玩家 d22 相等才触发。源码: sub_408408:13 if(d50>0&&player_d22≠d50)阻断"),
         51:("方向掩码","bit0-7对应朝向1-8, 0=任意。源码: sub_408408 a2[51]&(1<<(player_dir-1))"),
     },
     16: {  # 随机战斗区 — 玩家进入碰撞盒概率触发战斗 (sub_4084E0)
-        50:("条件匹配","0=无条件, 非零须与玩家ID匹配。源码: sub_4084E0 *(a2+200)>0时比较dword_8242E0+88"),
+        50:("通过条件","0=无限制, >0时须与玩家 d22 相等才触发战斗。源码: sub_4084E0:25 if(d50<=0||d50==player_d22)放行"),
         51:("方向掩码","bit0-7对应朝向1-8, 0=任意。源码: sub_4084E0 *(a2+204)&(1<<(player_dir-1))"),
         52:("战斗组1-ID","第1组战斗ID。源码: sub_4084E0 a2+208, 随机数<阈值时选中"),
         53:("战斗组1-概率","第1组遇敌概率阈值(0-100)。源码: sub_4084E0 v5 < v4[3]判断"),
@@ -369,7 +369,7 @@ _TYPE_LABELS = {
         62:("战斗背景ID","战斗场景背景。源码: sub_4084E0 sub_40EB10(v7, *(a2+248))第2参数"),
     },
     110: {  # 特殊机关 sub_408B30
-        50:("帧计数器","d52=0时>0启用拾取后动画; 此游戏全为0。源码: sub_408B30 byte+200=d50, d52==0且d50>0时+1动画播放"),
+        50:("帧计数器","d52=0时>0启用拾取后动画(帧递增); 此游戏全为0。源码: sub_408B30:74 if(d50){++d68; d14=d68+d51}"),
         51:("动画帧基偏移","d52=0时: frame_idx=frame_cur+d51。源码: sub_408B30 byte+204=d51, v2[51]=sub_45410C(JVG,v2[50],0), d14=d17+d51"),
         52:("行为模式","0=标记bit8+可选动画 1=清除实体(禁用+隐藏) 2+=无行为; 此游戏全为1。源码: sub_408B30 byte+208=d52, V3==0:设bit8, V3==1:清bit0+清bit1"),
         53:("组1-物品ID","随机范围最小值; Xmin==Xmax=固定掉落。源码: sub_408B30 byte+212=d53"),
@@ -386,7 +386,7 @@ _TYPE_LABELS = {
         64:("组3-数量上限","。源码: sub_408B30 byte+256=d64"),
     },
     200: {  # NPC角色 sub_406864 + sub_405CBC
-        50:("条件角色",""), 51:("立绘ID","Cha.JVG块索引。源码: sub_405CBC v2[51]作为sub_45410C参数获取立绘句柄"),
+        50:("通过条件","NPC未使用(引擎检查d34而非d50)。源码: sub_408E5C 不读取此字段"), 51:("立绘ID","Cha.JVG块索引。源码: sub_405CBC v2[51]作为sub_45410C参数获取立绘句柄"),
         52:("动画句柄","运行时。源码: sub_405CBC v2[52]=sub_45410C(ChaJVG,v2[51])保存立绘精灵句柄"), 53:("方向模式","4=四向 8=八向 0=静态。源码: sub_4077E4 a1[53]==4四向分支, a1[53]==8八向分支, sub_405CBC v2[53]"),
         55:("阴影帧","Cha.JVG全局帧索引(0=无1=小2=大)。源码: sub_406864 byte+220>0时调用sub_458020/sub_45AA08绘制阴影"), 56:("寻路X","运行时。源码: sub_408E5C byte+224=d56, 交互时保存/恢复"),
         57:("寻路Y","运行时。源码: sub_408E5C byte+228=d57, 交互时保存/恢复"), 64:("子模型","Ani.JVG块索引(行走动画)。源码: sub_405CBC v2[64]作为Ani.JVG块ID, v2[65]=sub_45410C(Ani,v2[64])"),
@@ -1650,7 +1650,8 @@ class MatEditor:
         _ent_header = ttk.Frame(entity_frame)
         _ent_header.pack(fill=tk.X, pady=(2,2))
         ttk.Label(_ent_header, text="实体列表").pack(side=tk.LEFT)
-        ttk.Button(_ent_header, text="新增实体", command=self._new_record, width=8).pack(side=tk.RIGHT)
+        ttk.Button(_ent_header, text="删除", command=self._clear_current, width=6).pack(side=tk.RIGHT, padx=(2,0))
+        ttk.Button(_ent_header, text="新增", command=self._new_record, width=6).pack(side=tk.RIGHT)
         # 搜索/筛选工具栏
         tb = ttk.Frame(entity_frame); tb.pack(fill=tk.X, pady=(0,2))
         ttk.Label(tb,text="搜索:").pack(side=tk.LEFT)
@@ -1784,23 +1785,16 @@ class MatEditor:
         # === 按 dword 范围分组 ===
         # 8-28: 显示/动画/位置/渲染 (去重)
         GROUP_8_28 = []; _seen8 = set()
-        _skip_8_28 = {12, 14, 15, 16, 17, 22, 25, 26, 27}  # 运行时/中间字段，参数面板不显示
+        _skip_8_28 = {12, 14, 16, 17, 22, 25, 26, 27}  # 运行时/中间字段，参数面板不显示
         for fields in (BASIC_FIELDS, RUNTIME_FIELDS, POS_FIELDS, INTERACT_FIELDS, SCRIPT_FIELDS):
             for f in fields:
                 if 8 <= f[1] <= 28 and f[1] not in _seen8 and f[1] not in _skip_8_28:
                     GROUP_8_28.append(f); _seen8.add(f[1])
-        # 排序: d13(朝向) 排在 d21(碰撞高) 之后
-        _order_8_28 = {13: 21.5}
+        # 排序: d13(朝向)→d15(交互距离)→d21(碰撞高)...
+        _order_8_28 = {13: 21.5, 15: 21.6}
         GROUP_8_28.sort(key=lambda f: _order_8_28.get(f[1], f[1]))
         self._build_group("显示/动画/位置 [8-28]", GROUP_8_28, 1)
-        # 30-44: 脚本/DefUnit (去重)
-        GROUP_30_44 = []; _seen30 = set()
-        for fields in (SCRIPT_FIELDS, RUNTIME_FIELDS):
-            for f in fields:
-                if 30 <= f[1] <= 44 and f[1] not in _seen30:
-                    GROUP_30_44.append(f); _seen30.add(f[1])
-        GROUP_30_44.sort(key=lambda f: f[1])
-        self._build_group("脚本/DefUnit [30-44]", GROUP_30_44, 2)
+        # 30-44: 脚本/DefUnit — 已移除, 仅在"全部"标签页编辑
         # 50-70: 交互/动画/物品 (去重: 同一di只保留首次出现)
         GROUP_50_70 = []; _seen50 = set()
         for fields in (INTERACT_FIELDS, RUNTIME_FIELDS, ANIM_FIELDS, ITEM_FIELDS):
@@ -1808,7 +1802,7 @@ class MatEditor:
                 if 50 <= f[1] <= 70 and f[1] not in _seen50:
                     GROUP_50_70.append(f); _seen50.add(f[1])
         GROUP_50_70.sort(key=lambda f: f[1])
-        self._build_group("交互/动画/物品 [50-70]", GROUP_50_70, 3)
+        self._build_group("交互/动画/物品 [50-70]", GROUP_50_70, 2)
         # 共享 dword 别名映射: GROUP_50_70 去重后 widget key 可能与 ALL_EDIT_FIELDS 中
         # 其他字段列表的 key 名不同 (同 di 但不同语义名)。建立别名防止 _show_record KeyError。
         _dword_aliases = {
@@ -1889,6 +1883,7 @@ class MatEditor:
             if key == 'type':
                 cb = ttk.Combobox(frm, state='readonly', values=[f"{k}-{v}" for k,v in sorted(ENTITY_TYPES.items())], width=14, font=FONT)
                 cb.pack(fill=tk.X); self._edit_vars[key] = cb
+                cb.bind('<<ComboboxSelected>>', lambda e, d=di: self._sync_cb_to_raw(d))
             else:
                 ev = tk.StringVar(); self._edit_vars[key] = ev
                 ttk.Entry(frm, textvariable=ev, width=14, font=FONT).pack(fill=tk.X)
@@ -1944,18 +1939,23 @@ class MatEditor:
             if key=='type':
                 cb=ttk.Combobox(frm,state='readonly',values=[f"{k}-{v}" for k,v in sorted(ENTITY_TYPES.items())],width=14,font=FONT)
                 cb.pack(fill=tk.X); self._edit_vars[key]=cb
+                cb.bind('<<ComboboxSelected>>', lambda e, d=di: self._sync_cb_to_raw(d))
             elif key=='anim_set':
                 cb=ttk.Combobox(frm,state='readonly',values=[f"{k}-{v}" for k,v in ANIM_SETS.items()],width=16,font=FONT)
                 cb.pack(fill=tk.X); self._edit_vars[key]=cb
+                cb.bind('<<ComboboxSelected>>', lambda e, d=di: self._sync_cb_to_raw(d))
             elif key=='blend_mode':
                 cb=ttk.Combobox(frm,state='readonly',values=["0-正常","1-染色","2-加法发光","3-减法压暗","4-亮度alpha","5-水平翻转"],width=16,font=FONT)
                 cb.pack(fill=tk.X); self._edit_vars[key]=cb
+                cb.bind('<<ComboboxSelected>>', lambda e, d=di: self._sync_cb_to_raw(d))
             elif key=='shadow_frame':
                 cb=ttk.Combobox(frm,state='readonly',values=["0-无阴影","1-小阴影(39×23)","2-大阴影(65×33)"],width=16,font=FONT)
                 cb.pack(fill=tk.X); self._edit_vars[key]=cb
+                cb.bind('<<ComboboxSelected>>', lambda e, d=di: self._sync_cb_to_raw(d))
             elif key=='cursor_id':
                 cb=ttk.Combobox(frm,state='readonly',values=[f"{k}-{v}" for k,v in sorted(_CURSOR_BLOCKS.items())],width=14,font=FONT)
                 cb.pack(fill=tk.X); self._edit_vars[key]=cb
+                cb.bind('<<ComboboxSelected>>', lambda e, d=di: self._sync_cb_to_raw(d))
             elif key=='dialog_color':
                 # dialog_color 存储值 0~31, 对应 FCOLOR 1~32 (+1 偏移)
                 # 使用 Menubutton+Menu 实现带颜色的下拉选择
@@ -2214,7 +2214,7 @@ class MatEditor:
             for name, di, label, cmt in fields:
                 known[di] = (name, label, cmt)
 
-        # 每行 4 个字段, 独立 key 避免与 "参数"tab 的 Combobox 冲突
+        # 每行 4 个字段 — 与参数tab共享 StringVar 实现双向同步
         self._all_labels = {}  # di → label_widget
         for di in range(96):
             r, c = divmod(di, 4)
@@ -2223,12 +2223,18 @@ class MatEditor:
                 name, label, cmt = known[di]
                 key = f'raw_{di}'
                 lbl = ttk.Label(frm, text=f"[{di:02d}] {label}", font=FONT_S)
+                # 若参数tab已有同名StringVar则复用, 实现双标签页值互通
+                if name in self._edit_vars and isinstance(self._edit_vars[name], tk.StringVar):
+                    ev = self._edit_vars[name]
+                else:
+                    ev = tk.StringVar()
             else:
                 key = f'd{di}'; label = f'd{di}'; cmt = ""
                 lbl = ttk.Label(frm, text=f"[{di:02d}] d{di}", font=FONT_S, foreground='#888')
+                ev = tk.StringVar()
             lbl.pack(anchor=tk.W)
             if cmt: self._bind_tooltip(lbl, f"[{di:02d}] {cmt}")
-            ev = tk.StringVar(); self._edit_vars[key] = ev
+            self._edit_vars[key] = ev
             ttk.Entry(frm, textvariable=ev, width=10, font=FONT_S).pack(fill=tk.X)
             self._all_labels[di] = lbl
 
@@ -2316,6 +2322,24 @@ class MatEditor:
         if '_dialog_color_mb' in self._edit_vars:
             self._edit_vars['_dialog_color_mb'].configure(
                 text=f"{val}-FCOLOR({val+1})")
+
+    def _sync_cb_to_raw(self, di):
+        """Combobox 选中时同步原始值到 '全部'tab 的 raw_N"""
+        for prefix in ('raw_', 'd'):
+            key = f'{prefix}{di}'
+            if key in self._edit_vars and isinstance(self._edit_vars[key], tk.StringVar):
+                # 从参数tab找对应 Combobox 并提取值
+                for fields in (ALL_EDIT_FIELDS, RUNTIME_FIELDS):
+                    for cb_key, cb_di, *_ in fields:
+                        if cb_di == di and cb_key in self._edit_vars:
+                            cb = self._edit_vars[cb_key]
+                            if isinstance(cb, ttk.Combobox):
+                                try:
+                                    v = int(cb.get().split('-')[0])
+                                    self._edit_vars[key].set(str(v))
+                                except ValueError:
+                                    pass
+                            return
 
     def _sync_entity_filter_to_scene(self, sid):
         """场景选中后同步筛选左侧实体列表为该场景的实体"""
@@ -3855,9 +3879,8 @@ class MatEditor:
 
     def _read_form(self):
         vals = {}
-        # 已覆盖的索引
         covered = set()
-        # 1. 先读 "全部"tab 的 raw_N 字段 (优先级最高, 用户在全部tab的编辑生效)
+        # 1. 先读 "全部"tab 的 raw_N/dN (共享StringVar的字段两边同步, Combobox字段读原始值)
         for di in range(96):
             for prefix in ('raw_', 'd'):
                 key = f'{prefix}{di}'
@@ -3867,7 +3890,7 @@ class MatEditor:
                     vals[f'd{di}'] = v
                     covered.add(di)
                     break
-        # 2. 再读 "参数"tab 的字段 (仅补充全部tab未覆盖的)
+        # 2. 补充 "全部"tab 未覆盖的 (仅有参数tab Combobox 等无raw_N的字段)
         for fields in (ALL_EDIT_FIELDS, RUNTIME_FIELDS):
             for key, di, label, cmt in fields:
                 if di in covered: continue
@@ -3876,9 +3899,11 @@ class MatEditor:
                 if isinstance(var, ttk.Combobox):
                     try: v = int(var.get().split('-')[0])
                     except: return None
-                else:
+                elif isinstance(var, tk.StringVar):
                     try: v = int(var.get())
                     except: return None
+                else:
+                    continue
                 vals[f'd{di}'] = v
         return vals
     def _apply_edit(self):
@@ -3946,6 +3971,12 @@ class MatEditor:
         bf=ttk.Frame(win); bf.grid(row=2,column=0,columnspan=3,pady=(5,10))
         ttk.Button(bf,text="确定",command=_ok).pack(side=tk.LEFT,padx=8)
         ttk.Button(bf,text="取消",command=win.destroy).pack(side=tk.LEFT,padx=8)
+        # 居中弹出
+        win.update_idletasks()
+        pw, ph = win.winfo_width(), win.winfo_height()
+        rx, ry = self.root.winfo_x(), self.root.winfo_y()
+        rw, rh = self.root.winfo_width(), self.root.winfo_height()
+        win.geometry(f"+{rx+(rw-pw)//2}+{ry+(rh-ph)//2}")
         win.wait_window()
         if not confirmed[0]: return
 
@@ -3957,10 +3988,30 @@ class MatEditor:
         for di in range(DWORD_COUNT): rec[f'd{di}']=0
         rec['d0']=sel_type; rec['d1']=sel_scene
         rec['d2']=3       # 启用+可见
+        # 脚本VM初始值: -1=空闲/无保存, 否则VM从错误位置执行
+        rec['d42']=-1     # 执行位置·PC: -1=空闲
+        rec['d43']=-1     # 调用返回·SP: -1=空栈
+        rec['d44']=-1     # 当前DefUnit#: -1=未遍历
+        # 传送点默认值
         rec['d8']=3 if sel_type==10 else 0  # 传送点光标动画=开门
-        rec['d10']=400; rec['d11']=384  # 地图中心附近
-        rec['d18']=400; rec['d19']=384  # 地形块用 bound_x/y 定位
+        rec['d18']=400; rec['d19']=384  # 碰撞区原点(地图中心附近)
         rec['d20']=30 if sel_type==110 else 40; rec['d21']=30 if sel_type==110 else 24
+        # 坐标 = 碰撞区中心, 使碰撞区以坐标为中心
+        rec['d10']=rec['d18'] + rec['d20']//2
+        rec['d11']=rec['d19'] + rec['d21']//2
+        # 朝向: 仅 NPC 默认向下, 其他类型不设置(保持0)
+        # type=20/200 默认渲染参数
+        if sel_type in (20, 200):
+            rec['d9']=1      # anim_set: Cha.JVG(角色)
+            rec['d55']=1     # 阴影帧: 1=小阴影
+            if sel_type == 20:
+                rec['d53']=0  # 事件对象: 静态(无方向)
+            else:
+                rec['d53']=4  # NPC: 四向
+                rec['d13']=4  # NPC: 朝向向下
+        # 交互距离: 基于游戏数据统计, 取各类型最常见值
+        _d15_defaults = {200:64, 20:64, 10:0, 16:300, 110:80, 15:64, 5:0}
+        rec['d15'] = _d15_defaults.get(sel_type, 64)
 
         self._dirty=True; self._apply_filter()
         for item in self.tree.get_children():
