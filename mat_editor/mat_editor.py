@@ -1639,8 +1639,13 @@ class MatEditor:
         self._vis_tree.bind('<<TreeviewSelect>>', self._on_vis_scene_select)
 
         # 下方: 实体列表 + 搜索工具栏
-        entity_frame = ttk.LabelFrame(left_pw, text="实体列表", padding=2)
+        entity_frame = ttk.Frame(left_pw)
         left_pw.add(entity_frame, weight=1)
+        # 标题行: 标题靠左 按钮靠右
+        _ent_header = ttk.Frame(entity_frame)
+        _ent_header.pack(fill=tk.X, pady=(2,2))
+        ttk.Label(_ent_header, text="实体列表").pack(side=tk.LEFT)
+        ttk.Button(_ent_header, text="新增实体", command=self._new_record, width=8).pack(side=tk.RIGHT)
         # 搜索/筛选工具栏
         tb = ttk.Frame(entity_frame); tb.pack(fill=tk.X, pady=(0,2))
         ttk.Label(tb,text="搜索:").pack(side=tk.LEFT)
@@ -1687,17 +1692,13 @@ class MatEditor:
         center_frame = ttk.Frame(main_pw)
         main_pw.add(center_frame, weight=6)
 
-        # 顶部工具栏
+        # 顶部工具栏 (两行)
         top = ttk.Frame(center_frame); top.pack(fill=tk.X, pady=(0,2))
+        # 第一行: 场景选择、显示模式、动画、刷新、编辑
         ttk.Label(top, text="场景:").pack(side=tk.LEFT)
         self._vis_scene_combo = ttk.Combobox(top, state='readonly', width=20)
         self._vis_scene_combo.pack(side=tk.LEFT, padx=2)
         self._vis_scene_combo.bind('<<ComboboxSelected>>', lambda e: self._on_vis_combo_select())
-        ttk.Separator(top, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=3)
-        for tval in [5,10,15,16,20,110,200]:
-            ttk.Checkbutton(top, text=ENTITY_TYPES.get(tval,f"T{tval}"),
-                            variable=self._vis_show_types[tval],
-                            command=self._vis_redraw).pack(side=tk.LEFT, padx=1)
         ttk.Separator(top, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=3)
         ttk.Label(top, text="显示:").pack(side=tk.LEFT)
         cb_mode = ttk.Combobox(top, textvariable=self._vis_display_mode,
@@ -1720,8 +1721,13 @@ class MatEditor:
         self._vis_edit_check = ttk.Checkbutton(top, text="允许拖动", variable=self._vis_edit_mode,
                                                 command=self._on_edit_mode_change)
         self._vis_edit_check.pack(side=tk.LEFT, padx=1)
-        ttk.Separator(top, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=3)
-        ttk.Button(top, text="新增实体", command=self._new_record, width=8).pack(side=tk.LEFT, padx=1)
+        # 第二行: 实体类型筛选
+        top2 = ttk.Frame(center_frame); top2.pack(fill=tk.X, pady=(0,2))
+        ttk.Label(top2, text="类型:").pack(side=tk.LEFT)
+        for tval in [5,10,15,16,20,110,200]:
+            ttk.Checkbutton(top2, text=ENTITY_TYPES.get(tval,f"T{tval}"),
+                            variable=self._vis_show_types[tval],
+                            command=self._vis_redraw).pack(side=tk.LEFT, padx=1)
 
         # 地图画布
         cf = ttk.Frame(center_frame); cf.pack(fill=tk.BOTH, expand=True)
@@ -2214,12 +2220,12 @@ class MatEditor:
             return
         ents.sort(key=lambda r: r['d19'] if r['d0'] == 10 else r['d11'])
 
-        # 画布尺寸
+        # 画布尺寸 (实体按绝对坐标绘制, 需覆盖到最大坐标+余量)
         xs = [r['d10'] for r in ents]; ys = [r['d11'] for r in ents]
-        minx, maxx = min(xs)-50, max(xs)+50; miny, maxy = min(ys)-50, max(ys)+50
-        w = max(MAX_MAP_W, maxx - minx + 200); h = max(MAX_MAP_H, maxy - miny + 200)
-        self._vis_canvas.configure(scrollregion=(0, 0, w, h))
-
+        right = max(r['d18']+r['d20'] for r in ents if r['d20']>0) if any(r['d20']>0 for r in ents) else max(xs)
+        bottom = max(r['d19']+r['d21'] for r in ents if r['d21']>0) if any(r['d21']>0 for r in ents) else max(ys)
+        w = max(MAX_MAP_W, max(max(xs), right) + 300)
+        h = max(MAX_MAP_H, max(max(ys), bottom) + 300)
         self._vis_render_scene(ents, w, h)
         self._vis_info.config(text=f"SC.GRP #{sid}: {sname} — {len(ents)} 个实体")
         if self._vis_anim_playing: self._vis_start_anim()
@@ -2380,6 +2386,7 @@ class MatEditor:
         # 转 PhotoImage 显示
         self._vis_bg_image = ImageTk.PhotoImage(composite)
         self._vis_canvas.create_image(0, 0, anchor='nw', image=self._vis_bg_image)
+        self._vis_canvas.configure(scrollregion=(0, 0, w, h))
 
     def _vis_redraw(self):
         """重新绘制当前场景"""
@@ -2391,7 +2398,10 @@ class MatEditor:
         if not ents: return
         ents.sort(key=lambda r: r['d19'] if r['d0'] == 10 else r['d11'])
         xs = [r['d10'] for r in ents]; ys = [r['d11'] for r in ents]
-        w = max(MAX_MAP_W, max(xs)-min(xs)+250); h = max(MAX_MAP_H, max(ys)-min(ys)+250)
+        right = max(r['d18']+r['d20'] for r in ents if r['d20']>0) if any(r['d20']>0 for r in ents) else max(xs)
+        bottom = max(r['d19']+r['d21'] for r in ents if r['d21']>0) if any(r['d21']>0 for r in ents) else max(ys)
+        w = max(MAX_MAP_W, max(max(xs), right) + 300)
+        h = max(MAX_MAP_H, max(max(ys), bottom) + 300)
         self._vis_render_scene(ents, w, h)
 
     def _vis_canvas_click(self, event):
