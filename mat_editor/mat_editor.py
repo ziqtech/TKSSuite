@@ -290,6 +290,7 @@ INTERACT_FIELDS = [
     ("target_scene",52,"目标场景","type=5:目标地图ID type=16:把手1道具 type=110:行为模式(0=标记bit8+动画 1=清除实体 2+=无行为)。type=200:动画句柄(运行时)。源码: sub_4081F8 *(_WORD*)(a2+208)=ChangeScene参数, sub_408B30 byte+208=d52行为模式判断(V3==0标记bit8/V3==1禁用隐藏)"),
     ("interact_dist",15,"交互距离","玩家可交互的最大曼哈顿距离(像素)。0=无距离限制。源码: sub_40818C dist=|px-ex|+|py-ey|, d15==0则return 1(总是可交互), dist>d15则return 0(太远), 被sub_408E5C(点击)和sub_4099B0(接近)调用"),]
 RUNTIME_FIELDS = [
+    ("tick_counter",5,"帧累加器","运行时帧累加器。每帧+1, 达到d[4](执行间隔)时归零并触发实体逻辑。源码: sub_409618 if(++d5>=d4){d5=0; 执行}。纯运行时字段, 地图文件中几乎全为0"),
     ("timer",12,"计时器","d[12](byte+48), 非[等待计时]字段。注: 等待计时是d[3](byte+12)=param, 由SetWait设置; 本字段(d[12])为另一运行时字段"),
     ("frame_idx",14,"当前帧","当前渲染帧索引(JVG全局帧号)。sub_405CBC初始化: d14=d17+d65; sub_4077E4朝向变更: d14=d17+d52+d16*dir_mult; sub_408704动画tick: d14++并循环。sub_406864读取d14传给渲染函数决定显示哪帧"),
     ("frame_count",16,"总帧数","JVG块内总帧数。源码: sub_405CBC v2[16]=sub_4540E8(JVG,block), sub_4077E4 d16用于方向帧计算"),
@@ -297,6 +298,8 @@ RUNTIME_FIELDS = [
     ("priority",22,"优先级/α","实体优先级/像素透明度。源码: sub_406864 byte+88=d22, sub_406E50计算, 决定简单/变换渲染分支"),
     ("sprite_off_x",26,"精灵偏移X","精灵 X 屏幕偏移, 叠加到坐标。源码: sub_406864 byte+104=d26, screen_x+=sprite_off_x"),
     ("sprite_off_y",27,"精灵偏移Y","精灵 Y 屏幕偏移, 叠加到坐标。源码: sub_406864 byte+108=d27, screen_y+=sprite_off_y"),
+    ("rt_ref_id",36,"运行时引用A","运行时实体身份指针。hi16=自身索引, lo16=0。格式: entity_index<<16。纯运行时字段, 地图文件中非零值为运行时残留。源码: 运行时转储反编译中无任何实体逻辑函数引用byte+144(d36), 属未文档化的运行时内部状态"),
+    ("rt_ref_id2",37,"运行时引用B","运行时实体身份指针。hi16=自身索引, lo16=256(0x100标志)。格式: (entity_index<<16)|0x100。纯运行时字段。源码: 运行时转储反编译中无任何实体逻辑函数引用byte+148(d37), 属未文档化的运行时内部状态"),
     ("script_PC",42,"脚本PC","sub_40EBD4入口: d42作为字节码起始偏移。必须=-1(0xFFFF)表示无保存点, 否则VM从错误位置执行。源码: sub_40EBD4 byte+168=d42 脚本PC, byte+172=d43 保存PC, End(0)时d42=d43"),
     ("saved_PC",43,"保存PC","End(0)时 d42=d43; d43=-1。新实体必须=-1。源码: sub_40EBD4 byte+172=d43"),
     ("target_dir",56,"目标朝向","type=5:目标朝向(1-8) type=16:把手2概率 type=110:组1Ymin type=200:寻路X(运行时)。源码: sub_408E5C byte+224=d56, sub_4081F8 byte+224, sub_4084E0, sub_408B30"),
@@ -3684,10 +3687,22 @@ class MatEditor:
 
     def _read_form(self):
         vals = {}
-        # 已覆盖的索引 (避免 "全部"tab 的 raw_/d_ 覆盖 "参数"tab 的值)
+        # 已覆盖的索引
         covered = set()
+        # 1. 先读 "全部"tab 的 raw_N 字段 (优先级最高, 用户在全部tab的编辑生效)
+        for di in range(96):
+            for prefix in ('raw_', 'd'):
+                key = f'{prefix}{di}'
+                if key in self._edit_vars:
+                    try: v = int(self._edit_vars[key].get())
+                    except: return None
+                    vals[f'd{di}'] = v
+                    covered.add(di)
+                    break
+        # 2. 再读 "参数"tab 的字段 (仅补充全部tab未覆盖的)
         for fields in (ALL_EDIT_FIELDS, RUNTIME_FIELDS):
             for key, di, label, cmt in fields:
+                if di in covered: continue
                 if key not in self._edit_vars: continue
                 var = self._edit_vars[key]
                 if isinstance(var, ttk.Combobox):
@@ -3697,17 +3712,6 @@ class MatEditor:
                     try: v = int(var.get())
                     except: return None
                 vals[f'd{di}'] = v
-                covered.add(di)
-        # 填充 "全部"tab 的未知字段
-        for di in range(96):
-            if di in covered: continue
-            for prefix in ('raw_', 'd'):
-                key = f'{prefix}{di}'
-                if key in self._edit_vars:
-                    try: v = int(self._edit_vars[key].get())
-                    except: return None
-                    vals[f'd{di}'] = v
-                    break
         return vals
     def _apply_edit(self):
         sel=self.tree.selection()
