@@ -1765,7 +1765,7 @@ class MatEditor:
         self.edit_inner = ttk.Frame(canvas); self.edit_inner.columnconfigure(0, weight=1)
         self.edit_inner.bind('<Configure>', lambda e: canvas.configure(scrollregion=canvas.bbox('all')))
         canvas.create_window((0,0), window=self.edit_inner, anchor='nw')
-        canvas.configure(yscrollcommand=scb.set)
+        canvas.configure(yscrollcommand=scb.set); scb.configure(command=canvas.yview)
         canvas.bind('<Configure>', lambda e: self.edit_inner.columnconfigure(0, minsize=e.width))
         def _mw(e): canvas.yview_scroll(int(-1*(e.delta/120)), "units")
         canvas.bind("<Enter>", lambda e: canvas.bind_all("<MouseWheel>", _mw))
