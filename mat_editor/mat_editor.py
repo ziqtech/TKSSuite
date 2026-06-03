@@ -195,8 +195,8 @@ def parse_tkt_colored_segments(text):
 BASIC_FIELDS = [
     ("type",0,"实体类型","实体类型: 5=脚本 10=出入传送 15=触发区 16=战斗区 20=事件 110=机关 200=NPC。源码: sub_405CBC *v2==10/20/110/200 分支, sub_409618 类型调度"),
     ("scene_id",1,"场景ID","所属场景 (-1=全局)。TKT_ID = scene_id + 300。源码: sub_405CBC v13[1]<0||v13[1]==dword_755B58 场景过滤"),
-    ("param",3,"扩展参数","扩展参数/等待计时器。SetWait设置随机值, sub_409618 byte+12作递减等待。源码: sub_409618 if(d3!=0){d3>0则d3--}else tick执行"),
-    ("tick",4,"tick","Tick周期(运行时)。源码: sub_409618 byte+16=d4, 当++d5>=d4时触发Tick执行"),
+    ("param",3,"等待计时","等待计时(帧数)。SetWait(min,max)写入随机值; >0时每帧递减并挂起实体, ==0时就绪, <0时永久挂起。源码: sub_40BF88 SetWait写入, sub_409618 if(d3!=0){d3>0则d3--}跳过; else进入tick"),
+    ("tick",4,"执行间隔","执行间隔(帧数)。每帧累加计数器, 达到此值时触发实体类型逻辑和A链脚本并归零。0或1=每帧执行。源码: sub_40C388 SetTick写入, sub_409618 if(++d5>=d4){d5=0; 执行}"),
     ("cursor_id",8,"光标动画","鼠标悬停光标动画编号。传送点(type=10)设为3显示开门动画。源码: sub_411BA4→sub_45408C 选择Cur.JVG块, sub_412390 设置光标"),
     ("anim_set",9,"动画集ID","动画集索引。源码: sub_405CBC dword_755AC0[v2[9]]查JVG表, sub_406864 a1[9]获取精灵资源"),
     ("x",10,"坐标X","世界坐标X (像素)。源码: sub_407070 a1[10]=a2 设置, sub_406864 byte+40 屏幕坐标=entity[d10]-camera_x+d[d26]"),
@@ -287,10 +287,11 @@ SCRIPT_FIELDS = [
 INTERACT_FIELDS = [
     ("cond_id",50,"条件匹配","0=无条件。type=5/15/16:与player[d22]匹配才可交互。type=110(d52=0):帧计数器>0启用拾取后动画。type=200:条件角色。源码: sub_4081F8 byte+200=d50, sub_408E5C byte+200条件检查"),
     ("dir_mask",51,"方向掩码","bit0-7对应朝向1-8, 0=任意方向。type=110(d52=0):动画帧基偏移。type=200:立绘ID(Cha.JVG块)。源码: sub_4081F8 byte+204=d51作方向掩码(d51&(1<<(player_d13-1))), sub_408B30 byte+204"),
-    ("target_scene",52,"目标场景","type=5:目标地图ID type=16:把手1道具 type=110:行为模式(0=标记bit8+动画 1=清除实体 2+=无行为)。type=200:动画句柄(运行时)。源码: sub_4081F8 *(_WORD*)(a2+208)=ChangeScene参数, sub_408B30 byte+208=d52行为模式判断(V3==0标记bit8/V3==1禁用隐藏)"),]
+    ("target_scene",52,"目标场景","type=5:目标地图ID type=16:把手1道具 type=110:行为模式(0=标记bit8+动画 1=清除实体 2+=无行为)。type=200:动画句柄(运行时)。源码: sub_4081F8 *(_WORD*)(a2+208)=ChangeScene参数, sub_408B30 byte+208=d52行为模式判断(V3==0标记bit8/V3==1禁用隐藏)"),
+    ("interact_dist",15,"交互距离","玩家可交互的最大曼哈顿距离(像素)。0=无距离限制。源码: sub_40818C dist=|px-ex|+|py-ey|, d15==0则return 1(总是可交互), dist>d15则return 0(太远), 被sub_408E5C(点击)和sub_4099B0(接近)调用"),]
 RUNTIME_FIELDS = [
-    ("timer",12,"计时器","SetWait设置的等待值。注意: d3(byte+12)在sub_409618中作递减计时器, 此字段含义随上下文变化"),
-    ("frame_idx",14,"帧索引","当前渲染帧索引。源码: sub_4077E4 d14=d17+d52+d16*dir_mult, sub_405CBC设置type200/type20的帧索引"),
+    ("timer",12,"计时器","d[12](byte+48), 非[等待计时]字段。注: 等待计时是d[3](byte+12)=param, 由SetWait设置; 本字段(d[12])为另一运行时字段"),
+    ("frame_idx",14,"当前帧","当前渲染帧索引(JVG全局帧号)。sub_405CBC初始化: d14=d17+d65; sub_4077E4朝向变更: d14=d17+d52+d16*dir_mult; sub_408704动画tick: d14++并循环。sub_406864读取d14传给渲染函数决定显示哪帧"),
     ("frame_count",16,"总帧数","JVG块内总帧数。源码: sub_405CBC v2[16]=sub_4540E8(JVG,block), sub_4077E4 d16用于方向帧计算"),
     ("frame_cur",17,"帧计数","动画当前帧/基础帧。源码: sub_4077E4 a1[17], sub_405CBC type200行走动画"),
     ("priority",22,"优先级/α","实体优先级/像素透明度。源码: sub_406864 byte+88=d22, sub_406E50计算, 决定简单/变换渲染分支"),
@@ -673,9 +674,9 @@ _ATTR_NAMES = {1:"智慧", 2:"仁德", 3:"勇气", 5:"体力值恢复", 6:"内�
 # │    4     │  blk4 │ 4帧33x47│ 拾取                         │
 # │  5-8     │blk5-8 │ 1帧28x40│ 同正常(战斗/备用)            │
 # │    9     │  blk9 │ 1帧24x37│ 调查                         │
-# │   10     │ blk10 │38帧30x42│ 苍冥(特殊)                   │
+# │   10     │ blk10 │38帧30x42│ 苍溟(特殊)                   │
 # └──────────┴───────┴──────────┴──────────────────────────────┘
-_CURSOR_BLOCKS = {0:"禁止点击", 1:"正常", 2:"对话气泡", 3:"开门", 4:"拾取", 5:"正常", 6:"正常", 7:"正常", 8:"正常", 9:"调查", 10:"苍冥"}
+_CURSOR_BLOCKS = {0:"禁止", 1:"常规", 2:"对话", 3:"开门", 4:"拾取", 5:"常规", 6:"常规", 7:"常规", 8:"常规", 9:"调查", 10:"苍溟"}
 
 def _setcursor_desc(args):
     """SetCursor(Cur.JVG块, 帧延迟, 开关): arg1选择光标精灵块, arg2动画帧延迟, arg3显示开关"""
@@ -1845,6 +1846,9 @@ class MatEditor:
             elif key=='shadow_frame':
                 cb=ttk.Combobox(frm,state='readonly',values=["0-无阴影","1-小阴影(39×23)","2-大阴影(65×33)"],width=16,font=FONT)
                 cb.pack(fill=tk.X); self._edit_vars[key]=cb
+            elif key=='cursor_id':
+                cb=ttk.Combobox(frm,state='readonly',values=[f"{k}-{v}" for k,v in sorted(_CURSOR_BLOCKS.items())],width=14,font=FONT)
+                cb.pack(fill=tk.X); self._edit_vars[key]=cb
             elif key=='flags':
                 ev=tk.StringVar(); self._edit_vars[key]=ev
                 ttk.Entry(frm,textvariable=ev,width=14,font=FONT).pack(fill=tk.X)
@@ -2119,7 +2123,7 @@ class MatEditor:
         if tval == 20:
             type_labels = _TYPE_LABELS.get(200, {})
         known = {}
-        for fields in (BASIC_FIELDS, POS_FIELDS, ANIM_FIELDS, ITEM_FIELDS, SCRIPT_FIELDS, INTERACT_FIELDS, RUNTIME_FIELDS):
+        for fields in (BASIC_FIELDS, FLAG_FIELDS, POS_FIELDS, ANIM_FIELDS, ITEM_FIELDS, SCRIPT_FIELDS, INTERACT_FIELDS, RUNTIME_FIELDS):
             for name, di, label, cmt in fields:
                 known[di] = (name, label, cmt)
         for di in range(96):
@@ -3606,6 +3610,7 @@ class MatEditor:
             elif key=='anim_set': self._edit_vars[key].set(f"{val}-{ANIM_SETS.get(val,'未知')}" if val in ANIM_SETS else f"{val}-未知")
             elif key=='blend_mode': self._edit_vars[key].set(f"{val}-{BLEND_MODES.get(val,'未知')}")
             elif key=='shadow_frame': self._edit_vars[key].set(f"{val}-{SHADOW_LABELS.get(val,'未知')}")
+            elif key=='cursor_id': self._edit_vars[key].set(f"{val}-{_CURSOR_BLOCKS.get(val,'未知')}")
             else: self._edit_vars[key].set(str(val))
         for key,di,label,cmt in RUNTIME_FIELDS:
             if key in self._edit_vars: self._edit_vars[key].set(str(rec[f'd{di}']))
