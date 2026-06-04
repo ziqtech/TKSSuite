@@ -12,6 +12,7 @@ TKMat.Dat 地图实体编辑器 v2.3 — 融合脚本编辑
   sub_409618: 主Tick循环 — A链=自动(d33>0) B链=触发(交互), d4=Tick周期, d3=等待计时器 ✓已验证
   sub_4081F8: type=10 出入传送点 — d50条件, d51方向掩码, d52目标场景, d53/d54目标XY, d56朝向 ✓已验证
   sub_4084E0: type=16 随机战斗区 — d50条件, d51方向掩码, d52-d54战斗ID组(3连), d55-d57概率组(3连, v4[3]=*(v4+12B)对齐), d60冷却基准, d61冷却计时, d62等级同步(0固定/1追随队伍均级) ✓已验证
+  sub_408704: type=20 事件对象 — 动画帧推进(d14/d17递增), d66循环等待, d67帧起点, d68终点, d69保留末帧, d71-d95音效事件对(偶数=音效ID/奇数=触发帧, 汇编: mov edx,[eax+0x140]传入PlaySound) ✓已验证
   type=5: 脚本对象 — sub_409618 显式跳过(无专用tick), 仅执行脚本(sub_40EBD4) ✓已验证
   sub_408E5C: 玩家点击交互 — B链触发, d34条件脚本 ✓已验证
   sub_408B30: 特殊机关(110) — d50帧计数器, d51帧偏移, d52行为模式(0/1/2), d53-d64物品组 ✓已验证
@@ -217,9 +218,9 @@ POS_FIELDS = [
 ANIM_FIELDS = [
     ("dir_mode",53,"方向模式/目标X","type=200:方向模式(0=静态/4=四向/8=八向) type=5:目标X type=16:战斗组2-ID type=110:组1物品ID(复用ITEM字段)。源码: sub_4077E4 a1[53]==4/8方向分支, sub_4081F8 byte+212(传送目标X), sub_4084E0 a2+212(战斗组2-ID), sub_408B30 byte+212"),
     ("target_y",54,"目标Y/物品上限","type=200:目标Y type=5:目标Y type=16:战斗组3-ID type=110:组1物品ID上限(复用ITEM字段)。源码: sub_4081F8 byte+216(传送目标Y), sub_4084E0 a2+216(战斗组3-ID), sub_408B30 byte+216"),
-    ("sub_model",64,"子模型ID","type=200:Ani.JVG块(行走动画) type=110:组3数量上限(复用ITEM字段)。源码: sub_405CBC v2[64]作为sub_4540E8/sub_45410C的JVG块参数"),
-    ("anim_cycle_wait",66,"动画循环等待","动画循环后随机等待帧数上限。<0:无循环等待 0:无等待 >0:随机[0,N]帧等待后重置。源码: sub_408704 if(*(a2+264)>0)d3=random(*(a2+264)), if(*(a2+264)<0)帧终点不重置"),
-    ("end_frame_hold",69,"结束保留帧","非零时动画播放到终点后保留最后一帧不重置。源码: sub_408704 if(*(a2+276)) d68--, d14-- (帧回退保留)")]
+    ("sub_model",64,"子模型ID","type=20/200:Ani.JVG块(type=20事件动画/type=200行走动画) type=110:组3数量上限(复用ITEM字段)。type=20 100%有值(1~592)。源码: sub_405CBC v2[64]作为sub_4540E8/sub_45410C的JVG块参数"),
+    ("anim_cycle_wait",66,"动画循环等待","动画循环后随机等待帧数上限。<0:不循环 0:立即循环 >0:random(N)等待。type=20/200共用。源码: sub_408704 if(*(a2+264)>0)d3=random(*(a2+264)), if(*(a2+264)<0)帧终点不重置"),
+    ("end_frame_hold",69,"结束保留帧","非零时动画播放到终点后保留最后一帧不重置。type=20/200共用。源码: sub_408704 if(*(a2+276)) d68--, d14-- (帧回退保留)")]
 def load_tkt_all(tkt_path):
     """加载 TKT.dat 全文数据库 (用于脚本预览解析对话文本)
     与 load_tkt_scene_names 相同格式, 但返回完整文本而非首行"""
@@ -308,10 +309,10 @@ RUNTIME_FIELDS = [
     ("saved_y",57,"保存Y","type=5:相机Y偏移 type=16:战斗组3-概率 type=110:组2Xmin type=200:寻路Y(运行时)。源码: sub_408E5C byte+228=d57, sub_4081F8(相机), sub_4084E0 a2+228(概率3), sub_408B30"),
     ("alt_tele_x",60,"备选传送X","type=10:相机偏移X type=16:冷却基准 type=110:组2Ymax type=200:备选传送X。源码: sub_408E5C byte+240=d60, sub_4081F8:31,sub_4084E0 a2+240,sub_408B30"),
     ("alt_tele_y",61,"备选传送Y","type=10:相机偏移Y type=16:冷却计时 type=110:组3Xmin type=200:备选传送Y。源码: sub_408E5C byte+244=d61, sub_4081F8:31,sub_4084E0 a2+244,sub_408B30"),
-    ("sub_handle",65,"子句柄","type=16:未使用 type=110:组3Xmax? type=200:动画基址(运行时)。源码: sub_405CBC v2[65]=sub_45410C(Ani,v2[64]),sub_408B30 (type=16无引用)"),
-    ("cur_frame",67,"当前帧",""),
-    ("max_frame",68,"最大帧","动画帧终点=max-1。源码: sub_405CBC if(v2[16]<=v2[68]) v2[68]=v2[16]-1"),
-    ("moving",70,"移动中","type=200移动模式: 0=静止 1=行走。源码: sub_409618 byte+280=d70, type200时检查d70==1触发行走动画"),]
+    ("sub_handle",65,"子句柄","type=16:未使用 type=20:动画句柄(运行时) type=110:组3Xmax? type=200:动画基址(运行时)。源码: sub_405CBC v2[65]=sub_45410C(Ani,v2[64]),sub_408B30 (type=16无引用)"),
+    ("cur_frame",67,"当前帧","type=20:动画帧起点(循环重置目标)。源码: sub_408704 d17=d67"),
+    ("max_frame",68,"最大帧","动画帧终点-1。type=20/200共用(type=20: 91%有值1~139)。源码: sub_408704 if(++d17>d68)到达终点; sub_405CBC if(v2[16]<=v2[68])v2[68]=v2[16]-1"),
+    ("moving",70,"移动中","type=200移动模式:0=静止 1=行走。type=20不使用(sub_409618仅对type200检查d70)。源码: sub_409618 byte+280=d70, type200时检查d70==1触发行走动画"),]
 ITEM_FIELDS = [
     ("item_g1_id",   53, "组1-物品ID",   "type110: 物品ID随机范围最小值; Xmin==Xmax→固定掉落。源码: sub_408B30 byte+212=d53, sub_452AC0随机范围"),
     ("item_g1_idmax",54, "组1-物品上限",  "type110: 物品ID随机范围最大值。源码: sub_408B30 byte+216=d54, 若d53>=d54则固定值"),
@@ -383,6 +384,50 @@ _TYPE_LABELS = {
         69:("(保留/未使用)","type=16 战斗引擎不访问"),
         70:("(保留/未使用)","type=16 战斗引擎不访问 (移动模式仅type=20/200使用, sub_409618)"),
     },
+    20: {  # 事件对象 — 动画精灵 (sub_408704 + sub_406864), 非角色! anim_set全为4(Ani.JVG)
+        # ★ 音效事件对布局: 偶数dword=音效ID(传给PlaySound的第3参数), 奇数dword=触发帧号(d17==此帧时播放)
+        # 汇编铁证 sub_408704: test [eax+0x140]; cmp [ecx+0x44],[edx+0x144]; mov edx,[edx+0x140]; call PlaySound
+        50:("(未使用)","type=20 不使用门禁/传送/战斗参数 (sub_408704 无引用)"),
+        51:("(未使用)",""),
+        52:("(未使用)",""),
+        53:("(未使用)",""),
+        54:("(未使用)",""),
+        55:("阴影帧","0=无 1=小阴影(39×23) 2=大阴影(65×33)。源码: sub_406864 if((type20||type200)&&d55>0)绘制阴影帧"),
+        56:("(未使用)",""),
+        57:("(未使用)",""),
+        58:("(未使用)",""),
+        59:("(未使用)",""),
+        60:("(未使用)",""),
+        61:("(未使用)",""),
+        62:("(未使用)",""),
+        63:("(未使用)",""),
+        64:("子模型(Ani.JVG块)","Ani.JVG动画块索引。100%实体有值(1~592)。源码: sub_405CBC v2[64]→sub_45410C(Ani,block)"),
+        65:("动画句柄(运行时)","sub_45410C返回值, 精灵绘制句柄。文件值=初始化后残留。源码: sub_405CBC v2[65]"),
+        66:("循环等待","动画循环后随机等待帧数。<0=-1不循环 0=立即循环 >0=random(N)等待。源码: sub_408704 if(d66>0)random(d66); if(d66<0)不重置"),
+        67:("帧起点","动画循环时重置到此帧。源码: sub_408704 d17=d67"),
+        68:("最大帧","动画终点=此值-1。91%实体有值。源码: sub_408704 if(++d17>d68)到达终点"),
+        69:("保留末帧","非零时动画播完停在最后一帧不循环。源码: sub_408704 if(d69)d68--,d14--"),
+        70:("(未使用)","移动模式仅type=200使用。type=20 不走路 (sub_409618 只对type200检查d70)"),
+        # 音效事件对 #9-11 (极少使用, <1%)
+        71:("音效9·ID","第9音效事件: 音效ID (传PlaySound)。源码: sub_408704 a2+0x11C"),
+        72:("音效9·触发帧","第9音效事件: d17==此值时播放。源码: sub_408704 a2+0x120"),
+        73:("音效10·ID",""), 74:("音效10·触发帧",""),
+        75:("音效11·ID",""), 76:("音效11·触发帧",""),
+        # d77-d79: 间隙, sub_408704 不访问
+        77:("(间隙·未使用)","offset 0x134-0x13C, sub_408704 不检查"),
+        78:("(间隙·未使用)",""),
+        79:("(间隙·未使用)",""),
+        # 音效事件对 #1-8 (d80/d81最常用, 49%实体使用)
+        80:("音效1·ID","第1音效事件: 音效ID。最常用(49%实体)。典型值:22/21/29/39/53。源码: sub_408704 a2+0x140→edx→PlaySound(arg3)"),
+        81:("音效1·触发帧","第1音效事件: d17==此帧时播放音效。0=动画起始帧。典型值:0/5。源码: sub_408704 a2+0x144"),
+        82:("音效2·ID",""), 83:("音效2·触发帧",""),
+        84:("音效3·ID",""), 85:("音效3·触发帧",""),
+        86:("音效4·ID",""), 87:("音效4·触发帧",""),
+        88:("音效5·ID",""), 89:("音效5·触发帧",""),
+        90:("音效6·ID",""), 91:("音效6·触发帧",""),
+        92:("音效7·ID",""), 93:("音效7·触发帧",""),
+        94:("音效8·ID",""), 95:("音效8·触发帧",""),
+    },
     110: {  # 特殊机关 sub_408B30
         50:("帧计数器","d52=0时>0启用拾取后动画(帧递增); 此游戏全为0。源码: sub_408B30:74 if(d50){++d68; d14=d68+d51}"),
         51:("动画帧基偏移","d52=0时: frame_idx=frame_cur+d51。源码: sub_408B30 byte+204=d51, v2[51]=sub_45410C(JVG,v2[50],0), d14=d17+d51"),
@@ -418,7 +463,7 @@ _TYPE_LABELS = {
         95:("事件13帧",""),
     },
 }
-# 注意: type=20(事件对象) 字段语义与 type=200 相同
+# 注意: type=20(事件对象) 与 type=200(NPC) 差异显著 — anim_set恒为4(Ani.JVG非Cha.JVG), d50-d63全未使用, d70不适用, d71-d95为音效事件
 
 FONT = ('Microsoft YaHei UI', 9); FONT_S = ('Microsoft YaHei UI', 8)
 FONT_B = ('Microsoft YaHei UI', 11, 'bold')
@@ -1909,7 +1954,8 @@ class MatEditor:
             10: {9,24,25,55,57,58,59}|set(range(63,71)),  # 出入传送点: 路径段在预览可见,参数面板不显示
             15: {9,13,24,25,28}|set(range(52,96)),  # 事件触发区: 无动画/混合/对话颜色/传送/战斗参数
             16: {8,9,13,23,24,28,50,51,58,59}|set(range(63,71)),  # 随机战斗区: 仅保留坐标碰撞优先级+战斗参数
-            20: set(), 110: set(), 200: set(),
+            20: set(range(50,96)) - {55,64,65,66,68,80,81},  # 事件对象: 仅保留7个实际使用的字段(d55阴影/d64子模型/d65句柄/d66循环/d68终点/d80音效ID/d81触发帧)
+            110: set(), 200: set(),
         }
         skip = _SKIP_DWORDS.get(tval, set())
 
@@ -1989,7 +2035,7 @@ class MatEditor:
 
         # ============ 显示/动画/位置 [8-28] ============
         GROUP_8_28 = []; _seen8 = set()
-        _skip_8_28 = {12, 14, 16, 17, 22, 25, 26, 27}
+        _skip_8_28 = {12, 17, 25, 26, 27}  # d14/d16/d22 移入 _SKIP_DWORDS 按类型控制, type=20需要它们
         for fields in (BASIC_FIELDS, RUNTIME_FIELDS, POS_FIELDS, INTERACT_FIELDS, SCRIPT_FIELDS):
             for f in fields:
                 if 8 <= f[1] <= 28 and f[1] not in _seen8 and f[1] not in _skip_8_28:
@@ -1999,7 +2045,6 @@ class MatEditor:
         GROUP_8_28 = [f for f in GROUP_8_28 if f[1] not in skip]  # 按类型过滤
         # 获取此类型的特有标签
         type_labels = _TYPE_LABELS.get(tval, {})
-        if tval == 20: type_labels = _TYPE_LABELS.get(200, {})
         if GROUP_8_28:
             lf2 = ttk.LabelFrame(inner, text="显示/动画/位置 [8-28]", padding=4)
             lf2.grid(row=1, column=0, sticky='ew', padx=2, pady=2)
@@ -2109,6 +2154,25 @@ class MatEditor:
                     tvars["_dir_bv"] = dir_bv
                 else:
                     tvars[key] = ev
+                    ttk.Entry(frm, textvariable=ev, width=14, font=FONT).pack(fill=tk.X)
+
+        # ============ 音效事件 [71-95] (type=20 专用) ============
+        if tval == 20 and type_labels:
+            sound_events = [(di, type_labels[di][0], type_labels[di][1])
+                           for di in range(71, 96) if di in type_labels and di not in skip]
+            if sound_events:
+                lf4 = ttk.LabelFrame(inner, text="音效事件 [71-95]", padding=4) # (汇编: mov edx,[eax+0x140]→PlaySound)
+                lf4.grid(row=3, column=0, sticky='ew', padx=2, pady=2)
+                grid4 = ttk.Frame(lf4); grid4.pack(fill=tk.X)
+                for fi, (di, tl, tc) in enumerate(sound_events):
+                    r, c = divmod(fi, 4); frm = ttk.Frame(grid4); frm.grid(row=r, column=c, sticky='nw', padx=4, pady=2)
+                    fg = '#cc6600'; tt = f"[{di:02d}] {tl}"
+                    if tc: tt += f": {tc}"
+                    lbl = ttk.Label(frm, text=f"[{di:02d}] {tl}", font=FONT_S, foreground=fg); lbl.pack(anchor=tk.W)
+                    if tc: self._bind_tooltip(lbl, tt)
+                    rk = f'raw_{di}'
+                    if rk not in self._edit_vars: self._edit_vars[rk] = tk.StringVar()
+                    ev = self._edit_vars[rk]; tvars[f'snd_{di}'] = ev
                     ttk.Entry(frm, textvariable=ev, width=14, font=FONT).pack(fill=tk.X)
 
         self._type_vars[tval] = tvars
@@ -2464,9 +2528,6 @@ class MatEditor:
     def _update_all_tab_labels(self, tval):
         """根据实体类型更新'全部'tab的字段标签"""
         type_labels = _TYPE_LABELS.get(tval, {})
-        # type=20 与 type=200 共享语义
-        if tval == 20:
-            type_labels = _TYPE_LABELS.get(200, {})
         known = {}
         for fields in (BASIC_FIELDS, FLAG_FIELDS, POS_FIELDS, ANIM_FIELDS, ITEM_FIELDS, SCRIPT_FIELDS, INTERACT_FIELDS, RUNTIME_FIELDS):
             for name, di, label, cmt in fields:
