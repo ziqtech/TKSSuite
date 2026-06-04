@@ -110,7 +110,8 @@ GAME_FONT_FAMILIES = {
 
 DEFAULT_FTYPE = 2
 DEFAULT_FCOLOR = 32    
-PREVIEW_BG = '#1a1d24'  # 工业风深色视口背景
+# PREVIEW_BG = '#1a1d24'  # 工业风深色视口背景
+PREVIEW_BG = '#313c52'  # 游戏对话框背景色
 FTYPE_BY_FAMILY_NAME = {v[0]: k - 1 for k, v in GAME_FONT_FAMILIES.items()}
 
 # ASCII → BIG5 重映射表 (word_4EC810)
