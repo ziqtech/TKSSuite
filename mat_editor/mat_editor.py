@@ -1779,7 +1779,7 @@ class MatEditor:
             mid = ttk.Frame(page_frame); mid.pack(fill=tk.BOTH, expand=True)
             lc = ttk.Frame(mid); lc.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
             scb = ttk.Scrollbar(mid, orient=tk.VERTICAL); scb.pack(side=tk.RIGHT, fill=tk.Y)
-            canvas = tk.Canvas(lc, highlightthickness=0, bg='#f8f8f8'); canvas.pack(fill=tk.BOTH, expand=True)
+            canvas = tk.Canvas(lc, highlightthickness=0); canvas.pack(fill=tk.BOTH, expand=True)
             inner = ttk.Frame(canvas); inner.columnconfigure(0, weight=1)
             inner.bind('<Configure>', lambda e, c=canvas: c.configure(scrollregion=c.bbox('all')))
             canvas.create_window((0,0), window=inner, anchor='nw')
