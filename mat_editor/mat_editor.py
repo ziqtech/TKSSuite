@@ -355,7 +355,7 @@ _TYPE_LABELS = {
     15: {  # 事件触发区 — 玩家接近碰撞盒时自动触发脚本 (sub_408408)
         34:("脚本开关","d34(cur_B)非零时触发才生效。源码: sub_408408 a2[34]==0则return 0"),
         50:("通过条件","0=无限制, >0时须与玩家 d22 相等才触发。源码: sub_408408:13 if(d50>0&&player_d22≠d50)阻断"),
-        51:("方向掩码","bit0-7对应朝向1-8, 0=任意。源码: sub_408408 a2[51]&(1<<(player_dir-1))"),
+        51:("面向要求","bit0=上 bit1=右上 bit2=右 bit3=右下 bit4=下 bit5=左下 bit6=左 bit7=左上。0=不限;>0=须面朝置位方向。源码: d51&(1<<(player_d13-1))"),
     },
     16: {  # 随机战斗区 — 玩家进入碰撞盒概率触发战斗 (sub_4084E0)
         50:("通过条件","0=无限制, >0时须与玩家 d22 相等才触发战斗。源码: sub_4084E0:25 if(d50<=0||d50==player_d22)放行"),
@@ -566,10 +566,17 @@ def _sign_qty(qty_str):
     except ValueError:
         return qty_str
 
-# CheckTeam 角色名缓存 (由 MatEditor._reload 从 WarPC.dat + TKT.dat 动态填充)
-_char_name_cache = {}
-
-def _load_char_names(tks_dir, tkt_lookup):
+def _dir_name(dir_str, entity=""):
+    """朝向值->方向名。entity=0主角(八向), 其他NPC(四向)"""
+    _D8 = {1:"上",2:"右上",3:"右",4:"右下",5:"下",6:"左下",7:"左",8:"左上"}
+    _D4 = {1:"下",2:"左",3:"右",4:"上"}
+    try:
+        v = int(dir_str)
+        if entity == "0": return _D8.get(v, dir_str)
+        return _D4.get(v, dir_str)
+    except:
+        return dir_str
+        return dir_str
     """从 WarPC.dat 加载角色名映射 index→name.
     类似 warpc_editor 的做法: 读 WarPC 每条记录的 [0] name_id, 查 TKT 得到名称."""
     global _char_name_cache
@@ -595,6 +602,12 @@ def _load_char_names(tks_dir, tkt_lookup):
     except Exception:
         pass
 
+def _dir_name(dir_str):
+    """朝向值->八向方向名(sub_4077E4: d53=8时d13-1映射组0-7)"""
+    _D8 = {1:"上",2:"右上",3:"右",4:"右下",5:"下",6:"左下",7:"左",8:"左上"}
+    try: v=int(dir_str); return _D8.get(v, dir_str)
+    except: return dir_str
+
 # CheckTeam arg1 语义映射 (基于 TKD脚本注释 + save_editor SEG2字段)
 # ┌──────┬──────────┬─────────────────────┬──────────────────────────────┐
 # │ arg1 │ 属性     │ SEG2地址            │ 证据                         │
@@ -609,6 +622,12 @@ def _load_char_names(tks_dir, tkt_lookup):
 # │ 11   │ 特殊物品 │ — (sub_40E11C)      │ TKD注释:"26個特殊物品"       │
 # └──────┴──────────┴─────────────────────┴──────────────────────────────┘
 _CAT_NAMES = {1:"角色", 2:"智慧", 3:"仁德", 4:"勇气", 5:"队伍人数", 6:"医术", 10:"事件完成度", 11:"特殊物品"}
+def _dir_name(dir_str):
+    """朝向值->八向方向名(sub_4077E4: d53=8时d13-1映射组0-7)"""
+    _D8 = {1:"上",2:"右上",3:"右",4:"右下",5:"下",6:"左下",7:"左",8:"左上"}
+    try: v=int(dir_str); return _D8.get(v, dir_str)
+    except: return dir_str
+
 # CheckTeam arg3 比较运算符 (基于TKD脚本注释语义 + 队伍人数检查模式推断)
 _CMP_OPS = {'0':"==", '1':"≥", '-1':"<", '-2':"≤", '2':">"}
 
@@ -846,7 +865,9 @@ SCRIPT_CMD_DESC = {
         if len(a)>=2 else f"设置阴影 ({','.join(a)})" if a else "设置阴影"
     ),
     # opcode 23: SetPos(4) — 设置位置: 实体, X, Y, 朝向
-    'SetPos':       lambda a, t: f"设置位置 实体#{a[0]}→({a[1]},{a[2]})朝向{a[3]}" if len(a)>=4 else f"设置位置 实体#{a[0]}" if a else "设置位置",
+    'SetPos':       lambda a, t: (
+        f"设置位置 实体#{a[0]}->({a[1]},{a[2]})朝向{a[3]}({_dir_name(a[3],a[0])})" if len(a)>=4 else
+        f"设置位置 实体#{a[0]}" if a else "设置位置"),
     # opcode 24: Disable(1) — 禁用实体 (sub_40C5A4)
     # 参数: 实体(-1=上下文 -2=自身)
     # 同时清除flags bit0(启用)和bit1(可见), 实体完全不可见不可交互
@@ -1873,7 +1894,8 @@ class MatEditor:
         _SKIP_DWORDS = {
             5:  {9,24,25}|set(range(29,96)),   # 脚本对象: 无动画集/混合/脚本链(d30-44外)/d50+
             10: {9,24,25,55,57,58,59}|set(range(63,71)),  # 出入传送点: 路径段在预览可见,参数面板不显示
-            15: set(), 16: set(), 20: set(), 110: set(), 200: set(),
+            15: {9,13,24,25,28}|set(range(52,96)),  # 事件触发区: 无动画/混合/对话颜色/传送/战斗参数
+            16: set(), 20: set(), 110: set(), 200: set(),
         }
         skip = _SKIP_DWORDS.get(tval, set())
 
@@ -2056,7 +2078,7 @@ class MatEditor:
                     ttk.Entry(frm, textvariable=ev, width=14, font=FONT).pack(fill=tk.X)
                     il = ttk.Label(frm, text="", foreground='#996600', font=FONT_S, wraplength=150)
                     il.pack(anchor=tk.W); tvars[f'_{key}_label'] = il
-                elif key == "dir_mask" and tval == 10:
+                elif key == "dir_mask" and tval in (10, 15):
                     tvars[key] = ev
                     dir_bv = {}
                     dir_cbf = ttk.Frame(frm); dir_cbf.pack(fill=tk.X)
