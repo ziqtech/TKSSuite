@@ -2160,7 +2160,7 @@ class MatEditor:
                 if key in ('item_g1_id', 'item_g2_id', 'item_g3_id'):
                     tvars[key] = ev
                     ttk.Entry(frm, textvariable=ev, width=14, font=FONT).pack(fill=tk.X)
-                    il = ttk.Label(frm, text="", foreground='#996600', font=FONT_S, wraplength=150)
+                    il = ttk.Label(frm, text="", foreground='#3366cc', font=FONT_S, wraplength=150)
                     il.pack(anchor=tk.W); tvars[f'_{key}_label'] = il
                 elif key == "dir_mask" and tval in (10, 15):
                     tvars[key] = ev
@@ -2180,6 +2180,11 @@ class MatEditor:
                 else:
                     tvars[key] = ev
                     ttk.Entry(frm, textvariable=ev, width=14, font=FONT).pack(fill=tk.X)
+                    # type=110 物品字段: 即使 key 不是 item_g1_id(被 ANIM_FIELDS 的 dir_mode 抢先), 也创建物品名标签
+                    if tval == 110 and di in (53, 57, 61):
+                        label_key = {53: '_item_g1_id_label', 57: '_item_g2_id_label', 61: '_item_g3_id_label'}[di]
+                        il = ttk.Label(frm, text="", foreground='#3366cc', font=FONT_S, wraplength=150)
+                        il.pack(anchor=tk.W); tvars[label_key] = il
 
         # ============ 音效事件 [71-95] (type=20 专用) ============
         if tval == 20 and type_labels:
@@ -2316,7 +2321,7 @@ class MatEditor:
                 hl=ttk.Label(frm,text="",foreground='#3366cc',font=FONT_S,wraplength=150)
                 hl.pack(anchor=tk.W); self._edit_vars['_hint_label']=hl
             if key in ('item_g1_id','item_g2_id','item_g3_id'):
-                il=ttk.Label(frm,text="",foreground='#996600',font=FONT_S,wraplength=150)
+                il=ttk.Label(frm,text="",foreground='#3366cc',font=FONT_S,wraplength=150)
                 il.pack(anchor=tk.W); self._edit_vars[f'_{key}_label']=il
         return lf
 
