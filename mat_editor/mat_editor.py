@@ -1669,6 +1669,8 @@ class MatEditor:
         em.add_command(label="新增记录",command=self._new_record,accelerator="Ctrl+N")
         em.add_command(label="复制当前记录",command=self._copy_record)
         em.add_command(label="清空当前记录",command=self._clear_current)
+        em.add_separator()
+        em.add_command(label="删除当前场景…",command=self._delete_scene)
         mb.add_cascade(label="编辑",menu=em)
         vm = tk.Menu(mb,tearoff=0)
         vm.add_command(label="统计信息",command=self._show_stats)
@@ -4461,6 +4463,76 @@ class MatEditor:
         if not messagebox.askyesno("确认",f"清空实体 #{idx}? (type 设为 0)"): return
         for di in range(DWORD_COUNT): self.records[idx][f'd{di}']=0
         self._dirty=True; self._apply_filter(); self._show_record(self.records[idx])
+
+    def _delete_scene(self):
+        """删除当前选中场景: 清除该场景所有实体 + 关联 DefUnit + TKD DEFINE"""
+        sid = self._vis_scene_id.get()
+        sname = scene_name(self.tkt_scenes, sid)
+        scene_entities = [r for r in self.records if has_data(r) and r['d1'] == sid]
+        if not scene_entities:
+            messagebox.showinfo("空场景", f"场景 {sname} (ID={sid}) 无实体, 无需删除")
+            return
+        n = len(scene_entities)
+        if not messagebox.askyesno("确认删除场景",
+            f"将删除场景 {sname} (ID={sid})\n\n"
+            f"  TKMat 实体: {n} 个\n"
+            f"  关联 DefUnit 链记录\n"
+            f"  关联 TKD DEFINE 块\n\n"
+            f"此操作不可撤销! 确定继续?"):
+            return
+
+        # 收集该场景所有实体引用的 DefUnit 索引和 DEFINE ID
+        all_du_indices = set()
+        all_define_ids = set()
+        for rec in scene_entities:
+            for di in [39, 40, 41]:  # head_A/B/C
+                head = rec.get(f'd{di}', -1)
+                if head < 0: continue
+                cur = head; visited = set()
+                while cur >= 0 and cur not in visited:
+                    visited.add(cur)
+                    du = next((r for r in self.defunit_recs if r['index'] == cur), None)
+                    if du is None: break
+                    all_du_indices.add(cur)
+                    did = (du.get('f1', 0) << 16) | du.get('f0', 0)
+                    if did > 0: all_define_ids.add(did)
+                    nxt = du.get('f6', 0)
+                    if nxt == 0 or nxt in visited: break
+                    cur = nxt
+
+        # 删除 TKD DEFINE 块
+        for did in all_define_ids:
+            if did in self.tkd_define_map:
+                d = self.tkd_define_map.pop(did)
+                if d in self.tkd_defines:
+                    self.tkd_defines.remove(d)
+
+        # 删除 DefUnit 记录
+        self.defunit_recs = [r for r in self.defunit_recs if r['index'] not in all_du_indices]
+        # 清理 defunit_next 和 defunit_entity
+        for idx in list(self.defunit_next.keys()):
+            if idx in all_du_indices:
+                del self.defunit_next[idx]
+        for eid in list(self.defunit_entity.keys()):
+            self.defunit_entity[eid] = [i for i in self.defunit_entity[eid] if i not in all_du_indices]
+            if not self.defunit_entity[eid]:
+                del self.defunit_entity[eid]
+
+        # 清除 TKMat 实体 (type 设为 0)
+        for rec in scene_entities:
+            for di in range(DWORD_COUNT):
+                rec[f'd{di}'] = 0
+
+        self._dirty = True; self._script_dirty = True
+        self._apply_filter()
+        self._vis_populate_scenes()
+        self._vis_load_scene()
+        messagebox.showinfo("删除完成",
+            f"已删除场景 {sname} (ID={sid})\n"
+            f"  实体: {n} 个\n"
+            f"  DefUnit: {len(all_du_indices)} 条\n"
+            f"  DEFINE: {len(all_define_ids)} 个")
+
     def _goto_empty(self):
         for rec in self.records:
             if is_empty(rec):
@@ -4520,10 +4592,40 @@ class MatEditor:
             messagebox.showwarning("无数据", "请先加载 TKS 目录")
             return
         sid = self._vis_scene_id.get()
+        # 虚拟场景不允许导出
+        if self._sc_grp_section_count > 0 and sid >= self._sc_grp_section_count:
+            messagebox.showwarning("虚拟场景", "虚拟场景没有对应的 SC.GRP 数据, 不允许导出。\n请先在 SC.GRP 中新增区段。")
+            return
         scene_entities = [r for r in self.records if has_data(r) and r['d1'] == sid]
         if not scene_entities:
             messagebox.showwarning("空场景", f"场景 {sid} 无实体数据")
             return
+
+        # 收集 TKT 场景名文本 (TKT_ID = sid + 300)
+        tkt_scene_text = None
+        if self.tkt_all:
+            tkt_id = sid + 300
+            tkt_scene_text = self.tkt_all.get(tkt_id, '')
+
+        # 收集 SC.GRP 场景区段 + SC.IDX (Base64 编码)
+        sc_grp_section = None; sc_idx_data = None
+        if self.dat_path:
+            d = os.path.dirname(self.dat_path)
+            grp_path = os.path.join(d, "SC.GRP"); idx_path = os.path.join(d, "SC.IDX")
+            if os.path.exists(grp_path) and os.path.exists(idx_path):
+                try:
+                    import base64
+                    with open(idx_path, 'rb') as f: idata = f.read()
+                    sc_idx_data = base64.b64encode(idata).decode('ascii')
+                    offs = [struct.unpack_from('<I', idata, i)[0] for i in range(0, len(idata), 4)]
+                    if sid < len(offs):
+                        start = offs[sid]
+                        end = offs[sid + 1] if sid + 1 < len(offs) else os.path.getsize(grp_path)
+                        with open(grp_path, 'rb') as f:
+                            f.seek(start)
+                            sc_grp_section = base64.b64encode(f.read(end - start)).decode('ascii')
+                except Exception:
+                    pass
 
         # 辅助: 按 index 查找 DefUnit 记录 (同 _refresh_chain_list 行3352)
         def find_du(idx):
@@ -4600,6 +4702,9 @@ class MatEditor:
             'version': 1,
             'scene_id': sid,
             'scene_name': scene_name(self.tkt_scenes, sid),
+            'tkt_scene_text': tkt_scene_text,
+            'sc_grp_section': sc_grp_section,
+            'sc_idx_data': sc_idx_data,
             'entity_count': len(entity_exports),
             'entities': entity_exports,
             'defunits': defunits,
