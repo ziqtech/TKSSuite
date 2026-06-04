@@ -2493,8 +2493,12 @@ class MatEditor:
 
         combo_vals = [f"{sid}: {sname} ({cnt}实体)" for sid, sname, cnt in scenes]
         self._vis_scene_combo['values'] = combo_vals
+        self._vis_tree.tag_configure('virtual', foreground='#3366cc')
         for sid, sname, cnt in scenes:
-            self._vis_tree.insert('', 'end', values=(str(sid), sname, str(cnt)))
+            is_virtual = self._sc_grp_section_count > 0 and sid >= self._sc_grp_section_count
+            display_name = f"{sname} [虚拟场景]" if is_virtual else sname
+            tags = ('virtual',) if is_virtual else ()
+            self._vis_tree.insert('', 'end', values=(str(sid), display_name, str(cnt)), tags=tags)
 
     def _build_all_tab(self):
         """Tab '全部': 按 d0~d95 顺序展示全部 96 个字段"""
@@ -4650,8 +4654,9 @@ class MatEditor:
             f"确定继续?"):
             return
 
-        # 1. 找空槽
-        empty_slots = [i for i, r in enumerate(self.records) if r['d0'] == 0]
+        # 1. 找空槽 — 取末尾连续空槽, 避免插入列表空隙
+        empty_slots = sorted([i for i, r in enumerate(self.records) if r['d0'] == 0], reverse=True)
+        empty_slots = sorted(empty_slots[:n_entities])  # 取最后 N 个, 新实体追加到末尾
         if len(empty_slots) < n_entities:
             messagebox.showerror("空槽不足",
                 f"需要 {n_entities} 个空槽, 但只有 {len(empty_slots)} 个")
