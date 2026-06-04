@@ -1541,6 +1541,9 @@ class MatEditor:
         self._bit_ev13 = tk.BooleanVar(value=False)      # d2 bit13: 事件标志(最常用)
         self._bit_ev14 = tk.BooleanVar(value=False)      # d2 bit14: 事件标志
         self._sync_lock = False
+        self._type_vars = {}   # tval → {key: widget/var}  每个实体类型的独立组件
+        self._type_frames = {} # tval → Frame             每个类型的显示页面
+        self._active_type = None  # 当前显示的类型页面
 
         self._build_ui(); self._set_edit_enabled(False)
         sw,sh = self.root.winfo_screenwidth(),self.root.winfo_screenheight()
@@ -1761,97 +1764,32 @@ class MatEditor:
         self.notebook = ttk.Notebook(rf)
         self.notebook.pack(fill=tk.BOTH, expand=True)
 
-        # === Tab "参数" — 现有字段编辑区 ===
+        # === Tab "参数" — 按实体类型独立显示参数组 ===
         tab_param = ttk.Frame(self.notebook)
         self.notebook.add(tab_param, text="参数")
-        mid = ttk.Frame(tab_param); mid.pack(fill=tk.BOTH, expand=True)
-        lc = ttk.Frame(mid); lc.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        scb = ttk.Scrollbar(mid, orient=tk.VERTICAL); scb.pack(side=tk.RIGHT, fill=tk.Y)
-        canvas = tk.Canvas(lc, highlightthickness=0); canvas.pack(fill=tk.BOTH, expand=True)
-        self.edit_inner = ttk.Frame(canvas); self.edit_inner.columnconfigure(0, weight=1)
-        self.edit_inner.bind('<Configure>', lambda e: canvas.configure(scrollregion=canvas.bbox('all')))
-        canvas.create_window((0,0), window=self.edit_inner, anchor='nw')
-        canvas.configure(yscrollcommand=scb.set); scb.configure(command=canvas.yview)
-        canvas.bind('<Configure>', lambda e: self.edit_inner.columnconfigure(0, minsize=e.width))
-        def _mw(e): canvas.yview_scroll(int(-1*(e.delta/120)), "units")
-        canvas.bind("<Enter>", lambda e: canvas.bind_all("<MouseWheel>", _mw))
-        canvas.bind("<Leave>", lambda e: canvas.unbind_all("<MouseWheel>"))
-        # 构建编辑字段组 + 位域 checkbutton 双向同步
         self._edit_vars = {}
-        self._param_labels = {}  # di → (label_widget, default_text, default_tooltip)
+        self._param_labels = {}
 
-        # === 基础属性: 左(type+scene) 右(flags) ===
-        self._build_basic_group()
-        # === 按 dword 范围分组 ===
-        # 8-28: 显示/动画/位置/渲染 (去重)
-        GROUP_8_28 = []; _seen8 = set()
-        _skip_8_28 = {12, 14, 16, 17, 22, 25, 26, 27}  # 运行时/中间字段，参数面板不显示
-        for fields in (BASIC_FIELDS, RUNTIME_FIELDS, POS_FIELDS, INTERACT_FIELDS, SCRIPT_FIELDS):
-            for f in fields:
-                if 8 <= f[1] <= 28 and f[1] not in _seen8 and f[1] not in _skip_8_28:
-                    GROUP_8_28.append(f); _seen8.add(f[1])
-        # 排序: d13(朝向)→d15(交互距离)→d21(碰撞高)...
-        _order_8_28 = {13: 21.5, 15: 21.6}
-        GROUP_8_28.sort(key=lambda f: _order_8_28.get(f[1], f[1]))
-        self._build_group("显示/动画/位置 [8-28]", GROUP_8_28, 1)
-        # 30-44: 脚本/DefUnit — 已移除, 仅在"全部"标签页编辑
-        # 50-70: 交互/动画/物品 (去重: 同一di只保留首次出现)
-        GROUP_50_70 = []; _seen50 = set()
-        for fields in (INTERACT_FIELDS, RUNTIME_FIELDS, ANIM_FIELDS, ITEM_FIELDS):
-            for f in fields:
-                if 50 <= f[1] <= 70 and f[1] not in _seen50:
-                    GROUP_50_70.append(f); _seen50.add(f[1])
-        GROUP_50_70.sort(key=lambda f: f[1])
-        self._build_group("交互/动画/物品 [50-70]", GROUP_50_70, 2)
-        # 共享 dword 别名映射: GROUP_50_70 去重后 widget key 可能与 ALL_EDIT_FIELDS 中
-        # 其他字段列表的 key 名不同 (同 di 但不同语义名)。建立别名防止 _show_record KeyError。
-        _dword_aliases = {
-            # d53: ITEM 'item_g1_id' -> ANIM 'dir_mode' (同 di, ANIM 先出现被保留)
-            'item_g1_id': 'dir_mode',
-            # d54: ITEM 'item_g1_idmax' -> ANIM 'target_y'
-            'item_g1_idmax': 'target_y',
-            # d55: BASIC 'shadow_frame' -> ITEM 'item_g1_qty'
-            'shadow_frame': 'item_g1_qty',
-            # d56: ITEM 'item_g1_qtymax' -> RUNTIME 'target_dir'
-            'item_g1_qtymax': 'target_dir',
-            # d57: ITEM 'item_g2_id' -> RUNTIME 'saved_y'
-            'item_g2_id': 'saved_y',
-            # d60: ITEM 'item_g2_qtymax' -> RUNTIME 'alt_tele_x'
-            'item_g2_qtymax': 'alt_tele_x',
-            # d61: ITEM 'item_g3_id' -> RUNTIME 'alt_tele_y'
-            'item_g3_id': 'alt_tele_y',
-            # d64: ITEM 'item_g3_qtymax' -> ANIM 'sub_model'
-            'item_g3_qtymax': 'sub_model',
-        }
-        for alias_key, source_key in _dword_aliases.items():
-            if source_key in self._edit_vars:
-                self._edit_vars[alias_key] = self._edit_vars[source_key]
-        # flags ↔ checkbutton 双向同步
-        self._sync_lock = False
-        _bit_vars = [(self._bit_enable,1), (self._bit_visible,2), (self._bit_pickable,4),
-                     (self._bit_hint,8), (self._bit_busy,0x10), (self._bit_resume,0x20),
-                     (self._bit_taken,0x100), (self._bit_animloop,0x10000),
-                     (self._bit_ev12,0x1000), (self._bit_ev13,0x2000), (self._bit_ev14,0x4000)]
-        def _on_cb(*args):
-            if self._sync_lock: return
-            self._sync_lock = True
-            try: flags = int(self._edit_vars['flags'].get())
-            except ValueError: flags = 0
-            for bv, mask in _bit_vars:
-                if bv.get(): flags |= mask
-                else: flags &= ~mask
-            self._edit_vars['flags'].set(str(flags))
-            self._sync_lock = False
-        def _on_flags(*args):
-            if self._sync_lock: return
-            self._sync_lock = True
-            try: flags = int(self._edit_vars['flags'].get())
-            except ValueError: self._sync_lock = False; return
-            for bv, mask in _bit_vars: bv.set((flags & mask) != 0)
-            self._sync_lock = False
-        self._edit_vars['flags'].trace_add('write', _on_flags)
-        for bv, _ in _bit_vars: bv.trace_add('write', _on_cb)
-
+        # 为每种实体类型创建一个独立页面（初始全部隐藏）
+        self._type_vars.clear()
+        self._type_frames.clear()
+        _TYPE_ORDER = [200, 10, 20, 110, 15, 16, 5]
+        for tval in _TYPE_ORDER:
+            page_frame = ttk.Frame(tab_param)
+            mid = ttk.Frame(page_frame); mid.pack(fill=tk.BOTH, expand=True)
+            lc = ttk.Frame(mid); lc.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+            scb = ttk.Scrollbar(mid, orient=tk.VERTICAL); scb.pack(side=tk.RIGHT, fill=tk.Y)
+            canvas = tk.Canvas(lc, highlightthickness=0, bg='#f8f8f8'); canvas.pack(fill=tk.BOTH, expand=True)
+            inner = ttk.Frame(canvas); inner.columnconfigure(0, weight=1)
+            inner.bind('<Configure>', lambda e, c=canvas: c.configure(scrollregion=c.bbox('all')))
+            canvas.create_window((0,0), window=inner, anchor='nw')
+            canvas.configure(yscrollcommand=scb.set); scb.configure(command=canvas.yview)
+            canvas.bind('<Configure>', lambda e, i=inner: i.columnconfigure(0, minsize=e.width))
+            def _mw(e, c=canvas): c.yview_scroll(int(-1*(e.delta/120)), "units")
+            canvas.bind("<Enter>", lambda e, c=canvas: canvas.bind_all("<MouseWheel>", lambda ev, cc=c: _mw(ev, cc)))
+            canvas.bind("<Leave>", lambda e: canvas.unbind_all("<MouseWheel>"))
+            self._build_type_param_page(inner, tval)
+            self._type_frames[tval] = page_frame
         # === Tab "脚本" — 占位 (稍后 _build_script_tab 填充) ===
         self.tab_script = ttk.Frame(self.notebook)
         self.notebook.add(self.tab_script, text="脚本")
@@ -1925,6 +1863,210 @@ class MatEditor:
                 # 初始 grid 布局 + 自适应换行
                 self._flags_relayout(rf)
                 rf.bind('<Configure>', lambda e: self._flags_relayout(rf))
+
+    def _build_type_param_page(self, inner, tval):
+        """为指定实体类型(tval)构建完整独立的参数编辑页"""
+        tvars = {}
+
+        # ============ 基础属性 ============
+        lf = ttk.LabelFrame(inner, text="基础属性", padding=4)
+        lf.grid(row=0, column=0, sticky='ew', padx=2, pady=2)
+        outer = ttk.Frame(lf); outer.pack(fill=tk.X)
+        left = ttk.Frame(outer); left.pack(side=tk.LEFT, fill=tk.Y, padx=(0,8))
+        for key, di, label, cmt in [("type",0,"实体类型",""), ("scene_id",1,"场景ID","")]:
+            frm = ttk.Frame(left); frm.pack(fill=tk.X, pady=2)
+            lbl = ttk.Label(frm, text=f"[{di:02d}] {label}", font=FONT_S); lbl.pack(anchor=tk.W)
+            if cmt: self._bind_tooltip(lbl, f"[{di:02d}] {cmt}")
+            if key == 'type':
+                cb = ttk.Combobox(frm, state='readonly', values=[f"{k}-{v}" for k,v in sorted(ENTITY_TYPES.items())], width=14, font=FONT)
+                cb.pack(fill=tk.X); tvars[key] = cb
+                cb.bind('<<ComboboxSelected>>', lambda e, d=di, _tvars=tvars: self._sync_type_cb_to_raw(_tvars, d))
+            else:
+                rk = f'raw_{di}'
+                if rk not in self._edit_vars: self._edit_vars[rk] = tk.StringVar()
+                ev = self._edit_vars[rk]; tvars[key] = ev
+                ttk.Entry(frm, textvariable=ev, width=14, font=FONT).pack(fill=tk.X)
+                nl = ttk.Label(frm, text="", foreground='#3366cc', font=FONT_S, wraplength=150)
+                nl.pack(anchor=tk.W); tvars['_scene_label'] = nl
+
+        right = ttk.Frame(outer); right.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        frm = ttk.Frame(right); frm.pack(fill=tk.X, pady=2)
+        ttk.Label(frm, text="[02] 标志位", font=FONT_S).pack(anchor=tk.W)
+        rk = 'raw_2'
+        if rk not in self._edit_vars: self._edit_vars[rk] = tk.StringVar()
+        ev = self._edit_vars[rk]; tvars['flags'] = ev
+        ttk.Entry(frm, textvariable=ev, width=14, font=FONT).pack(fill=tk.X)
+        cbf = ttk.Frame(frm); cbf.pack(fill=tk.X, pady=(2,0))
+        bit_attrs = [("_bit_enable","启用",1),("_bit_visible","显示",2),("_bit_pickable","可交互",4),
+                     ("_bit_hint","提示",8),("_bit_busy","忙碌",0x10),("_bit_resume","恢复",0x20),
+                     ("_bit_taken","已拾取",0x100),("_bit_animloop","循环动画",0x10000),
+                     ("_bit_ev12","事件标志A",0x1000),("_bit_ev13","事件标志B",0x2000),("_bit_ev14","事件标志C",0x4000)]
+        bit_vars = {}; bit_cbs = []; bit_hidden = set()  # 隐藏的 checkbox
+        rf = ttk.Frame(cbf); rf.pack(fill=tk.X)
+        for attr, text, mask in bit_attrs:
+            bv = tk.BooleanVar(value=False); bit_vars[attr] = bv
+            cb_w = ttk.Checkbutton(rf, text=text, variable=bv); bit_cbs.append(cb_w)
+        tvars['_bit_vars'] = bit_vars; tvars['_bit_cbs'] = bit_cbs
+        tvars['_bit_hidden'] = bit_hidden
+
+        def _flags_relayout_t(container=rf, _bit_cbs=bit_cbs, _bit_hidden=bit_hidden):
+            # 事件标志 checkbox: bit_attrs 最后3个
+            w = container.winfo_width()
+            if w < 20: w = 400
+            visible = [cb for cb in _bit_cbs if cb not in _bit_hidden]
+            cols = max(1, min(len(visible), w // 90))
+            for i, cb in enumerate(visible):
+                r, c = divmod(i, cols); cb.grid(row=r, column=c, sticky='w', padx=2)
+            for cb in _bit_hidden: cb.grid_remove()
+            for ci in range(cols): container.columnconfigure(ci, weight=1)
+        tvars['_flags_relayout'] = _flags_relayout_t
+
+        rf.bind('<Configure>', lambda e: _flags_relayout_t())
+        # 初始化布局
+        rf.update_idletasks(); _flags_relayout_t()
+        # 事件标志 checkbox 列表（bit_attrs 最后3项）
+        tvars['_bit_event_idxs'] = [i for i, (attr, _, _) in enumerate(bit_attrs)
+                                     if attr in ('_bit_ev12', '_bit_ev13', '_bit_ev14')]
+
+        def _on_cb_t(*a, _ev=ev, _bv=bit_vars):
+            try: flags = int(_ev.get())
+            except ValueError: flags = 0
+            for attr, _text, mask in bit_attrs:
+                if _bv[attr].get(): flags |= mask
+                else: flags &= ~mask
+            _ev.set(str(flags))
+        def _on_flags_t(*a, _ev=ev, _bv=bit_vars):
+            try: flags = int(_ev.get())
+            except ValueError: return
+            for attr, _text, mask in bit_attrs: _bv[attr].set((flags & mask) != 0)
+        for bv in bit_vars.values(): bv.trace_add('write', _on_cb_t)
+        ev.trace_add('write', _on_flags_t)
+
+        # ============ 显示/动画/位置 [8-28] ============
+        GROUP_8_28 = []; _seen8 = set()
+        _skip_8_28 = {12, 14, 16, 17, 22, 25, 26, 27}
+        for fields in (BASIC_FIELDS, RUNTIME_FIELDS, POS_FIELDS, INTERACT_FIELDS, SCRIPT_FIELDS):
+            for f in fields:
+                if 8 <= f[1] <= 28 and f[1] not in _seen8 and f[1] not in _skip_8_28:
+                    GROUP_8_28.append(f); _seen8.add(f[1])
+        _order_8_28 = {13: 21.5, 15: 21.6}
+        GROUP_8_28.sort(key=lambda f: _order_8_28.get(f[1], f[1]))
+        # 获取此类型的特有标签
+        type_labels = _TYPE_LABELS.get(tval, {})
+        if tval == 20: type_labels = _TYPE_LABELS.get(200, {})
+        lf2 = ttk.LabelFrame(inner, text="显示/动画/位置 [8-28]", padding=4)
+        lf2.grid(row=1, column=0, sticky='ew', padx=2, pady=2)
+        grid = ttk.Frame(lf2); grid.pack(fill=tk.X)
+        for fi, (key, di, label, cmt) in enumerate(GROUP_8_28):
+            r, c = divmod(fi, 4); frm = ttk.Frame(grid); frm.grid(row=r, column=c, sticky='nw', padx=4, pady=2)
+            # 类型特有标签优先
+            if di in type_labels:
+                tl, tc = type_labels[di]
+                fg = '#cc6600'; tt = f"[{di:02d}] {tl}"
+                if tc: tt += f": {tc}"
+            else:
+                tl, tc, fg = label, cmt, 'black'
+                tt = f"[{di:02d}] {cmt}" if cmt else None
+            lbl = ttk.Label(frm, text=f"[{di:02d}] {tl}", font=FONT_S, foreground=fg); lbl.pack(anchor=tk.W)
+            if tt: self._bind_tooltip(lbl, tt)
+            if key == 'anim_set':
+                cb = ttk.Combobox(frm, state='readonly', values=[f"{k}-{v}" for k,v in ANIM_SETS.items()], width=16, font=FONT)
+                cb.pack(fill=tk.X); tvars[key] = cb
+                cb.bind('<<ComboboxSelected>>', lambda e, d=di, _tvars=tvars: self._sync_type_cb_to_raw(_tvars, d))
+            elif key == 'blend_mode':
+                cb = ttk.Combobox(frm, state='readonly', values=["0-正常","1-染色","2-加法发光","3-减法压暗","4-亮度alpha","5-水平翻转"], width=16, font=FONT)
+                cb.pack(fill=tk.X); tvars[key] = cb
+                cb.bind('<<ComboboxSelected>>', lambda e, d=di, _tvars=tvars: self._sync_type_cb_to_raw(_tvars, d))
+            elif key == 'shadow_frame':
+                cb = ttk.Combobox(frm, state='readonly', values=["0-无阴影","1-小阴影(39×23)","2-大阴影(65×33)"], width=16, font=FONT)
+                cb.pack(fill=tk.X); tvars[key] = cb
+                cb.bind('<<ComboboxSelected>>', lambda e, d=di, _tvars=tvars: self._sync_type_cb_to_raw(_tvars, d))
+            elif key == 'cursor_id':
+                cb = ttk.Combobox(frm, state='readonly', values=[f"{k}-{v}" for k,v in sorted(_CURSOR_BLOCKS.items())], width=14, font=FONT)
+                cb.pack(fill=tk.X); tvars[key] = cb
+                cb.bind('<<ComboboxSelected>>', lambda e, d=di, _tvars=tvars: self._sync_type_cb_to_raw(_tvars, d))
+            elif key == 'dialog_color':
+                rk = f'raw_{di}'
+                if rk not in self._edit_vars: self._edit_vars[rk] = tk.StringVar(value='0')
+                dc_val = self._edit_vars[rk]; tvars[key] = dc_val
+                menu_frame = ttk.Frame(frm); menu_frame.pack(fill=tk.X)
+                dc_swatch = tk.Canvas(menu_frame, width=18, height=18, highlightthickness=1, bg='#000')
+                dc_swatch.pack(side=tk.LEFT, padx=(0,2)); tvars['_dialog_color_swatch'] = dc_swatch
+                mb = tk.Menubutton(menu_frame, text="0-FCOLOR(1)", relief=tk.RAISED, font=FONT, width=14, anchor='w', pady=0)
+                mb.pack(side=tk.LEFT, fill=tk.X, expand=True); tvars['_dialog_color_mb'] = mb
+                menu = tk.Menu(mb, tearoff=0)
+                for i in range(32):
+                    hc = GAME_COLORS.get(i + 1, '#000')
+                    menu.add_command(label=f"{i:2d}  FCOLOR({i+1:2d})  ■",
+                                     background=hc, foreground='#FFF',
+                                     activebackground=hc, activeforeground='#FFF',
+                                     command=lambda v=i, _v=dc_val, _s=dc_swatch, _m=mb:
+                                     (_v.set(str(v)), _s.configure(bg=GAME_COLORS.get(v+1,'#000')),
+                                      _m.configure(text=f"{v}-FCOLOR({v+1})")))
+                mb.config(menu=menu)
+            else:
+                rk = f'raw_{di}'
+                if rk not in self._edit_vars: self._edit_vars[rk] = tk.StringVar()
+                ev = self._edit_vars[rk]; tvars[key] = ev
+                ttk.Entry(frm, textvariable=ev, width=14, font=FONT).pack(fill=tk.X)
+                if key == 'hint_id':
+                    hl = ttk.Label(frm, text="", foreground='#3366cc', font=FONT_S, wraplength=150)
+                    hl.pack(anchor=tk.W); tvars['_hint_label'] = hl
+
+        # ============ 交互/动画/物品 [50-70] ============
+        GROUP_50_70 = []; _seen50 = set()
+        for fields in (INTERACT_FIELDS, RUNTIME_FIELDS, ANIM_FIELDS, ITEM_FIELDS):
+            for f in fields:
+                if 50 <= f[1] <= 70 and f[1] not in _seen50:
+                    GROUP_50_70.append(f); _seen50.add(f[1])
+        GROUP_50_70.sort(key=lambda f: f[1])
+        lf3 = ttk.LabelFrame(inner, text="交互/动画/物品 [50-70]", padding=4)
+        lf3.grid(row=2, column=0, sticky='ew', padx=2, pady=2)
+        grid3 = ttk.Frame(lf3); grid3.pack(fill=tk.X)
+        for fi, (key, di, label, cmt) in enumerate(GROUP_50_70):
+            r, c = divmod(fi, 4); frm = ttk.Frame(grid3); frm.grid(row=r, column=c, sticky='nw', padx=4, pady=2)
+            # 类型特有标签优先
+            if di in type_labels:
+                tl, tc = type_labels[di]
+                fg = '#cc6600'; tt = f"[{di:02d}] {tl}"
+                if tc: tt += f": {tc}"
+            else:
+                tl, tc, fg = label, cmt, 'black'
+                tt = f"[{di:02d}] {cmt}" if cmt else None
+            lbl = ttk.Label(frm, text=f"[{di:02d}] {tl}", font=FONT_S, foreground=fg); lbl.pack(anchor=tk.W)
+            if tt: self._bind_tooltip(lbl, tt)
+            rk = f'raw_{di}'
+            if rk not in self._edit_vars: self._edit_vars[rk] = tk.StringVar()
+            ev = self._edit_vars[rk]
+            if key in ('item_g1_id', 'item_g2_id', 'item_g3_id'):
+                tvars[key] = ev
+                ttk.Entry(frm, textvariable=ev, width=14, font=FONT).pack(fill=tk.X)
+                il = ttk.Label(frm, text="", foreground='#996600', font=FONT_S, wraplength=150)
+                il.pack(anchor=tk.W); tvars[f'_{key}_label'] = il
+            else:
+                tvars[key] = ev
+                ttk.Entry(frm, textvariable=ev, width=14, font=FONT).pack(fill=tk.X)
+
+        self._type_vars[tval] = tvars
+
+    def _sync_type_cb_to_raw(self, tvars, di):
+        """类型页面 Combobox 值同步到"全部"标签页 raw_N"""
+        for key in ('raw_', 'd'):
+            k = f'{key}{di}'
+            if k in self._edit_vars and isinstance(self._edit_vars[k], tk.StringVar):
+                # 查找 tvars 中对应 di 的 Combobox
+                for fields in (ALL_EDIT_FIELDS, RUNTIME_FIELDS):
+                    for cb_key, cb_di, *_ in fields:
+                        if cb_di == di and cb_key in tvars:
+                            cb = tvars[cb_key]
+                            if isinstance(cb, ttk.Combobox):
+                                try:
+                                    v = int(cb.get().split('-')[0])
+                                    self._edit_vars[k].set(str(v))
+                                except ValueError:
+                                    pass
+                            return
+                break
 
     def _build_group(self,title,fields,row):
         lf=ttk.LabelFrame(self.edit_inner,text=title,padding=4)
@@ -2226,6 +2368,8 @@ class MatEditor:
                 # 若参数tab已有同名StringVar则复用, 实现双标签页值互通
                 if name in self._edit_vars and isinstance(self._edit_vars[name], tk.StringVar):
                     ev = self._edit_vars[name]
+                elif key in self._edit_vars and isinstance(self._edit_vars[key], tk.StringVar):
+                    ev = self._edit_vars[key]
                 else:
                     ev = tk.StringVar()
             else:
@@ -2239,23 +2383,15 @@ class MatEditor:
             self._all_labels[di] = lbl
 
     def _update_param_labels(self, tval):
-        """根据实体类型更新'参数'tab的字段标签和tooltip"""
-        type_labels = _TYPE_LABELS.get(tval, {})
-        if tval == 20: type_labels = _TYPE_LABELS.get(200, {})
-        known = {}
-        for fields in (BASIC_FIELDS, FLAG_FIELDS, POS_FIELDS, ANIM_FIELDS, ITEM_FIELDS, SCRIPT_FIELDS, INTERACT_FIELDS, RUNTIME_FIELDS):
-            for name, di, label, cmt in fields:
-                known[di] = (label, cmt)
-        for di, (lbl, def_label, def_cmt) in self._param_labels.items():
-            if di in type_labels:
-                tl, tc = type_labels[di]
-                lbl.config(text=f"[{di:02d}] {tl}", foreground='#cc6600')
-                tt = f"[{di:02d}] {tl}"
-                if tc: tt += f": {tc}"
-                self._bind_tooltip(lbl, tt)
-            else:
-                lbl.config(text=f"[{di:02d}] {def_label}", foreground='black')
-                if def_cmt: self._bind_tooltip(lbl, f"[{di:02d}] {def_cmt}")
+        """根据实体类型切换到对应的独立参数页面"""
+        if tval not in self._type_frames:
+            return
+        # 隐藏当前页面
+        if self._active_type and self._active_type in self._type_frames:
+            self._type_frames[self._active_type].pack_forget()
+        # 显示目标页面
+        self._type_frames[tval].pack(fill=tk.BOTH, expand=True)
+        self._active_type = tval
 
     def _update_all_tab_labels(self, tval):
         """根据实体类型更新'全部'tab的字段标签"""
@@ -3797,15 +3933,16 @@ class MatEditor:
             val=rec[f'd{di}']
             BLEND_MODES = {0:"正常",1:"染色",2:"加法发光",3:"减法压暗",4:"亮度alpha",5:"水平翻转"}
             SHADOW_LABELS = {0:"无阴影",1:"小阴影(39×23)",2:"大阴影(65×33)"}
-            if key=='type': self._edit_vars[key].set(f"{val}-{ENTITY_TYPES.get(val,'未知')}")
-            elif key=='anim_set': self._edit_vars[key].set(f"{val}-{ANIM_SETS.get(val,'未知')}" if val in ANIM_SETS else f"{val}-未知")
-            elif key=='blend_mode': self._edit_vars[key].set(f"{val}-{BLEND_MODES.get(val,'未知')}")
-            elif key=='shadow_frame': self._edit_vars[key].set(f"{val}-{SHADOW_LABELS.get(val,'未知')}")
-            elif key=='cursor_id': self._edit_vars[key].set(f"{val}-{_CURSOR_BLOCKS.get(val,'未知')}")
-            elif key=='dialog_color':
-                self._on_dialog_color_select(val)
-            elif key in self._edit_vars:
-                self._edit_vars[key].set(str(val))
+            if key in self._edit_vars:
+                if key=='type': self._edit_vars[key].set(f"{val}-{ENTITY_TYPES.get(val,'未知')}")
+                elif key=='anim_set': self._edit_vars[key].set(f"{val}-{ANIM_SETS.get(val,'未知')}" if val in ANIM_SETS else f"{val}-未知")
+                elif key=='blend_mode': self._edit_vars[key].set(f"{val}-{BLEND_MODES.get(val,'未知')}")
+                elif key=='shadow_frame': self._edit_vars[key].set(f"{val}-{SHADOW_LABELS.get(val,'未知')}")
+                elif key=='cursor_id': self._edit_vars[key].set(f"{val}-{_CURSOR_BLOCKS.get(val,'未知')}")
+                elif key=='dialog_color' and key in self._edit_vars and hasattr(self, '_dialog_color_val'):
+                    self._on_dialog_color_select(val)
+                elif isinstance(self._edit_vars[key], tk.StringVar):
+                    self._edit_vars[key].set(str(val))
         for key,di,label,cmt in RUNTIME_FIELDS:
             if key in self._edit_vars: self._edit_vars[key].set(str(rec[f'd{di}']))
         # 填充"全部"标签页的字段 (raw_N 已知 + dN 未知)
@@ -3847,6 +3984,65 @@ class MatEditor:
         self._update_flags_visibility(tval)
         # 刷新脚本标签页链列表
         self._refresh_chain_list()
+        # 填充独立类型页面组件
+        if tval in self._type_vars:
+            tvars = self._type_vars[tval]
+            for key, di, label, cmt in ALL_EDIT_FIELDS:
+                val = rec[f'd{di}']
+                if key in tvars and isinstance(tvars[key], ttk.Combobox):
+                    if key == 'type':
+                        tvars[key].set(f"{val}-{ENTITY_TYPES.get(val,'未知')}")
+                    elif key == 'anim_set':
+                        tvars[key].set(f"{val}-{ANIM_SETS.get(val,'未知')}" if val in ANIM_SETS else f"{val}-未知")
+                    elif key == 'blend_mode':
+                        tvars[key].set(f"{val}-{BLEND_MODES.get(val,'未知')}")
+                    elif key == 'shadow_frame':
+                        tvars[key].set(f"{val}-{SHADOW_LABELS.get(val,'未知')}")
+                    elif key == 'cursor_id':
+                        tvars[key].set(f"{val}-{_CURSOR_BLOCKS.get(val,'未知')}")
+                elif key in tvars and isinstance(tvars[key], tk.StringVar):
+                    tvars[key].set(str(val))
+            for key, di, label, cmt in RUNTIME_FIELDS:
+                if key in tvars and isinstance(tvars[key], tk.StringVar):
+                    tvars[key].set(str(rec[f'd{di}']))
+            if '_scene_label' in tvars:
+                tvars['_scene_label'].config(text=sname)
+            if '_hint_label' in tvars:
+                hid = rec['d23']
+                tvars['_hint_label'].config(text="" if hid == 0 else self.tkt_scenes.get(hid, ""))
+            for key, di in [('_item_g1_id_label', 53), ('_item_g2_id_label', 57), ('_item_g3_id_label', 61)]:
+                if key in tvars:
+                    item_id = rec[f'd{di}']
+                    if item_id and item_id in self.item_names:
+                        tvars[key].config(text=self.item_names[item_id])
+                    elif item_id:
+                        tvars[key].config(text=f"物品 #{item_id}")
+                    else:
+                        tvars[key].config(text="")
+            # 对话框颜色
+            if '_dialog_color_swatch' in tvars:
+                dc_val = rec['d28']
+                tvars['dialog_color'].set(str(dc_val))
+                tvars['_dialog_color_swatch'].configure(bg=GAME_COLORS.get(dc_val + 1, '#000'))
+                if '_dialog_color_mb' in tvars:
+                    tvars['_dialog_color_mb'].configure(text=f"{dc_val}-FCOLOR({dc_val+1})")
+            # 标志位 checkbuttons
+            flags = rec['d2']
+            if '_bit_vars' in tvars:
+                for attr, mask in [("_bit_enable",1),("_bit_visible",2),("_bit_pickable",4),
+                                   ("_bit_hint",8),("_bit_busy",0x10),("_bit_resume",0x20),
+                                   ("_bit_taken",0x100),("_bit_animloop",0x10000),
+                                   ("_bit_ev12",0x1000),("_bit_ev13",0x2000),("_bit_ev14",0x4000)]:
+                    tvars['_bit_vars'][attr].set((flags & mask) != 0)
+            # 事件标志 checkbox 可见性
+            if '_bit_hidden' in tvars and '_bit_event_idxs' in tvars:
+                show = tval in (20, 200)
+                for i in tvars['_bit_event_idxs']:
+                    cb = tvars['_bit_cbs'][i]
+                    if show: tvars['_bit_hidden'].discard(cb)
+                    else: tvars['_bit_hidden'].add(cb)
+                if '_flags_relayout' in tvars:
+                    tvars['_flags_relayout']()
 
     def _clear_form(self):
         self._sync_lock=True
@@ -3857,9 +4053,21 @@ class MatEditor:
         if '_hint_label' in self._edit_vars: self._edit_vars['_hint_label'].config(text="")
         for key in ('_item_g1_id_label', '_item_g2_id_label', '_item_g3_id_label'):
             if key in self._edit_vars: self._edit_vars[key].config(text="")
-        # 恢复参数tab标签为默认
-        for di, (lbl, def_label, _) in self._param_labels.items():
-            lbl.config(text=f"[{di:02d}] {def_label}", foreground='black')
+        # 清空独立类型页面
+        for tval in self._type_vars:
+            tvars = self._type_vars[tval]
+            for key, var in tvars.items():
+                if isinstance(var, tk.StringVar): var.set("")
+                elif isinstance(var, ttk.Combobox): var.set("")
+            for lk in ('_scene_label', '_hint_label', '_item_g1_id_label', '_item_g2_id_label', '_item_g3_id_label'):
+                if lk in tvars: tvars[lk].config(text="")
+            if '_bit_vars' in tvars:
+                for bv in tvars['_bit_vars'].values(): bv.set(False)
+            if '_bit_hidden' in tvars and '_bit_event_idxs' in tvars:
+                for i in tvars['_bit_event_idxs']:
+                    tvars['_bit_hidden'].add(tvars['_bit_cbs'][i])
+                if '_flags_relayout' in tvars:
+                    tvars['_flags_relayout']()
         # 清空脚本标签页
         self._clear_script_editor()
         self.chain_tree.delete(*self.chain_tree.get_children())
@@ -3880,8 +4088,28 @@ class MatEditor:
     def _read_form(self):
         vals = {}
         covered = set()
-        # 1. 先读 "全部"tab 的 raw_N/dN (共享StringVar的字段两边同步, Combobox字段读原始值)
+        # 0. 先从激活类型页面读取 Combobox 值
+        if self._active_type and self._active_type in self._type_vars:
+            tvars = self._type_vars[self._active_type]
+            for fields in (ALL_EDIT_FIELDS, RUNTIME_FIELDS):
+                for cb_key, cb_di, *_ in fields:
+                    if cb_key in tvars and isinstance(tvars[cb_key], ttk.Combobox):
+                        try: v = int(tvars[cb_key].get().split('-')[0])
+                        except ValueError: continue
+                        vals[f'd{cb_di}'] = v; covered.add(cb_di)
+        # 0.5. 从激活类型页面读取 StringVar 值
+        if self._active_type and self._active_type in self._type_vars:
+            tvars = self._type_vars[self._active_type]
+            for fields in (ALL_EDIT_FIELDS, RUNTIME_FIELDS):
+                for key, di, *_ in fields:
+                    if di in covered: continue
+                    if key in tvars and isinstance(tvars[key], tk.StringVar):
+                        try: v = int(tvars[key].get())
+                        except ValueError: continue
+                        vals[f'd{di}'] = v; covered.add(di)
+        # 1. 从 "全部"tab 补充未覆盖的字段
         for di in range(96):
+            if di in covered: continue
             for prefix in ('raw_', 'd'):
                 key = f'{prefix}{di}'
                 if key in self._edit_vars:
