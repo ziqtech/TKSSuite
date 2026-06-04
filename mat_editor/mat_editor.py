@@ -335,7 +335,7 @@ _TYPE_LABELS = {
     },
     10: {  # 出入传送点 sub_4081F8 + 地形块连线 sub_405CBC
         50:("通过条件","0=无限制, >0时须与玩家 d22 相等才可传送。源码: sub_4081F8:15 if(d50>0&&player_d22≠d50)阻断"),
-        51:("方向掩码","bit0-7对应朝向1-8, 0=任意方向。源码: sub_4081F8 byte+204=d51, d51&(1<<(player_direction-1))掩码检查"),
+        51:("面向要求","bit0=上 bit1=右上 bit2=右 bit3=右下 bit4=下 bit5=左下 bit6=左 bit7=左上。0=不限;>0=须面朝置位方向。源码: d51&(1<<(player_d13-1))"),
         52:("目标地图ID","ChangeScene的目标场景ID。源码: sub_4081F8 *(_WORD*)(a2+208)作为ChangeScene第1参数"),
         53:("目标X","传送后X坐标。源码: sub_4081F8 *(_WORD*)(a2+212)作为ChangeScene第2参数"),
         54:("目标Y","传送后Y坐标。源码: sub_4081F8 *(_WORD*)(a2+216)作为ChangeScene第3参数"),
@@ -351,6 +351,8 @@ _TYPE_LABELS = {
         73:("路径3·编号",""), 74:("路径3·X1",""), 75:("路径3·Y1",""), 76:("路径3·X2",""), 77:("路径3·Y2",""),
         78:("路径4·编号",""), 79:("路径4·X1",""), 80:("路径4·Y1",""), 81:("路径4·X2",""), 82:("路径4·Y2",""),
         83:("路径5·编号",""), 84:("路径5·X1",""), 85:("路径5·Y1",""), 86:("路径5·X2",""), 87:("路径5·Y2",""),
+    },
+    15: {  # 事件触发区 — 玩家接近碰撞盒时自动触发脚本 (sub_408408)
         34:("脚本开关","d34(cur_B)非零时触发才生效。源码: sub_408408 a2[34]==0则return 0"),
         50:("通过条件","0=无限制, >0时须与玩家 d22 相等才触发。源码: sub_408408:13 if(d50>0&&player_d22≠d50)阻断"),
         51:("方向掩码","bit0-7对应朝向1-8, 0=任意。源码: sub_408408 a2[51]&(1<<(player_dir-1))"),
@@ -2054,6 +2056,21 @@ class MatEditor:
                     ttk.Entry(frm, textvariable=ev, width=14, font=FONT).pack(fill=tk.X)
                     il = ttk.Label(frm, text="", foreground='#996600', font=FONT_S, wraplength=150)
                     il.pack(anchor=tk.W); tvars[f'_{key}_label'] = il
+                elif key == "dir_mask" and tval == 10:
+                    tvars[key] = ev
+                    dir_bv = {}
+                    dir_cbf = ttk.Frame(frm); dir_cbf.pack(fill=tk.X)
+                    dir_labels = ["上","右上","右","右下","下","左下","左","左上"]
+                    for bit_i in range(8):
+                        bv = tk.BooleanVar(value=False); dir_bv[bit_i] = bv
+                        cb = ttk.Checkbutton(dir_cbf, text=dir_labels[bit_i], variable=bv)
+                        r2, c2 = divmod(bit_i, 2)
+                        cb.grid(row=r2, column=c2, sticky="w", padx=1)
+                    def _on_dir(*a, _ev=ev, _dir_bv=dir_bv):
+                        mask = sum((1<<i) for i, dbv in _dir_bv.items() if dbv.get())
+                        _ev.set(str(mask))
+                    for bv in dir_bv.values(): bv.trace_add("write", _on_dir)
+                    tvars["_dir_bv"] = dir_bv
                 else:
                     tvars[key] = ev
                     ttk.Entry(frm, textvariable=ev, width=14, font=FONT).pack(fill=tk.X)
@@ -4063,6 +4080,9 @@ class MatEditor:
                                    ("_bit_ev12",0x1000),("_bit_ev13",0x2000),("_bit_ev14",0x4000)]:
                     tvars['_bit_vars'][attr].set((flags & mask) != 0)
             # 事件标志 checkbox 可见性
+            if "_dir_bv" in tvars:
+                for bv in tvars["_dir_bv"].values(): bv.set(False)
+
             if '_bit_hidden' in tvars and '_bit_event_idxs' in tvars:
                 show = tval in (20, 200)
                 for i in tvars['_bit_event_idxs']:
@@ -4071,6 +4091,11 @@ class MatEditor:
                     else: tvars['_bit_hidden'].add(cb)
                 if '_flags_relayout' in tvars:
                     tvars['_flags_relayout']()
+            if "_dir_bv" in tvars:
+                d51_val = rec['d51']
+                for bit_i in tvars["_dir_bv"]:
+                    tvars["_dir_bv"][bit_i].set((d51_val & (1<<bit_i)) != 0)
+
 
     def _clear_form(self):
         self._sync_lock=True
