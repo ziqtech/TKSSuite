@@ -1867,6 +1867,12 @@ class MatEditor:
     def _build_type_param_page(self, inner, tval):
         """为指定实体类型(tval)构建完整独立的参数编辑页"""
         tvars = {}
+        # 每种类型不显示的 dword 集合（基于实际数据分析）
+        _SKIP_DWORDS = {
+            5:  {9,24,25}|set(range(29,96)),   # 脚本对象: 无动画集/混合/脚本链(d30-44外)/d50+
+            10: set(), 15: set(), 16: set(), 20: set(), 110: set(), 200: set(),
+        }
+        skip = _SKIP_DWORDS.get(tval, set())
 
         # ============ 基础属性 ============
         lf = ttk.LabelFrame(inner, text="基础属性", padding=4)
@@ -1951,67 +1957,69 @@ class MatEditor:
                     GROUP_8_28.append(f); _seen8.add(f[1])
         _order_8_28 = {13: 21.5, 15: 21.6}
         GROUP_8_28.sort(key=lambda f: _order_8_28.get(f[1], f[1]))
+        GROUP_8_28 = [f for f in GROUP_8_28 if f[1] not in skip]  # 按类型过滤
         # 获取此类型的特有标签
         type_labels = _TYPE_LABELS.get(tval, {})
         if tval == 20: type_labels = _TYPE_LABELS.get(200, {})
-        lf2 = ttk.LabelFrame(inner, text="显示/动画/位置 [8-28]", padding=4)
-        lf2.grid(row=1, column=0, sticky='ew', padx=2, pady=2)
-        grid = ttk.Frame(lf2); grid.pack(fill=tk.X)
-        for fi, (key, di, label, cmt) in enumerate(GROUP_8_28):
-            r, c = divmod(fi, 4); frm = ttk.Frame(grid); frm.grid(row=r, column=c, sticky='nw', padx=4, pady=2)
-            # 类型特有标签优先
-            if di in type_labels:
-                tl, tc = type_labels[di]
-                fg = '#cc6600'; tt = f"[{di:02d}] {tl}"
-                if tc: tt += f": {tc}"
-            else:
-                tl, tc, fg = label, cmt, 'black'
-                tt = f"[{di:02d}] {cmt}" if cmt else None
-            lbl = ttk.Label(frm, text=f"[{di:02d}] {tl}", font=FONT_S, foreground=fg); lbl.pack(anchor=tk.W)
-            if tt: self._bind_tooltip(lbl, tt)
-            if key == 'anim_set':
-                cb = ttk.Combobox(frm, state='readonly', values=[f"{k}-{v}" for k,v in ANIM_SETS.items()], width=16, font=FONT)
-                cb.pack(fill=tk.X); tvars[key] = cb
-                cb.bind('<<ComboboxSelected>>', lambda e, d=di, _tvars=tvars: self._sync_type_cb_to_raw(_tvars, d))
-            elif key == 'blend_mode':
-                cb = ttk.Combobox(frm, state='readonly', values=["0-正常","1-染色","2-加法发光","3-减法压暗","4-亮度alpha","5-水平翻转"], width=16, font=FONT)
-                cb.pack(fill=tk.X); tvars[key] = cb
-                cb.bind('<<ComboboxSelected>>', lambda e, d=di, _tvars=tvars: self._sync_type_cb_to_raw(_tvars, d))
-            elif key == 'shadow_frame':
-                cb = ttk.Combobox(frm, state='readonly', values=["0-无阴影","1-小阴影(39×23)","2-大阴影(65×33)"], width=16, font=FONT)
-                cb.pack(fill=tk.X); tvars[key] = cb
-                cb.bind('<<ComboboxSelected>>', lambda e, d=di, _tvars=tvars: self._sync_type_cb_to_raw(_tvars, d))
-            elif key == 'cursor_id':
-                cb = ttk.Combobox(frm, state='readonly', values=[f"{k}-{v}" for k,v in sorted(_CURSOR_BLOCKS.items())], width=14, font=FONT)
-                cb.pack(fill=tk.X); tvars[key] = cb
-                cb.bind('<<ComboboxSelected>>', lambda e, d=di, _tvars=tvars: self._sync_type_cb_to_raw(_tvars, d))
-            elif key == 'dialog_color':
-                rk = f'raw_{di}'
-                if rk not in self._edit_vars: self._edit_vars[rk] = tk.StringVar(value='0')
-                dc_val = self._edit_vars[rk]; tvars[key] = dc_val
-                menu_frame = ttk.Frame(frm); menu_frame.pack(fill=tk.X)
-                dc_swatch = tk.Canvas(menu_frame, width=18, height=18, highlightthickness=1, bg='#000')
-                dc_swatch.pack(side=tk.LEFT, padx=(0,2)); tvars['_dialog_color_swatch'] = dc_swatch
-                mb = tk.Menubutton(menu_frame, text="0-FCOLOR(1)", relief=tk.RAISED, font=FONT, width=14, anchor='w', pady=0)
-                mb.pack(side=tk.LEFT, fill=tk.X, expand=True); tvars['_dialog_color_mb'] = mb
-                menu = tk.Menu(mb, tearoff=0)
-                for i in range(32):
-                    hc = GAME_COLORS.get(i + 1, '#000')
-                    menu.add_command(label=f"{i:2d}  FCOLOR({i+1:2d})  ■",
-                                     background=hc, foreground='#FFF',
-                                     activebackground=hc, activeforeground='#FFF',
-                                     command=lambda v=i, _v=dc_val, _s=dc_swatch, _m=mb:
-                                     (_v.set(str(v)), _s.configure(bg=GAME_COLORS.get(v+1,'#000')),
-                                      _m.configure(text=f"{v}-FCOLOR({v+1})")))
-                mb.config(menu=menu)
-            else:
-                rk = f'raw_{di}'
-                if rk not in self._edit_vars: self._edit_vars[rk] = tk.StringVar()
-                ev = self._edit_vars[rk]; tvars[key] = ev
-                ttk.Entry(frm, textvariable=ev, width=14, font=FONT).pack(fill=tk.X)
-                if key == 'hint_id':
-                    hl = ttk.Label(frm, text="", foreground='#3366cc', font=FONT_S, wraplength=150)
-                    hl.pack(anchor=tk.W); tvars['_hint_label'] = hl
+        if GROUP_8_28:
+            lf2 = ttk.LabelFrame(inner, text="显示/动画/位置 [8-28]", padding=4)
+            lf2.grid(row=1, column=0, sticky='ew', padx=2, pady=2)
+            grid = ttk.Frame(lf2); grid.pack(fill=tk.X)
+            for fi, (key, di, label, cmt) in enumerate(GROUP_8_28):
+                r, c = divmod(fi, 4); frm = ttk.Frame(grid); frm.grid(row=r, column=c, sticky='nw', padx=4, pady=2)
+                # 类型特有标签优先
+                if di in type_labels:
+                    tl, tc = type_labels[di]
+                    fg = '#cc6600'; tt = f"[{di:02d}] {tl}"
+                    if tc: tt += f": {tc}"
+                else:
+                    tl, tc, fg = label, cmt, 'black'
+                    tt = f"[{di:02d}] {cmt}" if cmt else None
+                lbl = ttk.Label(frm, text=f"[{di:02d}] {tl}", font=FONT_S, foreground=fg); lbl.pack(anchor=tk.W)
+                if tt: self._bind_tooltip(lbl, tt)
+                if key == 'anim_set':
+                    cb = ttk.Combobox(frm, state='readonly', values=[f"{k}-{v}" for k,v in ANIM_SETS.items()], width=16, font=FONT)
+                    cb.pack(fill=tk.X); tvars[key] = cb
+                    cb.bind('<<ComboboxSelected>>', lambda e, d=di, _tvars=tvars: self._sync_type_cb_to_raw(_tvars, d))
+                elif key == 'blend_mode':
+                    cb = ttk.Combobox(frm, state='readonly', values=["0-正常","1-染色","2-加法发光","3-减法压暗","4-亮度alpha","5-水平翻转"], width=16, font=FONT)
+                    cb.pack(fill=tk.X); tvars[key] = cb
+                    cb.bind('<<ComboboxSelected>>', lambda e, d=di, _tvars=tvars: self._sync_type_cb_to_raw(_tvars, d))
+                elif key == 'shadow_frame':
+                    cb = ttk.Combobox(frm, state='readonly', values=["0-无阴影","1-小阴影(39×23)","2-大阴影(65×33)"], width=16, font=FONT)
+                    cb.pack(fill=tk.X); tvars[key] = cb
+                    cb.bind('<<ComboboxSelected>>', lambda e, d=di, _tvars=tvars: self._sync_type_cb_to_raw(_tvars, d))
+                elif key == 'cursor_id':
+                    cb = ttk.Combobox(frm, state='readonly', values=[f"{k}-{v}" for k,v in sorted(_CURSOR_BLOCKS.items())], width=14, font=FONT)
+                    cb.pack(fill=tk.X); tvars[key] = cb
+                    cb.bind('<<ComboboxSelected>>', lambda e, d=di, _tvars=tvars: self._sync_type_cb_to_raw(_tvars, d))
+                elif key == 'dialog_color':
+                    rk = f'raw_{di}'
+                    if rk not in self._edit_vars: self._edit_vars[rk] = tk.StringVar(value='0')
+                    dc_val = self._edit_vars[rk]; tvars[key] = dc_val
+                    menu_frame = ttk.Frame(frm); menu_frame.pack(fill=tk.X)
+                    dc_swatch = tk.Canvas(menu_frame, width=18, height=18, highlightthickness=1, bg='#000')
+                    dc_swatch.pack(side=tk.LEFT, padx=(0,2)); tvars['_dialog_color_swatch'] = dc_swatch
+                    mb = tk.Menubutton(menu_frame, text="0-FCOLOR(1)", relief=tk.RAISED, font=FONT, width=14, anchor='w', pady=0)
+                    mb.pack(side=tk.LEFT, fill=tk.X, expand=True); tvars['_dialog_color_mb'] = mb
+                    menu = tk.Menu(mb, tearoff=0)
+                    for i in range(32):
+                        hc = GAME_COLORS.get(i + 1, '#000')
+                        menu.add_command(label=f"{i:2d}  FCOLOR({i+1:2d})  ■",
+                                         background=hc, foreground='#FFF',
+                                         activebackground=hc, activeforeground='#FFF',
+                                         command=lambda v=i, _v=dc_val, _s=dc_swatch, _m=mb:
+                                         (_v.set(str(v)), _s.configure(bg=GAME_COLORS.get(v+1,'#000')),
+                                          _m.configure(text=f"{v}-FCOLOR({v+1})")))
+                    mb.config(menu=menu)
+                else:
+                    rk = f'raw_{di}'
+                    if rk not in self._edit_vars: self._edit_vars[rk] = tk.StringVar()
+                    ev = self._edit_vars[rk]; tvars[key] = ev
+                    ttk.Entry(frm, textvariable=ev, width=14, font=FONT).pack(fill=tk.X)
+                    if key == 'hint_id':
+                        hl = ttk.Label(frm, text="", foreground='#3366cc', font=FONT_S, wraplength=150)
+                        hl.pack(anchor=tk.W); tvars['_hint_label'] = hl
 
         # ============ 交互/动画/物品 [50-70] ============
         GROUP_50_70 = []; _seen50 = set()
@@ -2020,32 +2028,34 @@ class MatEditor:
                 if 50 <= f[1] <= 70 and f[1] not in _seen50:
                     GROUP_50_70.append(f); _seen50.add(f[1])
         GROUP_50_70.sort(key=lambda f: f[1])
-        lf3 = ttk.LabelFrame(inner, text="交互/动画/物品 [50-70]", padding=4)
-        lf3.grid(row=2, column=0, sticky='ew', padx=2, pady=2)
-        grid3 = ttk.Frame(lf3); grid3.pack(fill=tk.X)
-        for fi, (key, di, label, cmt) in enumerate(GROUP_50_70):
-            r, c = divmod(fi, 4); frm = ttk.Frame(grid3); frm.grid(row=r, column=c, sticky='nw', padx=4, pady=2)
-            # 类型特有标签优先
-            if di in type_labels:
-                tl, tc = type_labels[di]
-                fg = '#cc6600'; tt = f"[{di:02d}] {tl}"
-                if tc: tt += f": {tc}"
-            else:
-                tl, tc, fg = label, cmt, 'black'
-                tt = f"[{di:02d}] {cmt}" if cmt else None
-            lbl = ttk.Label(frm, text=f"[{di:02d}] {tl}", font=FONT_S, foreground=fg); lbl.pack(anchor=tk.W)
-            if tt: self._bind_tooltip(lbl, tt)
-            rk = f'raw_{di}'
-            if rk not in self._edit_vars: self._edit_vars[rk] = tk.StringVar()
-            ev = self._edit_vars[rk]
-            if key in ('item_g1_id', 'item_g2_id', 'item_g3_id'):
-                tvars[key] = ev
-                ttk.Entry(frm, textvariable=ev, width=14, font=FONT).pack(fill=tk.X)
-                il = ttk.Label(frm, text="", foreground='#996600', font=FONT_S, wraplength=150)
-                il.pack(anchor=tk.W); tvars[f'_{key}_label'] = il
-            else:
-                tvars[key] = ev
-                ttk.Entry(frm, textvariable=ev, width=14, font=FONT).pack(fill=tk.X)
+        GROUP_50_70 = [f for f in GROUP_50_70 if f[1] not in skip]  # 按类型过滤
+        if GROUP_50_70:
+            lf3 = ttk.LabelFrame(inner, text="交互/动画/物品 [50-70]", padding=4)
+            lf3.grid(row=2, column=0, sticky='ew', padx=2, pady=2)
+            grid3 = ttk.Frame(lf3); grid3.pack(fill=tk.X)
+            for fi, (key, di, label, cmt) in enumerate(GROUP_50_70):
+                r, c = divmod(fi, 4); frm = ttk.Frame(grid3); frm.grid(row=r, column=c, sticky='nw', padx=4, pady=2)
+                # 类型特有标签优先
+                if di in type_labels:
+                    tl, tc = type_labels[di]
+                    fg = '#cc6600'; tt = f"[{di:02d}] {tl}"
+                    if tc: tt += f": {tc}"
+                else:
+                    tl, tc, fg = label, cmt, 'black'
+                    tt = f"[{di:02d}] {cmt}" if cmt else None
+                lbl = ttk.Label(frm, text=f"[{di:02d}] {tl}", font=FONT_S, foreground=fg); lbl.pack(anchor=tk.W)
+                if tt: self._bind_tooltip(lbl, tt)
+                rk = f'raw_{di}'
+                if rk not in self._edit_vars: self._edit_vars[rk] = tk.StringVar()
+                ev = self._edit_vars[rk]
+                if key in ('item_g1_id', 'item_g2_id', 'item_g3_id'):
+                    tvars[key] = ev
+                    ttk.Entry(frm, textvariable=ev, width=14, font=FONT).pack(fill=tk.X)
+                    il = ttk.Label(frm, text="", foreground='#996600', font=FONT_S, wraplength=150)
+                    il.pack(anchor=tk.W); tvars[f'_{key}_label'] = il
+                else:
+                    tvars[key] = ev
+                    ttk.Entry(frm, textvariable=ev, width=14, font=FONT).pack(fill=tk.X)
 
         self._type_vars[tval] = tvars
 
