@@ -1660,6 +1660,9 @@ class MatEditor:
         fm.add_separator()
         fm.add_command(label="保存",command=self._save,accelerator="Ctrl+S")
         fm.add_command(label="另存为…",command=self._save_as)
+        fm.add_separator()
+        fm.add_command(label="导出场景…",command=self._export_scene)
+        fm.add_command(label="导入场景…",command=self._import_scene)
         fm.add_separator(); fm.add_command(label="退出",command=self.root.quit)
         mb.add_cascade(label="文件",menu=fm)
         em = tk.Menu(mb,tearoff=0)
@@ -2481,7 +2484,7 @@ class MatEditor:
                 smap[r['d1']].append(r['index'])
 
         # 以 SC.GRP section 数作为权威范围
-        total_scenes = self._sc_grp_section_count if self._sc_grp_section_count > 0 else max(smap.keys()) + 1
+        total_scenes = max(self._sc_grp_section_count, max(smap.keys()) + 1 if smap else 0)
         scenes = []
         for sid in range(total_scenes):
             sname = scene_name(self.tkt_scenes, sid)
@@ -4506,6 +4509,264 @@ class MatEditor:
         if not fp: return
         self.dat_path = fp
         self._save()
+
+    def _export_scene(self):
+        """导出当前场景: TKMat实体 + DefUnit链 + TKD脚本 → .tkmat JSON"""
+        if not self.records:
+            messagebox.showwarning("无数据", "请先加载 TKS 目录")
+            return
+        sid = self._vis_scene_id.get()
+        scene_entities = [r for r in self.records if has_data(r) and r['d1'] == sid]
+        if not scene_entities:
+            messagebox.showwarning("空场景", f"场景 {sid} 无实体数据")
+            return
+
+        # 辅助: 按 index 查找 DefUnit 记录 (同 _refresh_chain_list 行3352)
+        def find_du(idx):
+            return next((r for r in self.defunit_recs if r['index'] == idx), None)
+
+        all_defunit_indices = set()
+        entity_exports = []
+
+        def collect_chain(head_idx):
+            indices = []
+            cur = head_idx
+            visited = set()
+            while cur >= 0 and cur not in visited:
+                visited.add(cur)
+                du = find_du(cur)
+                if du is None: break
+                indices.append(cur)
+                all_defunit_indices.add(cur)
+                nxt = du.get('f6', 0)
+                if nxt == 0 or nxt in visited: break
+                cur = nxt
+            return indices
+
+        for rec in scene_entities:
+            chains = {}
+            for chain_name, di in [('A', 39), ('B', 40), ('C', 41)]:
+                # max_di: d30(A)/d31(B)/d32(C) — 链节点数, <=0 表示无链 (同 _refresh_chain_list 行3342)
+                max_di = {39: 30, 40: 31, 41: 32}[di]
+                head = rec.get(f'd{di}', -1)
+                mx = rec.get(f'd{max_di}', 0)
+                if head > 0 and mx > 0:
+                    chains[chain_name] = collect_chain(head)
+            entity_exports.append({
+                'dwords': [rec.get(f'd{i}', 0) for i in range(96)],
+                'defunit_chains': chains,
+            })
+
+        # 序列化 DefUnit 记录
+        defunits = []
+        for idx in sorted(all_defunit_indices):
+            du = find_du(idx)
+            if du:
+                defunits.append({'index': idx, 'fields': [du.get(f'f{i}', 0) for i in range(8)]})
+
+        # 序列化 DEFINE 块
+        defines_export = []
+        seen_dids = set()
+        for rec in scene_entities:
+            for chain_name, di in [('A', 39), ('B', 40), ('C', 41)]:
+                max_di = {39: 30, 40: 31, 41: 32}[di]
+                head = rec.get(f'd{di}', -1)
+                mx = rec.get(f'd{max_di}', 0)
+                if not (head > 0 and mx > 0): continue
+                cur = head
+                visited = set()
+                while cur >= 0 and cur not in visited:
+                    visited.add(cur)
+                    du = find_du(cur)
+                    if du is None: break
+                    did = (du.get('f1', 0) << 16) | du.get('f0', 0)
+                    if did > 0 and did not in seen_dids:
+                        seen_dids.add(did)
+                        d = self.tkd_define_map.get(did)
+                        if d:
+                            text = '\r\n'.join([d['header_line']] + d['body_lines'])
+                            defines_export.append({'id': did, 'text': text})
+                    nxt = du.get('f6', 0)
+                    if nxt == 0 or nxt in visited: break
+                    cur = nxt
+
+        import json
+        export_data = {
+            'format': 'tkmat_scene_export',
+            'version': 1,
+            'scene_id': sid,
+            'scene_name': scene_name(self.tkt_scenes, sid),
+            'entity_count': len(entity_exports),
+            'entities': entity_exports,
+            'defunits': defunits,
+            'defines': defines_export,
+        }
+
+        sname = scene_name(self.tkt_scenes, sid).replace('/', '_').replace('\\', '_')
+        fp = filedialog.asksaveasfilename(
+            title=f"导出场景 {sname}",
+            defaultextension=".tkmat",
+            initialfile=f"scene_{sid}_{sname}.tkmat",
+            filetypes=[("TKMat 场景导出", "*.tkmat"), ("所有文件", "*.*")])
+        if not fp: return
+        with open(fp, 'w', encoding='utf-8') as f:
+            json.dump(export_data, f, ensure_ascii=False, indent=2)
+        messagebox.showinfo("导出完成",
+            f"场景 {sname} (ID={sid})\n"
+            f"实体: {len(entity_exports)} 个\n"
+            f"DefUnit记录: {len(defunits)} 条\n"
+            f"DEFINE块: {len(defines_export)} 个\n"
+            f"已保存到:\n{fp}")
+
+    def _import_scene(self):
+        """导入 .tkmat 文件: 作为全新场景追加 — 实体入空槽, DefUnit追加, DEFINE重新计算ID"""
+        if not self.records:
+            messagebox.showwarning("无数据", "请先加载 TKS 目录")
+            return
+        import json
+        fp = filedialog.askopenfilename(
+            title="导入场景", filetypes=[("TKMat 场景导出", "*.tkmat"), ("所有文件", "*.*")])
+        if not fp: return
+        try:
+            with open(fp, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+        except Exception as e:
+            messagebox.showerror("读取失败", f"无法解析文件:\n{e}")
+            return
+        if data.get('format') != 'tkmat_scene_export':
+            messagebox.showerror("格式错误", "不是有效的 .tkmat 场景导出文件")
+            return
+
+        n_entities = len(data.get('entities', []))
+        n_defunits = len(data.get('defunits', []))
+        n_defines = len(data.get('defines', []))
+        if not messagebox.askyesno("确认导入",
+            f"将作为新场景导入:\n"
+            f"  实体: {n_entities} 个\n"
+            f"  DefUnit: {n_defunits} 条\n"
+            f"  DEFINE块: {n_defines} 个\n\n"
+            f"实体将插入 TKMat.dat 空槽\n"
+            f"DefUnit/DEFINE 追加, ID 自动重算\n\n"
+            f"确定继续?"):
+            return
+
+        # 1. 找空槽
+        empty_slots = [i for i, r in enumerate(self.records) if r['d0'] == 0]
+        if len(empty_slots) < n_entities:
+            messagebox.showerror("空槽不足",
+                f"需要 {n_entities} 个空槽, 但只有 {len(empty_slots)} 个")
+            return
+
+        # 2. 建立 old_entity → new_entity 映射
+        #    从 DefUnit 的 f1 字段提取每个实体的旧索引, 按顺序分配新槽
+        old_entity_ids = []
+        for ent in data['entities']:
+            chains = ent.get('defunit_chains', {})
+            for chain_indices in chains.values():
+                if chain_indices:
+                    # 找该链第一个 DefUnit 记录, 其 f1 就是旧 entity_id
+                    for du_entry in data['defunits']:
+                        if du_entry['index'] == chain_indices[0]:
+                            old_entity_ids.append(du_entry['fields'][1])
+                            break
+                    break  # 一个实体的所有链共享同一个 entity_id
+        # 确保每个实体都有映射
+        while len(old_entity_ids) < n_entities:
+            old_entity_ids.append(-1)  # fallback
+        entity_old_to_new = {}
+        for i, old_id in enumerate(old_entity_ids):
+            if old_id >= 0:
+                entity_old_to_new[old_id] = empty_slots[i]
+
+        # 3. 导入 DefUnit — f1 重映射为新 entity_id, f6 重映射为新 DefUnit 索引
+        du_old_to_new = {}
+        for du_entry in data['defunits']:
+            old_du_idx = du_entry['index']
+            new_du_idx = len(self.defunit_recs)
+            du_old_to_new[old_du_idx] = new_du_idx
+            fields = du_entry['fields']
+            old_f1 = fields[1]
+            new_f1 = entity_old_to_new.get(old_f1, old_f1)
+            rec = {'index': new_du_idx}
+            for fi in range(8):
+                val = fields[fi] if fi < len(fields) else 0
+                if fi == 1:
+                    val = new_f1
+                rec[f'f{fi}'] = val
+            self.defunit_recs.append(rec)
+        # 第二遍: 更新 f6 (链 next 指针)
+        for du_entry in data['defunits']:
+            new_du_idx = du_old_to_new[du_entry['index']]
+            old_f6 = du_entry['fields'][6]
+            if old_f6 in du_old_to_new:
+                du_rec = next((r for r in self.defunit_recs if r['index'] == new_du_idx), None)
+                if du_rec:
+                    du_rec['f6'] = du_old_to_new[old_f6]
+
+        # 4. 导入 DEFINE — ID = (new_f1<<16)|f0
+        for d_entry in data['defines']:
+            old_did = d_entry['id']
+            text = d_entry['text']
+            old_f0 = old_did & 0xFFFF
+            # 找到对应的 DefUnit 来确定新 f1
+            new_did = old_did
+            for du_entry in data['defunits']:
+                fields = du_entry['fields']
+                if (fields[1] << 16) | fields[0] == old_did:
+                    new_f1 = entity_old_to_new.get(fields[1], fields[1])
+                    new_f0 = fields[0]
+                    new_did = (new_f1 << 16) | new_f0
+                    break
+            # 更新文本中的 DEFINE ID, 追加 (新场景不会冲突)
+            if new_did != old_did:
+                text = text.replace(f'DEFINE {old_did}', f'DEFINE {new_did}', 1)
+            lines = text.replace('\r\n', '\n').split('\n')
+            header = ''; body = []
+            for line in lines:
+                if line.strip().startswith('DEFINE') and not line.strip().startswith('//'):
+                    header = line.rstrip('\r')
+                elif header:
+                    body.append(line.rstrip('\r'))
+            define = {
+                'define_id': new_did,
+                'comment': '', 'prefix_lines': [],
+                'body_lines': body if body else ['{', 'End(0)', '}; end'],
+                'line_start': -1, 'line_end': -1,
+                'header_line': header if header else f'DEFINE {new_did}',
+            }
+            self.tkd_defines.append(define)
+            self.tkd_define_map[new_did] = define
+
+        # 5. 导入实体 — dwords + 重映射链头 + 场景重编号
+        #    计算新场景ID = 当前最大场景ID + 1
+        existing_scenes = {r['d1'] for r in self.records if has_data(r) and r['d1'] >= 0}
+        new_scene_id = max(existing_scenes) + 1 if existing_scenes else 0
+        for i, ent in enumerate(data['entities']):
+            slot = empty_slots[i]
+            dwords = ent['dwords']
+            chains = ent.get('defunit_chains', {})
+            rec = self.records[slot]
+            rec['index'] = slot
+            for di in range(min(96, len(dwords))):
+                rec[f'd{di}'] = dwords[di]
+            rec['d1'] = new_scene_id  # 重映射到新场景
+            for chain_name, di in [('A', 39), ('B', 40), ('C', 41)]:
+                old_indices = chains.get(chain_name, [])
+                if old_indices and old_indices[0] in du_old_to_new:
+                    rec[f'd{di}'] = du_old_to_new[old_indices[0]]
+                else:
+                    rec[f'd{di}'] = -1
+
+        self._dirty = True
+        self._apply_filter()
+        self._vis_populate_scenes()  # 刷新场景列表, 显示新虚拟场景
+        self._vis_load_scene()
+        messagebox.showinfo("导入完成",
+            f"成功导入:\n"
+            f"  实体: {n_entities} 个\n"
+            f"  DefUnit: {n_defunits} 条\n"
+            f"  DEFINE: {n_defines} 个")
+
     def _export_csv(self):
         fp=filedialog.asksaveasfilename(title="导出 CSV",defaultextension=".csv",filetypes=[("CSV 文件","*.csv")])
         if not fp: return
