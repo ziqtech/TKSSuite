@@ -939,7 +939,8 @@ class TktEditor(QMainWindow):
         self.font_path = None      
         self._dirty = False
         self._current_idx = None   
-        self._is_dark = True
+        app_inst = QApplication.instance()
+        self._is_dark = app_inst.styleHints().colorScheme() == Qt.ColorScheme.Dark if app_inst else True
 
         self._build_ui()
         self._set_edit_enabled(False)
@@ -1001,11 +1002,11 @@ class TktEditor(QMainWindow):
         self.search_entry.returnPressed.connect(self._apply_filter)
         toolbar_layout.addWidget(self.search_entry)
 
-        btn_search = QPushButton("搜索")
+        btn_search = QPushButton("🔍 搜索")
         btn_search.clicked.connect(self._apply_filter)
         toolbar_layout.addWidget(btn_search)
         
-        btn_clear = QPushButton("清除")
+        btn_clear = QPushButton("🧹 清除")
         btn_clear.clicked.connect(self._clear_filter)
         toolbar_layout.addWidget(btn_clear)
 
@@ -1018,12 +1019,12 @@ class TktEditor(QMainWindow):
         self.filter_to.setFixedWidth(50)
         toolbar_layout.addWidget(self.filter_to)
 
-        btn_filter = QPushButton("过滤")
+        btn_filter = QPushButton("🪄 过滤")
         btn_filter.clicked.connect(self._apply_filter)
         toolbar_layout.addWidget(btn_filter)
 
         toolbar_layout.addSpacing(15)
-        btn_new_entry = QPushButton("＋ 新增条目")
+        btn_new_entry = QPushButton("➕ 新增条目")
         btn_new_entry.clicked.connect(self._new_entry)
         toolbar_layout.addWidget(btn_new_entry)
 
@@ -1099,14 +1100,14 @@ class TktEditor(QMainWindow):
 
         # 底部操作栏
         btn_layout = QHBoxLayout()
-        btn_apply = QPushButton("✓ 应用修改")
+        btn_apply = QPushButton("✅ 应用修改")
         btn_apply.clicked.connect(self._apply_edit)
         btn_layout.addWidget(btn_apply)
-        btn_reset = QPushButton("↺ 重置")
+        btn_reset = QPushButton("🔄 重置")
         btn_reset.clicked.connect(self._reset_edit)
         btn_layout.addWidget(btn_reset)
         btn_layout.addStretch()
-        btn_del_this = QPushButton("✗ 删除")
+        btn_del_this = QPushButton("❌ 删除")
         btn_del_this.clicked.connect(self._delete_entry)
         btn_layout.addWidget(btn_del_this)
         inspector_layout.addLayout(btn_layout)
@@ -1491,7 +1492,6 @@ class TktEditor(QMainWindow):
             toolbar.addWidget(btn)
             
         btn_more_color = QPushButton("🎨")
-        btn_more_color.setFixedSize(28, 28)
         btn_more_color.clicked.connect(self._show_color_palette)
         toolbar.addWidget(btn_more_color)
 
@@ -1507,9 +1507,14 @@ class TktEditor(QMainWindow):
         toolbar.addWidget(self.cb_ftype)
 
         toolbar.addSpacing(10)
-        btn_name = QPushButton("</> 姓名宏")
+        btn_name = QPushButton("👤 姓名宏")
         btn_name.clicked.connect(lambda: self._insert_tag("<NAME,1><NAME,2>"))
         toolbar.addWidget(btn_name)
+
+        toolbar.addSpacing(5)
+        btn_rgb = QPushButton("🎨 RGB色")
+        btn_rgb.clicked.connect(self._insert_fcolord)
+        toolbar.addWidget(btn_rgb)
         
         toolbar.addStretch()
         parent_layout.addLayout(toolbar)
@@ -1531,6 +1536,14 @@ class TktEditor(QMainWindow):
 
     def _insert_fcolor(self, color_idx):
         self._insert_tag(f"<FCOLOR,{color_idx}>", "<FRESET,2>")
+
+    def _insert_fcolord(self):
+        """弹出系统取色器，插入 <FCOLORD,r,g,b> 标签。"""
+        color = QColorDialog.getColor(parent=self)
+        if not color.isValid():
+            return
+        r, g, b = color.red(), color.green(), color.blue()
+        self._insert_tag(f"<FCOLORD,{r},{g},{b}>", "<FRESET,2>")
 
     def _show_color_palette(self):
         dlg = QDialog(self)
