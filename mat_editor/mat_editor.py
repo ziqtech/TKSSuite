@@ -605,6 +605,11 @@ def _dir_name(dir_str, entity=""):
     except:
         return dir_str
 
+def _cm(char_id):
+    """角色ID→名称, fallback 到 '角色#N'"""
+    try: cid=int(char_id); return _char_name_cache.get(cid, f"角色#{cid}")
+    except: return f"角色#{char_id}"
+
 # CheckTeam arg1 语义映射 (基于 TKD脚本注释 + save_editor SEG2字段)
 # ┌──────┬──────────┬─────────────────────┬──────────────────────────────┐
 # │ arg1 │ 属性     │ SEG2地址            │ 证据                         │
@@ -968,8 +973,8 @@ SCRIPT_CMD_DESC = {
     ),
     # opcode 45: TeamMember(2) — 队伍成员增减 (sub_40DA00, a2=1加入/0离开, a1=0清空全队)
     'TeamMember':   lambda a, t: (
-        f"角色{a[0]} 加入队伍" if len(a)>=2 and a[1]=='1' else
-        f"角色{a[0]} 离开队伍" if len(a)>=2 and a[1]=='0' else
+        f"角色 {_cm(a[0])} 加入队伍" if len(a)>=2 and a[1]=='1' else
+        f"角色 {_cm(a[0])} 离开队伍" if len(a)>=2 and a[1]=='0' else
         "清空全队" if a and a[0]=='0' else "队伍成员"),
     # opcode 46: Note(2) — 注释/标记 (sub_40DBF4)
     # 参数: 标记槽(0-999), 值
@@ -3501,6 +3506,7 @@ class MatEditor:
                 elif cmd_name in flow_cmds: tag = 'pv_flow'
                 elif cmd_name in branch_cmds: tag = 'pv_branch'
                 elif cmd_name == 'GetItem': tag = 'pv_getitem'
+                elif cmd_name == 'TeamMember': tag = 'pv_scene'
                 elif cmd_name == 'ChangeScene': tag = 'pv_scene'
                 self.script_preview.insert(tk.END, trunc(desc), tag)
             else:
