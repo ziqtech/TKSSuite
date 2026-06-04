@@ -1817,7 +1817,11 @@ class MatEditor:
             canvas.create_window((0,0), window=inner, anchor='nw')
             canvas.configure(yscrollcommand=scb.set); scb.configure(command=canvas.yview)
             canvas.bind('<Configure>', lambda e, i=inner: i.columnconfigure(0, minsize=e.width))
-            def _mw(e, c=canvas): c.yview_scroll(int(-1*(e.delta/120)), "units")
+            def _mw(e, c=canvas):
+                bbox = c.bbox('all')
+                if not bbox or bbox[3] <= c.winfo_height():
+                    return  # 内容未溢出, 不滚动
+                c.yview_scroll(int(-1*(e.delta/120)), "units")
             canvas.bind("<Enter>", lambda e, c=canvas: canvas.bind_all("<MouseWheel>", lambda ev, cc=c: _mw(ev, cc)))
             canvas.bind("<Leave>", lambda e: canvas.unbind_all("<MouseWheel>"))
             self._build_type_param_page(inner, tval)
@@ -2406,7 +2410,11 @@ class MatEditor:
         canvas.create_window((0,0), window=inner, anchor='nw')
         canvas.configure(yscrollcommand=scb.set)
         scb.configure(command=canvas.yview)
-        def _mw(e): canvas.yview_scroll(int(-1*(e.delta/120)), "units")
+        def _mw(e):
+            bbox = canvas.bbox('all')
+            if not bbox or bbox[3] <= canvas.winfo_height():
+                return  # 内容未溢出, 不滚动
+            canvas.yview_scroll(int(-1*(e.delta/120)), "units")
         canvas.bind("<Enter>", lambda e: canvas.bind_all("<MouseWheel>", _mw))
         canvas.bind("<Leave>", lambda e: canvas.unbind_all("<MouseWheel>"))
 
