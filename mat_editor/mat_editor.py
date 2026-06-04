@@ -566,17 +566,10 @@ def _sign_qty(qty_str):
     except ValueError:
         return qty_str
 
-def _dir_name(dir_str, entity=""):
-    """朝向值->方向名。entity=0主角(八向), 其他NPC(四向)"""
-    _D8 = {1:"上",2:"右上",3:"右",4:"右下",5:"下",6:"左下",7:"左",8:"左上"}
-    _D4 = {1:"下",2:"左",3:"右",4:"上"}
-    try:
-        v = int(dir_str)
-        if entity == "0": return _D8.get(v, dir_str)
-        return _D4.get(v, dir_str)
-    except:
-        return dir_str
-        return dir_str
+# CheckTeam 角色名缓存 (由 MatEditor._reload 从 WarPC.dat + TKT.dat 动态填充)
+_char_name_cache = {}
+
+def _load_char_names(tks_dir, tkt_lookup):
     """从 WarPC.dat 加载角色名映射 index→name.
     类似 warpc_editor 的做法: 读 WarPC 每条记录的 [0] name_id, 查 TKT 得到名称."""
     global _char_name_cache
@@ -602,11 +595,15 @@ def _dir_name(dir_str, entity=""):
     except Exception:
         pass
 
-def _dir_name(dir_str):
-    """朝向值->八向方向名(sub_4077E4: d53=8时d13-1映射组0-7)"""
+def _dir_name(dir_str, entity=""):
+    """朝向值->方向名。entity=0主角(八向), 其他NPC(四向)"""
     _D8 = {1:"上",2:"右上",3:"右",4:"右下",5:"下",6:"左下",7:"左",8:"左上"}
-    try: v=int(dir_str); return _D8.get(v, dir_str)
-    except: return dir_str
+    _D4 = {1:"右上",2:"右上",3:"右下",4:"右下",5:"左下",6:"左下",7:"左上",8:"左上"}
+    try:
+        v = int(dir_str)
+        return _D8.get(v, dir_str) if entity == "0" else _D4.get(v, dir_str)
+    except:
+        return dir_str
 
 # CheckTeam arg1 语义映射 (基于 TKD脚本注释 + save_editor SEG2字段)
 # ┌──────┬──────────┬─────────────────────┬──────────────────────────────┐
@@ -622,12 +619,6 @@ def _dir_name(dir_str):
 # │ 11   │ 特殊物品 │ — (sub_40E11C)      │ TKD注释:"26個特殊物品"       │
 # └──────┴──────────┴─────────────────────┴──────────────────────────────┘
 _CAT_NAMES = {1:"角色", 2:"智慧", 3:"仁德", 4:"勇气", 5:"队伍人数", 6:"医术", 10:"事件完成度", 11:"特殊物品"}
-def _dir_name(dir_str):
-    """朝向值->八向方向名(sub_4077E4: d53=8时d13-1映射组0-7)"""
-    _D8 = {1:"上",2:"右上",3:"右",4:"右下",5:"下",6:"左下",7:"左",8:"左上"}
-    try: v=int(dir_str); return _D8.get(v, dir_str)
-    except: return dir_str
-
 # CheckTeam arg3 比较运算符 (基于TKD脚本注释语义 + 队伍人数检查模式推断)
 _CMP_OPS = {'0':"==", '1':"≥", '-1':"<", '-2':"≤", '2':">"}
 
@@ -866,7 +857,7 @@ SCRIPT_CMD_DESC = {
     ),
     # opcode 23: SetPos(4) — 设置位置: 实体, X, Y, 朝向
     'SetPos':       lambda a, t: (
-        f"设置位置 实体#{a[0]}->({a[1]},{a[2]})朝向{a[3]}({_dir_name(a[3],a[0])})" if len(a)>=4 else
+        f"设置位置 实体#{a[0]}→({a[1]},{a[2]})朝向{a[3]}({_dir_name(a[3],a[0])})" if len(a)>=4 else
         f"设置位置 实体#{a[0]}" if a else "设置位置"),
     # opcode 24: Disable(1) — 禁用实体 (sub_40C5A4)
     # 参数: 实体(-1=上下文 -2=自身)
