@@ -717,18 +717,19 @@ def _render_fallback_char(ch, size, color, family_tuple, half_width=False, prefe
     
     return img, w
 
-def _render_text_image(segments, font, line_spacing=4, use_traditional_font=False, bg_color='#313c52'):
+def _render_text_image(segments, font, line_spacing=4, use_traditional_font=False, bg_color='#313c52', scale_factor=1.0):
     if not segments:
         return Image.new('RGBA', (1, 1), (0, 0, 0, 0))
         
     bg_rgb = _hex_to_rgb(bg_color)
+    scaled_spacing = int(line_spacing * scale_factor)
     lines = [] 
     current_line_glyphs = []
     current_line_height = 0
 
     for text, style in segments:
         ftype = FTYPE_BY_FAMILY_NAME.get(style['family'][0], 0)
-        size = style['size']
+        size = max(int(style['size'] * scale_factor), 1)
         color = style['fg']
         
         for ch in text:
@@ -773,8 +774,8 @@ def _render_text_image(segments, font, line_spacing=4, use_traditional_font=Fals
 
     total_h = 0
     for lh, _glyphs in lines:
-        total_h += lh + line_spacing
-    total_h -= line_spacing if lines else 0
+        total_h += lh + scaled_spacing
+    total_h -= scaled_spacing if lines else 0
 
     max_w = 0
     for _lh, glyphs in lines:
@@ -792,7 +793,7 @@ def _render_text_image(segments, font, line_spacing=4, use_traditional_font=Fals
             y_off = (lh - img.height) // 2
             canvas.paste(img, (x, y + y_off), img)
             x += adv
-        y += lh + line_spacing
+        y += lh + scaled_spacing
         
     return canvas
 
@@ -1121,9 +1122,32 @@ class TktEditor(QMainWindow):
         viewport_layout = QVBoxLayout(viewport_widget)
         viewport_layout.setContentsMargins(0,0,0,0)
 
+        # --- 视口缩放控制栏 ---
+        zoom_layout = QHBoxLayout()
+        zoom_layout.setContentsMargins(8, 4, 8, 4)
+
+        btn_zoom_out = QPushButton("\u2796")
+        btn_zoom_out.setFixedSize(24, 24)
+        btn_zoom_out.clicked.connect(self._zoom_out)
+
+        self.lbl_zoom = QLabel("100%")
+        self.lbl_zoom.setAlignment(Qt.AlignCenter)
+        self.lbl_zoom.setFixedWidth(45)
+
+        btn_zoom_in = QPushButton("\u2795")
+        btn_zoom_in.setFixedSize(24, 24)
+        btn_zoom_in.clicked.connect(self._zoom_in)
+
+        zoom_layout.addStretch()
+        zoom_layout.addWidget(btn_zoom_out)
+        zoom_layout.addWidget(self.lbl_zoom)
+        zoom_layout.addWidget(btn_zoom_in)
+
+        viewport_layout.addLayout(zoom_layout)
+
         # 使用 StackedWidget 平滑切换 图片渲染 / 纯文本降级
         self.preview_stack = QStackedWidget()
-        
+
         # Index 0: 图像容器 (绝对居中)
         self.preview_scroll_area = QScrollArea()
         self.preview_scroll_area.setWidgetResizable(True)
@@ -1170,6 +1194,9 @@ class TktEditor(QMainWindow):
         self._preview_timer = QTimer(self)
         self._preview_timer.setSingleShot(True)
         self._preview_timer.timeout.connect(self._render_preview)
+        
+        self._zoom_level = 100
+        self._original_pixmap = None
 
     def _make_v_sep(self):
         sep = QFrame()
@@ -1240,7 +1267,11 @@ class TktEditor(QMainWindow):
             try:
                 segments = parse_styled_segments(text)
                 current_bg = '#1a1d24' if self._is_dark else '#313c52'
-                img = _render_text_image(segments, self.font9696, use_traditional_font=use_traditional, bg_color=current_bg)
+                scale_factor = self._zoom_level / 100.0
+                img = _render_text_image(segments, self.font9696,
+                    use_traditional_font=use_traditional,
+                    bg_color=current_bg,
+                    scale_factor=scale_factor)
                 
                 qim = pil_to_qimage(img)
                 self.preview_img.setPixmap(QPixmap.fromImage(qim))
@@ -1253,6 +1284,28 @@ class TktEditor(QMainWindow):
 
         self.preview_stack.setCurrentIndex(1)
         self.preview_text.setPlainText(text)
+
+    def _zoom_in(self):
+        """放大视口 (上限 300%)"""
+        if self._zoom_level < 300:
+            self._zoom_level += 25
+            if self._zoom_level > 300:
+                self._zoom_level = 300
+            self._apply_zoom()
+
+    def _zoom_out(self):
+        """缩小视口 (下限 100%)"""
+        if self._zoom_level > 100:
+            self._zoom_level -= 25
+            if self._zoom_level < 100:
+                self._zoom_level = 100
+            self._apply_zoom()
+
+    def _apply_zoom(self):
+        """应用当前缩放比例 — 触发底层高精度重绘"""
+        if hasattr(self, 'lbl_zoom'):
+            self.lbl_zoom.setText(f"{self._zoom_level}%")
+        self._render_preview()
 
     def _on_font_toggle(self, checked):
         self._render_preview()
