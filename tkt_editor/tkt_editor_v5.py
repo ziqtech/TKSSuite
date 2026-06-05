@@ -895,9 +895,12 @@ class TktEditor(QMainWindow):
         self._zoom_level = 100
         self._sort_col = -1   
         self._sort_state = 0  
+        self._last_focused_input = None
 
         app_inst = QApplication.instance()
         self._is_dark = app_inst.styleHints().colorScheme() == Qt.ColorScheme.Dark if app_inst else True
+        if app_inst:
+            app_inst.focusChanged.connect(self._on_focus_changed)
 
         self._build_ui()
         self._set_edit_enabled(False)
@@ -1076,8 +1079,16 @@ class TktEditor(QMainWindow):
         comp_mid_layout.addWidget(self.comp_table, 1)
         w2_splitter.addWidget(comp_mid_widget)
 
+        # --- 创建右侧垂直分割器 (用于存放检查器和独立视口) ---
+        w2_right_splitter = QSplitter(Qt.Vertical)
+        w2_right_splitter.setHandleWidth(7)
+        w2_splitter.addWidget(w2_right_splitter)
+
         comp_right_widget = QWidget(); comp_right_layout = QVBoxLayout(comp_right_widget); comp_right_layout.setContentsMargins(0,0,0,0)
         
+        # 复用工具栏，控制当前处于焦点的输入框（不显示槽位/ID信息）
+        self._build_tag_toolbar(comp_right_layout, show_info=False)
+
         self.comp_box1_title = QLabel("名称 / 主文本内容 (ID: ---)")
         self.comp_box1_title.setStyleSheet("font-weight: bold; color: #478cbf;")
         comp_right_layout.addWidget(self.comp_box1_title)
@@ -1095,40 +1106,25 @@ class TktEditor(QMainWindow):
         dc_layout.addWidget(self.comp_text2)
         comp_right_layout.addWidget(self.comp_desc_container)
 
-        btn_comp_apply = QPushButton("✅ 保存本槽修改 (点击空槽直接输入即可扩展)"); btn_comp_apply.setStyleSheet("font-weight:bold; padding:8px; margin-top: 10px;")
+        btn_comp_apply = QPushButton("✅ 保存本槽修改 (点击空槽直接输入即可扩展)")
+        btn_comp_apply.setStyleSheet("font-weight:bold; padding:8px; margin-top: 10px;")
         btn_comp_apply.clicked.connect(self._apply_comp_edit)
         comp_right_layout.addWidget(btn_comp_apply)
 
-        # 联合视口预览标题栏（含缩放）
+        w2_right_splitter.addWidget(self._create_dock("分类属性扩展区", comp_right_widget))
+
+        # --- 将联合视口提取为独立分组 ---
+        comp_preview_widget = QWidget()
+        comp_preview_layout = QVBoxLayout(comp_preview_widget)
+        comp_preview_layout.setContentsMargins(0,0,0,0)
+
         comp_preview_header = QHBoxLayout()
-        comp_preview_header.setContentsMargins(0, 10, 0, 0)
+        comp_preview_header.setContentsMargins(0, 0, 0, 0)
+        btn_comp_zoom_out = QPushButton("➖"); btn_comp_zoom_out.setFixedSize(22, 22); btn_comp_zoom_out.setStyleSheet("padding: 0px; font-size: 12px;"); btn_comp_zoom_out.clicked.connect(self._zoom_out)
+        self.lbl_comp_zoom = QLabel("100%"); self.lbl_comp_zoom.setAlignment(Qt.AlignCenter); self.lbl_comp_zoom.setFixedWidth(40); self.lbl_comp_zoom.setStyleSheet("font-size: 11px; background-color: transparent;")
+        btn_comp_zoom_in = QPushButton("➕"); btn_comp_zoom_in.setFixedSize(22, 22); btn_comp_zoom_in.setStyleSheet("padding: 0px; font-size: 12px;"); btn_comp_zoom_in.clicked.connect(self._zoom_in)
+        comp_preview_header.addWidget(btn_comp_zoom_out); comp_preview_header.addWidget(self.lbl_comp_zoom); comp_preview_header.addWidget(btn_comp_zoom_in)
 
-        self.comp_preview_title = QLabel("️ 文本预览")
-        self.comp_preview_title.setStyleSheet("font-weight: bold; color: #a5b0cb;")
-        comp_preview_header.addWidget(self.comp_preview_title)
-        comp_preview_header.addStretch()
-
-        btn_comp_zoom_out = QPushButton("➖")
-        btn_comp_zoom_out.setFixedSize(22, 22)
-        btn_comp_zoom_out.setStyleSheet("padding: 0px; font-size: 12px;")
-        btn_comp_zoom_out.clicked.connect(self._zoom_out)
-
-        self.lbl_comp_zoom = QLabel("100%")
-        self.lbl_comp_zoom.setAlignment(Qt.AlignCenter)
-        self.lbl_comp_zoom.setFixedWidth(40)
-        self.lbl_comp_zoom.setStyleSheet("font-size: 11px; background-color: transparent;")
-
-        btn_comp_zoom_in = QPushButton("➕")
-        btn_comp_zoom_in.setFixedSize(22, 22)
-        btn_comp_zoom_in.setStyleSheet("padding: 0px; font-size: 12px;")
-        btn_comp_zoom_in.clicked.connect(self._zoom_in)
-
-        comp_preview_header.addWidget(btn_comp_zoom_out)
-        comp_preview_header.addWidget(self.lbl_comp_zoom)
-        comp_preview_header.addWidget(btn_comp_zoom_in)
-
-        comp_right_layout.addLayout(comp_preview_header)
-        
         self.comp_preview_scroll = QScrollArea()
         self.comp_preview_scroll.setWidgetResizable(True)
         sc_comp = QWidget(); sc_comp.setStyleSheet("background:transparent;")
@@ -1136,10 +1132,13 @@ class TktEditor(QMainWindow):
         self.comp_preview_img = QLabel(); self.comp_preview_img.setAlignment(Qt.AlignLeft | Qt.AlignTop)
         scl_comp.addWidget(self.comp_preview_img)
         self.comp_preview_scroll.setWidget(sc_comp)
-        comp_right_layout.addWidget(self.comp_preview_scroll, 1)
+        
+        comp_preview_layout.addWidget(self.comp_preview_scroll)
 
-        w2_splitter.addWidget(self._create_dock("分类属性扩展及视窗", comp_right_widget))
+        w2_right_splitter.addWidget(self._create_dock("2D 视口渲染器 (文本预览)", comp_preview_widget, header_layout=comp_preview_header))
+
         w2_splitter.setSizes([650, 450])
+        w2_right_splitter.setSizes([400, 400])
         self.main_tabs.addTab(w2_widget, "📦 游戏数据分类编辑 (智能分舱扩展模式)")
 
         # --- 底部统一路径状态栏 ---
@@ -1571,14 +1570,14 @@ class TktEditor(QMainWindow):
         self.preview_stack.setCurrentIndex(1); self.preview_text.setPlainText(t)
 
     # ----------- TAG 核心工具栏 (100% 恢复 V2 原版包含的所有组件) -----------
-    def _build_tag_toolbar(self, parent_layout):
+    def _build_tag_toolbar(self, parent_layout, show_info=True):
         toolbar = QHBoxLayout()
         toolbar.setContentsMargins(0, 5, 0, 5)
 
-        self.cb_freset = QComboBox()
-        self.cb_freset.addItems(["格式控制", "1-全部恢复", "2-恢复颜色", "3-重新初始化", "4-恢复字体"])
-        self.cb_freset.currentIndexChanged.connect(self._on_freset_select)
-        toolbar.addWidget(self.cb_freset)
+        cb_freset = QComboBox()
+        cb_freset.addItems(["格式控制", "1-全部恢复", "2-恢复颜色", "3-重新初始化", "4-恢复字体"])
+        cb_freset.currentIndexChanged.connect(lambda idx, cb=cb_freset: self._on_combo_freset(idx, cb))
+        toolbar.addWidget(cb_freset)
 
         toolbar.addSpacing(10)
         for ci in [17, 19, 20, 23, 26]:
@@ -1593,15 +1592,15 @@ class TktEditor(QMainWindow):
         toolbar.addWidget(btn_more_color)
 
         toolbar.addSpacing(10)
-        self.cb_fsize = QComboBox()
-        self.cb_fsize.addItems(["字号", "12", "16", "24", "32", "48"])
-        self.cb_fsize.currentIndexChanged.connect(self._on_fsize_select)
-        toolbar.addWidget(self.cb_fsize)
+        cb_fsize = QComboBox()
+        cb_fsize.addItems(["字号", "12", "16", "24", "32", "48"])
+        cb_fsize.currentIndexChanged.connect(lambda idx, cb=cb_fsize: self._on_combo_fsize(idx, cb))
+        toolbar.addWidget(cb_fsize)
 
-        self.cb_ftype = QComboBox()
-        self.cb_ftype.addItems(["字体", "1-细明", "2-明体", "3-楷体", "4-宋体", "5-微正黑", "6-黑体", "7-仿宋", "8-楷体2"])
-        self.cb_ftype.currentIndexChanged.connect(self._on_ftype_select)
-        toolbar.addWidget(self.cb_ftype)
+        cb_ftype = QComboBox()
+        cb_ftype.addItems(["字体", "1-细明", "2-明体", "3-楷体", "4-宋体", "5-微正黑", "6-黑体", "7-仿宋", "8-楷体2"])
+        cb_ftype.currentIndexChanged.connect(lambda idx, cb=cb_ftype: self._on_combo_ftype(idx, cb))
+        toolbar.addWidget(cb_ftype)
 
         toolbar.addSpacing(10)
         btn_name = QPushButton("👤 姓名宏")
@@ -1615,31 +1614,45 @@ class TktEditor(QMainWindow):
         
         toolbar.addStretch()
         
-        self.lbl_info = QLabel("未选中")
-        toolbar.addWidget(self.lbl_info)
-        
-        toolbar.addSpacing(10)
-        toolbar.addWidget(QLabel("绑定 ID:"))
-        self.id_entry = QLineEdit()
-        self.id_entry.setFixedWidth(70)
-        toolbar.addWidget(self.id_entry)
+        if show_info:
+            self.lbl_info = QLabel("未选中")
+            toolbar.addWidget(self.lbl_info)
+            
+            toolbar.addSpacing(10)
+            toolbar.addWidget(QLabel("绑定 ID:"))
+            self.id_entry = QLineEdit()
+            self.id_entry.setFixedWidth(70)
+            toolbar.addWidget(self.id_entry)
         
         parent_layout.addLayout(toolbar)
 
-    def _insert_tag(self, opening, closing=None):
-        cursor = self.text_widget.textCursor()
+    def _on_focus_changed(self, old, new):
+        if new in (self.text_widget, self.comp_text1, self.comp_text2):
+            self._last_focused_input = new
+
+    def _insert_tag(self, op, cl=None):
+        # 智能识别当前拥有焦点的文本框（优先用实时焦点，回退到最后追踪的输入框）
+        target = self.text_widget
+        fw = QApplication.focusWidget()
+        if fw in (self.text_widget, self.comp_text1, self.comp_text2):
+            target = fw
+        elif self._last_focused_input is not None:
+            target = self._last_focused_input
+        elif self.main_tabs.currentIndex() == 1:
+            target = self.comp_text1
+
+        cursor = target.textCursor()
         selected_text = cursor.selectedText()
         if selected_text: 
-            cursor.insertText(opening + selected_text + (closing or ''))
+            cursor.insertText(op + selected_text + (cl or ''))
         else: 
-            cursor.insertText(opening + (closing or ''))
-        self.text_widget.setFocus()
-        self._on_text_modified()
-
-    def _on_freset_select(self, index):
-        if index == 0: return
-        self._insert_tag(f"<FRESET,{int(self.cb_freset.currentText().split('-')[0])}>")
-        self.cb_freset.setCurrentIndex(0)
+            cursor.insertText(op + (cl or ''))
+        target.setFocus()
+        
+        if target == self.text_widget:
+            self._on_text_modified()
+        else:
+            self._on_comp_text_modified()
 
     def _insert_fcolor(self, color_idx):
         self._insert_tag(f"<FCOLOR,{color_idx}>", "<FRESET,2>")
@@ -1669,15 +1682,20 @@ class TktEditor(QMainWindow):
             layout.addWidget(btn, (ci - 1) // 8, (ci - 1) % 8)
         dlg.exec()
 
-    def _on_fsize_select(self, index):
-        if index == 0: return
-        self._insert_tag(f"<FSIZE,{int(self.cb_fsize.currentText())}>", "<FRESET,1>")
-        self.cb_fsize.setCurrentIndex(0)
+    def _on_combo_freset(self, idx, cb):
+        if idx == 0: return
+        self._insert_tag(f"<FRESET,{int(cb.currentText().split('-')[0])}>")
+        cb.setCurrentIndex(0)
 
-    def _on_ftype_select(self, index):
-        if index == 0: return
-        self._insert_tag(f"<FTYPE,{int(self.cb_ftype.currentText().split('-')[0])}>", "<FRESET,4>")
-        self.cb_ftype.setCurrentIndex(0)
+    def _on_combo_fsize(self, idx, cb):
+        if idx == 0: return
+        self._insert_tag(f"<FSIZE,{int(cb.currentText())}>", "<FRESET,1>")
+        cb.setCurrentIndex(0)
+
+    def _on_combo_ftype(self, idx, cb):
+        if idx == 0: return
+        self._insert_tag(f"<FTYPE,{int(cb.currentText().split('-')[0])}>", "<FRESET,4>")
+        cb.setCurrentIndex(0)
         
     def _show_about(self):
         QMessageBox.about(
