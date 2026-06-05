@@ -1072,6 +1072,7 @@ class TktEditor(QMainWindow):
         self.table.setColumnWidth(1, 65)
         self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
         self.table.itemSelectionChanged.connect(self._on_table_select)
+        self.table.horizontalHeader().sectionClicked.connect(self._on_header_clicked)
         
         left_dock = self._create_dock("文件系统 (文本资源表)", self.table)
         main_splitter.addWidget(left_dock)
@@ -1211,6 +1212,9 @@ class TktEditor(QMainWindow):
         
         self._zoom_level = 100
         self._original_pixmap = None
+        
+        self._sort_col = -1
+        self._sort_state = 0
 
     def _make_v_sep(self):
         sep = QFrame()
@@ -1420,11 +1424,8 @@ class TktEditor(QMainWindow):
             QMessageBox.critical(self, "保存失败", str(e))
 
     def _populate_tree(self):
-        self.table.setRowCount(0)
         self.filtered_indices = list(range(len(self.entries)))
-        self.table.setRowCount(len(self.entries))
-        for row, idx in enumerate(self.filtered_indices):
-            self._set_table_row(row, self.entries[idx])
+        self._apply_sort()
 
     def _set_table_row(self, row, e):
         preview = e['text'].replace('\n', '↵').replace('\t', ' ')[:60]
@@ -1446,17 +1447,59 @@ class TktEditor(QMainWindow):
         except ValueError: 
             id_to = None
 
-        self.table.setRowCount(0)
         self.filtered_indices = []
-        row = 0
         for idx, e in enumerate(self.entries):
             if id_from is not None and e['id'] < id_from: continue
             if id_to is not None and e['id'] > id_to: continue
             if query and query not in e['text'].lower() and query not in str(e['id']): continue
             self.filtered_indices.append(idx)
-            self.table.insertRow(row)
-            self._set_table_row(row, e)
-            row += 1
+            
+        self._apply_sort()
+
+    def _on_header_clicked(self, logical_index):
+        """表头被点击时切换三态排序"""
+        if logical_index not in (0, 1):
+            return
+            
+        if self._sort_col == logical_index:
+            self._sort_state = (self._sort_state + 1) % 3
+        else:
+            self._sort_col = logical_index
+            self._sort_state = 1
+            
+        self._apply_sort()
+
+    def _apply_sort(self):
+        """对当前的过滤列表进行真正的排序"""
+        if self._sort_state == 0:
+            self.filtered_indices.sort()
+        else:
+            is_desc = (self._sort_state == 2)
+            if self._sort_col == 0:
+                self.filtered_indices.sort(key=lambda x: self.entries[x]['slot'], reverse=is_desc)
+            elif self._sort_col == 1:
+                self.filtered_indices.sort(key=lambda x: self.entries[x]['id'], reverse=is_desc)
+                
+        self._refresh_table_view()
+
+    def _refresh_table_view(self):
+        """根据 filtered_indices 重新渲染表格并更新表头"""
+        self.table.blockSignals(True)
+        self.table.setRowCount(0)
+        self.table.setRowCount(len(self.filtered_indices))
+        
+        for row, idx in enumerate(self.filtered_indices):
+            self._set_table_row(row, self.entries[idx])
+            
+        self.table.blockSignals(False)
+
+        # 更新表头箭头指示
+        headers = ['#', 'ID', '文本内容']
+        if self._sort_col != -1 and self._sort_state != 0:
+            arrow = ' ▲' if self._sort_state == 1 else ' ▼'
+            headers[self._sort_col] += arrow
+            
+        self.table.setHorizontalHeaderLabels(headers)
 
     def _clear_filter(self):
         self.search_entry.setText('')
@@ -1523,16 +1566,16 @@ class TktEditor(QMainWindow):
         new_entry = OrderedDict([('slot', len(self.entries)), ('id', max_id + 1 if max_id >= 0 else 1), ('text', '')])
         self.entries.append(new_entry)
         self._dirty = True
-        
+
         idx = len(self.entries) - 1
-        self.filtered_indices.append(idx)
+        self._apply_filter()
         
-        row = self.table.rowCount()
-        self.table.insertRow(row)
-        self._set_table_row(row, new_entry)
-        
-        self.table.selectRow(row)
-        self.table.scrollToItem(self.table.item(row, 0))
+        try:
+            row = self.filtered_indices.index(idx)
+            self.table.selectRow(row)
+            self.table.scrollToItem(self.table.item(row, 0))
+        except ValueError:
+            pass
 
     def _delete_entry(self):
         if self._current_idx is None: return
