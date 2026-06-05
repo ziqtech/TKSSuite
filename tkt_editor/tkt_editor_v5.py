@@ -108,21 +108,21 @@ WORD_4EC810 = {
 }
 
 SEMANTIC_CATEGORIES = [
-    {"name": " 传送点文本", "type": "single", "ranges": [(100, 288)]},
-    {"name": "️ 剧情地图名称", "type": "single", "ranges": [(300, 513)]},
-    {"name": " 剧情文本区块", "type": "single", "ranges": [(1000, 4509), (25000, 28849), (30000, 30000)]},
-    {"name": " 队伍角色名称", "type": "single", "ranges": [(9000, 9030)]},
-    {"name": " 历史文本", "type": "single", "ranges": [(9050, 9080)]},
+    {"name": "🌌 传送点文本", "type": "single", "ranges": [(100, 288)]},
+    {"name": "🗺️ 剧情地图名称", "type": "single", "ranges": [(300, 513)]},
+    {"name": "📜 剧情文本区块", "type": "single", "ranges": [(1000, 4509), (25000, 28849), (30000, 30000)]},
+    {"name": "👥 队伍角色名称", "type": "single", "ranges": [(9000, 9030)]},
+    {"name": "📚 历史文本", "type": "single", "ranges": [(9050, 9080)]},
     {"name": "⚔️ 技能数据 (名称+说明)", "type": "paired", "name_start": 9101, "name_end": 9444, "desc_start": 9501, "desc_end": 9844},
-    {"name": " 物品-药品 (名称+说明)", "type": "paired", "name_start": 10001, "name_end": 10025, "desc_start": 10601, "desc_end": 10625},
-    {"name": " 物品-道具 (名称+说明)", "type": "paired", "name_start": 10051, "name_end": 10110, "desc_start": 10651, "desc_end": 10710},
-    {"name": "️ 物品-武器 (名称+说明)", "type": "paired", "name_start": 10151, "name_end": 10242, "desc_start": 10751, "desc_end": 10842},
-    {"name": "️ 物品-防具 (名称+说明)", "type": "paired", "name_start": 10301, "name_end": 10348, "desc_start": 10901, "desc_end": 10948},
-    {"name": " 物品-饰品 (名称+说明)", "type": "paired", "name_start": 10401, "name_end": 10458, "desc_start": 11001, "desc_end": 11058},
-    {"name": " 物品-特殊 (名称+说明)", "type": "paired", "name_start": 10501, "name_end": 10551, "desc_start": 11101, "desc_end": 11151},
-    {"name": " 记事文本", "type": "single", "ranges": [(11201, 11260)]},
-    {"name": " 功绩文本", "type": "single", "ranges": [(11401, 11467)]},
-    {"name": "️ 战斗角色名称", "type": "single", "ranges": [(11601, 11712)]},
+    {"name": "🧪 物品-药品 (名称+说明)", "type": "paired", "name_start": 10001, "name_end": 10025, "desc_start": 10601, "desc_end": 10625},
+    {"name": "🎒 物品-道具 (名称+说明)", "type": "paired", "name_start": 10051, "name_end": 10110, "desc_start": 10651, "desc_end": 10710},
+    {"name": "🗡️ 物品-武器 (名称+说明)", "type": "paired", "name_start": 10151, "name_end": 10242, "desc_start": 10751, "desc_end": 10842},
+    {"name": "🛡️ 物品-防具 (名称+说明)", "type": "paired", "name_start": 10301, "name_end": 10348, "desc_start": 10901, "desc_end": 10948},
+    {"name": "📿 物品-饰品 (名称+说明)", "type": "paired", "name_start": 10401, "name_end": 10458, "desc_start": 11001, "desc_end": 11058},
+    {"name": "🔮 物品-特殊 (名称+说明)", "type": "paired", "name_start": 10501, "name_end": 10551, "desc_start": 11101, "desc_end": 11151},
+    {"name": "📝 记事文本", "type": "single", "ranges": [(11201, 11260)]},
+    {"name": "🏆 功绩文本", "type": "single", "ranges": [(11401, 11467)]},
+    {"name": "🏟️ 战斗角色名称", "type": "single", "ranges": [(11601, 11712)]},
 ]
 
 # ============================================================
@@ -955,7 +955,7 @@ class TktEditor(QMainWindow):
         self.lbl_dirty = QLabel("")
         self.lbl_dirty.setStyleSheet("color: #e27d60; font-weight: bold;")
         top_ctrl_layout.addWidget(self.lbl_dirty)
-        btn_theme = QPushButton(" 切换主题")
+        btn_theme = QPushButton("🌓 切换主题")
         btn_theme.clicked.connect(self._toggle_theme)
         top_ctrl_layout.addWidget(btn_theme)
         main_layout.addLayout(top_ctrl_layout)
@@ -974,14 +974,14 @@ class TktEditor(QMainWindow):
         self.search_entry.returnPressed.connect(self._apply_filter)
         toolbar_layout.addWidget(self.search_entry)
         
-        btn_search = QPushButton(" 搜索"); btn_search.clicked.connect(self._apply_filter); toolbar_layout.addWidget(btn_search)
-        btn_clear = QPushButton(" 清除"); btn_clear.clicked.connect(self._clear_filter); toolbar_layout.addWidget(btn_clear)
+        btn_search = QPushButton("🔍 搜索"); btn_search.clicked.connect(self._apply_filter); toolbar_layout.addWidget(btn_search)
+        btn_clear = QPushButton("🧹 清除"); btn_clear.clicked.connect(self._clear_filter); toolbar_layout.addWidget(btn_clear)
         
         toolbar_layout.addWidget(QLabel("  区间:"))
         self.filter_from = QLineEdit(); self.filter_from.setFixedWidth(50); toolbar_layout.addWidget(self.filter_from)
         toolbar_layout.addWidget(QLabel("-"))
         self.filter_to = QLineEdit(); self.filter_to.setFixedWidth(50); toolbar_layout.addWidget(self.filter_to)
-        btn_filter = QPushButton(" 过滤"); btn_filter.clicked.connect(self._apply_filter); toolbar_layout.addWidget(btn_filter)
+        btn_filter = QPushButton("🪄 过滤"); btn_filter.clicked.connect(self._apply_filter); toolbar_layout.addWidget(btn_filter)
         
         toolbar_layout.addSpacing(15)
         btn_new_entry = QPushButton("➕ 新增条目"); btn_new_entry.clicked.connect(self._new_entry); toolbar_layout.addWidget(btn_new_entry)
@@ -1020,7 +1020,7 @@ class TktEditor(QMainWindow):
         
         btn_layout = QHBoxLayout()
         btn_apply = QPushButton("✅ 应用修改"); btn_apply.clicked.connect(self._apply_edit); btn_layout.addWidget(btn_apply)
-        btn_reset = QPushButton(" 重置"); btn_reset.clicked.connect(self._reset_edit); btn_layout.addWidget(btn_reset)
+        btn_reset = QPushButton("🔄 重置"); btn_reset.clicked.connect(self._reset_edit); btn_layout.addWidget(btn_reset)
         btn_layout.addStretch()
         btn_del_this = QPushButton("❌ 删除"); btn_del_this.clicked.connect(self._delete_entry); btn_layout.addWidget(btn_del_this)
         ins_layout.addLayout(btn_layout)
@@ -1046,7 +1046,7 @@ class TktEditor(QMainWindow):
         w1_right_splitter.addWidget(self._create_dock("2D 视口渲染器", viewport_widget, header_layout=zoom_layout))
         
         w1_splitter.setSizes([350, 950]); w1_right_splitter.setSizes([400, 400])
-        self.main_tabs.addTab(w1_widget, " 全局文件系统 (线性模式)")
+        self.main_tabs.addTab(w1_widget, "🔍 全局文件系统 (线性模式)")
 
         # ==================== WORKSPACE 2: 游戏语义化模块分类编辑 ====================
         w2_widget = QWidget()
@@ -1111,7 +1111,7 @@ class TktEditor(QMainWindow):
 
         w2_splitter.addWidget(self._create_dock("分类属性扩展及视窗", comp_right_widget))
         w2_splitter.setSizes([650, 450])
-        self.main_tabs.addTab(w2_widget, " 游戏数据分类编辑 (智能分舱扩展模式)")
+        self.main_tabs.addTab(w2_widget, "📦 游戏数据分类编辑 (智能分舱扩展模式)")
 
         # --- 底部统一路径状态栏 ---
         status_layout = QHBoxLayout(); status_layout.setContentsMargins(4, 4, 4, 0)
@@ -1558,7 +1558,7 @@ class TktEditor(QMainWindow):
             btn.clicked.connect(lambda checked=False, c=ci: self._insert_fcolor(c))
             toolbar.addWidget(btn)
             
-        btn_more_color = QPushButton("")
+        btn_more_color = QPushButton("🎨")
         btn_more_color.clicked.connect(self._show_color_palette)
         toolbar.addWidget(btn_more_color)
 
@@ -1574,12 +1574,12 @@ class TktEditor(QMainWindow):
         toolbar.addWidget(self.cb_ftype)
 
         toolbar.addSpacing(10)
-        btn_name = QPushButton(" 姓名宏")
+        btn_name = QPushButton("👤 姓名宏")
         btn_name.clicked.connect(lambda: self._insert_tag("<NAME,1><NAME,2>"))
         toolbar.addWidget(btn_name)
 
         toolbar.addSpacing(5)
-        btn_rgb = QPushButton(" RGB色")
+        btn_rgb = QPushButton("🎨 RGB色")
         btn_rgb.clicked.connect(self._insert_fcolord)
         toolbar.addWidget(btn_rgb)
         
