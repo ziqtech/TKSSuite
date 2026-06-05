@@ -1092,24 +1092,27 @@ class TktEditor(QMainWindow):
         self.comp_box1_title = QLabel("名称 / 主文本内容 (ID: ---)")
         self.comp_box1_title.setStyleSheet("font-weight: bold; color: #478cbf;")
         comp_right_layout.addWidget(self.comp_box1_title)
-        self.comp_text1 = QPlainTextEdit(); self.comp_text1.setFont(self.font_mono); self.comp_text1.setMaximumHeight(80)
+        self.comp_text1 = QPlainTextEdit(); self.comp_text1.setFont(self.font_mono)
         self.comp_text1.textChanged.connect(self._on_comp_text_modified)
-        comp_right_layout.addWidget(self.comp_text1)
+        comp_right_layout.addWidget(self.comp_text1, 1)
         
         self.comp_desc_container = QWidget()
         dc_layout = QVBoxLayout(self.comp_desc_container); dc_layout.setContentsMargins(0,0,0,0)
         self.comp_box2_title = QLabel("说明 / 描述文本内容 (ID: ---)")
         self.comp_box2_title.setStyleSheet("font-weight: bold; color: #55b572; padding-top: 10px;")
         dc_layout.addWidget(self.comp_box2_title)
-        self.comp_text2 = QPlainTextEdit(); self.comp_text2.setFont(self.font_mono); self.comp_text2.setMaximumHeight(120)
+        self.comp_text2 = QPlainTextEdit(); self.comp_text2.setFont(self.font_mono)
         self.comp_text2.textChanged.connect(self._on_comp_text_modified)
-        dc_layout.addWidget(self.comp_text2)
+        dc_layout.addWidget(self.comp_text2, 1)
         comp_right_layout.addWidget(self.comp_desc_container)
 
         btn_comp_apply = QPushButton("✅ 保存本槽修改 (点击空槽直接输入即可扩展)")
         btn_comp_apply.setStyleSheet("font-weight:bold; padding:8px; margin-top: 10px;")
         btn_comp_apply.clicked.connect(self._apply_comp_edit)
         comp_right_layout.addWidget(btn_comp_apply)
+
+        # 底部弹簧：将上方控件推向顶部，避免居中分布
+        comp_right_layout.addStretch()
 
         w2_right_splitter.addWidget(self._create_dock("分类属性扩展区", comp_right_widget))
 
