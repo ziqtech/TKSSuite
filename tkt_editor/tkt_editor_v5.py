@@ -946,21 +946,30 @@ class TktEditor(QMainWindow):
         help_menu = menu_bar.addMenu("帮助(H)")
         help_menu.addAction("关于", self._show_about)
 
-        # 全局控制栏
-        top_ctrl_layout = QHBoxLayout()
-        self.chk_traditional = QCheckBox("系统繁体字渲染")
-        self.chk_traditional.toggled.connect(self._on_font_toggle)
-        top_ctrl_layout.addWidget(self.chk_traditional)
-        top_ctrl_layout.addStretch()
+        self.main_tabs = QTabWidget()
+        
+        # Tab 栏右上角角部控件
+        corner_widget = QWidget()
+        corner_layout = QHBoxLayout(corner_widget)
+        corner_layout.setContentsMargins(0, 0, 4, 0)
+        
         self.lbl_dirty = QLabel("")
         self.lbl_dirty.setStyleSheet("color: #e27d60; font-weight: bold;")
-        top_ctrl_layout.addWidget(self.lbl_dirty)
+        corner_layout.addWidget(self.lbl_dirty)
+        
+        corner_layout.addSpacing(10)
+        self.chk_traditional = QCheckBox("系统繁体字渲染")
+        self.chk_traditional.toggled.connect(self._on_font_toggle)
+        corner_layout.addWidget(self.chk_traditional)
+        
+        corner_layout.addSpacing(10)
         btn_theme = QPushButton("🌓 切换主题")
         btn_theme.clicked.connect(self._toggle_theme)
-        top_ctrl_layout.addWidget(btn_theme)
-        main_layout.addLayout(top_ctrl_layout)
-
-        self.main_tabs = QTabWidget()
+        btn_theme.setStyleSheet("padding: 2px 8px; border-radius: 2px;")
+        corner_layout.addWidget(btn_theme)
+        
+        self.main_tabs.setCornerWidget(corner_widget, Qt.TopRightCorner)
+        
         main_layout.addWidget(self.main_tabs, 1)
 
         # ==================== WORKSPACE 1: 原始全局线性维护 ====================
@@ -1007,12 +1016,6 @@ class TktEditor(QMainWindow):
         w1_splitter.addWidget(w1_right_splitter)
 
         inspector_widget = QWidget(); ins_layout = QVBoxLayout(inspector_widget); ins_layout.setContentsMargins(0,0,0,0)
-        info_layout = QHBoxLayout()
-        self.lbl_info = QLabel("未选中"); info_layout.addWidget(self.lbl_info)
-        info_layout.addStretch(); info_layout.addWidget(QLabel("绑定 ID:"))
-        self.id_entry = QLineEdit(); self.id_entry.setFixedWidth(90); info_layout.addWidget(self.id_entry)
-        ins_layout.addLayout(info_layout)
-        
         self._build_tag_toolbar(ins_layout)
         
         self.text_widget = QPlainTextEdit(); self.text_widget.setFont(self.font_mono); self.text_widget.textChanged.connect(self._on_text_modified)
@@ -1096,9 +1099,35 @@ class TktEditor(QMainWindow):
         btn_comp_apply.clicked.connect(self._apply_comp_edit)
         comp_right_layout.addWidget(btn_comp_apply)
 
-        self.comp_preview_title = QLabel("️ 实时联合视口")
-        self.comp_preview_title.setStyleSheet("font-weight: bold; color: #a5b0cb; padding-top: 15px;")
-        comp_right_layout.addWidget(self.comp_preview_title)
+        # 联合视口预览标题栏（含缩放）
+        comp_preview_header = QHBoxLayout()
+        comp_preview_header.setContentsMargins(0, 10, 0, 0)
+
+        self.comp_preview_title = QLabel("️ 文本预览")
+        self.comp_preview_title.setStyleSheet("font-weight: bold; color: #a5b0cb;")
+        comp_preview_header.addWidget(self.comp_preview_title)
+        comp_preview_header.addStretch()
+
+        btn_comp_zoom_out = QPushButton("➖")
+        btn_comp_zoom_out.setFixedSize(22, 22)
+        btn_comp_zoom_out.setStyleSheet("padding: 0px; font-size: 12px;")
+        btn_comp_zoom_out.clicked.connect(self._zoom_out)
+
+        self.lbl_comp_zoom = QLabel("100%")
+        self.lbl_comp_zoom.setAlignment(Qt.AlignCenter)
+        self.lbl_comp_zoom.setFixedWidth(40)
+        self.lbl_comp_zoom.setStyleSheet("font-size: 11px; background-color: transparent;")
+
+        btn_comp_zoom_in = QPushButton("➕")
+        btn_comp_zoom_in.setFixedSize(22, 22)
+        btn_comp_zoom_in.setStyleSheet("padding: 0px; font-size: 12px;")
+        btn_comp_zoom_in.clicked.connect(self._zoom_in)
+
+        comp_preview_header.addWidget(btn_comp_zoom_out)
+        comp_preview_header.addWidget(self.lbl_comp_zoom)
+        comp_preview_header.addWidget(btn_comp_zoom_in)
+
+        comp_right_layout.addLayout(comp_preview_header)
         
         self.comp_preview_scroll = QScrollArea()
         self.comp_preview_scroll.setWidgetResizable(True)
@@ -1524,6 +1553,7 @@ class TktEditor(QMainWindow):
         if self._zoom_level > 100: self._zoom_level -= 25; self._apply_zoom()
     def _apply_zoom(self):
         if hasattr(self, 'lbl_zoom'): self.lbl_zoom.setText(f"{self._zoom_level}%")
+        if hasattr(self, 'lbl_comp_zoom'): self.lbl_comp_zoom.setText(f"{self._zoom_level}%")
         self._render_preview(); self._render_comp_previews()
 
     def _on_font_toggle(self, c): self._render_preview(); self._render_comp_previews()
@@ -1584,6 +1614,16 @@ class TktEditor(QMainWindow):
         toolbar.addWidget(btn_rgb)
         
         toolbar.addStretch()
+        
+        self.lbl_info = QLabel("未选中")
+        toolbar.addWidget(self.lbl_info)
+        
+        toolbar.addSpacing(10)
+        toolbar.addWidget(QLabel("绑定 ID:"))
+        self.id_entry = QLineEdit()
+        self.id_entry.setFixedWidth(70)
+        toolbar.addWidget(self.id_entry)
+        
         parent_layout.addLayout(toolbar)
 
     def _insert_tag(self, opening, closing=None):
