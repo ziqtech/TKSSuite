@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-TKT.dat 文本数据库编辑器 v2.0 (PySide6 语义化分类增强版)
+TKT.dat 文本数据库编辑器 v4.0 (PySide6 空槽探索 + 联合视口版)
 =============================
-支持低级全局线性维护 与 高级游戏语义化模块分类维护（成对绑定名称与说明，支持一键扩展）。
+支持动态边界扫描，自动计算安全的扩展空槽，并在单一视口内联合渲染复合文本。
 """
 
 import os
@@ -108,21 +108,21 @@ WORD_4EC810 = {
 
 # 游戏语义化分类配置映射表
 SEMANTIC_CATEGORIES = [
-    {"name": "🌌 传送点文本", "type": "single", "ranges": [(100, 288)]},
-    {"name": "🗺️ 剧情地图名称", "type": "single", "ranges": [(300, 513)]},
-    {"name": "📜 剧情文本区块", "type": "single", "ranges": [(1000, 4509), (25000, 28849), (30000, 30000)]},
-    {"name": "👥 队伍角色名称", "type": "single", "ranges": [(9000, 9030)]},
-    {"name": "📚 历史文本", "type": "single", "ranges": [(9050, 9080)]},
+    {"name": " 传送点文本", "type": "single", "ranges": [(100, 288)]},
+    {"name": "️ 剧情地图名称", "type": "single", "ranges": [(300, 513)]},
+    {"name": " 剧情文本区块", "type": "single", "ranges": [(1000, 4509), (25000, 28849), (30000, 30000)]},
+    {"name": " 队伍角色名称", "type": "single", "ranges": [(9000, 9030)]},
+    {"name": " 历史文本", "type": "single", "ranges": [(9050, 9080)]},
     {"name": "⚔️ 技能数据 (名称+说明)", "type": "paired", "name_start": 9101, "name_end": 9444, "desc_start": 9501, "desc_end": 9844},
-    {"name": "🧪 物品-药品 (名称+说明)", "type": "paired", "name_start": 10001, "name_end": 10025, "desc_start": 10601, "desc_end": 10625},
-    {"name": "🎒 物品-道具 (名称+说明)", "type": "paired", "name_start": 10051, "name_end": 10110, "desc_start": 10651, "desc_end": 10710},
-    {"name": "🗡️ 物品-武器 (名称+说明)", "type": "paired", "name_start": 10151, "name_end": 10242, "desc_start": 10751, "desc_end": 10842},
-    {"name": "🛡️ 物品-防具 (名称+说明)", "type": "paired", "name_start": 10301, "name_end": 10348, "desc_start": 10901, "desc_end": 10948},
-    {"name": "📿 物品-饰品 (名称+说明)", "type": "paired", "name_start": 10401, "name_end": 10458, "desc_start": 11001, "desc_end": 11058},
-    {"name": "🔮 物品-特殊 (名称+说明)", "type": "paired", "name_start": 10501, "name_end": 10551, "desc_start": 11101, "desc_end": 11151},
-    {"name": "📝 记事文本", "type": "single", "ranges": [(11201, 11260)]},
-    {"name": "🏆 功绩文本", "type": "single", "ranges": [(11401, 11467)]},
-    {"name": "🏟️ 战斗角色名称", "type": "single", "ranges": [(11601, 11712)]},
+    {"name": " 物品-药品 (名称+说明)", "type": "paired", "name_start": 10001, "name_end": 10025, "desc_start": 10601, "desc_end": 10625},
+    {"name": " 物品-道具 (名称+说明)", "type": "paired", "name_start": 10051, "name_end": 10110, "desc_start": 10651, "desc_end": 10710},
+    {"name": "️ 物品-武器 (名称+说明)", "type": "paired", "name_start": 10151, "name_end": 10242, "desc_start": 10751, "desc_end": 10842},
+    {"name": "️ 物品-防具 (名称+说明)", "type": "paired", "name_start": 10301, "name_end": 10348, "desc_start": 10901, "desc_end": 10948},
+    {"name": " 物品-饰品 (名称+说明)", "type": "paired", "name_start": 10401, "name_end": 10458, "desc_start": 11001, "desc_end": 11058},
+    {"name": " 物品-特殊 (名称+说明)", "type": "paired", "name_start": 10501, "name_end": 10551, "desc_start": 11101, "desc_end": 11151},
+    {"name": " 记事文本", "type": "single", "ranges": [(11201, 11260)]},
+    {"name": " 功绩文本", "type": "single", "ranges": [(11401, 11467)]},
+    {"name": "️ 战斗角色名称", "type": "single", "ranges": [(11601, 11712)]},
 ]
 
 _G2B_TABLE = None
@@ -130,8 +130,7 @@ _B2G_TABLE = None
 
 def load_g2b_dat(g2b_path):
     global _G2B_TABLE, _B2G_TABLE
-    with open(g2b_path, 'rb') as f:
-        data = f.read()
+    with open(g2b_path, 'rb') as f: data = f.read()
     if len(data) != 0x20000: raise ValueError("g2b.dat 大小错误")
     _G2B_TABLE = data
     _B2G_TABLE = {}
@@ -415,6 +414,11 @@ def save_tkt(tkt_path, entries):
         f.write(struct.pack('<I', len(entries)))
         f.write(encrypted)
 
+def pil_to_qimage(pil_image):
+    if pil_image.mode != "RGBA": pil_image = pil_image.convert("RGBA")
+    data = pil_image.tobytes("raw", "RGBA")
+    return QImage(data, pil_image.width, pil_image.height, QImage.Format_RGBA8888).copy()
+
 # ============================================================
 # QSS 样式表表
 # ============================================================
@@ -435,6 +439,7 @@ QSplitter::handle:vertical { border-top: 1px solid #14171f; margin-top: 3px; mar
 QSplitter::handle:horizontal:hover { border-left: 1px solid #478cbf; }
 QFrame#DockHeader { background-color: #14171f; border-top-left-radius: 4px; border-top-right-radius: 4px; }
 QLabel#DockTitle { color: #a5b0cb; font-weight: bold; background-color: transparent; }
+QWidget#DockBody { background-color: #202531; border: 1px solid #14171f; border-top: none; }
 QMenuBar { background-color: #202531; color: #dcdcdc; border-bottom: 1px solid #14171f; }
 QMenuBar::item:selected { background-color: #3b445c; border-radius: 2px; }
 QMenu { background-color: #202531; border: 1px solid #14171f; padding: 4px; }
@@ -455,6 +460,7 @@ QSplitter::handle { image: none; background-color: transparent; }
 QSplitter::handle:horizontal { border-left: 1px solid #b0b5bd; margin-left: 3px; margin-right: 3px; }
 QFrame#DockHeader { background-color: #b0b5bd; border-top-left-radius: 4px; border-top-right-radius: 4px; }
 QLabel#DockTitle { color: #111; font-weight: bold; background-color: transparent; }
+QWidget#DockBody { background-color: #e0e4e8; border: 1px solid #b0b5bd; border-top: none; }
 QMenuBar { background-color: #e0e4e8; color: #222222; border-bottom: 1px solid #b0b5bd; }
 QMenuBar::item:selected { background-color: #b8c0c7; border-radius: 2px; }
 QMenu { background-color: #ffffff; border: 1px solid #b0b5bd; padding: 4px; }
@@ -482,10 +488,10 @@ class TktEditor(QMainWindow):
         self.font_mono = QFont('Consolas', 10)
         self.tkt_path = None
         self.entries = []          
-        self.entry_by_id = {}      # 核心ID映射表，服务于快速分组检索
+        self.entry_by_id = {}      
         self.filtered_indices = [] 
-        self.font9696 = None    
-        self.font_path = None   
+        self.font9696 = None       
+        self.font_path = None
         self._dirty = False
         self._current_idx = None   
         
@@ -540,7 +546,7 @@ class TktEditor(QMainWindow):
         self.lbl_dirty = QLabel("")
         self.lbl_dirty.setStyleSheet("color: #e27d60; font-weight: bold;")
         top_ctrl_layout.addWidget(self.lbl_dirty)
-        btn_theme = QPushButton("🌓 切换主题")
+        btn_theme = QPushButton(" 切换主题")
         btn_theme.clicked.connect(self._toggle_theme)
         top_ctrl_layout.addWidget(btn_theme)
         main_layout.addLayout(top_ctrl_layout)
@@ -559,7 +565,7 @@ class TktEditor(QMainWindow):
         self.search_entry = QLineEdit(); self.search_entry.setPlaceholderText("全局搜索..."); self.search_entry.setFixedWidth(160)
         self.search_entry.returnPressed.connect(self._apply_filter)
         toolbar_layout.addWidget(self.search_entry)
-        btn_search = QPushButton("🔍 搜索"); btn_search.clicked.connect(self._apply_filter); toolbar_layout.addWidget(btn_search)
+        btn_search = QPushButton(" 搜索"); btn_search.clicked.connect(self._apply_filter); toolbar_layout.addWidget(btn_search)
         btn_clear = QPushButton("扫除"); btn_clear.clicked.connect(self._clear_filter); toolbar_layout.addWidget(btn_clear)
         toolbar_layout.addWidget(QLabel(" 区间:"))
         self.filter_from = QLineEdit(); self.filter_from.setFixedWidth(50); toolbar_layout.addWidget(self.filter_from)
@@ -571,11 +577,9 @@ class TktEditor(QMainWindow):
         toolbar_layout.addStretch()
         w1_layout.addLayout(toolbar_layout)
 
-        # 主分割窗
         w1_splitter = QSplitter(Qt.Horizontal); w1_splitter.setHandleWidth(6)
         w1_layout.addWidget(w1_splitter, 1)
 
-        # 左表格
         self.table = QTableWidget(0, 3)
         self.table.setHorizontalHeaderLabels(['#', 'ID', '文本内容 Preview'])
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
@@ -588,7 +592,6 @@ class TktEditor(QMainWindow):
         self.table.horizontalHeader().sectionClicked.connect(self._on_header_clicked)
         w1_splitter.addWidget(self._create_dock("低级全局数据表", self.table))
 
-        # 右面板 (检查器 + 视口)
         w1_right_splitter = QSplitter(Qt.Vertical); w1_right_splitter.setHandleWidth(6)
         w1_splitter.addWidget(w1_right_splitter)
 
@@ -629,30 +632,23 @@ class TktEditor(QMainWindow):
         w1_right_splitter.addWidget(self._create_dock("2D 视口渲染器", viewport_widget, header_layout=zoom_layout))
         
         w1_splitter.setSizes([350, 950]); w1_right_splitter.setSizes([400, 400])
-        self.main_tabs.addTab(w1_widget, "🔍 原始全项表 (线性模式)")
+        self.main_tabs.addTab(w1_widget, " 原始全项表 (线性模式)")
 
-        # ==================== WORKSPACE 2: 游戏语义化模块分类编辑 (核心改造) ====================
+        # ==================== WORKSPACE 2: 游戏语义化模块分类编辑 ====================
         w2_widget = QWidget()
         w2_layout = QHBoxLayout(w2_widget)
         w2_layout.setContentsMargins(4, 4, 4, 4)
 
-        # 左分类列表导航
         self.comp_cat_list = QListWidget()
         self.comp_cat_list.setFixedWidth(200)
         for cat in SEMANTIC_CATEGORIES: self.comp_cat_list.addItem(cat['name'])
         self.comp_cat_list.currentRowChanged.connect(self._on_comp_category_changed)
         w2_layout.addWidget(self.comp_cat_list)
 
-        # 中右分割线
         w2_splitter = QSplitter(Qt.Horizontal); w2_splitter.setHandleWidth(6)
         w2_layout.addWidget(w2_splitter, 1)
 
-        # 中：当前类目的条目表
         comp_mid_widget = QWidget(); comp_mid_layout = QVBoxLayout(comp_mid_widget); comp_mid_layout.setContentsMargins(0,0,0,0)
-        comp_toolbar = QHBoxLayout()
-        btn_comp_add = QPushButton("✨ 扩展新增本类项目"); btn_comp_add.clicked.connect(self._add_comp_node); comp_toolbar.addWidget(btn_comp_add)
-        comp_toolbar.addStretch()
-        comp_mid_layout.addLayout(comp_toolbar)
         
         self.comp_table = QTableWidget(0, 4)
         self.comp_table.setSelectionBehavior(QAbstractItemView.SelectRows)
@@ -663,10 +659,9 @@ class TktEditor(QMainWindow):
         comp_mid_layout.addWidget(self.comp_table, 1)
         w2_splitter.addWidget(comp_mid_widget)
 
-        # 右：分类专属复合属性修改面板（支持多视口同步编辑）
+        # 右：分类专属复合属性修改面板（集成统一渲染）
         comp_right_widget = QWidget(); comp_right_layout = QVBoxLayout(comp_right_widget); comp_right_layout.setContentsMargins(0,0,0,0)
         
-        # 轨道一：名称/主要文本
         self.comp_box1_title = QLabel("名称 / 主文本内容 (ID: ---)")
         self.comp_box1_title.setStyleSheet("font-weight: bold; color: #478cbf;")
         comp_right_layout.addWidget(self.comp_box1_title)
@@ -674,37 +669,37 @@ class TktEditor(QMainWindow):
         self.comp_text1.textChanged.connect(self._on_comp_text_modified)
         comp_right_layout.addWidget(self.comp_text1)
         
-        self.comp_scroll_area1 = QScrollArea(); self.comp_scroll_area1.setWidgetResizable(True); self.comp_scroll_area1.setMaximumHeight(70)
-        sc1 = QWidget(); sc1.setStyleSheet("background:transparent;"); scl1 = QVBoxLayout(sc1); scl1.setContentsMargins(4,4,4,4)
-        self.comp_preview_img1 = QLabel(); scl1.addWidget(self.comp_preview_img1); self.comp_scroll_area1.setWidget(sc1)
-        comp_right_layout.addWidget(self.comp_scroll_area1)
-
-        comp_right_layout.addSpacing(10)
-
-        # 轨道二：说明/次要文本 (单轨状态时会自动缩进隐藏)
         self.comp_desc_container = QWidget()
         dc_layout = QVBoxLayout(self.comp_desc_container); dc_layout.setContentsMargins(0,0,0,0)
         self.comp_box2_title = QLabel("说明 / 描述文本内容 (ID: ---)")
-        self.comp_box2_title.setStyleSheet("font-weight: bold; color: #55b572;")
+        self.comp_box2_title.setStyleSheet("font-weight: bold; color: #55b572; padding-top: 10px;")
         dc_layout.addWidget(self.comp_box2_title)
         self.comp_text2 = QPlainTextEdit(); self.comp_text2.setFont(self.font_mono); self.comp_text2.setMaximumHeight(120)
         self.comp_text2.textChanged.connect(self._on_comp_text_modified)
         dc_layout.addWidget(self.comp_text2)
-        
-        self.comp_scroll_area2 = QScrollArea(); self.comp_scroll_area2.setWidgetResizable(True); self.comp_scroll_area2.setMaximumHeight(110)
-        sc2 = QWidget(); sc2.setStyleSheet("background:transparent;"); scl2 = QVBoxLayout(sc2); scl2.setContentsMargins(4,4,4,4)
-        self.comp_preview_img2 = QLabel(); scl2.addWidget(self.comp_preview_img2); self.comp_scroll_area2.setWidget(sc2)
-        dc_layout.addWidget(self.comp_scroll_area2)
         comp_right_layout.addWidget(self.comp_desc_container)
 
-        comp_right_layout.addSpacing(10)
-        btn_comp_apply = QPushButton("✅ 应用本组数据修改(提交内存)"); btn_comp_apply.setStyleSheet("font-weight:bold; padding:8px;"); btn_comp_apply.clicked.connect(self._apply_comp_edit)
+        btn_comp_apply = QPushButton("✅ 保存本槽修改 (点击空槽直接输入即可拓展)"); btn_comp_apply.setStyleSheet("font-weight:bold; padding:8px; margin-top: 10px;")
+        btn_comp_apply.clicked.connect(self._apply_comp_edit)
         comp_right_layout.addWidget(btn_comp_apply)
-        comp_right_layout.addStretch()
 
-        w2_splitter.addWidget(self._create_dock("复合属性集成检查视窗", comp_right_widget))
+        # 统一联合视口
+        self.comp_preview_title = QLabel("️ 实时联合视口")
+        self.comp_preview_title.setStyleSheet("font-weight: bold; color: #a5b0cb; padding-top: 15px;")
+        comp_right_layout.addWidget(self.comp_preview_title)
+        
+        self.comp_preview_scroll = QScrollArea()
+        self.comp_preview_scroll.setWidgetResizable(True)
+        sc_comp = QWidget(); sc_comp.setStyleSheet("background:transparent;")
+        scl_comp = QVBoxLayout(sc_comp); scl_comp.setContentsMargins(4,4,4,4)
+        self.comp_preview_img = QLabel(); self.comp_preview_img.setAlignment(Qt.AlignLeft | Qt.AlignTop)
+        scl_comp.addWidget(self.comp_preview_img)
+        self.comp_preview_scroll.setWidget(sc_comp)
+        comp_right_layout.addWidget(self.comp_preview_scroll, 1)
+
+        w2_splitter.addWidget(self._create_dock("分类属性扩展及视窗", comp_right_widget))
         w2_splitter.setSizes([650, 450])
-        self.main_tabs.addTab(w2_widget, "📦 游戏数据分类编辑 (智能分舱模式)")
+        self.main_tabs.addTab(w2_widget, " 游戏数据分类编辑 (智能分舱扩展模式)")
 
         # --- 底部统一路径状态栏 ---
         status_layout = QHBoxLayout(); status_layout.setContentsMargins(4, 4, 4, 0)
@@ -713,7 +708,6 @@ class TktEditor(QMainWindow):
         self.lbl_g2b = QLabel("(G2B未加载)"); status_layout.addWidget(self.lbl_g2b); status_layout.addStretch()
         main_layout.addLayout(status_layout)
 
-        # 异步驱动渲染器定时器
         self._preview_timer = QTimer(self); self._preview_timer.setSingleShot(True); self._preview_timer.timeout.connect(self._render_preview)
         self._comp_preview_timer = QTimer(self); self._comp_preview_timer.setSingleShot(True); self._comp_preview_timer.timeout.connect(self._render_comp_previews)
 
@@ -733,8 +727,7 @@ class TktEditor(QMainWindow):
         preview_bg = '#1a1d24' if self._is_dark else '#313c52'
         if hasattr(self, 'preview_scroll_area'): self.preview_scroll_area.setStyleSheet(f"background-color: {preview_bg}; border: none;")
         if hasattr(self, 'preview_text'): self.preview_text.setStyleSheet(f"background-color: {preview_bg}; color: {GAME_COLORS[DEFAULT_FCOLOR]}; border: none;")
-        if hasattr(self, 'comp_scroll_area1'): self.comp_scroll_area1.setStyleSheet(f"background-color: {preview_bg}; border: none;")
-        if hasattr(self, 'comp_scroll_area2'): self.comp_scroll_area2.setStyleSheet(f"background-color: {preview_bg}; border: none;")
+        if hasattr(self, 'comp_preview_scroll'): self.comp_preview_scroll.setStyleSheet(f"background-color: {preview_bg}; border: none;")
         self._update_paths()
 
     def _update_paths(self):
@@ -748,7 +741,6 @@ class TktEditor(QMainWindow):
         else: self.lbl_g2b.setText("(g2b.dat 未挂载)"); self.lbl_g2b.setStyleSheet(cr)
 
     def _rebuild_id_map(self):
-        """重新索引全局内存缓存映射关系"""
         self.entry_by_id = {e['id']: e for e in self.entries}
 
     def _set_edit_enabled(self, enabled):
@@ -770,11 +762,10 @@ class TktEditor(QMainWindow):
             self._populate_tree()
             self._set_edit_enabled(False)
             
-            # 激活刷新分类标签页第一类
             self.comp_cat_list.setCurrentRow(0)
             self._on_comp_category_changed(0)
             
-            self.setWindowTitle(f"TKT.dat 编辑器 v2.0 - {os.path.basename(path)}")
+            self.setWindowTitle(f"TKT.dat 编辑器 v4.0 - {os.path.basename(path)}")
             self._apply_theme()
         except Exception as e: QMessageBox.critical(self, "数据载入溃散", str(e))
 
@@ -807,15 +798,35 @@ class TktEditor(QMainWindow):
         except Exception as e: QMessageBox.critical(self, "构写失败", str(e))
 
     # ============================================================
-    # 模块分类维护核心业务逻辑
+    # 模块分类维护 (空槽边界扫描核心)
     # ============================================================
+    def _get_all_category_starts(self):
+        """扫描全盘定义，捕获所有游戏数据定义的有效起始边界。"""
+        starts = []
+        for c in SEMANTIC_CATEGORIES:
+            if c['type'] == 'single':
+                for r in c['ranges']: starts.append(r[0])
+            else:
+                starts.append(c['name_start'])
+                starts.append(c['desc_start'])
+        return sorted(list(set(starts)))
+        
+    def _get_safe_upper_bound(self, end_id, all_starts):
+        """计算指定段落上限与下一个已知段落起点之间的安全扩容空槽边界。"""
+        for s in all_starts:
+            if s > end_id:
+                return s - 1
+        return end_id + 100 # 当处于最后一段定义时，自动释放 100 个游离空槽
+        
     def _on_comp_category_changed(self, index):
-        """当左侧分类导航发生切换"""
         if index < 0 or not self.entries: return
         cat = SEMANTIC_CATEGORIES[index]
+        all_starts = self._get_all_category_starts()
         
         self.comp_table.blockSignals(True)
         self.comp_table.setRowCount(0)
+        
+        empty_color = QColor("#888888")
         
         if cat['type'] == "single":
             self.comp_desc_container.setVisible(False)
@@ -825,15 +836,20 @@ class TktEditor(QMainWindow):
             self.comp_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
             
             row = 0
-            for e in self.entries:
-                in_range = any(low <= e['id'] <= high for low, high in cat['ranges'])
-                if in_range:
+            for rs, re in cat['ranges']:
+                safe_end = self._get_safe_upper_bound(re, all_starts)
+                for cur_id in range(rs, safe_end + 1):
+                    e = self.entry_by_id.get(cur_id)
                     self.comp_table.insertRow(row)
-                    self.comp_table.setItem(row, 0, self._make_center_item(str(e['id'])))
-                    self.comp_table.setItem(row, 1, QTableWidgetItem(e['text'].replace('\n','↵')[:60]))
+                    self.comp_table.setItem(row, 0, self._make_center_item(str(cur_id)))
+                    if e:
+                        self.comp_table.setItem(row, 1, QTableWidgetItem(e['text'].replace('\n','↵')[:60]))
+                    else:
+                        empty_item = QTableWidgetItem("【安全空槽 - 可直接编辑扩展】")
+                        empty_item.setForeground(empty_color)
+                        self.comp_table.setItem(row, 1, empty_item)
                     row += 1
         else:
-            # paired 双轨成对绑定模式（名字+说明同时加载）
             self.comp_desc_container.setVisible(True)
             self.comp_table.setColumnCount(4)
             self.comp_table.setHorizontalHeaderLabels(['名称 ID', '当前名称', '说明 ID', '当前说明预览'])
@@ -841,27 +857,31 @@ class TktEditor(QMainWindow):
             self.comp_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
             self.comp_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.Stretch)
             
-            # 扫描得出当前类目定义的上下界范围和派生扩展出的槽位
-            max_nid = cat['name_end']
-            for e in self.entries:
-                if cat['name_start'] <= e['id'] < cat['desc_start']:
-                    max_nid = max(max_nid, e['id'])
+            name_safe = self._get_safe_upper_bound(cat['name_end'], all_starts)
+            desc_safe = self._get_safe_upper_bound(cat['desc_end'], all_starts)
+            max_pairs = min(name_safe - cat['name_start'], desc_safe - cat['desc_start']) + 1
             
-            items_count = max_nid - cat['name_start'] + 1
             row = 0
-            for i in range(items_count):
+            for i in range(max_pairs):
                 nid = cat['name_start'] + i
                 did = cat['desc_start'] + i
+                ne = self.entry_by_id.get(nid)
+                de = self.entry_by_id.get(did)
                 
-                name_txt = self.entry_by_id.get(nid, {}).get('text', '')
-                desc_txt = self.entry_by_id.get(did, {}).get('text', '')
-                
-                # 如果数据库中两块都不存在（未挂载的数据空槽），选择隐藏或显示空行方便填写
                 self.comp_table.insertRow(row)
                 self.comp_table.setItem(row, 0, self._make_center_item(str(nid)))
-                self.comp_table.setItem(row, 1, QTableWidgetItem(name_txt.replace('\n','↵')))
+                if ne:
+                    self.comp_table.setItem(row, 1, QTableWidgetItem(ne['text'].replace('\n','↵')))
+                else:
+                    it = QTableWidgetItem("【名称空槽】")
+                    it.setForeground(empty_color); self.comp_table.setItem(row, 1, it)
+                    
                 self.comp_table.setItem(row, 2, self._make_center_item(str(did)))
-                self.comp_table.setItem(row, 3, QTableWidgetItem(desc_txt.replace('\n','↵')[:50]))
+                if de:
+                    self.comp_table.setItem(row, 3, QTableWidgetItem(de['text'].replace('\n','↵')[:50]))
+                else:
+                    it = QTableWidgetItem("【配套说明空槽】")
+                    it.setForeground(empty_color); self.comp_table.setItem(row, 3, it)
                 row += 1
 
         self.comp_table.blockSignals(False)
@@ -872,14 +892,12 @@ class TktEditor(QMainWindow):
         self.comp_box1_title.setText("名称 / 主文本内容 (ID: ---)")
         self.comp_box2_title.setText("说明 / 描述文本内容 (ID: ---)")
         self.comp_text1.clear(); self.comp_text2.clear()
-        self.comp_preview_img1.clear(); self.comp_preview_img2.clear()
+        self.comp_preview_img.clear()
 
     def _on_comp_table_select(self):
-        """当分类列表中的行被点击，双轨解析并同步回填"""
         selected = self.comp_table.selectedItems()
         if not selected: return
         row = selected[0].row()
-        
         cat = SEMANTIC_CATEGORIES[self.comp_cat_list.currentRow()]
         self.comp_text1.blockSignals(True); self.comp_text2.blockSignals(True)
         
@@ -906,15 +924,15 @@ class TktEditor(QMainWindow):
         self._comp_preview_timer.start(50)
 
     def _apply_comp_edit(self):
-        """应用集成检查器对两轨数据的同时修改"""
-        if not hasattr(self, '_comp_active_id1') or self._comp_active_id1 is None: return
+        """应用集成检查器数据修改，智能识别空槽生成新节点"""
+        if getattr(self, '_comp_active_id1', None) is None: return
         
         def _commit(eid, txt):
             if eid is None: return
             if eid in self.entry_by_id:
                 self.entry_by_id[eid]['text'] = txt
             else:
-                # 动态分配内存节点并追加
+                if not txt.strip(): return # 屏蔽全空操作
                 ne = OrderedDict([('slot', len(self.entries)), ('id', eid), ('text', txt)])
                 self.entries.append(ne)
                 self.entry_by_id[eid] = ne
@@ -923,70 +941,74 @@ class TktEditor(QMainWindow):
         if self._comp_active_id2 is not None:
             _commit(self._comp_active_id2, self.comp_text2.toPlainText())
             
-        # 联动机制：同步回写表格刷新，并同步通知原始全局线性线性视图
         row = self.comp_table.currentRow()
         if row >= 0:
-            self.comp_table.setItem(row, 1, QTableWidgetItem(self.comp_text1.toPlainText().replace('\n','↵')))
+            txt1 = self.comp_text1.toPlainText().replace('\n','↵')
+            txt2 = self.comp_text2.toPlainText().replace('\n','↵')[:50]
+            
+            # 清除原有的空槽变灰提示，恢复文本正常色彩
+            i1 = QTableWidgetItem(txt1)
+            i1.setForeground(QColor("#dcdcdc") if self._is_dark else QColor("#222222"))
+            self.comp_table.setItem(row, 1, i1)
+            
             if self._comp_active_id2 is not None:
-                self.comp_table.setItem(row, 3, QTableWidgetItem(self.comp_text2.toPlainText().replace('\n','↵')[:50]))
+                i2 = QTableWidgetItem(txt2)
+                i2.setForeground(QColor("#dcdcdc") if self._is_dark else QColor("#222222"))
+                self.comp_table.setItem(row, 3, i2)
         
-        self._populate_tree() # 激活全局列表同步
-
-    def _add_comp_node(self):
-        """一键安全逻辑分类空项扩展增补算法"""
-        if not self.entries: return
-        cat = SEMANTIC_CATEGORIES[self.comp_cat_list.currentRow()]
-        self._apply_comp_edit() # 先行存盘
-        
-        if cat['type'] == "single":
-            max_id = max([low for low, _ in cat['ranges']])
-            for e in self.entries:
-                if any(low <= e['id'] <= high for low, high in cat['ranges']):
-                    max_id = max(max_id, e['id'])
-            new_id = max_id + 1
-            
-            ne = OrderedDict([('slot', len(self.entries)), ('id', new_id), ('text', '新剧情或单条文本')])
-            self.entries.append(ne)
-        else:
-            max_nid = cat['name_end']
-            for e in self.entries:
-                if cat['name_start'] <= e['id'] < cat['desc_start']:
-                    max_nid = max(max_nid, e['id'])
-            new_nid = max_nid + 1
-            new_did = new_nid + (cat['desc_start'] - cat['name_start'])
-            
-            ne1 = OrderedDict([('slot', len(self.entries)), ('id', new_nid), ('text', '新项目名称')])
-            self.entries.append(ne1)
-            ne2 = OrderedDict([('slot', len(self.entries)), ('id', new_did), ('text', '新项目说明描述文本')])
-            self.entries.append(ne2)
-
-        self._rebuild_id_map()
-        self._on_comp_category_changed(self.comp_cat_list.currentRow())
-        self.comp_table.selectRow(self.comp_table.rowCount() - 1)
+        self._populate_tree() 
 
     def _render_comp_previews(self):
-        """分类视口专属：双物理视口无损字体级高分辨率缩放重新绘制"""
+        """联合画布：将两条独立数据同时高精合成在单一视口内"""
         if not HAS_PIL or not self.font9696: return
         bg = '#1a1d24' if self._is_dark else '#313c52'
         sc = self._zoom_level / 100.0
         ut = self.chk_traditional.isChecked()
         
-        def _draw(widget, txt):
-            if not txt.strip(): widget.clear(); return
-            try:
-                seg = parse_styled_segments(txt)
-                img = _render_text_image(seg, self.font9696, use_traditional_font=ut, bg_color=bg, scale_factor=sc)
-                widget.setPixmap(QPixmap.fromImage(pil_to_qimage(img)))
-            except: widget.clear()
-
-        if self._comp_active_id1 is not None: _draw(self.comp_preview_img1, self.comp_text1.toPlainText())
-        if self._comp_active_id2 is not None: _draw(self.comp_preview_img2, self.comp_text2.toPlainText())
+        img1, img2 = None, None
+        txt1 = self.comp_text1.toPlainText().strip()
+        txt2 = self.comp_text2.toPlainText().strip()
+        
+        if self._comp_active_id1 is not None and txt1:
+            try: img1 = _render_text_image(parse_styled_segments(txt1), self.font9696, use_traditional_font=ut, bg_color=bg, scale_factor=sc)
+            except: pass
+            
+        if self._comp_active_id2 is not None and txt2:
+            try: img2 = _render_text_image(parse_styled_segments(txt2), self.font9696, use_traditional_font=ut, bg_color=bg, scale_factor=sc)
+            except: pass
+            
+        if not img1 and not img2:
+            self.comp_preview_img.clear(); return
+            
+        w1, h1 = (img1.width, img1.height) if img1 else (0, 0)
+        w2, h2 = (img2.width, img2.height) if img2 else (0, 0)
+        
+        spacing = 15 if (img1 and img2) else 0
+        canvas_w = max(w1, w2)
+        canvas_h = h1 + spacing + h2
+        
+        bg_rgb = _hex_to_rgb(bg)
+        canvas = Image.new('RGBA', (canvas_w, canvas_h), (*bg_rgb, 255))
+        y = 0
+        if img1:
+            canvas.paste(img1, (0, y)); y += h1
+        if img1 and img2:
+            from PIL import ImageDraw
+            draw = ImageDraw.Draw(canvas)
+            ly = y + spacing // 2
+            # 绘制联合视口居中的隔离分界线
+            draw.line([(10, ly), (canvas_w - 10, ly)], fill=(120, 120, 120, 150), width=1)
+            y += spacing
+        if img2:
+            canvas.paste(img2, (0, y))
+            
+        self.comp_preview_img.setPixmap(QPixmap.fromImage(pil_to_qimage(canvas)))
 
     def _make_center_item(self, text):
         it = QTableWidgetItem(text); it.setTextAlignment(Qt.AlignCenter); return it
 
     # ============================================================
-    # 原始全选表（线性表格模式）内部逻辑基座（完全兼容并修护排序）
+    # 原始全选表（线性模式维护）
     # ============================================================
     def _populate_tree(self):
         self.filtered_indices = list(range(len(self.entries)))
@@ -1126,7 +1148,7 @@ class TktEditor(QMainWindow):
         self.cb_ftype = QComboBox(); self.cb_ftype.addItems(["字体", "1-细明", "2-明体", "3-楷体", "4-宋体", "5-微正黑", "6-黑体", "7-仿宋", "8-楷体2"])
         self.cb_ftype.currentIndexChanged.connect(lambda idx: (self._insert_tag(f"<FTYPE,{self.cb_ftype.currentText().split('-')[0]}>", "<FRESET,4>") if idx>0 else None, self.cb_ftype.setCurrentIndex(0)))
         t.addWidget(self.cb_ftype)
-        btn_name = QPushButton("👤 姓名宏"); btn_name.clicked.connect(lambda: self._insert_tag("<NAME,1><NAME,2>")); t.addWidget(btn_name)
+        btn_name = QPushButton(" 姓名宏"); btn_name.clicked.connect(lambda: self._insert_tag("<NAME,1><NAME,2>")); t.addWidget(btn_name)
         layout.addLayout(t)
 
     def _insert_tag(self, op, cl=None):
