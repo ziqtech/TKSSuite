@@ -78,14 +78,14 @@ GAME_FONT_SIZES = {12, 16, 24, 32, 48}
 DEFAULT_FONT_SIZE = 16
 
 GAME_FONT_FAMILIES = {
-    1: ('PMingLiU', 'MingLiU', 'SimSun', 'serif'),
-    2: ('MingLiU', 'PMingLiU', 'SimSun', 'serif'),
-    3: ('DFKai-SB', 'KaiTi', 'serif'),
-    4: ('SimSun', 'NSimSun', 'MingLiU', 'serif'),
-    5: ('Microsoft JhengHei', 'Microsoft YaHei', 'SimHei', 'sans-serif'),
-    6: ('SimHei', 'Microsoft YaHei', 'Microsoft JhengHei', 'sans-serif'),
-    7: ('FangSong', 'KaiTi', 'serif'),
-    8: ('KaiTi', 'DFKai-SB', 'serif'),
+    1: ('字体1',),
+    2: ('字体2',),
+    3: ('字体3',),
+    4: ('字体4',),
+    5: ('字体5',),
+    6: ('字体6',),
+    7: ('字体7',),
+    8: ('字体8',),
 }
 
 DEFAULT_FTYPE = 2
@@ -359,8 +359,8 @@ def parse_styled_segments(text):
                 elif val == 4: 
                     current['family'] = prev_family
             elif tag_name == 'TEXT': buf.append(f'[文本:{val_str}]')
-            elif tag_name == 'VARNUM': buf.append(f'[变量:{val_str}]')
-            elif tag_name == 'VARTXT': buf.append(f'[文本变量:{val_str}]')
+            elif tag_name == 'VARNUM': buf.append(f'[數值變量:{val_str}]')
+            elif tag_name == 'VARTXT': buf.append(f'[文本變量:{val_str}]')
             elif tag_name == 'NAME': buf.append('[姓]' if val_str == '1' else '[名]')
             else: buf.append(text[m.start():m.end()])
             i = m.end()
@@ -892,7 +892,7 @@ class TktEditor(QMainWindow):
         self._dirty = False
         self._current_idx = None   
         
-        self._zoom_level = 100
+        self._zoom_level = 150
         self._sort_col = -1   
         self._sort_state = 0  
         self._last_focused_input = None
@@ -1037,7 +1037,7 @@ class TktEditor(QMainWindow):
         zoom_layout = QHBoxLayout()
         zoom_layout.setContentsMargins(0,0,0,0)
         btn_zoom_out = QPushButton("➖"); btn_zoom_out.setFixedSize(22, 22); btn_zoom_out.setStyleSheet("padding: 0px; font-size: 12px;"); btn_zoom_out.clicked.connect(self._zoom_out)
-        self.lbl_zoom = QLabel("100%"); self.lbl_zoom.setAlignment(Qt.AlignCenter); self.lbl_zoom.setFixedWidth(40); self.lbl_zoom.setStyleSheet("font-size: 11px; background-color: transparent;")
+        self.lbl_zoom = QLabel("150%"); self.lbl_zoom.setAlignment(Qt.AlignCenter); self.lbl_zoom.setFixedWidth(40); self.lbl_zoom.setStyleSheet("font-size: 11px; background-color: transparent;")
         btn_zoom_in = QPushButton("➕"); btn_zoom_in.setFixedSize(22, 22); btn_zoom_in.setStyleSheet("padding: 0px; font-size: 12px;"); btn_zoom_in.clicked.connect(self._zoom_in)
         zoom_layout.addWidget(btn_zoom_out); zoom_layout.addWidget(self.lbl_zoom); zoom_layout.addWidget(btn_zoom_in)
 
@@ -1065,8 +1065,9 @@ class TktEditor(QMainWindow):
         self.comp_cat_list.currentRowChanged.connect(self._on_comp_category_changed)
         w2_layout.addWidget(self.comp_cat_list)
 
-        w2_splitter = QSplitter(Qt.Horizontal); w2_splitter.setHandleWidth(7)
-        w2_layout.addWidget(w2_splitter, 1)
+        self.w2_splitter = QSplitter(Qt.Horizontal); self.w2_splitter.setHandleWidth(7)
+        self.w2_splitter.splitterMoved.connect(self._adjust_comp_columns)
+        w2_layout.addWidget(self.w2_splitter, 1)
 
         comp_mid_widget = QWidget(); comp_mid_layout = QVBoxLayout(comp_mid_widget); comp_mid_layout.setContentsMargins(0,0,0,0)
         
@@ -1077,12 +1078,12 @@ class TktEditor(QMainWindow):
         self.comp_table.verticalHeader().setVisible(False)
         self.comp_table.itemSelectionChanged.connect(self._on_comp_table_select)
         comp_mid_layout.addWidget(self.comp_table, 1)
-        w2_splitter.addWidget(comp_mid_widget)
+        self.w2_splitter.addWidget(comp_mid_widget)
 
         # --- 创建右侧垂直分割器 (用于存放检查器和独立视口) ---
         w2_right_splitter = QSplitter(Qt.Vertical)
         w2_right_splitter.setHandleWidth(7)
-        w2_splitter.addWidget(w2_right_splitter)
+        self.w2_splitter.addWidget(w2_right_splitter)
 
         comp_right_widget = QWidget(); comp_right_layout = QVBoxLayout(comp_right_widget); comp_right_layout.setContentsMargins(0,0,0,0)
         
@@ -1124,7 +1125,7 @@ class TktEditor(QMainWindow):
         comp_preview_header = QHBoxLayout()
         comp_preview_header.setContentsMargins(0, 0, 0, 0)
         btn_comp_zoom_out = QPushButton("➖"); btn_comp_zoom_out.setFixedSize(22, 22); btn_comp_zoom_out.setStyleSheet("padding: 0px; font-size: 12px;"); btn_comp_zoom_out.clicked.connect(self._zoom_out)
-        self.lbl_comp_zoom = QLabel("100%"); self.lbl_comp_zoom.setAlignment(Qt.AlignCenter); self.lbl_comp_zoom.setFixedWidth(40); self.lbl_comp_zoom.setStyleSheet("font-size: 11px; background-color: transparent;")
+        self.lbl_comp_zoom = QLabel("150%"); self.lbl_comp_zoom.setAlignment(Qt.AlignCenter); self.lbl_comp_zoom.setFixedWidth(40); self.lbl_comp_zoom.setStyleSheet("font-size: 11px; background-color: transparent;")
         btn_comp_zoom_in = QPushButton("➕"); btn_comp_zoom_in.setFixedSize(22, 22); btn_comp_zoom_in.setStyleSheet("padding: 0px; font-size: 12px;"); btn_comp_zoom_in.clicked.connect(self._zoom_in)
         comp_preview_header.addWidget(btn_comp_zoom_out); comp_preview_header.addWidget(self.lbl_comp_zoom); comp_preview_header.addWidget(btn_comp_zoom_in)
 
@@ -1140,7 +1141,7 @@ class TktEditor(QMainWindow):
 
         w2_right_splitter.addWidget(self._create_dock("2D 视口渲染器 (文本预览)", comp_preview_widget, header_layout=comp_preview_header))
 
-        w2_splitter.setSizes([650, 450])
+        self.w2_splitter.setSizes([650, 450])
         w2_right_splitter.setSizes([400, 400])
         self.main_tabs.addTab(w2_widget, "📦 游戏数据分类编辑 (智能分舱扩展模式)")
 
@@ -1295,7 +1296,7 @@ class TktEditor(QMainWindow):
             self.comp_table.setColumnCount(4)
             self.comp_table.setHorizontalHeaderLabels(['名称 ID', '当前名称', '说明 ID', '当前说明预览'])
             self.comp_table.setColumnWidth(0, 70); self.comp_table.setColumnWidth(2, 70)
-            self.comp_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+            self.comp_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Interactive)
             self.comp_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.Stretch)
             
             name_safe = self._get_safe_upper_bound(cat['name_end'], all_starts)
@@ -1327,6 +1328,7 @@ class TktEditor(QMainWindow):
 
         self.comp_table.blockSignals(False)
         self._clear_comp_inputs()
+        self._adjust_comp_columns()
 
     def _clear_comp_inputs(self):
         self._comp_active_id1, self._comp_active_id2 = None, None
@@ -1334,6 +1336,16 @@ class TktEditor(QMainWindow):
         self.comp_box2_title.setText("说明 / 描述文本内容 (ID: ---)")
         self.comp_text1.clear(); self.comp_text2.clear()
         self.comp_preview_img.clear()
+
+    def _adjust_comp_columns(self):
+        """调整分类表格列宽：当前名称:当前说明预览 = 1:4"""
+        if self.comp_table.columnCount() != 4:
+            return
+        total_w = self.comp_table.viewport().width()
+        fixed_w = 70 + 70  # 名称ID + 说明ID 固定宽度
+        if total_w > fixed_w:
+            remaining = total_w - fixed_w
+            self.comp_table.setColumnWidth(1, remaining // 5)
 
     def _on_comp_table_select(self):
         selected = self.comp_table.selectedItems()
@@ -1524,7 +1536,15 @@ class TktEditor(QMainWindow):
 
     def _delete_entry(self):
         if self._current_idx is None: return
-        if QMessageBox.question(self, "物理清空", "物理剥离该节点？") == QMessageBox.No: return
+        msg = QMessageBox(self)
+        msg.setWindowTitle("物理清空")
+        msg.setText("物理剥离该节点？")
+        msg.setIcon(QMessageBox.Question)
+        msg.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+        msg.button(QMessageBox.Yes).setText("是")
+        msg.button(QMessageBox.No).setText("否")
+        if msg.exec() == QMessageBox.No:
+            return
         self.entries.pop(self._current_idx)
         for i, entry in enumerate(self.entries): entry['slot'] = i
         self._dirty = True; self._current_idx = None; self._rebuild_id_map(); self._populate_tree()
@@ -1583,7 +1603,7 @@ class TktEditor(QMainWindow):
         toolbar.addWidget(cb_freset)
 
         toolbar.addSpacing(10)
-        for ci in [17, 19, 20, 23, 26]:
+        for ci in [17, 19, 20, 23, 21]:
             btn = QPushButton()
             btn.setFixedSize(20, 20)
             btn.setStyleSheet(f"background-color: {GAME_COLORS[ci]}; border: 1px solid #777; border-radius: 10px;")
@@ -1601,7 +1621,7 @@ class TktEditor(QMainWindow):
         toolbar.addWidget(cb_fsize)
 
         cb_ftype = QComboBox()
-        cb_ftype.addItems(["字体", "1-细明", "2-明体", "3-楷体", "4-宋体", "5-微正黑", "6-黑体", "7-仿宋", "8-楷体2"])
+        cb_ftype.addItems(["字体", "1-字体1", "2-字体2", "3-字体3", "4-字体4", "5-字体5", "6-字体6", "7-字体7", "8-字体8"])
         cb_ftype.currentIndexChanged.connect(lambda idx, cb=cb_ftype: self._on_combo_ftype(idx, cb))
         toolbar.addWidget(cb_ftype)
 
@@ -1716,7 +1736,17 @@ class TktEditor(QMainWindow):
         )
 
     def closeEvent(self, event):
-        if self._dirty and QMessageBox.question(self, "未保存", "直接退出？") == QMessageBox.Cancel: event.ignore(); return
+        if self._dirty:
+            msg = QMessageBox(self)
+            msg.setWindowTitle("未保存")
+            msg.setText("直接退出？")
+            msg.setIcon(QMessageBox.Question)
+            msg.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+            msg.button(QMessageBox.Yes).setText("是")
+            msg.button(QMessageBox.No).setText("否")
+            if msg.exec() == QMessageBox.No:
+                event.ignore()
+                return
         if self.font9696: self.font9696.close()
         event.accept()
 
