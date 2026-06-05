@@ -536,6 +536,10 @@ class TktEditor(QMainWindow):
         file_menu.addAction("另存为…", self._save_as)
         file_menu.addSeparator()
         file_menu.addAction("退出", self.close)
+        
+        help_menu = menu_bar.addMenu("帮助(H)")
+        help_menu.addAction("关于…", self._show_about)
+
 
         # 全局控制栏
         top_ctrl_layout = QHBoxLayout()
@@ -1133,28 +1137,112 @@ class TktEditor(QMainWindow):
             except Exception as e: self.preview_stack.setCurrentIndex(1); self.preview_text.setPlainText(f'报错:\n{str(e)}'); return
         self.preview_stack.setCurrentIndex(1); self.preview_text.setPlainText(t)
 
-    def _build_tag_toolbar(self, layout):
-        t = QHBoxLayout(); t.setContentsMargins(0, 4, 0, 4)
-        self.cb_freset = QComboBox(); self.cb_freset.addItems(["格式恢复", "1-全恢复", "2-复颜色", "3-初化", "4-复体"])
-        self.cb_freset.currentIndexChanged.connect(lambda idx: (self._insert_tag(f"<FRESET,{idx}>") if idx>0 else None, self.cb_freset.setCurrentIndex(0)))
-        t.addWidget(self.cb_freset)
+    def _build_tag_toolbar(self, parent_layout):
+        toolbar = QHBoxLayout()
+        toolbar.setContentsMargins(0, 5, 0, 5)
+
+        self.cb_freset = QComboBox()
+        self.cb_freset.addItems(["格式控制", "1-全部恢复", "2-恢复颜色", "3-重新初始化", "4-恢复字体"])
+        self.cb_freset.currentIndexChanged.connect(self._on_freset_select)
+        toolbar.addWidget(self.cb_freset)
+
+        toolbar.addSpacing(10)
         for ci in [17, 19, 20, 23, 26]:
-            btn = QPushButton(); btn.setFixedSize(18, 18); btn.setStyleSheet(f"background-color: {GAME_COLORS[ci]}; border: 1px solid #777; border-radius: 9px;")
-            btn.clicked.connect(lambda checked=False, c=ci: self._insert_tag(f"<FCOLOR,{c}>", "<FRESET,2>"))
-            t.addWidget(btn)
-        self.cb_fsize = QComboBox(); self.cb_fsize.addItems(["字号", "12", "16", "24", "32", "48"])
-        self.cb_fsize.currentIndexChanged.connect(lambda idx: (self._insert_tag(f"<FSIZE,{self.cb_fsize.currentText()}>", "<FRESET,1>") if idx>0 else None, self.cb_fsize.setCurrentIndex(0)))
-        t.addWidget(self.cb_fsize)
-        self.cb_ftype = QComboBox(); self.cb_ftype.addItems(["字体", "1-细明", "2-明体", "3-楷体", "4-宋体", "5-微正黑", "6-黑体", "7-仿宋", "8-楷体2"])
-        self.cb_ftype.currentIndexChanged.connect(lambda idx: (self._insert_tag(f"<FTYPE,{self.cb_ftype.currentText().split('-')[0]}>", "<FRESET,4>") if idx>0 else None, self.cb_ftype.setCurrentIndex(0)))
-        t.addWidget(self.cb_ftype)
-        btn_name = QPushButton(" 姓名宏"); btn_name.clicked.connect(lambda: self._insert_tag("<NAME,1><NAME,2>")); t.addWidget(btn_name)
-        layout.addLayout(t)
+            btn = QPushButton()
+            btn.setFixedSize(20, 20)
+            btn.setStyleSheet(f"background-color: {GAME_COLORS[ci]}; border: 1px solid #777; border-radius: 10px;")
+            btn.clicked.connect(lambda checked=False, c=ci: self._insert_fcolor(c))
+            toolbar.addWidget(btn)
+            
+        btn_more_color = QPushButton("")
+        btn_more_color.clicked.connect(self._show_color_palette)
+        toolbar.addWidget(btn_more_color)
+
+        toolbar.addSpacing(10)
+        self.cb_fsize = QComboBox()
+        self.cb_fsize.addItems(["字号", "12", "16", "24", "32", "48"])
+        self.cb_fsize.currentIndexChanged.connect(self._on_fsize_select)
+        toolbar.addWidget(self.cb_fsize)
+
+        self.cb_ftype = QComboBox()
+        self.cb_ftype.addItems(["字体", "1-细明", "2-明体", "3-楷体", "4-宋体", "5-微正黑", "6-黑体", "7-仿宋", "8-楷体2"])
+        self.cb_ftype.currentIndexChanged.connect(self._on_ftype_select)
+        toolbar.addWidget(self.cb_ftype)
+
+        toolbar.addSpacing(10)
+        btn_name = QPushButton(" 姓名宏")
+        btn_name.clicked.connect(lambda: self._insert_tag("<NAME,1><NAME,2>"))
+        toolbar.addWidget(btn_name)
+
+        toolbar.addSpacing(5)
+        btn_rgb = QPushButton(" RGB色")
+        btn_rgb.clicked.connect(self._insert_fcolord)
+        toolbar.addWidget(btn_rgb)
+        
+        toolbar.addStretch()
+        parent_layout.addLayout(toolbar)
 
     def _insert_tag(self, op, cl=None):
         c = self.text_widget.textCursor(); sel = c.selectedText()
         c.insertText(op + sel + (cl or ''))
         self.text_widget.setFocus(); self._on_text_modified()
+
+    def _on_freset_select(self, index):
+        if index == 0: return
+        self._insert_tag(f"<FRESET,{int(self.cb_freset.currentText().split('-')[0])}>")
+        self.cb_freset.setCurrentIndex(0)
+
+    def _insert_fcolor(self, color_idx):
+        self._insert_tag(f"<FCOLOR,{color_idx}>", "<FRESET,2>")
+
+    def _insert_fcolord(self):
+        """弹出系统取色器，插入 <FCOLORD,r,g,b> 标签。"""
+        color = QColorDialog.getColor(parent=self)
+        if not color.isValid():
+            return
+        r, g, b = color.red(), color.green(), color.blue()
+        self._insert_tag(f"<FCOLORD,{r},{g},{b}>", "<FRESET,2>")
+
+    def _show_color_palette(self):
+        dlg = QDialog(self)
+        dlg.setWindowTitle("调色板 (游戏内建32色)")
+        dlg.setFixedSize(300, 150)
+        layout = QGridLayout(dlg)
+        for ci in range(1, 33):
+            btn = QPushButton()
+            btn.setFixedSize(26, 26)
+            btn.setStyleSheet(f"background-color: {GAME_COLORS[ci]}; border: 1px solid #555; border-radius: 4px;")
+            def make_handler(color_id):
+                def handler():
+                    self._insert_fcolor(color_id)
+                    dlg.accept()
+                return handler
+            btn.clicked.connect(make_handler(ci))
+            layout.addWidget(btn, (ci - 1) // 8, (ci - 1) % 8)
+        dlg.exec()
+
+    def _on_fsize_select(self, index):
+        if index == 0: return
+        self._insert_tag(f"<FSIZE,{int(self.cb_fsize.currentText())}>", "<FRESET,1>")
+        self.cb_fsize.setCurrentIndex(0)
+
+    def _on_ftype_select(self, index):
+        if index == 0: return
+        self._insert_tag(f"<FTYPE,{int(self.cb_ftype.currentText().split('-')[0])}>", "<FRESET,4>")
+        self.cb_ftype.setCurrentIndex(0)
+        
+    def _show_about(self):
+        QMessageBox.about(self, "关于",
+            "TKT.dat 文本数据库编辑器 v4.0 (PySide6)\n\n"
+            "基于逆向工程 sub_401E88/sub_4067E8/sub_4019D0 实现。\n"
+            "支持加载/编辑/保存/新增 TKT.dat 条目。\n\n"
+            "控制码:\n"
+            "  <FRESET,n>  n∈[1,4]     <FCOLOR,n>  n∈[1,32]\n"
+            "  <FCOLORD,r,g,b> r,g,b∈[0,255]\n"
+            "  <FSIZE,n>   n∈[12,48]   <FTYPE,n>   n∈[1,8]\n"
+            "  <TEXT,n>    n∈[1,32767] (2字节)\n"
+            "  <VARNUM,n>  n∈[1,255]   <VARTXT,n>  n∈[1,255]\n"
+            "  <NAME,n>    n∈[1,2]")
 
     def closeEvent(self, event):
         if self._dirty and QMessageBox.question(self, "未保存", "直接退出？") == QMessageBox.Cancel: event.ignore(); return
