@@ -854,8 +854,9 @@ QSplitter::handle:vertical:hover { border-top: 1px solid #478cbf; }
 QScrollBar:vertical { background: #1a1e27; width: 12px; }
 QScrollBar::handle:vertical { background: #3b445c; border-radius: 6px; min-height: 20px; margin: 2px; }
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0px; }
-QLabel#DockHeader { background-color: #14171f; color: #a5b0cb; font-weight: bold; padding: 6px; border-top-left-radius: 4px; border-top-right-radius: 4px; }
+QFrame#DockHeader { background-color: #14171f; border-top-left-radius: 4px; border-top-right-radius: 4px; }
 QWidget#DockBody { background-color: #202531; border: 1px solid #14171f; border-top: none; }
+QLabel#DockTitle { background-color: transparent; color: #a5b0cb; font-weight: bold; }
 
 /* 修复菜单栏与下拉菜单的样式 */
 QMenuBar { background-color: #202531; color: #dcdcdc; border-bottom: 1px solid #14171f; }
@@ -887,8 +888,9 @@ QSplitter::handle:vertical:hover { border-top: 1px solid #478cbf; }
 QScrollBar:vertical { background: #f2f5f7; width: 12px; }
 QScrollBar::handle:vertical { background: #b8c0c7; border-radius: 6px; min-height: 20px; margin: 2px; }
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0px; }
-QLabel#DockHeader { background-color: #b0b5bd; color: #111; font-weight: bold; padding: 6px; border-top-left-radius: 4px; border-top-right-radius: 4px; }
+QFrame#DockHeader { background-color: #b0b5bd; border-top-left-radius: 4px; border-top-right-radius: 4px; }
 QWidget#DockBody { background-color: #e0e4e8; border: 1px solid #b0b5bd; border-top: none; }
+QLabel#DockTitle { background-color: transparent; color: #111; font-weight: bold; }
 
 /* 修复菜单栏与下拉菜单的样式 */
 QMenuBar { background-color: #e0e4e8; color: #222222; border-bottom: 1px solid #b0b5bd; }
@@ -913,11 +915,23 @@ def pil_to_qimage(pil_image):
     return qim.copy()
 
 
-class DockHeader(QLabel):
+class DockHeader(QFrame):
     """自定义 Godot 风格的面板标题栏"""
-    def __init__(self, title):
-        super().__init__(title)
+    def __init__(self, title, right_layout=None):
+        super().__init__()
         self.setObjectName("DockHeader")
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(8, 6, 8, 6)
+        layout.setSpacing(4)
+
+        lbl = QLabel(title)
+        lbl.setObjectName("DockTitle")
+        layout.addWidget(lbl, 1)
+
+        # 如果传入了右侧控件（比如缩放按钮），就嵌在标题栏右侧
+        if right_layout:
+            layout.addLayout(right_layout)
+
 
 class TktEditor(QMainWindow):
     def __init__(self, initial_path=None):
@@ -951,13 +965,13 @@ class TktEditor(QMainWindow):
         if initial_path and os.path.exists(initial_path):
             self._load_file(initial_path)
 
-    def _create_dock(self, title, widget_content):
+    def _create_dock(self, title, widget_content, header_layout=None):
         """生成 Godot 风格的面板组件"""
         container = QWidget()
         layout = QVBoxLayout(container)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
-        layout.addWidget(DockHeader(title))
+        layout.addWidget(DockHeader(title, header_layout))
         
         body = QWidget()
         body.setObjectName("DockBody")
@@ -1124,26 +1138,26 @@ class TktEditor(QMainWindow):
 
         # --- 视口缩放控制栏 ---
         zoom_layout = QHBoxLayout()
-        zoom_layout.setContentsMargins(8, 4, 8, 4)
+        zoom_layout.setContentsMargins(0, 0, 0, 0)
 
-        btn_zoom_out = QPushButton("\u2796")
-        btn_zoom_out.setFixedSize(24, 24)
+        btn_zoom_out = QPushButton("➖")
+        btn_zoom_out.setFixedSize(22, 22)
+        btn_zoom_out.setStyleSheet("padding: 0px; font-size: 12px;")
         btn_zoom_out.clicked.connect(self._zoom_out)
 
         self.lbl_zoom = QLabel("100%")
         self.lbl_zoom.setAlignment(Qt.AlignCenter)
-        self.lbl_zoom.setFixedWidth(45)
+        self.lbl_zoom.setFixedWidth(40)
+        self.lbl_zoom.setStyleSheet("font-size: 11px; background-color: transparent;")
 
-        btn_zoom_in = QPushButton("\u2795")
-        btn_zoom_in.setFixedSize(24, 24)
+        btn_zoom_in = QPushButton("➕")
+        btn_zoom_in.setFixedSize(22, 22)
+        btn_zoom_in.setStyleSheet("padding: 0px; font-size: 12px;")
         btn_zoom_in.clicked.connect(self._zoom_in)
 
-        zoom_layout.addStretch()
         zoom_layout.addWidget(btn_zoom_out)
         zoom_layout.addWidget(self.lbl_zoom)
         zoom_layout.addWidget(btn_zoom_in)
-
-        viewport_layout.addLayout(zoom_layout)
 
         # 使用 StackedWidget 平滑切换 图片渲染 / 纯文本降级
         self.preview_stack = QStackedWidget()
@@ -1168,9 +1182,9 @@ class TktEditor(QMainWindow):
         self.preview_text.setStyleSheet(f"color: {GAME_COLORS[DEFAULT_FCOLOR]}; border: none;")
         self.preview_text.setPlainText("(请选择条目)")
         self.preview_stack.addWidget(self.preview_text)
-        
+
         viewport_layout.addWidget(self.preview_stack)
-        viewport_dock = self._create_dock("2D 视口 (游戏内实时预览)", viewport_widget)
+        viewport_dock = self._create_dock("2D 视口 (游戏内实时预览)", viewport_widget, header_layout=zoom_layout)
         right_splitter.addWidget(viewport_dock)
 
         # 调整初始比例
