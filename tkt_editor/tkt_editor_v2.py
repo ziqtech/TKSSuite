@@ -110,8 +110,8 @@ GAME_FONT_FAMILIES = {
 
 DEFAULT_FTYPE = 2
 DEFAULT_FCOLOR = 32    
-# PREVIEW_BG = '#1a1d24'  # 工业风深色视口背景
-PREVIEW_BG = '#313c52'  # 游戏对话框背景色
+# PREVIEW_BG 已移除 — 背景色现在由 _apply_theme 根据 self._is_dark 动态计算:
+#   深色模式: '#1a1d24' (工业风深色视口背景) / 浅色模式: '#313c52' (游戏对话框背景色)
 FTYPE_BY_FAMILY_NAME = {v[0]: k - 1 for k, v in GAME_FONT_FAMILIES.items()}
 
 # ASCII → BIG5 重映射表 (word_4EC810)
@@ -717,11 +717,11 @@ def _render_fallback_char(ch, size, color, family_tuple, half_width=False, prefe
     
     return img, w
 
-def _render_text_image(segments, font, line_spacing=4, use_traditional_font=False):
+def _render_text_image(segments, font, line_spacing=4, use_traditional_font=False, bg_color='#313c52'):
     if not segments:
         return Image.new('RGBA', (1, 1), (0, 0, 0, 0))
         
-    bg_rgb = _hex_to_rgb(PREVIEW_BG)
+    bg_rgb = _hex_to_rgb(bg_color)
     lines = [] 
     current_line_glyphs = []
     current_line_height = 0
@@ -1125,9 +1125,9 @@ class TktEditor(QMainWindow):
         self.preview_stack = QStackedWidget()
         
         # Index 0: 图像容器 (绝对居中)
-        scroll_area = QScrollArea()
-        scroll_area.setWidgetResizable(True)
-        scroll_area.setStyleSheet(f"background-color: {PREVIEW_BG}; border: none;")
+        self.preview_scroll_area = QScrollArea()
+        self.preview_scroll_area.setWidgetResizable(True)
+        self.preview_scroll_area.setStyleSheet("border: none;")
         scroll_content = QWidget()
         scroll_content.setStyleSheet("background: transparent;")
         scroll_layout = QVBoxLayout(scroll_content)
@@ -1135,13 +1135,13 @@ class TktEditor(QMainWindow):
         self.preview_img = QLabel()
         self.preview_img.setAlignment(Qt.AlignLeft | Qt.AlignTop)
         scroll_layout.addWidget(self.preview_img)
-        scroll_area.setWidget(scroll_content)
-        self.preview_stack.addWidget(scroll_area)
+        self.preview_scroll_area.setWidget(scroll_content)
+        self.preview_stack.addWidget(self.preview_scroll_area)
 
         # Index 1: 文本降级容器
         self.preview_text = QTextEdit()
         self.preview_text.setReadOnly(True)
-        self.preview_text.setStyleSheet(f"background-color: {PREVIEW_BG}; color: {GAME_COLORS[DEFAULT_FCOLOR]}; border: none;")
+        self.preview_text.setStyleSheet(f"color: {GAME_COLORS[DEFAULT_FCOLOR]}; border: none;")
         self.preview_text.setPlainText("(请选择条目)")
         self.preview_stack.addWidget(self.preview_text)
         
@@ -1181,11 +1181,21 @@ class TktEditor(QMainWindow):
     def _toggle_theme(self):
         self._is_dark = not self._is_dark
         self._apply_theme()
+        self._render_preview()
 
     def _apply_theme(self):
         qss = GODOT_DARK_QSS if self._is_dark else GODOT_LIGHT_QSS
         self.setStyleSheet(qss)
-        self._update_paths() 
+        self._update_paths()
+
+        # --- 动态更新预览区背景色 ---
+        preview_bg = '#1a1d24' if self._is_dark else '#313c52'
+
+        if hasattr(self, 'preview_scroll_area'):
+            self.preview_scroll_area.setStyleSheet(f"background-color: {preview_bg}; border: none;")
+
+        if hasattr(self, 'preview_text'):
+            self.preview_text.setStyleSheet(f"background-color: {preview_bg}; color: {GAME_COLORS[DEFAULT_FCOLOR]}; border: none;")
 
     def _update_paths(self):
         color_green = "color: #55b572;" if self._is_dark else "color: #178a39;"
@@ -1229,7 +1239,8 @@ class TktEditor(QMainWindow):
         if HAS_PIL and self.font9696:
             try:
                 segments = parse_styled_segments(text)
-                img = _render_text_image(segments, self.font9696, use_traditional_font=use_traditional)
+                current_bg = '#1a1d24' if self._is_dark else '#313c52'
+                img = _render_text_image(segments, self.font9696, use_traditional_font=use_traditional, bg_color=current_bg)
                 
                 qim = pil_to_qimage(img)
                 self.preview_img.setPixmap(QPixmap.fromImage(qim))
