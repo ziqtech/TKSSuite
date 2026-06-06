@@ -3237,9 +3237,26 @@ class TKSLauncher
             Log("  [WARN] 未找到游戏窗口, 叠加提示不可用");
         }
 
-        Log(string.Format("等待代码解密完成 (最多 {0} 秒)...", waitTimeout));
-        int childPid = 0;
+        Log(string.Format("等待游戏进程就绪 (最多 {0} 秒)...", waitTimeout));
+        int targetPid = 0;
+        bool directMode = false;   // true=主进程模式(逆向工作区), false=子进程模式(TKS原版)
+        string versionLabel = "";
         DateTime start = DateTime.Now;
+
+        // ──────────────────────────────────────────────────────
+        // 智能进程检测: 自动适配两种 TKS.exe 版本
+        //
+        // 版本 A (TKS 原版, UPX 压缩): 主进程解压后启动子进程运行游戏
+        //   特征: 主进程模块小 (~0x11000), 会生成子进程
+        //
+        // 版本 B (逆向工作区 繁体版, Borland 编译): 直接在自身进程内运行游戏
+        //   特征: 主进程模块大 (~0x67D000), 无子进程, 窗口类 TForm1
+        //
+        // 策略:
+        //   1. 优先检测子进程 (版本 A 模式)
+        //   2. 无子进程时直接检查主进程模块 (版本 B 模式)
+        //   3. 两者皆无则等待重试
+        // ──────────────────────────────────────────────────────
 
         while ((DateTime.Now - start).TotalSeconds < waitTimeout)
         {
@@ -3249,31 +3266,74 @@ class TKSLauncher
                 break;
             }
 
+            // 策略 1: 检测子进程 (TKS 原版 UPX 模式)
             var children = GetChildProcesses(tksProc.Id);
             if (children.Count > 0)
             {
-                childPid = (int)children[0].th32ProcessID;
-                Log(string.Format("  检测到子进程: PID={0} Name={1}", childPid, children[0].szExeFile));
+                targetPid = (int)children[0].th32ProcessID;
+                versionLabel = "TKS 原版 (子进程模式)";
+                Log(string.Format("  检测到子进程: PID={0} Name={1} → {2}",
+                    targetPid, children[0].szExeFile, versionLabel));
                 UpdateOverlay("正在加载游戏补丁...");
                 Thread.Sleep(3000);
                 break;
             }
+
+            // 策略 2: 检测主进程是否已加载游戏模块 (逆向工作区 直接模式)
+            // 等待 3 秒让游戏充分初始化后再检测模块
+            double elapsed = (DateTime.Now - start).TotalSeconds;
+            if (elapsed > 3.0 && !directMode)
+            {
+                IntPtr testBase = GetModuleBase(tksProc.Id);
+                if (testBase != IntPtr.Zero)
+                {
+                    // 进一步读取模块头验证是否是游戏代码段
+                    IntPtr hTest = OpenProcess(PROCESS_VM_READ, false, tksProc.Id);
+                    if (hTest != IntPtr.Zero)
+                    {
+                        byte[] peSig = new byte[2];
+                        int nr;
+                        if (ReadProcessMemory(hTest, testBase, peSig, 2, out nr)
+                            && nr == 2 && peSig[0] == 0x4D && peSig[1] == 0x5A)
+                        {
+                            // 确认模块已加载: 切换到主进程直接模式
+                            targetPid = tksProc.Id;
+                            directMode = true;
+                            versionLabel = "逆向工作区 繁体版 (主进程模式)";
+                            Log(string.Format("  游戏模块已加载到主进程: base=0x{0:X8} PID={1} → {2}",
+                                testBase.ToInt64(), targetPid, versionLabel));
+                            UpdateOverlay("正在加载游戏补丁...");
+                        }
+                        else
+                        {
+                            Log(string.Format("  [DIAG] 主进程模块未就绪 (peSig=[{0}])",
+                                BitConverter.ToString(peSig, 0, nr)));
+                        }
+                        CloseHandle(hTest);
+                    }
+                    if (directMode) break;
+                }
+            }
+
             Thread.Sleep(500);
         }
 
-        if (childPid == 0)
+        if (targetPid == 0)
         {
-            Log("[ERROR] 超时，未检测到子进程");
+            Log("[ERROR] 超时，未检测到游戏进程");
             if (!tksProc.HasExited) tksProc.Kill();
             Log("按任意键退出...");
             Console.ReadKey();
             return 1;
         }
 
-        IntPtr baseAddr = GetModuleBase(childPid);
+        Log(string.Format("  版本: {0}", versionLabel));
+        Log(string.Format("  目标 PID: {0}, 直接模式: {1}", targetPid, directMode));
+
+        IntPtr baseAddr = GetModuleBase(targetPid);
         if (baseAddr == IntPtr.Zero)
         {
-            Log(string.Format("[ERROR] 无法获取子进程 {0} 的模块信息", childPid));
+            Log(string.Format("[ERROR] 无法获取目标进程 {0} 的模块信息", targetPid));
             if (!tksProc.HasExited) tksProc.Kill();
             Log("按任意键退出...");
             Console.ReadKey();
@@ -3282,7 +3342,7 @@ class TKSLauncher
         Log(string.Format("  模块基址: 0x{0:X8}", baseAddr.ToInt64()));
 
         // Pre-patch diagnostic: dump raw code bytes at hook points
-        IntPtr hDiag = OpenProcess(PROCESS_VM_READ, false, childPid);
+        IntPtr hDiag = OpenProcess(PROCESS_VM_READ, false, targetPid);
         if (hDiag != IntPtr.Zero)
         {
             int nread;
@@ -3298,11 +3358,11 @@ class TKSLauncher
         }
 
         // 获取模块大小
-        IntPtr hMod = OpenProcess(PROCESS_VM_READ, false, childPid);
+        IntPtr hMod = OpenProcess(PROCESS_VM_READ, false, targetPid);
         int modSize = 0;
         if (hMod != IntPtr.Zero)
         {
-            IntPtr snap = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE | TH32CS_SNAPMODULE32, childPid);
+            IntPtr snap = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE | TH32CS_SNAPMODULE32, targetPid);
             if (snap != INVALID_HANDLE_VALUE)
             {
                 MODULEENTRY32 me = new MODULEENTRY32();
@@ -3320,7 +3380,7 @@ class TKSLauncher
         int codeSize = Math.Min(modSize - 0x1000, 0x700000 - codeStart);
         byte[] codeBuf = new byte[codeSize];
         {
-            IntPtr hRead = OpenProcess(PROCESS_VM_READ, false, childPid);
+            IntPtr hRead = OpenProcess(PROCESS_VM_READ, false, targetPid);
             int nread;
             if (hRead == IntPtr.Zero || !ReadProcessMemory(hRead, (IntPtr)codeStart, codeBuf, codeSize, out nread))
             {
@@ -3462,7 +3522,7 @@ class TKSLauncher
             }
 
             int newSize = _warpcFullData.Length;
-            IntPtr hWarpc = OpenProcess(PROCESS_VM_READ | PROCESS_VM_WRITE | PROCESS_VM_OPERATION, false, childPid);
+            IntPtr hWarpc = OpenProcess(PROCESS_VM_READ | PROCESS_VM_WRITE | PROCESS_VM_OPERATION, false, targetPid);
             if (hWarpc != IntPtr.Zero)
             {
                 // [补丁十一] WarPC 缓冲区前预留 GUARD 区 (修复索引文件被截断问题)
@@ -3535,7 +3595,7 @@ class TKSLauncher
         }
 
         // Allocate executable memory for caves (512 bytes for all cave templates)
-        IntPtr hProc = OpenProcess(PROCESS_VM_READ | PROCESS_VM_WRITE | PROCESS_VM_OPERATION, false, childPid);
+        IntPtr hProc = OpenProcess(PROCESS_VM_READ | PROCESS_VM_WRITE | PROCESS_VM_OPERATION, false, targetPid);
         IntPtr caveAddr = IntPtr.Zero;
         if (hProc != IntPtr.Zero)
         {
@@ -3550,7 +3610,7 @@ class TKSLauncher
         // 应用配置驱动的补丁 (模式扫描 + 值扫描)
         Log("\n=== 应用配置补丁 (模式扫描) ===");
         UpdateOverlay("正在应用内存补丁...");
-        hProc = OpenProcess(PROCESS_VM_READ | PROCESS_VM_WRITE | PROCESS_VM_OPERATION, false, childPid);
+        hProc = OpenProcess(PROCESS_VM_READ | PROCESS_VM_WRITE | PROCESS_VM_OPERATION, false, targetPid);
         bool ok = false;
         if (hProc != IntPtr.Zero)
         {
@@ -3570,7 +3630,7 @@ class TKSLauncher
 
         // 验证补丁: 重新读取关键位置的字节
         {
-            IntPtr hVer = OpenProcess(PROCESS_VM_READ, false, childPid);
+            IntPtr hVer = OpenProcess(PROCESS_VM_READ, false, targetPid);
             if (hVer != IntPtr.Zero)
             {
                 Log("\n--- 补丁验证 ---");
@@ -3593,7 +3653,7 @@ class TKSLauncher
         if (!minimalMode)
         {
             UpdateOverlay("正在扩展 WarPC 缓冲区...");
-            ExpandWarPcBuffer(childPid, baseAddr, modSize, caveAddr, codeBuf, codeStart);
+            ExpandWarPcBuffer(targetPid, baseAddr, modSize, caveAddr, codeBuf, codeStart);
         }
 
         // ============================================================
@@ -3613,7 +3673,7 @@ class TKSLauncher
         // ============================================================
         if (!minimalMode)
         {
-        Patch4C33FC(childPid, baseAddr);
+        Patch4C33FC(targetPid, baseAddr);
 
         // ============================================================
         // [补丁十三] 修复 sub_41C120 stream error 导致 slot 7-9 读取失败
@@ -3629,7 +3689,7 @@ class TKSLauncher
         //   这样任何遗留的 EOF/fail 标志都会被清除。sub_41BF48/sub_41C2B8
         //   会重新正常读取。sub_41C120 返回值不受影响 (仍为 true)。
         // ============================================================
-        Patch41C120(childPid, baseAddr);
+        Patch41C120(targetPid, baseAddr);
 
         // ============================================================
         // [补丁十四] 修复存档界面新角色队伍头像显示问题
@@ -3642,7 +3702,7 @@ class TKSLauncher
         // 修复: 扫描 sub_41AB94 内的 "add eax, 0xD3" (= 05 D3 00 00 00) 指令,
         //   替换为 call ArchivePortraitCave。cave 复现 movzx ID + WORD[261] 优先逻辑。
         // ============================================================
-        PatchArchivePortrait(childPid, baseAddr);
+        PatchArchivePortrait(targetPid, baseAddr);
 
         // ============================================================
         // [补丁十七] 修复存档界面金钱显示 signed→unsigned
@@ -3652,16 +3712,16 @@ class TKSLauncher
         //
         // 修复: 扫描 sub_41AB94 内的 movsx (0F BE) 指令, 改为 movzx (0F B6)
         // ============================================================
-        PatchGoldDisplay(childPid, baseAddr);
+        PatchGoldDisplay(targetPid, baseAddr);
 
         // Inject WORD[260]/WORD[261] from WarPC.dat into game memory
-        InjectWarPCData(childPid, discoveredBase);
+        InjectWarPCData(targetPid, discoveredBase);
         } // !minimalMode
 
         // Verify cave + hooks + data
         string log = string.Format("ok={0} cave=0x{1:X8} base=0x{2:X8}",
             ok, caveAddr.ToInt64(), baseAddr.ToInt64());
-        IntPtr hV = OpenProcess(PROCESS_VM_READ, false, childPid);
+        IntPtr hV = OpenProcess(PROCESS_VM_READ, false, targetPid);
         if (hV != IntPtr.Zero)
         {
             int read;
