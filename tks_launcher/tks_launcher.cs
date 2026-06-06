@@ -3239,17 +3239,17 @@ class TKSLauncher
 
         Log(string.Format("等待游戏进程就绪 (最多 {0} 秒)...", waitTimeout));
         int targetPid = 0;
-        bool directMode = false;   // true=主进程模式(逆向工作区), false=子进程模式(TKS原版)
+        bool directMode = false;   // true=主进程模式(TKS未加密版), false=子进程模式(TKS加密版)
         string versionLabel = "";
         DateTime start = DateTime.Now;
 
         // ──────────────────────────────────────────────────────
         // 智能进程检测: 自动适配两种 TKS.exe 版本
         //
-        // 版本 A (TKS 原版, UPX 压缩): 主进程解压后启动子进程运行游戏
+        // 版本 A (TKS 加密版, UPX 压缩): 主进程解压后启动子进程运行游戏
         //   特征: 主进程模块小 (~0x11000), 会生成子进程
         //
-        // 版本 B (逆向工作区 繁体版, Borland 编译): 直接在自身进程内运行游戏
+        // 版本 B (TKS 未加密版, Borland 编译): 直接在自身进程内运行游戏
         //   特征: 主进程模块大 (~0x67D000), 无子进程, 窗口类 TForm1
         //
         // 策略:
@@ -3266,12 +3266,12 @@ class TKSLauncher
                 break;
             }
 
-            // 策略 1: 检测子进程 (TKS 原版 UPX 模式)
+            // 策略 1: 检测子进程 (TKS 加密版 UPX 模式)
             var children = GetChildProcesses(tksProc.Id);
             if (children.Count > 0)
             {
                 targetPid = (int)children[0].th32ProcessID;
-                versionLabel = "TKS 原版 (子进程模式)";
+                versionLabel = "TKS 加密版 (子进程模式)";
                 Log(string.Format("  检测到子进程: PID={0} Name={1} → {2}",
                     targetPid, children[0].szExeFile, versionLabel));
                 UpdateOverlay("正在加载游戏补丁...");
@@ -3279,7 +3279,7 @@ class TKSLauncher
                 break;
             }
 
-            // 策略 2: 检测主进程是否已加载游戏模块 (逆向工作区 直接模式)
+            // 策略 2: 检测主进程是否已加载游戏模块 (TKS 未加密版 直接模式)
             // 等待 3 秒让游戏充分初始化后再检测模块
             double elapsed = (DateTime.Now - start).TotalSeconds;
             if (elapsed > 3.0 && !directMode)
@@ -3299,7 +3299,7 @@ class TKSLauncher
                             // 确认模块已加载: 切换到主进程直接模式
                             targetPid = tksProc.Id;
                             directMode = true;
-                            versionLabel = "逆向工作区 繁体版 (主进程模式)";
+                            versionLabel = "TKS 未加密版 (主进程模式)";
                             Log(string.Format("  游戏模块已加载到主进程: base=0x{0:X8} PID={1} → {2}",
                                 testBase.ToInt64(), targetPid, versionLabel));
                             UpdateOverlay("正在加载游戏补丁...");
