@@ -11,6 +11,7 @@ import re
 import struct
 import sys
 import json
+import argparse
 from collections import OrderedDict
 
 # ----------------- PySide6 Imports -----------------
@@ -1915,9 +1916,135 @@ class TktEditor(QMainWindow):
         if self.font9696: self.font9696.close()
         event.accept()
 
-def main():
-    app = QApplication(sys.argv); app.setStyle("Fusion")
-    editor = TktEditor(sys.argv[1] if len(sys.argv) > 1 else None)
-    editor.show(); sys.exit(app.exec())
+# ============================================================
+# 无界面 CLI 核心调度 (专供 AI Agent 与自动化脚本使用)
+# ============================================================
+def run_cli(args):
+    """处理所有的命令行逻辑，不启动任何 UI 组件"""
+    try:
+        # 1. 基础环境检验：加载底包并建立快照防重复体系
+        if not args.input or not os.path.exists(args.input):
+            print("Error: 必须通过 -i / --input 指定有效的 TKT.dat 底包文件。", file=sys.stderr)
+            sys.exit(1)
+            
+        entries = load_tkt(args.input)
+        entry_by_id = {e['id']: e for e in entries}
+        
+        # 建立初始快照 (免疫原版游戏同 ID 脏数据干扰)
+        original_snapshot = set((e['id'], e['text']) for e in entries)
+        
+        print(f"Success: 成功加载底包 {args.input}，共 {len(entries)} 条数据。")
 
-if __name__ == "__main__": main()
+        # 2. 【全量导出】指令：给 AI 提供完整的游戏文本上下文阅读
+        if args.dump_all:
+            with open(args.dump_all, 'w', encoding='utf-8') as f:
+                json.dump(entries, f, ensure_ascii=False, indent=4)
+            print(f"Success: 全量底层数据已导出至 {args.dump_all}")
+
+        # 3. 【导入增量 MOD】指令：支持 .json 与 .dat 自动推断
+        if args.import_mod:
+            if not os.path.exists(args.import_mod):
+                print(f"Error: 找不到待导入的 MOD 文件 {args.import_mod}", file=sys.stderr)
+                sys.exit(1)
+                
+            # 后缀名分流：JSON 文本或 二进制文件
+            if args.import_mod.lower().endswith('.json'):
+                with open(args.import_mod, 'r', encoding='utf-8') as f:
+                    mod_data = json.load(f)
+            else:
+                mod_data = load_tkt(args.import_mod)
+                
+            overwrite_count = 0
+            append_count = 0
+            
+            # 执行数据覆盖与追加融合
+            for mod_entry in mod_data:
+                eid = mod_entry['id']
+                mod_text = mod_entry['text']
+                
+                if eid in entry_by_id:
+                    if entry_by_id[eid]['text'] != mod_text:
+                        entry_by_id[eid]['text'] = mod_text
+                        overwrite_count += 1
+                else:
+                    new_entry = OrderedDict([
+                        ('slot', len(entries)), 
+                        ('id', eid), 
+                        ('text', mod_text)
+                    ])
+                    entries.append(new_entry)
+                    entry_by_id[eid] = new_entry
+                    append_count += 1
+                    
+            print(f"Success: 成功打入 MOD 补丁 [{args.import_mod}]")
+            print(f"Stats: 覆盖 {overwrite_count} 条，追加 {append_count} 条")
+
+        # 4. 【导出增量 MOD】指令：自动计算差异，支持导出 .json 或 .dat
+        if args.export_mod:
+            mod_entries = []
+            for current_entry in entries:
+                eid = current_entry['id']
+                current_text = current_entry['text']
+                
+                # 差分对比：仅提取新增或修改过的数据
+                if (eid, current_text) not in original_snapshot:
+                    mod_entries.append(OrderedDict([
+                        ('slot', len(mod_entries)), 
+                        ('id', eid), 
+                        ('text', current_text)
+                    ]))
+            
+            if not mod_entries:
+                print("Info: 经过对比，未检测到任何改动，跳过增量 MOD 导出。")
+            else:
+                # 后缀名分流写入
+                if args.export_mod.lower().endswith('.json'):
+                    with open(args.export_mod, 'w', encoding='utf-8') as f:
+                        json.dump(mod_entries, f, ensure_ascii=False, indent=4)
+                else:
+                    save_tkt(args.export_mod, mod_entries)
+                print(f"Success: 增量 MOD 已提取并保存至 {args.export_mod} (共 {len(mod_entries)} 条改动)")
+
+        # 5. 【输出完整游戏包】指令：保存带有完整槽位的全尺寸文件（进游戏测试用）
+        if args.output:
+            save_tkt(args.output, entries)
+            print(f"Success: 完整合并后的游戏二进制文件已生成至 {args.output}")
+
+        sys.exit(0)
+            
+    except Exception as e:
+        print(f"Error: CLI 引擎执行期间发生致命崩溃:\n{str(e)}", file=sys.stderr)
+        sys.exit(1)
+
+def main():
+    # 1. 挂载强化版的参数解析器
+    parser = argparse.ArgumentParser(description="TKT.dat 文本数据库编辑器 v5.0 (支持全功能无头 CLI 模式)")
+    
+    # 定义 CLI 工作流参数
+    parser.add_argument("--cli", action="store_true", help="启用无头命令行模式 (跳过 GUI 加载)")
+    parser.add_argument("-i", "--input", help="指定基础的 TKT.dat 底包路径 (CLI模式必填)")
+    parser.add_argument("--dump-all", help="将底包全量导出为 JSON 文件，用于阅读分析")
+    parser.add_argument("--import-mod", help="导入增量 MOD 文件 (根据后缀自动识别 .json 或 .dat)")
+    parser.add_argument("--export-mod", help="对比提取并导出增量 MOD (根据后缀自动识别 .json 或 .dat)")
+    parser.add_argument("-o", "--output", help="将最终的完整数据流封装导出为 TKT.dat")
+    
+    # 兼容 GUI 拖拽打开
+    parser.add_argument("gui_file", nargs="?", help="[GUI模式] 启动时直接打开的文件")
+
+    # 2. 解析参数
+    args, unknown = parser.parse_known_args()
+
+    # 3. 路由分发
+    if args.cli:
+        run_cli(args)
+    else:
+        app = QApplication(sys.argv)
+        app.setStyle("Fusion")
+        
+        initial_file = args.gui_file if args.gui_file else None
+        editor = TktEditor(initial_file)
+        editor.show()
+        sys.exit(app.exec())
+
+if __name__ == "__main__": 
+    main()
