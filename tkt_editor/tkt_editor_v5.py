@@ -926,6 +926,7 @@ class TktEditor(QMainWindow):
         file_menu.addAction("保存", QKeySequence("Ctrl+S"), self._save)
         file_menu.addAction("另存为…", self._save_as)
         file_menu.addSeparator()
+        file_menu.addAction("导入增量 MOD 文件…", QKeySequence("Ctrl+I"), self._import_mod)
         file_menu.addAction("导出增量 MOD 文件…", QKeySequence("Ctrl+E"), self._export_mod)
         file_menu.addSeparator()
         file_menu.addAction("退出", self.close)
@@ -1333,6 +1334,90 @@ class TktEditor(QMainWindow):
                     )
                 except Exception as e:
                     QMessageBox.critical(self, "二进制打包失败", f"打包二进制文件时发生底层崩溃:\n{str(e)}")
+
+    def _import_mod(self):
+        # 1. 前置检查：必须先加载原版 TKT 作为"底包"
+        if not self.tkt_path or not self.entries:
+            QMessageBox.warning(self, "环境缺失", "请先加载原版 TKT.dat 文件作为底包，再导入 MOD 进行数据融合。")
+            return
+
+        # 2. 弹出文件选择框，支持双格式
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "导入增量 MOD 文件",
+            "",
+            "MOD 数据文件 (*.json *.dat *.tkt);;JSON 明文文件 (*.json);;二进制加密文件 (*.dat *.tkt)"
+        )
+
+        if not file_path:
+            return
+
+        try:
+            imported_data = []
+            
+            # 3. 格式分流解析
+            if file_path.lower().endswith('.json'):
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    imported_data = json.load(f)
+            else:
+                # 复用底层的 load_tkt 函数，它可以完美解密标准的二进制补丁
+                imported_data = load_tkt(file_path)
+
+            if not imported_data:
+                QMessageBox.information(self, "空文件", "选中的 MOD 文件中没有任何有效数据。")
+                return
+
+            # 4. 核心融合逻辑 (Base + Override)
+            overwrite_count = 0
+            append_count = 0
+
+            for mod_entry in imported_data:
+                eid = mod_entry['id']
+                mod_text = mod_entry['text']
+
+                if eid in self.entry_by_id:
+                    # 场景 A：如果原版游戏底包中已有这个 ID，执行文本覆盖
+                    if self.entry_by_id[eid]['text'] != mod_text:
+                        self.entry_by_id[eid]['text'] = mod_text
+                        overwrite_count += 1
+                else:
+                    # 场景 B：如果是一个全新扩展的 ID，执行追加插入
+                    new_entry = OrderedDict([
+                        ('slot', len(self.entries)), 
+                        ('id', eid), 
+                        ('text', mod_text)
+                    ])
+                    self.entries.append(new_entry)
+                    self.entry_by_id[eid] = new_entry
+                    append_count += 1
+
+            # 5. 结果反馈
+            if overwrite_count == 0 and append_count == 0:
+                QMessageBox.information(self, "无变化", "导入的 MOD 数据与当前环境完全一致，未发生任何改变。")
+                return
+
+            # 6. 设置脏标记，提醒用户当前内存已被污染（已混入 MOD）
+            self._dirty = True
+            self.lbl_dirty.setText("[!] 已混入 MOD 补丁")
+            
+            # 7. 强制刷新所有的 UI 视图，确保刚导入的数据立刻显示
+            self._populate_tree()  # 刷新全局线性表
+            
+            # 刷新分类视图 (如果此时处于分类 Tab，确保空槽状态被更新)
+            cat_idx = self.comp_cat_list.currentRow()
+            if cat_idx >= 0:
+                self._on_comp_category_changed(cat_idx)
+                
+            QMessageBox.information(
+                self, 
+                "MOD 融合成功", 
+                f"增量补丁已成功打入当前环境！\n\n"
+                f"• 覆盖原有文本: {overwrite_count} 条\n"
+                f"• 追加全新词条: {append_count} 条"
+            )
+
+        except Exception as e:
+            QMessageBox.critical(self, "导入溃散", f"解析 MOD 文件时发生底层异常:\n{str(e)}")
 
     # ============================================================
     # 模块分类维护 (空槽边界扫描核心)
