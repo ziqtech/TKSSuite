@@ -45,7 +45,6 @@ LINE_SEPARATOR = 0x1E
 CONTROL_TAGS = {
     0x01: ("FRESET",  1, 1, 4),
     0x02: ("FCOLOR",  1, 1, 32),
-    0x03: ("FCOLORD", 3, 0, 255),
     0x04: ("FSIZE",   1, 12, 48),
     0x05: ("FTYPE",   1, 1, 8),
     0x14: ("TEXT",    2, 1, 32767),
@@ -122,7 +121,8 @@ SEMANTIC_CATEGORIES = [
     {"name": "🔮 物品-特殊 (名称+说明)", "type": "paired", "name_start": 10501, "name_end": 10551, "desc_start": 11101, "desc_end": 11151},
     {"name": "📝 记事文本", "type": "single", "ranges": [(11201, 11260)]},
     {"name": "🏆 功绩文本", "type": "single", "ranges": [(11401, 11467)]},
-    {"name": "🏟️ 战斗角色名称", "type": "single", "ranges": [(11601, 11712)]},
+    {"name": "🏟️ 战斗角色名称", "type": "single", "ranges": [(11601, 11800)]},
+    {"name": "📦 空余槽", "type": "single", "ranges": [(11801, 24999)]},
 ]
 
 # ============================================================
@@ -233,9 +233,6 @@ def decode_line(line_bytes):
                 elif data_len == 2:
                     val = line_bytes[i + 1] | (line_bytes[i + 2] << 8)
                     out.append(f'<{tag_name},{val}>')
-                else:
-                    r, g, b_val = line_bytes[i + 1], line_bytes[i + 2], line_bytes[i + 3]
-                    out.append(f'<{tag_name},{r},{g},{b_val}>')
                 i += 1 + data_len
                 continue
             else:
@@ -269,22 +266,13 @@ def encode_line(text):
             val_str = m.group(2)
             if tag_name in TAG_NAME_MAP:
                 code, data_len, min_val, max_val = TAG_NAME_MAP[tag_name]
-                if data_len == 3:
-                    parts = val_str.split(',')
-                    if len(parts) == 3:
-                        r, g, b = int(parts[0]), int(parts[1]), int(parts[2])
-                        if 0 <= r <= 255 and 0 <= g <= 255 and 0 <= b <= 255:
-                            out.append(code); out.append(r); out.append(g); out.append(b)
-                            i = m.end()
-                            continue
-                else:
-                    val = int(val_str)
-                    if min_val <= val <= max_val:
-                        out.append(code); out.append(val & 0xFF)
-                        if data_len == 2:
-                            out.append((val >> 8) & 0xFF)
-                        i = m.end()
-                        continue
+                val = int(val_str)
+                if min_val <= val <= max_val:
+                    out.append(code); out.append(val & 0xFF)
+                    if data_len == 2:
+                        out.append((val >> 8) & 0xFF)
+                    i = m.end()
+                    continue
             for ch in text[i:m.end()]:
                 out.extend(ch.encode('big5', errors='replace'))
             i = m.end()
@@ -329,12 +317,6 @@ def parse_styled_segments(text):
                 if 1 <= val <= 32:
                     prev_color = current['fg']
                     current['fg'] = GAME_COLORS[val]
-            elif tag_name == 'FCOLORD':
-                parts = val_str.split(',')
-                if len(parts) == 3:
-                    r, g, b = int(parts[0]), int(parts[1]), int(parts[2])
-                    prev_color = current['fg']
-                    current['fg'] = f'#{r:02X}{g:02X}{b:02X}'
             elif tag_name == 'FSIZE':
                 val = int(val_str)
                 if val in GAME_FONT_SIZES:
@@ -1630,11 +1612,6 @@ class TktEditor(QMainWindow):
         btn_name.clicked.connect(lambda: self._insert_tag("<NAME,1><NAME,2>"))
         toolbar.addWidget(btn_name)
 
-        toolbar.addSpacing(5)
-        btn_rgb = QPushButton("🎨 RGB色")
-        btn_rgb.clicked.connect(self._insert_fcolord)
-        toolbar.addWidget(btn_rgb)
-        
         toolbar.addStretch()
         
         if show_info:
@@ -1680,13 +1657,6 @@ class TktEditor(QMainWindow):
     def _insert_fcolor(self, color_idx):
         self._insert_tag(f"<FCOLOR,{color_idx}>", "<FRESET,2>")
 
-    def _insert_fcolord(self):
-        color = QColorDialog.getColor(parent=self)
-        if not color.isValid():
-            return
-        r, g, b = color.red(), color.green(), color.blue()
-        self._insert_tag(f"<FCOLORD,{r},{g},{b}>", "<FRESET,2>")
-
     def _show_color_palette(self):
         dlg = QDialog(self)
         dlg.setWindowTitle("调色板 (游戏内建32色)")
@@ -1728,7 +1698,6 @@ class TktEditor(QMainWindow):
             "支持加载/编辑/保存/新增 TKT.dat 条目。\n\n"
             "控制码:\n"
             "  <FRESET,n>  n∈[1,4]     <FCOLOR,n>  n∈[1,32]\n"
-            "  <FCOLORD,r,g,b> r,g,b∈[0,255]\n"
             "  <FSIZE,n>   n∈[12,48]   <FTYPE,n>   n∈[1,8]\n"
             "  <TEXT,n>    n∈[1,32767] (2字节)\n"
             "  <VARNUM,n>  n∈[1,255]   <VARTXT,n>  n∈[1,255]\n"
