@@ -10,6 +10,7 @@ import os
 import re
 import struct
 import sys
+import json
 from collections import OrderedDict
 
 # ----------------- PySide6 Imports -----------------
@@ -19,7 +20,8 @@ from PySide6.QtWidgets import (
     QAbstractItemView, QHeaderView, QLabel, QLineEdit, QPushButton,
     QCheckBox, QPlainTextEdit, QTextEdit, QComboBox,
     QMessageBox, QFileDialog, QColorDialog, QDialog, QGridLayout,
-    QFrame, QStackedWidget, QScrollArea, QTabWidget, QListWidget
+    QFrame, QStackedWidget, QScrollArea, QTabWidget, QListWidget,
+    QInputDialog
 )
 from PySide6.QtGui import (
     QAction, QKeySequence, QColor, QFont, QPixmap, QImage, QIcon,
@@ -874,8 +876,12 @@ class TktEditor(QMainWindow):
         self._dirty = False
         self._current_idx = None   
         
+        # 用于在加载文件时记录未受污染的原始文本状态，格式为 { (ID, 文本) } 元组集合
+        # 使用 set 而非 dict，彻底免疫原版文件中重复 ID（废弃数据）导致的快照覆盖误判
+        self.original_entry_snapshot = set()
+        
         self._zoom_level = 150
-        self._sort_col = -1   
+        self._sort_col = -1
         self._sort_state = 0  
         self._last_focused_input = None
 
@@ -919,6 +925,8 @@ class TktEditor(QMainWindow):
         file_menu.addAction("加载 TKS 目录…", QKeySequence("Ctrl+O"), self._load_tks_dir)
         file_menu.addAction("保存", QKeySequence("Ctrl+S"), self._save)
         file_menu.addAction("另存为…", self._save_as)
+        file_menu.addSeparator()
+        file_menu.addAction("导出增量 MOD 文件…", QKeySequence("Ctrl+E"), self._export_mod)
         file_menu.addSeparator()
         file_menu.addAction("退出", self.close)
 
@@ -1178,6 +1186,10 @@ class TktEditor(QMainWindow):
             self.tkt_path = path
             self._rebuild_id_map()
             
+            self.original_entry_snapshot.clear()
+            for entry in self.entries:
+                self.original_entry_snapshot.add((entry['id'], entry['text']))
+            
             font_path = os.path.join(os.path.dirname(path), "FONT9696")
             if HAS_PIL and os.path.exists(font_path):
                 if self.font9696: self.font9696.close()
@@ -1222,6 +1234,105 @@ class TktEditor(QMainWindow):
             self.tkt_path = path; self._dirty = False; self.lbl_dirty.setText("")
             QMessageBox.information(self, "成功", "引擎级 TKT 打包回填写盘完毕。")
         except Exception as e: QMessageBox.critical(self, "构写失败", str(e))
+
+    def _export_mod(self):
+        # 1. 安全前置检查：确保当前内存中有数据环境
+        if not self.tkt_path or not self.entries:
+            QMessageBox.warning(self, "环境缺失", "当前未加载任何基础 TKT.dat 文件，无法进行差分导出。")
+            return
+
+        # 2. 强制收尾：将当前 UI 焦点文本框中正在输入的未保存文本同步回内存容器
+        self._apply_edit()
+        
+        # 3. 核心差分扫描：对比当前内存状态与初始快照
+        #    使用 (ID, 文本) 元组集合判定，彻底免疫原版文件重复 ID 导致的误判
+        mod_entries = []
+        for current_entry in self.entries:
+            eid = current_entry['id']
+            current_text = current_entry['text']
+            
+            # 直接判断当前的 (ID, 文本) 组合是否在原始集合中出现过
+            if (eid, current_text) not in self.original_entry_snapshot:
+                # 重新按 0, 1, 2 编排连续的 slot 槽位，防止底层二进制打包时偏移错位
+                mod_entries.append(OrderedDict([
+                    ('slot', len(mod_entries)), 
+                    ('id', eid), 
+                    ('text', current_text)
+                ]))
+        
+        # 4. 若无任何脏数据，提前阻断
+        if not mod_entries:
+            QMessageBox.information(self, "无变动", "未检测到任何文本变动或新增条目，无需导出。")
+            return
+            
+        # 5. 【核心细节】：弹出交互式对话框，让开发者自主选择导出格式
+        format_options = [
+            "1. JSON 明文核对格式 (*.json)",
+            "2. 二进制加密补丁格式 (*.dat; *.tkt)"
+        ]
+        
+        selected_format, ok = QInputDialog.getItem(
+            self, 
+            "选择 MOD 导出数据类型", 
+            f"检测到共 {len(mod_entries)} 项变更。\n请选择保存类型（建议正式发布前先导出JSON核对）：", 
+            format_options, 
+            0,      # 默认选中第一项：JSON
+            False   # 文本不可由用户任意编辑修改
+        )
+        
+        # 用户点击了取消或关闭了弹窗，则安全中断
+        if not ok or not selected_format:
+            return
+
+        # 6. 根据用户的格式选择，分流处理文件对话框的过滤器和底层写盘逻辑
+        base_name = os.path.splitext(os.path.basename(self.tkt_path))[0]
+        
+        if "JSON" in selected_format:
+            # --- 分流 A: 导出 JSON 明文纯文本 ---
+            default_file_name = f"MOD_{base_name}_REVIEW.json"
+            save_path, _ = QFileDialog.getSaveFileName(
+                self, 
+                "导出明文核对文件", 
+                default_file_name, 
+                "JSON Data Files (*.json)"
+            )
+            
+            if save_path:
+                try:
+                    with open(save_path, 'w', encoding='utf-8') as json_file:
+                        # ensure_ascii=False 确保中文汉字不被转义为 \\uXXXX
+                        # indent=4 维持标准的漂亮排版格式，极大方便肉眼核对
+                        json.dump(mod_entries, json_file, ensure_ascii=False, indent=4)
+                    
+                    QMessageBox.information(
+                        self, 
+                        "明文导出成功", 
+                        f"JSON 核对文本已生成完毕！\n您可以直接使用文本编辑器打开：\n\n{save_path}"
+                    )
+                except Exception as e:
+                    QMessageBox.critical(self, "JSON 导出失败", f"文件写入时发生异常:\n{str(e)}")
+                    
+        else:
+            # --- 分流 B: 导出原版标准二进制加密数据文件 ---
+            default_file_name = f"MOD_{base_name}.dat"
+            save_path, _ = QFileDialog.getSaveFileName(
+                self, 
+                "导出二进制 MOD 补丁", 
+                default_file_name, 
+                "TKT Game Files (*.dat *.tkt)"
+            )
+            
+            if save_path:
+                try:
+                    # 复用原脚本底层的反解/构建算法函数，输出被 XOR 0xFF 加密处理后的原始格式
+                    save_tkt(save_path, mod_entries)
+                    QMessageBox.information(
+                        self, 
+                        "二进制打包成功", 
+                        f"增量 MOD 数据打包成功！\n共封装了 {len(mod_entries)} 条加密补丁数据。"
+                    )
+                except Exception as e:
+                    QMessageBox.critical(self, "二进制打包失败", f"打包二进制文件时发生底层崩溃:\n{str(e)}")
 
     # ============================================================
     # 模块分类维护 (空槽边界扫描核心)
