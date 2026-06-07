@@ -5,6 +5,7 @@ from PySide6.QtWidgets import (
     QStatusBar, QLabel, QFileDialog, QMessageBox,
 )
 from PySide6.QtCore import Qt, QSize
+from PySide6.QtGui import QIcon
 
 from core.config_loader import load_config, PatchDef
 from ui.patch_list import PatchListWidget
@@ -19,6 +20,11 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("TKS Mod Launcher")
         self.resize(960, 640)
         self.setMinimumSize(700, 400)
+
+        # 窗口图标
+        icon_path = os.path.join(os.path.dirname(__file__), "..", "TKS.ico")
+        if os.path.isfile(icon_path):
+            self.setWindowIcon(QIcon(icon_path))
 
         self._dark_mode = True
         self._overlay: GameOverlay | None = None
