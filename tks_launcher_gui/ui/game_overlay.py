@@ -43,6 +43,7 @@ class GameOverlay(QLabel):
         self._tracker.start(100)
 
         self.show()
+        self.raise_()  # 确保在游戏窗口之上
 
     def _update_position(self):
         if self.game_hwnd:
@@ -54,19 +55,22 @@ class GameOverlay(QLabel):
 
     def update_text(self, text: str, ok: bool = False):
         if not text:
-            # 空文本 = 关闭悬浮窗
             self.close_overlay()
             return
         self._ok = ok
         self.setText(text)
-        if ok:
-            self.setStyleSheet(self.styleSheet().replace(
-                "color: #E0E0E0", "color: #98C379"
-            ))
-        else:
-            self.setStyleSheet(self.styleSheet().replace(
-                "color: #98C379", "color: #E0E0E0"
-            ))
+        color = "#98C379" if ok else "#E0E0E0"
+        self.setStyleSheet(f"""
+            QLabel {{
+                background-color: rgba(32, 37, 49, 210);
+                color: {color};
+                font-family: "Microsoft YaHei", "Segoe UI";
+                font-size: 13px;
+                font-weight: bold;
+                padding: 8px 14px;
+                border-radius: 6px;
+            }}
+        """)
 
     def close_overlay(self):
         self._tracker.stop()
