@@ -271,12 +271,22 @@ def get_module_size(pid: int) -> int:
     return result
 
 def get_decompressed_size(path: str) -> int:
+    """读取 LZSS 文件的解压大小; 非 LZSS 文件返回实际文件大小"""
     if not os.path.isfile(path):
         return -1
     try:
+        file_size = os.path.getsize(path)
         with open(path, 'rb') as f:
-            h = f.read(4)
-        return b2i32(h) if len(h) >= 4 else -1
+            h = f.read(8)
+        if len(h) < 8:
+            return file_size
+        dec_size = b2i32(h, 0)    # bytes 0-3: 解压后大小
+        block_size = b2i32(h, 4)  # bytes 4-7: 压缩块大小
+        # 有效 LZSS: 解压大小 > 0, 压缩块 > 0, 压缩数据不超文件大小
+        if dec_size > 0 and 0 < block_size <= file_size - 8:
+            return dec_size
+        # 非 LZSS 文件 (如 TKMat.dat 原始数据), 返回实际文件大小
+        return file_size
     except Exception:
         return -1
 
