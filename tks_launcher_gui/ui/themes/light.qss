@@ -1,0 +1,95 @@
+/* Godot Editor 风格浅色主题 */
+QMainWindow, QWidget {
+    background-color: #F0F0F0;
+    color: #333333;
+    font-family: "Microsoft YaHei", "Segoe UI", sans-serif;
+    font-size: 13px;
+}
+
+QToolBar {
+    background-color: #E8E8E8;
+    border-bottom: 1px solid #CCCCCC;
+    padding: 4px;
+    spacing: 6px;
+}
+
+QPushButton {
+    background-color: #FFFFFF;
+    color: #333333;
+    border: 1px solid #CCCCCC;
+    border-radius: 4px;
+    padding: 6px 16px;
+    font-weight: bold;
+}
+QPushButton:hover {
+    background-color: #F5F5F5;
+    border-color: #999999;
+}
+QPushButton:pressed {
+    background-color: #E0E0E0;
+}
+QPushButton:disabled {
+    background-color: #F0F0F0;
+    color: #999;
+}
+
+QTextEdit {
+    background-color: #FFFFFF;
+    color: #333333;
+    border: 1px solid #CCCCCC;
+    border-radius: 4px;
+    padding: 8px;
+    font-family: "Consolas", "Courier New", monospace;
+    font-size: 12px;
+    selection-background-color: #4A9BD9;
+    selection-color: #FFFFFF;
+}
+
+QScrollArea {
+    background-color: #F0F0F0;
+    border: 1px solid #CCCCCC;
+    border-radius: 4px;
+}
+
+QScrollBar:vertical {
+    background-color: #E8E8E8;
+    width: 10px;
+    border-radius: 5px;
+}
+QScrollBar::handle:vertical {
+    background-color: #CCCCCC;
+    border-radius: 5px;
+    min-height: 30px;
+}
+QScrollBar::handle:vertical:hover {
+    background-color: #AAAAAA;
+}
+
+QCheckBox {
+    color: #333333;
+    spacing: 8px;
+    padding: 4px 0px;
+}
+QCheckBox::indicator {
+    width: 16px;
+    height: 16px;
+    background-color: #FFFFFF;
+    border: 1px solid #CCCCCC;
+    border-radius: 3px;
+}
+QCheckBox::indicator:checked {
+    background-color: #4A9BD9;
+    border-color: #4A9BD9;
+}
+
+QSplitter::handle {
+    background-color: #CCCCCC;
+    width: 2px;
+}
+
+QStatusBar {
+    background-color: #E8E8E8;
+    color: #666666;
+    border-top: 1px solid #CCCCCC;
+    padding: 2px 8px;
+}
