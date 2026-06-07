@@ -6,7 +6,6 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from PySide6.QtWidgets import QApplication
-from PySide6.QtCore import Qt
 from PySide6.QtGui import QIcon
 
 from ui.main_window import MainWindow
@@ -24,10 +23,6 @@ def main():
     # 设置应用图标
     if os.path.isfile(_ICON_PATH):
         app.setWindowIcon(QIcon(_ICON_PATH))
-
-    # 启用高 DPI 缩放
-    app.setAttribute(Qt.AA_EnableHighDpiScaling, True)
-    app.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
 
     # 创建主窗口
     window = MainWindow()
