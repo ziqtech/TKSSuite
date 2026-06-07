@@ -108,10 +108,16 @@ class MainWindow(QMainWindow):
 
         self._worker.log_emitted.connect(self.log_console.append_log)
         self._worker.status_changed.connect(self._on_status)
+        self._worker.game_window_found.connect(self._on_game_window_found)
         self._worker.overlay_update.connect(self._on_overlay_update)
         self._worker.finished.connect(self._on_finished)
 
         self._worker.start()
+
+    def _on_game_window_found(self, game_hwnd: int):
+        """UI 线程: 创建悬浮窗"""
+        if self._overlay is None:
+            self._overlay = GameOverlay(game_hwnd)
 
     def _on_status(self, text: str, ok: bool):
         self.status_label.setText(text)
@@ -121,10 +127,6 @@ class MainWindow(QMainWindow):
     def _on_overlay_update(self, text: str, ok: bool):
         if self._overlay and self._overlay.isVisible():
             self._overlay.update_text(text, ok)
-        elif text:
-            # 悬浮窗需要 game_hwnd，但此处没有
-            # overlay 仅更新已存在的悬浮窗
-            pass
 
     def _on_finished(self, success: bool, diag: dict):
         self.btn_start.setEnabled(True)

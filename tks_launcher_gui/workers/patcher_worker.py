@@ -39,6 +39,7 @@ class PatcherWorker(QThread):
     # --- 信号 ---
     log_emitted = Signal(str)
     status_changed = Signal(str, bool)  # text, is_ok
+    game_window_found = Signal(int)     # game_hwnd → UI 线程创建悬浮窗
     overlay_update = Signal(str, bool)  # text, is_ok
     finished = Signal(bool, dict)       # success, diagnostics
 
@@ -140,6 +141,7 @@ class PatcherWorker(QThread):
 
         if game_hwnd:
             self._log(f"  游戏窗口: 0x{game_hwnd:08X}")
+            self.game_window_found.emit(game_hwnd)
             self.overlay_update.emit("正在等待游戏加载...", False)
         else:
             self._log("  [WARN] 未找到游戏窗口, 叠加提示不可用")

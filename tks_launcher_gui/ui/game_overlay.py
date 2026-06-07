@@ -53,6 +53,10 @@ class GameOverlay(QLabel):
                 self.move(x, y)
 
     def update_text(self, text: str, ok: bool = False):
+        if not text:
+            # 空文本 = 关闭悬浮窗
+            self.close_overlay()
+            return
         self._ok = ok
         self.setText(text)
         if ok:
