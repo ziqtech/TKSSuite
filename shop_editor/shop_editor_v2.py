@@ -36,12 +36,10 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QSplitter,
     QTableWidget, QTableWidgetItem, QHeaderView, QPushButton, QLabel,
     QLineEdit, QComboBox, QSpinBox, QRadioButton, QButtonGroup, QTextEdit,
-    QFileDialog, QMessageBox, QDialog, QFrame, QAbstractItemView,
-    QStyledItemDelegate, QStyle
+    QFileDialog, QMessageBox, QDialog, QFrame, QAbstractItemView
 )
 from PySide6.QtGui import (
-    QColor, QFont, QAction, QKeySequence, QShortcut, QIcon, QPalette,
-    QPen, QBrush, QPainter
+    QColor, QFont, QAction, QKeySequence, QShortcut, QIcon, QPalette
 )
 from PySide6.QtCore import Qt
 
@@ -492,7 +490,6 @@ class ItemPickerDialog(QDialog):
 
         # 列表
         self.table = QTableWidget(0, 4)
-        self.table.setItemDelegate(FlatSelectDelegate(self.table))
         self.table.setHorizontalHeaderLabels(["索引", "分类", "可用商店", "物品名称"])
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SingleSelection)
@@ -577,26 +574,6 @@ class ItemPickerDialog(QDialog):
             self.selected_item_ref = int(self.table.item(row, 0).data(Qt.DisplayRole))
             self.accept()
 
-
-class FlatSelectDelegate(QStyledItemDelegate):
-    """选中时画直角蓝色填充 + 白色文字，不触发 Win11 原生圆角"""
-    def paint(self, painter, option, index):
-        selected = option.state & QStyle.State_Selected
-        if selected:
-            painter.save()
-            painter.setRenderHint(QPainter.Antialiasing, False)
-            painter.fillRect(option.rect, QBrush(QColor("#478cbf")))
-            text = index.data(Qt.DisplayRole)
-            if text is not None:
-                align = index.data(Qt.TextAlignmentRole)
-                if align is None:
-                    align = Qt.AlignLeft | Qt.AlignVCenter
-                painter.setPen(QPen(QColor("#ffffff")))
-                r = option.rect.adjusted(4, 0, -4, 0)
-                painter.drawText(r, int(align), str(text))
-            painter.restore()
-        else:
-            super().paint(painter, option, index)
 
 
 # ============================================================
@@ -777,7 +754,6 @@ class ShopEditorWindow(QMainWindow):
 
         # 左侧: 表格
         self.table = QTableWidget(0, 6)
-        self.table.setItemDelegate(FlatSelectDelegate(self.table))
         self.table.setHorizontalHeaderLabels(["索引", "区域ID", "区域名称", "物品索引", "物品名称", "出现条件"])
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SingleSelection)
@@ -910,7 +886,7 @@ class ShopEditorWindow(QMainWindow):
         path_layout.addWidget(self.lbl_tkt_path)
         path_layout.addStretch()
 
-        main_layout.addWidget(self._create_dock("当前加载的数据文件", path_content))
+        main_layout.addWidget(path_content)
 
     # ================================================================
     # 状态与主题管理
@@ -1345,6 +1321,7 @@ class ShopEditorWindow(QMainWindow):
 
 def main():
     app = QApplication(sys.argv)
+    app.setStyle("Fusion")
     app.setApplicationName("TKShop Editor")
 
     # 根据系统主题设置初始主题

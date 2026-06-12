@@ -7,7 +7,8 @@ QMainWindow, QWidget {
 }
 
 /* ── 表格视图 ── */
-QTableWidget { background-color: #ffffff; alternate-background-color: #f2f5f7; border: 1px solid #b0b5bd; selection-background-color: #478cbf; selection-color: #fff; }
+QTableWidget { background-color: #ffffff; alternate-background-color: #f2f5f7; border: 1px solid #b0b5bd; selection-background-color: #478cbf; selection-color: #ffffff; outline: none; }
+QTableWidget::item:hover { background-color: transparent; }
 QHeaderView::section { background-color: #d1d6dc; border: none; border-bottom: 1px solid #b0b5bd; padding: 4px; color: #222; }
 
 /* ── 按钮 ── */
