@@ -214,7 +214,33 @@ GODOT_DARK_QSS = """
 QWidget { background-color: #202531; color: #dcdcdc; font-family: 'Segoe UI', 'Microsoft YaHei'; }
 QTableWidget { background-color: #1a1e27; alternate-background-color: #202531; border: 1px solid #14171f; selection-background-color: #478cbf; }
 QHeaderView::section { background-color: #202531; border: none; border-bottom: 1px solid #14171f; padding: 4px; }
-QLineEdit, QTextEdit { background-color: #1a1e27; border: 1px solid #14171f; padding: 4px; border-radius: 2px;}
+/* =======================================================
+   大面积文本编辑区 (彻底消除色块突兀感)
+======================================================= */
+QPlainTextEdit, QTextEdit {
+    background-color: #161923; /* 与 FakeInputBox 统一的微凹深色底 */
+    border: 1px solid #0b0c12; /* 极暗边框，融入背景 */
+    border-radius: 4px;
+    padding: 8px;              /* 增加内边距，让文字有呼吸感 */
+    color: #e0e4eb;
+    font-family: 'Consolas', 'Segoe UI';
+    line-height: 1.5;
+}
+
+/* 独立单行输入框 (非 FakeInputBox 内的) */
+QLineEdit {
+    background-color: #161923;
+    border: 1px solid #0b0c12;
+    padding: 4px 8px;
+    border-radius: 4px;
+    color: #e0e4eb;
+}
+
+/* 【关键魔法】：只有在鼠标点击输入时，才凸显它的存在 */
+QPlainTextEdit:focus, QTextEdit:focus, QLineEdit:focus {
+    background-color: #1a1e29; /* 聚焦时微微提亮 */
+    border: 1px solid #478cbf; /* 亮起 Godot 焦点蓝 */
+}
 QPushButton { background-color: #2e3548; border: 1px solid #14171f; border-radius: 4px; padding: 5px 12px; }
 QPushButton:hover { background-color: #3b445c; }
 QPushButton:pressed { background-color: #478cbf; color: #fff; }
@@ -247,7 +273,50 @@ QLabel[class="InspectorTitle"] { font-weight: bold; color: #a5b0cb; border-botto
 QLabel[class="PropLabel"] { color: #8a96b3; }
 QScrollArea { border: none; background-color: transparent; }
 QScrollArea > QWidget > QWidget { background-color: transparent; }
-QFrame#PreviewFrame { background-color: #1a1e27; border: 1px solid #14171f; border-radius: 4px; }
+/* =======================================================
+   预览区面板 (彻底透明，融入背景)
+======================================================= */
+QFrame#PreviewFrame {
+    background-color: transparent;    /* 【关键魔法】：彻底透明化，消灭灰色色块 */
+    border: none;                     /* 移除四周生硬的边框 */
+    border-top: 2px solid #2b4f70;    /* 【核心改动】：变细，且换成极度暗沉的深灰蓝 */
+    border-bottom: 1px solid #14171f; /* 底部加一条极暗的分割线，与下方属性区隔开 */
+    border-radius: 0px;               /* 透明背景不需要圆角 */
+    margin-top: 4px;
+    margin-bottom: 8px;
+}
+
+/* 大标题：技能名称 */
+QLabel[class="PreviewName"] {
+    color: #e0e4eb;
+    font-size: 18px; /* 加大字号 */
+    font-weight: bold;
+    font-family: 'Microsoft YaHei', 'Segoe UI';
+}
+
+/* 元数据：类型与消耗 */
+QLabel[class="PreviewMeta"] {
+    color: #8a96b3;
+    font-size: 11px;
+    border-bottom: 1px solid #2e3548; /* 用底边框做极细的优雅分割线 */
+    padding-bottom: 8px;
+    margin-bottom: 4px;
+}
+
+/* 描述文本 */
+QLabel[class="PreviewDesc"] {
+    color: #55b572; /* 延续你的原版绿色偏好 */
+    font-size: 13px;
+    padding-top: 4px;
+}
+
+/* 子技能警告/提示 */
+QLabel[class="PreviewSubMeta"] {
+    color: #e27d60;
+    font-size: 12px;
+    font-weight: bold;
+    padding-top: 4px;
+}
 
 /* =======================================================
    综合输入框外壳 (EditorResourcePicker 风格)
@@ -316,7 +385,32 @@ GODOT_LIGHT_QSS = """
 QWidget { background-color: #e0e4e8; color: #222222; font-family: 'Segoe UI', 'Microsoft YaHei'; }
 QTableWidget { background-color: #ffffff; alternate-background-color: #f2f5f7; border: 1px solid #b0b5bd; selection-background-color: #478cbf; selection-color: #fff;}
 QHeaderView::section { background-color: #d1d6dc; border: none; border-bottom: 1px solid #b0b5bd; padding: 4px; color: #222; }
-QLineEdit, QTextEdit { background-color: #ffffff; border: 1px solid #b0b5bd; padding: 4px; border-radius: 2px;}
+/* =======================================================
+   大面积文本编辑区 (浅色清爽模式)
+======================================================= */
+QPlainTextEdit, QTextEdit {
+    background-color: #f7f9fa; /* 极浅的微凹底色，告别突兀的深灰色补丁 */
+    border: 1px solid #c2c7ce; /* 柔和的轮廓线 */
+    border-radius: 4px;
+    padding: 8px;
+    color: #222222;
+    font-family: 'Consolas', 'Segoe UI';
+}
+
+/* 独立单行输入框 */
+QLineEdit {
+    background-color: #f7f9fa;
+    border: 1px solid #c2c7ce;
+    padding: 4px 8px;
+    border-radius: 4px;
+    color: #222222;
+}
+
+/* 【关键魔法】：聚焦时变成纯白，让用户感觉"纸被抬起来了" */
+QPlainTextEdit:focus, QTextEdit:focus, QLineEdit:focus {
+    background-color: #ffffff; /* 聚焦时背景变纯白，极其清爽 */
+    border: 1px solid #478cbf; /* 亮起 Godot 焦点蓝 */
+}
 QPushButton { background-color: #cdd3d9; border: 1px solid #a6abb2; border-radius: 4px; padding: 5px 12px; color: #111;}
 QPushButton:hover { background-color: #b8c0c7; }
 QPushButton:pressed { background-color: #8da4b8; }
@@ -347,7 +441,46 @@ QLabel[class="InspectorTitle"] { font-weight: bold; color: #111; border-bottom: 
 QLabel[class="PropLabel"] { color: #444; }
 QScrollArea { border: none; background-color: transparent; }
 QScrollArea > QWidget > QWidget { background-color: transparent; }
-QFrame#PreviewFrame { background-color: #ffffff; border: 1px solid #b0b5bd; border-radius: 4px; }
+/* =======================================================
+   预览区面板 (浅色透明模式)
+======================================================= */
+QFrame#PreviewFrame {
+    background-color: transparent;    /* 彻底透明化 */
+    border: none;
+    border-top: 2px solid #8caec7;    /* 换成柔和的莫兰迪浅蓝灰 */
+    border-bottom: 1px solid #b0b5bd; /* 底部浅色分割线 */
+    border-radius: 0px;
+    margin-top: 4px;
+    margin-bottom: 8px;
+}
+
+QLabel[class="PreviewName"] {
+    color: #111111;
+    font-size: 18px;
+    font-weight: bold;
+    font-family: 'Microsoft YaHei', 'Segoe UI';
+}
+
+QLabel[class="PreviewMeta"] {
+    color: #666666;
+    font-size: 11px;
+    border-bottom: 1px solid #d8dce3; /* 浅色分割线 */
+    padding-bottom: 8px;
+    margin-bottom: 4px;
+}
+
+QLabel[class="PreviewDesc"] {
+    color: #178a39;
+    font-size: 13px;
+    padding-top: 4px;
+}
+
+QLabel[class="PreviewSubMeta"] {
+    color: #c93b16;
+    font-size: 12px;
+    font-weight: bold;
+    padding-top: 4px;
+}
 
 /* =======================================================
    综合输入框外壳 (浅色清爽模式)
@@ -704,26 +837,40 @@ class SkillEditorApp(QMainWindow):
         self.edit_layout = QVBoxLayout(self.edit_inner)
         self.edit_layout.setContentsMargins(4, 4, 16, 4)
         
-        # Preview Panel
+        # =======================================================
+        # Preview Panel (Godot 资源检查器头部风格)
+        # =======================================================
         preview_frame = QFrame()
         preview_frame.setObjectName("PreviewFrame")
-        pl = QGridLayout(preview_frame)
-        pl.addWidget(QLabel("名称:"), 0, 0)
+        pl = QVBoxLayout(preview_frame)
+        pl.setContentsMargins(8, 12, 8, 12)
+        pl.setSpacing(6)
+
+        # 1. 技能名称 (大标题)
         self.preview_name = QLabel("(未选中)")
-        self.preview_name.setStyleSheet("color: #478cbf; font-weight: bold;")
-        pl.addWidget(self.preview_name, 0, 1)
-        pl.addWidget(QLabel("描述:"), 1, 0)
-        self.preview_desc = QTextEdit()
-        self.preview_desc.setReadOnly(True)
-        self.preview_desc.setMaximumHeight(70)
-        self.preview_desc.setStyleSheet("color: #55b572; background: transparent; border: none;")
-        pl.addWidget(self.preview_desc, 1, 1)
+        self.preview_name.setProperty("class", "PreviewName")
+        self.preview_name.setWordWrap(True)
+        pl.addWidget(self.preview_name)
+
+        # 2. 技能元数据 (类型、点数、内力)
         self.preview_type = QLabel("")
-        self.preview_type.setStyleSheet("color: #888;")
-        pl.addWidget(self.preview_type, 2, 0, 1, 2)
+        self.preview_type.setProperty("class", "PreviewMeta")
+        self.preview_type.setWordWrap(True)
+        pl.addWidget(self.preview_type)
+
+        # 3. 技能描述 (替换掉丑陋的 QTextEdit，改用自动撑高的 QLabel)
+        self.preview_desc = QLabel("请在左侧列表中选择一项技能。")
+        self.preview_desc.setProperty("class", "PreviewDesc")
+        self.preview_desc.setWordWrap(True)
+        self.preview_desc.setTextInteractionFlags(Qt.TextSelectableByMouse) # 允许鼠标选中文本复制
+        pl.addWidget(self.preview_desc)
+
+        # 4. 子技能高亮提示
         self.preview_sub = QLabel("")
-        self.preview_sub.setStyleSheet("color: #e27d60;")
-        pl.addWidget(self.preview_sub, 3, 0, 1, 2)
+        self.preview_sub.setProperty("class", "PreviewSubMeta")
+        self.preview_sub.setWordWrap(True)
+        pl.addWidget(self.preview_sub)
+
         self.edit_layout.addWidget(preview_frame)
 
         # Properties (No wireframes, Godot inspector grid alignment)
@@ -944,10 +1091,13 @@ class SkillEditorApp(QMainWindow):
 
         nid = rec.get('skill_text_id', 0)
         n_txt = self.tkt.get(nid, "") if nid > 0 else ""
-        self.preview_name.setText(n_txt.split('\n')[0].strip() if n_txt else "(无)")
+        # 加上前缀增加仪式感，空名称处理也更加优雅
+        self.preview_name.setText(n_txt.split('\n')[0].strip() if n_txt else "未命名技能")
+
         did = nid + 400
         d_txt = self.tkt_full.get(did, "") if did > 0 else ""
-        self.preview_desc.setPlainText(d_txt if d_txt else "(无描述)")
+        # 改用 setText，因为组件已经换成了 QLabel
+        self.preview_desc.setText(d_txt if d_txt else "暂无关于该技能的详细描述。")
         
         hint = TYPE_HINT_LABELS.get(rec['type'], "")
         self.preview_type.setText(f"类型: {stype} | 点数={rec['jp_cost']} | 内力={rec['mp_cost']} | {hint}")
