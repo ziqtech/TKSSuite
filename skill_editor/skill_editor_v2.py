@@ -815,20 +815,19 @@ class SkillEditorApp(QMainWindow):
         right_layout = QVBoxLayout(right_widget)
         right_layout.setContentsMargins(0,0,0,0)
 
+        # 顶部行：记录标签 + 操作按钮
+        header_row = QHBoxLayout()
         self.lbl_rec_idx = QLabel("未选中")
         self.lbl_rec_idx.setStyleSheet("font-size: 14px; font-weight: bold;")
-        right_layout.addWidget(self.lbl_rec_idx)
-
-        # Action Buttons
-        btn_layout = QHBoxLayout()
-        btn_apply = QPushButton("✅ 应用修改 (写入内存)")
+        header_row.addWidget(self.lbl_rec_idx)
+        header_row.addStretch()
+        btn_apply = QPushButton("✅ 应用")
         btn_apply.clicked.connect(self._apply_edit)
-        btn_reset = QPushButton("🔄 重置为当前")
+        btn_reset = QPushButton("🔄 重置")
         btn_reset.clicked.connect(self._reset_edit)
-        btn_layout.addWidget(btn_apply)
-        btn_layout.addWidget(btn_reset)
-        btn_layout.addStretch()
-        right_layout.addLayout(btn_layout)
+        header_row.addWidget(btn_apply)
+        header_row.addWidget(btn_reset)
+        right_layout.addLayout(header_row)
 
         # Scroll Area for properties (Godot Style Layout)
         scroll = QScrollArea()
