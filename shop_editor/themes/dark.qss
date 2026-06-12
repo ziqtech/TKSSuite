@@ -139,7 +139,7 @@ QRadioButton::indicator {
     border: 1px solid #14171f;
     border-radius: 8px;
 }
-QRadioButton::indicator:checked { background-color: #478cbf; border-color: #478cbf; }
+QRadioButton::indicator:checked { background-color: #478cbf; border-color: #478cbf; image: url(svg/checkmark.svg); }
 QRadioButton::indicator:hover { border-color: #478cbf; }
 
 QCheckBox { color: #dcdcdc; spacing: 6px; }
