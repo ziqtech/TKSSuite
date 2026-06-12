@@ -2448,6 +2448,9 @@ class SpriteSheetEditorWindow(QMainWindow):
         self.canvas.selectionChangedCustom.connect(self._on_selection_changed)
         self.image_list.selectionChangedCustom.connect(self._on_selection_changed)
 
+        # 初始渲染空网格
+        self.canvas.redraw()
+
     def _create_dock(self, title, widget_content, header_layout=None):
         """创建 Godot 风格 Dock 面板: DockHeader + DockBody 包裹"""
         container = QWidget()
@@ -2581,6 +2584,10 @@ class SpriteSheetEditorWindow(QMainWindow):
             "图片文件 (*.png *.bmp *.jpg *.jpeg *.gif *.tga *.webp);;所有文件 (*.*)")
         if not files:
             return
+        # 切换到组合模式 (若已有数据会弹出确认框, 用户取消则跳过加载)
+        self._mode_merge.setChecked(True)
+        if not self._mode_merge.isChecked():
+            return
 
         images = []
         for fp in files:
@@ -2618,7 +2625,10 @@ class SpriteSheetEditorWindow(QMainWindow):
             "PNG 图片 (*.png);;所有图片 (*.png *.bmp *.jpg);;所有文件 (*.*)")
         if not fp:
             return
-        self._load_spritesheet(Path(fp))
+        # 切换到拆分模式 (若已有数据会弹出确认框, 用户取消则跳过加载)
+        self._mode_split.setChecked(True)
+        if self._mode_split.isChecked():
+            self._load_spritesheet(Path(fp))
 
     def _load_spritesheet(self, path: Path):
         try:
