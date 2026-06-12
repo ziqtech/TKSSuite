@@ -248,6 +248,68 @@ QLabel[class="PropLabel"] { color: #8a96b3; }
 QScrollArea { border: none; background-color: transparent; }
 QScrollArea > QWidget > QWidget { background-color: transparent; }
 QFrame#PreviewFrame { background-color: #1a1e27; border: 1px solid #14171f; border-radius: 4px; }
+
+/* =======================================================
+   综合输入框外壳 (EditorResourcePicker 风格)
+======================================================= */
+QFrame#FakeInputBox {
+    background-color: #161923; /* 更柔和的高级内陷底色 */
+    border: 1px solid #0b0c12; /* 极简的边缘阴影勾勒 */
+    border-radius: 4px;        /* 稍微圆润一点 */
+}
+
+QFrame#FakeInputBox:hover, QFrame#FakeInputBox:focus-within {
+    background-color: #1a1e29;
+    border: 1px solid #478cbf; /* Godot 经典的焦点蓝 */
+}
+
+/* 内部输入框：完全去边框化，依靠外壳表现 */
+QFrame#FakeInputBox > QLineEdit {
+    background: transparent;
+    border: none;
+    padding: 4px 8px; /* 【关键修复】上下4px，左右8px，文字彻底告别贴边 */
+    color: #e0e4eb;
+    font-family: 'Consolas', 'Segoe UI'; /* ID 推荐使用等宽字体更好看 */
+    selection-background-color: #478cbf;
+}
+
+/* 内部工具按钮：柔和的边界与无缝悬停 */
+QFrame#FakeInputBox > QPushButton {
+    background: transparent;
+    border: none;
+    border-left: 1px solid #202531; /* 极微弱的左侧分割线 */
+    border-right: 1px solid #202531;/* 极微弱的右侧分割线 */
+    border-radius: 0px;             /* 默认无圆角，融入整体 */
+    padding: 4px 8px;
+    margin: 0px;                    /* 【关键修复】取消margin，彻底贴合上下边缘 */
+    color: #8a96b3;
+}
+
+QFrame#FakeInputBox > QPushButton:hover {
+    background-color: #2e3548;
+    color: #ffffff;
+}
+/* 如果按钮在最左边（如配置掩码按钮），悬停时应用左圆角 */
+QFrame#FakeInputBox > QPushButton:first-child:hover {
+    border-top-left-radius: 3px;
+    border-bottom-left-radius: 3px;
+}
+
+/* 内部预览文本 (QLabel) */
+QLabel[class="ExtraPreviewText"] {
+    padding: 4px 8px;  /* 让预览文字也拥有舒适的边距 */
+    color: #478cbf;
+    font-size: 11px;
+}
+
+/* 下拉框去皮 */
+QFrame#FakeInputBox > QComboBox {
+    border: none;
+    background: transparent;
+    padding: 4px 8px; /* 同样补齐边距 */
+    color: #e0e4eb;
+}
+QFrame#FakeInputBox > QComboBox::drop-down { border: none; }
 """
 
 GODOT_LIGHT_QSS = """
@@ -286,6 +348,64 @@ QLabel[class="PropLabel"] { color: #444; }
 QScrollArea { border: none; background-color: transparent; }
 QScrollArea > QWidget > QWidget { background-color: transparent; }
 QFrame#PreviewFrame { background-color: #ffffff; border: 1px solid #b0b5bd; border-radius: 4px; }
+
+/* =======================================================
+   综合输入框外壳 (浅色清爽模式)
+======================================================= */
+QFrame#FakeInputBox {
+    background-color: #f7f9fa; /* 极浅的蓝白色作为凹陷输入区 */
+    border: 1px solid #c2c7ce;
+    border-radius: 4px;
+}
+
+QFrame#FakeInputBox:hover, QFrame#FakeInputBox:focus-within {
+    background-color: #ffffff;
+    border: 1px solid #478cbf;
+}
+
+QFrame#FakeInputBox > QLineEdit {
+    background: transparent;
+    border: none;
+    padding: 4px 8px; /* 文字不再贴边 */
+    color: #222222;
+    font-family: 'Consolas', 'Segoe UI';
+    selection-background-color: #478cbf;
+    selection-color: #ffffff;
+}
+
+QFrame#FakeInputBox > QPushButton {
+    background: transparent;
+    border: none;
+    border-left: 1px solid #d8dce3;
+    border-right: 1px solid #d8dce3;
+    border-radius: 0px;
+    padding: 4px 8px;
+    margin: 0px;
+    color: #555555;
+}
+
+QFrame#FakeInputBox > QPushButton:hover {
+    background-color: #e5e9f0;
+    color: #111111;
+}
+QFrame#FakeInputBox > QPushButton:first-child:hover {
+    border-top-left-radius: 3px;
+    border-bottom-left-radius: 3px;
+}
+
+QLabel[class="ExtraPreviewText"] {
+    padding: 4px 8px;
+    color: #1a6b9c; /* 浅色模式下更深的蓝色，保证可读性 */
+    font-size: 11px;
+}
+
+QFrame#FakeInputBox > QComboBox {
+    border: none;
+    background: transparent;
+    padding: 4px 8px;
+    color: #222222;
+}
+QFrame#FakeInputBox > QComboBox::drop-down { border: none; }
 """
 
 class DockHeader(QFrame):
@@ -654,58 +774,74 @@ class SkillEditorApp(QMainWindow):
         self.edit_layout.addWidget(group_widget)
 
     def _build_field(self, grid, row, col, fn, fo, fl, ft, cmt):
-        """Godot 对齐: Label 在列 2n, Input 在列 2n+1"""
+        """现代化引擎 Inspector 对齐: 零边距外壳 + 内部软填充"""
         lbl = QLabel(f"{fl}")
         lbl.setToolTip(f"[{fo:02d}] {cmt}")
         lbl.setProperty("class", "PropLabel")
 
-        container = QVBoxLayout()
-        container.setSpacing(2)
-        container.setContentsMargins(0,0,0,0)
+        # 1. 创建联合输入框外壳
+        input_wrapper = QFrame()
+        input_wrapper.setObjectName("FakeInputBox")
+
+        # 2. 彻底清空物理边距 (0,0,0,0)，让元素完全贴合外壳内壁
+        container = QHBoxLayout(input_wrapper)
+        container.setSpacing(0)
+        container.setContentsMargins(0, 0, 0, 0)
 
         if ft == 'tkt' or ft == 'skill_pick':
-            box = QHBoxLayout()
             inp = QLineEdit()
-            btn = QPushButton("…")
-            btn.setFixedWidth(26)
-            box.addWidget(inp); box.addWidget(btn)
-            container.addLayout(box)
+            inp.setMaximumWidth(50)  # 稍微加宽一点，给 padding 留出空间
+
+            btn = QPushButton("...")
+            btn.setFixedWidth(28)
+            btn.setCursor(Qt.PointingHandCursor)
+
             extra = QLabel("")
-            extra.setStyleSheet("color: #478cbf; font-size: 11px;")
-            container.addWidget(extra)
+            extra.setProperty("class", "ExtraPreviewText") # 赋予专属 class
+
+            container.addWidget(inp)
+            container.addWidget(btn)
+            container.addWidget(extra, 1)
+
             self.widget_map[fn] = inp; self.extra_map[fn] = extra
             if ft == 'tkt': btn.clicked.connect(lambda _, f=fn: self._pick_tkt(f))
             else: btn.clicked.connect(lambda _, f=fn: self._pick_skill(f))
-            
+
         elif ft == 'type' or ft == 'atk_type':
             cb = QComboBox()
             if ft == 'type': cb.addItems(SKILL_TYPE_VALUES)
             else: cb.addItems(ATK_TYPE_VALUES)
-            container.addWidget(cb)
+            container.addWidget(cb, 1)
             self.widget_map[fn] = cb
-            
+
         elif ft == 'mask' or ft == 'flags':
             inp = QLineEdit()
-            inp.setVisible(False) 
-            btn = QPushButton("配置掩码…")
-            container.addWidget(btn)
+            inp.setVisible(False)
+
+            btn = QPushButton("配置…")
+            btn.setCursor(Qt.PointingHandCursor)
+            # 配置按钮放在左侧时，约束它的最大宽度
+            btn.setMaximumWidth(60)
+
             extra = QLabel("(无)")
-            extra.setStyleSheet("color: #e27d60; font-size: 11px;")
-            extra.setWordWrap(True)
-            container.addWidget(extra)
+            extra.setProperty("class", "ExtraPreviewText")
+            extra.setWordWrap(False)
+
+            container.addWidget(btn)
+            container.addWidget(extra, 1)
             self.widget_map[fn] = inp; self.extra_map[fn] = extra
+
             if ft == 'mask':
                 btn.clicked.connect(lambda _, f=fn: self._pick_status(f))
             else:
                 btn.clicked.connect(lambda _, f=fn: self._pick_flags(f))
         else:
             inp = QLineEdit()
-            container.addWidget(inp)
+            container.addWidget(inp, 1)
             self.widget_map[fn] = inp
 
-        # 将组件对齐至网格
         grid.addWidget(lbl, row, col * 2, alignment=Qt.AlignRight | Qt.AlignVCenter)
-        grid.addLayout(container, row, col * 2 + 1)
+        grid.addWidget(input_wrapper, row, col * 2 + 1)
 
     def _toggle_theme(self):
         self._is_dark = not self._is_dark
@@ -832,7 +968,7 @@ class SkillEditorApp(QMainWindow):
             if ft == 'tkt':
                 nid = int(val) if val else 0
                 txt = self.tkt.get(nid, "") if nid > 0 else ""
-                self.extra_map[fn].setText(txt.split('\n')[0][:25] if txt else "")
+                self.extra_map[fn].setText((txt.split('\n')[0][:8] + '...') if txt else "")
             elif ft == 'mask':
                 self._update_mask_label(fn, int(val) if val else 0)
             elif ft == 'flags':
@@ -841,7 +977,7 @@ class SkillEditorApp(QMainWindow):
                 sidx = int(val) if val else 0
                 if 0 < sidx < len(self.records) and self.records[sidx]['skill_text_id'] != 0:
                     nm = skill_name(self.records[sidx], self.tkt)
-                    self.extra_map[fn].setText(nm[:25])
+                    self.extra_map[fn].setText((nm[:8] + '...'))
                 else:
                     self.extra_map[fn].setText("")
 
@@ -864,7 +1000,7 @@ class SkillEditorApp(QMainWindow):
         if dlg.exec() == QDialog.Accepted and dlg.selected_id is not None:
             self.widget_map[fn].setText(str(dlg.selected_id))
             txt = self.tkt.get(dlg.selected_id, "")
-            self.extra_map[fn].setText(txt.split('\n')[0][:25] if txt else "")
+            self.extra_map[fn].setText((txt.split('\n')[0][:8] + '...') if txt else "")
             if fn == 'skill_text_id': self.preview_name.setText(txt.split('\n')[0].strip() if txt else "(无)")
 
     def _pick_skill(self, fn):
@@ -873,7 +1009,7 @@ class SkillEditorApp(QMainWindow):
         if dlg.exec() == QDialog.Accepted and dlg.selected_index is not None:
             self.widget_map[fn].setText(str(dlg.selected_index))
             nm = skill_name(self.records[dlg.selected_index], self.tkt) if dlg.selected_index > 0 else ""
-            self.extra_map[fn].setText(nm[:25])
+            self.extra_map[fn].setText((nm[:8] + '...'))
 
     def _pick_status(self, fn):
         base = 0 if fn == 'immunity1' else 16
