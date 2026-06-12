@@ -870,25 +870,16 @@ class ShopEditorWindow(QMainWindow):
         # ---- 底部: 文件路径 ----
         path_content = QWidget()
         path_layout = QHBoxLayout(path_content)
-        path_layout.setContentsMargins(0, 0, 0, 0)
-        self.lbl_shop_path = QLabel("")
-        self.lbl_item_path = QLabel("")
-        self.lbl_tkt_path = QLabel("")
+        path_layout.setContentsMargins(4, 4, 4, 0)
+
+        self.lbl_shop_path = QLabel("(TKShop.dat 未挂载)")
+        self.lbl_item_path = QLabel("(TKItem.dat 未挂载)")
+        self.lbl_tkt_path = QLabel("(TKT.dat 未挂载)")
 
         path_layout.addWidget(self.lbl_shop_path)
-
-        vline3 = QFrame()
-        vline3.setFrameShape(QFrame.VLine)
-        vline3.setFrameShadow(QFrame.Sunken)
-        path_layout.addWidget(vline3)
-
+        path_layout.addWidget(self._make_v_sep())
         path_layout.addWidget(self.lbl_item_path)
-
-        vline4 = QFrame()
-        vline4.setFrameShape(QFrame.VLine)
-        vline4.setFrameShadow(QFrame.Sunken)
-        path_layout.addWidget(vline4)
-
+        path_layout.addWidget(self._make_v_sep())
         path_layout.addWidget(self.lbl_tkt_path)
         path_layout.addStretch()
 
@@ -901,21 +892,23 @@ class ShopEditorWindow(QMainWindow):
     def _set_edit_enabled(self, enabled):
         self.edit_content.setEnabled(enabled)
 
+    def _make_v_sep(self):
+        sep = QFrame(); sep.setFrameShape(QFrame.VLine); sep.setFrameShadow(QFrame.Sunken); sep.setStyleSheet("color: #777;")
+        return sep
+
     def _update_path_labels(self):
-        def _fmt(label, path):
-            if not path:
-                label.setText("(未加载)")
-                label.setStyleSheet("color: #CC3333;")
-            elif not os.path.exists(path):
-                label.setText(f"(不存在) {path}")
-                label.setStyleSheet("color: #CC3333;")
+        cg = ("color: #55b572;" if self._is_dark else "color: #178a39;")
+        cr = ("color: #e27d60;" if self._is_dark else "color: #c93b16;")
+        def _f(lb, path, label):
+            if not path or not os.path.exists(path):
+                lb.setText(f"({label} 未挂载)")
+                lb.setStyleSheet(cr)
             else:
-                label.setText(path)
-                label.setStyleSheet("color: #228B22;" if not self._is_dark else "color: #4CAF50;")
-                
-        _fmt(self.lbl_shop_path, self.shop_path)
-        _fmt(self.lbl_item_path, self.item_path)
-        _fmt(self.lbl_tkt_path, self.tkt_path)
+                lb.setText(f"{label}: {path}")
+                lb.setStyleSheet(cg)
+        _f(self.lbl_shop_path, self.shop_path, "TKShop.dat")
+        _f(self.lbl_item_path, self.item_path, "TKItem.dat")
+        _f(self.lbl_tkt_path, self.tkt_path, "TKT.dat")
 
     def _apply_theme(self):
         qss = ThemeManager._load_qss("dark" if self._is_dark else "light")
