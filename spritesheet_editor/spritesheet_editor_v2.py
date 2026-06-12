@@ -2284,7 +2284,7 @@ class SpriteSheetEditorWindow(QMainWindow):
 
         # 深浅色切换
         toolbar.addWidget(self._v_sep())
-        btn_theme = QPushButton("☀/🌙 主题")
+        btn_theme = QPushButton("🌓 切换主题")
         btn_theme.clicked.connect(self._toggle_theme)
         toolbar.addWidget(btn_theme)
 
