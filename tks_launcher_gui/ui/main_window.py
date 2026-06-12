@@ -19,8 +19,8 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("TKS Mod Launcher")
-        self.resize(960, 640)
-        self.setMinimumSize(700, 400)
+        self.resize(1050, 720)
+        self.setMinimumSize(800, 500)
 
         # 窗口图标
         icon_path = os.path.join(os.path.dirname(__file__), "..", "TKS.ico")
@@ -70,7 +70,7 @@ class MainWindow(QMainWindow):
         self.log_console = LogConsole()
         splitter.addWidget(self.log_console)
 
-        splitter.setSizes([340, 620])
+        splitter.setSizes([400, 650])
 
     def _setup_statusbar(self):
         self.status_bar = QStatusBar()
