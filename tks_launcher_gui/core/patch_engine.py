@@ -221,7 +221,8 @@ def apply_config_patches(config: PatchConfig, code_buf: bytearray, code_start_ad
                           h_proc: int, warpc_base: int, cave_addr: int,
                           variables: Dict[str, int], log_func=None,
                           minimal_mode=False, no_cave_mode=False,
-                          only_portrait=False, only_awk=False) -> bool:
+                          only_portrait=False, only_awk=False,
+                          selected_patches: set = None) -> bool:
     log = log_func or (lambda x: None)
     all_ok = True
     pch: List[PatchDef] = []
@@ -229,6 +230,10 @@ def apply_config_patches(config: PatchConfig, code_buf: bytearray, code_start_ad
     for defn in config.patches:
         tag = f"[{defn.id}]"
         log(f"\n  {tag}: {defn.desc}")
+
+        if selected_patches is not None and defn.optional and defn.id not in selected_patches:
+            log(f"    -> 用户取消勾选, 跳过")
+            continue
 
         if defn.type == "patch_bytes":
             all_ok &= apply_patch_bytes(defn, code_buf, code_start_addr, h_proc, log_func=log)

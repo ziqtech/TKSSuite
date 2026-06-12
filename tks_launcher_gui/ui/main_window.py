@@ -1,5 +1,6 @@
 """主窗口 — Godot 风格三面板布局 + 主题切换 + 启动逻辑"""
 import os
+import re
 from PySide6.QtWidgets import (
     QMainWindow, QToolBar, QSplitter, QPushButton,
     QStatusBar, QLabel, QFileDialog, QMessageBox,
@@ -85,7 +86,11 @@ class MainWindow(QMainWindow):
         qss_file = os.path.join(os.path.dirname(__file__), "themes", f"{theme}.qss")
         try:
             with open(qss_file, 'r', encoding='utf-8') as f:
-                self.setStyleSheet(f.read())
+                qss = f.read()
+            # 将相对 url() 转为绝对路径，确保图片能被 Qt 找到
+            themes_dir = os.path.dirname(qss_file).replace('\\', '/')
+            qss = re.sub(r'url\(([^)]+)\)', lambda m: f'url({themes_dir}/{m.group(1)})', qss)
+            self.setStyleSheet(qss)
             self._dark_mode = (theme == "dark")
             self.btn_theme.setText("🌙 深色" if self._dark_mode else "☀ 浅色")
         except Exception:
@@ -110,6 +115,7 @@ class MainWindow(QMainWindow):
             game_dir=game_dir,
             wait_timeout=30,
             minimal_mode=False,
+            selected_patches=self.patch_list.get_selected_patches(),
         )
 
         self._worker.log_emitted.connect(self.log_console.append_log)

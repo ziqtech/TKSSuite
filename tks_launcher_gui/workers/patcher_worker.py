@@ -46,7 +46,7 @@ class PatcherWorker(QThread):
     def __init__(self, exe_path: str, game_dir: str | None = None,
                  wait_timeout: int = 30, minimal_mode: bool = False,
                  no_cave_mode: bool = False, only_portrait: bool = False,
-                 only_awk: bool = False):
+                 only_awk: bool = False, selected_patches: set = None):
         super().__init__()
         self.exe_path = exe_path
         self.game_dir = game_dir
@@ -55,6 +55,7 @@ class PatcherWorker(QThread):
         self.no_cave_mode = no_cave_mode
         self.only_portrait = only_portrait
         self.only_awk = only_awk
+        self.selected_patches = selected_patches
         self._is_running = True
 
     def _log(self, msg: str):
@@ -321,6 +322,7 @@ class PatcherWorker(QThread):
                     cave_addr, config.variables, log_func=self._log,
                     minimal_mode=self.minimal_mode, no_cave_mode=self.no_cave_mode,
                     only_portrait=self.only_portrait, only_awk=self.only_awk,
+                    selected_patches=self.selected_patches,
                 )
             except Exception as ex:
                 self._log(f"[ERROR] ApplyConfigPatches 异常: {ex}")

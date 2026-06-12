@@ -80,6 +80,19 @@ QCheckBox::indicator {
 QCheckBox::indicator:checked {
     background-color: #4A9BD9;
     border-color: #4A9BD9;
+    image: url(checkmark.svg);
+}
+QCheckBox:disabled {
+    color: #999;
+}
+QCheckBox::indicator:disabled {
+    background-color: #E8E8E8;
+    border-color: #D0D0D0;
+}
+QCheckBox::indicator:checked:disabled {
+    background-color: #8CB8D9;
+    border-color: #8CB8D9;
+    image: url(checkmark.svg);
 }
 
 QSplitter::handle {

@@ -22,6 +22,7 @@ class PatchDef:
     hook_pattern: str = ""
     hook_expect_count: int = 0
     value_scan: bool = False
+    optional: bool = False
     _pre_scanned_hits: List[int] = field(default_factory=list, repr=False)
 
 @dataclass
@@ -92,6 +93,7 @@ def load_config(path: str, log_func=None) -> Optional[PatchConfig]:
             d.hook_pattern = pr.get("hook_pattern", "")
             d.hook_expect_count = pr.get("hook_expect_count", 0)
             d.value_scan = pr.get("value_scan", False)
+            d.optional = pr.get("optional", False)
             if "replace" in pr:
                 for rk, rv in pr["replace"].items():
                     d.replace[rk] = _parse_replace_val(rv)

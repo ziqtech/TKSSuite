@@ -25,6 +25,7 @@ class PatchListWidget(QScrollArea):
         for p in patches:
             cb = QCheckBox(f"[{p.id}] {p.desc}")
             cb.setChecked(True)
+            cb.setEnabled(p.optional)
             cb.setToolTip(f"类型: {p.type}\n模式: {p.pattern}")
             self._layout.addWidget(cb)
             self._checkboxes[p.id] = cb

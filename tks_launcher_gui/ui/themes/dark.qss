@@ -84,9 +84,22 @@ QCheckBox::indicator {
 QCheckBox::indicator:checked {
     background-color: #478cbf;
     border-color: #478cbf;
+    image: url(checkmark.svg);
 }
 QCheckBox::indicator:hover {
     border-color: #525A6E;
+}
+QCheckBox:disabled {
+    color: #666;
+}
+QCheckBox::indicator:disabled {
+    background-color: #2D3340;
+    border-color: #313745;
+}
+QCheckBox::indicator:checked:disabled {
+    background-color: #2D4A5E;
+    border-color: #2D4A5E;
+    image: url(checkmark.svg);
 }
 
 QSplitter::handle {
