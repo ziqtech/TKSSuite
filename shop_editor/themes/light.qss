@@ -1,5 +1,5 @@
 /* Godot Editor 风格浅色主题 — TKShop Editor (基于 tkt_editor_v5 配色) */
-QMainWindow, QWidget {
+QMainWindow, QWidget, QDialog {
     background-color: #e0e4e8;
     color: #222222;
     font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
@@ -182,4 +182,18 @@ QLabel#DockTitle { background-color: transparent; color: #111; font-weight: bold
 QLabel#hintLabel {
     color: #888888;
     font-size: 11px;
+}
+
+/* ── 弹窗高亮主按钮 ── */
+QPushButton#PrimaryButton {
+    background-color: #478cbf;
+    color: #ffffff;
+    border: 1px solid #366a91;
+    font-weight: bold;
+}
+QPushButton#PrimaryButton:hover {
+    background-color: #5aa1d5;
+}
+QPushButton#PrimaryButton:pressed {
+    background-color: #366a91;
 }

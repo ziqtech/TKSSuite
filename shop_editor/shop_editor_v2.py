@@ -461,6 +461,8 @@ class ItemPickerDialog(QDialog):
 
     def _build_ui(self):
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(8)
 
         # 顶部搜索
         top_layout = QHBoxLayout()
@@ -494,6 +496,7 @@ class ItemPickerDialog(QDialog):
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SingleSelection)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.table.verticalHeader().setVisible(False)
         self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.Stretch)
         self.table.setColumnWidth(0, 60)
         self.table.setColumnWidth(1, 80)
@@ -508,11 +511,14 @@ class ItemPickerDialog(QDialog):
         btn_layout.addWidget(self.lbl_count)
         btn_layout.addStretch()
         
-        btn_ok = QPushButton("✓ 确定")
+        btn_ok = QPushButton("✔ 确定")
+        btn_ok.setObjectName("PrimaryButton")
+        btn_ok.setMinimumWidth(90)
         btn_ok.clicked.connect(self._on_accept)
         btn_layout.addWidget(btn_ok)
 
-        btn_cancel = QPushButton("✗ 取消")
+        btn_cancel = QPushButton("❌ 取消")
+        btn_cancel.setMinimumWidth(90)
         btn_cancel.clicked.connect(self.reject)
         btn_layout.addWidget(btn_cancel)
         
