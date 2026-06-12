@@ -784,7 +784,7 @@ class SkillEditorApp(QMainWindow):
         
         toolbar.addStretch()
         
-        btn_theme = QPushButton("🌓 主题")
+        btn_theme = QPushButton("🌓 切换主题")
         btn_theme.clicked.connect(self._toggle_theme)
         toolbar.addWidget(btn_theme)
         
@@ -965,7 +965,7 @@ class SkillEditorApp(QMainWindow):
             inp = QLineEdit()
             inp.setVisible(False)
 
-            btn = QPushButton("配置…")
+            btn = QPushButton("配置")
             btn.setCursor(Qt.PointingHandCursor)
             # 配置按钮放在左侧时，约束它的最大宽度
             btn.setMaximumWidth(60)
@@ -1069,13 +1069,26 @@ class SkillEditorApp(QMainWindow):
             self.table.setItem(row, 3, QTableWidgetItem(skill_name(r, self.tkt)))
             self.table.setItem(row, 4, QTableWidgetItem(str(r['jp_cost'])))
             self.table.setItem(row, 5, QTableWidgetItem(str(r['mp_cost'])))
-            
-            if r['type'] == 0: color = QColor("#478cbf")
-            elif r['type'] == 2: color = QColor("#55b572")
-            else: color = QColor("#dcdcdc") if self._is_dark else QColor("#222222")
-            
-            for c in range(6): self.table.item(row, c).setForeground(color)
-            
+
+            # ==== 核心改造：为所有 4 种技能类型分配高辨识度专属颜色 ====
+            if self._is_dark:
+                # 深色模式高亮配色
+                if r['type'] == 0:   color = QColor("#478cbf") # 指令: 引擎蓝
+                elif r['type'] == 1: color = QColor("#e27d60") # 主动: 珊瑚橙 (极高辨识度)
+                elif r['type'] == 2: color = QColor("#55b572") # 被动: 翠绿
+                elif r['type'] == 3: color = QColor("#b988db") # 移动: 柔和紫
+                else:                color = QColor("#dcdcdc") # 未知: 默认白灰
+            else:
+                # 浅色模式需要更深的颜色才能在白底上压住视觉
+                if r['type'] == 0:   color = QColor("#28638f") # 深蓝
+                elif r['type'] == 1: color = QColor("#bd5739") # 深橙红
+                elif r['type'] == 2: color = QColor("#2d8046") # 深绿
+                elif r['type'] == 3: color = QColor("#8a5bb8") # 深紫
+                else:                color = QColor("#222222") # 未知: 默认黑
+
+            for c in range(6):
+                self.table.item(row, c).setForeground(color)
+
         self.table.blockSignals(False)
 
     def _on_table_select(self):
@@ -1100,7 +1113,18 @@ class SkillEditorApp(QMainWindow):
         self.preview_desc.setText(d_txt if d_txt else "暂无关于该技能的详细描述。")
         
         hint = TYPE_HINT_LABELS.get(rec['type'], "")
-        self.preview_type.setText(f"类型: {stype} | 点数={rec['jp_cost']} | 内力={rec['mp_cost']} | {hint}")
+
+        # ==== 检查器预览区类型同步高亮 ====
+        if self._is_dark:
+            type_color = {0: "#478cbf", 1: "#e27d60", 2: "#55b572", 3: "#b988db"}.get(rec['type'], "#dcdcdc")
+        else:
+            type_color = {0: "#28638f", 1: "#bd5739", 2: "#2d8046", 3: "#8a5bb8"}.get(rec['type'], "#222222")
+
+        # 使用 HTML 富文本进行局部着色，完美保留 QSS 的边框与排版
+        self.preview_type.setText(
+            f'<span style="color: {type_color}; font-weight: bold;">【{stype}】</span> '
+            f'| 点数={rec["jp_cost"]} | 内力={rec["mp_cost"]} | {hint}'
+        )
         sc = rec.get('sub_count', -1)
         self.preview_sub.setText(f"子技能: {sc} 个 (ID {rec['index']+1} - {rec['index']+sc})" if sc >= 0 else "")
 
@@ -1118,7 +1142,8 @@ class SkillEditorApp(QMainWindow):
             if ft == 'tkt':
                 nid = int(val) if val else 0
                 txt = self.tkt.get(nid, "") if nid > 0 else ""
-                self.extra_map[fn].setText((txt.split('\n')[0][:8] + '...') if txt else "")
+                t = txt.split('\n')[0] if txt else ""
+                self.extra_map[fn].setText((t[:8] + '...') if len(t) > 8 else t)
             elif ft == 'mask':
                 self._update_mask_label(fn, int(val) if val else 0)
             elif ft == 'flags':
@@ -1127,7 +1152,7 @@ class SkillEditorApp(QMainWindow):
                 sidx = int(val) if val else 0
                 if 0 < sidx < len(self.records) and self.records[sidx]['skill_text_id'] != 0:
                     nm = skill_name(self.records[sidx], self.tkt)
-                    self.extra_map[fn].setText((nm[:8] + '...'))
+                    self.extra_map[fn].setText((nm[:8] + '...') if len(nm) > 8 else nm)
                 else:
                     self.extra_map[fn].setText("")
 
@@ -1150,7 +1175,8 @@ class SkillEditorApp(QMainWindow):
         if dlg.exec() == QDialog.Accepted and dlg.selected_id is not None:
             self.widget_map[fn].setText(str(dlg.selected_id))
             txt = self.tkt.get(dlg.selected_id, "")
-            self.extra_map[fn].setText((txt.split('\n')[0][:8] + '...') if txt else "")
+            t = txt.split('\n')[0] if txt else ""
+            self.extra_map[fn].setText((t[:8] + '...') if len(t) > 8 else t)
             if fn == 'skill_text_id': self.preview_name.setText(txt.split('\n')[0].strip() if txt else "(无)")
 
     def _pick_skill(self, fn):
@@ -1159,7 +1185,7 @@ class SkillEditorApp(QMainWindow):
         if dlg.exec() == QDialog.Accepted and dlg.selected_index is not None:
             self.widget_map[fn].setText(str(dlg.selected_index))
             nm = skill_name(self.records[dlg.selected_index], self.tkt) if dlg.selected_index > 0 else ""
-            self.extra_map[fn].setText((nm[:8] + '...'))
+            self.extra_map[fn].setText((nm[:8] + '...') if len(nm) > 8 else nm)
 
     def _pick_status(self, fn):
         base = 0 if fn == 'immunity1' else 16
