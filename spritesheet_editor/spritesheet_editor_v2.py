@@ -352,7 +352,7 @@ class SpriteSheetModel(QObject):
     def __init__(self):
         super().__init__()
         self.frames: List[Optional[Image.Image]] = []
-        self.columns: int = 4
+        self.columns: int = 7
         self.rows: int = 4
         self.padding: int = 1
         self.cell_width: int = 64
@@ -498,7 +498,6 @@ class ImageListWidget(QListWidget):
         self.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.setDragDropMode(QAbstractItemView.InternalMove)
         self.setMinimumWidth(220)
-        self.setMaximumWidth(320)
 
     # ── 数据入口 ───────────────────────
     def clear_all(self):
@@ -676,6 +675,25 @@ class ImageListWidget(QListWidget):
 
     def _ask_confirm(self, title: str, msg: str) -> bool:
         return QMessageBox.question(self, title, msg) == QMessageBox.Yes
+
+
+# ═══════════════════════════════════════════════════════════════
+# Dock 面板包裹组件
+# ═══════════════════════════════════════════════════════════════
+
+class DockHeader(QFrame):
+    """Godot 风格面板标题栏 — 深色背景 + 加粗标题"""
+    def __init__(self, title, right_layout=None):
+        super().__init__()
+        self.setObjectName("DockHeader")
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(8, 6, 8, 6)
+        layout.setSpacing(4)
+        lbl = QLabel(title)
+        lbl.setObjectName("DockTitle")
+        layout.addWidget(lbl, 1)
+        if right_layout:
+            layout.addLayout(right_layout)
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -1406,14 +1424,14 @@ class PreviewView(QWidget):
         ctrl = QHBoxLayout()
 
         self._btn_play = QPushButton("▶ 播放")
-        self._btn_play.setFixedWidth(70)
+        self._btn_play.setStyleSheet("padding: 2px 8px;")
         self._btn_play.clicked.connect(self._toggle_play)
         ctrl.addWidget(self._btn_play)
 
         for text, slot in [("⏮", self._go_first), ("◀", self._prev_frame),
                             ("▶", self._next_frame), ("⏭", self._go_last)]:
             btn = QPushButton(text)
-            btn.setFixedWidth(30)
+            btn.setStyleSheet("padding: 2px 6px;")
             btn.clicked.connect(slot)
             ctrl.addWidget(btn)
 
@@ -1644,8 +1662,8 @@ class SettingsPanel(QWidget):
         layout.setContentsMargins(4, 4, 4, 4)
 
         # ── 网格设置 ──
-        grid_group = QGroupBox("网格设置")
-        grid_layout = QVBoxLayout(grid_group)
+        self._grid_section = QWidget()
+        grid_layout = QVBoxLayout(self._grid_section)
 
         for label, attr, rng in [("列数 (cols):", "columns", (1, 64)),
                                    ("行数 (rows):", "rows", (1, 64)),
@@ -1671,49 +1689,22 @@ class SettingsPanel(QWidget):
         self._btn_resplit.setEnabled(False)
         grid_layout.addWidget(self._btn_resplit)
 
-        layout.addWidget(grid_group)
+        layout.addWidget(self._grid_section)
 
         # ── 输出信息 ──
-        info_group = QGroupBox("输出信息")
-        info_layout = QVBoxLayout(info_group)
+        self._info_section = QWidget()
+        info_layout = QVBoxLayout(self._info_section)
         self._output_info = QTextEdit()
         self._output_info.setReadOnly(True)
         self._output_info.setMaximumHeight(100)
         self._output_info.setStyleSheet("background-color: #2a2a2a; color: #aaaaaa; font-family: Consolas; font-size: 11px;")
         info_layout.addWidget(self._output_info)
-        layout.addWidget(info_group)
+        layout.addWidget(self._info_section)
 
         # ── 行/列操作 ──
-        ops_group = QGroupBox("行/列排序")
-        ops_layout = QVBoxLayout(ops_group)
-        row1 = QHBoxLayout()
-        row1.addWidget(QLabel("行:"))
-        btn_up = QPushButton("↑ 上移")
-        btn_up.clicked.connect(lambda: self._move_row(-1))
-        btn_down = QPushButton("↓ 下移")
-        btn_down.clicked.connect(lambda: self._move_row(1))
-        row1.addWidget(btn_up)
-        row1.addWidget(btn_down)
-        ops_layout.addLayout(row1)
-
-        row2 = QHBoxLayout()
-        row2.addWidget(QLabel("列:"))
-        btn_left = QPushButton("← 左移")
-        btn_left.clicked.connect(lambda: self._move_col(-1))
-        btn_right = QPushButton("→ 右移")
-        btn_right.clicked.connect(lambda: self._move_col(1))
-        row2.addWidget(btn_left)
-        row2.addWidget(btn_right)
-        ops_layout.addLayout(row2)
-
-        hint = QLabel("提示: 画布上拖拽行头/列头也可排序")
-        hint.setStyleSheet("color: #666666; font-size: 10px;")
-        ops_layout.addWidget(hint)
-        layout.addWidget(ops_group)
-
         # ── 导出设置 ──
-        export_group = QGroupBox("导出")
-        export_layout = QVBoxLayout(export_group)
+        self._export_section = QWidget()
+        export_layout = QVBoxLayout(self._export_section)
 
         # 纹理格式
         tex_row = QHBoxLayout()
@@ -1729,6 +1720,7 @@ class SettingsPanel(QWidget):
         pix_row.addWidget(QLabel("像素格式:"))
         self._fmt_combo = QComboBox()
         self._fmt_combo.addItems(TEXTURE_FORMATS["PNG-32"])
+        self._fmt_combo.setCurrentText("RGB888")  # 默认 24-bit RGB, 对齐引擎资产标准
         self._fmt_combo.currentTextChanged.connect(self._refresh_export_info)
         pix_row.addWidget(self._fmt_combo)
         export_layout.addLayout(pix_row)
@@ -1767,11 +1759,19 @@ class SettingsPanel(QWidget):
         self._btn_export_each.clicked.connect(self.editor._export_all_frames)
         export_layout.addWidget(self._btn_export_each)
 
-        layout.addWidget(export_group)
+        layout.addWidget(self._export_section)
         layout.addStretch()
 
         self._update_output_info()
         self._refresh_export_info()
+
+    def sections(self):
+        """返回右侧面板各区域: [(标题, QWidget), ...]"""
+        return [
+            ("网格设置", self._grid_section),
+            ("输出信息", self._info_section),
+            ("导出", self._export_section),
+        ]
 
     # ── 回调 ──────────────────────────
     def _on_param_changed(self):
@@ -2187,7 +2187,7 @@ class SplitDialog(QDialog):
 class SpriteSheetEditorWindow(QMainWindow):
     """Spritesheet 编辑器主窗口 (PySide6)"""
 
-    def __init__(self, filepath: Optional[str] = None):
+    def __init__(self, filepath: Optional[str] = None, is_dark: bool = True):
         super().__init__()
         self.setWindowTitle("Spritesheet Editor - 精灵表编辑器 (PySide6)")
         ico = os.path.join(os.path.dirname(__file__), 'TKS.ico')
@@ -2202,13 +2202,19 @@ class SpriteSheetEditorWindow(QMainWindow):
         self.model = SpriteSheetModel()
         self._filepath: Optional[str] = None
         self._source_sheet: Optional[Image.Image] = None
-        self._is_dark: bool = True
+        self._is_dark: bool = is_dark
         self._preview_mode: str = "grid"
         self._suppress_mode_change: bool = False
 
         self._build_layout()
         self._build_menu()
         self._build_shortcuts()
+
+        # 初始画布背景色同步 (跟随 OS 主题)
+        bg_color = QColor("#1a1d24") if self._is_dark else QColor("#313c52")
+        self.canvas.setBackgroundBrush(QBrush(bg_color))
+        self.preview_view._disp.setStyleSheet(
+            f"background-color: {bg_color.name()}; border: none;")
 
         if filepath:
             self._load_spritesheet(Path(filepath))
@@ -2282,6 +2288,21 @@ class SpriteSheetEditorWindow(QMainWindow):
         btn_flip.clicked.connect(self._flip_horizontal)
         toolbar.addWidget(btn_flip)
 
+        toolbar.addWidget(self._v_sep())
+
+        btn_row_up = QPushButton("行上移")
+        btn_row_up.clicked.connect(lambda: self.settings._move_row(-1))
+        toolbar.addWidget(btn_row_up)
+        btn_row_down = QPushButton("行下移")
+        btn_row_down.clicked.connect(lambda: self.settings._move_row(1))
+        toolbar.addWidget(btn_row_down)
+        btn_col_left = QPushButton("列左移")
+        btn_col_left.clicked.connect(lambda: self.settings._move_col(-1))
+        toolbar.addWidget(btn_col_left)
+        btn_col_right = QPushButton("列右移")
+        btn_col_right.clicked.connect(lambda: self.settings._move_col(1))
+        toolbar.addWidget(btn_col_right)
+
         # 深浅色切换
         toolbar.addWidget(self._v_sep())
         btn_theme = QPushButton("🌓 切换主题")
@@ -2295,24 +2316,27 @@ class SpriteSheetEditorWindow(QMainWindow):
 
         main_layout.addLayout(toolbar)
 
-        # ── 主内容区 ──
-        content = QHBoxLayout()
+        # ── 主内容区 (QSplitter + Dock 面板) ──
+        main_splitter = QSplitter(Qt.Horizontal)
+        main_splitter.setHandleWidth(7)
 
-        # 左侧: 图片列表
-        left_panel = QVBoxLayout()
+        # ── 左侧: 精灵资产库 ──
+        left_widget = QWidget()
+        left_panel = QVBoxLayout(left_widget)
+        left_panel.setContentsMargins(0, 0, 0, 0)
         left_header = QHBoxLayout()
         self._list_title = QLabel("导入的精灵")
         left_header.addWidget(self._list_title)
         btn_clear = QPushButton("清空")
-        btn_clear.setFixedWidth(50)
+        btn_clear.setStyleSheet("padding: 2px 6px;")
         btn_clear.clicked.connect(self._clear_list)
         left_header.addWidget(btn_clear)
         btn_up = QPushButton("▲上移")
-        btn_up.setFixedWidth(55)
+        btn_up.setStyleSheet("padding: 2px 6px;")
         btn_up.clicked.connect(lambda: self.canvas.move_selected_left())
         left_header.addWidget(btn_up)
         btn_down = QPushButton("▼下移")
-        btn_down.setFixedWidth(55)
+        btn_down.setStyleSheet("padding: 2px 6px;")
         btn_down.clicked.connect(lambda: self.canvas.move_selected_right())
         left_header.addWidget(btn_down)
         left_panel.addLayout(left_header)
@@ -2326,10 +2350,12 @@ class SpriteSheetEditorWindow(QMainWindow):
         self._list_info_label = list_info
         left_panel.addWidget(list_info)
 
-        content.addLayout(left_panel)
+        main_splitter.addWidget(self._create_dock("精灵资产库", left_widget))
 
-        # 中间: 画布 + 预览
-        center = QVBoxLayout()
+        # ── 中间: 2D 渲染视口 ──
+        center_widget = QWidget()
+        center = QVBoxLayout(center_widget)
+        center.setContentsMargins(0, 0, 0, 0)
 
         # 预览模式切换栏 + 缩放
         preview_bar = QHBoxLayout()
@@ -2352,15 +2378,15 @@ class SpriteSheetEditorWindow(QMainWindow):
 
         preview_bar.addWidget(QLabel("缩放:"))
         btn_zoom_out = QPushButton("−")
-        btn_zoom_out.setFixedWidth(28)
+        btn_zoom_out.setStyleSheet("padding: 2px 6px;")
         btn_zoom_out.clicked.connect(lambda: self._shared_zoom_step(-0.25))
         preview_bar.addWidget(btn_zoom_out)
         btn_zoom_in = QPushButton("+")
-        btn_zoom_in.setFixedWidth(28)
+        btn_zoom_in.setStyleSheet("padding: 2px 6px;")
         btn_zoom_in.clicked.connect(lambda: self._shared_zoom_step(0.25))
         preview_bar.addWidget(btn_zoom_in)
         btn_zoom_1 = QPushButton("1:1")
-        btn_zoom_1.setFixedWidth(36)
+        btn_zoom_1.setStyleSheet("padding: 2px 6px;")
         btn_zoom_1.clicked.connect(self._shared_zoom_reset)
         preview_bar.addWidget(btn_zoom_1)
         self._zoom_label = QLabel("100%")
@@ -2393,24 +2419,51 @@ class SpriteSheetEditorWindow(QMainWindow):
         hint.setStyleSheet("color: #888888; font-size: 10px;")
         center.addWidget(hint)
 
-        content.addLayout(center, 1)
+        main_splitter.addWidget(self._create_dock("2D 渲染视口", center_widget))
 
-        # 右侧: 设置面板 (包裹在 QScrollArea 中应对小屏幕)
+        # ── 右侧: 检查器 (每个区域独立 Dock 面板, ScrollArea 应对小窗口) ──
         self.settings = SettingsPanel(self.model, self)
-        scroll_area = QScrollArea()
-        scroll_area.setWidget(self.settings)
-        scroll_area.setWidgetResizable(True)
-        scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        scroll_area.setMinimumWidth(260)
-        scroll_area.setMaximumWidth(310)
-        content.addWidget(scroll_area)
+        right_container = QWidget()
+        right_layout = QVBoxLayout(right_container)
+        right_layout.setContentsMargins(0, 0, 0, 0)
+        right_layout.setSpacing(4)
+        for title, widget in self.settings.sections():
+            right_layout.addWidget(self._create_dock(title, widget))
+        right_layout.addStretch()
+        right_scroll = QScrollArea()
+        right_scroll.setWidget(right_container)
+        right_scroll.setWidgetResizable(True)
+        right_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        right_scroll.setMinimumWidth(260)
+        main_splitter.addWidget(right_scroll)
 
-        main_layout.addLayout(content, 1)
+        main_splitter.setStretchFactor(0, 0)
+        main_splitter.setStretchFactor(1, 1)
+        main_splitter.setStretchFactor(2, 0)
+        main_splitter.setSizes([260, 600, 300])
+        main_layout.addWidget(main_splitter, 1)
 
         # ── 信号/槽连接 (MVC 解耦) ──
         self.model.model_changed.connect(self._on_model_changed)
         self.canvas.selectionChangedCustom.connect(self._on_selection_changed)
         self.image_list.selectionChangedCustom.connect(self._on_selection_changed)
+
+    def _create_dock(self, title, widget_content, header_layout=None):
+        """创建 Godot 风格 Dock 面板: DockHeader + DockBody 包裹"""
+        container = QWidget()
+        layout = QVBoxLayout(container)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        layout.addWidget(DockHeader(title, header_layout))
+
+        body = QWidget()
+        body.setObjectName("DockBody")
+        body_layout = QVBoxLayout(body)
+        body_layout.setContentsMargins(8, 8, 8, 8)
+        body_layout.addWidget(widget_content)
+
+        layout.addWidget(body, 1)
+        return container
 
     def _v_sep(self):
         sep = QFrame()
@@ -2873,6 +2926,13 @@ class SpriteSheetEditorWindow(QMainWindow):
         else:
             ThemeManager.apply_light_theme(app)
 
+        # 强制同步视口背景 (QSS 无法穿透 QGraphicsScene 底层)
+        bg_color = QColor("#1a1d24") if self._is_dark else QColor("#313c52")
+        self.canvas.setBackgroundBrush(QBrush(bg_color))
+        self.preview_view._disp.setStyleSheet(
+            f"background-color: {bg_color.name()}; border: none;")
+        self.canvas.redraw()
+
 
 # ═══════════════════════════════════════════════════════════════
 # 入口
@@ -2892,11 +2952,15 @@ def main():
     font.setPixelSize(13)
     app.setFont(font)
 
-    # 默认深色主题
-    ThemeManager.apply_dark_theme(app)
+    # 根据操作系统主题设定初始风格 (Qt6 原生检测)
+    is_dark = app.styleHints().colorScheme() == Qt.ColorScheme.Dark
+    if is_dark:
+        ThemeManager.apply_dark_theme(app)
+    else:
+        ThemeManager.apply_light_theme(app)
 
     filepath = sys.argv[1] if len(sys.argv) > 1 else None
-    window = SpriteSheetEditorWindow(filepath)
+    window = SpriteSheetEditorWindow(filepath, is_dark=is_dark)
     window.show()
 
     sys.exit(app.exec())
