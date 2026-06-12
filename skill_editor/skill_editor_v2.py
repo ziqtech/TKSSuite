@@ -874,18 +874,18 @@ class SkillEditorApp(QMainWindow):
         self.edit_layout.addWidget(preview_frame)
 
         # Properties (No wireframes, Godot inspector grid alignment)
-        self._build_field_group("基础属性", BASIC_FIELDS, 3)
-        self._build_field_group("效果加成 (主动技能核心)", EFFECT_FIELDS, 3)
-        self._build_field_group("状态免疫", IMMUNE_FIELDS, 3)
-        self._build_field_group("高级属性", ADVANCED_FIELDS, 3)
-        self._build_field_group("技能树引用表 (8组: 目标/进度)", TREE_FIELDS, 3)
+        self._build_field_group("基础属性", BASIC_FIELDS, 4)
+        self._build_field_group("效果加成 (主动技能核心)", EFFECT_FIELDS, 4)
+        self._build_field_group("状态免疫", IMMUNE_FIELDS, 4)
+        self._build_field_group("高级属性", ADVANCED_FIELDS, 4)
+        self._build_field_group("技能树引用表 (8组: 目标/进度)", TREE_FIELDS, 4)
 
         self.edit_layout.addStretch()
         scroll.setWidget(self.edit_inner)
         right_layout.addWidget(scroll, 1)
 
         self.splitter.addWidget(self._create_dock("检查器 (属性编辑)", right_widget))
-        self.splitter.setSizes([450, 800])
+        self.splitter.setSizes([380, 880])
 
         # Bottom Path
         path_layout = QHBoxLayout()
