@@ -255,19 +255,19 @@ def apply_alpha_mode(img: Image.Image, mode: str) -> Image.Image:
 # ═══════════════════════════════════════════════════════════════
 
 def pil_to_qpixmap(pil_image: Image.Image) -> QPixmap:
-    """将 PIL Image 转为 QPixmap (仅用于 UI 显示)"""
+    """将 PIL Image 转为 QPixmap (仅用于 UI 显示)
+
+    注意: QImage 通过 bytes 构造时不拷贝数据, 仅持有指针。
+    .copy() 确保 QPixmap 深拷贝一份独立内存, 避免 Python GC 回收
+    bytes 后 Qt 渲染时访问悬空指针导致段错误。
+    """
     if pil_image is None:
         return QPixmap()
     if pil_image.mode not in ("RGBA", "RGB"):
         pil_image = pil_image.convert("RGBA")
-    if pil_image.mode == "RGBA":
-        qim = QImage(pil_image.tobytes("raw", "RGBA"),
-                      pil_image.width, pil_image.height,
-                      QImage.Format_RGBA8888)
-    else:
-        qim = QImage(pil_image.tobytes("raw", "RGB"),
-                      pil_image.width, pil_image.height,
-                      QImage.Format_RGB888)
+    raw_bytes = pil_image.tobytes("raw", "RGBA" if pil_image.mode == "RGBA" else "RGB")
+    fmt = QImage.Format_RGBA8888 if pil_image.mode == "RGBA" else QImage.Format_RGB888
+    qim = QImage(raw_bytes, pil_image.width, pil_image.height, fmt).copy()
     return QPixmap.fromImage(qim)
 
 
@@ -276,7 +276,7 @@ def pil_to_qpixmap(pil_image: Image.Image) -> QPixmap:
 # ═══════════════════════════════════════════════════════════════
 
 class ThemeManager:
-    """QSS 主题管理器 — 从 themes/ 目录加载 Godot 风格样式表"""
+    """QSS 主题管理器 — 优先从 themes/ 目录加载 Godot 风格 QSS，缺失时回退 QPalette"""
 
     @staticmethod
     def _themes_dir() -> str:
@@ -296,10 +296,16 @@ class ThemeManager:
 
     @staticmethod
     def apply_theme(widget, theme: str) -> None:
-        """对指定 widget 应用主题 (dark / light)"""
+        """对指定 widget 应用主题 (dark / light)，QSS 缺失时自动回退 QPalette"""
         qss = ThemeManager._load_qss(theme)
         if qss:
             widget.setStyleSheet(qss)
+        elif theme == "dark":
+            widget.setStyleSheet("")
+            widget.setPalette(ThemeManager._dark_palette())
+        else:
+            widget.setStyleSheet("")
+            widget.setPalette(ThemeManager._light_palette())
 
     @staticmethod
     def apply_dark_theme(app: QApplication) -> None:
@@ -308,6 +314,30 @@ class ThemeManager:
     @staticmethod
     def apply_light_theme(app: QApplication) -> None:
         ThemeManager.apply_theme(app, "light")
+
+    # ── QPalette 后备方案 ──────────────────────────────
+
+    @staticmethod
+    def _dark_palette() -> QPalette:
+        palette = QPalette()
+        palette.setColor(QPalette.Window, QColor(45, 45, 45))
+        palette.setColor(QPalette.WindowText, Qt.white)
+        palette.setColor(QPalette.Base, QColor(30, 30, 30))
+        palette.setColor(QPalette.AlternateBase, QColor(45, 45, 45))
+        palette.setColor(QPalette.ToolTipBase, Qt.black)
+        palette.setColor(QPalette.ToolTipText, Qt.white)
+        palette.setColor(QPalette.Text, Qt.white)
+        palette.setColor(QPalette.Button, QColor(53, 53, 53))
+        palette.setColor(QPalette.ButtonText, Qt.white)
+        palette.setColor(QPalette.BrightText, Qt.red)
+        palette.setColor(QPalette.Link, QColor(42, 130, 218))
+        palette.setColor(QPalette.Highlight, QColor(42, 130, 218))
+        palette.setColor(QPalette.HighlightedText, Qt.black)
+        return palette
+
+    @staticmethod
+    def _light_palette() -> QPalette:
+        return QApplication.style().standardPalette()
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -378,12 +408,26 @@ class SpriteSheetModel(QObject):
                     self.frames.append(frame.copy())
                 else:
                     self.frames.append(None)
+        self.model_changed.emit()
 
     def swap_frames(self, idx_a: int, idx_b: int) -> None:
         self.normalize()
         n = len(self.frames)
         if 0 <= idx_a < n and 0 <= idx_b < n:
             self.frames[idx_a], self.frames[idx_b] = self.frames[idx_b], self.frames[idx_a]
+            self.model_changed.emit()
+
+    def move_frame(self, src: int, dst: int) -> None:
+        """将帧从 src 位置移动到 dst (pop+insert 语义)"""
+        self.normalize()
+        n = len(self.frames)
+        if not (0 <= src < n) or self.frames[src] is None:
+            return
+        frame = self.frames.pop(src)
+        dst_adj = dst if dst <= src else dst - 1
+        dst_adj = max(0, min(dst_adj, len(self.frames)))
+        self.frames.insert(dst_adj, frame)
+        self.model_changed.emit()
 
     def swap_rows(self, r1: int, r2: int) -> None:
         self.normalize()
@@ -393,6 +437,7 @@ class SpriteSheetModel(QObject):
         for c in range(cols):
             i1, i2 = r1 * cols + c, r2 * cols + c
             self.frames[i1], self.frames[i2] = self.frames[i2], self.frames[i1]
+        self.model_changed.emit()
 
     def swap_cols(self, c1: int, c2: int) -> None:
         self.normalize()
@@ -402,6 +447,7 @@ class SpriteSheetModel(QObject):
         for r in range(rows):
             i1, i2 = r * cols + c1, r * cols + c2
             self.frames[i1], self.frames[i2] = self.frames[i2], self.frames[i1]
+        self.model_changed.emit()
 
     def copy_row(self, row_idx: int) -> None:
         self.normalize()
@@ -417,6 +463,7 @@ class SpriteSheetModel(QObject):
         insert_pos = (row_idx + 1) * cols
         self.frames[insert_pos:insert_pos] = copied
         self.rows += 1
+        self.model_changed.emit()
 
     def get_frame(self, idx: int) -> Optional[Image.Image]:
         self.normalize()
@@ -432,6 +479,7 @@ class SpriteSheetModel(QObject):
 class ImageListWidget(QListWidget):
     """左侧面板: 精灵列表, 原生支持多选与拖拽排序"""
 
+    selectionChangedCustom = Signal()
     THUMB_SZ = 64
 
     def __init__(self, editor):
@@ -555,10 +603,9 @@ class ImageListWidget(QListWidget):
         self.editor.canvas.selection = sel
         self.editor.canvas._last_click_idx = primary
         self._selected_idx = primary
-        self.editor.canvas.redraw()
+        self.editor.canvas.update_selection_display()
         self._refresh_highlight()
-        if hasattr(self.editor, "_on_selection_changed"):
-            self.editor._on_selection_changed()
+        self.selectionChangedCustom.emit()
 
     # ── 拖拽排序支持 ──────────────────
     def startDrag(self, supportedActions):
@@ -569,7 +616,7 @@ class ImageListWidget(QListWidget):
         super().startDrag(supportedActions)
 
     def dropEvent(self, event):
-        """重写 dropEvent 以同步模型帧顺序"""
+        """重写 dropEvent 以同步模型帧顺序 — 委托 model.move_frame()"""
         src_mi = self._drag_src_mi
         self._drag_src_mi = -1
 
@@ -583,22 +630,16 @@ class ImageListWidget(QListWidget):
         if src_mi < 0 or dst_mi < 0 or src_mi == dst_mi:
             return
 
-        frames = self.editor.model.frames
-        if not (0 <= src_mi < len(frames)) or frames[src_mi] is None:
-            return
+        # Model 统一处理 move + emit signal → editor._on_model_changed()
+        self.editor.model.move_frame(src_mi, dst_mi)
 
-        # pop src → insert at dst (标准 reorder 语义)
-        item = frames.pop(src_mi)
         dst_adj = dst_mi if dst_mi <= src_mi else dst_mi - 1
-        dst_adj = max(0, min(dst_adj, len(frames)))
-        frames.insert(dst_adj, item)
-        self.editor.model.frames = frames
-
+        dst_adj = max(0, min(dst_adj, len(self.editor.model.frames) - 1))
         self._selected_idx = dst_adj
         self._anchor_idx = dst_adj
         self.editor.canvas.selection = {dst_adj}
         self.editor.canvas._last_click_idx = dst_adj
-        self.editor._on_model_changed()
+        # _on_model_changed 由 model_changed signal → editor 自动触发
 
     # ── 公共 API ──────────────────────
     def selected_image_idx(self) -> int:
@@ -643,6 +684,8 @@ class ImageListWidget(QListWidget):
 
 class SpriteGraphicsView(QGraphicsView):
     """精灵表画布: 显示网格, 支持拖拽排序, 多选"""
+
+    selectionChangedCustom = Signal()
 
     def __init__(self, model: SpriteSheetModel, editor):
         super().__init__()
@@ -920,8 +963,8 @@ class SpriteGraphicsView(QGraphicsView):
                         self.editor.image_list._selected_idx = primary
                     else:
                         self.editor.image_list._selected_idx = -1
-                self.redraw()
-                self._notify_selection_changed()
+                self.update_selection_display()
+                self.selectionChangedCustom.emit()
             return
 
         # Shift+点击: 范围选中
@@ -931,8 +974,8 @@ class SpriteGraphicsView(QGraphicsView):
                 self.selection = set(range(lo, hi + 1))
                 if hasattr(self.editor, "image_list"):
                     self.editor.image_list._selected_idx = idx
-                self.redraw()
-                self._notify_selection_changed()
+                self.update_selection_display()
+                self.selectionChangedCustom.emit()
             return
 
         # 普通点击
@@ -941,8 +984,8 @@ class SpriteGraphicsView(QGraphicsView):
                 self.selection.clear()
                 if hasattr(self.editor, "image_list"):
                     self.editor.image_list._selected_idx = -1
-                self.redraw()
-                self._notify_selection_changed()
+                self.update_selection_display()
+                self.selectionChangedCustom.emit()
             return
 
         self._drag_info = {"from_idx": idx, "start_x": x, "start_y": y, "moved": False}
@@ -951,8 +994,8 @@ class SpriteGraphicsView(QGraphicsView):
             self.selection = {idx}
         if hasattr(self.editor, "image_list"):
             self.editor.image_list._selected_idx = idx
-        self.redraw()
-        self._notify_selection_changed()
+        self.update_selection_display()
+        self.selectionChangedCustom.emit()
 
     def mouseMoveEvent(self, event: QMouseEvent):
         pos = self.mapToScene(event.position().toPoint())
@@ -1035,7 +1078,7 @@ class SpriteGraphicsView(QGraphicsView):
                     self.editor._on_model_changed()
                     return
             self._drag_info = None
-            self.redraw()
+            self.update_selection_display()
 
     def _show_frame_drag_indicator(self, cx: float, cy: float) -> None:
         self._remove_temp_items("drag_tgt")
@@ -1081,11 +1124,74 @@ class SpriteGraphicsView(QGraphicsView):
             if item.data(0) == tag:
                 self.scene.removeItem(item)
 
+    # ── 增量选中更新 (避免全量重绘) ──────
+    def update_selection_display(self) -> None:
+        """仅更新选中高亮和行列指示线, 不重建图片图元 — O(n) 替代 O(n×PIL)"""
+        m = self.model
+        cols = m.columns
+        cw, ch = m.cell_width, m.cell_height
+
+        # 遍历场景图元, 区分背景 / 图片 / 选中边框并更新
+        for item in self.scene.items():
+            data = item.data(0)
+            if not isinstance(data, int):
+                continue
+            idx = data
+            # 单元格背景: QGraphicsRectItem, 无边框或边框色 #555555
+            if isinstance(item, QGraphicsRectItem):
+                pen_color = item.pen().color().name()
+                # 跳过选中边框 (#80c0ff) / 行高亮 / 列高亮 / header 等
+                if pen_color in ("#80c0ff", "#a0d0ff", "#606060", "#ffcc00"):
+                    continue
+                if pen_color == "#555555" or item.pen().style() == Qt.NoPen:
+                    r, c = divmod(idx, cols)
+                    fill = QColor("#5a6a8a") if idx in self.selection else (
+                        QColor("#4a4a4a") if idx % 2 == 0 else QColor("#444444"))
+                    item.setBrush(QBrush(fill))
+
+        # 选中边框 → 删除旧的, 按需重建 (轻量)
+        for item in list(self.scene.items()):
+            if isinstance(item, QGraphicsRectItem) and item.pen().color().name() == "#80c0ff":
+                self.scene.removeItem(item)
+        # 行/列高亮 → 删除旧的
+        for item in list(self.scene.items()):
+            if isinstance(item, QGraphicsRectItem) and item.pen().color().name() == "#a0d0ff":
+                self.scene.removeItem(item)
+
+        # 重建选中边框
+        for idx in self.selection:
+            r, c = divmod(idx, cols)
+            x = HEADER_COL_W + c * (cw + m.padding)
+            y = HEADER_ROW_H + r * (ch + m.padding)
+            border = QGraphicsRectItem(x, y, cw, ch)
+            border.setPen(QPen(QColor("#80c0ff"), 2))
+            border.setBrush(QBrush(Qt.NoBrush))
+            self.scene.addItem(border)
+
+        # 单选时高亮整行/整列 (轻量)
+        if len(self.selection) == 1:
+            sel_idx = next(iter(self.selection))
+            sr, sc = divmod(sel_idx, cols)
+            tw, th = self._total_size()
+
+            ry = HEADER_ROW_H + sr * (ch + m.padding)
+            rh = QGraphicsRectItem(HEADER_COL_W, ry, tw - HEADER_COL_W, ch)
+            rh.setPen(QPen(QColor("#a0d0ff"), 1, Qt.DashLine))
+            rh.setBrush(QBrush(Qt.NoBrush))
+            self.scene.addItem(rh)
+
+            cx = HEADER_COL_W + sc * (cw + m.padding)
+            chl = QGraphicsRectItem(cx, HEADER_ROW_H, cw, th - HEADER_ROW_H)
+            chl.setPen(QPen(QColor("#a0d0ff"), 1, Qt.DashLine))
+            chl.setBrush(QBrush(Qt.NoBrush))
+            self.scene.addItem(chl)
+
     def wheelEvent(self, event: QWheelEvent):
         if event.modifiers() & Qt.ControlModifier:
             delta = event.angleDelta().y()
             step = 0.25 if delta > 0 else -0.25
             self.zoom_step(step)
+            event.accept()
         elif event.modifiers() & Qt.ShiftModifier:
             # Shift+滚轮 = 水平滚动
             delta = event.angleDelta().y()
@@ -1093,10 +1199,6 @@ class SpriteGraphicsView(QGraphicsView):
             sb.setValue(sb.value() - delta)
         else:
             super().wheelEvent(event)
-
-    def _notify_selection_changed(self):
-        if hasattr(self.editor, "_on_selection_changed"):
-            self.editor._on_selection_changed()
 
     # ── 公开方法 ───────────────────────
     def update_model(self) -> None:
@@ -1106,11 +1208,11 @@ class SpriteGraphicsView(QGraphicsView):
     def select_all(self) -> None:
         self.model.normalize()
         self.selection = set(range(len(self.model.frames)))
-        self.redraw()
+        self.update_selection_display()
 
     def select_none(self) -> None:
         self.selection.clear()
-        self.redraw()
+        self.update_selection_display()
 
     def delete_selected(self) -> None:
         for idx in list(self.selection):
@@ -1292,6 +1394,7 @@ class PreviewView(QWidget):
         if event.modifiers() & Qt.ControlModifier:
             delta = 0.25 if event.angleDelta().y() > 0 else -0.25
             self.zoom_step(delta)
+            event.accept()
         else:
             super().wheelEvent(event)
 
@@ -2303,6 +2406,11 @@ class SpriteSheetEditorWindow(QMainWindow):
         content.addWidget(scroll_area)
 
         main_layout.addLayout(content, 1)
+
+        # ── 信号/槽连接 (MVC 解耦) ──
+        self.model.model_changed.connect(self._on_model_changed)
+        self.canvas.selectionChangedCustom.connect(self._on_selection_changed)
+        self.image_list.selectionChangedCustom.connect(self._on_selection_changed)
 
     def _v_sep(self):
         sep = QFrame()
