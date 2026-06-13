@@ -564,11 +564,10 @@ class KonEditor(QMainWindow):
     # ----------- 右侧编辑面板 (Dock 风格) -----------
 
     def _build_edit_panel(self, parent):
-        # Dock 包裹 — 与 shop_editor_v2 / tkt_editor_v5 完全一致
         edit_content = QWidget()
         right_layout = QVBoxLayout(edit_content)
-        right_layout.setContentsMargins(0, 0, 0, 0)
-        right_layout.setSpacing(0)
+        right_layout.setContentsMargins(4, 4, 4, 4)
+        right_layout.setSpacing(4)
 
         # Inspector 标题 + 右侧按钮
         title_row = QHBoxLayout()
@@ -586,7 +585,7 @@ class KonEditor(QMainWindow):
         edit_container = QWidget()
         self.edit_layout = QVBoxLayout(edit_container)
         self.edit_layout.setContentsMargins(4, 4, 16, 4)
-        self.edit_layout.setSpacing(0)
+        self.edit_layout.setSpacing(4)
 
         # 预览面板 (PreviewFrame — 对齐 skill_editor_v2)
         preview = QFrame(); preview.setObjectName("PreviewFrame")
@@ -612,21 +611,8 @@ class KonEditor(QMainWindow):
         scroll.setWidget(edit_container)
         right_layout.addWidget(scroll, 1)
 
-        # Dock 包裹
-        dock = QWidget()
-        dock_layout = QVBoxLayout(dock)
-        dock_layout.setContentsMargins(0, 0, 0, 0)
-        dock_layout.setSpacing(0)
-        dock_layout.addWidget(DockHeader("动作属性编辑器"))
-        body = QWidget()
-        body.setObjectName("DockBody")
-        body_layout = QVBoxLayout(body)
-        body_layout.setContentsMargins(8, 8, 8, 8)
-        body_layout.addWidget(edit_content)
-        dock_layout.addWidget(body, 1)
-
-        parent.addWidget(dock)
-        self._edit_dock_body = body
+        parent.addWidget(edit_content)
+        self._edit_dock_body = edit_content
 
     def _build_field_group(self, title, fields, cols=4, force_last_row=False):
         """Dock 风格分组: DockHeader + DockBody + QGridLayout"""
