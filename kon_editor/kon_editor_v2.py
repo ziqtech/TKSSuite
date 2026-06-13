@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 """
-TKKon.dat 可视化编辑器 v3.2 (PySide6 — Godot 4.6 风格)
+TKKon.dat 可视化编辑器 v3.3 (PySide6 — Godot 4.6 风格)
 =============================================================
-UI 样式完全对齐 skill_editor_v2.py 的 FakeInputBox / InspectorTitle / PreviewFrame 体系。
+UI 样式完全对齐 skill_editor_v2.py / shop_editor_v2.py 的
+FakeInputBox / InspectorTitle / PreviewFrame / DockHeader 体系。
+主题从 themes/ 目录加载 QSS, 缺失时回退 QPalette。
 底层 LZSS 引擎与 TKKon/TKT 二进制解析逻辑 100% 保留。
 """
 
-import struct, os, sys
+import struct, os, re, sys
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QSplitter, QTableWidget, QTableWidgetItem, QHeaderView,
@@ -14,221 +16,89 @@ from PySide6.QtWidgets import (
     QScrollArea, QGroupBox, QDialog, QFileDialog, QMessageBox, QTextEdit,
     QFrame, QGridLayout, QAbstractItemView, QMenuBar,
 )
-from PySide6.QtGui import QIntValidator, QColor, QFont, QIcon, QShortcut
+from PySide6.QtGui import QIntValidator, QColor, QFont, QIcon, QShortcut, QPalette
 from PySide6.QtCore import Qt
 
 # ============================================================
-# QSS 样式表 (100% 对齐 skill_editor_v2.py 的 Godot 4.6 规范)
+# 深浅色主题管理器 (对齐 shop_editor_v2 / spritesheet_editor_v2)
 # ============================================================
 
-GODOT_DARK_QSS = """
-QWidget { background-color: #202531; color: #dcdcdc; font-family: 'Segoe UI', 'Microsoft YaHei'; }
-QTableWidget { background-color: #1a1e27; alternate-background-color: #202531; border: 1px solid #14171f; selection-background-color: #478cbf; }
-QHeaderView::section { background-color: #202531; border: none; border-bottom: 1px solid #14171f; padding: 4px; }
+class ThemeManager:
+    """QSS 主题管理器 — 优先从 themes/ 目录加载 Godot 风格 QSS，缺失时回退 QPalette"""
 
-QPlainTextEdit, QTextEdit {
-    background-color: #161923; border: 1px solid #0b0c12;
-    border-radius: 4px; padding: 8px; color: #e0e4eb;
-    font-family: 'Consolas', 'Segoe UI';
-}
+    @staticmethod
+    def _themes_dir() -> str:
+        return os.path.join(os.path.dirname(__file__), "themes")
 
-QLineEdit {
-    background-color: #161923; border: 1px solid #0b0c12;
-    padding: 4px 8px; border-radius: 4px; color: #e0e4eb;
-}
-QPlainTextEdit:focus, QTextEdit:focus, QLineEdit:focus {
-    background-color: #1a1e29; border: 1px solid #478cbf;
-}
-QLineEdit:disabled { background-color: #202531; color: #666; border: 1px dashed #2a303d; }
+    @staticmethod
+    def _load_qss(theme: str) -> str:
+        """读取 QSS 文件并将 url() 路径转为绝对路径"""
+        qss_file = os.path.join(ThemeManager._themes_dir(), f"{theme}.qss")
+        if not os.path.exists(qss_file):
+            return ""
+        with open(qss_file, "r", encoding="utf-8") as f:
+            qss = f.read()
+        themes_dir = os.path.dirname(qss_file).replace("\\", "/")
+        qss = re.sub(r"url\(([^)]+)\)", lambda m: f"url({themes_dir}/{m.group(1)})", qss)
+        return qss
 
-QPushButton {
-    background-color: #2e3548; border: 1px solid #14171f;
-    border-radius: 4px; padding: 5px 12px;
-}
-QPushButton:hover { background-color: #3b445c; }
-QPushButton:pressed { background-color: #478cbf; color: #fff; }
+    @staticmethod
+    def apply_theme(widget, theme: str) -> None:
+        """对指定 widget 应用主题 (dark / light)，QSS 缺失时自动回退 QPalette"""
+        qss = ThemeManager._load_qss(theme)
+        if qss:
+            widget.setStyleSheet(qss)
+        elif theme == "dark":
+            widget.setStyleSheet("")
+            widget.setPalette(ThemeManager._dark_palette())
+        else:
+            widget.setStyleSheet("")
+            widget.setPalette(ThemeManager._light_palette())
 
-QComboBox {
-    background-color: #2e3548; border: 1px solid #14171f;
-    border-radius: 4px; padding: 4px;
-}
-QComboBox::drop-down { border: none; }
+    @staticmethod
+    def apply_dark_theme(app: QApplication) -> None:
+        ThemeManager.apply_theme(app, "dark")
 
-QSplitter::handle { image: none; background-color: transparent; }
-QSplitter::handle:horizontal { border-left: 1px solid #14171f; margin-left: 3px; margin-right: 3px; }
-QSplitter::handle:vertical { border-top: 1px solid #14171f; margin-top: 3px; margin-bottom: 3px; }
-QSplitter::handle:horizontal:hover { border-left: 1px solid #478cbf; }
-QSplitter::handle:vertical:hover { border-top: 1px solid #478cbf; }
+    @staticmethod
+    def apply_light_theme(app: QApplication) -> None:
+        ThemeManager.apply_theme(app, "light")
 
-QScrollBar:vertical { background: #1a1e27; width: 12px; }
-QScrollBar::handle:vertical { background: #3b445c; border-radius: 6px; min-height: 20px; margin: 2px; }
-QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0px; }
+    @staticmethod
+    def _dark_palette() -> QPalette:
+        palette = QPalette()
+        palette.setColor(QPalette.Window, QColor(45, 45, 45))
+        palette.setColor(QPalette.WindowText, Qt.white)
+        palette.setColor(QPalette.Base, QColor(30, 30, 30))
+        palette.setColor(QPalette.AlternateBase, QColor(45, 45, 45))
+        palette.setColor(QPalette.ToolTipBase, Qt.black)
+        palette.setColor(QPalette.ToolTipText, Qt.white)
+        palette.setColor(QPalette.Text, Qt.white)
+        palette.setColor(QPalette.Button, QColor(53, 53, 53))
+        palette.setColor(QPalette.ButtonText, Qt.white)
+        palette.setColor(QPalette.BrightText, Qt.red)
+        palette.setColor(QPalette.Link, QColor(42, 130, 218))
+        palette.setColor(QPalette.Highlight, QColor(42, 130, 218))
+        palette.setColor(QPalette.HighlightedText, Qt.black)
+        return palette
 
-QCheckBox { spacing: 4px; }
-QCheckBox::indicator { width: 15px; height: 15px; }
+    @staticmethod
+    def _light_palette() -> QPalette:
+        return QApplication.style().standardPalette()
 
-QMenuBar { background-color: #202531; color: #dcdcdc; border-bottom: 1px solid #14171f; }
-QMenuBar::item { background: transparent; padding: 5px 10px; }
-QMenuBar::item:selected { background-color: #3b445c; border-radius: 2px; }
-QMenu { background-color: #202531; border: 1px solid #14171f; padding: 4px; }
-QMenu::item { padding: 6px 24px; }
-QMenu::item:selected { background-color: #478cbf; color: #ffffff; }
+# ============================================================
+# Dock 面板组件 (对齐 shop_editor_v2 / tkt_editor_v5)
+# ============================================================
 
-QLabel[class="InspectorTitle"] { font-weight: bold; color: #a5b0cb; border-bottom: 1px solid #14171f; padding-bottom: 2px; margin-top: 8px; }
-QLabel[class="PropLabel"] { color: #8a96b3; }
-QScrollArea { border: none; background-color: transparent; }
-QScrollArea > QWidget > QWidget { background-color: transparent; }
-
-/* 预览区面板 */
-QFrame#PreviewFrame {
-    background-color: transparent; border: none;
-    border-top: 2px solid #2b4f70; border-bottom: 1px solid #14171f;
-    border-radius: 0px; margin-top: 4px; margin-bottom: 8px;
-}
-QLabel[class="PreviewName"] { color: #e0e4eb; font-size: 18px; font-weight: bold; font-family: 'Microsoft YaHei', 'Segoe UI'; }
-QLabel[class="PreviewMeta"] { color: #8a96b3; font-size: 11px; border-bottom: 1px solid #2e3548; padding-bottom: 8px; margin-bottom: 4px; }
-QLabel[class="PreviewDesc"] { color: #55b572; font-size: 13px; padding-top: 4px; }
-QLabel[class="PreviewSubMeta"] { color: #e27d60; font-size: 12px; font-weight: bold; padding-top: 4px; }
-
-/* FakeInputBox 内凹输入框外壳 */
-QFrame#FakeInputBox {
-    background-color: #161923; border: 1px solid #0b0c12; border-radius: 4px;
-}
-QFrame#FakeInputBox:hover, QFrame#FakeInputBox:focus-within {
-    background-color: #1a1e29; border: 1px solid #478cbf;
-}
-QFrame#FakeInputBox > QLineEdit {
-    background: transparent; border: none; padding: 4px 8px;
-    color: #e0e4eb; font-family: 'Consolas', 'Segoe UI'; selection-background-color: #478cbf;
-}
-QFrame#FakeInputBox > QPushButton {
-    background: transparent; border: none;
-    border-left: 1px solid #202531; border-radius: 0px;
-    padding: 4px 8px; margin: 0px; color: #8a96b3;
-}
-QFrame#FakeInputBox > QPushButton:hover { background-color: #2e3548; color: #ffffff; }
-QFrame#FakeInputBox > QPushButton:first-child:hover { border-top-left-radius: 3px; border-bottom-left-radius: 3px; }
-QLabel[class="ExtraPreviewText"] { padding: 4px 8px; color: #478cbf; font-size: 11px; }
-QFrame#FakeInputBox > QComboBox {
-    border: none; background: transparent; padding: 4px 8px; color: #e0e4eb;
-}
-QFrame#FakeInputBox > QComboBox::drop-down { border: none; }
-
-/* 拆分字段内部标签 */
-QLabel[class="SplitFieldLabel"] { color: #8a96b3; font-size: 11px; padding: 0 4px; }
-
-QGroupBox {
-    border: 1px solid #2a303d; border-radius: 4px;
-    margin-top: 12px; padding-top: 16px;
-}
-QGroupBox::title {
-    subcontrol-origin: margin; subcontrol-position: top left;
-    padding: 2px 8px; color: #9da5b4;
-}
-"""
-
-GODOT_LIGHT_QSS = """
-QWidget { background-color: #e0e4e8; color: #222222; font-family: 'Segoe UI', 'Microsoft YaHei'; }
-QTableWidget { background-color: #ffffff; alternate-background-color: #f2f5f7; border: 1px solid #b0b5bd; selection-background-color: #478cbf; selection-color: #fff; }
-QHeaderView::section { background-color: #d1d6dc; border: none; border-bottom: 1px solid #b0b5bd; padding: 4px; color: #222; }
-
-QPlainTextEdit, QTextEdit {
-    background-color: #f7f9fa; border: 1px solid #c2c7ce;
-    border-radius: 4px; padding: 8px; color: #222222; font-family: 'Consolas', 'Segoe UI';
-}
-
-QLineEdit {
-    background-color: #f7f9fa; border: 1px solid #c2c7ce;
-    padding: 4px 8px; border-radius: 4px; color: #222222;
-}
-QPlainTextEdit:focus, QTextEdit:focus, QLineEdit:focus {
-    background-color: #ffffff; border: 1px solid #478cbf;
-}
-QLineEdit:disabled { background-color: #f3f4f6; color: #9ca3af; border: 1px dashed #d1d5db; }
-
-QPushButton {
-    background-color: #cdd3d9; border: 1px solid #a6abb2;
-    border-radius: 4px; padding: 5px 12px; color: #111;
-}
-QPushButton:hover { background-color: #b8c0c7; }
-QPushButton:pressed { background-color: #8da4b8; }
-
-QComboBox {
-    background-color: #ffffff; border: 1px solid #b0b5bd;
-    border-radius: 4px; padding: 4px;
-}
-QComboBox::drop-down { border: none; }
-
-QSplitter::handle { image: none; background-color: transparent; }
-QSplitter::handle:horizontal { border-left: 1px solid #b0b5bd; margin-left: 3px; margin-right: 3px; }
-QSplitter::handle:vertical { border-top: 1px solid #b0b5bd; margin-top: 3px; margin-bottom: 3px; }
-QSplitter::handle:horizontal:hover { border-left: 1px solid #478cbf; }
-QSplitter::handle:vertical:hover { border-top: 1px solid #478cbf; }
-
-QScrollBar:vertical { background: #f2f5f7; width: 12px; }
-QScrollBar::handle:vertical { background: #b8c0c7; border-radius: 6px; min-height: 20px; margin: 2px; }
-QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0px; }
-
-QCheckBox { spacing: 4px; }
-QCheckBox::indicator { width: 15px; height: 15px; }
-
-QMenuBar { background-color: #e0e4e8; color: #222222; border-bottom: 1px solid #b0b5bd; }
-QMenuBar::item { background: transparent; padding: 5px 10px; }
-QMenuBar::item:selected { background-color: #b8c0c7; border-radius: 2px; }
-QMenu { background-color: #ffffff; border: 1px solid #b0b5bd; padding: 4px; }
-QMenu::item { padding: 6px 24px; color: #222; }
-QMenu::item:selected { background-color: #478cbf; color: #ffffff; }
-
-QLabel[class="InspectorTitle"] { font-weight: bold; color: #111; border-bottom: 1px solid #b0b5bd; padding-bottom: 2px; margin-top: 8px; }
-QLabel[class="PropLabel"] { color: #444; }
-QScrollArea { border: none; background-color: transparent; }
-QScrollArea > QWidget > QWidget { background-color: transparent; }
-
-QFrame#PreviewFrame {
-    background-color: transparent; border: none;
-    border-top: 2px solid #8caec7; border-bottom: 1px solid #b0b5bd;
-    border-radius: 0px; margin-top: 4px; margin-bottom: 8px;
-}
-QLabel[class="PreviewName"] { color: #111111; font-size: 18px; font-weight: bold; font-family: 'Microsoft YaHei', 'Segoe UI'; }
-QLabel[class="PreviewMeta"] { color: #666666; font-size: 11px; border-bottom: 1px solid #d8dce3; padding-bottom: 8px; margin-bottom: 4px; }
-QLabel[class="PreviewDesc"] { color: #178a39; font-size: 13px; padding-top: 4px; }
-QLabel[class="PreviewSubMeta"] { color: #c93b16; font-size: 12px; font-weight: bold; padding-top: 4px; }
-
-QFrame#FakeInputBox {
-    background-color: #f7f9fa; border: 1px solid #c2c7ce; border-radius: 4px;
-}
-QFrame#FakeInputBox:hover, QFrame#FakeInputBox:focus-within {
-    background-color: #ffffff; border: 1px solid #478cbf;
-}
-QFrame#FakeInputBox > QLineEdit {
-    background: transparent; border: none; padding: 4px 8px;
-    color: #222222; font-family: 'Consolas', 'Segoe UI';
-    selection-background-color: #478cbf; selection-color: #ffffff;
-}
-QFrame#FakeInputBox > QPushButton {
-    background: transparent; border: none;
-    border-left: 1px solid #d8dce3; border-radius: 0px;
-    padding: 4px 8px; margin: 0px; color: #555555;
-}
-QFrame#FakeInputBox > QPushButton:hover { background-color: #e5e9f0; color: #111111; }
-QFrame#FakeInputBox > QPushButton:first-child:hover { border-top-left-radius: 3px; border-bottom-left-radius: 3px; }
-QLabel[class="ExtraPreviewText"] { padding: 4px 8px; color: #1a6b9c; font-size: 11px; }
-QFrame#FakeInputBox > QComboBox {
-    border: none; background: transparent; padding: 4px 8px; color: #222222;
-}
-QFrame#FakeInputBox > QComboBox::drop-down { border: none; }
-
-QLabel[class="SplitFieldLabel"] { color: #666; font-size: 11px; padding: 0 4px; }
-
-QGroupBox {
-    border: 1px solid #b0b5bd; border-radius: 4px;
-    margin-top: 12px; padding-top: 16px;
-}
-QGroupBox::title {
-    subcontrol-origin: margin; subcontrol-position: top left;
-    padding: 2px 8px; color: #4b5563;
-}
-"""
+class DockHeader(QFrame):
+    def __init__(self, title):
+        super().__init__()
+        self.setObjectName("DockHeader")
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(8, 6, 8, 6)
+        layout.setSpacing(4)
+        lbl = QLabel(title)
+        lbl.setObjectName("DockTitle")
+        layout.addWidget(lbl, 1)
 
 # ============================================================
 # 业务逻辑层 (严格保留原版算法)
@@ -525,13 +395,42 @@ class FieldRefDialog(QDialog):
         bl = QHBoxLayout(); bl.addStretch(); bl.addWidget(btn_close); layout.addLayout(bl)
 
 # ============================================================
+# FakeInputBox 工厂 (对齐 skill_editor_v2.py)
+# ============================================================
+
+def make_fake_input(line_edit=None, combo=None, button=None, stretch=True):
+    """创建 FakeInputBox 外壳 (内凹输入框风格)
+    
+    内部可包含:
+      - QLineEdit (数值输入)
+      - QComboBox (下拉选择)
+      - QPushButton (右侧操作按钮, 如 "选择状态...")
+    """
+    box = QFrame()
+    box.setObjectName("FakeInputBox")
+    h = QHBoxLayout(box)
+    h.setContentsMargins(0, 0, 0, 0)
+    h.setSpacing(0)
+
+    if line_edit:
+        line_edit.setFrame(False)
+        h.addWidget(line_edit)
+    if combo:
+        h.addWidget(combo)
+    if button:
+        h.addWidget(button)
+    if stretch:
+        h.addStretch()
+    return box
+
+# ============================================================
 # 主编辑器窗口
 # ============================================================
 
 class KonEditor(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("TKKon.dat 可视化编辑器 v3.2 - PySide6")
+        self.setWindowTitle("TKKon.dat 可视化编辑器 v3.3 - PySide6")
         self.resize(1320, 820); self.setMinimumSize(1050, 650)
 
         ico = os.path.join(os.path.dirname(__file__), 'TKS.ico')
@@ -557,8 +456,7 @@ class KonEditor(QMainWindow):
     # ============================================================
 
     def _apply_theme(self):
-        qss = GODOT_DARK_QSS if self.is_dark_theme else GODOT_LIGHT_QSS
-        self.setStyleSheet(qss)
+        ThemeManager.apply_theme(QApplication.instance(), "dark" if self.is_dark_theme else "light")
 
     def _toggle_theme(self):
         self.is_dark_theme = not self.is_dark_theme
@@ -592,7 +490,7 @@ class KonEditor(QMainWindow):
 
         QShortcut("F5", self).activated.connect(self._toggle_theme)
 
-        # -- 工具栏 (对齐原版, 仅增加切换主题按钮) --
+        # -- 工具栏 --
         toolbar = QHBoxLayout()
         toolbar.addWidget(QLabel("搜索:"))
         self.search_input = QLineEdit(); self.search_input.setFixedWidth(160)
@@ -618,7 +516,7 @@ class KonEditor(QMainWindow):
         toolbar.addStretch()
 
         self.status_label = QLabel("请通过 文件 → 加载 TKS 目录 打开数据")
-        self.status_label.setStyleSheet("color: #888;")
+        self.status_label.setObjectName("hintLabel")
         toolbar.addWidget(self.status_label)
 
         # -- 主布局 --
@@ -631,6 +529,7 @@ class KonEditor(QMainWindow):
 
         splitter = QSplitter(Qt.Horizontal)
         splitter.setHandleWidth(7)
+        splitter.setChildrenCollapsible(False)
         main_layout.addWidget(splitter, 1)
 
         self._build_table(splitter)
@@ -640,8 +539,8 @@ class KonEditor(QMainWindow):
         # 底部路径栏
         path_layout = QHBoxLayout()
         path_layout.setContentsMargins(4, 2, 4, 2)
-        self.lbl_kon = QLabel("TKKon.dat: 未加载"); self.lbl_kon.setStyleSheet("color: #e27d60;")
-        self.lbl_tkt = QLabel("TKT.dat: 未加载"); self.lbl_tkt.setStyleSheet("color: #e27d60;")
+        self.lbl_kon = QLabel("TKKon.dat: 未加载"); self.lbl_kon.setObjectName("hintLabel")
+        self.lbl_tkt = QLabel("TKT.dat: 未加载"); self.lbl_tkt.setObjectName("hintLabel")
         path_layout.addWidget(self.lbl_kon); path_layout.addSpacing(20)
         path_layout.addWidget(self.lbl_tkt); path_layout.addStretch()
         main_layout.addLayout(path_layout)
@@ -662,17 +561,18 @@ class KonEditor(QMainWindow):
         self.table.itemSelectionChanged.connect(self._on_table_select)
         parent.addWidget(self.table)
 
-    # ----------- 右侧编辑面板 -----------
+    # ----------- 右侧编辑面板 (Dock 风格) -----------
 
     def _build_edit_panel(self, parent):
-        right_widget = QWidget()
-        right_layout = QVBoxLayout(right_widget)
-        right_layout.setContentsMargins(4, 0, 4, 0)
-        right_layout.setSpacing(4)
+        # Dock 包裹 — 与 shop_editor_v2 / tkt_editor_v5 完全一致
+        edit_content = QWidget()
+        right_layout = QVBoxLayout(edit_content)
+        right_layout.setContentsMargins(0, 0, 0, 0)
+        right_layout.setSpacing(0)
 
         # Inspector 标题
         self.lbl_inspector_title = QLabel("技能属性检查器 — 未选中")
-        self.lbl_inspector_title.setStyleSheet("font-size: 16px; font-weight: bold; color: #478cbf; padding: 2px 0;")
+        self.lbl_inspector_title.setProperty("class", "InspectorTitle")
         right_layout.addWidget(self.lbl_inspector_title)
 
         # 应用/重置按钮
@@ -689,7 +589,7 @@ class KonEditor(QMainWindow):
         self.edit_layout.setContentsMargins(4, 4, 16, 4)
         self.edit_layout.setSpacing(2)
 
-        # 预览面板 (PreviewFrame)
+        # 预览面板 (PreviewFrame — 对齐 skill_editor_v2)
         preview = QFrame(); preview.setObjectName("PreviewFrame")
         pl = QVBoxLayout(preview); pl.setContentsMargins(8, 12, 8, 12); pl.setSpacing(6)
         self.preview_name = QLabel("(未选中)"); self.preview_name.setProperty("class", "PreviewName")
@@ -711,7 +611,22 @@ class KonEditor(QMainWindow):
         self.edit_layout.addStretch()
         scroll.setWidget(edit_container)
         right_layout.addWidget(scroll, 1)
-        parent.addWidget(right_widget)
+
+        # Dock 包裹
+        dock = QWidget()
+        dock_layout = QVBoxLayout(dock)
+        dock_layout.setContentsMargins(0, 0, 0, 0)
+        dock_layout.setSpacing(0)
+        dock_layout.addWidget(DockHeader("动作属性编辑器"))
+        body = QWidget()
+        body.setObjectName("DockBody")
+        body_layout = QVBoxLayout(body)
+        body_layout.setContentsMargins(8, 8, 8, 8)
+        body_layout.addWidget(edit_content)
+        dock_layout.addWidget(body, 1)
+
+        parent.addWidget(dock)
+        self._edit_dock_body = body
 
     def _build_field_group(self, title, fields, cols=4):
         """原版布局: QGroupBox + QGridLayout, label 在上 input 在下"""
@@ -726,12 +641,12 @@ class KonEditor(QMainWindow):
         self.edit_layout.addWidget(group)
 
     def _build_field(self, grid, row, col, fn, fo, fl, cmt):
-        """单个字段: label 在上, 输入控件在下, 解析文本在最下"""
+        """单个字段: PropLabel 在上, FakeInputBox 在中, ExtraPreviewText 在下"""
         cell = QVBoxLayout(); cell.setSpacing(2)
 
         lbl = QLabel(fl)
         lbl.setToolTip(f"[{fo:02d}] {cmt}")
-        lbl.setStyleSheet("font-size: 11px; color: #8a96b3;")
+        lbl.setProperty("class", "PropLabel")
         cell.addWidget(lbl)
 
         is_unused = fn.startswith('unused')
@@ -747,59 +662,60 @@ class KonEditor(QMainWindow):
             cb2 = QCheckBox("物理攻击"); cb2.setToolTip("物理伤害公式 (bit2)")
             h.addWidget(cb0); h.addWidget(cb1); h.addWidget(cb2); h.addStretch()
             self.split_map[fn] = (cb0, cb1, cb2)
-            extra = QLabel(""); extra.setStyleSheet("font-size: 11px; color: #55b572;")
+            extra = QLabel(""); extra.setProperty("class", "ExtraPreviewText")
             cell.addWidget(row_w); cell.addWidget(extra)
             self.extra_map[fn] = extra
 
         elif is_split:
-            row_w = QWidget(); h = QHBoxLayout(row_w); h.setContentsMargins(0,0,0,0); h.setSpacing(2)
-            if fn == 'exec_mode':
-                hi_w = QLineEdit(); hi_w.setValidator(QIntValidator(-1, 127)); hi_w.setFixedWidth(48)
-                lo_w = QComboBox(); lo_w.addItems(["启用", "禁用"]); lo_w.setFixedWidth(55)
-                h.addWidget(QLabel("距离")); h.addWidget(hi_w)
-                h.addWidget(QLabel("范围")); h.addWidget(lo_w)
-            else:
-                hi_w = QLineEdit(); hi_w.setValidator(QIntValidator(0, 127)); hi_w.setFixedWidth(48)
-                lo_w = QComboBox(); lo_w.addItems(["启用", "禁用"]); lo_w.setFixedWidth(55)
-                h.addWidget(QLabel("面积")); h.addWidget(hi_w)
-                h.addWidget(QLabel("扩散")); h.addWidget(lo_w)
-            h.addStretch()
+            hi_w = QLineEdit(); hi_w.setValidator(QIntValidator(-128, 127)); hi_w.setFixedWidth(48)
+            lo_w = QComboBox(); lo_w.setFixedWidth(60)
+            lo_w.addItems(["启用", "禁用"])
+            box = QFrame(); box.setObjectName("FakeInputBox")
+            bh = QHBoxLayout(box); bh.setContentsMargins(0,0,0,0); bh.setSpacing(0)
+            bh.addWidget(hi_w)
+            sep_text = "范围" if fn == 'exec_mode' else "扩散"
+            sep_lbl = QLabel(sep_text); sep_lbl.setProperty("class", "SplitFieldLabel")
+            bh.addWidget(sep_lbl)
+            bh.addWidget(lo_w)
             self.split_map[fn] = (hi_w, lo_w)
-            extra = QLabel(""); extra.setStyleSheet("font-size: 11px; color: #55b572;")
-            cell.addWidget(row_w); cell.addWidget(extra)
+            extra = QLabel(""); extra.setProperty("class", "ExtraPreviewText")
+            cell.addWidget(box); cell.addWidget(extra)
             self.extra_map[fn] = extra
 
         elif is_filter:
-            row_w = QWidget(); h = QHBoxLayout(row_w); h.setContentsMargins(0,0,0,0); h.setSpacing(2)
             hi_w = QComboBox(); hi_w.addItems(["全部", "仅角色", "仅空地"])
             lo_w = QComboBox(); lo_w.addItems(["对立阵营", "同阵营", "任意阵营"])
-            h.addWidget(QLabel("格子")); h.addWidget(hi_w)
-            h.addWidget(QLabel("阵营")); h.addWidget(lo_w); h.addStretch()
+            box = QFrame(); box.setObjectName("FakeInputBox")
+            bh = QHBoxLayout(box); bh.setContentsMargins(0,0,0,0); bh.setSpacing(0)
+            bh.addWidget(hi_w)
+            sep_lbl = QLabel("阵营"); sep_lbl.setProperty("class", "SplitFieldLabel")
+            bh.addWidget(sep_lbl)
+            bh.addWidget(lo_w)
             self.split_map[fn] = (hi_w, lo_w)
-            extra = QLabel(""); extra.setStyleSheet("font-size: 11px; color: #55b572;")
-            cell.addWidget(row_w); cell.addWidget(extra)
+            extra = QLabel(""); extra.setProperty("class", "ExtraPreviewText")
+            cell.addWidget(box); cell.addWidget(extra)
             self.extra_map[fn] = extra
 
         elif is_mask:
-            row_w = QWidget(); h = QHBoxLayout(row_w); h.setContentsMargins(0,0,0,0); h.setSpacing(4)
             inf = fn.startswith('inflict')
             btn = QPushButton("选择导致状态…" if inf else "选择解除状态…")
             hidden = QLineEdit(); hidden.hide()
-            h.addWidget(btn); h.addStretch()
+            box = make_fake_input(button=btn)
             self.widget_map[fn] = hidden
             status_frame = QWidget()
             self.extra_map[fn] = status_frame
             btn.clicked.connect(lambda checked, f=fn: self._pick_status(f))
-            cell.addWidget(row_w); cell.addWidget(status_frame)
+            cell.addWidget(box); cell.addWidget(status_frame)
 
         else:
             edit = QLineEdit()
             edit.setValidator(QIntValidator(-32768, 32767))
             if is_unused: edit.setEnabled(False)
             self.widget_map[fn] = edit
-            cell.addWidget(edit)
+            box = make_fake_input(edit)
+            cell.addWidget(box)
             if not is_unused:
-                extra = QLabel(""); extra.setStyleSheet("font-size: 11px; color: #8a96b3;")
+                extra = QLabel(""); extra.setProperty("class", "ExtraPreviewText")
                 cell.addWidget(extra); self.extra_map[fn] = extra
 
         grid.addLayout(cell, row, col)
@@ -811,7 +727,7 @@ class KonEditor(QMainWindow):
         self.move((screen.width() - self.width()) // 2, (screen.height() - self.height()) // 2)
 
     def _set_edit_enabled(self, en):
-        self.edit_layout.parentWidget().parentWidget().setEnabled(en)
+        self._edit_dock_body.setEnabled(en)
 
     def closeEvent(self, event):
         if self._dirty:
@@ -846,13 +762,11 @@ class KonEditor(QMainWindow):
         self._update_paths(); self._set_edit_enabled(True); self._apply_filter()
 
     def _update_paths(self):
-        cg = "color: #55b572;" if self.is_dark_theme else "color: #178a39;"
-        cr = "color: #e27d60;" if self.is_dark_theme else "color: #c93b16;"
         for lb, p in [(self.lbl_kon, self.kon_path), (self.lbl_tkt, self.tkt_path)]:
             key = "TKKon.dat" if lb is self.lbl_kon else "TKT.dat"
-            if not p: lb.setText(f"{key}: 未加载"); lb.setStyleSheet(cr)
-            elif not os.path.exists(p): lb.setText(f"{key}: (不存在) {p}"); lb.setStyleSheet(cr)
-            else: lb.setText(f"{key}: {p}"); lb.setStyleSheet(cg)
+            if not p: lb.setText(f"{key}: 未加载")
+            elif not os.path.exists(p): lb.setText(f"{key}: (不存在) {p}")
+            else: lb.setText(f"{key}: {p}")
 
     # ----------- 筛选/表格 -----------
 
@@ -886,7 +800,7 @@ class KonEditor(QMainWindow):
             r = self.records[idx]
             has_data = any(r[fn] != 0 for fn, _, _, _ in KON_FIELDS)
 
-            # 颜色标记 (对齐原始 kon_editor.py: 有数据=绿, 空=灰, tkact_id=-1=蓝)
+            # 颜色标记
             if r['tkact_id'] == -1:
                 color = QColor("#2266CC")
             elif has_data:
@@ -929,11 +843,11 @@ class KonEditor(QMainWindow):
                          r['target_filter'], r['exec_flags'] & 0xFF]
 
             self.table.insertRow(row)
-            for col, v in enumerate(vals):
-                item = NumericTableItem(v); item.setData(Qt.UserRole, sort_keys[col])
+            for c_col, v in enumerate(vals):
+                item = NumericTableItem(v); item.setData(Qt.UserRole, sort_keys[c_col])
                 item.setForeground(color)
-                if col in (0, 1): item.setTextAlignment(Qt.AlignCenter)
-                self.table.setItem(row, col, item)
+                if c_col in (0, 1): item.setTextAlignment(Qt.AlignCenter)
+                self.table.setItem(row, c_col, item)
 
         self.table.horizontalHeader().setSortIndicator(-1, Qt.AscendingOrder)
         self.table.setSortingEnabled(True); self.table.blockSignals(False)
@@ -1060,7 +974,7 @@ class KonEditor(QMainWindow):
     def _update_status_label(self, fn, mask):
         base = 0 if fn.endswith('_lo') else 16
         inf = fn.startswith('inflict')
-        color = '#CC3333' if inf else '#3366cc'
+        status_class = "StatusInflict" if inf else "StatusRemove"
         frame = self.extra_map.get(fn)
         if not frame: return
         # 清除旧内容
@@ -1076,7 +990,6 @@ class KonEditor(QMainWindow):
             COLS = 3
             for si, nm in enumerate(sel):
                 r, c = divmod(si, COLS)
-                # 在 grid 中放入 label
                 while frame_layout.count() <= r:
                     row_w = QWidget(); row_lay = QHBoxLayout(row_w)
                     row_lay.setContentsMargins(0,0,0,0); row_lay.setSpacing(6)
@@ -1084,11 +997,14 @@ class KonEditor(QMainWindow):
                 row_w = frame_layout.itemAt(r).widget()
                 row_lay = row_w.layout()
                 lbl = QLabel(nm)
-                lbl.setStyleSheet(f"font-size: 11px; color: {color};")
+                lbl.setProperty("class", status_class)
+                # 需要强制刷新 QSS class
+                lbl.style().unpolish(lbl); lbl.style().polish(lbl)
                 row_lay.addWidget(lbl)
         else:
             lbl = QLabel("(无)")
-            lbl.setStyleSheet(f"font-size: 11px; color: {color};")
+            lbl.setProperty("class", status_class)
+            lbl.style().unpolish(lbl); lbl.style().polish(lbl)
             frame_layout.addWidget(lbl)
 
     def _apply_edit(self):
@@ -1226,9 +1142,9 @@ class KonEditor(QMainWindow):
 
     def _show_about(self):
         QMessageBox.about(self, "关于",
-            "TKKon.dat 可视化编辑器 v3.2 (PySide6)\n\n"
+            "TKKon.dat 可视化编辑器 v3.3 (PySide6)\n\n"
             "基于《三国群侠传》 TKS.exe 反编译\n"
-            "Godot 4.6 风格 UI · FakeInputBox 体系\n\n"
+            "Godot 4.6 风格 UI · FakeInputBox · ThemeManager\n\n"
             "逆向来源:\n"
             "  sub_43D53C/43D8B0/43E980/4458B0/4434BC/4173F8"
         )
@@ -1240,6 +1156,15 @@ class KonEditor(QMainWindow):
 def main():
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
+    app.setApplicationName("TKKon Editor")
+
+    # 根据系统主题设置初始主题
+    is_dark = app.styleHints().colorScheme() == Qt.ColorScheme.Dark
+    if is_dark:
+        ThemeManager.apply_dark_theme(app)
+    else:
+        ThemeManager.apply_light_theme(app)
+
     editor = KonEditor(); editor.show()
     sys.exit(app.exec())
 
