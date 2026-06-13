@@ -570,24 +570,23 @@ class KonEditor(QMainWindow):
         right_layout.setContentsMargins(0, 0, 0, 0)
         right_layout.setSpacing(0)
 
-        # Inspector 标题
+        # Inspector 标题 + 右侧按钮
+        title_row = QHBoxLayout()
         self.lbl_inspector_title = QLabel("技能属性检查器 — 未选中")
         self.lbl_inspector_title.setProperty("class", "InspectorTitle")
-        right_layout.addWidget(self.lbl_inspector_title)
-
-        # 应用/重置按钮
-        btn_layout = QHBoxLayout()
+        title_row.addWidget(self.lbl_inspector_title, 1)
         self.btn_apply = QPushButton("✅ 应用修改"); self.btn_apply.clicked.connect(self._apply_edit)
         self.btn_reset = QPushButton("🔄 撤销修改"); self.btn_reset.clicked.connect(self._reset_edit)
-        btn_layout.addWidget(self.btn_apply); btn_layout.addWidget(self.btn_reset); btn_layout.addStretch()
-        right_layout.addLayout(btn_layout)
+        title_row.addWidget(self.btn_apply)
+        title_row.addWidget(self.btn_reset)
+        right_layout.addLayout(title_row)
 
         # 滚动区域
         scroll = QScrollArea(); scroll.setWidgetResizable(True)
         edit_container = QWidget()
         self.edit_layout = QVBoxLayout(edit_container)
         self.edit_layout.setContentsMargins(4, 4, 16, 4)
-        self.edit_layout.setSpacing(2)
+        self.edit_layout.setSpacing(0)
 
         # 预览面板 (PreviewFrame — 对齐 skill_editor_v2)
         preview = QFrame(); preview.setObjectName("PreviewFrame")
@@ -602,11 +601,12 @@ class KonEditor(QMainWindow):
         self.preview_sub.setWordWrap(True); pl.addWidget(self.preview_sub)
         self.edit_layout.addWidget(preview)
 
-        # 字段组 (列数对齐原版: 4, 5, 5, 5)
+        # 字段组 — Dock 风格分组 (列数: 4, 4, 5, 5)
         self._build_field_group("战斗执行参数 (offset 0–6)", ACTIVE_FIELDS[:4], 4)
-        self._build_field_group("伤害/回复参数 (offset 8–18)", ACTIVE_FIELDS[4:10], 5)
+        self._build_field_group("伤害/回复参数 (offset 8–18)", ACTIVE_FIELDS[4:10], 4)
         self._build_field_group("状态位掩码 (offset 20–28)", ACTIVE_FIELDS[10:15], 5)
-        self._build_field_group("未使用字段 + 执行标志 (offset 30–38)", KON_FIELDS[15:], 5)
+        # 未使用字段 + 执行标志 (执行标志单独一行)
+        self._build_field_group("未使用字段 + 执行标志 (offset 30–38)", KON_FIELDS[15:], 5, force_last_row=True)
 
         self.edit_layout.addStretch()
         scroll.setWidget(edit_container)
@@ -628,19 +628,36 @@ class KonEditor(QMainWindow):
         parent.addWidget(dock)
         self._edit_dock_body = body
 
-    def _build_field_group(self, title, fields, cols=4):
-        """原版布局: QGroupBox + QGridLayout, label 在上 input 在下"""
-        group = QGroupBox(title)
-        grid = QGridLayout(group)
+    def _build_field_group(self, title, fields, cols=4, force_last_row=False):
+        """Dock 风格分组: DockHeader + DockBody + QGridLayout"""
+        group_w = QWidget()
+        group_lay = QVBoxLayout(group_w)
+        group_lay.setContentsMargins(0, 0, 0, 0)
+        group_lay.setSpacing(0)
+        group_lay.addWidget(DockHeader(title))
+
+        body = QWidget()
+        body.setObjectName("DockBody")
+        body_inner = QVBoxLayout(body)
+        body_inner.setContentsMargins(8, 8, 8, 8)
+
+        grid = QGridLayout()
         grid.setVerticalSpacing(4); grid.setHorizontalSpacing(8)
 
         for fi, (fn, fo, fl, cmt) in enumerate(fields):
-            r, c = divmod(fi, cols)
-            self._build_field(grid, r, c, fn, fo, fl, cmt)
+            if force_last_row and fn == 'exec_flags':
+                # 执行标志单独占一整行
+                r = (fi // cols) + 1  # 下一行
+                self._build_field(grid, r, 0, fn, fo, fl, cmt, span=cols)
+            else:
+                r, c = divmod(fi, cols)
+                self._build_field(grid, r, c, fn, fo, fl, cmt)
 
-        self.edit_layout.addWidget(group)
+        body_inner.addLayout(grid)
+        group_lay.addWidget(body)
+        self.edit_layout.addWidget(group_w)
 
-    def _build_field(self, grid, row, col, fn, fo, fl, cmt):
+    def _build_field(self, grid, row, col, fn, fo, fl, cmt, span=1):
         """单个字段: PropLabel 在上, FakeInputBox 在中, ExtraPreviewText 在下"""
         cell = QVBoxLayout(); cell.setSpacing(2)
 
@@ -672,9 +689,17 @@ class KonEditor(QMainWindow):
             lo_w.addItems(["启用", "禁用"])
             box = QFrame(); box.setObjectName("FakeInputBox")
             bh = QHBoxLayout(box); bh.setContentsMargins(0,0,0,0); bh.setSpacing(0)
+            if fn == 'exec_mode':
+                hi_label = "距离"; lo_label = "范围"
+            elif fn == 'target_param':
+                hi_label = "面积"; lo_label = "扩散"
+            else:
+                hi_label = ""; lo_label = ""
+            if hi_label:
+                hl = QLabel(hi_label); hl.setProperty("class", "SplitFieldLabel")
+                bh.addWidget(hl)
             bh.addWidget(hi_w)
-            sep_text = "范围" if fn == 'exec_mode' else "扩散"
-            sep_lbl = QLabel(sep_text); sep_lbl.setProperty("class", "SplitFieldLabel")
+            sep_lbl = QLabel(lo_label); sep_lbl.setProperty("class", "SplitFieldLabel")
             bh.addWidget(sep_lbl)
             bh.addWidget(lo_w)
             self.split_map[fn] = (hi_w, lo_w)
@@ -687,6 +712,8 @@ class KonEditor(QMainWindow):
             lo_w = QComboBox(); lo_w.addItems(["对立阵营", "同阵营", "任意阵营"])
             box = QFrame(); box.setObjectName("FakeInputBox")
             bh = QHBoxLayout(box); bh.setContentsMargins(0,0,0,0); bh.setSpacing(0)
+            hl = QLabel("格子"); hl.setProperty("class", "SplitFieldLabel")
+            bh.addWidget(hl)
             bh.addWidget(hi_w)
             sep_lbl = QLabel("阵营"); sep_lbl.setProperty("class", "SplitFieldLabel")
             bh.addWidget(sep_lbl)
@@ -718,7 +745,7 @@ class KonEditor(QMainWindow):
                 extra = QLabel(""); extra.setProperty("class", "ExtraPreviewText")
                 cell.addWidget(extra); self.extra_map[fn] = extra
 
-        grid.addLayout(cell, row, col)
+        grid.addLayout(cell, row, col, 1, span)
 
     # ----------- 窗口控制 -----------
 
