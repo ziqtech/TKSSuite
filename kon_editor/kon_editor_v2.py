@@ -666,12 +666,12 @@ class KonEditor(QMainWindow):
             h.addWidget(cb0); h.addWidget(cb1); h.addWidget(cb2); h.addStretch()
             self.split_map[fn] = (cb0, cb1, cb2)
             extra = QLabel(""); extra.setProperty("class", "ExtraPreviewText")
-            cell.addWidget(row_w); cell.addWidget(extra)
+            cell.addWidget(row_w); cell.addWidget(extra, 0, Qt.AlignLeft | Qt.AlignTop)
             self.extra_map[fn] = extra
 
         elif is_split:
             hi_w = QLineEdit(); hi_w.setValidator(QIntValidator(-128, 127)); hi_w.setFixedWidth(48)
-            lo_w = QComboBox(); lo_w.setFixedWidth(60)
+            lo_w = QComboBox()
             lo_w.addItems(["启用", "禁用"])
             box = QFrame(); box.setObjectName("FakeInputBox")
             bh = QHBoxLayout(box); bh.setContentsMargins(0,0,0,0); bh.setSpacing(0)
@@ -687,10 +687,10 @@ class KonEditor(QMainWindow):
             bh.addWidget(hi_w)
             sep_lbl = QLabel(lo_label); sep_lbl.setProperty("class", "SplitFieldLabel")
             bh.addWidget(sep_lbl)
-            bh.addWidget(lo_w)
+            bh.addWidget(lo_w, 1)
             self.split_map[fn] = (hi_w, lo_w)
             extra = QLabel(""); extra.setProperty("class", "ExtraPreviewText")
-            cell.addWidget(box); cell.addWidget(extra)
+            cell.addWidget(box); cell.addWidget(extra, 0, Qt.AlignLeft | Qt.AlignTop)
             self.extra_map[fn] = extra
 
         elif is_filter:
@@ -703,22 +703,24 @@ class KonEditor(QMainWindow):
             bh.addWidget(hi_w)
             sep_lbl = QLabel("阵营"); sep_lbl.setProperty("class", "SplitFieldLabel")
             bh.addWidget(sep_lbl)
-            bh.addWidget(lo_w)
+            bh.addWidget(lo_w, 1)
             self.split_map[fn] = (hi_w, lo_w)
             extra = QLabel(""); extra.setProperty("class", "ExtraPreviewText")
-            cell.addWidget(box); cell.addWidget(extra)
+            cell.addWidget(box); cell.addWidget(extra, 0, Qt.AlignLeft | Qt.AlignTop)
             self.extra_map[fn] = extra
 
         elif is_mask:
             inf = fn.startswith('inflict')
             btn = QPushButton("选择导致状态…" if inf else "选择解除状态…")
             hidden = QLineEdit(); hidden.hide()
-            box = make_fake_input(button=btn)
+            box = QFrame(); box.setObjectName("FakeInputBox")
+            bh = QHBoxLayout(box); bh.setContentsMargins(0,0,0,0); bh.setSpacing(0)
+            bh.addWidget(btn, 1)
             self.widget_map[fn] = hidden
             status_frame = QWidget()
             self.extra_map[fn] = status_frame
             btn.clicked.connect(lambda checked, f=fn: self._pick_status(f))
-            cell.addWidget(box); cell.addWidget(status_frame)
+            cell.addWidget(box); cell.addWidget(status_frame, 0, Qt.AlignLeft | Qt.AlignTop)
 
         else:
             edit = QLineEdit()
@@ -729,9 +731,9 @@ class KonEditor(QMainWindow):
             cell.addWidget(box)
             if not is_unused:
                 extra = QLabel(""); extra.setProperty("class", "ExtraPreviewText")
-                cell.addWidget(extra); self.extra_map[fn] = extra
+                cell.addWidget(extra, 0, Qt.AlignLeft | Qt.AlignTop); self.extra_map[fn] = extra
 
-        grid.addLayout(cell, row, col, 1, span)
+        grid.addLayout(cell, row, col, 1, span, Qt.AlignTop)
 
     # ----------- 窗口控制 -----------
 

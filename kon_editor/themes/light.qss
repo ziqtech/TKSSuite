@@ -147,7 +147,7 @@ QCheckBox::indicator {
     border: 1px solid #b0b5bd;
     border-radius: 2px;
 }
-QCheckBox::indicator:checked { background-color: #478cbf; border-color: #478cbf; }
+QCheckBox::indicator:checked { background-color: #478cbf; border-color: #478cbf; image: url(svg/checkmark.svg); }
 QCheckBox::indicator:hover { border-color: #478cbf; }
 
 /* ── Dock 面板 (tkt_editor_v5 风格) ── */
@@ -250,6 +250,8 @@ QLabel[class="SplitFieldLabel"] {
     color: #666;
     font-size: 11px;
     padding: 0 4px;
+    min-width: 40px;
+    max-width: 40px;
 }
 
 /* ── QGroupBox ── */
