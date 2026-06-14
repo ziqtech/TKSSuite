@@ -604,8 +604,8 @@ class KonEditor(QMainWindow):
         self._build_field_group("战斗执行参数 (offset 0–6)", ACTIVE_FIELDS[:4], 4)
         self._build_field_group("伤害/回复参数 (offset 8–18)", ACTIVE_FIELDS[4:10], 4)
         self._build_field_group("状态位掩码 (offset 20–28)", ACTIVE_FIELDS[10:15], 5)
-        # 未使用字段 + 执行标志 (执行标志单独一行)
-        self._build_field_group("未使用字段 + 执行标志 (offset 30–38)", KON_FIELDS[15:], 5, force_last_row=True)
+        # 执行标志
+        self._build_field_group("执行标志 (offset 38)", [KON_FIELDS[-1]], 1)
 
         self.edit_layout.addStretch()
         scroll.setWidget(edit_container)
