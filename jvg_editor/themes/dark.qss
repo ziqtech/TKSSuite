@@ -91,8 +91,22 @@ QSpinBox:focus { border-color: #478cbf; }
 QListWidget {
     background-color: #1a1e27;
     border: 1px solid #14171f;
+    outline: none;
 }
-QListWidget::item:selected { background-color: #478cbf; color: white; }
+QListWidget::item {
+    padding: 4px 8px;
+    border: none;
+    border-radius: 0;
+}
+QListWidget::item:selected {
+    background-color: #478cbf;
+    color: white;
+    border: none;
+    border-radius: 0;
+}
+QListWidget::item:hover:!selected {
+    background-color: #2a303d;
+}
 
 /* ── 分割线 ── */
 QSplitter::handle { image: none; background-color: transparent; }

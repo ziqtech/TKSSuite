@@ -20,7 +20,7 @@ from PySide6.QtWidgets import (
     QGraphicsView, QGraphicsScene, QGraphicsPixmapItem, QGraphicsTextItem, QGraphicsRectItem
 )
 from PySide6.QtCore import Qt, QTimer, QSize, Signal
-from PySide6.QtGui import QPixmap, QImage, QColor, QPalette, QIcon, QAction, QPainter, QFont, QMouseEvent
+from PySide6.QtGui import QPixmap, QImage, QColor, QPalette, QIcon, QAction, QPainter, QFont, QMouseEvent, QPen, QBrush
 
 HAS_PIL = False
 try:
@@ -482,39 +482,6 @@ class ThemeManager:
     def toggle_theme(self):
         self.current_theme = 'light' if self.current_theme == 'dark' else 'dark'
 
-class CanvasView(QGraphicsView):
-    """可点击的画布视图，支持鼠标点击事件和滚轮缩放"""
-    def __init__(self, scene, parent=None):
-        super().__init__(scene, parent)
-        self._editor = None
-    
-    def set_editor(self, editor):
-        self._editor = editor
-    
-    def mousePressEvent(self, event: QMouseEvent):
-        if self._editor and self._editor._view == "tile":
-            # 获取点击位置的图形项
-            pos = self.mapToScene(event.position().toPoint())
-            item = self.scene().itemAt(pos, self.transform())
-            if item and isinstance(item, QGraphicsPixmapItem):
-                fi = item.data(0)
-                if fi is not None:
-                    self._editor._on_frame_click(fi)
-                    return
-        super().mousePressEvent(event)
-    
-    def wheelEvent(self, event):
-        if self._editor and event.modifiers() & Qt.ControlModifier:
-            # Ctrl+滚轮缩放
-            delta = event.angleDelta().y()
-            if delta > 0:
-                self._editor._zoom_step(0.5)
-            elif delta < 0:
-                self._editor._zoom_step(-0.5)
-            event.accept()
-        else:
-            super().wheelEvent(event)
-
 # ── GUI 组件 ──────────────────────────────────────────
 class DockHeader(QFrame):
     """统一的面板标题头"""
@@ -542,7 +509,7 @@ class CanvasView(QGraphicsView):
     
     def mousePressEvent(self, event: QMouseEvent):
         if self._editor and self._editor._view == "tile":
-            # 获取点击位置的图形项
+            # 处理平铺模式下的帧点击
             pos = self.mapToScene(event.position().toPoint())
             item = self.scene().itemAt(pos, self.transform())
             if item and isinstance(item, QGraphicsPixmapItem):
@@ -569,7 +536,15 @@ class JVGEditor(QMainWindow):
     def __init__(self, filepath: Optional[str] = None):
         super().__init__()
         self.setWindowTitle("JVG 图集编辑器 v2")
-        self.setGeometry(100, 100, 1280, 800)
+        self.resize(1280, 800)
+        
+        # 窗口居中显示
+        screen = QApplication.primaryScreen()
+        if screen:
+            geo = self.frameGeometry()
+            center = screen.availableGeometry().center()
+            geo.moveCenter(center)
+            self.move(geo.topLeft())
         
         # 加载图标
         ico_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'TKS.ico')
@@ -864,6 +839,18 @@ class JVGEditor(QMainWindow):
         btn_zin.setFixedWidth(36)
         btn_zin.clicked.connect(lambda: self._zoom_step(0.5))
         tb_layout.addWidget(btn_zin)
+        tb_layout.addSpacing(10)
+        
+        # 逐帧导航按钮
+        btn_prev = QPushButton("◀ 上一帧")
+        btn_prev.clicked.connect(lambda: self._nav(-1))
+        btn_prev.setShortcut(Qt.Key_Left)
+        tb_layout.addWidget(btn_prev)
+        
+        btn_next = QPushButton("下一帧 ▶")
+        btn_next.clicked.connect(lambda: self._nav(1))
+        btn_next.setShortcut(Qt.Key_Right)
+        tb_layout.addWidget(btn_next)
         
         self._zoom = 1.0
         tb_layout.addStretch()
@@ -1258,18 +1245,8 @@ class JVGEditor(QMainWindow):
         self._refresh_view()
         self._info.setText(f"导入组图完成: {'新增' if is_new_block else '替换'} {len(new_frames)} 帧, 跳过 {skipped} 空cell (cell={cw}×{ch})")
 
-    def _nav(self, d: int):
-        if self._view != "single":
-            return
-        if not self.jvg or self._bi < 0:
-            return
-        blk = self.jvg.blocks[self._bi]
-        self._fi = (self._fi + d) % max(1, blk.frame_count)
-        self._sel_fi = self._fi
-        self._refresh_view()
-
     def _zoom_step(self, delta: float):
-        self._zoom = max(0.5, min(5.0, self._zoom + delta))
+        self._zoom = max(1.0, min(3.0, self._zoom + delta))
         self._zoom_label.setText(f"{int(self._zoom * 100)}%")
         self._kill_anim()
         self._refresh_view()
@@ -1283,7 +1260,6 @@ class JVGEditor(QMainWindow):
         return f._palette if f._palette else blk.palette
 
     def _f2qpixmap(self, f: JVGFrame, pal: PaletteRGB565, scale: float = 1.0) -> Optional[QPixmap]:
-        scale *= self._zoom
         w, h = f.width, f.height
         if w <= 0 or h <= 0:
             return None
@@ -1291,6 +1267,8 @@ class JVGEditor(QMainWindow):
         if no_green:
             green_set = {i for i, e in enumerate(pal.entries) if e == 0x07E0}
         pr = pal.to_rgb888()
+        
+        # 生成原始尺寸的 pixmap，缩放由 QGraphicsPixmapItem.setScale 处理
         rgba = bytearray(w * h * 4)
         for y in range(h):
             for x in range(w):
@@ -1307,9 +1285,6 @@ class JVGEditor(QMainWindow):
                 rgba[off + 3] = 255
         
         qimg = QImage(bytes(rgba), w, h, QImage.Format_RGBA8888)
-        if scale != 1.0:
-            qimg = qimg.scaled(max(1, int(w * scale)), max(1, int(h * scale)), 
-                              Qt.KeepAspectRatio, Qt.FastTransformation)
         return QPixmap.fromImage(qimg)
 
     def _show_detail(self, f: JVGFrame, blk: JVMBlock, fi: int):
@@ -1358,16 +1333,17 @@ class JVGEditor(QMainWindow):
             if f.width <= 0:
                 continue
             pal = self._get_pal(blk, f)
-            # _f2qpixmap 内部已经应用了 zoom，所以这里传入 scale=1.0
+            # 缓存原始尺寸的 pixmap
             pixmap = self._f2qpixmap(f, pal, 1.0)
             if not pixmap:
                 continue
             self._photos[fi] = pixmap
             dw, dh = int(f.width * z), int(f.height * z)
             
-            # 添加图像到场景（图像已经缩放，不需要再 setScale）
+            # 添加图像到场景，使用 setScale 进行缩放
             item = QGraphicsPixmapItem(pixmap)
             item.setPos(x, y)
+            item.setScale(z)
             item.setData(0, fi)  # 存储帧索引
             self._scene.addItem(item)
             
@@ -1406,26 +1382,21 @@ class JVGEditor(QMainWindow):
         
         # 计算自适应缩放（与原版一致）
         fit_scale = min(1.0, (view_w - 80) / max(f.width, 1), (view_h - 80) / max(f.height, 1))
-        pixmap = self._f2qpixmap(f, pal, fit_scale)
+        # 获取原始尺寸的 pixmap
+        pixmap = self._f2qpixmap(f, pal, 1.0)
         
         if pixmap:
             self._photos[0] = pixmap
+            total_scale = fit_scale * self._zoom
+            pw = f.width * total_scale
+            ph = f.height * total_scale
             # 居中显示（与原版 anchor=tk.CENTER 一致）
-            x = (view_w - pixmap.width()) / 2
-            y = (view_h - pixmap.height()) / 2
+            x = (view_w - pw) / 2
+            y = (view_h - ph) / 2
             item = QGraphicsPixmapItem(pixmap)
             item.setPos(x, y)
+            item.setScale(total_scale)
             self._scene.addItem(item)
-        
-        # 添加导航箭头
-        nav_pen = QColor(68, 170, 255)  # #4af
-        left_arrow = self._scene.addText("◀", QFont("Microsoft YaHei", 14))
-        left_arrow.setPos(40, 20)
-        left_arrow.setDefaultTextColor(nav_pen)
-        
-        right_arrow = self._scene.addText("▶", QFont("Microsoft YaHei", 14))
-        right_arrow.setPos(view_w - 40, 20)
-        right_arrow.setDefaultTextColor(nav_pen)
         
         self._sel_fi = self._fi
         self._scene.setSceneRect(0, 0, view_w, view_h)
@@ -1472,7 +1443,8 @@ class JVGEditor(QMainWindow):
         
         view_w = self._canvas.viewport().width()
         view_h = self._canvas.viewport().height()
-        scale = min(1.0, (view_w - 40) / max(cell_w, 1), (view_h - 40) / max(cell_h, 1))
+        base_scale = min(1.0, (view_w - 40) / max(cell_w, 1), (view_h - 40) / max(cell_h, 1))
+        scale = base_scale * self._zoom  # 应用用户缩放
         scw = int(cell_w * scale)
         sch = int(cell_h * scale)
         cx = (view_w - scw) // 2
@@ -1495,22 +1467,25 @@ class JVGEditor(QMainWindow):
             oy = _u16s(f.y_max) - f.height + 1 - min_vt
             rgba = bytearray(scw * sch * 4)
             
-            for py in range(f.height):
-                for px in range(f.width):
+            # 对每个目标像素，找到对应的原图像素（最近邻插值）
+            for dy in range(sch):
+                for dx in range(scw):
+                    # 计算原图坐标
+                    px = int(dx / scale) - ox
+                    py = int(dy / scale) - oy
+                    if px < 0 or px >= f.width or py < 0 or py >= f.height:
+                        continue
                     p = py * f.width + px
                     if p < len(f.alpha) and f.alpha[p] == 0:
                         continue
                     idx = f.pixels[p] if p < len(f.pixels) else 0
                     if no_green and idx in green_set:
                         continue
-                    dx = int((ox + px) * scale)
-                    dy = int((oy + py) * scale)
-                    if 0 <= dx < scw and 0 <= dy < sch:
-                        off = (dy * scw + dx) * 4
-                        rgba[off] = pr[idx * 3]
-                        rgba[off + 1] = pr[idx * 3 + 1]
-                        rgba[off + 2] = pr[idx * 3 + 2]
-                        rgba[off + 3] = 255
+                    off = (dy * scw + dx) * 4
+                    rgba[off] = pr[idx * 3]
+                    rgba[off + 1] = pr[idx * 3 + 1]
+                    rgba[off + 2] = pr[idx * 3 + 2]
+                    rgba[off + 3] = 255
             
             qimg = QImage(bytes(rgba), scw, sch, QImage.Format_RGBA8888)
             self._anim_data.append(QPixmap.fromImage(qimg))
