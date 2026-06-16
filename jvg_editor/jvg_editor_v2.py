@@ -802,7 +802,7 @@ class JVGEditor(QMainWindow):
         self._tile_cols.valueChanged.connect(lambda: self._refresh_view())
         tb_layout.addWidget(self._tile_cols)
         
-        tb_layout.addWidget(QLabel("缝隙:"))
+        tb_layout.addWidget(QLabel("间距:"))
         self._padding = QSpinBox()
         self._padding.setRange(0, 16)
         self._padding.setValue(1)
