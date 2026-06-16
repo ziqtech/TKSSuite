@@ -933,7 +933,7 @@ class WarpcEditorV2(QMainWindow):
         elif field_ft == 'skill_pick':
             box = QFrame(); box.setObjectName("FakeInputBox")
             bh = QHBoxLayout(box); bh.setContentsMargins(0,0,0,0); bh.setSpacing(0)
-            ev.setMaximumWidth(50); bh.addWidget(ev)
+            ev.setMinimumWidth(50); bh.addWidget(ev); bh.addStretch()
             btn = QPushButton("…"); btn.setFixedWidth(28)
             btn.clicked.connect(lambda _, f=fn: self._pick_skill(f))
             bh.addWidget(btn); cell.addWidget(box)
@@ -942,7 +942,7 @@ class WarpcEditorV2(QMainWindow):
         elif field_ft == 'item_pick':
             box = QFrame(); box.setObjectName("FakeInputBox")
             bh = QHBoxLayout(box); bh.setContentsMargins(0,0,0,0); bh.setSpacing(0)
-            ev.setMaximumWidth(50); bh.addWidget(ev)
+            ev.setMinimumWidth(50); bh.addWidget(ev); bh.addStretch()
             btn = QPushButton("…"); btn.setFixedWidth(28)
             btn.clicked.connect(lambda _, f=fn: self._pick_item(f))
             bh.addWidget(btn); cell.addWidget(box)
@@ -951,7 +951,7 @@ class WarpcEditorV2(QMainWindow):
         elif fn == 'portrait':
             box = QFrame(); box.setObjectName("FakeInputBox")
             bh = QHBoxLayout(box); bh.setContentsMargins(0,0,0,0); bh.setSpacing(0)
-            ev.setMaximumWidth(50); bh.addWidget(ev)
+            ev.setMinimumWidth(50); bh.addWidget(ev); bh.addStretch()
             btn = QPushButton("…"); btn.setFixedWidth(28)
             btn.clicked.connect(lambda: self._pick_portrait())
             bh.addWidget(btn); cell.addWidget(box)
@@ -1029,7 +1029,7 @@ class WarpcEditorV2(QMainWindow):
         self._build_section(p, "装备索引 [138]-[144]", EQUIP_FIELDS[:4], 4, 'item_pick')
         self._build_section(p, "装备物品ID [146]-[152]", EQUIP_FIELDS[4:], 4, 'item_pick')
         self._build_section(p, "使用/装备权限 [154]-[162]", CHAR_USE_RIGHT_FIELDS, 5)
-        self._build_section(p, "装备技能 [164]-[174] (6字段)", EQUIP_SKILL_FIELDS, 3, 'skill_pick')
+        self._build_section(p, "装备技能 [164]-[174] (6字段)", EQUIP_SKILL_FIELDS, 6, 'skill_pick')
         self._build_section(p, "补丁字段 [520]-[526]", PATCH_FIELDS, 4)
         self._build_section(p, "成长率 [528]-[532]", GROWTH_FIELDS, 3)
         self._build_section(p, "战后奖励 [536]-[538]", BATTLE_REWARD_FIELDS, 2)
@@ -1075,6 +1075,7 @@ class WarpcEditorV2(QMainWindow):
         body = QWidget(); body.setObjectName("DockBody")
         bl = QVBoxLayout(body); bl.setContentsMargins(8,8,8,8)
         grid = QGridLayout(); grid.setVerticalSpacing(4); grid.setHorizontalSpacing(8)
+        for col_i in range(8): grid.setColumnStretch(col_i, 1)
         for i in range(count):
             r, c = divmod(i, 8)
             skill_idx = active_indices[i]
@@ -1084,7 +1085,7 @@ class WarpcEditorV2(QMainWindow):
             lbl.setToolTip(f"[{273+i}] TKSkill#{skill_idx} → TKKon ID"); cell.addWidget(lbl)
             box = QFrame(); box.setObjectName("FakeInputBox")
             bh = QHBoxLayout(box); bh.setContentsMargins(0,0,0,0); bh.setSpacing(0)
-            ev = QLineEdit("-1"); bh.addWidget(ev)
+            ev = QLineEdit("-1"); bh.addWidget(ev); bh.addStretch()
             btn = QPushButton("…"); btn.setFixedWidth(26)
             btn.clicked.connect(lambda _, idx=i, sv=ev: self._pick_tkkon(idx, sv))
             bh.addWidget(btn); cell.addWidget(box)
@@ -1100,7 +1101,7 @@ class WarpcEditorV2(QMainWindow):
         self._tab5_inner = p
 
     def _build_raw_grid(self, parent):
-        COLS = 8
+        COLS = 16
         for base in range(0, WARPC_FIELD_COUNT, 100):
             end = min(base+100, WARPC_FIELD_COUNT)
             grp = QWidget()
@@ -1114,7 +1115,7 @@ class WarpcEditorV2(QMainWindow):
                 cell = QVBoxLayout(); cell.setSpacing(1)
                 lbl = QLabel(f"[{j}]"); lbl.setProperty("class", "PropLabel"); cell.addWidget(lbl)
                 fn = f"raw_{j}"
-                ev = QLineEdit(); ev.setMaximumWidth(65); self._edit_vars[fn] = ev; cell.addWidget(ev)
+                ev = QLineEdit(); self._edit_vars[fn] = ev; cell.addWidget(ev)
                 grid.addLayout(cell, r, c, Qt.AlignTop)
             bl.addLayout(grid); gl.addWidget(body); parent.layout().addWidget(grp)
 
