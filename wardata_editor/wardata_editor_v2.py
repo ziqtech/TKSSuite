@@ -1461,6 +1461,7 @@ class WarDataEditorV2(QMainWindow):
     # ═══════════════════════════════════════════════════════════
 
     def _build_scene_tab(self):
+        """场景预览标签页 — QGraphicsView + 图层控制"""
         tab = QWidget(); layout = QVBoxLayout(tab)
         layout.setContentsMargins(2,2,2,2); layout.setSpacing(2)
 
@@ -1493,6 +1494,7 @@ class WarDataEditorV2(QMainWindow):
         ctrl.addWidget(self.zoom_combo)
         ctrl.addWidget(QPushButton("🔄 刷新", clicked=lambda: self._redraw_scene(True)))
         self.edit_mode = QCheckBox("编辑"); ctrl.addWidget(self.edit_mode)
+        ctrl.addWidget(QLabel("背景=map_id(WSC)", styleSheet='color:gray'))
         layout.addLayout(ctrl)
 
         # 图例
@@ -1520,12 +1522,22 @@ class WarDataEditorV2(QMainWindow):
         self._wsc_cache.clear(); self._redraw_scene()
 
     def _grid_to_screen(self, gx, gy):
+        """网格坐标 → 屏幕像素 (sub_42F9C8 等距投影)
+        sx = 359 + 56*(gx-10) - 56*(gy-15)
+        sy = 365 + 28*(gx-10) + 28*(gy-15)
+        其中 359/365 为 dword_4E7DF0/dword_4E7DF4 编译时常量
+        """
         zoom = self._preview_zoom
         sx = round((359 + 56*(gx-10) - 56*(gy-15)) * zoom)
         sy = round((365 + 28*(gx-10) + 28*(gy-15)) * zoom)
         return sx, sy
 
     def _scene_to_grid(self, sx, sy):
+        """屏幕像素 → 网格坐标 (逆推 sub_42F9C8)
+        逆公式: gx = (px/56 + py/28) / 2 + 10
+                 gy = (py/28 - px/56) / 2 + 15
+        其中 px, py 为WSC背景图像像素坐标 (= screen / zoom)
+        """
         zoom = self._preview_zoom
         if zoom <= 0: return None
         px = sx / zoom - 359; py = sy / zoom - 365
@@ -1551,7 +1563,18 @@ class WarDataEditorV2(QMainWindow):
         return (pixmap, new_w, new_h)
 
     def _resolve_scene_placements(self, rec, warway):
-        """根据 sub_431428 + sub_4307CC 的游戏规则解析场景布置"""
+        """根据 sub_431428 + sub_4307CC 的游戏规则解析场景布置
+
+        sub_431428 放置顺序: 友军固定→敌军固定→区域放置(1-5)→宝物固定→宝物区域放置
+        sub_4307CC:200-210 flags&4 时随机敌军槽位数
+        sub_452AC0: RNG = rand() % n → Python random.randrange(n)
+
+        返回: (resolved_enemies, resolved_treas, resolved_traps,
+               enemy_zone_reqs, trea_zone_reqs, trap_zone_reqs,
+               active_slots, fixed_enemy_slots, fixed_trea_indices, fixed_trap_indices,
+               resolved_allies)
+        """
+        # ── 友军数 & 激活槽位数 (sub_4307CC:200-210) ──
         ally_count = sum(1 for c in rec['must_chars'] if c > 0 and c != 255)
         if ally_count < 1: ally_count = 1
         flags = rec['flags']
@@ -1644,6 +1667,11 @@ class WarDataEditorV2(QMainWindow):
                 resolved_allies)
 
     def _redraw_scene(self, rerandomize=True):
+        """重绘场景 (背景 + 网格 + 单位 + 宝物)
+        游戏坐标体系: sub_42F9C8 等距投影, 所有元素(WSC背景/网格/单位)共享同一坐标系
+        敌军/宝物位置按照 sub_431428 游戏规则解析: 固定位置 + 区域随机放置
+        rerandomize=False 时复用缓存的解析位置 (拖拽时不重新随机)
+        """
         gv = self.scene_gview; scene = gv.scene()
         scene.clear()
         if self._current_idx < 0: return
@@ -1690,28 +1718,33 @@ class WarDataEditorV2(QMainWindow):
         trea_zone_reqs = getattr(self, '_last_trea_zone_reqs', [])
         trap_zone_reqs = getattr(self, '_last_trap_zone_reqs', [])
 
-        # 网格
+        # grid原点由 _grid_to_screen 固定使用游戏常量 (dword_4E7DF0=359, dword_4E7DF4=365, 偏移10/15)
+        # 这些是PE .data段编译时常量, 不随WSC分辨率变化, 所有战场通用
+
+        # ── 图层2: WarWay 网格 (sub_42F9C8 等距投影) ──
         if self.show_grid.isChecked() and warway:
             alpha_map = {'0':0, '25':64, '50':128, '75':192, '100':255}
             alpha_val = alpha_map.get(self.grid_alpha.currentText().rstrip('%'), 128)
             for gy in range(32):
                 for gx in range(32):
                     raw = warway[gy*32+gx]; val = raw if raw < 128 else raw-256
+                    # sub_4355C4/sub_431428: 地形值为 signed int8
                     sx, sy = self._grid_to_screen(gx, gy)
+                    # sub_42F9C8: isometric diamond at (sx,sy) with half-width tile_w, half-height tile_h
                     pts = [QPointF(sx, sy-tile_h), QPointF(sx+tile_w, sy),
                            QPointF(sx, sy+tile_h), QPointF(sx-tile_w, sy)]
                     poly = QPolygonF(pts)
                     pen = QPen(QColor('#334422'), 1)
                     brush = QBrush(Qt.NoBrush)
-                    if val == -1:
+                    if val == -1:  # WarWay -1 (0xFF) = 永久障碍
                         if not self.show_obstacle.isChecked(): continue
                         pen = QPen(QColor('#332211'), 1); brush = QBrush(QColor(85,51,34,alpha_val))
-                    elif val < -1:
+                    elif val < -1:  # WarWay < -1 = 临时障碍(sub_4355C4每回合+1直到0)
                         if not self.show_temp_obstacle.isChecked(): continue
                         pen = QPen(QColor('#443322'), 1); brush = QBrush(QColor(102,85,68,alpha_val))
-                    elif val == 0:
+                    elif val == 0:  # WarWay 0 = 普通地面
                         brush = QBrush(Qt.NoBrush)
-                    else:
+                    else:  # WarWay 1-5 = 特殊区域 (PlaceReq), 各区域不同颜色
                         if val-1 < len(self.show_zone) and not self.show_zone[val-1].isChecked(): continue
                         zone_rgba = {1:(51,34,17,170,102,51),2:(17,34,51,51,102,170),3:(51,34,51,170,68,170),
                                      4:(17,51,34,51,170,102),5:(51,51,17,170,170,51)}
@@ -1721,7 +1754,8 @@ class WarDataEditorV2(QMainWindow):
                     item = scene.addPolygon(poly, pen, brush)
                     item.setData(0, (gx, gy, val))
 
-        # 宝物
+        # ── 图层3: 宝物 (trea_xy offset 214-269, sub_431428) ──
+        # 固定位置: 亮色; 区域放置: 暗色
         if self.show_trea.isChecked():
             for i, (gx, gy) in resolved_treas.items():
                 sx, sy = self._grid_to_screen(gx, gy)
@@ -1738,8 +1772,19 @@ class WarDataEditorV2(QMainWindow):
                     lt = scene.addText(label); lt.setDefaultTextColor(fill_c)
                     lt.setFont(QFont('', max(8, int(10*zoom))))
                     lt.setPos(sx - lt.boundingRect().width()/2, sy - r - lt.boundingRect().height())
+            # 宝物区域请求标记(无法解析的, 画布底部)
+            if trea_zone_reqs:
+                zr_x = 10
+                by_zone = {}
+                for z, i, lbl in trea_zone_reqs:
+                    by_zone.setdefault(z, []).append(lbl)
+                for zone, labels in sorted(by_zone.items()):
+                    txt = f"Z{zone}:" + ",".join(labels)
+                    t = scene.addText(txt); t.setDefaultTextColor(QColor('#FFD700'))
+                    t.setFont(QFont('', max(9, int(11*zoom)))); t.setPos(zr_x, bg_h - 15)
+                    zr_x += t.boundingRect().width() + 10
 
-        # 陷阱
+        # ── 图层3b: 陷阱 (sub_431428:283-323) ──
         if self.show_trap.isChecked():
             TRAP_COLORS = {1:'#FFD700',2:'#8B4513',3:'#4488FF',4:'#FF4444',5:'#228B22',6:'#FF69B4'}
             for i, (gx, gy) in resolved_traps.items():
@@ -1758,9 +1803,22 @@ class WarDataEditorV2(QMainWindow):
                 lt = scene.addText(tname); lt.setDefaultTextColor(fc)
                 lt.setFont(QFont('', max(8, int(10*zoom))))
                 lt.setPos(sx - lt.boundingRect().width()/2, sy - r - lt.boundingRect().height())
+            # 区域陷阱无法解析的, 在底部提示
+            if trap_zone_reqs:
+                zr_x = 10
+                by_zone = {}
+                for z, i, ttype in trap_zone_reqs:
+                    by_zone.setdefault(z, []).append(f'{TRAP_NAMES_SHORT.get(ttype,"?")}{i}')
+                for zone, labels in sorted(by_zone.items()):
+                    txt = f'⚠Z{zone}陷阱:' + ','.join(labels)
+                    t = scene.addText(txt); t.setDefaultTextColor(QColor('#FF4444'))
+                    t.setFont(QFont('', max(9, int(11*zoom)))); t.setPos(zr_x, bg_h - 35)
+                    zr_x += t.boundingRect().width() + 10
 
-        # 单位
+        # ── 图层4: 单位 (sub_431428 解析后位置) ──
+        # 固定位置: 亮色; 区域放置: 暗色
         if self.show_units.isChecked():
+            # 敌军 — 按 sub_431428 规则解析后的位置
             for i, (gx, gy) in resolved_enemies.items():
                 eid = rec['enemy_ids'][i]; sx, sy = self._grid_to_screen(gx, gy)
                 r = max(5, tile_h // 2)
@@ -1776,7 +1834,7 @@ class WarDataEditorV2(QMainWindow):
                 nt = scene.addText(name); nt.setDefaultTextColor(QColor('#BA55D3' if i in fixed_enemy_slots else '#ff6666'))
                 nt.setFont(QFont('', max(8, int(10*zoom))))
                 nt.setPos(sx - nt.boundingRect().width()/2, sy + r + 2)
-            # 友军
+            # 友军 — ally_xy [178-189] + 区域放置解析
             for i in range(6):
                 if i in resolved_allies: gx, gy = resolved_allies[i]; fill_c = QColor('#3366cc')
                 else:
@@ -1791,7 +1849,22 @@ class WarDataEditorV2(QMainWindow):
                 t = scene.addText(tag); t.setDefaultTextColor(QColor('white'))
                 t.setFont(QFont('', max(7, int(9*zoom)), QFont.Bold))
                 t.setPos(sx - t.boundingRect().width()/2, sy - t.boundingRect().height()/2)
-            # 强制出战
+            # 敌军区域请求标记(无法解析的, 画布顶部)
+            if enemy_zone_reqs:
+                ezr_x = 10
+                by_zone = {}
+                for z, i, eid in enemy_zone_reqs:
+                    by_zone.setdefault(z, []).append(self._enemy_name(eid))
+                for zone, labels in sorted(by_zone.items()):
+                    txt = f"Z{zone}:" + ",".join(labels)
+                    t = scene.addText(txt); t.setDefaultTextColor(QColor('#ff6666'))
+                    t.setFont(QFont('', max(9, int(11*zoom)))); t.setPos(ezr_x, 20)
+                    ezr_x += t.boundingRect().width() + 10
+            # 激活槽位提示
+            if active_slots < 18:
+                t = scene.addText(f"[激活槽位:0-{active_slots-1}]"); t.setDefaultTextColor(QColor('#ff6666'))
+                t.setFont(QFont('', max(8, int(9*zoom)))); t.setPos(10, 40)
+            # 强制出战角色名称 — must_chars [2-7]
             for i in range(6):
                 cv = rec['must_chars'][i]
                 if cv <= 0: continue
