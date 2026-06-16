@@ -1493,8 +1493,6 @@ class WarDataEditorV2(QMainWindow):
         ctrl.addWidget(self.zoom_combo)
         ctrl.addWidget(QPushButton("🔄 刷新", clicked=lambda: self._redraw_scene(True)))
         self.edit_mode = QCheckBox("编辑"); ctrl.addWidget(self.edit_mode)
-        self.scene_info_var = QLabel(""); self.scene_info_var.setProperty("class","ExtraPreviewText")
-        ctrl.addStretch(); ctrl.addWidget(self.scene_info_var)
         layout.addLayout(ctrl)
 
         # 图例
@@ -1506,7 +1504,10 @@ class WarDataEditorV2(QMainWindow):
             swatch = QLabel(); swatch.setFixedSize(12,12)
             swatch.setStyleSheet(f"background-color:{color}; border:1px solid #444;")
             fl.addWidget(swatch); fl.addWidget(QLabel(label)); legend.addWidget(f)
-        legend.addStretch(); layout.addLayout(legend)
+        legend.addStretch()
+        self.scene_info_var = QLabel(""); self.scene_info_var.setProperty("class","ExtraPreviewText")
+        legend.addWidget(self.scene_info_var)
+        layout.addLayout(legend)
 
         # QGraphicsView
         self.scene_gview = SceneGraphicsView(self)
