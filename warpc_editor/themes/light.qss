@@ -236,6 +236,9 @@ QFrame#FakeInputBox > QComboBox {
 }
 QFrame#FakeInputBox > QComboBox::drop-down { border: none; }
 
+/* ── FakeInputBox 内部分割线 ── */
+QFrame[class="FakeInputSep"] { background-color: #d8dce3; border: none; }
+
 /* ── 额外预览文本 ── */
 QLabel[class="ExtraPreviewText"] {
     padding: 4px 8px;

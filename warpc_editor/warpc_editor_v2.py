@@ -993,11 +993,13 @@ class WarpcEditorV2(QMainWindow):
             lbl = QLabel(f"状态槽{si}"); lbl.setProperty("class", "PropLabel")
             lbl.setToolTip(f"[{fo//2}] {cmt}"); cell.addWidget(lbl)
             cb = NoWheelComboBox(); cb.addItems(status_options)
-            dur = QLineEdit("0"); dur.setMaximumWidth(40)
+            dur = QLineEdit("0"); dur.setMinimumWidth(40)
             box = QFrame(); box.setObjectName("FakeInputBox")
             bh = QHBoxLayout(box); bh.setContentsMargins(0,0,0,0); bh.setSpacing(0)
-            lb2 = QLabel("持续:"); lb2.setProperty("class", "PropLabel"); bh.addWidget(lb2)
-            bh.addWidget(dur); bh.addWidget(cb, 1)
+            lb2 = QLabel("持续:"); lb2.setMinimumWidth(50); lb2.setAlignment(Qt.AlignCenter); lb2.setProperty("class", "PropLabel"); bh.addWidget(lb2)
+            bh.addWidget(dur)
+            sep = QFrame(); sep.setFrameShape(QFrame.VLine); sep.setFixedWidth(1); sep.setProperty("class", "FakeInputSep"); bh.addWidget(sep)
+            bh.addWidget(cb, 1)
             cell.addWidget(box)
             self._status_widgets.append((fn, fo, cb, dur))
             ev_hidden = QLineEdit(); ev_hidden.hide(); self._edit_vars[fn] = ev_hidden
@@ -1012,12 +1014,12 @@ class WarpcEditorV2(QMainWindow):
         bl = QVBoxLayout(body); bl.setContentsMargins(8,8,8,8)
         grid = QGridLayout(); grid.setVerticalSpacing(2); grid.setHorizontalSpacing(4)
         for i in range(32):
-            r, c = divmod(i, 8)
+            r, c = divmod(i, 16)
             sname = STATUS_NAMES[i] if i < len(STATUS_NAMES) else f"{i+1}"
             cell = QVBoxLayout(); cell.setSpacing(1)
             lbl = QLabel(sname); lbl.setProperty("class", "PropLabel"); lbl.setToolTip(f"[51+{i//2}]")
             cell.addWidget(lbl)
-            ev = QLineEdit("0"); ev.setMaximumWidth(45); cell.addWidget(ev)
+            ev = QLineEdit("0"); cell.addWidget(ev)
             self._status_resist_widgets.append((i, ev))
             grid.addLayout(cell, r, c, Qt.AlignTop)
         bl.addLayout(grid); gl.addWidget(body); parent.layout().addWidget(grp)
@@ -1044,7 +1046,7 @@ class WarpcEditorV2(QMainWindow):
         bl = QVBoxLayout(body); bl.setContentsMargins(8,8,8,8)
         grid = QGridLayout(); grid.setVerticalSpacing(2); grid.setHorizontalSpacing(4)
         for i in range(SKILL_LEARN_COUNT):
-            r, c = divmod(i, 4)
+            r, c = divmod(i, 8)
             sname = self.skill_names.get(i, f"技能#{i}") if self.skill_names else f"技能#{i}"
             if i == 343: sname = "普通攻击"
             cell = QVBoxLayout(); cell.setSpacing(1)
@@ -1074,7 +1076,7 @@ class WarpcEditorV2(QMainWindow):
         bl = QVBoxLayout(body); bl.setContentsMargins(8,8,8,8)
         grid = QGridLayout(); grid.setVerticalSpacing(4); grid.setHorizontalSpacing(8)
         for i in range(count):
-            r, c = divmod(i, 3)
+            r, c = divmod(i, 8)
             skill_idx = active_indices[i]
             sname = "普通攻击" if skill_idx == 344 else self.skill_names.get(skill_idx, f"技能#{skill_idx}")
             cell = QVBoxLayout(); cell.setSpacing(2)
