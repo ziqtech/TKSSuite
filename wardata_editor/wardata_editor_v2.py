@@ -12,30 +12,53 @@ WarData.dat 可视化编辑器 v2.0 (PySide6 — Godot 4.6 风格)
   - sub_4355C4: 网格更新循环 — -1永久障碍/0可通行/1-5特殊区域
 
 WarData.dat 格式 (每条498字节, 219条, flat binary — sub_42FDF8):
+  字段通过 TKS.exe反编译 + War.dll官方编辑器(战场编辑器v2.0) 双重验证:
+
   [0]     byte    flags       — sub_4307CC:200 &4=随机敌军; sub_43CA64:102 &2=失败条件
-  [1]     byte    (reserved)
+  [1]     byte    (reserved)  — 反编译未引用; 原误读为battle_id高字节, sub_436BD4:30 word_4EB728=a1实为函数参数
   [2-7]   byte[6] must_chars  — sub_4307CC:51 v20=&unk_9537DA (+1编码; 0/255=空)
-  [8-29]  byte[22] (reserved)
+  [8-29]  byte[22] (reserved) — 反编译未引用
   [30-31] uint16  name_id     — sub_43A8D8:39 word_9537F6→sub_4067E8(TKT)
   [32-33] uint16  map_id      — sub_42FE70:16; War.dll标签"地图编号"
   [34-69] uint16[18] enemy_id — sub_4307CC:219; War.dll标签"人物编号" (WarPC索引)
-  [70-87] byte[18]  enemy_lv  — sub_4307CC:260
-  [88-105] byte[18] enemy_grp — sub_4307CC:217; 属性加成倍率
-  [106-141] byte[36] enemy_lv_range — sub_4307CC:227; 18 pairs (a3,a4)
-  [142-177] byte[36] enemy_xy — sub_431428:94 18 pairs int8 X,Y
-  [178-189] byte[12] ally_xy  — sub_431428:74 6 pairs X,Y
-  [190-207] byte[18] enemy_del — sub_4307CC:242
-  [208-213] byte[6] ally_facing
-  [214-269] byte[56] trap_xy  — 28组坐标
-  [270-325] byte[56] trap_pwr — 28组威力(min,max)
-  [326-345] uint16[10] trea_sub — 10组宝物物品ID
-  [346-385] uint16[20] trea_quant — 10对数量(min,max)
-  [386-441] uint16[28] trap_type — 28组陷阱类型 (1-6)
-  [442-477] uint16[18] enemy_flg — bit0=精英, bit1=特殊
-  [478]    byte    lv_spread_lo
-  [480]    byte    lv_spread_hi
-  [482-483] uint16 turn_limit
-  [484-497] byte[14] (reserved)
+  [70-87] byte[18]  enemy_lv  — sub_4307CC:260; sub_444FD4:79; War.dll标签"等级范围"
+  [88-105] byte[18] enemy_grp — sub_4307CC:217; sub_444FD4:26; 属性加成倍率(sub_4302D8:53); 0=普通士兵(可增援), >=1=将领(HP×N倍加成)
+  [106-141] byte[36] enemy_lv_range — sub_4307CC:227; sub_444FD4:48; level params(18 pairs a3,a4)
+                                18对X,Y(int8), X=106+2*i, Y=107+2*i
+  [142-177] byte[36] enemy_xy — sub_431428:94-98 grid coords(18 pairs int8 X,Y); War.dll"敌人朝向"
+  [178-189] byte[12] ally_xy  — sub_431428:74 unk_95388A; 6对X,Y(int8), 同enemy_xy格式
+  [190-207] byte[18] enemy_del — sub_4307CC:242 v9[102]; sub_444FD4:61; War.dll标签"属性加成"
+  [208-213] byte[6] ally_facing — War.dll标签"我方朝向"; 6个友军朝向值(byte)
+  [214-269] byte[56] trap_xy  — sub_431428:204 (char*)v43-172/-171; 28组陷阱/宝物坐标(int8对, 共享)
+  [270-325] byte[56] trap_pwr — sub_431428:296 (char*)v45-116/-115; 28组陷阱威力(min,max) byte
+  [326-345] uint16[10] trea_sub — sub_431428:202; 10组宝物物品ID (TKItem, sub_431428:303)
+  [346-385] uint16[20] trea_quant — sub_434510:36-37; 10对宝物数量(min,max) uint16
+  [386-441] uint16[28] trap_type — sub_431428:199,295 unk_95395A; 28组陷阱类型 (1=山崩 2=泥沼 3=漩渦 4=火焰 5=滾木 6=瘴氣)
+  ★ 已验证: offset 386-441 全为陷阱类型(1-6), 无TKItem ID; offset 270-325 全为陷阱威力(1-4)
+    真正的宝物数据在 trea_sub(326-345) 和 trea_quant(346-385)
+  [442-477] uint16[18] enemy_flg — sub_4307CC:263 v5[204]; sub_444FD4:81 word_953992
+                                  bit0=精英, bit1=特殊, bit13/14=阵营标记
+  [478]    byte    lv_spread_lo — sub_430578:17 byte_9539B6; 等级浮动下限, |hi-lo|→clamp(2,5)决定浮动幅度
+  [479]    byte    (reserved)   — 反编译未引用; 全219条数据为零
+  [480]    byte    lv_spread_hi — sub_430578:18 byte_9539B8; 等级浮动上限, 与lo的差值决定spread
+  [481]    byte    (reserved)   — 反编译未引用; 全219条数据为零
+  [482-483] uint16 turn_limit  — sub_43CA64:29 word_9539BA (>0时回合限制)
+  [484-497] byte[14] (reserved) — 反编译未引用; 全219条数据为零
+
+War.dll 官方编辑器(战场编辑器v2.0)证据:
+  - sub_401DE5: 读取→UI填充, sub_4024B4: UI→保存回写
+  - 编辑控件: a1+140(人物编号) a1+212(等级范围) a1+284(人物归属)
+              a1+356(敌人位置) a1+428(敌人朝向) a1+500(我方位置)
+              a1+572(属性加成) a1+644(我方朝向) a1+716(物品编号)
+              a1+788(物品数量) a1+860(地图编号)
+  - 记录访问: *(a3+880) + 498*(a2+1) — 1-based索引, 跳过文件首498字节
+  - 69条战斗名称硬编码于DLL字符串表(0x66A8起)
+
+WarWay.dat 格式 (每条1024字节, 共100条, 32x32有符号字节网格):
+  值语义 (sub_4355C4 + sub_431428):
+    -1 (0xFF): 障碍物/不可通行 — sub_4355C4更新循环跳过, 永久不变
+     0 (0x00): 普通可通行地面 — 默认值, 不触发特效
+     1-5:      特殊区域/放置区 — sub_431428:106取值分组, sub_434D7C:60触发地格特效
 
 用法: python wardata_editor_v2.py
 """
@@ -607,13 +630,31 @@ class WarDataEditorV2(QMainWindow):
 
     # ── 名称辅助 ──
     def _char_name(self, warpc_idx):
+        """WarPC角色索引 → 角色名称 (via WarPC.name_id → TKT)
+        WarPC[0-34]=玩家/独特角色, WarPC[35-142]=敌军角色.
+        must_chars 用 v-1 解码得到 0-34 的玩家索引。
+        enemy_ids 需 +35 得到敌军索引, 调用方应使用 _enemy_name()."""
         if warpc_idx in self.warpc_names: return self.warpc_names[warpc_idx]
         return f"PC#{warpc_idx}" if warpc_idx >= 0 else "?"
 
     def _enemy_name(self, enemy_id):
+        """敌军角色ID → 角色名称 (enemy_id + 35 = WarPC索引)"""
         return self._char_name(enemy_id + 35)
 
+    def _battle_name(self, rec):
+        """生成战斗名称 — 使用 battle_id 或 must_chars 推断"""
+        bid = rec['battle_id']
+        chars = [c for c in rec['must_chars'] if c > 0 and c != 255]
+        if chars:
+            names = []
+            for c in chars[:3]:
+                cid = c - 1  # +1编码解码
+                names.append(self._char_name(cid))
+            return f"#{bid} " + ",".join(names) if names else f"战场#{bid}"
+        return f"战场#{bid}"
+
     def _trea_label(self, rec, i):
+        """宝物槽的显示标签 (trea_sub TKItem ID)"""
         tid = rec['trea_sub'][i] if i < 10 else 0
         if tid == 10000: return "金钱"
         elif tid > 0: return self.tkitem_names_by_id.get(tid, f"Item#{tid}")[:8]
@@ -621,10 +662,12 @@ class WarDataEditorV2(QMainWindow):
 
     @staticmethod
     def _trap_type_at(rec, slot):
+        """获取指定槽位的陷阱类型"""
         return rec['trap_type'][slot]
 
     @staticmethod
     def _trap_power_at(rec, slot):
+        """获取指定槽位的陷阱威力 (min, max)"""
         off = slot * 2 if slot < 10 else 20 + (slot - 10) * 2
         return (rec['trap_pwr'][off], rec['trap_pwr'][off + 1])
 
@@ -1045,10 +1088,11 @@ class WarDataEditorV2(QMainWindow):
         gl_enemy.addWidget(DockHeader("敌军配置 [034-177] ×18"))
         body_enemy = QWidget(); body_enemy.setObjectName("DockBody")
         bl_enemy = QVBoxLayout(body_enemy); bl_enemy.setContentsMargins(8,8,8,8)
-        tbl = QTableWidget(18, 10); tbl.setMinimumHeight(350)
-        tbl.setHorizontalHeaderLabels(["ID","Lv","加成","LvP1","LvP2","X","Y","Delay","Flags","标志解读"])
-        for c in range(9): tbl.setColumnWidth(c, 55)
-        tbl.horizontalHeader().setSectionResizeMode(9, QHeaderView.Stretch)
+        tbl = QTableWidget(18, 9); tbl.setMinimumHeight(350)
+        tbl.setHorizontalHeaderLabels(["ID\nu16[034-069]","Lv\nu8[070-087]","加成\nu8[088-105]","LvP1\ni8[106-141]","LvP2\ni8[106-141]","X\ni8[142-177]","Y\ni8[142-177]","时序Delay\nu8[190-207]","标志\nu16[442-477]"])
+        tbl.setColumnWidth(0,55); tbl.setColumnWidth(1,45); tbl.setColumnWidth(2,45)
+        tbl.setColumnWidth(3,45); tbl.setColumnWidth(4,45); tbl.setColumnWidth(5,35)
+        tbl.setColumnWidth(6,35); tbl.setColumnWidth(7,65); tbl.setColumnWidth(8,55)
         tbl.verticalHeader().setDefaultSectionSize(24)
         self.ap_enemy_table = tbl
         bl_enemy.addWidget(tbl); gl_enemy.addWidget(body_enemy); layout.addWidget(grp_enemy)
@@ -1059,10 +1103,9 @@ class WarDataEditorV2(QMainWindow):
         gl_ally.addWidget(DockHeader("友军配置 [178-213] ×6"))
         body_ally = QWidget(); body_ally.setObjectName("DockBody")
         bl_ally = QVBoxLayout(body_ally); bl_ally.setContentsMargins(8,8,8,8)
-        atbl = QTableWidget(6, 4); atbl.setMinimumHeight(160)
-        atbl.setHorizontalHeaderLabels(["X","Y","朝向",""])
-        atbl.setColumnWidth(0,55); atbl.setColumnWidth(1,55); atbl.setColumnWidth(2,55)
-        atbl.horizontalHeader().setSectionResizeMode(3, QHeaderView.Stretch)
+        atbl = QTableWidget(6, 3); atbl.setMinimumHeight(160)
+        atbl.setHorizontalHeaderLabels(["X\ni8[178-189]","Y\ni8[178-189]","朝向\nu8[208-213]"])
+        atbl.setColumnWidth(0,35); atbl.setColumnWidth(1,35); atbl.setColumnWidth(2,65)
         atbl.verticalHeader().setDefaultSectionSize(24)
         self.ap_ally_table = atbl
         bl_ally.addWidget(atbl); gl_ally.addWidget(body_ally); layout.addWidget(grp_ally)
@@ -1073,10 +1116,11 @@ class WarDataEditorV2(QMainWindow):
         gl_trea.addWidget(DockHeader("宝物/陷阱 [214-441] ×28"))
         body_trea = QWidget(); body_trea.setObjectName("DockBody")
         bl_trea = QVBoxLayout(body_trea); bl_trea.setContentsMargins(8,8,8,8)
-        ttbl = QTableWidget(28, 9); ttbl.setMinimumHeight(500)
-        ttbl.setHorizontalHeaderLabels(["陷阱类型","副物品","X","Y","威Min","威Max","QtMin","QtMax",""])
-        for c in range(8): ttbl.setColumnWidth(c, 60)
-        ttbl.horizontalHeader().setSectionResizeMode(8, QHeaderView.Stretch)
+        ttbl = QTableWidget(28, 8); ttbl.setMinimumHeight(500)
+        ttbl.setHorizontalHeaderLabels(["陷阱类型\nu16[386-441]","副物品\nu16[326-345]","X\ni8[214-269]","Y\ni8[214-269]","威Min\nu8[270-325]","威Max\nu8[270-325]","QtMin\nu16[346-385]","QtMax\nu16[346-385]"])
+        ttbl.setColumnWidth(0,65); ttbl.setColumnWidth(1,65); ttbl.setColumnWidth(2,35)
+        ttbl.setColumnWidth(3,35); ttbl.setColumnWidth(4,45); ttbl.setColumnWidth(5,45)
+        ttbl.setColumnWidth(6,55); ttbl.setColumnWidth(7,55)
         ttbl.verticalHeader().setDefaultSectionSize(24)
         self.ap_trea_table = ttbl
         bl_trea.addWidget(ttbl); gl_trea.addWidget(body_trea); layout.addWidget(grp_trea)
@@ -1132,13 +1176,6 @@ class WarDataEditorV2(QMainWindow):
                     str(rec['enemy_lv_range'][i*2]), str(rec['enemy_lv_range'][i*2+1]),
                     str(rec['enemy_xy'][i*2]), str(rec['enemy_xy'][i*2+1]),
                     str(rec['enemy_delay'][i]), str(rec['enemy_flags'][i])]
-            f = rec['enemy_flags'][i]; parts = []
-            if f&1: parts.append('精英')
-            if f&2: parts.append('特殊')
-            if f&0x2000: parts.append('阵营A')
-            if f&0x4000: parts.append('阵营B')
-            if f&0x8000: parts.append('特殊型')
-            vals.append('/'.join(parts))
             for c, v in enumerate(vals):
                 item = QTableWidgetItem(v); item.setTextAlignment(Qt.AlignCenter); tbl.setItem(i, c, item)
         # 友军表
@@ -1154,7 +1191,7 @@ class WarDataEditorV2(QMainWindow):
                     str(rec['trap_xy'][i*2]), str(rec['trap_xy'][i*2+1]),
                     str(rec['trap_pwr'][i*2]), str(rec['trap_pwr'][i*2+1]),
                     str(rec['trea_quant'][i*2]) if i < 10 else '',
-                    str(rec['trea_quant'][i*2+1]) if i < 10 else '', '']
+                    str(rec['trea_quant'][i*2+1]) if i < 10 else '']
             for c, v in enumerate(vals):
                 item = QTableWidgetItem(v); item.setTextAlignment(Qt.AlignCenter); ttbl.setItem(i, c, item)
 
