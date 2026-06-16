@@ -1380,22 +1380,49 @@ class JVGEditor(QMainWindow):
         view_w = self._canvas.viewport().width()
         view_h = self._canvas.viewport().height()
         
-        # 计算自适应缩放（与原版一致）
-        fit_scale = min(1.0, (view_w - 80) / max(f.width, 1), (view_h - 80) / max(f.height, 1))
+        # 计算所有帧的边界框（与动画模式一致）
+        vrs = []
+        for frame in frames:
+            if frame.width <= 0:
+                vrs.append((0, 0, 0, 0))
+                continue
+            xm = _u16s(frame.x_max)
+            ym = _u16s(frame.y_max)
+            vrs.append((xm - frame.width + 1, ym - frame.height + 1, xm, ym))
+        
+        min_vl = min(r[0] for r in vrs)
+        min_vt = min(r[1] for r in vrs)
+        max_vr = max(r[2] for r in vrs)
+        max_vb = max(r[3] for r in vrs)
+        cell_w = max_vr - min_vl + 1
+        cell_h = max_vb - min_vt + 1
+        
+        # 计算自适应缩放
+        base_scale = min(1.0, (view_w - 40) / max(cell_w, 1), (view_h - 40) / max(cell_h, 1))
+        scale = base_scale * self._zoom
+        
         # 获取原始尺寸的 pixmap
         pixmap = self._f2qpixmap(f, pal, 1.0)
         
         if pixmap:
             self._photos[0] = pixmap
-            total_scale = fit_scale * self._zoom
-            pw = f.width * total_scale
-            ph = f.height * total_scale
-            # 居中显示（与原版 anchor=tk.CENTER 一致）
-            x = (view_w - pw) / 2
-            y = (view_h - ph) / 2
+            # 计算当前帧在 cell 中的偏移量
+            ox = _u16s(f.x_max) - f.width + 1 - min_vl
+            oy = _u16s(f.y_max) - f.height + 1 - min_vt
+            
+            # 计算 cell 在视口中的居中位置
+            cell_pixel_w = cell_w * scale
+            cell_pixel_h = cell_h * scale
+            cx = (view_w - cell_pixel_w) / 2
+            cy = (view_h - cell_pixel_h) / 2
+            
+            # 帧在 cell 中的位置
+            x = cx + ox * scale
+            y = cy + oy * scale
+            
             item = QGraphicsPixmapItem(pixmap)
             item.setPos(x, y)
-            item.setScale(total_scale)
+            item.setScale(scale)
             self._scene.addItem(item)
         
         self._sel_fi = self._fi
