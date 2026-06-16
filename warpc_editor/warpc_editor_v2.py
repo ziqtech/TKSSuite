@@ -424,7 +424,7 @@ def make_fake_input(line_edit=None, combo=None, button=None, stretch=True):
     box = QFrame(); box.setObjectName("FakeInputBox")
     h = QHBoxLayout(box); h.setContentsMargins(0,0,0,0); h.setSpacing(0)
     if line_edit: line_edit.setFrame(False); h.addWidget(line_edit)
-    if combo: h.addWidget(combo)
+    if combo: h.addWidget(combo, 1)
     if button: h.addWidget(button)
     if stretch: h.addStretch()
     return box
@@ -800,10 +800,10 @@ class WarpcEditorV2(QMainWindow):
         toolbar.addWidget(QLabel("搜索:"))
         self.search_entry = QLineEdit(); self.search_entry.setFixedWidth(160)
         self.search_entry.returnPressed.connect(self._apply_filter); toolbar.addWidget(self.search_entry)
-        toolbar.addWidget(QPushButton("搜索", clicked=self._apply_filter))
-        toolbar.addWidget(QPushButton("清除", clicked=self._clear_filter))
+        toolbar.addWidget(QPushButton("🔍 搜索", clicked=self._apply_filter))
+        toolbar.addWidget(QPushButton("🗑 清除", clicked=self._clear_filter))
         toolbar.addSpacing(10)
-        toolbar.addWidget(QPushButton("重新加载", clicked=self._reload))
+        toolbar.addWidget(QPushButton("🔄 重新加载", clicked=self._reload))
         toolbar.addWidget(QPushButton("🌗 切换主题", clicked=self._toggle_theme))
         toolbar.addStretch()
         self.status_var = QLabel("请通过 文件 → 加载 TKS 目录 打开数据")
@@ -875,8 +875,8 @@ class WarpcEditorV2(QMainWindow):
         scroll.setWidget(inner); self.tabs.addTab(scroll, name)
         return inner
 
-    def _build_section(self, parent, title, fields, cols=8, field_ft='int'):
-        """构建字段分组"""
+    def _build_section(self, parent, title, fields, cols=6, field_ft='int'):
+        """构建字段分组（统一列宽）"""
         grp = QWidget()
         gl = QVBoxLayout(grp); gl.setContentsMargins(0,0,0,0); gl.setSpacing(0)
         gl.addWidget(DockHeader(title))
@@ -888,6 +888,17 @@ class WarpcEditorV2(QMainWindow):
             cmt = field_tuple[3] if len(field_tuple) > 3 else fl
             r, c = divmod(fi, cols)
             self._build_field_widget(grid, r, c, fn, fo, fl, field_ft, cmt)
+        # 所有列等宽
+        for c in range(cols):
+            grid.setColumnStretch(c, 1)
+        # 填充末行空白占位，防止列宽不均
+        if fields:
+            last_row_count = len(fields) % cols
+            if last_row_count != 0:
+                last_row = len(fields) // cols
+                for c in range(last_row_count, cols):
+                    spacer = QWidget()
+                    grid.addWidget(spacer, last_row, c)
         bl.addLayout(grid); gl.addWidget(body); parent.layout().addWidget(grp)
 
     def _build_field_widget(self, grid, r, c, fn, fo, fl, field_ft='int', cmt=''):
@@ -969,13 +980,13 @@ class WarpcEditorV2(QMainWindow):
         p = self._build_scroll_tab("核心属性")
         self._build_section(p, "基本信息 [0]-[8]", IDENTITY_FIELDS, 6)
         self._build_section(p, "HP / MP [10]-[20]", HPMP_FIELDS, 6)
-        self._build_section(p, "八属性 [22]-[50]", STAT_FIELDS, 8)
-        self._build_section(p, "角色五维 [54]-[62]", CHAR_ATTR_FIELDS, 5)
-        self._build_section(p, "技能加成 [64]-[80] (来自TKSkill)", SKILL_BONUS_FIELDS, 5)
-        self._build_section(p, "反应组 [82]-[84]", REACTION_FIELDS, 2)
+        self._build_section(p, "八属性 [22]-[50]", STAT_FIELDS, 6)
+        self._build_section(p, "角色五维 [54]-[62]", CHAR_ATTR_FIELDS, 6)
+        self._build_section(p, "技能加成 [64]-[80] (来自TKSkill)", SKILL_BONUS_FIELDS, 6)
+        self._build_section(p, "反应组 [82]-[84]", REACTION_FIELDS, 6)
         self._build_status_slots(p)
         self._build_status_resist(p)
-        self._build_section(p, "攻击导致状态 [134]-[136]", STATUS_FIELDS_CAUSE, 2, 'mask')
+        self._build_section(p, "攻击导致状态 [134]-[136]", STATUS_FIELDS_CAUSE, 6, 'mask')
 
     def _build_status_slots(self, parent):
         grp = QWidget()
@@ -1026,14 +1037,14 @@ class WarpcEditorV2(QMainWindow):
 
     def _build_tab2(self):
         p = self._build_scroll_tab("装备与技能")
-        self._build_section(p, "装备索引 [138]-[144]", EQUIP_FIELDS[:4], 4, 'item_pick')
-        self._build_section(p, "装备物品ID [146]-[152]", EQUIP_FIELDS[4:], 4, 'item_pick')
-        self._build_section(p, "使用/装备权限 [154]-[162]", CHAR_USE_RIGHT_FIELDS, 5)
+        self._build_section(p, "装备索引 [138]-[144]", EQUIP_FIELDS[:4], 6, 'item_pick')
+        self._build_section(p, "装备物品ID [146]-[152]", EQUIP_FIELDS[4:], 6, 'item_pick')
+        self._build_section(p, "使用/装备权限 [154]-[162]", CHAR_USE_RIGHT_FIELDS, 6)
         self._build_section(p, "装备技能 [164]-[174] (6字段)", EQUIP_SKILL_FIELDS, 6, 'skill_pick')
-        self._build_section(p, "补丁字段 [520]-[526]", PATCH_FIELDS, 4)
-        self._build_section(p, "成长率 [528]-[532]", GROWTH_FIELDS, 3)
-        self._build_section(p, "战后奖励 [536]-[538]", BATTLE_REWARD_FIELDS, 2)
-        self._build_section(p, "可掉落物品 [540]-[544]", DROP_ITEM_FIELDS, 3, 'item_pick')
+        self._build_section(p, "补丁字段 [520]-[526]", PATCH_FIELDS, 6)
+        self._build_section(p, "成长率 [528]-[532]", GROWTH_FIELDS, 6)
+        self._build_section(p, "战后奖励 [536]-[538]", BATTLE_REWARD_FIELDS, 6)
+        self._build_section(p, "可掉落物品 [540]-[544]", DROP_ITEM_FIELDS, 6, 'item_pick')
 
     def _build_tab3(self):
         """技能学习状态 [176]-[518]"""
