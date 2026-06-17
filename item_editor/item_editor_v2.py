@@ -6,6 +6,31 @@ TKItem.dat 可视化编辑器 v2.0 (PySide6 — Godot 4.6 风格)
 保留全部逆向分析、字段定义、LZSS 编解码、JVG 图标加载逻辑。
 支持深色/浅色主题切换 (默认跟随系统), 共享 editor_themes/ 主题。
 
+【v3.0 变更】基于反编译源码 (sub_41E40C/sub_42234C/sub_422BBC) + Maker 文案 + 实测数据验证:
+  1. 字段 [22] offset 44: "装备后学习技能" (v15[22] -> char+176+v15[22]=10, 装备时学会)
+     ※实测验证: 蟬翼刀#178 [22]=135=技能"蟬翼刀"; 虎紋刀#177 [22]=134=技能"虎紋刀"
+  2. 字段 [23] offset 46: "使用后学习技能1" (v15[23] -> byte_757FB8[1054*a2+v15[23]]=10, 使用时)
+     ※实测验证: 遁甲天書#79 [23]=24=技能"瀚力術"
+  3. 字段 [24] offset 48: "使用后学习技能2"
+     ※实测验证: 遁甲天書#79 [24]=25=技能"遲緩術"
+  4. 字段 [26] offset 52: "导致状态 1-16" (Maker UI 标签)
+     ※实测验证: 紅顏知己[27]=0x1000 bit12=28迷恋; 大骨鎚[27]=0xC bit2/3=18禁制+19定身
+     (反编译 a2[67]=v9[26] 只是保存, 战斗时读取作状态 mask 使用)
+  5. 字段 [27] offset 54: "导致状态 17-32"
+  6. 字段 [28] offset 56: "解除状态 1-16"
+  7. 字段 [29] offset 58: "解除状态 17-32"
+  8. 字段 [25] offset 50: "增加医术" (Maker UI 文案; word_75688A += v15[25])
+  9. 使用权限 (equip_type) 位掩码语义 (2026-05 全面重分析):
+     0=通用/饰品(110条): 坐骑/饰品/任务物品, 0b0=无限制
+     1=刀/道具/轻衣(39条): 刀类武器+消耗品+轻便衣物/披风/袍, 0b1=bit0
+     2=剑/书籍/铠甲(97条): 剑类武器+书籍+重甲防具, 0b10=bit1
+     3=药品/食物(26条): 治疗物品, 刀剑通用 0b11=bit0|bit1
+     4=枪/秘笈(18条): 枪类武器+特殊秘笈/法宝, 0b100=bit2
+     8=矛(8条), 16=弓弩(12条), 32=大刀(12条), 64=戟(6条), 128=锤(6条)
+     (基于 sub_41928C/sub_41F318/sub_4307CC 逆向+全600条实测验证)
+ 10. 记录数硬限制: 600 条 (sub_45343C 加载 38400 字节 = 600x64; sub_42F8D4 遍历 < 600)
+ 11. 空槽 (40 条可新增物品): #560-#599, item_id=0 & name_id=0 & desc_id=600
+
 用法:
   python item_editor_v2.py
 """
@@ -49,7 +74,10 @@ def lzss_decompress(data):
 
 def lzss_compress(data):
     src = data; sl = len(src)
+    # 极速优化：使用线性 bytes 并借助底层 C 实现的 rfind 替代缓慢的纯 Python O(N^2) 搜索
+    # 初始化完整的 4096 字节虚拟历史记录与当前数据拼接
     flat_bytes = bytes(bytearray([0x20]*4096) + src)
+    
     tokens = []; pos = 0
     while pos < sl:
         curr = 4096 + pos
@@ -60,9 +88,12 @@ def lzss_compress(data):
                 pat = flat_bytes[curr : curr + length]
                 end_idx = curr + length - 1
                 start_idx = max(0, curr - 4096)
+                
+                # 寻找在 4096 窗口内最近的匹配项
                 idx = flat_bytes.rfind(pat, start_idx, end_idx)
                 if idx != -1:
                     bl = length
+                    # 将绝对索引直接转换为 Ring Buffer 的偏移量
                     bo = (idx - 18) & 0xFFF
                     break
         if bl >= 3:
@@ -107,6 +138,7 @@ def load_tkt(tkt_path):
     return lookup
 
 def load_tkt_full(tkt_path):
+    """加载 TKT 全部文本（保留完整多行内容，\x1e 转为换行）"""
     if not tkt_path or not os.path.exists(tkt_path): return {}
     with open(tkt_path, 'rb') as f: raw = f.read()
     ts = struct.unpack_from('<I', raw, 0)[0]; cnt = struct.unpack_from('<I', raw, 4)[0]
@@ -139,6 +171,7 @@ def load_tkskill_names(sp, tkt):
 # Mu.JVG 物品图标加载 (icon + 130 = 精灵索引)
 # ============================================================
 def load_mu_sprites(mu_path):
+    """加载 Mu.JVG 并返回 PIL Image 列表 (PIL 可用时) 或 None"""
     try:
         from PIL import Image
     except ImportError:
@@ -167,6 +200,7 @@ def load_mu_sprites(mu_path):
                 sprites.append(None)
                 continue
             eo = mo + 16; ed = data[eo:eo+co[si+1]-co[si]-16]
+            # RLE 解码 (对齐 jvg_editor _decode_rle)
             total = w*h; px = bytearray(total); alpha = bytearray(total)
             recs = []; rp = 0
             while rp + 4 <= len(ed):
@@ -195,6 +229,7 @@ def load_mu_sprites(mu_path):
                         if 0 <= bp < total: px[bp] = rpix[k]; alpha[bp] = 255
                         bp -= 1
                     pg = gap if al > 0 and cb+al >= w else 0
+            # 创建 PIL Image (alpha 通道由 RLE 解码器提供, 不依赖 palette index 0)
             if w > 0 and h > 0:
                 img = Image.frombytes('P', (w, h), bytes(px))
                 img.putpalette(pal_bytes)
@@ -208,14 +243,16 @@ def load_mu_sprites(mu_path):
 # ============================================================
 # 常量 (Maker.exe TksModify.dll 文案 + TKS.exe 反编译)
 # ============================================================
+# 31 种状态 (bit 0..30; Maker UI 状态列表)
 STATUS_NAMES = [
     "破兵","碎甲","昏眩","封锁","羁绊","蓄力","刚体","集中",
     "云身","神行","无视","伪装","御风","死战","连计","连计",
     "误导","混乱","禁制","定身","诅咒","封印","燃烧","冰冻",
     "虚弱","麻痹","沈睡","中毒","迷恋","明镜","针灸",
 ]
-STATUS_ICON_BASE = 242
+STATUS_ICON_BASE = 242  # Mu.JVG 中 31 个 30x30 状态图标起始精灵索引
 
+# 战斗结算效果 (combat_flag, field [20]) — sub_42234C: a2[33] |= v9[20]; 战斗结算时按位检查
 COMBAT_FLAG_BITS = [
     (1, "JP×2~3",              "战后技能点数×2~3 (無方戒; bit0)"),
     (2, "战后全恢复+异常全解",  "战斗结束HP/MP全恢复+清除异常 (無雙戒; bit1)"),
@@ -231,30 +268,36 @@ EXTRA_FLAG_BITS = [
     (5, "战斗时序强效",   "敌方计时条强制扣减(更强效); sub_431E70 bit5 (六無玄冥石)"),
 ]
 
+# 使用权限 (equip_type) — 多选位掩码，选项根据页面号动态切换
+#  sub_41928C: word_77CBD4[32*idx] & word_757FA4[527*char] → 权限位与校验
 USE_RIGHT_OPTIONS = {
-    0: [(1, "战斗"), (2, "非战斗")],
-    1: [(1, "战斗"), (2, "非战斗"), (4, "主角限定")],
+    0: [(1, "战斗"), (2, "非战斗")],                              # 药品
+    1: [(1, "战斗"), (2, "非战斗"), (4, "主角限定")],              # 道具
     2: [(1, "刀"), (2, "剑"), (4, "枪"), (8, "矛"),
-        (16, "弓"), (32, "大刀"), (64, "戟"), (128, "锤")],
-    3: [(1, "衣袍"), (2, "铠甲")],
-    4: [(0, "通用")],
-    5: [(0, "通用")],
+        (16, "弓"), (32, "大刀"), (64, "戟"), (128, "锤")],      # 武器
+    3: [(1, "衣袍"), (2, "铠甲")],                                # 防具
+    4: [(0, "通用")],                                             # 饰品
+    5: [(0, "通用")],                                             # 特殊
 }
 
 def _use_right_label(val, page):
+    """根据页面号解析使用权限为可读文本"""
     opts = USE_RIGHT_OPTIONS.get(page, [])
     sel = [name for bit, name in opts if bit == 0 or (val & bit)]
     return ", ".join(sel) if sel else "(无)"
 
+# 页面号 (tab_code, Maker UI 未显示; 商店分页, 0-5)
 PAGE_NAMES = {0:"药品", 1:"道具", 2:"武器", 3:"防具", 4:"饰品", 5:"特殊"}
 PAGE_VALUES = [f"{k}-{v}" for k,v in sorted(PAGE_NAMES.items())]
 
-ITEM_REC = 64; ITEM_CNT = 600
+ITEM_REC = 64; ITEM_CNT = 600  # 游戏硬编码: sub_45343C(aTkitemDat, word_77CBCA, 38400)
 W_INPUT = 12
 
 # ============================================================
-# 字段定义
+# 字段定义 - 严格按 Maker UI 文案 + 反编译证据
+# (键, 字节偏移, UI标签, 类型, 宽度, 反编译注释)
 # ============================================================
+# 顶部基础属性网格 (Maker UI 可见字段 22 条; 技能/状态在下方分组)
 GRID_FIELDS = [
     ("item_id",      0, "物品代码",       'int',       W_INPUT, "物品唯一标识，全游戏查找主键 (v15[0])"),
     ("name_id",      4, "名称代码",       'tkt',       W_INPUT, "TKT 文本数据库 ID，用于物品显示名称 (v15[2])"),
@@ -280,6 +323,7 @@ GRID_FIELDS = [
     ("price",       62, "价格",           'int',       W_INPUT, "物品买卖价格，商店卖出时折半 (v15[31])"),
 ]
 
+# 技能组 (4 个字段; 全部对应全局技能等级表)
 SKILL_FIELDS = [
     ("attach_skill",    42, "附加技能",         "装备后直接施加技能被动效果(属性加成等)，不写入技能栏 (v15[21])"),
     ("equip_learn",     44, "装备后学习技能",   "⚠ 仅升级已有技能(1-19→10级)，不会从零教会！未习得技能无效果 (v15[22])"),
@@ -287,16 +331,19 @@ SKILL_FIELDS = [
     ("use_learn2",      48, "使用后学习技能2",  "使用时学会技能(10级)；负数索引可从零教会全局技能 (v15[24])"),
 ]
 
+# 导致状态 (装备/命中时让目标进入异常状态; 干將莫邪[26]=0x03=破兵+碎甲; 紅顏知己[27]=0x1000=迷恋)
 CAUSE_MASK_FIELDS = [
     ("cause_mask1", 52, "导致状态 1-16",  "装备/命中时让目标进入的状态位掩码，每位对应状态表第 i 项 (v15[26])"),
     ("cause_mask2", 54, "导致状态 17-32", "装备/命中时让目标进入的状态位掩码，每位对应状态表第 16+i 项 (v15[27])"),
 ]
 
+# 解除状态 (使用物品时按位清除角色异常状态)
 CURE_MASK_FIELDS = [
     ("cure_mask1", 56, "解除状态 1-16",  "使用物品时解除的状态位掩码，每位对应状态表第 i 项 (v15[28])"),
     ("cure_mask2", 58, "解除状态 17-32", "使用物品时解除的状态位掩码，每位对应状态表第 16+i 项 (v15[29])"),
 ]
 
+# 隐含字段 (TKItem 记录占用但 Maker UI 未显示，读写透传保留原始数据)
 HIDDEN_FIELDS = [
     ("tab_code",     2, "页面号",       'page', W_INPUT, "物品在商店中的分页编号 (0=药品,1=道具,2=武器,3=防具,4=饰品,5=特殊)"),
     ("extra_flags", 60, "额外标志",     'extra_flags', W_INPUT, "地图/战斗全局标志(sub_41F784 OR到dword_755C80) (v15[30])"),
@@ -311,6 +358,11 @@ ALL_FIELDS = (GRID_FIELDS + HIDDEN_FIELDS +
 # 空槽/显示名辅助
 # ============================================================
 def is_empty_item(rec, tkt=None):
+    """严格空槽: item_id in (0,1) 或 name_id<=0 或 tkt 中无对应名称.
+    - #560-#599 真空槽: id=0 & name_id=0 (可新增物品复用)
+    - id=1 占位: 约 225 条游戏保留记录 (#550-559 等)
+    - 无 TKT 名: 孤立记录, 无法显示
+    """
     if rec.get('item_id', 0) in (0, 1): return True
     if rec.get('name_id', 0) <= 0: return True
     if tkt is not None:
@@ -319,6 +371,7 @@ def is_empty_item(rec, tkt=None):
     return False
 
 def is_pure_empty_slot(rec):
+    """真·空槽 (可作新增物品起始模板): item_id==0 AND name_id==0."""
     return rec.get('item_id', 0) == 0 and rec.get('name_id', 0) == 0
 
 def item_display_name(rec, tkt):
@@ -347,6 +400,7 @@ def load_items(fp):
 
 def save_items(fp, recs):
     buf = bytearray(ITEM_CNT * ITEM_REC)
+    # 空槽模板 (#560-#599 原始值: name_id=0, desc_id=600) 在保存时保持 desc_id=600
     for rec in recs[:ITEM_CNT]:
         i = rec['index']; off = i * ITEM_REC
         for k, fo, _, _, _, _ in ALL_FIELDS:
@@ -981,6 +1035,7 @@ class ItemEditorApp(QMainWindow):
 
     # ── 图标 ──
     def _get_icon_pixmap(self, icon_val, size=(24,24)):
+        """获取图标的 QPixmap (缓存), icon_val 为游戏原始值 (实际显示值 +130)"""
         if not self._mu_sprites: return None
         idx = icon_val + 130
         if idx < 0 or idx >= len(self._mu_sprites): return None
@@ -999,6 +1054,7 @@ class ItemEditorApp(QMainWindow):
 
     # ── 筛选/列表 ──
     def _update_right_options(self, page_filter_text):
+        """根据页面筛选值动态填充权限下拉框选项"""
         if page_filter_text.startswith("全部"):
             seen = set(); all_opts = []
             for page in sorted(USE_RIGHT_OPTIONS):
@@ -1074,6 +1130,7 @@ class ItemEditorApp(QMainWindow):
         self.table.blockSignals(False)
 
     def _sort_by(self, col):
+        """按列排序"""
         # 列: 图标(0) #(1) ID(2) 页面(3) 物品名称(4) 权限(5) 价格(6)
         km = {2:'item_id', 3:'tab_code', 5:'equip_type', 6:'price'}
         key = km.get(col, 'index')
@@ -1088,6 +1145,7 @@ class ItemEditorApp(QMainWindow):
         self._populate_edit(self.records[idx])
 
     def _populate_edit(self, rec):
+        """填充编辑区字段"""
         self._editing_idx = rec['index']
         self.lbl_rec_idx.setText(
             f"记录 #{rec['index']}   物品代码={rec['item_id']}   "
@@ -1164,6 +1222,7 @@ class ItemEditorApp(QMainWindow):
                 self.extra_map[fn].setText(f"[图标 {ival}]")
 
     def _update_flag_label(self, fn, val, flag_bits, use_bit_shift=False):
+        """更新标志位的标签显示"""
         mask = val & 0xFFFF
         sel = []
         for bit, name, _ in flag_bits:
@@ -1174,6 +1233,7 @@ class ItemEditorApp(QMainWindow):
         self.extra_map[fn].setText(", ".join(sel) if sel else "(无)")
 
     def _update_status_label(self, fn, mask):
+        """更新状态标签显示"""
         base = 0 if fn.endswith('_mask1') else 16
         sel = []
         for i in range(16):
@@ -1182,6 +1242,7 @@ class ItemEditorApp(QMainWindow):
         self.extra_map[fn].setText(", ".join(sel) if sel else "(无)")
 
     def _update_preview_status(self, si, sel):
+        """更新预览区中单个状态列 (含图标, 每行最多3个)"""
         container = self._preview_status_containers[si]
         # 清除旧内容
         while container.layout().count():
@@ -1203,6 +1264,7 @@ class ItemEditorApp(QMainWindow):
 
     # ── 弹窗: TKT ──
     def _pick_tkt(self, fn):
+        """弹窗选择 TKT 文本"""
         if not self.tkt: return
         cur_val = int(self.widget_map[fn].text() or 0)
         dlg = TktPickerDialog(self, self.tkt, cur_val)
@@ -1218,6 +1280,7 @@ class ItemEditorApp(QMainWindow):
 
     # ── 弹窗: 技能 ──
     def _pick_skill(self, fn):
+        """弹窗选择技能"""
         if not self.skill_names: return
         cur_val = int(self.widget_map[fn].text() or 0)
         dlg = SkillPickerDialog(self, self.skill_names, cur_val)
@@ -1231,6 +1294,7 @@ class ItemEditorApp(QMainWindow):
 
     # ── 弹窗: 图标 ──
     def _pick_icon(self, fn):
+        """弹窗选择物品图标"""
         if not self._mu_sprites:
             QMessageBox.information(self, "提示", "未加载 Mu.JVG 图标文件"); return
         cur_val = int(self.widget_map[fn].text() or 0)
@@ -1244,6 +1308,7 @@ class ItemEditorApp(QMainWindow):
 
     # ── 弹窗: 状态 mask ──
     def _pick_status(self, fn):
+        """弹窗选择状态 mask 多选"""
         is_cause = fn.startswith('cause_')
         title = "选择导致状态 (位掩码)" if is_cause else "选择解除状态 (位掩码)"
         base = 0 if fn.endswith('_mask1') else 16
@@ -1260,6 +1325,7 @@ class ItemEditorApp(QMainWindow):
 
     # ── 弹窗: 战斗结算效果 ──
     def _pick_combat_flags(self, fn):
+        """弹窗选择战斗结算效果 (位掩码多选)"""
         cur_val = int(self.widget_map[fn].text() or 0) & 0xFFFF
         dlg = FlagPickerDialog(self, "选择战斗结算效果 (位掩码)", COMBAT_FLAG_BITS, cur_val, use_bit_shift=False)
         if dlg.exec() == QDialog.Accepted and dlg.selected_mask is not None:
@@ -1268,6 +1334,7 @@ class ItemEditorApp(QMainWindow):
 
     # ── 弹窗: 额外标志 ──
     def _pick_extra_flags(self, fn):
+        """弹窗选择额外标志位"""
         cur_val = int(self.widget_map[fn].text() or 0) & 0xFFFF
         dlg = FlagPickerDialog(self, "选择额外标志 (位掩码)", EXTRA_FLAG_BITS, cur_val, use_bit_shift=True)
         if dlg.exec() == QDialog.Accepted and dlg.selected_mask is not None:
@@ -1276,9 +1343,11 @@ class ItemEditorApp(QMainWindow):
 
     # ── 弹窗: 使用权限 ──
     def _pick_use_right(self, fn):
+        """弹窗选择使用权限 (根据当前页面号动态切换选项)"""
         if not self.records or self._editing_idx is None: return
         page = self.records[self._editing_idx].get('tab_code', 0)
         opts = USE_RIGHT_OPTIONS.get(page, [])
+        # 仅有一个值为0的选项时，直接设为0
         if len(opts) == 1 and opts[0][0] == 0:
             self.widget_map[fn].setText("0")
             self.extra_map[fn].setText(_use_right_label(0, page)); return
@@ -1290,6 +1359,7 @@ class ItemEditorApp(QMainWindow):
 
     # ── 编辑应用 ──
     def _apply_edit(self):
+        """应用编辑到记录"""
         if self._editing_idx is None: return
         rec = self.records[self._editing_idx]
         for fn, fo, fl, ft, fw, cmt in ALL_FIELDS:
@@ -1313,10 +1383,12 @@ class ItemEditorApp(QMainWindow):
         self.status_var.setText(f"记录 #{rec['index']} 已修改 (内存, 未保存)")
 
     def _reset_edit(self):
+        """重置编辑区为当前记录"""
         if self._editing_idx is not None:
             self._populate_edit(self.records[self._editing_idx])
 
     def _clear_current(self):
+        """把当前选中记录清为空槽模板 (恢复 #560-599 原始值)."""
         if self._editing_idx is None:
             QMessageBox.information(self, "提示", "请先选择一条记录"); return
         reply = QMessageBox.question(self, "确认清空",
@@ -1344,6 +1416,9 @@ class ItemEditorApp(QMainWindow):
         QMessageBox.warning(self, "已满", "无真·空槽 (id=0 的记录) 可复制到.\n可先使用『清空此记录』释放一个槽位.")
 
     def _new_item(self):
+        """新增物品: 在空槽 #560-#599 中找第一条 item_id=0 的记录, 填入默认值并选中.
+        游戏硬编码限制 600 条, 无法扩容; 但 #560-#599 40 条空槽可用.
+        """
         if not self.records:
             QMessageBox.information(self, "提示", "请先加载 TKItem.dat"); return
         target = None
@@ -1352,15 +1427,22 @@ class ItemEditorApp(QMainWindow):
         if target is None:
             QMessageBox.warning(self, "已满",
                 "600 条记录上限已满 (sub_45343C 硬编码 38400 字节)\n无真·空槽 (id=0) 可用."); return
+        # 填入默认值 (参考 #560-599 原始模板)
         for fn, _, _, _, _, _ in ALL_FIELDS: target[fn] = 0
+        # 估算一个未占用的 item_id (避免碰撞)
         used_ids = {r['item_id'] for r in self.records if r['item_id'] > 0}
         new_id = 600
         while new_id in used_ids and new_id < 9999: new_id += 1
-        target['item_id'] = new_id; target['desc_id'] = 600; target['price'] = 1; target['tab_code'] = 0
-        self._dirty = True; self._apply_filter()
+        target['item_id'] = new_id
+        target['desc_id'] = 600  # 模板默认
+        target['price'] = 1
+        target['tab_code'] = 0
+        self._dirty = True
+        self._apply_filter()
         for r in range(self.table.rowCount()):
             if int(self.table.item(r, 1).text()) == target['index']:
                 self.table.selectRow(r); break
+        # 选中新记录
         self._populate_edit(target)
         QMessageBox.information(self, "新建物品",
             f"已在空槽 #{target['index']} 创建新物品\n"
@@ -1443,7 +1525,8 @@ class ItemEditorApp(QMainWindow):
             "  sub_42234C  装备应用 (装备后学习技能 / 导致状态)\n"
             "  sub_422BBC  附加技能 type=1/2/3 效果展开\n"
             "  sub_42F8D4  物品查找 (< 600 循环)\n"
-            "  sub_424A2C  背包/商店显示")
+            "  sub_424A2C  背包/商店显示\n\n"
+            "v3.0 修正 v2.2 的错误字段映射 (原将 [22] 误标导致状态)")
 
     def closeEvent(self, event):
         if self._dirty:
