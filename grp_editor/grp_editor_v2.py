@@ -868,7 +868,7 @@ class GRPEditor(QMainWindow):
                 if val == 0: desc_text = "无遮挡"
                 else: desc_text = f"深度{val}"
             else:
-                if val == 0: desc_text = "可行走"
+                if val == 0: desc_text = "类型0"
                 else: desc_text = f"类型{val}"
             desc_label = QLabel(desc_text)
             desc_label.setFont(QFont("Microsoft YaHei", 8))
@@ -897,12 +897,12 @@ class GRPEditor(QMainWindow):
                 for i in range(min(len(data), total)):
                     c = _L1_VAL2RGB.get(data[i], (0, 0, 0))
                     rgba[i*4] = c[0]; rgba[i*4+1] = c[1]; rgba[i*4+2] = c[2]
-                    rgba[i*4+3] = 0 if data[i] == 0 else 220
+                    rgba[i*4+3] = 220  # 所有颜色都使用相同的 alpha 值
             else:
                 for i in range(min(len(data), total)):
                     c = _L2_VAL2RGB.get(data[i], (0, 0, 0))
                     rgba[i*4] = c[0]; rgba[i*4+1] = c[1]; rgba[i*4+2] = c[2]
-                    rgba[i*4+3] = 0 if data[i] == 0 else 220
+                    rgba[i*4+3] = 220  # 所有颜色都使用相同的 alpha 值
             return rgba
         return None
 
@@ -1036,16 +1036,16 @@ class GRPEditor(QMainWindow):
         self._scene.clear()
         vw = self._view.viewport().width() or 400
         vh = self._view.viewport().height() or 300
-        margin_l, margin_r = 60, 40
+        margin_l, margin_r = 10, 10  # 减小边距，靠左上对齐
         wave_w = vw - margin_l - margin_r
-        wave_top, wave_h = 40, vh - 100
+        wave_top, wave_h = 30, vh - 80
         wave_mid = wave_top + wave_h // 2
 
         info = f"音频 #{sec.index:03d}  |  {sec.size}B"
         if sec._wav_info: info += f"  |  {sec._wav_info}"
         if sec._duration > 0: info += f"  |  {sec._duration:.2f}s"
         txt = self._scene.addText(info)
-        txt.setPos(vw // 2 - 150, 2)
+        txt.setPos(margin_l, 5)  # 左对齐
 
         self._scene.addRect(margin_l, wave_top, wave_w, wave_h,
                             QPen(QColor("#444")), QBrush(QColor("#1a1a1a")))
@@ -1101,6 +1101,9 @@ class GRPEditor(QMainWindow):
                 self._scene.addPolygon(
                     [QPointF(px-5, wave_top), QPointF(px+5, wave_top), QPointF(px, wave_top+8)],
                     QPen(QColor("#ff3040")), QBrush(QColor("#ff3040")))
+        
+        # 设置场景矩形，确保音频内容靠左上角显示
+        self._scene.setSceneRect(0, 0, vw, vh)
 
     def _update_pixel_info(self, sx: float, sy: float):
         sec = self._get_sec()
@@ -1330,7 +1333,7 @@ class GRPEditor(QMainWindow):
             lines.append("#   - 灰度值 N = 深度等级 N (值越大, 遮挡优先级越高)")
         else:
             lines.append("#   - 在图片编辑器中使用索引色模式 (保留调色板)")
-            lines.append("#   - 或用铅笔工具涂特定灰度值 (0=可行走, 1~N=碰撞类型)")
+            lines.append("#   - 或用铅笔工具涂特定灰度值 (0=类型0, 1~N=碰撞类型)")
             lines.append("#   - 保存为 PNG 索引色格式以保留碰撞类型ID")
         Path(legend_path).write_text('\n'.join(lines), encoding='utf-8')
 
@@ -1421,7 +1424,7 @@ class GRPEditor(QMainWindow):
             lines = [f"# {layer_name}  色板参考", "",
                      "# 用法: 在 PS/GIMP 中打开此 PNG, 用吸管取色, 然后在你的图片中涂色。",
                      "# 每个格子的数字 = 游戏中的实际值", "# 格子的颜色 = 该值对应的 RGB 颜色",
-                     "# 0 = 空白/可行走 (黑色)", ""]
+                     "# 0 = 空白/类型0 (黑色)", ""]
             for v in range(256):
                 c = lut[v]; lines.append(f"  {v:3d}  RGB({c[0]:3d},{c[1]:3d},{c[2]:3d})")
             Path(txt_path).write_text('\n'.join(lines), encoding='utf-8')
@@ -1549,7 +1552,7 @@ class GRPEditor(QMainWindow):
             "=== Layer1 深度值含义 ===\n"
             "  0 = 无遮挡(透明), 值越大遮挡优先度越高\n\n"
             "=== Layer2 碰撞类型含义 ===\n"
-            "  0 = 可行走, 1~N = 各类地形障碍")
+            "  0 = 类型0, 1~N = 各类地形障碍")
 
     def _show_about(self):
         QMessageBox.information(self, "关于 GRP 格式",
