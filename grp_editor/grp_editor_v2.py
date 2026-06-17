@@ -25,7 +25,8 @@ from PySide6.QtWidgets import (
     QLabel, QPushButton, QFileDialog, QMessageBox, QFrame, QSplitter,
     QGraphicsView, QGraphicsScene, QGraphicsPixmapItem, QListWidget,
     QListWidgetItem, QTextEdit, QToolBar, QStatusBar, QMenu, QMenuBar,
-    QDialog, QSpinBox, QGridLayout, QSizePolicy
+    QDialog, QSpinBox, QGridLayout, QSizePolicy, QGraphicsTextItem,
+    QScrollArea
 )
 from PySide6.QtCore import Qt, QTimer, QPointF, QRectF, Signal
 from PySide6.QtGui import (
@@ -623,12 +624,36 @@ class GRPEditor(QMainWindow):
         left_lay.addWidget(body, 1)
         splitter.addWidget(left_w)
 
-        # RIGHT: 画布
+        # RIGHT: 画布 + 色板
         right_w = QWidget(); right_lay = QVBoxLayout(right_w); right_lay.setContentsMargins(0,0,0,0)
         self._scene = QGraphicsScene()
         self._view = GRPGraphicsView(self._scene)
         self._view.editor = self
         right_lay.addWidget(self._view, 1)
+
+        # 色板面板（默认隐藏）
+        self._palette_panel = QWidget()
+        self._palette_panel.setObjectName("PalettePanel")
+        self._palette_panel.setVisible(False)
+        palette_lay = QVBoxLayout(self._palette_panel)
+        palette_lay.setContentsMargins(4, 4, 4, 4)
+        palette_lay.setSpacing(2)
+        
+        self._palette_title = QLabel("色板")
+        self._palette_title.setObjectName("DockTitle")
+        palette_lay.addWidget(self._palette_title)
+        
+        self._palette_scroll = QScrollArea()
+        self._palette_scroll.setWidgetResizable(True)
+        self._palette_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self._palette_container = QWidget()
+        self._palette_grid = QGridLayout(self._palette_container)
+        self._palette_grid.setSpacing(2)
+        self._palette_grid.setContentsMargins(2, 2, 2, 2)
+        self._palette_scroll.setWidget(self._palette_container)
+        palette_lay.addWidget(self._palette_scroll)
+        
+        right_lay.addWidget(self._palette_panel)
         splitter.addWidget(right_w)
 
         splitter.setSizes([280, 1080])
@@ -697,6 +722,7 @@ class GRPEditor(QMainWindow):
             self._stop_audio(); self._pil_img = None
             self._pixmap_item = None
             self._refresh_view(); self._update_detail(); self._update_buttons()
+            self._update_palette()
 
     def _update_detail(self):
         sec = self._get_sec()
@@ -775,6 +801,85 @@ class GRPEditor(QMainWindow):
         if not self._is_img(): return
         self._sel_layer = layer; self._pil_img = None; self._pixmap_item = None
         self._update_buttons(); self._refresh_view(); self._update_detail()
+        self._update_palette()
+
+    def _update_palette(self):
+        """更新色板面板显示"""
+        sec = self._get_sec()
+        if not isinstance(sec, GRPSection) or self._sel_layer == "A":
+            self._palette_panel.setVisible(False)
+            return
+
+        # 确保层数据已解码
+        if not sec.is_decoded_b: _decode_section_b(self.grp, sec)
+        data = sec.layer1 if self._sel_layer == "L1" else sec.layer2
+        if not data:
+            self._palette_panel.setVisible(False)
+            return
+
+        # 统计当前图像中使用的值
+        from collections import Counter
+        used_vals = sorted(Counter(data[:sec.width * sec.height]).keys())
+        if not used_vals:
+            self._palette_panel.setVisible(False)
+            return
+
+        # 更新标题
+        layer_name = "前景层 (遮挡深度)" if self._sel_layer == "L1" else "碰撞层 (地形类型)"
+        self._palette_title.setText(f"色板 — {layer_name} ({len(used_vals)}种值)")
+
+        # 清空现有色板项
+        while self._palette_grid.count():
+            item = self._palette_grid.takeAt(0)
+            if item.widget(): item.widget().deleteLater()
+
+        # 获取颜色映射
+        lut = _L1_VAL2RGB if self._sel_layer == "L1" else _L2_VAL2RGB
+
+        # 创建色板项
+        cols = 8  # 每行8个色块
+        for idx, val in enumerate(used_vals):
+            row, col = divmod(idx, cols)
+            
+            # 创建色块容器
+            item_w = QWidget()
+            item_lay = QHBoxLayout(item_w)
+            item_lay.setContentsMargins(2, 2, 2, 2)
+            item_lay.setSpacing(4)
+            
+            # 色块
+            color_label = QLabel()
+            color_label.setFixedSize(24, 24)
+            color = lut.get(val, (0, 0, 0))
+            color_label.setStyleSheet(f"background-color: rgb({color[0]},{color[1]},{color[2]}); "
+                                      f"border: 1px solid #555; border-radius: 3px;")
+            item_lay.addWidget(color_label)
+            
+            # 值标签
+            val_label = QLabel(f"{val}")
+            val_label.setFont(QFont("Consolas", 9, QFont.Bold))
+            val_label.setAlignment(Qt.AlignCenter)
+            val_label.setMinimumWidth(20)
+            item_lay.addWidget(val_label)
+            
+            # 描述标签
+            desc_text = ""
+            if self._sel_layer == "L1":
+                if val == 0: desc_text = "无遮挡"
+                else: desc_text = f"深度{val}"
+            else:
+                if val == 0: desc_text = "可行走"
+                else: desc_text = f"类型{val}"
+            desc_label = QLabel(desc_text)
+            desc_label.setFont(QFont("Microsoft YaHei", 8))
+            item_lay.addWidget(desc_label, 1)
+            
+            self._palette_grid.addWidget(item_w, row, col)
+
+        # 调整面板高度
+        rows = (len(used_vals) - 1) // cols + 1
+        self._palette_panel.setFixedHeight(min(200, rows * 36 + 40))
+        self._palette_panel.setVisible(True)
 
     # ── Layer RGBA ────────────────────────────────────────
     def _get_layer_rgba(self, sec: GRPSection, layer: str) -> Optional[bytearray]:
@@ -795,7 +900,9 @@ class GRPEditor(QMainWindow):
                     rgba[i*4+3] = 0 if data[i] == 0 else 220
             else:
                 for i in range(min(len(data), total)):
-                    rgba[i*4:i*4+4] = bytes(_collision_color(data[i]))
+                    c = _L2_VAL2RGB.get(data[i], (0, 0, 0))
+                    rgba[i*4] = c[0]; rgba[i*4+1] = c[1]; rgba[i*4+2] = c[2]
+                    rgba[i*4+3] = 0 if data[i] == 0 else 220
             return rgba
         return None
 
@@ -837,6 +944,89 @@ class GRPEditor(QMainWindow):
             self._pixmap_item = self._scene.addPixmap(pm)
             self._pixmap_item.setOffset(-sw // 2, -sh // 2)
             self._scene.setSceneRect(QRectF(-sw // 2 - 20, -sh // 2 - 20, sw + 40, sh + 40))
+
+            # 为 L1/L2 层添加序号标注（每个连续区域标注一个数字）
+            if self._sel_layer in ("L1", "L2"):
+                font_size = max(8, min(24, int(14 / (disp_scale * z)))) if (disp_scale * z) > 0 else 14
+                text_pen = QPen(QColor(255, 255, 255, 240))
+                shadow_pen = QPen(QColor(0, 0, 0, 200))
+
+                # 获取层数据
+                layer_data = sec.layer1 if self._sel_layer == "L1" else sec.layer2
+                if layer_data:
+                    # 记录已访问的像素
+                    visited = bytearray(w * h)  # 使用 bytearray 提高性能
+                    
+                    # 存储所有需要标注的区域 [(val, center_x, center_y), ...]
+                    annotations = []
+                    
+                    # 泛洪填充找连通区域
+                    def flood_fill(start_x, start_y, target_val):
+                        stack = [(start_x, start_y)]
+                        region = []
+                        while stack:
+                            x, y = stack.pop()
+                            if x < 0 or x >= w or y < 0 or y >= h:
+                                continue
+                            idx = y * w + x
+                            if visited[idx]:
+                                continue
+                            if idx >= len(layer_data) or layer_data[idx] != target_val:
+                                continue
+                            visited[idx] = 1
+                            region.append((x, y))
+                            stack.extend([(x+1,y),(x-1,y),(x,y+1),(x,y-1)])
+                        return region
+
+                    # 遍历图像，找每个连续区域
+                    min_region_size = max(16, int(64 / (disp_scale * z))) if (disp_scale * z) > 0 else 16
+                    
+                    for py in range(h):
+                        for px in range(w):
+                            idx = py * w + px
+                            if visited[idx]:
+                                continue
+                            if idx >= len(layer_data):
+                                visited[idx] = 1
+                                continue
+                            val = layer_data[idx]
+                            if val == 0:  # 跳过空白区域
+                                visited[idx] = 1
+                                continue
+                            
+                            # 找到连续区域
+                            region = flood_fill(px, py, val)
+                            if len(region) < min_region_size:
+                                continue  # 跳过太小的区域
+                            
+                            # 计算区域中心
+                            cx = sum(p[0] for p in region) / len(region)
+                            cy = sum(p[1] for p in region) / len(region)
+                            
+                            # 记录该区域的标注信息
+                            annotations.append((val, cx, cy))
+
+                    # 为每个区域添加标注
+                    for val, cx, cy in annotations:
+                        scene_x = (cx - w / 2) * disp_scale
+                        scene_y = (cy - h / 2) * disp_scale
+
+                        # 添加阴影文本（黑色描边效果）
+                        for dx, dy in [(-1,-1),(1,-1),(-1,1),(1,1)]:
+                            shadow = self._scene.addText(str(val))
+                            shadow.setFont(QFont("Consolas", font_size, QFont.Bold))
+                            shadow.setDefaultTextColor(shadow_pen.color())
+                            shadow.setPos(scene_x + dx, scene_y + dy)
+                            shadow.setTransformOriginPoint(shadow.boundingRect().center())
+                            shadow.setScale(1.0 / (disp_scale * z) if (disp_scale * z) > 0 else 1.0)
+
+                        # 添加主文本
+                        text_item = self._scene.addText(str(val))
+                        text_item.setFont(QFont("Consolas", font_size, QFont.Bold))
+                        text_item.setDefaultTextColor(text_pen.color())
+                        text_item.setPos(scene_x, scene_y)
+                        text_item.setTransformOriginPoint(text_item.boundingRect().center())
+                        text_item.setScale(1.0 / (disp_scale * z) if (disp_scale * z) > 0 else 1.0)
 
             self._zoom_lbl.setText(f" {int(z*100)}% ")
             names = {"A": "主图", "L1": "前景层 (遮挡)", "L2": "碰撞层 (地形)"}
@@ -1115,7 +1305,7 @@ class GRPEditor(QMainWindow):
             if not data: return
             pal = bytearray(768)
             for v in range(256):
-                c = _collision_color(v)
+                c = _L2_VAL2RGB.get(v, (0, 0, 0))
                 pal[v*3] = c[0]; pal[v*3+1] = c[1]; pal[v*3+2] = c[2]
             img = Image.frombytes("P", (w, h), data[:w*h])
             img.putpalette(bytes(pal))
@@ -1131,7 +1321,7 @@ class GRPEditor(QMainWindow):
         for v, cnt in vals:
             if v == 0: lines.append(f"  {v:3d} (共{cnt:6d}px) = 空白/无数据")
             elif title.startswith("Layer 1"): lines.append(f"  {v:3d} (共{cnt:6d}px) = 遮挡深度等级 {v}")
-            else: lines.append(f"  {v:3d} (共{cnt:6d}px) = 碰撞类型 #{v}  ({_collision_color(v)[:3]})")
+            else: lines.append(f"  {v:3d} (共{cnt:6d}px) = 碰撞类型 #{v}  ({_L2_VAL2RGB.get(v, (0,0,0))})")
         lines.append("")
         lines.append("# 编辑指南:")
         if title.startswith("Layer 1"):
