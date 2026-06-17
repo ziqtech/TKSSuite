@@ -1,4 +1,4 @@
-/* Godot Editor 风格深色主题 — JVG Editor (与 warpc_editor 配色体系保持一致) */
+/* Godot Editor 风格深色主题 — GXP Image Editor (统一配色体系) */
 QMainWindow, QWidget, QDialog {
     background-color: #202531;
     color: #dcdcdc;
@@ -83,8 +83,8 @@ QSpinBox::down-button {
 QSpinBox::up-button:hover, QSpinBox::down-button:hover {
     background-color: #3b445c;
 }
-QSpinBox::up-arrow { image: url(themes/svg/up-arrow.svg); width: 8px; height: 8px; }
-QSpinBox::down-arrow { image: url(themes/svg/down-arrow.svg); width: 8px; height: 8px; }
+QSpinBox::up-arrow { image: url(svg/up-arrow.svg); width: 8px; height: 8px; }
+QSpinBox::down-arrow { image: url(svg/down-arrow.svg); width: 8px; height: 8px; }
 QSpinBox:focus { border-color: #478cbf; }
 
 /* ── 列表控件 ── */
@@ -159,7 +159,7 @@ QCheckBox::indicator {
     border: 1px solid #14171f;
     border-radius: 2px;
 }
-QCheckBox::indicator:checked { background-color: #478cbf; border-color: #478cbf; image: url(themes/svg/checkmark.svg); }
+QCheckBox::indicator:checked { background-color: #478cbf; border-color: #478cbf; image: url(svg/checkmark.svg); }
 QCheckBox::indicator:hover { border-color: #478cbf; }
 
 /* ── Tab 页 ── */
@@ -176,9 +176,9 @@ QTabBar::tab:selected { background: #1a1e27; border-bottom-color: #1a1e27; font-
 QTabBar::tab:hover:!selected { background: #3b445c; }
 
 /* ── Dock 面板 ── */
-QFrame#DockHeader { background-color: #1a1e27; border-top-left-radius: 4px; border-top-right-radius: 4px; }
+QFrame#DockHeader { background-color: #14171f; border-top-left-radius: 4px; border-top-right-radius: 4px; }
 QWidget#DockBody { background-color: #202531; border: 1px solid #14171f; border-top: none; }
-QLabel#DockTitle { background-color: transparent; color: #8a96b3; font-size: 12px; font-weight: bold; }
+QLabel#DockTitle { background-color: transparent; color: #a5b0cb; font-weight: bold; }
 
 /* ── QGroupBox ── */
 QGroupBox {
@@ -229,6 +229,12 @@ QLabel#StatusPixel {
     font-size: 11px;
     padding: 0 4px;
     font-family: "Consolas", "Courier New", monospace;
+}
+
+/* ── 图形视图 ── */
+QGraphicsView {
+    border: 1px solid #14171f;
+    background-color: #1a1e27;
 }
 
 QScrollArea { border: none; background-color: transparent; }

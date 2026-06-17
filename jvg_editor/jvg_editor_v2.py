@@ -7,7 +7,7 @@ JVG 图集编辑器 v2 — PySide6 版本，支持深色/浅色主题切换
 """
 
 from __future__ import annotations
-import os, sys, struct, io, json, zlib, math
+import os, sys, struct, io, json, zlib, math, re
 from pathlib import Path
 from typing import List, Tuple, Optional
 from PySide6.QtWidgets import (
@@ -457,20 +457,19 @@ class ThemeManager:
     def _load_themes(self):
         dark_path = os.path.join(self.themes_dir, 'dark.qss')
         light_path = os.path.join(self.themes_dir, 'light.qss')
-        # SVG 图标的基础路径（绝对路径）
-        svg_base = os.path.join(self.themes_dir, 'svg').replace('\\', '/')
+        
+        # 统一用正则将 url() 内的相对路径转为绝对路径
+        themes_dir = self.themes_dir.replace('\\', '/')
+        
+        def _resolve_urls(qss: str) -> str:
+            return re.sub(r"url\(([^)]+)\)", lambda m: f"url({themes_dir}/{m.group(1)})", qss)
         
         if os.path.exists(dark_path):
             with open(dark_path, 'r', encoding='utf-8') as f:
-                qss = f.read()
-                # 将相对路径替换为绝对路径
-                qss = qss.replace('url(themes/svg/', f'url({svg_base}/')
-                self._dark_qss = qss
+                self._dark_qss = _resolve_urls(f.read())
         if os.path.exists(light_path):
             with open(light_path, 'r', encoding='utf-8') as f:
-                qss = f.read()
-                qss = qss.replace('url(themes/svg/', f'url({svg_base}/')
-                self._light_qss = qss
+                self._light_qss = _resolve_urls(f.read())
 
     def get_stylesheet(self) -> str:
         return self._dark_qss if self.current_theme == 'dark' else self._light_qss
