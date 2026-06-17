@@ -725,12 +725,12 @@ class ItemEditorApp(QMainWindow):
         self.splitter.setHandleWidth(7)
         main_layout.addWidget(self.splitter, 1)
 
-        # 左侧: 物品列表
+        # 左侧: 物品列表 (列顺序与原版一致: 图标在最前)
         self.table = QTableWidget(0, 7)
-        self.table.setHorizontalHeaderLabels(['#', 'ID', '页', '物品名称', '权限', '价格', '图标'])
-        self.table.setColumnWidth(0, 40); self.table.setColumnWidth(1, 50)
-        self.table.setColumnWidth(2, 50); self.table.setColumnWidth(3, 160)
-        self.table.setColumnWidth(4, 90); self.table.setColumnWidth(5, 50)
+        self.table.setHorizontalHeaderLabels(['图标', '#', 'ID', '页面', '物品名称', '权限', '价格'])
+        self.table.setColumnWidth(0, 40); self.table.setColumnWidth(1, 40)
+        self.table.setColumnWidth(2, 50); self.table.setColumnWidth(3, 50)
+        self.table.setColumnWidth(4, 160); self.table.setColumnWidth(5, 90)
         self.table.setColumnWidth(6, 50)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SingleSelection)
@@ -966,7 +966,7 @@ class ItemEditorApp(QMainWindow):
             self.tkt = load_tkt(self.tkt_path)
             self.tkt_full = load_tkt_full(self.tkt_path)
         else:
-            self.tkt = {}; self.tkt_full = {}
+            self.tkt_full = {}
         if self.skill_path:
             self.skill_names = load_tkskill_names(self.skill_path, self.tkt)
         if self.mu_path:
@@ -1013,9 +1013,10 @@ class ItemEditorApp(QMainWindow):
         new_vals = ["全部权限"] + all_opts
         current_vals = [self.filter_right.itemText(i) for i in range(self.filter_right.count())]
         if new_vals != current_vals:
-            self.filter_right.blockSignals(True)
+            self._guard_right_reset = True
             self.filter_right.clear(); self.filter_right.addItems(new_vals)
-            self.filter_right.blockSignals(False)
+            self.filter_right.setCurrentIndex(0)  # 重置为"全部权限"
+            self._guard_right_reset = False
 
     def _apply_filter(self):
         if self._guard_right_reset: return
@@ -1059,20 +1060,22 @@ class ItemEditorApp(QMainWindow):
             et = r['equip_type']
             rt = _use_right_label(et, r.get('tab_code', 0)) if et or et == 0 else "—"
             self.table.insertRow(row)
-            self.table.setItem(row, 0, QTableWidgetItem(str(r['index'])))
-            self.table.setItem(row, 1, QTableWidgetItem(str(r['item_id'])))
-            self.table.setItem(row, 2, QTableWidgetItem(PAGE_NAMES.get(r['tab_code'], '?')))
-            self.table.setItem(row, 3, QTableWidgetItem(item_display_name(r, self.tkt)))
-            self.table.setItem(row, 4, QTableWidgetItem(rt))
-            self.table.setItem(row, 5, QTableWidgetItem(str(r['price'])))
+            # 列顺序: 图标(0) #(1) ID(2) 页面(3) 物品名称(4) 权限(5) 价格(6)
             icon_item = QTableWidgetItem()
             pix = self._get_icon_pixmap(r['icon'], (24, 24))
             if pix: icon_item.setIcon(QIcon(pix))
-            self.table.setItem(row, 6, icon_item)
+            self.table.setItem(row, 0, icon_item)
+            self.table.setItem(row, 1, QTableWidgetItem(str(r['index'])))
+            self.table.setItem(row, 2, QTableWidgetItem(str(r['item_id'])))
+            self.table.setItem(row, 3, QTableWidgetItem(PAGE_NAMES.get(r['tab_code'], '?')))
+            self.table.setItem(row, 4, QTableWidgetItem(item_display_name(r, self.tkt)))
+            self.table.setItem(row, 5, QTableWidgetItem(rt))
+            self.table.setItem(row, 6, QTableWidgetItem(str(r['price'])))
         self.table.blockSignals(False)
 
     def _sort_by(self, col):
-        km = {1:'item_id', 2:'tab_code', 4:'equip_type', 5:'price'}
+        # 列: 图标(0) #(1) ID(2) 页面(3) 物品名称(4) 权限(5) 价格(6)
+        km = {2:'item_id', 3:'tab_code', 5:'equip_type', 6:'price'}
         key = km.get(col, 'index')
         self.filtered_indices.sort(key=lambda i: self.records[i].get(key, 0), reverse=self._sort_reverse)
         self._sort_reverse = not self._sort_reverse; self._refresh_table()
@@ -1081,7 +1084,7 @@ class ItemEditorApp(QMainWindow):
     def _on_table_select(self):
         sel = self.table.selectedItems()
         if not sel: return
-        idx = int(self.table.item(sel[0].row(), 0).text())
+        idx = int(self.table.item(sel[0].row(), 1).text())  # 列1=索引 (列0=图标)
         self._populate_edit(self.records[idx])
 
     def _populate_edit(self, rec):
@@ -1153,7 +1156,7 @@ class ItemEditorApp(QMainWindow):
             elif ft == 'skill':
                 sid = int(val) if val else -1
                 nm = self.skill_names.get(sid, "(无)") if sid > 0 else "(无)"
-                self.extra_map[fn].setText(nm[:20] if sid > 0 else "(无)")
+                self.extra_map[fn].setText(nm[:30] if sid > 0 else "(无)")
             elif ft == 'mask':
                 self._update_status_label(fn, int(val) if val else 0)
             elif ft == 'icon':
@@ -1305,7 +1308,7 @@ class ItemEditorApp(QMainWindow):
                 rec[fn] = 0
         self._dirty = True; self._apply_filter()
         for r in range(self.table.rowCount()):
-            if int(self.table.item(r, 0).text()) == rec['index']:
+            if int(self.table.item(r, 1).text()) == rec['index']:
                 self.table.selectRow(r); break
         self.status_var.setText(f"记录 #{rec['index']} 已修改 (内存, 未保存)")
 
@@ -1335,7 +1338,7 @@ class ItemEditorApp(QMainWindow):
                 rec['index'] = i
                 self._dirty = True; self._apply_filter()
                 for r in range(self.table.rowCount()):
-                    if int(self.table.item(r, 0).text()) == i:
+                    if int(self.table.item(r, 1).text()) == i:
                         self.table.selectRow(r); break
                 self.status_var.setText(f"已复制到空槽 #{i}"); return
         QMessageBox.warning(self, "已满", "无真·空槽 (id=0 的记录) 可复制到.\n可先使用『清空此记录』释放一个槽位.")
@@ -1356,7 +1359,7 @@ class ItemEditorApp(QMainWindow):
         target['item_id'] = new_id; target['desc_id'] = 600; target['price'] = 1; target['tab_code'] = 0
         self._dirty = True; self._apply_filter()
         for r in range(self.table.rowCount()):
-            if int(self.table.item(r, 0).text()) == target['index']:
+            if int(self.table.item(r, 1).text()) == target['index']:
                 self.table.selectRow(r); break
         self._populate_edit(target)
         QMessageBox.information(self, "新建物品",
