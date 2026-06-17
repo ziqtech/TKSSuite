@@ -442,6 +442,7 @@ class DockHeader(QFrame):
 
 def make_fake_input(line_edit=None, combo=None, button=None, stretch=True):
     box = QFrame(); box.setObjectName("FakeInputBox")
+    box.setFixedHeight(28)  # 固定高度，防止上下撑开
     h = QHBoxLayout(box); h.setContentsMargins(0,0,0,0); h.setSpacing(0)
     if line_edit: h.addWidget(line_edit)
     if combo: h.addWidget(combo, 1)
@@ -786,6 +787,7 @@ class ItemEditorApp(QMainWindow):
         self.table.setColumnWidth(2, 50); self.table.setColumnWidth(3, 50)
         self.table.setColumnWidth(4, 160); self.table.setColumnWidth(5, 90)
         self.table.setColumnWidth(6, 50)
+        self.table.horizontalHeader().setStretchLastSection(True)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SingleSelection)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
@@ -956,32 +958,32 @@ class ItemEditorApp(QMainWindow):
             elif ft == 'extra_flags': btn.clicked.connect(lambda _, f=fn: self._pick_extra_flags(f))
             elif ft == 'skill': btn.clicked.connect(lambda _, f=fn: self._pick_skill(f))
             wrap_w = QWidget(); wrap_w.setLayout(field_wrap)
-            grid.addWidget(lbl, row, col*2, alignment=Qt.AlignRight|Qt.AlignVCenter)
-            grid.addWidget(wrap_w, row, col*2+1)
+            grid.addWidget(lbl, row, col*2, alignment=Qt.AlignRight|Qt.AlignTop)
+            grid.addWidget(wrap_w, row, col*2+1, alignment=Qt.AlignLeft|Qt.AlignTop)
             return
         elif ft == 'mask':
-            inp = QLineEdit(); inp.setVisible(False)
-            btn = QPushButton("配置"); btn.setCursor(Qt.PointingHandCursor); btn.setMaximumWidth(60)
             is_cause = fn.startswith('cause_')
-            extra = QLabel("(无)")
-            extra.setProperty("class", "StatusInflict" if is_cause else "StatusRemove")
-            extra.setWordWrap(True)
-            box = make_fake_input(line_edit=inp, button=btn, stretch=False)
-            field_wrap = QVBoxLayout(); field_wrap.setContentsMargins(0,0,0,0); field_wrap.setSpacing(0)
-            field_wrap.addWidget(box); field_wrap.addWidget(extra)
-            self.widget_map[fn] = inp; self.extra_map[fn] = extra
+            btn = QPushButton("选择导致状态…" if is_cause else "选择解除状态…")
+            hidden = QLineEdit(); hidden.hide()
+            box = QFrame(); box.setObjectName("FakeInputBox")
+            box.setFixedHeight(28)  # 固定高度，防止上下撑开
+            bh = QHBoxLayout(box); bh.setContentsMargins(0,0,0,0); bh.setSpacing(0)
+            bh.addWidget(btn, 1)
+            self.widget_map[fn] = hidden
+            status_frame = QWidget()
+            self.extra_map[fn] = status_frame
             btn.clicked.connect(lambda _, f=fn: self._pick_status(f))
-            wrap_w = QWidget(); wrap_w.setLayout(field_wrap)
-            grid.addWidget(lbl, row, col*2, alignment=Qt.AlignRight|Qt.AlignVCenter)
-            grid.addWidget(wrap_w, row, col*2+1)
+            grid.addWidget(lbl, row, col*2, alignment=Qt.AlignRight|Qt.AlignTop)
+            grid.addWidget(box, row, col*2+1, alignment=Qt.AlignLeft|Qt.AlignTop)
+            grid.addWidget(status_frame, row+1, col*2+1, Qt.AlignLeft | Qt.AlignTop)
             return
         else:
             inp = QLineEdit()
             box = make_fake_input(line_edit=inp)
             self.widget_map[fn] = inp; self.extra_map[fn] = None
 
-        grid.addWidget(lbl, row, col*2, alignment=Qt.AlignRight|Qt.AlignVCenter)
-        grid.addWidget(box, row, col*2+1)
+        grid.addWidget(lbl, row, col*2, alignment=Qt.AlignRight|Qt.AlignTop)
+        grid.addWidget(box, row, col*2+1, alignment=Qt.AlignLeft|Qt.AlignTop)
 
     # ── 启用/禁用编辑 ──
     def _set_edit_enabled(self, en):
@@ -1233,13 +1235,41 @@ class ItemEditorApp(QMainWindow):
         self.extra_map[fn].setText(", ".join(sel) if sel else "(无)")
 
     def _update_status_label(self, fn, mask):
-        """更新状态标签显示"""
+        """更新状态标签显示 (参考 kon_editor_v2.py 写法)"""
         base = 0 if fn.endswith('_mask1') else 16
-        sel = []
-        for i in range(16):
-            if mask & (1 << i) and base + i < len(STATUS_NAMES):
-                sel.append(STATUS_NAMES[base + i])
-        self.extra_map[fn].setText(", ".join(sel) if sel else "(无)")
+        is_cause = fn.startswith('cause_')
+        status_class = "StatusInflict" if is_cause else "StatusRemove"
+        frame = self.extra_map.get(fn)
+        if not frame: return
+        # 清除旧内容
+        for c in frame.findChildren(QWidget):
+            c.setParent(None)
+        frame_layout = frame.layout()
+        if not frame_layout:
+            frame_layout = QVBoxLayout(frame)
+            frame_layout.setContentsMargins(0,0,0,0); frame_layout.setSpacing(1)
+        sel = [f"{base+i}.{STATUS_NAMES[base+i]}" for i in range(16)
+               if (mask & (1 << i)) and base + i < len(STATUS_NAMES)]
+        if sel:
+            COLS = 3
+            for si, nm in enumerate(sel):
+                r, c = divmod(si, COLS)
+                while frame_layout.count() <= r:
+                    row_w = QWidget(); row_lay = QHBoxLayout(row_w)
+                    row_lay.setContentsMargins(0,0,0,0); row_lay.setSpacing(6)
+                    frame_layout.addWidget(row_w)
+                row_w = frame_layout.itemAt(r).widget()
+                row_lay = row_w.layout()
+                lbl = QLabel(nm)
+                lbl.setProperty("class", status_class)
+                # 需要强制刷新 QSS class
+                lbl.style().unpolish(lbl); lbl.style().polish(lbl)
+                row_lay.addWidget(lbl)
+        else:
+            lbl = QLabel("(无)")
+            lbl.setProperty("class", status_class)
+            lbl.style().unpolish(lbl); lbl.style().polish(lbl)
+            frame_layout.addWidget(lbl)
 
     def _update_preview_status(self, si, sel):
         """更新预览区中单个状态列 (含图标, 每行最多3个)"""
