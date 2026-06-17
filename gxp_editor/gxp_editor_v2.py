@@ -1,0 +1,654 @@
+#!/usr/bin/env python3
+"""
+GXP 图像编辑器 v4 — 外部独立主题版 (PySide6)
+===========================================
+全面适配外部独立 themes/dark.qss 与 themes/light.qss
+强制剥离透明通道导出 24-bit RGB (符合游戏引擎要求)
+"""
+
+from __future__ import annotations
+import os, sys, struct, zlib
+from pathlib import Path
+from typing import Optional
+
+from PySide6.QtWidgets import (
+    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
+    QLabel, QPushButton, QFileDialog, QMessageBox, QFrame,
+    QSplitter, QGraphicsView, QGraphicsScene, QGraphicsPixmapItem
+)
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QPixmap, QImage, QColor, QIcon, QPainter, QWheelEvent, QKeySequence
+
+HAS_PIL = False
+try:
+    from PIL import Image
+    HAS_PIL = True
+except ImportError:
+    pass
+
+# ── GXP 格式常量 ──────────────────────────────────────────
+GXP_MAGIC = b"JGXP"
+GXP_HEADER_SIZE = 48
+RING_SIZE = 4096
+RING_INIT = RING_SIZE - 18
+MIN_MATCH = 3
+MAX_MATCH = 18
+RING_INIT_VALUE = 0x20
+
+# ═══════════════════════════════════════════════════════════
+# 核心数据逻辑
+# ═══════════════════════════════════════════════════════════
+
+def lzss_decompress(data: bytes, target_size: int) -> bytes:
+    ring = bytearray([RING_INIT_VALUE] * RING_SIZE)
+    ring_pos = RING_INIT
+    pos, out = 0, bytearray()
+
+    while pos < len(data) and len(out) < target_size:
+        flag = data[pos]; pos += 1
+        for bit in range(8):
+            if pos >= len(data) or len(out) >= target_size: break
+            if flag & (1 << bit):
+                b = data[pos]; pos += 1
+                out.append(b)
+                ring[ring_pos % RING_SIZE] = b
+                ring_pos += 1
+            else:
+                if pos + 2 > len(data): break
+                b1, b2 = data[pos], data[pos + 1]; pos += 2
+                offset = b1 | ((b2 & 0xF0) << 4)
+                length = (b2 & 0x0F) + 3
+                for k in range(length):
+                    b = ring[(offset + k) % RING_SIZE]
+                    out.append(b)
+                    ring[ring_pos % RING_SIZE] = b
+                    ring_pos += 1
+    return bytes(out[:target_size])
+
+def _hash_2b(a: int, b: int) -> int:
+    return ((a << 8) | b) & 0xFFF
+
+def lzss_compress(data: bytes) -> bytes:
+    n = len(data)
+    if n == 0: return b""
+    hash_heads = [-1] * 4096
+    hash_next = [-1] * n
+
+    for i in range(n - 1, -1, -1):
+        if i + 1 < n:
+            h = _hash_2b(data[i], data[i + 1])
+            hash_next[i] = hash_heads[h]
+            hash_heads[h] = i
+
+    buf = bytearray()
+    entries: list[tuple[bool, bytes]] = []
+
+    def flush_group():
+        if not entries: return
+        flag = 0
+        for i, (is_lit, _) in enumerate(entries):
+            if is_lit: flag |= (1 << i)
+        buf.append(flag)
+        for _, data_bytes in entries:
+            buf.extend(data_bytes)
+        entries.clear()
+
+    pos = 0
+    while pos < n:
+        best_len, best_off = 0, 0
+        remaining = n - pos
+
+        if remaining >= 2:
+            h = _hash_2b(data[pos], data[pos + 1])
+            chain = hash_heads[h]
+            steps = 0
+            while chain >= 0 and steps < 64:
+                if pos - chain > RING_SIZE: break
+                if chain < pos:
+                    ml = 0
+                    while ml < min(remaining, MAX_MATCH) and data[chain + ml] == data[pos + ml]:
+                        ml += 1
+                    if ml > best_len:
+                        best_len, best_off = ml, pos - chain
+                        if ml == MAX_MATCH: break
+                chain = hash_next[chain]
+                steps += 1
+
+        if best_len >= MIN_MATCH:
+            ring_pos_val = (RING_INIT + pos) % RING_SIZE
+            actual_offset = (ring_pos_val - best_off) % RING_SIZE
+            b1 = actual_offset & 0xFF
+            b2 = ((actual_offset >> 4) & 0xF0) | ((best_len - 3) & 0x0F)
+            entries.append((False, bytes([b1, b2])))
+            pos += best_len
+        else:
+            entries.append((True, bytes([data[pos]])))
+            pos += 1
+
+        if len(entries) >= 8: flush_group()
+    flush_group()
+    return bytes(buf)
+
+_RGB565_LUT = bytearray(65536 * 3)
+for _v in range(65536):
+    r5, g6, b5 = (_v >> 11) & 0x1F, (_v >> 5) & 0x3F, _v & 0x1F
+    _RGB565_LUT[_v * 3] = (r5 << 3) | (r5 >> 2)
+    _RGB565_LUT[_v * 3 + 1] = (g6 << 2) | (g6 >> 4)
+    _RGB565_LUT[_v * 3 + 2] = (b5 << 3) | (b5 >> 2)
+
+def rgb565_bytes_to_rgba(raw: bytes, w: int, h: int) -> bytearray:
+    total = w * h
+    rgba = bytearray(total * 4)
+    for i in range(min(total, len(raw) // 2)):
+        val = raw[i * 2] | (raw[i * 2 + 1] << 8)
+        off3, off4 = val * 3, i * 4
+        rgba[off4] = _RGB565_LUT[off3]
+        rgba[off4 + 1] = _RGB565_LUT[off3 + 1]
+        rgba[off4 + 2] = _RGB565_LUT[off3 + 2]
+        rgba[off4 + 3] = 255
+    return rgba
+
+def rgba_to_rgb565_bytes(rgba: bytes, w: int, h: int) -> bytes:
+    raw = bytearray(w * h * 2)
+    for i in range(w * h):
+        off4 = i * 4
+        r, g, b = rgba[off4], rgba[off4 + 1], rgba[off4 + 2]
+        val = (((r >> 3) & 0x1F) << 11) | (((g >> 2) & 0x3F) << 5) | ((b >> 3) & 0x1F)
+        raw[i * 2] = val & 0xFF
+        raw[i * 2 + 1] = (val >> 8) & 0xFF
+    return bytes(raw)
+
+class GXPImage:
+    def __init__(self):
+        self.width: int = 0
+        self.height: int = 0
+        self.bpp: int = 16
+        self.rgba: bytearray = bytearray()
+        self.filepath: Optional[str] = None
+
+    @property
+    def pixel_count(self) -> int: return self.width * self.height
+    @property
+    def size_str(self) -> str: return f"{self.width}×{self.height}"
+
+def load_gxp(filepath: str) -> GXPImage:
+    data = Path(filepath).read_bytes()
+    if len(data) < GXP_HEADER_SIZE + 4: raise ValueError("文件太小, 不足 48 字节头")
+    if data[0:4] != GXP_MAGIC: raise ValueError(f"无效魔数: {data[0:4]!r}")
+
+    width = ~struct.unpack_from("<i", data, 4)[0]
+    height = ~struct.unpack_from("<i", data, 8)[0]
+    compressed_size = struct.unpack_from("<I", data, 12)[0]
+    bpp = struct.unpack_from("<I", data, 16)[0]
+
+    uncompressed_size = struct.unpack_from("<I", data, GXP_HEADER_SIZE)[0]
+    lzss_data = data[GXP_HEADER_SIZE + 4 : GXP_HEADER_SIZE + compressed_size]
+    
+    raw_pixels = lzss_decompress(lzss_data, uncompressed_size)
+    img = GXPImage()
+    img.width, img.height, img.bpp, img.filepath = width, height, bpp, filepath
+    img.rgba = rgb565_bytes_to_rgba(raw_pixels, width, height)
+    return img
+
+def save_gxp(img: GXPImage, filepath: str):
+    raw_rgb565 = rgba_to_rgb565_bytes(bytes(img.rgba), img.width, img.height)
+    compressed = lzss_compress(raw_rgb565)
+    
+    buf = bytearray()
+    buf += GXP_MAGIC
+    buf += struct.pack("<i", ~img.width)
+    buf += struct.pack("<i", ~img.height)
+    buf += struct.pack("<I", len(compressed) + 4)
+    buf += struct.pack("<I", img.bpp)
+    buf += bytes(28)
+    buf += struct.pack("<I", len(raw_rgb565))
+    buf += compressed
+    Path(filepath).write_bytes(bytes(buf))
+
+def import_image(filepath: str, target_w: int = 0, target_h: int = 0) -> GXPImage:
+    pil = Image.open(filepath).convert("RGBA")
+    if target_w > 0 and target_h > 0:
+        pil = pil.resize((target_w, target_h), Image.LANCZOS)
+    elif target_w > 0 or target_h > 0:
+        ow, oh = pil.size
+        if target_w > 0: pil = pil.resize((target_w, int(oh * (target_w / ow))), Image.LANCZOS)
+        else: pil = pil.resize((int(ow * (target_h / oh)), target_h), Image.LANCZOS)
+
+    img = GXPImage()
+    img.width, img.height = pil.size
+    img.rgba = bytearray(pil.tobytes())
+    return img
+
+def _png_chunk(chunk_type: bytes, data: bytes) -> bytes:
+    chunk = chunk_type + data
+    return struct.pack(">I", len(data)) + chunk + struct.pack(">I", zlib.crc32(chunk) & 0xFFFFFFFF)
+
+def export_png(img: GXPImage, filepath: str):
+    """导出 24-bit RGB PNG (剥离透明通道，符合游戏引擎无透明背景要求)"""
+    w, h = img.width, img.height
+    png = b"\x89PNG\r\n\x1a\n"
+    png += _png_chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0))
+
+    stride_in = w * 4
+    stride_out = w * 3
+    raw = bytearray(h * (stride_out + 1))
+    mv = memoryview(img.rgba)
+    
+    for row in range(h):
+        out = row * (stride_out + 1)
+        raw[out] = 0
+        for col in range(w):
+            in_idx = row * stride_in + col * 4
+            out_idx = out + 1 + col * 3
+            raw[out_idx:out_idx+3] = mv[in_idx:in_idx+3]
+
+    png += _png_chunk(b"IDAT", zlib.compress(bytes(raw), 9))
+    png += _png_chunk(b"IEND", b"")
+    Path(filepath).write_bytes(png)
+
+# ═══════════════════════════════════════════════════════════
+# 主题管理器 (直接加载外部 .qss)
+# ═══════════════════════════════════════════════════════════
+
+class ThemeManager:
+    def __init__(self):
+        self.themes_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'themes')
+        self.current_theme = 'dark'
+        self._dark_qss = ''
+        self._light_qss = ''
+        self._load_themes()
+
+    def _load_themes(self):
+        dark_path = os.path.join(self.themes_dir, 'dark.qss')
+        light_path = os.path.join(self.themes_dir, 'light.qss')
+        
+        # 统一处理斜杠，确保 QSS 内能够正确读取绝对路径下的 SVG
+        svg_base = os.path.join(self.themes_dir, 'svg').replace('\\', '/')
+        
+        if os.path.exists(dark_path):
+            with open(dark_path, 'r', encoding='utf-8') as f:
+                qss = f.read()
+                # 动态把相对路径变为绝对路径
+                qss = qss.replace('url(themes/svg/', f'url({svg_base}/')
+                self._dark_qss = qss
+        else:
+            print(f"Warning: Theme not found at {dark_path}")
+                
+        if os.path.exists(light_path):
+            with open(light_path, 'r', encoding='utf-8') as f:
+                qss = f.read()
+                qss = qss.replace('url(themes/svg/', f'url({svg_base}/')
+                self._light_qss = qss
+
+    def get_stylesheet(self) -> str:
+        return self._dark_qss if self.current_theme == 'dark' else self._light_qss
+
+    def set_theme(self, theme: str):
+        if theme in ('dark', 'light'):
+            self.current_theme = theme
+
+    def toggle_theme(self):
+        self.current_theme = 'light' if self.current_theme == 'dark' else 'dark'
+
+# ═══════════════════════════════════════════════════════════
+# GUI 样式与组件
+# ═══════════════════════════════════════════════════════════
+
+class DockHeader(QFrame):
+    def __init__(self, title, right_layout=None):
+        super().__init__()
+        self.setObjectName("DockHeader")
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(10, 6, 6, 6)
+        lbl = QLabel(title)
+        lbl.setObjectName("DockTitle")
+        layout.addWidget(lbl, 1)
+        if right_layout: layout.addLayout(right_layout)
+
+class EnhancedGraphicsView(QGraphicsView):
+    def __init__(self, scene, parent=None):
+        super().__init__(scene, parent)
+        self.setRenderHint(QPainter.Antialiasing, False)
+        self.setRenderHint(QPainter.SmoothPixmapTransform, False)
+        self.setDragMode(QGraphicsView.ScrollHandDrag)
+        self.setTransformationAnchor(QGraphicsView.AnchorUnderMouse)
+        self.setMouseTracking(True)
+        self.editor = None
+
+    def wheelEvent(self, event: QWheelEvent):
+        if event.modifiers() & Qt.ControlModifier:
+            delta = 0.25 if event.angleDelta().y() > 0 else -0.25
+            if self.editor: self.editor._zoom_step(delta)
+            event.accept()
+        else:
+            super().wheelEvent(event)
+
+    def mouseMoveEvent(self, event):
+        super().mouseMoveEvent(event)
+        if self.editor:
+            scene_pos = self.mapToScene(event.position().toPoint())
+            self.editor._update_pixel_info(scene_pos.x(), scene_pos.y())
+
+
+# ═══════════════════════════════════════════════════════════
+# 主程序窗口
+# ═══════════════════════════════════════════════════════════
+
+class GXPEditor(QMainWindow):
+    def __init__(self, filepath: Optional[str] = None):
+        super().__init__()
+        self.setWindowTitle("GXP 图像编辑器 v4 (独立外部主题)")
+        self.resize(1200, 800)
+        
+        ico_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'TKS.ico')
+        if os.path.exists(ico_path): self.setWindowIcon(QIcon(ico_path))
+
+        self.theme_manager = ThemeManager()
+        app_inst = QApplication.instance()
+        if app_inst:
+            is_dark = app_inst.styleHints().colorScheme() == Qt.ColorScheme.Dark
+            self.theme_manager.set_theme('dark' if is_dark else 'light')
+        else:
+            self.theme_manager.set_theme('dark')
+        
+        self.img: Optional[GXPImage] = None
+        self._pixmap_item = None
+        self._zoom = 1.0
+
+        self._setup_menu()
+        self._setup_ui()
+        self._apply_theme()
+
+        if filepath and os.path.exists(filepath): self._open(filepath)
+        else: self._new_empty()
+
+    def _create_dock(self, title, widget_content, header_layout=None):
+        container = QWidget()
+        layout = QVBoxLayout(container)
+        layout.setContentsMargins(0, 0, 0, 0); layout.setSpacing(0)
+        layout.addWidget(DockHeader(title, header_layout))
+        
+        body = QWidget()
+        body.setObjectName("DockBody")
+        body_layout = QVBoxLayout(body)
+        body_layout.setContentsMargins(8, 8, 8, 8)
+        body_layout.addWidget(widget_content)
+        
+        layout.addWidget(body, 1)
+        return container
+
+    def _apply_theme(self):
+        stylesheet = self.theme_manager.get_stylesheet()
+        if stylesheet:
+            self.setStyleSheet(stylesheet)
+            
+        scene_bg = QColor(32, 37, 49) if self.theme_manager.current_theme == 'dark' else QColor(224, 228, 232)
+        self._scene.setBackgroundBrush(scene_bg)
+        
+        # 强制刷新状态栏以更新 QSS 样式 (依据 tkt_editor 经验)
+        status_bar = self.statusBar()
+        if status_bar:
+            status_bar.style().unpolish(status_bar)
+            status_bar.style().polish(status_bar)
+        for label in [self._status_left, self._status_size, self._status_pixel, self._status_sep]:
+            if label:
+                label.style().unpolish(label)
+                label.style().polish(label)
+
+    def _toggle_theme(self):
+        self.theme_manager.toggle_theme()
+        self._apply_theme()
+        theme_name = '深色' if self.theme_manager.current_theme == 'dark' else '浅色'
+        self.statusBar().showMessage(f"已切换到{theme_name}主题", 2000)
+
+    def _setup_menu(self):
+        mb = self.menuBar()
+        fm = mb.addMenu("文件(&F)")
+        fm.addAction("新建(&N)", QKeySequence("Ctrl+N"), self._new_empty)
+        fm.addAction("打开(&O)", QKeySequence("Ctrl+O"), self._open_dlg)
+        fm.addAction("保存(&S)", QKeySequence("Ctrl+S"), self._save)
+        fm.addAction("另存为(&A)...", QKeySequence("Ctrl+Shift+S"), self._save_as)
+        fm.addSeparator()
+        fm.addAction("导入图片(&I)...", QKeySequence("Ctrl+I"), self._import_dlg)
+        fm.addAction("导出 24位 PNG(&E)...", QKeySequence("Ctrl+E"), self._export_dlg)
+        fm.addSeparator()
+        fm.addAction("退出(&X)", QKeySequence("Alt+F4"), self.close)
+
+        vm = mb.addMenu("视图(&V)")
+        vm.addAction("原始大小 100%(&1)", QKeySequence("Ctrl+0"), lambda: self._set_zoom(1.0))
+        vm.addAction("适合窗口(&F)", self._fit_to_window)
+        vm.addSeparator()
+        vm.addAction("切换主题(&T)", QKeySequence("Ctrl+T"), self._toggle_theme)
+
+    def _setup_ui(self):
+        cw = QWidget()
+        self.setCentralWidget(cw)
+        layout = QVBoxLayout(cw)
+        layout.setContentsMargins(8, 8, 8, 8)
+
+        splitter = QSplitter(Qt.Horizontal)
+        splitter.setHandleWidth(7)
+        layout.addWidget(splitter, 1)
+
+        # ---------------- 左侧控制面板 ----------------
+        left_panel = QWidget()
+        left_panel.setFixedWidth(280)
+        left_layout = QVBoxLayout(left_panel)
+        left_layout.setContentsMargins(0, 0, 0, 0)
+
+        info_w = QWidget()
+        info_l = QVBoxLayout(info_w)
+        self._info_label = QLabel("无图像")
+        self._info_label.setAlignment(Qt.AlignCenter)
+        info_l.addWidget(self._info_label)
+        left_layout.addWidget(self._create_dock("GXP 图像属性", info_w))
+
+        ops_w = QWidget()
+        ops_l = QVBoxLayout(ops_w)
+        
+        b1 = QPushButton("📂 打开 GXP"); b1.clicked.connect(self._open_dlg); ops_l.addWidget(b1)
+        b2 = QPushButton("💾 保存 / 另存为"); b2.clicked.connect(self._save); ops_l.addWidget(b2)
+        
+        fline = QFrame(); fline.setFrameShape(QFrame.HLine); fline.setStyleSheet("color: #555;"); ops_l.addWidget(fline)
+        
+        b3 = QPushButton("📥 导入外部图片"); b3.clicked.connect(self._import_dlg); ops_l.addWidget(b3)
+        b4 = QPushButton("📤 导出 24位 PNG"); b4.clicked.connect(self._export_dlg); ops_l.addWidget(b4)
+        
+        left_layout.addWidget(self._create_dock("文件与资产操作", ops_w))
+        left_layout.addStretch()
+        splitter.addWidget(left_panel)
+
+        # ---------------- 右侧画布视口 ----------------
+        right_panel = QWidget()
+        right_layout = QVBoxLayout(right_panel)
+        right_layout.setContentsMargins(0, 0, 0, 0)
+
+        tb_layout = QHBoxLayout()
+        tb_layout.setContentsMargins(6, 2, 6, 2)
+        tb_layout.setSpacing(6)
+        btn_style = "QPushButton { padding: 3px 8px; }"
+        btn_zout = QPushButton("➖"); btn_zout.setStyleSheet(btn_style); btn_zout.clicked.connect(lambda: self._zoom_step(-0.25))
+        self._zoom_label = QLabel("100%"); self._zoom_label.setAlignment(Qt.AlignCenter); self._zoom_label.setFixedWidth(50)
+        btn_zin = QPushButton("➕"); btn_zin.setStyleSheet(btn_style); btn_zin.clicked.connect(lambda: self._zoom_step(0.25))
+        btn_fit = QPushButton("📐 适应窗口"); btn_fit.setStyleSheet(btn_style); btn_fit.clicked.connect(self._fit_to_window)
+        btn_theme = QPushButton("🌗 切换主题"); btn_theme.setStyleSheet(btn_style); btn_theme.clicked.connect(self._toggle_theme)
+        tb_layout.addWidget(btn_zout); tb_layout.addWidget(self._zoom_label); tb_layout.addWidget(btn_zin)
+        tb_layout.addSpacing(12)
+        tb_layout.addWidget(btn_fit); tb_layout.addWidget(btn_theme)
+        tb_layout.addStretch()
+
+        self._scene = QGraphicsScene()
+        self._canvas = EnhancedGraphicsView(self._scene)
+        self._canvas.editor = self
+        
+        # 工具栏容器
+        tb_widget = QWidget()
+        tb_widget.setLayout(tb_layout)
+        tb_widget.setFixedHeight(32)
+        right_layout.addWidget(tb_widget)
+        right_layout.addWidget(self._canvas, 1)
+        
+        splitter.addWidget(right_panel)
+        splitter.setSizes([280, 920])
+
+        # ---------------- 状态栏 ----------------
+        sb = self.statusBar()
+        sb.setSizeGripEnabled(False)  # 移除右下角大小调整手柄
+        
+        self._status_left = QLabel(" 就绪")
+        self._status_left.setObjectName("StatusLabel")
+        sb.addWidget(self._status_left, 1)
+        
+        self._status_pixel = QLabel("")
+        self._status_pixel.setObjectName("StatusPixel")
+        sb.addPermanentWidget(self._status_pixel)
+        
+        self._status_sep = QLabel(" │ ")
+        self._status_sep.setObjectName("StatusSep")
+        sb.addPermanentWidget(self._status_sep)
+        
+        self._status_size = QLabel("0×0")
+        self._status_size.setObjectName("StatusInfo")
+        sb.addPermanentWidget(self._status_size)
+
+    def _update_pixel_info(self, x: float, y: float):
+        if not self.img or not self._pixmap_item: 
+            self._status_pixel.setText(""); return
+            
+        z = self._zoom
+        px, py = int(x / z), int(y / z)
+        w, h = self.img.width, self.img.height
+        
+        if 0 <= px < w and 0 <= py < h:
+            idx = (py * w + px) * 4
+            r, g, b, _ = self.img.rgba[idx:idx + 4]
+            r5, g6, b5 = (r >> 3) & 0x1F, (g >> 2) & 0x3F, (b >> 3) & 0x1F
+            val565 = (r5 << 11) | (g6 << 5) | b5
+            self._status_pixel.setText(f"Pos:({px}, {py})  RGB:({r},{g},{b})  HEX565: 0x{val565:04X}")
+        else:
+            self._status_pixel.setText("")
+
+    # ── 文件调度 ──────────────────────────────────────────
+
+    def _new_empty(self):
+        self.img = GXPImage()
+        self.img.width, self.img.height = 640, 480
+        self.img.rgba = bytearray(640 * 480 * 4)
+        self._zoom = 1.0
+        self._refresh_view()
+        self._status_left.setText(" 新建空白画布 640×480")
+        self._info_label.setText("尺寸: 640×480\n格式: RGB565\n状态: 内存新建")
+        self.setWindowTitle("GXP 编辑器 v4 — [新建]")
+
+    def _open_dlg(self):
+        p, _ = QFileDialog.getOpenFileName(self, "打开 GXP", "", "GXP (*.gxp *.GXP);;All (*.*)")
+        if p: self._open(p)
+
+    def _open(self, p: str):
+        try:
+            self._status_left.setText(f" 加载中: {Path(p).name} ...")
+            QApplication.processEvents()
+            self.img = load_gxp(p)
+            self._fit_to_window()
+            self._refresh_view()
+            self._status_left.setText(f" 已加载: {Path(p).name}  |  {os.path.getsize(p)/1024:.1f} KB")
+            self._info_label.setText(f"尺寸: {self.img.size_str}\n格式: RGB{self.img.bpp}\n文件: {os.path.getsize(p)/1024:.1f} KB")
+            self.setWindowTitle(f"GXP 编辑器 v4 — {os.path.basename(p)}")
+        except Exception as e:
+            QMessageBox.critical(self, "数据载入溃散", str(e))
+            self._status_left.setText(" 打开失败")
+
+    def _save(self):
+        if not self.img: return
+        if self.img.filepath: self._do_save(self.img.filepath)
+        else: self._save_as()
+
+    def _save_as(self):
+        p, _ = QFileDialog.getSaveFileName(self, "打包输出 GXP", "", "GXP (*.gxp)")
+        if p: self._do_save(p)
+
+    def _do_save(self, p: str):
+        try:
+            self._status_left.setText(" 数据流压缩中...")
+            QApplication.processEvents()
+            save_gxp(self.img, p)
+            self.img.filepath = p
+            size_kb = os.path.getsize(p) / 1024
+            self._status_left.setText(f" 已保存: {Path(p).name}  |  {size_kb:.1f} KB")
+            self.setWindowTitle(f"GXP 编辑器 v4 — {os.path.basename(p)}")
+        except Exception as e:
+            QMessageBox.critical(self, "构写失败", str(e))
+
+    def _import_dlg(self):
+        if not HAS_PIL:
+            QMessageBox.warning(self, "缺少依赖", "外部图像导入功能需要安装 Pillow 库。\npip install Pillow")
+            return
+        p, _ = QFileDialog.getOpenFileName(self, "导入参考底图", "", "图片 (*.png *.bmp *.jpg *.jpeg);;All (*.*)")
+        if not p: return
+        try:
+            self._status_left.setText(" 图像映射导入中...")
+            QApplication.processEvents()
+            self.img = import_image(p, self.img.width if self.img and self.img.width > 0 else 0,
+                                       self.img.height if self.img and self.img.height > 0 else 0)
+            self._fit_to_window()
+            self._refresh_view()
+            self._status_left.setText(f" 已导入外部资产: {Path(p).name}")
+            self._info_label.setText(f"尺寸: {self.img.size_str}\n格式: RGB{self.img.bpp}\n来源: 外部图片映射")
+            self.setWindowTitle(f"GXP 编辑器 v4 — [资产导入] {os.path.basename(p)}")
+        except Exception as e:
+            QMessageBox.critical(self, "导入失败", str(e))
+
+    def _export_dlg(self):
+        if not self.img or self.img.width <= 0: return
+        p, _ = QFileDialog.getSaveFileName(self, "导出无透明 24-bit PNG", "", "PNG (*.png)")
+        if not p: return
+        try:
+            export_png(self.img, p)
+            self._status_left.setText(f" 已成功剥离导出: {Path(p).name}")
+        except Exception as e:
+            QMessageBox.critical(self, "导出失败", str(e))
+
+    # ── 视图调度 ──────────────────────────────────────────
+
+    def _refresh_view(self):
+        self._scene.clear()
+        if not self.img or self.img.width <= 0: return
+
+        w, h = self.img.width, self.img.height
+        sw, sh = int(w * self._zoom), int(h * self._zoom)
+
+        qimg = QImage(bytes(self.img.rgba), w, h, QImage.Format_RGBA8888)
+        pixmap = QPixmap.fromImage(qimg)
+        
+        if self._zoom != 1.0:
+            pixmap = pixmap.scaled(max(1, sw), max(1, sh), Qt.IgnoreAspectRatio, Qt.FastTransformation)
+        
+        self._pixmap_item = QGraphicsPixmapItem(pixmap)
+        self._scene.addItem(self._pixmap_item)
+        self._scene.setSceneRect(0, 0, sw, sh)
+        
+        self._zoom_label.setText(f"{int(self._zoom * 100)}%")
+        self._status_size.setText(f"{self.img.size_str} ")
+
+    def _set_zoom(self, z: float):
+        self._zoom = max(0.5, min(3.0, z))
+        self._refresh_view()
+
+    def _zoom_step(self, delta: float):
+        self._set_zoom(self._zoom + delta)
+
+    def _fit_to_window(self):
+        if not self.img or self.img.width <= 0: return
+        view_w = self._canvas.viewport().width() - 20 or 800
+        view_h = self._canvas.viewport().height() - 20 or 600
+        z = min(1.0, view_w / self.img.width, view_h / self.img.height)
+        self._set_zoom(max(0.5, z))
+
+
+if __name__ == "__main__":
+    app = QApplication(sys.argv)
+    app.setStyle("Fusion")
+    fp = sys.argv[1] if len(sys.argv) > 1 else None
+    editor = GXPEditor(fp)
+    editor.show()
+    sys.exit(app.exec())
