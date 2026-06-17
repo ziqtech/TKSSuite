@@ -127,10 +127,19 @@ QSpinBox:focus {
 QListWidget {
     background-color: #ffffff;
     border: 1px solid #b0b5bd;
+    outline: none;
+}
+QListWidget::item {
+    border: none;
+    border-radius: 0;
+    padding: 2px 4px;
 }
 QListWidget::item:selected {
     background-color: #478cbf;
     color: white;
+    border: none;
+    border-radius: 0;
+    outline: none;
 }
 
 /* ── 分组框 ── */

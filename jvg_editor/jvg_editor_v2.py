@@ -1588,6 +1588,7 @@ class JVGEditor(QMainWindow):
 # ── Entry ──────────────────────────────────────────
 def main():
     app = QApplication(sys.argv)
+    app.setStyle("Fusion")  # 使用 Fusion 样式，避免 Windows 原生样式覆盖 QSS
     
     # 设置应用程序图标
     ico_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'TKS.ico')
