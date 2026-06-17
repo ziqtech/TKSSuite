@@ -252,7 +252,7 @@ def export_png(img: GXPImage, filepath: str):
 
 class ThemeManager:
     def __init__(self):
-        self.themes_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'themes')
+        self.themes_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'editor_themes')
         self.current_theme = 'dark'
         self._dark_qss = ''
         self._light_qss = ''

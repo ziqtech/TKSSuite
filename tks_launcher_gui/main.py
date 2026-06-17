@@ -24,11 +24,8 @@ def main():
     if os.path.isfile(_ICON_PATH):
         app.setWindowIcon(QIcon(_ICON_PATH))
 
-    # 创建主窗口
+    # 创建主窗口 (自动检测系统主题)
     window = MainWindow()
-
-    # 加载深色主题
-    window.set_theme("dark")
 
     window.show()
 

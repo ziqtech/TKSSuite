@@ -750,99 +750,22 @@ def pil_to_qimage(pil_image):
     return QImage(data, pil_image.width, pil_image.height, QImage.Format_RGBA8888).copy()
 
 # ============================================================
-# QSS 样式表表 (100% 还原 V2 的 Godot Style)
+# QSS 主题加载 (共享 editor_themes/ 目录)
 # ============================================================
-GODOT_DARK_QSS = """
-QWidget { background-color: #202531; color: #dcdcdc; font-family: 'Segoe UI', 'Microsoft YaHei'; }
-QTableWidget { background-color: #1a1e27; alternate-background-color: #202531; border: 1px solid #14171f; selection-background-color: #478cbf; }
-QHeaderView::section { background-color: #202531; border: none; border-bottom: 1px solid #14171f; padding: 4px; }
-QPlainTextEdit, QLineEdit, QTextEdit { background-color: #1a1e27; border: 1px solid #14171f; padding: 4px; border-radius: 2px;}
-QPushButton { background-color: #2e3548; border: 1px solid #14171f; border-radius: 4px; padding: 5px 12px; }
-QPushButton:hover { background-color: #3b445c; }
-QPushButton:pressed { background-color: #478cbf; color: #fff; }
-QComboBox { background-color: #2e3548; border: 1px solid #14171f; border-radius: 4px; padding: 4px; }
-QComboBox::drop-down { border: none; }
-QListWidget { background-color: #1a1e27; border: 1px solid #14171f; }
-QListWidget::item:selected { background-color: #478cbf; color: white; }
+def _load_qss(theme: str) -> str:
+    """从共享 editor_themes/ 目录加载 QSS 并解析 url() 为绝对路径"""
+    themes_dir = os.path.join(os.path.dirname(__file__), '..', 'editor_themes')
+    qss_path = os.path.join(themes_dir, f'{theme}.qss')
+    if os.path.exists(qss_path):
+        with open(qss_path, 'r', encoding='utf-8') as f:
+            qss = f.read()
+        themes_dir_abs = os.path.abspath(themes_dir).replace("\\", "/")
+        qss = re.sub(r"url\(([^)]+)\)", lambda m: f"url({themes_dir_abs}/{m.group(1)})", qss)
+        return qss
+    return ''
 
-/* 分割线与滚动条样式还原 */
-QSplitter::handle { image: none; background-color: transparent; }
-QSplitter::handle:horizontal { border-left: 1px solid #14171f; margin-left: 3px; margin-right: 3px; }
-QSplitter::handle:vertical { border-top: 1px solid #14171f; margin-top: 3px; margin-bottom: 3px; }
-QSplitter::handle:horizontal:hover { border-left: 1px solid #478cbf; }
-QSplitter::handle:vertical:hover { border-top: 1px solid #478cbf; }
-
-QScrollBar:vertical { background: #1a1e27; width: 12px; }
-QScrollBar::handle:vertical { background: #3b445c; border-radius: 6px; min-height: 20px; margin: 2px; }
-QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0px; }
-
-/* 面板头与内部边框 */
-QFrame#DockHeader { background-color: #14171f; border-top-left-radius: 4px; border-top-right-radius: 4px; }
-QWidget#DockBody { background-color: #202531; border: 1px solid #14171f; border-top: none; }
-QLabel#DockTitle { background-color: transparent; color: #a5b0cb; font-weight: bold; }
-
-/* 菜单修复 */
-QMenuBar { background-color: #202531; color: #dcdcdc; border-bottom: 1px solid #14171f; }
-QMenuBar::item { background: transparent; padding: 5px 10px; }
-QMenuBar::item:selected { background-color: #3b445c; border-radius: 2px; }
-QMenuBar::item:pressed { background-color: #478cbf; color: #ffffff; }
-QMenu { background-color: #202531; border: 1px solid #14171f; padding: 4px; }
-QMenu::item { padding: 6px 24px 6px 24px; }
-QMenu::item:selected { background-color: #478cbf; color: #ffffff; border-radius: 2px; }
-QMenu::separator { height: 1px; background: #14171f; margin: 4px 0px; }
-
-/* 为新加的 TabWidget 提供适配主题 */
-QTabWidget::pane { border: 1px solid #14171f; top: -1px; }
-QTabBar::tab { background: #202531; border: 1px solid #14171f; padding: 6px 12px; margin-right: 2px; border-top-left-radius: 4px; border-top-right-radius: 4px; }
-QTabBar::tab:selected { background: #1a1e27; border-bottom-color: #1a1e27; font-weight: bold; color: #478cbf; }
-QTabBar::tab:hover:!selected { background: #3b445c; }
-"""
-
-GODOT_LIGHT_QSS = """
-QWidget { background-color: #e0e4e8; color: #222222; font-family: 'Segoe UI', 'Microsoft YaHei'; }
-QTableWidget { background-color: #ffffff; alternate-background-color: #f2f5f7; border: 1px solid #b0b5bd; selection-background-color: #478cbf; selection-color: #fff;}
-QHeaderView::section { background-color: #d1d6dc; border: none; border-bottom: 1px solid #b0b5bd; padding: 4px; color: #222; }
-QPlainTextEdit, QLineEdit, QTextEdit { background-color: #ffffff; border: 1px solid #b0b5bd; padding: 4px; border-radius: 2px;}
-QPushButton { background-color: #cdd3d9; border: 1px solid #a6abb2; border-radius: 4px; padding: 5px 12px; color: #111;}
-QPushButton:hover { background-color: #b8c0c7; }
-QPushButton:pressed { background-color: #8da4b8; }
-QComboBox { background-color: #ffffff; border: 1px solid #b0b5bd; border-radius: 4px; padding: 4px; }
-QComboBox::drop-down { border: none; }
-QListWidget { background-color: #ffffff; border: 1px solid #b0b5bd; }
-QListWidget::item:selected { background-color: #478cbf; color: white; }
-
-/* 分割线与滚动条样式还原 */
-QSplitter::handle { image: none; background-color: transparent; }
-QSplitter::handle:horizontal { border-left: 1px solid #b0b5bd; margin-left: 3px; margin-right: 3px; }
-QSplitter::handle:vertical { border-top: 1px solid #b0b5bd; margin-top: 3px; margin-bottom: 3px; }
-QSplitter::handle:horizontal:hover { border-left: 1px solid #478cbf; }
-QSplitter::handle:vertical:hover { border-top: 1px solid #478cbf; }
-
-QScrollBar:vertical { background: #f2f5f7; width: 12px; }
-QScrollBar::handle:vertical { background: #b8c0c7; border-radius: 6px; min-height: 20px; margin: 2px; }
-QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0px; }
-
-/* 面板头与内部边框 */
-QFrame#DockHeader { background-color: #b0b5bd; border-top-left-radius: 4px; border-top-right-radius: 4px; }
-QWidget#DockBody { background-color: #e0e4e8; border: 1px solid #b0b5bd; border-top: none; }
-QLabel#DockTitle { background-color: transparent; color: #111; font-weight: bold; }
-
-/* 菜单修复 */
-QMenuBar { background-color: #e0e4e8; color: #222222; border-bottom: 1px solid #b0b5bd; }
-QMenuBar::item { background: transparent; padding: 5px 10px; }
-QMenuBar::item:selected { background-color: #b8c0c7; border-radius: 2px; }
-QMenuBar::item:pressed { background-color: #8da4b8; color: #111; }
-QMenu { background-color: #ffffff; border: 1px solid #b0b5bd; padding: 4px; }
-QMenu::item { padding: 6px 24px 6px 24px; color: #222; }
-QMenu::item:selected { background-color: #478cbf; color: #ffffff; border-radius: 2px; }
-QMenu::separator { height: 1px; background: #b0b5bd; margin: 4px 0px; }
-
-/* 为新加的 TabWidget 提供适配主题 */
-QTabWidget::pane { border: 1px solid #b0b5bd; top: -1px; }
-QTabBar::tab { background: #e0e4e8; border: 1px solid #b0b5bd; padding: 6px 12px; margin-right: 2px; border-top-left-radius: 4px; border-top-right-radius: 4px; color: #222;}
-QTabBar::tab:selected { background: #ffffff; border-bottom-color: #ffffff; font-weight: bold; color: #478cbf; }
-QTabBar::tab:hover:!selected { background: #b8c0c7; }
-"""
+GODOT_DARK_QSS = _load_qss('dark')
+GODOT_LIGHT_QSS = _load_qss('light')
 
 class DockHeader(QFrame):
     def __init__(self, title, right_layout=None):

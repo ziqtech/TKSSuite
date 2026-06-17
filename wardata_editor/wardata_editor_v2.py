@@ -63,7 +63,7 @@ WarWay.dat 格式 (每条1024字节, 共100条, 32x32有符号字节网格):
 用法: python wardata_editor_v2.py
 """
 
-import struct, os, sys, random
+import struct, os, sys, random, re
 from pathlib import Path
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
@@ -412,11 +412,15 @@ def load_tkitem_names(tkitem_path: str, tkt: dict) -> dict:
 # ═══════════════════════════════════════════════════════════
 
 def _load_qss(filename):
-    """加载 themes/ 目录下的 QSS 文件"""
-    qss_path = os.path.join(os.path.dirname(__file__), 'themes', filename)
+    """加载共享 editor_themes/ 目录下的 QSS 文件并解析 url() 为绝对路径"""
+    themes_dir = os.path.join(os.path.dirname(__file__), '..', 'editor_themes')
+    qss_path = os.path.join(themes_dir, filename)
     if os.path.exists(qss_path):
         with open(qss_path, 'r', encoding='utf-8') as f:
-            return f.read()
+            qss = f.read()
+        themes_dir_abs = os.path.dirname(qss_path).replace("\\", "/")
+        qss = re.sub(r"url\(([^)]+)\)", lambda m: f"url({themes_dir_abs}/{m.group(1)})", qss)
+        return qss
     return ''
 
 GODOT_DARK_QSS = _load_qss('dark.qss')

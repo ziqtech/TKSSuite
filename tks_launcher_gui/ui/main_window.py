@@ -2,7 +2,7 @@
 import os
 import re
 from PySide6.QtWidgets import (
-    QMainWindow, QToolBar, QSplitter, QPushButton,
+    QApplication, QMainWindow, QToolBar, QSplitter, QPushButton,
     QStatusBar, QLabel, QFileDialog, QMessageBox,
 )
 from PySide6.QtCore import Qt, QSize
@@ -27,9 +27,12 @@ class MainWindow(QMainWindow):
         if os.path.isfile(icon_path):
             self.setWindowIcon(QIcon(icon_path))
 
-        self._dark_mode = True
         self._overlay: GameOverlay | None = None
         self._worker: PatcherWorker | None = None
+
+        # 检测系统主题
+        app_inst = QApplication.instance()
+        self._dark_mode = app_inst.styleHints().colorScheme() == Qt.ColorScheme.Dark if app_inst else True
 
         # 加载配置用于补丁列表
         config = load_config("tks_patches.json")
@@ -38,6 +41,7 @@ class MainWindow(QMainWindow):
         self._setup_toolbar()
         self._setup_central()
         self._setup_statusbar()
+        self.set_theme("dark" if self._dark_mode else "light")
 
     def _setup_toolbar(self):
         toolbar = QToolBar()
@@ -45,12 +49,12 @@ class MainWindow(QMainWindow):
         toolbar.setIconSize(QSize(20, 20))
         self.addToolBar(toolbar)
 
-        self.btn_start = QPushButton("▶ 启动并注入")
+        self.btn_start = QPushButton("🚀 启动并注入")
         self.btn_start.setObjectName("btnStart")
         self.btn_start.clicked.connect(self._on_start)
         toolbar.addWidget(self.btn_start)
 
-        self.btn_theme = QPushButton("🌙 深色")
+        self.btn_theme = QPushButton("🌗 切换主题")
         self.btn_theme.clicked.connect(self._toggle_theme)
         toolbar.addWidget(self.btn_theme)
 
@@ -79,11 +83,10 @@ class MainWindow(QMainWindow):
 
     def _toggle_theme(self):
         self._dark_mode = not self._dark_mode
-        self.btn_theme.setText("🌙 深色" if self._dark_mode else "☀ 浅色")
         self.set_theme("dark" if self._dark_mode else "light")
 
     def set_theme(self, theme: str):
-        qss_file = os.path.join(os.path.dirname(__file__), "themes", f"{theme}.qss")
+        qss_file = os.path.join(os.path.dirname(__file__), '..', '..', 'editor_themes', f"{theme}.qss")
         try:
             with open(qss_file, 'r', encoding='utf-8') as f:
                 qss = f.read()
@@ -92,7 +95,7 @@ class MainWindow(QMainWindow):
             qss = re.sub(r'url\(([^)]+)\)', lambda m: f'url({themes_dir}/{m.group(1)})', qss)
             self.setStyleSheet(qss)
             self._dark_mode = (theme == "dark")
-            self.btn_theme.setText("🌙 深色" if self._dark_mode else "☀ 浅色")
+            self.log_console.set_dark_mode(self._dark_mode)
         except Exception:
             pass
 
@@ -133,7 +136,7 @@ class MainWindow(QMainWindow):
 
     def _on_status(self, text: str, ok: bool):
         self.status_label.setText(text)
-        color = "#98C379" if ok else "#E06C75"
+        color = "#2E7D32" if ok else "#E06C75"
         self.status_label.setStyleSheet(f"color: {color}; font-weight: bold;")
 
     def _on_overlay_update(self, text: str, ok: bool):
@@ -144,7 +147,7 @@ class MainWindow(QMainWindow):
         self.btn_start.setEnabled(True)
         if success:
             self.status_bar.showMessage("补丁应用成功！游戏运行中")
-            self.status_label.setStyleSheet("color: #98C379; font-weight: bold;")
+            self.status_label.setStyleSheet("color: #2E7D32; font-weight: bold;")
             self.status_label.setText("✅ 补丁已生效")
         else:
             err = diag.get('error', 'unknown')

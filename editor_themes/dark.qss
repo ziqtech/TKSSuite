@@ -1,4 +1,4 @@
-/* Godot Editor 风格深色主题 — Spritesheet Editor v2 */
+/* Godot Editor 风格深色主题 — 全局共享主题 (所有编辑器统一使用) */
 /* 色板: 底色 #202531 / 边框 #14171f / 强调 #478cbf */
 
 QWidget {
@@ -28,6 +28,14 @@ QPlainTextEdit, QLineEdit, QTextEdit {
     padding: 4px;
     border-radius: 2px;
     selection-background-color: #478cbf;
+}
+QLineEdit:focus, QPlainTextEdit:focus, QTextEdit:focus {
+    border-color: #478cbf;
+}
+QLineEdit:disabled {
+    background-color: #202531;
+    color: #666;
+    border: 1px dashed #2a303d;
 }
 
 /* ── 按钮 ── */
@@ -276,6 +284,30 @@ QMenu::separator {
     margin: 3px 6px;
 }
 
+/* ── Tab 页 ── */
+QTabWidget::pane {
+    border: 1px solid #14171f;
+    background-color: #202531;
+    top: -1px;
+}
+QTabBar::tab {
+    background: #202531;
+    border: 1px solid #14171f;
+    padding: 6px 12px;
+    margin-right: 2px;
+    border-top-left-radius: 4px;
+    border-top-right-radius: 4px;
+}
+QTabBar::tab:selected {
+    background: #1a1e27;
+    border-bottom-color: #1a1e27;
+    font-weight: bold;
+    color: #478cbf;
+}
+QTabBar::tab:hover:!selected {
+    background: #3b445c;
+}
+
 /* ── 面板头与内部边框 (Dock 风格) ── */
 QFrame#DockHeader {
     background-color: #14171f;
@@ -334,4 +366,220 @@ QStatusBar {
 QLabel {
     color: #dcdcdc;
     background-color: transparent;
+}
+
+/* ── 状态栏子标签 ── */
+QLabel#StatusLabel {
+    background-color: transparent;
+    color: #a5b0cb;
+    font-size: 12px;
+    padding: 0 4px;
+}
+QLabel#StatusSep {
+    background-color: transparent;
+    color: #3b445c;
+    font-size: 12px;
+    padding: 0 2px;
+}
+QLabel#StatusInfo {
+    background-color: transparent;
+    color: #8a96b3;
+    font-size: 12px;
+    padding: 0 4px;
+}
+QLabel#StatusPixel {
+    background-color: transparent;
+    color: #6a7590;
+    font-size: 11px;
+    padding: 0 4px;
+    font-family: "Consolas", "Courier New", monospace;
+}
+
+/* ── 提示标签 ── */
+QLabel#hintLabel {
+    color: #888888;
+    font-size: 11px;
+}
+
+/* ── Inspector 标题 (kon/wardata/warpc) ── */
+QLabel[class="InspectorTitle"] {
+    font-weight: bold;
+    color: #a5b0cb;
+    border-bottom: 1px solid #14171f;
+    padding-bottom: 2px;
+    margin-top: 8px;
+}
+QLabel[class="PropLabel"] {
+    color: #8a96b3;
+}
+
+/* ── 预览区面板 (kon/wardata/warpc) ── */
+QFrame#PreviewFrame {
+    background-color: transparent;
+    border: none;
+    border-top: 2px solid #2b4f70;
+    border-bottom: 1px solid #14171f;
+    border-radius: 0px;
+    margin-top: 4px;
+    margin-bottom: 8px;
+}
+QLabel[class="PreviewName"] {
+    color: #e0e4eb;
+    font-size: 18px;
+    font-weight: bold;
+    font-family: 'Microsoft YaHei', 'Segoe UI';
+}
+QLabel[class="PreviewMeta"] {
+    color: #8a96b3;
+    font-size: 11px;
+    border-bottom: 1px solid #2e3548;
+    padding-bottom: 8px;
+    margin-bottom: 4px;
+}
+QLabel[class="PreviewDesc"] {
+    color: #55b572;
+    font-size: 13px;
+    padding-top: 4px;
+}
+QLabel[class="PreviewSubMeta"] {
+    color: #e27d60;
+    font-size: 12px;
+    font-weight: bold;
+    padding-top: 4px;
+}
+
+/* ── FakeInputBox 内凹输入框 (kon/wardata/warpc) ── */
+QFrame#FakeInputBox {
+    background-color: #161923;
+    border: 1px solid #0b0c12;
+    border-radius: 4px;
+}
+QFrame#FakeInputBox:hover, QFrame#FakeInputBox:focus-within {
+    background-color: #1a1e29;
+    border: 1px solid #478cbf;
+}
+QFrame#FakeInputBox > QLineEdit {
+    background: transparent;
+    border: none;
+    padding: 4px 8px;
+    color: #e0e4eb;
+    font-family: 'Consolas', 'Segoe UI';
+    selection-background-color: #478cbf;
+}
+QFrame#FakeInputBox > QPushButton {
+    background: transparent;
+    border: none;
+    border-left: 1px solid #202531;
+    border-right: 1px solid #202531;
+    border-radius: 0px;
+    padding: 4px 8px;
+    margin: 0px;
+    color: #8a96b3;
+}
+QFrame#FakeInputBox > QPushButton:hover {
+    background-color: #2e3548;
+    color: #ffffff;
+}
+QFrame#FakeInputBox > QPushButton:first-child:hover {
+    border-top-left-radius: 3px;
+    border-bottom-left-radius: 3px;
+}
+QFrame#FakeInputBox > QComboBox {
+    border: none;
+    background: transparent;
+    padding: 4px 8px;
+    color: #e0e4eb;
+}
+QFrame#FakeInputBox > QComboBox::drop-down {
+    border: none;
+}
+QFrame[class="FakeInputSep"] {
+    background-color: #202531;
+    border: none;
+}
+
+/* ── 额外预览文本 ── */
+QLabel[class="ExtraPreviewText"] {
+    padding: 4px 8px;
+    color: #55b572;
+    font-size: 11px;
+}
+
+/* ── 拆分字段内部标签 ── */
+QLabel[class="SplitFieldLabel"] {
+    color: #8a96b3;
+    font-size: 11px;
+    padding: 0 4px;
+    min-width: 40px;
+    max-width: 40px;
+}
+
+/* ── 状态掩码标签颜色 (kon) ── */
+QLabel[class="StatusInflict"] {
+    color: #CC3333;
+    font-size: 11px;
+}
+QLabel[class="StatusRemove"] {
+    color: #3366cc;
+    font-size: 11px;
+}
+
+/* ── 弹窗高亮主按钮 ── */
+QPushButton#PrimaryButton {
+    background-color: #478cbf;
+    color: #ffffff;
+    border: 1px solid #366a91;
+    font-weight: bold;
+}
+QPushButton#PrimaryButton:hover {
+    background-color: #5aa1d5;
+}
+QPushButton#PrimaryButton:pressed {
+    background-color: #366a91;
+}
+
+/* ── 工具栏 (tks_launcher_gui) ── */
+QToolBar {
+    background-color: #1a1e27;
+    border-bottom: 1px solid #14171f;
+    padding: 4px;
+    spacing: 6px;
+}
+
+/* ── 控制台日志文本区 (tks_launcher_gui) ── */
+QTextEdit#LogConsole {
+    background-color: #171A21;
+    color: #C8CCD4;
+    border: 1px solid #14171f;
+    border-radius: 4px;
+    padding: 8px;
+    font-family: "Consolas", "Courier New", monospace;
+    font-size: 12px;
+    selection-background-color: #478cbf;
+}
+
+/* ── QCheckBox 禁用状态 ── */
+QCheckBox::indicator:disabled {
+    background-color: #252a35;
+    border-color: #1a1e27;
+}
+QCheckBox::indicator:checked:disabled {
+    background-color: #2D4A5E;
+    border-color: #2D4A5E;
+    image: url(svg/checkmark.svg);
+}
+
+/* ── 滚动条悬停 (tks_launcher_gui) ── */
+QScrollBar::handle:vertical:hover {
+    background-color: #478cbf;
+}
+QScrollBar::handle:horizontal:hover {
+    background-color: #478cbf;
+}
+
+/* ── 状态栏标签 (tks_launcher_gui) ── */
+QLabel#statusLabel {
+    color: #dcdcdc;
+    font-weight: bold;
+    padding: 4px 8px;
 }

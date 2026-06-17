@@ -448,7 +448,7 @@ def export_gridsheet(blk:JVMBlock,outdir:str,padding:int=1,columns:int=0,greensc
 # ── 主题管理 ──────────────────────────────────────────
 class ThemeManager:
     def __init__(self):
-        self.themes_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'themes')
+        self.themes_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'editor_themes')
         self.current_theme = 'dark'
         self._dark_qss = ''
         self._light_qss = ''

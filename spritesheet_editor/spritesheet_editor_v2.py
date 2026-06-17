@@ -280,7 +280,7 @@ class ThemeManager:
 
     @staticmethod
     def _themes_dir() -> str:
-        return os.path.join(os.path.dirname(__file__), "themes")
+        return os.path.join(os.path.dirname(__file__), "..", "editor_themes")
 
     @staticmethod
     def _load_qss(theme: str) -> str:
