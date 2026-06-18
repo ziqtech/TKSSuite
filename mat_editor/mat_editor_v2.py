@@ -2092,7 +2092,7 @@ class MatEditorApp(QMainWindow):
             GROUP_8_28.sort(key=lambda f: _order_8_28.get(f[1], f[1]))
             GROUP_8_28 = [f for f in GROUP_8_28 if f[1] not in skip]
             if GROUP_8_28:
-                self._build_field_group(inner_layout, "显示/动画/位置 [8-28]", GROUP_8_28, tvars, type_labels, 4)
+                self._build_field_group(inner_layout, "显示/动画/位置 [8-28]", GROUP_8_28, tvars, type_labels, 4, tval=tval)
 
             # === 交互/动画/物品 [50-70] ===
             GROUP_50_70 = []
@@ -2105,7 +2105,7 @@ class MatEditorApp(QMainWindow):
             GROUP_50_70.sort(key=lambda f: f[1])
             GROUP_50_70 = [f for f in GROUP_50_70 if f[1] not in skip]
             if GROUP_50_70:
-                self._build_field_group(inner_layout, "交互/动画/物品 [50-70]", GROUP_50_70, tvars, type_labels, 4)
+                self._build_field_group(inner_layout, "交互/动画/物品 [50-70]", GROUP_50_70, tvars, type_labels, 4, tval=tval)
 
             # === 音效事件 [71-95] (type=20 专用) ===
             if tval == 20 and type_labels:
@@ -2113,7 +2113,7 @@ class MatEditorApp(QMainWindow):
                                for di in range(71, 96) if di in type_labels and di not in skip]
                 if sound_events:
                     snd_fields = [(f'snd_{di}', di, tl, tc) for di, tl, tc in sound_events]
-                    self._build_field_group(inner_layout, "音效事件 [71-95]", snd_fields, tvars, type_labels, 4, is_sound=True)
+                    self._build_field_group(inner_layout, "音效事件 [71-95]", snd_fields, tvars, type_labels, 4, tval=tval, is_sound=True)
 
             inner_layout.addStretch()
             scroll.setWidget(inner)
@@ -2137,6 +2137,7 @@ class MatEditorApp(QMainWindow):
 
         # Type combobox
         lbl = QLabel("[00] 实体类型")
+        lbl.setToolTip("[00] 实体类型: 5=脚本 10=出入传送 15=触发区 16=战斗区 20=事件 110=机关 200=NPC。源码: sub_405CBC")
         lbl.setProperty("class", "PropLabel")
         cb = QComboBox()
         cb.addItems([f"{k}-{v}" for k, v in sorted(ENTITY_TYPES.items())])
@@ -2151,6 +2152,7 @@ class MatEditorApp(QMainWindow):
 
         # Scene ID
         lbl2 = QLabel("[01] 场景ID")
+        lbl2.setToolTip("[01] 所属场景 (-1=全局)。TKT_ID = scene_id + 300。源码: sub_405CBC")
         lbl2.setProperty("class", "PropLabel")
         rk = 'raw_1'
         if rk not in self._edit_vars:
@@ -2171,6 +2173,7 @@ class MatEditorApp(QMainWindow):
 
         # Flags
         lbl3 = QLabel("[02] 标志位")
+        lbl3.setToolTip("[02] 位域。bit0=启用 bit1=可见 bit2=可交互 bit3=提示 bit4=忙碌 bit5=恢复 bit8=已拾取 bit16=动画循环")
         lbl3.setProperty("class", "PropLabel")
         rk2 = 'raw_2'
         if rk2 not in self._edit_vars:
@@ -2237,7 +2240,7 @@ class MatEditorApp(QMainWindow):
         v_layout.addLayout(grid)
         parent_layout.addWidget(group_widget)
 
-    def _build_field_group(self, parent_layout, title, fields, tvars, type_labels, cols, is_sound=False):
+    def _build_field_group(self, parent_layout, title, fields, tvars, type_labels, cols, tval=0, is_sound=False):
         """构建通用字段组"""
         group_widget = QWidget()
         v_layout = QVBoxLayout(group_widget)
@@ -2325,6 +2328,82 @@ class MatEditorApp(QMainWindow):
                 wl.setContentsMargins(0, 0, 0, 0)
                 wl.addWidget(cb)
                 cb.currentIndexChanged.connect(lambda _, d=di, _cb=cb: self._sync_type_cb_to_raw(tvars, d, _cb))
+            elif key == 'dialog_color':
+                # 对话颜色选择器: FCOLOR 1-32 调色板
+                rk_dc = f'raw_{di}'
+                if rk_dc not in self._edit_vars:
+                    self._edit_vars[rk_dc] = QLineEdit()
+                dc_ev = self._edit_vars[rk_dc]
+                tvars[key] = dc_ev
+                wrapper = QFrame()
+                wrapper.setObjectName("FakeInputBox")
+                wl = QHBoxLayout(wrapper)
+                wl.setContentsMargins(0, 0, 0, 0)
+                wl.addWidget(dc_ev)
+                # Color swatch
+                dc_swatch = QLabel("■")
+                dc_swatch.setFixedSize(22, 22)
+                dc_swatch.setAlignment(Qt.AlignCenter)
+                dc_swatch.setStyleSheet("background-color: #000; color: #fff; border: 1px solid #333;")
+                wl.addWidget(dc_swatch)
+                tvars['_dialog_color_swatch'] = dc_swatch
+                # Picker button
+                dc_btn = QPushButton("选色")
+                dc_btn.setFixedWidth(40)
+                dc_btn.setCursor(Qt.PointingHandCursor)
+                def _make_dc_picker(_swatch=dc_swatch, _ev=dc_ev):
+                    def _pick():
+                        menu = QMenu(self)
+                        for i in range(32):
+                            hc = GAME_COLORS.get(i + 1, '#000')
+                            act = menu.addAction(f"{i:2d}  FCOLOR({i+1:2d})  ■")
+                            act.setData(i)
+                            # Set icon color via stylesheet on the action's widget
+                        chosen = menu.exec(dc_btn.mapToGlobal(QPoint(0, dc_btn.height())))
+                        if chosen:
+                            val = chosen.data()
+                            _ev.setText(str(val))
+                            _swatch.setStyleSheet(f"background-color: {GAME_COLORS.get(val+1,'#000')}; color: #fff; border: 1px solid #333;")
+                    return _pick
+                dc_btn.clicked.connect(_make_dc_picker())
+                wl.addWidget(dc_btn)
+                tvars['_dialog_color_btn'] = dc_btn
+            elif key == 'dir_mask' and tval in (10, 15):
+                # 方向掩码 checkbox 网格 (8个朝向)
+                rk_dm = f'raw_{di}'
+                if rk_dm not in self._edit_vars:
+                    self._edit_vars[rk_dm] = QLineEdit()
+                dm_ev = self._edit_vars[rk_dm]
+                tvars[key] = dm_ev
+                wrapper = QFrame()
+                wrapper.setObjectName("FakeInputBox")
+                wl_wrap = QHBoxLayout(wrapper)
+                wl_wrap.setContentsMargins(0, 0, 0, 0)
+                wl_wrap.addWidget(dm_ev)
+                # Direction checkboxes grid
+                dir_frame = QWidget()
+                dir_grid = QGridLayout(dir_frame)
+                dir_grid.setContentsMargins(0, 0, 0, 0)
+                dir_grid.setSpacing(1)
+                dir_labels = ["上", "右上", "右", "右下", "下", "左下", "左", "左上"]
+                dir_bv = {}
+                for bit_i in range(8):
+                    bv_cb = QCheckBox(dir_labels[bit_i])
+                    dir_bv[bit_i] = bv_cb
+                    r2, c2 = divmod(bit_i, 2)
+                    dir_grid.addWidget(bv_cb, r2, c2)
+                def _make_dir_sync(_ev=dm_ev, _dir_bv=dir_bv):
+                    def _on_dir(*_a):
+                        mask = sum((1 << i) for i, cb in _dir_bv.items() if cb.isChecked())
+                        _ev.blockSignals(True)
+                        _ev.setText(str(mask))
+                        _ev.blockSignals(False)
+                    return _on_dir
+                dir_sync_fn = _make_dir_sync()
+                for bv_cb in dir_bv.values():
+                    bv_cb.stateChanged.connect(dir_sync_fn)
+                tvars["_dir_bv"] = dir_bv
+                wl_wrap.addWidget(dir_frame)
             else:
                 wrapper = QFrame()
                 wrapper.setObjectName("FakeInputBox")
@@ -2485,6 +2564,20 @@ class MatEditorApp(QMainWindow):
         # State
         self.script_text.setReadOnly(True)
         self._disable_scroll_sync = False
+
+        # 滚动同步: 编辑器 <-> 行预览
+        self._script_sb = self.script_text.verticalScrollBar()
+        self._preview_sb = self.script_preview.verticalScrollBar()
+        def _on_editor_scroll(val, _ps=self._preview_sb, _es=self._script_sb):
+            if not self._disable_scroll_sync:
+                ratio = val / max(1, _es.maximum())
+                _ps.setValue(int(ratio * max(1, _ps.maximum())))
+        def _on_preview_scroll(val, _ps=self._preview_sb, _es=self._script_sb):
+            if not self._disable_scroll_sync:
+                ratio = val / max(1, _ps.maximum())
+                _es.setValue(int(ratio * max(1, _es.maximum())))
+        self._script_sb.valueChanged.connect(_on_editor_scroll)
+        self._preview_sb.valueChanged.connect(_on_preview_scroll)
 
     # =========== 全部标签页 ===========
     def _build_all_tab(self):
@@ -2843,6 +2936,25 @@ class MatEditorApp(QMainWindow):
                         cb.setChecked((flags & mask) != 0)
                         cb.blockSignals(False)
 
+            # Dialog color swatch update
+            dc_swatch = tvars.get('_dialog_color_swatch')
+            if dc_swatch and isinstance(dc_swatch, QLabel):
+                dc_val = rec['d28']
+                dc_swatch.setStyleSheet(
+                    f"background-color: {GAME_COLORS.get(dc_val + 1, '#000')}; color: #fff; border: 1px solid #333;")
+
+            # Direction mask checkboxes update
+            dir_bv = tvars.get('_dir_bv')
+            if dir_bv:
+                d51_val = rec['d51']
+                for bit_i in dir_bv:
+                    dir_bv[bit_i].blockSignals(True)
+                    dir_bv[bit_i].setChecked((d51_val & (1 << bit_i)) != 0)
+                    dir_bv[bit_i].blockSignals(False)
+
+            # Event flag checkbox visibility (bit12/13/14 only for type=20/200)
+            self._update_type_flags_visibility(tvars, tval)
+
         # Update all tab labels
         self._update_all_tab_labels(tval)
         # Refresh chain list
@@ -2885,6 +2997,21 @@ class MatEditorApp(QMainWindow):
             else:
                 lbl.setText(f"[{di:02d}] d{di}")
                 lbl.setStyleSheet("color: #888;")
+
+    def _update_type_flags_visibility(self, tvars, tval):
+        """根据实体类型显示/隐藏事件标志 checkbox (bit12/13/14)"""
+        bit_event_idxs = tvars.get('_bit_event_idxs', [])
+        bit_cbs = tvars.get('_bit_cbs', [])
+        show = tval in (20, 200)
+        for i in bit_event_idxs:
+            if i < len(bit_cbs):
+                bit_cbs[i].setVisible(show)
+
+    def _update_flags_visibility(self, tval):
+        """根据实体类型更新全局 flags 事件标志可见性"""
+        # For type pages
+        if tval in self._type_vars:
+            self._update_type_flags_visibility(self._type_vars[tval], tval)
 
     def _clear_form(self):
         for key, var in self._edit_vars.items():
@@ -3395,7 +3522,7 @@ class MatEditorApp(QMainWindow):
 
     # =========== 画布交互 ===========
     def _vis_canvas_click(self, event):
-        pos = event.pos()
+        pos = event.position().toPoint()
         scene_pos = self._vis_gview.mapToScene(pos)
         cx, cy = int(scene_pos.x()), int(scene_pos.y())
         self._vis_selected = None
@@ -3425,7 +3552,7 @@ class MatEditorApp(QMainWindow):
         self._vis_redraw()
 
     def _vis_canvas_mouse_move(self, event):
-        pos = event.pos()
+        pos = event.position().toPoint()
         scene_pos = self._vis_gview.mapToScene(pos)
         self._vis_coord_label.setText(f"坐标: ({int(scene_pos.x())}, {int(scene_pos.y())})")
         # Drag handling
@@ -3448,7 +3575,7 @@ class MatEditorApp(QMainWindow):
         if self._vis_drag:
             eidx = self._vis_drag[0]
             rec = self.records[eidx]
-            pos = event.pos()
+            pos = event.position().toPoint()
             scene_pos = self._vis_gview.mapToScene(pos)
             cx, cy = int(scene_pos.x()), int(scene_pos.y())
             px, py = rec['d10'], rec['d11']
@@ -3941,15 +4068,23 @@ class MatEditorApp(QMainWindow):
             group_item = QTreeWidgetItem([f'{sub_name}链', '', '', '', '', f'head=#{h} max={mx} {cur_str}'])
             group_item.setForeground(0, QColor("#3366cc"))
             self.chain_tree.addTopLevelItem(group_item)
-            # Traverse chain
+            # Traverse chain (with loop detection)
             idx = h
-            visited = set()
+            visited_chain = set()
             for step in range(mx):
-                if idx in visited:
+                if idx in visited_chain:
+                    # 循环检测: 标记循环节点
+                    loop_item = QTreeWidgetItem([f'  {sub_name}', str(step + 1), f'(循环→{idx})', '', '', '⚠循环'])
+                    loop_item.setForeground(0, QColor("#CC0000"))
+                    self.chain_tree.addTopLevelItem(loop_item)
                     break
-                visited.add(idx)
+                visited_chain.add(idx)
                 du_rec = next((r for r in self.defunit_recs if r['index'] == idx), None)
                 if du_rec is None:
+                    # 空槽检测
+                    empty_item = QTreeWidgetItem([f'  {sub_name}', str(step + 1), f'#{idx}(空槽)', '', '', '⚠断开'])
+                    empty_item.setForeground(0, QColor("#CC6600"))
+                    self.chain_tree.addTopLevelItem(empty_item)
                     break
                 define_id = (du_rec['f1'] << 16) | du_rec['f0']
                 marks = []
@@ -4213,54 +4348,253 @@ class MatEditorApp(QMainWindow):
         win = QDialog(self)
         win.setWindowTitle(f"脚本预览 — DEFINE {self._current_edit_define_id}")
         win.resize(780, 680)
-        layout = QVBoxLayout(win)
+        # 图标
+        ico = os.path.join(os.path.dirname(__file__), 'TKS.ico')
+        if os.path.exists(ico):
+            win.setWindowIcon(QIcon(ico))
+        main_layout = QVBoxLayout(win)
 
+        # 顶部信息栏
+        info_row = QHBoxLayout()
         comment = d.get('comment', '')
         info_text = f"DEFINE {self._current_edit_define_id}"
         if comment:
             info_text += f"  —  {comment}"
         info_text += f"  |  {len(commands)} 条命令"
-        layout.addWidget(QLabel(info_text))
+        info_lbl = QLabel(info_text)
+        info_lbl.setStyleSheet("font-size: 13px; font-weight: bold;")
+        info_row.addWidget(info_lbl, 1)
+        self._pv_info_lbl = QLabel("")
+        info_row.addWidget(self._pv_info_lbl)
+        main_layout.addLayout(info_row)
 
-        tree = QTreeWidget()
-        tree.setHeaderLabels(["#", "命令", "描述"])
-        tree.setColumnWidth(0, 35)
-        tree.setColumnWidth(1, 110)
+        # 导航按钮栏
+        nav_row = QHBoxLayout()
+        for text, fn_name in [("⏮ 起始", "reset"), ("◀ 上一步", "prev"),
+                               ("下一步 ▶", "next"), ("结束 ⏭", "end"),
+                               ("▶ 自动播放", "auto")]:
+            btn = QPushButton(text)
+            btn.setFixedWidth(85 if "自动" in text else 72)
+            btn.setCursor(Qt.PointingHandCursor)
+            nav_row.addWidget(btn)
+            if fn_name == "reset":
+                btn.clicked.connect(self._preview_reset)
+            elif fn_name == "prev":
+                btn.clicked.connect(self._preview_prev)
+            elif fn_name == "next":
+                btn.clicked.connect(self._preview_next)
+            elif fn_name == "end":
+                btn.clicked.connect(self._preview_end)
+            elif fn_name == "auto":
+                btn.clicked.connect(self._preview_auto_play)
+        nav_row.addStretch()
+        main_layout.addLayout(nav_row)
+
+        # 命令列表 + 详情面板 (垂直分割)
+        splitter = QSplitter(Qt.Vertical)
+
+        # 命令列表 (带颜色标签)
+        self._pv_tree = QTreeWidget()
+        self._pv_tree.setHeaderLabels(["#", "命令", "描述"])
+        self._pv_tree.setColumnWidth(0, 35)
+        self._pv_tree.setColumnWidth(1, 110)
+        self._pv_tree.setSelectionMode(QAbstractItemView.SingleSelection)
+        self._pv_tree.setRootIsDecorated(False)
+
+        # 填充命令 (带颜色分类)
+        talk_cmds = {'TalkB', 'TalkA', 'BlackTalk', 'ShowText', 'MenuChoice',
+                     'SysTalk', 'SetTalkB', 'SetHint', 'DoTalkB', 'MenuTalk'}
+        flow_cmds = {'End', 'Yield', 'Jump', 'Else'}
+        branch_cmds = {'CheckFlag', 'CheckResult', 'CheckItem', 'CheckTeam',
+                       'CheckMember', 'Switch', 'Random'}
         for si, (cmd_name, args, line_text, line_idx) in enumerate(commands):
             desc = self._format_cmd_desc(cmd_name, args)
             item = QTreeWidgetItem([str(si + 1), cmd_name, desc])
-            tree.addTopLevelItem(item)
-        layout.addWidget(tree, 1)
+            # 颜色分类
+            if cmd_name in talk_cmds:
+                color = QColor("#7B30D0")  # 紫色=对话
+            elif cmd_name in flow_cmds:
+                color = QColor("#0066CC")  # 蓝色=流程
+            elif cmd_name in branch_cmds:
+                color = QColor("#CC6600")  # 橙色=分支
+            elif cmd_name == 'GetItem':
+                color = QColor("#FF0000")  # 红色=道具
+            else:
+                color = QColor("#333333") if not self._is_dark else QColor("#cccccc")
+            for c in range(3):
+                item.setForeground(c, color)
+            item.setData(0, Qt.UserRole, si)  # 存储步骤索引
+            self._pv_tree.addTopLevelItem(item)
 
-        detail = QPlainTextEdit()
-        detail.setReadOnly(True)
-        detail.setFont(QFont("Consolas", 10))
-        layout.addWidget(detail)
+        splitter.addWidget(self._pv_tree)
 
-        def on_select():
-            sel = tree.selectedItems()
-            if not sel:
-                return
-            step = int(sel[0].text(0)) - 1
-            if 0 <= step < len(self._preview_cmds):
-                cmd_name, args, line_text, _ = self._preview_cmds[step]
-                detail.clear()
-                detail.appendPlainText(f"原始: {line_text}")
-                detail.appendPlainText(f"命令: {cmd_name}({', '.join(args)})")
-                detail.appendPlainText(f"描述: {self._format_cmd_desc(cmd_name, args)}")
-                if cmd_name in ('TalkB', 'TalkA', 'SetTalkB', 'BlackTalk') and len(args) >= 2:
-                    text_idx = 0 if cmd_name == 'BlackTalk' else 1
-                    tkt_text = _tkt_text(self.tkt_all, args[text_idx], max_len=500)
-                    if tkt_text:
-                        detail.appendPlainText(f"\n━━━ TKT 对话文本 (ID={args[text_idx]}) ━━━")
-                        detail.appendPlainText(tkt_text)
+        # 详情面板 (QTextEdit 支持富文本颜色)
+        self._pv_detail = QTextEdit()
+        self._pv_detail.setReadOnly(True)
+        self._pv_detail.setFont(QFont("Consolas", 10))
+        self._pv_detail.setStyleSheet(
+            "QTextEdit { background-color: #313c52; color: #CCCCCC; }")
+        # 预配置 FCOLOR 1-32 颜色格式
+        self._pv_color_formats = {}
+        for ci in range(1, 33):
+            fmt = QTextCharFormat()
+            fmt.setForeground(QColor(GAME_COLORS[ci]))
+            self._pv_color_formats[f'tkt_c{ci}'] = fmt
+        # 物品名红色格式
+        self._pv_item_red_fmt = QTextCharFormat()
+        self._pv_item_red_fmt.setForeground(QColor("#FF4444"))
+        self._pv_item_red_fmt.setFontWeight(QFont.Bold)
+        # 动态 FCOLORD 格式缓存
+        self._pv_dynamic_color_tags = {}
+        splitter.addWidget(self._pv_detail)
+        splitter.setSizes([380, 200])
+        main_layout.addWidget(splitter, 1)
 
-        tree.itemSelectionChanged.connect(on_select)
-        if tree.topLevelItemCount() > 0:
-            tree.setCurrentItem(tree.topLevelItem(0))
+        # 选中事件
+        self._pv_tree.itemSelectionChanged.connect(self._preview_on_select)
+        # 选中第一步
+        if self._pv_tree.topLevelItemCount() > 0:
+            self._pv_tree.setCurrentItem(self._pv_tree.topLevelItem(0))
 
         self._preview_win = win
+        self._pv_auto_timer = None
         win.exec()
+        # 停止自动播放
+        if self._pv_auto_timer:
+            self._pv_auto_timer.stop()
+            self._pv_auto_timer = None
+
+    def _preview_on_select(self):
+        """预览窗口: 选中命令 → 更新详情面板"""
+        sel = self._pv_tree.selectedItems()
+        if not sel:
+            return
+        step = sel[0].data(0, Qt.UserRole)
+        if step is None:
+            return
+        self._preview_step = step
+        if 0 <= step < len(self._preview_cmds):
+            cmd_name, args, line_text, _ = self._preview_cmds[step]
+            self._pv_detail.clear()
+            self._pv_detail.append(f"<b>原始:</b> {line_text}")
+            self._pv_detail.append(f"<b>命令:</b> {cmd_name}({', '.join(args)})")
+            self._pv_detail.append(f"<b>描述:</b> {self._format_cmd_desc(cmd_name, args)}")
+            # 对话命令: 解析 TKT 文本并用颜色渲染
+            if cmd_name in ('TalkB', 'TalkA', 'SetTalkB', 'BlackTalk') and len(args) >= 2:
+                text_idx = 0 if cmd_name == 'BlackTalk' else 1
+                tkt_text = _tkt_text(self.tkt_all, args[text_idx], max_len=500)
+                if tkt_text:
+                    self._pv_detail.append(f"\n<b>━━━ TKT 对话文本 (ID={args[text_idx]}) ━━━</b>")
+                    self._insert_colored_tkt(tkt_text)
+            elif cmd_name in ('ShowText', 'MenuTalk', 'SysTalk') and args:
+                tkt_text = _tkt_text(self.tkt_all, args[0], max_len=500)
+                if tkt_text:
+                    self._pv_detail.append(f"\n<b>━━━ TKT 对话文本 (ID={args[0]}) ━━━</b>")
+                    self._insert_colored_tkt(tkt_text)
+            # GetItem: 物品名称用红色显示
+            if cmd_name == 'GetItem' and args and self.item_names:
+                try:
+                    item_id = int(args[0])
+                    item_name = self.item_names.get(item_id, '')
+                    if item_name:
+                        self._pv_detail.append(f"\n<b>━━━ 物品名称 (ID={args[0]}) ━━━</b>")
+                        cursor = self._pv_detail.textCursor()
+                        cursor.movePosition(QTextCursor.End)
+                        cursor.insertText(item_name, self._pv_item_red_fmt)
+                except (ValueError, TypeError):
+                    pass
+            # 更新信息标签
+            self._pv_info_lbl.setText(f"步骤 {step+1}/{len(self._preview_cmds)}")
+        # 高亮当前步骤 (黄色背景)
+        for i in range(self._pv_tree.topLevelItemCount()):
+            item = self._pv_tree.topLevelItem(i)
+            si = item.data(0, Qt.UserRole)
+            if si == step:
+                for c in range(3):
+                    item.setBackground(c, QColor("#FFEE88") if not self._is_dark else QColor("#5a5520"))
+            else:
+                for c in range(3):
+                    item.setBackground(c, QColor("transparent"))
+
+    def _insert_colored_tkt(self, text):
+        """将含 <FCOLOR,n> 等标签的 TKT 文本按颜色分段插入详情面板"""
+        segments = parse_tkt_colored_segments(text)
+        cursor = self._pv_detail.textCursor()
+        cursor.movePosition(QTextCursor.End)
+        for seg_text, color in segments:
+            fmt = self._get_tkt_color_format(color)
+            cursor.insertText(seg_text, fmt)
+
+    def _get_tkt_color_format(self, color_hex):
+        """获取 TKT 颜色的 QTextCharFormat。FCOLOR 1-32 用预配置, FCOLORD 动态创建"""
+        for ci in range(1, 33):
+            if GAME_COLORS[ci] == color_hex:
+                return self._pv_color_formats[f'tkt_c{ci}']
+        # FCOLORD 动态颜色
+        if color_hex not in self._pv_dynamic_color_tags:
+            fmt = QTextCharFormat()
+            fmt.setForeground(QColor(color_hex))
+            self._pv_dynamic_color_tags[color_hex] = fmt
+        return self._pv_dynamic_color_tags[color_hex]
+
+    def _preview_next(self):
+        """下一步"""
+        if not self._preview_cmds:
+            return
+        self._preview_step = min(self._preview_step + 1, len(self._preview_cmds) - 1)
+        self._preview_goto_step(self._preview_step)
+
+    def _preview_prev(self):
+        """上一步"""
+        if not self._preview_cmds:
+            return
+        self._preview_step = max(self._preview_step - 1, 0)
+        self._preview_goto_step(self._preview_step)
+
+    def _preview_end(self):
+        """跳到结束"""
+        if not self._preview_cmds:
+            return
+        self._preview_step = len(self._preview_cmds) - 1
+        self._preview_goto_step(self._preview_step)
+
+    def _preview_reset(self):
+        """重新开始"""
+        self._preview_step = 0
+        self._preview_goto_step(0)
+
+    def _preview_goto_step(self, step):
+        """跳转到指定步骤"""
+        if not hasattr(self, '_pv_tree') or not self._pv_tree:
+            return
+        if 0 <= step < self._pv_tree.topLevelItemCount():
+            item = self._pv_tree.topLevelItem(step)
+            self._pv_tree.setCurrentItem(item)
+            self._pv_tree.scrollToItem(item)
+
+    def _preview_auto_play(self):
+        """自动播放脚本步骤"""
+        if not self._preview_cmds:
+            return
+        self._preview_step = 0
+        self._preview_goto_step(0)
+        self._auto_play_tick()
+
+    def _auto_play_tick(self):
+        """自动播放定时器"""
+        if not hasattr(self, '_preview_win') or not self._preview_win.isVisible():
+            return
+        if self._preview_step >= len(self._preview_cmds) - 1:
+            return
+        self._preview_step += 1
+        self._preview_goto_step(self._preview_step)
+        # 根据命令类型调整速度
+        cmd_name = self._preview_cmds[self._preview_step][0]
+        delay = 800 if cmd_name in ('TalkB', 'TalkA', 'BlackTalk', 'ShowText', 'MenuChoice') else 400
+        self._pv_auto_timer = QTimer(self)
+        self._pv_auto_timer.setSingleShot(True)
+        self._pv_auto_timer.timeout.connect(self._auto_play_tick)
+        self._pv_auto_timer.start(delay)
 
     def _parse_script_commands(self, body_lines):
         commands = []
