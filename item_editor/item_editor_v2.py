@@ -42,10 +42,10 @@ from PySide6.QtWidgets import (
     QSplitter, QTableWidget, QTableWidgetItem, QAbstractItemView,
     QHeaderView, QLabel, QLineEdit, QPushButton, QCheckBox, QComboBox,
     QMessageBox, QFileDialog, QDialog, QGridLayout, QFrame, QScrollArea,
-    QSizePolicy, QMenu, QMenuBar
+    QSizePolicy, QMenu, QMenuBar, QStyledItemDelegate, QStyle, QLayout
 )
-from PySide6.QtGui import QAction, QKeySequence, QIcon, QImage, QPixmap
-from PySide6.QtCore import Qt
+from PySide6.QtGui import QAction, QKeySequence, QIcon, QImage, QPixmap, QPainter
+from PySide6.QtCore import Qt, QRect, QPoint, QSize
 
 # ============================================================
 # LZSS 编解码 (sub_452B14)
@@ -674,6 +674,71 @@ class UseRightPickerDialog(QDialog):
         self.selected_mask = m; self.accept()
 
 # ============================================================
+# FlowLayout — 流式布局，子控件左右排列，超出自动换行
+# ============================================================
+class FlowLayout(QLayout):
+    def __init__(self, parent=None, margin=0, spacing=-1):
+        super().__init__(parent)
+        self.setContentsMargins(margin, margin, margin, margin)
+        self.setSpacing(spacing)
+        self._items = []
+
+    def addItem(self, item): self._items.append(item)
+    def count(self): return len(self._items)
+    def itemAt(self, index):
+        if 0 <= index < len(self._items): return self._items[index]
+        return None
+    def takeAt(self, index):
+        if 0 <= index < len(self._items): return self._items.pop(index)
+        return None
+    def hasHeightForWidth(self): return True
+
+    def heightForWidth(self, width):
+        return self._do_layout(QRect(0, 0, width, 0), test_only=True)
+
+    def setGeometry(self, rect):
+        super().setGeometry(rect)
+        self._do_layout(rect, test_only=False)
+
+    def sizeHint(self): return self.minimumSize()
+    def minimumSize(self):
+        size = QSize()
+        for item in self._items: size = size.expandedTo(item.minimumSize())
+        m = self.contentsMargins(); size += QSize(m.left()+m.right(), m.top()+m.bottom())
+        return size
+
+    def _do_layout(self, rect, test_only):
+        m = self.contentsMargins()
+        effective = rect.adjusted(m.left(), m.top(), -m.right(), 0)
+        x = effective.x(); y = effective.y(); row_h = 0
+        for item in self._items:
+            sz = item.sizeHint(); nx = x + sz.width()
+            if nx - effective.x() > effective.width() and row_h > 0:
+                x = effective.x(); y += row_h + self.spacing(); row_h = 0
+                nx = x + sz.width()
+            if not test_only: item.setGeometry(QRect(QPoint(x, y), sz))
+            x = nx + self.spacing(); row_h = max(row_h, sz.height())
+        return y + row_h - rect.y() + m.bottom()
+
+# ============================================================
+# 图标居中 Delegate
+# ============================================================
+class IconDelegate(QStyledItemDelegate):
+    """将表格图标列的图标绘制在单元格正中央"""
+    def paint(self, painter, option, index):
+        painter.save()
+        # 绘制选中高亮背景
+        if option.state & QStyle.State_Selected:
+            painter.fillRect(option.rect, option.palette.highlight())
+        icon = index.data(Qt.DecorationRole)
+        if icon:
+            pix = icon.pixmap(36, 36)
+            x = option.rect.x() + (option.rect.width() - pix.width()) // 2
+            y = option.rect.y() + (option.rect.height() - pix.height()) // 2
+            painter.drawPixmap(x, y, pix)
+        painter.restore()
+
+# ============================================================
 # GUI 核心编辑器
 # ============================================================
 class ItemEditorApp(QMainWindow):
@@ -783,15 +848,17 @@ class ItemEditorApp(QMainWindow):
         # 左侧: 物品列表 (列顺序与原版一致: 图标在最前)
         self.table = QTableWidget(0, 7)
         self.table.setHorizontalHeaderLabels(['图标', '#', 'ID', '页面', '物品名称', '权限', '价格'])
-        self.table.setColumnWidth(0, 40); self.table.setColumnWidth(1, 40)
+        self.table.setColumnWidth(0, 56); self.table.setColumnWidth(1, 40)
         self.table.setColumnWidth(2, 50); self.table.setColumnWidth(3, 50)
         self.table.setColumnWidth(4, 160); self.table.setColumnWidth(5, 90)
         self.table.setColumnWidth(6, 50)
+        self.table.verticalHeader().setDefaultSectionSize(44)
         self.table.horizontalHeader().setStretchLastSection(True)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SingleSelection)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.verticalHeader().setVisible(False)
+        self.table.setItemDelegateForColumn(0, IconDelegate())
         self.table.itemSelectionChanged.connect(self._on_table_select)
         self.table.horizontalHeader().sectionClicked.connect(self._sort_by)
         self.splitter.addWidget(self._create_dock("物品列表", self.table))
@@ -825,12 +892,12 @@ class ItemEditorApp(QMainWindow):
         # 基础属性网格
         self._build_field_group("基础属性", GRID_FIELDS, 5)
         # 技能组
-        self._build_field_group("技能", [(k,o,l,'skill',W_INPUT,c) for k,o,l,c in SKILL_FIELDS], 4)
+        self._build_field_group("技能", [(k,o,l,'skill',W_INPUT,c) for k,o,l,c in SKILL_FIELDS], 5)
         # 状态组
         status_fields = [(k,o,l,'mask',W_INPUT,c) for k,o,l,c in CAUSE_MASK_FIELDS + CURE_MASK_FIELDS]
-        self._build_field_group("状态位掩码 (导致/解除)", status_fields, 4)
+        self._build_field_group("状态位掩码 (导致/解除)", status_fields, 5)
         # 隐含字段
-        self._build_field_group("隐含数据 (保留原始数据)", HIDDEN_FIELDS, 2)
+        self._build_field_group("隐含数据 (保留原始数据)", HIDDEN_FIELDS, 5)
 
         self.edit_layout.addStretch()
         scroll.setWidget(self.edit_inner)
@@ -891,21 +958,23 @@ class ItemEditorApp(QMainWindow):
             skill_row.addLayout(col)
         pl.addLayout(skill_row)
 
-        # 状态预览 (4列, 含图标)
-        status_row = QHBoxLayout()
+        # 状态预览 (4列, QGridLayout 确保标题和内容行对齐)
+        status_grid = QGridLayout()
+        status_grid.setHorizontalSpacing(8); status_grid.setVerticalSpacing(2)
+        status_grid.setContentsMargins(0, 0, 0, 0)
         status_labels = ["导致状态 1-16", "导致状态 17-32", "解除状态 1-16", "解除状态 17-32"]
         self._preview_status_containers = []
         for si, slbl in enumerate(status_labels):
-            col = QVBoxLayout()
             lbl_t = QLabel(f"{slbl}:"); lbl_t.setProperty("class", "PropLabel")
-            col.addWidget(lbl_t)
+            status_grid.addWidget(lbl_t, 0, si, Qt.AlignTop)
             container = QWidget()
-            container_layout = QVBoxLayout(container)
-            container_layout.setContentsMargins(0, 0, 0, 0)
-            col.addWidget(container)
+            container_layout = FlowLayout(margin=0, spacing=2)
+            container.setLayout(container_layout)
+            status_grid.addWidget(container, 1, si, Qt.AlignTop)
             self._preview_status_containers.append(container)
-            status_row.addLayout(col)
-        pl.addLayout(status_row)
+        for si in range(4):
+            status_grid.setColumnStretch(si, 1)
+        pl.addLayout(status_grid)
 
         self.edit_layout.addWidget(preview_frame)
 
@@ -918,12 +987,24 @@ class ItemEditorApp(QMainWindow):
         v_layout.addWidget(lbl_title)
 
         grid = QGridLayout()
-        grid.setVerticalSpacing(6); grid.setHorizontalSpacing(15)
+        grid.setVerticalSpacing(6); grid.setHorizontalSpacing(8)
         grid.setContentsMargins(10, 0, 0, 0)
 
         for fi, field_def in enumerate(fields):
             r, c = divmod(fi, cols)
             self._build_field(grid, r, c, field_def)
+
+        # 所有列等宽
+        for c in range(cols):
+            grid.setColumnStretch(c, 1)
+        # 填充末行空白占位，防止列宽不均
+        if fields:
+            last_row_count = len(fields) % cols
+            if last_row_count != 0:
+                last_row = len(fields) // cols
+                for c in range(last_row_count, cols):
+                    spacer = QWidget()
+                    grid.addWidget(spacer, last_row, c)
 
         v_layout.addLayout(grid)
         self.edit_layout.addWidget(group_widget)
@@ -933,13 +1014,15 @@ class ItemEditorApp(QMainWindow):
         ft = field_def[3] if len(field_def) > 3 else 'int'
         cmt = field_def[5] if len(field_def) > 5 else (field_def[4] if len(field_def) > 4 else "")
 
+        cell = QVBoxLayout(); cell.setSpacing(2)
         lbl = QLabel(fl)
         lbl.setToolTip(f"[{fo:02d}] {cmt}")
         lbl.setProperty("class", "PropLabel")
+        cell.addWidget(lbl)
 
         if ft == 'page':
             cb = QComboBox(); cb.addItems(PAGE_VALUES)
-            box = make_fake_input(combo=cb)
+            cell.addWidget(make_fake_input(combo=cb))
             self.widget_map[fn] = cb; self.extra_map[fn] = None
         elif ft in ('tkt', 'icon', 'use_right', 'combat_flag', 'extra_flags', 'skill'):
             inp = QLineEdit()
@@ -948,8 +1031,7 @@ class ItemEditorApp(QMainWindow):
             extra = QLabel(""); extra.setProperty("class", "ExtraPreviewText")
             extra.setWordWrap(True)
             box = make_fake_input(line_edit=inp, button=btn, stretch=False)
-            field_wrap = QVBoxLayout(); field_wrap.setContentsMargins(0,0,0,0); field_wrap.setSpacing(0)
-            field_wrap.addWidget(box); field_wrap.addWidget(extra)
+            cell.addWidget(box); cell.addWidget(extra)
             self.widget_map[fn] = inp; self.extra_map[fn] = extra
             if ft == 'tkt': btn.clicked.connect(lambda _, f=fn: self._pick_tkt(f))
             elif ft == 'icon': btn.clicked.connect(lambda _, f=fn: self._pick_icon(f))
@@ -957,33 +1039,26 @@ class ItemEditorApp(QMainWindow):
             elif ft == 'combat_flag': btn.clicked.connect(lambda _, f=fn: self._pick_combat_flags(f))
             elif ft == 'extra_flags': btn.clicked.connect(lambda _, f=fn: self._pick_extra_flags(f))
             elif ft == 'skill': btn.clicked.connect(lambda _, f=fn: self._pick_skill(f))
-            wrap_w = QWidget(); wrap_w.setLayout(field_wrap)
-            grid.addWidget(lbl, row, col*2, alignment=Qt.AlignRight|Qt.AlignTop)
-            grid.addWidget(wrap_w, row, col*2+1, alignment=Qt.AlignLeft|Qt.AlignTop)
-            return
         elif ft == 'mask':
             is_cause = fn.startswith('cause_')
             btn = QPushButton("选择导致状态…" if is_cause else "选择解除状态…")
             hidden = QLineEdit(); hidden.hide()
             box = QFrame(); box.setObjectName("FakeInputBox")
-            box.setFixedHeight(28)  # 固定高度，防止上下撑开
+            box.setFixedHeight(28)
             bh = QHBoxLayout(box); bh.setContentsMargins(0,0,0,0); bh.setSpacing(0)
             bh.addWidget(btn, 1)
             self.widget_map[fn] = hidden
             status_frame = QWidget()
+            status_frame.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
             self.extra_map[fn] = status_frame
             btn.clicked.connect(lambda _, f=fn: self._pick_status(f))
-            grid.addWidget(lbl, row, col*2, alignment=Qt.AlignRight|Qt.AlignTop)
-            grid.addWidget(box, row, col*2+1, alignment=Qt.AlignLeft|Qt.AlignTop)
-            grid.addWidget(status_frame, row+1, col*2+1, Qt.AlignLeft | Qt.AlignTop)
-            return
+            cell.addWidget(box); cell.addWidget(status_frame, 1)
         else:
             inp = QLineEdit()
-            box = make_fake_input(line_edit=inp)
+            cell.addWidget(make_fake_input(line_edit=inp))
             self.widget_map[fn] = inp; self.extra_map[fn] = None
 
-        grid.addWidget(lbl, row, col*2, alignment=Qt.AlignRight|Qt.AlignTop)
-        grid.addWidget(box, row, col*2+1, alignment=Qt.AlignLeft|Qt.AlignTop)
+        grid.addLayout(cell, row, col, Qt.AlignTop)
 
     # ── 启用/禁用编辑 ──
     def _set_edit_enabled(self, en):
@@ -1120,7 +1195,7 @@ class ItemEditorApp(QMainWindow):
             self.table.insertRow(row)
             # 列顺序: 图标(0) #(1) ID(2) 页面(3) 物品名称(4) 权限(5) 价格(6)
             icon_item = QTableWidgetItem()
-            pix = self._get_icon_pixmap(r['icon'], (24, 24))
+            pix = self._get_icon_pixmap(r['icon'], (36, 36))
             if pix: icon_item.setIcon(QIcon(pix))
             self.table.setItem(row, 0, icon_item)
             self.table.setItem(row, 1, QTableWidgetItem(str(r['index'])))
@@ -1235,62 +1310,58 @@ class ItemEditorApp(QMainWindow):
         self.extra_map[fn].setText(", ".join(sel) if sel else "(无)")
 
     def _update_status_label(self, fn, mask):
-        """更新状态标签显示 (参考 kon_editor_v2.py 写法)"""
+        """更新状态标签显示 — 复用已有 layout，避免 deleteLater 引发的重复布局警告"""
         base = 0 if fn.endswith('_mask1') else 16
         is_cause = fn.startswith('cause_')
         status_class = "StatusInflict" if is_cause else "StatusRemove"
         frame = self.extra_map.get(fn)
         if not frame: return
-        # 清除旧内容
-        for c in frame.findChildren(QWidget):
-            c.setParent(None)
+        # 获取或创建 layout（只创建一次，后续复用）
         frame_layout = frame.layout()
         if not frame_layout:
             frame_layout = QVBoxLayout(frame)
             frame_layout.setContentsMargins(0,0,0,0); frame_layout.setSpacing(1)
+            frame_layout.setAlignment(Qt.AlignLeft | Qt.AlignTop)
+        # 清除所有子控件（保留 layout 本身）
+        while frame_layout.count():
+            item = frame_layout.takeAt(0)
+            w = item.widget()
+            if w: w.deleteLater()
         sel = [f"{base+i}.{STATUS_NAMES[base+i]}" for i in range(16)
                if (mask & (1 << i)) and base + i < len(STATUS_NAMES)]
-        if sel:
-            COLS = 3
-            for si, nm in enumerate(sel):
-                r, c = divmod(si, COLS)
-                while frame_layout.count() <= r:
-                    row_w = QWidget(); row_lay = QHBoxLayout(row_w)
-                    row_lay.setContentsMargins(0,0,0,0); row_lay.setSpacing(6)
-                    frame_layout.addWidget(row_w)
-                row_w = frame_layout.itemAt(r).widget()
-                row_lay = row_w.layout()
-                lbl = QLabel(nm)
-                lbl.setProperty("class", status_class)
-                # 需要强制刷新 QSS class
-                lbl.style().unpolish(lbl); lbl.style().polish(lbl)
-                row_lay.addWidget(lbl)
-        else:
-            lbl = QLabel("(无)")
-            lbl.setProperty("class", status_class)
-            lbl.style().unpolish(lbl); lbl.style().polish(lbl)
-            frame_layout.addWidget(lbl)
+        lbl = QLabel("  ".join(sel) if sel else "(无)")
+        lbl.setWordWrap(True)
+        lbl.setProperty("class", status_class)
+        lbl.setAlignment(Qt.AlignLeft | Qt.AlignTop)
+        lbl.style().unpolish(lbl); lbl.style().polish(lbl)
+        frame_layout.addWidget(lbl)
+        frame.updateGeometry()
 
     def _update_preview_status(self, si, sel):
-        """更新预览区中单个状态列 (含图标, 每行最多3个)"""
+        """更新预览区中单个状态列 (FlowLayout 左右排列，超出换行)"""
         container = self._preview_status_containers[si]
         # 清除旧内容
-        while container.layout().count():
-            child = container.layout().takeAt(0)
-            if child.widget(): child.widget().deleteLater()
+        layout = container.layout()
+        while layout.count():
+            item = layout.takeAt(0)
+            w = item.widget()
+            if w: w.deleteLater()
         if not sel:
             lbl = QLabel("—"); lbl.setProperty("class", "PreviewDesc")
-            container.layout().addWidget(lbl); return
-        row = QHBoxLayout(); row.setContentsMargins(0,0,0,0)
+            layout.addWidget(lbl); return
         for idx, nm in sel:
-            cell = QVBoxLayout(); cell.setContentsMargins(0,0,0,0); cell.setSpacing(0)
+            chip = QWidget()
+            chip_lay = QHBoxLayout(chip)
+            chip_lay.setContentsMargins(2, 1, 4, 1); chip_lay.setSpacing(2)
+            # 始终为图标预留固定 16x16 空间
+            il = QLabel(); il.setFixedSize(16, 16)
             pix = self._get_icon_pixmap(STATUS_ICON_BASE + idx - 130, (16, 16))
-            if pix:
-                il = QLabel(); il.setPixmap(pix); cell.addWidget(il)
+            if pix: il.setPixmap(pix)
+            chip_lay.addWidget(il)
             lbl = QLabel(nm); lbl.setStyleSheet("font-size: 10px;")
-            cell.addWidget(lbl)
-            row.addLayout(cell)
-        container.layout().addLayout(row)
+            chip_lay.addWidget(lbl)
+            chip.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+            layout.addWidget(chip)
 
     # ── 弹窗: TKT ──
     def _pick_tkt(self, fn):
