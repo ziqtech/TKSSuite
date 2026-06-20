@@ -1874,7 +1874,7 @@ class MatEditorApp(QMainWindow):
         # Right pane
         self._build_right_panel()
 
-        self.splitter.setSizes([230, 680, 340])
+        self.splitter.setSizes([220, 640, 320])
 
         # Bottom path bar
         path_layout = QHBoxLayout()
@@ -2056,6 +2056,7 @@ class MatEditorApp(QMainWindow):
         left_splitter.setSizes([300, 400])
 
         left_layout.addWidget(left_splitter)
+        left_widget.setMinimumWidth(180)
         self.splitter.addWidget(left_widget)
 
     # =========== 中间面板: 地图预览 ===========
@@ -2130,7 +2131,7 @@ class MatEditorApp(QMainWindow):
         self._vis_gview.wheelEvent = self._vis_canvas_wheel
         self._vis_bg_item = None  # QGraphicsPixmapItem for scene background
         center_layout.addWidget(self._vis_gview, 1)
-
+        center_widget.setMinimumWidth(400)
         self.splitter.addWidget(center_widget)
 
     # =========== 右侧面板: 编辑区 ===========
@@ -2185,6 +2186,7 @@ class MatEditorApp(QMainWindow):
         right_layout.addLayout(bf)
 
         self.edit_frame = right_widget
+        right_widget.setMinimumWidth(280)
         self.splitter.addWidget(right_widget)
 
     def _build_type_param_pages(self):
