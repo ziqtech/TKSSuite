@@ -2460,12 +2460,12 @@ class MatEditorApp(QMainWindow):
                 wrapper.setObjectName("FakeInputBox")
                 wl = QHBoxLayout(wrapper)
                 wl.setContentsMargins(0, 0, 0, 0)
-                wl.addWidget(dc_ev)
-                # Color swatch
-                dc_swatch = QLabel("■")
+                wl.setSpacing(0)
+                wl.addWidget(dc_ev, 1)
+                # Color swatch + picker button 右对齐紧贴
+                dc_swatch = QLabel()
                 dc_swatch.setFixedSize(22, 22)
-                dc_swatch.setAlignment(Qt.AlignCenter)
-                dc_swatch.setStyleSheet("background-color: #000; color: #fff; border: 1px solid #333;")
+                dc_swatch.setStyleSheet("background-color: #000; border: 1px solid #333; border-right: none;")
                 wl.addWidget(dc_swatch)
                 tvars['_dialog_color_swatch'] = dc_swatch
                 # Picker button
@@ -2485,21 +2485,23 @@ class MatEditorApp(QMainWindow):
                         if chosen:
                             val = chosen.data()
                             _ev.setText(str(val))
-                            _swatch.setStyleSheet(f"background-color: {GAME_COLORS.get(val+1,'#000')}; color: #fff; border: 1px solid #333;")
+                            _swatch.setStyleSheet(f"background-color: {GAME_COLORS.get(val+1,'#000')}; border: 1px solid #333; border-right: none;")
                     return _pick
                 dc_btn.clicked.connect(_make_dc_picker())
                 wl.addWidget(dc_btn)
                 tvars['_dialog_color_btn'] = dc_btn
             elif key == 'dir_mask' and tval in (10, 15):
-                # 方向掩码 checkbox 网格 (8个朝向)
+                # 方向掩码 checkbox 网格 (8个朝向) — 垂直布局: 数值输入在上, checkbox 在下
                 dm_ev = self._make_raw_edit(di)
+                dm_ev.setMaximumWidth(80)
                 tvars[key] = dm_ev
                 wrapper = QFrame()
                 wrapper.setObjectName("FakeInputBox")
-                wl_wrap = QHBoxLayout(wrapper)
-                wl_wrap.setContentsMargins(0, 0, 0, 0)
+                wl_wrap = QVBoxLayout(wrapper)
+                wl_wrap.setContentsMargins(4, 2, 4, 2)
+                wl_wrap.setSpacing(2)
                 wl_wrap.addWidget(dm_ev)
-                # Direction checkboxes grid
+                # Direction checkboxes grid: 4行×2列
                 dir_frame = QWidget()
                 dir_grid = QGridLayout(dir_frame)
                 dir_grid.setContentsMargins(0, 0, 0, 0)
@@ -2508,6 +2510,7 @@ class MatEditorApp(QMainWindow):
                 dir_bv = {}
                 for bit_i in range(8):
                     bv_cb = QCheckBox(dir_labels[bit_i])
+                    bv_cb.setStyleSheet("font-size: 11px;")
                     dir_bv[bit_i] = bv_cb
                     r2, c2 = divmod(bit_i, 2)
                     dir_grid.addWidget(bv_cb, r2, c2)
@@ -2538,18 +2541,19 @@ class MatEditorApp(QMainWindow):
                     il.setWordWrap(True)
                     wl.addWidget(il)
                     tvars[f'_{key}_label'] = il
-                # Hint label
-                if key == 'hint_id':
-                    hl = QLabel("")
-                    hl.setProperty("class", "ExtraPreviewText")
-                    hl.setWordWrap(True)
-                    wl.addWidget(hl)
-                    tvars['_hint_label'] = hl
 
             cell_widget = QWidget()
             cell = QVBoxLayout(cell_widget); cell.setSpacing(2); cell.setContentsMargins(0, 0, 0, 0)
             cell.addWidget(lbl)
             cell.addWidget(wrapper)
+            # Hint label — 输入框外部下方, 与输入框左边线对齐
+            if key == 'hint_id':
+                hl = QLabel("")
+                hl.setProperty("class", "ExtraPreviewText")
+                hl.setWordWrap(True)
+                hl.setStyleSheet("padding-left: 0px; font-size: 11px;")
+                cell.addWidget(hl)
+                tvars['_hint_label'] = hl
             wrapper.setMinimumHeight(24)
             grid.addWidget(cell_widget, r, c, Qt.AlignTop)
 
@@ -3101,7 +3105,7 @@ class MatEditorApp(QMainWindow):
             if dc_swatch and isinstance(dc_swatch, QLabel):
                 dc_val = rec['d28']
                 dc_swatch.setStyleSheet(
-                    f"background-color: {GAME_COLORS.get(dc_val + 1, '#000')}; color: #fff; border: 1px solid #333;")
+                    f"background-color: {GAME_COLORS.get(dc_val + 1, '#000')}; border: 1px solid #333; border-right: none;")
 
             # Direction mask checkboxes update
             dir_bv = tvars.get('_dir_bv')
@@ -3478,8 +3482,13 @@ class MatEditorApp(QMainWindow):
         ents = [r for r in self.records if has_data(r) and r['d1'] == sid]
         sname = scene_name(self.tkt_scenes, sid)
         if not ents:
+            # 空场景: 如果有背景图也要渲染
+            bg_w = self._vis_bg_pil.width if self._vis_bg_pil else 0
+            bg_h = self._vis_bg_pil.height if self._vis_bg_pil else 0
+            w = max(MAX_MAP_W, bg_w)
+            h = max(MAX_MAP_H, bg_h)
+            self._vis_render_scene(ents, w, h)
             self._vis_info_label.setText(f"SC.GRP #{sid}: {sname} — 无实体 (空场景)")
-            self._vis_gscene.setSceneRect(0, 0, MAX_MAP_W, MAX_MAP_H)
             return
         ents.sort(key=lambda r: r['d19'] if r['d0'] == 10 else r['d11'])
 
@@ -3487,8 +3496,11 @@ class MatEditorApp(QMainWindow):
         ys = [r['d11'] for r in ents]
         right = max(r['d18'] + r['d20'] for r in ents if r['d20'] > 0) if any(r['d20'] > 0 for r in ents) else max(xs)
         bottom = max(r['d19'] + r['d21'] for r in ents if r['d21'] > 0) if any(r['d21'] > 0 for r in ents) else max(ys)
-        w = max(MAX_MAP_W, max(max(xs), right) + 300)
-        h = max(MAX_MAP_H, max(max(ys), bottom) + 300)
+        # 场景尺寸 = max(实体范围, 背景图尺寸, 最小尺寸)
+        bg_w = self._vis_bg_pil.width if self._vis_bg_pil else 0
+        bg_h = self._vis_bg_pil.height if self._vis_bg_pil else 0
+        w = max(MAX_MAP_W, max(max(xs), right) + 300, bg_w)
+        h = max(MAX_MAP_H, max(max(ys), bottom) + 300, bg_h)
         self._vis_render_scene(ents, w, h)
         self._vis_info_label.setText(f"SC.GRP #{sid}: {sname} — {len(ents)} 个实体")
         if self._vis_anim_playing:
@@ -3659,7 +3671,7 @@ class MatEditorApp(QMainWindow):
         pixmap = _pil_to_qpixmap(composite)
         self._vis_bg_pixmap = pixmap
         self._vis_bg_item = self._vis_gscene.addPixmap(pixmap)
-        self._vis_gscene.setSceneRect(0, 0, w, h)
+        self._vis_gscene.setSceneRect(0, 0, composite.width, composite.height)
 
     def _vis_redraw(self):
         sid = self._vis_scene_id
@@ -3669,15 +3681,21 @@ class MatEditorApp(QMainWindow):
         if not self.records:
             return
         ents = [r for r in self.records if has_data(r) and r['d1'] == sid]
+        bg_w = self._vis_bg_pil.width if self._vis_bg_pil else 0
+        bg_h = self._vis_bg_pil.height if self._vis_bg_pil else 0
         if not ents:
+            # 空场景: 如果有背景图也要渲染
+            w = max(MAX_MAP_W, bg_w)
+            h = max(MAX_MAP_H, bg_h)
+            self._vis_render_scene(ents, w, h)
             return
         ents.sort(key=lambda r: r['d19'] if r['d0'] == 10 else r['d11'])
         xs = [r['d10'] for r in ents]
         ys = [r['d11'] for r in ents]
         right = max(r['d18'] + r['d20'] for r in ents if r['d20'] > 0) if any(r['d20'] > 0 for r in ents) else max(xs)
         bottom = max(r['d19'] + r['d21'] for r in ents if r['d21'] > 0) if any(r['d21'] > 0 for r in ents) else max(ys)
-        w = max(MAX_MAP_W, max(max(xs), right) + 300)
-        h = max(MAX_MAP_H, max(max(ys), bottom) + 300)
+        w = max(MAX_MAP_W, max(max(xs), right) + 300, bg_w)
+        h = max(MAX_MAP_H, max(max(ys), bottom) + 300, bg_h)
         self._vis_render_scene(ents, w, h)
 
     # =========== 画布交互 ===========
