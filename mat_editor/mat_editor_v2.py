@@ -1631,6 +1631,75 @@ def _pil_to_qpixmap(pil_img):
     return QPixmap.fromImage(qimg.copy())
 
 
+class ScriptSyntaxHighlighter(QSyntaxHighlighter):
+    """脚本编辑器语法高亮 — 逐行规则严格对应 mat_editor.py 的 _apply_syntax_highlight。
+    tkinter tag 优先级 (高→低): block > command > number > comment > keyword,
+    故按升序 setFormat 使高优先级后涂覆盖低优先级, 视觉效果与 v1 一致。
+    颜色按主题取值: 浅色沿用 v1 原值, 深色提亮至在背景 #1a1e27 上对比度达标。"""
+    # (浅色, 深色) 配色对
+    _PALETTE = {
+        'keyword': ('#0000FF', '#5b8aff'),
+        'comment': ('#008000', '#6ab04c'),
+        'number':  ('#B07000', '#e0a040'),
+        'command': ('#7B30D0', '#b884ff'),
+        'block':   ('#C00000', '#ff7b7b'),
+    }
+
+    def __init__(self, document, is_dark=False):
+        super().__init__(document)
+        self._is_dark = is_dark
+        self._build_formats()
+
+    def _build_formats(self):
+        def _fmt(key):
+            f = QTextCharFormat()
+            f.setForeground(QColor(self._PALETTE[key][1 if self._is_dark else 0]))
+            return f
+        self.fmt_keyword = _fmt('keyword')  # DEFINE
+        self.fmt_comment = _fmt('comment')  # // 注释
+        self.fmt_number  = _fmt('number')   # 数字
+        self.fmt_command = _fmt('command')  # 命令名
+        self.fmt_block   = _fmt('block')    # { } 块
+
+    def set_dark(self, is_dark):
+        """切换主题后重建格式并重涂"""
+        if self._is_dark == is_dark:
+            return
+        self._is_dark = is_dark
+        self._build_formats()
+        self.rehighlight()
+
+    def highlightBlock(self, text):
+        line = text
+        stripped = line.strip()
+        line_len = len(line)
+        comment_start = line.find('//')
+        # 1. keyword (最低优先级)
+        if stripped.startswith('DEFINE'):
+            self.setFormat(0, line_len, self.fmt_keyword)
+        # 2. comment
+        if comment_start >= 0:
+            self.setFormat(comment_start, line_len - comment_start, self.fmt_comment)
+        # 3. number (跳过注释内的数字)
+        for m in re.finditer(r'-?\d+', line):
+            if comment_start >= 0 and m.start() >= comment_start:
+                continue
+            self.setFormat(m.start(), m.end() - m.start(), self.fmt_number)
+        # 4. command (Cmd( 中的命令名部分)
+        for cmd in SCRIPT_COMMANDS:
+            needle = cmd + '('
+            idx = 0
+            while True:
+                pos = line.find(needle, idx)
+                if pos < 0:
+                    break
+                self.setFormat(pos, len(cmd), self.fmt_command)
+                idx = pos + 1
+        # 5. block (最高优先级, 整行)
+        if stripped.startswith('{') or stripped.startswith('}'):
+            self.setFormat(0, line_len, self.fmt_block)
+
+
 class DockHeader(QFrame):
     """Dock 面板标题栏"""
     def __init__(self, title, right_layout=None):
@@ -1735,6 +1804,27 @@ class MatEditorApp(QMainWindow):
         qss = GODOT_DARK_QSS if self._is_dark else GODOT_LIGHT_QSS
         self.setStyleSheet(qss)
         self._update_path()
+        self._update_entity_type_colors()
+        # 同步脚本编辑器语法高亮配色至当前主题
+        if hasattr(self, '_script_highlighter') and self._script_highlighter:
+            self._script_highlighter.set_dark(self._is_dark)
+        # 同步行预览面板配色至当前主题 (行预览仅在加载 DEFINE 时渲染一次,
+        # 切换主题后须重渲染, 否则保留旧主题配色 — 旧浅色 #333 落在深色背景上呈暗灰)
+        if hasattr(self, 'script_preview') and self._current_edit_define_id is not None:
+            self._update_line_preview()
+        self._refresh_table()
+
+    def _update_entity_type_colors(self):
+        """根据当前主题更新实体列表的类型颜色"""
+        if self._is_dark:
+            # 深色背景: 使用明亮色彩
+            colors = {0: "#AAAAAA", 5: "#2196F3", 10: "#4CAF50", 15: "#FF9800",
+                      16: "#795548", 20: "#9C27B0", 110: "#E91E63", 200: "#F44336"}
+        else:
+            # 白色背景: 使用深色彩以保证可读性
+            colors = {0: "#777777", 5: "#1565C0", 10: "#2E7D32", 15: "#E65100",
+                      16: "#5D4037", 20: "#6A1B9A", 110: "#AD1457", 200: "#C62828"}
+        self._entity_type_colors = {tv: QColor(cl) for tv, cl in colors.items()}
 
     # =========== UI 构建 ===========
     def _build_ui(self):
@@ -1884,11 +1974,19 @@ class MatEditorApp(QMainWindow):
         # Scene list
         self.scene_tree = QTreeWidget()
         self.scene_tree.setHeaderLabels(["SC#", "场景名称", "实体"])
-        self.scene_tree.setColumnWidth(0, 45)
-        self.scene_tree.setColumnWidth(1, 120)
-        self.scene_tree.setColumnWidth(2, 40)
+        self.scene_tree.setColumnWidth(0, 50)
+        self.scene_tree.setColumnWidth(2, 45)
+        self.scene_tree.header().setSectionResizeMode(1, QHeaderView.Stretch)  # 场景名称列自动拉伸
+        self.scene_tree.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.scene_tree.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.scene_tree.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.scene_tree.setRootIsDecorated(False)
+        self.scene_tree.setUniformRowHeights(True)
+        self.scene_tree.setStyleSheet(
+            "QTreeWidget { font-size: 12px; }"
+            "QTreeWidget::item { padding: 2px 4px; min-height: 22px; }"
+            "QHeaderView::section { padding: 4px 6px; font-weight: bold; }"
+        )
         self.scene_tree.itemSelectionChanged.connect(self._on_vis_scene_select)
         left_splitter.addWidget(self._create_dock("场景列表 (SC.GRP)", self.scene_tree))
 
@@ -1906,21 +2004,30 @@ class MatEditorApp(QMainWindow):
 
         self.entity_tree = QTreeWidget()
         self.entity_tree.setHeaderLabels(["索引", "类型", "场景", "X", "Y", "脚本", "Tick"])
-        self.entity_tree.setColumnWidth(0, 45)
-        self.entity_tree.setColumnWidth(1, 75)
-        self.entity_tree.setColumnWidth(2, 95)
-        self.entity_tree.setColumnWidth(3, 40)
-        self.entity_tree.setColumnWidth(4, 40)
-        self.entity_tree.setColumnWidth(5, 65)
-        self.entity_tree.setColumnWidth(6, 38)
+        self.entity_tree.setColumnWidth(0, 50)   # 索引
+        self.entity_tree.setColumnWidth(1, 85)   # 类型
+        self.entity_tree.setColumnWidth(3, 45)   # X
+        self.entity_tree.setColumnWidth(4, 45)   # Y
+        self.entity_tree.setColumnWidth(5, 70)   # 脚本
+        self.entity_tree.setColumnWidth(6, 40)   # Tick
+        self.entity_tree.header().setSectionResizeMode(2, QHeaderView.Stretch)  # 场景列自动拉伸
+        self.entity_tree.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.entity_tree.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.entity_tree.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.entity_tree.setRootIsDecorated(False)
-        self.entity_tree.setSortingEnabled(True)
+        self.entity_tree.setSortingEnabled(False)
+        self.entity_tree.setUniformRowHeights(True)
+        self.entity_tree.setStyleSheet(
+            "QTreeWidget { font-size: 12px; }"
+            "QTreeWidget::item { padding: 2px 4px; min-height: 22px; }"
+            "QHeaderView::section { padding: 4px 6px; font-weight: bold; }"
+        )
         self.entity_tree.itemSelectionChanged.connect(self._on_select)
-        # Configure type colors as foreground
-        self._entity_type_colors = {}
-        for tv, cl in TYPE_COLORS.items():
-            self._entity_type_colors[tv] = QColor(cl)
+        # 点击列头排序
+        self.entity_tree.header().setSortIndicatorShown(True)
+        self.entity_tree.header().sectionClicked.connect(self._sort_entity_by_column)
+        # 表格实体类型颜色 (根据主题切换)
+        self._update_entity_type_colors()
 
         left_splitter.addWidget(self._create_dock("实体列表", self.entity_tree, ent_header))
         left_splitter.setSizes([300, 400])
@@ -2545,6 +2652,8 @@ class MatEditorApp(QMainWindow):
         self.script_text.setTabStopDistance(40)
         self.script_text.setLineWrapMode(QPlainTextEdit.NoWrap)
         self.script_text.textChanged.connect(self._on_script_edit)
+        # 语法高亮器 (逻辑对应 mat_editor.py _apply_syntax_highlight)
+        self._script_highlighter = ScriptSyntaxHighlighter(self.script_text.document(), self._is_dark)
         editor_splitter.addWidget(self.script_text)
 
         # Right: Line preview
@@ -2709,8 +2818,14 @@ class MatEditorApp(QMainWindow):
         if sel:
             sel_idx = int(sel[0].text(0))
 
+        # 性能关键: 禁用排序+信号+更新, 批量添加
         self.entity_tree.setUpdatesEnabled(False)
+        self.entity_tree.blockSignals(True)
+        self.entity_tree.setSortingEnabled(False)
         self.entity_tree.clear()
+
+        # 批量构建所有 item 后一次性添加
+        items = []
         for idx in self.filtered_indices:
             rec = self.records[idx]
             tval = rec['d0']
@@ -2724,7 +2839,9 @@ class MatEditorApp(QMainWindow):
             if color:
                 for c in range(7):
                     item.setForeground(c, color)
-            self.entity_tree.addTopLevelItem(item)
+            items.append(item)
+
+        self.entity_tree.addTopLevelItems(items)
 
         # Restore selection
         if sel_idx is not None:
@@ -2735,14 +2852,28 @@ class MatEditorApp(QMainWindow):
                     break
 
         self.entity_tree.setUpdatesEnabled(True)
+        self.entity_tree.blockSignals(False)
 
         if not self.entity_tree.selectedItems():
             self._current_param_idx = None
             self.lbl_title.setText("未选中")
             self._clear_form()
 
-    def _sort_by(self, col):
-        self.entity_tree.sortByColumn(col, Qt.AscendingOrder)
+    def _sort_entity_by_column(self, col):
+        """点击列头排序实体列表"""
+        # 列: 索引(0) 类型(1) 场景(2) X(3) Y(4) 脚本(5) Tick(6)
+        key_map = {0: 'index', 1: 'd0', 2: 'd1', 3: 'd10', 4: 'd11', 6: 'd4'}
+        key = key_map.get(col)
+        if key is None:
+            return  # 脚本/Tick 列不支持排序
+        # 切换排序方向
+        current_order = self.entity_tree.header().sortIndicatorOrder()
+        reverse = (current_order == Qt.DescendingOrder)
+        # 对 filtered_indices 排序并刷新
+        self.filtered_indices.sort(
+            key=lambda i: self.records[i].get(key, 0) if isinstance(self.records[i].get(key, 0), (int, float)) else 0,
+            reverse=reverse)
+        self._refresh_table()
 
     # =========== 选择事件 ===========
     def _on_select(self):
@@ -3730,6 +3861,8 @@ class MatEditorApp(QMainWindow):
             return
         self.status_var.setText("加载中…")
         QApplication.processEvents()
+        # 禁用全局 UI 更新以加速加载
+        self.setUpdatesEnabled(False)
         if self.tkt_path:
             self.tkt_scenes = load_tkt_scene_names(self.tkt_path)
         self._sc_grp_section_count = 0
@@ -3841,10 +3974,15 @@ class MatEditorApp(QMainWindow):
                     break
             self._vis_load_scene()
             self._sync_entity_filter_to_scene(sid)
+        self.setUpdatesEnabled(True)
 
     def _vis_populate_scenes(self):
+        self.scene_tree.setUpdatesEnabled(False)
+        self.scene_tree.blockSignals(True)
         self.scene_tree.clear()
         if not self.records:
+            self.scene_tree.blockSignals(False)
+            self.scene_tree.setUpdatesEnabled(True)
             return
         smap = defaultdict(list)
         for r in self.records:
@@ -3852,6 +3990,7 @@ class MatEditorApp(QMainWindow):
                 smap[r['d1']].append(r['index'])
         total_scenes = max(self._sc_grp_section_count, max(smap.keys()) + 1 if smap else 0)
         combo_vals = []
+        scene_items = []
         for sid in range(total_scenes):
             sname = scene_name(self.tkt_scenes, sid)
             cnt = len(smap.get(sid, []))
@@ -3861,8 +4000,11 @@ class MatEditorApp(QMainWindow):
             if is_virtual:
                 for c in range(3):
                     item.setForeground(c, QColor("#3366cc"))
-            self.scene_tree.addTopLevelItem(item)
+            scene_items.append(item)
             combo_vals.append(f"{sid}: {sname} ({cnt}实体)")
+        self.scene_tree.addTopLevelItems(scene_items)
+        self.scene_tree.blockSignals(False)
+        self.scene_tree.setUpdatesEnabled(True)
         self._vis_scene_combo.clear()
         self._vis_scene_combo.addItems(combo_vals)
 
@@ -3974,18 +4116,37 @@ class MatEditorApp(QMainWindow):
         self._apply_syntax_highlight()
 
     def _apply_syntax_highlight(self):
-        """简易语法高亮"""
-        cursor = self.script_text.textCursor()
-        cursor.select(QTextCursor.Document)
-        # Simple approach: use extra selections for highlighting
-        # For a proper highlighter, would use QSyntaxHighlighter subclass
-        # Keeping it simple for now
+        """语法高亮 — 逻辑对应 mat_editor.py _apply_syntax_highlight。
+        实际逐行高亮由 ScriptSyntaxHighlighter 自动完成, 此处触发一次整文档重涂。"""
+        if hasattr(self, '_script_highlighter') and self._script_highlighter:
+            self._script_highlighter.rehighlight()
 
     def _update_line_preview(self):
-        """更新右侧行功能预览"""
+        """更新右侧行功能预览 (带颜色分类) — 解析与着色逻辑对应 mat_editor.py _update_line_preview"""
         content = self.script_text.toPlainText()
         lines = content.split('\n')
         self.script_preview.clear()
+        cursor = self.script_preview.textCursor()
+
+        # 颜色格式 (对应 v1 的 pv_* tag); 灰色系在深色背景 #1a1e27 上对比度不足,
+        # 深色模式提亮并复用本主题 QSS 既有灰阶 (#dcdcdc/#a5b0cb/#8a96b3), 浅色保持 v1 原值
+        def mkfmt(color):
+            f = QTextCharFormat()
+            f.setForeground(QColor(color))
+            return f
+        dark = self._is_dark
+        # 深色配色优化: 背景 #1a1e27 上彩色类提亮至对比度>=4.5:1 且与左侧高亮器色板语义一致
+        # (紫=命令/对话, 蓝=流程, 橙=分支, 红=道具, 绿=场景/队员); 灰阶类按
+        # comment>block>raw 分层, 注释/未识别弱化以突出命令行
+        fmt_cmd     = mkfmt('#333333' if not dark else '#b884ff')  # pv_cmd   普通命令
+        fmt_talk    = mkfmt('#7B30D0' if not dark else '#b884ff')  # pv_talk  对话(与命令紫统一)
+        fmt_flow    = mkfmt('#0066CC' if not dark else '#5b8aff')  # pv_flow  流程
+        fmt_branch  = mkfmt('#CC6600' if not dark else '#e0a040')  # pv_branch 分支
+        fmt_getitem = mkfmt('#CC0000' if not dark else '#ff7b7b')  # pv_getitem 道具
+        fmt_scene   = mkfmt('#008800' if not dark else '#6ab04c')  # pv_scene  场景/队员
+        fmt_comment = mkfmt('#AAA'    if not dark else '#6a7590')  # pv_comment 注释(弱化)
+        fmt_block   = mkfmt('#BBB'    if not dark else '#7a86a8')  # pv_block  块/DEFINE
+        fmt_raw     = mkfmt('#999'    if not dark else '#5a6480')  # pv_raw   未识别(最弱)
 
         def trunc(s, max_len=28):
             s = s.replace('\n', ' ').replace('\r', '')
@@ -3999,17 +4160,20 @@ class MatEditorApp(QMainWindow):
         branch_cmds = {'CheckFlag', 'CheckResult', 'CheckItem', 'CheckTeam', 'CheckMember',
                        'Switch', 'Random'}
 
-        preview_lines = []
-        for line in lines:
+        for i, line in enumerate(lines):
             stripped = line.strip()
+            if i > 0:
+                cursor.insertText('\n')
             if not stripped:
-                preview_lines.append("")
                 continue
             if stripped.startswith('//'):
-                preview_lines.append(trunc(stripped))
+                cursor.insertText(trunc(stripped), fmt_comment)
                 continue
-            if stripped in ('{', '}; end') or stripped.startswith('};') or stripped.startswith('DEFINE'):
-                preview_lines.append(trunc(stripped))
+            if stripped in ('{', '}; end') or stripped.startswith('};'):
+                cursor.insertText(trunc(stripped), fmt_block)
+                continue
+            if stripped.startswith('DEFINE'):
+                cursor.insertText(trunc(stripped), fmt_block)
                 continue
             m = re.match(r'([A-Za-z_]\w*)\s*\((.*)\)', stripped)
             if m:
@@ -4017,15 +4181,25 @@ class MatEditorApp(QMainWindow):
                 args_str = m.group(2).strip()
                 args = [a.strip() for a in args_str.split(',') if a.strip()] if args_str else []
                 desc = self._format_cmd_desc(cmd_name, args)
-                preview_lines.append(trunc(desc))
+                fmt = fmt_cmd
+                if cmd_name in talk_cmds:
+                    fmt = fmt_talk
+                elif cmd_name in flow_cmds:
+                    fmt = fmt_flow
+                elif cmd_name in branch_cmds:
+                    fmt = fmt_branch
+                elif cmd_name == 'GetItem':
+                    fmt = fmt_getitem
+                elif cmd_name in ('TeamMember', 'ChangeScene'):
+                    fmt = fmt_scene
+                cursor.insertText(trunc(desc), fmt)
             else:
                 m2 = re.match(r'([A-Za-z_]\w+)\s*$', stripped)
                 if m2 and m2.group(1) in SCRIPT_CMD_DESC:
                     desc = self._format_cmd_desc(m2.group(1), [])
-                    preview_lines.append(trunc(desc))
+                    cursor.insertText(trunc(desc), fmt_cmd)
                 else:
-                    preview_lines.append(trunc(stripped, 40))
-        self.script_preview.setPlainText('\n'.join(preview_lines))
+                    cursor.insertText(trunc(stripped, 40), fmt_raw)
 
     def _format_cmd_desc(self, cmd_name, args):
         desc_fn = SCRIPT_CMD_DESC.get(cmd_name)
@@ -4368,28 +4542,6 @@ class MatEditorApp(QMainWindow):
         info_row.addWidget(self._pv_info_lbl)
         main_layout.addLayout(info_row)
 
-        # 导航按钮栏
-        nav_row = QHBoxLayout()
-        for text, fn_name in [("⏮ 起始", "reset"), ("◀ 上一步", "prev"),
-                               ("下一步 ▶", "next"), ("结束 ⏭", "end"),
-                               ("▶ 自动播放", "auto")]:
-            btn = QPushButton(text)
-            btn.setFixedWidth(85 if "自动" in text else 72)
-            btn.setCursor(Qt.PointingHandCursor)
-            nav_row.addWidget(btn)
-            if fn_name == "reset":
-                btn.clicked.connect(self._preview_reset)
-            elif fn_name == "prev":
-                btn.clicked.connect(self._preview_prev)
-            elif fn_name == "next":
-                btn.clicked.connect(self._preview_next)
-            elif fn_name == "end":
-                btn.clicked.connect(self._preview_end)
-            elif fn_name == "auto":
-                btn.clicked.connect(self._preview_auto_play)
-        nav_row.addStretch()
-        main_layout.addLayout(nav_row)
-
         # 命令列表 + 详情面板 (垂直分割)
         splitter = QSplitter(Qt.Vertical)
 
@@ -4407,20 +4559,27 @@ class MatEditorApp(QMainWindow):
         flow_cmds = {'End', 'Yield', 'Jump', 'Else'}
         branch_cmds = {'CheckFlag', 'CheckResult', 'CheckItem', 'CheckTeam',
                        'CheckMember', 'Switch', 'Random'}
+        # 配色与右侧行预览 (_update_line_preview) 统一, 按主题切换深/浅色板
+        dark = self._is_dark
+        c_talk    = QColor('#7B30D0' if not dark else '#b884ff')   # 紫=对话
+        c_flow    = QColor('#0066CC' if not dark else '#5b8aff')   # 蓝=流程
+        c_branch  = QColor('#CC6600' if not dark else '#e0a040')   # 橙=分支
+        c_getitem = QColor('#CC0000' if not dark else '#ff7b7b')   # 红=道具
+        c_default = QColor('#333333' if not dark else '#b884ff')   # 普通命令(与对话紫统一)
         for si, (cmd_name, args, line_text, line_idx) in enumerate(commands):
             desc = self._format_cmd_desc(cmd_name, args)
             item = QTreeWidgetItem([str(si + 1), cmd_name, desc])
             # 颜色分类
             if cmd_name in talk_cmds:
-                color = QColor("#7B30D0")  # 紫色=对话
+                color = c_talk
             elif cmd_name in flow_cmds:
-                color = QColor("#0066CC")  # 蓝色=流程
+                color = c_flow
             elif cmd_name in branch_cmds:
-                color = QColor("#CC6600")  # 橙色=分支
+                color = c_branch
             elif cmd_name == 'GetItem':
-                color = QColor("#FF0000")  # 红色=道具
+                color = c_getitem
             else:
-                color = QColor("#333333") if not self._is_dark else QColor("#cccccc")
+                color = c_default
             for c in range(3):
                 item.setForeground(c, color)
             item.setData(0, Qt.UserRole, si)  # 存储步骤索引
@@ -4432,8 +4591,6 @@ class MatEditorApp(QMainWindow):
         self._pv_detail = QTextEdit()
         self._pv_detail.setReadOnly(True)
         self._pv_detail.setFont(QFont("Consolas", 10))
-        self._pv_detail.setStyleSheet(
-            "QTextEdit { background-color: #313c52; color: #CCCCCC; }")
         # 预配置 FCOLOR 1-32 颜色格式
         self._pv_color_formats = {}
         for ci in range(1, 33):
@@ -4457,12 +4614,7 @@ class MatEditorApp(QMainWindow):
             self._pv_tree.setCurrentItem(self._pv_tree.topLevelItem(0))
 
         self._preview_win = win
-        self._pv_auto_timer = None
         win.exec()
-        # 停止自动播放
-        if self._pv_auto_timer:
-            self._pv_auto_timer.stop()
-            self._pv_auto_timer = None
 
     def _preview_on_select(self):
         """预览窗口: 选中命令 → 更新详情面板"""
@@ -4536,65 +4688,6 @@ class MatEditorApp(QMainWindow):
             fmt.setForeground(QColor(color_hex))
             self._pv_dynamic_color_tags[color_hex] = fmt
         return self._pv_dynamic_color_tags[color_hex]
-
-    def _preview_next(self):
-        """下一步"""
-        if not self._preview_cmds:
-            return
-        self._preview_step = min(self._preview_step + 1, len(self._preview_cmds) - 1)
-        self._preview_goto_step(self._preview_step)
-
-    def _preview_prev(self):
-        """上一步"""
-        if not self._preview_cmds:
-            return
-        self._preview_step = max(self._preview_step - 1, 0)
-        self._preview_goto_step(self._preview_step)
-
-    def _preview_end(self):
-        """跳到结束"""
-        if not self._preview_cmds:
-            return
-        self._preview_step = len(self._preview_cmds) - 1
-        self._preview_goto_step(self._preview_step)
-
-    def _preview_reset(self):
-        """重新开始"""
-        self._preview_step = 0
-        self._preview_goto_step(0)
-
-    def _preview_goto_step(self, step):
-        """跳转到指定步骤"""
-        if not hasattr(self, '_pv_tree') or not self._pv_tree:
-            return
-        if 0 <= step < self._pv_tree.topLevelItemCount():
-            item = self._pv_tree.topLevelItem(step)
-            self._pv_tree.setCurrentItem(item)
-            self._pv_tree.scrollToItem(item)
-
-    def _preview_auto_play(self):
-        """自动播放脚本步骤"""
-        if not self._preview_cmds:
-            return
-        self._preview_step = 0
-        self._preview_goto_step(0)
-        self._auto_play_tick()
-
-    def _auto_play_tick(self):
-        """自动播放定时器"""
-        if not hasattr(self, '_preview_win') or not self._preview_win.isVisible():
-            return
-        if self._preview_step >= len(self._preview_cmds) - 1:
-            return
-        self._preview_step += 1
-        self._preview_goto_step(self._preview_step)
-        # 根据命令类型调整速度
-        cmd_name = self._preview_cmds[self._preview_step][0]
-        delay = 800 if cmd_name in ('TalkB', 'TalkA', 'BlackTalk', 'ShowText', 'MenuChoice') else 400
-        self._pv_auto_timer = QTimer(self)
-        self._pv_auto_timer.setSingleShot(True)
-        self._pv_auto_timer.timeout.connect(self._auto_play_tick)
-        self._pv_auto_timer.start(delay)
 
     def _parse_script_commands(self, body_lines):
         commands = []

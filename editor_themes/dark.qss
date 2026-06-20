@@ -8,11 +8,12 @@ QWidget {
 }
 
 /* ── 表格 ── */
-QTableWidget {
+QTableWidget, QTreeWidget {
     background-color: #1a1e27;
-    alternate-background-color: #202531;
+    color: #dcdcdc;
     border: 1px solid #14171f;
     selection-background-color: #478cbf;
+    selection-color: #ffffff;
 }
 QHeaderView::section {
     background-color: #202531;

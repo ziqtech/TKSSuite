@@ -8,9 +8,9 @@ QWidget {
 }
 
 /* ── 表格 ── */
-QTableWidget {
+QTableWidget, QTreeWidget {
     background-color: #ffffff;
-    alternate-background-color: #f2f5f7;
+    color: #222222;
     border: 1px solid #b0b5bd;
     selection-background-color: #478cbf;
     selection-color: #fff;
