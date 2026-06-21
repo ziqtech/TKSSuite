@@ -1721,8 +1721,8 @@ class MatEditorApp(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("TKMat.Dat 地图实体编辑器 v2.3 (PySide6)")
-        self.resize(1280, 820)
-        self.setMinimumSize(1024, 640)
+        self.resize(1560, 860)
+        self.setMinimumSize(1340, 640)
 
         # 加载图标
         ico_path = os.path.join(os.path.dirname(__file__), 'TKS.ico')
@@ -1838,6 +1838,7 @@ class MatEditorApp(QMainWindow):
         menu_bar = self.menuBar()
         fm = menu_bar.addMenu("文件(F)")
         fm.addAction("加载 TKS 目录…", QKeySequence("Ctrl+O"), self._load_dir)
+        fm.addAction("重载", self._reload)
         fm.addSeparator()
         fm.addAction("保存", QKeySequence("Ctrl+S"), self._save)
         fm.addAction("另存为…", self._save_as)
@@ -1874,7 +1875,11 @@ class MatEditorApp(QMainWindow):
         # Right pane
         self._build_right_panel()
 
-        self.splitter.setSizes([220, 640, 320])
+        self.splitter.setSizes([460, 640, 460])
+        # 左右面板拉伸因子=0, 中间=1: 窗口放大时多余空间全归中间, 左右保持初始宽度
+        self.splitter.setStretchFactor(0, 0)
+        self.splitter.setStretchFactor(1, 1)
+        self.splitter.setStretchFactor(2, 0)
 
         # Bottom path bar
         path_layout = QHBoxLayout()
@@ -1971,50 +1976,31 @@ class MatEditorApp(QMainWindow):
         # 表格实体类型颜色 (根据主题切换)
         self._update_entity_type_colors()
 
-        # 实体列表面板 (自定义 header: 标题+按钮同行, 不用 DockHeader)
+        # 实体列表面板
         ent_panel = QWidget()
         ent_panel_layout = QVBoxLayout(ent_panel)
         ent_panel_layout.setContentsMargins(0, 0, 0, 0)
         ent_panel_layout.setSpacing(0)
-        # 标题行: "实体列表" 靠左, 新增/删除 靠右
-        ent_header = QWidget()
-        ent_header.setObjectName("DockHeader")
-        ent_header_layout = QHBoxLayout(ent_header)
-        ent_header_layout.setContentsMargins(8, 6, 8, 6)
-        ent_header_layout.setSpacing(4)
-        ent_title = QLabel("实体列表")
-        ent_title.setObjectName("DockTitle")
-        ent_header_layout.addWidget(ent_title, 1)
-        btn_new = QPushButton("新增")
-        btn_new.clicked.connect(self._new_record)
-        ent_header_layout.addWidget(btn_new)
-        btn_del = QPushButton("删除")
-        btn_del.clicked.connect(self._clear_current)
-        ent_header_layout.addWidget(btn_del)
-        ent_panel_layout.addWidget(ent_header)
+        # 标题栏 (DockHeader)
+        ent_panel_layout.addWidget(DockHeader("实体列表"))
         # Body 区域
         ent_body = QWidget()
         ent_body.setObjectName("DockBody")
         ent_body_layout = QVBoxLayout(ent_body)
         ent_body_layout.setContentsMargins(8, 8, 8, 8)
         ent_body_layout.setSpacing(4)
-        # 搜索/筛选工具栏 (与 v1 布局一致)
+        # 新增/删除 + 筛选工具栏 (新增/删除置于原搜索位置)
         filter_row = QHBoxLayout()
         filter_row.setSpacing(2)
-        filter_row.addWidget(QLabel("搜索:"))
-        self.search_entry = QLineEdit()
-        self.search_entry.returnPressed.connect(self._apply_filter)
-        self.search_entry.setFixedWidth(100)
-        filter_row.addWidget(self.search_entry)
-        btn_search = QPushButton("搜索")
-        btn_search.clicked.connect(self._apply_filter)
-        filter_row.addWidget(btn_search)
-        btn_clear = QPushButton("清除")
-        btn_clear.clicked.connect(self._clear_filter)
-        filter_row.addWidget(btn_clear)
+        btn_new = QPushButton("新增")
+        btn_new.clicked.connect(self._new_record)
+        filter_row.addWidget(btn_new)
+        btn_del = QPushButton("删除")
+        btn_del.clicked.connect(self._clear_current)
+        filter_row.addWidget(btn_del)
         # 分隔线
-        sep1 = QFrame(); sep1.setFrameShape(QFrame.VLine); sep1.setFrameShadow(QFrame.Sunken)
-        filter_row.addWidget(sep1)
+        sep0 = QFrame(); sep0.setFrameShape(QFrame.VLine); sep0.setFrameShadow(QFrame.Sunken)
+        filter_row.addWidget(sep0)
         filter_row.addWidget(QLabel("类型:"))
         self.filter_type = QComboBox()
         self.filter_type.addItems(["全部"] + [f"{k}-{v}" for k, v in sorted(ENTITY_TYPES.items()) if k != 0])
@@ -2022,26 +2008,15 @@ class MatEditorApp(QMainWindow):
         self.filter_type.setFixedWidth(120)
         filter_row.addWidget(self.filter_type)
         # 分隔线
-        sep2 = QFrame(); sep2.setFrameShape(QFrame.VLine); sep2.setFrameShadow(QFrame.Sunken)
-        filter_row.addWidget(sep2)
-        filter_row.addWidget(QLabel("场景:"))
-        self.filter_scene = QComboBox()
-        self.filter_scene.addItems(["全部"])
-        self.filter_scene.currentIndexChanged.connect(self._apply_filter)
-        self.filter_scene.setFixedWidth(130)
-        filter_row.addWidget(self.filter_scene)
-        # 分隔线
         sep3 = QFrame(); sep3.setFrameShape(QFrame.VLine); sep3.setFrameShadow(QFrame.Sunken)
         filter_row.addWidget(sep3)
         self.show_empty_cb = QCheckBox("空槽")
         self.show_empty_cb.stateChanged.connect(self._apply_filter)
         filter_row.addWidget(self.show_empty_cb)
-        # 分隔线
-        sep4 = QFrame(); sep4.setFrameShape(QFrame.VLine); sep4.setFrameShadow(QFrame.Sunken)
-        filter_row.addWidget(sep4)
-        btn_reload = QPushButton("重载")
-        btn_reload.clicked.connect(self._reload)
-        filter_row.addWidget(btn_reload)
+        self.show_global_cb = QCheckBox("全局")
+        self.show_global_cb.setToolTip("显示 d1==-1 的全局实体 (不属于任何具体场景)")
+        self.show_global_cb.stateChanged.connect(self._apply_filter)
+        filter_row.addWidget(self.show_global_cb)
         filter_row.addStretch()
         ent_body_layout.addLayout(filter_row)
         # 状态栏
@@ -2056,7 +2031,7 @@ class MatEditorApp(QMainWindow):
         left_splitter.setSizes([300, 400])
 
         left_layout.addWidget(left_splitter)
-        left_widget.setMinimumWidth(180)
+        left_widget.setMinimumWidth(460)
         self.splitter.addWidget(left_widget)
 
     # =========== 中间面板: 地图预览 ===========
@@ -2186,7 +2161,7 @@ class MatEditorApp(QMainWindow):
         right_layout.addLayout(bf)
 
         self.edit_frame = right_widget
-        right_widget.setMinimumWidth(280)
+        right_widget.setMinimumWidth(460)
         self.splitter.addWidget(right_widget)
 
     def _build_type_param_pages(self):
@@ -2847,34 +2822,24 @@ class MatEditorApp(QMainWindow):
 
     # =========== 筛选/列表 ===========
     def _apply_filter(self):
-        q = self.search_entry.text().strip().lower()
         ftype = self.filter_type.currentText()
-        fscene = self.filter_scene.currentText()
         show_empty = self.show_empty_cb.isChecked()
+        show_global = self.show_global_cb.isChecked()
+        sid = self._vis_scene_id
+        ftype_val = int(ftype.split('-')[0]) if ftype and ftype != "全部" else None
         self.filtered_indices = []
         for rec in self.records:
-            if not show_empty and is_empty(rec):
-                continue
-            if ftype and ftype != "全部" and rec['d0'] != int(ftype.split('-')[0]):
-                continue
-            if fscene and fscene != "全部" and rec['d1'] != int(fscene.split(':')[0]):
-                continue
-            if q:
-                parts = [str(rec['index']), str(rec['d0']), str(rec['d1']),
-                         str(rec['d10']), str(rec['d11']),
-                         scene_name(self.tkt_scenes, rec['d1']),
-                         ENTITY_TYPES.get(rec['d0'], '')]
-                if q not in ' '.join(parts).lower():
+            if is_empty(rec):
+                if not show_empty:
+                    continue
+            else:
+                # 按当前选中场景联动筛选; 全局实体(d1==-1)仅在勾选「全局」时显示
+                if rec['d1'] != sid and not (show_global and rec['d1'] == -1):
+                    continue
+                if ftype_val is not None and rec['d0'] != ftype_val:
                     continue
             self.filtered_indices.append(rec['index'])
         self._refresh_table()
-
-    def _clear_filter(self):
-        self.search_entry.clear()
-        self.filter_type.setCurrentIndex(0)
-        self.filter_scene.setCurrentIndex(0)
-        self.show_empty_cb.setChecked(False)
-        self._apply_filter()
 
     def _refresh_table(self):
         sel_idx = None
@@ -2971,7 +2936,7 @@ class MatEditorApp(QMainWindow):
                 break
         self._vis_stop_anim()
         self._vis_load_scene()
-        self._sync_entity_filter_to_scene(sid)
+        self._apply_filter()
 
     def _on_vis_combo_select(self):
         val = self._vis_scene_combo.currentText()
@@ -2982,23 +2947,6 @@ class MatEditorApp(QMainWindow):
         self._vis_scene_id = sid
         self._vis_stop_anim()
         self._vis_load_scene()
-        self._sync_entity_filter_to_scene(sid)
-
-    def _sync_entity_filter_to_scene(self, sid):
-        for i in range(self.filter_scene.count()):
-            text = self.filter_scene.itemText(i)
-            if text == "全部":
-                continue
-            try:
-                if int(text.split(':')[0]) == sid:
-                    self.filter_scene.setCurrentIndex(i)
-                    self._apply_filter()
-                    return
-            except ValueError:
-                continue
-        # Add new entry
-        self.filter_scene.addItem(f"{sid}: {scene_name(self.tkt_scenes, sid)}")
-        self.filter_scene.setCurrentIndex(self.filter_scene.count() - 1)
         self._apply_filter()
 
     def _sync_entity_list_select(self, idx):
@@ -3461,9 +3409,7 @@ class MatEditorApp(QMainWindow):
     def _goto_empty(self):
         for rec in self.records:
             if is_empty(rec):
-                self.search_entry.clear()
                 self.filter_type.setCurrentIndex(0)
-                self.filter_scene.setCurrentIndex(0)
                 self.show_empty_cb.setChecked(True)
                 self._apply_filter()
                 for i in range(self.entity_tree.topLevelItemCount()):
@@ -4030,9 +3976,6 @@ class MatEditorApp(QMainWindow):
             self.status_var.setText(
                 f"{REC_COUNT}条 | 有效{nonempty} | TKMat场景{len(scenes)} | "
                 f"SC.GRP {self._sc_grp_section_count}区段")
-            sc = ["全部"] + [f"{s}: {scene_name(self.tkt_scenes, s)}" for s in sorted(scenes)]
-            self.filter_scene.clear()
-            self.filter_scene.addItems(sc)
         except Exception as e:
             QMessageBox.critical(self, "加载失败", str(e))
             self.records = []
@@ -4051,7 +3994,6 @@ class MatEditorApp(QMainWindow):
                     self._vis_scene_combo.setCurrentIndex(i)
                     break
             self._vis_load_scene()
-            self._sync_entity_filter_to_scene(sid)
         self.setUpdatesEnabled(True)
 
     def _vis_populate_scenes(self):
@@ -4214,10 +4156,10 @@ class MatEditorApp(QMainWindow):
             return f
         dark = self._is_dark
         # 深色配色优化: 背景 #1a1e27 上彩色类提亮至对比度>=4.5:1 且与左侧高亮器色板语义一致
-        # (紫=命令/对话, 蓝=流程, 橙=分支, 红=道具, 绿=场景/队员); 灰阶类按
+        # (白=普通命令, 紫=对话, 蓝=流程, 橙=分支, 红=道具, 绿=场景/队员); 灰阶类按
         # comment>block>raw 分层, 注释/未识别弱化以突出命令行
-        fmt_cmd     = mkfmt('#333333' if not dark else '#b884ff')  # pv_cmd   普通命令
-        fmt_talk    = mkfmt('#7B30D0' if not dark else '#b884ff')  # pv_talk  对话(与命令紫统一)
+        fmt_cmd     = mkfmt('#333333' if not dark else '#dcdcdc')  # pv_cmd   普通命令(深色=白色)
+        fmt_talk    = mkfmt('#7B30D0' if not dark else '#b884ff')  # pv_talk  对话
         fmt_flow    = mkfmt('#0066CC' if not dark else '#5b8aff')  # pv_flow  流程
         fmt_branch  = mkfmt('#CC6600' if not dark else '#e0a040')  # pv_branch 分支
         fmt_getitem = mkfmt('#CC0000' if not dark else '#ff7b7b')  # pv_getitem 道具
@@ -4643,7 +4585,7 @@ class MatEditorApp(QMainWindow):
         c_flow    = QColor('#0066CC' if not dark else '#5b8aff')   # 蓝=流程
         c_branch  = QColor('#CC6600' if not dark else '#e0a040')   # 橙=分支
         c_getitem = QColor('#CC0000' if not dark else '#ff7b7b')   # 红=道具
-        c_default = QColor('#333333' if not dark else '#b884ff')   # 普通命令(与对话紫统一)
+        c_default = QColor('#333333' if not dark else '#dcdcdc')   # 普通命令(深色=白色)
         for si, (cmd_name, args, line_text, line_idx) in enumerate(commands):
             desc = self._format_cmd_desc(cmd_name, args)
             item = QTreeWidgetItem([str(si + 1), cmd_name, desc])
