@@ -1781,6 +1781,11 @@ class MatEditorApp(QMainWindow):
         self._script_dirty = False
         self._edit_debounce = None
 
+        # 画布重绘防抖定时器，避免 resizeEvent 卡死主线程
+        self._resize_timer = QTimer(self)
+        self._resize_timer.setSingleShot(True)
+        self._resize_timer.timeout.connect(self._do_resize_redraw)
+
         # 字段编辑组件映射
         self._edit_vars = {}  # key -> widget (canonical, 多为"全部"页持有)
         self._raw_mirrors = {}  # di -> [QLineEdit, ...] 同一字段在参数页/全部页的镜像控件
@@ -1806,6 +1811,10 @@ class MatEditorApp(QMainWindow):
         self.setStyleSheet(qss)
         self._update_path()
         self._update_entity_type_colors()
+        self._update_vis_background()
+        # 主题切换时，强制重绘 PIL 底图以匹配新背景色
+        if hasattr(self, 'records') and self.records:
+            self._vis_redraw()
         # 同步脚本编辑器语法高亮配色至当前主题
         if hasattr(self, '_script_highlighter') and self._script_highlighter:
             self._script_highlighter.set_dark(self._is_dark)
@@ -1826,6 +1835,15 @@ class MatEditorApp(QMainWindow):
             colors = {0: "#777777", 5: "#1565C0", 10: "#2E7D32", 15: "#E65100",
                       16: "#5D4037", 20: "#6A1B9A", 110: "#AD1457", 200: "#C62828"}
         self._entity_type_colors = {tv: QColor(cl) for tv, cl in colors.items()}
+
+    def _update_vis_background(self):
+        """设置中间预览区 QGraphicsView 的背景色, 使深色区域填满整个预览区
+        (对应 v1 tk.Canvas 的 bg)。场景矩形外的空白也以此色填充。"""
+        if not hasattr(self, '_vis_gview'):
+            return
+        # 与 editor_themes/*.qss 的 QGraphicsView background-color 一致
+        bg = QColor('#1a1e27') if self._is_dark else QColor('#ffffff')
+        self._vis_gview.setBackgroundBrush(bg)
 
     # =========== UI 构建 ===========
     def _build_ui(self):
@@ -2100,6 +2118,10 @@ class MatEditorApp(QMainWindow):
         self._vis_gview.setDragMode(QGraphicsView.NoDrag)
         self._vis_gview.setViewportUpdateMode(QGraphicsView.SmartViewportUpdate)
         self._vis_gview.setMouseTracking(True)
+        # 左上角对齐 (对应 v1 的 anchor='nw'): 地图原点贴齐视口左上, 放大时多余空间留在右下
+        self._vis_gview.setAlignment(Qt.AlignTop | Qt.AlignLeft)
+        # 深色背景填满整个预览区 (含场景矩形外的空白), 与 v1 画布 bg 一致
+        self._update_vis_background()
         self._vis_gview.mousePressEvent = self._vis_canvas_click
         self._vis_gview.mouseMoveEvent = self._vis_canvas_mouse_move
         self._vis_gview.mouseReleaseEvent = self._vis_canvas_release
@@ -3442,6 +3464,10 @@ class MatEditorApp(QMainWindow):
         if not self.records:
             return
 
+        # 获取当前预览窗口视口的实际像素大小
+        view_w = self._vis_gview.viewport().width()
+        view_h = self._vis_gview.viewport().height()
+
         # Background PIL Image
         self._vis_bg_pil = None
         if self.dat_path:
@@ -3462,8 +3488,8 @@ class MatEditorApp(QMainWindow):
             # 空场景: 如果有背景图也要渲染
             bg_w = self._vis_bg_pil.width if self._vis_bg_pil else 0
             bg_h = self._vis_bg_pil.height if self._vis_bg_pil else 0
-            w = max(MAX_MAP_W, bg_w)
-            h = max(MAX_MAP_H, bg_h)
+            w = max(view_w, MAX_MAP_W, bg_w)
+            h = max(view_h, MAX_MAP_H, bg_h)
             self._vis_render_scene(ents, w, h)
             self._vis_info_label.setText(f"SC.GRP #{sid}: {sname} — 无实体 (空场景)")
             return
@@ -3473,11 +3499,11 @@ class MatEditorApp(QMainWindow):
         ys = [r['d11'] for r in ents]
         right = max(r['d18'] + r['d20'] for r in ents if r['d20'] > 0) if any(r['d20'] > 0 for r in ents) else max(xs)
         bottom = max(r['d19'] + r['d21'] for r in ents if r['d21'] > 0) if any(r['d21'] > 0 for r in ents) else max(ys)
-        # 场景尺寸 = max(实体范围, 背景图尺寸, 最小尺寸)
+        # 场景尺寸 = max(视口大小, 实体范围, 背景图尺寸, 最小尺寸)
         bg_w = self._vis_bg_pil.width if self._vis_bg_pil else 0
         bg_h = self._vis_bg_pil.height if self._vis_bg_pil else 0
-        w = max(MAX_MAP_W, max(max(xs), right) + 300, bg_w)
-        h = max(MAX_MAP_H, max(max(ys), bottom) + 300, bg_h)
+        w = max(view_w, MAX_MAP_W, max(max(xs), right) + 300, bg_w)
+        h = max(view_h, MAX_MAP_H, max(max(ys), bottom) + 300, bg_h)
         self._vis_render_scene(ents, w, h)
         self._vis_info_label.setText(f"SC.GRP #{sid}: {sname} — {len(ents)} 个实体")
         if self._vis_anim_playing:
@@ -3488,15 +3514,17 @@ class MatEditorApp(QMainWindow):
         from PIL import Image, ImageDraw, ImageOps
         mode = DISPLAY_MODES.get(self._vis_display_mode, 'auto')
 
-        # Background
+        # Background — 匹配 QGraphicsView 的 QSS 主题背景色
+        # 深色主题 #1a1e27 → (26, 30, 39), 浅色主题 #ffffff → (255, 255, 255)
+        bg_color = (26, 30, 39) if self._is_dark else (255, 255, 255)
         if self._vis_bg_pil:
             composite = self._vis_bg_pil.copy()
             if composite.width < w or composite.height < h:
-                new_bg = Image.new('RGB', (w, h), (26, 26, 46))
+                new_bg = Image.new('RGB', (w, h), bg_color)
                 new_bg.paste(composite, (0, 0))
                 composite = new_bg
         else:
-            composite = Image.new('RGB', (w, h), (26, 26, 46))
+            composite = Image.new('RGB', (w, h), bg_color)
 
         for r in ents:
             tval = r['d0']
@@ -3657,13 +3685,18 @@ class MatEditorApp(QMainWindow):
         self._vis_bg_item = None
         if not self.records:
             return
+
+        # 获取当前预览窗口视口的实际像素大小
+        view_w = self._vis_gview.viewport().width()
+        view_h = self._vis_gview.viewport().height()
+
         ents = [r for r in self.records if has_data(r) and r['d1'] == sid]
         bg_w = self._vis_bg_pil.width if self._vis_bg_pil else 0
         bg_h = self._vis_bg_pil.height if self._vis_bg_pil else 0
         if not ents:
             # 空场景: 如果有背景图也要渲染
-            w = max(MAX_MAP_W, bg_w)
-            h = max(MAX_MAP_H, bg_h)
+            w = max(view_w, MAX_MAP_W, bg_w)
+            h = max(view_h, MAX_MAP_H, bg_h)
             self._vis_render_scene(ents, w, h)
             return
         ents.sort(key=lambda r: r['d19'] if r['d0'] == 10 else r['d11'])
@@ -3671,8 +3704,8 @@ class MatEditorApp(QMainWindow):
         ys = [r['d11'] for r in ents]
         right = max(r['d18'] + r['d20'] for r in ents if r['d20'] > 0) if any(r['d20'] > 0 for r in ents) else max(xs)
         bottom = max(r['d19'] + r['d21'] for r in ents if r['d21'] > 0) if any(r['d21'] > 0 for r in ents) else max(ys)
-        w = max(MAX_MAP_W, max(max(xs), right) + 300, bg_w)
-        h = max(MAX_MAP_H, max(max(ys), bottom) + 300, bg_h)
+        w = max(view_w, MAX_MAP_W, max(max(xs), right) + 300, bg_w)
+        h = max(view_h, MAX_MAP_H, max(max(ys), bottom) + 300, bg_h)
         self._vis_render_scene(ents, w, h)
 
     # =========== 画布交互 ===========
@@ -5096,6 +5129,18 @@ class MatEditorApp(QMainWindow):
         self._vis_load_scene()
         QMessageBox.information(self, "导入完成",
                                 f"成功导入:\n  实体: {n_entities} 个\n  DefUnit: {n_defunits} 条\n  DEFINE: {n_defines} 个")
+
+    # =========== 窗口缩放事件 ===========
+    def resizeEvent(self, event):
+        """窗口大小改变时，防抖触发自适应重绘"""
+        super().resizeEvent(event)
+        if hasattr(self, 'records') and self.records:
+            self._resize_timer.start(100)
+
+    def _do_resize_redraw(self):
+        """防抖定时器触发的真正重绘逻辑"""
+        if hasattr(self, 'records') and self.records:
+            self._vis_redraw()
 
     # =========== 关闭事件 ===========
     def closeEvent(self, event):
