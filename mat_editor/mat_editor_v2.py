@@ -25,7 +25,7 @@ TKMat.Dat 地图实体编辑器 v2.3 — PySide6 Godot 风格版
   python mat_editor_v2.py
 """
 
-import struct, os, sys, re, csv, json, base64
+import struct, os, sys, re, csv, json, base64, time
 from collections import OrderedDict, defaultdict, Counter
 
 from PySide6.QtWidgets import (
@@ -41,31 +41,33 @@ from PySide6.QtGui import (
     QAction, QKeySequence, QColor, QFont, QIcon, QPixmap, QImage,
     QPainter, QTextCursor, QTextCharFormat, QSyntaxHighlighter
 )
-from PySide6.QtCore import Qt, QTimer, QRect, QPoint, QSize
+from PySide6.QtCore import Qt, QTimer, QRect, QPoint, QSize, QThread, Signal
 
 # ============================================================
 # LZSS 解压 (用于 TKItem.dat)
 # ============================================================
 def lzss_decompress(data):
     if len(data) < 12: return b''
-    ts = struct.unpack_from('<I', data, 0)[0]; bs = struct.unpack_from('<I', data, 4)[0]
-    w = bytearray([0x20]*4096); wp = 4078; out = bytearray(); flags = 0; pos = 12; bc = 4
-    while bc < bs:
+    ts, bs = struct.unpack_from('<II', data, 0)
+    w = bytearray((0x20,)) * 4096
+    wp = 4078; flags = 0; pos = 12; bc = 4
+    dlen = len(data)
+    out = bytearray()
+    while bc < bs and pos < dlen:
         flags >>= 1
-        if (flags & 0x100) == 0:
-            if pos >= len(data): break
+        if not (flags & 0x100):
             flags = data[pos] | 0xFF00; pos += 1; bc += 1
         if flags & 1:
-            if pos >= len(data): break
             b = data[pos]; pos += 1; bc += 1
             out.append(b); w[wp] = b; wp = (wp + 1) & 0xFFF
         else:
-            if pos + 1 >= len(data): break
-            b1, b2 = data[pos], data[pos+1]; pos += 2; bc += 2
+            if pos + 1 >= dlen: break
+            b1 = data[pos]; b2 = data[pos+1]; pos += 2; bc += 2
             ro = ((b2 & 0xF0) << 4) | b1; rl = (b2 & 0x0F) + 2
-            for j in range(rl + 1):
-                b = w[(j + ro) & 0xFFF]; out.append(b)
-                w[wp] = b; wp = (wp + 1) & 0xFFF
+            for _ in range(rl + 1):
+                b = w[ro]
+                out.append(b); w[wp] = b; wp = (wp + 1) & 0xFFF
+                ro = (ro + 1) & 0xFFF
     return bytes(out[:ts])
 
 # ============================================================
@@ -236,24 +238,47 @@ ANIM_FIELDS = [
     ("sub_model",64,"子模型ID","type=20/200:Ani.JVG块(type=20事件动画/type=200行走动画) type=110:组3数量上限(复用ITEM字段)。type=20 100%有值(1~592)。源码: sub_405CBC v2[64]作为sub_4540E8/sub_45410C的JVG块参数"),
     ("anim_cycle_wait",66,"动画循环等待","动画循环后随机等待帧数上限。<0:不循环 0:立即循环 >0:random(N)等待。type=20/200共用。源码: sub_408704 if(*(a2+264)>0)d3=random(*(a2+264)), if(*(a2+264)<0)帧终点不重置"),
     ("end_frame_hold",69,"结束保留帧","非零时动画播放到终点后保留最后一帧不重置。type=20/200共用。源码: sub_408704 if(*(a2+276)) d68--, d14-- (帧回退保留)")]
-def load_tkt_all(tkt_path):
-    """加载 TKT.dat 全文数据库 (用于脚本预览解析对话文本)
-    与 load_tkt_scene_names 相同格式, 但返回完整文本而非首行"""
+class TktLazyDict:
+    """延迟解析 TKT 文本：只在第一次用到某条文本时才执行耗时的 decode_tkt_bytes"""
+    def __init__(self, raw_dict):
+        self.raw = raw_dict
+        self.cache = {}
+
+    def get(self, eid, default=''):
+        if eid in self.cache:
+            return self.cache[eid]
+        if eid in self.raw:
+            txt = decode_tkt_bytes(self.raw[eid])
+            self.cache[eid] = txt
+            return txt
+        return default
+
+    def __getitem__(self, eid):
+        return self.get(eid, '')
+
+    def __contains__(self, eid):
+        return eid in self.raw
+
+# C 级解密映射表：bytes.translate 用，替代逐字节 XOR 循环
+_TKT_XOR_TABLE = bytes([i ^ 0xFF for i in range(256)])
+
+def load_tkt_raw(tkt_path):
+    """仅提取字节流块，不做任何文本解析"""
     if not tkt_path or not os.path.exists(tkt_path): return {}
     with open(tkt_path,'rb') as f: raw = f.read()
-    total_size = struct.unpack_from('<I',raw,0)[0]
-    count = struct.unpack_from('<I',raw,4)[0]
-    dec = bytes(b^0xFF for b in raw[8:8+total_size])
-    id_sz, off_sz = count*4, count*4; tb = id_sz+off_sz; lookup = {}
-    for i in range(count):
-        eid = struct.unpack_from('<i',dec,i*4)[0]
-        off = struct.unpack_from('<I',dec,id_sz+i*4)[0]; ao = tb+off
-        if ao>=len(dec): continue
-        end=ao
-        while end<len(dec) and dec[end]!=0: end+=1
-        txt=dec[ao:end]
-        s = decode_tkt_bytes(txt)
-        if s: lookup[eid]=s
+    total_size, count = struct.unpack_from('<II', raw, 0)
+    dec = raw[8:8+total_size].translate(_TKT_XOR_TABLE)
+    id_sz = count * 4; tb = id_sz * 2; lookup = {}
+    actual_count = min(count, (len(dec) - id_sz) // 4)
+    if actual_count <= 0: return lookup
+    ids = struct.unpack_from('<' + 'i' * actual_count, dec, 0)
+    offs = struct.unpack_from('<' + 'I' * actual_count, dec, id_sz)
+    for eid, off in zip(ids, offs):
+        ao = tb + off
+        if ao >= len(dec): continue
+        end = dec.find(b'\x00', ao)
+        if end == -1: end = len(dec)
+        lookup[eid] = dec[ao:end]
     return lookup
 
 def get_script_info(rec):
@@ -511,7 +536,7 @@ MAX_MAP_W, MAX_MAP_H = 1024, 768
 def load_tkd(filepath):
     with open(filepath, 'rb') as f:
         data = f.read()
-    decoded = bytes([b ^ 0xFF for b in data])
+    decoded = data.translate(_TKT_XOR_TABLE)
     try:
         text = decoded.decode('big5', errors='replace')
     except Exception:
@@ -523,7 +548,7 @@ def save_tkd(filepath, text):
         encoded = text.encode('big5')
     except (UnicodeEncodeError, UnicodeDecodeError):
         encoded = text.encode('gbk', errors='replace')
-    encrypted = bytes([b ^ 0xFF for b in encoded])
+    encrypted = encoded.translate(_TKT_XOR_TABLE)
     with open(filepath, 'wb') as f:
         f.write(encrypted)
 
@@ -1197,42 +1222,29 @@ SCRIPT_CMD_DESC = {
 }
 
 # ============================================================
-# TKT 场景名
+# TKT 场景名 (延迟解析版)
 # ============================================================
-def load_tkt_scene_names(tkt_path):
-    if not tkt_path or not os.path.exists(tkt_path): return {}
-    with open(tkt_path,'rb') as f: raw = f.read()
-    total_size = struct.unpack_from('<I',raw,0)[0]
-    count = struct.unpack_from('<I',raw,4)[0]
-    dec = bytes(b^0xFF for b in raw[8:8+total_size])
-    id_sz, off_sz = count*4, count*4; tb = id_sz+off_sz; lookup = {}
-    for i in range(count):
-        eid = struct.unpack_from('<i',dec,i*4)[0]
-        off = struct.unpack_from('<I',dec,id_sz+i*4)[0]; ao = tb+off
-        if ao>=len(dec): continue
-        end=ao
-        while end<len(dec) and dec[end]!=0: end+=1
-        txt=dec[ao:end]
-        s = decode_tkt_bytes(txt)
-        if s: lookup[eid]=s.split('\n')[0].strip()
-    return lookup
-
 def scene_name(tkt, sid):
-    if sid==-1: return "全局(所有场景)"
-    return tkt.get(SCENE_NAME_TKT_BASE+sid,f"场景{sid}")
+    if sid == -1: return "全局(所有场景)"
+    txt = tkt.get(SCENE_NAME_TKT_BASE + sid, "")
+    return txt.split('\n')[0].strip() if txt else f"场景{sid}"
 
 # ============================================================
 # 数据 IO
 # ============================================================
+# 预生成键名元组，消灭加载时的 6000×96 次字符串拼接
+MAT_KEYS = tuple(f'd{i}' for i in range(DWORD_COUNT))
+
 def load_mat(fp):
     with open(fp,'rb') as f: raw=f.read()
     if len(raw)!=FILE_SIZE: raise ValueError(f"文件大小异常:{len(raw)}")
     recs=[]
-    for i in range(REC_COUNT):
-        off=i*REC_SIZE
-        dw=struct.unpack_from('<'+'i'*DWORD_COUNT,raw,off)
-        rec={'index':i}
-        for di in range(DWORD_COUNT): rec[f'd{di}']=dw[di]
+    fmt = '<' + 'i' * DWORD_COUNT
+    for i, dw in enumerate(struct.iter_unpack(fmt, raw)):
+        if i >= REC_COUNT: break
+        rec = dict(zip(MAT_KEYS, dw))
+        rec['index'] = i
+        rec['_has_data'] = any(dw)
         recs.append(rec)
     return recs
 
@@ -1244,8 +1256,8 @@ def save_mat(fp, recs):
     with open(fp,'wb') as f: f.write(bytes(buf))
     return True
 
-def is_empty(rec): return rec['d0']==0
-def has_data(rec): return rec['d0']!=0
+def is_empty(rec): return not rec.get('_has_data', rec['d0'] != 0)
+def has_data(rec): return rec.get('_has_data', rec['d0'] != 0)
 
 def save_defunit(fp, defunit_recs):
     """保存 TKDefUnit.dat — 5000 条 × 16 字节"""
@@ -1575,14 +1587,13 @@ def load_scene_background(sc_grp_path, sc_idx_path, scene_id):
     try:
         _grp_dir = os.path.normpath(os.path.join(os.path.dirname(__file__), '..', 'grp_editor'))
         if _grp_dir not in sys.path: sys.path.insert(0, _grp_dir)
-        from grp_editor import load_grp, _decode_section_a, rgb565_to_rgba
+        from grp_editor import load_grp, _decode_section_a
     except ImportError:
         return None
 
     try:
         grp = load_grp(sc_grp_path, sc_idx_path)
         if not grp: return None
-        # 构建 原始 section 索引 → image section 的映射
         idx_map = {sec.index: sec for sec in grp.sections}
         sec = idx_map.get(scene_id)
         if not sec or sec.width <= 0 or sec.height <= 0: return None
@@ -1590,10 +1601,10 @@ def load_scene_background(sc_grp_path, sc_idx_path, scene_id):
         _decode_section_a(grp, sec)
         if not sec.pixels: return None
 
-        rgba = rgb565_to_rgba(sec.pixels, sec.width, sec.height)
         from PIL import Image
-        img = Image.frombytes('RGBA', (sec.width, sec.height), bytes(rgba))
-        return img.convert('RGB')  # 背景转 RGB 供 PIL 合成
+        # PIL C 引擎直接解码 RGB565 字节流，替代纯 Python 的 225 万次位移循环
+        img = Image.frombytes('RGB', (sec.width, sec.height), sec.pixels, 'raw', 'BGR;16')
+        return img
     except Exception:
         return None
 
@@ -1713,6 +1724,148 @@ class DockHeader(QFrame):
         layout.addWidget(lbl, 1)
         if right_layout:
             layout.addLayout(right_layout)
+
+
+# ============================================================
+# 后台异步加载器
+# ============================================================
+class DataLoaderThread(QThread):
+    finished_load = Signal()
+    error_load = Signal(str)
+
+    def __init__(self, dat_path, tkt_path):
+        super().__init__()
+        self.dat_path = dat_path
+        self.tkt_path = tkt_path
+
+    def run(self):
+        try:
+            d = os.path.dirname(self.dat_path)
+            result = {}
+
+            # 1. TKT (延迟解析：只切字节块，首次访问时才解码)
+            if self.tkt_path:
+                raw_tkt = load_tkt_raw(self.tkt_path)
+                tkt_lazy = TktLazyDict(raw_tkt)
+                result['tkt_all'] = tkt_lazy
+                result['tkt_scenes'] = tkt_lazy
+            else:
+                result['tkt_scenes'] = {}
+                result['tkt_all'] = {}
+
+            # 2. TKDefUnit
+            defunit_recs = []
+            defunit_next = {}
+            defunit_entity = {}
+            du_p = os.path.join(d, "TKDefUnit.Dat")
+            if os.path.exists(du_p):
+                with open(du_p, 'rb') as f:
+                    du_raw = f.read()
+                for i, fields in enumerate(struct.iter_unpack('<HHHHHHHH', du_raw)):
+                    if i >= DEFUNIT_REC_COUNT: break
+                    f0, f1, f6 = fields[0], fields[1], fields[6]
+                    if f0 == 0 and f1 == 0: continue
+                    rec = {'index': i, 'f0': f0, 'f1': f1, 'f2': fields[2],
+                           'f3': fields[3], 'f4': fields[4], 'f5': fields[5],
+                           'f6': f6, 'f7': fields[7]}
+                    defunit_recs.append(rec)
+                    if f6 != 0: defunit_next[i] = f6
+                    defunit_entity.setdefault(f1, []).append(i)
+            result['defunit_recs'] = defunit_recs
+            result['defunit_next'] = defunit_next
+            result['defunit_entity'] = defunit_entity
+
+            # 3 & 4. TKD 脚本与 TKItem 物品数据 (LZSS 解压耗时，已移至后台线程)
+            result['tkd_defines'] = []
+            result['tkd_header'] = ''
+            result['tkd_define_map'] = {}
+            result['item_names'] = {}
+
+            # 5. SC.GRP section count
+            sc_grp_section_count = 0
+            grp_path = os.path.join(d, "SC.GRP")
+            idx_path = os.path.join(d, "SC.IDX")
+            if os.path.exists(grp_path) and os.path.exists(idx_path):
+                idata = open(idx_path, 'rb').read()
+                fsize = os.path.getsize(grp_path)
+                offs = [struct.unpack_from('<I', idata, i)[0] for i in range(0, len(idata), 4)]
+                if offs and offs[-1] == fsize:
+                    sc_grp_section_count = len(offs) - 1
+            result['sc_grp_section_count'] = sc_grp_section_count
+
+            # 6. TKMat (JVG 贴图已剥离至独立线程 JvgLoaderThread)
+            result['records'] = load_mat(self.dat_path)
+
+            self.result_data = result
+            self.finished_load.emit()
+        except Exception as e:
+            import traceback
+            self.error_load.emit(str(e) + "\n" + traceback.format_exc())
+
+
+# ============================================================
+# 后台异步加载器 (贴图专线)
+# ============================================================
+class JvgLoaderThread(QThread):
+    finished_jvg = Signal()
+
+    def __init__(self, dat_path, tkt_lazy=None):
+        super().__init__()
+        self.dat_path = dat_path
+        self.tkt_lazy = tkt_lazy
+        self.jvg_result = {}
+
+    def run(self):
+        try:
+            d = os.path.dirname(self.dat_path)
+            res = {}
+
+            # TKD 脚本解压与解析
+            time.sleep(0.001)
+            tkd_p = os.path.join(d, "TKD.dat")
+            if os.path.exists(tkd_p):
+                tkd_text = load_tkd(tkd_p)
+                tkd_defines, tkd_header = parse_defines(tkd_text)
+                res['tkd_defines'] = tkd_defines
+                res['tkd_header'] = tkd_header
+                res['tkd_define_map'] = {dd['define_id']: dd for dd in tkd_defines}
+
+            # TKItem 物品名解压与解析
+            time.sleep(0.001)
+            item_names = {}
+            item_p = os.path.join(d, "TKItem.dat")
+            if os.path.exists(item_p) and self.tkt_lazy:
+                with open(item_p, 'rb') as f:
+                    item_raw = f.read()
+                item_dec = lzss_decompress(item_raw)
+                ITEM_CNT = 600
+                for i, fields in enumerate(struct.iter_unpack('<' + 'h' * 32, item_dec)):
+                    if i >= ITEM_CNT: break
+                    item_id, name_id = fields[0], fields[2]
+                    if item_id > 0 and name_id > 0:
+                        name = self.tkt_lazy.get(name_id, '')
+                        if name:
+                            item_names[item_id] = name.split('\n')[0].strip()
+            res['item_names'] = item_names
+
+            # 角色名
+            time.sleep(0.001)
+            if self.tkt_lazy:
+                _load_char_names(d, self.tkt_lazy)
+
+            # JVG 贴图
+            time.sleep(0.001)
+            res['ani_jvg'] = _get_jvg(os.path.join(d, "Ani.JVG"))
+            res['cha_jvg'] = _get_jvg(os.path.join(d, "Cha.JVG"))
+            res['cur_jvg'] = _get_jvg(os.path.join(d, "Cur.JVG"))
+
+            self.jvg_result = res
+            self.finished_jvg.emit()
+        except Exception as e:
+            import traceback
+            print("Background asset load error:", e, traceback.format_exc())
+            self.jvg_result = {}
+            self.finished_jvg.emit()
 
 
 class MatEditorApp(QMainWindow):
@@ -2875,9 +3028,13 @@ class MatEditorApp(QMainWindow):
         self.entity_tree.setSortingEnabled(False)
         self.entity_tree.clear()
 
+        # 限制显示数量，避免实例化过多 QTreeWidgetItem 对象
+        DISPLAY_LIMIT = 500
+        show_indices = self.filtered_indices[:DISPLAY_LIMIT]
+
         # 批量构建所有 item 后一次性添加
         items = []
-        for idx in self.filtered_indices:
+        for idx in show_indices:
             rec = self.records[idx]
             tval = rec['d0']
             sname = scene_name(self.tkt_scenes, rec['d1'])
@@ -2903,12 +3060,17 @@ class MatEditorApp(QMainWindow):
                     break
 
         self.entity_tree.setUpdatesEnabled(True)
+        self.entity_tree.setSortingEnabled(True)
         self.entity_tree.blockSignals(False)
 
         if not self.entity_tree.selectedItems():
             self._current_param_idx = None
             self.lbl_title.setText("未选中")
             self._clear_form()
+
+        # 截断提示
+        if len(self.filtered_indices) > DISPLAY_LIMIT:
+            self._vis_info_label.setText(f"列表已截断显示前 {DISPLAY_LIMIT}/{len(self.filtered_indices)} 条，使用筛选缩小范围")
 
     def _sort_entity_by_column(self, col):
         """点击列头排序实体列表"""
@@ -3488,22 +3650,25 @@ class MatEditorApp(QMainWindow):
             # 空场景: 如果有背景图也要渲染
             bg_w = self._vis_bg_pil.width if self._vis_bg_pil else 0
             bg_h = self._vis_bg_pil.height if self._vis_bg_pil else 0
-            w = max(view_w, MAX_MAP_W, bg_w)
-            h = max(view_h, MAX_MAP_H, bg_h)
+            w = min(max(view_w, MAX_MAP_W, bg_w), 8192)
+            h = min(max(view_h, MAX_MAP_H, bg_h), 8192)
             self._vis_render_scene(ents, w, h)
             self._vis_info_label.setText(f"SC.GRP #{sid}: {sname} — 无实体 (空场景)")
             return
         ents.sort(key=lambda r: r['d19'] if r['d0'] == 10 else r['d11'])
 
-        xs = [r['d10'] for r in ents]
-        ys = [r['d11'] for r in ents]
-        right = max(r['d18'] + r['d20'] for r in ents if r['d20'] > 0) if any(r['d20'] > 0 for r in ents) else max(xs)
-        bottom = max(r['d19'] + r['d21'] for r in ents if r['d21'] > 0) if any(r['d21'] > 0 for r in ents) else max(ys)
+        # 过滤垃圾废弃坐标 (>10000)，防止画布被撑到 8192 导致显卡卡死
+        xs = [r['d10'] for r in ents if -10000 < r['d10'] < 10000]
+        ys = [r['d11'] for r in ents if -10000 < r['d11'] < 10000]
+        if not xs: xs = [0]
+        if not ys: ys = [0]
+        right = max(r['d18'] + r['d20'] for r in ents if r['d20'] > 0 and -10000 < r['d18'] < 10000) if any(r['d20'] > 0 and -10000 < r['d18'] < 10000 for r in ents) else max(xs)
+        bottom = max(r['d19'] + r['d21'] for r in ents if r['d21'] > 0 and -10000 < r['d19'] < 10000) if any(r['d21'] > 0 and -10000 < r['d19'] < 10000 for r in ents) else max(ys)
         # 场景尺寸 = max(视口大小, 实体范围, 背景图尺寸, 最小尺寸)
         bg_w = self._vis_bg_pil.width if self._vis_bg_pil else 0
         bg_h = self._vis_bg_pil.height if self._vis_bg_pil else 0
-        w = max(view_w, MAX_MAP_W, max(max(xs), right) + 300, bg_w)
-        h = max(view_h, MAX_MAP_H, max(max(ys), bottom) + 300, bg_h)
+        w = min(max(view_w, MAX_MAP_W, max(max(xs), right) + 300, bg_w), 8192)
+        h = min(max(view_h, MAX_MAP_H, max(max(ys), bottom) + 300, bg_h), 8192)
         self._vis_render_scene(ents, w, h)
         self._vis_info_label.setText(f"SC.GRP #{sid}: {sname} — {len(ents)} 个实体")
         if self._vis_anim_playing:
@@ -3525,6 +3690,8 @@ class MatEditorApp(QMainWindow):
                 composite = new_bg
         else:
             composite = Image.new('RGB', (w, h), bg_color)
+
+        dr = ImageDraw.Draw(composite)
 
         for r in ents:
             tval = r['d0']
@@ -3614,7 +3781,6 @@ class MatEditorApp(QMainWindow):
                                 _pil_normal(composite, sprite_rgba, sx, sy)
 
                 # Draw collision box
-                dr = ImageDraw.Draw(composite)
                 bx, by = r['d18'], r['d19']
                 bw = r['d20'] if r['d20'] > 0 else 0
                 bh = r['d21'] if r['d21'] > 0 else 0
@@ -3623,7 +3789,6 @@ class MatEditorApp(QMainWindow):
 
             # Draw geometric shape when no sprite
             if sprite_rgba is None:
-                dr = ImageDraw.Draw(composite)
                 bx, by = r['d18'], r['d19']
                 bw = r['d20'] if r['d20'] > 0 else 40
                 bh = r['d21'] if r['d21'] > 0 else 40
@@ -3647,7 +3812,6 @@ class MatEditorApp(QMainWindow):
             if cur_a > 0: script_icon += "⚡"
             if cur_b > 0: script_icon += "👆"
             if script_icon: label = f"{label} {script_icon}"
-            dr = ImageDraw.Draw(composite)
             bx_c = r['d18'] + r['d20'] // 2
             dr.text((bx_c - len(label) * 3, r['d19'] - 12), label, fill=color)
 
@@ -3669,7 +3833,6 @@ class MatEditorApp(QMainWindow):
         # Selected entity highlight
         if self._vis_selected is not None and self._vis_selected in self._vis_hit_regions:
             x1, y1, x2, y2 = self._vis_hit_regions[self._vis_selected]
-            dr = ImageDraw.Draw(composite)
             dr.rectangle([x1 - 2, y1 - 2, x2 + 2, y2 + 2], outline=(255, 215, 0), width=2)
 
         # Convert to QPixmap and display
@@ -3695,17 +3858,20 @@ class MatEditorApp(QMainWindow):
         bg_h = self._vis_bg_pil.height if self._vis_bg_pil else 0
         if not ents:
             # 空场景: 如果有背景图也要渲染
-            w = max(view_w, MAX_MAP_W, bg_w)
-            h = max(view_h, MAX_MAP_H, bg_h)
+            w = min(max(view_w, MAX_MAP_W, bg_w), 8192)
+            h = min(max(view_h, MAX_MAP_H, bg_h), 8192)
             self._vis_render_scene(ents, w, h)
             return
         ents.sort(key=lambda r: r['d19'] if r['d0'] == 10 else r['d11'])
-        xs = [r['d10'] for r in ents]
-        ys = [r['d11'] for r in ents]
-        right = max(r['d18'] + r['d20'] for r in ents if r['d20'] > 0) if any(r['d20'] > 0 for r in ents) else max(xs)
-        bottom = max(r['d19'] + r['d21'] for r in ents if r['d21'] > 0) if any(r['d21'] > 0 for r in ents) else max(ys)
-        w = max(view_w, MAX_MAP_W, max(max(xs), right) + 300, bg_w)
-        h = max(view_h, MAX_MAP_H, max(max(ys), bottom) + 300, bg_h)
+        # 过滤垃圾废弃坐标 (>10000)，防止画布被撑到 8192 导致显卡卡死
+        xs = [r['d10'] for r in ents if -10000 < r['d10'] < 10000]
+        ys = [r['d11'] for r in ents if -10000 < r['d11'] < 10000]
+        if not xs: xs = [0]
+        if not ys: ys = [0]
+        right = max(r['d18'] + r['d20'] for r in ents if r['d20'] > 0 and -10000 < r['d18'] < 10000) if any(r['d20'] > 0 and -10000 < r['d18'] < 10000 for r in ents) else max(xs)
+        bottom = max(r['d19'] + r['d21'] for r in ents if r['d21'] > 0 and -10000 < r['d19'] < 10000) if any(r['d21'] > 0 and -10000 < r['d19'] < 10000 for r in ents) else max(ys)
+        w = min(max(view_w, MAX_MAP_W, max(max(xs), right) + 300, bg_w), 8192)
+        h = min(max(view_h, MAX_MAP_H, max(max(ys), bottom) + 300, bg_h), 8192)
         self._vis_render_scene(ents, w, h)
 
     # =========== 画布交互 ===========
@@ -3916,110 +4082,64 @@ class MatEditorApp(QMainWindow):
     def _reload(self):
         if not self.dat_path:
             return
-        self.status_var.setText("加载中…")
-        QApplication.processEvents()
-        # 禁用全局 UI 更新以加速加载
+        self.status_var.setText("后台高速解析结构中…")
+        self._set_edit_enabled(False)
+        # 清空贴图引用，防止切换目录时旧缓存残留
+        self._ani_jvg = None
+        self._cha_jvg = None
+        self._cur_jvg = None
+        self._update_path()
+        # 启动异步加载线程，避免 UI 假死
+        self._loader_thread = DataLoaderThread(self.dat_path, self.tkt_path)
+        self._loader_thread.finished_load.connect(self._on_load_success)
+        self._loader_thread.error_load.connect(self._on_load_error)
+        self._loader_thread.start()
+
+    def _on_load_error(self, err_msg):
+        """加载报错回调"""
+        QMessageBox.critical(self, "加载失败", f"数据解析异常:\n{err_msg}")
+        self.records = []
+        self._set_edit_enabled(True)
+        self.status_var.setText("加载失败")
+
+    def _on_load_success(self):
+        """加载完毕回调：应用数据并刷新 UI"""
         self.setUpdatesEnabled(False)
-        if self.tkt_path:
-            self.tkt_scenes = load_tkt_scene_names(self.tkt_path)
-        self._sc_grp_section_count = 0
-        d = os.path.dirname(self.dat_path)
-        # Load TKDefUnit.dat
-        self.defunit_recs = []
-        self.defunit_next = {}
-        self.defunit_entity = {}
-        du_p = os.path.join(d, "TKDefUnit.Dat")
-        if os.path.exists(du_p):
-            try:
-                with open(du_p, 'rb') as f:
-                    du_raw = f.read()
-                for i in range(DEFUNIT_REC_COUNT):
-                    off = i * DEFUNIT_REC_SIZE
-                    fields = struct.unpack_from('<HHHHHHHH', du_raw, off)
-                    f0, f1, f6 = fields[0], fields[1], fields[6]
-                    if f0 == 0 and f1 == 0:
-                        continue
-                    rec = {'index': i, 'f0': f0, 'f1': f1, 'f2': fields[2],
-                           'f3': fields[3], 'f4': fields[4], 'f5': fields[5],
-                           'f6': f6, 'f7': fields[7]}
-                    self.defunit_recs.append(rec)
-                    if f6 != 0:
-                        self.defunit_next[i] = f6
-                    self.defunit_entity.setdefault(f1, []).append(i)
-            except Exception:
-                pass
-        # Load TKD.dat
-        self.tkd_defines = []
-        self.tkd_header = ''
-        self.tkd_define_map = {}
-        tkd_p = os.path.join(d, "TKD.dat")
-        if os.path.exists(tkd_p):
-            try:
-                tkd_text = load_tkd(tkd_p)
-                self.tkd_defines, self.tkd_header = parse_defines(tkd_text)
-                self.tkd_define_map = {dd['define_id']: dd for dd in self.tkd_defines}
-            except Exception:
-                pass
-        # Load TKT full
-        self.tkt_all = load_tkt_all(self.tkt_path)
-        # Load char names
-        _load_char_names(d, self.tkt_all)
-        # Load item names
-        self.item_names = {}
-        item_p = os.path.join(d, "TKItem.dat")
-        if os.path.exists(item_p) and self.tkt_scenes:
-            try:
-                with open(item_p, 'rb') as f:
-                    item_raw = f.read()
-                item_dec = lzss_decompress(item_raw)
-                ITEM_REC = 64
-                ITEM_CNT = 600
-                for i in range(min(ITEM_CNT, len(item_dec) // ITEM_REC)):
-                    off = i * ITEM_REC
-                    fields = struct.unpack_from('<' + 'h' * 32, item_dec, off)
-                    item_id = fields[0]
-                    name_id = fields[2]
-                    if item_id > 0 and name_id > 0:
-                        name = self.tkt_all.get(name_id, '') or self.tkt_scenes.get(name_id, '')
-                        if name:
-                            self.item_names[item_id] = name.split('\n')[0].strip()
-            except Exception:
-                pass
-        # SC.GRP section count
-        grp_path = os.path.join(d, "SC.GRP")
-        idx_path = os.path.join(d, "SC.IDX")
-        if os.path.exists(grp_path) and os.path.exists(idx_path):
-            try:
-                idata = open(idx_path, 'rb').read()
-                fsize = os.path.getsize(grp_path)
-                offs = [struct.unpack_from('<I', idata, i)[0] for i in range(0, len(idata), 4)]
-                if offs and offs[-1] == fsize:
-                    self._sc_grp_section_count = len(offs) - 1
-            except Exception:
-                pass
-        # Load JVG files
-        self._ani_jvg = _get_jvg(os.path.join(d, "Ani.JVG"))
-        self._cha_jvg = _get_jvg(os.path.join(d, "Cha.JVG"))
-        self._cur_jvg = _get_jvg(os.path.join(d, "Cur.JVG"))
-        try:
-            self.records = load_mat(self.dat_path)
-            self._dirty = False
-            nonempty = sum(1 for r in self.records if has_data(r))
-            scenes = set(r['d1'] for r in self.records if has_data(r))
-            self.status_var.setText(
-                f"{REC_COUNT}条 | 有效{nonempty} | TKMat场景{len(scenes)} | "
-                f"SC.GRP {self._sc_grp_section_count}区段")
-        except Exception as e:
-            QMessageBox.critical(self, "加载失败", str(e))
-            self.records = []
+        result = self._loader_thread.result_data
+
+        self.tkt_scenes = result.get('tkt_scenes', {})
+        self.tkt_all = result.get('tkt_all', {})
+        self.defunit_recs = result.get('defunit_recs', [])
+        self.defunit_next = result.get('defunit_next', {})
+        self.defunit_entity = result.get('defunit_entity', {})
+        self.tkd_defines = result.get('tkd_defines', [])
+        self.tkd_header = result.get('tkd_header', '')
+        self.tkd_define_map = result.get('tkd_define_map', {})
+        self.item_names = result.get('item_names', {})
+        self._sc_grp_section_count = result.get('sc_grp_section_count', 0)
+        self.records = result.get('records', [])
+
+        self._dirty = False
+        nonempty = sum(1 for r in self.records if has_data(r))
+        scenes = set(r['d1'] for r in self.records if has_data(r))
+
         self._update_path()
         self._set_edit_enabled(True)
         self._apply_filter()
         self._vis_populate_scenes()
-        # Auto-select first valid scene
+
+        # 延迟启动 JVG 贴图加载，让主线程先完成 UI 渲染，避免 GIL 锁竞争
+        self.status_var.setText(
+            f"{REC_COUNT}条 | 有效{nonempty} | TKMat场景{len(scenes)} | "
+            f"SC.GRP {self._sc_grp_section_count}区段 (正在后台加载贴图…)")
+        QTimer.singleShot(300, self._start_jvg_thread)
+
+        # 自动选中首个有效场景 (静默信号，防止触发无意义的首次重绘)
         if self.scene_tree.topLevelItemCount() > 0:
             first = self.scene_tree.topLevelItem(1 if self.scene_tree.topLevelItemCount() > 1 else 0)
+            self.scene_tree.blockSignals(True)
             self.scene_tree.setCurrentItem(first)
+            self.scene_tree.blockSignals(False)
             sid = int(first.text(0))
             self._vis_scene_id = sid
             for i in range(self._vis_scene_combo.count()):
@@ -4027,7 +4147,39 @@ class MatEditorApp(QMainWindow):
                     self._vis_scene_combo.setCurrentIndex(i)
                     break
             self._vis_load_scene()
+
         self.setUpdatesEnabled(True)
+
+    def _start_jvg_thread(self):
+        """延迟触发的后台资源加载线程 (贴图+TKD+物品)"""
+        self._jvg_thread = JvgLoaderThread(self.dat_path, getattr(self, 'tkt_all', None))
+        self._jvg_thread.finished_jvg.connect(self._on_jvg_success)
+        self._jvg_thread.start()
+
+    def _on_jvg_success(self):
+        """后台资源加载完毕回调 (贴图+TKD+物品)"""
+        result = self._jvg_thread.jvg_result
+        # 接收贴图
+        self._ani_jvg = result.get('ani_jvg')
+        self._cha_jvg = result.get('cha_jvg')
+        self._cur_jvg = result.get('cur_jvg')
+
+        # 接收 TKD 脚本与物品数据
+        if 'tkd_defines' in result:
+            self.tkd_defines = result['tkd_defines']
+            self.tkd_header = result.get('tkd_header', '')
+            self.tkd_define_map = result.get('tkd_define_map', {})
+            self.item_names = result.get('item_names', {})
+            # 刷新当前脚本预览
+            if self._current_edit_define_id is not None:
+                self._update_line_preview()
+
+        self._update_path()
+        cur = self.status_var.text()
+        self.status_var.setText(cur.replace("(正在后台加载贴图…)", "(全部资源就绪)"))
+        # 触发重绘让实体显示彩色立绘
+        if hasattr(self, 'records') and self.records:
+            self._vis_redraw()
 
     def _vis_populate_scenes(self):
         self.scene_tree.setUpdatesEnabled(False)
