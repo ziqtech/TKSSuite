@@ -2561,13 +2561,6 @@ class MatEditorApp(QMainWindow):
                 wl = QHBoxLayout(wrapper)
                 wl.setContentsMargins(0, 0, 0, 0)
                 wl.addWidget(ev)
-                # Item name label for type110
-                if key in ('item_g1_id', 'item_g2_id', 'item_g3_id'):
-                    il = QLabel("")
-                    il.setProperty("class", "ExtraPreviewText")
-                    il.setWordWrap(True)
-                    wl.addWidget(il)
-                    tvars[f'_{key}_label'] = il
 
             cell_widget = QWidget()
             cell = QVBoxLayout(cell_widget); cell.setSpacing(2); cell.setContentsMargins(0, 0, 0, 0)
@@ -2581,6 +2574,17 @@ class MatEditorApp(QMainWindow):
                 hl.setStyleSheet("padding-left: 0px; font-size: 11px;")
                 cell.addWidget(hl)
                 tvars['_hint_label'] = hl
+            # Item name label — type=110 物品ID输入框下方 (显示方式参考 hint_id)
+            # 注意: d53/d57/d61 在 GROUP_50_70 中已被 ANIM/RUNTIME 的 dir_mode/saved_y/alt_tele_y
+            # 抢先占用 (按 di 去重), key 不会是 item_gN_id, 故按 di 判定 (与 mat_editor.py 一致)
+            if tval == 110 and di in (53, 57, 61):
+                _item_lbl_key = {53: '_item_g1_id_label', 57: '_item_g2_id_label', 61: '_item_g3_id_label'}[di]
+                il = QLabel("")
+                il.setProperty("class", "ExtraPreviewText")
+                il.setWordWrap(True)
+                il.setStyleSheet("padding-left: 0px; font-size: 11px;")
+                cell.addWidget(il)
+                tvars[_item_lbl_key] = il
             wrapper.setMinimumHeight(24)
             grid.addWidget(cell_widget, r, c, Qt.AlignTop)
 
