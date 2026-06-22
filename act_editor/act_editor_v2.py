@@ -1560,8 +1560,8 @@ class ActEditorV2(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("TKAct.dat 多图层 2D 精灵动画编辑器 v3.0 - PySide6")
-        self.resize(1400, 860)
-        self.setMinimumSize(1100, 680)
+        self.resize(1600, 900)
+        self.setMinimumSize(1200, 680)
 
         ico = os.path.join(os.path.dirname(__file__), 'TKS.ico')
         if not os.path.exists(ico):
@@ -1693,8 +1693,8 @@ class ActEditorV2(QMainWindow):
         self.search_entry.setFixedWidth(160)
         self.search_entry.returnPressed.connect(self._apply_filter)
         toolbar.addWidget(self.search_entry)
-        toolbar.addWidget(QPushButton("搜索", clicked=self._apply_filter))
-        toolbar.addWidget(QPushButton("清除", clicked=self._clear_filter))
+        toolbar.addWidget(QPushButton("🔍 搜索", clicked=self._apply_filter))
+        toolbar.addWidget(QPushButton("✕ 清除", clicked=self._clear_filter))
         toolbar.addSpacing(8)
 
         self.show_empty_cb = QCheckBox("显示空条目")
@@ -1708,7 +1708,7 @@ class ActEditorV2(QMainWindow):
         toolbar.addWidget(self.greenscreen_cb)
 
         toolbar.addSpacing(8)
-        toolbar.addWidget(QPushButton("重新加载", clicked=self._reload))
+        toolbar.addWidget(QPushButton("🔄 重新加载", clicked=self._reload))
         toolbar.addWidget(QPushButton("🌗 切换主题", clicked=self._toggle_theme))
         toolbar.addStretch()
 
@@ -1716,13 +1716,13 @@ class ActEditorV2(QMainWindow):
         toolbar.addWidget(self.status_var)
         main_layout.addLayout(toolbar)
 
-        # 主 Splitter
+        # 主 Splitter (三栏: 条目列表 | 时间轴与预览 | 参数面板)
         splitter = QSplitter(Qt.Horizontal)
         splitter.setHandleWidth(7)
         splitter.setChildrenCollapsible(False)
         main_layout.addWidget(splitter, 1)
 
-        # 左侧: 条目列表
+        # 左栏: 条目列表
         self.table = QTableWidget(0, 4)
         self.table.setHorizontalHeaderLabels(["序号", "名称", "图层组成", "层数"])
         self.table.setColumnWidth(0, 45)
@@ -1740,29 +1740,46 @@ class ActEditorV2(QMainWindow):
         self.table.setSortingEnabled(False)
         splitter.addWidget(self.table)
 
-        # 右侧: 编辑面板
-        right = QWidget()
-        rl = QVBoxLayout(right)
-        rl.setContentsMargins(4, 4, 4, 4)
-        rl.setSpacing(4)
+        # 中栏: 时间轴与预览
+        center = QWidget()
+        cl = QVBoxLayout(center)
+        cl.setContentsMargins(4, 4, 4, 4)
+        cl.setSpacing(4)
 
-        # 编辑头
+        # 编辑头 (全局: 应用/重置 写入所有字段)
         hdr_row = QHBoxLayout()
         self.lbl_entry = QLabel("未选中")
         self.lbl_entry.setProperty("class", "PreviewName")
         hdr_row.addWidget(self.lbl_entry, 1)
-
         hdr_row.addWidget(QPushButton("✅ 应用修改", clicked=self._apply_edit))
         hdr_row.addWidget(QPushButton("🔄 重置", clicked=self._reset_edit))
-        rl.addLayout(hdr_row)
+        cl.addLayout(hdr_row)
 
-        # Tab 页
+        self._build_timeline_into(cl)
+        splitter.addWidget(center)
+        self._center_widget = center
+
+        # 右栏: 参数面板 (方向 / 条目级参数 / 尾部)
+        right = QWidget()
+        rl = QVBoxLayout(right)
+        rl.setContentsMargins(4, 4, 4, 4)
+        rl.setSpacing(4)
+        right.setMinimumWidth(420)
+
+        param_title = QLabel("参数面板")
+        param_title.setProperty("class", "PreviewName")
+        rl.addWidget(param_title)
+
         self.tabs = QTabWidget()
+        self.tabs.setDocumentMode(True)
         self._build_direction_tab()
-        self._build_timeline_tab()
+        self._build_layer_cards_tab()
         self._build_param_tab()
         self._build_tail_tab()
         rl.addWidget(self.tabs, 1)
+        splitter.addWidget(right)
+
+        splitter.setSizes([280, 800, 520])
 
         # 底部路径栏
         path_layout = QHBoxLayout()
@@ -1775,9 +1792,6 @@ class ActEditorV2(QMainWindow):
             path_layout.addSpacing(15)
         path_layout.addStretch()
         main_layout.addLayout(path_layout)
-
-        splitter.addWidget(right)
-        splitter.setSizes([350, 1050])
 
     def _build_scroll_tab(self, name):
         scroll = QScrollArea()
@@ -1830,21 +1844,39 @@ class ActEditorV2(QMainWindow):
         inner.layout().addLayout(grid)
         inner.layout().addStretch()
 
-    # ── Tab 2: 时间轴与预览 (统一视图) ──
+    # ── 中栏: 时间轴与预览 (统一视图) ──
 
-    def _build_timeline_tab(self):
-        inner = self._build_scroll_tab("时间轴与预览")
+    def _build_timeline_into(self, parent_layout):
+        inner = QWidget()
+        inner.setLayout(QVBoxLayout())
+        inner.layout().setContentsMargins(0, 0, 0, 0)
+        inner.layout().setSpacing(4)
+        parent_layout.addWidget(inner, 1)
 
         # 控制栏
         ctrl = QHBoxLayout()
 
-        ctrl.addWidget(QPushButton("◀◀", clicked=self._tl_goto_first, fixedWidth=36))
-        ctrl.addWidget(QPushButton("◀", clicked=self._tl_step_prev, fixedWidth=30))
-        ctrl.addWidget(QPushButton("▶", clicked=self._preview_play, fixedWidth=30))
-        ctrl.addWidget(QPushButton("⏸", clicked=self._preview_stop, fixedWidth=30))
-        ctrl.addWidget(QPushButton("▶▶", clicked=self._tl_goto_last, fixedWidth=36))
+        btn_first = QPushButton("⏮️", clicked=self._tl_goto_first)
+        btn_first.setToolTip("跳至首帧 (Ctrl+◀◀)")
+        ctrl.addWidget(btn_first)
 
-        ctrl.addSpacing(8)
+        btn_prev = QPushButton("◀️", clicked=self._tl_step_prev)
+        btn_prev.setToolTip("后退一帧 (J / ←)")
+        ctrl.addWidget(btn_prev)
+
+        btn_play = QPushButton("▶️", clicked=self._preview_play)
+        btn_play.setToolTip("播放动画 (L)")
+        ctrl.addWidget(btn_play)
+
+        btn_stop = QPushButton("⏹️", clicked=self._preview_stop)
+        btn_stop.setToolTip("停止播放 (K)")
+        ctrl.addWidget(btn_stop)
+
+        btn_last = QPushButton("⏭️", clicked=self._tl_goto_last)
+        btn_last.setToolTip("跳至末帧 (Ctrl+▶▶)")
+        ctrl.addWidget(btn_last)
+
+        ctrl.addSpacing(4)
         ctrl.addWidget(QLabel("方向:"))
 
         self._dir_btns = QButtonGroup(self)
@@ -1855,27 +1887,34 @@ class ActEditorV2(QMainWindow):
             ctrl.addWidget(rb)
         self._dir_btns.buttonClicked.connect(self._on_dir_changed)
 
-        ctrl.addSpacing(8)
-        ctrl.addWidget(QLabel("周期(ms):"))
+        ctrl.addSpacing(4)
+        ctrl.addWidget(QLabel("周期:"))
         self._speed_spin = QSpinBox()
         self._speed_spin.setRange(10, 500)
         self._speed_spin.setValue(120)
         self._speed_spin.setSingleStep(10)
+        self._speed_spin.setMaximumWidth(52)
         ctrl.addWidget(self._speed_spin)
 
-        ctrl.addSpacing(8)
+        ctrl.addSpacing(4)
         ctrl.addWidget(QLabel("缩放:"))
-        ctrl.addWidget(QPushButton("−", clicked=self._tl_zoom_out, fixedWidth=24))
-        ctrl.addWidget(QPushButton("+", clicked=self._tl_zoom_in, fixedWidth=24))
-        self._tl_zoom_lbl = QLabel("40px/t")
+        btn_zo = QPushButton("➖", clicked=self._tl_zoom_out)
+        btn_zo.setToolTip("缩小时间轴 (Ctrl+滚轮)")
+        ctrl.addWidget(btn_zo)
+        btn_zi = QPushButton("➕", clicked=self._tl_zoom_in)
+        btn_zi.setToolTip("放大时间轴 (Ctrl+滚轮)")
+        ctrl.addWidget(btn_zi)
+        self._tl_zoom_lbl = QLabel("×40")
         ctrl.addWidget(self._tl_zoom_lbl)
 
-        ctrl.addSpacing(8)
-        ctrl.addWidget(QPushButton("归零", clicked=self._tl_reset_playhead))
+        ctrl.addSpacing(4)
+        btn_zero = QPushButton("↩️ 归零", clicked=self._tl_reset_playhead)
+        btn_zero.setToolTip("播放头归零")
+        ctrl.addWidget(btn_zero)
         self._tl_tick_lbl = QLabel("tick: 0")
         ctrl.addWidget(self._tl_tick_lbl)
 
-        ctrl.addSpacing(8)
+        ctrl.addSpacing(4)
         self._edit_mode_cb = QCheckBox("编辑模式")
         self._edit_mode_cb.setChecked(False)
         self._edit_mode_cb.stateChanged.connect(self._toggle_edit_mode)
@@ -1901,38 +1940,28 @@ class ActEditorV2(QMainWindow):
         vpw.setChildrenCollapsible(False)
         inner.layout().addWidget(vpw, 1)
 
-        # 上: 水平分割 (预览画布 + 图层卡片)
-        upw = QSplitter(Qt.Horizontal)
-        upw.setHandleWidth(5)
-        vpw.addWidget(upw)
-
-        # 预览画布
+        # 预览画布 (独占上区, 不受右侧卡片挤压)
         self.preview_canvas = PreviewCanvas(self)
-        upw.addWidget(self.preview_canvas)
+        vpw.addWidget(self.preview_canvas)
 
-        # 图层卡片面板
-        card_scroll = QScrollArea()
-        card_scroll.setWidgetResizable(True)
-        card_scroll.setMinimumWidth(200)
-        card_scroll.setMaximumWidth(320)
-        self._card_inner = QWidget()
-        self._card_inner.setLayout(QVBoxLayout())
-        self._card_inner.layout().setContentsMargins(4, 4, 4, 4)
-        self._card_inner.layout().setSpacing(4)
-        card_scroll.setWidget(self._card_inner)
-        upw.addWidget(card_scroll)
-
-        self._build_layer_cards()
-
-        # 下: 时间轴
+        # 时间轴 (下区, 按需收缩)
         self.timeline_widget = TimelineWidget(self)
         self.timeline_widget.playheadMoved.connect(self._on_timeline_clicked)
         vpw.addWidget(self.timeline_widget)
 
-        # 缩略图条
+        # 预览 : 时间轴 ≈ 3.5 : 1 (保证预览足够大, 时间轴自适应)
+        vpw.setSizes([520, 150])
+
+        # 缩略图条 (固定在时间轴下方, 高度最小)
         self.thumb_strip = ThumbnailStrip(self)
         self.thumb_strip.frameRangeChanged.connect(self._on_thumb_range_changed)
         inner.layout().addWidget(self.thumb_strip)
+
+    def _build_layer_cards_tab(self):
+        """图层编辑 Tab: 8 个图层的紧凑参数卡片 (放在右侧参数面板)"""
+        inner = self._build_scroll_tab("图层编辑")
+        self._card_inner = inner
+        self._build_layer_cards()
 
     def _build_layer_cards(self):
         """构建 8 个图层的紧凑卡片"""
@@ -2083,8 +2112,8 @@ class ActEditorV2(QMainWindow):
         vars_row['_detail'] = detail
 
         # 展开/折叠按钮
-        toggle_btn = QPushButton("▼ 展开详情")
-        toggle_btn.setFixedWidth(90)
+        toggle_btn = QPushButton("🔽 展开详情")
+        toggle_btn.setFixedWidth(100)
         toggle_btn.clicked.connect(lambda checked, li=layer_idx: self._toggle_card_detail(li))
         cl.addWidget(toggle_btn)
         vars_row['_toggle_btn'] = toggle_btn
@@ -2098,11 +2127,11 @@ class ActEditorV2(QMainWindow):
         btn = vr.get('_toggle_btn')
         if vr.get('_detail_expanded', False):
             detail.setVisible(False)
-            btn.setText("▼ 展开详情")
+            btn.setText("🔽 展开详情")
             vr['_detail_expanded'] = False
         else:
             detail.setVisible(True)
-            btn.setText("▲ 收起详情")
+            btn.setText("🔼 收起详情")
             vr['_detail_expanded'] = True
 
     # ── Tab 3: 条目级参数 ──
@@ -2184,8 +2213,9 @@ class ActEditorV2(QMainWindow):
             grid.addWidget(le_tick, r, 2)
             self._tail_vars.append(le_tick)
 
-            btn = QPushButton("▶")
-            btn.setFixedWidth(28)
+            btn = QPushButton("▶️")
+            btn.setFixedWidth(40)
+            btn.setToolTip("试听此 sound_id 对应的音效文件")
             btn.clicked.connect(lambda checked, idx=pair: self._on_tail_preview(idx))
             grid.addWidget(btn, r, 3)
 
@@ -2913,6 +2943,7 @@ class ActEditorV2(QMainWindow):
 
     def _set_edit_enabled(self, en):
         self.tabs.setEnabled(en)
+        self._center_widget.setEnabled(en)
 
     def _on_greenscreen_toggle(self):
         self._greenscreen_remove = self.greenscreen_cb.isChecked()
@@ -3622,7 +3653,7 @@ class ActEditorV2(QMainWindow):
 
     def _tl_update_zoom_lbl(self):
         if getattr(self, '_tl_zoom_lbl', None) is not None:
-            self._tl_zoom_lbl.setText(f"{self.timeline_widget.zoom()}px/t")
+            self._tl_zoom_lbl.setText(f"×{self.timeline_widget.zoom()}")
 
     def _tl_reset_playhead(self):
         self._preview_stop()
@@ -3891,7 +3922,7 @@ class ActEditorV2(QMainWindow):
 
         bl = QHBoxLayout()
         bl.addStretch()
-        bl.addWidget(QPushButton("关闭", clicked=dlg.close))
+        bl.addWidget(QPushButton("✕ 关闭", clicked=dlg.close))
         layout.addLayout(bl)
         dlg.exec()
 
