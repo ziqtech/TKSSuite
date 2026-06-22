@@ -22,7 +22,7 @@ from PySide6.QtCore import Qt, QTranslator
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from editor_utils.theme_manager import ThemeManager
 from editor_utils.dock_components import DockHeader
-from editor_utils.ui_helpers import make_fake_input, update_path_labels
+from editor_utils.ui_helpers import make_fake_input, update_path_labels, confirm_close, export_csv
 from editor_utils.lzss import lzss_decompress_dat, lzss_compress_dat
 from editor_utils.tkt_loader import load_tkt_simple
 
@@ -581,11 +581,10 @@ class KonEditor(QMainWindow):
         self._edit_dock_body.setEnabled(en)
 
     def closeEvent(self, event):
-        if self._dirty:
-            reply = QMessageBox.question(self, "未保存", "有未保存的修改, 确定退出?",
-                                         QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
-            if reply == QMessageBox.No: event.ignore(); return
-        event.accept()
+        if not confirm_close(self, self._dirty):
+            event.ignore()
+        else:
+            event.accept()
 
     # ----------- 数据加载 -----------
 
@@ -972,18 +971,17 @@ class KonEditor(QMainWindow):
 
     def _export_csv(self):
         if not self.records: return
-        p, _ = QFileDialog.getSaveFileName(self, "导出 CSV", "", "CSV 文件 (*.csv)")
-        if not p: return
-        with open(p, 'w', encoding='utf-8-sig') as f:
-            hdr = ['记录索引', '动画ID', '名称'] + [fn for fn, _, _, _ in KON_FIELDS]
-            f.write(','.join(hdr) + '\n')
-            for rec in self.records:
-                if all(rec[fn] == 0 for fn, _, _, _ in KON_FIELDS): continue
-                row = [str(rec['index']), str(rec.get('tkact_id', '')),
-                       kon_record_name(rec, self.tkt, self.names)]
-                row += [str(rec[fn]) for fn, _, _, _ in KON_FIELDS]
-                f.write(','.join(row) + '\n')
-        self.status_label.setText(f"已导出: {p}")
+        filtered = [r for r in self.records
+                    if not all(r[fn] == 0 for fn, _, _, _ in KON_FIELDS)]
+        hdr = ['记录索引', '动画ID', '名称'] + [fn for fn, _, _, _ in KON_FIELDS]
+
+        def row_func(rec):
+            return [str(rec['index']), str(rec.get('tkact_id', '')),
+                    kon_record_name(rec, self.tkt, self.names)] + \
+                   [str(rec[fn]) for fn, _, _, _ in KON_FIELDS]
+
+        if export_csv(self, filtered, hdr, row_func, "TKKon.csv"):
+            self.status_label.setText("已导出 CSV")
 
     # ----------- 帮助 -----------
 

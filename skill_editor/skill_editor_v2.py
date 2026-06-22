@@ -133,9 +133,9 @@ def save_skills(fp, recs):
 import sys as _sys
 _sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from editor_utils.theme_manager import ThemeManager
-from editor_utils.dock_components import DockHeader
+from editor_utils.dock_components import DockHeader, create_dock
 from editor_utils.picker_dialogs import TktPickerDialog
-from editor_utils.ui_helpers import update_path_labels
+from editor_utils.ui_helpers import update_path_labels, confirm_close, export_csv
 
 # ============================================================
 # 弹窗选择器 (技能)
@@ -254,17 +254,8 @@ class SkillEditorApp(QMainWindow):
         self._apply_theme()
 
     def _create_dock(self, title, widget_content, header_layout=None):
-        container = QWidget()
-        layout = QVBoxLayout(container)
-        layout.setContentsMargins(0, 0, 0, 0); layout.setSpacing(0)
-        layout.addWidget(DockHeader(title, header_layout))
-        body = QWidget()
-        body.setObjectName("DockBody")
-        body_layout = QVBoxLayout(body)
-        body_layout.setContentsMargins(8, 8, 8, 8)
-        body_layout.addWidget(widget_content)
-        layout.addWidget(body, 1)
-        return container
+        """Dock 面板包裹 — 委托给 editor_utils.dock_components"""
+        return create_dock(title, widget_content, header_layout)
 
     def _build_ui(self):
         central_widget = QWidget()
@@ -879,28 +870,23 @@ class SkillEditorApp(QMainWindow):
 
     def _export_csv(self):
         if not self.records: return
-        p, _ = QFileDialog.getSaveFileName(self, "导出CSV", "", "CSV (*.csv)")
-        if not p: return
-        with open(p, 'w', encoding='utf-8-sig', newline='') as f:
-            writer = csv.writer(f)
-            hdr = ['索引', '名称', '类型'] + [fl for _, _, fl, _, _ in ALL_FIELDS]
-            writer.writerow(hdr)
-            for rec in self.records:
-                if rec['skill_text_id'] == 0: continue
-                row = [rec['index'], skill_name(rec, self.tkt), SKILL_TYPES.get(rec['type'], str(rec['type']))]
-                row += [rec[fn] for fn, _, _, _, _ in ALL_FIELDS]
-                writer.writerow(row)
-        self.status_var.setText(f"已导出: {p}")
+        filtered = [r for r in self.records if r['skill_text_id'] != 0]
+        hdr = ['索引', '名称', '类型'] + [fl for _, _, fl, _, _ in ALL_FIELDS]
+        def row_func(rec):
+            return [rec['index'], skill_name(rec, self.tkt),
+                    SKILL_TYPES.get(rec['type'], str(rec['type']))] + \
+                   [rec[fn] for fn, _, _, _, _ in ALL_FIELDS]
+        if export_csv(self, filtered, hdr, row_func, "TKSkill.csv"):
+            self.status_var.setText("已导出 CSV")
 
     def _show_about(self):
         QMessageBox.about(self, "关于", "TKSkill.dat PySide6 编辑器\n已应用 Godot 4.6 级别布局与纯净控件约束。")
 
     def closeEvent(self, event):
-        if self._dirty:
-            reply = QMessageBox.question(self, "未保存", "有未保存的修改, 确定退出?")
-            if reply == QMessageBox.No:
-                event.ignore(); return
-        event.accept()
+        if not confirm_close(self, self._dirty):
+            event.ignore()
+        else:
+            event.accept()
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)

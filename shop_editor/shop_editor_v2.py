@@ -44,8 +44,9 @@ from PySide6.QtCore import Qt, QTranslator
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from editor_utils.theme_manager import ThemeManager
-from editor_utils.dock_components import DockHeader
+from editor_utils.dock_components import DockHeader, create_dock
 from editor_utils.lzss import lzss_decompress_dat, lzss_compress_dat
+from editor_utils.ui_helpers import export_csv
 
 # ── 本地别名: 保持向后兼容 ──
 def lzss_decompress(data): return lzss_decompress_dat(data)
@@ -392,19 +393,8 @@ class ShopEditorWindow(QMainWindow):
     # ================================================================
 
     def _create_dock(self, title, widget_content):
-        """Dock 面板包裹 — 与 tkt_editor_v5 完全一致"""
-        container = QWidget()
-        layout = QVBoxLayout(container)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
-        layout.addWidget(DockHeader(title))
-        body = QWidget()
-        body.setObjectName("DockBody")
-        body_layout = QVBoxLayout(body)
-        body_layout.setContentsMargins(8, 8, 8, 8)
-        body_layout.addWidget(widget_content)
-        layout.addWidget(body, 1)
-        return container
+        """Dock 面板包裹 — 委托给 editor_utils.dock_components"""
+        return create_dock(title, widget_content)
 
     def _build_ui(self):
         # ---- 菜单栏 ----
@@ -1031,19 +1021,15 @@ class ShopEditorWindow(QMainWindow):
             QMessageBox.critical(self, "保存失败", str(e))
 
     def _export_csv(self):
-        if not self.records:
-            return
-        path, _ = QFileDialog.getSaveFileName(self, "导出 CSV", "", "CSV files (*.csv)")
-        if not path:
-            return
-        with open(path, 'w', encoding='utf-8-sig') as f:
-            f.write("索引,区域ID,区域名称,物品索引,物品名称,出现条件(原始),出现条件(文本)\n")
-            for rec in self.records:
-                iname = self.item_names.get(rec['item_ref'], f"Item#{rec['item_ref']}")
-                f.write(f"{rec['index']},{rec['area_id']},{area_label(rec['area_id'])},"
-                        f"{rec['item_ref']},{iname},{rec['condition']},{self._cond_str(rec['condition'])}\n")
-        self.lbl_status.setText(f"已导出 CSV: {path}")
-        QMessageBox.information(self, "导出成功", f"已导出 {len(self.records)} 条")
+        if not self.records: return
+        hdr = ["索引","区域ID","区域名称","物品索引","物品名称","出现条件(原始)","出现条件(文本)"]
+        def row_func(rec):
+            iname = self.item_names.get(rec['item_ref'], f"Item#{rec['item_ref']}")
+            return [str(rec['index']), str(rec['area_id']), area_label(rec['area_id']),
+                    str(rec['item_ref']), iname, str(rec['condition']),
+                    self._cond_str(rec['condition'])]
+        if export_csv(self, self.records, hdr, row_func, "TKShop.csv"):
+            self.lbl_status.setText("已导出 CSV")
 
     def _show_help(self):
         QMessageBox.information(self, "使用说明",

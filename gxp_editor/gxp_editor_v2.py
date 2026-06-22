@@ -28,7 +28,7 @@ except ImportError:
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from editor_utils.theme_manager import ThemeManager
-from editor_utils.dock_components import DockHeader
+from editor_utils.dock_components import DockHeader, create_dock
 from editor_utils.lzss import (lzss_decompress_stream as _lzss_decompress_stream,
                                 lzss_compress_stream as _lzss_compress_stream)
 from editor_utils.rgb565 import rgb565_to_rgba, rgba_to_rgb565
@@ -199,19 +199,8 @@ class GXPEditor(QMainWindow):
         else: self._new_empty()
 
     def _create_dock(self, title, widget_content, header_layout=None):
-        container = QWidget()
-        layout = QVBoxLayout(container)
-        layout.setContentsMargins(0, 0, 0, 0); layout.setSpacing(0)
-        layout.addWidget(DockHeader(title, header_layout))
-        
-        body = QWidget()
-        body.setObjectName("DockBody")
-        body_layout = QVBoxLayout(body)
-        body_layout.setContentsMargins(8, 8, 8, 8)
-        body_layout.addWidget(widget_content)
-        
-        layout.addWidget(body, 1)
-        return container
+        """Dock 面板包裹 — 委托给 editor_utils.dock_components"""
+        return create_dock(title, widget_content, header_layout)
 
     def _apply_theme(self):
         stylesheet = self.theme_manager.get_stylesheet()

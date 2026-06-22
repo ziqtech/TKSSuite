@@ -48,7 +48,7 @@ except ImportError:
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from editor_utils.theme_manager import ThemeManager
-from editor_utils.dock_components import DockHeader
+from editor_utils.dock_components import DockHeader, create_dock
 
 # ── 像素格式定义 ──────────────────────────────────────────────
 PIXEL_FORMATS: dict[str, str] = {
@@ -2375,21 +2375,8 @@ class SpriteSheetEditorWindow(QMainWindow):
         self.canvas.redraw()
 
     def _create_dock(self, title, widget_content, header_layout=None):
-        """创建 Godot 风格 Dock 面板: DockHeader + DockBody 包裹"""
-        container = QWidget()
-        layout = QVBoxLayout(container)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
-        layout.addWidget(DockHeader(title, header_layout))
-
-        body = QWidget()
-        body.setObjectName("DockBody")
-        body_layout = QVBoxLayout(body)
-        body_layout.setContentsMargins(8, 8, 8, 8)
-        body_layout.addWidget(widget_content)
-
-        layout.addWidget(body, 1)
-        return container
+        """Dock 面板包裹 — 委托给 editor_utils.dock_components"""
+        return create_dock(title, widget_content, header_layout)
 
     def _v_sep(self):
         sep = QFrame()

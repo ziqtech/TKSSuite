@@ -40,7 +40,7 @@ except ImportError:
 # ----------------- editor_utils Imports -----------------
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from editor_utils.theme_manager import ThemeManager
-from editor_utils.dock_components import DockHeader
+from editor_utils.dock_components import DockHeader, create_dock
 from editor_utils.ui_helpers import update_path_labels
 from editor_utils.tkt_loader import load_tkt_full as _load_tkt_full
 
@@ -775,20 +775,8 @@ class TktEditor(QMainWindow):
             self._load_file(initial_path)
 
     def _create_dock(self, title, widget_content, header_layout=None):
-        """恢复原版的 DockBody 包裹模式以完美显示引擎边框"""
-        container = QWidget()
-        layout = QVBoxLayout(container)
-        layout.setContentsMargins(0, 0, 0, 0); layout.setSpacing(0)
-        layout.addWidget(DockHeader(title, header_layout))
-        
-        body = QWidget()
-        body.setObjectName("DockBody")
-        body_layout = QVBoxLayout(body)
-        body_layout.setContentsMargins(8, 8, 8, 8)
-        body_layout.addWidget(widget_content)
-        
-        layout.addWidget(body, 1)
-        return container
+        """Dock 面板包裹 — 委托给 editor_utils.dock_components"""
+        return create_dock(title, widget_content, header_layout)
 
     def _build_ui(self):
         central_widget = QWidget()

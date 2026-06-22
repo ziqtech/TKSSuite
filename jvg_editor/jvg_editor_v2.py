@@ -31,7 +31,7 @@ except ImportError:
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from editor_utils.theme_manager import ThemeManager
-from editor_utils.dock_components import DockHeader
+from editor_utils.dock_components import DockHeader, create_dock
 
 JVG_MAGIC = b"@JVG"; JVM_MAGIC = b"@JVM"
 SCREEN_W = 640; HEADER_SIZE = 32
@@ -540,21 +540,8 @@ class JVGEditor(QMainWindow):
             self._new()
 
     def _create_dock(self, title, widget_content, header_layout=None):
-        """创建统一的 dock 面板"""
-        container = QWidget()
-        layout = QVBoxLayout(container)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
-        layout.addWidget(DockHeader(title, header_layout))
-        
-        body = QWidget()
-        body.setObjectName("DockBody")
-        body_layout = QVBoxLayout(body)
-        body_layout.setContentsMargins(6, 6, 6, 6)
-        body_layout.addWidget(widget_content)
-        
-        layout.addWidget(body, 1)
-        return container
+        """创建统一的 dock 面板 — 委托给 editor_utils.dock_components"""
+        return create_dock(title, widget_content, header_layout)
 
     def _apply_theme(self):
         stylesheet = self.theme_manager.get_stylesheet()

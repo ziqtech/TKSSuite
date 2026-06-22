@@ -45,8 +45,9 @@ from PySide6.QtCore import Qt, QTimer, QRect, QPoint, QSize, QThread, Signal, QT
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from editor_utils.theme_manager import ThemeManager
-from editor_utils.dock_components import DockHeader
+from editor_utils.dock_components import DockHeader, create_dock
 from editor_utils.lzss import lzss_decompress_dat as lzss_decompress
+from editor_utils.ui_helpers import export_csv
 
 # ============================================================
 # 常量
@@ -2099,18 +2100,8 @@ class MatEditorApp(QMainWindow):
         self.setStatusBar(sb)
 
     def _create_dock(self, title, widget_content, header_layout=None):
-        container = QWidget()
-        layout = QVBoxLayout(container)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
-        layout.addWidget(DockHeader(title, header_layout))
-        body = QWidget()
-        body.setObjectName("DockBody")
-        body_layout = QVBoxLayout(body)
-        body_layout.setContentsMargins(8, 8, 8, 8)
-        body_layout.addWidget(widget_content)
-        layout.addWidget(body, 1)
-        return container
+        """Dock 面板包裹 — 委托给 editor_utils.dock_components"""
+        return create_dock(title, widget_content, header_layout)
 
     # =========== 左侧面板: 场景列表 + 实体列表 ===========
     def _build_left_panel(self):
@@ -5024,19 +5015,13 @@ class MatEditorApp(QMainWindow):
         QMessageBox.information(self, "统计信息", msg)
 
     def _export_csv(self):
-        fp, _ = QFileDialog.getSaveFileName(self, "导出 CSV", "", "CSV 文件 (*.csv)")
-        if not fp:
-            return
-        with open(fp, 'w', encoding='utf-8-sig') as f:
-            hd = ['index'] + [f'd{i}' for i in range(DWORD_COUNT)] + ['type_name', 'scene_name']
-            f.write(','.join(hd) + '\n')
-            for rec in self.records:
-                if not has_data(rec):
-                    continue
-                row = [str(rec['index'])] + [str(rec[f'd{di}']) for di in range(DWORD_COUNT)]
-                row += [ENTITY_TYPES.get(rec['d0'], ''), scene_name(self.tkt_scenes, rec['d1'])]
-                f.write(','.join(row) + '\n')
-        QMessageBox.information(self, "导出完成", f"已导出到 {fp}")
+        if not self.records: return
+        filtered = [r for r in self.records if has_data(r)]
+        hdr = ['index'] + [f'd{i}' for i in range(DWORD_COUNT)] + ['type_name', 'scene_name']
+        def row_func(rec):
+            return [str(rec['index'])] + [str(rec[f'd{di}']) for di in range(DWORD_COUNT)] + \
+                   [ENTITY_TYPES.get(rec['d0'], ''), scene_name(self.tkt_scenes, rec['d1'])]
+        export_csv(self, filtered, hdr, row_func, "TKMat.csv")
 
     def _show_field_ref(self):
         msg = ("TKMat.Dat 实体表字段说明\n" + '─' * 50 + "\n\n加载: sub_412688:21\n结构: 6000条×384B(96×int32)\n\n已证实字段:\n"

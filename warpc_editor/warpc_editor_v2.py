@@ -64,7 +64,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from editor_utils.theme_manager import ThemeManager
 from editor_utils.dock_components import DockHeader
 from editor_utils.picker_dialogs import TktPickerDialog
-from editor_utils.ui_helpers import make_fake_input, update_path_labels
+from editor_utils.ui_helpers import make_fake_input, update_path_labels, confirm_close, export_csv
 from editor_utils.lzss import lzss_decompress_dat, lzss_compress_dat
 from editor_utils.tkt_loader import load_tkt_simple
 
@@ -1651,22 +1651,20 @@ class WarpcEditorV2(QMainWindow):
 
     def _export_csv(self):
         if not self.records: return
-        p, _ = QFileDialog.getSaveFileName(self, "导出 CSV", "", "CSV (*.csv)")
-        if not p: return
-        with open(p, 'w', encoding='utf-8-sig', newline='') as f:
-            writer = csv.writer(f)
-            hdr = ['索引','名称','等级','身份','类型','HP当前','HP上限','MP当前','MP上限']
-            for name in STAT_NAMES_CN: hdr += [f'{name}(基础)', f'{name}(当前)']
-            hdr += [f'field[{i}]' for i in range(27, WARPC_FIELD_COUNT)]
-            writer.writerow(hdr)
-            for rec in self.records:
-                fl = rec['fields']
-                row = [str(rec['index']), self._char_name(rec), str(fl[2]), str(fl[3]), str(fl[4]),
-                       str(fl[5]), str(fl[8]), str(fl[6]), str(fl[10])]
-                for bo in STAT_BASE_OFFSETS: row += [str(fl[bo//2]), str(fl[bo//2+1])]
-                row += [str(fl[i]) for i in range(27, WARPC_FIELD_COUNT)]
-                writer.writerow(row)
-        self.status_var.setText(f"已导出: {p}")
+        hdr = ['索引','名称','等级','身份','类型','HP当前','HP上限','MP当前','MP上限']
+        for name in STAT_NAMES_CN: hdr += [f'{name}(基础)', f'{name}(当前)']
+        hdr += [f'field[{i}]' for i in range(27, WARPC_FIELD_COUNT)]
+
+        def row_func(rec):
+            fl = rec['fields']
+            row = [str(rec['index']), self._char_name(rec), str(fl[2]), str(fl[3]), str(fl[4]),
+                   str(fl[5]), str(fl[8]), str(fl[6]), str(fl[10])]
+            for bo in STAT_BASE_OFFSETS: row += [str(fl[bo//2]), str(fl[bo//2+1])]
+            row += [str(fl[i]) for i in range(27, WARPC_FIELD_COUNT)]
+            return row
+
+        if export_csv(self, self.records, hdr, row_func, "WarPC.csv"):
+            self.status_var.setText("已导出 CSV")
 
     # ── 帮助 ──
     def _show_field_ref(self):
@@ -1695,10 +1693,10 @@ class WarpcEditorV2(QMainWindow):
             f"  Tab 5: 全部字段 (raw grid)")
 
     def closeEvent(self, event):
-        if self._dirty:
-            reply = QMessageBox.question(self, "未保存", "有未保存的修改, 确定退出?")
-            if reply == QMessageBox.No: event.ignore(); return
-        event.accept()
+        if not confirm_close(self, self._dirty):
+            event.ignore()
+        else:
+            event.accept()
 
 # ═══════════════════════════════════════════════════════════════
 # 入口

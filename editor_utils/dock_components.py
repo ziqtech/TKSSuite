@@ -32,5 +32,5 @@ def create_dock(title, widget_content, header_layout=None):
     body_layout = QVBoxLayout(body)
     body_layout.setContentsMargins(8, 8, 8, 8)
     body_layout.addWidget(widget_content)
-    layout.addWidget(body)
+    layout.addWidget(body, 1)
     return container
