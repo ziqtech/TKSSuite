@@ -16,7 +16,7 @@ from PySide6.QtWidgets import (
     QLabel, QPushButton, QFileDialog, QMessageBox, QFrame,
     QSplitter, QGraphicsView, QGraphicsScene, QGraphicsPixmapItem
 )
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTranslator
 from PySide6.QtGui import QPixmap, QImage, QColor, QIcon, QPainter, QWheelEvent, QKeySequence
 
 HAS_PIL = False
@@ -646,6 +646,9 @@ class GXPEditor(QMainWindow):
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
+    _t = QTranslator()
+    _t.load("qtbase_zh_CN", os.path.join(os.path.dirname(__file__), '..', 'editor_utils'))
+    app.installTranslator(_t)
     fp = sys.argv[1] if len(sys.argv) > 1 else None
     editor = GXPEditor(fp)
     editor.show()

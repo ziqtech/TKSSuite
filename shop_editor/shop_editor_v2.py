@@ -41,7 +41,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtGui import (
     QColor, QFont, QAction, QKeySequence, QShortcut, QIcon, QPalette
 )
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTranslator
 
 
 # ============================================================
@@ -1322,6 +1322,9 @@ def main():
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
     app.setApplicationName("TKShop Editor")
+    _t = QTranslator()
+    _t.load("qtbase_zh_CN", os.path.join(os.path.dirname(__file__), '..', 'editor_utils'))
+    app.installTranslator(_t)
 
     # 根据系统主题设置初始主题
     is_dark = app.styleHints().colorScheme() == Qt.ColorScheme.Dark

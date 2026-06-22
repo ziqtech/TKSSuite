@@ -17,7 +17,7 @@ from PySide6.QtWidgets import (
     QFrame, QGridLayout, QAbstractItemView, QMenuBar,
 )
 from PySide6.QtGui import QIntValidator, QColor, QFont, QIcon, QShortcut, QPalette
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTranslator
 
 # ============================================================
 # 深浅色主题管理器 (对齐 shop_editor_v2 / spritesheet_editor_v2)
@@ -1172,6 +1172,9 @@ def main():
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
     app.setApplicationName("TKKon Editor")
+    _t = QTranslator()
+    _t.load("qtbase_zh_CN", os.path.join(os.path.dirname(__file__), '..', 'editor_utils'))
+    app.installTranslator(_t)
 
     # 根据系统主题设置初始主题
     is_dark = app.styleHints().colorScheme() == Qt.ColorScheme.Dark

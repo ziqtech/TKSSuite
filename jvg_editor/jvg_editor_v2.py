@@ -19,7 +19,7 @@ from PySide6.QtWidgets import (
     QDialogButtonBox, QFormLayout, QLineEdit, QTextEdit,
     QGraphicsView, QGraphicsScene, QGraphicsPixmapItem, QGraphicsTextItem, QGraphicsRectItem
 )
-from PySide6.QtCore import Qt, QTimer, QSize, Signal
+from PySide6.QtCore import Qt, QTimer, QSize, Signal, QTranslator
 from PySide6.QtGui import QPixmap, QImage, QColor, QPalette, QIcon, QAction, QPainter, QFont, QMouseEvent, QPen, QBrush
 
 HAS_PIL = False
@@ -1589,12 +1589,14 @@ class JVGEditor(QMainWindow):
 def main():
     app = QApplication(sys.argv)
     app.setStyle("Fusion")  # 使用 Fusion 样式，避免 Windows 原生样式覆盖 QSS
-    
+    _t = QTranslator()
+    _t.load("qtbase_zh_CN", os.path.join(os.path.dirname(__file__), '..', 'editor_utils'))
+    app.installTranslator(_t)
     # 设置应用程序图标
     ico_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'TKS.ico')
     if os.path.exists(ico_path):
         app.setWindowIcon(QIcon(ico_path))
-    
+
     fp = sys.argv[1] if len(sys.argv) > 1 else None
     editor = JVGEditor(fp)
     editor.show()

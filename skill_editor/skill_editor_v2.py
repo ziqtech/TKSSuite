@@ -16,7 +16,7 @@ from PySide6.QtWidgets import (
     QDialog, QGridLayout, QFrame, QScrollArea
 )
 from PySide6.QtGui import QAction, QKeySequence, QColor, QFont, QIcon
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTranslator
 
 # ============================================================
 # LZSS 编解码 & 业务数据常数 (100% 原始逻辑)
@@ -1055,6 +1055,9 @@ class SkillEditorApp(QMainWindow):
 if __name__ == '__main__':
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
+    _t = QTranslator()
+    _t.load("qtbase_zh_CN", os.path.join(os.path.dirname(__file__), '..', 'editor_utils'))
+    app.installTranslator(_t)
     editor = SkillEditorApp()
     editor.show()
     sys.exit(app.exec())

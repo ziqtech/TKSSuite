@@ -28,7 +28,7 @@ from PySide6.QtWidgets import (
     QDialog, QSpinBox, QGridLayout, QSizePolicy, QGraphicsTextItem,
     QScrollArea
 )
-from PySide6.QtCore import Qt, QTimer, QPointF, QRectF, Signal
+from PySide6.QtCore import Qt, QTimer, QPointF, QRectF, Signal, QTranslator
 from PySide6.QtGui import (
     QPixmap, QImage, QColor, QIcon, QPainter, QWheelEvent, QPen,
     QBrush, QKeySequence, QAction, QFont
@@ -1572,6 +1572,9 @@ class GRPEditor(QMainWindow):
 def main():
     app = QApplication(sys.argv)
     app.setStyle("Fusion")  # 使用 Fusion 样式，避免 Windows 原生样式覆盖 QSS
+    _t = QTranslator()
+    _t.load("qtbase_zh_CN", os.path.join(os.path.dirname(__file__), '..', 'editor_utils'))
+    app.installTranslator(_t)
     fp = sys.argv[1] if len(sys.argv) > 1 else None
     editor = GRPEditor(fp)
     editor.show()

@@ -79,7 +79,7 @@ from PySide6.QtGui import (
     QColor, QFont, QIcon, QIntValidator, QBrush, QPen, QPolygonF,
     QPainter, QPixmap, QImage, QAction, QKeySequence,
 )
-from PySide6.QtCore import Qt, QPointF, QRectF
+from PySide6.QtCore import Qt, QPointF, QRectF, QTranslator
 
 HAS_PIL = False
 try:
@@ -2052,6 +2052,9 @@ class SceneGraphicsView(QGraphicsView):
 if __name__ == '__main__':
     app = QApplication(sys.argv)
     app.setStyle('Fusion')
+    _t = QTranslator()
+    _t.load("qtbase_zh_CN", os.path.join(os.path.dirname(__file__), '..', 'editor_utils'))
+    app.installTranslator(_t)
     editor = WarDataEditorV2()
     editor.show()
     sys.exit(app.exec())

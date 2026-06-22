@@ -59,7 +59,7 @@ from PySide6.QtWidgets import (
     QFrame, QGridLayout, QAbstractItemView, QMenuBar, QTabWidget,
 )
 from PySide6.QtGui import QColor, QFont, QIcon, QIntValidator
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTranslator
 
 # ═══════════════════════════════════════════════════════════════
 # LZSS 编解码 (100% 原始逻辑)
@@ -1837,6 +1837,9 @@ class WarpcEditorV2(QMainWindow):
 def main():
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
+    _t = QTranslator()
+    _t.load("qtbase_zh_CN", os.path.join(os.path.dirname(__file__), '..', 'editor_utils'))
+    app.installTranslator(_t)
     app.setApplicationName("WarPC Editor")
     editor = WarpcEditorV2(); editor.show()
     sys.exit(app.exec())

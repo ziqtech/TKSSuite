@@ -36,7 +36,7 @@ from PySide6.QtGui import (
 )
 from PySide6.QtCore import (
     Qt, QObject, Signal, QTimer, QSize, QRect, QPoint, QRectF, QPointF,
-    QMimeData, QEvent,
+    QMimeData, QEvent, QTranslator,
 )
 
 HAS_PIL = False
@@ -2956,7 +2956,9 @@ def main():
 
     app = QApplication(sys.argv)
     app.setApplicationName("Spritesheet Editor")
-
+    _t = QTranslator()
+    _t.load("qtbase_zh_CN", os.path.join(os.path.dirname(__file__), '..', 'editor_utils'))
+    app.installTranslator(_t)
     # 设置应用默认字体 (避免 QFont setPointSize(-1) 警告, QSS 会覆盖实际显示)
     font = QFont()
     font.setPixelSize(13)

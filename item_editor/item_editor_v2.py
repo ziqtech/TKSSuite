@@ -45,7 +45,7 @@ from PySide6.QtWidgets import (
     QSizePolicy, QMenu, QMenuBar, QStyledItemDelegate, QStyle, QLayout
 )
 from PySide6.QtGui import QAction, QKeySequence, QIcon, QImage, QPixmap, QPainter
-from PySide6.QtCore import Qt, QRect, QPoint, QSize
+from PySide6.QtCore import Qt, QRect, QPoint, QSize, QTranslator
 
 # ============================================================
 # LZSS 编解码 (sub_452B14)
@@ -1640,6 +1640,9 @@ class ItemEditorApp(QMainWindow):
 if __name__ == '__main__':
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
+    _t = QTranslator()
+    _t.load("qtbase_zh_CN", os.path.join(os.path.dirname(__file__), '..', 'editor_utils'))
+    app.installTranslator(_t)
     editor = ItemEditorApp()
     editor.show()
     sys.exit(app.exec())
