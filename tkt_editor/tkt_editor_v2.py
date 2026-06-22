@@ -1,27 +1,17 @@
 #!/usr/bin/env python3
 """
-TKT.dat 文本数据库编辑器 v1.0 (PySide6 工业级完整版)
+TKT.dat 文本数据库编辑器 v5.0 (PySide6 最终完美融合版)
 =============================
-加载/编辑/保存/新增 TKT.dat 文本数据库条目。
-
-逆向依据:
-  sub_401E88 (0x401e88): TKT.dat 加载/构建主函数
-    - LOAD 模式 (lines 373-401): fread header(8B), malloc, fread data, XOR 0xFF 解密
-    - BUILD 模式 (lines 85-371): 两遍扫描 TKTalk.txt, 编译标签, XOR 加密, 写 TKT.dat
-    - 行 320: `*(_BYTE *)(dword_8242F8 + v31++) = 30;` → 0x1E 行分隔符 (仅第2行起)
-    - 行 336: `*(_BYTE *)(dword_8242F8 + v31++) = 0;`  → 0x00 条目终止符
-    - 行 343-348 / 397-401: XOR 加密/解密 `*v24 = ~*v24`
-  sub_4067E8 (0x4067e8): 通过 ID 线性扫描查询文本
-  sub_4019D0 (0x4019d0): `<TAG,n>` 控制标记编码器
-    - v6=1 仅 TEXT 分支 (行 120): 写入 2 字节 (lo+hi)
-    - 其余标签 v6=0: 写入 1 字节
-  tkt_decoder.py: 权威解码器实现 (逆向工作区/)
+融合了 V2 原版极高精度的文字测算渲染、Godot QSS/滚动条样式、文件图标加载逻辑，
+并加入了 V4 的安全空槽边界扫描、联合渲染视口与智能分仓功能。
 """
 
 import os
 import re
 import struct
 import sys
+import json
+import argparse
 from collections import OrderedDict
 
 # ----------------- PySide6 Imports -----------------
@@ -31,17 +21,14 @@ from PySide6.QtWidgets import (
     QAbstractItemView, QHeaderView, QLabel, QLineEdit, QPushButton,
     QCheckBox, QPlainTextEdit, QTextEdit, QComboBox,
     QMessageBox, QFileDialog, QColorDialog, QDialog, QGridLayout,
-    QFrame, QStackedWidget, QScrollArea
+    QFrame, QStackedWidget, QScrollArea, QTabWidget, QListWidget,
+    QInputDialog
 )
 from PySide6.QtGui import (
     QAction, QKeySequence, QColor, QFont, QPixmap, QImage, QIcon,
     QTextCursor, QTextDocument
 )
-from PySide6.QtCore import Qt, QTimer, QUrl, QSize
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-from editor_utils.theme_manager import ThemeManager
-from editor_utils.dock_components import DockHeader
+from PySide6.QtCore import Qt, QTimer, QUrl, QSize, QTranslator
 
 HAS_PIL = False
 try:
@@ -50,19 +37,24 @@ try:
 except ImportError:
     pass
 
-# ============================================================
-# 常量 (全部来自反编译)
-# ============================================================
-XOR_KEY = 0xFF                       # sub_401E88: `*p = ~*p` 即 XOR 0xFF
-HDR_SIZE = 8                         # 未加密头部: total_size(4) + record_count(4)
-ENTRY_TERMINATOR = 0x00              # sub_401E88 行 336
-LINE_SEPARATOR = 0x1E                # sub_401E88 行 320 (十进制 30)
+# ----------------- editor_utils Imports -----------------
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+from editor_utils.theme_manager import ThemeManager
+from editor_utils.dock_components import DockHeader
+from editor_utils.ui_helpers import update_path_labels
+from editor_utils.tkt_loader import load_tkt_full as _load_tkt_full
 
-# 控制字节映射 (sub_4019D0): code -> (name, data_bytes, min_val, max_val)
+# ============================================================
+# 常量 (来自反编译)
+# ============================================================
+XOR_KEY = 0xFF                       
+HDR_SIZE = 8                         
+ENTRY_TERMINATOR = 0x00              
+LINE_SEPARATOR = 0x1E                
+
 CONTROL_TAGS = {
     0x01: ("FRESET",  1, 1, 4),
     0x02: ("FCOLOR",  1, 1, 32),
-    0x03: ("FCOLORD", 3, 0, 255),
     0x04: ("FSIZE",   1, 12, 48),
     0x05: ("FTYPE",   1, 1, 8),
     0x14: ("TEXT",    2, 1, 32767),
@@ -74,21 +66,14 @@ CONTROL_TAGS = {
 TAG_NAME_MAP = {v[0]: (code, v[1], v[2], v[3]) for code, v in CONTROL_TAGS.items()}
 TAG_PATTERN = re.compile(r'<([A-Z]+),(\d+(?:,\d+)*)>')
 
-# ============================================================
-# 游戏渲染参数 (sub_44E49C 文本绘制调度)
-# ============================================================
-
-# FCOLOR 1-32 调色板 (dword_A2C524[32], RGB565 LE)
 _GAME_PALETTE_565 = [
-    0x0000,  # index 0 (unused)
-    0x0000, 0x8410, 0x8000, 0x8400, 0x0400, 0x0410, 0x0010, 0x8010,
+    0x0000, 0x0000, 0x8410, 0x8000, 0x8400, 0x0400, 0x0410, 0x0010, 0x8010,
     0x8200, 0x8008, 0x4400, 0x0408, 0x4010, 0x0210, 0x0000, 0x0000,
     0xF79B, 0xC618, 0xF800, 0xFFE0, 0x07E0, 0x07FF, 0x001F, 0xF81F,
     0xFC08, 0xFA10, 0x87E8, 0x47F0, 0x821F, 0x441F, 0x31EA, 0xFFFF,
 ]
 
 def _rgb565_to_hex(rgb565):
-    """RGB565 → #RRGGBB (sub_451F08 case 15 色彩转换)"""
     r5 = (rgb565 >> 11) & 0x1F
     g6 = (rgb565 >> 5) & 0x3F
     b5 = rgb565 & 0x1F
@@ -102,65 +87,67 @@ GAME_FONT_SIZES = {12, 16, 24, 32, 48}
 DEFAULT_FONT_SIZE = 16
 
 GAME_FONT_FAMILIES = {
-    1: ('PMingLiU', 'MingLiU', 'SimSun', 'serif'),
-    2: ('MingLiU', 'PMingLiU', 'SimSun', 'serif'),
-    3: ('DFKai-SB', 'KaiTi', 'serif'),
-    4: ('SimSun', 'NSimSun', 'MingLiU', 'serif'),
-    5: ('Microsoft JhengHei', 'Microsoft YaHei', 'SimHei', 'sans-serif'),
-    6: ('SimHei', 'Microsoft YaHei', 'Microsoft JhengHei', 'sans-serif'),
-    7: ('FangSong', 'KaiTi', 'serif'),
-    8: ('KaiTi', 'DFKai-SB', 'serif'),
+    1: ('字体1',),
+    2: ('字体2',),
+    3: ('字体3',),
+    4: ('字体4',),
+    5: ('字体5',),
+    6: ('字体6',),
+    7: ('字体7',),
+    8: ('字体8',),
 }
 
 DEFAULT_FTYPE = 2
 DEFAULT_FCOLOR = 32    
-# PREVIEW_BG 已移除 — 背景色现在由 _apply_theme 根据 self._is_dark 动态计算:
-#   深色模式: '#1a1d24' (工业风深色视口背景) / 浅色模式: '#313c52' (游戏对话框背景色)
 FTYPE_BY_FAMILY_NAME = {v[0]: k - 1 for k, v in GAME_FONT_FAMILIES.items()}
 
-# ASCII → BIG5 重映射表 (word_4EC810)
 WORD_4EC810 = {
-    0x20: 0xA140, 0x21: 0xA149, 0x22: 0xA1AA, 0x23: 0xA1AD,
-    0x24: 0xA243, 0x25: 0xA24D, 0x26: 0xA1AE, 0x27: 0xA1AC,
-    0x28: 0xA15D, 0x29: 0xA15E, 0x2A: 0xA1B8, 0x2B: 0xA1DE,
-    0x2C: 0xA141, 0x2D: 0xA1DF, 0x2E: 0xA145, 0x2F: 0xA241,
-    0x30: 0xA2AF, 0x31: 0xA2B0, 0x32: 0xA2B1, 0x33: 0xA2B2,
-    0x34: 0xA2B3, 0x35: 0xA2B4, 0x36: 0xA2B5, 0x37: 0xA2B6,
-    0x38: 0xA2B7, 0x39: 0xA2B8, 0x3A: 0xA14A, 0x3B: 0xA146,
-    0x3C: 0xA1E0, 0x3D: 0xA1E2, 0x3E: 0xA1E1, 0x3F: 0xA148,
-    0x40: 0xA249, 0x41: 0xA2CF, 0x42: 0xA2D0, 0x43: 0xA2D1,
-    0x44: 0xA2D2, 0x45: 0xA2D3, 0x46: 0xA2D4, 0x47: 0xA2D5,
-    0x48: 0xA2D6, 0x49: 0xA2D7, 0x4A: 0xA2D8, 0x4B: 0xA2D9,
-    0x4C: 0xA2DA, 0x4D: 0xA2DB, 0x4E: 0xA2DC, 0x4F: 0xA2DD,
-    0x50: 0xA2DE, 0x51: 0xA2DF, 0x52: 0xA2E0, 0x53: 0xA2E1,
-    0x54: 0xA2E2, 0x55: 0xA2E3, 0x56: 0xA2E4, 0x57: 0xA2E5,
-    0x58: 0xA2E6, 0x59: 0xA2E7, 0x5A: 0xA2E8, 0x5B: 0xA165,
-    0x5C: 0xA242, 0x5D: 0xA166, 0x5E: 0xA173, 0x5F: 0xA1C5,
-    0x60: 0xA1AB, 0x61: 0xA2E9, 0x62: 0xA2EA, 0x63: 0xA2EB,
-    0x64: 0xA2EC, 0x65: 0xA2ED, 0x66: 0xA2EE, 0x67: 0xA2EF,
-    0x68: 0xA2F0, 0x69: 0xA2F1, 0x6A: 0xA2F2, 0x6B: 0xA2F3,
-    0x6C: 0xA2F4, 0x6D: 0xA2F5, 0x6E: 0xA2F6, 0x6F: 0xA2F7,
-    0x70: 0xA2F8, 0x71: 0xA2F9, 0x72: 0xA2FA, 0x73: 0xA2FB,
-    0x74: 0xA2FC, 0x75: 0xA2FD, 0x76: 0xA2FE, 0x77: 0xA340,
-    0x78: 0xA341, 0x79: 0xA342, 0x7A: 0xA343, 0x7B: 0xA161,
-    0x7C: 0xA155, 0x7D: 0xA162, 0x7E: 0xA1E3, 0x7F: 0xA1BD,
+    0x20: 0xA140, 0x21: 0xA149, 0x22: 0xA1AA, 0x23: 0xA1AD, 0x24: 0xA243, 0x25: 0xA24D, 0x26: 0xA1AE, 0x27: 0xA1AC,
+    0x28: 0xA15D, 0x29: 0xA15E, 0x2A: 0xA1B8, 0x2B: 0xA1DE, 0x2C: 0xA141, 0x2D: 0xA1DF, 0x2E: 0xA145, 0x2F: 0xA241,
+    0x30: 0xA2AF, 0x31: 0xA2B0, 0x32: 0xA2B1, 0x33: 0xA2B2, 0x34: 0xA2B3, 0x35: 0xA2B4, 0x36: 0xA2B5, 0x37: 0xA2B6,
+    0x38: 0xA2B7, 0x39: 0xA2B8, 0x3A: 0xA14A, 0x3B: 0xA146, 0x3C: 0xA1E0, 0x3D: 0xA1E2, 0x3E: 0xA1E1, 0x3F: 0xA148,
+    0x40: 0xA249, 0x41: 0xA2CF, 0x42: 0xA2D0, 0x43: 0xA2D1, 0x44: 0xA2D2, 0x45: 0xA2D3, 0x46: 0xA2D4, 0x47: 0xA2D5,
+    0x48: 0xA2D6, 0x49: 0xA2D7, 0x4A: 0xA2D8, 0x4B: 0xA2D9, 0x4C: 0xA2DA, 0x4D: 0xA2DB, 0x4E: 0xA2DC, 0x4F: 0xA2DD,
+    0x50: 0xA2DE, 0x51: 0xA2DF, 0x52: 0xA2E0, 0x53: 0xA2E1, 0x54: 0xA2E2, 0x55: 0xA2E3, 0x56: 0xA2E4, 0x57: 0xA2E5,
+    0x58: 0xA2E6, 0x59: 0xA2E7, 0x5A: 0xA2E8, 0x5B: 0xA165, 0x5C: 0xA242, 0x5D: 0xA166, 0x5E: 0xA173, 0x5F: 0xA1C5,
+    0x60: 0xA1AB, 0x61: 0xA2E9, 0x62: 0xA2EA, 0x63: 0xA2EB, 0x64: 0xA2EC, 0x65: 0xA2ED, 0x66: 0xA2EE, 0x67: 0xA2EF,
+    0x68: 0xA2F0, 0x69: 0xA2F1, 0x6A: 0xA2F2, 0x6B: 0xA2F3, 0x6C: 0xA2F4, 0x6D: 0xA2F5, 0x6E: 0xA2F6, 0x6F: 0xA2F7,
+    0x70: 0xA2F8, 0x71: 0xA2F9, 0x72: 0xA2FA, 0x73: 0xA2FB, 0x74: 0xA2FC, 0x75: 0xA2FD, 0x76: 0xA2FE, 0x77: 0xA340,
+    0x78: 0xA341, 0x79: 0xA342, 0x7A: 0xA343, 0x7B: 0xA161, 0x7C: 0xA155, 0x7D: 0xA162, 0x7E: 0xA1E3, 0x7F: 0xA1BD,
 }
 
+SEMANTIC_CATEGORIES = [
+    {"name": "🌌 传送点文本", "type": "single", "ranges": [(100, 288)]},
+    {"name": "🗺️ 剧情地图名称", "type": "single", "ranges": [(300, 513)]},
+    {"name": "📜 剧情文本区块", "type": "single", "ranges": [(1000, 4509), (25000, 28849), (30000, 30000)]},
+    {"name": "👥 队伍角色名称", "type": "single", "ranges": [(9000, 9030)]},
+    {"name": "📚 历史文本", "type": "single", "ranges": [(9050, 9080)]},
+    {"name": "⚔️ 技能数据 (名称+说明)", "type": "paired", "name_start": 9101, "name_end": 9444, "desc_start": 9501, "desc_end": 9844},
+    {"name": "🧪 物品-药品 (名称+说明)", "type": "paired", "name_start": 10001, "name_end": 10025, "desc_start": 10601, "desc_end": 10625},
+    {"name": "🎒 物品-道具 (名称+说明)", "type": "paired", "name_start": 10051, "name_end": 10110, "desc_start": 10651, "desc_end": 10710},
+    {"name": "🗡️ 物品-武器 (名称+说明)", "type": "paired", "name_start": 10151, "name_end": 10242, "desc_start": 10751, "desc_end": 10842},
+    {"name": "🛡️ 物品-防具 (名称+说明)", "type": "paired", "name_start": 10301, "name_end": 10348, "desc_start": 10901, "desc_end": 10948},
+    {"name": "📿 物品-饰品 (名称+说明)", "type": "paired", "name_start": 10401, "name_end": 10458, "desc_start": 11001, "desc_end": 11058},
+    {"name": "🔮 物品-特殊 (名称+说明)", "type": "paired", "name_start": 10501, "name_end": 10551, "desc_start": 11101, "desc_end": 11151},
+    {"name": "📝 记事文本", "type": "single", "ranges": [(11201, 11260)]},
+    {"name": "🏆 功绩文本", "type": "single", "ranges": [(11401, 11467)]},
+    {"name": "🏟️ 战斗角色名称", "type": "single", "ranges": [(11601, 11800)]},
+    {"name": "📦 空余槽", "type": "single", "ranges": [(11801, 24999)]},
+]
+
 # ============================================================
-# GB2312 ↔ Big5 转换 (依据 sub_45BB64/sub_45BCE4)
+# GB2312 ↔ Big5 转换 (依据 V2 原版逻辑)
 # ============================================================
 _G2B_TABLE = None
 _B2G_TABLE = None
 
 def load_g2b_dat(g2b_path):
-    """加载 g2b.dat 并构建双向转换表。"""
     global _G2B_TABLE, _B2G_TABLE
     with open(g2b_path, 'rb') as f:
         data = f.read()
     if len(data) != 0x20000:
         raise ValueError(f"g2b.dat 大小错误: 期望 131072 字节, 实际 {len(data)}")
     _G2B_TABLE = data
-
     _B2G_TABLE = {}
     for gb_code in range(0x10000):
         idx = gb_code * 2
@@ -173,10 +160,8 @@ def load_g2b_dat(g2b_path):
     return data
 
 def big5_to_gb(text):
-    """将 Big5 编码文本转换为 GB2312 编码文本。"""
     if _B2G_TABLE is None:
         return text 
-
     result = []
     for ch in text:
         try:
@@ -199,70 +184,20 @@ def big5_to_gb(text):
     return ''.join(result)
 
 # ============================================================
-# TKT 文件 I/O (依据 sub_401E88)
+# TKT 文件 I/O (V2 原版逻辑)
 # ============================================================
 def load_tkt(tkt_path):
-    """加载 TKT.dat, 返回 entries 列表 (OrderedDict)。"""
-    with open(tkt_path, 'rb') as f:
-        raw = f.read()
-    if len(raw) < HDR_SIZE:
-        raise ValueError(f"TKT.dat 头部不足 8 字节: 实际 {len(raw)}")
-
-    total_size = struct.unpack_from('<I', raw, 0)[0]
-    record_count = struct.unpack_from('<I', raw, 4)[0]
-
-    if len(raw) < HDR_SIZE + total_size:
-        raise ValueError(f"TKT.dat 体积不足: 声明 {total_size}, 实际 {len(raw) - HDR_SIZE}")
-
-    # XOR 0xFF 解密 (sub_401E88 行 397-401: `*n = ~*n`)
-    encrypted = raw[HDR_SIZE:HDR_SIZE + total_size]
-    decrypted = bytes(b ^ XOR_KEY for b in encrypted)
-
-    # 切分三表
-    id_table_size = 4 * record_count
-    offset_table_size = 4 * record_count
-    text_base = id_table_size + offset_table_size
-
-    entries = []
-    for i in range(record_count):
-        entry_id = struct.unpack_from('<i', decrypted, i * 4)[0]         
-        text_offset = struct.unpack_from('<I', decrypted, id_table_size + i * 4)[0] 
-
-        # 提取条目字节 (扫描 0x00 终止)
-        abs_off = text_base + text_offset
-        if abs_off >= len(decrypted):
-            blob = b''
-        else:
-            end = abs_off
-            while end < len(decrypted) and decrypted[end] != ENTRY_TERMINATOR:
-                end += 1
-            blob = decrypted[abs_off:end]
-
-        # 按 0x1E 拆行
-        raw_lines = blob.split(bytes([LINE_SEPARATOR]))
-        decoded_lines = [decode_line(ln) for ln in raw_lines]
-        text = '\n'.join(decoded_lines)
-
-        entries.append(OrderedDict([
-            ('slot', i),
-            ('id', entry_id),
-            ('text', text),
-        ]))
-    return entries
+    """加载 TKT.dat — 委托给 editor_utils.tkt_loader"""
+    return _load_tkt_full(tkt_path)
 
 def decode_line(line_bytes):
-    """把单行字节流解码为 UTF 文本, 控制字节转为 <TAG,n> 标记。"""
     out = []
     buf = bytearray()
-
     def flush():
         if buf:
-            try:
-                out.append(buf.decode('big5', errors='replace'))
-            except Exception:
-                out.append(buf.decode('gbk', errors='replace'))
+            try: out.append(buf.decode('big5', errors='replace'))
+            except Exception: out.append(buf.decode('gbk', errors='replace'))
             buf.clear()
-
     i = 0
     n = len(line_bytes)
     while i < n:
@@ -277,12 +212,6 @@ def decode_line(line_bytes):
                 elif data_len == 2:
                     val = line_bytes[i + 1] | (line_bytes[i + 2] << 8)
                     out.append(f'<{tag_name},{val}>')
-                else:
-                    # data_len == 3 (FCOLORD: r,g,b)
-                    r = line_bytes[i + 1]
-                    g = line_bytes[i + 2]
-                    b_val = line_bytes[i + 3]
-                    out.append(f'<{tag_name},{r},{g},{b_val}>')
                 i += 1 + data_len
                 continue
             else:
@@ -295,7 +224,6 @@ def decode_line(line_bytes):
             out.append(f'<RAW,0x{b:02X}>')
             i += 1
             continue
-        # Big5 双字节 (sub_4019D0 行 45-51)
         if b >= 0x80 and i + 1 < n:
             buf.append(b)
             buf.append(line_bytes[i + 1])
@@ -307,46 +235,28 @@ def decode_line(line_bytes):
     return ''.join(out)
 
 def encode_line(text):
-    """把一行 UTF 文本编码为二进制字节流 (Big5 + 控制字节)。"""
     out = bytearray()
     i = 0
     n = len(text)
     while i < n:
-        # 尝试匹配 <TAG,n> 或 <FCOLORD,r,g,b> 标记
         m = TAG_PATTERN.match(text, i)
         if m:
             tag_name = m.group(1)
             val_str = m.group(2)
             if tag_name in TAG_NAME_MAP:
                 code, data_len, min_val, max_val = TAG_NAME_MAP[tag_name]
-                if data_len == 3:
-                    # FCOLORD: r,g,b
-                    parts = val_str.split(',')
-                    if len(parts) == 3:
-                        r, g, b = int(parts[0]), int(parts[1]), int(parts[2])
-                        if 0 <= r <= 255 and 0 <= g <= 255 and 0 <= b <= 255:
-                            out.append(code)
-                            out.append(r)
-                            out.append(g)
-                            out.append(b)
-                            i = m.end()
-                            continue
-                else:
-                    val = int(val_str)
-                    if min_val <= val <= max_val:
-                        out.append(code)
-                        out.append(val & 0xFF)
-                        if data_len == 2:
-                            out.append((val >> 8) & 0xFF)
-                        i = m.end()
-                        continue
-            # 无效标签, 原样输出
+                val = int(val_str)
+                if min_val <= val <= max_val:
+                    out.append(code); out.append(val & 0xFF)
+                    if data_len == 2:
+                        out.append((val >> 8) & 0xFF)
+                    i = m.end()
+                    continue
             for ch in text[i:m.end()]:
                 out.extend(ch.encode('big5', errors='replace'))
             i = m.end()
             continue
             
-        # 尝试匹配 <RAW,0xNN> 标记
         if text[i] == '<' and i + 6 < n:
             rm = re.match(r'<RAW,0x([0-9A-Fa-f]{2})>', text[i:])
             if rm:
@@ -355,23 +265,15 @@ def encode_line(text):
                 continue
                 
         ch = text[i]
-        # Big5 双字节字符直接编码
-        try:
-            encoded = ch.encode('big5')
-        except (UnicodeEncodeError, UnicodeDecodeError):
-            encoded = ch.encode('gbk', errors='replace')
+        try: encoded = ch.encode('big5')
+        except (UnicodeEncodeError, UnicodeDecodeError): encoded = ch.encode('gbk', errors='replace')
         out.extend(encoded)
         i += 1
     return bytes(out)
 
 def parse_styled_segments(text):
-    """将含 <TAG,n> 的 TKT 文本解析为 [(text, {style}), ...] 分段列表。"""
     segments = []
-    current = {
-        'fg': GAME_COLORS[DEFAULT_FCOLOR],
-        'size': DEFAULT_FONT_SIZE,
-        'family': GAME_FONT_FAMILIES[DEFAULT_FTYPE],
-    }
+    current = {'fg': GAME_COLORS[DEFAULT_FCOLOR], 'size': DEFAULT_FONT_SIZE, 'family': GAME_FONT_FAMILIES[DEFAULT_FTYPE]}
     prev_color = current['fg']
     prev_family = current['family']
     buf = []
@@ -394,12 +296,6 @@ def parse_styled_segments(text):
                 if 1 <= val <= 32:
                     prev_color = current['fg']
                     current['fg'] = GAME_COLORS[val]
-            elif tag_name == 'FCOLORD':
-                parts = val_str.split(',')
-                if len(parts) == 3:
-                    r, g, b = int(parts[0]), int(parts[1]), int(parts[2])
-                    prev_color = current['fg']
-                    current['fg'] = f'#{r:02X}{g:02X}{b:02X}'
             elif tag_name == 'FSIZE':
                 val = int(val_str)
                 if val in GAME_FONT_SIZES:
@@ -423,16 +319,11 @@ def parse_styled_segments(text):
                     current['family'] = GAME_FONT_FAMILIES[DEFAULT_FTYPE]
                 elif val == 4: 
                     current['family'] = prev_family
-            elif tag_name == 'TEXT':
-                buf.append(f'[文本:{val_str}]')
-            elif tag_name == 'VARNUM':
-                buf.append(f'[变量:{val_str}]')
-            elif tag_name == 'VARTXT':
-                buf.append(f'[文本变量:{val_str}]')
-            elif tag_name == 'NAME':
-                buf.append('[姓]' if val_str == '1' else '[名]')
-            else:
-                buf.append(text[m.start():m.end()])
+            elif tag_name == 'TEXT': buf.append(f'[文本:{val_str}]')
+            elif tag_name == 'VARNUM': buf.append(f'[數值變量:{val_str}]')
+            elif tag_name == 'VARTXT': buf.append(f'[文本變量:{val_str}]')
+            elif tag_name == 'NAME': buf.append('[姓]' if val_str == '1' else '[名]')
+            else: buf.append(text[m.start():m.end()])
             i = m.end()
         elif text[i] == '<' and i + 6 < n:
             rm = re.match(r'<RAW,0x([0-9A-Fa-f]{2})>', text[i:])
@@ -450,13 +341,9 @@ def parse_styled_segments(text):
     return segments
 
 # ============================================================
-# FONT9696 位图字体解码器 (sub_44ADB0/sub_44B384/sub_44B208)
+# FONT9696 解码与渲染 (完全恢复 V2 原版多行代码)
 # ============================================================
 class Font9696:
-    """FONT9696 自定义位图字体解码器。
-    格式: 8个FTYPE区段 × 14,915字形 × uint32偏移索引 + RLE压缩位图
-    字形: 96×96 最大, 1bpp, 3字节组RLE
-    """
     GLYPHS_PER_SECTION = 14915
     GLYPH_BUF_SIZE = 1152
 
@@ -598,8 +485,8 @@ class Font9696:
         self._cache[cache_key] = (result, advance)
         return (result, advance)
 
-def _hex_to_rgb(hex_color):
-    return (int(hex_color[1:3], 16), int(hex_color[3:5], 16), int(hex_color[5:7], 16))
+def _hex_to_rgb(h):
+    return (int(h[1:3], 16), int(h[3:5], 16), int(h[5:7], 16))
 
 def _unicode_to_big5_code(ch):
     try:
@@ -802,7 +689,6 @@ def _render_text_image(segments, font, line_spacing=4, use_traditional_font=Fals
     return canvas
 
 def save_tkt(tkt_path, entries):
-    """保存 entries 到 TKT.dat。"""
     record_count = len(entries)
     text_blob = bytearray()
     id_table = bytearray()
@@ -814,8 +700,7 @@ def save_tkt(tkt_path, entries):
         lines = text.split('\n')
         entry_bytes = bytearray()
         for li, line in enumerate(lines):
-            if li > 0:
-                entry_bytes.append(LINE_SEPARATOR)  
+            if li > 0: entry_bytes.append(LINE_SEPARATOR)  
             entry_bytes.extend(encode_line(line))
         entry_bytes.append(ENTRY_TERMINATOR)  
 
@@ -835,42 +720,52 @@ def save_tkt(tkt_path, entries):
         f.write(struct.pack('<I', record_count))
         f.write(encrypted)
 
-
-# ============================================================
-# PySide6 GUI
-# ============================================================
 def pil_to_qimage(pil_image):
-    if pil_image.mode != "RGBA": 
-        pil_image = pil_image.convert("RGBA")
+    if pil_image.mode != "RGBA": pil_image = pil_image.convert("RGBA")
     data = pil_image.tobytes("raw", "RGBA")
-    qim = QImage(data, pil_image.width, pil_image.height, QImage.Format_RGBA8888)
-    return qim.copy()
-
+    return QImage(data, pil_image.width, pil_image.height, QImage.Format_RGBA8888).copy()
 
 class TktEditor(QMainWindow):
     def __init__(self, initial_path=None):
         super().__init__()
-        self.setWindowTitle("TKT.dat 文本数据库编辑器 - 引擎级界面")
-        self.resize(1280, 800)
-        self.setMinimumSize(900, 600)
+        self.setWindowTitle("TKT.dat 语义化智能维护编辑器 - 引擎级界面")
+        self.resize(1350, 850)
 
-        self.font_main = QFont('Microsoft YaHei UI', 9)
-        self.font_s = QFont('Microsoft YaHei UI', 8)
-        self.font_mono = QFont('Consolas', 10)
-        
+        # --- 还原图标加载 ---
         ico_path = os.path.join(os.path.dirname(__file__), 'TKS.ico')
-        if os.path.exists(ico_path): 
+        if os.path.exists(ico_path):
             self.setWindowIcon(QIcon(ico_path))
 
+        self.font_mono = QFont('Consolas', 10)
         self.tkt_path = None
         self.entries = []          
+        self.entry_by_id = {}      
         self.filtered_indices = [] 
         self.font9696 = None       
-        self.font_path = None      
+        self.font_path = None
         self._dirty = False
         self._current_idx = None   
+        
+        # 用于在加载文件时记录未受污染的原始文本状态，格式为 { (ID, 文本) } 元组集合
+        # 使用 set 而非 dict，彻底免疫原版文件中重复 ID（废弃数据）导致的快照覆盖误判
+        self.original_entry_snapshot = set()
+        
+        self._zoom_level = 150
+        self._sort_col = -1
+        self._sort_state = 0  
+        self._last_focused_input = None
+
         app_inst = QApplication.instance()
         self._is_dark = app_inst.styleHints().colorScheme() == Qt.ColorScheme.Dark if app_inst else True
+
+        # 应用 Godot 风格窗口标题栏 (与 editor_themes 主题一致)
+        import sys as _sys
+        _sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+        from editor_utils.window_theme import apply_godot_theme
+        apply_godot_theme(self, self._is_dark)
+
+        if app_inst:
+            app_inst.focusChanged.connect(self._on_focus_changed)
 
         self._build_ui()
         self._set_edit_enabled(False)
@@ -880,11 +775,10 @@ class TktEditor(QMainWindow):
             self._load_file(initial_path)
 
     def _create_dock(self, title, widget_content, header_layout=None):
-        """生成 Godot 风格的面板组件"""
+        """恢复原版的 DockBody 包裹模式以完美显示引擎边框"""
         container = QWidget()
         layout = QVBoxLayout(container)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
+        layout.setContentsMargins(0, 0, 0, 0); layout.setSpacing(0)
         layout.addWidget(DockHeader(title, header_layout))
         
         body = QWidget()
@@ -901,15 +795,16 @@ class TktEditor(QMainWindow):
         self.setCentralWidget(central_widget)
         main_layout = QVBoxLayout(central_widget)
         main_layout.setContentsMargins(8, 8, 8, 8)
-        main_layout.setSpacing(8)
 
-        # --- 菜单栏 ---
+        # --- 菜单栏 (还原全部项) ---
         menu_bar = self.menuBar()
         file_menu = menu_bar.addMenu("文件(F)")
         file_menu.addAction("加载 TKS 目录…", QKeySequence("Ctrl+O"), self._load_tks_dir)
-        file_menu.addSeparator()
         file_menu.addAction("保存", QKeySequence("Ctrl+S"), self._save)
         file_menu.addAction("另存为…", self._save_as)
+        file_menu.addSeparator()
+        file_menu.addAction("导入增量 MOD 文件…", QKeySequence("Ctrl+I"), self._import_mod)
+        file_menu.addAction("导出增量 MOD 文件…", QKeySequence("Ctrl+E"), self._export_mod)
         file_menu.addSeparator()
         file_menu.addAction("退出", self.close)
 
@@ -922,444 +817,721 @@ class TktEditor(QMainWindow):
         help_menu = menu_bar.addMenu("帮助(H)")
         help_menu.addAction("关于", self._show_about)
 
-        # --- 工具栏 ---
-        toolbar_layout = QHBoxLayout()
-        toolbar_layout.setContentsMargins(0, 0, 0, 4)
+        self.main_tabs = QTabWidget()
         
-        self.search_entry = QLineEdit()
-        self.search_entry.setPlaceholderText("关键词/ID搜索...")
-        self.search_entry.setFixedWidth(160)
-        self.search_entry.returnPressed.connect(self._apply_filter)
-        toolbar_layout.addWidget(self.search_entry)
-
-        btn_search = QPushButton("🔍 搜索")
-        btn_search.clicked.connect(self._apply_filter)
-        toolbar_layout.addWidget(btn_search)
+        # Tab 栏右上角角部控件
+        corner_widget = QWidget()
+        corner_layout = QHBoxLayout(corner_widget)
+        corner_layout.setContentsMargins(0, 0, 4, 0)
         
-        btn_clear = QPushButton("🧹 清除")
-        btn_clear.clicked.connect(self._clear_filter)
-        toolbar_layout.addWidget(btn_clear)
-
-        toolbar_layout.addWidget(QLabel("  区间:"))
-        self.filter_from = QLineEdit()
-        self.filter_from.setFixedWidth(50)
-        toolbar_layout.addWidget(self.filter_from)
-        toolbar_layout.addWidget(QLabel("-"))
-        self.filter_to = QLineEdit()
-        self.filter_to.setFixedWidth(50)
-        toolbar_layout.addWidget(self.filter_to)
-
-        btn_filter = QPushButton("🪄 过滤")
-        btn_filter.clicked.connect(self._apply_filter)
-        toolbar_layout.addWidget(btn_filter)
-
-        toolbar_layout.addSpacing(15)
-        btn_new_entry = QPushButton("➕ 新增条目")
-        btn_new_entry.clicked.connect(self._new_entry)
-        toolbar_layout.addWidget(btn_new_entry)
-
+        self.lbl_dirty = QLabel("")
+        self.lbl_dirty.setStyleSheet("color: #e27d60; font-weight: bold;")
+        corner_layout.addWidget(self.lbl_dirty)
+        
+        corner_layout.addSpacing(10)
         self.chk_traditional = QCheckBox("系统繁体字渲染")
         self.chk_traditional.toggled.connect(self._on_font_toggle)
-        toolbar_layout.addWidget(self.chk_traditional)
-
-        toolbar_layout.addStretch()
-
+        corner_layout.addWidget(self.chk_traditional)
+        
+        corner_layout.addSpacing(10)
         btn_theme = QPushButton("🌓 切换主题")
         btn_theme.clicked.connect(self._toggle_theme)
-        toolbar_layout.addWidget(btn_theme)
+        btn_theme.setStyleSheet("padding: 2px 8px; border-radius: 2px;")
+        corner_layout.addWidget(btn_theme)
+        
+        self.main_tabs.setCornerWidget(corner_widget, Qt.TopRightCorner)
+        
+        main_layout.addWidget(self.main_tabs, 1)
 
-        main_layout.addLayout(toolbar_layout)
+        # ==================== WORKSPACE 1: 原始全局线性维护 ====================
+        w1_widget = QWidget()
+        w1_layout = QVBoxLayout(w1_widget)
+        w1_layout.setContentsMargins(4, 4, 4, 4)
 
-        # --- 主工作区 (水平 Splitter) ---
-        main_splitter = QSplitter(Qt.Horizontal)
-        main_splitter.setHandleWidth(7)  # 设置水平分割线物理热区宽度为 7 像素
-        main_layout.addWidget(main_splitter, 1)
+        # 工具栏 (还原 Emoji)
+        toolbar_layout = QHBoxLayout()
+        self.search_entry = QLineEdit(); self.search_entry.setPlaceholderText("关键词/ID搜索..."); self.search_entry.setFixedWidth(160)
+        self.search_entry.returnPressed.connect(self._apply_filter)
+        toolbar_layout.addWidget(self.search_entry)
+        
+        btn_search = QPushButton("🔍 搜索"); btn_search.clicked.connect(self._apply_filter); toolbar_layout.addWidget(btn_search)
+        btn_clear = QPushButton("🧹 清除"); btn_clear.clicked.connect(self._clear_filter); toolbar_layout.addWidget(btn_clear)
+        
+        toolbar_layout.addWidget(QLabel("  区间:"))
+        self.filter_from = QLineEdit(); self.filter_from.setFixedWidth(50); toolbar_layout.addWidget(self.filter_from)
+        toolbar_layout.addWidget(QLabel("-"))
+        self.filter_to = QLineEdit(); self.filter_to.setFixedWidth(50); toolbar_layout.addWidget(self.filter_to)
+        btn_filter = QPushButton("🪄 过滤"); btn_filter.clicked.connect(self._apply_filter); toolbar_layout.addWidget(btn_filter)
+        
+        toolbar_layout.addSpacing(15)
+        btn_new_entry = QPushButton("➕ 新增条目"); btn_new_entry.clicked.connect(self._new_entry); toolbar_layout.addWidget(btn_new_entry)
+        toolbar_layout.addStretch()
+        w1_layout.addLayout(toolbar_layout)
 
-        # 1. 左侧：资源列表面板
+        w1_splitter = QSplitter(Qt.Horizontal); w1_splitter.setHandleWidth(7)
+        w1_layout.addWidget(w1_splitter, 1)
+
         self.table = QTableWidget(0, 3)
-        self.table.setHorizontalHeaderLabels(['#', 'ID', '文本内容'])
+        self.table.setHorizontalHeaderLabels(['#', 'ID', '文本内容 Preview'])
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SingleSelection)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.verticalHeader().setVisible(False)
-        self.table.setColumnWidth(0, 45)
-        self.table.setColumnWidth(1, 65)
+        self.table.setColumnWidth(0, 50); self.table.setColumnWidth(1, 70)
         self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
         self.table.itemSelectionChanged.connect(self._on_table_select)
         self.table.horizontalHeader().sectionClicked.connect(self._on_header_clicked)
+        w1_splitter.addWidget(self._create_dock("低级全局数据表", self.table))
+
+        w1_right_splitter = QSplitter(Qt.Vertical); w1_right_splitter.setHandleWidth(7)
+        w1_splitter.addWidget(w1_right_splitter)
+
+        inspector_widget = QWidget(); ins_layout = QVBoxLayout(inspector_widget); ins_layout.setContentsMargins(0,0,0,0)
+        self._build_tag_toolbar(ins_layout)
         
-        left_dock = self._create_dock("文件系统 (文本资源表)", self.table)
-        main_splitter.addWidget(left_dock)
-
-        # 2. 右侧：垂直 Splitter (检查器 + 视口)
-        right_splitter = QSplitter(Qt.Vertical)
-        right_splitter.setHandleWidth(7) # 设置垂直分割线物理热区宽度为 7 像素
-        main_splitter.addWidget(right_splitter)
-
-        # 2.1 检查器 (属性编辑)
-        inspector_widget = QWidget()
-        inspector_layout = QVBoxLayout(inspector_widget)
-        inspector_layout.setContentsMargins(0,0,0,0)
-
-        # 信息/ID 栏
-        info_layout = QHBoxLayout()
-        self.lbl_info = QLabel("未选中")
-        self.lbl_info.setStyleSheet("font-weight: bold;")
-        info_layout.addWidget(self.lbl_info)
-        info_layout.addStretch()
+        self.text_widget = QPlainTextEdit(); self.text_widget.setFont(self.font_mono); self.text_widget.textChanged.connect(self._on_text_modified)
+        ins_layout.addWidget(self.text_widget, 1)
         
-        self.lbl_dirty = QLabel("")
-        self.lbl_dirty.setStyleSheet("color: #e27d60; font-weight: bold;")
-        info_layout.addWidget(self.lbl_dirty)
-
-        info_layout.addSpacing(20)
-        info_layout.addWidget(QLabel("绑定 ID:"))
-        self.id_entry = QLineEdit()
-        self.id_entry.setFixedWidth(100)
-        info_layout.addWidget(self.id_entry)
-        inspector_layout.addLayout(info_layout)
-
-        # Tag 工具栏
-        self._build_tag_toolbar(inspector_layout)
-
-        # 核心文本编辑器
-        self.text_widget = QPlainTextEdit()
-        self.text_widget.setFont(self.font_mono)
-        self.text_widget.setLineWrapMode(QPlainTextEdit.NoWrap)
-        self.text_widget.textChanged.connect(self._on_text_modified)
-        inspector_layout.addWidget(self.text_widget, 1)
-
-        # 底部操作栏
         btn_layout = QHBoxLayout()
-        btn_apply = QPushButton("✅ 应用修改")
-        btn_apply.clicked.connect(self._apply_edit)
-        btn_layout.addWidget(btn_apply)
-        btn_reset = QPushButton("🔄 重置")
-        btn_reset.clicked.connect(self._reset_edit)
-        btn_layout.addWidget(btn_reset)
+        btn_apply = QPushButton("✅ 应用修改"); btn_apply.clicked.connect(self._apply_edit); btn_layout.addWidget(btn_apply)
+        btn_reset = QPushButton("🔄 重置"); btn_reset.clicked.connect(self._reset_edit); btn_layout.addWidget(btn_reset)
         btn_layout.addStretch()
-        btn_del_this = QPushButton("❌ 删除")
-        btn_del_this.clicked.connect(self._delete_entry)
-        btn_layout.addWidget(btn_del_this)
-        inspector_layout.addLayout(btn_layout)
+        btn_del_this = QPushButton("❌ 删除"); btn_del_this.clicked.connect(self._delete_entry); btn_layout.addWidget(btn_del_this)
+        ins_layout.addLayout(btn_layout)
+        w1_right_splitter.addWidget(self._create_dock("检查器 (属性/代码编辑)", inspector_widget))
 
-        inspector_dock = self._create_dock("检查器 (属性/代码编辑)", inspector_widget)
-        right_splitter.addWidget(inspector_dock)
-
-        # 2.2 视口 (预览渲染)
-        viewport_widget = QWidget()
-        viewport_layout = QVBoxLayout(viewport_widget)
-        viewport_layout.setContentsMargins(0,0,0,0)
-
-        # --- 视口缩放控制栏 ---
+        # 视口
+        viewport_widget = QWidget(); vp_layout = QVBoxLayout(viewport_widget); vp_layout.setContentsMargins(0,0,0,0)
         zoom_layout = QHBoxLayout()
-        zoom_layout.setContentsMargins(0, 0, 0, 0)
+        zoom_layout.setContentsMargins(0,0,0,0)
+        btn_zoom_out = QPushButton("➖"); btn_zoom_out.setFixedSize(22, 22); btn_zoom_out.setStyleSheet("padding: 0px; font-size: 12px;"); btn_zoom_out.clicked.connect(self._zoom_out)
+        self.lbl_zoom = QLabel("150%"); self.lbl_zoom.setAlignment(Qt.AlignCenter); self.lbl_zoom.setFixedWidth(40); self.lbl_zoom.setStyleSheet("font-size: 11px; background-color: transparent;")
+        btn_zoom_in = QPushButton("➕"); btn_zoom_in.setFixedSize(22, 22); btn_zoom_in.setStyleSheet("padding: 0px; font-size: 12px;"); btn_zoom_in.clicked.connect(self._zoom_in)
+        zoom_layout.addWidget(btn_zoom_out); zoom_layout.addWidget(self.lbl_zoom); zoom_layout.addWidget(btn_zoom_in)
 
-        btn_zoom_out = QPushButton("➖")
-        btn_zoom_out.setFixedSize(22, 22)
-        btn_zoom_out.setStyleSheet("padding: 0px; font-size: 12px;")
-        btn_zoom_out.clicked.connect(self._zoom_out)
-
-        self.lbl_zoom = QLabel("100%")
-        self.lbl_zoom.setAlignment(Qt.AlignCenter)
-        self.lbl_zoom.setFixedWidth(40)
-        self.lbl_zoom.setStyleSheet("font-size: 11px; background-color: transparent;")
-
-        btn_zoom_in = QPushButton("➕")
-        btn_zoom_in.setFixedSize(22, 22)
-        btn_zoom_in.setStyleSheet("padding: 0px; font-size: 12px;")
-        btn_zoom_in.clicked.connect(self._zoom_in)
-
-        zoom_layout.addWidget(btn_zoom_out)
-        zoom_layout.addWidget(self.lbl_zoom)
-        zoom_layout.addWidget(btn_zoom_in)
-
-        # 使用 StackedWidget 平滑切换 图片渲染 / 纯文本降级
         self.preview_stack = QStackedWidget()
+        self.preview_scroll_area = QScrollArea(); self.preview_scroll_area.setWidgetResizable(True)
+        scroll_content = QWidget(); scroll_content.setStyleSheet("background: transparent;")
+        scroll_layout = QVBoxLayout(scroll_content); scroll_layout.setAlignment(Qt.AlignLeft | Qt.AlignTop)
+        self.preview_img = QLabel(); self.preview_img.setAlignment(Qt.AlignLeft | Qt.AlignTop); scroll_layout.addWidget(self.preview_img)
+        self.preview_scroll_area.setWidget(scroll_content); self.preview_stack.addWidget(self.preview_scroll_area)
+        self.preview_text = QTextEdit(); self.preview_text.setReadOnly(True); self.preview_stack.addWidget(self.preview_text)
+        vp_layout.addWidget(self.preview_stack)
+        w1_right_splitter.addWidget(self._create_dock("2D 视口渲染器", viewport_widget, header_layout=zoom_layout))
+        
+        w1_splitter.setSizes([350, 950]); w1_right_splitter.setSizes([400, 400])
+        self.main_tabs.addTab(w1_widget, "🔍 全局文件系统 (线性模式)")
 
-        # Index 0: 图像容器 (绝对居中)
-        self.preview_scroll_area = QScrollArea()
-        self.preview_scroll_area.setWidgetResizable(True)
-        self.preview_scroll_area.setStyleSheet("border: none;")
-        scroll_content = QWidget()
-        scroll_content.setStyleSheet("background: transparent;")
-        scroll_layout = QVBoxLayout(scroll_content)
-        scroll_layout.setAlignment(Qt.AlignLeft | Qt.AlignTop)
-        self.preview_img = QLabel()
-        self.preview_img.setAlignment(Qt.AlignLeft | Qt.AlignTop)
-        scroll_layout.addWidget(self.preview_img)
-        self.preview_scroll_area.setWidget(scroll_content)
-        self.preview_stack.addWidget(self.preview_scroll_area)
+        # ==================== WORKSPACE 2: 游戏语义化模块分类编辑 ====================
+        w2_widget = QWidget()
+        w2_layout = QHBoxLayout(w2_widget)
+        w2_layout.setContentsMargins(4, 4, 4, 4)
 
-        # Index 1: 文本降级容器
-        self.preview_text = QTextEdit()
-        self.preview_text.setReadOnly(True)
-        self.preview_text.setStyleSheet(f"color: {GAME_COLORS[DEFAULT_FCOLOR]}; border: none;")
-        self.preview_text.setPlainText("(请选择条目)")
-        self.preview_stack.addWidget(self.preview_text)
+        self.comp_cat_list = QListWidget()
+        self.comp_cat_list.setFixedWidth(200)
+        for cat in SEMANTIC_CATEGORIES: self.comp_cat_list.addItem(cat['name'])
+        self.comp_cat_list.currentRowChanged.connect(self._on_comp_category_changed)
+        w2_layout.addWidget(self.comp_cat_list)
 
-        viewport_layout.addWidget(self.preview_stack)
-        viewport_dock = self._create_dock("2D 视口 (游戏内实时预览)", viewport_widget, header_layout=zoom_layout)
-        right_splitter.addWidget(viewport_dock)
+        self.w2_splitter = QSplitter(Qt.Horizontal); self.w2_splitter.setHandleWidth(7)
+        self.w2_splitter.splitterMoved.connect(self._adjust_comp_columns)
+        w2_layout.addWidget(self.w2_splitter, 1)
 
-        # 调整初始比例
-        main_splitter.setSizes([350, 930])
-        right_splitter.setSizes([400, 400])
+        comp_mid_widget = QWidget(); comp_mid_layout = QVBoxLayout(comp_mid_widget); comp_mid_layout.setContentsMargins(0,0,0,0)
+        
+        self.comp_table = QTableWidget(0, 4)
+        self.comp_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.comp_table.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.comp_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.comp_table.verticalHeader().setVisible(False)
+        self.comp_table.itemSelectionChanged.connect(self._on_comp_table_select)
+        comp_mid_layout.addWidget(self.comp_table, 1)
+        self.w2_splitter.addWidget(comp_mid_widget)
 
-        # --- 底部状态栏 ---
-        status_layout = QHBoxLayout()
-        status_layout.setContentsMargins(0, 4, 0, 0)
-        self.lbl_tkt = QLabel("(TKT未加载)")
-        status_layout.addWidget(self.lbl_tkt)
-        status_layout.addWidget(self._make_v_sep())
-        self.lbl_font = QLabel("(FONT未加载)")
-        status_layout.addWidget(self.lbl_font)
-        status_layout.addWidget(self._make_v_sep())
-        self.lbl_g2b = QLabel("(G2B未加载)")
-        status_layout.addWidget(self.lbl_g2b)
-        status_layout.addStretch()
+        # --- 创建右侧垂直分割器 (用于存放检查器和独立视口) ---
+        w2_right_splitter = QSplitter(Qt.Vertical)
+        w2_right_splitter.setHandleWidth(7)
+        self.w2_splitter.addWidget(w2_right_splitter)
+
+        comp_right_widget = QWidget(); comp_right_layout = QVBoxLayout(comp_right_widget); comp_right_layout.setContentsMargins(0,0,0,0)
+        
+        # 复用工具栏，控制当前处于焦点的输入框（不显示槽位/ID信息）
+        self._build_tag_toolbar(comp_right_layout, show_info=False)
+
+        self.comp_box1_title = QLabel("名称 / 主文本内容 (ID: ---)")
+        self.comp_box1_title.setStyleSheet("font-weight: bold; color: #478cbf;")
+        comp_right_layout.addWidget(self.comp_box1_title)
+        self.comp_text1 = QPlainTextEdit(); self.comp_text1.setFont(self.font_mono)
+        self.comp_text1.textChanged.connect(self._on_comp_text_modified)
+        comp_right_layout.addWidget(self.comp_text1, 1)
+        
+        self.comp_desc_container = QWidget()
+        dc_layout = QVBoxLayout(self.comp_desc_container); dc_layout.setContentsMargins(0,0,0,0)
+        self.comp_box2_title = QLabel("说明 / 描述文本内容 (ID: ---)")
+        self.comp_box2_title.setStyleSheet("font-weight: bold; color: #55b572; padding-top: 10px;")
+        dc_layout.addWidget(self.comp_box2_title)
+        self.comp_text2 = QPlainTextEdit(); self.comp_text2.setFont(self.font_mono)
+        self.comp_text2.textChanged.connect(self._on_comp_text_modified)
+        dc_layout.addWidget(self.comp_text2, 1)
+        comp_right_layout.addWidget(self.comp_desc_container)
+
+        btn_comp_apply = QPushButton("✅ 保存本槽修改 (点击空槽直接输入即可扩展)")
+        btn_comp_apply.setStyleSheet("font-weight:bold; padding:8px; margin-top: 10px;")
+        btn_comp_apply.clicked.connect(self._apply_comp_edit)
+        comp_right_layout.addWidget(btn_comp_apply)
+
+        # 底部弹簧：将上方控件推向顶部，避免居中分布
+        comp_right_layout.addStretch()
+
+        w2_right_splitter.addWidget(self._create_dock("分类属性扩展区", comp_right_widget))
+
+        # --- 将联合视口提取为独立分组 ---
+        comp_preview_widget = QWidget()
+        comp_preview_layout = QVBoxLayout(comp_preview_widget)
+        comp_preview_layout.setContentsMargins(0,0,0,0)
+
+        comp_preview_header = QHBoxLayout()
+        comp_preview_header.setContentsMargins(0, 0, 0, 0)
+        btn_comp_zoom_out = QPushButton("➖"); btn_comp_zoom_out.setFixedSize(22, 22); btn_comp_zoom_out.setStyleSheet("padding: 0px; font-size: 12px;"); btn_comp_zoom_out.clicked.connect(self._zoom_out)
+        self.lbl_comp_zoom = QLabel("150%"); self.lbl_comp_zoom.setAlignment(Qt.AlignCenter); self.lbl_comp_zoom.setFixedWidth(40); self.lbl_comp_zoom.setStyleSheet("font-size: 11px; background-color: transparent;")
+        btn_comp_zoom_in = QPushButton("➕"); btn_comp_zoom_in.setFixedSize(22, 22); btn_comp_zoom_in.setStyleSheet("padding: 0px; font-size: 12px;"); btn_comp_zoom_in.clicked.connect(self._zoom_in)
+        comp_preview_header.addWidget(btn_comp_zoom_out); comp_preview_header.addWidget(self.lbl_comp_zoom); comp_preview_header.addWidget(btn_comp_zoom_in)
+
+        self.comp_preview_scroll = QScrollArea()
+        self.comp_preview_scroll.setWidgetResizable(True)
+        sc_comp = QWidget(); sc_comp.setStyleSheet("background:transparent;")
+        scl_comp = QVBoxLayout(sc_comp); scl_comp.setContentsMargins(4,4,4,4)
+        self.comp_preview_img = QLabel(); self.comp_preview_img.setAlignment(Qt.AlignLeft | Qt.AlignTop)
+        scl_comp.addWidget(self.comp_preview_img)
+        self.comp_preview_scroll.setWidget(sc_comp)
+        
+        comp_preview_layout.addWidget(self.comp_preview_scroll)
+
+        w2_right_splitter.addWidget(self._create_dock("2D 视口渲染器 (文本预览)", comp_preview_widget, header_layout=comp_preview_header))
+
+        self.w2_splitter.setSizes([650, 450])
+        w2_right_splitter.setSizes([400, 400])
+        self.main_tabs.addTab(w2_widget, "📦 游戏数据分类编辑 (智能分舱扩展模式)")
+
+        # --- 底部统一路径状态栏 ---
+        status_layout = QHBoxLayout(); status_layout.setContentsMargins(4, 4, 4, 0)
+        self.lbl_tkt = QLabel("(TKT未加载)"); status_layout.addWidget(self.lbl_tkt); status_layout.addWidget(self._make_v_sep())
+        self.lbl_font = QLabel("(FONT未加载)"); status_layout.addWidget(self.lbl_font); status_layout.addWidget(self._make_v_sep())
+        self.lbl_g2b = QLabel("(G2B未加载)"); status_layout.addWidget(self.lbl_g2b); status_layout.addStretch()
         main_layout.addLayout(status_layout)
 
-        self._preview_timer = QTimer(self)
-        self._preview_timer.setSingleShot(True)
-        self._preview_timer.timeout.connect(self._render_preview)
-        
-        self._zoom_level = 100
-        self._original_pixmap = None
-        
-        self._sort_col = -1
-        self._sort_state = 0
+        self._preview_timer = QTimer(self); self._preview_timer.setSingleShot(True); self._preview_timer.timeout.connect(self._render_preview)
+        self._comp_preview_timer = QTimer(self); self._comp_preview_timer.setSingleShot(True); self._comp_preview_timer.timeout.connect(self._render_comp_previews)
 
     def _make_v_sep(self):
-        sep = QFrame()
-        sep.setFrameShape(QFrame.VLine)
-        sep.setFrameShadow(QFrame.Sunken)
-        sep.setStyleSheet("color: #777;")
+        sep = QFrame(); sep.setFrameShape(QFrame.VLine); sep.setFrameShadow(QFrame.Sunken); sep.setStyleSheet("color: #777;")
         return sep
 
     def _toggle_theme(self):
         self._is_dark = not self._is_dark
         self._apply_theme()
         self._render_preview()
+        self._render_comp_previews()
+        # 更新窗口标题栏颜色
+        from editor_utils.window_theme import apply_godot_theme
+        apply_godot_theme(self, self._is_dark)
 
     def _apply_theme(self):
         qss = ThemeManager.dark_qss() if self._is_dark else ThemeManager.light_qss()
         self.setStyleSheet(qss)
-        self._update_paths()
-
-        # --- 动态更新预览区背景色 ---
         preview_bg = '#1a1d24' if self._is_dark else '#313c52'
-
-        if hasattr(self, 'preview_scroll_area'):
-            self.preview_scroll_area.setStyleSheet(f"background-color: {preview_bg}; border: none;")
-
-        if hasattr(self, 'preview_text'):
-            self.preview_text.setStyleSheet(f"background-color: {preview_bg}; color: {GAME_COLORS[DEFAULT_FCOLOR]}; border: none;")
+        if hasattr(self, 'preview_scroll_area'): self.preview_scroll_area.setStyleSheet(f"background-color: {preview_bg}; border: none;")
+        if hasattr(self, 'preview_text'): self.preview_text.setStyleSheet(f"background-color: {preview_bg}; color: {GAME_COLORS[DEFAULT_FCOLOR]}; border: none;")
+        if hasattr(self, 'comp_preview_scroll'): self.comp_preview_scroll.setStyleSheet(f"background-color: {preview_bg}; border: none;")
+        self._update_paths()
 
     def _update_paths(self):
-        color_green = "color: #55b572;" if self._is_dark else "color: #178a39;"
-        color_red = "color: #e27d60;" if self._is_dark else "color: #c93b16;"
+        update_path_labels([
+            (self.lbl_tkt, self.tkt_path, 'TKT'),
+            (self.lbl_font, self.font_path, 'FONT9696'),
+        ], self._is_dark)
+        cg = ("color: #55b572;" if self._is_dark else "color: #178a39;")
+        cr = ("color: #e27d60;" if self._is_dark else "color: #c93b16;")
+        if _B2G_TABLE is not None: self.lbl_g2b.setText("g2b.dat: 已挂载"); self.lbl_g2b.setStyleSheet(cg)
+        else: self.lbl_g2b.setText("(g2b.dat 未挂载)"); self.lbl_g2b.setStyleSheet(cr)
 
-        def _f(lb, p, label=''):
-            if not p or not os.path.exists(p):
-                lb.setText(f"({label} 未挂载)")
-                lb.setStyleSheet(color_red)
-            else:
-                lb.setText(f"{label}: {p}" if label else p)
-                lb.setStyleSheet(color_green)
-                
-        _f(self.lbl_tkt, self.tkt_path, 'TKT')
-        _f(self.lbl_font, self.font_path, 'FONT9696')
-        
-        if _B2G_TABLE is not None:
-            self.lbl_g2b.setText("g2b.dat: 已挂载")
-            self.lbl_g2b.setStyleSheet(color_green)
-        elif _G2B_TABLE is not None:
-            self.lbl_g2b.setText("g2b.dat: 挂载 (反向表失败)")
-            self.lbl_g2b.setStyleSheet("color: #d19a3b;")
-        else:
-            self.lbl_g2b.setText("(g2b.dat 未挂载)")
-            self.lbl_g2b.setStyleSheet(color_red)
+    def _rebuild_id_map(self):
+        self.entry_by_id = {e['id']: e for e in self.entries}
 
     def _set_edit_enabled(self, enabled):
-        self.text_widget.setEnabled(enabled)
-        self.id_entry.setEnabled(enabled)
-
-    def _render_preview(self):
-        text = self.text_widget.toPlainText()
-        
-        if not text.strip():
-            self.preview_stack.setCurrentIndex(1)
-            self.preview_text.setPlainText('[空条目]')
-            return
-
-        use_traditional = self.chk_traditional.isChecked()
-
-        if HAS_PIL and self.font9696:
-            try:
-                segments = parse_styled_segments(text)
-                current_bg = '#1a1d24' if self._is_dark else '#313c52'
-                scale_factor = self._zoom_level / 100.0
-                img = _render_text_image(segments, self.font9696,
-                    use_traditional_font=use_traditional,
-                    bg_color=current_bg,
-                    scale_factor=scale_factor)
-                
-                qim = pil_to_qimage(img)
-                self.preview_img.setPixmap(QPixmap.fromImage(qim))
-                self.preview_stack.setCurrentIndex(0)
-                return
-            except Exception as e:
-                self.preview_stack.setCurrentIndex(1)
-                self.preview_text.setPlainText(f'[PIL渲染报错]\n{str(e)}')
-                return
-
-        self.preview_stack.setCurrentIndex(1)
-        self.preview_text.setPlainText(text)
-
-    def _zoom_in(self):
-        """放大视口 (上限 300%)"""
-        if self._zoom_level < 300:
-            self._zoom_level += 25
-            if self._zoom_level > 300:
-                self._zoom_level = 300
-            self._apply_zoom()
-
-    def _zoom_out(self):
-        """缩小视口 (下限 100%)"""
-        if self._zoom_level > 100:
-            self._zoom_level -= 25
-            if self._zoom_level < 100:
-                self._zoom_level = 100
-            self._apply_zoom()
-
-    def _apply_zoom(self):
-        """应用当前缩放比例 — 触发底层高精度重绘"""
-        if hasattr(self, 'lbl_zoom'):
-            self.lbl_zoom.setText(f"{self._zoom_level}%")
-        self._render_preview()
-
-    def _on_font_toggle(self, checked):
-        self._render_preview()
-
-    def closeEvent(self, event):
-        if self._dirty:
-            reply = QMessageBox.question(self, "未保存", "场景有未保存的修改，是否在退出前保存？", QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel)
-            if reply == QMessageBox.Cancel:
-                event.ignore()
-                return
-            if reply == QMessageBox.Yes: 
-                self._save()
-        if self.font9696:
-            self.font9696.close()
-            self.font9696 = None
-        event.accept()
-
-    # ----------- 文件与列表逻辑 -----------
-    def _load_tks_dir(self):
-        d = QFileDialog.getExistingDirectory(self, "挂载 TKS 游戏目录", self._guess_tks_dir())
-        if not d: return
-        tkt_path = os.path.join(d, "TKT.dat")
-        if not os.path.exists(tkt_path):
-            QMessageBox.critical(self, "文件缺失", f"未找到 TKT.dat\n({d})")
-            return
-
-        font_path = os.path.join(d, "FONT9696")
-        if os.path.exists(font_path) and HAS_PIL:
-            try:
-                if self.font9696: self.font9696.close()
-                self.font9696, self.font_path = Font9696(font_path), font_path
-            except: 
-                self.font9696 = self.font_path = None
-        else: 
-            self.font9696 = self.font_path = None
-
-        g2b_path = os.path.join(d, "g2b.dat")
-        if os.path.exists(g2b_path):
-            try: 
-                load_g2b_dat(g2b_path)
-            except: 
-                pass
-
-        self._load_file(tkt_path)
-        self._update_paths()
-
-    def _guess_tks_dir(self):
-        here = os.path.dirname(os.path.abspath(__file__))
-        tks_dir = os.path.normpath(os.path.join(here, "..", "..", "逆向工作区", "TKS"))
-        return tks_dir if os.path.isdir(tks_dir) else here
+        self.text_widget.setEnabled(enabled); self.id_entry.setEnabled(enabled)
 
     def _load_file(self, path):
         try:
             self.entries = load_tkt(path)
             self.tkt_path = path
-
+            self._rebuild_id_map()
+            
+            self.original_entry_snapshot.clear()
+            for entry in self.entries:
+                self.original_entry_snapshot.add((entry['id'], entry['text']))
+            
             font_path = os.path.join(os.path.dirname(path), "FONT9696")
-            if HAS_PIL and not self.font9696 and os.path.exists(font_path):
-                try: 
-                    self.font9696, self.font_path = Font9696(font_path), font_path
-                except: 
-                    self.font9696 = self.font_path = None
-
-            self._dirty = False
-            self._current_idx = None
+            if HAS_PIL and os.path.exists(font_path):
+                if self.font9696: self.font9696.close()
+                self.font9696, self.font_path = Font9696(font_path), font_path
+            
+            self._dirty = False; self._current_idx = None
+            self.lbl_dirty.setText("")
             self._populate_tree()
             self._set_edit_enabled(False)
-            self.lbl_info.setText("未选中")
-            self.id_entry.setText('')
-            self.text_widget.clear()
             
-            self._update_paths()
-            self.setWindowTitle(f"TKT.dat 编辑器 - {os.path.basename(path)}")
-        except Exception as e:
-            QMessageBox.critical(self, "加载失败", str(e))
+            self.comp_cat_list.setCurrentRow(0)
+            self._on_comp_category_changed(0)
+            
+            self.setWindowTitle(f"TKT.dat 编辑器 v5.0 - {os.path.basename(path)}")
+            self._apply_theme()
+        except Exception as e: QMessageBox.critical(self, "数据载入溃散", str(e))
+
+    def _load_tks_dir(self):
+        d = QFileDialog.getExistingDirectory(self, "挂载 TKS 游戏核心环境目录")
+        if not d: return
+        tkt_path = os.path.join(d, "TKT.dat")
+        if not os.path.exists(tkt_path): QMessageBox.critical(self, "寻路失败", "目录内未检测到 TKT.dat"); return
+        
+        g2b_path = os.path.join(d, "g2b.dat")
+        if os.path.exists(g2b_path): 
+            try: load_g2b_dat(g2b_path)
+            except: pass
+        self._load_file(tkt_path)
 
     def _save(self):
-        if not self.tkt_path: 
-            self._save_as()
-        else: 
-            self._do_save(self.tkt_path)
+        if not self.tkt_path: self._save_as()
+        else: self._do_save(self.tkt_path)
 
     def _save_as(self):
-        path, _ = QFileDialog.getSaveFileName(self, "另存为 TKT.dat", self._guess_tks_dir(), "TKT 数据库 (*.dat);;所有文件 (*.*)")
-        if path: 
-            self._do_save(path)
+        path, _ = QFileDialog.getSaveFileName(self, "打包输出解密 TKT.dat", "", "TKT.dat (*.dat)")
+        if path: self._do_save(path)
 
     def _do_save(self, path):
         self._apply_edit()
-        reply = QMessageBox.question(self, "确认", f"打包保存到 {os.path.basename(path)}？\n共 {len(self.entries)} 个节点")
-        if reply == QMessageBox.No: return
         try:
             save_tkt(path, self.entries)
-            self.tkt_path = path
-            self._dirty = False
-            self.lbl_dirty.setText("")
-        except Exception as e: 
-            QMessageBox.critical(self, "保存失败", str(e))
+            self.tkt_path = path; self._dirty = False; self.lbl_dirty.setText("")
+            QMessageBox.information(self, "成功", "引擎级 TKT 打包回填写盘完毕。")
+        except Exception as e: QMessageBox.critical(self, "构写失败", str(e))
 
+    def _export_mod(self):
+        # 1. 安全前置检查：确保当前内存中有数据环境
+        if not self.tkt_path or not self.entries:
+            QMessageBox.warning(self, "环境缺失", "当前未加载任何基础 TKT.dat 文件，无法进行差分导出。")
+            return
+
+        # 2. 强制收尾：将当前 UI 焦点文本框中正在输入的未保存文本同步回内存容器
+        self._apply_edit()
+        
+        # 3. 核心差分扫描：对比当前内存状态与初始快照
+        #    使用 (ID, 文本) 元组集合判定，彻底免疫原版文件重复 ID 导致的误判
+        mod_entries = []
+        for current_entry in self.entries:
+            eid = current_entry['id']
+            current_text = current_entry['text']
+            
+            # 直接判断当前的 (ID, 文本) 组合是否在原始集合中出现过
+            if (eid, current_text) not in self.original_entry_snapshot:
+                # 重新按 0, 1, 2 编排连续的 slot 槽位，防止底层二进制打包时偏移错位
+                mod_entries.append(OrderedDict([
+                    ('slot', len(mod_entries)), 
+                    ('id', eid), 
+                    ('text', current_text)
+                ]))
+        
+        # 4. 若无任何脏数据，提前阻断
+        if not mod_entries:
+            QMessageBox.information(self, "无变动", "未检测到任何文本变动或新增条目，无需导出。")
+            return
+            
+        # 5. 【核心细节】：弹出交互式对话框，让开发者自主选择导出格式
+        format_options = [
+            "1. JSON 明文核对格式 (*.json)",
+            "2. 二进制加密补丁格式 (*.dat; *.tkt)"
+        ]
+        
+        selected_format, ok = QInputDialog.getItem(
+            self, 
+            "选择 MOD 导出数据类型", 
+            f"检测到共 {len(mod_entries)} 项变更。\n请选择保存类型（建议正式发布前先导出JSON核对）：", 
+            format_options, 
+            0,      # 默认选中第一项：JSON
+            False   # 文本不可由用户任意编辑修改
+        )
+        
+        # 用户点击了取消或关闭了弹窗，则安全中断
+        if not ok or not selected_format:
+            return
+
+        # 6. 根据用户的格式选择，分流处理文件对话框的过滤器和底层写盘逻辑
+        base_name = os.path.splitext(os.path.basename(self.tkt_path))[0]
+        
+        if "JSON" in selected_format:
+            # --- 分流 A: 导出 JSON 明文纯文本 ---
+            default_file_name = f"MOD_{base_name}_REVIEW.json"
+            save_path, _ = QFileDialog.getSaveFileName(
+                self, 
+                "导出明文核对文件", 
+                default_file_name, 
+                "JSON Data Files (*.json)"
+            )
+            
+            if save_path:
+                try:
+                    with open(save_path, 'w', encoding='utf-8') as json_file:
+                        # ensure_ascii=False 确保中文汉字不被转义为 \\uXXXX
+                        # indent=4 维持标准的漂亮排版格式，极大方便肉眼核对
+                        json.dump(mod_entries, json_file, ensure_ascii=False, indent=4)
+                    
+                    QMessageBox.information(
+                        self, 
+                        "明文导出成功", 
+                        f"JSON 核对文本已生成完毕！\n您可以直接使用文本编辑器打开：\n\n{save_path}"
+                    )
+                except Exception as e:
+                    QMessageBox.critical(self, "JSON 导出失败", f"文件写入时发生异常:\n{str(e)}")
+                    
+        else:
+            # --- 分流 B: 导出原版标准二进制加密数据文件 ---
+            default_file_name = f"MOD_{base_name}.dat"
+            save_path, _ = QFileDialog.getSaveFileName(
+                self, 
+                "导出二进制 MOD 补丁", 
+                default_file_name, 
+                "TKT Game Files (*.dat *.tkt)"
+            )
+            
+            if save_path:
+                try:
+                    # 复用原脚本底层的反解/构建算法函数，输出被 XOR 0xFF 加密处理后的原始格式
+                    save_tkt(save_path, mod_entries)
+                    QMessageBox.information(
+                        self, 
+                        "二进制打包成功", 
+                        f"增量 MOD 数据打包成功！\n共封装了 {len(mod_entries)} 条加密补丁数据。"
+                    )
+                except Exception as e:
+                    QMessageBox.critical(self, "二进制打包失败", f"打包二进制文件时发生底层崩溃:\n{str(e)}")
+
+    def _import_mod(self):
+        # 1. 前置检查：必须先加载原版 TKT 作为"底包"
+        if not self.tkt_path or not self.entries:
+            QMessageBox.warning(self, "环境缺失", "请先加载原版 TKT.dat 文件作为底包，再导入 MOD 进行数据融合。")
+            return
+
+        # 2. 弹出文件选择框，支持双格式
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "导入增量 MOD 文件",
+            "",
+            "MOD 数据文件 (*.json *.dat *.tkt);;JSON 明文文件 (*.json);;二进制加密文件 (*.dat *.tkt)"
+        )
+
+        if not file_path:
+            return
+
+        try:
+            imported_data = []
+            
+            # 3. 格式分流解析
+            if file_path.lower().endswith('.json'):
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    imported_data = json.load(f)
+            else:
+                # 复用底层的 load_tkt 函数，它可以完美解密标准的二进制补丁
+                imported_data = load_tkt(file_path)
+
+            if not imported_data:
+                QMessageBox.information(self, "空文件", "选中的 MOD 文件中没有任何有效数据。")
+                return
+
+            # 4. 核心融合逻辑 (Base + Override)
+            overwrite_count = 0
+            append_count = 0
+
+            for mod_entry in imported_data:
+                eid = mod_entry['id']
+                mod_text = mod_entry['text']
+
+                if eid in self.entry_by_id:
+                    # 场景 A：如果原版游戏底包中已有这个 ID，执行文本覆盖
+                    if self.entry_by_id[eid]['text'] != mod_text:
+                        self.entry_by_id[eid]['text'] = mod_text
+                        overwrite_count += 1
+                else:
+                    # 场景 B：如果是一个全新扩展的 ID，执行追加插入
+                    new_entry = OrderedDict([
+                        ('slot', len(self.entries)), 
+                        ('id', eid), 
+                        ('text', mod_text)
+                    ])
+                    self.entries.append(new_entry)
+                    self.entry_by_id[eid] = new_entry
+                    append_count += 1
+
+            # 5. 结果反馈
+            if overwrite_count == 0 and append_count == 0:
+                QMessageBox.information(self, "无变化", "导入的 MOD 数据与当前环境完全一致，未发生任何改变。")
+                return
+
+            # 6. 设置脏标记，提醒用户当前内存已被污染（已混入 MOD）
+            self._dirty = True
+            self.lbl_dirty.setText("[!] 已混入 MOD 补丁")
+            
+            # 7. 强制刷新所有的 UI 视图，确保刚导入的数据立刻显示
+            self._populate_tree()  # 刷新全局线性表
+            
+            # 刷新分类视图 (如果此时处于分类 Tab，确保空槽状态被更新)
+            cat_idx = self.comp_cat_list.currentRow()
+            if cat_idx >= 0:
+                self._on_comp_category_changed(cat_idx)
+                
+            QMessageBox.information(
+                self, 
+                "MOD 融合成功", 
+                f"增量补丁已成功打入当前环境！\n\n"
+                f"• 覆盖原有文本: {overwrite_count} 条\n"
+                f"• 追加全新词条: {append_count} 条"
+            )
+
+        except Exception as e:
+            QMessageBox.critical(self, "导入溃散", f"解析 MOD 文件时发生底层异常:\n{str(e)}")
+
+    # ============================================================
+    # 模块分类维护 (空槽边界扫描核心)
+    # ============================================================
+    def _get_all_category_starts(self):
+        starts = []
+        for c in SEMANTIC_CATEGORIES:
+            if c['type'] == 'single':
+                for r in c['ranges']: starts.append(r[0])
+            else:
+                starts.append(c['name_start'])
+                starts.append(c['desc_start'])
+        return sorted(list(set(starts)))
+        
+    def _get_safe_upper_bound(self, end_id, all_starts):
+        for s in all_starts:
+            if s > end_id:
+                return s - 1
+        return end_id + 100 
+        
+    def _on_comp_category_changed(self, index):
+        if index < 0 or not self.entries: return
+        cat = SEMANTIC_CATEGORIES[index]
+        all_starts = self._get_all_category_starts()
+        
+        self.comp_table.blockSignals(True)
+        self.comp_table.setRowCount(0)
+        
+        empty_color = QColor("#888888")
+        
+        if cat['type'] == "single":
+            self.comp_desc_container.setVisible(False)
+            self.comp_table.setColumnCount(2)
+            self.comp_table.setHorizontalHeaderLabels(['条目 ID', '核心文本内容 Preview'])
+            self.comp_table.setColumnWidth(0, 80)
+            self.comp_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+            
+            row = 0
+            for rs, re in cat['ranges']:
+                safe_end = self._get_safe_upper_bound(re, all_starts)
+                for cur_id in range(rs, safe_end + 1):
+                    e = self.entry_by_id.get(cur_id)
+                    self.comp_table.insertRow(row)
+                    self.comp_table.setItem(row, 0, self._make_center_item(str(cur_id)))
+                    if e:
+                        self.comp_table.setItem(row, 1, QTableWidgetItem(e['text'].replace('\n','↵')[:60]))
+                    else:
+                        empty_item = QTableWidgetItem("【安全空槽 - 可直接编辑扩展】")
+                        empty_item.setForeground(empty_color)
+                        self.comp_table.setItem(row, 1, empty_item)
+                    row += 1
+        else:
+            self.comp_desc_container.setVisible(True)
+            self.comp_table.setColumnCount(4)
+            self.comp_table.setHorizontalHeaderLabels(['名称 ID', '当前名称', '说明 ID', '当前说明预览'])
+            self.comp_table.setColumnWidth(0, 70); self.comp_table.setColumnWidth(2, 70)
+            self.comp_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Interactive)
+            self.comp_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.Stretch)
+            
+            name_safe = self._get_safe_upper_bound(cat['name_end'], all_starts)
+            desc_safe = self._get_safe_upper_bound(cat['desc_end'], all_starts)
+            max_pairs = min(name_safe - cat['name_start'], desc_safe - cat['desc_start']) + 1
+            
+            row = 0
+            for i in range(max_pairs):
+                nid = cat['name_start'] + i
+                did = cat['desc_start'] + i
+                ne = self.entry_by_id.get(nid)
+                de = self.entry_by_id.get(did)
+                
+                self.comp_table.insertRow(row)
+                self.comp_table.setItem(row, 0, self._make_center_item(str(nid)))
+                if ne:
+                    self.comp_table.setItem(row, 1, QTableWidgetItem(ne['text'].replace('\n','↵')))
+                else:
+                    it = QTableWidgetItem("【名称空槽】")
+                    it.setForeground(empty_color); self.comp_table.setItem(row, 1, it)
+                    
+                self.comp_table.setItem(row, 2, self._make_center_item(str(did)))
+                if de:
+                    self.comp_table.setItem(row, 3, QTableWidgetItem(de['text'].replace('\n','↵')[:50]))
+                else:
+                    it = QTableWidgetItem("【配套说明空槽】")
+                    it.setForeground(empty_color); self.comp_table.setItem(row, 3, it)
+                row += 1
+
+        self.comp_table.blockSignals(False)
+        self._clear_comp_inputs()
+        self._adjust_comp_columns()
+
+    def _clear_comp_inputs(self):
+        self._comp_active_id1, self._comp_active_id2 = None, None
+        self.comp_box1_title.setText("名称 / 主文本内容 (ID: ---)")
+        self.comp_box2_title.setText("说明 / 描述文本内容 (ID: ---)")
+        self.comp_text1.clear(); self.comp_text2.clear()
+        self.comp_preview_img.clear()
+
+    def _adjust_comp_columns(self):
+        """调整分类表格列宽：当前名称:当前说明预览 = 1:4"""
+        if self.comp_table.columnCount() != 4:
+            return
+        total_w = self.comp_table.viewport().width()
+        fixed_w = 70 + 70  # 名称ID + 说明ID 固定宽度
+        if total_w > fixed_w:
+            remaining = total_w - fixed_w
+            self.comp_table.setColumnWidth(1, remaining // 5)
+
+    def _on_comp_table_select(self):
+        selected = self.comp_table.selectedItems()
+        if not selected: return
+        row = selected[0].row()
+        cat = SEMANTIC_CATEGORIES[self.comp_cat_list.currentRow()]
+        self.comp_text1.blockSignals(True); self.comp_text2.blockSignals(True)
+        
+        if cat['type'] == "single":
+            self._comp_active_id1 = int(self.comp_table.item(row, 0).text())
+            self._comp_active_id2 = None
+            self.comp_box1_title.setText(f"文本内容字段 (ID: {self._comp_active_id1})")
+            self.comp_text1.setPlainText(self.entry_by_id.get(self._comp_active_id1, {}).get('text', ''))
+            self.comp_text2.clear()
+        else:
+            self._comp_active_id1 = int(self.comp_table.item(row, 0).text())
+            self._comp_active_id2 = int(self.comp_table.item(row, 2).text())
+            self.comp_box1_title.setText(f"关联名称字段 (ID: {self._comp_active_id1})")
+            self.comp_box2_title.setText(f"关联说明字段 (ID: {self._comp_active_id2})")
+            self.comp_text1.setPlainText(self.entry_by_id.get(self._comp_active_id1, {}).get('text', ''))
+            self.comp_text2.setPlainText(self.entry_by_id.get(self._comp_active_id2, {}).get('text', ''))
+
+        self.comp_text1.blockSignals(False); self.comp_text2.blockSignals(False)
+        self._render_comp_previews()
+
+    def _on_comp_text_modified(self):
+        self._dirty = True
+        self.lbl_dirty.setText("[!] 未保存")
+        self._comp_preview_timer.start(50)
+
+    def _apply_comp_edit(self):
+        if getattr(self, '_comp_active_id1', None) is None: return
+        
+        def _commit(eid, txt):
+            if eid is None: return
+            if eid in self.entry_by_id:
+                self.entry_by_id[eid]['text'] = txt
+            else:
+                if not txt.strip(): return 
+                ne = OrderedDict([('slot', len(self.entries)), ('id', eid), ('text', txt)])
+                self.entries.append(ne)
+                self.entry_by_id[eid] = ne
+
+        _commit(self._comp_active_id1, self.comp_text1.toPlainText())
+        if self._comp_active_id2 is not None:
+            _commit(self._comp_active_id2, self.comp_text2.toPlainText())
+            
+        row = self.comp_table.currentRow()
+        if row >= 0:
+            txt1 = self.comp_text1.toPlainText().replace('\n','↵')
+            txt2 = self.comp_text2.toPlainText().replace('\n','↵')[:50]
+            
+            i1 = QTableWidgetItem(txt1)
+            i1.setForeground(QColor("#dcdcdc") if self._is_dark else QColor("#222222"))
+            self.comp_table.setItem(row, 1, i1)
+            
+            if self._comp_active_id2 is not None:
+                i2 = QTableWidgetItem(txt2)
+                i2.setForeground(QColor("#dcdcdc") if self._is_dark else QColor("#222222"))
+                self.comp_table.setItem(row, 3, i2)
+        
+        self._populate_tree() 
+
+    def _render_comp_previews(self):
+        if not HAS_PIL or not self.font9696: return
+        bg = '#1a1d24' if self._is_dark else '#313c52'
+        sc = self._zoom_level / 100.0
+        ut = self.chk_traditional.isChecked()
+        
+        img1, img2 = None, None
+        txt1 = self.comp_text1.toPlainText().strip()
+        txt2 = self.comp_text2.toPlainText().strip()
+        
+        if self._comp_active_id1 is not None and txt1:
+            try: img1 = _render_text_image(parse_styled_segments(txt1), self.font9696, use_traditional_font=ut, bg_color=bg, scale_factor=sc)
+            except: pass
+            
+        if self._comp_active_id2 is not None and txt2:
+            try: img2 = _render_text_image(parse_styled_segments(txt2), self.font9696, use_traditional_font=ut, bg_color=bg, scale_factor=sc)
+            except: pass
+            
+        if not img1 and not img2:
+            self.comp_preview_img.clear(); return
+            
+        w1, h1 = (img1.width, img1.height) if img1 else (0, 0)
+        w2, h2 = (img2.width, img2.height) if img2 else (0, 0)
+        
+        spacing = 15 if (img1 and img2) else 0
+        canvas_w = max(w1, w2)
+        canvas_h = h1 + spacing + h2
+        
+        bg_rgb = _hex_to_rgb(bg)
+        canvas = Image.new('RGBA', (canvas_w, canvas_h), (*bg_rgb, 255))
+        y = 0
+        if img1:
+            canvas.paste(img1, (0, y)); y += h1
+        if img1 and img2:
+            from PIL import ImageDraw
+            draw = ImageDraw.Draw(canvas)
+            ly = y + spacing // 2
+            draw.line([(10, ly), (canvas_w - 10, ly)], fill=(120, 120, 120, 150), width=1)
+            y += spacing
+        if img2:
+            canvas.paste(img2, (0, y))
+            
+        self.comp_preview_img.setPixmap(QPixmap.fromImage(pil_to_qimage(canvas)))
+
+    def _make_center_item(self, text):
+        it = QTableWidgetItem(text); it.setTextAlignment(Qt.AlignCenter); return it
+
+    # ============================================================
+    # 原始全选表（线性模式维护）
+    # ============================================================
     def _populate_tree(self):
         self.filtered_indices = list(range(len(self.entries)))
         self._apply_sort()
 
     def _set_table_row(self, row, e):
-        preview = e['text'].replace('\n', '↵').replace('\t', ' ')[:60]
-        i1, i2 = QTableWidgetItem(str(e['slot'])), QTableWidgetItem(str(e['id']))
-        i1.setTextAlignment(Qt.AlignCenter)
-        i2.setTextAlignment(Qt.AlignCenter)
-        self.table.setItem(row, 0, i1)
-        self.table.setItem(row, 1, i2)
-        self.table.setItem(row, 2, QTableWidgetItem(preview))
+        pv = e['text'].replace('\n', '↵').replace('\t', ' ')[:60]
+        i1, i2 = self._make_center_item(str(e['slot'])), self._make_center_item(str(e['id']))
+        self.table.setItem(row, 0, i1); self.table.setItem(row, 1, i2); self.table.setItem(row, 2, QTableWidgetItem(pv))
 
     def _apply_filter(self):
         query = self.search_entry.text().strip().lower()
-        try: 
-            id_from = int(self.filter_from.text()) if self.filter_from.text().strip() else None
-        except ValueError: 
-            id_from = None
-        try: 
-            id_to = int(self.filter_to.text()) if self.filter_to.text().strip() else None
-        except ValueError: 
-            id_to = None
+        try: id_from = int(self.filter_from.text()) if self.filter_from.text().strip() else None
+        except: id_from = None
+        try: id_to = int(self.filter_to.text()) if self.filter_to.text().strip() else None
+        except: id_to = None
 
         self.filtered_indices = []
         for idx, e in enumerate(self.entries):
@@ -1367,160 +1539,122 @@ class TktEditor(QMainWindow):
             if id_to is not None and e['id'] > id_to: continue
             if query and query not in e['text'].lower() and query not in str(e['id']): continue
             self.filtered_indices.append(idx)
-            
         self._apply_sort()
-
-    def _on_header_clicked(self, logical_index):
-        """表头被点击时切换三态排序"""
-        if logical_index not in (0, 1):
-            return
-            
-        if self._sort_col == logical_index:
-            self._sort_state = (self._sort_state + 1) % 3
-        else:
-            self._sort_col = logical_index
-            self._sort_state = 1
-            
-        self._apply_sort()
-
-    def _apply_sort(self):
-        """对当前的过滤列表进行真正的排序"""
-        if self._sort_state == 0:
-            self.filtered_indices.sort()
-        else:
-            is_desc = (self._sort_state == 2)
-            if self._sort_col == 0:
-                self.filtered_indices.sort(key=lambda x: self.entries[x]['slot'], reverse=is_desc)
-            elif self._sort_col == 1:
-                self.filtered_indices.sort(key=lambda x: self.entries[x]['id'], reverse=is_desc)
-                
-        self._refresh_table_view()
-
-    def _refresh_table_view(self):
-        """根据 filtered_indices 重新渲染表格并更新表头"""
-        self.table.blockSignals(True)
-        self.table.setRowCount(0)
-        self.table.setRowCount(len(self.filtered_indices))
-        
-        for row, idx in enumerate(self.filtered_indices):
-            self._set_table_row(row, self.entries[idx])
-            
-        self.table.blockSignals(False)
-
-        # 更新表头箭头指示
-        headers = ['#', 'ID', '文本内容']
-        if self._sort_col != -1 and self._sort_state != 0:
-            arrow = ' ▲' if self._sort_state == 1 else ' ▼'
-            headers[self._sort_col] += arrow
-            
-        self.table.setHorizontalHeaderLabels(headers)
 
     def _clear_filter(self):
-        self.search_entry.setText('')
-        self.filter_from.setText('')
-        self.filter_to.setText('')
+        self.search_entry.clear(); self.filter_from.clear(); self.filter_to.clear()
         self._populate_tree()
 
     def _focus_search(self):
-        self.search_entry.setFocus()
-        self.search_entry.selectAll()
+        self.search_entry.setFocus(); self.search_entry.selectAll()
 
     def _on_table_select(self):
-        selected = self.table.selectedItems()
-        if not selected: return
-        self._load_entry_to_edit(self.filtered_indices[selected[0].row()])
+        sel = self.table.selectedItems()
+        if not sel: return
+        self._load_entry_to_edit(self.filtered_indices[sel[0].row()])
 
     def _load_entry_to_edit(self, idx):
         if idx < 0 or idx >= len(self.entries): return
-        self._current_idx = idx
-        e = self.entries[idx]
-        self.lbl_info.setText(f"slot={e['slot']}")
+        self._current_idx = idx; e = self.entries[idx]
+        self.lbl_info.setText(f"当前全项槽位置 slot={e['slot']}")
         self.id_entry.setText(str(e['id']))
         self._set_edit_enabled(True)
-        self.text_widget.blockSignals(True)
-        self.text_widget.setPlainText(e['text'])
-        self.text_widget.blockSignals(False)
-        self.lbl_dirty.setText("")
+        self.text_widget.blockSignals(True); self.text_widget.setPlainText(e['text']); self.text_widget.blockSignals(False)
         self._render_preview()
 
     def _on_text_modified(self):
-        if self._current_idx is not None: self.lbl_dirty.setText("[!] 未保存")
+        self._dirty = True
+        self.lbl_dirty.setText("[!] 未保存")
         self._preview_timer.start(50) 
 
     def _apply_edit(self):
         if self._current_idx is None: return
-        try: 
-            new_id = int(self.id_entry.text())
-        except ValueError:
-            QMessageBox.critical(self, "参数错误", "ID必须是整数。")
-            return
-            
-        new_text = self.text_widget.toPlainText()
+        try: nid = int(self.id_entry.text())
+        except: QMessageBox.critical(self, "错误", "ID必须是整数"); return
+        ntxt = self.text_widget.toPlainText()
         e = self.entries[self._current_idx]
-        
-        if e['id'] != new_id or e['text'] != new_text:
-            e['id'], e['text'] = new_id, new_text
-            self._dirty = True
-            self.lbl_dirty.setText("")
-            try: 
-                self._set_table_row(self.filtered_indices.index(self._current_idx), e)
-            except ValueError: 
-                pass
+        if e['id'] != nid or e['text'] != ntxt:
+            e['id'], e['text'] = nid, ntxt
+            self._dirty = True; self._rebuild_id_map()
+            try: self._set_table_row(self.filtered_indices.index(self._current_idx), e)
+            except: pass
 
     def _reset_edit(self):
-        if self._current_idx is not None: 
-            self._load_entry_to_edit(self._current_idx)
+        if self._current_idx is not None: self._load_entry_to_edit(self._current_idx)
 
     def _new_entry(self):
-        if not self.entries:
-            QMessageBox.information(self, "提示", "请先挂载 TKT.dat")
-            return
-            
-        max_id = max(e['id'] for e in self.entries)
-        new_entry = OrderedDict([('slot', len(self.entries)), ('id', max_id + 1 if max_id >= 0 else 1), ('text', '')])
-        self.entries.append(new_entry)
-        self._dirty = True
-
-        idx = len(self.entries) - 1
-        self._apply_filter()
-        
+        if not self.entries: return
+        mid = max(e['id'] for e in self.entries)
+        ne = OrderedDict([('slot', len(self.entries)), ('id', mid + 1 if mid >= 0 else 1), ('text', '')])
+        self.entries.append(ne); self._dirty = True; self._rebuild_id_map(); self._apply_filter()
         try:
-            row = self.filtered_indices.index(idx)
-            self.table.selectRow(row)
-            self.table.scrollToItem(self.table.item(row, 0))
-        except ValueError:
-            pass
+            r = self.filtered_indices.index(len(self.entries) - 1)
+            self.table.selectRow(r); self.table.scrollToItem(self.table.item(r,0))
+        except: pass
 
     def _delete_entry(self):
         if self._current_idx is None: return
-        e = self.entries[self._current_idx]
-        if QMessageBox.question(self, "确认移除", f"移除节点 slot={e['slot']} ID={e['id']}?", QMessageBox.Yes | QMessageBox.No) == QMessageBox.No: return
-        
+        if QMessageBox.question(self, "物理清空", "物理剥离该节点？", QMessageBox.Ok | QMessageBox.Cancel) == QMessageBox.Cancel:
+            return
         self.entries.pop(self._current_idx)
-        self._dirty = True
-        
-        for i, entry in enumerate(self.entries): 
-            entry['slot'] = i
-            
-        self._current_idx = None
-        self._populate_tree()
-        self._set_edit_enabled(False)
-        self.lbl_info.setText("未选中")
-        self.id_entry.setText('')
-        self.text_widget.clear()
+        for i, entry in enumerate(self.entries): entry['slot'] = i
+        self._dirty = True; self._current_idx = None; self._rebuild_id_map(); self._populate_tree()
+        self._set_edit_enabled(False); self.text_widget.clear()
 
-    # ----------- TAG 工具栏 -----------
-    def _build_tag_toolbar(self, parent_layout):
+    def _on_header_clicked(self, logical_index):
+        if logical_index not in (0, 1): return
+        if self._sort_col == logical_index: self._sort_state = (self._sort_state + 1) % 3
+        else: self._sort_col = logical_index; self._sort_state = 1
+        self._apply_sort()
+
+    def _apply_sort(self):
+        if self._sort_state == 0: self.filtered_indices.sort()
+        else:
+            rev = (self._sort_state == 2)
+            if self._sort_col == 0: self.filtered_indices.sort(key=lambda x: self.entries[x]['slot'], reverse=rev)
+            elif self._sort_col == 1: self.filtered_indices.sort(key=lambda x: self.entries[x]['id'], reverse=rev)
+        self.table.blockSignals(True); self.table.setRowCount(0); self.table.setRowCount(len(self.filtered_indices))
+        for r, idx in enumerate(self.filtered_indices): self._set_table_row(r, self.entries[idx])
+        self.table.blockSignals(False)
+        hd = ['#', 'ID', '文本内容 Preview']
+        if self._sort_col != -1 and self._sort_state != 0: hd[self._sort_col] += (' ▲' if self._sort_state == 1 else ' ▼')
+        self.table.setHorizontalHeaderLabels(hd)
+
+    def _zoom_in(self):
+        if self._zoom_level < 300: self._zoom_level += 25; self._apply_zoom()
+    def _zoom_out(self):
+        if self._zoom_level > 100: self._zoom_level -= 25; self._apply_zoom()
+    def _apply_zoom(self):
+        if hasattr(self, 'lbl_zoom'): self.lbl_zoom.setText(f"{self._zoom_level}%")
+        if hasattr(self, 'lbl_comp_zoom'): self.lbl_comp_zoom.setText(f"{self._zoom_level}%")
+        self._render_preview(); self._render_comp_previews()
+
+    def _on_font_toggle(self, c): self._render_preview(); self._render_comp_previews()
+    
+    def _render_preview(self):
+        t = self.text_widget.toPlainText()
+        if not t.strip(): self.preview_stack.setCurrentIndex(1); self.preview_text.setPlainText('[空槽]'); return
+        if HAS_PIL and self.font9696:
+            try:
+                seg = parse_styled_segments(t)
+                img = _render_text_image(seg, self.font9696, use_traditional_font=self.chk_traditional.isChecked(), bg_color=('#1a1d24' if self._is_dark else '#313c52'), scale_factor=self._zoom_level / 100.0)
+                self.preview_img.setPixmap(QPixmap.fromImage(pil_to_qimage(img)))
+                self.preview_stack.setCurrentIndex(0); return
+            except Exception as e: self.preview_stack.setCurrentIndex(1); self.preview_text.setPlainText(f'报错:\n{str(e)}'); return
+        self.preview_stack.setCurrentIndex(1); self.preview_text.setPlainText(t)
+
+    # ----------- TAG 核心工具栏 (100% 恢复 V2 原版包含的所有组件) -----------
+    def _build_tag_toolbar(self, parent_layout, show_info=True):
         toolbar = QHBoxLayout()
         toolbar.setContentsMargins(0, 5, 0, 5)
 
-        self.cb_freset = QComboBox()
-        self.cb_freset.addItems(["格式控制", "1-全部恢复", "2-恢复颜色", "3-重新初始化", "4-恢复字体"])
-        self.cb_freset.currentIndexChanged.connect(self._on_freset_select)
-        toolbar.addWidget(self.cb_freset)
+        cb_freset = QComboBox()
+        cb_freset.addItems(["格式控制", "1-全部恢复", "2-恢复颜色", "3-重新初始化", "4-恢复字体"])
+        cb_freset.currentIndexChanged.connect(lambda idx, cb=cb_freset: self._on_combo_freset(idx, cb))
+        toolbar.addWidget(cb_freset)
 
         toolbar.addSpacing(10)
-        for ci in [17, 19, 20, 23, 26]:
+        for ci in [17, 19, 20, 23, 21]:
             btn = QPushButton()
             btn.setFixedSize(20, 20)
             btn.setStyleSheet(f"background-color: {GAME_COLORS[ci]}; border: 1px solid #777; border-radius: 10px;")
@@ -1532,54 +1666,65 @@ class TktEditor(QMainWindow):
         toolbar.addWidget(btn_more_color)
 
         toolbar.addSpacing(10)
-        self.cb_fsize = QComboBox()
-        self.cb_fsize.addItems(["字号", "12", "16", "24", "32", "48"])
-        self.cb_fsize.currentIndexChanged.connect(self._on_fsize_select)
-        toolbar.addWidget(self.cb_fsize)
+        cb_fsize = QComboBox()
+        cb_fsize.addItems(["字号", "12", "16", "24", "32", "48"])
+        cb_fsize.currentIndexChanged.connect(lambda idx, cb=cb_fsize: self._on_combo_fsize(idx, cb))
+        toolbar.addWidget(cb_fsize)
 
-        self.cb_ftype = QComboBox()
-        self.cb_ftype.addItems(["字体", "1-细明", "2-明体", "3-楷体", "4-宋体", "5-微正黑", "6-黑体", "7-仿宋", "8-楷体2"])
-        self.cb_ftype.currentIndexChanged.connect(self._on_ftype_select)
-        toolbar.addWidget(self.cb_ftype)
+        cb_ftype = QComboBox()
+        cb_ftype.addItems(["字体", "1-字体1", "2-字体2", "3-字体3", "4-字体4", "5-字体5", "6-字体6", "7-字体7", "8-字体8"])
+        cb_ftype.currentIndexChanged.connect(lambda idx, cb=cb_ftype: self._on_combo_ftype(idx, cb))
+        toolbar.addWidget(cb_ftype)
 
         toolbar.addSpacing(10)
         btn_name = QPushButton("👤 姓名宏")
         btn_name.clicked.connect(lambda: self._insert_tag("<NAME,1><NAME,2>"))
         toolbar.addWidget(btn_name)
 
-        toolbar.addSpacing(5)
-        btn_rgb = QPushButton("🎨 RGB色")
-        btn_rgb.clicked.connect(self._insert_fcolord)
-        toolbar.addWidget(btn_rgb)
-        
         toolbar.addStretch()
+        
+        if show_info:
+            self.lbl_info = QLabel("未选中")
+            toolbar.addWidget(self.lbl_info)
+            
+            toolbar.addSpacing(10)
+            toolbar.addWidget(QLabel("绑定 ID:"))
+            self.id_entry = QLineEdit()
+            self.id_entry.setFixedWidth(70)
+            toolbar.addWidget(self.id_entry)
+        
         parent_layout.addLayout(toolbar)
 
-    def _insert_tag(self, opening, closing=None):
-        cursor = self.text_widget.textCursor()
+    def _on_focus_changed(self, old, new):
+        if new in (self.text_widget, self.comp_text1, self.comp_text2):
+            self._last_focused_input = new
+
+    def _insert_tag(self, op, cl=None):
+        # 智能识别当前拥有焦点的文本框（优先用实时焦点，回退到最后追踪的输入框）
+        target = self.text_widget
+        fw = QApplication.focusWidget()
+        if fw in (self.text_widget, self.comp_text1, self.comp_text2):
+            target = fw
+        elif self._last_focused_input is not None:
+            target = self._last_focused_input
+        elif self.main_tabs.currentIndex() == 1:
+            target = self.comp_text1
+
+        cursor = target.textCursor()
         selected_text = cursor.selectedText()
         if selected_text: 
-            cursor.insertText(opening + selected_text + (closing or ''))
+            cursor.insertText(op + selected_text + (cl or ''))
         else: 
-            cursor.insertText(opening + (closing or ''))
-        self.text_widget.setFocus()
-        self._on_text_modified()
-
-    def _on_freset_select(self, index):
-        if index == 0: return
-        self._insert_tag(f"<FRESET,{int(self.cb_freset.currentText().split('-')[0])}>")
-        self.cb_freset.setCurrentIndex(0)
+            cursor.insertText(op + (cl or ''))
+        target.setFocus()
+        
+        if target == self.text_widget:
+            self._on_text_modified()
+        else:
+            self._on_comp_text_modified()
 
     def _insert_fcolor(self, color_idx):
         self._insert_tag(f"<FCOLOR,{color_idx}>", "<FRESET,2>")
-
-    def _insert_fcolord(self):
-        """弹出系统取色器，插入 <FCOLORD,r,g,b> 标签。"""
-        color = QColorDialog.getColor(parent=self)
-        if not color.isValid():
-            return
-        r, g, b = color.red(), color.green(), color.blue()
-        self._insert_tag(f"<FCOLORD,{r},{g},{b}>", "<FRESET,2>")
 
     def _show_color_palette(self):
         dlg = QDialog(self)
@@ -1599,45 +1744,175 @@ class TktEditor(QMainWindow):
             layout.addWidget(btn, (ci - 1) // 8, (ci - 1) % 8)
         dlg.exec()
 
-    def _on_fsize_select(self, index):
-        if index == 0: return
-        self._insert_tag(f"<FSIZE,{int(self.cb_fsize.currentText())}>", "<FRESET,1>")
-        self.cb_fsize.setCurrentIndex(0)
+    def _on_combo_freset(self, idx, cb):
+        if idx == 0: return
+        self._insert_tag(f"<FRESET,{int(cb.currentText().split('-')[0])}>")
+        cb.setCurrentIndex(0)
 
-    def _on_ftype_select(self, index):
-        if index == 0: return
-        self._insert_tag(f"<FTYPE,{int(self.cb_ftype.currentText().split('-')[0])}>", "<FRESET,4>")
-        self.cb_ftype.setCurrentIndex(0)
+    def _on_combo_fsize(self, idx, cb):
+        if idx == 0: return
+        self._insert_tag(f"<FSIZE,{int(cb.currentText())}>", "<FRESET,1>")
+        cb.setCurrentIndex(0)
+
+    def _on_combo_ftype(self, idx, cb):
+        if idx == 0: return
+        self._insert_tag(f"<FTYPE,{int(cb.currentText().split('-')[0])}>", "<FRESET,4>")
+        cb.setCurrentIndex(0)
         
     def _show_about(self):
         QMessageBox.about(
             self, "关于",
-            "TKT.dat 文本数据库编辑器 v1.0 (PySide6)\n\n"
+            "TKT.dat 文本数据库编辑器 v5.0 (PySide6)\n\n"
             "基于逆向工程 sub_401E88/sub_4067E8/sub_4019D0 实现。\n"
             "支持加载/编辑/保存/新增 TKT.dat 条目。\n\n"
             "控制码:\n"
             "  <FRESET,n>  n∈[1,4]     <FCOLOR,n>  n∈[1,32]\n"
-            "  <FCOLORD,r,g,b> r,g,b∈[0,255]\n"
             "  <FSIZE,n>   n∈[12,48]   <FTYPE,n>   n∈[1,8]\n"
             "  <TEXT,n>    n∈[1,32767] (2字节)\n"
             "  <VARNUM,n>  n∈[1,255]   <VARTXT,n>  n∈[1,255]\n"
             "  <NAME,n>    n∈[1,2]"
         )
 
-def main():
-    app = QApplication(sys.argv)
-    app.setStyle("Fusion") 
-    
-    initial_path = None
-    if len(sys.argv) > 1:
-        initial_path = sys.argv[1]
-        if not os.path.exists(initial_path):
-            print(f"[ERROR] 文件不存在: {initial_path}", file=sys.stderr)
-            return 1
+    def closeEvent(self, event):
+        if self._dirty:
+            if QMessageBox.question(self, "未保存", "直接退出？", QMessageBox.Ok | QMessageBox.Cancel) == QMessageBox.Cancel:
+                event.ignore()
+                return
+        if self.font9696: self.font9696.close()
+        event.accept()
 
-    editor = TktEditor(initial_path)
-    editor.show()
-    sys.exit(app.exec())
+# ============================================================
+# 无界面 CLI 核心调度 (专供 AI Agent 与自动化脚本使用)
+# ============================================================
+def run_cli(args):
+    """处理所有的命令行逻辑，不启动任何 UI 组件"""
+    try:
+        # 1. 基础环境检验：加载底包并建立快照防重复体系
+        if not args.input or not os.path.exists(args.input):
+            print("Error: 必须通过 -i / --input 指定有效的 TKT.dat 底包文件。", file=sys.stderr)
+            sys.exit(1)
+            
+        entries = load_tkt(args.input)
+        entry_by_id = {e['id']: e for e in entries}
+        
+        # 建立初始快照 (免疫原版游戏同 ID 脏数据干扰)
+        original_snapshot = set((e['id'], e['text']) for e in entries)
+        
+        print(f"Success: 成功加载底包 {args.input}，共 {len(entries)} 条数据。")
+
+        # 2. 【全量导出】指令：给 AI 提供完整的游戏文本上下文阅读
+        if args.dump_all:
+            with open(args.dump_all, 'w', encoding='utf-8') as f:
+                json.dump(entries, f, ensure_ascii=False, indent=4)
+            print(f"Success: 全量底层数据已导出至 {args.dump_all}")
+
+        # 3. 【导入增量 MOD】指令：支持 .json 与 .dat 自动推断
+        if args.import_mod:
+            if not os.path.exists(args.import_mod):
+                print(f"Error: 找不到待导入的 MOD 文件 {args.import_mod}", file=sys.stderr)
+                sys.exit(1)
+                
+            # 后缀名分流：JSON 文本或 二进制文件
+            if args.import_mod.lower().endswith('.json'):
+                with open(args.import_mod, 'r', encoding='utf-8') as f:
+                    mod_data = json.load(f)
+            else:
+                mod_data = load_tkt(args.import_mod)
+                
+            overwrite_count = 0
+            append_count = 0
+            
+            # 执行数据覆盖与追加融合
+            for mod_entry in mod_data:
+                eid = mod_entry['id']
+                mod_text = mod_entry['text']
+                
+                if eid in entry_by_id:
+                    if entry_by_id[eid]['text'] != mod_text:
+                        entry_by_id[eid]['text'] = mod_text
+                        overwrite_count += 1
+                else:
+                    new_entry = OrderedDict([
+                        ('slot', len(entries)), 
+                        ('id', eid), 
+                        ('text', mod_text)
+                    ])
+                    entries.append(new_entry)
+                    entry_by_id[eid] = new_entry
+                    append_count += 1
+                    
+            print(f"Success: 成功打入 MOD 补丁 [{args.import_mod}]")
+            print(f"Stats: 覆盖 {overwrite_count} 条，追加 {append_count} 条")
+
+        # 4. 【导出增量 MOD】指令：自动计算差异，支持导出 .json 或 .dat
+        if args.export_mod:
+            mod_entries = []
+            for current_entry in entries:
+                eid = current_entry['id']
+                current_text = current_entry['text']
+                
+                # 差分对比：仅提取新增或修改过的数据
+                if (eid, current_text) not in original_snapshot:
+                    mod_entries.append(OrderedDict([
+                        ('slot', len(mod_entries)), 
+                        ('id', eid), 
+                        ('text', current_text)
+                    ]))
+            
+            if not mod_entries:
+                print("Info: 经过对比，未检测到任何改动，跳过增量 MOD 导出。")
+            else:
+                # 后缀名分流写入
+                if args.export_mod.lower().endswith('.json'):
+                    with open(args.export_mod, 'w', encoding='utf-8') as f:
+                        json.dump(mod_entries, f, ensure_ascii=False, indent=4)
+                else:
+                    save_tkt(args.export_mod, mod_entries)
+                print(f"Success: 增量 MOD 已提取并保存至 {args.export_mod} (共 {len(mod_entries)} 条改动)")
+
+        # 5. 【输出完整游戏包】指令：保存带有完整槽位的全尺寸文件（进游戏测试用）
+        if args.output:
+            save_tkt(args.output, entries)
+            print(f"Success: 完整合并后的游戏二进制文件已生成至 {args.output}")
+
+        sys.exit(0)
+            
+    except Exception as e:
+        print(f"Error: CLI 引擎执行期间发生致命崩溃:\n{str(e)}", file=sys.stderr)
+        sys.exit(1)
+
+def main():
+    # 1. 挂载强化版的参数解析器
+    parser = argparse.ArgumentParser(description="TKT.dat 文本数据库编辑器 v5.0 (支持全功能无头 CLI 模式)")
+    
+    # 定义 CLI 工作流参数
+    parser.add_argument("--cli", action="store_true", help="启用无头命令行模式 (跳过 GUI 加载)")
+    parser.add_argument("-i", "--input", help="指定基础的 TKT.dat 底包路径 (CLI模式必填)")
+    parser.add_argument("--dump-all", help="将底包全量导出为 JSON 文件，用于阅读分析")
+    parser.add_argument("--import-mod", help="导入增量 MOD 文件 (根据后缀自动识别 .json 或 .dat)")
+    parser.add_argument("--export-mod", help="对比提取并导出增量 MOD (根据后缀自动识别 .json 或 .dat)")
+    parser.add_argument("-o", "--output", help="将最终的完整数据流封装导出为 TKT.dat")
+    
+    # 兼容 GUI 拖拽打开
+    parser.add_argument("gui_file", nargs="?", help="[GUI模式] 启动时直接打开的文件")
+
+    # 2. 解析参数
+    args, unknown = parser.parse_known_args()
+
+    # 3. 路由分发
+    if args.cli:
+        run_cli(args)
+    else:
+        app = QApplication(sys.argv)
+        app.setStyle("Fusion")
+        _t = QTranslator()
+        _t.load("qtbase_zh_CN", os.path.join(os.path.dirname(__file__), '..', 'editor_utils'))
+        app.installTranslator(_t)
+
+        initial_file = args.gui_file if args.gui_file else None
+        editor = TktEditor(initial_file)
+        editor.show()
+        sys.exit(app.exec())
 
 if __name__ == "__main__":
     main()
