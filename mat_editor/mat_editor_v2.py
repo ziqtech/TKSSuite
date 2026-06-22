@@ -46,33 +46,7 @@ from PySide6.QtCore import Qt, QTimer, QRect, QPoint, QSize, QThread, Signal, QT
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from editor_utils.theme_manager import ThemeManager
 from editor_utils.dock_components import DockHeader
-
-# ============================================================
-# LZSS 解压 (用于 TKItem.dat)
-# ============================================================
-def lzss_decompress(data):
-    if len(data) < 12: return b''
-    ts, bs = struct.unpack_from('<II', data, 0)
-    w = bytearray((0x20,)) * 4096
-    wp = 4078; flags = 0; pos = 12; bc = 4
-    dlen = len(data)
-    out = bytearray()
-    while bc < bs and pos < dlen:
-        flags >>= 1
-        if not (flags & 0x100):
-            flags = data[pos] | 0xFF00; pos += 1; bc += 1
-        if flags & 1:
-            b = data[pos]; pos += 1; bc += 1
-            out.append(b); w[wp] = b; wp = (wp + 1) & 0xFFF
-        else:
-            if pos + 1 >= dlen: break
-            b1 = data[pos]; b2 = data[pos+1]; pos += 2; bc += 2
-            ro = ((b2 & 0xF0) << 4) | b1; rl = (b2 & 0x0F) + 2
-            for _ in range(rl + 1):
-                b = w[ro]
-                out.append(b); w[wp] = b; wp = (wp + 1) & 0xFFF
-                ro = (ro + 1) & 0xFFF
-    return bytes(out[:ts])
+from editor_utils.lzss import lzss_decompress_dat as lzss_decompress
 
 # ============================================================
 # 常量
@@ -263,27 +237,10 @@ class TktLazyDict:
     def __contains__(self, eid):
         return eid in self.raw
 
-# C 级解密映射表：bytes.translate 用，替代逐字节 XOR 循环
-_TKT_XOR_TABLE = bytes([i ^ 0xFF for i in range(256)])
-
 def load_tkt_raw(tkt_path):
-    """仅提取字节流块，不做任何文本解析"""
-    if not tkt_path or not os.path.exists(tkt_path): return {}
-    with open(tkt_path,'rb') as f: raw = f.read()
-    total_size, count = struct.unpack_from('<II', raw, 0)
-    dec = raw[8:8+total_size].translate(_TKT_XOR_TABLE)
-    id_sz = count * 4; tb = id_sz * 2; lookup = {}
-    actual_count = min(count, (len(dec) - id_sz) // 4)
-    if actual_count <= 0: return lookup
-    ids = struct.unpack_from('<' + 'i' * actual_count, dec, 0)
-    offs = struct.unpack_from('<' + 'I' * actual_count, dec, id_sz)
-    for eid, off in zip(ids, offs):
-        ao = tb + off
-        if ao >= len(dec): continue
-        end = dec.find(b'\x00', ao)
-        if end == -1: end = len(dec)
-        lookup[eid] = dec[ao:end]
-    return lookup
+    """仅提取字节流块 — 委托给 editor_utils.tkt_loader"""
+    from editor_utils.tkt_loader import load_tkt_raw as _load
+    return _load(tkt_path)
 
 def get_script_info(rec):
     """根据逆向分析 (sub_409618/sub_408E5C/sub_4081F8等) 判断实体的脚本执行方式。

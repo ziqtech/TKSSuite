@@ -20,6 +20,18 @@ import os, sys, struct, time, datetime
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+from editor_utils.lzss import (lzss_decompress_dat as _lzss_decompress_dat,
+                                lzss_compress_dat as _lzss_compress_dat,
+                                lzss_decompress_save, lzss_compress_save)
+from editor_utils.tkt_loader import load_tkt_simple
+
+# ── 本地别名: 保持向后兼容 ──
+def lzss_decompress_dat(data): return _lzss_decompress_dat(data)
+def lzss_decompress(data): return lzss_decompress_save(data)
+def lzss_compress(data): return lzss_compress_save(data)
+def load_tkt(tkt_path): return load_tkt_simple(tkt_path, skip_range=None)
+
 # ============================================================
 # 常量 (来自逆向工程 — 每个值附带反编译代码证据)
 # ============================================================
@@ -234,128 +246,6 @@ STATUS_NAMES = [
 SKILL_LEARN_COUNT = 344
 
 # ============================================================
-# LZSS 解压 — DAT 文件格式 (TKItem/TKSkill/WarPC 等, 双4B头)
-# sub_45343C 加载: [4B uncompressed_size][4B block_size][LZSS]
-# 与存档格式不同 (存档仅单4B头), 需要独立解压函数
-# ============================================================
-def lzss_decompress_dat(data):
-    """解压 DAT 文件 (TKItem/TKSkill/WarPC 等). 格式: [4B ts][4B bs][LZSS]"""
-    if len(data) < 12: return b''
-    ts = struct.unpack_from('<I', data, 0)[0]
-    bs = struct.unpack_from('<I', data, 4)[0]
-    w = bytearray([0x20]*4096); wp = 4078; out = bytearray(); flags = 0
-    pos = 12; bc = 4
-    while bc < bs:
-        flags >>= 1
-        if (flags & 0x100) == 0:
-            if pos >= len(data): break
-            flags = data[pos] | 0xFF00; pos += 1; bc += 1
-        if flags & 1:
-            if pos >= len(data): break
-            b = data[pos]; pos += 1; bc += 1
-            out.append(b); w[wp] = b; wp = (wp + 1) & 0xFFF
-        else:
-            if pos + 1 >= len(data): break
-            b1, b2 = data[pos], data[pos+1]; pos += 2; bc += 2
-            ro = ((b2 & 0xF0) << 4) | b1; rl = (b2 & 0x0F) + 2
-            for j in range(rl + 1):
-                b = w[(j + ro) & 0xFFF]; out.append(b)
-                w[wp] = b; wp = (wp + 1) & 0xFFF
-    return bytes(out[:ts])
-
-# ============================================================
-# LZSS 压缩/解压 — 存档格式 (sub_4530A8 / sub_452B14)
-# 窗口4096字节, 初始填充0x20, 初始位置4078, 最小匹配3, 最大匹配18
-# ============================================================
-
-def lzss_decompress(data):
-    """解压 SaveBufLZSS 块. 格式: [4B uncompressed_size][LZSS stream]"""
-    if len(data) < 4:
-        return b''
-    total_size = struct.unpack_from('<I', data, 0)[0]
-    window = bytearray([0x20] * 4096)
-    wp = 4078
-    out = bytearray()
-    flags = 0
-    pos = 4
-    while pos < len(data) and len(out) < total_size:
-        flags >>= 1
-        if (flags & 0x100) == 0:
-            if pos >= len(data):
-                break
-            flags = data[pos] | 0xFF00
-            pos += 1
-        if flags & 1:
-            if pos >= len(data):
-                break
-            b = data[pos]; pos += 1
-            out.append(b)
-            window[wp] = b
-            wp = (wp + 1) & 0xFFF
-        else:
-            if pos + 1 >= len(data):
-                break
-            b1, b2 = data[pos], data[pos + 1]; pos += 2
-            offset = ((b2 & 0xF0) << 4) | b1
-            length = (b2 & 0x0F) + 3
-            for j in range(length):
-                b = window[(offset + j) & 0xFFF]
-                out.append(b)
-                window[wp] = b
-                wp = (wp + 1) & 0xFFF
-    return bytes(out[:total_size])
-
-
-def lzss_compress(data):
-    """压缩为 SaveBufLZSS 块. 返回: [4B uncompressed_size][LZSS stream]"""
-    src = data
-    sl = len(src)
-    flat = bytes(bytearray([0x20] * 4096) + src)
-    tokens = []
-    pos = 0
-    while pos < sl:
-        curr = 4096 + pos
-        max_len = min(18, sl - pos)
-        best_len = 0
-        best_off = 0
-        if max_len >= 3:
-            for length in range(max_len, 2, -1):
-                pat = flat[curr:curr + length]
-                end = curr + length - 1
-                start = max(0, curr - 4096)
-                idx = flat.rfind(pat, start, end)
-                if idx != -1:
-                    best_len = length
-                    best_off = (idx - 18) & 0xFFF
-                    break
-        if best_len >= 3:
-            tokens.append((False, best_off, best_len))
-            pos += best_len
-        else:
-            tokens.append((True, src[pos], 0))
-            pos += 1
-    stream = bytearray()
-    ti = 0
-    while ti < len(tokens):
-        fb = 0
-        be = min(ti + 8, len(tokens))
-        for i in range(ti, be):
-            if tokens[i][0]:
-                fb |= (1 << (i - ti))
-        stream.append(fb)
-        for i in range(ti, be):
-            if tokens[i][0]:
-                stream.append(tokens[i][1])
-            else:
-                off = tokens[i][1]
-                el = tokens[i][2] - 3
-                stream.append(off & 0xFF)
-                stream.append(((off >> 4) & 0xF0) | (el & 0x0F))
-        ti = be
-    return struct.pack('<I', sl) + bytes(stream)
-
-
-# ============================================================
 # 文件加载/保存 (兼容TKSLauncher扩展后的WarPC)
 # ============================================================
 
@@ -511,40 +401,6 @@ def warpc_set_byte(seg3, char_idx, byte_offset, value):
     if off >= len(seg3):
         return
     seg3[off] = value & 0xFF
-
-
-# ============================================================
-# TKT 文本数据库加载
-# ============================================================
-
-def load_tkt(tkt_path):
-    """加载 TKT.dat (XOR 0xFF 编码的 Big5 文本库). 返回 {id: text}."""
-    with open(tkt_path, 'rb') as f:
-        raw = f.read()
-    if len(raw) < 8:
-        return {}
-    ts = struct.unpack_from('<I', raw, 0)[0]
-    cnt = struct.unpack_from('<I', raw, 4)[0]
-    enc = raw[8:8 + ts]
-    dec = bytes([b ^ 0xFF for b in enc])
-    idsz = cnt * 4
-    lookup = {}
-    for i in range(cnt):
-        eid = struct.unpack_from('<i', dec, i * 4)[0]
-        off = struct.unpack_from('<I', dec, idsz + i * 4)[0]
-        ao = idsz * 2 + off
-        if ao < len(dec):
-            end = ao
-            while end < len(dec) and dec[end] != 0:
-                end += 1
-            txt = dec[ao:end].replace(b'\x1e', b'\n')
-            try:
-                s = txt.decode('big5', errors='replace')
-            except Exception:
-                s = txt.decode('gbk', errors='replace')
-            if s and s != '0':
-                lookup[eid] = s
-    return lookup
 
 
 # ============================================================

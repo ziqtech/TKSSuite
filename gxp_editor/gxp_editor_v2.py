@@ -29,138 +29,19 @@ except ImportError:
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from editor_utils.theme_manager import ThemeManager
 from editor_utils.dock_components import DockHeader
+from editor_utils.lzss import (lzss_decompress_stream as _lzss_decompress_stream,
+                                lzss_compress_stream as _lzss_compress_stream)
+from editor_utils.rgb565 import rgb565_to_rgba, rgba_to_rgb565
 
 # ── GXP 格式常量 ──────────────────────────────────────────
 GXP_MAGIC = b"JGXP"
 GXP_HEADER_SIZE = 48
-RING_SIZE = 4096
-RING_INIT = RING_SIZE - 18
-MIN_MATCH = 3
-MAX_MATCH = 18
-RING_INIT_VALUE = 0x20
 
-# ═══════════════════════════════════════════════════════════
-# 核心数据逻辑
-# ═══════════════════════════════════════════════════════════
-
-def lzss_decompress(data: bytes, target_size: int) -> bytes:
-    ring = bytearray([RING_INIT_VALUE] * RING_SIZE)
-    ring_pos = RING_INIT
-    pos, out = 0, bytearray()
-
-    while pos < len(data) and len(out) < target_size:
-        flag = data[pos]; pos += 1
-        for bit in range(8):
-            if pos >= len(data) or len(out) >= target_size: break
-            if flag & (1 << bit):
-                b = data[pos]; pos += 1
-                out.append(b)
-                ring[ring_pos % RING_SIZE] = b
-                ring_pos += 1
-            else:
-                if pos + 2 > len(data): break
-                b1, b2 = data[pos], data[pos + 1]; pos += 2
-                offset = b1 | ((b2 & 0xF0) << 4)
-                length = (b2 & 0x0F) + 3
-                for k in range(length):
-                    b = ring[(offset + k) % RING_SIZE]
-                    out.append(b)
-                    ring[ring_pos % RING_SIZE] = b
-                    ring_pos += 1
-    return bytes(out[:target_size])
-
-def _hash_2b(a: int, b: int) -> int:
-    return ((a << 8) | b) & 0xFFF
-
-def lzss_compress(data: bytes) -> bytes:
-    n = len(data)
-    if n == 0: return b""
-    hash_heads = [-1] * 4096
-    hash_next = [-1] * n
-
-    for i in range(n - 1, -1, -1):
-        if i + 1 < n:
-            h = _hash_2b(data[i], data[i + 1])
-            hash_next[i] = hash_heads[h]
-            hash_heads[h] = i
-
-    buf = bytearray()
-    entries: list[tuple[bool, bytes]] = []
-
-    def flush_group():
-        if not entries: return
-        flag = 0
-        for i, (is_lit, _) in enumerate(entries):
-            if is_lit: flag |= (1 << i)
-        buf.append(flag)
-        for _, data_bytes in entries:
-            buf.extend(data_bytes)
-        entries.clear()
-
-    pos = 0
-    while pos < n:
-        best_len, best_off = 0, 0
-        remaining = n - pos
-
-        if remaining >= 2:
-            h = _hash_2b(data[pos], data[pos + 1])
-            chain = hash_heads[h]
-            steps = 0
-            while chain >= 0 and steps < 64:
-                if pos - chain > RING_SIZE: break
-                if chain < pos:
-                    ml = 0
-                    while ml < min(remaining, MAX_MATCH) and data[chain + ml] == data[pos + ml]:
-                        ml += 1
-                    if ml > best_len:
-                        best_len, best_off = ml, pos - chain
-                        if ml == MAX_MATCH: break
-                chain = hash_next[chain]
-                steps += 1
-
-        if best_len >= MIN_MATCH:
-            ring_pos_val = (RING_INIT + pos) % RING_SIZE
-            actual_offset = (ring_pos_val - best_off) % RING_SIZE
-            b1 = actual_offset & 0xFF
-            b2 = ((actual_offset >> 4) & 0xF0) | ((best_len - 3) & 0x0F)
-            entries.append((False, bytes([b1, b2])))
-            pos += best_len
-        else:
-            entries.append((True, bytes([data[pos]])))
-            pos += 1
-
-        if len(entries) >= 8: flush_group()
-    flush_group()
-    return bytes(buf)
-
-_RGB565_LUT = bytearray(65536 * 3)
-for _v in range(65536):
-    r5, g6, b5 = (_v >> 11) & 0x1F, (_v >> 5) & 0x3F, _v & 0x1F
-    _RGB565_LUT[_v * 3] = (r5 << 3) | (r5 >> 2)
-    _RGB565_LUT[_v * 3 + 1] = (g6 << 2) | (g6 >> 4)
-    _RGB565_LUT[_v * 3 + 2] = (b5 << 3) | (b5 >> 2)
-
-def rgb565_bytes_to_rgba(raw: bytes, w: int, h: int) -> bytearray:
-    total = w * h
-    rgba = bytearray(total * 4)
-    for i in range(min(total, len(raw) // 2)):
-        val = raw[i * 2] | (raw[i * 2 + 1] << 8)
-        off3, off4 = val * 3, i * 4
-        rgba[off4] = _RGB565_LUT[off3]
-        rgba[off4 + 1] = _RGB565_LUT[off3 + 1]
-        rgba[off4 + 2] = _RGB565_LUT[off3 + 2]
-        rgba[off4 + 3] = 255
-    return rgba
-
-def rgba_to_rgb565_bytes(rgba: bytes, w: int, h: int) -> bytes:
-    raw = bytearray(w * h * 2)
-    for i in range(w * h):
-        off4 = i * 4
-        r, g, b = rgba[off4], rgba[off4 + 1], rgba[off4 + 2]
-        val = (((r >> 3) & 0x1F) << 11) | (((g >> 2) & 0x3F) << 5) | ((b >> 3) & 0x1F)
-        raw[i * 2] = val & 0xFF
-        raw[i * 2 + 1] = (val >> 8) & 0xFF
-    return bytes(raw)
+# ── 本地别名: 保持向后兼容 ──
+def lzss_decompress(data, target_size): return _lzss_decompress_stream(data, target_size)
+def lzss_compress(data): return _lzss_compress_stream(data)
+def rgb565_bytes_to_rgba(raw, w, h): return rgb565_to_rgba(raw, w, h)
+def rgba_to_rgb565_bytes(rgba, w, h): return rgba_to_rgb565(rgba, w, h)
 
 class GXPImage:
     def __init__(self):

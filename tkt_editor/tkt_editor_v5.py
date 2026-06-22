@@ -42,6 +42,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from editor_utils.theme_manager import ThemeManager
 from editor_utils.dock_components import DockHeader
 from editor_utils.ui_helpers import update_path_labels
+from editor_utils.tkt_loader import load_tkt_full as _load_tkt_full
 
 # ============================================================
 # 常量 (来自反编译)
@@ -186,39 +187,8 @@ def big5_to_gb(text):
 # TKT 文件 I/O (V2 原版逻辑)
 # ============================================================
 def load_tkt(tkt_path):
-    with open(tkt_path, 'rb') as f:
-        raw = f.read()
-    if len(raw) < HDR_SIZE:
-        raise ValueError(f"TKT.dat 头部不足 8 字节")
-
-    total_size = struct.unpack_from('<I', raw, 0)[0]
-    record_count = struct.unpack_from('<I', raw, 4)[0]
-
-    encrypted = raw[HDR_SIZE:HDR_SIZE + total_size]
-    decrypted = bytes(b ^ XOR_KEY for b in encrypted)
-
-    id_table_size = 4 * record_count
-    offset_table_size = 4 * record_count
-    text_base = id_table_size + offset_table_size
-
-    entries = []
-    for i in range(record_count):
-        entry_id = struct.unpack_from('<i', decrypted, i * 4)[0]         
-        text_offset = struct.unpack_from('<I', decrypted, id_table_size + i * 4)[0] 
-        abs_off = text_base + text_offset
-        if abs_off >= len(decrypted):
-            blob = b''
-        else:
-            end = abs_off
-            while end < len(decrypted) and decrypted[end] != ENTRY_TERMINATOR:
-                end += 1
-            blob = decrypted[abs_off:end]
-
-        raw_lines = blob.split(bytes([LINE_SEPARATOR]))
-        decoded_lines = [decode_line(ln) for ln in raw_lines]
-        text = '\n'.join(decoded_lines)
-        entries.append(OrderedDict([('slot', i), ('id', entry_id), ('text', text)]))
-    return entries
+    """加载 TKT.dat — 委托给 editor_utils.tkt_loader"""
+    return _load_tkt_full(tkt_path)
 
 def decode_line(line_bytes):
     out = []

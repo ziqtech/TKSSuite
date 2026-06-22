@@ -41,9 +41,16 @@ except ImportError: pass
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from editor_utils.theme_manager import ThemeManager
 from editor_utils.dock_components import DockHeader
+from editor_utils.lzss import (lzss_decompress_stream as _lzss_decompress_stream,
+                                lzss_compress_stream as _lzss_compress_stream,
+                                RING_SIZE, RING_INIT_POS as RING_INIT,
+                                RING_INIT_VAL, MIN_MATCH as MIN_MATCH_LZ,
+                                MAX_MATCH as MAX_MATCH_LZ)
+from editor_utils.rgb565 import rgb565_to_rgba, rgba_to_rgb565
 
-# ── 常量 ──────────────────────────────────────────────────
-RING_SIZE, RING_INIT, RING_INIT_VAL, MIN_MATCH_LZ, MAX_MATCH_LZ = 4096, 4078, 0x20, 3, 18
+# ── 本地别名: 保持向后兼容 ──
+def lzss_decompress(data, target_size): return _lzss_decompress_stream(data, target_size)
+def lzss_compress(data): return _lzss_compress_stream(data)
 
 _COLLISION_COLORS = {
     0:(0,0,0,0), 1:(255,0,0,200), 2:(0,200,0,200), 3:(0,100,255,200),
@@ -96,64 +103,8 @@ def _nearest_color(rgb: tuple, lut_rev: dict) -> int:
 
 
 # ═══════════════════════════════════════════════════════════
-# LZSS & RLE 引擎
+# RLE 字节对引擎 (GRP 特有, 不提取到 editor_utils)
 # ═══════════════════════════════════════════════════════════
-
-def lzss_decompress(data: bytes, target_size: int) -> bytes:
-    ring = bytearray([RING_INIT_VAL] * RING_SIZE); ring_pos, pos = RING_INIT, 0
-    out = bytearray()
-    while pos < len(data) and len(out) < target_size:
-        flag = data[pos]; pos += 1
-        for bit in range(8):
-            if pos >= len(data) or len(out) >= target_size: break
-            if flag & (1 << bit):
-                b = data[pos]; pos += 1; out.append(b)
-                ring[ring_pos % RING_SIZE] = b; ring_pos += 1
-            else:
-                if pos + 2 > len(data): break
-                b1, b2 = data[pos], data[pos + 1]; pos += 2
-                offset = b1 | ((b2 & 0xF0) << 4); length = (b2 & 0x0F) + 3
-                for k in range(length):
-                    b = ring[(offset + k) % RING_SIZE]; out.append(b)
-                    ring[ring_pos % RING_SIZE] = b; ring_pos += 1
-    return bytes(out[:target_size])
-
-def _hash_2b(a: int, b: int) -> int: return ((a << 8) | b) & 0xFFF
-
-def lzss_compress(data: bytes) -> bytes:
-    n = len(data)
-    if n == 0: return b""
-    hh, hn = [-1] * 4096, [-1] * n
-    for i in range(n - 1, -1, -1):
-        if i + 1 < n: h = _hash_2b(data[i], data[i + 1]); hn[i] = hh[h]; hh[h] = i
-    buf, entries = bytearray(), []
-    def flush():
-        if not entries: return
-        flag = 0
-        for i, (is_lit, _) in enumerate(entries):
-            if is_lit: flag |= (1 << i)
-        buf.append(flag)
-        for _, d in entries: buf.extend(d)
-        entries.clear()
-    pos = 0
-    while pos < n:
-        bl, bo = 0, 0
-        if n - pos >= 2:
-            chain = hh[_hash_2b(data[pos], data[pos + 1])]; steps = 0
-            while chain >= 0 and steps < 64:
-                if pos - chain > RING_SIZE: break
-                if chain < pos:
-                    ml = 0
-                    while ml < min(n - pos, MAX_MATCH_LZ) and data[chain + ml] == data[pos + ml]: ml += 1
-                    if ml > bl: bl, bo = ml, pos - chain
-                    if ml == MAX_MATCH_LZ: break
-                chain = hn[chain]; steps += 1
-        if bl >= MIN_MATCH_LZ:
-            rp = (RING_INIT + pos) % RING_SIZE; ao = (rp - bo) % RING_SIZE
-            entries.append((False, bytes([ao & 0xFF, ((ao >> 4) & 0xF0) | ((bl - 3) & 0x0F)]))); pos += bl
-        else: entries.append((True, bytes([data[pos]]))); pos += 1
-        if len(entries) >= 8: flush()
-    flush(); return bytes(buf)
 
 def rle_bp_decompress(data: bytes, target_size: int) -> bytes:
     out = bytearray(); pos = 0
@@ -174,33 +125,6 @@ def rle_bp_compress(data: bytes) -> bytes:
         while i + c < len(data) and data[i + c] == v and c < 255: c += 1
         out.append(c); out.append(v); i += c
     return bytes(out)
-
-
-# ═══════════════════════════════════════════════════════════
-# RGB565 转换
-# ═══════════════════════════════════════════════════════════
-
-_RGB565_LUT = bytearray(65536 * 3)
-for _v in range(65536):
-    r5, g6, b5 = (_v >> 11) & 0x1F, (_v >> 5) & 0x3F, _v & 0x1F
-    _RGB565_LUT[_v * 3] = (r5 << 3) | (r5 >> 2)
-    _RGB565_LUT[_v * 3 + 1] = (g6 << 2) | (g6 >> 4)
-    _RGB565_LUT[_v * 3 + 2] = (b5 << 3) | (b5 >> 2)
-
-def rgb565_to_rgba(raw: bytes, w: int, h: int) -> bytearray:
-    total = w * h; rgba = bytearray(total * 4)
-    for i in range(min(total, len(raw) // 2)):
-        lo, hi = raw[i * 2], raw[i * 2 + 1]; off3 = (lo | (hi << 8)) * 3; off4 = i * 4
-        rgba[off4:off4 + 3] = _RGB565_LUT[off3:off3 + 3]; rgba[off4 + 3] = 255
-    return rgba
-
-def rgba_to_rgb565(rgba_bytes: bytes, w: int, h: int) -> bytes:
-    raw = bytearray(w * h * 2)
-    for i in range(w * h):
-        off4 = i * 4; r5 = (rgba_bytes[off4] >> 3) & 0x1F
-        g6 = (rgba_bytes[off4+1] >> 2) & 0x3F; b5 = (rgba_bytes[off4+2] >> 3) & 0x1F
-        val = (r5 << 11) | (g6 << 5) | b5; raw[i*2] = val & 0xFF; raw[i*2+1] = (val >> 8) & 0xFF
-    return bytes(raw)
 
 
 # ═══════════════════════════════════════════════════════════

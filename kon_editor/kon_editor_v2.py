@@ -23,79 +23,13 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from editor_utils.theme_manager import ThemeManager
 from editor_utils.dock_components import DockHeader
 from editor_utils.ui_helpers import make_fake_input, update_path_labels
+from editor_utils.lzss import lzss_decompress_dat, lzss_compress_dat
+from editor_utils.tkt_loader import load_tkt_simple
 
-# ============================================================
-# 业务逻辑层 (严格保留原版算法)
-# ============================================================
-
-def lzss_decompress(data):
-    if len(data) < 12: return b''
-    ts = struct.unpack_from('<I', data, 0)[0]; bs = struct.unpack_from('<I', data, 4)[0]
-    w = bytearray([0x20] * 4096); wp = 4078; out = bytearray(); flags = 0; pos = 12; bc = 4
-    while bc < bs:
-        flags >>= 1
-        if (flags & 0x100) == 0:
-            if pos >= len(data): break
-            flags = data[pos] | 0xFF00; pos += 1; bc += 1
-        if flags & 1:
-            if pos >= len(data): break
-            b = data[pos]; pos += 1; bc += 1
-            out.append(b); w[wp] = b; wp = (wp + 1) & 0xFFF
-        else:
-            if pos + 1 >= len(data): break
-            b1, b2 = data[pos], data[pos + 1]; pos += 2; bc += 2
-            ro = ((b2 & 0xF0) << 4) | b1; rl = (b2 & 0x0F) + 2
-            for j in range(rl + 1):
-                b = w[(j + ro) & 0xFFF]; out.append(b); w[wp] = b; wp = (wp + 1) & 0xFFF
-    return bytes(out[:ts])
-
-def lzss_compress(data):
-    src = data; sl = len(src); flat = bytes(bytearray([0x20] * 4096) + src)
-    tokens = []; pos = 0
-    while pos < sl:
-        curr = 4096 + pos; ms = min(18, sl - pos); bl, bo = 0, 0
-        if ms >= 3:
-            for length in range(ms, 2, -1):
-                pat = flat[curr:curr + length]; end = curr + length - 1; start = max(0, curr - 4096)
-                idx = flat.rfind(pat, start, end)
-                if idx != -1: bl = length; bo = (idx - 18) & 0xFFF; break
-        if bl >= 3: tokens.append((False, bo, bl)); pos += bl
-        else: tokens.append((True, src[pos], 0)); pos += 1
-    stream = bytearray(); ti = 0
-    while ti < len(tokens):
-        fb = 0; be = min(ti + 8, len(tokens))
-        for i in range(ti, be):
-            if tokens[i][0]: fb |= (1 << (i - ti))
-        stream.append(fb)
-        for i in range(ti, be):
-            if tokens[i][0]: stream.append(tokens[i][1])
-            else:
-                off, length = tokens[i][1], tokens[i][2]; el = length - 3
-                stream.append(off & 0xFF); stream.append(((off >> 4) & 0xF0) | (el & 0x0F))
-        ti = be
-    ds = sl; bd = struct.pack('<I', ds) + bytes(stream)
-    return struct.pack('<II', ds, len(bd)) + bd
-
-def load_tkt(tkt_path):
-    if not tkt_path or not os.path.exists(tkt_path): return {}
-    with open(tkt_path, 'rb') as f: raw = f.read()
-    ts = struct.unpack_from('<I', raw, 0)[0]; cnt = struct.unpack_from('<I', raw, 4)[0]
-    enc = raw[8:8 + ts]; dec = bytes([b ^ 0xFF for b in enc])
-    idsz, ofsz = cnt * 4, cnt * 4; lookup = {}
-    SKIP = set(range(0, 10))
-    for i in range(cnt):
-        eid = struct.unpack_from('<i', dec, i * 4)[0]
-        if eid in SKIP: continue
-        off = struct.unpack_from('<I', dec, idsz + i * 4)[0]
-        ao = idsz + ofsz + off
-        if ao < len(dec):
-            end = ao
-            while end < len(dec) and dec[end] != 0: end += 1
-            txt = dec[ao:end].replace(b'\x1e', b'\n')
-            try: s = txt.decode('big5', errors='replace')
-            except: s = txt.decode('gbk', errors='replace')
-            if s and s != '0': lookup[eid] = s
-    return lookup
+# ── 本地别名: 保持向后兼容 ──
+def lzss_decompress(data): return lzss_decompress_dat(data)
+def lzss_compress(data): return lzss_compress_dat(data)
+def load_tkt(tkt_path): return load_tkt_simple(tkt_path)
 
 def load_tkkon_names(csv_path):
     names = {}
