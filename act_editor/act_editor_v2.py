@@ -1225,25 +1225,33 @@ class TimelineWidget(QWidget):
             QPoint(int(ph_x), 8),
         ])
 
-        # 音效标记 (同 tick 的标记纵向错开, 防止重叠)
+        # 音效标记 (同 tick 合并为一个 ♪, 下方列出所有 sid)
         self._sfx_pos = []
         sfx_y = content_h + 4 + self._pan_y
-        x_used = {}  # int(sx) → 已绘制次数
+        # 按 trig 分组
+        by_trig = {}  # trig → [(sid, idx), ...]
         for (sx_val, sy_val, sid, trig, idx) in self._sfx_in:
+            by_trig.setdefault(trig, []).append((sid, idx))
+        for trig, items in sorted(by_trig.items()):
             sx = self._content_x(trig)
-            key = int(sx)
-            n = x_used.get(key, 0)
-            x_used[key] = n + 1
-            off_y = sfx_y + n * 14  # 每个重叠标记下移 14px
-            color = QColor(self.SFX_COLORS[idx % len(self.SFX_COLORS)])
+            n = len(items)
+            color = QColor(self.SFX_COLORS[items[0][1] % len(self.SFX_COLORS)])
+            # ♪ 图标
             painter.setPen(color)
             painter.setFont(QFont(FONT_FAMILY, 10, QFont.Bold))
-            painter.drawText(int(sx) - 4, int(off_y + 10), "♪")
-            painter.setFont(QFont(FONT_FAMILY, 6))
-            painter.drawText(int(sx) - 8, int(off_y + 22), f"sid={sid}")
+            note = "♪" if n == 1 else f"♪×{n}"
+            painter.drawText(int(sx) - 8, int(sfx_y + 10), note)
+            # sid 列表 (每个一行, 纵向错开)
+            painter.setFont(QFont(FONT_FAMILY, 7))
+            for i, (sid, idx) in enumerate(items):
+                c = QColor(self.SFX_COLORS[idx % len(self.SFX_COLORS)])
+                painter.setPen(c)
+                painter.drawText(int(sx) - 12, int(sfx_y + 22 + i * 14), f"sid={sid}")
+            # 虚线连接到轨道
             painter.setPen(QPen(color, 1, Qt.DashLine))
-            painter.drawLine(int(sx), int(off_y - 10), int(sx), int(off_y - 4))
-            self._sfx_pos.append((int(sx), int(off_y), sid, trig, idx))
+            painter.drawLine(int(sx), int(sfx_y - 6), int(sx), int(sfx_y))
+            # 记录点击区域 (覆盖整个 group)
+            self._sfx_pos.append((int(sx), int(sfx_y), items[0][0], trig, items[0][1]))
 
         # 框选矩形
         if self._marquee_start is not None:
@@ -1279,7 +1287,7 @@ class TimelineWidget(QWidget):
             if db[0] <= x <= bb[2]:
                 return s, 'body', tick
         for (sx, sy, sid, trig, idx) in self._sfx_pos:
-            if abs(x - sx) < 10 and abs(y - sy) < 12:
+            if abs(x - sx) < 12 and abs(y - sy) < 36:
                 return idx, 'sfx', trig
         return None, 'empty', tick
 
@@ -2044,9 +2052,11 @@ class ActEditorV2(QMainWindow):
             vars_row[key] = le
             return le
 
-        def _cb(key, labels_dict):
+        def _cb(key, labels_dict, editable=False):
             cb = self._no_wheel_combo(list(labels_dict.values()))
             cb.setMinimumWidth(FW)
+            if editable:
+                cb.setEditable(True)
             vars_row[key] = cb
             return cb
 
@@ -2055,7 +2065,7 @@ class ActEditorV2(QMainWindow):
         bc = _cb("blend_mode", BLEND_MODE_LABELS)
         vars_row['_blend_combo'] = bc
         grid.addLayout(_cell("混合模式", bc), 0, 1)
-        lc = _cb("loop_behavior", LOOP_BEHAVIOR_LABELS)
+        lc = _cb("loop_behavior", LOOP_BEHAVIOR_LABELS, editable=True)
         vars_row['_loop_combo'] = lc
         grid.addLayout(_cell("循环行为", lc), 0, 2)
         grid.addLayout(_cell("方向模式", _cb("direction_mode", DIRECTION_MODE_LABELS)), 0, 3)
@@ -2179,7 +2189,9 @@ class ActEditorV2(QMainWindow):
 
         lbl = QLabel(
             "条目级参数区 (bytes 32-79, int16[16..39], 共 24 项)。\n"
-            "★ [18] 疑似总 tick;  [20/22/24/…] 疑似每激活图层的 tick 配额;  其余多为 0。")
+            "sub_4434BC: word_9D039E(+36) 动画总 tick; "
+            "word_9D03A2[0..7](+40..+54) 各层 tick 配额;\n"
+            "其余字段源码中无引用 (预留/未使用)。")
         lbl.setWordWrap(True)
         lbl.setProperty("class", "PropLabel")
         inner.layout().addWidget(lbl)
@@ -2196,9 +2208,12 @@ class ActEditorV2(QMainWindow):
 
             hint = ""
             if idx == 18:
-                hint = " 总tick?"
-            elif idx in (20, 22, 24, 26, 28):
-                hint = " 图层tick?"
+                hint = " 总tick"
+            elif idx == 19:
+                hint = " cur_tick"
+            elif 20 <= idx <= 27:
+                layer_n = idx - 19
+                hint = f" L{layer_n}配额"
             lbl_f = QLabel(f"[{idx}]{hint}")
             lbl_f.setProperty("class", "PropLabel")
             cell.addWidget(lbl_f)
@@ -2599,6 +2614,8 @@ class ActEditorV2(QMainWindow):
                 idx_c = widget.findText(label)
                 if idx_c >= 0:
                     widget.setCurrentIndex(idx_c)
+                elif widget.isEditable():
+                    widget.setCurrentText(str(v))
                 widget.blockSignals(False)
 
         # 同步卡片里的 combo
@@ -2614,10 +2631,13 @@ class ActEditorV2(QMainWindow):
         loop_combo = vars_row.get('_loop_combo')
         if loop_combo:
             loop_combo.blockSignals(True)
-            label = _enum_to_label(vals[19], LOOP_BEHAVIOR_LABELS)
+            v = vals[19]
+            label = _enum_to_label(v, LOOP_BEHAVIOR_LABELS)
             idx_c = loop_combo.findText(label)
             if idx_c >= 0:
                 loop_combo.setCurrentIndex(idx_c)
+            elif loop_combo.isEditable():
+                loop_combo.setCurrentText(str(v))
             loop_combo.blockSignals(False)
 
         # 帧范围标签
