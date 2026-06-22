@@ -2403,7 +2403,8 @@ class ActEditorV2(QMainWindow):
             if not show_empty and entry_is_empty(entry):
                 continue
             if q:
-                text = f"{entry['index']} {entry_summary(entry)}".lower()
+                name = self.names.get(entry['index'], '')
+                text = f"{entry['index']} {name} {entry_summary(entry)}".lower()
                 if q not in text:
                     continue
             self.filtered_indices.append(entry['index'])
