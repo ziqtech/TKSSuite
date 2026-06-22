@@ -41,7 +41,7 @@ from PySide6.QtGui import (
     QAction, QKeySequence, QColor, QFont, QIcon, QPixmap, QImage,
     QPainter, QTextCursor, QTextCharFormat, QSyntaxHighlighter
 )
-from PySide6.QtCore import Qt, QTimer, QRect, QPoint, QSize, QThread, Signal
+from PySide6.QtCore import Qt, QTimer, QRect, QPoint, QSize, QThread, Signal, QTranslator
 
 # ============================================================
 # LZSS 解压 (用于 TKItem.dat)
@@ -3676,14 +3676,7 @@ class MatEditorApp(QMainWindow):
         if not sel:
             return
         idx = int(sel[0].text(0))
-        msg = QMessageBox(self)
-        msg.setWindowTitle("确认")
-        msg.setText(f"清空实体 #{idx}? (type 设为 0)")
-        msg.setIcon(QMessageBox.Question)
-        msg.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
-        msg.button(QMessageBox.Yes).setText("确定")
-        msg.button(QMessageBox.No).setText("取消")
-        if msg.exec() != QMessageBox.Yes:
+        if QMessageBox.question(self, "确认", f"清空实体 #{idx}? (type 设为 0)", QMessageBox.Ok | QMessageBox.Cancel) != QMessageBox.Ok:
             return
         for di in range(DWORD_COUNT):
             self.records[idx][f'd{di}'] = 0
@@ -4331,14 +4324,7 @@ class MatEditorApp(QMainWindow):
         du_p = os.path.join(d, "TKDefUnit.Dat")
         tkd_p = os.path.join(d, "TKD.dat")
         files_msg = f"TKMat.Dat: {self.dat_path}\nTKDefUnit.Dat: {du_p}\nTKD.dat: {tkd_p}"
-        msg = QMessageBox(self)
-        msg.setWindowTitle("确认保存 — 将写入以下 3 个文件")
-        msg.setText(files_msg)
-        msg.setIcon(QMessageBox.Question)
-        msg.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
-        msg.button(QMessageBox.Yes).setText("确定")
-        msg.button(QMessageBox.No).setText("取消")
-        if msg.exec() != QMessageBox.Yes:
+        if QMessageBox.question(self, "确认保存 — 将写入以下 3 个文件", files_msg, QMessageBox.Ok | QMessageBox.Cancel) != QMessageBox.Ok:
             return
         errors = []
         try:
@@ -4701,14 +4687,9 @@ class MatEditorApp(QMainWindow):
         if du_rec is None:
             return
         entity_id = du_rec['f1']
-        msg = QMessageBox(self)
-        msg.setWindowTitle("确认删除")
-        msg.setText(f"删除 DefUnit #{du_idx} → DEFINE {define_id}?\n此操作同时从 TKD.dat 删除对应 DEFINE 块。")
-        msg.setIcon(QMessageBox.Question)
-        msg.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
-        msg.button(QMessageBox.Yes).setText("确定")
-        msg.button(QMessageBox.No).setText("取消")
-        if msg.exec() != QMessageBox.Yes:
+        if QMessageBox.question(self, "确认删除",
+                                f"删除 DefUnit #{du_idx} → DEFINE {define_id}?\n此操作同时从 TKD.dat 删除对应 DEFINE 块。",
+                                QMessageBox.Ok | QMessageBox.Cancel) != QMessageBox.Ok:
             return
 
         rec = self.records[self._current_param_idx]
@@ -5046,14 +5027,9 @@ class MatEditorApp(QMainWindow):
             QMessageBox.information(self, "空场景", f"场景 {sname} (ID={sid}) 无实体, 无需删除")
             return
         n = len(scene_entities)
-        msg = QMessageBox(self)
-        msg.setWindowTitle("确认删除场景")
-        msg.setText(f"将删除场景 {sname} (ID={sid})\n\n  TKMat 实体: {n} 个\n\n此操作不可撤销!")
-        msg.setIcon(QMessageBox.Question)
-        msg.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
-        msg.button(QMessageBox.Yes).setText("确定")
-        msg.button(QMessageBox.No).setText("取消")
-        if msg.exec() != QMessageBox.Yes:
+        if QMessageBox.question(self, "确认删除场景",
+                                f"将删除场景 {sname} (ID={sid})\n\n  TKMat 实体: {n} 个\n\n此操作不可撤销!",
+                                QMessageBox.Ok | QMessageBox.Cancel) != QMessageBox.Ok:
             return
         all_du_indices = set()
         all_define_ids = set()
@@ -5301,14 +5277,9 @@ class MatEditorApp(QMainWindow):
         n_entities = len(data.get('entities', []))
         n_defunits = len(data.get('defunits', []))
         n_defines = len(data.get('defines', []))
-        msg = QMessageBox(self)
-        msg.setWindowTitle("确认导入")
-        msg.setText(f"将作为新场景导入:\n  实体: {n_entities} 个\n  DefUnit: {n_defunits} 条\n  DEFINE块: {n_defines} 个\n\n确定继续?")
-        msg.setIcon(QMessageBox.Question)
-        msg.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
-        msg.button(QMessageBox.Yes).setText("确定")
-        msg.button(QMessageBox.No).setText("取消")
-        if msg.exec() != QMessageBox.Yes:
+        if QMessageBox.question(self, "确认导入",
+                                f"将作为新场景导入:\n  实体: {n_entities} 个\n  DefUnit: {n_defunits} 条\n  DEFINE块: {n_defines} 个\n\n确定继续?",
+                                QMessageBox.Ok | QMessageBox.Cancel) != QMessageBox.Ok:
             return
 
         empty_slots = sorted([i for i, r in enumerate(self.records) if r['d0'] == 0], reverse=True)
@@ -5435,14 +5406,7 @@ class MatEditorApp(QMainWindow):
         self._vis_stop_sel_anim()
         dirty = self._dirty or self._script_dirty
         if dirty:
-            msg = QMessageBox(self)
-            msg.setWindowTitle("未保存")
-            msg.setText("有未保存的修改 (含脚本), 确定退出?")
-            msg.setIcon(QMessageBox.Question)
-            msg.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
-            msg.button(QMessageBox.Yes).setText("确定")
-            msg.button(QMessageBox.No).setText("取消")
-            if msg.exec() == QMessageBox.No:
+            if QMessageBox.question(self, "未保存", "有未保存的修改 (含脚本), 确定退出?", QMessageBox.Ok | QMessageBox.Cancel) == QMessageBox.Cancel:
                 event.ignore()
                 return
         event.accept()
@@ -5454,6 +5418,9 @@ class MatEditorApp(QMainWindow):
 if __name__ == '__main__':
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
+    _t = QTranslator()
+    _t.load("qtbase_zh_CN", os.path.join(os.path.dirname(__file__), '..', 'editor_utils'))
+    app.installTranslator(_t)
     editor = MatEditorApp()
     editor.show()
     sys.exit(app.exec())

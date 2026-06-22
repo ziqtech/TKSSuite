@@ -28,7 +28,7 @@ from PySide6.QtGui import (
     QAction, QKeySequence, QColor, QFont, QPixmap, QImage, QIcon,
     QTextCursor, QTextDocument
 )
-from PySide6.QtCore import Qt, QTimer, QUrl, QSize
+from PySide6.QtCore import Qt, QTimer, QUrl, QSize, QTranslator
 
 HAS_PIL = False
 try:
@@ -1638,14 +1638,7 @@ class TktEditor(QMainWindow):
 
     def _delete_entry(self):
         if self._current_idx is None: return
-        msg = QMessageBox(self)
-        msg.setWindowTitle("物理清空")
-        msg.setText("物理剥离该节点？")
-        msg.setIcon(QMessageBox.Question)
-        msg.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
-        msg.button(QMessageBox.Yes).setText("是")
-        msg.button(QMessageBox.No).setText("否")
-        if msg.exec() == QMessageBox.No:
+        if QMessageBox.question(self, "物理清空", "物理剥离该节点？", QMessageBox.Ok | QMessageBox.Cancel) == QMessageBox.Cancel:
             return
         self.entries.pop(self._current_idx)
         for i, entry in enumerate(self.entries): entry['slot'] = i
@@ -1826,14 +1819,7 @@ class TktEditor(QMainWindow):
 
     def closeEvent(self, event):
         if self._dirty:
-            msg = QMessageBox(self)
-            msg.setWindowTitle("未保存")
-            msg.setText("直接退出？")
-            msg.setIcon(QMessageBox.Question)
-            msg.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
-            msg.button(QMessageBox.Yes).setText("是")
-            msg.button(QMessageBox.No).setText("否")
-            if msg.exec() == QMessageBox.No:
+            if QMessageBox.question(self, "未保存", "直接退出？", QMessageBox.Ok | QMessageBox.Cancel) == QMessageBox.Cancel:
                 event.ignore()
                 return
         if self.font9696: self.font9696.close()
@@ -1963,11 +1949,14 @@ def main():
     else:
         app = QApplication(sys.argv)
         app.setStyle("Fusion")
-        
+        _t = QTranslator()
+        _t.load("qtbase_zh_CN", os.path.join(os.path.dirname(__file__), '..', 'editor_utils'))
+        app.installTranslator(_t)
+
         initial_file = args.gui_file if args.gui_file else None
         editor = TktEditor(initial_file)
         editor.show()
         sys.exit(app.exec())
 
-if __name__ == "__main__": 
+if __name__ == "__main__":
     main()
