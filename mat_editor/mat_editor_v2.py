@@ -2046,7 +2046,7 @@ class MatEditorApp(QMainWindow):
         # Right pane
         self._build_right_panel()
 
-        self.splitter.setSizes([460, 640, 460])
+        self.splitter.setSizes([460, 640, 550])
         # 左右面板拉伸因子=0, 中间=1: 窗口放大时多余空间全归中间, 左右保持初始宽度
         self.splitter.setStretchFactor(0, 0)
         self.splitter.setStretchFactor(1, 1)
@@ -2879,7 +2879,7 @@ class MatEditorApp(QMainWindow):
         self.script_preview.setLineWrapMode(QPlainTextEdit.NoWrap)
         editor_splitter.addWidget(self.script_preview)
 
-        editor_splitter.setSizes([400, 300])
+        editor_splitter.setSizes([400, 400])
         bot_layout.addWidget(editor_splitter, 1)
 
         script_splitter.addWidget(bot_widget)
