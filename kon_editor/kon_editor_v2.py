@@ -438,6 +438,11 @@ class KonEditor(QMainWindow):
 
         app_inst = QApplication.instance()
         self.is_dark_theme = app_inst.styleHints().colorScheme() == Qt.ColorScheme.Dark if app_inst else True
+
+        import sys as _sys
+        _sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+        from editor_utils.window_theme import apply_godot_theme
+        apply_godot_theme(self, self.is_dark_theme)
         self.kon_path = None; self.tkt_path = None
         self.records = []; self.tkt = {}; self.names = {}
         self.filtered_indices = []; self._dirty = False; self._editing_idx = -1
@@ -462,6 +467,8 @@ class KonEditor(QMainWindow):
         self.is_dark_theme = not self.is_dark_theme
         self._apply_theme()
         self._refresh_table()
+        from editor_utils.window_theme import apply_godot_theme
+        apply_godot_theme(self, self.is_dark_theme)
 
     # ============================================================
     # UI 构建

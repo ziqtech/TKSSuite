@@ -617,17 +617,22 @@ class ShopEditorWindow(QMainWindow):
         self.shop_path = None
         self.item_path = None
         self.tkt_path = None
-        
+
         self.records = []
         self.items = []
         self.item_names = {}
         self.filtered_indices = []
-        
+
         self._dirty = False
         self._editing_idx = -1
 
         app_inst = QApplication.instance()
         self._is_dark = app_inst.styleHints().colorScheme() == Qt.ColorScheme.Dark if app_inst else True
+
+        import sys as _sys
+        _sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+        from editor_utils.window_theme import apply_godot_theme
+        apply_godot_theme(self, self._is_dark)
 
         self._build_ui()
         self._update_path_labels()
@@ -926,6 +931,8 @@ class ShopEditorWindow(QMainWindow):
         self._apply_theme()
         self._update_path_labels()
         self._refresh_table()
+        from editor_utils.window_theme import apply_godot_theme
+        apply_godot_theme(self, self._is_dark)
 
     # ================================================================
     # 数据加载

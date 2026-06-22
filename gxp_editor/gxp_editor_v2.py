@@ -337,7 +337,7 @@ class GXPEditor(QMainWindow):
         super().__init__()
         self.setWindowTitle("GXP 图像编辑器 v4 (独立外部主题)")
         self.resize(1200, 800)
-        
+
         ico_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'TKS.ico')
         if os.path.exists(ico_path): self.setWindowIcon(QIcon(ico_path))
 
@@ -347,7 +347,13 @@ class GXPEditor(QMainWindow):
             is_dark = app_inst.styleHints().colorScheme() == Qt.ColorScheme.Dark
             self.theme_manager.set_theme('dark' if is_dark else 'light')
         else:
+            is_dark = True
             self.theme_manager.set_theme('dark')
+
+        import sys as _sys
+        _sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+        from editor_utils.window_theme import apply_godot_theme
+        apply_godot_theme(self, is_dark)
         
         self.img: Optional[GXPImage] = None
         self._pixmap_item = None
@@ -398,6 +404,8 @@ class GXPEditor(QMainWindow):
         self._apply_theme()
         theme_name = '深色' if self.theme_manager.current_theme == 'dark' else '浅色'
         self.statusBar().showMessage(f"已切换到{theme_name}主题", 2000)
+        from editor_utils.window_theme import apply_godot_theme
+        apply_godot_theme(self, self.theme_manager.current_theme == 'dark')
 
     def _setup_menu(self):
         mb = self.menuBar()

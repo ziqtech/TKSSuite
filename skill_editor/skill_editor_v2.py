@@ -381,14 +381,20 @@ class SkillEditorApp(QMainWindow):
         self.setWindowTitle("TKSkill.dat 可视化编辑器 (PySide6)")
         self.resize(1260, 820)
         self.setMinimumSize(1000, 650)
-        
+
         # 补全：精准加载原版要求的图标文件 TKS.ico
         ico_path = os.path.join(os.path.dirname(__file__), 'TKS.ico')
         if os.path.exists(ico_path):
             self.setWindowIcon(QIcon(ico_path))
 
+        import sys as _sys
         app_inst = QApplication.instance()
         self._is_dark = app_inst.styleHints().colorScheme() == Qt.ColorScheme.Dark if app_inst else True
+
+        import sys as _sys
+        _sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+        from editor_utils.window_theme import apply_godot_theme
+        apply_godot_theme(self, self._is_dark)
 
         self.skill_path = self.tkt_path = None
         self.records = []; self.tkt = {}; self.tkt_full = {}
@@ -676,6 +682,8 @@ class SkillEditorApp(QMainWindow):
     def _toggle_theme(self):
         self._is_dark = not self._is_dark
         self._apply_theme()
+        from editor_utils.window_theme import apply_godot_theme
+        apply_godot_theme(self, self._is_dark)
 
     def _apply_theme(self):
         qss = GODOT_DARK_QSS if self._is_dark else GODOT_LIGHT_QSS

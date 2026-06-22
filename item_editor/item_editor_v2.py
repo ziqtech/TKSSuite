@@ -750,8 +750,14 @@ class ItemEditorApp(QMainWindow):
         ico_path = os.path.join(os.path.dirname(__file__), 'TKS.ico')
         if os.path.exists(ico_path): self.setWindowIcon(QIcon(ico_path))
 
+        import sys as _sys
         app_inst = QApplication.instance()
         self._is_dark = app_inst.styleHints().colorScheme() == Qt.ColorScheme.Dark if app_inst else True
+
+        import sys as _sys
+        _sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+        from editor_utils.window_theme import apply_godot_theme
+        apply_godot_theme(self, self._is_dark)
 
         self.item_path = self.tkt_path = self.skill_path = self.mu_path = None
         self.records = []; self.tkt = {}; self.tkt_full = {}; self.skill_names = {}
@@ -771,6 +777,8 @@ class ItemEditorApp(QMainWindow):
 
     def _toggle_theme(self):
         self._is_dark = not self._is_dark; self._apply_theme(); self._refresh_table()
+        from editor_utils.window_theme import apply_godot_theme
+        apply_godot_theme(self, self._is_dark)
 
     def _create_dock(self, title, widget_content):
         container = QWidget()

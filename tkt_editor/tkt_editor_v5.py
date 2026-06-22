@@ -784,10 +784,10 @@ class TktEditor(QMainWindow):
         super().__init__()
         self.setWindowTitle("TKT.dat 语义化智能维护编辑器 - 引擎级界面")
         self.resize(1350, 850)
-        
+
         # --- 还原图标加载 ---
         ico_path = os.path.join(os.path.dirname(__file__), 'TKS.ico')
-        if os.path.exists(ico_path): 
+        if os.path.exists(ico_path):
             self.setWindowIcon(QIcon(ico_path))
 
         self.font_mono = QFont('Consolas', 10)
@@ -811,6 +811,13 @@ class TktEditor(QMainWindow):
 
         app_inst = QApplication.instance()
         self._is_dark = app_inst.styleHints().colorScheme() == Qt.ColorScheme.Dark if app_inst else True
+
+        # 应用 Godot 风格窗口标题栏 (与 editor_themes 主题一致)
+        import sys as _sys
+        _sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+        from editor_utils.window_theme import apply_godot_theme
+        apply_godot_theme(self, self._is_dark)
+
         if app_inst:
             app_inst.focusChanged.connect(self._on_focus_changed)
 
@@ -1079,6 +1086,9 @@ class TktEditor(QMainWindow):
         self._apply_theme()
         self._render_preview()
         self._render_comp_previews()
+        # 更新窗口标题栏颜色
+        from editor_utils.window_theme import apply_godot_theme
+        apply_godot_theme(self, self._is_dark)
 
     def _apply_theme(self):
         qss = GODOT_DARK_QSS if self._is_dark else GODOT_LIGHT_QSS

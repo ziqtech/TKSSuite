@@ -513,6 +513,11 @@ class GRPEditor(QMainWindow):
         if app_inst:
             is_dark = app_inst.styleHints().colorScheme() == Qt.ColorScheme.Dark
             self.theme_manager.current_theme = 'dark' if is_dark else 'light'
+
+        import sys as _sys
+        _sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+        from editor_utils.window_theme import apply_godot_theme
+        apply_godot_theme(self, is_dark)
         self._apply_theme()
 
         # 状态
@@ -567,6 +572,8 @@ class GRPEditor(QMainWindow):
 
     def _toggle_theme(self):
         self.theme_manager.toggle_theme(); self._apply_theme()
+        from editor_utils.window_theme import apply_godot_theme
+        apply_godot_theme(self, self.theme_manager.current_theme == 'dark')
 
     # ── Toolbar ───────────────────────────────────────────
     def _setup_toolbar(self):

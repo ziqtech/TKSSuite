@@ -536,7 +536,7 @@ class JVGEditor(QMainWindow):
         super().__init__()
         self.setWindowTitle("JVG 图集编辑器 v2")
         self.resize(1280, 800)
-        
+
         # 窗口居中显示
         screen = QApplication.primaryScreen()
         if screen:
@@ -558,7 +558,12 @@ class JVGEditor(QMainWindow):
             self.theme_manager.set_theme('dark' if self._is_dark else 'light')
         else:
             self._is_dark = True
-        
+
+        import sys as _sys
+        _sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+        from editor_utils.window_theme import apply_godot_theme
+        apply_godot_theme(self, self._is_dark)
+
         # 数据模型
         self.jvg: Optional[JVGFile] = None
         self._bi = -1
@@ -906,6 +911,8 @@ class JVGEditor(QMainWindow):
         self._apply_theme()
         theme_name = '深色' if self._is_dark else '浅色'
         self.statusBar().showMessage(f"已切换到{theme_name}主题", 2000)
+        from editor_utils.window_theme import apply_godot_theme
+        apply_godot_theme(self, self._is_dark)
 
     def _new(self):
         self.jvg = JVGFile()

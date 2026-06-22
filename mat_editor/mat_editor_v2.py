@@ -1975,6 +1975,12 @@ class MatEditorApp(QMainWindow):
             if app_inst else True
         )
 
+        # 应用 Godot 风格窗口标题栏 (与 editor_themes 主题一致)
+        import sys as _sys
+        _sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+        from editor_utils.window_theme import apply_godot_theme
+        apply_godot_theme(self, self._is_dark)
+
         # 数据状态
         self.dat_path = None
         self.tkt_path = None
@@ -2044,6 +2050,9 @@ class MatEditorApp(QMainWindow):
     def _toggle_theme(self):
         self._is_dark = not self._is_dark
         self._apply_theme()
+        # 更新窗口标题栏颜色
+        from editor_utils.window_theme import apply_godot_theme
+        apply_godot_theme(self, self._is_dark)
 
     def _apply_theme(self):
         qss = GODOT_DARK_QSS if self._is_dark else GODOT_LIGHT_QSS

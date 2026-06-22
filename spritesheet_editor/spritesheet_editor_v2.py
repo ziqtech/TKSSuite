@@ -2193,6 +2193,11 @@ class SpriteSheetEditorWindow(QMainWindow):
         ico = os.path.join(os.path.dirname(__file__), 'TKS.ico')
         if os.path.exists(ico):
             self.setWindowIcon(QIcon(ico))
+
+        import sys as _sys
+        _sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+        from editor_utils.window_theme import apply_godot_theme
+        apply_godot_theme(self, is_dark)
         # 根据屏幕可用空间设定窗口尺寸 (不超过屏幕 90%)
         screen_geo = QApplication.primaryScreen().availableGeometry()
         w = min(1180, int(screen_geo.width() * 0.85))
@@ -2942,6 +2947,8 @@ class SpriteSheetEditorWindow(QMainWindow):
         self.preview_view._disp.setStyleSheet(
             f"background-color: {bg_color.name()}; border: none;")
         self.canvas.redraw()
+        from editor_utils.window_theme import apply_godot_theme
+        apply_godot_theme(self, self._is_dark)
 
 
 # ═══════════════════════════════════════════════════════════════
