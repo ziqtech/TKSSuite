@@ -652,15 +652,7 @@ class ShopEditorWindow(QMainWindow):
         _f(self.lbl_tkt_path, self.tkt_path, "TKT.dat")
 
     def _apply_theme(self):
-        qss = ThemeManager._load_qss("dark" if self._is_dark else "light")
-        if qss:
-            self.setStyleSheet(qss)
-        elif self._is_dark:
-            self.setStyleSheet("")
-            self.setPalette(ThemeManager._dark_palette())
-        else:
-            self.setStyleSheet("")
-            self.setPalette(ThemeManager._light_palette())
+        ThemeManager.apply_theme(self, "dark" if self._is_dark else "light")
 
     def _toggle_theme(self):
         self._is_dark = not self._is_dark
