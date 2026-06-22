@@ -61,7 +61,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtGui import QColor, QFont, QIcon, QIntValidator
 from PySide6.QtCore import Qt, QTranslator
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-from editor_utils.theme_manager import ThemeManager, GODOT_DARK_QSS, GODOT_LIGHT_QSS
+from editor_utils.theme_manager import ThemeManager
 from editor_utils.dock_components import DockHeader
 from editor_utils.picker_dialogs import TktPickerDialog
 from editor_utils.ui_helpers import make_fake_input, update_path_labels
@@ -693,7 +693,7 @@ class WarpcEditorV2(QMainWindow):
 
     # ── 主题 ──
     def _apply_theme(self):
-        self.setStyleSheet(GODOT_DARK_QSS if self._is_dark else GODOT_LIGHT_QSS)
+        self.setStyleSheet(ThemeManager.dark_qss() if self._is_dark else ThemeManager.light_qss())
         self._update_paths()
 
     def _toggle_theme(self):

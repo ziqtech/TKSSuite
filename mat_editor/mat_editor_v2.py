@@ -44,7 +44,7 @@ from PySide6.QtGui import (
 from PySide6.QtCore import Qt, QTimer, QRect, QPoint, QSize, QThread, Signal, QTranslator
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-from editor_utils.theme_manager import ThemeManager, GODOT_DARK_QSS, GODOT_LIGHT_QSS
+from editor_utils.theme_manager import ThemeManager
 from editor_utils.dock_components import DockHeader
 
 # ============================================================
@@ -2026,7 +2026,7 @@ class MatEditorApp(QMainWindow):
         apply_godot_theme(self, self._is_dark)
 
     def _apply_theme(self):
-        qss = GODOT_DARK_QSS if self._is_dark else GODOT_LIGHT_QSS
+        qss = ThemeManager.dark_qss() if self._is_dark else ThemeManager.light_qss()
         self.setStyleSheet(qss)
         self._update_path()
         self._update_entity_type_colors()

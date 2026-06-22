@@ -103,6 +103,3 @@ class ThemeManager:
         return _make_palette(False)
 
 
-# 模块级便捷变量 (兼容各编辑器现有 GODOT_DARK_QSS / GODOT_LIGHT_QSS 引用)
-GODOT_DARK_QSS = _DARK_QSS
-GODOT_LIGHT_QSS = _LIGHT_QSS

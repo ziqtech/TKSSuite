@@ -39,7 +39,7 @@ except ImportError:
 
 # ----------------- editor_utils Imports -----------------
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-from editor_utils.theme_manager import ThemeManager, GODOT_DARK_QSS, GODOT_LIGHT_QSS
+from editor_utils.theme_manager import ThemeManager
 from editor_utils.dock_components import DockHeader
 from editor_utils.ui_helpers import update_path_labels
 
@@ -1067,7 +1067,7 @@ class TktEditor(QMainWindow):
         apply_godot_theme(self, self._is_dark)
 
     def _apply_theme(self):
-        qss = GODOT_DARK_QSS if self._is_dark else GODOT_LIGHT_QSS
+        qss = ThemeManager.dark_qss() if self._is_dark else ThemeManager.light_qss()
         self.setStyleSheet(qss)
         preview_bg = '#1a1d24' if self._is_dark else '#313c52'
         if hasattr(self, 'preview_scroll_area'): self.preview_scroll_area.setStyleSheet(f"background-color: {preview_bg}; border: none;")

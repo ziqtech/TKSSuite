@@ -420,64 +420,11 @@ def pil_to_qimage(pil_image):
     return QImage(data, pil_image.width, pil_image.height, QImage.Format_RGBA8888).copy()
 
 # ============================================================
-# QSS 样式表表
+# 公共模块导入
 # ============================================================
-GODOT_DARK_QSS = """
-QWidget { background-color: #202531; color: #dcdcdc; font-family: 'Segoe UI', 'Microsoft YaHei'; }
-QTableWidget { background-color: #1a1e27; alternate-background-color: #202531; border: 1px solid #14171f; selection-background-color: #478cbf; }
-QHeaderView::section { background-color: #202531; border: none; border-bottom: 1px solid #14171f; padding: 4px; }
-QPlainTextEdit, QLineEdit, QTextEdit { background-color: #1a1e27; border: 1px solid #14171f; padding: 4px; border-radius: 2px;}
-QPushButton { background-color: #2e3548; border: 1px solid #14171f; border-radius: 4px; padding: 5px 12px; }
-QPushButton:hover { background-color: #3b445c; }
-QPushButton:pressed { background-color: #478cbf; color: #fff; }
-QComboBox { background-color: #2e3548; border: 1px solid #14171f; border-radius: 4px; padding: 4px; }
-QListWidget { background-color: #1a1e27; border: 1px solid #14171f; }
-QListWidget::item:selected { background-color: #478cbf; color: white; }
-QSplitter::handle { image: none; background-color: transparent; }
-QSplitter::handle:horizontal { border-left: 1px solid #14171f; margin-left: 3px; margin-right: 3px; }
-QSplitter::handle:vertical { border-top: 1px solid #14171f; margin-top: 3px; margin-bottom: 3px; }
-QSplitter::handle:horizontal:hover { border-left: 1px solid #478cbf; }
-QFrame#DockHeader { background-color: #14171f; border-top-left-radius: 4px; border-top-right-radius: 4px; }
-QLabel#DockTitle { color: #a5b0cb; font-weight: bold; background-color: transparent; }
-QWidget#DockBody { background-color: #202531; border: 1px solid #14171f; border-top: none; }
-QMenuBar { background-color: #202531; color: #dcdcdc; border-bottom: 1px solid #14171f; }
-QMenuBar::item:selected { background-color: #3b445c; border-radius: 2px; }
-QMenu { background-color: #202531; border: 1px solid #14171f; padding: 4px; }
-QMenu::item:selected { background-color: #478cbf; color: #ffffff; border-radius: 2px; }
-"""
-
-GODOT_LIGHT_QSS = """
-QWidget { background-color: #e0e4e8; color: #222222; font-family: 'Segoe UI', 'Microsoft YaHei'; }
-QTableWidget { background-color: #ffffff; alternate-background-color: #f2f5f7; border: 1px solid #b0b5bd; selection-background-color: #478cbf; selection-color: #fff;}
-QHeaderView::section { background-color: #d1d6dc; border: none; border-bottom: 1px solid #b0b5bd; padding: 4px; color: #222; }
-QPlainTextEdit, QLineEdit, QTextEdit { background-color: #ffffff; border: 1px solid #b0b5bd; padding: 4px; border-radius: 2px;}
-QPushButton { background-color: #cdd3d9; border: 1px solid #a6abb2; border-radius: 4px; padding: 5px 12px; color: #111;}
-QPushButton:hover { background-color: #b8c0c7; }
-QComboBox { background-color: #ffffff; border: 1px solid #b0b5bd; border-radius: 4px; padding: 4px; }
-QListWidget { background-color: #ffffff; border: 1px solid #b0b5bd; }
-QListWidget::item:selected { background-color: #478cbf; color: white; }
-QSplitter::handle { image: none; background-color: transparent; }
-QSplitter::handle:horizontal { border-left: 1px solid #b0b5bd; margin-left: 3px; margin-right: 3px; }
-QFrame#DockHeader { background-color: #b0b5bd; border-top-left-radius: 4px; border-top-right-radius: 4px; }
-QLabel#DockTitle { color: #111; font-weight: bold; background-color: transparent; }
-QWidget#DockBody { background-color: #e0e4e8; border: 1px solid #b0b5bd; border-top: none; }
-QMenuBar { background-color: #e0e4e8; color: #222222; border-bottom: 1px solid #b0b5bd; }
-QMenuBar::item:selected { background-color: #b8c0c7; border-radius: 2px; }
-QMenu { background-color: #ffffff; border: 1px solid #b0b5bd; padding: 4px; }
-QMenu::item:selected { background-color: #478cbf; color: #ffffff; border-radius: 2px; }
-"""
-
-class DockHeader(QFrame):
-    def __init__(self, title, right_layout=None):
-        super().__init__()
-        self.setObjectName("DockHeader")
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(8, 6, 8, 6)
-        layout.setSpacing(4)
-        lbl = QLabel(title)
-        lbl.setObjectName("DockTitle")
-        layout.addWidget(lbl, 1)
-        if right_layout: layout.addLayout(right_layout)
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+from editor_utils.theme_manager import ThemeManager
+from editor_utils.dock_components import DockHeader
 
 class TktEditor(QMainWindow):
     def __init__(self, initial_path=None):
@@ -726,7 +673,7 @@ class TktEditor(QMainWindow):
         self._render_comp_previews()
 
     def _apply_theme(self):
-        qss = GODOT_DARK_QSS if self._is_dark else GODOT_LIGHT_QSS
+        qss = ThemeManager.dark_qss() if self._is_dark else ThemeManager.light_qss()
         self.setStyleSheet(qss)
         preview_bg = '#1a1d24' if self._is_dark else '#313c52'
         if hasattr(self, 'preview_scroll_area'): self.preview_scroll_area.setStyleSheet(f"background-color: {preview_bg}; border: none;")

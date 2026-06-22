@@ -40,6 +40,7 @@ from PySide6.QtGui import (
 from PySide6.QtCore import Qt, QTimer, QUrl, QSize
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+from editor_utils.theme_manager import ThemeManager
 from editor_utils.dock_components import DockHeader
 
 HAS_PIL = False
@@ -836,78 +837,6 @@ def save_tkt(tkt_path, entries):
 
 
 # ============================================================
-# QSS 主题配置 (Godot 风格 + MenuBar 悬停修复)
-# ============================================================
-GODOT_DARK_QSS = """
-QWidget { background-color: #202531; color: #dcdcdc; font-family: 'Segoe UI', 'Microsoft YaHei'; }
-QTableWidget { background-color: #1a1e27; alternate-background-color: #202531; border: 1px solid #14171f; selection-background-color: #478cbf; }
-QHeaderView::section { background-color: #202531; border: none; border-bottom: 1px solid #14171f; padding: 4px; }
-QPlainTextEdit, QLineEdit, QTextEdit { background-color: #1a1e27; border: 1px solid #14171f; padding: 4px; border-radius: 2px;}
-QPushButton { background-color: #2e3548; border: 1px solid #14171f; border-radius: 4px; padding: 5px 12px; }
-QPushButton:hover { background-color: #3b445c; }
-QPushButton:pressed { background-color: #478cbf; color: #fff; }
-QComboBox { background-color: #2e3548; border: 1px solid #14171f; border-radius: 4px; padding: 4px; }
-QComboBox::drop-down { border: none; }
-/* 彻底隐藏默认背景，用 1 像素的 border 来画线 */
-QSplitter::handle { image: none; background-color: transparent; }
-QSplitter::handle:horizontal { border-left: 1px solid #14171f; margin-left: 3px; margin-right: 3px; }
-QSplitter::handle:vertical { border-top: 1px solid #14171f; margin-top: 3px; margin-bottom: 3px; }
-QSplitter::handle:horizontal:hover { border-left: 1px solid #478cbf; }
-QSplitter::handle:vertical:hover { border-top: 1px solid #478cbf; }
-QScrollBar:vertical { background: #1a1e27; width: 12px; }
-QScrollBar::handle:vertical { background: #3b445c; border-radius: 6px; min-height: 20px; margin: 2px; }
-QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0px; }
-QFrame#DockHeader { background-color: #14171f; border-top-left-radius: 4px; border-top-right-radius: 4px; }
-QWidget#DockBody { background-color: #202531; border: 1px solid #14171f; border-top: none; }
-QLabel#DockTitle { background-color: transparent; color: #a5b0cb; font-weight: bold; }
-
-/* 修复菜单栏与下拉菜单的样式 */
-QMenuBar { background-color: #202531; color: #dcdcdc; border-bottom: 1px solid #14171f; }
-QMenuBar::item { background: transparent; padding: 5px 10px; }
-QMenuBar::item:selected { background-color: #3b445c; border-radius: 2px; }
-QMenuBar::item:pressed { background-color: #478cbf; color: #ffffff; }
-QMenu { background-color: #202531; border: 1px solid #14171f; padding: 4px; }
-QMenu::item { padding: 6px 24px 6px 24px; }
-QMenu::item:selected { background-color: #478cbf; color: #ffffff; border-radius: 2px; }
-QMenu::separator { height: 1px; background: #14171f; margin: 4px 0px; }
-"""
-
-GODOT_LIGHT_QSS = """
-QWidget { background-color: #e0e4e8; color: #222222; font-family: 'Segoe UI', 'Microsoft YaHei'; }
-QTableWidget { background-color: #ffffff; alternate-background-color: #f2f5f7; border: 1px solid #b0b5bd; selection-background-color: #478cbf; selection-color: #fff;}
-QHeaderView::section { background-color: #d1d6dc; border: none; border-bottom: 1px solid #b0b5bd; padding: 4px; color: #222; }
-QPlainTextEdit, QLineEdit, QTextEdit { background-color: #ffffff; border: 1px solid #b0b5bd; padding: 4px; border-radius: 2px;}
-QPushButton { background-color: #cdd3d9; border: 1px solid #a6abb2; border-radius: 4px; padding: 5px 12px; color: #111;}
-QPushButton:hover { background-color: #b8c0c7; }
-QPushButton:pressed { background-color: #8da4b8; }
-QComboBox { background-color: #ffffff; border: 1px solid #b0b5bd; border-radius: 4px; padding: 4px; }
-QComboBox::drop-down { border: none; }
-/* 彻底隐藏默认背景，用 1 像素的 border 来画线 */
-QSplitter::handle { image: none; background-color: transparent; }
-QSplitter::handle:horizontal { border-left: 1px solid #b0b5bd; margin-left: 3px; margin-right: 3px; }
-QSplitter::handle:vertical { border-top: 1px solid #b0b5bd; margin-top: 3px; margin-bottom: 3px; }
-QSplitter::handle:horizontal:hover { border-left: 1px solid #478cbf; }
-QSplitter::handle:vertical:hover { border-top: 1px solid #478cbf; }
-QScrollBar:vertical { background: #f2f5f7; width: 12px; }
-QScrollBar::handle:vertical { background: #b8c0c7; border-radius: 6px; min-height: 20px; margin: 2px; }
-QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0px; }
-QFrame#DockHeader { background-color: #b0b5bd; border-top-left-radius: 4px; border-top-right-radius: 4px; }
-QWidget#DockBody { background-color: #e0e4e8; border: 1px solid #b0b5bd; border-top: none; }
-QLabel#DockTitle { background-color: transparent; color: #111; font-weight: bold; }
-
-/* 修复菜单栏与下拉菜单的样式 */
-QMenuBar { background-color: #e0e4e8; color: #222222; border-bottom: 1px solid #b0b5bd; }
-QMenuBar::item { background: transparent; padding: 5px 10px; }
-QMenuBar::item:selected { background-color: #b8c0c7; border-radius: 2px; }
-QMenuBar::item:pressed { background-color: #8da4b8; color: #111; }
-QMenu { background-color: #ffffff; border: 1px solid #b0b5bd; padding: 4px; }
-QMenu::item { padding: 6px 24px 6px 24px; color: #222; }
-QMenu::item:selected { background-color: #478cbf; color: #ffffff; border-radius: 2px; }
-QMenu::separator { height: 1px; background: #b0b5bd; margin: 4px 0px; }
-"""
-
-
-# ============================================================
 # PySide6 GUI
 # ============================================================
 def pil_to_qimage(pil_image):
@@ -1214,7 +1143,7 @@ class TktEditor(QMainWindow):
         self._render_preview()
 
     def _apply_theme(self):
-        qss = GODOT_DARK_QSS if self._is_dark else GODOT_LIGHT_QSS
+        qss = ThemeManager.dark_qss() if self._is_dark else ThemeManager.light_qss()
         self.setStyleSheet(qss)
         self._update_paths()
 
