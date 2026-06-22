@@ -45,7 +45,7 @@ from PySide6.QtWidgets import (
     QLineEdit, QComboBox, QCheckBox, QPushButton, QLabel,
     QScrollArea, QDialog, QFileDialog, QMessageBox, QTextEdit,
     QFrame, QGridLayout, QAbstractItemView, QMenuBar, QTabWidget,
-    QSpinBox, QRadioButton, QButtonGroup, QGroupBox, QStyle, QMenu,
+    QSpinBox, QSlider, QRadioButton, QButtonGroup, QGroupBox, QStyle, QMenu,
     QToolTip,
 )
 from PySide6.QtGui import (
@@ -895,7 +895,12 @@ class PreviewCanvas(QWidget):
         self._off_y = 0
         self._bbox = None
         self._drag_state = None
+        self._entry_title = ""
         self._cursor_over_sprite = False
+
+    def set_entry_title(self, title):
+        self._entry_title = title
+        self.update()
 
     def set_frame_data(self, composite_pixmap, comp_ox, comp_oy,
                        sprite_boxes, origin_cv, enemy_cv, info_lines,
@@ -922,7 +927,7 @@ class PreviewCanvas(QWidget):
 
         w, h = self.width(), self.height()
         # 背景
-        painter.fillRect(0, 0, w, h, QColor('#1a1a2e'))
+        painter.fillRect(0, 0, w, h, QColor('#1a1e27'))
 
         if self._composite_pixmap and not self._composite_pixmap.isNull():
             painter.drawPixmap(int(self._comp_ox), int(self._comp_oy),
@@ -971,13 +976,19 @@ class PreviewCanvas(QWidget):
             painter.setFont(QFont("Consolas", 10))
             painter.drawText(w // 2 - 60, h - 16, f"■ 播放完毕 (tick {self._tick})")
 
-        # 信息行
+        # 信息行 (左上)
         painter.setPen(QColor('#0f0'))
         painter.setFont(QFont("Consolas", 8))
         y = 12
         for line in self._info_lines[:24]:
             painter.drawText(8, y, line)
             y += 14
+
+        # 条目标题 (左下, 同字体样式)
+        if self._entry_title:
+            painter.setPen(QColor('#0f0'))
+            painter.setFont(QFont("Consolas", 8))
+            painter.drawText(8, h - 12, self._entry_title)
 
     def _cv_to_game(self, cv_x, cv_y):
         """画布坐标 → 游戏坐标"""
@@ -1123,7 +1134,7 @@ class TimelineWidget(QWidget):
         ruler_h = self._ruler_h
 
         is_dark = self.editor._is_dark
-        bg = QColor('#2a2a3e') if is_dark else QColor('#f5f5f5')
+        bg = QColor('#1a1e27') if is_dark else QColor('#f5f5f5')
         painter.fillRect(0, 0, w, h, bg)
 
         if not self._layers_info:
@@ -1137,7 +1148,7 @@ class TimelineWidget(QWidget):
 
         # 刻度尺
         tick_step = max(1, int(20 / zoom))
-        ruler_color = QColor('#999') if is_dark else QColor('#666')
+        ruler_color = QColor('#888') if is_dark else QColor('#666')
         painter.setPen(QPen(ruler_color, 1))
         painter.setFont(QFont(FONT_FAMILY, 8))
         for t in range(0, max_tick + tick_step, tick_step):
@@ -1158,7 +1169,7 @@ class TimelineWidget(QWidget):
             # 可见性眼睛 (左侧, 可点击)
             vis_cb = self.editor._preview_vis.get(s + 1)
             vis_on = vis_cb.isChecked() if vis_cb else True
-            painter.setPen(QColor(self.TRACK_COLORS[s % 8] if vis_on else '#bbb'))
+            painter.setPen(QColor(self.TRACK_COLORS[s % 8] if vis_on else '#555'))
             painter.setFont(QFont(FONT_FAMILY, 10))
             painter.drawText(18 + self._pan_x, int(y + track_h // 2 + 4),
                              '●' if vis_on else '○')
@@ -1175,8 +1186,8 @@ class TimelineWidget(QWidget):
             if delay > 0:
                 dw = int(delay * zoom)
                 painter.fillRect(QRect(int(dx), int(y), int(dw), track_h),
-                               QColor('#3a3a4e') if is_dark else QColor('#ddd'))
-                painter.setPen(QColor('#555') if is_dark else QColor('#ccc'))
+                               QColor('#2e3548') if is_dark else QColor('#ddd'))
+                painter.setPen(QColor('#3b445c') if is_dark else QColor('#ccc'))
                 painter.drawRect(QRect(int(dx), int(y), int(dw), track_h))
 
             # 播放区
@@ -1508,7 +1519,7 @@ class ThumbnailStrip(QWidget):
         painter = QPainter(self)
         w, h = self.width(), self.height()
         is_dark = self.editor._is_dark
-        bg = QColor('#2a2a3e') if is_dark else QColor('#e8e8e8')
+        bg = QColor('#1a1e27') if is_dark else QColor('#f5f5f5')
         painter.fillRect(0, 0, w, h, bg)
 
         if not self._pixmaps:
@@ -1760,15 +1771,6 @@ class ActEditorV2(QMainWindow):
         cl.setContentsMargins(4, 4, 4, 4)
         cl.setSpacing(4)
 
-        # 编辑头 (全局: 应用/重置 写入所有字段)
-        hdr_row = QHBoxLayout()
-        self.lbl_entry = QLabel("未选中")
-        self.lbl_entry.setProperty("class", "PreviewName")
-        hdr_row.addWidget(self.lbl_entry, 1)
-        hdr_row.addWidget(QPushButton("✅ 应用修改", clicked=self._apply_edit))
-        hdr_row.addWidget(QPushButton("🔄 重置", clicked=self._reset_edit))
-        cl.addLayout(hdr_row)
-
         self._build_timeline_into(cl)
         splitter.addWidget(center)
         self._center_widget = center
@@ -1780,12 +1782,9 @@ class ActEditorV2(QMainWindow):
         rl.setSpacing(4)
         right.setMinimumWidth(420)
 
-        param_title = QLabel("参数面板")
-        param_title.setProperty("class", "PreviewName")
-        rl.addWidget(param_title)
-
         self.tabs = QTabWidget()
         self.tabs.setDocumentMode(True)
+        self.tabs.tabBar().setDrawBase(False)
         self._build_direction_tab()
         self._build_layer_cards_tab()
         self._build_param_tab()
@@ -1925,6 +1924,8 @@ class ActEditorV2(QMainWindow):
         ctrl.addWidget(self._edit_mode_cb)
 
         ctrl.addStretch()
+        ctrl.addWidget(QPushButton("✅ 应用修改", clicked=self._apply_edit))
+        ctrl.addWidget(QPushButton("🔄 重置", clicked=self._reset_edit))
         inner.layout().addLayout(ctrl)
 
         # 垂直分割: 预览区 + 时间轴区 (工具栏附在时间轴顶部)
@@ -1954,14 +1955,20 @@ class ActEditorV2(QMainWindow):
         merged_bar.addWidget(self._vis_frame)
         merged_bar.addStretch()
         merged_bar.addWidget(QLabel("缩放:"))
-        btn_zo = QPushButton("➖", clicked=self._tl_zoom_out)
-        btn_zo.setToolTip("缩小时间轴 (Ctrl+滚轮)")
-        merged_bar.addWidget(btn_zo)
-        btn_zi = QPushButton("➕", clicked=self._tl_zoom_in)
-        btn_zi.setToolTip("放大时间轴 (Ctrl+滚轮)")
-        merged_bar.addWidget(btn_zi)
         self._tl_zoom_lbl = QLabel("×40")
+        self._tl_zoom_lbl.setFixedWidth(36)
+        self._tl_zoom_lbl.setAlignment(Qt.AlignCenter)
         merged_bar.addWidget(self._tl_zoom_lbl)
+        zoom_slider = QSlider(Qt.Horizontal)
+        zoom_slider.setRange(2, 40)
+        zoom_slider.setValue(40)
+        zoom_slider.setTickInterval(2)
+        zoom_slider.setPageStep(4)
+        zoom_slider.setMaximumWidth(160)
+        zoom_slider.setToolTip("时间轴缩放 (Ctrl+滚轮)")
+        zoom_slider.valueChanged.connect(self._tl_zoom_slider_changed)
+        merged_bar.addWidget(zoom_slider)
+        self._tl_zoom_slider = zoom_slider
         tl_layout.addWidget(merged_w)
 
         self.timeline_widget = TimelineWidget(self)
@@ -2528,9 +2535,9 @@ class ActEditorV2(QMainWindow):
         self._editing_idx = entry['index']
         active = sorted(entry_active_layers(entry))
         refd = sorted(entry_referenced_layers(entry))
-        self.lbl_entry.setText(
-            f"动画 #{entry['index']}   "
-            f"活跃图层 {active if active else '(空)'}   "
+        self.preview_canvas.set_entry_title(
+            f"动画 #{entry['index']}  "
+            f"活跃图层 {active if active else '(空)'}  "
             f"方向表引用 {refd if refd else '(无)'}")
 
         for d in range(4):
@@ -2567,7 +2574,7 @@ class ActEditorV2(QMainWindow):
             self._refresh_tail_file_lbl(pair)
 
         self._preview_reload()
-        self._tl_redraw()
+        self._tl_auto_zoom()
 
     def _populate_layer(self, layer_idx, vals):
         self._auto_fill_enabled = False
@@ -3436,7 +3443,7 @@ class ActEditorV2(QMainWindow):
         # PIL 合成
         comp_w = max(1, int(bw * scale))
         comp_h = max(1, int(bh * scale))
-        CANVAS_BG_RGB = (0x1a, 0x1a, 0x2e)
+        CANVAS_BG_RGB = (0x1a, 0x1e, 0x27)
         try:
             composite = Image.new('RGB', (comp_w, comp_h), CANVAS_BG_RGB)
         except Exception:
@@ -3711,8 +3718,32 @@ class ActEditorV2(QMainWindow):
         self._tl_redraw()
 
     def _tl_update_zoom_lbl(self):
+        z = self.timeline_widget.zoom()
         if getattr(self, '_tl_zoom_lbl', None) is not None:
-            self._tl_zoom_lbl.setText(f"×{self.timeline_widget.zoom()}")
+            self._tl_zoom_lbl.setText(f"×{z}")
+        if getattr(self, '_tl_zoom_slider', None) is not None:
+            self._tl_zoom_slider.blockSignals(True)
+            self._tl_zoom_slider.setValue(z)
+            self._tl_zoom_slider.blockSignals(False)
+
+    def _tl_auto_zoom(self):
+        """自动缩放使动画长度适配时间轴宽度 (2~40)"""
+        if self._editing_idx < 0:
+            return
+        dur = self._tl_calc_duration(self.entries[self._editing_idx])
+        if dur <= 0:
+            return
+        tw = self.timeline_widget
+        avail = max(tw.width() - tw._margin * 2, 200)
+        z = max(2, min(40, int(avail / dur)))
+        tw.set_zoom(z)
+        self._tl_update_zoom_lbl()
+        self._tl_redraw()
+
+    def _tl_zoom_slider_changed(self, val):
+        self.timeline_widget.set_zoom(val)
+        self._tl_update_zoom_lbl()
+        self._tl_redraw()
 
     def _tl_reset_playhead(self):
         self._preview_stop()
