@@ -8,7 +8,7 @@ FakeInputBox / InspectorTitle / PreviewFrame / DockHeader 体系。
 底层 LZSS 引擎与 TKKon/TKT 二进制解析逻辑 100% 保留。
 """
 
-import struct, os, re, sys
+import struct, os, sys
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QSplitter, QTableWidget, QTableWidgetItem, QHeaderView,
@@ -16,89 +16,13 @@ from PySide6.QtWidgets import (
     QScrollArea, QGroupBox, QDialog, QFileDialog, QMessageBox, QTextEdit,
     QFrame, QGridLayout, QAbstractItemView, QMenuBar,
 )
-from PySide6.QtGui import QIntValidator, QColor, QFont, QIcon, QShortcut, QPalette
+from PySide6.QtGui import QIntValidator, QColor, QFont, QIcon, QShortcut
 from PySide6.QtCore import Qt, QTranslator
 
-# ============================================================
-# 深浅色主题管理器 (对齐 shop_editor_v2 / spritesheet_editor_v2)
-# ============================================================
-
-class ThemeManager:
-    """QSS 主题管理器 — 优先从 themes/ 目录加载 Godot 风格 QSS，缺失时回退 QPalette"""
-
-    @staticmethod
-    def _themes_dir() -> str:
-        return os.path.join(os.path.dirname(__file__), "..", "editor_themes")
-
-    @staticmethod
-    def _load_qss(theme: str) -> str:
-        """读取 QSS 文件并将 url() 路径转为绝对路径"""
-        qss_file = os.path.join(ThemeManager._themes_dir(), f"{theme}.qss")
-        if not os.path.exists(qss_file):
-            return ""
-        with open(qss_file, "r", encoding="utf-8") as f:
-            qss = f.read()
-        themes_dir = os.path.dirname(qss_file).replace("\\", "/")
-        qss = re.sub(r"url\(([^)]+)\)", lambda m: f"url({themes_dir}/{m.group(1)})", qss)
-        return qss
-
-    @staticmethod
-    def apply_theme(widget, theme: str) -> None:
-        """对指定 widget 应用主题 (dark / light)，QSS 缺失时自动回退 QPalette"""
-        qss = ThemeManager._load_qss(theme)
-        if qss:
-            widget.setStyleSheet(qss)
-        elif theme == "dark":
-            widget.setStyleSheet("")
-            widget.setPalette(ThemeManager._dark_palette())
-        else:
-            widget.setStyleSheet("")
-            widget.setPalette(ThemeManager._light_palette())
-
-    @staticmethod
-    def apply_dark_theme(app: QApplication) -> None:
-        ThemeManager.apply_theme(app, "dark")
-
-    @staticmethod
-    def apply_light_theme(app: QApplication) -> None:
-        ThemeManager.apply_theme(app, "light")
-
-    @staticmethod
-    def _dark_palette() -> QPalette:
-        palette = QPalette()
-        palette.setColor(QPalette.Window, QColor(45, 45, 45))
-        palette.setColor(QPalette.WindowText, Qt.white)
-        palette.setColor(QPalette.Base, QColor(30, 30, 30))
-        palette.setColor(QPalette.AlternateBase, QColor(45, 45, 45))
-        palette.setColor(QPalette.ToolTipBase, Qt.black)
-        palette.setColor(QPalette.ToolTipText, Qt.white)
-        palette.setColor(QPalette.Text, Qt.white)
-        palette.setColor(QPalette.Button, QColor(53, 53, 53))
-        palette.setColor(QPalette.ButtonText, Qt.white)
-        palette.setColor(QPalette.BrightText, Qt.red)
-        palette.setColor(QPalette.Link, QColor(42, 130, 218))
-        palette.setColor(QPalette.Highlight, QColor(42, 130, 218))
-        palette.setColor(QPalette.HighlightedText, Qt.black)
-        return palette
-
-    @staticmethod
-    def _light_palette() -> QPalette:
-        return QApplication.style().standardPalette()
-
-# ============================================================
-# Dock 面板组件 (对齐 shop_editor_v2 / tkt_editor_v5)
-# ============================================================
-
-class DockHeader(QFrame):
-    def __init__(self, title):
-        super().__init__()
-        self.setObjectName("DockHeader")
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(8, 6, 8, 6)
-        layout.setSpacing(4)
-        lbl = QLabel(title)
-        lbl.setObjectName("DockTitle")
-        layout.addWidget(lbl, 1)
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+from editor_utils.theme_manager import ThemeManager
+from editor_utils.dock_components import DockHeader
+from editor_utils.ui_helpers import make_fake_input, update_path_labels
 
 # ============================================================
 # 业务逻辑层 (严格保留原版算法)
@@ -393,35 +317,6 @@ class FieldRefDialog(QDialog):
         text.setPlainText('\n'.join(lines)); layout.addWidget(text)
         btn_close = QPushButton("关闭"); btn_close.clicked.connect(self.close)
         bl = QHBoxLayout(); bl.addStretch(); bl.addWidget(btn_close); layout.addLayout(bl)
-
-# ============================================================
-# FakeInputBox 工厂 (对齐 skill_editor_v2.py)
-# ============================================================
-
-def make_fake_input(line_edit=None, combo=None, button=None, stretch=True):
-    """创建 FakeInputBox 外壳 (内凹输入框风格)
-    
-    内部可包含:
-      - QLineEdit (数值输入)
-      - QComboBox (下拉选择)
-      - QPushButton (右侧操作按钮, 如 "选择状态...")
-    """
-    box = QFrame()
-    box.setObjectName("FakeInputBox")
-    h = QHBoxLayout(box)
-    h.setContentsMargins(0, 0, 0, 0)
-    h.setSpacing(0)
-
-    if line_edit:
-        line_edit.setFrame(False)
-        h.addWidget(line_edit)
-    if combo:
-        h.addWidget(combo)
-    if button:
-        h.addWidget(button)
-    if stretch:
-        h.addStretch()
-    return box
 
 # ============================================================
 # 主编辑器窗口
@@ -784,11 +679,10 @@ class KonEditor(QMainWindow):
         self._update_paths(); self._set_edit_enabled(True); self._apply_filter()
 
     def _update_paths(self):
-        for lb, p in [(self.lbl_kon, self.kon_path), (self.lbl_tkt, self.tkt_path)]:
-            key = "TKKon.dat" if lb is self.lbl_kon else "TKT.dat"
-            if not p: lb.setText(f"{key}: 未加载")
-            elif not os.path.exists(p): lb.setText(f"{key}: (不存在) {p}")
-            else: lb.setText(f"{key}: {p}")
+        update_path_labels([
+            (self.lbl_kon, self.kon_path, "TKKon.dat"),
+            (self.lbl_tkt, self.tkt_path, "TKT.dat"),
+        ], self.is_dark_theme)
 
     # ----------- 筛选/表格 -----------
 

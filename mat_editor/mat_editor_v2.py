@@ -43,6 +43,10 @@ from PySide6.QtGui import (
 )
 from PySide6.QtCore import Qt, QTimer, QRect, QPoint, QSize, QThread, Signal, QTranslator
 
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+from editor_utils.theme_manager import ThemeManager, GODOT_DARK_QSS, GODOT_LIGHT_QSS
+from editor_utils.dock_components import DockHeader
+
 # ============================================================
 # LZSS 解压 (用于 TKItem.dat)
 # ============================================================
@@ -1610,24 +1614,6 @@ def load_scene_background(sc_grp_path, sc_idx_path, scene_id):
 
 
 # ============================================================
-# QSS 主题加载 (共享 editor_themes/ 目录)
-# ============================================================
-def _load_qss(theme: str) -> str:
-    """从共享 editor_themes/ 目录加载 QSS 并解析 url() 为绝对路径"""
-    themes_dir = os.path.join(os.path.dirname(__file__), '..', 'editor_themes')
-    qss_path = os.path.join(themes_dir, f'{theme}.qss')
-    if os.path.exists(qss_path):
-        with open(qss_path, 'r', encoding='utf-8') as f:
-            qss = f.read()
-        themes_dir_abs = os.path.abspath(themes_dir).replace("\\", "/")
-        qss = re.sub(r"url\(([^)]+)\)", lambda m: f"url({themes_dir_abs}/{m.group(1)})", qss)
-        return qss
-    return ''
-
-GODOT_DARK_QSS = _load_qss('dark')
-GODOT_LIGHT_QSS = _load_qss('light')
-
-# ============================================================
 # PIL → QPixmap 转换工具
 # ============================================================
 def _pil_to_qpixmap(pil_img):
@@ -1795,21 +1781,6 @@ class ScriptSyntaxHighlighter(QSyntaxHighlighter):
         # 5. block (最高优先级, 整行)
         if stripped.startswith('{') or stripped.startswith('}'):
             self.setFormat(0, line_len, self.fmt_block)
-
-
-class DockHeader(QFrame):
-    """Dock 面板标题栏"""
-    def __init__(self, title, right_layout=None):
-        super().__init__()
-        self.setObjectName("DockHeader")
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(8, 6, 8, 6)
-        layout.setSpacing(4)
-        lbl = QLabel(title)
-        lbl.setObjectName("DockTitle")
-        layout.addWidget(lbl, 1)
-        if right_layout:
-            layout.addLayout(right_layout)
 
 
 # ============================================================

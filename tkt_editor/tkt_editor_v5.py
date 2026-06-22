@@ -37,6 +37,12 @@ try:
 except ImportError:
     pass
 
+# ----------------- editor_utils Imports -----------------
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+from editor_utils.theme_manager import ThemeManager, GODOT_DARK_QSS, GODOT_LIGHT_QSS
+from editor_utils.dock_components import DockHeader
+from editor_utils.ui_helpers import update_path_labels
+
 # ============================================================
 # 常量 (来自反编译)
 # ============================================================
@@ -749,36 +755,6 @@ def pil_to_qimage(pil_image):
     data = pil_image.tobytes("raw", "RGBA")
     return QImage(data, pil_image.width, pil_image.height, QImage.Format_RGBA8888).copy()
 
-# ============================================================
-# QSS 主题加载 (共享 editor_themes/ 目录)
-# ============================================================
-def _load_qss(theme: str) -> str:
-    """从共享 editor_themes/ 目录加载 QSS 并解析 url() 为绝对路径"""
-    themes_dir = os.path.join(os.path.dirname(__file__), '..', 'editor_themes')
-    qss_path = os.path.join(themes_dir, f'{theme}.qss')
-    if os.path.exists(qss_path):
-        with open(qss_path, 'r', encoding='utf-8') as f:
-            qss = f.read()
-        themes_dir_abs = os.path.abspath(themes_dir).replace("\\", "/")
-        qss = re.sub(r"url\(([^)]+)\)", lambda m: f"url({themes_dir_abs}/{m.group(1)})", qss)
-        return qss
-    return ''
-
-GODOT_DARK_QSS = _load_qss('dark')
-GODOT_LIGHT_QSS = _load_qss('light')
-
-class DockHeader(QFrame):
-    def __init__(self, title, right_layout=None):
-        super().__init__()
-        self.setObjectName("DockHeader")
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(8, 6, 8, 6)
-        layout.setSpacing(4)
-        lbl = QLabel(title)
-        lbl.setObjectName("DockTitle")
-        layout.addWidget(lbl, 1)
-        if right_layout: layout.addLayout(right_layout)
-
 class TktEditor(QMainWindow):
     def __init__(self, initial_path=None):
         super().__init__()
@@ -1100,12 +1076,12 @@ class TktEditor(QMainWindow):
         self._update_paths()
 
     def _update_paths(self):
-        cg, cr = ("color: #55b572;" if self._is_dark else "color: #178a39;"), ("color: #e27d60;" if self._is_dark else "color: #c93b16;")
-        def _f(lb, p, l=''):
-            if not p or not os.path.exists(p): lb.setText(f"({l} 未挂载)"); lb.setStyleSheet(cr)
-            else: lb.setText(f"{l}: {p}"); lb.setStyleSheet(cg)
-        _f(self.lbl_tkt, self.tkt_path, 'TKT')
-        _f(self.lbl_font, self.font_path, 'FONT9696')
+        update_path_labels([
+            (self.lbl_tkt, self.tkt_path, 'TKT'),
+            (self.lbl_font, self.font_path, 'FONT9696'),
+        ], self._is_dark)
+        cg = ("color: #55b572;" if self._is_dark else "color: #178a39;")
+        cr = ("color: #e27d60;" if self._is_dark else "color: #c93b16;")
         if _B2G_TABLE is not None: self.lbl_g2b.setText("g2b.dat: 已挂载"); self.lbl_g2b.setStyleSheet(cg)
         else: self.lbl_g2b.setText("(g2b.dat 未挂载)"); self.lbl_g2b.setStyleSheet(cr)
 

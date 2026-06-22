@@ -29,6 +29,10 @@ try:
 except ImportError:
     pass
 
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+from editor_utils.theme_manager import ThemeManager
+from editor_utils.dock_components import DockHeader
+
 JVG_MAGIC = b"@JVG"; JVM_MAGIC = b"@JVM"
 SCREEN_W = 640; HEADER_SIZE = 32
 
@@ -445,58 +449,7 @@ def export_gridsheet(blk:JVMBlock,outdir:str,padding:int=1,columns:int=0,greensc
     Path(os.path.join(outdir,name)).write_bytes(_rgba_png(aw,ah,atlas))
     print(f"  Gridsheet: {name} ({aw}x{ah}, {cols}x{rows}, cell {cw}x{ch})")
 
-# ── 主题管理 ──────────────────────────────────────────
-class ThemeManager:
-    def __init__(self):
-        self.themes_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'editor_themes')
-        self.current_theme = 'dark'
-        self._dark_qss = ''
-        self._light_qss = ''
-        self._load_themes()
-
-    def _load_themes(self):
-        dark_path = os.path.join(self.themes_dir, 'dark.qss')
-        light_path = os.path.join(self.themes_dir, 'light.qss')
-        
-        # 统一用正则将 url() 内的相对路径转为绝对路径
-        themes_dir = self.themes_dir.replace('\\', '/')
-        
-        def _resolve_urls(qss: str) -> str:
-            return re.sub(r"url\(([^)]+)\)", lambda m: f"url({themes_dir}/{m.group(1)})", qss)
-        
-        if os.path.exists(dark_path):
-            with open(dark_path, 'r', encoding='utf-8') as f:
-                self._dark_qss = _resolve_urls(f.read())
-        if os.path.exists(light_path):
-            with open(light_path, 'r', encoding='utf-8') as f:
-                self._light_qss = _resolve_urls(f.read())
-
-    def get_stylesheet(self) -> str:
-        return self._dark_qss if self.current_theme == 'dark' else self._light_qss
-
-    def set_theme(self, theme: str):
-        if theme in ('dark', 'light'):
-            self.current_theme = theme
-
-    def toggle_theme(self):
-        self.current_theme = 'light' if self.current_theme == 'dark' else 'dark'
-
 # ── GUI 组件 ──────────────────────────────────────────
-class DockHeader(QFrame):
-    """统一的面板标题头"""
-    def __init__(self, title, right_layout=None):
-        super().__init__()
-        self.setObjectName("DockHeader")
-        self.setFixedHeight(28)  # 固定高度，与 wardata_editor 一致
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(10, 0, 6, 0)
-        layout.setSpacing(4)
-        lbl = QLabel(title)
-        lbl.setObjectName("DockTitle")
-        layout.addWidget(lbl, 1)
-        if right_layout:
-            layout.addLayout(right_layout)
-
 class CanvasView(QGraphicsView):
     """可点击的画布视图，支持鼠标点击事件和滚轮缩放"""
     def __init__(self, scene, parent=None):

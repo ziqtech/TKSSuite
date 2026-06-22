@@ -29,7 +29,6 @@ LZSS 文件头 (sub_45343C 读取):
 
 import struct
 import os
-import re
 import sys
 
 from PySide6.QtWidgets import (
@@ -42,6 +41,10 @@ from PySide6.QtGui import (
     QColor, QFont, QAction, QKeySequence, QShortcut, QIcon, QPalette
 )
 from PySide6.QtCore import Qt, QTranslator
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+from editor_utils.theme_manager import ThemeManager
+from editor_utils.dock_components import DockHeader
 
 
 # ============================================================
@@ -373,75 +376,6 @@ TAB_TO_SHOP = {
 }
 
 # ============================================================
-# 深浅色主题管理器 (来自 spritesheet_editor_v2.py)
-# ============================================================
-
-class ThemeManager:
-    """QSS 主题管理器 — 优先从 themes/ 目录加载 Godot 风格 QSS，缺失时回退 QPalette"""
-
-    @staticmethod
-    def _themes_dir() -> str:
-        return os.path.join(os.path.dirname(__file__), "..", "editor_themes")
-
-    @staticmethod
-    def _load_qss(theme: str) -> str:
-        """读取 QSS 文件并将 url() 路径转为绝对路径"""
-        qss_file = os.path.join(ThemeManager._themes_dir(), f"{theme}.qss")
-        if not os.path.exists(qss_file):
-            return ""
-        with open(qss_file, "r", encoding="utf-8") as f:
-            qss = f.read()
-        themes_dir = os.path.dirname(qss_file).replace("\\", "/")
-        qss = re.sub(r"url\(([^)]+)\)", lambda m: f"url({themes_dir}/{m.group(1)})", qss)
-        return qss
-
-    @staticmethod
-    def apply_theme(widget, theme: str) -> None:
-        """对指定 widget 应用主题 (dark / light)，QSS 缺失时自动回退 QPalette"""
-        qss = ThemeManager._load_qss(theme)
-        if qss:
-            widget.setStyleSheet(qss)
-        elif theme == "dark":
-            widget.setStyleSheet("")
-            widget.setPalette(ThemeManager._dark_palette())
-        else:
-            widget.setStyleSheet("")
-            widget.setPalette(ThemeManager._light_palette())
-
-    @staticmethod
-    def apply_dark_theme(app: QApplication) -> None:
-        ThemeManager.apply_theme(app, "dark")
-
-    @staticmethod
-    def apply_light_theme(app: QApplication) -> None:
-        ThemeManager.apply_theme(app, "light")
-
-    # ── QPalette 后备方案 ──────────────────────────────
-
-    @staticmethod
-    def _dark_palette() -> QPalette:
-        palette = QPalette()
-        palette.setColor(QPalette.Window, QColor(45, 45, 45))
-        palette.setColor(QPalette.WindowText, Qt.white)
-        palette.setColor(QPalette.Base, QColor(30, 30, 30))
-        palette.setColor(QPalette.AlternateBase, QColor(45, 45, 45))
-        palette.setColor(QPalette.ToolTipBase, Qt.black)
-        palette.setColor(QPalette.ToolTipText, Qt.white)
-        palette.setColor(QPalette.Text, Qt.white)
-        palette.setColor(QPalette.Button, QColor(53, 53, 53))
-        palette.setColor(QPalette.ButtonText, Qt.white)
-        palette.setColor(QPalette.BrightText, Qt.red)
-        palette.setColor(QPalette.Link, QColor(42, 130, 218))
-        palette.setColor(QPalette.Highlight, QColor(42, 130, 218))
-        palette.setColor(QPalette.HighlightedText, Qt.black)
-        return palette
-
-    @staticmethod
-    def _light_palette() -> QPalette:
-        return QApplication.style().standardPalette()
-
-
-# ============================================================
 # 物品选择对话框 (PySide6)
 # ============================================================
 
@@ -580,22 +514,6 @@ class ItemPickerDialog(QDialog):
             self.selected_item_ref = int(self.table.item(row, 0).data(Qt.DisplayRole))
             self.accept()
 
-
-
-# ============================================================
-# Dock 面板组件 (来自 tkt_editor_v5)
-# ============================================================
-
-class DockHeader(QFrame):
-    def __init__(self, title):
-        super().__init__()
-        self.setObjectName("DockHeader")
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(8, 6, 8, 6)
-        layout.setSpacing(4)
-        lbl = QLabel(title)
-        lbl.setObjectName("DockTitle")
-        layout.addWidget(lbl, 1)
 
 
 # ============================================================

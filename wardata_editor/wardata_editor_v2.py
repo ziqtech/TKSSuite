@@ -63,7 +63,7 @@ WarWay.dat 格式 (每条1024字节, 共100条, 32x32有符号字节网格):
 用法: python wardata_editor_v2.py
 """
 
-import struct, os, sys, random, re
+import struct, os, sys, random
 from pathlib import Path
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
@@ -80,6 +80,11 @@ from PySide6.QtGui import (
     QPainter, QPixmap, QImage, QAction, QKeySequence,
 )
 from PySide6.QtCore import Qt, QPointF, QRectF, QTranslator
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+from editor_utils.theme_manager import ThemeManager, GODOT_DARK_QSS, GODOT_LIGHT_QSS
+from editor_utils.dock_components import DockHeader
+from editor_utils.ui_helpers import make_fake_input, update_path_labels
 
 HAS_PIL = False
 try:
@@ -408,48 +413,12 @@ def load_tkitem_names(tkitem_path: str, tkt: dict) -> dict:
 
 
 # ═══════════════════════════════════════════════════════════
-# 主题加载
+# 陷阱名称常量
 # ═══════════════════════════════════════════════════════════
-
-def _load_qss(filename):
-    """加载共享 editor_themes/ 目录下的 QSS 文件并解析 url() 为绝对路径"""
-    themes_dir = os.path.join(os.path.dirname(__file__), '..', 'editor_themes')
-    qss_path = os.path.join(themes_dir, filename)
-    if os.path.exists(qss_path):
-        with open(qss_path, 'r', encoding='utf-8') as f:
-            qss = f.read()
-        themes_dir_abs = os.path.dirname(qss_path).replace("\\", "/")
-        qss = re.sub(r"url\(([^)]+)\)", lambda m: f"url({themes_dir_abs}/{m.group(1)})", qss)
-        return qss
-    return ''
-
-GODOT_DARK_QSS = _load_qss('dark.qss')
-GODOT_LIGHT_QSS = _load_qss('light.qss')
 
 TRAP_NAMES_MAP = {0: '0 无', 1: '1 山崩陷阱', 2: '2 泥沼陷阱', 3: '3 漩渦陷阱',
                   4: '4 火焰陷阱', 5: '5 滾木陷阱', 6: '6 瘴氣陷阱'}
 TRAP_NAMES_SHORT = {1: '山崩', 2: '泥沼', 3: '漩渦', 4: '火焰', 5: '滾木', 6: '瘴氣'}
-
-# ═══════════════════════════════════════════════════════════
-# Dock 面板组件 (对齐 warpc_editor_v2)
-# ═══════════════════════════════════════════════════════════
-
-class DockHeader(QFrame):
-    def __init__(self, title):
-        super().__init__()
-        self.setObjectName("DockHeader")
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(8, 6, 8, 6); layout.setSpacing(4)
-        lbl = QLabel(title); lbl.setObjectName("DockTitle"); layout.addWidget(lbl, 1)
-
-def make_fake_input(line_edit=None, combo=None, button=None, stretch=True):
-    box = QFrame(); box.setObjectName("FakeInputBox")
-    h = QHBoxLayout(box); h.setContentsMargins(0,0,0,0); h.setSpacing(0)
-    if line_edit: line_edit.setFrame(False); h.addWidget(line_edit)
-    if combo: h.addWidget(combo, 1)
-    if button: h.addWidget(button)
-    if stretch: h.addStretch()
-    return box
 
 # ═══════════════════════════════════════════════════════════
 # 主编辑器窗口
@@ -526,21 +495,14 @@ class WarDataEditorV2(QMainWindow):
         apply_godot_theme(self, self._is_dark)
 
     def _update_paths(self):
+        update_path_labels([
+            (self.lbl_wardata, self.wardata_path, 'WarData'),
+            (self.lbl_warway, self.warway_path, 'WarWay'),
+            (self.lbl_tkt, self.tkt_path, 'TKT'),
+            (self.lbl_wsc, self.wsc_grp_path, 'WSC'),
+        ], self._is_dark)
         cg = "color:#55b572;" if self._is_dark else "color:#178a39;"
         cr = "color:#e27d60;" if self._is_dark else "color:#c93b16;"
-        for lb, p, key in [(self.lbl_wardata, self.wardata_path, 'WarData'),
-                            (self.lbl_warway, self.warway_path, 'WarWay'),
-                            (self.lbl_tkt, self.tkt_path, 'TKT')]:
-            if not p:
-                lb.setStyleSheet(cr); lb.setText(f"{key}: 未加载")
-            elif not os.path.exists(p):
-                lb.setStyleSheet(cr); lb.setText(f"{key}: (不存在){p}")
-            else:
-                lb.setStyleSheet(cg); lb.setText(f"{key}: {p}")
-        if self.wsc_grp_path and os.path.exists(self.wsc_grp_path):
-            self.lbl_wsc.setStyleSheet(cg); self.lbl_wsc.setText(f"WSC: {self.wsc_grp_path}")
-        else:
-            self.lbl_wsc.setStyleSheet(cr); self.lbl_wsc.setText("WSC: 未加载")
         extra_parts = []
         if self.warpc_path and os.path.exists(self.warpc_path):
             extra_parts.append(f"WarPC: {len(self.warpc_names)}人")

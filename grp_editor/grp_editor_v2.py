@@ -38,6 +38,10 @@ HAS_PIL = False
 try:    from PIL import Image, ImageDraw; HAS_PIL = True
 except ImportError: pass
 
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+from editor_utils.theme_manager import ThemeManager
+from editor_utils.dock_components import DockHeader
+
 # ── 常量 ──────────────────────────────────────────────────
 RING_SIZE, RING_INIT, RING_INIT_VAL, MIN_MATCH_LZ, MAX_MATCH_LZ = 4096, 4078, 0x20, 3, 18
 
@@ -429,44 +433,8 @@ def export_png_rgba(w, h, rgba, path):
 
 
 # ═══════════════════════════════════════════════════════════
-# 主题管理器
-# ═══════════════════════════════════════════════════════════
-
-class ThemeManager:
-    def __init__(self):
-        self.themes_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'editor_themes')
-        self.current_theme = 'dark'
-        self._dark_qss = ''; self._light_qss = ''
-        self._load_themes()
-
-    def _load_themes(self):
-        themes_dir = self.themes_dir.replace('\\', '/')
-        def _resolve_urls(qss):
-            return re.sub(r"url\(([^)]+)\)", lambda m: f"url({themes_dir}/{m.group(1)})", qss)
-        for name, attr in [('dark.qss', '_dark_qss'), ('light.qss', '_light_qss')]:
-            p = os.path.join(self.themes_dir, name)
-            if os.path.exists(p):
-                with open(p, 'r', encoding='utf-8') as f:
-                    setattr(self, attr, _resolve_urls(f.read()))
-
-    def get_stylesheet(self): return self._dark_qss if self.current_theme == 'dark' else self._light_qss
-    def toggle_theme(self): self.current_theme = 'light' if self.current_theme == 'dark' else 'dark'
-
-
-# ═══════════════════════════════════════════════════════════
 # GUI 组件
 # ═══════════════════════════════════════════════════════════
-
-class DockHeader(QFrame):
-    def __init__(self, title, right_layout=None):
-        super().__init__()
-        self.setObjectName("DockHeader")
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(10, 6, 6, 6)
-        lbl = QLabel(title); lbl.setObjectName("DockTitle")
-        layout.addWidget(lbl, 1)
-        if right_layout: layout.addLayout(right_layout)
-
 
 class GRPGraphicsView(QGraphicsView):
     """支持 Ctrl+滚轮缩放、拖拽平移、鼠标位置跟踪的图像视图"""

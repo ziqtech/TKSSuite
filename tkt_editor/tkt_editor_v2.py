@@ -39,6 +39,9 @@ from PySide6.QtGui import (
 )
 from PySide6.QtCore import Qt, QTimer, QUrl, QSize
 
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+from editor_utils.dock_components import DockHeader
+
 HAS_PIL = False
 try:
     from PIL import Image, ImageDraw, ImageFont
@@ -913,24 +916,6 @@ def pil_to_qimage(pil_image):
     data = pil_image.tobytes("raw", "RGBA")
     qim = QImage(data, pil_image.width, pil_image.height, QImage.Format_RGBA8888)
     return qim.copy()
-
-
-class DockHeader(QFrame):
-    """自定义 Godot 风格的面板标题栏"""
-    def __init__(self, title, right_layout=None):
-        super().__init__()
-        self.setObjectName("DockHeader")
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(8, 6, 8, 6)
-        layout.setSpacing(4)
-
-        lbl = QLabel(title)
-        lbl.setObjectName("DockTitle")
-        layout.addWidget(lbl, 1)
-
-        # 如果传入了右侧控件（比如缩放按钮），就嵌在标题栏右侧
-        if right_layout:
-            layout.addLayout(right_layout)
 
 
 class TktEditor(QMainWindow):

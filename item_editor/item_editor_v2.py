@@ -35,7 +35,7 @@ TKItem.dat 可视化编辑器 v2.0 (PySide6 — Godot 4.6 风格)
   python item_editor_v2.py
 """
 
-import struct, os, sys, csv, re
+import struct, os, sys, csv
 
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
@@ -46,6 +46,12 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtGui import QAction, QKeySequence, QIcon, QImage, QPixmap, QPainter
 from PySide6.QtCore import Qt, QRect, QPoint, QSize, QTranslator
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+from editor_utils.theme_manager import ThemeManager, GODOT_DARK_QSS, GODOT_LIGHT_QSS
+from editor_utils.dock_components import DockHeader
+from editor_utils.picker_dialogs import TktPickerDialog
+from editor_utils.ui_helpers import make_fake_input, update_path_labels
 
 # ============================================================
 # LZSS 编解码 (sub_452B14)
@@ -410,90 +416,6 @@ def save_items(fp, recs):
         raise RuntimeError("压缩回写验证失败!")
     with open(fp, 'wb') as f: f.write(compressed)
     return True
-
-# ============================================================
-# QSS 主题加载 (共享 editor_themes/ 目录)
-# ============================================================
-def _load_qss(theme: str) -> str:
-    themes_dir = os.path.join(os.path.dirname(__file__), '..', 'editor_themes')
-    qss_path = os.path.join(themes_dir, f'{theme}.qss')
-    if os.path.exists(qss_path):
-        with open(qss_path, 'r', encoding='utf-8') as f:
-            qss = f.read()
-        themes_dir_abs = os.path.abspath(themes_dir).replace("\\", "/")
-        qss = re.sub(r"url\(([^)]+)\)", lambda m: f"url({themes_dir_abs}/{m.group(1)})", qss)
-        return qss
-    return ''
-
-GODOT_DARK_QSS = _load_qss('dark')
-GODOT_LIGHT_QSS = _load_qss('light')
-
-# ============================================================
-# UI 辅助组件
-# ============================================================
-class DockHeader(QFrame):
-    def __init__(self, title):
-        super().__init__()
-        self.setObjectName("DockHeader")
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(8, 6, 8, 6); layout.setSpacing(4)
-        lbl = QLabel(title); lbl.setObjectName("DockTitle")
-        layout.addWidget(lbl, 1)
-
-def make_fake_input(line_edit=None, combo=None, button=None, stretch=True):
-    box = QFrame(); box.setObjectName("FakeInputBox")
-    box.setFixedHeight(28)  # 固定高度，防止上下撑开
-    h = QHBoxLayout(box); h.setContentsMargins(0,0,0,0); h.setSpacing(0)
-    if line_edit: h.addWidget(line_edit)
-    if combo: h.addWidget(combo, 1)
-    if button: h.addWidget(button)
-    if stretch: h.addStretch()
-    return box
-
-# ============================================================
-# 弹窗选择器
-# ============================================================
-class TktPickerDialog(QDialog):
-    def __init__(self, parent, tkt_dict, cur_val):
-        super().__init__(parent)
-        self.setWindowTitle("选择 TKT 文本"); self.resize(520, 550)
-        self.selected_id = None
-        self.tkt_items = sorted(tkt_dict.items(), key=lambda x: x[0])
-        layout = QVBoxLayout(self)
-        sf = QHBoxLayout(); sf.addWidget(QLabel("搜索:"))
-        self.search_box = QLineEdit(); self.search_box.textChanged.connect(self._refresh); sf.addWidget(self.search_box)
-        layout.addLayout(sf)
-        self.table = QTableWidget(0, 2)
-        self.table.setHorizontalHeaderLabels(['ID', '文本'])
-        self.table.setColumnWidth(0, 60)
-        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
-        self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
-        self.table.setSelectionMode(QAbstractItemView.SingleSelection)
-        self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
-        self.table.verticalHeader().setVisible(False)
-        self.table.doubleClicked.connect(self._accept_selection)
-        layout.addWidget(self.table)
-        bl = QHBoxLayout(); bl.addStretch()
-        bl.addWidget(QPushButton("取消", clicked=self.reject))
-        btn_ok = QPushButton("确定"); btn_ok.clicked.connect(self._accept_selection); bl.addWidget(btn_ok)
-        layout.addLayout(bl)
-        self._refresh()
-
-    def _refresh(self):
-        query = self.search_box.text().strip().lower()
-        self.table.setRowCount(0); row = 0
-        for eid, txt in self.tkt_items:
-            if query and query not in txt.lower(): continue
-            self.table.insertRow(row)
-            self.table.setItem(row, 0, QTableWidgetItem(str(eid)))
-            self.table.setItem(row, 1, QTableWidgetItem(txt[:80].replace('\n', ' ')))
-            row += 1
-
-    def _accept_selection(self):
-        sel = self.table.selectedItems()
-        if sel:
-            self.selected_id = int(self.table.item(sel[0].row(), 0).text())
-            self.accept()
 
 class SkillPickerDialog(QDialog):
     def __init__(self, parent, skill_names, cur_val):
@@ -1073,14 +995,11 @@ class ItemEditorApp(QMainWindow):
         self.edit_inner.setEnabled(en)
 
     def _update_paths(self):
-        cg = "color:#55b572;" if self._is_dark else "color:#178a39;"
-        cr = "color:#e27d60;" if self._is_dark else "color:#c93b16;"
-        for lb, p, key in [(self.lbl_item, self.item_path, 'TKItem'),
-                           (self.lbl_tkt, self.tkt_path, 'TKT'),
-                           (self.lbl_skill, self.skill_path, 'TKSkill')]:
-            if not p: lb.setStyleSheet(cr); lb.setText(f"{key}: 未加载")
-            elif not os.path.exists(p): lb.setStyleSheet(cr); lb.setText(f"{key}: (不存在){p}")
-            else: lb.setStyleSheet(cg); lb.setText(f"{key}: {p}")
+        update_path_labels([
+            (self.lbl_item, self.item_path, 'TKItem'),
+            (self.lbl_tkt, self.tkt_path, 'TKT'),
+            (self.lbl_skill, self.skill_path, 'TKSkill'),
+        ], self._is_dark)
 
     # ── 数据加载 ──
     def _load_tks_dir(self):
