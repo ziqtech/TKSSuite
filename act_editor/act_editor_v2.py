@@ -1225,20 +1225,25 @@ class TimelineWidget(QWidget):
             QPoint(int(ph_x), 8),
         ])
 
-        # 音效标记
+        # 音效标记 (同 tick 的标记纵向错开, 防止重叠)
         self._sfx_pos = []
         sfx_y = content_h + 4 + self._pan_y
+        x_used = {}  # int(sx) → 已绘制次数
         for (sx_val, sy_val, sid, trig, idx) in self._sfx_in:
             sx = self._content_x(trig)
+            key = int(sx)
+            n = x_used.get(key, 0)
+            x_used[key] = n + 1
+            off_y = sfx_y + n * 14  # 每个重叠标记下移 14px
             color = QColor(self.SFX_COLORS[idx % len(self.SFX_COLORS)])
             painter.setPen(color)
             painter.setFont(QFont(FONT_FAMILY, 10, QFont.Bold))
-            painter.drawText(int(sx) - 4, int(sfx_y + 10), "♪")
+            painter.drawText(int(sx) - 4, int(off_y + 10), "♪")
             painter.setFont(QFont(FONT_FAMILY, 6))
-            painter.drawText(int(sx) - 8, int(sfx_y + 22), f"sid={sid}")
+            painter.drawText(int(sx) - 8, int(off_y + 22), f"sid={sid}")
             painter.setPen(QPen(color, 1, Qt.DashLine))
-            painter.drawLine(int(sx), int(sfx_y - 10), int(sx), int(sfx_y - 4))
-            self._sfx_pos.append((int(sx), int(sfx_y), sid, trig, idx))
+            painter.drawLine(int(sx), int(off_y - 10), int(sx), int(off_y - 4))
+            self._sfx_pos.append((int(sx), int(off_y), sid, trig, idx))
 
         # 框选矩形
         if self._marquee_start is not None:
@@ -1400,10 +1405,11 @@ class TimelineWidget(QWidget):
             self.update()
             return
 
-        was_sfx = (self._drag_state is not None
-                   and self._drag_state[0] == 'sfx')
+        had_drag = self._drag_state is not None
+        was_sfx = had_drag and self._drag_state[0] == 'sfx'
         self._drag_state = None
-        self.editor._tl_handle_release(was_sfx)
+        if had_drag:
+            self.editor._tl_handle_release(was_sfx)
         self.setCursor(Qt.ArrowCursor)
 
     def wheelEvent(self, event):
@@ -1776,6 +1782,7 @@ class ActEditorV2(QMainWindow):
         self._build_layer_cards_tab()
         self._build_param_tab()
         self._build_tail_tab()
+        self.tabs.setCurrentIndex(1)  # 默认激活「图层编辑」
         rl.addWidget(self.tabs, 1)
         splitter.addWidget(right)
 
@@ -1897,17 +1904,6 @@ class ActEditorV2(QMainWindow):
         ctrl.addWidget(self._speed_spin)
 
         ctrl.addSpacing(4)
-        ctrl.addWidget(QLabel("缩放:"))
-        btn_zo = QPushButton("➖", clicked=self._tl_zoom_out)
-        btn_zo.setToolTip("缩小时间轴 (Ctrl+滚轮)")
-        ctrl.addWidget(btn_zo)
-        btn_zi = QPushButton("➕", clicked=self._tl_zoom_in)
-        btn_zi.setToolTip("放大时间轴 (Ctrl+滚轮)")
-        ctrl.addWidget(btn_zi)
-        self._tl_zoom_lbl = QLabel("×40")
-        ctrl.addWidget(self._tl_zoom_lbl)
-
-        ctrl.addSpacing(4)
         btn_zero = QPushButton("↩️ 归零", clicked=self._tl_reset_playhead)
         btn_zero.setToolTip("播放头归零")
         ctrl.addWidget(btn_zero)
@@ -1923,34 +1919,49 @@ class ActEditorV2(QMainWindow):
         ctrl.addStretch()
         inner.layout().addLayout(ctrl)
 
-        # 图层可见性
-        vis_row = QHBoxLayout()
-        vis_row.addWidget(QLabel("图层可见:"))
-        self._vis_frame = QWidget()
-        self._vis_layout = QHBoxLayout(self._vis_frame)
-        self._vis_layout.setContentsMargins(0, 0, 0, 0)
-        self._vis_layout.setSpacing(2)
-        vis_row.addWidget(self._vis_frame)
-        vis_row.addStretch()
-        inner.layout().addLayout(vis_row)
-
-        # 垂直分割: 预览区 + 时间轴区
+        # 垂直分割: 预览区 + 时间轴区 (工具栏附在时间轴顶部)
         vpw = QSplitter(Qt.Vertical)
         vpw.setHandleWidth(5)
         vpw.setChildrenCollapsible(False)
         inner.layout().addWidget(vpw, 1)
 
-        # 预览画布 (独占上区, 不受右侧卡片挤压)
+        # 预览画布 (上区)
         self.preview_canvas = PreviewCanvas(self)
         vpw.addWidget(self.preview_canvas)
 
-        # 时间轴 (下区, 按需收缩)
+        # 时间轴容器: 工具栏 (上) + TimelineWidget (下)
+        tl_container = QWidget()
+        tl_layout = QVBoxLayout(tl_container)
+        tl_layout.setContentsMargins(0, 0, 0, 0)
+        tl_layout.setSpacing(0)
+
+        merged_w = QWidget()
+        merged_bar = QHBoxLayout(merged_w)
+        merged_bar.setContentsMargins(4, 2, 4, 2)
+        merged_bar.addWidget(QLabel("图层可见:"))
+        self._vis_frame = QWidget()
+        self._vis_layout = QHBoxLayout(self._vis_frame)
+        self._vis_layout.setContentsMargins(0, 0, 0, 0)
+        self._vis_layout.setSpacing(2)
+        merged_bar.addWidget(self._vis_frame)
+        merged_bar.addStretch()
+        merged_bar.addWidget(QLabel("缩放:"))
+        btn_zo = QPushButton("➖", clicked=self._tl_zoom_out)
+        btn_zo.setToolTip("缩小时间轴 (Ctrl+滚轮)")
+        merged_bar.addWidget(btn_zo)
+        btn_zi = QPushButton("➕", clicked=self._tl_zoom_in)
+        btn_zi.setToolTip("放大时间轴 (Ctrl+滚轮)")
+        merged_bar.addWidget(btn_zi)
+        self._tl_zoom_lbl = QLabel("×40")
+        merged_bar.addWidget(self._tl_zoom_lbl)
+        tl_layout.addWidget(merged_w)
+
         self.timeline_widget = TimelineWidget(self)
         self.timeline_widget.playheadMoved.connect(self._on_timeline_clicked)
-        vpw.addWidget(self.timeline_widget)
+        tl_layout.addWidget(self.timeline_widget, 1)
 
-        # 预览 : 时间轴 ≈ 3.5 : 1 (保证预览足够大, 时间轴自适应)
-        vpw.setSizes([520, 150])
+        vpw.addWidget(tl_container)
+        vpw.setSizes([500, 180])
 
         # 缩略图条 (固定在时间轴下方, 高度最小)
         self.thumb_strip = ThumbnailStrip(self)
@@ -1963,6 +1974,15 @@ class ActEditorV2(QMainWindow):
         self._card_inner = inner
         self._build_layer_cards()
 
+    @staticmethod
+    def _no_wheel_combo(items=None):
+        """创建禁用滚轮切换的 QComboBox (防止滚动面板时误改选项)"""
+        combo = QComboBox()
+        combo.wheelEvent = lambda e: e.ignore()
+        if items:
+            combo.addItems(items)
+        return combo
+
     def _build_layer_cards(self):
         """构建 8 个图层的紧凑卡片"""
         for s in range(ACT_MAX_LAYER):
@@ -1972,23 +1992,24 @@ class ActEditorV2(QMainWindow):
     def _build_single_card(self, layer_idx):
         s = layer_idx + 1
         vars_row = self._layer_vars[layer_idx]
+        COL = 4  # 每行 4 列, 等宽
 
         card = QFrame()
         card.setObjectName("DockBody")
         card.setFrameShape(QFrame.StyledPanel)
         cl = QVBoxLayout(card)
-        cl.setContentsMargins(6, 4, 6, 4)
-        cl.setSpacing(2)
+        cl.setContentsMargins(8, 6, 8, 8)
+        cl.setSpacing(6)
 
-        # 头部: 图层号 + 类型
+        # ── 头部: 图层号 + 类型 ──
         head = QHBoxLayout()
+        head.setSpacing(6)
         lbl = QLabel(f"#{s}")
         lbl.setProperty("class", "PreviewName")
         head.addWidget(lbl)
         vars_row['_card_label'] = lbl
 
-        type_combo = QComboBox()
-        type_combo.addItems(list(LAYER_TYPE_LABELS.values()))
+        type_combo = self._no_wheel_combo(list(LAYER_TYPE_LABELS.values()))
         type_combo.setCurrentIndex(0)
         type_combo.currentIndexChanged.connect(
             lambda idx, li=layer_idx: self._on_layer_type_changed(li))
@@ -1996,108 +2017,125 @@ class ActEditorV2(QMainWindow):
         vars_row['_type_combo'] = type_combo
         cl.addLayout(head)
 
-        # 紧凑属性行
-        row1 = QHBoxLayout()
-        row1.setSpacing(2)
+        # ── 属性网格: 标签在上 → 输入框在下 → 4 列等宽 ──
+        grid = QGridLayout()
+        grid.setVerticalSpacing(6)
+        grid.setHorizontalSpacing(8)
 
-        blend_combo = QComboBox()
-        blend_combo.addItems(list(BLEND_MODE_LABELS.values()))
-        blend_combo.setMaximumWidth(120)
-        row1.addWidget(blend_combo)
-        vars_row['_blend_combo'] = blend_combo
-        vars_row['blend_mode'] = blend_combo
+        def _cell(label, widget):
+            """创建 '标签在上, 控件在下' 的 VBox 单元"""
+            c = QVBoxLayout()
+            c.setSpacing(2)
+            lb = QLabel(label)
+            lb.setProperty("class", "PropLabel")
+            c.addWidget(lb)
+            c.addWidget(widget)
+            c.addStretch()
+            return c
 
-        loop_combo = QComboBox()
-        loop_combo.addItems(list(LOOP_BEHAVIOR_LABELS.values()))
-        loop_combo.setMaximumWidth(170)
-        row1.addWidget(loop_combo)
-        vars_row['_loop_combo'] = loop_combo
-        vars_row['loop_behavior'] = loop_combo
+        FW = 104  # 所有输入控件统一宽度
 
-        cl.addLayout(row1)
+        def _le(key, default="0", ro=False):
+            le = QLineEdit(default)
+            le.setMinimumWidth(FW)
+            if ro:
+                le.setReadOnly(True)
+            le.textChanged.connect(lambda txt, li=layer_idx, f=key: self._on_layer_field_change(li, f))
+            vars_row[key] = le
+            return le
 
-        # 帧范围 + 延迟/间隔
-        row2 = QHBoxLayout()
-        row2.setSpacing(2)
+        def _cb(key, labels_dict):
+            cb = self._no_wheel_combo(list(labels_dict.values()))
+            cb.setMinimumWidth(FW)
+            vars_row[key] = cb
+            return cb
 
-        frame_lbl = QLabel("[0..0]")
-        frame_lbl.setProperty("class", "ExtraPreviewText")
-        row2.addWidget(frame_lbl)
-        vars_row['_frame_lbl'] = frame_lbl
+        # Row 0: JVG块号 | 混合模式 | 循环行为 | 方向模式
+        grid.addLayout(_cell("JVG 块号", _le("jvg_block_index")), 0, 0)
+        bc = _cb("blend_mode", BLEND_MODE_LABELS)
+        vars_row['_blend_combo'] = bc
+        grid.addLayout(_cell("混合模式", bc), 0, 1)
+        lc = _cb("loop_behavior", LOOP_BEHAVIOR_LABELS)
+        vars_row['_loop_combo'] = lc
+        grid.addLayout(_cell("循环行为", lc), 0, 2)
+        grid.addLayout(_cell("方向模式", _cb("direction_mode", DIRECTION_MODE_LABELS)), 0, 3)
 
-        row2.addWidget(QLabel("延迟:"))
-        sd_le = QLineEdit("0")
-        sd_le.setFixedWidth(40)
-        row2.addWidget(sd_le)
-        vars_row['start_delay'] = sd_le
+        # Row 1: 起始帧 | 终止帧 | 方向帧偏移 | 移动模式
+        grid.addLayout(_cell("起始帧", _le("first_frame")), 1, 0)
+        grid.addLayout(_cell("终止帧", _le("last_frame")), 1, 1)
+        grid.addLayout(_cell("方向帧偏移", _le("dir_frame_offset")), 1, 2)
+        grid.addLayout(_cell("移动模式", _cb("move_mode", MOVE_MODE_LABELS)), 1, 3)
 
-        row2.addWidget(QLabel("间隔:"))
-        ti_le = QLineEdit("0")
-        ti_le.setFixedWidth(40)
-        row2.addWidget(ti_le)
-        vars_row['tick_interval'] = ti_le
+        # Row 2: 帧停留 tick | 启动延迟 | 混合参数 | 参数步进
+        grid.addLayout(_cell("帧停留 tick", _le("tick_interval")), 2, 0)
+        grid.addLayout(_cell("启动延迟", _le("start_delay")), 2, 1)
+        grid.addLayout(_cell("混合参数", _le("blend_param")), 2, 2)
+        grid.addLayout(_cell("参数步进", _le("blend_param_step")), 2, 3)
 
-        row2.addStretch()
-        cl.addLayout(row2)
+        # Row 3: 步进值 | 步进增量 | 帧标签(只读) | —
+        grid.addLayout(_cell("步进值", _le("step_value")), 3, 0)
+        grid.addLayout(_cell("步进增量", _le("step_delta")), 3, 1)
+        fr = QLabel("[0..0]")
+        fr.setProperty("class", "ExtraPreviewText")
+        fr.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        grid.addLayout(_cell("帧范围", fr), 3, 2)
+        vars_row['_frame_lbl'] = fr
+        grid.addLayout(_cell("", QWidget()), 3, 3)  # 占位对齐
 
-        # 详细区域 (默认隐藏)
+        # 四列等宽
+        for c in range(COL):
+            grid.setColumnStretch(c, 1)
+
+        cl.addLayout(grid)
+
+        # ── 详细区域 (默认隐藏: 位移/运行时/保留字段) ──
         detail = QWidget()
         dl = QVBoxLayout(detail)
-        dl.setContentsMargins(0, 0, 0, 0)
-        dl.setSpacing(2)
+        dl.setContentsMargins(2, 2, 2, 2)
+        dl.setSpacing(6)
 
-        # 构建详细字段
-        COMPACT_FIELDS = {'layer_type', 'blend_mode', 'loop_behavior',
-                         'start_delay', 'tick_interval'}
+        EXCLUDE_COMPACT = {'layer_type', 'jvg_block_index', 'blend_mode',
+                          'loop_behavior', 'direction_mode', 'move_mode',
+                          'first_frame', 'last_frame', 'dir_frame_offset',
+                          'tick_interval', 'start_delay',
+                          'blend_param', 'blend_param_step',
+                          'step_value', 'step_delta'}
         for grp_name, fields in FIELD_GROUPS:
-            remaining = [(fn, idx, label, w, c) for (fn, idx, label, w, c) in fields
-                        if fn not in COMPACT_FIELDS]
-            if not remaining:
+            rem = [(fn, idx, label, w, cmt) for (fn, idx, label, w, cmt) in fields
+                   if fn not in EXCLUDE_COMPACT]
+            if not rem:
                 continue
             grp_w = QGroupBox(grp_name)
-            gl = QGridLayout(grp_w)
-            gl.setSpacing(2)
-            for fi, (fn, idx, label, w, cmt) in enumerate(remaining):
-                r, c = divmod(fi, 2)
-                cell = QHBoxLayout()
-                cell.setSpacing(2)
-                lbl_f = QLabel(f"{label}[{idx}]")
-                lbl_f.setProperty("class", "PropLabel")
-                lbl_f.setFixedWidth(90)
-                lbl_f.setToolTip(cmt)
-                cell.addWidget(lbl_f)
-
-                if fn == 'blend_mode':
-                    cb = QComboBox()
-                    cb.addItems(list(BLEND_MODE_LABELS.values()))
-                    cb.setMaximumWidth(140)
-                    cell.addWidget(cb)
-                    vars_row[fn] = cb
-                elif fn == 'direction_mode':
-                    cb = QComboBox()
-                    cb.addItems(list(DIRECTION_MODE_LABELS.values()))
-                    cb.setMaximumWidth(120)
-                    cell.addWidget(cb)
-                    vars_row[fn] = cb
-                elif fn == 'move_mode':
-                    cb = QComboBox()
-                    cb.addItems(list(MOVE_MODE_LABELS.values()))
-                    cb.setMaximumWidth(120)
-                    cell.addWidget(cb)
-                    vars_row[fn] = cb
-                else:
-                    is_ro = fn in READONLY_KEYS
-                    le = QLineEdit()
-                    le.setFixedWidth(w * 8 + 20)
-                    if is_ro:
-                        le.setReadOnly(True)
-                    le.textChanged.connect(
-                        lambda txt, li=layer_idx, f=fn: self._on_layer_field_change(li, f))
-                    cell.addWidget(le)
-                    vars_row[fn] = le
-
-                cell.addStretch()
-                gl.addLayout(cell, r, c)
+            dg = QGridLayout(grp_w)
+            dg.setVerticalSpacing(6)
+            dg.setHorizontalSpacing(8)
+            for fi, (fn, idx, label, w, cmt) in enumerate(rem):
+                r, c = divmod(fi, COL)
+                dc = QVBoxLayout()
+                dc.setSpacing(2)
+                dlb = QLabel(label)
+                dlb.setProperty("class", "PropLabel")
+                dlb.setToolTip(cmt)
+                dc.addWidget(dlb)
+                ro = fn in READONLY_KEYS
+                dw = QLineEdit("0")
+                dw.setMinimumWidth(FW)
+                if ro:
+                    dw.setReadOnly(True)
+                dw.textChanged.connect(lambda txt, li=layer_idx, f=fn: self._on_layer_field_change(li, f))
+                dc.addWidget(dw)
+                vars_row[fn] = dw
+                dc.addStretch()
+                dg.addLayout(dc, r, c)
+            # 填充末行空白
+            if rem:
+                lrc = len(rem) % COL
+                if lrc != 0:
+                    lr = len(rem) // COL
+                    for cc in range(lrc, COL):
+                        dg.addWidget(QWidget(), lr, cc)
+            for cc in range(COL):
+                dg.setColumnStretch(cc, 1)
             dl.addWidget(grp_w)
 
         # 探针标签
@@ -2111,7 +2149,7 @@ class ActEditorV2(QMainWindow):
         cl.addWidget(detail)
         vars_row['_detail'] = detail
 
-        # 展开/折叠按钮
+        # ── 展开/折叠 ──
         toggle_btn = QPushButton("🔽 展开详情")
         toggle_btn.setFixedWidth(100)
         toggle_btn.clicked.connect(lambda checked, li=layer_idx: self._toggle_card_detail(li))
@@ -2147,13 +2185,14 @@ class ActEditorV2(QMainWindow):
         inner.layout().addWidget(lbl)
 
         grid = QGridLayout()
-        grid.setSpacing(4)
+        grid.setVerticalSpacing(6)
+        grid.setHorizontalSpacing(8)
         self._param_vars = []
 
         for k, idx in enumerate(range(16, 40)):
             r, c = divmod(k, 6)
             cell = QVBoxLayout()
-            cell.setSpacing(1)
+            cell.setSpacing(2)
 
             hint = ""
             if idx == 18:
@@ -2165,10 +2204,13 @@ class ActEditorV2(QMainWindow):
             cell.addWidget(lbl_f)
 
             le = QLineEdit("0")
-            le.setFixedWidth(70)
+            le.setMinimumWidth(60)
             self._param_vars.append(le)
             cell.addWidget(le)
-            grid.addLayout(cell, r, c, Qt.AlignTop)
+            grid.addLayout(cell, r, c)
+
+        for c in range(6):
+            grid.setColumnStretch(c, 1)
 
         inner.layout().addLayout(grid)
         inner.layout().addStretch()
@@ -3356,12 +3398,9 @@ class ActEditorV2(QMainWindow):
         if cw < 10 or ch < 10:
             return False
 
-        margin = 40
         bw = max(bbox_r - bbox_l, 1)
         bh = max(bbox_b - bbox_t, 1)
-        sx = (cw - margin * 2) / bw
-        sy = (ch - margin * 2) / bh
-        scale = min(sx, sy, 3.0)
+        scale = 1.0  # 固定 100% 比例, 不随预览区大小缩放
 
         draw_w = bw * scale
         draw_h = bh * scale
