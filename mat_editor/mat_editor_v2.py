@@ -1642,18 +1642,104 @@ def _pil_to_qpixmap(pil_img):
     return QPixmap.fromImage(qimg.copy())
 
 
+class CodeEditor(QPlainTextEdit):
+    """代码编辑器 — 支持 Tab 缩进、多行缩进/反缩进、自动换行等 VSCode 风格操作"""
+    INDENT = "  "  # 2 空格缩进
+
+    def keyPressEvent(self, event):
+        # Tab 键: 插入缩进或多行缩进
+        if event.key() == Qt.Key_Tab:
+            cursor = self.textCursor()
+            if cursor.hasSelection():
+                self._indent_lines(cursor, indent=True)
+            else:
+                cursor.insertText(self.INDENT)
+            return
+        # Shift+Tab: 多行反缩进
+        if event.key() == Qt.Key_Backtab:
+            cursor = self.textCursor()
+            if cursor.hasSelection():
+                self._indent_lines(cursor, indent=False)
+            return
+        # Enter 键: 自动缩进 (保持上一行的缩进级别)
+        if event.key() in (Qt.Key_Return, Qt.Key_Enter):
+            cursor = self.textCursor()
+            block = cursor.block()
+            line_text = block.text()
+            # 计算当前行的缩进
+            indent = ""
+            for ch in line_text:
+                if ch == ' ':
+                    indent += ' '
+                elif ch == '\t':
+                    indent += '  '
+                else:
+                    break
+            # 如果上一行以 { 结尾，额外增加一级缩进
+            stripped = line_text.rstrip()
+            if stripped.endswith('{'):
+                indent += self.INDENT
+            cursor.insertText('\n' + indent)
+            return
+        super().keyPressEvent(event)
+
+    def _indent_lines(self, cursor, indent=True):
+        """对选中的多行进行缩进或反缩进"""
+        start = cursor.selectionStart()
+        end = cursor.selectionEnd()
+
+        cursor.beginEditBlock()
+
+        # 移动到选区起始行
+        cursor.setPosition(start)
+        cursor.movePosition(QTextCursor.StartOfBlock)
+        start_block = cursor.block()
+
+        # 移动到选区结束行
+        cursor.setPosition(end)
+        if cursor.atBlockStart() and end > start:
+            # 如果选区正好在行首，不包含这一行
+            cursor.movePosition(QTextCursor.PreviousBlock)
+        cursor.movePosition(QTextCursor.EndOfBlock)
+        end_block = cursor.block()
+
+        # 遍历每一行
+        block = start_block
+        while True:
+            line_text = block.text()
+            if indent:
+                # 缩进: 在行首插入2个空格
+                cursor.setPosition(block.position())
+                cursor.insertText(self.INDENT)
+            else:
+                # 反缩进: 删除行首最多2个空格
+                if line_text.startswith(self.INDENT):
+                    cursor.setPosition(block.position())
+                    cursor.setPosition(block.position() + 2, QTextCursor.KeepAnchor)
+                    cursor.removeSelectedText()
+                elif line_text.startswith(' '):
+                    cursor.setPosition(block.position())
+                    cursor.setPosition(block.position() + 1, QTextCursor.KeepAnchor)
+                    cursor.removeSelectedText()
+
+            if block == end_block:
+                break
+            block = block.next()
+
+        cursor.endEditBlock()
+
+
 class ScriptSyntaxHighlighter(QSyntaxHighlighter):
-    """脚本编辑器语法高亮 — 逐行规则严格对应 mat_editor.py 的 _apply_syntax_highlight。
-    tkinter tag 优先级 (高→低): block > command > number > comment > keyword,
-    故按升序 setFormat 使高优先级后涂覆盖低优先级, 视觉效果与 v1 一致。
-    颜色按主题取值: 浅色沿用 v1 原值, 深色提亮至在背景 #1a1e27 上对比度达标。"""
-    # (浅色, 深色) 配色对
+    """脚本编辑器语法高亮 — 配色方案与 Godot 4.6 代码编辑器保持一致。
+    优先级 (高→低): block > command > number > comment > keyword,
+    按升序 setFormat 使高优先级后涂覆盖低优先级。"""
+    # (浅色, 深色) 配色对 — 参考 Godot 4.6 编辑器主题
     _PALETTE = {
-        'keyword': ('#0000FF', '#5b8aff'),
-        'comment': ('#008000', '#6ab04c'),
-        'number':  ('#B07000', '#e0a040'),
-        'command': ('#7B30D0', '#b884ff'),
-        'block':   ('#C00000', '#ff7b7b'),
+        'keyword': ('#d63547', '#ff7085'),    # 关键字: 红色/粉色
+        'comment': ('#6a737d', '#6a737d'),    # 注释: 灰色
+        'number':  ('#2e9c6e', '#a1ffe0'),    # 数字: 绿色/青绿色
+        'command': ('#6b89ff', '#a1bfff'),    # 命令: 蓝色/浅蓝色
+        'block':   ('#c75000', '#ffce7b'),    # 块符号: 橙色/暖黄色
     }
 
     def __init__(self, document, is_dark=False):
@@ -2637,12 +2723,12 @@ class MatEditorApp(QMainWindow):
                 wrapper.setObjectName("FakeInputBox")
                 wl = QHBoxLayout(wrapper)
                 wl.setContentsMargins(0, 0, 0, 0)
-                wl.setSpacing(0)
+                wl.setSpacing(2)
                 wl.addWidget(dc_ev, 1)
-                # Color swatch + picker button 右对齐紧贴
-                dc_swatch = QLabel()
-                dc_swatch.setFixedSize(22, 22)
-                dc_swatch.setStyleSheet("background-color: #000; border: 1px solid #333; border-right: none;")
+                # Color swatch
+                dc_swatch = QFrame()
+                dc_swatch.setFixedSize(20, 20)
+                dc_swatch.setStyleSheet("background-color: #000; border: 1px solid #666;")
                 wl.addWidget(dc_swatch)
                 tvars['_dialog_color_swatch'] = dc_swatch
                 # Picker button
@@ -2662,7 +2748,7 @@ class MatEditorApp(QMainWindow):
                         if chosen:
                             val = chosen.data()
                             _ev.setText(str(val))
-                            _swatch.setStyleSheet(f"background-color: {GAME_COLORS.get(val+1,'#000')}; border: 1px solid #333; border-right: none;")
+                            _swatch.setStyleSheet(f"background-color: {GAME_COLORS.get(val+1,'#000')}; border: 1px solid #333;")
                     return _pick
                 dc_btn.clicked.connect(_make_dc_picker())
                 wl.addWidget(dc_btn)
@@ -2865,8 +2951,8 @@ class MatEditorApp(QMainWindow):
         # Editor + preview (horizontal splitter)
         editor_splitter = QSplitter(Qt.Horizontal)
 
-        # Left: Script editor (QPlainTextEdit)
-        self.script_text = QPlainTextEdit()
+        # Left: Script editor (CodeEditor)
+        self.script_text = CodeEditor()
         self.script_text.setFont(QFont("Consolas", 10))
         self.script_text.setTabStopDistance(40)
         self.script_text.setLineWrapMode(QPlainTextEdit.NoWrap)
@@ -3268,10 +3354,10 @@ class MatEditorApp(QMainWindow):
 
             # Dialog color swatch update
             dc_swatch = tvars.get('_dialog_color_swatch')
-            if dc_swatch and isinstance(dc_swatch, QLabel):
+            if dc_swatch and isinstance(dc_swatch, QFrame):
                 dc_val = rec['d28']
                 dc_swatch.setStyleSheet(
-                    f"background-color: {GAME_COLORS.get(dc_val + 1, '#000')}; border: 1px solid #333; border-right: none;")
+                    f"background-color: {GAME_COLORS.get(dc_val + 1, '#000')}; border: 1px solid #666;")
 
             # Direction mask checkboxes update
             dir_bv = tvars.get('_dir_bv')
