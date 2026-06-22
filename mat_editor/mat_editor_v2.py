@@ -2312,19 +2312,22 @@ class MatEditorApp(QMainWindow):
         self._display_mode_combo.currentIndexChanged.connect(self._on_display_mode_change)
         top.addWidget(self._display_mode_combo)
         top.addSpacing(10)
-        self._vis_play_btn = QPushButton("▶")
-        self._vis_play_btn.setFixedWidth(35)
+        self._vis_play_btn = QPushButton("▶️ 播放全部")
+        self._vis_play_btn.setFixedWidth(80)
+        self._vis_play_btn.setStyleSheet("padding-left: 4px; padding-right: 4px;")
         self._vis_play_btn.setToolTip("播放/暂停精灵动画")
         self._vis_play_btn.clicked.connect(self._vis_toggle_anim)
         top.addWidget(self._vis_play_btn)
-        self._vis_sel_anim_btn = QPushButton("▷")
-        self._vis_sel_anim_btn.setFixedWidth(35)
+        self._vis_sel_anim_btn = QPushButton("⏯️ 播放选中")
+        self._vis_sel_anim_btn.setFixedWidth(80)
+        self._vis_sel_anim_btn.setStyleSheet("padding-left: 4px; padding-right: 4px;")
         self._vis_sel_anim_btn.setToolTip("播放/暂停当前选中实体的动画")
         self._vis_sel_anim_btn.clicked.connect(self._vis_toggle_sel_anim)
         top.addWidget(self._vis_sel_anim_btn)
         top.addSpacing(10)
-        btn_refresh = QPushButton("刷新")
-        btn_refresh.setFixedWidth(50)
+        btn_refresh = QPushButton("🔄 刷新")
+        btn_refresh.setFixedWidth(60)
+        btn_refresh.setStyleSheet("padding-left: 4px; padding-right: 4px;")
         btn_refresh.clicked.connect(self._vis_load_scene)
         top.addWidget(btn_refresh)
         top.addSpacing(10)
@@ -3451,7 +3454,9 @@ class MatEditorApp(QMainWindow):
                     var.setChecked(False)
         # Clear script tab
         self.script_text.setReadOnly(False)
+        self.script_text.blockSignals(True)
         self.script_text.clear()
+        self.script_text.blockSignals(False)
         self.script_text.setReadOnly(True)
         self.script_preview.clear()
         self.chain_tree.clear()
@@ -3671,7 +3676,14 @@ class MatEditorApp(QMainWindow):
         if not sel:
             return
         idx = int(sel[0].text(0))
-        if QMessageBox.question(self, "确认", f"清空实体 #{idx}? (type 设为 0)") != QMessageBox.Yes:
+        msg = QMessageBox(self)
+        msg.setWindowTitle("确认")
+        msg.setText(f"清空实体 #{idx}? (type 设为 0)")
+        msg.setIcon(QMessageBox.Question)
+        msg.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+        msg.button(QMessageBox.Yes).setText("确定")
+        msg.button(QMessageBox.No).setText("取消")
+        if msg.exec() != QMessageBox.Yes:
             return
         for di in range(DWORD_COUNT):
             self.records[idx][f'd{di}'] = 0
@@ -4040,11 +4052,11 @@ class MatEditorApp(QMainWindow):
         if self._vis_anim_playing:
             self._vis_stop_anim()
             self._vis_anim_playing = False
-            self._vis_play_btn.setText("▶")
+            self._vis_play_btn.setText("▶️ 播放全部")
         else:
             self._vis_anim_playing = True
             self._vis_start_anim()
-            self._vis_play_btn.setText("⏸")
+            self._vis_play_btn.setText("⏸️ 暂停全部")
 
     def _vis_start_anim(self):
         if self._vis_anim_timer:
@@ -4097,7 +4109,7 @@ class MatEditorApp(QMainWindow):
 
     def _vis_start_sel_anim(self, idx):
         self._vis_sel_anim_active = True
-        self._vis_sel_anim_btn.setText("⏸")
+        self._vis_sel_anim_btn.setText("⏸️ 播放选中")
         self._vis_anim_frame[idx] = 0
         timer = QTimer(self)
         timer.timeout.connect(lambda: self._vis_sel_anim_tick(idx))
@@ -4120,13 +4132,13 @@ class MatEditorApp(QMainWindow):
         if self._vis_sel_anim_timer:
             self._vis_sel_anim_timer.stop()
             self._vis_sel_anim_timer = None
-        self._vis_sel_anim_btn.setText("▷")
+        self._vis_sel_anim_btn.setText("⏯️ 播放选中")
 
     def _on_display_mode_change(self):
         self._vis_stop_anim()
         self._vis_stop_sel_anim()
         self._vis_anim_playing = False
-        self._vis_play_btn.setText("▶")
+        self._vis_play_btn.setText("▶️ 播放全部")
         self._vis_display_mode = self._display_mode_combo.currentText()
         self._vis_load_scene()
 
@@ -4208,7 +4220,6 @@ class MatEditorApp(QMainWindow):
         self._sc_grp_section_count = result.get('sc_grp_section_count', 0)
         self.records = result.get('records', [])
 
-        self._dirty = False
         nonempty = sum(1 for r in self.records if has_data(r))
         scenes = set(r['d1'] for r in self.records if has_data(r))
 
@@ -4237,6 +4248,9 @@ class MatEditorApp(QMainWindow):
                     break
             self._vis_load_scene()
 
+        # 所有初始化完成后才重置脏标记，防止 UI 刷新链路误触
+        self._dirty = False
+        self._script_dirty = False
         self.setUpdatesEnabled(True)
 
     def _start_jvg_thread(self):
@@ -4317,7 +4331,14 @@ class MatEditorApp(QMainWindow):
         du_p = os.path.join(d, "TKDefUnit.Dat")
         tkd_p = os.path.join(d, "TKD.dat")
         files_msg = f"TKMat.Dat: {self.dat_path}\nTKDefUnit.Dat: {du_p}\nTKD.dat: {tkd_p}"
-        if QMessageBox.question(self, "确认保存 — 将写入以下 3 个文件", files_msg) != QMessageBox.Yes:
+        msg = QMessageBox(self)
+        msg.setWindowTitle("确认保存 — 将写入以下 3 个文件")
+        msg.setText(files_msg)
+        msg.setIcon(QMessageBox.Question)
+        msg.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+        msg.button(QMessageBox.Yes).setText("确定")
+        msg.button(QMessageBox.No).setText("取消")
+        if msg.exec() != QMessageBox.Yes:
             return
         errors = []
         try:
@@ -4374,6 +4395,8 @@ class MatEditorApp(QMainWindow):
     def _load_define_to_editor(self, define_id):
         self._current_edit_define_id = define_id
         self.script_text.setReadOnly(False)
+        # 阻止信号，避免 setPlainText 触发 _on_script_edit
+        self.script_text.blockSignals(True)
         self.script_text.clear()
         d = self.tkd_define_map.get(define_id)
         if d:
@@ -4383,6 +4406,7 @@ class MatEditorApp(QMainWindow):
         else:
             self.script_text.setPlainText('{\nEnd(0)\n}; end\n')
             self.script_info_lbl.setText(f"DEFINE {define_id} (新建)")
+        self.script_text.blockSignals(False)
         self._apply_syntax_highlight()
         self._update_line_preview()
         self._script_dirty = False
@@ -4390,7 +4414,9 @@ class MatEditorApp(QMainWindow):
     def _clear_script_editor(self):
         self._save_editor_to_define()
         self.script_text.setReadOnly(False)
+        self.script_text.blockSignals(True)
         self.script_text.clear()
+        self.script_text.blockSignals(False)
         self.script_text.setReadOnly(True)
         self.script_preview.clear()
         self._current_edit_define_id = None
@@ -4675,8 +4701,14 @@ class MatEditorApp(QMainWindow):
         if du_rec is None:
             return
         entity_id = du_rec['f1']
-        if QMessageBox.question(self, "确认删除",
-                                f"删除 DefUnit #{du_idx} → DEFINE {define_id}?\n此操作同时从 TKD.dat 删除对应 DEFINE 块。") != QMessageBox.Yes:
+        msg = QMessageBox(self)
+        msg.setWindowTitle("确认删除")
+        msg.setText(f"删除 DefUnit #{du_idx} → DEFINE {define_id}?\n此操作同时从 TKD.dat 删除对应 DEFINE 块。")
+        msg.setIcon(QMessageBox.Question)
+        msg.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+        msg.button(QMessageBox.Yes).setText("确定")
+        msg.button(QMessageBox.No).setText("取消")
+        if msg.exec() != QMessageBox.Yes:
             return
 
         rec = self.records[self._current_param_idx]
@@ -4723,7 +4755,9 @@ class MatEditorApp(QMainWindow):
         if _modified_dis:
             self._sync_form_dwords(rec, _modified_dis)
         self.script_text.setReadOnly(False)
+        self.script_text.blockSignals(True)
         self.script_text.clear()
+        self.script_text.blockSignals(False)
         self.script_text.setReadOnly(True)
         self._current_edit_define_id = None
         self._refresh_chain_list()
@@ -5012,8 +5046,14 @@ class MatEditorApp(QMainWindow):
             QMessageBox.information(self, "空场景", f"场景 {sname} (ID={sid}) 无实体, 无需删除")
             return
         n = len(scene_entities)
-        if QMessageBox.question(self, "确认删除场景",
-                                f"将删除场景 {sname} (ID={sid})\n\n  TKMat 实体: {n} 个\n\n此操作不可撤销!") != QMessageBox.Yes:
+        msg = QMessageBox(self)
+        msg.setWindowTitle("确认删除场景")
+        msg.setText(f"将删除场景 {sname} (ID={sid})\n\n  TKMat 实体: {n} 个\n\n此操作不可撤销!")
+        msg.setIcon(QMessageBox.Question)
+        msg.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+        msg.button(QMessageBox.Yes).setText("确定")
+        msg.button(QMessageBox.No).setText("取消")
+        if msg.exec() != QMessageBox.Yes:
             return
         all_du_indices = set()
         all_define_ids = set()
@@ -5261,8 +5301,14 @@ class MatEditorApp(QMainWindow):
         n_entities = len(data.get('entities', []))
         n_defunits = len(data.get('defunits', []))
         n_defines = len(data.get('defines', []))
-        if QMessageBox.question(self, "确认导入",
-                                f"将作为新场景导入:\n  实体: {n_entities} 个\n  DefUnit: {n_defunits} 条\n  DEFINE块: {n_defines} 个\n\n确定继续?") != QMessageBox.Yes:
+        msg = QMessageBox(self)
+        msg.setWindowTitle("确认导入")
+        msg.setText(f"将作为新场景导入:\n  实体: {n_entities} 个\n  DefUnit: {n_defunits} 条\n  DEFINE块: {n_defines} 个\n\n确定继续?")
+        msg.setIcon(QMessageBox.Question)
+        msg.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+        msg.button(QMessageBox.Yes).setText("确定")
+        msg.button(QMessageBox.No).setText("取消")
+        if msg.exec() != QMessageBox.Yes:
             return
 
         empty_slots = sorted([i for i, r in enumerate(self.records) if r['d0'] == 0], reverse=True)
@@ -5389,7 +5435,14 @@ class MatEditorApp(QMainWindow):
         self._vis_stop_sel_anim()
         dirty = self._dirty or self._script_dirty
         if dirty:
-            if QMessageBox.question(self, "未保存", "有未保存的修改 (含脚本), 确定退出?") == QMessageBox.No:
+            msg = QMessageBox(self)
+            msg.setWindowTitle("未保存")
+            msg.setText("有未保存的修改 (含脚本), 确定退出?")
+            msg.setIcon(QMessageBox.Question)
+            msg.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+            msg.button(QMessageBox.Yes).setText("确定")
+            msg.button(QMessageBox.No).setText("取消")
+            if msg.exec() == QMessageBox.No:
                 event.ignore()
                 return
         event.accept()
