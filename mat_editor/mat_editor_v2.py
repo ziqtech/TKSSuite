@@ -2163,10 +2163,10 @@ class MatEditorApp(QMainWindow):
         # 新增/删除 + 筛选工具栏 (新增/删除置于原搜索位置)
         filter_row = QHBoxLayout()
         filter_row.setSpacing(2)
-        btn_new = QPushButton("新增")
+        btn_new = QPushButton("➕ 新增")
         btn_new.clicked.connect(self._new_record)
         filter_row.addWidget(btn_new)
-        btn_del = QPushButton("删除")
+        btn_del = QPushButton("🗑️ 删除")
         btn_del.clicked.connect(self._clear_current)
         filter_row.addWidget(btn_del)
         # 分隔线
@@ -2809,17 +2809,20 @@ class MatEditorApp(QMainWindow):
 
         # DefUnit chain list
         chain_toolbar = QHBoxLayout()
-        for text, chain in [("新增到A", "A"), ("新增到B", "B"), ("新增到C", "C")]:
+        for text, chain in [("➕ A链", "A"), ("➕ B链", "B"), ("➕ C链", "C")]:
             btn = QPushButton(text)
             btn.setFixedWidth(65)
+            btn.setStyleSheet("padding-left: 4px; padding-right: 4px;")
             btn.clicked.connect(lambda _, c=chain: self._add_chain_entry(c))
             chain_toolbar.addWidget(btn)
-        btn_del_chain = QPushButton("删除选中")
+        btn_del_chain = QPushButton("🗑️ 删除")
         btn_del_chain.setFixedWidth(65)
+        btn_del_chain.setStyleSheet("padding-left: 4px; padding-right: 4px;")
         btn_del_chain.clicked.connect(self._delete_chain_entry)
         chain_toolbar.addWidget(btn_del_chain)
-        btn_refr = QPushButton("刷新")
-        btn_refr.setFixedWidth(45)
+        btn_refr = QPushButton("🔄 刷新")
+        btn_refr.setFixedWidth(65)
+        btn_refr.setStyleSheet("padding-left: 4px; padding-right: 4px;")
         btn_refr.clicked.connect(self._refresh_chain_list)
         chain_toolbar.addWidget(btn_refr)
         chain_toolbar.addStretch()
