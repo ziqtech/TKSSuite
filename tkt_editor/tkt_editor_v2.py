@@ -41,7 +41,7 @@ except ImportError:
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from editor_utils.theme_manager import ThemeManager
 from editor_utils.dock_components import DockHeader, create_dock
-from editor_utils.ui_helpers import update_path_labels
+from editor_utils.ui_helpers import update_path_labels, confirm_close
 from editor_utils.tkt_loader import load_tkt_full as _load_tkt_full
 
 # ============================================================
@@ -1762,10 +1762,9 @@ class TktEditor(QMainWindow):
         )
 
     def closeEvent(self, event):
-        if self._dirty:
-            if QMessageBox.question(self, "未保存", "直接退出？", QMessageBox.Ok | QMessageBox.Cancel) == QMessageBox.Cancel:
-                event.ignore()
-                return
+        if not confirm_close(self, self._dirty, text="直接退出？"):
+            event.ignore()
+            return
         if self.font9696: self.font9696.close()
         event.accept()
 

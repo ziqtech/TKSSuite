@@ -47,7 +47,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from editor_utils.theme_manager import ThemeManager
 from editor_utils.dock_components import DockHeader, create_dock
 from editor_utils.lzss import lzss_decompress_dat as lzss_decompress
-from editor_utils.ui_helpers import export_csv
+from editor_utils.ui_helpers import export_csv, confirm_close
 
 # ============================================================
 # 常量
@@ -494,6 +494,8 @@ MAX_MAP_W, MAX_MAP_H = 1024, 768
 
 # TKD.dat 脚本 I/O (来自 script_editor.py)
 # ============================================================
+
+_TKT_XOR_TABLE = bytes([i ^ 0xFF for i in range(256)])  # XOR 密钥表, load_tkd/save_tkd 用
 
 def load_tkd(filepath):
     with open(filepath, 'rb') as f:
@@ -5326,11 +5328,10 @@ class MatEditorApp(QMainWindow):
     def closeEvent(self, event):
         self._vis_stop_anim()
         self._vis_stop_sel_anim()
-        dirty = self._dirty or self._script_dirty
-        if dirty:
-            if QMessageBox.question(self, "未保存", "有未保存的修改 (含脚本), 确定退出?", QMessageBox.Ok | QMessageBox.Cancel) == QMessageBox.Cancel:
-                event.ignore()
-                return
+        if not confirm_close(self, self._dirty or self._script_dirty,
+                             text="有未保存的修改 (含脚本), 确定退出?"):
+            event.ignore()
+            return
         event.accept()
 
 
