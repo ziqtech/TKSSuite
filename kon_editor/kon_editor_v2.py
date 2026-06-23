@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (
     QSplitter, QTableWidget, QTableWidgetItem, QHeaderView,
     QLineEdit, QComboBox, QCheckBox, QPushButton, QLabel,
     QScrollArea, QGroupBox, QDialog, QFileDialog, QMessageBox, QTextEdit,
-    QFrame, QGridLayout, QAbstractItemView, QMenuBar,
+    QFrame, QGridLayout, QAbstractItemView, QMenuBar, QSizePolicy,
 )
 from PySide6.QtGui import QIntValidator, QColor, QFont, QIcon, QShortcut
 from PySide6.QtCore import Qt, QTranslator
@@ -351,9 +351,10 @@ class KonEditor(QMainWindow):
         toolbar.addWidget(btn_theme)
         toolbar.addStretch()
 
-        self.status_label = QLabel("请通过 文件 → 加载 TKS 目录 打开数据")
-        self.status_label.setObjectName("hintLabel")
-        toolbar.addWidget(self.status_label)
+        self.btn_apply = QPushButton("✅ 应用修改"); self.btn_apply.clicked.connect(self._apply_edit)
+        self.btn_reset = QPushButton("🔄 撤销修改"); self.btn_reset.clicked.connect(self._reset_edit)
+        toolbar.addWidget(self.btn_apply)
+        toolbar.addWidget(self.btn_reset)
 
         # -- 主布局 --
         central = QWidget()
@@ -379,6 +380,9 @@ class KonEditor(QMainWindow):
         self.lbl_tkt = QLabel("TKT.dat: 未加载"); self.lbl_tkt.setObjectName("hintLabel")
         path_layout.addWidget(self.lbl_kon); path_layout.addSpacing(20)
         path_layout.addWidget(self.lbl_tkt); path_layout.addStretch()
+        self.status_label = QLabel("请通过 文件 → 加载 TKS 目录 打开数据")
+        self.status_label.setObjectName("hintLabel")
+        path_layout.addWidget(self.status_label)
         main_layout.addLayout(path_layout)
 
     # ----------- 左侧表格 -----------
@@ -405,22 +409,11 @@ class KonEditor(QMainWindow):
         right_layout.setContentsMargins(4, 4, 4, 4)
         right_layout.setSpacing(4)
 
-        # Inspector 标题 + 右侧按钮
-        title_row = QHBoxLayout()
-        self.lbl_inspector_title = QLabel("技能属性检查器 — 未选中")
-        self.lbl_inspector_title.setProperty("class", "InspectorTitle")
-        title_row.addWidget(self.lbl_inspector_title, 1)
-        self.btn_apply = QPushButton("✅ 应用修改"); self.btn_apply.clicked.connect(self._apply_edit)
-        self.btn_reset = QPushButton("🔄 撤销修改"); self.btn_reset.clicked.connect(self._reset_edit)
-        title_row.addWidget(self.btn_apply)
-        title_row.addWidget(self.btn_reset)
-        right_layout.addLayout(title_row)
-
         # 滚动区域
         scroll = QScrollArea(); scroll.setWidgetResizable(True)
         edit_container = QWidget()
         self.edit_layout = QVBoxLayout(edit_container)
-        self.edit_layout.setContentsMargins(4, 4, 16, 4)
+        self.edit_layout.setContentsMargins(4, 0, 4, 4)
         self.edit_layout.setSpacing(4)
 
         # 预览面板 (PreviewFrame — 对齐 skill_editor_v2)
@@ -439,7 +432,7 @@ class KonEditor(QMainWindow):
         # 字段组 — Dock 风格分组 (列数: 4, 4, 5, 5)
         self._build_field_group("战斗执行参数 (offset 0–6)", ACTIVE_FIELDS[:4], 4)
         self._build_field_group("伤害/回复参数 (offset 8–18)", ACTIVE_FIELDS[4:10], 4)
-        self._build_field_group("状态位掩码 (offset 20–28)", ACTIVE_FIELDS[10:15], 5)
+        self._build_field_group("状态位掩码 (offset 20–28)", ACTIVE_FIELDS[10:15], 4)
         # 执行标志
         self._build_field_group("执行标志 (offset 38)", [KON_FIELDS[-1]], 1)
 
@@ -465,6 +458,8 @@ class KonEditor(QMainWindow):
 
         grid = QGridLayout()
         grid.setVerticalSpacing(4); grid.setHorizontalSpacing(8)
+        for c in range(cols):
+            grid.setColumnStretch(c, 1)
 
         for fi, (fn, fo, fl, cmt) in enumerate(fields):
             if force_last_row and fn == 'exec_flags':
@@ -526,6 +521,7 @@ class KonEditor(QMainWindow):
             bh.addWidget(lo_w, 1)
             self.split_map[fn] = (hi_w, lo_w)
             extra = QLabel(""); extra.setProperty("class", "ExtraPreviewText")
+            box.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
             cell.addWidget(box); cell.addWidget(extra, 0, Qt.AlignLeft | Qt.AlignTop)
             self.extra_map[fn] = extra
 
@@ -540,8 +536,10 @@ class KonEditor(QMainWindow):
             sep_lbl = QLabel("阵营"); sep_lbl.setProperty("class", "SplitFieldLabel")
             bh.addWidget(sep_lbl)
             bh.addWidget(lo_w, 1)
+            bh.addWidget(lo_w, 1)
             self.split_map[fn] = (hi_w, lo_w)
             extra = QLabel(""); extra.setProperty("class", "ExtraPreviewText")
+            box.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
             cell.addWidget(box); cell.addWidget(extra, 0, Qt.AlignLeft | Qt.AlignTop)
             self.extra_map[fn] = extra
 
@@ -556,6 +554,7 @@ class KonEditor(QMainWindow):
             status_frame = QWidget()
             self.extra_map[fn] = status_frame
             btn.clicked.connect(lambda checked, f=fn: self._pick_status(f))
+            box.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
             cell.addWidget(box); cell.addWidget(status_frame, 0, Qt.AlignLeft | Qt.AlignTop)
 
         else:
@@ -564,12 +563,14 @@ class KonEditor(QMainWindow):
             if is_unused: edit.setEnabled(False)
             self.widget_map[fn] = edit
             box = make_fake_input(edit)
+            box.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
             cell.addWidget(box)
             if not is_unused:
                 extra = QLabel(""); extra.setProperty("class", "ExtraPreviewText")
                 cell.addWidget(extra, 0, Qt.AlignLeft | Qt.AlignTop); self.extra_map[fn] = extra
 
-        grid.addLayout(cell, row, col, 1, span, Qt.AlignTop)
+        cell.addStretch()
+        grid.addLayout(cell, row, col, 1, span)
 
     # ----------- 窗口控制 -----------
 
@@ -715,15 +716,6 @@ class KonEditor(QMainWindow):
         nm = kon_record_name(rec, self.tkt, self.names)
         cid = rec.get('tkact_id', 0)
         em = rec.get('exec_mode', 0); tp = rec.get('target_param', 0)
-
-        # Inspector 标题
-        em_text = describe_exec_mode(em) if em != 0 else ""
-        tp_text = describe_target_param(tp) if tp != 0 else ""
-        detail = "  |  ".join(filter(None, [em_text, tp_text]))
-        self.lbl_inspector_title.setText(
-            f"◆ {nm}  (Index #{rec['index']} / AnimID={cid})"
-            + (f"  [{detail}]" if detail else "")
-        )
 
         # 预览面板
         self.preview_name.setText(nm if nm else "空槽")

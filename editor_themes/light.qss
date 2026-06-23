@@ -522,9 +522,7 @@ QLabel[class="ExtraPreviewText"] {
 QLabel[class="SplitFieldLabel"] {
     color: #666;
     font-size: 11px;
-    padding: 0 4px;
-    min-width: 40px;
-    max-width: 40px;
+    padding: 0 2px;
 }
 
 /* ── 状态掩码标签颜色 (kon) ── */
