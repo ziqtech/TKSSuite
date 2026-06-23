@@ -1,6 +1,6 @@
 """主窗口 — Godot 风格三面板布局 + 主题切换 + 启动逻辑"""
 import os
-import re
+import sys
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QToolBar, QSplitter, QPushButton,
     QStatusBar, QLabel, QFileDialog, QMessageBox,
@@ -8,12 +8,21 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, QSize
 from PySide6.QtGui import QIcon
 
+from editor_utils.theme_manager import ThemeManager
+from editor_utils.window_theme import apply_godot_theme
+
 from core.config_loader import load_config, PatchDef
 from ui.patch_list import PatchListWidget
 from ui.mod_list import ModListWidget
 from ui.log_console import LogConsole
 from ui.game_overlay import GameOverlay
 from workers.patcher_worker import PatcherWorker
+
+# 确定启动器根目录（打包 exe 或开发模式）
+if getattr(sys, 'frozen', False):
+    _LAUNCHER_DIR = os.path.dirname(sys.executable)
+else:
+    _LAUNCHER_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 class MainWindow(QMainWindow):
@@ -24,19 +33,23 @@ class MainWindow(QMainWindow):
         self.setMinimumSize(800, 500)
 
         # 窗口图标
-        icon_path = os.path.join(os.path.dirname(__file__), "..", "TKS.ico")
+        icon_path = os.path.join(_LAUNCHER_DIR, "TKS.ico")
         if os.path.isfile(icon_path):
             self.setWindowIcon(QIcon(icon_path))
 
         self._overlay: GameOverlay | None = None
         self._worker: PatcherWorker | None = None
 
+        # 主题管理器（使用 editor_utils 的缓存式管理器）
+        self._theme_mgr = ThemeManager()
+
         # 检测系统主题
         app_inst = QApplication.instance()
         self._dark_mode = app_inst.styleHints().colorScheme() == Qt.ColorScheme.Dark if app_inst else True
 
         # 加载配置用于补丁列表
-        config = load_config("tks_patches.json")
+        config_path = os.path.join(_LAUNCHER_DIR, "tks_patches.json")
+        config = load_config(config_path)
         self._patches: list[PatchDef] = config.patches if config else []
 
         self._setup_toolbar()
@@ -75,7 +88,9 @@ class MainWindow(QMainWindow):
         self.patch_list = PatchListWidget(self._patches)
         left_splitter.addWidget(self.patch_list)
 
-        self.mod_list = ModListWidget("mods")
+        # 使用启动器目录下的 mods 目录
+        mods_dir = os.path.join(_LAUNCHER_DIR, "mods")
+        self.mod_list = ModListWidget(mods_dir)
         left_splitter.addWidget(self.mod_list)
 
         left_splitter.setSizes([300, 300])
@@ -96,18 +111,18 @@ class MainWindow(QMainWindow):
         self.set_theme("dark" if self._dark_mode else "light")
 
     def set_theme(self, theme: str):
-        qss_file = os.path.join(os.path.dirname(__file__), '..', '..', 'editor_themes', f"{theme}.qss")
-        try:
-            with open(qss_file, 'r', encoding='utf-8') as f:
-                qss = f.read()
-            # 将相对 url() 转为绝对路径，确保图片能被 Qt 找到
-            themes_dir = os.path.dirname(qss_file).replace('\\', '/')
-            qss = re.sub(r'url\(([^)]+)\)', lambda m: f'url({themes_dir}/{m.group(1)})', qss)
-            self.setStyleSheet(qss)
-            self._dark_mode = (theme == "dark")
-            self.log_console.set_dark_mode(self._dark_mode)
-        except Exception:
-            pass
+        """应用主题：QSS 样式 + Windows 窗口框架主题"""
+        self._dark_mode = (theme == "dark")
+        self._theme_mgr.set_theme(theme)
+
+        # 应用 QSS 样式表（从 ThemeManager 缓存中获取）
+        ThemeManager.apply_theme(self, theme)
+
+        # 应用 Windows 标题栏/边框主题
+        apply_godot_theme(self, is_dark=self._dark_mode)
+
+        # 更新日志控制台深色状态
+        self.log_console.set_dark_mode(self._dark_mode)
 
     def _on_start(self):
         exe_path, _ = QFileDialog.getOpenFileName(

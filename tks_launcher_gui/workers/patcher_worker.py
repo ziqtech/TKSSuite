@@ -117,7 +117,7 @@ class PatcherWorker(QThread):
         ensure_save_directory_healthy(log_func=self._log)
 
         # === MOD 加载流程 ===
-        mods_dir = os.path.join(game_dir or os.getcwd(), "mods")
+        mods_dir = os.path.join(exe_dir, "mods")
         self._log(f"\n=== MOD 加载 ({mods_dir}) ===")
         loaded_mods = scan_mods(mods_dir, log_func=self._log)
         if loaded_mods:

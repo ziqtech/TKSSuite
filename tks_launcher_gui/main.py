@@ -3,7 +3,10 @@ import sys
 import os
 
 # 确保当前目录在 path 中
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+_THIS_DIR = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, _THIS_DIR)
+# 将 仓库根目录 目录加入搜索路径，使 editor_utils 可导入
+sys.path.insert(0, os.path.dirname(_THIS_DIR))
 
 from PySide6.QtWidgets import QApplication
 from PySide6.QtGui import QIcon
