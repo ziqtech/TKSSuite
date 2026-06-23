@@ -15,7 +15,7 @@ from PySide6.QtWidgets import (
     QCheckBox, QTextEdit, QComboBox, QMessageBox, QFileDialog,
     QDialog, QGridLayout, QFrame, QScrollArea
 )
-from PySide6.QtGui import QAction, QKeySequence, QColor, QFont, QIcon
+from PySide6.QtGui import QAction, QKeySequence, QColor, QFont, QIcon, QImage, QPixmap
 from PySide6.QtCore import Qt, QTranslator
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
@@ -29,6 +29,74 @@ def lzss_compress(data): return lzss_compress_dat(data)
 def load_tkt(tkt_path): return load_tkt_simple(tkt_path)
 def load_tkt_full(tkt_path): return load_tkt_simple(tkt_path, full_strip=True)
 
+def load_mu_sprites(mu_path):
+    """加载 Mu.JVG 并返回 PIL Image 列表 (PIL 可用时) 或 None (对齐 item_editor)"""
+    try:
+        from PIL import Image
+    except ImportError:
+        return None
+    if not mu_path or not os.path.exists(mu_path): return None
+    with open(mu_path, 'rb') as f: data = f.read()
+    if len(data) < 32 or data[:4] != b'@JVG': return None
+    bc = struct.unpack_from('<I', data, 8)[0]
+    off = 32; sprites = []
+    for bi in range(bc):
+        if off + 32 > len(data) or data[off:off+4] != b'@JVM': break
+        sc = struct.unpack_from('<I', data, off+4)[0]; ds = struct.unpack_from('<I', data, off+12)[0]
+        s1 = off + 32; co = [struct.unpack_from('<I', data, s1+j*4)[0] for j in range(sc+1)]
+        po = s1 + (sc+1)*4
+        pal_entries = []
+        for j in range(256):
+            e = struct.unpack_from('<H', data, po+j*2)[0]
+            r = ((e>>11)&0x1F)<<3; g = ((e>>5)&0x3F)<<2; b = (e&0x1F)<<3
+            pal_entries.extend([r,g,b])
+        pal_bytes = bytes(pal_entries)
+        dr = po + 512
+        for si in range(sc):
+            mo = dr + co[si]; ws = struct.unpack_from('<8H', data, mo)
+            w, h = ws[2], ws[3]
+            if w <= 0 or h <= 0:
+                sprites.append(None)
+                continue
+            eo = mo + 16; ed = data[eo:eo+co[si+1]-co[si]-16]
+            total = w*h; px = bytearray(total); alpha = bytearray(total)
+            recs = []; rp = 0
+            while rp + 4 <= len(ed):
+                sk = struct.unpack_from('<H', ed, rp)[0]; rw = struct.unpack_from('<H', ed, rp+2)[0]; rp += 4
+                rw = min(rw, len(ed)-rp); rd = ed[rp:rp+rw] if rw>0 else b''; rp += rw
+                recs.append((sk, rw, rd))
+            if not recs: continue
+            simple = (recs[0][0]==0 and recs[0][1]==w and all(r[1]==w for r in recs))
+            if simple:
+                for ri, (_, rw, rpix) in enumerate(recs):
+                    if ri >= h: break
+                    tr = h-1-ri
+                    for c in range(min(rw, len(rpix))): px[tr*w+c] = rpix[rw-1-c]; alpha[tr*w+c] = 255
+            else:
+                scr_w = 640; gap = max(scr_w-w, 0); bp = total-1; pg = 0
+                for sa, rw, rpix in recs:
+                    rem = sa-pg; pg = 0
+                    if rem < 0: rem = 0
+                    while rem > 0 and bp >= 0:
+                        col = (total-1-bp)%w; tb = w-col
+                        if rem <= tb: bp -= rem; rem = 0
+                        else: bp -= tb; rem -= tb+gap; rem = max(rem, 0)
+                    cb = (total-1-bp)%w if bp >= 0 else 0
+                    al = min(rw, len(rpix))
+                    for k in range(al):
+                        if 0 <= bp < total: px[bp] = rpix[k]; alpha[bp] = 255
+                        bp -= 1
+                    pg = gap if al > 0 and cb+al >= w else 0
+            if w > 0 and h > 0:
+                img = Image.frombytes('P', (w, h), bytes(px))
+                img.putpalette(pal_bytes)
+                rgba = img.convert('RGBA')
+                a_img = Image.frombytes('L', (w, h), bytes(alpha))
+                rgba.putalpha(a_img)
+                sprites.append(rgba)
+        off += 32 + (sc+1)*4 + 512 + ds
+    return sprites
+
 SKILL_REC = 94; SKILL_CNT = 350
 SKILL_TYPES = {0: "指令技能", 1: "主动技能", 2: "被动技能", 3: "移动技能"}
 SKILL_TYPE_VALUES = [f"{k}-{v}" for k, v in sorted(SKILL_TYPES.items())]
@@ -40,6 +108,7 @@ STATUS_NAMES = [
     "误导","混乱","禁制","定身","诅咒","封印","燃烧","冰冻",
     "虚弱","麻痹","沈睡","中毒","迷恋","明镜","针灸",
 ]
+STATUS_ICON_BASE = 242  # Mu.JVG 中 31 个状态图标起始精灵索引 (对齐 item_editor)
 
 SPECIAL_FLAG_BITS = [
     (0, "飘浮", "地形通行无阻"), (1, "飙行", "移动范围扩大"),
@@ -48,7 +117,7 @@ SPECIAL_FLAG_BITS = [
 
 BASIC_FIELDS = [
     ("skill_text_id", 0, "名称文本ID", 'tkt', "技能名称 TKT 文本ID"),
-    ("skill_desc_id", 2, "说明文本ID", 'int', "技能说明 TKT 文本ID = skill_text_id + 400"),
+    ("skill_desc_id", 2, "说明文本ID", 'tkt', "技能说明 TKT 文本ID = skill_text_id + 400"),
     ("type", 4, "技能类型", 'type', "0=指令 1=主动 2=被动 3=移动"),
     ("jp_cost", 6, "技能点数", 'int', "学习技能所需点数 (JP)"),
 ]
@@ -135,7 +204,7 @@ _sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from editor_utils.theme_manager import ThemeManager
 from editor_utils.dock_components import DockHeader, create_dock
 from editor_utils.picker_dialogs import TktPickerDialog
-from editor_utils.ui_helpers import update_path_labels, confirm_close, export_csv
+from editor_utils.ui_helpers import make_fake_input, update_path_labels, confirm_close, export_csv
 
 # ============================================================
 # 弹窗选择器 (技能)
@@ -217,6 +286,46 @@ class SkillPickerDialog(QDialog):
         self.accept()
 
 # ============================================================
+# 弹窗选择器 (状态免疫 — 与 item_editor 一致: 图标+复选框)
+# ============================================================
+
+class StatusPickerDialog(QDialog):
+    def __init__(self, parent, title, status_names, get_pixmap_fn, cur_mask, base, is_cause):
+        super().__init__(parent)
+        self.setWindowTitle(title); self.resize(380, 520)
+        self.selected_mask = None
+        layout = QVBoxLayout(self)
+        scroll = QScrollArea(); scroll.setWidgetResizable(True)
+        content = QWidget(); cl = QVBoxLayout(content)
+        self.checkboxes = []
+        for i in range(16):
+            idx = base + i
+            if idx >= len(status_names): break
+            row = QHBoxLayout()
+            pix = get_pixmap_fn(STATUS_ICON_BASE + idx - 130, (20, 20))
+            if pix:
+                lbl = QLabel(); lbl.setPixmap(pix); row.addWidget(lbl)
+            cb = QCheckBox(f"{idx}. {status_names[idx]}")
+            cb.setChecked(bool(cur_mask & (1 << i)))
+            self.checkboxes.append((i, cb)); row.addWidget(cb); row.addStretch()
+            cl.addLayout(row)
+        cl.addStretch(); scroll.setWidget(content); layout.addWidget(scroll)
+        bl = QHBoxLayout()
+        bl.addWidget(QPushButton("全选", clicked=lambda: [cb.setChecked(True) for _, cb in self.checkboxes]))
+        bl.addWidget(QPushButton("全清", clicked=lambda: [cb.setChecked(False) for _, cb in self.checkboxes]))
+        bl.addStretch()
+        bl.addWidget(QPushButton("取消", clicked=self.reject))
+        btn_ok = QPushButton("确定"); btn_ok.clicked.connect(self._ok); bl.addWidget(btn_ok)
+        layout.addLayout(bl)
+
+    def _ok(self):
+        m = 0
+        for i, cb in self.checkboxes:
+            if cb.isChecked(): m |= (1 << i)
+        if m >= 0x8000: m -= 0x10000
+        self.selected_mask = m; self.accept()
+
+# ============================================================
 # GUI 核心编辑器
 # ============================================================
 
@@ -245,9 +354,12 @@ class SkillEditorApp(QMainWindow):
         self.records = []; self.tkt = {}; self.tkt_full = {}
         self.filtered_indices = []; self._dirty = False
         self._editing_idx = None
-        
-        self.widget_map = {} 
-        self.extra_map = {}  
+
+        self.mu_path = None
+        self._mu_sprites = []; self._icon_pixmaps = {}
+
+        self.widget_map = {}
+        self.extra_map = {}
         
         self._build_ui()
         self._set_edit_enabled(False)
@@ -423,57 +535,62 @@ class SkillEditorApp(QMainWindow):
         main_layout.addLayout(path_layout)
 
     def _build_field_group(self, title, fields, cols):
-        """完全抹除嵌套 QFrame 线框，使用简洁的 Godot 标签对齐系统"""
+        """字段分组：标签在上、输入框在下 (对齐 warpc_editor_v2 布局)"""
         group_widget = QWidget()
         v_layout = QVBoxLayout(group_widget)
         v_layout.setContentsMargins(0, 4, 0, 4)
         v_layout.setSpacing(6)
-        
+
         lbl_title = QLabel(title)
         lbl_title.setProperty("class", "InspectorTitle")
         v_layout.addWidget(lbl_title)
-        
+
         grid = QGridLayout()
         grid.setVerticalSpacing(6)
         grid.setHorizontalSpacing(15)
         grid.setContentsMargins(10, 0, 0, 0)
-        
+
         for fi, (fn, fo, fl, ft, cmt) in enumerate(fields):
             r, c = divmod(fi, cols)
             self._build_field(grid, r, c, fn, fo, fl, ft, cmt)
-            
+
+        for c in range(cols):
+            grid.setColumnStretch(c, 1)
         v_layout.addLayout(grid)
         self.edit_layout.addWidget(group_widget)
 
     def _build_field(self, grid, row, col, fn, fo, fl, ft, cmt):
-        """现代化引擎 Inspector 对齐: 零边距外壳 + 内部软填充"""
-        lbl = QLabel(f"{fl}")
+        """单字段控件：标签在上、输入框在下"""
+        cell = QVBoxLayout()
+        cell.setSpacing(2)
+
+        lbl = QLabel(fl)
         lbl.setToolTip(f"[{fo:02d}] {cmt}")
         lbl.setProperty("class", "PropLabel")
-
-        # 1. 创建联合输入框外壳
-        input_wrapper = QFrame()
-        input_wrapper.setObjectName("FakeInputBox")
-
-        # 2. 彻底清空物理边距 (0,0,0,0)，让元素完全贴合外壳内壁
-        container = QHBoxLayout(input_wrapper)
-        container.setSpacing(0)
-        container.setContentsMargins(0, 0, 0, 0)
+        cell.addWidget(lbl)
 
         if ft == 'tkt' or ft == 'skill_pick':
-            inp = QLineEdit()
-            inp.setMaximumWidth(50)  # 稍微加宽一点，给 padding 留出空间
+            box = QFrame()
+            box.setObjectName("FakeInputBox")
+            container = QHBoxLayout(box)
+            container.setSpacing(0)
+            container.setContentsMargins(0, 0, 0, 0)
 
+            inp = QLineEdit()
+            inp.setMaximumWidth(50)
             btn = QPushButton("...")
             btn.setFixedWidth(28)
             btn.setCursor(Qt.PointingHandCursor)
 
-            extra = QLabel("")
-            extra.setProperty("class", "ExtraPreviewText") # 赋予专属 class
-
             container.addWidget(inp)
+            container.addStretch()
             container.addWidget(btn)
-            container.addWidget(extra, 1)
+            cell.addWidget(box)
+
+            extra = QLabel("")
+            extra.setProperty("class", "ExtraPreviewText")
+            extra.setWordWrap(True)
+            cell.addWidget(extra)
 
             self.widget_map[fn] = inp; self.extra_map[fn] = extra
             if ft == 'tkt': btn.clicked.connect(lambda _, f=fn: self._pick_tkt(f))
@@ -483,37 +600,40 @@ class SkillEditorApp(QMainWindow):
             cb = QComboBox()
             if ft == 'type': cb.addItems(SKILL_TYPE_VALUES)
             else: cb.addItems(ATK_TYPE_VALUES)
-            container.addWidget(cb, 1)
+            cell.addWidget(make_fake_input(combo=cb))
             self.widget_map[fn] = cb
 
         elif ft == 'mask' or ft == 'flags':
             inp = QLineEdit()
             inp.setVisible(False)
 
-            btn = QPushButton("配置")
+            btn = QPushButton("配置免疫状态…" if ft == 'mask' else "配置特殊标志…")
             btn.setCursor(Qt.PointingHandCursor)
-            # 配置按钮放在左侧时，约束它的最大宽度
-            btn.setMaximumWidth(60)
+
+            box = QFrame()
+            box.setObjectName("FakeInputBox")
+            container = QHBoxLayout(box)
+            container.setSpacing(0)
+            container.setContentsMargins(0, 0, 0, 0)
+            container.addWidget(btn, 1)
+            cell.addWidget(box)
 
             extra = QLabel("(无)")
             extra.setProperty("class", "ExtraPreviewText")
-            extra.setWordWrap(False)
+            extra.setWordWrap(True)
+            cell.addWidget(extra)
 
-            container.addWidget(btn)
-            container.addWidget(extra, 1)
             self.widget_map[fn] = inp; self.extra_map[fn] = extra
-
             if ft == 'mask':
                 btn.clicked.connect(lambda _, f=fn: self._pick_status(f))
             else:
                 btn.clicked.connect(lambda _, f=fn: self._pick_flags(f))
         else:
             inp = QLineEdit()
-            container.addWidget(inp, 1)
+            cell.addWidget(make_fake_input(line_edit=inp))
             self.widget_map[fn] = inp
 
-        grid.addWidget(lbl, row, col * 2, alignment=Qt.AlignRight | Qt.AlignVCenter)
-        grid.addWidget(input_wrapper, row, col * 2 + 1)
+        grid.addLayout(cell, row, col, Qt.AlignTop)
 
     def _toggle_theme(self):
         self._is_dark = not self._is_dark
@@ -541,6 +661,7 @@ class SkillEditorApp(QMainWindow):
             QMessageBox.warning(self, "文件缺失", "未找到 TKSkill.dat"); return
         self.skill_path = sk
         self.tkt_path = tk_ if os.path.exists(tk_) else None
+        self.mu_path = os.path.join(d, "Mu.JVG")
         self._reload()
 
     def _reload(self):
@@ -549,6 +670,9 @@ class SkillEditorApp(QMainWindow):
         if self.tkt_path:
             self.tkt = load_tkt(self.tkt_path)
             self.tkt_full = load_tkt_full(self.tkt_path)
+        if self.mu_path:
+            self._mu_sprites = load_mu_sprites(self.mu_path) or []
+            self._icon_pixmaps.clear()
         try:
             self.records = load_skills(self.skill_path); self._dirty = False
             nonempty = sum(1 for r in self.records if r['skill_text_id'] != 0)
@@ -556,6 +680,25 @@ class SkillEditorApp(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "加载失败", str(e)); self.records = []
         self._update_paths(); self._set_edit_enabled(True); self._apply_filter()
+
+    # ── 图标 ──
+    def _get_icon_pixmap(self, icon_val, size=(24,24)):
+        """获取状态图标的 QPixmap (缓存), icon_val 为游戏原始值 (实际显示值 +130)"""
+        if not self._mu_sprites: return None
+        idx = icon_val + 130
+        if idx < 0 or idx >= len(self._mu_sprites): return None
+        sprite = self._mu_sprites[idx]
+        if sprite is None: return None
+        cache_key = (idx, size)
+        if cache_key in self._icon_pixmaps: return self._icon_pixmaps[cache_key]
+        try:
+            from PIL import Image
+            img = sprite.resize(size, Image.NEAREST).convert('RGBA')
+            data = img.tobytes('raw', 'RGBA')
+            qimg = QImage(data, img.width, img.height, QImage.Format_RGBA8888)
+            pix = QPixmap.fromImage(qimg); self._icon_pixmaps[cache_key] = pix
+            return pix
+        except: return None
 
     def _set_edit_enabled(self, en):
         self.edit_inner.setEnabled(en)
@@ -714,43 +857,11 @@ class SkillEditorApp(QMainWindow):
     def _pick_status(self, fn):
         base = 0 if fn == 'immunity1' else 16
         cur = int(self.widget_map[fn].text() or 0) & 0xFFFF
-        dlg = QDialog(self)
-        dlg.setWindowTitle("选择免疫状态")
-        dlg.resize(360, 520)
-        layout = QVBoxLayout(dlg)
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        content = QWidget()
-        c_layout = QVBoxLayout(content)
-        checkboxes = []
-        for i in range(16):
-            idx = base + i
-            if idx >= len(STATUS_NAMES): break
-            cb = QCheckBox(f"{idx}. {STATUS_NAMES[idx]}")
-            cb.setChecked(bool(cur & (1 << i)))
-            checkboxes.append((i, cb))
-            c_layout.addWidget(cb)
-        c_layout.addStretch()
-        scroll.setWidget(content)
-        layout.addWidget(scroll)
-        btn_layout = QHBoxLayout()
-        btn_all = QPushButton("全选")
-        btn_all.clicked.connect(lambda: [cb.setChecked(True) for _, cb in checkboxes])
-        btn_none = QPushButton("全清")
-        btn_none.clicked.connect(lambda: [cb.setChecked(False) for _, cb in checkboxes])
-        btn_ok = QPushButton("确定")
-        def _ok():
-            m = 0
-            for i, cb in checkboxes:
-                if cb.isChecked(): m |= (1 << i)
-            if m >= 0x8000: m -= 0x10000
-            self.widget_map[fn].setText(str(m))
-            self._update_mask_label(fn, m & 0xFFFF)
-            dlg.accept()
-        btn_ok.clicked.connect(_ok)
-        btn_layout.addWidget(btn_all); btn_layout.addWidget(btn_none); btn_layout.addStretch(); btn_layout.addWidget(btn_ok)
-        layout.addLayout(btn_layout)
-        dlg.exec()
+        dlg = StatusPickerDialog(self, "选择免疫状态 (位掩码)", STATUS_NAMES,
+                                 self._get_icon_pixmap, cur, base, False)
+        if dlg.exec() == QDialog.Accepted and dlg.selected_mask is not None:
+            self.widget_map[fn].setText(str(dlg.selected_mask))
+            self._update_mask_label(fn, dlg.selected_mask & 0xFFFF)
 
     def _pick_flags(self, fn):
         cur = int(self.widget_map[fn].text() or 0) & 0xFFFF
