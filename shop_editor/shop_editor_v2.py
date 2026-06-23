@@ -50,6 +50,7 @@ from editor_utils.ui_helpers import export_csv
 from editor_utils.mod_exporter import (
     diff_records, compute_crc32, generate_mod_json,
     pack_tksmod, build_data_diff_json, ModMetadataDialog,
+    ask_reference_directory, load_reference_dat_fields,
 )
 
 # ── 本地别名: 保持向后兼容 ──
@@ -425,6 +426,10 @@ class ShopEditorWindow(QMainWindow):
         action_export_mod = QAction("导出为 MOD (.tksmod)…", self)
         action_export_mod.triggered.connect(self._export_tksmod)
         file_menu.addAction(action_export_mod)
+        
+        action_export_mod_ref = QAction("导出为 MOD (指定参考目录)…", self)
+        action_export_mod_ref.triggered.connect(self._export_tksmod_with_ref)
+        file_menu.addAction(action_export_mod_ref)
         
         file_menu.addSeparator()
         action_exit = QAction("退出", self)
@@ -1059,6 +1064,39 @@ class ShopEditorWindow(QMainWindow):
             n_mod = len(diff_result['modified']); n_app = len(diff_result['appended'])
             self.lbl_status.setText(f"已导出 MOD: {os.path.basename(fp)} (修改{n_mod}条, 追加{n_app}条)")
             QMessageBox.information(self, "导出成功", f"已导出:\n{fp}\n\n修改: {n_mod} 条\n追加: {n_app} 条")
+        except Exception as e:
+            QMessageBox.critical(self, "导出失败", str(e))
+
+    def _export_tksmod_with_ref(self):
+        """导出 MOD — 指定原始参考目录进行差异比对"""
+        if not self.records:
+            QMessageBox.information(self, "提示", "请先加载数据"); return
+        ref_dir = ask_reference_directory(self)
+        if not ref_dir: return
+        ref_records = load_reference_dat_fields(ref_dir, "TKShop.dat",
+            rec_size=8, field_count=4, field_fmt='h', use_lzss=True)
+        if ref_records is None:
+            QMessageBox.warning(self, "参考目录无效", f"在 {ref_dir} 中未找到 TKShop.dat"); return
+        from PySide6.QtWidgets import QDialog
+        dlg = ModMetadataDialog(self, getattr(self, '_last_mod_metadata', None))
+        if dlg.exec() != QDialog.Accepted: return
+        metadata = dlg.get_metadata(); self._last_mod_metadata = metadata
+
+        current_fields = [[r['area_id'], r['item_ref'], r['condition'], r['display']] for r in self.records]
+        diff_result = diff_records(ref_records, current_fields, 4, len(ref_records))
+        if not diff_result['modified'] and not diff_result['appended']:
+            QMessageBox.information(self, "无差异", "当前数据与参考文件相同，无需导出。"); return
+        crc = compute_crc32(os.path.join(ref_dir, "TKShop.dat"))
+        data_json = build_data_diff_json(target="TKShop.dat", record_size=8, field_type="mixed",
+            field_count=4, original_count=len(ref_records), original_crc32=crc, diff_result=diff_result)
+        mod_json = generate_mod_json(metadata, [{"file": "data/TKShop.dat.json", "target": "TKShop.dat"}])
+        fp, _ = QFileDialog.getSaveFileName(self, "导出为 MOD", f"{metadata['id']}.tksmod", "TKS MOD (*.tksmod)")
+        if not fp: return
+        try:
+            pack_tksmod(fp, mod_json, {"data/TKShop.dat.json": data_json})
+            n_mod = len(diff_result['modified']); n_app = len(diff_result['appended'])
+            self.lbl_status.setText(f"已导出 MOD (参考目录): {os.path.basename(fp)}")
+            QMessageBox.information(self, "导出成功", f"已导出 (参考目录模式):\n{fp}\n\n参考: {ref_dir}\n修改: {n_mod} 条\n追加: {n_app} 条")
         except Exception as e:
             QMessageBox.critical(self, "导出失败", str(e))
 

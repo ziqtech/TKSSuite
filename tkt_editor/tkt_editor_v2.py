@@ -43,6 +43,11 @@ from editor_utils.theme_manager import ThemeManager
 from editor_utils.dock_components import DockHeader, create_dock
 from editor_utils.ui_helpers import update_path_labels, confirm_close
 from editor_utils.tkt_loader import load_tkt_full as _load_tkt_full
+from editor_utils.mod_exporter import (
+    diff_text_entries, compute_crc32, generate_mod_json,
+    pack_tksmod, build_text_diff_json, ModMetadataDialog,
+    ask_reference_directory, load_reference_tkt_entries,
+)
 
 # ============================================================
 # 常量 (来自反编译)
@@ -794,6 +799,9 @@ class TktEditor(QMainWindow):
         file_menu.addAction("导入增量 MOD 文件…", QKeySequence("Ctrl+I"), self._import_mod)
         file_menu.addAction("导出增量 MOD 文件…", QKeySequence("Ctrl+E"), self._export_mod)
         file_menu.addSeparator()
+        file_menu.addAction("导出为 MOD (.tksmod)…", self._export_tksmod)
+        file_menu.addAction("导出为 MOD (指定参考目录)…", self._export_tksmod_with_ref)
+        file_menu.addSeparator()
         file_menu.addAction("退出", self.close)
 
         edit_menu = menu_bar.addMenu("编辑(E)")
@@ -1202,6 +1210,63 @@ class TktEditor(QMainWindow):
                     )
                 except Exception as e:
                     QMessageBox.critical(self, "二进制打包失败", f"打包二进制文件时发生底层崩溃:\n{str(e)}")
+
+    def _export_tksmod(self):
+        """导出为统一 .tksmod 格式（基于加载时快照进行差异比对）"""
+        self._do_export_tksmod(use_ref_dir=False)
+
+    def _export_tksmod_with_ref(self):
+        """导出为统一 .tksmod 格式（指定原始参考目录进行差异比对）"""
+        self._do_export_tksmod(use_ref_dir=True)
+
+    def _do_export_tksmod(self, use_ref_dir=False):
+        """统一 .tksmod 导出实现"""
+        if not self.entries:
+            QMessageBox.information(self, "提示", "请先加载数据"); return
+        self._apply_edit()
+
+        # 确定参考数据
+        if use_ref_dir:
+            ref_dir = ask_reference_directory(self)
+            if not ref_dir: return
+            ref_entries = load_reference_tkt_entries(ref_dir)
+            if ref_entries is None:
+                QMessageBox.warning(self, "参考目录无效", f"在 {ref_dir} 中未找到 TKT.dat"); return
+        else:
+            # 使用加载时保存的快照
+            ref_entries = {eid: text for eid, text in self.original_entry_snapshot}
+
+        # 构建当前文本映射
+        current_entries = {entry['id']: entry['text'] for entry in self.entries}
+
+        # 计算差异
+        diff_result = diff_text_entries(ref_entries, current_entries)
+
+        if not diff_result['modified'] and not diff_result['appended'] and not diff_result['deleted']:
+            QMessageBox.information(self, "无差异", "当前数据与参考文件相同，无需导出。"); return
+
+        # MOD 元数据
+        dlg = ModMetadataDialog(self, getattr(self, '_last_mod_metadata', None))
+        if dlg.exec() != QDialog.Accepted: return
+        metadata = dlg.get_metadata(); self._last_mod_metadata = metadata
+
+        # 构建数据文件
+        crc = compute_crc32(self.tkt_path) if self.tkt_path else "0x00000000"
+        data_json = build_text_diff_json(target="TKT.dat", original_crc32=crc, diff_result=diff_result)
+        components = [{"file": "data/TKT.dat.json", "target": "TKT.dat"}]
+        mod_json = generate_mod_json(metadata, components)
+
+        fp, _ = QFileDialog.getSaveFileName(self, "导出为 MOD", f"{metadata['id']}.tksmod", "TKS MOD (*.tksmod)")
+        if not fp: return
+        try:
+            pack_tksmod(fp, mod_json, {"data/TKT.dat.json": data_json})
+            n_mod = len(diff_result['modified']); n_app = len(diff_result['appended'])
+            n_del = len(diff_result['deleted'])
+            self.lbl_dirty.setText(f"已导出 MOD: {os.path.basename(fp)}")
+            QMessageBox.information(self, "导出成功",
+                f"已导出 .tksmod:\n{fp}\n\n修改: {n_mod} 条\n新增: {n_app} 条\n删除: {n_del} 条")
+        except Exception as e:
+            QMessageBox.critical(self, "导出失败", str(e))
 
     def _import_mod(self):
         # 1. 前置检查：必须先加载原版 TKT 作为"底包"

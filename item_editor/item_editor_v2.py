@@ -59,6 +59,7 @@ from editor_utils.tkt_loader import load_tkt_simple
 from editor_utils.mod_exporter import (
     diff_records, compute_crc32, generate_mod_json,
     pack_tksmod, build_data_diff_json, ModMetadataDialog,
+    ask_reference_directory, load_reference_dat_fields,
 )
 
 # ── 本地别名: 保持向后兼容 ──
@@ -517,6 +518,7 @@ class ItemEditorApp(QMainWindow):
         fm.addAction("保存\tCtrl+S", self._save)
         fm.addAction("导出 CSV…", self._export_csv)
         fm.addAction("导出为 MOD (.tksmod)…", self._export_tksmod)
+        fm.addAction("导出为 MOD (指定参考目录)…", self._export_tksmod_with_ref)
         fm.addSeparator(); fm.addAction("退出", self.close)
         em = mb.addMenu("编辑(&E)")
         em.addAction("新建物品 (填充空槽)\tCtrl+N", self._new_item)
@@ -1307,6 +1309,40 @@ class ItemEditorApp(QMainWindow):
             n_mod = len(diff_result['modified']); n_app = len(diff_result['appended'])
             self.status_var.setText(f"已导出 MOD: {os.path.basename(fp)} (修改{n_mod}条, 追加{n_app}条)")
             QMessageBox.information(self, "导出成功", f"已导出:\n{fp}\n\n修改: {n_mod} 条\n追加: {n_app} 条")
+        except Exception as e:
+            QMessageBox.critical(self, "导出失败", str(e))
+
+    def _export_tksmod_with_ref(self):
+        """导出 MOD — 指定原始参考目录进行差异比对"""
+        if not self.records:
+            QMessageBox.information(self, "提示", "请先加载数据"); return
+        ref_dir = ask_reference_directory(self)
+        if not ref_dir: return
+        ref_records = load_reference_dat_fields(ref_dir, "TKItem.dat",
+            rec_size=64, field_count=32, field_fmt='h', use_lzss=True)
+        if ref_records is None:
+            QMessageBox.warning(self, "参考目录无效", f"在 {ref_dir} 中未找到 TKItem.dat"); return
+        from PySide6.QtWidgets import QDialog
+        dlg = ModMetadataDialog(self, getattr(self, '_last_mod_metadata', None))
+        if dlg.exec() != QDialog.Accepted: return
+        metadata = dlg.get_metadata(); self._last_mod_metadata = metadata
+
+        current_fields = [[rec[k] for k, _, _, _, _, _ in ALL_FIELDS] for rec in self.records]
+        field_count = len(ALL_FIELDS)
+        diff_result = diff_records(ref_records, current_fields, field_count, len(ref_records))
+        if not diff_result['modified'] and not diff_result['appended']:
+            QMessageBox.information(self, "无差异", "当前数据与参考文件相同，无需导出。"); return
+        crc = compute_crc32(os.path.join(ref_dir, "TKItem.dat"))
+        data_json = build_data_diff_json(target="TKItem.dat", record_size=64, field_type="int16",
+            field_count=field_count, original_count=len(ref_records), original_crc32=crc, diff_result=diff_result)
+        mod_json = generate_mod_json(metadata, [{"file": "data/TKItem.dat.json", "target": "TKItem.dat"}])
+        fp, _ = QFileDialog.getSaveFileName(self, "导出为 MOD", f"{metadata['id']}.tksmod", "TKS MOD (*.tksmod)")
+        if not fp: return
+        try:
+            pack_tksmod(fp, mod_json, {"data/TKItem.dat.json": data_json})
+            n_mod = len(diff_result['modified']); n_app = len(diff_result['appended'])
+            self.status_var.setText(f"已导出 MOD (参考目录): {os.path.basename(fp)}")
+            QMessageBox.information(self, "导出成功", f"已导出 (参考目录模式):\n{fp}\n\n参考: {ref_dir}\n修改: {n_mod} 条\n追加: {n_app} 条")
         except Exception as e:
             QMessageBox.critical(self, "导出失败", str(e))
 

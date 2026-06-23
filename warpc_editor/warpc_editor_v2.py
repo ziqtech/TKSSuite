@@ -71,6 +71,7 @@ from editor_utils.tkt_loader import load_tkt_simple
 from editor_utils.mod_exporter import (
     diff_records, compute_crc32, generate_mod_json,
     pack_tksmod, build_data_diff_json, ModMetadataDialog,
+    ask_reference_directory, load_reference_dat_fields,
 )
 
 # ── 本地别名: 保持向后兼容 ──
@@ -636,6 +637,7 @@ class WarpcEditorV2(QMainWindow):
         fm.addAction("保存\tCtrl+S", self._save)
         fm.addAction("导出 CSV…", self._export_csv)
         fm.addAction("导出为 MOD (.tksmod)…", self._export_tksmod)
+        fm.addAction("导出为 MOD (指定参考目录)…", self._export_tksmod_with_ref)
         fm.addSeparator(); fm.addAction("退出", self.close)
 
         em = mb.addMenu("编辑(&E)")
@@ -1727,6 +1729,59 @@ class WarpcEditorV2(QMainWindow):
             QMessageBox.information(self, "导出成功",
                 f"已导出 MOD 文件:\n{fp}\n\n"
                 f"修改记录: {n_mod} 条\n追加记录: {n_app} 条")
+        except Exception as e:
+            QMessageBox.critical(self, "导出失败", str(e))
+
+    def _export_tksmod_with_ref(self):
+        """导出 MOD — 指定原始参考目录进行差异比对（适用于当前文件已被修改的情况）"""
+        if not self.records:
+            QMessageBox.information(self, "提示", "请先加载数据"); return
+
+        # 1. 选择参考目录
+        ref_dir = ask_reference_directory(self)
+        if not ref_dir: return
+
+        # 2. 从参考目录加载原始 WarPC.dat
+        ref_records = load_reference_dat_fields(ref_dir, "WarPC.dat",
+            rec_size=WARPC_REC, field_count=WARPC_FIELD_COUNT, field_fmt='h', use_lzss=True)
+        if ref_records is None:
+            QMessageBox.warning(self, "参考目录无效", f"在 {ref_dir} 中未找到 WarPC.dat"); return
+
+        # 3. MOD 元数据
+        dlg = ModMetadataDialog(self, getattr(self, '_last_mod_metadata', None))
+        if dlg.exec() != QDialog.Accepted: return
+        metadata = dlg.get_metadata(); self._last_mod_metadata = metadata
+
+        # 4. 计算差异（对比参考目录的数据 vs 当前内存数据）
+        current_fields = [r['fields'] for r in self.records]
+        diff_result = diff_records(ref_records, current_fields, WARPC_FIELD_COUNT, len(ref_records))
+
+        if not diff_result['modified'] and not diff_result['appended']:
+            QMessageBox.information(self, "无差异", "当前数据与参考文件相同，无需导出。"); return
+
+        # 5. 构建并导出
+        crc = compute_crc32(os.path.join(ref_dir, "WarPC.dat"))
+        data_json = build_data_diff_json(target="WarPC.dat", record_size=WARPC_REC,
+            field_type="int16", field_count=WARPC_FIELD_COUNT,
+            original_count=len(ref_records), original_crc32=crc, diff_result=diff_result)
+
+        id_ranges = {}
+        if diff_result['appended']:
+            min_idx = min(r['index'] for r in diff_result['appended'])
+            max_idx = max(r['index'] for r in diff_result['appended'])
+            id_ranges["warpc"] = {"start": min_idx, "end": max_idx}
+        warpc_expand = len(self.records) if len(self.records) > WARPC_ORIG_COUNT else 0
+        metadata["id_ranges"] = id_ranges; metadata["warpc_expand"] = warpc_expand
+
+        mod_json = generate_mod_json(metadata, [{"file": "data/WarPC.dat.json", "target": "WarPC.dat"}])
+        fp, _ = QFileDialog.getSaveFileName(self, "导出为 MOD", f"{metadata['id']}.tksmod", "TKS MOD (*.tksmod)")
+        if not fp: return
+        try:
+            pack_tksmod(fp, mod_json, {"data/WarPC.dat.json": data_json})
+            n_mod = len(diff_result['modified']); n_app = len(diff_result['appended'])
+            self.status_var.setText(f"已导出 MOD: {os.path.basename(fp)} (参考目录比对, 修改{n_mod}, 追加{n_app})")
+            QMessageBox.information(self, "导出成功",
+                f"已导出 (参考目录模式):\n{fp}\n\n参考: {ref_dir}\n修改: {n_mod} 条\n追加: {n_app} 条")
         except Exception as e:
             QMessageBox.critical(self, "导出失败", str(e))
 

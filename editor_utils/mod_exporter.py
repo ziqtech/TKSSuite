@@ -420,3 +420,75 @@ class ModMetadataDialog(QDialog):
 
     def get_metadata(self) -> dict:
         return self.metadata
+
+
+# ═══════════════════════════════════════════════════════════════
+# 参考目录选择 + 原始数据加载辅助
+# ═══════════════════════════════════════════════════════════════
+
+def ask_reference_directory(parent, title="选择原始游戏目录 (作为 MOD 差异参考)") -> str | None:
+    """弹出目录选择对话框，让用户选择原始/未修改的游戏目录作为 diff 参考基准。
+
+    Returns:
+        目录路径，或 None（用户取消）
+    """
+    from PySide6.QtWidgets import QFileDialog, QMessageBox
+    d = QFileDialog.getExistingDirectory(parent, title)
+    if not d:
+        return None
+    return d
+
+
+def load_reference_dat_fields(ref_dir: str, dat_name: str, rec_size: int,
+                              field_count: int, field_fmt: str = 'h',
+                              use_lzss: bool = True) -> list[list[int]] | None:
+    """从参考目录加载 DAT 文件的全部记录字段（用于 diff 比较）。
+
+    Args:
+        ref_dir: 参考游戏目录
+        dat_name: 文件名 (如 "WarPC.dat")
+        rec_size: 每条记录字节数
+        field_count: 每条记录字段数
+        field_fmt: struct 格式字符 ('h'=int16, 'H'=uint16, 'i'=int32)
+        use_lzss: 是否需要 LZSS 解压
+
+    Returns:
+        [[field0, field1, ...], ...] 或 None (文件不存在)
+    """
+    import struct as _struct
+    fp = os.path.join(ref_dir, dat_name)
+    if not os.path.isfile(fp):
+        return None
+
+    with open(fp, 'rb') as f:
+        raw = f.read()
+
+    if use_lzss:
+        from .lzss import lzss_decompress_dat
+        dec = lzss_decompress_dat(raw)
+    else:
+        dec = raw
+
+    count = len(dec) // rec_size
+    fmt = '<' + field_fmt * field_count
+    records = []
+    for i in range(count):
+        off = i * rec_size
+        if off + rec_size > len(dec):
+            break
+        vals = _struct.unpack_from(fmt, dec, off)
+        records.append(list(vals))
+    return records
+
+
+def load_reference_tkt_entries(ref_dir: str) -> dict[int, str] | None:
+    """从参考目录加载 TKT.dat 的全部文本条目。
+
+    Returns:
+        {text_id: text_content, ...} 或 None (文件不存在)
+    """
+    fp = os.path.join(ref_dir, "TKT.dat")
+    if not os.path.isfile(fp):
+        return None
+    from .tkt_loader import load_tkt_simple
+    return load_tkt_simple(fp, full_strip=True)
