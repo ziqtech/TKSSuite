@@ -127,7 +127,7 @@ class PatcherWorker(QThread):
                 self._log(f"  [WARN] 检测到 {len(conflicts)} 个冲突, 继续加载 (后加载覆盖)")
             self._log(f"\n--- 合并 MOD 数据 ---")
             merged = merge_mods(sorted_mods, game_dir or os.getcwd(), log_func=self._log)
-            if merged.file_data or merged.resource_replacements:
+            if merged.file_data or merged.resource_replacements or merged.backed_up:
                 self._log(f"\n--- 写入 MOD 数据 ---")
                 apply_mod_data(merged, game_dir or os.getcwd(), log_func=self._log)
                 self._log(f"  MOD 数据已写入, 游戏启动后将自动恢复原始文件")
@@ -404,9 +404,14 @@ class PatcherWorker(QThread):
         time.sleep(2)
         self.overlay_update.emit("", False)
 
-        # 恢复 MOD 修改的原始文件
+        # 等待游戏进程退出后再恢复原始文件
+        # (游戏运行期间可能重新加载磁盘文件, 如 TitleMenu.gxp)
         if loaded_mods:
+            self._log("\n等待游戏退出后恢复原始文件...")
+            self.status_changed.emit("补丁已生效，等待游戏退出...", True)
+            self._wait_game_exit(tks_proc, target_pid)
             restore_originals(game_dir or os.getcwd(), log_func=self._log)
+            self._log("原始文件已恢复。")
 
         self.finished.emit(ok, {
             "base": base_addr,
@@ -414,6 +419,44 @@ class PatcherWorker(QThread):
             "warpc_expanded": _warpc_expanded,
             "new_buf": _warpc_new_buf,
         })
+
+    def _wait_game_exit(self, tks_proc, target_pid: int):
+        """等待游戏进程退出 (轮询检测, 纯 Win32 实现)"""
+        # 收集需要监控的 PID
+        pids_to_watch = set()
+        if tks_proc and tks_proc.poll() is None:
+            pids_to_watch.add(tks_proc.pid)
+        if target_pid:
+            pids_to_watch.add(target_pid)
+
+        if not pids_to_watch:
+            return
+
+        self._log(f"  监控进程: {pids_to_watch}")
+        SYNCHRONIZE = 0x00100000
+        WAIT_TIMEOUT = 258
+
+        while self._is_running:
+            alive = False
+            for pid in list(pids_to_watch):
+                # 尝试打开进程, 如果失败说明已退出
+                h = _OpenProcess(SYNCHRONIZE | 0x0400, False, pid)  # 0x0400 = PROCESS_QUERY_INFORMATION
+                if h:
+                    # 检查是否已退出 (WaitForSingleObject timeout=0)
+                    ret = ctypes.windll.kernel32.WaitForSingleObject(h, 0)
+                    _CloseHandle(h)
+                    if ret == WAIT_TIMEOUT:
+                        alive = True
+                        break
+                    # ret == 0 (WAIT_OBJECT_0) 表示进程已退出
+                else:
+                    # OpenProcess 失败, 进程可能已退出
+                    pass
+            if not alive:
+                break
+            time.sleep(1)
+
+        self._log("  游戏进程已退出。")
 
     def stop(self):
         self._is_running = False

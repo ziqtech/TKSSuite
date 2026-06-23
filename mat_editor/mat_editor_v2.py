@@ -4207,6 +4207,11 @@ class MatEditorApp(QMainWindow):
             self.tkd_header = result.get('tkd_header', '')
             self.tkd_define_map = result.get('tkd_define_map', {})
             self.item_names = result.get('item_names', {})
+            # 保存 TKD 原始快照用于 MOD 导出 (dict: {define_id_str: full_text})
+            self._original_tkd_defines = {
+                str(dd['define_id']): '\r\n'.join([dd['header_line']] + dd['body_lines'])
+                for dd in self.tkd_defines
+            }
             # 刷新当前脚本预览
             if self._current_edit_define_id is not None:
                 self._update_line_preview()
@@ -4328,6 +4333,21 @@ class MatEditorApp(QMainWindow):
                 data_files["data/TKDefUnit.dat.json"] = du_json
                 components.append({"file": "data/TKDefUnit.dat.json", "target": "TKDefUnit.Dat"})
 
+        # TKD.dat 脚本差异
+        if hasattr(self, '_original_tkd_defines') and hasattr(self, 'tkd_defines'):
+            self._save_editor_to_define()  # 确保当前编辑中的脚本已回写
+            current_tkd = {
+                str(dd['define_id']): '\r\n'.join([dd['header_line']] + dd['body_lines'])
+                for dd in self.tkd_defines
+            }
+            tkd_diff = diff_text_defines(self._original_tkd_defines, current_tkd)
+            if tkd_diff['modified'] or tkd_diff['appended'] or tkd_diff['deleted']:
+                tkd_path = os.path.join(os.path.dirname(self.dat_path), "TKD.dat")
+                crc = compute_crc32(tkd_path) if os.path.exists(tkd_path) else "0x00000000"
+                tkd_json = build_text_diff_json(target="TKD.dat", original_crc32=crc, diff_result=tkd_diff)
+                data_files["data/TKD.dat.json"] = tkd_json
+                components.append({"file": "data/TKD.dat.json", "target": "TKD.dat"})
+
         if not data_files:
             QMessageBox.information(self, "无差异", "当前数据与原始文件相同，无需导出。"); return
 
@@ -4385,6 +4405,28 @@ class MatEditorApp(QMainWindow):
                         field_type="uint16", field_count=8, original_count=len(ref_du), original_crc32=crc, diff_result=du_diff)
                     data_files["data/TKDefUnit.dat.json"] = du_json
                     components.append({"file": "data/TKDefUnit.dat.json", "target": "TKDefUnit.Dat"})
+
+        # TKD.dat 脚本差异
+        if hasattr(self, 'tkd_defines'):
+            ref_tkd_path = os.path.join(ref_dir, "TKD.dat")
+            if os.path.exists(ref_tkd_path):
+                self._save_editor_to_define()  # 确保当前编辑中的脚本已回写
+                ref_tkd_text = load_tkd(ref_tkd_path)
+                ref_tkd_defs, _ = parse_defines(ref_tkd_text)
+                ref_tkd_map = {
+                    str(dd['define_id']): '\r\n'.join([dd['header_line']] + dd['body_lines'])
+                    for dd in ref_tkd_defs
+                }
+                current_tkd = {
+                    str(dd['define_id']): '\r\n'.join([dd['header_line']] + dd['body_lines'])
+                    for dd in self.tkd_defines
+                }
+                tkd_diff = diff_text_defines(ref_tkd_map, current_tkd)
+                if tkd_diff['modified'] or tkd_diff['appended'] or tkd_diff['deleted']:
+                    crc = compute_crc32(ref_tkd_path)
+                    tkd_json = build_text_diff_json(target="TKD.dat", original_crc32=crc, diff_result=tkd_diff)
+                    data_files["data/TKD.dat.json"] = tkd_json
+                    components.append({"file": "data/TKD.dat.json", "target": "TKD.dat"})
 
         if not data_files:
             QMessageBox.information(self, "无差异", "当前数据与参考文件相同，无需导出。"); return
