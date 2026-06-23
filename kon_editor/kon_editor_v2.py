@@ -25,6 +25,8 @@ from editor_utils.dock_components import DockHeader
 from editor_utils.ui_helpers import make_fake_input, update_path_labels, confirm_close, export_csv
 from editor_utils.lzss import lzss_decompress_dat, lzss_compress_dat
 from editor_utils.tkt_loader import load_tkt_simple
+from editor_utils.picker_dialogs import StatusPickerDialog, STATUS_NAMES
+from editor_utils.jvg_loader import load_mu_sprites, get_sprite_pixmap
 
 # ── 本地别名: 保持向后兼容 ──
 def lzss_decompress(data): return lzss_decompress_dat(data)
@@ -44,12 +46,7 @@ def load_tkkon_names(csv_path):
 
 KON_REC = 40; KON_CNT = 650; KON_FIELD_COUNT = 20; KON_DECOMPRESSED = 26000
 
-STATUS_NAMES = [
-    "破兵","碎甲","昏眩","封锁","羁绊","蓄力","刚体","集中",
-    "云身","神行","无视","伪装","御风","死战","连计","连计",
-    "误导","混乱","禁制","定身","诅咒","封印","燃烧","冰冻",
-    "虚弱","麻痹","沈睡","中毒","迷恋","明镜","针灸",
-]
+# STATUS_NAMES 由 editor_utils.picker_dialogs 提供 (见上方导入)
 
 KON_FIELDS = [
     ("exec_mode",        0,  "执行模式",      "高字节=攻击距离(负=自身, 0=单格, 1-3=近战, 6+=远程); 低字节=范围开关"),
@@ -185,36 +182,8 @@ class NumericTableItem(QTableWidgetItem):
         return super().__lt__(other)
 
 # ============================================================
-# 对话框: 状态掩码多选
+# 对话框: 状态掩码多选 — 复用 editor_utils.picker_dialogs.StatusPickerDialog
 # ============================================================
-
-class StatusMaskDialog(QDialog):
-    def __init__(self, title, current_mask, base_idx, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle(title); self.setFixedSize(320, 520)
-        self.checkboxes = []
-        layout = QVBoxLayout(self)
-        scroll = QScrollArea(); scroll.setWidgetResizable(True)
-        content = QWidget(); vlay = QVBoxLayout(content)
-        for i in range(16):
-            idx = base_idx + i
-            if idx >= len(STATUS_NAMES): break
-            cb = QCheckBox(f"{idx}. {STATUS_NAMES[idx]}")
-            cb.setChecked(bool(current_mask & (1 << i)))
-            self.checkboxes.append(cb); vlay.addWidget(cb)
-        vlay.addStretch(); scroll.setWidget(content); layout.addWidget(scroll)
-        btn_layout = QHBoxLayout()
-        btn_all = QPushButton("全选"); btn_all.clicked.connect(lambda: [c.setChecked(True) for c in self.checkboxes])
-        btn_clear = QPushButton("全清"); btn_clear.clicked.connect(lambda: [c.setChecked(False) for c in self.checkboxes])
-        btn_ok = QPushButton("确定"); btn_ok.clicked.connect(self.accept)
-        btn_cancel = QPushButton("取消"); btn_cancel.clicked.connect(self.reject)
-        btn_layout.addWidget(btn_all); btn_layout.addWidget(btn_clear)
-        btn_layout.addStretch(); btn_layout.addWidget(btn_ok); btn_layout.addWidget(btn_cancel)
-        layout.addLayout(btn_layout)
-
-    def get_mask(self):
-        m = sum((1 << i) for i, cb in enumerate(self.checkboxes) if cb.isChecked())
-        return m if m < 0x8000 else m - 0x10000
 
 # ============================================================
 # 对话框: 字段参考
@@ -274,6 +243,7 @@ class KonEditor(QMainWindow):
         apply_godot_theme(self, self.is_dark_theme)
         self.kon_path = None; self.tkt_path = None
         self.records = []; self.tkt = {}; self.names = {}
+        self.mu_path = None; self._mu_sprites = []; self._icon_pixmaps = {}
         self.filtered_indices = []; self._dirty = False; self._editing_idx = -1
 
         self.widget_map = {}      # QLineEdit / QComboBox for direct value fields
@@ -596,12 +566,16 @@ class KonEditor(QMainWindow):
         if not os.path.exists(ko):
             QMessageBox.warning(self, "文件缺失", "未找到 TKKon.dat"); return
         self.kon_path = ko; self.tkt_path = tk_ if os.path.exists(tk_) else None
+        self.mu_path = os.path.join(d, "Mu.JVG")
         self._reload()
 
     def _reload(self):
         if not self.kon_path: return
         self.status_label.setText("加载中…"); QApplication.processEvents()
         if self.tkt_path: self.tkt = load_tkt(self.tkt_path)
+        if self.mu_path:
+            self._mu_sprites = load_mu_sprites(self.mu_path) or []
+            self._icon_pixmaps.clear()
         name_csv = os.path.join(os.path.dirname(__file__), 'tkkon_names.csv')
         self.names = load_tkkon_names(name_csv)
         try:
@@ -801,14 +775,18 @@ class KonEditor(QMainWindow):
             cb0, cb1, cb2 = self.split_map['exec_flags']
             cb0.setChecked(bool(lo & 1)); cb1.setChecked(bool(lo & 2)); cb2.setChecked(bool(lo & 4))
 
+    # ── 图标 ──
+    def _get_icon_pixmap(self, icon_val, size=(24,24)):
+        return get_sprite_pixmap(self._mu_sprites, icon_val, size, self._icon_pixmaps)
+
     def _pick_status(self, fn):
         cur = int(self.widget_map[fn].text() or 0) & 0xFFFF
         base = 0 if fn.endswith('_lo') else 16
         inf = fn.startswith('inflict')
         title = "选择导致状态 (位掩码)" if inf else "选择解除状态 (位掩码)"
-        dlg = StatusMaskDialog(title, cur, base, self)
-        if dlg.exec() == QDialog.Accepted:
-            new_mask = dlg.get_mask()
+        dlg = StatusPickerDialog(self, title, STATUS_NAMES, cur, base, self._get_icon_pixmap, inf)
+        if dlg.exec() == QDialog.Accepted and dlg.selected_mask is not None:
+            new_mask = dlg.selected_mask
             self.widget_map[fn].setText(str(new_mask))
             self._update_status_label(fn, new_mask & 0xFFFF)
 

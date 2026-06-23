@@ -44,13 +44,15 @@ from PySide6.QtWidgets import (
     QMessageBox, QFileDialog, QDialog, QGridLayout, QFrame, QScrollArea,
     QSizePolicy, QMenu, QMenuBar, QStyledItemDelegate, QStyle, QLayout
 )
-from PySide6.QtGui import QAction, QKeySequence, QIcon, QImage, QPixmap, QPainter
+from PySide6.QtGui import QAction, QKeySequence, QIcon, QPainter
 from PySide6.QtCore import Qt, QRect, QPoint, QSize, QTranslator
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from editor_utils.theme_manager import ThemeManager
 from editor_utils.dock_components import DockHeader, create_dock
-from editor_utils.picker_dialogs import TktPickerDialog
+from editor_utils.picker_dialogs import (
+    TktPickerDialog, StatusPickerDialog, STATUS_NAMES, STATUS_ICON_BASE
+)
 from editor_utils.ui_helpers import make_fake_input, update_path_labels, confirm_close, export_csv
 from editor_utils.lzss import lzss_decompress_dat, lzss_compress_dat
 from editor_utils.tkt_loader import load_tkt_simple
@@ -77,91 +79,13 @@ def load_tkskill_names(sp, tkt):
         names[i] = n
     return names
 
-# ============================================================
-# Mu.JVG 物品图标加载 (icon + 130 = 精灵索引)
-# ============================================================
-def load_mu_sprites(mu_path):
-    """加载 Mu.JVG 并返回 PIL Image 列表 (PIL 可用时) 或 None"""
-    try:
-        from PIL import Image
-    except ImportError:
-        return None
-    if not mu_path or not os.path.exists(mu_path): return None
-    with open(mu_path, 'rb') as f: data = f.read()
-    if len(data) < 32 or data[:4] != b'@JVG': return None
-    bc = struct.unpack_from('<I', data, 8)[0]
-    off = 32; sprites = []
-    for bi in range(bc):
-        if off + 32 > len(data) or data[off:off+4] != b'@JVM': break
-        sc = struct.unpack_from('<I', data, off+4)[0]; ds = struct.unpack_from('<I', data, off+12)[0]
-        s1 = off + 32; co = [struct.unpack_from('<I', data, s1+j*4)[0] for j in range(sc+1)]
-        po = s1 + (sc+1)*4
-        pal_entries = []
-        for j in range(256):
-            e = struct.unpack_from('<H', data, po+j*2)[0]
-            r = ((e>>11)&0x1F)<<3; g = ((e>>5)&0x3F)<<2; b = (e&0x1F)<<3
-            pal_entries.extend([r,g,b])
-        pal_bytes = bytes(pal_entries)
-        dr = po + 512
-        for si in range(sc):
-            mo = dr + co[si]; ws = struct.unpack_from('<8H', data, mo)
-            w, h = ws[2], ws[3]
-            if w <= 0 or h <= 0:
-                sprites.append(None)
-                continue
-            eo = mo + 16; ed = data[eo:eo+co[si+1]-co[si]-16]
-            # RLE 解码 (对齐 jvg_editor _decode_rle)
-            total = w*h; px = bytearray(total); alpha = bytearray(total)
-            recs = []; rp = 0
-            while rp + 4 <= len(ed):
-                sk = struct.unpack_from('<H', ed, rp)[0]; rw = struct.unpack_from('<H', ed, rp+2)[0]; rp += 4
-                rw = min(rw, len(ed)-rp); rd = ed[rp:rp+rw] if rw>0 else b''; rp += rw
-                recs.append((sk, rw, rd))
-            if not recs: continue
-            simple = (recs[0][0]==0 and recs[0][1]==w and all(r[1]==w for r in recs))
-            if simple:
-                for ri, (_, rw, rpix) in enumerate(recs):
-                    if ri >= h: break
-                    tr = h-1-ri
-                    for c in range(min(rw, len(rpix))): px[tr*w+c] = rpix[rw-1-c]; alpha[tr*w+c] = 255
-            else:
-                scr_w = 640; gap = max(scr_w-w, 0); bp = total-1; pg = 0
-                for sa, rw, rpix in recs:
-                    rem = sa-pg; pg = 0
-                    if rem < 0: rem = 0
-                    while rem > 0 and bp >= 0:
-                        col = (total-1-bp)%w; tb = w-col
-                        if rem <= tb: bp -= rem; rem = 0
-                        else: bp -= tb; rem -= tb+gap; rem = max(rem, 0)
-                    cb = (total-1-bp)%w if bp >= 0 else 0
-                    al = min(rw, len(rpix))
-                    for k in range(al):
-                        if 0 <= bp < total: px[bp] = rpix[k]; alpha[bp] = 255
-                        bp -= 1
-                    pg = gap if al > 0 and cb+al >= w else 0
-            # 创建 PIL Image (alpha 通道由 RLE 解码器提供, 不依赖 palette index 0)
-            if w > 0 and h > 0:
-                img = Image.frombytes('P', (w, h), bytes(px))
-                img.putpalette(pal_bytes)
-                rgba = img.convert('RGBA')
-                a_img = Image.frombytes('L', (w, h), bytes(alpha))
-                rgba.putalpha(a_img)
-                sprites.append(rgba)
-        off += 32 + (sc+1)*4 + 512 + ds
-    return sprites
+from editor_utils.jvg_loader import load_mu_sprites, get_sprite_pixmap
 
 # ============================================================
 # 常量 (Maker.exe TksModify.dll 文案 + TKS.exe 反编译)
 # ============================================================
-# 31 种状态 (bit 0..30; Maker UI 状态列表)
-STATUS_NAMES = [
-    "破兵","碎甲","昏眩","封锁","羁绊","蓄力","刚体","集中",
-    "云身","神行","无视","伪装","御风","死战","连计","连计",
-    "误导","混乱","禁制","定身","诅咒","封印","燃烧","冰冻",
-    "虚弱","麻痹","沈睡","中毒","迷恋","明镜","针灸",
-]
-STATUS_ICON_BASE = 242  # Mu.JVG 中 31 个 30x30 状态图标起始精灵索引
-
+# 31 种状态 (bit 0..30; Maker UI 状态列表) — STATUS_NAMES / STATUS_ICON_BASE
+# 由 editor_utils.picker_dialogs 统一提供 (见下方导入)
 # 战斗结算效果 (combat_flag, field [20]) — sub_42234C: a2[33] |= v9[20]; 战斗结算时按位检查
 COMBAT_FLAG_BITS = [
     (1, "JP×2~3",              "战后技能点数×2~3 (無方戒; bit0)"),
@@ -403,42 +327,6 @@ class IconPickerDialog(QDialog):
 
     def _select(self, v):
         self.selected_value = v; self.accept()
-
-class StatusPickerDialog(QDialog):
-    def __init__(self, parent, title, status_names, get_pixmap_fn, cur_mask, base, is_cause):
-        super().__init__(parent)
-        self.setWindowTitle(title); self.resize(380, 520)
-        self.selected_mask = None
-        layout = QVBoxLayout(self)
-        scroll = QScrollArea(); scroll.setWidgetResizable(True)
-        content = QWidget(); cl = QVBoxLayout(content)
-        self.checkboxes = []
-        for i in range(16):
-            idx = base + i
-            if idx >= len(status_names): break
-            row = QHBoxLayout()
-            pix = get_pixmap_fn(STATUS_ICON_BASE + idx - 130, (20, 20))
-            if pix:
-                lbl = QLabel(); lbl.setPixmap(pix); row.addWidget(lbl)
-            cb = QCheckBox(f"{idx}. {status_names[idx]}")
-            cb.setChecked(bool(cur_mask & (1 << i)))
-            self.checkboxes.append((i, cb)); row.addWidget(cb); row.addStretch()
-            cl.addLayout(row)
-        cl.addStretch(); scroll.setWidget(content); layout.addWidget(scroll)
-        bl = QHBoxLayout()
-        bl.addWidget(QPushButton("全选", clicked=lambda: [cb.setChecked(True) for _, cb in self.checkboxes]))
-        bl.addWidget(QPushButton("全清", clicked=lambda: [cb.setChecked(False) for _, cb in self.checkboxes]))
-        bl.addStretch()
-        bl.addWidget(QPushButton("取消", clicked=self.reject))
-        btn_ok = QPushButton("确定"); btn_ok.clicked.connect(self._ok); bl.addWidget(btn_ok)
-        layout.addLayout(bl)
-
-    def _ok(self):
-        m = 0
-        for i, cb in self.checkboxes:
-            if cb.isChecked(): m |= (1 << i)
-        if m >= 0x8000: m -= 0x10000
-        self.selected_mask = m; self.accept()
 
 class FlagPickerDialog(QDialog):
     """通用位标志选择弹窗 (combat_flag / extra_flags)"""
@@ -935,22 +823,7 @@ class ItemEditorApp(QMainWindow):
 
     # ── 图标 ──
     def _get_icon_pixmap(self, icon_val, size=(24,24)):
-        """获取图标的 QPixmap (缓存), icon_val 为游戏原始值 (实际显示值 +130)"""
-        if not self._mu_sprites: return None
-        idx = icon_val + 130
-        if idx < 0 or idx >= len(self._mu_sprites): return None
-        sprite = self._mu_sprites[idx]
-        if sprite is None: return None
-        cache_key = (idx, size)
-        if cache_key in self._icon_pixmaps: return self._icon_pixmaps[cache_key]
-        try:
-            from PIL import Image
-            img = sprite.resize(size, Image.NEAREST).convert('RGBA')
-            data = img.tobytes('raw', 'RGBA')
-            qimg = QImage(data, img.width, img.height, QImage.Format_RGBA8888)
-            pix = QPixmap.fromImage(qimg); self._icon_pixmaps[cache_key] = pix
-            return pix
-        except: return None
+        return get_sprite_pixmap(self._mu_sprites, icon_val, size, self._icon_pixmaps)
 
     # ── 筛选/列表 ──
     def _update_right_options(self, page_filter_text):
@@ -1237,7 +1110,7 @@ class ItemEditorApp(QMainWindow):
         title = "选择导致状态 (位掩码)" if is_cause else "选择解除状态 (位掩码)"
         base = 0 if fn.endswith('_mask1') else 16
         cur_mask = int(self.widget_map[fn].text() or 0) & 0xFFFF
-        dlg = StatusPickerDialog(self, title, STATUS_NAMES, self._get_icon_pixmap, cur_mask, base, is_cause)
+        dlg = StatusPickerDialog(self, title, STATUS_NAMES, cur_mask, base, self._get_icon_pixmap, is_cause)
         if dlg.exec() == QDialog.Accepted and dlg.selected_mask is not None:
             self.widget_map[fn].setText(str(dlg.selected_mask))
             self._update_status_label(fn, dlg.selected_mask & 0xFFFF)
