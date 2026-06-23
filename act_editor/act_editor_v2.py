@@ -1786,10 +1786,10 @@ class ActEditorV2(QMainWindow):
         self.tabs.setDocumentMode(True)
         self.tabs.tabBar().setDrawBase(False)
         self._build_direction_tab()
-        self._build_layer_cards_tab()
         self._build_param_tab()
+        self._build_layer_cards_tab()
         self._build_tail_tab()
-        self.tabs.setCurrentIndex(1)  # 默认激活「图层编辑」
+        self.tabs.setCurrentIndex(2)  # 默认激活「图层编辑」(按物理偏移排第3)
         rl.addWidget(self.tabs, 1)
         splitter.addWidget(right)
 
