@@ -63,7 +63,8 @@ from PySide6.QtCore import Qt, QTranslator
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from editor_utils.theme_manager import ThemeManager
 from editor_utils.dock_components import DockHeader
-from editor_utils.picker_dialogs import TktPickerDialog
+from editor_utils.picker_dialogs import TktPickerDialog, StatusPickerDialog, STATUS_NAMES
+from editor_utils.jvg_loader import load_mu_sprites, get_sprite_pixmap
 from editor_utils.ui_helpers import make_fake_input, update_path_labels, confirm_close, export_csv
 from editor_utils.lzss import lzss_decompress_dat, lzss_compress_dat
 from editor_utils.tkt_loader import load_tkt_simple
@@ -138,12 +139,7 @@ def load_jvg_sprites(jvg_path):
 
 WARPC_REC = 1054; WARPC_FIELD_COUNT = 527; WARPC_ORIG_COUNT = 143; WARPC_ORIG_SIZE = 150722
 
-STATUS_NAMES = [
-    "破兵","碎甲","昏眩","封锁","羁绊","蓄力","刚体","集中",
-    "云身","神行","无视","伪装","御风","死战","连计","连计",
-    "误导","混乱","禁制","定身","诅咒","封印","燃烧","冰冻",
-    "虚弱","麻痹","沈睡","中毒","迷恋","明镜","针灸",
-]
+# STATUS_NAMES 由 editor_utils.picker_dialogs 提供 (见上方导入)
 
 COMBAT_FLAG_BITS = [
     (0, "JP×2~3", "战后技能点数×2~3"), (1, "战后全恢复+异常全解", "HP/MP全恢复+清除异常"),
@@ -433,30 +429,6 @@ class ItemPickerDialog(QDialog):
 
     def _clear(self, val): self.selected_key = int(val); self.accept()
 
-class StatusMaskDialog(QDialog):
-    def __init__(self, parent, title, current_mask, base_idx):
-        super().__init__(parent)
-        self.setWindowTitle(title); self.resize(320, 520)
-        self.checkboxes = []
-        layout = QVBoxLayout(self)
-        scroll = QScrollArea(); scroll.setWidgetResizable(True)
-        content = QWidget(); vlay = QVBoxLayout(content)
-        for i in range(16):
-            idx = base_idx + i
-            if idx >= len(STATUS_NAMES): break
-            cb = QCheckBox(f"{idx}. {STATUS_NAMES[idx]}"); cb.setChecked(bool(current_mask & (1<<i)))
-            self.checkboxes.append(cb); vlay.addWidget(cb)
-        vlay.addStretch(); scroll.setWidget(content); layout.addWidget(scroll)
-        bl = QHBoxLayout()
-        bl.addWidget(QPushButton("全选", clicked=lambda: [c.setChecked(True) for c in self.checkboxes]))
-        bl.addWidget(QPushButton("全清", clicked=lambda: [c.setChecked(False) for c in self.checkboxes]))
-        bl.addStretch(); bl.addWidget(QPushButton("取消", clicked=self.reject))
-        bl.addWidget(QPushButton("确定", clicked=self.accept)); layout.addLayout(bl)
-
-    def get_mask(self):
-        m = sum((1<<i) for i, cb in enumerate(self.checkboxes) if cb.isChecked())
-        return m if m < 0x8000 else m - 0x10000
-
 class FlagsDialog(QDialog):
     def __init__(self, parent, title, bits, current_val):
         super().__init__(parent)
@@ -614,6 +586,7 @@ class WarpcEditorV2(QMainWindow):
 
         self.warpc_path = self.tkt_path = None
         self.records = []; self.tkt = {}
+        self.mu_path = None; self._mu_sprites = []; self._icon_pixmaps = {}
         self.skill_names = {}; self._skill_types = {}; self.tkkon_names = {}
         self.item_names = {}; self.item_idx_names = {}; self._idx_to_id = {}; self._id_to_idx = {}
         self.filtered_indices = []; self._dirty = False; self._editing_idx = -1
@@ -680,8 +653,8 @@ class WarpcEditorV2(QMainWindow):
         toolbar.addWidget(QPushButton("🔄 重新加载", clicked=self._reload))
         toolbar.addWidget(QPushButton("🌗 切换主题", clicked=self._toggle_theme))
         toolbar.addStretch()
-        self.status_var = QLabel("请通过 文件 → 加载 TKS 目录 打开数据")
-        toolbar.addWidget(self.status_var)
+        toolbar.addWidget(QPushButton("✅ 应用修改", clicked=self._apply_edit))
+        toolbar.addWidget(QPushButton("🔄 重置", clicked=self._reset_edit))
         main_layout.addLayout(toolbar)
 
         # 主 Splitter
@@ -726,12 +699,6 @@ class WarpcEditorV2(QMainWindow):
         self.tabs = QTabWidget()
         self._build_tab1(); self._build_tab2(); self._build_tab3(); self._build_tab4(); self._build_tab5()
         rl.addWidget(self.tabs, 1)
-
-        # 底部按钮
-        bf = QHBoxLayout()
-        bf.addWidget(QPushButton("✅ 应用修改", clicked=self._apply_edit))
-        bf.addWidget(QPushButton("🔄 重置", clicked=self._reset_edit)); bf.addStretch()
-        rl.addLayout(bf)
         splitter.addWidget(right); splitter.setSizes([350, 1050])
 
         # 底部路径栏
@@ -740,7 +707,10 @@ class WarpcEditorV2(QMainWindow):
         self.lbl_skill = QLabel(); self.lbl_fa = QLabel()
         for w in [self.lbl_warpc, self.lbl_tkt, self.lbl_item, self.lbl_skill, self.lbl_fa]:
             path_layout.addWidget(w); path_layout.addSpacing(15)
-        path_layout.addStretch(); main_layout.addLayout(path_layout)
+        path_layout.addStretch()
+        self.status_var = QLabel("请通过 文件 → 加载 TKS 目录 打开数据")
+        path_layout.addWidget(self.status_var)
+        main_layout.addLayout(path_layout)
 
     def _build_scroll_tab(self, name):
         scroll = QScrollArea(); scroll.setWidgetResizable(True)
@@ -818,7 +788,7 @@ class WarpcEditorV2(QMainWindow):
         elif field_ft == 'skill_pick':
             box = QFrame(); box.setObjectName("FakeInputBox")
             bh = QHBoxLayout(box); bh.setContentsMargins(0,0,0,0); bh.setSpacing(0)
-            ev.setMinimumWidth(50); bh.addWidget(ev); bh.addStretch()
+            ev.setMinimumWidth(50); bh.addWidget(ev, 1)
             btn = QPushButton("…"); btn.setFixedWidth(28)
             btn.clicked.connect(lambda _, f=fn: self._pick_skill(f))
             bh.addWidget(btn); cell.addWidget(box)
@@ -827,7 +797,7 @@ class WarpcEditorV2(QMainWindow):
         elif field_ft == 'item_pick':
             box = QFrame(); box.setObjectName("FakeInputBox")
             bh = QHBoxLayout(box); bh.setContentsMargins(0,0,0,0); bh.setSpacing(0)
-            ev.setMinimumWidth(50); bh.addWidget(ev); bh.addStretch()
+            ev.setMinimumWidth(50); bh.addWidget(ev, 1)
             btn = QPushButton("…"); btn.setFixedWidth(28)
             btn.clicked.connect(lambda _, f=fn: self._pick_item(f))
             bh.addWidget(btn); cell.addWidget(box)
@@ -836,16 +806,16 @@ class WarpcEditorV2(QMainWindow):
         elif fn == 'portrait':
             box = QFrame(); box.setObjectName("FakeInputBox")
             bh = QHBoxLayout(box); bh.setContentsMargins(0,0,0,0); bh.setSpacing(0)
-            ev.setMinimumWidth(50); bh.addWidget(ev); bh.addStretch()
+            ev.setMinimumWidth(50); bh.addWidget(ev, 1)
             btn = QPushButton("…"); btn.setFixedWidth(28)
             btn.clicked.connect(lambda: self._pick_portrait())
             bh.addWidget(btn); cell.addWidget(box)
         elif fn == 'history_text_id':
-            cell.addWidget(make_fake_input(line_edit=ev))
+            cell.addWidget(make_fake_input(line_edit=ev, stretch=False))
             extra = QLabel(""); extra.setProperty("class", "ExtraPreviewText"); extra.setWordWrap(True)
             cell.addWidget(extra); self._edit_extras[fn] = extra
         else:
-            cell.addWidget(make_fake_input(line_edit=ev))
+            cell.addWidget(make_fake_input(line_edit=ev, stretch=False))
 
         grid.addLayout(cell, r, c, Qt.AlignTop)
 
@@ -1012,11 +982,15 @@ class WarpcEditorV2(QMainWindow):
         if not os.path.exists(wp):
             QMessageBox.warning(self, "文件缺失", "未找到 WarPC.dat"); return
         self.warpc_path = wp; self.tkt_path = tk_ if os.path.exists(tk_) else None
+        self.mu_path = os.path.join(d, "Mu.JVG")
         self._reload()
 
     def _reload(self):
         if not self.warpc_path: return
         self.status_var.setText("加载中…"); QApplication.processEvents()
+        if self.mu_path:
+            self._mu_sprites = load_mu_sprites(self.mu_path) or []
+            self._icon_pixmaps.clear()
 
         orig_path = self.warpc_path + ".orig"
         if os.path.exists(orig_path):
@@ -1410,15 +1384,18 @@ class WarpcEditorV2(QMainWindow):
                 sel = [name for bit, name, _ in opts if (mask & bit)]
                 self._edit_extras[fn].setText(", ".join(sel) if sel else "(无)")
 
+    def _get_icon_pixmap(self, icon_val, size=(24,24)):
+        return get_sprite_pixmap(self._mu_sprites, icon_val, size, self._icon_pixmaps)
+
     def _pick_status_mask(self, fn):
         try: cur = int(self._edit_vars[fn].text() or 0)
         except: cur = 0
         base = 0 if fn.endswith('_mask1') else 16
         is_cause = fn.startswith('cause_')
         title = "选择导致状态 (位掩码)" if is_cause else "选择解除状态 (位掩码)"
-        dlg = StatusMaskDialog(self, title, cur & 0xFFFF, base)
-        if dlg.exec() == QDialog.Accepted:
-            new_mask = dlg.get_mask()
+        dlg = StatusPickerDialog(self, title, STATUS_NAMES, cur & 0xFFFF, base, self._get_icon_pixmap, is_cause)
+        if dlg.exec() == QDialog.Accepted and dlg.selected_mask is not None:
+            new_mask = dlg.selected_mask
             self._edit_vars[fn].setText(str(new_mask))
             if fn in self._edit_extras:
                 self._update_status_label(fn, new_mask & 0xFFFF)
