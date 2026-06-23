@@ -21,6 +21,10 @@ from PySide6.QtCore import Qt, QTranslator
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from editor_utils.lzss import lzss_decompress_dat, lzss_compress_dat
 from editor_utils.tkt_loader import load_tkt_simple
+from editor_utils.mod_exporter import (
+    diff_records, compute_crc32, generate_mod_json,
+    pack_tksmod, build_data_diff_json, ModMetadataDialog,
+)
 
 # ── 本地别名: 保持向后兼容 ──
 def lzss_decompress(data): return lzss_decompress_dat(data)
@@ -242,6 +246,7 @@ class SkillEditorApp(QMainWindow):
 
         self.skill_path = self.tkt_path = None
         self.records = []; self.tkt = {}; self.tkt_full = {}
+        self._original_records = []  # 原始快照，用于 MOD 导出
         self.filtered_indices = []; self._dirty = False
         self._editing_idx = None
 
@@ -272,6 +277,7 @@ class SkillEditorApp(QMainWindow):
         fm.addSeparator()
         fm.addAction("保存", QKeySequence("Ctrl+S"), self._save)
         fm.addAction("导出 CSV…", self._export_csv)
+        fm.addAction("导出为 MOD (.tksmod)…", self._export_tksmod)
         fm.addSeparator()
         fm.addAction("退出", self.close)
 
@@ -566,6 +572,7 @@ class SkillEditorApp(QMainWindow):
             self._icon_pixmaps.clear()
         try:
             self.records = load_skills(self.skill_path); self._dirty = False
+            self._original_records = [[rec[k] for k, _, _, _, _ in ALL_FIELDS] for rec in self.records]
             nonempty = sum(1 for r in self.records if r['skill_text_id'] != 0)
             self.status_var.setText(f"{len(self.records)} 条 | 有效 {nonempty} | TKT {len(self.tkt)} 条")
         except Exception as e:
@@ -865,6 +872,47 @@ class SkillEditorApp(QMainWindow):
                    [rec[fn] for fn, _, _, _, _ in ALL_FIELDS]
         if export_csv(self, filtered, hdr, row_func, "TKSkill.csv"):
             self.status_var.setText("已导出 CSV")
+
+    def _export_tksmod(self):
+        """导出当前修改为 .tksmod MOD 文件"""
+        if not self.records or not self._original_records:
+            QMessageBox.information(self, "提示", "请先加载数据"); return
+
+        dlg = ModMetadataDialog(self, getattr(self, '_last_mod_metadata', None))
+        if dlg.exec() != QDialog.Accepted:
+            return
+        metadata = dlg.get_metadata()
+        self._last_mod_metadata = metadata
+
+        # 构建当前数据为 flat fields 列表
+        current_fields = [[rec[k] for k, _, _, _, _ in ALL_FIELDS] for rec in self.records]
+        field_count = len(ALL_FIELDS)
+        diff_result = diff_records(
+            self._original_records, current_fields, field_count, len(self._original_records))
+
+        if not diff_result['modified'] and not diff_result['appended']:
+            QMessageBox.information(self, "无差异", "当前数据与原始文件相同，无需导出。"); return
+
+        crc = compute_crc32(self.skill_path) if self.skill_path else "0x00000000"
+        data_json = build_data_diff_json(
+            target="TKSkill.dat", record_size=SKILL_REC, field_type="int16",
+            field_count=field_count, original_count=len(self._original_records),
+            original_crc32=crc, diff_result=diff_result)
+
+        components = [{"file": "data/TKSkill.dat.json", "target": "TKSkill.dat"}]
+        mod_json = generate_mod_json(metadata, components)
+
+        default_name = f"{metadata['id']}.tksmod"
+        fp, _ = QFileDialog.getSaveFileName(self, "导出为 MOD", default_name, "TKS MOD (*.tksmod)")
+        if not fp: return
+
+        try:
+            pack_tksmod(fp, mod_json, {"data/TKSkill.dat.json": data_json})
+            n_mod = len(diff_result['modified']); n_app = len(diff_result['appended'])
+            self.status_var.setText(f"已导出 MOD: {os.path.basename(fp)} (修改{n_mod}条, 追加{n_app}条)")
+            QMessageBox.information(self, "导出成功", f"已导出 MOD 文件:\n{fp}\n\n修改: {n_mod} 条\n追加: {n_app} 条")
+        except Exception as e:
+            QMessageBox.critical(self, "导出失败", str(e))
 
     def _show_about(self):
         QMessageBox.about(self, "关于", "TKSkill.dat PySide6 编辑器\n已应用 Godot 4.6 级别布局与纯净控件约束。")

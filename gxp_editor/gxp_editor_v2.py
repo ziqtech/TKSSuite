@@ -32,6 +32,9 @@ from editor_utils.dock_components import DockHeader, create_dock
 from editor_utils.lzss import (lzss_decompress_stream as _lzss_decompress_stream,
                                 lzss_compress_stream as _lzss_compress_stream)
 from editor_utils.rgb565 import rgb565_to_rgba, rgba_to_rgb565
+from editor_utils.mod_exporter import (
+    compute_crc32, generate_mod_json, pack_tksmod, ModMetadataDialog,
+)
 
 # ── GXP 格式常量 ──────────────────────────────────────────
 GXP_MAGIC = b"JGXP"
@@ -239,6 +242,8 @@ class GXPEditor(QMainWindow):
         fm.addAction("导入图片(&I)...", QKeySequence("Ctrl+I"), self._import_dlg)
         fm.addAction("导出 24位 PNG(&E)...", QKeySequence("Ctrl+E"), self._export_dlg)
         fm.addSeparator()
+        fm.addAction("导出为 MOD (.tksmod)…", self._export_tksmod)
+        fm.addSeparator()
         fm.addAction("退出(&X)", QKeySequence("Alt+F4"), self.close)
 
         vm = mb.addMenu("视图(&V)")
@@ -432,6 +437,27 @@ class GXPEditor(QMainWindow):
         try:
             export_png(self.img, p)
             self._status_left.setText(f" 已成功剥离导出: {Path(p).name}")
+        except Exception as e:
+            QMessageBox.critical(self, "导出失败", str(e))
+
+    def _export_tksmod(self):
+        """导出当前 GXP 为 .tksmod 资源替换 MOD"""
+        if not self.img or not self.img.filepath:
+            QMessageBox.information(self, "提示", "请先打开 GXP 文件"); return
+        from PySide6.QtWidgets import QDialog
+        dlg = ModMetadataDialog(self, getattr(self, '_last_mod_metadata', None))
+        if dlg.exec() != QDialog.Accepted: return
+        metadata = dlg.get_metadata(); self._last_mod_metadata = metadata
+        metadata["type"] = "visual"
+
+        target_name = os.path.basename(self.img.filepath)
+        mod_json = generate_mod_json(metadata, [],
+            resources=[{"file": f"resources/{target_name}", "target": target_name}])
+        fp, _ = QFileDialog.getSaveFileName(self, "导出为 MOD", f"{metadata['id']}.tksmod", "TKS MOD (*.tksmod)")
+        if not fp: return
+        try:
+            pack_tksmod(fp, mod_json, {}, resource_files={f"resources/{target_name}": self.img.filepath})
+            self._status_left.setText(f" 已导出 MOD: {Path(fp).name}")
         except Exception as e:
             QMessageBox.critical(self, "导出失败", str(e))
 

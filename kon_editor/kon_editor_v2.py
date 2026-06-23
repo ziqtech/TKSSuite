@@ -27,6 +27,10 @@ from editor_utils.lzss import lzss_decompress_dat, lzss_compress_dat
 from editor_utils.tkt_loader import load_tkt_simple
 from editor_utils.picker_dialogs import StatusPickerDialog, STATUS_NAMES
 from editor_utils.jvg_loader import load_mu_sprites, get_sprite_pixmap
+from editor_utils.mod_exporter import (
+    diff_records, compute_crc32, generate_mod_json,
+    pack_tksmod, build_data_diff_json, ModMetadataDialog,
+)
 
 # ── 本地别名: 保持向后兼容 ──
 def lzss_decompress(data): return lzss_decompress_dat(data)
@@ -243,6 +247,7 @@ class KonEditor(QMainWindow):
         apply_godot_theme(self, self.is_dark_theme)
         self.kon_path = None; self.tkt_path = None
         self.records = []; self.tkt = {}; self.names = {}
+        self._original_records = []  # 原始快照，用于 MOD 导出
         self.mu_path = None; self._mu_sprites = []; self._icon_pixmaps = {}
         self.filtered_indices = []; self._dirty = False; self._editing_idx = -1
 
@@ -281,6 +286,7 @@ class KonEditor(QMainWindow):
         fm.addSeparator()
         fm.addAction("保存\tCtrl+S", self._save)
         fm.addAction("导出 CSV...", self._export_csv)
+        fm.addAction("导出为 MOD (.tksmod)…", self._export_tksmod)
         fm.addSeparator()
         fm.addAction("退出", self.close)
 
@@ -580,6 +586,7 @@ class KonEditor(QMainWindow):
         self.names = load_tkkon_names(name_csv)
         try:
             self.records = load_kon(self.kon_path); self._dirty = False
+            self._original_records = [[rec[fn] for fn, _, _, _ in KON_FIELDS] for rec in self.records]
             nonempty = sum(1 for r in self.records if any(r[fn] != 0 for fn, _, _, _ in KON_FIELDS))
             self.status_label.setText(f"{len(self.records)} 条 | 有效 {nonempty} | TKT {len(self.tkt)} 条")
         except Exception as e:
@@ -952,6 +959,35 @@ class KonEditor(QMainWindow):
 
         if export_csv(self, filtered, hdr, row_func, "TKKon.csv"):
             self.status_label.setText("已导出 CSV")
+
+    def _export_tksmod(self):
+        """导出当前修改为 .tksmod MOD 文件"""
+        if not self.records or not self._original_records:
+            QMessageBox.information(self, "提示", "请先加载数据"); return
+        from PySide6.QtWidgets import QDialog
+        dlg = ModMetadataDialog(self, getattr(self, '_last_mod_metadata', None))
+        if dlg.exec() != QDialog.Accepted: return
+        metadata = dlg.get_metadata(); self._last_mod_metadata = metadata
+
+        current_fields = [[rec[fn] for fn, _, _, _ in KON_FIELDS] for rec in self.records]
+        field_count = KON_FIELD_COUNT
+        diff_result = diff_records(self._original_records, current_fields, field_count, len(self._original_records))
+        if not diff_result['modified'] and not diff_result['appended']:
+            QMessageBox.information(self, "无差异", "当前数据与原始文件相同，无需导出。"); return
+
+        crc = compute_crc32(self.kon_path) if self.kon_path else "0x00000000"
+        data_json = build_data_diff_json(target="TKKon.dat", record_size=KON_REC, field_type="int16",
+            field_count=field_count, original_count=len(self._original_records), original_crc32=crc, diff_result=diff_result)
+        mod_json = generate_mod_json(metadata, [{"file": "data/TKKon.dat.json", "target": "TKKon.dat"}])
+        fp, _ = QFileDialog.getSaveFileName(self, "导出为 MOD", f"{metadata['id']}.tksmod", "TKS MOD (*.tksmod)")
+        if not fp: return
+        try:
+            pack_tksmod(fp, mod_json, {"data/TKKon.dat.json": data_json})
+            n_mod = len(diff_result['modified']); n_app = len(diff_result['appended'])
+            self.status_label.setText(f"已导出 MOD: {os.path.basename(fp)} (修改{n_mod}条, 追加{n_app}条)")
+            QMessageBox.information(self, "导出成功", f"已导出:\n{fp}\n\n修改: {n_mod} 条\n追加: {n_app} 条")
+        except Exception as e:
+            QMessageBox.critical(self, "导出失败", str(e))
 
     # ----------- 帮助 -----------
 

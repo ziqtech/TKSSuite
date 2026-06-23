@@ -47,6 +47,10 @@ from editor_utils.theme_manager import ThemeManager
 from editor_utils.dock_components import DockHeader, create_dock
 from editor_utils.lzss import lzss_decompress_dat, lzss_compress_dat
 from editor_utils.ui_helpers import export_csv
+from editor_utils.mod_exporter import (
+    diff_records, compute_crc32, generate_mod_json,
+    pack_tksmod, build_data_diff_json, ModMetadataDialog,
+)
 
 # ── 本地别名: 保持向后兼容 ──
 def lzss_decompress(data): return lzss_decompress_dat(data)
@@ -366,6 +370,7 @@ class ShopEditorWindow(QMainWindow):
         self.tkt_path = None
 
         self.records = []
+        self._original_records = []  # 原始快照，用于 MOD 导出
         self.items = []
         self.item_names = {}
         self.filtered_indices = []
@@ -416,6 +421,10 @@ class ShopEditorWindow(QMainWindow):
         action_export = QAction("导出 CSV…", self)
         action_export.triggered.connect(self._export_csv)
         file_menu.addAction(action_export)
+        
+        action_export_mod = QAction("导出为 MOD (.tksmod)…", self)
+        action_export_mod.triggered.connect(self._export_tksmod)
+        file_menu.addAction(action_export_mod)
         
         file_menu.addSeparator()
         action_exit = QAction("退出", self)
@@ -702,6 +711,7 @@ class ShopEditorWindow(QMainWindow):
 
         try:
             self.records = load_shop_data(self.shop_path)
+            self._original_records = [[r['area_id'], r['item_ref'], r['condition'], r['display']] for r in self.records]
             self._dirty = False
             self.lbl_status.setText(f"已加载 {len(self.records)} 条商店记录 + {len(self.items)} 个物品")
         except Exception as e:
@@ -1022,6 +1032,35 @@ class ShopEditorWindow(QMainWindow):
                     self._cond_str(rec['condition'])]
         if export_csv(self, self.records, hdr, row_func, "TKShop.csv"):
             self.lbl_status.setText("已导出 CSV")
+
+    def _export_tksmod(self):
+        """导出当前修改为 .tksmod MOD 文件"""
+        if not self.records or not self._original_records:
+            QMessageBox.information(self, "提示", "请先加载数据"); return
+        from PySide6.QtWidgets import QDialog
+        dlg = ModMetadataDialog(self, getattr(self, '_last_mod_metadata', None))
+        if dlg.exec() != QDialog.Accepted: return
+        metadata = dlg.get_metadata(); self._last_mod_metadata = metadata
+
+        current_fields = [[r['area_id'], r['item_ref'], r['condition'], r['display']] for r in self.records]
+        field_count = 4
+        diff_result = diff_records(self._original_records, current_fields, field_count, len(self._original_records))
+        if not diff_result['modified'] and not diff_result['appended']:
+            QMessageBox.information(self, "无差异", "当前数据与原始文件相同，无需导出。"); return
+
+        crc = compute_crc32(self.shop_path) if self.shop_path else "0x00000000"
+        data_json = build_data_diff_json(target="TKShop.dat", record_size=8, field_type="mixed",
+            field_count=field_count, original_count=len(self._original_records), original_crc32=crc, diff_result=diff_result)
+        mod_json = generate_mod_json(metadata, [{"file": "data/TKShop.dat.json", "target": "TKShop.dat"}])
+        fp, _ = QFileDialog.getSaveFileName(self, "导出为 MOD", f"{metadata['id']}.tksmod", "TKS MOD (*.tksmod)")
+        if not fp: return
+        try:
+            pack_tksmod(fp, mod_json, {"data/TKShop.dat.json": data_json})
+            n_mod = len(diff_result['modified']); n_app = len(diff_result['appended'])
+            self.lbl_status.setText(f"已导出 MOD: {os.path.basename(fp)} (修改{n_mod}条, 追加{n_app}条)")
+            QMessageBox.information(self, "导出成功", f"已导出:\n{fp}\n\n修改: {n_mod} 条\n追加: {n_app} 条")
+        except Exception as e:
+            QMessageBox.critical(self, "导出失败", str(e))
 
     def _show_help(self):
         QMessageBox.information(self, "使用说明",

@@ -32,6 +32,9 @@ except ImportError:
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from editor_utils.theme_manager import ThemeManager
 from editor_utils.dock_components import DockHeader, create_dock
+from editor_utils.mod_exporter import (
+    compute_crc32, generate_mod_json, pack_tksmod, ModMetadataDialog,
+)
 
 JVG_MAGIC = b"@JVG"; JVM_MAGIC = b"@JVM"
 SCREEN_W = 640; HEADER_SIZE = 32
@@ -595,6 +598,12 @@ class JVGEditor(QMainWindow):
         
         file_menu.addSeparator()
         
+        export_mod_action = QAction("导出为 MOD (.tksmod)…", self)
+        export_mod_action.triggered.connect(self._export_tksmod)
+        file_menu.addAction(export_mod_action)
+        
+        file_menu.addSeparator()
+        
         exit_action = QAction("退出(&X)", self)
         exit_action.setShortcut("Alt+F4")
         exit_action.triggered.connect(self.close)
@@ -904,6 +913,27 @@ class JVGEditor(QMainWindow):
             self.statusBar().showMessage(f"已保存: {os.path.basename(p)}", 2000)
         except Exception as e:
             QMessageBox.critical(self, "保存失败", str(e))
+
+    def _export_tksmod(self):
+        """导出当前 JVG 为 .tksmod 资源替换 MOD"""
+        if not self.jvg or not self.jvg.filepath:
+            QMessageBox.information(self, "提示", "请先打开 JVG 文件"); return
+        from PySide6.QtWidgets import QDialog
+        dlg = ModMetadataDialog(self, getattr(self, '_last_mod_metadata', None))
+        if dlg.exec() != QDialog.Accepted: return
+        metadata = dlg.get_metadata(); self._last_mod_metadata = metadata
+        metadata["type"] = "visual"
+
+        target_name = os.path.basename(self.jvg.filepath)
+        mod_json = generate_mod_json(metadata, [],
+            resources=[{"file": f"resources/{target_name}", "target": target_name}])
+        fp, _ = QFileDialog.getSaveFileName(self, "导出为 MOD", f"{metadata['id']}.tksmod", "TKS MOD (*.tksmod)")
+        if not fp: return
+        try:
+            pack_tksmod(fp, mod_json, {}, resource_files={f"resources/{target_name}": self.jvg.filepath})
+            self.statusBar().showMessage(f"已导出 MOD: {os.path.basename(fp)}", 3000)
+        except Exception as e:
+            QMessageBox.critical(self, "导出失败", str(e))
 
     def _sync_list(self):
         current_row = self._blist.currentRow()

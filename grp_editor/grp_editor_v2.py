@@ -47,6 +47,9 @@ from editor_utils.lzss import (lzss_decompress_stream as _lzss_decompress_stream
                                 RING_INIT_VAL, MIN_MATCH as MIN_MATCH_LZ,
                                 MAX_MATCH as MAX_MATCH_LZ)
 from editor_utils.rgb565 import rgb565_to_rgba, rgba_to_rgb565
+from editor_utils.mod_exporter import (
+    compute_crc32, generate_mod_json, pack_tksmod, ModMetadataDialog,
+)
 
 # ── 本地别名: 保持向后兼容 ──
 def lzss_decompress(data, target_size): return _lzss_decompress_stream(data, target_size)
@@ -441,6 +444,8 @@ class GRPEditor(QMainWindow):
         fm.addAction("保存 (Ctrl+S)", self._save, QKeySequence("Ctrl+S"))
         fm.addAction("另存为... (Ctrl+Shift+S)", self._save_as, QKeySequence("Ctrl+Shift+S"))
         fm.addSeparator()
+        fm.addAction("导出为 MOD (.tksmod)…", self._export_tksmod)
+        fm.addSeparator()
         fm.addAction("导出 L1 色板", lambda: self._export_color_swatch("L1"))
         fm.addAction("导出 L2 色板", lambda: self._export_color_swatch("L2"))
         fm.addSeparator()
@@ -691,6 +696,34 @@ class GRPEditor(QMainWindow):
             self.grp.filepath = grp_path; self.grp.idx_path = idx_path
             self._status_lbl.setText(f"已保存: {Path(grp_path).name} ({os.path.getsize(grp_path)/1024:.1f}KB)")
         except Exception as e: QMessageBox.critical(self, "保存失败", str(e))
+
+    def _export_tksmod(self):
+        """导出当前 GRP 为 .tksmod 资源替换 MOD"""
+        if not self.grp or not self.grp.filepath:
+            QMessageBox.information(self, "提示", "请先打开 GRP 文件"); return
+        from PySide6.QtWidgets import QDialog
+        dlg = ModMetadataDialog(self, getattr(self, '_last_mod_metadata', None))
+        if dlg.exec() != QDialog.Accepted: return
+        metadata = dlg.get_metadata(); self._last_mod_metadata = metadata
+        metadata["type"] = "visual"
+
+        target_name = os.path.basename(self.grp.filepath)
+        resources_list = [{"file": f"resources/{target_name}", "target": target_name}]
+        resource_files = {f"resources/{target_name}": self.grp.filepath}
+        # 如果有 IDX 文件也一起打包
+        if self.grp.idx_path and os.path.isfile(self.grp.idx_path):
+            idx_name = os.path.basename(self.grp.idx_path)
+            resources_list.append({"file": f"resources/{idx_name}", "target": idx_name})
+            resource_files[f"resources/{idx_name}"] = self.grp.idx_path
+
+        mod_json = generate_mod_json(metadata, [], resources=resources_list)
+        fp, _ = QFileDialog.getSaveFileName(self, "导出为 MOD", f"{metadata['id']}.tksmod", "TKS MOD (*.tksmod)")
+        if not fp: return
+        try:
+            pack_tksmod(fp, mod_json, {}, resource_files=resource_files)
+            self._status_lbl.setText(f"已导出 MOD: {Path(fp).name}")
+        except Exception as e:
+            QMessageBox.critical(self, "导出失败", str(e))
 
     def closeEvent(self, event):
         self._stop_audio(); super().closeEvent(event)

@@ -31,6 +31,10 @@ from core.warpc_expander import (
     ensure_save_directory_healthy, prepare_warpc_for_game,
     expand_warpc_buffer, inject_warpc_data,
 )
+from core.mod_loader import (
+    scan_mods, resolve_dependencies, detect_conflicts,
+    merge_mods, apply_mod_data, restore_originals,
+)
 
 
 class PatcherWorker(QThread):
@@ -111,6 +115,27 @@ class PatcherWorker(QThread):
 
         # 启动前检查
         ensure_save_directory_healthy(log_func=self._log)
+
+        # === MOD 加载流程 ===
+        mods_dir = os.path.join(game_dir or os.getcwd(), "mods")
+        self._log(f"\n=== MOD 加载 ({mods_dir}) ===")
+        loaded_mods = scan_mods(mods_dir, log_func=self._log)
+        if loaded_mods:
+            sorted_mods = resolve_dependencies(loaded_mods, log_func=self._log)
+            conflicts = detect_conflicts(sorted_mods, log_func=self._log)
+            if conflicts:
+                self._log(f"  [WARN] 检测到 {len(conflicts)} 个冲突, 继续加载 (后加载覆盖)")
+            self._log(f"\n--- 合并 MOD 数据 ---")
+            merged = merge_mods(sorted_mods, game_dir or os.getcwd(), log_func=self._log)
+            if merged.file_data or merged.resource_replacements:
+                self._log(f"\n--- 写入 MOD 数据 ---")
+                apply_mod_data(merged, game_dir or os.getcwd(), log_func=self._log)
+                self._log(f"  MOD 数据已写入, 游戏启动后将自动恢复原始文件")
+            else:
+                self._log(f"  MOD 无数据变更")
+        else:
+            self._log(f"  未发现 MOD 文件")
+
         expanded, full_data, truncated = prepare_warpc_for_game(log_func=self._log)
         _warpc_expanded = expanded
         _warpc_full_data = full_data
@@ -378,6 +403,10 @@ class PatcherWorker(QThread):
 
         time.sleep(2)
         self.overlay_update.emit("", False)
+
+        # 恢复 MOD 修改的原始文件
+        if loaded_mods:
+            restore_originals(game_dir or os.getcwd(), log_func=self._log)
 
         self.finished.emit(ok, {
             "base": base_addr,

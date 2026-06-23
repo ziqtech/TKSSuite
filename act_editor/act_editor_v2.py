@@ -65,6 +65,9 @@ from editor_utils.dock_components import DockHeader
 from editor_utils.ui_helpers import (
     make_fake_input, update_path_labels, confirm_close, export_csv,
 )
+from editor_utils.mod_exporter import (
+    compute_crc32, generate_mod_json, pack_tksmod, ModMetadataDialog,
+)
 
 HAS_PIL = False
 try:
@@ -1689,6 +1692,7 @@ class ActEditorV2(QMainWindow):
         fm.addSeparator()
         fm.addAction("保存\tCtrl+S", self._save)
         fm.addAction("导出 CSV…", self._export_csv)
+        fm.addAction("导出为 MOD (.tksmod)…", self._export_tksmod)
         fm.addSeparator()
         fm.addAction("退出", self.close)
 
@@ -3008,6 +3012,28 @@ class ActEditorV2(QMainWindow):
                         row.append(str(L[idx]))
                 f.write(','.join(row) + '\n')
         self.status_var.setText(f"已导出: {fp}")
+
+    def _export_tksmod(self):
+        """导出当前修改为 .tksmod MOD 文件 (TKAct.dat 资源完整替换模式)"""
+        if not self.entries or not self.act_path:
+            QMessageBox.information(self, "提示", "请先加载数据"); return
+        from PySide6.QtWidgets import QDialog
+        dlg = ModMetadataDialog(self, getattr(self, '_last_mod_metadata', None))
+        if dlg.exec() != QDialog.Accepted: return
+        metadata = dlg.get_metadata(); self._last_mod_metadata = metadata
+
+        # TKAct.dat 作为资源完整替换（非 LZSS 定长文件，差异追踪代价高）
+        crc = compute_crc32(self.act_path)
+        mod_json = generate_mod_json(metadata, [],
+            resources=[{"file": "resources/TKAct.dat", "target": "TKAct.dat"}])
+        fp, _ = QFileDialog.getSaveFileName(self, "导出为 MOD", f"{metadata['id']}.tksmod", "TKS MOD (*.tksmod)")
+        if not fp: return
+        try:
+            pack_tksmod(fp, mod_json, {}, resource_files={"resources/TKAct.dat": self.act_path})
+            self.status_var.setText(f"已导出 MOD: {os.path.basename(fp)}")
+            QMessageBox.information(self, "导出成功", f"已导出 (资源替换模式):\n{fp}")
+        except Exception as e:
+            QMessageBox.critical(self, "导出失败", str(e))
 
     # ── 编辑状态 ──
 

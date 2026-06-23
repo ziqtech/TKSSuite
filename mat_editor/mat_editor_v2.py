@@ -48,6 +48,10 @@ from editor_utils.theme_manager import ThemeManager
 from editor_utils.dock_components import DockHeader, create_dock
 from editor_utils.lzss import lzss_decompress_dat as lzss_decompress
 from editor_utils.ui_helpers import export_csv, confirm_close
+from editor_utils.mod_exporter import (
+    diff_records, diff_text_defines, compute_crc32, generate_mod_json,
+    pack_tksmod, build_data_diff_json, build_text_diff_json, ModMetadataDialog,
+)
 
 # ============================================================
 # 常量
@@ -2042,6 +2046,7 @@ class MatEditorApp(QMainWindow):
         fm.addSeparator()
         fm.addAction("导出场景…", self._export_scene)
         fm.addAction("导入场景…", self._import_scene)
+        fm.addAction("导出为 MOD (.tksmod)…", self._export_tksmod)
         fm.addSeparator()
         fm.addAction("退出", self.close)
 
@@ -4143,6 +4148,10 @@ class MatEditorApp(QMainWindow):
         self._sc_grp_section_count = result.get('sc_grp_section_count', 0)
         self.records = result.get('records', [])
 
+        # 保存原始快照用于 MOD 导出
+        self._original_mat_records = [[r.get(f'd{i}', 0) for i in range(DWORD_COUNT)] for r in self.records]
+        self._original_defunit_recs = [[r.get(f'f{i}', 0) for i in range(8)] for r in self.defunit_recs]
+
         nonempty = sum(1 for r in self.records if has_data(r))
         scenes = set(r['d1'] for r in self.records if has_data(r))
 
@@ -4283,6 +4292,53 @@ class MatEditorApp(QMainWindow):
             return
         self.dat_path = fp
         self._save()
+
+    def _export_tksmod(self):
+        """导出当前修改为 .tksmod MOD 文件 (TKMat + TKDefUnit + TKD 三文件联动)"""
+        if not self.records or not hasattr(self, '_original_mat_records'):
+            QMessageBox.information(self, "提示", "请先加载数据"); return
+        from PySide6.QtWidgets import QDialog
+        dlg = ModMetadataDialog(self, getattr(self, '_last_mod_metadata', None))
+        if dlg.exec() != QDialog.Accepted: return
+        metadata = dlg.get_metadata(); self._last_mod_metadata = metadata
+
+        data_files = {}; components = []
+
+        # TKMat.Dat 差异
+        current_mat = [[r.get(f'd{i}', 0) for i in range(DWORD_COUNT)] for r in self.records]
+        mat_diff = diff_records(self._original_mat_records, current_mat, DWORD_COUNT, len(self._original_mat_records))
+        if mat_diff['modified'] or mat_diff['appended']:
+            crc = compute_crc32(self.dat_path) if self.dat_path else "0x00000000"
+            mat_json = build_data_diff_json(target="TKMat.Dat", record_size=REC_SIZE, field_type="int32",
+                field_count=DWORD_COUNT, original_count=len(self._original_mat_records), original_crc32=crc, diff_result=mat_diff)
+            data_files["data/TKMat.dat.json"] = mat_json
+            components.append({"file": "data/TKMat.dat.json", "target": "TKMat.Dat"})
+
+        # TKDefUnit.Dat 差异
+        if hasattr(self, '_original_defunit_recs') and hasattr(self, 'defunit_recs'):
+            current_du = [[r.get(f'f{i}', 0) for i in range(8)] for r in self.defunit_recs]
+            du_diff = diff_records(self._original_defunit_recs, current_du, 8, len(self._original_defunit_recs))
+            if du_diff['modified'] or du_diff['appended']:
+                du_path = os.path.join(os.path.dirname(self.dat_path), "TKDefUnit.Dat")
+                crc = compute_crc32(du_path) if os.path.exists(du_path) else "0x00000000"
+                du_json = build_data_diff_json(target="TKDefUnit.Dat", record_size=DEFUNIT_REC_SIZE, field_type="uint16",
+                    field_count=8, original_count=len(self._original_defunit_recs), original_crc32=crc, diff_result=du_diff)
+                data_files["data/TKDefUnit.dat.json"] = du_json
+                components.append({"file": "data/TKDefUnit.dat.json", "target": "TKDefUnit.Dat"})
+
+        if not data_files:
+            QMessageBox.information(self, "无差异", "当前数据与原始文件相同，无需导出。"); return
+
+        mod_json = generate_mod_json(metadata, components)
+        fp, _ = QFileDialog.getSaveFileName(self, "导出为 MOD", f"{metadata['id']}.tksmod", "TKS MOD (*.tksmod)")
+        if not fp: return
+        try:
+            pack_tksmod(fp, mod_json, data_files)
+            total = sum(len(v.get('modified', [])) + len(v.get('appended', [])) for v in data_files.values())
+            self.status_var.setText(f"已导出 MOD: {os.path.basename(fp)} ({len(components)}文件, {total}处变更)")
+            QMessageBox.information(self, "导出成功", f"已导出:\n{fp}\n\n包含 {len(components)} 个数据文件")
+        except Exception as e:
+            QMessageBox.critical(self, "导出失败", str(e))
 
     # =========== 脚本编辑 ===========
     def _save_editor_to_define(self):

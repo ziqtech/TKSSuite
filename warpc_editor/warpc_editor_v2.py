@@ -68,6 +68,10 @@ from editor_utils.jvg_loader import load_mu_sprites, get_sprite_pixmap
 from editor_utils.ui_helpers import make_fake_input, update_path_labels, confirm_close, export_csv
 from editor_utils.lzss import lzss_decompress_dat, lzss_compress_dat
 from editor_utils.tkt_loader import load_tkt_simple
+from editor_utils.mod_exporter import (
+    diff_records, compute_crc32, generate_mod_json,
+    pack_tksmod, build_data_diff_json, ModMetadataDialog,
+)
 
 # ── 本地别名: 保持向后兼容 ──
 def lzss_decompress(data): return lzss_decompress_dat(data)
@@ -586,6 +590,7 @@ class WarpcEditorV2(QMainWindow):
 
         self.warpc_path = self.tkt_path = None
         self.records = []; self.tkt = {}
+        self._original_records = []  # 原始快照，用于 MOD 导出
         self.mu_path = None; self._mu_sprites = []; self._icon_pixmaps = {}
         self.skill_names = {}; self._skill_types = {}; self.tkkon_names = {}
         self.item_names = {}; self.item_idx_names = {}; self._idx_to_id = {}; self._id_to_idx = {}
@@ -630,6 +635,7 @@ class WarpcEditorV2(QMainWindow):
         fm.addSeparator()
         fm.addAction("保存\tCtrl+S", self._save)
         fm.addAction("导出 CSV…", self._export_csv)
+        fm.addAction("导出为 MOD (.tksmod)…", self._export_tksmod)
         fm.addSeparator(); fm.addAction("退出", self.close)
 
         em = mb.addMenu("编辑(&E)")
@@ -1013,6 +1019,8 @@ class WarpcEditorV2(QMainWindow):
 
         try:
             self.records = load_warpc(self.warpc_path); self._dirty = False
+            # 保存原始快照用于 MOD 导出差异比对
+            self._original_records = [list(r['fields']) for r in self.records]
             self.skill_names, self._skill_types = self._load_skill_names()
             self.tkkon_names = self._load_tkkon_names()
             self.item_names, self.item_idx_names, self._idx_to_id, self._id_to_idx = self._load_item_names()
@@ -1642,6 +1650,85 @@ class WarpcEditorV2(QMainWindow):
 
         if export_csv(self, self.records, hdr, row_func, "WarPC.csv"):
             self.status_var.setText("已导出 CSV")
+
+    def _export_tksmod(self):
+        """导出当前修改为 .tksmod MOD 文件"""
+        if not self.records or not self._original_records:
+            QMessageBox.information(self, "提示", "请先加载数据"); return
+
+        # 收集 MOD 元数据
+        dlg = ModMetadataDialog(self, getattr(self, '_last_mod_metadata', None))
+        if dlg.exec() != QDialog.Accepted:
+            return
+        metadata = dlg.get_metadata()
+        self._last_mod_metadata = metadata
+
+        # 计算差异
+        current_fields = [r['fields'] for r in self.records]
+        diff_result = diff_records(
+            self._original_records, current_fields,
+            WARPC_FIELD_COUNT, len(self._original_records)
+        )
+
+        # 检查是否有差异
+        if not diff_result['modified'] and not diff_result['appended']:
+            QMessageBox.information(self, "无差异", "当前数据与原始文件相同，无需导出。")
+            return
+
+        # 计算原始文件 CRC32
+        crc = compute_crc32(self.warpc_path) if self.warpc_path else "0x00000000"
+
+        # 构建数据差异 JSON
+        data_json = build_data_diff_json(
+            target="WarPC.dat",
+            record_size=WARPC_REC,
+            field_type="int16",
+            field_count=WARPC_FIELD_COUNT,
+            original_count=len(self._original_records),
+            original_crc32=crc,
+            diff_result=diff_result,
+        )
+
+        # 构建 ID 范围
+        id_ranges = {}
+        if diff_result['appended']:
+            min_idx = min(r['index'] for r in diff_result['appended'])
+            max_idx = max(r['index'] for r in diff_result['appended'])
+            id_ranges["warpc"] = {"start": min_idx, "end": max_idx}
+
+        # WarPC 扩展需求
+        warpc_expand = 0
+        if len(self.records) > WARPC_ORIG_COUNT:
+            warpc_expand = len(self.records)
+
+        metadata["id_ranges"] = id_ranges
+        metadata["warpc_expand"] = warpc_expand
+
+        # 组件列表
+        components = [{"file": "data/WarPC.dat.json", "target": "WarPC.dat"}]
+
+        # 生成 mod.json
+        mod_json = generate_mod_json(metadata, components)
+
+        # 选择保存路径
+        default_name = f"{metadata['id']}.tksmod"
+        fp, _ = QFileDialog.getSaveFileName(
+            self, "导出为 MOD", default_name, "TKS MOD (*.tksmod)")
+        if not fp:
+            return
+
+        # 打包
+        data_files = {"data/WarPC.dat.json": data_json}
+        try:
+            pack_tksmod(fp, mod_json, data_files)
+            n_mod = len(diff_result['modified'])
+            n_app = len(diff_result['appended'])
+            self.status_var.setText(f"已导出 MOD: {os.path.basename(fp)} (修改{n_mod}条, 追加{n_app}条)")
+            QMessageBox.information(self, "导出成功",
+                f"已导出 MOD 文件:\n{fp}\n\n"
+                f"修改记录: {n_mod} 条\n追加记录: {n_app} 条")
+        except Exception as e:
+            QMessageBox.critical(self, "导出失败", str(e))
 
     # ── 帮助 ──
     def _show_field_ref(self):

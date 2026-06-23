@@ -56,6 +56,10 @@ from editor_utils.picker_dialogs import (
 from editor_utils.ui_helpers import make_fake_input, update_path_labels, confirm_close, export_csv
 from editor_utils.lzss import lzss_decompress_dat, lzss_compress_dat
 from editor_utils.tkt_loader import load_tkt_simple
+from editor_utils.mod_exporter import (
+    diff_records, compute_crc32, generate_mod_json,
+    pack_tksmod, build_data_diff_json, ModMetadataDialog,
+)
 
 # ── 本地别名: 保持向后兼容 ──
 def lzss_decompress(data): return lzss_decompress_dat(data)
@@ -475,6 +479,7 @@ class ItemEditorApp(QMainWindow):
 
         self.item_path = self.tkt_path = self.skill_path = self.mu_path = None
         self.records = []; self.tkt = {}; self.tkt_full = {}; self.skill_names = {}
+        self._original_records = []  # 原始快照，用于 MOD 导出
         self._mu_sprites = []; self._icon_pixmaps = {}
         self.filtered_indices = []; self._dirty = False; self._editing_idx = None
         self._sort_reverse = False
@@ -511,6 +516,7 @@ class ItemEditorApp(QMainWindow):
         fm.addSeparator()
         fm.addAction("保存\tCtrl+S", self._save)
         fm.addAction("导出 CSV…", self._export_csv)
+        fm.addAction("导出为 MOD (.tksmod)…", self._export_tksmod)
         fm.addSeparator(); fm.addAction("退出", self.close)
         em = mb.addMenu("编辑(&E)")
         em.addAction("新建物品 (填充空槽)\tCtrl+N", self._new_item)
@@ -816,6 +822,7 @@ class ItemEditorApp(QMainWindow):
             self._icon_pixmaps.clear()
         try:
             self.records = load_items(self.item_path); self._dirty = False
+            self._original_records = [[rec[k] for k, _, _, _, _, _ in ALL_FIELDS] for rec in self.records]
             self.status_var.setText(f"{len(self.records)} 条 | TKT {len(self.tkt)} 条 | 技能 {len(self.skill_names)} 条")
         except Exception as e:
             QMessageBox.critical(self, "加载失败", str(e)); self.records = []
@@ -1273,6 +1280,35 @@ class ItemEditorApp(QMainWindow):
             return [str(rec['index'])] + [str(rec[fn]) for fn, _, _, _, _, _ in ALL_FIELDS]
         if export_csv(self, self.records, hdr, row_func, "TKItem.csv"):
             self.status_var.setText("已导出 CSV")
+
+    def _export_tksmod(self):
+        """导出当前修改为 .tksmod MOD 文件"""
+        if not self.records or not self._original_records:
+            QMessageBox.information(self, "提示", "请先加载数据"); return
+        from PySide6.QtWidgets import QDialog
+        dlg = ModMetadataDialog(self, getattr(self, '_last_mod_metadata', None))
+        if dlg.exec() != QDialog.Accepted: return
+        metadata = dlg.get_metadata(); self._last_mod_metadata = metadata
+
+        current_fields = [[rec[k] for k, _, _, _, _, _ in ALL_FIELDS] for rec in self.records]
+        field_count = len(ALL_FIELDS)
+        diff_result = diff_records(self._original_records, current_fields, field_count, len(self._original_records))
+        if not diff_result['modified'] and not diff_result['appended']:
+            QMessageBox.information(self, "无差异", "当前数据与原始文件相同，无需导出。"); return
+
+        crc = compute_crc32(self.item_path) if self.item_path else "0x00000000"
+        data_json = build_data_diff_json(target="TKItem.dat", record_size=64, field_type="int16",
+            field_count=field_count, original_count=len(self._original_records), original_crc32=crc, diff_result=diff_result)
+        mod_json = generate_mod_json(metadata, [{"file": "data/TKItem.dat.json", "target": "TKItem.dat"}])
+        fp, _ = QFileDialog.getSaveFileName(self, "导出为 MOD", f"{metadata['id']}.tksmod", "TKS MOD (*.tksmod)")
+        if not fp: return
+        try:
+            pack_tksmod(fp, mod_json, {"data/TKItem.dat.json": data_json})
+            n_mod = len(diff_result['modified']); n_app = len(diff_result['appended'])
+            self.status_var.setText(f"已导出 MOD: {os.path.basename(fp)} (修改{n_mod}条, 追加{n_app}条)")
+            QMessageBox.information(self, "导出成功", f"已导出:\n{fp}\n\n修改: {n_mod} 条\n追加: {n_app} 条")
+        except Exception as e:
+            QMessageBox.critical(self, "导出失败", str(e))
 
     # ── 帮助 ──
     def _show_field_ref(self):

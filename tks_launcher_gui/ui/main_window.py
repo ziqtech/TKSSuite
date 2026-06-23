@@ -10,6 +10,7 @@ from PySide6.QtGui import QIcon
 
 from core.config_loader import load_config, PatchDef
 from ui.patch_list import PatchListWidget
+from ui.mod_list import ModListWidget
 from ui.log_console import LogConsole
 from ui.game_overlay import GameOverlay
 from workers.patcher_worker import PatcherWorker
@@ -68,8 +69,17 @@ class MainWindow(QMainWindow):
         splitter = QSplitter(Qt.Horizontal)
         self.setCentralWidget(splitter)
 
+        # 左侧面板: 补丁列表 + MOD 列表（垂直分割）
+        left_splitter = QSplitter(Qt.Vertical)
+
         self.patch_list = PatchListWidget(self._patches)
-        splitter.addWidget(self.patch_list)
+        left_splitter.addWidget(self.patch_list)
+
+        self.mod_list = ModListWidget("mods")
+        left_splitter.addWidget(self.mod_list)
+
+        left_splitter.setSizes([300, 300])
+        splitter.addWidget(left_splitter)
 
         self.log_console = LogConsole()
         splitter.addWidget(self.log_console)

@@ -88,6 +88,9 @@ from editor_utils.ui_helpers import make_fake_input, update_path_labels, confirm
 from editor_utils.lzss import lzss_decompress_stream as lzss_decompress
 from editor_utils.rgb565 import rgb565_to_rgba
 from editor_utils.tkt_loader import load_tkt_simple
+from editor_utils.mod_exporter import (
+    compute_crc32, generate_mod_json, pack_tksmod, ModMetadataDialog,
+)
 
 HAS_PIL = False
 try:
@@ -469,6 +472,7 @@ class WarDataEditorV2(QMainWindow):
         fm.addSeparator()
         fm.addAction("保存\tCtrl+S", self._save)
         fm.addAction("另存为…", self._save_as)
+        fm.addAction("导出为 MOD (.tksmod)…", self._export_tksmod)
         fm.addSeparator()
         fm.addAction("退出", self.close)
 
@@ -793,6 +797,71 @@ class WarDataEditorV2(QMainWindow):
 
     def _show_about(self):
         QMessageBox.about(self, "关于", "WarData.dat 可视化编辑器 v2.0\n\nPySide6 版本\n基于游戏逆向工程 (TKS.exe 反编译)")
+
+    def _export_tksmod(self):
+        """导出当前修改为 .tksmod MOD 文件（WarData 完整记录级差异）"""
+        if not self.records:
+            QMessageBox.information(self, "提示", "请先加载数据"); return
+        from PySide6.QtWidgets import QDialog
+        dlg = ModMetadataDialog(self, getattr(self, '_last_mod_metadata', None))
+        if dlg.exec() != QDialog.Accepted: return
+        metadata = dlg.get_metadata(); self._last_mod_metadata = metadata
+
+        # WarData 使用完整记录的 _raw 字节比对
+        # 重新加载原始数据进行比对
+        if not self.wardata_path:
+            QMessageBox.warning(self, "错误", "无法确定原始文件路径"); return
+        original = load_wardata(self.wardata_path)
+        self._apply_current_edit()
+
+        modified = []
+        for i in range(min(len(original), len(self.records))):
+            if original[i]['_raw'] != self.records[i]['_raw']:
+                # 记录所有非零/变化的字段
+                rec = self.records[i]
+                fields = {}
+                for key in ['flags', 'battle_name_id', 'map_id', 'battle_turn_limit',
+                            'lv_spread_lo', 'lv_spread_hi']:
+                    fields[key] = rec[key]
+                for key in ['must_chars', 'enemy_ids', 'enemy_lv', 'enemy_power',
+                            'enemy_lv_range', 'enemy_xy', 'ally_xy', 'enemy_delay',
+                            'ally_facing', 'trap_xy', 'trap_pwr', 'trea_sub',
+                            'trea_quant', 'trap_type', 'enemy_flags']:
+                    fields[key] = rec[key]
+                modified.append({"index": i, "fields": fields})
+
+        appended = []
+        for i in range(len(original), len(self.records)):
+            rec = self.records[i]
+            fields = {}
+            for key in ['flags', 'battle_name_id', 'map_id', 'battle_turn_limit',
+                        'lv_spread_lo', 'lv_spread_hi']:
+                fields[key] = rec[key]
+            for key in ['must_chars', 'enemy_ids', 'enemy_lv', 'enemy_power',
+                        'enemy_lv_range', 'enemy_xy', 'ally_xy', 'enemy_delay',
+                        'ally_facing', 'trap_xy', 'trap_pwr', 'trea_sub',
+                        'trea_quant', 'trap_type', 'enemy_flags']:
+                fields[key] = rec[key]
+            appended.append({"index": i, "fields": fields})
+
+        if not modified and not appended:
+            QMessageBox.information(self, "无差异", "当前数据与原始文件相同，无需导出。"); return
+
+        crc = compute_crc32(self.wardata_path)
+        data_json = {
+            "target": "WarData.dat", "record_size": WAR_REC_SIZE,
+            "field_type": "structured", "original_count": len(original),
+            "original_crc32": crc, "modified": modified, "appended": appended
+        }
+        mod_json = generate_mod_json(metadata, [{"file": "data/WarData.dat.json", "target": "WarData.dat"}])
+        fp, _ = QFileDialog.getSaveFileName(self, "导出为 MOD", f"{metadata['id']}.tksmod", "TKS MOD (*.tksmod)")
+        if not fp: return
+        try:
+            pack_tksmod(fp, mod_json, {"data/WarData.dat.json": data_json})
+            self.status_var.setText(f"已导出 MOD: {os.path.basename(fp)} (修改{len(modified)}条, 追加{len(appended)}条)")
+            QMessageBox.information(self, "导出成功", f"已导出:\n{fp}\n\n修改: {len(modified)} 条\n追加: {len(appended)} 条")
+        except Exception as e:
+            QMessageBox.critical(self, "导出失败", str(e))
 
     def closeEvent(self, event):
         if not confirm_close(self, self._dirty):
