@@ -34,6 +34,8 @@ from editor_utils.theme_manager import ThemeManager
 from editor_utils.dock_components import DockHeader, create_dock
 from editor_utils.mod_exporter import (
     compute_crc32, generate_mod_json, pack_tksmod, ModMetadataDialog,
+    ask_reference_directory, diff_binary_blocks, build_block_diff_json,
+    load_jvg_raw_blocks,
 )
 
 JVG_MAGIC = b"@JVG"; JVM_MAGIC = b"@JVM"
@@ -915,23 +917,64 @@ class JVGEditor(QMainWindow):
             QMessageBox.critical(self, "保存失败", str(e))
 
     def _export_tksmod(self):
-        """导出当前 JVG 为 .tksmod 资源替换 MOD"""
+        """导出 JVG 为 .tksmod — 块级增量（仅导出修改过的精灵块）"""
         if not self.jvg or not self.jvg.filepath:
             QMessageBox.information(self, "提示", "请先打开 JVG 文件"); return
+
+        # 选择参考目录（原始游戏目录）
+        ref_dir = ask_reference_directory(self, "选择原始游戏目录 (作为精灵块比对参考)")
+        if not ref_dir: return
+
+        target_name = os.path.basename(self.jvg.filepath)
+        ref_path = os.path.join(ref_dir, target_name)
+        if not os.path.isfile(ref_path):
+            QMessageBox.warning(self, "参考文件不存在", f"在 {ref_dir} 中未找到 {target_name}"); return
+
+        # 加载参考文件的原始块
+        ref_blocks = load_jvg_raw_blocks(ref_path)
+        if ref_blocks is None:
+            QMessageBox.warning(self, "参考文件无效", f"{target_name} 不是有效的 JVG 文件"); return
+
+        # 先保存当前编辑到临时文件获取当前块数据
+        import tempfile
+        tmp_path = tempfile.mktemp(suffix='.jvg')
+        try:
+            save_jvg(self.jvg, tmp_path)
+            cur_blocks = load_jvg_raw_blocks(tmp_path)
+        finally:
+            if os.path.exists(tmp_path): os.remove(tmp_path)
+
+        if cur_blocks is None:
+            QMessageBox.warning(self, "错误", "无法序列化当前 JVG 数据"); return
+
+        # 计算块级差异
+        diff_result = diff_binary_blocks(ref_blocks, cur_blocks)
+        if not diff_result['modified'] and not diff_result['appended'] and not diff_result['deleted_indices']:
+            QMessageBox.information(self, "无差异", "当前 JVG 与参考文件相同，无需导出。"); return
+
+        # MOD 元数据
         from PySide6.QtWidgets import QDialog
         dlg = ModMetadataDialog(self, getattr(self, '_last_mod_metadata', None))
         if dlg.exec() != QDialog.Accepted: return
         metadata = dlg.get_metadata(); self._last_mod_metadata = metadata
         metadata["type"] = "visual"
 
-        target_name = os.path.basename(self.jvg.filepath)
-        mod_json = generate_mod_json(metadata, [],
-            resources=[{"file": f"resources/{target_name}", "target": target_name}])
+        # 构建数据文件
+        crc = compute_crc32(ref_path)
+        data_json = build_block_diff_json(target=target_name, block_type="jvm_block",
+            original_count=len(ref_blocks), original_crc32=crc, diff_result=diff_result)
+        internal_path = f"data/{target_name}.json"
+        components = [{"file": internal_path, "target": target_name}]
+        mod_json = generate_mod_json(metadata, components)
+
         fp, _ = QFileDialog.getSaveFileName(self, "导出为 MOD", f"{metadata['id']}.tksmod", "TKS MOD (*.tksmod)")
         if not fp: return
         try:
-            pack_tksmod(fp, mod_json, {}, resource_files={f"resources/{target_name}": self.jvg.filepath})
-            self.statusBar().showMessage(f"已导出 MOD: {os.path.basename(fp)}", 3000)
+            pack_tksmod(fp, mod_json, {internal_path: data_json})
+            n_mod = len(diff_result['modified']); n_app = len(diff_result['appended'])
+            self.statusBar().showMessage(f"已导出 MOD: {os.path.basename(fp)} (修改{n_mod}块, 新增{n_app}块)", 5000)
+            QMessageBox.information(self, "导出成功",
+                f"已导出 (块级增量):\n{fp}\n\n参考: {ref_path}\n修改: {n_mod} 个精灵块\n新增: {n_app} 个精灵块")
         except Exception as e:
             QMessageBox.critical(self, "导出失败", str(e))
 

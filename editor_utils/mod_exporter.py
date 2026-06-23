@@ -492,3 +492,156 @@ def load_reference_tkt_entries(ref_dir: str) -> dict[int, str] | None:
         return None
     from .tkt_loader import load_tkt_simple
     return load_tkt_simple(fp, full_strip=True)
+
+
+# ═══════════════════════════════════════════════════════════════
+# 块级增量: JVG / GRP 二进制资源
+# ═══════════════════════════════════════════════════════════════
+
+import base64
+
+
+def diff_binary_blocks(original_blocks: list[bytes], current_blocks: list[bytes]
+                       ) -> dict:
+    """对比二进制块列表，返回修改/新增的块索引及其 base64 编码数据。
+
+    用于 JVG (@JVM块) 和 GRP (区段) 的增量导出。
+    每个块作为整体单元比较——如果内容不同则整块替换。
+
+    Args:
+        original_blocks: 原始文件中各块的原始字节
+        current_blocks: 当前编辑后各块的原始字节
+
+    Returns:
+        {
+          "modified": [{"index": i, "data_b64": "..."}, ...],
+          "appended": [{"index": i, "data_b64": "..."}, ...],
+          "deleted_indices": [i, ...]
+        }
+    """
+    modified = []
+    appended = []
+    deleted_indices = []
+
+    # 比对已有块
+    for i in range(min(len(original_blocks), len(current_blocks))):
+        if original_blocks[i] != current_blocks[i]:
+            modified.append({
+                "index": i,
+                "data_b64": base64.b64encode(current_blocks[i]).decode('ascii'),
+            })
+
+    # 新增块
+    for i in range(len(original_blocks), len(current_blocks)):
+        appended.append({
+            "index": i,
+            "data_b64": base64.b64encode(current_blocks[i]).decode('ascii'),
+        })
+
+    # 删除块（当前比原始少）
+    for i in range(len(current_blocks), len(original_blocks)):
+        deleted_indices.append(i)
+
+    return {"modified": modified, "appended": appended, "deleted_indices": deleted_indices}
+
+
+def build_block_diff_json(target: str, block_type: str, original_count: int,
+                          original_crc32: str, diff_result: dict) -> dict:
+    """构建块级增量 JSON 结构。
+
+    Args:
+        target: 目标文件名 (如 "Cha.JVG")
+        block_type: "jvm_block" | "grp_section"
+        original_count: 原始块/段数量
+        original_crc32: 原始文件 CRC32
+        diff_result: diff_binary_blocks() 返回值
+    """
+    return {
+        "target": target,
+        "patch_type": "block_diff",
+        "block_type": block_type,
+        "original_count": original_count,
+        "original_crc32": original_crc32,
+        "modified": diff_result.get("modified", []),
+        "appended": diff_result.get("appended", []),
+        "deleted_indices": diff_result.get("deleted_indices", []),
+    }
+
+
+def load_jvg_raw_blocks(filepath: str) -> list[bytes] | None:
+    """加载 JVG 文件中每个 @JVM 块的原始字节数据（含块头）。
+
+    Returns:
+        [block0_bytes, block1_bytes, ...] 或 None
+    """
+    import struct as _struct
+    if not os.path.isfile(filepath):
+        return None
+    with open(filepath, 'rb') as f:
+        data = f.read()
+    if len(data) < 32 or data[:4] != b'@JVG':
+        return None
+
+    block_count = _struct.unpack_from('<I', data, 8)[0]
+    blocks = []
+    off = 32  # 跳过 @JVG 文件头
+
+    for _ in range(block_count):
+        if off + 32 > len(data) or data[off:off+4] != b'@JVM':
+            break
+        sprite_count = _struct.unpack_from('<I', data, off + 4)[0]
+        data_size = _struct.unpack_from('<I', data, off + 12)[0]
+        # 块总大小 = 块头(32B) + 偏移表((sprite_count+1)*4) + 调色板(512B) + 数据(data_size)
+        block_size = 32 + (sprite_count + 1) * 4 + 512 + data_size
+        block_bytes = data[off:off + block_size]
+        blocks.append(block_bytes)
+        off += block_size
+
+    return blocks
+
+
+def load_grp_raw_sections(filepath: str, idx_path: str | None = None
+                          ) -> list[bytes] | None:
+    """加载 GRP 文件中每个区段的原始字节数据。
+
+    Returns:
+        [section0_bytes, section1_bytes, ...] 或 None
+    """
+    import struct as _struct
+    if not os.path.isfile(filepath):
+        return None
+
+    with open(filepath, 'rb') as f:
+        data = f.read()
+
+    # 尝试找 IDX 文件
+    if idx_path is None:
+        from pathlib import Path
+        for ext in ['.IDX', '.idx']:
+            candidate = str(Path(filepath).with_suffix(ext))
+            if os.path.exists(candidate):
+                idx_path = candidate
+                break
+
+    if not idx_path or not os.path.isfile(idx_path):
+        return None
+
+    with open(idx_path, 'rb') as f:
+        idx_data = f.read()
+
+    if len(idx_data) < 8 or len(idx_data) % 4 != 0:
+        return None
+
+    offsets = [_struct.unpack_from('<I', idx_data, i)[0]
+               for i in range(0, len(idx_data), 4)]
+
+    sections = []
+    for i in range(len(offsets) - 1):
+        start = offsets[i]
+        end = offsets[i + 1]
+        if start <= end <= len(data):
+            sections.append(data[start:end])
+        else:
+            sections.append(b'')
+
+    return sections

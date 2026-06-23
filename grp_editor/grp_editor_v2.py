@@ -49,6 +49,8 @@ from editor_utils.lzss import (lzss_decompress_stream as _lzss_decompress_stream
 from editor_utils.rgb565 import rgb565_to_rgba, rgba_to_rgb565
 from editor_utils.mod_exporter import (
     compute_crc32, generate_mod_json, pack_tksmod, ModMetadataDialog,
+    ask_reference_directory, diff_binary_blocks, build_block_diff_json,
+    load_grp_raw_sections,
 )
 
 # ── 本地别名: 保持向后兼容 ──
@@ -698,30 +700,71 @@ class GRPEditor(QMainWindow):
         except Exception as e: QMessageBox.critical(self, "保存失败", str(e))
 
     def _export_tksmod(self):
-        """导出当前 GRP 为 .tksmod 资源替换 MOD"""
+        """导出 GRP 为 .tksmod — 区段级增量（仅导出修改过的区段）"""
         if not self.grp or not self.grp.filepath:
             QMessageBox.information(self, "提示", "请先打开 GRP 文件"); return
+
+        # 选择参考目录
+        ref_dir = ask_reference_directory(self, "选择原始游戏目录 (作为区段比对参考)")
+        if not ref_dir: return
+
+        target_name = os.path.basename(self.grp.filepath)
+        ref_path = os.path.join(ref_dir, target_name)
+        if not os.path.isfile(ref_path):
+            QMessageBox.warning(self, "参考文件不存在", f"在 {ref_dir} 中未找到 {target_name}"); return
+
+        # 查找参考 IDX
+        ref_idx = None
+        from pathlib import Path
+        for ext in ['.IDX', '.idx']:
+            c = str(Path(ref_path).with_suffix(ext))
+            if os.path.exists(c): ref_idx = c; break
+
+        ref_sections = load_grp_raw_sections(ref_path, ref_idx)
+        if ref_sections is None:
+            QMessageBox.warning(self, "参考文件无效", f"无法解析 {target_name} 的区段结构（需要配套 IDX 文件）"); return
+
+        # 保存当前到临时文件获取当前区段
+        import tempfile
+        tmp_grp = tempfile.mktemp(suffix='.grp')
+        tmp_idx = tempfile.mktemp(suffix='.idx')
+        try:
+            save_grp(self.grp, tmp_grp, tmp_idx)
+            cur_sections = load_grp_raw_sections(tmp_grp, tmp_idx)
+        finally:
+            for p in [tmp_grp, tmp_idx]:
+                if os.path.exists(p): os.remove(p)
+
+        if cur_sections is None:
+            QMessageBox.warning(self, "错误", "无法序列化当前 GRP 数据"); return
+
+        # 计算区段级差异
+        diff_result = diff_binary_blocks(ref_sections, cur_sections)
+        if not diff_result['modified'] and not diff_result['appended'] and not diff_result['deleted_indices']:
+            QMessageBox.information(self, "无差异", "当前 GRP 与参考文件相同，无需导出。"); return
+
+        # MOD 元数据
         from PySide6.QtWidgets import QDialog
         dlg = ModMetadataDialog(self, getattr(self, '_last_mod_metadata', None))
         if dlg.exec() != QDialog.Accepted: return
         metadata = dlg.get_metadata(); self._last_mod_metadata = metadata
         metadata["type"] = "visual"
 
-        target_name = os.path.basename(self.grp.filepath)
-        resources_list = [{"file": f"resources/{target_name}", "target": target_name}]
-        resource_files = {f"resources/{target_name}": self.grp.filepath}
-        # 如果有 IDX 文件也一起打包
-        if self.grp.idx_path and os.path.isfile(self.grp.idx_path):
-            idx_name = os.path.basename(self.grp.idx_path)
-            resources_list.append({"file": f"resources/{idx_name}", "target": idx_name})
-            resource_files[f"resources/{idx_name}"] = self.grp.idx_path
+        crc = compute_crc32(ref_path)
+        data_json = build_block_diff_json(target=target_name, block_type="grp_section",
+            original_count=len(ref_sections), original_crc32=crc, diff_result=diff_result)
+        internal_path = f"data/{target_name}.json"
+        components = [{"file": internal_path, "target": target_name}]
+        mod_json = generate_mod_json(metadata, components)
 
-        mod_json = generate_mod_json(metadata, [], resources=resources_list)
         fp, _ = QFileDialog.getSaveFileName(self, "导出为 MOD", f"{metadata['id']}.tksmod", "TKS MOD (*.tksmod)")
         if not fp: return
         try:
-            pack_tksmod(fp, mod_json, {}, resource_files=resource_files)
-            self._status_lbl.setText(f"已导出 MOD: {Path(fp).name}")
+            pack_tksmod(fp, mod_json, {internal_path: data_json})
+            n_mod = len(diff_result['modified']); n_app = len(diff_result['appended'])
+            self._status_lbl.setText(f"已导出 MOD: {Path(fp).name} (修改{n_mod}区段, 新增{n_app}区段)")
+            QMessageBox.information(self, "导出成功",
+                f"已导出 (区段级增量):\n{fp}\n\n参考: {ref_path}\n修改: {n_mod} 个区段\n新增: {n_app} 个区段")
         except Exception as e:
             QMessageBox.critical(self, "导出失败", str(e))
 

@@ -67,6 +67,7 @@ from editor_utils.ui_helpers import (
 )
 from editor_utils.mod_exporter import (
     compute_crc32, generate_mod_json, pack_tksmod, ModMetadataDialog,
+    ask_reference_directory, diff_binary_blocks, build_block_diff_json,
 )
 
 HAS_PIL = False
@@ -3014,24 +3015,63 @@ class ActEditorV2(QMainWindow):
         self.status_var.setText(f"已导出: {fp}")
 
     def _export_tksmod(self):
-        """导出当前修改为 .tksmod MOD 文件 (TKAct.dat 资源完整替换模式)"""
+        """导出 TKAct.dat 为 .tksmod — 记录级增量（仅导出修改过的动画条目）"""
         if not self.entries or not self.act_path:
             QMessageBox.information(self, "提示", "请先加载数据"); return
+
+        # 选择参考目录
+        ref_dir = ask_reference_directory(self, "选择原始游戏目录 (作为动画数据比对参考)")
+        if not ref_dir: return
+
+        ref_path = os.path.join(ref_dir, "TKAct.dat")
+        if not os.path.isfile(ref_path):
+            QMessageBox.warning(self, "参考文件不存在", f"在 {ref_dir} 中未找到 TKAct.dat"); return
+
+        # 加载参考文件
+        try:
+            ref_entries = load_act(ref_path)
+        except Exception as e:
+            QMessageBox.warning(self, "参考文件无效", str(e)); return
+
+        # 按记录整体字节比对（每条 784B 作为一个块）
+        def entry_to_bytes(entry):
+            buf = bytearray(ACT_ENTRY_SIZE)
+            for d in range(4):
+                buf[d*8:d*8+8] = bytes(v & 0xFF for v in entry['dirs'][d])
+            struct.pack_into('<24h', buf, ACT_PARAM_OFFSET, *entry['param16'])
+            for s in range(ACT_MAX_LAYER):
+                lo = (s+1) * ACT_LAYER_SIZE
+                struct.pack_into('<40h', buf, lo, *entry['layers'][s])
+            struct.pack_into('<32h', buf, ACT_TAIL_OFFSET, *entry['tail'])
+            return bytes(buf)
+
+        ref_blocks = [entry_to_bytes(e) for e in ref_entries]
+        cur_blocks = [entry_to_bytes(e) for e in self.entries]
+
+        diff_result = diff_binary_blocks(ref_blocks, cur_blocks)
+        if not diff_result['modified'] and not diff_result['appended']:
+            QMessageBox.information(self, "无差异", "当前动画数据与参考文件相同，无需导出。"); return
+
+        # MOD 元数据
         from PySide6.QtWidgets import QDialog
         dlg = ModMetadataDialog(self, getattr(self, '_last_mod_metadata', None))
         if dlg.exec() != QDialog.Accepted: return
         metadata = dlg.get_metadata(); self._last_mod_metadata = metadata
 
-        # TKAct.dat 作为资源完整替换（非 LZSS 定长文件，差异追踪代价高）
-        crc = compute_crc32(self.act_path)
-        mod_json = generate_mod_json(metadata, [],
-            resources=[{"file": "resources/TKAct.dat", "target": "TKAct.dat"}])
+        crc = compute_crc32(ref_path)
+        data_json = build_block_diff_json(target="TKAct.dat", block_type="act_entry",
+            original_count=len(ref_entries), original_crc32=crc, diff_result=diff_result)
+        components = [{"file": "data/TKAct.dat.json", "target": "TKAct.dat"}]
+        mod_json = generate_mod_json(metadata, components)
+
         fp, _ = QFileDialog.getSaveFileName(self, "导出为 MOD", f"{metadata['id']}.tksmod", "TKS MOD (*.tksmod)")
         if not fp: return
         try:
-            pack_tksmod(fp, mod_json, {}, resource_files={"resources/TKAct.dat": self.act_path})
-            self.status_var.setText(f"已导出 MOD: {os.path.basename(fp)}")
-            QMessageBox.information(self, "导出成功", f"已导出 (资源替换模式):\n{fp}")
+            pack_tksmod(fp, mod_json, {"data/TKAct.dat.json": data_json})
+            n_mod = len(diff_result['modified']); n_app = len(diff_result['appended'])
+            self.status_var.setText(f"已导出 MOD: {os.path.basename(fp)} (修改{n_mod}条, 新增{n_app}条)")
+            QMessageBox.information(self, "导出成功",
+                f"已导出 (记录级增量):\n{fp}\n\n参考: {ref_path}\n修改: {n_mod} 条动画记录\n新增: {n_app} 条")
         except Exception as e:
             QMessageBox.critical(self, "导出失败", str(e))
 
