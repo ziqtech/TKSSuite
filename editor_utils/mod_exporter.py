@@ -920,6 +920,8 @@ def get_tksmod_info(mod_path: str) -> dict | None:
         "conflicts": mod_json.get("conflicts", []),
         "id_ranges": mod_json.get("id_ranges", {}),
         "warpc_expand": mod_json.get("warpc_expand", 0),
+        "scene_scope": mod_json.get("scene_scope", []),
+        "scene_name": mod_json.get("scene_name", ""),
         "components": mod_json.get("components", []),
         "resources": mod_json.get("resources", []),
         "targets": targets,

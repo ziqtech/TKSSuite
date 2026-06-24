@@ -1582,6 +1582,42 @@ def load_scene_background(sc_grp_path, sc_idx_path, scene_id):
         return None
 
 
+def load_scene_background_from_bytes(section_data: bytes):
+    """从原始 GRP section 字节数据直接解码场景背景图。
+    用于从内存中的 _sc_grp_pending 数据渲染场景。"""
+    if not section_data or len(section_data) < 12:
+        return None
+    try:
+        _grp_dir = os.path.normpath(os.path.join(os.path.dirname(__file__), '..', 'grp_editor'))
+        if _grp_dir not in sys.path: sys.path.insert(0, _grp_dir)
+        from grp_editor import lzss_decompress as grp_lzss_decompress
+    except ImportError:
+        return None
+
+    try:
+        w, h, comp_a, comp_b = struct.unpack_from('<HHII', section_data, 0)
+        if w <= 0 or h <= 0 or w > 4096 or h > 4096:
+            return None
+        if 12 + comp_a + comp_b > len(section_data):
+            return None
+        # 解压 frame A: 前4字节为未压缩大小，其余为 LZSS 数据
+        fa_data = section_data[12:12 + comp_a]
+        if len(fa_data) < 4:
+            return None
+        uncomp_sz = struct.unpack_from('<I', fa_data, 0)[0]
+        lzss_data = fa_data[4:]
+        target_size = w * h * 2
+        pixels = grp_lzss_decompress(lzss_data, min(uncomp_sz, target_size))
+        if len(pixels) < target_size:
+            pixels = pixels + b'\x00' * (target_size - len(pixels))
+
+        from PIL import Image
+        img = Image.frombytes('RGB', (w, h), pixels[:target_size], 'raw', 'BGR;16')
+        return img
+    except Exception:
+        return None
+
+
 # ============================================================
 # PIL → QPixmap 转换工具
 # ============================================================
@@ -3671,7 +3707,18 @@ class MatEditorApp(QMainWindow):
 
         # Background PIL Image
         self._vis_bg_pil = None
-        if self.dat_path:
+        # 优先从内存中的 _sc_grp_pending 加载背景（MOD 导入后尚未保存的数据）
+        if self._sc_grp_pending is not None and 0 <= sid < len(self._sc_grp_pending):
+            section_bytes = self._sc_grp_pending[sid]
+            if section_bytes:
+                try:
+                    bg = load_scene_background_from_bytes(section_bytes)
+                    if bg:
+                        self._vis_bg_pil = bg
+                except Exception:
+                    pass
+        # 回退到从磁盘文件加载
+        if self._vis_bg_pil is None and self.dat_path:
             d = os.path.dirname(self.dat_path)
             grp_path = os.path.join(d, "SC.GRP")
             idx_path = os.path.join(d, "SC.IDX")
@@ -4260,8 +4307,11 @@ class MatEditorApp(QMainWindow):
         self.scene_tree.addTopLevelItems(scene_items)
         self.scene_tree.blockSignals(False)
         self.scene_tree.setUpdatesEnabled(True)
+        # 阻止 combo 信号，避免 clear/addItems 触发 _on_vis_combo_select 导致 _vis_scene_id 被意外修改
+        self._vis_scene_combo.blockSignals(True)
         self._vis_scene_combo.clear()
         self._vis_scene_combo.addItems(combo_vals)
+        self._vis_scene_combo.blockSignals(False)
 
     # =========== 场景列表/实体列表 ===========
     def _vis_scene_tree_to_combo(self):
@@ -4551,13 +4601,11 @@ class MatEditorApp(QMainWindow):
         mat_entries = []
         for eidx in scene_entity_indices:
             rec = self.records[eidx]
+            # 导出所有字段（含零值），确保导入时能完整覆盖目标槽位
             fields = {}
             for fi in range(DWORD_COUNT):
-                val = rec.get(f'd{fi}', 0)
-                if val != 0:
-                    fields[f"f{fi}"] = val
-            if fields:
-                mat_entries.append({"index": eidx, "fields": fields})
+                fields[f"f{fi}"] = rec.get(f'd{fi}', 0)
+            mat_entries.append({"index": eidx, "fields": fields})
 
         if mat_entries:
             crc = compute_crc32(self.dat_path) if self.dat_path else "0x00000000"
@@ -4575,13 +4623,11 @@ class MatEditorApp(QMainWindow):
             for du_idx in sorted(all_defunit_indices):
                 du = find_du(du_idx)
                 if du:
+                    # 导出所有字段（含零值）
                     fields = {}
                     for fi in range(8):
-                        val = du.get(f'f{fi}', 0)
-                        if val != 0:
-                            fields[f"f{fi}"] = val
-                    if fields:
-                        du_entries.append({"index": du_idx, "fields": fields})
+                        fields[f"f{fi}"] = du.get(f'f{fi}', 0)
+                    du_entries.append({"index": du_idx, "fields": fields})
 
             if du_entries:
                 du_path = os.path.join(os.path.dirname(self.dat_path), "TKDefUnit.Dat")
@@ -4780,8 +4826,38 @@ class MatEditorApp(QMainWindow):
 
         # 导入 SC.GRP（只存入内存，等用户保存时才写入文件）
         if has_sc:
-            _, sc_blocks = import_tksmod_blocks(fp, ref_dir, "SC.GRP", block_type="grp_section")
+            # 先加载原始块列表，再应用diff
+            from editor_utils.mod_exporter import load_grp_raw_sections
+            ref_sc_path = os.path.join(ref_dir, "SC.GRP")
+            sc_blocks = load_grp_raw_sections(ref_sc_path)
             if sc_blocks is not None:
+                # 检查 scene_scope 中是否有超出原始范围的场景索引
+                scene_scope = info.get('scene_scope', [])
+                if scene_scope:
+                    max_idx = max(scene_scope)
+                    # 扩展 sc_blocks 数组以容纳最大索引
+                    while len(sc_blocks) <= max_idx:
+                        sc_blocks.append(b'')  # 空区段占位
+                
+                # 现在应用 diff
+                import zipfile, json, base64 as b64
+                with zipfile.ZipFile(fp, 'r') as zf:
+                    mod_json = json.loads(zf.read('mod.json'))
+                    sc_diff_data = None
+                    for comp in mod_json.get('components', []):
+                        if comp.get('target') == 'SC.GRP':
+                            internal = comp.get('file', '')
+                            if internal:
+                                sc_diff_data = json.loads(zf.read(internal))
+                                break
+                
+                if sc_diff_data:
+                    for entry in sc_diff_data.get('modified', []):
+                        idx = entry.get('index', -1)
+                        data_b64 = entry.get('data_b64', '')
+                        if 0 <= idx < len(sc_blocks) and data_b64:
+                            sc_blocks[idx] = b64.b64decode(data_b64)
+                
                 self._sc_grp_pending = sc_blocks
                 self._sc_grp_section_count = len(sc_blocks)
                 imported_parts.append(f"SC.GRP ({len(sc_blocks)}区段, 待保存)")
@@ -4804,6 +4880,31 @@ class MatEditorApp(QMainWindow):
 
         self._apply_filter()
         self._vis_populate_scenes()
+
+        # 自动跳转到导入的场景 (scene_scope)
+        scene_scope = info.get('scene_scope', [])
+        if scene_scope:
+            target_sid = scene_scope[0]
+        else:
+            target_sid = self._vis_scene_id  # 保持原场景
+
+        if target_sid is not None and target_sid >= 0:
+            self._vis_scene_id = target_sid
+            # 同步 combo 和 tree 的选中状态（阻止信号避免触发 _on_vis_combo_select）
+            self._vis_scene_combo.blockSignals(True)
+            for i in range(self._vis_scene_combo.count()):
+                if self._vis_scene_combo.itemText(i).startswith(f"{target_sid}:"):
+                    self._vis_scene_combo.setCurrentIndex(i)
+                    break
+            self._vis_scene_combo.blockSignals(False)
+            self.scene_tree.blockSignals(True)
+            for i in range(self.scene_tree.topLevelItemCount()):
+                item = self.scene_tree.topLevelItem(i)
+                if item and item.text(0) == str(target_sid):
+                    self.scene_tree.setCurrentItem(item)
+                    break
+            self.scene_tree.blockSignals(False)
+
         self._vis_load_scene()
         self.status_var.setText(
             f"已导入 MOD: {info.get('name', '')} v{info.get('version', '')} | "
