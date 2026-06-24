@@ -484,14 +484,18 @@ def load_reference_dat_fields(ref_dir: str, dat_name: str, rec_size: int,
 def load_reference_tkt_entries(ref_dir: str) -> dict[int, str] | None:
     """从参考目录加载 TKT.dat 的全部文本条目。
 
+    使用 load_tkt_full 进行完整解码（含控制标签），确保与编辑器内部表示一致，
+    避免因解码方式不同导致 diff 误判。
+
     Returns:
         {text_id: text_content, ...} 或 None (文件不存在)
     """
     fp = os.path.join(ref_dir, "TKT.dat")
     if not os.path.isfile(fp):
         return None
-    from .tkt_loader import load_tkt_simple
-    return load_tkt_simple(fp, full_strip=True)
+    from .tkt_loader import load_tkt_full
+    entries = load_tkt_full(fp)
+    return {e['id']: e['text'] for e in entries}
 
 
 # ═══════════════════════════════════════════════════════════════
