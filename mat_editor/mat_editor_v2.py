@@ -53,6 +53,7 @@ from editor_utils.mod_exporter import (
     pack_tksmod, build_data_diff_json, build_text_diff_json, ModMetadataDialog,
     ask_reference_directory, load_reference_dat_fields,
     get_tksmod_info, import_tksmod_records, import_tksmod_text_defines,
+    import_tksmod_blocks,
     ModImportPreviewDialog,
     diff_binary_blocks, build_block_diff_json, load_grp_raw_sections,
 )
@@ -1940,6 +1941,7 @@ class MatEditorApp(QMainWindow):
         self._vis_edit_mode = False  # 编辑开关: 默认关闭(禁止拖动)
         self._undo_pos = None  # 单步撤销: (entity_idx, old_x, old_y)
         self._sc_grp_section_count = 0
+        self._sc_grp_pending = None  # 待保存的 SC.GRP 数据 (list[bytes])，仅在保存时写入文件
         self.item_names = {}
         self._ani_jvg = None
         self._cha_jvg = None
@@ -4275,8 +4277,12 @@ class MatEditorApp(QMainWindow):
         self._save_editor_to_define()
         du_p = os.path.join(d, "TKDefUnit.Dat")
         tkd_p = os.path.join(d, "TKD.dat")
+        has_sc_pending = self._sc_grp_pending is not None
         files_msg = f"TKMat.Dat: {self.dat_path}\nTKDefUnit.Dat: {du_p}\nTKD.dat: {tkd_p}"
-        if QMessageBox.question(self, "确认保存 — 将写入以下 3 个文件", files_msg, QMessageBox.Ok | QMessageBox.Cancel) != QMessageBox.Ok:
+        if has_sc_pending:
+            files_msg += f"\nSC.GRP: {os.path.join(d, 'SC.GRP')}\nSC.IDX: {os.path.join(d, 'SC.IDX')}"
+        file_count = 5 if has_sc_pending else 3
+        if QMessageBox.question(self, f"确认保存 — 将写入以下 {file_count} 个文件", files_msg, QMessageBox.Ok | QMessageBox.Cancel) != QMessageBox.Ok:
             return
         errors = []
         try:
@@ -4292,12 +4298,31 @@ class MatEditorApp(QMainWindow):
             save_tkd(tkd_p, tkd_text)
         except Exception as e:
             errors.append(f"TKD.dat: {e}")
+        # 保存待写入的 SC.GRP/SC.IDX
+        if has_sc_pending:
+            try:
+                grp_path = os.path.join(d, "SC.GRP")
+                idx_path = os.path.join(d, "SC.IDX")
+                offsets = []
+                grp_data = bytearray()
+                for section in self._sc_grp_pending:
+                    offsets.append(len(grp_data))
+                    grp_data.extend(section)
+                offsets.append(len(grp_data))  # 末尾哨兵
+                with open(grp_path, 'wb') as f:
+                    f.write(bytes(grp_data))
+                with open(idx_path, 'wb') as f:
+                    for off in offsets:
+                        f.write(struct.pack('<I', off))
+                self._sc_grp_pending = None  # 已写入，清除待保存标记
+            except Exception as e:
+                errors.append(f"SC.GRP/IDX: {e}")
         if errors:
             QMessageBox.critical(self, "保存失败", '\n'.join(errors))
         else:
             self._dirty = False
             self._script_dirty = False
-            self.status_var.setText("已保存 — 3 个文件")
+            self.status_var.setText(f"已保存 — {file_count} 个文件")
 
     def _save_as(self):
         fp, _ = QFileDialog.getSaveFileName(self, "另存 TKMat.Dat", "", "DAT 文件 (*.Dat *.dat);;所有文件 (*.*)")
@@ -4679,9 +4704,10 @@ class MatEditorApp(QMainWindow):
         has_mat = "TKMat.Dat" in targets
         has_du = "TKDefUnit.Dat" in targets
         has_tkd = "TKD.dat" in targets
-        if not has_mat and not has_du and not has_tkd:
+        has_sc = "SC.GRP" in targets
+        if not has_mat and not has_du and not has_tkd and not has_sc:
             QMessageBox.warning(self, "不兼容",
-                "此 MOD 不包含 TKMat/TKDefUnit/TKD 的数据\n\n"
+                "此 MOD 不包含 TKMat/TKDefUnit/TKD/SC.GRP 的数据\n\n"
                 f"包含的数据: {', '.join(targets)}"); return
 
         from PySide6.QtWidgets import QDialog
@@ -4752,11 +4778,19 @@ class MatEditorApp(QMainWindow):
                 # 刷新脚本编辑器
                 self._current_edit_define_id = None
 
+        # 导入 SC.GRP（只存入内存，等用户保存时才写入文件）
+        if has_sc:
+            _, sc_blocks = import_tksmod_blocks(fp, ref_dir, "SC.GRP", block_type="grp_section")
+            if sc_blocks is not None:
+                self._sc_grp_pending = sc_blocks
+                self._sc_grp_section_count = len(sc_blocks)
+                imported_parts.append(f"SC.GRP ({len(sc_blocks)}区段, 待保存)")
+
         if not imported_parts:
             QMessageBox.warning(self, "导入失败",
                 "无法导入任何数据。\n请确认参考目录中包含有效的游戏文件"); return
 
-        self._dirty = False
+        self._dirty = bool(has_sc)  # 有 SC.GRP 待保存则标记为 dirty
         self._last_mod_metadata = {
             "id": info.get("id", ""),
             "name": info.get("name", ""),
@@ -4769,6 +4803,8 @@ class MatEditorApp(QMainWindow):
         }
 
         self._apply_filter()
+        self._vis_populate_scenes()
+        self._vis_load_scene()
         self.status_var.setText(
             f"已导入 MOD: {info.get('name', '')} v{info.get('version', '')} | "
             f"{', '.join(imported_parts)}")
