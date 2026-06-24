@@ -1,8 +1,10 @@
 """补丁应用引擎 — 从 tks_launcher.py 提取 & 重组"""
+import os
+import json
 import struct
 from typing import List, Dict, Optional
 from .memory import (
-    i32b, b2i32, b2u16, bhex,
+    i32b, i16b, b2i32, b2u16, bhex,
     read_pm, write_pm, vp_ex,
     replace_addr_in_bytes,
     PROCESS_VM_READ, PROCESS_VM_WRITE, PROCESS_VM_OPERATION,
@@ -214,11 +216,120 @@ def apply_cave_hook(defn: PatchDef, hits: List[int], code_buf: bytearray,
     return ptd > 0
 
 # ============================================================
+# 补丁类型: patch_summon_table (召唤表自定义)
+# 逆向依据: sub_444BB0 召唤角色选择; stru_4EB6F0 区域 .data 8字节 (技能224~231)
+#           + sub_444BB0 内 3 处 imm16 立即数 (技能222/251_a/251_b)
+# JSON 值为 WarPC 索引 (= i+36), 写入时换算 i = WarPC-36
+# ============================================================
+
+def apply_summon_table(defn: PatchDef, code_buf: bytearray, code_start_addr: int,
+                       base_addr: int, h_proc: int, variables: Dict[str, int],
+                       log_func=None) -> bool:
+    log = log_func or (lambda x: None)
+    all_ok = True
+
+    # Step 0: 读取召唤表 JSON
+    if not defn.json_file or not os.path.isfile(defn.json_file):
+        log(f"    [WARN] 召唤表 JSON 不存在: {defn.json_file!r}, 跳过")
+        return True
+    try:
+        with open(defn.json_file, 'r', encoding='utf-8') as f:
+            summon = json.load(f)
+    except Exception as e:
+        log(f"  [ERROR] 解析召唤表 JSON 失败: {e}")
+        return False
+    log(f"    JSON: {len(summon)} 个键")
+
+    # Step 1: WarPC 记录数上限 (用于值域校验)
+    rec_size = variables.get("warpc_rec_size", 1054)
+    new_size = variables.get("warpc_new_size", 150722)
+    max_count = new_size // rec_size if rec_size > 0 else 143
+
+    def _warpc_i(warpc_idx, imm16):
+        if not isinstance(warpc_idx, (int,)):
+            return None, f"非整数: {warpc_idx!r}"
+        if warpc_idx < 36 or warpc_idx >= max_count:
+            return None, f"WarPC索引 {warpc_idx} 越界 (36..{max_count-1})"
+        i = warpc_idx - 36
+        limit = 65535 if imm16 else 255
+        if i < 0 or i > limit:
+            return None, f"i值 {i} 越界 (0..{limit})"
+        return i, None
+
+    # Step 2: 写 .data 8 字节 (技能 224~231) — .data 段通常 PAGE_READWRITE
+    if defn.data_rva and defn.data_keys:
+        tbl_abs = base_addr + defn.data_rva
+        tbl_off = defn.data_rva - 0x1000
+        if tbl_off < 0 or tbl_off + 8 > len(code_buf):
+            log(f"  [ERROR] .data 偏移越界")
+            all_ok = False
+        else:
+            cur = bytearray(code_buf[tbl_off:tbl_off + 8])
+            changed = False
+            for k, key in enumerate(defn.data_keys):
+                if key not in summon:
+                    continue
+                i, err = _warpc_i(summon[key], imm16=False)
+                if err:
+                    log(f"    [WARN] {key}: {err}, 跳过")
+                    continue
+                if cur[k] != (i & 0xFF):
+                    log(f"    {key}: i {cur[k]}->{i & 0xFF} (WarPC {cur[k]+36}->{summon[key]})")
+                    changed = True
+                cur[k] = i & 0xFF
+            if changed:
+                nw = write_pm(h_proc, tbl_abs, bytes(cur))
+                code_buf[tbl_off:tbl_off + 8] = bytes(cur)
+                log(f"    [OK] .data @0x{tbl_abs:08X} 写入{nw}/{len(cur)}字节")
+                if nw != len(cur):
+                    all_ok = False
+            else:
+                log(f"    -> .data 与默认值一致")
+
+    # Step 3: 写代码段 imm16 — 自开进程句柄写入，不依赖传入的 h_proc
+    _pid = variables.get("_target_pid", 0)
+    if not _pid:
+        log("  [WARN] 缺少 target_pid, 跳过 imm16 补丁")
+        return all_ok
+    _hp = _OpenProcess(PROCESS_VM_READ | PROCESS_VM_WRITE | PROCESS_VM_OPERATION,
+                        False, _pid)
+    if not _hp:
+        log(f"  [WARN] OpenProcess(PID={_pid}) 失败, 跳过 imm16 补丁")
+        return all_ok
+
+    for site in defn.code_addrs:
+        key = site.get("key", "")
+        rva_str = site.get("rva", "")
+        if not key or not rva_str:
+            continue
+        rva = int(rva_str, 16) if isinstance(rva_str, str) else int(rva_str)
+        abs_addr = base_addr + rva
+        if key not in summon:
+            continue
+        i, err = _warpc_i(summon[key], imm16=True)
+        if err:
+            log(f"    [WARN] {key}: {err}, 跳过")
+            continue
+        imm = i16b(i)
+        nw = write_pm(_hp, abs_addr, imm)
+        if nw == 2:
+            log(f"    [OK] {key} i={i} @abs 0x{abs_addr:08X}")
+        else:
+            log(f"  [FAIL] {key}: WriteProcessMemory 失败 @abs 0x{abs_addr:08X}")
+            all_ok = False
+        cb_off = abs_addr - code_start_addr
+        if 0 <= cb_off + 2 <= len(code_buf):
+            code_buf[cb_off:cb_off + 2] = imm
+
+    _CloseHandle(_hp)
+    return all_ok
+
+# ============================================================
 # 配置补丁编排
 # ============================================================
 
 def apply_config_patches(config: PatchConfig, code_buf: bytearray, code_start_addr: int,
-                          h_proc: int, warpc_base: int, cave_addr: int,
+                          base_addr: int, h_proc: int, warpc_base: int, cave_addr: int,
                           variables: Dict[str, int], log_func=None,
                           minimal_mode=False, no_cave_mode=False,
                           only_portrait=False, only_awk=False,
@@ -260,6 +371,9 @@ def apply_config_patches(config: PatchConfig, code_buf: bytearray, code_start_ad
                 all_ok &= apply_patch_imm32_by_pattern(defn, code_buf, code_start_addr, h_proc, variables, log_func=log)
         elif defn.type == "patch_warpc_addr":
             log(f"    -> 由 WarPC 扩展流程处理 (base=0x{warpc_base:08X})")
+        elif defn.type == "patch_summon_table":
+            all_ok &= apply_summon_table(defn, code_buf, code_start_addr, base_addr,
+                                          h_proc, variables, log_func=log)
         else:
             log(f"  [WARN] 未知补丁类型: {defn.type}")
 

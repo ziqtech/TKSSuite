@@ -322,11 +322,11 @@ def inject_warpc_data(child_pid: int, warpc_base: int, expanded: bool, log_func=
     for i in range(cnt):
         bo = i * WARPC_REC_SIZE
         w260 = b2u16(dec, bo + 520)
-        if w260:
-            write_mem16(hp, warpc_base + bo + 520, w260); wc += 1
+        if w260 and write_mem16(hp, warpc_base + bo + 520, w260):
+            wc += 1
         w261 = b2u16(dec, bo + 522)
-        if w261:
-            write_mem16(hp, WARPC_BASE + bo + 522, w261); pc += 1
+        if w261 and write_mem16(hp, WARPC_BASE + bo + 522, w261):
+            pc += 1
 
     _CloseHandle(hp)
     log(f"  Data inject: {wc} W260, {pc} W261")

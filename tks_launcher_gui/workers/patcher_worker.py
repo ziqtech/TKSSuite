@@ -23,7 +23,7 @@ from core.scanner import parse_pattern, pattern_scan, discover_warpc_base
 from core.config_loader import load_config
 from core.patch_engine import (
     apply_config_patches,
-    patch_4c33fc, patch_41c120, patch_archive_portrait, patch_gold_display,
+    patch_4c33fc, patch_41c120, patch_gold_display,
 )
 from core.warpc_expander import (
     WARPC_BASE, WARPC_REC_SIZE, WARPC_ORIG_COUNT, WARPC_ORIG_SIZE,
@@ -50,7 +50,8 @@ class PatcherWorker(QThread):
     def __init__(self, exe_path: str, game_dir: str | None = None,
                  wait_timeout: int = 30, minimal_mode: bool = False,
                  no_cave_mode: bool = False, only_portrait: bool = False,
-                 only_awk: bool = False, selected_patches: set = None):
+                 only_awk: bool = False, selected_patches: set = None,
+                 enabled_mod_ids: set = None):
         super().__init__()
         self.exe_path = exe_path
         self.game_dir = game_dir
@@ -60,6 +61,7 @@ class PatcherWorker(QThread):
         self.only_portrait = only_portrait
         self.only_awk = only_awk
         self.selected_patches = selected_patches
+        self.enabled_mod_ids = enabled_mod_ids
         self._is_running = True
 
     def _log(self, msg: str):
@@ -120,7 +122,17 @@ class PatcherWorker(QThread):
         mods_dir = os.path.join(exe_dir, "mods")
         self._log(f"\n=== MOD 加载 ({mods_dir}) ===")
         loaded_mods = scan_mods(mods_dir, log_func=self._log)
+        # 按 UI 勾选状态过滤: 仅启用勾选的 MOD，未勾选的跳过
         if loaded_mods:
+            if self.enabled_mod_ids is not None:
+                skipped = []
+                for m in loaded_mods:
+                    m.enabled = m.mod_id in self.enabled_mod_ids
+                    if not m.enabled:
+                        skipped.append(m.mod_id)
+                if skipped:
+                    self._log(f"  用户取消勾选 {len(skipped)} 个 MOD: {', '.join(skipped)}")
+            # resolve_dependencies 内部按 m.enabled 过滤，未勾选的自动跳过
             sorted_mods = resolve_dependencies(loaded_mods, log_func=self._log)
             conflicts = detect_conflicts(sorted_mods, log_func=self._log)
             if conflicts:
@@ -246,7 +258,10 @@ class PatcherWorker(QThread):
         self._log(f"  模块大小: 0x{mod_size:X} ({mod_size} bytes)")
 
         code_start = base_addr + 0x1000
-        code_size = min(mod_size - 0x1000, 0x700000 - code_start)
+        # 安全上限 3MB: 过大会触及 BSS 未映射页导致 ReadProcessMemory 整体失败
+        code_size = mod_size - 0x1000 if mod_size > 0x1000 else 0
+        if code_size > 0x300000:
+            code_size = 0x300000
         code_buf = bytearray(code_size)
         hr = _OpenProcess(PROCESS_VM_READ, False, target_pid)
         if not hr:
@@ -337,23 +352,22 @@ class PatcherWorker(QThread):
 
         # 应用配置补丁
         self._log("\n=== 应用配置补丁 (模式扫描) ===")
-        hp = _OpenProcess(PROCESS_VM_READ | PROCESS_VM_WRITE | PROCESS_VM_OPERATION, False, target_pid)
+        config.variables["_target_pid"] = target_pid
         ok = False
-        if hp:
-            try:
-                ok = apply_config_patches(
-                    config, code_buf, code_start, hp,
-                    warpc_base_for_caves if warpc_base_for_caves else discovered_base,
-                    cave_addr, config.variables, log_func=self._log,
-                    minimal_mode=self.minimal_mode, no_cave_mode=self.no_cave_mode,
-                    only_portrait=self.only_portrait, only_awk=self.only_awk,
-                    selected_patches=self.selected_patches,
-                )
-            except Exception as ex:
-                self._log(f"[ERROR] ApplyConfigPatches 异常: {ex}")
-                import traceback
-                self._log(traceback.format_exc())
-            _CloseHandle(hp)
+        try:
+            ok = apply_config_patches(
+                config, code_buf, code_start, base_addr, hp,
+                warpc_base_for_caves if warpc_base_for_caves else discovered_base,
+                cave_addr, config.variables, log_func=self._log,
+                minimal_mode=self.minimal_mode, no_cave_mode=self.no_cave_mode,
+                only_portrait=self.only_portrait, only_awk=self.only_awk,
+                selected_patches=self.selected_patches,
+            )
+        except Exception as ex:
+            self._log(f"[ERROR] ApplyConfigPatches 异常: {ex}")
+            import traceback
+            self._log(traceback.format_exc())
+        _CloseHandle(hp)
 
         # WarPC 代码引用修补
         if not self.minimal_mode and _warpc_expanded and _warpc_new_buf:
@@ -364,12 +378,11 @@ class PatcherWorker(QThread):
                 log_func=self._log,
             )
 
-        # [补丁十二~十四、十七] 运行时动态修补
-        archive_cave = cave_addr + 192 if cave_addr else 0
+        # [补丁十二~十三、十七] 运行时动态修补
+        # 注: patch_archive_portrait 已移除 (与 config cave_hook 冲突导致卡死)
         if not self.minimal_mode:
             patch_4c33fc(target_pid, base_addr, log_func=self._log)
             patch_41c120(target_pid, base_addr, log_func=self._log)
-            patch_archive_portrait(target_pid, base_addr, archive_cave, log_func=self._log)
             patch_gold_display(target_pid, base_addr, log_func=self._log)
             inject_warpc_data(target_pid, discovered_base, _warpc_expanded, log_func=self._log)
 

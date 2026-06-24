@@ -150,6 +150,7 @@ class MainWindow(QMainWindow):
             wait_timeout=30,
             minimal_mode=False,
             selected_patches=self.patch_list.get_selected_patches(),
+            enabled_mod_ids={m.mod_id for m in self.mod_list.get_enabled_mods()},
         )
 
         self._worker.log_emitted.connect(self.log_console.append_log)

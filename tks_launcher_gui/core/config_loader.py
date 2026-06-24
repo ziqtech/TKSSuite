@@ -23,6 +23,11 @@ class PatchDef:
     hook_expect_count: int = 0
     value_scan: bool = False
     optional: bool = False
+    # patch_summon_table 专用字段
+    json_file: str = ""                       # 召唤表 JSON 路径 (load_config 解析为绝对路径)
+    data_rva: int = 0                         # .data 召唤表 8 字节的 RVA
+    data_keys: List[str] = field(default_factory=list)   # .data 8 字节顺序对应的 JSON 键名
+    code_addrs: List[Dict] = field(default_factory=list)  # 代码段 imm16 直接地址写入 [{rva, key}]
     _pre_scanned_hits: List[int] = field(default_factory=list, repr=False)
 
 @dataclass
@@ -94,6 +99,14 @@ def load_config(path: str, log_func=None) -> Optional[PatchConfig]:
             d.hook_expect_count = pr.get("hook_expect_count", 0)
             d.value_scan = pr.get("value_scan", False)
             d.optional = pr.get("optional", False)
+            # patch_summon_table 字段
+            jf = pr.get("json_file", "")
+            if jf and not os.path.isabs(jf):
+                jf = os.path.join(os.path.dirname(path), jf)
+            d.json_file = jf
+            d.data_rva = _parse_maybe_hex(pr.get("data_rva", 0))
+            d.data_keys = list(pr.get("data_keys", []))
+            d.code_addrs = list(pr.get("code_addrs", []))
             if "replace" in pr:
                 for rk, rv in pr["replace"].items():
                     d.replace[rk] = _parse_replace_val(rv)

@@ -202,10 +202,12 @@ def vp_ex(h_proc: int, addr: int, size: int, newp: int) -> int:
     _VirtualProtectEx(h_proc, ctypes.c_void_p(addr), size, newp, ctypes.byref(old))
     return old.value
 
-def write_mem16(h_proc: int, addr: int, val: int):
+def write_mem16(h_proc: int, addr: int, val: int) -> bool:
+    """写 2 字节到进程内存，返回是否成功"""
     old = vp_ex(h_proc, addr, 2, PAGE_EXECUTE_READWRITE)
-    write_pm(h_proc, addr, i16b(val))
+    nw = write_pm(h_proc, addr, i16b(val))
     vp_ex(h_proc, addr, 2, old)
+    return nw == 2
 
 def replace_addr_in_bytes(data: bytearray, old_addr: int, new_addr: int):
     """替换字节数组中所有 4 字节 LE 地址"""
