@@ -16,6 +16,7 @@ from ui.patch_list import PatchListWidget
 from ui.mod_list import ModListWidget
 from ui.log_console import LogConsole
 from ui.game_overlay import GameOverlay
+from ui.mod_packer_dialog import ModPackerDialog
 from workers.patcher_worker import PatcherWorker
 
 # 确定启动器根目录（打包 exe 或开发模式）
@@ -67,6 +68,11 @@ class MainWindow(QMainWindow):
         self.btn_start.setObjectName("btnStart")
         self.btn_start.clicked.connect(self._on_start)
         toolbar.addWidget(self.btn_start)
+
+        self.btn_pack = QPushButton("📦 MOD 打包")
+        self.btn_pack.setToolTip("将多个 .tksmod 文件合并为一个 MOD 包")
+        self.btn_pack.clicked.connect(self._on_pack_mod)
+        toolbar.addWidget(self.btn_pack)
 
         self.btn_theme = QPushButton("🌗 切换主题")
         self.btn_theme.clicked.connect(self._toggle_theme)
@@ -179,6 +185,14 @@ class MainWindow(QMainWindow):
             self.status_bar.showMessage(f"失败: {err}")
             self.status_label.setStyleSheet("color: #E06C75; font-weight: bold;")
             self.status_label.setText("❌ 补丁应用失败")
+
+    def _on_pack_mod(self):
+        """打开 MOD 打包器对话框"""
+        mods_dir = os.path.join(_LAUNCHER_DIR, "mods")
+        dialog = ModPackerDialog(mods_dir=mods_dir, parent=self)
+        dialog.exec()
+        # 打包完成后刷新 MOD 列表
+        self.mod_list.refresh_mods()
 
     def closeEvent(self, event):
         if self._worker and self._worker.isRunning():

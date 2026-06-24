@@ -2,7 +2,7 @@
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
     QTableWidget, QTableWidgetItem, QAbstractItemView, QTextEdit,
-    QHeaderView,
+    QHeaderView, QSplitter,
 )
 from PySide6.QtCore import Qt
 
@@ -34,7 +34,12 @@ class ModListWidget(QWidget):
         content = QWidget()
         body = QVBoxLayout(content)
         body.setContentsMargins(0, 0, 0, 0)
-        body.setSpacing(4)
+        body.setSpacing(0)
+
+        # 表格 + 详情 用垂直分割, 详情高度可拖动调整
+        split = QSplitter(Qt.Vertical)
+        split.setHandleWidth(4)
+        split.setChildrenCollapsible(False)
 
         # 表格
         self._table = QTableWidget(0, len(_COLUMNS))
@@ -55,14 +60,19 @@ class ModListWidget(QWidget):
         self._table.setColumnWidth(_COL_NAME, 140)
         self._table.setColumnWidth(_COL_ID, 100)
         self._table.setColumnWidth(_COL_AUTHOR, 100)
-        body.addWidget(self._table, 1)
+        split.addWidget(self._table)
 
         # 详情
         self._detail = QTextEdit()
         self._detail.setReadOnly(True)
-        self._detail.setMaximumHeight(72)
+        self._detail.setMinimumHeight(40)
         self._detail.setPlaceholderText("选中 MOD 查看详情")
-        body.addWidget(self._detail)
+        split.addWidget(self._detail)
+
+        split.setStretchFactor(0, 1)
+        split.setStretchFactor(1, 0)
+        split.setSizes([1000, 72])
+        body.addWidget(split)
 
         # DockHeader 右侧操作按钮
         header_row = QHBoxLayout()
