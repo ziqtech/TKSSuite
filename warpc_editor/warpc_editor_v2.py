@@ -50,7 +50,7 @@ Tab 分区 (按字段索引顺序排列):
   python warpc_editor_v2.py
 """
 
-import struct, os, sys, csv
+import struct, os, sys, csv, json
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QSplitter, QTableWidget, QTableWidgetItem, QHeaderView,
@@ -158,9 +158,17 @@ MOVE_FLAG_BITS = [
 FLAG_DEFS = {'special_flag': ("特殊能力标志", COMBAT_FLAG_BITS), 'move_flags': ("移动特殊标志", MOVE_FLAG_BITS)}
 
 USE_RIGHT_DEFS = {
-    'use_right_item': ("道具使用权限", [(1,"战斗","可在战斗中"),(2,"非战斗","可在非战斗"),(4,"主角限定","仅主角可用")]),
-    'use_right_weapon': ("武器装备权限", [(1,"刀",""),(2,"剑",""),(4,"枪",""),(8,"矛",""),(16,"弓",""),(32,"大刀",""),(64,"戟",""),(128,"锤","")]),
-    'use_right_armor': ("防具装备权限", [(1,"衣袍",""),(2,"铠甲","")]),
+    'use_right_medicine': ("药品使用权限", [(1,"战斗"),(2,"非战斗")]),
+    'use_right_item': ("道具使用权限", [(1,"战斗"),(2,"非战斗"),(4,"主角限定")]),
+    'use_right_weapon': ("武器装备权限", [(1,"刀"),(2,"剑"),(4,"枪"),(8,"矛"),(16,"弓"),(32,"大刀"),(64,"戟"),(128,"锤")]),
+    'use_right_armor': ("防具装备权限", [(1,"衣袍"),(2,"铠甲")]),
+    'use_right_accessory': ("饰品使用权限", [(0,"通用")]),
+}
+# 页面号 → 权限字段名 (与 item_editor standard_config.json 的页面号语义一致)
+# 页面 0=药品 1=道具 2=武器 3=防具 4=饰品 5=特殊; 5=特殊在 WarPC 中无对应字段，故不映射
+USE_RIGHT_PAGE_TO_FIELD = {
+    0: 'use_right_medicine', 1: 'use_right_item', 2: 'use_right_weapon',
+    3: 'use_right_armor', 4: 'use_right_accessory',
 }
 
 SKILL_LEARN_COUNT = 344
@@ -458,21 +466,38 @@ class FlagsDialog(QDialog):
 class UseRightDialog(QDialog):
     def __init__(self, parent, title, opts, current_val):
         super().__init__(parent)
-        self.setWindowTitle(title); self.resize(360, 60+max(len(opts),2)*32)
+        self.setWindowTitle(title); self.resize(360, 90+max(len(opts),2)*32)
         self.opts = opts; self.vars = []
         layout = QVBoxLayout(self)
-        for bit, name, desc in opts:
-            cb = QCheckBox(f"{name}" + (f" ({desc})" if desc else ""))
-            cb.setChecked(bool(current_val & bit)); self.vars.append((bit, cb))
-            layout.addWidget(cb)
+        # 手动输入框: MOD 可能使用超出内置预定义的位掩码，允许直接输入任意数值
+        manual_row = QHBoxLayout()
+        manual_row.addWidget(QLabel("当前值:"))
+        self.manual_edit = QLineEdit(str(current_val & 0xFFFF))
+        self.manual_edit.setPlaceholderText("可直接输入任意数值 (含 MOD 扩展位)")
+        manual_row.addWidget(self.manual_edit, 1)
+        layout.addLayout(manual_row)
+        for bit, name in opts:
+            cb = QCheckBox(f"{name}")
+            cb.setChecked(bool(current_val & bit))
+            cb.toggled.connect(self._sync_from_boxes)
+            self.vars.append((bit, cb)); layout.addWidget(cb)
         bl = QHBoxLayout()
         bl.addWidget(QPushButton("全选", clicked=lambda: [v.setChecked(True) for _,v in self.vars]))
         bl.addWidget(QPushButton("全清", clicked=lambda: [v.setChecked(False) for _,v in self.vars]))
         bl.addStretch(); bl.addWidget(QPushButton("取消", clicked=self.reject))
         bl.addWidget(QPushButton("确定", clicked=self.accept)); layout.addLayout(bl)
 
-    def get_value(self):
+    def _sync_from_boxes(self):
+        """勾选框变动时同步到手动输入框"""
         m = sum(bit for bit, cb in self.vars if cb.isChecked())
+        self.manual_edit.setText(str(m))
+
+    def get_value(self):
+        try:
+            m = int(self.manual_edit.text().strip() or 0)
+        except ValueError:
+            m = sum(bit for bit, cb in self.vars if cb.isChecked())
+        m &= 0xFFFF
         return m if m < 0x8000 else m - 0x10000
 
 class TkkonPickerDialog(QDialog):
@@ -602,6 +627,8 @@ class WarpcEditorV2(QMainWindow):
         self._status_resist_widgets = []; self._skill_learn_widgets = []
         self._skill_effect_widgets = []; self._skill_effect_name_labels = []
         self._fa_sprites = []; self._fa_photos = {}
+        # 使用权限定义运行时副本 (可由 文件→自定义使用权限配置 整项替换)
+        self._use_right_defs = {k: (t, list(o)) for k, (t, o) in USE_RIGHT_DEFS.items()}
 
         self._build_ui(); self._set_edit_enabled(False); self._apply_theme()
 
@@ -641,6 +668,8 @@ class WarpcEditorV2(QMainWindow):
         fm.addAction("导出为 MOD (指定参考目录)…", self._export_tksmod_with_ref)
         fm.addSeparator()
         fm.addAction("导入 MOD (.tksmod)…", self._import_tksmod)
+        fm.addSeparator()
+        fm.addAction("自定义使用权限配置…", self._load_use_right_config)
         fm.addSeparator(); fm.addAction("退出", self.close)
 
         em = mb.addMenu("编辑(&E)")
@@ -1305,12 +1334,12 @@ class WarpcEditorV2(QMainWindow):
                 sel = [name for bit, name, _ in bits if mask & (1<<bit)]
                 self._edit_extras[fn].setText(", ".join(sel) if sel else "(无)")
 
-        for fn in USE_RIGHT_DEFS:
+        for fn in self._use_right_defs:
             if fn in self._edit_extras and fn in self._edit_vars:
                 try: val = int(self._edit_vars[fn].text())
                 except: val = 0
-                _, opts = USE_RIGHT_DEFS[fn]; mask = val & 0xFFFF
-                sel = [name for bit, name, _ in opts if (mask & bit)]
+                _, opts = self._use_right_defs[fn]; mask = val & 0xFFFF
+                sel = [name for bit, name in opts if (mask & bit)]
                 self._edit_extras[fn].setText(", ".join(sel) if sel else "(无)")
 
         for fn, *rest in STATUS_FIELDS_CAUSE:
@@ -1384,8 +1413,8 @@ class WarpcEditorV2(QMainWindow):
                 self._edit_extras[fn].setText(", ".join(sel) if sel else "(无)")
 
     def _pick_use_right(self, fn):
-        if fn not in USE_RIGHT_DEFS: return
-        title, opts = USE_RIGHT_DEFS[fn]
+        if fn not in self._use_right_defs: return
+        title, opts = self._use_right_defs[fn]
         try: cur = int(self._edit_vars[fn].text() or 0)
         except: cur = 0
         dlg = UseRightDialog(self, title, opts, cur & 0xFFFF)
@@ -1394,8 +1423,48 @@ class WarpcEditorV2(QMainWindow):
             self._edit_vars[fn].setText(str(val))
             if fn in self._edit_extras:
                 mask = val & 0xFFFF
-                sel = [name for bit, name, _ in opts if (mask & bit)]
+                sel = [name for bit, name in opts if (mask & bit)]
                 self._edit_extras[fn].setText(", ".join(sel) if sel else "(无)")
+
+    # ── 自定义使用权限配置 ──
+    def _load_use_right_config(self):
+        """从 JSON 文件加载自定义使用权限选项，整项替换内置默认。
+
+        复用 item_editor 的 standard_config.json 格式: {"页面号": [[位值, 名称], ...], ...}
+        页面号 → 权限字段: 0=药品 1=道具 2=武器 3=防具 4=饰品，见 USE_RIGHT_PAGE_TO_FIELD。
+        仅替换 JSON 中出现的字段，其余保留内置默认。
+        """
+        fp, _ = QFileDialog.getOpenFileName(self, "选择使用权限配置文件", "", "JSON (*.json)")
+        if not fp: return
+        try:
+            with open(fp, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+        except Exception as e:
+            QMessageBox.critical(self, "加载失败", f"无法解析 JSON 文件:\n{e}"); return
+        updated = []
+        try:
+            for page_key, items in data.items():
+                try:
+                    page = int(page_key)
+                except (ValueError, TypeError):
+                    continue  # 跳过非整型键 (如 "_说明" 注释字段)
+                fn = USE_RIGHT_PAGE_TO_FIELD.get(page)
+                if fn is None:
+                    continue  # 页面 5=特殊 在 WarPC 中无对应字段，跳过
+                pairs = [(int(it[0]), str(it[1])) for it in items]
+                if not pairs:
+                    raise ValueError(f"页面 {page} 选项列表为空")
+                title, _ = self._use_right_defs.get(fn, (fn, []))
+                self._use_right_defs[fn] = (title, pairs)
+                updated.append(f"{page}({fn})")
+        except (TypeError, IndexError, ValueError) as e:
+            QMessageBox.critical(self, "格式错误",
+                f"JSON 格式不正确，应为 {{\"页面号\": [[位值, 名称], ...]}}\n错误: {e}"); return
+        self.status_var.setText(
+            f"已加载自定义使用权限配置: {os.path.basename(fp)} (覆盖 {', '.join(updated) or '无'})")
+        # 刷新当前编辑面板的权限标签
+        if self._editing_idx >= 0 and self._editing_idx < len(self.records):
+            self._populate_edit(self.records[self._editing_idx])
 
     def _get_icon_pixmap(self, icon_val, size=(24,24)):
         return get_sprite_pixmap(self._mu_sprites, icon_val, size, self._icon_pixmaps)
