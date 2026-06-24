@@ -35,7 +35,7 @@ TKItem.dat 可视化编辑器 v2.0 (PySide6 — Godot 4.6 风格)
   python item_editor_v2.py
 """
 
-import struct, os, sys, csv
+import struct, os, sys, csv, json
 
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
@@ -120,9 +120,10 @@ USE_RIGHT_OPTIONS = {
     5: [(0, "通用")],                                             # 特殊
 }
 
-def _use_right_label(val, page):
-    """根据页面号解析使用权限为可读文本"""
-    opts = USE_RIGHT_OPTIONS.get(page, [])
+def _use_right_label(val, page, opts=None):
+    """根据页面号解析使用权限为可读文本 (opts 为空时回退到内置默认)"""
+    if opts is None:
+        opts = USE_RIGHT_OPTIONS.get(page, [])
     sel = [name for bit, name in opts if bit == 0 or (val & bit)]
     return ", ".join(sel) if sel else "(无)"
 
@@ -369,13 +370,21 @@ class FlagPickerDialog(QDialog):
 class UseRightPickerDialog(QDialog):
     def __init__(self, parent, opts, cur_val):
         super().__init__(parent)
-        self.setWindowTitle("选择使用权限 (多选位掩码)"); self.resize(320, 60 + max(len(opts), 2) * 28)
+        self.setWindowTitle("选择使用权限 (多选位掩码)"); self.resize(320, 90 + max(len(opts), 2) * 28)
         self.selected_mask = None
         layout = QVBoxLayout(self)
+        # 手动输入框: MOD 可能使用超出内置预定义的位掩码，允许直接输入任意数值
+        manual_row = QHBoxLayout()
+        manual_row.addWidget(QLabel("当前值:"))
+        self.manual_edit = QLineEdit(str(cur_val))
+        self.manual_edit.setPlaceholderText("可直接输入任意数值 (含 MOD 扩展位)")
+        manual_row.addWidget(self.manual_edit, 1)
+        layout.addLayout(manual_row)
         self.checkboxes = []
         for bit, name in opts:
             cb = QCheckBox(f"{bit}-{name}" if bit != 0 else name)
             cb.setChecked(bool(cur_val & bit) if bit != 0 else False)
+            cb.toggled.connect(self._sync_from_boxes)
             self.checkboxes.append((bit, cb)); layout.addWidget(cb)
         layout.addStretch()
         bl = QHBoxLayout()
@@ -386,11 +395,20 @@ class UseRightPickerDialog(QDialog):
         btn_ok = QPushButton("确定"); btn_ok.clicked.connect(self._ok); bl.addWidget(btn_ok)
         layout.addLayout(bl)
 
-    def _ok(self):
+    def _sync_from_boxes(self):
+        """勾选框变动时同步到手动输入框"""
         m = 0
         for bit, cb in self.checkboxes:
-            if cb.isChecked(): m += bit
-        if m >= 0x8000: m -= 0x10000
+            if cb.isChecked(): m |= bit
+        self.manual_edit.setText(str(m))
+
+    def _ok(self):
+        try:
+            m = int(self.manual_edit.text().strip() or 0)
+        except ValueError:
+            m = 0
+        m &= 0xFFFF                      # equip_type 为 16 位字段
+        if m >= 0x8000: m -= 0x10000      # 转有符号
         self.selected_mask = m; self.accept()
 
 # ============================================================
@@ -486,6 +504,8 @@ class ItemEditorApp(QMainWindow):
         self.filtered_indices = []; self._dirty = False; self._editing_idx = None
         self._sort_reverse = False
         self._guard_right_reset = False
+        # 使用权限选项运行时副本 (可由 文件→自定义使用权限配置 整页替换)
+        self._use_right_options = {p: list(opts) for p, opts in USE_RIGHT_OPTIONS.items()}
 
         self.widget_map = {}; self.extra_map = {}
 
@@ -522,6 +542,8 @@ class ItemEditorApp(QMainWindow):
         fm.addAction("导出为 MOD (指定参考目录)…", self._export_tksmod_with_ref)
         fm.addSeparator()
         fm.addAction("导入 MOD (.tksmod)…", self._import_tksmod)
+        fm.addSeparator()
+        fm.addAction("自定义使用权限配置…", self._load_use_right_config)
         fm.addSeparator(); fm.addAction("退出", self.close)
         em = mb.addMenu("编辑(&E)")
         em.addAction("新建物品 (填充空槽)\tCtrl+N", self._new_item)
@@ -842,14 +864,14 @@ class ItemEditorApp(QMainWindow):
         """根据页面筛选值动态填充权限下拉框选项"""
         if page_filter_text.startswith("全部"):
             seen = set(); all_opts = []
-            for page in sorted(USE_RIGHT_OPTIONS):
-                for bit, name in USE_RIGHT_OPTIONS[page]:
+            for page in sorted(self._use_right_options):
+                for bit, name in self._use_right_options[page]:
                     key = (bit, name)
                     if key not in seen:
                         seen.add(key); all_opts.append(f"{bit}-{name}")
         else:
             page = int(page_filter_text.split('-')[0])
-            opts = USE_RIGHT_OPTIONS.get(page, [])
+            opts = self._use_right_options.get(page, [])
             all_opts = [f"{bit}-{name}" for bit, name in opts]
         new_vals = ["全部权限"] + all_opts
         current_vals = [self.filter_right.itemText(i) for i in range(self.filter_right.count())]
@@ -899,7 +921,7 @@ class ItemEditorApp(QMainWindow):
         for row, idx in enumerate(self.filtered_indices):
             r = self.records[idx]
             et = r['equip_type']
-            rt = _use_right_label(et, r.get('tab_code', 0)) if et or et == 0 else "—"
+            rt = _use_right_label(et, r.get('tab_code', 0), self._use_right_options.get(r.get('tab_code', 0))) if et or et == 0 else "—"
             self.table.insertRow(row)
             # 列顺序: 图标(0) #(1) ID(2) 页面(3) 物品名称(4) 权限(5) 价格(6)
             icon_item = QTableWidgetItem()
@@ -947,7 +969,7 @@ class ItemEditorApp(QMainWindow):
 
         # 元数据
         page_str = PAGE_NAMES.get(rec['tab_code'], '?')
-        et_label = _use_right_label(rec.get('equip_type', 0), rec.get('tab_code', 0))
+        et_label = _use_right_label(rec.get('equip_type', 0), rec.get('tab_code', 0), self._use_right_options.get(rec.get('tab_code', 0)))
         self.preview_meta.setText(f"页面={page_str}  |  权限={et_label}  |  价格={rec['price']}  |  图标={rec.get('icon',0)}")
 
         # 图标预览
@@ -991,7 +1013,7 @@ class ItemEditorApp(QMainWindow):
                 self.extra_map[fn].setText((t[:12]+'...') if len(t) > 12 else t)
             elif ft == 'use_right':
                 page = rec.get('tab_code', 0)
-                self.extra_map[fn].setText(_use_right_label(int(val) if val else 0, page))
+                self.extra_map[fn].setText(_use_right_label(int(val) if val else 0, page, self._use_right_options.get(page)))
             elif ft == 'combat_flag':
                 self._update_flag_label(fn, int(val) if val else 0, COMBAT_FLAG_BITS)
             elif ft == 'extra_flags':
@@ -1155,16 +1177,54 @@ class ItemEditorApp(QMainWindow):
         """弹窗选择使用权限 (根据当前页面号动态切换选项)"""
         if not self.records or self._editing_idx is None: return
         page = self.records[self._editing_idx].get('tab_code', 0)
-        opts = USE_RIGHT_OPTIONS.get(page, [])
+        opts = self._use_right_options.get(page, [])
         # 仅有一个值为0的选项时，直接设为0
         if len(opts) == 1 and opts[0][0] == 0:
             self.widget_map[fn].setText("0")
-            self.extra_map[fn].setText(_use_right_label(0, page)); return
+            self.extra_map[fn].setText(_use_right_label(0, page, opts)); return
         cur_val = int(self.widget_map[fn].text() or 0) & 0xFFFF
         dlg = UseRightPickerDialog(self, opts, cur_val)
         if dlg.exec() == QDialog.Accepted and dlg.selected_mask is not None:
             self.widget_map[fn].setText(str(dlg.selected_mask))
-            self.extra_map[fn].setText(_use_right_label(dlg.selected_mask, page))
+            self.extra_map[fn].setText(_use_right_label(dlg.selected_mask, page, opts))
+
+    # ── 自定义使用权限配置 ──
+    def _load_use_right_config(self):
+        """从 JSON 文件加载自定义使用权限选项 (整页替换内置默认)。
+
+        JSON 格式: {"页面号": [[位值, 名称], ...], ...}
+          例如 {"2": [[1, "刀"], [2, "剑"], [256, "MOD新增武器类"]]}
+        仅替换 JSON 中出现的页面号，其余页面保留内置默认。
+        """
+        fp, _ = QFileDialog.getOpenFileName(self, "选择使用权限配置文件", "", "JSON (*.json)")
+        if not fp: return
+        try:
+            with open(fp, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+        except Exception as e:
+            QMessageBox.critical(self, "加载失败", f"无法解析 JSON 文件:\n{e}"); return
+        new_opts = {}
+        try:
+            for page_key, items in data.items():
+                # 跳过非整型键 (如 "_说明" 注释字段)
+                try:
+                    page = int(page_key)
+                except (ValueError, TypeError):
+                    continue
+                pairs = [(int(it[0]), str(it[1])) for it in items]
+                if not pairs:
+                    raise ValueError(f"页面 {page} 选项列表为空")
+                new_opts[page] = pairs
+        except (TypeError, IndexError, ValueError) as e:
+            QMessageBox.critical(self, "格式错误",
+                f"JSON 格式不正确，应为 {{\"页面号\": [[位值, 名称], ...]}}\n错误: {e}"); return
+        self._use_right_options.update(new_opts)  # 整页替换
+        self.status_var.setText(
+            f"已加载自定义使用权限配置: {os.path.basename(fp)} (覆盖页面 {sorted(new_opts)})")
+        # 刷新当前编辑面板与列表的权限标签
+        if self._editing_idx is not None and self._editing_idx < len(self.records):
+            self._populate_edit(self.records[self._editing_idx])
+        self._apply_filter()
 
     # ── 编辑应用 ──
     def _apply_edit(self):
