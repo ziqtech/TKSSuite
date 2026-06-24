@@ -54,6 +54,7 @@ from editor_utils.mod_exporter import (
     ask_reference_directory, load_reference_dat_fields,
     get_tksmod_info, import_tksmod_records, import_tksmod_text_defines,
     ModImportPreviewDialog,
+    diff_binary_blocks, build_block_diff_json, load_grp_raw_sections,
 )
 
 # ============================================================
@@ -2048,6 +2049,7 @@ class MatEditorApp(QMainWindow):
         fm.addAction("另存为…", self._save_as)
         fm.addSeparator()
         fm.addAction("导出场景…", self._export_scene)
+        fm.addAction("导出场景为 MOD (.tksmod)…", self._export_scene_as_tksmod)
         fm.addAction("导入场景…", self._import_scene)
         fm.addAction("导出为 MOD (.tksmod)…", self._export_tksmod)
         fm.addAction("导出为 MOD (指定参考目录)…", self._export_tksmod_with_ref)
@@ -4445,6 +4447,223 @@ class MatEditorApp(QMainWindow):
             QMessageBox.information(self, "导出成功", f"已导出 (参考目录模式):\n{fp}\n\n参考: {ref_dir}\n包含 {len(components)} 个数据文件, {total} 处变更")
         except Exception as e:
             QMessageBox.critical(self, "导出失败", str(e))
+
+    def _export_scene_as_tksmod(self):
+        """导出当前场景为 .tksmod MOD 文件 — 直接导出选中场景全部数据（不判断差异）"""
+        if not self.records:
+            QMessageBox.information(self, "提示", "请先加载数据")
+            return
+
+        sid = self._vis_scene_id
+        if sid < 0:
+            QMessageBox.warning(self, "无效场景", "请先在可视化面板中选择一个场景")
+            return
+
+        # ── 1. 筛选属于本场景的实体 ──
+        scene_entity_indices = [i for i, r in enumerate(self.records)
+                                if has_data(r) and r['d1'] == sid]
+        if not scene_entity_indices:
+            QMessageBox.warning(self, "空场景", f"场景 {sid} 无实体数据")
+            return
+
+        # ── 2. 追踪 DefUnit 链 ──
+        def find_du(idx):
+            return next((r for r in self.defunit_recs if r['index'] == idx), None)
+
+        all_defunit_indices = set()
+
+        def collect_chain(head_idx):
+            cur = head_idx
+            visited = set()
+            while cur >= 0 and cur not in visited:
+                visited.add(cur)
+                du = find_du(cur)
+                if du is None:
+                    break
+                all_defunit_indices.add(cur)
+                nxt = du.get('f6', 0)
+                if nxt == 0 or nxt in visited:
+                    break
+                cur = nxt
+
+        for eidx in scene_entity_indices:
+            rec = self.records[eidx]
+            for chain_di, max_di in [(39, 30), (40, 31), (41, 32)]:
+                head = rec.get(f'd{chain_di}', -1)
+                mx = rec.get(f'd{max_di}', 0)
+                if head > 0 and mx > 0:
+                    collect_chain(head)
+
+        # ── 3. 追踪 TKD DEFINE 块 ──
+        scene_define_ids = set()
+        for du_idx in all_defunit_indices:
+            du = find_du(du_idx)
+            if du:
+                did = (du.get('f1', 0) << 16) | du.get('f0', 0)
+                if did > 0:
+                    scene_define_ids.add(str(did))
+
+        # ── 4. 弹出 MOD 元数据对话框 ──
+        from PySide6.QtWidgets import QDialog
+        sname = scene_name(self.tkt_scenes, sid).replace('/', '_').replace('\\', '_')
+        defaults = getattr(self, '_last_mod_metadata', None) or {}
+        if not defaults.get('id'):
+            defaults['id'] = f"scene_{sid}_{sname}"
+        if not defaults.get('name'):
+            defaults['name'] = f"场景 {sname} (ID={sid})"
+        if not defaults.get('type'):
+            defaults['type'] = 'story'
+        dlg = ModMetadataDialog(self, defaults)
+        if dlg.exec() != QDialog.Accepted:
+            return
+        metadata = dlg.get_metadata()
+        self._last_mod_metadata = metadata
+
+        # ── 5. 直接导出 TKMat.Dat 场景实体（全量字段，不做差异比对）──
+        data_files = {}
+        components = []
+
+        mat_entries = []
+        for eidx in scene_entity_indices:
+            rec = self.records[eidx]
+            fields = {}
+            for fi in range(DWORD_COUNT):
+                val = rec.get(f'd{fi}', 0)
+                if val != 0:
+                    fields[f"f{fi}"] = val
+            if fields:
+                mat_entries.append({"index": eidx, "fields": fields})
+
+        if mat_entries:
+            crc = compute_crc32(self.dat_path) if self.dat_path else "0x00000000"
+            original_count = len(self.records)
+            mat_json = build_data_diff_json(
+                target="TKMat.Dat", record_size=REC_SIZE, field_type="int32",
+                field_count=DWORD_COUNT, original_count=original_count,
+                original_crc32=crc, diff_result={'modified': mat_entries, 'appended': []})
+            data_files["data/TKMat.dat.json"] = mat_json
+            components.append({"file": "data/TKMat.dat.json", "target": "TKMat.Dat"})
+
+        # ── 6. 直接导出 TKDefUnit.Dat（全量字段，不做差异比对）──
+        if hasattr(self, 'defunit_recs') and all_defunit_indices:
+            du_entries = []
+            for du_idx in sorted(all_defunit_indices):
+                du = find_du(du_idx)
+                if du:
+                    fields = {}
+                    for fi in range(8):
+                        val = du.get(f'f{fi}', 0)
+                        if val != 0:
+                            fields[f"f{fi}"] = val
+                    if fields:
+                        du_entries.append({"index": du_idx, "fields": fields})
+
+            if du_entries:
+                du_path = os.path.join(os.path.dirname(self.dat_path), "TKDefUnit.Dat")
+                crc = compute_crc32(du_path) if os.path.exists(du_path) else "0x00000000"
+                original_du_count = len(self.defunit_recs)
+                du_json = build_data_diff_json(
+                    target="TKDefUnit.Dat", record_size=DEFUNIT_REC_SIZE, field_type="uint16",
+                    field_count=8, original_count=original_du_count,
+                    original_crc32=crc, diff_result={'modified': du_entries, 'appended': []})
+                data_files["data/TKDefUnit.dat.json"] = du_json
+                components.append({"file": "data/TKDefUnit.dat.json", "target": "TKDefUnit.Dat"})
+
+        # ── 7. 直接导出 TKD.dat 脚本（全量内容，不做差异比对）──
+        if hasattr(self, 'tkd_defines') and scene_define_ids:
+            self._save_editor_to_define()
+            tkd_modified = {}
+            for dd in self.tkd_defines:
+                did_str = str(dd['define_id'])
+                if did_str in scene_define_ids:
+                    tkd_modified[did_str] = '\r\n'.join([dd['header_line']] + dd['body_lines'])
+
+            if tkd_modified:
+                tkd_path = os.path.join(os.path.dirname(self.dat_path), "TKD.dat")
+                crc = compute_crc32(tkd_path) if os.path.exists(tkd_path) else "0x00000000"
+                tkd_json = build_text_diff_json(target="TKD.dat", original_crc32=crc,
+                    diff_result={'modified': tkd_modified, 'appended': [], 'deleted': []})
+                data_files["data/TKD.dat.json"] = tkd_json
+                components.append({"file": "data/TKD.dat.json", "target": "TKD.dat"})
+
+        # ── 8. 直接导出 SC.GRP 场景区段（不做差异比对）──
+        if self.dat_path:
+            game_dir = os.path.dirname(self.dat_path)
+            grp_path = os.path.join(game_dir, "SC.GRP")
+            idx_path = os.path.join(game_dir, "SC.IDX")
+            if os.path.exists(grp_path) and os.path.exists(idx_path):
+                try:
+                    with open(idx_path, 'rb') as f:
+                        idata = f.read()
+                    offs = [struct.unpack_from('<I', idata, i)[0] for i in range(0, len(idata), 4)]
+                    if sid < len(offs):
+                        start = offs[sid]
+                        end = offs[sid + 1] if sid + 1 < len(offs) else os.path.getsize(grp_path)
+                        with open(grp_path, 'rb') as f:
+                            f.seek(start)
+                            section_data = f.read(end - start)
+                        if section_data:
+                            total_sections = len(offs) - 1 if len(offs) > 1 else len(offs)
+                            sc_diff = {
+                                'modified': [{'index': sid, 'data_b64': base64.b64encode(section_data).decode('ascii')}],
+                                'appended': [],
+                                'deleted_indices': [],
+                            }
+                            crc = compute_crc32(grp_path)
+                            sc_json = build_block_diff_json(
+                                target="SC.GRP", block_type="grp_section",
+                                original_count=total_sections,
+                                original_crc32=crc, diff_result=sc_diff)
+                            data_files["data/SC.GRP.json"] = sc_json
+                            components.append({"file": "data/SC.GRP.json", "target": "SC.GRP"})
+                except Exception:
+                    pass
+
+        # ── 9. 最终打包 ──
+        if not data_files:
+            QMessageBox.information(self, "无数据",
+                f"场景 {sid} 未收集到任何可导出数据。")
+            return
+
+        # 在 mod.json 中附加 scene_scope 字段
+        metadata['scene_scope'] = [sid]
+        mod_json = generate_mod_json(metadata, components)
+        mod_json['scene_scope'] = [sid]
+        mod_json['scene_name'] = scene_name(self.tkt_scenes, sid)
+
+        fp, _ = QFileDialog.getSaveFileName(
+            self, "导出场景为 MOD",
+            f"{metadata['id']}.tksmod",
+            "TKS MOD (*.tksmod);;所有文件 (*.*)")
+        if not fp:
+            return
+        try:
+            pack_tksmod(fp, mod_json, data_files)
+            n_mat = len(mat_entries)
+            n_du = len(data_files.get('data/TKDefUnit.dat.json', {}).get('modified', []))
+            n_tkd = len(data_files.get('data/TKD.dat.json', {}).get('modified', {}))
+            has_sc = 'data/SC.GRP.json' in data_files
+            summary = (f"场景 {scene_name(self.tkt_scenes, sid)} (ID={sid})\n"
+                       f"实体: {n_mat} 条\n"
+                       f"DefUnit: {n_du} 条\n"
+                       f"脚本: {n_tkd} 块\n"
+                       f"SC.GRP: {'包含' if has_sc else '无'}\n\n"
+                       f"已保存到:\n{fp}")
+            self.status_var.setText(f"已导出场景 MOD: {os.path.basename(fp)}")
+            QMessageBox.information(self, "导出成功", summary)
+        except Exception as e:
+            QMessageBox.critical(self, "导出失败", str(e))
+
+    @staticmethod
+    def _extract_define_id_from_text(text: str) -> str:
+        """从 DEFINE 块文本中提取 define_id 字符串"""
+        for line in text.split('\n'):
+            stripped = line.strip().rstrip('\r')
+            if stripped.startswith('DEFINE') and not stripped.startswith('//'):
+                parts = stripped.split(None, 2)
+                if len(parts) >= 2:
+                    return parts[1]
+        return ''
 
     def _import_tksmod(self):
         """从 .tksmod 导入 MOD 数据到编辑器 (TKMat + TKDefUnit + TKD 三文件联动)"""
