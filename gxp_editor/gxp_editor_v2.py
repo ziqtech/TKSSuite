@@ -34,6 +34,7 @@ from editor_utils.lzss import (lzss_decompress_stream as _lzss_decompress_stream
 from editor_utils.rgb565 import rgb565_to_rgba, rgba_to_rgb565
 from editor_utils.mod_exporter import (
     compute_crc32, generate_mod_json, pack_tksmod, ModMetadataDialog,
+    get_tksmod_info, read_tksmod, ModImportPreviewDialog,
 )
 
 # ── GXP 格式常量 ──────────────────────────────────────────
@@ -243,6 +244,7 @@ class GXPEditor(QMainWindow):
         fm.addAction("导出 24位 PNG(&E)...", QKeySequence("Ctrl+E"), self._export_dlg)
         fm.addSeparator()
         fm.addAction("导出为 MOD (.tksmod)…", self._export_tksmod)
+        fm.addAction("导入 MOD (.tksmod)…", self._import_tksmod)
         fm.addSeparator()
         fm.addAction("退出(&X)", QKeySequence("Alt+F4"), self.close)
 
@@ -460,6 +462,68 @@ class GXPEditor(QMainWindow):
             self._status_left.setText(f" 已导出 MOD: {Path(fp).name}")
         except Exception as e:
             QMessageBox.critical(self, "导出失败", str(e))
+
+    def _import_tksmod(self):
+        """从 .tksmod 导入 MOD 数据到 GXP 编辑器 (资源替换模式)"""
+        fp, _ = QFileDialog.getOpenFileName(self, "选择 MOD 文件", "", "TKS MOD (*.tksmod)")
+        if not fp: return
+
+        info = get_tksmod_info(fp)
+        if info is None:
+            QMessageBox.warning(self, "无效文件", "无法解析此 .tksmod 文件"); return
+
+        # GXP 编辑器查找资源文件中的 .gxp/.GXP 文件
+        resources = info.get("resources", [])
+        gxp_resources = [r for r in resources
+                         if r.get("target", "").upper().endswith(".GXP")]
+        if not gxp_resources:
+            QMessageBox.warning(self, "不兼容", "此 MOD 不包含 GXP 资源文件\n\n"
+                f"包含的数据: {', '.join(info.get('targets', []))}\n"
+                f"资源: {', '.join(r.get('target','') for r in resources)}"); return
+
+        from PySide6.QtWidgets import QDialog
+        dlg = ModImportPreviewDialog(self, info)
+        if dlg.exec() != QDialog.Accepted: return
+
+        # 从 ZIP 中提取 GXP 资源并加载
+        import zipfile, tempfile
+        res = gxp_resources[0]
+        internal_path = res.get("file", "")
+        target_name = res.get("target", "")
+
+        try:
+            with zipfile.ZipFile(fp, 'r') as zf:
+                if internal_path not in zf.namelist():
+                    QMessageBox.warning(self, "导入失败",
+                        f"MOD 中找不到资源: {internal_path}"); return
+                tmp = tempfile.mktemp(suffix='.gxp')
+                with zf.open(internal_path) as src:
+                    Path(tmp).write_bytes(src.read())
+                self.img = load_gxp(tmp)
+                self.img.filepath = None
+                os.remove(tmp)
+        except Exception as e:
+            QMessageBox.warning(self, "导入失败", f"加载 GXP 失败: {e}"); return
+
+        self._last_mod_metadata = {
+            "id": info.get("id", ""),
+            "name": info.get("name", ""),
+            "version": info.get("version", "1.0.0"),
+            "author": info.get("author", ""),
+            "description": info.get("description", ""),
+            "type": info.get("type", "visual"),
+            "mode": info.get("mode", "mixed"),
+            "load_order": info.get("load_order", 100),
+        }
+
+        self._refresh_view()
+        self._status_left.setText(
+            f" 已导入 MOD: {info.get('name', '')} | {target_name}")
+        QMessageBox.information(self, "导入成功",
+            f"已导入 MOD: {info.get('name', '')}\n"
+            f"资源: {target_name}\n"
+            f"尺寸: {self.img.width}×{self.img.height}\n\n"
+            f"您现在可以继续编辑并重新导出。")
 
     # ── 视图调度 ──────────────────────────────────────────
 

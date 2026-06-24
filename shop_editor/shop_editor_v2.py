@@ -51,6 +51,7 @@ from editor_utils.mod_exporter import (
     diff_records, compute_crc32, generate_mod_json,
     pack_tksmod, build_data_diff_json, ModMetadataDialog,
     ask_reference_directory, load_reference_dat_fields,
+    get_tksmod_info, import_tksmod_records, ModImportPreviewDialog,
 )
 
 # ── 本地别名: 保持向后兼容 ──
@@ -430,6 +431,11 @@ class ShopEditorWindow(QMainWindow):
         action_export_mod_ref = QAction("导出为 MOD (指定参考目录)…", self)
         action_export_mod_ref.triggered.connect(self._export_tksmod_with_ref)
         file_menu.addAction(action_export_mod_ref)
+        
+        file_menu.addSeparator()
+        action_import_mod = QAction("导入 MOD (.tksmod)…", self)
+        action_import_mod.triggered.connect(self._import_tksmod)
+        file_menu.addAction(action_import_mod)
         
         file_menu.addSeparator()
         action_exit = QAction("退出", self)
@@ -1099,6 +1105,72 @@ class ShopEditorWindow(QMainWindow):
             QMessageBox.information(self, "导出成功", f"已导出 (参考目录模式):\n{fp}\n\n参考: {ref_dir}\n修改: {n_mod} 条\n追加: {n_app} 条")
         except Exception as e:
             QMessageBox.critical(self, "导出失败", str(e))
+
+    def _import_tksmod(self):
+        """从 .tksmod 导入 MOD 数据到编辑器"""
+        fp, _ = QFileDialog.getOpenFileName(self, "选择 MOD 文件", "", "TKS MOD (*.tksmod)")
+        if not fp: return
+
+        info = get_tksmod_info(fp)
+        if info is None:
+            QMessageBox.warning(self, "无效文件", "无法解析此 .tksmod 文件"); return
+
+        if "TKShop.dat" not in info.get("targets", []):
+            QMessageBox.warning(self, "不兼容", "此 MOD 不包含 TKShop.dat 的数据\n\n"
+                f"包含的数据: {', '.join(info.get('targets', []))}"); return
+
+        from PySide6.QtWidgets import QDialog
+        dlg = ModImportPreviewDialog(self, info)
+        if dlg.exec() != QDialog.Accepted: return
+
+        ref_dir = ask_reference_directory(self, "选择原始游戏目录 (作为基底数据)")
+        if not ref_dir: return
+
+        mod_json, records = import_tksmod_records(
+            fp, ref_dir, "TKShop.dat",
+            rec_size=8, field_count=4,
+            field_fmt='h', use_lzss=True
+        )
+        if records is None:
+            QMessageBox.warning(self, "导入失败",
+                "无法导入 MOD 数据。\n请确认参考目录中包含有效的 TKShop.dat"); return
+
+        new_records = []
+        for i, fields in enumerate(records):
+            rec = {
+                'index': i,
+                'area_id': fields[0] if len(fields) > 0 else 0,
+                'item_ref': fields[1] if len(fields) > 1 else 0,
+                'condition': fields[2] if len(fields) > 2 else 0,
+                'display': fields[3] if len(fields) > 3 else 0,
+            }
+            new_records.append(rec)
+
+        self.records = new_records
+        self._original_records = [list(row) for row in records]
+        self._dirty = False
+
+        self._last_mod_metadata = {
+            "id": info.get("id", ""),
+            "name": info.get("name", ""),
+            "version": info.get("version", "1.0.0"),
+            "author": info.get("author", ""),
+            "description": info.get("description", ""),
+            "type": info.get("type", "data"),
+            "mode": info.get("mode", "mixed"),
+            "load_order": info.get("load_order", 100),
+        }
+
+        self._refresh_table()
+        self.lbl_status.setText(
+            f"已导入 MOD: {info.get('name', '')} v{info.get('version', '')} | "
+            f"{len(self.records)} 条记录")
+        QMessageBox.information(self, "导入成功",
+            f"已导入 MOD: {info.get('name', '')}\n"
+            f"版本: {info.get('version', '')}\n"
+            f"作者: {info.get('author', '')}\n\n"
+            f"共加载 {len(records)} 条记录。\n"
+            f"您现在可以继续编辑并重新导出。")
 
     def _show_help(self):
         QMessageBox.information(self, "使用说明",

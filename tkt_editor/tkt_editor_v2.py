@@ -47,6 +47,7 @@ from editor_utils.mod_exporter import (
     diff_text_entries, compute_crc32, generate_mod_json,
     pack_tksmod, build_text_diff_json, ModMetadataDialog,
     ask_reference_directory, load_reference_tkt_entries,
+    get_tksmod_info, import_tksmod_text_entries, ModImportPreviewDialog,
 )
 
 # ============================================================
@@ -802,6 +803,8 @@ class TktEditor(QMainWindow):
         file_menu.addAction("导出为 MOD (.tksmod)…", self._export_tksmod)
         file_menu.addAction("导出为 MOD (指定参考目录)…", self._export_tksmod_with_ref)
         file_menu.addSeparator()
+        file_menu.addAction("导入 MOD (.tksmod)…", self._import_tksmod)
+        file_menu.addSeparator()
         file_menu.addAction("退出", self.close)
 
         edit_menu = menu_bar.addMenu("编辑(E)")
@@ -1267,6 +1270,61 @@ class TktEditor(QMainWindow):
                 f"已导出 .tksmod:\n{fp}\n\n修改: {n_mod} 条\n新增: {n_app} 条\n删除: {n_del} 条")
         except Exception as e:
             QMessageBox.critical(self, "导出失败", str(e))
+
+    def _import_tksmod(self):
+        """从 .tksmod 导入 MOD 数据到 TKT 编辑器"""
+        fp, _ = QFileDialog.getOpenFileName(self, "选择 MOD 文件", "", "TKS MOD (*.tksmod)")
+        if not fp: return
+
+        info = get_tksmod_info(fp)
+        if info is None:
+            QMessageBox.warning(self, "无效文件", "无法解析此 .tksmod 文件"); return
+
+        if "TKT.dat" not in info.get("targets", []):
+            QMessageBox.warning(self, "不兼容", "此 MOD 不包含 TKT.dat 的数据\n\n"
+                f"包含的数据: {', '.join(info.get('targets', []))}"); return
+
+        dlg = ModImportPreviewDialog(self, info)
+        if dlg.exec() != QDialog.Accepted: return
+
+        ref_dir = ask_reference_directory(self, "选择原始游戏目录 (作为基底数据)")
+        if not ref_dir: return
+
+        mod_json, entries_dict = import_tksmod_text_entries(fp, ref_dir)
+        if entries_dict is None:
+            QMessageBox.warning(self, "导入失败",
+                "无法导入 MOD 数据。\n请确认参考目录中包含有效的 TKT.dat"); return
+
+        # 将 dict 转化为编辑器内部格式
+        new_entries = []
+        for eid in sorted(entries_dict.keys()):
+            new_entries.append(OrderedDict([('slot', len(new_entries)), ('id', eid), ('text', entries_dict[eid])]))
+
+        self.entries = new_entries
+        self.original_entry_snapshot = [(e['id'], e['text']) for e in new_entries]
+        self._dirty = False
+
+        self._last_mod_metadata = {
+            "id": info.get("id", ""),
+            "name": info.get("name", ""),
+            "version": info.get("version", "1.0.0"),
+            "author": info.get("author", ""),
+            "description": info.get("description", ""),
+            "type": info.get("type", "data"),
+            "mode": info.get("mode", "mixed"),
+            "load_order": info.get("load_order", 100),
+        }
+
+        self._populate_tree()
+        self.lbl_dirty.setText(
+            f"已导入 MOD: {info.get('name', '')} v{info.get('version', '')} | "
+            f"{len(new_entries)} 条文本")
+        QMessageBox.information(self, "导入成功",
+            f"已导入 MOD: {info.get('name', '')}\n"
+            f"版本: {info.get('version', '')}\n"
+            f"作者: {info.get('author', '')}\n\n"
+            f"共加载 {len(new_entries)} 条文本。\n"
+            f"您现在可以继续编辑并重新导出。")
 
     def _import_mod(self):
         # 1. 前置检查：必须先加载原版 TKT 作为"底包"

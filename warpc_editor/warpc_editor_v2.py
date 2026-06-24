@@ -72,6 +72,7 @@ from editor_utils.mod_exporter import (
     diff_records, compute_crc32, generate_mod_json,
     pack_tksmod, build_data_diff_json, ModMetadataDialog,
     ask_reference_directory, load_reference_dat_fields,
+    get_tksmod_info, import_tksmod_records, ModImportPreviewDialog,
 )
 
 # ── 本地别名: 保持向后兼容 ──
@@ -638,6 +639,8 @@ class WarpcEditorV2(QMainWindow):
         fm.addAction("导出 CSV…", self._export_csv)
         fm.addAction("导出为 MOD (.tksmod)…", self._export_tksmod)
         fm.addAction("导出为 MOD (指定参考目录)…", self._export_tksmod_with_ref)
+        fm.addSeparator()
+        fm.addAction("导入 MOD (.tksmod)…", self._import_tksmod)
         fm.addSeparator(); fm.addAction("退出", self.close)
 
         em = mb.addMenu("编辑(&E)")
@@ -1784,6 +1787,68 @@ class WarpcEditorV2(QMainWindow):
                 f"已导出 (参考目录模式):\n{fp}\n\n参考: {ref_dir}\n修改: {n_mod} 条\n追加: {n_app} 条")
         except Exception as e:
             QMessageBox.critical(self, "导出失败", str(e))
+
+    def _import_tksmod(self):
+        """从 .tksmod 导入 MOD 数据到编辑器"""
+        fp, _ = QFileDialog.getOpenFileName(self, "选择 MOD 文件", "", "TKS MOD (*.tksmod)")
+        if not fp: return
+
+        # 预览 MOD 信息
+        info = get_tksmod_info(fp)
+        if info is None:
+            QMessageBox.warning(self, "无效文件", "无法解析此 .tksmod 文件"); return
+
+        # 检查是否包含 WarPC.dat
+        if "WarPC.dat" not in info.get("targets", []):
+            QMessageBox.warning(self, "不兼容", "此 MOD 不包含 WarPC.dat 的数据\n\n"
+                f"包含的数据: {', '.join(info.get('targets', []))}"); return
+
+        dlg = ModImportPreviewDialog(self, info)
+        if dlg.exec() != QDialog.Accepted: return
+
+        # 选择原始游戏目录
+        ref_dir = ask_reference_directory(self, "选择原始游戏目录 (作为基底数据)")
+        if not ref_dir: return
+
+        # 执行导入
+        mod_json, records = import_tksmod_records(
+            fp, ref_dir, "WarPC.dat",
+            rec_size=WARPC_REC, field_count=WARPC_FIELD_COUNT,
+            field_fmt='h', use_lzss=True
+        )
+        if records is None:
+            QMessageBox.warning(self, "导入失败",
+                "无法导入 MOD 数据。\n请确认参考目录中包含有效的 WarPC.dat"); return
+
+        # 将导入的数据填充到编辑器
+        self.records = [{'index': i, 'fields': row} for i, row in enumerate(records)]
+        self._original_records = [list(r['fields']) for r in self.records]
+        self._dirty = False
+
+        # 记住 MOD 元数据，方便再次导出
+        self._last_mod_metadata = {
+            "id": info.get("id", ""),
+            "name": info.get("name", ""),
+            "version": info.get("version", "1.0.0"),
+            "author": info.get("author", ""),
+            "description": info.get("description", ""),
+            "type": info.get("type", "data"),
+            "mode": info.get("mode", "mixed"),
+            "load_order": info.get("load_order", 100),
+        }
+
+        # 刷新 UI
+        self._apply_filter()
+        nonempty = sum(1 for r in self.records if any(v != 0 for v in r['fields']))
+        self.status_var.setText(
+            f"已导入 MOD: {info.get('name', '')} v{info.get('version', '')} | "
+            f"{len(self.records)} 角色 | 有效 {nonempty}")
+        QMessageBox.information(self, "导入成功",
+            f"已导入 MOD: {info.get('name', '')}\n"
+            f"版本: {info.get('version', '')}\n"
+            f"作者: {info.get('author', '')}\n\n"
+            f"共加载 {len(records)} 条记录。\n"
+            f"您现在可以继续编辑并重新导出。")
 
     # ── 帮助 ──
     def _show_field_ref(self):

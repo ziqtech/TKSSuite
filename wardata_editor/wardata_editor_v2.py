@@ -91,6 +91,7 @@ from editor_utils.tkt_loader import load_tkt_simple
 from editor_utils.mod_exporter import (
     compute_crc32, generate_mod_json, pack_tksmod, ModMetadataDialog,
     ask_reference_directory,
+    get_tksmod_info, read_tksmod, ModImportPreviewDialog,
 )
 
 HAS_PIL = False
@@ -475,6 +476,8 @@ class WarDataEditorV2(QMainWindow):
         fm.addAction("另存为…", self._save_as)
         fm.addAction("导出为 MOD (.tksmod)…", self._export_tksmod)
         fm.addAction("导出为 MOD (指定参考目录)…", self._export_tksmod_with_ref)
+        fm.addSeparator()
+        fm.addAction("导入 MOD (.tksmod)…", self._import_tksmod)
         fm.addSeparator()
         fm.addAction("退出", self.close)
 
@@ -918,6 +921,106 @@ class WarDataEditorV2(QMainWindow):
             QMessageBox.information(self, "导出成功", f"已导出 (参考目录模式):\n{fp}\n\n参考: {ref_dir}\n修改: {len(modified)} 条\n追加: {len(appended)} 条")
         except Exception as e:
             QMessageBox.critical(self, "导出失败", str(e))
+
+    def _import_tksmod(self):
+        """从 .tksmod 导入 MOD 数据到 WarData 编辑器"""
+        fp, _ = QFileDialog.getOpenFileName(self, "选择 MOD 文件", "", "TKS MOD (*.tksmod)")
+        if not fp: return
+
+        info = get_tksmod_info(fp)
+        if info is None:
+            QMessageBox.warning(self, "无效文件", "无法解析此 .tksmod 文件"); return
+
+        if "WarData.dat" not in info.get("targets", []):
+            QMessageBox.warning(self, "不兼容", "此 MOD 不包含 WarData.dat 的数据\n\n"
+                f"包含的数据: {', '.join(info.get('targets', []))}"); return
+
+        from PySide6.QtWidgets import QDialog
+        dlg = ModImportPreviewDialog(self, info)
+        if dlg.exec() != QDialog.Accepted: return
+
+        ref_dir = ask_reference_directory(self, "选择原始游戏目录 (作为基底数据)")
+        if not ref_dir: return
+
+        ref_path = os.path.join(ref_dir, "WarData.dat")
+        if not os.path.isfile(ref_path):
+            QMessageBox.warning(self, "参考目录无效", f"在 {ref_dir} 中未找到 WarData.dat"); return
+
+        # 加载原始数据
+        try:
+            ref_records = load_wardata(ref_path)
+        except Exception as e:
+            QMessageBox.warning(self, "参考文件无效", str(e)); return
+
+        # 解析 MOD 差异数据
+        mod_json, data_files = read_tksmod(fp)
+        if mod_json is None:
+            QMessageBox.warning(self, "导入失败", "无法解析 MOD 文件"); return
+
+        # 找到 WarData.dat 的差异数据
+        diff_data = None
+        for comp in mod_json.get("components", []):
+            if comp.get("target", "").lower() == "wardata.dat":
+                internal = comp.get("file", "")
+                if internal in data_files:
+                    diff_data = data_files[internal]
+                    break
+        if diff_data is None:
+            QMessageBox.warning(self, "导入失败", "MOD 中找不到 WarData.dat 的差异数据"); return
+
+        # 应用差异到原始数据
+        records = list(ref_records)  # 浅拷贝
+
+        # 扩展记录到需要的大小
+        max_idx = len(records) - 1
+        for entry in diff_data.get("appended", []):
+            idx = entry.get("index", 0)
+            if idx > max_idx:
+                max_idx = idx
+        while len(records) <= max_idx:
+            records.append({'index': len(records), 'battle_id': len(records),
+                'flags': 0, 'must_chars': [0]*6, 'battle_name_id': 0, 'map_id': 0,
+                'enemy_ids': [0]*18, 'enemy_lv': [0]*18, 'enemy_power': [0]*18,
+                'enemy_lv_range': [0]*36, 'enemy_xy': [0]*36, 'ally_xy': [0]*12,
+                'enemy_delay': [0]*18, 'ally_facing': [0]*6, 'trap_xy': [0]*56,
+                'trap_pwr': [0]*56, 'trea_sub': [0]*10, 'trea_quant': [0]*20,
+                'trap_type': [0]*28, 'enemy_flags': [0]*18,
+                'lv_spread_lo': 0, 'lv_spread_hi': 0,
+                'battle_turn_limit': 0, '_raw': bytes(bytearray(WAR_REC_SIZE))})
+
+        # 应用修改和追加
+        for entry in diff_data.get("modified", []) + diff_data.get("appended", []):
+            idx = entry.get("index", -1)
+            if idx < 0 or idx >= len(records): continue
+            fields = entry.get("fields", {})
+            for key, value in fields.items():
+                if key in records[idx]:
+                    records[idx][key] = value
+
+        self.records = records
+        self._dirty = False
+
+        self._last_mod_metadata = {
+            "id": info.get("id", ""),
+            "name": info.get("name", ""),
+            "version": info.get("version", "1.0.0"),
+            "author": info.get("author", ""),
+            "description": info.get("description", ""),
+            "type": info.get("type", "data"),
+            "mode": info.get("mode", "mixed"),
+            "load_order": info.get("load_order", 100),
+        }
+
+        self._apply_filter()
+        self.status_var.setText(
+            f"已导入 MOD: {info.get('name', '')} v{info.get('version', '')} | "
+            f"{len(records)} 场战斗")
+        QMessageBox.information(self, "导入成功",
+            f"已导入 MOD: {info.get('name', '')}\n"
+            f"版本: {info.get('version', '')}\n"
+            f"作者: {info.get('author', '')}\n\n"
+            f"共加载 {len(records)} 场战斗数据。\n"
+            f"您现在可以继续编辑并重新导出。")
 
     def closeEvent(self, event):
         if not confirm_close(self, self._dirty):

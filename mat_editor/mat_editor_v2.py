@@ -52,6 +52,8 @@ from editor_utils.mod_exporter import (
     diff_records, diff_text_defines, compute_crc32, generate_mod_json,
     pack_tksmod, build_data_diff_json, build_text_diff_json, ModMetadataDialog,
     ask_reference_directory, load_reference_dat_fields,
+    get_tksmod_info, import_tksmod_records, import_tksmod_text_defines,
+    ModImportPreviewDialog,
 )
 
 # ============================================================
@@ -2049,6 +2051,8 @@ class MatEditorApp(QMainWindow):
         fm.addAction("导入场景…", self._import_scene)
         fm.addAction("导出为 MOD (.tksmod)…", self._export_tksmod)
         fm.addAction("导出为 MOD (指定参考目录)…", self._export_tksmod_with_ref)
+        fm.addSeparator()
+        fm.addAction("导入 MOD (.tksmod)…", self._import_tksmod)
         fm.addSeparator()
         fm.addAction("退出", self.close)
 
@@ -4441,6 +4445,120 @@ class MatEditorApp(QMainWindow):
             QMessageBox.information(self, "导出成功", f"已导出 (参考目录模式):\n{fp}\n\n参考: {ref_dir}\n包含 {len(components)} 个数据文件, {total} 处变更")
         except Exception as e:
             QMessageBox.critical(self, "导出失败", str(e))
+
+    def _import_tksmod(self):
+        """从 .tksmod 导入 MOD 数据到编辑器 (TKMat + TKDefUnit + TKD 三文件联动)"""
+        fp, _ = QFileDialog.getOpenFileName(self, "选择 MOD 文件", "", "TKS MOD (*.tksmod)")
+        if not fp: return
+
+        info = get_tksmod_info(fp)
+        if info is None:
+            QMessageBox.warning(self, "无效文件", "无法解析此 .tksmod 文件"); return
+
+        # 检查是否包含相关数据
+        targets = info.get("targets", [])
+        has_mat = "TKMat.Dat" in targets
+        has_du = "TKDefUnit.Dat" in targets
+        has_tkd = "TKD.dat" in targets
+        if not has_mat and not has_du and not has_tkd:
+            QMessageBox.warning(self, "不兼容",
+                "此 MOD 不包含 TKMat/TKDefUnit/TKD 的数据\n\n"
+                f"包含的数据: {', '.join(targets)}"); return
+
+        from PySide6.QtWidgets import QDialog
+        dlg = ModImportPreviewDialog(self, info)
+        if dlg.exec() != QDialog.Accepted: return
+
+        ref_dir = ask_reference_directory(self, "选择原始游戏目录 (作为基底数据)")
+        if not ref_dir: return
+
+        imported_parts = []
+
+        # 导入 TKMat.Dat
+        if has_mat:
+            mod_json, mat_records = import_tksmod_records(
+                fp, ref_dir, "TKMat.Dat",
+                rec_size=REC_SIZE, field_count=DWORD_COUNT,
+                field_fmt='i', use_lzss=False
+            )
+            if mat_records is not None:
+                new_records = []
+                for i, fields in enumerate(mat_records):
+                    rec = {'index': i}
+                    for di in range(DWORD_COUNT):
+                        rec[f'd{di}'] = fields[di] if di < len(fields) else 0
+                    new_records.append(rec)
+                self.records = new_records
+                self._original_mat_records = [list(row) for row in mat_records]
+                imported_parts.append(f"TKMat ({len(mat_records)}条)")
+
+        # 导入 TKDefUnit.Dat
+        if has_du:
+            _, du_records = import_tksmod_records(
+                fp, ref_dir, "TKDefUnit.Dat",
+                rec_size=DEFUNIT_REC_SIZE, field_count=8,
+                field_fmt='H', use_lzss=False
+            )
+            if du_records is not None and hasattr(self, 'defunit_recs'):
+                new_du = []
+                for i, fields in enumerate(du_records):
+                    rec = {'index': i}
+                    for fi in range(8):
+                        rec[f'f{fi}'] = fields[fi] if fi < len(fields) else 0
+                    new_du.append(rec)
+                self.defunit_recs = new_du
+                self._original_defunit_recs = [list(row) for row in du_records]
+                imported_parts.append(f"TKDefUnit ({len(du_records)}条)")
+
+        # 导入 TKD.dat
+        if has_tkd:
+            _, defines = import_tksmod_text_defines(fp, ref_dir)
+            if defines is not None and hasattr(self, 'tkd_defines'):
+                # 将 defines dict 转化为编辑器内部 tkd_defines 格式
+                new_tkd = []
+                for did_str, content in sorted(defines.items(),
+                        key=lambda x: int(x[0]) if x[0].isdigit() else 0):
+                    lines = content.split('\r\n') if '\r\n' in content else content.split('\n')
+                    header_line = lines[0] if lines else ''
+                    body_lines = lines[1:] if len(lines) > 1 else []
+                    new_tkd.append({
+                        'define_id': int(did_str) if did_str.isdigit() else 0,
+                        'header_line': header_line,
+                        'body_lines': body_lines,
+                    })
+                self.tkd_defines = new_tkd
+                self.tkd_define_map = {dd['define_id']: dd for dd in new_tkd}
+                self._original_tkd_defines = dict(defines)
+                imported_parts.append(f"TKD ({len(new_tkd)}块)")
+                # 刷新脚本编辑器
+                self._current_edit_define_id = None
+
+        if not imported_parts:
+            QMessageBox.warning(self, "导入失败",
+                "无法导入任何数据。\n请确认参考目录中包含有效的游戏文件"); return
+
+        self._dirty = False
+        self._last_mod_metadata = {
+            "id": info.get("id", ""),
+            "name": info.get("name", ""),
+            "version": info.get("version", "1.0.0"),
+            "author": info.get("author", ""),
+            "description": info.get("description", ""),
+            "type": info.get("type", "data"),
+            "mode": info.get("mode", "mixed"),
+            "load_order": info.get("load_order", 100),
+        }
+
+        self._apply_filter()
+        self.status_var.setText(
+            f"已导入 MOD: {info.get('name', '')} v{info.get('version', '')} | "
+            f"{', '.join(imported_parts)}")
+        QMessageBox.information(self, "导入成功",
+            f"已导入 MOD: {info.get('name', '')}\n"
+            f"版本: {info.get('version', '')}\n"
+            f"作者: {info.get('author', '')}\n\n"
+            f"导入内容: {', '.join(imported_parts)}\n\n"
+            f"您现在可以继续编辑并重新导出。")
 
     # =========== 脚本编辑 ===========
     def _save_editor_to_define(self):

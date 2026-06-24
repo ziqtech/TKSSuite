@@ -51,6 +51,7 @@ from editor_utils.mod_exporter import (
     compute_crc32, generate_mod_json, pack_tksmod, ModMetadataDialog,
     ask_reference_directory, diff_binary_blocks, build_block_diff_json,
     load_grp_raw_sections,
+    get_tksmod_info, import_tksmod_blocks, ModImportPreviewDialog,
 )
 
 # ── 本地别名: 保持向后兼容 ──
@@ -447,6 +448,7 @@ class GRPEditor(QMainWindow):
         fm.addAction("另存为... (Ctrl+Shift+S)", self._save_as, QKeySequence("Ctrl+Shift+S"))
         fm.addSeparator()
         fm.addAction("导出为 MOD (.tksmod)…", self._export_tksmod)
+        fm.addAction("导入 MOD (.tksmod)…", self._import_tksmod)
         fm.addSeparator()
         fm.addAction("导出 L1 色板", lambda: self._export_color_swatch("L1"))
         fm.addAction("导出 L2 色板", lambda: self._export_color_swatch("L2"))
@@ -767,6 +769,85 @@ class GRPEditor(QMainWindow):
                 f"已导出 (区段级增量):\n{fp}\n\n参考: {ref_path}\n修改: {n_mod} 个区段\n新增: {n_app} 个区段")
         except Exception as e:
             QMessageBox.critical(self, "导出失败", str(e))
+
+    def _import_tksmod(self):
+        """从 .tksmod 导入 MOD 数据到 GRP 编辑器"""
+        fp, _ = QFileDialog.getOpenFileName(self, "选择 MOD 文件", "", "TKS MOD (*.tksmod)")
+        if not fp: return
+
+        info = get_tksmod_info(fp)
+        if info is None:
+            QMessageBox.warning(self, "无效文件", "无法解析此 .tksmod 文件"); return
+
+        # 查找 GRP 类型的 target
+        grp_targets = [t for t in info.get("targets", []) if t.upper().endswith(".GRP")]
+        if not grp_targets:
+            QMessageBox.warning(self, "不兼容", "此 MOD 不包含 GRP 文件的数据\n\n"
+                f"包含的数据: {', '.join(info.get('targets', []))}"); return
+
+        target_name = grp_targets[0]
+
+        from PySide6.QtWidgets import QDialog
+        dlg = ModImportPreviewDialog(self, info)
+        if dlg.exec() != QDialog.Accepted: return
+
+        ref_dir = ask_reference_directory(self, "选择原始游戏目录 (作为基底数据)")
+        if not ref_dir: return
+
+        mod_json, blocks = import_tksmod_blocks(
+            fp, ref_dir, target_name, block_type="grp_section")
+        if blocks is None:
+            QMessageBox.warning(self, "导入失败",
+                f"无法导入 MOD 数据。\n请确认参考目录中包含有效的 {target_name}"); return
+
+        # 将区段列表重建为临时 GRP+IDX 文件，然后重新加载
+        import tempfile
+        tmp_grp = tempfile.mktemp(suffix='.grp')
+        tmp_idx = tempfile.mktemp(suffix='.idx')
+        try:
+            # 重建 GRP: 拼接所有区段
+            offsets = [0]
+            for sec in blocks:
+                offsets.append(offsets[-1] + len(sec))
+            # 写入 IDX
+            idx_data = b''.join(struct.pack('<I', off) for off in offsets)
+            Path(tmp_idx).write_bytes(idx_data)
+            # 写入 GRP
+            with open(tmp_grp, 'wb') as f:
+                for sec in blocks:
+                    f.write(sec)
+
+            self._stop_audio()
+            self.grp = load_grp(tmp_grp, tmp_idx)
+            self.grp.filepath = None
+            self.grp.idx_path = None
+        except Exception as e:
+            QMessageBox.warning(self, "导入失败", f"重建 GRP 数据失败: {e}"); return
+        finally:
+            for p in [tmp_grp, tmp_idx]:
+                if os.path.exists(p): os.remove(p)
+
+        # 记住 MOD 元数据
+        self._last_mod_metadata = {
+            "id": info.get("id", ""),
+            "name": info.get("name", ""),
+            "version": info.get("version", "1.0.0"),
+            "author": info.get("author", ""),
+            "description": info.get("description", ""),
+            "type": info.get("type", "visual"),
+            "mode": info.get("mode", "mixed"),
+            "load_order": info.get("load_order", 100),
+        }
+
+        self._sync_list()
+        self._status_lbl.setText(
+            f"已导入 MOD: {info.get('name', '')} v{info.get('version', '')} | "
+            f"{target_name}: {len(blocks)} 个区段")
+        QMessageBox.information(self, "导入成功",
+            f"已导入 MOD: {info.get('name', '')}\n"
+            f"目标: {target_name}\n"
+            f"区段数: {len(blocks)}\n\n"
+            f"您现在可以继续编辑并重新导出。")
 
     def closeEvent(self, event):
         self._stop_audio(); super().closeEvent(event)

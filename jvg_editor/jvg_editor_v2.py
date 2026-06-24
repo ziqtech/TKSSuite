@@ -36,6 +36,7 @@ from editor_utils.mod_exporter import (
     compute_crc32, generate_mod_json, pack_tksmod, ModMetadataDialog,
     ask_reference_directory, diff_binary_blocks, build_block_diff_json,
     load_jvg_raw_blocks,
+    get_tksmod_info, import_tksmod_blocks, ModImportPreviewDialog,
 )
 
 JVG_MAGIC = b"@JVG"; JVM_MAGIC = b"@JVM"
@@ -604,6 +605,10 @@ class JVGEditor(QMainWindow):
         export_mod_action.triggered.connect(self._export_tksmod)
         file_menu.addAction(export_mod_action)
         
+        import_mod_action = QAction("导入 MOD (.tksmod)…", self)
+        import_mod_action.triggered.connect(self._import_tksmod)
+        file_menu.addAction(import_mod_action)
+        
         file_menu.addSeparator()
         
         exit_action = QAction("退出(&X)", self)
@@ -977,6 +982,92 @@ class JVGEditor(QMainWindow):
                 f"已导出 (块级增量):\n{fp}\n\n参考: {ref_path}\n修改: {n_mod} 个精灵块\n新增: {n_app} 个精灵块")
         except Exception as e:
             QMessageBox.critical(self, "导出失败", str(e))
+
+    def _import_tksmod(self):
+        """从 .tksmod 导入 MOD 数据到 JVG 编辑器"""
+        fp, _ = QFileDialog.getOpenFileName(self, "选择 MOD 文件", "", "TKS MOD (*.tksmod)")
+        if not fp: return
+
+        info = get_tksmod_info(fp)
+        if info is None:
+            QMessageBox.warning(self, "无效文件", "无法解析此 .tksmod 文件"); return
+
+        # 查找 JVG 类型的 target
+        jvg_targets = [t for t in info.get("targets", []) if t.upper().endswith(".JVG")]
+        if not jvg_targets:
+            QMessageBox.warning(self, "不兼容", "此 MOD 不包含 JVG 文件的数据\n\n"
+                f"包含的数据: {', '.join(info.get('targets', []))}"); return
+
+        target_name = jvg_targets[0]  # 取第一个 JVG target
+
+        from PySide6.QtWidgets import QDialog
+        dlg = ModImportPreviewDialog(self, info)
+        if dlg.exec() != QDialog.Accepted: return
+
+        ref_dir = ask_reference_directory(self, "选择原始游戏目录 (作为基底数据)")
+        if not ref_dir: return
+
+        mod_json, blocks = import_tksmod_blocks(
+            fp, ref_dir, target_name, block_type="jvm_block")
+        if blocks is None:
+            QMessageBox.warning(self, "导入失败",
+                f"无法导入 MOD 数据。\n请确认参考目录中包含有效的 {target_name}"); return
+
+        # 将块数据重建为临时 JVG 文件，然后重新加载
+        import tempfile
+        tmp_path = tempfile.mktemp(suffix='.jvg')
+        try:
+            # 重建 JVG 二进制
+            total_frames = 0
+            total_data_size = 0
+            for blk_data in blocks:
+                if len(blk_data) >= 32 and blk_data[:4] == b'@JVM':
+                    sc = struct.unpack_from('<I', blk_data, 4)[0]
+                    ds = struct.unpack_from('<I', blk_data, 12)[0]
+                    total_frames += sc
+                    total_data_size += ds
+
+            buf = bytearray()
+            buf += b'@JVG'
+            buf += struct.pack('<I', len(blocks))
+            buf += struct.pack('<I', len(blocks))
+            buf += struct.pack('<I', total_data_size)
+            buf += struct.pack('<I', total_frames)
+            buf += bytes(12)
+            for blk_data in blocks:
+                buf += blk_data
+
+            Path(tmp_path).write_bytes(bytes(buf))
+            self.jvg = load_jvg(tmp_path)
+            self.jvg.filepath = None  # 清除临时路径
+        except Exception as e:
+            QMessageBox.warning(self, "导入失败", f"重建 JVG 数据失败: {e}"); return
+        finally:
+            if os.path.exists(tmp_path): os.remove(tmp_path)
+
+        # 记住 MOD 元数据
+        self._last_mod_metadata = {
+            "id": info.get("id", ""),
+            "name": info.get("name", ""),
+            "version": info.get("version", "1.0.0"),
+            "author": info.get("author", ""),
+            "description": info.get("description", ""),
+            "type": info.get("type", "visual"),
+            "mode": info.get("mode", "mixed"),
+            "load_order": info.get("load_order", 100),
+        }
+
+        self._sync_list()
+        self._bi = 0; self._fi = 0
+        self._refresh_view()
+        self.statusBar().showMessage(
+            f"已导入 MOD: {info.get('name', '')} v{info.get('version', '')} | "
+            f"{target_name}: {len(blocks)} 个精灵块", 5000)
+        QMessageBox.information(self, "导入成功",
+            f"已导入 MOD: {info.get('name', '')}\n"
+            f"目标: {target_name}\n"
+            f"精灵块: {len(blocks)} 个\n\n"
+            f"您现在可以继续编辑并重新导出。")
 
     def _sync_list(self):
         current_row = self._blist.currentRow()

@@ -649,3 +649,475 @@ def load_grp_raw_sections(filepath: str, idx_path: str | None = None
             sections.append(b'')
 
     return sections
+
+
+# ═══════════════════════════════════════════════════════════════
+# MOD 导入 — 核心函数
+# ═══════════════════════════════════════════════════════════════
+
+def import_tksmod_records(mod_path: str, ref_dir: str, target_name: str,
+                          rec_size: int, field_count: int,
+                          field_fmt: str = 'h', use_lzss: bool = True
+                          ) -> tuple[dict | None, list[list[int]] | None]:
+    """从 .tksmod 导入定长记录类数据 (WarPC/Item/Skill/Kon/Shop)。
+
+    流程: 加载原始数据 → 应用 diff → 返回完整记录数组
+
+    Args:
+        mod_path: .tksmod 文件路径
+        ref_dir: 原始游戏目录 (基底数据)
+        target_name: 目标文件名 (如 "WarPC.dat")
+        rec_size: 每条记录字节数
+        field_count: 每条记录字段数
+        field_fmt: struct 格式字符 ('h'=int16, 'H'=uint16, 'i'=int32)
+        use_lzss: 是否需要 LZSS 解压
+
+    Returns:
+        (metadata, records)
+        metadata: mod.json 解析后的元数据字典
+        records: [[field0, field1, ...], ...] 完整记录数组 (已应用差异)
+        如果失败返回 (None, None)
+    """
+    # 1. 解析 .tksmod
+    mod_json, data_files = read_tksmod(mod_path)
+    if mod_json is None:
+        return None, None
+
+    # 2. 找到对应 target 的差异数据
+    diff_data = _find_component_data(mod_json, data_files, target_name)
+    if diff_data is None:
+        return mod_json, None  # MOD 中不包含此 target 的数据
+
+    # 3. 加载原始数据
+    ref_records = load_reference_dat_fields(
+        ref_dir, target_name,
+        rec_size=rec_size, field_count=field_count,
+        field_fmt=field_fmt, use_lzss=use_lzss
+    )
+    if ref_records is None:
+        return mod_json, None
+
+    # 4. 应用差异
+    result = _apply_record_diff(ref_records, diff_data, field_count)
+    return mod_json, result
+
+
+def import_tksmod_text_defines(mod_path: str, ref_dir: str
+                               ) -> tuple[dict | None, dict[str, str] | None]:
+    """从 .tksmod 导入 TKD.dat 文本脚本差异。
+
+    流程: 加载原始 TKD → 解析 DEFINE 块 → 应用 diff → 返回完整 defines 字典
+
+    Returns:
+        (metadata, defines_dict)
+        defines_dict: {define_id_str: full_text, ...}
+    """
+    mod_json, data_files = read_tksmod(mod_path)
+    if mod_json is None:
+        return None, None
+
+    diff_data = _find_component_data(mod_json, data_files, "TKD.dat")
+    if diff_data is None:
+        return mod_json, None
+
+    # 加载原始 TKD.dat
+    tkd_path = os.path.join(ref_dir, "TKD.dat")
+    if not os.path.isfile(tkd_path):
+        return mod_json, None
+
+    # XOR 解密 + Big5 解码
+    xor_table = bytes([i ^ 0xFF for i in range(256)])
+    with open(tkd_path, 'rb') as f:
+        raw = f.read()
+    decoded = raw.translate(xor_table)
+    try:
+        text = decoded.decode('big5', errors='replace')
+    except Exception:
+        text = decoded.decode('gbk', errors='replace')
+
+    # 解析为 DEFINE 块字典
+    defines = _parse_defines_to_dict(text)
+
+    # 应用差异
+    modified = diff_data.get("modified", {})
+    appended = diff_data.get("appended", [])
+    deleted = diff_data.get("deleted", [])
+
+    for did, content in modified.items():
+        defines[did] = content
+
+    if isinstance(appended, list):
+        for content in appended:
+            for line in content.split('\n'):
+                stripped = line.strip().rstrip('\r')
+                if stripped.startswith('DEFINE'):
+                    parts = stripped.split(None, 1)
+                    if len(parts) > 1:
+                        defines[parts[1]] = content
+                    break
+    elif isinstance(appended, dict):
+        for did, content in appended.items():
+            defines[did] = content
+
+    for did in deleted:
+        defines.pop(did, None)
+
+    return mod_json, defines
+
+
+def import_tksmod_text_entries(mod_path: str, ref_dir: str
+                               ) -> tuple[dict | None, dict[int, str] | None]:
+    """从 .tksmod 导入 TKT.dat 文本条目差异。
+
+    Returns:
+        (metadata, entries_dict)
+        entries_dict: {text_id: text_content, ...}
+    """
+    mod_json, data_files = read_tksmod(mod_path)
+    if mod_json is None:
+        return None, None
+
+    diff_data = _find_component_data(mod_json, data_files, "TKT.dat")
+    if diff_data is None:
+        return mod_json, None
+
+    # 加载原始 TKT 文本
+    ref_entries = load_reference_tkt_entries(ref_dir)
+    if ref_entries is None:
+        return mod_json, None
+
+    # 应用差异
+    modified = diff_data.get("modified", {})
+    appended = diff_data.get("appended", {})
+    deleted = diff_data.get("deleted", [])
+
+    for id_str, text in modified.items():
+        ref_entries[int(id_str)] = text
+
+    if isinstance(appended, dict):
+        for id_str, text in appended.items():
+            ref_entries[int(id_str)] = text
+
+    for id_str in deleted:
+        ref_entries.pop(int(id_str), None)
+
+    return mod_json, ref_entries
+
+
+def import_tksmod_blocks(mod_path: str, ref_dir: str, target_name: str,
+                         block_type: str = "jvm_block"
+                         ) -> tuple[dict | None, list[bytes] | None]:
+    """从 .tksmod 导入块级二进制差异 (JVG/GRP)。
+
+    流程: 加载原始块列表 → 应用块级 diff → 返回完整块列表
+
+    Args:
+        mod_path: .tksmod 文件路径
+        ref_dir: 原始游戏目录
+        target_name: 目标文件名 (如 "Cha.JVG" 或 "BattleBG.GRP")
+        block_type: "jvm_block" | "grp_section"
+
+    Returns:
+        (metadata, blocks)
+        blocks: [block0_bytes, block1_bytes, ...]
+    """
+    mod_json, data_files = read_tksmod(mod_path)
+    if mod_json is None:
+        return None, None
+
+    diff_data = _find_component_data(mod_json, data_files, target_name)
+    if diff_data is None:
+        return mod_json, None
+
+    # 加载原始块列表
+    ref_path = os.path.join(ref_dir, target_name)
+    if block_type == "jvm_block":
+        blocks = load_jvg_raw_blocks(ref_path)
+    else:
+        blocks = load_grp_raw_sections(ref_path)
+
+    if blocks is None:
+        return mod_json, None
+
+    # 应用差异
+    modified_blocks = diff_data.get("modified", [])
+    appended_blocks = diff_data.get("appended", [])
+    deleted_indices = diff_data.get("deleted_indices", [])
+
+    for entry in modified_blocks:
+        idx = entry.get("index", -1)
+        data_b64 = entry.get("data_b64", "")
+        if 0 <= idx < len(blocks) and data_b64:
+            blocks[idx] = base64.b64decode(data_b64)
+
+    for entry in appended_blocks:
+        idx = entry.get("index", -1)
+        data_b64 = entry.get("data_b64", "")
+        if data_b64:
+            block_data = base64.b64decode(data_b64)
+            while len(blocks) <= idx:
+                blocks.append(b'')
+            blocks[idx] = block_data
+
+    for idx in sorted(deleted_indices, reverse=True):
+        if 0 <= idx < len(blocks):
+            blocks[idx] = b''
+
+    return mod_json, blocks
+
+
+def get_tksmod_info(mod_path: str) -> dict | None:
+    """获取 .tksmod 的摘要信息，用于导入预览。
+
+    Returns:
+        {
+            "id": str, "name": str, "version": str,
+            "author": str, "description": str,
+            "type": str, "mode": str, "load_order": int,
+            "created": str,
+            "components": [{"file": ..., "target": ...}],
+            "targets": [target_name, ...],
+            "stats": {target: {"modified": n, "appended": n, ...}},
+        }
+    """
+    mod_json, data_files = read_tksmod(mod_path)
+    if mod_json is None:
+        return None
+
+    targets = []
+    stats = {}
+    for comp in mod_json.get("components", []):
+        target = comp.get("target", "")
+        internal = comp.get("file", "")
+        if target:
+            targets.append(target)
+        if internal in data_files:
+            d = data_files[internal]
+            stat = {}
+            if isinstance(d.get("modified"), list):
+                stat["modified"] = len(d["modified"])
+            elif isinstance(d.get("modified"), dict):
+                stat["modified"] = len(d["modified"])
+            if isinstance(d.get("appended"), (list, dict)):
+                stat["appended"] = len(d["appended"])
+            if "deleted" in d:
+                stat["deleted"] = len(d["deleted"])
+            if "deleted_indices" in d:
+                stat["deleted"] = len(d["deleted_indices"])
+            stats[target] = stat
+
+    return {
+        "id": mod_json.get("id", ""),
+        "name": mod_json.get("name", ""),
+        "version": mod_json.get("version", ""),
+        "author": mod_json.get("author", ""),
+        "description": mod_json.get("description", ""),
+        "type": mod_json.get("type", ""),
+        "mode": mod_json.get("mode", ""),
+        "load_order": mod_json.get("load_order", 100),
+        "created": mod_json.get("created", ""),
+        "dependencies": mod_json.get("dependencies", []),
+        "conflicts": mod_json.get("conflicts", []),
+        "id_ranges": mod_json.get("id_ranges", {}),
+        "warpc_expand": mod_json.get("warpc_expand", 0),
+        "components": mod_json.get("components", []),
+        "resources": mod_json.get("resources", []),
+        "targets": targets,
+        "stats": stats,
+    }
+
+
+# ── 导入辅助内部函数 ──
+
+def _find_component_data(mod_json: dict, data_files: dict,
+                         target_name: str) -> dict | None:
+    """在 MOD 组件中找到指定 target 的差异数据。"""
+    for comp in mod_json.get("components", []):
+        if comp.get("target", "").lower() == target_name.lower():
+            internal = comp.get("file", "")
+            if internal in data_files:
+                return data_files[internal]
+    return None
+
+
+def _apply_record_diff(original: list[list[int]], diff_data: dict,
+                       field_count: int) -> list[list[int]]:
+    """将定长记录差异应用到原始数据，返回完整修改后记录数组。"""
+    # 深拷贝以避免修改原始
+    result = [row[:] for row in original]
+
+    # 确定最终大小
+    max_idx = len(result) - 1
+    for entry in diff_data.get("appended", []):
+        idx = entry.get("index", 0)
+        if idx > max_idx:
+            max_idx = idx
+
+    # 扩展到需要的大小
+    while len(result) <= max_idx:
+        result.append([0] * field_count)
+
+    # 应用修改
+    for entry in diff_data.get("modified", []):
+        idx = entry.get("index", -1)
+        if idx < 0 or idx >= len(result):
+            continue
+        fields = entry.get("fields", {})
+        for fkey, value in fields.items():
+            if fkey.startswith('f'):
+                try:
+                    fi = int(fkey[1:])
+                    if 0 <= fi < field_count:
+                        result[idx][fi] = int(value)
+                except (ValueError, IndexError):
+                    pass
+
+    # 应用追加
+    for entry in diff_data.get("appended", []):
+        idx = entry.get("index", -1)
+        if idx < 0 or idx >= len(result):
+            continue
+        fields = entry.get("fields", {})
+        for fkey, value in fields.items():
+            if fkey.startswith('f'):
+                try:
+                    fi = int(fkey[1:])
+                    if 0 <= fi < field_count:
+                        result[idx][fi] = int(value)
+                except (ValueError, IndexError):
+                    pass
+
+    return result
+
+
+def _parse_defines_to_dict(text: str) -> dict[str, str]:
+    """解析 TKD.dat 文本为 DEFINE 块字典 {define_id_str: full_block_text}。"""
+    lines = text.split('\n')
+    defines = {}
+    current_id = None
+    current_lines = []
+
+    for line in lines:
+        raw = line.rstrip('\r')
+        stripped = raw.strip()
+        if stripped.startswith('DEFINE') and not stripped.startswith('//'):
+            parts = stripped.split(None, 1)
+            define_id = parts[1] if len(parts) > 1 else "0"
+            if current_id is not None:
+                defines[current_id] = '\r\n'.join(current_lines)
+            current_id = define_id
+            current_lines = [raw]
+        elif stripped.startswith('};') and current_id is not None:
+            current_lines.append(raw)
+            defines[current_id] = '\r\n'.join(current_lines)
+            current_id = None
+            current_lines = []
+        elif current_id is not None:
+            current_lines.append(raw)
+
+    if current_id is not None:
+        defines[current_id] = '\r\n'.join(current_lines)
+
+    return defines
+
+
+# ═══════════════════════════════════════════════════════════════
+# MOD 导入预览对话框
+# ═══════════════════════════════════════════════════════════════
+
+class ModImportPreviewDialog(QDialog):
+    """MOD 导入预览对话框 — 显示 MOD 信息并确认导入。"""
+
+    def __init__(self, parent=None, mod_info: dict | None = None):
+        super().__init__(parent)
+        self.setWindowTitle("导入 MOD (.tksmod)")
+        self.resize(520, 400)
+        self._accepted = False
+        info = mod_info or {}
+
+        layout = QVBoxLayout(self)
+
+        # MOD 基本信息
+        grid = QGridLayout()
+        grid.setVerticalSpacing(6)
+        grid.setHorizontalSpacing(12)
+
+        row = 0
+        grid.addWidget(QLabel("MOD ID:"), row, 0)
+        grid.addWidget(QLabel(f"<b>{info.get('id', '—')}</b>"), row, 1)
+
+        row += 1
+        grid.addWidget(QLabel("名称:"), row, 0)
+        grid.addWidget(QLabel(f"<b>{info.get('name', '—')}</b>"), row, 1)
+
+        row += 1
+        grid.addWidget(QLabel("版本:"), row, 0)
+        grid.addWidget(QLabel(info.get('version', '—')), row, 1)
+
+        row += 1
+        grid.addWidget(QLabel("作者:"), row, 0)
+        grid.addWidget(QLabel(info.get('author', '—')), row, 1)
+
+        row += 1
+        grid.addWidget(QLabel("创建时间:"), row, 0)
+        grid.addWidget(QLabel(info.get('created', '—')), row, 1)
+
+        row += 1
+        grid.addWidget(QLabel("类型:"), row, 0)
+        grid.addWidget(QLabel(info.get('type', '—')), row, 1)
+
+        row += 1
+        grid.addWidget(QLabel("加载顺序:"), row, 0)
+        grid.addWidget(QLabel(str(info.get('load_order', 100))), row, 1)
+
+        layout.addLayout(grid)
+
+        # 描述
+        desc = info.get('description', '')
+        if desc:
+            layout.addSpacing(8)
+            desc_lbl = QLabel(f"描述: {desc}")
+            desc_lbl.setWordWrap(True)
+            layout.addWidget(desc_lbl)
+
+        # 组件变更统计
+        layout.addSpacing(12)
+        layout.addWidget(QLabel("<b>包含数据:</b>"))
+
+        stats = info.get('stats', {})
+        targets = info.get('targets', [])
+        if targets:
+            for t in targets:
+                s = stats.get(t, {})
+                parts = []
+                if s.get('modified', 0): parts.append(f"{s['modified']} 处修改")
+                if s.get('appended', 0): parts.append(f"{s['appended']} 处追加")
+                if s.get('deleted', 0): parts.append(f"{s['deleted']} 处删除")
+                stat_str = ", ".join(parts) if parts else "无变更"
+                layout.addWidget(QLabel(f"  • {t}: {stat_str}"))
+        else:
+            layout.addWidget(QLabel("  (无数据组件)"))
+
+        # 资源文件
+        resources = info.get('resources', [])
+        if resources:
+            layout.addSpacing(8)
+            layout.addWidget(QLabel(f"<b>资源替换: {len(resources)} 个文件</b>"))
+
+        layout.addStretch()
+
+        # 提示
+        layout.addWidget(QLabel(
+            "<i>导入将加载此 MOD 的修改数据到编辑器中。\n"
+            "您需要指定原始游戏目录作为基底数据。</i>"))
+
+        # 按钮
+        btn_layout = QHBoxLayout()
+        btn_layout.addStretch()
+        btn_cancel = QPushButton("取消")
+        btn_cancel.clicked.connect(self.reject)
+        btn_layout.addWidget(btn_cancel)
+        btn_ok = QPushButton("导入")
+        btn_ok.clicked.connect(self.accept)
+        btn_layout.addWidget(btn_ok)
+        layout.addLayout(btn_layout)

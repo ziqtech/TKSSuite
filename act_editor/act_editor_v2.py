@@ -68,6 +68,7 @@ from editor_utils.ui_helpers import (
 from editor_utils.mod_exporter import (
     compute_crc32, generate_mod_json, pack_tksmod, ModMetadataDialog,
     ask_reference_directory, diff_binary_blocks, build_block_diff_json,
+    get_tksmod_info, import_tksmod_blocks, ModImportPreviewDialog,
 )
 
 HAS_PIL = False
@@ -1694,6 +1695,7 @@ class ActEditorV2(QMainWindow):
         fm.addAction("保存\tCtrl+S", self._save)
         fm.addAction("导出 CSV…", self._export_csv)
         fm.addAction("导出为 MOD (.tksmod)…", self._export_tksmod)
+        fm.addAction("导入 MOD (.tksmod)…", self._import_tksmod)
         fm.addSeparator()
         fm.addAction("退出", self.close)
 
@@ -3074,6 +3076,73 @@ class ActEditorV2(QMainWindow):
                 f"已导出 (记录级增量):\n{fp}\n\n参考: {ref_path}\n修改: {n_mod} 条动画记录\n新增: {n_app} 条")
         except Exception as e:
             QMessageBox.critical(self, "导出失败", str(e))
+
+    def _import_tksmod(self):
+        """从 .tksmod 导入 MOD 数据到 TKAct 编辑器"""
+        fp, _ = QFileDialog.getOpenFileName(self, "选择 MOD 文件", "", "TKS MOD (*.tksmod)")
+        if not fp: return
+
+        info = get_tksmod_info(fp)
+        if info is None:
+            QMessageBox.warning(self, "无效文件", "无法解析此 .tksmod 文件"); return
+
+        if "TKAct.dat" not in info.get("targets", []):
+            QMessageBox.warning(self, "不兼容", "此 MOD 不包含 TKAct.dat 的数据\n\n"
+                f"包含的数据: {', '.join(info.get('targets', []))}"); return
+
+        from PySide6.QtWidgets import QDialog
+        dlg = ModImportPreviewDialog(self, info)
+        if dlg.exec() != QDialog.Accepted: return
+
+        ref_dir = ask_reference_directory(self, "选择原始游戏目录 (作为基底数据)")
+        if not ref_dir: return
+
+        mod_json, blocks = import_tksmod_blocks(
+            fp, ref_dir, "TKAct.dat", block_type="act_entry")
+        if blocks is None:
+            QMessageBox.warning(self, "导入失败",
+                "无法导入 MOD 数据。\n请确认参考目录中包含有效的 TKAct.dat"); return
+
+        # 将块字节重新解析为 entries 结构
+        new_entries = []
+        for i, blk in enumerate(blocks):
+            if len(blk) < ACT_ENTRY_SIZE:
+                blk = blk + bytes(ACT_ENTRY_SIZE - len(blk))
+            data = blk[:ACT_ENTRY_SIZE]
+            dirs = [list(data[d*8:d*8+8]) for d in range(4)]
+            param16 = list(struct.unpack_from('<24h', data, ACT_PARAM_OFFSET))
+            layers = [list(struct.unpack_from('<40h', data, (s+1)*ACT_LAYER_SIZE))
+                      for s in range(ACT_MAX_LAYER)]
+            tail = list(struct.unpack_from('<32h', data, ACT_TAIL_OFFSET))
+            new_entries.append({
+                'index': i, 'dirs': dirs,
+                'param16': param16, 'layers': layers, 'tail': tail,
+            })
+
+        self.entries = new_entries
+        self._dirty = False
+
+        self._last_mod_metadata = {
+            "id": info.get("id", ""),
+            "name": info.get("name", ""),
+            "version": info.get("version", "1.0.0"),
+            "author": info.get("author", ""),
+            "description": info.get("description", ""),
+            "type": info.get("type", "data"),
+            "mode": info.get("mode", "mixed"),
+            "load_order": info.get("load_order", 100),
+        }
+
+        self._apply_filter()
+        self.status_var.setText(
+            f"已导入 MOD: {info.get('name', '')} v{info.get('version', '')} | "
+            f"{len(new_entries)} 条动画记录")
+        QMessageBox.information(self, "导入成功",
+            f"已导入 MOD: {info.get('name', '')}\n"
+            f"版本: {info.get('version', '')}\n"
+            f"作者: {info.get('author', '')}\n\n"
+            f"共加载 {len(new_entries)} 条动画记录。\n"
+            f"您现在可以继续编辑并重新导出。")
 
     # ── 编辑状态 ──
 
