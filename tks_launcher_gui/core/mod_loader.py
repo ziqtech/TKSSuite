@@ -896,22 +896,147 @@ def _save_grp_sections(sections: list, grp_path: str, idx_path: str):
             f.write(sec)
 
 
+def _load_jvg_blocks(file_path: str) -> Optional[list]:
+    """加载 JVG 文件中每个 @JVM 块的原始字节数据。
+
+    JVG 是自包含块格式, 不需要外部 IDX 文件。
+    返回 [block0_bytes, block1_bytes, ...] 或 None
+    """
+    if not os.path.isfile(file_path):
+        return None
+    with open(file_path, 'rb') as f:
+        data = f.read()
+    if len(data) < 32 or data[:4] != b'@JVG':
+        return None
+
+    block_count = struct.unpack_from('<I', data, 8)[0]
+    blocks = []
+    off = 32  # 跳过 @JVG 文件头
+
+    for _ in range(block_count):
+        if off + 32 > len(data) or data[off:off+4] != b'@JVM':
+            break
+        sprite_count = struct.unpack_from('<I', data, off + 4)[0]
+        data_size = struct.unpack_from('<I', data, off + 12)[0]
+        # 块总大小 = 块头(32B) + 偏移表((sprite_count+1)*4) + 调色板(512B) + 数据(data_size)
+        block_size = 32 + (sprite_count + 1) * 4 + 512 + data_size
+        block_bytes = data[off:off + block_size]
+        blocks.append(block_bytes)
+        off += block_size
+
+    return blocks
+
+
+def _load_fixed_record_blocks(file_path: str, record_size: int) -> Optional[list]:
+    """加载定长记录的平坦二进制文件为块列表。
+
+    用于 TKAct.dat 等无头部、无压缩的固定记录文件。
+    每条记录作为一个独立的 block。
+
+    Args:
+        file_path: 文件路径
+        record_size: 每条记录的字节数 (如 TKAct.dat = 784)
+
+    返回 [record0_bytes, record1_bytes, ...] 或 None
+    """
+    if not os.path.isfile(file_path):
+        return None
+    with open(file_path, 'rb') as f:
+        data = f.read()
+    if len(data) == 0 or len(data) % record_size != 0:
+        return None
+
+    count = len(data) // record_size
+    blocks = []
+    for i in range(count):
+        off = i * record_size
+        blocks.append(data[off:off + record_size])
+    return blocks
+
+
+def _save_fixed_record_blocks(blocks: list, file_path: str):
+    """将定长记录块列表拼接写回文件（无头部、无压缩）。"""
+    with open(file_path, 'wb') as f:
+        for blk in blocks:
+            f.write(blk)
+
+
+def _save_jvg_blocks(blocks: list, file_path: str):
+    """将修改后的 @JVM 块列表重建为 JVG 文件。"""
+    total_frames = 0
+    total_data_size = 0
+    for blk_data in blocks:
+        if len(blk_data) >= 32 and blk_data[:4] == b'@JVM':
+            sc = struct.unpack_from('<I', blk_data, 4)[0]
+            ds = struct.unpack_from('<I', blk_data, 12)[0]
+            total_frames += sc
+            total_data_size += ds
+
+    # 构建 @JVG 文件头 (32 bytes)
+    buf = bytearray()
+    buf += b'@JVG'
+    buf += struct.pack('<I', len(blocks))   # block_count
+    buf += struct.pack('<I', len(blocks))   # block_count (重复)
+    buf += struct.pack('<I', total_data_size)
+    buf += struct.pack('<I', total_frames)
+    buf += bytes(12)  # 保留字节填满 32B
+
+    # 拼接所有块
+    for blk_data in blocks:
+        buf += blk_data
+
+    with open(file_path, 'wb') as f:
+        f.write(bytes(buf))
+
+
+# 定长记录文件的块大小映射
+_FIXED_RECORD_SIZES = {
+    "act_entry": 784,   # TKAct.dat: 650 条 × 784 字节
+}
+
+
 def _merge_block_file(file_path: str, target_name: str,
                       mod_diffs: List[Tuple['ModInfo', dict]], log_func=None) -> Optional[str]:
-    """合并 GRP 类块级二进制文件, 返回标记 (实际文件由此函数直接写入)
+    """合并块级二进制文件, 返回标记 (实际文件由此函数直接写入)
 
-    注意: 此函数直接操作 GRP + IDX 两个文件, 不通过 merged.file_data 返回。
+    根据 block_type 区分:
+      - "jvm_block":   JVG 自包含格式, 通过 @JVM 块头解析
+      - "act_entry":   定长记录格式 (TKAct.dat 等), 无头部无压缩
+      - "grp_section": GRP 区段格式, 需要配套 IDX 文件
+
     返回 'direct_write' 标记表示已处理。
     """
     log = log_func or (lambda x: None)
 
-    result = _load_grp_sections(file_path)
-    if result is None:
-        log(f"  [WARN] 无法加载 {target_name} 的区段结构 (需要配套 IDX 文件)")
-        return None
+    # 从第一个 MOD 差异中获取 block_type
+    first_diff = mod_diffs[0][1] if mod_diffs else {}
+    block_type = first_diff.get("block_type", "grp_section")
 
-    sections, idx_path = result
-    log(f"  合并 {target_name}: {len(sections)} 个区段, {len(mod_diffs)} 个 MOD 差异")
+    if block_type == "jvm_block":
+        # JVG 文件: 自包含格式, 不需要 IDX
+        sections = _load_jvg_blocks(file_path)
+        if sections is None:
+            log(f"  [WARN] 无法加载 {target_name} 的 @JVM 块结构 (不是有效的 @JVG 文件)")
+            return None
+        log(f"  合并 {target_name}: {len(sections)} 个 @JVM 块, {len(mod_diffs)} 个 MOD 差异")
+
+    elif block_type in _FIXED_RECORD_SIZES:
+        # 定长记录文件: TKAct.dat 等, 无头部无 IDX
+        rec_size = _FIXED_RECORD_SIZES[block_type]
+        sections = _load_fixed_record_blocks(file_path, rec_size)
+        if sections is None:
+            log(f"  [WARN] 无法加载 {target_name} 的定长记录结构 (record_size={rec_size})")
+            return None
+        log(f"  合并 {target_name}: {len(sections)} 条记录 (×{rec_size}B), {len(mod_diffs)} 个 MOD 差异")
+
+    else:
+        # GRP 文件: 需要 IDX
+        result = _load_grp_sections(file_path)
+        if result is None:
+            log(f"  [WARN] 无法加载 {target_name} 的区段结构 (需要配套 IDX 文件)")
+            return None
+        sections, idx_path = result
+        log(f"  合并 {target_name}: {len(sections)} 个区段, {len(mod_diffs)} 个 MOD 差异")
 
     # 按顺序应用每个 MOD 的块差异
     for mod, diff_data in mod_diffs:
@@ -945,8 +1070,13 @@ def _merge_block_file(file_path: str, target_name: str,
         log(f"    应用 MOD '{mod.name}': {len(modified_blocks)} 修改, "
             f"{len(appended_blocks)} 追加, {len(deleted_indices)} 删除")
 
-    # 直接写入 GRP + IDX
-    _save_grp_sections(sections, file_path, idx_path)
+    # 写入文件
+    if block_type == "jvm_block":
+        _save_jvg_blocks(sections, file_path)
+    elif block_type in _FIXED_RECORD_SIZES:
+        _save_fixed_record_blocks(sections, file_path)
+    else:
+        _save_grp_sections(sections, file_path, idx_path)
     return "direct_write"
 
 
