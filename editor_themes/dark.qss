@@ -141,6 +141,21 @@ QListWidget::item:selected {
     border-radius: 0;
     outline: none;
 }
+QListWidget::indicator, QTableWidget::indicator {
+    width: 16px;
+    height: 16px;
+    background-color: #1a1e27;
+    border: 1px solid #14171f;
+    border-radius: 3px;
+}
+QListWidget::indicator:checked, QTableWidget::indicator:checked {
+    background-color: #478cbf;
+    border-color: #478cbf;
+    image: url(svg/checkmark.svg);
+}
+QListWidget::indicator:hover, QTableWidget::indicator:hover {
+    border-color: #3b445c;
+}
 
 /* ── 分组框 ── */
 QGroupBox {
@@ -590,4 +605,21 @@ QLabel#statusLabel {
     color: #dcdcdc;
     font-weight: bold;
     padding: 4px 8px;
+}
+
+/* ── DockHeader 内紧凑工具按钮 (tks_launcher_gui) ── */
+QPushButton#dockToolButton {
+    background-color: #2e3548;
+    color: #dcdcdc;
+    border: 1px solid #14171f;
+    border-radius: 3px;
+    padding: 1px 8px;
+    max-height: 20px;
+}
+QPushButton#dockToolButton:hover {
+    background-color: #3b445c;
+}
+QPushButton#dockToolButton:pressed {
+    background-color: #478cbf;
+    color: #fff;
 }

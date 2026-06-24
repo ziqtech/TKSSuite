@@ -93,13 +93,13 @@ class MainWindow(QMainWindow):
         self.mod_list = ModListWidget(mods_dir)
         left_splitter.addWidget(self.mod_list)
 
-        left_splitter.setSizes([300, 300])
+        left_splitter.setSizes([360, 540])
         splitter.addWidget(left_splitter)
 
         self.log_console = LogConsole()
         splitter.addWidget(self.log_console)
 
-        splitter.setSizes([400, 650])
+        splitter.setSizes([580, 520])
 
     def _setup_statusbar(self):
         self.status_bar = QStatusBar()

@@ -19,6 +19,7 @@ _ICON_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "TKS.ico")
 
 def main():
     app = QApplication(sys.argv)
+    app.setStyle("Fusion")  # 使用 Fusion 样式，避免 Windows 原生样式覆盖 QSS
     app.setApplicationName("TKS Mod Launcher")
     app.setApplicationVersion("2.0.0")
     app.setOrganizationName("TKSMod")
