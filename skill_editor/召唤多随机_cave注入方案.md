@@ -273,3 +273,60 @@ entry[7] = 技能231
 5. **单技能验证**：仅配 `skill_228_random:[138,134,132]`，游戏内多次施放召喚麒麟，统计三角色出现概率≈1/3。
 6. **值域校验**：配越界值（如 999）→ 启动器告警跳过，不写脏数据。
 7. **回退**：取消勾选 `summon_table` 补丁 → 不注入，游戏原版行为。
+
+---
+
+## 十一、阶段二/三 实际实现（2026-06-25）
+
+### 11.1 注入点确认（capstone 反汇编精确边界）
+
+从函数入口 0x444BB0 反汇编确认（注意：之前文档中部分 RVA 偏 1，但不影响 pattern scan）：
+
+| 技能 | hook 地址 | 原指令 | 字节数 | 结果交付 |
+|---|---|---|---|---|
+| 224~231 | **0x444C84** | `movsx edx, byte[eax+0x4EB6F0]` | 7 | edx → 由 `0x444C8B mov [ebp-2],dx` 写回 |
+| 222 | **0x444C9C** | `mov word [ebp-2], 0x3A` | 6 | cave 直接写 `[ebp-2]`，ret→`0x444CA2 jmp 0x444CCF` |
+| 251 | **0x444CB3** | `push 0x64`（rand 段起点） | 28 | cave 直接写 `[ebp-2]`，ret→`0x444CB8` NOP 滑到 `0x444CCF` |
+
+> 注：222 和 251 路径之后没有 `mov [ebp-2],dx` 指令，所以 cave 必须自己写 `[ebp-2]`，不同于 224~231 的 edx 间接交付。
+
+### 11.2 阶段二/三 cave 代码（63 字节）
+
+合并三段：`entry_222`（hook 0x444C9C 调入）+ `entry_251`（hook 0x444CB3 调入）+ `shared`（随机选 cand，写 `[ebp-2]`）。
+
+- `entry_222`：`push ebx; mov ebx,8; jmp shared` → entry[8] = 技能222
+- `entry_251`：`push ebx; mov ebx,9; jmp shared` → entry[9] = 技能251
+- `shared`：`imul ebx,9; add ebx,TABLE_BASE(imm32 立即数); movzx ecx,[esi](count≥1,仅在配了 _random 时启用); rand; cand[r]; mov [ebp-2],dx; ret`
+
+无 default 分支（count=0 不会走到，因为只在配了 `*_random` 时才写入对应 hook）。
+
+### 11.3 222/251 与现有 imm16 补丁的关系
+
+- 若配了 `skill_222_random`：hook `0x444C9C`（覆盖 imm16 `0x444CA0`），imm16 补丁失效（被覆盖）。hook 优先。
+- 若未配：不 hook 222，imm16 补丁（`skill_222` 单值）正常生效。向后兼容。
+- 同理 251：配了 `skill_251_random` → hook 覆盖整个 rand+分支段（含 `skill_251_a@0x444CC5`/`skill_251_b@0x444CCD`），a/b 失效。
+
+### 11.4 最终 cave 内存布局（1024 字节）
+
+```
+偏移    用途
+0~63     awk_sprite cave           (现有)
+64~127   portrait1 cave            (现有)
+128~191  portrait2 cave            (现有)
+192~255  archive_portrait cave     (现有)
+256~319  history_text cave         (现有)
+320~396  阶段一 cave 代码           (entry_224, 77字节)
+400~447  (保留)
+448~537  候选表                     (90字节: entry0~7=224~231, 8=222, 9=251)
+560~622  阶段二/三合并 cave 代码     (entry_222+entry_251+shared, 63字节)
+640~1023 (保留)
+```
+
+### 11.5 验证清单（2026-06-25）
+
+1. ✅ 字节码自检：阶段一 77 字节 + 阶段二/三 63 字节，capstone 反汇编逐指令一致
+2. ✅ 占位符唯一性：两段 cave 各有 1 次 `0x52414E44`，均替换为 table_abs
+3. ✅ hook 覆盖精确：三处 hook 各有独立 pattern，expect_count=1，互不覆盖
+4. ✅ 字节级执行模拟：entry_222(entry8)/entry_251(entry9) 索引计算和 cand 读取正确
+5. ✅ 端到端 mock 测试：T222/T251/T全/T0 四场景全通过
+6. ✅ 三阶段同时配置：候选表 90 字节 + 2 cave + 3 hook 全部写入正确
