@@ -336,7 +336,7 @@ class PatcherWorker(QThread):
             actual = get_decompressed_size(fname)
             config.variables[vn] = actual if actual > 0 else DATA_FILE_ORIG_SIZES[fname]
 
-        # 分配 cave 内存 (临时句柄, 用完即关)
+        # 分配 cave 内存 + 应用配置补丁 (共用同一句柄)
         self.overlay_update.emit("正在应用内存补丁...", False)
         hp = _OpenProcess(PROCESS_VM_READ | PROCESS_VM_WRITE | PROCESS_VM_OPERATION, False, target_pid)
         cave_addr = 0
@@ -344,7 +344,6 @@ class PatcherWorker(QThread):
             ca = _VirtualAllocEx(hp, None, 1024, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE)
             if ca:
                 cave_addr = ctypes.cast(ca, ctypes.c_void_p).value or 0
-            _CloseHandle(hp)
         if cave_addr:
             self._log(f"  Cave 内存: 0x{cave_addr:08X} (1024 bytes)")
         else:
@@ -367,7 +366,8 @@ class PatcherWorker(QThread):
             self._log(f"[ERROR] ApplyConfigPatches 异常: {ex}")
             import traceback
             self._log(traceback.format_exc())
-        _CloseHandle(hp)
+        if hp:
+            _CloseHandle(hp)
 
         # WarPC 代码引用修补
         if not self.minimal_mode and _warpc_expanded and _warpc_new_buf:

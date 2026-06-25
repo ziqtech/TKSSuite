@@ -217,7 +217,10 @@ def expand_warpc_buffer(child_pid: int, base_addr: int, module_size: int,
     ss = code_start_addr; ssz = len(code_buf)
 
     # WarPC 基址修补
+    # 安全排除: 跳过 E8/E9 指令的 rel32 偶然匹配
     for off in value_scan(bytes(code_buf), WARPC_BASE):
+        if off >= 1 and code_buf[off - 1] in (0xE8, 0xE9):
+            continue
         write_pm(hp, ss + off, nal)
         code_buf[off:off+4] = nal; ap += 1
     log(f"  WarPC 基址 0x{WARPC_BASE:08X} 扫描: 找到 {ap} 处")
@@ -225,6 +228,8 @@ def expand_warpc_buffer(child_pid: int, base_addr: int, module_size: int,
     # word_757F0C 修补
     w0c = WARPC_BASE + 4; n0c = i32b(nb + 4)
     for off in value_scan(bytes(code_buf), w0c):
+        if off >= 1 and code_buf[off - 1] in (0xE8, 0xE9):
+            continue
         aa = ss + off
         op = vp_ex(hp, aa, 4, PAGE_EXECUTE_READWRITE)
         write_pm(hp, aa, n0c)
@@ -233,6 +238,10 @@ def expand_warpc_buffer(child_pid: int, base_addr: int, module_size: int,
     log(f"  word_757F0C 修补: {a0p} 处")
 
     # 字段基址修补
+    # 启发式扫描: 找到 \x75\x00 标记后回退 2 字节读 4 字节地址,
+    # 判断是否落在 WarPC 第一条记录的字段范围内.
+    # 安全排除: 如果 4 字节前一字节是 E8(call) 或 E9(jmp) 操作码,
+    # 说明该 4 字节是相对偏移 (rel32) 而非地址引用, 必须跳过.
     rs, re = WARPC_BASE, WARPC_BASE + WARPC_REC_SIZE
     pos = 0
     end = ssz - 4
@@ -243,6 +252,10 @@ def expand_warpc_buffer(child_pid: int, base_addr: int, module_size: int,
             break
         read_pos = pos - 2
         if read_pos >= 0:
+            # 安全检查: read_pos - 1 为 E8/E9 则该 4 字节是 call/jmp 的 rel32, 跳过
+            if read_pos >= 1 and code_buf[read_pos - 1] in (0xE8, 0xE9):
+                pos += 1
+                continue
             v = b2i32(bytes(code_buf), read_pos)
             if rs <= v < re:
                 ofs = v - WARPC_BASE; nv = nb + ofs

@@ -385,7 +385,7 @@ def apply_summon_table(defn: PatchDef, code_buf: bytearray, code_start_addr: int
             else:
                 log(f"    -> .data 与默认值一致")
 
-    # Step 3: 写代码段 imm16 — 自开进程句柄写入，不依赖传入的 h_proc
+    # Step 3: 写代码段 imm16 — 使用独立句柄确保写入成功
     _pid = variables.get("_target_pid", 0)
     if not _pid:
         log("  [WARN] 缺少 target_pid, 跳过 imm16 补丁")
@@ -421,7 +421,7 @@ def apply_summon_table(defn: PatchDef, code_buf: bytearray, code_start_addr: int
             code_buf[cb_off:cb_off + 2] = imm
 
     # Step 4: 多随机 cave 注入 (skill_224~231 的 *_random 列表)
-    # 复用 Step 3 自开句柄 _hp — 传入的 h_proc 在 patcher_worker 分配 cave 后已被 CloseHandle, 不可用
+    # 复用 Step 3 句柄 _hp (确保随机 cave 写入成功)
     # data_keys 顺序 = entry 顺序 (224~231 -> entry 0~7); 列表键名 = data_keys[k] + "_random"
     rnd_pat_str = defn.random_hook_pattern
     if rnd_pat_str and defn.random_cave_offset and defn.random_table_offset:
