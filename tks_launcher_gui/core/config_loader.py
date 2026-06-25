@@ -33,10 +33,10 @@ class PatchDef:
     random_hook_pattern: str = ""             # hook 点模式 (定位 0x444C84 查表指令)
     random_hook_size: int = 0                 # 覆盖字节数 (=7: E8 rel32 + 2 NOP)
     random_hook_expect_count: int = 0         # 预期匹配数
-    random_cave_offset: int = 0               # 阶段一 cave 代码 (entry_224, 77字节) 偏移
+    random_cave_offset: int = 0               # 224~231 cave 代码 (entry_224, 77字节) 偏移
     random_table_offset: int = 0              # 候选表 (90字节: entry0~7=224~231, 8=222, 9=251) 偏移
-    # 阶段二/三 (222/251) 多随机: 合并 cave 代码 (entry_222+entry_251+shared, 63字节) + 多 hook
-    random2_cave_offset: int = 0              # 阶段二/三合并 cave 代码偏移
+    # 222/251 多随机: 合并 cave 代码 (entry_222+entry_251+shared, 63字节) + 多 hook
+    random2_cave_offset: int = 0             # 222/251 合并 cave 代码偏移
     random2_hooks: List[Dict] = field(default_factory=list)  # [{pattern,hook_size,expect_count,entry_offset,json_key,entry_idx}]
     _pre_scanned_hits: List[int] = field(default_factory=list, repr=False)
 

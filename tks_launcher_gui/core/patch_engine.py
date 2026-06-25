@@ -104,8 +104,8 @@ CAVE_SUMMON_RANDOM = bytes([
 ])
 
 # ============================================================
-# Cave 模板: 召唤多随机 阶段二/三 (222/251)
-# 与阶段一区别: 222/251 hook 点之后不经 mov[ebp-2],dx, 故 cave 自行写 [ebp-2]
+# Cave 模板: 召唤多随机 222/251
+# 与 224~231 区别: 222/251 hook 点之后不经 mov[ebp-2],dx, 故 cave 自行写 [ebp-2]
 # 合并三段: entry_222(entry8) + entry_251(entry9) + shared(随机选 cand, 写[ebp-2])
 # entry_222/entry_251 仅设 entry 常数后 jmp shared; shared 内 rand 选 cand -> [ebp-2]
 # 仅在配了 skill_222_random/skill_251_random 时启用对应 hook (count>=1, 无 default 分支)
@@ -417,16 +417,16 @@ def _apply_summon_random(defn: PatchDef, summon: dict, code_buf: bytearray,
                          code_start_addr: int, h_proc: int, cave_addr: int,
                          warpc_i_fn, log_func=None) -> bool:
     """多随机 cave: 读 *_random 列表 -> 90字节候选表 + cave代码 + hooks
-    阶段一: 224~231 (entry 0~7, entry_224 cave, hook 0x444C84, 结果->edx)
-    阶段二: 222 (entry 8, 合并 cave entry_222, hook 0x444C9C, 结果->[ebp-2])
-    阶段三: 251 (entry 9, 合并 cave entry_251, hook 0x444CB3, 结果->[ebp-2])"""
+    224~231 (entry 0~7, entry_224 cave, hook 0x444C84, 结果->edx)
+    222 (entry 8, 合并 cave entry_222, hook 0x444C9C, 结果->[ebp-2])
+    251 (entry 9, 合并 cave entry_251, hook 0x444CB3, 结果->[ebp-2])"""
     log = log_func or (lambda x: None)
 
     # 4a. 收集候选列表 -> 90 字节候选表 (entry 0~7=224~231, 8=222, 9=251)
     table = bytearray(90)        # 10 entry x 9 字节
     any_random = False
-    has_224 = False              # 224~231 任一配了 -> 需阶段一 cave+hook
-    extra_hooks_to_apply = []    # 阶段二/三: [{entry_idx, ...hook_cfg}]
+    has_224 = False              # 224~231 任一配了 -> 需 224~231 cave+hook
+    extra_hooks_to_apply = []    # 222/251 hooks: [{entry_idx, ...hook_cfg}]
 
     def collect(rkey, entry_idx):
         nonlocal any_random, has_224
@@ -450,12 +450,12 @@ def _apply_summon_random(defn: PatchDef, summon: dict, code_buf: bytearray,
         log(f"    {rkey}: {len(cand)} 候选 i={cand} (WarPC={[c + 36 for c in cand]})")
         return True
 
-    # 阶段一: 224~231 (entry 0~7)
+    # 224~231 (entry 0~7)
     for k, key in enumerate(defn.data_keys):
         if collect(key + "_random", k):
             has_224 = True
 
-    # 阶段二/三: 222 (entry 8) / 251 (entry 9), 按 random2_hooks 配置收集
+    # 222 (entry 8) / 251 (entry 9), 按 random2_hooks 配置收集
     for hk in defn.random2_hooks:
         jkey = hk.get("json_key", "")
         eidx = hk.get("entry_idx", 0)
@@ -475,7 +475,7 @@ def _apply_summon_random(defn: PatchDef, summon: dict, code_buf: bytearray,
 
     all_ok = True
 
-    # 4c. 阶段一: entry_224 cave + hook 0x444C84 (结果->edx, 由原 mov[ebp-2],dx 写回)
+    # 4c. 224~231: entry_224 cave + hook 0x444C84 (结果->edx, 由原 mov[ebp-2],dx 写回)
     if has_224:
         all_ok &= _write_cave_and_hook(
             CAVE_SUMMON_RANDOM, defn.random_cave_offset, 0,           # cave 代码, 入口偏移 0
@@ -483,18 +483,18 @@ def _apply_summon_random(defn: PatchDef, summon: dict, code_buf: bytearray,
             table_abs, code_buf, code_start_addr, h_proc, cave_addr,
             warpc_i_fn, log, tag="224~231")
 
-    # 4d. 阶段二/三: 合并 cave (entry_222+entry_251+shared) + 各 hook
+    # 4d. 222/251: 合并 cave (entry_222+entry_251+shared) + 各 hook
     if extra_hooks_to_apply:
         cave2_abs = cave_addr + defn.random2_cave_offset
         cave2_code = bytearray(CAVE_SUMMON_RANDOM_222_251)
         if cave2_code.count(SUMMON_RANDOM_PLACEHOLDER.to_bytes(4, 'little')) != 1:
-            log(f"  [ERROR] 阶段二/三 cave 占位符次数异常, 中止")
+            log(f"  [ERROR] 222/251 cave 占位符次数异常, 中止")
             return False
         replace_addr_in_bytes(cave2_code, SUMMON_RANDOM_PLACEHOLDER, table_abs)
         if write_pm(h_proc, cave2_abs, bytes(cave2_code)) != len(cave2_code):
-            log(f"  [FAIL] 阶段二/三 cave 代码写入失败 @0x{cave2_abs:08X}")
+            log(f"  [FAIL] 222/251 cave 代码写入失败 @0x{cave2_abs:08X}")
             return False
-        log(f"    [OK] 阶段二/三 cave @0x{cave2_abs:08X} ({len(cave2_code)} 字节)")
+        log(f"    [OK] 222/251 cave @0x{cave2_abs:08X} ({len(cave2_code)} 字节)")
         for hk in extra_hooks_to_apply:
             all_ok &= _write_cave_and_hook(
                 None, defn.random2_cave_offset, hk.get("entry_offset", 0),  # 复用已写 cave, 仅 hook
@@ -515,7 +515,7 @@ def _write_cave_and_hook(cave_template: Optional[bytes], cave_offset: int, entry
     prewritten_cave_abs>0 时跳过 cave 写入 (复用已写代码), 仅写 hook 指向该地址+entry_offset."""
     log = log_func or (lambda x: None)
 
-    # 写 cave 代码 (阶段一); 阶段二/三复用已写合并代码
+    # 写 cave 代码 (224~231); 222/251 复用已写合并代码
     if cave_template is not None:
         cave_code = bytearray(cave_template)
         if cave_code.count(SUMMON_RANDOM_PLACEHOLDER.to_bytes(4, 'little')) != 1:
@@ -530,7 +530,7 @@ def _write_cave_and_hook(cave_template: Optional[bytes], cave_offset: int, entry
     else:
         cave_abs = prewritten_cave_abs
 
-    hook_target = cave_abs + entry_offset   # call 目标 (阶段二/三为合并 cave 内入口)
+    hook_target = cave_abs + entry_offset   # call 目标 (222/251 为合并 cave 内入口)
 
     # 写 hook: E8 rel32 + NOP 填充
     if not hook_pattern or not hook_size:
