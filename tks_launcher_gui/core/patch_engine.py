@@ -65,6 +65,45 @@ CAVE_HISTORY_TEXT = bytes([
 _WARPC_BASE_PLACEHOLDER = 0x757F08
 
 # ============================================================
+# Cave 模板: 召唤多随机 (224~231)
+# 逆向依据: sub_444BB0 @0x444C83 查表指令; sub_452AC0 rand(n)->0..n-1
+# hook 点 0x444C83 (movsx edx,byte[eax+0x4EB6F0], 7字节) -> E8 rel32 + 90 90
+# cave 末尾 ret 回 0x444C8A (mov [ebp-2],dx 由原指令写回)
+# count=0 走原查表 (向后兼容); count=N 调 sub_452AC0(N) 随机选 cand[0..N-1]
+# 唯一动态重定位点: TABLE_BASE 占位符 0x52414E44 (cave 内出现 1 次)
+# ============================================================
+
+SUMMON_RANDOM_PLACEHOLDER = 0x52414E44   # "RAND", cave 内唯一, 指向 72 字节候选表
+
+CAVE_SUMMON_RANDOM = bytes([
+    0x53,                                              # 0  push ebx
+    0x56,                                              # 1  push esi
+    0x0F,0xBF,0x1D,0x7C,0x6C,0x9D,0x00,                # 2  movsx ebx, word[0x9D6C7C]
+    0x81,0xEB,0xE0,0x00,0x00,0x00,                     # 9  sub ebx, 0xE0  (imm32! 避免 imm8 符号扩展, idx 224..231 -> 0..7)
+    0x6B,0xDB,0x09,                                    # 15 imul ebx, ebx, 9       (entry 9 字节)
+    0x81,0xC3,0x44,0x4E,0x41,0x52,                     # 18 add ebx, TABLE_BASE   <- 占位符 (imm32 立即数加, 非[mem]解引用)
+    0x8B,0xF3,                                         # 24 mov esi, ebx
+    0x0F,0xB6,0x0E,                                    # 26 movzx ecx, byte[esi]   (count)
+    0x85,0xC9,                                         # 29 test ecx, ecx
+    0x74,0x1B,                                         # 31 jz  .default(60)
+    0x83,0xF9,0x01,                                    # 33 cmp ecx, 1
+    0x76,0x10,                                         # 36 jbe .single(54)
+    0x51,                                              # 38 push ecx
+    0xB8,0xC0,0x2A,0x45,0x00,                          # 39 mov eax, 0x452AC0
+    0xFF,0xD0,                                         # 44 call eax               (rand(count))
+    0x59,                                              # 46 pop ecx
+    0x0F,0xB6,0x54,0x06,0x01,                          # 47 movzx edx, byte[esi+1+eax]  (i=cand[r])
+    0xEB,0x14,                                         # 52 jmp .done(74)
+    0x0F,0xB6,0x56,0x01,                               # 54 .single: movzx edx, byte[esi+1]
+    0xEB,0x0E,                                         # 58 jmp .done(74)
+    0x0F,0xBF,0x05,0x7C,0x6C,0x9D,0x00,                # 60 .default: movsx eax, word[0x9D6C7C]
+    0x0F,0xBE,0x90,0xF0,0xB6,0x4E,0x00,                # 67 movsx edx, byte[eax+0x4EB6F0]  (原查表)
+    0x5E,                                              # 74 .done: pop esi
+    0x5B,                                              # 75 pop ebx
+    0xC3,                                              # 76 ret
+])
+
+# ============================================================
 # Cave 模板构建
 # ============================================================
 
@@ -224,7 +263,7 @@ def apply_cave_hook(defn: PatchDef, hits: List[int], code_buf: bytearray,
 
 def apply_summon_table(defn: PatchDef, code_buf: bytearray, code_start_addr: int,
                        base_addr: int, h_proc: int, variables: Dict[str, int],
-                       log_func=None) -> bool:
+                       log_func=None, cave_addr: int = 0) -> bool:
     log = log_func or (lambda x: None)
     all_ok = True
 
@@ -321,8 +360,107 @@ def apply_summon_table(defn: PatchDef, code_buf: bytearray, code_start_addr: int
         if 0 <= cb_off + 2 <= len(code_buf):
             code_buf[cb_off:cb_off + 2] = imm
 
+    # Step 4: 多随机 cave 注入 (skill_224~231 的 *_random 列表)
+    # 复用 Step 3 自开句柄 _hp — 传入的 h_proc 在 patcher_worker 分配 cave 后已被 CloseHandle, 不可用
+    # data_keys 顺序 = entry 顺序 (224~231 -> entry 0~7); 列表键名 = data_keys[k] + "_random"
+    rnd_pat_str = defn.random_hook_pattern
+    if rnd_pat_str and defn.random_cave_offset and defn.random_table_offset:
+        if not cave_addr:
+            log("  [WARN] 无 cave 内存, 跳过多随机注入")
+        else:
+            all_ok &= _apply_summon_random(defn, summon, code_buf, code_start_addr,
+                                            _hp, cave_addr, _warpc_i, log)
+
     _CloseHandle(_hp)
     return all_ok
+
+
+def _apply_summon_random(defn: PatchDef, summon: dict, code_buf: bytearray,
+                         code_start_addr: int, h_proc: int, cave_addr: int,
+                         warpc_i_fn, log_func=None) -> bool:
+    """224~231 多随机 cave: 读 *_random 列表 -> 72字节候选表 + cave代码 + hook 0x444C83"""
+    log = log_func or (lambda x: None)
+
+    # 4a. 收集每个技能 (entry 0~7) 的候选列表
+    table = bytearray(72)        # 8 entry x 9 字节
+    any_random = False
+    for k, key in enumerate(defn.data_keys):
+        rkey = key + "_random"
+        lst = summon.get(rkey)
+        if not isinstance(lst, list) or not lst:
+            continue                      # count=0, 走原查表
+        if len(lst) > 8:
+            log(f"    [WARN] {rkey}: 候选 {len(lst)} > 8, 截断为 8")
+            lst = lst[:8]
+        cand = []
+        bad = False
+        for w in lst:
+            ii, err = warpc_i_fn(w, imm16=False)   # i 值域 0..255 (byte 存储)
+            if err:
+                log(f"    [WARN] {rkey}: WarPC {w} {err}, 跳过该技能随机")
+                bad = True; break
+            cand.append(ii & 0xFF)
+        if bad or not cand:
+            continue
+        table[k * 9] = len(cand)
+        for j, c in enumerate(cand):
+            table[k * 9 + 1 + j] = c
+        any_random = True
+        log(f"    {rkey}: {len(cand)} 候选 i={cand} (WarPC={[c + 36 for c in cand]})")
+
+    if not any_random:
+        log("    -> 无 *_random 配置, 跳过多随机 cave")
+        return True
+
+    # 4b. 写 72 字节候选表
+    table_abs = cave_addr + defn.random_table_offset
+    if write_pm(h_proc, table_abs, bytes(table)) != len(table):
+        log(f"  [FAIL] 候选表写入失败 @0x{table_abs:08X}")
+        return False
+    log(f"    [OK] 候选表 @0x{table_abs:08X} (72 字节)")
+
+    # 4c. 构建 cave 代码, 重定位 TABLE_BASE 占位符 -> table_abs
+    cave_code = bytearray(CAVE_SUMMON_RANDOM)
+    ph_count = cave_code.count(SUMMON_RANDOM_PLACEHOLDER.to_bytes(4, 'little'))
+    if ph_count != 1:
+        log(f"  [ERROR] cave 占位符出现 {ph_count} 次 (预期 1), 中止")
+        return False
+    replace_addr_in_bytes(cave_code, SUMMON_RANDOM_PLACEHOLDER, table_abs)
+    cave_abs = cave_addr + defn.random_cave_offset
+    if write_pm(h_proc, cave_abs, bytes(cave_code)) != len(cave_code):
+        log(f"  [FAIL] cave 代码写入失败 @0x{cave_abs:08X}")
+        return False
+    log(f"    [OK] cave 代码 @0x{cave_abs:08X} ({len(cave_code)} 字节, TABLE_BASE->0x{table_abs:08X})")
+
+    # 4d. 写 hook: 0x444C83 处 7 字节 -> E8 rel32 + 90 90
+    pat, wc = parse_pattern(defn.random_hook_pattern)
+    hits = pattern_scan(bytes(code_buf), pat, wc)
+    if defn.random_hook_expect_count > 0 and len(hits) != defn.random_hook_expect_count:
+        log(f"  [WARN] 多随机 hook 匹配 {len(hits)} 处 (预期 {defn.random_hook_expect_count}), 跳过")
+        return False
+    if not hits:
+        log("  [WARN] 多随机 hook 模式无匹配, 跳过")
+        return False
+
+    hsz = defn.random_hook_size or 7
+    for off in hits:
+        ha = code_start_addr + off
+        co = (cave_abs - (ha + 5)) & 0xFFFFFFFF
+        ci = bytearray(hsz)
+        ci[0] = 0xE8
+        ci[1:5] = i32b(co)
+        for i in range(5, hsz):
+            ci[i] = 0x90
+        op = vp_ex(h_proc, ha, hsz, PAGE_EXECUTE_READWRITE)
+        nw = write_pm(h_proc, ha, bytes(ci))
+        vp_ex(h_proc, ha, hsz, op)
+        if nw != hsz:
+            log(f"  [FAIL] hook 写入失败 @RVA 0x{off:X}")
+            return False
+        for i in range(min(hsz, len(code_buf) - off)):
+            code_buf[off + i] = ci[i]
+        log(f"    [OK] 多随机 hook @RVA 0x{off:X} (abs 0x{ha:08X}) -> cave 0x{cave_abs:08X}")
+    return True
 
 # ============================================================
 # 配置补丁编排
@@ -373,7 +511,8 @@ def apply_config_patches(config: PatchConfig, code_buf: bytearray, code_start_ad
             log(f"    -> 由 WarPC 扩展流程处理 (base=0x{warpc_base:08X})")
         elif defn.type == "patch_summon_table":
             all_ok &= apply_summon_table(defn, code_buf, code_start_addr, base_addr,
-                                          h_proc, variables, log_func=log)
+                                          h_proc, variables, log_func=log,
+                                          cave_addr=cave_addr)
         else:
             log(f"  [WARN] 未知补丁类型: {defn.type}")
 

@@ -341,12 +341,12 @@ class PatcherWorker(QThread):
         hp = _OpenProcess(PROCESS_VM_READ | PROCESS_VM_WRITE | PROCESS_VM_OPERATION, False, target_pid)
         cave_addr = 0
         if hp:
-            ca = _VirtualAllocEx(hp, None, 512, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE)
+            ca = _VirtualAllocEx(hp, None, 1024, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE)
             if ca:
                 cave_addr = ctypes.cast(ca, ctypes.c_void_p).value or 0
             _CloseHandle(hp)
         if cave_addr:
-            self._log(f"  Cave 内存: 0x{cave_addr:08X} (512 bytes)")
+            self._log(f"  Cave 内存: 0x{cave_addr:08X} (1024 bytes)")
         else:
             self._log("  [WARN] VirtualAllocEx failed, caves skipped")
 

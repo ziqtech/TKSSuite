@@ -28,6 +28,13 @@ class PatchDef:
     data_rva: int = 0                         # .data 召唤表 8 字节的 RVA
     data_keys: List[str] = field(default_factory=list)   # .data 8 字节顺序对应的 JSON 键名
     code_addrs: List[Dict] = field(default_factory=list)  # 代码段 imm16 直接地址写入 [{rva, key}]
+    # patch_summon_table 多随机 cave 注入字段 (224~231 *_random 列表)
+    # data_keys 顺序即 entry 顺序 (224~231 -> entry 0~7); 列表型 JSON 键名 = data_keys[k] + "_random"
+    random_hook_pattern: str = ""             # hook 点模式 (定位 0x444C83 查表指令)
+    random_hook_size: int = 0                 # 覆盖字节数 (=7: E8 rel32 + 2 NOP)
+    random_hook_expect_count: int = 0         # 预期匹配数
+    random_cave_offset: int = 0               # cave 代码在 cave 内存的偏移
+    random_table_offset: int = 0              # 72 字节候选表在 cave 内存的偏移
     _pre_scanned_hits: List[int] = field(default_factory=list, repr=False)
 
 @dataclass
@@ -107,6 +114,11 @@ def load_config(path: str, log_func=None) -> Optional[PatchConfig]:
             d.data_rva = _parse_maybe_hex(pr.get("data_rva", 0))
             d.data_keys = list(pr.get("data_keys", []))
             d.code_addrs = list(pr.get("code_addrs", []))
+            d.random_hook_pattern = pr.get("random_hook_pattern", "")
+            d.random_hook_size = pr.get("random_hook_size", 0)
+            d.random_hook_expect_count = pr.get("random_hook_expect_count", 0)
+            d.random_cave_offset = pr.get("random_cave_offset", 0)
+            d.random_table_offset = pr.get("random_table_offset", 0)
             if "replace" in pr:
                 for rk, rv in pr["replace"].items():
                     d.replace[rk] = _parse_replace_val(rv)
