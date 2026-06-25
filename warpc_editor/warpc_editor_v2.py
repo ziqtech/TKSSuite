@@ -59,7 +59,7 @@ from PySide6.QtWidgets import (
     QFrame, QGridLayout, QAbstractItemView, QMenuBar, QTabWidget,
 )
 from PySide6.QtGui import QColor, QFont, QIcon, QIntValidator
-from PySide6.QtCore import Qt, QTranslator
+from PySide6.QtCore import Qt, QTranslator, Signal
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from editor_utils.theme_manager import ThemeManager
 from editor_utils.dock_components import DockHeader
@@ -597,7 +597,68 @@ class FieldRefDialog(QDialog):
 # 主编辑器窗口
 # ═══════════════════════════════════════════════════════════════
 
+class WarpcEditPanel(QWidget):
+    """独立的角色编辑面板 (可作为嵌入组件使用, 不依赖 QMainWindow)"""
+    record_applied = Signal(int)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        # 初始化所有必要属性
+        self.tkt = {}; self.skill_names = {}; self._skill_types = {}
+        self.tkkon_names = {}; self.item_names = {}; self.item_idx_names = {}
+        self._idx_to_id = {}; self._id_to_idx = {}
+        self._mu_sprites = []; self._icon_pixmaps = {}
+        self._fa_sprites = []; self._fa_photos = {}
+        self._editing_idx = -1; self._current_record = None
+        self._edit_vars = {}; self._edit_extras = {}
+        self._status_widgets = []; self._status_resist_widgets = []
+        self._skill_learn_widgets = []; self._skill_learn_labels = []
+        self._skill_effect_widgets = []; self._skill_effect_name_labels = []
+        self._use_right_defs = {k: (t, list(o)) for k, (t, o) in USE_RIGHT_DEFS.items()}
+        self._build_panel()
+
+    def _build_panel(self):
+        rl = QVBoxLayout(self); rl.setContentsMargins(4,4,4,4); rl.setSpacing(4)
+        # 预览头
+        preview = QFrame(); preview.setObjectName("PreviewFrame")
+        pl = QVBoxLayout(preview); pl.setContentsMargins(8,8,8,8); pl.setSpacing(4)
+        hdr_row = QHBoxLayout()
+        self.preview_avatar = QLabel(""); hdr_row.addWidget(self.preview_avatar)
+        info_col = QVBoxLayout()
+        self.preview_name = QLabel("(未选中)"); self.preview_name.setProperty("class", "PreviewName")
+        self.preview_name.setWordWrap(True); info_col.addWidget(self.preview_name)
+        self.preview_meta = QLabel(""); self.preview_meta.setProperty("class", "PreviewMeta")
+        self.preview_meta.setWordWrap(True); info_col.addWidget(self.preview_meta)
+        hdr_row.addLayout(info_col, 1); pl.addLayout(hdr_row)
+        self.preview_desc = QLabel("请在列表中选择角色。")
+        self.preview_desc.setProperty("class", "PreviewDesc"); self.preview_desc.setWordWrap(True)
+        pl.addWidget(self.preview_desc)
+        rl.addWidget(preview)
+        # Tab 页
+        self.tabs = QTabWidget()
+        self._build_tab1(); self._build_tab2(); self._build_tab3(); self._build_tab4(); self._build_tab5()
+        rl.addWidget(self.tabs, 1)
+
+    # 复用 WarpcEditorV2 的方法
+    _build_scroll_tab = None  # 将在下面赋值
+    _build_section = None
+    _build_field_widget = None
+    _build_tab1 = None; _build_tab2 = None; _build_tab3 = None
+    _build_tab4 = None; _build_tab5 = None
+    _build_status_slots = None; _build_status_resist = None
+    _build_skill_effect_section = None
+    _populate_edit = None; _apply_edit = None
+    _char_name = None; _get_fa_photo = None
+    _pick_flags = None; _pick_use_right = None; _pick_status_mask = None
+    _pick_skill = None; _pick_item = None; _pick_portrait = None
+    _pick_tkkon = None; _update_kon_label = None
+    _reset_edit = None
+
+
 class WarpcEditorV2(QMainWindow):
+    # 信号: 角色编辑已应用 (参数: 角色索引)
+    record_applied = Signal(int)
+
     def __init__(self):
         super().__init__()
         self.setWindowTitle("WarPC.dat 可视化编辑器 v2.0 - PySide6")
@@ -739,6 +800,7 @@ class WarpcEditorV2(QMainWindow):
         self.tabs = QTabWidget()
         self._build_tab1(); self._build_tab2(); self._build_tab3(); self._build_tab4(); self._build_tab5()
         rl.addWidget(self.tabs, 1)
+        self._edit_panel = right  # 存储编辑面板引用, 供外部嵌入使用
         splitter.addWidget(right); splitter.setSizes([350, 1050])
 
         # 底部路径栏
@@ -1275,9 +1337,26 @@ class WarpcEditorV2(QMainWindow):
                 unsigned = f[field_idx] & 0xFFFF; byte_val = (unsigned>>(8*is_high)) & 0xFF
                 for vi, item in enumerate(cb.itemText(i) for i in range(cb.count())):
                     if item.startswith(f'{byte_val}-'): cb.setCurrentIndex(vi); break
+            # 刷新技能名称标签 (嵌入模式下 skill_names 可能在 Tab 构建后才加载)
+            if self.skill_names and hasattr(self, '_skill_learn_labels'):
+                for i, lbl in enumerate(self._skill_learn_labels):
+                    sname = self.skill_names.get(i, f"技能#{i}")
+                    if i == 343: sname = "普通攻击"
+                    lbl.setText(sname[:12])
+                    lbl.setToolTip(f"[{88+i//2}] {sname}")
 
         # 技能效果
-        if hasattr(self, '_skill_effect_widgets'):
+        # 延迟构建: 嵌入模式下 Tab4 在首次选择时才构建
+        # 条件: _effect_inner 存在 且 (尚无技能效果控件 或 控件列表为空)
+        if hasattr(self, '_effect_inner') and self._effect_inner:
+            needs_rebuild = (not hasattr(self, '_skill_effect_widgets')
+                             or not self._skill_effect_widgets)
+            if needs_rebuild and self._skill_types:
+                self._clear_layout(self._effect_inner.layout())
+                self._skill_effect_widgets = []
+                self._skill_effect_name_labels = []
+                self._build_skill_effect_section(self._effect_inner)
+        if hasattr(self, '_skill_effect_widgets') and self._skill_effect_widgets:
             for i, ev in self._skill_effect_widgets:
                 field_idx = 273 + i
                 if field_idx < WARPC_FIELD_COUNT: ev.setText(str(f[field_idx]))
@@ -1348,6 +1427,11 @@ class WarpcEditorV2(QMainWindow):
                 self._update_status_label(fn, mask & 0xFFFF)
 
         # 全部字段 Tab
+        if hasattr(self, '_tab5_inner') and self._tab5_inner:
+            has_raw = any(f"raw_{j}" in self._edit_vars for j in range(min(10, WARPC_FIELD_COUNT)))
+            if not has_raw:
+                self._clear_layout(self._tab5_inner.layout())
+                self._build_raw_grid(self._tab5_inner)
         for j in range(WARPC_FIELD_COUNT):
             fn = f"raw_{j}"
             if fn in self._edit_vars: self._edit_vars[fn].setText(str(f[j]))
@@ -1537,7 +1621,8 @@ class WarpcEditorV2(QMainWindow):
     # ── 应用编辑 ──
     def _apply_edit(self):
         if self._editing_idx < 0: return
-        rec = self.records[self._editing_idx]; f = rec['fields']
+        rec = self._current_record if hasattr(self, '_current_record') and self._current_record else self.records[self._editing_idx]
+        f = rec['fields']
 
         # Role / Reaction group
         if 'role' in self._edit_extras:
@@ -1618,18 +1703,26 @@ class WarpcEditorV2(QMainWindow):
                 except: pass
 
         self._dirty = True
+        # 同步回 records (独立模式需要)
+        if self.records and self._editing_idx < len(self.records):
+            self.records[self._editing_idx] = rec
         nm = self._char_name(rec)
         hp_str = f"{f[5]}/{f[8]}" if f[5] or f[8] else ""
         mp_str = f"{f[6]}/{f[10]}" if f[6] or f[10] else ""
         role_str = '未激活' if f[3]==-1 else ('已激活' if f[3]==0 else str(f[3]))
-        self._refresh_table()
-        for r in range(self.table.rowCount()):
-            if int(self.table.item(r, 0).text()) == rec['index']:
-                self.table.selectRow(r); break
-        self.status_var.setText(f"角色 #{rec['index']} 已修改 (内存, 未保存)")
+        if hasattr(self, 'table') and self.table.isVisible():
+            self._refresh_table()
+            for r in range(self.table.rowCount()):
+                if int(self.table.item(r, 0).text()) == rec['index']:
+                    self.table.selectRow(r); break
+        if hasattr(self, 'status_var'):
+            self.status_var.setText(f"角色 #{rec['index']} 已修改 (内存, 未保存)")
+        self.record_applied.emit(rec['index'])
 
     def _reset_edit(self):
-        if self._editing_idx >= 0: self._populate_edit(self.records[self._editing_idx])
+        if self._editing_idx >= 0:
+            rec = self._current_record if hasattr(self, '_current_record') and self._current_record else self.records[self._editing_idx]
+            self._populate_edit(rec)
 
     # ── 新增/复制/导出/导入 ──
     def _add_new(self):
@@ -1952,8 +2045,100 @@ class WarpcEditorV2(QMainWindow):
             event.accept()
 
 # ═══════════════════════════════════════════════════════════════
-# 入口
+# 方法共享: 将 WarpcEditorV2 的编辑方法赋给 WarpcEditPanel
 # ═══════════════════════════════════════════════════════════════
+_shared_methods = [
+    '_build_scroll_tab', '_build_section', '_build_field_widget',
+    '_build_tab1', '_build_tab2', '_build_tab3', '_build_tab4', '_build_tab5',
+    '_build_status_slots', '_build_status_resist', '_build_skill_effect_section',
+    '_build_raw_grid', '_clear_layout',
+    '_populate_edit', '_char_name', '_get_fa_photo', '_get_icon_pixmap',
+    '_pick_flags', '_pick_use_right', '_pick_status_mask',
+    '_pick_skill', '_pick_item', '_pick_portrait',
+    '_pick_tkkon', '_update_kon_label', '_update_status_label',
+]
+for _m in _shared_methods:
+    setattr(WarpcEditPanel, _m, getattr(WarpcEditorV2, _m))
+
+
+def _panel_apply_edit(self):
+    """WarpcEditPanel 专用 apply: 修改 _current_record 并发射信号"""
+    if self._editing_idx < 0 or not self._current_record: return
+    rec = self._current_record; f = rec['fields']
+    # Role / Reaction group
+    if 'role' in self._edit_extras:
+        sv = self._edit_extras['role'].currentText()
+        if sv:
+            sep = sv.find('-', 1) if sv.startswith('-') else sv.find('-')
+            f[3] = int(sv[:sep]) if sep >= 0 else int(sv)
+    if 'reaction_group' in self._edit_extras:
+        sv = self._edit_extras['reaction_group'].currentText()
+        if sv:
+            sep = sv.find('-', 1) if sv.startswith('-') else sv.find('-')
+            f[41] = int(sv[:sep]) if sep >= 0 else int(sv)
+    if hasattr(self, '_status_widgets'):
+        for fs_fn, fo, cb, ev_dur in self._status_widgets:
+            sid = cb.currentIndex()
+            if sid == 0: v = -256
+            else:
+                try: dur = int(ev_dur.text())
+                except: dur = 1
+                if dur < 0: dur = 1
+                if dur > 255: dur = 255
+                v = (sid & 0xFF) | ((dur & 0xFF) << 8)
+                if v >= 0x8000: v -= 0x10000
+            f[fo//2] = v
+    if hasattr(self, '_status_resist_widgets'):
+        for byte_idx, ev in self._status_resist_widgets:
+            try: byte_val = int(ev.text())
+            except: continue
+            if byte_val < 0: byte_val = 0
+            if byte_val > 255: byte_val = 255
+            field_idx = 51 + byte_idx//2; is_high = byte_idx % 2
+            unsigned = f[field_idx] & 0xFFFF
+            new_val = (unsigned & 0x00FF) | (byte_val << 8) if is_high else (unsigned & 0xFF00) | byte_val
+            if new_val >= 0x8000: new_val -= 0x10000
+            f[field_idx] = new_val
+    if hasattr(self, '_skill_learn_widgets'):
+        for skill_idx, cb in self._skill_learn_widgets:
+            sv = cb.currentText()
+            sep = sv.find('-', 1) if sv.startswith('-') else sv.find('-')
+            byte_val = int(sv[:sep]) if sep >= 0 else 0
+            field_idx = 88 + skill_idx//2; is_high = skill_idx % 2
+            unsigned = f[field_idx] & 0xFFFF
+            new_val = (unsigned & 0x00FF) | (byte_val << 8) if is_high else (unsigned & 0xFF00) | byte_val
+            if new_val >= 0x8000: new_val -= 0x10000
+            f[field_idx] = new_val
+    if hasattr(self, '_skill_effect_widgets'):
+        for i, ev in self._skill_effect_widgets:
+            field_idx = 273 + i
+            if field_idx >= WARPC_FIELD_COUNT: continue
+            try: v = int(ev.text()); f[field_idx] = max(-32768, min(32767, v))
+            except: pass
+    for fn, fo, _, *_ in ALL_NAMED_FIELDS:
+        if fn in self._edit_vars and fn not in ('role', 'reaction_group'):
+            try: v = int(self._edit_vars[fn].text()); f[fo//2] = max(-32768, min(32767, v))
+            except: pass
+    named_indices = set(fo//2 for _, fo, *rest in ALL_NAMED_FIELDS)
+    for j in range(51, 67): named_indices.add(j)
+    for j in range(88, 260): named_indices.add(j)
+    if hasattr(self, '_skill_effect_widgets'):
+        for i, _ in self._skill_effect_widgets: named_indices.add(273 + i)
+    for j in range(WARPC_FIELD_COUNT):
+        if j in named_indices: continue
+        fn = f"raw_{j}"
+        if fn in self._edit_vars:
+            try: v = int(self._edit_vars[fn].text()); f[j] = max(-32768, min(32767, v))
+            except: pass
+    self.record_applied.emit(rec['index'])
+
+WarpcEditPanel._apply_edit = _panel_apply_edit
+
+def _panel_reset_edit(self):
+    if self._editing_idx >= 0 and self._current_record:
+        self._populate_edit(self._current_record)
+
+WarpcEditPanel._reset_edit = _panel_reset_edit
 
 def main():
     app = QApplication(sys.argv)

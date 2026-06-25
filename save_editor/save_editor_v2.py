@@ -20,7 +20,7 @@ TKS Save Editor v2.0 (PySide6 — Godot 4.6 风格)
   python save_editor_v2.py
 """
 
-import struct, os, sys, time, datetime
+import struct, os, sys, time, datetime, csv
 
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
@@ -41,6 +41,10 @@ from editor_utils.lzss import lzss_decompress_save, lzss_compress_save, lzss_dec
 from editor_utils.tkt_loader import load_tkt_simple
 from editor_utils.jvg_loader import load_mu_sprites, get_sprite_pixmap
 from editor_utils.dock_components import DockHeader
+
+# 导入 warpc_editor_v2 以复用其完整编辑面板
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'warpc_editor'))
+from warpc_editor_v2 import WarpcEditPanel, WARPC_FIELD_COUNT
 
 
 # ============================================================
@@ -203,6 +207,61 @@ WARPC_EQUIP = [
     ("equip_idx2", 142, "装备索引2", ""), ("equip_idx3", 144, "装备索引3", ""),
     ("equip_id0",  146, "装备物品ID0", ""), ("equip_id1",  148, "装备物品ID1", ""),
     ("equip_id2",  150, "装备物品ID2", ""), ("equip_id3",  152, "装备物品ID3", ""),
+]
+
+WARPC_SKILL_BONUS = [
+    ("atk_count",   64, "攻击次数",      "sub_42234C初始=1"),
+    ("special_flag",66, "特殊能力标志",  "TKItem[20]位掩码"),
+    ("mp_reduce",   68, "内力消耗减少%", "TKSkill[33]内息"),
+    ("magic_def",   70, "法伤减少%",     "TKSkill[38]抗魔"),
+    ("exp_bonus",   72, "经验增加%",     "TKSkill[36]鬼才"),
+    ("jp_bonus",    74, "技能点增加%",   "TKSkill[37]天才"),
+    ("move_flags",  76, "移动特殊标志",  "bit0飘浮 bit1飙行 bit2搜宝 bit3解陷"),
+    ("heal_move",   78, "移动恢复HP%",   "TKSkill[22]自愈"),
+    ("mp_move",     80, "移动恢复MP%",   "TKSkill[24]回气"),
+]
+
+WARPC_REACTION = [
+    ("reaction_group",   82, "反应组",   "被动技能反应组 1-10"),
+    ("reaction_trigger", 84, "触发概率", "TKSkill[44] %%"),
+]
+
+WARPC_STATUS_SLOTS = [
+    (f"status_slot{i}", 86 + i * 2, f"状态槽{i}", "低字节=状态ID 高字节=持续回合")
+    for i in range(8)
+]
+
+WARPC_CAUSE_MASK = [
+    ("cause_mask1", 134, "攻击导致状态 1-16",  "装备v9[26]位掩码"),
+    ("cause_mask2", 136, "攻击导致状态 17-32", "装备v9[27]位掩码"),
+]
+
+WARPC_EQUIP_SKILLS = [
+    ("equip_skill0", 164, "装备技能0", ""), ("equip_skill1", 166, "装备技能1", ""),
+    ("equip_skill2", 168, "装备技能2", ""), ("equip_skill3", 170, "装备技能3", ""),
+    ("passive1",     172, "被动技能1", ""), ("passive2",     174, "被动技能2", ""),
+]
+
+WARPC_USE_RIGHT = [
+    ("use_right_medicine",  154, "药品权限",   ""),
+    ("use_right_item",      156, "道具权限",   "1=战斗 2=非战斗 4=主角限定"),
+    ("use_right_weapon",    158, "武器权限",   "1=刀 2=剑 4=枪 8=矛 16=弓 32=大刀 64=戟 128=锤"),
+    ("use_right_armor",     160, "防具权限",   "1=衣袍 2=铠甲"),
+    ("use_right_accessory", 162, "饰品权限",   ""),
+]
+
+WARPC_PATCH = [
+    ("awk_sprite_id", 520, "战场图集索引", "Awk.JVG块号(补丁专用)"),
+    ("portrait_menu", 522, "队伍头像ID",   "Mu.JVG块号(补丁专用)"),
+    ("history_text",  524, "历史文本ID",   "TKT ID(补丁专用)"),
+    ("entity_link",   526, "地图实体ID",   "离队后NPC实体"),
+]
+
+STATUS_NAMES_LIST = [
+    "破兵","碎甲","昏眩","封锁","羁绊","蓄力","刚体","集中",
+    "云身","神行","无视","伪装","御风","死战","连计","连计",
+    "误导","混乱","禁制","定身","诅咒","封印","燃烧","冰冻",
+    "虚弱","麻痹","沈睡","中毒","迷恋","明镜","针灸",
 ]
 
 # ============================================================
@@ -446,11 +505,17 @@ class SaveEditorApp(QMainWindow):
         self.lbl_save = QLabel("存档: 未加载")
         self.lbl_tkt = QLabel("TKT: 未加载")
         self.lbl_item = QLabel("TKItem: 未加载")
+        self.lbl_skill = QLabel("TKSkill: 未加载")
+        self.lbl_mu = QLabel("Mu.JVG: 未加载")
         path_row.addWidget(self.lbl_save)
         path_row.addSpacing(16)
         path_row.addWidget(self.lbl_tkt)
         path_row.addSpacing(16)
         path_row.addWidget(self.lbl_item)
+        path_row.addSpacing(16)
+        path_row.addWidget(self.lbl_skill)
+        path_row.addSpacing(16)
+        path_row.addWidget(self.lbl_mu)
         path_row.addStretch()
         main_layout.addLayout(path_row)
 
@@ -460,6 +525,8 @@ class SaveEditorApp(QMainWindow):
             (self.lbl_save, self.save_dir, '存档'),
             (self.lbl_tkt, os.path.join(parent, 'TKT.dat') if parent else None, 'TKT'),
             (self.lbl_item, os.path.join(parent, 'TKItem.dat') if parent else None, 'TKItem'),
+            (self.lbl_skill, os.path.join(parent, 'TKSkill.dat') if parent else None, 'TKSkill'),
+            (self.lbl_mu, os.path.join(parent, 'Mu.JVG') if parent else None, 'Mu.JVG'),
         ], self._is_dark)
 
     # ================================================================
@@ -826,13 +893,14 @@ class SaveEditorApp(QMainWindow):
         sf.addWidget(self._warpc_filter)
         left_layout.addLayout(sf)
 
-        self._warpc_table = QTableWidget(0, 5)
-        self._warpc_table.setHorizontalHeaderLabels(['#', '名称', 'LV', '身份', 'HP'])
+        self._warpc_table = QTableWidget(0, 6)
+        self._warpc_table.setHorizontalHeaderLabels(['#', '名称', 'LV', '身份', 'HP', 'MP'])
         self._warpc_table.setColumnWidth(0, 35)
         self._warpc_table.setColumnWidth(1, 110)
         self._warpc_table.setColumnWidth(2, 35)
         self._warpc_table.setColumnWidth(3, 50)
         self._warpc_table.setColumnWidth(4, 55)
+        self._warpc_table.setColumnWidth(5, 55)
         self._warpc_table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self._warpc_table.setSelectionMode(QAbstractItemView.SingleSelection)
         self._warpc_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
@@ -840,30 +908,17 @@ class SaveEditorApp(QMainWindow):
         self._warpc_table.itemSelectionChanged.connect(self._on_warpc_select)
         left_layout.addWidget(self._warpc_table)
 
-        # 右侧: 编辑面板
-        right = QWidget()
-        right_layout = QVBoxLayout(right)
-        right_layout.setContentsMargins(0, 0, 0, 0)
-
-        self._warpc_title = QLabel("← 选择角色编辑")
-        self._warpc_title.setProperty("class", "InspectorTitle")
-        right_layout.addWidget(self._warpc_title)
-
-        self._warpc_scroll = QScrollArea()
-        self._warpc_scroll.setWidgetResizable(True)
-        self._warpc_edit_inner = QWidget()
-        self._warpc_edit_layout = QVBoxLayout(self._warpc_edit_inner)
-        self._warpc_scroll.setWidget(self._warpc_edit_inner)
-        right_layout.addWidget(self._warpc_scroll, 1)
+        # 右侧: 复用 warpc_editor_v2 的独立编辑面板
+        self._warpc_panel = WarpcEditPanel()
 
         splitter = QSplitter(Qt.Horizontal)
         splitter.addWidget(left)
-        splitter.addWidget(right)
-        splitter.setSizes([380, 600])
+        splitter.addWidget(self._warpc_panel)
+        splitter.setSizes([350, 1050])
         layout.addWidget(splitter)
 
         self._warpc_cur_idx = -1
-        self._warpc_edit_vars = {}
+        self._warpc_panel.record_applied.connect(self._on_warpc_record_applied)
         self.tabs.addTab(w, "👤 角色")
 
     # ================================================================
@@ -893,10 +948,12 @@ class SaveEditorApp(QMainWindow):
         tkt_path = os.path.join(parent, 'TKT.dat')
         if os.path.exists(tkt_path):
             self.tkt = load_tkt_simple(tkt_path, skip_range=None)
-        # TKSkill
+        # TKSkill (名称 + 类型)
         sk_path = os.path.join(parent, 'TKSkill.dat')
+        self._skill_types = {}
         if os.path.exists(sk_path):
             self.skill_names = self._parse_skill_dat(sk_path)
+            self._skill_types = self._parse_skill_types(sk_path)
         # TKItem
         it_path = os.path.join(parent, 'TKItem.dat')
         if os.path.exists(it_path):
@@ -906,6 +963,9 @@ class SaveEditorApp(QMainWindow):
         if os.path.exists(mu_path):
             self._mu_sprites = load_mu_sprites(mu_path) or []
             self._icon_pixmaps.clear()
+        # TKKon 名称 (从 warpc_editor 目录加载 CSV)
+        tkkon_csv = os.path.join(os.path.dirname(__file__), '..', 'warpc_editor', 'tkkon_names.csv')
+        self.tkkon_names = self._load_tkkon_names(tkkon_csv)
 
     def _parse_skill_dat(self, path):
         try:
@@ -919,7 +979,48 @@ class SaveEditorApp(QMainWindow):
                 name_id = struct.unpack_from('<h', dec, off)[0]
                 if name_id > 0 and name_id in self.tkt:
                     names[i] = self.tkt[name_id].split('\n')[0].strip()[:20]
+                elif name_id < 0 and -name_id in self.tkt:
+                    names[i] = self.tkt[-name_id].split('\n')[0].strip()[:20]
+                elif name_id:
+                    names[i] = f'#{name_id}'
             return names
+        except Exception:
+            return {}
+
+    def _parse_skill_types(self, path):
+        """解析 TKSkill.dat 的 type 字段 (供 warpc editor 技能效果判定 tab 使用)
+        TKSkill 记录 94 字节: [0]name_id [2]unknown [4]type [6]...
+        """
+        try:
+            with open(path, 'rb') as f:
+                dec = lzss_decompress_dat(f.read())
+            types = {}
+            for i in range(350):
+                off = i * 94
+                if off + 6 > len(dec):
+                    break
+                skill_type = struct.unpack_from('<h', dec, off + 4)[0]
+                types[i] = skill_type
+            return types
+        except Exception:
+            return {}
+
+    def _load_tkkon_names(self, csv_path):
+        """加载 TKKon 名称映射 (从 warpc_editor/tkkon_names.csv)"""
+        if not os.path.exists(csv_path):
+            return {}
+        try:
+            lookup = {}
+            with open(csv_path, 'r', encoding='utf-8-sig') as f:
+                reader = csv.reader(f)
+                next(reader, None)  # 跳过标题行
+                for row in reader:
+                    if len(row) >= 2 and row[0].strip().isdigit():
+                        idx = int(row[0])
+                        name = row[1].strip()
+                        if name:
+                            lookup[idx] = name
+            return lookup
         except Exception:
             return {}
 
@@ -1225,6 +1326,7 @@ class SaveEditorApp(QMainWindow):
             lv = warpc_get(self.seg3, i, 4)
             role = warpc_get(self.seg3, i, 6)
             hp = warpc_get(self.seg3, i, 10)
+            mp = warpc_get(self.seg3, i, 12)
             name = self.tkt.get(name_id, f"ID:{name_id}") if name_id else ""
             in_team = i in team_set
 
@@ -1252,6 +1354,7 @@ class SaveEditorApp(QMainWindow):
             self._warpc_table.setItem(row, 2, QTableWidgetItem(str(lv)))
             self._warpc_table.setItem(row, 3, QTableWidgetItem(role_str))
             self._warpc_table.setItem(row, 4, QTableWidgetItem(str(hp)))
+            self._warpc_table.setItem(row, 5, QTableWidgetItem(str(mp)))
 
     def _on_warpc_select(self):
         sel = self._warpc_table.selectedItems()
@@ -1259,112 +1362,46 @@ class SaveEditorApp(QMainWindow):
             return
         idx = int(self._warpc_table.item(sel[0].row(), 0).text())
         self._warpc_cur_idx = idx
-        self._build_warpc_editor(idx)
+        # 将 seg3 数据转为 warpc editor 的记录格式
+        if self.seg3 is not None:
+            off = idx * WARPC_REC
+            if off + WARPC_REC <= len(self.seg3):
+                vals = list(struct.unpack_from('<' + 'h' * WARPC_FIELD_COUNT, self.seg3, off))
+                rec = {'index': idx, 'fields': vals}
+                self._warpc_panel._current_record = rec
+                self._warpc_panel._editing_idx = idx
+                # 传递外部资源
+                self._warpc_panel.tkt = self.tkt
+                self._warpc_panel.skill_names = self.skill_names
+                self._warpc_panel._skill_types = self._skill_types
+                self._warpc_panel.item_names = self.item_names
+                self._warpc_panel._mu_sprites = self._mu_sprites
+                self._warpc_panel._icon_pixmaps = {}
+                self._warpc_panel.tkkon_names = self.tkkon_names
+                # 构建 item_idx_names (TKItem数组下标→名称)
+                self._warpc_panel.item_idx_names = {
+                    idx: rec['name'] for idx, rec in self.item_records.items() if rec.get('name')
+                }
+                self._warpc_panel._populate_edit(rec)
 
-    def _build_warpc_editor(self, idx):
-        """构建角色编辑面板."""
-        # 清除旧内容
-        while self._warpc_edit_layout.count():
-            item = self._warpc_edit_layout.takeAt(0)
-            w = item.widget()
-            if w:
-                w.deleteLater()
-        self._warpc_edit_vars = {}
-        if self.seg3 is None or idx < 0:
-            return
+    def _on_warpc_record_applied(self, idx):
+        """编辑面板点击应用后, 同步回 seg3"""
+        rec = self._warpc_panel._current_record
+        if rec and self.seg3 is not None:
+            off = idx * WARPC_REC
+            if off + WARPC_REC <= len(self.seg3):
+                struct.pack_into('<' + 'h' * WARPC_FIELD_COUNT, self.seg3, off, *rec['fields'])
+                self._dirty = True
+                self._refresh_warpc_list()
+                self._status_label.setText(f"角色 #{idx} 已修改 (未保存)")
 
-        name_id = warpc_get(self.seg3, idx, 0)
-        name = self.tkt.get(name_id, f"ID:{name_id}")
-        self._warpc_title.setText(f"角色 #{idx} - {name}")
 
-        # 各区段
-        self._warpc_section("身份信息", WARPC_IDENTITY, idx)
-        self._warpc_section("HP / MP", WARPC_HPMP, idx)
-        self._warpc_stat_section(idx)
-        self._warpc_section("角色五维", WARPC_CHAR_ATTR, idx)
-        self._warpc_section("装备", WARPC_EQUIP, idx)
-        self._warpc_section("成长率", WARPC_GROWTH, idx)
-        self._warpc_section("战后奖励/掉落", WARPC_BATTLE_REWARD + WARPC_DROP, idx)
 
-        # 应用按钮
-        btn = QPushButton("✅ 应用角色修改")
-        btn.clicked.connect(self._apply_warpc)
-        self._warpc_edit_layout.addWidget(btn)
-        self._warpc_edit_layout.addStretch()
 
-    def _warpc_section(self, title, fields, idx):
-        grp = QWidget()
-        vl = QVBoxLayout(grp); vl.setContentsMargins(0, 0, 0, 0); vl.setSpacing(0)
-        vl.addWidget(DockHeader(title))
-        body = QWidget(); body.setObjectName("DockBody")
-        bl = QVBoxLayout(body); bl.setContentsMargins(8, 8, 8, 8)
-        gl = QGridLayout(); gl.setVerticalSpacing(4); gl.setHorizontalSpacing(8)
-        gl.setContentsMargins(10, 0, 0, 0)
-        cols = 4
-        for fi, item in enumerate(fields):
-            fn, fo, label = item[0], item[1], item[2]
-            cmt = item[3] if len(item) > 3 else ""
-            r, c = divmod(fi, cols)
-            cell = QVBoxLayout(); cell.setSpacing(2)
-            lbl = QLabel(f"{label} [{fo}]")
-            lbl.setProperty("class", "PropLabel")
-            if cmt:
-                lbl.setToolTip(cmt)
-            cell.addWidget(lbl)
-            val = warpc_get(self.seg3, idx, fo)
-            edit = QLineEdit(str(val))
-            edit.setFont(QFont("Consolas", 9))
-            cell.addWidget(make_fake_input(line_edit=edit, stretch=False))
-            gl.addLayout(cell, r, c, Qt.AlignTop)
-            self._warpc_edit_vars[fn] = (edit, fo)
-        for c in range(cols):
-            gl.setColumnStretch(c, 1)
-        if fields:
-            last_row = len(fields) // cols
-            last_count = len(fields) % cols
-            if last_count != 0:
-                for c in range(last_count, cols):
-                    gl.addWidget(QWidget(), last_row, c)
-        bl.addLayout(gl)
-        vl.addWidget(body)
-        self._warpc_edit_layout.addWidget(grp)
 
-    def _warpc_stat_section(self, idx):
-        grp = QWidget()
-        vl = QVBoxLayout(grp); vl.setContentsMargins(0, 0, 0, 0); vl.setSpacing(0)
-        vl.addWidget(DockHeader("八属性 (基础/当前)"))
-        body = QWidget(); body.setObjectName("DockBody")
-        bl = QVBoxLayout(body); bl.setContentsMargins(8, 8, 8, 8)
-        gl = QGridLayout(); gl.setVerticalSpacing(4); gl.setHorizontalSpacing(8)
-        gl.setContentsMargins(10, 0, 0, 0)
-        for ci, (name, short, bo) in enumerate(zip(STAT_NAMES, STAT_SHORTS, STAT_OFFSETS)):
-            cell = QVBoxLayout(); cell.setSpacing(2)
-            lbl = QLabel(name); lbl.setProperty("class", "PropLabel")
-            cell.addWidget(lbl)
-            base_val = warpc_get(self.seg3, idx, bo)
-            cur_val = warpc_get(self.seg3, idx, bo + 2)
-            eb = QLineEdit(str(base_val))
-            eb.setFont(QFont("Consolas", 9))
-            ec = QLineEdit(str(cur_val))
-            ec.setFont(QFont("Consolas", 9))
-            # 基础值行
-            row_b = QHBoxLayout(); row_b.setSpacing(2)
-            row_b.addWidget(QLabel("基"), 0)
-            row_b.addWidget(make_fake_input(line_edit=eb, stretch=False), 1)
-            cell.addLayout(row_b)
-            # 当前值行
-            row_c = QHBoxLayout(); row_c.setSpacing(2)
-            row_c.addWidget(QLabel("当"), 0)
-            row_c.addWidget(make_fake_input(line_edit=ec, stretch=False), 1)
-            cell.addLayout(row_c)
-            gl.addLayout(cell, 0, ci, Qt.AlignTop)
-            self._warpc_edit_vars[f'{short}_base'] = (eb, bo)
-            self._warpc_edit_vars[f'{short}_cur'] = (ec, bo + 2)
-        for c in range(8):
-            gl.setColumnStretch(c, 1)
-        bl.addLayout(gl)
-        vl.addWidget(body)
-        self._warpc_edit_layout.addWidget(grp)
+
+
+
 
     # ================================================================
     # 应用修改
@@ -1450,19 +1487,7 @@ class SaveEditorApp(QMainWindow):
         except (ValueError, struct.error) as e:
             QMessageBox.critical(self, "输入错误", str(e))
 
-    def _apply_warpc(self):
-        if self.seg3 is None or self._warpc_cur_idx < 0:
-            return
-        idx = self._warpc_cur_idx
-        try:
-            for fn, (edit, fo) in self._warpc_edit_vars.items():
-                v = int(edit.text())
-                warpc_set(self.seg3, idx, fo, v)
-            self._dirty = True
-            self._refresh_warpc_list()
-            self._status_label.setText(f"角色 #{idx} 已修改 (未保存)")
-        except ValueError as e:
-            QMessageBox.critical(self, "输入错误", str(e))
+
 
     # ================================================================
     # 物品操作
