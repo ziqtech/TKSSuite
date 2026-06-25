@@ -23,7 +23,7 @@ from core.scanner import parse_pattern, pattern_scan, discover_warpc_base
 from core.config_loader import load_config
 from core.patch_engine import (
     apply_config_patches,
-    patch_4c33fc, patch_41c120, patch_gold_display,
+    patch_4c33fc, patch_41c120, patch_archive_portrait, patch_gold_display,
 )
 from core.warpc_expander import (
     WARPC_BASE, WARPC_REC_SIZE, WARPC_ORIG_COUNT, WARPC_ORIG_SIZE,
@@ -336,7 +336,7 @@ class PatcherWorker(QThread):
             actual = get_decompressed_size(fname)
             config.variables[vn] = actual if actual > 0 else DATA_FILE_ORIG_SIZES[fname]
 
-        # 分配 cave 内存
+        # 分配 cave 内存 (临时句柄, 用完即关)
         self.overlay_update.emit("正在应用内存补丁...", False)
         hp = _OpenProcess(PROCESS_VM_READ | PROCESS_VM_WRITE | PROCESS_VM_OPERATION, False, target_pid)
         cave_addr = 0
@@ -378,11 +378,15 @@ class PatcherWorker(QThread):
                 log_func=self._log,
             )
 
-        # [补丁十二~十三、十七] 运行时动态修补
-        # 注: patch_archive_portrait 已移除 (与 config cave_hook 冲突导致卡死)
+        # [补丁十二~十四、十七] 运行时动态修补
+        # archive_portrait 独立于 cave_hook 系统, 自开句柄, 避免与召唤洞穴交互
         if not self.minimal_mode:
             patch_4c33fc(target_pid, base_addr, log_func=self._log)
             patch_41c120(target_pid, base_addr, log_func=self._log)
+            archive_cave = cave_addr + 192 if cave_addr else 0
+            patch_archive_portrait(target_pid, base_addr, archive_cave,
+                                   warpc_base_for_caves if warpc_base_for_caves else discovered_base,
+                                   log_func=self._log)
             patch_gold_display(target_pid, base_addr, log_func=self._log)
             inject_warpc_data(target_pid, discovered_base, _warpc_expanded, log_func=self._log)
 

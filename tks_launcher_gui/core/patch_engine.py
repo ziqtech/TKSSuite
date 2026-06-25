@@ -45,13 +45,35 @@ CAVE_PORTRAIT2 = bytes([
     0x58, 0x87, 0x14, 0x24, 0xFF, 0xE2,
 ])
 
+# 逆向依据: sub_41AB94 @0x41AD00 (存档界面队伍头像绘制)
+# 原指令: movsx eax,byte[ecx+eax*2+0x29E]; add ax,0xD3; push eax
+# 修复要点:
+#   1. movzx ecx,al 取无符号角色索引 (0..199=有效, 0xFF=空槽)
+#   2. cmp cl,0xFF 空槽检查 → 跳过 WarPC 查询避免越界崩溃
+#   3. imul eax,ecx,0x41E 三操作数形式, ECX=源, 避免原二操作数 imul 破坏索引
+#   4. 默认头像 = 索引 + 0xD3, 自定义头像 = warpc[index].field_0x20A
 CAVE_ARCHIVE_PORTRAIT = bytes([
-    0x52, 0x51, 0x0F, 0xB6, 0xC0, 0x8B, 0xC8, 0x69,
-    0xC0, 0x1E, 0x04, 0x00, 0x00, 0x05, 0x08, 0x7F,
-    0x75, 0x00, 0x0F, 0xB7, 0x90, 0x0A, 0x02, 0x00,
-    0x00, 0x66, 0x85, 0xD2, 0x75, 0x09, 0x8B, 0xC1,
-    0x05, 0xD3, 0x00, 0x00, 0x00, 0xEB, 0x02, 0x8B,
-    0xC2, 0x59, 0x5A, 0x87, 0x04, 0x24, 0xFF, 0xE0,
+    0x52,                                              # push edx
+    0x51,                                              # push ecx
+    0x0F, 0xB6, 0xC8,                                  # movzx ecx, al          (无符号索引)
+    0x80, 0xF9, 0xFF,                                  # cmp cl, 0xFF           (空槽?)
+    0x74, 0x17,                                        # je .default            (空槽→默认)
+    0x69, 0xC1, 0x1E, 0x04, 0x00, 0x00,               # imul eax, ecx, 0x41E   (索引*sizeof)
+    0x05, 0x08, 0x7F, 0x75, 0x00,                      # add eax, WARPC_BASE    (→&warpc[idx])
+    0x0F, 0xB7, 0x90, 0x0A, 0x02, 0x00, 0x00,         # movzx edx, word[eax+0x20A] (自定义头像)
+    0x66, 0x85, 0xD2,                                  # test dx, dx
+    0x75, 0x09,                                        # jnz .use_custom
+    # .default:
+    0x8B, 0xC1,                                        # mov eax, ecx
+    0x05, 0xD3, 0x00, 0x00, 0x00,                      # add eax, 0xD3          (默认头像)
+    0xEB, 0x02,                                        # jmp .done
+    # .use_custom:
+    0x8B, 0xC2,                                        # mov eax, edx           (自定义头像)
+    # .done:
+    0x59,                                              # pop ecx
+    0x5A,                                              # pop edx
+    0x87, 0x04, 0x24,                                  # xchg [esp], eax        (结果替换返回地址)
+    0xFF, 0xE0,                                        # jmp eax                (返回)
 ])
 
 CAVE_HISTORY_TEXT = bytes([
@@ -727,7 +749,8 @@ def patch_41c120(cpid: int, base: int, log_func=None):
 # [补丁十四] 存档界面队伍头像 hook
 # ============================================================
 
-def patch_archive_portrait(cpid: int, base: int, cave_addr: int, log_func=None):
+def patch_archive_portrait(cpid: int, base: int, cave_addr: int, warpc_base: int, log_func=None):
+    """独立于 cave_hook 系统: 自开句柄, 写洞穴代码 + hooks"""
     log = log_func or (lambda x: None)
     sr = 0x1AB94; ssz = 0x500
     log("\n--- [补丁十四] 存档界面队伍头像 hook ---")
@@ -738,6 +761,13 @@ def patch_archive_portrait(cpid: int, base: int, cave_addr: int, log_func=None):
     if not hp:
         log("  [ERROR] OpenProcess 失败"); return
 
+    # Step 1: 写入洞穴代码
+    cd = build_cave_template("archive_portrait", warpc_base, log_func=log)
+    if cd:
+        nw = write_pm(hp, cave_addr, cd)
+        log(f"    Cave 写入: 0x{cave_addr:08X} ({nw}/{len(cd)} bytes)")
+
+    # Step 2: 扫描 sub_41AB94 写入 hooks
     av = base + sr
     buf, nr = read_pm(hp, av, ssz)
     if nr < 64:
@@ -748,9 +778,9 @@ def patch_archive_portrait(cpid: int, base: int, cave_addr: int, log_func=None):
         if buf[i]==0x66 and buf[i+1]==0x05 and buf[i+2]==0xD3 and buf[i+3]==0x00 and buf[i+4]==0x50:
             hrva = sr + i; ha = base + hrva
             co = (cave_addr - (ha + 5)) & 0xFFFFFFFF
-            cd = bytearray(5); cd[0]=0xE8; cd[1:5]=i32b(co)
+            cd_hook = bytearray(5); cd_hook[0]=0xE8; cd_hook[1:5]=i32b(co)
             op = vp_ex(hp, ha, 5, PAGE_EXECUTE_READWRITE)
-            nw = write_pm(hp, ha, bytes(cd))
+            nw = write_pm(hp, ha, bytes(cd_hook))
             vp_ex(hp, ha, 5, op)
             if nw == 5:
                 ptd += 1
