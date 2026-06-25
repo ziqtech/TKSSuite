@@ -28,17 +28,37 @@ from PySide6.QtWidgets import (
     QHeaderView, QLabel, QLineEdit, QPushButton, QCheckBox, QComboBox,
     QMessageBox, QFileDialog, QDialog, QGridLayout, QFrame, QScrollArea,
     QTabWidget, QTextEdit, QSpinBox, QGroupBox, QFormLayout,
+    QStyledItemDelegate, QStyle,
 )
-from PySide6.QtGui import QIcon, QFont, QColor, QIntValidator
+from PySide6.QtGui import QIcon, QFont, QColor, QIntValidator, QPainter
 from PySide6.QtCore import Qt, QTranslator
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from editor_utils.theme_manager import ThemeManager
 from editor_utils.window_theme import apply_godot_theme
-from editor_utils.ui_helpers import update_path_labels, confirm_close
+from editor_utils.ui_helpers import update_path_labels, confirm_close, make_fake_input
 from editor_utils.lzss import lzss_decompress_save, lzss_compress_save, lzss_decompress_dat
 from editor_utils.tkt_loader import load_tkt_simple
 from editor_utils.jvg_loader import load_mu_sprites, get_sprite_pixmap
+from editor_utils.dock_components import DockHeader
+
+
+# ============================================================
+# 图标居中 Delegate (与 item_editor_v2 一致)
+# ============================================================
+class IconDelegate(QStyledItemDelegate):
+    """将表格图标列的图标绘制在单元格正中央"""
+    def paint(self, painter, option, index):
+        painter.save()
+        if option.state & QStyle.State_Selected:
+            painter.fillRect(option.rect, option.palette.highlight())
+        icon = index.data(Qt.DecorationRole)
+        if icon:
+            pix = icon.pixmap(36, 36)
+            x = option.rect.x() + (option.rect.width() - pix.width()) // 2
+            y = option.rect.y() + (option.rect.height() - pix.height()) // 2
+            painter.drawPixmap(x, y, pix)
+        painter.restore()
 
 # ============================================================
 # 常量 (来自逆向工程 — 每个值附带反编译代码证据)
@@ -381,30 +401,31 @@ class SaveEditorApp(QMainWindow):
         # 菜单栏
         mb = self.menuBar()
         fm = mb.addMenu("文件(&F)")
-        fm.addAction("打开存档目录…\tCtrl+O", self._cmd_open)
-        fm.addAction("保存当前槽位\tCtrl+S", self._cmd_save)
+        fm.addAction("📂 打开存档目录…\tCtrl+O", self._cmd_open)
+        fm.addAction("💾 保存当前槽位\tCtrl+S", self._cmd_save)
         fm.addSeparator()
-        fm.addAction("退出", self.close)
+        fm.addAction("🚪 退出", self.close)
         tm = mb.addMenu("工具(&T)")
-        tm.addAction("刷新数据显示", self._refresh_all)
+        tm.addAction("🔄 刷新数据显示", self._refresh_all)
         hm = mb.addMenu("帮助(&H)")
-        hm.addAction("关于", self._show_about)
+        hm.addAction("ℹ️ 关于", self._show_about)
 
         # 工具栏
         toolbar = QHBoxLayout()
-        toolbar.addWidget(QPushButton("打开目录", clicked=self._cmd_open))
-        toolbar.addWidget(QPushButton("保存", clicked=self._cmd_save))
+        toolbar.addWidget(QPushButton("📂 打开目录", clicked=self._cmd_open))
+        toolbar.addWidget(QPushButton("💾 保存", clicked=self._cmd_save))
         toolbar.addSpacing(12)
         toolbar.addWidget(QLabel("槽位:"))
         self._slot_btns = []
         for i in range(1, 10):
-            btn = QPushButton(str(i))
+            btn = QPushButton(f"{i}")
             btn.setFixedWidth(32)
+            btn.setToolTip(f"槽位 {i}")
             btn.clicked.connect(lambda checked, s=i: self._switch_slot(s))
             toolbar.addWidget(btn)
             self._slot_btns.append(btn)
         toolbar.addStretch()
-        toolbar.addWidget(QPushButton("切换主题", clicked=self._toggle_theme))
+        toolbar.addWidget(QPushButton("🌗 切换主题", clicked=self._toggle_theme))
         self._status_label = QLabel("请打开存档目录")
         toolbar.addWidget(self._status_label)
         main_layout.addLayout(toolbar)
@@ -485,7 +506,7 @@ class SaveEditorApp(QMainWindow):
         self._summary_text.setFont(QFont("Consolas", 9))
         layout.addWidget(self._summary_text, 1)
 
-        self.tabs.addTab(w, "总览")
+        self.tabs.addTab(w, "📊 总览")
 
     # ================================================================
     # Tab 1: 队伍与经济
@@ -496,64 +517,93 @@ class SaveEditorApp(QMainWindow):
         layout.setContentsMargins(12, 12, 12, 12)
 
         # 队伍成员
-        team_grp = QGroupBox("队伍成员 (word_75688C[6], -1=空)")
-        tl = QHBoxLayout(team_grp)
         self._team_edits = []
         self._team_name_labels = []
+        team_grp = QWidget()
+        tvl = QVBoxLayout(team_grp); tvl.setContentsMargins(0, 0, 0, 0); tvl.setSpacing(0)
+        tvl.addWidget(DockHeader("队伍成员 (word_75688C[6], -1=空)"))
+        tbody = QWidget(); tbody.setObjectName("DockBody")
+        tbl = QVBoxLayout(tbody); tbl.setContentsMargins(8, 8, 8, 8)
+        tgl = QGridLayout(); tgl.setVerticalSpacing(4); tgl.setHorizontalSpacing(8)
+        tgl.setContentsMargins(10, 0, 0, 0)
         for i in range(6):
-            col_w = QWidget()
-            cl = QVBoxLayout(col_w)
-            cl.addWidget(QLabel(f"成员{i+1}"))
-            edit = QLineEdit("-1")
-            edit.setFixedWidth(60)
-            edit.setFont(QFont("Consolas", 9))
-            cl.addWidget(edit)
-            nlbl = QLabel("")
-            nlbl.setProperty("class", "ExtraPreviewText")
-            cl.addWidget(nlbl)
-            tl.addWidget(col_w)
+            cell = QVBoxLayout(); cell.setSpacing(2)
+            lbl = QLabel(f"成员{i+1}"); lbl.setProperty("class", "PropLabel")
+            cell.addWidget(lbl)
+            edit = QLineEdit("-1"); edit.setFont(QFont("Consolas", 9))
+            cell.addWidget(make_fake_input(line_edit=edit, stretch=False))
+            nlbl = QLabel(""); nlbl.setProperty("class", "ExtraPreviewText")
+            cell.addWidget(nlbl)
+            tgl.addLayout(cell, 0, i, Qt.AlignTop)
             self._team_edits.append(edit)
             self._team_name_labels.append(nlbl)
+        for c in range(7):
+            tgl.setColumnStretch(c, 1)
+        tgl.addWidget(QWidget(), 0, 6)
+        tbl.addLayout(tgl)
+        tvl.addWidget(tbody)
         layout.addWidget(team_grp)
 
         # 经济
-        econ_grp = QGroupBox("经济与声望")
-        el = QGridLayout(econ_grp)
+        econ_grp = QWidget()
+        evl = QVBoxLayout(econ_grp); evl.setContentsMargins(0, 0, 0, 0); evl.setSpacing(0)
+        evl.addWidget(DockHeader("经济与声望"))
+        ebody = QWidget(); ebody.setObjectName("DockBody")
+        ebl = QVBoxLayout(ebody); ebl.setContentsMargins(8, 8, 8, 8)
+        egl = QGridLayout(); egl.setVerticalSpacing(4); egl.setHorizontalSpacing(8)
+        egl.setContentsMargins(10, 0, 0, 0)
         self._econ_edits = {}
         econ_fields = [("gold", "金钱(上限30000)"), ("wisdom", "智慧"),
                        ("benevolence", "仁德"), ("courage", "勇气"), ("medicine", "医术(上限100)")]
         for col, (key, label) in enumerate(econ_fields):
-            el.addWidget(QLabel(label), 0, col)
-            edit = QLineEdit("0")
-            edit.setFixedWidth(70)
-            edit.setFont(QFont("Consolas", 9))
-            el.addWidget(edit, 1, col)
+            cell = QVBoxLayout(); cell.setSpacing(2)
+            lbl = QLabel(label); lbl.setProperty("class", "PropLabel")
+            cell.addWidget(lbl)
+            edit = QLineEdit("0"); edit.setFont(QFont("Consolas", 9))
+            cell.addWidget(make_fake_input(line_edit=edit, stretch=False))
+            egl.addLayout(cell, 0, col, Qt.AlignTop)
             self._econ_edits[key] = edit
+        for c in range(7):
+            egl.setColumnStretch(c, 1)
+        for c in range(5, 7):
+            egl.addWidget(QWidget(), 0, c)
+        ebl.addLayout(egl)
+        evl.addWidget(ebody)
         layout.addWidget(econ_grp)
 
         # 战斗统计
-        battle_grp = QGroupBox("战斗统计")
-        bl = QGridLayout(battle_grp)
+        battle_grp = QWidget()
+        bvl = QVBoxLayout(battle_grp); bvl.setContentsMargins(0, 0, 0, 0); bvl.setSpacing(0)
+        bvl.addWidget(DockHeader("战斗统计"))
+        bbody = QWidget(); bbody.setObjectName("DockBody")
+        bbl = QVBoxLayout(bbody); bbl.setContentsMargins(8, 8, 8, 8)
+        bgl = QGridLayout(); bgl.setVerticalSpacing(4); bgl.setHorizontalSpacing(8)
+        bgl.setContentsMargins(10, 0, 0, 0)
         self._battle_edits = {}
         for col, (key, off, size, label, fmt, cmt) in enumerate(SEG2_BATTLE_FIELDS):
-            bl.addWidget(QLabel(label), 0, col)
-            edit = QLineEdit("0")
-            edit.setFixedWidth(70)
-            edit.setFont(QFont("Consolas", 9))
-            edit.setToolTip(cmt)
-            bl.addWidget(edit, 1, col)
+            cell = QVBoxLayout(); cell.setSpacing(2)
+            lbl = QLabel(label); lbl.setProperty("class", "PropLabel")
+            lbl.setToolTip(cmt)
+            cell.addWidget(lbl)
+            edit = QLineEdit("0"); edit.setFont(QFont("Consolas", 9))
+            cell.addWidget(make_fake_input(line_edit=edit, stretch=False))
+            bgl.addLayout(cell, 0, col, Qt.AlignTop)
             self._battle_edits[key] = edit
+        for c in range(7):
+            bgl.setColumnStretch(c, 1)
+        bbl.addLayout(bgl)
+        bvl.addWidget(bbody)
         layout.addWidget(battle_grp)
 
         # 应用按钮
         btn_row = QHBoxLayout()
-        btn_row.addWidget(QPushButton("应用队伍修改", clicked=self._apply_team))
+        btn_row.addWidget(QPushButton("✅ 应用队伍修改", clicked=self._apply_team))
         btn_row.addWidget(QLabel("(修改后需保存到文件)"))
         btn_row.addStretch()
         layout.addLayout(btn_row)
         layout.addStretch()
 
-        self.tabs.addTab(w, "队伍")
+        self.tabs.addTab(w, "👥 队伍")
 
     # ================================================================
     # Tab 2: 物品
@@ -568,26 +618,30 @@ class SaveEditorApp(QMainWindow):
         self._inv_count_edit = QLineEdit("0")
         self._inv_count_edit.setFixedWidth(60)
         ctrl.addWidget(self._inv_count_edit)
-        ctrl.addWidget(QPushButton("刷新", clicked=self._refresh_inventory))
-        ctrl.addWidget(QPushButton("应用修改", clicked=self._apply_inventory))
-        ctrl.addWidget(QPushButton("新增物品", clicked=self._add_inv_item_dialog))
+        ctrl.addWidget(QPushButton("🔄 刷新", clicked=self._refresh_inventory))
+        ctrl.addWidget(QPushButton("✅ 应用修改", clicked=self._apply_inventory))
+        ctrl.addWidget(QPushButton("➕ 新增物品", clicked=self._add_inv_item_dialog))
         ctrl.addStretch()
         layout.addLayout(ctrl)
 
         # 物品表格
-        self._inv_table = QTableWidget(0, 5)
-        self._inv_table.setHorizontalHeaderLabels(['#', 'ID', '页面', '物品名称', '数量'])
-        self._inv_table.setColumnWidth(0, 40)
-        self._inv_table.setColumnWidth(1, 50)
-        self._inv_table.setColumnWidth(2, 50)
-        self._inv_table.setColumnWidth(3, 200)
-        self._inv_table.setColumnWidth(4, 60)
+        self._inv_table = QTableWidget(0, 6)
+        self._inv_table.setHorizontalHeaderLabels(['图标', '#', 'ID', '页面', '物品名称', '数量'])
+        self._inv_table.setColumnWidth(0, 50)
+        self._inv_table.setColumnWidth(1, 36)
+        self._inv_table.setColumnWidth(2, 46)
+        self._inv_table.setColumnWidth(3, 46)
+        self._inv_table.setColumnWidth(4, 200)
+        self._inv_table.setColumnWidth(5, 55)
+        self._inv_table.verticalHeader().setDefaultSectionSize(44)
         self._inv_table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self._inv_table.setSelectionMode(QAbstractItemView.SingleSelection)
         self._inv_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self._inv_table.verticalHeader().setVisible(False)
         self._inv_table.horizontalHeader().setStretchLastSection(True)
+        self._inv_table.setItemDelegateForColumn(0, IconDelegate())
         layout.addWidget(self._inv_table, 1)
+        self._inv_photos = []  # prevent GC
 
         # 编辑行
         edit_row = QHBoxLayout()
@@ -599,13 +653,13 @@ class SaveEditorApp(QMainWindow):
         self._inv_edit_qty = QLineEdit()
         self._inv_edit_qty.setFixedWidth(60)
         edit_row.addWidget(self._inv_edit_qty)
-        edit_row.addWidget(QPushButton("修改选中", clicked=self._apply_inv_edit))
-        edit_row.addWidget(QPushButton("删除选中", clicked=self._delete_inv_item))
+        edit_row.addWidget(QPushButton("✅ 修改选中", clicked=self._apply_inv_edit))
+        edit_row.addWidget(QPushButton("🗑 删除选中", clicked=self._delete_inv_item))
         edit_row.addStretch()
         layout.addLayout(edit_row)
 
         self._inv_table.itemSelectionChanged.connect(self._on_inv_select)
-        self.tabs.addTab(w, "物品")
+        self.tabs.addTab(w, "🎒 物品")
 
     # ================================================================
     # Tab 3: 事件系统 (核心改进)
@@ -620,16 +674,16 @@ class SaveEditorApp(QMainWindow):
 
         # 子Tab: 开关
         self._switch_table = self._build_event_subtab(
-            "事件开关", 32, SWITCH_SEMANTICS, "word_755E10, case49 设置")
+            "🔘 事件开关", 32, SWITCH_SEMANTICS, "word_755E10, case49 设置")
         # 子Tab: 变量
         self._var_table = self._build_event_subtab(
-            "事件变量", 250, VARIABLE_SEMANTICS, "word_755E80, case36/37 设置")
+            "🔢 事件变量", 250, VARIABLE_SEMANTICS, "word_755E80, case36/37 设置")
         # 子Tab: 标志
         self._flag_table = self._build_event_subtab(
-            "事件标志", 1024, FLAG_SEMANTICS, "word_756080, sub_40CB08 设置")
+            "🚩 事件标志", 1024, FLAG_SEMANTICS, "word_756080, sub_40CB08 设置")
         # 子Tab: 结果
         self._result_table = self._build_event_subtab(
-            "事件结果", 24, RESULT_SEMANTICS, "word_755E50, case60 检查")
+            "🎯 事件结果", 24, RESULT_SEMANTICS, "word_755E50, case60 检查")
 
         # 控制栏
         ctrl = QHBoxLayout()
@@ -640,10 +694,10 @@ class SaveEditorApp(QMainWindow):
         self._event_hex_cb.stateChanged.connect(self._refresh_event_display)
         ctrl.addWidget(self._event_hex_cb)
         ctrl.addStretch()
-        ctrl.addWidget(QPushButton("应用事件修改", clicked=self._apply_events))
+        ctrl.addWidget(QPushButton("✅ 应用事件修改", clicked=self._apply_events))
         layout.addLayout(ctrl)
 
-        self.tabs.addTab(w, "事件系统")
+        self.tabs.addTab(w, "📋 事件系统")
 
     def _build_event_subtab(self, title, count, semantics, source_note):
         """构建事件子Tab: 返回 QTableWidget"""
@@ -705,27 +759,46 @@ class SaveEditorApp(QMainWindow):
 
         # 应用按钮
         btn_row = QHBoxLayout()
-        btn_row.addWidget(QPushButton("应用全局修改", clicked=self._apply_global))
+        btn_row.addWidget(QPushButton("✅ 应用全局修改", clicked=self._apply_global))
         btn_row.addStretch()
         inner_layout.addLayout(btn_row)
         inner_layout.addStretch()
 
         scroll.setWidget(inner)
         layout.addWidget(scroll)
-        self.tabs.addTab(w, "全局状态")
+        self.tabs.addTab(w, "🌍 全局状态")
 
     def _build_global_section(self, parent_layout, title, fields, seg):
-        grp = QGroupBox(title)
-        gl = QGridLayout(grp)
-        for row, (key, off, size, label, fmt, cmt) in enumerate(fields):
-            gl.addWidget(QLabel(f"{label} [+0x{off:X}]"), row, 0)
+        grp = QWidget()
+        vl = QVBoxLayout(grp); vl.setContentsMargins(0, 0, 0, 0); vl.setSpacing(0)
+        vl.addWidget(DockHeader(title))
+        body = QWidget(); body.setObjectName("DockBody")
+        bl = QVBoxLayout(body); bl.setContentsMargins(8, 8, 8, 8)
+        gl = QGridLayout(); gl.setVerticalSpacing(6); gl.setHorizontalSpacing(8)
+        gl.setContentsMargins(10, 0, 0, 0)
+        cols = 5
+        for fi, (key, off, size, label, fmt, cmt) in enumerate(fields):
+            r, c = divmod(fi, cols)
+            cell = QVBoxLayout(); cell.setSpacing(2)
+            lbl = QLabel(f"{label} [+0x{off:X}]")
+            lbl.setProperty("class", "PropLabel")
+            lbl.setToolTip(cmt)
+            cell.addWidget(lbl)
             edit = QLineEdit("0")
-            edit.setFixedWidth(120)
             edit.setFont(QFont("Consolas", 9))
-            edit.setToolTip(cmt)
-            gl.addWidget(edit, row, 1)
-            gl.addWidget(QLabel(cmt), row, 2)
+            cell.addWidget(make_fake_input(line_edit=edit, stretch=False))
+            gl.addLayout(cell, r, c, Qt.AlignTop)
             self._global_edits[key] = (edit, off, size, fmt, seg)
+        for c in range(cols):
+            gl.setColumnStretch(c, 1)
+        if fields:
+            last_row = len(fields) // cols
+            last_count = len(fields) % cols
+            if last_count != 0:
+                for c in range(last_count, cols):
+                    gl.addWidget(QWidget(), last_row, c)
+        bl.addLayout(gl)
+        vl.addWidget(body)
         parent_layout.addWidget(grp)
 
     # ================================================================
@@ -744,11 +817,11 @@ class SaveEditorApp(QMainWindow):
         # 搜索
         sf = QHBoxLayout()
         self._warpc_search = QLineEdit()
-        self._warpc_search.setPlaceholderText("搜索角色...")
+        self._warpc_search.setPlaceholderText("🔍 搜索角色...")
         self._warpc_search.textChanged.connect(self._refresh_warpc_list)
         sf.addWidget(self._warpc_search)
         self._warpc_filter = QComboBox()
-        self._warpc_filter.addItems(["全部", "已激活", "未激活", "队伍中"])
+        self._warpc_filter.addItems(["全部", "✅ 已激活", "❌ 未激活", "👥 队伍中"])
         self._warpc_filter.currentIndexChanged.connect(self._refresh_warpc_list)
         sf.addWidget(self._warpc_filter)
         left_layout.addLayout(sf)
@@ -791,7 +864,7 @@ class SaveEditorApp(QMainWindow):
 
         self._warpc_cur_idx = -1
         self._warpc_edit_vars = {}
-        self.tabs.addTab(w, "角色")
+        self.tabs.addTab(w, "👤 角色")
 
     # ================================================================
     # 数据加载
@@ -860,20 +933,21 @@ class SaveEditorApp(QMainWindow):
         names = {}
         for i in range(600):
             off = i * 64
-            if off + 10 > len(dec):
+            if off + 64 > len(dec):
                 break
             item_id = struct.unpack_from('<h', dec, off)[0]
             name_id = struct.unpack_from('<h', dec, off + 4)[0]
             tab_code = struct.unpack_from('<h', dec, off + 2)[0]
             icon = struct.unpack_from('<h', dec, off + 8)[0]
+            price = struct.unpack_from('<h', dec, off + 62)[0]
             nm = ""
             if name_id > 0 and name_id in self.tkt:
                 nm = self.tkt[name_id].split('\n')[0].strip()[:25]
             elif item_id > 0:
                 nm = f'物品#{item_id}'
+            records[i] = {'item_id': item_id, 'name_id': name_id,
+                          'tab_code': tab_code, 'icon': icon, 'price': price, 'name': nm}
             if item_id > 0:
-                records[i] = {'item_id': item_id, 'name_id': name_id,
-                              'tab_code': tab_code, 'icon': icon, 'name': nm}
                 names[item_id] = nm
         return records, names
 
@@ -894,13 +968,19 @@ class SaveEditorApp(QMainWindow):
         if not os.path.exists(sav_data):
             self._status_label.setText(f"槽位 {self.slot}: 数据文件不存在")
             self.game_state = self.seg1 = self.seg2 = self.seg3 = None
+            self.index_meta = None
+            self._dirty = False
+            self._refresh_all()
             return
         try:
             self.game_state, self.seg1, self.seg2, self.seg3 = load_save_data(sav_data)
             self.warpc_count = len(self.seg3) // WARPC_REC
         except Exception as e:
             QMessageBox.critical(self, "加载失败", str(e))
-            self.game_state = None
+            self.game_state = self.seg1 = self.seg2 = self.seg3 = None
+            self.index_meta = None
+            self._dirty = False
+            self._refresh_all()
             return
         self.index_meta = load_index_file(sav_idx)
         self._dirty = False
@@ -985,6 +1065,13 @@ class SaveEditorApp(QMainWindow):
     # ================================================================
     def _refresh_team(self):
         if self.seg2 is None:
+            for i in range(6):
+                self._team_edits[i].setText("-1")
+                self._team_name_labels[i].setText("")
+            for key in self._econ_edits:
+                self._econ_edits[key].setText("0")
+            for key in self._battle_edits:
+                self._battle_edits[key].setText("0")
             return
         for i in range(6):
             tid = struct.unpack_from('<h', self.seg2, 0x0C + i * 2)[0]
@@ -999,16 +1086,23 @@ class SaveEditorApp(QMainWindow):
             if key in self._battle_edits:
                 self._battle_edits[key].setText(str(val))
 
+    # ── 图标 ──
+    def _get_icon_pixmap(self, icon_val, size=(24, 24)):
+        return get_sprite_pixmap(self._mu_sprites, icon_val, size, self._icon_pixmaps)
+
     # ================================================================
     # 刷新: 物品
     # ================================================================
     def _refresh_inventory(self):
         if self.seg2 is None:
+            self._inv_count_edit.setText("0")
+            self._inv_table.setRowCount(0)
             return
         key, off, size, label, fmt, cmt = SEG2_INV_COUNT
         count = struct.unpack_from('<H', self.seg2, off)[0]
         self._inv_count_edit.setText(str(count))
         self._inv_table.setRowCount(0)
+        self._inv_photos.clear()
         off_items = SEG2_INVENTORY[0][1]
         off_types = SEG2_INVENTORY[1][1]
         off_qtys = SEG2_INVENTORY[2][1]
@@ -1020,19 +1114,31 @@ class SaveEditorApp(QMainWindow):
             name = rec.get('name', f'物品#{item_id}') if rec else f'物品#{item_id}'
             tab = rec.get('tab_code', 0)
             page = PAGE_NAMES.get(tab, '?')
+            icon_val = rec.get('icon', 0) if rec else 0
             row = self._inv_table.rowCount()
             self._inv_table.insertRow(row)
-            self._inv_table.setItem(row, 0, QTableWidgetItem(str(i)))
-            self._inv_table.setItem(row, 1, QTableWidgetItem(str(item_id)))
-            self._inv_table.setItem(row, 2, QTableWidgetItem(page))
-            self._inv_table.setItem(row, 3, QTableWidgetItem(name))
-            self._inv_table.setItem(row, 4, QTableWidgetItem(str(qty)))
+            # 图标列
+            icon_item = QTableWidgetItem()
+            pix = self._get_icon_pixmap(icon_val, (36, 36))
+            if pix:
+                icon_item.setIcon(QIcon(pix))
+            self._inv_table.setItem(row, 0, icon_item)
+            self._inv_table.setItem(row, 1, QTableWidgetItem(str(i)))
+            self._inv_table.setItem(row, 2, QTableWidgetItem(str(item_id)))
+            self._inv_table.setItem(row, 3, QTableWidgetItem(page))
+            self._inv_table.setItem(row, 4, QTableWidgetItem(name))
+            self._inv_table.setItem(row, 5, QTableWidgetItem(str(qty)))
 
     # ================================================================
     # 刷新: 事件系统
     # ================================================================
     def _refresh_events(self):
         if self.seg1 is None:
+            for table in [self._switch_table, self._var_table, self._flag_table, self._result_table]:
+                for row in range(table.rowCount()):
+                    table.item(row, 1).setText("0")
+                    table.item(row, 3).setText("0x0000")
+                    table.setRowHidden(row, False)
             return
         # 开关 (32项, offset 0x2F8)
         for i in range(32):
@@ -1086,6 +1192,8 @@ class SaveEditorApp(QMainWindow):
     # ================================================================
     def _refresh_global(self):
         if self.seg1 is None:
+            for key, (edit, off, size, fmt, seg) in self._global_edits.items():
+                edit.setText("0")
             return
         for key, (edit, off, size, fmt, seg) in self._global_edits.items():
             data = self.seg1 if seg == 'seg1' else self.seg2
@@ -1120,11 +1228,11 @@ class SaveEditorApp(QMainWindow):
             name = self.tkt.get(name_id, f"ID:{name_id}") if name_id else ""
             in_team = i in team_set
 
-            if filt == "未激活" and role != -1:
+            if filt == "❌ 未激活" and role != -1:
                 continue
-            if filt == "已激活" and role != 0:
+            if filt == "✅ 已激活" and role != 0:
                 continue
-            if filt == "队伍中" and not in_team:
+            if filt == "👥 队伍中" and not in_team:
                 continue
             if search and search not in str(i) and search not in name.lower():
                 continue
@@ -1179,49 +1287,83 @@ class SaveEditorApp(QMainWindow):
         self._warpc_section("战后奖励/掉落", WARPC_BATTLE_REWARD + WARPC_DROP, idx)
 
         # 应用按钮
-        btn = QPushButton("应用角色修改")
+        btn = QPushButton("✅ 应用角色修改")
         btn.clicked.connect(self._apply_warpc)
         self._warpc_edit_layout.addWidget(btn)
         self._warpc_edit_layout.addStretch()
 
     def _warpc_section(self, title, fields, idx):
-        grp = QGroupBox(title)
-        gl = QGridLayout(grp)
+        grp = QWidget()
+        vl = QVBoxLayout(grp); vl.setContentsMargins(0, 0, 0, 0); vl.setSpacing(0)
+        vl.addWidget(DockHeader(title))
+        body = QWidget(); body.setObjectName("DockBody")
+        bl = QVBoxLayout(body); bl.setContentsMargins(8, 8, 8, 8)
+        gl = QGridLayout(); gl.setVerticalSpacing(4); gl.setHorizontalSpacing(8)
+        gl.setContentsMargins(10, 0, 0, 0)
         cols = 4
         for fi, item in enumerate(fields):
             fn, fo, label = item[0], item[1], item[2]
             cmt = item[3] if len(item) > 3 else ""
             r, c = divmod(fi, cols)
-            gl.addWidget(QLabel(f"{label}[{fo}]"), r * 2, c)
+            cell = QVBoxLayout(); cell.setSpacing(2)
+            lbl = QLabel(f"{label} [{fo}]")
+            lbl.setProperty("class", "PropLabel")
+            if cmt:
+                lbl.setToolTip(cmt)
+            cell.addWidget(lbl)
             val = warpc_get(self.seg3, idx, fo)
             edit = QLineEdit(str(val))
-            edit.setFixedWidth(80)
             edit.setFont(QFont("Consolas", 9))
-            if cmt:
-                edit.setToolTip(cmt)
-            gl.addWidget(edit, r * 2 + 1, c)
+            cell.addWidget(make_fake_input(line_edit=edit, stretch=False))
+            gl.addLayout(cell, r, c, Qt.AlignTop)
             self._warpc_edit_vars[fn] = (edit, fo)
+        for c in range(cols):
+            gl.setColumnStretch(c, 1)
+        if fields:
+            last_row = len(fields) // cols
+            last_count = len(fields) % cols
+            if last_count != 0:
+                for c in range(last_count, cols):
+                    gl.addWidget(QWidget(), last_row, c)
+        bl.addLayout(gl)
+        vl.addWidget(body)
         self._warpc_edit_layout.addWidget(grp)
 
     def _warpc_stat_section(self, idx):
-        grp = QGroupBox("八属性 (基础/当前)")
-        gl = QGridLayout(grp)
+        grp = QWidget()
+        vl = QVBoxLayout(grp); vl.setContentsMargins(0, 0, 0, 0); vl.setSpacing(0)
+        vl.addWidget(DockHeader("八属性 (基础/当前)"))
+        body = QWidget(); body.setObjectName("DockBody")
+        bl = QVBoxLayout(body); bl.setContentsMargins(8, 8, 8, 8)
+        gl = QGridLayout(); gl.setVerticalSpacing(4); gl.setHorizontalSpacing(8)
+        gl.setContentsMargins(10, 0, 0, 0)
         for ci, (name, short, bo) in enumerate(zip(STAT_NAMES, STAT_SHORTS, STAT_OFFSETS)):
-            gl.addWidget(QLabel(name), 0, ci)
+            cell = QVBoxLayout(); cell.setSpacing(2)
+            lbl = QLabel(name); lbl.setProperty("class", "PropLabel")
+            cell.addWidget(lbl)
             base_val = warpc_get(self.seg3, idx, bo)
             cur_val = warpc_get(self.seg3, idx, bo + 2)
             eb = QLineEdit(str(base_val))
-            eb.setFixedWidth(50)
             eb.setFont(QFont("Consolas", 9))
             ec = QLineEdit(str(cur_val))
-            ec.setFixedWidth(50)
             ec.setFont(QFont("Consolas", 9))
-            gl.addWidget(QLabel("基"), 1, ci)
-            gl.addWidget(eb, 2, ci)
-            gl.addWidget(QLabel("当"), 3, ci)
-            gl.addWidget(ec, 4, ci)
+            # 基础值行
+            row_b = QHBoxLayout(); row_b.setSpacing(2)
+            row_b.addWidget(QLabel("基"), 0)
+            row_b.addWidget(make_fake_input(line_edit=eb, stretch=False), 1)
+            cell.addLayout(row_b)
+            # 当前值行
+            row_c = QHBoxLayout(); row_c.setSpacing(2)
+            row_c.addWidget(QLabel("当"), 0)
+            row_c.addWidget(make_fake_input(line_edit=ec, stretch=False), 1)
+            cell.addLayout(row_c)
+            gl.addLayout(cell, 0, ci, Qt.AlignTop)
             self._warpc_edit_vars[f'{short}_base'] = (eb, bo)
             self._warpc_edit_vars[f'{short}_cur'] = (ec, bo + 2)
+        for c in range(8):
+            gl.setColumnStretch(c, 1)
+        bl.addLayout(gl)
+        vl.addWidget(body)
         self._warpc_edit_layout.addWidget(grp)
 
     # ================================================================
@@ -1329,15 +1471,15 @@ class SaveEditorApp(QMainWindow):
         sel = self._inv_table.selectedItems()
         if sel:
             row = sel[0].row()
-            self._inv_edit_id.setText(self._inv_table.item(row, 1).text())
-            self._inv_edit_qty.setText(self._inv_table.item(row, 4).text())
+            self._inv_edit_id.setText(self._inv_table.item(row, 2).text())
+            self._inv_edit_qty.setText(self._inv_table.item(row, 5).text())
 
     def _apply_inv_edit(self):
         sel = self._inv_table.selectedItems()
         if not sel or self.seg2 is None:
             return
         row = sel[0].row()
-        idx = int(self._inv_table.item(row, 0).text())
+        idx = int(self._inv_table.item(row, 1).text())
         try:
             new_id = int(self._inv_edit_id.text())
             new_qty = int(self._inv_edit_qty.text())
@@ -1362,7 +1504,7 @@ class SaveEditorApp(QMainWindow):
         if not sel or self.seg2 is None:
             return
         row = sel[0].row()
-        idx = int(self._inv_table.item(row, 0).text())
+        idx = int(self._inv_table.item(row, 1).text())
         count_off = SEG2_INV_COUNT[1]
         arr_offs = [f[1] for f in SEG2_INVENTORY]
         count = struct.unpack_from('<H', self.seg2, count_off)[0]
@@ -1383,80 +1525,118 @@ class SaveEditorApp(QMainWindow):
             QMessageBox.information(self, "提示", "请先加载存档目录")
             return
         dlg = QDialog(self)
-        dlg.setWindowTitle("新增物品")
-        dlg.resize(500, 400)
+        dlg.setWindowTitle("➕ 新增物品 — 选择物品")
+        dlg.resize(640, 560)
+        dlg.setMinimumSize(480, 360)
         layout = QVBoxLayout(dlg)
 
-        # 搜索
+        # 搜索栏 (与 save_editor v1 一致)
         sf = QHBoxLayout()
         sf.addWidget(QLabel("搜索:"))
         search_edit = QLineEdit()
         sf.addWidget(search_edit)
+        sf.addWidget(QPushButton("清除", clicked=lambda: search_edit.clear()))
+        sf.addSpacing(10)
+        sf.addWidget(QLabel("页面:"))
+        page_cb = QComboBox()
+        page_vals = ["全部页面"] + [f"{k}-{v}" for k, v in PAGE_NAMES.items()]
+        page_cb.addItems(page_vals)
+        sf.addWidget(page_cb)
+        sf.addSpacing(6)
+        nonempty_cb = QCheckBox("仅非空")
+        nonempty_cb.setChecked(True)
+        sf.addWidget(nonempty_cb)
         layout.addLayout(sf)
 
-        # 列表
-        table = QTableWidget(0, 3)
-        table.setHorizontalHeaderLabels(['ID', '名称', '页面'])
-        table.setSelectionBehavior(QAbstractItemView.SelectRows)
-        table.setSelectionMode(QAbstractItemView.SingleSelection)
-        table.setEditTriggers(QAbstractItemView.NoEditTriggers)
-        table.verticalHeader().setVisible(False)
-        table.horizontalHeader().setStretchLastSection(True)
-        layout.addWidget(table, 1)
+        # 物品列表 (图标 + # + ID + 页面 + 名称 + 价格)
+        dlg_table = QTableWidget(0, 6)
+        dlg_table.setHorizontalHeaderLabels(['图标', '#', 'ID', '页面', '物品名称', '价格'])
+        dlg_table.setColumnWidth(0, 50)
+        dlg_table.setColumnWidth(1, 36)
+        dlg_table.setColumnWidth(2, 42)
+        dlg_table.setColumnWidth(3, 46)
+        dlg_table.setColumnWidth(5, 46)
+        dlg_table.verticalHeader().setDefaultSectionSize(44)
+        dlg_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        dlg_table.setSelectionMode(QAbstractItemView.SingleSelection)
+        dlg_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        dlg_table.verticalHeader().setVisible(False)
+        dlg_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.Stretch)
+        dlg_table.setItemDelegateForColumn(0, IconDelegate())
+        layout.addWidget(dlg_table, 1)
 
-        # 数量
+        # 底部: 数量 + 按钮
         qty_row = QHBoxLayout()
         qty_row.addWidget(QLabel("数量:"))
         qty_edit = QLineEdit("1")
         qty_edit.setFixedWidth(80)
         qty_row.addWidget(qty_edit)
+        qty_row.addWidget(QLabel("(上限30000)"))
         qty_row.addStretch()
-        qty_row.addWidget(QPushButton("取消", clicked=dlg.reject))
-        ok_btn = QPushButton("添加")
+        qty_row.addWidget(QPushButton("❌ 取消", clicked=dlg.reject))
+        ok_btn = QPushButton("✅ 添加")
         qty_row.addWidget(ok_btn)
         layout.addLayout(qty_row)
 
         selected = {'idx': None, 'item_id': None}
 
         def refresh_list():
-            table.setRowCount(0)
+            dlg_table.setRowCount(0)
             q = search_edit.text().strip().lower()
+            pg = page_cb.currentText()
+            ne = nonempty_cb.isChecked()
             for arr_idx, rec in self.item_records.items():
                 name = rec.get('name', '')
                 item_id = rec.get('item_id', 0)
-                if not name:
+                tab = rec.get('tab_code', 0)
+                price = rec.get('price', 0)
+                if ne and not name:
                     continue
+                if pg != "全部页面":
+                    if tab != int(pg.split('-')[0]):
+                        continue
                 if q and q not in f"{arr_idx} {item_id} {name}".lower():
                     continue
-                row = table.rowCount()
-                table.insertRow(row)
-                table.setItem(row, 0, QTableWidgetItem(str(item_id)))
-                table.setItem(row, 1, QTableWidgetItem(name))
-                table.setItem(row, 2, QTableWidgetItem(PAGE_NAMES.get(rec.get('tab_code', 0), '?')))
+                row = dlg_table.rowCount()
+                dlg_table.insertRow(row)
+                icon_val = rec.get('icon', 0)
+                icon_item = QTableWidgetItem()
+                pix = self._get_icon_pixmap(icon_val, (36, 36))
+                if pix:
+                    icon_item.setIcon(QIcon(pix))
+                dlg_table.setItem(row, 0, icon_item)
+                dlg_table.setItem(row, 1, QTableWidgetItem(str(arr_idx)))
+                dlg_table.setItem(row, 2, QTableWidgetItem(str(item_id)))
+                dlg_table.setItem(row, 3, QTableWidgetItem(PAGE_NAMES.get(tab, '?')))
+                dlg_table.setItem(row, 4, QTableWidgetItem(name))
+                dlg_table.setItem(row, 5, QTableWidgetItem(str(price)))
 
         def on_select():
-            sel = table.selectedItems()
+            sel = dlg_table.selectedItems()
             if sel:
-                selected['item_id'] = int(table.item(sel[0].row(), 0).text())
+                selected['idx'] = int(dlg_table.item(sel[0].row(), 1).text())
+                selected['item_id'] = int(dlg_table.item(sel[0].row(), 2).text())
 
         def do_add():
-            if selected['item_id'] is None:
-                QMessageBox.warning(dlg, "提示", "请选择物品")
+            if selected['idx'] is None:
+                QMessageBox.warning(dlg, "提示", "请先在列表中选择物品")
                 return
             try:
                 qty = int(qty_edit.text())
                 if qty <= 0 or qty > 30000:
                     raise ValueError
             except ValueError:
-                QMessageBox.critical(dlg, "输入错误", "数量 1-30000")
+                QMessageBox.critical(dlg, "输入错误", "请输入有效数量 (1-30000)")
                 return
-            type_idx = self._find_item_idx_by_id(selected['item_id'])
-            self._add_inv_item(type_idx, selected['item_id'], qty)
+            self._add_inv_item(selected['idx'], selected['item_id'], qty)
             dlg.accept()
 
         search_edit.textChanged.connect(lambda: refresh_list())
-        table.itemSelectionChanged.connect(on_select)
+        page_cb.currentTextChanged.connect(lambda: refresh_list())
+        nonempty_cb.stateChanged.connect(lambda: refresh_list())
+        dlg_table.itemSelectionChanged.connect(on_select)
         ok_btn.clicked.connect(do_add)
+        dlg_table.doubleClicked.connect(lambda: do_add())
         refresh_list()
         dlg.exec()
 
