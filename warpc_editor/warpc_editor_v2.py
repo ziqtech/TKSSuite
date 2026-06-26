@@ -57,6 +57,7 @@ from PySide6.QtWidgets import (
     QLineEdit, QComboBox, QCheckBox, QPushButton, QLabel,
     QScrollArea, QDialog, QFileDialog, QMessageBox, QTextEdit,
     QFrame, QGridLayout, QAbstractItemView, QMenuBar, QTabWidget,
+    QSpinBox,
 )
 from PySide6.QtGui import QColor, QFont, QIcon, QIntValidator
 from PySide6.QtCore import Qt, QTranslator, Signal
@@ -666,6 +667,393 @@ class FieldRefDialog(QDialog):
         bl = QHBoxLayout(); bl.addStretch(); bl.addWidget(QPushButton("关闭", clicked=self.close)); layout.addLayout(bl)
 
 # ═══════════════════════════════════════════════════════════════
+# 成长数据表弹窗 (逆向来源: sub_410674 / sub_43066C / sub_4302D8)
+# ═══════════════════════════════════════════════════════════════
+
+class GrowthTableDialog(QDialog):
+    """角色逐级成长数据表 — 基于反编译公式 (sub_410674/sub_43066C)
+
+    成长公式 (每升一级):
+      选择成长率除数:
+        level < 21       → growth_early  (field[264], byte 528)
+        21 ≤ level < 41  → growth_mid    (field[265], byte 530)
+        level ≥ 41       → growth_late   (field[266], byte 532)
+      stat += stat // divisor + 1   (hp/mp/atk/def/hit/eva)
+      spd  += 1                     (固定)
+      hp = min(hp, 9999);  mp = min(mp, 9999)
+
+    等级上限: 60 (sub_43066C L13: if level < 60)
+
+    敌方属性加成 (sub_4302D8:53-62, enemy_grp/enemy_power):
+      HP  += grp × HP          (×(grp+1), cap 20000)
+      MP  += grp × MP / 4      (cap 20000)
+      ATK += grp × ATK / 8
+      DEF += grp × DEF / 8
+      HIT += grp × HIT / 12
+      EVA += grp × EVA / 12
+      SPD += grp × level / 10
+    """
+
+    STAT_CAP_HPMP = 9999
+    STAT_CAP_HPMP_ENEMY = 20000
+    MAX_LEVEL = 60
+
+    # WarPC int16 字段索引 (byte_offset // 2)
+    _IDX_HP   = 7    # hp_base
+    _IDX_MP   = 9    # mp_base
+    _IDX_ATK  = 11   # atk_base
+    _IDX_DEF  = 13   # def_base
+    _IDX_HIT  = 15   # hit_base
+    _IDX_EVA  = 17   # eva_base
+    _IDX_SPD  = 19   # spd_base (field[38//2])
+    _IDX_GE   = 264  # growth_early
+    _IDX_GM   = 265  # growth_mid
+    _IDX_GL   = 266  # growth_late
+
+    STAT_LABELS = ["HP", "MP", "攻击", "防御", "命中", "闪避", "速度"]
+
+    def __init__(self, parent, rec, char_name, tkt_names=None, grp=0):
+        super().__init__(parent)
+        self.setWindowTitle(f"成长数据表 — {char_name}")
+        self.resize(1100, 800)
+        self._rec = rec
+        self._char_name = char_name
+        self._f = rec['fields']
+        self._tkt = tkt_names or {}
+        self._grp = grp
+
+        # 读取当前数据
+        self._cur_level = max(1, self._f[2])
+        self._cur_stats = [
+            self._f[self._IDX_HP], self._f[self._IDX_MP],
+            self._f[self._IDX_ATK], self._f[self._IDX_DEF],
+            self._f[self._IDX_HIT], self._f[self._IDX_EVA],
+            self._f[self._IDX_SPD],
+        ]
+        self._ge = self._f[self._IDX_GE]
+        self._gm = self._f[self._IDX_GM]
+        self._gl = self._f[self._IDX_GL]
+
+        # 估算 1 级基础值 (二分搜索)
+        self._base_stats = [self._estimate_base(cur, self._cur_level)
+                            for cur in self._cur_stats]
+
+        # 计算完整成长表 (1-60级)
+        self._table_data = self._build_table()
+        self._build_ui()
+        self._update_grp_summary()
+
+    # ── 成长模拟 (对应 sub_410674 循环体) ──
+
+    def _get_divisor(self, level):
+        """获取指定等级段的成长率除数"""
+        if level >= 41: return self._gl
+        if level >= 21: return self._gm
+        return self._ge
+
+    def _simulate_stat(self, base, from_level, to_level):
+        """模拟单项属性从 from_level 升至 to_level (sub_410674 循环体)"""
+        val = base
+        for lvl in range(from_level, to_level):
+            d = self._get_divisor(lvl)
+            if d > 0:
+                val += val // d + 1
+            else:
+                val += 1
+        return val
+
+    def _simulate_spd(self, base_spd, from_level, to_level):
+        """速度: 每级固定 +1 (sub_410674 L33: ++a1[19])"""
+        return base_spd + (to_level - from_level)
+
+    def _estimate_base(self, current_stat, current_level):
+        """二分搜索估算 1 级时的属性基础值 (取最接近当前值的基点)"""
+        if current_level <= 1:
+            return current_stat
+        # 对速度特殊处理 (固定+1/级)
+        # 注意: 此函数不区分 stat 类型, 速度单独在 _build_table 处理
+        lo, hi = 1, max(current_stat, 1)
+        while lo < hi:
+            mid = (lo + hi) // 2
+            sim = self._simulate_stat(mid, 1, current_level)
+            if sim < current_stat:
+                lo = mid + 1
+            else:
+                hi = mid
+        # lo = 最小 sim >= current 的 base; 检查 lo-1 是否更接近
+        if lo > 1:
+            sim_lo  = self._simulate_stat(lo, 1, current_level)
+            sim_lo1 = self._simulate_stat(lo - 1, 1, current_level)
+            if abs(sim_lo1 - current_stat) <= abs(sim_lo - current_stat):
+                return lo - 1
+        return lo
+
+    def _build_table(self):
+        """构建 1 至 MAX_LEVEL 级完整数据表"""
+        data = []
+        # 速度基础: spd_base 是当前的速度值 (含 +1/级), 1级基础 = cur - (level-1)
+        spd_base = max(0, self._cur_stats[6] - (self._cur_level - 1))
+        base = list(self._base_stats[:6]) + [spd_base]
+
+        prev = list(base)
+        for lvl in range(1, self.MAX_LEVEL + 1):
+            if lvl == 1:
+                stats = list(base)
+            else:
+                d = self._get_divisor(lvl - 1)
+                stats = []
+                for i in range(6):
+                    v = prev[i]
+                    stats.append(v + (v // d + 1) if d > 0 else v + 1)
+                stats.append(prev[6] + 1)  # spd 固定 +1
+
+            # HP/MP 上限 cap (sub_410674 L35-38 / sub_43066C L37-40)
+            capped = list(stats)
+            capped[0] = min(capped[0], self.STAT_CAP_HPMP)
+            capped[1] = min(capped[1], self.STAT_CAP_HPMP)
+
+            deltas = [capped[i] - prev[i] for i in range(7)] if lvl > 1 else [0] * 7
+            divisor = self._get_divisor(lvl)
+
+            data.append({
+                'level': lvl, 'divisor': divisor, 'stats': capped,
+                'deltas': deltas, 'is_current': (lvl == self._cur_level),
+            })
+            prev = capped
+        return data
+
+    # ── UI 构建 ──
+
+    def _build_ui(self):
+        layout = QVBoxLayout(self)
+
+        # 顶部: 公式说明 + 1级基础值
+        info_frame = QFrame()
+        info_layout = QVBoxLayout(info_frame)
+        info_layout.setContentsMargins(8, 4, 8, 4)
+        info_layout.setSpacing(2)
+        info_layout.addWidget(QLabel(
+            f"<b>{self._char_name}</b>  (编号 #{self._rec['index']},  "
+            f"当前等级 {self._cur_level})"))
+        info_layout.addWidget(QLabel(
+            f"成长率: 初期={self._ge} (Lv1-20) | "
+            f"中期={self._gm} (Lv21-40) | "
+            f"后期={self._gl} (Lv41-60)"))
+        info_layout.addWidget(QLabel(
+            f"公式: stat += stat // divisor + 1 "
+            f"(来源 sub_410674/sub_43066C) | "
+            f"速度: 每级固定+1 | HP/MP上限={self.STAT_CAP_HPMP}"))
+
+        # 速度基础: 固定+1/级, 1级值 = 当前值 - (等级-1)
+        spd_base = max(0, self._cur_stats[6] - (self._cur_level - 1))
+        base_parts = [f"{l}={b}" for l, b in zip(self.STAT_LABELS[:6], self._base_stats[:6])]
+        base_parts.append(f"速度={spd_base} (固定+1/级)")
+        base_str = "  |  ".join(base_parts)
+        base_lbl = QLabel(f"<b>估算 1 级基础值</b>: {base_str}")
+        base_lbl.setWordWrap(True)
+        info_layout.addWidget(base_lbl)
+        layout.addWidget(info_frame)
+
+        # ── grp 加成控制行 ──
+        grp_frame = QFrame()
+        grp_frame.setObjectName("DockBody")
+        grp_row = QHBoxLayout(grp_frame)
+        grp_row.setContentsMargins(8, 4, 8, 4)
+        grp_row.addWidget(QLabel("属性加成倍率 (grp):"))
+        self._grp_spin = QSpinBox()
+        self._grp_spin.setRange(0, 10)
+        self._grp_spin.setValue(self._grp)
+        self._grp_spin.setToolTip(
+            "敌方属性加成倍率 (sub_4302D8:53-62)\n"
+            "0=普通士兵  1+=将领/Boss\n"
+            "HP += grp×HP  MP += grp×MP/4\n"
+            "ATK/DEF += grp×stat/8  HIT/EVA += grp×stat/12\n"
+            "SPD += grp×level/10")
+        self._grp_spin.valueChanged.connect(self._update_grp_summary)
+        grp_row.addWidget(self._grp_spin)
+        grp_row.addSpacing(20)
+        grp_row.addWidget(QLabel("目标等级:"))
+        self._target_lv_spin = QSpinBox()
+        self._target_lv_spin.setRange(1, self.MAX_LEVEL)
+        self._target_lv_spin.setValue(min(self._cur_level, self.MAX_LEVEL))
+        self._target_lv_spin.valueChanged.connect(self._update_grp_summary)
+        grp_row.addWidget(self._target_lv_spin)
+        grp_row.addSpacing(20)
+        self._grp_formula_lbl = QLabel("")
+        self._grp_formula_lbl.setWordWrap(True)
+        grp_row.addWidget(self._grp_formula_lbl, 1)
+        layout.addWidget(grp_frame)
+
+        # ── grp 加成结果表 ──
+        self._grp_table = QTableWidget(7, 4)
+        self._grp_table.setHorizontalHeaderLabels(
+            ["属性", "成长后基础", "grp加成值", "最终属性"])
+        self._grp_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self._grp_table.verticalHeader().setVisible(False)
+        self._grp_table.setAlternatingRowColors(True)
+        self._grp_table.setFont(QFont("Consolas", 9))
+        self._grp_table.setColumnWidth(0, 80)
+        self._grp_table.setColumnWidth(1, 120)
+        self._grp_table.setColumnWidth(2, 120)
+        self._grp_table.setColumnWidth(3, 120)
+        self._grp_table.setMaximumHeight(220)
+        layout.addWidget(self._grp_table)
+
+        # 表格
+        col_headers = ["等级", "成长率", "HP", "Δ", "MP", "Δ",
+                        "攻击", "Δ", "防御", "Δ", "命中", "Δ",
+                        "闪避", "Δ", "速度", "Δ"]
+        self._growth_table = QTableWidget(len(self._table_data), len(col_headers))
+        self._growth_table.setHorizontalHeaderLabels(col_headers)
+        self._growth_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self._growth_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self._growth_table.verticalHeader().setVisible(False)
+        self._growth_table.setAlternatingRowColors(True)
+        self._growth_table.setFont(QFont("Consolas", 9))
+        # 列宽
+        for ci in range(len(col_headers)):
+            self._growth_table.setColumnWidth(ci, 52 if ci > 0 else 45)
+        self._populate_table()
+        layout.addWidget(self._growth_table, 1)
+
+        # 底部按钮
+        bl = QHBoxLayout()
+        bl.addWidget(QPushButton("导出 CSV…", clicked=self._export_csv))
+        bl.addStretch()
+        bl.addWidget(QPushButton("关闭", clicked=self.close))
+        layout.addLayout(bl)
+
+    def _populate_table(self):
+        font_bold = QFont("Consolas", 9, QFont.Bold)
+        for row, d in enumerate(self._table_data):
+            is_cur = d['is_current']
+            bg = QColor("#2a5090") if is_cur else None
+            items = [str(d['level']), str(d['divisor'])]
+            for si in range(7):
+                items.append(str(d['stats'][si]))
+                delta = d['deltas'][si]
+                items.append(f"+{delta}" if delta > 0 else str(delta))
+            for ci, txt in enumerate(items):
+                item = QTableWidgetItem(txt)
+                item.setTextAlignment(Qt.AlignCenter)
+                if is_cur:
+                    item.setFont(font_bold)
+                    item.setBackground(bg)
+                    item.setForeground(QColor("#ffffff"))
+                elif ci in (3, 5, 7, 9, 11, 13, 15) and d['level'] > 1:
+                    item.setForeground(QColor("#88aa88"))
+                self._growth_table.setItem(row, ci, item)
+        # 滚动到当前等级
+        for row, d in enumerate(self._table_data):
+            if d['is_current']:
+                self._growth_table.scrollToItem(
+                    self._growth_table.item(row, 0))
+                break
+
+    def _export_csv(self):
+        fp, _ = QFileDialog.getSaveFileName(
+            self, "导出成长数据", f"{self._char_name}_growth.csv",
+            "CSV (*.csv)")
+        if not fp:
+            return
+        headers = ["等级", "成长率", "HP", "dHP", "MP", "dMP",
+                    "攻击", "d攻击", "防御", "d防御", "命中", "d命中",
+                    "闪避", "d闪避", "速度", "d速度"]
+        with open(fp, 'w', newline='', encoding='utf-8-sig') as f:
+            w = csv.writer(f)
+            w.writerow(headers)
+            for d in self._table_data:
+                row = [d['level'], d['divisor']]
+                for si in range(7):
+                    row.append(d['stats'][si])
+                    row.append(d['deltas'][si])
+                w.writerow(row)
+            # grp 加成摘要
+            grp = self._grp_spin.value()
+            target_lv = self._target_lv_spin.value()
+            if grp > 0:
+                w.writerow([])
+                w.writerow([f'grp={grp} 目标等级={target_lv} (sub_4302D8)'])
+                w.writerow(['属性', '成长后基础', 'grp加成', '最终属性'])
+                if 1 <= target_lv <= len(self._table_data):
+                    base = self._table_data[target_lv - 1]['stats']
+                else:
+                    base = self._table_data[-1]['stats']
+                grp_divs = [1, 4, 8, 8, 12, 12, 0]
+                for i, label in enumerate(self.STAT_LABELS):
+                    bonus = grp * base[i] // grp_divs[i] if grp_divs[i] else grp * target_lv // 10
+                    final = base[i] + bonus
+                    if i < 2:
+                        final = min(final, self.STAT_CAP_HPMP_ENEMY)
+                    w.writerow([label, base[i], f'+{bonus}', final])
+        QMessageBox.information(self, "导出成功",
+            f"已导出 {self._char_name} 成长数据至:\n{fp}")
+
+    # ── grp 加成计算 (sub_4302D8:53-62) ──
+
+    def _update_grp_summary(self):
+        """根据 grp 和目标等级计算并刷新加成结果表"""
+        grp = self._grp_spin.value()
+        target_lv = self._target_lv_spin.value()
+
+        # 取目标等级的成长后属性 (Phase 1)
+        if 1 <= target_lv <= len(self._table_data):
+            base_at_lv = list(self._table_data[target_lv - 1]['stats'])
+        else:
+            base_at_lv = list(self._table_data[-1]['stats'])
+
+        # grp 加成公式 (sub_4302D8:55-61)
+        # divisors for each stat: HP=1, MP=4, ATK=8, DEF=8, HIT=12, EVA=12, SPD=special
+        grp_divs = [1, 4, 8, 8, 12, 12, 0]  # 0=SPD special
+        bonuses = []
+        for i in range(6):
+            bonuses.append(grp * base_at_lv[i] // grp_divs[i] if grp_divs[i] > 0 else 0)
+        bonuses.append(grp * target_lv // 10)  # SPD
+
+        # Final = base + bonus, cap HP/MP at 20000 (sub_4302D8:63-66)
+        cap = self.STAT_CAP_HPMP_ENEMY
+        finals = []
+        for i in range(7):
+            v = base_at_lv[i] + bonuses[i]
+            if i < 2:
+                v = min(v, cap)
+            finals.append(v)
+
+        # 更新公式标签
+        if grp > 0:
+            self._grp_formula_lbl.setText(
+                f"<b>Phase 2</b> (sub_4302D8): "
+                f"HP×{grp+1}(cap {cap})  MP+{grp}×MP/4  "
+                f"ATK/DEF+{grp}/8  HIT/EVA+{grp}/12  SPD+{grp}×Lv/10")
+        else:
+            self._grp_formula_lbl.setText(
+                "<i>grp=0: 普通士兵, 无加成 (可被选为增援)</i>")
+
+        # 填充 grp 结果表
+        for row_i, label in enumerate(self.STAT_LABELS):
+            self._grp_table.setItem(row_i, 0, self._make_cell(label))
+            self._grp_table.setItem(row_i, 1,
+                self._make_cell(str(base_at_lv[row_i])))
+            bonus_val = bonuses[row_i]
+            bonus_txt = f"+{bonus_val}" if bonus_val > 0 else str(bonus_val)
+            self._grp_table.setItem(row_i, 2,
+                self._make_cell(bonus_txt,
+                    fg=QColor("#e8a040") if bonus_val > 0 else None))
+            self._grp_table.setItem(row_i, 3,
+                self._make_cell(str(finals[row_i]),
+                    fg=QColor("#ff6060") if grp > 0 else None,
+                    bold=True))
+
+    def _make_cell(self, text, fg=None, bold=False):
+        item = QTableWidgetItem(str(text))
+        item.setTextAlignment(Qt.AlignCenter)
+        if fg:
+            item.setForeground(fg)
+        if bold:
+            item.setFont(QFont("Consolas", 9, QFont.Bold))
+        return item
+
+# ═══════════════════════════════════════════════════════════════
 # 主编辑器窗口
 # ═══════════════════════════════════════════════════════════════
 
@@ -766,6 +1154,9 @@ class WarpcEditorV2(QMainWindow):
         em.addAction("复制当前角色", self._copy_record)
         em.addAction("导出当前角色(.warpc)…", self._export_warpc)
         em.addAction("导入角色(.warpc)…", self._import_warpc)
+
+        am = mb.addMenu("分析(&A)")
+        am.addAction("成长数据表 (1-60级)", self._show_growth_table)
 
         hm = mb.addMenu("帮助(&H)")
         hm.addAction("字段参考 (逆向来源)", self._show_field_ref)
@@ -2159,6 +2550,18 @@ class WarpcEditorV2(QMainWindow):
             f"作者: {info.get('author', '')}\n\n"
             f"共加载 {len(records)} 条记录。\n"
             f"您现在可以继续编辑并重新导出。")
+
+    # ── 分析 ──
+    def _show_growth_table(self):
+        """打开成长数据表弹窗 (1-60级)"""
+        if self._editing_idx < 0 or self._editing_idx >= len(self.records):
+            QMessageBox.warning(self, "未选择角色",
+                "请先在左侧列表中选择一个角色。")
+            return
+        rec = self.records[self._editing_idx]
+        char_name = self._char_name(rec)
+        dlg = GrowthTableDialog(self, rec, char_name, self.tkt)
+        dlg.exec()
 
     # ── 帮助 ──
     def _show_field_ref(self):
