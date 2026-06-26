@@ -51,6 +51,9 @@ class ModInfoPreviewWidget(QWidget):
             rows.append(("依赖", ", ".join(mod.dependencies), False))
         if mod.conflicts:
             rows.append(("冲突", ", ".join(mod.conflicts), False))
+        if mod.pak_contents:
+            rows.append(("合集内容", f"{len(mod.pak_contents)} 个模组", False))
+            rows.append(("", ", ".join(mod.pak_contents), False))
         if mod.warpc_expand:
             rows.append(("WarPC 扩展到", f"{mod.warpc_expand} 角色", False))
         if mod.id_ranges:

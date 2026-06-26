@@ -1,5 +1,7 @@
-"""模组元数据编辑对话框 — 加载 .tksmod 编辑元数据后保存，不改模组内容"""
+"""模组元数据编辑对话框 — 加载 .tksmod / .tksmodpak 编辑元数据后保存，不改模组内容"""
+import json
 import os
+import zipfile
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QGridLayout,
     QLabel, QLineEdit, QTextEdit, QComboBox, QSpinBox,
@@ -164,22 +166,46 @@ class ModMetaEditorDialog(QDialog):
 
     def _on_open(self):
         path, _ = QFileDialog.getOpenFileName(
-            self, "选择 .tksmod 文件", self._mods_dir,
-            "TKS 模组文件 (*.tksmod);;所有文件 (*)"
+            self, "选择模组文件", self._mods_dir,
+            "TKS 模组文件 (*.tksmod *.tksmodpak);;所有文件 (*)"
         )
         if not path:
             return
         self._load(path)
 
     def _load(self, path: str):
+        ext = os.path.splitext(path)[1].lower()
+        if ext == ".tksmodpak":
+            self._load_tksmodpak(path)
+        else:
+            self._load_tksmod(path)
+
+    def _load_tksmod(self, path: str):
         content = read_tksmod_content(path)
         if not content.valid:
             QMessageBox.warning(self, "无法加载", f"读取失败: {content.error}")
             return
         self._mod_path = path
         self.edit_path.setText(path)
-        mj = content.mod_json
+        self._fill_fields(content.mod_json)
 
+    def _load_tksmodpak(self, path: str):
+        try:
+            with zipfile.ZipFile(path, 'r') as zf:
+                if "mod.json" not in zf.namelist():
+                    QMessageBox.warning(self, "无法加载", "该合集文件中缺少 mod.json")
+                    return
+                mj_str = zf.read("mod.json").decode('utf-8')
+                mj = json.loads(mj_str)
+        except Exception as e:
+            QMessageBox.warning(self, "无法加载", f"读取失败: {e}")
+            return
+
+        self._mod_path = path
+        self.edit_path.setText(path)
+        self._fill_fields(mj)
+
+    def _fill_fields(self, mj: dict):
         self.edit_id.setText(mj.get("id", ""))
         self.edit_name.setText(mj.get("name", ""))
         self.edit_version.setText(mj.get("version", "1.0.0"))
@@ -230,7 +256,7 @@ class ModMetaEditorDialog(QDialog):
 
     def _validate(self) -> bool:
         if not self._mod_path:
-            QMessageBox.warning(self, "提示", "请先打开一个 .tksmod 文件")
+            QMessageBox.warning(self, "提示", "请先打开一个模组文件")
             return False
         if not self.edit_id.text().strip():
             QMessageBox.warning(self, "必填", "请输入模组 ID")
@@ -242,10 +268,18 @@ class ModMetaEditorDialog(QDialog):
             return False
         return True
 
+    def _is_pak(self, path: str = None) -> bool:
+        """判断给定路径（默认当前打开的文件）是否为 .tksmodpak 合集格式。"""
+        p = path or self._mod_path
+        return os.path.splitext(p)[1].lower() == ".tksmodpak"
+
     def _on_save(self):
         if not self._validate():
             return
-        ok, msg = rewrite_mod_metadata(self._mod_path, self._collect_metadata())
+        if self._is_pak():
+            ok, msg = self._save_tksmodpak(self._mod_path)
+        else:
+            ok, msg = rewrite_mod_metadata(self._mod_path, self._collect_metadata())
         if ok:
             QMessageBox.information(self, "保存成功", f"已更新元数据:\n{self._mod_path}")
         else:
@@ -257,16 +291,44 @@ class ModMetaEditorDialog(QDialog):
         default = os.path.join(self._mods_dir, os.path.basename(self._mod_path))
         path, _ = QFileDialog.getSaveFileName(
             self, "另存为", default,
-            "TKS 模组文件 (*.tksmod);;所有文件 (*)"
+            "TKS 模组文件 (*.tksmod *.tksmodpak);;所有文件 (*)"
         )
         if not path:
             return
-        ok, msg = rewrite_mod_metadata(self._mod_path, self._collect_metadata(),
-                                       output_path=path)
+        if self._is_pak(path):
+            ok, msg = self._save_tksmodpak(path)
+        else:
+            ok, msg = rewrite_mod_metadata(self._mod_path, self._collect_metadata(),
+                                           output_path=path)
         if ok:
             QMessageBox.information(self, "保存成功", f"已另存为:\n{path}")
         else:
             QMessageBox.critical(self, "保存失败", msg)
+
+    def _save_tksmodpak(self, path: str) -> tuple[bool, str]:
+        """写入 .tksmodpak 的 mod.json 元数据，保留所有 .tksmod 文件不变。"""
+        try:
+            tmp = path + ".tmp"
+            with zipfile.ZipFile(path, 'r') as src, \
+                 zipfile.ZipFile(tmp, 'w', zipfile.ZIP_DEFLATED) as dst:
+                meta = self._collect_metadata()
+                meta["format"] = "TKSMODPAK"
+                meta["format_version"] = 1
+                dst.writestr("mod.json",
+                            json.dumps(meta, ensure_ascii=False, indent=2))
+                for item in src.infolist():
+                    if item.filename == "mod.json":
+                        continue
+                    dst.writestr(item, src.read(item.filename))
+            os.replace(tmp, path)
+            return True, "保存成功"
+        except Exception as e:
+            if os.path.isfile(tmp):
+                try:
+                    os.remove(tmp)
+                except OSError:
+                    pass
+            return False, f"保存失败: {e}"
 
     def _regen_id(self):
         """重新生成模组 ID（直接覆盖）。"""

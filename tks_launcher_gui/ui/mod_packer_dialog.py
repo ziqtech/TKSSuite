@@ -1,4 +1,4 @@
-"""模组打包器对话框 — 将多个 .tksmod 合并为一个统一模组包"""
+"""模组打包对话框 — 将多个 .tksmod 打包为一个 .tksmodpak 合集文件"""
 import os
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QGridLayout,
@@ -9,18 +9,19 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt
 
 from core.mod_packer import (
-    read_tksmod_content, validate_merge, merge_tksmod_files,
+    read_tksmod_content,
     suggest_output_name, list_tksmod_contents,
+    create_tksmodpak,
 )
 from editor_utils.mod_exporter import generate_short_uuid
 
 
 class ModPackerDialog(QDialog):
-    """模组打包对话框 — 选择多个 .tksmod 文件，设置统一元数据后合并为一个"""
+    """模组打包对话框 — 选择多个 .tksmod 文件，设置合集元数据后打包为 .tksmodpak"""
 
     def __init__(self, mods_dir: str = "mods", parent=None):
         super().__init__(parent)
-        self.setWindowTitle("模组打包器 — 合并多个 .tksmod 为一个模组包")
+        self.setWindowTitle("模组打包 — 将多个 .tksmod 打包为合集文件")
         self.resize(700, 620)
         self._mods_dir = mods_dir
         self._file_paths: list[str] = []
@@ -29,7 +30,7 @@ class ModPackerDialog(QDialog):
         layout.setSpacing(12)
 
         # ---- 文件列表区 ----
-        file_group = QGroupBox("源文件列表 (将合并为一个模组包)")
+        file_group = QGroupBox("源文件列表 (将打包为一个 .tksmodpak)")
         file_layout = QVBoxLayout(file_group)
 
         self._file_list = QListWidget()
@@ -62,7 +63,7 @@ class ModPackerDialog(QDialog):
         layout.addWidget(file_group)
 
         # ---- 元数据区 ----
-        meta_group = QGroupBox("模组包元数据 (合并后的统一信息)")
+        meta_group = QGroupBox("合集元数据")
         grid = QGridLayout(meta_group)
         grid.setVerticalSpacing(8)
         grid.setHorizontalSpacing(12)
@@ -123,7 +124,7 @@ class ModPackerDialog(QDialog):
         out_row = QHBoxLayout()
         out_row.addWidget(QLabel("输出文件:"))
         self.edit_output = QLineEdit()
-        self.edit_output.setPlaceholderText("合并后的 .tksmod 文件路径")
+        self.edit_output.setPlaceholderText("输出的 .tksmodpak 文件路径")
         out_row.addWidget(self.edit_output, 1)
         btn_browse = QPushButton("浏览...")
         btn_browse.clicked.connect(self._on_browse_output)
@@ -145,11 +146,7 @@ class ModPackerDialog(QDialog):
         bottom_row = QHBoxLayout()
         bottom_row.addStretch()
 
-        btn_validate = QPushButton("验证兼容性")
-        btn_validate.clicked.connect(self._on_validate)
-        bottom_row.addWidget(btn_validate)
-
-        btn_pack = QPushButton("🔗 执行合并")
+        btn_pack = QPushButton("📦 执行打包")
         btn_pack.setObjectName("btnPack")
         btn_pack.setStyleSheet("font-weight: bold; padding: 6px 20px;")
         btn_pack.clicked.connect(self._on_pack)
@@ -287,14 +284,14 @@ class ModPackerDialog(QDialog):
         suggested = suggest_output_name(self._file_paths, self._get_metadata())
         default_path = os.path.join(self._mods_dir, suggested)
         path, _ = QFileDialog.getSaveFileName(
-            self, "保存合并后的模组包", default_path,
-            "TKS 模组文件 (*.tksmod);;所有文件 (*)"
+            self, "保存 .tksmodpak 合集文件", default_path,
+            "TKS 模组合集 (*.tksmodpak);;所有文件 (*)"
         )
         if path:
             self.edit_output.setText(path)
 
     # ────────────────────────────────────────────────
-    # 验证和打包
+    # 打包
     # ────────────────────────────────────────────────
 
     def _get_metadata(self) -> dict:
@@ -309,29 +306,9 @@ class ModPackerDialog(QDialog):
             "load_order": self.spin_order.value(),
         }
 
-    def _on_validate(self):
-        if not self._file_paths:
-            QMessageBox.warning(self, "提示", "请先添加要合并的 .tksmod 文件")
-            return
-
-        self._log_area.clear()
-        can_merge, warnings = validate_merge(self._file_paths)
-
-        if warnings:
-            for w in warnings:
-                self._log_area.append(w)
-        else:
-            self._log_area.append("✅ 所有文件兼容，可以合并")
-
-        if can_merge:
-            self._log_area.append(f"\n验证通过: {len(self._file_paths)} 个文件可以合并")
-        else:
-            self._log_area.append("\n❌ 验证失败，请修复错误后重试")
-
     def _on_pack(self):
-        # 基本验证
         if not self._file_paths:
-            QMessageBox.warning(self, "提示", "请先添加要合并的 .tksmod 文件")
+            QMessageBox.warning(self, "提示", "请先添加要打包的 .tksmod 文件")
             return
 
         metadata = self._get_metadata()
@@ -350,6 +327,9 @@ class ModPackerDialog(QDialog):
             suggested = suggest_output_name(self._file_paths, metadata)
             output = os.path.join(self._mods_dir, suggested)
             self.edit_output.setText(output)
+        if not output.lower().endswith(".tksmodpak"):
+            output += ".tksmodpak"
+            self.edit_output.setText(output)
 
         # 确认覆盖
         if os.path.isfile(output):
@@ -361,36 +341,30 @@ class ModPackerDialog(QDialog):
             if ret != QMessageBox.Yes:
                 return
 
-        # 执行合并
+        # 执行打包
         self._log_area.clear()
         self._progress.setVisible(True)
-        self._progress.setRange(0, 0)  # 不确定进度
+        self._progress.setRange(0, 0)
 
         def log(msg):
             self._log_area.append(msg)
 
-        log(f"开始合并 {len(self._file_paths)} 个 .tksmod 文件...")
+        log(f"开始打包 {len(self._file_paths)} 个 .tksmod 文件...")
         log(f"输出: {output}")
         log("")
 
-        result = merge_tksmod_files(self._file_paths, output, metadata, log_func=log)
+        ok, msg = create_tksmodpak(self._file_paths, output, metadata, log_func=log)
 
         self._progress.setVisible(False)
 
-        if result.success:
-            log(f"\n✅ 合并成功！")
-            log(f"   组件数: {result.total_components}")
-            log(f"   资源数: {result.total_resources}")
-            if result.warnings:
-                log(f"   警告: {len(result.warnings)} 条")
-
+        if ok:
+            log(f"\n✅ {msg}")
             QMessageBox.information(
-                self, "合并成功",
-                f"已成功将 {len(self._file_paths)} 个文件合并为:\n\n"
+                self, "打包成功",
+                f"已成功将 {len(self._file_paths)} 个文件打包为:\n\n"
                 f"{os.path.basename(output)}\n\n"
-                f"组件: {result.total_components}, 资源: {result.total_resources}\n\n"
-                f"玩家只需将此文件放入 mods/ 目录即可使用。"
+                f"可通过「模组拆分」功能还原原始文件。"
             )
         else:
-            log(f"\n❌ 合并失败: {result.error}")
-            QMessageBox.critical(self, "合并失败", result.error)
+            log(f"\n❌ {msg}")
+            QMessageBox.critical(self, "打包失败", msg)

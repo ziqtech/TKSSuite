@@ -47,6 +47,10 @@ class ModInfo:
     # 加载后的数据
     data_files: Dict[str, Any] = field(default_factory=dict)
     enabled: bool = True
+    # .tksmodpak 合集：内含的 .tksmod 文件名列表（仅 pak 条目有值）
+    pak_contents: List[str] = field(default_factory=list)
+    # 合集内展开的 .tksmod 原始 ZIP 数据（内存中，不落盘），用于资源提取
+    _data_raw: Optional[bytes] = None
 
 
 @dataclass
@@ -86,18 +90,26 @@ def scan_mods(mods_dir: str, log_func=None) -> List[ModInfo]:
         return mods
 
     for fname in sorted(os.listdir(mods_dir)):
-        if not fname.lower().endswith('.tksmod'):
-            continue
+        ext = os.path.splitext(fname)[1].lower()
         fpath = os.path.join(mods_dir, fname)
-        try:
-            mod = _load_single_mod(fpath, log)
-            if mod:
-                mods.append(mod)
-                log(f"  [OK] 加载 MOD: {mod.name} v{mod.version} ({fname})")
-        except Exception as e:
-            log(f"  [WARN] 加载 {fname} 失败: {e}")
+        if ext == '.tksmod':
+            try:
+                mod = _load_single_mod(fpath, log)
+                if mod:
+                    mods.append(mod)
+                    log(f"  [OK] 加载 MOD: {mod.name} v{mod.version} ({fname})")
+            except Exception as e:
+                log(f"  [WARN] 加载 {fname} 失败: {e}")
+        elif ext == '.tksmodpak':
+            try:
+                mod = _load_pak_mod_info(fpath, log)
+                if mod:
+                    mods.append(mod)
+                    log(f"  [OK] 加载合集: {mod.name} ({fname}) [{len(mod.pak_contents)} 个模组]")
+            except Exception as e:
+                log(f"  [WARN] 加载合集 {fname} 失败: {e}")
 
-    log(f"  共发现 {len(mods)} 个 MOD 文件")
+    log(f"  共发现 {len(mods)} 个模组/合集")
     return mods
 
 
@@ -145,6 +157,100 @@ def _load_single_mod(mod_path: str, log_func=None) -> Optional[ModInfo]:
                 mod.data_files[internal_path] = json.loads(content)
 
         return mod
+
+
+def _load_pak_mod_info(pak_path: str, log_func=None) -> Optional[ModInfo]:
+    """从 .tksmodpak 文件中读取合集元数据，创建 ModInfo 条目。
+
+    仅读取 mod.json 获取合集概览信息，不解析内含的 .tksmod 文件内容。
+    pak_contents 记录内含的 .tksmod 文件名列表。
+    """
+    log = log_func or (lambda x: None)
+
+    with zipfile.ZipFile(pak_path, 'r') as zf:
+        if "mod.json" not in zf.namelist():
+            log(f"    .tksmodpak 缺少 mod.json")
+            return None
+
+        mj_str = zf.read("mod.json").decode('utf-8')
+        mj = json.loads(mj_str)
+
+        # 收集内含的 .tksmod 文件名
+        pak_contents = sorted(
+            n for n in zf.namelist()
+            if n.lower().endswith(".tksmod") and not n.endswith("/")
+        )
+
+        mod = ModInfo(
+            path=pak_path,
+            mod_id=mj.get("id", ""),
+            name=mj.get("name", ""),
+            version=mj.get("version", "1.0.0"),
+            author=mj.get("author", ""),
+            description=mj.get("description", ""),
+            mod_type=mj.get("type", "mixed"),
+            mode="mixed",
+            load_order=mj.get("load_order", 100),
+            dependencies=mj.get("dependencies", []),
+            conflicts=mj.get("conflicts", []),
+            pak_contents=pak_contents,
+        )
+        return mod
+
+
+def expand_pak_mods(pak_path: str, log_func=None) -> List[ModInfo]:
+    """展开 .tksmodpak 合集，将内含的每个 .tksmod 在内存中解析为独立 ModInfo。
+
+    不落盘，与普通 .tksmod 加载方式一致。原始 ZIP 数据保存在 _data_raw 中，
+    供 apply_mod_data 提取资源时使用。
+    """
+    import io
+    log = log_func or (lambda x: None)
+    result = []
+
+    with zipfile.ZipFile(pak_path, 'r') as zf:
+        mod_entries = sorted(
+            n for n in zf.namelist()
+            if n.lower().endswith(".tksmod") and not n.endswith("/")
+        )
+        for entry in mod_entries:
+            raw_data = zf.read(entry)
+            with zipfile.ZipFile(io.BytesIO(raw_data), 'r') as izf:
+                if "mod.json" not in izf.namelist():
+                    continue
+                mj = json.loads(izf.read("mod.json").decode('utf-8'))
+                if mj.get("format") != "TKSMOD":
+                    continue
+
+                mod = ModInfo(
+                    path=pak_path,
+                    mod_id=mj.get("id", ""),
+                    name=mj.get("name", ""),
+                    version=mj.get("version", "1.0.0"),
+                    author=mj.get("author", ""),
+                    description=mj.get("description", ""),
+                    mod_type=mj.get("type", "data"),
+                    mode=mj.get("mode", "mixed"),
+                    load_order=mj.get("load_order", 100),
+                    dependencies=mj.get("dependencies", []),
+                    conflicts=mj.get("conflicts", []),
+                    id_ranges=mj.get("id_ranges", {}),
+                    warpc_expand=mj.get("warpc_expand", 0),
+                    components=mj.get("components", []),
+                    resources=mj.get("resources", []),
+                    _data_raw=raw_data,
+                )
+
+                # 预加载数据文件（内存中）
+                for comp in mod.components:
+                    internal_path = comp.get("file", "")
+                    if internal_path in izf.namelist():
+                        mod.data_files[internal_path] = json.loads(
+                            izf.read(internal_path).decode('utf-8'))
+
+                result.append(mod)
+
+    return result
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -291,7 +397,7 @@ def merge_mods(mods: List[ModInfo], game_dir: str, log_func=None) -> MergedData:
         for res in mod.resources:
             target = res.get("target", "")
             if target:
-                merged.resource_replacements[target] = (mod.path, res.get("file", ""))
+                merged.resource_replacements[target] = (mod.path, res.get("file", ""), mod._data_raw)
 
         # WarPC 扩展需求
         if mod.warpc_expand > merged.warpc_expand_count:
@@ -1105,7 +1211,8 @@ def apply_mod_data(merged: MergedData, game_dir: str, log_func=None):
         log(f"  写入: {target_name} ({len(data)} 字节)")
 
     # 处理资源文件替换
-    for target_name, (mod_path, internal_path) in merged.resource_replacements.items():
+    import io as _io
+    for target_name, (mod_path, internal_path, raw_data) in merged.resource_replacements.items():
         target_path = os.path.join(game_dir, target_name)
         orig_path = target_path + ".mod_orig"
 
@@ -1115,9 +1222,13 @@ def apply_mod_data(merged: MergedData, game_dir: str, log_func=None):
             merged.backed_up.append(target_path)
             log(f"  备份资源: {target_name} → {target_name}.mod_orig")
 
-        # 从 ZIP 中提取资源文件
+        # 从 ZIP 中提取资源文件（支持内存数据或磁盘文件）
         try:
-            with zipfile.ZipFile(mod_path, 'r') as zf:
+            if raw_data:
+                zf = zipfile.ZipFile(_io.BytesIO(raw_data), 'r')
+            else:
+                zf = zipfile.ZipFile(mod_path, 'r')
+            with zf:
                 if internal_path in zf.namelist():
                     with zf.open(internal_path) as src:
                         with open(target_path, 'wb') as dst:

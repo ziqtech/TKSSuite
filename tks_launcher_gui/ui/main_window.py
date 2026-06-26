@@ -19,6 +19,7 @@ from ui.log_console import LogConsole
 from ui.game_overlay import GameOverlay
 from ui.mod_packer_dialog import ModPackerDialog
 from ui.mod_meta_editor_dialog import ModMetaEditorDialog
+from ui.mod_splitter_dialog import ModSplitterDialog
 from workers.patcher_worker import PatcherWorker
 from editor_utils.dock_components import DockHeader
 
@@ -73,9 +74,14 @@ class MainWindow(QMainWindow):
         toolbar.addWidget(self.btn_start)
 
         self.btn_pack = QPushButton("📦 模组打包")
-        self.btn_pack.setToolTip("将多个 .tksmod 文件合并为一个模组包")
+        self.btn_pack.setToolTip("将多个 .tksmod 文件打包为 .tksmodpak 合集文件")
         self.btn_pack.clicked.connect(self._on_pack_mod)
         toolbar.addWidget(self.btn_pack)
+
+        self.btn_split = QPushButton("📂 模组拆分")
+        self.btn_split.setToolTip("从 .tksmodpak 合集文件中提取原始模组")
+        self.btn_split.clicked.connect(self._on_split_mod)
+        toolbar.addWidget(self.btn_split)
 
         self.btn_edit_meta = QPushButton("✏️ 模组信息编辑")
         self.btn_edit_meta.setToolTip("加载 .tksmod 编辑元数据后保存（不改模组内容）")
@@ -225,6 +231,14 @@ class MainWindow(QMainWindow):
         dialog = ModPackerDialog(mods_dir=mods_dir, parent=self)
         dialog.exec()
         # 打包完成后刷新模组列表
+        self.mod_list.refresh_mods()
+
+    def _on_split_mod(self):
+        """打开模组拆分对话框"""
+        mods_dir = os.path.join(_LAUNCHER_DIR, "mods")
+        dialog = ModSplitterDialog(mods_dir=mods_dir, parent=self)
+        dialog.exec()
+        # 拆分完成后刷新模组列表
         self.mod_list.refresh_mods()
 
     def _on_edit_mod_meta(self):

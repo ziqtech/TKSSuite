@@ -376,12 +376,12 @@ def suggest_output_name(mod_paths: List[str], metadata: Dict[str, Any]) -> str:
     """根据元数据建议输出文件名。"""
     mod_id = metadata.get("id", "")
     if mod_id:
-        return f"{mod_id}.tksmod"
+        return f"{mod_id}.tksmodpak"
     # 尝试从第一个文件推导
     if mod_paths:
         base = os.path.splitext(os.path.basename(mod_paths[0]))[0]
-        return f"{base}_pack.tksmod"
-    return "merged_mod.tksmod"
+        return f"{base}_pack.tksmodpak"
+    return "mod_pack.tksmodpak"
 
 
 def rewrite_mod_metadata(mod_path: str, new_metadata: Dict[str, Any],
@@ -444,3 +444,126 @@ def rewrite_mod_metadata(mod_path: str, new_metadata: Dict[str, Any],
             except OSError:
                 pass
         return False, f"保存失败: {e}"
+
+
+def create_tksmodpak(mod_paths: List[str], output_path: str,
+                      metadata: Dict[str, Any] | None = None,
+                      log_func=None) -> Tuple[bool, str]:
+    """将多个 .tksmod 文件打包为一个 .tksmodpak 文件。
+
+    不做任何数据合并，仅收纳原始 .tksmod 文件 + 合集元数据 mod.json。
+    后续可通过 extract_tksmodpak() 原样拆分还原。
+
+    .tksmodpak 结构:
+        mod.json         — 合集元数据（名称、作者、描述等）
+        xxx.tksmod       — 原始模组文件（逐字节保留）
+
+    Args:
+        mod_paths: 要打包的 .tksmod 文件路径列表
+        output_path: 输出的 .tksmodpak 文件路径
+        metadata: 合集元数据 dict，包含 id, name, version, author, description 等
+        log_func: 日志回调函数
+
+    Returns:
+        (success: bool, message: str)
+    """
+    log = log_func or (lambda x: None)
+
+    if not mod_paths:
+        return False, "未提供要打包的模组文件"
+
+    from datetime import datetime, timezone, timedelta
+    now = datetime.now(timezone(timedelta(hours=8)))
+
+    try:
+        with zipfile.ZipFile(output_path, 'w', zipfile.ZIP_DEFLATED) as zf:
+            # 写入合集元数据
+            meta = {
+                "format": "TKSMODPAK",
+                "format_version": 1,
+                "id": (metadata or {}).get("id", ""),
+                "name": (metadata or {}).get("name", "模组合集"),
+                "version": (metadata or {}).get("version", "1.0.0"),
+                "author": (metadata or {}).get("author", ""),
+                "description": (metadata or {}).get("description", ""),
+                "type": (metadata or {}).get("type", "mixed"),
+                "load_order": (metadata or {}).get("load_order", 100),
+                "created": now.strftime("%Y-%m-%dT%H:%M:%S"),
+                "source_files": [os.path.basename(p) for p in mod_paths],
+            }
+            zf.writestr("mod.json",
+                        json.dumps(meta, ensure_ascii=False, indent=2))
+            log(f"  写入合集元数据: {meta['name']}")
+
+            # 逐字节复制原始 .tksmod 文件
+            for fp in mod_paths:
+                filename = os.path.basename(fp)
+                with open(fp, 'rb') as src:
+                    zf.writestr(filename, src.read())
+                log(f"  打包: {filename}")
+
+        size_kb = os.path.getsize(output_path) / 1024
+        log(f"  输出: {os.path.basename(output_path)} ({size_kb:.1f} KB)")
+        return True, f"已打包 {len(mod_paths)} 个模组文件"
+    except Exception as e:
+        return False, f"打包失败: {e}"
+
+
+def extract_tksmodpak(pack_path: str, output_dir: str,
+                       log_func=None) -> dict:
+    """从 .tksmodpak 文件中提取所有 .tksmod 文件。
+
+    Args:
+        pack_path: .tksmodpak 文件路径
+        output_dir: 提取输出目录
+        log_func: 日志回调函数
+
+    Returns:
+        {
+            "success": bool,
+            "extracted": list[str],   # 已提取的文件路径列表
+            "error": str,
+        }
+    """
+    log = log_func or (lambda x: None)
+    result = {"success": False, "extracted": [], "error": ""}
+
+    if not os.path.isfile(pack_path):
+        result["error"] = f"文件不存在: {pack_path}"
+        return result
+
+    try:
+        with zipfile.ZipFile(pack_path, 'r') as zf:
+            mod_entries = sorted(
+                n for n in zf.namelist()
+                if n.lower().endswith(".tksmod") and not n.endswith("/")
+            )
+            if not mod_entries:
+                result["error"] = "该合集包中未找到 .tksmod 文件"
+                return result
+
+            os.makedirs(output_dir, exist_ok=True)
+            for entry in mod_entries:
+                filename = os.path.basename(entry)
+                output_path = os.path.join(output_dir, filename)
+
+                # 处理重名冲突
+                if os.path.exists(output_path):
+                    base, ext = os.path.splitext(filename)
+                    counter = 1
+                    while os.path.exists(output_path):
+                        output_path = os.path.join(output_dir, f"{base}_{counter}{ext}")
+                        counter += 1
+                    log(f"  重命名: {filename} → {os.path.basename(output_path)}")
+
+                with zf.open(entry) as src:
+                    with open(output_path, 'wb') as dst:
+                        dst.write(src.read())
+                result["extracted"].append(output_path)
+                log(f"  提取: {os.path.basename(output_path)}")
+
+            result["success"] = True
+    except Exception as e:
+        result["error"] = str(e)
+
+    return result

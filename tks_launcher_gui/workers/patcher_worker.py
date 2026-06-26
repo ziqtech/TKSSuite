@@ -34,6 +34,7 @@ from core.warpc_expander import (
 from core.mod_loader import (
     scan_mods, resolve_dependencies, detect_conflicts,
     merge_mods, apply_mod_data, restore_originals,
+    expand_pak_mods,
 )
 
 
@@ -132,8 +133,19 @@ class PatcherWorker(QThread):
                         skipped.append(m.mod_id)
                 if skipped:
                     self._log(f"  用户取消勾选 {len(skipped)} 个 MOD: {', '.join(skipped)}")
+            # 展开启用的 .tksmodpak 合集，将其内含的 .tksmod 加入加载列表
+            expanded = []
+            for m in loaded_mods:
+                if m.enabled and m.pak_contents:
+                    self._log(f"  展开合集: {m.name} ({len(m.pak_contents)} 个模组)")
+                    pak_mods = expand_pak_mods(m.path, log_func=self._log)
+                    for pm in pak_mods:
+                        pm.enabled = True
+                    expanded.extend(pak_mods)
+                elif not m.pak_contents:
+                    expanded.append(m)
             # resolve_dependencies 内部按 m.enabled 过滤，未勾选的自动跳过
-            sorted_mods = resolve_dependencies(loaded_mods, log_func=self._log)
+            sorted_mods = resolve_dependencies(expanded, log_func=self._log)
             conflicts = detect_conflicts(sorted_mods, log_func=self._log)
             if conflicts:
                 self._log(f"  [WARN] 检测到 {len(conflicts)} 个冲突, 继续加载 (后加载覆盖)")
