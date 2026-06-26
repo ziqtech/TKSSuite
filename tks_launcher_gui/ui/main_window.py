@@ -162,7 +162,10 @@ class MainWindow(QMainWindow):
         self._worker.start()
 
     def _on_game_window_found(self, game_hwnd: int):
-        """UI 线程: 创建悬浮窗"""
+        """UI 线程: 创建悬浮窗. 游戏关闭后旧 overlay 已隐藏但引用仍在, 需重建."""
+        if self._overlay is not None and not self._overlay.isVisible():
+            self._overlay.close_overlay()
+            self._overlay = None
         if self._overlay is None:
             self._overlay = GameOverlay(game_hwnd)
 
