@@ -82,7 +82,8 @@ SAV_META_SIZE = 28
 SEG1_BASIC_FIELDS = [
     ("map_id",       0x40, 4, "当前地图ID",     "I",  "dword_755B58, sub_40C044地图切换"),
     ("current_char", 0x44, 4, "当前角色ID",     "I",  "dword_755B5C, sub_40C7CC SetPlayer事件"),
-    ("game_active",  0x48, 4, "游戏激活标志",    "I",  "dword_755B60, sub_41103C读档后置1"),
+    ("game_active",  0x48, 4, "游戏激活标志",    "I",
+     "dword_755B60, sub_41103C读档后置1, opcode31(PlayerAct)控制。为0时sub_4081F8/4084E0/408E5C全部跳过"),
     ("given_name",   0x4C, 5, "名",             "big5", "byte_755B64, sub_40D2D0"),
     ("surname",      0x54, 5, "姓",             "big5", "byte_755B6C, sub_40D2D0"),
 ]
@@ -95,22 +96,26 @@ SEG1_SLOT_FIELDS = [
 ]
 
 SEG1_MAP_FIELDS = [
-    ("battle_flags", 0x168, 4, "遭遇战旗标",     "I",  "dword_755C80, bit0减半/bit1禁止/bit2强制/bit3反击"),
+    ("battle_flags", 0x168, 4, "遭遇战旗标",     "I",
+     "dword_755C80 位域(sub_41F784 按队伍装备 word_77CC06 OR 聚合)。bit0=遇敌冷却+30%(rand140) bit1=遇敌冷却+50%(rand200) bit2=禁止遇敌(sub_4084E0 检查&4跳过) bit3/5=战斗数值修正(sub_431E70) bit4/5=战斗修正(sub_43B7FC)。注: bit3 旧注'反击'未获代码证实"),
     ("map_timer",    0x82C, 2, "地图计时器",     "H",  "word_756344"),
     ("door_unlock",  0x82E, 2, "开门标志",       "H",  "word_756346"),
 ]
 
 SEG1_EVENT_FIELDS = [
-    ("comp_flag",    0x336, 2, "同伴管理标志",    "H",  "word_755E4E — 编成/同伴状态位域"),
-    ("minigame_rst", 0x366, 2, "小游戏结果",     "H",  "word_755E7E — case64 MiniGame(1-7型) 1=成功0=失败"),
-    ("last_acq",     0x566, 2, "最后获得金币",    "H",  "word_75607E — 存档1=10531(0x2923)"),
+    ("comp_flag",    0x336, 2, "同伴管理标志",    "H",
+     "word_755E4E — 编成/同伴状态位域"),
+    ("minigame_rst", 0x366, 2, "小游戏结果",     "H",
+     "word_755E7E — 小游戏结果(1=成功 0=失败), case64 MiniGame(opcode 64)写入"),
+    ("last_acq",     0x566, 2, "最后获得量",      "H",
+     "word_75607E — sub_40CE30(opcode40)写入: 金币获取时=a2(数量), 物品获取时=word_77CBCE[32*idx](物品属性)。注意: 此地址=word_755E80[255], 即变量槽255的内存别名"),
 ]
 
 # 数组字段定义
 SEG1_ARRAYS = [
     ("switches",     0x2F8, 32,  2, "事件开关",      "word_755E10[32], case49"),
     ("results",      0x338, 24,  2, "事件结果",      "word_755E50[24], case60"),
-    ("variables",    0x368, 250, 2, "事件变量",      "word_755E80[250], case36-39 (代码上限>0xF9=249)"),
+    ("variables",    0x368, 250, 2, "事件变量",      "word_755E80, case36-39。上限因操作码而异: case36 SetVar >0xF9 (max 249); case37 Random / case38 SetFlagVar / case39 AddFlagVar >=0x100 (max 255)。存档预留256槽(0x368-0x567), 编辑器编辑0-249, 槽255=last_acq别名"),
     ("flags",        0x568, 1024,2, "事件标志",      "word_756080[1024], sub_40CB08/sub_40CB4C"),
 ]
 
