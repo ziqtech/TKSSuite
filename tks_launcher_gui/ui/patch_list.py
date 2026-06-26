@@ -101,6 +101,9 @@ class PatchListWidget(QWidget):
         cb.setChecked(True)
         cb.setEnabled(enabled)
         cb.setToolTip(f"类型: {p.type}\n模式: {p.pattern}")
+        if not enabled:
+            # 必选补丁：复选框保持禁用外观，文字颜色由主题 QSS 中 #requiredPatch 规则控制
+            cb.setObjectName("requiredPatch")
         self._checkboxes[p.id] = cb
         return cb
 

@@ -591,6 +591,10 @@ QCheckBox::indicator:checked:disabled {
     border-color: #2D4A5E;
     image: url(svg/checkmark.svg);
 }
+/* 必选补丁复选框：禁用态文字保持正常颜色 */
+QCheckBox#requiredPatch:disabled {
+    color: #dcdcdc;
+}
 
 /* ── 滚动条悬停 (tks_launcher_gui) ── */
 QScrollBar::handle:vertical:hover {

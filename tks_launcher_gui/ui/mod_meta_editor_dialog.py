@@ -1,4 +1,4 @@
-"""MOD 元数据编辑对话框 — 加载 .tksmod 编辑元数据后保存，不改 MOD 内容"""
+"""模组元数据编辑对话框 — 加载 .tksmod 编辑元数据后保存，不改模组内容"""
 import os
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QGridLayout,
@@ -11,14 +11,14 @@ from editor_utils.mod_exporter import generate_short_uuid
 
 
 class ModMetaEditorDialog(QDialog):
-    """MOD 元数据编辑器：打开 .tksmod → 编辑元数据 → 保存/另存为。
+    """模组元数据编辑器：打开 .tksmod → 编辑元数据 → 保存/另存为。
 
     仅修改 mod.json 中的元数据字段，data/* 与 resources/* 内容保持不变。
     """
 
-    def __init__(self, mods_dir: str = "mods", parent=None):
+    def __init__(self, mods_dir: str = "mods", parent=None, initial_path: str | None = None):
         super().__init__(parent)
-        self.setWindowTitle("MOD 信息编辑")
+        self.setWindowTitle("模组信息编辑")
         self.resize(560, 540)
         self._mods_dir = mods_dir
         self._mod_path: str = ""
@@ -27,7 +27,7 @@ class ModMetaEditorDialog(QDialog):
 
         # ---- 文件选择 ----
         file_row = QHBoxLayout()
-        file_row.addWidget(QLabel("MOD 文件:"))
+        file_row.addWidget(QLabel("模组文件:"))
         self.edit_path = QLineEdit()
         self.edit_path.setReadOnly(True)
         self.edit_path.setPlaceholderText("点击「打开…」选择 .tksmod 文件")
@@ -43,11 +43,11 @@ class ModMetaEditorDialog(QDialog):
         grid.setHorizontalSpacing(12)
 
         row = 0
-        grid.addWidget(QLabel("MOD ID *:"), row, 0)
+        grid.addWidget(QLabel("模组 ID *:"), row, 0)
         id_row = QHBoxLayout()
         self.edit_id = QLineEdit()
         self.edit_id.setPlaceholderText("唯一标识符")
-        self.edit_id.setMaxLength(16)  # MOD ID 最大 16 位
+        self.edit_id.setMaxLength(16)  # 模组 ID 最大 16 位
         # 输入时实时移除所有空格（前后及中间），并保持光标位置
         self.edit_id.textChanged.connect(self._on_id_text_changed)
         id_row.addWidget(self.edit_id)
@@ -103,19 +103,19 @@ class ModMetaEditorDialog(QDialog):
         row += 1
         grid.addWidget(QLabel("依赖:"), row, 0)
         self.edit_deps = QLineEdit()
-        self.edit_deps.setPlaceholderText("逗号分隔的 MOD ID")
+        self.edit_deps.setPlaceholderText("逗号分隔的模组 ID")
         grid.addWidget(self.edit_deps, row, 1)
 
         row += 1
         grid.addWidget(QLabel("冲突:"), row, 0)
         self.edit_conflicts = QLineEdit()
-        self.edit_conflicts.setPlaceholderText("逗号分隔的 MOD ID")
+        self.edit_conflicts.setPlaceholderText("逗号分隔的模组 ID")
         grid.addWidget(self.edit_conflicts, row, 1)
 
         layout.addLayout(grid)
 
         # 提示
-        tip = QLabel("<i>仅修改元数据，MOD 数据与资源内容保持不变。</i>")
+        tip = QLabel("<i>仅修改元数据，模组数据与资源内容保持不变。</i>")
         tip.setWordWrap(True)
         layout.addWidget(tip)
 
@@ -141,6 +141,10 @@ class ModMetaEditorDialog(QDialog):
 
         self._set_fields_enabled(False)
 
+        # 若传入了初始路径且文件存在，自动加载
+        if initial_path and os.path.isfile(initial_path):
+            self._load(initial_path)
+
     # ────────────────────────────────────────────────
     # 字段状态
     # ────────────────────────────────────────────────
@@ -161,7 +165,7 @@ class ModMetaEditorDialog(QDialog):
     def _on_open(self):
         path, _ = QFileDialog.getOpenFileName(
             self, "选择 .tksmod 文件", self._mods_dir,
-            "TKS MOD 文件 (*.tksmod);;所有文件 (*)"
+            "TKS 模组文件 (*.tksmod);;所有文件 (*)"
         )
         if not path:
             return
@@ -229,11 +233,11 @@ class ModMetaEditorDialog(QDialog):
             QMessageBox.warning(self, "提示", "请先打开一个 .tksmod 文件")
             return False
         if not self.edit_id.text().strip():
-            QMessageBox.warning(self, "必填", "请输入 MOD ID")
+            QMessageBox.warning(self, "必填", "请输入模组 ID")
             self.edit_id.setFocus()
             return False
         if not self.edit_name.text().strip():
-            QMessageBox.warning(self, "必填", "请输入 MOD 名称")
+            QMessageBox.warning(self, "必填", "请输入模组名称")
             self.edit_name.setFocus()
             return False
         return True
@@ -253,7 +257,7 @@ class ModMetaEditorDialog(QDialog):
         default = os.path.join(self._mods_dir, os.path.basename(self._mod_path))
         path, _ = QFileDialog.getSaveFileName(
             self, "另存为", default,
-            "TKS MOD 文件 (*.tksmod);;所有文件 (*)"
+            "TKS 模组文件 (*.tksmod);;所有文件 (*)"
         )
         if not path:
             return
@@ -265,12 +269,12 @@ class ModMetaEditorDialog(QDialog):
             QMessageBox.critical(self, "保存失败", msg)
 
     def _regen_id(self):
-        """重新生成 MOD ID（直接覆盖）。"""
+        """重新生成模组 ID（直接覆盖）。"""
         self.edit_id.setText(generate_short_uuid())
         self.edit_id.setFocus()
 
     def _on_id_text_changed(self, text: str):
-        """实时移除 MOD ID 中的所有空格（前后及中间），保持光标位置不跳变。"""
+        """实时移除模组 ID 中的所有空格（前后及中间），保持光标位置不跳变。"""
         if ' ' not in text:
             return
         cursor = self.edit_id.cursorPosition()

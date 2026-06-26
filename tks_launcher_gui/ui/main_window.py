@@ -72,13 +72,13 @@ class MainWindow(QMainWindow):
         self.btn_start.clicked.connect(self._on_start)
         toolbar.addWidget(self.btn_start)
 
-        self.btn_pack = QPushButton("📦 MOD 打包")
-        self.btn_pack.setToolTip("将多个 .tksmod 文件合并为一个 MOD 包")
+        self.btn_pack = QPushButton("📦 模组打包")
+        self.btn_pack.setToolTip("将多个 .tksmod 文件合并为一个模组包")
         self.btn_pack.clicked.connect(self._on_pack_mod)
         toolbar.addWidget(self.btn_pack)
 
-        self.btn_edit_meta = QPushButton("✏️ MOD 信息编辑")
-        self.btn_edit_meta.setToolTip("加载 .tksmod 编辑元数据后保存（不改 MOD 内容）")
+        self.btn_edit_meta = QPushButton("✏️ 模组信息编辑")
+        self.btn_edit_meta.setToolTip("加载 .tksmod 编辑元数据后保存（不改模组内容）")
         self.btn_edit_meta.clicked.connect(self._on_edit_mod_meta)
         toolbar.addWidget(self.btn_edit_meta)
 
@@ -220,19 +220,21 @@ class MainWindow(QMainWindow):
             self.status_label.setText("❌ 补丁应用失败")
 
     def _on_pack_mod(self):
-        """打开 MOD 打包器对话框"""
+        """打开模组打包器对话框"""
         mods_dir = os.path.join(_LAUNCHER_DIR, "mods")
         dialog = ModPackerDialog(mods_dir=mods_dir, parent=self)
         dialog.exec()
-        # 打包完成后刷新 MOD 列表
+        # 打包完成后刷新模组列表
         self.mod_list.refresh_mods()
 
     def _on_edit_mod_meta(self):
-        """打开 MOD 元数据编辑对话框"""
+        """打开模组元数据编辑对话框，自动加载列表中选中的模组"""
         mods_dir = os.path.join(_LAUNCHER_DIR, "mods")
-        dialog = ModMetaEditorDialog(mods_dir=mods_dir, parent=self)
+        selected = self.mod_list.get_selected_mod()
+        initial_path = selected.path if selected else None
+        dialog = ModMetaEditorDialog(mods_dir=mods_dir, parent=self, initial_path=initial_path)
         dialog.exec()
-        # 保存后刷新 MOD 列表（元数据可能已变更）
+        # 保存后刷新模组列表（元数据可能已变更）
         self.mod_list.refresh_mods()
 
     def closeEvent(self, event):

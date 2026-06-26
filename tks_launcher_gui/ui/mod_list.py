@@ -128,6 +128,16 @@ class ModListWidget(QWidget):
             return
         self.mod_selected.emit(self._mods[row])
 
+    def get_selected_mod(self) -> ModInfo | None:
+        """获取当前选中的 MOD，无选中则返回 None"""
+        items = self._table.selectedItems()
+        if not items:
+            return None
+        row = items[0].row()
+        if row < 0 or row >= len(self._mods):
+            return None
+        return self._mods[row]
+
     def get_enabled_mods(self) -> list[ModInfo]:
         """获取所有勾选启用的 MOD 列表"""
         enabled = []

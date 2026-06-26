@@ -1,4 +1,4 @@
-"""MOD 打包器对话框 — 将多个 .tksmod 合并为一个统一 MOD 包"""
+"""模组打包器对话框 — 将多个 .tksmod 合并为一个统一模组包"""
 import os
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QGridLayout,
@@ -12,14 +12,15 @@ from core.mod_packer import (
     read_tksmod_content, validate_merge, merge_tksmod_files,
     suggest_output_name, list_tksmod_contents,
 )
+from editor_utils.mod_exporter import generate_short_uuid
 
 
 class ModPackerDialog(QDialog):
-    """MOD 打包对话框 — 选择多个 .tksmod 文件，设置统一元数据后合并为一个"""
+    """模组打包对话框 — 选择多个 .tksmod 文件，设置统一元数据后合并为一个"""
 
     def __init__(self, mods_dir: str = "mods", parent=None):
         super().__init__(parent)
-        self.setWindowTitle("MOD 打包器 — 合并多个 .tksmod 为一个 MOD 包")
+        self.setWindowTitle("模组打包器 — 合并多个 .tksmod 为一个模组包")
         self.resize(700, 620)
         self._mods_dir = mods_dir
         self._file_paths: list[str] = []
@@ -28,7 +29,7 @@ class ModPackerDialog(QDialog):
         layout.setSpacing(12)
 
         # ---- 文件列表区 ----
-        file_group = QGroupBox("源文件列表 (将合并为一个 MOD 包)")
+        file_group = QGroupBox("源文件列表 (将合并为一个模组包)")
         file_layout = QVBoxLayout(file_group)
 
         self._file_list = QListWidget()
@@ -61,21 +62,29 @@ class ModPackerDialog(QDialog):
         layout.addWidget(file_group)
 
         # ---- 元数据区 ----
-        meta_group = QGroupBox("MOD 包元数据 (合并后的统一信息)")
+        meta_group = QGroupBox("模组包元数据 (合并后的统一信息)")
         grid = QGridLayout(meta_group)
         grid.setVerticalSpacing(8)
         grid.setHorizontalSpacing(12)
 
         row = 0
-        grid.addWidget(QLabel("MOD ID *:"), row, 0)
+        grid.addWidget(QLabel("模组 ID *:"), row, 0)
+        id_row = QHBoxLayout()
         self.edit_id = QLineEdit()
         self.edit_id.setPlaceholderText("唯一标识符, 如 zhangxiu_mod")
-        grid.addWidget(self.edit_id, row, 1)
+        self.edit_id.setMaxLength(16)  # 模组 ID 最大 16 位
+        # 输入时实时移除所有空格（前后及中间），并保持光标位置
+        self.edit_id.textChanged.connect(self._on_id_text_changed)
+        id_row.addWidget(self.edit_id)
+        self.btn_regen_id = QPushButton("重新生成")
+        self.btn_regen_id.clicked.connect(self._regen_id)
+        id_row.addWidget(self.btn_regen_id)
+        grid.addLayout(id_row, row, 1)
 
         row += 1
         grid.addWidget(QLabel("名称 *:"), row, 0)
         self.edit_name = QLineEdit()
-        self.edit_name.setPlaceholderText("MOD 显示名称, 如 张绣传")
+        self.edit_name.setPlaceholderText("模组显示名称, 如 张绣传")
         grid.addWidget(self.edit_name, row, 1)
 
         row += 1
@@ -92,7 +101,7 @@ class ModPackerDialog(QDialog):
         grid.addWidget(QLabel("描述:"), row, 0)
         self.edit_desc = QTextEdit()
         self.edit_desc.setMaximumHeight(60)
-        self.edit_desc.setPlaceholderText("MOD 简介，描述修改内容")
+        self.edit_desc.setPlaceholderText("模组简介，描述修改内容")
         grid.addWidget(self.edit_desc, row, 1)
 
         row += 1
@@ -159,7 +168,7 @@ class ModPackerDialog(QDialog):
     def _on_add_files(self):
         files, _ = QFileDialog.getOpenFileNames(
             self, "选择 .tksmod 文件", self._mods_dir,
-            "TKS MOD 文件 (*.tksmod);;所有文件 (*)"
+            "TKS 模组文件 (*.tksmod);;所有文件 (*)"
         )
         if files:
             self._add_files(files)
@@ -217,25 +226,58 @@ class ModPackerDialog(QDialog):
         self._lbl_count.setText(f"共 {len(self._file_paths)} 个文件")
 
     def _auto_fill_metadata(self):
-        """从第一个有效文件自动填充元数据（仅当字段为空时）"""
+        """从已添加的模组文件自动填充元数据（仅当字段为空时）。
+
+        ID/名称/作者取自第一个有效文件；描述合并所有文件的描述。
+        """
         if not self._file_paths:
             return
+        first_valid = None
+        descs = []
         for fp in self._file_paths:
             content = read_tksmod_content(fp)
-            if content.valid:
-                mj = content.mod_json
-                if not self.edit_id.text().strip():
-                    # 从 mod_id 推导包 ID
-                    mod_id = mj.get("id", "")
-                    if mod_id:
-                        # 去除可能的后缀如 _kon, _act 等
-                        base_id = mod_id.rsplit('_', 1)[0] if '_' in mod_id else mod_id
-                        self.edit_id.setText(base_id)
-                if not self.edit_name.text().strip():
-                    self.edit_name.setText(mj.get("name", ""))
-                if not self.edit_author.text().strip():
-                    self.edit_author.setText(mj.get("author", ""))
-                break
+            if not content.valid:
+                continue
+            mj = content.mod_json
+            if first_valid is None:
+                first_valid = mj
+            desc = mj.get("description", "").strip()
+            if desc:
+                descs.append(desc)
+
+        if first_valid is None:
+            return
+
+        if not self.edit_id.text().strip():
+            mod_id = first_valid.get("id", "")
+            if mod_id:
+                base_id = mod_id.rsplit('_', 1)[0] if '_' in mod_id else mod_id
+                self.edit_id.setText(base_id)
+        if not self.edit_name.text().strip():
+            self.edit_name.setText(first_valid.get("name", ""))
+        if not self.edit_author.text().strip():
+            self.edit_author.setText(first_valid.get("author", ""))
+
+        # 合并所有模组描述到描述输入框
+        if descs and not self.edit_desc.toPlainText().strip():
+            self.edit_desc.setPlainText("\n---\n".join(descs))
+
+    def _regen_id(self):
+        """重新生成模组 ID（直接覆盖）。"""
+        self.edit_id.setText(generate_short_uuid())
+        self.edit_id.setFocus()
+
+    def _on_id_text_changed(self, text: str):
+        """实时移除模组 ID 中的所有空格（前后及中间），保持光标位置不跳变。"""
+        if ' ' not in text:
+            return
+        cursor = self.edit_id.cursorPosition()
+        spaces_before = text[:cursor].count(' ')
+        no_space = text.replace(' ', '')
+        self.edit_id.blockSignals(True)
+        self.edit_id.setText(no_space)
+        self.edit_id.blockSignals(False)
+        self.edit_id.setCursorPosition(max(0, cursor - spaces_before))
 
     # ────────────────────────────────────────────────
     # 输出路径
@@ -245,8 +287,8 @@ class ModPackerDialog(QDialog):
         suggested = suggest_output_name(self._file_paths, self._get_metadata())
         default_path = os.path.join(self._mods_dir, suggested)
         path, _ = QFileDialog.getSaveFileName(
-            self, "保存合并后的 MOD 包", default_path,
-            "TKS MOD 文件 (*.tksmod);;所有文件 (*)"
+            self, "保存合并后的模组包", default_path,
+            "TKS 模组文件 (*.tksmod);;所有文件 (*)"
         )
         if path:
             self.edit_output.setText(path)
@@ -294,11 +336,11 @@ class ModPackerDialog(QDialog):
 
         metadata = self._get_metadata()
         if not metadata["id"]:
-            QMessageBox.warning(self, "必填", "请输入 MOD ID")
+            QMessageBox.warning(self, "必填", "请输入模组 ID")
             self.edit_id.setFocus()
             return
         if not metadata["name"]:
-            QMessageBox.warning(self, "必填", "请输入 MOD 名称")
+            QMessageBox.warning(self, "必填", "请输入模组名称")
             self.edit_name.setFocus()
             return
 
