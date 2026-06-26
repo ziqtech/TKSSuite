@@ -101,16 +101,16 @@ SEG1_MAP_FIELDS = [
 ]
 
 SEG1_EVENT_FIELDS = [
-    ("comp_flag",    0x336, 2, "同伴管理标志",    "H",  "word_755E4E"),
-    ("minigame_rst", 0x366, 2, "小游戏结果",     "H",  "word_755E7E"),
-    ("last_acq",     0x566, 2, "最后获得量",     "H",  "word_75607E"),
+    ("comp_flag",    0x336, 2, "同伴管理标志",    "H",  "word_755E4E — 编成/同伴状态位域"),
+    ("minigame_rst", 0x366, 2, "小游戏结果",     "H",  "word_755E7E — case64 MiniGame(1-7型) 1=成功0=失败"),
+    ("last_acq",     0x566, 2, "最后获得金币",    "H",  "word_75607E — 存档1=10531(0x2923)"),
 ]
 
 # 数组字段定义
 SEG1_ARRAYS = [
     ("switches",     0x2F8, 32,  2, "事件开关",      "word_755E10[32], case49"),
     ("results",      0x338, 24,  2, "事件结果",      "word_755E50[24], case60"),
-    ("variables",    0x368, 256, 2, "事件变量",      "word_755E80[256], case36-39"),
+    ("variables",    0x368, 250, 2, "事件变量",      "word_755E80[250], case36-39 (代码上限>0xF9=249)"),
     ("flags",        0x568, 1024,2, "事件标志",      "word_756080[1024], sub_40CB08/sub_40CB4C"),
 ]
 
@@ -153,22 +153,227 @@ SEG2_INVENTORY = [
 ]
 
 # ============================================================
-# 事件语义标注 (从逆向分析提取)
+# 事件语义标注 (基于反编译+TKD.dat脚本+存档三方交叉验证)
 # ============================================================
-# 事件开关: word_755E10[32], case 49 设置
-# 语义需从脚本数据(TKD.dat)中具体事件调用来推导, 此处标注通用用途
-SWITCH_SEMANTICS = {i: f"开关#{i}" for i in range(32)}
+# 分析来源: TKS.exe sub_40EBD4(脚本VM), TKD.dat(Big5注释), sav.1/sav.2(实际存档)
+# 详见: 事件系统语义分析.md
 
-# 事件变量: word_755E80[250], case 36/37 设置
-# case 36: 直接赋值; case 37: 随机数; case 38/39: 作为 flag 操作的值来源
-VARIABLE_SEMANTICS = {i: f"变量#{i}" for i in range(250)}
+# ── 事件开关: word_755E10[32], case 49 (SetSwitch) 设置 ──
+# 读取: sub_408E5C (对话/事件激活检查), 检查 switch[0] 非零才允许触发
+# 语义: 全局功能控制开关, 与 Flags 的"持久剧情进度"不同
+SWITCH_SEMANTICS = {
+    0:  "【主开关】游戏对话/事件系统启用 — 几乎所有DEFINE开头都调SetSwitch(0,1)",
+    31: "脚本交互模式切换 — 配合PlayerAct(1)使用, TKD注释'讓主角選人'",
+}
+# 填充未确定项
+for _i in range(32):
+    if _i not in SWITCH_SEMANTICS:
+        SWITCH_SEMANTICS[_i] = f"开关#{_i} (未观察到使用)"
 
-# 事件标志: word_756080[1024], sub_40CB08 设置 / sub_40CB4C 累加
-# case 61 (sub_40E40C) 检查: 比较 flag[id] 与期望值
-FLAG_SEMANTICS = {i: f"标志#{i}" for i in range(1024)}
+# ── 事件变量: word_755E80[250], case 36 (SetVar) / case 37 (Random) 设置 ──
+# 读取: case 38 (SetFlagVar) / case 39 (AddFlagVar) — 作为flag值来源
+# 语义: 脚本运行时临时工作区。Random→变量→SetFlagVar→标志 的值传递桥梁
+# TKD统计: SetVar从未直接调用; Random仅有 Random(0,0,4)=15次, Random(0,0,1)=2次
+VARIABLE_SEMANTICS = {
+    0:  "【主随机槽】Random(0,0,4)输出 — 用于随机NPC位置/事件分支, 然后SetFlagVar转存到flag",
+}
+# 填充未确定项 (SetVar极少直接使用, 所有17次Random都写入var[0])
+for _i in range(250):
+    if _i not in VARIABLE_SEMANTICS:
+        VARIABLE_SEMANTICS[_i] = f"变量#{_i} (TKD脚本中未观察到使用)"
 
-# 事件结果: word_755E50[24], case 60 检查
-RESULT_SEMANTICS = {i: f"结果#{i}" for i in range(24)}
+# ── 事件标志: word_756080[1024], case 32(SetFlag)/33(AddFlag)/38(SetFlagVar)/39(AddFlagVar) 设置 ──
+# 检查: case 61 (CheckFlag) → sub_40E40C, 支持6种比较: <(-2) <=(-1) ==(0) >=(1) >(2) !=(3)
+# 语义: 持久化剧情进度追踪, 是事件系统核心。值域: 0=未触发 1=进行中 2+=完成/分支结果
+FLAG_SEMANTICS = {}
+
+# === 三国武将角色事件标志 (flags 7-13, 1001-1006, 501-507) ===
+_CHAR_FLAGS = {
+    7:   "關羽 — 角色加入/事件完成 (SetFlag=1, CheckFlag>=1)",
+    8:   "張飛 — 角色加入/事件完成 (SetFlag=1, CheckFlag>=1)",
+    9:   "黃忠 — 角色加入/事件完成 (SetFlag=1, CheckFlag>=1) TKD注释'完成黃忠事件'",
+    10:  "馬超 — 角色加入/事件完成 (SetFlag=1, CheckFlag>=1)",
+    11:  "趙雲 — 角色加入/事件完成 (SetFlag=1, CheckFlag>=1)",
+    12:  "馬良 — 角色加入/事件完成 (SetFlag=1, CheckFlag>=1)",
+    13:  "找人计数 — 0=一開始沒有人 1-6=找到N個人 (值域0-6, 6种比较)",
+    1001: "陸遜 — 角色加入/事件完成 (SetFlag=1, CheckFlag>=1)",
+    1002: "甘寧 — 角色加入/事件完成 (SetFlag=1, CheckFlag>=1)",
+    1003: "太史慈 — 角色加入/事件完成 (SetFlag=1, CheckFlag>=1) TKD注释'完成太史慈事件'",
+    1004: "魯肅 — 角色加入/事件完成 (SetFlag=1, CheckFlag>=1)",
+    1005: "呂蒙 — 角色加入/事件完成 (SetFlag=1, CheckFlag>=1)",
+    1006: "黃蓋 — 角色加入/事件完成 (SetFlag=1, CheckFlag>=1)",
+    501: "檢查回來人數 — 0=沒有人 1-6=N人 (值域0-6, 6种比较)",
+    502: "夏侯惇 — 角色加入/事件完成 (SetFlag=1, CheckFlag>=1 值域1-2)",
+    503: "張遼 — 角色事件 TKD注释'完成張遼事件'/'未完成張遼事件' (值域0-2)",
+    504: "典韋 — 角色加入/事件完成 (SetFlag=1, CheckFlag>=1 值域1-2)",
+    505: "賈詡 — 角色加入/事件完成 (SetFlag=1, CheckFlag>=1 值域1-2)",
+    506: "荀彧 — 角色加入/事件完成 (SetFlag=1, CheckFlag>=1 值域1-2)",
+    507: "許褚 — 角色加入/事件完成 (SetFlag=1, CheckFlag>=1 值域1-2)",
+}
+
+# === 主线剧情阶段标志 ===
+_STORY_FLAGS = {
+    142: "諸葛亮主线 — 7阶段剧情 (值域0-6, 594次引用, CheckFlag<6/==N) TKD注释'諸葛亮'",
+    143: "周瑜主线 — 7阶段剧情 (值域0-6, 594次引用, CheckFlag<6/==N) TKD注释'周瑜'",
+    144: "司馬懿主线 — 7阶段剧情 (值域0-6, 594次引用, CheckFlag<6/==N) TKD注释'司馬懿'",
+    145: "三主线完成计数 — CheckFlag(==3)配合142/143/144, AddFlag(1)跨实体673-4348 (6个DEFINE)",
+    146: "九鼎收集 — 找到七個以上的鼎 (CheckFlag>=3/>=7, 存档1=1存档2=1)",
+    121: "曹操歸來 — 0=曹操未回來 1=已回來 (CheckFlag==0/>=1)",
+    301: "華佗終章 — 完成三人及麻沸散事件 (CheckFlag>=4)",
+    302: "華佗进度 — 1=第一次遇華佗 2=第二次 3=第三次(找藥材) (值域0-3, SetFlag=1/2/3)",
+    303: "夏侯惇对话进度 — AddFlag(1)阶段递进 SetFlag(2→5) 实体1114-1116 '與夏侯惇對話' (3个DEFINE)",
+}
+
+# === 计数/统计类标志 (值域1-6, 通常只做==比较) ===
+_COUNT_FLAGS = {
+    # flags 100-105: 跨9个实体(666-674)的计数模式, 每个实体AddFlag/SetFlag
+    # DEFINE头部均为"1 #Define"系列, 无场景注释 — 推测为通用角色/队伍计数
+    100: "计数A — AddFlag(1)模式跨9个实体(666-674) (132次引用, CheckFlag==1~6)",
+    101: "计数B — AddFlag(1)模式跨9个实体(666-674) (24次引用, CheckFlag==1~6)",
+    102: "二值A — SetFlag(1)模式跨9个实体(666-674) (42次引用, CheckFlag==1)",
+    103: "金錢計數A — CheckFlag==1~6 TKD注释'錢' 实体2390-2391 (132次引用)",
+    104: "官名計數A — CheckFlag==1~6 TKD注释'官名' 实体2390-2391 (24次引用, 存档2=1)",
+    105: "二值B — SetFlag(0/1)跨9个实体(2390-2391+) (39次引用, CheckFlag==1)",
+    106: "配对计数 — CheckFlag(==0/>=1)与flag[105]配对 实体2390 'XX加入事件' (存档2=1)",
+    # flags 110-119: 跨实体4283-4293的事件组, 头DEFINE有场景注释
+    110: "事件组A·阶段 — CheckFlag(>=0/==0/==1) 实体4283场景'XX加入事件' (3个DEFINE)",
+    111: "官名計數B — CheckFlag==1~6 TKD注释'官名..N人' (24次引用)",
+    112: "事件组A·旗1 — SetFlag(0/1) 实体4283-4288 'XX加入事件' (42次引用, CheckFlag==1)",
+    113: "金錢計數B — CheckFlag==1~6 TKD注释'錢..N人' (132次引用)",
+    114: "事件组A·旗2 — SetFlag(1→2) 实体4283-4288 'XX加入事件' (3次引用)",
+    115: "事件组A·旗3 — SetFlag(1→2) 实体4283-4290 'XX加入事件' (3次引用)",
+    116: "事件组A·旗4 — SetFlag(1→2) 实体4283-4289 'XX加入事件' (3次引用)",
+    117: "事件组A·旗5 — SetFlag(1→2) 实体4283-4291 'XX加入事件' (3次引用)",
+    118: "事件组A·旗6 — SetFlag(1→2) 实体4283-4293 'XX加入事件' (3次引用)",
+    119: "事件组A·旗7 — SetFlag(1→2) 实体4283-4292 'XX加入事件' (3次引用)",
+    # flags 130-139: 跨实体666-680的事件组, 头DEFINE场景"一般對話"
+    130: "事件组B·阶段 — CheckFlag(>=0/==0/==1) 实体672场景'一般對話' (3个DEFINE)",
+    134: "事件组B·旗1 — SetFlag(1→2) 实体666-680 '一般對話' (3次引用)",
+    135: "事件组B·旗2 — SetFlag(1→2) 实体667-680 '一般對話' (3次引用)",
+    136: "事件组B·旗3 — SetFlag(1→2) 实体669-680 '一般對話' (3次引用)",
+    137: "事件组B·旗4 — SetFlag(1→2) 实体666-680 '一般對話' (3次引用)",
+    138: "事件组B·旗5 — SetFlag(1→2) 实体667-680 '一般對話' (3次引用)",
+    139: "事件组B·旗6 — SetFlag(1→2) 实体668-680 '一般對話' (3次引用)",
+    1011: "檢查回來人數B — 1-6人 (36次引用, 存档2=1)",
+}
+
+# === 多阶段任务标志 ===
+_QUEST_FLAGS = {
+    1012: "周瑜任务 — 找到焦尾琴 (SetFlag=1/2/10, CheckFlag!=/==, 值域0-10) TKD注释'講過焦尾琴'",
+    1013: "馬良任务 — 多阶段递进 (SetFlag=1-5, CheckFlag<=/==, 值域1-5)",
+    1016: "解良任务 — 第二次對話後未離開 (SetFlag=1-16, CheckFlag==/!=, 多阶段) TKD注释'第二次對話'",
+    1018: "孟獲任务 — 多阶段递进 (SetFlag=3/4/7/9/10, 值域3-10) TKD注释'孟獲'",
+    1021: "太史慈任务 — 多阶段 (SetFlag=1/3/10/11, CheckFlag>=1) TKD注释'太史慈'",
+    1022: "多阶段任务 — SetFlag(1/2/10/11) 跨实体1148-2069 5种比较 (10个DEFINE)",
+    1023: "多阶段任务 — SetFlag(1/2) CheckFlag(==0/==1/==2) 跨实体2035-2372 (8个DEFINE)",
+    1014: "多阶段任务 — SetFlag(2/3/6) CheckFlag(==1/==3/==5) 跨实体2230-2312 (3个DEFINE)",
+}
+
+# === 通用阶段控制标志 ===
+_GENERIC_FLAGS = {
+    # flags 305-312: 跨多个实体的事件组, CheckFlag/AddFlag阶段控制
+    305: "阶段计数A — AddFlag(1)跨5个实体(1179-1183+) (5个DEFINE, CheckFlag==4)",
+    306: "阶段计数B·重置 — SetFlag(0)清零+AddFlag(1) 实体4389 '2-6 #Define'系列 (136次引用)",
+    307: "阶段计数B·累加 — AddFlag(1)累加器 实体4389 '2-6 #Define'系列 (64次引用, 配合306)",
+    309: "阶段计数C — AddFlag(1)/CheckFlag(==4/==5) 跨实体1230-4447 (10个DEFINE)",
+    310: "激活开关 — CheckFlag(1)→SetFlag(1) 实体1242-1250 (5个DEFINE, 配合309)",
+    312: "二阶段旗 — SetFlag(1→2) 实体352/4384-4388 (4个DEFINE, CheckFlag==2)",
+    343: "通用阶段 — 4阶段 (值域0-4, 282次引用, CheckFlag==0-4)",
+    344: "通用阶段+Random — 5阶段 SetFlagVar(0) Random→flag 实体672 '一般對話' (36次引用)",
+    346: "通用阶段 — 5阶段 (值域0-4, 18次引用, CheckFlag==0-4)",
+    347: "通用阶段 — 5阶段 (值域0-4, 18次引用, CheckFlag==0-4)",
+}
+
+# === 特殊用途标志 ===
+_SPECIAL_FLAGS = {
+    999: "【随机结果槽】Random→SetFlagVar专用 (值域0-4, 存档1=3存档2=3)",
+    0:   "游戏初始化完成 (两个存档均为1)",
+    1:   "序章/初始化 — 场景2「桃源鄉」实体43/338 脚本对象'虎牢關之役' (4个DEFINE, 存档1=1存档2=1)",
+    2:   "初始化组 — 场景2「桃源鄉」实体43/338 脚本对象 (3个DEFINE, 存档1=0存档2=1)",
+    3:   "早期进度 — 场景2「桃源鄉」+场景53「長沙街道」+场景55「長沙馬廄」 (4个DEFINE, 存档1=0存档2=1)",
+    106: "某主线事件 — 与flag[105]组配对 (存档1=0存档2=1)",
+    107: "某主线分支 — 值=2代表某分支完成 (存档1=0存档2=2)",
+    354: "三分支结果 — (存档1=3存档2=0, 值=3)",
+}
+
+# === 场景事件标志 (从DEFINE头部注释+TKMat+TKT三方交叉验证) ===
+# 场景名来源: TKT[300+scene_id] → Big5解码第一行
+_SCENE_FLAGS = {
+    5:   "長安對話计数 — 场景94「北平城區」NPC 实体403-404 (7个DEFINE)",
+    6:   "長安对话二值 — 场景94「北平城區」+95「北平武器店」+108「許家村民房」+163「長安城外」 (5个DEFINE)",
+    103: "金錢計數 — 场景31「建業王殿」NPC 实体2390-2391 (132次引用)",
+    104: "官名計數 — 场景31「建業王殿」NPC 实体2390-2391 (24次引用, 存档2=1)",
+    105: "二值状态 — 场景31「建業王殿」NPC 实体2390-2391 (39次引用)",
+    303: "夏侯惇对话 — 场景140「南蠻村莊」+143「南蠻村長家」+0「大地圖」 实体1114-1116 (3个DEFINE)",
+    356: "無法回頭 — 场景165「長安道觀」+0「大地圖」 实体885/1946 一次性门禁 (3个DEFINE)",
+    309: "阶段计数 — 场景30「建業內城」+23「成都內城」 脚本对象 (10个DEFINE, CheckFlag==4/5)",
+    310: "激活开关 — 场景106「許家村」+77「武威街道」+125「武陵街道」+32「睢陽街道」 NPC (5个DEFINE)",
+    312: "二阶段旗 — 场景53「長沙街道」+54「長沙酒樓」+45「南陽大街」 NPC (4个DEFINE)",
+    344: "通用+随机 — 场景25「成都王殿」+134「下邳市集」 NPC Random→SetFlagVar (6个DEFINE)",
+    1014:"夏侯惇任务 — 场景139「夏侯惇軍營主帳」+138「夏侯惇軍營營區」 脚本对象 (3个DEFINE)",
+    1022:"武威任务 — 场景78「武威酒館」+76「武威城門」 事件对象/NPC (10个DEFINE)",
+    1023:"許家村任务 — 场景106「許家村」 NPC/脚本对象 (8个DEFINE)",
+}
+
+# === 事件组A (flags 110-119) — 场景18「鄴城王殿」NPC 实体4283 ===
+_EVENT_GROUP_A = {
+    110: "事件组A·阶段 — 场景18「鄴城王殿」NPC 实体4283 'XX加入事件' (CheckFlag>=0/==0/==1 3个DEFINE)",
+    112: "事件组A·旗1 — 场景18「鄴城王殿」NPC 实体4283 (42次引用, CheckFlag==1, SetFlag 0/1)",
+    114: "事件组A·旗2 — 场景18「鄴城王殿」+17「鄴城內城」 实体4283/4285 (SetFlag 1→2)",
+    115: "事件组A·旗3 — 场景18「鄴城王殿」+17「鄴城內城」 实体4283/4285",
+    116: "事件组A·旗4 — 场景18「鄴城王殿」+17「鄴城內城」 实体4283/4285",
+    117: "事件组A·旗5 — 场景18「鄴城王殿」+17「鄴城內城」 实体4283/4285",
+    118: "事件组A·旗6 — 场景18「鄴城王殿」+17「鄴城內城」 实体4283/4285",
+    119: "事件组A·旗7 — 场景18「鄴城王殿」+17「鄴城內城」 实体4283/4285",
+}
+
+# === 事件组B (flags 130-139) — 场景25「成都王殿」NPC 实体672 + 场景23「成都內城」传送点 实体680 ===
+_EVENT_GROUP_B = {
+    130: "事件组B·阶段 — 场景25「成都王殿」NPC 实体672 '一般對話' (CheckFlag>=0/==0/==1 3个DEFINE)",
+    134: "事件组B·旗1 — 场景25「成都王殿」+23「成都內城」 实体666/669/672/680",
+    135: "事件组B·旗2 — 场景25「成都王殿」+23「成都內城」 实体667/670/672/680",
+    136: "事件组B·旗3 — 场景25「成都王殿」+23「成都內城」 实体669/671/672/680",
+    137: "事件组B·旗4 — 场景25「成都王殿」+23「成都內城」 实体666/672/680",
+    138: "事件组B·旗5 — 场景25「成都王殿」+23「成都內城」 实体667/672/680",
+    139: "事件组B·旗6 — 场景25「成都王殿」+23「成都內城」 实体668/672/680",
+}
+
+# === 计数/统计类标志（含场景名）===
+_COUNT_SCENE_FLAGS = {
+    100: "计数A — 场景25「成都王殿」NPC 实体666-669 AddFlag(1) (132次引用)",
+    101: "计数B — 场景25「成都王殿」NPC 实体666-669 AddFlag(1) (24次引用)",
+    102: "二值A — 场景25「成都王殿」NPC 实体666-669 SetFlag(1) (42次引用)",
+    # flags 111/113 仍暂用原标注 (来自TKD注释)
+}
+
+# === 阶段计数标志（含场景名）===
+_STAGE_SCENE_FLAGS = {
+    305: "阶段计数A — 场景9「天師塚西玄穴」脚本对象 实体1179-1182 AddFlag(1)/CheckFlag==4 (5个DEFINE)",
+    306: "阶段计数B·重置 — 场景21「成都蒲良武器店」NPC 实体4389 CheckFlag→AddFlag '2-6 #Define'系列 (136次引用)",
+    307: "阶段计数B·累加 — 场景21「成都蒲良武器店」NPC 实体4389 AddFlag(1)累加器 (64次引用)",
+    145: "三主线完成计数 — 场景25「成都王殿」NPC 实体673 CheckFlag==3 配合142/143/144 (6个DEFINE)",
+}
+
+# 合并所有标志语义 (优先级: 后合并的覆盖先合并的)
+for _d in [_CHAR_FLAGS, _STORY_FLAGS, _COUNT_FLAGS, _QUEST_FLAGS,
+           _GENERIC_FLAGS, _SPECIAL_FLAGS, _SCENE_FLAGS,
+           _EVENT_GROUP_A, _EVENT_GROUP_B, _COUNT_SCENE_FLAGS, _STAGE_SCENE_FLAGS]:
+    FLAG_SEMANTICS.update(_d)
+
+# 填充未确定项 — 按值域类型分类
+for _i in range(1024):
+    if _i not in FLAG_SEMANTICS:
+        FLAG_SEMANTICS[_i] = f"标志#{_i}"
+
+# ── 事件结果: word_755E50[24], case 7 (MenuTalk→sub_40B710) 设置 ──
+# 检查: case 60 (CheckResult) 仅支持 == 比较
+# 语义: 存储玩家菜单选择索引, MenuTalk写入→CheckResult立即消费
+# TKD统计: 583次MenuTalk调用, 全部使用result[0]
+RESULT_SEMANTICS = {
+    0: "【主菜单槽】MenuTalk选择结果 — 583次调用全部使用此槽, 0=选项1 1=选项2...",
+}
+for _i in range(1, 24):
+    RESULT_SEMANTICS[_i] = f"结果#{_i} (TKD中未观察到使用, 所有MenuTalk都用result[0])"
 
 PAGE_NAMES = {0: "药品", 1: "道具", 2: "武器", 3: "防具", 4: "饰品", 5: "特殊"}
 
@@ -650,12 +855,17 @@ class SaveEditorApp(QMainWindow):
 
         table = QTableWidget(count, 4)
         table.setHorizontalHeaderLabels(['索引', '值', '语义标注', '十六进制'])
-        table.setColumnWidth(0, 60)
-        table.setColumnWidth(1, 80)
-        table.setColumnWidth(2, 300)
-        table.setColumnWidth(3, 80)
         table.verticalHeader().setVisible(False)
-        table.horizontalHeader().setStretchLastSection(True)
+        # 列宽策略: 索引/值/十六进制适应内容, 语义标注列自适应填充剩余宽度
+        hh = table.horizontalHeader()
+        hh.setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        hh.setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        hh.setSectionResizeMode(2, QHeaderView.Stretch)
+        hh.setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        # 设置最小宽度防止过度压缩
+        table.setColumnWidth(0, 50)
+        table.setColumnWidth(1, 60)
+        table.setColumnWidth(3, 70)
         table.setSelectionBehavior(QAbstractItemView.SelectRows)
 
         for i in range(count):
@@ -1613,6 +1823,16 @@ class SaveEditorApp(QMainWindow):
         if name_id and name_id in self.tkt:
             return self.tkt[name_id]
         return f"#{char_idx}"
+
+    def _scene_name(self, scene_id):
+        """从TKT获取场景名称 (TKT_ID = scene_id + 300).
+        与mat_editor_v2的scene_name()一致。"""
+        if scene_id < 0:
+            return "全局"
+        tkt_id = 300 + scene_id
+        if self.tkt and tkt_id in self.tkt:
+            return self.tkt[tkt_id].split('\n')[0].strip()
+        return f"场景{scene_id}"
 
     def _decode_big5(self, raw):
         null_idx = raw.find(b'\x00')
