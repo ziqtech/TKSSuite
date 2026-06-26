@@ -42,10 +42,6 @@ from editor_utils.tkt_loader import load_tkt_simple
 from editor_utils.jvg_loader import load_mu_sprites, get_sprite_pixmap
 from editor_utils.dock_components import DockHeader
 
-# 导入 warpc_editor_v2 以复用其完整编辑面板
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'warpc_editor'))
-from warpc_editor_v2 import WarpcEditPanel, WARPC_FIELD_COUNT
-
 
 # ============================================================
 # 图标居中 Delegate (与 item_editor_v2 一致)
@@ -76,8 +72,6 @@ SEG1_SIZE = 3432   # Block A: 脚本全局变量 (unk_755B18)
 SEG2_SIZE = 5768   # Block B: 背包/队伍/金币 (unk_756880)
 WARPC_OFFSET = 9200  # = SEG1_SIZE + SEG2_SIZE
 WARPC_REC = 1054   # 每条WarPC记录字节数
-WARPC_ORIG_CNT = 143
-WARPC_ORIG_SIZE = 150722
 
 # .sav 索引文件 (28字节)
 SAV_META_SIZE = 28
@@ -156,112 +150,6 @@ SEG2_INVENTORY = [
     ("inv_items", 0x82A, 600, "物品ID",      "word_7570AA[600]"),
     ("inv_types", 0xCDA, 600, "物品类型索引", "word_75755A[600]"),
     ("inv_qtys",  0x118A, 600, "物品堆叠数量", "word_757A0A[600]"),
-]
-
-# ============================================================
-# WarPC 字段定义
-# ============================================================
-WARPC_IDENTITY = [
-    ("name_id",       0,   "名称TKT ID",   "角色名称"),
-    ("portrait",      2,   "头像索引",     "Fa.JVG ×2大幅图"),
-    ("level",         4,   "等级",         ""),
-    ("role",          6,   "身份",         "-1=未激活 0=已激活"),
-    ("exp_to_next",   8,   "升级所需经验", ""),
-    ("awk_sprite_id", 520, "战场图集索引", "Awk.JVG块号"),
-    ("portrait_menu", 522, "队伍头像ID",   "Mu.JVG块号"),
-    ("entity_link",   526, "地图实体ID",   "离队后NPC实体"),
-]
-
-WARPC_HPMP = [
-    ("cur_hp",  10, "当前HP", ""), ("cur_mp",  12, "当前MP", ""),
-    ("hp_base", 14, "HP基础", ""), ("hp_max",  16, "HP上限", ""),
-    ("mp_base", 18, "MP基础", ""), ("mp_max",  20, "MP上限", ""),
-]
-
-STAT_NAMES = ["攻击", "防御", "命中", "闪避", "速度", "幸运", "移动", "悟性"]
-STAT_SHORTS = ["atk", "def", "hit", "eva", "spd", "luk", "mov", "wis"]
-STAT_OFFSETS = [22, 26, 30, 34, 38, 42, 46, 50]
-
-WARPC_CHAR_ATTR = [
-    ("char_wisdom",      54, "智慧", ""), ("char_benevolence", 56, "仁德", ""),
-    ("char_courage",     58, "勇气", ""), ("char_medicine",    60, "医术", "上限100"),
-    ("jp_total",         62, "技能点数", ""),
-]
-
-WARPC_GROWTH = [
-    ("growth_early", 528, "成长率初期", ""), ("growth_mid", 530, "成长率中期", ""),
-    ("growth_late",  532, "成长率后期", ""),
-]
-
-WARPC_BATTLE_REWARD = [
-    ("jp_reward",   536, "战后JP点", ""), ("gold_reward", 538, "战后金钱基数", ""),
-]
-
-WARPC_DROP = [
-    ("drop_item0", 540, "必掉落物品", ""), ("drop_item1", 542, "高概率掉落", ""),
-    ("drop_item2", 544, "低概率掉落", ""),
-]
-
-WARPC_EQUIP = [
-    ("equip_idx0", 138, "装备索引0", ""), ("equip_idx1", 140, "装备索引1", ""),
-    ("equip_idx2", 142, "装备索引2", ""), ("equip_idx3", 144, "装备索引3", ""),
-    ("equip_id0",  146, "装备物品ID0", ""), ("equip_id1",  148, "装备物品ID1", ""),
-    ("equip_id2",  150, "装备物品ID2", ""), ("equip_id3",  152, "装备物品ID3", ""),
-]
-
-WARPC_SKILL_BONUS = [
-    ("atk_count",   64, "攻击次数",      "sub_42234C初始=1"),
-    ("special_flag",66, "特殊能力标志",  "TKItem[20]位掩码"),
-    ("mp_reduce",   68, "内力消耗减少%", "TKSkill[33]内息"),
-    ("magic_def",   70, "法伤减少%",     "TKSkill[38]抗魔"),
-    ("exp_bonus",   72, "经验增加%",     "TKSkill[36]鬼才"),
-    ("jp_bonus",    74, "技能点增加%",   "TKSkill[37]天才"),
-    ("move_flags",  76, "移动特殊标志",  "bit0飘浮 bit1飙行 bit2搜宝 bit3解陷"),
-    ("heal_move",   78, "移动恢复HP%",   "TKSkill[22]自愈"),
-    ("mp_move",     80, "移动恢复MP%",   "TKSkill[24]回气"),
-]
-
-WARPC_REACTION = [
-    ("reaction_group",   82, "反应组",   "被动技能反应组 1-10"),
-    ("reaction_trigger", 84, "触发概率", "TKSkill[44] %%"),
-]
-
-WARPC_STATUS_SLOTS = [
-    (f"status_slot{i}", 86 + i * 2, f"状态槽{i}", "低字节=状态ID 高字节=持续回合")
-    for i in range(8)
-]
-
-WARPC_CAUSE_MASK = [
-    ("cause_mask1", 134, "攻击导致状态 1-16",  "装备v9[26]位掩码"),
-    ("cause_mask2", 136, "攻击导致状态 17-32", "装备v9[27]位掩码"),
-]
-
-WARPC_EQUIP_SKILLS = [
-    ("equip_skill0", 164, "装备技能0", ""), ("equip_skill1", 166, "装备技能1", ""),
-    ("equip_skill2", 168, "装备技能2", ""), ("equip_skill3", 170, "装备技能3", ""),
-    ("passive1",     172, "被动技能1", ""), ("passive2",     174, "被动技能2", ""),
-]
-
-WARPC_USE_RIGHT = [
-    ("use_right_medicine",  154, "药品权限",   ""),
-    ("use_right_item",      156, "道具权限",   "1=战斗 2=非战斗 4=主角限定"),
-    ("use_right_weapon",    158, "武器权限",   "1=刀 2=剑 4=枪 8=矛 16=弓 32=大刀 64=戟 128=锤"),
-    ("use_right_armor",     160, "防具权限",   "1=衣袍 2=铠甲"),
-    ("use_right_accessory", 162, "饰品权限",   ""),
-]
-
-WARPC_PATCH = [
-    ("awk_sprite_id", 520, "战场图集索引", "Awk.JVG块号(补丁专用)"),
-    ("portrait_menu", 522, "队伍头像ID",   "Mu.JVG块号(补丁专用)"),
-    ("history_text",  524, "历史文本ID",   "TKT ID(补丁专用)"),
-    ("entity_link",   526, "地图实体ID",   "离队后NPC实体"),
-]
-
-STATUS_NAMES_LIST = [
-    "破兵","碎甲","昏眩","封锁","羁绊","蓄力","刚体","集中",
-    "云身","神行","无视","伪装","御风","死战","连计","连计",
-    "误导","混乱","禁制","定身","诅咒","封印","燃烧","冰冻",
-    "虚弱","麻痹","沈睡","中毒","迷恋","明镜","针灸",
 ]
 
 # ============================================================
@@ -391,13 +279,6 @@ def warpc_get(seg3, char_idx, byte_offset):
     return struct.unpack_from('<h', seg3, off)[0]
 
 
-def warpc_set(seg3, char_idx, byte_offset, value):
-    off = char_idx * WARPC_REC + byte_offset
-    if off + 2 > len(seg3):
-        return
-    struct.pack_into('<h', seg3, off, max(-32768, min(32767, value)))
-
-
 # ============================================================
 # GUI 主窗口
 # ============================================================
@@ -426,11 +307,10 @@ class SaveEditorApp(QMainWindow):
         self.seg3 = None
         self.index_meta = None
         self._dirty = False
-        self.warpc_count = WARPC_ORIG_CNT
+        self.warpc_count = 143  # default, updated on load
 
         # 外部资源
         self.tkt = {}
-        self.skill_names = {}
         self.item_records = {}
         self.item_names = {}
         self._mu_sprites = []
@@ -498,22 +378,18 @@ class SaveEditorApp(QMainWindow):
         self._build_inventory_tab()
         self._build_event_tab()
         self._build_global_tab()
-        self._build_warpc_tab()
 
         # 底部路径栏
         path_row = QHBoxLayout()
         self.lbl_save = QLabel("存档: 未加载")
         self.lbl_tkt = QLabel("TKT: 未加载")
         self.lbl_item = QLabel("TKItem: 未加载")
-        self.lbl_skill = QLabel("TKSkill: 未加载")
         self.lbl_mu = QLabel("Mu.JVG: 未加载")
         path_row.addWidget(self.lbl_save)
         path_row.addSpacing(16)
         path_row.addWidget(self.lbl_tkt)
         path_row.addSpacing(16)
         path_row.addWidget(self.lbl_item)
-        path_row.addSpacing(16)
-        path_row.addWidget(self.lbl_skill)
         path_row.addSpacing(16)
         path_row.addWidget(self.lbl_mu)
         path_row.addStretch()
@@ -525,7 +401,6 @@ class SaveEditorApp(QMainWindow):
             (self.lbl_save, self.save_dir, '存档'),
             (self.lbl_tkt, os.path.join(parent, 'TKT.dat') if parent else None, 'TKT'),
             (self.lbl_item, os.path.join(parent, 'TKItem.dat') if parent else None, 'TKItem'),
-            (self.lbl_skill, os.path.join(parent, 'TKSkill.dat') if parent else None, 'TKSkill'),
             (self.lbl_mu, os.path.join(parent, 'Mu.JVG') if parent else None, 'Mu.JVG'),
         ], self._is_dark)
 
@@ -948,12 +823,6 @@ class SaveEditorApp(QMainWindow):
         tkt_path = os.path.join(parent, 'TKT.dat')
         if os.path.exists(tkt_path):
             self.tkt = load_tkt_simple(tkt_path, skip_range=None)
-        # TKSkill (名称 + 类型)
-        sk_path = os.path.join(parent, 'TKSkill.dat')
-        self._skill_types = {}
-        if os.path.exists(sk_path):
-            self.skill_names = self._parse_skill_dat(sk_path)
-            self._skill_types = self._parse_skill_types(sk_path)
         # TKItem
         it_path = os.path.join(parent, 'TKItem.dat')
         if os.path.exists(it_path):
@@ -963,9 +832,6 @@ class SaveEditorApp(QMainWindow):
         if os.path.exists(mu_path):
             self._mu_sprites = load_mu_sprites(mu_path) or []
             self._icon_pixmaps.clear()
-        # TKKon 名称 (从 warpc_editor 目录加载 CSV)
-        tkkon_csv = os.path.join(os.path.dirname(__file__), '..', 'warpc_editor', 'tkkon_names.csv')
-        self.tkkon_names = self._load_tkkon_names(tkkon_csv)
 
     def _parse_skill_dat(self, path):
         try:
@@ -1095,7 +961,6 @@ class SaveEditorApp(QMainWindow):
         self._refresh_inventory()
         self._refresh_events()
         self._refresh_global()
-        self._refresh_warpc_list()
 
     # ================================================================
     # 刷新: 总览
@@ -1131,7 +996,7 @@ class SaveEditorApp(QMainWindow):
             lines.append(f"数据文件: sav.{self.slot} ({fsize:,} bytes)")
             lines.append(f"Frame1 (TKMat): {GAMESTATE_SIZE:,}B | Frame2: SEG1={SEG1_SIZE}B SEG2={SEG2_SIZE}B WarPC={len(self.seg3):,}B")
             lines.append(f"WarPC 角色数: {self.warpc_count} (记录大小 {WARPC_REC}B)")
-            if self.warpc_count != WARPC_ORIG_CNT:
+            if self.warpc_count != 143:  # 原始143角色
                 lines.append(f"  * 非标准角色数 (原始143), 已被TKSLauncher扩展")
             if self.seg2:
                 gold = struct.unpack_from('<H', self.seg2, 0x02)[0]

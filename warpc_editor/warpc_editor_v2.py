@@ -66,7 +66,7 @@ from editor_utils.dock_components import DockHeader
 from editor_utils.picker_dialogs import TktPickerDialog, StatusPickerDialog, STATUS_NAMES
 from editor_utils.jvg_loader import load_mu_sprites, get_sprite_pixmap
 from editor_utils.ui_helpers import make_fake_input, update_path_labels, confirm_close, export_csv
-from editor_utils.lzss import lzss_decompress_dat, lzss_compress_dat
+from editor_utils.lzss import lzss_decompress_dat, lzss_compress_dat, lzss_decompress_save, lzss_compress_save
 from editor_utils.tkt_loader import load_tkt_simple
 from editor_utils.mod_exporter import (
     diff_records, compute_crc32, generate_mod_json,
@@ -323,6 +323,78 @@ def save_warpc(fp, recs):
     if lzss_decompress(compressed) != bytes(buf):
         raise RuntimeError("压缩回写验证失败!")
     with open(fp, 'wb') as f: f.write(compressed)
+    return True
+
+# ── 存档文件常量 (来自 sub_410ED4 SaveTKMat / sub_41103C LoadTKMat) ──
+SAVE_SEG1_SIZE = 3432    # 脚本全局变量
+SAVE_SEG2_SIZE = 5768    # 背包/队伍/金币
+SAVE_WARPC_OFFSET = 9200 # = SEG1 + SEG2
+
+def load_warpc_from_save(save_path):
+    """从存档文件 sav.N 读取 WarPC 数据。
+    返回 (seg1_bytes, seg2_bytes, records) 其中 records 格式同 load_warpc()。"""
+    with open(save_path, 'rb') as f:
+        raw = f.read()
+    offset = 0
+    # 跳过 Frame 1 (TKMat, 2304000B)
+    if offset + 4 > len(raw):
+        raise ValueError("文件太短: 无法读取 Frame1 大小")
+    comp1 = struct.unpack_from('<I', raw, offset)[0]; offset += 4 + comp1
+    # 读取 Frame 2
+    if offset + 4 > len(raw):
+        raise ValueError("文件太短: 无法读取 Frame2 大小")
+    comp2 = struct.unpack_from('<I', raw, offset)[0]; offset += 4
+    if offset + comp2 > len(raw):
+        raise ValueError("Frame2 数据不完整")
+    frame2 = lzss_decompress_save(raw[offset:offset + comp2])
+    if len(frame2) < SAVE_WARPC_OFFSET:
+        raise ValueError(f"Frame2 解压大小不足: {len(frame2)} < {SAVE_WARPC_OFFSET}")
+    seg1 = bytes(frame2[:SAVE_SEG1_SIZE])
+    seg2 = bytes(frame2[SAVE_SEG1_SIZE:SAVE_WARPC_OFFSET])
+    seg3 = bytes(frame2[SAVE_WARPC_OFFSET:])
+    if len(seg3) % WARPC_REC != 0:
+        raise ValueError(f"WarPC 段大小 {len(seg3)} 不是 {WARPC_REC} 的整数倍")
+    recs = []
+    cnt = len(seg3) // WARPC_REC
+    for i in range(cnt):
+        off = i * WARPC_REC
+        vals = struct.unpack_from('<' + 'h' * WARPC_FIELD_COUNT, seg3, off)
+        recs.append({'index': i, 'fields': list(vals)})
+    return seg1, seg2, recs
+
+def save_warpc_to_save(save_path, seg1, seg2, records):
+    """将 WarPC records 写回存档文件 sav.N (保留 Frame 1 和 seg1/seg2 不变)。"""
+    # 重新读取原文件获取 Frame 1 原始压缩数据
+    with open(save_path, 'rb') as f:
+        raw = f.read()
+    # 提取 Frame 1 原始压缩块
+    comp1 = struct.unpack_from('<I', raw, 0)[0]
+    frame1_block = raw[4:4 + comp1]
+    # 构建新 seg3
+    seg3_buf = bytearray(len(records) * WARPC_REC)
+    for i, rec in enumerate(records):
+        off = i * WARPC_REC
+        struct.pack_into('<' + 'h' * WARPC_FIELD_COUNT, seg3_buf, off, *rec['fields'])
+    # 组装 Frame 2
+    frame2 = bytes(seg1) + bytes(seg2) + bytes(seg3_buf)
+    comp2 = lzss_compress_save(frame2)
+    # 回读验证
+    dec2 = lzss_decompress_save(comp2)
+    if dec2 != frame2:
+        raise RuntimeError("Frame2 压缩回写验证失败!")
+    # 备份
+    if os.path.exists(save_path):
+        try:
+            with open(save_path, 'rb') as s:
+                with open(save_path + '.bak', 'wb') as d: d.write(s.read())
+        except Exception:
+            pass
+    # 写入
+    with open(save_path, 'wb') as f:
+        f.write(struct.pack('<I', len(frame1_block)))
+        f.write(frame1_block)
+        f.write(struct.pack('<I', len(comp2)))
+        f.write(comp2)
     return True
 
 def get_field(rec, byte_off):
@@ -597,63 +669,6 @@ class FieldRefDialog(QDialog):
 # 主编辑器窗口
 # ═══════════════════════════════════════════════════════════════
 
-class WarpcEditPanel(QWidget):
-    """独立的角色编辑面板 (可作为嵌入组件使用, 不依赖 QMainWindow)"""
-    record_applied = Signal(int)
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        # 初始化所有必要属性
-        self.tkt = {}; self.skill_names = {}; self._skill_types = {}
-        self.tkkon_names = {}; self.item_names = {}; self.item_idx_names = {}
-        self._idx_to_id = {}; self._id_to_idx = {}
-        self._mu_sprites = []; self._icon_pixmaps = {}
-        self._fa_sprites = []; self._fa_photos = {}
-        self._editing_idx = -1; self._current_record = None
-        self._edit_vars = {}; self._edit_extras = {}
-        self._status_widgets = []; self._status_resist_widgets = []
-        self._skill_learn_widgets = []; self._skill_learn_labels = []
-        self._skill_effect_widgets = []; self._skill_effect_name_labels = []
-        self._use_right_defs = {k: (t, list(o)) for k, (t, o) in USE_RIGHT_DEFS.items()}
-        self._build_panel()
-
-    def _build_panel(self):
-        rl = QVBoxLayout(self); rl.setContentsMargins(4,4,4,4); rl.setSpacing(4)
-        # 预览头
-        preview = QFrame(); preview.setObjectName("PreviewFrame")
-        pl = QVBoxLayout(preview); pl.setContentsMargins(8,8,8,8); pl.setSpacing(4)
-        hdr_row = QHBoxLayout()
-        self.preview_avatar = QLabel(""); hdr_row.addWidget(self.preview_avatar)
-        info_col = QVBoxLayout()
-        self.preview_name = QLabel("(未选中)"); self.preview_name.setProperty("class", "PreviewName")
-        self.preview_name.setWordWrap(True); info_col.addWidget(self.preview_name)
-        self.preview_meta = QLabel(""); self.preview_meta.setProperty("class", "PreviewMeta")
-        self.preview_meta.setWordWrap(True); info_col.addWidget(self.preview_meta)
-        hdr_row.addLayout(info_col, 1); pl.addLayout(hdr_row)
-        self.preview_desc = QLabel("请在列表中选择角色。")
-        self.preview_desc.setProperty("class", "PreviewDesc"); self.preview_desc.setWordWrap(True)
-        pl.addWidget(self.preview_desc)
-        rl.addWidget(preview)
-        # Tab 页
-        self.tabs = QTabWidget()
-        self._build_tab1(); self._build_tab2(); self._build_tab3(); self._build_tab4(); self._build_tab5()
-        rl.addWidget(self.tabs, 1)
-
-    # 复用 WarpcEditorV2 的方法
-    _build_scroll_tab = None  # 将在下面赋值
-    _build_section = None
-    _build_field_widget = None
-    _build_tab1 = None; _build_tab2 = None; _build_tab3 = None
-    _build_tab4 = None; _build_tab5 = None
-    _build_status_slots = None; _build_status_resist = None
-    _build_skill_effect_section = None
-    _populate_edit = None; _apply_edit = None
-    _char_name = None; _get_fa_photo = None
-    _pick_flags = None; _pick_use_right = None; _pick_status_mask = None
-    _pick_skill = None; _pick_item = None; _pick_portrait = None
-    _pick_tkkon = None; _update_kon_label = None
-    _reset_edit = None
-
 
 class WarpcEditorV2(QMainWindow):
     # 信号: 角色编辑已应用 (参数: 角色索引)
@@ -684,6 +699,14 @@ class WarpcEditorV2(QMainWindow):
         self.item_names = {}; self.item_idx_names = {}; self._idx_to_id = {}; self._id_to_idx = {}
         self.filtered_indices = []; self._dirty = False; self._editing_idx = -1
 
+        # 存档模式状态
+        self._save_mode = False   # True = 编辑的是 sav.N 中的 WarPC 数据
+        self._save_path = None    # 当前存档文件路径
+        self._save_slot = 0       # 当前槽位号
+        self._seg1 = None         # Frame2 seg1 原始字节 (回写时需要)
+        self._seg2 = None         # Frame2 seg2 原始字节 (回写时需要)
+        self._game_dir = None     # 游戏资源目录 (TKT/TKItem/Fa.JVG 所在目录)
+
         self._edit_vars = {}; self._edit_extras = {}; self._status_widgets = []
         self._status_resist_widgets = []; self._skill_learn_widgets = []
         self._skill_effect_widgets = []; self._skill_effect_name_labels = []
@@ -704,9 +727,13 @@ class WarpcEditorV2(QMainWindow):
         apply_godot_theme(self, self._is_dark)
 
     def _update_paths(self):
-        tks_dir = os.path.dirname(self.warpc_path) if self.warpc_path else ''
+        tks_dir = self._get_tks_dir()
+        if self._save_mode and self.warpc_path:
+            warpc_display = f"{self.warpc_path} (槽位{self._save_slot})"
+        else:
+            warpc_display = self.warpc_path
         update_path_labels([
-            (self.lbl_warpc, self.warpc_path, "WarPC"),
+            (self.lbl_warpc, warpc_display, "WarPC"),
             (self.lbl_tkt, self.tkt_path, "TKT"),
             (self.lbl_item, os.path.join(tks_dir, 'TKItem.dat') if tks_dir else '', "TKItem"),
             (self.lbl_skill, os.path.join(tks_dir, 'TKSkill.dat') if tks_dir else '', "TKSkill"),
@@ -722,6 +749,7 @@ class WarpcEditorV2(QMainWindow):
         mb = self.menuBar()
         fm = mb.addMenu("文件(&F)")
         fm.addAction("加载 TKS 目录…\tCtrl+O", self._load_tks_dir)
+        fm.addAction("加载存档 (从游戏目录)…\tCtrl+Shift+O", self._load_save_dir)
         fm.addSeparator()
         fm.addAction("保存\tCtrl+S", self._save)
         fm.addAction("导出 CSV…", self._export_csv)
@@ -1085,7 +1113,96 @@ class WarpcEditorV2(QMainWindow):
             QMessageBox.warning(self, "文件缺失", "未找到 WarPC.dat"); return
         self.warpc_path = wp; self.tkt_path = tk_ if os.path.exists(tk_) else None
         self.mu_path = os.path.join(d, "Mu.JVG")
+        self._save_mode = False  # 重置存档模式
         self._reload()
+
+    def _load_save_dir(self):
+        """从存档文件 sav.N 加载 WarPC 角色数据 (先选游戏目录, 再自动定位 save/)"""
+        d = QFileDialog.getExistingDirectory(self, "选择 TKS 游戏目录 (含 save 子文件夹)")
+        if not d: return
+        # 确认选中的是游戏目录 (包含 WarPC.dat 或 TKT.dat)
+        is_game_dir = os.path.exists(os.path.join(d, 'WarPC.dat')) or os.path.exists(os.path.join(d, 'TKT.dat'))
+        if not is_game_dir:
+            # 用户可能选了 save/ 子文件夹，尝试向上修正
+            parent = os.path.dirname(d.rstrip('/\\'))
+            if os.path.exists(os.path.join(parent, 'WarPC.dat')) or os.path.exists(os.path.join(parent, 'TKT.dat')):
+                d = parent  # 自动修正到游戏目录
+            else:
+                QMessageBox.warning(self, "目录不正确",
+                    f"所选目录不是 TKS 游戏目录 (未找到 WarPC.dat/TKT.dat):\n{d}\n\n"
+                    f"请选择包含 WarPC.dat 和 save/ 文件夹的游戏根目录。")
+                return
+        game_dir = d
+        # 在游戏目录下查找 save 子文件夹
+        save_dir = os.path.join(d, 'save')
+        if not os.path.exists(save_dir):
+            save_dir = d  # 降级: 直接在游戏目录下找
+        if not any(os.path.exists(os.path.join(save_dir, f'sav.{s}')) for s in range(1, 10)):
+            QMessageBox.warning(self, "未找到存档",
+                f"在游戏目录下未找到 save 文件夹或 sav.N 文件:\n{d}")
+            return
+        # 扫描可用槽位
+        slots = []
+        for s in range(1, 10):
+            sp = os.path.join(save_dir, f'sav.{s}')
+            if os.path.exists(sp):
+                # 读取索引文件摘要
+                ip = os.path.join(save_dir, f'{s}.sav')
+                summary = ""
+                if os.path.exists(ip):
+                    try:
+                        idx_data = open(ip, 'rb').read()
+                        if len(idx_data) >= 28:
+                            import datetime as _dt
+                            ts = struct.unpack_from('<I', idx_data, 8)[0]
+                            dt_str = _dt.datetime.fromtimestamp(ts).strftime('%m/%d %H:%M')
+                            gold = struct.unpack_from('<H', idx_data, 6)[0]
+                            summary = f"{dt_str} | 金{gold}"
+                    except Exception:
+                        summary = "(索引异常)"
+                slots.append((s, sp, summary))
+        if not slots:
+            QMessageBox.warning(self, "无可用槽位", "目录中没有存档数据"); return
+        # 槽位选择对话框
+        dlg = QDialog(self); dlg.setWindowTitle("选择存档槽位")
+        dlg.resize(450, 380)
+        layout = QVBoxLayout(dlg)
+        layout.addWidget(QLabel(f"存档目录: {save_dir}"))
+        table = QTableWidget(len(slots), 3)
+        table.setHorizontalHeaderLabels(['槽位', '文件', '摘要'])
+        table.setColumnWidth(0, 50); table.setColumnWidth(1, 150)
+        table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
+        table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        table.setSelectionMode(QAbstractItemView.SingleSelection)
+        table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        table.verticalHeader().setVisible(False)
+        for row, (s, sp, summary) in enumerate(slots):
+            table.setItem(row, 0, QTableWidgetItem(str(s)))
+            table.setItem(row, 1, QTableWidgetItem(os.path.basename(sp)))
+            table.setItem(row, 2, QTableWidgetItem(summary))
+        layout.addWidget(table, 1)
+        btn_row = QHBoxLayout()
+        btn_row.addStretch()
+        btn_row.addWidget(QPushButton("取消", clicked=dlg.reject))
+        btn_row.addWidget(QPushButton("打开", clicked=dlg.accept))
+        layout.addLayout(btn_row)
+        if dlg.exec() != QDialog.Accepted:
+            return
+        sel = table.selectedItems()
+        if not sel: return
+        slot_num = slots[sel[0].row()][0]
+        save_path = slots[sel[0].row()][1]
+        # 加载数据
+        self._save_mode = True
+        self._save_path = save_path
+        self._save_slot = slot_num
+        self._game_dir = game_dir  # 直接存储游戏目录
+        self.warpc_path = save_path  # 用于资源路径推导
+        # game_dir 就是用户选择的游戏目录
+        self.tkt_path = os.path.join(game_dir, 'TKT.dat') if os.path.exists(os.path.join(game_dir, 'TKT.dat')) else None
+        self.mu_path = os.path.join(game_dir, 'Mu.JVG') if os.path.exists(os.path.join(game_dir, 'Mu.JVG')) else None
+        self._reload()
+        self.setWindowTitle(f"WarPC.dat 可视化编辑器 v2.0 - PySide6 [存档模式 槽位{slot_num}]")
 
     def _reload(self):
         if not self.warpc_path: return
@@ -1094,27 +1211,35 @@ class WarpcEditorV2(QMainWindow):
             self._mu_sprites = load_mu_sprites(self.mu_path) or []
             self._icon_pixmaps.clear()
 
-        orig_path = self.warpc_path + ".orig"
-        if os.path.exists(orig_path):
-            if QMessageBox.question(self, "检测到未恢复的备份",
-                "发现 WarPC.dat.orig, 是否从备份恢复?",
-                QMessageBox.Yes|QMessageBox.No) == QMessageBox.Yes:
-                try:
-                    bak = orig_path + ".editor_bak"
-                    import shutil
-                    if not os.path.exists(bak): shutil.copy2(self.warpc_path, bak)
-                    os.replace(orig_path, self.warpc_path)
-                    self.status_var.setText("已从 .orig 备份恢复")
-                except Exception as e:
-                    QMessageBox.critical(self, "恢复失败", str(e))
-
         if self.tkt_path: self.tkt = load_tkt(self.tkt_path)
-        tks_dir = os.path.dirname(self.warpc_path)
+
+        # 加载 Fa.JVG 头像
+        tks_dir = self._get_tks_dir()
         fa_path = os.path.join(tks_dir, 'Fa.JVG')
         self._fa_sprites = load_jvg_sprites(fa_path) or []; self._fa_photos.clear()
 
         try:
-            self.records = load_warpc(self.warpc_path); self._dirty = False
+            if self._save_mode:
+                # 存档模式: 从 sav.N 加载 WarPC
+                self.status_var.setText("从存档加载 WarPC 数据…"); QApplication.processEvents()
+                self._seg1, self._seg2, self.records = load_warpc_from_save(self.warpc_path)
+            else:
+                # 普通模式: 从 WarPC.dat 加载
+                orig_path = self.warpc_path + ".orig"
+                if os.path.exists(orig_path):
+                    if QMessageBox.question(self, "检测到未恢复的备份",
+                        "发现 WarPC.dat.orig, 是否从备份恢复?",
+                        QMessageBox.Yes|QMessageBox.No) == QMessageBox.Yes:
+                        try:
+                            bak = orig_path + ".editor_bak"
+                            import shutil
+                            if not os.path.exists(bak): shutil.copy2(self.warpc_path, bak)
+                            os.replace(orig_path, self.warpc_path)
+                            self.status_var.setText("已从 .orig 备份恢复")
+                        except Exception as e:
+                            QMessageBox.critical(self, "恢复失败", str(e))
+                self.records = load_warpc(self.warpc_path)
+            self._dirty = False
             # 保存原始快照用于 MOD 导出差异比对
             self._original_records = [list(r['fields']) for r in self.records]
             self.skill_names, self._skill_types = self._load_skill_names()
@@ -1153,8 +1278,14 @@ class WarpcEditorV2(QMainWindow):
             if item.widget(): item.widget().deleteLater()
             elif item.layout(): self._clear_layout(item.layout())
 
+    def _get_tks_dir(self):
+        """获取游戏资源目录 (TKT.dat 所在目录)。存档模式下直接返回存储的游戏目录。"""
+        if self._save_mode and self._game_dir:
+            return self._game_dir
+        return os.path.dirname(self.warpc_path) if self.warpc_path else ''
+
     def _load_skill_names(self):
-        tks_dir = os.path.dirname(self.warpc_path) if self.warpc_path else ''
+        tks_dir = self._get_tks_dir()
         sk_path = os.path.join(tks_dir, 'TKSkill.dat')
         if not os.path.exists(sk_path): return {}, {}
         try:
@@ -1188,7 +1319,7 @@ class WarpcEditorV2(QMainWindow):
         except: return {}
 
     def _load_item_names(self):
-        tks_dir = os.path.dirname(self.warpc_path) if self.warpc_path else ''
+        tks_dir = self._get_tks_dir()
         it_path = os.path.join(tks_dir, 'TKItem.dat')
         if not os.path.exists(it_path): return {}, {}, {}, {}
         try:
@@ -1785,6 +1916,8 @@ class WarpcEditorV2(QMainWindow):
 
     # ── 保存/导出CSV ──
     def _save(self):
+        if self._save_mode:
+            self._save_to_save_file(); return
         if not self.warpc_path or not self.records:
             QMessageBox.information(self, "提示", "请先加载数据"); return
         if QMessageBox.question(self, "确认保存",
@@ -1799,6 +1932,21 @@ class WarpcEditorV2(QMainWindow):
             save_warpc(self.warpc_path, self.records); self._dirty = False
             self.status_var.setText(f"已保存 → {self.warpc_path}")
             QMessageBox.information(self, "成功", f"已保存\n备份: {self.warpc_path}.bak")
+        except Exception as e: QMessageBox.critical(self, "保存失败", str(e))
+
+    def _save_to_save_file(self):
+        """存档模式下保存 WarPC 数据回 sav.N"""
+        if not self._save_path or not self.records or self._seg1 is None or self._seg2 is None:
+            QMessageBox.information(self, "提示", "无存档数据"); return
+        if QMessageBox.question(self, "确认保存",
+            f"将 {len(self.records)} 个角色的 WarPC 数据写回存档:\n{self._save_path} (槽位 {self._save_slot})\n\n原存档将被备份为 .bak",
+            QMessageBox.Yes|QMessageBox.No) != QMessageBox.Yes: return
+        try:
+            self.status_var.setText("正在保存到存档…"); QApplication.processEvents()
+            save_warpc_to_save(self._save_path, self._seg1, self._seg2, self.records)
+            self._dirty = False
+            self.status_var.setText(f"已保存到存档 → {self._save_path} 槽位{self._save_slot}")
+            QMessageBox.information(self, "成功", f"已保存到存档\n备份: {self._save_path}.bak")
         except Exception as e: QMessageBox.critical(self, "保存失败", str(e))
 
     def _export_csv(self):
@@ -2043,102 +2191,6 @@ class WarpcEditorV2(QMainWindow):
             event.ignore()
         else:
             event.accept()
-
-# ═══════════════════════════════════════════════════════════════
-# 方法共享: 将 WarpcEditorV2 的编辑方法赋给 WarpcEditPanel
-# ═══════════════════════════════════════════════════════════════
-_shared_methods = [
-    '_build_scroll_tab', '_build_section', '_build_field_widget',
-    '_build_tab1', '_build_tab2', '_build_tab3', '_build_tab4', '_build_tab5',
-    '_build_status_slots', '_build_status_resist', '_build_skill_effect_section',
-    '_build_raw_grid', '_clear_layout',
-    '_populate_edit', '_char_name', '_get_fa_photo', '_get_icon_pixmap',
-    '_pick_flags', '_pick_use_right', '_pick_status_mask',
-    '_pick_skill', '_pick_item', '_pick_portrait',
-    '_pick_tkkon', '_update_kon_label', '_update_status_label',
-]
-for _m in _shared_methods:
-    setattr(WarpcEditPanel, _m, getattr(WarpcEditorV2, _m))
-
-
-def _panel_apply_edit(self):
-    """WarpcEditPanel 专用 apply: 修改 _current_record 并发射信号"""
-    if self._editing_idx < 0 or not self._current_record: return
-    rec = self._current_record; f = rec['fields']
-    # Role / Reaction group
-    if 'role' in self._edit_extras:
-        sv = self._edit_extras['role'].currentText()
-        if sv:
-            sep = sv.find('-', 1) if sv.startswith('-') else sv.find('-')
-            f[3] = int(sv[:sep]) if sep >= 0 else int(sv)
-    if 'reaction_group' in self._edit_extras:
-        sv = self._edit_extras['reaction_group'].currentText()
-        if sv:
-            sep = sv.find('-', 1) if sv.startswith('-') else sv.find('-')
-            f[41] = int(sv[:sep]) if sep >= 0 else int(sv)
-    if hasattr(self, '_status_widgets'):
-        for fs_fn, fo, cb, ev_dur in self._status_widgets:
-            sid = cb.currentIndex()
-            if sid == 0: v = -256
-            else:
-                try: dur = int(ev_dur.text())
-                except: dur = 1
-                if dur < 0: dur = 1
-                if dur > 255: dur = 255
-                v = (sid & 0xFF) | ((dur & 0xFF) << 8)
-                if v >= 0x8000: v -= 0x10000
-            f[fo//2] = v
-    if hasattr(self, '_status_resist_widgets'):
-        for byte_idx, ev in self._status_resist_widgets:
-            try: byte_val = int(ev.text())
-            except: continue
-            if byte_val < 0: byte_val = 0
-            if byte_val > 255: byte_val = 255
-            field_idx = 51 + byte_idx//2; is_high = byte_idx % 2
-            unsigned = f[field_idx] & 0xFFFF
-            new_val = (unsigned & 0x00FF) | (byte_val << 8) if is_high else (unsigned & 0xFF00) | byte_val
-            if new_val >= 0x8000: new_val -= 0x10000
-            f[field_idx] = new_val
-    if hasattr(self, '_skill_learn_widgets'):
-        for skill_idx, cb in self._skill_learn_widgets:
-            sv = cb.currentText()
-            sep = sv.find('-', 1) if sv.startswith('-') else sv.find('-')
-            byte_val = int(sv[:sep]) if sep >= 0 else 0
-            field_idx = 88 + skill_idx//2; is_high = skill_idx % 2
-            unsigned = f[field_idx] & 0xFFFF
-            new_val = (unsigned & 0x00FF) | (byte_val << 8) if is_high else (unsigned & 0xFF00) | byte_val
-            if new_val >= 0x8000: new_val -= 0x10000
-            f[field_idx] = new_val
-    if hasattr(self, '_skill_effect_widgets'):
-        for i, ev in self._skill_effect_widgets:
-            field_idx = 273 + i
-            if field_idx >= WARPC_FIELD_COUNT: continue
-            try: v = int(ev.text()); f[field_idx] = max(-32768, min(32767, v))
-            except: pass
-    for fn, fo, _, *_ in ALL_NAMED_FIELDS:
-        if fn in self._edit_vars and fn not in ('role', 'reaction_group'):
-            try: v = int(self._edit_vars[fn].text()); f[fo//2] = max(-32768, min(32767, v))
-            except: pass
-    named_indices = set(fo//2 for _, fo, *rest in ALL_NAMED_FIELDS)
-    for j in range(51, 67): named_indices.add(j)
-    for j in range(88, 260): named_indices.add(j)
-    if hasattr(self, '_skill_effect_widgets'):
-        for i, _ in self._skill_effect_widgets: named_indices.add(273 + i)
-    for j in range(WARPC_FIELD_COUNT):
-        if j in named_indices: continue
-        fn = f"raw_{j}"
-        if fn in self._edit_vars:
-            try: v = int(self._edit_vars[fn].text()); f[j] = max(-32768, min(32767, v))
-            except: pass
-    self.record_applied.emit(rec['index'])
-
-WarpcEditPanel._apply_edit = _panel_apply_edit
-
-def _panel_reset_edit(self):
-    if self._editing_idx >= 0 and self._current_record:
-        self._populate_edit(self._current_record)
-
-WarpcEditPanel._reset_edit = _panel_reset_edit
 
 def main():
     app = QApplication(sys.argv)

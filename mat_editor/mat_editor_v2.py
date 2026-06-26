@@ -46,7 +46,7 @@ from PySide6.QtCore import Qt, QTimer, QRect, QPoint, QSize, QThread, Signal, QT
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from editor_utils.theme_manager import ThemeManager
 from editor_utils.dock_components import DockHeader, create_dock
-from editor_utils.lzss import lzss_decompress_dat as lzss_decompress
+from editor_utils.lzss import lzss_decompress_dat as lzss_decompress, lzss_decompress_save, lzss_compress_save
 from editor_utils.ui_helpers import export_csv, confirm_close
 from editor_utils.mod_exporter import (
     diff_records, diff_text_defines, compute_crc32, generate_mod_json,
@@ -1244,6 +1244,71 @@ def save_defunit(fp, defunit_recs):
     return True
 
 # ============================================================
+# 存档文件读写 (来自 sub_410ED4 SaveTKMat / sub_41103C LoadTKMat)
+# ============================================================
+SAVE_SEG1_SIZE = 3432
+SAVE_SEG2_SIZE = 5768
+SAVE_WARPC_OFFSET = 9200
+
+def load_mat_from_save(save_path):
+    """从存档 sav.N 解压 Frame1 并解析为 TKMat records (同 load_mat 格式)"""
+    with open(save_path, 'rb') as f:
+        raw = f.read()
+    if 4 > len(raw):
+        raise ValueError("文件太短")
+    comp1 = struct.unpack_from('<I', raw, 0)[0]
+    if 4 + comp1 + 4 > len(raw):
+        raise ValueError("Frame2 大小字段缺失")
+    frame1 = lzss_decompress_save(raw[4:4 + comp1])
+    if len(frame1) != FILE_SIZE:
+        raise ValueError(f"Frame1 解压大小异常: {len(frame1)} (期望 {FILE_SIZE})")
+    # 解析为 records (与 load_mat 一致)
+    recs = []
+    fmt = '<' + 'i' * DWORD_COUNT
+    for i, dw in enumerate(struct.iter_unpack(fmt, frame1)):
+        if i >= REC_COUNT: break
+        rec = dict(zip(MAT_KEYS, dw))
+        rec['index'] = i
+        rec['_has_data'] = any(dw)
+        recs.append(rec)
+    return recs
+
+def save_mat_to_save(save_path, records):
+    """将 TKMat records 写回存档 sav.N 的 Frame1 (保留 Frame2 不变)"""
+    with open(save_path, 'rb') as f:
+        raw = f.read()
+    # 读取 Frame2 原始压缩块 (保留不变)
+    comp1 = struct.unpack_from('<I', raw, 0)[0]
+    off2 = 4 + comp1
+    comp2 = struct.unpack_from('<I', raw, off2)[0]
+    frame2_block = raw[off2 + 4:off2 + 4 + comp2]
+    # 构建新 Frame1
+    buf = bytearray(FILE_SIZE)
+    for rec in records[:REC_COUNT]:
+        off = rec['index'] * REC_SIZE
+        for di in range(DWORD_COUNT):
+            struct.pack_into('<i', buf, off + di * 4, rec.get(f'd{di}', 0))
+    comp1_new = lzss_compress_save(bytes(buf))
+    # 回读验证
+    dec1 = lzss_decompress_save(comp1_new)
+    if dec1 != bytes(buf):
+        raise RuntimeError("Frame1 压缩回写验证失败!")
+    # 备份
+    if os.path.exists(save_path):
+        try:
+            with open(save_path, 'rb') as s:
+                with open(save_path + '.bak', 'wb') as d: d.write(s.read())
+        except Exception:
+            pass
+    # 写入
+    with open(save_path, 'wb') as f:
+        f.write(struct.pack('<I', len(comp1_new)))
+        f.write(comp1_new)
+        f.write(struct.pack('<I', len(frame2_block)))
+        f.write(frame2_block)
+    return True
+
+# ============================================================
 # JVG 精灵帧辅助
 # ============================================================
 def _get_jvg(filepath):
@@ -1795,14 +1860,16 @@ class DataLoaderThread(QThread):
     finished_load = Signal()
     error_load = Signal(str)
 
-    def __init__(self, dat_path, tkt_path):
+    def __init__(self, dat_path, tkt_path, game_dir=None, preloaded_records=None):
         super().__init__()
         self.dat_path = dat_path
         self.tkt_path = tkt_path
+        self.game_dir = game_dir or os.path.dirname(dat_path) if dat_path else ''
+        self.preloaded_records = preloaded_records
 
     def run(self):
         try:
-            d = os.path.dirname(self.dat_path)
+            d = self.game_dir
             result = {}
 
             # 1. TKT (延迟解析：只切字节块，首次访问时才解码)
@@ -1856,7 +1923,10 @@ class DataLoaderThread(QThread):
             result['sc_grp_section_count'] = sc_grp_section_count
 
             # 6. TKMat (JVG 贴图已剥离至独立线程 JvgLoaderThread)
-            result['records'] = load_mat(self.dat_path)
+            if self.preloaded_records is not None:
+                result['records'] = self.preloaded_records
+            else:
+                result['records'] = load_mat(self.dat_path)
 
             self.result_data = result
             self.finished_load.emit()
@@ -1871,15 +1941,16 @@ class DataLoaderThread(QThread):
 class JvgLoaderThread(QThread):
     finished_jvg = Signal()
 
-    def __init__(self, dat_path, tkt_lazy=None):
+    def __init__(self, dat_path, tkt_lazy=None, game_dir=None):
         super().__init__()
         self.dat_path = dat_path
         self.tkt_lazy = tkt_lazy
+        self.game_dir = game_dir or os.path.dirname(dat_path) if dat_path else ''
         self.jvg_result = {}
 
     def run(self):
         try:
-            d = os.path.dirname(self.dat_path)
+            d = self.game_dir
             res = {}
 
             # TKD 脚本解压与解析
@@ -2003,6 +2074,12 @@ class MatEditorApp(QMainWindow):
         self._script_dirty = False
         self._edit_debounce = None
 
+        # 存档模式状态
+        self._save_mode = False   # True = 编辑的是 sav.N 中的 TKMat 数据
+        self._save_path = None    # 当前存档文件路径
+        self._save_slot = 0       # 槽位号
+        self._game_dir = None     # 游戏资源目录 (TKDefUnit/TKD/SC.GRP 所在目录)
+
         # 画布重绘防抖定时器，避免 resizeEvent 卡死主线程
         self._resize_timer = QTimer(self)
         self._resize_timer.setSingleShot(True)
@@ -2081,6 +2158,7 @@ class MatEditorApp(QMainWindow):
         menu_bar = self.menuBar()
         fm = menu_bar.addMenu("文件(F)")
         fm.addAction("加载 TKS 目录…", QKeySequence("Ctrl+O"), self._load_dir)
+        fm.addAction("加载存档 (从游戏目录)…", QKeySequence("Ctrl+Shift+O"), self._load_save_dir)
         fm.addAction("重载", self._reload)
         fm.addSeparator()
         fm.addAction("保存", QKeySequence("Ctrl+S"), self._save)
@@ -3031,6 +3109,13 @@ class MatEditorApp(QMainWindow):
 
 
     # =========== 路径更新 ===========
+    def _get_game_dir(self):
+        """获取游戏资源目录 (TKMat.Dat/SC.GRP/JVG 等所在目录)。
+        存档模式下返回 self._game_dir，普通模式返回 dat_path 的父目录。"""
+        if self._save_mode and self._game_dir:
+            return self._game_dir
+        return os.path.dirname(self.dat_path) if self.dat_path else ''
+
     def _update_path(self):
         G = "color: #55b572;" if self._is_dark else "color: #178a39;"
         R = "color: #e27d60;" if self._is_dark else "color: #c93b16;"
@@ -3719,7 +3804,7 @@ class MatEditorApp(QMainWindow):
                     pass
         # 回退到从磁盘文件加载
         if self._vis_bg_pil is None and self.dat_path:
-            d = os.path.dirname(self.dat_path)
+            d = self._get_game_dir()
             grp_path = os.path.join(d, "SC.GRP")
             idx_path = os.path.join(d, "SC.IDX")
             if os.path.exists(grp_path):
@@ -4161,9 +4246,104 @@ class MatEditorApp(QMainWindow):
         if not os.path.exists(mat_p):
             QMessageBox.warning(self, "文件缺失", f"未找到 TKMat.Dat\n{d}")
             return
+        self._save_mode = False
         self.dat_path = mat_p
         self.tkt_path = tkt_p if os.path.exists(tkt_p) else None
         self._reload()
+
+    def _load_save_dir(self):
+        """从存档文件 sav.N 加载 TKMat 地图实体数据 (先选游戏目录, 再自动定位 save/)"""
+        d = QFileDialog.getExistingDirectory(self, "选择 TKS 游戏目录 (含 save 子文件夹)")
+        if not d: return
+        # 确认选中的是游戏目录 (包含 TKMat.Dat 或 TKT.dat)
+        is_game_dir = os.path.exists(os.path.join(d, 'TKMat.Dat')) or os.path.exists(os.path.join(d, 'TKT.dat'))
+        if not is_game_dir:
+            # 用户可能选了 save/ 子文件夹，尝试向上修正
+            parent = os.path.dirname(d.rstrip('/\\'))
+            if os.path.exists(os.path.join(parent, 'TKMat.Dat')) or os.path.exists(os.path.join(parent, 'TKT.dat')):
+                d = parent  # 自动修正到游戏目录
+            else:
+                QMessageBox.warning(self, "目录不正确",
+                    f"所选目录不是 TKS 游戏目录 (未找到 TKMat.Dat/TKT.dat):\n{d}\n\n"
+                    f"请选择包含 TKMat.Dat 和 save/ 文件夹的游戏根目录。")
+                return
+        game_dir = d
+        # 在游戏目录下查找 save 子文件夹
+        save_dir = os.path.join(d, 'save')
+        if not os.path.exists(save_dir):
+            save_dir = d  # 降级: 直接在游戏目录下找
+        if not any(os.path.exists(os.path.join(save_dir, f'sav.{s}')) for s in range(1, 10)):
+            QMessageBox.warning(self, "未找到存档",
+                f"在游戏目录下未找到 save 文件夹或 sav.N 文件:\n{d}")
+            return
+        # 扫描可用槽位
+        slots = []
+        for s in range(1, 10):
+            sp = os.path.join(save_dir, f'sav.{s}')
+            if os.path.exists(sp):
+                ip = os.path.join(save_dir, f'{s}.sav')
+                summary = ""
+                if os.path.exists(ip):
+                    try:
+                        idx_data = open(ip, 'rb').read()
+                        if len(idx_data) >= 28:
+                            import datetime as _dt
+                            ts = struct.unpack_from('<I', idx_data, 8)[0]
+                            dt_str = _dt.datetime.fromtimestamp(ts).strftime('%m/%d %H:%M')
+                            gold = struct.unpack_from('<H', idx_data, 6)[0]
+                            summary = f"{dt_str} | 金{gold}"
+                    except Exception:
+                        summary = "(索引异常)"
+                slots.append((s, sp, summary))
+        if not slots:
+            QMessageBox.warning(self, "无可用槽位", "目录中没有存档数据"); return
+        # 槽位选择对话框
+        dlg = QDialog(self); dlg.setWindowTitle("选择存档槽位 — 加载 TKMat 数据")
+        dlg.resize(450, 380)
+        layout = QVBoxLayout(dlg)
+        layout.addWidget(QLabel(f"存档目录: {save_dir}"))
+        table = QTableWidget(len(slots), 3)
+        table.setHorizontalHeaderLabels(['槽位', '文件', '摘要'])
+        table.setColumnWidth(0, 50); table.setColumnWidth(1, 150)
+        table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
+        table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        table.setSelectionMode(QAbstractItemView.SingleSelection)
+        table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        table.verticalHeader().setVisible(False)
+        for row, (s, sp, summary) in enumerate(slots):
+            table.setItem(row, 0, QTableWidgetItem(str(s)))
+            table.setItem(row, 1, QTableWidgetItem(os.path.basename(sp)))
+            table.setItem(row, 2, QTableWidgetItem(summary))
+        layout.addWidget(table, 1)
+        btn_row = QHBoxLayout()
+        btn_row.addStretch()
+        btn_row.addWidget(QPushButton("取消", clicked=dlg.reject))
+        btn_row.addWidget(QPushButton("打开", clicked=dlg.accept))
+        layout.addLayout(btn_row)
+        if dlg.exec() != QDialog.Accepted: return
+        sel = table.selectedItems()
+        if not sel: return
+        slot_num = slots[sel[0].row()][0]
+        save_path = slots[sel[0].row()][1]
+        # 设置存档模式
+        self._save_mode = True
+        self._save_path = save_path
+        self._save_slot = slot_num
+        self._game_dir = game_dir  # 直接存储游戏目录
+        self.dat_path = save_path  # DataLoaderThread 从此路径加载附属文件 (TKD/TKDefUnit)
+        tkt_p = os.path.join(game_dir, 'TKT.dat')
+        self.tkt_path = tkt_p if os.path.exists(tkt_p) else None
+        # 预加载 TKMat records (从存档 Frame1)
+        self.status_var.setText(f"从存档加载 TKMat 数据 (槽位{slot_num})…")
+        QApplication.processEvents()
+        try:
+            self._preloaded_records = load_mat_from_save(save_path)
+        except Exception as e:
+            QMessageBox.critical(self, "加载失败", f"无法从存档读取 TKMat 数据:\n{e}")
+            self._save_mode = False
+            return
+        self._reload()
+        self.setWindowTitle(f"TKMat.Dat 地图实体编辑器 v2.3 (PySide6) [存档模式 槽位{slot_num}]")
 
     def _reload(self):
         if not self.dat_path:
@@ -4175,8 +4355,11 @@ class MatEditorApp(QMainWindow):
         self._cha_jvg = None
         self._cur_jvg = None
         self._update_path()
-        # 启动异步加载线程，避免 UI 假死
-        self._loader_thread = DataLoaderThread(self.dat_path, self.tkt_path)
+        # 存档模式下使用 game_dir 加载附属文件，并传入预加载的 TKMat records
+        game_dir = self._game_dir if self._save_mode else os.path.dirname(self.dat_path)
+        preloaded = getattr(self, '_preloaded_records', None) if self._save_mode else None
+        self._loader_thread = DataLoaderThread(self.dat_path, self.tkt_path,
+                                                game_dir=game_dir, preloaded_records=preloaded)
         self._loader_thread.finished_load.connect(self._on_load_success)
         self._loader_thread.error_load.connect(self._on_load_error)
         self._loader_thread.start()
@@ -4244,7 +4427,8 @@ class MatEditorApp(QMainWindow):
 
     def _start_jvg_thread(self):
         """延迟触发的后台资源加载线程 (贴图+TKD+物品)"""
-        self._jvg_thread = JvgLoaderThread(self.dat_path, getattr(self, 'tkt_all', None))
+        game_dir = self._game_dir if self._save_mode else None
+        self._jvg_thread = JvgLoaderThread(self.dat_path, getattr(self, 'tkt_all', None), game_dir=game_dir)
         self._jvg_thread.finished_jvg.connect(self._on_jvg_success)
         self._jvg_thread.start()
 
@@ -4320,6 +4504,8 @@ class MatEditorApp(QMainWindow):
 
     # =========== 保存 ===========
     def _save(self):
+        if self._save_mode:
+            self._save_to_save_file(); return
         d = os.path.dirname(self.dat_path) if self.dat_path else None
         if not d:
             self._save_as()
@@ -4375,11 +4561,66 @@ class MatEditorApp(QMainWindow):
             self.status_var.setText(f"已保存 — {file_count} 个文件")
 
     def _save_as(self):
+        if self._save_mode:
+            QMessageBox.information(self, "提示", "存档模式下不支持另存为")
+            return
         fp, _ = QFileDialog.getSaveFileName(self, "另存 TKMat.Dat", "", "DAT 文件 (*.Dat *.dat);;所有文件 (*.*)")
         if not fp:
             return
         self.dat_path = fp
         self._save()
+
+    def _save_to_save_file(self):
+        """存档模式下保存 TKMat 数据回 sav.N，TKDefUnit/TKD 写入游戏目录"""
+        if not self._save_path or not self.records:
+            QMessageBox.information(self, "提示", "无存档数据"); return
+        game_dir = self._game_dir or os.path.dirname(os.path.dirname(self._save_path))
+        du_p = os.path.join(game_dir, "TKDefUnit.Dat")
+        tkd_p = os.path.join(game_dir, "TKD.dat")
+        files_msg = (f"存档 TKMat: {self._save_path} (槽位 {self._save_slot})\n"
+                     f"TKDefUnit.Dat: {du_p}\nTKD.dat: {tkd_p}")
+        has_sc = self._sc_grp_pending is not None
+        if has_sc:
+            files_msg += f"\nSC.GRP/SC.IDX: {game_dir}"
+        if QMessageBox.question(self, f"确认保存到存档", files_msg,
+                                QMessageBox.Ok | QMessageBox.Cancel) != QMessageBox.Ok:
+            return
+        errors = []
+        try:
+            save_mat_to_save(self._save_path, self.records)
+        except Exception as e:
+            errors.append(f"存档 TKMat: {e}")
+        try:
+            save_defunit(du_p, self.defunit_recs)
+        except Exception as e:
+            errors.append(f"TKDefUnit.Dat: {e}")
+        try:
+            tkd_text = rebuild_text(self.tkd_defines, self.tkd_header)
+            save_tkd(tkd_p, tkd_text)
+        except Exception as e:
+            errors.append(f"TKD.dat: {e}")
+        if has_sc:
+            try:
+                grp_path = os.path.join(game_dir, "SC.GRP")
+                idx_path = os.path.join(game_dir, "SC.IDX")
+                offsets = []
+                grp_data = bytearray()
+                for section in self._sc_grp_pending:
+                    offsets.append(len(grp_data))
+                    grp_data.extend(section)
+                offsets.append(len(grp_data))
+                with open(grp_path, 'wb') as f: f.write(bytes(grp_data))
+                with open(idx_path, 'wb') as f:
+                    for off in offsets: f.write(struct.pack('<I', off))
+                self._sc_grp_pending = None
+            except Exception as e:
+                errors.append(f"SC.GRP/IDX: {e}")
+        if errors:
+            QMessageBox.critical(self, "保存失败", '\n'.join(errors))
+        else:
+            self._dirty = False
+            self._script_dirty = False
+            self.status_var.setText(f"已保存到存档 {self._save_path} 槽位{self._save_slot}")
 
     def _export_tksmod(self):
         """导出当前修改为 .tksmod MOD 文件 (TKMat + TKDefUnit + TKD 三文件联动)"""
@@ -4407,7 +4648,7 @@ class MatEditorApp(QMainWindow):
             current_du = [[r.get(f'f{i}', 0) for i in range(8)] for r in self.defunit_recs]
             du_diff = diff_records(self._original_defunit_recs, current_du, 8, len(self._original_defunit_recs))
             if du_diff['modified'] or du_diff['appended']:
-                du_path = os.path.join(os.path.dirname(self.dat_path), "TKDefUnit.Dat")
+                du_path = os.path.join(self._get_game_dir(), "TKDefUnit.Dat")
                 crc = compute_crc32(du_path) if os.path.exists(du_path) else "0x00000000"
                 du_json = build_data_diff_json(target="TKDefUnit.Dat", record_size=DEFUNIT_REC_SIZE, field_type="uint16",
                     field_count=8, original_count=len(self._original_defunit_recs), original_crc32=crc, diff_result=du_diff)
@@ -4423,7 +4664,7 @@ class MatEditorApp(QMainWindow):
             }
             tkd_diff = diff_text_defines(self._original_tkd_defines, current_tkd)
             if tkd_diff['modified'] or tkd_diff['appended'] or tkd_diff['deleted']:
-                tkd_path = os.path.join(os.path.dirname(self.dat_path), "TKD.dat")
+                tkd_path = os.path.join(self._get_game_dir(), "TKD.dat")
                 crc = compute_crc32(tkd_path) if os.path.exists(tkd_path) else "0x00000000"
                 tkd_json = build_text_diff_json(target="TKD.dat", original_crc32=crc, diff_result=tkd_diff)
                 data_files["data/TKD.dat.json"] = tkd_json
@@ -4630,7 +4871,7 @@ class MatEditorApp(QMainWindow):
                     du_entries.append({"index": du_idx, "fields": fields})
 
             if du_entries:
-                du_path = os.path.join(os.path.dirname(self.dat_path), "TKDefUnit.Dat")
+                du_path = os.path.join(self._get_game_dir(), "TKDefUnit.Dat")
                 crc = compute_crc32(du_path) if os.path.exists(du_path) else "0x00000000"
                 original_du_count = len(self.defunit_recs)
                 du_json = build_data_diff_json(
@@ -4650,7 +4891,7 @@ class MatEditorApp(QMainWindow):
                     tkd_modified[did_str] = '\r\n'.join([dd['header_line']] + dd['body_lines'])
 
             if tkd_modified:
-                tkd_path = os.path.join(os.path.dirname(self.dat_path), "TKD.dat")
+                tkd_path = os.path.join(self._get_game_dir(), "TKD.dat")
                 crc = compute_crc32(tkd_path) if os.path.exists(tkd_path) else "0x00000000"
                 tkd_json = build_text_diff_json(target="TKD.dat", original_crc32=crc,
                     diff_result={'modified': tkd_modified, 'appended': [], 'deleted': []})
@@ -4659,7 +4900,7 @@ class MatEditorApp(QMainWindow):
 
         # ── 8. 直接导出 SC.GRP 场景区段（不做差异比对）──
         if self.dat_path:
-            game_dir = os.path.dirname(self.dat_path)
+            game_dir = self._get_game_dir()
             grp_path = os.path.join(game_dir, "SC.GRP")
             idx_path = os.path.join(game_dir, "SC.IDX")
             if os.path.exists(grp_path) and os.path.exists(idx_path):
@@ -5696,7 +5937,7 @@ class MatEditorApp(QMainWindow):
         sc_grp_section = None
         sc_idx_data = None
         if self.dat_path:
-            d = os.path.dirname(self.dat_path)
+            d = self._get_game_dir()
             grp_path = os.path.join(d, "SC.GRP")
             idx_path = os.path.join(d, "SC.IDX")
             if os.path.exists(grp_path) and os.path.exists(idx_path):
