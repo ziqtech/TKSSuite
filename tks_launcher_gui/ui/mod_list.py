@@ -1,25 +1,30 @@
-"""MOD 列表面板 — 以表格显示 mods/ 目录中的 .tksmod 文件，支持启用/禁用"""
+"""模组列表面板 — 以表格显示 mods/ 目录中的 .tksmod 文件，支持启用/禁用"""
+import os
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
-    QTableWidget, QTableWidgetItem, QAbstractItemView, QTextEdit,
-    QHeaderView, QSplitter,
+    QTableWidget, QTableWidgetItem, QAbstractItemView,
+    QHeaderView,
 )
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 
 from editor_utils.dock_components import create_dock
 from core.mod_loader import scan_mods, ModInfo
 
-_COLUMNS = ["启用", "名称", "ID", "版本", "作者", "描述"]
+_COLUMNS = ["启用", "文件名", "模组名称", "ID", "版本", "作者", "描述"]
 _COL_ENABLE = 0
-_COL_NAME = 1
-_COL_ID = 2
-_COL_VERSION = 3
-_COL_AUTHOR = 4
-_COL_DESC = 5
+_COL_FILENAME = 1
+_COL_NAME = 2
+_COL_ID = 3
+_COL_VERSION = 4
+_COL_AUTHOR = 5
+_COL_DESC = 6
 
 
 class ModListWidget(QWidget):
-    """MOD 列表面板，嵌入主窗口左侧"""
+    """模组列表面板，嵌入主窗口。选中行时发出 mod_selected 信号。"""
+
+    # 选中模组时发出（None 表示无选中），供独立的模组信息预览面板订阅
+    mod_selected = Signal(object)
 
     def __init__(self, mods_dir: str = "mods", parent=None):
         super().__init__(parent)
@@ -36,11 +41,6 @@ class ModListWidget(QWidget):
         body.setContentsMargins(0, 0, 0, 0)
         body.setSpacing(0)
 
-        # 表格 + 详情 用垂直分割, 详情高度可拖动调整
-        split = QSplitter(Qt.Vertical)
-        split.setHandleWidth(4)
-        split.setChildrenCollapsible(False)
-
         # 表格
         self._table = QTableWidget(0, len(_COLUMNS))
         self._table.setHorizontalHeaderLabels(_COLUMNS)
@@ -52,27 +52,17 @@ class ModListWidget(QWidget):
 
         h = self._table.horizontalHeader()
         h.setSectionResizeMode(_COL_ENABLE, QHeaderView.ResizeToContents)
+        h.setSectionResizeMode(_COL_FILENAME, QHeaderView.Interactive)
         h.setSectionResizeMode(_COL_NAME, QHeaderView.Interactive)
         h.setSectionResizeMode(_COL_ID, QHeaderView.Interactive)
         h.setSectionResizeMode(_COL_VERSION, QHeaderView.ResizeToContents)
         h.setSectionResizeMode(_COL_AUTHOR, QHeaderView.Interactive)
         h.setSectionResizeMode(_COL_DESC, QHeaderView.Stretch)
+        self._table.setColumnWidth(_COL_FILENAME, 160)
         self._table.setColumnWidth(_COL_NAME, 140)
-        self._table.setColumnWidth(_COL_ID, 100)
+        self._table.setColumnWidth(_COL_ID, 150)
         self._table.setColumnWidth(_COL_AUTHOR, 100)
-        split.addWidget(self._table)
-
-        # 详情
-        self._detail = QTextEdit()
-        self._detail.setReadOnly(True)
-        self._detail.setMinimumHeight(40)
-        self._detail.setPlaceholderText("选中 MOD 查看详情")
-        split.addWidget(self._detail)
-
-        split.setStretchFactor(0, 1)
-        split.setStretchFactor(1, 0)
-        split.setSizes([1000, 72])
-        body.addWidget(split)
+        body.addWidget(self._table)
 
         # DockHeader 右侧操作按钮
         header_row = QHBoxLayout()
@@ -85,16 +75,17 @@ class ModListWidget(QWidget):
         self.btn_refresh.clicked.connect(self.refresh_mods)
         header_row.addWidget(self.btn_refresh)
 
-        outer.addWidget(create_dock("MOD 列表", content, header_layout=header_row))
+        outer.addWidget(create_dock("模组列表", content, header_layout=header_row))
 
         # 初始加载
         self.refresh_mods()
-
 
     def refresh_mods(self):
         """重新扫描 mods 目录"""
         self._table.setRowCount(0)
         self._mods = scan_mods(self._mods_dir)
+        # 默认按 MOD ID 排序（不区分大小写）
+        self._mods.sort(key=lambda m: m.mod_id.lower())
 
         self._table.setRowCount(len(self._mods))
         for row, mod in enumerate(self._mods):
@@ -104,6 +95,7 @@ class ModListWidget(QWidget):
             enable_item.setCheckState(Qt.Checked if mod.enabled else Qt.Unchecked)
             self._table.setItem(row, _COL_ENABLE, enable_item)
 
+            self._set_text(row, _COL_FILENAME, os.path.basename(mod.path))
             self._set_text(row, _COL_NAME, mod.name)
             self._set_text(row, _COL_ID, mod.mod_id)
             self._set_text(row, _COL_VERSION, mod.version)
@@ -121,9 +113,6 @@ class ModListWidget(QWidget):
                 if it is not None:
                     it.setToolTip(tip)
 
-        self._detail.setPlainText(
-            f"目录: {self._mods_dir}\n共 {len(self._mods)} 个 MOD")
-
     def _set_text(self, row: int, col: int, text: str):
         item = QTableWidgetItem(text)
         item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
@@ -131,33 +120,13 @@ class ModListWidget(QWidget):
 
     def _on_current_changed(self, current, previous):
         if current is None:
-            self._detail.setPlainText("")
+            self.mod_selected.emit(None)
             return
         row = current.row()
         if row < 0 or row >= len(self._mods):
-            self._detail.setPlainText("")
+            self.mod_selected.emit(None)
             return
-        mod = self._mods[row]
-        lines = [
-            f"名称: {mod.name}",
-            f"ID: {mod.mod_id}",
-            f"版本: {mod.version}",
-            f"作者: {mod.author}",
-            f"类型: {mod.mod_type} / {mod.mode}",
-            f"加载顺序: {mod.load_order}",
-            f"描述: {mod.description}",
-        ]
-        if mod.dependencies:
-            lines.append(f"依赖: {', '.join(mod.dependencies)}")
-        if mod.conflicts:
-            lines.append(f"冲突: {', '.join(mod.conflicts)}")
-        if mod.warpc_expand:
-            lines.append(f"WarPC 扩展到: {mod.warpc_expand} 角色")
-        if mod.id_ranges:
-            ranges = [f"  {k}: {v.get('start',0)}-{v.get('end',0)}"
-                      for k, v in mod.id_ranges.items()]
-            lines.append("ID 范围:\n" + "\n".join(ranges))
-        self._detail.setPlainText("\n".join(lines))
+        self.mod_selected.emit(self._mods[row])
 
     def get_enabled_mods(self) -> list[ModInfo]:
         """获取所有勾选启用的 MOD 列表"""

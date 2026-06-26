@@ -3,7 +3,7 @@ import os
 import sys
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QToolBar, QSplitter, QPushButton,
-    QStatusBar, QLabel, QFileDialog, QMessageBox,
+    QStatusBar, QLabel, QFileDialog, QMessageBox, QWidget, QVBoxLayout,
 )
 from PySide6.QtCore import Qt, QSize
 from PySide6.QtGui import QIcon
@@ -14,10 +14,13 @@ from editor_utils.window_theme import apply_godot_theme
 from core.config_loader import load_config, PatchDef
 from ui.patch_list import PatchListWidget
 from ui.mod_list import ModListWidget
+from ui.mod_info_preview import ModInfoPreviewWidget
 from ui.log_console import LogConsole
 from ui.game_overlay import GameOverlay
 from ui.mod_packer_dialog import ModPackerDialog
+from ui.mod_meta_editor_dialog import ModMetaEditorDialog
 from workers.patcher_worker import PatcherWorker
+from editor_utils.dock_components import DockHeader
 
 # 确定启动器根目录（打包 exe 或开发模式）
 if getattr(sys, 'frozen', False):
@@ -30,7 +33,7 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("TKS Mod Launcher")
-        self.resize(1050, 720)
+        self.resize(1400, 900)
         self.setMinimumSize(800, 500)
 
         # 窗口图标
@@ -74,6 +77,11 @@ class MainWindow(QMainWindow):
         self.btn_pack.clicked.connect(self._on_pack_mod)
         toolbar.addWidget(self.btn_pack)
 
+        self.btn_edit_meta = QPushButton("✏️ MOD 信息编辑")
+        self.btn_edit_meta.setToolTip("加载 .tksmod 编辑元数据后保存（不改 MOD 内容）")
+        self.btn_edit_meta.clicked.connect(self._on_edit_mod_meta)
+        toolbar.addWidget(self.btn_edit_meta)
+
         self.btn_theme = QPushButton("🌗 切换主题")
         self.btn_theme.clicked.connect(self._toggle_theme)
         toolbar.addWidget(self.btn_theme)
@@ -88,24 +96,45 @@ class MainWindow(QMainWindow):
         splitter = QSplitter(Qt.Horizontal)
         self.setCentralWidget(splitter)
 
-        # 左侧面板: 补丁列表 + MOD 列表（垂直分割）
-        left_splitter = QSplitter(Qt.Vertical)
-
+        # 左侧: 补丁列表
         self.patch_list = PatchListWidget(self._patches)
-        left_splitter.addWidget(self.patch_list)
+        self.patch_list.setMinimumWidth(300)
+        splitter.addWidget(self.patch_list)
 
-        # 使用启动器目录下的 mods 目录
+        # 中间: 模组列表 + 模组信息（垂直分割，互相独立）
         mods_dir = os.path.join(_LAUNCHER_DIR, "mods")
         self.mod_list = ModListWidget(mods_dir)
-        left_splitter.addWidget(self.mod_list)
+        self.mod_list.setMinimumWidth(400)
+        self.mod_preview = ModInfoPreviewWidget()
+        self.mod_preview.set_default_height(self.patch_list.optional_default_height)
+        # 选中模组时更新预览
+        self.mod_list.mod_selected.connect(self.mod_preview.show_mod)
 
-        left_splitter.setSizes([360, 540])
-        splitter.addWidget(left_splitter)
+        middle = QSplitter(Qt.Vertical)
+        middle.setHandleWidth(4)
+        middle.setChildrenCollapsible(False)
+        middle.addWidget(self.mod_list)
+        middle.addWidget(self.mod_preview)
+        middle.setStretchFactor(0, 1)
+        middle.setStretchFactor(1, 0)
+        middle.setSizes([1000, self.patch_list.optional_default_height])
+        splitter.addWidget(middle)
 
+        # 右侧: 日志控制台（带 DockHeader）
         self.log_console = LogConsole()
-        splitter.addWidget(self.log_console)
+        log_wrap = QWidget()
+        log_lay = QVBoxLayout(log_wrap)
+        log_lay.setContentsMargins(0, 0, 0, 0)
+        log_lay.setSpacing(0)
+        log_lay.addWidget(DockHeader("启动日志"))
+        log_lay.addWidget(self.log_console, 1)
+        splitter.addWidget(log_wrap)
 
-        splitter.setSizes([580, 520])
+        # 中间/右侧可伸缩（窗口最大化时自适应），左侧按内容固定宽度
+        splitter.setSizes([380, 550, 520])
+        splitter.setStretchFactor(0, 0)
+        splitter.setStretchFactor(1, 1)
+        splitter.setStretchFactor(2, 1)
 
     def _setup_statusbar(self):
         self.status_bar = QStatusBar()
@@ -196,6 +225,14 @@ class MainWindow(QMainWindow):
         dialog = ModPackerDialog(mods_dir=mods_dir, parent=self)
         dialog.exec()
         # 打包完成后刷新 MOD 列表
+        self.mod_list.refresh_mods()
+
+    def _on_edit_mod_meta(self):
+        """打开 MOD 元数据编辑对话框"""
+        mods_dir = os.path.join(_LAUNCHER_DIR, "mods")
+        dialog = ModMetaEditorDialog(mods_dir=mods_dir, parent=self)
+        dialog.exec()
+        # 保存后刷新 MOD 列表（元数据可能已变更）
         self.mod_list.refresh_mods()
 
     def closeEvent(self, event):

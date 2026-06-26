@@ -382,3 +382,65 @@ def suggest_output_name(mod_paths: List[str], metadata: Dict[str, Any]) -> str:
         base = os.path.splitext(os.path.basename(mod_paths[0]))[0]
         return f"{base}_pack.tksmod"
     return "merged_mod.tksmod"
+
+
+def rewrite_mod_metadata(mod_path: str, new_metadata: Dict[str, Any],
+                         output_path: Optional[str] = None,
+                         log_func=None) -> Tuple[bool, str]:
+    """重写 .tksmod 的元数据，保留所有数据/资源内容不变。
+
+    在原始 mod.json 的基础上仅更新 new_metadata 中给出的字段，其余字段
+    （含 components、resources、id_ranges、warpc_expand、created 等）原样保留；
+    data/* 与 resources/* 文件以字节级复制，确保 MOD 内容不被改动。
+
+    Args:
+        mod_path: 源 .tksmod 文件路径
+        new_metadata: 要更新的元数据字段字典
+        output_path: 输出路径；None 表示覆盖原文件
+        log_func: 日志回调
+
+    Returns:
+        (success, message)
+    """
+    log = log_func or (lambda x: None)
+
+    if not os.path.isfile(mod_path):
+        return False, f"文件不存在: {mod_path}"
+
+    content = read_tksmod_content(mod_path)
+    if not content.valid:
+        return False, f"无法读取: {content.error}"
+
+    # 在原始 mod.json 基础上更新元数据，保留所有未提及字段
+    mod_json = dict(content.mod_json)
+    mod_json.update(new_metadata)
+    # 强制保留格式标识（防止被 new_metadata 误覆盖）
+    mod_json["format"] = content.mod_json.get("format", "TKSMOD")
+    mod_json["format_version"] = content.mod_json.get("format_version", 1)
+
+    if output_path is None:
+        output_path = mod_path
+
+    # 写入临时文件再替换，避免覆盖源文件时出错
+    tmp_path = output_path + ".tmp"
+    try:
+        with zipfile.ZipFile(mod_path, 'r') as src_zf, \
+                zipfile.ZipFile(tmp_path, 'w', zipfile.ZIP_DEFLATED) as dst_zf:
+            # 先写新的 mod.json
+            dst_zf.writestr("mod.json",
+                            json.dumps(mod_json, ensure_ascii=False, indent=2))
+            # 原样复制其余所有条目（数据 + 资源，字节级保留）
+            for item in src_zf.infolist():
+                if item.filename == "mod.json":
+                    continue
+                dst_zf.writestr(item, src_zf.read(item.filename))
+        os.replace(tmp_path, output_path)
+        log(f"  已保存元数据: {output_path}")
+        return True, "保存成功"
+    except Exception as e:
+        if os.path.isfile(tmp_path):
+            try:
+                os.remove(tmp_path)
+            except OSError:
+                pass
+        return False, f"保存失败: {e}"
