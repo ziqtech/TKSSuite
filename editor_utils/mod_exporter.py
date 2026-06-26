@@ -16,6 +16,7 @@ import json
 import zlib
 import zipfile
 import copy
+import uuid
 from datetime import datetime, timezone, timedelta
 from typing import Any
 
@@ -311,6 +312,18 @@ def build_text_diff_json(target: str, original_crc32: str,
 # MOD 元数据对话框
 # ═══════════════════════════════════════════════════════════════
 
+def generate_short_uuid(length: int = 16) -> str:
+    """生成不含 '-' 的短 UUID（取 uuid4 十六进制前 length 位）。
+
+    Args:
+        length: 返回字符数，默认 16
+
+    Returns:
+        不含 '-' 的大写十六进制字符串，如 'A1B2C3D4E5F67890'
+    """
+    return uuid.uuid4().hex[:length].upper()
+
+
 class ModMetadataDialog(QDialog):
     """MOD 元数据输入对话框，用于首次导出时收集信息。"""
 
@@ -330,9 +343,14 @@ class ModMetadataDialog(QDialog):
 
         row = 0
         grid.addWidget(QLabel("MOD ID *:"), row, 0)
-        self.edit_id = QLineEdit(defaults.get("id", ""))
-        self.edit_id.setPlaceholderText("唯一标识符, 如 my_balance_mod")
-        grid.addWidget(self.edit_id, row, 1)
+        id_row = QHBoxLayout()
+        self.edit_id = QLineEdit(defaults.get("id", "") or generate_short_uuid())
+        self.edit_id.setPlaceholderText("唯一标识符, 可手动修改或重新生成")
+        id_row.addWidget(self.edit_id)
+        self.btn_regen_id = QPushButton("重新生成")
+        self.btn_regen_id.clicked.connect(self._regen_id)
+        id_row.addWidget(self.btn_regen_id)
+        grid.addLayout(id_row, row, 1)
 
         row += 1
         grid.addWidget(QLabel("名称 *:"), row, 0)
@@ -420,6 +438,11 @@ class ModMetadataDialog(QDialog):
 
     def get_metadata(self) -> dict:
         return self.metadata
+
+    def _regen_id(self):
+        """重新生成默认 MOD ID（不影响已手动修改的内容，直接覆盖）。"""
+        self.edit_id.setText(generate_short_uuid())
+        self.edit_id.setFocus()
 
 
 # ═══════════════════════════════════════════════════════════════
