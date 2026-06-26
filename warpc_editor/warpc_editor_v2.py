@@ -712,7 +712,7 @@ class GrowthTableDialog(QDialog):
 
     STAT_LABELS = ["HP", "MP", "攻击", "防御", "命中", "闪避", "速度"]
 
-    def __init__(self, parent, rec, char_name, tkt_names=None, grp=0):
+    def __init__(self, parent, rec, char_name, tkt_names=None, grp=0, is_dark=True):
         super().__init__(parent)
         self.setWindowTitle(f"成长数据表 — {char_name}")
         self.resize(1100, 800)
@@ -721,6 +721,22 @@ class GrowthTableDialog(QDialog):
         self._f = rec['fields']
         self._tkt = tkt_names or {}
         self._grp = grp
+
+        # 应用主题样式表
+        ThemeManager.apply_theme(self, 'dark' if is_dark else 'light')
+        self._is_dark_init = is_dark
+
+        # 主题颜色 (与 editor_themes 色板对齐)
+        if is_dark:
+            self._CLR_CUR_BG   = QColor("#2a5090")   # 当前等级行背景
+            self._CLR_CUR_FG   = QColor("#ffffff")   # 当前等级行文字
+            self._CLR_DELTA    = QColor("#55b572")   # Δ增量 (取自 dark.qss PreviewDesc)
+            self._CLR_GRP      = QColor("#e8a040")   # grp最终属性
+        else:
+            self._CLR_CUR_BG   = QColor("#478cbf")   # 当前等级行背景 (light 强调色)
+            self._CLR_CUR_FG   = QColor("#ffffff")   # 当前等级行文字
+            self._CLR_DELTA    = QColor("#2d7a2d")   # Δ增量 (深绿)
+            self._CLR_GRP      = QColor("#cc7a20")   # grp最终属性 (深橙)
 
         # 读取当前数据
         self._cur_level = max(1, self._f[2])
@@ -872,47 +888,43 @@ class GrowthTableDialog(QDialog):
         self._grp_spin.valueChanged.connect(self._update_grp_summary)
         grp_row.addWidget(self._grp_spin)
         grp_row.addSpacing(20)
-        grp_row.addWidget(QLabel("目标等级:"))
-        self._target_lv_spin = QSpinBox()
-        self._target_lv_spin.setRange(1, self.MAX_LEVEL)
-        self._target_lv_spin.setValue(min(self._cur_level, self.MAX_LEVEL))
-        self._target_lv_spin.valueChanged.connect(self._update_grp_summary)
-        grp_row.addWidget(self._target_lv_spin)
-        grp_row.addSpacing(20)
-        self._grp_formula_lbl = QLabel("")
+        self._grp_formula_lbl = QLabel(
+            "<i>grp=0: 仅显示等级成长数据; 设为 1+ 可查看敌方加成后的最终属性</i>")
         self._grp_formula_lbl.setWordWrap(True)
         grp_row.addWidget(self._grp_formula_lbl, 1)
         layout.addWidget(grp_frame)
 
-        # ── grp 加成结果表 ──
-        self._grp_table = QTableWidget(7, 4)
-        self._grp_table.setHorizontalHeaderLabels(
-            ["属性", "成长后基础", "grp加成值", "最终属性"])
-        self._grp_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
-        self._grp_table.verticalHeader().setVisible(False)
-        self._grp_table.setAlternatingRowColors(True)
-        self._grp_table.setFont(QFont("Consolas", 9))
-        self._grp_table.setColumnWidth(0, 80)
-        self._grp_table.setColumnWidth(1, 120)
-        self._grp_table.setColumnWidth(2, 120)
-        self._grp_table.setColumnWidth(3, 120)
-        self._grp_table.setMaximumHeight(220)
-        layout.addWidget(self._grp_table)
-
-        # 表格
-        col_headers = ["等级", "成长率", "HP", "Δ", "MP", "Δ",
-                        "攻击", "Δ", "防御", "Δ", "命中", "Δ",
-                        "闪避", "Δ", "速度", "Δ"]
-        self._growth_table = QTableWidget(len(self._table_data), len(col_headers))
-        self._growth_table.setHorizontalHeaderLabels(col_headers)
+        # 表格 (16 基础列 + 7 grp 最终列)
+        self._BASE_COLS = ["等级", "成长率", "HP", "Δ", "MP", "Δ",
+                            "攻击", "Δ", "防御", "Δ", "命中", "Δ",
+                            "闪避", "Δ", "速度", "Δ"]
+        self._GRP_COLS = ["HP★", "MP★", "攻击★", "防御★",
+                           "命中★", "闪避★", "速度★"]
+        all_cols = self._BASE_COLS + self._GRP_COLS
+        self._growth_table = QTableWidget(len(self._table_data), len(all_cols))
+        self._growth_table.setHorizontalHeaderLabels(all_cols)
         self._growth_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self._growth_table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self._growth_table.verticalHeader().setVisible(False)
         self._growth_table.setAlternatingRowColors(True)
+        # 修复深色模式下交替行背景色 (QSS 不覆盖 palette 的 AlternateBase)
+        if self._is_dark_init:
+            self._growth_table.setStyleSheet(
+                "QTableWidget::item { background-color: #1a1e27; }"
+                "QTableWidget::item:alternate { background-color: #202531; }"
+                "QTableWidget::item:selected { background-color: #478cbf; color: #ffffff; }")
+        else:
+            self._growth_table.setStyleSheet(
+                "QTableWidget::item { background-color: #ffffff; }"
+                "QTableWidget::item:alternate { background-color: #f5f5f5; }"
+                "QTableWidget::item:selected { background-color: #478cbf; color: #ffffff; }")
         self._growth_table.setFont(QFont("Consolas", 9))
         # 列宽
-        for ci in range(len(col_headers)):
-            self._growth_table.setColumnWidth(ci, 52 if ci > 0 else 45)
+        for ci in range(len(all_cols)):
+            self._growth_table.setColumnWidth(ci, 58 if ci >= 16 else (52 if ci > 0 else 45))
+        # 初始隐藏 grp 列
+        for ci in range(16, 23):
+            self._growth_table.setColumnHidden(ci, True)
         self._populate_table()
         layout.addWidget(self._growth_table, 1)
 
@@ -927,7 +939,7 @@ class GrowthTableDialog(QDialog):
         font_bold = QFont("Consolas", 9, QFont.Bold)
         for row, d in enumerate(self._table_data):
             is_cur = d['is_current']
-            bg = QColor("#2a5090") if is_cur else None
+            bg = self._CLR_CUR_BG if is_cur else None
             items = [str(d['level']), str(d['divisor'])]
             for si in range(7):
                 items.append(str(d['stats'][si]))
@@ -939,9 +951,9 @@ class GrowthTableDialog(QDialog):
                 if is_cur:
                     item.setFont(font_bold)
                     item.setBackground(bg)
-                    item.setForeground(QColor("#ffffff"))
+                    item.setForeground(self._CLR_CUR_FG)
                 elif ci in (3, 5, 7, 9, 11, 13, 15) and d['level'] > 1:
-                    item.setForeground(QColor("#88aa88"))
+                    item.setForeground(self._CLR_DELTA)
                 self._growth_table.setItem(row, ci, item)
         # 滚动到当前等级
         for row, d in enumerate(self._table_data):
@@ -968,90 +980,72 @@ class GrowthTableDialog(QDialog):
                     row.append(d['stats'][si])
                     row.append(d['deltas'][si])
                 w.writerow(row)
-            # grp 加成摘要
+            # grp 加成摘要 (每一级的最终值)
             grp = self._grp_spin.value()
-            target_lv = self._target_lv_spin.value()
             if grp > 0:
                 w.writerow([])
-                w.writerow([f'grp={grp} 目标等级={target_lv} (sub_4302D8)'])
-                w.writerow(['属性', '成长后基础', 'grp加成', '最终属性'])
-                if 1 <= target_lv <= len(self._table_data):
-                    base = self._table_data[target_lv - 1]['stats']
-                else:
-                    base = self._table_data[-1]['stats']
+                w.writerow([f'grp={grp} 各级最终属性 (sub_4302D8)'])
+                grp_h = ['等级'] + [f'{l}最终' for l in self.STAT_LABELS]
+                w.writerow(grp_h)
                 grp_divs = [1, 4, 8, 8, 12, 12, 0]
-                for i, label in enumerate(self.STAT_LABELS):
-                    bonus = grp * base[i] // grp_divs[i] if grp_divs[i] else grp * target_lv // 10
-                    final = base[i] + bonus
-                    if i < 2:
-                        final = min(final, self.STAT_CAP_HPMP_ENEMY)
-                    w.writerow([label, base[i], f'+{bonus}', final])
+                cap = self.STAT_CAP_HPMP_ENEMY
+                for d in self._table_data:
+                    lv = d['level']; base = d['stats']
+                    row_g = [lv]
+                    for i in range(7):
+                        bonus = (grp * base[i] // grp_divs[i]
+                                 if grp_divs[i] else grp * lv // 10)
+                        v = base[i] + bonus
+                        if i < 2: v = min(v, cap)
+                        row_g.append(v)
+                    w.writerow(row_g)
         QMessageBox.information(self, "导出成功",
             f"已导出 {self._char_name} 成长数据至:\n{fp}")
 
     # ── grp 加成计算 (sub_4302D8:53-62) ──
 
     def _update_grp_summary(self):
-        """根据 grp 和目标等级计算并刷新加成结果表"""
+        """根据 grp 值切换成长表中的 grp 列并填充各级最终属性"""
         grp = self._grp_spin.value()
-        target_lv = self._target_lv_spin.value()
 
-        # 取目标等级的成长后属性 (Phase 1)
-        if 1 <= target_lv <= len(self._table_data):
-            base_at_lv = list(self._table_data[target_lv - 1]['stats'])
-        else:
-            base_at_lv = list(self._table_data[-1]['stats'])
-
-        # grp 加成公式 (sub_4302D8:55-61)
-        # divisors for each stat: HP=1, MP=4, ATK=8, DEF=8, HIT=12, EVA=12, SPD=special
-        grp_divs = [1, 4, 8, 8, 12, 12, 0]  # 0=SPD special
-        bonuses = []
-        for i in range(6):
-            bonuses.append(grp * base_at_lv[i] // grp_divs[i] if grp_divs[i] > 0 else 0)
-        bonuses.append(grp * target_lv // 10)  # SPD
-
-        # Final = base + bonus, cap HP/MP at 20000 (sub_4302D8:63-66)
-        cap = self.STAT_CAP_HPMP_ENEMY
-        finals = []
-        for i in range(7):
-            v = base_at_lv[i] + bonuses[i]
-            if i < 2:
-                v = min(v, cap)
-            finals.append(v)
+        # 显示/隐藏 grp 列 (col 16-22)
+        for ci in range(16, 23):
+            self._growth_table.setColumnHidden(ci, grp == 0)
 
         # 更新公式标签
         if grp > 0:
+            cap = self.STAT_CAP_HPMP_ENEMY
             self._grp_formula_lbl.setText(
-                f"<b>Phase 2</b> (sub_4302D8): "
+                f"<b>grp={grp}</b> (sub_4302D8): "
+                f"★列 = 成长值 + grp加成  "
                 f"HP×{grp+1}(cap {cap})  MP+{grp}×MP/4  "
                 f"ATK/DEF+{grp}/8  HIT/EVA+{grp}/12  SPD+{grp}×Lv/10")
         else:
             self._grp_formula_lbl.setText(
-                "<i>grp=0: 普通士兵, 无加成 (可被选为增援)</i>")
+                "<i>grp=0: 仅显示等级成长数据; "
+                "设为 1+ 可查看敌方加成后的最终属性</i>")
+            return  # grp=0 时不需要填充
 
-        # 填充 grp 结果表
-        for row_i, label in enumerate(self.STAT_LABELS):
-            self._grp_table.setItem(row_i, 0, self._make_cell(label))
-            self._grp_table.setItem(row_i, 1,
-                self._make_cell(str(base_at_lv[row_i])))
-            bonus_val = bonuses[row_i]
-            bonus_txt = f"+{bonus_val}" if bonus_val > 0 else str(bonus_val)
-            self._grp_table.setItem(row_i, 2,
-                self._make_cell(bonus_txt,
-                    fg=QColor("#e8a040") if bonus_val > 0 else None))
-            self._grp_table.setItem(row_i, 3,
-                self._make_cell(str(finals[row_i]),
-                    fg=QColor("#ff6060") if grp > 0 else None,
-                    bold=True))
+        # 填充各级 grp 最终属性 (每行用该级自己的成长值 + 该级自己的 level)
+        grp_divs = [1, 4, 8, 8, 12, 12, 0]
+        cap = self.STAT_CAP_HPMP_ENEMY
+        font_bold = QFont("Consolas", 9, QFont.Bold)
 
-    def _make_cell(self, text, fg=None, bold=False):
-        item = QTableWidgetItem(str(text))
-        item.setTextAlignment(Qt.AlignCenter)
-        if fg:
-            item.setForeground(fg)
-        if bold:
-            item.setFont(QFont("Consolas", 9, QFont.Bold))
-        return item
+        for row, d in enumerate(self._table_data):
+            lv = d['level']
+            base = d['stats']
+            for si in range(7):
+                bonus = (grp * base[si] // grp_divs[si]
+                         if grp_divs[si] > 0
+                         else grp * lv // 10)
+                final = base[si] + bonus
+                if si < 2:
+                    final = min(final, cap)
+                item = QTableWidgetItem(str(final))
+                item.setTextAlignment(Qt.AlignCenter)
+                item.setForeground(self._CLR_GRP)
+                item.setFont(font_bold)
+                self._growth_table.setItem(row, 16 + si, item)
 
 # ═══════════════════════════════════════════════════════════════
 # 主编辑器窗口
@@ -2560,7 +2554,8 @@ class WarpcEditorV2(QMainWindow):
             return
         rec = self.records[self._editing_idx]
         char_name = self._char_name(rec)
-        dlg = GrowthTableDialog(self, rec, char_name, self.tkt)
+        dlg = GrowthTableDialog(self, rec, char_name, self.tkt,
+                                 is_dark=self._is_dark)
         dlg.exec()
 
     # ── 帮助 ──
