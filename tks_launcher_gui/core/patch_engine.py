@@ -156,6 +156,36 @@ CAVE_HISTORY_TEXT = bytes([
     0x8B, 0xD0, 0x83, 0xC4, 0x04, 0xC3,
 ])
 
+# 经验加成乘法溢出保护 Cave
+# 逆向依据: sub_43B7FC @0x43BA27 exp_bonus 计算
+# hook 点: mov edx,[eax]; movsx eax,word[ecx+3Eh]; imul edx,eax (9字节)
+# 原始指令被替换为 E8(call)+4xNOP, cave执行后 ret回 +9处 (add edx,99)
+# 逻辑:
+#   1. mov edx, [eax]              — 加载 *v19 (原始指令1)
+#   2. cmp edx, 30000             — 上界检查
+#   3. jle .cap_done              — 已在范围内则跳过
+#   4. mov edx, 30000             — 钳位到上限 (防止乘法溢出)
+#   5. test edx, edx              — 下界检查
+#   6. jns .no_neg                — 非负则跳过
+#   7. xor edx, edx               — 负值置零
+#   8. movsx eax, word[ecx+3Eh]   — 加载 exp_bonus (原始指令2)
+#   9. imul edx, eax              — 安全乘法 (max 30000*32767 < INT32_MAX)
+#  10. ret                        — 返回到 "add edx, 99"
+CAVE_EXP_BONUS_SAFE_MUL = bytes([
+    0x8B, 0x10,                                        # mov edx, [eax]
+    0x81, 0xFA, 0x30, 0x75, 0x00, 0x00,                # cmp edx, 7530h
+    0x7E, 0x05,                                        # jle .cap_done (+5)
+    0xBA, 0x30, 0x75, 0x00, 0x00,                      # mov edx, 7530h
+    # .cap_done:
+    0x85, 0xD2,                                        # test edx, edx
+    0x79, 0x02,                                        # jns .no_neg (+2)
+    0x33, 0xD2,                                        # xor edx, edx
+    # .no_neg:
+    0x0F, 0xBF, 0x41, 0x3E,                            # movsx eax, word[ecx+3Eh]
+    0x0F, 0xAF, 0xD0,                                  # imul edx, eax
+    0xC3,                                              # ret
+])
+
 _WARPC_BASE_PLACEHOLDER = 0x757F08
 
 # ============================================================
@@ -248,6 +278,7 @@ def build_cave_template(name: str, warpc_base: int, log_func=None) -> Optional[b
         "portrait2": CAVE_PORTRAIT2,
         "archive_portrait": CAVE_ARCHIVE_PORTRAIT,
         "history_text": CAVE_HISTORY_TEXT,
+        "exp_bonus_safe_mul": CAVE_EXP_BONUS_SAFE_MUL,
     }
     if name not in templates:
         log(f"    [WARN] 未知 cave 模板: {name}")
