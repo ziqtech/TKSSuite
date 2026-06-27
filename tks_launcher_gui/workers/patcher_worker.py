@@ -302,15 +302,9 @@ class PatcherWorker(QThread):
         config.variables["warpc_base"] = discovered_base
 
         # [补丁十八] 在原始代码上定位存档加载函数的 Move 调用 (必须在任何常量/地址修补之前)
-        _portrait_reinject_enabled = (self.selected_patches is None
-                                      or "portrait_reinject" in self.selected_patches)
-        _load_hook_rvas = []
-        if _portrait_reinject_enabled:
-            _load_hook_rvas = find_load_hook_points(
-                bytes(code_buf), discovered_base, WARPC_ORIG_SIZE, log_func=self._log
-            )
-        else:
-            self._log("\n  [补丁十八] 用户取消勾选, 跳过存档加载 hook")
+        _load_hook_rvas = find_load_hook_points(
+            bytes(code_buf), discovered_base, WARPC_ORIG_SIZE, log_func=self._log
+        )
 
         # [补丁十一] GUARD 区 + 分配 WarPC 缓冲区
         warpc_base_for_caves = 0
@@ -412,10 +406,6 @@ class PatcherWorker(QThread):
                                    warpc_base_for_caves if warpc_base_for_caves else discovered_base,
                                    log_func=self._log)
             patch_gold_display(target_pid, base_addr, log_func=self._log)
-
-            # [补丁十五] ENTER键修复已通过 tks_patches.json 中的 patch_bytes 自动应用
-            # 无需额外调用
-
             inject_warpc_data(target_pid, discovered_base, _warpc_expanded, log_func=self._log)
 
             # [补丁十八] 存档加载后自动重注入头像数据
@@ -471,13 +461,13 @@ class PatcherWorker(QThread):
 
         # 构建 portrait 看门狗数据 (用于游戏运行期间持续保护)
         _wd_params = None
-        if not self.minimal_mode and _portrait_reinject_enabled:
+        if not self.minimal_mode:
             _wd_params = self._build_portrait_watchdog_params(
                 target_pid,
                 warpc_base_for_caves if warpc_base_for_caves else discovered_base,
             )
 
-        # 等待游戏进程退出 (含 portrait 看门狗 + ENTER键看门狗)
+        # 等待游戏进程退出 (含 portrait 看门狗)
         # (游戏运行期间可能重新加载磁盘文件, 如 TitleMenu.gxp)
         self._log("\n等待游戏退出...")
         self.status_changed.emit("补丁已生效，等待游戏退出...", True)
@@ -546,6 +536,7 @@ class PatcherWorker(QThread):
     def _wait_game_exit_with_watchdog(self, tks_proc, target_pid: int, wd_params):
         """
         等待游戏进程退出, 同时运行 portrait 看门狗。
+        每 500ms 检测哨兵值, 若被清零则重新注入全部自定义头像数据。
         """
         pids_to_watch = set()
         if tks_proc and tks_proc.poll() is None:
@@ -559,7 +550,9 @@ class PatcherWorker(QThread):
         self._log(f"  监控进程: {pids_to_watch}")
         SYNCHRONIZE = 0x00100000
         WAIT_TIMEOUT = 258
-        POLL_INTERVAL = 0.5
+        POLL_INTERVAL = 0.5  # 500ms
+
+        reinject_count = 0
 
         while self._is_running:
             # --- 进程存活检查 ---
