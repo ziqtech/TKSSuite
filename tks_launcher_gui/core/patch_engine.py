@@ -717,8 +717,6 @@ def apply_config_patches(config: PatchConfig, code_buf: bytearray, code_start_ad
                                           cave_addr=cave_addr)
         elif defn.type == "runtime_watchdog":
             log(f"    -> 由运行时看门狗处理 (游戏运行期间持续监控)")
-        elif defn.type == "runtime_enter_key_fix":
-            log(f"    -> 由运行时动态修补处理 (patch_enter_key_fix)")
         else:
             log(f"  [WARN] 未知补丁类型: {defn.type}")
 
@@ -869,42 +867,6 @@ def patch_archive_portrait(cpid: int, base: int, cave_addr: int, warpc_base: int
 
     log(f"  共 hook {ptd} 处")
     _CloseHandle(hp)
-
-# ============================================================
-# [补丁十五] ENTER键全局禁用 — 数据段看门狗
-# ============================================================
-# Armadillo 壳保护使代码段 hook 无效, 改用 BSS 数据监控.
-# 游戏键盘输入存储在 dword_78E26E (abs addr 0x78E26E).
-# 看门狗以高频轮询该地址, 一旦检测到值=0x0D(ENTER)就立即覆写为0xFC(无效键码).
-# 返回看门狗参数字典, 由 patcher_worker 的等待循环执行.
-
-# 键码全局变量地址
-KEYCODE_ADDR = 0x78E26E
-ENTER_KEYCODE = 0x0D
-REPLACE_KEYCODE = 0xFC  # 游戏内无任何处理此键码
-
-
-def patch_enter_key_fix(cpid: int, base: int, code_buf: bytearray,
-                        code_start: int, log_func=None):
-    """
-    [补丁十五] ENTER键禁用 — 返回看门狗参数
-
-    不修改代码段 (被 Armadillo 壳保护), 改为持续监控 BSS 数据:
-    - 轮询 dword_78E26E (键码全局变量)
-    - 检测到 0x0D (ENTER) 立即覆写为 0xFC
-    - 通过 patcher_worker 的看门狗循环执行
-
-    返回: dict 或 None. dict 含 pid 和 target_addr 供看门狗使用.
-    """
-    log = log_func or (lambda x: None)
-    log("\n--- [补丁十五] ENTER键禁用 (数据段看门狗) ---")
-    log(f"  监控地址: 0x{KEYCODE_ADDR:08X} (dword_78E26E)")
-    log(f"  策略: 检测到值=0x{ENTER_KEYCODE:02X}(ENTER) → 立即覆写为 0x{REPLACE_KEYCODE:02X}")
-    log(f"  执行方式: 由 patcher_worker 看门狗循环高频轮询")
-    log("  ✓ 无需修改代码段, 不受 Armadillo 壳保护影响")
-    return {"pid": cpid, "addr": KEYCODE_ADDR,
-            "block_value": ENTER_KEYCODE, "replace_value": REPLACE_KEYCODE}
-
 
 # ============================================================
 # [补丁十七] 存档界面金钱显示修复

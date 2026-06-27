@@ -25,7 +25,6 @@ from core.patch_engine import (
     apply_config_patches,
     patch_4c33fc, patch_41c120, patch_archive_portrait, patch_gold_display,
     find_load_hook_points, hook_save_load_portrait,
-    patch_enter_key_fix,
 )
 from core.warpc_expander import (
     WARPC_BASE, WARPC_REC_SIZE, WARPC_ORIG_COUNT, WARPC_ORIG_SIZE,
@@ -414,15 +413,8 @@ class PatcherWorker(QThread):
                                    log_func=self._log)
             patch_gold_display(target_pid, base_addr, log_func=self._log)
 
-            # [补丁十五] ENTER键物品使用BUG修复 (数据段看门狗)
-            _enter_key_fix_enabled = (self.selected_patches is None
-                                      or "enter_key_item_fix" in self.selected_patches)
-            _enter_key_wd = None
-            if _enter_key_fix_enabled:
-                _enter_key_wd = patch_enter_key_fix(target_pid, base_addr, code_buf, code_start,
-                                                    log_func=self._log)
-            else:
-                self._log("\n  [补丁十五] 用户取消勾选, 跳过ENTER键修复")
+            # [补丁十五] ENTER键修复已通过 tks_patches.json 中的 patch_bytes 自动应用
+            # 无需额外调用
 
             inject_warpc_data(target_pid, discovered_base, _warpc_expanded, log_func=self._log)
 
@@ -489,8 +481,7 @@ class PatcherWorker(QThread):
         # (游戏运行期间可能重新加载磁盘文件, 如 TitleMenu.gxp)
         self._log("\n等待游戏退出...")
         self.status_changed.emit("补丁已生效，等待游戏退出...", True)
-        self._wait_game_exit_with_watchdog(tks_proc, target_pid, _wd_params,
-                                           enter_key_wd=_enter_key_wd)
+        self._wait_game_exit_with_watchdog(tks_proc, target_pid, _wd_params)
 
         if loaded_mods:
             restore_originals(game_dir or os.getcwd(), log_func=self._log)
@@ -552,10 +543,9 @@ class PatcherWorker(QThread):
             "sentinel_value": sentinel_value,
         }
 
-    def _wait_game_exit_with_watchdog(self, tks_proc, target_pid: int, wd_params,
-                                       enter_key_wd=None):
+    def _wait_game_exit_with_watchdog(self, tks_proc, target_pid: int, wd_params):
         """
-        等待游戏进程退出, 同时运行 portrait 看门狗和 ENTER键看门狗。
+        等待游戏进程退出, 同时运行 portrait 看门狗。
         """
         pids_to_watch = set()
         if tks_proc and tks_proc.poll() is None:
@@ -567,54 +557,31 @@ class PatcherWorker(QThread):
             return
 
         self._log(f"  监控进程: {pids_to_watch}")
-        if enter_key_wd:
-            self._log(f"  ENTER键看门狗已启动 (监控 @0x{enter_key_wd['addr']:08X})")
         SYNCHRONIZE = 0x00100000
         WAIT_TIMEOUT = 258
-        # 降低轮询间隔以提高 ENTER 键拦截响应速度
-        POLL_INTERVAL = 0.01 if enter_key_wd else 0.5  # 10ms vs 500ms
-        alive_check_counter = 0
+        POLL_INTERVAL = 0.5
 
         while self._is_running:
-            # --- 进程存活检查 (每 500ms 检查一次, 不是每次循环) ---
-            alive_check_counter += 1
-            if alive_check_counter >= int(0.5 / POLL_INTERVAL):
-                alive_check_counter = 0
-                alive = False
-                for pid in list(pids_to_watch):
-                    h = _OpenProcess(SYNCHRONIZE | 0x0400, False, pid)
-                    if h:
-                        ret = ctypes.windll.kernel32.WaitForSingleObject(h, 0)
-                        _CloseHandle(h)
-                        if ret == WAIT_TIMEOUT:
-                            alive = True
-                            break
-                if not alive:
-                    break
+            # --- 进程存活检查 ---
+            alive = False
+            for pid in list(pids_to_watch):
+                h = _OpenProcess(SYNCHRONIZE | 0x0400, False, pid)
+                if h:
+                    ret = ctypes.windll.kernel32.WaitForSingleObject(h, 0)
+                    _CloseHandle(h)
+                    if ret == WAIT_TIMEOUT:
+                        alive = True
+                        break
+            if not alive:
+                break
 
-            # --- ENTER键看门狗: 检测并屏蔽 ---
-            if enter_key_wd:
-                self._watchdog_block_enter_key(enter_key_wd)
-
-            # --- Portrait 看门狗: 哨兵检测 + 重注入 (仅每 500ms) ---
-            if wd_params and alive_check_counter == 0:
+            # --- Portrait 看门狗: 哨兵检测 + 重注入 ---
+            if wd_params:
                 self._watchdog_check_and_reinject(wd_params)
 
             time.sleep(POLL_INTERVAL)
 
         self._log("  游戏进程已退出。")
-
-    def _watchdog_block_enter_key(self, wd):
-        """检测 dword_78E26E==0x0D 并立即覆写为 0xFC"""
-        hp = _OpenProcess(PROCESS_VM_READ | PROCESS_VM_WRITE | 0x0008, False, wd["pid"])
-        if not hp:
-            return
-        buf, nr = read_pm(hp, wd["addr"], 4)
-        if nr >= 4:
-            val = int.from_bytes(buf[:4], 'little')
-            if val == wd["block_value"]:
-                write_pm(hp, wd["addr"], wd["replace_value"].to_bytes(4, 'little'))
-        _CloseHandle(hp)
 
     def _watchdog_check_and_reinject(self, wd):
         """
