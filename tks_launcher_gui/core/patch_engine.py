@@ -266,6 +266,57 @@ CAVE_SUMMON_RANDOM_222_251 = bytes([
 ])
 
 # ============================================================
+# Cave 模板: 武器 cause_mask -> TKKon inflict_status
+# 逆向依据: 注入点 sub_4400DC @0x4400F6 (TKKon拷贝后, 状态队列推送前)
+# hook: mov word [0x9E028A], 0 (9字节) -> E8 rel32 + 4xNOP
+# cave 末尾 ret 回 hook+5, 经4xNOP到 hook+9 继续
+# 逻辑:
+#   1. 读取 word_9D6F58 获取攻击者实体索引
+#   2. WarPC[attacker].offset_69 -> 装备武器 item_index
+#   3. TKItem[item_index].offset_26/27 -> cause_mask[1/2]
+#   4. OR 进 word_9D6C3C / word_9D6C3E
+#   5. 执行被替换指令 mov word [0x9E028A], 0
+# ============================================================
+CAVE_WEAPON_CAUSE_MASK = bytes([
+    # 保存寄存器
+    0x60,                                              #  0 pushad
+
+    # 读取攻击者实体索引 word_9D6F58
+    0x0F,0xBF,0x05,0x58,0x6F,0x9D,0x00,               #  1 movsx eax, [0x9D6F58]
+    0x66,0x85,0xC0,                                     #  8 test ax, ax
+    0x7C,0x3D,                                         # 11 jl .done (+61) — 负数跳过
+    0x3D,0x8F,0x00,0x00,0x00,                          # 13 cmp eax, 143
+    0x7D,0x36,                                         # 18 jge .done (+54) — 超范围跳过
+
+    # 计算 WarPC 字节偏移: eax * 1054
+    0x69,0xC0,0x1E,0x04,0x00,0x00,                     # 20 imul eax, eax, 1054
+    0x05,0x08,0x7F,0x75,0x00,                          # 26 add eax, WARPC_BASE (占位符, 自动重定位)
+
+    # 读取装备武器 item_index (字偏移69=字节偏移138=0x8A)
+    0x0F,0xBF,0x90,0x8A,0x00,0x00,0x00,                # 31 movsx edx, [eax + 138]
+
+    # 检查武器是否存在 (index != -1)
+    0x83,0xFA,0xFF,                                    # 38 cmp edx, -1
+    0x74,0x1F,                                         # 41 je .done (+31)
+
+    # 计算 TKItem 字节偏移: edx * 64
+    0xC1,0xE2,0x06,                                    # 43 shl edx, 6
+
+    # 读取 cause_mask[1] (TKItem[26]=字节偏移52), OR 进 word_9D6C3C
+    0x66,0x8B,0x82,0xFE,0xCB,0x77,0x00,                # 46 mov ax, [edx + 0x77CBFE]
+    0x66,0x09,0x05,0x3C,0x6C,0x9D,0x00,                # 53 or [0x9D6C3C], ax
+
+    # 读取 cause_mask[2] (TKItem[27]=字节偏移54), OR 进 word_9D6C3E
+    0x66,0x8B,0x82,0x00,0xCC,0x77,0x00,                # 60 mov ax, [edx + 0x77CC00]
+    0x66,0x09,0x05,0x3E,0x6C,0x9D,0x00,                # 67 or [0x9D6C3E], ax
+
+    # .done: 恢复寄存器 + 执行被替换指令 + 返回
+    0x61,                                              # 74 popad
+    0x66,0xC7,0x05,0x8A,0x02,0x9E,0x00,0x00,0x00,     # 75 mov word [0x9E028A], 0
+    0xC3,                                              # 84 ret
+])
+
+# ============================================================
 # Cave 模板构建
 # ============================================================
 
@@ -279,6 +330,7 @@ def build_cave_template(name: str, warpc_base: int, log_func=None) -> Optional[b
         "archive_portrait": CAVE_ARCHIVE_PORTRAIT,
         "history_text": CAVE_HISTORY_TEXT,
         "exp_bonus_safe_mul": CAVE_EXP_BONUS_SAFE_MUL,
+        "weapon_cause_mask": CAVE_WEAPON_CAUSE_MASK,
     }
     if name not in templates:
         log(f"    [WARN] 未知 cave 模板: {name}")
