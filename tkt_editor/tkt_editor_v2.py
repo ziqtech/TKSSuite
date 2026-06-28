@@ -1586,7 +1586,8 @@ class TktEditor(QMainWindow):
         for ci in [17, 19, 20, 23, 21]:
             btn = QPushButton()
             btn.setFixedSize(20, 20)
-            btn.setStyleSheet(f"background-color: {GAME_COLORS[ci]}; border: 1px solid #777; border-radius: 10px;")
+            btn.setProperty("class", "ColorSwatchRound")
+            btn.setStyleSheet(f"background-color: {GAME_COLORS[ci]};")
             btn.clicked.connect(lambda checked=False, c=ci: self._insert_fcolor(c))
             toolbar.addWidget(btn)
             
@@ -1663,7 +1664,8 @@ class TktEditor(QMainWindow):
         for ci in range(1, 33):
             btn = QPushButton()
             btn.setFixedSize(26, 26)
-            btn.setStyleSheet(f"background-color: {GAME_COLORS[ci]}; border: 1px solid #555; border-radius: 4px;")
+            btn.setProperty("class", "ColorSwatchBtn")
+            btn.setStyleSheet(f"background-color: {GAME_COLORS[ci]};")
             def make_handler(color_id):
                 def handler():
                     self._insert_fcolor(color_id)

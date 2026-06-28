@@ -744,10 +744,31 @@ QLabel[class="TypeFieldLabel"] {
     color: #cc6600;
 }
 
-/* ── 颜色色块 (mat_editor 对话色选择器) ── */
-QFrame[class="ColorSwatch"] {
+/* ── 颜色色块 (mat/grp/wardata 色块通用) ── */
+QFrame[class="ColorSwatch"], QLabel[class="ColorSwatch"] {
     background-color: #000000;
     border: 1px solid #666;
+    border-radius: 3px;
+}
+
+/* ── 色块按钮 - 圆形 (tkt_editor 工具栏颜色快捷键) ── */
+QPushButton[class="ColorSwatchRound"] {
+    border: 1px solid #777;
+    border-radius: 10px;
+    padding: 0px;
+}
+QPushButton[class="ColorSwatchRound"]:hover {
+    border: 2px solid #478cbf;
+}
+
+/* ── 色块按钮 - 方形 (tkt_editor 调色板弹窗) ── */
+QPushButton[class="ColorSwatchBtn"] {
+    border: 1px solid #555;
+    border-radius: 4px;
+    padding: 0px;
+}
+QPushButton[class="ColorSwatchBtn"]:hover {
+    border: 2px solid #478cbf;
 }
 
 /* ── 路径状态标签 (loaded/missing/unloaded) ── */

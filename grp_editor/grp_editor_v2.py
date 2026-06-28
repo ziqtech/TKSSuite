@@ -907,8 +907,8 @@ class GRPEditor(QMainWindow):
             color_label = QLabel()
             color_label.setFixedSize(24, 24)
             color = lut.get(val, (0, 0, 0))
-            color_label.setStyleSheet(f"background-color: rgb({color[0]},{color[1]},{color[2]}); "
-                                      f"border: 1px solid #555; border-radius: 3px;")
+            color_label.setProperty("class", "ColorSwatch")
+            color_label.setStyleSheet(f"background-color: rgb({color[0]},{color[1]},{color[2]});")
             item_lay.addWidget(color_label)
             
             # 值标签

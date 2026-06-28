@@ -1768,7 +1768,8 @@ class WarDataEditorV2(QMainWindow):
         ctrl.addWidget(self.zoom_combo)
         ctrl.addWidget(QPushButton("🔄 刷新", clicked=lambda: self._redraw_scene(True)))
         self.edit_mode = QCheckBox("编辑"); ctrl.addWidget(self.edit_mode)
-        ctrl.addWidget(QLabel("背景=map_id(WSC)", styleSheet='color:gray'))
+        _lbl_bg_hint = QLabel("背景=map_id(WSC)"); _lbl_bg_hint.setObjectName("hintLabel")
+        ctrl.addWidget(_lbl_bg_hint)
         layout.addLayout(ctrl)
 
         # 图例
@@ -1778,7 +1779,8 @@ class WarDataEditorV2(QMainWindow):
         for label, color in terrain_colors:
             f = QWidget(); fl = QHBoxLayout(f); fl.setContentsMargins(0,0,0,0); fl.setSpacing(2)
             swatch = QLabel(); swatch.setFixedSize(12,12)
-            swatch.setStyleSheet(f"background-color:{color}; border:1px solid #444;")
+            swatch.setProperty("class", "ColorSwatch")
+            swatch.setStyleSheet(f"background-color:{color};")
             fl.addWidget(swatch); fl.addWidget(QLabel(label)); legend.addWidget(f)
         legend.addStretch()
         self.scene_info_var = QLabel(""); self.scene_info_var.setProperty("class","ExtraPreviewText")

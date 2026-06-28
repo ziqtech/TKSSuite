@@ -2802,7 +2802,7 @@ class MatEditorApp(QMainWindow):
                         if chosen:
                             val = chosen.data()
                             _ev.setText(str(val))
-                            _swatch.setStyleSheet(f"background-color: {GAME_COLORS.get(val+1,'#000')}; border: 1px solid #333;")
+                            _swatch.setStyleSheet(f"background-color: {GAME_COLORS.get(val+1,'#000')};")
                     return _pick
                 dc_btn.clicked.connect(_make_dc_picker())
                 wl.addWidget(dc_btn)
@@ -3419,7 +3419,7 @@ class MatEditorApp(QMainWindow):
             if dc_swatch and isinstance(dc_swatch, QFrame):
                 dc_val = rec['d28']
                 dc_swatch.setStyleSheet(
-                    f"background-color: {GAME_COLORS.get(dc_val + 1, '#000')}; border: 1px solid #666;")
+                    f"background-color: {GAME_COLORS.get(dc_val + 1, '#000')};")
 
             # Direction mask checkboxes update
             dir_bv = tvars.get('_dir_bv')
