@@ -192,6 +192,7 @@ class MainWindow(QMainWindow):
         self._worker.status_changed.connect(self._on_status)
         self._worker.game_window_found.connect(self._on_game_window_found)
         self._worker.overlay_update.connect(self._on_overlay_update)
+        self._worker.profile_detected.connect(self._on_profile_detected)
         self._worker.finished.connect(self._on_finished)
 
         self._worker.start()
@@ -212,6 +213,12 @@ class MainWindow(QMainWindow):
     def _on_overlay_update(self, text: str, ok: bool):
         if self._overlay and self._overlay.isVisible():
             self._overlay.update_text(text, ok)
+
+    def _on_profile_detected(self, display_name: str):
+        """UI 线程: 显示检测到的第三方 MOD 版本信息"""
+        self.status_bar.showMessage(
+            f"⚠ 检测到第三方 MOD 版本: {display_name}，部分补丁已自动跳过"
+        )
 
     def _on_finished(self, success: bool, diag: dict):
         self.btn_start.setEnabled(True)

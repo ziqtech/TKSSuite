@@ -19,7 +19,7 @@ from core.memory import (
     MEM_COMMIT, MEM_RESERVE,
     _OpenProcess, _CloseHandle, _VirtualAllocEx,
 )
-from core.scanner import parse_pattern, pattern_scan, discover_warpc_base
+from core.scanner import parse_pattern, pattern_scan, discover_warpc_base, detect_exe_profile, detect_exe_profile_runtime
 from core.config_loader import load_config
 from core.patch_engine import (
     apply_config_patches,
@@ -48,6 +48,7 @@ class PatcherWorker(QThread):
     game_window_found = Signal(int)     # game_hwnd → UI 线程创建悬浮窗
     overlay_update = Signal(str, bool)  # text, is_ok
     finished = Signal(bool, dict)       # success, diagnostics
+    profile_detected = Signal(str)      # profile display_name → UI 显示版本信息
 
     def __init__(self, exe_path: str, game_dir: str | None = None,
                  wait_timeout: int = 30, minimal_mode: bool = False,
@@ -294,6 +295,16 @@ class PatcherWorker(QThread):
         code_buf[:nr] = raw_buf
         self._log(f"  代码段: 0x{code_start:08X}-0x{code_start + nr:08X} ({nr} bytes)")
 
+        # === EXE 版本指纹识别 (Task 1: 第三方 MOD 兼容) ===
+        _exe_profile = detect_exe_profile(tks_path, base_addr, log_func=self._log)
+        if _exe_profile.name != "original":
+            self.profile_detected.emit(_exe_profile.display_name)
+            for w in _exe_profile.warnings:
+                self._log(f"  [MOD兼容] {w}")
+            self.status_changed.emit(f"检测到: {_exe_profile.display_name}", True)
+        else:
+            self._log(f"  EXE 版本: 原版")
+
         # 自动发现 WarPC BSS 基址
         fallback_base = config.variables.get("warpc_base", WARPC_BASE)
         discovered_base = discover_warpc_base(
@@ -379,6 +390,7 @@ class PatcherWorker(QThread):
                 minimal_mode=self.minimal_mode, no_cave_mode=self.no_cave_mode,
                 only_portrait=self.only_portrait, only_awk=self.only_awk,
                 selected_patches=self.selected_patches,
+                exe_profile=_exe_profile,
             )
         except Exception as ex:
             self._log(f"[ERROR] ApplyConfigPatches 异常: {ex}")
@@ -394,6 +406,7 @@ class PatcherWorker(QThread):
                 target_pid, base_addr, mod_size, cave_addr,
                 code_buf, code_start, _warpc_new_buf, _warpc_full_data,
                 log_func=self._log,
+                exclude_ranges=_exe_profile.extra_section_ranges if _exe_profile else None,
             )
 
         # [补丁十二~十四、十七] 运行时动态修补

@@ -23,6 +23,10 @@ class PatchDef:
     hook_expect_count: int = 0
     value_scan: bool = False
     optional: bool = False
+    # 第三方 MOD 兼容字段
+    profile_rules: Dict[str, str] = field(default_factory=dict)  # {profile_name: "apply"|"skip"}
+    hook_conflict_action: str = "skip"  # hook 点已被占用时: "skip" | "warn"
+    exclude_extra_sections: bool = True  # value_scan 时是否排除额外段
     # patch_summon_table 专用字段
     json_file: str = ""                       # 召唤表 JSON 路径 (load_config 解析为绝对路径)
     data_rva: int = 0                         # .data 召唤表 8 字节的 RVA
@@ -109,6 +113,10 @@ def load_config(path: str, log_func=None) -> Optional[PatchConfig]:
             d.hook_expect_count = pr.get("hook_expect_count", 0)
             d.value_scan = pr.get("value_scan", False)
             d.optional = pr.get("optional", False)
+            # 第三方 MOD 兼容字段
+            d.profile_rules = dict(pr.get("profile_rules", {}))
+            d.hook_conflict_action = pr.get("hook_conflict_action", "skip")
+            d.exclude_extra_sections = pr.get("exclude_extra_sections", True)
             # patch_summon_table 字段
             jf = pr.get("json_file", "")
             if jf and not os.path.isabs(jf):

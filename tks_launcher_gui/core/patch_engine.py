@@ -15,6 +15,20 @@ from .scanner import parse_pattern, pattern_scan, value_scan
 from .config_loader import PatchDef, PatchConfig, resolve_var
 
 # ============================================================
+# Hook 冲突检测
+# ============================================================
+
+def check_hook_conflict(code_buf: bytearray, off: int) -> bool:
+    """检测 hook 点是否已被其他 MOD 占用
+
+    若目标位置的第一字节已是 E8(call) 或 E9(jmp)，
+    说明已被其他补丁/MOD hook，存在冲稁。
+    """
+    if off < 0 or off >= len(code_buf):
+        return False
+    return code_buf[off] in (0xE8, 0xE9)
+
+# ============================================================
 # Cave 模板 (x86 机器码, 原样复制自 C#)
 # ============================================================
 
@@ -374,8 +388,10 @@ def apply_patch_bytes(defn: PatchDef, code_buf: bytearray, code_start_addr: int,
 # ============================================================
 
 def apply_patch_imm32_by_value(defn: PatchDef, code_buf: bytearray, code_start_addr: int,
-                                h_proc: int, variables: Dict[str, int], log_func=None) -> bool:
+                                h_proc: int, variables: Dict[str, int], log_func=None,
+                                exclude_ranges: list = None) -> bool:
     log = log_func or (lambda x: None)
+    _excl = exclude_ranges or []
     ov = defn.expect_value
     nv = resolve_var(defn.new_value_expr, variables, log_func=log)
     if nv is None:
@@ -390,6 +406,17 @@ def apply_patch_imm32_by_value(defn: PatchDef, code_buf: bytearray, code_start_a
         if off >= 1 and code_buf[off - 1] in (0xE8, 0xE9):
             log(f"    [SKIP] RVA 0x{off:X}: 前字节为 E8/E9 (call/jmp rel32), 跳过")
             continue
+        # 第三方 MOD 兼容: 排除额外段
+        if _excl and defn.exclude_extra_sections:
+            abs_a = code_start_addr + off
+            skip = False
+            for ex_start, ex_end in _excl:
+                if ex_start <= abs_a < ex_end:
+                    log(f"    [SKIP] RVA 0x{off:X}: 位于 MOD 额外段内")
+                    skip = True
+                    break
+            if skip:
+                continue
         aa = code_start_addr + off
         op = vp_ex(h_proc, aa, 4, PAGE_EXECUTE_READWRITE)
         write_pm(h_proc, aa, nle)
@@ -756,10 +783,24 @@ def apply_config_patches(config: PatchConfig, code_buf: bytearray, code_start_ad
                           variables: Dict[str, int], log_func=None,
                           minimal_mode=False, no_cave_mode=False,
                           only_portrait=False, only_awk=False,
-                          selected_patches: set = None) -> bool:
+                          selected_patches: set = None,
+                          exe_profile=None) -> bool:
+    """配置补丁编排
+
+    Args:
+        exe_profile: ExeProfile 实例, 用于第三方 MOD 兼容检测。
+                     若为 None 则按原版处理。
+    """
     log = log_func or (lambda x: None)
     all_ok = True
     pch: List[PatchDef] = []
+
+    # 第三方 MOD 兼容: 从 profile 获取应跳过的补丁
+    _profile_skip = set()
+    _profile_name = "original"
+    if exe_profile is not None:
+        _profile_skip = exe_profile.skip_patches or set()
+        _profile_name = exe_profile.name
 
     for defn in config.patches:
         tag = f"[{defn.id}]"
@@ -769,6 +810,19 @@ def apply_config_patches(config: PatchConfig, code_buf: bytearray, code_start_ad
             log(f"    -> 用户取消勾选, 跳过")
             continue
 
+        # 第三方 MOD 兼容: profile_rules 检查
+        if defn.profile_rules:
+            rule = defn.profile_rules.get(_profile_name,
+                                         defn.profile_rules.get("_default", "apply"))
+            if rule == "skip":
+                log(f"    -> profile '{_profile_name}' 规则: 跳过")
+                continue
+
+        # 第三方 MOD 兼容: profile skip_patches 检查
+        if defn.id in _profile_skip:
+            log(f"    -> 第三方 MOD 版本自动跳过")
+            continue
+
         if defn.type == "patch_bytes":
             all_ok &= apply_patch_bytes(defn, code_buf, code_start_addr, h_proc, log_func=log)
         elif defn.type == "cave_hook":
@@ -776,8 +830,20 @@ def apply_config_patches(config: PatchConfig, code_buf: bytearray, code_start_ad
             hpat, hwc = parse_pattern(hp or "")
             hh = pattern_scan(bytes(code_buf), hpat, hwc)
             if defn.hook_expect_count > 0 and len(hh) != defn.hook_expect_count:
+                # 软失败模式: 匹配数为 0 且有 MOD profile 时, 降级为跳过而非失败
+                if len(hh) == 0 and exe_profile and exe_profile.has_extra_sections:
+                    log(f"  {tag}: Hook 模式无匹配 (MOD 可能已修改此处), 自动跳过")
+                    continue
                 log(f"  {tag}: Hook 模式匹配 {len(hh)} 处 (预期 {defn.hook_expect_count}), 跳过")
                 continue
+            # Hook 冲突检测: 检查 hook 点是否已被占用
+            if hh and check_hook_conflict(code_buf, hh[0]):
+                action = defn.hook_conflict_action
+                if action == "skip":
+                    log(f"  {tag}: Hook 点已被占用 (E8/E9 开头), 自动跳过")
+                    continue
+                else:
+                    log(f"  {tag}: [WARN] Hook 点已被占用, 但仍尝试应用")
             defn._pre_scanned_hits = hh
             pch.append(defn)
         elif defn.type == "patch_imm32":
@@ -789,7 +855,8 @@ def apply_config_patches(config: PatchConfig, code_buf: bytearray, code_start_ad
                 if defn.expect_value != 0 and nv == defn.expect_value:
                     log(f"    -> 值未变化 ({defn.expect_value}), 跳过")
                     continue
-                all_ok &= apply_patch_imm32_by_value(defn, code_buf, code_start_addr, h_proc, variables, log_func=log)
+                all_ok &= apply_patch_imm32_by_value(defn, code_buf, code_start_addr, h_proc, variables, log_func=log,
+                                                       exclude_ranges=exe_profile.extra_section_ranges if exe_profile else None)
             else:
                 all_ok &= apply_patch_imm32_by_pattern(defn, code_buf, code_start_addr, h_proc, variables, log_func=log)
         elif defn.type == "patch_warpc_addr":

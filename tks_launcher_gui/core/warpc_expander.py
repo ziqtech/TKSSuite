@@ -198,8 +198,14 @@ def patch_data_file_sizes(h_proc: int, base_addr: int, scan_start: int,
 
 def expand_warpc_buffer(child_pid: int, base_addr: int, module_size: int,
                          cave_addr: int, code_buf: bytearray, code_start_addr: int,
-                         new_buf: int, full_data: bytes, log_func=None) -> dict:
-    """补丁五/六/七/八/十一: WarPC 缓冲区动态扩展"""
+                         new_buf: int, full_data: bytes, log_func=None,
+                         exclude_ranges: list = None) -> dict:
+    """补丁五/六/七/八/十一: WarPC 缓冲区动态扩展
+
+    Args:
+        exclude_ranges: [(abs_start, abs_end), ...] 排除区域列表
+                        (第三方 MOD 自有代码段, value_scan 时跳过)
+    """
     log = log_func or (lambda x: None)
     ns = len(full_data)
     access = PROCESS_VM_READ | PROCESS_VM_WRITE | PROCESS_VM_OPERATION
@@ -215,11 +221,24 @@ def expand_warpc_buffer(child_pid: int, base_addr: int, module_size: int,
     nal = i32b(nb); nsl = i32b(ns)
     ap, sp, fp, a0p = 0, 0, 0, 0
     ss = code_start_addr; ssz = len(code_buf)
+    _excl = exclude_ranges or []
+
+    def _in_exclude(off: int) -> bool:
+        """检查偏移对应的绝对地址是否在排除区域内"""
+        if not _excl:
+            return False
+        abs_a = ss + off
+        for ex_start, ex_end in _excl:
+            if ex_start <= abs_a < ex_end:
+                return True
+        return False
 
     # WarPC 基址修补
-    # 安全排除: 跳过 E8/E9 指令的 rel32 偶然匹配
+    # 安全排除: 跳过 E8/E9 指令的 rel32 偶然匹配 + MOD 额外段
     for off in value_scan(bytes(code_buf), WARPC_BASE):
         if off >= 1 and code_buf[off - 1] in (0xE8, 0xE9):
+            continue
+        if _in_exclude(off):
             continue
         write_pm(hp, ss + off, nal)
         code_buf[off:off+4] = nal; ap += 1
@@ -229,6 +248,8 @@ def expand_warpc_buffer(child_pid: int, base_addr: int, module_size: int,
     w0c = WARPC_BASE + 4; n0c = i32b(nb + 4)
     for off in value_scan(bytes(code_buf), w0c):
         if off >= 1 and code_buf[off - 1] in (0xE8, 0xE9):
+            continue
+        if _in_exclude(off):
             continue
         aa = ss + off
         op = vp_ex(hp, aa, 4, PAGE_EXECUTE_READWRITE)
@@ -254,6 +275,9 @@ def expand_warpc_buffer(child_pid: int, base_addr: int, module_size: int,
         if read_pos >= 0:
             # 安全检查: read_pos - 1 为 E8/E9 则该 4 字节是 call/jmp 的 rel32, 跳过
             if read_pos >= 1 and code_buf[read_pos - 1] in (0xE8, 0xE9):
+                pos += 1
+                continue
+            if _in_exclude(read_pos):
                 pos += 1
                 continue
             v = b2i32(bytes(code_buf), read_pos)
