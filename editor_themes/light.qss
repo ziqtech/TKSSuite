@@ -573,9 +573,9 @@ QToolBar {
 }
 
 /* ── 控制台日志文本区 (tks_launcher_gui) ── */
+/* 注意: 文字颜色由 log_console.py 通过 HTML 内联样式控制, 此处不设置 color */
 QTextEdit#LogConsole {
     background-color: #ffffff;
-    color: #333333;
     border: 1px solid #b0b5bd;
     border-radius: 4px;
     padding: 8px;
@@ -614,6 +614,16 @@ QLabel#statusLabel {
     font-weight: bold;
     padding: 4px 8px;
 }
+QLabel#statusLabelOk {
+    color: #2E7D32;
+    font-weight: bold;
+    padding: 4px 8px;
+}
+QLabel#statusLabelError {
+    color: #C62828;
+    font-weight: bold;
+    padding: 4px 8px;
+}
 
 /* ── DockHeader 内紧凑工具按钮 (tks_launcher_gui) ── */
 QPushButton#dockToolButton {
@@ -630,4 +640,24 @@ QPushButton#dockToolButton:hover {
 QPushButton#dockToolButton:pressed {
     background-color: #478cbf;
     color: #fff;
+}
+
+/* ── 启动按钮高亮 (tks_launcher_gui) ── */
+QPushButton#btnStart {
+    background-color: #3a8c52;
+    color: #ffffff;
+    border: 1px solid #2e7041;
+    font-weight: bold;
+}
+QPushButton#btnStart:hover {
+    background-color: #45a362;
+}
+QPushButton#btnStart:pressed {
+    background-color: #2e7041;
+    color: #ffffff;
+}
+QPushButton#btnStart:disabled {
+    background-color: #d5d9dd;
+    color: #999;
+    border-color: #b0b5bd;
 }

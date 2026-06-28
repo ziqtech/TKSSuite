@@ -207,8 +207,10 @@ class MainWindow(QMainWindow):
 
     def _on_status(self, text: str, ok: bool):
         self.status_label.setText(text)
-        color = "#2E7D32" if ok else "#E06C75"
-        self.status_label.setStyleSheet(f"color: {color}; font-weight: bold;")
+        # 通过 objectName 切换状态样式, 颜色由 QSS 控制
+        self.status_label.setObjectName("statusLabelOk" if ok else "statusLabelError")
+        self.status_label.style().unpolish(self.status_label)
+        self.status_label.style().polish(self.status_label)
 
     def _on_overlay_update(self, text: str, ok: bool):
         if self._overlay and self._overlay.isVisible():
@@ -224,13 +226,15 @@ class MainWindow(QMainWindow):
         self.btn_start.setEnabled(True)
         if success:
             self.status_bar.showMessage("补丁应用成功！游戏运行中")
-            self.status_label.setStyleSheet("color: #2E7D32; font-weight: bold;")
             self.status_label.setText("✅ 补丁已生效")
+            self.status_label.setObjectName("statusLabelOk")
         else:
             err = diag.get('error', 'unknown')
             self.status_bar.showMessage(f"失败: {err}")
-            self.status_label.setStyleSheet("color: #E06C75; font-weight: bold;")
             self.status_label.setText("❌ 补丁应用失败")
+            self.status_label.setObjectName("statusLabelError")
+        self.status_label.style().unpolish(self.status_label)
+        self.status_label.style().polish(self.status_label)
 
     def _on_pack_mod(self):
         """打开模组打包器对话框"""

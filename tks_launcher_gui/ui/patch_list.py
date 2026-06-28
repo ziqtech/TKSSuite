@@ -88,7 +88,7 @@ class PatchListWidget(QWidget):
                 inner.addWidget(self._make_checkbox(p, enabled=enabled))
         else:
             hint = QLabel("  (无)")
-            hint.setStyleSheet("color: #666; padding-left: 4px;")
+            hint.setObjectName("hintLabel")
             inner.addWidget(hint)
 
         inner.addStretch()

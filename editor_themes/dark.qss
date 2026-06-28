@@ -570,15 +570,16 @@ QToolBar {
 }
 
 /* ── 控制台日志文本区 (tks_launcher_gui) ── */
+/* 注意: 文字颜色由 log_console.py 通过 HTML 内联样式控制, 此处不设置 color */
 QTextEdit#LogConsole {
     background-color: #171A21;
-    color: #C8CCD4;
     border: 1px solid #14171f;
     border-radius: 4px;
     padding: 8px;
     font-family: "Consolas", "Courier New", monospace;
     font-size: 12px;
     selection-background-color: #478cbf;
+    selection-color: #ffffff;
 }
 
 /* ── QCheckBox 禁用状态 ── */
@@ -610,6 +611,16 @@ QLabel#statusLabel {
     font-weight: bold;
     padding: 4px 8px;
 }
+QLabel#statusLabelOk {
+    color: #98C379;
+    font-weight: bold;
+    padding: 4px 8px;
+}
+QLabel#statusLabelError {
+    color: #E06C75;
+    font-weight: bold;
+    padding: 4px 8px;
+}
 
 /* ── DockHeader 内紧凑工具按钮 (tks_launcher_gui) ── */
 QPushButton#dockToolButton {
@@ -626,4 +637,24 @@ QPushButton#dockToolButton:hover {
 QPushButton#dockToolButton:pressed {
     background-color: #478cbf;
     color: #fff;
+}
+
+/* ── 启动按钮高亮 (tks_launcher_gui) ── */
+QPushButton#btnStart {
+    background-color: #2b5f3a;
+    color: #e0f5e5;
+    border: 1px solid #1e4a2c;
+    font-weight: bold;
+}
+QPushButton#btnStart:hover {
+    background-color: #367a4a;
+}
+QPushButton#btnStart:pressed {
+    background-color: #1e4a2c;
+    color: #ffffff;
+}
+QPushButton#btnStart:disabled {
+    background-color: #252a35;
+    color: #555;
+    border-color: #14171f;
 }
