@@ -840,7 +840,7 @@ class JVGEditor(QMainWindow):
         self._detail = QTextEdit()
         self._detail.setReadOnly(True)
         self._detail.setMaximumHeight(100)
-        self._detail.setStyleSheet("font-family: Consolas; font-size: 10pt;")
+        self._detail.setProperty("class", "MonoText")
         right_splitter.addWidget(self._create_dock("图元结构校验日志", self._detail))
         
         right_layout.addWidget(right_splitter)

@@ -908,16 +908,7 @@ class GrowthTableDialog(QDialog):
         self._growth_table.verticalHeader().setVisible(False)
         self._growth_table.setAlternatingRowColors(True)
         # 修复深色模式下交替行背景色 (QSS 不覆盖 palette 的 AlternateBase)
-        if self._is_dark_init:
-            self._growth_table.setStyleSheet(
-                "QTableWidget::item { background-color: #1a1e27; }"
-                "QTableWidget::item:alternate { background-color: #202531; }"
-                "QTableWidget::item:selected { background-color: #478cbf; color: #ffffff; }")
-        else:
-            self._growth_table.setStyleSheet(
-                "QTableWidget::item { background-color: #ffffff; }"
-                "QTableWidget::item:alternate { background-color: #f5f5f5; }"
-                "QTableWidget::item:selected { background-color: #478cbf; color: #ffffff; }")
+        self._growth_table.setProperty("class", "GrowthTable")
         self._growth_table.setFont(QFont("Consolas", 9))
         # 列宽
         for ci in range(len(all_cols)):
@@ -2106,9 +2097,9 @@ class WarpcEditorV2(QMainWindow):
             btn.setFixedSize(80, 90)
             btn.setCursor(Qt.PointingHandCursor)
             if portrait_idx == cur_val:
-                btn.setStyleSheet("QPushButton{background-color:#2e3548; border:2px solid #478cbf;}" if self._is_dark else "QPushButton{background-color:#f0f0f0; border:2px solid #478cbf;}")
+                btn.setProperty("selected", "true")
             else:
-                btn.setStyleSheet("QPushButton{background-color:transparent; border:1px solid transparent;}")
+                btn.setProperty("selected", "false")
             pix = self._get_fa_photo(sprite_idx, (64, 64))
             if pix:
                 btn.setIcon(QIcon(pix)); btn.setIconSize(pix.size())

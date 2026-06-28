@@ -508,7 +508,7 @@ class ShopEditorWindow(QMainWindow):
         toolbar_layout.addStretch()
         
         self.lbl_status = QLabel("请通过 文件 → 加载 TKS 目录 打开数据")
-        self.lbl_status.setStyleSheet("color: gray;")
+        self.lbl_status.setProperty("class", "StatusHint")
         toolbar_layout.addWidget(self.lbl_status)
         
         main_layout.addLayout(toolbar_layout)
@@ -571,7 +571,7 @@ class ShopEditorWindow(QMainWindow):
         item_row.addWidget(self.lbl_editing_item_idx)
         
         self.lbl_item_name = QLabel("(未选择)")
-        self.lbl_item_name.setStyleSheet("color: #4282DA; font-weight: bold;")
+        self.lbl_item_name.setProperty("class", "PrimaryTitle")
         item_row.addWidget(self.lbl_item_name, 1)
         
         btn_pick_item = QPushButton("📦 选择物品…")
@@ -609,7 +609,7 @@ class ShopEditorWindow(QMainWindow):
         self.txt_cond_table = QTextEdit()
         self.txt_cond_table.setReadOnly(True)
         self.txt_cond_table.setMaximumHeight(160)
-        self.txt_cond_table.setStyleSheet("font-family: Consolas, 'Microsoft YaHei UI'; font-size: 12px;")
+        self.txt_cond_table.setProperty("class", "MonoText")
         edit_layout.addWidget(self.txt_cond_table)
 
         edit_layout.addStretch()
@@ -654,19 +654,19 @@ class ShopEditorWindow(QMainWindow):
         self.edit_content.setEnabled(enabled)
 
     def _make_v_sep(self):
-        sep = QFrame(); sep.setFrameShape(QFrame.VLine); sep.setFrameShadow(QFrame.Sunken); sep.setStyleSheet("color: #777;")
+        sep = QFrame(); sep.setFrameShape(QFrame.VLine); sep.setFrameShadow(QFrame.Sunken); sep.setProperty("class", "SepLine")
         return sep
 
     def _update_path_labels(self):
-        cg = ("color: #55b572;" if self._is_dark else "color: #178a39;")
-        cr = ("color: #e27d60;" if self._is_dark else "color: #c93b16;")
         def _f(lb, path, label):
             if not path or not os.path.exists(path):
                 lb.setText(f"({label} 未挂载)")
-                lb.setStyleSheet(cr)
+                lb.setProperty("status", "missing")
             else:
                 lb.setText(f"{label}: {path}")
-                lb.setStyleSheet(cg)
+                lb.setProperty("status", "loaded")
+            lb.style().unpolish(lb)
+            lb.style().polish(lb)
         _f(self.lbl_shop_path, self.shop_path, "TKShop.dat")
         _f(self.lbl_item_path, self.item_path, "TKItem.dat")
         _f(self.lbl_tkt_path, self.tkt_path, "TKT.dat")
@@ -879,14 +879,16 @@ class ShopEditorWindow(QMainWindow):
 
         if area_id in allowed:
             self.lbl_compat.setText("✓ 该物品可在此商店出现")
-            self.lbl_compat.setStyleSheet(f"color: {color_ok};")
+            self.lbl_compat.setProperty("status", "loaded")
         elif not allowed:
             self.lbl_compat.setText("⚠ 该物品不会在任何商店出现")
-            self.lbl_compat.setStyleSheet(f"color: {color_err};")
+            self.lbl_compat.setProperty("status", "missing")
         else:
             shop_names = [AREA_NAMES.get(a, str(a)) for a in allowed]
             self.lbl_compat.setText(f"⚠ 不兼容! 该物品仅适用于: {', '.join(shop_names)}")
-            self.lbl_compat.setStyleSheet(f"color: {color_err};")
+            self.lbl_compat.setProperty("status", "missing")
+        self.lbl_compat.style().unpolish(self.lbl_compat)
+        self.lbl_compat.style().polish(self.lbl_compat)
 
     def _on_area_changed(self):
         if self._editing_idx < 0:

@@ -1140,7 +1140,9 @@ class SaveEditorApp(QMainWindow):
         self.slot = slot_num
         self._load_current_slot()
         for i, btn in enumerate(self._slot_btns):
-            btn.setStyleSheet("font-weight: bold; color: #478cbf;" if i + 1 == slot_num else "")
+            btn.setProperty("active", "true" if i + 1 == slot_num else "false")
+            btn.style().unpolish(btn)
+            btn.style().polish(btn)
 
     def _load_current_slot(self):
         if not self.save_dir:

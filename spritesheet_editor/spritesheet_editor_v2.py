@@ -1342,14 +1342,14 @@ class PreviewView(QWidget):
         ctrl = QHBoxLayout()
 
         self._btn_play = QPushButton("▶ 播放")
-        self._btn_play.setStyleSheet("padding: 2px 8px;")
+        self._btn_play.setProperty("class", "CompactBtn")
         self._btn_play.clicked.connect(self._toggle_play)
         ctrl.addWidget(self._btn_play)
 
         for text, slot in [("⏮", self._go_first), ("◀", self._prev_frame),
                             ("▶", self._next_frame), ("⏭", self._go_last)]:
             btn = QPushButton(text)
-            btn.setStyleSheet("padding: 2px 6px;")
+            btn.setProperty("class", "CompactBtn")
             btn.clicked.connect(slot)
             ctrl.addWidget(btn)
 
@@ -1390,7 +1390,7 @@ class PreviewView(QWidget):
         # ── 显示区 ──
         self._disp = QLabel()
         self._disp.setAlignment(Qt.AlignCenter)
-        self._disp.setStyleSheet("background-color: #1a1a1a;")
+        self._disp.setObjectName("GamePreview")
         self._disp.setMinimumSize(200, 150)
         self._disp.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self._disp.setScaledContents(False)
@@ -1615,7 +1615,7 @@ class SettingsPanel(QWidget):
         self._output_info = QTextEdit()
         self._output_info.setReadOnly(True)
         self._output_info.setMaximumHeight(100)
-        self._output_info.setStyleSheet("background-color: #2a2a2a; color: #aaaaaa; font-family: Consolas; font-size: 11px;")
+        self._output_info.setProperty("class", "MonoText")
         info_layout.addWidget(self._output_info)
         layout.addWidget(self._info_section)
 
@@ -1658,7 +1658,7 @@ class SettingsPanel(QWidget):
         self._fmt_desc = QTextEdit()
         self._fmt_desc.setReadOnly(True)
         self._fmt_desc.setMaximumHeight(80)
-        self._fmt_desc.setStyleSheet("background-color: #2a2a2a; color: #cccccc; font-size: 10px;")
+        self._fmt_desc.setProperty("class", "MonoText")
         export_layout.addWidget(self._fmt_desc)
 
         # 格式预览
@@ -1666,7 +1666,7 @@ class SettingsPanel(QWidget):
         self._fmt_preview = QTextEdit()
         self._fmt_preview.setReadOnly(True)
         self._fmt_preview.setMaximumHeight(60)
-        self._fmt_preview.setStyleSheet("background-color: #2a2a2a; color: #aaccff; font-family: Consolas; font-size: 10px;")
+        self._fmt_preview.setProperty("class", "MonoText")
         export_layout.addWidget(self._fmt_preview)
 
         btn_save = QPushButton("保存图集...")
@@ -1915,7 +1915,7 @@ class ImportMergeDialog(QDialog):
         sl.addLayout(row2)
 
         self._preview_label = QLabel()
-        self._preview_label.setStyleSheet("color: #aaaaaa;")
+        self._preview_label.setProperty("class", "StatusHint")
         sl.addWidget(self._preview_label)
 
         layout.addWidget(settings)
@@ -2035,7 +2035,7 @@ class SplitDialog(QDialog):
         sl.addLayout(row3)
 
         self._preview_label = QLabel()
-        self._preview_label.setStyleSheet("color: #aaaaaa;")
+        self._preview_label.setProperty("class", "StatusHint")
         sl.addWidget(self._preview_label)
         layout.addWidget(settings)
 
@@ -2136,8 +2136,9 @@ class SpriteSheetEditorWindow(QMainWindow):
         # 初始画布背景色同步 (跟随 OS 主题)
         bg_color = QColor("#1a1d24") if self._is_dark else QColor("#313c52")
         self.canvas.setBackgroundBrush(QBrush(bg_color))
-        self.preview_view._disp.setStyleSheet(
-            f"background-color: {bg_color.name()}; border: none;")
+        self.preview_view._disp.setObjectName("GamePreview")
+        self.preview_view._disp.style().unpolish(self.preview_view._disp)
+        self.preview_view._disp.style().polish(self.preview_view._disp)
 
         if filepath:
             self._load_spritesheet(Path(filepath))
@@ -2234,7 +2235,7 @@ class SpriteSheetEditorWindow(QMainWindow):
 
         toolbar.addStretch()
         self._status_label = QLabel("就绪")
-        self._status_label.setStyleSheet("color: #888888;")
+        self._status_label.setProperty("class", "StatusHint")
         toolbar.addWidget(self._status_label)
 
         main_layout.addLayout(toolbar)
@@ -2251,15 +2252,15 @@ class SpriteSheetEditorWindow(QMainWindow):
         self._list_title = QLabel("导入的精灵")
         left_header.addWidget(self._list_title)
         btn_clear = QPushButton("清空")
-        btn_clear.setStyleSheet("padding: 2px 6px;")
+        btn_clear.setProperty("class", "CompactBtn")
         btn_clear.clicked.connect(self._clear_list)
         left_header.addWidget(btn_clear)
         btn_up = QPushButton("▲上移")
-        btn_up.setStyleSheet("padding: 2px 6px;")
+        btn_up.setProperty("class", "CompactBtn")
         btn_up.clicked.connect(lambda: self.canvas.move_selected_left())
         left_header.addWidget(btn_up)
         btn_down = QPushButton("▼下移")
-        btn_down.setStyleSheet("padding: 2px 6px;")
+        btn_down.setProperty("class", "CompactBtn")
         btn_down.clicked.connect(lambda: self.canvas.move_selected_right())
         left_header.addWidget(btn_down)
         left_panel.addLayout(left_header)
@@ -2269,7 +2270,7 @@ class SpriteSheetEditorWindow(QMainWindow):
         left_panel.addWidget(self.image_list, 1)
 
         list_info = QLabel("未导入图片")
-        list_info.setStyleSheet("color: #888888; font-size: 10px;")
+        list_info.setProperty("class", "StatusHint")
         self._list_info_label = list_info
         left_panel.addWidget(list_info)
 
@@ -2301,15 +2302,15 @@ class SpriteSheetEditorWindow(QMainWindow):
 
         preview_bar.addWidget(QLabel("缩放:"))
         btn_zoom_out = QPushButton("−")
-        btn_zoom_out.setStyleSheet("padding: 2px 6px;")
+        btn_zoom_out.setProperty("class", "CompactBtn")
         btn_zoom_out.clicked.connect(lambda: self._shared_zoom_step(-0.25))
         preview_bar.addWidget(btn_zoom_out)
         btn_zoom_in = QPushButton("+")
-        btn_zoom_in.setStyleSheet("padding: 2px 6px;")
+        btn_zoom_in.setProperty("class", "CompactBtn")
         btn_zoom_in.clicked.connect(lambda: self._shared_zoom_step(0.25))
         preview_bar.addWidget(btn_zoom_in)
         btn_zoom_1 = QPushButton("1:1")
-        btn_zoom_1.setStyleSheet("padding: 2px 6px;")
+        btn_zoom_1.setProperty("class", "CompactBtn")
         btn_zoom_1.clicked.connect(self._shared_zoom_reset)
         preview_bar.addWidget(btn_zoom_1)
         self._zoom_label = QLabel("100%")
@@ -2339,7 +2340,7 @@ class SpriteSheetEditorWindow(QMainWindow):
         center.addWidget(self._stack, 1)
 
         hint = QLabel("操作: 点击选帧 | Ctrl+多选 | Shift+范围选 | 拖拽帧/行头/列头排序")
-        hint.setStyleSheet("color: #888888; font-size: 10px;")
+        hint.setProperty("class", "StatusHint")
         center.addWidget(hint)
 
         main_splitter.addWidget(self._create_dock("2D 渲染视口", center_widget))
@@ -2849,8 +2850,9 @@ class SpriteSheetEditorWindow(QMainWindow):
         # 强制同步视口背景 (QSS 无法穿透 QGraphicsScene 底层)
         bg_color = QColor("#1a1d24") if self._is_dark else QColor("#313c52")
         self.canvas.setBackgroundBrush(QBrush(bg_color))
-        self.preview_view._disp.setStyleSheet(
-            f"background-color: {bg_color.name()}; border: none;")
+        self.preview_view._disp.setObjectName("GamePreview")
+        self.preview_view._disp.style().unpolish(self.preview_view._disp)
+        self.preview_view._disp.style().polish(self.preview_view._disp)
         self.canvas.redraw()
         from editor_utils.window_theme import apply_godot_theme
         apply_godot_theme(self, self._is_dark)

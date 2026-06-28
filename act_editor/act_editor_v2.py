@@ -2756,7 +2756,16 @@ class ActEditorV2(QMainWindow):
         lbl.setText(
             f"{src_name}[{blk}]  实际 {n_frames} 帧   {layout_desc}{info}\n"
             f"    {span_desc}   切片量 {used}/{n_frames} ({pct}%){warn}")
-        lbl.setStyleSheet(f"color: {color};")
+        if color == '#C33':
+            lbl.setProperty("probe", "error")
+        elif color == '#093':
+            lbl.setProperty("probe", "ok")
+        elif color == '#C60':
+            lbl.setProperty("probe", "warn")
+        else:
+            lbl.setProperty("probe", "empty")
+        lbl.style().unpolish(lbl)
+        lbl.style().polish(lbl)
 
     def _on_layer_field_change(self, layer_idx, field_name):
         self._update_layer_probe(layer_idx)
@@ -3168,24 +3177,29 @@ class ActEditorV2(QMainWindow):
             sid = 0
         if sid <= 0:
             lbl.setText("(空位)")
-            lbl.setStyleSheet("color: #AAA;")
+            lbl.setProperty("probe", "empty")
+            lbl.style().unpolish(lbl); lbl.style().polish(lbl)
             return
         if self.sws_grp is None:
             lbl.setText(f"SWS#{sid:04d}  (未加载 TKS 目录)")
-            lbl.setStyleSheet("color: #C60;")
+            lbl.setProperty("probe", "warn")
+            lbl.style().unpolish(lbl); lbl.style().polish(lbl)
             return
         info = self.sws_grp.wav_info(sid)
         if info is not None:
             ch, sr, bits, dur = info
             lbl.setText(f"SWS#{sid:03d}  {ch}ch {sr}Hz {bits}bit {dur:.2f}s")
-            lbl.setStyleSheet("color: #093;")
+            lbl.setProperty("probe", "ok")
+            lbl.style().unpolish(lbl); lbl.style().polish(lbl)
             return
         if sid >= self.sws_grp.section_count:
             lbl.setText(f"SWS#{sid}  X 超出段数({self.sws_grp.section_count})")
-            lbl.setStyleSheet("color: #C33;")
+            lbl.setProperty("probe", "error")
+            lbl.style().unpolish(lbl); lbl.style().polish(lbl)
             return
         lbl.setText(f"SWS#{sid:03d}  (非 WAV 段)")
-        lbl.setStyleSheet("color: #C60;")
+        lbl.setProperty("probe", "warn")
+        lbl.style().unpolish(lbl); lbl.style().polish(lbl)
 
     def _resolve_sound_path(self, sid):
         if sid <= 0 or self.sws_grp is None:

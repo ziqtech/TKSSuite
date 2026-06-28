@@ -314,10 +314,7 @@ class IconPickerDialog(QDialog):
             game_idx = si - 130
             r, c = divmod(si, COLS)
             btn = QPushButton(); btn.setFixedSize(52, 56); btn.setCursor(Qt.PointingHandCursor)
-            if game_idx == cur_val:
-                btn.setStyleSheet("QPushButton{background-color:#2e3548; border:2px solid #478cbf;}")
-            else:
-                btn.setStyleSheet("QPushButton{background-color:transparent; border:1px solid transparent;}")
+            btn.setProperty("selected", "true" if game_idx == cur_val else "false")
             pix = get_pixmap_fn(game_idx, (40, 40))
             if pix:
                 btn.setIcon(QIcon(pix)); btn.setIconSize(pix.size())
@@ -618,7 +615,7 @@ class ItemEditorApp(QMainWindow):
         # 顶部行: 记录标签 + 操作按钮
         header_row = QHBoxLayout()
         self.lbl_rec_idx = QLabel("未选中")
-        self.lbl_rec_idx.setStyleSheet("font-size: 14px; font-weight: bold;")
+        self.lbl_rec_idx.setProperty("class", "RecordHeader")
         header_row.addWidget(self.lbl_rec_idx)
         header_row.addStretch()
         header_row.addWidget(QPushButton("✅ 应用", clicked=self._apply_edit))
@@ -1088,7 +1085,7 @@ class ItemEditorApp(QMainWindow):
             pix = self._get_icon_pixmap(STATUS_ICON_BASE + idx - 130, (16, 16))
             if pix: il.setPixmap(pix)
             chip_lay.addWidget(il)
-            lbl = QLabel(nm); lbl.setStyleSheet("font-size: 10px;")
+            lbl = QLabel(nm); lbl.setProperty("class", "ChipLabel")
             chip_lay.addWidget(lbl)
             chip.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
             layout.addWidget(chip)
@@ -1500,7 +1497,7 @@ class ItemEditorApp(QMainWindow):
         layout = QVBoxLayout(dlg)
         from PySide6.QtWidgets import QTextEdit
         tx = QTextEdit(); tx.setReadOnly(True); tx.setPlainText('\n'.join(lines))
-        tx.setStyleSheet("font-family: 'Consolas', 'Courier New', monospace; font-size: 9pt;")
+        tx.setProperty("class", "MonoText")
         layout.addWidget(tx)
         dlg.exec()
 

@@ -658,3 +658,199 @@ QPushButton#btnStart:disabled {
     color: #555;
     border-color: #14171f;
 }
+
+/* ── 记录标题标签 (item/skill/mat/warpc 编辑器) ── */
+QLabel[class="RecordHeader"] {
+    font-size: 14px;
+    font-weight: bold;
+}
+
+/* ── 状态提示标签 (mat_editor) ── */
+QLabel[class="StatusHint"] {
+    color: #888;
+    font-size: 11px;
+}
+
+/* ── 紧凑按钮 (mat_editor 工具栏) ── */
+QPushButton[class="CompactBtn"] {
+    padding-left: 4px;
+    padding-right: 4px;
+}
+
+/* ── 打包/操作主按钮 (launcher dialogs) ── */
+QPushButton#btnPack {
+    font-weight: bold;
+    padding: 6px 20px;
+}
+
+/* ── 图标选择器按钮 (item/warpc 编辑器) ── */
+QPushButton[selected="true"] {
+    background-color: #2e3548;
+    border: 2px solid #478cbf;
+}
+QPushButton[selected="false"] {
+    background-color: transparent;
+    border: 1px solid transparent;
+}
+
+/* ── 活动槽位按钮 (save_editor) ── */
+QPushButton[active="true"] {
+    font-weight: bold;
+    color: #478cbf;
+}
+QPushButton[active="false"] {
+    font-weight: normal;
+    color: #dcdcdc;
+}
+
+/* ── Chip 小标签 (item_editor) ── */
+QLabel[class="ChipLabel"] {
+    font-size: 10px;
+}
+
+/* ── 等宽文本区 (字段来源弹窗) ── */
+QTextEdit[class="MonoText"] {
+    font-family: 'Consolas', 'Courier New', monospace;
+    font-size: 9pt;
+}
+
+/* ── 紧凑树控件 (mat_editor 场景/实体列表) ── */
+QTreeWidget[class="CompactTree"] {
+    font-size: 12px;
+}
+QTreeWidget[class="CompactTree"]::item {
+    padding: 2px 4px;
+    min-height: 22px;
+}
+QTreeWidget[class="CompactTree"] QHeaderView::section {
+    padding: 4px 6px;
+    font-weight: bold;
+}
+
+/* ── 成长率表格 (warpc_editor) ── */
+QTableWidget[class="GrowthTable"]::item {
+    background-color: #1a1e27;
+}
+QTableWidget[class="GrowthTable"]::item:alternate {
+    background-color: #202531;
+}
+QTableWidget[class="GrowthTable"]::item:selected {
+    background-color: #478cbf;
+    color: #ffffff;
+}
+
+/* ── 类型字段标签 (mat_editor 实体参数) ── */
+QLabel[class="TypeFieldLabel"] {
+    color: #cc6600;
+}
+
+/* ── 颜色色块 (mat_editor 对话色选择器) ── */
+QFrame[class="ColorSwatch"] {
+    background-color: #000000;
+    border: 1px solid #666;
+}
+
+/* ── 路径状态标签 (loaded/missing/unloaded) ── */
+QLabel[status="loaded"] {
+    color: #55b572;
+}
+QLabel[status="missing"] {
+    color: #e27d60;
+}
+QLabel[status="unloaded"] {
+    color: #888;
+}
+
+/* ── 方向指示复选框 (mat_editor) ── */
+QCheckBox[class="DirCheckBox"] {
+    font-size: 11px;
+}
+
+/* ── 提示文本标签 (输入框下方, 无左距) ── */
+QLabel[class="FieldHint"] {
+    padding-left: 0px;
+    font-size: 11px;
+    color: #55b572;
+}
+
+/* ── 脏标记标签 (tkt_editor) ── */
+QLabel[class="DirtyIndicator"] {
+    color: #e27d60;
+    font-weight: bold;
+}
+
+/* ── 未知字段标签 (mat_editor “全部”页 d-index) ── */
+QLabel[class="UnknownFieldLabel"] {
+    color: #888;
+}
+
+/* ── 探针标签 (act_editor 层/音效状态) ── */
+QLabel[probe="ok"] {
+    color: #55b572;
+}
+QLabel[probe="warn"] {
+    color: #CC6600;
+}
+QLabel[probe="error"] {
+    color: #CC3333;
+}
+QLabel[probe="empty"] {
+    color: #AAAAAA;
+}
+
+/* ── 信息标题标签 (mat_editor 脚本预览) ── */
+QLabel[class="InfoTitle"] {
+    font-size: 13px;
+    font-weight: bold;
+}
+
+/* ── 缩放按钮 (tkt/spritesheet 编辑器) ── */
+QPushButton[class="ZoomBtn"] {
+    padding: 0px;
+    font-size: 12px;
+}
+
+/* ── 缩放比例标签 ── */
+QLabel[class="ZoomLabel"] {
+    font-size: 11px;
+    background-color: transparent;
+}
+
+/* ── 透明背景容器 (scroll content) ── */
+QWidget#TransparentBg {
+    background: transparent;
+}
+
+/* ── 主标题标签 (tkt_editor 蓝色强调) ── */
+QLabel[class="PrimaryTitle"] {
+    font-weight: bold;
+    color: #478cbf;
+}
+
+/* ── 副标题标签 (tkt_editor 绿色强调) ── */
+QLabel[class="SecondaryTitle"] {
+    font-weight: bold;
+    color: #55b572;
+    padding-top: 10px;
+}
+
+/* ── 确认操作按钮 (tkt_editor) ── */
+QPushButton[class="ConfirmBtn"] {
+    font-weight: bold;
+    padding: 8px;
+    margin-top: 10px;
+}
+
+/* ── 分隔线框架 (QFrame separator) ── */
+QFrame[class="SepLine"] {
+    color: #555;
+}
+
+/* ── 游戏预览区 (tkt_editor 模拟游戏文本渲染背景) ── */
+QScrollArea#GamePreview, QTextEdit#GamePreview {
+    background-color: #1a1d24;
+    border: none;
+}
+QTextEdit#GamePreview {
+    color: #ffffff;
+}

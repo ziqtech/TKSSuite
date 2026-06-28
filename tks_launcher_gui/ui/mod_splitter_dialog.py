@@ -70,7 +70,6 @@ class ModSplitterDialog(QDialog):
 
         self._btn_split = QPushButton("📂 执行拆分")
         self._btn_split.setObjectName("btnPack")
-        self._btn_split.setStyleSheet("font-weight: bold; padding: 6px 20px;")
         self._btn_split.setEnabled(False)
         self._btn_split.clicked.connect(self._on_split)
         btn_row.addWidget(self._btn_split)

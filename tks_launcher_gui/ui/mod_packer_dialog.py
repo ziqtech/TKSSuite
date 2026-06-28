@@ -148,7 +148,6 @@ class ModPackerDialog(QDialog):
 
         btn_pack = QPushButton("📦 执行打包")
         btn_pack.setObjectName("btnPack")
-        btn_pack.setStyleSheet("font-weight: bold; padding: 6px 20px;")
         btn_pack.clicked.connect(self._on_pack)
         bottom_row.addWidget(btn_pack)
 

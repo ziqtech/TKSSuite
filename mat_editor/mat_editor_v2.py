@@ -2256,11 +2256,7 @@ class MatEditorApp(QMainWindow):
         self.scene_tree.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.scene_tree.setRootIsDecorated(False)
         self.scene_tree.setUniformRowHeights(True)
-        self.scene_tree.setStyleSheet(
-            "QTreeWidget { font-size: 12px; }"
-            "QTreeWidget::item { padding: 2px 4px; min-height: 22px; }"
-            "QHeaderView::section { padding: 4px 6px; font-weight: bold; }"
-        )
+        self.scene_tree.setProperty("class", "CompactTree")
         self.scene_tree.itemSelectionChanged.connect(self._on_vis_scene_select)
         left_splitter.addWidget(self._create_dock("场景列表 (SC.GRP)", self.scene_tree))
 
@@ -2280,11 +2276,7 @@ class MatEditorApp(QMainWindow):
         self.entity_tree.setRootIsDecorated(False)
         self.entity_tree.setSortingEnabled(False)
         self.entity_tree.setUniformRowHeights(True)
-        self.entity_tree.setStyleSheet(
-            "QTreeWidget { font-size: 12px; }"
-            "QTreeWidget::item { padding: 2px 4px; min-height: 22px; }"
-            "QHeaderView::section { padding: 4px 6px; font-weight: bold; }"
-        )
+        self.entity_tree.setProperty("class", "CompactTree")
         self.entity_tree.itemSelectionChanged.connect(self._on_select)
         # 点击列头排序
         self.entity_tree.header().setSortIndicatorShown(True)
@@ -2337,7 +2329,7 @@ class MatEditorApp(QMainWindow):
         ent_body_layout.addLayout(filter_row)
         # 状态栏
         self.status_var = QLabel("请通过 文件 → 加载 TKS 目录 打开数据")
-        self.status_var.setStyleSheet("color: gray; font-size: 11px;")
+        self.status_var.setProperty("class", "StatusHint")
         ent_body_layout.addWidget(self.status_var)
         # 实体列表
         ent_body_layout.addWidget(self.entity_tree, 1)
@@ -2373,20 +2365,20 @@ class MatEditorApp(QMainWindow):
         top.addSpacing(10)
         self._vis_play_btn = QPushButton("▶️ 播放全部")
         self._vis_play_btn.setFixedWidth(80)
-        self._vis_play_btn.setStyleSheet("padding-left: 4px; padding-right: 4px;")
+        self._vis_play_btn.setProperty("class", "CompactBtn")
         self._vis_play_btn.setToolTip("播放/暂停精灵动画")
         self._vis_play_btn.clicked.connect(self._vis_toggle_anim)
         top.addWidget(self._vis_play_btn)
         self._vis_sel_anim_btn = QPushButton("⏯️ 播放选中")
         self._vis_sel_anim_btn.setFixedWidth(80)
-        self._vis_sel_anim_btn.setStyleSheet("padding-left: 4px; padding-right: 4px;")
+        self._vis_sel_anim_btn.setProperty("class", "CompactBtn")
         self._vis_sel_anim_btn.setToolTip("播放/暂停当前选中实体的动画")
         self._vis_sel_anim_btn.clicked.connect(self._vis_toggle_sel_anim)
         top.addWidget(self._vis_sel_anim_btn)
         top.addSpacing(10)
         btn_refresh = QPushButton("🔄 刷新")
         btn_refresh.setFixedWidth(60)
-        btn_refresh.setStyleSheet("padding-left: 4px; padding-right: 4px;")
+        btn_refresh.setProperty("class", "CompactBtn")
         btn_refresh.clicked.connect(self._vis_load_scene)
         top.addWidget(btn_refresh)
         top.addSpacing(10)
@@ -2440,7 +2432,7 @@ class MatEditorApp(QMainWindow):
         right_layout.setSpacing(2)
 
         self.lbl_title = QLabel("未选中")
-        self.lbl_title.setStyleSheet("font-size: 14px; font-weight: bold;")
+        self.lbl_title.setProperty("class", "RecordHeader")
         right_layout.addWidget(self.lbl_title)
 
         # Notebook (QTabWidget)
@@ -2729,7 +2721,7 @@ class MatEditorApp(QMainWindow):
                 lbl.setToolTip(tip)
             lbl.setProperty("class", "PropLabel")
             if di in type_labels:
-                lbl.setStyleSheet("color: #cc6600;")
+                lbl.setProperty("class", "TypeFieldLabel")
 
             # Input widget (组合框字段不创建 QLineEdit 镜像, 由"全部"页 raw_N 充当存储,
             # 经 _sync_type_cb_to_raw 单向同步; 文本类字段各自建镜像并双向同步)
@@ -2790,7 +2782,7 @@ class MatEditorApp(QMainWindow):
                 # Color swatch
                 dc_swatch = QFrame()
                 dc_swatch.setFixedSize(20, 20)
-                dc_swatch.setStyleSheet("background-color: #000; border: 1px solid #666;")
+                dc_swatch.setProperty("class", "ColorSwatch")
                 wl.addWidget(dc_swatch)
                 tvars['_dialog_color_swatch'] = dc_swatch
                 # Picker button
@@ -2835,7 +2827,7 @@ class MatEditorApp(QMainWindow):
                 dir_bv = {}
                 for bit_i in range(8):
                     bv_cb = QCheckBox(dir_labels[bit_i])
-                    bv_cb.setStyleSheet("font-size: 11px;")
+                    bv_cb.setProperty("class", "DirCheckBox")
                     dir_bv[bit_i] = bv_cb
                     r2, c2 = divmod(bit_i, 2)
                     dir_grid.addWidget(bv_cb, r2, c2)
@@ -2867,9 +2859,8 @@ class MatEditorApp(QMainWindow):
             # Hint label — 输入框外部下方, 与输入框左边线对齐
             if key == 'hint_id':
                 hl = QLabel("")
-                hl.setProperty("class", "ExtraPreviewText")
+                hl.setProperty("class", "FieldHint")
                 hl.setWordWrap(True)
-                hl.setStyleSheet("padding-left: 0px; font-size: 11px;")
                 cell.addWidget(hl)
                 tvars['_hint_label'] = hl
             # Item name label — type=110 物品ID输入框下方 (显示方式参考 hint_id)
@@ -2878,9 +2869,8 @@ class MatEditorApp(QMainWindow):
             if tval == 110 and di in (53, 57, 61):
                 _item_lbl_key = {53: '_item_g1_id_label', 57: '_item_g2_id_label', 61: '_item_g3_id_label'}[di]
                 il = QLabel("")
-                il.setProperty("class", "ExtraPreviewText")
+                il.setProperty("class", "FieldHint")
                 il.setWordWrap(True)
-                il.setStyleSheet("padding-left: 0px; font-size: 11px;")
                 cell.addWidget(il)
                 tvars[_item_lbl_key] = il
             wrapper.setMinimumHeight(24)
@@ -2960,17 +2950,17 @@ class MatEditorApp(QMainWindow):
         for text, chain in [("➕ A链", "A"), ("➕ B链", "B"), ("➕ C链", "C")]:
             btn = QPushButton(text)
             btn.setFixedWidth(65)
-            btn.setStyleSheet("padding-left: 4px; padding-right: 4px;")
+            btn.setProperty("class", "CompactBtn")
             btn.clicked.connect(lambda _, c=chain: self._add_chain_entry(c))
             chain_toolbar.addWidget(btn)
         btn_del_chain = QPushButton("🗑️ 删除")
         btn_del_chain.setFixedWidth(65)
-        btn_del_chain.setStyleSheet("padding-left: 4px; padding-right: 4px;")
+        btn_del_chain.setProperty("class", "CompactBtn")
         btn_del_chain.clicked.connect(self._delete_chain_entry)
         chain_toolbar.addWidget(btn_del_chain)
         btn_refr = QPushButton("🔄 刷新")
         btn_refr.setFixedWidth(65)
-        btn_refr.setStyleSheet("padding-left: 4px; padding-right: 4px;")
+        btn_refr.setProperty("class", "CompactBtn")
         btn_refr.clicked.connect(self._refresh_chain_list)
         chain_toolbar.addWidget(btn_refr)
         chain_toolbar.addStretch()
@@ -3117,41 +3107,44 @@ class MatEditorApp(QMainWindow):
         return os.path.dirname(self.dat_path) if self.dat_path else ''
 
     def _update_path(self):
-        G = "color: #55b572;" if self._is_dark else "color: #178a39;"
-        R = "color: #e27d60;" if self._is_dark else "color: #c93b16;"
-        gray = "color: #888;"
         if not self.dat_path:
             self.lbl_path.setText("(未加载)")
-            self.lbl_path.setStyleSheet(R)
+            self.lbl_path.setProperty("status", "missing")
         elif not os.path.exists(self.dat_path):
             self.lbl_path.setText(f"(不存在){self.dat_path}")
-            self.lbl_path.setStyleSheet(R)
+            self.lbl_path.setProperty("status", "missing")
         else:
             self.lbl_path.setText(self.dat_path)
-            self.lbl_path.setStyleSheet(G)
+            self.lbl_path.setProperty("status", "loaded")
+        self.lbl_path.style().unpolish(self.lbl_path)
+        self.lbl_path.style().polish(self.lbl_path)
 
         for lbl, jvg, name in [(self.lbl_cha, self._cha_jvg, "Cha.JVG"),
                                 (self.lbl_ani, self._ani_jvg, "Ani.JVG"),
                                 (self.lbl_cur, self._cur_jvg, "Cur.JVG")]:
             if jvg is not None:
                 lbl.setText(f"{name}✓")
-                lbl.setStyleSheet(G)
+                lbl.setProperty("status", "loaded")
             elif self.dat_path and os.path.exists(self.dat_path):
                 lbl.setText(f"{name}✗")
-                lbl.setStyleSheet(R)
+                lbl.setProperty("status", "missing")
             else:
                 lbl.setText(name)
-                lbl.setStyleSheet(gray)
+                lbl.setProperty("status", "unloaded")
+            lbl.style().unpolish(lbl)
+            lbl.style().polish(lbl)
 
         if self._sc_grp_section_count > 0:
             self.lbl_sc.setText(f"SC.GRP✓({self._sc_grp_section_count})")
-            self.lbl_sc.setStyleSheet(G)
+            self.lbl_sc.setProperty("status", "loaded")
         elif self.dat_path and os.path.exists(self.dat_path):
             self.lbl_sc.setText("SC.GRP✗")
-            self.lbl_sc.setStyleSheet(R)
+            self.lbl_sc.setProperty("status", "missing")
         else:
             self.lbl_sc.setText("SC.GRP")
-            self.lbl_sc.setStyleSheet(gray)
+            self.lbl_sc.setProperty("status", "unloaded")
+        self.lbl_sc.style().unpolish(self.lbl_sc)
+        self.lbl_sc.style().polish(self.lbl_sc)
 
     # =========== 筛选/列表 ===========
     def _apply_filter(self):
@@ -3474,14 +3467,16 @@ class MatEditorApp(QMainWindow):
             if di in type_labels:
                 tl, tc = type_labels[di]
                 lbl.setText(f"[{di:02d}] {tl}")
-                lbl.setStyleSheet("color: #cc6600;")
+                lbl.setProperty("class", "TypeFieldLabel")
             elif di in known:
                 name, label, cmt = known[di]
                 lbl.setText(f"[{di:02d}] {label}")
-                lbl.setStyleSheet("")
+                lbl.setProperty("class", "PropLabel")
             else:
                 lbl.setText(f"[{di:02d}] d{di}")
-                lbl.setStyleSheet("color: #888;")
+                lbl.setProperty("class", "UnknownFieldLabel")
+            lbl.style().unpolish(lbl)
+            lbl.style().polish(lbl)
 
     def _update_type_flags_visibility(self, tvars, tval):
         """根据实体类型显示/隐藏事件标志 checkbox (bit12/13/14)"""
@@ -5573,7 +5568,9 @@ class MatEditorApp(QMainWindow):
         tval = rec.get('d0', 0)
         en = (flags & 1) != 0
         self._sched_labels['enabled'].setText("✓ 已启用" if en else "✗ 未启用")
-        self._sched_labels['enabled'].setStyleSheet("color: #55b572;" if en else "color: #e27d60;")
+        self._sched_labels['enabled'].setProperty("status", "loaded" if en else "missing")
+        self._sched_labels['enabled'].style().unpolish(self._sched_labels['enabled'])
+        self._sched_labels['enabled'].style().polish(self._sched_labels['enabled'])
         pk = (flags & 4) != 0
         self._sched_labels['pickable'].setText("✓ 可交互" if pk else "✗ 不可交互")
         tick = rec.get('d4', 0)
@@ -5648,7 +5645,7 @@ class MatEditorApp(QMainWindow):
             info_text += f"  —  {comment}"
         info_text += f"  |  {len(commands)} 条命令"
         info_lbl = QLabel(info_text)
-        info_lbl.setStyleSheet("font-size: 13px; font-weight: bold;")
+        info_lbl.setProperty("class", "InfoTitle")
         info_row.addWidget(info_lbl, 1)
         self._pv_info_lbl = QLabel("")
         info_row.addWidget(self._pv_info_lbl)

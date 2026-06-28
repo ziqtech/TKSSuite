@@ -126,7 +126,6 @@ class ModMetaEditorDialog(QDialog):
         btn_row.addStretch()
         self.btn_save = QPushButton("保存")
         self.btn_save.setObjectName("btnPack")
-        self.btn_save.setStyleSheet("font-weight: bold; padding: 6px 20px;")
         self.btn_save.clicked.connect(self._on_save)
         self.btn_save.setEnabled(False)
         btn_row.addWidget(self.btn_save)

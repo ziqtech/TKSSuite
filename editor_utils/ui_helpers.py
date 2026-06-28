@@ -20,18 +20,18 @@ def update_path_labels(labels_config, is_dark):
     批量更新路径标签的文本和颜色
     labels_config: [(QLabel, path_or_None, display_name), ...]
     """
-    cg = f"color: {COLOR_LOADED_DARK};" if is_dark else f"color: {COLOR_LOADED_LIGHT};"
-    cr = f"color: {COLOR_MISSING_DARK};" if is_dark else f"color: {COLOR_MISSING_LIGHT};"
     for label, path, name in labels_config:
         if path and os.path.exists(path):
             label.setText(f"{name}: {path}")
-            label.setStyleSheet(cg)
+            label.setProperty("status", "loaded")
         elif path:
             label.setText(f"{name}: (不存在){path}")
-            label.setStyleSheet(cr)
+            label.setProperty("status", "missing")
         else:
             label.setText(f"{name}: 未加载")
-            label.setStyleSheet(cr)
+            label.setProperty("status", "missing")
+        label.style().unpolish(label)
+        label.style().polish(label)
 
 
 def make_fake_input(widget=None, line_edit=None, combo=None, button=None, stretch=True, height=28):

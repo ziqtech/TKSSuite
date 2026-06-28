@@ -358,7 +358,7 @@ class SkillEditorApp(QMainWindow):
         # 顶部行：记录标签 + 操作按钮
         header_row = QHBoxLayout()
         self.lbl_rec_idx = QLabel("未选中")
-        self.lbl_rec_idx.setStyleSheet("font-size: 14px; font-weight: bold;")
+        self.lbl_rec_idx.setProperty("class", "RecordHeader")
         header_row.addWidget(self.lbl_rec_idx)
         header_row.addStretch()
         btn_apply = QPushButton("✅ 应用")

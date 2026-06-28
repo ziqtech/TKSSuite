@@ -449,17 +449,19 @@ class WarDataEditorV2(QMainWindow):
             (self.lbl_tkt, self.tkt_path, 'TKT'),
             (self.lbl_wsc, self.wsc_grp_path, 'WSC'),
         ], self._is_dark)
-        cg = "color:#55b572;" if self._is_dark else "color:#178a39;"
-        cr = "color:#e27d60;" if self._is_dark else "color:#c93b16;"
         extra_parts = []
         if self.warpc_path and os.path.exists(self.warpc_path):
             extra_parts.append(f"WarPC: {len(self.warpc_names)}人")
         if self.tkitem_path and os.path.exists(self.tkitem_path):
             extra_parts.append(f"TKItem: {len(self.tkitem_names)}件")
         if extra_parts:
-            self.lbl_extra.setStyleSheet(cg); self.lbl_extra.setText(" | ".join(extra_parts))
+            self.lbl_extra.setProperty("status", "loaded")
+            self.lbl_extra.setText(" | ".join(extra_parts))
         else:
-            self.lbl_extra.setStyleSheet(cr); self.lbl_extra.setText("(WarPC/TKItem: 未加载)")
+            self.lbl_extra.setProperty("status", "missing")
+            self.lbl_extra.setText("(WarPC/TKItem: 未加载)")
+        self.lbl_extra.style().unpolish(self.lbl_extra)
+        self.lbl_extra.style().polish(self.lbl_extra)
 
     # ── UI 构建 ──
     def _build_ui(self):

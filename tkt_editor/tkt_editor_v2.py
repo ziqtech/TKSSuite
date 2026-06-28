@@ -821,7 +821,7 @@ class TktEditor(QMainWindow):
         corner_layout.setContentsMargins(0, 0, 4, 0)
         
         self.lbl_dirty = QLabel("")
-        self.lbl_dirty.setStyleSheet("color: #e27d60; font-weight: bold;")
+        self.lbl_dirty.setProperty("class", "DirtyIndicator")
         corner_layout.addWidget(self.lbl_dirty)
         
         corner_layout.addSpacing(10)
@@ -832,7 +832,7 @@ class TktEditor(QMainWindow):
         corner_layout.addSpacing(10)
         btn_theme = QPushButton("🌓 切换主题")
         btn_theme.clicked.connect(self._toggle_theme)
-        btn_theme.setStyleSheet("padding: 2px 8px; border-radius: 2px;")
+        btn_theme.setProperty("class", "CompactBtn")
         corner_layout.addWidget(btn_theme)
         
         self.main_tabs.setCornerWidget(corner_widget, Qt.TopRightCorner)
@@ -900,14 +900,14 @@ class TktEditor(QMainWindow):
         viewport_widget = QWidget(); vp_layout = QVBoxLayout(viewport_widget); vp_layout.setContentsMargins(0,0,0,0)
         zoom_layout = QHBoxLayout()
         zoom_layout.setContentsMargins(0,0,0,0)
-        btn_zoom_out = QPushButton("➖"); btn_zoom_out.setFixedSize(22, 22); btn_zoom_out.setStyleSheet("padding: 0px; font-size: 12px;"); btn_zoom_out.clicked.connect(self._zoom_out)
-        self.lbl_zoom = QLabel("150%"); self.lbl_zoom.setAlignment(Qt.AlignCenter); self.lbl_zoom.setFixedWidth(40); self.lbl_zoom.setStyleSheet("font-size: 11px; background-color: transparent;")
-        btn_zoom_in = QPushButton("➕"); btn_zoom_in.setFixedSize(22, 22); btn_zoom_in.setStyleSheet("padding: 0px; font-size: 12px;"); btn_zoom_in.clicked.connect(self._zoom_in)
+        btn_zoom_out = QPushButton("➖"); btn_zoom_out.setFixedSize(22, 22); btn_zoom_out.setProperty("class", "ZoomBtn"); btn_zoom_out.clicked.connect(self._zoom_out)
+        self.lbl_zoom = QLabel("150%"); self.lbl_zoom.setAlignment(Qt.AlignCenter); self.lbl_zoom.setFixedWidth(40); self.lbl_zoom.setProperty("class", "ZoomLabel")
+        btn_zoom_in = QPushButton("➕"); btn_zoom_in.setFixedSize(22, 22); btn_zoom_in.setProperty("class", "ZoomBtn"); btn_zoom_in.clicked.connect(self._zoom_in)
         zoom_layout.addWidget(btn_zoom_out); zoom_layout.addWidget(self.lbl_zoom); zoom_layout.addWidget(btn_zoom_in)
 
         self.preview_stack = QStackedWidget()
         self.preview_scroll_area = QScrollArea(); self.preview_scroll_area.setWidgetResizable(True)
-        scroll_content = QWidget(); scroll_content.setStyleSheet("background: transparent;")
+        scroll_content = QWidget(); scroll_content.setObjectName("TransparentBg")
         scroll_layout = QVBoxLayout(scroll_content); scroll_layout.setAlignment(Qt.AlignLeft | Qt.AlignTop)
         self.preview_img = QLabel(); self.preview_img.setAlignment(Qt.AlignLeft | Qt.AlignTop); scroll_layout.addWidget(self.preview_img)
         self.preview_scroll_area.setWidget(scroll_content); self.preview_stack.addWidget(self.preview_scroll_area)
@@ -955,7 +955,7 @@ class TktEditor(QMainWindow):
         self._build_tag_toolbar(comp_right_layout, show_info=False)
 
         self.comp_box1_title = QLabel("名称 / 主文本内容 (ID: ---)")
-        self.comp_box1_title.setStyleSheet("font-weight: bold; color: #478cbf;")
+        self.comp_box1_title.setProperty("class", "PrimaryTitle")
         comp_right_layout.addWidget(self.comp_box1_title)
         self.comp_text1 = QPlainTextEdit(); self.comp_text1.setFont(self.font_mono)
         self.comp_text1.textChanged.connect(self._on_comp_text_modified)
@@ -964,7 +964,7 @@ class TktEditor(QMainWindow):
         self.comp_desc_container = QWidget()
         dc_layout = QVBoxLayout(self.comp_desc_container); dc_layout.setContentsMargins(0,0,0,0)
         self.comp_box2_title = QLabel("说明 / 描述文本内容 (ID: ---)")
-        self.comp_box2_title.setStyleSheet("font-weight: bold; color: #55b572; padding-top: 10px;")
+        self.comp_box2_title.setProperty("class", "SecondaryTitle")
         dc_layout.addWidget(self.comp_box2_title)
         self.comp_text2 = QPlainTextEdit(); self.comp_text2.setFont(self.font_mono)
         self.comp_text2.textChanged.connect(self._on_comp_text_modified)
@@ -972,7 +972,7 @@ class TktEditor(QMainWindow):
         comp_right_layout.addWidget(self.comp_desc_container)
 
         btn_comp_apply = QPushButton("✅ 保存本槽修改 (点击空槽直接输入即可扩展)")
-        btn_comp_apply.setStyleSheet("font-weight:bold; padding:8px; margin-top: 10px;")
+        btn_comp_apply.setProperty("class", "ConfirmBtn")
         btn_comp_apply.clicked.connect(self._apply_comp_edit)
         comp_right_layout.addWidget(btn_comp_apply)
 
@@ -988,14 +988,14 @@ class TktEditor(QMainWindow):
 
         comp_preview_header = QHBoxLayout()
         comp_preview_header.setContentsMargins(0, 0, 0, 0)
-        btn_comp_zoom_out = QPushButton("➖"); btn_comp_zoom_out.setFixedSize(22, 22); btn_comp_zoom_out.setStyleSheet("padding: 0px; font-size: 12px;"); btn_comp_zoom_out.clicked.connect(self._zoom_out)
-        self.lbl_comp_zoom = QLabel("150%"); self.lbl_comp_zoom.setAlignment(Qt.AlignCenter); self.lbl_comp_zoom.setFixedWidth(40); self.lbl_comp_zoom.setStyleSheet("font-size: 11px; background-color: transparent;")
-        btn_comp_zoom_in = QPushButton("➕"); btn_comp_zoom_in.setFixedSize(22, 22); btn_comp_zoom_in.setStyleSheet("padding: 0px; font-size: 12px;"); btn_comp_zoom_in.clicked.connect(self._zoom_in)
+        btn_comp_zoom_out = QPushButton("➖"); btn_comp_zoom_out.setFixedSize(22, 22); btn_comp_zoom_out.setProperty("class", "ZoomBtn"); btn_comp_zoom_out.clicked.connect(self._zoom_out)
+        self.lbl_comp_zoom = QLabel("150%"); self.lbl_comp_zoom.setAlignment(Qt.AlignCenter); self.lbl_comp_zoom.setFixedWidth(40); self.lbl_comp_zoom.setProperty("class", "ZoomLabel")
+        btn_comp_zoom_in = QPushButton("➕"); btn_comp_zoom_in.setFixedSize(22, 22); btn_comp_zoom_in.setProperty("class", "ZoomBtn"); btn_comp_zoom_in.clicked.connect(self._zoom_in)
         comp_preview_header.addWidget(btn_comp_zoom_out); comp_preview_header.addWidget(self.lbl_comp_zoom); comp_preview_header.addWidget(btn_comp_zoom_in)
 
         self.comp_preview_scroll = QScrollArea()
         self.comp_preview_scroll.setWidgetResizable(True)
-        sc_comp = QWidget(); sc_comp.setStyleSheet("background:transparent;")
+        sc_comp = QWidget(); sc_comp.setObjectName("TransparentBg")
         scl_comp = QVBoxLayout(sc_comp); scl_comp.setContentsMargins(4,4,4,4)
         self.comp_preview_img = QLabel(); self.comp_preview_img.setAlignment(Qt.AlignLeft | Qt.AlignTop)
         scl_comp.addWidget(self.comp_preview_img)
@@ -1020,7 +1020,7 @@ class TktEditor(QMainWindow):
         self._comp_preview_timer = QTimer(self); self._comp_preview_timer.setSingleShot(True); self._comp_preview_timer.timeout.connect(self._render_comp_previews)
 
     def _make_v_sep(self):
-        sep = QFrame(); sep.setFrameShape(QFrame.VLine); sep.setFrameShadow(QFrame.Sunken); sep.setStyleSheet("color: #777;")
+        sep = QFrame(); sep.setFrameShape(QFrame.VLine); sep.setFrameShadow(QFrame.Sunken); sep.setProperty("class", "SepLine")
         return sep
 
     def _toggle_theme(self):
@@ -1035,10 +1035,9 @@ class TktEditor(QMainWindow):
     def _apply_theme(self):
         qss = ThemeManager.dark_qss() if self._is_dark else ThemeManager.light_qss()
         self.setStyleSheet(qss)
-        preview_bg = '#1a1d24' if self._is_dark else '#313c52'
-        if hasattr(self, 'preview_scroll_area'): self.preview_scroll_area.setStyleSheet(f"background-color: {preview_bg}; border: none;")
-        if hasattr(self, 'preview_text'): self.preview_text.setStyleSheet(f"background-color: {preview_bg}; color: {GAME_COLORS[DEFAULT_FCOLOR]}; border: none;")
-        if hasattr(self, 'comp_preview_scroll'): self.comp_preview_scroll.setStyleSheet(f"background-color: {preview_bg}; border: none;")
+        if hasattr(self, 'preview_scroll_area'): self.preview_scroll_area.setObjectName("GamePreview")
+        if hasattr(self, 'preview_text'): self.preview_text.setObjectName("GamePreview")
+        if hasattr(self, 'comp_preview_scroll'): self.comp_preview_scroll.setObjectName("GamePreview")
         self._update_paths()
 
     def _update_paths(self):
@@ -1046,10 +1045,14 @@ class TktEditor(QMainWindow):
             (self.lbl_tkt, self.tkt_path, 'TKT'),
             (self.lbl_font, self.font_path, 'FONT9696'),
         ], self._is_dark)
-        cg = ("color: #55b572;" if self._is_dark else "color: #178a39;")
-        cr = ("color: #e27d60;" if self._is_dark else "color: #c93b16;")
-        if _B2G_TABLE is not None: self.lbl_g2b.setText("g2b.dat: 已挂载"); self.lbl_g2b.setStyleSheet(cg)
-        else: self.lbl_g2b.setText("(g2b.dat 未挂载)"); self.lbl_g2b.setStyleSheet(cr)
+        if _B2G_TABLE is not None:
+            self.lbl_g2b.setText("g2b.dat: 已挂载")
+            self.lbl_g2b.setProperty("status", "loaded")
+        else:
+            self.lbl_g2b.setText("(g2b.dat 未挂载)")
+            self.lbl_g2b.setProperty("status", "missing")
+        self.lbl_g2b.style().unpolish(self.lbl_g2b)
+        self.lbl_g2b.style().polish(self.lbl_g2b)
 
     def _rebuild_id_map(self):
         self.entry_by_id = {e['id']: e for e in self.entries}
