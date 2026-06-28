@@ -184,17 +184,14 @@ def detect_exe_profile(exe_path: str, base_addr: int = 0x400000,
     if '.test' in sec_names and '.Silvana' in sec_names:
         profile.name = "xiaotansanguo3"
         profile.display_name = "孝谈三国3终极版"
-        # 该 MOD 已自行实现的功能 → 自动跳过
-        profile.skip_patches = {
-            "awk_sprite_cave",      # .test 段已有形象加载逻辑
-            "awk_sprite_cave2",     # .test 段已有敌方形象逻辑
-        }
+        # 启动器优先级最高: 不跳过任何补丁, 而是通过 fallback_rva + override 机制覆盖 MOD 已有 hook
+        profile.skip_patches = set()  # 不跳过任何补丁
         profile.warnings.append(
             "检测到第三方 MOD 版本 (孝谈三国3终极版)，"
-            "战场形象补丁已自动跳过（MOD 自带实现）"
+            "启动器补丁将以最高优先级覆盖 MOD 已有修改"
         )
         log(f"  识别为: {profile.display_name}")
-        log(f"  自动跳过补丁: {profile.skip_patches}")
+        log(f"  策略: 启动器补丁优先级最高, 使用 fallback_rva + override")
     elif extra_secs:
         # 未知的 MOD 版本，但有额外段
         profile.name = "unknown_mod"
@@ -250,9 +247,9 @@ def detect_exe_profile_runtime(h_proc: int, base_addr: int, module_size: int,
     if '.test' in sec_names and '.Silvana' in sec_names:
         profile.name = "xiaotansanguo3"
         profile.display_name = "孝谈三国3终极版"
-        profile.skip_patches = {"awk_sprite_cave", "awk_sprite_cave2"}
+        profile.skip_patches = set()  # 启动器优先级最高, 不跳过任何补丁
         profile.warnings.append(
-            "检测到第三方 MOD 版本 (孝谈三国3终极版)，战场形象补丁已自动跳过"
+            "检测到第三方 MOD 版本 (孝谈三国3终极版)，启动器补丁将以最高优先级覆盖"
         )
         log(f"  识别为: {profile.display_name}")
     elif extra_secs:

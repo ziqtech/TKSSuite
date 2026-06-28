@@ -25,8 +25,9 @@ class PatchDef:
     optional: bool = False
     # 第三方 MOD 兼容字段
     profile_rules: Dict[str, str] = field(default_factory=dict)  # {profile_name: "apply"|"skip"}
-    hook_conflict_action: str = "skip"  # hook 点已被占用时: "skip" | "warn"
+    hook_conflict_action: str = "override"  # hook 点已被占用时: "override" | "skip"
     exclude_extra_sections: bool = True  # value_scan 时是否排除额外段
+    fallback_rva: int = 0  # 模式扫描失败时的回退 RVA (用于 MOD 版本)
     # patch_summon_table 专用字段
     json_file: str = ""                       # 召唤表 JSON 路径 (load_config 解析为绝对路径)
     data_rva: int = 0                         # .data 召唤表 8 字节的 RVA
@@ -115,8 +116,9 @@ def load_config(path: str, log_func=None) -> Optional[PatchConfig]:
             d.optional = pr.get("optional", False)
             # 第三方 MOD 兼容字段
             d.profile_rules = dict(pr.get("profile_rules", {}))
-            d.hook_conflict_action = pr.get("hook_conflict_action", "skip")
+            d.hook_conflict_action = pr.get("hook_conflict_action", "override")
             d.exclude_extra_sections = pr.get("exclude_extra_sections", True)
+            d.fallback_rva = _parse_maybe_hex(pr.get("fallback_rva", 0))
             # patch_summon_table 字段
             jf = pr.get("json_file", "")
             if jf and not os.path.isabs(jf):

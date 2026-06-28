@@ -830,17 +830,29 @@ def apply_config_patches(config: PatchConfig, code_buf: bytearray, code_start_ad
             hpat, hwc = parse_pattern(hp or "")
             hh = pattern_scan(bytes(code_buf), hpat, hwc)
             if defn.hook_expect_count > 0 and len(hh) != defn.hook_expect_count:
-                # 软失败模式: 匹配数为 0 且有 MOD profile 时, 降级为跳过而非失败
-                if len(hh) == 0 and exe_profile and exe_profile.has_extra_sections:
-                    log(f"  {tag}: Hook 模式无匹配 (MOD 可能已修改此处), 自动跳过")
+                # 模式匹配失败 — 尝试 fallback_rva 回退定位
+                if len(hh) == 0 and defn.fallback_rva > 0:
+                    # fallback_rva 是相对于基址的偏移, 转为 code_buf 内偏移
+                    fb_off = defn.fallback_rva - 0x1000  # RVA -> code_buf offset
+                    if 0 <= fb_off < len(code_buf) - defn.hook_size:
+                        hh = [fb_off]
+                        log(f"  {tag}: 模式无匹配, 使用 fallback_rva 0x{defn.fallback_rva:X} (offset 0x{fb_off:X})")
+                    else:
+                        log(f"  {tag}: fallback_rva 0x{defn.fallback_rva:X} 越界, 跳过")
+                        continue
+                elif len(hh) == 0 and exe_profile and exe_profile.has_extra_sections:
+                    log(f"  {tag}: Hook 模式无匹配 (MOD 已修改, 无 fallback), 跳过")
                     continue
-                log(f"  {tag}: Hook 模式匹配 {len(hh)} 处 (预期 {defn.hook_expect_count}), 跳过")
-                continue
+                else:
+                    log(f"  {tag}: Hook 模式匹配 {len(hh)} 处 (预期 {defn.hook_expect_count}), 跳过")
+                    continue
             # Hook 冲突检测: 检查 hook 点是否已被占用
             if hh and check_hook_conflict(code_buf, hh[0]):
                 action = defn.hook_conflict_action
-                if action == "skip":
-                    log(f"  {tag}: Hook 点已被占用 (E8/E9 开头), 自动跳过")
+                if action == "override":
+                    log(f"  {tag}: Hook 点已被占用, 启动器优先级最高 → 覆盖")
+                elif action == "skip":
+                    log(f"  {tag}: Hook 点已被占用 (E8/E9 开头), 跳过")
                     continue
                 else:
                     log(f"  {tag}: [WARN] Hook 点已被占用, 但仍尝试应用")
