@@ -448,6 +448,7 @@ class GRPEditor(QMainWindow):
         fm.addAction("另存为... (Ctrl+Shift+S)", self._save_as, QKeySequence("Ctrl+Shift+S"))
         fm.addSeparator()
         fm.addAction("导出为 MOD (.tksmod)…", self._export_tksmod)
+        fm.addAction("导出选中区段为 MOD (.tksmod)…", self._export_selected_as_mod)
         fm.addAction("导入 MOD (.tksmod)…", self._import_tksmod)
         fm.addSeparator()
         fm.addAction("导出 L1 色板", lambda: self._export_color_swatch("L1"))
@@ -769,6 +770,98 @@ class GRPEditor(QMainWindow):
                 f"已导出 (区段级增量):\n{fp}\n\n参考: {ref_path}\n修改: {n_mod} 个区段\n新增: {n_app} 个区段")
         except Exception as e:
             QMessageBox.critical(self, "导出失败", str(e))
+
+    def _export_selected_as_mod(self):
+        """导出当前选中区段为 .tksmod — 块级增量模式，launcher 可正确合并到目标文件"""
+        if not self.grp or self._sel_idx < 0:
+            QMessageBox.information(self, "提示", "请先选中一个区段"); return
+
+        sec = self._get_sec()
+        if sec is None:
+            QMessageBox.information(self, "提示", "请先选中一个区段"); return
+
+        if not self.grp.filepath:
+            QMessageBox.information(self, "提示",
+                "请先打开一个 GRP 文件（需要原始文件名作为 MOD 合并目标）"); return
+
+        # 步骤1: 序列化选中区段 → 临时 GRP → 提取原始区段字节
+        tmp_grp = GRPFile()
+        if isinstance(sec, GRPSection):
+            new_sec = GRPSection(0, 0, sec.width, sec.height, sec.comp_a, sec.comp_b)
+            new_sec._orig_frame_a = sec._orig_frame_a
+            new_sec._orig_frame_b = sec._orig_frame_b
+            new_sec._orig_fb_declared = sec._orig_fb_declared
+            if sec._modified_a and sec._pixels:
+                new_sec._pixels = sec._pixels
+                new_sec._decoded_a = True
+                new_sec._modified_a = True
+            if sec._modified_b:
+                new_sec._layer1 = sec._layer1
+                new_sec._layer2 = sec._layer2
+                new_sec.has_layer2 = sec.has_layer2
+                new_sec._decoded_b = True
+                new_sec._modified_b = True
+            tmp_grp.sections.append(new_sec)
+        elif isinstance(sec, GRPAudioSection):
+            new_sec = GRPAudioSection(0, 0, sec.size, sec._raw)
+            new_sec._wav_info = sec._wav_info
+            new_sec._duration = sec._duration
+            tmp_grp.audio_sections.append(new_sec)
+        elif isinstance(sec, GRPDataSection):
+            new_sec = GRPDataSection(0, 0, sec.size, sec._raw)
+            tmp_grp.data_sections.append(new_sec)
+
+        import tempfile, base64
+        tmp_grp_path = tempfile.mktemp(suffix='.grp')
+        tmp_idx_path = tempfile.mktemp(suffix='.idx')
+        try:
+            save_grp(tmp_grp, tmp_grp_path, tmp_idx_path)
+            cur_sections = load_grp_raw_sections(tmp_grp_path, tmp_idx_path)
+            if not cur_sections:
+                QMessageBox.warning(self, "错误", "无法序列化选中区段"); return
+            section_bytes = cur_sections[0]
+
+            # 步骤2: 构建 block_diff — launcher 会加载游戏原文件并替换指定索引的区段
+            target_name = os.path.basename(self.grp.filepath)
+            diff_result = {
+                "modified": [{"index": sec.index,
+                              "data_b64": base64.b64encode(section_bytes).decode('ascii')}],
+                "appended": [],
+                "deleted_indices": [],
+            }
+
+            crc = compute_crc32(self.grp.filepath)
+            data_json = build_block_diff_json(
+                target=target_name, block_type="grp_section",
+                original_count=self.grp.total_sections, original_crc32=crc,
+                diff_result=diff_result)
+
+            # 步骤3: MOD 元数据
+            from PySide6.QtWidgets import QDialog
+            dlg = ModMetadataDialog(self, getattr(self, '_last_mod_metadata', None))
+            if dlg.exec() != QDialog.Accepted: return
+            metadata = dlg.get_metadata(); self._last_mod_metadata = metadata
+            metadata["type"] = "visual"
+
+            internal_path = f"data/{target_name}.json"
+            mod_json = generate_mod_json(metadata,
+                [{"file": internal_path, "target": target_name}])
+
+            fp, _ = QFileDialog.getSaveFileName(self, "导出选中区段为 MOD",
+                f"{metadata['id']}.tksmod", "TKS MOD (*.tksmod)")
+            if not fp: return
+
+            pack_tksmod(fp, mod_json, {internal_path: data_json})
+
+            self._status_lbl.setText(
+                f"已导出 MOD: {Path(fp).name} (区段 #{sec.index:03d} → {target_name})")
+            QMessageBox.information(self, "导出成功",
+                f"已导出选中区段为 MOD (块级合并):\n{fp}\n\n"
+                f"目标文件: {target_name}\n区段: #{sec.index:03d} ({sec.type_label})\n\n"
+                f"Launcher 加载时将替换 {target_name} 的第 {sec.index} 个区段。")
+        finally:
+            for p in [tmp_grp_path, tmp_idx_path]:
+                if os.path.exists(p): os.remove(p)
 
     def _import_tksmod(self):
         """从 .tksmod 导入 MOD 数据到 GRP 编辑器"""

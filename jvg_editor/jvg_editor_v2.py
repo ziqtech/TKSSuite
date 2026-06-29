@@ -606,7 +606,15 @@ class JVGEditor(QMainWindow):
         export_mod_action = QAction("导出为 MOD (.tksmod)…", self)
         export_mod_action.triggered.connect(self._export_tksmod)
         file_menu.addAction(export_mod_action)
-        
+
+        export_block_mod_action = QAction("导出当前分组为 MOD (.tksmod)…", self)
+        export_block_mod_action.triggered.connect(self._export_block_as_mod)
+        file_menu.addAction(export_block_mod_action)
+
+        export_frame_mod_action = QAction("导出选中帧为 MOD (.tksmod)…", self)
+        export_frame_mod_action.triggered.connect(self._export_frame_as_mod)
+        file_menu.addAction(export_frame_mod_action)
+
         import_mod_action = QAction("导入 MOD (.tksmod)…", self)
         import_mod_action.triggered.connect(self._import_tksmod)
         file_menu.addAction(import_mod_action)
@@ -984,6 +992,131 @@ class JVGEditor(QMainWindow):
                 f"已导出 (块级增量):\n{fp}\n\n参考: {ref_path}\n修改: {n_mod} 个精灵块\n新增: {n_app} 个精灵块")
         except Exception as e:
             QMessageBox.critical(self, "导出失败", str(e))
+
+    def _export_block_as_mod(self):
+        """导出当前分组为 .tksmod — 块级增量模式，launcher 可正确合并到目标文件"""
+        if not self.jvg or self._bi < 0 or self._bi >= len(self.jvg.blocks):
+            QMessageBox.information(self, "提示", "请先选中一个分组"); return
+
+        if not self.jvg.filepath:
+            QMessageBox.information(self, "提示",
+                "请先打开一个 JVG 文件（需要原始文件名作为 MOD 合并目标）"); return
+
+        blk = self.jvg.blocks[self._bi]
+
+        # 步骤1: 序列化当前分组 → 临时 JVG → 提取原始 block 字节
+        tmp_jvg = JVGFile()
+        import copy
+        new_blk = JVMBlock(blk.name)
+        new_blk.frames = copy.deepcopy(blk.frames)
+        new_blk.palette.entries = list(blk.palette.entries)
+        tmp_jvg.blocks.append(new_blk)
+
+        import tempfile, base64
+        tmp_path = tempfile.mktemp(suffix='.jvg')
+        try:
+            save_jvg(tmp_jvg, tmp_path)
+            cur_blocks = load_jvg_raw_blocks(tmp_path)
+            if not cur_blocks:
+                QMessageBox.warning(self, "错误", "无法序列化当前分组"); return
+            block_bytes = cur_blocks[0]
+
+            # 步骤2: 构建 block_diff — launcher 会加载游戏原文件并替换指定索引的块
+            target_name = os.path.basename(self.jvg.filepath)
+            diff_result = {
+                "modified": [{"index": self._bi,
+                              "data_b64": base64.b64encode(block_bytes).decode('ascii')}],
+                "appended": [],
+                "deleted_indices": [],
+            }
+
+            crc = compute_crc32(self.jvg.filepath)
+            data_json = build_block_diff_json(
+                target=target_name, block_type="jvm_block",
+                original_count=len(self.jvg.blocks), original_crc32=crc,
+                diff_result=diff_result)
+
+            # 步骤3: MOD 元数据
+            from PySide6.QtWidgets import QDialog
+            dlg = ModMetadataDialog(self, getattr(self, '_last_mod_metadata', None))
+            if dlg.exec() != QDialog.Accepted: return
+            metadata = dlg.get_metadata(); self._last_mod_metadata = metadata
+            metadata["type"] = "visual"
+
+            internal_path = f"data/{target_name}.json"
+            mod_json = generate_mod_json(metadata,
+                [{"file": internal_path, "target": target_name}])
+
+            fp, _ = QFileDialog.getSaveFileName(self, "导出当前分组为 MOD",
+                f"{metadata['id']}.tksmod", "TKS MOD (*.tksmod)")
+            if not fp: return
+
+            pack_tksmod(fp, mod_json, {internal_path: data_json})
+
+            self.statusBar().showMessage(
+                f"已导出 MOD: {os.path.basename(fp)} (分组 [{self._bi}] {blk.name}, {blk.frame_count}帧)", 5000)
+            QMessageBox.information(self, "导出成功",
+                f"已导出当前分组为 MOD (块级合并):\n{fp}\n\n"
+                f"目标文件: {target_name}\n分组: [{self._bi}] {blk.name}\n帧数: {blk.frame_count}\n\n"
+                f"Launcher 加载时将替换 {target_name} 的第 {self._bi} 个精灵块。")
+        finally:
+            if os.path.exists(tmp_path): os.remove(tmp_path)
+
+    def _export_frame_as_mod(self):
+        """导出选中帧为 .tksmod — 资源替换模式（独立 JVG 文件，用于分享/存档）"""
+        if not self.jvg or self._bi < 0 or self._bi >= len(self.jvg.blocks):
+            QMessageBox.information(self, "提示", "请先选中一个分组"); return
+
+        blk = self.jvg.blocks[self._bi]
+        if self._sel_fi < 0 or self._sel_fi >= blk.frame_count:
+            QMessageBox.information(self, "提示", "请先在平铺视图中点击选中一帧"); return
+
+        frame = blk.frames[self._sel_fi]
+
+        # 创建临时 JVGFile，包含一个分组和选中的帧
+        tmp_jvg = JVGFile()
+        import copy
+        new_blk = JVMBlock(f"{blk.name}_f{self._sel_fi}")
+        new_blk.frames = [copy.deepcopy(frame)]
+        new_blk.palette.entries = list(blk.palette.entries)
+        tmp_jvg.blocks.append(new_blk)
+
+        import tempfile
+        tmp_path = tempfile.mktemp(suffix='.jvg')
+        try:
+            save_jvg(tmp_jvg, tmp_path)
+
+            # MOD 元数据
+            from PySide6.QtWidgets import QDialog
+            dlg = ModMetadataDialog(self, getattr(self, '_last_mod_metadata', None))
+            if dlg.exec() != QDialog.Accepted: return
+            metadata = dlg.get_metadata(); self._last_mod_metadata = metadata
+            metadata["type"] = "visual"
+
+            # 生成独立资源文件名（不会覆盖游戏文件）
+            src_name = os.path.basename(self.jvg.filepath) if self.jvg.filepath else "unknown.jvg"
+            base = os.path.splitext(src_name)[0]
+            target_name = f"{base}_{blk.name}_f{self._sel_fi:03d}.jvg"
+
+            mod_json = generate_mod_json(metadata, [],
+                resources=[{"file": f"resources/{target_name}", "target": target_name}])
+
+            fp, _ = QFileDialog.getSaveFileName(self, "导出选中帧为 MOD",
+                f"{metadata['id']}.tksmod", "TKS MOD (*.tksmod)")
+            if not fp: return
+
+            pack_tksmod(fp, mod_json, {}, resource_files={f"resources/{target_name}": tmp_path})
+
+            self.statusBar().showMessage(
+                f"已导出 MOD: {os.path.basename(fp)} (帧 #{self._sel_fi})", 5000)
+            QMessageBox.information(self, "导出成功",
+                f"已导出选中帧为 MOD:\n{fp}\n\n"
+                f"分组: [{self._bi}] {blk.name}\n"
+                f"帧: #{self._sel_fi} ({frame.width}×{frame.height})\n\n"
+                f"注意: 帧导出为独立资源文件，不会自动合并到游戏 JVG。\n"
+                f"如需修改游戏中的精灵块，请使用「导出当前分组为 MOD」。")
+        finally:
+            if os.path.exists(tmp_path): os.remove(tmp_path)
 
     def _import_tksmod(self):
         """从 .tksmod 导入 MOD 数据到 JVG 编辑器"""
