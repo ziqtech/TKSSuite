@@ -190,7 +190,8 @@ def save_jvg(jvg:JVGFile,filepath:str):
         n=blk.frame_count
         buf+=JVM_MAGIC
         buf+=struct.pack("<I",n)
-        buf+=struct.pack("<I",0)
+        bsp=len(buf)
+        buf+=struct.pack("<I",0)   # [8:12] 块体大小占位 (data_size + 偏移表 + 调色板)
         dsp=len(buf)
         buf+=struct.pack("<I",0)
         buf+=bytes(16)
@@ -219,6 +220,7 @@ def save_jvg(jvg:JVGFile,filepath:str):
         for e in blk.palette.entries: buf+=struct.pack("<H",e&0xFFFF)
         buf+=fd
         struct.pack_into("<I",buf,dsp,block_data_size)
+        struct.pack_into("<I",buf,bsp,block_data_size+(n+1)*4+512)
 
     struct.pack_into("<I",buf,12,total_data_size)
     Path(filepath).write_bytes(bytes(buf))
