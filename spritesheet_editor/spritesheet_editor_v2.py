@@ -293,6 +293,7 @@ class SpriteSheetModel(QObject):
         self.padding: int = 1
         self.cell_width: int = 64
         self.cell_height: int = 64
+        self._cell_size_set: bool = False  # 用户是否手动设定过 cell 宽高
 
     @property
     def total_cells(self) -> int:
@@ -1695,6 +1696,10 @@ class SettingsPanel(QWidget):
     def _on_param_changed(self):
         if self._suppress_changes:
             return
+        # 检测 cell 宽高是否被用户手动修改
+        sender = self.sender()
+        if sender in (self._spin_cell_width, self._spin_cell_height):
+            self.model._cell_size_set = True
         try:
             self.model.columns = self._spin_columns.value()
             self.model.rows = self._spin_rows.value()
@@ -1712,9 +1717,17 @@ class SettingsPanel(QWidget):
 
     def _auto_detect(self):
         self.model.auto_detect_cell_size()
+        self._suppress_changes = True
         self._spin_cell_width.setValue(self.model.cell_width)
         self._spin_cell_height.setValue(self.model.cell_height)
-        self._on_param_changed()
+        self._suppress_changes = False
+        self.model._cell_size_set = False  # 自动检测不算手动设定
+        self.editor._on_model_changed()
+        self._update_output_info()
+        try:
+            self._refresh_export_info()
+        except Exception:
+            pass
 
     def _move_row(self, delta: int):
         sel = self.editor.canvas.selection
@@ -2519,6 +2532,7 @@ class SpriteSheetEditorWindow(QMainWindow):
         self.model.columns = cols
         self.model.rows = rows
         self.model.padding = self.settings._spin_padding.value()
+        self.model._cell_size_set = False  # 全新导入，重置手动设定标记
         self.model.auto_detect_cell_size()
         self.canvas.selection.clear()
         self.canvas._drag_info = None
@@ -2555,12 +2569,11 @@ class SpriteSheetEditorWindow(QMainWindow):
         cols = max(1, int(m.columns))
         rows = max(1, int(m.rows))
         pad = max(0, int(m.padding))
-        iw, ih = img.size
-        cell_w = max(1, (iw - max(0, cols - 1) * pad) // cols)
-        cell_h = max(1, (ih - max(0, rows - 1) * pad) // rows)
-        m.cell_width = cell_w
-        m.cell_height = cell_h
-
+        # 用户未手动设定 cell 宽高时自动反算；已手动设定则使用用户值
+        if not m._cell_size_set:
+            iw, ih = img.size
+            m.cell_width = max(1, (iw - max(0, cols - 1) * pad) // cols)
+            m.cell_height = max(1, (ih - max(0, rows - 1) * pad) // rows)
         m.split_spritesheet(img)
         self.image_list._image_paths = []
         self.image_list._path_by_id = {}
@@ -2587,15 +2600,14 @@ class SpriteSheetEditorWindow(QMainWindow):
                 return
 
         m = self.model
-        cols = max(1, int(m.columns))
-        rows = max(1, int(m.rows))
-        pad = max(0, int(m.padding))
-        iw, ih = img.size
-        cell_w = max(1, (iw - max(0, cols - 1) * pad) // cols)
-        cell_h = max(1, (ih - max(0, rows - 1) * pad) // rows)
-        m.cell_width = cell_w
-        m.cell_height = cell_h
-
+        # 用户未手动设定 cell 宽高时自动反算；已手动设定则使用用户值
+        if not m._cell_size_set:
+            iw, ih = img.size
+            cols = max(1, int(m.columns))
+            rows = max(1, int(m.rows))
+            pad = max(0, int(m.padding))
+            m.cell_width = max(1, (iw - max(0, cols - 1) * pad) // cols)
+            m.cell_height = max(1, (ih - max(0, rows - 1) * pad) // rows)
         m.split_spritesheet(img)
         self.image_list._image_paths = []
         self.image_list._path_by_id = {}
