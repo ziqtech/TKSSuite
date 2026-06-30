@@ -24,8 +24,9 @@ from workers.patcher_worker import PatcherWorker
 from editor_utils.dock_components import DockHeader
 
 # 确定启动器根目录（打包 exe 或开发模式）
-if getattr(sys, 'frozen', False):
-    _LAUNCHER_DIR = os.path.dirname(sys.executable)
+if "__compiled__" in globals():
+    from editor_utils.runtime_bootstrap import get_app_dir
+    _LAUNCHER_DIR = get_app_dir()
 else:
     _LAUNCHER_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 

@@ -122,7 +122,16 @@ def load_config(path: str, log_func=None) -> Optional[PatchConfig]:
             # patch_summon_table 字段
             jf = pr.get("json_file", "")
             if jf and not os.path.isabs(jf):
-                jf = os.path.join(os.path.dirname(path), jf)
+                # 先相对于 tks_patches.json 所在目录解析
+                resolved = os.path.join(os.path.dirname(path), jf)
+                # 若不存在, 向上搜索一层 (兼容开发环境 tks_patches.json 在子目录)
+                if not os.path.isfile(resolved):
+                    parent_dir = os.path.dirname(os.path.dirname(path))
+                    if parent_dir and parent_dir != os.path.dirname(path):
+                        alt = os.path.join(parent_dir, jf)
+                        if os.path.isfile(alt):
+                            resolved = alt
+                jf = resolved
             d.json_file = jf
             d.data_rva = _parse_maybe_hex(pr.get("data_rva", 0))
             d.data_keys = list(pr.get("data_keys", []))

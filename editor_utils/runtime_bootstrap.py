@@ -52,12 +52,31 @@ def _detect_app_dir():
             return parent
         current = parent
 
-    # 兜底: 返回 sys.executable 目录
+    # 兜底: 优先使用 sys.argv[0] 目录 (在 Nuitka onefile 下保留原始 exe 路径)
+    if sys.argv and sys.argv[0]:
+        argv0_dir = os.path.dirname(os.path.abspath(sys.argv[0]))
+        if os.path.isdir(argv0_dir):
+            return argv0_dir
     return exe_dir
 
 
 # exe 所在目录 (发行目录)
 _APP_DIR = _detect_app_dir()
+
+
+def get_app_dir() -> str:
+    """返回 exe 所在发行目录。
+
+    编译环境: 使用 sys.argv[0] 定位原始 exe 路径 (Nuitka onefile/standalone 均保留)。
+             不依赖 .lib 文件 — 即使运行时归档丢失也能正确找到 configs/ 和 mods/。
+    开发环境: 返回值不可靠 (可能为 Python 安装目录), 调用者应自行用 __file__ 推算。
+    """
+    # sys.argv[0] 在 Nuitka 下保留原始 exe 路径, 比 sys.executable 更可靠
+    # (sys.executable 在 onefile 模式下指向临时解压目录)
+    if sys.argv and sys.argv[0]:
+        return os.path.dirname(os.path.abspath(sys.argv[0]))
+    return _APP_DIR
+
 
 # 运行时缓存目录
 _CACHE_DIR = os.path.join(

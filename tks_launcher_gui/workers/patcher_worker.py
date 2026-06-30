@@ -87,11 +87,11 @@ class PatcherWorker(QThread):
         _truncated_files = {}
 
         # 确定启动器目录
-        if getattr(sys, 'frozen', False):
-            exe_dir = os.path.dirname(sys.executable)
+        if "__compiled__" in globals():
+            from editor_utils.runtime_bootstrap import get_app_dir
+            exe_dir = get_app_dir()
         else:
-            exe_dir = os.path.dirname(os.path.abspath(__file__))
-            exe_dir = os.path.dirname(exe_dir)  # workers/ -> root
+            exe_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # workers/ -> root
         if not exe_dir:
             exe_dir = os.getcwd()
 

@@ -199,6 +199,12 @@ def assemble_release():
         for f in src_configs.glob("*.json"):
             shutil.copy2(str(f), str(RELEASE_DIR / "configs" / f.name))
 
+    # 复制 tks_patches.json 到发行根目录 (补丁基础设施, 不在 configs/ 内)
+    tks_patches_src = 仓库根目录 / "tks_launcher_gui" / "tks_patches.json"
+    if tks_patches_src.exists():
+        shutil.copy2(str(tks_patches_src), str(RELEASE_DIR / "tks_patches.json"))
+        print(f"  [OK] tks_patches.json")
+
     # 汇总
     total_size = sum(
         f.stat().st_size for f in RELEASE_DIR.iterdir()

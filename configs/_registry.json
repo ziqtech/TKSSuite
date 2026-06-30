@@ -1,0 +1,20 @@
+{
+  "equip_type_labels": {
+    "description": "装备类型使用权限位值→中文标签映射",
+    "category": "editor",
+    "schema": "page_map",
+    "primary_editor": "item_editor",
+    "consumers": ["warpc_editor"],
+    "merge_strategy": "page_union",
+    "user_editable": true
+  },
+  "summon_table": {
+    "description": "召唤技能→WarPC 映射表",
+    "category": "launcher",
+    "schema": "key_value",
+    "primary_editor": null,
+    "consumers": ["tks_launcher_gui"],
+    "merge_strategy": "key_override",
+    "user_editable": false
+  }
+}
