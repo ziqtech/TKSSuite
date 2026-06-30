@@ -1602,6 +1602,7 @@ class JVGEditor(QMainWindow):
             
             # 添加图像到场景，使用 setScale 进行缩放
             item = QGraphicsPixmapItem(pixmap)
+            item.setShapeMode(QGraphicsPixmapItem.ShapeMode.BoundingRectShape)
             item.setPos(x, y)
             item.setScale(z)
             item.setData(0, fi)  # 存储帧索引
