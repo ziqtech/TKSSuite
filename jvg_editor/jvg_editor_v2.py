@@ -1410,6 +1410,16 @@ class JVGEditor(QMainWindow):
         max_cells = cols * rows
         skipped = 0
 
+        # 对 replace 分支，预计算 min_vl/min_vt (与 export_gridsheet 一致)
+        if not is_new_block and valid_list:
+            _vrs = []
+            for _, vf in valid_list:
+                _xm = _u16s(vf.x_max); _ym = _u16s(vf.y_max)
+                _vl = _xm - vf.width + 1; _vt = _ym - vf.height + 1
+                _vrs.append((_vl, _vt, _xm, _ym))
+            _min_vl = min(r[0] for r in _vrs)
+            _min_vt = min(r[1] for r in _vrs)
+
         if is_new_block:
             for cell_idx in range(max_cells):
                 ri = cell_idx // cols
@@ -1442,18 +1452,23 @@ class JVGEditor(QMainWindow):
                     skipped += 1
                     continue
                 cell = gs.crop((cx, cy, cx + cw, cy + ch))
+                # 检查 cell 是否完全透明
                 bbox = cell.getchannel('A').getbbox()
                 if bbox is None:
                     skipped += 1
                     continue
-                l, t, r, b = bbox
-                sub = cell.crop((l, t, r, b))
+                # 按原始帧在 cell 中的位置和尺寸提取，保留透明边缘
                 old_xm = _u16s(old_f.x_max)
                 old_ym = _u16s(old_f.y_max)
                 old_vl = old_xm - old_f.width + 1
                 old_vt = old_ym - old_f.height + 1
-                new_x_max = (old_vl - l + r - 1) & 0xFFFF
-                new_y_max = (old_vt - t + b - 1) & 0xFFFF
+                ox = old_vl - _min_vl
+                oy = old_vt - _min_vt
+                # 提取原始帧矩形区域 (包含透明像素)
+                sub = cell.crop((ox, oy, ox + old_f.width, oy + old_f.height))
+                # 保持原始 offset
+                new_x_max = old_f.x_max
+                new_y_max = old_f.y_max
                 subs.append(sub)
                 metas.append((blk_fi, new_x_max, new_y_max))
                 replace_set.add(blk_fi)
