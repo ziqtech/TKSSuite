@@ -1201,12 +1201,12 @@ class ShopEditorWindow(QMainWindow):
 # ============================================================
 
 def main():
+    from editor_utils.app_init import install_translator, setup_app_icon
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
     app.setApplicationName("TKShop Editor")
-    _t = QTranslator()
-    _t.load("qtbase_zh_CN", os.path.join(os.path.dirname(__file__), '..', 'editor_utils'))
-    app.installTranslator(_t)
+    _t = install_translator(app)
+    setup_app_icon(app, os.path.dirname(__file__))
 
     # 根据系统主题设置初始主题
     is_dark = app.styleHints().colorScheme() == Qt.ColorScheme.Dark

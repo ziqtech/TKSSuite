@@ -2880,11 +2880,11 @@ def main():
         print("  pip install Pillow")
         sys.exit(1)
 
+    from editor_utils.app_init import install_translator, setup_app_icon
     app = QApplication(sys.argv)
     app.setApplicationName("Spritesheet Editor")
-    _t = QTranslator()
-    _t.load("qtbase_zh_CN", os.path.join(os.path.dirname(__file__), '..', 'editor_utils'))
-    app.installTranslator(_t)
+    _t = install_translator(app)
+    setup_app_icon(app, os.path.dirname(__file__))
     # 设置应用默认字体 (避免 QFont setPointSize(-1) 警告, QSS 会覆盖实际显示)
     font = QFont()
     font.setPixelSize(13)

@@ -5,11 +5,17 @@
   2. 静态模式: ThemeManager.apply_dark_theme(app)
 """
 import os
+import sys
 import re
 from PySide6.QtGui import QPalette, QColor
 from PySide6.QtCore import Qt
 
-_THEMES_DIR = os.path.join(os.path.dirname(__file__), '..', 'editor_themes')
+# 打包环境: PyInstaller 将 editor_themes/ 烘焙进 exe，通过 sys._MEIPASS 访问
+# 开发环境: 相对于当前文件的上级目录
+if getattr(sys, 'frozen', False):
+    _THEMES_DIR = os.path.join(sys._MEIPASS, 'editor_themes')
+else:
+    _THEMES_DIR = os.path.join(os.path.dirname(__file__), '..', 'editor_themes')
 
 
 def _load_qss(theme: str) -> str:

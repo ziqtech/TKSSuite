@@ -1849,15 +1849,11 @@ class JVGEditor(QMainWindow):
 
 # ── Entry ──────────────────────────────────────────
 def main():
+    from editor_utils.app_init import install_translator, setup_app_icon
     app = QApplication(sys.argv)
     app.setStyle("Fusion")  # 使用 Fusion 样式，避免 Windows 原生样式覆盖 QSS
-    _t = QTranslator()
-    _t.load("qtbase_zh_CN", os.path.join(os.path.dirname(__file__), '..', 'editor_utils'))
-    app.installTranslator(_t)
-    # 设置应用程序图标
-    ico_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'TKS.ico')
-    if os.path.exists(ico_path):
-        app.setWindowIcon(QIcon(ico_path))
+    _t = install_translator(app)
+    setup_app_icon(app, os.path.dirname(os.path.abspath(__file__)))
 
     fp = sys.argv[1] if len(sys.argv) > 1 else None
     editor = JVGEditor(fp)

@@ -1719,11 +1719,11 @@ class GRPEditor(QMainWindow):
 # ═══════════════════════════════════════════════════════════
 
 def main():
+    from editor_utils.app_init import install_translator, setup_app_icon
     app = QApplication(sys.argv)
     app.setStyle("Fusion")  # 使用 Fusion 样式，避免 Windows 原生样式覆盖 QSS
-    _t = QTranslator()
-    _t.load("qtbase_zh_CN", os.path.join(os.path.dirname(__file__), '..', 'editor_utils'))
-    app.installTranslator(_t)
+    _t = install_translator(app)
+    setup_app_icon(app, os.path.dirname(__file__))
     fp = sys.argv[1] if len(sys.argv) > 1 else None
     editor = GRPEditor(fp)
     editor.show()

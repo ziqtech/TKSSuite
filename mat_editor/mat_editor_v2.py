@@ -6209,11 +6209,11 @@ class MatEditorApp(QMainWindow):
 # 入口
 # ============================================================
 if __name__ == '__main__':
+    from editor_utils.app_init import install_translator, setup_app_icon
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
-    _t = QTranslator()
-    _t.load("qtbase_zh_CN", os.path.join(os.path.dirname(__file__), '..', 'editor_utils'))
-    app.installTranslator(_t)
+    _t = install_translator(app)
+    setup_app_icon(app, os.path.dirname(__file__))
     editor = MatEditorApp()
     editor.show()
     sys.exit(app.exec())
