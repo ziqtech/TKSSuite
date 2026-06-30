@@ -10,11 +10,14 @@ import re
 from PySide6.QtGui import QPalette, QColor
 from PySide6.QtCore import Qt
 
-# 打包环境: PyInstaller 将 editor_themes/ 烘焙进 exe，通过 sys._MEIPASS 访问
+# 打包环境: Nuitka/PyInstaller 将 editor_themes/ 烘焙进 exe
+# Nuitka: __file__ 始终指向正确位置 (无论 onefile/standalone)
+# PyInstaller: 通过 sys._MEIPASS 访问
 # 开发环境: 相对于当前文件的上级目录
-if getattr(sys, 'frozen', False):
+if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
     _THEMES_DIR = os.path.join(sys._MEIPASS, 'editor_themes')
 else:
+    # Nuitka 编译 和 开发环境 均通过 __file__ 相对路径定位
     _THEMES_DIR = os.path.join(os.path.dirname(__file__), '..', 'editor_themes')
 
 
