@@ -846,7 +846,13 @@ class ItemEditorApp(QMainWindow):
             self._icon_pixmaps.clear()
         try:
             self.records = load_items(self.item_path); self._dirty = False
-            self._original_records = [[rec[k] for k, _, _, _, _, _ in ALL_FIELDS] for rec in self.records]
+            # MOD 导出使用原始字节序 (word index = byte_offset // 2)，与启动器 _apply_fields_to_record 一致
+            self._original_records = []
+            for rec in self.records:
+                row = [0] * 32
+                for k, fo, _, _, _, _ in ALL_FIELDS:
+                    row[fo // 2] = rec[k]
+                self._original_records.append(row)
             self.status_var.setText(f"{len(self.records)} 条 | TKT {len(self.tkt)} 条 | 技能 {len(self.skill_names)} 条")
         except Exception as e:
             QMessageBox.critical(self, "加载失败", str(e)); self.records = []
@@ -1352,7 +1358,13 @@ class ItemEditorApp(QMainWindow):
         if dlg.exec() != QDialog.Accepted: return
         metadata = dlg.get_metadata(); self._last_mod_metadata = metadata
 
-        current_fields = [[rec[k] for k, _, _, _, _, _ in ALL_FIELDS] for rec in self.records]
+        # 构建原始字节序字段数组 (word index = byte_offset // 2)，与启动器一致
+        current_fields = []
+        for rec in self.records:
+            row = [0] * 32
+            for k, fo, _, _, _, _ in ALL_FIELDS:
+                row[fo // 2] = rec[k]
+            current_fields.append(row)
         field_count = len(ALL_FIELDS)
         diff_result = diff_records(self._original_records, current_fields, field_count, len(self._original_records))
         if not diff_result['modified'] and not diff_result['appended']:
@@ -1387,7 +1399,13 @@ class ItemEditorApp(QMainWindow):
         if dlg.exec() != QDialog.Accepted: return
         metadata = dlg.get_metadata(); self._last_mod_metadata = metadata
 
-        current_fields = [[rec[k] for k, _, _, _, _, _ in ALL_FIELDS] for rec in self.records]
+        # 构建原始字节序字段数组 (word index = byte_offset // 2)，与启动器一致
+        current_fields = []
+        for rec in self.records:
+            row = [0] * 32
+            for k, fo, _, _, _, _ in ALL_FIELDS:
+                row[fo // 2] = rec[k]
+            current_fields.append(row)
         field_count = len(ALL_FIELDS)
         diff_result = diff_records(ref_records, current_fields, field_count, len(ref_records))
         if not diff_result['modified'] and not diff_result['appended']:
@@ -1434,12 +1452,13 @@ class ItemEditorApp(QMainWindow):
             QMessageBox.warning(self, "导入失败",
                 "无法导入 MOD 数据。\n请确认参考目录中包含有效的 TKItem.dat"); return
 
-        # 将导入的字段数组转化为编辑器内部记录格式
+        # 将导入的字段数组（原始字节序）转化为编辑器内部记录格式
         new_records = []
         for i, fields in enumerate(records):
             rec = {'index': i}
-            for fi, (k, fo, _, _, _, _) in enumerate(ALL_FIELDS):
-                rec[k] = fields[fi] if fi < len(fields) else 0
+            for k, fo, _, _, _, _ in ALL_FIELDS:
+                word_idx = fo // 2
+                rec[k] = fields[word_idx] if word_idx < len(fields) else 0
             new_records.append(rec)
 
         self.records = new_records
