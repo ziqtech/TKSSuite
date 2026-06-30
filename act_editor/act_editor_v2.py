@@ -1594,8 +1594,6 @@ class ActEditorV2(QMainWindow):
         self.setMinimumSize(1200, 680)
 
         ico = os.path.join(os.path.dirname(__file__), 'TKS.ico')
-        if not os.path.exists(ico):
-            ico = os.path.join(os.path.dirname(__file__), '..', 'kon_editor', 'TKS.ico')
         if os.path.exists(ico):
             self.setWindowIcon(QIcon(ico))
 

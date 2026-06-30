@@ -69,7 +69,6 @@ def build_one(name: str, entry: str, needs_pillow: bool, verbose: bool = False):
         "--noconfirm",
         "--distpath", str(DIST_DIR),
         "--workpath", str(BUILD_DIR / "work"),
-        "--specpath", str(SPECS_DIR),
         str(spec_path),
     ]
 

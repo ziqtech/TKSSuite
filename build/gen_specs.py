@@ -38,8 +38,8 @@ import sys
 
 block_cipher = None
 
-# 仓库根目录 根目录
-BASE = os.path.abspath(os.path.join(os.path.dirname(SPECPATH), '..', '..'))
+# 仓库根目录 根目录 (SPECPATH = spec 文件所在目录, 即 build/specs/)
+BASE = os.path.abspath(os.path.join(SPECPATH, '..', '..'))
 
 a = Analysis(
     [os.path.join(BASE, {entry!r})],
@@ -53,8 +53,8 @@ a = Analysis(
         (os.path.join(BASE, 'editor_themes', 'svg'), 'editor_themes/svg'),
         # 翻译文件
         (os.path.join(BASE, 'editor_utils', 'qtbase_zh_CN.qm'), 'editor_utils'),
-        # 编辑器图标
-        (os.path.join(BASE, {editor_dir!r}, 'TKS.ico'), '.'),{extra_datas}
+        # 编辑器图标 (优先从编辑器目录, 回退到 item_editor)
+        (os.path.join(BASE, {icon_dir!r}, 'TKS.ico'), '.'),{extra_datas}
     ],
     hiddenimports=[
         'PySide6.QtSvg',
@@ -81,7 +81,7 @@ exe = EXE(
     [],
     exclude_binaries=True,
     name={name!r},
-    icon=os.path.join(BASE, {editor_dir!r}, 'TKS.ico'),
+    icon=os.path.join(BASE, {icon_dir!r}, 'TKS.ico'),
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -119,10 +119,19 @@ def generate_spec(name: str, entry: str, needs_pillow: bool, editor_dir: str) ->
         (os.path.join(BASE, 'tks_launcher_gui', 'tks_patches.json'), '.'),
         (os.path.join(BASE, 'tks_launcher_gui', 'summon_table.json'), '.'),"""
 
+    # 图标目录: 优先用编辑器自身目录, 没有则回退到 item_editor
+    import os as _os
+    base_path = _os.path.abspath(_os.path.join(_os.path.dirname(__file__), '..'))
+    if _os.path.isfile(_os.path.join(base_path, editor_dir, 'TKS.ico')):
+        icon_dir = editor_dir
+    else:
+        icon_dir = 'item_editor'
+
     return SPEC_TEMPLATE.format(
         name=name,
         entry=entry,
         editor_dir=editor_dir,
+        icon_dir=icon_dir,
         extra_imports=extra_imports,
         extra_datas=extra_datas,
     )
