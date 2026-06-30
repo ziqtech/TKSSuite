@@ -561,7 +561,7 @@ class GXPEditor(QMainWindow):
         self._set_zoom(max(0.5, z))
 
 
-if __name__ == "__main__":
+def main():
     from editor_utils.app_init import install_translator, setup_app_icon
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
@@ -571,3 +571,7 @@ if __name__ == "__main__":
     editor = GXPEditor(fp)
     editor.show()
     sys.exit(app.exec())
+
+
+if __name__ == "__main__":
+    main()

@@ -6208,7 +6208,7 @@ class MatEditorApp(QMainWindow):
 # ============================================================
 # 入口
 # ============================================================
-if __name__ == '__main__':
+def main():
     from editor_utils.app_init import install_translator, setup_app_icon
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
@@ -6217,3 +6217,7 @@ if __name__ == '__main__':
     editor = MatEditorApp()
     editor.show()
     sys.exit(app.exec())
+
+
+if __name__ == '__main__':
+    main()
