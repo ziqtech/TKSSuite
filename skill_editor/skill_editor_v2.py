@@ -577,7 +577,13 @@ class SkillEditorApp(QMainWindow):
             self._icon_pixmaps.clear()
         try:
             self.records = load_skills(self.skill_path); self._dirty = False
-            self._original_records = [[rec[k] for k, _, _, _, _ in ALL_FIELDS] for rec in self.records]
+            # MOD 导出使用原始字节序 (word index = byte_offset // 2)，与启动器 _apply_fields_to_record 一致
+            self._original_records = []
+            for rec in self.records:
+                row = [0] * (SKILL_REC // 2)
+                for k, fo, _, _, _ in ALL_FIELDS:
+                    row[fo // 2] = rec[k]
+                self._original_records.append(row)
             nonempty = sum(1 for r in self.records if r['skill_text_id'] != 0)
             self.status_var.setText(f"{len(self.records)} 条 | 有效 {nonempty} | TKT {len(self.tkt)} 条")
         except Exception as e:
@@ -889,8 +895,13 @@ class SkillEditorApp(QMainWindow):
         metadata = dlg.get_metadata()
         self._last_mod_metadata = metadata
 
-        # 构建当前数据为 flat fields 列表
-        current_fields = [[rec[k] for k, _, _, _, _ in ALL_FIELDS] for rec in self.records]
+        # 构建原始字节序字段数组 (word index = byte_offset // 2)，与启动器一致
+        current_fields = []
+        for rec in self.records:
+            row = [0] * (SKILL_REC // 2)
+            for k, fo, _, _, _ in ALL_FIELDS:
+                row[fo // 2] = rec[k]
+            current_fields.append(row)
         field_count = len(ALL_FIELDS)
         diff_result = diff_records(
             self._original_records, current_fields, field_count, len(self._original_records))
@@ -934,7 +945,13 @@ class SkillEditorApp(QMainWindow):
         if dlg.exec() != QDialog.Accepted: return
         metadata = dlg.get_metadata(); self._last_mod_metadata = metadata
 
-        current_fields = [[rec[k] for k, _, _, _, _ in ALL_FIELDS] for rec in self.records]
+        # 构建原始字节序字段数组 (word index = byte_offset // 2)，与启动器一致
+        current_fields = []
+        for rec in self.records:
+            row = [0] * (SKILL_REC // 2)
+            for k, fo, _, _, _ in ALL_FIELDS:
+                row[fo // 2] = rec[k]
+            current_fields.append(row)
         field_count = len(ALL_FIELDS)
         diff_result = diff_records(ref_records, current_fields, field_count, len(ref_records))
         if not diff_result['modified'] and not diff_result['appended']:
@@ -985,8 +1002,9 @@ class SkillEditorApp(QMainWindow):
         new_records = []
         for i, fields in enumerate(records):
             rec = {'index': i}
-            for fi, (k, _, _, _, _) in enumerate(ALL_FIELDS):
-                rec[k] = fields[fi] if fi < len(fields) else 0
+            for k, fo, _, _, _ in ALL_FIELDS:
+                word_idx = fo // 2
+                rec[k] = fields[word_idx] if word_idx < len(fields) else 0
             new_records.append(rec)
 
         self.records = new_records
