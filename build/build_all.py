@@ -1,15 +1,19 @@
 """
-build_all.py — TKS Editors 一键构建脚本 (Nuitka 薄 exe + 共享运行时)
-===========================================================
-使用 Nuitka 将所有编辑器打包为薄 exe。
-大型共享模块 (PySide6/PIL) 由 .lib 归档提供，不编译进 exe。
+build_all.py — TKS Editors 一键构建脚本 (Nuitka)
+==================================================
+支持两种打包模式:
 
-用法:
+  薄 exe (默认) — 大型共享模块 (PySide6/PIL) 由 .lib 归档提供，不编译进 exe
     python build/build_all.py                  # 构建全部薄 exe
     python build/build_all.py --only TKSItemEditor   # 仅构建指定编辑器
     python build/build_all.py --runtime        # 仅生成运行时归档 (.lib)
     python build/build_all.py --all            # 归档 + 全部 exe
-    python build/build_all.py --list           # 列出所有可构建编辑器
+
+  完整 exe (--onefile) — PySide6/PIL 烘焙进每个 exe，无外部 .lib 依赖
+    python build/build_all.py --onefile                 # 构建全部完整 exe
+    python build/build_all.py --onefile --only TKSLauncher  # 仅构建指定
+
+  python build/build_all.py --list             # 列出所有可构建编辑器
 
 前置条件:
     pip install nuitka ordered-set zstandard PySide6 Pillow
@@ -17,11 +21,9 @@ build_all.py — TKS Editors 一键构建脚本 (Nuitka 薄 exe + 共享运行�
 
 输出目录:
     dist/TKSEditors/
-    ├── TKSItemEditor.exe     (~5-8MB, 薄 exe)
+    ├── TKSItemEditor.exe     (~5-8MB 薄 / ~40-80MB 完整)
     ├── ...
-    ├── PySide6.lib           (共享运行时归档)
-    ├── QtCore.lib
-    ├── ...
+    ├── [薄模式] PySide6.lib, QtCore.lib, ...
     ├── configs/
     └── mods/
 """
@@ -56,6 +58,9 @@ EDITORS = [
     ("TKSLauncher",          "build/entries/entry_launcher.py",           "tks_launcher_gui"),
 ]
 
+# 需要 Pillow 的编辑器 (onefile 模式用, 薄模式 PIL 由 PIL.lib 统一提供)
+NEEDS_PILLOW = {"TKSJvgEditor", "TKSGrpEditor", "TKSGxpEditor", "TKSSpritesheetEditor"}
+
 # ═══════════════════════════════════════════════════════════════
 # 路径常量
 # ═══════════════════════════════════════════════════════════════
@@ -66,8 +71,8 @@ DIST_DIR = 仓库根目录 / "dist"
 RELEASE_DIR = DIST_DIR / "TKSEditors"
 
 
-def _build_nuitka_cmd(name: str, entry: str, editor_dir: str) -> list:
-    """生成 Nuitka 薄 exe 构建命令"""
+def _build_thin_cmd(name: str, entry: str, editor_dir: str) -> list:
+    """生成 Nuitka 薄 exe 构建命令 (PySide6/PIL 由 .lib 提供, 不编译进 exe)"""
     entry_path = 仓库根目录 / entry
     icon_path = 仓库根目录 / editor_dir / "TKS.ico"
     if not icon_path.exists():
@@ -129,15 +134,84 @@ def _build_nuitka_cmd(name: str, entry: str, editor_dir: str) -> list:
     return cmd
 
 
-def build_one(name: str, entry: str, editor_dir: str, verbose: bool = False) -> bool:
-    """构建单个薄 exe"""
+def _build_onefile_cmd(name: str, entry: str, editor_dir: str) -> list:
+    """生成 Nuitka 完整 onefile 构建命令 (PySide6/PIL 编译进 exe)"""
+    entry_path = 仓库根目录 / entry
+    icon_path = 仓库根目录 / editor_dir / "TKS.ico"
+    if not icon_path.exists():
+        icon_path = 仓库根目录 / "item_editor" / "TKS.ico"
+
+    cmd = [
+        sys.executable, "-m", "nuitka",
+        # ── 打包模式 ──
+        "--onefile",
+        "--assume-yes-for-downloads",
+
+        # ── 输出控制 ──
+        f"--output-dir={DIST_DIR}",
+        f"--output-filename={name}.exe",
+
+        # ── Windows 配置 ──
+        "--windows-console-mode=disable",
+        f"--windows-icon-from-ico={icon_path}",
+
+        # ── PySide6 插件 (完整编译 Qt) ──
+        "--enable-plugin=pyside6",
+
+        # ── 包含数据文件 (主题/翻译/图标) ──
+        f"--include-data-dir={仓库根目录 / 'editor_themes'}=editor_themes",
+        f"--include-data-files={仓库根目录 / 'editor_utils' / 'qtbase_zh_CN.qm'}=editor_utils/qtbase_zh_CN.qm",
+        f"--include-data-files={icon_path}=TKS.ico",
+
+        # ── 包含 editor_utils 包 ──
+        f"--include-package=editor_utils",
+
+        # ── 排除无用模块 (减小体积) ──
+        "--nofollow-import-to=tkinter",
+        "--nofollow-import-to=matplotlib",
+        "--nofollow-import-to=numpy",
+        "--nofollow-import-to=scipy",
+        "--nofollow-import-to=pytest",
+        "--nofollow-import-to=IPython",
+        "--nofollow-import-to=unittest",
+        "--nofollow-import-to=PySide6.QtQml",
+        "--nofollow-import-to=PySide6.QtQuick",
+        "--nofollow-import-to=PySide6.QtNetwork",
+        "--nofollow-import-to=PySide6.QtWebEngine",
+
+        # ── 允许运行时导入被排除模块 (意外导入链如 item_editor.py→tkinter 不会 crash) ──
+        "--no-deployment-flag=excluded-module-usage",
+
+        # ── 编译优化 ──
+        "--lto=yes",
+        "--python-flag=no_docstrings",
+        "--python-flag=no_asserts",
+
+        # ── 清理 ──
+        "--remove-output",
+    ]
+
+    # Pillow 支持
+    if name in NEEDS_PILLOW:
+        cmd.append("--include-package=PIL")
+
+    # 入口脚本 (必须是最后一个参数)
+    cmd.append(str(entry_path))
+
+    return cmd
+
+
+def build_one(name: str, entry: str, editor_dir: str,
+              onefile: bool = False, verbose: bool = False) -> bool:
+    """构建单个 exe (薄模式或完整 onefile 模式)"""
+    mode_label = "完整 onefile (PySide6/PIL 内嵌)" if onefile else "薄 exe (无 PySide6/PIL)"
     print(f"\n{'='*60}")
     print(f"  构建: {name}")
     print(f"  入口: {entry}")
-    print(f"  模式: Nuitka --onefile (薄 exe, 无 PySide6/PIL)")
+    print(f"  模式: Nuitka --onefile ({mode_label})")
     print(f"{'='*60}")
 
-    cmd = _build_nuitka_cmd(name, entry, editor_dir)
+    cmd = _build_onefile_cmd(name, entry, editor_dir) if onefile else _build_thin_cmd(name, entry, editor_dir)
 
     if verbose:
         print(f"  命令: {' '.join(str(c) for c in cmd)}")
@@ -216,20 +290,32 @@ def assemble_release():
 
 
 def main():
-    parser = argparse.ArgumentParser(description="TKS Editors 一键构建")
+    parser = argparse.ArgumentParser(description="TKS Editors 一键构建 (Nuitka)")
+    parser.add_argument("--onefile", action="store_true",
+                        help="完整单文件模式: PySide6/PIL 编译进 exe (无外部 .lib 依赖)")
     parser.add_argument("--only", type=str, help="仅构建指定编辑器")
-    parser.add_argument("--runtime", action="store_true", help="仅生成运行时归档")
-    parser.add_argument("--all", action="store_true", help="归档 + 全部 exe")
-    parser.add_argument("--list", action="store_true", help="列出可构建编辑器")
-    parser.add_argument("--no-assemble", action="store_true", help="不组装发行目录")
+    parser.add_argument("--runtime", action="store_true",
+                        help="仅生成运行时归档 (仅薄模式)")
+    parser.add_argument("--all", action="store_true",
+                        help="归档 + 全部 exe (仅薄模式)")
+    parser.add_argument("--list", action="store_true", help="列出所有可构建编辑器")
+    parser.add_argument("--no-assemble", action="store_true", help="构建后不组装发行目录")
     parser.add_argument("--verbose", action="store_true", help="详细输出")
     args = parser.parse_args()
 
     if args.list:
         print("可构建编辑器:")
         for name, entry, _ in EDITORS:
-            print(f"  {name:<24} {entry}")
+            tag = ""
+            if not args.onefile and name in NEEDS_PILLOW:
+                tag = " [+PIL]"
+            print(f"  {name:<24} {entry}{tag}")
         return
+
+    if args.onefile and (args.runtime or args.all):
+        print("[WARN] --onefile 模式下 --runtime/--all 无效 (完整 exe 无需 .lib 归档)")
+        args.runtime = False
+        args.all = False
 
     # 生成入口脚本 (确保最新)
     subprocess.run([sys.executable, str(BUILD_DIR / "gen_entries.py")],
@@ -262,7 +348,7 @@ def main():
     t_total = time.time()
 
     for name, entry, editor_dir in targets:
-        ok = build_one(name, entry, editor_dir, args.verbose)
+        ok = build_one(name, entry, editor_dir, args.onefile, args.verbose)
         (success if ok else failed).append(name)
 
     elapsed_total = time.time() - t_total
