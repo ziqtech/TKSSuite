@@ -854,13 +854,7 @@ def main():
     no_gold_display = adv.get("no_gold_display", False)
     no_4c33fc_41c120 = adv.get("no_4c33fc_41c120", False)
 
-    # Wine/Winlator 环境自动跳过补丁十四 (xchg [esp],eax; jmp eax 与 Wine 不兼容)
-    if _is_wine() and not no_archive_portrait:
-        no_archive_portrait = True
-        ver = _get_wine_version()
-        ver_str = f" ({ver})" if ver else ""
-        print(f"[Wine兼容] 检测到 Wine 环境{ver_str}, 自动跳过补丁十四 (存档界面头像 hook)")
-        print("  原因: cave 代码使用 xchg [esp],eax; jmp eax 栈技巧, Wine 不支持")
+    # Wine/Winlator 环境已原生兼容 (CAVE_ARCHIVE_PORTRAIT 改用非 LOCK 指令)
 
     for label, flag in [
         ("no_runtime_hooks: 跳过所有运行时补丁", no_runtime_hooks),

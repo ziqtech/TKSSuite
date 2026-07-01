@@ -156,10 +156,11 @@ CAVE_ARCHIVE_PORTRAIT = bytes([
     # .use_custom:
     0x8B, 0xC2,                                        # mov eax, edx           (自定义头像)
     # .done:
-    0x59,                                              # pop ecx
-    0x5A,                                              # pop edx
-    0x87, 0x04, 0x24,                                  # xchg [esp], eax        (结果替换返回地址)
-    0xFF, 0xE0,                                        # jmp eax                (返回)
+    0x59,                                              # pop ecx                (恢复 ecx)
+    0x5A,                                              # pop edx                (恢复 edx)
+    0x59,                                              # pop ecx                (ecx=返回地址)
+    0x50,                                              # push eax               (portrait值入栈)
+    0xFF, 0xE1,                                        # jmp ecx                (返回)
 ])
 
 CAVE_HISTORY_TEXT = bytes([
