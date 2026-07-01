@@ -825,6 +825,113 @@ def _write_cave_and_hook(cave_template: Optional[bytes], cave_offset: int, entry
     return True
 
 # ============================================================
+# 补丁类型: patch_drop_probability (物品掉落概率自定义)
+# 逆向依据: sub_4400DC @ VA 0x441A24/0x441A97 (Path A 死亡掉落结算)
+#
+# Path A (sub_4400DC) 是实际的怪物死亡掉落结算, 在攻击动画期间运行:
+#   触发条件: HP<=伤害, attacker_type==100(玩家), monster_type<10(敌人)
+#   概率结构 (独立判定, 非互斥):
+#     常规槽 word_9D7296: 非空且 cnt<64 → 必掉 (无随机检查, 100%)
+#     普通槽 word_9D7298: 非空且 rand(1000)<200 (20%) 且 cnt<64 → 掉落 → jnb 跳过
+#     稀有槽 word_9D729A: 非空且 rand(1000)<50  (5%)  且 cnt<64 → 掉落 → jnb 跳过
+#   不清零槽位, 无物品查询/显示 (sub_42F8D4/sub_434188)
+#
+# 字节补丁策略 (不用 cave — 原版流程已正常工作):
+#   常规槽: 已是 100%, 无法在不插入指令的情况下配置 (无随机检查点)
+#   普通槽: 修改 0x41A2F 处的 cmp ax, 0xC8 (200) imm16 → pct*10
+#   稀有槽: 修改 0x41AA2 处的 cmp ax, 0x32 (50, imm8 形式) → cmp ax, imm16 (同长度 4 字节)
+#   JNB 指令保持原样 — 如果 rand < threshold 则跳过, 否则掉落
+#   级联模式: 不支持 (原版 Path A 是独立结构, 不是级联)
+# ============================================================
+
+def apply_drop_probability(defn: PatchDef, code_buf: bytearray, code_start_addr: int,
+                           h_proc: int, log_func=None) -> bool:
+    log = log_func or (lambda x: None)
+    tag = f"[{defn.id}]"
+    log(f"\n  {tag}: {defn.desc}")
+
+    # 1. 读取 JSON 配置
+    jf = defn.json_file
+    if not jf or not os.path.isfile(jf):
+        log(f"    [WARN] JSON 配置不存在: {jf!r}, 跳过")
+        return True
+    try:
+        with open(jf, 'r', encoding='utf-8') as f:
+            cfg = json.load(f)
+    except Exception as e:
+        log(f"  [ERROR] 解析 drop_probability.json 失败: {e}")
+        return True
+
+    mode = cfg.get("mode", "independent")
+    if mode == "cascade":
+        log(f"    [WARN] cascade 模式需要代码重构, Path A 不支持级联. 使用 independent 模式代替.")
+        mode = "independent"
+
+    # 2. 验证百分值
+    rare_pct = int(cfg.get("rare_pct", 100))
+    normal_pct = int(cfg.get("normal_pct", 100))
+    regular_pct = int(cfg.get("regular_pct", 100))
+    for name, val in [("rare", rare_pct), ("normal", normal_pct), ("regular", regular_pct)]:
+        if val < 0 or val > 100:
+            log(f"  [ERROR] {name}_pct={val} 超出 0~100")
+            return True
+
+    log(f"    normal={normal_pct}%, rare={rare_pct}% (常规槽原版无随机, 100%不可降)")
+
+    # 3. 构建补丁列表
+    #    每个补丁: (rva, expected_bytes, new_bytes)
+    patches = []
+
+    # 普通槽阈值: VA 0x441A2F → RVA 0x41A2F, 原: 66 3D C8 00 (cmp ax, 0xC8=200)
+    # sub_452AC0(1000) → [0, 999]. 跌落条件: rand(1000) < threshold. jnb 跳过.
+    # 对于 pct%: threshold = pct * 10. 对于 100%: threshold=1000 (0x3E8), rand<1000 始终成立.
+    norm_rva = 0x41A2F
+    old_norm = bytes([0x66, 0x3D, 0xC8, 0x00])
+    new_norm = bytes([0x66, 0x3D, (normal_pct * 10) & 0xFF, ((normal_pct * 10) >> 8) & 0xFF])
+    patches.append((norm_rva, old_norm, new_norm))
+
+    # 稀有槽阈值: VA 0x441AA2 → RVA 0x41AA2, 原: 66 83 F8 32 (cmp ax, imm8 0x32=50)
+    # 替换为同长 4 字节的 imm16 形式: 66 3D XX XX (cmp ax, imm16)
+    rare_rva = 0x41AA2
+    old_rare = bytes([0x66, 0x83, 0xF8, 0x32])
+    new_rare = bytes([0x66, 0x3D, (rare_pct * 10) & 0xFF, ((rare_pct * 10) >> 8) & 0xFF])
+    patches.append((rare_rva, old_rare, new_rare))
+
+    # 4. 应用字节补丁
+    all_ok = True
+    for rva, expected, new_bytes in patches:
+        hook_off = rva - 0x1000
+        if hook_off < 0 or hook_off + len(expected) > len(code_buf):
+            log(f"    [ERROR] RVA 0x{rva:X} 越界")
+            all_ok = False
+            continue
+        actual = bytes(code_buf[hook_off:hook_off + len(expected)])
+        log(f"    验证 0x{rva:X}: code_buf={actual.hex()} (期望 {expected.hex()})")
+        if actual != expected:
+            log(f"    [ERROR] 字节不匹配! 可能已被其他 MOD 修改或版本不对, 跳过")
+            continue
+
+        ha = code_start_addr + hook_off
+        verify_buf, nread = read_pm(h_proc, ha, len(expected))
+        if nread == len(expected) and verify_buf != expected:
+            log(f"    [ERROR] 进程内存与 code_buf 不一致, 跳过")
+            continue
+
+        op = vp_ex(h_proc, ha, len(new_bytes), PAGE_EXECUTE_READWRITE)
+        nw = write_pm(h_proc, ha, new_bytes)
+        vp_ex(h_proc, ha, len(new_bytes), op)
+        if nw == len(new_bytes):
+            log(f"    [OK] 0x{rva:X}: {expected.hex()} → {new_bytes.hex()} "
+                f"(threshold={int.from_bytes(new_bytes[2:4],'little')})")
+            for i in range(len(new_bytes)):
+                code_buf[hook_off + i] = new_bytes[i]
+        else:
+            log(f"  [FAIL] 写入失败 @ 0x{ha:08X}")
+            all_ok = False
+
+    return all_ok
+
+# ============================================================
 # 配置补丁编排
 # ============================================================
 
@@ -927,6 +1034,9 @@ def apply_config_patches(config: PatchConfig, code_buf: bytearray, code_start_ad
             all_ok &= apply_summon_table(defn, code_buf, code_start_addr, base_addr,
                                           h_proc, variables, log_func=log,
                                           cave_addr=cave_addr)
+        elif defn.type == "patch_drop_probability":
+            all_ok &= apply_drop_probability(defn, code_buf, code_start_addr,
+                                              h_proc, log_func=log)
         elif defn.type == "runtime_watchdog":
             log(f"    -> 由运行时看门狗处理 (游戏运行期间持续监控)")
         else:
