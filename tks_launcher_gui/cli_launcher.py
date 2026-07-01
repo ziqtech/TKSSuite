@@ -60,6 +60,37 @@ from core.mod_loader import (
 
 
 # ═══════════════════════════════════════════════════════════════
+# Wine 环境检测
+# ═══════════════════════════════════════════════════════════════
+
+def _is_wine() -> bool:
+    """检测是否运行在 Wine 环境下 (包括 Winlator)。
+
+    Wine 的 ntdll.dll 导出了 wine_get_version 函数,
+    这是 Windows 原生 ntdll.dll 中不存在的。
+    """
+    try:
+        ntdll = ctypes.windll.ntdll
+        return hasattr(ntdll, 'wine_get_version')
+    except Exception:
+        return False
+
+
+def _get_wine_version() -> str | None:
+    """获取 Wine 版本字符串 (仅 Wine 环境下有效)"""
+    try:
+        ntdll = ctypes.windll.ntdll
+        get_version = getattr(ntdll, 'wine_get_version', None)
+        if get_version:
+            get_version.restype = ctypes.c_char_p
+            ver = get_version()
+            return ver.decode('utf-8') if ver else None
+    except Exception:
+        pass
+    return None
+
+
+# ═══════════════════════════════════════════════════════════════
 # 工具函数
 # ═══════════════════════════════════════════════════════════════
 
@@ -133,12 +164,26 @@ class CliLauncher:
     def __init__(self, tks_path: str, game_dir: str | None = None,
                  wait_timeout: int = 30,
                  selected_patches: set = None,
-                 enabled_mod_ids: set = None):
+                 enabled_mod_ids: set = None,
+                 no_runtime_hooks: bool = False,
+                 no_watchdog: bool = False,
+                 no_save_load_hook: bool = False,
+                 no_archive_portrait: bool = False,
+                 no_inject_warpc: bool = False,
+                 no_gold_display: bool = False,
+                 no_4c33fc_41c120: bool = False):
         self.tks_path = os.path.abspath(tks_path)
         self.game_dir = game_dir
         self.wait_timeout = wait_timeout
         self.selected_patches = selected_patches
         self.enabled_mod_ids = enabled_mod_ids
+        self.no_runtime_hooks = no_runtime_hooks
+        self.no_watchdog = no_watchdog
+        self.no_save_load_hook = no_save_load_hook
+        self.no_archive_portrait = no_archive_portrait
+        self.no_inject_warpc = no_inject_warpc
+        self.no_gold_display = no_gold_display
+        self.no_4c33fc_41c120 = no_4c33fc_41c120
         self._is_running = True
 
         # 注册 Ctrl+C 处理
@@ -506,34 +551,58 @@ class CliLauncher:
             )
 
         # ── 18. 运行时动态修补 ──
-        patch_4c33fc(target_pid, base_addr, log_func=self._log)
-        patch_41c120(target_pid, base_addr, log_func=self._log)
-        archive_cave = cave_addr + 192 if cave_addr else 0
-        patch_archive_portrait(target_pid, base_addr, archive_cave,
-                               warpc_base_for_caves if warpc_base_for_caves else discovered_base,
-                               log_func=self._log)
-        patch_gold_display(target_pid, base_addr, log_func=self._log)
-        inject_warpc_data(target_pid, discovered_base, _warpc_expanded, log_func=self._log)
-
-        # 存档加载 portrait 重注入 hook
-        if _load_hook_rvas:
-            from core.lzss import lzss_decompress
-            _wp_file = "WarPC.dat"
-            _wp_orig = _wp_file + ".orig"
-            _reinject_src = _wp_orig if os.path.isfile(_wp_orig) else _wp_file
-            if os.path.isfile(_reinject_src):
-                with open(_reinject_src, 'rb') as _f:
-                    _wp_dec = lzss_decompress(_f.read())
-                _wp_count = len(_wp_dec) // WARPC_REC_SIZE
-                _active_base = (warpc_base_for_caves
-                                if warpc_base_for_caves else discovered_base)
-                hook_save_load_portrait(
-                    target_pid, base_addr, code_buf, code_start,
-                    cave_addr, _active_base, _wp_dec, _wp_count,
-                    _load_hook_rvas, log_func=self._log
-                )
+        if self.no_runtime_hooks:
+            self._log("\n=== 跳过运行时补丁 (no_runtime_hooks) ===")
+        else:
+            # 补丁十二+十三: 入口检查 + stream error
+            if self.no_4c33fc_41c120:
+                self._log("  [补丁十二+十三] 跳过 (no_4c33fc_41c120)")
             else:
-                self._log("  [补丁十八] WarPC.dat 不存在, 跳过重注入 hook")
+                patch_4c33fc(target_pid, base_addr, log_func=self._log)
+                patch_41c120(target_pid, base_addr, log_func=self._log)
+
+            # 补丁十四: 存档界面队伍头像 hook
+            if self.no_archive_portrait:
+                self._log("  [补丁十四] 跳过 (no_archive_portrait)")
+            else:
+                archive_cave = cave_addr + 192 if cave_addr else 0
+                patch_archive_portrait(target_pid, base_addr, archive_cave,
+                                       warpc_base_for_caves if warpc_base_for_caves else discovered_base,
+                                       log_func=self._log)
+
+            # 补丁十七: 存档界面金钱显示修复
+            if self.no_gold_display:
+                self._log("  [补丁十七] 跳过 (no_gold_display)")
+            else:
+                patch_gold_display(target_pid, base_addr, log_func=self._log)
+
+            # WarPC 数据注入
+            if self.no_inject_warpc:
+                self._log("  [inject_warpc_data] 跳过 (no_inject_warpc)")
+            else:
+                inject_warpc_data(target_pid, discovered_base, _warpc_expanded, log_func=self._log)
+
+            # 补丁十八: 存档加载 portrait 重注入 hook
+            if self.no_save_load_hook:
+                self._log("  [补丁十八] 跳过 (no_save_load_hook)")
+            elif _load_hook_rvas:
+                from core.lzss import lzss_decompress
+                _wp_file = "WarPC.dat"
+                _wp_orig = _wp_file + ".orig"
+                _reinject_src = _wp_orig if os.path.isfile(_wp_orig) else _wp_file
+                if os.path.isfile(_reinject_src):
+                    with open(_reinject_src, 'rb') as _f:
+                        _wp_dec = lzss_decompress(_f.read())
+                    _wp_count = len(_wp_dec) // WARPC_REC_SIZE
+                    _active_base = (warpc_base_for_caves
+                                    if warpc_base_for_caves else discovered_base)
+                    hook_save_load_portrait(
+                        target_pid, base_addr, code_buf, code_start,
+                        cave_addr, _active_base, _wp_dec, _wp_count,
+                        _load_hook_rvas, log_func=self._log
+                    )
+                else:
+                    self._log("  [补丁十八] WarPC.dat 不存在, 跳过重注入 hook")
 
         # ── 19. 诊断 dump ──
         self._log("\n--- 存档索引文件内容 dump ---")
@@ -563,10 +632,14 @@ class CliLauncher:
             self._log("\n[WARN] 部分补丁未应用成功")
 
         # ── 21. 构建看门狗参数 ──
-        _wd_params = self._build_portrait_watchdog_params(
-            target_pid,
-            warpc_base_for_caves if warpc_base_for_caves else discovered_base,
-        )
+        _wd_params = None
+        if not self.no_runtime_hooks and not self.no_watchdog:
+            _wd_params = self._build_portrait_watchdog_params(
+                target_pid,
+                warpc_base_for_caves if warpc_base_for_caves else discovered_base,
+            )
+        elif self.no_watchdog:
+            self._log("  [看门狗] 已禁用 (--no-watchdog)")
 
         # ── 22. 等待游戏退出 (含看门狗) ──
         self._log("\n等待游戏退出...")
@@ -726,6 +799,12 @@ def main():
                         help="游戏目录 (覆盖配置文件)")
     parser.add_argument("--no-mods", action="store_true",
                         help="跳过 MOD 加载")
+    parser.add_argument("--no-runtime-hooks", action="store_true",
+                        help="[诊断] 跳过所有运行时补丁 (4c33fc/41c120/头像/gold/补丁十八)")
+    parser.add_argument("--no-watchdog", action="store_true",
+                        help="[诊断] 禁用 portrait 看门狗 (保留其他运行时补丁)")
+    parser.add_argument("--no-save-load-hook", action="store_true",
+                        help="[诊断] 仅跳过补丁十八 (存档加载 portrait 重注入 hook)")
     parser.add_argument("--timeout", type=int, default=None,
                         help="等待超时秒数 (默认: 30)")
 
@@ -760,12 +839,54 @@ def main():
     else:
         print("[配置] MOD: 全部启用 (默认)")
 
+    if args.no_runtime_hooks:
+        print("[诊断] --no-runtime-hooks: 跳过所有运行时补丁")
+    if args.no_watchdog:
+        print("[诊断] --no-watchdog: 禁用看门狗")
+
+    # 配置文件中的诊断选项 (命令行参数优先)
+    adv = cfg.get("advanced", {})
+    no_runtime_hooks = args.no_runtime_hooks or adv.get("no_runtime_hooks", False)
+    no_watchdog = args.no_watchdog or adv.get("no_watchdog", False)
+    no_save_load_hook = args.no_save_load_hook or adv.get("no_save_load_hook", False)
+    no_archive_portrait = adv.get("no_archive_portrait", False)
+    no_inject_warpc = adv.get("no_inject_warpc", False)
+    no_gold_display = adv.get("no_gold_display", False)
+    no_4c33fc_41c120 = adv.get("no_4c33fc_41c120", False)
+
+    # Wine/Winlator 环境自动跳过补丁十四 (xchg [esp],eax; jmp eax 与 Wine 不兼容)
+    if _is_wine() and not no_archive_portrait:
+        no_archive_portrait = True
+        ver = _get_wine_version()
+        ver_str = f" ({ver})" if ver else ""
+        print(f"[Wine兼容] 检测到 Wine 环境{ver_str}, 自动跳过补丁十四 (存档界面头像 hook)")
+        print("  原因: cave 代码使用 xchg [esp],eax; jmp eax 栈技巧, Wine 不支持")
+
+    for label, flag in [
+        ("no_runtime_hooks: 跳过所有运行时补丁", no_runtime_hooks),
+        ("no_watchdog: 禁用看门狗", no_watchdog),
+        ("no_save_load_hook: 跳过补丁十八", no_save_load_hook),
+        ("no_archive_portrait: 跳过补丁十四", no_archive_portrait),
+        ("no_inject_warpc: 跳过 WarPC 注入", no_inject_warpc),
+        ("no_gold_display: 跳过补丁十七", no_gold_display),
+        ("no_4c33fc_41c120: 跳过补丁十二+十三", no_4c33fc_41c120),
+    ]:
+        if flag:
+            print(f"[诊断] {label}")
+
     launcher = CliLauncher(
         tks_path=tks_path,
         game_dir=game_dir,
         wait_timeout=timeout,
         selected_patches=selected_patches,
         enabled_mod_ids=enabled_mod_ids,
+        no_runtime_hooks=no_runtime_hooks,
+        no_watchdog=no_watchdog,
+        no_save_load_hook=no_save_load_hook,
+        no_archive_portrait=no_archive_portrait,
+        no_inject_warpc=no_inject_warpc,
+        no_gold_display=no_gold_display,
+        no_4c33fc_41c120=no_4c33fc_41c120,
     )
     ok, diag = launcher.run()
     if ok:
