@@ -29,6 +29,7 @@ EDITORS = [
     ("entry_spritesheet_editor.py", "spritesheet_editor.spritesheet_editor_v2"),
     ("entry_save_editor.py",        "save_editor.save_editor_v2"),
     ("entry_launcher.py",           "tks_launcher_gui.main"),
+    ("entry_launcher_cli.py",      "tks_launcher_gui.cli_launcher"),
 ]
 
 TEMPLATE = '''\

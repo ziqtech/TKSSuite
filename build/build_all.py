@@ -56,6 +56,7 @@ EDITORS = [
     ("TKSSpritesheetEditor", "build/entries/entry_spritesheet_editor.py", "spritesheet_editor"),
     ("TKSSaveEditor",        "build/entries/entry_save_editor.py",        "save_editor"),
     ("TKSLauncher",          "build/entries/entry_launcher.py",           "tks_launcher_gui"),
+    ("TKSLauncherCLI",       "build/entries/entry_launcher_cli.py",      "tks_launcher_gui"),
 ]
 
 # 需要 Pillow 的编辑器 (onefile 模式用, 薄模式 PIL 由 PIL.lib 统一提供)
@@ -201,17 +202,77 @@ def _build_onefile_cmd(name: str, entry: str, editor_dir: str) -> list:
     return cmd
 
 
+def _build_cli_cmd(name: str, entry: str, editor_dir: str) -> list:
+    """生成 CLI 启动器 Nuitka 构建命令 (无 PySide6, 无 Qt, 极简 exe)"""
+    entry_path = 仓库根目录 / entry
+    icon_path = 仓库根目录 / editor_dir / "TKS.ico"
+    if not icon_path.exists():
+        icon_path = 仓库根目录 / "item_editor" / "TKS.ico"
+
+    tks_launcher_dir = 仓库根目录 / "tks_launcher_gui"
+
+    cmd = [
+        sys.executable, "-m", "nuitka",
+        "--onefile",
+        "--assume-yes-for-downloads",
+        f"--output-dir={DIST_DIR}",
+        f"--output-filename={name}.exe",
+        # CLI 需要控制台输出
+        "--windows-console-mode=force",
+        f"--windows-icon-from-ico={icon_path}",
+
+        # 排除所有 GUI 框架 (避免 Nuitka 追踪到 PySide6)
+        "--nofollow-import-to=PySide6",
+        "--nofollow-import-to=shiboken6",
+        "--nofollow-import-to=PIL",
+        "--nofollow-import-to=tkinter",
+        "--nofollow-import-to=matplotlib",
+        "--nofollow-import-to=numpy",
+
+        # 禁用排除模块的隐式导入检测
+        "--no-deployment-flag=excluded-module-usage",
+
+        # 包含 core 包 (Nuitka 不会自动发现)
+        "--include-package=tks_launcher_gui.core",
+
+        # 包含数据文件 (补丁配置)
+        f"--include-data-files={tks_launcher_dir / 'tks_patches.json'}=tks_patches.json",
+        f"--include-data-files={tks_launcher_dir / 'summon_table.json'}=summon_table.json",
+
+        # 编译优化
+        "--lto=yes",
+        "--python-flag=no_docstrings",
+        "--python-flag=no_asserts",
+        "--remove-output",
+
+        str(entry_path),
+    ]
+    return cmd
+
+
 def build_one(name: str, entry: str, editor_dir: str,
               onefile: bool = False, verbose: bool = False) -> bool:
     """构建单个 exe (薄模式或完整 onefile 模式)"""
-    mode_label = "完整 onefile (PySide6/PIL 内嵌)" if onefile else "薄 exe (无 PySide6/PIL)"
+    # CLI 启动器使用专用构建 (无 PySide6)
+    is_cli = (name == "TKSLauncherCLI")
+    if is_cli:
+        mode_label = "CLI 极简 (无 PySide6/Qt)"
+    elif onefile:
+        mode_label = "完整 onefile (PySide6/PIL 内嵌)"
+    else:
+        mode_label = "薄 exe (无 PySide6/PIL)"
     print(f"\n{'='*60}")
     print(f"  构建: {name}")
     print(f"  入口: {entry}")
     print(f"  模式: Nuitka --onefile ({mode_label})")
     print(f"{'='*60}")
 
-    cmd = _build_onefile_cmd(name, entry, editor_dir) if onefile else _build_thin_cmd(name, entry, editor_dir)
+    if is_cli:
+        cmd = _build_cli_cmd(name, entry, editor_dir)
+    elif onefile:
+        cmd = _build_onefile_cmd(name, entry, editor_dir)
+    else:
+        cmd = _build_thin_cmd(name, entry, editor_dir)
 
     if verbose:
         print(f"  命令: {' '.join(str(c) for c in cmd)}")
@@ -278,6 +339,18 @@ def assemble_release():
     if tks_patches_src.exists():
         shutil.copy2(str(tks_patches_src), str(RELEASE_DIR / "tks_patches.json"))
         print(f"  [OK] tks_patches.json")
+
+    # 复制 launcher_config.json (CLI 启动器配置模板)
+    launcher_cfg_src = 仓库根目录 / "tks_launcher_gui" / "launcher_config.json"
+    if launcher_cfg_src.exists():
+        shutil.copy2(str(launcher_cfg_src), str(RELEASE_DIR / "launcher_config.json"))
+        print(f"  [OK] launcher_config.json")
+
+    # 复制 summon_table.json (召唤表数据)
+    summon_src = 仓库根目录 / "tks_launcher_gui" / "summon_table.json"
+    if summon_src.exists():
+        shutil.copy2(str(summon_src), str(RELEASE_DIR / "summon_table.json"))
+        print(f"  [OK] summon_table.json")
 
     # 汇总
     total_size = sum(
