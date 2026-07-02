@@ -1242,8 +1242,9 @@ class TimelineWidget(QWidget):
             th = max(1, int(f.height * ratio))
             thumb = f.resize((tw, th), Image.NEAREST)
             self._thumbs.append(pil_to_qpixmap(thumb))
-        total_w = max(4 + len(frames) * (self._cell + self._gap) + 4, self.width())
+        total_w = 4 + len(frames) * (self._cell + self._gap) + 4
         self.setMinimumWidth(total_w)
+        self.resize(total_w, self.height())
         self.update()
 
     def set_current(self, idx: int):
@@ -1397,11 +1398,16 @@ class PreviewView(QWidget):
         self._disp.setScaledContents(False)
         layout.addWidget(self._disp, 1)
 
-        # ── 时间轴 ──
+        # ── 时间轴 ── (水平滚动, 避免帧数多时 setMinimumWidth 撑爆父布局)
         self._timeline = TimelineWidget()
         self._timeline.clicked.connect(self._on_timeline_click)
-        self._timeline.setVisible(False)
-        layout.addWidget(self._timeline)
+        self._timeline_scroll = QScrollArea()
+        self._timeline_scroll.setWidget(self._timeline)
+        self._timeline_scroll.setWidgetResizable(False)
+        self._timeline_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self._timeline_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self._timeline_scroll.setVisible(False)
+        layout.addWidget(self._timeline_scroll)
 
         # ── 进度条 ──
         self._slider = QSlider(Qt.Horizontal)
@@ -1418,14 +1424,14 @@ class PreviewView(QWidget):
             self._pingpong_cb.setEnabled(False)
             self._range_all.setEnabled(False)
             self._range_sel.setEnabled(False)
-            self._timeline.setVisible(False)
+            self._timeline_scroll.setVisible(False)
         else:
             self._btn_play.setEnabled(True)
             self._loop_cb.setEnabled(True)
             self._pingpong_cb.setEnabled(True)
             self._range_all.setEnabled(True)
             self._range_sel.setEnabled(True)
-            self._timeline.setVisible(True)
+            self._timeline_scroll.setVisible(True)
 
     def set_frames(self, frames: List[Image.Image], keep_idx: bool = True):
         old_idx = self._current
@@ -2768,10 +2774,36 @@ class SpriteSheetEditorWindow(QMainWindow):
     def _show_grid_view(self):
         self._grid_container.setVisible(True)
         self.preview_view.setVisible(False)
+        self._relayout_viewport()
 
     def _show_preview_view(self):
         self._grid_container.setVisible(False)
         self.preview_view.setVisible(True)
+        self._relayout_viewport()
+
+    def _relayout_viewport(self):
+        """强制整窗重排, 等效于"最大化→还原"触发的一次自顶向下 resize 级联。
+
+        preview_view 构造起即隐藏, 首次 setVisible(True) 时其内部 QLabel
+        仍持有隐藏期间缓存的几何; 仅 activate() 本层布局无法让父级
+        (QSplitter / Dock) 重新分配空间, 故需沿父链逐层 invalidate+activate,
+        再延迟一帧在显示事件处理完后重设 pixmap。
+        """
+        w = self._stack
+        while w is not None:
+            lay = w.layout()
+            if lay is not None:
+                lay.invalidate()
+                lay.activate()
+            w = w.parentWidget()
+        QTimer.singleShot(0, self._refresh_preview_geometry)
+
+    def _refresh_preview_geometry(self):
+        if not self.preview_view.isVisible():
+            return
+        self.preview_view.updateGeometry()
+        if self.preview_view._frames:
+            self.preview_view._show_frame(self.preview_view._current)
 
     def _refresh_inline_preview(self, keep_idx: bool = True):
         if self._preview_mode == "grid":
