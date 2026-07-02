@@ -2,9 +2,11 @@
 
 ## 概述
 
-`weapon_status_nop_je` 是 TKS Launcher 中"战斗与技能"组的一个 `patch_bytes` 类型补丁。其目的是让 `weapon_cause_mask_hook_v2` 补丁（武器 cause_mask 注入）能稳定生效，但代价是牺牲了原版游戏的随机性——所有武器攻击 **100%** 附加状态效果。
+> ⚠️ **状态**: 此补丁已于 2026-07-02 从 `tks_patches.json` 移除。`weapon_cause_mask_hook_v2` 本身已解决武器 cause_mask 在普通攻击时不注入状态队列的 BUG，无需此补丁。
 
-本文档从逆向工程角度完整验证该补丁的作用、逻辑链、以及与原版游戏的差异。
+`weapon_status_nop_je` 曾是 TKS Launcher 中"战斗与技能"组的一个 `patch_bytes` 类型补丁。其设计意图是让 `weapon_cause_mask_hook_v2` 补丁（武器 cause_mask 注入）"稳定生效"，但实际效果并非 100% 附加，而是将概率判定从"攻击者速度随机公式"切换为"受击者状态抗性查表"——既不是补丁声称的效果，也不是必要的修改。
+
+**移除理由**：hook 注入的武器 cause_mask 到达 `sub_442D44` 时携带 `a5=0`（BSS 初始值），走原版速度随机公式（2×速度/3+15，15~99%），状态已正常施加。此补丁多余且有副作用。
 
 ---
 
@@ -171,7 +173,7 @@ char __cdecl sub_442D44(__int16 a1, __int16 a2, __int16 a3, __int16 a4, __int16 
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
-│ ① weapon_cause_mask_hook_v2 (cave hook @ sub_4400DC 入口)    │
+│ ① weapon_cause_mask_hook (cave hook @ sub_4400DC 入口)    │
 │                                                              │
 │   逆向依据: sub_447DAC case 2000 → word_9D6C7C = -1 (普通攻击) │
 │                                                              │
@@ -257,7 +259,7 @@ char __cdecl sub_442D44(__int16 a1, __int16 a2, __int16 a3, __int16 a4, __int16 
 
 ### 方案 B：增强 cave hook 逻辑
 
-在 `weapon_cause_mask_hook_v2` 的 cave 代码中，除了设置 `word_9D6C3C/9D6C3E`，额外写入一个自定义标志变量，然后在 `sub_442D44` 中额外 hook 检查该标志，识别"这是武器 cause"并采用自定义概率公式（注意 v8 上限为 100，需钳位）。
+在 `weapon_cause_mask_hook` 的 cave 代码中，除了设置 `word_9D6C3C/9D6C3E`，额外写入一个自定义标志变量，然后在 `sub_442D44` 中额外 hook 检查该标志，识别"这是武器 cause"并采用自定义概率公式（注意 v8 上限为 100，需钳位）。
 
 **优点**: 可以自定义概率公式（如保留速度加成并提升基础概率）
 **缺点**: 需要额外 hook 和 cave 空间
@@ -293,3 +295,4 @@ char __cdecl sub_442D44(__int16 a1, __int16 a2, __int16 a3, __int16 a4, __int16 
 |------|------|
 | 2026-06-30 | 初始版本：完成补丁验证分析，修正"力量"→"速度"的字段识别错误 |
 | 2026-07-02 | 修正 `weapon_weight` 臆测：该字段实为反编译器符号 `algn_9D70D0[1054*a1+16+a2]`，是**受击实体的状态抗性字节**（100=免疫/75/50/其它），与武器无关；同步修正补丁效果——补丁后并非无条件 100% 附加，而是按受击者抗性查表（100/50/25/不施加），仅抗性为其它值(含0xFF)时才 100%。依据：`442D44.c` 反编译 + `memory/00401000--00481000.txt:16865-16877` 反汇编寻址解码 |
+| 2026-07-02 | **补丁移除**：经验证，`weapon_status_nop_je` 无存在必要。原始 BUG 是 sub_4400DC 的第一轮目标循环对普通攻击不执行、第二轮循环不设置 cause_mask 导致武器状态无法入队。`weapon_cause_mask_hook_v2` 在入口注入 cause_mask 到 `9D6C3C/9D6C3E`（a5=0 走速度公式）已修复此问题。nop_je 将速度公式替换为抗性查表无必要且副作用影响所有 a5==0 来源。依据：`disassembly/4400DC.asm:122-130` 第一轮守卫 + `4429E5` 第二轮 default 路径 + `decompile/4173F8.c:19` TKItem 基址验证 |
