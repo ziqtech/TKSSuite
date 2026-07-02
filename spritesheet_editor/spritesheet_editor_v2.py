@@ -1645,7 +1645,7 @@ class SettingsPanel(QWidget):
         pix_row.addWidget(QLabel("像素格式:"))
         self._fmt_combo = QComboBox()
         self._fmt_combo.addItems(TEXTURE_FORMATS["PNG-32"])
-        self._fmt_combo.setCurrentText("RGB888")  # 默认 24-bit RGB, 对齐引擎资产标准
+        self._fmt_combo.setCurrentText("RGBA8888")  # 默认 32-bit RGBA
         self._fmt_combo.currentTextChanged.connect(self._refresh_export_info)
         pix_row.addWidget(self._fmt_combo)
         export_layout.addLayout(pix_row)
@@ -1655,7 +1655,7 @@ class SettingsPanel(QWidget):
         alpha_row.addWidget(QLabel("透明处理:"))
         self._alpha_combo = QComboBox()
         self._alpha_combo.addItems(ALPHA_MODES)
-        self._alpha_combo.setCurrentText("清除透明像素")
+        self._alpha_combo.setCurrentText("无")
         self._alpha_combo.currentTextChanged.connect(self._refresh_export_info)
         alpha_row.addWidget(self._alpha_combo)
         export_layout.addLayout(alpha_row)
@@ -2917,9 +2917,12 @@ def main():
     app.setApplicationName("Spritesheet Editor")
     _t = install_translator(app)
     setup_app_icon(app, os.path.dirname(__file__))
-    # 设置应用默认字体 (避免 QFont setPointSize(-1) 警告, QSS 会覆盖实际显示)
+    # 设置应用默认字体 (用 pointSize 而非 pixelSize:
+    # pixelSize 会使 font.pointSize() 返回 -1, 点击 QComboBox 弹出菜单时
+    # Qt 内部以 font.pointSize() 调 setPointSize 触发 "Point size <= 0 (-1)" 警告;
+    # 实际显示由 QSS 的 px 字号覆盖)
     font = QFont()
-    font.setPixelSize(13)
+    font.setPointSize(9)
     app.setFont(font)
 
     # 根据操作系统主题设定初始风格 (Qt6 原生检测)
