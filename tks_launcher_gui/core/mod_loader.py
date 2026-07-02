@@ -35,8 +35,6 @@ class ModInfo:
     version: str = "1.0.0"
     author: str = ""
     description: str = ""
-    mod_type: str = "data"
-    mode: str = "mixed"
     load_order: int = 100
     dependencies: List[str] = field(default_factory=list)
     conflicts: List[str] = field(default_factory=list)
@@ -138,8 +136,6 @@ def _load_single_mod(mod_path: str, log_func=None) -> Optional[ModInfo]:
             version=mj.get("version", "1.0.0"),
             author=mj.get("author", ""),
             description=mj.get("description", ""),
-            mod_type=mj.get("type", "data"),
-            mode=mj.get("mode", "mixed"),
             load_order=mj.get("load_order", 100),
             dependencies=mj.get("dependencies", []),
             conflicts=mj.get("conflicts", []),
@@ -188,8 +184,6 @@ def _load_pak_mod_info(pak_path: str, log_func=None) -> Optional[ModInfo]:
             version=mj.get("version", "1.0.0"),
             author=mj.get("author", ""),
             description=mj.get("description", ""),
-            mod_type=mj.get("type", "mixed"),
-            mode="mixed",
             load_order=mj.get("load_order", 100),
             dependencies=mj.get("dependencies", []),
             conflicts=mj.get("conflicts", []),
@@ -229,8 +223,6 @@ def expand_pak_mods(pak_path: str, log_func=None) -> List[ModInfo]:
                     version=mj.get("version", "1.0.0"),
                     author=mj.get("author", ""),
                     description=mj.get("description", ""),
-                    mod_type=mj.get("type", "data"),
-                    mode=mj.get("mode", "mixed"),
                     load_order=mj.get("load_order", 100),
                     dependencies=mj.get("dependencies", []),
                     conflicts=mj.get("conflicts", []),

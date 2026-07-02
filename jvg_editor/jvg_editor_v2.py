@@ -982,7 +982,6 @@ class JVGEditor(QMainWindow):
         dlg = ModMetadataDialog(self, getattr(self, '_last_mod_metadata', None))
         if dlg.exec() != QDialog.Accepted: return
         metadata = dlg.get_metadata(); self._last_mod_metadata = metadata
-        metadata["type"] = "visual"
 
         # 构建数据文件
         crc = compute_crc32(ref_path)
@@ -1052,7 +1051,6 @@ class JVGEditor(QMainWindow):
             dlg = ModMetadataDialog(self, getattr(self, '_last_mod_metadata', None))
             if dlg.exec() != QDialog.Accepted: return
             metadata = dlg.get_metadata(); self._last_mod_metadata = metadata
-            metadata["type"] = "visual"
 
             internal_path = f"data/{target_name}.json"
             mod_json = generate_mod_json(metadata,
@@ -1103,7 +1101,6 @@ class JVGEditor(QMainWindow):
             dlg = ModMetadataDialog(self, getattr(self, '_last_mod_metadata', None))
             if dlg.exec() != QDialog.Accepted: return
             metadata = dlg.get_metadata(); self._last_mod_metadata = metadata
-            metadata["type"] = "visual"
 
             # 生成独立资源文件名（不会覆盖游戏文件）
             src_name = os.path.basename(self.jvg.filepath) if self.jvg.filepath else "unknown.jvg"
@@ -1200,8 +1197,6 @@ class JVGEditor(QMainWindow):
             "version": info.get("version", "1.0.0"),
             "author": info.get("author", ""),
             "description": info.get("description", ""),
-            "type": info.get("type", "visual"),
-            "mode": info.get("mode", "mixed"),
             "load_order": info.get("load_order", 100),
         }
 

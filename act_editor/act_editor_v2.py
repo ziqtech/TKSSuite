@@ -3135,8 +3135,6 @@ class ActEditorV2(QMainWindow):
             "version": info.get("version", "1.0.0"),
             "author": info.get("author", ""),
             "description": info.get("description", ""),
-            "type": info.get("type", "data"),
-            "mode": info.get("mode", "mixed"),
             "load_order": info.get("load_order", 100),
         }
 

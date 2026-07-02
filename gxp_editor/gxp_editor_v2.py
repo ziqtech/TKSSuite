@@ -449,7 +449,6 @@ class GXPEditor(QMainWindow):
         dlg = ModMetadataDialog(self, getattr(self, '_last_mod_metadata', None))
         if dlg.exec() != QDialog.Accepted: return
         metadata = dlg.get_metadata(); self._last_mod_metadata = metadata
-        metadata["type"] = "visual"
 
         target_name = os.path.basename(self.img.filepath)
         mod_json = generate_mod_json(metadata, [],
@@ -510,8 +509,6 @@ class GXPEditor(QMainWindow):
             "version": info.get("version", "1.0.0"),
             "author": info.get("author", ""),
             "description": info.get("description", ""),
-            "type": info.get("type", "visual"),
-            "mode": info.get("mode", "mixed"),
             "load_order": info.get("load_order", 100),
         }
 

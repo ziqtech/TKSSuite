@@ -4,7 +4,7 @@ import os
 import zipfile
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QGridLayout,
-    QLabel, QLineEdit, QTextEdit, QComboBox, QSpinBox,
+    QLabel, QLineEdit, QTextEdit, QSpinBox,
     QPushButton, QFileDialog, QMessageBox,
 )
 
@@ -80,16 +80,6 @@ class ModMetaEditorDialog(QDialog):
         grid.addWidget(self.edit_desc, row, 1)
 
         row += 1
-        grid.addWidget(QLabel("类型:"), row, 0)
-        self.combo_type = QComboBox()
-        self.combo_type.addItems(["data", "story", "visual", "mixed"])
-        grid.addWidget(self.combo_type, row, 1)
-
-        row += 1
-        grid.addWidget(QLabel("模式:"), row, 0)
-        self.combo_mode = QComboBox()
-        self.combo_mode.addItems(["diff", "append", "mixed"])
-        grid.addWidget(self.combo_mode, row, 1)
 
         row += 1
         grid.addWidget(QLabel("加载顺序:"), row, 0)
@@ -152,7 +142,7 @@ class ModMetaEditorDialog(QDialog):
 
     def _fields(self):
         return (self.edit_id, self.btn_regen_id, self.edit_name, self.edit_version,
-                self.edit_author, self.edit_desc, self.combo_type, self.combo_mode,
+                self.edit_author, self.edit_desc,
                 self.spin_order, self.edit_gamever, self.edit_deps, self.edit_conflicts)
 
     def _set_fields_enabled(self, enabled: bool):
@@ -211,9 +201,6 @@ class ModMetaEditorDialog(QDialog):
         self.edit_author.setText(mj.get("author", ""))
         self.edit_desc.setPlainText(mj.get("description", ""))
 
-        self._set_combo(self.combo_type, mj.get("type", "data"))
-        self._set_combo(self.combo_mode, mj.get("mode", "mixed"))
-
         self.spin_order.setValue(mj.get("load_order", 100))
         self.edit_gamever.setText(mj.get("game_version", "1.0"))
         self.edit_deps.setText(", ".join(mj.get("dependencies", [])))
@@ -223,14 +210,6 @@ class ModMetaEditorDialog(QDialog):
         self.btn_save.setEnabled(True)
         self.btn_saveas.setEnabled(True)
 
-    @staticmethod
-    def _set_combo(combo: QComboBox, value: str):
-        idx = combo.findText(value)
-        if idx >= 0:
-            combo.setCurrentIndex(idx)
-        else:
-            combo.addItem(value)
-            combo.setCurrentText(value)
 
     # ────────────────────────────────────────────────
     # 收集 / 校验 / 保存
@@ -245,8 +224,6 @@ class ModMetaEditorDialog(QDialog):
             "version": self.edit_version.text().strip() or "1.0.0",
             "author": self.edit_author.text().strip(),
             "description": self.edit_desc.toPlainText().strip(),
-            "type": self.combo_type.currentText(),
-            "mode": self.combo_mode.currentText(),
             "load_order": self.spin_order.value(),
             "game_version": self.edit_gamever.text().strip() or "1.0",
             "dependencies": deps,

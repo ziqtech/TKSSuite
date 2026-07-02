@@ -43,7 +43,6 @@ class ModInfoPreviewWidget(QWidget):
             ("ID", mod.mod_id, False),
             ("版本", mod.version, False),
             ("作者", mod.author, False),
-            ("类型", f"{mod.mod_type} / {mod.mode}", False),
             ("加载顺序", str(mod.load_order), False),
             ("描述", mod.description, False),
         ]

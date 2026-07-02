@@ -22,7 +22,7 @@ from typing import Any
 
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QGridLayout,
-    QLabel, QLineEdit, QTextEdit, QComboBox, QSpinBox,
+    QLabel, QLineEdit, QTextEdit, QSpinBox,
     QPushButton, QMessageBox,
 )
 from PySide6.QtCore import Qt
@@ -188,9 +188,6 @@ def generate_mod_json(metadata: dict, components: list[dict],
         "created": now.strftime("%Y-%m-%dT%H:%M:%S"),
         "game_version": metadata.get("game_version", "1.0"),
 
-        "type": metadata.get("type", "data"),
-        "mode": metadata.get("mode", "mixed"),
-
         "dependencies": metadata.get("dependencies", []),
         "conflicts": metadata.get("conflicts", []),
         "load_order": metadata.get("load_order", 100),
@@ -330,7 +327,7 @@ class ModMetadataDialog(QDialog):
     def __init__(self, parent=None, defaults: dict | None = None):
         super().__init__(parent)
         self.setWindowTitle("导出为 MOD (.tksmod)")
-        self.resize(500, 420)
+        self.resize(500, 370)
         self.metadata = {}
         defaults = defaults or {}
 
@@ -376,24 +373,6 @@ class ModMetadataDialog(QDialog):
         grid.addWidget(self.edit_desc, row, 1)
 
         row += 1
-        grid.addWidget(QLabel("类型:"), row, 0)
-        self.combo_type = QComboBox()
-        self.combo_type.addItems(["data", "story", "visual", "mixed"])
-        idx = self.combo_type.findText(defaults.get("type", "data"))
-        if idx >= 0:
-            self.combo_type.setCurrentIndex(idx)
-        grid.addWidget(self.combo_type, row, 1)
-
-        row += 1
-        grid.addWidget(QLabel("模式:"), row, 0)
-        self.combo_mode = QComboBox()
-        self.combo_mode.addItems(["diff", "append", "mixed"])
-        idx = self.combo_mode.findText(defaults.get("mode", "mixed"))
-        if idx >= 0:
-            self.combo_mode.setCurrentIndex(idx)
-        grid.addWidget(self.combo_mode, row, 1)
-
-        row += 1
         grid.addWidget(QLabel("加载顺序:"), row, 0)
         self.spin_order = QSpinBox()
         self.spin_order.setRange(0, 9999)
@@ -430,8 +409,6 @@ class ModMetadataDialog(QDialog):
             "version": self.edit_version.text().strip() or "1.0.0",
             "author": self.edit_author.text().strip(),
             "description": self.edit_desc.toPlainText().strip(),
-            "type": self.combo_type.currentText(),
-            "mode": self.combo_mode.currentText(),
             "load_order": self.spin_order.value(),
         }
         self.accept()
