@@ -390,8 +390,11 @@ CAVE_DUEL_SELF_FIX = bytes([
 #       hook 使用 E8 (call) 会在栈上多压一个返回地址,
 #       因此 cave 开头先 pop edx 移除多余返回地址并暂存,
 #       使栈布局还原为原始函数期望的 [ebp+4]=调用者返回地址
-#       然后执行原序言并检查目标是否反击自伤
-#       非自伤时用 push edx; ret 跳转到 0x4434C4 继续正常执行
+#       然后执行原序言并检查 byte_9D6FA4[0]==a1 (目标==施法者自身)
+#       且 a1!=word_9D6F58 (反击场景, 非主攻击者)
+#       若满足反击自伤条件: 将 byte_9D6FA4[0] 修正为 word_9D6F58
+#       (原始攻击者), 使反击者正常攻击原攻击者而非自己
+#       不影响主攻击者自伤(已有补丁)和治疗自愈(a1==word_9D6F58不过滤)
 # ============================================================
 CAVE_DUEL_COUNTER_SELF_FIX = bytes([
     # === 修复栈帧: pop 掉 E8 call 多压的返回地址 ===
@@ -413,28 +416,22 @@ CAVE_DUEL_COUNTER_SELF_FIX = bytes([
     0x0F, 0xBE, 0x05, 0xA4, 0x6F, 0x9D, 0x00,         # 11 movsx eax, byte [0x9D6FA4]
     0x0F, 0xBF, 0x4D, 0x08,                            # 18 movsx ecx, word [ebp+8] (a1)
     0x3B, 0xC1,                                        # 22 cmp eax, ecx
-    0x75, 0x1E,                                        # 24 jne .not_self (+30)
+    0x75, 0x17,                                        # 24 jne .continue (+23) — 非自身, 正常执行
 
     # === 自身目标: 检查是否反击场景 (a1 != word_9D6F58) ===
     0x0F, 0xBF, 0x0D, 0x58, 0x6F, 0x9D, 0x00,         # 26 movsx ecx, word [0x9D6F58]
     0x66, 0x3B, 0x4D, 0x08,                            # 33 cmp cx, [ebp+8]
-    0x74, 0x11,                                        # 37 je .not_self (+17) — 主攻击者, 已有补丁处理
+    0x74, 0x0A,                                        # 37 je .continue (+10) — 主攻击者, 已有补丁处理
 
-    # === 反击自伤: 跳过 sub_4434BC ===
-    0x66, 0xC7, 0x05, 0x58, 0x70, 0x9D, 0x00, 0x00, 0x00,  # 39 mov word [0x9D7058], 0
-    0x59,                                              # 48 pop ecx
-    0x58,                                              # 49 pop eax
-    0x30, 0xC0,                                        # 50 xor al, al (返回值 0)
-    0x5F,                                              # 52 pop edi
-    0x5E,                                              # 53 pop esi
-    0xC9,                                              # 54 leave (→ mov esp,ebp; pop ebp)
-    0xC3,                                              # 55 ret → 返回原始调用者
+    # === 反击自伤: 将目标修正为原始攻击者 ===
+    0xA0, 0x58, 0x6F, 0x9D, 0x00,                      # 39 mov al, [0x9D6F58] (原始攻击者ID)
+    0xA2, 0xA4, 0x6F, 0x9D, 0x00,                      # 44 mov [0x9D6FA4], al (修正第一目标)
 
-    # === .not_self: 正常继续 sub_4434BC ===
-    0x59,                                              # 56 pop ecx
-    0x58,                                              # 57 pop eax
-    0x52,                                              # 58 push edx (0x4434C4, 之前 pop edx 暂存的)
-    0xC3,                                              # 59 ret → 跳转到 0x4434C4 继续执行
+    # === .continue: 正常继续 sub_4434BC ===
+    0x59,                                              # 49 pop ecx
+    0x58,                                              # 50 pop eax
+    0x52,                                              # 51 push edx (0x4434C4, 之前暂存的)
+    0xC3,                                              # 52 ret → 跳转到 0x4434C4 继续执行
 ])
 
 # ============================================================
