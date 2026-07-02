@@ -543,7 +543,9 @@ class JVGEditor(QMainWindow):
         self._view = "tile"
         self._anim_job: Optional[QTimer] = None
         self._photos = {}
-        
+        self._act_export_avatars = None
+        self._act_import_avatars = None
+
         # 创建UI
         self._setup_menu()
         self._setup_ui()
@@ -610,7 +612,21 @@ class JVGEditor(QMainWindow):
         export_grid_action = QAction("导出图集", self)
         export_grid_action.triggered.connect(lambda: self._export("grid"))
         export_menu.addAction(export_grid_action)
-        
+
+        export_menu.addSeparator()
+
+        self._act_export_avatars = QAction("导出全部头像 (Fa.JVG)", self)
+        self._act_export_avatars.triggered.connect(self._export_all_avatars)
+        export_menu.addAction(self._act_export_avatars)
+
+        self._act_export_avatars_split = QAction("导出全部头像-拆分 (Fa.JVG)", self)
+        self._act_export_avatars_split.triggered.connect(self._export_all_avatars_split)
+        export_menu.addAction(self._act_export_avatars_split)
+
+        self._act_import_avatars = QAction("导入全部头像 (Fa.JVG)", self)
+        self._act_import_avatars.triggered.connect(self._import_all_avatars)
+        export_menu.addAction(self._act_import_avatars)
+
         file_menu.addSeparator()
         
         export_mod_action = QAction("导出为 MOD (.tksmod)…", self)
@@ -741,6 +757,20 @@ class JVGEditor(QMainWindow):
         grp_exp_layout.addWidget(btn_exp_grp)
         grp_exp_layout.addWidget(btn_exp_grid)
         ops_layout.addWidget(grp_exp)
+
+        # 头像批量操作组 (仅 Fa.JVG)
+        grp_avatar = QGroupBox("头像批量 (Fa.JVG)")
+        grp_avatar_layout = QVBoxLayout(grp_avatar)
+        self._btn_export_avatars = QPushButton("📤 导出全部头像")
+        self._btn_export_avatars.clicked.connect(self._export_all_avatars)
+        self._btn_export_avatars_split = QPushButton("📤 导出全部头像 (拆分)")
+        self._btn_export_avatars_split.clicked.connect(self._export_all_avatars_split)
+        self._btn_import_avatars = QPushButton("📥 导入全部头像")
+        self._btn_import_avatars.clicked.connect(self._import_all_avatars)
+        grp_avatar_layout.addWidget(self._btn_export_avatars)
+        grp_avatar_layout.addWidget(self._btn_export_avatars_split)
+        grp_avatar_layout.addWidget(self._btn_import_avatars)
+        ops_layout.addWidget(grp_avatar)
         
         left_layout.addWidget(self._create_dock("工作流选项", ops_container))
 
@@ -897,6 +927,7 @@ class JVGEditor(QMainWindow):
         self._fi = 0
         self._sel_fi = -1
         self._refresh_view()
+        self._update_avatar_actions()
         self.setWindowTitle("JVG编辑器 v2 — [新建]")
 
     def _open_dlg(self):
@@ -917,6 +948,7 @@ class JVGEditor(QMainWindow):
         self._fi = 0
         self._sel_fi = -1
         self._refresh_view()
+        self._update_avatar_actions()
         self.setWindowTitle(f"JVG编辑器 v2 — {os.path.basename(p)}")
 
     def _save(self):
@@ -1854,6 +1886,223 @@ class JVGEditor(QMainWindow):
             export_gridsheet(blk, d, padding=self._padding.value(), 
                            columns=self._tile_cols.value(), greenscreen_set=gs)
             self._info.setText(f"已导出 gridsheet (padding={self._padding.value()}) 到 {d}")
+
+    # ── Fa.JVG 头像批量操作 ─────────────────────────────────
+    def _is_fa_jvg(self) -> bool:
+        """检查当前加载文件是否为 Fa.JVG"""
+        if not self.jvg or not self.jvg.filepath:
+            return False
+        return os.path.basename(self.jvg.filepath).upper() == "FA.JVG"
+
+    def _update_avatar_actions(self):
+        """根据当前文件类型启用/禁用头像相关操作"""
+        is_fa = self._is_fa_jvg()
+        if self._act_export_avatars:
+            self._act_export_avatars.setEnabled(is_fa)
+        if self._act_export_avatars_split:
+            self._act_export_avatars_split.setEnabled(is_fa)
+        if self._act_import_avatars:
+            self._act_import_avatars.setEnabled(is_fa)
+        if hasattr(self, '_btn_export_avatars'):
+            self._btn_export_avatars.setEnabled(is_fa)
+        if hasattr(self, '_btn_export_avatars_split'):
+            self._btn_export_avatars_split.setEnabled(is_fa)
+        if hasattr(self, '_btn_import_avatars'):
+            self._btn_import_avatars.setEnabled(is_fa)
+
+    def _export_all_avatars(self):
+        """导出全部头像：取所有偶数block的frame0(70×70)，以padding=1排列成近正方形图集"""
+        if not self.jvg or not self._is_fa_jvg():
+            QMessageBox.information(self, "提示", "此功能仅适用于 Fa.JVG 头像资源文件")
+            return
+
+        # 收集所有70×70头像 (偶数block的frame 0)
+        avatars = []  # [(block_index, frame, block), ...]
+        for bi in range(0, len(self.jvg.blocks), 2):
+            blk = self.jvg.blocks[bi]
+            if blk.frame_count > 0:
+                f = blk.frames[0]
+                if f.width > 0 and f.height > 0:
+                    avatars.append((bi, f, blk))
+
+        if not avatars:
+            QMessageBox.information(self, "提示", "没有找到有效的头像数据")
+            return
+
+        n = len(avatars)
+        cols = int(math.ceil(math.sqrt(n)))
+        rows = int(math.ceil(n / cols))
+
+        cell_size = 70
+        padding = self._padding.value()
+        aw = cols * cell_size + (cols - 1) * padding
+        ah = rows * cell_size + (rows - 1) * padding
+
+        no_green = self._greenscreen_remove.isChecked()
+        atlas = bytearray(aw * ah * 4)
+
+        for ai, (bi, f, blk) in enumerate(avatars):
+            ri = ai // cols
+            ci = ai % cols
+            cx = ci * (cell_size + padding)
+            cy = ri * (cell_size + padding)
+
+            pal = self._get_pal(blk, f)
+            if no_green:
+                gs = {i for i, e in enumerate(pal.entries) if e == 0x07E0}
+            else:
+                gs = None
+            pr = pal.to_rgb888()
+
+            for py in range(f.height):
+                for px in range(f.width):
+                    p = py * f.width + px
+                    if p < len(f.alpha) and f.alpha[p] == 0:
+                        continue
+                    idx = f.pixels[p] if p < len(f.pixels) else 0
+                    if gs and idx in gs:
+                        continue
+                    dx, dy = cx + px, cy + py
+                    if 0 <= dx < aw and 0 <= dy < ah:
+                        off = (dy * aw + dx) * 4
+                        atlas[off] = pr[idx * 3]
+                        atlas[off + 1] = pr[idx * 3 + 1]
+                        atlas[off + 2] = pr[idx * 3 + 2]
+                        atlas[off + 3] = 255
+
+        default_name = "Fa_avatars.png"
+        fp, _ = QFileDialog.getSaveFileName(self, "导出全部头像", default_name, "PNG (*.png)")
+        if not fp:
+            return
+
+        Path(fp).write_bytes(_rgba_png(aw, ah, atlas))
+        self._info.setText(f"已导出 {n} 个头像到 {Path(fp).name} ({aw}×{ah}, {cols}×{rows})")
+        self.statusBar().showMessage(f"已导出全部头像: {n}个角色 ({cols}×{rows})", 3000)
+
+    def _export_all_avatars_split(self):
+        """导出全部头像（拆分）：将每个角色的70×70和35×35头像导出为独立PNG"""
+        if not self.jvg or not self._is_fa_jvg():
+            QMessageBox.information(self, "提示", "此功能仅适用于 Fa.JVG 头像资源文件")
+            return
+
+        outdir = QFileDialog.getExistingDirectory(self, "选择导出目录")
+        if not outdir:
+            return
+
+        no_green = self._greenscreen_remove.isChecked()
+        exported = 0
+
+        for bi, blk in enumerate(self.jvg.blocks):
+            if blk.frame_count == 0:
+                continue
+            f = blk.frames[0]
+            if f.width <= 0 or f.height <= 0:
+                continue
+
+            pal = self._get_pal(blk, f)
+            if no_green:
+                gs = {i for i, e in enumerate(pal.entries) if e == 0x07E0}
+            else:
+                gs = None
+
+            char_idx = bi // 2
+            size_label = "70x70" if bi % 2 == 0 else "35x35"
+            name = f"avatar_{char_idx:03d}_{size_label}.png"
+            export_single(f, pal, os.path.join(outdir, name), gs)
+            exported += 1
+
+        self._info.setText(f"已导出 {exported} 帧到 {outdir}")
+        self.statusBar().showMessage(f"已导出全部头像(拆分): {exported} 帧", 3000)
+
+    def _import_all_avatars(self):
+        """导入全部头像：从图集按编辑器间距拆分70×70头像，自动生成35×35版本"""
+        if not self.jvg or not self._is_fa_jvg():
+            QMessageBox.information(self, "提示", "此功能仅适用于 Fa.JVG 头像资源文件")
+            return
+
+        # 用已有偶数block数量确定网格（与导出逻辑一致，不受padding变化影响）
+        avatar_count = sum(1 for bi in range(0, len(self.jvg.blocks), 2)
+                          if self.jvg.blocks[bi].frame_count > 0
+                          and self.jvg.blocks[bi].frames[0].width > 0)
+        if avatar_count == 0:
+            QMessageBox.information(self, "提示", "没有找到已有头像数据，无法确定网格尺寸")
+            return
+        cols = int(math.ceil(math.sqrt(avatar_count)))
+        rows = int(math.ceil(avatar_count / cols))
+
+        fp, _ = QFileDialog.getOpenFileName(self, "选择头像图集", "", "PNG (*.png)")
+        if not fp:
+            return
+
+        try:
+            img = Image.open(fp).convert('RGBA')
+        except Exception as e:
+            QMessageBox.critical(self, "打开失败", str(e))
+            return
+
+        cell_size = 70
+        padding = self._padding.value()
+        stride = cell_size + padding
+        total_cells = cols * rows
+
+        self._info.setText(f"导入全部头像: 解析 {cols}×{rows} 图集...")
+        QApplication.processEvents()
+
+        imported = 0
+        for cell_idx in range(total_cells):
+            ri = cell_idx // cols
+            ci = cell_idx % cols
+            cx = ci * stride
+            cy = ri * stride
+
+            # 裁剪 70×70 区域
+            cell_70 = img.crop((cx, cy, cx + cell_size, cy + cell_size))
+
+            # 跳过全透明 cell
+            bbox = cell_70.getchannel('A').getbbox()
+            if bbox is None:
+                continue
+
+            # 缩放生成 35×35
+            cell_35 = cell_70.resize((35, 35), Image.LANCZOS)
+
+            even_bi = cell_idx * 2       # 70×70 头像 block
+            odd_bi = cell_idx * 2 + 1    # 35×35 头像 block
+
+            # 确保 block 存在
+            while even_bi >= len(self.jvg.blocks):
+                self.jvg.blocks.append(JVMBlock(f"block_{len(self.jvg.blocks):02d}"))
+            while odd_bi >= len(self.jvg.blocks):
+                self.jvg.blocks.append(JVMBlock(f"block_{len(self.jvg.blocks):02d}"))
+
+            blk_even = self.jvg.blocks[even_bi]
+            blk_odd = self.jvg.blocks[odd_bi]
+
+            # --- 导入 70×70 头像 ---
+            frame_70 = _pil_frame(cell_70)
+            if frame_70._palette:
+                blk_even.palette.entries = list(frame_70._palette.entries)
+                frame_70._palette = None
+            frame_70.x_max = (cell_size - 1) & 0xFFFF
+            frame_70.y_max = (cell_size - 1) & 0xFFFF
+            blk_even.frames = [frame_70]
+
+            # --- 导入 35×35 头像 ---
+            frame_35 = _pil_frame(cell_35)
+            if frame_35._palette:
+                blk_odd.palette.entries = list(frame_35._palette.entries)
+                frame_35._palette = None
+            frame_35.x_max = (35 - 1) & 0xFFFF
+            frame_35.y_max = (35 - 1) & 0xFFFF
+            blk_odd.frames = [frame_35]
+
+            imported += 1
+
+        self._sync_list()
+        self._kill_anim()
+        self._refresh_view()
+        self._info.setText(f"导入全部头像完成: {imported} 个角色 ({cols}×{rows} 图集)")
+        self.statusBar().showMessage(f"已导入全部头像: {imported} 个角色", 3000)
 
 # ── Entry ──────────────────────────────────────────
 def main():
