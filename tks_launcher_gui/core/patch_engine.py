@@ -380,6 +380,41 @@ CAVE_DUEL_SELF_FIX = bytes([
 ])
 
 # ============================================================
+# 补丁: 死战反击自伤修复 (duel_counter_self_fix)
+# ============================================================
+# 问题: sub_442B48 (反击目标过滤) 中, 只有 case 183 (距离过滤) 有自身排除
+#       逻辑 (检查 word_9D6F5A==x && word_9D6F5C==y 则跳过自身)
+#       case 181(体力)/182(内力)/184(等级) 没有自身排除, 导致反击技能在
+#       攻击距离不足时把反击者自己加入目标列表, 造成自己打自己
+# ============================================================
+# 方案: Hook 在 sub_442B48 的 v7>=0 检查点 (0x442CF9), 所有 case 收敛处
+#       在原始 v7>=0 判断之后、添加到 byte_9D6FA4[] 之前,
+#       额外检查目标实体是否等于当前攻击者 (word_9D6F58)
+#       若相同则修改返回地址跳过添加, 跳转到下一个网格位置 (0x442D18)
+# ============================================================
+CAVE_DUEL_COUNTER_SELF_FIX = bytes([
+    # 执行被替换指令 part1: cmp word [esp+06h], 0 (v7 >= 0?)
+    0x66, 0x83, 0x7C, 0x24, 0x06, 0x00,               #  0 cmp word [esp+06h], 0
+
+    # v7 < 0 则跳过 (原始行为)
+    0x7C, 0x10,                                         #  6 jl .to_skip (+16 → offset 0x18)
+
+    # 检查是否为自身: 比较 v7 与 word_9D6F58 (当前攻击者)
+    0x0F, 0xBF, 0x44, 0x24, 0x06,                      #  8 movsx eax, word [esp+06h]
+    0x66, 0x3B, 0x05, 0x58, 0x6F, 0x9D, 0x00,          # 13 cmp ax, word [0x9D6F58]
+
+    # 目标==自身 → 跳过添加
+    0x74, 0x02,                                         # 20 je .to_skip (+2 → offset 0x18)
+
+    # 所有检查通过: 正常返回 (ret → 回到 0x442D01, 即添加目标代码)
+    0xC3,                                               # 22 ret
+
+    # .to_skip: 修改返回地址到 0x442D18 (跳过添加, 继续下个网格位置)
+    0xC7, 0x04, 0x24, 0x18, 0x2D, 0x44, 0x00,          # 23 mov dword [esp], 0x442D18
+    0xC3,                                               # 30 ret
+])
+
+# ============================================================
 # Cave 模板构建
 # ============================================================
 
@@ -395,6 +430,7 @@ def build_cave_template(name: str, warpc_base: int, log_func=None) -> Optional[b
         "exp_bonus_safe_mul": CAVE_EXP_BONUS_SAFE_MUL,
         "weapon_cause_mask": CAVE_WEAPON_CAUSE_MASK,
         "duel_self_fix": CAVE_DUEL_SELF_FIX,
+        "duel_counter_self_fix": CAVE_DUEL_COUNTER_SELF_FIX,
     }
     if name not in templates:
         log(f"    [WARN] 未知 cave 模板: {name}")
