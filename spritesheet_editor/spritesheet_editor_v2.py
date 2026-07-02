@@ -140,8 +140,8 @@ def _quantize_png8(img: Image.Image) -> Image.Image:
         q = rgb.quantize(colors=255, method=Image.Quantize.MEDIANCUT, dither=0)
     except Exception:
         q = rgb.quantize(colors=255)
-    q_data = list(q.getdata())
-    a_data = list(alpha.getdata())
+    q_data = list(q.get_flattened_data())
+    a_data = list(alpha.get_flattened_data())
     new_data = [255 if a_data[i] < 128 else q_data[i] for i in range(w * h)]
     pal = list(q.getpalette() or [])
     while len(pal) < 768:
@@ -201,7 +201,7 @@ def _alpha_premultiply(img: Image.Image) -> Image.Image:
 def _alpha_reduce_border(img: Image.Image, iterations: int = 4) -> Image.Image:
     img = img.convert("RGBA")
     w, h = img.size
-    data = list(img.getdata())
+    data = list(img.get_flattened_data())
     for _ in range(max(1, iterations)):
         new_data = list(data)
         changed = False
@@ -2135,11 +2135,6 @@ class SpriteSheetEditorWindow(QMainWindow):
         _sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
         from editor_utils.window_theme import apply_godot_theme
         apply_godot_theme(self, is_dark)
-        # 根据屏幕可用空间设定窗口尺寸 (不超过屏幕 90%)
-        screen_geo = QApplication.primaryScreen().availableGeometry()
-        w = min(1180, int(screen_geo.width() * 0.85))
-        h = min(780, int(screen_geo.height() * 0.85))
-        self.resize(w, h)
 
         self.model = SpriteSheetModel()
         self._filepath: Optional[str] = None
@@ -2162,11 +2157,20 @@ class SpriteSheetEditorWindow(QMainWindow):
         if filepath:
             self._load_spritesheet(Path(filepath))
 
-        # 居中
-        screen = QApplication.primaryScreen().geometry()
-        x = (screen.width() - 1180) // 2
-        y = (screen.height() - 740) // 2
-        self.move(x, y)
+        self._fit_to_screen()
+
+    def _fit_to_screen(self):
+        """根据屏幕可用空间设定窗口尺寸并居中。"""
+        screen_geo = QApplication.primaryScreen().availableGeometry()
+        hint = self.sizeHint()
+        w = min(hint.width(), int(screen_geo.width() * 0.92))
+        h = min(hint.height(), int(screen_geo.height() * 0.88))
+        self.resize(w, h)
+        self.setMinimumSize(1200, 800)
+        # 用 frameGeometry 居中（含窗口边框/标题栏），避免客户区与框架尺寸不一致
+        fg = self.frameGeometry()
+        fg.moveCenter(screen_geo.center())
+        self.move(fg.topLeft())
 
     def _build_layout(self):
         central = QWidget()
