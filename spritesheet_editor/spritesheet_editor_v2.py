@@ -2519,6 +2519,12 @@ class SpriteSheetEditorWindow(QMainWindow):
         if not self._mode_merge.isChecked():
             return
 
+        # 按文件名排序（自然排序：数字按数值大小排）
+        files = sorted(files, key=lambda f: [
+            int(t) if t.isdigit() else t.lower()
+            for t in re.split(r'(\d+)', Path(f).name)
+        ])
+
         images = []
         for fp in files:
             try:

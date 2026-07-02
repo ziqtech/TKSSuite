@@ -236,7 +236,7 @@ def _pil_frame(img:'Image.Image')->JVGFrame:
     rgb=Image.composite(img.convert('RGB'),bg,img.getchannel('A').point(lambda x:255 if x>=128 else 0))
     solid=sum(1 for b in alpha_data if b>=128)
     n_colors=min(255,max(1,solid)) if solid>0 else 1
-    q=rgb.quantize(n_colors,method=Image.Quantize.MEDIANCUT)
+    q=rgb.quantize(n_colors,method=Image.Quantize.MEDIANCUT,dither=0)
     raw_pal=q.getpalette() or [0]*768
     frame._palette=PaletteRGB565()
     pal_rgb=[]
@@ -268,7 +268,7 @@ def _remap_to_block_palette(f:JVGFrame,blk:JVMBlock):
     used=set(f.pixels)
     remap=[0]*256
     for fi in sorted(used):
-        if fi>=256 or f_colors[fi] is None or f._palette.entries[fi]==0: continue
+        if fi>=256 or f_colors[fi] is None or fi==0: continue
         fc=f_colors[fi]; exact=None
         for bi in range(256):
             e=blk.palette.entries[bi]; bc=(((e>>11)&0x1F)<<3,((e>>5)&0x3F)<<2,(e&0x1F)<<3)
@@ -1321,8 +1321,18 @@ class JVGEditor(QMainWindow):
             new_f = frames[0]
             old_f = blk.frames[self._sel_fi]
             _align_anchor(new_f, old_f, mode="bottom_center")
+            # 检查是否有其他帧共享此block色板
+            other_frames = [f for i, f in enumerate(blk.frames)
+                           if i != self._sel_fi and f.width > 0 and f.height > 0]
             if new_f._palette:
-                _remap_to_block_palette(new_f, blk)
+                if other_frames:
+                    # 多帧block：先替换再 remap 合并色板
+                    blk.frames[self._sel_fi] = new_f
+                    _remap_to_block_palette(new_f, blk)
+                else:
+                    # 单帧block：直接替换色板（与"导入图集(拆分)"相同逻辑）
+                    blk.palette.entries = list(new_f._palette.entries)
+                    new_f._palette = None
             blk.frames[self._sel_fi] = new_f
             self._sync_list()
             self._kill_anim()
