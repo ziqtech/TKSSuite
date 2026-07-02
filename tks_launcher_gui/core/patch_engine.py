@@ -382,36 +382,59 @@ CAVE_DUEL_SELF_FIX = bytes([
 # ============================================================
 # 补丁: 死战反击自伤修复 (duel_counter_self_fix)
 # ============================================================
-# 问题: sub_442B48 (反击目标过滤) 中, 只有 case 183 (距离过滤) 有自身排除
-#       逻辑 (检查 word_9D6F5A==x && word_9D6F5C==y 则跳过自身)
-#       case 181(体力)/182(内力)/184(等级) 没有自身排除, 导致反击技能在
-#       攻击距离不足时把反击者自己加入目标列表, 造成自己打自己
+# 问题: sub_4458B0 AI强制反击段, sub_43D8B0从反击者自身坐标定位目标,
+#       导致 byte_9D6FA4[0] == v26 (自身进入目标列表, 攻击自己)
+#       现有 duel_self_target_fix 比较 word_9D6F58(原攻击者≠v26)无法拦截
 # ============================================================
-# 方案: Hook 在 sub_442B48 的 v7>=0 检查点 (0x442CF9), 所有 case 收敛处
-#       在原始 v7>=0 判断之后、添加到 byte_9D6FA4[] 之前,
-#       额外检查目标实体是否等于当前攻击者 (word_9D6F58)
-#       若相同则修改返回地址跳过添加, 跳转到下一个网格位置 (0x442D18)
+# 方案: Hook 在 sub_4434BC 入口 (0x4434BC), 替换前8字节函数头
+#       hook 使用 E8 (call) 会在栈上多压一个返回地址,
+#       因此 cave 开头先 pop edx 移除多余返回地址并暂存,
+#       使栈布局还原为原始函数期望的 [ebp+4]=调用者返回地址
+#       然后执行原序言并检查目标是否反击自伤
+#       非自伤时用 push edx; ret 跳转到 0x4434C4 继续正常执行
 # ============================================================
 CAVE_DUEL_COUNTER_SELF_FIX = bytes([
-    # 执行被替换指令 part1: cmp word [esp+06h], 0 (v7 >= 0?)
-    0x66, 0x83, 0x7C, 0x24, 0x06, 0x00,               #  0 cmp word [esp+06h], 0
+    # === 修复栈帧: pop 掉 E8 call 多压的返回地址 ===
+    0x5A,                                              #  0 pop edx (edx = 0x4434C4, 暂存)
+    # 现在栈布局与原始函数一致: [esp]=orig_ret, [esp+4]=a1
 
-    # v7 < 0 则跳过 (原始行为)
-    0x7C, 0x10,                                         #  6 jl .to_skip (+16 → offset 0x18)
+    # === 执行被替换的序言 (8 bytes) ===
+    0x55,                                              #  1 push ebp
+    0x8B, 0xEC,                                        #  2 mov ebp, esp (→ [ebp+4]=orig_ret, [ebp+8]=a1)
+    0x83, 0xC4, 0x9C,                                  #  4 add esp, -64h
+    0x56,                                              #  7 push esi
+    0x57,                                              #  8 push edi
 
-    # 检查是否为自身: 比较 v7 与 word_9D6F58 (当前攻击者)
-    0x0F, 0xBF, 0x44, 0x24, 0x06,                      #  8 movsx eax, word [esp+06h]
-    0x66, 0x3B, 0x05, 0x58, 0x6F, 0x9D, 0x00,          # 13 cmp ax, word [0x9D6F58]
+    # === 保存寄存器 ===
+    0x50,                                              #  9 push eax
+    0x51,                                              # 10 push ecx
 
-    # 目标==自身 → 跳过添加
-    0x74, 0x02,                                         # 20 je .to_skip (+2 → offset 0x18)
+    # === 检查 byte_9D6FA4[0] == a1 (自身目标?) ===
+    0x0F, 0xBE, 0x05, 0xA4, 0x6F, 0x9D, 0x00,         # 11 movsx eax, byte [0x9D6FA4]
+    0x0F, 0xBF, 0x4D, 0x08,                            # 18 movsx ecx, word [ebp+8] (a1)
+    0x3B, 0xC1,                                        # 22 cmp eax, ecx
+    0x75, 0x1E,                                        # 24 jne .not_self (+30)
 
-    # 所有检查通过: 正常返回 (ret → 回到 0x442D01, 即添加目标代码)
-    0xC3,                                               # 22 ret
+    # === 自身目标: 检查是否反击场景 (a1 != word_9D6F58) ===
+    0x0F, 0xBF, 0x0D, 0x58, 0x6F, 0x9D, 0x00,         # 26 movsx ecx, word [0x9D6F58]
+    0x66, 0x3B, 0x4D, 0x08,                            # 33 cmp cx, [ebp+8]
+    0x74, 0x11,                                        # 37 je .not_self (+17) — 主攻击者, 已有补丁处理
 
-    # .to_skip: 修改返回地址到 0x442D18 (跳过添加, 继续下个网格位置)
-    0xC7, 0x04, 0x24, 0x18, 0x2D, 0x44, 0x00,          # 23 mov dword [esp], 0x442D18
-    0xC3,                                               # 30 ret
+    # === 反击自伤: 跳过 sub_4434BC ===
+    0x66, 0xC7, 0x05, 0x58, 0x70, 0x9D, 0x00, 0x00, 0x00,  # 39 mov word [0x9D7058], 0
+    0x59,                                              # 48 pop ecx
+    0x58,                                              # 49 pop eax
+    0x30, 0xC0,                                        # 50 xor al, al (返回值 0)
+    0x5F,                                              # 52 pop edi
+    0x5E,                                              # 53 pop esi
+    0xC9,                                              # 54 leave (→ mov esp,ebp; pop ebp)
+    0xC3,                                              # 55 ret → 返回原始调用者
+
+    # === .not_self: 正常继续 sub_4434BC ===
+    0x59,                                              # 56 pop ecx
+    0x58,                                              # 57 pop eax
+    0x52,                                              # 58 push edx (0x4434C4, 之前 pop edx 暂存的)
+    0xC3,                                              # 59 ret → 跳转到 0x4434C4 继续执行
 ])
 
 # ============================================================
