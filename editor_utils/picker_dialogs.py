@@ -15,6 +15,15 @@ from PySide6.QtGui import QPixmap, QImage
 from editor_utils.window_theme import apply_godot_theme
 
 
+def _detect_dark_theme(parent) -> bool:
+    """检测父窗口的深色主题状态，优先读属性，回退系统主题。"""
+    for attr in ('is_dark_theme', '_is_dark'):
+        val = getattr(parent, attr, None)
+        if val is not None:
+            return bool(val)
+    return QApplication.instance().styleHints().colorScheme() == Qt.ColorScheme.Dark
+
+
 # 31 种状态名称 (Maker UI 状态列表; bit 0..30) — 供状态弹窗/标签渲染共用
 STATUS_NAMES = [
     "破兵","碎甲","昏眩","封锁","羁绊","蓄力","刚体","集中",
@@ -34,6 +43,7 @@ class TktPickerDialog(QDialog):
         self.setWindowTitle("选择 TKT 文本")
         self.resize(500, 400)
         self.selected_id = cur_val
+        self._is_dark = _detect_dark_theme(parent)
 
         layout = QVBoxLayout(self)
 
@@ -71,7 +81,7 @@ class TktPickerDialog(QDialog):
 
     def showEvent(self, event):
         super().showEvent(event)
-        apply_godot_theme(self, QApplication.instance().styleHints().colorScheme() == Qt.ColorScheme.Dark)
+        apply_godot_theme(self, self._is_dark)
 
         # 选中当前值
         if cur_val > 0:
@@ -121,6 +131,7 @@ class StatusPickerDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle(title); self.resize(380, 520)
         self.selected_mask = None
+        self._is_dark = _detect_dark_theme(parent)
         layout = QVBoxLayout(self)
         scroll = QScrollArea(); scroll.setWidgetResizable(True)
         content = QWidget(); cl = QVBoxLayout(content)
@@ -148,7 +159,7 @@ class StatusPickerDialog(QDialog):
 
     def showEvent(self, event):
         super().showEvent(event)
-        apply_godot_theme(self, QApplication.instance().styleHints().colorScheme() == Qt.ColorScheme.Dark)
+        apply_godot_theme(self, self._is_dark)
 
     def _ok(self):
         m = 0

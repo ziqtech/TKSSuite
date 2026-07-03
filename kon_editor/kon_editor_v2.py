@@ -145,7 +145,7 @@ def kon_record_name(rec, tkt, resolver=None, compact_threshold=0):
     tp_hi = (tp >> 8) & 0xFF
     if tp_hi > 0: parts.append(f"面{tp_hi}")
     desc = " ".join(parts) if parts else ""
-    if cid >= 0: return f"动画#{cid} {desc}".strip()
+    if cid > 0: return f"动画#{cid} {desc}".strip()
     return f"空槽-#{idx}"
 
 def load_kon(fp):
@@ -644,15 +644,21 @@ class KonEditor(QMainWindow):
             r = self.records[idx]
             has_data = any(r[fn] != 0 for fn, _, _, _ in KON_FIELDS)
 
-            # 颜色标记
-            if r['tkact_id'] == -1:
+            nm = kon_record_name(r, self.tkt, self._resolver, self._compact_threshold())
+
+            # 颜色标记 (名称语义优先)
+            if "原版未完成" in nm:
+                color = QColor("#CC3333")
+            elif "未知" in nm:
+                color = QColor("#CC8800")
+            elif "空槽" in nm:
+                color = QColor("#888888") if self.is_dark_theme else QColor("#AAAAAA")
+            elif r['tkact_id'] == -1:
                 color = QColor("#2266CC")
             elif has_data:
                 color = QColor("#228B22") if self.is_dark_theme else QColor("#1a7a1a")
             else:
                 color = QColor("#AAAAAA") if self.is_dark_theme else QColor("#999999")
-
-            nm = kon_record_name(r, self.tkt, self._resolver, self._compact_threshold())
 
             em = r['exec_mode'] & 0xFFFF; em_hi = (em >> 8) & 0xFF
             if em_hi >= 128: dist_str = "自身"

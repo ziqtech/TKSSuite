@@ -61,6 +61,22 @@ PROTAGONIST_ATTACK_NAMES: dict[int, str] = {
     6: "主角《劍攻擊》",
 }
 
+# ── 软默认名称 (原版未使用槽位, MOD 匹配到数据时优先覆盖) ──
+DEFAULT_NAMES: dict[int, str] = {
+    409: "南蛮女将《攻击》（原版未完成）",
+    428: "银骥《攻击》（原版未完成）",
+    459: "未知",
+    510: "未知",
+    511: "未知",
+    512: "未知",
+    526: "麒麟《仙术》",
+    558: "未知",
+    559: "未知",
+    560: "未知",
+    561: "未知",
+    642: "未知",
+}
+
 
 class KonNameResolver:
     """TKKon 索引动态名称解析器。
@@ -154,7 +170,10 @@ class KonNameResolver:
         # 7. 陷阱硬编码映射 (sub_434C0C: trap_type + 551)
         self._resolve_traps()
 
-        # 8. 剩余空槽: 用动画引用或空槽标记填充
+        # 8. 软默认名称 (原版未使用槽位, 仅当未被 WarPC/Item 解析时填充)
+        self._resolve_defaults()
+
+        # 9. 剩余空槽: 用动画引用或空槽标记填充
         self._fill_remaining(kon_entries)
 
     # ── 数据加载 ──
@@ -453,6 +472,18 @@ class KonNameResolver:
             if kon_id not in self._names:
                 self._names[kon_id] = name
 
+    # ── 软默认名称 ──
+
+    def _resolve_defaults(self):
+        """填充原版未使用槽位的默认名称。
+
+        仅在 WarPC/TKItem/陷阱 均未解析到时才填充。
+        MOD 若为这些槽位配置了角色或物品，会被前面的步骤优先匹配。
+        """
+        for kon_id, name in DEFAULT_NAMES.items():
+            if kon_id not in self._names:
+                self._names[kon_id] = name
+
     # ── 剩余填充 ──
 
     def _fill_remaining(self, kon_entries: list[dict]):
@@ -476,7 +507,7 @@ class KonNameResolver:
 
             # 有数据的条目: 用动画引用
             cid = entry.get('tkact_id', 0)
-            if cid >= 0:
+            if cid > 0:
                 self._names[idx] = f"动画#{cid}"
             else:
                 self._names[idx] = f"空槽-#{idx}"
