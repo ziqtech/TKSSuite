@@ -64,7 +64,7 @@ from PySide6.QtCore import Qt, QTranslator, Signal
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from editor_utils.theme_manager import ThemeManager
 from editor_utils.dock_components import DockHeader
-from editor_utils.picker_dialogs import TktPickerDialog, StatusPickerDialog, STATUS_NAMES
+from editor_utils.picker_dialogs import TktPickerDialog, StatusPickerDialog, STATUS_NAMES, ItemPickerDialog
 from editor_utils.jvg_loader import load_mu_sprites, get_sprite_pixmap
 from editor_utils.ui_helpers import make_fake_input, update_path_labels, confirm_close, export_csv, resolve_config_path
 from editor_utils.lzss import lzss_decompress_dat, lzss_compress_dat, lzss_decompress_save, lzss_compress_save
@@ -491,56 +491,6 @@ class SkillPickerDialog(QDialog):
         if sel: self.selected_index = int(self.table.item(sel[0].row(), 0).text()); self.accept()
 
     def _clear(self): self.selected_index = -1; self.accept()
-
-class ItemPickerDialog(QDialog):
-    def __init__(self, parent, lookup, cur_val, is_idx=False, idx_to_id=None, id_to_idx=None):
-        super().__init__(parent)
-        self.setWindowTitle("选择物品"); self.resize(520, 520)
-        self.selected_key = None; self.lookup = lookup; self.is_idx = is_idx
-        self.idx_to_id = idx_to_id or {}; self.id_to_idx = id_to_idx or {}
-
-        layout = QVBoxLayout(self)
-        sf = QHBoxLayout(); sf.addWidget(QLabel("搜索:"))
-        self.search_box = QLineEdit(); self.search_box.textChanged.connect(self._refresh); sf.addWidget(self.search_box)
-        layout.addLayout(sf)
-
-        self.table = QTableWidget(0, 2)
-        label = "物品#" if is_idx else "物品ID"
-        self.table.setHorizontalHeaderLabels([label, "名称"])
-        self.table.setColumnWidth(0, 80)
-        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
-        self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
-        self.table.setSelectionMode(QAbstractItemView.SingleSelection)
-        self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
-        self.table.verticalHeader().setVisible(False)
-        self.table.doubleClicked.connect(self._accept)
-        layout.addWidget(self.table)
-
-        bl = QHBoxLayout()
-        clear_val = "-1" if is_idx else "0"
-        btn_clr = QPushButton(f"清空({clear_val})"); btn_clr.clicked.connect(lambda: self._clear(clear_val))
-        bl.addWidget(btn_clr); bl.addStretch()
-        bl.addWidget(QPushButton("取消", clicked=self.reject))
-        bl.addWidget(QPushButton("确定", clicked=self._accept)); layout.addLayout(bl)
-        self._refresh()
-
-    def showEvent(self, event):
-        super().showEvent(event)
-        _dialog_show_event(self)
-
-    def _refresh(self):
-        q = self.search_box.text().strip().lower(); self.table.setRowCount(0); row = 0
-        for k, v in sorted(self.lookup.items(), key=lambda x: x[0]):
-            if q and q not in f"{k} {v}".lower(): continue
-            self.table.insertRow(row)
-            self.table.setItem(row, 0, QTableWidgetItem(str(k)))
-            self.table.setItem(row, 1, QTableWidgetItem(v)); row += 1
-
-    def _accept(self):
-        sel = self.table.selectedItems()
-        if sel: self.selected_key = int(self.table.item(sel[0].row(), 0).text()); self.accept()
-
-    def _clear(self, val): self.selected_key = int(val); self.accept()
 
 class FlagsDialog(QDialog):
     def __init__(self, parent, title, bits, current_val):
@@ -1111,6 +1061,7 @@ class WarpcEditorV2(QMainWindow):
         self.mu_path = None; self._mu_sprites = []; self._icon_pixmaps = {}
         self.skill_names = {}; self._skill_types = {}; self.tkkon_names = {}
         self.item_names = {}; self.item_idx_names = {}; self._idx_to_id = {}; self._id_to_idx = {}
+        self._item_records = []  # 完整物品记录 (供 ItemPickerDialog 使用)
         self.filtered_indices = []; self._dirty = False; self._editing_idx = -1
 
         # 存档模式状态
@@ -1778,21 +1729,34 @@ class WarpcEditorV2(QMainWindow):
             if len(raw) % 64 == 0 and (len(dec) == 0 or len(dec) % 64 != 0):
                 dec = raw
             id_lookup, idx_lookup, idx_to_id, id_to_idx = {}, {}, {}, {}
+            # 同时构建完整物品记录列表 (供 ItemPickerDialog 使用)
+            item_records = []
             for i in range(600):
                 off = i * 64
                 if off + 10 > len(dec): break
                 item_id = struct.unpack_from('<h', dec, off)[0]
+                tab_code = struct.unpack_from('<h', dec, off + 2)[0]
                 name_id = struct.unpack_from('<h', dec, off + 4)[0]
+                icon = struct.unpack_from('<h', dec, off + 8)[0]
+                equip_type = struct.unpack_from('<h', dec, off + 10)[0]
+                price = struct.unpack_from('<h', dec, off + 62)[0] if off + 64 <= len(dec) else 0
                 if name_id > 0 and name_id in self.tkt:
                     nm = self.tkt[name_id].split('\n')[0].strip()[:25]
                 elif item_id > 0:
                     nm = f'物品#{item_id}'
-                else: continue
-                if item_id > 0:
-                    id_lookup[item_id] = nm; idx_to_id[i] = item_id; id_to_idx[item_id] = i
-                idx_lookup[i] = nm
+                else: nm = ''
+                if nm:
+                    if item_id > 0:
+                        id_lookup[item_id] = nm; idx_to_id[i] = item_id; id_to_idx[item_id] = i
+                    idx_lookup[i] = nm
+                item_records.append({
+                    'index': i, 'item_id': item_id, 'tab_code': tab_code,
+                    'name': nm, 'equip_type': equip_type,
+                    'icon': icon, 'price': price,
+                })
+            self._item_records = item_records
             return id_lookup, idx_lookup, idx_to_id, id_to_idx
-        except: return {}, {}, {}, {}
+        except: self._item_records = []; return {}, {}, {}, {}
 
     def _set_edit_enabled(self, en):
         self.tabs.setEnabled(en)
@@ -2036,26 +2000,42 @@ class WarpcEditorV2(QMainWindow):
 
     def _pick_item(self, fn):
         is_idx = fn.startswith('equip_idx')
-        lookup = self.item_idx_names if is_idx else self.item_names
-        if not lookup: return
+        if not getattr(self, '_item_records', None): return
         try: cur = int(self._edit_vars[fn].text() or 0)
         except: cur = 0
-        dlg = ItemPickerDialog(self, lookup, cur, is_idx, self._idx_to_id, self._id_to_idx)
-        if dlg.exec() == QDialog.Accepted and dlg.selected_key is not None:
-            self._edit_vars[fn].setText(str(dlg.selected_key))
+        # equip_idx 模式: 返回数组索引; equip_id/drop_item 模式: 返回物品 ID
+        return_key = 'index' if is_idx else 'item_id'
+        clear_text = "清空(-1)" if is_idx else "清空(0)"
+        # 转换 WarPC 权限定义格式 → ItemPickerDialog 所需格式
+        use_right_opts = {}
+        for page, field_name in USE_RIGHT_PAGE_TO_FIELD.items():
+            if field_name in self._use_right_defs:
+                use_right_opts[page] = self._use_right_defs[field_name][1]
+        use_right_opts.setdefault(5, [(0, "通用")])
+        dlg = ItemPickerDialog(
+            self, self._item_records,
+            use_right_options=use_right_opts,
+            icon_pixmap_fn=self._get_icon_pixmap,
+            current_value=cur,
+            clear_text=clear_text,
+            return_key=return_key,
+        )
+        if dlg.exec() == QDialog.Accepted and dlg.selected_value is not None:
+            sel_val = dlg.selected_value
+            self._edit_vars[fn].setText(str(sel_val))
             if fn in self._edit_extras:
                 if is_idx:
-                    nm = self.item_idx_names.get(dlg.selected_key, '')
-                    self._edit_extras[fn].setText(nm if dlg.selected_key!=-1 else '(未装备)')
+                    nm = self.item_idx_names.get(sel_val, '')
+                    self._edit_extras[fn].setText(nm if sel_val != -1 else '(未装备)')
                 else:
-                    nm = self.item_names.get(dlg.selected_key, '')
-                    self._edit_extras[fn].setText(nm if dlg.selected_key!=-1 else '(未装备)')
-            # 同步配对字段
+                    nm = self.item_names.get(sel_val, '')
+                    self._edit_extras[fn].setText(nm if sel_val != -1 and sel_val != 0 else '(未装备)')
+            # 同步配对字段 (equip_idx ↔ equip_id)
             slot = fn[-1]
             if is_idx:
-                pair_fn = f'equip_id{slot}'; pair_val = self._idx_to_id.get(dlg.selected_key, 0)
+                pair_fn = f'equip_id{slot}'; pair_val = self._idx_to_id.get(sel_val, 0)
             else:
-                pair_fn = f'equip_idx{slot}'; pair_val = self._id_to_idx.get(dlg.selected_key, -1)
+                pair_fn = f'equip_idx{slot}'; pair_val = self._id_to_idx.get(sel_val, -1)
             if pair_fn in self._edit_vars:
                 self._edit_vars[pair_fn].setText(str(pair_val))
             if pair_fn in self._edit_extras:

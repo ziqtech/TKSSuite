@@ -40,7 +40,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtGui import (
     QColor, QFont, QAction, QKeySequence, QShortcut, QIcon, QPalette
 )
-from PySide6.QtCore import Qt, QTranslator
+from PySide6.QtCore import Qt, QTranslator, QSize
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from editor_utils.theme_manager import ThemeManager
@@ -54,6 +54,8 @@ from editor_utils.mod_exporter import (
     get_tksmod_info, import_tksmod_records, ModImportPreviewDialog,
 )
 from editor_utils.window_theme import apply_godot_theme
+from editor_utils.picker_dialogs import ItemPickerDialog
+from editor_utils.jvg_loader import load_mu_sprites, get_sprite_pixmap
 
 # ── 本地别名: 保持向后兼容 ──
 def lzss_decompress(data): return lzss_decompress_dat(data)
@@ -66,8 +68,9 @@ def lzss_compress(data): return lzss_compress_dat(data)
 
 def load_tkitem_with_tkt(item_dat_path, tkt_dat_path):
     """
-    加载 TKItem 并关联 TKT 名称, 同时提取 equip_type 用于分类筛选
-    field[0]=item_id, field[1]=tab_code, field[5]=equip_type (word_77CBD4, sub_41928C)
+    加载 TKItem 并关联 TKT 名称, 同时提取 equip_type / icon / price
+    field[0]=item_id, field[1]=tab_code, field[4]=icon, field[5]=equip_type, field[31]=price
+    返回: list[(idx, item_id, tab_code, name_id, equip_type, name, icon, price)]
     """
     with open(item_dat_path, 'rb') as f:
         raw = f.read()
@@ -83,8 +86,10 @@ def load_tkitem_with_tkt(item_dat_path, tkt_dat_path):
         item_id = struct.unpack_from('<h', decompressed, off)[0]
         tab_code = struct.unpack_from('<h', decompressed, off + 2)[0]
         name_id = struct.unpack_from('<h', decompressed, off + 4)[0]
-        equip_type = struct.unpack_from('<h', decompressed, off + 10)[0]  # field[5]
-        items_raw.append((i, item_id, tab_code, name_id, equip_type))
+        icon = struct.unpack_from('<h', decompressed, off + 8)[0]
+        equip_type = struct.unpack_from('<h', decompressed, off + 10)[0]
+        price = struct.unpack_from('<h', decompressed, off + 62)[0] if off + 64 <= len(decompressed) else 0
+        items_raw.append((i, item_id, tab_code, name_id, equip_type, icon, price))
 
     tkt_lookup = {}
     if tkt_dat_path and os.path.exists(tkt_dat_path):
@@ -118,7 +123,7 @@ def load_tkitem_with_tkt(item_dat_path, tkt_dat_path):
                     tkt_lookup[eid] = text.decode('gbk', errors='replace')
 
     result = []
-    for idx, item_id, tab_code, name_id, equip_type in items_raw:
+    for idx, item_id, tab_code, name_id, equip_type, icon, price in items_raw:
         if name_id > 0 and name_id in tkt_lookup:
             name = tkt_lookup[name_id]
             if name and name != '0':
@@ -129,7 +134,7 @@ def load_tkitem_with_tkt(item_dat_path, tkt_dat_path):
             name = ""
         if not name or name == "0":
             name = f"Item#{item_id}" if item_id else f"(空-{idx})"
-        result.append((idx, item_id, tab_code, name_id, equip_type, name))
+        result.append((idx, item_id, tab_code, name_id, equip_type, name, icon, price))
 
     return result
 
@@ -218,147 +223,6 @@ TAB_TO_SHOP = {
 }
 
 # ============================================================
-# 物品选择对话框 (PySide6)
-# ============================================================
-
-class ItemPickerDialog(QDialog):
-    def __init__(self, parent, items, item_names):
-        super().__init__(parent)
-        self.setWindowTitle("选择物品")
-        self.resize(650, 520)
-        self.setModal(True)
-        
-        self.items = items
-        self.item_names = item_names
-        self.selected_item_ref = -1
-
-        self._build_ui()
-        self._refresh_list()
-
-    def _build_ui(self):
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(12, 12, 12, 12)
-        layout.setSpacing(8)
-
-        # 顶部搜索
-        top_layout = QHBoxLayout()
-        top_layout.addWidget(QLabel("搜索:"))
-        self.search_input = QLineEdit()
-        self.search_input.textChanged.connect(self._refresh_list)
-        top_layout.addWidget(self.search_input)
-        layout.addLayout(top_layout)
-
-        # 过滤选项
-        filter_layout = QHBoxLayout()
-        filter_layout.addWidget(QLabel("分类:"))
-        self.cat_combo = QComboBox()
-        self.cat_combo.addItems(["全部分类", "消耗品", "书籍", "武器", "防具", "饰品", "特殊"])
-        self.cat_combo.currentIndexChanged.connect(self._refresh_list)
-        filter_layout.addWidget(self.cat_combo)
-
-        filter_layout.addWidget(QLabel("商店:"))
-        self.shop_combo = QComboBox()
-        self.shop_combo.addItem("全部商店")
-        for aid, aname in sorted(AREA_NAMES.items()):
-            self.shop_combo.addItem(aname, userData=aid)
-        self.shop_combo.currentIndexChanged.connect(self._refresh_list)
-        filter_layout.addWidget(self.shop_combo)
-        filter_layout.addStretch()
-        layout.addLayout(filter_layout)
-
-        # 列表
-        self.table = QTableWidget(0, 4)
-        self.table.setHorizontalHeaderLabels(["索引", "分类", "可用商店", "物品名称"])
-        self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
-        self.table.setSelectionMode(QAbstractItemView.SingleSelection)
-        self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
-        self.table.verticalHeader().setVisible(False)
-        self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.Stretch)
-        self.table.setColumnWidth(0, 60)
-        self.table.setColumnWidth(1, 80)
-        self.table.setColumnWidth(2, 140)
-        self.table.cellDoubleClicked.connect(self._on_accept)
-        self.table.setSortingEnabled(True)
-        layout.addWidget(self.table)
-
-        # 底部按钮
-        btn_layout = QHBoxLayout()
-        self.lbl_count = QLabel()
-        btn_layout.addWidget(self.lbl_count)
-        btn_layout.addStretch()
-        
-        btn_ok = QPushButton("✔ 确定")
-        btn_ok.setObjectName("PrimaryButton")
-        btn_ok.setMinimumWidth(90)
-        btn_ok.clicked.connect(self._on_accept)
-        btn_layout.addWidget(btn_ok)
-
-        btn_cancel = QPushButton("❌ 取消")
-        btn_cancel.setMinimumWidth(90)
-        btn_cancel.clicked.connect(self.reject)
-        btn_layout.addWidget(btn_cancel)
-        
-        layout.addLayout(btn_layout)
-
-    def _cat_name(self, tab_code):
-        return {0: "消耗品", 1: "书籍", 2: "武器", 3: "防具", 4: "饰品", 5: "特殊"}.get(tab_code, "其他")
-
-    def _shops_for_tab(self, tab_code):
-        area_ids = TAB_TO_SHOP.get(tab_code, [])
-        if not area_ids:
-            return "无"
-        return ", ".join(AREA_NAMES.get(a, str(a)) for a in area_ids)
-
-    def _refresh_list(self):
-        self.table.setSortingEnabled(False)
-        self.table.setRowCount(0)
-        
-        q = self.search_input.text().strip().lower()
-        cat_idx = self.cat_combo.currentIndex()
-        cat_allowed = None if cat_idx == 0 else [cat_idx - 1]
-        
-        shop_idx = self.shop_combo.currentIndex()
-        filter_aid = None if shop_idx == 0 else self.shop_combo.currentData()
-
-        row_data = []
-        for idx, item_id, tab_code, name_id, equip_type, name in self.items:
-            if not name or name.startswith("(空") or name.startswith("Item#") or name == "0":
-                continue
-            if q and q not in name.lower():
-                continue
-            if cat_allowed is not None and tab_code not in cat_allowed:
-                continue
-            if filter_aid is not None:
-                if filter_aid not in TAB_TO_SHOP.get(tab_code, []):
-                    continue
-            row_data.append((idx, self._cat_name(tab_code), self._shops_for_tab(tab_code), name))
-
-        self.table.setRowCount(len(row_data))
-        for r, data in enumerate(row_data):
-            # 将索引存为整数格式以便正确排序
-            idx_item = QTableWidgetItem()
-            idx_item.setData(Qt.DisplayRole, data[0])
-            self.table.setItem(r, 0, idx_item)
-            
-            self.table.setItem(r, 1, QTableWidgetItem(data[1]))
-            self.table.setItem(r, 2, QTableWidgetItem(data[2]))
-            self.table.setItem(r, 3, QTableWidgetItem(data[3]))
-
-        self.table.setSortingEnabled(True)
-        self.lbl_count.setText(f"共 {len(self.items)} 件物品 | 当前显示 {len(row_data)} 件")
-        
-        if self.table.rowCount() > 0:
-            self.table.selectRow(0)
-
-    def _on_accept(self):
-        row = self.table.currentRow()
-        if row >= 0:
-            self.selected_item_ref = int(self.table.item(row, 0).data(Qt.DisplayRole))
-            self.accept()
-
-
-
-# ============================================================
 # GUI 编辑器 (PySide6)
 # ============================================================
 
@@ -377,11 +241,15 @@ class ShopEditorWindow(QMainWindow):
         self.shop_path = None
         self.item_path = None
         self.tkt_path = None
+        self.mu_path = None
 
         self.records = []
         self._original_records = []  # 原始快照，用于 MOD 导出
         self.items = []
         self.item_names = {}
+        self._item_icons = {}  # 数组索引 → icon 精灵值
+        self._mu_sprites = []
+        self._icon_pixmaps = {}
         self.filtered_indices = []
 
         self._dirty = False
@@ -524,19 +392,22 @@ class ShopEditorWindow(QMainWindow):
         main_layout.addWidget(splitter, 1)
 
         # 左侧: 表格
-        self.table = QTableWidget(0, 6)
-        self.table.setHorizontalHeaderLabels(["索引", "区域ID", "区域名称", "物品索引", "物品名称", "出现条件"])
+        self.table = QTableWidget(0, 7)
+        self.table.setHorizontalHeaderLabels(["图标", "索引", "区域ID", "区域名称", "物品索引", "物品名称", "出现条件"])
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SingleSelection)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.verticalHeader().setVisible(False)
+        self.table.verticalHeader().setDefaultSectionSize(44)
 
         self.table.setColumnWidth(0, 50)
-        self.table.setColumnWidth(1, 60)
-        self.table.setColumnWidth(2, 80)
-        self.table.setColumnWidth(3, 70)
-        self.table.horizontalHeader().setSectionResizeMode(4, QHeaderView.Stretch)
-        self.table.setColumnWidth(5, 100)
+        self.table.setColumnWidth(1, 50)
+        self.table.setColumnWidth(2, 60)
+        self.table.setColumnWidth(3, 80)
+        self.table.setColumnWidth(4, 70)
+        self.table.horizontalHeader().setSectionResizeMode(5, QHeaderView.Stretch)
+        self.table.setColumnWidth(6, 100)
+        self.table.setIconSize(QSize(36, 36))
 
         self.table.itemSelectionChanged.connect(self._on_table_select)
         self.table.horizontalHeader().sectionClicked.connect(self._on_header_click)
@@ -697,6 +568,7 @@ class ShopEditorWindow(QMainWindow):
         shop = os.path.join(tks_dir, "TKShop.dat")
         item = os.path.join(tks_dir, "TKItem.dat")
         tkt  = os.path.join(tks_dir, "TKT.dat")
+        mu   = os.path.join(tks_dir, "Mu.JVG")
 
         missing = []
         for p, n in [(shop, "TKShop.dat"), (item, "TKItem.dat")]:
@@ -710,6 +582,7 @@ class ShopEditorWindow(QMainWindow):
         self.shop_path = shop
         self.item_path = item
         self.tkt_path = tkt if os.path.exists(tkt) else None
+        self.mu_path = mu if os.path.exists(mu) else None
         self._reload()
 
     def _reload(self):
@@ -722,6 +595,13 @@ class ShopEditorWindow(QMainWindow):
         if self.item_path and os.path.exists(self.item_path):
             self.items = load_tkitem_with_tkt(self.item_path, self.tkt_path or "")
             self.item_names = {it[0]: it[5] for it in self.items}
+            # 物品图标查找表 (数组索引 → icon 精灵值)
+            self._item_icons = {it[0]: it[6] for it in self.items}
+
+        # Mu.JVG 图标精灵
+        if self.mu_path and os.path.exists(self.mu_path):
+            self._mu_sprites = load_mu_sprites(self.mu_path) or []
+            self._icon_pixmaps.clear()
 
         try:
             self.records = load_shop_data(self.shop_path)
@@ -735,6 +615,9 @@ class ShopEditorWindow(QMainWindow):
         self._update_path_labels()
         self._set_edit_enabled(True)
         self._apply_filter()
+
+    def _get_icon_pixmap(self, icon_val, size=(24, 24)):
+        return get_sprite_pixmap(self._mu_sprites, icon_val, size, self._icon_pixmaps)
 
     # ================================================================
     # 过滤 & 表格
@@ -783,9 +666,16 @@ class ShopEditorWindow(QMainWindow):
             iname = self.item_names.get(rec['item_ref'], f"Item#{rec['item_ref']}")
             cond_str = self._cond_str(rec['condition'])
 
+            # 图标列 (column 0)
+            icon_item = QTableWidgetItem()
+            icon_val = self._item_icons.get(rec['item_ref'], 0)
+            pix = self._get_icon_pixmap(icon_val, (36, 36)) if icon_val else None
+            if pix:
+                icon_item.setIcon(QIcon(pix))
+
             item_idx = QTableWidgetItem()
             item_idx.setData(Qt.DisplayRole, rec['index'])
-            item_idx.setData(Qt.UserRole, rec['index']) # 缓存原始索引
+            item_idx.setData(Qt.UserRole, rec['index'])  # 缓存原始索引
             
             item_aid = QTableWidgetItem()
             item_aid.setData(Qt.DisplayRole, rec['area_id'])
@@ -803,12 +693,13 @@ class ShopEditorWindow(QMainWindow):
                 for col_item in (item_idx, item_aid, item_aname, item_iref, item_iname, item_cond):
                     col_item.setForeground(color_random)
 
-            self.table.setItem(r, 0, item_idx)
-            self.table.setItem(r, 1, item_aid)
-            self.table.setItem(r, 2, item_aname)
-            self.table.setItem(r, 3, item_iref)
-            self.table.setItem(r, 4, item_iname)
-            self.table.setItem(r, 5, item_cond)
+            self.table.setItem(r, 0, icon_item)
+            self.table.setItem(r, 1, item_idx)
+            self.table.setItem(r, 2, item_aid)
+            self.table.setItem(r, 3, item_aname)
+            self.table.setItem(r, 4, item_iref)
+            self.table.setItem(r, 5, item_iname)
+            self.table.setItem(r, 6, item_cond)
 
     def _on_header_click(self, logicalIndex):
         if self.sort_col == logicalIndex:
@@ -817,7 +708,7 @@ class ShopEditorWindow(QMainWindow):
             self.sort_col = logicalIndex
             self.sort_reverse = False
 
-        keys = {0: 'index', 1: 'area_id', 2: 'area_id', 3: 'item_ref', 4: 'item_ref', 5: 'condition'}
+        keys = {1: 'index', 2: 'area_id', 3: 'area_id', 4: 'item_ref', 5: 'item_ref', 6: 'condition'}
         key = keys.get(logicalIndex, 'index')
         
         self.filtered_indices.sort(key=lambda i: self.records[i].get(key, 0), reverse=self.sort_reverse)
@@ -828,12 +719,14 @@ class ShopEditorWindow(QMainWindow):
     # ================================================================
 
     def _on_table_select(self):
-        selected = self.table.selectedItems()
-        if not selected:
+        row = self.table.currentRow()
+        if row < 0:
             return
-        
-        # 从第一列的 UserRole 获取真正的记录 index
-        idx = selected[0].data(Qt.UserRole)
+        # 从索引列 (column 1) 的 UserRole 获取真正的记录 index
+        idx_item = self.table.item(row, 1)
+        if not idx_item:
+            return
+        idx = idx_item.data(Qt.UserRole)
         rec = self.records[idx]
         self._populate_edit(rec)
 
@@ -946,13 +839,25 @@ class ShopEditorWindow(QMainWindow):
         self.txt_cond_table.setPlainText(header + '\n' + '\n'.join(lines))
 
     def _pick_item(self):
-        dialog = ItemPickerDialog(self, self.items, self.item_names)
-        if dialog.exec() == QDialog.Accepted:
-            picked = dialog.selected_item_ref
+        # 将 shop items tuple 列表转换为 ItemPickerDialog 所需的 dict 列表
+        item_list = []
+        for idx, item_id, tab_code, name_id, equip_type, name, icon, price in self.items:
+            item_list.append({
+                'index': idx, 'item_id': item_id, 'tab_code': tab_code,
+                'name': name, 'equip_type': equip_type,
+                'icon': icon, 'price': price,
+            })
+        dialog = ItemPickerDialog(
+            self, item_list,
+            icon_pixmap_fn=self._get_icon_pixmap,
+            return_key='index',
+        )
+        if dialog.exec() == QDialog.Accepted and dialog.selected_value is not None:
+            picked = dialog.selected_value
             if picked >= 0:
                 self.lbl_editing_item_idx.setText(str(picked))
                 self.lbl_item_name.setText(self.item_names.get(picked, f"Item#{picked}"))
-                self._on_area_changed() # 更新兼容性验证
+                self._on_area_changed()  # 更新兼容性验证
 
     def _apply_edit(self):
         if self._editing_idx < 0:
@@ -968,7 +873,7 @@ class ShopEditorWindow(QMainWindow):
         
         # 重新选中编辑行
         for r in range(self.table.rowCount()):
-            if self.table.item(r, 0).data(Qt.UserRole) == rec['index']:
+            if self.table.item(r, 1) and self.table.item(r, 1).data(Qt.UserRole) == rec['index']:
                 self.table.selectRow(r)
                 break
                 
@@ -1001,9 +906,9 @@ class ShopEditorWindow(QMainWindow):
                 self._apply_filter()
                 
                 for r in range(self.table.rowCount()):
-                    if self.table.item(r, 0).data(Qt.UserRole) == rec['index']:
+                    if self.table.item(r, 1) and self.table.item(r, 1).data(Qt.UserRole) == rec['index']:
                         self.table.selectRow(r)
-                        self.table.scrollToItem(self.table.item(r, 0))
+                        self.table.scrollToItem(self.table.item(r, 1))
                         break
                         
                 self.lbl_status.setText(f"选中空槽 #{rec['index']}, 请在右侧编辑后应用修改")

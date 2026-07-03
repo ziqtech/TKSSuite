@@ -42,7 +42,7 @@ from PySide6.QtWidgets import (
     QSplitter, QTableWidget, QTableWidgetItem, QAbstractItemView,
     QHeaderView, QLabel, QLineEdit, QPushButton, QCheckBox, QComboBox,
     QMessageBox, QFileDialog, QDialog, QGridLayout, QFrame, QScrollArea,
-    QSizePolicy, QMenu, QMenuBar, QStyledItemDelegate, QStyle, QLayout
+    QSizePolicy, QMenu, QMenuBar, QLayout
 )
 from PySide6.QtGui import QAction, QKeySequence, QIcon, QPainter
 from PySide6.QtCore import Qt, QRect, QPoint, QSize, QTranslator
@@ -491,24 +491,6 @@ class FlowLayout(QLayout):
         return y + row_h - rect.y() + m.bottom()
 
 # ============================================================
-# 图标居中 Delegate
-# ============================================================
-class IconDelegate(QStyledItemDelegate):
-    """将表格图标列的图标绘制在单元格正中央"""
-    def paint(self, painter, option, index):
-        painter.save()
-        # 绘制选中高亮背景
-        if option.state & QStyle.State_Selected:
-            painter.fillRect(option.rect, option.palette.highlight())
-        icon = index.data(Qt.DecorationRole)
-        if icon:
-            pix = icon.pixmap(36, 36)
-            x = option.rect.x() + (option.rect.width() - pix.width()) // 2
-            y = option.rect.y() + (option.rect.height() - pix.height()) // 2
-            painter.drawPixmap(x, y, pix)
-        painter.restore()
-
-# ============================================================
 # GUI 核心编辑器
 # ============================================================
 class ItemEditorApp(QMainWindow):
@@ -631,7 +613,7 @@ class ItemEditorApp(QMainWindow):
         self.table.setSelectionMode(QAbstractItemView.SingleSelection)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.verticalHeader().setVisible(False)
-        self.table.setItemDelegateForColumn(0, IconDelegate())
+        self.table.setIconSize(QSize(36, 36))
         self.table.itemSelectionChanged.connect(self._on_table_select)
         self.table.horizontalHeader().sectionClicked.connect(self._sort_by)
         self.splitter.addWidget(self._create_dock("物品列表", self.table))
@@ -676,7 +658,7 @@ class ItemEditorApp(QMainWindow):
         scroll.setWidget(self.edit_inner)
         right_layout.addWidget(scroll, 1)
         self.splitter.addWidget(self._create_dock("检查器 (属性编辑)", right_widget))
-        self.splitter.setSizes([420, 940])
+        self.splitter.setSizes([560, 800])
 
         # 底部路径栏
         path_layout = QHBoxLayout()

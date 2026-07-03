@@ -27,11 +27,10 @@ from PySide6.QtWidgets import (
     QSplitter, QTableWidget, QTableWidgetItem, QAbstractItemView,
     QHeaderView, QLabel, QLineEdit, QPushButton, QCheckBox, QComboBox,
     QMessageBox, QFileDialog, QDialog, QGridLayout, QFrame, QScrollArea,
-    QTabWidget, QTextEdit, QSpinBox, QGroupBox, QFormLayout,
-    QStyledItemDelegate, QStyle,
+    QTabWidget, QTextEdit, QSpinBox, QGroupBox, QFormLayout, QInputDialog,
 )
 from PySide6.QtGui import QIcon, QFont, QColor, QIntValidator, QPainter
-from PySide6.QtCore import Qt, QTranslator
+from PySide6.QtCore import Qt, QTranslator, QSize
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from editor_utils.theme_manager import ThemeManager
@@ -42,26 +41,11 @@ from editor_utils.tkt_loader import load_tkt_simple
 from editor_utils.jvg_loader import load_mu_sprites, get_sprite_pixmap
 from editor_utils.dock_components import DockHeader
 from editor_utils.kon_name_resolver import KonNameResolver
+from editor_utils.picker_dialogs import ItemPickerDialog
 
 
 # ============================================================
-# 图标居中 Delegate (与 item_editor_v2 一致)
-# ============================================================
-class IconDelegate(QStyledItemDelegate):
-    """将表格图标列的图标绘制在单元格正中央"""
-    def paint(self, painter, option, index):
-        painter.save()
-        if option.state & QStyle.State_Selected:
-            painter.fillRect(option.rect, option.palette.highlight())
-        icon = index.data(Qt.DecorationRole)
-        if icon:
-            pix = icon.pixmap(36, 36)
-            x = option.rect.x() + (option.rect.width() - pix.width()) // 2
-            y = option.rect.y() + (option.rect.height() - pix.height()) // 2
-            painter.drawPixmap(x, y, pix)
-        painter.restore()
-
-# ============================================================
+# 数据段定义
 # 常量 (来自逆向工程 — 每个值附带反编译代码证据)
 # ============================================================
 
@@ -793,7 +777,7 @@ class SaveEditorApp(QMainWindow):
         self._inv_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self._inv_table.verticalHeader().setVisible(False)
         self._inv_table.horizontalHeader().setStretchLastSection(True)
-        self._inv_table.setItemDelegateForColumn(0, IconDelegate())
+        self._inv_table.setIconSize(QSize(36, 36))
         layout.addWidget(self._inv_table, 1)
         self._inv_photos = []  # prevent GC
 
@@ -1133,6 +1117,7 @@ class SaveEditorApp(QMainWindow):
             name_id = struct.unpack_from('<h', dec, off + 4)[0]
             tab_code = struct.unpack_from('<h', dec, off + 2)[0]
             icon = struct.unpack_from('<h', dec, off + 8)[0]
+            equip_type = struct.unpack_from('<h', dec, off + 10)[0]
             price = struct.unpack_from('<h', dec, off + 62)[0]
             nm = ""
             if name_id > 0 and name_id in self.tkt:
@@ -1140,7 +1125,8 @@ class SaveEditorApp(QMainWindow):
             elif item_id > 0:
                 nm = f'物品#{item_id}'
             records[i] = {'item_id': item_id, 'name_id': name_id,
-                          'tab_code': tab_code, 'icon': icon, 'price': price, 'name': nm}
+                          'tab_code': tab_code, 'icon': icon,
+                          'equip_type': equip_type, 'price': price, 'name': nm}
             if item_id > 0:
                 names[item_id] = nm
         return records, names
@@ -1643,121 +1629,36 @@ class SaveEditorApp(QMainWindow):
         if not self.item_records:
             QMessageBox.information(self, "提示", "请先加载存档目录")
             return
-        dlg = QDialog(self)
-        dlg.setWindowTitle("➕ 新增物品 — 选择物品")
-        dlg.resize(640, 560)
-        dlg.setMinimumSize(480, 360)
-        layout = QVBoxLayout(dlg)
-
-        # 搜索栏 (与 save_editor v1 一致)
-        sf = QHBoxLayout()
-        sf.addWidget(QLabel("搜索:"))
-        search_edit = QLineEdit()
-        sf.addWidget(search_edit)
-        sf.addWidget(QPushButton("清除", clicked=lambda: search_edit.clear()))
-        sf.addSpacing(10)
-        sf.addWidget(QLabel("页面:"))
-        page_cb = QComboBox()
-        page_vals = ["全部页面"] + [f"{k}-{v}" for k, v in PAGE_NAMES.items()]
-        page_cb.addItems(page_vals)
-        sf.addWidget(page_cb)
-        sf.addSpacing(6)
-        nonempty_cb = QCheckBox("仅非空")
-        nonempty_cb.setChecked(True)
-        sf.addWidget(nonempty_cb)
-        layout.addLayout(sf)
-
-        # 物品列表 (图标 + # + ID + 页面 + 名称 + 价格)
-        dlg_table = QTableWidget(0, 6)
-        dlg_table.setHorizontalHeaderLabels(['图标', '#', 'ID', '页面', '物品名称', '价格'])
-        dlg_table.setColumnWidth(0, 50)
-        dlg_table.setColumnWidth(1, 36)
-        dlg_table.setColumnWidth(2, 42)
-        dlg_table.setColumnWidth(3, 46)
-        dlg_table.setColumnWidth(5, 46)
-        dlg_table.verticalHeader().setDefaultSectionSize(44)
-        dlg_table.setSelectionBehavior(QAbstractItemView.SelectRows)
-        dlg_table.setSelectionMode(QAbstractItemView.SingleSelection)
-        dlg_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
-        dlg_table.verticalHeader().setVisible(False)
-        dlg_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.Stretch)
-        dlg_table.setItemDelegateForColumn(0, IconDelegate())
-        layout.addWidget(dlg_table, 1)
-
-        # 底部: 数量 + 按钮
-        qty_row = QHBoxLayout()
-        qty_row.addWidget(QLabel("数量:"))
-        qty_edit = QLineEdit("1")
-        qty_edit.setFixedWidth(80)
-        qty_row.addWidget(qty_edit)
-        qty_row.addWidget(QLabel("(上限30000)"))
-        qty_row.addStretch()
-        qty_row.addWidget(QPushButton("❌ 取消", clicked=dlg.reject))
-        ok_btn = QPushButton("✅ 添加")
-        qty_row.addWidget(ok_btn)
-        layout.addLayout(qty_row)
-
-        selected = {'idx': None, 'item_id': None}
-
-        def refresh_list():
-            dlg_table.setRowCount(0)
-            q = search_edit.text().strip().lower()
-            pg = page_cb.currentText()
-            ne = nonempty_cb.isChecked()
-            for arr_idx, rec in self.item_records.items():
-                name = rec.get('name', '')
-                item_id = rec.get('item_id', 0)
-                tab = rec.get('tab_code', 0)
-                price = rec.get('price', 0)
-                if ne and not name:
-                    continue
-                if pg != "全部页面":
-                    if tab != int(pg.split('-')[0]):
-                        continue
-                if q and q not in f"{arr_idx} {item_id} {name}".lower():
-                    continue
-                row = dlg_table.rowCount()
-                dlg_table.insertRow(row)
-                icon_val = rec.get('icon', 0)
-                icon_item = QTableWidgetItem()
-                pix = self._get_icon_pixmap(icon_val, (36, 36))
-                if pix:
-                    icon_item.setIcon(QIcon(pix))
-                dlg_table.setItem(row, 0, icon_item)
-                dlg_table.setItem(row, 1, QTableWidgetItem(str(arr_idx)))
-                dlg_table.setItem(row, 2, QTableWidgetItem(str(item_id)))
-                dlg_table.setItem(row, 3, QTableWidgetItem(PAGE_NAMES.get(tab, '?')))
-                dlg_table.setItem(row, 4, QTableWidgetItem(name))
-                dlg_table.setItem(row, 5, QTableWidgetItem(str(price)))
-
-        def on_select():
-            sel = dlg_table.selectedItems()
-            if sel:
-                selected['idx'] = int(dlg_table.item(sel[0].row(), 1).text())
-                selected['item_id'] = int(dlg_table.item(sel[0].row(), 2).text())
-
-        def do_add():
-            if selected['idx'] is None:
-                QMessageBox.warning(dlg, "提示", "请先在列表中选择物品")
-                return
-            try:
-                qty = int(qty_edit.text())
-                if qty <= 0 or qty > 30000:
-                    raise ValueError
-            except ValueError:
-                QMessageBox.critical(dlg, "输入错误", "请输入有效数量 (1-30000)")
-                return
-            self._add_inv_item(selected['idx'], selected['item_id'], qty)
-            dlg.accept()
-
-        search_edit.textChanged.connect(lambda: refresh_list())
-        page_cb.currentTextChanged.connect(lambda: refresh_list())
-        nonempty_cb.stateChanged.connect(lambda: refresh_list())
-        dlg_table.itemSelectionChanged.connect(on_select)
-        ok_btn.clicked.connect(do_add)
-        dlg_table.doubleClicked.connect(lambda: do_add())
-        refresh_list()
-        dlg.exec()
+        # 构造完整物品记录列表 (与 item_editor 统一格式)
+        item_list = []
+        for arr_idx, rec in self.item_records.items():
+            item_list.append({
+                'index': arr_idx,
+                'item_id': rec.get('item_id', 0),
+                'tab_code': rec.get('tab_code', 0),
+                'name': rec.get('name', ''),
+                'equip_type': rec.get('equip_type', 0),
+                'icon': rec.get('icon', 0),
+                'price': rec.get('price', 0),
+            })
+        dlg = ItemPickerDialog(
+            self, item_list,
+            icon_pixmap_fn=self._get_icon_pixmap,
+            title="➕ 新增物品 — 选择物品",
+            return_key='index',
+        )
+        if dlg.exec() != QDialog.Accepted or dlg.selected_value is None:
+            return
+        arr_idx = dlg.selected_value
+        rec = self.item_records.get(arr_idx, {})
+        item_id = rec.get('item_id', 0)
+        # 数量输入
+        qty, ok = QInputDialog.getInt(
+            self, "输入数量", f"为 物品#{item_id} (idx={arr_idx}) 设置数量:",
+            value=1, minValue=1, maxValue=30000)
+        if not ok:
+            return
+        self._add_inv_item(arr_idx, item_id, qty)
 
     def _add_inv_item(self, type_idx, item_id, qty):
         if self.seg2 is None:
