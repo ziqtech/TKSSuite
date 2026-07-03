@@ -2145,7 +2145,9 @@ class WarpcEditorV2(QMainWindow):
             grid.addWidget(btn, r, c)
         scroll.setWidget(inner); layout.addWidget(scroll)
         bl = QHBoxLayout(); bl.addStretch(); bl.addWidget(QPushButton("取消", clicked=dlg.reject))
-        layout.addLayout(bl); dlg.exec()
+        layout.addLayout(bl)
+        _dialog_show_event(dlg)
+        dlg.exec()
 
     def _pick_tkkon(self, idx, ev):
         if not self.tkkon_names: return
