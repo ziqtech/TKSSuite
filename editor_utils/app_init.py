@@ -47,11 +47,13 @@ def get_frozen_base() -> str:
 def get_app_dir() -> Path:
     """获取 exe 实际所在目录 (用于定位 configs/, mods/ 等外部目录)。
 
-    - 打包环境: exe 所在目录
+    - 打包环境: 通过 runtime_bootstrap.get_app_dir() (使用 sys.argv[0],
+      在 Nuitka onefile 下正确返回原始 exe 路径而非临时解压目录)
     - 开发环境:  目录
     """
     if is_compiled():
-        return Path(sys.executable).parent
+        from editor_utils.runtime_bootstrap import get_app_dir as _bs_get_app_dir
+        return Path(_bs_get_app_dir())
     return Path(__file__).resolve().parent.parent
 
 
