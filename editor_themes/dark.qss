@@ -875,3 +875,68 @@ QScrollArea#GamePreview, QTextEdit#GamePreview {
 QTextEdit#GamePreview {
     color: #ffffff;
 }
+
+/* ── configs_editor ── */
+
+QFrame#Toolbar {
+    max-height: 36px;
+}
+
+/* 召唤编辑对话框 — 目标选择器显示区 */
+QWidget[class="TargetDisplay"] {
+    border: 1px solid #14171f;
+    border-radius: 3px;
+    background-color: #1a1e27;
+}
+QLabel[class="TargetIcon"], QLabel[class="TargetName"] {
+    border: none;
+    background: transparent;
+    color: #dcdcdc;
+}
+QLabel[class="TargetName"] {
+    padding: 2px 0px;
+}
+
+/* 召唤表面板 — TKS目录未加载提示条 */
+QFrame#SummonHintBar {
+    background-color: rgba(255, 193, 7, 0.12);
+    border-radius: 4px;
+}
+QLabel#SummonHintLabel {
+    color: #FFA000;
+    background: transparent;
+}
+
+/* 掉落概率面板 — 常规槽标签 */
+QLabel#RegularPctLabel {
+    font-weight: bold;
+    color: #55b572;
+}
+
+/* 状态栏标签 — configs_editor */
+QLabel#ConfigDirLabel[status="loaded"],
+QLabel#StatusWarpcLabel[status="loaded"],
+QLabel#StatusTktLabel[status="loaded"],
+QLabel#StatusFaLabel[status="loaded"] {
+    color: #55b572;
+    font-weight: bold;
+}
+QLabel#ConfigDirLabel[status="missing"],
+QLabel#StatusWarpcLabel[status="missing"],
+QLabel#StatusTktLabel[status="missing"],
+QLabel#StatusFaLabel[status="missing"] {
+    color: #e27d60;
+}
+QLabel#ConfigDirLabel[status="unloaded"],
+QLabel#StatusWarpcLabel[status="unloaded"],
+QLabel#StatusTktLabel[status="unloaded"],
+QLabel#StatusFaLabel[status="unloaded"] {
+    color: #888888;
+}
+
+/* WarPC 选择器 — 已选提示栏 */
+QLabel#WarpcSelectedLabel {
+    padding: 4px;
+    border-radius: 4px;
+    background: rgba(255, 255, 0, 0.08);
+}

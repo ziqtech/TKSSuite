@@ -8,6 +8,15 @@
     "merge_strategy": "page_union",
     "user_editable": true
   },
+  "drop_probability": {
+    "description": "物品掉落概率自定义配置",
+    "category": "launcher",
+    "schema": "key_value",
+    "primary_editor": "configs_editor",
+    "consumers": ["tks_launcher_gui"],
+    "merge_strategy": "key_override",
+    "user_editable": true
+  },
   "summon_table": {
     "description": "召唤技能→WarPC 映射表",
     "category": "launcher",
@@ -15,6 +24,6 @@
     "primary_editor": null,
     "consumers": ["tks_launcher_gui"],
     "merge_strategy": "key_override",
-    "user_editable": false
+    "user_editable": true
   }
 }
