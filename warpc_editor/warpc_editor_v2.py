@@ -75,6 +75,7 @@ from editor_utils.mod_exporter import (
     ask_reference_directory, load_reference_dat_fields,
     get_tksmod_info, import_tksmod_records, ModImportPreviewDialog,
 )
+from editor_utils.window_theme import apply_godot_theme
 
 # ── 本地别名: 保持向后兼容 ──
 def lzss_decompress(data): return lzss_decompress_dat(data)
@@ -1056,13 +1057,8 @@ class WarpcEditorV2(QMainWindow):
         ico = os.path.join(os.path.dirname(__file__), 'TKS.ico')
         if os.path.exists(ico): self.setWindowIcon(QIcon(ico))
 
-        import sys as _sys
         app_inst = QApplication.instance()
         self._is_dark = app_inst.styleHints().colorScheme() == Qt.ColorScheme.Dark if app_inst else True
-
-        import sys as _sys
-        _sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-        from editor_utils.window_theme import apply_godot_theme
         apply_godot_theme(self, self._is_dark)
 
         self.warpc_path = self.tkt_path = None
@@ -1099,7 +1095,6 @@ class WarpcEditorV2(QMainWindow):
 
     def _toggle_theme(self):
         self._is_dark = not self._is_dark; self._apply_theme(); self._refresh_table()
-        from editor_utils.window_theme import apply_godot_theme
         apply_godot_theme(self, self._is_dark)
 
     # ── 配置自动加载 ──

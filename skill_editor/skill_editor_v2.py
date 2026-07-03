@@ -27,6 +27,13 @@ from editor_utils.mod_exporter import (
     ask_reference_directory, load_reference_dat_fields,
     get_tksmod_info, import_tksmod_records, ModImportPreviewDialog,
 )
+from editor_utils.window_theme import apply_godot_theme
+from editor_utils.theme_manager import ThemeManager
+from editor_utils.dock_components import DockHeader, create_dock
+from editor_utils.picker_dialogs import (
+    TktPickerDialog, StatusPickerDialog, STATUS_NAMES, STATUS_ICON_BASE
+)
+from editor_utils.ui_helpers import make_fake_input, update_path_labels, confirm_close, export_csv
 
 # ── 本地别名: 保持向后兼容 ──
 def lzss_decompress(data): return lzss_decompress_dat(data)
@@ -133,15 +140,6 @@ def save_skills(fp, recs):
     with open(fp, 'wb') as f: f.write(compressed)
     return True
 
-import sys as _sys
-_sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-from editor_utils.theme_manager import ThemeManager
-from editor_utils.dock_components import DockHeader, create_dock
-from editor_utils.picker_dialogs import (
-    TktPickerDialog, StatusPickerDialog, STATUS_NAMES, STATUS_ICON_BASE
-)
-from editor_utils.ui_helpers import make_fake_input, update_path_labels, confirm_close, export_csv
-
 # ============================================================
 # 弹窗选择器 (技能)
 # ============================================================
@@ -237,13 +235,9 @@ class SkillEditorApp(QMainWindow):
         if os.path.exists(ico_path):
             self.setWindowIcon(QIcon(ico_path))
 
-        import sys as _sys
         app_inst = QApplication.instance()
         self._is_dark = app_inst.styleHints().colorScheme() == Qt.ColorScheme.Dark if app_inst else True
 
-        import sys as _sys
-        _sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-        from editor_utils.window_theme import apply_godot_theme
         apply_godot_theme(self, self._is_dark)
 
         self.skill_path = self.tkt_path = None
@@ -540,7 +534,6 @@ class SkillEditorApp(QMainWindow):
     def _toggle_theme(self):
         self._is_dark = not self._is_dark
         self._apply_theme()
-        from editor_utils.window_theme import apply_godot_theme
         apply_godot_theme(self, self._is_dark)
 
     def _apply_theme(self):

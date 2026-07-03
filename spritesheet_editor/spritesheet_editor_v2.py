@@ -49,6 +49,7 @@ except ImportError:
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from editor_utils.theme_manager import ThemeManager
 from editor_utils.dock_components import DockHeader, create_dock
+from editor_utils.window_theme import apply_godot_theme
 
 # ── 像素格式定义 ──────────────────────────────────────────────
 PIXEL_FORMATS: dict[str, str] = {
@@ -2131,9 +2132,6 @@ class SpriteSheetEditorWindow(QMainWindow):
         if os.path.exists(ico):
             self.setWindowIcon(QIcon(ico))
 
-        import sys as _sys
-        _sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-        from editor_utils.window_theme import apply_godot_theme
         apply_godot_theme(self, is_dark)
 
         self.model = SpriteSheetModel()
@@ -2908,7 +2906,6 @@ class SpriteSheetEditorWindow(QMainWindow):
         self.preview_view._disp.style().unpolish(self.preview_view._disp)
         self.preview_view._disp.style().polish(self.preview_view._disp)
         self.canvas.redraw()
-        from editor_utils.window_theme import apply_godot_theme
         apply_godot_theme(self, self._is_dark)
 
 

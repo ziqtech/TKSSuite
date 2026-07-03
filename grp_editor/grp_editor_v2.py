@@ -15,7 +15,8 @@ GRP 资源包编辑器 v2 — PySide6 外部主题版
 """
 
 from __future__ import annotations
-import os, sys, struct, zlib, wave, tempfile, shutil, io, math, re, time
+import os, sys, struct, zlib, wave, tempfile, shutil, io, math, re, time, base64, subprocess
+import winsound
 from pathlib import Path
 from typing import List, Optional, Tuple
 from collections import Counter
@@ -35,7 +36,7 @@ from PySide6.QtGui import (
 )
 
 HAS_PIL = False
-try:    from PIL import Image, ImageDraw; HAS_PIL = True
+try:    from PIL import Image, ImageDraw, ImageFont; HAS_PIL = True
 except ImportError: pass
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
@@ -53,6 +54,7 @@ from editor_utils.mod_exporter import (
     load_grp_raw_sections,
     get_tksmod_info, import_tksmod_blocks, ModImportPreviewDialog,
 )
+from editor_utils.window_theme import apply_godot_theme
 
 # ── 本地别名: 保持向后兼容 ──
 def lzss_decompress(data, target_size): return _lzss_decompress_stream(data, target_size)
@@ -412,9 +414,6 @@ class GRPEditor(QMainWindow):
             is_dark = app_inst.styleHints().colorScheme() == Qt.ColorScheme.Dark
             self.theme_manager.current_theme = 'dark' if is_dark else 'light'
 
-        import sys as _sys
-        _sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-        from editor_utils.window_theme import apply_godot_theme
         apply_godot_theme(self, is_dark)
         self._apply_theme()
 
@@ -474,7 +473,6 @@ class GRPEditor(QMainWindow):
 
     def _toggle_theme(self):
         self.theme_manager.toggle_theme(); self._apply_theme()
-        from editor_utils.window_theme import apply_godot_theme
         apply_godot_theme(self, self.theme_manager.current_theme == 'dark')
 
     # ── Toolbar ───────────────────────────────────────────
@@ -718,7 +716,6 @@ class GRPEditor(QMainWindow):
 
         # 查找参考 IDX
         ref_idx = None
-        from pathlib import Path
         for ext in ['.IDX', '.idx']:
             c = str(Path(ref_path).with_suffix(ext))
             if os.path.exists(c): ref_idx = c; break
@@ -728,7 +725,6 @@ class GRPEditor(QMainWindow):
             QMessageBox.warning(self, "参考文件无效", f"无法解析 {target_name} 的区段结构（需要配套 IDX 文件）"); return
 
         # 保存当前到临时文件获取当前区段
-        import tempfile
         tmp_grp = tempfile.mktemp(suffix='.grp')
         tmp_idx = tempfile.mktemp(suffix='.idx')
         try:
@@ -747,7 +743,6 @@ class GRPEditor(QMainWindow):
             QMessageBox.information(self, "无差异", "当前 GRP 与参考文件相同，无需导出。"); return
 
         # MOD 元数据
-        from PySide6.QtWidgets import QDialog
         dlg = ModMetadataDialog(self, getattr(self, '_last_mod_metadata', None))
         if dlg.exec() != QDialog.Accepted: return
         metadata = dlg.get_metadata(); self._last_mod_metadata = metadata
@@ -810,7 +805,6 @@ class GRPEditor(QMainWindow):
             new_sec = GRPDataSection(0, 0, sec.size, sec._raw)
             tmp_grp.data_sections.append(new_sec)
 
-        import tempfile, base64
         tmp_grp_path = tempfile.mktemp(suffix='.grp')
         tmp_idx_path = tempfile.mktemp(suffix='.idx')
         try:
@@ -836,7 +830,6 @@ class GRPEditor(QMainWindow):
                 diff_result=diff_result)
 
             # 步骤3: MOD 元数据
-            from PySide6.QtWidgets import QDialog
             dlg = ModMetadataDialog(self, getattr(self, '_last_mod_metadata', None))
             if dlg.exec() != QDialog.Accepted: return
             metadata = dlg.get_metadata(); self._last_mod_metadata = metadata
@@ -878,7 +871,6 @@ class GRPEditor(QMainWindow):
 
         target_name = grp_targets[0]
 
-        from PySide6.QtWidgets import QDialog
         dlg = ModImportPreviewDialog(self, info)
         if dlg.exec() != QDialog.Accepted: return
 
@@ -892,7 +884,6 @@ class GRPEditor(QMainWindow):
                 f"无法导入 MOD 数据。\n请确认参考目录中包含有效的 {target_name}"); return
 
         # 将区段列表重建为临时 GRP+IDX 文件，然后重新加载
-        import tempfile
         tmp_grp = tempfile.mktemp(suffix='.grp')
         tmp_idx = tempfile.mktemp(suffix='.idx')
         try:
@@ -963,7 +954,6 @@ class GRPEditor(QMainWindow):
             return
 
         # 统计当前图像中使用的值
-        from collections import Counter
         used_vals = sorted(Counter(data[:sec.width * sec.height]).keys())
         if not used_vals:
             self._palette_panel.setVisible(False)
@@ -1307,10 +1297,8 @@ class GRPEditor(QMainWindow):
             self._audio_tmp = tmp.name
             self._wave_start_time = time.time()
             if sys.platform == 'win32':
-                import winsound
                 winsound.PlaySound(tmp.name, winsound.SND_ASYNC | winsound.SND_FILENAME)
             else:
-                import subprocess
                 player = 'aplay' if shutil.which('aplay') else ('afplay' if sys.platform == 'darwin' else 'paplay')
                 self._audio_proc = subprocess.Popen([player, tmp.name],
                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -1341,7 +1329,6 @@ class GRPEditor(QMainWindow):
         if not self._audio_playing: return
         try:
             if sys.platform == 'win32':
-                import winsound
                 winsound.PlaySound(None, winsound.SND_PURGE)
             elif hasattr(self, '_audio_proc') and self._audio_proc:
                 self._audio_proc.terminate(); self._audio_proc = None
@@ -1550,7 +1537,6 @@ class GRPEditor(QMainWindow):
             draw = ImageDraw.Draw(pal_img)
             font = None
             try:
-                from PIL import ImageFont
                 font = ImageFont.truetype("consola.ttf", 9)
             except: pass
             for v in range(256):

@@ -25,7 +25,7 @@ TKMat.Dat 地图实体编辑器 v2.3 — PySide6 Godot 风格版
   python mat_editor_v2.py
 """
 
-import struct, os, sys, re, csv, json, base64, time
+import struct, os, sys, re, csv, json, base64, time, traceback
 from collections import OrderedDict, defaultdict, Counter
 
 from PySide6.QtWidgets import (
@@ -57,6 +57,14 @@ from editor_utils.mod_exporter import (
     ModImportPreviewDialog,
     diff_binary_blocks, build_block_diff_json, load_grp_raw_sections,
 )
+from editor_utils.window_theme import apply_godot_theme
+
+HAS_PIL = False
+try:
+    from PIL import Image, ImageChops, ImageOps
+    HAS_PIL = True
+except ImportError:
+    pass
 
 # ============================================================
 # 常量
@@ -1355,7 +1363,6 @@ def _jvg_sprite_to_pil(jvg, block_idx, frame_idx=0):
             ci = px[p] if p < len(px) else 0
             rgba[off] = pr[ci*3]; rgba[off+1] = pr[ci*3+1]
             rgba[off+2] = pr[ci*3+2]; rgba[off+3] = 255
-    from PIL import Image
     img = Image.frombytes('RGBA', (frame.width, frame.height), bytes(rgba))
     _SPRITE_CACHE[key] = img
     return img
@@ -1383,7 +1390,6 @@ def _make_subtractive_shadow(jvg, block_idx, frame_idx):
             r, g, b = pr[ci*3], pr[ci*3+1], pr[ci*3+2]
             L = int(0.299*r + 0.587*g + 0.114*b)  # NTSC 亮度
             rgba[off] = 0; rgba[off+1] = 0; rgba[off+2] = 0; rgba[off+3] = L
-    from PIL import Image
     img = Image.frombytes('RGBA', (frame.width, frame.height), bytes(rgba))
     _SHADOW_CACHE[key] = img
     return img
@@ -1412,13 +1418,11 @@ def _get_blended_sprite(jvg, block_idx, frame_idx, mode=0, param=0):
             ci = px[p] if p < len(px) else 0
             rgba[off] = pr[ci*3]; rgba[off+1] = pr[ci*3+1]
             rgba[off+2] = pr[ci*3+2]; rgba[off+3] = 255
-    from PIL import Image, ImageOps
     img = Image.frombytes('RGBA', (frame.width, frame.height), bytes(rgba))
     if mode == 5:
         img = ImageOps.mirror(img)
     elif mode == 1:
         # 染色: 按 param 颜色值乘入 RGB 通道 (sub_454D24)
-        from PIL import ImageChops
         r_tint = (param >> 10) & 0x1F; g_tint = (param >> 5) & 0x1F; b_tint = param & 0x1F
         if param > 0 and param <= 31:
             sf_r = r_tint / 31.0; sf_g = g_tint / 31.0; sf_b = b_tint / 31.0
@@ -1435,7 +1439,7 @@ def _get_blended_sprite(jvg, block_idx, frame_idx, mode=0, param=0):
             r_ch, g_ch, b_ch, a_ch = img.split()
             # 像素越亮 → 加法贡献越大; alpha = 亮度 * scale
             lum = r_ch.point(lambda v: int(v * 0.299)) if False else r_ch
-            from PIL import ImageChops
+            
             lum = ImageChops.add(
                 ImageChops.add(
                     r_ch.point(lambda v: int(v * 0.299)),
@@ -1456,7 +1460,7 @@ def _get_blended_sprite(jvg, block_idx, frame_idx, mode=0, param=0):
     elif mode == 4:
         # 亮度 alpha: 按 src 亮度修改 alpha 通道 (sub_459854)
         r_ch, g_ch, b_ch, a_ch = img.split()
-        from PIL import ImageChops
+        
         lum = ImageChops.add(
             ImageChops.add(
                 r_ch.point(lambda v: int(v * 0.299)),
@@ -1511,7 +1515,6 @@ def _get_jvg_frame_rgba(jvg, block_idx, frame_idx):
             ci = px[p] if p < len(px) else 0
             rgba[off] = pr[ci*3]; rgba[off+1] = pr[ci*3+1]
             rgba[off+2] = pr[ci*3+2]; rgba[off+3] = 255
-    from PIL import Image
     img = Image.frombytes('RGBA', (frame.width, frame.height), bytes(rgba))
     _RGBA_CACHE[key] = img.copy()
     return img
@@ -1534,7 +1537,6 @@ def _pil_tint(rgba_src, param):
     r_ch = r_ch.point(lambda v: int(v * r_tint / 31))
     g_ch = g_ch.point(lambda v: int(v * g_tint / 31))
     b_ch = b_ch.point(lambda v: int(v * b_tint / 31))
-    from PIL import Image
     return Image.merge('RGBA', (r_ch, g_ch, b_ch, a_ch))
 
 def _pil_additive(composite, rgba_src, dx, dy, param):
@@ -1542,7 +1544,7 @@ def _pil_additive(composite, rgba_src, dx, dy, param):
     param=0或>31 → full min(dst+src, 255); 0<param<=31 → min(dst+src*param/32, 255)"""
     if composite is None or rgba_src is None: return
     try:
-        from PIL import Image, ImageChops
+    
         sw, sh = rgba_src.size; cw, ch = composite.size
         l = max(0, dx); t = max(0, dy)
         r = min(cw, dx + sw); b = min(ch, dy + sh)
@@ -1569,7 +1571,7 @@ def _pil_subtract(composite, rgba_src, dx, dy):
     dst.RGB = max(dst - src, 0) 逐通道独立"""
     if composite is None or rgba_src is None: return
     try:
-        from PIL import Image, ImageChops
+    
         sw, sh = rgba_src.size; cw, ch = composite.size
         l = max(0, dx); t = max(0, dy)
         r = min(cw, dx + sw); b = min(ch, dy + sh)
@@ -1593,7 +1595,7 @@ def _pil_luma_alpha(composite, rgba_src, dx, dy):
     α = NTSC_luma_5bit(src); α=0跳过; α>28覆盖; else dst*(32-α)/32+src*α/32"""
     if composite is None or rgba_src is None: return
     try:
-        from PIL import Image, ImageChops
+    
         sw, sh = rgba_src.size; cw, ch = composite.size
         l = max(0, dx); t = max(0, dy)
         r = min(cw, dx + sw); b = min(ch, dy + sh)
@@ -1639,8 +1641,7 @@ def load_scene_background(sc_grp_path, sc_idx_path, scene_id):
         _decode_section_a(grp, sec)
         if not sec.pixels: return None
 
-        from PIL import Image
-        # PIL C 引擎直接解码 RGB565 字节流，替代纯 Python 的 225 万次位移循环
+            # PIL C 引擎直接解码 RGB565 字节流，替代纯 Python 的 225 万次位移循环
         img = Image.frombytes('RGB', (sec.width, sec.height), sec.pixels, 'raw', 'BGR;16')
         return img
     except Exception:
@@ -1676,8 +1677,7 @@ def load_scene_background_from_bytes(section_data: bytes):
         if len(pixels) < target_size:
             pixels = pixels + b'\x00' * (target_size - len(pixels))
 
-        from PIL import Image
-        img = Image.frombytes('RGB', (w, h), pixels[:target_size], 'raw', 'BGR;16')
+            img = Image.frombytes('RGB', (w, h), pixels[:target_size], 'raw', 'BGR;16')
         return img
     except Exception:
         return None
@@ -1931,7 +1931,7 @@ class DataLoaderThread(QThread):
             self.result_data = result
             self.finished_load.emit()
         except Exception as e:
-            import traceback
+            
             self.error_load.emit(str(e) + "\n" + traceback.format_exc())
 
 
@@ -1995,7 +1995,7 @@ class JvgLoaderThread(QThread):
             self.jvg_result = res
             self.finished_jvg.emit()
         except Exception as e:
-            import traceback
+            
             print("Background asset load error:", e, traceback.format_exc())
             self.jvg_result = {}
             self.finished_jvg.emit()
@@ -2023,9 +2023,6 @@ class MatEditorApp(QMainWindow):
         )
 
         # 应用 Godot 风格窗口标题栏 (与 editor_themes 主题一致)
-        import sys as _sys
-        _sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-        from editor_utils.window_theme import apply_godot_theme
         apply_godot_theme(self, self._is_dark)
 
         # 数据状态
@@ -2105,7 +2102,6 @@ class MatEditorApp(QMainWindow):
         self._is_dark = not self._is_dark
         self._apply_theme()
         # 更新窗口标题栏颜色
-        from editor_utils.window_theme import apply_godot_theme
         apply_godot_theme(self, self._is_dark)
 
     def _apply_theme(self):
@@ -3842,7 +3838,7 @@ class MatEditorApp(QMainWindow):
 
     def _vis_render_scene(self, ents, w, h):
         """PIL 预合成整个场景并显示到 QGraphicsView"""
-        from PIL import Image, ImageDraw, ImageOps
+        
         mode = DISPLAY_MODES.get(self._vis_display_mode, 'auto')
 
         # Background — 匹配 QGraphicsView 的 QSS 主题背景色
@@ -4621,7 +4617,6 @@ class MatEditorApp(QMainWindow):
         """导出当前修改为 .tksmod MOD 文件 (TKMat + TKDefUnit + TKD 三文件联动)"""
         if not self.records or not hasattr(self, '_original_mat_records'):
             QMessageBox.information(self, "提示", "请先加载数据"); return
-        from PySide6.QtWidgets import QDialog
         dlg = ModMetadataDialog(self, getattr(self, '_last_mod_metadata', None))
         if dlg.exec() != QDialog.Accepted: return
         metadata = dlg.get_metadata(); self._last_mod_metadata = metadata
@@ -4692,7 +4687,6 @@ class MatEditorApp(QMainWindow):
         if ref_mat is None:
             QMessageBox.warning(self, "参考目录无效", f"在 {ref_dir} 中未找到 TKMat.Dat"); return
 
-        from PySide6.QtWidgets import QDialog
         dlg = ModMetadataDialog(self, getattr(self, '_last_mod_metadata', None))
         if dlg.exec() != QDialog.Accepted: return
         metadata = dlg.get_metadata(); self._last_mod_metadata = metadata
@@ -4815,7 +4809,6 @@ class MatEditorApp(QMainWindow):
                     scene_define_ids.add(str(did))
 
         # ── 4. 弹出 MOD 元数据对话框 ──
-        from PySide6.QtWidgets import QDialog
         sname = scene_name(self.tkt_scenes, sid).replace('/', '_').replace('\\', '_')
         defaults = getattr(self, '_last_mod_metadata', None) or {}
         if not defaults.get('id'):
@@ -4992,7 +4985,6 @@ class MatEditorApp(QMainWindow):
                 "此 MOD 不包含 TKMat/TKDefUnit/TKD/SC.GRP 的数据\n\n"
                 f"包含的数据: {', '.join(targets)}"); return
 
-        from PySide6.QtWidgets import QDialog
         dlg = ModImportPreviewDialog(self, info)
         if dlg.exec() != QDialog.Accepted: return
 

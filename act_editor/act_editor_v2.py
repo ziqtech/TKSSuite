@@ -3062,7 +3062,6 @@ class ActEditorV2(QMainWindow):
             QMessageBox.information(self, "无差异", "当前动画数据与参考文件相同，无需导出。"); return
 
         # MOD 元数据
-        from PySide6.QtWidgets import QDialog
         dlg = ModMetadataDialog(self, getattr(self, '_last_mod_metadata', None))
         if dlg.exec() != QDialog.Accepted: return
         metadata = dlg.get_metadata(); self._last_mod_metadata = metadata
@@ -3097,7 +3096,6 @@ class ActEditorV2(QMainWindow):
             QMessageBox.warning(self, "不兼容", "此 MOD 不包含 TKAct.dat 的数据\n\n"
                 f"包含的数据: {', '.join(info.get('targets', []))}"); return
 
-        from PySide6.QtWidgets import QDialog
         dlg = ModImportPreviewDialog(self, info)
         if dlg.exec() != QDialog.Accepted: return
 

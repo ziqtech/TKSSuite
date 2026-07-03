@@ -36,6 +36,7 @@ from editor_utils.mod_exporter import (
     compute_crc32, generate_mod_json, pack_tksmod, ModMetadataDialog,
     get_tksmod_info, read_tksmod, ModImportPreviewDialog,
 )
+from editor_utils.window_theme import apply_godot_theme
 
 # ── GXP 格式常量 ──────────────────────────────────────────
 GXP_MAGIC = b"JGXP"
@@ -186,9 +187,6 @@ class GXPEditor(QMainWindow):
             is_dark = True
             self.theme_manager.set_theme('dark')
 
-        import sys as _sys
-        _sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-        from editor_utils.window_theme import apply_godot_theme
         apply_godot_theme(self, is_dark)
         
         self.img: Optional[GXPImage] = None
@@ -229,7 +227,6 @@ class GXPEditor(QMainWindow):
         self._apply_theme()
         theme_name = '深色' if self.theme_manager.current_theme == 'dark' else '浅色'
         self.statusBar().showMessage(f"已切换到{theme_name}主题", 2000)
-        from editor_utils.window_theme import apply_godot_theme
         apply_godot_theme(self, self.theme_manager.current_theme == 'dark')
 
     def _setup_menu(self):
@@ -445,7 +442,7 @@ class GXPEditor(QMainWindow):
         """导出当前 GXP 为 .tksmod 资源替换 MOD"""
         if not self.img or not self.img.filepath:
             QMessageBox.information(self, "提示", "请先打开 GXP 文件"); return
-        from PySide6.QtWidgets import QDialog
+        
         dlg = ModMetadataDialog(self, getattr(self, '_last_mod_metadata', None))
         if dlg.exec() != QDialog.Accepted: return
         metadata = dlg.get_metadata(); self._last_mod_metadata = metadata
@@ -479,7 +476,7 @@ class GXPEditor(QMainWindow):
                 f"包含的数据: {', '.join(info.get('targets', []))}\n"
                 f"资源: {', '.join(r.get('target','') for r in resources)}"); return
 
-        from PySide6.QtWidgets import QDialog
+        
         dlg = ModImportPreviewDialog(self, info)
         if dlg.exec() != QDialog.Accepted: return
 

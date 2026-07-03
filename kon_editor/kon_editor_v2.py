@@ -33,6 +33,7 @@ from editor_utils.mod_exporter import (
     ask_reference_directory, load_reference_dat_fields,
     get_tksmod_info, import_tksmod_records, ModImportPreviewDialog,
 )
+from editor_utils.window_theme import apply_godot_theme
 
 # ── 本地别名: 保持向后兼容 ──
 def lzss_decompress(data): return lzss_decompress_dat(data)
@@ -243,9 +244,6 @@ class KonEditor(QMainWindow):
         app_inst = QApplication.instance()
         self.is_dark_theme = app_inst.styleHints().colorScheme() == Qt.ColorScheme.Dark if app_inst else True
 
-        import sys as _sys
-        _sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-        from editor_utils.window_theme import apply_godot_theme
         apply_godot_theme(self, self.is_dark_theme)
         self.kon_path = None; self.tkt_path = None
         self.records = []; self.tkt = {}; self.names = {}
@@ -273,7 +271,6 @@ class KonEditor(QMainWindow):
         self.is_dark_theme = not self.is_dark_theme
         self._apply_theme()
         self._refresh_table()
-        from editor_utils.window_theme import apply_godot_theme
         apply_godot_theme(self, self.is_dark_theme)
 
     # ============================================================
@@ -969,7 +966,7 @@ class KonEditor(QMainWindow):
         """导出当前修改为 .tksmod MOD 文件"""
         if not self.records or not self._original_records:
             QMessageBox.information(self, "提示", "请先加载数据"); return
-        from PySide6.QtWidgets import QDialog
+        
         dlg = ModMetadataDialog(self, getattr(self, '_last_mod_metadata', None))
         if dlg.exec() != QDialog.Accepted: return
         metadata = dlg.get_metadata(); self._last_mod_metadata = metadata
@@ -1004,7 +1001,7 @@ class KonEditor(QMainWindow):
             rec_size=KON_REC, field_count=KON_FIELD_COUNT, field_fmt='h', use_lzss=True)
         if ref_records is None:
             QMessageBox.warning(self, "参考目录无效", f"在 {ref_dir} 中未找到 TKKon.dat"); return
-        from PySide6.QtWidgets import QDialog
+        
         dlg = ModMetadataDialog(self, getattr(self, '_last_mod_metadata', None))
         if dlg.exec() != QDialog.Accepted: return
         metadata = dlg.get_metadata(); self._last_mod_metadata = metadata

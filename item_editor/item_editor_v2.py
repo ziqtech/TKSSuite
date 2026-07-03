@@ -62,6 +62,7 @@ from editor_utils.mod_exporter import (
     ask_reference_directory, load_reference_dat_fields,
     get_tksmod_info, import_tksmod_records, ModImportPreviewDialog,
 )
+from editor_utils.window_theme import apply_godot_theme
 
 # ── 本地别名: 保持向后兼容 ──
 def lzss_decompress(data): return lzss_decompress_dat(data)
@@ -485,13 +486,8 @@ class ItemEditorApp(QMainWindow):
         ico_path = os.path.join(os.path.dirname(__file__), 'TKS.ico')
         if os.path.exists(ico_path): self.setWindowIcon(QIcon(ico_path))
 
-        import sys as _sys
         app_inst = QApplication.instance()
         self._is_dark = app_inst.styleHints().colorScheme() == Qt.ColorScheme.Dark if app_inst else True
-
-        import sys as _sys
-        _sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-        from editor_utils.window_theme import apply_godot_theme
         apply_godot_theme(self, self._is_dark)
 
         self.item_path = self.tkt_path = self.skill_path = self.mu_path = None
@@ -517,7 +513,6 @@ class ItemEditorApp(QMainWindow):
 
     def _toggle_theme(self):
         self._is_dark = not self._is_dark; self._apply_theme(); self._refresh_table()
-        from editor_utils.window_theme import apply_godot_theme
         apply_godot_theme(self, self._is_dark)
 
     def _create_dock(self, title, widget_content):
@@ -1345,7 +1340,7 @@ class ItemEditorApp(QMainWindow):
         """导出当前修改为 .tksmod MOD 文件"""
         if not self.records or not self._original_records:
             QMessageBox.information(self, "提示", "请先加载数据"); return
-        from PySide6.QtWidgets import QDialog
+        
         dlg = ModMetadataDialog(self, getattr(self, '_last_mod_metadata', None))
         if dlg.exec() != QDialog.Accepted: return
         metadata = dlg.get_metadata(); self._last_mod_metadata = metadata
@@ -1386,7 +1381,7 @@ class ItemEditorApp(QMainWindow):
             rec_size=64, field_count=32, field_fmt='h', use_lzss=True)
         if ref_records is None:
             QMessageBox.warning(self, "参考目录无效", f"在 {ref_dir} 中未找到 TKItem.dat"); return
-        from PySide6.QtWidgets import QDialog
+        
         dlg = ModMetadataDialog(self, getattr(self, '_last_mod_metadata', None))
         if dlg.exec() != QDialog.Accepted: return
         metadata = dlg.get_metadata(); self._last_mod_metadata = metadata

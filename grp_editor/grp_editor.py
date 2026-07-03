@@ -15,14 +15,15 @@ GRP 资源包编辑器 — 浏览/预览/编辑/导出三国群侠传 .grp 格�
 """
 
 from __future__ import annotations
-import os, sys, struct, zlib, wave, tempfile, subprocess, shutil, io, math, tkinter as tk
+import os, sys, struct, zlib, wave, tempfile, subprocess, shutil, io, math, tkinter as tk, time
+import winsound
 from tkinter import ttk, filedialog, messagebox
 from pathlib import Path
 from typing import List, Optional, Tuple
 from collections import Counter
 
 HAS_PIL = False
-try:    from PIL import Image, ImageTk, ImageDraw; HAS_PIL = True
+try:    from PIL import Image, ImageTk, ImageDraw, ImageFont; HAS_PIL = True
 except ImportError: pass
 
 # ── 常量 ──────────────────────────────────────────────────
@@ -1193,7 +1194,6 @@ class GRPEditor:
             # 尝试加载字体
             font = None
             try:
-                from PIL import ImageFont
                 font = ImageFont.truetype("consola.ttf", 9)
             except: pass
 
@@ -1383,11 +1383,9 @@ class GRPEditor:
             tmp = tempfile.NamedTemporaryFile(suffix='.wav', delete=False); tmp.close()
             Path(tmp.name).write_bytes(sec._raw)
             self._audio_tmp = tmp.name
-            import time
             self._wave_start_time = time.time()
 
             if sys.platform == 'win32':
-                import winsound
                 winsound.PlaySound(tmp.name, winsound.SND_ASYNC | winsound.SND_FILENAME)
                 self._audio_playing = True; self._btn_play.configure(text="■ 停止")
                 # 立即绘制带播放头的波形, 启动动画循环
@@ -1420,7 +1418,6 @@ class GRPEditor:
         if not self._audio_playing: return
         try:
             if sys.platform == 'win32':
-                import winsound
                 winsound.PlaySound(None, winsound.SND_PURGE)
             elif self._audio_proc:
                 self._audio_proc.terminate(); self._audio_proc = None

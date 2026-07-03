@@ -49,6 +49,7 @@ from editor_utils.mod_exporter import (
     ask_reference_directory, load_reference_tkt_entries,
     get_tksmod_info, import_tksmod_text_entries, ModImportPreviewDialog,
 )
+from editor_utils.window_theme import apply_godot_theme
 
 # ============================================================
 # 常量 (来自反编译)
@@ -765,9 +766,6 @@ class TktEditor(QMainWindow):
         self._is_dark = app_inst.styleHints().colorScheme() == Qt.ColorScheme.Dark if app_inst else True
 
         # 应用 Godot 风格窗口标题栏 (与 editor_themes 主题一致)
-        import sys as _sys
-        _sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-        from editor_utils.window_theme import apply_godot_theme
         apply_godot_theme(self, self._is_dark)
 
         if app_inst:
@@ -1029,7 +1027,6 @@ class TktEditor(QMainWindow):
         self._render_preview()
         self._render_comp_previews()
         # 更新窗口标题栏颜色
-        from editor_utils.window_theme import apply_godot_theme
         apply_godot_theme(self, self._is_dark)
 
     def _apply_theme(self):
@@ -1428,7 +1425,6 @@ class TktEditor(QMainWindow):
         if img1:
             canvas.paste(img1, (0, y)); y += h1
         if img1 and img2:
-            from PIL import ImageDraw
             draw = ImageDraw.Draw(canvas)
             ly = y + spacing // 2
             draw.line([(10, ly), (canvas_w - 10, ly)], fill=(120, 120, 120, 150), width=1)

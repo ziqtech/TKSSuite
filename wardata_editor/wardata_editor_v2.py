@@ -93,6 +93,7 @@ from editor_utils.mod_exporter import (
     ask_reference_directory,
     get_tksmod_info, read_tksmod, ModImportPreviewDialog,
 )
+from editor_utils.window_theme import apply_godot_theme
 
 HAS_PIL = False
 try:
@@ -383,13 +384,8 @@ class WarDataEditorV2(QMainWindow):
         if os.path.exists(ico):
             self.setWindowIcon(QIcon(ico))
 
-        import sys as _sys
         app_inst = QApplication.instance()
         self._is_dark = app_inst.styleHints().colorScheme() == Qt.ColorScheme.Dark if app_inst else True
-
-        import sys as _sys
-        _sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-        from editor_utils.window_theme import apply_godot_theme
         apply_godot_theme(self, self._is_dark)
 
         # 数据状态
@@ -439,7 +435,6 @@ class WarDataEditorV2(QMainWindow):
     def _toggle_theme(self):
         self._is_dark = not self._is_dark
         self._apply_theme()
-        from editor_utils.window_theme import apply_godot_theme
         apply_godot_theme(self, self._is_dark)
 
     def _update_paths(self):
@@ -809,7 +804,7 @@ class WarDataEditorV2(QMainWindow):
         """导出当前修改为 .tksmod MOD 文件（WarData 完整记录级差异）"""
         if not self.records:
             QMessageBox.information(self, "提示", "请先加载数据"); return
-        from PySide6.QtWidgets import QDialog
+        
         dlg = ModMetadataDialog(self, getattr(self, '_last_mod_metadata', None))
         if dlg.exec() != QDialog.Accepted: return
         metadata = dlg.get_metadata(); self._last_mod_metadata = metadata
@@ -880,7 +875,7 @@ class WarDataEditorV2(QMainWindow):
         ref_path = os.path.join(ref_dir, "WarData.dat")
         if not os.path.isfile(ref_path):
             QMessageBox.warning(self, "参考目录无效", f"在 {ref_dir} 中未找到 WarData.dat"); return
-        from PySide6.QtWidgets import QDialog
+        
         original = load_wardata(ref_path)
 
         dlg = ModMetadataDialog(self, getattr(self, '_last_mod_metadata', None))
@@ -937,7 +932,7 @@ class WarDataEditorV2(QMainWindow):
             QMessageBox.warning(self, "不兼容", "此 MOD 不包含 WarData.dat 的数据\n\n"
                 f"包含的数据: {', '.join(info.get('targets', []))}"); return
 
-        from PySide6.QtWidgets import QDialog
+        
         dlg = ModImportPreviewDialog(self, info)
         if dlg.exec() != QDialog.Accepted: return
 

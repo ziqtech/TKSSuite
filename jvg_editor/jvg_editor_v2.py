@@ -7,7 +7,7 @@ JVG 图集编辑器 v2 — PySide6 版本，支持深色/浅色主题切换
 """
 
 from __future__ import annotations
-import os, sys, struct, io, json, zlib, math, re
+import os, sys, struct, io, json, zlib, math, re, copy, tempfile
 from pathlib import Path
 from typing import List, Tuple, Optional
 from PySide6.QtWidgets import (
@@ -38,6 +38,7 @@ from editor_utils.mod_exporter import (
     load_jvg_raw_blocks,
     get_tksmod_info, import_tksmod_blocks, ModImportPreviewDialog,
 )
+from editor_utils.window_theme import apply_godot_theme
 
 JVG_MAGIC = b"@JVG"; JVM_MAGIC = b"@JVM"
 SCREEN_W = 640; HEADER_SIZE = 32
@@ -530,9 +531,6 @@ class JVGEditor(QMainWindow):
         else:
             self._is_dark = True
 
-        import sys as _sys
-        _sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-        from editor_utils.window_theme import apply_godot_theme
         apply_godot_theme(self, self._is_dark)
 
         # 数据模型
@@ -917,7 +915,6 @@ class JVGEditor(QMainWindow):
         self._apply_theme()
         theme_name = '深色' if self._is_dark else '浅色'
         self.statusBar().showMessage(f"已切换到{theme_name}主题", 2000)
-        from editor_utils.window_theme import apply_godot_theme
         apply_godot_theme(self, self._is_dark)
 
     def _new(self):
@@ -993,7 +990,7 @@ class JVGEditor(QMainWindow):
             QMessageBox.warning(self, "参考文件无效", f"{target_name} 不是有效的 JVG 文件"); return
 
         # 先保存当前编辑到临时文件获取当前块数据
-        import tempfile
+        
         tmp_path = tempfile.mktemp(suffix='.jvg')
         try:
             save_jvg(self.jvg, tmp_path)
@@ -1010,7 +1007,6 @@ class JVGEditor(QMainWindow):
             QMessageBox.information(self, "无差异", "当前 JVG 与参考文件相同，无需导出。"); return
 
         # MOD 元数据
-        from PySide6.QtWidgets import QDialog
         dlg = ModMetadataDialog(self, getattr(self, '_last_mod_metadata', None))
         if dlg.exec() != QDialog.Accepted: return
         metadata = dlg.get_metadata(); self._last_mod_metadata = metadata
@@ -1079,7 +1075,6 @@ class JVGEditor(QMainWindow):
                 diff_result=diff_result)
 
             # 步骤3: MOD 元数据
-            from PySide6.QtWidgets import QDialog
             dlg = ModMetadataDialog(self, getattr(self, '_last_mod_metadata', None))
             if dlg.exec() != QDialog.Accepted: return
             metadata = dlg.get_metadata(); self._last_mod_metadata = metadata
@@ -1123,13 +1118,12 @@ class JVGEditor(QMainWindow):
         new_blk.palette.entries = list(blk.palette.entries)
         tmp_jvg.blocks.append(new_blk)
 
-        import tempfile
+        
         tmp_path = tempfile.mktemp(suffix='.jvg')
         try:
             save_jvg(tmp_jvg, tmp_path)
 
             # MOD 元数据
-            from PySide6.QtWidgets import QDialog
             dlg = ModMetadataDialog(self, getattr(self, '_last_mod_metadata', None))
             if dlg.exec() != QDialog.Accepted: return
             metadata = dlg.get_metadata(); self._last_mod_metadata = metadata
@@ -1177,7 +1171,6 @@ class JVGEditor(QMainWindow):
 
         target_name = jvg_targets[0]  # 取第一个 JVG target
 
-        from PySide6.QtWidgets import QDialog
         dlg = ModImportPreviewDialog(self, info)
         if dlg.exec() != QDialog.Accepted: return
 
@@ -1191,7 +1184,7 @@ class JVGEditor(QMainWindow):
                 f"无法导入 MOD 数据。\n请确认参考目录中包含有效的 {target_name}"); return
 
         # 将块数据重建为临时 JVG 文件，然后重新加载
-        import tempfile
+        
         tmp_path = tempfile.mktemp(suffix='.jvg')
         try:
             # 重建 JVG 二进制

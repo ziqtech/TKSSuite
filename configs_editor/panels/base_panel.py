@@ -7,8 +7,8 @@ import json
 import os
 import copy
 from pathlib import Path
-from PySide6.QtWidgets import QWidget
-from PySide6.QtCore import Signal
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel
+from PySide6.QtCore import Signal, Qt
 
 
 class ConfigPanelBase(QWidget):
@@ -141,7 +141,6 @@ class ConfigPanelBase(QWidget):
 
     def _show_missing(self) -> None:
         """配置文件缺失时显示占位提示。子类可覆盖。"""
-        from PySide6.QtWidgets import QVBoxLayout, QLabel
         layout = QVBoxLayout(self)
         layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
         lbl = QLabel(f"配置文件不存在: {self.config_name}.json")
@@ -150,12 +149,8 @@ class ConfigPanelBase(QWidget):
 
     def _show_error(self, msg: str) -> None:
         """配置文件加载错误时显示错误提示。子类可覆盖。"""
-        from PySide6.QtWidgets import QVBoxLayout, QLabel
         layout = QVBoxLayout(self)
         layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
         lbl = QLabel(f"加载失败: {msg}")
         lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(lbl)
-
-
-from PySide6.QtCore import Qt

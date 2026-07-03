@@ -53,6 +53,7 @@ from editor_utils.mod_exporter import (
     ask_reference_directory, load_reference_dat_fields,
     get_tksmod_info, import_tksmod_records, ModImportPreviewDialog,
 )
+from editor_utils.window_theme import apply_godot_theme
 
 # ── 本地别名: 保持向后兼容 ──
 def lzss_decompress(data): return lzss_decompress_dat(data)
@@ -383,9 +384,6 @@ class ShopEditorWindow(QMainWindow):
         app_inst = QApplication.instance()
         self._is_dark = app_inst.styleHints().colorScheme() == Qt.ColorScheme.Dark if app_inst else True
 
-        import sys as _sys
-        _sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-        from editor_utils.window_theme import apply_godot_theme
         apply_godot_theme(self, self._is_dark)
 
         self._build_ui()
@@ -679,7 +677,6 @@ class ShopEditorWindow(QMainWindow):
         self._apply_theme()
         self._update_path_labels()
         self._refresh_table()
-        from editor_utils.window_theme import apply_godot_theme
         apply_godot_theme(self, self._is_dark)
 
     # ================================================================
@@ -1050,7 +1047,7 @@ class ShopEditorWindow(QMainWindow):
         """导出当前修改为 .tksmod MOD 文件"""
         if not self.records or not self._original_records:
             QMessageBox.information(self, "提示", "请先加载数据"); return
-        from PySide6.QtWidgets import QDialog
+        
         dlg = ModMetadataDialog(self, getattr(self, '_last_mod_metadata', None))
         if dlg.exec() != QDialog.Accepted: return
         metadata = dlg.get_metadata(); self._last_mod_metadata = metadata
@@ -1085,7 +1082,7 @@ class ShopEditorWindow(QMainWindow):
             rec_size=8, field_count=4, field_fmt='h', use_lzss=True)
         if ref_records is None:
             QMessageBox.warning(self, "参考目录无效", f"在 {ref_dir} 中未找到 TKShop.dat"); return
-        from PySide6.QtWidgets import QDialog
+        
         dlg = ModMetadataDialog(self, getattr(self, '_last_mod_metadata', None))
         if dlg.exec() != QDialog.Accepted: return
         metadata = dlg.get_metadata(); self._last_mod_metadata = metadata
@@ -1121,7 +1118,7 @@ class ShopEditorWindow(QMainWindow):
             QMessageBox.warning(self, "不兼容", "此 MOD 不包含 TKShop.dat 的数据\n\n"
                 f"包含的数据: {', '.join(info.get('targets', []))}"); return
 
-        from PySide6.QtWidgets import QDialog
+        
         dlg = ModImportPreviewDialog(self, info)
         if dlg.exec() != QDialog.Accepted: return
 

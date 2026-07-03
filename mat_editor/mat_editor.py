@@ -29,6 +29,13 @@ import struct, os, sys, re
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 
+HAS_PIL = False
+try:
+    from PIL import Image, ImageTk, ImageChops, ImageOps, ImageDraw
+    HAS_PIL = True
+except ImportError:
+    pass
+
 # ============================================================
 # LZSS 解压 (用于 TKItem.dat)
 # ============================================================
@@ -1295,7 +1302,6 @@ def _jvg_sprite_to_tk(jvg, block_idx, frame_idx=0):
             ci = px[p] if p < len(px) else 0
             rgba[off] = pr[ci*3]; rgba[off+1] = pr[ci*3+1]
             rgba[off+2] = pr[ci*3+2]; rgba[off+3] = 255
-    from PIL import Image, ImageTk
     img = Image.frombytes('RGBA', (frame.width, frame.height), bytes(rgba))
     ptk = ImageTk.PhotoImage(img)
     _SPRITE_CACHE[key] = ptk
@@ -1324,7 +1330,6 @@ def _make_subtractive_shadow(jvg, block_idx, frame_idx):
             r, g, b = pr[ci*3], pr[ci*3+1], pr[ci*3+2]
             L = int(0.299*r + 0.587*g + 0.114*b)  # NTSC 亮度
             rgba[off] = 0; rgba[off+1] = 0; rgba[off+2] = 0; rgba[off+3] = L
-    from PIL import Image, ImageTk
     img = Image.frombytes('RGBA', (frame.width, frame.height), bytes(rgba))
     ptk = ImageTk.PhotoImage(img)
     _SHADOW_CACHE[key] = ptk
@@ -1354,13 +1359,12 @@ def _get_blended_sprite(jvg, block_idx, frame_idx, mode=0, param=0):
             ci = px[p] if p < len(px) else 0
             rgba[off] = pr[ci*3]; rgba[off+1] = pr[ci*3+1]
             rgba[off+2] = pr[ci*3+2]; rgba[off+3] = 255
-    from PIL import Image, ImageTk, ImageOps
     img = Image.frombytes('RGBA', (frame.width, frame.height), bytes(rgba))
     if mode == 5:
         img = ImageOps.mirror(img)
     elif mode == 1:
         # 染色: 按 param 颜色值乘入 RGB 通道 (sub_454D24)
-        from PIL import ImageChops
+        
         r_tint = (param >> 10) & 0x1F; g_tint = (param >> 5) & 0x1F; b_tint = param & 0x1F
         if param > 0 and param <= 31:
             sf_r = r_tint / 31.0; sf_g = g_tint / 31.0; sf_b = b_tint / 31.0
@@ -1377,7 +1381,7 @@ def _get_blended_sprite(jvg, block_idx, frame_idx, mode=0, param=0):
             r_ch, g_ch, b_ch, a_ch = img.split()
             # 像素越亮 → 加法贡献越大; alpha = 亮度 * scale
             lum = r_ch.point(lambda v: int(v * 0.299)) if False else r_ch
-            from PIL import ImageChops
+            
             lum = ImageChops.add(
                 ImageChops.add(
                     r_ch.point(lambda v: int(v * 0.299)),
@@ -1398,7 +1402,7 @@ def _get_blended_sprite(jvg, block_idx, frame_idx, mode=0, param=0):
     elif mode == 4:
         # 亮度 alpha: 按 src 亮度修改 alpha 通道 (sub_459854)
         r_ch, g_ch, b_ch, a_ch = img.split()
-        from PIL import ImageChops
+        
         lum = ImageChops.add(
             ImageChops.add(
                 r_ch.point(lambda v: int(v * 0.299)),
@@ -1454,7 +1458,6 @@ def _get_jvg_frame_rgba(jvg, block_idx, frame_idx):
             ci = px[p] if p < len(px) else 0
             rgba[off] = pr[ci*3]; rgba[off+1] = pr[ci*3+1]
             rgba[off+2] = pr[ci*3+2]; rgba[off+3] = 255
-    from PIL import Image
     img = Image.frombytes('RGBA', (frame.width, frame.height), bytes(rgba))
     _RGBA_CACHE[key] = img.copy()
     return img
@@ -1477,7 +1480,6 @@ def _pil_tint(rgba_src, param):
     r_ch = r_ch.point(lambda v: int(v * r_tint / 31))
     g_ch = g_ch.point(lambda v: int(v * g_tint / 31))
     b_ch = b_ch.point(lambda v: int(v * b_tint / 31))
-    from PIL import Image
     return Image.merge('RGBA', (r_ch, g_ch, b_ch, a_ch))
 
 def _pil_additive(composite, rgba_src, dx, dy, param):
@@ -1485,7 +1487,7 @@ def _pil_additive(composite, rgba_src, dx, dy, param):
     param=0或>31 → full min(dst+src, 255); 0<param<=31 → min(dst+src*param/32, 255)"""
     if composite is None or rgba_src is None: return
     try:
-        from PIL import Image, ImageChops
+        
         sw, sh = rgba_src.size; cw, ch = composite.size
         l = max(0, dx); t = max(0, dy)
         r = min(cw, dx + sw); b = min(ch, dy + sh)
@@ -1512,7 +1514,7 @@ def _pil_subtract(composite, rgba_src, dx, dy):
     dst.RGB = max(dst - src, 0) 逐通道独立"""
     if composite is None or rgba_src is None: return
     try:
-        from PIL import Image, ImageChops
+        
         sw, sh = rgba_src.size; cw, ch = composite.size
         l = max(0, dx); t = max(0, dy)
         r = min(cw, dx + sw); b = min(ch, dy + sh)
@@ -1536,7 +1538,7 @@ def _pil_luma_alpha(composite, rgba_src, dx, dy):
     α = NTSC_luma_5bit(src); α=0跳过; α>28覆盖; else dst*(32-α)/32+src*α/32"""
     if composite is None or rgba_src is None: return
     try:
-        from PIL import Image, ImageChops
+        
         sw, sh = rgba_src.size; cw, ch = composite.size
         l = max(0, dx); t = max(0, dy)
         r = min(cw, dx + sw); b = min(ch, dy + sh)
@@ -1584,7 +1586,6 @@ def load_scene_background(sc_grp_path, sc_idx_path, scene_id):
         if not sec.pixels: return None
 
         rgba = rgb565_to_rgba(sec.pixels, sec.width, sec.height)
-        from PIL import Image
         img = Image.frombytes('RGBA', (sec.width, sec.height), bytes(rgba))
         return img.convert('RGB')  # 背景转 RGB 供 PIL 合成
     except Exception:
@@ -2751,7 +2752,6 @@ class MatEditor:
 
     def _vis_render_scene(self, ents, w, h):
         """PIL 预合成整个场景并显示到 Canvas"""
-        from PIL import Image, ImageDraw, ImageTk, ImageOps
         mode = DISPLAY_MODES.get(self._vis_display_mode.get(), 'auto')
 
         # 背景
@@ -3572,14 +3572,14 @@ class MatEditor:
                     if pos < 0: break
                     self.script_text.tag_add('command', f"{ln}.{pos}", f"{ln}.{pos + len(cmd)}")
                     idx = pos + 1
-            import re
+            
             for m in re.finditer(r'-?\d+', line):
                 if comment_start >= 0 and m.start() >= comment_start: continue
                 self.script_text.tag_add('number', f"{ln}.{m.start()}", f"{ln}.{m.end()}")
 
     def _update_line_preview(self):
         """更新右侧行功能预览面板 — 逐行解析编辑器内容并显示命令描述"""
-        import re
+        
         content = self.script_text.get('1.0', 'end-1c')
         lines = content.split('\n')
 
@@ -3644,7 +3644,7 @@ class MatEditor:
     # =========== 脚本预览 ===========
     def _parse_script_commands(self, body_lines):
         """解析 DEFINE body_lines 中的脚本命令, 返回 [(cmd_name, args_list, line_text, line_idx), ...]"""
-        import re
+        
         commands = []
         for i, line in enumerate(body_lines):
             stripped = line.strip()

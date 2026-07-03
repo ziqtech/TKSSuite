@@ -14,6 +14,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QPixmap, QImage, QIcon
 
 from editor_utils.window_theme import apply_godot_theme
+from editor_utils.picker_dialogs import WarpcPickerDialog
 
 from .base_panel import ConfigPanelBase
 
@@ -297,20 +298,16 @@ class SummonEditDialog(QDialog):
 
     def _on_select_main(self):
         """点击主目标选择按钮 — 弹出单选 WarPC 选择器。"""
-        from editor_utils.picker_dialogs import WarpcPickerDialog
-        excluded = list(set(self._random_list))
         dlg = WarpcPickerDialog(self, self._records, self._tkt, self._fa_sprites,
                                 multi_select=False,
-                                current_indices=[self._main_target],
-                                excluded_indices=excluded)
+                                current_indices=[self._main_target])
         if dlg.exec() == QDialog.DialogCode.Accepted and dlg.selected_indices:
             self._main_target = dlg.selected_indices[0]
             self._update_main_display()
 
     def _on_select_a(self):
         """点击分支 A 选择按钮。"""
-        from editor_utils.picker_dialogs import WarpcPickerDialog
-        excluded = [v for v in [self._b_target] if v is not None] + list(set(self._random_list))
+        excluded = [v for v in [self._b_target] if v is not None]
         dlg = WarpcPickerDialog(self, self._records, self._tkt, self._fa_sprites,
                                 multi_select=False,
                                 current_indices=[self._a_target or 0],
@@ -321,8 +318,7 @@ class SummonEditDialog(QDialog):
 
     def _on_select_b(self):
         """点击分支 B 选择按钮。"""
-        from editor_utils.picker_dialogs import WarpcPickerDialog
-        excluded = [v for v in [self._a_target] if v is not None] + list(set(self._random_list))
+        excluded = [v for v in [self._a_target] if v is not None]
         dlg = WarpcPickerDialog(self, self._records, self._tkt, self._fa_sprites,
                                 multi_select=False,
                                 current_indices=[self._b_target or 0],
@@ -343,12 +339,7 @@ class SummonEditDialog(QDialog):
 
     def _on_add_random(self):
         """弹出 WarPC 选择器（多选模式）添加随机候选。"""
-        from editor_utils.picker_dialogs import WarpcPickerDialog
         excluded = list(set(self._random_list))
-        if self._is_dual:
-            excluded.extend([v for v in [self._a_target, self._b_target] if v is not None])
-        else:
-            excluded.append(self._main_target)
 
         dlg = WarpcPickerDialog(self, self._records, self._tkt, self._fa_sprites,
                                 multi_select=True,
