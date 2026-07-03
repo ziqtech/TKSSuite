@@ -62,6 +62,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from editor_utils.theme_manager import ThemeManager
 from editor_utils.window_theme import apply_godot_theme
 from editor_utils.kon_name_resolver import KonNameResolver
+from editor_utils.lzss import lzss_decompress_dat
 from editor_utils.dock_components import DockHeader
 from editor_utils.ui_helpers import (
     make_fake_input, update_path_labels, confirm_close, export_csv,
@@ -1669,6 +1670,17 @@ class ActEditorV2(QMainWindow):
         self._apply_theme()
         apply_godot_theme(self, self._is_dark)
 
+    def _compact_threshold(self):
+        return 3 if self.compact_cb.isChecked() else 0
+
+    def _rebuild_names(self):
+        """精简显示切换时重建名称缓存并刷新列表。"""
+        if not self.act_path:
+            return
+        tks_dir = os.path.dirname(self.act_path)
+        self.names = self._build_act_names(tks_dir, self._compact_threshold())
+        self._apply_filter()
+
     def _update_paths(self):
         tks_dir = os.path.dirname(self.act_path) if self.act_path else ''
         update_path_labels([
@@ -1732,6 +1744,12 @@ class ActEditorV2(QMainWindow):
         self.show_empty_cb.setChecked(True)
         self.show_empty_cb.stateChanged.connect(self._apply_filter)
         toolbar.addWidget(self.show_empty_cb)
+
+        self.compact_cb = QCheckBox("精简显示")
+        self.compact_cb.setChecked(True)
+        self.compact_cb.setToolTip("当同一 TKKon 被超过3个角色配置时，仅显示技能名称")
+        self.compact_cb.stateChanged.connect(self._rebuild_names)
+        toolbar.addWidget(self.compact_cb)
 
         self.greenscreen_cb = QCheckBox("去绿幕")
         self.greenscreen_cb.setChecked(True)
@@ -2352,11 +2370,7 @@ class ActEditorV2(QMainWindow):
             self.entries = load_act(self.act_path)
 
             tks_dir = os.path.dirname(self.act_path)
-            try:
-                resolver = KonNameResolver(tks_dir)
-                self.names = resolver.get_all_names()
-            except Exception:
-                self.names = {}
+            self.names = self._build_act_names(tks_dir, self._compact_threshold())
 
             self._dirty = False
             nonempty = sum(1 for e in self.entries if not entry_is_empty(e))
@@ -2369,6 +2383,79 @@ class ActEditorV2(QMainWindow):
         self._set_edit_enabled(True)
         self._update_paths()
         self._apply_filter()
+
+    def _build_act_names(self, tks_dir: str, compact_threshold: int = 3) -> dict[int, str]:
+        """构建 TKAct 索引 → 名称 的反向映射。
+        
+        TKAct 条目被 TKKon.tkact_id 和 TKItem.tkkon_index→TKKon.tkact_id
+        多对一引用。此方法收集所有引用源并合并显示。
+        """
+        import struct
+        names: dict[int, list[str]] = {}
+
+        # 1. 获取 TKKon 名称解析器
+        try:
+            resolver = KonNameResolver(tks_dir)
+        except Exception:
+            return {}
+
+        # 2. TKKon → TKAct: kon[k].tkact_id → resolver.get_name(k)
+        kon_path = os.path.join(tks_dir, 'TKKon.dat')
+        kon_act_map: dict[int, int] = {}  # kon_index → tkact_id
+        if os.path.exists(kon_path):
+            try:
+                with open(kon_path, 'rb') as f:
+                    raw = f.read()
+                dec = lzss_decompress_dat(raw)
+                if len(raw) % 40 == 0 and (len(dec) == 0 or len(dec) % 40 != 0):
+                    dec = raw
+                for i in range(650):
+                    off = i * 40
+                    if off + 8 > len(dec):
+                        break
+                    tkact_id = struct.unpack_from('<h', dec, off + 6)[0]
+                    if tkact_id >= 0:
+                        kon_act_map[i] = tkact_id
+            except Exception:
+                pass
+
+        for kon_idx, act_idx in kon_act_map.items():
+            name = resolver.get_name(kon_idx, compact_threshold=compact_threshold)
+            if name and not name.startswith('空槽-'):
+                if act_idx not in names:
+                    names[act_idx] = []
+                if name not in names[act_idx]:
+                    names[act_idx].append(name)
+
+        # 3. TKItem → TKKon → TKAct: item.tkkon_index → kon_act_map → act_idx
+        item_path = os.path.join(tks_dir, 'TKItem.dat')
+        if os.path.exists(item_path):
+            try:
+                with open(item_path, 'rb') as f:
+                    raw = f.read()
+                dec = lzss_decompress_dat(raw)
+                if len(raw) % 64 == 0 and (len(dec) == 0 or len(dec) % 64 != 0):
+                    dec = raw
+                for i in range(600):
+                    off = i * 64
+                    if off + 14 > len(dec):
+                        break
+                    item_id = struct.unpack_from('<h', dec, off)[0]
+                    if item_id <= 0:
+                        continue
+                    tkkon_idx = struct.unpack_from('<h', dec, off + 12)[0]
+                    if tkkon_idx in kon_act_map:
+                        act_idx = kon_act_map[tkkon_idx]
+                        kon_name = resolver.get_name(tkkon_idx, compact_threshold=compact_threshold)
+                        if kon_name and not kon_name.startswith('空槽-'):
+                            if act_idx not in names:
+                                names[act_idx] = []
+                            if kon_name not in names[act_idx]:
+                                names[act_idx].append(kon_name)
+            except Exception:
+                pass
+
+        return {k: '\n'.join(v) for k, v in names.items()}
 
     # ── 路径更新 ──
 
@@ -2443,14 +2530,29 @@ class ActEditorV2(QMainWindow):
         for row, idx in enumerate(self.filtered_indices):
             entry = self.entries[idx]
             has_data = not entry_is_empty(entry)
-            nm = self.names.get(idx, '')
+            if has_data:
+                nm = self.names.get(idx, '')
+                if not nm and idx in (640, 641, 642):
+                    nm = '未知'
+            else:
+                nm = '空槽'
             self.table.insertRow(row)
             self.table.setItem(row, 0, QTableWidgetItem(str(idx)))
             self.table.setItem(row, 1, QTableWidgetItem(nm))
             self.table.setItem(row, 2, QTableWidgetItem(entry_summary(entry)))
             n_layer = len(entry_active_layers(entry))
             self.table.setItem(row, 3, QTableWidgetItem(str(n_layer)))
-            color = QColor('#228B22') if has_data else QColor('#AAAAAA')
+            # 颜色标记 (名称语义优先)
+            if "原版未完成" in nm:
+                color = QColor("#CC3333")
+            elif "未知" in nm:
+                color = QColor("#CC8800")
+            elif "空槽" in nm:
+                color = QColor("#888888") if self._is_dark else QColor("#AAAAAA")
+            elif has_data:
+                color = QColor('#228B22')
+            else:
+                color = QColor('#AAAAAA')
             for ci in range(4):
                 self.table.item(row, ci).setForeground(color)
         self.table.blockSignals(False)
