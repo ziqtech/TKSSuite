@@ -309,6 +309,9 @@ ALL_NAMED_FIELDS = (IDENTITY_FIELDS + HPMP_FIELDS + STAT_FIELDS + CHAR_ATTR_FIEL
 def load_warpc(fp):
     with open(fp, 'rb') as f: raw = f.read()
     dec = lzss_decompress(raw)
+    # 兜底: LZSS 解压结果不对齐记录边界但原始文件对齐 → 未压缩 raw 数据
+    if len(raw) % WARPC_REC == 0 and (len(dec) == 0 or len(dec) % WARPC_REC != 0):
+        dec = raw
     if len(dec) % WARPC_REC != 0:
         raise ValueError(f"解压后大小 {len(dec)} 不是 {WARPC_REC} 的整数倍")
     recs = []; cnt = len(dec) // WARPC_REC
@@ -1695,7 +1698,10 @@ class WarpcEditorV2(QMainWindow):
         sk_path = os.path.join(tks_dir, 'TKSkill.dat')
         if not os.path.exists(sk_path): return {}, {}
         try:
-            with open(sk_path, 'rb') as f: dec = lzss_decompress(f.read())
+            with open(sk_path, 'rb') as f: raw = f.read()
+            dec = lzss_decompress(raw)
+            if len(raw) % 94 == 0 and (len(dec) == 0 or len(dec) % 94 != 0):
+                dec = raw
             names, types = {}, {}
             for i in range(350):
                 off = i * 94
@@ -1726,7 +1732,10 @@ class WarpcEditorV2(QMainWindow):
         it_path = os.path.join(tks_dir, 'TKItem.dat')
         if not os.path.exists(it_path): return {}, {}, {}, {}
         try:
-            with open(it_path, 'rb') as f: dec = lzss_decompress(f.read())
+            with open(it_path, 'rb') as f: raw = f.read()
+            dec = lzss_decompress(raw)
+            if len(raw) % 64 == 0 and (len(dec) == 0 or len(dec) % 64 != 0):
+                dec = raw
             id_lookup, idx_lookup, idx_to_id, id_to_idx = {}, {}, {}, {}
             for i in range(600):
                 off = i * 64

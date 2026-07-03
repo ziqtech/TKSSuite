@@ -121,7 +121,11 @@ def skill_name(rec, tkt):
 
 def load_skills(fp):
     with open(fp, 'rb') as f: raw = f.read()
-    dec = lzss_decompress(raw); recs = []
+    dec = lzss_decompress(raw)
+    # 兜底: LZSS 解压结果不对齐记录边界但原始文件对齐 → 未压缩 raw 数据
+    if len(raw) % SKILL_REC == 0 and (len(dec) == 0 or len(dec) % SKILL_REC != 0):
+        dec = raw
+    recs = []
     for i in range(SKILL_CNT):
         off = i * SKILL_REC
         if off + SKILL_REC > len(dec): break

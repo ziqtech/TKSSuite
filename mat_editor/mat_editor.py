@@ -670,6 +670,9 @@ def _load_char_names(tks_dir, tkt_lookup):
             raw = f.read()
         dec = lzss_decompress(raw)
         REC = 1054  # 527 int16
+        # 兜底: 解压结果不对齐记录边界但原始文件对齐 → 未压缩 raw 数据
+        if len(raw) % REC == 0 and (len(dec) == 0 or len(dec) % REC != 0):
+            dec = raw
         cnt = min(50, len(dec) // REC)
         for i in range(cnt):
             off = i * REC
@@ -3145,6 +3148,9 @@ class MatEditor:
                 with open(item_p, 'rb') as f: item_raw = f.read()
                 item_dec = lzss_decompress(item_raw)
                 ITEM_REC = 64; ITEM_CNT = 600
+                # 兜底: 解压结果不对齐记录边界但原始文件对齐 → 未压缩 raw 数据
+                if len(item_raw) % ITEM_REC == 0 and (len(item_dec) == 0 or len(item_dec) % ITEM_REC != 0):
+                    item_dec = item_raw
                 for i in range(min(ITEM_CNT, len(item_dec) // ITEM_REC)):
                     off = i * ITEM_REC
                     fields = struct.unpack_from('<' + 'h' * 32, item_dec, off)

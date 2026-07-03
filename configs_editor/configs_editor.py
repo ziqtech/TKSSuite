@@ -47,6 +47,9 @@ def load_warpc_records(warpc_path: str):
     with open(warpc_path, 'rb') as f:
         raw = f.read()
     dec = lzss_decompress_dat(raw)
+    # 兜底: LZSS 解压结果不对齐记录边界但原始文件对齐 → 未压缩 raw 数据
+    if len(raw) % WARPC_REC_SIZE == 0 and (len(dec) == 0 or len(dec) % WARPC_REC_SIZE != 0):
+        dec = raw
     if not dec or len(dec) % WARPC_REC_SIZE != 0:
         return []
     count = len(dec) // WARPC_REC_SIZE
@@ -68,6 +71,9 @@ def load_skill_names(skill_path: str, tkt_names: dict) -> dict:
     with open(skill_path, 'rb') as f:
         raw = f.read()
     dec = lzss_decompress_dat(raw)
+    # 兜底: LZSS 解压结果不对齐记录边界但原始文件对齐 → 未压缩 raw 数据
+    if len(raw) % SKILL_REC == 0 and (len(dec) == 0 or len(dec) % SKILL_REC != 0):
+        dec = raw
     if not dec or len(dec) < SKILL_REC:
         return {}
     result = {}

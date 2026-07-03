@@ -231,6 +231,9 @@ def load_tkitem_with_tkt(item_dat_path, tkt_dat_path):
         raw = f.read()
     decompressed = lzss_decompress(raw)
     REC_SIZE = 64
+    # 兜底: LZSS 解压结果不对齐记录边界但原始文件对齐 → 未压缩 raw 数据
+    if len(raw) % REC_SIZE == 0 and (len(decompressed) == 0 or len(decompressed) % REC_SIZE != 0):
+        decompressed = raw
 
     items_raw = []
     for i in range(min(600, len(decompressed) // REC_SIZE)):
@@ -313,6 +316,9 @@ def load_shop_data(filepath):
         raw = f.read()
 
     decompressed = lzss_decompress(raw)
+    # 兜底: LZSS 解压结果不对齐记录边界但原始文件对齐 → 未压缩 raw 数据
+    if len(raw) % REC_SIZE == 0 and (len(decompressed) == 0 or len(decompressed) % REC_SIZE != 0):
+        decompressed = raw
     FIXED_COUNT = 240
     records = []
 

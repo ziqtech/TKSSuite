@@ -61,7 +61,7 @@ from editor_utils.window_theme import apply_godot_theme
 
 HAS_PIL = False
 try:
-    from PIL import Image, ImageChops, ImageOps
+    from PIL import Image, ImageChops, ImageDraw, ImageOps
     HAS_PIL = True
 except ImportError:
     pass
@@ -679,6 +679,9 @@ def _load_char_names(tks_dir, tkt_lookup):
             raw = f.read()
         dec = lzss_decompress(raw)
         REC = 1054  # 527 int16
+        # 兜底: 解压结果不对齐记录边界但原始文件对齐 → 未压缩 raw 数据
+        if len(raw) % REC == 0 and (len(dec) == 0 or len(dec) % REC != 0):
+            dec = raw
         cnt = min(50, len(dec) // REC)
         for i in range(cnt):
             off = i * REC
@@ -1971,6 +1974,9 @@ class JvgLoaderThread(QThread):
                 with open(item_p, 'rb') as f:
                     item_raw = f.read()
                 item_dec = lzss_decompress(item_raw)
+                # 兜底: 解压结果不对齐记录边界但原始文件对齐 → 未压缩 raw 数据
+                if len(item_raw) % 64 == 0 and (len(item_dec) == 0 or len(item_dec) % 64 != 0):
+                    item_dec = item_raw
                 ITEM_CNT = 600
                 for i, fields in enumerate(struct.iter_unpack('<' + 'h' * 32, item_dec)):
                     if i >= ITEM_CNT: break

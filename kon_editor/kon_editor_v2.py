@@ -151,6 +151,9 @@ def kon_record_name(rec, tkt, resolver=None, compact_threshold=0):
 def load_kon(fp):
     with open(fp, 'rb') as f: raw = f.read()
     dec = lzss_decompress(raw)
+    # 兜底: LZSS 解压大小不匹配预期时, 检查是否已是未压缩 raw 数据
+    if len(dec) != KON_DECOMPRESSED and len(raw) == KON_DECOMPRESSED:
+        dec = raw
     if len(dec) != KON_DECOMPRESSED:
         raise ValueError(f"解压后大小 {len(dec)} 不等于预期 26000")
     recs = []

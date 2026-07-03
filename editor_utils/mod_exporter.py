@@ -466,6 +466,9 @@ def load_reference_dat_fields(ref_dir: str, dat_name: str, rec_size: int,
     if use_lzss:
         from .lzss import lzss_decompress_dat
         dec = lzss_decompress_dat(raw)
+        # 兜底: 解压结果不对齐记录边界但原始文件对齐 → 未压缩 raw 数据
+        if len(raw) % rec_size == 0 and (len(dec) == 0 or len(dec) % rec_size != 0):
+            dec = raw
     else:
         dec = raw
 

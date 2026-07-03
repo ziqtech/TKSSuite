@@ -150,6 +150,9 @@ def load_tkskill_names(sp, tkt):
     if not sp or not os.path.exists(sp): return {}
     with open(sp, 'rb') as f: raw = f.read()
     dec = lzss_decompress(raw); REC = 94; names = {}
+    # 兜底: LZSS 解压结果不对齐记录边界但原始文件对齐 → 未压缩 raw 数据
+    if len(raw) % REC == 0 and (len(dec) == 0 or len(dec) % REC != 0):
+        dec = raw
     for i in range(min(350, len(dec)//REC)):
         sid = struct.unpack_from('<h', dec, i*REC)[0]
         n = tkt.get(sid,"") or tkt.get(-sid,"") or f"Skill#{sid}"
@@ -381,7 +384,11 @@ def item_display_name(rec, tkt):
 # ============================================================
 def load_items(fp):
     with open(fp, 'rb') as f: raw = f.read()
-    dec = lzss_decompress(raw); recs = []
+    dec = lzss_decompress(raw)
+    # 兜底: LZSS 解压结果不对齐记录边界但原始文件对齐 → 未压缩 raw 数据
+    if len(raw) % ITEM_REC == 0 and (len(dec) == 0 or len(dec) % ITEM_REC != 0):
+        dec = raw
+    recs = []
     for i in range(ITEM_CNT):
         off = i * ITEM_REC
         if off + ITEM_REC > len(dec): break

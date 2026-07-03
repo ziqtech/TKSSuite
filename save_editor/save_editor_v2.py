@@ -1059,7 +1059,10 @@ class SaveEditorApp(QMainWindow):
     def _parse_skill_dat(self, path):
         try:
             with open(path, 'rb') as f:
-                dec = lzss_decompress_dat(f.read())
+                raw = f.read()
+            dec = lzss_decompress_dat(raw)
+            if len(raw) % 94 == 0 and (len(dec) == 0 or len(dec) % 94 != 0):
+                dec = raw
             names = {}
             for i in range(350):
                 off = i * 94
@@ -1082,7 +1085,10 @@ class SaveEditorApp(QMainWindow):
         """
         try:
             with open(path, 'rb') as f:
-                dec = lzss_decompress_dat(f.read())
+                raw = f.read()
+            dec = lzss_decompress_dat(raw)
+            if len(raw) % 94 == 0 and (len(dec) == 0 or len(dec) % 94 != 0):
+                dec = raw
             types = {}
             for i in range(350):
                 off = i * 94
@@ -1111,7 +1117,10 @@ class SaveEditorApp(QMainWindow):
     def _parse_item_dat(self, path):
         try:
             with open(path, 'rb') as f:
-                dec = lzss_decompress_dat(f.read())
+                raw = f.read()
+            dec = lzss_decompress_dat(raw)
+            if len(raw) % 64 == 0 and (len(dec) == 0 or len(dec) % 64 != 0):
+                dec = raw
         except Exception:
             return {}, {}
         records = {}

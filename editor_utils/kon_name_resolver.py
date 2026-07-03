@@ -182,7 +182,10 @@ class KonNameResolver:
 
         try:
             with open(path, 'rb') as f:
-                dec = lzss_decompress_dat(f.read())
+                raw = f.read()
+            dec = lzss_decompress_dat(raw)
+            if len(raw) % SKILL_REC == 0 and (len(dec) == 0 or len(dec) % SKILL_REC != 0):
+                dec = raw
         except Exception:
             return {}, {}
 
@@ -217,7 +220,10 @@ class KonNameResolver:
 
         try:
             with open(path, 'rb') as f:
-                dec = lzss_decompress_dat(f.read())
+                raw = f.read()
+            dec = lzss_decompress_dat(raw)
+            if len(raw) % KON_REC == 0 and (len(dec) == 0 or len(dec) % KON_REC != 0):
+                dec = raw
         except Exception:
             return []
 
@@ -279,7 +285,10 @@ class KonNameResolver:
 
         try:
             with open(path, 'rb') as f:
-                dec = lzss_decompress_dat(f.read())
+                raw = f.read()
+            dec = lzss_decompress_dat(raw)
+            if len(raw) % WARPC_REC == 0 and (len(dec) == 0 or len(dec) % WARPC_REC != 0):
+                dec = raw
         except Exception:
             return
 
@@ -380,7 +389,10 @@ class KonNameResolver:
 
         try:
             with open(path, 'rb') as f:
-                dec = lzss_decompress_dat(f.read())
+                raw = f.read()
+            dec = lzss_decompress_dat(raw)
+            if len(raw) % ITEM_REC == 0 and (len(dec) == 0 or len(dec) % ITEM_REC != 0):
+                dec = raw
         except Exception:
             return
 
