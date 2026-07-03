@@ -57,7 +57,7 @@ from PySide6.QtWidgets import (
     QLineEdit, QComboBox, QCheckBox, QPushButton, QLabel,
     QScrollArea, QDialog, QFileDialog, QMessageBox, QTextEdit,
     QFrame, QGridLayout, QAbstractItemView, QMenuBar, QTabWidget,
-    QSpinBox,
+    QSpinBox, QSizePolicy,
 )
 from PySide6.QtGui import QColor, QFont, QIcon, QIntValidator
 from PySide6.QtCore import Qt, QTranslator, Signal
@@ -82,6 +82,18 @@ from editor_utils.kon_name_resolver import KonNameResolver
 def lzss_decompress(data): return lzss_decompress_dat(data)
 def lzss_compress(data): return lzss_compress_dat(data)
 def load_tkt(tkt_path): return load_tkt_simple(tkt_path)
+
+def _dialog_show_event(dialog):
+    """弹窗 title bar 主题跟随父窗口。在 showEvent 中调用。"""
+    from editor_utils.window_theme import apply_godot_theme
+    parent = dialog.parent()
+    if parent:
+        is_dark = getattr(parent, 'is_dark_theme', None) or getattr(parent, '_is_dark', None)
+    else:
+        is_dark = None
+    if is_dark is None:
+        is_dark = QApplication.instance().styleHints().colorScheme() == Qt.ColorScheme.Dark
+    apply_godot_theme(dialog, bool(is_dark))
 
 def load_jvg_sprites(jvg_path):
     try: from PIL import Image
@@ -459,6 +471,10 @@ class SkillPickerDialog(QDialog):
 
         self._refresh()
 
+    def showEvent(self, event):
+        super().showEvent(event)
+        _dialog_show_event(self)
+
     def _refresh(self):
         q = self.search_box.text().strip().lower(); self.table.setRowCount(0); row = 0
         type_names = {0:"指令",1:"主动",2:"被动",3:"移动"}
@@ -508,6 +524,10 @@ class ItemPickerDialog(QDialog):
         bl.addWidget(QPushButton("确定", clicked=self._accept)); layout.addLayout(bl)
         self._refresh()
 
+    def showEvent(self, event):
+        super().showEvent(event)
+        _dialog_show_event(self)
+
     def _refresh(self):
         q = self.search_box.text().strip().lower(); self.table.setRowCount(0); row = 0
         for k, v in sorted(self.lookup.items(), key=lambda x: x[0]):
@@ -538,6 +558,10 @@ class FlagsDialog(QDialog):
         bl.addStretch(); bl.addWidget(QPushButton("取消", clicked=self.reject))
         bl.addWidget(QPushButton("确定", clicked=self.accept)); layout.addLayout(bl)
 
+    def showEvent(self, event):
+        super().showEvent(event)
+        _dialog_show_event(self)
+
     def get_value(self):
         m = sum((1<<bit) for bit, cb in self.vars if cb.isChecked())
         return m if m < 0x8000 else m - 0x10000
@@ -565,6 +589,10 @@ class UseRightDialog(QDialog):
         bl.addWidget(QPushButton("全清", clicked=lambda: [v.setChecked(False) for _,v in self.vars]))
         bl.addStretch(); bl.addWidget(QPushButton("取消", clicked=self.reject))
         bl.addWidget(QPushButton("确定", clicked=self.accept)); layout.addLayout(bl)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        _dialog_show_event(self)
 
     def _sync_from_boxes(self):
         """勾选框变动时同步到手动输入框"""
@@ -603,6 +631,10 @@ class TkkonPickerDialog(QDialog):
         bl.addStretch(); bl.addWidget(QPushButton("取消", clicked=self.reject))
         bl.addWidget(QPushButton("确定", clicked=self._accept)); layout.addLayout(bl)
         self.items = sorted(tkkon_names.items(), key=lambda x: x[0]) if tkkon_names else []; self._refresh()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        _dialog_show_event(self)
 
     def _refresh(self):
         q = self.search_box.text().strip().lower(); self.table.setRowCount(0); row = 0
@@ -671,6 +703,10 @@ class FieldRefDialog(QDialog):
             lines.append(f"  {s}")
         text.setPlainText('\n'.join(lines)); layout.addWidget(text)
         bl = QHBoxLayout(); bl.addStretch(); bl.addWidget(QPushButton("关闭", clicked=self.close)); layout.addLayout(bl)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        _dialog_show_event(self)
 
 # ═══════════════════════════════════════════════════════════════
 # 成长数据表弹窗 (逆向来源: sub_410674 / sub_43066C / sub_4302D8)
@@ -764,6 +800,10 @@ class GrowthTableDialog(QDialog):
         self._table_data = self._build_table()
         self._build_ui()
         self._update_grp_summary()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        apply_godot_theme(self, self._is_dark_init)
 
     # ── 成长模拟 (对应 sub_410674 循环体) ──
 
@@ -1484,6 +1524,7 @@ class WarpcEditorV2(QMainWindow):
             btn.clicked.connect(lambda _, idx=i, sv=ev: self._pick_tkkon(idx, sv))
             bh.addWidget(btn); cell.addWidget(box)
             name_lbl = QLabel("(未设置)"); name_lbl.setProperty("class", "ExtraPreviewText")
+            name_lbl.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)  # 不撑宽
             cell.addWidget(name_lbl); self._skill_effect_widgets.append((i, ev))
             self._skill_effect_name_labels.append(name_lbl)
             ev.textChanged.connect(lambda _, idx=i, sv=ev: self._update_kon_label(idx, sv))
@@ -1723,7 +1764,7 @@ class WarpcEditorV2(QMainWindow):
             return {}
         try:
             resolver = KonNameResolver(tks_dir)
-            return resolver.get_all_names()
+            return resolver.get_all_names(compact_threshold=3)
         except Exception:
             return {}
 
@@ -2119,7 +2160,9 @@ class WarpcEditorV2(QMainWindow):
         try: kon_id = int(ev.text())
         except: return
         name = self.tkkon_names.get(kon_id, f"TKKon#{kon_id}") if kon_id >= 0 else "(未设置)"
-        self._skill_effect_name_labels[idx].setText(name)
+        lbl = self._skill_effect_name_labels[idx]
+        lbl.setToolTip(name)
+        lbl.setText(name)
 
     # ── 应用编辑 ──
     def _apply_edit(self):
