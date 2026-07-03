@@ -66,7 +66,7 @@ from editor_utils.theme_manager import ThemeManager
 from editor_utils.dock_components import DockHeader
 from editor_utils.picker_dialogs import TktPickerDialog, StatusPickerDialog, STATUS_NAMES, ItemPickerDialog
 from editor_utils.jvg_loader import load_mu_sprites, get_sprite_pixmap
-from editor_utils.ui_helpers import make_fake_input, update_path_labels, confirm_close, export_csv, resolve_config_path
+from editor_utils.ui_helpers import make_fake_input, update_path_labels, confirm_close, export_csv, resolve_config_path, dialog_show_event
 from editor_utils.lzss import lzss_decompress_dat, lzss_compress_dat, lzss_decompress_save, lzss_compress_save
 from editor_utils.tkt_loader import load_tkt_simple
 from editor_utils.mod_exporter import (
@@ -82,18 +82,6 @@ from editor_utils.kon_name_resolver import KonNameResolver
 def lzss_decompress(data): return lzss_decompress_dat(data)
 def lzss_compress(data): return lzss_compress_dat(data)
 def load_tkt(tkt_path): return load_tkt_simple(tkt_path)
-
-def _dialog_show_event(dialog):
-    """弹窗 title bar 主题跟随父窗口。在 showEvent 中调用。"""
-    from editor_utils.window_theme import apply_godot_theme
-    parent = dialog.parent()
-    if parent:
-        is_dark = getattr(parent, 'is_dark_theme', None) or getattr(parent, '_is_dark', None)
-    else:
-        is_dark = None
-    if is_dark is None:
-        is_dark = QApplication.instance().styleHints().colorScheme() == Qt.ColorScheme.Dark
-    apply_godot_theme(dialog, bool(is_dark))
 
 def load_jvg_sprites(jvg_path):
     try: from PIL import Image
@@ -473,7 +461,7 @@ class SkillPickerDialog(QDialog):
 
     def showEvent(self, event):
         super().showEvent(event)
-        _dialog_show_event(self)
+        dialog_show_event(self)
 
     def _refresh(self):
         q = self.search_box.text().strip().lower(); self.table.setRowCount(0); row = 0
@@ -510,7 +498,7 @@ class FlagsDialog(QDialog):
 
     def showEvent(self, event):
         super().showEvent(event)
-        _dialog_show_event(self)
+        dialog_show_event(self)
 
     def get_value(self):
         m = sum((1<<bit) for bit, cb in self.vars if cb.isChecked())
@@ -542,7 +530,7 @@ class UseRightDialog(QDialog):
 
     def showEvent(self, event):
         super().showEvent(event)
-        _dialog_show_event(self)
+        dialog_show_event(self)
 
     def _sync_from_boxes(self):
         """勾选框变动时同步到手动输入框"""
@@ -584,7 +572,7 @@ class TkkonPickerDialog(QDialog):
 
     def showEvent(self, event):
         super().showEvent(event)
-        _dialog_show_event(self)
+        dialog_show_event(self)
 
     def _refresh(self):
         q = self.search_box.text().strip().lower(); self.table.setRowCount(0); row = 0
@@ -656,7 +644,7 @@ class FieldRefDialog(QDialog):
 
     def showEvent(self, event):
         super().showEvent(event)
-        _dialog_show_event(self)
+        dialog_show_event(self)
 
 # ═══════════════════════════════════════════════════════════════
 # 成长数据表弹窗 (逆向来源: sub_410674 / sub_43066C / sub_4302D8)
@@ -2126,7 +2114,7 @@ class WarpcEditorV2(QMainWindow):
         scroll.setWidget(inner); layout.addWidget(scroll)
         bl = QHBoxLayout(); bl.addStretch(); bl.addWidget(QPushButton("取消", clicked=dlg.reject))
         layout.addLayout(bl)
-        _dialog_show_event(dlg)
+        dialog_show_event(dlg)
         dlg.exec()
 
     def _pick_tkkon(self, idx, ev):

@@ -53,7 +53,7 @@ from editor_utils.dock_components import DockHeader, create_dock
 from editor_utils.picker_dialogs import (
     TktPickerDialog, StatusPickerDialog, STATUS_NAMES, STATUS_ICON_BASE
 )
-from editor_utils.ui_helpers import make_fake_input, update_path_labels, confirm_close, export_csv, resolve_config_path
+from editor_utils.ui_helpers import make_fake_input, update_path_labels, confirm_close, export_csv, resolve_config_path, dialog_show_event
 from editor_utils.lzss import lzss_decompress_dat, lzss_compress_dat
 from editor_utils.tkt_loader import load_tkt_simple
 from editor_utils.mod_exporter import (
@@ -63,17 +63,6 @@ from editor_utils.mod_exporter import (
     get_tksmod_info, import_tksmod_records, ModImportPreviewDialog,
 )
 from editor_utils.window_theme import apply_godot_theme
-
-def _dialog_show_event(dialog):
-    """弹窗 title bar 主题跟随父窗口。在 showEvent 中调用。"""
-    parent = dialog.parent()
-    if parent:
-        is_dark = getattr(parent, '_is_dark', None) or getattr(parent, 'is_dark_theme', None)
-    else:
-        is_dark = None
-    if is_dark is None:
-        is_dark = QApplication.instance().styleHints().colorScheme() == Qt.ColorScheme.Dark
-    apply_godot_theme(dialog, bool(is_dark))
 
 # ── 本地别名: 保持向后兼容 ──
 def lzss_decompress(data): return lzss_decompress_dat(data)
@@ -300,7 +289,7 @@ class SkillPickerDialog(QDialog):
 
     def showEvent(self, event):
         super().showEvent(event)
-        _dialog_show_event(self)
+        dialog_show_event(self)
 
     def _refresh(self):
         q = self.search_box.text().strip().lower()
@@ -354,7 +343,7 @@ class IconPickerDialog(QDialog):
 
     def showEvent(self, event):
         super().showEvent(event)
-        _dialog_show_event(self)
+        dialog_show_event(self)
 
     def _select(self, v):
         self.selected_value = v; self.accept()
@@ -386,7 +375,7 @@ class FlagPickerDialog(QDialog):
 
     def showEvent(self, event):
         super().showEvent(event)
-        _dialog_show_event(self)
+        dialog_show_event(self)
 
     def _ok(self):
         m = 0
@@ -425,7 +414,7 @@ class UseRightPickerDialog(QDialog):
 
     def showEvent(self, event):
         super().showEvent(event)
-        _dialog_show_event(self)
+        dialog_show_event(self)
 
     def _sync_from_boxes(self):
         """勾选框变动时同步到手动输入框"""
@@ -1519,7 +1508,7 @@ class ItemEditorApp(QMainWindow):
         tx = QTextEdit(); tx.setReadOnly(True); tx.setPlainText('\n'.join(lines))
         tx.setProperty("class", "MonoText")
         layout.addWidget(tx)
-        _dialog_show_event(dlg)
+        dialog_show_event(dlg)
         dlg.exec()
 
     def _show_about(self):

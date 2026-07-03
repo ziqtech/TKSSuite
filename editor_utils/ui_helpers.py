@@ -5,7 +5,8 @@
 import os
 import sys
 import csv
-from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QLineEdit, QComboBox, QPushButton, QFileDialog, QMessageBox
+from PySide6.QtWidgets import QApplication, QFrame, QHBoxLayout, QLabel, QLineEdit, QComboBox, QPushButton, QFileDialog, QMessageBox
+from PySide6.QtCore import Qt
 from PySide6.QtGui import QIcon
 
 
@@ -102,6 +103,19 @@ def confirm_close(parent, dirty, title="未保存", text="有未保存的修改,
         return True
     return QMessageBox.question(parent, title, text,
                                 QMessageBox.Ok | QMessageBox.Cancel) == QMessageBox.Ok
+
+
+def dialog_show_event(dialog):
+    """弹窗 title bar 主题跟随父窗口。在 QDialog.showEvent 中调用。"""
+    from editor_utils.window_theme import apply_godot_theme
+    parent = dialog.parent()
+    if parent:
+        is_dark = getattr(parent, '_is_dark', None) or getattr(parent, 'is_dark_theme', None)
+    else:
+        is_dark = None
+    if is_dark is None:
+        is_dark = QApplication.instance().styleHints().colorScheme() == Qt.ColorScheme.Dark
+    apply_godot_theme(dialog, bool(is_dark))
 
 
 def resolve_config_path(config_filename):

@@ -9,22 +9,12 @@ import os, json
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLineEdit, QTableWidget,
     QTableWidgetItem, QAbstractItemView, QPushButton, QHeaderView,
-    QScrollArea, QWidget, QCheckBox, QLabel, QApplication, QComboBox
+    QScrollArea, QWidget, QCheckBox, QLabel, QComboBox
 )
 from PySide6.QtCore import Qt, QSize
 from PySide6.QtGui import QPixmap, QImage, QIcon
 
-from editor_utils.window_theme import apply_godot_theme
-from editor_utils.ui_helpers import resolve_config_path
-
-
-def _detect_dark_theme(parent) -> bool:
-    """检测父窗口的深色主题状态，优先读属性，回退系统主题。"""
-    for attr in ('is_dark_theme', '_is_dark'):
-        val = getattr(parent, attr, None)
-        if val is not None:
-            return bool(val)
-    return QApplication.instance().styleHints().colorScheme() == Qt.ColorScheme.Dark
+from editor_utils.ui_helpers import resolve_config_path, dialog_show_event
 
 
 # 31 种状态名称 (Maker UI 状态列表; bit 0..30) — 供状态弹窗/标签渲染共用
@@ -46,8 +36,6 @@ class TktPickerDialog(QDialog):
         self.setWindowTitle("选择 TKT 文本")
         self.resize(500, 400)
         self.selected_id = cur_val
-        self._is_dark = _detect_dark_theme(parent)
-
         layout = QVBoxLayout(self)
 
         # 搜索框
@@ -84,7 +72,7 @@ class TktPickerDialog(QDialog):
 
     def showEvent(self, event):
         super().showEvent(event)
-        apply_godot_theme(self, self._is_dark)
+        dialog_show_event(self)
 
         # 选中当前值
         if self.selected_id > 0:
@@ -134,7 +122,6 @@ class StatusPickerDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle(title); self.resize(380, 520)
         self.selected_mask = None
-        self._is_dark = _detect_dark_theme(parent)
         layout = QVBoxLayout(self)
         scroll = QScrollArea(); scroll.setWidgetResizable(True)
         content = QWidget(); cl = QVBoxLayout(content)
@@ -162,7 +149,7 @@ class StatusPickerDialog(QDialog):
 
     def showEvent(self, event):
         super().showEvent(event)
-        apply_godot_theme(self, self._is_dark)
+        dialog_show_event(self)
 
     def _ok(self):
         m = 0
@@ -274,8 +261,6 @@ class ItemPickerDialog(QDialog):
         self.setWindowTitle(title)
         self.resize(640, 560)
         self.setMinimumSize(480, 360)
-        self._is_dark = _detect_dark_theme(parent)
-
         self.selected_value = None
         self._icon_pixmap_fn = icon_pixmap_fn
         self._clear_text = clear_text
@@ -390,7 +375,7 @@ class ItemPickerDialog(QDialog):
 
     def showEvent(self, event):
         super().showEvent(event)
-        apply_godot_theme(self, self._is_dark)
+        dialog_show_event(self)
 
     # ── 权限联动 ──
     def _update_perm_options(self, page_text):
@@ -572,7 +557,6 @@ class WarpcPickerDialog(QDialog):
         self._pixmap_cache = {}
 
         layout = QVBoxLayout(self)
-
         # 搜索框
         search_row = QHBoxLayout()
         search_row.addWidget(QLabel("🔍"))
@@ -622,17 +606,7 @@ class WarpcPickerDialog(QDialog):
 
     def showEvent(self, event):
         super().showEvent(event)
-        apply_godot_theme(self, self._is_dark_theme())
-
-    @staticmethod
-    def _is_dark_theme():
-        """沿父窗口链检测当前是否为深色主题。"""
-        app = QApplication.instance()
-        if app:
-            for w in app.topLevelWidgets():
-                if hasattr(w, '_is_dark'):
-                    return w._is_dark
-        return QApplication.instance().styleHints().colorScheme() == Qt.ColorScheme.Dark
+        dialog_show_event(self)
 
     def _get_name(self, idx):
         """通过 WarPC 索引获取角色名称。"""
