@@ -84,9 +84,9 @@ class TktPickerDialog(QDialog):
         apply_godot_theme(self, self._is_dark)
 
         # 选中当前值
-        if cur_val > 0:
+        if self.selected_id > 0:
             for row in range(self.table.rowCount()):
-                if int(self.table.item(row, 0).text()) == cur_val:
+                if int(self.table.item(row, 0).text()) == self.selected_id:
                     self.table.selectRow(row)
                     break
 
