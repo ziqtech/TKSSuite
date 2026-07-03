@@ -97,7 +97,7 @@ class ConfigPanelBase(QWidget):
             self._data = copy.deepcopy(self._baseline)
             self._populate_ui(self._data)
 
-    def set_game_data(self, war_pc_records, tkt_names, fa_sprites) -> None:
+    def set_game_data(self, war_pc_records, tkt_names, fa_sprites, skill_names=None) -> None:
         """接收主窗口加载的游戏数据。默认空实现，SummonTablePanel 覆盖。"""
         pass
 

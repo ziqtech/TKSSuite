@@ -933,6 +933,16 @@ QLabel#StatusTktLabel[status="unloaded"],
 QLabel#StatusFaLabel[status="unloaded"] {
     color: #888888;
 }
+QLabel#StatusSkillLabel[status="loaded"] {
+    color: #55b572;
+    font-weight: bold;
+}
+QLabel#StatusSkillLabel[status="missing"] {
+    color: #e27d60;
+}
+QLabel#StatusSkillLabel[status="unloaded"] {
+    color: #888888;
+}
 
 /* WarPC 选择器 — 已选提示栏 */
 QLabel#WarpcSelectedLabel {

@@ -8,7 +8,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QLineEdit, QPushButton, QLabel, QWidget,
     QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView,
     QDialog, QListWidget, QListWidgetItem, QMessageBox, QFrame,
-    QApplication
+    QApplication, QToolButton
 )
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QPixmap, QImage, QIcon
@@ -45,8 +45,9 @@ def _parse_skill_key(key: str):
     return (skill_num, suffix)
 
 
-def _build_skill_rows(data: dict):
+def _build_skill_rows(data: dict, skill_names: dict | None = None):
     """从 JSON 数据构建表格行数据。
+    若提供 skill_names (来自 TKSkill.dat)，优先使用技能真实名称作为 label。
     返回: list[dict]，每条含 skill_key, skill_num, skill_label, main_target, random_list, is_dual
     """
     # 收集所有 skill_NNN 键
@@ -80,13 +81,17 @@ def _build_skill_rows(data: dict):
         is_dual = info["a"] is not None or info["b"] is not None
         main = info["main"] if info["main"] is not None else (info["a"] or 0)
         random_list = info["random"] or []
-        # 简化技能说明为显示标签
+        # 简化技能名称为显示标签
         desc = info["desc"]
-        # 从说明中提取技能名称 (如 "技能228 召喚麒麟 → ..." → "召喚麒麟")
+        # 若加载了 TKSkill.dat，优先使用真实技能名称
         label = ""
-        m = re.match(r'^技能\d+\s+(\S+)', desc)
-        if m:
-            label = m.group(1)
+        if skill_names and skill_num in skill_names:
+            label = skill_names[skill_num]
+        if not label:
+            # 回退: 从 JSON 说明中提取 (如 "技能228 召喚麒麟 → ..." → "召喚麒麟")
+            m = re.match(r'^技能\d+\s+(\S+)', desc)
+            if m:
+                label = m.group(1)
         if not label:
             label = f"skill_{skill_num}"
 
@@ -404,6 +409,7 @@ class SummonTablePanel(ConfigPanelBase):
         self._war_pc_records = []
         self._tkt_names = {}
         self._fa_sprites = []
+        self._skill_names = {}
         self._game_data_loaded = False
         self._rows = []
         self._build_ui()
@@ -430,7 +436,7 @@ class SummonTablePanel(ConfigPanelBase):
         search_row = QHBoxLayout()
         search_row.addWidget(QLabel("搜索:"))
         self._search = QLineEdit()
-        self._search.setPlaceholderText("按技能说明或编号搜索...")
+        self._search.setPlaceholderText("按技能名称或编号搜索...")
         self._search.textChanged.connect(self._refresh_table)
         search_row.addWidget(self._search, 1)
         layout.addLayout(search_row)
@@ -438,7 +444,7 @@ class SummonTablePanel(ConfigPanelBase):
         # ── 表格 ──
         self._table = QTableWidget()
         self._table.setColumnCount(5)
-        self._table.setHorizontalHeaderLabels(["技能", "技能说明", "主目标", "多随机池(优先)", "操作"])
+        self._table.setHorizontalHeaderLabels(["技能", "技能名称", "主目标", "多随机池(优先)", "操作"])
         hdr = self._table.horizontalHeader()
         hdr.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
         hdr.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
@@ -507,7 +513,7 @@ class SummonTablePanel(ConfigPanelBase):
             key_item.setToolTip(row["desc"])
             self._table.setItem(r, 0, key_item)
 
-            # 技能说明
+            # 技能名称
             label_item = QTableWidgetItem(row["label"])
             label_item.setToolTip(row["desc"])
             self._table.setItem(r, 1, label_item)
@@ -544,8 +550,10 @@ class SummonTablePanel(ConfigPanelBase):
             self._table.setItem(r, 3, rand_item)
 
             # 操作列 (编辑按钮)
-            edit_btn = QPushButton("✏️")
-            edit_btn.setFixedWidth(32)
+            edit_btn = QToolButton()
+            edit_btn.setText("✏️ 编辑")
+            edit_btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
+            edit_btn.setAutoRaise(True)
             edit_btn.setToolTip("编辑此行")
             edit_btn.clicked.connect(lambda checked, idx=r: self._on_edit_row_idx(idx))
             self._table.setCellWidget(r, 4, edit_btn)
@@ -581,16 +589,20 @@ class SummonTablePanel(ConfigPanelBase):
 
     # ── ConfigPanelBase 实现 ──
 
-    def set_game_data(self, war_pc_records, tkt_names, fa_sprites):
+    def set_game_data(self, war_pc_records, tkt_names, fa_sprites, skill_names=None):
         self._war_pc_records = war_pc_records or []
         self._tkt_names = tkt_names or {}
         self._fa_sprites = fa_sprites or []
+        self._skill_names = skill_names or {}
         self._game_data_loaded = bool(self._war_pc_records)
         self._hint_bar.setVisible(not self._game_data_loaded)
+        # 用 TKSkill.dat 真名重建技能行
+        if self._loaded and self._data is not None:
+            self._rows = _build_skill_rows(self._data, self._skill_names)
         self._refresh_table()
 
     def _populate_ui(self, data: dict):
-        self._rows = _build_skill_rows(data)
+        self._rows = _build_skill_rows(data, self._skill_names)
         self._game_data_loaded = bool(self._war_pc_records)
         self._hint_bar.setVisible(not self._game_data_loaded and self._loaded)
         self._refresh_table()

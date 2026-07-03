@@ -53,7 +53,7 @@ from editor_utils.dock_components import DockHeader, create_dock
 from editor_utils.picker_dialogs import (
     TktPickerDialog, StatusPickerDialog, STATUS_NAMES, STATUS_ICON_BASE
 )
-from editor_utils.ui_helpers import make_fake_input, update_path_labels, confirm_close, export_csv
+from editor_utils.ui_helpers import make_fake_input, update_path_labels, confirm_close, export_csv, resolve_config_path
 from editor_utils.lzss import lzss_decompress_dat, lzss_compress_dat
 from editor_utils.tkt_loader import load_tkt_simple
 from editor_utils.mod_exporter import (
@@ -501,8 +501,10 @@ class ItemEditorApp(QMainWindow):
         self.filtered_indices = []; self._dirty = False; self._editing_idx = None
         self._sort_reverse = False
         self._guard_right_reset = False
-        # 使用权限选项运行时副本 (可由 文件→自定义使用权限配置 整页替换)
+        # 使用权限选项运行时副本 (启动时自动从 configs/ 加载)
         self._use_right_options = {p: list(opts) for p, opts in USE_RIGHT_OPTIONS.items()}
+        # 启动时自动从 configs/ 加载 equip_type_labels.json
+        self._auto_load_use_right_config()
 
         self.widget_map = {}; self.extra_map = {}
 
@@ -539,8 +541,6 @@ class ItemEditorApp(QMainWindow):
         fm.addAction("导出为 MOD (指定参考目录)…", self._export_tksmod_with_ref)
         fm.addSeparator()
         fm.addAction("导入 MOD (.tksmod)…", self._import_tksmod)
-        fm.addSeparator()
-        fm.addAction("自定义使用权限配置…", self._load_use_right_config)
         fm.addSeparator(); fm.addAction("退出", self.close)
         em = mb.addMenu("编辑(&E)")
         em.addAction("新建物品 (填充空槽)\tCtrl+N", self._new_item)
@@ -1191,43 +1191,35 @@ class ItemEditorApp(QMainWindow):
             self.widget_map[fn].setText(str(dlg.selected_mask))
             self.extra_map[fn].setText(_use_right_label(dlg.selected_mask, page, opts))
 
-    # ── 自定义使用权限配置 ──
-    def _load_use_right_config(self):
-        """从 JSON 文件加载自定义使用权限选项 (整页替换内置默认)。
+    # ── 自动加载使用权限配置 ──
+    def _auto_load_use_right_config(self):
+        """启动时自动从 configs/equip_type_labels.json 加载使用权限标签。
 
-        JSON 格式: {"页面号": [[位值, 名称], ...], ...}
-          例如 {"2": [[1, "刀"], [2, "剑"], [256, "MOD新增武器类"]]}
-        仅替换 JSON 中出现的页面号，其余页面保留内置默认。
+        加载成功后整页替换内置默认；文件缺失或解析失败时静默回退到内置默认。
+        支持开发环境和打包环境的路径解析。
         """
-        fp, _ = QFileDialog.getOpenFileName(self, "选择使用权限配置文件", "", "JSON (*.json)")
-        if not fp: return
+        path = resolve_config_path('equip_type_labels.json')
+        if not path:
+            return  # 配置文件不存在，使用内置默认
         try:
-            with open(fp, 'r', encoding='utf-8') as f:
+            with open(path, 'r', encoding='utf-8') as f:
                 data = json.load(f)
-        except Exception as e:
-            QMessageBox.critical(self, "加载失败", f"无法解析 JSON 文件:\n{e}"); return
+        except (json.JSONDecodeError, OSError):
+            return  # 解析失败，使用内置默认
         new_opts = {}
         try:
             for page_key, items in data.items():
-                # 跳过非整型键 (如 "_说明" 注释字段)
                 try:
                     page = int(page_key)
                 except (ValueError, TypeError):
-                    continue
+                    continue  # 跳过非整型键 (如 "_说明" 注释字段)
                 pairs = [(int(it[0]), str(it[1])) for it in items]
-                if not pairs:
-                    raise ValueError(f"页面 {page} 选项列表为空")
-                new_opts[page] = pairs
-        except (TypeError, IndexError, ValueError) as e:
-            QMessageBox.critical(self, "格式错误",
-                f"JSON 格式不正确，应为 {{\"页面号\": [[位值, 名称], ...]}}\n错误: {e}"); return
-        self._use_right_options.update(new_opts)  # 整页替换
-        self.status_var.setText(
-            f"已加载自定义使用权限配置: {os.path.basename(fp)} (覆盖页面 {sorted(new_opts)})")
-        # 刷新当前编辑面板与列表的权限标签
-        if self._editing_idx is not None and self._editing_idx < len(self.records):
-            self._populate_edit(self.records[self._editing_idx])
-        self._apply_filter()
+                if pairs:
+                    new_opts[page] = pairs
+        except (TypeError, IndexError, ValueError):
+            return  # 格式错误，使用内置默认
+        if new_opts:
+            self._use_right_options.update(new_opts)
 
     # ── 编辑应用 ──
     def _apply_edit(self):

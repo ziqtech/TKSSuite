@@ -4,7 +4,7 @@ EquipTypeLabelsPanel — 装备使用权限位值→中文标签 配置面板
 """
 from PySide6.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QComboBox, QTableWidget, QTableWidgetItem,
-    QPushButton, QLabel, QWidget, QHeaderView, QAbstractItemView,
+    QPushButton, QToolButton, QLabel, QWidget, QHeaderView, QAbstractItemView,
     QStyledItemDelegate, QMessageBox
 )
 from PySide6.QtCore import Qt
@@ -117,7 +117,10 @@ class EquipTypeLabelsPanel(ConfigPanelBase):
             self._table.setItem(i, 1, name_item)
 
             # 操作列 (删除按钮)
-            del_btn = QPushButton("🗑 删除")
+            del_btn = QToolButton()
+            del_btn.setText("🗑 删除")
+            del_btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
+            del_btn.setAutoRaise(True)
             del_btn.clicked.connect(lambda checked, row=i: self._on_delete(row))
             self._table.setCellWidget(i, 2, del_btn)
 

@@ -66,7 +66,7 @@ from editor_utils.theme_manager import ThemeManager
 from editor_utils.dock_components import DockHeader
 from editor_utils.picker_dialogs import TktPickerDialog, StatusPickerDialog, STATUS_NAMES
 from editor_utils.jvg_loader import load_mu_sprites, get_sprite_pixmap
-from editor_utils.ui_helpers import make_fake_input, update_path_labels, confirm_close, export_csv
+from editor_utils.ui_helpers import make_fake_input, update_path_labels, confirm_close, export_csv, resolve_config_path
 from editor_utils.lzss import lzss_decompress_dat, lzss_compress_dat, lzss_decompress_save, lzss_compress_save
 from editor_utils.tkt_loader import load_tkt_simple
 from editor_utils.mod_exporter import (
@@ -1085,8 +1085,10 @@ class WarpcEditorV2(QMainWindow):
         self._status_resist_widgets = []; self._skill_learn_widgets = []
         self._skill_effect_widgets = []; self._skill_effect_name_labels = []
         self._fa_sprites = []; self._fa_photos = {}
-        # 使用权限定义运行时副本 (可由 文件→自定义使用权限配置 整项替换)
+        # 使用权限定义运行时副本 (启动时自动从 configs/ 加载)
         self._use_right_defs = {k: (t, list(o)) for k, (t, o) in USE_RIGHT_DEFS.items()}
+        # 启动时自动从 configs/ 加载 equip_type_labels.json
+        self._auto_load_use_right_defs()
 
         self._build_ui(); self._set_edit_enabled(False); self._apply_theme()
 
@@ -1099,6 +1101,38 @@ class WarpcEditorV2(QMainWindow):
         self._is_dark = not self._is_dark; self._apply_theme(); self._refresh_table()
         from editor_utils.window_theme import apply_godot_theme
         apply_godot_theme(self, self._is_dark)
+
+    # ── 配置自动加载 ──
+    def _auto_load_use_right_defs(self):
+        """启动时自动从 configs/equip_type_labels.json 加载使用权限标签。
+
+        将 JSON 中的页面号 (0-5) 通过 USE_RIGHT_PAGE_TO_FIELD 映射到
+        WarPC 权限字段名，整项替换 _use_right_defs 中对应项。
+        文件缺失或解析失败时静默回退到内置 USE_RIGHT_DEFS 默认值。
+        """
+        path = resolve_config_path('equip_type_labels.json')
+        if not path:
+            return
+        try:
+            with open(path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+        except (json.JSONDecodeError, OSError):
+            return
+        try:
+            for page_key, items in data.items():
+                try:
+                    page = int(page_key)
+                except (ValueError, TypeError):
+                    continue  # 跳过非整型键 (如 "_说明" 注释字段)
+                field_name = USE_RIGHT_PAGE_TO_FIELD.get(page)
+                if not field_name:
+                    continue  # 页面 5(特殊) 在 WarPC 中无对应字段
+                pairs = [(int(it[0]), str(it[1])) for it in items]
+                if pairs:
+                    old_title = self._use_right_defs[field_name][0] if field_name in self._use_right_defs else ""
+                    self._use_right_defs[field_name] = (old_title, pairs)
+        except (TypeError, IndexError, ValueError):
+            pass
 
     def _update_paths(self):
         tks_dir = self._get_tks_dir()
@@ -1132,7 +1166,6 @@ class WarpcEditorV2(QMainWindow):
         fm.addSeparator()
         fm.addAction("导入 MOD (.tksmod)…", self._import_tksmod)
         fm.addSeparator()
-        fm.addAction("自定义使用权限配置…", self._load_use_right_config)
         fm.addSeparator(); fm.addAction("退出", self.close)
 
         em = mb.addMenu("编辑(&E)")
@@ -2017,46 +2050,6 @@ class WarpcEditorV2(QMainWindow):
                 mask = val & 0xFFFF
                 sel = [name for bit, name in opts if (mask & bit)]
                 self._edit_extras[fn].setText(", ".join(sel) if sel else "(无)")
-
-    # ── 自定义使用权限配置 ──
-    def _load_use_right_config(self):
-        """从 JSON 文件加载自定义使用权限选项，整项替换内置默认。
-
-        复用 item_editor 的 standard_config.json 格式: {"页面号": [[位值, 名称], ...], ...}
-        页面号 → 权限字段: 0=药品 1=道具 2=武器 3=防具 4=饰品，见 USE_RIGHT_PAGE_TO_FIELD。
-        仅替换 JSON 中出现的字段，其余保留内置默认。
-        """
-        fp, _ = QFileDialog.getOpenFileName(self, "选择使用权限配置文件", "", "JSON (*.json)")
-        if not fp: return
-        try:
-            with open(fp, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-        except Exception as e:
-            QMessageBox.critical(self, "加载失败", f"无法解析 JSON 文件:\n{e}"); return
-        updated = []
-        try:
-            for page_key, items in data.items():
-                try:
-                    page = int(page_key)
-                except (ValueError, TypeError):
-                    continue  # 跳过非整型键 (如 "_说明" 注释字段)
-                fn = USE_RIGHT_PAGE_TO_FIELD.get(page)
-                if fn is None:
-                    continue  # 页面 5=特殊 在 WarPC 中无对应字段，跳过
-                pairs = [(int(it[0]), str(it[1])) for it in items]
-                if not pairs:
-                    raise ValueError(f"页面 {page} 选项列表为空")
-                title, _ = self._use_right_defs.get(fn, (fn, []))
-                self._use_right_defs[fn] = (title, pairs)
-                updated.append(f"{page}({fn})")
-        except (TypeError, IndexError, ValueError) as e:
-            QMessageBox.critical(self, "格式错误",
-                f"JSON 格式不正确，应为 {{\"页面号\": [[位值, 名称], ...]}}\n错误: {e}"); return
-        self.status_var.setText(
-            f"已加载自定义使用权限配置: {os.path.basename(fp)} (覆盖 {', '.join(updated) or '无'})")
-        # 刷新当前编辑面板的权限标签
-        if self._editing_idx >= 0 and self._editing_idx < len(self.records):
-            self._populate_edit(self.records[self._editing_idx])
 
     def _get_icon_pixmap(self, icon_val, size=(24,24)):
         return get_sprite_pixmap(self._mu_sprites, icon_val, size, self._icon_pixmaps)

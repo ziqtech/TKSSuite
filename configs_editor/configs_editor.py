@@ -58,6 +58,31 @@ def load_warpc_records(warpc_path: str):
     return records
 
 
+SKILL_REC = 94  # TKSkill.dat 每条记录 94 字节 (47 × int16)
+
+
+def load_skill_names(skill_path: str, tkt_names: dict) -> dict:
+    """加载 TKSkill.dat，返回 {skill_num: skill_name}。
+    参照 skill_editor_v2.py 的 SKILL_REC=94, SKILL_CNT=350 格式。
+    """
+    with open(skill_path, 'rb') as f:
+        raw = f.read()
+    dec = lzss_decompress_dat(raw)
+    if not dec or len(dec) < SKILL_REC:
+        return {}
+    result = {}
+    count = len(dec) // SKILL_REC
+    for i in range(count):
+        off = i * SKILL_REC
+        vals = struct.unpack_from('<' + 'h' * 47, dec, off)
+        text_id = vals[0]  # skill_text_id @ offset 0
+        if text_id and text_id in tkt_names:
+            result[i] = tkt_names[text_id]
+        elif text_id:
+            result[i] = f"技能{text_id}"
+    return result
+
+
 class ConfigsEditorWindow(QMainWindow):
     """主窗口 — 菜单栏 + 工具栏 + QTabWidget + 状态栏"""
 
@@ -74,6 +99,7 @@ class ConfigsEditorWindow(QMainWindow):
         self._war_pc_records = []
         self._tkt_names = {}
         self._fa_sprites = []
+        self._skill_names = {}
         self._game_data_loaded = False
         self._tks_dir = None
 
@@ -172,7 +198,9 @@ class ConfigsEditorWindow(QMainWindow):
         self._status_tkt.setObjectName("StatusTktLabel")
         self._status_fa = QLabel("Fa.JVG — ")
         self._status_fa.setObjectName("StatusFaLabel")
-        for lbl in [self._status_warpc, self._status_tkt, self._status_fa]:
+        self._status_skill = QLabel("TKSkill.dat — ")
+        self._status_skill.setObjectName("StatusSkillLabel")
+        for lbl in [self._status_warpc, self._status_tkt, self._status_fa, self._status_skill]:
             status_bar.addWidget(lbl)
 
         status_bar.addPermanentWidget(QLabel("TKS Configs Editor"))
@@ -275,6 +303,15 @@ class ConfigsEditorWindow(QMainWindow):
             except Exception:
                 pass
 
+        # 加载 TKSkill.dat (技能名称)
+        self._skill_names = {}
+        skill_path = os.path.join(d, "TKSkill.dat")
+        if os.path.exists(skill_path):
+            try:
+                self._skill_names = load_skill_names(skill_path, self._tkt_names)
+            except Exception:
+                pass
+
         self._game_data_loaded = bool(self._war_pc_records)
         self._tks_dir = d
 
@@ -283,13 +320,15 @@ class ConfigsEditorWindow(QMainWindow):
 
         # 传递给所有面板
         for panel in self._panels:
-            panel.set_game_data(self._war_pc_records, self._tkt_names, self._fa_sprites)
+            panel.set_game_data(self._war_pc_records, self._tkt_names,
+                                self._fa_sprites, self._skill_names)
 
         QMessageBox.information(self, "加载成功",
             f"已加载 TKS 目录:\n"
             f"  WarPC.dat: {len(self._war_pc_records)} 角色\n"
             f"  TKT.dat: {len(self._tkt_names)} 条文本\n"
-            f"  Fa.JVG: {len(self._fa_sprites)} 个精灵")
+            f"  Fa.JVG: {len(self._fa_sprites)} 个精灵\n"
+            f"  TKSkill.dat: {len(self._skill_names)} 个技能名称")
 
     # ── 样式刷新 ──
 
@@ -310,16 +349,19 @@ class ConfigsEditorWindow(QMainWindow):
             self._status_warpc.setText("WarPC.dat — ")
             self._status_tkt.setText("TKT.dat — ")
             self._status_fa.setText("Fa.JVG — ")
-            for lbl in [self._status_warpc, self._status_tkt, self._status_fa]:
+            self._status_skill.setText("TKSkill.dat — ")
+            for lbl in [self._status_warpc, self._status_tkt, self._status_fa, self._status_skill]:
                 self._apply_label_status(lbl, "unloaded")
         else:
             warpc_path = os.path.join(self._tks_dir, "WarPC.dat")
             tkt_path = os.path.join(self._tks_dir, "TKT.dat")
             fa_path = os.path.join(self._tks_dir, "Fa.JVG")
+            skill_path = os.path.join(self._tks_dir, "TKSkill.dat")
 
             self._set_status_label(self._status_warpc, "WarPC.dat", warpc_path)
             self._set_status_label(self._status_tkt, "TKT.dat", tkt_path)
             self._set_status_label(self._status_fa, "Fa.JVG", fa_path)
+            self._set_status_label(self._status_skill, "TKSkill.dat", skill_path)
 
     def _set_status_label(self, label, name, path):
         if os.path.exists(path):
