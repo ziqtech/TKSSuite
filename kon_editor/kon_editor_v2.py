@@ -34,6 +34,7 @@ from editor_utils.mod_exporter import (
     get_tksmod_info, import_tksmod_records, ModImportPreviewDialog,
 )
 from editor_utils.window_theme import apply_godot_theme
+from editor_utils.kon_name_resolver import KonNameResolver
 
 # ── 本地别名: 保持向后兼容 ──
 def lzss_decompress(data): return lzss_decompress_dat(data)
@@ -41,15 +42,9 @@ def lzss_compress(data): return lzss_compress_dat(data)
 def load_tkt(tkt_path): return load_tkt_simple(tkt_path)
 
 def load_tkkon_names(csv_path):
-    names = {}
-    if not csv_path or not os.path.exists(csv_path): return names
-    with open(csv_path, 'r', encoding='utf-8-sig') as f:
-        reader = __import__('csv').reader(f); next(reader, None)
-        for row in reader:
-            if len(row) >= 2 and row[0].strip().isdigit():
-                idx = int(row[0]); name = row[1].strip()
-                if name: names[idx] = name
-    return names
+    """[已废弃] 保留以兼容旧代码.
+    请使用 editor_utils.kon_name_resolver.KonNameResolver 替代。"""
+    return {}
 
 KON_REC = 40; KON_CNT = 650; KON_FIELD_COUNT = 20; KON_DECOMPRESSED = 26000
 
@@ -135,9 +130,12 @@ def describe_resource_val(val, resource_name):
     if 1001 <= val <= 1999: return f"{resource_name}%={val - 1000}%"
     return f"{resource_name}=({val})"
 
-def kon_record_name(rec, tkt, names=None):
+def kon_record_name(rec, tkt, resolver=None, compact_threshold=0):
     idx = rec['index']
-    if names and idx in names and names[idx]: return names[idx]
+    if resolver:
+        name = resolver.get_name(idx, compact_threshold)
+        if name and not name.startswith('空槽-') and not name.startswith('动画#'):
+            return name
     cid = rec.get('tkact_id', 0); parts = []
     em = rec.get('exec_mode', 0); tp = rec.get('target_param', 0)
     if em < 0: parts.append("自身")
@@ -246,7 +244,7 @@ class KonEditor(QMainWindow):
 
         apply_godot_theme(self, self.is_dark_theme)
         self.kon_path = None; self.tkt_path = None
-        self.records = []; self.tkt = {}; self.names = {}
+        self.records = []; self.tkt = {}; self._resolver = None
         self._original_records = []  # 原始快照，用于 MOD 导出
         self.mu_path = None; self._mu_sprites = []; self._icon_pixmaps = {}
         self.filtered_indices = []; self._dirty = False; self._editing_idx = -1
@@ -254,6 +252,7 @@ class KonEditor(QMainWindow):
         self.widget_map = {}      # QLineEdit / QComboBox for direct value fields
         self.extra_map = {}       # QLabel for parsed description text
         self.split_map = {}       # (hi_w, lo_w) for split fields
+        self.compact_names = True # 精简显示: >3角色时仅显示技能名
 
         self._build_ui()
         self._apply_theme()
@@ -319,6 +318,11 @@ class KonEditor(QMainWindow):
         self.chk_show_empty = QCheckBox("显示空槽"); self.chk_show_empty.setChecked(True)
         self.chk_show_empty.stateChanged.connect(self._apply_filter)
         toolbar.addWidget(self.chk_show_empty)
+
+        self.chk_compact = QCheckBox("精简显示"); self.chk_compact.setChecked(True)
+        self.chk_compact.setToolTip("当同一技能效果被超过3个角色配置时，仅显示技能名称")
+        self.chk_compact.stateChanged.connect(self._apply_filter)
+        toolbar.addWidget(self.chk_compact)
         toolbar.addSpacing(8)
 
         btn_reload = QPushButton("🔄 重新加载"); btn_reload.clicked.connect(self._reload)
@@ -584,8 +588,11 @@ class KonEditor(QMainWindow):
         if self.mu_path:
             self._mu_sprites = load_mu_sprites(self.mu_path) or []
             self._icon_pixmaps.clear()
-        name_csv = os.path.join(os.path.dirname(__file__), 'tkkon_names.csv')
-        self.names = load_tkkon_names(name_csv)
+        tks_dir = os.path.dirname(self.kon_path)
+        try:
+            self._resolver = KonNameResolver(tks_dir)
+        except Exception:
+            self._resolver = None
         try:
             self.records = load_kon(self.kon_path); self._dirty = False
             self._original_records = [[rec[fn] for fn, _, _, _ in KON_FIELDS] for rec in self.records]
@@ -606,12 +613,13 @@ class KonEditor(QMainWindow):
     def _apply_filter(self):
         q = self.search_input.text().strip().lower()
         show_empty = self.chk_show_empty.isChecked()
+        self.compact_names = self.chk_compact.isChecked()
         self.filtered_indices = []
         for rec in self.records:
             if not show_empty:
                 if all(rec[fn] == 0 for fn, _, _, _ in KON_FIELDS): continue
             if q:
-                nm = kon_record_name(rec, self.tkt, self.names)
+                nm = kon_record_name(rec, self.tkt, self._resolver)
                 search_text = f"{rec['index']} {rec['tkact_id']} {rec['exec_mode']} {nm} " \
                               f"{' '.join(str(rec[fn]) for fn,_,_,_ in KON_FIELDS)}".lower()
                 if q not in search_text: continue
@@ -641,7 +649,7 @@ class KonEditor(QMainWindow):
             else:
                 color = QColor("#AAAAAA") if self.is_dark_theme else QColor("#999999")
 
-            nm = kon_record_name(r, self.tkt, self.names)
+            nm = kon_record_name(r, self.tkt, self._resolver, self._compact_threshold())
 
             em = r['exec_mode'] & 0xFFFF; em_hi = (em >> 8) & 0xFF
             if em_hi >= 128: dist_str = "自身"
@@ -685,7 +693,8 @@ class KonEditor(QMainWindow):
         self.table.horizontalHeader().setSortIndicator(-1, Qt.AscendingOrder)
         self.table.setSortingEnabled(True); self.table.blockSignals(False)
 
-    # ----------- 编辑 -----------
+    def _compact_threshold(self) -> int:
+        return 3 if self.compact_names else 0
 
     def _on_table_select(self):
         sel = self.table.selectedItems()
@@ -696,7 +705,7 @@ class KonEditor(QMainWindow):
 
     def _populate_edit(self, rec):
         self._editing_idx = rec['index']
-        nm = kon_record_name(rec, self.tkt, self.names)
+        nm = kon_record_name(rec, self.tkt, self._resolver, self._compact_threshold())
         cid = rec.get('tkact_id', 0)
         em = rec.get('exec_mode', 0); tp = rec.get('target_param', 0)
 
@@ -956,7 +965,7 @@ class KonEditor(QMainWindow):
 
         def row_func(rec):
             return [str(rec['index']), str(rec.get('tkact_id', '')),
-                    kon_record_name(rec, self.tkt, self.names)] + \
+                    kon_record_name(rec, self.tkt, self._resolver)] + \
                    [str(rec[fn]) for fn, _, _, _ in KON_FIELDS]
 
         if export_csv(self, filtered, hdr, row_func, "TKKon.csv"):

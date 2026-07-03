@@ -41,6 +41,7 @@ from editor_utils.lzss import lzss_decompress_save, lzss_compress_save, lzss_dec
 from editor_utils.tkt_loader import load_tkt_simple
 from editor_utils.jvg_loader import load_mu_sprites, get_sprite_pixmap
 from editor_utils.dock_components import DockHeader
+from editor_utils.kon_name_resolver import KonNameResolver
 
 
 # ============================================================
@@ -523,6 +524,7 @@ class SaveEditorApp(QMainWindow):
         self.tkt = {}
         self.item_records = {}
         self.item_names = {}
+        self.tkkon_names = {}
         self._mu_sprites = []
         self._icon_pixmaps = {}
 
@@ -1047,6 +1049,12 @@ class SaveEditorApp(QMainWindow):
         if os.path.exists(mu_path):
             self._mu_sprites = load_mu_sprites(mu_path) or []
             self._icon_pixmaps.clear()
+        # TKKon 名称 (动态解析)
+        try:
+            resolver = KonNameResolver(parent)
+            self.tkkon_names = resolver.get_all_names()
+        except Exception:
+            self.tkkon_names = {}
 
     def _parse_skill_dat(self, path):
         try:
@@ -1086,22 +1094,17 @@ class SaveEditorApp(QMainWindow):
         except Exception:
             return {}
 
-    def _load_tkkon_names(self, csv_path):
-        """加载 TKKon 名称映射 (从 warpc_editor/tkkon_names.csv)"""
-        if not os.path.exists(csv_path):
+    def _load_tkkon_names(self, tks_dir=None):
+        """[已废弃] 从游戏数据动态解析 TKKon 名称映射.
+        
+        现在由 _load_resources() 通过 KonNameResolver 自动完成。
+        保留此方法仅为兼容旧调用。
+        """
+        if not tks_dir:
             return {}
         try:
-            lookup = {}
-            with open(csv_path, 'r', encoding='utf-8-sig') as f:
-                reader = csv.reader(f)
-                next(reader, None)  # 跳过标题行
-                for row in reader:
-                    if len(row) >= 2 and row[0].strip().isdigit():
-                        idx = int(row[0])
-                        name = row[1].strip()
-                        if name:
-                            lookup[idx] = name
-            return lookup
+            resolver = KonNameResolver(tks_dir)
+            return resolver.get_all_names()
         except Exception:
             return {}
 

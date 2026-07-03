@@ -76,6 +76,7 @@ from editor_utils.mod_exporter import (
     get_tksmod_info, import_tksmod_records, ModImportPreviewDialog,
 )
 from editor_utils.window_theme import apply_godot_theme
+from editor_utils.kon_name_resolver import KonNameResolver
 
 # ── 本地别名: 保持向后兼容 ──
 def lzss_decompress(data): return lzss_decompress_dat(data)
@@ -1710,18 +1711,15 @@ class WarpcEditorV2(QMainWindow):
         except: return {}, {}
 
     def _load_tkkon_names(self):
-        name_csv = os.path.join(os.path.dirname(__file__), 'tkkon_names.csv')
-        if not os.path.exists(name_csv): return {}
+        """从游戏数据动态解析 TKKon 名称映射 (替代静态 tkkon_names.csv)。"""
+        tks_dir = self._get_tks_dir()
+        if not tks_dir:
+            return {}
         try:
-            lookup = {}
-            with open(name_csv, 'r', encoding='utf-8-sig') as f:
-                reader = csv.reader(f); next(reader, None)
-                for row in reader:
-                    if len(row) >= 2 and row[0].strip().isdigit():
-                        idx = int(row[0]); name = row[1].strip()
-                        if name: lookup[idx] = name
-            return lookup
-        except: return {}
+            resolver = KonNameResolver(tks_dir)
+            return resolver.get_all_names()
+        except Exception:
+            return {}
 
     def _load_item_names(self):
         tks_dir = self._get_tks_dir()

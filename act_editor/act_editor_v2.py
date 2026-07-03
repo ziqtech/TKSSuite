@@ -61,6 +61,7 @@ from PySide6.QtCore import (
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from editor_utils.theme_manager import ThemeManager
 from editor_utils.window_theme import apply_godot_theme
+from editor_utils.kon_name_resolver import KonNameResolver
 from editor_utils.dock_components import DockHeader
 from editor_utils.ui_helpers import (
     make_fake_input, update_path_labels, confirm_close, export_csv,
@@ -2350,14 +2351,12 @@ class ActEditorV2(QMainWindow):
         try:
             self.entries = load_act(self.act_path)
 
-            name_csv = os.path.join(os.path.dirname(__file__), 'tkkon_names.csv')
-            self.names = {}
-            if os.path.exists(name_csv):
-                with open(name_csv, 'r', encoding='utf-8-sig') as f:
-                    for line in f:
-                        parts = line.strip().split(',', 1)
-                        if len(parts) == 2 and parts[0].strip().isdigit():
-                            self.names[int(parts[0])] = parts[1].strip()
+            tks_dir = os.path.dirname(self.act_path)
+            try:
+                resolver = KonNameResolver(tks_dir)
+                self.names = resolver.get_all_names()
+            except Exception:
+                self.names = {}
 
             self._dirty = False
             nonempty = sum(1 for e in self.entries if not entry_is_empty(e))
