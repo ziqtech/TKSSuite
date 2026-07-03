@@ -92,8 +92,12 @@ class ConfigsEditorWindow(QMainWindow):
         self.resize(900, 650)
         self.setMinimumSize(700, 500)
 
-        # 配置目录
-        self._configs_dir = Path(__file__).parent.parent / "configs"
+        # 配置目录 — Nuitka onefile 下 __file__ 指向临时目录, 需用 exe 所在目录
+        if getattr(sys, 'frozen', False) or "__compiled__" in globals():
+            from editor_utils.runtime_bootstrap import get_app_dir
+            self._configs_dir = Path(get_app_dir()) / "configs"
+        else:
+            self._configs_dir = Path(__file__).parent.parent / "configs"
 
         # 游戏数据
         self._war_pc_records = []

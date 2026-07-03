@@ -10,8 +10,9 @@ build_all.py — TKS Editors 一键构建脚本 (Nuitka)
     python build/build_all.py --all            # 归档 + 全部 exe
 
   完整 exe (--onefile) — PySide6/PIL 烘焙进每个 exe，无外部 .lib 依赖
-    python build/build_all.py --onefile                 # 构建全部完整 exe
-    python build/build_all.py --onefile --only TKSLauncher  # 仅构建指定
+    python build/build_all.py --onefile                 # 调试模式: --lto=no --jobs=8 (快速)
+    python build/build_all.py --onefile --release       # 发布模式: --lto=yes (链接时优化, 更小体积)
+    python build/build_all.py --onefile --only TKSLauncher --release  # 仅构建指定 (发布)
 
   python build/build_all.py --list             # 列出所有可构建编辑器
 
@@ -55,6 +56,7 @@ EDITORS = [
     ("TKSGxpEditor",         "build/entries/entry_gxp_editor.py",         "gxp_editor"),
     ("TKSSpritesheetEditor", "build/entries/entry_spritesheet_editor.py", "spritesheet_editor"),
     ("TKSSaveEditor",        "build/entries/entry_save_editor.py",        "save_editor"),
+    ("TKSConfigsEditor",      "build/entries/entry_configs_editor.py",     "configs_editor"),
     ("TKSLauncher",          "build/entries/entry_launcher.py",           "tks_launcher_gui"),
     ("TKSLauncherCLI",       "build/entries/entry_launcher_cli.py",      "tks_launcher_gui"),
 ]
@@ -72,7 +74,7 @@ DIST_DIR = 仓库根目录 / "dist"
 RELEASE_DIR = DIST_DIR / "TKSEditors"
 
 
-def _build_thin_cmd(name: str, entry: str, editor_dir: str) -> list:
+def _build_thin_cmd(name: str, entry: str, editor_dir: str, release: bool = False) -> list:
     """生成 Nuitka 薄 exe 构建命令 (PySide6/PIL 由 .lib 提供, 不编译进 exe)"""
     entry_path = 仓库根目录 / entry
     icon_path = 仓库根目录 / editor_dir / "TKS.ico"
@@ -122,20 +124,24 @@ def _build_thin_cmd(name: str, entry: str, editor_dir: str) -> list:
         "--nofollow-import-to=unittest",
 
         # ── 编译优化 ──
+        "--jobs=8",
+        f"--lto={'yes' if release else 'no'}",
         "--python-flag=no_docstrings",
         "--python-flag=no_asserts",
+    ]
 
-        # ── 清理 ──
+    # ── 清理 ──
+    cmd.extend([
         "--remove-output",
 
         # ── 入口脚本 ──
         str(entry_path),
-    ]
+    ])
 
     return cmd
 
 
-def _build_onefile_cmd(name: str, entry: str, editor_dir: str) -> list:
+def _build_onefile_cmd(name: str, entry: str, editor_dir: str, release: bool = False) -> list:
     """生成 Nuitka 完整 onefile 构建命令 (PySide6/PIL 编译进 exe)"""
     entry_path = 仓库根目录 / entry
     icon_path = 仓库根目录 / editor_dir / "TKS.ico"
@@ -184,7 +190,8 @@ def _build_onefile_cmd(name: str, entry: str, editor_dir: str) -> list:
         "--no-deployment-flag=excluded-module-usage",
 
         # ── 编译优化 ──
-        "--lto=yes",
+        "--jobs=8",
+        f"--lto={'yes' if release else 'no'}",
         "--python-flag=no_docstrings",
         "--python-flag=no_asserts",
 
@@ -202,7 +209,7 @@ def _build_onefile_cmd(name: str, entry: str, editor_dir: str) -> list:
     return cmd
 
 
-def _build_cli_cmd(name: str, entry: str, editor_dir: str) -> list:
+def _build_cli_cmd(name: str, entry: str, editor_dir: str, release: bool = False) -> list:
     """生成 CLI 启动器 Nuitka 构建命令 (无 PySide6, 无 Qt, 极简 exe)"""
     entry_path = 仓库根目录 / entry
     icon_path = 仓库根目录 / editor_dir / "TKS.ico"
@@ -240,18 +247,20 @@ def _build_cli_cmd(name: str, entry: str, editor_dir: str) -> list:
         f"--include-data-files={tks_launcher_dir / 'summon_table.json'}=summon_table.json",
 
         # 编译优化
-        "--lto=yes",
+        "--jobs=8",
+        f"--lto={'yes' if release else 'no'}",
         "--python-flag=no_docstrings",
         "--python-flag=no_asserts",
         "--remove-output",
-
-        str(entry_path),
     ]
+
+    cmd.append(str(entry_path))
     return cmd
 
 
 def build_one(name: str, entry: str, editor_dir: str,
-              onefile: bool = False, verbose: bool = False) -> bool:
+              onefile: bool = False, verbose: bool = False,
+              release: bool = False) -> bool:
     """构建单个 exe (薄模式或完整 onefile 模式)"""
     # CLI 启动器使用专用构建 (无 PySide6)
     is_cli = (name == "TKSLauncherCLI")
@@ -261,18 +270,19 @@ def build_one(name: str, entry: str, editor_dir: str,
         mode_label = "完整 onefile (PySide6/PIL 内嵌)"
     else:
         mode_label = "薄 exe (无 PySide6/PIL)"
+    lto_label = "LTO=yes" if release else "LTO=no (调试加速)"
     print(f"\n{'='*60}")
     print(f"  构建: {name}")
     print(f"  入口: {entry}")
-    print(f"  模式: Nuitka --onefile ({mode_label})")
+    print(f"  模式: Nuitka --onefile ({mode_label}, {lto_label}, jobs=8)")
     print(f"{'='*60}")
 
     if is_cli:
-        cmd = _build_cli_cmd(name, entry, editor_dir)
+        cmd = _build_cli_cmd(name, entry, editor_dir, release)
     elif onefile:
-        cmd = _build_onefile_cmd(name, entry, editor_dir)
+        cmd = _build_onefile_cmd(name, entry, editor_dir, release)
     else:
-        cmd = _build_thin_cmd(name, entry, editor_dir)
+        cmd = _build_thin_cmd(name, entry, editor_dir, release)
 
     if verbose:
         print(f"  命令: {' '.join(str(c) for c in cmd)}")
@@ -374,6 +384,8 @@ def main():
     parser.add_argument("--list", action="store_true", help="列出所有可构建编辑器")
     parser.add_argument("--no-assemble", action="store_true", help="构建后不组装发行目录")
     parser.add_argument("--verbose", action="store_true", help="详细输出")
+    parser.add_argument("--release", action="store_true",
+                        help="发布模式: --lto=yes (链接时优化, 更小体积, 构建更慢)")
     args = parser.parse_args()
 
     if args.list:
@@ -421,7 +433,7 @@ def main():
     t_total = time.time()
 
     for name, entry, editor_dir in targets:
-        ok = build_one(name, entry, editor_dir, args.onefile, args.verbose)
+        ok = build_one(name, entry, editor_dir, args.onefile, args.verbose, args.release)
         (success if ok else failed).append(name)
 
     elapsed_total = time.time() - t_total
