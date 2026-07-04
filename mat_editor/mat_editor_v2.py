@@ -3677,6 +3677,7 @@ class MatEditorApp(QMainWindow):
         rec['d43'] = -1     # 调用返回·SP: -1=空栈
         rec['d44'] = -1     # 当前DefUnit#: -1=未遍历
         rec['d8'] = 3 if sel_type == 10 else 0
+        rec['_has_data'] = True
         rec['d18'] = 400
         rec['d19'] = 384
         rec['d20'] = 30 if sel_type == 110 else 40
@@ -3725,6 +3726,7 @@ class MatEditorApp(QMainWindow):
         for di in range(DWORD_COUNT):
             dst[f'd{di}'] = src[f'd{di}']
         dst['index'] = empty_idx
+        dst['_has_data'] = True
         self._dirty = True
         self._apply_filter()
         for i in range(self.entity_tree.topLevelItemCount()):
@@ -3743,6 +3745,7 @@ class MatEditorApp(QMainWindow):
             return
         for di in range(DWORD_COUNT):
             self.records[idx][f'd{di}'] = 0
+        self.records[idx]['_has_data'] = False
         self._dirty = True
         self._apply_filter()
         self._show_record(self.records[idx])
@@ -4077,8 +4080,11 @@ class MatEditorApp(QMainWindow):
         pos = event.position().toPoint()
         scene_pos = self._vis_gview.mapToScene(pos)
         self._vis_coord_label.setText(f"坐标: ({int(scene_pos.x())}, {int(scene_pos.y())})")
-        # Drag handling
+        # Drag handling (仅左键按下时拖动, 对应原版 <B1-Motion> 行为)
         if self._vis_drag is None or not self._vis_edit_mode:
+            return
+        if not (event.buttons() & Qt.LeftButton):
+            self._vis_drag = None
             return
         eidx, sx, sy, ox, oy = self._vis_drag
         cx, cy = int(scene_pos.x()), int(scene_pos.y())
@@ -5012,6 +5018,7 @@ class MatEditorApp(QMainWindow):
                     rec = {'index': i}
                     for di in range(DWORD_COUNT):
                         rec[f'd{di}'] = fields[di] if di < len(fields) else 0
+                    rec['_has_data'] = any(rec[f'd{di}'] for di in range(DWORD_COUNT))
                     new_records.append(rec)
                 self.records = new_records
                 self._original_mat_records = [list(row) for row in mat_records]
@@ -6164,6 +6171,7 @@ class MatEditorApp(QMainWindow):
             for di in range(min(96, len(dwords))):
                 rec[f'd{di}'] = dwords[di]
             rec['d1'] = new_scene_id
+            rec['_has_data'] = any(rec[f'd{di}'] for di in range(DWORD_COUNT))
             for chain_name, di in [('A', 39), ('B', 40), ('C', 41)]:
                 old_indices = chains.get(chain_name, [])
                 if old_indices and old_indices[0] in du_old_to_new:
