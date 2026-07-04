@@ -89,7 +89,7 @@ from editor_utils.lzss import lzss_decompress_stream as lzss_decompress
 from editor_utils.rgb565 import rgb565_to_rgba
 from editor_utils.tkt_loader import load_tkt_simple
 from editor_utils.mod_exporter import (
-    compute_crc32, generate_mod_json, pack_tksmod, ModMetadataDialog,
+    compute_crc32, generate_mod_json, pack_tksmod, ModMetadataDialog, safe_mod_filename,
     ask_reference_directory,
     get_tksmod_info, read_tksmod, ModImportPreviewDialog,
 )
@@ -856,7 +856,7 @@ class WarDataEditorV2(QMainWindow):
             "original_crc32": crc, "modified": modified, "appended": appended
         }
         mod_json = generate_mod_json(metadata, [{"file": "data/WarData.dat.json", "target": "WarData.dat"}])
-        fp, _ = QFileDialog.getSaveFileName(self, "导出为 MOD", f"{metadata['id']}.tksmod", "TKS MOD (*.tksmod)")
+        fp, _ = QFileDialog.getSaveFileName(self, "导出为 MOD", f"{safe_mod_filename(metadata['name'], metadata['id'])}.tksmod", "TKS MOD (*.tksmod)")
         if not fp: return
         try:
             pack_tksmod(fp, mod_json, {"data/WarData.dat.json": data_json})
@@ -910,7 +910,7 @@ class WarDataEditorV2(QMainWindow):
         data_json = {"target": "WarData.dat", "record_size": WAR_REC_SIZE, "field_type": "structured",
             "original_count": len(original), "original_crc32": crc, "modified": modified, "appended": appended}
         mod_json = generate_mod_json(metadata, [{"file": "data/WarData.dat.json", "target": "WarData.dat"}])
-        fp, _ = QFileDialog.getSaveFileName(self, "导出为 MOD", f"{metadata['id']}.tksmod", "TKS MOD (*.tksmod)")
+        fp, _ = QFileDialog.getSaveFileName(self, "导出为 MOD", f"{safe_mod_filename(metadata['name'], metadata['id'])}.tksmod", "TKS MOD (*.tksmod)")
         if not fp: return
         try:
             pack_tksmod(fp, mod_json, {"data/WarData.dat.json": data_json})

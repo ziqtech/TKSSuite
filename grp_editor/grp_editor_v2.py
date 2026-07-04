@@ -49,7 +49,7 @@ from editor_utils.lzss import (lzss_decompress_stream as _lzss_decompress_stream
                                 MAX_MATCH as MAX_MATCH_LZ)
 from editor_utils.rgb565 import rgb565_to_rgba, rgba_to_rgb565
 from editor_utils.mod_exporter import (
-    compute_crc32, generate_mod_json, pack_tksmod, ModMetadataDialog,
+    compute_crc32, generate_mod_json, pack_tksmod, ModMetadataDialog, safe_mod_filename,
     ask_reference_directory, diff_binary_blocks, build_block_diff_json,
     load_grp_raw_sections,
     get_tksmod_info, import_tksmod_blocks, ModImportPreviewDialog,
@@ -754,7 +754,7 @@ class GRPEditor(QMainWindow):
         components = [{"file": internal_path, "target": target_name}]
         mod_json = generate_mod_json(metadata, components)
 
-        fp, _ = QFileDialog.getSaveFileName(self, "导出为 MOD", f"{metadata['id']}.tksmod", "TKS MOD (*.tksmod)")
+        fp, _ = QFileDialog.getSaveFileName(self, "导出为 MOD", f"{safe_mod_filename(metadata['name'], metadata['id'])}.tksmod", "TKS MOD (*.tksmod)")
         if not fp: return
         try:
             pack_tksmod(fp, mod_json, {internal_path: data_json})
@@ -839,7 +839,7 @@ class GRPEditor(QMainWindow):
                 [{"file": internal_path, "target": target_name}])
 
             fp, _ = QFileDialog.getSaveFileName(self, "导出选中区段为 MOD",
-                f"{metadata['id']}.tksmod", "TKS MOD (*.tksmod)")
+                f"{safe_mod_filename(metadata['name'], metadata['id'])}.tksmod", "TKS MOD (*.tksmod)")
             if not fp: return
 
             pack_tksmod(fp, mod_json, {internal_path: data_json})

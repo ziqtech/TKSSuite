@@ -309,6 +309,27 @@ def build_text_diff_json(target: str, original_crc32: str,
 # MOD 元数据对话框
 # ═══════════════════════════════════════════════════════════════
 
+def safe_mod_filename(name: str, fallback_id: str) -> str:
+    """将 MOD 名称转为安全的文件名。name 为空时回退到 fallback_id。
+
+    用于导出 MOD 时生成保存对话框的默认文件名.
+    过滤 Windows 文件名非法字符, 移除首尾空格和点.
+
+    Args:
+        name: MOD 显示名称 (来自 ModMetadataDialog)
+        fallback_id: MOD ID, 名称不可用时回退
+
+    Returns:
+        安全的文件名字符串 (不含扩展名)
+    """
+    import re
+    if not name or not name.strip():
+        return fallback_id
+    safe = re.sub(r'[<>:"/\\|?*]', '_', name.strip())
+    safe = safe.strip('. ')
+    return safe or fallback_id
+
+
 def generate_short_uuid(length: int = 16) -> str:
     """生成不含 '-' 的短 UUID（取 uuid4 十六进制前 length 位）。
 

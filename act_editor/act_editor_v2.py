@@ -68,7 +68,7 @@ from editor_utils.ui_helpers import (
     make_fake_input, update_path_labels, confirm_close, export_csv,
 )
 from editor_utils.mod_exporter import (
-    compute_crc32, generate_mod_json, pack_tksmod, ModMetadataDialog,
+    compute_crc32, generate_mod_json, pack_tksmod, ModMetadataDialog, safe_mod_filename,
     ask_reference_directory, diff_binary_blocks, build_block_diff_json,
     get_tksmod_info, import_tksmod_blocks, ModImportPreviewDialog,
 )
@@ -3173,7 +3173,7 @@ class ActEditorV2(QMainWindow):
         components = [{"file": "data/TKAct.dat.json", "target": "TKAct.dat"}]
         mod_json = generate_mod_json(metadata, components)
 
-        fp, _ = QFileDialog.getSaveFileName(self, "导出为 MOD", f"{metadata['id']}.tksmod", "TKS MOD (*.tksmod)")
+        fp, _ = QFileDialog.getSaveFileName(self, "导出为 MOD", f"{safe_mod_filename(metadata['name'], metadata['id'])}.tksmod", "TKS MOD (*.tksmod)")
         if not fp: return
         try:
             pack_tksmod(fp, mod_json, {"data/TKAct.dat.json": data_json})

@@ -56,6 +56,7 @@ from editor_utils.mod_exporter import (
     import_tksmod_blocks,
     ModImportPreviewDialog,
     diff_binary_blocks, build_block_diff_json, load_grp_raw_sections,
+    safe_mod_filename,
 )
 from editor_utils.window_theme import apply_godot_theme
 
@@ -4676,7 +4677,7 @@ class MatEditorApp(QMainWindow):
             QMessageBox.information(self, "无差异", "当前数据与原始文件相同，无需导出。"); return
 
         mod_json = generate_mod_json(metadata, components)
-        fp, _ = QFileDialog.getSaveFileName(self, "导出为 MOD", f"{metadata['id']}.tksmod", "TKS MOD (*.tksmod)")
+        fp, _ = QFileDialog.getSaveFileName(self, "导出为 MOD", f"{safe_mod_filename(metadata['name'], metadata['id'])}.tksmod", "TKS MOD (*.tksmod)")
         if not fp: return
         try:
             pack_tksmod(fp, mod_json, data_files)
@@ -4755,7 +4756,7 @@ class MatEditorApp(QMainWindow):
             QMessageBox.information(self, "无差异", "当前数据与参考文件相同，无需导出。"); return
 
         mod_json = generate_mod_json(metadata, components)
-        fp, _ = QFileDialog.getSaveFileName(self, "导出为 MOD", f"{metadata['id']}.tksmod", "TKS MOD (*.tksmod)")
+        fp, _ = QFileDialog.getSaveFileName(self, "导出为 MOD", f"{safe_mod_filename(metadata['name'], metadata['id'])}.tksmod", "TKS MOD (*.tksmod)")
         if not fp: return
         try:
             pack_tksmod(fp, mod_json, data_files)
@@ -4945,7 +4946,7 @@ class MatEditorApp(QMainWindow):
 
         fp, _ = QFileDialog.getSaveFileName(
             self, "导出场景为 MOD",
-            f"{metadata['id']}.tksmod",
+            f"{safe_mod_filename(metadata['name'], metadata['id'])}.tksmod",
             "TKS MOD (*.tksmod);;所有文件 (*.*)")
         if not fp:
             return

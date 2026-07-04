@@ -71,7 +71,7 @@ from editor_utils.lzss import lzss_decompress_dat, lzss_compress_dat, lzss_decom
 from editor_utils.tkt_loader import load_tkt_simple
 from editor_utils.mod_exporter import (
     diff_records, compute_crc32, generate_mod_json,
-    pack_tksmod, build_data_diff_json, ModMetadataDialog,
+    pack_tksmod, build_data_diff_json, ModMetadataDialog, safe_mod_filename,
     ask_reference_directory, load_reference_dat_fields,
     get_tksmod_info, import_tksmod_records, ModImportPreviewDialog,
 )
@@ -2411,7 +2411,7 @@ class WarpcEditorV2(QMainWindow):
         mod_json = generate_mod_json(metadata, components)
 
         # 选择保存路径
-        default_name = f"{metadata['id']}.tksmod"
+        default_name = f"{safe_mod_filename(metadata['name'], metadata['id'])}.tksmod"
         fp, _ = QFileDialog.getSaveFileName(
             self, "导出为 MOD", default_name, "TKS MOD (*.tksmod)")
         if not fp:
@@ -2472,7 +2472,7 @@ class WarpcEditorV2(QMainWindow):
         metadata["id_ranges"] = id_ranges; metadata["warpc_expand"] = warpc_expand
 
         mod_json = generate_mod_json(metadata, [{"file": "data/WarPC.dat.json", "target": "WarPC.dat"}])
-        fp, _ = QFileDialog.getSaveFileName(self, "导出为 MOD", f"{metadata['id']}.tksmod", "TKS MOD (*.tksmod)")
+        fp, _ = QFileDialog.getSaveFileName(self, "导出为 MOD", f"{safe_mod_filename(metadata['name'], metadata['id'])}.tksmod", "TKS MOD (*.tksmod)")
         if not fp: return
         try:
             pack_tksmod(fp, mod_json, {"data/WarPC.dat.json": data_json})

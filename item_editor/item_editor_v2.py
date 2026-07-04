@@ -58,7 +58,7 @@ from editor_utils.lzss import lzss_decompress_dat, lzss_compress_dat
 from editor_utils.tkt_loader import load_tkt_simple
 from editor_utils.mod_exporter import (
     diff_records, compute_crc32, generate_mod_json,
-    pack_tksmod, build_data_diff_json, ModMetadataDialog,
+    pack_tksmod, build_data_diff_json, ModMetadataDialog, safe_mod_filename,
     ask_reference_directory, load_reference_dat_fields,
     get_tksmod_info, import_tksmod_records, ModImportPreviewDialog,
 )
@@ -1366,7 +1366,7 @@ class ItemEditorApp(QMainWindow):
         data_json = build_data_diff_json(target="TKItem.dat", record_size=64, field_type="int16",
             field_count=field_count, original_count=len(self._original_records), original_crc32=crc, diff_result=diff_result)
         mod_json = generate_mod_json(metadata, [{"file": "data/TKItem.dat.json", "target": "TKItem.dat"}])
-        fp, _ = QFileDialog.getSaveFileName(self, "导出为 MOD", f"{metadata['id']}.tksmod", "TKS MOD (*.tksmod)")
+        fp, _ = QFileDialog.getSaveFileName(self, "导出为 MOD", f"{safe_mod_filename(metadata['name'], metadata['id'])}.tksmod", "TKS MOD (*.tksmod)")
         if not fp: return
         try:
             pack_tksmod(fp, mod_json, {"data/TKItem.dat.json": data_json})
@@ -1406,7 +1406,7 @@ class ItemEditorApp(QMainWindow):
         data_json = build_data_diff_json(target="TKItem.dat", record_size=64, field_type="int16",
             field_count=field_count, original_count=len(ref_records), original_crc32=crc, diff_result=diff_result)
         mod_json = generate_mod_json(metadata, [{"file": "data/TKItem.dat.json", "target": "TKItem.dat"}])
-        fp, _ = QFileDialog.getSaveFileName(self, "导出为 MOD", f"{metadata['id']}.tksmod", "TKS MOD (*.tksmod)")
+        fp, _ = QFileDialog.getSaveFileName(self, "导出为 MOD", f"{safe_mod_filename(metadata['name'], metadata['id'])}.tksmod", "TKS MOD (*.tksmod)")
         if not fp: return
         try:
             pack_tksmod(fp, mod_json, {"data/TKItem.dat.json": data_json})

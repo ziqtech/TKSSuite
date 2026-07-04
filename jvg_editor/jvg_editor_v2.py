@@ -37,6 +37,7 @@ from editor_utils.mod_exporter import (
     ask_reference_directory, diff_binary_blocks, build_block_diff_json,
     load_jvg_raw_blocks,
     get_tksmod_info, import_tksmod_blocks, ModImportPreviewDialog,
+    safe_mod_filename,
 )
 from editor_utils.window_theme import apply_godot_theme
 
@@ -398,16 +399,6 @@ def import_images(paths:List[str])->List[JVGFrame]:
     return frames
 
 # ── 导出 ──────────────────────────────────────────────
-def _safe_mod_filename(name: str, fallback_id: str) -> str:
-    """将 MOD 名称转为安全的文件名。name 为空时回退到 fallback_id。"""
-    if not name or not name.strip():
-        return fallback_id
-    # 移除 Windows 文件名非法字符
-    safe = re.sub(r'[<>:"/\\|?*]', '_', name.strip())
-    # 移除首尾空格和点
-    safe = safe.strip('. ')
-    return safe or fallback_id
-
 def _rgba_png(w:int,h:int,rgba:bytearray)->bytes:
     def ch(ct,d): c=ct+d; return struct.pack(">I",len(d))+c+struct.pack(">I",zlib.crc32(c)&0xFFFFFFFF)
     png=b"\x89PNG\r\n\x1a\n"; png+=ch(b"IHDR",struct.pack(">IIBBBBB",w,h,8,6,0,0,0))
@@ -1019,7 +1010,7 @@ class JVGEditor(QMainWindow):
         components = [{"file": internal_path, "target": target_name}]
         mod_json = generate_mod_json(metadata, components)
 
-        safe_name = _safe_mod_filename(metadata['name'], metadata['id'])
+        safe_name = safe_mod_filename(metadata['name'], metadata['id'])
         fp, _ = QFileDialog.getSaveFileName(self, "导出为 MOD", f"{safe_name}.tksmod", "TKS MOD (*.tksmod)")
         if not fp: return
         try:
@@ -1083,7 +1074,7 @@ class JVGEditor(QMainWindow):
             mod_json = generate_mod_json(metadata,
                 [{"file": internal_path, "target": target_name}])
 
-            safe_name = _safe_mod_filename(metadata['name'], metadata['id'])
+            safe_name = safe_mod_filename(metadata['name'], metadata['id'])
             fp, _ = QFileDialog.getSaveFileName(self, "导出当前分组为 MOD",
                 f"{safe_name}.tksmod", "TKS MOD (*.tksmod)")
             if not fp: return
@@ -1136,7 +1127,7 @@ class JVGEditor(QMainWindow):
             mod_json = generate_mod_json(metadata, [],
                 resources=[{"file": f"resources/{target_name}", "target": target_name}])
 
-            safe_name = _safe_mod_filename(metadata['name'], metadata['id'])
+            safe_name = safe_mod_filename(metadata['name'], metadata['id'])
             fp, _ = QFileDialog.getSaveFileName(self, "导出选中帧为 MOD",
                 f"{safe_name}.tksmod", "TKS MOD (*.tksmod)")
             if not fp: return
