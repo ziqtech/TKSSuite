@@ -60,6 +60,8 @@ class JVGFrame:
         self.row_count=0; self._pixels:Optional[bytes]=None; self._alpha:Optional[bytes]=None
         self.encoded_data=b""
         self._palette: Optional[PaletteRGB565] = None
+        # 帧头 8 个 uint16 中未被编辑器使用的保留字段，必须原样保存以免 MOD diff 误判
+        self._hdr_unk4=0; self._hdr_unk5=0; self._hdr_unk6=0
 
     @property
     def pixels(self)->bytes:
@@ -87,6 +89,7 @@ class JVGFrame:
 class JVMBlock:
     def __init__(self, name:str=""):
         self.name=name; self.frames:List[JVGFrame]=[]; self.palette=PaletteRGB565()
+        self._header_reserved=bytes(16)  # block头 [16:32] 保留字节，原样保存
     @property
     def frame_count(self)->int: return len(self.frames)
 
@@ -145,8 +148,10 @@ def load_jvg(filepath:str)->JVGFile:
         for si in range(sc):
             mo=dr+co[si]; ws=struct.unpack("<8H",data[mo:mo+16])
             f=JVGFrame(); f.x_max=ws[0]; f.y_max=ws[1]; f.width=ws[2]; f.height=ws[3]; f.row_count=ws[7]
+            f._hdr_unk4=ws[4]; f._hdr_unk5=ws[5]; f._hdr_unk6=ws[6]
             eo=mo+16; f.encoded_data=data[eo:eo+co[si+1]-co[si]-16]
             blk.frames.append(f)
+        blk._header_reserved=data[off+16:off+32]
         off+=32+(sc+1)*4+512+ds; jvg.blocks.append(blk)
     return jvg
 
@@ -192,15 +197,15 @@ def save_jvg(jvg:JVGFile,filepath:str):
         n=blk.frame_count
         buf+=JVM_MAGIC
         buf+=struct.pack("<I",n)
-        bsp=len(buf)
-        buf+=struct.pack("<I",0)   # [8:12] 块体大小占位 (data_size + 偏移表 + 调色板)
+        buf+=struct.pack("<I",0)   # [8:12] 原始格式保留字段，必须为 0
         dsp=len(buf)
         buf+=struct.pack("<I",0)
-        buf+=bytes(16)
+        buf+=blk._header_reserved if len(blk._header_reserved)==16 else bytes(16)
 
         fd=bytearray(); co=[0]
         for f in blk.frames:
-            meta=struct.pack("<8H",f.x_max&0xFFFF,f.y_max&0xFFFF,f.width,f.height,0,0,0,0)
+            meta=struct.pack("<8H",f.x_max&0xFFFF,f.y_max&0xFFFF,f.width,f.height,
+                f._hdr_unk4&0xFFFF,f._hdr_unk5&0xFFFF,f._hdr_unk6&0xFFFF,0)
             fd+=meta
             if f.encoded_data:
                 enc=f.encoded_data
@@ -222,7 +227,6 @@ def save_jvg(jvg:JVGFile,filepath:str):
         for e in blk.palette.entries: buf+=struct.pack("<H",e&0xFFFF)
         buf+=fd
         struct.pack_into("<I",buf,dsp,block_data_size)
-        struct.pack_into("<I",buf,bsp,block_data_size+(n+1)*4+512)
 
     struct.pack_into("<I",buf,12,total_data_size)
     Path(filepath).write_bytes(bytes(buf))
@@ -1039,6 +1043,7 @@ class JVGEditor(QMainWindow):
         new_blk = JVMBlock(blk.name)
         new_blk.frames = copy.deepcopy(blk.frames)
         new_blk.palette.entries = list(blk.palette.entries)
+        new_blk._header_reserved = blk._header_reserved
         tmp_jvg.blocks.append(new_blk)
 
         import tempfile, base64
