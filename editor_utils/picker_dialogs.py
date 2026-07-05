@@ -288,8 +288,13 @@ class ItemPickerDialog(QDialog):
 
         # 回显当前值
         if current_value is not None and self._table.rowCount() > 0:
+            # 简单模式: col0=ID; 完整模式: return_key='item_id'→col2=item_id, 'index'→col1=#
+            if self._simple_mode:
+                match_col = 0
+            else:
+                match_col = 2 if self._return_key == 'item_id' else 1
             for row in range(self._table.rowCount()):
-                item = self._table.item(row, 0 if self._simple_mode else 1)
+                item = self._table.item(row, match_col)
                 if item:
                     try:
                         if int(item.text().lstrip('#')) == current_value:

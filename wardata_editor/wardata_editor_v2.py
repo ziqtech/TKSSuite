@@ -86,6 +86,8 @@ from editor_utils.theme_manager import ThemeManager
 from editor_utils.dock_components import DockHeader
 from editor_utils.ui_helpers import make_fake_input, update_path_labels, confirm_close
 from editor_utils.lzss import lzss_decompress_stream as lzss_decompress
+from editor_utils.lzss import lzss_decompress_dat
+from editor_utils.jvg_loader import load_mu_sprites, get_sprite_pixmap
 from editor_utils.rgb565 import rgb565_to_rgba
 from editor_utils.tkt_loader import load_tkt_simple
 from editor_utils.mod_exporter import (
@@ -94,6 +96,7 @@ from editor_utils.mod_exporter import (
     get_tksmod_info, read_tksmod, ModImportPreviewDialog,
 )
 from editor_utils.window_theme import apply_godot_theme
+from editor_utils.picker_dialogs import WarpcPickerDialog, ItemPickerDialog
 
 HAS_PIL = False
 try:
@@ -314,6 +317,34 @@ def load_warpc_names(warpc_path: str, tkt: dict) -> dict:
     return names
 
 
+WARPC_FIELD_COUNT = 527
+WARPC_REC_SIZE = 1054  # 527 × 2
+
+
+def load_warpc_records(warpc_path: str):
+    """加载 WarPC.dat，返回 list[dict]。
+    每条: {'index': i, 'fields': [f0, f1, ...]}
+    fields[0] = name_id, fields[1] = portrait
+    """
+    if not warpc_path or not os.path.exists(warpc_path):
+        return []
+    with open(warpc_path, 'rb') as f:
+        raw = f.read()
+    dec = lzss_decompress_dat(raw)
+    # 兜底: LZSS 解压结果不对齐记录边界但原始文件对齐 → 未压缩 raw 数据
+    if len(raw) % WARPC_REC_SIZE == 0 and (len(dec) == 0 or len(dec) % WARPC_REC_SIZE != 0):
+        dec = raw
+    if not dec or len(dec) % WARPC_REC_SIZE != 0:
+        return []
+    count = len(dec) // WARPC_REC_SIZE
+    records = []
+    for i in range(count):
+        off = i * WARPC_REC_SIZE
+        vals = struct.unpack_from('<' + 'h' * WARPC_FIELD_COUNT, dec, off)
+        records.append({'index': i, 'fields': list(vals)})
+    return records
+
+
 def load_tkitem_names(tkitem_path: str, tkt: dict) -> dict:
     if not tkitem_path or not os.path.exists(tkitem_path):
         return ({}, {})
@@ -361,6 +392,54 @@ def load_tkitem_names(tkitem_path: str, tkt: dict) -> dict:
     return (by_index, by_item_id)
 
 
+TKITEM_REC = 64  # 32 × int16
+TKITEM_CNT = 600
+
+
+def load_tkitem_records(tkitem_path: str, tkt: dict):
+    """加载 TKItem.dat 完整记录，返回 list[dict]。
+    每条: {'index', 'item_id', 'tab_code', 'name', 'equip_type', 'icon', 'price'}
+    """
+    if not tkitem_path or not os.path.exists(tkitem_path):
+        return []
+    with open(tkitem_path, 'rb') as f:
+        raw = f.read()
+    dec = lzss_decompress_dat(raw)
+    if len(raw) % TKITEM_REC == 0 and (len(dec) == 0 or len(dec) % TKITEM_REC != 0):
+        dec = raw
+    if not dec or len(dec) < TKITEM_REC:
+        return []
+    records = []
+    for i in range(TKITEM_CNT):
+        off = i * TKITEM_REC
+        if off + TKITEM_REC > len(dec): break
+        fields = struct.unpack_from('<' + 'h' * 32, dec, off)
+        item_id = fields[0]
+        tab_code = fields[1]
+        name_id = fields[2]
+        icon = fields[4]
+        equip_type = fields[5]
+        price = fields[31]
+        if item_id <= 1:
+            continue
+        if name_id and name_id in tkt:
+            name = tkt[name_id]
+        elif name_id:
+            name = f"Item#{item_id}"
+        else:
+            continue
+        records.append({
+            'index': i,
+            'item_id': item_id,
+            'tab_code': tab_code,
+            'name': name,
+            'equip_type': equip_type,
+            'icon': icon,
+            'price': price,
+        })
+    return records
+
+
 # ═══════════════════════════════════════════════════════════
 # 陷阱名称常量
 # ═══════════════════════════════════════════════════════════
@@ -396,9 +475,14 @@ class WarDataEditorV2(QMainWindow):
         self.tkt_path = None
         self.warpc_path = None
         self.warpc_names = {}
+        self.warpc_records = []
+        self.fa_sprites = []
+        self.mu_sprites = []
+        self._icon_pixmaps = {}
         self.tkitem_path = None
         self.tkitem_names = {}
         self.tkitem_names_by_id = {}
+        self.tkitem_records = []
         self.records = []
         self.wsc_offsets = []
         self.tkt = {}
@@ -554,6 +638,11 @@ class WarDataEditorV2(QMainWindow):
     def _set_edit_enabled(self, enabled):
         self.table.setEnabled(enabled)
 
+    # ── 图标辅助 ──
+    def _get_icon_pixmap(self, icon_val, size=(36, 36)):
+        """将物品 icon 值转为 QPixmap (委托给 jvg_loader.get_sprite_pixmap)"""
+        return get_sprite_pixmap(self.mu_sprites, icon_val, size, self._icon_pixmaps)
+
     # ── 名称辅助 ──
     def _char_name(self, warpc_idx):
         """WarPC角色索引 → 角色名称 (via WarPC.name_id → TKT)
@@ -692,13 +781,21 @@ class WarDataEditorV2(QMainWindow):
         self.tkt_path = tkt if os.path.exists(tkt) else None
         self.warpc_path = warpc if os.path.exists(warpc) else None
         self.tkitem_path = tkitem if os.path.exists(tkitem) else None
+        fa_path = os.path.join(d, 'Fa.JVG')
+        self.fa_path = fa_path if os.path.exists(fa_path) else None
         self.records = load_wardata(self.wardata_path)
         self.wsc_offsets = load_wsc_idx(self.wsc_idx_path) if self.wsc_idx_path else []
         self.tkt = load_tkt(self.tkt_path) if self.tkt_path else {}
         self.warpc_names = load_warpc_names(self.warpc_path, self.tkt) if self.warpc_path else {}
+        self.warpc_records = load_warpc_records(self.warpc_path) if self.warpc_path else []
+        self.fa_sprites = load_mu_sprites(self.fa_path) if self.fa_path else []
+        mu_path = os.path.join(d, 'Mu.JVG')
+        self.mu_sprites = load_mu_sprites(mu_path) if os.path.exists(mu_path) else []
+        self._icon_pixmaps.clear()
         if self.tkitem_path:
             self.tkitem_names, self.tkitem_names_by_id = load_tkitem_names(self.tkitem_path, self.tkt)
-        else: self.tkitem_names, self.tkitem_names_by_id = {}, {}
+            self.tkitem_records = load_tkitem_records(self.tkitem_path, self.tkt)
+        else: self.tkitem_names, self.tkitem_names_by_id, self.tkitem_records = {}, {}, []
         self._wsc_cache.clear(); self._wsc_res_cache.clear()
         self._refresh_tree(); self._set_edit_enabled(True); self._dirty = False
         self._update_paths()
@@ -750,8 +847,11 @@ class WarDataEditorV2(QMainWindow):
         if self.tkt_path:
             self.tkt = load_tkt(self.tkt_path)
             self.warpc_names = load_warpc_names(self.warpc_path, self.tkt) if self.warpc_path else {}
+            self.warpc_records = load_warpc_records(self.warpc_path) if self.warpc_path else []
             if self.tkitem_path:
                 self.tkitem_names, self.tkitem_names_by_id = load_tkitem_names(self.tkitem_path, self.tkt)
+                self.tkitem_records = load_tkitem_records(self.tkitem_path, self.tkt)
+        self._icon_pixmaps.clear()
         self._refresh_tree(); self._dirty = False; self.status_var.setText("已重新加载")
 
     # ── 记录管理 ──
@@ -1507,8 +1607,31 @@ class WarDataEditorV2(QMainWindow):
         elif col == 10: rec['enemy_flags'][row] = v & 0xFFFF
 
     def _on_enemy_cell_clicked(self, row, col):
-        """双击特殊设定列弹出标志选择对话框"""
-        if col != 10 or self._current_idx < 0: return
+        """双击角色ID列弹出WarPC选择器，双击特殊设定列弹出标志选择对话框"""
+        if self._current_idx < 0: return
+        rec = self.records[self._current_idx]
+        if col == 1:  # 角色ID — WarPC 选择器
+            if not self.warpc_records:
+                return  # 未加载 WarPC 记录，仅支持手动输入
+            cur_eid = rec['enemy_ids'][row]
+            cur_warpc_idx = cur_eid + 35
+            dlg = WarpcPickerDialog(self, self.warpc_records, self.tkt,
+                                   self.fa_sprites, multi_select=False,
+                                   current_indices=[cur_warpc_idx])
+            if dlg.exec() == QDialog.DialogCode.Accepted and dlg.selected_indices:
+                new_warpc_idx = dlg.selected_indices[0]
+                new_eid = new_warpc_idx - 35
+                rec['enemy_ids'][row] = new_eid
+                self._dirty = True
+                # 刷新表格中的角色ID和角色名
+                tbl = self.enemy_table; tbl.blockSignals(True)
+                id_item = QTableWidgetItem(str(new_eid)); id_item.setTextAlignment(Qt.AlignCenter)
+                tbl.setItem(row, 1, id_item)
+                tbl.blockSignals(False)
+                self.enemy_name_labels[row].setText(self._enemy_name(new_eid)[:14] if new_eid else "(空)")
+                self._redraw_scene(rerandomize=False)
+            return
+        if col != 10: return
         rec = self.records[self._current_idx]
         cur = rec['enemy_flags'][row] & 0xFFFF
         dlg = QDialog(self); dlg.setWindowTitle(f"敌军槽{row} 特殊设定")
@@ -1630,6 +1753,7 @@ class WarDataEditorV2(QMainWindow):
             self.dt_name_labels.append(name_lbl); tbl.setCellWidget(i, 4, name_lbl)
             cb = QComboBox(); cb.addItems(trap_items); tbl.setCellWidget(i, 7, cb)
         tbl.cellChanged.connect(self._on_dt_cell_changed)
+        tbl.cellDoubleClicked.connect(self._on_dt_cell_clicked)
         layout.addWidget(tbl)
         layout.addWidget(QLabel("陷阱1-6→TKKon[552-557] | 宝物:trea_sub+trea_quant(slot0-9)"))
         scroll.setWidget(inner); self.tabs.addTab(scroll, "宝物和陷阱")
@@ -1663,6 +1787,31 @@ class WarDataEditorV2(QMainWindow):
             for c, v in enumerate([str(pmin), str(pmax)], 8):
                 item = QTableWidgetItem(v); item.setTextAlignment(Qt.AlignCenter); tbl.setItem(i, c, item)
         tbl.blockSignals(False)
+
+    def _on_dt_cell_clicked(self, row, col):
+        """双击宝物ID列弹出物品选择器"""
+        if col != 3 or row >= 10 or self._current_idx < 0: return
+        if not self.tkitem_records:
+            return  # 未加载 TKItem 数据，仅支持手动输入
+        rec = self.records[self._current_idx]
+        cur_tid = rec['trea_sub'][row]
+        dlg = ItemPickerDialog(self, self.tkitem_records,
+                               icon_pixmap_fn=self._get_icon_pixmap,
+                               current_value=cur_tid,
+                               title=f"选择宝物 (槽{row})")
+        if dlg.exec() and dlg.selected_value is not None:
+            new_tid = dlg.selected_value
+            rec['trea_sub'][row] = new_tid & 0xFFFF
+            self._dirty = True
+            # 刷新表格中的宝物ID和宝物名
+            tbl = self.dt_table; tbl.blockSignals(True)
+            id_item = QTableWidgetItem(str(new_tid)); id_item.setTextAlignment(Qt.AlignCenter)
+            tbl.setItem(row, 3, id_item)
+            tbl.blockSignals(False)
+            if new_tid == 10000: self.dt_name_labels[row].setText("金钱")
+            elif new_tid and new_tid in self.tkitem_names_by_id: self.dt_name_labels[row].setText(self.tkitem_names_by_id[new_tid][:12])
+            elif new_tid: self.dt_name_labels[row].setText(f"Item#{new_tid}")
+            else: self.dt_name_labels[row].setText("")
 
     def _on_dt_cell_changed(self, row, col):
         """宝物/陷阱表格单元格变更时同步写回记录并刷新名称"""
@@ -1755,6 +1904,7 @@ class WarDataEditorV2(QMainWindow):
         ctrl.addWidget(self.show_temp_obstacle)
         self.show_zone = [QCheckBox(f"区域{i+1}") for i in range(5)]
         for z in self.show_zone: z.setChecked(True); z.toggled.connect(self._redraw_scene); ctrl.addWidget(z)
+        ctrl.addStretch()
         ctrl.addWidget(QLabel("缩放:"))
         self.zoom_combo = QComboBox(); self.zoom_combo.addItems(['25%','33%','50%','66%','75%','100%'])
         self.zoom_combo.setCurrentText('75%'); self.zoom_combo.currentTextChanged.connect(self._on_zoom_change)
