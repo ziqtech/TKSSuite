@@ -1193,7 +1193,13 @@ class SaveEditorApp(QMainWindow):
             for i in range(6):
                 tid = m['team_ids'][i]
                 lv = m['team_levels'][i]
-                name = self._get_char_name(tid) if tid >= 0 else "(空)"
+                if i == 0 and self.seg1 is not None:
+                    given = self._decode_big5(self.seg1[0x4C:0x4C + 5])
+                    surname = self._decode_big5(self.seg1[0x54:0x54 + 5])
+                    full = (surname + given).strip()
+                    name = full if full else "主角"
+                else:
+                    name = self._get_char_name(tid) if tid >= 0 else "(空)"
                 self._ov_team[i][0].setText(name)
                 self._ov_team[i][1].setText(f"Lv.{lv}" if tid >= 0 else "")
         else:
@@ -1219,7 +1225,14 @@ class SaveEditorApp(QMainWindow):
                 for i in range(6):
                     tid = struct.unpack_from('<h', self.seg2, 0x0C + i * 2)[0]
                     if tid >= 0:
-                        team_strs.append(f"{self._get_char_name(tid)}(#{tid})")
+                        if i == 0 and self.seg1 is not None:
+                            given = self._decode_big5(self.seg1[0x4C:0x4C + 5])
+                            surname = self._decode_big5(self.seg1[0x54:0x54 + 5])
+                            full = (surname + given).strip()
+                            name = full if full else "主角"
+                        else:
+                            name = self._get_char_name(tid)
+                        team_strs.append(f"{name}(#{tid})")
                 lines.append(f"金钱: {gold} | 队伍: {', '.join(team_strs) if team_strs else '(空)'}")
             lines.append("")
             lines.append("=== 全部槽位状态 ===")
@@ -1230,6 +1243,12 @@ class SaveEditorApp(QMainWindow):
                     meta = load_index_file(ip)
                     if meta:
                         names = [self._get_char_name(t) for t in meta['team_ids'] if t >= 0]
+                        # 当前槽位: 成员1优先用姓+名
+                        if s == self.slot and self.seg1 is not None and meta['team_ids'][0] >= 0:
+                            given = self._decode_big5(self.seg1[0x4C:0x4C + 5])
+                            surname = self._decode_big5(self.seg1[0x54:0x54 + 5])
+                            full = (surname + given).strip()
+                            names[0] = full if full else "主角"
                         try:
                             ts_str = datetime.datetime.fromtimestamp(meta['timestamp']).strftime('%m/%d %H:%M')
                         except Exception:
@@ -1257,7 +1276,14 @@ class SaveEditorApp(QMainWindow):
         for i in range(6):
             tid = struct.unpack_from('<h', self.seg2, 0x0C + i * 2)[0]
             self._team_edits[i].setText(str(tid))
-            self._team_name_labels[i].setText(self._get_char_name(tid) if tid >= 0 else "(空)")
+            if i == 0 and self.seg1 is not None:
+                # 成员1: 优先用姓+名拼接，否则显示"主角"
+                given = self._decode_big5(self.seg1[0x4C:0x4C + 5])
+                surname = self._decode_big5(self.seg1[0x54:0x54 + 5])
+                full = (surname + given).strip()
+                self._team_name_labels[i].setText(full if full else "主角")
+            else:
+                self._team_name_labels[i].setText(self._get_char_name(tid) if tid >= 0 else "(空)")
         for key, off, size, label, fmt, cmt in SEG2_CORE_FIELDS:
             val = struct.unpack_from('<' + fmt, self.seg2, off)[0]
             if key in self._econ_edits:
