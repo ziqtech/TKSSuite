@@ -39,6 +39,7 @@ class ModInfoPreviewWidget(QWidget):
 
         # 构建 (标题, 值, 是否预转义HTML) 行；标题列右对齐，使冒号在列边界对齐
         rows: list[tuple[str, str, bool]] = [
+            ("文件路径", mod.path, False),
             ("名称", mod.name, False),
             ("ID", mod.mod_id, False),
             ("版本", mod.version, False),

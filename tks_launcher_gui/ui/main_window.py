@@ -35,7 +35,7 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("TKS Mod Launcher")
-        self.resize(1400, 900)
+        self.resize(1600, 900)
         self.setMinimumSize(800, 500)
 
         # 窗口图标

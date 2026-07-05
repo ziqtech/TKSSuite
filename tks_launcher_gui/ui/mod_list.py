@@ -11,15 +11,14 @@ from PySide6.QtGui import QColor
 from editor_utils.dock_components import create_dock
 from core.mod_loader import scan_mods, ModInfo
 
-_COLUMNS = ["启用", "文件名", "模组名称", "加载顺序", "ID", "版本", "作者", "描述"]
+_COLUMNS = ["启用", "模组名称", "版本", "加载顺序", "ID", "作者", "描述"]
 _COL_ENABLE = 0
-_COL_FILENAME = 1
-_COL_NAME = 2
+_COL_NAME = 1
+_COL_VERSION = 2
 _COL_LOAD_ORDER = 3
 _COL_ID = 4
-_COL_VERSION = 5
-_COL_AUTHOR = 6
-_COL_DESC = 7
+_COL_AUTHOR = 5
+_COL_DESC = 6
 
 
 class ModListWidget(QWidget):
@@ -56,15 +55,13 @@ class ModListWidget(QWidget):
 
         h = self._table.horizontalHeader()
         h.setSectionResizeMode(_COL_ENABLE, QHeaderView.ResizeToContents)
-        h.setSectionResizeMode(_COL_FILENAME, QHeaderView.Interactive)
         h.setSectionResizeMode(_COL_NAME, QHeaderView.Interactive)
         h.setSectionResizeMode(_COL_LOAD_ORDER, QHeaderView.ResizeToContents)
         h.setSectionResizeMode(_COL_ID, QHeaderView.Interactive)
         h.setSectionResizeMode(_COL_VERSION, QHeaderView.ResizeToContents)
         h.setSectionResizeMode(_COL_AUTHOR, QHeaderView.Interactive)
         h.setSectionResizeMode(_COL_DESC, QHeaderView.Stretch)
-        self._table.setColumnWidth(_COL_FILENAME, 160)
-        self._table.setColumnWidth(_COL_NAME, 140)
+        self._table.setColumnWidth(_COL_NAME, 180)
         self._table.setColumnWidth(_COL_ID, 150)
         self._table.setColumnWidth(_COL_AUTHOR, 100)
         body.addWidget(self._table)
@@ -107,15 +104,14 @@ class ModListWidget(QWidget):
             enable_item.setCheckState(Qt.Checked if mod.enabled else Qt.Unchecked)
             self._table.setItem(row, _COL_ENABLE, enable_item)
 
-            self._set_text(row, _COL_FILENAME, os.path.basename(mod.path))
             self._set_text(row, _COL_NAME, mod.name)
+            self._set_text(row, _COL_VERSION, mod.version)
             self._set_text(row, _COL_LOAD_ORDER, str(mod.load_order))
 
             id_item = self._set_text(row, _COL_ID, mod.mod_id)
             if mod.mod_id in dup_ids:
                 id_item.setForeground(QColor(220, 50, 50))
 
-            self._set_text(row, _COL_VERSION, mod.version)
             self._set_text(row, _COL_AUTHOR, mod.author)
 
             desc_item = QTableWidgetItem(mod.description)
