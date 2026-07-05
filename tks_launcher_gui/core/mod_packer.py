@@ -448,6 +448,7 @@ def rewrite_mod_metadata(mod_path: str, new_metadata: Dict[str, Any],
 
 def create_tksmodpak(mod_paths: List[str], output_path: str,
                       metadata: Dict[str, Any] | None = None,
+                      preview_image_path: str | None = None,
                       log_func=None) -> Tuple[bool, str]:
     """将多个 .tksmod 文件打包为一个 .tksmodpak 文件。
 
@@ -456,12 +457,14 @@ def create_tksmodpak(mod_paths: List[str], output_path: str,
 
     .tksmodpak 结构:
         mod.json         — 合集元数据（名称、作者、描述等）
+        preview.png      — 预览图（可选）
         xxx.tksmod       — 原始模组文件（逐字节保留）
 
     Args:
         mod_paths: 要打包的 .tksmod 文件路径列表
         output_path: 输出的 .tksmodpak 文件路径
         metadata: 合集元数据 dict，包含 id, name, version, author, description 等
+        preview_image_path: 预览图本地路径（可选）
         log_func: 日志回调函数
 
     Returns:
@@ -474,6 +477,13 @@ def create_tksmodpak(mod_paths: List[str], output_path: str,
 
     from datetime import datetime, timezone, timedelta
     now = datetime.now(timezone(timedelta(hours=8)))
+
+    # 处理预览图
+    preview_filename = ""
+    _preview = preview_image_path or (metadata or {}).get("preview_image_path", "")
+    if _preview and os.path.isfile(_preview):
+        ext = os.path.splitext(_preview)[1].lower() or ".png"
+        preview_filename = f"preview{ext}"
 
     try:
         with zipfile.ZipFile(output_path, 'w', zipfile.ZIP_DEFLATED) as zf:
@@ -491,9 +501,16 @@ def create_tksmodpak(mod_paths: List[str], output_path: str,
                 "created": now.strftime("%Y-%m-%dT%H:%M:%S"),
                 "source_files": [os.path.basename(p) for p in mod_paths],
             }
+            if preview_filename:
+                meta["preview_image"] = preview_filename
             zf.writestr("mod.json",
                         json.dumps(meta, ensure_ascii=False, indent=2))
             log(f"  写入合集元数据: {meta['name']}")
+
+            # 写入预览图
+            if preview_filename and _preview and os.path.isfile(_preview):
+                zf.write(_preview, preview_filename)
+                log(f"  写入预览图: {preview_filename}")
 
             # 逐字节复制原始 .tksmod 文件
             for fp in mod_paths:

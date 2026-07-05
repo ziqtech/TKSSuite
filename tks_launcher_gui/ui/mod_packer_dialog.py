@@ -7,6 +7,7 @@ from PySide6.QtWidgets import (
     QMessageBox, QGroupBox, QProgressBar, QAbstractItemView,
 )
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QPixmap
 
 from core.mod_packer import (
     read_tksmod_content,
@@ -117,6 +118,43 @@ class ModPackerDialog(QDialog):
         self.spin_order.setRange(0, 9999)
         self.spin_order.setValue(100)
         grid.addWidget(self.spin_order, row, 1)
+
+        # 预览图行
+        row += 1
+        grid.addWidget(QLabel("预览图:"), row, 0, Qt.AlignTop)
+        self._preview_path: str = ""
+        _preview_card = QHBoxLayout()
+        _preview_card.setContentsMargins(0, 4, 0, 4)
+        _preview_card.setSpacing(14)
+        self._lbl_preview_thumb = QLabel()
+        self._lbl_preview_thumb.setFixedSize(120, 120)
+        self._lbl_preview_thumb.setAlignment(Qt.AlignCenter)
+        self._lbl_preview_thumb.setStyleSheet(
+            "QLabel { border: 2px dashed #555; border-radius: 6px; "
+            "background: #1e1e1e; color: #666; }")
+        self._lbl_preview_thumb.setText("无预览图")
+        _preview_card.addWidget(self._lbl_preview_thumb)
+        _preview_info = QVBoxLayout()
+        _preview_info.setContentsMargins(0, 0, 0, 0)
+        _preview_info.setSpacing(8)
+        self._lbl_preview_name = QLabel("<i style='color:#888'>未选择图片</i>")
+        self._lbl_preview_name.setWordWrap(True)
+        _preview_info.addWidget(self._lbl_preview_name)
+        _btn_row = QHBoxLayout()
+        _btn_row.setSpacing(8)
+        _btn_pick = QPushButton("选择图片…")
+        _btn_pick.setFixedWidth(100)
+        _btn_pick.clicked.connect(self._on_pick_preview)
+        _btn_row.addWidget(_btn_pick)
+        _btn_clear = QPushButton("清除")
+        _btn_clear.setFixedWidth(60)
+        _btn_clear.clicked.connect(self._on_clear_preview)
+        _btn_row.addWidget(_btn_clear)
+        _btn_row.addStretch()
+        _preview_info.addLayout(_btn_row)
+        _preview_info.addStretch()
+        _preview_card.addLayout(_preview_info, 1)
+        grid.addLayout(_preview_card, row, 1)
 
         layout.addWidget(meta_group)
 
@@ -276,6 +314,31 @@ class ModPackerDialog(QDialog):
         self.edit_id.setCursorPosition(max(0, cursor - spaces_before))
 
     # ────────────────────────────────────────────────
+    # 预览图
+    # ────────────────────────────────────────────────
+
+    _PREVIEW_IMG_FILTER = "图片文件 (*.png *.jpg *.jpeg *.bmp *.webp);;所有文件 (*)"
+
+    def _on_pick_preview(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self, "选择预览图", "", self._PREVIEW_IMG_FILTER)
+        if path:
+            self._preview_path = path
+            self._lbl_preview_name.setText(os.path.basename(path))
+            pm = QPixmap(path)
+            if not pm.isNull():
+                scaled = pm.scaled(120, 120, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                self._lbl_preview_thumb.setPixmap(scaled)
+            else:
+                self._lbl_preview_thumb.setText("无法加载")
+
+    def _on_clear_preview(self):
+        self._preview_path = ""
+        self._lbl_preview_thumb.clear()
+        self._lbl_preview_thumb.setText("无预览图")
+        self._lbl_preview_name.setText("<i style='color:#888'>未选择图片</i>")
+
+    # ────────────────────────────────────────────────
     # 输出路径
     # ────────────────────────────────────────────────
 
@@ -303,6 +366,7 @@ class ModPackerDialog(QDialog):
             "type": self.combo_type.currentText(),
             "mode": "mixed",
             "load_order": self.spin_order.value(),
+            "preview_image_path": self._preview_path,
         }
 
     def _on_pack(self):
@@ -352,7 +416,10 @@ class ModPackerDialog(QDialog):
         log(f"输出: {output}")
         log("")
 
-        ok, msg = create_tksmodpak(self._file_paths, output, metadata, log_func=log)
+        ok, msg = create_tksmodpak(
+            self._file_paths, output, metadata,
+            preview_image_path=self._preview_path,
+            log_func=log)
 
         self._progress.setVisible(False)
 

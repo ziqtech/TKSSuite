@@ -7,9 +7,11 @@ from PySide6.QtWidgets import (
     QLabel, QLineEdit, QTextEdit, QSpinBox,
     QPushButton, QFileDialog, QMessageBox,
 )
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QPixmap
 
 from core.mod_packer import read_tksmod_content, rewrite_mod_metadata
-from editor_utils.mod_exporter import generate_short_uuid
+from editor_utils.mod_exporter import generate_short_uuid, extract_preview_image
 
 
 class ModMetaEditorDialog(QDialog):
@@ -103,6 +105,44 @@ class ModMetaEditorDialog(QDialog):
         self.edit_conflicts = QLineEdit()
         self.edit_conflicts.setPlaceholderText("逗号分隔的模组 ID")
         grid.addWidget(self.edit_conflicts, row, 1)
+
+        # 预览图行
+        row += 1
+        grid.addWidget(QLabel("预览图:"), row, 0, Qt.AlignTop)
+        self._preview_path: str = ""  # 新选择的本地图片路径
+        self._orig_preview_name: str = ""  # 原文件中的预览图文件名
+        _preview_card = QHBoxLayout()
+        _preview_card.setContentsMargins(0, 4, 0, 4)
+        _preview_card.setSpacing(14)
+        self._lbl_preview_thumb = QLabel()
+        self._lbl_preview_thumb.setFixedSize(120, 120)
+        self._lbl_preview_thumb.setAlignment(Qt.AlignCenter)
+        self._lbl_preview_thumb.setStyleSheet(
+            "QLabel { border: 2px dashed #555; border-radius: 6px; "
+            "background: #1e1e1e; color: #666; }")
+        self._lbl_preview_thumb.setText("无预览图")
+        _preview_card.addWidget(self._lbl_preview_thumb)
+        _preview_info = QVBoxLayout()
+        _preview_info.setContentsMargins(0, 0, 0, 0)
+        _preview_info.setSpacing(8)
+        self._lbl_preview_name = QLabel("<i style='color:#888'>未选择图片</i>")
+        self._lbl_preview_name.setWordWrap(True)
+        _preview_info.addWidget(self._lbl_preview_name)
+        _btn_row = QHBoxLayout()
+        _btn_row.setSpacing(8)
+        _btn_pick = QPushButton("选择图片…")
+        _btn_pick.setFixedWidth(100)
+        _btn_pick.clicked.connect(self._on_pick_preview)
+        _btn_row.addWidget(_btn_pick)
+        _btn_clear = QPushButton("清除")
+        _btn_clear.setFixedWidth(60)
+        _btn_clear.clicked.connect(self._on_clear_preview)
+        _btn_row.addWidget(_btn_clear)
+        _btn_row.addStretch()
+        _preview_info.addLayout(_btn_row)
+        _preview_info.addStretch()
+        _preview_card.addLayout(_preview_info, 1)
+        grid.addLayout(_preview_card, row, 1)
 
         layout.addLayout(grid)
 
@@ -206,6 +246,29 @@ class ModMetaEditorDialog(QDialog):
         self.edit_deps.setText(", ".join(mj.get("dependencies", [])))
         self.edit_conflicts.setText(", ".join(mj.get("conflicts", [])))
 
+        # 预览图
+        self._preview_path = ""
+        self._orig_preview_name = mj.get("preview_image", "")
+        if self._orig_preview_name:
+            # 从文件中提取预览图显示
+            img_data = extract_preview_image(self._mod_path)
+            if img_data:
+                pm = QPixmap()
+                pm.loadFromData(img_data)
+                if not pm.isNull():
+                    scaled = pm.scaled(120, 120, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                    self._lbl_preview_thumb.setPixmap(scaled)
+                    self._lbl_preview_name.setText(self._orig_preview_name)
+                else:
+                    self._lbl_preview_thumb.setText("无法加载")
+                    self._lbl_preview_name.setText(self._orig_preview_name)
+            else:
+                self._lbl_preview_thumb.setText("无预览图")
+                self._lbl_preview_name.setText(self._orig_preview_name)
+        else:
+            self._lbl_preview_thumb.setText("无预览图")
+            self._lbl_preview_name.setText("<i>未选择</i>")
+
         self._set_fields_enabled(True)
         self.btn_save.setEnabled(True)
         self.btn_saveas.setEnabled(True)
@@ -218,7 +281,7 @@ class ModMetaEditorDialog(QDialog):
     def _collect_metadata(self) -> dict:
         deps = [s.strip() for s in self.edit_deps.text().split(",") if s.strip()]
         conflicts = [s.strip() for s in self.edit_conflicts.text().split(",") if s.strip()]
-        return {
+        meta = {
             "id": self.edit_id.text().strip(),
             "name": self.edit_name.text().strip(),
             "version": self.edit_version.text().strip() or "1.0.0",
@@ -229,6 +292,13 @@ class ModMetaEditorDialog(QDialog):
             "dependencies": deps,
             "conflicts": conflicts,
         }
+        # 预览图：优先用新选择的，否则保留原始的
+        if self._preview_path and os.path.isfile(self._preview_path):
+            ext = os.path.splitext(self._preview_path)[1].lower() or ".png"
+            meta["preview_image"] = f"preview{ext}"
+        elif self._orig_preview_name:
+            meta["preview_image"] = self._orig_preview_name
+        return meta
 
     def _validate(self) -> bool:
         if not self._mod_path:
@@ -255,7 +325,7 @@ class ModMetaEditorDialog(QDialog):
         if self._is_pak():
             ok, msg = self._save_tksmodpak(self._mod_path)
         else:
-            ok, msg = rewrite_mod_metadata(self._mod_path, self._collect_metadata())
+            ok, msg = self._save_with_preview(self._mod_path)
         if ok:
             QMessageBox.information(self, "保存成功", f"已更新元数据:\n{self._mod_path}")
         else:
@@ -274,28 +344,84 @@ class ModMetaEditorDialog(QDialog):
         if self._is_pak(path):
             ok, msg = self._save_tksmodpak(path)
         else:
-            ok, msg = rewrite_mod_metadata(self._mod_path, self._collect_metadata(),
-                                           output_path=path)
+            ok, msg = self._save_with_preview(path)
         if ok:
             QMessageBox.information(self, "保存成功", f"已另存为:\n{path}")
         else:
             QMessageBox.critical(self, "保存失败", msg)
 
+    def _save_with_preview(self, output_path: str) -> tuple[bool, str]:
+        """保存 .tksmod，支持替换/删除预览图。保留原有数据/资源文件不变。"""
+        new_meta = self._collect_metadata()
+        old_preview = self._orig_preview_name  # 旧预览图文件名（在 ZIP 内）
+        new_preview = self._preview_path        # 新选择的本地图片路径
+        # 若用户清除了预览，或换了新图，跳过旧预览图文件
+        has_new = bool(new_preview and os.path.isfile(new_preview))
+        skip_old_preview = old_preview and (has_new or not new_meta.get("preview_image"))
+        tmp = output_path + ".tmp"
+        try:
+            with zipfile.ZipFile(self._mod_path, 'r') as src, \
+                 zipfile.ZipFile(tmp, 'w', zipfile.ZIP_DEFLATED) as dst:
+                # 读取原始 mod.json，在其基础上合并用户编辑的字段
+                orig_mj = json.loads(src.read("mod.json").decode('utf-8'))
+                orig_mj.update(new_meta)
+                # 强制保留格式标识
+                orig_mj["format"] = "TKSMOD"
+                orig_mj["format_version"] = 1
+                dst.writestr("mod.json",
+                             json.dumps(orig_mj, ensure_ascii=False, indent=2))
+                # 复制其他文件（跳过旧预览图和 mod.json）
+                skip_names = {"mod.json"}
+                if skip_old_preview:
+                    skip_names.add(old_preview)
+                for item in src.infolist():
+                    if item.filename in skip_names:
+                        continue
+                    dst.writestr(item, src.read(item.filename))
+                # 写入新预览图
+                if has_new:
+                    preview_name = new_meta.get("preview_image", "preview.png")
+                    dst.write(new_preview, preview_name)
+            os.replace(tmp, output_path)
+            return True, "保存成功"
+        except Exception as e:
+            if os.path.isfile(tmp):
+                try:
+                    os.remove(tmp)
+                except OSError:
+                    pass
+            return False, f"保存失败: {e}"
+
     def _save_tksmodpak(self, path: str) -> tuple[bool, str]:
-        """写入 .tksmodpak 的 mod.json 元数据，保留所有 .tksmod 文件不变。"""
+        """写入 .tksmodpak 的 mod.json 元数据，支持替换/删除预览图。保留 .tksmod 文件不变。"""
+        new_meta = self._collect_metadata()
+        old_preview = self._orig_preview_name
+        new_preview = self._preview_path
+        has_new = bool(new_preview and os.path.isfile(new_preview))
+        skip_old_preview = old_preview and (has_new or not new_meta.get("preview_image"))
         try:
             tmp = path + ".tmp"
             with zipfile.ZipFile(path, 'r') as src, \
                  zipfile.ZipFile(tmp, 'w', zipfile.ZIP_DEFLATED) as dst:
-                meta = self._collect_metadata()
-                meta["format"] = "TKSMODPAK"
-                meta["format_version"] = 1
+                # 读取原始 mod.json，在其基础上合并用户编辑的字段
+                orig_mj = json.loads(src.read("mod.json").decode('utf-8'))
+                orig_mj.update(new_meta)
+                # 强制保留格式标识
+                orig_mj["format"] = "TKSMODPAK"
+                orig_mj["format_version"] = 1
                 dst.writestr("mod.json",
-                            json.dumps(meta, ensure_ascii=False, indent=2))
+                            json.dumps(orig_mj, ensure_ascii=False, indent=2))
+                skip_names = {"mod.json"}
+                if skip_old_preview:
+                    skip_names.add(old_preview)
                 for item in src.infolist():
-                    if item.filename == "mod.json":
+                    if item.filename in skip_names:
                         continue
                     dst.writestr(item, src.read(item.filename))
+                # 写入新预览图
+                if has_new:
+                    preview_name = new_meta.get("preview_image", "preview.png")
+                    dst.write(new_preview, preview_name)
             os.replace(tmp, path)
             return True, "保存成功"
         except Exception as e:
@@ -310,6 +436,27 @@ class ModMetaEditorDialog(QDialog):
         """重新生成模组 ID（直接覆盖）。"""
         self.edit_id.setText(generate_short_uuid())
         self.edit_id.setFocus()
+
+    def _on_pick_preview(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self, "选择预览图", "",
+            "图片文件 (*.png *.jpg *.jpeg *.bmp *.webp);;所有文件 (*)")
+        if path:
+            self._preview_path = path
+            self._lbl_preview_name.setText(os.path.basename(path))
+            pm = QPixmap(path)
+            if not pm.isNull():
+                scaled = pm.scaled(120, 120, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                self._lbl_preview_thumb.setPixmap(scaled)
+            else:
+                self._lbl_preview_thumb.setText("无法加载")
+
+    def _on_clear_preview(self):
+        self._preview_path = ""
+        self._orig_preview_name = ""
+        self._lbl_preview_thumb.clear()
+        self._lbl_preview_thumb.setText("无预览图")
+        self._lbl_preview_name.setText("<i style='color:#888'>未选择图片</i>")
 
     def _on_id_text_changed(self, text: str):
         """实时移除模组 ID 中的所有空格（前后及中间），保持光标位置不跳变。"""

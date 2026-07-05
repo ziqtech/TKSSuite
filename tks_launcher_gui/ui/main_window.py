@@ -142,10 +142,10 @@ class MainWindow(QMainWindow):
         splitter.addWidget(log_wrap)
 
         # 中间/右侧可伸缩（窗口最大化时自适应），左侧按内容固定宽度
-        splitter.setSizes([380, 550, 520])
+        splitter.setSizes([380, 570, 500])
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)
-        splitter.setStretchFactor(2, 1)
+        splitter.setStretchFactor(2, 0)
 
     def _setup_statusbar(self):
         self.status_bar = QStatusBar()

@@ -49,6 +49,8 @@ class ModInfo:
     pak_contents: List[str] = field(default_factory=list)
     # 合集内展开的 .tksmod 原始 ZIP 数据（内存中，不落盘），用于资源提取
     _data_raw: Optional[bytes] = None
+    # 预览图文件名（在 ZIP 内的文件名，如 "preview.png"）
+    preview_image: str = ""
 
 
 @dataclass
@@ -143,6 +145,7 @@ def _load_single_mod(mod_path: str, log_func=None) -> Optional[ModInfo]:
             warpc_expand=mj.get("warpc_expand", 0),
             components=mj.get("components", []),
             resources=mj.get("resources", []),
+            preview_image=mj.get("preview_image", ""),
         )
 
         # 预加载数据文件
@@ -188,6 +191,7 @@ def _load_pak_mod_info(pak_path: str, log_func=None) -> Optional[ModInfo]:
             dependencies=mj.get("dependencies", []),
             conflicts=mj.get("conflicts", []),
             pak_contents=pak_contents,
+            preview_image=mj.get("preview_image", ""),
         )
         return mod
 

@@ -6,7 +6,7 @@ from editor_utils.dock_components import DockHeader
 from core.config_loader import PatchDef
 
 # 可选补丁区固定默认高度（不再按条数动态计算）；MOD 详情预览区同步使用此值
-OPTIONAL_PATCH_DEFAULT_HEIGHT = 220
+OPTIONAL_PATCH_DEFAULT_HEIGHT = 320
 
 
 class PatchListWidget(QWidget):

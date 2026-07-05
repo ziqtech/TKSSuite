@@ -23,9 +23,10 @@ from typing import Any
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QGridLayout,
     QLabel, QLineEdit, QTextEdit, QSpinBox,
-    QPushButton, QMessageBox,
+    QPushButton, QMessageBox, QFileDialog,
 )
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QPixmap
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -168,7 +169,8 @@ def generate_mod_json(metadata: dict, components: list[dict],
 
     Args:
         metadata: 包含 id, name, version, author, description, type, mode,
-                  dependencies, conflicts, load_order, id_ranges, warpc_expand
+                  dependencies, conflicts, load_order, id_ranges, warpc_expand,
+                  preview_image_path (可选, 本地预览图路径)
         components: [{"file": "data/X.json", "target": "X.dat"}, ...]
         resources: [{"file": "resources/X.JVG", "target": "X.JVG"}, ...]
 
@@ -176,6 +178,13 @@ def generate_mod_json(metadata: dict, components: list[dict],
         完整的 mod.json 字典
     """
     now = datetime.now(timezone(timedelta(hours=8)))
+
+    # 若有预览图，记录内部文件名（不含路径，仅文件名）
+    preview_image = ""
+    preview_path = metadata.get("preview_image_path", "")
+    if preview_path and os.path.isfile(preview_path):
+        ext = os.path.splitext(preview_path)[1].lower() or ".png"
+        preview_image = f"preview{ext}"
 
     mod_json = {
         "format": "TKSMOD",
@@ -198,6 +207,10 @@ def generate_mod_json(metadata: dict, components: list[dict],
         "components": components,
         "resources": resources or [],
     }
+    if preview_image:
+        mod_json["preview_image"] = preview_image
+        # 内部辅助字段，供 pack_tksmod 读取原图路径，写入 ZIP 时自动过滤
+        mod_json["_preview_image_path"] = preview_path
     return mod_json
 
 
@@ -207,7 +220,8 @@ def generate_mod_json(metadata: dict, components: list[dict],
 
 def pack_tksmod(output_path: str, mod_json: dict,
                 data_files: dict[str, Any],
-                resource_files: dict[str, str] | None = None) -> bool:
+                resource_files: dict[str, str] | None = None,
+                preview_image_path: str | None = None) -> bool:
     """将 MOD 数据打包为 .tksmod (ZIP) 文件。
 
     Args:
@@ -217,13 +231,20 @@ def pack_tksmod(output_path: str, mod_json: dict,
                     value 为字典，将被 json.dumps 序列化
         resource_files: {"resources/Cha.JVG": "/abs/path/to/file", ...}
                         value 为源文件的绝对路径
+        preview_image_path: 预览图本地路径（可选），自动打入 ZIP 根目录
 
     Returns:
         True 成功
     """
+    # 优先从参数取，其次从 mod_json 元数据取
+    _preview = preview_image_path or mod_json.get("_preview_image_path", "")
+
     with zipfile.ZipFile(output_path, 'w', zipfile.ZIP_DEFLATED) as zf:
         # 写入 mod.json
-        mod_json_str = json.dumps(mod_json, ensure_ascii=False, indent=2)
+        # 去掉内部辅助字段（不应写入文件）
+        _clean_json = {k: v for k, v in mod_json.items()
+                       if not k.startswith('_')}
+        mod_json_str = json.dumps(_clean_json, ensure_ascii=False, indent=2)
         zf.writestr("mod.json", mod_json_str)
 
         # 写入数据差异文件
@@ -236,6 +257,12 @@ def pack_tksmod(output_path: str, mod_json: dict,
             for internal_path, source_path in resource_files.items():
                 if os.path.isfile(source_path):
                     zf.write(source_path, internal_path)
+
+        # 写入预览图
+        if _preview and os.path.isfile(_preview):
+            preview_internal = mod_json.get("preview_image", "") or \
+                               f"preview{os.path.splitext(_preview)[1].lower() or '.png'}"
+            zf.write(_preview, preview_internal)
 
     return True
 
@@ -271,6 +298,29 @@ def read_tksmod(mod_path: str) -> tuple[dict | None, dict[str, Any]]:
             return mod_json, data_files
     except Exception:
         return None, {}
+
+
+def extract_preview_image(mod_path: str) -> bytes | None:
+    """从 .tksmod/.tksmodpak 中提取预览图字节数据。
+
+    根据 mod.json 中的 preview_image 字段定位文件并读取。
+
+    Returns:
+        图片字节数据，或 None（无预览图/读取失败）
+    """
+    if not os.path.isfile(mod_path):
+        return None
+    try:
+        with zipfile.ZipFile(mod_path, 'r') as zf:
+            if "mod.json" not in zf.namelist():
+                return None
+            mj = json.loads(zf.read("mod.json").decode('utf-8'))
+            preview_name = mj.get("preview_image", "")
+            if not preview_name or preview_name not in zf.namelist():
+                return None
+            return zf.read(preview_name)
+    except Exception:
+        return None
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -345,11 +395,15 @@ def generate_short_uuid(length: int = 16) -> str:
 class ModMetadataDialog(QDialog):
     """MOD 元数据输入对话框，用于首次导出时收集信息。"""
 
+    _PREVIEW_IMG_FILTER = "图片文件 (*.png *.jpg *.jpeg *.bmp *.webp);;所有文件 (*)"
+    _PREVIEW_THUMB_SIZE = 120  # 预览图缩略图最大边长
+
     def __init__(self, parent=None, defaults: dict | None = None):
         super().__init__(parent)
         self.setWindowTitle("导出为 MOD (.tksmod)")
-        self.resize(500, 370)
+        self.resize(520, 430)
         self.metadata = {}
+        self._preview_path: str = ""  # 当前选中的预览图本地路径
         defaults = defaults or {}
 
         layout = QVBoxLayout(self)
@@ -400,6 +454,52 @@ class ModMetadataDialog(QDialog):
         self.spin_order.setValue(defaults.get("load_order", 100))
         grid.addWidget(self.spin_order, row, 1)
 
+        # 预览图行
+        row += 1
+        grid.addWidget(QLabel("预览图:"), row, 0, Qt.AlignTop)
+        preview_card = QHBoxLayout()
+        preview_card.setContentsMargins(0, 4, 0, 4)
+        preview_card.setSpacing(14)
+
+        self._lbl_preview_thumb = QLabel()
+        self._lbl_preview_thumb.setFixedSize(
+            self._PREVIEW_THUMB_SIZE, self._PREVIEW_THUMB_SIZE)
+        self._lbl_preview_thumb.setAlignment(Qt.AlignCenter)
+        self._lbl_preview_thumb.setStyleSheet(
+            "QLabel { border: 2px dashed #555; border-radius: 6px; "
+            "background: #1e1e1e; color: #666; }")
+        self._lbl_preview_thumb.setText("无预览图")
+        preview_card.addWidget(self._lbl_preview_thumb)
+
+        preview_info = QVBoxLayout()
+        preview_info.setContentsMargins(0, 0, 0, 0)
+        preview_info.setSpacing(8)
+        self._lbl_preview_name = QLabel("<i style='color:#888'>未选择图片</i>")
+        self._lbl_preview_name.setWordWrap(True)
+        preview_info.addWidget(self._lbl_preview_name)
+
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(8)
+        self._btn_pick_img = QPushButton("选择图片…")
+        self._btn_pick_img.setFixedWidth(100)
+        self._btn_pick_img.clicked.connect(self._on_pick_preview_image)
+        btn_row.addWidget(self._btn_pick_img)
+        self._btn_clear_img = QPushButton("清除")
+        self._btn_clear_img.setFixedWidth(60)
+        self._btn_clear_img.clicked.connect(self._on_clear_preview_image)
+        btn_row.addWidget(self._btn_clear_img)
+        btn_row.addStretch()
+        preview_info.addLayout(btn_row)
+
+        preview_info.addStretch()
+        preview_card.addLayout(preview_info, 1)
+        grid.addLayout(preview_card, row, 1)
+
+        # 恢复默认预览图路径
+        default_preview = defaults.get("preview_image_path", "")
+        if default_preview and os.path.isfile(default_preview):
+            self._set_preview_image(default_preview)
+
         layout.addLayout(grid)
         layout.addSpacing(12)
 
@@ -413,6 +513,31 @@ class ModMetadataDialog(QDialog):
         btn_ok.clicked.connect(self._accept)
         btn_layout.addWidget(btn_ok)
         layout.addLayout(btn_layout)
+
+    def _on_pick_preview_image(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self, "选择预览图", "", self._PREVIEW_IMG_FILTER)
+        if path:
+            self._set_preview_image(path)
+
+    def _on_clear_preview_image(self):
+        self._preview_path = ""
+        self._lbl_preview_thumb.clear()
+        self._lbl_preview_thumb.setText("无预览图")
+        self._lbl_preview_name.setText("<i style='color:#888'>未选择图片</i>")
+
+    def _set_preview_image(self, path: str):
+        """加载并显示预览图缩略图。"""
+        self._preview_path = path
+        self._lbl_preview_name.setText(os.path.basename(path))
+        pm = QPixmap(path)
+        if not pm.isNull():
+            scaled = pm.scaled(
+                self._PREVIEW_THUMB_SIZE, self._PREVIEW_THUMB_SIZE,
+                Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            self._lbl_preview_thumb.setPixmap(scaled)
+        else:
+            self._lbl_preview_thumb.setText("无法加载")
 
     def _accept(self):
         mod_id = self.edit_id.text().strip()
@@ -431,6 +556,7 @@ class ModMetadataDialog(QDialog):
             "author": self.edit_author.text().strip(),
             "description": self.edit_desc.toPlainText().strip(),
             "load_order": self.spin_order.value(),
+            "preview_image_path": self._preview_path,
         }
         self.accept()
 
@@ -948,6 +1074,7 @@ def get_tksmod_info(mod_path: str) -> dict | None:
         "scene_name": mod_json.get("scene_name", ""),
         "components": mod_json.get("components", []),
         "resources": mod_json.get("resources", []),
+        "preview_image": mod_json.get("preview_image", ""),
         "targets": targets,
         "stats": stats,
     }
