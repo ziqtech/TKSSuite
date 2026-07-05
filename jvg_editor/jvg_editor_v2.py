@@ -1339,35 +1339,6 @@ class JVGEditor(QMainWindow):
             self._kill_anim()
             self._refresh_view()
 
-    def _pick_reference_block(self) -> Optional[int]:
-        blocks = [(i, blk) for i, blk in enumerate(self.jvg.blocks)
-                  if blk.frame_count > 0 and i != self._bi]
-        if not blocks:
-            QMessageBox.information(self, "无参考分组", "当前 JVG 中没有其他有帧的分组可作为参考。")
-            return None
-
-        dlg = QDialog(self)
-        dlg.setWindowTitle("选择参考分组 (用于恢复offset)")
-        dlg.setModal(True)
-        
-        layout = QVBoxLayout(dlg)
-        layout.addWidget(QLabel("空分组导入需要参考分组的 offset。\n请选择导出该图集的源分组:"))
-        
-        list_widget = QListWidget()
-        for bi, blk in blocks:
-            list_widget.addItem(f"[{bi:3d}] {blk.name} ({blk.frame_count}f)")
-        list_widget.setCurrentRow(0)
-        layout.addWidget(list_widget)
-        
-        button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        button_box.accepted.connect(dlg.accept)
-        button_box.rejected.connect(dlg.reject)
-        layout.addWidget(button_box)
-        
-        if dlg.exec() == QDialog.Accepted and list_widget.currentRow() >= 0:
-            return blocks[list_widget.currentRow()][0]
-        return None
-
     def _batch_replace_gridsheet(self):
         if not self.jvg or self._bi < 0:
             QMessageBox.information(self, "提示", "请先选择分组")
@@ -1435,23 +1406,6 @@ class JVGEditor(QMainWindow):
         ch = ch_num // rows
 
         auto_min_vl = -((cw - 1) // 2)
-
-        ref_frames = None
-        if is_new_block:
-            ref_bi = self._pick_reference_block()
-            if ref_bi is not None:
-                ref_blk = self.jvg.blocks[ref_bi]
-                ref_valid = [(i, f) for i, f in enumerate(ref_blk.frames) if f.width > 0 and f.height > 0]
-                ref_frames = ref_valid
-                if len(ref_valid) > cols * rows:
-                    reply = QMessageBox.question(self, "帧数不匹配",
-                        f"参考分组有 {len(ref_valid)} 帧, 但 grid 只有 {cols * rows} 个 cell。\n"
-                        f"多余 cell 将按自动计算 offset。是否继续?",
-                        QMessageBox.Yes | QMessageBox.No)
-                    if reply != QMessageBox.Yes:
-                        return
-        else:
-            ref_frames = valid_list
 
         self._info.setText(f"导入组图: 裁剪 cell...")
         QApplication.processEvents()
@@ -1544,11 +1498,6 @@ class JVGEditor(QMainWindow):
                 nf.x_max = xm
                 nf.y_max = ym
                 blk.frames.append(nf)
-            if ref_frames:
-                for cell_idx, (_, ref_f) in enumerate(ref_frames):
-                    if cell_idx >= len(blk.frames):
-                        break
-                    _align_anchor(blk.frames[cell_idx], ref_f, mode="bottom_center")
         else:
             for (blk_fi, xm, ym), nf in zip(metas, new_frames):
                 nf.x_max = xm
