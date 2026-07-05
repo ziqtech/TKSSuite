@@ -6,18 +6,20 @@ from PySide6.QtWidgets import (
     QHeaderView,
 )
 from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QColor
 
 from editor_utils.dock_components import create_dock
 from core.mod_loader import scan_mods, ModInfo
 
-_COLUMNS = ["启用", "文件名", "模组名称", "ID", "版本", "作者", "描述"]
+_COLUMNS = ["启用", "文件名", "模组名称", "加载顺序", "ID", "版本", "作者", "描述"]
 _COL_ENABLE = 0
 _COL_FILENAME = 1
 _COL_NAME = 2
-_COL_ID = 3
-_COL_VERSION = 4
-_COL_AUTHOR = 5
-_COL_DESC = 6
+_COL_LOAD_ORDER = 3
+_COL_ID = 4
+_COL_VERSION = 5
+_COL_AUTHOR = 6
+_COL_DESC = 7
 
 
 class ModListWidget(QWidget):
@@ -54,6 +56,7 @@ class ModListWidget(QWidget):
         h.setSectionResizeMode(_COL_ENABLE, QHeaderView.ResizeToContents)
         h.setSectionResizeMode(_COL_FILENAME, QHeaderView.Interactive)
         h.setSectionResizeMode(_COL_NAME, QHeaderView.Interactive)
+        h.setSectionResizeMode(_COL_LOAD_ORDER, QHeaderView.ResizeToContents)
         h.setSectionResizeMode(_COL_ID, QHeaderView.Interactive)
         h.setSectionResizeMode(_COL_VERSION, QHeaderView.ResizeToContents)
         h.setSectionResizeMode(_COL_AUTHOR, QHeaderView.Interactive)
@@ -87,6 +90,12 @@ class ModListWidget(QWidget):
         # 默认按 MOD ID 排序（不区分大小写）
         self._mods.sort(key=lambda m: m.mod_id.lower())
 
+        # 检测重复 ID
+        id_counts: dict[str, int] = {}
+        for mod in self._mods:
+            id_counts[mod.mod_id] = id_counts.get(mod.mod_id, 0) + 1
+        dup_ids = {k for k, v in id_counts.items() if v > 1}
+
         self._table.setRowCount(len(self._mods))
         for row, mod in enumerate(self._mods):
             enable_item = QTableWidgetItem()
@@ -97,7 +106,12 @@ class ModListWidget(QWidget):
 
             self._set_text(row, _COL_FILENAME, os.path.basename(mod.path))
             self._set_text(row, _COL_NAME, mod.name)
-            self._set_text(row, _COL_ID, mod.mod_id)
+            self._set_text(row, _COL_LOAD_ORDER, str(mod.load_order))
+
+            id_item = self._set_text(row, _COL_ID, mod.mod_id)
+            if mod.mod_id in dup_ids:
+                id_item.setForeground(QColor(220, 50, 50))
+
             self._set_text(row, _COL_VERSION, mod.version)
             self._set_text(row, _COL_AUTHOR, mod.author)
 
@@ -113,10 +127,11 @@ class ModListWidget(QWidget):
                 if it is not None:
                     it.setToolTip(tip)
 
-    def _set_text(self, row: int, col: int, text: str):
+    def _set_text(self, row: int, col: int, text: str) -> QTableWidgetItem:
         item = QTableWidgetItem(text)
         item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
         self._table.setItem(row, col, item)
+        return item
 
     def _on_current_changed(self, current, previous):
         if current is None:
