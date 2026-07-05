@@ -502,7 +502,7 @@ class JVGEditor(QMainWindow):
     def __init__(self, filepath: Optional[str] = None):
         super().__init__()
         self.setWindowTitle("JVG 图集编辑器 v2")
-        self.resize(1280, 800)
+        self.resize(1400, 900)
 
         # 窗口居中显示
         screen = QApplication.primaryScreen()
@@ -710,10 +710,12 @@ class JVGEditor(QMainWindow):
         lc_layout.setContentsMargins(0, 0, 0, 0)
         list_header = QHBoxLayout()
         btn_add = QPushButton("➕")
-        btn_add.setFixedWidth(36)
+        btn_add.setFixedSize(22, 22)
+        btn_add.setProperty("class", "ZoomBtn")
         btn_add.clicked.connect(self._add_block)
         btn_del = QPushButton("➖")
-        btn_del.setFixedWidth(36)
+        btn_del.setFixedSize(22, 22)
+        btn_del.setProperty("class", "ZoomBtn")
         btn_del.clicked.connect(self._del_block)
         list_header.addStretch()
         list_header.addWidget(btn_add)
@@ -736,15 +738,15 @@ class JVGEditor(QMainWindow):
         tb_layout = QHBoxLayout(tb_widget)
         tb_layout.setContentsMargins(4, 4, 4, 4)
         tb_layout.setSpacing(4)
-        btn_tile = QPushButton("🖼️ 平铺")
-        btn_tile.clicked.connect(lambda: self._set_view("tile"))
-        btn_single = QPushButton("📷 逐帧")
-        btn_single.clicked.connect(lambda: self._set_view("single"))
-        btn_anim = QPushButton("🎬 动画")
-        btn_anim.clicked.connect(lambda: self._set_view("anim"))
-        tb_layout.addWidget(btn_tile)
-        tb_layout.addWidget(btn_single)
-        tb_layout.addWidget(btn_anim)
+        self._btn_tile = QPushButton("🖼️ 平铺")
+        self._btn_tile.clicked.connect(lambda: self._set_view("tile"))
+        self._btn_single = QPushButton("📷 逐帧")
+        self._btn_single.clicked.connect(lambda: self._set_view("single"))
+        self._btn_anim = QPushButton("🎬 动画")
+        self._btn_anim.clicked.connect(lambda: self._set_view("anim"))
+        tb_layout.addWidget(self._btn_tile)
+        tb_layout.addWidget(self._btn_single)
+        tb_layout.addWidget(self._btn_anim)
         tb_layout.addSpacing(10)
         self._greenscreen_remove = QCheckBox("预览去绿幕")
         self._greenscreen_remove.setChecked(True)
@@ -804,8 +806,14 @@ class JVGEditor(QMainWindow):
         right_panel.setMinimumWidth(180)
         right_layout = QVBoxLayout(right_panel)
         right_layout.setContentsMargins(0, 0, 0, 0)
-        right_splitter = QSplitter(Qt.Vertical)
-        right_splitter.setHandleWidth(7)
+        right_layout.setSpacing(4)
+
+        # 顶部 dock 容器
+        top_docks = QWidget()
+        top_docks.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)
+        top_docks_layout = QVBoxLayout(top_docks)
+        top_docks_layout.setContentsMargins(0, 0, 0, 0)
+        top_docks_layout.setSpacing(4)
 
         # 视图与布局
         layout_widget = QWidget()
@@ -825,7 +833,7 @@ class JVGEditor(QMainWindow):
         btn_theme = QPushButton("🌗 切换主题")
         btn_theme.clicked.connect(self._toggle_theme)
         layout_form.addRow(btn_theme)
-        right_splitter.addWidget(self._create_dock("视图与布局", layout_widget))
+        top_docks_layout.addWidget(self._create_dock("视图与布局", layout_widget))
 
         # 帧导入与替换
         frame_ops_widget = QWidget()
@@ -844,7 +852,7 @@ class JVGEditor(QMainWindow):
         frame_ops_layout.addWidget(btn_rep_img)
         frame_ops_layout.addWidget(btn_bat_img)
         frame_ops_layout.addWidget(btn_del_img)
-        right_splitter.addWidget(self._create_dock("帧导入与替换", frame_ops_widget))
+        top_docks_layout.addWidget(self._create_dock("帧导入与替换", frame_ops_widget))
 
         # 导出
         exp_widget = QWidget()
@@ -860,9 +868,9 @@ class JVGEditor(QMainWindow):
         exp_layout.addWidget(btn_exp_single)
         exp_layout.addWidget(btn_exp_grp)
         exp_layout.addWidget(btn_exp_grid)
-        right_splitter.addWidget(self._create_dock("导出", exp_widget))
+        top_docks_layout.addWidget(self._create_dock("导出", exp_widget))
 
-        # Fa.JVG 头像批量
+        # 头像操作
         avatar_widget = QWidget()
         avatar_layout = QVBoxLayout(avatar_widget)
         avatar_layout.setContentsMargins(4, 4, 4, 4)
@@ -876,35 +884,41 @@ class JVGEditor(QMainWindow):
         avatar_layout.addWidget(self._btn_export_avatars)
         avatar_layout.addWidget(self._btn_export_avatars_split)
         avatar_layout.addWidget(self._btn_import_avatars)
-        self._grp_avatar = self._create_dock("Fa.JVG 头像", avatar_widget)
-        right_splitter.addWidget(self._grp_avatar)
+        self._grp_avatar = self._create_dock("头像操作", avatar_widget)
+        self._grp_avatar.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)
+
+        right_layout.addWidget(top_docks)
+        right_layout.addWidget(self._grp_avatar)
 
         # 图元结构校验日志
         self._detail = QTextEdit()
         self._detail.setReadOnly(True)
         self._detail.setMinimumHeight(60)
         self._detail.setProperty("class", "MonoText")
-        right_splitter.addWidget(self._create_dock("图元结构校验日志", self._detail))
+        right_layout.addWidget(self._create_dock("图元结构校验日志", self._detail))
 
-        # 前 4 个 dock 不拉伸，用内容撑开；日志 dock 填充剩余空间
-        right_splitter.setStretchFactor(0, 0)
-        right_splitter.setStretchFactor(1, 0)
-        right_splitter.setStretchFactor(2, 0)
-        right_splitter.setStretchFactor(3, 0)
-        right_splitter.setStretchFactor(4, 1)
-        right_layout.addWidget(right_splitter)
+        right_layout.addStretch()
+
+        # 将右侧面板移到图集分组列表左边
         splitter.addWidget(right_panel)
+        w_canvas = splitter.widget(1)
+        w_left = splitter.widget(0)
+        splitter.addWidget(w_left)
+        splitter.addWidget(w_canvas)
 
         # 三栏比例：左右固定，中间自适应
         splitter.setStretchFactor(0, 0)
-        splitter.setStretchFactor(1, 1)
-        splitter.setStretchFactor(2, 0)
-        splitter.setSizes([250, 780, 250])
+        splitter.setStretchFactor(1, 0)
+        splitter.setStretchFactor(2, 1)
+        splitter.setSizes([250, 250, 780])
         
         # 信息标签
         self._info = QLabel("")
         self.statusBar().addPermanentWidget(self._info)
         self.statusBar().showMessage("引擎就绪")
+
+        # 初始化视图按钮状态
+        self._set_view(self._view)
 
     def _switch_theme(self, theme: str):
         self._is_dark = (theme == 'dark')
@@ -1579,6 +1593,10 @@ class JVGEditor(QMainWindow):
             self._act_tile.setChecked(mode == "tile")
             self._act_single.setChecked(mode == "single")
             self._act_anim.setChecked(mode == "anim")
+        if hasattr(self, '_btn_tile'):
+            names = {"tile": "平铺", "single": "逐帧", "anim": "动画"}
+            for btn, key in [(self._btn_tile, "tile"), (self._btn_single, "single"), (self._btn_anim, "anim")]:
+                btn.setText(f"🟢 {names[key]}" if mode == key else f"⚪ {names[key]}")
         self._kill_anim()
         self._refresh_view()
 
@@ -1935,9 +1953,6 @@ class JVGEditor(QMainWindow):
             self._btn_export_avatars_split.setEnabled(is_fa)
         if hasattr(self, '_btn_import_avatars'):
             self._btn_import_avatars.setEnabled(is_fa)
-        # 控制头像分组可见性
-        if hasattr(self, '_grp_avatar'):
-            self._grp_avatar.setVisible(is_fa)
 
     def _export_all_avatars(self):
         """导出全部头像：取所有偶数block的frame0(70×70)，以padding=1排列成近正方形图集"""
