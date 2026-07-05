@@ -1403,6 +1403,19 @@ class JVGEditor(QMainWindow):
         if not ok:
             return
 
+        # 导入模式选择 (仅替换分支需要)
+        use_bbox_mode = True  # 默认 bbox 模式
+        if not is_new_block:
+            mode_items = ["自适应 Bbox (外部图集)", "精确匹配 (本编辑器导出的图集)"]
+            mode_choice, ok = QInputDialog.getItem(self, "导入模式",
+                "选择导入模式:\n"
+                "· 自适应 Bbox — 用 alpha 通道自动检测精灵边界，适合外部图集\n"
+                "· 精确匹配 — 按旧帧 offset 精确提取，适合本编辑器导出的图集",
+                mode_items, 0, False)
+            if not ok:
+                return
+            use_bbox_mode = (mode_choice == mode_items[0])
+
         if not is_new_block and cols * rows < n_valid:
             reply = QMessageBox.question(self, "容量不足",
                 f"cols×rows = {cols}×{rows} = {cols * rows} < 有效帧数 {n_valid}\n"
@@ -1449,16 +1462,6 @@ class JVGEditor(QMainWindow):
         max_cells = cols * rows
         skipped = 0
 
-        # 对 replace 分支，预计算 min_vl/min_vt (与 export_gridsheet 一致)
-        if not is_new_block and valid_list:
-            _vrs = []
-            for _, vf in valid_list:
-                _xm = _u16s(vf.x_max); _ym = _u16s(vf.y_max)
-                _vl = _xm - vf.width + 1; _vt = _ym - vf.height + 1
-                _vrs.append((_vl, _vt, _xm, _ym))
-            _min_vl = min(r[0] for r in _vrs)
-            _min_vt = min(r[1] for r in _vrs)
-
         if is_new_block:
             for cell_idx in range(max_cells):
                 ri = cell_idx // cols
@@ -1479,6 +1482,16 @@ class JVGEditor(QMainWindow):
                 subs.append(sub)
                 metas.append((new_x_max, 0, b))
         else:
+            # 精确匹配模式：预计算 min_vl/min_vt (与 export_gridsheet 一致)
+            if not use_bbox_mode:
+                _vrs = []
+                for _, vf in valid_list:
+                    _xm = _u16s(vf.x_max); _ym = _u16s(vf.y_max)
+                    _vl = _xm - vf.width + 1; _vt = _ym - vf.height + 1
+                    _vrs.append((_vl, _vt, _xm, _ym))
+                _min_vl = min(r[0] for r in _vrs)
+                _min_vt = min(r[1] for r in _vrs)
+
             for cell_idx, (blk_fi, old_f) in enumerate(valid_list):
                 if cell_idx >= max_cells:
                     skipped += 1
@@ -1491,21 +1504,24 @@ class JVGEditor(QMainWindow):
                     skipped += 1
                     continue
                 cell = gs.crop((cx, cy, cx + cw, cy + ch))
-                # 检查 cell 是否完全透明
                 bbox = cell.getchannel('A').getbbox()
                 if bbox is None:
                     skipped += 1
                     continue
-                # 按原始帧在 cell 中的位置和尺寸提取，保留透明边缘
-                old_xm = _u16s(old_f.x_max)
-                old_ym = _u16s(old_f.y_max)
-                old_vl = old_xm - old_f.width + 1
-                old_vt = old_ym - old_f.height + 1
-                ox = old_vl - _min_vl
-                oy = old_vt - _min_vt
-                # 提取原始帧矩形区域 (包含透明像素)
-                sub = cell.crop((ox, oy, ox + old_f.width, oy + old_f.height))
-                # 保持原始 offset
+                if use_bbox_mode:
+                    # Bbox 自适应模式：用 alpha 通道检测精灵边界
+                    l, t, r, b = bbox
+                    sub = cell.crop((l, t, r, b))
+                else:
+                    # 精确匹配模式：按旧帧 offset 提取
+                    old_xm = _u16s(old_f.x_max)
+                    old_ym = _u16s(old_f.y_max)
+                    old_vl = old_xm - old_f.width + 1
+                    old_vt = old_ym - old_f.height + 1
+                    ox = old_vl - _min_vl
+                    oy = old_vt - _min_vt
+                    sub = cell.crop((ox, oy, ox + old_f.width, oy + old_f.height))
+                # 保持原始 offset，由 _align_anchor 重新对齐
                 new_x_max = old_f.x_max
                 new_y_max = old_f.y_max
                 subs.append(sub)
@@ -1542,7 +1558,8 @@ class JVGEditor(QMainWindow):
         self._sync_list()
         self._kill_anim()
         self._refresh_view()
-        self._info.setText(f"导入组图完成: {'新增' if is_new_block else '替换'} {len(new_frames)} 帧, 跳过 {skipped} 空cell (cell={cw}×{ch})")
+        _mode_label = "Bbox" if (is_new_block or use_bbox_mode) else "精确匹配"
+        self._info.setText(f"导入组图完成: {'新增' if is_new_block else '替换'} {len(new_frames)} 帧, 跳过 {skipped} 空cell (cell={cw}×{ch}, {_mode_label})")
 
     def _zoom_step(self, delta: float):
         self._zoom = max(1.0, min(3.0, self._zoom + delta))
