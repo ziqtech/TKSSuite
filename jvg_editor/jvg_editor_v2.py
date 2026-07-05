@@ -1482,15 +1482,14 @@ class JVGEditor(QMainWindow):
                 subs.append(sub)
                 metas.append((new_x_max, 0, b))
         else:
-            # 精确匹配模式：预计算 min_vl/min_vt (与 export_gridsheet 一致)
-            if not use_bbox_mode:
-                _vrs = []
-                for _, vf in valid_list:
-                    _xm = _u16s(vf.x_max); _ym = _u16s(vf.y_max)
-                    _vl = _xm - vf.width + 1; _vt = _ym - vf.height + 1
-                    _vrs.append((_vl, _vt, _xm, _ym))
-                _min_vl = min(r[0] for r in _vrs)
-                _min_vt = min(r[1] for r in _vrs)
+            # 预计算全局视口原点 (与 export_gridsheet 一致)
+            _vrs = []
+            for _, vf in valid_list:
+                _xm = _u16s(vf.x_max); _ym = _u16s(vf.y_max)
+                _vl = _xm - vf.width + 1; _vt = _ym - vf.height + 1
+                _vrs.append((_vl, _vt, _xm, _ym))
+            _min_vl = min(r[0] for r in _vrs)
+            _min_vt = min(r[1] for r in _vrs)
 
             for cell_idx, (blk_fi, old_f) in enumerate(valid_list):
                 if cell_idx >= max_cells:
@@ -1512,8 +1511,11 @@ class JVGEditor(QMainWindow):
                     # Bbox 自适应模式：用 alpha 通道检测精灵边界
                     l, t, r, b = bbox
                     sub = cell.crop((l, t, r, b))
+                    # 用全局视口原点计算游戏世界坐标 (所有 cell 统一基准)
+                    new_x_max = (_min_vl + r - 1) & 0xFFFF
+                    new_y_max = (_min_vt + b - 1) & 0xFFFF
                 else:
-                    # 精确匹配模式：按旧帧 offset 提取
+                    # 精确匹配模式：按旧帧 offset 提取，尺寸不变
                     old_xm = _u16s(old_f.x_max)
                     old_ym = _u16s(old_f.y_max)
                     old_vl = old_xm - old_f.width + 1
@@ -1521,9 +1523,8 @@ class JVGEditor(QMainWindow):
                     ox = old_vl - _min_vl
                     oy = old_vt - _min_vt
                     sub = cell.crop((ox, oy, ox + old_f.width, oy + old_f.height))
-                # 保持原始 offset，由 _align_anchor 重新对齐
-                new_x_max = old_f.x_max
-                new_y_max = old_f.y_max
+                    new_x_max = old_f.x_max
+                    new_y_max = old_f.y_max
                 subs.append(sub)
                 metas.append((blk_fi, new_x_max, new_y_max))
                 replace_set.add(blk_fi)
@@ -1552,7 +1553,10 @@ class JVGEditor(QMainWindow):
             for (blk_fi, xm, ym), nf in zip(metas, new_frames):
                 nf.x_max = xm
                 nf.y_max = ym
-                _align_anchor(nf, blk.frames[blk_fi], mode="bottom_center")
+                if not use_bbox_mode:
+                    # 精确匹配模式：用 _align_anchor 重新对齐
+                    _align_anchor(nf, blk.frames[blk_fi], mode="bottom_center")
+                # bbox 模式：直接使用公式计算的 offset，不做锚点对齐
                 blk.frames[blk_fi] = nf
 
         self._sync_list()
