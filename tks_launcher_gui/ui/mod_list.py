@@ -27,6 +27,8 @@ class ModListWidget(QWidget):
 
     # 选中模组时发出（None 表示无选中），供独立的模组信息预览面板订阅
     mod_selected = Signal(object)
+    # 重复 ID 检测结果：True 表示存在重复
+    duplicate_ids_detected = Signal(bool)
 
     def __init__(self, mods_dir: str = "mods", parent=None):
         super().__init__(parent)
@@ -95,6 +97,7 @@ class ModListWidget(QWidget):
         for mod in self._mods:
             id_counts[mod.mod_id] = id_counts.get(mod.mod_id, 0) + 1
         dup_ids = {k for k, v in id_counts.items() if v > 1}
+        self.duplicate_ids_detected.emit(len(dup_ids) > 0)
 
         self._table.setRowCount(len(self._mods))
         for row, mod in enumerate(self._mods):
@@ -169,3 +172,10 @@ class ModListWidget(QWidget):
         """更新 MOD 目录并刷新"""
         self._mods_dir = mods_dir
         self.refresh_mods()
+
+    def has_duplicate_ids(self) -> bool:
+        """检查当前模组列表中是否存在重复 ID"""
+        id_counts: dict[str, int] = {}
+        for mod in self._mods:
+            id_counts[mod.mod_id] = id_counts.get(mod.mod_id, 0) + 1
+        return any(v > 1 for v in id_counts.values())

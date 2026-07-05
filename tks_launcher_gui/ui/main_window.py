@@ -116,6 +116,10 @@ class MainWindow(QMainWindow):
         self.mod_preview.set_default_height(self.patch_list.optional_default_height)
         # 选中模组时更新预览
         self.mod_list.mod_selected.connect(self.mod_preview.show_mod)
+        # 重复 ID 检测
+        self.mod_list.duplicate_ids_detected.connect(self._on_duplicate_ids)
+        # 初始加载已在构造中完成，此时信号尚未连接，需手动检查一次
+        self._on_duplicate_ids(self.mod_list.has_duplicate_ids())
 
         middle = QSplitter(Qt.Vertical)
         middle.setHandleWidth(4)
@@ -262,6 +266,19 @@ class MainWindow(QMainWindow):
         dialog.exec()
         # 保存后刷新模组列表（元数据可能已变更）
         self.mod_list.refresh_mods()
+
+    def _on_duplicate_ids(self, has_dup: bool):
+        """模组列表刷新后根据重复 ID 情况更新状态标签和启动按钮"""
+        if has_dup:
+            self.status_label.setText("❌ 存在重复ID")
+            self.status_label.setObjectName("statusLabelError")
+            self.btn_start.setEnabled(False)
+        else:
+            self.status_label.setText("就绪")
+            self.status_label.setObjectName("statusLabel")
+            self.btn_start.setEnabled(True)
+        self.status_label.style().unpolish(self.status_label)
+        self.status_label.style().polish(self.status_label)
 
     def closeEvent(self, event):
         if self._worker and self._worker.isRunning():
