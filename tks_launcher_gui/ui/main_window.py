@@ -20,6 +20,7 @@ from ui.game_overlay import GameOverlay
 from ui.mod_packer_dialog import ModPackerDialog
 from ui.mod_meta_editor_dialog import ModMetaEditorDialog
 from ui.mod_splitter_dialog import ModSplitterDialog
+from ui.custom_avatar_dialog import CustomAvatarDialog
 from workers.patcher_worker import PatcherWorker
 from editor_utils.dock_components import DockHeader
 
@@ -88,6 +89,11 @@ class MainWindow(QMainWindow):
         self.btn_edit_meta.setToolTip("加载 .tksmod 编辑元数据后保存（不改模组内容）")
         self.btn_edit_meta.clicked.connect(self._on_edit_mod_meta)
         toolbar.addWidget(self.btn_edit_meta)
+
+        self.btn_avatar = QPushButton("🖼️ 自定义头像")
+        self.btn_avatar.setToolTip("上传图片并裁剪，生成自定义头像 MOD")
+        self.btn_avatar.clicked.connect(self._on_custom_avatar)
+        toolbar.addWidget(self.btn_avatar)
 
         self.btn_theme = QPushButton("🌗 切换主题")
         self.btn_theme.clicked.connect(self._toggle_theme)
@@ -265,6 +271,14 @@ class MainWindow(QMainWindow):
         dialog = ModMetaEditorDialog(mods_dir=mods_dir, parent=self, initial_path=initial_path)
         dialog.exec()
         # 保存后刷新模组列表（元数据可能已变更）
+        self.mod_list.refresh_mods()
+
+    def _on_custom_avatar(self):
+        """打开自定义头像对话框"""
+        mods_dir = os.path.join(_LAUNCHER_DIR, "mods")
+        dialog = CustomAvatarDialog(mods_dir=mods_dir, parent=self)
+        dialog.exec()
+        # 生成后刷新模组列表
         self.mod_list.refresh_mods()
 
     def _on_duplicate_ids(self, has_dup: bool):
