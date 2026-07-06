@@ -4,6 +4,7 @@ import sys
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QToolBar, QSplitter, QPushButton,
     QStatusBar, QLabel, QFileDialog, QMessageBox, QWidget, QVBoxLayout,
+    QRadioButton, QButtonGroup,
 )
 from PySide6.QtCore import Qt, QSize
 from PySide6.QtGui import QIcon
@@ -137,7 +138,7 @@ class MainWindow(QMainWindow):
         middle.setSizes([1000, self.patch_list.optional_default_height])
         splitter.addWidget(middle)
 
-        # 右侧: 日志控制台（带 DockHeader）
+        # 右侧: 日志控制台 + 辅助工具（垂直分割）
         self.log_console = LogConsole()
         log_wrap = QWidget()
         log_lay = QVBoxLayout(log_wrap)
@@ -145,13 +146,75 @@ class MainWindow(QMainWindow):
         log_lay.setSpacing(0)
         log_lay.addWidget(DockHeader("启动日志"))
         log_lay.addWidget(self.log_console, 1)
-        splitter.addWidget(log_wrap)
+
+        # 辅助工具面板
+        tools_panel = self._build_tools_panel()
+
+        right = QSplitter(Qt.Vertical)
+        right.setHandleWidth(4)
+        right.setChildrenCollapsible(False)
+        right.addWidget(log_wrap)
+        right.addWidget(tools_panel)
+        right.setStretchFactor(0, 1)
+        right.setStretchFactor(1, 0)
+        right.setSizes([600, 120])
+        splitter.addWidget(right)
 
         # 中间/右侧可伸缩（窗口最大化时自适应），左侧按内容固定宽度
         splitter.setSizes([380, 570, 500])
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)
         splitter.setStretchFactor(2, 0)
+
+    def _build_tools_panel(self) -> QWidget:
+        """构建辅助工具选择面板，根据 tools/ 子目录自动生成 RadioGroup。"""
+        tools_dir = os.path.join(_LAUNCHER_DIR, "tools")
+        # 扫描 tools/ 下的子文件夹作为可用工具
+        self._available_tools: list[str] = []
+        if os.path.isdir(tools_dir):
+            self._available_tools = sorted(
+                d for d in os.listdir(tools_dir)
+                if os.path.isdir(os.path.join(tools_dir, d))
+            )
+
+        container = QWidget()
+        outer = QVBoxLayout(container)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+        outer.addWidget(DockHeader("辅助工具"))
+
+        body = QWidget()
+        body.setObjectName("DockBody")
+        body_lay = QVBoxLayout(body)
+        body_lay.setContentsMargins(8, 6, 8, 6)
+        body_lay.setSpacing(4)
+
+        self._tool_btn_group = QButtonGroup(self)
+        self._tool_btn_group.setExclusive(True)
+
+        # 「无」选项 — 不注入任何辅助工具
+        radio_none = QRadioButton("无")
+        radio_none.setChecked(True)
+        radio_none.setProperty("tool_name", "")
+        self._tool_btn_group.addButton(radio_none)
+        body_lay.addWidget(radio_none)
+
+        for name in self._available_tools:
+            rb = QRadioButton(name)
+            rb.setProperty("tool_name", name)
+            self._tool_btn_group.addButton(rb)
+            body_lay.addWidget(rb)
+
+        body_lay.addStretch()
+        outer.addWidget(body, 1)
+        return container
+
+    def _get_selected_tool(self) -> str:
+        """返回当前选中的辅助工具名称（空字符串表示不注入）。"""
+        btn = self._tool_btn_group.checkedButton()
+        if btn:
+            return btn.property("tool_name") or ""
+        return ""
 
     def _setup_statusbar(self):
         self.status_bar = QStatusBar()
@@ -197,6 +260,7 @@ class MainWindow(QMainWindow):
             minimal_mode=False,
             selected_patches=self.patch_list.get_selected_patches(),
             enabled_mod_ids={m.mod_id for m in self.mod_list.get_enabled_mods()},
+            selected_tool=self._get_selected_tool(),
         )
 
         self._worker.log_emitted.connect(self.log_console.append_log)

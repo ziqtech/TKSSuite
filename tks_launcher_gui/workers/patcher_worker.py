@@ -4,6 +4,7 @@ import sys
 import time
 import struct
 import ctypes
+import shutil
 import subprocess
 from datetime import datetime, timezone, timedelta
 
@@ -54,7 +55,7 @@ class PatcherWorker(QThread):
                  wait_timeout: int = 30, minimal_mode: bool = False,
                  no_cave_mode: bool = False, only_portrait: bool = False,
                  only_awk: bool = False, selected_patches: set = None,
-                 enabled_mod_ids: set = None):
+                 enabled_mod_ids: set = None, selected_tool: str = ""):
         super().__init__()
         self.exe_path = exe_path
         self.game_dir = game_dir
@@ -65,7 +66,10 @@ class PatcherWorker(QThread):
         self.only_awk = only_awk
         self.selected_patches = selected_patches
         self.enabled_mod_ids = enabled_mod_ids
+        self.selected_tool = selected_tool
         self._is_running = True
+        # 辅助工具注入追踪: {相对路径: True=新建 | False=覆盖已有}
+        self._tool_injected_files: dict[str, bool] = {}
 
     def _log(self, msg: str):
         self.log_emitted.emit(msg)
@@ -166,6 +170,9 @@ class PatcherWorker(QThread):
         _warpc_expanded = expanded
         _warpc_full_data = full_data
         _truncated_files = truncated
+
+        # === 辅助工具注入 ===
+        self._inject_tool_files(exe_dir, game_dir or os.getcwd())
 
         # 启动游戏
         self._log(f"\n启动 {tks_path}...")
@@ -320,7 +327,6 @@ class PatcherWorker(QThread):
         # [补丁十一] GUARD 区 + 分配 WarPC 缓冲区
         warpc_base_for_caves = 0
         if _warpc_expanded and _warpc_full_data:
-            import shutil
             wp = "WarPC.dat"; bp = wp + ".orig"
             if os.path.isfile(bp):
                 shutil.copy2(bp, wp); os.remove(bp)
@@ -341,7 +347,6 @@ class PatcherWorker(QThread):
                 _CloseHandle(hw)
 
         # 恢复其他被截断的 .dat
-        import shutil
         for k in list(_truncated_files.keys()):
             if k == "WarPC.dat":
                 continue
@@ -490,6 +495,9 @@ class PatcherWorker(QThread):
             restore_originals(game_dir or os.getcwd(), log_func=self._log)
             self._log("原始文件已恢复。")
 
+        # === 辅助工具清理 ===
+        self._remove_tool_files(game_dir or os.getcwd())
+
         self.finished.emit(ok, {
             "base": base_addr,
             "cave": cave_addr,
@@ -628,3 +636,103 @@ class PatcherWorker(QThread):
 
     def stop(self):
         self._is_running = False
+
+    # ────────────────────────────────────────────────
+    # 辅助工具：注入 / 清理
+    # ────────────────────────────────────────────────
+
+    def _inject_tool_files(self, launcher_dir: str, game_dir: str):
+        """将选中的辅助工具文件复制到游戏目录，并记录注入状态以便后续清理。"""
+        if not self.selected_tool:
+            return
+
+        tool_src = os.path.join(launcher_dir, "tools", self.selected_tool)
+        if not os.path.isdir(tool_src):
+            self._log(f"  [WARN] 辅助工具目录不存在: {tool_src}")
+            return
+
+        self._log(f"\n=== 注入辅助工具: {self.selected_tool} ===")
+        injected = 0
+        for root, dirs, files in os.walk(tool_src):
+            # 计算相对于 tool_src 的路径
+            rel_root = os.path.relpath(root, tool_src)
+            for fname in files:
+                src_file = os.path.join(root, fname)
+                rel_path = os.path.join(rel_root, fname) if rel_root != "." else fname
+                dst_file = os.path.join(game_dir, rel_path)
+
+                # 确保目标目录存在
+                dst_dir = os.path.dirname(dst_file)
+                if not os.path.isdir(dst_dir):
+                    os.makedirs(dst_dir, exist_ok=True)
+                    self._log(f"  创建目录: {os.path.relpath(dst_dir, game_dir)}")
+
+                # 记录是否为新文件；若已存在则备份为 .toolbak
+                is_new = not os.path.isfile(dst_file)
+                if not is_new:
+                    bak = dst_file + ".toolbak"
+                    try:
+                        shutil.copy2(dst_file, bak)
+                    except Exception as e:
+                        self._log(f"  [WARN] 备份 {rel_path} 失败: {e}")
+                self._tool_injected_files[rel_path] = is_new
+
+                try:
+                    shutil.copy2(src_file, dst_file)
+                    injected += 1
+                    status = "新文件" if is_new else "覆盖"
+                    self._log(f"  [{status}] {rel_path}")
+                except Exception as e:
+                    self._log(f"  [ERROR] 复制 {rel_path} 失败: {e}")
+
+        self._log(f"  共注入 {injected} 个文件")
+
+    def _remove_tool_files(self, game_dir: str):
+        """游戏退出后，移除辅助工具注入的文件（恢复被覆盖的文件，删除新建的文件）。"""
+        if not self._tool_injected_files:
+            return
+
+        self._log(f"\n=== 清理辅助工具文件 ===")
+        removed = 0
+        restored_dirs: set[str] = set()
+
+        for rel_path, is_new in self._tool_injected_files.items():
+            dst_file = os.path.join(game_dir, rel_path)
+            if is_new:
+                # 新建的文件 — 直接删除
+                if os.path.isfile(dst_file):
+                    try:
+                        os.remove(dst_file)
+                        removed += 1
+                        self._log(f"  [删除] {rel_path}")
+                    except Exception as e:
+                        self._log(f"  [ERROR] 删除 {rel_path} 失败: {e}")
+            else:
+                # 被覆盖的文件 — 从 .toolbak 恢复
+                bak = dst_file + ".toolbak"
+                if os.path.isfile(bak):
+                    try:
+                        shutil.copy2(bak, dst_file)
+                        os.remove(bak)
+                        removed += 1
+                        self._log(f"  [恢复] {rel_path}")
+                    except Exception as e:
+                        self._log(f"  [ERROR] 恢复 {rel_path} 失败: {e}")
+            # 记录需要检查的空目录
+            rel_dir = os.path.dirname(rel_path)
+            if rel_dir:
+                restored_dirs.add(rel_dir)
+
+        # 尝试删除辅助工具创建的空目录（从深到浅）
+        sorted_dirs = sorted(restored_dirs, key=lambda d: d.count(os.sep), reverse=True)
+        for rel_dir in sorted_dirs:
+            dir_path = os.path.join(game_dir, rel_dir)
+            if os.path.isdir(dir_path) and not os.listdir(dir_path):
+                try:
+                    os.rmdir(dir_path)
+                    self._log(f"  [删除目录] {rel_dir}")
+                except Exception:
+                    pass
+
+        self._log(f"  共清理 {removed} 个文件")
+        self._tool_injected_files.clear()
