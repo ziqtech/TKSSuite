@@ -4,20 +4,21 @@ ddraw.dll 补丁移除工具
 从 tks_launcher_gui/tools/ddraw/ddraw.dll 中移除指定的内存补丁和 Hook（清零处理）。
 
 补丁 (patch): DLL 在 .data 段中以明文 ASCII 字符串定义，格式为:
-    "0x游戏地址,补丁字节,描述"
+    "0x游戏地址,补丁字节,原指令描述,新指令描述"
 本脚本将这些字符串清零，使 DLL 的补丁解析器跳过它们。
 
 Hook: DLL 在 .data 段中以 32 字节条目定义，结构为:
     [8字节地址字符串] [8字节null填充] [16字节Hook名称]
 本脚本将地址字符串清零，使 DLL 的 Hook 安装器跳过它们。
 
-可移除的补丁组:
-  - 智慧/仁德补丁: 将游戏对 0x756884/0x756886 的 WORD 操作改为 BYTE 操作
-  - 金钱上限补丁: 将金钱上限从 9999 扩展到 30000
+可移除的补丁组 (共 44 个):
+  - wisdom:       智慧 WORD→BYTE 补丁 (9个) — 已移除于修补版
+  - benevolence:  仁德 WORD→BYTE 补丁 (9个) — 已移除于修补版
+  - gold_cap:     金钱上限 30K 扩展补丁 (9个) — 已移除于修补版
+  - money_field:  金钱字段 WORD→DWORD 扩展补丁 (17个) — 修补版中仍生效
 
-可移除的 Hook:
-  - ReadSave: 拦截存档加载，可能修改 SEG2 属性数据
-  - WriteSave: 拦截存档保存，可能修改 SEG2 属性数据
+可移除的 Hook (共 6 个):
+  - SkimFstDlg / NoTmpDatRead / NoTmpDatWrite / NoEnemy / ReadSave / WriteSave
 """
 
 import sys
@@ -67,6 +68,29 @@ GOLD_CAP_PATCH_ADDRS = {
     "0x00412372",  # mov 30K → NoChg
 }
 
+# 金钱字段 WORD→DWORD 扩展 (money field): 将 SEG2+0x02 (0x756882) 的金钱运算
+# 从 WORD(16位) 扩展为 DWORD(32位)，支持更大数值。共 17 个。
+# 参考: ddraw_dll_analysis.md Section 4.2-D "保留的补丁"
+MONEY_FIELD_PATCH_ADDRS = {
+    "0x004197D9",  # SEG2 数据读取修正: movzdx→mov
+    "0x0041D0F9",  # 栈操作修正: push→NoChg
+    "0x00423AFD",  # [ecx+0x29C] mov→movzx 零扩展读取
+    "0x00423B04",  # sub word[0x756882]→sub dword 减法扩展
+    "0x00423B10",  # [edx+0x29C] mov→movzx 零扩展读取
+    "0x00423B17",  # add word[0x756882]→add dword 加法扩展
+    "0x00423E96",  # [edx+0x29C] mov→movzx 零扩展读取
+    "0x00423E9D",  # sub word[0x756882]→sub dword 减法扩展
+    "0x00423EA9",  # [edx+0x29C] mov→movzx 零扩展读取
+    "0x00423EB0",  # add word[0x756882]→add dword 加法扩展
+    "0x00424DB3",  # movzx eax,word[0x756882]→mov eax,[0x756882]
+    "0x004250A6",  # mov ax,[ecx]→movzx ax,byte[ecx]
+    "0x004250B0",  # cmp word[0x756882]→cmp dword 比较扩展
+    "0x00425149",  # movzx eax,word[0x756882]→mov eax,[0x756882]
+    "0x00425153",  # mov edx,0x7530→mov edx,0xFF7530 立即数替换
+    "0x00438D39",  # movzx ecx,word[0x756882]→mov ecx,[0x756882]
+    "0x00439123",  # movzx ecx,word[0x756882]→mov ecx,[0x756882]
+}
+
 # ============================================================
 # Hook 定义
 # ============================================================
@@ -86,10 +110,38 @@ WRITESAVE_HOOK = {
     "addr": "00410FA2",
 }
 
+# SkimFstDlg Hook: 快速对话跳过/加速 (游戏地址 0x00403C63)
+SKIMFSTDLG_HOOK = {
+    "name": "SkimFstDlg",
+    "addr": "00403C63",
+}
+
+# NoTmpDatRead Hook: 拦截 TmpDat 读取 (游戏地址 0x0047881A)
+NOTMPDATREAD_HOOK = {
+    "name": "NoTmpDatRead",
+    "addr": "0047881A",
+}
+
+# NoTmpDatWrite Hook: 拦截 TmpDat 写入 (游戏地址 0x00478842)
+NOTMPDATWRITE_HOOK = {
+    "name": "NoTmpDatWrite",
+    "addr": "00478842",
+}
+
+# NoEnemy Hook: 无敌/无敌方模式 (游戏地址 0x004084FD)
+NOENEMY_HOOK = {
+    "name": "NoEnemy",
+    "addr": "004084FD",
+}
+
 # Hook 组注册表: 名称 → (hook定义列表, 描述)
 HOOK_GROUPS = {
-    "readsave":  ([READSAVE_HOOK],  "ReadSave Hook (存档加载拦截)"),
-    "writesave": ([WRITESAVE_HOOK], "WriteSave Hook (存档保存拦截)"),
+    "skimfstdlg":    ([SKIMFSTDLG_HOOK],    "SkimFstDlg Hook (快速对话跳过)"),
+    "notmpdatread":  ([NOTMPDATREAD_HOOK],  "NoTmpDatRead Hook (TmpDat读取拦截)"),
+    "notmpdatwrite": ([NOTMPDATWRITE_HOOK], "NoTmpDatWrite Hook (TmpDat写入拦截)"),
+    "noenemy":       ([NOENEMY_HOOK],       "NoEnemy Hook (无敌模式)"),
+    "readsave":      ([READSAVE_HOOK],      "ReadSave Hook (存档加载拦截)"),
+    "writesave":     ([WRITESAVE_HOOK],     "WriteSave Hook (存档保存拦截)"),
 }
 
 # 补丁组注册表: 名称 → (地址集合, 描述)
@@ -97,6 +149,7 @@ PATCH_GROUPS = {
     "wisdom":      (WISDOM_PATCH_ADDRS,      "智慧 WORD→BYTE 补丁 (9个)"),
     "benevolence": (BENEVOLENCE_PATCH_ADDRS,  "仁德 WORD→BYTE 补丁 (9个)"),
     "gold_cap":    (GOLD_CAP_PATCH_ADDRS,     "金钱上限 30K 扩展补丁 (9个)"),
+    "money_field": (MONEY_FIELD_PATCH_ADDRS,  "金钱字段 WORD→DWORD 扩展补丁 (17个)"),
 }
 
 
@@ -219,7 +272,8 @@ def patch_ddraw(dll_path: Path, groups: list[str], backup: bool = True) -> None:
     all_group_names = list(PATCH_GROUPS.keys()) + list(HOOK_GROUPS.keys())
 
     if "all" in groups:
-        groups = all_group_names
+        # "all" 排除 SkimFstDlg 和 NoEnemy — 快速对话跳过和无敌模式是基础功能，应保留
+        groups = [g for g in all_group_names if g not in ("skimfstdlg", "noenemy")]
 
     # 分类: 补丁组 vs Hook 组
     addrs_to_remove = set()
@@ -291,19 +345,25 @@ def main():
   wisdom       智慧 WORD→BYTE 补丁 (9个)
   benevolence  仁德 WORD→BYTE 补丁 (9个)
   gold_cap     金钱上限 30K 扩展补丁 (9个)
+  money_field  金钱字段 WORD→DWORD 扩展补丁 (17个)
 
 Hook:
-  readsave     ReadSave Hook (存档加载拦截)
-  writesave    WriteSave Hook (存档保存拦截)
+  skimfstdlg     SkimFstDlg Hook (快速对话跳过)
+  notmpdatread   NoTmpDatRead Hook (TmpDat读取拦截)
+  notmpdatwrite  NoTmpDatWrite Hook (TmpDat写入拦截)
+  noenemy        NoEnemy Hook (无敌模式)
+  readsave       ReadSave Hook (存档加载拦截)
+  writesave      WriteSave Hook (存档保存拦截)
 
 特殊:
-  all          移除以上全部补丁和 Hook
+  all          移除以上全部补丁和 Hook (共 44 补丁 + 6 Hook)
 
 示例:
   python strip_ddraw_patches.py                              # 移除全部 (默认)
   python strip_ddraw_patches.py -g wisdom benevolence        # 只移除智慧/仁德
+  python strip_ddraw_patches.py -g money_field               # 只移除金钱字段扩展
   python strip_ddraw_patches.py -g readsave writesave        # 只移除存档 Hook
-  python strip_ddraw_patches.py -g gold_cap -d path/to/ddraw.dll
+  python strip_ddraw_patches.py -g all -d path/to/ddraw.dll
 """,
     )
     parser.add_argument(
