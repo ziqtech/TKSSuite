@@ -1,9 +1,9 @@
 """模组列表面板 — 以表格显示 mods/ 目录中的 .tksmod 文件，支持启用/禁用"""
 import os
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
+    QWidget, QVBoxLayout, QHBoxLayout,
     QTableWidget, QTableWidgetItem, QAbstractItemView,
-    QHeaderView,
+    QHeaderView, QToolButton,
 )
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor
@@ -71,7 +71,9 @@ class ModListWidget(QWidget):
         header_row.setContentsMargins(0, 0, 0, 0)
         header_row.setSpacing(4)
         header_row.addStretch()
-        self.btn_refresh = QPushButton("刷新")
+        self.btn_refresh = QToolButton()
+        self.btn_refresh.setText("刷新")
+        self.btn_refresh.setAutoRaise(True)
         self.btn_refresh.setObjectName("dockToolButton")
         self.btn_refresh.setCursor(Qt.PointingHandCursor)
         self.btn_refresh.clicked.connect(self.refresh_mods)

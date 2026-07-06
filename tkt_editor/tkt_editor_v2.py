@@ -22,7 +22,7 @@ from PySide6.QtWidgets import (
     QCheckBox, QPlainTextEdit, QTextEdit, QComboBox,
     QMessageBox, QFileDialog, QColorDialog, QDialog, QGridLayout,
     QFrame, QStackedWidget, QScrollArea, QTabWidget, QListWidget,
-    QInputDialog
+    QInputDialog, QToolButton
 )
 from PySide6.QtGui import (
     QAction, QKeySequence, QColor, QFont, QPixmap, QImage, QIcon,
@@ -898,9 +898,9 @@ class TktEditor(QMainWindow):
         viewport_widget = QWidget(); vp_layout = QVBoxLayout(viewport_widget); vp_layout.setContentsMargins(0,0,0,0)
         zoom_layout = QHBoxLayout()
         zoom_layout.setContentsMargins(0,0,0,0)
-        btn_zoom_out = QPushButton("➖"); btn_zoom_out.setFixedSize(22, 22); btn_zoom_out.setProperty("class", "ZoomBtn"); btn_zoom_out.clicked.connect(self._zoom_out)
+        btn_zoom_out = QToolButton(); btn_zoom_out.setText("➖"); btn_zoom_out.setAutoRaise(True); btn_zoom_out.setObjectName("dockToolButton"); btn_zoom_out.clicked.connect(self._zoom_out)
         self.lbl_zoom = QLabel("150%"); self.lbl_zoom.setAlignment(Qt.AlignCenter); self.lbl_zoom.setFixedWidth(40); self.lbl_zoom.setProperty("class", "ZoomLabel")
-        btn_zoom_in = QPushButton("➕"); btn_zoom_in.setFixedSize(22, 22); btn_zoom_in.setProperty("class", "ZoomBtn"); btn_zoom_in.clicked.connect(self._zoom_in)
+        btn_zoom_in = QToolButton(); btn_zoom_in.setText("➕"); btn_zoom_in.setAutoRaise(True); btn_zoom_in.setObjectName("dockToolButton"); btn_zoom_in.clicked.connect(self._zoom_in)
         zoom_layout.addWidget(btn_zoom_out); zoom_layout.addWidget(self.lbl_zoom); zoom_layout.addWidget(btn_zoom_in)
 
         self.preview_stack = QStackedWidget()
@@ -986,9 +986,9 @@ class TktEditor(QMainWindow):
 
         comp_preview_header = QHBoxLayout()
         comp_preview_header.setContentsMargins(0, 0, 0, 0)
-        btn_comp_zoom_out = QPushButton("➖"); btn_comp_zoom_out.setFixedSize(22, 22); btn_comp_zoom_out.setProperty("class", "ZoomBtn"); btn_comp_zoom_out.clicked.connect(self._zoom_out)
+        btn_comp_zoom_out = QToolButton(); btn_comp_zoom_out.setText("➖"); btn_comp_zoom_out.setAutoRaise(True); btn_comp_zoom_out.setObjectName("dockToolButton"); btn_comp_zoom_out.clicked.connect(self._zoom_out)
         self.lbl_comp_zoom = QLabel("150%"); self.lbl_comp_zoom.setAlignment(Qt.AlignCenter); self.lbl_comp_zoom.setFixedWidth(40); self.lbl_comp_zoom.setProperty("class", "ZoomLabel")
-        btn_comp_zoom_in = QPushButton("➕"); btn_comp_zoom_in.setFixedSize(22, 22); btn_comp_zoom_in.setProperty("class", "ZoomBtn"); btn_comp_zoom_in.clicked.connect(self._zoom_in)
+        btn_comp_zoom_in = QToolButton(); btn_comp_zoom_in.setText("➕"); btn_comp_zoom_in.setAutoRaise(True); btn_comp_zoom_in.setObjectName("dockToolButton"); btn_comp_zoom_in.clicked.connect(self._zoom_in)
         comp_preview_header.addWidget(btn_comp_zoom_out); comp_preview_header.addWidget(self.lbl_comp_zoom); comp_preview_header.addWidget(btn_comp_zoom_in)
 
         self.comp_preview_scroll = QScrollArea()

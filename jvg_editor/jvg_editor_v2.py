@@ -17,7 +17,8 @@ from PySide6.QtWidgets import (
     QMenuBar, QMenu, QStatusBar, QToolBar, QGroupBox, QSizePolicy,
     QListWidget, QListWidgetItem, QAbstractItemView, QDialog,
     QDialogButtonBox, QFormLayout, QLineEdit, QTextEdit,
-    QGraphicsView, QGraphicsScene, QGraphicsPixmapItem, QGraphicsTextItem, QGraphicsRectItem
+    QGraphicsView, QGraphicsScene, QGraphicsPixmapItem, QGraphicsTextItem, QGraphicsRectItem,
+    QToolButton
 )
 from PySide6.QtCore import Qt, QTimer, QSize, Signal, QTranslator
 from PySide6.QtGui import QPixmap, QImage, QColor, QPalette, QIcon, QAction, QActionGroup, QPainter, QFont, QMouseEvent, QPen, QBrush, QCloseEvent
@@ -709,13 +710,15 @@ class JVGEditor(QMainWindow):
         lc_layout = QVBoxLayout(list_container)
         lc_layout.setContentsMargins(0, 0, 0, 0)
         list_header = QHBoxLayout()
-        btn_add = QPushButton("➕")
-        btn_add.setFixedSize(22, 22)
-        btn_add.setProperty("class", "ZoomBtn")
+        btn_add = QToolButton()
+        btn_add.setText("➕")
+        btn_add.setAutoRaise(True)
+        btn_add.setObjectName("dockToolButton")
         btn_add.clicked.connect(self._add_block)
-        btn_del = QPushButton("➖")
-        btn_del.setFixedSize(22, 22)
-        btn_del.setProperty("class", "ZoomBtn")
+        btn_del = QToolButton()
+        btn_del.setText("➖")
+        btn_del.setAutoRaise(True)
+        btn_del.setObjectName("dockToolButton")
         btn_del.clicked.connect(self._del_block)
         list_header.addStretch()
         list_header.addWidget(btn_add)

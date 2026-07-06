@@ -626,18 +626,18 @@ QLabel#statusLabelError {
 }
 
 /* ── DockHeader 内紧凑工具按钮 (tks_launcher_gui) ── */
-QPushButton#dockToolButton {
-    background-color: #cdd3d9;
+QToolButton#dockToolButton {
+    background-color: transparent;
     color: #222222;
-    border: 1px solid #b0b5bd;
+    border: none;
     border-radius: 3px;
-    padding: 1px 8px;
-    max-height: 20px;
+    padding: 0px 6px;
+    max-height: 16px;
 }
-QPushButton#dockToolButton:hover {
-    background-color: #b8c0c7;
+QToolButton#dockToolButton:hover {
+    background-color: #cdd3d9;
 }
-QPushButton#dockToolButton:pressed {
+QToolButton#dockToolButton:pressed {
     background-color: #478cbf;
     color: #fff;
 }
