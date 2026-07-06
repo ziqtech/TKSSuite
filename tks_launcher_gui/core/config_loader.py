@@ -28,6 +28,7 @@ class PatchDef:
     hook_conflict_action: str = "override"  # hook 点已被占用时: "override" | "skip"
     exclude_extra_sections: bool = True  # value_scan 时是否排除额外段
     fallback_rva: int = 0  # 模式扫描失败时的回退 RVA (用于 MOD 版本)
+    patterns: List[Dict] = field(default_factory=list)  # patch_bytes 多模式: [{pattern, replace, expect_count}]
     # patch_summon_table 专用字段
     json_file: str = ""                       # 召唤表 JSON 路径 (load_config 解析为绝对路径)
     data_rva: int = 0                         # .data 召唤表 8 字节的 RVA
@@ -146,6 +147,17 @@ def load_config(path: str, log_func=None) -> Optional[PatchConfig]:
             if "replace" in pr:
                 for rk, rv in pr["replace"].items():
                     d.replace[rk] = _parse_replace_val(rv)
+            if "patterns" in pr:
+                for pe in pr["patterns"]:
+                    prepl = {}
+                    if "replace" in pe:
+                        for rk, rv in pe["replace"].items():
+                            prepl[rk] = _parse_replace_val(rv)
+                    d.patterns.append({
+                        "pattern": pe.get("pattern", ""),
+                        "expect_count": pe.get("expect_count", 0),
+                        "replace": prepl,
+                    })
             config.patches.append(d)
 
     log(f"  已加载配置: {len(config.variables)} 个变量, {len(config.patches)} 个补丁")

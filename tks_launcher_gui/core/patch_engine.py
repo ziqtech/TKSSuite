@@ -466,28 +466,39 @@ def build_cave_template(name: str, warpc_base: int, log_func=None) -> Optional[b
 def apply_patch_bytes(defn: PatchDef, code_buf: bytearray, code_start_addr: int,
                        h_proc: int, log_func=None) -> bool:
     log = log_func or (lambda x: None)
-    pat, wc = parse_pattern(defn.pattern)
-    hits = pattern_scan(bytes(code_buf), pat, wc)
-    log(f"    模式: [{defn.pattern}] -> 匹配 {len(hits)} 处 (预期 {defn.expect_count})")
-    if defn.expect_count > 0 and len(hits) != defn.expect_count:
-        log(f"  [WARN] 匹配数 {len(hits)} != 预期 {defn.expect_count}")
-    ptd = 0
-    for off in hits:
-        for rk, bv in defn.replace.items():
-            ro = int(rk)
-            aa = code_start_addr + off + ro
-            op = vp_ex(h_proc, aa, 1, PAGE_EXECUTE_READWRITE)
-            write_pm(h_proc, aa, bytes([bv & 0xFF]))
-            vp_ex(h_proc, aa, 1, op)
-            idx = off + ro
-            if idx < len(code_buf):
-                code_buf[idx] = bv & 0xFF
-        log(f"    [OK] RVA 0x{off:X} (abs 0x{code_start_addr + off:08X})")
-        ptd += 1
-    if ptd == 0 and defn.expect_count > 0:
-        log("  [FAIL] 未找到匹配模式")
-        return False
-    return True
+    # 支持多模式 (patterns) 或单模式 (向后兼容)
+    if defn.patterns:
+        entries = defn.patterns
+    else:
+        entries = [{
+            "pattern": defn.pattern, "expect_count": defn.expect_count,
+            "replace": dict(defn.replace),
+        }]
+    all_ok = True
+    for entry in entries:
+        pat, wc = parse_pattern(entry["pattern"])
+        hits = pattern_scan(bytes(code_buf), pat, wc)
+        expect = entry.get("expect_count", 0)
+        log(f"    模式: [{entry['pattern']}] -> 匹配 {len(hits)} 处 (预期 {expect})")
+        if expect > 0 and len(hits) != expect:
+            log(f"  [WARN] 匹配数 {len(hits)} != 预期 {expect}")
+        ptd = 0
+        for off in hits:
+            for rk, bv in entry["replace"].items():
+                ro = int(rk)
+                aa = code_start_addr + off + ro
+                op = vp_ex(h_proc, aa, 1, PAGE_EXECUTE_READWRITE)
+                write_pm(h_proc, aa, bytes([bv & 0xFF]))
+                vp_ex(h_proc, aa, 1, op)
+                idx = off + ro
+                if idx < len(code_buf):
+                    code_buf[idx] = bv & 0xFF
+            log(f"    [OK] RVA 0x{off:X} (abs 0x{code_start_addr + off:08X})")
+            ptd += 1
+        if ptd == 0 and expect > 0:
+            log("  [FAIL] 未找到匹配模式")
+            all_ok = False
+    return all_ok
 
 # ============================================================
 # 补丁类型: patch_imm32 (value_scan)
