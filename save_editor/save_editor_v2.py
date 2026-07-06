@@ -109,8 +109,8 @@ SEG1_ARRAYS = [
 # ============================================================
 SEG2_CORE_FIELDS = [
     ("gold",         0x02, 2, "金钱",          "H",  "word_756882, 上限30000"),
-    ("wisdom",       0x07, 1, "智慧",         "B",  "byte_756886"),
-    ("benevolence",  0x06, 1, "仁德",         "B",  "byte_756887"),
+    ("wisdom",       0x04, 2, "智慧",         "H",  "word_756884, EXE确认: movsx/mov/add [0x756884] word"),
+    ("benevolence",  0x06, 2, "仁德",         "H",  "word_756886, EXE确认: movsx/mov/add [0x756886] word"),
     ("courage",      0x08, 2, "勇气",         "H",  "word_756888"),
     ("medicine",     0x0A, 2, "医术",         "H",  "word_75688A, 上限100"),
 ]
