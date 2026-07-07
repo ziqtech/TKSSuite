@@ -67,14 +67,42 @@ from core.mod_loader import (
 def _is_wine() -> bool:
     """检测是否运行在 Wine 环境下 (包括 Winlator)。
 
-    Wine 的 ntdll.dll 导出了 wine_get_version 函数,
-    这是 Windows 原生 ntdll.dll 中不存在的。
+    多重检测策略, 确保在各种 Wine/Winlator 版本下都能正确识别:
+    1. wine_get_version 函数 (Wine ntdll.dll 特有)
+    2. wine_get_build_id 函数 (Wine ntdll.dll 特有)
+    3. 注册表 HKEY_CURRENT_USER\\Software\\Wine
+    4. 环境变量 WINEPREFIX / WINELOADER
     """
+    # 方法1: wine_get_version
     try:
         ntdll = ctypes.windll.ntdll
-        return hasattr(ntdll, 'wine_get_version')
+        if hasattr(ntdll, 'wine_get_version'):
+            return True
     except Exception:
-        return False
+        pass
+
+    # 方法2: wine_get_build_id
+    try:
+        ntdll = ctypes.windll.ntdll
+        if hasattr(ntdll, 'wine_get_build_id'):
+            return True
+    except Exception:
+        pass
+
+    # 方法3: 注册表
+    try:
+        import winreg
+        key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\\Wine")
+        winreg.CloseKey(key)
+        return True
+    except Exception:
+        pass
+
+    # 方法4: 环境变量
+    if os.environ.get("WINEPREFIX") or os.environ.get("WINELOADER"):
+        return True
+
+    return False
 
 
 def _get_wine_version() -> str | None:
@@ -172,7 +200,8 @@ class CliLauncher:
                  no_archive_portrait: bool = False,
                  no_inject_warpc: bool = False,
                  no_gold_display: bool = False,
-                 no_4c33fc_41c120: bool = False):
+                 no_4c33fc_41c120: bool = False,
+                 no_suspend: bool = False):
         self.tks_path = os.path.abspath(tks_path)
         self.game_dir = game_dir
         self.wait_timeout = wait_timeout
@@ -185,6 +214,7 @@ class CliLauncher:
         self.no_inject_warpc = no_inject_warpc
         self.no_gold_display = no_gold_display
         self.no_4c33fc_41c120 = no_4c33fc_41c120
+        self.no_suspend = no_suspend
         self._is_running = True
 
         # 注册 Ctrl+C 处理
@@ -306,7 +336,16 @@ class CliLauncher:
         _warpc_full_data = full_data
         _truncated_files = truncated
 
-        # ── 5. 启动游戏 (CREATE_SUSPENDED: 挂起主线程, 在 TForm1_FormCreate 之前应用补丁) ──
+        # ── 5. 启动游戏 ──
+        # Wine/Winlator 不兼容 CREATE_SUSPENDED + SuspendThread/ResumeThread,
+        # 在 Wine 下使用普通启动方式 (回退到修改前的行为)
+        is_wine = _is_wine() or self.no_suspend
+        if is_wine:
+            if self.no_suspend and not _is_wine():
+                self._log("  用户强制禁用 CREATE_SUSPENDED (--no-suspend)")
+            else:
+                self._log("  检测到 Wine/Winlator 环境, 使用兼容模式 (无 CREATE_SUSPENDED)")
+
         self._log(f"\n启动 {tks_path}...")
         if not os.path.isfile(tks_path):
             self._log(f"[ERROR] TKS.exe 不存在: {tks_path}")
@@ -316,15 +355,16 @@ class CliLauncher:
             tks_proc = subprocess.Popen(
                 tks_path,
                 cwd=os.path.dirname(os.path.abspath(tks_path)) or os.getcwd(),
-                creationflags=0x4,  # CREATE_SUSPENDED
+                creationflags=0x4 if not is_wine else 0,  # CREATE_SUSPENDED (原生Windows only)
             )
         except Exception as e:
             self._log(f"[ERROR] 无法启动 {tks_path}: {e}")
             return False, {"error": f"launch failed: {e}"}
 
-        self._log(f"  TKS.exe PID = {tks_proc.pid} (CREATE_SUSPENDED)")
+        self._log(f"  TKS.exe PID = {tks_proc.pid}" +
+                  (" (CREATE_SUSPENDED)" if not is_wine else ""))
 
-        # ── 6. 早期模块检测: 未加密版模块已加载, 主线程已挂起 ──
+        # ── 6. 进程检测 ──
         target_pid = 0
         direct_mode = False
         version_label = ""
@@ -334,91 +374,161 @@ class CliLauncher:
         code_buf = None
         code_start = 0
 
-        _base_addr = 0
-        for _ in range(3):
-            _base_addr = get_module_base(tks_proc.pid)
-            if _base_addr:
-                break
-            time.sleep(0.05)
-
-        if _base_addr:
-            _mod_size = get_module_size(tks_proc.pid)
-            _code_start = _base_addr + 0x1000
-            _code_size = min(_mod_size - 0x1000, 0x300000) if _mod_size > 0x1000 else 0
-            if _code_size > 0:
-                _hr = _OpenProcess(PROCESS_VM_READ, False, tks_proc.pid)
-                if _hr:
-                    _raw, _nr = read_pm(_hr, _code_start, _code_size)
-                    _CloseHandle(_hr)
-                    if _nr > 0:
-                        _buf = bytearray(_code_size)
-                        _buf[:_nr] = _raw
-                        # 检查游戏特征 (SkimFstDlg 模式前 7 字节: A1 14 A5 4F 00 50 E8)
-                        if b'\xA1\x14\xA5\x4F\x00\x50\xE8' in bytes(_buf):
-                            target_pid = tks_proc.pid
-                            direct_mode = True
-                            version_label = "TKS 未加密版 (主进程模式, 已挂起)"
-                            _need_resume_pid = tks_proc.pid
-                            base_addr = _base_addr
-                            mod_size = _mod_size
-                            code_start = _code_start
-                            code_buf = _buf
-                            self._log(f"  [未加密版] 游戏代码已确认, 进程已挂起, 基址: 0x{base_addr:08X}")
-
-        # ── 7. 加密版: 恢复父进程, 快速轮询子进程, 挂起子进程 ──
-        if target_pid == 0:
-            self._log("  未检测到游戏代码 (加密版), 恢复进程以创建子进程...")
-            resume_process(tks_proc.pid)
-
-            st = time.time()
-            tpid = tks_proc.pid
-            while (time.time() - st) < self.wait_timeout:
-                if not self._is_running:
-                    self._log("用户取消")
-                    if tks_proc.poll() is None:
-                        tks_proc.kill()
-                    return False, {"error": "cancelled"}
-
-                retcode = tks_proc.poll()
-                if retcode is not None:
-                    self._log(f"  TKS.exe 已退出 (code={retcode})")
+        if not is_wine:
+            # ── 原生 Windows: CREATE_SUSPENDED 早期模块检测 ──
+            _base_addr = 0
+            for _ in range(3):
+                _base_addr = get_module_base(tks_proc.pid)
+                if _base_addr:
                     break
-
-                children = get_child_processes(tpid)
-                if children:
-                    target_pid = children[0].th32ProcessID
-                    version_label = "TKS 加密版 (子进程模式)"
-                    en = children[0].szExeFile.decode('ascii', errors='replace')
-                    self._log(f"  检测到子进程: PID={target_pid} Name={en} -> {version_label}")
-                    # 立即挂起子进程所有线程 (在 TForm1_FormCreate 之前)
-                    suspended = suspend_process(target_pid)
-                    self._log(f"  已挂起子进程 {suspended} 个线程")
-                    _need_resume_pid = target_pid
-                    break
-
-                # 后备: 未加密版模块加载延迟时 (CREATE_SUSPENDED 失效)
-                if not direct_mode:
-                    tb = get_module_base(tpid)
-                    if tb:
-                        ht = _OpenProcess(PROCESS_VM_READ, False, tpid)
-                        if ht:
-                            psig, nr = read_pm(ht, tb, 2)
-                            if nr == 2 and psig[0] == 0x4D and psig[1] == 0x5A:
-                                target_pid = tpid
-                                direct_mode = True
-                                version_label = "TKS 未加密版 (主进程模式, 后备检测)"
-                                self._log(f"  游戏模块已加载到主进程: base=0x{tb:08X} -> {version_label}")
-                            _CloseHandle(ht)
-                        if direct_mode:
-                            break
-
                 time.sleep(0.05)
 
-            if target_pid == 0:
-                self._log("[ERROR] 超时，未检测到游戏进程")
-                if tks_proc.poll() is None:
-                    tks_proc.kill()
-                return False, {"error": "timeout"}
+            if _base_addr:
+                _mod_size = get_module_size(tks_proc.pid)
+                _code_start = _base_addr + 0x1000
+                _code_size = min(_mod_size - 0x1000, 0x300000) if _mod_size > 0x1000 else 0
+                if _code_size > 0:
+                    _hr = _OpenProcess(PROCESS_VM_READ, False, tks_proc.pid)
+                    if _hr:
+                        _raw, _nr = read_pm(_hr, _code_start, _code_size)
+                        _CloseHandle(_hr)
+                        if _nr > 0:
+                            _buf = bytearray(_code_size)
+                            _buf[:_nr] = _raw
+                            # 检查游戏特征 (SkimFstDlg 模式前 7 字节: A1 14 A5 4F 00 50 E8)
+                            if b'\xA1\x14\xA5\x4F\x00\x50\xE8' in bytes(_buf):
+                                target_pid = tks_proc.pid
+                                direct_mode = True
+                                version_label = "TKS 未加密版 (主进程模式, 已挂起)"
+                                _need_resume_pid = tks_proc.pid
+                                base_addr = _base_addr
+                                mod_size = _mod_size
+                                code_start = _code_start
+                                code_buf = _buf
+                                self._log(f"  [未加密版] 游戏代码已确认, 进程已挂起, 基址: 0x{base_addr:08X}")
+
+        # ── 7. 加密版/后备检测 ──
+        if target_pid == 0:
+            if is_wine:
+                # ── Wine/Winlator: 完全复刻旧版流程 (01c9bf2 之前) ──
+                # 7a. 查找游戏窗口 (提供延迟让进程初始化)
+                game_hwnd = 0
+                for _ in range(20):
+                    time.sleep(0.25)
+                    game_hwnd = find_window("TForm1", None)
+                    if not game_hwnd:
+                        game_hwnd = find_window(None, "TK")
+                    if game_hwnd:
+                        break
+                if game_hwnd:
+                    self._log(f"  游戏窗口: 0x{game_hwnd:08X}")
+                else:
+                    self._log("  [INFO] 未检测到游戏窗口 (无头模式下不影响)")
+
+                # 7b. 等待进程就绪 (500ms 轮询, 3秒后才开始后备检测)
+                self._log(f"等待游戏进程就绪 (最多{self.wait_timeout}秒)...")
+                st = time.time()
+                tpid = tks_proc.pid
+                while (time.time() - st) < self.wait_timeout:
+                    if not self._is_running:
+                        self._log("用户取消")
+                        if tks_proc.poll() is None:
+                            tks_proc.kill()
+                        return False, {"error": "cancelled"}
+
+                    retcode = tks_proc.poll()
+                    if retcode is not None:
+                        self._log(f"  TKS.exe 已退出 (code={retcode})")
+                        break
+
+                    children = get_child_processes(tpid)
+                    if children:
+                        target_pid = children[0].th32ProcessID
+                        version_label = "TKS 加密版 (子进程模式, Wine 兼容)"
+                        en = children[0].szExeFile.decode('ascii', errors='replace')
+                        self._log(f"  检测到子进程: PID={target_pid} Name={en} -> {version_label}")
+                        time.sleep(3)
+                        break
+
+                    # 后备: 3秒后才检查主进程模块 (避免误判解密器为游戏)
+                    elapsed = time.time() - st
+                    if elapsed > 3.0 and not direct_mode:
+                        tb = get_module_base(tpid)
+                        if tb:
+                            ht = _OpenProcess(PROCESS_VM_READ, False, tpid)
+                            if ht:
+                                psig, nr = read_pm(ht, tb, 2)
+                                if nr == 2 and psig[0] == 0x4D and psig[1] == 0x5A:
+                                    target_pid = tpid
+                                    direct_mode = True
+                                    version_label = "TKS 未加密版 (主进程模式, Wine 后备)"
+                                    self._log(f"  游戏模块已加载到主进程: base=0x{tb:08X} -> {version_label}")
+                                _CloseHandle(ht)
+                            if direct_mode:
+                                break
+
+                    time.sleep(0.5)
+
+                if target_pid == 0:
+                    self._log("[ERROR] 超时，未检测到游戏进程")
+                    if tks_proc.poll() is None:
+                        tks_proc.kill()
+                    return False, {"error": "timeout"}
+
+            else:
+                # ── 原生 Windows: CREATE_SUSPENDED 快速检测 ──
+                self._log("  未检测到游戏代码 (加密版), 恢复进程以创建子进程...")
+                resume_process(tks_proc.pid)
+
+                st = time.time()
+                tpid = tks_proc.pid
+                while (time.time() - st) < self.wait_timeout:
+                    if not self._is_running:
+                        self._log("用户取消")
+                        if tks_proc.poll() is None:
+                            tks_proc.kill()
+                        return False, {"error": "cancelled"}
+
+                    retcode = tks_proc.poll()
+                    if retcode is not None:
+                        self._log(f"  TKS.exe 已退出 (code={retcode})")
+                        break
+
+                    children = get_child_processes(tpid)
+                    if children:
+                        target_pid = children[0].th32ProcessID
+                        version_label = "TKS 加密版 (子进程模式)"
+                        en = children[0].szExeFile.decode('ascii', errors='replace')
+                        self._log(f"  检测到子进程: PID={target_pid} Name={en} -> {version_label}")
+                        # 立即挂起子进程所有线程 (在 TForm1_FormCreate 之前)
+                        suspended = suspend_process(target_pid)
+                        self._log(f"  已挂起子进程 {suspended} 个线程")
+                        _need_resume_pid = target_pid
+                        break
+
+                    # 后备: 未加密版模块加载延迟时 (CREATE_SUSPENDED 失效)
+                    if not direct_mode:
+                        tb = get_module_base(tpid)
+                        if tb:
+                            ht = _OpenProcess(PROCESS_VM_READ, False, tpid)
+                            if ht:
+                                psig, nr = read_pm(ht, tb, 2)
+                                if nr == 2 and psig[0] == 0x4D and psig[1] == 0x5A:
+                                    target_pid = tpid
+                                    direct_mode = True
+                                    version_label = "TKS 未加密版 (主进程模式, 后备检测)"
+                                    self._log(f"  游戏模块已加载到主进程: base=0x{tb:08X} -> {version_label}")
+                                _CloseHandle(ht)
+                            if direct_mode:
+                                break
+
+                    time.sleep(0.05)
+
+                if target_pid == 0:
+                    self._log("[ERROR] 超时，未检测到游戏进程")
+                    if tks_proc.poll() is None:
+                        tks_proc.kill()
+                    return False, {"error": "timeout"}
 
         self._log(f"  版本: {version_label}")
         self._log(f"  目标 PID: {target_pid}, 直接模式: {direct_mode}")
@@ -844,6 +954,8 @@ def main():
                         help="[诊断] 禁用 portrait 看门狗 (保留其他运行时补丁)")
     parser.add_argument("--no-save-load-hook", action="store_true",
                         help="[诊断] 仅跳过补丁十八 (存档加载 portrait 重注入 hook)")
+    parser.add_argument("--no-suspend", action="store_true",
+                        help="[Winlator] 禁用 CREATE_SUSPENDED + 线程挂起/恢复 (Wine 兼容)")
     parser.add_argument("--timeout", type=int, default=None,
                         help="等待超时秒数 (默认: 30)")
 
@@ -892,6 +1004,7 @@ def main():
     no_inject_warpc = adv.get("no_inject_warpc", False)
     no_gold_display = adv.get("no_gold_display", False)
     no_4c33fc_41c120 = adv.get("no_4c33fc_41c120", False)
+    no_suspend = args.no_suspend or adv.get("no_suspend", False)
 
     # Wine/Winlator 环境已原生兼容 (CAVE_ARCHIVE_PORTRAIT 改用非 LOCK 指令)
 
@@ -903,6 +1016,7 @@ def main():
         ("no_inject_warpc: 跳过 WarPC 注入", no_inject_warpc),
         ("no_gold_display: 跳过补丁十七", no_gold_display),
         ("no_4c33fc_41c120: 跳过补丁十二+十三", no_4c33fc_41c120),
+        ("no_suspend: 禁用 CREATE_SUSPENDED (Wine 兼容)", no_suspend),
     ]:
         if flag:
             print(f"[诊断] {label}")
@@ -920,6 +1034,7 @@ def main():
         no_inject_warpc=no_inject_warpc,
         no_gold_display=no_gold_display,
         no_4c33fc_41c120=no_4c33fc_41c120,
+        no_suspend=no_suspend,
     )
     ok, diag = launcher.run()
     if ok:
