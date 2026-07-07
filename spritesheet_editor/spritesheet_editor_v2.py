@@ -781,10 +781,10 @@ class SpriteGraphicsView(QGraphicsView):
                     if fw == cw and fh == ch:
                         display = frame
                     else:
-                        # 帧小于cell时居中，大于cell时锚定左上角
+                        # 始终居中对齐，大尺寸帧使用负坐标偏移
                         display = Image.new("RGBA", (cw, ch), (0, 0, 0, 0))
-                        ox = (cw - fw) // 2 if fw <= cw else 0
-                        oy = (ch - fh) // 2 if fh <= ch else 0
+                        ox = (cw - fw) // 2
+                        oy = (ch - fh) // 2
                         display.paste(frame, (ox, oy), frame if frame.mode == "RGBA" else None)
                     pixmap = pil_to_qpixmap(display)
                     pix_item = QGraphicsPixmapItem(pixmap)
@@ -1793,152 +1793,110 @@ class SettingsPanel(QWidget):
 
     # ── 像素平移 ───────────────────────────
     def _shift_pixels(self, dx: int, dy: int):
-        """将选中帧的像素内容按 (dx, dy) 方向平移，保留所有像素，智能裁剪透明区域"""
+        """将选中帧的像素内容按方向平移，画布自动对称扩展，绝不裁剪"""
         sel = self.editor.canvas.selection
-        # 如果没有选择，使用当前帧
         if not sel:
-            current = self.editor.canvas.timeline.current_index
+            current = self.editor.canvas.timeline.current_index if hasattr(self.editor.canvas, "timeline") else -1
             if current >= 0 and current < len(self.model.frames):
                 sel = {current}
         if not sel:
             return
+            
         px = self._spin_shift_px.value()
-        ox = dx * px
-        oy = dy * px
-        try:
-            import numpy as np
-            has_numpy = True
-        except ImportError:
-            has_numpy = False
+        
         for idx in sel:
             frame = self.model.frames[idx]
-            if frame is None:
-                continue
-            if frame.mode != "RGBA":
-                frame = frame.convert("RGBA")
-            w, h = frame.size
-            if has_numpy:
-                arr = np.array(frame)
-                # 计算透明边界
-                alpha = arr[:, :, 3]
-                # 左透明列数
-                left_trans = 0
-                for c in range(w):
-                    if np.all(alpha[:, c] == 0):
-                        left_trans += 1
-                    else:
-                        break
-                # 右透明列数
-                right_trans = 0
-                for c in range(w - 1, -1, -1):
-                    if np.all(alpha[:, c] == 0):
-                        right_trans += 1
-                    else:
-                        break
-                # 上透明行数
-                top_trans = 0
-                for r in range(h):
-                    if np.all(alpha[r, :] == 0):
-                        top_trans += 1
-                    else:
-                        break
-                # 下透明行数
-                bottom_trans = 0
-                for r in range(h - 1, -1, -1):
-                    if np.all(alpha[r, :] == 0):
-                        bottom_trans += 1
-                    else:
-                        break
-                # 处理水平偏移
-                if ox > 0:  # 右移：可以裁剪右侧透明区域
-                    trim = min(right_trans, ox)
-                    if trim > 0:
-                        arr = arr[:, :w - trim]
-                        w = w - trim
-                    # 扩展右侧
-                    new_w = w + ox
-                    new_arr = np.zeros((arr.shape[0], new_w, 4), dtype=np.uint8)
-                    new_arr[:, ox:ox + arr.shape[1]] = arr
-                    arr = new_arr
-                elif ox < 0:  # 左移：可以裁剪左侧透明区域
-                    trim = min(left_trans, -ox)
-                    if trim > 0:
-                        arr = arr[:, trim:]
-                        w = w - trim
-                    # 扩展左侧
-                    new_w = w + abs(ox)
-                    new_arr = np.zeros((arr.shape[0], new_w, 4), dtype=np.uint8)
-                    new_arr[:, :arr.shape[1]] = arr
-                    arr = new_arr
-                # 处理垂直偏移
-                h = arr.shape[0]
-                if oy > 0:  # 下移：可以裁剪下侧透明区域
-                    trim = min(bottom_trans, oy)
-                    if trim > 0:
-                        arr = arr[:h - trim, :]
-                        h = h - trim
-                    new_h = h + oy
-                    new_arr = np.zeros((new_h, arr.shape[1], 4), dtype=np.uint8)
-                    new_arr[oy:oy + arr.shape[0], :] = arr
-                    arr = new_arr
-                elif oy < 0:  # 上移：可以裁剪上侧透明区域
-                    trim = min(top_trans, -oy)
-                    if trim > 0:
-                        arr = arr[trim:, :]
-                        h = h - trim
-                    new_h = h + abs(oy)
-                    new_arr = np.zeros((new_h, arr.shape[1], 4), dtype=np.uint8)
-                    new_arr[:arr.shape[0], :] = arr
-                    arr = new_arr
-                self.model.frames[idx] = Image.fromarray(arr)
-            else:
-                # 无 numpy 时简单裁剪方案
-                new_w = w + abs(ox)
-                new_h = h + abs(oy)
-                new_img = Image.new("RGBA", (new_w, new_h), (0, 0, 0, 0))
-                paste_x = ox if ox > 0 else 0
-                paste_y = oy if oy > 0 else 0
-                new_img.paste(frame, (paste_x, paste_y))
-                self.model.frames[idx] = new_img
+            if frame is None: continue
+            if frame.mode != "RGBA": frame = frame.convert("RGBA")
+
+            # 获取真实非透明像素的边界
+            bbox = frame.getbbox()
+            if not bbox: continue
+            left, top, right, bottom = bbox
+
+            W, H = frame.size
+            # 目标内容的新左上角坐标
+            new_left = left + dx * px
+            new_top = top + dy * px
+            cw = right - left
+            ch = bottom - top
+
+            # 计算需要向外扩展的像素量（如果不超出则为 0）
+            E_x = max(0, -new_left, new_left + cw - W)
+            E_y = max(0, -new_top, new_top + ch - H)
+
+            # 对称扩展画布（保持中心点绝对不变，配合居中渲染完美移动视觉位置）
+            new_W = W + 2 * E_x
+            new_H = H + 2 * E_y
+            new_img = Image.new("RGBA", (new_W, new_H), (0, 0, 0, 0))
+
+            # 由于左上角扩展了 E_x/E_y，粘贴坐标也需要加上这个偏移
+            paste_x = new_left + E_x
+            paste_y = new_top + E_y
+
+            content = frame.crop(bbox)
+            new_img.paste(content, (paste_x, paste_y))
+            self.model.frames[idx] = new_img
+            
         self.editor._on_model_changed()
+        self._update_output_info()
 
     # ── 像素拉伸 (单方向缩放) ──────────────────
     def _stretch_pixels(self, dx: int, dy: int):
-        """单方向拉伸：向指定方向延伸，对侧锚定，基于原图累积计算"""
+        """单方向锚定拉伸：自动固定对侧，向指定方向拉伸，画布自适应扩展不裁剪"""
         sel = self.editor.canvas.selection
-        # 如果没有选择，使用当前帧
-        if not sel:
-            current = self.editor.canvas.timeline.current_index
-            if current >= 0 and current < len(self.model.frames):
-                sel = {current}
-        if not sel:
-            return
+        if not sel: return
+
         pct = self._spin_scale_pct.value()
-        # 上/右 = 增大, 下/左 = 缩小
-        enlarge = (dy < 0) or (dx > 0)
-        ratio = 1 + pct / 100 if enlarge else max(0.01, 1 - pct / 100)
+        ratio = 1.0 + (pct / 100.0) # 仅做拉伸，不做缩小
+
         for idx in sel:
             frame = self.model.frames[idx]
-            if frame is None:
-                continue
-            # 保存原图（首次）
-            if idx not in self.model._original_frames:
-                self.model._original_frames[idx] = frame.copy() if frame.mode == "RGBA" else frame.convert("RGBA").copy()
-                self.model._scale_factors[idx] = (1.0, 1.0)
-            # 更新累积比例
-            sx, sy = self.model._scale_factors[idx]
-            if dx != 0:  # 左/右拉伸 → 改变宽度
-                sx *= ratio
-            else:  # 上/下拉伸 → 改变高度
-                sy *= ratio
-            self.model._scale_factors[idx] = (sx, sy)
-            # 基于原图计算新尺寸
-            orig = self.model._original_frames[idx]
-            ow, oh = orig.size
-            new_w = max(1, round(ow * sx))
-            new_h = max(1, round(oh * sy))
-            # 直接保存缩放后的帧，不裁剪到 cell 尺寸
-            self.model.frames[idx] = self._bilinear_minimap_resize(orig, new_w, new_h)
+            if frame is None: continue
+            if frame.mode != "RGBA": frame = frame.convert("RGBA")
+
+            bbox = frame.getbbox()
+            if not bbox: continue
+            left, top, right, bottom = bbox
+            cw = right - left
+            ch = bottom - top
+            W, H = frame.size
+
+            new_cw, new_ch = cw, ch
+            new_left, new_top = left, top
+
+            # 核心锚定逻辑
+            if dx > 0: # 右拉伸 (锚定左侧)
+                new_cw = max(1, int(cw * ratio))
+                # left 保持不变
+            elif dx < 0: # 左拉伸 (锚定右侧)
+                new_cw = max(1, int(cw * ratio))
+                new_left = right - new_cw # 向左生长
+            elif dy > 0: # 下拉伸 (锚定顶部)
+                new_ch = max(1, int(ch * ratio))
+                # top 保持不变
+            elif dy < 0: # 上拉伸 (锚定底部)
+                new_ch = max(1, int(ch * ratio))
+                new_top = bottom - new_ch # 向上生长
+
+            # 提取原图并硬边缘拉伸
+            content = frame.crop(bbox)
+            content = content.resize((new_cw, new_ch), Image.NEAREST)
+
+            # 计算防裁剪的对称扩展量
+            E_x = max(0, -new_left, new_left + new_cw - W)
+            E_y = max(0, -new_top, new_top + new_ch - H)
+
+            new_W = W + 2 * E_x
+            new_H = H + 2 * E_y
+            new_img = Image.new("RGBA", (new_W, new_H), (0, 0, 0, 0))
+
+            paste_x = new_left + E_x
+            paste_y = new_top + E_y
+
+            new_img.paste(content, (paste_x, paste_y))
+            self.model.frames[idx] = new_img
+
         self.editor._on_model_changed()
         self._update_output_info()
 
@@ -1960,43 +1918,50 @@ class SettingsPanel(QWidget):
         return cur.resize((target_w, target_h), Image.NEAREST)
 
     def _scale_pixels(self, enlarge: bool):
-        """PIL 百分比等比缩放 — 基于原图累积计算
-
-        两个维度共用同一个 ratio，比例完美保持。
-        放大: ratio = 1 + pct/100
-        缩小: ratio = 1 - pct/100
-        始终基于原图缩放，避免累积像素损失。
-        """
+        """全局等比缩放：基于内容中心点缩放，自适应防裁剪"""
         sel = self.editor.canvas.selection
-        # 如果没有选择，使用当前帧
-        if not sel:
-            current = self.editor.canvas.timeline.current_index
-            if current >= 0 and current < len(self.model.frames):
-                sel = {current}
-        if not sel:
-            return
-        pct = self._spin_scale_pct.value()  # 1-100 百分比
-        ratio = 1 + pct / 100 if enlarge else max(0.01, 1 - pct / 100)
+        if not sel: return
+
+        pct = self._spin_scale_pct.value()
+        ratio = 1.0 + (pct / 100.0) if enlarge else max(0.01, 1.0 - (pct / 100.0))
+
         for idx in sel:
             frame = self.model.frames[idx]
-            if frame is None:
-                continue
-            # 保存原图（首次）
-            if idx not in self.model._original_frames:
-                self.model._original_frames[idx] = frame.copy() if frame.mode == "RGBA" else frame.convert("RGBA").copy()
-                self.model._scale_factors[idx] = (1.0, 1.0)
-            # 更新累积比例（等比缩放，两维度相同）
-            sx, sy = self.model._scale_factors[idx]
-            sx *= ratio
-            sy *= ratio
-            self.model._scale_factors[idx] = (sx, sy)
-            # 基于原图计算新尺寸
-            orig = self.model._original_frames[idx]
-            ow, oh = orig.size
-            new_w = max(1, round(ow * sx))
-            new_h = max(1, round(oh * sy))
-            self.model.frames[idx] = self._bilinear_minimap_resize(orig, new_w, new_h)
-        # cell 尺寸保持不变 — 画布网格稳定，视图不随图片缩放
+            if frame is None: continue
+            if frame.mode != "RGBA": frame = frame.convert("RGBA")
+
+            bbox = frame.getbbox()
+            if not bbox: continue
+            left, top, right, bottom = bbox
+            cw = right - left
+            ch = bottom - top
+            W, H = frame.size
+
+            new_cw = max(1, int(cw * ratio))
+            new_ch = max(1, int(ch * ratio))
+
+            # 以内容当前的物理中心进行缩放
+            ccx = left + cw / 2.0
+            ccy = top + ch / 2.0
+            new_left = int(ccx - new_cw / 2.0)
+            new_top = int(ccy - new_ch / 2.0)
+
+            content = frame.crop(bbox)
+            content = content.resize((new_cw, new_ch), Image.NEAREST)
+
+            E_x = max(0, -new_left, new_left + new_cw - W)
+            E_y = max(0, -new_top, new_top + new_ch - H)
+
+            new_W = W + 2 * E_x
+            new_H = H + 2 * E_y
+            new_img = Image.new("RGBA", (new_W, new_H), (0, 0, 0, 0))
+
+            paste_x = new_left + E_x
+            paste_y = new_top + E_y
+
+            new_img.paste(content, (paste_x, paste_y))
+            self.model.frames[idx] = new_img
+
         self.editor._on_model_changed()
         self._update_output_info()
 
