@@ -15,6 +15,7 @@ from core.memory import (
     read_pm, write_pm, vp_ex,
     get_module_base, get_module_size, get_child_processes,
     find_window, get_decompressed_size,
+    suspend_process, resume_process,
     PROCESS_VM_READ, PROCESS_VM_WRITE, PROCESS_VM_OPERATION,
     PAGE_EXECUTE_READWRITE,
     MEM_COMMIT, MEM_RESERVE,
@@ -174,133 +175,164 @@ class PatcherWorker(QThread):
         # === 辅助工具注入 ===
         self._inject_tool_files(exe_dir, game_dir or os.getcwd())
 
-        # 启动游戏
+        # 启动游戏 (CREATE_SUSPENDED: 挂起主线程, 在 TForm1_FormCreate 之前应用补丁)
         self._log(f"\n启动 {tks_path}...")
         try:
             tks_proc = subprocess.Popen(
                 tks_path,
-                cwd=os.path.dirname(os.path.abspath(tks_path)) or os.getcwd()
+                cwd=os.path.dirname(os.path.abspath(tks_path)) or os.getcwd(),
+                creationflags=0x4,  # CREATE_SUSPENDED
             )
         except Exception as e:
             self._log(f"[ERROR] 无法启动 {tks_path}: {e}")
             self.finished.emit(False, {"error": f"launch failed: {e}"})
             return
-        self._log(f"  TKS.exe PID = {tks_proc.pid}")
-        self.status_changed.emit("游戏已启动，等待进程就绪...", True)
+        self._log(f"  TKS.exe PID = {tks_proc.pid} (CREATE_SUSPENDED)")
+        self.status_changed.emit("游戏已启动 (已挂起)，正在应用补丁...", True)
 
-        # 查找游戏窗口
-        game_hwnd = 0
-        for _ in range(20):
-            time.sleep(0.25)
-            game_hwnd = find_window("TForm1", None)
-            if not game_hwnd:
-                game_hwnd = find_window(None, "TK")
-            if game_hwnd:
-                break
-
-        if game_hwnd:
-            self._log(f"  游戏窗口: 0x{game_hwnd:08X}")
-            self.game_window_found.emit(game_hwnd)
-            self.overlay_update.emit("正在等待游戏加载...", False)
-        else:
-            self._log("  [WARN] 未找到游戏窗口, 叠加提示不可用")
-
-        # 等待进程就绪
-        self._log(f"等待游戏进程就绪 (最多 {self.wait_timeout} 秒)...")
+        # ── 早期模块检测: 未加密版模块已加载, 主线程已挂起 ──
         target_pid = 0
         direct_mode = False
         version_label = ""
-        st = time.time()
-        tpid = tks_proc.pid
+        _need_resume_pid = 0
+        base_addr = 0
+        mod_size = 0
+        code_buf = None
+        code_start = 0
 
-        while (time.time() - st) < self.wait_timeout:
-            if not self._is_running:
-                self._log("用户取消")
+        _base_addr = 0
+        for _ in range(3):
+            _base_addr = get_module_base(tks_proc.pid)
+            if _base_addr:
+                break
+            time.sleep(0.05)
+
+        if _base_addr:
+            _mod_size = get_module_size(tks_proc.pid)
+            _code_start = _base_addr + 0x1000
+            _code_size = min(_mod_size - 0x1000, 0x300000) if _mod_size > 0x1000 else 0
+            if _code_size > 0:
+                _hr = _OpenProcess(PROCESS_VM_READ, False, tks_proc.pid)
+                if _hr:
+                    _raw, _nr = read_pm(_hr, _code_start, _code_size)
+                    _CloseHandle(_hr)
+                    if _nr > 0:
+                        _buf = bytearray(_code_size)
+                        _buf[:_nr] = _raw
+                        # 检查游戏特征 (SkimFstDlg 模式前 7 字节: A1 14 A5 4F 00 50 E8)
+                        if b'\xA1\x14\xA5\x4F\x00\x50\xE8' in bytes(_buf):
+                            target_pid = tks_proc.pid
+                            direct_mode = True
+                            version_label = "TKS 未加密版 (主进程模式, 已挂起)"
+                            _need_resume_pid = tks_proc.pid
+                            base_addr = _base_addr
+                            mod_size = _mod_size
+                            code_start = _code_start
+                            code_buf = _buf
+                            self._log(f"  [未加密版] 游戏代码已确认, 进程已挂起, 基址: 0x{base_addr:08X}")
+
+        # ── 加密版: 恢复父进程, 快速轮询子进程, 挂起子进程 ──
+        if target_pid == 0:
+            self._log("  未检测到游戏代码 (加密版), 恢复进程以创建子进程...")
+            resume_process(tks_proc.pid)
+
+            st = time.time()
+            tpid = tks_proc.pid
+            while (time.time() - st) < self.wait_timeout:
+                if not self._is_running:
+                    self._log("用户取消")
+                    if tks_proc.poll() is None:
+                        tks_proc.kill()
+                    self.finished.emit(False, {"error": "cancelled"})
+                    return
+
+                retcode = tks_proc.poll()
+                if retcode is not None:
+                    self._log(f"  TKS.exe 已退出 (code={retcode})")
+                    break
+
+                children = get_child_processes(tpid)
+                if children:
+                    target_pid = children[0].th32ProcessID
+                    version_label = "TKS 加密版 (子进程模式)"
+                    en = children[0].szExeFile.decode('ascii', errors='replace')
+                    self._log(f"  检测到子进程: PID={target_pid} Name={en} -> {version_label}")
+                    self.overlay_update.emit("正在加载游戏补丁...", False)
+                    # 立即挂起子进程所有线程 (在 TForm1_FormCreate 之前)
+                    suspended = suspend_process(target_pid)
+                    self._log(f"  已挂起子进程 {suspended} 个线程")
+                    _need_resume_pid = target_pid
+                    break
+
+                # 后备: 未加密版模块加载延迟时 (CREATE_SUSPENDED 失效)
+                if not direct_mode:
+                    tb = get_module_base(tpid)
+                    if tb:
+                        ht = _OpenProcess(PROCESS_VM_READ, False, tpid)
+                        if ht:
+                            psig, nr = read_pm(ht, tb, 2)
+                            if nr == 2 and psig[0]==0x4D and psig[1]==0x5A:
+                                target_pid = tpid; direct_mode = True
+                                version_label = "TKS 未加密版 (主进程模式, 后备检测)"
+                                self._log(f"  游戏模块已加载到主进程: base=0x{tb:08X} -> {version_label}")
+                                self.overlay_update.emit("正在加载游戏补丁...", False)
+                            _CloseHandle(ht)
+                        if direct_mode:
+                            break
+
+                time.sleep(0.05)
+
+            if target_pid == 0:
+                self._log("[ERROR] 超时，未检测到游戏进程")
                 if tks_proc.poll() is None:
                     tks_proc.kill()
-                self.finished.emit(False, {"error": "cancelled"})
+                self.finished.emit(False, {"error": "timeout"})
                 return
-
-            retcode = tks_proc.poll()
-            if retcode is not None:
-                self._log(f"  TKS.exe 已退出 (code={retcode})")
-                break
-
-            children = get_child_processes(tpid)
-            if children:
-                target_pid = children[0].th32ProcessID
-                version_label = "TKS 加密版 (子进程模式)"
-                en = children[0].szExeFile.decode('ascii', errors='replace')
-                self._log(f"  检测到子进程: PID={target_pid} Name={en} -> {version_label}")
-                self.overlay_update.emit("正在加载游戏补丁...", False)
-                time.sleep(3)
-                break
-
-            elapsed = time.time() - st
-            if elapsed > 3.0 and not direct_mode:
-                tb = get_module_base(tpid)
-                if tb:
-                    ht = _OpenProcess(PROCESS_VM_READ, False, tpid)
-                    if ht:
-                        psig, nr = read_pm(ht, tb, 2)
-                        if nr == 2 and psig[0]==0x4D and psig[1]==0x5A:
-                            target_pid = tpid; direct_mode = True
-                            version_label = "TKS 未加密版 (主进程模式)"
-                            self._log(f"  游戏模块已加载到主进程: base=0x{tb:08X} -> {version_label}")
-                            self.overlay_update.emit("正在加载游戏补丁...", False)
-                        _CloseHandle(ht)
-                    if direct_mode:
-                        break
-
-            time.sleep(0.5)
-
-        if target_pid == 0:
-            self._log("[ERROR] 超时，未检测到游戏进程")
-            if tks_proc.poll() is None:
-                tks_proc.kill()
-            self.finished.emit(False, {"error": "timeout"})
-            return
 
         self._log(f"  版本: {version_label}")
         self._log(f"  目标 PID: {target_pid}, 直接模式: {direct_mode}")
         self.status_changed.emit(f"目标进程 PID={target_pid}，正在应用补丁...", True)
 
-        base_addr = get_module_base(target_pid)
-        if base_addr == 0:
-            self._log(f"[ERROR] 无法获取目标进程 {target_pid} 的模块信息")
-            if tks_proc.poll() is None:
-                tks_proc.kill()
-            self.finished.emit(False, {"error": "no module base"})
-            return
-        self._log(f"  模块基址: 0x{base_addr:08X}")
+        # ── 获取模块基址 + 读取代码段 (仅加密版/后备需要, 未加密版已读取) ──
+        if code_buf is None:
+            base_addr = get_module_base(target_pid)
+            if base_addr == 0:
+                self._log(f"[ERROR] 无法获取目标进程 {target_pid} 的模块信息")
+                if tks_proc.poll() is None:
+                    tks_proc.kill()
+                self.finished.emit(False, {"error": "no module base"})
+                return
+            self._log(f"  模块基址: 0x{base_addr:08X}")
 
-        # 读取代码段
-        mod_size = get_module_size(target_pid)
-        self._log(f"  模块大小: 0x{mod_size:X} ({mod_size} bytes)")
+            mod_size = get_module_size(target_pid)
+            self._log(f"  模块大小: 0x{mod_size:X} ({mod_size} bytes)")
 
-        code_start = base_addr + 0x1000
-        # 安全上限 3MB: 过大会触及 BSS 未映射页导致 ReadProcessMemory 整体失败
-        code_size = mod_size - 0x1000 if mod_size > 0x1000 else 0
-        if code_size > 0x300000:
-            code_size = 0x300000
-        code_buf = bytearray(code_size)
-        hr = _OpenProcess(PROCESS_VM_READ, False, target_pid)
-        if not hr:
-            self._log("[ERROR] 无法打开进程读取代码段")
-            if tks_proc.poll() is None:
-                tks_proc.kill()
-            self.finished.emit(False, {"error": "cannot read code"})
-            return
-        raw_buf, nr = read_pm(hr, code_start, code_size)
-        _CloseHandle(hr)
-        if nr <= 0:
-            self._log("[ERROR] 无法读取代码段")
-            if tks_proc.poll() is None:
-                tks_proc.kill()
-            self.finished.emit(False, {"error": "code read failed"})
-            return
-        code_buf[:nr] = raw_buf
-        self._log(f"  代码段: 0x{code_start:08X}-0x{code_start + nr:08X} ({nr} bytes)")
+            code_start = base_addr + 0x1000
+            # 安全上限 3MB: 过大会触及 BSS 未映射页导致 ReadProcessMemory 整体失败
+            code_size = mod_size - 0x1000 if mod_size > 0x1000 else 0
+            if code_size > 0x300000:
+                code_size = 0x300000
+            code_buf = bytearray(code_size)
+            hr = _OpenProcess(PROCESS_VM_READ, False, target_pid)
+            if not hr:
+                self._log("[ERROR] 无法打开进程读取代码段")
+                if tks_proc.poll() is None:
+                    tks_proc.kill()
+                self.finished.emit(False, {"error": "cannot read code"})
+                return
+            raw_buf, nr = read_pm(hr, code_start, code_size)
+            _CloseHandle(hr)
+            if nr <= 0:
+                self._log("[ERROR] 无法读取代码段")
+                if tks_proc.poll() is None:
+                    tks_proc.kill()
+                self.finished.emit(False, {"error": "code read failed"})
+                return
+            code_buf[:nr] = raw_buf
+            self._log(f"  代码段: 0x{code_start:08X}-0x{code_start + nr:08X} ({nr} bytes)")
+        else:
+            self._log(f"  模块大小: 0x{mod_size:X} ({mod_size} bytes)")
+            self._log(f"  代码段: 0x{code_start:08X}-0x{code_start + len(code_buf):08X} ({len(code_buf)} bytes)")
 
         # === EXE 版本指纹识别 (Task 1: 第三方 MOD 兼容) ===
         _exe_profile = detect_exe_profile(tks_path, base_addr, log_func=self._log)
@@ -462,6 +494,28 @@ class PatcherWorker(QThread):
                 self._log(f"  slot {si}: team=[{','.join(str(t) for t in team)}] levels=[{','.join('Lv'+str(l) for l in lvs)}]")
             except Exception as e:
                 self._log(f"  slot {si}: 读取失败 {e}")
+
+        # ── 恢复挂起的进程 (所有补丁已应用完毕) ──
+        if _need_resume_pid:
+            resumed = resume_process(_need_resume_pid)
+            self._log(f"\n已恢复进程 PID={_need_resume_pid} ({resumed} 个线程)")
+            _need_resume_pid = 0
+
+        # ── 查找游戏窗口 (用于叠加层, 补丁后查找) ──
+        game_hwnd = 0
+        for _ in range(20):
+            time.sleep(0.25)
+            game_hwnd = find_window("TForm1", None)
+            if not game_hwnd:
+                game_hwnd = find_window(None, "TK")
+            if game_hwnd:
+                break
+
+        if game_hwnd:
+            self._log(f"  游戏窗口: 0x{game_hwnd:08X}")
+            self.game_window_found.emit(game_hwnd)
+        else:
+            self._log("  [WARN] 未找到游戏窗口, 叠加提示不可用")
 
         # 完成
         if ok:

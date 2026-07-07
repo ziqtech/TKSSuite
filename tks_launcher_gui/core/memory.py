@@ -303,3 +303,78 @@ def get_window_rect(hwnd: int) -> Tuple[int, int, int, int]:
     if _GetWindowRect(hwnd, ctypes.byref(r)):
         return r.Left, r.Top, r.Right, r.Bottom
     return 0, 0, 0, 0
+
+# ============================================================
+# 线程管理 (挂起/恢复) — 用于 CREATE_SUSPENDED 早期补丁
+# ============================================================
+
+TH32CS_SNAPTHREAD = 0x00000004
+THREAD_SUSPEND_RESUME = 0x0002
+
+class THREADENTRY32(ctypes.Structure):
+    _fields_ = [
+        ("dwSize", wintypes.DWORD),
+        ("cntUsage", wintypes.DWORD),
+        ("th32ThreadID", wintypes.DWORD),
+        ("th32OwnerProcessID", wintypes.DWORD),
+        ("tpBasePri", ctypes.c_long),
+        ("tpDeltaPri", ctypes.c_long),
+        ("dwFlags", wintypes.DWORD),
+    ]
+
+_OpenThread = kernel32.OpenThread
+_OpenThread.restype = wintypes.HANDLE
+_OpenThread.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+
+_SuspendThread = kernel32.SuspendThread
+_SuspendThread.restype = wintypes.DWORD
+_SuspendThread.argtypes = [wintypes.HANDLE]
+
+_ResumeThread = kernel32.ResumeThread
+_ResumeThread.restype = wintypes.DWORD
+_ResumeThread.argtypes = [wintypes.HANDLE]
+
+
+def _enumerate_thread_ids(pid: int) -> List[int]:
+    """枚举指定进程的所有线程 ID"""
+    results: List[int] = []
+    snap = _CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0)
+    if not snap or snap == INVALID_HANDLE_VALUE:
+        return results
+    te = THREADENTRY32()
+    te.dwSize = ctypes.sizeof(THREADENTRY32)
+    if kernel32.Thread32First(snap, ctypes.byref(te)):
+        while True:
+            if te.th32OwnerProcessID == pid:
+                results.append(te.th32ThreadID)
+            nxt = THREADENTRY32()
+            nxt.dwSize = ctypes.sizeof(THREADENTRY32)
+            if not kernel32.Thread32Next(snap, ctypes.byref(nxt)):
+                break
+            te = nxt
+    _CloseHandle(snap)
+    return results
+
+
+def suspend_process(pid: int) -> int:
+    """挂起进程的所有线程。返回挂起的线程数。"""
+    count = 0
+    for tid in _enumerate_thread_ids(pid):
+        ht = _OpenThread(THREAD_SUSPEND_RESUME, False, tid)
+        if ht:
+            _SuspendThread(ht)
+            _CloseHandle(ht)
+            count += 1
+    return count
+
+
+def resume_process(pid: int) -> int:
+    """恢复进程的所有线程。返回恢复的线程数。"""
+    count = 0
+    for tid in _enumerate_thread_ids(pid):
+        ht = _OpenThread(THREAD_SUSPEND_RESUME, False, tid)
+        if ht:
+            _ResumeThread(ht)
+            _CloseHandle(ht)
+            count += 1
+    return count
