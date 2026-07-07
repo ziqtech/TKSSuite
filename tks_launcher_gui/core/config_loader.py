@@ -23,6 +23,7 @@ class PatchDef:
     hook_expect_count: int = 0
     value_scan: bool = False
     optional: bool = False
+    default_checked: bool = True  # 可选补丁默认是否勾选 (仅 optional=True 时有效, 默认 True)
     # 第三方 MOD 兼容字段
     profile_rules: Dict[str, str] = field(default_factory=dict)  # {profile_name: "apply"|"skip"}
     hook_conflict_action: str = "override"  # hook 点已被占用时: "override" | "skip"
@@ -115,6 +116,7 @@ def load_config(path: str, log_func=None) -> Optional[PatchConfig]:
             d.hook_expect_count = pr.get("hook_expect_count", 0)
             d.value_scan = pr.get("value_scan", False)
             d.optional = pr.get("optional", False)
+            d.default_checked = pr.get("default_checked", True)
             # 第三方 MOD 兼容字段
             d.profile_rules = dict(pr.get("profile_rules", {}))
             d.hook_conflict_action = pr.get("hook_conflict_action", "override")

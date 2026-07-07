@@ -98,7 +98,8 @@ class PatchListWidget(QWidget):
 
     def _make_checkbox(self, p: PatchDef, enabled: bool) -> QCheckBox:
         cb = QCheckBox(f"[{p.id}] {p.desc}")
-        cb.setChecked(True)
+        # 可选补丁根据 default_checked 决定初始勾选状态；必选补丁始终勾选
+        cb.setChecked(True if not enabled else p.default_checked)
         cb.setEnabled(enabled)
         cb.setToolTip(f"类型: {p.type}\n模式: {p.pattern}")
         if not enabled:
