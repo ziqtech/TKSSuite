@@ -7,7 +7,7 @@ JVG 图集编辑器 v2 — PySide6 版本，支持深色/浅色主题切换
 """
 
 from __future__ import annotations
-import os, sys, struct, io, json, zlib, math, re, copy, tempfile
+import os, sys, struct, io, json, zlib, math, re, copy, tempfile, base64
 from pathlib import Path
 from typing import List, Tuple, Optional
 from PySide6.QtWidgets import (
