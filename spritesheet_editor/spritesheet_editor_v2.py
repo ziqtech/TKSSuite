@@ -781,10 +781,10 @@ class SpriteGraphicsView(QGraphicsView):
                     if fw == cw and fh == ch:
                         display = frame
                     else:
-                        # 帧小于cell时居中粘贴（不resize），保持原始像素不模糊
+                        # 帧小于cell时居中，大于cell时锚定左上角
                         display = Image.new("RGBA", (cw, ch), (0, 0, 0, 0))
-                        ox = (cw - fw) // 2
-                        oy = (ch - fh) // 2
+                        ox = (cw - fw) // 2 if fw <= cw else 0
+                        oy = (ch - fh) // 2 if fh <= ch else 0
                         display.paste(frame, (ox, oy), frame if frame.mode == "RGBA" else None)
                     pixmap = pil_to_qpixmap(display)
                     pix_item = QGraphicsPixmapItem(pixmap)
@@ -1793,13 +1793,23 @@ class SettingsPanel(QWidget):
 
     # ── 像素平移 ───────────────────────────
     def _shift_pixels(self, dx: int, dy: int):
-        """将选中帧的像素内容按 (dx, dy) 方向平移，超出时扩展帧尺寸以保留内容"""
+        """将选中帧的像素内容按 (dx, dy) 方向平移，保留所有像素，智能裁剪透明区域"""
         sel = self.editor.canvas.selection
+        # 如果没有选择，使用当前帧
+        if not sel:
+            current = self.editor.canvas.timeline.current_index
+            if current >= 0 and current < len(self.model.frames):
+                sel = {current}
         if not sel:
             return
         px = self._spin_shift_px.value()
         ox = dx * px
         oy = dy * px
+        try:
+            import numpy as np
+            has_numpy = True
+        except ImportError:
+            has_numpy = False
         for idx in sel:
             frame = self.model.frames[idx]
             if frame is None:
@@ -1807,21 +1817,100 @@ class SettingsPanel(QWidget):
             if frame.mode != "RGBA":
                 frame = frame.convert("RGBA")
             w, h = frame.size
-            # 计算新尺寸以容纳平移后的所有内容
-            new_w = w + abs(ox)
-            new_h = h + abs(oy)
-            new_img = Image.new("RGBA", (new_w, new_h), (0, 0, 0, 0))
-            # 计算粘贴位置：正偏移时从偏移处开始，负偏移时从 0 开始
-            paste_x = ox if ox > 0 else 0
-            paste_y = oy if oy > 0 else 0
-            new_img.paste(frame, (paste_x, paste_y))
-            self.model.frames[idx] = new_img
+            if has_numpy:
+                arr = np.array(frame)
+                # 计算透明边界
+                alpha = arr[:, :, 3]
+                # 左透明列数
+                left_trans = 0
+                for c in range(w):
+                    if np.all(alpha[:, c] == 0):
+                        left_trans += 1
+                    else:
+                        break
+                # 右透明列数
+                right_trans = 0
+                for c in range(w - 1, -1, -1):
+                    if np.all(alpha[:, c] == 0):
+                        right_trans += 1
+                    else:
+                        break
+                # 上透明行数
+                top_trans = 0
+                for r in range(h):
+                    if np.all(alpha[r, :] == 0):
+                        top_trans += 1
+                    else:
+                        break
+                # 下透明行数
+                bottom_trans = 0
+                for r in range(h - 1, -1, -1):
+                    if np.all(alpha[r, :] == 0):
+                        bottom_trans += 1
+                    else:
+                        break
+                # 处理水平偏移
+                if ox > 0:  # 右移：可以裁剪右侧透明区域
+                    trim = min(right_trans, ox)
+                    if trim > 0:
+                        arr = arr[:, :w - trim]
+                        w = w - trim
+                    # 扩展右侧
+                    new_w = w + ox
+                    new_arr = np.zeros((arr.shape[0], new_w, 4), dtype=np.uint8)
+                    new_arr[:, ox:ox + arr.shape[1]] = arr
+                    arr = new_arr
+                elif ox < 0:  # 左移：可以裁剪左侧透明区域
+                    trim = min(left_trans, -ox)
+                    if trim > 0:
+                        arr = arr[:, trim:]
+                        w = w - trim
+                    # 扩展左侧
+                    new_w = w + abs(ox)
+                    new_arr = np.zeros((arr.shape[0], new_w, 4), dtype=np.uint8)
+                    new_arr[:, :arr.shape[1]] = arr
+                    arr = new_arr
+                # 处理垂直偏移
+                h = arr.shape[0]
+                if oy > 0:  # 下移：可以裁剪下侧透明区域
+                    trim = min(bottom_trans, oy)
+                    if trim > 0:
+                        arr = arr[:h - trim, :]
+                        h = h - trim
+                    new_h = h + oy
+                    new_arr = np.zeros((new_h, arr.shape[1], 4), dtype=np.uint8)
+                    new_arr[oy:oy + arr.shape[0], :] = arr
+                    arr = new_arr
+                elif oy < 0:  # 上移：可以裁剪上侧透明区域
+                    trim = min(top_trans, -oy)
+                    if trim > 0:
+                        arr = arr[trim:, :]
+                        h = h - trim
+                    new_h = h + abs(oy)
+                    new_arr = np.zeros((new_h, arr.shape[1], 4), dtype=np.uint8)
+                    new_arr[:arr.shape[0], :] = arr
+                    arr = new_arr
+                self.model.frames[idx] = Image.fromarray(arr)
+            else:
+                # 无 numpy 时简单裁剪方案
+                new_w = w + abs(ox)
+                new_h = h + abs(oy)
+                new_img = Image.new("RGBA", (new_w, new_h), (0, 0, 0, 0))
+                paste_x = ox if ox > 0 else 0
+                paste_y = oy if oy > 0 else 0
+                new_img.paste(frame, (paste_x, paste_y))
+                self.model.frames[idx] = new_img
         self.editor._on_model_changed()
 
     # ── 像素拉伸 (单方向缩放) ──────────────────
     def _stretch_pixels(self, dx: int, dy: int):
         """单方向拉伸：向指定方向延伸，对侧锚定，基于原图累积计算"""
         sel = self.editor.canvas.selection
+        # 如果没有选择，使用当前帧
+        if not sel:
+            current = self.editor.canvas.timeline.current_index
+            if current >= 0 and current < len(self.model.frames):
+                sel = {current}
         if not sel:
             return
         pct = self._spin_scale_pct.value()
@@ -1879,6 +1968,11 @@ class SettingsPanel(QWidget):
         始终基于原图缩放，避免累积像素损失。
         """
         sel = self.editor.canvas.selection
+        # 如果没有选择，使用当前帧
+        if not sel:
+            current = self.editor.canvas.timeline.current_index
+            if current >= 0 and current < len(self.model.frames):
+                sel = {current}
         if not sel:
             return
         pct = self._spin_scale_pct.value()  # 1-100 百分比
