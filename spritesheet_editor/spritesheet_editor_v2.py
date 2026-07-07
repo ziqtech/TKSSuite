@@ -1871,10 +1871,11 @@ class SettingsPanel(QWidget):
             info = self._get_or_init_lossless_state(frame)
             rect = info["lossless_rect"]
             
-            # 直接修改数学逻辑坐标系
-            rect[0] += dx * px
-            rect[1] += dy * px
-            info["lossless_rect"] = rect
+            # 【修复】必须创建全新的列表，切断 Python 浅拷贝带来的内存地址共享！
+            # 否则平移其中一帧，会暗中破坏其他复制帧的坐标数据
+            new_l = rect[0] + dx * px
+            new_t = rect[1] + dy * px
+            info["lossless_rect"] = [new_l, new_t, rect[2], rect[3]]
             
             self._apply_lossless_render(idx, info)
             
@@ -1940,9 +1941,14 @@ class SettingsPanel(QWidget):
         sel = self.editor.canvas.selection
         if not sel: return
 
-        # 绝对增减逻辑：全局按钮始终表现为直接的增大或缩小，无视输入负数符号
-        pct_val = abs(self._spin_scale_pct.value())
-        ratio = 1.0 + (pct_val / 100.0) if enlarge else max(0.01, 1.0 - (pct_val / 100.0))
+        pct_val = self._spin_scale_pct.value()
+        # 【修复】移除 abs() 强制干预，统一缩放逻辑
+        # 放大按钮直接应用数值 (正数放大，负数缩小)
+        # 缩小按钮则强制反转符号 (正数变成缩小，负数变成双重否定放大)
+        final_pct = pct_val if enlarge else -pct_val
+        ratio = 1.0 + (final_pct / 100.0)
+        if ratio <= 0.01: 
+            ratio = 0.01 # 防止缩小成 0 崩溃
 
         for idx in sel:
             frame = self.model.frames[idx]
