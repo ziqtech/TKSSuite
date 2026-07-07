@@ -1674,24 +1674,24 @@ class SettingsPanel(QWidget):
         self._btn_shift_right.clicked.connect(lambda: self._shift_pixels(1, 0))
 
         # — 拉伸 / 缩放 (无损化) —
-        shift_layout.addWidget(QLabel("变形 (无损像素操作):"))
+        shift_layout.addWidget(QLabel("边缘操作 (无损防裁剪):"))
         
         mode_row = QHBoxLayout()
-        self._radio_stretch = QRadioButton("单向拉伸 (1D)")
+        self._radio_stretch = QRadioButton("向外拉伸 (变大)")
         self._radio_stretch.setChecked(True)
-        self._radio_scale = QRadioButton("定向缩放 (2D)")
+        self._radio_shrink = QRadioButton("向内收缩 (变小)")
         self._radio_stretch.toggled.connect(self._on_transform_mode_changed)
         mode_row.addWidget(self._radio_stretch)
-        mode_row.addWidget(self._radio_scale)
+        mode_row.addWidget(self._radio_shrink)
         shift_layout.addLayout(mode_row)
 
         scale_val_row = QHBoxLayout()
-        scale_val_row.addWidget(QLabel("比例(%):"))
+        scale_val_row.addWidget(QLabel("幅度(%):"))
         self._spin_scale_pct = QSpinBox()
-        # 支持负数：正数表示放大，负数表示缩小 (-99 代表缩小到 1%)
-        self._spin_scale_pct.setRange(-99, 500)
+        # 彻底移除负数，只填绝对比例，具体是变大还是变小由上方的单选框决定
+        self._spin_scale_pct.setRange(1, 500)
         self._spin_scale_pct.setValue(10)
-        self._spin_scale_pct.setToolTip("输入正数放大，输入负数缩小 (例如 -10 代表缩小10%)")
+        self._spin_scale_pct.setToolTip("输入要调整的百分比 (例如 10 代表 10%)")
         scale_val_row.addWidget(self._spin_scale_pct)
         shift_layout.addLayout(scale_val_row)
 
@@ -1849,10 +1849,10 @@ class SettingsPanel(QWidget):
             self._btn_dir_left.setText("左拉伸")
             self._btn_dir_right.setText("右拉伸")
         else:
-            self._btn_dir_up.setText("上缩放")
-            self._btn_dir_down.setText("下缩放")
-            self._btn_dir_left.setText("左缩放")
-            self._btn_dir_right.setText("右缩放")
+            self._btn_dir_up.setText("上收缩")
+            self._btn_dir_down.setText("下收缩")
+            self._btn_dir_left.setText("左收缩")
+            self._btn_dir_right.setText("右收缩")
 
     # ── 平移 ───────────────────────────
     def _shift_pixels(self, dx: int, dy: int):
@@ -1882,16 +1882,16 @@ class SettingsPanel(QWidget):
         self.editor._on_model_changed()
         self._update_output_info()
 
-    # ── 定向变形 (合并了拉伸与定向缩放) ───────────────────────────
+    # ── 边缘定向操作 ────────────────────────
     def _directional_modify(self, dx: int, dy: int):
         sel = self.editor.canvas.selection
         if not sel: return
 
         pct = self._spin_scale_pct.value()
-        ratio = 1.0 + (pct / 100.0)
-        if ratio <= 0.01: ratio = 0.01 # 防止缩小成 0 崩溃
+        is_stretch = self._radio_stretch.isChecked()
 
-        is_scale = self._radio_scale.isChecked()
+        # 拉伸即放大(>1)，收缩即缩小(<1)
+        ratio = 1.0 + (pct / 100.0) if is_stretch else max(0.01, 1.0 - (pct / 100.0))
 
         for idx in sel:
             frame = self.model.frames[idx]
@@ -1900,36 +1900,22 @@ class SettingsPanel(QWidget):
             info = self._get_or_init_lossless_state(frame)
             rect = info["lossless_rect"]
             l, t, w, h = rect
-            cx, cy = l + w/2.0, t + h/2.0
 
-            if is_scale: 
-                # 2D 锚定缩放：长宽等比变化，向指定方向延展/收缩
-                new_w, new_h = w * ratio, h * ratio
-                if dx > 0:   # 右缩放 (锚定左)
-                    w, h, t = new_w, new_h, cy - new_h/2.0
-                elif dx < 0: # 左缩放 (锚定右)
-                    l = l + w - new_w
-                    w, h, t = new_w, new_h, cy - new_h/2.0
-                elif dy > 0: # 下缩放 (锚定上)
-                    w, h, l = new_w, new_h, cx - new_w/2.0
-                elif dy < 0: # 上缩放 (锚定下)
-                    t = t + h - new_h
-                    w, h, l = new_w, new_h, cx - new_w/2.0
-            else: 
-                # 1D 锚定拉伸：仅改变单一维度尺寸
-                if dx > 0:   # 右拉伸 (锚定左)
-                    w = w * ratio
-                elif dx < 0: # 左拉伸 (锚定右)
-                    new_w = w * ratio
-                    l = l + w - new_w
-                    w = new_w
-                elif dy > 0: # 下拉伸 (锚定上)
-                    h = h * ratio
-                elif dy < 0: # 上拉伸 (锚定下)
-                    new_h = h * ratio
-                    t = t + h - new_h
-                    h = new_h
+            # 单纯操控指定边缘，锚定对侧
+            if dx > 0:   # 操作右侧 (固定左侧，只改变宽)
+                w = w * ratio
+            elif dx < 0: # 操作左侧 (固定右侧，改变宽，并且左边界发生位移)
+                new_w = w * ratio
+                l = l + w - new_w
+                w = new_w
+            elif dy > 0: # 操作下侧 (固定上方，只改变高)
+                h = h * ratio
+            elif dy < 0: # 操作上侧 (固定下方，改变高，并且上边界发生位移)
+                new_h = h * ratio
+                t = t + h - new_h
+                h = new_h
 
+            # 分配新列表确保切断浅拷贝引用
             info["lossless_rect"] = [l, t, w, h]
             self._apply_lossless_render(idx, info)
 
@@ -1942,13 +1928,8 @@ class SettingsPanel(QWidget):
         if not sel: return
 
         pct_val = self._spin_scale_pct.value()
-        # 【修复】移除 abs() 强制干预，统一缩放逻辑
-        # 放大按钮直接应用数值 (正数放大，负数缩小)
-        # 缩小按钮则强制反转符号 (正数变成缩小，负数变成双重否定放大)
-        final_pct = pct_val if enlarge else -pct_val
-        ratio = 1.0 + (final_pct / 100.0)
-        if ratio <= 0.01: 
-            ratio = 0.01 # 防止缩小成 0 崩溃
+        # 放大按钮直接放大，缩小按钮直接缩小 (不再受到符号或模式限制)
+        ratio = 1.0 + (pct_val / 100.0) if enlarge else max(0.01, 1.0 - (pct_val / 100.0))
 
         for idx in sel:
             frame = self.model.frames[idx]
