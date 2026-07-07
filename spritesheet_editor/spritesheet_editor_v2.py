@@ -1599,7 +1599,7 @@ class PreviewView(QWidget):
 # ═══════════════════════════════════════════════════════════════
 
 class SettingsPanel(QWidget):
-    """右侧面板: 网格参数设置 + 导出"""
+    """右侧面板: 网格参数设置 + 导出 + 无损像素调节"""
 
     def __init__(self, model: SpriteSheetModel, editor):
         super().__init__()
@@ -1673,38 +1673,51 @@ class SettingsPanel(QWidget):
         self._btn_shift_left.clicked.connect(lambda: self._shift_pixels(-1, 0))
         self._btn_shift_right.clicked.connect(lambda: self._shift_pixels(1, 0))
 
-        # — 拉伸 / 缩放 —
-        shift_layout.addWidget(QLabel("拉伸 / 缩放:"))
+        # — 拉伸 / 缩放 (无损化) —
+        shift_layout.addWidget(QLabel("变形 (无损像素操作):"))
+        
+        mode_row = QHBoxLayout()
+        self._radio_stretch = QRadioButton("单向拉伸 (1D)")
+        self._radio_stretch.setChecked(True)
+        self._radio_scale = QRadioButton("定向缩放 (2D)")
+        self._radio_stretch.toggled.connect(self._on_transform_mode_changed)
+        mode_row.addWidget(self._radio_stretch)
+        mode_row.addWidget(self._radio_scale)
+        shift_layout.addLayout(mode_row)
+
         scale_val_row = QHBoxLayout()
         scale_val_row.addWidget(QLabel("比例(%):"))
         self._spin_scale_pct = QSpinBox()
-        self._spin_scale_pct.setRange(1, 100)
+        # 支持负数：正数表示放大，负数表示缩小 (-99 代表缩小到 1%)
+        self._spin_scale_pct.setRange(-99, 500)
         self._spin_scale_pct.setValue(10)
+        self._spin_scale_pct.setToolTip("输入正数放大，输入负数缩小 (例如 -10 代表缩小10%)")
         scale_val_row.addWidget(self._spin_scale_pct)
         shift_layout.addLayout(scale_val_row)
 
         stretch_btn_grid = QGridLayout()
         stretch_btn_grid.setSpacing(4)
-        self._btn_stretch_up = QPushButton("上拉伸")
-        self._btn_stretch_down = QPushButton("下拉伸")
-        self._btn_stretch_left = QPushButton("左拉伸")
-        self._btn_stretch_right = QPushButton("右拉伸")
-        self._btn_scale_up = QPushButton("放大")
-        self._btn_scale_down = QPushButton("缩小")
-        stretch_btn_grid.addWidget(self._btn_stretch_up, 0, 0)
-        stretch_btn_grid.addWidget(self._btn_stretch_down, 0, 1)
-        stretch_btn_grid.addWidget(self._btn_stretch_left, 1, 0)
-        stretch_btn_grid.addWidget(self._btn_stretch_right, 1, 1)
+        self._btn_dir_up = QPushButton("上拉伸")
+        self._btn_dir_down = QPushButton("下拉伸")
+        self._btn_dir_left = QPushButton("左拉伸")
+        self._btn_dir_right = QPushButton("右拉伸")
+        self._btn_scale_up = QPushButton("中心放大")
+        self._btn_scale_down = QPushButton("中心缩小")
+        
+        stretch_btn_grid.addWidget(self._btn_dir_up, 0, 0)
+        stretch_btn_grid.addWidget(self._btn_dir_down, 0, 1)
+        stretch_btn_grid.addWidget(self._btn_dir_left, 1, 0)
+        stretch_btn_grid.addWidget(self._btn_dir_right, 1, 1)
         stretch_btn_grid.addWidget(self._btn_scale_up, 2, 0)
         stretch_btn_grid.addWidget(self._btn_scale_down, 2, 1)
         shift_layout.addLayout(stretch_btn_grid)
 
-        self._btn_stretch_up.clicked.connect(lambda: self._stretch_pixels(0, -1))
-        self._btn_stretch_down.clicked.connect(lambda: self._stretch_pixels(0, 1))
-        self._btn_stretch_left.clicked.connect(lambda: self._stretch_pixels(-1, 0))
-        self._btn_stretch_right.clicked.connect(lambda: self._stretch_pixels(1, 0))
-        self._btn_scale_up.clicked.connect(lambda: self._scale_pixels(True))
-        self._btn_scale_down.clicked.connect(lambda: self._scale_pixels(False))
+        self._btn_dir_up.clicked.connect(lambda: self._directional_modify(0, -1))
+        self._btn_dir_down.clicked.connect(lambda: self._directional_modify(0, 1))
+        self._btn_dir_left.clicked.connect(lambda: self._directional_modify(-1, 0))
+        self._btn_dir_right.clicked.connect(lambda: self._directional_modify(1, 0))
+        self._btn_scale_up.clicked.connect(lambda: self._center_scale(True))
+        self._btn_scale_down.clicked.connect(lambda: self._center_scale(False))
 
         layout.addWidget(self._shift_section)
 
@@ -1718,12 +1731,10 @@ class SettingsPanel(QWidget):
         info_layout.addWidget(self._output_info)
         layout.addWidget(self._info_section)
 
-        # ── 行/列操作 ──
         # ── 导出设置 ──
         self._export_section = QWidget()
         export_layout = QVBoxLayout(self._export_section)
 
-        # 纹理格式
         tex_row = QHBoxLayout()
         tex_row.addWidget(QLabel("纹理格式:"))
         self._tex_combo = NoWheelComboBox()
@@ -1732,17 +1743,15 @@ class SettingsPanel(QWidget):
         tex_row.addWidget(self._tex_combo)
         export_layout.addLayout(tex_row)
 
-        # 像素格式
         pix_row = QHBoxLayout()
         pix_row.addWidget(QLabel("像素格式:"))
         self._fmt_combo = NoWheelComboBox()
         self._fmt_combo.addItems(TEXTURE_FORMATS["PNG-32"])
-        self._fmt_combo.setCurrentText("RGBA8888")  # 默认 32-bit RGBA
+        self._fmt_combo.setCurrentText("RGBA8888")
         self._fmt_combo.currentTextChanged.connect(self._refresh_export_info)
         pix_row.addWidget(self._fmt_combo)
         export_layout.addLayout(pix_row)
 
-        # 透明处理
         alpha_row = QHBoxLayout()
         alpha_row.addWidget(QLabel("透明处理:"))
         self._alpha_combo = NoWheelComboBox()
@@ -1752,7 +1761,6 @@ class SettingsPanel(QWidget):
         alpha_row.addWidget(self._alpha_combo)
         export_layout.addLayout(alpha_row)
 
-        # 格式说明
         export_layout.addWidget(QLabel("格式说明:"))
         self._fmt_desc = QTextEdit()
         self._fmt_desc.setReadOnly(True)
@@ -1760,7 +1768,6 @@ class SettingsPanel(QWidget):
         self._fmt_desc.setProperty("class", "MonoText")
         export_layout.addWidget(self._fmt_desc)
 
-        # 格式预览
         export_layout.addWidget(QLabel("格式预览:"))
         self._fmt_preview = QTextEdit()
         self._fmt_preview.setReadOnly(True)
@@ -1783,7 +1790,6 @@ class SettingsPanel(QWidget):
         self._refresh_export_info()
 
     def sections(self):
-        """返回右侧面板各区域: [(标题, QWidget), ...]"""
         return [
             ("网格设置", self._grid_section),
             ("像素调节", self._shift_section),
@@ -1791,185 +1797,174 @@ class SettingsPanel(QWidget):
             ("导出", self._export_section),
         ]
 
-    # ── 像素平移 ───────────────────────────
-    def _shift_pixels(self, dx: int, dy: int):
-        """将选中帧的像素内容按方向平移，画布自动对称扩展，绝不裁剪"""
-        sel = self.editor.canvas.selection
-        if not sel:
-            current = self.editor.canvas.timeline.current_index if hasattr(self.editor.canvas, "timeline") else -1
-            if current >= 0 and current < len(self.model.frames):
-                sel = {current}
-        if not sel:
-            return
-            
-        px = self._spin_shift_px.value()
+    # ── 核心无损化方法 ───────────────────────────
+    def _get_or_init_lossless_state(self, frame: Image.Image) -> dict:
+        """从 PIL 的 info 字典中提取或初始化无损状态数据"""
+        if "lossless_content" not in frame.info:
+            if frame.mode != "RGBA": frame = frame.convert("RGBA")
+            bbox = frame.getbbox()
+            if not bbox: bbox = (0, 0, frame.width, frame.height)
+            l, t, r, b = bbox
+            frame.info["lossless_content"] = frame.crop(bbox)
+            frame.info["lossless_orig_W"] = frame.width
+            frame.info["lossless_orig_H"] = frame.height
+            # 记录精准的浮点数学边框 [left, top, width, height]
+            frame.info["lossless_rect"] = [float(l), float(t), float(r - l), float(b - t)]
+        return frame.info
+
+    def _apply_lossless_render(self, idx: int, info: dict):
+        """完全基于精准浮点状态系与原始素材，进行防损耗渲染并更新画布"""
+        l, t, w, h = info["lossless_rect"]
+        render_w, render_h = max(1, int(round(w))), max(1, int(round(h)))
+        render_l, render_t = int(round(l)), int(round(t))
+
+        # 核心：永远从"未被破坏的原图"进行唯一一次变形
+        content = info["lossless_content"]
+        resized = content.resize((render_w, render_h), Image.NEAREST)
+
+        orig_W, orig_H = info["lossless_orig_W"], info["lossless_orig_H"]
+
+        # 动态对称扩展画布 (防裁剪绝对约束)
+        E_x = max(0, -render_l, render_l + render_w - orig_W)
+        E_y = max(0, -render_t, render_t + render_h - orig_H)
+
+        new_W = orig_W + 2 * E_x
+        new_H = orig_H + 2 * E_y
+        new_img = Image.new("RGBA", (new_W, new_H), (0, 0, 0, 0))
+
+        paste_x = render_l + E_x
+        paste_y = render_t + E_y
+
+        new_img.paste(resized, (paste_x, paste_y))
         
+        # 传递灵魂：把状态信息拷贝给新生成的帧，实现跨时代的无损溯源
+        new_img.info = info.copy()
+        self.model.frames[idx] = new_img
+
+    # ── UI 事件回调 ───────────────────────────
+    def _on_transform_mode_changed(self):
+        if self._radio_stretch.isChecked():
+            self._btn_dir_up.setText("上拉伸")
+            self._btn_dir_down.setText("下拉伸")
+            self._btn_dir_left.setText("左拉伸")
+            self._btn_dir_right.setText("右拉伸")
+        else:
+            self._btn_dir_up.setText("上缩放")
+            self._btn_dir_down.setText("下缩放")
+            self._btn_dir_left.setText("左缩放")
+            self._btn_dir_right.setText("右缩放")
+
+    # ── 平移 ───────────────────────────
+    def _shift_pixels(self, dx: int, dy: int):
+        sel = self.editor.canvas.selection
+        if not sel:
+            current = getattr(self.editor.canvas, "timeline", None)
+            if current and 0 <= current.current_index < len(self.model.frames):
+                sel = {current.current_index}
+        if not sel: return
+        
+        px = self._spin_shift_px.value()
         for idx in sel:
             frame = self.model.frames[idx]
             if frame is None: continue
-            if frame.mode != "RGBA": frame = frame.convert("RGBA")
-
-            # 获取真实非透明像素的边界
-            bbox = frame.getbbox()
-            if not bbox: continue
-            left, top, right, bottom = bbox
-
-            W, H = frame.size
-            # 目标内容的新左上角坐标
-            new_left = left + dx * px
-            new_top = top + dy * px
-            cw = right - left
-            ch = bottom - top
-
-            # 计算需要向外扩展的像素量（如果不超出则为 0）
-            E_x = max(0, -new_left, new_left + cw - W)
-            E_y = max(0, -new_top, new_top + ch - H)
-
-            # 对称扩展画布（保持中心点绝对不变，配合居中渲染完美移动视觉位置）
-            new_W = W + 2 * E_x
-            new_H = H + 2 * E_y
-            new_img = Image.new("RGBA", (new_W, new_H), (0, 0, 0, 0))
-
-            # 由于左上角扩展了 E_x/E_y，粘贴坐标也需要加上这个偏移
-            paste_x = new_left + E_x
-            paste_y = new_top + E_y
-
-            content = frame.crop(bbox)
-            new_img.paste(content, (paste_x, paste_y))
-            self.model.frames[idx] = new_img
+            
+            info = self._get_or_init_lossless_state(frame)
+            rect = info["lossless_rect"]
+            
+            # 直接修改数学逻辑坐标系
+            rect[0] += dx * px
+            rect[1] += dy * px
+            info["lossless_rect"] = rect
+            
+            self._apply_lossless_render(idx, info)
             
         self.editor._on_model_changed()
         self._update_output_info()
 
-    # ── 像素拉伸 (单方向缩放) ──────────────────
-    def _stretch_pixels(self, dx: int, dy: int):
-        """单方向锚定拉伸：自动固定对侧，向指定方向拉伸，画布自适应扩展不裁剪"""
+    # ── 定向变形 (合并了拉伸与定向缩放) ───────────────────────────
+    def _directional_modify(self, dx: int, dy: int):
         sel = self.editor.canvas.selection
         if not sel: return
 
         pct = self._spin_scale_pct.value()
-        ratio = 1.0 + (pct / 100.0) # 仅做拉伸，不做缩小
+        ratio = 1.0 + (pct / 100.0)
+        if ratio <= 0.01: ratio = 0.01 # 防止缩小成 0 崩溃
+
+        is_scale = self._radio_scale.isChecked()
 
         for idx in sel:
             frame = self.model.frames[idx]
             if frame is None: continue
-            if frame.mode != "RGBA": frame = frame.convert("RGBA")
+            
+            info = self._get_or_init_lossless_state(frame)
+            rect = info["lossless_rect"]
+            l, t, w, h = rect
+            cx, cy = l + w/2.0, t + h/2.0
 
-            bbox = frame.getbbox()
-            if not bbox: continue
-            left, top, right, bottom = bbox
-            cw = right - left
-            ch = bottom - top
-            W, H = frame.size
+            if is_scale: 
+                # 2D 锚定缩放：长宽等比变化，向指定方向延展/收缩
+                new_w, new_h = w * ratio, h * ratio
+                if dx > 0:   # 右缩放 (锚定左)
+                    w, h, t = new_w, new_h, cy - new_h/2.0
+                elif dx < 0: # 左缩放 (锚定右)
+                    l = l + w - new_w
+                    w, h, t = new_w, new_h, cy - new_h/2.0
+                elif dy > 0: # 下缩放 (锚定上)
+                    w, h, l = new_w, new_h, cx - new_w/2.0
+                elif dy < 0: # 上缩放 (锚定下)
+                    t = t + h - new_h
+                    w, h, l = new_w, new_h, cx - new_w/2.0
+            else: 
+                # 1D 锚定拉伸：仅改变单一维度尺寸
+                if dx > 0:   # 右拉伸 (锚定左)
+                    w = w * ratio
+                elif dx < 0: # 左拉伸 (锚定右)
+                    new_w = w * ratio
+                    l = l + w - new_w
+                    w = new_w
+                elif dy > 0: # 下拉伸 (锚定上)
+                    h = h * ratio
+                elif dy < 0: # 上拉伸 (锚定下)
+                    new_h = h * ratio
+                    t = t + h - new_h
+                    h = new_h
 
-            new_cw, new_ch = cw, ch
-            new_left, new_top = left, top
-
-            # 核心锚定逻辑
-            if dx > 0: # 右拉伸 (锚定左侧)
-                new_cw = max(1, int(cw * ratio))
-                # left 保持不变
-            elif dx < 0: # 左拉伸 (锚定右侧)
-                new_cw = max(1, int(cw * ratio))
-                new_left = right - new_cw # 向左生长
-            elif dy > 0: # 下拉伸 (锚定顶部)
-                new_ch = max(1, int(ch * ratio))
-                # top 保持不变
-            elif dy < 0: # 上拉伸 (锚定底部)
-                new_ch = max(1, int(ch * ratio))
-                new_top = bottom - new_ch # 向上生长
-
-            # 提取原图并硬边缘拉伸
-            content = frame.crop(bbox)
-            content = content.resize((new_cw, new_ch), Image.NEAREST)
-
-            # 计算防裁剪的对称扩展量
-            E_x = max(0, -new_left, new_left + new_cw - W)
-            E_y = max(0, -new_top, new_top + new_ch - H)
-
-            new_W = W + 2 * E_x
-            new_H = H + 2 * E_y
-            new_img = Image.new("RGBA", (new_W, new_H), (0, 0, 0, 0))
-
-            paste_x = new_left + E_x
-            paste_y = new_top + E_y
-
-            new_img.paste(content, (paste_x, paste_y))
-            self.model.frames[idx] = new_img
+            info["lossless_rect"] = [l, t, w, h]
+            self._apply_lossless_render(idx, info)
 
         self.editor._on_model_changed()
         self._update_output_info()
 
-    # ── 像素缩放 (PIL / 百分比 / Bilinear Minimap) ─────────────────────
-    @staticmethod
-    def _bilinear_minimap_resize(img, target_w: int, target_h: int):
-        """像素风格缩放：始终使用 NEAREST 保持像素锐利，大比例缩小时逐步减半以提高质量"""
-        w, h = img.size
-        # 放大或微小变化 → 直接 NEAREST
-        if target_w >= w or target_h >= h:
-            return img.resize((target_w, target_h), Image.NEAREST)
-        # 缩小 → 逐步减半 + NEAREST（保持像素锐利）
-        cur = img
-        cw, ch = cur.size
-        while cw > target_w * 2 and ch > target_h * 2:
-            cw, ch = max(cw // 2, target_w), max(ch // 2, target_h)
-            cur = cur.resize((cw, ch), Image.NEAREST)
-        # 最后一步精确缩放到目标尺寸
-        return cur.resize((target_w, target_h), Image.NEAREST)
-
-    def _scale_pixels(self, enlarge: bool):
-        """全局等比缩放：基于内容中心点缩放，自适应防裁剪"""
+    # ── 全局中心等比缩放 ───────────────────────────
+    def _center_scale(self, enlarge: bool):
         sel = self.editor.canvas.selection
         if not sel: return
 
-        pct = self._spin_scale_pct.value()
-        ratio = 1.0 + (pct / 100.0) if enlarge else max(0.01, 1.0 - (pct / 100.0))
+        # 绝对增减逻辑：全局按钮始终表现为直接的增大或缩小，无视输入负数符号
+        pct_val = abs(self._spin_scale_pct.value())
+        ratio = 1.0 + (pct_val / 100.0) if enlarge else max(0.01, 1.0 - (pct_val / 100.0))
 
         for idx in sel:
             frame = self.model.frames[idx]
             if frame is None: continue
-            if frame.mode != "RGBA": frame = frame.convert("RGBA")
+            
+            info = self._get_or_init_lossless_state(frame)
+            rect = info["lossless_rect"]
+            l, t, w, h = rect
+            
+            cx, cy = l + w/2.0, t + h/2.0
+            w, h = w * ratio, h * ratio
+            l, t = cx - w/2.0, cy - h/2.0
 
-            bbox = frame.getbbox()
-            if not bbox: continue
-            left, top, right, bottom = bbox
-            cw = right - left
-            ch = bottom - top
-            W, H = frame.size
-
-            new_cw = max(1, int(cw * ratio))
-            new_ch = max(1, int(ch * ratio))
-
-            # 以内容当前的物理中心进行缩放
-            ccx = left + cw / 2.0
-            ccy = top + ch / 2.0
-            new_left = int(ccx - new_cw / 2.0)
-            new_top = int(ccy - new_ch / 2.0)
-
-            content = frame.crop(bbox)
-            content = content.resize((new_cw, new_ch), Image.NEAREST)
-
-            E_x = max(0, -new_left, new_left + new_cw - W)
-            E_y = max(0, -new_top, new_top + new_ch - H)
-
-            new_W = W + 2 * E_x
-            new_H = H + 2 * E_y
-            new_img = Image.new("RGBA", (new_W, new_H), (0, 0, 0, 0))
-
-            paste_x = new_left + E_x
-            paste_y = new_top + E_y
-
-            new_img.paste(content, (paste_x, paste_y))
-            self.model.frames[idx] = new_img
+            info["lossless_rect"] = [l, t, w, h]
+            self._apply_lossless_render(idx, info)
 
         self.editor._on_model_changed()
         self._update_output_info()
 
-    # ── 回调 ──────────────────────────
+    # (以下原有的通用参数绑定与检查器逻辑保持不变)
     def _on_param_changed(self):
-        if self._suppress_changes:
-            return
-        # 检测 cell 宽高是否被用户手动修改
+        if self._suppress_changes: return
         sender = self.sender()
         if sender in (self._spin_cell_width, self._spin_cell_height):
             self.model._cell_size_set = True
@@ -1979,14 +1974,11 @@ class SettingsPanel(QWidget):
             self.model.padding = self._spin_padding.value()
             self.model.cell_width = self._spin_cell_width.value()
             self.model.cell_height = self._spin_cell_height.value()
-        except Exception:
-            return
+        except Exception: return
         self.editor._on_model_changed()
         self._update_output_info()
-        try:
-            self._refresh_export_info()
-        except Exception:
-            pass
+        try: self._refresh_export_info()
+        except Exception: pass
 
     def _auto_detect(self):
         self.model.auto_detect_cell_size()
@@ -1994,26 +1986,22 @@ class SettingsPanel(QWidget):
         self._spin_cell_width.setValue(self.model.cell_width)
         self._spin_cell_height.setValue(self.model.cell_height)
         self._suppress_changes = False
-        self.model._cell_size_set = False  # 自动检测不算手动设定
+        self.model._cell_size_set = False
         self.editor._on_model_changed()
         self._update_output_info()
-        try:
-            self._refresh_export_info()
-        except Exception:
-            pass
+        try: self._refresh_export_info()
+        except Exception: pass
 
     def _move_row(self, delta: int):
         sel = self.editor.canvas.selection
         if not sel:
-            if self.model.frame_count == 0:
-                return
+            if self.model.frame_count == 0: return
             for i, f in enumerate(self.model.frames):
                 if f is not None:
                     sel = {i}
                     self.editor.canvas.selection = sel
                     break
-        if not sel:
-            return
+        if not sel: return
         cols = max(1, int(self.model.columns))
         idx = min(sel)
         r = idx // cols
@@ -2023,12 +2011,9 @@ class SettingsPanel(QWidget):
             new_sel = set()
             for s in sel:
                 sr, sc = divmod(s, cols)
-                if sr == r:
-                    new_sel.add(target * cols + sc)
-                elif sr == target:
-                    new_sel.add(r * cols + sc)
-                else:
-                    new_sel.add(s)
+                if sr == r: new_sel.add(target * cols + sc)
+                elif sr == target: new_sel.add(r * cols + sc)
+                else: new_sel.add(s)
             self.editor.canvas.selection = new_sel
             self.editor._on_model_changed()
             self._update_output_info()
@@ -2036,15 +2021,13 @@ class SettingsPanel(QWidget):
     def _move_col(self, delta: int):
         sel = self.editor.canvas.selection
         if not sel:
-            if self.model.frame_count == 0:
-                return
+            if self.model.frame_count == 0: return
             for i, f in enumerate(self.model.frames):
                 if f is not None:
                     sel = {i}
                     self.editor.canvas.selection = sel
                     break
-        if not sel:
-            return
+        if not sel: return
         cols = max(1, int(self.model.columns))
         idx = min(sel)
         c = idx % cols
@@ -2054,12 +2037,9 @@ class SettingsPanel(QWidget):
             new_sel = set()
             for s in sel:
                 sr, sc = divmod(s, cols)
-                if sc == c:
-                    new_sel.add(sr * cols + target)
-                elif sc == target:
-                    new_sel.add(sr * cols + c)
-                else:
-                    new_sel.add(s)
+                if sc == c: new_sel.add(sr * cols + target)
+                elif sc == target: new_sel.add(sr * cols + c)
+                else: new_sel.add(s)
             self.editor.canvas.selection = new_sel
             self.editor._on_model_changed()
             self._update_output_info()
@@ -2081,7 +2061,7 @@ class SettingsPanel(QWidget):
         desc = f"【{fmt}】\n{pix_desc}\n\n【{alpha_mode}】\n{alpha_desc}"
         self._fmt_desc.setPlainText(desc)
 
-        lines: List[str] = []
+        lines: list[str] = []
         m = self.model
         try:
             ss = m.build_spritesheet()
@@ -2112,8 +2092,7 @@ class SettingsPanel(QWidget):
         fp, _ = QFileDialog.getSaveFileName(
             self, f"保存图集 ({self._tex_combo.currentText()} / {fmt})",
             "", "PNG 图片 (*.png)")
-        if not fp:
-            return
+        if not fp: return
         converted.save(fp, "PNG")
         self.editor._status_label.setText(
             f"已保存 ({self._tex_combo.currentText()} / {fmt} / {alpha_mode}): {Path(fp).name}")
@@ -2134,8 +2113,7 @@ class SettingsPanel(QWidget):
                 f"帧: {m.frame_count}/{m.total_cells}",
             ]
             self._output_info.setPlainText("\n".join(lines))
-        except Exception:
-            pass
+        except Exception: pass
 
     def refresh_values(self):
         self._suppress_changes = True
@@ -2146,10 +2124,8 @@ class SettingsPanel(QWidget):
         self._spin_cell_height.setValue(self.model.cell_height)
         self._suppress_changes = False
         self._update_output_info()
-        try:
-            self._refresh_export_info()
-        except Exception:
-            pass
+        try: self._refresh_export_info()
+        except Exception: pass
 
 
 # ═══════════════════════════════════════════════════════════════
