@@ -90,6 +90,12 @@ DRAG_THRESHOLD = 5
 DEFAULT_FPS = 12
 
 
+class NoWheelComboBox(QComboBox):
+    """禁用鼠标滚轮切换选项的 QComboBox，防止误滚改变值"""
+    def wheelEvent(self, event: QWheelEvent):
+        event.ignore()
+
+
 # ═══════════════════════════════════════════════════════════════
 # PIL 像素格式转换 (原样保留)
 # ═══════════════════════════════════════════════════════════════
@@ -295,6 +301,9 @@ class SpriteSheetModel(QObject):
         self.cell_width: int = 64
         self.cell_height: int = 64
         self._cell_size_set: bool = False  # 用户是否手动设定过 cell 宽高
+        # 像素调节：保存原图和累积缩放比例
+        self._original_frames: dict[int, Image.Image] = {}
+        self._scale_factors: dict[int, tuple[float, float]] = {}
 
     @property
     def total_cells(self) -> int:
@@ -329,8 +338,16 @@ class SpriteSheetModel(QObject):
             r, c = divmod(i, self.columns)
             x = c * (self.cell_width + self.padding)
             y = r * (self.cell_height + self.padding)
-            resized = frame.resize((self.cell_width, self.cell_height), Image.LANCZOS)
-            ss.paste(resized, (x, y), resized if resized.mode == "RGBA" else None)
+            fw, fh = frame.size
+            if fw == self.cell_width and fh == self.cell_height:
+                display = frame
+            else:
+                # 帧与 cell 尺寸不一致时居中粘贴（不 resize），保持像素缩放效果
+                display = Image.new("RGBA", (self.cell_width, self.cell_height), (0, 0, 0, 0))
+                ox = (self.cell_width - fw) // 2
+                oy = (self.cell_height - fh) // 2
+                display.paste(frame, (ox, oy), frame if frame.mode == "RGBA" else None)
+            ss.paste(display, (x, y), display if display.mode == "RGBA" else None)
         return ss
 
     def split_spritesheet(self, img: Image.Image) -> None:
@@ -760,8 +777,16 @@ class SpriteGraphicsView(QGraphicsView):
 
             if frame is not None:
                 try:
-                    resized = frame.resize((cw, ch), Image.NEAREST)
-                    pixmap = pil_to_qpixmap(resized)
+                    fw, fh = frame.size
+                    if fw == cw and fh == ch:
+                        display = frame
+                    else:
+                        # 帧小于cell时居中粘贴（不resize），保持原始像素不模糊
+                        display = Image.new("RGBA", (cw, ch), (0, 0, 0, 0))
+                        ox = (cw - fw) // 2
+                        oy = (ch - fh) // 2
+                        display.paste(frame, (ox, oy), frame if frame.mode == "RGBA" else None)
+                    pixmap = pil_to_qpixmap(display)
                     pix_item = QGraphicsPixmapItem(pixmap)
                     pix_item.setPos(x, y)
                     pix_item.setData(0, i)
@@ -1621,8 +1646,10 @@ class SettingsPanel(QWidget):
         self._shift_section = QWidget()
         shift_layout = QVBoxLayout(self._shift_section)
 
+        # — 平移 —
+        shift_layout.addWidget(QLabel("平移:"))
         shift_val_row = QHBoxLayout()
-        shift_val_row.addWidget(QLabel("调节像素值:"))
+        shift_val_row.addWidget(QLabel("像素值:"))
         self._spin_shift_px = QSpinBox()
         self._spin_shift_px.setRange(1, 4096)
         self._spin_shift_px.setValue(1)
@@ -1631,20 +1658,53 @@ class SettingsPanel(QWidget):
 
         shift_btn_grid = QGridLayout()
         shift_btn_grid.setSpacing(4)
-        btn_shift_up = QPushButton("上移")
-        btn_shift_down = QPushButton("下移")
-        btn_shift_left = QPushButton("左移")
-        btn_shift_right = QPushButton("右移")
-        shift_btn_grid.addWidget(btn_shift_up, 0, 1)
-        shift_btn_grid.addWidget(btn_shift_left, 1, 0)
-        shift_btn_grid.addWidget(btn_shift_right, 1, 2)
-        shift_btn_grid.addWidget(btn_shift_down, 2, 1)
+        self._btn_shift_up = QPushButton("上移")
+        self._btn_shift_down = QPushButton("下移")
+        self._btn_shift_left = QPushButton("左移")
+        self._btn_shift_right = QPushButton("右移")
+        shift_btn_grid.addWidget(self._btn_shift_up, 0, 0)
+        shift_btn_grid.addWidget(self._btn_shift_down, 0, 1)
+        shift_btn_grid.addWidget(self._btn_shift_left, 1, 0)
+        shift_btn_grid.addWidget(self._btn_shift_right, 1, 1)
         shift_layout.addLayout(shift_btn_grid)
 
-        btn_shift_up.clicked.connect(lambda: self._shift_pixels(0, -1))
-        btn_shift_down.clicked.connect(lambda: self._shift_pixels(0, 1))
-        btn_shift_left.clicked.connect(lambda: self._shift_pixels(-1, 0))
-        btn_shift_right.clicked.connect(lambda: self._shift_pixels(1, 0))
+        self._btn_shift_up.clicked.connect(lambda: self._shift_pixels(0, -1))
+        self._btn_shift_down.clicked.connect(lambda: self._shift_pixels(0, 1))
+        self._btn_shift_left.clicked.connect(lambda: self._shift_pixels(-1, 0))
+        self._btn_shift_right.clicked.connect(lambda: self._shift_pixels(1, 0))
+
+        # — 拉伸 / 缩放 —
+        shift_layout.addWidget(QLabel("拉伸 / 缩放:"))
+        scale_val_row = QHBoxLayout()
+        scale_val_row.addWidget(QLabel("比例(%):"))
+        self._spin_scale_pct = QSpinBox()
+        self._spin_scale_pct.setRange(1, 100)
+        self._spin_scale_pct.setValue(10)
+        scale_val_row.addWidget(self._spin_scale_pct)
+        shift_layout.addLayout(scale_val_row)
+
+        stretch_btn_grid = QGridLayout()
+        stretch_btn_grid.setSpacing(4)
+        self._btn_stretch_up = QPushButton("上拉伸")
+        self._btn_stretch_down = QPushButton("下拉伸")
+        self._btn_stretch_left = QPushButton("左拉伸")
+        self._btn_stretch_right = QPushButton("右拉伸")
+        self._btn_scale_up = QPushButton("放大")
+        self._btn_scale_down = QPushButton("缩小")
+        stretch_btn_grid.addWidget(self._btn_stretch_up, 0, 0)
+        stretch_btn_grid.addWidget(self._btn_stretch_down, 0, 1)
+        stretch_btn_grid.addWidget(self._btn_stretch_left, 1, 0)
+        stretch_btn_grid.addWidget(self._btn_stretch_right, 1, 1)
+        stretch_btn_grid.addWidget(self._btn_scale_up, 2, 0)
+        stretch_btn_grid.addWidget(self._btn_scale_down, 2, 1)
+        shift_layout.addLayout(stretch_btn_grid)
+
+        self._btn_stretch_up.clicked.connect(lambda: self._stretch_pixels(0, -1))
+        self._btn_stretch_down.clicked.connect(lambda: self._stretch_pixels(0, 1))
+        self._btn_stretch_left.clicked.connect(lambda: self._stretch_pixels(-1, 0))
+        self._btn_stretch_right.clicked.connect(lambda: self._stretch_pixels(1, 0))
+        self._btn_scale_up.clicked.connect(lambda: self._scale_pixels(True))
+        self._btn_scale_down.clicked.connect(lambda: self._scale_pixels(False))
 
         layout.addWidget(self._shift_section)
 
@@ -1666,7 +1726,7 @@ class SettingsPanel(QWidget):
         # 纹理格式
         tex_row = QHBoxLayout()
         tex_row.addWidget(QLabel("纹理格式:"))
-        self._tex_combo = QComboBox()
+        self._tex_combo = NoWheelComboBox()
         self._tex_combo.addItems(list(TEXTURE_FORMATS.keys()))
         self._tex_combo.currentTextChanged.connect(self._on_tex_fmt_changed)
         tex_row.addWidget(self._tex_combo)
@@ -1675,7 +1735,7 @@ class SettingsPanel(QWidget):
         # 像素格式
         pix_row = QHBoxLayout()
         pix_row.addWidget(QLabel("像素格式:"))
-        self._fmt_combo = QComboBox()
+        self._fmt_combo = NoWheelComboBox()
         self._fmt_combo.addItems(TEXTURE_FORMATS["PNG-32"])
         self._fmt_combo.setCurrentText("RGBA8888")  # 默认 32-bit RGBA
         self._fmt_combo.currentTextChanged.connect(self._refresh_export_info)
@@ -1685,7 +1745,7 @@ class SettingsPanel(QWidget):
         # 透明处理
         alpha_row = QHBoxLayout()
         alpha_row.addWidget(QLabel("透明处理:"))
-        self._alpha_combo = QComboBox()
+        self._alpha_combo = NoWheelComboBox()
         self._alpha_combo.addItems(ALPHA_MODES)
         self._alpha_combo.setCurrentText("无")
         self._alpha_combo.currentTextChanged.connect(self._refresh_export_info)
@@ -1731,9 +1791,9 @@ class SettingsPanel(QWidget):
             ("导出", self._export_section),
         ]
 
-    # ── 像素平移 ──────────────────────────
+    # ── 像素平移 ───────────────────────────
     def _shift_pixels(self, dx: int, dy: int):
-        """将选中帧的像素内容按 (dx, dy) 方向平移，空出区域填透明"""
+        """将选中帧的像素内容按 (dx, dy) 方向平移，超出时扩展帧尺寸以保留内容"""
         sel = self.editor.canvas.selection
         if not sel:
             return
@@ -1747,10 +1807,104 @@ class SettingsPanel(QWidget):
             if frame.mode != "RGBA":
                 frame = frame.convert("RGBA")
             w, h = frame.size
-            new_img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
-            new_img.paste(frame, (ox, oy))
+            # 计算新尺寸以容纳平移后的所有内容
+            new_w = w + abs(ox)
+            new_h = h + abs(oy)
+            new_img = Image.new("RGBA", (new_w, new_h), (0, 0, 0, 0))
+            # 计算粘贴位置：正偏移时从偏移处开始，负偏移时从 0 开始
+            paste_x = ox if ox > 0 else 0
+            paste_y = oy if oy > 0 else 0
+            new_img.paste(frame, (paste_x, paste_y))
             self.model.frames[idx] = new_img
         self.editor._on_model_changed()
+
+    # ── 像素拉伸 (单方向缩放) ──────────────────
+    def _stretch_pixels(self, dx: int, dy: int):
+        """单方向拉伸：向指定方向延伸，对侧锚定，基于原图累积计算"""
+        sel = self.editor.canvas.selection
+        if not sel:
+            return
+        pct = self._spin_scale_pct.value()
+        # 上/右 = 增大, 下/左 = 缩小
+        enlarge = (dy < 0) or (dx > 0)
+        ratio = 1 + pct / 100 if enlarge else max(0.01, 1 - pct / 100)
+        for idx in sel:
+            frame = self.model.frames[idx]
+            if frame is None:
+                continue
+            # 保存原图（首次）
+            if idx not in self.model._original_frames:
+                self.model._original_frames[idx] = frame.copy() if frame.mode == "RGBA" else frame.convert("RGBA").copy()
+                self.model._scale_factors[idx] = (1.0, 1.0)
+            # 更新累积比例
+            sx, sy = self.model._scale_factors[idx]
+            if dx != 0:  # 左/右拉伸 → 改变宽度
+                sx *= ratio
+            else:  # 上/下拉伸 → 改变高度
+                sy *= ratio
+            self.model._scale_factors[idx] = (sx, sy)
+            # 基于原图计算新尺寸
+            orig = self.model._original_frames[idx]
+            ow, oh = orig.size
+            new_w = max(1, round(ow * sx))
+            new_h = max(1, round(oh * sy))
+            # 直接保存缩放后的帧，不裁剪到 cell 尺寸
+            self.model.frames[idx] = self._bilinear_minimap_resize(orig, new_w, new_h)
+        self.editor._on_model_changed()
+        self._update_output_info()
+
+    # ── 像素缩放 (PIL / 百分比 / Bilinear Minimap) ─────────────────────
+    @staticmethod
+    def _bilinear_minimap_resize(img, target_w: int, target_h: int):
+        """像素风格缩放：始终使用 NEAREST 保持像素锐利，大比例缩小时逐步减半以提高质量"""
+        w, h = img.size
+        # 放大或微小变化 → 直接 NEAREST
+        if target_w >= w or target_h >= h:
+            return img.resize((target_w, target_h), Image.NEAREST)
+        # 缩小 → 逐步减半 + NEAREST（保持像素锐利）
+        cur = img
+        cw, ch = cur.size
+        while cw > target_w * 2 and ch > target_h * 2:
+            cw, ch = max(cw // 2, target_w), max(ch // 2, target_h)
+            cur = cur.resize((cw, ch), Image.NEAREST)
+        # 最后一步精确缩放到目标尺寸
+        return cur.resize((target_w, target_h), Image.NEAREST)
+
+    def _scale_pixels(self, enlarge: bool):
+        """PIL 百分比等比缩放 — 基于原图累积计算
+
+        两个维度共用同一个 ratio，比例完美保持。
+        放大: ratio = 1 + pct/100
+        缩小: ratio = 1 - pct/100
+        始终基于原图缩放，避免累积像素损失。
+        """
+        sel = self.editor.canvas.selection
+        if not sel:
+            return
+        pct = self._spin_scale_pct.value()  # 1-100 百分比
+        ratio = 1 + pct / 100 if enlarge else max(0.01, 1 - pct / 100)
+        for idx in sel:
+            frame = self.model.frames[idx]
+            if frame is None:
+                continue
+            # 保存原图（首次）
+            if idx not in self.model._original_frames:
+                self.model._original_frames[idx] = frame.copy() if frame.mode == "RGBA" else frame.convert("RGBA").copy()
+                self.model._scale_factors[idx] = (1.0, 1.0)
+            # 更新累积比例（等比缩放，两维度相同）
+            sx, sy = self.model._scale_factors[idx]
+            sx *= ratio
+            sy *= ratio
+            self.model._scale_factors[idx] = (sx, sy)
+            # 基于原图计算新尺寸
+            orig = self.model._original_frames[idx]
+            ow, oh = orig.size
+            new_w = max(1, round(ow * sx))
+            new_h = max(1, round(oh * sy))
+            self.model.frames[idx] = self._bilinear_minimap_resize(orig, new_w, new_h)
+        # cell 尺寸保持不变 — 画布网格稳定，视图不随图片缩放
+        self.editor._on_model_changed()
+        self._update_output_info()
 
     # ── 回调 ──────────────────────────
     def _on_param_changed(self):
