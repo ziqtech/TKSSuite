@@ -22,7 +22,7 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QListWidget, QListWidgetItem,
     QGraphicsView, QGraphicsScene, QGraphicsPixmapItem, QGraphicsRectItem,
     QGraphicsTextItem, QGraphicsItem,
-    QVBoxLayout, QHBoxLayout,
+    QVBoxLayout, QHBoxLayout, QGridLayout,
     QLabel, QPushButton, QSpinBox, QComboBox, QCheckBox, QRadioButton,
     QGroupBox, QTextEdit, QScrollBar,
     QMenuBar, QMenu, QToolBar, QStatusBar, QDialog, QFileDialog,
@@ -1617,6 +1617,37 @@ class SettingsPanel(QWidget):
 
         layout.addWidget(self._grid_section)
 
+        # ── 像素调节 ──
+        self._shift_section = QWidget()
+        shift_layout = QVBoxLayout(self._shift_section)
+
+        shift_val_row = QHBoxLayout()
+        shift_val_row.addWidget(QLabel("调节像素值:"))
+        self._spin_shift_px = QSpinBox()
+        self._spin_shift_px.setRange(1, 4096)
+        self._spin_shift_px.setValue(1)
+        shift_val_row.addWidget(self._spin_shift_px)
+        shift_layout.addLayout(shift_val_row)
+
+        shift_btn_grid = QGridLayout()
+        shift_btn_grid.setSpacing(4)
+        btn_shift_up = QPushButton("上移")
+        btn_shift_down = QPushButton("下移")
+        btn_shift_left = QPushButton("左移")
+        btn_shift_right = QPushButton("右移")
+        shift_btn_grid.addWidget(btn_shift_up, 0, 1)
+        shift_btn_grid.addWidget(btn_shift_left, 1, 0)
+        shift_btn_grid.addWidget(btn_shift_right, 1, 2)
+        shift_btn_grid.addWidget(btn_shift_down, 2, 1)
+        shift_layout.addLayout(shift_btn_grid)
+
+        btn_shift_up.clicked.connect(lambda: self._shift_pixels(0, -1))
+        btn_shift_down.clicked.connect(lambda: self._shift_pixels(0, 1))
+        btn_shift_left.clicked.connect(lambda: self._shift_pixels(-1, 0))
+        btn_shift_right.clicked.connect(lambda: self._shift_pixels(1, 0))
+
+        layout.addWidget(self._shift_section)
+
         # ── 输出信息 ──
         self._info_section = QWidget()
         info_layout = QVBoxLayout(self._info_section)
@@ -1695,9 +1726,31 @@ class SettingsPanel(QWidget):
         """返回右侧面板各区域: [(标题, QWidget), ...]"""
         return [
             ("网格设置", self._grid_section),
+            ("像素调节", self._shift_section),
             ("输出信息", self._info_section),
             ("导出", self._export_section),
         ]
+
+    # ── 像素平移 ──────────────────────────
+    def _shift_pixels(self, dx: int, dy: int):
+        """将选中帧的像素内容按 (dx, dy) 方向平移，空出区域填透明"""
+        sel = self.editor.canvas.selection
+        if not sel:
+            return
+        px = self._spin_shift_px.value()
+        ox = dx * px
+        oy = dy * px
+        for idx in sel:
+            frame = self.model.frames[idx]
+            if frame is None:
+                continue
+            if frame.mode != "RGBA":
+                frame = frame.convert("RGBA")
+            w, h = frame.size
+            new_img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+            new_img.paste(frame, (ox, oy))
+            self.model.frames[idx] = new_img
+        self.editor._on_model_changed()
 
     # ── 回调 ──────────────────────────
     def _on_param_changed(self):
