@@ -80,6 +80,7 @@ from mat_constants import (
     IDX_DEFUNIT_IDX, IDX_COND_ID, IDX_DIR_MASK, IDX_TARGET_SCENE, IDX_DIR_MODE,
     IDX_TARGET_Y, IDX_SHADOW_FRAME, IDX_TARGET_DIR, IDX_SAVED_Y, IDX_ALT_TELE_X,
     IDX_ALT_TELE_Y, IDX_SUB_MODEL, IDX_MOVING, IDX_HINT_ID,
+    TYPE_SKIP_DWORDS,
 )
 HAS_PIL = False
 try:
@@ -1807,7 +1808,8 @@ class JvgLoaderThread(QThread):
 class MapDataManager:
     """地图数据状态与装配层 (§5) — 从 MatEditorApp 拆出的纯数据职责。
     持有 records/defunit/tkt/tkd 等数据状态, 提供 load_from_result 装配与 reset 重置。
-    MatEditorApp 通过 self._data 访问; SceneCanvasView 通过 self._editor._data 访问。"""
+    MatEditorApp 通过 self._data 访问; SceneCanvasView 通过 self._data (editor._data
+    的快捷引用) 访问, 同时保留 self._editor 反向引用编辑器回调。"""
 
     def __init__(self):
         # 文件路径
@@ -1857,12 +1859,16 @@ class MapDataManager:
 
 class SceneCanvasView(QGraphicsView):
     """场景画布视图 — 从 MatEditorApp 拆出的可视化渲染与交互层 (§4)。
-    持有画布自有状态, 通过 self._editor 反向引用编辑器数据/回调。"""
+    持有画布自有状态, 通过 self._editor 反向引用编辑器回调, 通过 self._data
+    (editor._data 的快捷引用) 直接访问数据层, 避免迪米特法则链式访问。"""
 
     def __init__(self, editor, parent=None):
         scene = QGraphicsScene()
         super().__init__(scene, parent)
         self._editor = editor
+        # 数据层快捷引用 (§4 进阶③) — 避免对 editor 数据层的链式访问,
+        # 直接持有 MapDataManager 实例引用以遵循迪米特法则
+        self._data = editor._data
         # 画布自有状态 (从 MatEditorApp.__init__ 迁出)
         self._vis_scene_id = 0
         self._vis_bg_pil = None
@@ -2068,14 +2074,14 @@ class SceneCanvasView(QGraphicsView):
         self._vis_gscene.clear()
         self._vis_hit_regions = {}
         self._vis_bg_item = None
-        if not self._editor._data.records:
+        if not self._data.records:
             return
 
         # 获取当前预览窗口视口的实际像素大小
         view_w = self.viewport().width()
         view_h = self.viewport().height()
 
-        ents = [r for r in self._editor._data.records if has_data(r) and r['d1'] == sid]
+        ents = [r for r in self._data.records if has_data(r) and r['d1'] == sid]
         bg_w = self._vis_bg_pil.width if self._vis_bg_pil else 0
         bg_h = self._vis_bg_pil.height if self._vis_bg_pil else 0
         if not ents:
@@ -2111,7 +2117,7 @@ class SceneCanvasView(QGraphicsView):
             if self._vis_sel_anim_active and self._vis_selected != found:
                 self._vis_stop_sel_anim()
             self._vis_selected = found
-            rec = self._editor._data.records[found]
+            rec = self._data.records[found]
             tname = ENTITY_TYPES.get(rec[IDX_TYPE], '?')
             pos_x, pos_y = rec[IDX_POS_X], rec[IDX_POS_Y]
             self._undo_pos = (found, pos_x, pos_y)
@@ -2141,19 +2147,19 @@ class SceneCanvasView(QGraphicsView):
         cx, cy = int(scene_pos.x()), int(scene_pos.y())
         dx, dy = cx - sx, cy - sy
         new_x, new_y = ox + dx, oy + dy
-        rec = self._editor._data.records[eidx]
+        rec = self._data.records[eidx]
         old_d10, old_d11 = rec[IDX_POS_X], rec[IDX_POS_Y]
         rec[IDX_POS_X], rec[IDX_POS_Y] = new_x, new_y
         rec[IDX_BOUND_X] += new_x - old_d10
         rec[IDX_BOUND_Y] += new_y - old_d11
-        self._editor._data._dirty = True
+        self._data._dirty = True
         self._editor._vis_info_label.setText(f"移动: #{eidx} → ({new_x},{new_y})")
         self._vis_redraw()
 
     def mouseReleaseEvent(self, event):
         if self._vis_drag:
             eidx = self._vis_drag[0]
-            rec = self._editor._data.records[eidx]
+            rec = self._data.records[eidx]
             pos = event.position().toPoint()
             scene_pos = self.mapToScene(pos)
             cx, cy = int(scene_pos.x()), int(scene_pos.y())
@@ -2215,7 +2221,7 @@ class SceneCanvasView(QGraphicsView):
             self._editor._vis_info_label.setText("全局动画已开启，无需单独播放")
             return
         idx = self._vis_selected
-        rec = self._editor._data.records[idx]
+        rec = self._data.records[idx]
         mode = DISPLAY_MODES.get(self._vis_display_mode, 'auto')
         tval = rec[IDX_TYPE]
         can_animate = False
@@ -2278,17 +2284,475 @@ class SceneCanvasView(QGraphicsView):
         if self._undo_pos is None:
             return
         eidx, old_x, old_y = self._undo_pos
-        rec = self._editor._data.records[eidx]
+        rec = self._data.records[eidx]
         cur_d10, cur_d11 = rec['d10'], rec['d11']
         rec['d10'], rec['d11'] = old_x, old_y
         rec['d18'] += old_x - cur_d10
         rec['d19'] += old_y - cur_d11
-        self._editor._data._dirty = True
+        self._data._dirty = True
         self._editor._vis_info_label.setText(f"已撤销: #{eidx} → ({old_x},{old_y})")
         self._vis_redraw()
         self._undo_pos = None
         if hasattr(self, '_current_param_idx') and self._editor._current_param_idx == eidx:
             self._editor._show_record(rec)
+
+
+class InspectorPanelBuilder:
+    """属性面板构建工厂 (§4 进阶②) — 从 MatEditorApp 拆出的视图构建职责。
+    持有 editor 各字典的快捷引用 (同对象), 构建的 widget 直接落入 editor 字典,
+    使消费方 (_update_inspector/_sync_to_raw 等) 无需改动。"""
+
+    def __init__(self, editor):
+        self._editor = editor
+        # 快捷引用 (与进阶③ self._data 同模式) — 字典为可变对象, 写入直接回传 editor
+        self._edit_vars = editor._edit_vars
+        self._raw_mirrors = editor._raw_mirrors
+        self._type_vars = editor._type_vars
+        self._type_frames = editor._type_frames
+
+    def build_type_param_pages(self):
+        """为每种实体类型构建独立的参数编辑页"""
+        _TYPE_ORDER = [200, 10, 20, 110, 15, 16, 5]
+        for tval in _TYPE_ORDER:
+            scroll = QScrollArea()
+            scroll.setWidgetResizable(True)
+            inner = QWidget()
+            inner_layout = QVBoxLayout(inner)
+            inner_layout.setContentsMargins(4, 4, 16, 4)
+            inner_layout.setSpacing(6)
+
+            tvars = {}
+            skip = TYPE_SKIP_DWORDS.get(tval, set())
+            type_labels = _TYPE_LABELS.get(tval, {})
+
+            # === 基础属性 ===
+            self._build_type_basic_group(inner_layout, tvars, tval, type_labels)
+
+            # === 显示/动画/位置 [8-28] ===
+            GROUP_8_28 = []
+            _seen8 = set()
+            _skip_8_28 = {12, 17, 25, 26, 27}
+            for fields in (BASIC_FIELDS, RUNTIME_FIELDS, POS_FIELDS, INTERACT_FIELDS, SCRIPT_FIELDS):
+                for f in fields:
+                    if 8 <= f[1] <= 28 and f[1] not in _seen8 and f[1] not in _skip_8_28:
+                        GROUP_8_28.append(f)
+                        _seen8.add(f[1])
+            _order_8_28 = {13: 21.5, 15: 21.6}
+            GROUP_8_28.sort(key=lambda f: _order_8_28.get(f[1], f[1]))
+            GROUP_8_28 = [f for f in GROUP_8_28 if f[1] not in skip]
+            if GROUP_8_28:
+                self._build_field_group(inner_layout, "显示/动画/位置 [8-28]", GROUP_8_28, tvars, type_labels, 4, tval=tval)
+
+            # === 交互/动画/物品 [50-70] ===
+            GROUP_50_70 = []
+            _seen50 = set()
+            for fields in (INTERACT_FIELDS, RUNTIME_FIELDS, ANIM_FIELDS, ITEM_FIELDS):
+                for f in fields:
+                    if 50 <= f[1] <= 70 and f[1] not in _seen50:
+                        GROUP_50_70.append(f)
+                        _seen50.add(f[1])
+            GROUP_50_70.sort(key=lambda f: f[1])
+            GROUP_50_70 = [f for f in GROUP_50_70 if f[1] not in skip]
+            if GROUP_50_70:
+                self._build_field_group(inner_layout, "交互/动画/物品 [50-70]", GROUP_50_70, tvars, type_labels, 4, tval=tval)
+
+            # === 音效事件 [71-95] (type=20 专用) ===
+            if tval == 20 and type_labels:
+                sound_events = [(di, type_labels[di][0], type_labels[di][1])
+                               for di in range(71, 96) if di in type_labels and di not in skip]
+                if sound_events:
+                    snd_fields = [(f'snd_{di}', di, tl, tc) for di, tl, tc in sound_events]
+                    self._build_field_group(inner_layout, "音效事件 [71-95]", snd_fields, tvars, type_labels, 4, tval=tval, is_sound=True)
+
+            inner_layout.addStretch()
+            scroll.setWidget(inner)
+            self._type_frames[tval] = scroll
+            self._type_vars[tval] = tvars
+
+    def make_raw_edit(self, di):
+        """为 dword di 创建一个独立的 QLineEdit 并登记到镜像表。
+        v2 不再共享同一 QLineEdit 控件 (一个 QWidget 只能有一个父窗口, 会被
+        后续 addWidget re-parent 走, 导致其余页变空壳); 改为每页各建一个,
+        构建完成后用 _wire_raw_mirrors 双向同步, 等价于 v1 的 StringVar 互通。"""
+        ev = QLineEdit()
+        self._raw_mirrors.setdefault(di, []).append(ev)
+        return ev
+
+    def wire_raw_mirrors(self):
+        """为每个 dword 的所有镜像 QLineEdit 接入 textChanged 双向同步。
+        用 blockSignals 防回环。构建后过滤已被 Qt 回收的对象。"""
+        for di in list(self._raw_mirrors):
+            eds = self._raw_mirrors[di]
+            # 过滤已被 Qt 回收的孤儿对象 (addWidget re-parent 后未保持强引用)
+            alive = []
+            for ed in eds:
+                try:
+                    _ = ed.text()
+                    alive.append(ed)
+                except RuntimeError:
+                    pass
+            self._raw_mirrors[di] = alive
+            if len(alive) < 2:
+                continue
+            # 为每个控件分别创建 handler, 用 partial 预填 src 避免闭包捕获
+            for src_ed in alive:
+                src_ed.textChanged.connect(partial(self._on_mirror_changed, src_ed, alive))
+
+    def _build_type_basic_group(self, parent_layout, tvars, tval, type_labels):
+        """构建类型页面的基础属性组 (DockHeader + DockBody, 垂直单元格, 等宽列)"""
+        grp = QWidget()
+        gl = QVBoxLayout(grp)
+        gl.setContentsMargins(0, 0, 0, 0)
+        gl.setSpacing(0)
+        gl.addWidget(DockHeader("基础属性"))
+        body = QWidget()
+        body.setObjectName("DockBody")
+        bl = QVBoxLayout(body)
+        bl.setContentsMargins(8, 8, 8, 8)
+        grid = QGridLayout()
+        grid.setVerticalSpacing(4)
+        grid.setHorizontalSpacing(8)
+
+        def _cell(lbl_widget, input_widget):
+            """返回 (QWidget, QVBoxLayout) — QWidget 作为 grid 单元格, 保证内部控件有父"""
+            cw = QWidget()
+            cell = QVBoxLayout(cw)
+            cell.setSpacing(2)
+            cell.setContentsMargins(0, 0, 0, 0)
+            cell.addWidget(lbl_widget)
+            input_widget.setMinimumHeight(24)
+            cell.addWidget(input_widget)
+            return cw
+
+        # Type combobox
+        lbl = QLabel("[00] 实体类型")
+        lbl.setToolTip("[00] 实体类型: 5=脚本 10=出入传送 15=触发区 16=战斗区 20=事件 110=机关 200=NPC。源码: sub_405CBC")
+        lbl.setProperty("class", "PropLabel")
+        cb = QComboBox()
+        cb.addItems([f"{k}-{v}" for k, v in sorted(ENTITY_TYPES.items())])
+        tvars['type'] = cb
+        wrapper = QFrame()
+        wrapper.setObjectName("FakeInputBox")
+        wl = QHBoxLayout(wrapper)
+        wl.setContentsMargins(0, 0, 0, 0)
+        wl.addWidget(cb)
+        grid.addWidget(_cell(lbl, wrapper), 0, 0, Qt.AlignTop)
+
+        # Scene ID
+        lbl2 = QLabel("[01] 场景ID")
+        lbl2.setToolTip("[01] 所属场景 (-1=全局)。TKT_ID = scene_id + 300。源码: sub_405CBC")
+        lbl2.setProperty("class", "PropLabel")
+        ev = self.make_raw_edit(1)
+        tvars['scene_id'] = ev
+        wrapper2 = QFrame()
+        wrapper2.setObjectName("FakeInputBox")
+        wl2 = QHBoxLayout(wrapper2)
+        wl2.setContentsMargins(0, 0, 0, 0)
+        wl2.addWidget(ev)
+        scene_lbl = QLabel("")
+        scene_lbl.setProperty("class", "ExtraPreviewText")
+        wl2.addWidget(scene_lbl)
+        tvars['_scene_label'] = scene_lbl
+        grid.addWidget(_cell(lbl2, wrapper2), 0, 1, Qt.AlignTop)
+
+        # Flags
+        lbl3 = QLabel("[02] 标志位")
+        lbl3.setToolTip("[02] 位域。bit0=启用 bit1=可见 bit2=可交互 bit3=提示 bit4=忙碌 bit5=恢复 bit8=已拾取 bit16=动画循环")
+        lbl3.setProperty("class", "PropLabel")
+        ev2 = self.make_raw_edit(2)
+        tvars['flags'] = ev2
+        wrapper3 = QFrame()
+        wrapper3.setObjectName("FakeInputBox")
+        wl3 = QHBoxLayout(wrapper3)
+        wl3.setContentsMargins(0, 0, 0, 0)
+        wl3.addWidget(ev2)
+        grid.addWidget(_cell(lbl3, wrapper3), 0, 2, Qt.AlignTop)
+
+        # Flag checkboxes
+        bit_attrs = [
+            ("_bit_enable", "启用", 1), ("_bit_visible", "显示", 2),
+            ("_bit_pickable", "可交互", 4), ("_bit_hint", "提示", 8),
+            ("_bit_busy", "忙碌", 0x10), ("_bit_resume", "恢复", 0x20),
+            ("_bit_taken", "已拾取", 0x100), ("_bit_animloop", "循环动画", 0x10000),
+            ("_bit_ev12", "事件标志A", 0x1000), ("_bit_ev13", "事件标志B", 0x2000),
+            ("_bit_ev14", "事件标志C", 0x4000),
+        ]
+        bit_vars = {}
+        bit_cbs = []
+        flags_frame = QWidget()
+        flags_grid = QGridLayout(flags_frame)
+        flags_grid.setContentsMargins(0, 0, 0, 0)
+        flags_grid.setSpacing(2)
+        for bi, (attr, text, mask) in enumerate(bit_attrs):
+            cb_bit = QCheckBox(text)
+            cb_bit.setToolTip(f"{attr}: mask=0x{mask:X}")
+            bit_vars[attr] = cb_bit
+            bit_cbs.append(cb_bit)
+            r, c = divmod(bi, 4)
+            flags_grid.addWidget(cb_bit, r, c)
+
+        tvars['_bit_vars'] = bit_vars
+        tvars['_bit_cbs'] = bit_cbs
+        tvars['_bit_event_idxs'] = [i for i, (attr, _, _) in enumerate(bit_attrs)
+                                     if attr in ('_bit_ev12', '_bit_ev13', '_bit_ev14')]
+
+        # Wire up flag<->entry sync
+        def _on_flags_changed(*_args):
+            try:
+                flags = int(ev2.text() or 0)
+            except ValueError:
+                return
+            for attr, _text, mask in bit_attrs:
+                bit_vars[attr].setChecked((flags & mask) != 0)
+
+        def _on_cb_changed(*_args):
+            flags = 0
+            for attr, _text, mask in bit_attrs:
+                if bit_vars[attr].isChecked():
+                    flags |= mask
+            ev2.setText(str(flags))
+
+        ev2.textChanged.connect(_on_flags_changed)
+        for bv in bit_vars.values():
+            bv.stateChanged.connect(_on_cb_changed)
+
+        grid.addWidget(flags_frame, 1, 0, 1, 3)
+
+        for c in range(3):
+            grid.setColumnStretch(c, 1)
+        bl.addLayout(grid)
+        gl.addWidget(body)
+        parent_layout.addWidget(grp)
+
+    def _build_field_group(self, parent_layout, title, fields, tvars, type_labels, cols, tval=0, is_sound=False):
+        """构建通用字段组 (DockHeader + DockBody, 垂直单元格, 等宽列)"""
+        grp = QWidget()
+        gl = QVBoxLayout(grp)
+        gl.setContentsMargins(0, 0, 0, 0)
+        gl.setSpacing(0)
+        gl.addWidget(DockHeader(title))
+        body = QWidget()
+        body.setObjectName("DockBody")
+        bl = QVBoxLayout(body)
+        bl.setContentsMargins(8, 8, 8, 8)
+        grid = QGridLayout()
+        grid.setVerticalSpacing(4)
+        grid.setHorizontalSpacing(8)
+
+        for fi, field_tuple in enumerate(fields):
+            key, di, label, cmt = field_tuple
+            r, c = divmod(fi, cols)
+
+            # Label with type-specific override
+            if di in type_labels:
+                tl, tc = type_labels[di]
+                lbl_text = f"[{di:02d}] {tl}"
+                tip = f"[{di:02d}] {tl}: {tc}" if tc else None
+            else:
+                lbl_text = f"[{di:02d}] {label}"
+                tip = f"[{di:02d}] {cmt}" if cmt else None
+
+            lbl = QLabel(lbl_text)
+            if tip:
+                lbl.setToolTip(tip)
+            lbl.setProperty("class", "PropLabel")
+            if di in type_labels:
+                lbl.setProperty("class", "TypeFieldLabel")
+
+            # Input widget (组合框字段不创建 QLineEdit 镜像, 由"全部"页 raw_N 充当存储,
+            # 经 _sync_type_cb_to_raw 单向同步; 文本类字段各自建镜像并双向同步)
+            ev = None
+
+            # Check if this needs a combobox
+            if key == 'anim_set':
+                cb = QComboBox()
+                cb.addItems([f"{k}-{v}" for k, v in ANIM_SETS.items()])
+                tvars[key] = cb
+                wrapper = QFrame()
+                wrapper.setObjectName("FakeInputBox")
+                wl = QHBoxLayout(wrapper)
+                wl.setContentsMargins(0, 0, 0, 0)
+                wl.addWidget(cb)
+                # Sync combobox to raw entry
+                cb.currentIndexChanged.connect(partial(self._sync_type_cb_to_raw, tvars, di, cb))
+            elif key == 'blend_mode':
+                cb = QComboBox()
+                cb.addItems(["0-正常", "1-染色", "2-加法发光", "3-减法压暗", "4-亮度alpha", "5-水平翻转"])
+                tvars[key] = cb
+                wrapper = QFrame()
+                wrapper.setObjectName("FakeInputBox")
+                wl = QHBoxLayout(wrapper)
+                wl.setContentsMargins(0, 0, 0, 0)
+                wl.addWidget(cb)
+                cb.currentIndexChanged.connect(partial(self._sync_type_cb_to_raw, tvars, di, cb))
+            elif key == 'shadow_frame':
+                cb = QComboBox()
+                cb.addItems(["0-无阴影", "1-小阴影(39×23)", "2-大阴影(65×33)"])
+                tvars[key] = cb
+                wrapper = QFrame()
+                wrapper.setObjectName("FakeInputBox")
+                wl = QHBoxLayout(wrapper)
+                wl.setContentsMargins(0, 0, 0, 0)
+                wl.addWidget(cb)
+                cb.currentIndexChanged.connect(partial(self._sync_type_cb_to_raw, tvars, di, cb))
+            elif key == 'cursor_id':
+                cb = QComboBox()
+                cb.addItems([f"{k}-{v}" for k, v in sorted(_CURSOR_BLOCKS.items())])
+                tvars[key] = cb
+                wrapper = QFrame()
+                wrapper.setObjectName("FakeInputBox")
+                wl = QHBoxLayout(wrapper)
+                wl.setContentsMargins(0, 0, 0, 0)
+                wl.addWidget(cb)
+                cb.currentIndexChanged.connect(partial(self._sync_type_cb_to_raw, tvars, di, cb))
+            elif key == 'dialog_color':
+                # 对话颜色选择器: FCOLOR 1-32 调色板
+                dc_ev = self.make_raw_edit(di)
+                tvars[key] = dc_ev
+                wrapper = QFrame()
+                wrapper.setObjectName("FakeInputBox")
+                wl = QHBoxLayout(wrapper)
+                wl.setContentsMargins(0, 0, 0, 0)
+                wl.setSpacing(2)
+                wl.addWidget(dc_ev, 1)
+                # Color swatch
+                dc_swatch = QFrame()
+                dc_swatch.setFixedSize(20, 20)
+                dc_swatch.setProperty("class", "ColorSwatch")
+                wl.addWidget(dc_swatch)
+                tvars['_dialog_color_swatch'] = dc_swatch
+                # Picker button
+                dc_btn = QPushButton("选色")
+                dc_btn.setFixedWidth(40)
+                dc_btn.setCursor(Qt.PointingHandCursor)
+                dc_btn.clicked.connect(partial(self._pick_dialog_color, dc_swatch, dc_ev, dc_btn))
+                wl.addWidget(dc_btn)
+                tvars['_dialog_color_btn'] = dc_btn
+            elif key == 'dir_mask' and tval in (10, 15):
+                # 方向掩码 checkbox 网格 (8个朝向) — 垂直布局: 数值输入在上, checkbox 在下
+                dm_ev = self.make_raw_edit(di)
+                dm_ev.setMaximumWidth(80)
+                tvars[key] = dm_ev
+                wrapper = QFrame()
+                wrapper.setObjectName("FakeInputBox")
+                wl_wrap = QVBoxLayout(wrapper)
+                wl_wrap.setContentsMargins(4, 2, 4, 2)
+                wl_wrap.setSpacing(2)
+                wl_wrap.addWidget(dm_ev)
+                # Direction checkboxes grid: 4行×2列
+                dir_frame = QWidget()
+                dir_grid = QGridLayout(dir_frame)
+                dir_grid.setContentsMargins(0, 0, 0, 0)
+                dir_grid.setSpacing(1)
+                dir_labels = ["上", "右上", "右", "右下", "下", "左下", "左", "左上"]
+                dir_bv = {}
+                for bit_i in range(8):
+                    bv_cb = QCheckBox(dir_labels[bit_i])
+                    bv_cb.setProperty("class", "DirCheckBox")
+                    dir_bv[bit_i] = bv_cb
+                    r2, c2 = divmod(bit_i, 2)
+                    dir_grid.addWidget(bv_cb, r2, c2)
+                for bv_cb in dir_bv.values():
+                    bv_cb.stateChanged.connect(partial(self._sync_dir_mask, dm_ev, dir_bv))
+                tvars["_dir_bv"] = dir_bv
+                wl_wrap.addWidget(dir_frame)
+            else:
+                ev = self.make_raw_edit(di)
+                tvars[key] = ev
+                wrapper = QFrame()
+                wrapper.setObjectName("FakeInputBox")
+                wl = QHBoxLayout(wrapper)
+                wl.setContentsMargins(0, 0, 0, 0)
+                wl.addWidget(ev)
+
+            cell_widget = QWidget()
+            cell = QVBoxLayout(cell_widget)
+            cell.setSpacing(2)
+            cell.setContentsMargins(0, 0, 0, 0)
+            cell.addWidget(lbl)
+            cell.addWidget(wrapper)
+            # Hint label — 输入框外部下方, 与输入框左边线对齐
+            if key == 'hint_id':
+                hl = QLabel("")
+                hl.setProperty("class", "FieldHint")
+                hl.setWordWrap(True)
+                cell.addWidget(hl)
+                tvars['_hint_label'] = hl
+            # Item name label — type=110 物品ID输入框下方 (显示方式参考 hint_id)
+            # 注意: d53/d57/d61 在 GROUP_50_70 中已被 ANIM/RUNTIME 的 dir_mode/saved_y/alt_tele_y
+            # 抢先占用 (按 di 去重), key 不会是 item_gN_id, 故按 di 判定 (与 mat_editor.py 一致)
+            if tval == 110 and di in (53, 57, 61):
+                _item_lbl_key = {53: '_item_g1_id_label', 57: '_item_g2_id_label', 61: '_item_g3_id_label'}[di]
+                il = QLabel("")
+                il.setProperty("class", "FieldHint")
+                il.setWordWrap(True)
+                cell.addWidget(il)
+                tvars[_item_lbl_key] = il
+            wrapper.setMinimumHeight(24)
+            grid.addWidget(cell_widget, r, c, Qt.AlignTop)
+
+        # 所有列等宽
+        for c in range(cols):
+            grid.setColumnStretch(c, 1)
+        # 填充末行空白占位, 防止列宽不均
+        if fields:
+            last_row_count = len(fields) % cols
+            if last_row_count != 0:
+                last_row = len(fields) // cols
+                for c in range(last_row_count, cols):
+                    grid.addWidget(QWidget(), last_row, c)
+
+        # grid 必须关联父 QWidget, 否则内部 widget 无父 → 被 GC 回收
+        grid_widget = QWidget()
+        grid_widget.setLayout(grid)
+        bl.addWidget(grid_widget)
+        gl.addWidget(body)
+        parent_layout.addWidget(grp)
+
+    def _sync_type_cb_to_raw(self, tvars, di, cb_widget, *_args):
+        """类型页面 Combobox 值同步到 raw_N"""
+        try:
+            v = int(cb_widget.currentText().split('-')[0])
+            rk = f'raw_{di}'
+            if rk in self._edit_vars:
+                self._edit_vars[rk].setText(str(v))
+        except ValueError:
+            pass
+
+    # ---- partial 槽函数 (原为闭包/lambda, §3 改造抽出) ----
+    def _on_mirror_changed(self, src, eds, txt=""):
+        """raw 镜像同步: src 改变时把文本广播给 eds 中其它编辑框。
+        (textChanged 信号会传入 txt)"""
+        for ed in eds:
+            if ed is src:
+                continue
+            if ed.text() == txt:
+                continue
+            ed.blockSignals(True)
+            ed.setText(txt)
+            ed.blockSignals(False)
+
+    def _pick_dialog_color(self, swatch, ev, btn, *_args):
+        """对话颜色选色弹窗 (clicked 信号会传入 bool, *_args 吸收)"""
+        menu = QMenu(self._editor)
+        for i in range(32):
+            hc = GAME_COLORS.get(i + 1, '#000')
+            px = QPixmap(16, 16)
+            px.fill(QColor(hc))
+            act = menu.addAction(QIcon(px), f"  {i:2d}  FCOLOR({i+1:2d})")
+            act.setData(i)
+        chosen = menu.exec(btn.mapToGlobal(QPoint(0, btn.height())))
+        if chosen:
+            val = chosen.data()
+            ev.setText(str(val))
+            swatch.setStyleSheet(f"background-color: {GAME_COLORS.get(val+1,'#000')};")
+
+    def _sync_dir_mask(self, ev, dir_bv, *_args):
+        """方向掩码 checkbox 网格同步到数值输入 (stateChanged 信号会传入 int, *_args 吸收)"""
+        mask = sum((1 << i) for i, cb in dir_bv.items() if cb.isChecked())
+        ev.blockSignals(True)
+        ev.setText(str(mask))
+        ev.blockSignals(False)
 
 
 class MatEditorApp(QMainWindow):
@@ -2341,6 +2805,8 @@ class MatEditorApp(QMainWindow):
         self._raw_mirrors = {}  # di -> [QLineEdit, ...] 同一字段在参数页/全部页的镜像控件
         self._type_vars = {}  # tval -> {key: widget}
         self._type_frames = {}  # tval -> QWidget
+        # 属性面板构建工厂 (§4 进阶②) — 视图构建逻辑外置
+        self._inspector = InspectorPanelBuilder(self)
         self._active_type = None
         self._param_labels = {}
         self._all_labels = {}
@@ -2680,7 +3146,7 @@ class MatEditorApp(QMainWindow):
         self.notebook.addTab(self.tab_param, "参数")
 
         # Build per-type parameter pages
-        self._build_type_param_pages()
+        self._inspector.build_type_param_pages()
 
         # Tab "脚本"
         self.tab_script = QWidget()
@@ -2693,7 +3159,7 @@ class MatEditorApp(QMainWindow):
         self._build_all_tab()
 
         # 参数页 / 全部页的镜像 QLineEdit 双向同步 (等价 v1 StringVar 互通)
-        self._wire_raw_mirrors()
+        self._inspector.wire_raw_mirrors()
 
         # Bottom buttons
         bf = QHBoxLayout()
@@ -2712,460 +3178,6 @@ class MatEditorApp(QMainWindow):
         self.edit_frame = right_widget
         right_widget.setMinimumWidth(460)
         self.splitter.addWidget(right_widget)
-
-    def _build_type_param_pages(self):
-        """为每种实体类型构建独立的参数编辑页"""
-        _TYPE_ORDER = [200, 10, 20, 110, 15, 16, 5]
-        _SKIP_DWORDS = {
-            5:  {9,24,25}|set(range(29,96)),
-            10: {9,24,25,55,57,58,59}|set(range(63,71)),
-            15: {9,13,24,25,28}|set(range(52,96)),
-            16: {8,9,13,23,24,28,50,51,58,59}|set(range(63,71)),
-            20: set(range(50,96)) - {55,64,65,66,68,80,81},
-            110: {9,14,16,23,50,51}|set(range(57,96)),
-            200: {23,54}|set(range(56,96)) - {64},
-        }
-
-        for tval in _TYPE_ORDER:
-            scroll = QScrollArea()
-            scroll.setWidgetResizable(True)
-            inner = QWidget()
-            inner_layout = QVBoxLayout(inner)
-            inner_layout.setContentsMargins(4, 4, 16, 4)
-            inner_layout.setSpacing(6)
-
-            tvars = {}
-            skip = _SKIP_DWORDS.get(tval, set())
-            type_labels = _TYPE_LABELS.get(tval, {})
-
-            # === 基础属性 ===
-            self._build_type_basic_group(inner_layout, tvars, tval, type_labels)
-
-            # === 显示/动画/位置 [8-28] ===
-            GROUP_8_28 = []
-            _seen8 = set()
-            _skip_8_28 = {12, 17, 25, 26, 27}
-            for fields in (BASIC_FIELDS, RUNTIME_FIELDS, POS_FIELDS, INTERACT_FIELDS, SCRIPT_FIELDS):
-                for f in fields:
-                    if 8 <= f[1] <= 28 and f[1] not in _seen8 and f[1] not in _skip_8_28:
-                        GROUP_8_28.append(f)
-                        _seen8.add(f[1])
-            _order_8_28 = {13: 21.5, 15: 21.6}
-            GROUP_8_28.sort(key=lambda f: _order_8_28.get(f[1], f[1]))
-            GROUP_8_28 = [f for f in GROUP_8_28 if f[1] not in skip]
-            if GROUP_8_28:
-                self._build_field_group(inner_layout, "显示/动画/位置 [8-28]", GROUP_8_28, tvars, type_labels, 4, tval=tval)
-
-            # === 交互/动画/物品 [50-70] ===
-            GROUP_50_70 = []
-            _seen50 = set()
-            for fields in (INTERACT_FIELDS, RUNTIME_FIELDS, ANIM_FIELDS, ITEM_FIELDS):
-                for f in fields:
-                    if 50 <= f[1] <= 70 and f[1] not in _seen50:
-                        GROUP_50_70.append(f)
-                        _seen50.add(f[1])
-            GROUP_50_70.sort(key=lambda f: f[1])
-            GROUP_50_70 = [f for f in GROUP_50_70 if f[1] not in skip]
-            if GROUP_50_70:
-                self._build_field_group(inner_layout, "交互/动画/物品 [50-70]", GROUP_50_70, tvars, type_labels, 4, tval=tval)
-
-            # === 音效事件 [71-95] (type=20 专用) ===
-            if tval == 20 and type_labels:
-                sound_events = [(di, type_labels[di][0], type_labels[di][1])
-                               for di in range(71, 96) if di in type_labels and di not in skip]
-                if sound_events:
-                    snd_fields = [(f'snd_{di}', di, tl, tc) for di, tl, tc in sound_events]
-                    self._build_field_group(inner_layout, "音效事件 [71-95]", snd_fields, tvars, type_labels, 4, tval=tval, is_sound=True)
-
-            inner_layout.addStretch()
-            scroll.setWidget(inner)
-            self._type_frames[tval] = scroll
-            self._type_vars[tval] = tvars
-
-    def _make_raw_edit(self, di):
-        """为 dword di 创建一个独立的 QLineEdit 并登记到镜像表。
-        v2 不再共享同一 QLineEdit 控件 (一个 QWidget 只能有一个父窗口, 会被
-        后续 addWidget re-parent 走, 导致其余页变空壳); 改为每页各建一个,
-        构建完成后用 _wire_raw_mirrors 双向同步, 等价于 v1 的 StringVar 互通。"""
-        ev = QLineEdit()
-        self._raw_mirrors.setdefault(di, []).append(ev)
-        return ev
-
-    def _wire_raw_mirrors(self):
-        """为每个 dword 的所有镜像 QLineEdit 接入 textChanged 双向同步。
-        用 blockSignals 防回环。构建后过滤已被 Qt 回收的对象。"""
-        for di in list(self._raw_mirrors):
-            eds = self._raw_mirrors[di]
-            # 过滤已被 Qt 回收的孤儿对象 (addWidget re-parent 后未保持强引用)
-            alive = []
-            for ed in eds:
-                try:
-                    _ = ed.text()
-                    alive.append(ed)
-                except RuntimeError:
-                    pass
-            self._raw_mirrors[di] = alive
-            if len(alive) < 2:
-                continue
-            # 为每个控件分别创建 handler, 用 partial 预填 src 避免闭包捕获
-            for src_ed in alive:
-                src_ed.textChanged.connect(partial(self._on_mirror_changed, src_ed, alive))
-
-    def _build_type_basic_group(self, parent_layout, tvars, tval, type_labels):
-        """构建类型页面的基础属性组 (DockHeader + DockBody, 垂直单元格, 等宽列)"""
-        grp = QWidget()
-        gl = QVBoxLayout(grp)
-        gl.setContentsMargins(0, 0, 0, 0)
-        gl.setSpacing(0)
-        gl.addWidget(DockHeader("基础属性"))
-        body = QWidget()
-        body.setObjectName("DockBody")
-        bl = QVBoxLayout(body)
-        bl.setContentsMargins(8, 8, 8, 8)
-        grid = QGridLayout()
-        grid.setVerticalSpacing(4)
-        grid.setHorizontalSpacing(8)
-
-        def _cell(lbl_widget, input_widget):
-            """返回 (QWidget, QVBoxLayout) — QWidget 作为 grid 单元格, 保证内部控件有父"""
-            cw = QWidget()
-            cell = QVBoxLayout(cw)
-            cell.setSpacing(2)
-            cell.setContentsMargins(0, 0, 0, 0)
-            cell.addWidget(lbl_widget)
-            input_widget.setMinimumHeight(24)
-            cell.addWidget(input_widget)
-            return cw
-
-        # Type combobox
-        lbl = QLabel("[00] 实体类型")
-        lbl.setToolTip("[00] 实体类型: 5=脚本 10=出入传送 15=触发区 16=战斗区 20=事件 110=机关 200=NPC。源码: sub_405CBC")
-        lbl.setProperty("class", "PropLabel")
-        cb = QComboBox()
-        cb.addItems([f"{k}-{v}" for k, v in sorted(ENTITY_TYPES.items())])
-        tvars['type'] = cb
-        wrapper = QFrame()
-        wrapper.setObjectName("FakeInputBox")
-        wl = QHBoxLayout(wrapper)
-        wl.setContentsMargins(0, 0, 0, 0)
-        wl.addWidget(cb)
-        grid.addWidget(_cell(lbl, wrapper), 0, 0, Qt.AlignTop)
-
-        # Scene ID
-        lbl2 = QLabel("[01] 场景ID")
-        lbl2.setToolTip("[01] 所属场景 (-1=全局)。TKT_ID = scene_id + 300。源码: sub_405CBC")
-        lbl2.setProperty("class", "PropLabel")
-        ev = self._make_raw_edit(1)
-        tvars['scene_id'] = ev
-        wrapper2 = QFrame()
-        wrapper2.setObjectName("FakeInputBox")
-        wl2 = QHBoxLayout(wrapper2)
-        wl2.setContentsMargins(0, 0, 0, 0)
-        wl2.addWidget(ev)
-        scene_lbl = QLabel("")
-        scene_lbl.setProperty("class", "ExtraPreviewText")
-        wl2.addWidget(scene_lbl)
-        tvars['_scene_label'] = scene_lbl
-        grid.addWidget(_cell(lbl2, wrapper2), 0, 1, Qt.AlignTop)
-
-        # Flags
-        lbl3 = QLabel("[02] 标志位")
-        lbl3.setToolTip("[02] 位域。bit0=启用 bit1=可见 bit2=可交互 bit3=提示 bit4=忙碌 bit5=恢复 bit8=已拾取 bit16=动画循环")
-        lbl3.setProperty("class", "PropLabel")
-        ev2 = self._make_raw_edit(2)
-        tvars['flags'] = ev2
-        wrapper3 = QFrame()
-        wrapper3.setObjectName("FakeInputBox")
-        wl3 = QHBoxLayout(wrapper3)
-        wl3.setContentsMargins(0, 0, 0, 0)
-        wl3.addWidget(ev2)
-        grid.addWidget(_cell(lbl3, wrapper3), 0, 2, Qt.AlignTop)
-
-        # Flag checkboxes
-        bit_attrs = [
-            ("_bit_enable", "启用", 1), ("_bit_visible", "显示", 2),
-            ("_bit_pickable", "可交互", 4), ("_bit_hint", "提示", 8),
-            ("_bit_busy", "忙碌", 0x10), ("_bit_resume", "恢复", 0x20),
-            ("_bit_taken", "已拾取", 0x100), ("_bit_animloop", "循环动画", 0x10000),
-            ("_bit_ev12", "事件标志A", 0x1000), ("_bit_ev13", "事件标志B", 0x2000),
-            ("_bit_ev14", "事件标志C", 0x4000),
-        ]
-        bit_vars = {}
-        bit_cbs = []
-        flags_frame = QWidget()
-        flags_grid = QGridLayout(flags_frame)
-        flags_grid.setContentsMargins(0, 0, 0, 0)
-        flags_grid.setSpacing(2)
-        for bi, (attr, text, mask) in enumerate(bit_attrs):
-            cb_bit = QCheckBox(text)
-            cb_bit.setToolTip(f"{attr}: mask=0x{mask:X}")
-            bit_vars[attr] = cb_bit
-            bit_cbs.append(cb_bit)
-            r, c = divmod(bi, 4)
-            flags_grid.addWidget(cb_bit, r, c)
-
-        tvars['_bit_vars'] = bit_vars
-        tvars['_bit_cbs'] = bit_cbs
-        tvars['_bit_event_idxs'] = [i for i, (attr, _, _) in enumerate(bit_attrs)
-                                     if attr in ('_bit_ev12', '_bit_ev13', '_bit_ev14')]
-
-        # Wire up flag<->entry sync
-        def _on_flags_changed(*_args):
-            try:
-                flags = int(ev2.text() or 0)
-            except ValueError:
-                return
-            for attr, _text, mask in bit_attrs:
-                bit_vars[attr].setChecked((flags & mask) != 0)
-
-        def _on_cb_changed(*_args):
-            flags = 0
-            for attr, _text, mask in bit_attrs:
-                if bit_vars[attr].isChecked():
-                    flags |= mask
-            ev2.setText(str(flags))
-
-        ev2.textChanged.connect(_on_flags_changed)
-        for bv in bit_vars.values():
-            bv.stateChanged.connect(_on_cb_changed)
-
-        grid.addWidget(flags_frame, 1, 0, 1, 3)
-
-        for c in range(3):
-            grid.setColumnStretch(c, 1)
-        bl.addLayout(grid)
-        gl.addWidget(body)
-        parent_layout.addWidget(grp)
-
-    def _build_field_group(self, parent_layout, title, fields, tvars, type_labels, cols, tval=0, is_sound=False):
-        """构建通用字段组 (DockHeader + DockBody, 垂直单元格, 等宽列)"""
-        grp = QWidget()
-        gl = QVBoxLayout(grp)
-        gl.setContentsMargins(0, 0, 0, 0)
-        gl.setSpacing(0)
-        gl.addWidget(DockHeader(title))
-        body = QWidget()
-        body.setObjectName("DockBody")
-        bl = QVBoxLayout(body)
-        bl.setContentsMargins(8, 8, 8, 8)
-        grid = QGridLayout()
-        grid.setVerticalSpacing(4)
-        grid.setHorizontalSpacing(8)
-
-        for fi, field_tuple in enumerate(fields):
-            key, di, label, cmt = field_tuple
-            r, c = divmod(fi, cols)
-
-            # Label with type-specific override
-            if di in type_labels:
-                tl, tc = type_labels[di]
-                lbl_text = f"[{di:02d}] {tl}"
-                tip = f"[{di:02d}] {tl}: {tc}" if tc else None
-            else:
-                lbl_text = f"[{di:02d}] {label}"
-                tip = f"[{di:02d}] {cmt}" if cmt else None
-
-            lbl = QLabel(lbl_text)
-            if tip:
-                lbl.setToolTip(tip)
-            lbl.setProperty("class", "PropLabel")
-            if di in type_labels:
-                lbl.setProperty("class", "TypeFieldLabel")
-
-            # Input widget (组合框字段不创建 QLineEdit 镜像, 由"全部"页 raw_N 充当存储,
-            # 经 _sync_type_cb_to_raw 单向同步; 文本类字段各自建镜像并双向同步)
-            ev = None
-
-            # Check if this needs a combobox
-            if key == 'anim_set':
-                cb = QComboBox()
-                cb.addItems([f"{k}-{v}" for k, v in ANIM_SETS.items()])
-                tvars[key] = cb
-                wrapper = QFrame()
-                wrapper.setObjectName("FakeInputBox")
-                wl = QHBoxLayout(wrapper)
-                wl.setContentsMargins(0, 0, 0, 0)
-                wl.addWidget(cb)
-                # Sync combobox to raw entry
-                cb.currentIndexChanged.connect(partial(self._sync_type_cb_to_raw, tvars, di, cb))
-            elif key == 'blend_mode':
-                cb = QComboBox()
-                cb.addItems(["0-正常", "1-染色", "2-加法发光", "3-减法压暗", "4-亮度alpha", "5-水平翻转"])
-                tvars[key] = cb
-                wrapper = QFrame()
-                wrapper.setObjectName("FakeInputBox")
-                wl = QHBoxLayout(wrapper)
-                wl.setContentsMargins(0, 0, 0, 0)
-                wl.addWidget(cb)
-                cb.currentIndexChanged.connect(partial(self._sync_type_cb_to_raw, tvars, di, cb))
-            elif key == 'shadow_frame':
-                cb = QComboBox()
-                cb.addItems(["0-无阴影", "1-小阴影(39×23)", "2-大阴影(65×33)"])
-                tvars[key] = cb
-                wrapper = QFrame()
-                wrapper.setObjectName("FakeInputBox")
-                wl = QHBoxLayout(wrapper)
-                wl.setContentsMargins(0, 0, 0, 0)
-                wl.addWidget(cb)
-                cb.currentIndexChanged.connect(partial(self._sync_type_cb_to_raw, tvars, di, cb))
-            elif key == 'cursor_id':
-                cb = QComboBox()
-                cb.addItems([f"{k}-{v}" for k, v in sorted(_CURSOR_BLOCKS.items())])
-                tvars[key] = cb
-                wrapper = QFrame()
-                wrapper.setObjectName("FakeInputBox")
-                wl = QHBoxLayout(wrapper)
-                wl.setContentsMargins(0, 0, 0, 0)
-                wl.addWidget(cb)
-                cb.currentIndexChanged.connect(partial(self._sync_type_cb_to_raw, tvars, di, cb))
-            elif key == 'dialog_color':
-                # 对话颜色选择器: FCOLOR 1-32 调色板
-                dc_ev = self._make_raw_edit(di)
-                tvars[key] = dc_ev
-                wrapper = QFrame()
-                wrapper.setObjectName("FakeInputBox")
-                wl = QHBoxLayout(wrapper)
-                wl.setContentsMargins(0, 0, 0, 0)
-                wl.setSpacing(2)
-                wl.addWidget(dc_ev, 1)
-                # Color swatch
-                dc_swatch = QFrame()
-                dc_swatch.setFixedSize(20, 20)
-                dc_swatch.setProperty("class", "ColorSwatch")
-                wl.addWidget(dc_swatch)
-                tvars['_dialog_color_swatch'] = dc_swatch
-                # Picker button
-                dc_btn = QPushButton("选色")
-                dc_btn.setFixedWidth(40)
-                dc_btn.setCursor(Qt.PointingHandCursor)
-                dc_btn.clicked.connect(partial(self._pick_dialog_color, dc_swatch, dc_ev, dc_btn))
-                wl.addWidget(dc_btn)
-                tvars['_dialog_color_btn'] = dc_btn
-            elif key == 'dir_mask' and tval in (10, 15):
-                # 方向掩码 checkbox 网格 (8个朝向) — 垂直布局: 数值输入在上, checkbox 在下
-                dm_ev = self._make_raw_edit(di)
-                dm_ev.setMaximumWidth(80)
-                tvars[key] = dm_ev
-                wrapper = QFrame()
-                wrapper.setObjectName("FakeInputBox")
-                wl_wrap = QVBoxLayout(wrapper)
-                wl_wrap.setContentsMargins(4, 2, 4, 2)
-                wl_wrap.setSpacing(2)
-                wl_wrap.addWidget(dm_ev)
-                # Direction checkboxes grid: 4行×2列
-                dir_frame = QWidget()
-                dir_grid = QGridLayout(dir_frame)
-                dir_grid.setContentsMargins(0, 0, 0, 0)
-                dir_grid.setSpacing(1)
-                dir_labels = ["上", "右上", "右", "右下", "下", "左下", "左", "左上"]
-                dir_bv = {}
-                for bit_i in range(8):
-                    bv_cb = QCheckBox(dir_labels[bit_i])
-                    bv_cb.setProperty("class", "DirCheckBox")
-                    dir_bv[bit_i] = bv_cb
-                    r2, c2 = divmod(bit_i, 2)
-                    dir_grid.addWidget(bv_cb, r2, c2)
-                for bv_cb in dir_bv.values():
-                    bv_cb.stateChanged.connect(partial(self._sync_dir_mask, dm_ev, dir_bv))
-                tvars["_dir_bv"] = dir_bv
-                wl_wrap.addWidget(dir_frame)
-            else:
-                ev = self._make_raw_edit(di)
-                tvars[key] = ev
-                wrapper = QFrame()
-                wrapper.setObjectName("FakeInputBox")
-                wl = QHBoxLayout(wrapper)
-                wl.setContentsMargins(0, 0, 0, 0)
-                wl.addWidget(ev)
-
-            cell_widget = QWidget()
-            cell = QVBoxLayout(cell_widget)
-            cell.setSpacing(2)
-            cell.setContentsMargins(0, 0, 0, 0)
-            cell.addWidget(lbl)
-            cell.addWidget(wrapper)
-            # Hint label — 输入框外部下方, 与输入框左边线对齐
-            if key == 'hint_id':
-                hl = QLabel("")
-                hl.setProperty("class", "FieldHint")
-                hl.setWordWrap(True)
-                cell.addWidget(hl)
-                tvars['_hint_label'] = hl
-            # Item name label — type=110 物品ID输入框下方 (显示方式参考 hint_id)
-            # 注意: d53/d57/d61 在 GROUP_50_70 中已被 ANIM/RUNTIME 的 dir_mode/saved_y/alt_tele_y
-            # 抢先占用 (按 di 去重), key 不会是 item_gN_id, 故按 di 判定 (与 mat_editor.py 一致)
-            if tval == 110 and di in (53, 57, 61):
-                _item_lbl_key = {53: '_item_g1_id_label', 57: '_item_g2_id_label', 61: '_item_g3_id_label'}[di]
-                il = QLabel("")
-                il.setProperty("class", "FieldHint")
-                il.setWordWrap(True)
-                cell.addWidget(il)
-                tvars[_item_lbl_key] = il
-            wrapper.setMinimumHeight(24)
-            grid.addWidget(cell_widget, r, c, Qt.AlignTop)
-
-        # 所有列等宽
-        for c in range(cols):
-            grid.setColumnStretch(c, 1)
-        # 填充末行空白占位, 防止列宽不均
-        if fields:
-            last_row_count = len(fields) % cols
-            if last_row_count != 0:
-                last_row = len(fields) // cols
-                for c in range(last_row_count, cols):
-                    grid.addWidget(QWidget(), last_row, c)
-
-        # grid 必须关联父 QWidget, 否则内部 widget 无父 → 被 GC 回收
-        grid_widget = QWidget()
-        grid_widget.setLayout(grid)
-        bl.addWidget(grid_widget)
-        gl.addWidget(body)
-        parent_layout.addWidget(grp)
-
-    def _sync_type_cb_to_raw(self, tvars, di, cb_widget, *_args):
-        """类型页面 Combobox 值同步到 raw_N"""
-        try:
-            v = int(cb_widget.currentText().split('-')[0])
-            rk = f'raw_{di}'
-            if rk in self._edit_vars:
-                self._edit_vars[rk].setText(str(v))
-        except ValueError:
-            pass
-
-    # ---- partial 槽函数 (原为闭包/lambda, §3 改造抽出) ----
-    def _on_mirror_changed(self, src, eds, txt=""):
-        """raw 镜像同步: src 改变时把文本广播给 eds 中其它编辑框。
-        (textChanged 信号会传入 txt)"""
-        for ed in eds:
-            if ed is src:
-                continue
-            if ed.text() == txt:
-                continue
-            ed.blockSignals(True)
-            ed.setText(txt)
-            ed.blockSignals(False)
-
-    def _pick_dialog_color(self, swatch, ev, btn, *_args):
-        """对话颜色选色弹窗 (clicked 信号会传入 bool, *_args 吸收)"""
-        menu = QMenu(self)
-        for i in range(32):
-            hc = GAME_COLORS.get(i + 1, '#000')
-            px = QPixmap(16, 16)
-            px.fill(QColor(hc))
-            act = menu.addAction(QIcon(px), f"  {i:2d}  FCOLOR({i+1:2d})")
-            act.setData(i)
-        chosen = menu.exec(btn.mapToGlobal(QPoint(0, btn.height())))
-        if chosen:
-            val = chosen.data()
-            ev.setText(str(val))
-            swatch.setStyleSheet(f"background-color: {GAME_COLORS.get(val+1,'#000')};")
-
-    def _sync_dir_mask(self, ev, dir_bv, *_args):
-        """方向掩码 checkbox 网格同步到数值输入 (stateChanged 信号会传入 int, *_args 吸收)"""
-        mask = sum((1 << i) for i, cb in dir_bv.items() if cb.isChecked())
-        ev.blockSignals(True)
-        ev.setText(str(mask))
-        ev.blockSignals(False)
 
     # =========== 脚本标签页 ===========
     def _build_script_tab(self):
@@ -3348,7 +3360,7 @@ class MatEditorApp(QMainWindow):
 
             # "全部"页为每个字段创建独立 QLineEdit 并登记镜像。
             # canonical _edit_vars[key] 指向"全部"页控件; 参数页镜像双向同步。
-            ev = self._make_raw_edit(di)
+            ev = self._inspector.make_raw_edit(di)
             self._edit_vars[key] = ev
             ev.setMaximumWidth(80)
 
