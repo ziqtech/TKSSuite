@@ -4,6 +4,7 @@ import sys
 import time
 import struct
 import ctypes
+import filecmp
 import shutil
 import subprocess
 from datetime import datetime, timezone, timedelta
@@ -722,7 +723,14 @@ class PatcherWorker(QThread):
                     self._log(f"  创建目录: {os.path.relpath(dst_dir, game_dir)}")
 
                 # 记录是否为新文件；若已存在则备份为 .toolbak
+                # 如果目标已存在且内容与源相同 → 上次未清理的残留 → 视为新文件，直接删除
                 is_new = not os.path.isfile(dst_file)
+                if not is_new:
+                    try:
+                        if filecmp.cmp(src_file, dst_file, shallow=False):
+                            is_new = True  # 与源相同，我们自己的残留文件
+                    except Exception:
+                        pass
                 if not is_new:
                     bak = dst_file + ".toolbak"
                     try:
