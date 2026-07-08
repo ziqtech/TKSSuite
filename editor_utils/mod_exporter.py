@@ -71,10 +71,8 @@ def diff_records(original: list[list[int]], current: list[list[int]],
     for i in range(min(len(original), len(current), original_count)):
         orig = original[i]
         cur = current[i]
-        field_diffs = {}
-        for fi in range(min(field_count, len(orig), len(cur))):
-            if orig[fi] != cur[fi]:
-                field_diffs[f"f{fi}"] = cur[fi]
+        limit = min(field_count, len(orig), len(cur))
+        field_diffs = {f"f{fi}": cur[fi] for fi in range(limit) if orig[fi] != cur[fi]}
         if field_diffs:
             modified.append({"index": i, "fields": field_diffs})
 
@@ -82,10 +80,7 @@ def diff_records(original: list[list[int]], current: list[list[int]],
     for i in range(original_count, len(current)):
         cur = current[i]
         # 只记录非零字段以节省空间
-        field_diffs = {}
-        for fi in range(min(field_count, len(cur))):
-            if cur[fi] != 0:
-                field_diffs[f"f{fi}"] = cur[fi]
+        field_diffs = {f"f{fi}": cur[fi] for fi in range(min(field_count, len(cur))) if cur[fi] != 0}
         if field_diffs:
             appended.append({"index": i, "fields": field_diffs})
 
@@ -664,9 +659,6 @@ def load_reference_tkt_entries(ref_dir: str) -> dict[int, str] | None:
 # 块级增量: JVG / GRP 二进制资源
 # ═══════════════════════════════════════════════════════════════
 
-import base64
-
-
 def diff_binary_blocks(original_blocks: list[bytes], current_blocks: list[bytes]
                        ) -> dict:
     """对比二进制块列表，返回修改/新增的块索引及其 base64 编码数据。
@@ -905,18 +897,21 @@ def import_tksmod_text_defines(mod_path: str, ref_dir: str
     for did, content in modified.items():
         defines[did] = content
 
+    # 规范化: list → {id: content} 字典，统一按 dict 处理
     if isinstance(appended, list):
+        _appended_dict = {}
         for content in appended:
             for line in content.split('\n'):
                 stripped = line.strip().rstrip('\r')
                 if stripped.startswith('DEFINE'):
                     parts = stripped.split(None, 1)
                     if len(parts) > 1:
-                        defines[parts[1]] = content
+                        _appended_dict[parts[1]] = content
                     break
-    elif isinstance(appended, dict):
-        for did, content in appended.items():
-            defines[did] = content
+        appended = _appended_dict
+
+    for did, content in appended.items():
+        defines[did] = content
 
     for did in deleted:
         defines.pop(did, None)
@@ -1102,6 +1097,15 @@ def _find_component_data(mod_json: dict, data_files: dict,
     return None
 
 
+def _update_record_fields(record: list[int], fields: dict, field_count: int):
+    """将字段差异字典应用到单条记录。"""
+    for fkey, value in fields.items():
+        if fkey.startswith('f'):
+            fi = int(fkey[1:])
+            if 0 <= fi < field_count:
+                record[fi] = int(value)
+
+
 def _apply_record_diff(original: list[list[int]], diff_data: dict,
                        field_count: int) -> list[list[int]]:
     """将定长记录差异应用到原始数据，返回完整修改后记录数组。"""
@@ -1119,35 +1123,12 @@ def _apply_record_diff(original: list[list[int]], diff_data: dict,
     while len(result) <= max_idx:
         result.append([0] * field_count)
 
-    # 应用修改
-    for entry in diff_data.get("modified", []):
-        idx = entry.get("index", -1)
-        if idx < 0 or idx >= len(result):
-            continue
-        fields = entry.get("fields", {})
-        for fkey, value in fields.items():
-            if fkey.startswith('f'):
-                try:
-                    fi = int(fkey[1:])
-                    if 0 <= fi < field_count:
-                        result[idx][fi] = int(value)
-                except (ValueError, IndexError):
-                    pass
-
-    # 应用追加
-    for entry in diff_data.get("appended", []):
-        idx = entry.get("index", -1)
-        if idx < 0 or idx >= len(result):
-            continue
-        fields = entry.get("fields", {})
-        for fkey, value in fields.items():
-            if fkey.startswith('f'):
-                try:
-                    fi = int(fkey[1:])
-                    if 0 <= fi < field_count:
-                        result[idx][fi] = int(value)
-                except (ValueError, IndexError):
-                    pass
+    # 应用修改 & 追加（共用字段更新逻辑）
+    for key in ("modified", "appended"):
+        for entry in diff_data.get(key, []):
+            idx = entry.get("index", -1)
+            if 0 <= idx < len(result):
+                _update_record_fields(result[idx], entry.get("fields", {}), field_count)
 
     return result
 

@@ -140,8 +140,8 @@ class StatusPickerDialog(QDialog):
             cl.addLayout(row)
         cl.addStretch(); scroll.setWidget(content); layout.addWidget(scroll)
         bl = QHBoxLayout()
-        bl.addWidget(QPushButton("全选", clicked=lambda: [cb.setChecked(True) for _, cb in self.checkboxes]))
-        bl.addWidget(QPushButton("全清", clicked=lambda: [cb.setChecked(False) for _, cb in self.checkboxes]))
+        bl.addWidget(QPushButton("全选", clicked=lambda: self._set_all_checked(True)))
+        bl.addWidget(QPushButton("全清", clicked=lambda: self._set_all_checked(False)))
         bl.addStretch()
         bl.addWidget(QPushButton("✅ 确定", clicked=self._ok))
         bl.addWidget(QPushButton("❌ 取消", clicked=self.reject))
@@ -150,6 +150,10 @@ class StatusPickerDialog(QDialog):
     def showEvent(self, event):
         super().showEvent(event)
         dialog_show_event(self)
+
+    def _set_all_checked(self, state):
+        for _, cb in self.checkboxes:
+            cb.setChecked(state)
 
     def _ok(self):
         m = 0
@@ -253,6 +257,9 @@ class ItemPickerDialog(QDialog):
             (默认 ``'item_id'``; 可选 ``'index'``)
     """
 
+    # 完整模式表格列宽: 图标(0) #(1) ID(2) 页面(3) 物品名称(4) 权限(5) 价格(6)
+    _COLUMN_WIDTHS = {0: 50, 1: 40, 2: 50, 3: 50, 5: 100, 6: 60}
+
     def __init__(self, parent, items, *, use_right_options=None,
                  icon_pixmap_fn=None, current_value=None,
                  title="选择物品", clear_text=None,
@@ -349,12 +356,8 @@ class ItemPickerDialog(QDialog):
             self._table = QTableWidget(0, 7)
             self._table.setHorizontalHeaderLabels(
                 ['图标', '#', 'ID', '页面', '物品名称', '权限', '价格'])
-            self._table.setColumnWidth(0, 50)
-            self._table.setColumnWidth(1, 40)
-            self._table.setColumnWidth(2, 50)
-            self._table.setColumnWidth(3, 50)
-            self._table.setColumnWidth(5, 100)
-            self._table.setColumnWidth(6, 60)
+            for col, width in self._COLUMN_WIDTHS.items():
+                self._table.setColumnWidth(col, width)
             self._table.verticalHeader().setDefaultSectionSize(44)
             self._table.horizontalHeader().setSectionResizeMode(4, QHeaderView.Stretch)
             self._table.setIconSize(QSize(36, 36))
@@ -430,38 +433,35 @@ class ItemPickerDialog(QDialog):
         frg = self._perm_cb.currentText()
         ne = self._nonempty_cb.isChecked()
 
-        page_opts = self._use_right_options  # 用于权限文本解析
+        def _is_match(rec):
+            name = rec.get('name', '')
+            # 仅非空筛选
+            if ne and (not name or name.startswith("Item#") or name.startswith("(空") or name == "0"):
+                return False
+            # 页面筛选
+            if pg and not pg.startswith("全部"):
+                if rec.get('tab_code', 0) != int(pg.split('-')[0]):
+                    return False
+            # 权限筛选 (与 item_editor_v2._apply_filter 一致)
+            if frg and not frg.startswith("全部"):
+                bit = int(frg.split('-')[0])
+                eq = rec.get('equip_type', 0)
+                if bit == 0:
+                    if eq != 0:
+                        return False
+                elif (eq & bit) == 0:
+                    return False
+            # 搜索过滤
+            if q and q not in f"{rec.get('index', 0)} {rec.get('item_id', 0)} {rec.get('tab_code', 0)} {name}".lower():
+                return False
+            return True
 
-        for rec in self._records:
+        for rec in filter(_is_match, self._records):
             name = rec.get('name', '')
             item_id = rec.get('item_id', 0)
             tab = rec.get('tab_code', 0)
             equip_type = rec.get('equip_type', 0)
             idx = rec.get('index', 0)
-
-            # 仅非空筛选
-            if ne:
-                if not name or name.startswith("Item#") or name.startswith("(空") or name == "0":
-                    continue
-
-            # 页面筛选
-            if pg and not pg.startswith("全部"):
-                if tab != int(pg.split('-')[0]):
-                    continue
-
-            # 权限筛选 (与 item_editor_v2._apply_filter 一致)
-            if frg and not frg.startswith("全部"):
-                bit = int(frg.split('-')[0])
-                if bit == 0:
-                    if equip_type != 0:
-                        continue
-                else:
-                    if (equip_type & bit) == 0:
-                        continue
-
-            # 搜索过滤
-            if q and q not in f"{idx} {item_id} {tab} {name}".lower():
-                continue
 
             # 插入行
             row = self._table.rowCount()
@@ -522,15 +522,14 @@ class ItemPickerDialog(QDialog):
 # ═══════════════════════════════════════════════════════════════
 
 def _pil_to_pixmap(img, size=(32, 32)):
-    """将 PIL.Image 转为 QPixmap"""
-    try:
-        img = img.resize(size, 1)  # Image.NEAREST = 1
-        img = img.convert('RGBA')
-        data = img.tobytes('raw', 'RGBA')
-        qimg = QImage(data, img.width, img.height, QImage.Format_RGBA8888)
-        return QPixmap.fromImage(qimg)
-    except Exception:
+    """将 PIL.Image 转为 QPixmap。img 为 None 时返回 None。"""
+    if img is None:
         return None
+    img = img.resize(size, 1)  # Image.NEAREST = 1
+    img = img.convert('RGBA')
+    data = img.tobytes('raw', 'RGBA')
+    qimg = QImage(data, img.width, img.height, QImage.Format_RGBA8888)
+    return QPixmap.fromImage(qimg)
 
 
 class WarpcPickerDialog(QDialog):
