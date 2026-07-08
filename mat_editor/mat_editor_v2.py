@@ -27,6 +27,7 @@ TKMat.Dat 地图实体编辑器 v2.3 — PySide6 Godot 风格版
 
 import struct, os, sys, re, csv, json, base64, time, traceback
 from collections import OrderedDict, defaultdict, Counter
+from functools import partial
 
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
@@ -60,6 +61,26 @@ from editor_utils.mod_exporter import (
 )
 from editor_utils.window_theme import apply_godot_theme
 
+from mat_constants import (
+    REC_SIZE, REC_COUNT, FILE_SIZE, DWORD_COUNT, SCENE_NAME_TKT_BASE,
+    DEFUNIT_REC_SIZE, DEFUNIT_REC_COUNT, DEFUNIT_FILE_SIZE,
+    ENTITY_TYPES, TYPE_COLORS, TYPE_COLORS_RGBA, ANIM_SETS, DISPLAY_MODES,
+    _GAME_PALETTE_565, _rgb565_to_hex, GAME_COLORS, DEFAULT_TKT_FCOLOR,
+    _CONTROL_TAGS, _LINE_SEP,
+    BASIC_FIELDS, FLAG_FIELDS, POS_FIELDS, ANIM_FIELDS,
+    SCRIPT_FIELDS, INTERACT_FIELDS, RUNTIME_FIELDS, ITEM_FIELDS, ALL_EDIT_FIELDS,
+    _TYPE_LABELS, MAX_MAP_W, MAX_MAP_H,
+    IDX_TYPE, IDX_SCENE_ID, IDX_FLAGS, IDX_WAIT, IDX_TICK, IDX_TICK_COUNTER,
+    IDX_CURSOR_ID, IDX_ANIM_SET, IDX_POS_X, IDX_POS_Y, IDX_INTERACT_DIST,
+    IDX_DIRECTION, IDX_FRAME_IDX, IDX_FRAME_COUNT, IDX_FRAME_CUR, IDX_PRIORITY,
+    IDX_BOUND_X, IDX_BOUND_Y, IDX_BOUND_W, IDX_BOUND_H, IDX_BLEND_MODE,
+    IDX_BLEND_PARAM, IDX_SPRITE_OFF_X, IDX_SPRITE_OFF_Y, IDX_TIMER,
+    IDX_DIALOG_COLOR, IDX_MAX_A, IDX_MAX_B, IDX_MAX_C, IDX_CUR_A, IDX_CUR_B,
+    IDX_CUR_C, IDX_HEAD_A, IDX_HEAD_B, IDX_HEAD_C, IDX_SCRIPT_PC, IDX_SAVED_PC,
+    IDX_DEFUNIT_IDX, IDX_COND_ID, IDX_DIR_MASK, IDX_TARGET_SCENE, IDX_DIR_MODE,
+    IDX_TARGET_Y, IDX_SHADOW_FRAME, IDX_TARGET_DIR, IDX_SAVED_Y, IDX_ALT_TELE_X,
+    IDX_ALT_TELE_Y, IDX_SUB_MODEL, IDX_MOVING, IDX_HINT_ID,
+)
 HAS_PIL = False
 try:
     from PIL import Image, ImageChops, ImageDraw, ImageOps
@@ -70,18 +91,6 @@ except ImportError:
 # ============================================================
 # 常量
 # ============================================================
-REC_SIZE = 384; REC_COUNT = 6000; FILE_SIZE = 2304000; DWORD_COUNT = 96
-SCENE_NAME_TKT_BASE = 300
-DEFUNIT_REC_SIZE = 16; DEFUNIT_REC_COUNT = 5000; DEFUNIT_FILE_SIZE = 80000
-
-ENTITY_TYPES = {0:"空槽",5:"脚本对象",10:"出入传送点",15:"事件触发区",16:"随机战斗区",
-                20:"事件对象",110:"特殊机关",200:"NPC角色"}
-TYPE_COLORS = {0:"#AAA",5:"#2196F3",10:"#4CAF50",15:"#FF9800",16:"#795548",
-               20:"#9C27B0",110:"#E91E63",200:"#F44336"}
-TYPE_COLORS_RGBA = {0:(170,170,170),5:(33,150,243),10:(76,175,80),15:(255,152,0),
-                    16:(121,85,72),20:(156,39,176),110:(233,30,99),200:(244,67,54)}
-ANIM_SETS = {0:"空(无动画)",1:"Cha.JVG(角色)",4:"Ani.JVG(动画)",5:"Cur.JVG(光标)"}
-DISPLAY_MODES = {"游戏默认":"auto","动画":"ani","角色":"cha","线框":"wire"}
 _JVG_CACHE = {}  # filepath → JVGFile
 _SPRITE_CACHE = {}  # filepath, global_idx → PIL.Image
 
@@ -89,33 +98,15 @@ _SPRITE_CACHE = {}  # filepath, global_idx → PIL.Image
 # TKT 文本颜色渲染 (依据 tkt_editor.py / sub_44E49C)
 # ============================================================
 # FCOLOR 1-32 调色板 (dword_A2C524[32], RGB565 LE)
-_GAME_PALETTE_565 = [
-    0x0000, 0x0000, 0x8410, 0x8000, 0x8400, 0x0400, 0x0410, 0x0010, 0x8010,
-    0x8200, 0x8008, 0x4400, 0x0408, 0x4010, 0x0210, 0x0000, 0x0000,
-    0xF79B, 0xC618, 0xF800, 0xFFE0, 0x07E0, 0x07FF, 0x001F, 0xF81F,
-    0xFC08, 0xFA10, 0x87E8, 0x47F0, 0x821F, 0x441F, 0x31EA, 0xFFFF,
-]
-
-def _rgb565_to_hex(rgb565):
-    r5 = (rgb565 >> 11) & 0x1F; g6 = (rgb565 >> 5) & 0x3F; b5 = rgb565 & 0x1F
-    r8 = (r5 << 3) | (r5 >> 2); g8 = (g6 << 2) | (g6 >> 4); b8 = (b5 << 3) | (b5 >> 2)
-    return f'#{r8:02X}{g8:02X}{b8:02X}'
-
-GAME_COLORS = {i: _rgb565_to_hex(_GAME_PALETTE_565[i]) for i in range(1, 33)}
-DEFAULT_TKT_FCOLOR = GAME_COLORS[32]  # 白色
 
 # 控制字节映射 (sub_4019D0): code -> (name, data_bytes)
-_CONTROL_TAGS = {
-    0x01: ("FRESET",  1), 0x02: ("FCOLOR",  1), 0x03: ("FCOLORD", 3),
-    0x04: ("FSIZE",   1), 0x05: ("FTYPE",   1), 0x14: ("TEXT",    2),
-    0x15: ("VARNUM",  1), 0x16: ("VARTXT",  1), 0x1D: ("NAME",    1),
-}
-_LINE_SEP = 0x1E
 
 def decode_tkt_bytes(data):
     """将原始 TKT 字节流解码为含 <TAG,n> 标记的 UTF 文本。
     依据 tkt_editor.py decode_line() — 控制字节 → <TAG,n>, Big5 → UTF"""
-    out = []; buf = bytearray(); i, n = 0, len(data)
+    out = []
+    buf = bytearray()
+    i, n = 0, len(data)
     def flush():
         if buf:
             try: out.append(buf.decode('big5', errors='replace'))
@@ -134,15 +125,25 @@ def decode_tkt_bytes(data):
                     out.append(f'<{tag_name},{val}>')
                 else:  # dlen==3: FCOLORD
                     out.append(f'<{tag_name},{data[i+1]},{data[i+2]},{data[i+3]}>')
-                i += 1 + dlen; continue
+                i += 1 + dlen
+                continue
         if b == _LINE_SEP:
-            flush(); out.append('\n'); i += 1; continue
+            flush()
+            out.append('\n')
+            i += 1
+            continue
         if b < 0x20:
-            flush(); out.append(f'<RAW,0x{b:02X}>'); i += 1; continue
+            flush()
+            out.append(f'<RAW,0x{b:02X}>')
+            i += 1
+            continue
         if b >= 0x80 and i + 1 < n:
-            buf.append(b); buf.append(data[i+1]); i += 2
+            buf.append(b)
+            buf.append(data[i+1])
+            i += 2
         else:
-            buf.append(b); i += 1
+            buf.append(b)
+            i += 1
     flush()
     return ''.join(out)
 
@@ -166,7 +167,8 @@ def parse_tkt_colored_segments(text):
         m = _TKT_TAG_RE.match(text, i)
         if m:
             flush()
-            tag_name = m.group(1); val_str = m.group(2)
+            tag_name = m.group(1)
+            val_str = m.group(2)
             if tag_name == 'FCOLOR':
                 try:
                     val = int(val_str)
@@ -202,39 +204,14 @@ def parse_tkt_colored_segments(text):
                 buf.append(f'[RAW:{rm.group(1)}]')
                 i += rm.end()
                 continue
-            buf.append(text[i]); i += 1
+            buf.append(text[i])
+            i += 1
         else:
-            buf.append(text[i]); i += 1
+            buf.append(text[i])
+            i += 1
     flush()
     return segments
 
-BASIC_FIELDS = [
-    ("type",0,"实体类型","实体类型: 5=脚本 10=出入传送 15=触发区 16=战斗区 20=事件 110=机关 200=NPC。源码: sub_405CBC *v2==10/20/110/200 分支, sub_409618 类型调度"),
-    ("scene_id",1,"场景ID","所属场景 (-1=全局)。TKT_ID = scene_id + 300。源码: sub_405CBC v13[1]<0||v13[1]==dword_755B58 场景过滤"),
-    ("param",3,"等待计时","等待计时(帧数)。SetWait(min,max)写入随机值; >0时每帧递减并挂起实体, ==0时就绪, <0时永久挂起。源码: sub_40BF88 SetWait写入, sub_409618 if(d3!=0){d3>0则d3--}跳过; else进入tick"),
-    ("tick",4,"执行间隔","执行间隔(帧数)。每帧累加计数器, 达到此值时触发实体类型逻辑和A链脚本并归零。0或1=每帧执行。源码: sub_40C388 SetTick写入, sub_409618 if(++d5>=d4){d5=0; 执行}"),
-    ("cursor_id",8,"光标动画","鼠标悬停光标动画编号。传送点(type=10)设为3显示开门动画。源码: sub_411BA4→sub_45408C 选择Cur.JVG块, sub_412390 设置光标"),
-    ("anim_set",9,"动画集ID","动画集索引。源码: sub_405CBC dword_755AC0[v2[9]]查JVG表, sub_406864 a1[9]获取精灵资源"),
-    ("x",10,"坐标X","世界坐标X (像素)。源码: sub_407070 a1[10]=a2 设置, sub_406864 byte+40 屏幕坐标=entity[d10]-camera_x+d[d26]"),
-    ("y",11,"坐标Y","世界坐标Y (像素)。源码: sub_407070 a1[11]=a3 设置, sub_406864 byte+44 屏幕坐标=entity[d11]-camera_y+d[d27]"),
-    ("direction",13,"朝向","朝向 1~8。源码: sub_4077E4 a1[13]=a2, 仅1~8有效, type=200时更新帧索引"),
-    ("hint_id",23,"提示文本ID","鼠标悬停提示的TKT文本ID。传送点(type=10): 设为 300+目标场景ID 以显示目标场景名。源码: sub_412390"),
-    ("blend_mode",24,"混合模式","主精灵渲染混合模式。源码: sub_406864 byte+96 switch(0~5): 0=正常sub_4544EC 1=染色sub_454D24 2=加法sub_4559D0 3=减法sub_458020 4=亮度alpha 5=翻转sub_458D08"),
-    ("blend_param",25,"混合参数","混合参数, byte+100为WORD。源码: sub_406864 mode=1时param作颜色索引, mode=2时param作加法缩放(0或>31=全加法)"),
-    ("shadow_frame",55,"阴影帧","type=200: Cha.JVG全局帧索引(0=无1=小2=大)。源码: sub_406864 byte+220 *(int*)(ptr+220)>0时调用sub_458020/sub_45AA08绘制阴影帧"),]
-FLAG_FIELDS = [
-    ("flags",2,"标志位","位域。bit0=启用 bit1=可见 bit2=可交互 bit3=提示 bit4=忙碌 bit5=恢复 bit8=已拾取(type110) bit16=动画循环。源码: sub_406864 byte+8 bit0/1/2检查, sub_409618 byte+8 bit0启用, sub_408B30 byte+9 bit0=已拾取, sub_408E5C byte+8 bit4/5繁忙/恢复"),]
-POS_FIELDS = [
-    ("bound_x",18,"碰撞X","碰撞盒X起点。type=5可点击区域, type=10/16碰撞检测。源码: sub_408108/sub_410B74"),
-    ("bound_y",19,"碰撞Y","碰撞盒Y起点。type=5可点击区域, type=10/16碰撞检测。源码: sub_408108/sub_410B74"),
-    ("bound_w",20,"碰撞宽","碰撞盒/区域宽度。type=10出入传送点和type=16随机战斗区使用。源码: sub_408108/sub_4084E0 AABB碰撞检测"),
-    ("bound_h",21,"碰撞高","碰撞盒/区域高度。type=10出入传送点和type=16随机战斗区使用。源码: sub_408108/sub_4084E0 AABB碰撞检测"),]
-ANIM_FIELDS = [
-    ("dir_mode",53,"方向模式/目标X","type=200:方向模式(0=静态/4=四向/8=八向) type=5:目标X type=16:战斗组2-ID type=110:组1物品ID(复用ITEM字段)。源码: sub_4077E4 a1[53]==4/8方向分支, sub_4081F8 byte+212(传送目标X), sub_4084E0 a2+212(战斗组2-ID), sub_408B30 byte+212"),
-    ("target_y",54,"目标Y/物品上限","type=200:目标Y type=5:目标Y type=16:战斗组3-ID type=110:组1物品ID上限(复用ITEM字段)。源码: sub_4081F8 byte+216(传送目标Y), sub_4084E0 a2+216(战斗组3-ID), sub_408B30 byte+216"),
-    ("sub_model",64,"子模型ID","type=20/200:Ani.JVG块(type=20事件动画/type=200行走动画) type=110:组3数量上限(复用ITEM字段)。type=20 100%有值(1~592)。源码: sub_405CBC v2[64]作为sub_4540E8/sub_45410C的JVG块参数"),
-    ("anim_cycle_wait",66,"动画循环等待","动画循环后随机等待帧数上限。<0:不循环 0:立即循环 >0:random(N)等待。type=20/200共用。源码: sub_408704 if(*(a2+264)>0)d3=random(*(a2+264)), if(*(a2+264)<0)帧终点不重置"),
-    ("end_frame_hold",69,"结束保留帧","非零时动画播放到终点后保留最后一帧不重置。type=20/200共用。源码: sub_408704 if(*(a2+276)) d68--, d14-- (帧回退保留)")]
 class TktLazyDict:
     """延迟解析 TKT 文本：只在第一次用到某条文本时才执行耗时的 decode_tkt_bytes"""
     def __init__(self, raw_dict):
@@ -295,218 +272,9 @@ def get_script_info(rec):
     tick_label = str(tick_val) if tick_val > 0 else ""
     return script_label, tick_label
 
-SCRIPT_FIELDS = [
-    ("dialog_color",28,"对话颜色","TalkA/TalkB 文字颜色索引(0~31), 第2参数=TKT文本ID。源码: sub_44B028 查表 dword_A2C528"),
-    ("max_A",30,"A链·长度","DEFINE链A 的节点总数。Tick自动执行时 cur_A 从1递增至此值后归零循环。源码: sub_40EBD4 byte+120=d30, End(1): if(++d33>d30)d33=0"),
-    ("max_B",31,"B链·长度","DEFINE链B 的节点总数。交互触发时 cur_B 从1递增至此值后归零循环。源码: sub_40EBD4 byte+124=d31, End(2): if(++d34>d31)d34=0"),
-    ("max_C",32,"C链·长度","DEFINE链C 的节点总数。保留链, 通常不使用。源码: sub_40EBD4 byte+128=d32, End(3): if(++d35>d32)d35=0"),
-    ("cur_A",33,"A链·进度","当前 Tick 执行的 DEFINE 节点位置(1-based)。SetNowDef命令可跳转。源码: sub_40EBD4 byte+132=d33, End(4):d33=0重置到起点"),
-    ("cur_B",34,"B链·进度","当前交互触发的 DEFINE 节点位置(1-based)。源码: sub_40EBD4 byte+136=d34, End(5):d34=0重置"),
-    ("cur_C",35,"C链·进度","当前 C链 DEFINE 节点位置(1-based)。源码: sub_40EBD4 byte+140=d35, End(6):d35=0重置"),
-    ("head_A",39,"A链·头索引","DEFINE链A 的首个 TKDefUnit 记录索引。sub_4066F0(entity,0)沿此遍历链表。修改后需同步 DefUnit 数据"),
-    ("head_B",40,"B链·头索引","DEFINE链B 的首个 TKDefUnit 记录索引。sub_4066F0(entity,1)沿此遍历。交互/传送/战斗触发时执行此链"),
-    ("head_C",41,"C链·头索引","DEFINE链C 的首个 TKDefUnit 记录索引。保留链, 当前游戏未使用"),
-    ("defunit_idx",44,"当前DefUnit#","运行时: sub_4066F0 链遍历时填入当前节点的 DefUnit 索引。文件中值=-1为正常(尚未遍历)。源码: sub_40EBD4 line18 dword_51AF40[96*a1+44], dword_753500+16*idx+4读取链数据"),]
-INTERACT_FIELDS = [
-    ("cond_id",50,"条件参数","语义视实体类型而定: type=10传送/15触发/16战斗→门禁阈值(须=player_d22); type=110机关→动画触发器(d52=0时>0播放拾取动画); type=200NPC→引擎不使用; type=5脚本→自由字段。源码: sub_4081F8:15/408408:13/4084E0:25 比对player_d22; sub_408B30:74 帧递增"),
-    ("dir_mask",51,"方向掩码","bit0-7对应朝向1-8, 0=任意方向。type=110(d52=0):动画帧基偏移。type=200:立绘ID(Cha.JVG块)。源码: sub_4081F8 byte+204=d51作方向掩码(d51&(1<<(player_d13-1))), sub_408B30 byte+204"),
-    ("target_scene",52,"功能参数","语义视类型而定: type=10→目标地图ID(ChangeScene参数); type=16→战斗组1-ID(连续3组:d52-d54=ID, d55-d57=概率); type=110→行为模式(0=标记+动画 1=清除隐藏 2+无, 游戏中全为1); type=5/15/20/200→引擎不使用(全为0)。源码: sub_4081F8 *(_WORD*)(a2+208)传送; sub_4084E0 a2+208战斗ID组起始; sub_408B30 byte+208=d52行为模式"),
-    ("interact_dist",15,"交互距离","玩家可交互的最大曼哈顿距离(像素)。0=无距离限制。源码: sub_40818C dist=|px-ex|+|py-ey|, d15==0则return 1(总是可交互), dist>d15则return 0(太远), 被sub_408E5C(点击)和sub_4099B0(接近)调用"),]
-RUNTIME_FIELDS = [
-    ("tick_counter",5,"帧累加器","运行时帧累加器。每帧+1, 达到d[4](执行间隔)时归零并触发实体逻辑。源码: sub_409618 if(++d5>=d4){d5=0; 执行}。纯运行时字段, 地图文件中几乎全为0"),
-    ("timer",12,"计时器","d[12](byte+48), 非[等待计时]字段。注: 等待计时是d[3](byte+12)=param, 由SetWait设置; 本字段(d[12])为另一运行时字段"),
-    ("frame_idx",14,"当前帧","当前渲染帧索引(JVG全局帧号)。sub_405CBC初始化: d14=d17+d65; sub_4077E4朝向变更: d14=d17+d52+d16*dir_mult; sub_408704动画tick: d14++并循环。sub_406864读取d14传给渲染函数决定显示哪帧"),
-    ("frame_count",16,"总帧数","JVG块内总帧数。源码: sub_405CBC v2[16]=sub_4540E8(JVG,block), sub_4077E4 d16用于方向帧计算"),
-    ("frame_cur",17,"帧计数","动画当前帧/基础帧。源码: sub_4077E4 a1[17], sub_405CBC type200行走动画"),
-    ("priority",22,"优先级/α","普通实体: 渲染优先级。玩家实体: 被脚本复用为剧情进度寄存器, 与 d50(通过条件) 配合实现门禁系统。sub_4081F8/408408/4084E0 均读取 player_d22 与实体 d50 比对。源码: sub_406864 byte+88=d22 渲染; sub_4081F8:15 门禁比对"),
-    ("sprite_off_x",26,"精灵偏移X","精灵 X 屏幕偏移, 叠加到坐标。源码: sub_406864 byte+104=d26, screen_x+=sprite_off_x"),
-    ("sprite_off_y",27,"精灵偏移Y","精灵 Y 屏幕偏移, 叠加到坐标。源码: sub_406864 byte+108=d27, screen_y+=sprite_off_y"),
-    ("rt_ref_id",36,"运行时引用A","运行时实体身份指针。hi16=自身索引, lo16=0。格式: entity_index<<16。纯运行时字段, 地图文件中非零值为运行时残留。源码: 运行时转储反编译中无任何实体逻辑函数引用byte+144(d36), 属未文档化的运行时内部状态"),
-    ("rt_ref_id2",37,"运行时引用B","运行时实体身份指针。hi16=自身索引, lo16=256(0x100标志)。格式: (entity_index<<16)|0x100。纯运行时字段。源码: 运行时转储反编译中无任何实体逻辑函数引用byte+148(d37), 属未文档化的运行时内部状态"),
-    ("script_PC",42,"执行位置","[PC] 脚本字节码当前执行位置。0=链起点 -1=空闲(无脚本执行)。WaitWalk等阻塞操作将当前偏移写回此处实现断点恢复。源码: sub_40EBD4 byte+168=d42 作为 VM 入口 PC, sub_4081F8/408408/408E5C/409618 均在调用前 reset=0"),
-    ("saved_PC",43,"调用返回","[SP] 跨链调用前的执行位置保存(调用栈)。sub_4081F8/408408/408E5C 触发 B 链前: d43=d42; End(0) 恢复: d42=d43 然后 d43=-1。新实体初始=-1。源码: sub_4081F8:25 *(a2+172)=*(a2+168)"),
-    ("target_dir",56,"目标朝向","type=5:目标朝向(1-8) type=16:战斗组2-概率 type=110:组1Ymin type=200:寻路X(运行时)。源码: sub_408E5C byte+224=d56, sub_4081F8 byte+224(传送朝向), sub_4084E0 a2+224(概率2), sub_408B30"),
-    ("saved_y",57,"保存Y","type=5:相机Y偏移 type=16:战斗组3-概率 type=110:组2Xmin type=200:寻路Y(运行时)。源码: sub_408E5C byte+228=d57, sub_4081F8(相机), sub_4084E0 a2+228(概率3), sub_408B30"),
-    ("alt_tele_x",60,"备选传送X","type=10:相机偏移X type=16:冷却基准 type=110:组2Ymax type=200:备选传送X。源码: sub_408E5C byte+240=d60, sub_4081F8:31,sub_4084E0 a2+240,sub_408B30"),
-    ("alt_tele_y",61,"备选传送Y","type=10:相机偏移Y type=16:冷却计时 type=110:组3Xmin type=200:备选传送Y。源码: sub_408E5C byte+244=d61, sub_4081F8:31,sub_4084E0 a2+244,sub_408B30"),
-    ("sub_handle",65,"子句柄","type=16:未使用 type=20:动画句柄(运行时) type=110:组3Xmax? type=200:动画基址(运行时)。源码: sub_405CBC v2[65]=sub_45410C(Ani,v2[64]),sub_408B30 (type=16无引用)"),
-    ("cur_frame",67,"当前帧","type=20:动画帧起点(循环重置目标)。源码: sub_408704 d17=d67"),
-    ("max_frame",68,"最大帧","动画帧终点-1。type=20/200共用(type=20: 91%有值1~139)。源码: sub_408704 if(++d17>d68)到达终点; sub_405CBC if(v2[16]<=v2[68])v2[68]=v2[16]-1"),
-    ("moving",70,"移动中","type=200移动模式:0=静止 1=行走。type=20不使用(sub_409618仅对type200检查d70)。源码: sub_409618 byte+280=d70, type200时检查d70==1触发行走动画"),]
-ITEM_FIELDS = [
-    ("item_g1_id",   53, "组1-物品ID",   "type110: 物品ID随机范围最小值; Xmin==Xmax→固定掉落。源码: sub_408B30 byte+212=d53, sub_452AC0随机范围"),
-    ("item_g1_idmax",54, "组1-物品上限",  "type110: 物品ID随机范围最大值。源码: sub_408B30 byte+216=d54, 若d53>=d54则固定值"),
-    ("item_g1_qty",  55, "组1-数量",     "type110: 数量随机范围最小值; Ymin==Ymax→固定数量。源码: sub_408B30 byte+220=d55, sub_452AC0随机范围"),
-    ("item_g1_qtymax",56,"组1-数量上限",  "type110: 数量随机范围最大值。源码: sub_408B30 byte+224=d56, 若d55>=d56则固定值"),
-    ("item_g2_id",   57, "组2-物品ID",   "type110: 第二组物品ID (此游戏未使用)。源码: sub_408B30 byte+228=d57"),
-    ("item_g2_idmax",58, "组2-物品上限",  "type110: 第二组物品ID上限。源码: sub_408B30 byte+232=d58"),
-    ("item_g2_qty",  59, "组2-数量",     "type110: 第二组数量。源码: sub_408B30 byte+236=d59"),
-    ("item_g2_qtymax",60,"组2-数量上限",  "type110: 第二组数量上限。源码: sub_408B30 byte+240=d60"),
-    ("item_g3_id",   61, "组3-物品ID",   "type110: 第三组物品ID (此游戏未使用)。源码: sub_408B30 byte+244=d61"),
-    ("item_g3_idmax",62, "组3-物品上限",  "type110: 第三组物品ID上限。源码: sub_408B30 byte+248=d62"),
-    ("item_g3_qty",  63, "组3-数量",     "type110: 第三组数量。源码: sub_408B30 byte+252=d63"),
-    ("item_g3_qtymax",64,"组3-数量上限",  "type110: 第三组数量上限。源码: sub_408B30 byte+256=d64"),
-]
-ALL_EDIT_FIELDS = BASIC_FIELDS+FLAG_FIELDS+POS_FIELDS+ANIM_FIELDS+SCRIPT_FIELDS+INTERACT_FIELDS+ITEM_FIELDS
 
 # 类型相关字段映射: type → {dword: (label, comment)}
 # 仅列出与 type=200(NPC) 默认语义不同的字段
-_TYPE_LABELS = {
-    5: {  # 脚本对象 — 无专用tick, 仅执行脚本 (sub_409618 显式跳过)
-        # type=5 无类型特定处理, d50~d62 由脚本自由使用 (通过 SetVar/GetItem 等命令读写)
-    },
-    10: {  # 出入传送点 sub_4081F8 + 地形块连线 sub_405CBC
-        50:("通过条件","0=无限制, >0时须与玩家 d22 相等才可传送。源码: sub_4081F8:15 if(d50>0&&player_d22≠d50)阻断"),
-        51:("面向要求","bit0=上 bit1=右上 bit2=右 bit3=右下 bit4=下 bit5=左下 bit6=左 bit7=左上。0=不限;>0=须面朝置位方向。源码: d51&(1<<(player_d13-1))"),
-        52:("目标地图ID","ChangeScene的目标场景ID。源码: sub_4081F8 *(_WORD*)(a2+208)作为ChangeScene第1参数"),
-        53:("目标X","传送后X坐标。源码: sub_4081F8 *(_WORD*)(a2+212)作为ChangeScene第2参数"),
-        54:("目标Y","传送后Y坐标。源码: sub_4081F8 *(_WORD*)(a2+216)作为ChangeScene第3参数"),
-        56:("目标朝向","传送后玩家朝向1-8。源码: sub_4081F8 *(_WORD*)(a2+224)作为ChangeScene第4参数"),
-        57:("相机X","相机目标X。源码: sub_408E5C byte+228=d57相机位置"), 58:("相机Y",""),
-        59:("相机Z",""), 60:("相机偏移X","。源码: sub_408E5C byte+240=d60"),
-        61:("相机偏移Y","。源码: sub_408E5C byte+244=d61"),
-        62:("路径封锁","SetBlock写入。>0=封锁(路径网格清零) 0=开放(写入路径标记)。sub_4081F8:+248 d62非零跳过传送; sub_40DC1C SetBlock写入; sub_405CBC封锁时清除网格"),
-        63:("路径1·编号","非零=启用路径1; 低字节=路径编号(BYTE标记值)。sub_4526D0(v2[64]..v2[67], *(BYTE*)(a2+252), grid)"), 64:("路径1·X1","路径1起点X。sub_4526D0参数a1"), 65:("路径1·Y1","路径1起点Y。sub_4526D0参数a2"),
-        66:("路径1·X2","路径1终点X。sub_4526D0参数a3"), 67:("路径1·Y2","路径1终点Y。sub_4526D0参数a4"),
-        68:("路径2·编号","非零=启用; 低字节=编号。sub_4526D0(v2[69]..v2[72], *(BYTE*)(a2+272), grid)"),
-        69:("路径2·X1",""), 70:("路径2·Y1",""), 71:("路径2·X2",""), 72:("路径2·Y2",""),
-        73:("路径3·编号",""), 74:("路径3·X1",""), 75:("路径3·Y1",""), 76:("路径3·X2",""), 77:("路径3·Y2",""),
-        78:("路径4·编号",""), 79:("路径4·X1",""), 80:("路径4·Y1",""), 81:("路径4·X2",""), 82:("路径4·Y2",""),
-        83:("路径5·编号",""), 84:("路径5·X1",""), 85:("路径5·Y1",""), 86:("路径5·X2",""), 87:("路径5·Y2",""),
-    },
-    15: {  # 事件触发区 — 玩家接近碰撞盒时自动触发脚本 (sub_408408)
-        34:("脚本开关","d34(cur_B)非零时触发才生效。源码: sub_408408 a2[34]==0则return 0"),
-        50:("通过条件","0=无限制, >0时须与玩家 d22 相等才触发。源码: sub_408408:13 if(d50>0&&player_d22≠d50)阻断"),
-        51:("面向要求","bit0=上 bit1=右上 bit2=右 bit3=右下 bit4=下 bit5=左下 bit6=左 bit7=左上。0=不限;>0=须面朝置位方向。源码: d51&(1<<(player_d13-1))"),
-    },
-    16: {  # 随机战斗区 — 玩家进入碰撞盒概率触发战斗 (sub_4084E0)
-        # ★ 数据布局: 3个战斗ID (d52-d54) 连续, 后跟 3个概率 (d55-d57) 连续 — 非交错!
-        # 源码 sub_4084E0: v4=a2+208; while轮中 *v4 读ID, v4[3]=*(v4+12字节) 读概率, ++v4 指针前进4字节
-        50:("通过条件","0=无限制, >0时须与玩家 d22 相等才触发战斗。源码: sub_4084E0:25 if(d50<=0||d50==player_d22)放行"),
-        51:("面向要求","bit0=上 bit1=右上 bit2=右 bit3=右下 bit4=下 bit5=左下 bit6=左 bit7=左上。0=不限;>0=须面朝置位方向。源码: d51&(1<<(player_d13-1))"),
-        52:("战斗组1-ID","第1组战斗ID。源码: sub_4084E0 v4[0]=*(a2+208)"),
-        53:("战斗组2-ID","第2组战斗ID。源码: sub_4084E0 ++v4后v4[0]=*(a2+212)"),
-        54:("战斗组3-ID","第3组战斗ID。源码: sub_4084E0 二次++v4后v4[0]=*(a2+216)"),
-        55:("战斗组1-概率","第1组遇敌概率阈值(0-100)。源码: sub_4084E0 v4[3]=*(a2+220)"),
-        56:("战斗组2-概率","第2组遇敌概率阈值(0-100)。源码: sub_4084E0 ++v4后v4[3]=*(a2+224)"),
-        57:("战斗组3-概率","第3组遇敌概率阈值(0-100)。源码: sub_4084E0 二次++v4后v4[3]=*(a2+228)"),
-        58:("(保留/未使用)","type=16 战斗引擎不访问 d58-d59 (sub_4084E0 无引用)"),
-        59:("(保留/未使用)","type=16 战斗引擎不访问"),
-        60:("冷却基准","遇敌后冷却计时基准值。源码: sub_4084E0 d[61]=d[60]; 难度调整: d[61]+=d[60]/2(bit1) 或 d[61]+=3*d[60]/10(bit0)"),
-        61:("冷却计时","当前冷却剩余帧数(运行时递减)。源码: sub_4084E0 if(d[61]<=0)遇敌检查; else if(player忙碌) d[61]--"),
-        62:("等级同步","敌人等级是否追随队伍。0=固定等级(使用战斗数据预设值); 1=自动调级(敌人等级=队伍均值±2~5)。数据: 89%实体的d62=1。源码: sub_4084E0→sub_40EB10→sub_436BD4→sub_4307CC(a1), if(a1)word_9D6C86=队伍均级 else=0; sub_430578用此值缩放敌人等级"),
-        63:("(保留/未使用)","type=16 战斗引擎不访问 d63-d70 (sub_4084E0 无引用)"),
-        64:("(保留/未使用)","type=16 战斗引擎不访问"),
-        65:("(保留/未使用)","type=16 战斗引擎不访问 (勿受'目标地图'旧标注误导)"),
-        66:("(保留/未使用)","type=16 战斗引擎不访问"),
-        67:("(保留/未使用)","type=16 战斗引擎不访问"),
-        68:("(保留/未使用)","type=16 战斗引擎不访问"),
-        69:("(保留/未使用)","type=16 战斗引擎不访问"),
-        70:("(保留/未使用)","type=16 战斗引擎不访问 (移动模式仅type=20/200使用, sub_409618)"),
-    },
-    20: {  # 事件对象 — 动画精灵 (sub_408704 + sub_406864), 非角色! anim_set全为4(Ani.JVG)
-        # ★ 音效事件对布局: 偶数dword=音效ID(传给PlaySound的第3参数), 奇数dword=触发帧号(d17==此帧时播放)
-        # 汇编铁证 sub_408704: test [eax+0x140]; cmp [ecx+0x44],[edx+0x144]; mov edx,[edx+0x140]; call PlaySound
-        50:("(未使用)","type=20 不使用门禁/传送/战斗参数 (sub_408704 无引用)"),
-        51:("(未使用)",""),
-        52:("(未使用)",""),
-        53:("(未使用)",""),
-        54:("(未使用)",""),
-        55:("阴影帧","0=无 1=小阴影(39×23) 2=大阴影(65×33)。源码: sub_406864 if((type20||type200)&&d55>0)绘制阴影帧"),
-        56:("(未使用)",""),
-        57:("(未使用)",""),
-        58:("(未使用)",""),
-        59:("(未使用)",""),
-        60:("(未使用)",""),
-        61:("(未使用)",""),
-        62:("(未使用)",""),
-        63:("(未使用)",""),
-        64:("子模型(Ani.JVG块)","Ani.JVG动画块索引。100%实体有值(1~592)。源码: sub_405CBC v2[64]→sub_45410C(Ani,block)"),
-        65:("动画句柄(运行时)","sub_45410C返回值, 精灵绘制句柄。文件值=初始化后残留。源码: sub_405CBC v2[65]"),
-        66:("循环等待","动画循环后随机等待帧数。<0=-1不循环 0=立即循环 >0=random(N)等待。源码: sub_408704 if(d66>0)random(d66); if(d66<0)不重置"),
-        67:("帧起点","动画循环时重置到此帧。源码: sub_408704 d17=d67"),
-        68:("最大帧","动画终点=此值-1。91%实体有值。源码: sub_408704 if(++d17>d68)到达终点"),
-        69:("保留末帧","非零时动画播完停在最后一帧不循环。源码: sub_408704 if(d69)d68--,d14--"),
-        70:("(未使用)","移动模式仅type=200使用。type=20 不走路 (sub_409618 只对type200检查d70)"),
-        # 音效事件对 #9-11 (极少使用, <1%)
-        71:("音效9·ID","第9音效事件: 音效ID (传PlaySound)。源码: sub_408704 a2+0x11C"),
-        72:("音效9·触发帧","第9音效事件: d17==此值时播放。源码: sub_408704 a2+0x120"),
-        73:("音效10·ID",""), 74:("音效10·触发帧",""),
-        75:("音效11·ID",""), 76:("音效11·触发帧",""),
-        # d77-d79: 间隙, sub_408704 不访问
-        77:("(间隙·未使用)","offset 0x134-0x13C, sub_408704 不检查"),
-        78:("(间隙·未使用)",""),
-        79:("(间隙·未使用)",""),
-        # 音效事件对 #1-8 (d80/d81最常用, 49%实体使用)
-        80:("音效1·ID","第1音效事件: 音效ID。最常用(49%实体)。典型值:22/21/29/39/53。源码: sub_408704 a2+0x140→edx→PlaySound(arg3)"),
-        81:("音效1·触发帧","第1音效事件: d17==此帧时播放音效。0=动画起始帧。典型值:0/5。源码: sub_408704 a2+0x144"),
-        82:("音效2·ID",""), 83:("音效2·触发帧",""),
-        84:("音效3·ID",""), 85:("音效3·触发帧",""),
-        86:("音效4·ID",""), 87:("音效4·触发帧",""),
-        88:("音效5·ID",""), 89:("音效5·触发帧",""),
-        90:("音效6·ID",""), 91:("音效6·触发帧",""),
-        92:("音效7·ID",""), 93:("音效7·触发帧",""),
-        94:("音效8·ID",""), 95:("音效8·触发帧",""),
-    },
-    110: {  # 特殊机关 sub_408B30
-        50:("帧计数器","d52=0时>0启用拾取后动画(帧递增); 此游戏全为0。源码: sub_408B30:74 if(d50){++d68; d14=d68+d51}"),
-        51:("动画帧基偏移","d52=0时: frame_idx=frame_cur+d51。源码: sub_408B30 byte+204=d51, v2[51]=sub_45410C(JVG,v2[50],0), d14=d17+d51"),
-        52:("行为模式","0=标记bit8+可选动画 1=清除实体(禁用+隐藏) 2+=无行为; 此游戏全为1。源码: sub_408B30 byte+208=d52, V3==0:设bit8, V3==1:清bit0+清bit1"),
-        53:("组1-物品ID","随机范围最小值; Xmin==Xmax=固定掉落。源码: sub_408B30 byte+212=d53"),
-        54:("组1-物品ID上限","随机范围最大值。源码: sub_408B30 byte+216=d54"),
-        55:("组1-数量","随机范围最小值; Ymin==Ymax=固定数量。源码: sub_408B30 byte+220=d55"),
-        56:("组1-数量上限","随机范围最大值。源码: sub_408B30 byte+224=d56"),
-        57:("组2-物品ID","(此游戏未使用)。源码: sub_408B30 byte+228=d57"),
-        58:("组2-物品ID上限","。源码: sub_408B30 byte+232=d58"),
-        59:("组2-数量","。源码: sub_408B30 byte+236=d59"),
-        60:("组2-数量上限","。源码: sub_408B30 byte+240=d60"),
-        61:("组3-物品ID","(此游戏未使用)。源码: sub_408B30 byte+244=d61"),
-        62:("组3-物品ID上限","。源码: sub_408B30 byte+248=d62"),
-        63:("组3-数量","。源码: sub_408B30 byte+252=d63"),
-        64:("组3-数量上限","。源码: sub_408B30 byte+256=d64"),
-    },
-    200: {  # NPC角色 sub_405CBC(init) + sub_4077E4(dir) + sub_406864(render) + sub_408E5C(click) + sub_408704(walk)
-        # ★ 初始化 sub_405CBC: d51→立绘(d52=句柄), d53→方向模式(d16=帧/d53), d64→行走动画(d65=句柄), d70→站桩(0)/行走(1)分支
-        # ★ 交互 sub_408E5C: B链触发(d34>0), 寻路状态 d56-d58→d60-d62 备份/恢复, 交互距离 sub_40818C
-        # ★ 行走 sub_408704: d70==1时触发, d66循环等待, d67帧起点, d68终点; d71-d95音效事件(同type=20, 偶数=音效ID/奇数=触发帧, 此游戏NPC几乎不用)
-        50:("通过条件","⚠️ 待验证: 100%实体有值(96.4%=8, 范围2-13)。C代码未找到type=200访问d50的证据(sub_408E5C仅检查d34), 疑为脚本层剧情门控值。数据推翻旧标注'NPC未使用'"),
-        51:("立绘ID","Cha.JVG块索引。96%有值(1~177)。源码: sub_405CBC v2[51]→sub_45410C(Cha.JVG, v2[51])"),
-        52:("立绘句柄","立绘精灵句柄(运行时)。源码: sub_405CBC v2[52]=sub_45410C(Cha, v2[51]); sub_4077E4: d14=d17+d52+..."),
-        53:("方向模式","4=四向(962个=98%), 8=八向(3个), 0=静态(3个)。源码: sub_4077E4 a1[53]==4四向分支/a1[53]==8八向分支; sub_405CBC: d16/=d53"),
-        54:("(未使用)","数据: 全为零(<1%异常值)"),
-        55:("阴影帧","0=无 1=小阴影(746个) 2=大阴影(151个)。源码: sub_406864 if((type20||type200)&&d55>0)绘制"),
-        56:("寻路X","运行时。交互时 sub_408E5C: d60=d56 备份; 交互结束后 d56=d60 恢复。文件值=残留"),
-        57:("寻路Y","运行时。sub_408E5C: d61=d57 备份; 交互结束后 d57=d61 恢复"),
-        58:("寻路参数","运行时。sub_408E5C: d62=d58 备份。数据: 全为零"),
-        59:("(未使用)",""),
-        60:("寻路X·备份","运行时。sub_408E5C: d60=d56 (交互前保存原位置)。文件值=残留"),
-        61:("寻路Y·备份","运行时。sub_408E5C: d61=d57"),
-        62:("寻路参数·备份","运行时。sub_408E5C: d62=d58"),
-        63:("(未使用)",""),
-        64:("子模型","Ani.JVG行走动画块索引。35%使用(行走NPC)。源码: sub_405CBC v2[64]→sub_45410C(Ani, v2[64])"),
-        65:("行走句柄","行走动画精灵句柄(运行时)。源码: sub_405CBC v2[65]=sub_45410C(Ani, v2[64])"),
-        66:("循环等待","行走动画循环后等待帧数。18%使用。源码: sub_408704 if(d66>0)random(d66); if(d66<0)不循环"),
-        67:("帧起点","行走动画循环重置帧。源码: sub_408704: d17=d67; sub_405CBC: if(d67>d68)d67=0"),
-        68:("最大帧","行走动画终点-1。37%使用。源码: sub_408704 if(++d17>d68)循环; sub_405CBC: if(d16<=d68)d68=d16-1"),
-        69:("保留末帧","非零时行走动画停最后帧。源码: sub_408704 if(d69)d68--,d14--"),
-        70:("移动模式","0=站桩(Cha.JVG方向帧, 70%=690个) 1=行走(Ani.JVG动画, 30%=297个)。源码: sub_405CBC d70==0→站桩方向帧/d70==1→行走动画; sub_409618 d70==1→sub_408704"),
-        # 音效事件对 — sub_408704 同type=20机制(偶数=音效ID, 奇数=触发帧), 此游戏NPC几乎不用
-        71:("音效·事件1","仅在5个NPC使用"), 72:("音效·触发帧1",""),
-        73:("音效·事件2",""), 74:("音效·触发帧2",""),
-        75:("音效·事件3",""), 76:("音效·触发帧3",""),
-        # d77-d79: 间隙 (sub_408704 不检查)
-        77:("(间隙)",""), 78:("(间隙)",""), 79:("(间隙)",""),
-        80:("音效·事件4",""), 81:("音效·触发帧4",""),
-        82:("音效·事件5",""), 83:("音效·触发帧5",""),
-        84:("音效·事件6",""), 85:("音效·触发帧6",""),
-        86:("音效·事件7",""), 87:("音效·触发帧7",""),
-        88:("音效·事件8",""), 89:("音效·触发帧8",""),
-        90:("音效·事件9",""), 91:("音效·触发帧9",""),
-        92:("音效·事件10",""), 93:("音效·触发帧10",""),
-        94:("音效·事件11",""), 95:("音效·触发帧11",""),
-    },
-}
-MAX_MAP_W, MAX_MAP_H = 1024, 768
 
 
 
@@ -538,7 +306,9 @@ def parse_defines(text):
     lines = text.split('\n')
     defines = []
     current = None
-    header_lines = []; pending_prefix = []; seen_first_define = False
+    header_lines = []
+    pending_prefix = []
+    seen_first_define = False
     for i, line in enumerate(lines):
         raw_line = line.rstrip('\r')
         stripped = raw_line.strip()
@@ -554,7 +324,8 @@ def parse_defines(text):
             current['line_end'] = i
             current['comment'] = stripped[2:].replace(' end', '').strip()
             current['body_lines'].append(raw_line)
-            defines.append(current); current = None
+            defines.append(current)
+            current = None
         elif current is not None:
             current['body_lines'].append(raw_line)
         else:
@@ -574,7 +345,8 @@ def rebuild_text(defines, header):
         for pl in d.get('prefix_lines', []): parts.append(pl)
         parts.append(d['header_line'])
         for bl in d['body_lines']: parts.append(bl)
-    parts.append(''); parts.append('')
+    parts.append('')
+    parts.append('')
     return '\r\n'.join(parts)
 
 # 脚本命令完整列表 — 基于 DEFCMD.LST 权威操作码表 + TKD_decoded.txt 实际用法
@@ -709,7 +481,9 @@ def _dir_name(dir_str, entity=""):
 
 def _cm(char_id):
     """角色ID→名称, fallback 到 '角色#N'"""
-    try: cid=int(char_id); return _char_name_cache.get(cid, f"角色#{cid}")
+    try:
+        cid=int(char_id)
+        return _char_name_cache.get(cid, f"角色#{cid}")
     except: return f"角色#{char_id}"
 
 # CheckTeam arg1 语义映射 (基于 TKD脚本注释 + save_editor SEG2字段)
@@ -805,7 +579,9 @@ def _setcursor_desc(args):
     """SetCursor(Cur.JVG块, 帧延迟, 开关): arg1选择光标精灵块, arg2动画帧延迟, arg3显示开关"""
     if not args or len(args) < 3:
         return "设置光标"
-    ent = args[0]; spd = args[1]; en = args[2]
+    ent = args[0]
+    spd = args[1]
+    en = args[2]
     en_str = "隐藏" if en == '0' else "显示" if en == '1' else f"模式{en}"
     block_name = _CURSOR_BLOCKS.get(int(ent) if ent.lstrip('-').isdigit() else -1, f"块{ent}")
     spd_str = f"延迟{spd}t" if spd != '3' else ""  # 3=引擎默认, 不显示
@@ -1348,6 +1124,28 @@ def _get_jvg_frame(jvg, global_idx):
         global_idx -= blk.frame_count
     return None, None, None
 
+def _extract_rgba_from_frame(frame, palette):
+    """提取 JVG 帧的像素并转为 RGBA bytes，消除冗余的像素遍历代码。
+    遍历 frame.pixels/frame.alpha: al[p]==0 的像素留透明(0,0,0,0)，
+    其余按调色板查色写 RGB + alpha=255。空尺寸返回 None。"""
+    if frame.width <= 0 or frame.height <= 0:
+        return None
+    pr = palette.to_rgb888()
+    rgba = bytearray(frame.width * frame.height * 4)
+    px, al = frame.pixels, frame.alpha
+    for y in range(frame.height):
+        for x in range(frame.width):
+            p = y * frame.width + x
+            off = p * 4
+            if p < len(al) and al[p] == 0:
+                continue
+            ci = px[p] if p < len(px) else 0
+            rgba[off] = pr[ci*3]
+            rgba[off+1] = pr[ci*3+1]
+            rgba[off+2] = pr[ci*3+2]
+            rgba[off+3] = 255
+    return bytes(rgba)
+
 def _jvg_sprite_to_pil(jvg, block_idx, frame_idx=0):
     """从 JVG 的 block[block_idx].frames[frame_idx] 提取 PIL Image (缓存)"""
     key = (id(jvg), block_idx, frame_idx)
@@ -1356,18 +1154,9 @@ def _jvg_sprite_to_pil(jvg, block_idx, frame_idx=0):
     blk = jvg.blocks[block_idx]
     if frame_idx < 0 or frame_idx >= blk.frame_count: return None
     frame = blk.frames[frame_idx]
-    if frame.width <= 0 or frame.height <= 0: return None
-    pr = blk.palette.to_rgb888()
-    rgba = bytearray(frame.width * frame.height * 4)
-    px, al = frame.pixels, frame.alpha
-    for y in range(frame.height):
-        for x in range(frame.width):
-            p = y * frame.width + x; off = p * 4
-            if p < len(al) and al[p] == 0: continue
-            ci = px[p] if p < len(px) else 0
-            rgba[off] = pr[ci*3]; rgba[off+1] = pr[ci*3+1]
-            rgba[off+2] = pr[ci*3+2]; rgba[off+3] = 255
-    img = Image.frombytes('RGBA', (frame.width, frame.height), bytes(rgba))
+    rgba_bytes = _extract_rgba_from_frame(frame, blk.palette)
+    if not rgba_bytes: return None
+    img = Image.frombytes('RGBA', (frame.width, frame.height), rgba_bytes)
     _SPRITE_CACHE[key] = img
     return img
 
@@ -1388,12 +1177,16 @@ def _make_subtractive_shadow(jvg, block_idx, frame_idx):
     px, al = frame.pixels, frame.alpha
     for y in range(frame.height):
         for x in range(frame.width):
-            p = y * frame.width + x; off = p * 4
+            p = y * frame.width + x
+            off = p * 4
             if p < len(al) and al[p] == 0: continue
             ci = px[p] if p < len(px) else 0
             r, g, b = pr[ci*3], pr[ci*3+1], pr[ci*3+2]
             L = int(0.299*r + 0.587*g + 0.114*b)  # NTSC 亮度
-            rgba[off] = 0; rgba[off+1] = 0; rgba[off+2] = 0; rgba[off+3] = L
+            rgba[off] = 0
+            rgba[off+1] = 0
+            rgba[off+2] = 0
+            rgba[off+3] = L
     img = Image.frombytes('RGBA', (frame.width, frame.height), bytes(rgba))
     _SHADOW_CACHE[key] = img
     return img
@@ -1412,24 +1205,20 @@ def _get_blended_sprite(jvg, block_idx, frame_idx, mode=0, param=0):
     if frame_idx < 0 or frame_idx >= blk.frame_count: return None
     frame = blk.frames[frame_idx]
     if frame.width <= 0 or frame.height <= 0: return None
-    pr = blk.palette.to_rgb888()
-    rgba = bytearray(frame.width * frame.height * 4)
-    px, al = frame.pixels, frame.alpha
-    for y in range(frame.height):
-        for x in range(frame.width):
-            p = y * frame.width + x; off = p * 4
-            if p < len(al) and al[p] == 0: continue
-            ci = px[p] if p < len(px) else 0
-            rgba[off] = pr[ci*3]; rgba[off+1] = pr[ci*3+1]
-            rgba[off+2] = pr[ci*3+2]; rgba[off+3] = 255
-    img = Image.frombytes('RGBA', (frame.width, frame.height), bytes(rgba))
+    rgba_bytes = _extract_rgba_from_frame(frame, blk.palette)
+    if not rgba_bytes: return None
+    img = Image.frombytes('RGBA', (frame.width, frame.height), rgba_bytes)
     if mode == 5:
         img = ImageOps.mirror(img)
     elif mode == 1:
         # 染色: 按 param 颜色值乘入 RGB 通道 (sub_454D24)
-        r_tint = (param >> 10) & 0x1F; g_tint = (param >> 5) & 0x1F; b_tint = param & 0x1F
+        r_tint = (param >> 10) & 0x1F
+        g_tint = (param >> 5) & 0x1F
+        b_tint = param & 0x1F
         if param > 0 and param <= 31:
-            sf_r = r_tint / 31.0; sf_g = g_tint / 31.0; sf_b = b_tint / 31.0
+            sf_r = r_tint / 31.0
+            sf_g = g_tint / 31.0
+            sf_b = b_tint / 31.0
             r_ch, g_ch, b_ch, a_ch = img.split()
             r_ch = r_ch.point(lambda v: int(v * sf_r))
             g_ch = g_ch.point(lambda v: int(v * sf_g))
@@ -1489,7 +1278,8 @@ def _get_dir_frame(blk, d13, d16, d53, anim_cycle=0):
         fpd = max(1, blk.frame_count // 8)
         dir_grp = max(0, min(7, d13 - 1))
     else:
-        fpd = blk.frame_count; dir_grp = 0
+        fpd = blk.frame_count
+        dir_grp = 0
     base = dir_grp * fpd
     frame = base + (anim_cycle % fpd)
     if frame >= blk.frame_count: frame = base
@@ -1509,17 +1299,9 @@ def _get_jvg_frame_rgba(jvg, block_idx, frame_idx):
     if frame_idx < 0 or frame_idx >= blk.frame_count: return None
     frame = blk.frames[frame_idx]
     if frame.width <= 0 or frame.height <= 0: return None
-    pr = blk.palette.to_rgb888()
-    rgba = bytearray(frame.width * frame.height * 4)
-    px, al = frame.pixels, frame.alpha
-    for y in range(frame.height):
-        for x in range(frame.width):
-            p = y * frame.width + x; off = p * 4
-            if p < len(al) and al[p] == 0: continue
-            ci = px[p] if p < len(px) else 0
-            rgba[off] = pr[ci*3]; rgba[off+1] = pr[ci*3+1]
-            rgba[off+2] = pr[ci*3+2]; rgba[off+3] = 255
-    img = Image.frombytes('RGBA', (frame.width, frame.height), bytes(rgba))
+    rgba_bytes = _extract_rgba_from_frame(frame, blk.palette)
+    if not rgba_bytes: return None
+    img = Image.frombytes('RGBA', (frame.width, frame.height), rgba_bytes)
     _RGBA_CACHE[key] = img.copy()
     return img
 
@@ -1536,7 +1318,9 @@ def _pil_tint(rgba_src, param):
     param=0 或 >31 → 不变; 0<param<=31 → R*=r/31, G*=g/31, B*=b/31"""
     if rgba_src is None: return None
     if param <= 0 or param > 31: return rgba_src
-    r_tint = (param >> 10) & 0x1F; g_tint = (param >> 5) & 0x1F; b_tint = param & 0x1F
+    r_tint = (param >> 10) & 0x1F
+    g_tint = (param >> 5) & 0x1F
+    b_tint = param & 0x1F
     r_ch, g_ch, b_ch, a_ch = rgba_src.split()
     r_ch = r_ch.point(lambda v: int(v * r_tint / 31))
     g_ch = g_ch.point(lambda v: int(v * g_tint / 31))
@@ -1549,11 +1333,15 @@ def _pil_additive(composite, rgba_src, dx, dy, param):
     if composite is None or rgba_src is None: return
     try:
     
-        sw, sh = rgba_src.size; cw, ch = composite.size
-        l = max(0, dx); t = max(0, dy)
-        r = min(cw, dx + sw); b = min(ch, dy + sh)
+        sw, sh = rgba_src.size
+        cw, ch = composite.size
+        l = max(0, dx)
+        t = max(0, dy)
+        r = min(cw, dx + sw)
+        b = min(ch, dy + sh)
         if r <= l or b <= t: return
-        sl, st = l - dx, t - dy; sr, sb = r - dx, b - dy
+        sl, st = l - dx, t - dy
+        sr, sb = r - dx, b - dy
         sub = rgba_src.crop((sl, st, sr, sb))
         if sub.mode != 'RGBA': sub = sub.convert('RGBA')
         alpha = sub.split()[3]
@@ -1576,11 +1364,15 @@ def _pil_subtract(composite, rgba_src, dx, dy):
     if composite is None or rgba_src is None: return
     try:
     
-        sw, sh = rgba_src.size; cw, ch = composite.size
-        l = max(0, dx); t = max(0, dy)
-        r = min(cw, dx + sw); b = min(ch, dy + sh)
+        sw, sh = rgba_src.size
+        cw, ch = composite.size
+        l = max(0, dx)
+        t = max(0, dy)
+        r = min(cw, dx + sw)
+        b = min(ch, dy + sh)
         if r <= l or b <= t: return
-        sl, st = l - dx, t - dy; sr, sb = r - dx, b - dy
+        sl, st = l - dx, t - dy
+        sr, sb = r - dx, b - dy
         sub = rgba_src.crop((sl, st, sr, sb))
         if sub.mode != 'RGBA': sub = sub.convert('RGBA')
         alpha = sub.split()[3]
@@ -1600,11 +1392,15 @@ def _pil_luma_alpha(composite, rgba_src, dx, dy):
     if composite is None or rgba_src is None: return
     try:
     
-        sw, sh = rgba_src.size; cw, ch = composite.size
-        l = max(0, dx); t = max(0, dy)
-        r = min(cw, dx + sw); b = min(ch, dy + sh)
+        sw, sh = rgba_src.size
+        cw, ch = composite.size
+        l = max(0, dx)
+        t = max(0, dy)
+        r = min(cw, dx + sw)
+        b = min(ch, dy + sh)
         if r <= l or b <= t: return
-        sl, st = l - dx, t - dy; sr, sb = r - dx, b - dy
+        sl, st = l - dx, t - dy
+        sr, sb = r - dx, b - dy
         sub = rgba_src.crop((sl, st, sr, sb))
         if sub.mode != 'RGBA': sub = sub.convert('RGBA')
         src_alpha = sub.split()[3]
@@ -2008,6 +1804,493 @@ class JvgLoaderThread(QThread):
             self.finished_jvg.emit()
 
 
+class MapDataManager:
+    """地图数据状态与装配层 (§5) — 从 MatEditorApp 拆出的纯数据职责。
+    持有 records/defunit/tkt/tkd 等数据状态, 提供 load_from_result 装配与 reset 重置。
+    MatEditorApp 通过 self._data 访问; SceneCanvasView 通过 self._editor._data 访问。"""
+
+    def __init__(self):
+        # 文件路径
+        self.dat_path = None
+        self.tkt_path = None
+        # 主数据
+        self.records = []
+        self.defunit_recs = []
+        self.defunit_next = {}
+        self.defunit_entity = {}
+        self.tkd_defines = []
+        self.tkd_header = ''
+        self.tkd_define_map = {}
+        self.tkt_all = {}
+        self.tkt_scenes = {}
+        self.item_names = {}
+        self.filtered_indices = []
+        # SC.GRP 待保存数据
+        self._sc_grp_section_count = 0
+        self._sc_grp_pending = None
+        # 存档模式状态
+        self._save_mode = False
+        self._save_path = None
+        self._save_slot = 0
+        self._game_dir = None
+        # 脏标记
+        self._dirty = False
+
+    def load_from_result(self, result):
+        """从 DataLoaderThread 返回的结果装配全部数据状态"""
+        self.tkt_scenes = result.get('tkt_scenes', {})
+        self.tkt_all = result.get('tkt_all', {})
+        self.defunit_recs = result.get('defunit_recs', [])
+        self.defunit_next = result.get('defunit_next', {})
+        self.defunit_entity = result.get('defunit_entity', {})
+        self.tkd_defines = result.get('tkd_defines', [])
+        self.tkd_header = result.get('tkd_header', '')
+        self.tkd_define_map = result.get('tkd_define_map', {})
+        self.item_names = result.get('item_names', {})
+        self._sc_grp_section_count = result.get('sc_grp_section_count', 0)
+        self.records = result.get('records', [])
+
+    def reset(self):
+        """重置全部数据状态到空"""
+        self.__init__()
+
+
+class SceneCanvasView(QGraphicsView):
+    """场景画布视图 — 从 MatEditorApp 拆出的可视化渲染与交互层 (§4)。
+    持有画布自有状态, 通过 self._editor 反向引用编辑器数据/回调。"""
+
+    def __init__(self, editor, parent=None):
+        scene = QGraphicsScene()
+        super().__init__(scene, parent)
+        self._editor = editor
+        # 画布自有状态 (从 MatEditorApp.__init__ 迁出)
+        self._vis_scene_id = 0
+        self._vis_bg_pil = None
+        self._vis_bg_pixmap = None
+        self._vis_entities = {}
+        self._vis_hit_regions = {}
+        self._vis_selected = None
+        self._vis_drag = None
+        self._vis_edit_mode = False
+        self._undo_pos = None
+        self._vis_display_mode = "游戏默认"
+        self._vis_anim_playing = False
+        self._vis_anim_timer = None
+        self._vis_anim_frame = {}
+        self._vis_sel_anim_active = False
+        self._vis_sel_anim_timer = None
+        self._vis_gscene = scene
+        self._vis_bg_item = None
+        # QGraphicsView 属性配置 (原 _build_center_panel 中的设置)
+        self.setRenderHint(QPainter.SmoothPixmapTransform)
+        self.setDragMode(QGraphicsView.NoDrag)
+        self.setViewportUpdateMode(QGraphicsView.SmartViewportUpdate)
+        self.setMouseTracking(True)
+        self.setAlignment(Qt.AlignTop | Qt.AlignLeft)
+
+    def update_vis_background(self):
+        """设置中间预览区 QGraphicsView 的背景色, 使深色区域填满整个预览区
+        (对应 v1 tk.Canvas 的 bg)。场景矩形外的空白也以此色填充。"""
+        # 与 editor_themes/*.qss 的 QGraphicsView background-color 一致
+        bg = QColor('#1a1e27') if self._editor._is_dark else QColor('#ffffff')
+        self.setBackgroundBrush(bg)
+
+
+    def _vis_render_scene(self, ents, w, h):
+        """PIL 预合成整个场景并显示到 QGraphicsView"""
+        
+        mode = DISPLAY_MODES.get(self._vis_display_mode, 'auto')
+
+        # Background — 匹配 QGraphicsView 的 QSS 主题背景色
+        # 深色主题 #1a1e27 → (26, 30, 39), 浅色主题 #ffffff → (255, 255, 255)
+        bg_color = (26, 30, 39) if self._editor._is_dark else (255, 255, 255)
+        if self._vis_bg_pil:
+            composite = self._vis_bg_pil.copy()
+            if composite.width < w or composite.height < h:
+                new_bg = Image.new('RGB', (w, h), bg_color)
+                new_bg.paste(composite, (0, 0))
+                composite = new_bg
+        else:
+            composite = Image.new('RGB', (w, h), bg_color)
+
+        dr = ImageDraw.Draw(composite)
+
+        for r in ents:
+            tval = r[IDX_TYPE]
+            show = self._editor._type_filter_cbs.get(tval)
+            if show and not show.isChecked():
+                continue
+            idx = r['index']
+            x = r[IDX_POS_X]
+            y = r[IDX_POS_Y]
+            ox = r.get('d26', 0)
+            oy = r.get('d27', 0)
+            color = TYPE_COLORS_RGBA.get(tval, (128, 128, 128))
+
+            sprite_rgba = None
+            jvg = None
+            blk_idx = 0
+            should_animate = False
+            if mode != 'wire':
+                if mode == 'auto':
+                    if tval == 200:
+                        if r['d70'] == 1 and r['d64'] > 0 and self._editor._ani_jvg:
+                            jvg = self._editor._ani_jvg
+                            blk_idx = r['d64']
+                            should_animate = True
+                        elif r['d51'] > 0 and self._editor._cha_jvg:
+                            jvg = self._editor._cha_jvg
+                            blk_idx = r['d51']
+                    elif tval in (20, 110) and r['d64'] > 0 and self._editor._ani_jvg:
+                        jvg = self._editor._ani_jvg
+                        blk_idx = r['d64']
+                        should_animate = True
+                elif mode == 'ani':
+                    if tval in (200, 20, 110) and r['d64'] > 0 and self._editor._ani_jvg:
+                        jvg = self._editor._ani_jvg
+                        blk_idx = r['d64']
+                        should_animate = True
+                elif mode == 'cha':
+                    if tval == 200 and r['d51'] > 0 and self._editor._cha_jvg:
+                        jvg = self._editor._cha_jvg
+                        blk_idx = r['d51']
+                    elif tval in (20, 110) and r['d64'] > 0 and self._editor._ani_jvg:
+                        jvg = self._editor._ani_jvg
+                        blk_idx = r['d64']
+
+            if jvg and blk_idx < jvg.block_count:
+                blk = jvg.blocks[blk_idx]
+                if blk.frames:
+                    if should_animate and idx not in self._vis_anim_frame:
+                        self._vis_anim_frame[idx] = 0
+                    anim = self._vis_anim_frame.get(idx, 0) if should_animate else 0
+                    fi, fpd = _get_dir_frame(blk, r['d13'], r['d16'], r['d53'], anim)
+                    if fi < len(blk.frames):
+                        blend_mode = r.get('d24', 0)
+                        blend_param = r.get('d25', 0)
+                        sprite_rgba = _get_jvg_frame_rgba(jvg, blk_idx, fi)
+                        if sprite_rgba:
+                            sx = x + ox + blk.frames[fi].x_off
+                            sy = y + oy + blk.frames[fi].y_off
+                            if blend_mode == 5:
+                                sprite_rgba = ImageOps.mirror(sprite_rgba)
+                            if blend_mode == 1:
+                                sprite_rgba = _pil_tint(sprite_rgba, blend_param)
+                            # Shadow
+                            shadow_fi = r.get('d55', 0)
+                            if shadow_fi > 0 and (tval == 200 or tval == 20) and jvg is self._editor._cha_jvg and jvg.block_count > 0:
+                                blk0 = jvg.blocks[0]
+                                if blk0.frames and shadow_fi < blk0.frame_count:
+                                    shadow_rgba = _get_jvg_frame_rgba(jvg, 0, shadow_fi)
+                                    _pil_subtract(composite, shadow_rgba,
+                                                  x + ox + jvg.blocks[0].frames[shadow_fi].x_off,
+                                                  y + oy + jvg.blocks[0].frames[shadow_fi].y_off)
+                            # Store hit region
+                            bx, by = r[IDX_BOUND_X], r[IDX_BOUND_Y]
+                            bw = r[IDX_BOUND_W] if r[IDX_BOUND_W] > 0 else sprite_rgba.width
+                            bh = r[IDX_BOUND_H] if r[IDX_BOUND_H] > 0 else sprite_rgba.height
+                            self._vis_hit_regions[idx] = (bx, by, bx + bw, by + bh)
+                            # Composite sprite
+                            blend_func = {0: _pil_normal, 2: _pil_additive, 3: _pil_subtract,
+                                          4: _pil_luma_alpha, 5: _pil_normal}.get(blend_mode, _pil_normal)
+                            if blend_mode == 2:
+                                _pil_additive(composite, sprite_rgba, sx, sy, blend_param)
+                            elif blend_mode == 3:
+                                _pil_subtract(composite, sprite_rgba, sx, sy)
+                            elif blend_mode == 4:
+                                _pil_luma_alpha(composite, sprite_rgba, sx, sy)
+                            else:
+                                _pil_normal(composite, sprite_rgba, sx, sy)
+
+                # Draw collision box
+                bx, by = r[IDX_BOUND_X], r[IDX_BOUND_Y]
+                bw = r[IDX_BOUND_W] if r[IDX_BOUND_W] > 0 else 0
+                bh = r[IDX_BOUND_H] if r[IDX_BOUND_H] > 0 else 0
+                if bw > 0 and bh > 0:
+                    dr.rectangle([bx, by, bx + bw, by + bh], outline=color, width=1)
+
+            # Draw geometric shape when no sprite
+            if sprite_rgba is None:
+                bx, by = r[IDX_BOUND_X], r[IDX_BOUND_Y]
+                bw = r[IDX_BOUND_W] if r[IDX_BOUND_W] > 0 else 40
+                bh = r[IDX_BOUND_H] if r[IDX_BOUND_H] > 0 else 40
+                dr.rectangle([bx, by, bx + bw, by + bh], outline=color, width=2)
+                self._vis_hit_regions[idx] = (bx, by, bx + bw, by + bh)
+
+            # Label
+            label = f"#{idx}"
+            if tval == 10:
+                d62 = r.get("d62", 0)
+                label = f"T{idx}[锁]" if d62 > 0 else f"T{idx}"
+            elif tval == 15: label = f"E{idx}"
+            elif tval == 16: label = f"B{idx}"
+            elif tval == 20: label = f"V{idx}"
+            elif tval == 110: label = f"M{idx}"
+            elif tval == 200: label = f"N{idx}"
+            elif tval == 5: label = f"P{idx}"
+            cur_a = r.get('d33', 0)
+            cur_b = r.get('d34', 0)
+            script_icon = ""
+            if cur_a > 0: script_icon += "⚡"
+            if cur_b > 0: script_icon += "👆"
+            if script_icon: label = f"{label} {script_icon}"
+            bx_c = r[IDX_BOUND_X] + r[IDX_BOUND_W] // 2
+            dr.text((bx_c - len(label) * 3, r[IDX_BOUND_Y] - 12), label, fill=color)
+
+            # type=10 path lines
+            if tval == 10:
+                d62 = r.get("d62", 0)
+                lc = (255, 80, 80) if d62 > 0 else (80, 255, 80)
+                segs = [
+                    (r.get("d63", 0), r.get("d64", 0), r.get("d65", 0), r.get("d66", 0), r.get("d67", 0)),
+                    (r.get("d68", 0), r.get("d69", 0), r.get("d70", 0), r.get("d71", 0), r.get("d72", 0)),
+                    (r.get("d73", 0), r.get("d74", 0), r.get("d75", 0), r.get("d76", 0), r.get("d77", 0)),
+                    (r.get("d78", 0), r.get("d79", 0), r.get("d80", 0), r.get("d81", 0), r.get("d82", 0)),
+                    (r.get("d83", 0), r.get("d84", 0), r.get("d85", 0), r.get("d86", 0), r.get("d87", 0)),
+                ]
+                for en, x1, y1, x2, y2 in segs:
+                    if en and x1 > 0 and y1 > 0 and x2 > 0 and y2 > 0:
+                        dr.line([x1, y1, x2, y2], fill=lc, width=2)
+
+        # Selected entity highlight
+        if self._vis_selected is not None and self._vis_selected in self._vis_hit_regions:
+            x1, y1, x2, y2 = self._vis_hit_regions[self._vis_selected]
+            dr.rectangle([x1 - 2, y1 - 2, x2 + 2, y2 + 2], outline=(255, 215, 0), width=2)
+
+        # Convert to QPixmap and display
+        pixmap = _pil_to_qpixmap(composite)
+        self._vis_bg_pixmap = pixmap
+        self._vis_bg_item = self._vis_gscene.addPixmap(pixmap)
+        self._vis_gscene.setSceneRect(0, 0, composite.width, composite.height)
+
+    def _vis_redraw(self):
+        sid = self._vis_scene_id
+        self._vis_gscene.clear()
+        self._vis_hit_regions = {}
+        self._vis_bg_item = None
+        if not self._editor._data.records:
+            return
+
+        # 获取当前预览窗口视口的实际像素大小
+        view_w = self.viewport().width()
+        view_h = self.viewport().height()
+
+        ents = [r for r in self._editor._data.records if has_data(r) and r['d1'] == sid]
+        bg_w = self._vis_bg_pil.width if self._vis_bg_pil else 0
+        bg_h = self._vis_bg_pil.height if self._vis_bg_pil else 0
+        if not ents:
+            # 空场景: 如果有背景图也要渲染
+            w = min(max(view_w, MAX_MAP_W, bg_w), 8192)
+            h = min(max(view_h, MAX_MAP_H, bg_h), 8192)
+            self._vis_render_scene(ents, w, h)
+            return
+        ents.sort(key=lambda r: r['d19'] if r['d0'] == 10 else r['d11'])
+        # 过滤垃圾废弃坐标 (>10000)，防止画布被撑到 8192 导致显卡卡死
+        xs = [r['d10'] for r in ents if -10000 < r['d10'] < 10000]
+        ys = [r['d11'] for r in ents if -10000 < r['d11'] < 10000]
+        if not xs: xs = [0]
+        if not ys: ys = [0]
+        right = max(r['d18'] + r['d20'] for r in ents if r['d20'] > 0 and -10000 < r['d18'] < 10000) if any(r['d20'] > 0 and -10000 < r['d18'] < 10000 for r in ents) else max(xs)
+        bottom = max(r['d19'] + r['d21'] for r in ents if r['d21'] > 0 and -10000 < r['d19'] < 10000) if any(r['d21'] > 0 and -10000 < r['d19'] < 10000 for r in ents) else max(ys)
+        w = min(max(view_w, MAX_MAP_W, max(max(xs), right) + 300, bg_w), 8192)
+        h = min(max(view_h, MAX_MAP_H, max(max(ys), bottom) + 300, bg_h), 8192)
+        self._vis_render_scene(ents, w, h)
+
+    # =========== 画布交互 ===========
+    def mousePressEvent(self, event):
+        pos = event.position().toPoint()
+        scene_pos = self.mapToScene(pos)
+        cx, cy = int(scene_pos.x()), int(scene_pos.y())
+        self._vis_selected = None
+        self._vis_drag = None
+        found = None
+        for idx, (x1, y1, x2, y2) in self._vis_hit_regions.items():
+            if x1 <= cx <= x2 and y1 <= cy <= y2:
+                found = idx
+        if found is not None:
+            if self._vis_sel_anim_active and self._vis_selected != found:
+                self._vis_stop_sel_anim()
+            self._vis_selected = found
+            rec = self._editor._data.records[found]
+            tname = ENTITY_TYPES.get(rec[IDX_TYPE], '?')
+            pos_x, pos_y = rec[IDX_POS_X], rec[IDX_POS_Y]
+            self._undo_pos = (found, pos_x, pos_y)
+            if self._vis_edit_mode:
+                self._editor._vis_info_label.setText(f"选中: #{found} [{tname}] 坐标({pos_x},{pos_y}) — 拖拽可移动")
+                self._vis_drag = (found, cx, cy, pos_x, pos_y)
+            else:
+                self._editor._vis_info_label.setText(f"选中: #{found} [{tname}] 坐标({pos_x},{pos_y}) — 拖动已锁定")
+            self._editor._sync_entity_list_select(found)
+            self._editor._current_param_idx = found
+            self._editor._show_record(rec)
+        else:
+            self._editor._vis_info_label.setText("")
+        self._vis_redraw()
+
+    def mouseMoveEvent(self, event):
+        pos = event.position().toPoint()
+        scene_pos = self.mapToScene(pos)
+        self._editor._vis_coord_label.setText(f"坐标: ({int(scene_pos.x())}, {int(scene_pos.y())})")
+        # Drag handling (仅左键按下时拖动, 对应原版 <B1-Motion> 行为)
+        if self._vis_drag is None or not self._vis_edit_mode:
+            return
+        if not (event.buttons() & Qt.LeftButton):
+            self._vis_drag = None
+            return
+        eidx, sx, sy, ox, oy = self._vis_drag
+        cx, cy = int(scene_pos.x()), int(scene_pos.y())
+        dx, dy = cx - sx, cy - sy
+        new_x, new_y = ox + dx, oy + dy
+        rec = self._editor._data.records[eidx]
+        old_d10, old_d11 = rec[IDX_POS_X], rec[IDX_POS_Y]
+        rec[IDX_POS_X], rec[IDX_POS_Y] = new_x, new_y
+        rec[IDX_BOUND_X] += new_x - old_d10
+        rec[IDX_BOUND_Y] += new_y - old_d11
+        self._editor._data._dirty = True
+        self._editor._vis_info_label.setText(f"移动: #{eidx} → ({new_x},{new_y})")
+        self._vis_redraw()
+
+    def mouseReleaseEvent(self, event):
+        if self._vis_drag:
+            eidx = self._vis_drag[0]
+            rec = self._editor._data.records[eidx]
+            pos = event.position().toPoint()
+            scene_pos = self.mapToScene(pos)
+            cx, cy = int(scene_pos.x()), int(scene_pos.y())
+            px, py = rec[IDX_POS_X], rec[IDX_POS_Y]
+            self._vis_drag = (eidx, cx, cy, px, py)
+            if hasattr(self, '_current_param_idx') and self._editor._current_param_idx == eidx:
+                self._editor._show_record(rec)
+
+    def wheelEvent(self, event):
+        delta = event.angleDelta().y()
+        if event.modifiers() & Qt.ShiftModifier:
+            self.horizontalScrollBar().setValue(
+                self.horizontalScrollBar().value() - delta)
+        else:
+            self.verticalScrollBar().setValue(
+                self.verticalScrollBar().value() - delta)
+
+    # =========== 动画控制 ===========
+    def _vis_toggle_anim(self):
+        if self._vis_anim_playing:
+            self._vis_stop_anim()
+            self._vis_anim_playing = False
+            self._editor._vis_play_btn.setText("▶️ 播放全部")
+        else:
+            self._vis_anim_playing = True
+            self._vis_start_anim()
+            self._editor._vis_play_btn.setText("⏸️ 暂停全部")
+
+    def _vis_start_anim(self):
+        if self._vis_anim_timer:
+            return
+        mode = DISPLAY_MODES.get(self._vis_display_mode, 'auto')
+        if mode in ('wire', 'cha'):
+            return
+        timer = QTimer(self)
+        timer.timeout.connect(self._vis_anim_tick)
+        timer.start(200)
+        self._vis_anim_timer = timer
+
+    def _vis_anim_tick(self):
+        mode = DISPLAY_MODES.get(self._vis_display_mode, 'auto')
+        if mode in ('wire', 'cha'):
+            self._vis_stop_anim()
+            return
+        for idx in list(self._vis_anim_frame.keys()):
+            self._vis_anim_frame[idx] += 1
+        self._vis_redraw()
+
+    def _vis_stop_anim(self):
+        if self._vis_anim_timer:
+            self._vis_anim_timer.stop()
+            self._vis_anim_timer = None
+
+    def _vis_toggle_sel_anim(self):
+        if self._vis_selected is None:
+            self._editor._vis_info_label.setText("请先选中一个实体再播放动画")
+            return
+        if self._vis_anim_playing:
+            self._editor._vis_info_label.setText("全局动画已开启，无需单独播放")
+            return
+        idx = self._vis_selected
+        rec = self._editor._data.records[idx]
+        mode = DISPLAY_MODES.get(self._vis_display_mode, 'auto')
+        tval = rec[IDX_TYPE]
+        can_animate = False
+        if mode in ('auto', 'ani'):
+            if tval in (200, 20, 110) and rec[IDX_SUB_MODEL] > 0 and self._editor._ani_jvg:
+                can_animate = True
+        if not can_animate:
+            tname = ENTITY_TYPES.get(tval, '?')
+            self._editor._vis_info_label.setText(f"实体 #{idx} [{tname}] 不支持动画")
+            return
+        if self._vis_sel_anim_active:
+            self._vis_stop_sel_anim()
+        else:
+            self._vis_start_sel_anim(idx)
+
+    def _vis_start_sel_anim(self, idx):
+        self._vis_sel_anim_active = True
+        self._editor._vis_sel_anim_btn.setText("⏸️ 播放选中")
+        self._vis_anim_frame[idx] = 0
+        timer = QTimer(self)
+        timer.timeout.connect(lambda: self._vis_sel_anim_tick(idx))
+        timer.start(200)
+        self._vis_sel_anim_timer = timer
+
+    def _vis_sel_anim_tick(self, idx):
+        if not self._vis_sel_anim_active:
+            return
+        mode = DISPLAY_MODES.get(self._vis_display_mode, 'auto')
+        if mode in ('wire', 'cha'):
+            self._vis_stop_sel_anim()
+            return
+        if idx in self._vis_anim_frame:
+            self._vis_anim_frame[idx] += 1
+        self._vis_redraw()
+
+    def _vis_stop_sel_anim(self):
+        self._vis_sel_anim_active = False
+        if self._vis_sel_anim_timer:
+            self._vis_sel_anim_timer.stop()
+            self._vis_sel_anim_timer = None
+        self._editor._vis_sel_anim_btn.setText("⏯️ 播放选中")
+
+    def _on_display_mode_change(self):
+        self._vis_stop_anim()
+        self._vis_stop_sel_anim()
+        self._vis_anim_playing = False
+        self._editor._vis_play_btn.setText("▶️ 播放全部")
+        self._vis_display_mode = self._editor._display_mode_combo.currentText()
+        self._editor._vis_load_scene()
+
+    def _on_edit_mode_change(self):
+        self._vis_edit_mode = self._editor._vis_edit_cb.isChecked()
+        if self._vis_edit_mode:
+            self._editor._vis_info_label.setText("编辑模式已开启 — 可拖动实体")
+        else:
+            self._vis_drag = None
+            self._editor._vis_info_label.setText("编辑模式已锁定 — 拖动已禁用")
+
+    def _vis_canvas_undo(self):
+        if self._undo_pos is None:
+            return
+        eidx, old_x, old_y = self._undo_pos
+        rec = self._editor._data.records[eidx]
+        cur_d10, cur_d11 = rec['d10'], rec['d11']
+        rec['d10'], rec['d11'] = old_x, old_y
+        rec['d18'] += old_x - cur_d10
+        rec['d19'] += old_y - cur_d11
+        self._editor._data._dirty = True
+        self._editor._vis_info_label.setText(f"已撤销: #{eidx} → ({old_x},{old_y})")
+        self._vis_redraw()
+        self._undo_pos = None
+        if hasattr(self, '_current_param_idx') and self._editor._current_param_idx == eidx:
+            self._editor._show_record(rec)
+
+
 class MatEditorApp(QMainWindow):
     """TKMat.Dat 地图实体编辑器 PySide6 版"""
 
@@ -2032,44 +2315,14 @@ class MatEditorApp(QMainWindow):
         # 应用 Godot 风格窗口标题栏 (与 editor_themes 主题一致)
         apply_godot_theme(self, self._is_dark)
 
-        # 数据状态
-        self.dat_path = None
-        self.tkt_path = None
-        self.records = []
-        self.tkt_scenes = {}
-        self.filtered_indices = []
-        self._dirty = False
+        # 数据状态 (§5 — 已迁入 MapDataManager)
+        self._data = MapDataManager()
 
-        # 可视化模式状态
-        self._vis_scene_id = 0
+        # 可视化模式状态 (画布自有状态已迁入 SceneCanvasView)
         self._vis_show_types = {t: True for t in [5, 10, 15, 16, 20, 110, 200]}
-        self._vis_bg_pil = None
-        self._vis_bg_pixmap = None
-        self._vis_entities = {}
-        self._vis_hit_regions = {}
-        self._vis_selected = None
-        self._vis_drag = None
-        self._vis_edit_mode = False  # 编辑开关: 默认关闭(禁止拖动)
-        self._undo_pos = None  # 单步撤销: (entity_idx, old_x, old_y)
-        self._sc_grp_section_count = 0
-        self._sc_grp_pending = None  # 待保存的 SC.GRP 数据 (list[bytes])，仅在保存时写入文件
-        self.item_names = {}
         self._ani_jvg = None
         self._cha_jvg = None
         self._cur_jvg = None
-        self._vis_display_mode = "游戏默认"
-        self._vis_anim_playing = False
-        self._vis_anim_timer = None
-        self._vis_anim_frame = {}
-        self._vis_sel_anim_active = False
-        self._vis_sel_anim_timer = None
-        self.defunit_recs = []
-        self.defunit_next = {}
-        self.defunit_entity = {}
-        self.tkd_defines = []
-        self.tkd_header = ''
-        self.tkd_define_map = {}
-        self.tkt_all = {}
         self._preview_win = None
         self._preview_step = 0
         self._preview_cmds = []
@@ -2077,12 +2330,6 @@ class MatEditorApp(QMainWindow):
         self._current_edit_define_id = None
         self._script_dirty = False
         self._edit_debounce = None
-
-        # 存档模式状态
-        self._save_mode = False   # True = 编辑的是 sav.N 中的 TKMat 数据
-        self._save_path = None    # 当前存档文件路径
-        self._save_slot = 0       # 槽位号
-        self._game_dir = None     # 游戏资源目录 (TKDefUnit/TKD/SC.GRP 所在目录)
 
         # 画布重绘防抖定时器，避免 resizeEvent 卡死主线程
         self._resize_timer = QTimer(self)
@@ -2116,10 +2363,10 @@ class MatEditorApp(QMainWindow):
         self.setStyleSheet(qss)
         self._update_path()
         self._update_entity_type_colors()
-        self._update_vis_background()
+        self._canvas.update_vis_background()
         # 主题切换时，强制重绘 PIL 底图以匹配新背景色
-        if hasattr(self, 'records') and self.records:
-            self._vis_redraw()
+        if hasattr(self, '_data') and self._data.records:
+            self._canvas._vis_redraw()
         # 同步脚本编辑器语法高亮配色至当前主题
         if hasattr(self, '_script_highlighter') and self._script_highlighter:
             self._script_highlighter.set_dark(self._is_dark)
@@ -2140,15 +2387,6 @@ class MatEditorApp(QMainWindow):
             colors = {0: "#777777", 5: "#1565C0", 10: "#2E7D32", 15: "#E65100",
                       16: "#5D4037", 20: "#6A1B9A", 110: "#AD1457", 200: "#C62828"}
         self._entity_type_colors = {tv: QColor(cl) for tv, cl in colors.items()}
-
-    def _update_vis_background(self):
-        """设置中间预览区 QGraphicsView 的背景色, 使深色区域填满整个预览区
-        (对应 v1 tk.Canvas 的 bg)。场景矩形外的空白也以此色填充。"""
-        if not hasattr(self, '_vis_gview'):
-            return
-        # 与 editor_themes/*.qss 的 QGraphicsView background-color 一致
-        bg = QColor('#1a1e27') if self._is_dark else QColor('#ffffff')
-        self._vis_gview.setBackgroundBrush(bg)
 
     # =========== UI 构建 ===========
     def _build_ui(self):
@@ -2310,7 +2548,9 @@ class MatEditorApp(QMainWindow):
         btn_del.clicked.connect(self._clear_current)
         filter_row.addWidget(btn_del)
         # 分隔线
-        sep0 = QFrame(); sep0.setFrameShape(QFrame.VLine); sep0.setFrameShadow(QFrame.Sunken)
+        sep0 = QFrame()
+        sep0.setFrameShape(QFrame.VLine)
+        sep0.setFrameShadow(QFrame.Sunken)
         filter_row.addWidget(sep0)
         filter_row.addWidget(QLabel("类型:"))
         self.filter_type = QComboBox()
@@ -2319,7 +2559,9 @@ class MatEditorApp(QMainWindow):
         self.filter_type.setFixedWidth(120)
         filter_row.addWidget(self.filter_type)
         # 分隔线
-        sep3 = QFrame(); sep3.setFrameShape(QFrame.VLine); sep3.setFrameShadow(QFrame.Sunken)
+        sep3 = QFrame()
+        sep3.setFrameShape(QFrame.VLine)
+        sep3.setFrameShadow(QFrame.Sunken)
         filter_row.addWidget(sep3)
         self.show_empty_cb = QCheckBox("空槽")
         self.show_empty_cb.stateChanged.connect(self._apply_filter)
@@ -2352,6 +2594,9 @@ class MatEditorApp(QMainWindow):
         center_layout.setContentsMargins(0, 0, 0, 0)
         center_layout.setSpacing(2)
 
+        # 先创建画布: 工具栏的信号槽连接需要引用 self._canvas 上的方法 (§4)
+        self._canvas = SceneCanvasView(self)
+
         # Top toolbar row 1
         top = QHBoxLayout()
         top.addWidget(QLabel("场景:"))
@@ -2363,20 +2608,20 @@ class MatEditorApp(QMainWindow):
         top.addWidget(QLabel("显示:"))
         self._display_mode_combo = QComboBox()
         self._display_mode_combo.addItems(list(DISPLAY_MODES.keys()))
-        self._display_mode_combo.currentIndexChanged.connect(self._on_display_mode_change)
+        self._display_mode_combo.currentIndexChanged.connect(self._canvas._on_display_mode_change)
         top.addWidget(self._display_mode_combo)
         top.addSpacing(10)
         self._vis_play_btn = QPushButton("▶️ 播放全部")
         self._vis_play_btn.setFixedWidth(80)
         self._vis_play_btn.setProperty("class", "CompactBtn")
         self._vis_play_btn.setToolTip("播放/暂停精灵动画")
-        self._vis_play_btn.clicked.connect(self._vis_toggle_anim)
+        self._vis_play_btn.clicked.connect(self._canvas._vis_toggle_anim)
         top.addWidget(self._vis_play_btn)
         self._vis_sel_anim_btn = QPushButton("⏯️ 播放选中")
         self._vis_sel_anim_btn.setFixedWidth(80)
         self._vis_sel_anim_btn.setProperty("class", "CompactBtn")
         self._vis_sel_anim_btn.setToolTip("播放/暂停当前选中实体的动画")
-        self._vis_sel_anim_btn.clicked.connect(self._vis_toggle_sel_anim)
+        self._vis_sel_anim_btn.clicked.connect(self._canvas._vis_toggle_sel_anim)
         top.addWidget(self._vis_sel_anim_btn)
         top.addSpacing(10)
         btn_refresh = QPushButton("🔄 刷新")
@@ -2386,7 +2631,7 @@ class MatEditorApp(QMainWindow):
         top.addWidget(btn_refresh)
         top.addSpacing(10)
         self._vis_edit_cb = QCheckBox("允许拖动")
-        self._vis_edit_cb.stateChanged.connect(self._on_edit_mode_change)
+        self._vis_edit_cb.stateChanged.connect(self._canvas._on_edit_mode_change)
         top.addWidget(self._vis_edit_cb)
         top.addStretch()
         btn_theme = QPushButton("🌓 切换主题")
@@ -2401,29 +2646,15 @@ class MatEditorApp(QMainWindow):
         for tval in [5, 10, 15, 16, 20, 110, 200]:
             cb = QCheckBox(ENTITY_TYPES.get(tval, f"T{tval}"))
             cb.setChecked(True)
-            cb.stateChanged.connect(self._vis_redraw)
+            cb.stateChanged.connect(self._canvas._vis_redraw)
             self._type_filter_cbs[tval] = cb
             top2.addWidget(cb)
         top2.addStretch()
         center_layout.addLayout(top2)
 
-        # Map canvas using QGraphicsView
-        self._vis_gscene = QGraphicsScene()
-        self._vis_gview = QGraphicsView(self._vis_gscene)
-        self._vis_gview.setRenderHint(QPainter.SmoothPixmapTransform)
-        self._vis_gview.setDragMode(QGraphicsView.NoDrag)
-        self._vis_gview.setViewportUpdateMode(QGraphicsView.SmartViewportUpdate)
-        self._vis_gview.setMouseTracking(True)
-        # 左上角对齐 (对应 v1 的 anchor='nw'): 地图原点贴齐视口左上, 放大时多余空间留在右下
-        self._vis_gview.setAlignment(Qt.AlignTop | Qt.AlignLeft)
-        # 深色背景填满整个预览区 (含场景矩形外的空白), 与 v1 画布 bg 一致
-        self._update_vis_background()
-        self._vis_gview.mousePressEvent = self._vis_canvas_click
-        self._vis_gview.mouseMoveEvent = self._vis_canvas_mouse_move
-        self._vis_gview.mouseReleaseEvent = self._vis_canvas_release
-        self._vis_gview.wheelEvent = self._vis_canvas_wheel
-        self._vis_bg_item = None  # QGraphicsPixmapItem for scene background
-        center_layout.addWidget(self._vis_gview, 1)
+        # Map canvas — SceneCanvasView 已在方法顶部创建 (§4), 此处仅设置背景并加入布局
+        self._canvas.update_vis_background()
+        center_layout.addWidget(self._canvas, 1)
         center_widget.setMinimumWidth(400)
         self.splitter.addWidget(center_widget)
 
@@ -2576,34 +2807,31 @@ class MatEditorApp(QMainWindow):
             self._raw_mirrors[di] = alive
             if len(alive) < 2:
                 continue
-            # 为每个控件分别创建 handler, 通过闭包捕获 src 避免 sender() 失效
+            # 为每个控件分别创建 handler, 用 partial 预填 src 避免闭包捕获
             for src_ed in alive:
-                def _make_handler(_src=src_ed, _eds=alive):
-                    def _on_changed(txt):
-                        for ed in _eds:
-                            if ed is _src:
-                                continue
-                            if ed.text() == txt:
-                                continue
-                            ed.blockSignals(True)
-                            ed.setText(txt)
-                            ed.blockSignals(False)
-                    return _on_changed
-                src_ed.textChanged.connect(_make_handler())
+                src_ed.textChanged.connect(partial(self._on_mirror_changed, src_ed, alive))
 
     def _build_type_basic_group(self, parent_layout, tvars, tval, type_labels):
         """构建类型页面的基础属性组 (DockHeader + DockBody, 垂直单元格, 等宽列)"""
         grp = QWidget()
-        gl = QVBoxLayout(grp); gl.setContentsMargins(0, 0, 0, 0); gl.setSpacing(0)
+        gl = QVBoxLayout(grp)
+        gl.setContentsMargins(0, 0, 0, 0)
+        gl.setSpacing(0)
         gl.addWidget(DockHeader("基础属性"))
-        body = QWidget(); body.setObjectName("DockBody")
-        bl = QVBoxLayout(body); bl.setContentsMargins(8, 8, 8, 8)
-        grid = QGridLayout(); grid.setVerticalSpacing(4); grid.setHorizontalSpacing(8)
+        body = QWidget()
+        body.setObjectName("DockBody")
+        bl = QVBoxLayout(body)
+        bl.setContentsMargins(8, 8, 8, 8)
+        grid = QGridLayout()
+        grid.setVerticalSpacing(4)
+        grid.setHorizontalSpacing(8)
 
         def _cell(lbl_widget, input_widget):
             """返回 (QWidget, QVBoxLayout) — QWidget 作为 grid 单元格, 保证内部控件有父"""
             cw = QWidget()
-            cell = QVBoxLayout(cw); cell.setSpacing(2); cell.setContentsMargins(0, 0, 0, 0)
+            cell = QVBoxLayout(cw)
+            cell.setSpacing(2)
+            cell.setContentsMargins(0, 0, 0, 0)
             cell.addWidget(lbl_widget)
             input_widget.setMinimumHeight(24)
             cell.addWidget(input_widget)
@@ -2616,8 +2844,11 @@ class MatEditorApp(QMainWindow):
         cb = QComboBox()
         cb.addItems([f"{k}-{v}" for k, v in sorted(ENTITY_TYPES.items())])
         tvars['type'] = cb
-        wrapper = QFrame(); wrapper.setObjectName("FakeInputBox")
-        wl = QHBoxLayout(wrapper); wl.setContentsMargins(0, 0, 0, 0); wl.addWidget(cb)
+        wrapper = QFrame()
+        wrapper.setObjectName("FakeInputBox")
+        wl = QHBoxLayout(wrapper)
+        wl.setContentsMargins(0, 0, 0, 0)
+        wl.addWidget(cb)
         grid.addWidget(_cell(lbl, wrapper), 0, 0, Qt.AlignTop)
 
         # Scene ID
@@ -2626,9 +2857,13 @@ class MatEditorApp(QMainWindow):
         lbl2.setProperty("class", "PropLabel")
         ev = self._make_raw_edit(1)
         tvars['scene_id'] = ev
-        wrapper2 = QFrame(); wrapper2.setObjectName("FakeInputBox")
-        wl2 = QHBoxLayout(wrapper2); wl2.setContentsMargins(0, 0, 0, 0); wl2.addWidget(ev)
-        scene_lbl = QLabel(""); scene_lbl.setProperty("class", "ExtraPreviewText")
+        wrapper2 = QFrame()
+        wrapper2.setObjectName("FakeInputBox")
+        wl2 = QHBoxLayout(wrapper2)
+        wl2.setContentsMargins(0, 0, 0, 0)
+        wl2.addWidget(ev)
+        scene_lbl = QLabel("")
+        scene_lbl.setProperty("class", "ExtraPreviewText")
         wl2.addWidget(scene_lbl)
         tvars['_scene_label'] = scene_lbl
         grid.addWidget(_cell(lbl2, wrapper2), 0, 1, Qt.AlignTop)
@@ -2639,8 +2874,11 @@ class MatEditorApp(QMainWindow):
         lbl3.setProperty("class", "PropLabel")
         ev2 = self._make_raw_edit(2)
         tvars['flags'] = ev2
-        wrapper3 = QFrame(); wrapper3.setObjectName("FakeInputBox")
-        wl3 = QHBoxLayout(wrapper3); wl3.setContentsMargins(0, 0, 0, 0); wl3.addWidget(ev2)
+        wrapper3 = QFrame()
+        wrapper3.setObjectName("FakeInputBox")
+        wl3 = QHBoxLayout(wrapper3)
+        wl3.setContentsMargins(0, 0, 0, 0)
+        wl3.addWidget(ev2)
         grid.addWidget(_cell(lbl3, wrapper3), 0, 2, Qt.AlignTop)
 
         # Flag checkboxes
@@ -2695,16 +2933,24 @@ class MatEditorApp(QMainWindow):
 
         for c in range(3):
             grid.setColumnStretch(c, 1)
-        bl.addLayout(grid); gl.addWidget(body); parent_layout.addWidget(grp)
+        bl.addLayout(grid)
+        gl.addWidget(body)
+        parent_layout.addWidget(grp)
 
     def _build_field_group(self, parent_layout, title, fields, tvars, type_labels, cols, tval=0, is_sound=False):
         """构建通用字段组 (DockHeader + DockBody, 垂直单元格, 等宽列)"""
         grp = QWidget()
-        gl = QVBoxLayout(grp); gl.setContentsMargins(0, 0, 0, 0); gl.setSpacing(0)
+        gl = QVBoxLayout(grp)
+        gl.setContentsMargins(0, 0, 0, 0)
+        gl.setSpacing(0)
         gl.addWidget(DockHeader(title))
-        body = QWidget(); body.setObjectName("DockBody")
-        bl = QVBoxLayout(body); bl.setContentsMargins(8, 8, 8, 8)
-        grid = QGridLayout(); grid.setVerticalSpacing(4); grid.setHorizontalSpacing(8)
+        body = QWidget()
+        body.setObjectName("DockBody")
+        bl = QVBoxLayout(body)
+        bl.setContentsMargins(8, 8, 8, 8)
+        grid = QGridLayout()
+        grid.setVerticalSpacing(4)
+        grid.setHorizontalSpacing(8)
 
         for fi, field_tuple in enumerate(fields):
             key, di, label, cmt = field_tuple
@@ -2741,7 +2987,7 @@ class MatEditorApp(QMainWindow):
                 wl.setContentsMargins(0, 0, 0, 0)
                 wl.addWidget(cb)
                 # Sync combobox to raw entry
-                cb.currentIndexChanged.connect(lambda _, d=di, _cb=cb: self._sync_type_cb_to_raw(tvars, d, _cb))
+                cb.currentIndexChanged.connect(partial(self._sync_type_cb_to_raw, tvars, di, cb))
             elif key == 'blend_mode':
                 cb = QComboBox()
                 cb.addItems(["0-正常", "1-染色", "2-加法发光", "3-减法压暗", "4-亮度alpha", "5-水平翻转"])
@@ -2751,7 +2997,7 @@ class MatEditorApp(QMainWindow):
                 wl = QHBoxLayout(wrapper)
                 wl.setContentsMargins(0, 0, 0, 0)
                 wl.addWidget(cb)
-                cb.currentIndexChanged.connect(lambda _, d=di, _cb=cb: self._sync_type_cb_to_raw(tvars, d, _cb))
+                cb.currentIndexChanged.connect(partial(self._sync_type_cb_to_raw, tvars, di, cb))
             elif key == 'shadow_frame':
                 cb = QComboBox()
                 cb.addItems(["0-无阴影", "1-小阴影(39×23)", "2-大阴影(65×33)"])
@@ -2761,7 +3007,7 @@ class MatEditorApp(QMainWindow):
                 wl = QHBoxLayout(wrapper)
                 wl.setContentsMargins(0, 0, 0, 0)
                 wl.addWidget(cb)
-                cb.currentIndexChanged.connect(lambda _, d=di, _cb=cb: self._sync_type_cb_to_raw(tvars, d, _cb))
+                cb.currentIndexChanged.connect(partial(self._sync_type_cb_to_raw, tvars, di, cb))
             elif key == 'cursor_id':
                 cb = QComboBox()
                 cb.addItems([f"{k}-{v}" for k, v in sorted(_CURSOR_BLOCKS.items())])
@@ -2771,7 +3017,7 @@ class MatEditorApp(QMainWindow):
                 wl = QHBoxLayout(wrapper)
                 wl.setContentsMargins(0, 0, 0, 0)
                 wl.addWidget(cb)
-                cb.currentIndexChanged.connect(lambda _, d=di, _cb=cb: self._sync_type_cb_to_raw(tvars, d, _cb))
+                cb.currentIndexChanged.connect(partial(self._sync_type_cb_to_raw, tvars, di, cb))
             elif key == 'dialog_color':
                 # 对话颜色选择器: FCOLOR 1-32 调色板
                 dc_ev = self._make_raw_edit(di)
@@ -2792,22 +3038,7 @@ class MatEditorApp(QMainWindow):
                 dc_btn = QPushButton("选色")
                 dc_btn.setFixedWidth(40)
                 dc_btn.setCursor(Qt.PointingHandCursor)
-                def _make_dc_picker(_swatch=dc_swatch, _ev=dc_ev):
-                    def _pick():
-                        menu = QMenu(self)
-                        for i in range(32):
-                            hc = GAME_COLORS.get(i + 1, '#000')
-                            px = QPixmap(16, 16)
-                            px.fill(QColor(hc))
-                            act = menu.addAction(QIcon(px), f"  {i:2d}  FCOLOR({i+1:2d})")
-                            act.setData(i)
-                        chosen = menu.exec(dc_btn.mapToGlobal(QPoint(0, dc_btn.height())))
-                        if chosen:
-                            val = chosen.data()
-                            _ev.setText(str(val))
-                            _swatch.setStyleSheet(f"background-color: {GAME_COLORS.get(val+1,'#000')};")
-                    return _pick
-                dc_btn.clicked.connect(_make_dc_picker())
+                dc_btn.clicked.connect(partial(self._pick_dialog_color, dc_swatch, dc_ev, dc_btn))
                 wl.addWidget(dc_btn)
                 tvars['_dialog_color_btn'] = dc_btn
             elif key == 'dir_mask' and tval in (10, 15):
@@ -2834,16 +3065,8 @@ class MatEditorApp(QMainWindow):
                     dir_bv[bit_i] = bv_cb
                     r2, c2 = divmod(bit_i, 2)
                     dir_grid.addWidget(bv_cb, r2, c2)
-                def _make_dir_sync(_ev=dm_ev, _dir_bv=dir_bv):
-                    def _on_dir(*_a):
-                        mask = sum((1 << i) for i, cb in _dir_bv.items() if cb.isChecked())
-                        _ev.blockSignals(True)
-                        _ev.setText(str(mask))
-                        _ev.blockSignals(False)
-                    return _on_dir
-                dir_sync_fn = _make_dir_sync()
                 for bv_cb in dir_bv.values():
-                    bv_cb.stateChanged.connect(dir_sync_fn)
+                    bv_cb.stateChanged.connect(partial(self._sync_dir_mask, dm_ev, dir_bv))
                 tvars["_dir_bv"] = dir_bv
                 wl_wrap.addWidget(dir_frame)
             else:
@@ -2856,7 +3079,9 @@ class MatEditorApp(QMainWindow):
                 wl.addWidget(ev)
 
             cell_widget = QWidget()
-            cell = QVBoxLayout(cell_widget); cell.setSpacing(2); cell.setContentsMargins(0, 0, 0, 0)
+            cell = QVBoxLayout(cell_widget)
+            cell.setSpacing(2)
+            cell.setContentsMargins(0, 0, 0, 0)
             cell.addWidget(lbl)
             cell.addWidget(wrapper)
             # Hint label — 输入框外部下方, 与输入框左边线对齐
@@ -2893,9 +3118,11 @@ class MatEditorApp(QMainWindow):
         # grid 必须关联父 QWidget, 否则内部 widget 无父 → 被 GC 回收
         grid_widget = QWidget()
         grid_widget.setLayout(grid)
-        bl.addWidget(grid_widget); gl.addWidget(body); parent_layout.addWidget(grp)
+        bl.addWidget(grid_widget)
+        gl.addWidget(body)
+        parent_layout.addWidget(grp)
 
-    def _sync_type_cb_to_raw(self, tvars, di, cb_widget):
+    def _sync_type_cb_to_raw(self, tvars, di, cb_widget, *_args):
         """类型页面 Combobox 值同步到 raw_N"""
         try:
             v = int(cb_widget.currentText().split('-')[0])
@@ -2904,6 +3131,41 @@ class MatEditorApp(QMainWindow):
                 self._edit_vars[rk].setText(str(v))
         except ValueError:
             pass
+
+    # ---- partial 槽函数 (原为闭包/lambda, §3 改造抽出) ----
+    def _on_mirror_changed(self, src, eds, txt=""):
+        """raw 镜像同步: src 改变时把文本广播给 eds 中其它编辑框。
+        (textChanged 信号会传入 txt)"""
+        for ed in eds:
+            if ed is src:
+                continue
+            if ed.text() == txt:
+                continue
+            ed.blockSignals(True)
+            ed.setText(txt)
+            ed.blockSignals(False)
+
+    def _pick_dialog_color(self, swatch, ev, btn, *_args):
+        """对话颜色选色弹窗 (clicked 信号会传入 bool, *_args 吸收)"""
+        menu = QMenu(self)
+        for i in range(32):
+            hc = GAME_COLORS.get(i + 1, '#000')
+            px = QPixmap(16, 16)
+            px.fill(QColor(hc))
+            act = menu.addAction(QIcon(px), f"  {i:2d}  FCOLOR({i+1:2d})")
+            act.setData(i)
+        chosen = menu.exec(btn.mapToGlobal(QPoint(0, btn.height())))
+        if chosen:
+            val = chosen.data()
+            ev.setText(str(val))
+            swatch.setStyleSheet(f"background-color: {GAME_COLORS.get(val+1,'#000')};")
+
+    def _sync_dir_mask(self, ev, dir_bv, *_args):
+        """方向掩码 checkbox 网格同步到数值输入 (stateChanged 信号会传入 int, *_args 吸收)"""
+        mask = sum((1 << i) for i, cb in dir_bv.items() if cb.isChecked())
+        ev.blockSignals(True)
+        ev.setText(str(mask))
+        ev.blockSignals(False)
 
     # =========== 脚本标签页 ===========
     def _build_script_tab(self):
@@ -2954,7 +3216,7 @@ class MatEditorApp(QMainWindow):
             btn = QPushButton(text)
             btn.setFixedWidth(65)
             btn.setProperty("class", "CompactBtn")
-            btn.clicked.connect(lambda _, c=chain: self._add_chain_entry(c))
+            btn.clicked.connect(partial(self._add_chain_entry, chain))
             chain_toolbar.addWidget(btn)
         btn_del_chain = QPushButton("🗑️ 删除")
         btn_del_chain.setFixedWidth(65)
@@ -3108,20 +3370,20 @@ class MatEditorApp(QMainWindow):
     # =========== 路径更新 ===========
     def _get_game_dir(self):
         """获取游戏资源目录 (TKMat.Dat/SC.GRP/JVG 等所在目录)。
-        存档模式下返回 self._game_dir，普通模式返回 dat_path 的父目录。"""
-        if self._save_mode and self._game_dir:
-            return self._game_dir
-        return os.path.dirname(self.dat_path) if self.dat_path else ''
+        存档模式下返回 self._data._game_dir，普通模式返回 dat_path 的父目录。"""
+        if self._data._save_mode and self._data._game_dir:
+            return self._data._game_dir
+        return os.path.dirname(self._data.dat_path) if self._data.dat_path else ''
 
     def _update_path(self):
-        if not self.dat_path:
+        if not self._data.dat_path:
             self.lbl_path.setText("(未加载)")
             self.lbl_path.setProperty("status", "missing")
-        elif not os.path.exists(self.dat_path):
-            self.lbl_path.setText(f"(不存在){self.dat_path}")
+        elif not os.path.exists(self._data.dat_path):
+            self.lbl_path.setText(f"(不存在){self._data.dat_path}")
             self.lbl_path.setProperty("status", "missing")
         else:
-            self.lbl_path.setText(self.dat_path)
+            self.lbl_path.setText(self._data.dat_path)
             self.lbl_path.setProperty("status", "loaded")
         self.lbl_path.style().unpolish(self.lbl_path)
         self.lbl_path.style().polish(self.lbl_path)
@@ -3132,7 +3394,7 @@ class MatEditorApp(QMainWindow):
             if jvg is not None:
                 lbl.setText(f"{name}✓")
                 lbl.setProperty("status", "loaded")
-            elif self.dat_path and os.path.exists(self.dat_path):
+            elif self._data.dat_path and os.path.exists(self._data.dat_path):
                 lbl.setText(f"{name}✗")
                 lbl.setProperty("status", "missing")
             else:
@@ -3141,10 +3403,10 @@ class MatEditorApp(QMainWindow):
             lbl.style().unpolish(lbl)
             lbl.style().polish(lbl)
 
-        if self._sc_grp_section_count > 0:
-            self.lbl_sc.setText(f"SC.GRP✓({self._sc_grp_section_count})")
+        if self._data._sc_grp_section_count > 0:
+            self.lbl_sc.setText(f"SC.GRP✓({self._data._sc_grp_section_count})")
             self.lbl_sc.setProperty("status", "loaded")
-        elif self.dat_path and os.path.exists(self.dat_path):
+        elif self._data.dat_path and os.path.exists(self._data.dat_path):
             self.lbl_sc.setText("SC.GRP✗")
             self.lbl_sc.setProperty("status", "missing")
         else:
@@ -3158,10 +3420,10 @@ class MatEditorApp(QMainWindow):
         ftype = self.filter_type.currentText()
         show_empty = self.show_empty_cb.isChecked()
         show_global = self.show_global_cb.isChecked()
-        sid = self._vis_scene_id
+        sid = self._canvas._vis_scene_id
         ftype_val = int(ftype.split('-')[0]) if ftype and ftype != "全部" else None
-        self.filtered_indices = []
-        for rec in self.records:
+        self._data.filtered_indices = []
+        for rec in self._data.records:
             if is_empty(rec):
                 if not show_empty:
                     continue
@@ -3171,7 +3433,7 @@ class MatEditorApp(QMainWindow):
                     continue
                 if ftype_val is not None and rec['d0'] != ftype_val:
                     continue
-            self.filtered_indices.append(rec['index'])
+            self._data.filtered_indices.append(rec['index'])
         self._refresh_table()
 
     def _refresh_table(self):
@@ -3188,14 +3450,14 @@ class MatEditorApp(QMainWindow):
 
         # 限制显示数量，避免实例化过多 QTreeWidgetItem 对象
         DISPLAY_LIMIT = 500
-        show_indices = self.filtered_indices[:DISPLAY_LIMIT]
+        show_indices = self._data.filtered_indices[:DISPLAY_LIMIT]
 
         # 批量构建所有 item 后一次性添加
         items = []
         for idx in show_indices:
-            rec = self.records[idx]
+            rec = self._data.records[idx]
             tval = rec['d0']
-            sname = scene_name(self.tkt_scenes, rec['d1'])
+            sname = scene_name(self._data.tkt_scenes, rec['d1'])
             script_lbl, tick_lbl = get_script_info(rec)
             vals = [str(idx), f"{tval}-{ENTITY_TYPES.get(tval, '未知')}", sname,
                     str(rec['d10']), str(rec['d11']), script_lbl, tick_lbl]
@@ -3227,8 +3489,8 @@ class MatEditorApp(QMainWindow):
             self._clear_form()
 
         # 截断提示
-        if len(self.filtered_indices) > DISPLAY_LIMIT:
-            self._vis_info_label.setText(f"列表已截断显示前 {DISPLAY_LIMIT}/{len(self.filtered_indices)} 条，使用筛选缩小范围")
+        if len(self._data.filtered_indices) > DISPLAY_LIMIT:
+            self._vis_info_label.setText(f"列表已截断显示前 {DISPLAY_LIMIT}/{len(self._data.filtered_indices)} 条，使用筛选缩小范围")
 
     def _sort_entity_by_column(self, col):
         """点击列头排序实体列表"""
@@ -3241,8 +3503,8 @@ class MatEditorApp(QMainWindow):
         current_order = self.entity_tree.header().sortIndicatorOrder()
         reverse = (current_order == Qt.DescendingOrder)
         # 对 filtered_indices 排序并刷新
-        self.filtered_indices.sort(
-            key=lambda i: self.records[i].get(key, 0) if isinstance(self.records[i].get(key, 0), (int, float)) else 0,
+        self._data.filtered_indices.sort(
+            key=lambda i: self._data.records[i].get(key, 0) if isinstance(self._data.records[i].get(key, 0), (int, float)) else 0,
             reverse=reverse)
         self._refresh_table()
 
@@ -3255,12 +3517,12 @@ class MatEditorApp(QMainWindow):
             return
         idx = int(sel[0].text(0))
         self._current_param_idx = idx
-        rec = self.records[idx]
+        rec = self._data.records[idx]
         self._show_record(rec)
         # Sync highlight on map
-        if rec['d1'] == self._vis_scene_id:
-            self._vis_selected = idx
-            self._vis_redraw()
+        if rec['d1'] == self._canvas._vis_scene_id:
+            self._canvas._vis_selected = idx
+            self._canvas._vis_redraw()
             tname = ENTITY_TYPES.get(rec['d0'], '?')
             self._vis_info_label.setText(f"选中: #{idx} [{tname}] 坐标({rec['d10']},{rec['d11']})")
 
@@ -3270,13 +3532,13 @@ class MatEditorApp(QMainWindow):
         if not sel:
             return
         sid = int(sel[0].text(0))
-        self._vis_scene_id = sid
+        self._canvas._vis_scene_id = sid
         # Sync combo
         for i in range(self._vis_scene_combo.count()):
             if self._vis_scene_combo.itemText(i).startswith(f"{sid}:"):
                 self._vis_scene_combo.setCurrentIndex(i)
                 break
-        self._vis_stop_anim()
+        self._canvas._vis_stop_anim()
         self._vis_load_scene()
         self._apply_filter()
 
@@ -3286,8 +3548,8 @@ class MatEditorApp(QMainWindow):
             sid = int(val.split(':')[0])
         except ValueError:
             return
-        self._vis_scene_id = sid
-        self._vis_stop_anim()
+        self._canvas._vis_scene_id = sid
+        self._canvas._vis_stop_anim()
         self._vis_load_scene()
         self._apply_filter()
 
@@ -3305,7 +3567,7 @@ class MatEditorApp(QMainWindow):
         idx = rec['index']
         tval = rec['d0']
         tname = ENTITY_TYPES.get(tval, f"未知({tval})")
-        sname = scene_name(self.tkt_scenes, rec['d1'])
+        sname = scene_name(self._data.tkt_scenes, rec['d1'])
         self.lbl_title.setText(f"实体 #{idx} [{tname}] {sname} ({rec['d10']},{rec['d11']})")
 
         BLEND_MODES = {0: "正常", 1: "染色", 2: "加法发光", 3: "减法压暗", 4: "亮度alpha", 5: "水平翻转"}
@@ -3328,15 +3590,15 @@ class MatEditorApp(QMainWindow):
         hl = self._edit_vars.get('_hint_label')
         if isinstance(hl, QLabel):
             hid = rec['d23']
-            hl.setText("" if hid == 0 else self.tkt_scenes.get(hid, ""))
+            hl.setText("" if hid == 0 else self._data.tkt_scenes.get(hid, ""))
 
         # Item name labels
         for key, di in [('_item_g1_id_label', 53), ('_item_g2_id_label', 57), ('_item_g3_id_label', 61)]:
             lbl = self._edit_vars.get(key)
             if isinstance(lbl, QLabel):
                 item_id = rec[f'd{di}']
-                if item_id and item_id in self.item_names:
-                    lbl.setText(self.item_names[item_id])
+                if item_id and item_id in self._data.item_names:
+                    lbl.setText(self._data.item_names[item_id])
                 elif item_id:
                     lbl.setText(f"物品 #{item_id}")
                 else:
@@ -3394,14 +3656,14 @@ class MatEditorApp(QMainWindow):
             hl2 = tvars.get('_hint_label')
             if isinstance(hl2, QLabel):
                 hid = rec['d23']
-                hl2.setText("" if hid == 0 else self.tkt_scenes.get(hid, ""))
+                hl2.setText("" if hid == 0 else self._data.tkt_scenes.get(hid, ""))
             # Item labels
             for key, di in [('_item_g1_id_label', 53), ('_item_g2_id_label', 57), ('_item_g3_id_label', 61)]:
                 lbl = tvars.get(key)
                 if isinstance(lbl, QLabel):
                     item_id = rec[f'd{di}']
-                    if item_id and item_id in self.item_names:
-                        lbl.setText(self.item_names[item_id])
+                    if item_id and item_id in self._data.item_names:
+                        lbl.setText(self._data.item_names[item_id])
                     elif item_id:
                         lbl.setText(f"物品 #{item_id}")
                     else:
@@ -3588,15 +3850,15 @@ class MatEditorApp(QMainWindow):
         if new_vals is None:
             QMessageBox.warning(self, "输入错误", "字段值必须是整数")
             return
-        rec = self.records[idx]
+        rec = self._data.records[idx]
         for key, val in new_vals.items():
             rec[key] = val
-        self._dirty = True
+        self._data._dirty = True
         self._show_record(rec)
         self._apply_filter()
         self._sync_entity_list_select(idx)
-        if rec['d1'] == self._vis_scene_id:
-            self._vis_redraw()
+        if rec['d1'] == self._canvas._vis_scene_id:
+            self._canvas._vis_redraw()
 
     def _reset_edit(self):
         sel = self.entity_tree.selectedItems()
@@ -3606,14 +3868,14 @@ class MatEditorApp(QMainWindow):
             idx = self._current_param_idx
         else:
             return
-        self._show_record(self.records[idx])
+        self._show_record(self._data.records[idx])
 
     # =========== 新增/复制/清空 ===========
     def _new_record(self):
-        if not self.records:
+        if not self._data.records:
             return
         empty_idx = None
-        for rec in self.records:
+        for rec in self._data.records:
             if is_empty(rec):
                 empty_idx = rec['index']
                 break
@@ -3634,15 +3896,15 @@ class MatEditorApp(QMainWindow):
         dl.addWidget(type_cb)
 
         dl.addWidget(QLabel("场景 ID:"))
-        scene_entry = QLineEdit(str(self._vis_scene_id))
+        scene_entry = QLineEdit(str(self._canvas._vis_scene_id))
         dl.addWidget(scene_entry)
-        scene_lbl = QLabel(scene_name(self.tkt_scenes, self._vis_scene_id))
+        scene_lbl = QLabel(scene_name(self._data.tkt_scenes, self._canvas._vis_scene_id))
         dl.addWidget(scene_lbl)
 
         def _on_scene_change():
             try:
                 sid = int(scene_entry.text())
-                scene_lbl.setText(scene_name(self.tkt_scenes, sid))
+                scene_lbl.setText(scene_name(self._data.tkt_scenes, sid))
             except ValueError:
                 pass
         scene_entry.textChanged.connect(_on_scene_change)
@@ -3670,9 +3932,9 @@ class MatEditorApp(QMainWindow):
         try:
             sel_scene = int(scene_entry.text())
         except ValueError:
-            sel_scene = self._vis_scene_id
+            sel_scene = self._canvas._vis_scene_id
 
-        rec = self.records[empty_idx]
+        rec = self._data.records[empty_idx]
         for di in range(DWORD_COUNT):
             rec[f'd{di}'] = 0
         rec['d0'] = sel_type
@@ -3700,7 +3962,7 @@ class MatEditorApp(QMainWindow):
         _d15_defaults = {200: 64, 20: 64, 10: 0, 16: 300, 110: 80, 15: 64, 5: 0}
         rec['d15'] = _d15_defaults.get(sel_type, 64)
 
-        self._dirty = True
+        self._data._dirty = True
         self._apply_filter()
         for i in range(self.entity_tree.topLevelItemCount()):
             item = self.entity_tree.topLevelItem(i)
@@ -3709,8 +3971,8 @@ class MatEditorApp(QMainWindow):
                 self.entity_tree.scrollToItem(item)
                 self._show_record(rec)
                 break
-        if sel_scene == self._vis_scene_id:
-            self._vis_redraw()
+        if sel_scene == self._canvas._vis_scene_id:
+            self._canvas._vis_redraw()
 
     def _copy_record(self):
         sel = self.entity_tree.selectedItems()
@@ -3718,21 +3980,21 @@ class MatEditorApp(QMainWindow):
             QMessageBox.information(self, "提示", "请先选择记录")
             return
         idx = int(sel[0].text(0))
-        src = self.records[idx]
+        src = self._data.records[idx]
         empty_idx = None
-        for rec in self.records:
+        for rec in self._data.records:
             if is_empty(rec):
                 empty_idx = rec['index']
                 break
         if empty_idx is None:
             QMessageBox.information(self, "无空槽", f"所有{REC_COUNT}条记录均已占用")
             return
-        dst = self.records[empty_idx]
+        dst = self._data.records[empty_idx]
         for di in range(DWORD_COUNT):
             dst[f'd{di}'] = src[f'd{di}']
         dst['index'] = empty_idx
         dst['_has_data'] = True
-        self._dirty = True
+        self._data._dirty = True
         self._apply_filter()
         for i in range(self.entity_tree.topLevelItemCount()):
             item = self.entity_tree.topLevelItem(i)
@@ -3749,14 +4011,14 @@ class MatEditorApp(QMainWindow):
         if QMessageBox.question(self, "确认", f"清空实体 #{idx}? (type 设为 0)", QMessageBox.Ok | QMessageBox.Cancel) != QMessageBox.Ok:
             return
         for di in range(DWORD_COUNT):
-            self.records[idx][f'd{di}'] = 0
-        self.records[idx]['_has_data'] = False
-        self._dirty = True
+            self._data.records[idx][f'd{di}'] = 0
+        self._data.records[idx]['_has_data'] = False
+        self._data._dirty = True
         self._apply_filter()
-        self._show_record(self.records[idx])
+        self._show_record(self._data.records[idx])
 
     def _goto_empty(self):
-        for rec in self.records:
+        for rec in self._data.records:
             if is_empty(rec):
                 self.filter_type.setCurrentIndex(0)
                 self.show_empty_cb.setChecked(True)
@@ -3773,42 +4035,42 @@ class MatEditorApp(QMainWindow):
     # =========== 可视化 ===========
     def _vis_load_scene(self):
         """加载场景到画布 (PIL 预合成)"""
-        sid = self._vis_scene_id
-        self._vis_gscene.clear()
-        self._vis_entities.clear()
-        self._vis_selected = None
-        self._vis_drag = None
-        self._vis_stop_sel_anim()
-        self._vis_hit_regions = {}
-        self._vis_anim_frame.clear()
-        self._vis_bg_item = None
+        sid = self._canvas._vis_scene_id
+        self._canvas._vis_gscene.clear()
+        self._canvas._vis_entities.clear()
+        self._canvas._vis_selected = None
+        self._canvas._vis_drag = None
+        self._canvas._vis_stop_sel_anim()
+        self._canvas._vis_hit_regions = {}
+        self._canvas._vis_anim_frame.clear()
+        self._canvas._vis_bg_item = None
 
         # Limit caches
         for cache in (_SPRITE_CACHE, _SHADOW_CACHE, _BLEND_CACHE, _RGBA_CACHE):
             if len(cache) > 300:
                 for k in list(cache.keys())[:len(cache) - 300]:
                     del cache[k]
-        if not self.records:
+        if not self._data.records:
             return
 
         # 获取当前预览窗口视口的实际像素大小
-        view_w = self._vis_gview.viewport().width()
-        view_h = self._vis_gview.viewport().height()
+        view_w = self._canvas.viewport().width()
+        view_h = self._canvas.viewport().height()
 
         # Background PIL Image
-        self._vis_bg_pil = None
+        self._canvas._vis_bg_pil = None
         # 优先从内存中的 _sc_grp_pending 加载背景（MOD 导入后尚未保存的数据）
-        if self._sc_grp_pending is not None and 0 <= sid < len(self._sc_grp_pending):
-            section_bytes = self._sc_grp_pending[sid]
+        if self._data._sc_grp_pending is not None and 0 <= sid < len(self._data._sc_grp_pending):
+            section_bytes = self._data._sc_grp_pending[sid]
             if section_bytes:
                 try:
                     bg = load_scene_background_from_bytes(section_bytes)
                     if bg:
-                        self._vis_bg_pil = bg
+                        self._canvas._vis_bg_pil = bg
                 except Exception:
                     pass
         # 回退到从磁盘文件加载
-        if self._vis_bg_pil is None and self.dat_path:
+        if self._canvas._vis_bg_pil is None and self._data.dat_path:
             d = self._get_game_dir()
             grp_path = os.path.join(d, "SC.GRP")
             idx_path = os.path.join(d, "SC.IDX")
@@ -3816,19 +4078,19 @@ class MatEditorApp(QMainWindow):
                 try:
                     bg = load_scene_background(grp_path, idx_path, sid)
                     if bg:
-                        self._vis_bg_pil = bg
+                        self._canvas._vis_bg_pil = bg
                 except Exception:
                     pass
 
-        ents = [r for r in self.records if has_data(r) and r['d1'] == sid]
-        sname = scene_name(self.tkt_scenes, sid)
+        ents = [r for r in self._data.records if has_data(r) and r['d1'] == sid]
+        sname = scene_name(self._data.tkt_scenes, sid)
         if not ents:
             # 空场景: 如果有背景图也要渲染
-            bg_w = self._vis_bg_pil.width if self._vis_bg_pil else 0
-            bg_h = self._vis_bg_pil.height if self._vis_bg_pil else 0
+            bg_w = self._canvas._vis_bg_pil.width if self._canvas._vis_bg_pil else 0
+            bg_h = self._canvas._vis_bg_pil.height if self._canvas._vis_bg_pil else 0
             w = min(max(view_w, MAX_MAP_W, bg_w), 8192)
             h = min(max(view_h, MAX_MAP_H, bg_h), 8192)
-            self._vis_render_scene(ents, w, h)
+            self._canvas._vis_render_scene(ents, w, h)
             self._vis_info_label.setText(f"SC.GRP #{sid}: {sname} — 无实体 (空场景)")
             return
         ents.sort(key=lambda r: r['d19'] if r['d0'] == 10 else r['d11'])
@@ -3841,408 +4103,14 @@ class MatEditorApp(QMainWindow):
         right = max(r['d18'] + r['d20'] for r in ents if r['d20'] > 0 and -10000 < r['d18'] < 10000) if any(r['d20'] > 0 and -10000 < r['d18'] < 10000 for r in ents) else max(xs)
         bottom = max(r['d19'] + r['d21'] for r in ents if r['d21'] > 0 and -10000 < r['d19'] < 10000) if any(r['d21'] > 0 and -10000 < r['d19'] < 10000 for r in ents) else max(ys)
         # 场景尺寸 = max(视口大小, 实体范围, 背景图尺寸, 最小尺寸)
-        bg_w = self._vis_bg_pil.width if self._vis_bg_pil else 0
-        bg_h = self._vis_bg_pil.height if self._vis_bg_pil else 0
+        bg_w = self._canvas._vis_bg_pil.width if self._canvas._vis_bg_pil else 0
+        bg_h = self._canvas._vis_bg_pil.height if self._canvas._vis_bg_pil else 0
         w = min(max(view_w, MAX_MAP_W, max(max(xs), right) + 300, bg_w), 8192)
         h = min(max(view_h, MAX_MAP_H, max(max(ys), bottom) + 300, bg_h), 8192)
-        self._vis_render_scene(ents, w, h)
+        self._canvas._vis_render_scene(ents, w, h)
         self._vis_info_label.setText(f"SC.GRP #{sid}: {sname} — {len(ents)} 个实体")
-        if self._vis_anim_playing:
-            self._vis_start_anim()
-
-    def _vis_render_scene(self, ents, w, h):
-        """PIL 预合成整个场景并显示到 QGraphicsView"""
-        
-        mode = DISPLAY_MODES.get(self._vis_display_mode, 'auto')
-
-        # Background — 匹配 QGraphicsView 的 QSS 主题背景色
-        # 深色主题 #1a1e27 → (26, 30, 39), 浅色主题 #ffffff → (255, 255, 255)
-        bg_color = (26, 30, 39) if self._is_dark else (255, 255, 255)
-        if self._vis_bg_pil:
-            composite = self._vis_bg_pil.copy()
-            if composite.width < w or composite.height < h:
-                new_bg = Image.new('RGB', (w, h), bg_color)
-                new_bg.paste(composite, (0, 0))
-                composite = new_bg
-        else:
-            composite = Image.new('RGB', (w, h), bg_color)
-
-        dr = ImageDraw.Draw(composite)
-
-        for r in ents:
-            tval = r['d0']
-            show = self._type_filter_cbs.get(tval)
-            if show and not show.isChecked():
-                continue
-            idx = r['index']
-            x = r['d10']
-            y = r['d11']
-            ox = r.get('d26', 0)
-            oy = r.get('d27', 0)
-            color = TYPE_COLORS_RGBA.get(tval, (128, 128, 128))
-
-            sprite_rgba = None
-            jvg = None
-            blk_idx = 0
-            should_animate = False
-            if mode != 'wire':
-                if mode == 'auto':
-                    if tval == 200:
-                        if r['d70'] == 1 and r['d64'] > 0 and self._ani_jvg:
-                            jvg = self._ani_jvg
-                            blk_idx = r['d64']
-                            should_animate = True
-                        elif r['d51'] > 0 and self._cha_jvg:
-                            jvg = self._cha_jvg
-                            blk_idx = r['d51']
-                    elif tval in (20, 110) and r['d64'] > 0 and self._ani_jvg:
-                        jvg = self._ani_jvg
-                        blk_idx = r['d64']
-                        should_animate = True
-                elif mode == 'ani':
-                    if tval in (200, 20, 110) and r['d64'] > 0 and self._ani_jvg:
-                        jvg = self._ani_jvg
-                        blk_idx = r['d64']
-                        should_animate = True
-                elif mode == 'cha':
-                    if tval == 200 and r['d51'] > 0 and self._cha_jvg:
-                        jvg = self._cha_jvg
-                        blk_idx = r['d51']
-                    elif tval in (20, 110) and r['d64'] > 0 and self._ani_jvg:
-                        jvg = self._ani_jvg
-                        blk_idx = r['d64']
-
-            if jvg and blk_idx < jvg.block_count:
-                blk = jvg.blocks[blk_idx]
-                if blk.frames:
-                    if should_animate and idx not in self._vis_anim_frame:
-                        self._vis_anim_frame[idx] = 0
-                    anim = self._vis_anim_frame.get(idx, 0) if should_animate else 0
-                    fi, fpd = _get_dir_frame(blk, r['d13'], r['d16'], r['d53'], anim)
-                    if fi < len(blk.frames):
-                        blend_mode = r.get('d24', 0)
-                        blend_param = r.get('d25', 0)
-                        sprite_rgba = _get_jvg_frame_rgba(jvg, blk_idx, fi)
-                        if sprite_rgba:
-                            sx = x + ox + blk.frames[fi].x_off
-                            sy = y + oy + blk.frames[fi].y_off
-                            if blend_mode == 5:
-                                sprite_rgba = ImageOps.mirror(sprite_rgba)
-                            if blend_mode == 1:
-                                sprite_rgba = _pil_tint(sprite_rgba, blend_param)
-                            # Shadow
-                            shadow_fi = r.get('d55', 0)
-                            if shadow_fi > 0 and (tval == 200 or tval == 20) and jvg is self._cha_jvg and jvg.block_count > 0:
-                                blk0 = jvg.blocks[0]
-                                if blk0.frames and shadow_fi < blk0.frame_count:
-                                    shadow_rgba = _get_jvg_frame_rgba(jvg, 0, shadow_fi)
-                                    _pil_subtract(composite, shadow_rgba,
-                                                  x + ox + jvg.blocks[0].frames[shadow_fi].x_off,
-                                                  y + oy + jvg.blocks[0].frames[shadow_fi].y_off)
-                            # Store hit region
-                            bx, by = r['d18'], r['d19']
-                            bw = r['d20'] if r['d20'] > 0 else sprite_rgba.width
-                            bh = r['d21'] if r['d21'] > 0 else sprite_rgba.height
-                            self._vis_hit_regions[idx] = (bx, by, bx + bw, by + bh)
-                            # Composite sprite
-                            blend_func = {0: _pil_normal, 2: _pil_additive, 3: _pil_subtract,
-                                          4: _pil_luma_alpha, 5: _pil_normal}.get(blend_mode, _pil_normal)
-                            if blend_mode == 2:
-                                _pil_additive(composite, sprite_rgba, sx, sy, blend_param)
-                            elif blend_mode == 3:
-                                _pil_subtract(composite, sprite_rgba, sx, sy)
-                            elif blend_mode == 4:
-                                _pil_luma_alpha(composite, sprite_rgba, sx, sy)
-                            else:
-                                _pil_normal(composite, sprite_rgba, sx, sy)
-
-                # Draw collision box
-                bx, by = r['d18'], r['d19']
-                bw = r['d20'] if r['d20'] > 0 else 0
-                bh = r['d21'] if r['d21'] > 0 else 0
-                if bw > 0 and bh > 0:
-                    dr.rectangle([bx, by, bx + bw, by + bh], outline=color, width=1)
-
-            # Draw geometric shape when no sprite
-            if sprite_rgba is None:
-                bx, by = r['d18'], r['d19']
-                bw = r['d20'] if r['d20'] > 0 else 40
-                bh = r['d21'] if r['d21'] > 0 else 40
-                dr.rectangle([bx, by, bx + bw, by + bh], outline=color, width=2)
-                self._vis_hit_regions[idx] = (bx, by, bx + bw, by + bh)
-
-            # Label
-            label = f"#{idx}"
-            if tval == 10:
-                d62 = r.get("d62", 0)
-                label = f"T{idx}[锁]" if d62 > 0 else f"T{idx}"
-            elif tval == 15: label = f"E{idx}"
-            elif tval == 16: label = f"B{idx}"
-            elif tval == 20: label = f"V{idx}"
-            elif tval == 110: label = f"M{idx}"
-            elif tval == 200: label = f"N{idx}"
-            elif tval == 5: label = f"P{idx}"
-            cur_a = r.get('d33', 0)
-            cur_b = r.get('d34', 0)
-            script_icon = ""
-            if cur_a > 0: script_icon += "⚡"
-            if cur_b > 0: script_icon += "👆"
-            if script_icon: label = f"{label} {script_icon}"
-            bx_c = r['d18'] + r['d20'] // 2
-            dr.text((bx_c - len(label) * 3, r['d19'] - 12), label, fill=color)
-
-            # type=10 path lines
-            if tval == 10:
-                d62 = r.get("d62", 0)
-                lc = (255, 80, 80) if d62 > 0 else (80, 255, 80)
-                segs = [
-                    (r.get("d63", 0), r.get("d64", 0), r.get("d65", 0), r.get("d66", 0), r.get("d67", 0)),
-                    (r.get("d68", 0), r.get("d69", 0), r.get("d70", 0), r.get("d71", 0), r.get("d72", 0)),
-                    (r.get("d73", 0), r.get("d74", 0), r.get("d75", 0), r.get("d76", 0), r.get("d77", 0)),
-                    (r.get("d78", 0), r.get("d79", 0), r.get("d80", 0), r.get("d81", 0), r.get("d82", 0)),
-                    (r.get("d83", 0), r.get("d84", 0), r.get("d85", 0), r.get("d86", 0), r.get("d87", 0)),
-                ]
-                for en, x1, y1, x2, y2 in segs:
-                    if en and x1 > 0 and y1 > 0 and x2 > 0 and y2 > 0:
-                        dr.line([x1, y1, x2, y2], fill=lc, width=2)
-
-        # Selected entity highlight
-        if self._vis_selected is not None and self._vis_selected in self._vis_hit_regions:
-            x1, y1, x2, y2 = self._vis_hit_regions[self._vis_selected]
-            dr.rectangle([x1 - 2, y1 - 2, x2 + 2, y2 + 2], outline=(255, 215, 0), width=2)
-
-        # Convert to QPixmap and display
-        pixmap = _pil_to_qpixmap(composite)
-        self._vis_bg_pixmap = pixmap
-        self._vis_bg_item = self._vis_gscene.addPixmap(pixmap)
-        self._vis_gscene.setSceneRect(0, 0, composite.width, composite.height)
-
-    def _vis_redraw(self):
-        sid = self._vis_scene_id
-        self._vis_gscene.clear()
-        self._vis_hit_regions = {}
-        self._vis_bg_item = None
-        if not self.records:
-            return
-
-        # 获取当前预览窗口视口的实际像素大小
-        view_w = self._vis_gview.viewport().width()
-        view_h = self._vis_gview.viewport().height()
-
-        ents = [r for r in self.records if has_data(r) and r['d1'] == sid]
-        bg_w = self._vis_bg_pil.width if self._vis_bg_pil else 0
-        bg_h = self._vis_bg_pil.height if self._vis_bg_pil else 0
-        if not ents:
-            # 空场景: 如果有背景图也要渲染
-            w = min(max(view_w, MAX_MAP_W, bg_w), 8192)
-            h = min(max(view_h, MAX_MAP_H, bg_h), 8192)
-            self._vis_render_scene(ents, w, h)
-            return
-        ents.sort(key=lambda r: r['d19'] if r['d0'] == 10 else r['d11'])
-        # 过滤垃圾废弃坐标 (>10000)，防止画布被撑到 8192 导致显卡卡死
-        xs = [r['d10'] for r in ents if -10000 < r['d10'] < 10000]
-        ys = [r['d11'] for r in ents if -10000 < r['d11'] < 10000]
-        if not xs: xs = [0]
-        if not ys: ys = [0]
-        right = max(r['d18'] + r['d20'] for r in ents if r['d20'] > 0 and -10000 < r['d18'] < 10000) if any(r['d20'] > 0 and -10000 < r['d18'] < 10000 for r in ents) else max(xs)
-        bottom = max(r['d19'] + r['d21'] for r in ents if r['d21'] > 0 and -10000 < r['d19'] < 10000) if any(r['d21'] > 0 and -10000 < r['d19'] < 10000 for r in ents) else max(ys)
-        w = min(max(view_w, MAX_MAP_W, max(max(xs), right) + 300, bg_w), 8192)
-        h = min(max(view_h, MAX_MAP_H, max(max(ys), bottom) + 300, bg_h), 8192)
-        self._vis_render_scene(ents, w, h)
-
-    # =========== 画布交互 ===========
-    def _vis_canvas_click(self, event):
-        pos = event.position().toPoint()
-        scene_pos = self._vis_gview.mapToScene(pos)
-        cx, cy = int(scene_pos.x()), int(scene_pos.y())
-        self._vis_selected = None
-        self._vis_drag = None
-        found = None
-        for idx, (x1, y1, x2, y2) in self._vis_hit_regions.items():
-            if x1 <= cx <= x2 and y1 <= cy <= y2:
-                found = idx
-        if found is not None:
-            if self._vis_sel_anim_active and self._vis_selected != found:
-                self._vis_stop_sel_anim()
-            self._vis_selected = found
-            rec = self.records[found]
-            tname = ENTITY_TYPES.get(rec['d0'], '?')
-            pos_x, pos_y = rec['d10'], rec['d11']
-            self._undo_pos = (found, pos_x, pos_y)
-            if self._vis_edit_mode:
-                self._vis_info_label.setText(f"选中: #{found} [{tname}] 坐标({pos_x},{pos_y}) — 拖拽可移动")
-                self._vis_drag = (found, cx, cy, pos_x, pos_y)
-            else:
-                self._vis_info_label.setText(f"选中: #{found} [{tname}] 坐标({pos_x},{pos_y}) — 拖动已锁定")
-            self._sync_entity_list_select(found)
-            self._current_param_idx = found
-            self._show_record(rec)
-        else:
-            self._vis_info_label.setText("")
-        self._vis_redraw()
-
-    def _vis_canvas_mouse_move(self, event):
-        pos = event.position().toPoint()
-        scene_pos = self._vis_gview.mapToScene(pos)
-        self._vis_coord_label.setText(f"坐标: ({int(scene_pos.x())}, {int(scene_pos.y())})")
-        # Drag handling (仅左键按下时拖动, 对应原版 <B1-Motion> 行为)
-        if self._vis_drag is None or not self._vis_edit_mode:
-            return
-        if not (event.buttons() & Qt.LeftButton):
-            self._vis_drag = None
-            return
-        eidx, sx, sy, ox, oy = self._vis_drag
-        cx, cy = int(scene_pos.x()), int(scene_pos.y())
-        dx, dy = cx - sx, cy - sy
-        new_x, new_y = ox + dx, oy + dy
-        rec = self.records[eidx]
-        old_d10, old_d11 = rec['d10'], rec['d11']
-        rec['d10'], rec['d11'] = new_x, new_y
-        rec['d18'] += new_x - old_d10
-        rec['d19'] += new_y - old_d11
-        self._dirty = True
-        self._vis_info_label.setText(f"移动: #{eidx} → ({new_x},{new_y})")
-        self._vis_redraw()
-
-    def _vis_canvas_release(self, event):
-        if self._vis_drag:
-            eidx = self._vis_drag[0]
-            rec = self.records[eidx]
-            pos = event.position().toPoint()
-            scene_pos = self._vis_gview.mapToScene(pos)
-            cx, cy = int(scene_pos.x()), int(scene_pos.y())
-            px, py = rec['d10'], rec['d11']
-            self._vis_drag = (eidx, cx, cy, px, py)
-            if hasattr(self, '_current_param_idx') and self._current_param_idx == eidx:
-                self._show_record(rec)
-
-    def _vis_canvas_wheel(self, event):
-        delta = event.angleDelta().y()
-        if event.modifiers() & Qt.ShiftModifier:
-            self._vis_gview.horizontalScrollBar().setValue(
-                self._vis_gview.horizontalScrollBar().value() - delta)
-        else:
-            self._vis_gview.verticalScrollBar().setValue(
-                self._vis_gview.verticalScrollBar().value() - delta)
-
-    # =========== 动画控制 ===========
-    def _vis_toggle_anim(self):
-        if self._vis_anim_playing:
-            self._vis_stop_anim()
-            self._vis_anim_playing = False
-            self._vis_play_btn.setText("▶️ 播放全部")
-        else:
-            self._vis_anim_playing = True
-            self._vis_start_anim()
-            self._vis_play_btn.setText("⏸️ 暂停全部")
-
-    def _vis_start_anim(self):
-        if self._vis_anim_timer:
-            return
-        mode = DISPLAY_MODES.get(self._vis_display_mode, 'auto')
-        if mode in ('wire', 'cha'):
-            return
-        timer = QTimer(self)
-        timer.timeout.connect(self._vis_anim_tick)
-        timer.start(200)
-        self._vis_anim_timer = timer
-
-    def _vis_anim_tick(self):
-        mode = DISPLAY_MODES.get(self._vis_display_mode, 'auto')
-        if mode in ('wire', 'cha'):
-            self._vis_stop_anim()
-            return
-        for idx in list(self._vis_anim_frame.keys()):
-            self._vis_anim_frame[idx] += 1
-        self._vis_redraw()
-
-    def _vis_stop_anim(self):
-        if self._vis_anim_timer:
-            self._vis_anim_timer.stop()
-            self._vis_anim_timer = None
-
-    def _vis_toggle_sel_anim(self):
-        if self._vis_selected is None:
-            self._vis_info_label.setText("请先选中一个实体再播放动画")
-            return
-        if self._vis_anim_playing:
-            self._vis_info_label.setText("全局动画已开启，无需单独播放")
-            return
-        idx = self._vis_selected
-        rec = self.records[idx]
-        mode = DISPLAY_MODES.get(self._vis_display_mode, 'auto')
-        tval = rec['d0']
-        can_animate = False
-        if mode in ('auto', 'ani'):
-            if tval in (200, 20, 110) and rec['d64'] > 0 and self._ani_jvg:
-                can_animate = True
-        if not can_animate:
-            tname = ENTITY_TYPES.get(tval, '?')
-            self._vis_info_label.setText(f"实体 #{idx} [{tname}] 不支持动画")
-            return
-        if self._vis_sel_anim_active:
-            self._vis_stop_sel_anim()
-        else:
-            self._vis_start_sel_anim(idx)
-
-    def _vis_start_sel_anim(self, idx):
-        self._vis_sel_anim_active = True
-        self._vis_sel_anim_btn.setText("⏸️ 播放选中")
-        self._vis_anim_frame[idx] = 0
-        timer = QTimer(self)
-        timer.timeout.connect(lambda: self._vis_sel_anim_tick(idx))
-        timer.start(200)
-        self._vis_sel_anim_timer = timer
-
-    def _vis_sel_anim_tick(self, idx):
-        if not self._vis_sel_anim_active:
-            return
-        mode = DISPLAY_MODES.get(self._vis_display_mode, 'auto')
-        if mode in ('wire', 'cha'):
-            self._vis_stop_sel_anim()
-            return
-        if idx in self._vis_anim_frame:
-            self._vis_anim_frame[idx] += 1
-        self._vis_redraw()
-
-    def _vis_stop_sel_anim(self):
-        self._vis_sel_anim_active = False
-        if self._vis_sel_anim_timer:
-            self._vis_sel_anim_timer.stop()
-            self._vis_sel_anim_timer = None
-        self._vis_sel_anim_btn.setText("⏯️ 播放选中")
-
-    def _on_display_mode_change(self):
-        self._vis_stop_anim()
-        self._vis_stop_sel_anim()
-        self._vis_anim_playing = False
-        self._vis_play_btn.setText("▶️ 播放全部")
-        self._vis_display_mode = self._display_mode_combo.currentText()
-        self._vis_load_scene()
-
-    def _on_edit_mode_change(self):
-        self._vis_edit_mode = self._vis_edit_cb.isChecked()
-        if self._vis_edit_mode:
-            self._vis_info_label.setText("编辑模式已开启 — 可拖动实体")
-        else:
-            self._vis_drag = None
-            self._vis_info_label.setText("编辑模式已锁定 — 拖动已禁用")
-
-    def _vis_canvas_undo(self):
-        if self._undo_pos is None:
-            return
-        eidx, old_x, old_y = self._undo_pos
-        rec = self.records[eidx]
-        cur_d10, cur_d11 = rec['d10'], rec['d11']
-        rec['d10'], rec['d11'] = old_x, old_y
-        rec['d18'] += old_x - cur_d10
-        rec['d19'] += old_y - cur_d11
-        self._dirty = True
-        self._vis_info_label.setText(f"已撤销: #{eidx} → ({old_x},{old_y})")
-        self._vis_redraw()
-        self._undo_pos = None
-        if hasattr(self, '_current_param_idx') and self._current_param_idx == eidx:
-            self._show_record(rec)
+        if self._canvas._vis_anim_playing:
+            self._canvas._vis_start_anim()
 
     # =========== 数据加载 ===========
     def _load_dir(self):
@@ -4254,9 +4122,9 @@ class MatEditorApp(QMainWindow):
         if not os.path.exists(mat_p):
             QMessageBox.warning(self, "文件缺失", f"未找到 TKMat.Dat\n{d}")
             return
-        self._save_mode = False
-        self.dat_path = mat_p
-        self.tkt_path = tkt_p if os.path.exists(tkt_p) else None
+        self._data._save_mode = False
+        self._data.dat_path = mat_p
+        self._data.tkt_path = tkt_p if os.path.exists(tkt_p) else None
         self._reload()
 
     def _load_save_dir(self):
@@ -4304,15 +4172,18 @@ class MatEditorApp(QMainWindow):
                         summary = "(索引异常)"
                 slots.append((s, sp, summary))
         if not slots:
-            QMessageBox.warning(self, "无可用槽位", "目录中没有存档数据"); return
+            QMessageBox.warning(self, "无可用槽位", "目录中没有存档数据")
+            return
         # 槽位选择对话框
-        dlg = QDialog(self); dlg.setWindowTitle("选择存档槽位 — 加载 TKMat 数据")
+        dlg = QDialog(self)
+        dlg.setWindowTitle("选择存档槽位 — 加载 TKMat 数据")
         dlg.resize(450, 380)
         layout = QVBoxLayout(dlg)
         layout.addWidget(QLabel(f"存档目录: {save_dir}"))
         table = QTableWidget(len(slots), 3)
         table.setHorizontalHeaderLabels(['槽位', '文件', '摘要'])
-        table.setColumnWidth(0, 50); table.setColumnWidth(1, 150)
+        table.setColumnWidth(0, 50)
+        table.setColumnWidth(1, 150)
         table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
         table.setSelectionBehavior(QAbstractItemView.SelectRows)
         table.setSelectionMode(QAbstractItemView.SingleSelection)
@@ -4334,13 +4205,13 @@ class MatEditorApp(QMainWindow):
         slot_num = slots[sel[0].row()][0]
         save_path = slots[sel[0].row()][1]
         # 设置存档模式
-        self._save_mode = True
-        self._save_path = save_path
-        self._save_slot = slot_num
-        self._game_dir = game_dir  # 直接存储游戏目录
-        self.dat_path = save_path  # DataLoaderThread 从此路径加载附属文件 (TKD/TKDefUnit)
+        self._data._save_mode = True
+        self._data._save_path = save_path
+        self._data._save_slot = slot_num
+        self._data._game_dir = game_dir  # 直接存储游戏目录
+        self._data.dat_path = save_path  # DataLoaderThread 从此路径加载附属文件 (TKD/TKDefUnit)
         tkt_p = os.path.join(game_dir, 'TKT.dat')
-        self.tkt_path = tkt_p if os.path.exists(tkt_p) else None
+        self._data.tkt_path = tkt_p if os.path.exists(tkt_p) else None
         # 预加载 TKMat records (从存档 Frame1)
         self.status_var.setText(f"从存档加载 TKMat 数据 (槽位{slot_num})…")
         QApplication.processEvents()
@@ -4348,13 +4219,13 @@ class MatEditorApp(QMainWindow):
             self._preloaded_records = load_mat_from_save(save_path)
         except Exception as e:
             QMessageBox.critical(self, "加载失败", f"无法从存档读取 TKMat 数据:\n{e}")
-            self._save_mode = False
+            self._data._save_mode = False
             return
         self._reload()
         self.setWindowTitle(f"TKMat.Dat 地图实体编辑器 v2.3 (PySide6) [存档模式 槽位{slot_num}]")
 
     def _reload(self):
-        if not self.dat_path:
+        if not self._data.dat_path:
             return
         self.status_var.setText("后台高速解析结构中…")
         self._set_edit_enabled(False)
@@ -4364,9 +4235,9 @@ class MatEditorApp(QMainWindow):
         self._cur_jvg = None
         self._update_path()
         # 存档模式下使用 game_dir 加载附属文件，并传入预加载的 TKMat records
-        game_dir = self._game_dir if self._save_mode else os.path.dirname(self.dat_path)
-        preloaded = getattr(self, '_preloaded_records', None) if self._save_mode else None
-        self._loader_thread = DataLoaderThread(self.dat_path, self.tkt_path,
+        game_dir = self._data._game_dir if self._data._save_mode else os.path.dirname(self._data.dat_path)
+        preloaded = getattr(self, '_preloaded_records', None) if self._data._save_mode else None
+        self._loader_thread = DataLoaderThread(self._data.dat_path, self._data.tkt_path,
                                                 game_dir=game_dir, preloaded_records=preloaded)
         self._loader_thread.finished_load.connect(self._on_load_success)
         self._loader_thread.error_load.connect(self._on_load_error)
@@ -4375,7 +4246,7 @@ class MatEditorApp(QMainWindow):
     def _on_load_error(self, err_msg):
         """加载报错回调"""
         QMessageBox.critical(self, "加载失败", f"数据解析异常:\n{err_msg}")
-        self.records = []
+        self._data.records = []
         self._set_edit_enabled(True)
         self.status_var.setText("加载失败")
 
@@ -4384,24 +4255,14 @@ class MatEditorApp(QMainWindow):
         self.setUpdatesEnabled(False)
         result = self._loader_thread.result_data
 
-        self.tkt_scenes = result.get('tkt_scenes', {})
-        self.tkt_all = result.get('tkt_all', {})
-        self.defunit_recs = result.get('defunit_recs', [])
-        self.defunit_next = result.get('defunit_next', {})
-        self.defunit_entity = result.get('defunit_entity', {})
-        self.tkd_defines = result.get('tkd_defines', [])
-        self.tkd_header = result.get('tkd_header', '')
-        self.tkd_define_map = result.get('tkd_define_map', {})
-        self.item_names = result.get('item_names', {})
-        self._sc_grp_section_count = result.get('sc_grp_section_count', 0)
-        self.records = result.get('records', [])
+        self._data.load_from_result(result)
 
         # 保存原始快照用于 MOD 导出
-        self._original_mat_records = [[r.get(f'd{i}', 0) for i in range(DWORD_COUNT)] for r in self.records]
-        self._original_defunit_recs = [[r.get(f'f{i}', 0) for i in range(8)] for r in self.defunit_recs]
+        self._original_mat_records = [[r.get(f'd{i}', 0) for i in range(DWORD_COUNT)] for r in self._data.records]
+        self._original_defunit_recs = [[r.get(f'f{i}', 0) for i in range(8)] for r in self._data.defunit_recs]
 
-        nonempty = sum(1 for r in self.records if has_data(r))
-        scenes = set(r['d1'] for r in self.records if has_data(r))
+        nonempty = sum(1 for r in self._data.records if has_data(r))
+        scenes = set(r['d1'] for r in self._data.records if has_data(r))
 
         self._update_path()
         self._set_edit_enabled(True)
@@ -4411,7 +4272,7 @@ class MatEditorApp(QMainWindow):
         # 延迟启动 JVG 贴图加载，让主线程先完成 UI 渲染，避免 GIL 锁竞争
         self.status_var.setText(
             f"{REC_COUNT}条 | 有效{nonempty} | TKMat场景{len(scenes)} | "
-            f"SC.GRP {self._sc_grp_section_count}区段 (正在后台加载贴图…)")
+            f"SC.GRP {self._data._sc_grp_section_count}区段 (正在后台加载贴图…)")
         QTimer.singleShot(300, self._start_jvg_thread)
 
         # 自动选中首个有效场景 (静默信号，防止触发无意义的首次重绘)
@@ -4421,7 +4282,7 @@ class MatEditorApp(QMainWindow):
             self.scene_tree.setCurrentItem(first)
             self.scene_tree.blockSignals(False)
             sid = int(first.text(0))
-            self._vis_scene_id = sid
+            self._canvas._vis_scene_id = sid
             for i in range(self._vis_scene_combo.count()):
                 if self._vis_scene_combo.itemText(i).startswith(f"{sid}:"):
                     self._vis_scene_combo.setCurrentIndex(i)
@@ -4429,14 +4290,14 @@ class MatEditorApp(QMainWindow):
             self._vis_load_scene()
 
         # 所有初始化完成后才重置脏标记，防止 UI 刷新链路误触
-        self._dirty = False
+        self._data._dirty = False
         self._script_dirty = False
         self.setUpdatesEnabled(True)
 
     def _start_jvg_thread(self):
         """延迟触发的后台资源加载线程 (贴图+TKD+物品)"""
-        game_dir = self._game_dir if self._save_mode else None
-        self._jvg_thread = JvgLoaderThread(self.dat_path, getattr(self, 'tkt_all', None), game_dir=game_dir)
+        game_dir = self._data._game_dir if self._data._save_mode else None
+        self._jvg_thread = JvgLoaderThread(self._data.dat_path, self._data.tkt_all, game_dir=game_dir)
         self._jvg_thread.finished_jvg.connect(self._on_jvg_success)
         self._jvg_thread.start()
 
@@ -4450,14 +4311,14 @@ class MatEditorApp(QMainWindow):
 
         # 接收 TKD 脚本与物品数据
         if 'tkd_defines' in result:
-            self.tkd_defines = result['tkd_defines']
-            self.tkd_header = result.get('tkd_header', '')
-            self.tkd_define_map = result.get('tkd_define_map', {})
-            self.item_names = result.get('item_names', {})
+            self._data.tkd_defines = result['tkd_defines']
+            self._data.tkd_header = result.get('tkd_header', '')
+            self._data.tkd_define_map = result.get('tkd_define_map', {})
+            self._data.item_names = result.get('item_names', {})
             # 保存 TKD 原始快照用于 MOD 导出 (dict: {define_id_str: full_text})
             self._original_tkd_defines = {
                 str(dd['define_id']): '\r\n'.join([dd['header_line']] + dd['body_lines'])
-                for dd in self.tkd_defines
+                for dd in self._data.tkd_defines
             }
             # 刷新当前脚本预览
             if self._current_edit_define_id is not None:
@@ -4467,28 +4328,28 @@ class MatEditorApp(QMainWindow):
         cur = self.status_var.text()
         self.status_var.setText(cur.replace("(正在后台加载贴图…)", "(全部资源就绪)"))
         # 触发重绘让实体显示彩色立绘
-        if hasattr(self, 'records') and self.records:
-            self._vis_redraw()
+        if hasattr(self, '_data') and self._data.records:
+            self._canvas._vis_redraw()
 
     def _vis_populate_scenes(self):
         self.scene_tree.setUpdatesEnabled(False)
         self.scene_tree.blockSignals(True)
         self.scene_tree.clear()
-        if not self.records:
+        if not self._data.records:
             self.scene_tree.blockSignals(False)
             self.scene_tree.setUpdatesEnabled(True)
             return
         smap = defaultdict(list)
-        for r in self.records:
+        for r in self._data.records:
             if has_data(r) and r['d1'] >= 0:
                 smap[r['d1']].append(r['index'])
-        total_scenes = max(self._sc_grp_section_count, max(smap.keys()) + 1 if smap else 0)
+        total_scenes = max(self._data._sc_grp_section_count, max(smap.keys()) + 1 if smap else 0)
         combo_vals = []
         scene_items = []
         for sid in range(total_scenes):
-            sname = scene_name(self.tkt_scenes, sid)
+            sname = scene_name(self._data.tkt_scenes, sid)
             cnt = len(smap.get(sid, []))
-            is_virtual = self._sc_grp_section_count > 0 and sid >= self._sc_grp_section_count
+            is_virtual = self._data._sc_grp_section_count > 0 and sid >= self._data._sc_grp_section_count
             display_name = f"{sname} [虚拟场景]" if is_virtual else sname
             item = QTreeWidgetItem([str(sid), display_name, str(cnt)])
             if is_virtual:
@@ -4512,17 +4373,18 @@ class MatEditorApp(QMainWindow):
 
     # =========== 保存 ===========
     def _save(self):
-        if self._save_mode:
-            self._save_to_save_file(); return
-        d = os.path.dirname(self.dat_path) if self.dat_path else None
+        if self._data._save_mode:
+            self._save_to_save_file()
+            return
+        d = os.path.dirname(self._data.dat_path) if self._data.dat_path else None
         if not d:
             self._save_as()
             return
         self._save_editor_to_define()
         du_p = os.path.join(d, "TKDefUnit.Dat")
         tkd_p = os.path.join(d, "TKD.dat")
-        has_sc_pending = self._sc_grp_pending is not None
-        files_msg = f"TKMat.Dat: {self.dat_path}\nTKDefUnit.Dat: {du_p}\nTKD.dat: {tkd_p}"
+        has_sc_pending = self._data._sc_grp_pending is not None
+        files_msg = f"TKMat.Dat: {self._data.dat_path}\nTKDefUnit.Dat: {du_p}\nTKD.dat: {tkd_p}"
         if has_sc_pending:
             files_msg += f"\nSC.GRP: {os.path.join(d, 'SC.GRP')}\nSC.IDX: {os.path.join(d, 'SC.IDX')}"
         file_count = 5 if has_sc_pending else 3
@@ -4530,15 +4392,15 @@ class MatEditorApp(QMainWindow):
             return
         errors = []
         try:
-            save_mat(self.dat_path, self.records)
+            save_mat(self._data.dat_path, self._data.records)
         except Exception as e:
             errors.append(f"TKMat.Dat: {e}")
         try:
-            save_defunit(du_p, self.defunit_recs)
+            save_defunit(du_p, self._data.defunit_recs)
         except Exception as e:
             errors.append(f"TKDefUnit.Dat: {e}")
         try:
-            tkd_text = rebuild_text(self.tkd_defines, self.tkd_header)
+            tkd_text = rebuild_text(self._data.tkd_defines, self._data.tkd_header)
             save_tkd(tkd_p, tkd_text)
         except Exception as e:
             errors.append(f"TKD.dat: {e}")
@@ -4549,7 +4411,7 @@ class MatEditorApp(QMainWindow):
                 idx_path = os.path.join(d, "SC.IDX")
                 offsets = []
                 grp_data = bytearray()
-                for section in self._sc_grp_pending:
+                for section in self._data._sc_grp_pending:
                     offsets.append(len(grp_data))
                     grp_data.extend(section)
                 offsets.append(len(grp_data))  # 末尾哨兵
@@ -4558,36 +4420,37 @@ class MatEditorApp(QMainWindow):
                 with open(idx_path, 'wb') as f:
                     for off in offsets:
                         f.write(struct.pack('<I', off))
-                self._sc_grp_pending = None  # 已写入，清除待保存标记
+                self._data._sc_grp_pending = None  # 已写入，清除待保存标记
             except Exception as e:
                 errors.append(f"SC.GRP/IDX: {e}")
         if errors:
             QMessageBox.critical(self, "保存失败", '\n'.join(errors))
         else:
-            self._dirty = False
+            self._data._dirty = False
             self._script_dirty = False
             self.status_var.setText(f"已保存 — {file_count} 个文件")
 
     def _save_as(self):
-        if self._save_mode:
+        if self._data._save_mode:
             QMessageBox.information(self, "提示", "存档模式下不支持另存为")
             return
         fp, _ = QFileDialog.getSaveFileName(self, "另存 TKMat.Dat", "", "DAT 文件 (*.Dat *.dat);;所有文件 (*.*)")
         if not fp:
             return
-        self.dat_path = fp
+        self._data.dat_path = fp
         self._save()
 
     def _save_to_save_file(self):
         """存档模式下保存 TKMat 数据回 sav.N，TKDefUnit/TKD 写入游戏目录"""
-        if not self._save_path or not self.records:
-            QMessageBox.information(self, "提示", "无存档数据"); return
-        game_dir = self._game_dir or os.path.dirname(os.path.dirname(self._save_path))
+        if not self._data._save_path or not self._data.records:
+            QMessageBox.information(self, "提示", "无存档数据")
+            return
+        game_dir = self._data._game_dir or os.path.dirname(os.path.dirname(self._data._save_path))
         du_p = os.path.join(game_dir, "TKDefUnit.Dat")
         tkd_p = os.path.join(game_dir, "TKD.dat")
-        files_msg = (f"存档 TKMat: {self._save_path} (槽位 {self._save_slot})\n"
+        files_msg = (f"存档 TKMat: {self._data._save_path} (槽位 {self._data._save_slot})\n"
                      f"TKDefUnit.Dat: {du_p}\nTKD.dat: {tkd_p}")
-        has_sc = self._sc_grp_pending is not None
+        has_sc = self._data._sc_grp_pending is not None
         if has_sc:
             files_msg += f"\nSC.GRP/SC.IDX: {game_dir}"
         if QMessageBox.question(self, f"确认保存到存档", files_msg,
@@ -4595,15 +4458,15 @@ class MatEditorApp(QMainWindow):
             return
         errors = []
         try:
-            save_mat_to_save(self._save_path, self.records)
+            save_mat_to_save(self._data._save_path, self._data.records)
         except Exception as e:
             errors.append(f"存档 TKMat: {e}")
         try:
-            save_defunit(du_p, self.defunit_recs)
+            save_defunit(du_p, self._data.defunit_recs)
         except Exception as e:
             errors.append(f"TKDefUnit.Dat: {e}")
         try:
-            tkd_text = rebuild_text(self.tkd_defines, self.tkd_header)
+            tkd_text = rebuild_text(self._data.tkd_defines, self._data.tkd_header)
             save_tkd(tkd_p, tkd_text)
         except Exception as e:
             errors.append(f"TKD.dat: {e}")
@@ -4613,46 +4476,49 @@ class MatEditorApp(QMainWindow):
                 idx_path = os.path.join(game_dir, "SC.IDX")
                 offsets = []
                 grp_data = bytearray()
-                for section in self._sc_grp_pending:
+                for section in self._data._sc_grp_pending:
                     offsets.append(len(grp_data))
                     grp_data.extend(section)
                 offsets.append(len(grp_data))
                 with open(grp_path, 'wb') as f: f.write(bytes(grp_data))
                 with open(idx_path, 'wb') as f:
                     for off in offsets: f.write(struct.pack('<I', off))
-                self._sc_grp_pending = None
+                self._data._sc_grp_pending = None
             except Exception as e:
                 errors.append(f"SC.GRP/IDX: {e}")
         if errors:
             QMessageBox.critical(self, "保存失败", '\n'.join(errors))
         else:
-            self._dirty = False
+            self._data._dirty = False
             self._script_dirty = False
-            self.status_var.setText(f"已保存到存档 {self._save_path} 槽位{self._save_slot}")
+            self.status_var.setText(f"已保存到存档 {self._data._save_path} 槽位{self._data._save_slot}")
 
     def _export_tksmod(self):
         """导出当前修改为 .tksmod MOD 文件 (TKMat + TKDefUnit + TKD 三文件联动)"""
-        if not self.records or not hasattr(self, '_original_mat_records'):
-            QMessageBox.information(self, "提示", "请先加载数据"); return
+        if not self._data.records or not hasattr(self, '_original_mat_records'):
+            QMessageBox.information(self, "提示", "请先加载数据")
+            return
         dlg = ModMetadataDialog(self, getattr(self, '_last_mod_metadata', None))
         if dlg.exec() != QDialog.Accepted: return
-        metadata = dlg.get_metadata(); self._last_mod_metadata = metadata
+        metadata = dlg.get_metadata()
+        self._last_mod_metadata = metadata
 
-        data_files = {}; components = []
+        data_files = {}
+        components = []
 
         # TKMat.Dat 差异
-        current_mat = [[r.get(f'd{i}', 0) for i in range(DWORD_COUNT)] for r in self.records]
+        current_mat = [[r.get(f'd{i}', 0) for i in range(DWORD_COUNT)] for r in self._data.records]
         mat_diff = diff_records(self._original_mat_records, current_mat, DWORD_COUNT, len(self._original_mat_records))
         if mat_diff['modified'] or mat_diff['appended']:
-            crc = compute_crc32(self.dat_path) if self.dat_path else "0x00000000"
+            crc = compute_crc32(self._data.dat_path) if self._data.dat_path else "0x00000000"
             mat_json = build_data_diff_json(target="TKMat.Dat", record_size=REC_SIZE, field_type="int32",
                 field_count=DWORD_COUNT, original_count=len(self._original_mat_records), original_crc32=crc, diff_result=mat_diff)
             data_files["data/TKMat.dat.json"] = mat_json
             components.append({"file": "data/TKMat.dat.json", "target": "TKMat.Dat"})
 
         # TKDefUnit.Dat 差异
-        if hasattr(self, '_original_defunit_recs') and hasattr(self, 'defunit_recs'):
-            current_du = [[r.get(f'f{i}', 0) for i in range(8)] for r in self.defunit_recs]
+        if hasattr(self, '_original_defunit_recs') and hasattr(self, '_data'):
+            current_du = [[r.get(f'f{i}', 0) for i in range(8)] for r in self._data.defunit_recs]
             du_diff = diff_records(self._original_defunit_recs, current_du, 8, len(self._original_defunit_recs))
             if du_diff['modified'] or du_diff['appended']:
                 du_path = os.path.join(self._get_game_dir(), "TKDefUnit.Dat")
@@ -4663,11 +4529,11 @@ class MatEditorApp(QMainWindow):
                 components.append({"file": "data/TKDefUnit.dat.json", "target": "TKDefUnit.Dat"})
 
         # TKD.dat 脚本差异
-        if hasattr(self, '_original_tkd_defines') and hasattr(self, 'tkd_defines'):
+        if hasattr(self, '_original_tkd_defines') and hasattr(self, '_data'):
             self._save_editor_to_define()  # 确保当前编辑中的脚本已回写
             current_tkd = {
                 str(dd['define_id']): '\r\n'.join([dd['header_line']] + dd['body_lines'])
-                for dd in self.tkd_defines
+                for dd in self._data.tkd_defines
             }
             tkd_diff = diff_text_defines(self._original_tkd_defines, current_tkd)
             if tkd_diff['modified'] or tkd_diff['appended'] or tkd_diff['deleted']:
@@ -4678,7 +4544,8 @@ class MatEditorApp(QMainWindow):
                 components.append({"file": "data/TKD.dat.json", "target": "TKD.dat"})
 
         if not data_files:
-            QMessageBox.information(self, "无差异", "当前数据与原始文件相同，无需导出。"); return
+            QMessageBox.information(self, "无差异", "当前数据与原始文件相同，无需导出。")
+            return
 
         mod_json = generate_mod_json(metadata, components)
         fp, _ = QFileDialog.getSaveFileName(self, "导出为 MOD", f"{safe_mod_filename(metadata['name'], metadata['id'])}.tksmod", "TKS MOD (*.tksmod)")
@@ -4693,11 +4560,12 @@ class MatEditorApp(QMainWindow):
 
     def _export_tksmod_with_ref(self):
         """导出 MOD — 指定原始参考目录进行差异比对 (TKMat + TKDefUnit)"""
-        if not self.records:
-            QMessageBox.information(self, "提示", "请先加载数据"); return
+        if not self._data.records:
+            QMessageBox.information(self, "提示", "请先加载数据")
+            return
 
         # 预构建当前 TKMat 字段
-        current_mat = [[r.get(f'd{i}', 0) for i in range(DWORD_COUNT)] for r in self.records]
+        current_mat = [[r.get(f'd{i}', 0) for i in range(DWORD_COUNT)] for r in self._data.records]
 
         def _compute_stats(ref_dir):
             ref_mat = load_reference_dat_fields(ref_dir, "TKMat.Dat",
@@ -4740,9 +4608,11 @@ class MatEditorApp(QMainWindow):
         ref_mat = load_reference_dat_fields(ref_dir, "TKMat.Dat",
             rec_size=REC_SIZE, field_count=DWORD_COUNT, field_fmt='i', use_lzss=False)
         if ref_mat is None:
-            QMessageBox.warning(self, "参考目录无效", f"在 {ref_dir} 中未找到 TKMat.Dat"); return
+            QMessageBox.warning(self, "参考目录无效", f"在 {ref_dir} 中未找到 TKMat.Dat")
+            return
 
-        data_files = {}; components = []
+        data_files = {}
+        components = []
 
         # TKMat.Dat 差异
         mat_diff = diff_records(ref_mat, current_mat, DWORD_COUNT, len(ref_mat))
@@ -4754,11 +4624,11 @@ class MatEditorApp(QMainWindow):
             components.append({"file": "data/TKMat.dat.json", "target": "TKMat.Dat"})
 
         # TKDefUnit.Dat 差异
-        if hasattr(self, 'defunit_recs'):
+        if hasattr(self, '_data'):
             ref_du = load_reference_dat_fields(ref_dir, "TKDefUnit.Dat",
                 rec_size=DEFUNIT_REC_SIZE, field_count=8, field_fmt='H', use_lzss=False)
             if ref_du is not None:
-                current_du = [[r.get(f'f{i}', 0) for i in range(8)] for r in self.defunit_recs]
+                current_du = [[r.get(f'f{i}', 0) for i in range(8)] for r in self._data.defunit_recs]
                 du_diff = diff_records(ref_du, current_du, 8, len(ref_du))
                 if du_diff['modified'] or du_diff['appended']:
                     crc = compute_crc32(os.path.join(ref_dir, "TKDefUnit.Dat"))
@@ -4768,7 +4638,7 @@ class MatEditorApp(QMainWindow):
                     components.append({"file": "data/TKDefUnit.dat.json", "target": "TKDefUnit.Dat"})
 
         # TKD.dat 脚本差异
-        if hasattr(self, 'tkd_defines'):
+        if hasattr(self, '_data'):
             ref_tkd_path = os.path.join(ref_dir, "TKD.dat")
             if os.path.exists(ref_tkd_path):
                 self._save_editor_to_define()  # 确保当前编辑中的脚本已回写
@@ -4780,7 +4650,7 @@ class MatEditorApp(QMainWindow):
                 }
                 current_tkd = {
                     str(dd['define_id']): '\r\n'.join([dd['header_line']] + dd['body_lines'])
-                    for dd in self.tkd_defines
+                    for dd in self._data.tkd_defines
                 }
                 tkd_diff = diff_text_defines(ref_tkd_map, current_tkd)
                 if tkd_diff['modified'] or tkd_diff['appended'] or tkd_diff['deleted']:
@@ -4790,11 +4660,13 @@ class MatEditorApp(QMainWindow):
                     components.append({"file": "data/TKD.dat.json", "target": "TKD.dat"})
 
         if not data_files:
-            QMessageBox.information(self, "无差异", "当前数据与参考文件相同，无需导出。"); return
+            QMessageBox.information(self, "无差异", "当前数据与参考文件相同，无需导出。")
+            return
 
         dlg = ModMetadataDialog(self, getattr(self, '_last_mod_metadata', None))
         if dlg.exec() != QDialog.Accepted: return
-        metadata = dlg.get_metadata(); self._last_mod_metadata = metadata
+        metadata = dlg.get_metadata()
+        self._last_mod_metadata = metadata
 
         mod_json = generate_mod_json(metadata, components)
         fp, _ = QFileDialog.getSaveFileName(self, "导出为 MOD", f"{safe_mod_filename(metadata['name'], metadata['id'])}.tksmod", "TKS MOD (*.tksmod)")
@@ -4809,17 +4681,17 @@ class MatEditorApp(QMainWindow):
 
     def _export_scene_as_tksmod(self):
         """导出当前场景为 .tksmod MOD 文件 — 直接导出选中场景全部数据（不判断差异）"""
-        if not self.records:
+        if not self._data.records:
             QMessageBox.information(self, "提示", "请先加载数据")
             return
 
-        sid = self._vis_scene_id
+        sid = self._canvas._vis_scene_id
         if sid < 0:
             QMessageBox.warning(self, "无效场景", "请先在可视化面板中选择一个场景")
             return
 
         # ── 1. 筛选属于本场景的实体 ──
-        scene_entity_indices = [i for i, r in enumerate(self.records)
+        scene_entity_indices = [i for i, r in enumerate(self._data.records)
                                 if has_data(r) and r['d1'] == sid]
         if not scene_entity_indices:
             QMessageBox.warning(self, "空场景", f"场景 {sid} 无实体数据")
@@ -4827,7 +4699,7 @@ class MatEditorApp(QMainWindow):
 
         # ── 2. 追踪 DefUnit 链 ──
         def find_du(idx):
-            return next((r for r in self.defunit_recs if r['index'] == idx), None)
+            return next((r for r in self._data.defunit_recs if r['index'] == idx), None)
 
         all_defunit_indices = set()
 
@@ -4846,7 +4718,7 @@ class MatEditorApp(QMainWindow):
                 cur = nxt
 
         for eidx in scene_entity_indices:
-            rec = self.records[eidx]
+            rec = self._data.records[eidx]
             for chain_di, max_di in [(39, 30), (40, 31), (41, 32)]:
                 head = rec.get(f'd{chain_di}', -1)
                 mx = rec.get(f'd{max_di}', 0)
@@ -4863,7 +4735,7 @@ class MatEditorApp(QMainWindow):
                     scene_define_ids.add(str(did))
 
         # ── 4. 弹出 MOD 元数据对话框 ──
-        sname = scene_name(self.tkt_scenes, sid).replace('/', '_').replace('\\', '_')
+        sname = scene_name(self._data.tkt_scenes, sid).replace('/', '_').replace('\\', '_')
         defaults = getattr(self, '_last_mod_metadata', None) or {}
         if not defaults.get('id'):
             defaults['id'] = f"scene_{sid}_{sname}"
@@ -4883,7 +4755,7 @@ class MatEditorApp(QMainWindow):
 
         mat_entries = []
         for eidx in scene_entity_indices:
-            rec = self.records[eidx]
+            rec = self._data.records[eidx]
             # 导出所有字段（含零值），确保导入时能完整覆盖目标槽位
             fields = {}
             for fi in range(DWORD_COUNT):
@@ -4891,8 +4763,8 @@ class MatEditorApp(QMainWindow):
             mat_entries.append({"index": eidx, "fields": fields})
 
         if mat_entries:
-            crc = compute_crc32(self.dat_path) if self.dat_path else "0x00000000"
-            original_count = len(self.records)
+            crc = compute_crc32(self._data.dat_path) if self._data.dat_path else "0x00000000"
+            original_count = len(self._data.records)
             mat_json = build_data_diff_json(
                 target="TKMat.Dat", record_size=REC_SIZE, field_type="int32",
                 field_count=DWORD_COUNT, original_count=original_count,
@@ -4901,7 +4773,7 @@ class MatEditorApp(QMainWindow):
             components.append({"file": "data/TKMat.dat.json", "target": "TKMat.Dat"})
 
         # ── 6. 直接导出 TKDefUnit.Dat（全量字段，不做差异比对）──
-        if hasattr(self, 'defunit_recs') and all_defunit_indices:
+        if hasattr(self, '_data') and all_defunit_indices:
             du_entries = []
             for du_idx in sorted(all_defunit_indices):
                 du = find_du(du_idx)
@@ -4915,7 +4787,7 @@ class MatEditorApp(QMainWindow):
             if du_entries:
                 du_path = os.path.join(self._get_game_dir(), "TKDefUnit.Dat")
                 crc = compute_crc32(du_path) if os.path.exists(du_path) else "0x00000000"
-                original_du_count = len(self.defunit_recs)
+                original_du_count = len(self._data.defunit_recs)
                 du_json = build_data_diff_json(
                     target="TKDefUnit.Dat", record_size=DEFUNIT_REC_SIZE, field_type="uint16",
                     field_count=8, original_count=original_du_count,
@@ -4924,10 +4796,10 @@ class MatEditorApp(QMainWindow):
                 components.append({"file": "data/TKDefUnit.dat.json", "target": "TKDefUnit.Dat"})
 
         # ── 7. 直接导出 TKD.dat 脚本（全量内容，不做差异比对）──
-        if hasattr(self, 'tkd_defines') and scene_define_ids:
+        if hasattr(self, '_data') and scene_define_ids:
             self._save_editor_to_define()
             tkd_modified = {}
-            for dd in self.tkd_defines:
+            for dd in self._data.tkd_defines:
                 did_str = str(dd['define_id'])
                 if did_str in scene_define_ids:
                     tkd_modified[did_str] = '\r\n'.join([dd['header_line']] + dd['body_lines'])
@@ -4941,7 +4813,7 @@ class MatEditorApp(QMainWindow):
                 components.append({"file": "data/TKD.dat.json", "target": "TKD.dat"})
 
         # ── 8. 直接导出 SC.GRP 场景区段（不做差异比对）──
-        if self.dat_path:
+        if self._data.dat_path:
             game_dir = self._get_game_dir()
             grp_path = os.path.join(game_dir, "SC.GRP")
             idx_path = os.path.join(game_dir, "SC.IDX")
@@ -4983,7 +4855,7 @@ class MatEditorApp(QMainWindow):
         metadata['scene_scope'] = [sid]
         mod_json = generate_mod_json(metadata, components)
         mod_json['scene_scope'] = [sid]
-        mod_json['scene_name'] = scene_name(self.tkt_scenes, sid)
+        mod_json['scene_name'] = scene_name(self._data.tkt_scenes, sid)
 
         fp, _ = QFileDialog.getSaveFileName(
             self, "导出场景为 MOD",
@@ -4997,7 +4869,7 @@ class MatEditorApp(QMainWindow):
             n_du = len(data_files.get('data/TKDefUnit.dat.json', {}).get('modified', []))
             n_tkd = len(data_files.get('data/TKD.dat.json', {}).get('modified', {}))
             has_sc = 'data/SC.GRP.json' in data_files
-            summary = (f"场景 {scene_name(self.tkt_scenes, sid)} (ID={sid})\n"
+            summary = (f"场景 {scene_name(self._data.tkt_scenes, sid)} (ID={sid})\n"
                        f"实体: {n_mat} 条\n"
                        f"DefUnit: {n_du} 条\n"
                        f"脚本: {n_tkd} 块\n"
@@ -5026,7 +4898,8 @@ class MatEditorApp(QMainWindow):
 
         info = get_tksmod_info(fp)
         if info is None:
-            QMessageBox.warning(self, "无效文件", "无法解析此 .tksmod 文件"); return
+            QMessageBox.warning(self, "无效文件", "无法解析此 .tksmod 文件")
+            return
 
         # 检查是否包含相关数据
         targets = info.get("targets", [])
@@ -5037,7 +4910,8 @@ class MatEditorApp(QMainWindow):
         if not has_mat and not has_du and not has_tkd and not has_sc:
             QMessageBox.warning(self, "不兼容",
                 "此 MOD 不包含 TKMat/TKDefUnit/TKD/SC.GRP 的数据\n\n"
-                f"包含的数据: {', '.join(targets)}"); return
+                f"包含的数据: {', '.join(targets)}")
+            return
 
         dlg = ModImportPreviewDialog(self, info, default_dir=self._get_game_dir())
         if dlg.exec() != QDialog.Accepted: return
@@ -5061,7 +4935,7 @@ class MatEditorApp(QMainWindow):
                         rec[f'd{di}'] = fields[di] if di < len(fields) else 0
                     rec['_has_data'] = any(rec[f'd{di}'] for di in range(DWORD_COUNT))
                     new_records.append(rec)
-                self.records = new_records
+                self._data.records = new_records
                 self._original_mat_records = [list(row) for row in mat_records]
                 imported_parts.append(f"TKMat ({len(mat_records)}条)")
 
@@ -5072,21 +4946,21 @@ class MatEditorApp(QMainWindow):
                 rec_size=DEFUNIT_REC_SIZE, field_count=8,
                 field_fmt='H', use_lzss=False
             )
-            if du_records is not None and hasattr(self, 'defunit_recs'):
+            if du_records is not None and hasattr(self, '_data'):
                 new_du = []
                 for i, fields in enumerate(du_records):
                     rec = {'index': i}
                     for fi in range(8):
                         rec[f'f{fi}'] = fields[fi] if fi < len(fields) else 0
                     new_du.append(rec)
-                self.defunit_recs = new_du
+                self._data.defunit_recs = new_du
                 self._original_defunit_recs = [list(row) for row in du_records]
                 imported_parts.append(f"TKDefUnit ({len(du_records)}条)")
 
         # 导入 TKD.dat
         if has_tkd:
             _, defines = import_tksmod_text_defines(fp, ref_dir)
-            if defines is not None and hasattr(self, 'tkd_defines'):
+            if defines is not None and hasattr(self, '_data'):
                 # 将 defines dict 转化为编辑器内部 tkd_defines 格式
                 new_tkd = []
                 for did_str, content in sorted(defines.items(),
@@ -5099,8 +4973,8 @@ class MatEditorApp(QMainWindow):
                         'header_line': header_line,
                         'body_lines': body_lines,
                     })
-                self.tkd_defines = new_tkd
-                self.tkd_define_map = {dd['define_id']: dd for dd in new_tkd}
+                self._data.tkd_defines = new_tkd
+                self._data.tkd_define_map = {dd['define_id']: dd for dd in new_tkd}
                 self._original_tkd_defines = dict(defines)
                 imported_parts.append(f"TKD ({len(new_tkd)}块)")
                 # 刷新脚本编辑器
@@ -5140,15 +5014,16 @@ class MatEditorApp(QMainWindow):
                         if 0 <= idx < len(sc_blocks) and data_b64:
                             sc_blocks[idx] = b64.b64decode(data_b64)
                 
-                self._sc_grp_pending = sc_blocks
-                self._sc_grp_section_count = len(sc_blocks)
+                self._data._sc_grp_pending = sc_blocks
+                self._data._sc_grp_section_count = len(sc_blocks)
                 imported_parts.append(f"SC.GRP ({len(sc_blocks)}区段, 待保存)")
 
         if not imported_parts:
             QMessageBox.warning(self, "导入失败",
-                "无法导入任何数据。\n请确认参考目录中包含有效的游戏文件"); return
+                "无法导入任何数据。\n请确认参考目录中包含有效的游戏文件")
+            return
 
-        self._dirty = bool(has_sc)  # 有 SC.GRP 待保存则标记为 dirty
+        self._data._dirty = bool(has_sc)  # 有 SC.GRP 待保存则标记为 dirty
         self._last_mod_metadata = {
             "id": info.get("id", ""),
             "name": info.get("name", ""),
@@ -5166,10 +5041,10 @@ class MatEditorApp(QMainWindow):
         if scene_scope:
             target_sid = scene_scope[0]
         else:
-            target_sid = self._vis_scene_id  # 保持原场景
+            target_sid = self._canvas._vis_scene_id  # 保持原场景
 
         if target_sid is not None and target_sid >= 0:
-            self._vis_scene_id = target_sid
+            self._canvas._vis_scene_id = target_sid
             # 同步 combo 和 tree 的选中状态（阻止信号避免触发 _on_vis_combo_select）
             self._vis_scene_combo.blockSignals(True)
             for i in range(self._vis_scene_combo.count()):
@@ -5201,7 +5076,7 @@ class MatEditorApp(QMainWindow):
         if self._current_edit_define_id is None:
             return
         text = self.script_text.toPlainText()
-        d = self.tkd_define_map.get(self._current_edit_define_id)
+        d = self._data.tkd_define_map.get(self._current_edit_define_id)
         if d is None:
             d = {'define_id': self._current_edit_define_id, 'comment': '', 'prefix_lines': [],
                  'body_lines': [], 'line_start': -1, 'line_end': -1,
@@ -5211,8 +5086,8 @@ class MatEditorApp(QMainWindow):
                 if s.startswith('};'):
                     d['comment'] = s[2:].replace(' end', '').strip()
                     break
-            self.tkd_defines.append(d)
-            self.tkd_define_map[self._current_edit_define_id] = d
+            self._data.tkd_defines.append(d)
+            self._data.tkd_define_map[self._current_edit_define_id] = d
         d['body_lines'] = text.split('\n')
         for line in reversed(d['body_lines']):
             s = line.strip()
@@ -5226,7 +5101,7 @@ class MatEditorApp(QMainWindow):
         # 阻止信号，避免 setPlainText 触发 _on_script_edit
         self.script_text.blockSignals(True)
         self.script_text.clear()
-        d = self.tkd_define_map.get(define_id)
+        d = self._data.tkd_define_map.get(define_id)
         if d:
             self.script_text.setPlainText('\n'.join(d.get('body_lines', [])))
             comment = d.get('comment', '')
@@ -5353,10 +5228,10 @@ class MatEditorApp(QMainWindow):
         desc_fn = SCRIPT_CMD_DESC.get(cmd_name)
         if desc_fn:
             try:
-                return desc_fn(args, self.tkt_all, self.item_names)
+                return desc_fn(args, self._data.tkt_all, self._data.item_names)
             except TypeError:
                 try:
-                    return desc_fn(args, self.tkt_all)
+                    return desc_fn(args, self._data.tkt_all)
                 except Exception:
                     pass
             except Exception:
@@ -5367,12 +5242,12 @@ class MatEditorApp(QMainWindow):
     # =========== DefUnit 链 ===========
     def _refresh_chain_list(self):
         self.chain_tree.clear()
-        if not self.records:
+        if not self._data.records:
             return
         rec = None
         if hasattr(self, '_current_param_idx') and self._current_param_idx is not None:
-            if 0 <= self._current_param_idx < len(self.records):
-                rec = self.records[self._current_param_idx]
+            if 0 <= self._current_param_idx < len(self._data.records):
+                rec = self._data.records[self._current_param_idx]
         if not rec or not has_data(rec):
             self._clear_script_editor()
             self._update_sched_info(None)
@@ -5401,7 +5276,7 @@ class MatEditorApp(QMainWindow):
                     self.chain_tree.addTopLevelItem(loop_item)
                     break
                 visited_chain.add(idx)
-                du_rec = next((r for r in self.defunit_recs if r['index'] == idx), None)
+                du_rec = next((r for r in self._data.defunit_recs if r['index'] == idx), None)
                 if du_rec is None:
                     # 空槽检测
                     empty_item = QTreeWidgetItem([f'  {sub_name}', str(step + 1), f'#{idx}(空槽)', '', '', '⚠断开'])
@@ -5449,11 +5324,11 @@ class MatEditorApp(QMainWindow):
         self._load_define_to_editor(define_id)
         self.chain_info_lbl.setText(f"DefUnit #{du_idx} → DEFINE {define_id}")
 
-    def _add_chain_entry(self, sub_scene):
+    def _add_chain_entry(self, sub_scene, *_args):
         rec = None
         if hasattr(self, '_current_param_idx') and self._current_param_idx is not None:
-            if 0 <= self._current_param_idx < len(self.records):
-                rec = self.records[self._current_param_idx]
+            if 0 <= self._current_param_idx < len(self._data.records):
+                rec = self._data.records[self._current_param_idx]
         if not rec or not has_data(rec):
             return
         entity_id = rec['index']
@@ -5461,7 +5336,7 @@ class MatEditorApp(QMainWindow):
         # Find empty DefUnit slot
         empty_idx = None
         for i in range(DEFUNIT_REC_COUNT):
-            existing = next((r for r in self.defunit_recs if r['index'] == i), None)
+            existing = next((r for r in self._data.defunit_recs if r['index'] == i), None)
             if existing is None:
                 empty_idx = i
                 break
@@ -5469,7 +5344,7 @@ class MatEditorApp(QMainWindow):
             QMessageBox.information(self, "无空槽", f"TKDefUnit.dat 所有 {DEFUNIT_REC_COUNT} 条记录均已占用")
             return
 
-        existing_blocks = [r['f0'] for r in self.defunit_recs if r['f1'] == entity_id and r['f0'] >= 256]
+        existing_blocks = [r['f0'] for r in self._data.defunit_recs if r['f1'] == entity_id and r['f0'] >= 256]
         new_f0 = max(existing_blocks) + 1 if existing_blocks else 256
         if new_f0 > 266:
             new_f0 = max(existing_blocks) + 1
@@ -5477,8 +5352,8 @@ class MatEditorApp(QMainWindow):
 
         new_rec = {'index': empty_idx, 'f0': new_f0, 'f1': entity_id,
                    'f2': 0, 'f3': 0, 'f4': 0, 'f5': 0, 'f6': 0, 'f7': 0}
-        self.defunit_recs.append(new_rec)
-        self.defunit_entity.setdefault(entity_id, []).append(empty_idx)
+        self._data.defunit_recs.append(new_rec)
+        self._data.defunit_entity.setdefault(entity_id, []).append(empty_idx)
 
         h_di, mx_di, cur_di = {'A': (39, 30, 33), 'B': (40, 31, 34), 'C': (41, 32, 35)}[sub_scene]
         head = rec.get(f'd{h_di}', 0)
@@ -5491,24 +5366,24 @@ class MatEditorApp(QMainWindow):
             idx = head
             tail = head
             for _ in range(mx):
-                du_r = next((r for r in self.defunit_recs if r['index'] == idx), None)
+                du_r = next((r for r in self._data.defunit_recs if r['index'] == idx), None)
                 if du_r is None or du_r['f6'] == 0:
                     break
                 idx = du_r['f6']
                 tail = idx
-            du_tail = next((r for r in self.defunit_recs if r['index'] == tail), None)
+            du_tail = next((r for r in self._data.defunit_recs if r['index'] == tail), None)
             if du_tail:
                 du_tail['f6'] = empty_idx
             rec[f'd{mx_di}'] = mx + 1
 
-        if define_id not in self.tkd_define_map:
+        if define_id not in self._data.tkd_define_map:
             d = {'define_id': define_id, 'comment': '', 'prefix_lines': [],
                  'body_lines': ['{', 'End(0)', '}; end'], 'line_start': -1, 'line_end': -1,
                  'header_line': f'DEFINE {define_id}'}
-            self.tkd_defines.append(d)
-            self.tkd_define_map[define_id] = d
+            self._data.tkd_defines.append(d)
+            self._data.tkd_define_map[define_id] = d
 
-        self._dirty = True
+        self._data._dirty = True
         self._script_dirty = True
         self._sync_form_dwords(rec, (h_di, mx_di, cur_di))
         self._refresh_chain_list()
@@ -5525,7 +5400,7 @@ class MatEditorApp(QMainWindow):
             return
         du_idx = int(du_str)
         define_id = int(define_str)
-        du_rec = next((r for r in self.defunit_recs if r['index'] == du_idx), None)
+        du_rec = next((r for r in self._data.defunit_recs if r['index'] == du_idx), None)
         if du_rec is None:
             return
         entity_id = du_rec['f1']
@@ -5534,7 +5409,7 @@ class MatEditorApp(QMainWindow):
                                 QMessageBox.Ok | QMessageBox.Cancel) != QMessageBox.Ok:
             return
 
-        rec = self.records[self._current_param_idx]
+        rec = self._data.records[self._current_param_idx]
         _modified_dis = []
         for sub_name, h_di, mx_di, cur_di in [('A', 39, 30, 33), ('B', 40, 31, 34), ('C', 41, 32, 35)]:
             h = rec.get(f'd{h_di}', 0)
@@ -5547,14 +5422,14 @@ class MatEditorApp(QMainWindow):
                 if idx == du_idx:
                     break
                 prev = idx
-                du_r = next((r for r in self.defunit_recs if r['index'] == idx), None)
+                du_r = next((r for r in self._data.defunit_recs if r['index'] == idx), None)
                 idx = du_r['f6'] if du_r else 0
             if idx != du_idx:
                 continue
             if prev is None:
                 rec[f'd{h_di}'] = du_rec['f6']
             else:
-                prev_rec = next((r for r in self.defunit_recs if r['index'] == prev), None)
+                prev_rec = next((r for r in self._data.defunit_recs if r['index'] == prev), None)
                 if prev_rec:
                     prev_rec['f6'] = du_rec['f6']
             rec[f'd{mx_di}'] = max(0, mx - 1)
@@ -5565,15 +5440,15 @@ class MatEditorApp(QMainWindow):
             break
 
         du_rec['f0'] = du_rec['f1'] = du_rec['f6'] = 0
-        self.defunit_recs = [r for r in self.defunit_recs if r['index'] != du_idx]
-        if entity_id in self.defunit_entity and du_idx in self.defunit_entity[entity_id]:
-            self.defunit_entity[entity_id].remove(du_idx)
-        if define_id in self.tkd_define_map:
-            d = self.tkd_define_map.pop(define_id)
-            if d in self.tkd_defines:
-                self.tkd_defines.remove(d)
+        self._data.defunit_recs = [r for r in self._data.defunit_recs if r['index'] != du_idx]
+        if entity_id in self._data.defunit_entity and du_idx in self._data.defunit_entity[entity_id]:
+            self._data.defunit_entity[entity_id].remove(du_idx)
+        if define_id in self._data.tkd_define_map:
+            d = self._data.tkd_define_map.pop(define_id)
+            if d in self._data.tkd_defines:
+                self._data.tkd_defines.remove(d)
 
-        self._dirty = True
+        self._data._dirty = True
         self._script_dirty = True
         if _modified_dis:
             self._sync_form_dwords(rec, _modified_dis)
@@ -5660,7 +5535,7 @@ class MatEditorApp(QMainWindow):
         if self._current_edit_define_id is None:
             QMessageBox.information(self, "预览", "请先选择一个 DEFINE 脚本块")
             return
-        d = self.tkd_define_map.get(self._current_edit_define_id)
+        d = self._data.tkd_define_map.get(self._current_edit_define_id)
         if d is None:
             QMessageBox.information(self, "预览", "未找到当前 DEFINE 数据")
             return
@@ -5787,20 +5662,20 @@ class MatEditorApp(QMainWindow):
             # 对话命令: 解析 TKT 文本并用颜色渲染
             if cmd_name in ('TalkB', 'TalkA', 'SetTalkB', 'BlackTalk') and len(args) >= 2:
                 text_idx = 0 if cmd_name == 'BlackTalk' else 1
-                tkt_text = _tkt_text(self.tkt_all, args[text_idx], max_len=500)
+                tkt_text = _tkt_text(self._data.tkt_all, args[text_idx], max_len=500)
                 if tkt_text:
                     self._pv_detail.append(f"\n<b>━━━ TKT 对话文本 (ID={args[text_idx]}) ━━━</b>")
                     self._insert_colored_tkt(tkt_text)
             elif cmd_name in ('ShowText', 'MenuTalk', 'SysTalk') and args:
-                tkt_text = _tkt_text(self.tkt_all, args[0], max_len=500)
+                tkt_text = _tkt_text(self._data.tkt_all, args[0], max_len=500)
                 if tkt_text:
                     self._pv_detail.append(f"\n<b>━━━ TKT 对话文本 (ID={args[0]}) ━━━</b>")
                     self._insert_colored_tkt(tkt_text)
             # GetItem: 物品名称用红色显示
-            if cmd_name == 'GetItem' and args and self.item_names:
+            if cmd_name == 'GetItem' and args and self._data.item_names:
                 try:
                     item_id = int(args[0])
-                    item_name = self.item_names.get(item_id, '')
+                    item_name = self._data.item_names.get(item_id, '')
                     if item_name:
                         self._pv_detail.append(f"\n<b>━━━ 物品名称 (ID={args[0]}) ━━━</b>")
                         cursor = self._pv_detail.textCursor()
@@ -5864,9 +5739,9 @@ class MatEditorApp(QMainWindow):
 
     # =========== 删除场景 ===========
     def _delete_scene(self):
-        sid = self._vis_scene_id
-        sname = scene_name(self.tkt_scenes, sid)
-        scene_entities = [r for r in self.records if has_data(r) and r['d1'] == sid]
+        sid = self._canvas._vis_scene_id
+        sname = scene_name(self._data.tkt_scenes, sid)
+        scene_entities = [r for r in self._data.records if has_data(r) and r['d1'] == sid]
         if not scene_entities:
             QMessageBox.information(self, "空场景", f"场景 {sname} (ID={sid}) 无实体, 无需删除")
             return
@@ -5886,7 +5761,7 @@ class MatEditorApp(QMainWindow):
                 visited = set()
                 while cur >= 0 and cur not in visited:
                     visited.add(cur)
-                    du = next((r for r in self.defunit_recs if r['index'] == cur), None)
+                    du = next((r for r in self._data.defunit_recs if r['index'] == cur), None)
                     if du is None:
                         break
                     all_du_indices.add(cur)
@@ -5898,15 +5773,15 @@ class MatEditorApp(QMainWindow):
                         break
                     cur = nxt
         for did in all_define_ids:
-            if did in self.tkd_define_map:
-                d = self.tkd_define_map.pop(did)
-                if d in self.tkd_defines:
-                    self.tkd_defines.remove(d)
-        self.defunit_recs = [r for r in self.defunit_recs if r['index'] not in all_du_indices]
+            if did in self._data.tkd_define_map:
+                d = self._data.tkd_define_map.pop(did)
+                if d in self._data.tkd_defines:
+                    self._data.tkd_defines.remove(d)
+        self._data.defunit_recs = [r for r in self._data.defunit_recs if r['index'] not in all_du_indices]
         for rec in scene_entities:
             for di in range(DWORD_COUNT):
                 rec[f'd{di}'] = 0
-        self._dirty = True
+        self._data._dirty = True
         self._script_dirty = True
         self._apply_filter()
         self._vis_populate_scenes()
@@ -5916,11 +5791,11 @@ class MatEditorApp(QMainWindow):
 
     # =========== 统计/导出/导入 ===========
     def _show_stats(self):
-        if not self.records:
+        if not self._data.records:
             return
         tc = Counter()
         sc = Counter()
-        for r in self.records:
+        for r in self._data.records:
             if has_data(r):
                 tc[r['d0']] += 1
                 sc[r['d1']] += 1
@@ -5931,12 +5806,12 @@ class MatEditorApp(QMainWindow):
         QMessageBox.information(self, "统计信息", msg)
 
     def _export_csv(self):
-        if not self.records: return
-        filtered = [r for r in self.records if has_data(r)]
+        if not self._data.records: return
+        filtered = [r for r in self._data.records if has_data(r)]
         hdr = ['index'] + [f'd{i}' for i in range(DWORD_COUNT)] + ['type_name', 'scene_name']
         def row_func(rec):
             return [str(rec['index'])] + [str(rec[f'd{di}']) for di in range(DWORD_COUNT)] + \
-                   [ENTITY_TYPES.get(rec['d0'], ''), scene_name(self.tkt_scenes, rec['d1'])]
+                   [ENTITY_TYPES.get(rec['d0'], ''), scene_name(self._data.tkt_scenes, rec['d1'])]
         export_csv(self, filtered, hdr, row_func, "TKMat.csv")
 
     def _show_field_ref(self):
@@ -5958,26 +5833,26 @@ class MatEditorApp(QMainWindow):
 
     def _export_scene(self):
         """导出当前场景: TKMat实体 + DefUnit链 + TKD脚本 → .tkmat JSON"""
-        if not self.records:
+        if not self._data.records:
             QMessageBox.warning(self, "无数据", "请先加载 TKS 目录")
             return
-        sid = self._vis_scene_id
-        if self._sc_grp_section_count > 0 and sid >= self._sc_grp_section_count:
+        sid = self._canvas._vis_scene_id
+        if self._data._sc_grp_section_count > 0 and sid >= self._data._sc_grp_section_count:
             QMessageBox.warning(self, "虚拟场景", "虚拟场景没有对应的 SC.GRP 数据, 不允许导出。")
             return
-        scene_entities = [r for r in self.records if has_data(r) and r['d1'] == sid]
+        scene_entities = [r for r in self._data.records if has_data(r) and r['d1'] == sid]
         if not scene_entities:
             QMessageBox.warning(self, "空场景", f"场景 {sid} 无实体数据")
             return
 
         tkt_scene_text = None
-        if self.tkt_all:
+        if self._data.tkt_all:
             tkt_id = sid + 300
-            tkt_scene_text = self.tkt_all.get(tkt_id, '')
+            tkt_scene_text = self._data.tkt_all.get(tkt_id, '')
 
         sc_grp_section = None
         sc_idx_data = None
-        if self.dat_path:
+        if self._data.dat_path:
             d = self._get_game_dir()
             grp_path = os.path.join(d, "SC.GRP")
             idx_path = os.path.join(d, "SC.IDX")
@@ -5997,7 +5872,7 @@ class MatEditorApp(QMainWindow):
                     pass
 
         def find_du(idx):
-            return next((r for r in self.defunit_recs if r['index'] == idx), None)
+            return next((r for r in self._data.defunit_recs if r['index'] == idx), None)
 
         all_defunit_indices = set()
         entity_exports = []
@@ -6057,7 +5932,7 @@ class MatEditorApp(QMainWindow):
                     did = (du.get('f1', 0) << 16) | du.get('f0', 0)
                     if did > 0 and did not in seen_dids:
                         seen_dids.add(did)
-                        d = self.tkd_define_map.get(did)
+                        d = self._data.tkd_define_map.get(did)
                         if d:
                             text = '\r\n'.join([d['header_line']] + d['body_lines'])
                             defines_export.append({'id': did, 'text': text})
@@ -6070,7 +5945,7 @@ class MatEditorApp(QMainWindow):
             'format': 'tkmat_scene_export',
             'version': 1,
             'scene_id': sid,
-            'scene_name': scene_name(self.tkt_scenes, sid),
+            'scene_name': scene_name(self._data.tkt_scenes, sid),
             'tkt_scene_text': tkt_scene_text,
             'sc_grp_section': sc_grp_section,
             'sc_idx_data': sc_idx_data,
@@ -6080,7 +5955,7 @@ class MatEditorApp(QMainWindow):
             'defines': defines_export,
         }
 
-        sname = scene_name(self.tkt_scenes, sid).replace('/', '_').replace('\\', '_')
+        sname = scene_name(self._data.tkt_scenes, sid).replace('/', '_').replace('\\', '_')
         fp, _ = QFileDialog.getSaveFileName(
             self, f"导出场景 {sname}",
             f"scene_{sid}_{sname}.tkmat",
@@ -6096,7 +5971,7 @@ class MatEditorApp(QMainWindow):
 
     def _import_scene(self):
         """导入 .tkmat 文件: 作为全新场景追加"""
-        if not self.records:
+        if not self._data.records:
             QMessageBox.warning(self, "无数据", "请先加载 TKS 目录")
             return
         fp, _ = QFileDialog.getOpenFileName(self, "导入场景", "", "TKMat 场景导出 (*.tkmat);;所有文件 (*.*)")
@@ -6120,7 +5995,7 @@ class MatEditorApp(QMainWindow):
                                 QMessageBox.Ok | QMessageBox.Cancel) != QMessageBox.Ok:
             return
 
-        empty_slots = sorted([i for i, r in enumerate(self.records) if r['d0'] == 0], reverse=True)
+        empty_slots = sorted([i for i, r in enumerate(self._data.records) if r['d0'] == 0], reverse=True)
         empty_slots = sorted(empty_slots[:n_entities])
         if len(empty_slots) < n_entities:
             QMessageBox.critical(self, "空槽不足", f"需要 {n_entities} 个空槽, 但只有 {len(empty_slots)} 个")
@@ -6148,7 +6023,7 @@ class MatEditorApp(QMainWindow):
         du_old_to_new = {}
         for du_entry in data['defunits']:
             old_du_idx = du_entry['index']
-            new_du_idx = len(self.defunit_recs)
+            new_du_idx = len(self._data.defunit_recs)
             du_old_to_new[old_du_idx] = new_du_idx
             fields = du_entry['fields']
             old_f1 = fields[1]
@@ -6159,12 +6034,12 @@ class MatEditorApp(QMainWindow):
                 if fi == 1:
                     val = new_f1
                 rec[f'f{fi}'] = val
-            self.defunit_recs.append(rec)
+            self._data.defunit_recs.append(rec)
         for du_entry in data['defunits']:
             new_du_idx = du_old_to_new[du_entry['index']]
             old_f6 = du_entry['fields'][6]
             if old_f6 in du_old_to_new:
-                du_rec = next((r for r in self.defunit_recs if r['index'] == new_du_idx), None)
+                du_rec = next((r for r in self._data.defunit_recs if r['index'] == new_du_idx), None)
                 if du_rec:
                     du_rec['f6'] = du_old_to_new[old_f6]
 
@@ -6197,17 +6072,17 @@ class MatEditorApp(QMainWindow):
                 'line_start': -1, 'line_end': -1,
                 'header_line': header if header else f'DEFINE {new_did}',
             }
-            self.tkd_defines.append(define)
-            self.tkd_define_map[new_did] = define
+            self._data.tkd_defines.append(define)
+            self._data.tkd_define_map[new_did] = define
 
         # Import entities
-        existing_scenes = {r['d1'] for r in self.records if has_data(r) and r['d1'] >= 0}
+        existing_scenes = {r['d1'] for r in self._data.records if has_data(r) and r['d1'] >= 0}
         new_scene_id = max(existing_scenes) + 1 if existing_scenes else 0
         for i, ent in enumerate(data['entities']):
             slot = empty_slots[i]
             dwords = ent['dwords']
             chains = ent.get('defunit_chains', {})
-            rec = self.records[slot]
+            rec = self._data.records[slot]
             rec['index'] = slot
             for di in range(min(96, len(dwords))):
                 rec[f'd{di}'] = dwords[di]
@@ -6220,7 +6095,7 @@ class MatEditorApp(QMainWindow):
                 else:
                     rec[f'd{di}'] = -1
 
-        self._dirty = True
+        self._data._dirty = True
         self._apply_filter()
         self._vis_populate_scenes()
         self._vis_load_scene()
@@ -6231,19 +6106,19 @@ class MatEditorApp(QMainWindow):
     def resizeEvent(self, event):
         """窗口大小改变时，防抖触发自适应重绘"""
         super().resizeEvent(event)
-        if hasattr(self, 'records') and self.records:
+        if hasattr(self, '_data') and self._data.records:
             self._resize_timer.start(100)
 
     def _do_resize_redraw(self):
         """防抖定时器触发的真正重绘逻辑"""
-        if hasattr(self, 'records') and self.records:
-            self._vis_redraw()
+        if hasattr(self, '_data') and self._data.records:
+            self._canvas._vis_redraw()
 
     # =========== 关闭事件 ===========
     def closeEvent(self, event):
-        self._vis_stop_anim()
-        self._vis_stop_sel_anim()
-        if not confirm_close(self, self._dirty or self._script_dirty,
+        self._canvas._vis_stop_anim()
+        self._canvas._vis_stop_sel_anim()
+        if not confirm_close(self, self._data._dirty or self._script_dirty,
                              text="有未保存的修改 (含脚本), 确定退出?"):
             event.ignore()
             return
