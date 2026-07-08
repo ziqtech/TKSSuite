@@ -1033,10 +1033,9 @@ class WarDataEditorV2(QMainWindow):
                 f"包含的数据: {', '.join(info.get('targets', []))}"); return
 
         
-        dlg = ModImportPreviewDialog(self, info)
+        dlg = ModImportPreviewDialog(self, info, default_dir=os.path.dirname(self.wardata_path) if self.wardata_path else "")
         if dlg.exec() != QDialog.Accepted: return
-
-        ref_dir = ask_reference_directory(self, "选择原始游戏目录 (作为基底数据)")
+        ref_dir = dlg.get_ref_dir()
         if not ref_dir: return
 
         ref_path = os.path.join(ref_dir, "WarData.dat")

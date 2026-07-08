@@ -2492,7 +2492,7 @@ class MatEditorApp(QMainWindow):
             16: {8,9,13,23,24,28,50,51,58,59}|set(range(63,71)),
             20: set(range(50,96)) - {55,64,65,66,68,80,81},
             110: {9,14,16,23,50,51}|set(range(57,96)),
-            200: {23,54}|set(range(56,96)),
+            200: {23,54}|set(range(56,96)) - {64},
         }
 
         for tval in _TYPE_ORDER:
@@ -5002,10 +5002,9 @@ class MatEditorApp(QMainWindow):
                 "此 MOD 不包含 TKMat/TKDefUnit/TKD/SC.GRP 的数据\n\n"
                 f"包含的数据: {', '.join(targets)}"); return
 
-        dlg = ModImportPreviewDialog(self, info)
+        dlg = ModImportPreviewDialog(self, info, default_dir=self._get_game_dir())
         if dlg.exec() != QDialog.Accepted: return
-
-        ref_dir = ask_reference_directory(self, "选择原始游戏目录 (作为基底数据)")
+        ref_dir = dlg.get_ref_dir()
         if not ref_dir: return
 
         imported_parts = []

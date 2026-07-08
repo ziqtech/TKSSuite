@@ -1030,10 +1030,9 @@ class ShopEditorWindow(QMainWindow):
                 f"包含的数据: {', '.join(info.get('targets', []))}"); return
 
         
-        dlg = ModImportPreviewDialog(self, info)
+        dlg = ModImportPreviewDialog(self, info, default_dir=os.path.dirname(self.shop_path) if self.shop_path else "")
         if dlg.exec() != QDialog.Accepted: return
-
-        ref_dir = ask_reference_directory(self, "选择原始游戏目录 (作为基底数据)")
+        ref_dir = dlg.get_ref_dir()
         if not ref_dir: return
 
         mod_json, records = import_tksmod_records(

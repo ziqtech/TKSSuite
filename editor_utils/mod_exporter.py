@@ -1181,11 +1181,12 @@ def _parse_defines_to_dict(text: str) -> dict[str, str]:
 class ModImportPreviewDialog(QDialog):
     """MOD 导入预览对话框 — 显示 MOD 信息并确认导入。"""
 
-    def __init__(self, parent=None, mod_info: dict | None = None):
+    def __init__(self, parent=None, mod_info: dict | None = None, default_dir: str = ""):
         super().__init__(parent)
         self.setWindowTitle("导入 MOD (.tksmod)")
-        self.resize(520, 400)
+        self.resize(520, 460)
         self._accepted = False
+        self._ref_dir = default_dir
         info = mod_info or {}
 
         layout = QVBoxLayout(self)
@@ -1257,12 +1258,24 @@ class ModImportPreviewDialog(QDialog):
             layout.addSpacing(8)
             layout.addWidget(QLabel(f"<b>资源替换: {len(resources)} 个文件</b>"))
 
+        # 参考目录选择
+        layout.addSpacing(12)
+        layout.addWidget(QLabel("<b>原始游戏目录 (基底数据):</b>"))
+        dir_layout = QHBoxLayout()
+        self._dir_edit = QLineEdit(self._ref_dir)
+        self._dir_edit.setReadOnly(True)
+        self._dir_edit.setMinimumWidth(280)
+        dir_layout.addWidget(self._dir_edit, 1)
+        btn_browse = QPushButton("选择目录…")
+        btn_browse.clicked.connect(self._on_browse_dir)
+        dir_layout.addWidget(btn_browse)
+        layout.addLayout(dir_layout)
+
         layout.addStretch()
 
         # 提示
         layout.addWidget(QLabel(
-            "<i>导入将加载此 MOD 的修改数据到编辑器中。\n"
-            "您需要指定原始游戏目录作为基底数据。</i>"))
+            "<i>导入将以此目录中的原始文件为基底，应用 MOD 的差异数据。</i>"))
 
         # 按钮
         btn_layout = QHBoxLayout()
@@ -1271,6 +1284,22 @@ class ModImportPreviewDialog(QDialog):
         btn_cancel.clicked.connect(self.reject)
         btn_layout.addWidget(btn_cancel)
         btn_ok = QPushButton("导入")
-        btn_ok.clicked.connect(self.accept)
+        btn_ok.clicked.connect(self._on_import)
         btn_layout.addWidget(btn_ok)
         layout.addLayout(btn_layout)
+
+    def _on_browse_dir(self):
+        from PySide6.QtWidgets import QFileDialog
+        d = QFileDialog.getExistingDirectory(self, "选择原始游戏目录", self._ref_dir)
+        if d:
+            self._ref_dir = d
+            self._dir_edit.setText(d)
+
+    def _on_import(self):
+        if not self._ref_dir or not os.path.isdir(self._ref_dir):
+            QMessageBox.warning(self, "缺少目录", "请先选择原始游戏目录。")
+            return
+        self.accept()
+
+    def get_ref_dir(self) -> str:
+        return self._ref_dir

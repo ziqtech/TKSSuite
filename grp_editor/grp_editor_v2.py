@@ -871,10 +871,9 @@ class GRPEditor(QMainWindow):
 
         target_name = grp_targets[0]
 
-        dlg = ModImportPreviewDialog(self, info)
+        dlg = ModImportPreviewDialog(self, info, default_dir=os.path.dirname(self.grp.filepath) if self.grp and self.grp.filepath else "")
         if dlg.exec() != QDialog.Accepted: return
-
-        ref_dir = ask_reference_directory(self, "选择原始游戏目录 (作为基底数据)")
+        ref_dir = dlg.get_ref_dir()
         if not ref_dir: return
 
         mod_json, blocks = import_tksmod_blocks(
@@ -1082,7 +1081,7 @@ class GRPEditor(QMainWindow):
 
             # 为 L1/L2 层添加序号标注（每个连续区域标注一个数字）
             if self._sel_layer in ("L1", "L2"):
-                font_size = max(8, min(24, int(14 / (disp_scale * z)))) if (disp_scale * z) > 0 else 14
+                font_size = 14  # 固定字号，不随图片尺寸/缩放变化
                 text_pen = QPen(QColor(255, 255, 255, 240))
                 shadow_pen = QPen(QColor(0, 0, 0, 200))
 
@@ -1152,16 +1151,12 @@ class GRPEditor(QMainWindow):
                             shadow.setFont(QFont("Consolas", font_size, QFont.Bold))
                             shadow.setDefaultTextColor(shadow_pen.color())
                             shadow.setPos(scene_x + dx, scene_y + dy)
-                            shadow.setTransformOriginPoint(shadow.boundingRect().center())
-                            shadow.setScale(1.0 / (disp_scale * z) if (disp_scale * z) > 0 else 1.0)
 
                         # 添加主文本
                         text_item = self._scene.addText(str(val))
                         text_item.setFont(QFont("Consolas", font_size, QFont.Bold))
                         text_item.setDefaultTextColor(text_pen.color())
                         text_item.setPos(scene_x, scene_y)
-                        text_item.setTransformOriginPoint(text_item.boundingRect().center())
-                        text_item.setScale(1.0 / (disp_scale * z) if (disp_scale * z) > 0 else 1.0)
 
             self._zoom_lbl.setText(f" {int(z*100)}% ")
             names = {"A": "主图", "L1": "前景层 (遮挡)", "L2": "碰撞层 (地形)"}

@@ -1230,10 +1230,9 @@ class JVGEditor(QMainWindow):
 
         target_name = jvg_targets[0]  # 取第一个 JVG target
 
-        dlg = ModImportPreviewDialog(self, info)
+        dlg = ModImportPreviewDialog(self, info, default_dir=os.path.dirname(self.jvg.filepath) if self.jvg and self.jvg.filepath else "")
         if dlg.exec() != QDialog.Accepted: return
-
-        ref_dir = ask_reference_directory(self, "选择原始游戏目录 (作为基底数据)")
+        ref_dir = dlg.get_ref_dir()
         if not ref_dir: return
 
         mod_json, blocks = import_tksmod_blocks(

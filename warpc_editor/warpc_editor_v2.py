@@ -2498,11 +2498,9 @@ class WarpcEditorV2(QMainWindow):
             QMessageBox.warning(self, "不兼容", "此 MOD 不包含 WarPC.dat 的数据\n\n"
                 f"包含的数据: {', '.join(info.get('targets', []))}"); return
 
-        dlg = ModImportPreviewDialog(self, info)
+        dlg = ModImportPreviewDialog(self, info, default_dir=os.path.dirname(self.warpc_path) if self.warpc_path else "")
         if dlg.exec() != QDialog.Accepted: return
-
-        # 选择原始游戏目录
-        ref_dir = ask_reference_directory(self, "选择原始游戏目录 (作为基底数据)")
+        ref_dir = dlg.get_ref_dir()
         if not ref_dir: return
 
         # 执行导入
