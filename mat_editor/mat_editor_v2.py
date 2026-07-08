@@ -3039,12 +3039,16 @@ class MatEditorApp(QMainWindow):
         self._preview_sb = self.script_preview.verticalScrollBar()
         def _on_editor_scroll(val, _ps=self._preview_sb, _es=self._script_sb):
             if not self._disable_scroll_sync:
+                self._disable_scroll_sync = True
                 ratio = val / max(1, _es.maximum())
                 _ps.setValue(int(ratio * max(1, _ps.maximum())))
+                self._disable_scroll_sync = False
         def _on_preview_scroll(val, _ps=self._preview_sb, _es=self._script_sb):
             if not self._disable_scroll_sync:
+                self._disable_scroll_sync = True
                 ratio = val / max(1, _ps.maximum())
                 _es.setValue(int(ratio * max(1, _es.maximum())))
+                self._disable_scroll_sync = False
         self._script_sb.valueChanged.connect(_on_editor_scroll)
         self._preview_sb.valueChanged.connect(_on_preview_scroll)
 

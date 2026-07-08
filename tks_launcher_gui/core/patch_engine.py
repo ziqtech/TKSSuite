@@ -435,6 +435,55 @@ CAVE_DUEL_COUNTER_SELF_FIX = bytes([
 ])
 
 # ============================================================
+# Cave 模板: 主角替换 — TeamMember 脚本路由
+# 逆向依据: sub_40DA00 @0x40DA1C (TeamMember 入口条件判断)
+# hook: cmp word [ebp+8], 0; jnz 0x40DA8D (7字节) -> E8 rel32 + 2xNOP
+# 路由逻辑:
+#   TeamMember(0, 0)   → 走离队分支 (主角离队)
+#   TeamMember(0, -1)  → 走清空全队分支
+#   TeamMember(N, *)   → 正常入队/离队 (不变)
+# 所有分支均使用绝对跳转, ret 不会被命中
+# ============================================================
+CAVE_TEAM_MEMBER_LEAVE_ROUTING = bytes([
+    0x66, 0x83, 0x7D, 0x08, 0x00,                      #  0 cmp word [ebp+8], 0
+    0x75, 0x11,                                        #  5 jnz .to_join_leave (+17, abs=24)
+    0x66, 0x83, 0x7D, 0x0C, 0xFF,                      #  7 cmp word [ebp+0Ch], -1
+    0x74, 0x14,                                        # 12 je .to_clear_all (+20, abs=34)
+    0xE9, 0x69, 0x00, 0x00, 0x00,                      # 14 jmp 0x40DA8D (.to_join_leave)
+    0xE9, 0x5F, 0x00, 0x00, 0x00,                      # 19 jmp 0x40DA23 (.to_clear_all)
+    # pad to 32 bytes
+    0x90, 0x90, 0x90,
+])
+
+# ============================================================
+# Cave 模板: 主角替换 — CheckMember 等级检查重定向
+# 逆向依据: sub_40E88C @0x40E8CB (CheckMember a2==0 分支)
+# hook: movsx edx, word [ebp+8] (5字节) -> E8 rel32
+# 逻辑:
+#   1. pop 掉 E8 call 多压的返回地址
+#   2. 若 a1==0 (检查主角), 读取 word_75688C[0] (槽位0成员ID)
+#   3. 若槽位0非空且非主角自身, 替换 a1 = 槽位0成员ID
+#   4. 执行被替换指令 (movsx ecx, word [ebp+8]) 并 jmp 回 0x40E8D1
+# ============================================================
+CAVE_CHECKMEMBER_LEVEL = bytes([
+    0x59,                                              #  0 pop ecx (pop call return addr)
+    0x50,                                              #  1 push eax
+    0x66, 0x83, 0x7D, 0x08, 0x00,                      #  2 cmp word [ebp+8], 0
+    0x75, 0x19,                                        #  7 jne .skip (+25, abs=34)
+    0x66, 0xA1, 0x8C, 0x68, 0x75, 0x00,                #  9 mov ax, [0x75688C]
+    0x66, 0x83, 0xF8, 0xFF,                            # 15 cmp ax, -1
+    0x74, 0x11,                                        # 19 je .skip (+17, abs=38)
+    0x66, 0x85, 0xC0,                                  # 21 test ax, ax
+    0x74, 0x0C,                                        # 24 je .skip (+12, abs=38)
+    0x66, 0x89, 0x45, 0x08,                            # 26 mov word [ebp+8], ax
+    0xEB, 0x08,                                        # 30 jmp .skip (+8, abs=40)
+    # .skip:
+    0x58,                                              # 32 pop eax
+    0x0F, 0xBF, 0x4D, 0x08,                            # 33 movsx ecx, word [ebp+8]
+    0xE9, 0xA9, 0x00, 0x00, 0x00,                      # 37 jmp 0x40E8D1
+])
+
+# ============================================================
 # Cave 模板构建
 # ============================================================
 
@@ -451,6 +500,8 @@ def build_cave_template(name: str, warpc_base: int, log_func=None) -> Optional[b
         "weapon_cause_mask": CAVE_WEAPON_CAUSE_MASK,
         "duel_self_fix": CAVE_DUEL_SELF_FIX,
         "duel_counter_self_fix": CAVE_DUEL_COUNTER_SELF_FIX,
+        "team_member_leave_routing": CAVE_TEAM_MEMBER_LEAVE_ROUTING,
+        "checkmember_level": CAVE_CHECKMEMBER_LEVEL,
     }
     if name not in templates:
         log(f"    [WARN] 未知 cave 模板: {name}")
