@@ -442,17 +442,22 @@ CAVE_DUEL_COUNTER_SELF_FIX = bytes([
 #   TeamMember(0, 0)   → 走离队分支 (主角离队)
 #   TeamMember(0, -1)  → 走清空全队分支
 #   TeamMember(N, *)   → 正常入队/离队 (不变)
-# 所有分支均使用绝对跳转, ret 不会被命中
+# .to_join_leave 用 PUSH/RET 跳转到 0x40DA8D; .to_clear_all 用 RET 返回到 0x40DA23
 # ============================================================
 CAVE_TEAM_MEMBER_LEAVE_ROUTING = bytes([
-    0x66, 0x83, 0x7D, 0x08, 0x00,                      #  0 cmp word [ebp+8], 0
-    0x75, 0x11,                                        #  5 jnz .to_join_leave (+17, abs=24)
-    0x66, 0x83, 0x7D, 0x0C, 0xFF,                      #  7 cmp word [ebp+0Ch], -1
-    0x74, 0x14,                                        # 12 je .to_clear_all (+20, abs=34)
-    0xE9, 0x69, 0x00, 0x00, 0x00,                      # 14 jmp 0x40DA8D (.to_join_leave)
-    0xE9, 0x5F, 0x00, 0x00, 0x00,                      # 19 jmp 0x40DA23 (.to_clear_all)
-    # pad to 32 bytes
-    0x90, 0x90, 0x90,
+    # --- 路由逻辑 ---
+    0x66, 0x83, 0x7D, 0x08, 0x00,                      #  0 cmp word [ebp+8], 0        ; a1 == 0?
+    0x75, 0x0A,                                        #  5 jnz .to_join_leave (→ 17)   ; a1 != 0 → 正常入队/离队
+    0x66, 0x83, 0x7D, 0x0C, 0xFF,                      #  7 cmp word [ebp+0Ch], -1     ; a2 == -1?
+    0x74, 0x0C,                                        # 12 je .to_clear_all (→ 26)     ; 是 → 清空全队
+    0xEB, 0x01,                                        # 14 jmp .to_join_leave (→ 17)   ; a1==0,a2!=-1 → 走离队
+    0x90,                                              # 16 nop (对齐)
+    # .to_join_leave: 丢弃 CALL 返回地址(0x40DA23), 跳转到入队/离队入口 0x40DA8D
+    0x83, 0xC4, 0x04,                                  # 17 add esp, 4                  ; 丢弃返回地址
+    0x68, 0x8D, 0xDA, 0x40, 0x00,                      # 20 push 0x40DA8D              ; join/leave 入口
+    0xC3,                                              # 25 ret                         ; → 0x40DA8D
+    # .to_clear_all: 直接 RET 到 CALL 返回地址 0x40DA23 (清空全队入口)
+    0xC3,                                              # 26 ret                         ; → 0x40DA23
 ])
 
 # ============================================================
@@ -466,21 +471,23 @@ CAVE_TEAM_MEMBER_LEAVE_ROUTING = bytes([
 #   4. 执行被替换指令 (movsx ecx, word [ebp+8]) 并 jmp 回 0x40E8D1
 # ============================================================
 CAVE_CHECKMEMBER_LEVEL = bytes([
-    0x59,                                              #  0 pop ecx (pop call return addr)
+    0x59,                                              #  0 pop ecx (丢弃 CALL 返回地址)
     0x50,                                              #  1 push eax
-    0x66, 0x83, 0x7D, 0x08, 0x00,                      #  2 cmp word [ebp+8], 0
-    0x75, 0x19,                                        #  7 jne .skip (+25, abs=34)
-    0x66, 0xA1, 0x8C, 0x68, 0x75, 0x00,                #  9 mov ax, [0x75688C]
-    0x66, 0x83, 0xF8, 0xFF,                            # 15 cmp ax, -1
-    0x74, 0x11,                                        # 19 je .skip (+17, abs=38)
-    0x66, 0x85, 0xC0,                                  # 21 test ax, ax
-    0x74, 0x0C,                                        # 24 je .skip (+12, abs=38)
-    0x66, 0x89, 0x45, 0x08,                            # 26 mov word [ebp+8], ax
-    0xEB, 0x08,                                        # 30 jmp .skip (+8, abs=40)
+    0x66, 0x83, 0x7D, 0x08, 0x00,                      #  2 cmp word [ebp+8], 0        ; a1 == 0?
+    0x75, 0x15,                                        #  7 jne .skip (→ 30)            ; a1 != 0 → 跳过
+    0x66, 0xA1, 0x8C, 0x68, 0x75, 0x00,                #  9 mov ax, [0x75688C]         ; ax = word_75688C[0]
+    0x66, 0x83, 0xF8, 0xFF,                            # 15 cmp ax, -1                  ; 槽位0为空?
+    0x74, 0x09,                                        # 19 je .skip (→ 30)             ; 是 → 跳过
+    0x66, 0x85, 0xC0,                                  # 21 test ax, ax                 ; 槽位0=主角自身?
+    0x74, 0x04,                                        # 24 je .skip (→ 30)             ; 是 → 跳过
+    0x66, 0x89, 0x45, 0x08,                            # 26 mov word [ebp+8], ax        ; 替换 a1 = 槽位0成员ID
+    # 自然落入 .skip (无需 jmp, mov [ebp+8] 后紧跟 pop eax)
     # .skip:
-    0x58,                                              # 32 pop eax
-    0x0F, 0xBF, 0x4D, 0x08,                            # 33 movsx ecx, word [ebp+8]
-    0xE9, 0xA9, 0x00, 0x00, 0x00,                      # 37 jmp 0x40E8D1
+    0x58,                                              # 30 pop eax                     ; 恢复 eax
+    0x0F, 0xBF, 0x4D, 0x08,                            # 31 movsx ecx, word [ebp+8]    ; ecx = (可能修改后的) a1
+    0x8B, 0xD1,                                        # 35 mov edx, ecx               ; edx = a1 (0x40E8D4 add/sub 需要!)
+    0x68, 0xD1, 0xE8, 0x40, 0x00,                      # 37 push 0x40E8D1              ; 返回目标
+    0xC3,                                              # 42 ret                         ; → 0x40E8D1
 ])
 
 # ============================================================
