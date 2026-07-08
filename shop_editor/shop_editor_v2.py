@@ -46,12 +46,12 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from editor_utils.theme_manager import ThemeManager
 from editor_utils.dock_components import DockHeader, create_dock
 from editor_utils.lzss import lzss_decompress_dat, lzss_compress_dat
-from editor_utils.ui_helpers import export_csv
+from editor_utils.ui_helpers import export_csv, themed_messagebox
 from editor_utils.mod_exporter import (
     diff_records, compute_crc32, generate_mod_json,
     pack_tksmod, build_data_diff_json, ModMetadataDialog, safe_mod_filename,
-    ask_reference_directory, load_reference_dat_fields,
-    get_tksmod_info, import_tksmod_records, ModImportPreviewDialog,
+    load_reference_dat_fields,
+    get_tksmod_info, import_tksmod_records, ModImportPreviewDialog, ModExportPreviewDialog,
 )
 from editor_utils.window_theme import apply_godot_theme
 from editor_utils.picker_dialogs import ItemPickerDialog
@@ -987,21 +987,42 @@ class ShopEditorWindow(QMainWindow):
         """导出 MOD — 指定原始参考目录进行差异比对"""
         if not self.records:
             QMessageBox.information(self, "提示", "请先加载数据"); return
-        ref_dir = ask_reference_directory(self)
-        if not ref_dir: return
+
+        # 预构建当前字段
+        current_fields = [[r['area_id'], r['item_ref'], r['condition'], r['display']] for r in self.records]
+
+        def _compute_stats(ref_dir):
+            ref_records = load_reference_dat_fields(ref_dir, "TKShop.dat",
+                rec_size=8, field_count=4, field_fmt='h', use_lzss=True)
+            if ref_records is None:
+                return {"valid": False, "error": "目录中未找到 TKShop.dat"}
+            diff = diff_records(ref_records, current_fields, 4, len(ref_records))
+            targets = []
+            if diff['modified'] or diff['appended']:
+                targets.append({"name": "TKShop.dat",
+                    "modified": len(diff['modified']),
+                    "appended": len(diff['appended']),
+                    "deleted": 0})
+            return {"valid": True, "targets": targets}
+
+        preview_dlg = ModExportPreviewDialog(self,
+            default_dir=os.path.dirname(self.shop_path) if self.shop_path else "",
+            compute_stats=_compute_stats)
+        if preview_dlg.exec() != QDialog.Accepted: return
+        ref_dir = preview_dlg.get_ref_dir()
+
         ref_records = load_reference_dat_fields(ref_dir, "TKShop.dat",
             rec_size=8, field_count=4, field_fmt='h', use_lzss=True)
         if ref_records is None:
             QMessageBox.warning(self, "参考目录无效", f"在 {ref_dir} 中未找到 TKShop.dat"); return
-        
+        diff_result = diff_records(ref_records, current_fields, 4, len(ref_records))
+        if not diff_result['modified'] and not diff_result['appended']:
+            QMessageBox.information(self, "无差异", "当前数据与参考文件相同，无需导出。"); return
+
         dlg = ModMetadataDialog(self, getattr(self, '_last_mod_metadata', None))
         if dlg.exec() != QDialog.Accepted: return
         metadata = dlg.get_metadata(); self._last_mod_metadata = metadata
 
-        current_fields = [[r['area_id'], r['item_ref'], r['condition'], r['display']] for r in self.records]
-        diff_result = diff_records(ref_records, current_fields, 4, len(ref_records))
-        if not diff_result['modified'] and not diff_result['appended']:
-            QMessageBox.information(self, "无差异", "当前数据与参考文件相同，无需导出。"); return
         crc = compute_crc32(os.path.join(ref_dir, "TKShop.dat"))
         data_json = build_data_diff_json(target="TKShop.dat", record_size=8, field_type="mixed",
             field_count=4, original_count=len(ref_records), original_crc32=crc, diff_result=diff_result)
@@ -1080,7 +1101,7 @@ class ShopEditorWindow(QMainWindow):
             f"您现在可以继续编辑并重新导出。")
 
     def _show_help(self):
-        QMessageBox.information(self, "使用说明",
+        themed_messagebox(self, QMessageBox.Information, "使用说明",
             "TKShop.dat 可视化编辑器\n\n"
             "1. 文件 → 加载 TKS 目录: 选择包含 TKShop.dat / TKItem.dat / TKT.dat 的目录\n"
             "2. 左侧表格: 单击行查看/编辑, 支持区域过滤和关键词搜索, 点击表头可排序\n"
@@ -1095,7 +1116,7 @@ class ShopEditorWindow(QMainWindow):
             "   选择物品后区域下方会显示是否兼容及建议放置的商店")
 
     def _show_about(self):
-        QMessageBox.information(self, "关于",
+        themed_messagebox(self, QMessageBox.Information, "关于",
             "TKShop.dat 可视化编辑器 (PySide6 重构版)\n\n"
             "基于《三国群侠传》(TKS) 逆向工程\n"
             "支持 TKShop.dat 的加载、编辑、保存\n"

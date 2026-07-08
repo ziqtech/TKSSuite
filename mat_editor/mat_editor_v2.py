@@ -47,14 +47,14 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from editor_utils.theme_manager import ThemeManager
 from editor_utils.dock_components import DockHeader, create_dock
 from editor_utils.lzss import lzss_decompress_dat as lzss_decompress, lzss_decompress_save, lzss_compress_save
-from editor_utils.ui_helpers import export_csv, confirm_close
+from editor_utils.ui_helpers import export_csv, confirm_close, themed_messagebox
 from editor_utils.mod_exporter import (
     diff_records, diff_text_defines, compute_crc32, generate_mod_json,
     pack_tksmod, build_data_diff_json, build_text_diff_json, ModMetadataDialog,
-    ask_reference_directory, load_reference_dat_fields,
+    load_reference_dat_fields,
     get_tksmod_info, import_tksmod_records, import_tksmod_text_defines,
     import_tksmod_blocks,
-    ModImportPreviewDialog,
+    ModImportPreviewDialog, ModExportPreviewDialog,
     diff_binary_blocks, build_block_diff_json, load_grp_raw_sections,
     safe_mod_filename,
 )
@@ -4695,8 +4695,46 @@ class MatEditorApp(QMainWindow):
         """导出 MOD — 指定原始参考目录进行差异比对 (TKMat + TKDefUnit)"""
         if not self.records:
             QMessageBox.information(self, "提示", "请先加载数据"); return
-        ref_dir = ask_reference_directory(self)
-        if not ref_dir: return
+
+        # 预构建当前 TKMat 字段
+        current_mat = [[r.get(f'd{i}', 0) for i in range(DWORD_COUNT)] for r in self.records]
+
+        def _compute_stats(ref_dir):
+            ref_mat = load_reference_dat_fields(ref_dir, "TKMat.Dat",
+                rec_size=REC_SIZE, field_count=DWORD_COUNT, field_fmt='i', use_lzss=False)
+            if ref_mat is None:
+                return {"valid": False, "error": "目录中未找到 TKMat.Dat"}
+            mat_diff = diff_records(ref_mat, current_mat, DWORD_COUNT, len(ref_mat))
+            targets = []
+            if mat_diff['modified'] or mat_diff['appended']:
+                targets.append({"name": "TKMat.dat",
+                    "modified": len(mat_diff['modified']),
+                    "appended": len(mat_diff['appended']),
+                    "deleted": 0})
+            # TKDefUnit.dat (如果可加载)
+            du_path = os.path.join(ref_dir, "TKDefUnit.Dat")
+            if os.path.isfile(du_path) and hasattr(self, '_du_records') and self._du_records:
+                from core.du_loader import load_defunit
+                try:
+                    with open(du_path, 'rb') as f:
+                        du_raw = f.read()
+                    ref_du = load_defunit(du_raw)
+                    cur_du = [[r[f'd{i}'] for i in range(4)] for r in self._du_records]
+                    du_diff = diff_records(ref_du, cur_du, 4, len(ref_du))
+                    if du_diff['modified'] or du_diff['appended']:
+                        targets.append({"name": "TKDefUnit.dat",
+                            "modified": len(du_diff['modified']),
+                            "appended": len(du_diff['appended']),
+                            "deleted": 0})
+                except Exception:
+                    pass
+            return {"valid": True, "targets": targets}
+
+        preview_dlg = ModExportPreviewDialog(self,
+            default_dir=self._get_game_dir(),
+            compute_stats=_compute_stats)
+        if preview_dlg.exec() != QDialog.Accepted: return
+        ref_dir = preview_dlg.get_ref_dir()
 
         # 加载参考目录中的 TKMat.Dat
         ref_mat = load_reference_dat_fields(ref_dir, "TKMat.Dat",
@@ -4704,14 +4742,9 @@ class MatEditorApp(QMainWindow):
         if ref_mat is None:
             QMessageBox.warning(self, "参考目录无效", f"在 {ref_dir} 中未找到 TKMat.Dat"); return
 
-        dlg = ModMetadataDialog(self, getattr(self, '_last_mod_metadata', None))
-        if dlg.exec() != QDialog.Accepted: return
-        metadata = dlg.get_metadata(); self._last_mod_metadata = metadata
-
         data_files = {}; components = []
 
         # TKMat.Dat 差异
-        current_mat = [[r.get(f'd{i}', 0) for i in range(DWORD_COUNT)] for r in self.records]
         mat_diff = diff_records(ref_mat, current_mat, DWORD_COUNT, len(ref_mat))
         if mat_diff['modified'] or mat_diff['appended']:
             crc = compute_crc32(os.path.join(ref_dir, "TKMat.Dat"))
@@ -4758,6 +4791,10 @@ class MatEditorApp(QMainWindow):
 
         if not data_files:
             QMessageBox.information(self, "无差异", "当前数据与参考文件相同，无需导出。"); return
+
+        dlg = ModMetadataDialog(self, getattr(self, '_last_mod_metadata', None))
+        if dlg.exec() != QDialog.Accepted: return
+        metadata = dlg.get_metadata(); self._last_mod_metadata = metadata
 
         mod_json = generate_mod_json(metadata, components)
         fp, _ = QFileDialog.getSaveFileName(self, "导出为 MOD", f"{safe_mod_filename(metadata['name'], metadata['id'])}.tksmod", "TKS MOD (*.tksmod)")
@@ -5908,10 +5945,10 @@ class MatEditorApp(QMainWindow):
                " [30-35]sub-scene [39-41]chain heads [42-43]PC [44]defunit_idx\n"
                " [50]条件角色 [51]访问掩码 [52]目标场景 [53]目标X [54]目标Y [56]目标朝向\n"
                "注意: [52-56]字段语义与实体类型相关 (type=10: 传送参数; type=200: 动画参数)")
-        QMessageBox.information(self, "字段说明", msg)
+        themed_messagebox(self, QMessageBox.Information, "字段说明", msg)
 
     def _show_about(self):
-        QMessageBox.information(self, "关于",
+        themed_messagebox(self, QMessageBox.Information, "关于",
                                 "TKMat.Dat 地图实体编辑器 v2.3 (PySide6)\n\n"
                                 "模式: 参数 + 可视化 + 脚本编辑 + 脚本调度分析\n"
                                 "逆向依据: sub_412688, sub_405CBC, sub_4066F0, sub_40EBD4, sub_409618\n"

@@ -84,7 +84,7 @@ from PySide6.QtCore import Qt, QPointF, QRectF, QTranslator
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from editor_utils.theme_manager import ThemeManager
 from editor_utils.dock_components import DockHeader
-from editor_utils.ui_helpers import make_fake_input, update_path_labels, confirm_close
+from editor_utils.ui_helpers import make_fake_input, update_path_labels, confirm_close, themed_messagebox
 from editor_utils.lzss import lzss_decompress_stream as lzss_decompress
 from editor_utils.lzss import lzss_decompress_dat
 from editor_utils.jvg_loader import load_mu_sprites, get_sprite_pixmap
@@ -92,8 +92,7 @@ from editor_utils.rgb565 import rgb565_to_rgba
 from editor_utils.tkt_loader import load_tkt_simple
 from editor_utils.mod_exporter import (
     compute_crc32, generate_mod_json, pack_tksmod, ModMetadataDialog, safe_mod_filename,
-    ask_reference_directory,
-    get_tksmod_info, read_tksmod, ModImportPreviewDialog,
+    get_tksmod_info, read_tksmod, ModImportPreviewDialog, ModExportPreviewDialog,
 )
 from editor_utils.window_theme import apply_godot_theme
 from editor_utils.picker_dialogs import WarpcPickerDialog, ItemPickerDialog
@@ -887,7 +886,7 @@ class WarDataEditorV2(QMainWindow):
         self.status_var.setText("已删除战场")
 
     def _show_field_ref(self):
-        QMessageBox.information(self, "字段参考",
+        themed_messagebox(self, QMessageBox.Information, "字段参考",
             "WarData.dat 字段参考\n\n[0] flags [2-7] must_chars [30] name_id [32] map_id\n"
             "[34-69] enemy_id×18 [70-87] enemy_lv [88-105] enemy_power\n"
             "[106-141] enemy_lv_range [142-177] enemy_xy [178-189] ally_xy\n"
@@ -898,7 +897,7 @@ class WarDataEditorV2(QMainWindow):
             "WarWay.dat: 1024字节/条, 32x32网格, -1=障碍, 0=通行, 1-5=区域")
 
     def _show_about(self):
-        QMessageBox.about(self, "关于", "WarData.dat 可视化编辑器 v2.0\n\nPySide6 版本\n基于游戏逆向工程 (TKS.exe 反编译)")
+        themed_messagebox(self, QMessageBox.Information, "关于", "WarData.dat 可视化编辑器 v2.0\n\nPySide6 版本\n基于游戏逆向工程 (TKS.exe 反编译)")
 
     def _export_tksmod(self):
         """导出当前修改为 .tksmod MOD 文件（WarData 完整记录级差异）"""
@@ -970,17 +969,40 @@ class WarDataEditorV2(QMainWindow):
         if not self.records:
             QMessageBox.information(self, "提示", "请先加载数据"); return
         self._apply_current_edit()
-        ref_dir = ask_reference_directory(self)
-        if not ref_dir: return
+
+        # 预构建当前记录（WarData 每条记录以 _raw 为标识）
+        current_records = [r for r in self.records]
+
+        def _compute_stats(ref_dir):
+            ref_path = os.path.join(ref_dir, "WarData.dat")
+            if not os.path.isfile(ref_path):
+                return {"valid": False, "error": "目录中未找到 WarData.dat"}
+            try:
+                original = load_wardata(ref_path)
+            except Exception:
+                return {"valid": False, "error": "WarData.dat 解析失败"}
+            modified = 0
+            for i in range(min(len(original), len(current_records))):
+                if original[i]['_raw'] != current_records[i]['_raw']:
+                    modified += 1
+            appended = max(0, len(current_records) - len(original))
+            targets = []
+            if modified or appended:
+                targets.append({"name": "WarData.dat",
+                    "modified": modified, "appended": appended, "deleted": 0})
+            return {"valid": True, "targets": targets}
+
+        preview_dlg = ModExportPreviewDialog(self,
+            default_dir=os.path.dirname(self.wardata_path) if self.wardata_path else "",
+            compute_stats=_compute_stats)
+        if preview_dlg.exec() != QDialog.Accepted: return
+        ref_dir = preview_dlg.get_ref_dir()
+
         ref_path = os.path.join(ref_dir, "WarData.dat")
         if not os.path.isfile(ref_path):
             QMessageBox.warning(self, "参考目录无效", f"在 {ref_dir} 中未找到 WarData.dat"); return
-        
-        original = load_wardata(ref_path)
 
-        dlg = ModMetadataDialog(self, getattr(self, '_last_mod_metadata', None))
-        if dlg.exec() != QDialog.Accepted: return
-        metadata = dlg.get_metadata(); self._last_mod_metadata = metadata
+        original = load_wardata(ref_path)
 
         modified = []
         for i in range(min(len(original), len(self.records))):
@@ -1006,6 +1028,11 @@ class WarDataEditorV2(QMainWindow):
 
         if not modified and not appended:
             QMessageBox.information(self, "无差异", "当前数据与参考文件相同，无需导出。"); return
+
+        dlg = ModMetadataDialog(self, getattr(self, '_last_mod_metadata', None))
+        if dlg.exec() != QDialog.Accepted: return
+        metadata = dlg.get_metadata(); self._last_mod_metadata = metadata
+
         crc = compute_crc32(ref_path)
         data_json = {"target": "WarData.dat", "record_size": WAR_REC_SIZE, "field_type": "structured",
             "original_count": len(original), "original_crc32": crc, "modified": modified, "appended": appended}

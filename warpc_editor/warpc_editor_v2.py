@@ -66,14 +66,14 @@ from editor_utils.theme_manager import ThemeManager
 from editor_utils.dock_components import DockHeader
 from editor_utils.picker_dialogs import TktPickerDialog, StatusPickerDialog, STATUS_NAMES, ItemPickerDialog
 from editor_utils.jvg_loader import load_mu_sprites, get_sprite_pixmap
-from editor_utils.ui_helpers import make_fake_input, update_path_labels, confirm_close, export_csv, resolve_config_path, dialog_show_event
+from editor_utils.ui_helpers import make_fake_input, update_path_labels, confirm_close, export_csv, resolve_config_path, dialog_show_event, themed_messagebox
 from editor_utils.lzss import lzss_decompress_dat, lzss_compress_dat, lzss_decompress_save, lzss_compress_save
 from editor_utils.tkt_loader import load_tkt_simple
 from editor_utils.mod_exporter import (
     diff_records, compute_crc32, generate_mod_json,
     pack_tksmod, build_data_diff_json, ModMetadataDialog, safe_mod_filename,
-    ask_reference_directory, load_reference_dat_fields,
-    get_tksmod_info, import_tksmod_records, ModImportPreviewDialog,
+    load_reference_dat_fields,
+    get_tksmod_info, import_tksmod_records, ModImportPreviewDialog, ModExportPreviewDialog,
 )
 from editor_utils.window_theme import apply_godot_theme
 from editor_utils.kon_name_resolver import KonNameResolver
@@ -2435,29 +2435,43 @@ class WarpcEditorV2(QMainWindow):
         if not self.records:
             QMessageBox.information(self, "提示", "请先加载数据"); return
 
-        # 1. 选择参考目录
-        ref_dir = ask_reference_directory(self)
-        if not ref_dir: return
+        # 预构建当前字段
+        current_fields = [r['fields'] for r in self.records]
 
-        # 2. 从参考目录加载原始 WarPC.dat
+        def _compute_stats(ref_dir):
+            ref_records = load_reference_dat_fields(ref_dir, "WarPC.dat",
+                rec_size=WARPC_REC, field_count=WARPC_FIELD_COUNT, field_fmt='h', use_lzss=True)
+            if ref_records is None:
+                return {"valid": False, "error": "目录中未找到 WarPC.dat"}
+            diff = diff_records(ref_records, current_fields, WARPC_FIELD_COUNT, len(ref_records))
+            targets = []
+            if diff['modified'] or diff['appended']:
+                targets.append({"name": "WarPC.dat",
+                    "modified": len(diff['modified']),
+                    "appended": len(diff['appended']),
+                    "deleted": 0})
+            return {"valid": True, "targets": targets}
+
+        preview_dlg = ModExportPreviewDialog(self,
+            default_dir=os.path.dirname(self.warpc_path) if self.warpc_path else "",
+            compute_stats=_compute_stats)
+        if preview_dlg.exec() != QDialog.Accepted: return
+        ref_dir = preview_dlg.get_ref_dir()
+
+        # 加载参考数据并计算差异
         ref_records = load_reference_dat_fields(ref_dir, "WarPC.dat",
             rec_size=WARPC_REC, field_count=WARPC_FIELD_COUNT, field_fmt='h', use_lzss=True)
         if ref_records is None:
             QMessageBox.warning(self, "参考目录无效", f"在 {ref_dir} 中未找到 WarPC.dat"); return
+        diff_result = diff_records(ref_records, current_fields, WARPC_FIELD_COUNT, len(ref_records))
+        if not diff_result['modified'] and not diff_result['appended']:
+            QMessageBox.information(self, "无差异", "当前数据与参考文件相同，无需导出。"); return
 
-        # 3. MOD 元数据
         dlg = ModMetadataDialog(self, getattr(self, '_last_mod_metadata', None))
         if dlg.exec() != QDialog.Accepted: return
         metadata = dlg.get_metadata(); self._last_mod_metadata = metadata
 
-        # 4. 计算差异（对比参考目录的数据 vs 当前内存数据）
-        current_fields = [r['fields'] for r in self.records]
-        diff_result = diff_records(ref_records, current_fields, WARPC_FIELD_COUNT, len(ref_records))
-
-        if not diff_result['modified'] and not diff_result['appended']:
-            QMessageBox.information(self, "无差异", "当前数据与参考文件相同，无需导出。"); return
-
-        # 5. 构建并导出
+        # 构建并导出
         crc = compute_crc32(os.path.join(ref_dir, "WarPC.dat"))
         data_json = build_data_diff_json(target="WarPC.dat", record_size=WARPC_REC,
             field_type="int16", field_count=WARPC_FIELD_COUNT,
@@ -2560,7 +2574,7 @@ class WarpcEditorV2(QMainWindow):
 
     def _show_about(self):
         cnt = len(self.records) if self.records else WARPC_ORIG_COUNT
-        QMessageBox.about(self, "关于",
+        themed_messagebox(self, QMessageBox.Information, "关于",
             f"WarPC.dat 可视化编辑器 v2.0 (PySide6)\n\n"
             f"基于《三国群侠传》 TKS.exe 反编译\n"
             f"{cnt} 角色 × {WARPC_REC} 字节 ({WARPC_FIELD_COUNT}×int16)\n"

@@ -22,7 +22,7 @@ from PySide6.QtCore import Qt, QTranslator
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from editor_utils.theme_manager import ThemeManager
 from editor_utils.dock_components import DockHeader
-from editor_utils.ui_helpers import make_fake_input, update_path_labels, confirm_close, export_csv
+from editor_utils.ui_helpers import make_fake_input, update_path_labels, confirm_close, export_csv, themed_messagebox, dialog_show_event
 from editor_utils.lzss import lzss_decompress_dat, lzss_compress_dat
 from editor_utils.tkt_loader import load_tkt_simple
 from editor_utils.picker_dialogs import StatusPickerDialog, STATUS_NAMES
@@ -30,8 +30,8 @@ from editor_utils.jvg_loader import load_mu_sprites, get_sprite_pixmap
 from editor_utils.mod_exporter import (
     diff_records, compute_crc32, generate_mod_json,
     pack_tksmod, build_data_diff_json, ModMetadataDialog, safe_mod_filename,
-    ask_reference_directory, load_reference_dat_fields,
-    get_tksmod_info, import_tksmod_records, ModImportPreviewDialog,
+    load_reference_dat_fields,
+    get_tksmod_info, import_tksmod_records, ModImportPreviewDialog, ModExportPreviewDialog,
 )
 from editor_utils.window_theme import apply_godot_theme
 from editor_utils.kon_name_resolver import KonNameResolver
@@ -228,6 +228,10 @@ class FieldRefDialog(QDialog):
         text.setPlainText('\n'.join(lines)); layout.addWidget(text)
         btn_close = QPushButton("关闭"); btn_close.clicked.connect(self.close)
         bl = QHBoxLayout(); bl.addStretch(); bl.addWidget(btn_close); layout.addLayout(bl)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        dialog_show_event(self)
 
 # ============================================================
 # 主编辑器窗口
@@ -1013,21 +1017,42 @@ class KonEditor(QMainWindow):
         """导出 MOD — 指定原始参考目录进行差异比对"""
         if not self.records:
             QMessageBox.information(self, "提示", "请先加载数据"); return
-        ref_dir = ask_reference_directory(self)
-        if not ref_dir: return
+
+        # 预构建当前字段
+        current_fields = [[rec[fn] for fn, _, _, _ in KON_FIELDS] for rec in self.records]
+
+        def _compute_stats(ref_dir):
+            ref_records = load_reference_dat_fields(ref_dir, "TKKon.dat",
+                rec_size=KON_REC, field_count=KON_FIELD_COUNT, field_fmt='h', use_lzss=True)
+            if ref_records is None:
+                return {"valid": False, "error": "目录中未找到 TKKon.dat"}
+            diff = diff_records(ref_records, current_fields, KON_FIELD_COUNT, len(ref_records))
+            targets = []
+            if diff['modified'] or diff['appended']:
+                targets.append({"name": "TKKon.dat",
+                    "modified": len(diff['modified']),
+                    "appended": len(diff['appended']),
+                    "deleted": 0})
+            return {"valid": True, "targets": targets}
+
+        preview_dlg = ModExportPreviewDialog(self,
+            default_dir=os.path.dirname(self.kon_path) if self.kon_path else "",
+            compute_stats=_compute_stats)
+        if preview_dlg.exec() != QDialog.Accepted: return
+        ref_dir = preview_dlg.get_ref_dir()
+
         ref_records = load_reference_dat_fields(ref_dir, "TKKon.dat",
             rec_size=KON_REC, field_count=KON_FIELD_COUNT, field_fmt='h', use_lzss=True)
         if ref_records is None:
             QMessageBox.warning(self, "参考目录无效", f"在 {ref_dir} 中未找到 TKKon.dat"); return
-        
+        diff_result = diff_records(ref_records, current_fields, KON_FIELD_COUNT, len(ref_records))
+        if not diff_result['modified'] and not diff_result['appended']:
+            QMessageBox.information(self, "无差异", "当前数据与参考文件相同，无需导出。"); return
+
         dlg = ModMetadataDialog(self, getattr(self, '_last_mod_metadata', None))
         if dlg.exec() != QDialog.Accepted: return
         metadata = dlg.get_metadata(); self._last_mod_metadata = metadata
 
-        current_fields = [[rec[fn] for fn, _, _, _ in KON_FIELDS] for rec in self.records]
-        diff_result = diff_records(ref_records, current_fields, KON_FIELD_COUNT, len(ref_records))
-        if not diff_result['modified'] and not diff_result['appended']:
-            QMessageBox.information(self, "无差异", "当前数据与参考文件相同，无需导出。"); return
         crc = compute_crc32(os.path.join(ref_dir, "TKKon.dat"))
         data_json = build_data_diff_json(target="TKKon.dat", record_size=KON_REC, field_type="int16",
             field_count=KON_FIELD_COUNT, original_count=len(ref_records), original_crc32=crc, diff_result=diff_result)
@@ -1106,7 +1131,7 @@ class KonEditor(QMainWindow):
         FieldRefDialog(self).exec()
 
     def _show_about(self):
-        QMessageBox.about(self, "关于",
+        themed_messagebox(self, QMessageBox.Information, "关于",
             "TKKon.dat 可视化编辑器 v3.3 (PySide6)\n\n"
             "基于《三国群侠传》 TKS.exe 反编译\n"
             "Godot 4.6 风格 UI · FakeInputBox · ThemeManager\n\n"

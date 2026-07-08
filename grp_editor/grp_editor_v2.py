@@ -50,11 +50,12 @@ from editor_utils.lzss import (lzss_decompress_stream as _lzss_decompress_stream
 from editor_utils.rgb565 import rgb565_to_rgba, rgba_to_rgb565
 from editor_utils.mod_exporter import (
     compute_crc32, generate_mod_json, pack_tksmod, ModMetadataDialog, safe_mod_filename,
-    ask_reference_directory, diff_binary_blocks, build_block_diff_json,
+    diff_binary_blocks, build_block_diff_json,
     load_grp_raw_sections,
-    get_tksmod_info, import_tksmod_blocks, ModImportPreviewDialog,
+    get_tksmod_info, import_tksmod_blocks, ModImportPreviewDialog, ModExportPreviewDialog,
 )
 from editor_utils.window_theme import apply_godot_theme
+from editor_utils.ui_helpers import themed_messagebox
 
 # ── 本地别名: 保持向后兼容 ──
 def lzss_decompress(data, target_size): return _lzss_decompress_stream(data, target_size)
@@ -413,6 +414,7 @@ class GRPEditor(QMainWindow):
         if app_inst:
             is_dark = app_inst.styleHints().colorScheme() == Qt.ColorScheme.Dark
             self.theme_manager.current_theme = 'dark' if is_dark else 'light'
+        self._is_dark = is_dark
 
         apply_godot_theme(self, is_dark)
         self._apply_theme()
@@ -473,7 +475,8 @@ class GRPEditor(QMainWindow):
 
     def _toggle_theme(self):
         self.theme_manager.toggle_theme(); self._apply_theme()
-        apply_godot_theme(self, self.theme_manager.current_theme == 'dark')
+        self._is_dark = self.theme_manager.current_theme == 'dark'
+        apply_godot_theme(self, self._is_dark)
 
     # ── Toolbar ───────────────────────────────────────────
     def _setup_toolbar(self):
@@ -705,11 +708,46 @@ class GRPEditor(QMainWindow):
         if not self.grp or not self.grp.filepath:
             QMessageBox.information(self, "提示", "请先打开 GRP 文件"); return
 
-        # 选择参考目录
-        ref_dir = ask_reference_directory(self, "选择原始游戏目录 (作为区段比对参考)")
-        if not ref_dir: return
-
         target_name = os.path.basename(self.grp.filepath)
+
+        # 先保存当前到临时文件获取当前区段
+        tmp_grp = tempfile.mktemp(suffix='.grp')
+        tmp_idx = tempfile.mktemp(suffix='.idx')
+        try:
+            save_grp(self.grp, tmp_grp, tmp_idx)
+            cur_sections = load_grp_raw_sections(tmp_grp, tmp_idx)
+        finally:
+            for p in [tmp_grp, tmp_idx]:
+                if os.path.exists(p): os.remove(p)
+        if cur_sections is None:
+            QMessageBox.warning(self, "错误", "无法序列化当前 GRP 数据"); return
+
+        def _compute_stats(ref_dir):
+            ref_path = os.path.join(ref_dir, target_name)
+            if not os.path.isfile(ref_path):
+                return {"valid": False, "error": f"目录中未找到 {target_name}"}
+            ref_idx = None
+            for ext in ['.IDX', '.idx']:
+                c = str(Path(ref_path).with_suffix(ext))
+                if os.path.exists(c): ref_idx = c; break
+            ref_sections = load_grp_raw_sections(ref_path, ref_idx)
+            if ref_sections is None:
+                return {"valid": False, "error": f"无法解析 {target_name}（需要配套 IDX 文件）"}
+            diff = diff_binary_blocks(ref_sections, cur_sections)
+            targets = []
+            if diff['modified'] or diff['appended'] or diff['deleted_indices']:
+                targets.append({"name": target_name,
+                    "modified": len(diff['modified']),
+                    "appended": len(diff['appended']),
+                    "deleted": len(diff['deleted_indices'])})
+            return {"valid": True, "targets": targets}
+
+        preview_dlg = ModExportPreviewDialog(self,
+            default_dir=os.path.dirname(self.grp.filepath) if self.grp and self.grp.filepath else "",
+            compute_stats=_compute_stats)
+        if preview_dlg.exec() != QDialog.Accepted: return
+        ref_dir = preview_dlg.get_ref_dir()
+
         ref_path = os.path.join(ref_dir, target_name)
         if not os.path.isfile(ref_path):
             QMessageBox.warning(self, "参考文件不存在", f"在 {ref_dir} 中未找到 {target_name}"); return
@@ -742,7 +780,6 @@ class GRPEditor(QMainWindow):
         if not diff_result['modified'] and not diff_result['appended'] and not diff_result['deleted_indices']:
             QMessageBox.information(self, "无差异", "当前 GRP 与参考文件相同，无需导出。"); return
 
-        # MOD 元数据
         dlg = ModMetadataDialog(self, getattr(self, '_last_mod_metadata', None))
         if dlg.exec() != QDialog.Accepted: return
         metadata = dlg.get_metadata(); self._last_mod_metadata = metadata
@@ -1663,7 +1700,7 @@ class GRPEditor(QMainWindow):
         self._status_lbl.setText(f"已删除区段 #{idx:03d}")
 
     def _show_pseudo_help(self):
-        QMessageBox.information(self, "伪彩工作流说明",
+        themed_messagebox(self, QMessageBox.Information, "伪彩工作流说明",
             "=== 伪彩色导出/导入工作流 ===\n\n"
             "1. 选中 Layer1(遮挡深度) 或 Layer2(碰撞类型)\n"
             "2. 点击「伪彩导出」→ 得到带 RGB 颜色的 PNG\n"
@@ -1681,7 +1718,7 @@ class GRPEditor(QMainWindow):
             "  0 = 类型0, 1~N = 各类地形障碍")
 
     def _show_about(self):
-        QMessageBox.information(self, "关于 GRP 格式",
+        themed_messagebox(self, QMessageBox.Information, "关于 GRP 格式",
             "GRP — 三国群侠传 通用资源包\n\n"
             "格式特征:\n"
             "  - 无文件级魔数, 通过 .IDX 索引定位区段\n"

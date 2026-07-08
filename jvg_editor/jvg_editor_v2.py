@@ -35,9 +35,9 @@ from editor_utils.theme_manager import ThemeManager
 from editor_utils.dock_components import DockHeader, create_dock
 from editor_utils.mod_exporter import (
     compute_crc32, generate_mod_json, pack_tksmod, ModMetadataDialog,
-    ask_reference_directory, diff_binary_blocks, build_block_diff_json,
+    diff_binary_blocks, build_block_diff_json,
     load_jvg_raw_blocks,
-    get_tksmod_info, import_tksmod_blocks, ModImportPreviewDialog,
+    get_tksmod_info, import_tksmod_blocks, ModImportPreviewDialog, ModExportPreviewDialog,
     safe_mod_filename,
 )
 from editor_utils.window_theme import apply_godot_theme
@@ -1036,11 +1036,40 @@ class JVGEditor(QMainWindow):
         if not self.jvg or not self.jvg.filepath:
             QMessageBox.information(self, "提示", "请先打开 JVG 文件"); return
 
-        # 选择参考目录（原始游戏目录）
-        ref_dir = ask_reference_directory(self, "选择原始游戏目录 (作为精灵块比对参考)")
-        if not ref_dir: return
-
         target_name = os.path.basename(self.jvg.filepath)
+
+        # 获取当前块数据
+        tmp_path = tempfile.mktemp(suffix='.jvg')
+        try:
+            save_jvg(self.jvg, tmp_path)
+            cur_blocks = load_jvg_raw_blocks(tmp_path)
+        finally:
+            if os.path.exists(tmp_path): os.remove(tmp_path)
+        if cur_blocks is None:
+            QMessageBox.warning(self, "错误", "无法序列化当前 JVG 数据"); return
+
+        def _compute_stats(ref_dir):
+            ref_path = os.path.join(ref_dir, target_name)
+            if not os.path.isfile(ref_path):
+                return {"valid": False, "error": f"目录中未找到 {target_name}"}
+            ref_blocks = load_jvg_raw_blocks(ref_path)
+            if ref_blocks is None:
+                return {"valid": False, "error": f"{target_name} 不是有效的 JVG 文件"}
+            diff = diff_binary_blocks(ref_blocks, cur_blocks)
+            targets = []
+            if diff['modified'] or diff['appended'] or diff['deleted_indices']:
+                targets.append({"name": target_name,
+                    "modified": len(diff['modified']),
+                    "appended": len(diff['appended']),
+                    "deleted": len(diff['deleted_indices'])})
+            return {"valid": True, "targets": targets}
+
+        preview_dlg = ModExportPreviewDialog(self,
+            default_dir=os.path.dirname(self.jvg.filepath) if self.jvg and self.jvg.filepath else "",
+            compute_stats=_compute_stats)
+        if preview_dlg.exec() != QDialog.Accepted: return
+        ref_dir = preview_dlg.get_ref_dir()
+
         ref_path = os.path.join(ref_dir, target_name)
         if not os.path.isfile(ref_path):
             QMessageBox.warning(self, "参考文件不存在", f"在 {ref_dir} 中未找到 {target_name}"); return
@@ -1067,7 +1096,6 @@ class JVGEditor(QMainWindow):
         if not diff_result['modified'] and not diff_result['appended'] and not diff_result['deleted_indices']:
             QMessageBox.information(self, "无差异", "当前 JVG 与参考文件相同，无需导出。"); return
 
-        # MOD 元数据
         dlg = ModMetadataDialog(self, getattr(self, '_last_mod_metadata', None))
         if dlg.exec() != QDialog.Accepted: return
         metadata = dlg.get_metadata(); self._last_mod_metadata = metadata

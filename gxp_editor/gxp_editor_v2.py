@@ -187,8 +187,9 @@ class GXPEditor(QMainWindow):
             is_dark = True
             self.theme_manager.set_theme('dark')
 
+        self._is_dark = is_dark
         apply_godot_theme(self, is_dark)
-        
+
         self.img: Optional[GXPImage] = None
         self._pixmap_item = None
         self._zoom = 1.0
@@ -225,9 +226,10 @@ class GXPEditor(QMainWindow):
     def _toggle_theme(self):
         self.theme_manager.toggle_theme()
         self._apply_theme()
-        theme_name = '深色' if self.theme_manager.current_theme == 'dark' else '浅色'
+        self._is_dark = self.theme_manager.current_theme == 'dark'
+        theme_name = '深色' if self._is_dark else '浅色'
         self.statusBar().showMessage(f"已切换到{theme_name}主题", 2000)
-        apply_godot_theme(self, self.theme_manager.current_theme == 'dark')
+        apply_godot_theme(self, self._is_dark)
 
     def _setup_menu(self):
         mb = self.menuBar()

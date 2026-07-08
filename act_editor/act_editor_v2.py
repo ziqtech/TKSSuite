@@ -66,11 +66,12 @@ from editor_utils.lzss import lzss_decompress_dat
 from editor_utils.dock_components import DockHeader
 from editor_utils.ui_helpers import (
     make_fake_input, update_path_labels, confirm_close, export_csv,
+    themed_messagebox, dialog_show_event,
 )
 from editor_utils.mod_exporter import (
     compute_crc32, generate_mod_json, pack_tksmod, ModMetadataDialog, safe_mod_filename,
-    ask_reference_directory, diff_binary_blocks, build_block_diff_json,
-    get_tksmod_info, import_tksmod_blocks, ModImportPreviewDialog,
+    diff_binary_blocks, build_block_diff_json,
+    get_tksmod_info, import_tksmod_blocks, ModImportPreviewDialog, ModExportPreviewDialog,
 )
 
 HAS_PIL = False
@@ -3129,21 +3130,7 @@ class ActEditorV2(QMainWindow):
         if not self.entries or not self.act_path:
             QMessageBox.information(self, "提示", "请先加载数据"); return
 
-        # 选择参考目录
-        ref_dir = ask_reference_directory(self, "选择原始游戏目录 (作为动画数据比对参考)")
-        if not ref_dir: return
-
-        ref_path = os.path.join(ref_dir, "TKAct.dat")
-        if not os.path.isfile(ref_path):
-            QMessageBox.warning(self, "参考文件不存在", f"在 {ref_dir} 中未找到 TKAct.dat"); return
-
-        # 加载参考文件
-        try:
-            ref_entries = load_act(ref_path)
-        except Exception as e:
-            QMessageBox.warning(self, "参考文件无效", str(e)); return
-
-        # 按记录整体字节比对（每条 784B 作为一个块）
+        # 序列化函数（用于差异比对）
         def entry_to_bytes(entry):
             buf = bytearray(ACT_ENTRY_SIZE)
             for d in range(4):
@@ -3155,14 +3142,45 @@ class ActEditorV2(QMainWindow):
             struct.pack_into('<32h', buf, ACT_TAIL_OFFSET, *entry['tail'])
             return bytes(buf)
 
-        ref_blocks = [entry_to_bytes(e) for e in ref_entries]
         cur_blocks = [entry_to_bytes(e) for e in self.entries]
+
+        def _compute_stats(ref_dir):
+            ref_path = os.path.join(ref_dir, "TKAct.dat")
+            if not os.path.isfile(ref_path):
+                return {"valid": False, "error": "目录中未找到 TKAct.dat"}
+            try:
+                ref_entries = load_act(ref_path)
+            except Exception as e:
+                return {"valid": False, "error": f"TKAct.dat 解析失败: {e}"}
+            ref_blocks = [entry_to_bytes(e) for e in ref_entries]
+            diff = diff_binary_blocks(ref_blocks, cur_blocks)
+            targets = []
+            if diff['modified'] or diff['appended'] or diff['deleted_indices']:
+                targets.append({"name": "TKAct.dat",
+                    "modified": len(diff['modified']),
+                    "appended": len(diff['appended']),
+                    "deleted": len(diff['deleted_indices'])})
+            return {"valid": True, "targets": targets}
+
+        preview_dlg = ModExportPreviewDialog(self,
+            default_dir=os.path.dirname(self.act_path) if self.act_path else "",
+            compute_stats=_compute_stats)
+        if preview_dlg.exec() != QDialog.Accepted: return
+        ref_dir = preview_dlg.get_ref_dir()
+
+        ref_path = os.path.join(ref_dir, "TKAct.dat")
+        if not os.path.isfile(ref_path):
+            QMessageBox.warning(self, "参考文件不存在", f"在 {ref_dir} 中未找到 TKAct.dat"); return
+        try:
+            ref_entries = load_act(ref_path)
+        except Exception as e:
+            QMessageBox.warning(self, "参考文件无效", str(e)); return
+        ref_blocks = [entry_to_bytes(e) for e in ref_entries]
 
         diff_result = diff_binary_blocks(ref_blocks, cur_blocks)
         if not diff_result['modified'] and not diff_result['appended']:
             QMessageBox.information(self, "无差异", "当前动画数据与参考文件相同，无需导出。"); return
 
-        # MOD 元数据
         dlg = ModMetadataDialog(self, getattr(self, '_last_mod_metadata', None))
         if dlg.exec() != QDialog.Accepted: return
         metadata = dlg.get_metadata(); self._last_mod_metadata = metadata
@@ -4258,10 +4276,11 @@ class ActEditorV2(QMainWindow):
         bl.addStretch()
         bl.addWidget(QPushButton("✕ 关闭", clicked=dlg.close))
         layout.addLayout(bl)
+        dialog_show_event(dlg)
         dlg.exec()
 
     def _show_about(self):
-        QMessageBox.about(self, "关于",
+        themed_messagebox(self, QMessageBox.Information, "关于",
             "TKAct.dat 多图层 2D 精灵动画编辑器 v3.0 (PySide6)\n\n"
             "修订依据:\n"
             "  · sub_4434BC / sub_42FEE0 / sub_451780 / sub_458D08 反编译\n\n"

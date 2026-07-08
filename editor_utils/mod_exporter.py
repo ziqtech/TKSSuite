@@ -12,12 +12,16 @@ mod_exporter — MOD 导出公共模块
 .tksmod 格式: ZIP 压缩包，内含 mod.json + data/*.json + resources/*
 """
 import os
+import re
 import json
 import zlib
+import struct as _struct
 import zipfile
 import copy
 import uuid
+import base64
 from datetime import datetime, timezone, timedelta
+from pathlib import Path
 from typing import Any
 
 from PySide6.QtWidgets import (
@@ -27,6 +31,16 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QPixmap
+
+from editor_utils.lzss import (
+    lzss_decompress_stream as _lzss_decompress_stream,
+    lzss_compress_stream as _lzss_compress_stream,
+    RING_SIZE, RING_INIT_POS as RING_INIT,
+    RING_INIT_VAL, MIN_MATCH as MIN_MATCH_LZ,
+    MAX_MATCH as MAX_MATCH_LZ, lzss_decompress_dat,
+)
+from editor_utils.tkt_loader import load_tkt_full
+from editor_utils.ui_helpers import dialog_show_event
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -372,7 +386,6 @@ def safe_mod_filename(name: str, fallback_id: str) -> str:
     Returns:
         安全的文件名字符串 (不含扩展名)
     """
-    import re
     if not name or not name.strip():
         return fallback_id
     safe = re.sub(r'[<>:"/\\|?*]', '_', name.strip())
@@ -514,6 +527,10 @@ class ModMetadataDialog(QDialog):
         btn_layout.addWidget(btn_ok)
         layout.addLayout(btn_layout)
 
+    def showEvent(self, event):
+        super().showEvent(event)
+        dialog_show_event(self)
+
     def _on_pick_preview_image(self):
         path, _ = QFileDialog.getOpenFileName(
             self, "选择预览图", "", self._PREVIEW_IMG_FILTER)
@@ -548,7 +565,6 @@ class ModMetadataDialog(QDialog):
         if not mod_name:
             QMessageBox.warning(self, "必填", "请输入 MOD 名称")
             return
-
         self.metadata = {
             "id": mod_id,
             "name": mod_name,
@@ -579,7 +595,6 @@ def ask_reference_directory(parent, title="选择原始游戏目录 (作为 MOD 
     Returns:
         目录路径，或 None（用户取消）
     """
-    from PySide6.QtWidgets import QFileDialog, QMessageBox
     d = QFileDialog.getExistingDirectory(parent, title)
     if not d:
         return None
@@ -602,7 +617,6 @@ def load_reference_dat_fields(ref_dir: str, dat_name: str, rec_size: int,
     Returns:
         [[field0, field1, ...], ...] 或 None (文件不存在)
     """
-    import struct as _struct
     fp = os.path.join(ref_dir, dat_name)
     if not os.path.isfile(fp):
         return None
@@ -611,7 +625,6 @@ def load_reference_dat_fields(ref_dir: str, dat_name: str, rec_size: int,
         raw = f.read()
 
     if use_lzss:
-        from .lzss import lzss_decompress_dat
         dec = lzss_decompress_dat(raw)
         # 兜底: 解压结果不对齐记录边界但原始文件对齐 → 未压缩 raw 数据
         if len(raw) % rec_size == 0 and (len(dec) == 0 or len(dec) % rec_size != 0):
@@ -643,7 +656,6 @@ def load_reference_tkt_entries(ref_dir: str) -> dict[int, str] | None:
     fp = os.path.join(ref_dir, "TKT.dat")
     if not os.path.isfile(fp):
         return None
-    from .tkt_loader import load_tkt_full
     entries = load_tkt_full(fp)
     return {e['id']: e['text'] for e in entries}
 
@@ -728,7 +740,6 @@ def load_jvg_raw_blocks(filepath: str) -> list[bytes] | None:
     Returns:
         [block0_bytes, block1_bytes, ...] 或 None
     """
-    import struct as _struct
     if not os.path.isfile(filepath):
         return None
     with open(filepath, 'rb') as f:
@@ -761,7 +772,6 @@ def load_grp_raw_sections(filepath: str, idx_path: str | None = None
     Returns:
         [section0_bytes, section1_bytes, ...] 或 None
     """
-    import struct as _struct
     if not os.path.isfile(filepath):
         return None
 
@@ -770,7 +780,6 @@ def load_grp_raw_sections(filepath: str, idx_path: str | None = None
 
     # 尝试找 IDX 文件
     if idx_path is None:
-        from pathlib import Path
         for ext in ['.IDX', '.idx']:
             candidate = str(Path(filepath).with_suffix(ext))
             if os.path.exists(candidate):
@@ -1288,8 +1297,11 @@ class ModImportPreviewDialog(QDialog):
         btn_layout.addWidget(btn_ok)
         layout.addLayout(btn_layout)
 
+    def showEvent(self, event):
+        super().showEvent(event)
+        dialog_show_event(self)
+
     def _on_browse_dir(self):
-        from PySide6.QtWidgets import QFileDialog
         d = QFileDialog.getExistingDirectory(self, "选择原始游戏目录", self._ref_dir)
         if d:
             self._ref_dir = d
@@ -1299,6 +1311,136 @@ class ModImportPreviewDialog(QDialog):
         if not self._ref_dir or not os.path.isdir(self._ref_dir):
             QMessageBox.warning(self, "缺少目录", "请先选择原始游戏目录。")
             return
+        self.accept()
+
+    def get_ref_dir(self) -> str:
+        return self._ref_dir
+
+
+# ═══════════════════════════════════════════════════════════════
+# MOD 导出预览对话框
+# ═══════════════════════════════════════════════════════════════
+
+class ModExportPreviewDialog(QDialog):
+    """MOD 导出预览对话框 — 选择参考目录并显示组件变更统计。
+
+    流程: 用户确认目录和变更统计 → 点击"导出" → 调用方弹出 ModMetadataDialog 填写元数据。
+    """
+
+    def __init__(self, parent=None, default_dir: str = "",
+                 compute_stats: callable = None,
+                 mod_info: dict | None = None):
+        super().__init__(parent)
+        self.setWindowTitle("导出为 MOD — 选择参考目录")
+        self.resize(520, 420)
+        self._ref_dir = default_dir
+        self._compute_stats = compute_stats
+        self._info = mod_info or {}
+        self._has_diff = False
+
+        layout = QVBoxLayout(self)
+
+        # ── 参考目录选择 ──
+        layout.addWidget(QLabel("<b>原始游戏目录 (差异参考):</b>"))
+        dir_layout = QHBoxLayout()
+        self._dir_edit = QLineEdit(self._ref_dir)
+        self._dir_edit.setReadOnly(True)
+        self._dir_edit.setMinimumWidth(280)
+        dir_layout.addWidget(self._dir_edit, 1)
+        btn_browse = QPushButton("选择目录…")
+        btn_browse.clicked.connect(self._on_browse_dir)
+        dir_layout.addWidget(btn_browse)
+        layout.addLayout(dir_layout)
+
+        layout.addSpacing(12)
+
+        # ── 组件变更统计 ──
+        layout.addWidget(QLabel("<b>包含数据:</b>"))
+        self._stats_layout = QVBoxLayout()
+        self._stats_layout.setSpacing(2)
+        layout.addLayout(self._stats_layout)
+
+        layout.addStretch()
+
+        # ── 提示 ──
+        self._hint_label = QLabel(
+            "<i>确认参考目录和变更统计后，点击「导出」填写 MOD 元数据。</i>")
+        layout.addWidget(self._hint_label)
+
+        # ── 按钮 ──
+        btn_layout = QHBoxLayout()
+        btn_layout.addStretch()
+        btn_cancel = QPushButton("取消")
+        btn_cancel.clicked.connect(self.reject)
+        btn_layout.addWidget(btn_cancel)
+        self._btn_export = QPushButton("导出")
+        self._btn_export.clicked.connect(self._on_export)
+        btn_layout.addWidget(self._btn_export)
+        layout.addLayout(btn_layout)
+
+        # 初始计算
+        self._refresh_stats()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        dialog_show_event(self)
+
+    def _on_browse_dir(self):
+        d = QFileDialog.getExistingDirectory(self, "选择原始游戏目录", self._ref_dir)
+        if d:
+            self._ref_dir = d
+            self._dir_edit.setText(d)
+            self._refresh_stats()
+
+    def _clear_layout(self, layout):
+        while layout.count():
+            item = layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+
+    def _refresh_stats(self):
+        self._clear_layout(self._stats_layout)
+        self._has_diff = False
+
+        if not self._compute_stats:
+            self._stats_layout.addWidget(QLabel("  (无统计数据)"))
+            return
+        if not self._ref_dir or not os.path.isdir(self._ref_dir):
+            self._stats_layout.addWidget(QLabel("  (请选择有效的原始游戏目录)"))
+            return
+
+        try:
+            result = self._compute_stats(self._ref_dir)
+        except Exception as e:
+            self._stats_layout.addWidget(QLabel(f"  (计算失败: {e})"))
+            return
+
+        if result is None or not result.get("valid", False):
+            err = (result or {}).get("error", "目录中未找到目标文件")
+            self._stats_layout.addWidget(QLabel(f"  (错误: {err})"))
+            return
+
+        targets = result.get("targets", [])
+        if not targets:
+            self._stats_layout.addWidget(QLabel("  (当前数据与参考文件相同，无差异)"))
+            return
+
+        self._has_diff = True
+        for t in targets:
+            name = t.get("name", "?")
+            parts = []
+            if t.get("modified", 0): parts.append(f"{t['modified']} 处修改")
+            if t.get("appended", 0): parts.append(f"{t['appended']} 处追加")
+            if t.get("deleted", 0): parts.append(f"{t['deleted']} 处删除")
+            stat_str = ", ".join(parts) if parts else "无变更"
+            self._stats_layout.addWidget(QLabel(f"  • {name}: {stat_str}"))
+
+    def _on_export(self):
+        if not self._ref_dir or not os.path.isdir(self._ref_dir):
+            QMessageBox.warning(self, "缺少目录", "请先选择原始游戏目录。")
+            return
+        if not self._has_diff:
+            return  # 无差异时静默忽略点击
         self.accept()
 
     def get_ref_dir(self) -> str:

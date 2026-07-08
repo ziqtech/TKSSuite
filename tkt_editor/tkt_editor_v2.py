@@ -41,13 +41,13 @@ except ImportError:
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from editor_utils.theme_manager import ThemeManager
 from editor_utils.dock_components import DockHeader, create_dock
-from editor_utils.ui_helpers import update_path_labels, confirm_close
+from editor_utils.ui_helpers import update_path_labels, confirm_close, themed_messagebox
 from editor_utils.tkt_loader import load_tkt_full as _load_tkt_full
 from editor_utils.mod_exporter import (
     diff_text_entries, compute_crc32, generate_mod_json,
     pack_tksmod, build_text_diff_json, ModMetadataDialog, safe_mod_filename,
-    ask_reference_directory, load_reference_tkt_entries,
-    get_tksmod_info, import_tksmod_text_entries, ModImportPreviewDialog,
+    load_reference_tkt_entries,
+    get_tksmod_info, import_tksmod_text_entries, ModImportPreviewDialog, ModExportPreviewDialog,
 )
 from editor_utils.window_theme import apply_godot_theme
 
@@ -1127,30 +1127,43 @@ class TktEditor(QMainWindow):
             QMessageBox.information(self, "提示", "请先加载数据"); return
         self._apply_edit()
 
-        # 确定参考数据
+        current_entries = {entry['id']: entry['text'] for entry in self.entries}
+
         if use_ref_dir:
-            ref_dir = ask_reference_directory(self)
-            if not ref_dir: return
+            def _compute_stats(ref_dir):
+                ref_entries = load_reference_tkt_entries(ref_dir)
+                if ref_entries is None:
+                    return {"valid": False, "error": "目录中未找到 TKT.dat"}
+                diff = diff_text_entries(ref_entries, current_entries)
+                targets = []
+                if diff['modified'] or diff['appended'] or diff['deleted']:
+                    targets.append({"name": "TKT.dat",
+                        "modified": len(diff['modified']),
+                        "appended": len(diff['appended']) if isinstance(diff['appended'], dict) else len(diff.get('appended', [])),
+                        "deleted": len(diff['deleted'])})
+                return {"valid": True, "targets": targets}
+
+            preview_dlg = ModExportPreviewDialog(self,
+                default_dir=os.path.dirname(self.tkt_path) if self.tkt_path else "",
+                compute_stats=_compute_stats)
+            if preview_dlg.exec() != QDialog.Accepted: return
+            ref_dir = preview_dlg.get_ref_dir()
             ref_entries = load_reference_tkt_entries(ref_dir)
             if ref_entries is None:
                 QMessageBox.warning(self, "参考目录无效", f"在 {ref_dir} 中未找到 TKT.dat"); return
         else:
-            # 使用加载时保存的快照
             ref_entries = {eid: text for eid, text in self.original_entry_snapshot}
 
-        # 构建当前文本映射
-        current_entries = {entry['id']: entry['text'] for entry in self.entries}
+        # MOD 元数据
+        dlg = ModMetadataDialog(self, getattr(self, '_last_mod_metadata', None))
+        if dlg.exec() != QDialog.Accepted: return
+        metadata = dlg.get_metadata(); self._last_mod_metadata = metadata
 
         # 计算差异
         diff_result = diff_text_entries(ref_entries, current_entries)
 
         if not diff_result['modified'] and not diff_result['appended'] and not diff_result['deleted']:
             QMessageBox.information(self, "无差异", "当前数据与参考文件相同，无需导出。"); return
-
-        # MOD 元数据
-        dlg = ModMetadataDialog(self, getattr(self, '_last_mod_metadata', None))
-        if dlg.exec() != QDialog.Accepted: return
-        metadata = dlg.get_metadata(); self._last_mod_metadata = metadata
 
         # 构建数据文件
         crc = compute_crc32(self.tkt_path) if self.tkt_path else "0x00000000"
@@ -1684,8 +1697,8 @@ class TktEditor(QMainWindow):
         cb.setCurrentIndex(0)
         
     def _show_about(self):
-        QMessageBox.about(
-            self, "关于",
+        themed_messagebox(
+            self, QMessageBox.Information, "关于",
             "TKT.dat 文本数据库编辑器 v5.0 (PySide6)\n\n"
             "基于逆向工程 sub_401E88/sub_4067E8/sub_4019D0 实现。\n"
             "支持加载/编辑/保存/新增 TKT.dat 条目。\n\n"

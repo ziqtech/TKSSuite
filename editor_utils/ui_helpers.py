@@ -118,6 +118,13 @@ def dialog_show_event(dialog):
     apply_godot_theme(dialog, bool(is_dark))
 
 
+def themed_messagebox(parent, icon, title, text):
+    """主题化 information/about 弹窗 — title bar 跟随父窗口主题。"""
+    msg = QMessageBox(icon, title, text, QMessageBox.StandardButton.Ok, parent)
+    dialog_show_event(msg)
+    return msg.exec()
+
+
 def resolve_config_path(config_filename):
     """解析 configs/ 目录下配置文件的绝对路径。
 
