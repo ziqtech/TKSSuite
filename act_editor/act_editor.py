@@ -93,6 +93,23 @@ TKAct.dat 多图层 2D 精灵动画编辑器 v2.4.4
   sub_451C38: 播放已加载音效缓冲 (eax = 资源表, edx = sound_id)
 """
 
+import collections
+import copy
+import os
+import struct
+import sys
+import time
+import tkinter as tk
+from tkinter import filedialog, messagebox, ttk
+
+HAS_PIL = False
+try:
+    from PIL import Image, ImageTk, ImageChops
+    HAS_PIL = True
+except ImportError:
+    pass
+
+
 class LRUCache:
     """固定容量的 LRU 缓存, 兼容 dict 的 get/set/clear 接口."""
     def __init__(self, capacity=500):
@@ -113,17 +130,6 @@ class LRUCache:
 
     def clear(self):
         self.cache.clear()
-
-
-import os, sys, struct, copy, time, collections, tkinter as tk
-from tkinter import ttk, messagebox, filedialog
-
-HAS_PIL = False
-try:
-    from PIL import Image, ImageTk, ImageChops
-    HAS_PIL = True
-except ImportError:
-    pass
 
 
 # ============================================================
@@ -363,8 +369,10 @@ class _LazyJvgReader:
             mo = dr + co[si]
             ws = struct.unpack('<8H', raw[mo:mo+16])
             f = jvg_mod.JVGFrame()
-            f.x_max = ws[0]; f.y_max = ws[1]
-            f.width = ws[2]; f.height = ws[3]
+            f.x_max = ws[0]
+            f.y_max = ws[1]
+            f.width = ws[2]
+            f.height = ws[3]
             f.row_count = ws[7]
             eo = mo + 16
             f.encoded_data = raw[eo:eo+co[si+1]-co[si]-16]
@@ -542,7 +550,7 @@ def infer_jvg_layout(n_frames):
 #
 # Af.jvg (dword_951930, 367 blocks, 347 MB):
 #   特效/物件/刀光/箭矢/爆点/飞行物 等通用动画池.
-#   帧数分布 (前几位): 20/24/17/19/28/15/16/18/7 ... 
+#   帧数分布 (前几位): 20/24/17/19/28/15/16/18/7 ...
 #   大量非 4 倍数块 → 多数特效/物件为单方向动画,
 #   ACT 数据里对应 direction_mode == 0 (固定方向 0).
 #
@@ -3538,8 +3546,10 @@ class ActEditor:
             return
         sw, sh = rgba_src.size
         cw, ch = composite.size
-        l = max(0, dx); t = max(0, dy)
-        r = min(cw, dx + sw); b = min(ch, dy + sh)
+        l = max(0, dx)
+        t = max(0, dy)
+        r = min(cw, dx + sw)
+        b = min(ch, dy + sh)
         if r <= l or b <= t:
             return
         sl, st = l - dx, t - dy
@@ -3580,8 +3590,10 @@ class ActEditor:
             return
         sw, sh = rgba_src.size
         cw, ch = composite.size
-        l = max(0, dx); t = max(0, dy)
-        r = min(cw, dx + sw); b = min(ch, dy + sh)
+        l = max(0, dx)
+        t = max(0, dy)
+        r = min(cw, dx + sw)
+        b = min(ch, dy + sh)
         if r <= l or b <= t:
             return
         sl, st = l - dx, t - dy
@@ -4323,3 +4335,4 @@ def main():
 
 if __name__ == '__main__':
     main()
+

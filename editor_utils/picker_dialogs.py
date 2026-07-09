@@ -5,14 +5,15 @@
       WarpcPickerDialog (WarPC 角色选择器)
       ItemPickerDialog  (物品选择器 — 完整表格 + 页面/权限/非空筛选)
 """
-import os, json
-from PySide6.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QLineEdit, QTableWidget,
-    QTableWidgetItem, QAbstractItemView, QPushButton, QHeaderView,
-    QScrollArea, QWidget, QCheckBox, QLabel, QComboBox
-)
+import json
+
 from PySide6.QtCore import Qt, QSize
-from PySide6.QtGui import QPixmap, QImage, QIcon
+from PySide6.QtGui import QIcon, QImage, QPixmap
+from PySide6.QtWidgets import (
+    QAbstractItemView, QCheckBox, QComboBox, QDialog, QHBoxLayout,
+    QHeaderView, QLabel, QLineEdit, QPushButton, QScrollArea,
+    QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
+)
 
 from editor_utils.ui_helpers import resolve_config_path
 
@@ -119,11 +120,14 @@ class StatusPickerDialog(QDialog):
     def __init__(self, parent, title, status_names, cur_mask, base,
                  get_pixmap_fn=None, is_cause=False):
         super().__init__(parent)
-        self.setWindowTitle(title); self.resize(380, 520)
+        self.setWindowTitle(title)
+        self.resize(380, 520)
         self.selected_mask = None
         layout = QVBoxLayout(self)
-        scroll = QScrollArea(); scroll.setWidgetResizable(True)
-        content = QWidget(); cl = QVBoxLayout(content)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        content = QWidget()
+        cl = QVBoxLayout(content)
         self.checkboxes = []
         for i in range(16):
             idx = base + i
@@ -132,12 +136,18 @@ class StatusPickerDialog(QDialog):
             if get_pixmap_fn is not None:
                 pix = get_pixmap_fn(STATUS_ICON_BASE + idx - 130, (20, 20))
                 if pix:
-                    lbl = QLabel(); lbl.setPixmap(pix); row.addWidget(lbl)
+                    lbl = QLabel()
+                    lbl.setPixmap(pix)
+                    row.addWidget(lbl)
             cb = QCheckBox(f"{idx}. {status_names[idx]}")
             cb.setChecked(bool(cur_mask & (1 << i)))
-            self.checkboxes.append((i, cb)); row.addWidget(cb); row.addStretch()
+            self.checkboxes.append((i, cb))
+            row.addWidget(cb)
+            row.addStretch()
             cl.addLayout(row)
-        cl.addStretch(); scroll.setWidget(content); layout.addWidget(scroll)
+        cl.addStretch()
+        scroll.setWidget(content)
+        layout.addWidget(scroll)
         bl = QHBoxLayout()
         bl.addWidget(QPushButton("全选", clicked=lambda: self._set_all_checked(True)))
         bl.addWidget(QPushButton("全清", clicked=lambda: self._set_all_checked(False)))
@@ -153,9 +163,12 @@ class StatusPickerDialog(QDialog):
     def _ok(self):
         m = 0
         for i, cb in self.checkboxes:
-            if cb.isChecked(): m |= (1 << i)
-        if m >= 0x8000: m -= 0x10000
-        self.selected_mask = m; self.accept()
+            if cb.isChecked():
+                m |= (1 << i)
+        if m >= 0x8000:
+            m -= 0x10000
+        self.selected_mask = m
+        self.accept()
 
     def get_mask(self):
         """兼容旧调用: 返回与 selected_mask 相同的带符号 int16"""
@@ -380,7 +393,8 @@ class ItemPickerDialog(QDialog):
     def _update_perm_options(self, page_text):
         """根据页面筛选值动态填充权限下拉框选项 (与 item_editor_v2 一致)"""
         if page_text.startswith("全部"):
-            seen = set(); all_opts = []
+            seen = set()
+            all_opts = []
             for page in sorted(self._use_right_options):
                 for bit, name in self._use_right_options[page]:
                     key = (bit, name)

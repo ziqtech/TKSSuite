@@ -18,14 +18,17 @@ TKMat.Dat 地图实体编辑器 v2.3 — 融合脚本编辑
   sub_408B30: 特殊机关(110) — d50帧计数器, d51帧偏移, d52行为模式(0/1/2), d53-d64物品组 ✓已验证
   sub_40EBD4: 脚本VM — d42=PC, d43=saved_PC, d30-d32=max链, d33-d35=cur链, End模式0xFFFF-0xFFFA ✓已验证
   sub_405CBC+sub_4077E4+sub_408E5C: type=200 NPC — d51立绘ID→d52句柄, d53方向模式(4/8), d55阴影帧, d56-d62寻路备份, d64行走动画, d70站桩/行走 ✓已验证
-  
+
   验证方法: 反编译 .c 文件中 entity 指针偏移量 ÷ 4 = dword 索引, 与编辑器字段索引对照确认
 
 用法:
   python mat_editor.py
 """
 
-import struct, os, sys, re
+import os
+import re
+import struct
+import sys
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 
@@ -931,7 +934,7 @@ SCRIPT_CMD_DESC = {
         f"切换场景→#{a[0]} {_tkt_scene(t, a[0])}" if a else "切换场景"
     ),
     # opcode 20: SetAni(7) — 设置动画 (sub_40C1A4)
-    # 参数: 实体(-1=上下文 -2=自身), Ani.JVG块ID, 帧起点(-1=不变), 帧终点(-1=不变), 
+    # 参数: 实体(-1=上下文 -2=自身), Ani.JVG块ID, 帧起点(-1=不变), 帧终点(-1=不变),
     #        当前帧(-1=不变), 动画速度(-1=不变), 循环标志(0=不循环 1=循环 -1=不变)
     # 仅type=20/200有效; 设置anim_set=4(Ani.JVG), 修改子模型和动画参数
     'SetAni':       lambda a, t: (
@@ -1244,8 +1247,12 @@ def save_mat(fp, recs):
     with open(fp,'wb') as f: f.write(bytes(buf))
     return True
 
-def is_empty(rec): return rec['d0']==0
-def has_data(rec): return rec['d0']!=0
+def is_empty(rec):
+    return rec['d0']==0
+
+
+def has_data(rec):
+    return rec['d0']!=0
 
 def save_defunit(fp, defunit_recs):
     """保存 TKDefUnit.dat — 5000 条 × 16 字节"""
@@ -1367,7 +1374,7 @@ def _get_blended_sprite(jvg, block_idx, frame_idx, mode=0, param=0):
         img = ImageOps.mirror(img)
     elif mode == 1:
         # 染色: 按 param 颜色值乘入 RGB 通道 (sub_454D24)
-        
+
         r_tint = (param >> 10) & 0x1F; g_tint = (param >> 5) & 0x1F; b_tint = param & 0x1F
         if param > 0 and param <= 31:
             sf_r = r_tint / 31.0; sf_g = g_tint / 31.0; sf_b = b_tint / 31.0
@@ -1384,7 +1391,7 @@ def _get_blended_sprite(jvg, block_idx, frame_idx, mode=0, param=0):
             r_ch, g_ch, b_ch, a_ch = img.split()
             # 像素越亮 → 加法贡献越大; alpha = 亮度 * scale
             lum = r_ch.point(lambda v: int(v * 0.299)) if False else r_ch
-            
+
             lum = ImageChops.add(
                 ImageChops.add(
                     r_ch.point(lambda v: int(v * 0.299)),
@@ -1405,7 +1412,7 @@ def _get_blended_sprite(jvg, block_idx, frame_idx, mode=0, param=0):
     elif mode == 4:
         # 亮度 alpha: 按 src 亮度修改 alpha 通道 (sub_459854)
         r_ch, g_ch, b_ch, a_ch = img.split()
-        
+
         lum = ImageChops.add(
             ImageChops.add(
                 r_ch.point(lambda v: int(v * 0.299)),
@@ -1490,7 +1497,7 @@ def _pil_additive(composite, rgba_src, dx, dy, param):
     param=0或>31 → full min(dst+src, 255); 0<param<=31 → min(dst+src*param/32, 255)"""
     if composite is None or rgba_src is None: return
     try:
-        
+
         sw, sh = rgba_src.size; cw, ch = composite.size
         l = max(0, dx); t = max(0, dy)
         r = min(cw, dx + sw); b = min(ch, dy + sh)
@@ -1517,7 +1524,7 @@ def _pil_subtract(composite, rgba_src, dx, dy):
     dst.RGB = max(dst - src, 0) 逐通道独立"""
     if composite is None or rgba_src is None: return
     try:
-        
+
         sw, sh = rgba_src.size; cw, ch = composite.size
         l = max(0, dx); t = max(0, dy)
         r = min(cw, dx + sw); b = min(ch, dy + sh)
@@ -1541,7 +1548,7 @@ def _pil_luma_alpha(composite, rgba_src, dx, dy):
     α = NTSC_luma_5bit(src); α=0跳过; α>28覆盖; else dst*(32-α)/32+src*α/32"""
     if composite is None or rgba_src is None: return
     try:
-        
+
         sw, sh = rgba_src.size; cw, ch = composite.size
         l = max(0, dx); t = max(0, dy)
         r = min(cw, dx + sw); b = min(ch, dy + sh)
@@ -3578,14 +3585,14 @@ class MatEditor:
                     if pos < 0: break
                     self.script_text.tag_add('command', f"{ln}.{pos}", f"{ln}.{pos + len(cmd)}")
                     idx = pos + 1
-            
+
             for m in re.finditer(r'-?\d+', line):
                 if comment_start >= 0 and m.start() >= comment_start: continue
                 self.script_text.tag_add('number', f"{ln}.{m.start()}", f"{ln}.{m.end()}")
 
     def _update_line_preview(self):
         """更新右侧行功能预览面板 — 逐行解析编辑器内容并显示命令描述"""
-        
+
         content = self.script_text.get('1.0', 'end-1c')
         lines = content.split('\n')
 
@@ -3650,7 +3657,7 @@ class MatEditor:
     # =========== 脚本预览 ===========
     def _parse_script_commands(self, body_lines):
         """解析 DEFINE body_lines 中的脚本命令, 返回 [(cmd_name, args_list, line_text, line_idx), ...]"""
-        
+
         commands = []
         for i, line in enumerate(body_lines):
             stripped = line.strip()
@@ -4394,7 +4401,9 @@ class MatEditor:
         scene_var.trace_add('write',_on_sv)
 
         confirmed=[False]
-        def _ok(): confirmed[0]=True; win.destroy()
+        def _ok():
+            confirmed[0]=True
+            win.destroy()
         win.protocol("WM_DELETE_WINDOW",win.destroy)
         bf=ttk.Frame(win); bf.grid(row=2,column=0,columnspan=3,pady=(5,10))
         ttk.Button(bf,text="确定",command=_ok).pack(side=tk.LEFT,padx=8)

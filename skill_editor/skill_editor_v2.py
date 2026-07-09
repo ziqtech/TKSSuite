@@ -5,46 +5,61 @@ TKSkill.dat 可视化编辑器 (PySide6 最终完美 Godot 风格版)
 修复了布局对齐、去除了冗余线框，并 100% 还原了 Godot 4.6 滚动条及主题样式。
 """
 
-import struct, os, sys, csv, re
-from collections import OrderedDict
+import os
+import struct
+import sys
 
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QColor, QIcon, QKeySequence
 from PySide6.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QMenuBar, QMenu, QSplitter, QTableWidget, QTableWidgetItem,
-    QAbstractItemView, QHeaderView, QLabel, QLineEdit, QPushButton,
-    QCheckBox, QTextEdit, QComboBox, QMessageBox, QFileDialog,
-    QDialog, QGridLayout, QFrame, QScrollArea
+    QAbstractItemView, QApplication, QCheckBox, QComboBox, QDialog,
+    QFileDialog, QFrame, QGridLayout, QHBoxLayout, QHeaderView, QLabel,
+    QLineEdit, QMainWindow, QMenu, QMenuBar, QMessageBox, QPushButton,
+    QScrollArea, QSplitter, QTableWidget, QTableWidgetItem, QTextEdit,
+    QVBoxLayout, QWidget
 )
-from PySide6.QtGui import QAction, QKeySequence, QColor, QFont, QIcon
-from PySide6.QtCore import Qt, QTranslator
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-from editor_utils.lzss import lzss_decompress_dat, lzss_compress_dat
-from editor_utils.tkt_loader import load_tkt_simple
+from editor_utils.dock_components import DockHeader, create_dock
+from editor_utils.jvg_loader import get_sprite_pixmap, load_mu_sprites
+from editor_utils.lzss import lzss_compress_dat, lzss_decompress_dat
 from editor_utils.mod_exporter import (
-    diff_records, compute_crc32, generate_mod_json,
-    pack_tksmod, build_data_diff_json, ModMetadataDialog, safe_mod_filename,
-    load_reference_dat_fields,
-    get_tksmod_info, import_tksmod_records, ModImportPreviewDialog, ModExportPreviewDialog,
+    ModExportPreviewDialog, ModImportPreviewDialog, ModMetadataDialog,
+    build_data_diff_json, compute_crc32, diff_records, generate_mod_json,
+    get_tksmod_info, import_tksmod_records, load_reference_dat_fields,
+    pack_tksmod, safe_mod_filename,
+)
+from editor_utils.picker_dialogs import (
+    STATUS_ICON_BASE, STATUS_NAMES, StatusPickerDialog, TktPickerDialog
+)
+from editor_utils.theme_manager import ThemeManager
+from editor_utils.tkt_loader import load_tkt_simple
+from editor_utils.ui_helpers import (
+    confirm_close, export_csv, make_fake_input, themed_messagebox,
+    update_path_labels,
 )
 from editor_utils.window_theme import apply_godot_theme
-from editor_utils.theme_manager import ThemeManager
-from editor_utils.dock_components import DockHeader, create_dock
-from editor_utils.picker_dialogs import (
-    TktPickerDialog, StatusPickerDialog, STATUS_NAMES, STATUS_ICON_BASE
-)
-from editor_utils.ui_helpers import make_fake_input, update_path_labels, confirm_close, export_csv, themed_messagebox
 
 # ── 本地别名: 保持向后兼容 ──
-def lzss_decompress(data): return lzss_decompress_dat(data)
-def lzss_compress(data): return lzss_compress_dat(data)
 
-def load_tkt(tkt_path): return load_tkt_simple(tkt_path)
-def load_tkt_full(tkt_path): return load_tkt_simple(tkt_path, full_strip=True)
 
-from editor_utils.jvg_loader import load_mu_sprites, get_sprite_pixmap
+def lzss_decompress(data):
+    return lzss_decompress_dat(data)
 
-SKILL_REC = 94; SKILL_CNT = 350
+
+def lzss_compress(data):
+    return lzss_compress_dat(data)
+
+
+def load_tkt(tkt_path):
+    return load_tkt_simple(tkt_path)
+
+
+def load_tkt_full(tkt_path):
+    return load_tkt_simple(tkt_path, full_strip=True)
+
+SKILL_REC = 94
+SKILL_CNT = 350
 SKILL_TYPES = {0: "指令技能", 1: "主动技能", 2: "被动技能", 3: "移动技能"}
 SKILL_TYPE_VALUES = [f"{k}-{v}" for k, v in sorted(SKILL_TYPES.items())]
 ATK_TYPE_VALUES = ["-1-近战攻击", "0-物理攻击", "1-术法攻击", "10-召唤攻击"]
@@ -120,7 +135,8 @@ def skill_name(rec, tkt):
     return f"Skill#{sid}" if sid else f"(空-#{rec['index']})"
 
 def load_skills(fp):
-    with open(fp, 'rb') as f: raw = f.read()
+    with open(fp, 'rb') as f:
+        raw = f.read()
     dec = lzss_decompress(raw)
     # 兜底: LZSS 解压结果不对齐记录边界但原始文件对齐 → 未压缩 raw 数据
     if len(raw) % SKILL_REC == 0 and (len(dec) == 0 or len(dec) % SKILL_REC != 0):
@@ -131,17 +147,21 @@ def load_skills(fp):
         if off + SKILL_REC > len(dec): break
         fields = struct.unpack_from('<' + 'h' * 47, dec, off)
         rec = {'index': i}
-        for k, fo, _, _, _ in ALL_FIELDS: rec[k] = fields[fo // 2]
+        for k, fo, _, _, _ in ALL_FIELDS:
+            rec[k] = fields[fo // 2]
         recs.append(rec)
     return recs
 
 def save_skills(fp, recs):
     buf = bytearray(SKILL_CNT * SKILL_REC)
     for rec in recs[:SKILL_CNT]:
-        i = rec['index']; off = i * SKILL_REC
-        for k, fo, _, _, _ in ALL_FIELDS: struct.pack_into('<h', buf, off + fo, rec[k])
+        i = rec['index']
+        off = i * SKILL_REC
+        for k, fo, _, _, _ in ALL_FIELDS:
+            struct.pack_into('<h', buf, off + fo, rec[k])
     compressed = lzss_compress(bytes(buf))
-    with open(fp, 'wb') as f: f.write(compressed)
+    with open(fp, 'wb') as f:
+        f.write(compressed)
     return True
 
 # ============================================================
@@ -156,7 +176,7 @@ class SkillPickerDialog(QDialog):
         self.selected_index = None
         self.records = records
         self.tkt_dict = tkt_dict
-        
+
         layout = QVBoxLayout(self)
         search_layout = QHBoxLayout()
         search_layout.addWidget(QLabel("搜索:"))
@@ -169,10 +189,12 @@ class SkillPickerDialog(QDialog):
         self.type_box.currentIndexChanged.connect(self._refresh)
         search_layout.addWidget(self.type_box)
         layout.addLayout(search_layout)
-        
+
         self.table = QTableWidget(0, 4)
         self.table.setHorizontalHeaderLabels(['技能ID', '文本ID', '类型', '技能名称'])
-        self.table.setColumnWidth(0, 60); self.table.setColumnWidth(1, 60); self.table.setColumnWidth(2, 80)
+        self.table.setColumnWidth(0, 60)
+        self.table.setColumnWidth(1, 60)
+        self.table.setColumnWidth(2, 80)
         self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.Stretch)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SingleSelection)
@@ -180,18 +202,21 @@ class SkillPickerDialog(QDialog):
         self.table.verticalHeader().setVisible(False)
         self.table.doubleClicked.connect(self._accept_selection)
         layout.addWidget(self.table)
-        
+
         btn_layout = QHBoxLayout()
         btn_clear = QPushButton("清空选择")
         btn_clear.clicked.connect(self._clear_selection)
         btn_layout.addWidget(btn_clear)
         btn_layout.addStretch()
-        btn_cancel = QPushButton("取消"); btn_cancel.clicked.connect(self.reject)
-        btn_ok = QPushButton("确定"); btn_ok.clicked.connect(self._accept_selection)
-        btn_layout.addWidget(btn_cancel); btn_layout.addWidget(btn_ok)
+        btn_cancel = QPushButton("取消")
+        btn_cancel.clicked.connect(self.reject)
+        btn_ok = QPushButton("确定")
+        btn_ok.clicked.connect(self._accept_selection)
+        btn_layout.addWidget(btn_cancel)
+        btn_layout.addWidget(btn_ok)
         layout.addLayout(btn_layout)
         self._refresh()
-        
+
     def _refresh(self):
         query = self.search_box.text().strip().lower()
         ft = self.type_box.currentText()
@@ -199,12 +224,16 @@ class SkillPickerDialog(QDialog):
         row = 0
         for r in self.records:
             if r['skill_text_id'] == 0: continue
-            idx = r['index']; sid = r['skill_text_id']; st = r['type']
+            idx = r['index']
+            sid = r['skill_text_id']
+            st = r['type']
             sn = skill_name(r, self.tkt_dict)
             if query and query not in f"{idx} {sid} {sn}".lower(): continue
             if ft != "全部":
-                try: ft_val = int(ft.split('-')[0])
-                except: ft_val = None
+                try:
+                    ft_val = int(ft.split('-')[0])
+                except:
+                    ft_val = None
                 if st != ft_val: continue
             self.table.insertRow(row)
             self.table.setItem(row, 0, QTableWidgetItem(str(idx)))
@@ -218,7 +247,7 @@ class SkillPickerDialog(QDialog):
         if sel:
             self.selected_index = int(self.table.item(sel[0].row(), 0).text())
             self.accept()
-            
+
     def _clear_selection(self):
         self.selected_index = 0
         self.accept()
@@ -245,17 +274,21 @@ class SkillEditorApp(QMainWindow):
         apply_godot_theme(self, self._is_dark)
 
         self.skill_path = self.tkt_path = None
-        self.records = []; self.tkt = {}; self.tkt_full = {}
+        self.records = []
+        self.tkt = {}
+        self.tkt_full = {}
         self._original_records = []  # 原始快照，用于 MOD 导出
-        self.filtered_indices = []; self._dirty = False
+        self.filtered_indices = []
+        self._dirty = False
         self._editing_idx = None
 
         self.mu_path = None
-        self._mu_sprites = []; self._icon_pixmaps = {}
+        self._mu_sprites = []
+        self._icon_pixmaps = {}
 
         self.widget_map = {}
         self.extra_map = {}
-        
+
         self._build_ui()
         self._set_edit_enabled(False)
         self._apply_theme()
@@ -299,33 +332,33 @@ class SkillEditorApp(QMainWindow):
         self.search_entry.setFixedWidth(160)
         self.search_entry.returnPressed.connect(self._apply_filter)
         toolbar.addWidget(self.search_entry)
-        
+
         btn_search = QPushButton("搜索")
         btn_search.clicked.connect(self._apply_filter)
         toolbar.addWidget(btn_search)
-        
+
         btn_clear = QPushButton("清除")
         btn_clear.clicked.connect(self._clear_filter)
         toolbar.addWidget(btn_clear)
-        
+
         toolbar.addSpacing(15)
         toolbar.addWidget(QLabel("类型:"))
         self.type_filter = QComboBox()
         self.type_filter.addItems(["全部类型"] + SKILL_TYPE_VALUES)
         self.type_filter.currentIndexChanged.connect(self._apply_filter)
         toolbar.addWidget(self.type_filter)
-        
+
         toolbar.addSpacing(15)
         btn_reload = QPushButton("重新加载")
         btn_reload.clicked.connect(self._reload)
         toolbar.addWidget(btn_reload)
-        
+
         toolbar.addStretch()
-        
+
         btn_theme = QPushButton("🌓 切换主题")
         btn_theme.clicked.connect(self._toggle_theme)
         toolbar.addWidget(btn_theme)
-        
+
         self.status_var = QLabel("请通过 文件 → 加载 TKS 目录 打开数据")
         toolbar.addWidget(self.status_var)
         main_layout.addLayout(toolbar)
@@ -338,9 +371,12 @@ class SkillEditorApp(QMainWindow):
         # --- Left Pane (Table) ---
         self.table = QTableWidget(0, 6)
         self.table.setHorizontalHeaderLabels(['技能ID', '文本ID', '类型', '技能名称', '技能点数', '耗费内力'])
-        self.table.setColumnWidth(0, 60); self.table.setColumnWidth(1, 60)
-        self.table.setColumnWidth(2, 80); self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.Stretch)
-        self.table.setColumnWidth(4, 70); self.table.setColumnWidth(5, 70)
+        self.table.setColumnWidth(0, 60)
+        self.table.setColumnWidth(1, 60)
+        self.table.setColumnWidth(2, 80)
+        self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.Stretch)
+        self.table.setColumnWidth(4, 70)
+        self.table.setColumnWidth(5, 70)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SingleSelection)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
@@ -373,7 +409,7 @@ class SkillEditorApp(QMainWindow):
         self.edit_inner = QWidget()
         self.edit_layout = QVBoxLayout(self.edit_inner)
         self.edit_layout.setContentsMargins(4, 4, 16, 4)
-        
+
         # =======================================================
         # Preview Panel (Godot 资源检查器头部风格)
         # =======================================================
@@ -492,7 +528,8 @@ class SkillEditorApp(QMainWindow):
             extra.setWordWrap(True)
             cell.addWidget(extra)
 
-            self.widget_map[fn] = inp; self.extra_map[fn] = extra
+            self.widget_map[fn] = inp
+            self.extra_map[fn] = extra
             if ft == 'tkt': btn.clicked.connect(lambda _, f=fn: self._pick_tkt(f))
             else: btn.clicked.connect(lambda _, f=fn: self._pick_skill(f))
 
@@ -523,7 +560,8 @@ class SkillEditorApp(QMainWindow):
             extra.setWordWrap(True)
             cell.addWidget(extra)
 
-            self.widget_map[fn] = inp; self.extra_map[fn] = extra
+            self.widget_map[fn] = inp
+            self.extra_map[fn] = extra
             if ft == 'mask':
                 btn.clicked.connect(lambda _, f=fn: self._pick_status(f))
             else:
@@ -557,7 +595,8 @@ class SkillEditorApp(QMainWindow):
         sk = os.path.join(d, "TKSkill.dat")
         tk_ = os.path.join(d, "TKT.dat")
         if not os.path.exists(sk):
-            QMessageBox.warning(self, "文件缺失", "未找到 TKSkill.dat"); return
+            QMessageBox.warning(self, "文件缺失", "未找到 TKSkill.dat")
+            return
         self.skill_path = sk
         self.tkt_path = tk_ if os.path.exists(tk_) else None
         self.mu_path = os.path.join(d, "Mu.JVG")
@@ -573,7 +612,8 @@ class SkillEditorApp(QMainWindow):
             self._mu_sprites = load_mu_sprites(self.mu_path) or []
             self._icon_pixmaps.clear()
         try:
-            self.records = load_skills(self.skill_path); self._dirty = False
+            self.records = load_skills(self.skill_path)
+            self._dirty = False
             # MOD 导出使用原始字节序 (word index = byte_offset // 2)，与启动器 _apply_fields_to_record 一致
             self._original_records = []
             for rec in self.records:
@@ -584,8 +624,11 @@ class SkillEditorApp(QMainWindow):
             nonempty = sum(1 for r in self.records if r['skill_text_id'] != 0)
             self.status_var.setText(f"{len(self.records)} 条 | 有效 {nonempty} | TKT {len(self.tkt)} 条")
         except Exception as e:
-            QMessageBox.critical(self, "加载失败", str(e)); self.records = []
-        self._update_paths(); self._set_edit_enabled(True); self._apply_filter()
+            QMessageBox.critical(self, "加载失败", str(e))
+            self.records = []
+        self._update_paths()
+        self._set_edit_enabled(True)
+        self._apply_filter()
 
     # ── 图标 ──
     def _get_icon_pixmap(self, icon_val, size=(24,24)):
@@ -669,7 +712,7 @@ class SkillEditorApp(QMainWindow):
         d_txt = self.tkt_full.get(did, "") if did > 0 else ""
         # 改用 setText，因为组件已经换成了 QLabel
         self.preview_desc.setText(d_txt if d_txt else "暂无关于该技能的详细描述。")
-        
+
         hint = TYPE_HINT_LABELS.get(rec['type'], "")
 
         # ==== 检查器预览区类型同步高亮 ====
@@ -690,13 +733,15 @@ class SkillEditorApp(QMainWindow):
             val = rec.get(fn, 0)
             w = self.widget_map.get(fn)
             if not w: continue
-            
+
             if ft == 'type' or ft == 'atk_type':
                 for i in range(w.count()):
-                    if w.itemText(i).startswith(f"{val}-"): w.setCurrentIndex(i); break
+                    if w.itemText(i).startswith(f"{val}-"):
+                        w.setCurrentIndex(i)
+                        break
             else:
                 w.setText(str(val))
-                
+
             if ft == 'tkt':
                 nid = int(val) if val else 0
                 txt = self.tkt.get(nid, "") if nid > 0 else ""
@@ -766,7 +811,7 @@ class SkillEditorApp(QMainWindow):
             cb.setChecked(bool(cur & (1 << bit)))
             checkboxes.append((bit, cb))
             layout.addWidget(cb)
-            
+
         btn_layout = QHBoxLayout()
         btn_clear = QPushButton("全清")
         btn_clear.clicked.connect(lambda: [cb.setChecked(False) for _, cb in checkboxes])
@@ -780,7 +825,9 @@ class SkillEditorApp(QMainWindow):
             self._update_flags_label(fn, m)
             dlg.accept()
         btn_ok.clicked.connect(_ok)
-        btn_layout.addWidget(btn_clear); btn_layout.addStretch(); btn_layout.addWidget(btn_ok)
+        btn_layout.addWidget(btn_clear)
+        btn_layout.addStretch()
+        btn_layout.addWidget(btn_ok)
         layout.addLayout(btn_layout)
         dlg.exec()
 
@@ -800,12 +847,13 @@ class SkillEditorApp(QMainWindow):
                 rec[fn] = v
             except ValueError:
                 rec[fn] = 0
-                
+
         self._dirty = True
         self._apply_filter()
         for r in range(self.table.rowCount()):
             if int(self.table.item(r, 0).text()) == rec['index']:
-                self.table.selectRow(r); break
+                self.table.selectRow(r)
+                break
         self.status_var.setText(f"记录 #{rec['index']} 已修改 (内存)")
 
     def _reset_edit(self):
@@ -817,12 +865,16 @@ class SkillEditorApp(QMainWindow):
         for rec in self.records:
             if rec['skill_text_id'] == 0:
                 rec['skill_text_id'] = rec['index'] + 1
-                rec['type'] = 1; rec['jp_cost'] = 1
-                rec['sub_count'] = -1; rec['atk_type'] = -1
-                self._dirty = True; self._apply_filter()
+                rec['type'] = 1
+                rec['jp_cost'] = 1
+                rec['sub_count'] = -1
+                rec['atk_type'] = -1
+                self._dirty = True
+                self._apply_filter()
                 for r in range(self.table.rowCount()):
                     if int(self.table.item(r, 0).text()) == rec['index']:
-                        self.table.selectRow(r); break
+                        self.table.selectRow(r)
+                        break
                 self._populate_edit(rec)
                 self.status_var.setText(f"已创建新技能 → 槽位 #{rec['index']}")
                 return
@@ -837,10 +889,12 @@ class SkillEditorApp(QMainWindow):
                 idx_bak = rec['index']
                 rec.update({k: v for k, v in src.items() if k != 'index'})
                 rec['index'] = idx_bak
-                self._dirty = True; self._apply_filter()
+                self._dirty = True
+                self._apply_filter()
                 for r in range(self.table.rowCount()):
                     if int(self.table.item(r, 0).text()) == rec['index']:
-                        self.table.selectRow(r); break
+                        self.table.selectRow(r)
+                        break
                 self._populate_edit(rec)
                 return
 
@@ -850,9 +904,11 @@ class SkillEditorApp(QMainWindow):
         if rec['skill_text_id'] == 0: return
         reply = QMessageBox.question(self, "确认", f"确定清空记录 #{rec['index']}?")
         if reply == QMessageBox.Yes:
-            for k, fo, _, _, _ in ALL_FIELDS: rec[k] = 0
+            for k, fo, _, _, _ in ALL_FIELDS:
+                rec[k] = 0
             rec['sub_count'] = -1
-            self._dirty = True; self._apply_filter()
+            self._dirty = True
+            self._apply_filter()
             self._populate_edit(rec)
 
     def _save(self):
@@ -861,10 +917,12 @@ class SkillEditorApp(QMainWindow):
         if reply == QMessageBox.Yes:
             try:
                 with open(self.skill_path, 'rb') as s:
-                    with open(self.skill_path + ".bak", 'wb') as d: d.write(s.read())
+                    with open(self.skill_path + ".bak", 'wb') as d:
+                        d.write(s.read())
             except: pass
             try:
-                save_skills(self.skill_path, self.records); self._dirty = False
+                save_skills(self.skill_path, self.records)
+                self._dirty = False
                 QMessageBox.information(self, "成功", "保存成功！")
                 self.status_var.setText(f"已保存 → {self.skill_path}")
             except Exception as e:
@@ -884,7 +942,8 @@ class SkillEditorApp(QMainWindow):
     def _export_tksmod(self):
         """导出当前修改为 .tksmod MOD 文件"""
         if not self.records or not self._original_records:
-            QMessageBox.information(self, "提示", "请先加载数据"); return
+            QMessageBox.information(self, "提示", "请先加载数据")
+            return
 
         dlg = ModMetadataDialog(self, getattr(self, '_last_mod_metadata', None))
         if dlg.exec() != QDialog.Accepted:
@@ -904,7 +963,8 @@ class SkillEditorApp(QMainWindow):
             self._original_records, current_fields, field_count, len(self._original_records))
 
         if not diff_result['modified'] and not diff_result['appended']:
-            QMessageBox.information(self, "无差异", "当前数据与原始文件相同，无需导出。"); return
+            QMessageBox.information(self, "无差异", "当前数据与原始文件相同，无需导出。")
+            return
 
         crc = compute_crc32(self.skill_path) if self.skill_path else "0x00000000"
         data_json = build_data_diff_json(
@@ -921,7 +981,8 @@ class SkillEditorApp(QMainWindow):
 
         try:
             pack_tksmod(fp, mod_json, {"data/TKSkill.dat.json": data_json})
-            n_mod = len(diff_result['modified']); n_app = len(diff_result['appended'])
+            n_mod = len(diff_result['modified'])
+            n_app = len(diff_result['appended'])
             self.status_var.setText(f"已导出 MOD: {os.path.basename(fp)} (修改{n_mod}条, 追加{n_app}条)")
             QMessageBox.information(self, "导出成功", f"已导出 MOD 文件:\n{fp}\n\n修改: {n_mod} 条\n追加: {n_app} 条")
         except Exception as e:
@@ -930,7 +991,8 @@ class SkillEditorApp(QMainWindow):
     def _export_tksmod_with_ref(self):
         """导出 MOD — 指定原始参考目录进行差异比对"""
         if not self.records:
-            QMessageBox.information(self, "提示", "请先加载数据"); return
+            QMessageBox.information(self, "提示", "请先加载数据")
+            return
 
         # 预构建当前字段
         current_fields = []
@@ -964,10 +1026,12 @@ class SkillEditorApp(QMainWindow):
         ref_records = load_reference_dat_fields(ref_dir, "TKSkill.dat",
             rec_size=SKILL_REC, field_count=field_count, field_fmt='h', use_lzss=True)
         if ref_records is None:
-            QMessageBox.warning(self, "参考目录无效", f"在 {ref_dir} 中未找到 TKSkill.dat"); return
+            QMessageBox.warning(self, "参考目录无效", f"在 {ref_dir} 中未找到 TKSkill.dat")
+            return
         diff_result = diff_records(ref_records, current_fields, field_count, len(ref_records))
         if not diff_result['modified'] and not diff_result['appended']:
-            QMessageBox.information(self, "无差异", "当前数据与参考文件相同，无需导出。"); return
+            QMessageBox.information(self, "无差异", "当前数据与参考文件相同，无需导出。")
+            return
 
         crc = compute_crc32(os.path.join(ref_dir, "TKSkill.dat"))
         data_json = build_data_diff_json(target="TKSkill.dat", record_size=SKILL_REC, field_type="int16",
@@ -977,7 +1041,8 @@ class SkillEditorApp(QMainWindow):
         if not fp: return
         try:
             pack_tksmod(fp, mod_json, {"data/TKSkill.dat.json": data_json})
-            n_mod = len(diff_result['modified']); n_app = len(diff_result['appended'])
+            n_mod = len(diff_result['modified'])
+            n_app = len(diff_result['appended'])
             self.status_var.setText(f"已导出 MOD (参考目录): {os.path.basename(fp)}")
             QMessageBox.information(self, "导出成功", f"已导出 (参考目录模式):\n{fp}\n\n参考: {ref_dir}\n修改: {n_mod} 条\n追加: {n_app} 条")
         except Exception as e:
@@ -990,11 +1055,13 @@ class SkillEditorApp(QMainWindow):
 
         info = get_tksmod_info(fp)
         if info is None:
-            QMessageBox.warning(self, "无效文件", "无法解析此 .tksmod 文件"); return
+            QMessageBox.warning(self, "无效文件", "无法解析此 .tksmod 文件")
+            return
 
         if "TKSkill.dat" not in info.get("targets", []):
             QMessageBox.warning(self, "不兼容", "此 MOD 不包含 TKSkill.dat 的数据\n\n"
-                f"包含的数据: {', '.join(info.get('targets', []))}"); return
+                f"包含的数据: {', '.join(info.get('targets', []))}")
+            return
 
         dlg = ModImportPreviewDialog(self, info, default_dir=os.path.dirname(self.skill_path) if self.skill_path else "")
         if dlg.exec() != QDialog.Accepted: return
@@ -1008,7 +1075,8 @@ class SkillEditorApp(QMainWindow):
         )
         if records is None:
             QMessageBox.warning(self, "导入失败",
-                "无法导入 MOD 数据。\n请确认参考目录中包含有效的 TKSkill.dat"); return
+                "无法导入 MOD 数据。\n请确认参考目录中包含有效的 TKSkill.dat")
+            return
 
         new_records = []
         for i, fields in enumerate(records):

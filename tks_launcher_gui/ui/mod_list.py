@@ -1,15 +1,15 @@
 """模组列表面板 — 以表格显示 mods/ 目录中的 .tksmod 文件，支持启用/禁用"""
 import os
-from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout,
-    QTableWidget, QTableWidgetItem, QAbstractItemView,
-    QHeaderView, QToolButton,
-)
+
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor
+from PySide6.QtWidgets import (
+    QAbstractItemView, QHBoxLayout, QHeaderView, QTableWidget,
+    QTableWidgetItem, QToolButton, QVBoxLayout, QWidget,
+)
 
+from core.mod_loader import ModInfo, scan_mods
 from editor_utils.dock_components import create_dock
-from core.mod_loader import scan_mods, ModInfo
 
 _COLUMNS = ["启用", "模组名称", "版本", "加载顺序", "ID", "作者", "描述"]
 _COL_ENABLE = 0

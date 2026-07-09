@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """验证修复后的 SEG2 字段解析"""
-import sys, os, struct
+import os
+import struct
+import sys
 
 sys.path.insert(0, os.path.dirname(__file__))
 from save_editor import load_save_data, SEG2_CORE_FIELDS

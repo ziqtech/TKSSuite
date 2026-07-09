@@ -16,7 +16,11 @@ TKS Save Editor v2.0
   [6×1B team_ids][2B gold][4B unix_timestamp][6×2B team_levels][4B scene_id]
 """
 
-import os, sys, struct, time, datetime
+import datetime
+import os
+import struct
+import sys
+import time
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 
@@ -27,10 +31,20 @@ from editor_utils.lzss import (lzss_decompress_dat as _lzss_decompress_dat,
 from editor_utils.tkt_loader import load_tkt_simple
 
 # ── 本地别名: 保持向后兼容 ──
-def lzss_decompress_dat(data): return _lzss_decompress_dat(data)
-def lzss_decompress(data): return lzss_decompress_save(data)
-def lzss_compress(data): return lzss_compress_save(data)
-def load_tkt(tkt_path): return load_tkt_simple(tkt_path, skip_range=None)
+def lzss_decompress_dat(data):
+    return _lzss_decompress_dat(data)
+
+
+def lzss_decompress(data):
+    return lzss_decompress_save(data)
+
+
+def lzss_compress(data):
+    return lzss_compress_save(data)
+
+
+def load_tkt(tkt_path):
+    return load_tkt_simple(tkt_path, skip_range=None)
 
 # ============================================================
 # 常量 (来自逆向工程 — 每个值附带反编译代码证据)
@@ -260,17 +274,20 @@ def load_save_data(path):
     # Frame 1: TKMat 实体表 (2304000B)
     if offset + 4 > len(raw):
         raise ValueError("文件太短: 无法读取 Frame1 大小")
-    comp1 = struct.unpack_from('<I', raw, offset)[0]; offset += 4
+    comp1 = struct.unpack_from('<I', raw, offset)[0]
+    offset += 4
     if offset + comp1 > len(raw):
         raise ValueError(f"Frame1 数据不完整 (需要 {comp1} 字节)")
-    game_state = lzss_decompress(raw[offset:offset + comp1]); offset += comp1
+    game_state = lzss_decompress(raw[offset:offset + comp1])
+    offset += comp1
     if len(game_state) != GAMESTATE_SIZE:
         raise ValueError(f"Frame1 解压大小异常: {len(game_state)} (期望 {GAMESTATE_SIZE})")
 
     # Frame 2: 全局状态 (BlockA + BlockB + BlockC)
     if offset + 4 > len(raw):
         raise ValueError("文件太短: 无法读取 Frame2 大小")
-    comp2 = struct.unpack_from('<I', raw, offset)[0]; offset += 4
+    comp2 = struct.unpack_from('<I', raw, offset)[0]
+    offset += 4
     if offset + comp2 > len(raw):
         raise ValueError(f"Frame2 数据不完整 (需要 {comp2} 字节)")
     frame2 = lzss_decompress(raw[offset:offset + comp2])
@@ -993,7 +1010,9 @@ class SaveEditor:
                 dec = lzss_decompress_dat(f.read())
         except Exception:
             return {}, {}, {}
-        idx_records = {}; id_lookup = {}; idx_lookup = {}
+        idx_records = {}
+        id_lookup = {}
+        idx_lookup = {}
         for i in range(600):
             off = i * 64
             if off + 10 > len(dec): break
@@ -1097,7 +1116,8 @@ class SaveEditor:
             for k in self._ov_vars:
                 self._ov_vars[k].set("—")
             for lbl, lv_lbl in self._ov_team_labels:
-                lbl.config(text="—"); lv_lbl.config(text="")
+                lbl.config(text="—")
+                lv_lbl.config(text="")
 
         # 摘要
         lines = []
@@ -1269,9 +1289,12 @@ class SaveEditor:
         dlg.minsize(480, 360)
         # 居中
         dlg.update_idletasks()
-        rx = self.root.winfo_rootx(); ry = self.root.winfo_rooty()
-        rw = self.root.winfo_width(); rh = self.root.winfo_height()
-        dw = dlg.winfo_width(); dh = dlg.winfo_height()
+        rx = self.root.winfo_rootx()
+        ry = self.root.winfo_rooty()
+        rw = self.root.winfo_width()
+        rh = self.root.winfo_height()
+        dw = dlg.winfo_width()
+        dh = dlg.winfo_height()
         dlg.geometry(f"+{rx+(rw-dw)//2}+{ry+(rh-dh)//2}")
 
         # 搜索栏 (参照 item_editor 布局)
@@ -1307,7 +1330,8 @@ class SaveEditor:
         tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         vsb.pack(side=tk.RIGHT, fill=tk.Y)
 
-        def _mw(e): tree.yview_scroll(int(-1*(e.delta/120)), "units")
+        def _mw(e):
+            tree.yview_scroll(int(-1*(e.delta/120)), "units")
         tree.bind("<Enter>", lambda e: tree.bind_all("<MouseWheel>", _mw))
         tree.bind("<Leave>", lambda e: tree.unbind_all("<MouseWheel>"))
 
@@ -1812,7 +1836,9 @@ class SaveEditor:
                       font=FONT_S, wraplength=420, padding=3).pack()
             tip['win'] = w
         def _leave(e):
-            if tip['win']: tip['win'].destroy(); tip['win'] = None
+            if tip['win']:
+                tip['win'].destroy()
+                tip['win'] = None
         widget.bind('<Enter>', _enter)
         widget.bind('<Leave>', _leave)
 

@@ -15,11 +15,22 @@ GRP 资源包编辑器 v2 — PySide6 外部主题版
 """
 
 from __future__ import annotations
-import os, sys, struct, zlib, wave, tempfile, shutil, io, math, re, time, base64, subprocess
+import base64
+import io
+import os
+import shutil
+import struct
+import subprocess
+import sys
+import tempfile
+import time
+import wave
 import winsound
+import zlib
+from collections import Counter
+from functools import partial
 from pathlib import Path
 from typing import List, Optional, Tuple
-from collections import Counter
 
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
@@ -36,30 +47,41 @@ from PySide6.QtGui import (
 )
 
 HAS_PIL = False
-try:    from PIL import Image, ImageDraw, ImageFont; HAS_PIL = True
-except ImportError: pass
+try:
+    from PIL import Image, ImageDraw, ImageFont
+    HAS_PIL = True
+except ImportError:
+    pass
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-from editor_utils.theme_manager import ThemeManager
 from editor_utils.dock_components import DockHeader
-from editor_utils.lzss import (lzss_decompress_stream as _lzss_decompress_stream,
-                                lzss_compress_stream as _lzss_compress_stream,
-                                RING_SIZE, RING_INIT_POS as RING_INIT,
-                                RING_INIT_VAL, MIN_MATCH as MIN_MATCH_LZ,
-                                MAX_MATCH as MAX_MATCH_LZ)
-from editor_utils.rgb565 import rgb565_to_rgba, rgba_to_rgb565
-from editor_utils.mod_exporter import (
-    compute_crc32, generate_mod_json, pack_tksmod, ModMetadataDialog, safe_mod_filename,
-    diff_binary_blocks, build_block_diff_json,
-    load_grp_raw_sections,
-    get_tksmod_info, import_tksmod_blocks, ModImportPreviewDialog, ModExportPreviewDialog,
+from editor_utils.lzss import (
+    MAX_MATCH as MAX_MATCH_LZ,
+    MIN_MATCH as MIN_MATCH_LZ,
+    RING_INIT_POS as RING_INIT,
+    RING_INIT_VAL,
+    RING_SIZE,
+    lzss_compress_stream as _lzss_compress_stream,
+    lzss_decompress_stream as _lzss_decompress_stream,
 )
-from editor_utils.window_theme import apply_godot_theme
+from editor_utils.mod_exporter import (
+    ModExportPreviewDialog, ModImportPreviewDialog, ModMetadataDialog,
+    build_block_diff_json, compute_crc32, diff_binary_blocks,
+    generate_mod_json, get_tksmod_info, import_tksmod_blocks,
+    load_grp_raw_sections, pack_tksmod, safe_mod_filename,
+)
+from editor_utils.rgb565 import rgb565_to_rgba, rgba_to_rgb565
+from editor_utils.theme_manager import ThemeManager
 from editor_utils.ui_helpers import themed_messagebox
+from editor_utils.window_theme import apply_godot_theme
 
 # ── 本地别名: 保持向后兼容 ──
-def lzss_decompress(data, target_size): return _lzss_decompress_stream(data, target_size)
-def lzss_compress(data): return _lzss_compress_stream(data)
+def lzss_decompress(data, target_size):
+    return _lzss_decompress_stream(data, target_size)
+
+
+def lzss_compress(data):
+    return _lzss_compress_stream(data)
 
 _COLLISION_COLORS = {
     0:(0,0,0,0), 1:(255,0,0,200), 2:(0,200,0,200), 3:(0,100,255,200),
@@ -68,17 +90,21 @@ _COLLISION_COLORS = {
 }
 
 def _collision_color(val: int):
-    if val in _COLLISION_COLORS: return _COLLISION_COLORS[val]
+    if val in _COLLISION_COLORS:
+        return _COLLISION_COLORS[val]
     if val == 0: return (0,0,0,0)
-    h = (val * 67 + 150) % 360; x = int(255 * (1 - abs((h / 60) % 2 - 1)))
+    h = (val * 67 + 150) % 360
+    x = int(255 * (1 - abs((h / 60) % 2 - 1)))
     r,g,b = [(255,x,0),(x,255,0),(0,255,x),(0,x,255),(x,0,255),(255,0,x)][int(h//60)]
     return (r,g,b,200)
 
 # ═══════════════════════════════════════════════════════════
 # 伪彩色映射表 (LUT)
 # ═══════════════════════════════════════════════════════════
-_L1_VAL2RGB = {}; _L1_RGB2VAL = {}
-_L2_VAL2RGB = {}; _L2_RGB2VAL = {}
+_L1_VAL2RGB = {}
+_L1_RGB2VAL = {}
+_L2_VAL2RGB = {}
+_L2_RGB2VAL = {}
 
 def _distinct_color(val: int, seed: int) -> tuple:
     if val == 0: return (0, 0, 0)
@@ -91,23 +117,32 @@ def _distinct_color(val: int, seed: int) -> tuple:
 
 for _v in range(256):
     c1 = _distinct_color(_v, seed=31)
-    while c1 in _L1_RGB2VAL: c1 = ((c1[0] + 1) % 256, c1[1], c1[2])
-    _L1_VAL2RGB[_v] = c1; _L1_RGB2VAL[c1] = _v
-    if _v == 0: c2 = (0, 0, 0)
+    while c1 in _L1_RGB2VAL:
+        c1 = ((c1[0] + 1) % 256, c1[1], c1[2])
+    _L1_VAL2RGB[_v] = c1
+    _L1_RGB2VAL[c1] = _v
+    if _v == 0:
+        c2 = (0, 0, 0)
     elif _v in _COLLISION_COLORS:
-        r, g, b, _a = _COLLISION_COLORS[_v]; c2 = (r, g, b)
-    else: c2 = _distinct_color(_v, seed=73)
-    while c2 in _L2_RGB2VAL: c2 = ((c2[0] + 1) % 256, c2[1], c2[2])
-    _L2_VAL2RGB[_v] = c2; _L2_RGB2VAL[c2] = _v
+        r, g, b, _a = _COLLISION_COLORS[_v]
+        c2 = (r, g, b)
+    else:
+        c2 = _distinct_color(_v, seed=73)
+    while c2 in _L2_RGB2VAL:
+        c2 = ((c2[0] + 1) % 256, c2[1], c2[2])
+    _L2_VAL2RGB[_v] = c2
+    _L2_RGB2VAL[c2] = _v
 
 def _nearest_color(rgb: tuple, lut_rev: dict) -> int:
-    if rgb in lut_rev: return lut_rev[rgb]
+    if rgb in lut_rev:
+        return lut_rev[rgb]
     r, g, b = rgb
     best_val, best_dist = 0, 999999
     for color, val in lut_rev.items():
         cr, cg, cb = color
         dist = (r - cr)**2 + (g - cg)**2 + (b - cb)**2
-        if dist < best_dist: best_val, best_dist = val, dist
+        if dist < best_dist:
+            best_val, best_dist = val, dist
     return best_val
 
 
@@ -116,23 +151,33 @@ def _nearest_color(rgb: tuple, lut_rev: dict) -> int:
 # ═══════════════════════════════════════════════════════════
 
 def rle_bp_decompress(data: bytes, target_size: int) -> bytes:
-    out = bytearray(); pos = 0
+    out = bytearray()
+    pos = 0
     while pos + 1 < len(data) and len(out) < target_size:
-        count, value = data[pos], data[pos + 1]; pos += 2; out.extend(bytes([value] * count))
+        count, value = data[pos], data[pos + 1]
+        pos += 2
+        out.extend(bytes([value] * count))
     return bytes(out[:target_size])
 
 def rle_bp_probe(data: bytes, expected_size: int) -> bool:
     total, pos = 0, 0
-    while pos + 1 < len(data): total += data[pos]; pos += 2
+    while pos + 1 < len(data):
+        total += data[pos]
+        pos += 2
     return total == expected_size
 
 def rle_bp_compress(data: bytes) -> bytes:
     if not data: return b""
-    out = bytearray(); i = 0
+    out = bytearray()
+    i = 0
     while i < len(data):
-        v = data[i]; c = 1
-        while i + c < len(data) and data[i + c] == v and c < 255: c += 1
-        out.append(c); out.append(v); i += c
+        v = data[i]
+        c = 1
+        while i + c < len(data) and data[i + c] == v and c < 255:
+            c += 1
+        out.append(c)
+        out.append(v)
+        i += c
     return bytes(out)
 
 
@@ -143,45 +188,76 @@ def rle_bp_compress(data: bytes) -> bytes:
 class GRPSection:
     def __init__(self, index: int, offset: int, width: int, height: int,
                  comp_a: int, comp_b: int):
-        self.index = index; self.offset = offset
-        self.width = width; self.height = height; self.comp_a = comp_a; self.comp_b = comp_b
+        self.index = index
+        self.offset = offset
+        self.width = width
+        self.height = height
+        self.comp_a = comp_a
+        self.comp_b = comp_b
         self.uncomp_a = width * height * 2
-        self._pixels: Optional[bytes] = None; self._decoded_a = False
-        self._layer1: Optional[bytes] = None; self._layer2: Optional[bytes] = None
-        self._decoded_b = False; self.has_layer2 = False
+        self._pixels: Optional[bytes] = None
+        self._decoded_a = False
+        self._layer1: Optional[bytes] = None
+        self._layer2: Optional[bytes] = None
+        self._decoded_b = False
+        self.has_layer2 = False
         self._orig_frame_a: Optional[bytes] = None
         self._orig_frame_b: Optional[bytes] = None
         self._orig_fb_declared: int = 0
-        self._modified_a = False; self._modified_b = False
+        self._modified_a = False
+        self._modified_b = False
 
     @property
-    def pixels(self): return self._pixels
+    def pixels(self):
+        return self._pixels
+
     @property
-    def layer1(self): return self._layer1
+    def layer1(self):
+        return self._layer1
+
     @property
-    def layer2(self): return self._layer2
+    def layer2(self):
+        return self._layer2
+
     @property
-    def is_decoded_a(self): return self._decoded_a
+    def is_decoded_a(self):
+        return self._decoded_a
+
     @property
-    def is_decoded_b(self): return self._decoded_b
+    def is_decoded_b(self):
+        return self._decoded_b
+
     @property
-    def type_label(self): return f"IMG {self.width}×{self.height}"
+    def type_label(self):
+        return f"IMG {self.width}×{self.height}"
 
 class GRPAudioSection:
     def __init__(self, index: int, offset: int, size: int, raw_data: Optional[bytes] = None):
-        self.index = index; self.offset = offset; self.size = size; self._raw = raw_data
-        self._wav_info = ""; self._duration = 0.0; self._samples: Optional[list] = None
+        self.index = index
+        self.offset = offset
+        self.size = size
+        self._raw = raw_data
+        self._wav_info = ""
+        self._duration = 0.0
+        self._samples: Optional[list] = None
 
     @property
-    def raw(self): return self._raw
+    def raw(self):
+        return self._raw
+
     @raw.setter
-    def raw(self, v): self._raw = v
+    def raw(self, v):
+        self._raw = v
+
     @property
     def type_label(self):
-        if self._wav_info: return f"AUD {self._wav_info} {self._duration:.1f}s"
+        if self._wav_info:
+            return f"AUD {self._wav_info} {self._duration:.1f}s"
         return f"AUD {self.size}B"
+
     @property
-    def has_samples(self): return self._samples is not None
+    def has_samples(self):
+        return self._samples is not None
 
     def parse_wav(self):
         if not self._raw or len(self._raw) < 44: return
@@ -193,9 +269,12 @@ class GRPAudioSection:
                 self._duration = nf / sr if sr > 0 else 0
                 if nf > 0 and sw > 0:
                     frames = wf.readframes(nf)
-                    if sw == 1: fmt, n_per = f"<{len(frames)}b", len(frames)
-                    elif sw == 2: fmt, n_per = f"<{len(frames)//2}h", len(frames)//2
-                    else: fmt, n_per = f"<{len(frames)//sw}i", len(frames)//sw
+                    if sw == 1:
+                        fmt, n_per = f"<{len(frames)}b", len(frames)
+                    elif sw == 2:
+                        fmt, n_per = f"<{len(frames)//2}h", len(frames)//2
+                    else:
+                        fmt, n_per = f"<{len(frames)//sw}i", len(frames)//sw
                     raw = struct.unpack(fmt, frames[:struct.calcsize(fmt)])
                     if ch == 2:
                         raw = [(raw[i] + raw[i+1]) // 2 for i in range(0, len(raw)-1, 2)]
@@ -204,12 +283,18 @@ class GRPAudioSection:
 
 class GRPDataSection:
     def __init__(self, index: int, offset: int, size: int, raw_data: Optional[bytes] = None):
-        self.index = index; self.offset = offset; self.size = size; self._raw = raw_data
+        self.index = index
+        self.offset = offset
+        self.size = size
+        self._raw = raw_data
 
     @property
-    def raw(self): return self._raw
+    def raw(self):
+        return self._raw
+
     @property
-    def type_label(self): return f"DATA {self.size}B"
+    def type_label(self):
+        return f"DATA {self.size}B"
 
 
 class GRPFile:
@@ -218,7 +303,8 @@ class GRPFile:
         self.audio_sections: List[GRPAudioSection] = []
         self.data_sections: List[GRPDataSection] = []
         self.idx_offsets: List[int] = []
-        self.filepath: Optional[str] = None; self.idx_path: Optional[str] = None
+        self.filepath: Optional[str] = None
+        self.idx_path: Optional[str] = None
         self._raw_data: bytes = b""
 
     @property
@@ -227,10 +313,14 @@ class GRPFile:
 
     def all_sorted(self):
         items = []
-        for s in self.sections: items.append(('IMG', s.index, s))
-        for a in self.audio_sections: items.append(('AUD', a.index, a))
-        for d in self.data_sections: items.append(('DATA', d.index, d))
-        items.sort(key=lambda x: x[1]); return items
+        for s in self.sections:
+            items.append(('IMG', s.index, s))
+        for a in self.audio_sections:
+            items.append(('AUD', a.index, a))
+        for d in self.data_sections:
+            items.append(('DATA', d.index, d))
+        items.sort(key=lambda x: x[1])
+        return items
 
 
 # ═══════════════════════════════════════════════════════════
@@ -238,29 +328,39 @@ class GRPFile:
 # ═══════════════════════════════════════════════════════════
 
 def load_grp(filepath: str, idx_path: Optional[str] = None) -> GRPFile:
-    grp = GRPFile(); grp.filepath = filepath
-    grp._raw_data = Path(filepath).read_bytes(); data = grp._raw_data; fsize = len(data)
+    grp = GRPFile()
+    grp.filepath = filepath
+    grp._raw_data = Path(filepath).read_bytes()
+    data = grp._raw_data
+    fsize = len(data)
     if idx_path is None:
         for ext in ['.IDX', '.idx']:
             c = str(Path(filepath).with_suffix(ext))
-            if os.path.exists(c): idx_path = c; break
+            if os.path.exists(c):
+                idx_path = c
+                break
     if idx_path and os.path.exists(idx_path):
         idata = Path(idx_path).read_bytes()
         if len(idata) >= 8 and len(idata) % 4 == 0:
             offs = [struct.unpack_from("<I", idata, i)[0] for i in range(0, len(idata), 4)]
-            if offs and offs[-1] == fsize: grp.idx_offsets = offs; grp.idx_path = idx_path
+            if offs and offs[-1] == fsize:
+                grp.idx_offsets = offs
+                grp.idx_path = idx_path
     if grp.idx_offsets:
         num = len(grp.idx_offsets) - 1
         boundaries = [(grp.idx_offsets[i], grp.idx_offsets[i + 1]) for i in range(num)]
     else:
-        boundaries = []; off = 0
+        boundaries = []
+        off = 0
         while off + 12 <= fsize:
             w, h, ca, cb = struct.unpack_from("<HHII", data, off)
             if w == 0 or h == 0 or w > 4096 or h > 4096: break
             ss = 12 + ca + cb
             if off + ss > fsize: break
-            boundaries.append((off, off + ss)); off += ss
-        if boundaries: grp.idx_offsets = [b[0] for b in boundaries] + [boundaries[-1][1]]
+            boundaries.append((off, off + ss))
+            off += ss
+        if boundaries:
+            grp.idx_offsets = [b[0] for b in boundaries] + [boundaries[-1][1]]
     for idx, (so, eo) in enumerate(boundaries):
         sz = eo - so
         if sz >= 12:
@@ -268,20 +368,26 @@ def load_grp(filepath: str, idx_path: Optional[str] = None) -> GRPFile:
             if (1 <= w <= 4096 and 1 <= h <= 4096 and
                 12 + ca + cb == sz and ca > 0 and cb > 0):
                 sec = GRPSection(idx, so, w, h, ca, cb)
-                fa_off = so + 12; fb_off = fa_off + ca
+                fa_off = so + 12
+                fb_off = fa_off + ca
                 sec._orig_frame_a = data[fa_off:fa_off + ca]
                 sec._orig_frame_b = data[fb_off:fb_off + cb]
-                if cb >= 4: sec._orig_fb_declared = struct.unpack_from("<I", data, fb_off)[0]
-                grp.sections.append(sec); continue
+                if cb >= 4:
+                    sec._orig_fb_declared = struct.unpack_from("<I", data, fb_off)[0]
+                grp.sections.append(sec)
+                continue
         if sz >= 12 and data[so:so+4] == b"RIFF":
             asec = GRPAudioSection(idx, so, sz, data[so:eo])
-            asec.parse_wav(); grp.audio_sections.append(asec); continue
+            asec.parse_wav()
+            grp.audio_sections.append(asec)
+            continue
         grp.data_sections.append(GRPDataSection(idx, so, sz, data[so:eo]))
     return grp
 
 def _decode_section_a(grp: GRPFile, sec: GRPSection):
     if sec._decoded_a: return
-    data = grp._raw_data; fa_off = sec.offset + 12
+    data = grp._raw_data
+    fa_off = sec.offset + 12
     uncomp_sz = struct.unpack_from("<I", data, fa_off)[0]
     lzss_data = data[fa_off + 4:fa_off + sec.comp_a]
     sec._pixels = lzss_decompress(lzss_data, min(uncomp_sz, sec.uncomp_a))
@@ -291,23 +397,27 @@ def _decode_section_a(grp: GRPFile, sec: GRPSection):
 
 def _decode_section_b(grp: GRPFile, sec: GRPSection):
     if sec._decoded_b: return
-    data = grp._raw_data; fb_off = sec.offset + 12 + sec.comp_a
+    data = grp._raw_data
+    fb_off = sec.offset + 12 + sec.comp_a
     if fb_off + 4 > len(data): return
     declared = struct.unpack_from("<I", data, fb_off)[0]
     cs, ce = fb_off + 4, fb_off + 4 + sec.comp_b - 4
-    comp_data = data[cs:ce]; total_px = sec.width * sec.height
+    comp_data = data[cs:ce]
+    total_px = sec.width * sec.height
     if rle_bp_probe(comp_data, declared):
         raw = rle_bp_decompress(comp_data, declared)
         sec._layer1 = raw[:total_px]
         if declared == total_px * 2 and len(raw) >= total_px * 2:
-            sec._layer2 = raw[total_px:total_px * 2]; sec.has_layer2 = True
+            sec._layer2 = raw[total_px:total_px * 2]
+            sec.has_layer2 = True
     else:
         raw = lzss_decompress(comp_data, sec.uncomp_a)
         sec._layer1 = bytes(raw[i] for i in range(0, min(len(raw), total_px * 2), 2))
     sec._decoded_b = True
 
 def save_grp(grp: GRPFile, filepath: str, idx_path: Optional[str] = None):
-    buf = bytearray(); offsets = []
+    buf = bytearray()
+    offsets = []
     for kind, idx, obj in grp.all_sorted():
         offsets.append(len(buf))
         if kind == 'IMG':
@@ -325,7 +435,8 @@ def save_grp(grp: GRPFile, filepath: str, idx_path: Optional[str] = None):
                     fb_raw = (sec._layer1 + sec._layer2)[:sec.width * sec.height * 2]
                 elif sec._layer1:
                     fb_raw = sec._layer1[:sec.width * sec.height]
-                else: fb_raw = b""
+                else:
+                    fb_raw = b""
                 fb_body = rle_bp_compress(fb_raw)
                 comp_b = len(fb_body) + 4
                 fb_data = struct.pack("<I", len(fb_raw)) + fb_body
@@ -334,16 +445,21 @@ def save_grp(grp: GRPFile, filepath: str, idx_path: Optional[str] = None):
                 fb_data = sec._orig_frame_b if sec._orig_frame_b else (
                     struct.pack("<I", sec._orig_fb_declared) + b"\x00" * (sec.comp_b - 4))
             buf += struct.pack("<HHII", sec.width, sec.height, comp_a, comp_b)
-            buf += fa_data; buf += fb_data
+            buf += fa_data
+            buf += fb_data
         elif kind == 'AUD':
-            if obj._raw: buf += obj._raw
+            if obj._raw:
+                buf += obj._raw
         else:
-            if obj._raw: buf += obj._raw
+            if obj._raw:
+                buf += obj._raw
     offsets.append(len(buf))
     Path(filepath).write_bytes(bytes(buf))
-    if idx_path is None: idx_path = str(Path(filepath).with_suffix('.idx'))
+    if idx_path is None:
+        idx_path = str(Path(filepath).with_suffix('.idx'))
     idata = bytearray()
-    for off in offsets: idata += struct.pack("<I", off)
+    for off in offsets:
+        idata += struct.pack("<I", off)
     Path(idx_path).write_bytes(bytes(idata))
 
 
@@ -352,16 +468,20 @@ def save_grp(grp: GRPFile, filepath: str, idx_path: Optional[str] = None):
 # ═══════════════════════════════════════════════════════════
 
 def _png_chunk(ct: bytes, d: bytes) -> bytes:
-    c = ct + d; return struct.pack(">I", len(d)) + c + struct.pack(">I", zlib.crc32(c) & 0xFFFFFFFF)
+    c = ct + d
+    return struct.pack(">I", len(d)) + c + struct.pack(">I", zlib.crc32(c) & 0xFFFFFFFF)
 
 def export_png_rgba(w, h, rgba, path):
     png = b"\x89PNG\r\n\x1a\n"
     png += _png_chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 6, 0, 0, 0))
-    stride = w * 4; raw = bytearray(h * (stride + 1))
+    stride = w * 4
+    raw = bytearray(h * (stride + 1))
     for row in range(h):
-        out = row * (stride + 1); raw[out] = 0
+        out = row * (stride + 1)
+        raw[out] = 0
         raw[out + 1:out + 1 + stride] = rgba[row * stride:(row + 1) * stride]
-    png += _png_chunk(b"IDAT", zlib.compress(bytes(raw), 9)); png += _png_chunk(b"IEND", b"")
+    png += _png_chunk(b"IDAT", zlib.compress(bytes(raw), 9))
+    png += _png_chunk(b"IEND", b"")
     Path(path).write_bytes(png)
 
 
@@ -383,7 +503,8 @@ class GRPGraphicsView(QGraphicsView):
     def wheelEvent(self, event: QWheelEvent):
         if event.modifiers() & Qt.ControlModifier:
             step = 1 if event.angleDelta().y() > 0 else -1
-            if self.editor: self.editor._zoom_step(step)
+            if self.editor:
+                self.editor._zoom_step(step)
             event.accept()
         else:
             super().wheelEvent(event)
@@ -406,7 +527,8 @@ class GRPEditor(QMainWindow):
         self.resize(1360, 900)
 
         ico_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'TKS.ico')
-        if os.path.exists(ico_path): self.setWindowIcon(QIcon(ico_path))
+        if os.path.exists(ico_path):
+            self.setWindowIcon(QIcon(ico_path))
 
         # 主题
         self.theme_manager = ThemeManager()
@@ -421,12 +543,15 @@ class GRPEditor(QMainWindow):
 
         # 状态
         self.grp: Optional[GRPFile] = None
-        self._sel_idx = -1; self._sel_layer = "A"
+        self._sel_idx = -1
+        self._sel_layer = "A"
         self._zoom = 1.0
         self._pixmap_item: Optional[QGraphicsPixmapItem] = None
         self._pil_img = None  # PIL cache
-        self._audio_playing = False; self._audio_tmp = None
-        self._wave_start_time = 0.0; self._wave_timer: Optional[QTimer] = None
+        self._audio_playing = False
+        self._audio_tmp = None
+        self._wave_start_time = 0.0
+        self._wave_timer: Optional[QTimer] = None
 
         # 构建 UI
         self._setup_menu()
@@ -434,8 +559,10 @@ class GRPEditor(QMainWindow):
         self._setup_ui()
         self._setup_statusbar()
 
-        if filepath and os.path.exists(filepath): self._open(filepath)
-        else: self._new_empty()
+        if filepath and os.path.exists(filepath):
+            self._open(filepath)
+        else:
+            self._new_empty()
 
     def _apply_theme(self):
         self.setStyleSheet(self.theme_manager.get_stylesheet())
@@ -474,13 +601,15 @@ class GRPEditor(QMainWindow):
         hm.addAction("关于 GRP 格式", self._show_about)
 
     def _toggle_theme(self):
-        self.theme_manager.toggle_theme(); self._apply_theme()
+        self.theme_manager.toggle_theme()
+        self._apply_theme()
         self._is_dark = self.theme_manager.current_theme == 'dark'
         apply_godot_theme(self, self._is_dark)
 
     # ── Toolbar ───────────────────────────────────────────
     def _setup_toolbar(self):
-        tb = QToolBar("主工具栏"); self.addToolBar(tb)
+        tb = QToolBar("主工具栏")
+        self.addToolBar(tb)
         tb.addAction("📂 打开 GRP", self._open_dlg)
         tb.addAction("💾 保存", self._save)
         tb.addSeparator()
@@ -505,7 +634,8 @@ class GRPEditor(QMainWindow):
         tb.addSeparator()
 
         tb.addAction("🔍−", lambda: self._zoom_step(-1))
-        self._zoom_lbl = QLabel(" 100% "); tb.addWidget(self._zoom_lbl)
+        self._zoom_lbl = QLabel(" 100% ")
+        tb.addWidget(self._zoom_lbl)
         tb.addAction("🔍+", lambda: self._zoom_step(1))
         tb.addAction("🔲 适应", self._fit_to_window)
         tb.addSeparator()
@@ -513,12 +643,17 @@ class GRPEditor(QMainWindow):
 
     # ── Main UI Layout ────────────────────────────────────
     def _setup_ui(self):
-        splitter = QSplitter(Qt.Horizontal); self.setCentralWidget(splitter)
+        splitter = QSplitter(Qt.Horizontal)
+        self.setCentralWidget(splitter)
 
         # LEFT: 区段列表 + 详情
-        left_w = QWidget(); left_lay = QVBoxLayout(left_w); left_lay.setContentsMargins(0,0,0,0)
+        left_w = QWidget()
+        left_lay = QVBoxLayout(left_w)
+        left_lay.setContentsMargins(0,0,0,0)
         left_lay.addWidget(DockHeader("区段列表"))
-        body = QWidget(); body.setObjectName("DockBody"); body_lay = QVBoxLayout(body)
+        body = QWidget()
+        body.setObjectName("DockBody")
+        body_lay = QVBoxLayout(body)
 
         self._sec_list = QListWidget()
         self._sec_list.setFont(QFont("Consolas", 9))
@@ -535,7 +670,9 @@ class GRPEditor(QMainWindow):
         splitter.addWidget(left_w)
 
         # RIGHT: 画布 + 色板
-        right_w = QWidget(); right_lay = QVBoxLayout(right_w); right_lay.setContentsMargins(0,0,0,0)
+        right_w = QWidget()
+        right_lay = QVBoxLayout(right_w)
+        right_lay.setContentsMargins(0,0,0,0)
         self._scene = QGraphicsScene()
         self._view = GRPGraphicsView(self._scene)
         self._view.editor = self
@@ -548,11 +685,11 @@ class GRPEditor(QMainWindow):
         palette_lay = QVBoxLayout(self._palette_panel)
         palette_lay.setContentsMargins(4, 4, 4, 4)
         palette_lay.setSpacing(2)
-        
+
         self._palette_title = QLabel("色板")
         self._palette_title.setObjectName("DockTitle")
         palette_lay.addWidget(self._palette_title)
-        
+
         self._palette_scroll = QScrollArea()
         self._palette_scroll.setWidgetResizable(True)
         self._palette_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
@@ -562,7 +699,7 @@ class GRPEditor(QMainWindow):
         self._palette_grid.setContentsMargins(2, 2, 2, 2)
         self._palette_scroll.setWidget(self._palette_container)
         palette_lay.addWidget(self._palette_scroll)
-        
+
         right_lay.addWidget(self._palette_panel)
         splitter.addWidget(right_w)
 
@@ -572,10 +709,14 @@ class GRPEditor(QMainWindow):
     # ── Statusbar ─────────────────────────────────────────
     def _setup_statusbar(self):
         sb = self.statusBar()
-        self._status_lbl = QLabel("就绪 — 打开 GRP 文件"); self._status_lbl.setObjectName("StatusLabel")
-        self._pixel_lbl = QLabel(""); self._pixel_lbl.setObjectName("StatusPixel")
-        self._info_lbl = QLabel(""); self._info_lbl.setObjectName("StatusInfo")
-        self._hint_lbl = QLabel("Ctrl+滚轮=缩放 | 拖拽=平移"); self._hint_lbl.setObjectName("StatusInfo")
+        self._status_lbl = QLabel("就绪 — 打开 GRP 文件")
+        self._status_lbl.setObjectName("StatusLabel")
+        self._pixel_lbl = QLabel("")
+        self._pixel_lbl.setObjectName("StatusPixel")
+        self._info_lbl = QLabel("")
+        self._info_lbl.setObjectName("StatusInfo")
+        self._hint_lbl = QLabel("Ctrl+滚轮=缩放 | 拖拽=平移")
+        self._hint_lbl.setObjectName("StatusInfo")
         sb.addWidget(self._status_lbl, 1)
         sb.addPermanentWidget(self._info_lbl)
         sb.addPermanentWidget(self._pixel_lbl)
@@ -583,8 +724,11 @@ class GRPEditor(QMainWindow):
 
     # ── Button state ──────────────────────────────────────
     def _update_buttons(self):
-        is_img = self._is_img(); is_aud = self._is_aud()
-        self._btn_a.setEnabled(is_img); self._btn_l1.setEnabled(is_img); self._btn_l2.setEnabled(is_img)
+        is_img = self._is_img()
+        is_aud = self._is_aud()
+        self._btn_a.setEnabled(is_img)
+        self._btn_l1.setEnabled(is_img)
+        self._btn_l2.setEnabled(is_img)
         self._btn_play_act.setEnabled(is_aud)
         names = {"A": "主图", "L1": "前景层", "L2": "碰撞层"}
         for act, key in [(self._btn_a, "A"), (self._btn_l1, "L1"), (self._btn_l2, "L2")]:
@@ -595,17 +739,23 @@ class GRPEditor(QMainWindow):
             else:
                 act.setText(names[key])  # 禁用时仅显示文字
 
-    def _is_img(self): return isinstance(self._get_sec(), GRPSection)
-    def _is_aud(self): return isinstance(self._get_sec(), GRPAudioSection)
+    def _is_img(self):
+        return isinstance(self._get_sec(), GRPSection)
+
+    def _is_aud(self):
+        return isinstance(self._get_sec(), GRPAudioSection)
 
     def _get_sec(self):
         if not self.grp or self._sel_idx < 0: return None
         for s in self.grp.sections:
-            if s.index == self._sel_idx: return s
+            if s.index == self._sel_idx:
+                return s
         for a in self.grp.audio_sections:
-            if a.index == self._sel_idx: return a
+            if a.index == self._sel_idx:
+                return a
         for d in self.grp.data_sections:
-            if d.index == self._sel_idx: return d
+            if d.index == self._sel_idx:
+                return d
         return None
 
     # ── Section list ──────────────────────────────────────
@@ -613,13 +763,16 @@ class GRPEditor(QMainWindow):
         self._sec_list.blockSignals(True)
         self._sec_list.clear()
         if not self.grp:
-            self._sec_list.blockSignals(False); return
+            self._sec_list.blockSignals(False)
+            return
         for kind, idx, obj in self.grp.all_sorted():
             self._sec_list.addItem(f"[{kind}] #{idx:03d}  {obj.type_label}")
         if self.grp.total_sections > 0:
             self._sec_list.setCurrentRow(0)
             self._sel_idx = self.grp.all_sorted()[0][1]
-            self._refresh_view(); self._update_detail(); self._update_buttons()
+            self._refresh_view()
+            self._update_detail()
+            self._update_buttons()
         self._sec_list.blockSignals(False)
 
     def _on_section_select(self, row: int):
@@ -628,10 +781,14 @@ class GRPEditor(QMainWindow):
         if row < len(items):
             self._sel_idx = items[row][1]
             sec = self._get_sec()
-            if isinstance(sec, GRPSection): self._sel_layer = "A"
-            self._stop_audio(); self._pil_img = None
+            if isinstance(sec, GRPSection):
+                self._sel_layer = "A"
+            self._stop_audio()
+            self._pil_img = None
             self._pixmap_item = None
-            self._refresh_view(); self._update_detail(); self._update_buttons()
+            self._refresh_view()
+            self._update_detail()
+            self._update_buttons()
             self._update_palette()
 
     def _update_detail(self):
@@ -645,68 +802,89 @@ class GRPEditor(QMainWindow):
                     vals = sorted(Counter(sec.layer1).items())
                     info += f"L1值域: {len(vals)}种\n"
                     info += '  ' + ', '.join(f'{v}={c}' for v,c in vals[:8])
-                    if len(vals) > 8: info += f' ...共{len(vals)}种'
+                    if len(vals) > 8:
+                        info += f' ...共{len(vals)}种'
                     info += '\n'
                 if sec.has_layer2 and sec.layer2:
                     vals2 = sorted(Counter(sec.layer2).items())
                     info += f"L2值域: {len(vals2)}种\n"
                     items_txt = [f'#{v}({c}px)' for v,c in vals2[:8]]
                     info += '  ' + ', '.join(items_txt)
-                    if len(vals2) > 8: info += f' ...共{len(vals2)}种'
+                    if len(vals2) > 8:
+                        info += f' ...共{len(vals2)}种'
                     info += '\n'
             info += f"A:{'OK' if sec.is_decoded_a else '待解码'} B:{'OK' if sec.is_decoded_b else '待解码'}"
         elif isinstance(sec, GRPAudioSection):
             info = f"区段 #{sec.index:03d} — 音频\n大小: {sec.size}B"
-            if sec._wav_info: info += f"\n格式: {sec._wav_info}\n时长: {sec._duration:.2f}s"
+            if sec._wav_info:
+                info += f"\n格式: {sec._wav_info}\n时长: {sec._duration:.2f}s"
         elif isinstance(sec, GRPDataSection):
             info = f"区段 #{sec.index:03d} — 数据\n大小: {sec.size}B\n(索引/元数据, 不可编辑)"
-        else: info = "(无选中)"
+        else:
+            info = "(无选中)"
         self._sec_detail.setPlainText(info)
 
     # ── File ops ──────────────────────────────────────────
     def _new_empty(self):
-        self.grp = GRPFile(); self._sync_list(); self._sel_idx = -1; self._refresh_view()
+        self.grp = GRPFile()
+        self._sync_list()
+        self._sel_idx = -1
+        self._refresh_view()
         self.setWindowTitle("GRP 编辑器 v2 — [新建]")
 
     def _open_dlg(self):
         p, _ = QFileDialog.getOpenFileName(self, "打开 GRP", "", "GRP (*.grp *.GRP);;All (*.*)")
-        if p: self._open(p)
+        if p:
+            self._open(p)
 
     def _open(self, p: str):
         try:
-            self._status_lbl.setText(f"加载中: {Path(p).name}..."); QApplication.processEvents()
-            self._stop_audio(); self.grp = load_grp(p)
-            self._sel_idx = -1; self._sel_layer = "A"
-            self._sync_list(); self._refresh_view()
+            self._status_lbl.setText(f"加载中: {Path(p).name}...")
+            QApplication.processEvents()
+            self._stop_audio()
+            self.grp = load_grp(p)
+            self._sel_idx = -1
+            self._sel_layer = "A"
+            self._sync_list()
+            self._refresh_view()
             ni, na, nd = len(self.grp.sections), len(self.grp.audio_sections), len(self.grp.data_sections)
             extra = f"  ({ni}IMG + {na}AUD" + (f" + {nd}DATA" if nd else "") + ")"
             id_info = f"  |  IDX: {Path(self.grp.idx_path).name}" if self.grp.idx_path else ""
             self._status_lbl.setText(f"已加载: {Path(p).name}  |  {self.grp.total_sections} sections{extra}{id_info}")
             self.setWindowTitle(f"GRP 编辑器 v2 — {os.path.basename(p)}")
         except Exception as e:
-            QMessageBox.critical(self, "打开失败", str(e)); import traceback; traceback.print_exc()
+            QMessageBox.critical(self, "打开失败", str(e))
+            import traceback
+            traceback.print_exc()
 
     def _save(self):
         if not self.grp: return
-        if self.grp.filepath: self._do_save(self.grp.filepath, self.grp.idx_path)
-        else: self._save_as()
+        if self.grp.filepath:
+            self._do_save(self.grp.filepath, self.grp.idx_path)
+        else:
+            self._save_as()
 
     def _save_as(self):
         p, _ = QFileDialog.getSaveFileName(self, "保存 GRP", "", "GRP (*.grp)")
-        if p: self._do_save(p, str(Path(p).with_suffix('.idx')))
+        if p:
+            self._do_save(p, str(Path(p).with_suffix('.idx')))
 
     def _do_save(self, grp_path, idx_path=None):
         try:
-            self._status_lbl.setText("压缩中..."); QApplication.processEvents()
+            self._status_lbl.setText("压缩中...")
+            QApplication.processEvents()
             save_grp(self.grp, grp_path, idx_path)
-            self.grp.filepath = grp_path; self.grp.idx_path = idx_path
+            self.grp.filepath = grp_path
+            self.grp.idx_path = idx_path
             self._status_lbl.setText(f"已保存: {Path(grp_path).name} ({os.path.getsize(grp_path)/1024:.1f}KB)")
-        except Exception as e: QMessageBox.critical(self, "保存失败", str(e))
+        except Exception as e:
+            QMessageBox.critical(self, "保存失败", str(e))
 
     def _export_tksmod(self):
         """导出 GRP 为 .tksmod — 区段级增量（仅导出修改过的区段）"""
         if not self.grp or not self.grp.filepath:
-            QMessageBox.information(self, "提示", "请先打开 GRP 文件"); return
+            QMessageBox.information(self, "提示", "请先打开 GRP 文件")
+            return
 
         target_name = os.path.basename(self.grp.filepath)
 
@@ -718,9 +896,11 @@ class GRPEditor(QMainWindow):
             cur_sections = load_grp_raw_sections(tmp_grp, tmp_idx)
         finally:
             for p in [tmp_grp, tmp_idx]:
-                if os.path.exists(p): os.remove(p)
+                if os.path.exists(p):
+                    os.remove(p)
         if cur_sections is None:
-            QMessageBox.warning(self, "错误", "无法序列化当前 GRP 数据"); return
+            QMessageBox.warning(self, "错误", "无法序列化当前 GRP 数据")
+            return
 
         def _compute_stats(ref_dir):
             ref_path = os.path.join(ref_dir, target_name)
@@ -729,7 +909,9 @@ class GRPEditor(QMainWindow):
             ref_idx = None
             for ext in ['.IDX', '.idx']:
                 c = str(Path(ref_path).with_suffix(ext))
-                if os.path.exists(c): ref_idx = c; break
+                if os.path.exists(c):
+                    ref_idx = c
+                    break
             ref_sections = load_grp_raw_sections(ref_path, ref_idx)
             if ref_sections is None:
                 return {"valid": False, "error": f"无法解析 {target_name}（需要配套 IDX 文件）"}
@@ -750,17 +932,21 @@ class GRPEditor(QMainWindow):
 
         ref_path = os.path.join(ref_dir, target_name)
         if not os.path.isfile(ref_path):
-            QMessageBox.warning(self, "参考文件不存在", f"在 {ref_dir} 中未找到 {target_name}"); return
+            QMessageBox.warning(self, "参考文件不存在", f"在 {ref_dir} 中未找到 {target_name}")
+            return
 
         # 查找参考 IDX
         ref_idx = None
         for ext in ['.IDX', '.idx']:
             c = str(Path(ref_path).with_suffix(ext))
-            if os.path.exists(c): ref_idx = c; break
+            if os.path.exists(c):
+                ref_idx = c
+                break
 
         ref_sections = load_grp_raw_sections(ref_path, ref_idx)
         if ref_sections is None:
-            QMessageBox.warning(self, "参考文件无效", f"无法解析 {target_name} 的区段结构（需要配套 IDX 文件）"); return
+            QMessageBox.warning(self, "参考文件无效", f"无法解析 {target_name} 的区段结构（需要配套 IDX 文件）")
+            return
 
         # 保存当前到临时文件获取当前区段
         tmp_grp = tempfile.mktemp(suffix='.grp')
@@ -770,19 +956,23 @@ class GRPEditor(QMainWindow):
             cur_sections = load_grp_raw_sections(tmp_grp, tmp_idx)
         finally:
             for p in [tmp_grp, tmp_idx]:
-                if os.path.exists(p): os.remove(p)
+                if os.path.exists(p):
+                    os.remove(p)
 
         if cur_sections is None:
-            QMessageBox.warning(self, "错误", "无法序列化当前 GRP 数据"); return
+            QMessageBox.warning(self, "错误", "无法序列化当前 GRP 数据")
+            return
 
         # 计算区段级差异
         diff_result = diff_binary_blocks(ref_sections, cur_sections)
         if not diff_result['modified'] and not diff_result['appended'] and not diff_result['deleted_indices']:
-            QMessageBox.information(self, "无差异", "当前 GRP 与参考文件相同，无需导出。"); return
+            QMessageBox.information(self, "无差异", "当前 GRP 与参考文件相同，无需导出。")
+            return
 
         dlg = ModMetadataDialog(self, getattr(self, '_last_mod_metadata', None))
         if dlg.exec() != QDialog.Accepted: return
-        metadata = dlg.get_metadata(); self._last_mod_metadata = metadata
+        metadata = dlg.get_metadata()
+        self._last_mod_metadata = metadata
 
         crc = compute_crc32(ref_path)
         data_json = build_block_diff_json(target=target_name, block_type="grp_section",
@@ -795,7 +985,8 @@ class GRPEditor(QMainWindow):
         if not fp: return
         try:
             pack_tksmod(fp, mod_json, {internal_path: data_json})
-            n_mod = len(diff_result['modified']); n_app = len(diff_result['appended'])
+            n_mod = len(diff_result['modified'])
+            n_app = len(diff_result['appended'])
             self._status_lbl.setText(f"已导出 MOD: {Path(fp).name} (修改{n_mod}区段, 新增{n_app}区段)")
             QMessageBox.information(self, "导出成功",
                 f"已导出 (区段级增量):\n{fp}\n\n参考: {ref_path}\n修改: {n_mod} 个区段\n新增: {n_app} 个区段")
@@ -805,15 +996,18 @@ class GRPEditor(QMainWindow):
     def _export_selected_as_mod(self):
         """导出当前选中区段为 .tksmod — 块级增量模式，launcher 可正确合并到目标文件"""
         if not self.grp or self._sel_idx < 0:
-            QMessageBox.information(self, "提示", "请先选中一个区段"); return
+            QMessageBox.information(self, "提示", "请先选中一个区段")
+            return
 
         sec = self._get_sec()
         if sec is None:
-            QMessageBox.information(self, "提示", "请先选中一个区段"); return
+            QMessageBox.information(self, "提示", "请先选中一个区段")
+            return
 
         if not self.grp.filepath:
             QMessageBox.information(self, "提示",
-                "请先打开一个 GRP 文件（需要原始文件名作为 MOD 合并目标）"); return
+                "请先打开一个 GRP 文件（需要原始文件名作为 MOD 合并目标）")
+            return
 
         # 步骤1: 序列化选中区段 → 临时 GRP → 提取原始区段字节
         tmp_grp = GRPFile()
@@ -848,7 +1042,8 @@ class GRPEditor(QMainWindow):
             save_grp(tmp_grp, tmp_grp_path, tmp_idx_path)
             cur_sections = load_grp_raw_sections(tmp_grp_path, tmp_idx_path)
             if not cur_sections:
-                QMessageBox.warning(self, "错误", "无法序列化选中区段"); return
+                QMessageBox.warning(self, "错误", "无法序列化选中区段")
+                return
             section_bytes = cur_sections[0]
 
             # 步骤2: 构建 block_diff — launcher 会加载游戏原文件并替换指定索引的区段
@@ -869,7 +1064,8 @@ class GRPEditor(QMainWindow):
             # 步骤3: MOD 元数据
             dlg = ModMetadataDialog(self, getattr(self, '_last_mod_metadata', None))
             if dlg.exec() != QDialog.Accepted: return
-            metadata = dlg.get_metadata(); self._last_mod_metadata = metadata
+            metadata = dlg.get_metadata()
+            self._last_mod_metadata = metadata
 
             internal_path = f"data/{target_name}.json"
             mod_json = generate_mod_json(metadata,
@@ -889,7 +1085,8 @@ class GRPEditor(QMainWindow):
                 f"Launcher 加载时将替换 {target_name} 的第 {sec.index} 个区段。")
         finally:
             for p in [tmp_grp_path, tmp_idx_path]:
-                if os.path.exists(p): os.remove(p)
+                if os.path.exists(p):
+                    os.remove(p)
 
     def _import_tksmod(self):
         """从 .tksmod 导入 MOD 数据到 GRP 编辑器"""
@@ -898,13 +1095,15 @@ class GRPEditor(QMainWindow):
 
         info = get_tksmod_info(fp)
         if info is None:
-            QMessageBox.warning(self, "无效文件", "无法解析此 .tksmod 文件"); return
+            QMessageBox.warning(self, "无效文件", "无法解析此 .tksmod 文件")
+            return
 
         # 查找 GRP 类型的 target
         grp_targets = [t for t in info.get("targets", []) if t.upper().endswith(".GRP")]
         if not grp_targets:
             QMessageBox.warning(self, "不兼容", "此 MOD 不包含 GRP 文件的数据\n\n"
-                f"包含的数据: {', '.join(info.get('targets', []))}"); return
+                f"包含的数据: {', '.join(info.get('targets', []))}")
+            return
 
         target_name = grp_targets[0]
 
@@ -917,7 +1116,8 @@ class GRPEditor(QMainWindow):
             fp, ref_dir, target_name, block_type="grp_section")
         if blocks is None:
             QMessageBox.warning(self, "导入失败",
-                f"无法导入 MOD 数据。\n请确认参考目录中包含有效的 {target_name}"); return
+                f"无法导入 MOD 数据。\n请确认参考目录中包含有效的 {target_name}")
+            return
 
         # 将区段列表重建为临时 GRP+IDX 文件，然后重新加载
         tmp_grp = tempfile.mktemp(suffix='.grp')
@@ -940,10 +1140,12 @@ class GRPEditor(QMainWindow):
             self.grp.filepath = None
             self.grp.idx_path = None
         except Exception as e:
-            QMessageBox.warning(self, "导入失败", f"重建 GRP 数据失败: {e}"); return
+            QMessageBox.warning(self, "导入失败", f"重建 GRP 数据失败: {e}")
+            return
         finally:
             for p in [tmp_grp, tmp_idx]:
-                if os.path.exists(p): os.remove(p)
+                if os.path.exists(p):
+                    os.remove(p)
 
         # 记住 MOD 元数据
         self._last_mod_metadata = {
@@ -966,13 +1168,18 @@ class GRPEditor(QMainWindow):
             f"您现在可以继续编辑并重新导出。")
 
     def closeEvent(self, event):
-        self._stop_audio(); super().closeEvent(event)
+        self._stop_audio()
+        super().closeEvent(event)
 
     # ── Layer switching ───────────────────────────────────
     def _switch_layer(self, layer: str):
         if not self._is_img(): return
-        self._sel_layer = layer; self._pil_img = None; self._pixmap_item = None
-        self._update_buttons(); self._refresh_view(); self._update_detail()
+        self._sel_layer = layer
+        self._pil_img = None
+        self._pixmap_item = None
+        self._update_buttons()
+        self._refresh_view()
+        self._update_detail()
         self._update_palette()
 
     def _update_palette(self):
@@ -983,7 +1190,8 @@ class GRPEditor(QMainWindow):
             return
 
         # 确保层数据已解码
-        if not sec.is_decoded_b: _decode_section_b(self.grp, sec)
+        if not sec.is_decoded_b:
+            _decode_section_b(self.grp, sec)
         data = sec.layer1 if self._sel_layer == "L1" else sec.layer2
         if not data:
             self._palette_panel.setVisible(False)
@@ -1002,7 +1210,8 @@ class GRPEditor(QMainWindow):
         # 清空现有色板项
         while self._palette_grid.count():
             item = self._palette_grid.takeAt(0)
-            if item.widget(): item.widget().deleteLater()
+            if item.widget():
+                item.widget().deleteLater()
 
         # 获取颜色映射
         lut = _L1_VAL2RGB if self._sel_layer == "L1" else _L2_VAL2RGB
@@ -1011,13 +1220,13 @@ class GRPEditor(QMainWindow):
         cols = 8  # 每行8个色块
         for idx, val in enumerate(used_vals):
             row, col = divmod(idx, cols)
-            
+
             # 创建色块容器
             item_w = QWidget()
             item_lay = QHBoxLayout(item_w)
             item_lay.setContentsMargins(2, 2, 2, 2)
             item_lay.setSpacing(4)
-            
+
             # 色块
             color_label = QLabel()
             color_label.setFixedSize(24, 24)
@@ -1025,26 +1234,30 @@ class GRPEditor(QMainWindow):
             color_label.setProperty("class", "ColorSwatch")
             color_label.setStyleSheet(f"background-color: rgb({color[0]},{color[1]},{color[2]});")
             item_lay.addWidget(color_label)
-            
+
             # 值标签
             val_label = QLabel(f"{val}")
             val_label.setFont(QFont("Consolas", 9, QFont.Bold))
             val_label.setAlignment(Qt.AlignCenter)
             val_label.setMinimumWidth(20)
             item_lay.addWidget(val_label)
-            
+
             # 描述标签
             desc_text = ""
             if self._sel_layer == "L1":
-                if val == 0: desc_text = "无遮挡"
-                else: desc_text = f"深度{val}"
+                if val == 0:
+                    desc_text = "无遮挡"
+                else:
+                    desc_text = f"深度{val}"
             else:
-                if val == 0: desc_text = "类型0"
-                else: desc_text = f"类型{val}"
+                if val == 0:
+                    desc_text = "类型0"
+                else:
+                    desc_text = f"类型{val}"
             desc_label = QLabel(desc_text)
             desc_label.setFont(QFont("Microsoft YaHei", 8))
             item_lay.addWidget(desc_label, 1)
-            
+
             self._palette_grid.addWidget(item_w, row, col)
 
         # 调整面板高度
@@ -1054,13 +1267,17 @@ class GRPEditor(QMainWindow):
 
     # ── Layer RGBA ────────────────────────────────────────
     def _get_layer_rgba(self, sec: GRPSection, layer: str) -> Optional[bytearray]:
-        w, h = sec.width, sec.height; total = w * h
+        w, h = sec.width, sec.height
+        total = w * h
         if layer == "A":
-            if not sec.is_decoded_a: _decode_section_a(self.grp, sec)
-            if sec.pixels: return rgb565_to_rgba(sec.pixels, w, h)
+            if not sec.is_decoded_a:
+                _decode_section_a(self.grp, sec)
+            if sec.pixels:
+                return rgb565_to_rgba(sec.pixels, w, h)
             return bytearray(total * 4)
         elif layer in ("L1", "L2"):
-            if not sec.is_decoded_b: _decode_section_b(self.grp, sec)
+            if not sec.is_decoded_b:
+                _decode_section_b(self.grp, sec)
             data = sec.layer1 if layer == "L1" else sec.layer2
             if not data: return None
             rgba = bytearray(total * 4)
@@ -1091,7 +1308,8 @@ class GRPEditor(QMainWindow):
             return
 
         if isinstance(sec, GRPAudioSection):
-            self._draw_audio_view(sec); return
+            self._draw_audio_view(sec)
+            return
 
         if isinstance(sec, GRPSection):
             w, h = sec.width, sec.height
@@ -1127,10 +1345,10 @@ class GRPEditor(QMainWindow):
                 if layer_data:
                     # 记录已访问的像素
                     visited = bytearray(w * h)  # 使用 bytearray 提高性能
-                    
+
                     # 存储所有需要标注的区域 [(val, center_x, center_y), ...]
                     annotations = []
-                    
+
                     # 泛洪填充找连通区域
                     def flood_fill(start_x, start_y, target_val):
                         stack = [(start_x, start_y)]
@@ -1151,7 +1369,7 @@ class GRPEditor(QMainWindow):
 
                     # 遍历图像，找每个连续区域
                     min_region_size = max(16, int(64 / (disp_scale * z))) if (disp_scale * z) > 0 else 16
-                    
+
                     for py in range(h):
                         for px in range(w):
                             idx = py * w + px
@@ -1164,16 +1382,16 @@ class GRPEditor(QMainWindow):
                             if val == 0:  # 跳过空白区域
                                 visited[idx] = 1
                                 continue
-                            
+
                             # 找到连续区域
                             region = flood_fill(px, py, val)
                             if len(region) < min_region_size:
                                 continue  # 跳过太小的区域
-                            
+
                             # 计算区域中心
                             cx = sum(p[0] for p in region) / len(region)
                             cy = sum(p[1] for p in region) / len(region)
-                            
+
                             # 记录该区域的标注信息
                             annotations.append((val, cx, cy))
 
@@ -1209,8 +1427,10 @@ class GRPEditor(QMainWindow):
         wave_mid = wave_top + wave_h // 2
 
         info = f"音频 #{sec.index:03d}  |  {sec.size}B"
-        if sec._wav_info: info += f"  |  {sec._wav_info}"
-        if sec._duration > 0: info += f"  |  {sec._duration:.2f}s"
+        if sec._wav_info:
+            info += f"  |  {sec._wav_info}"
+        if sec._duration > 0:
+            info += f"  |  {sec._duration:.2f}s"
         txt = self._scene.addText(info)
         txt.setPos(margin_l, 5)  # 左对齐
 
@@ -1218,12 +1438,15 @@ class GRPEditor(QMainWindow):
                             QPen(QColor("#444")), QBrush(QColor("#1a1a1a")))
 
         if sec.has_samples and sec._samples:
-            samples = sec._samples; n = len(samples)
+            samples = sec._samples
+            n = len(samples)
             max_val = max(abs(min(samples)), abs(max(samples)), 1)
             half_h = wave_h // 2 - 6
             px_per_col = max(1, n / wave_w)
-            pen_normal = QPen(QColor("#607890")); pen_normal.setWidth(1)
-            pen_played = QPen(QColor("#4a9eff")); pen_played.setWidth(1)
+            pen_normal = QPen(QColor("#607890"))
+            pen_normal.setWidth(1)
+            pen_played = QPen(QColor("#4a9eff"))
+            pen_played.setWidth(1)
 
             played_cols = 0
             if self._audio_playing and sec._duration > 0:
@@ -1242,7 +1465,8 @@ class GRPEditor(QMainWindow):
                 x = margin_l + ci
                 y_top = wave_mid - int((vmax / max_val) * half_h)
                 y_bot = wave_mid - int((vmin / max_val) * half_h)
-                if y_top == y_bot: y_top -= 1
+                if y_top == y_bot:
+                    y_top -= 1
                 pen = pen_played if ci <= played_cols else pen_normal
                 self._scene.addLine(x, y_top, x, y_bot, pen)
 
@@ -1257,7 +1481,8 @@ class GRPEditor(QMainWindow):
                     if tx <= margin_l + wave_w:
                         self._scene.addLine(tx, tl_y, tx, tl_y + 6, QPen(QColor("#888")))
                         t = self._scene.addText(f"{tick_sec}s")
-                        t.setDefaultTextColor(QColor("#888")); t.setPos(tx - 8, tl_y + 8)
+                        t.setDefaultTextColor(QColor("#888"))
+                        t.setPos(tx - 8, tl_y + 8)
 
             if self._audio_playing and sec._duration > 0:
                 elapsed = time.time() - self._wave_start_time
@@ -1268,15 +1493,17 @@ class GRPEditor(QMainWindow):
                 self._scene.addPolygon(
                     [QPointF(px-5, wave_top), QPointF(px+5, wave_top), QPointF(px, wave_top+8)],
                     QPen(QColor("#ff3040")), QBrush(QColor("#ff3040")))
-        
+
         # 设置场景矩形，确保音频内容靠左上角显示
         self._scene.setSceneRect(0, 0, vw, vh)
 
     def _update_pixel_info(self, sx: float, sy: float):
         sec = self._get_sec()
         if not isinstance(sec, GRPSection):
-            self._pixel_lbl.setText(""); return
-        w, h = sec.width, sec.height; z = self._zoom
+            self._pixel_lbl.setText("")
+            return
+        w, h = sec.width, sec.height
+        z = self._zoom
         max_dim = max(w, h)
         auto_scale = min(1.0, self._MAX_DISPLAY_DIM / max_dim) if max_dim > self._MAX_DISPLAY_DIM else 1.0
         disp_scale = z * auto_scale
@@ -1286,15 +1513,18 @@ class GRPEditor(QMainWindow):
         if 0 <= px < w and 0 <= py < h:
             idx = py * w + px
             if self._sel_layer == "A" and sec.is_decoded_a and sec.pixels and idx * 2 + 1 < len(sec.pixels):
-                lo, hi = sec.pixels[idx*2], sec.pixels[idx*2+1]; v = lo | (hi << 8)
+                lo, hi = sec.pixels[idx*2], sec.pixels[idx*2+1]
+                v = lo | (hi << 8)
                 r5, g6, b5 = (v>>11)&0x1F, (v>>5)&0x3F, v&0x1F
                 self._pixel_lbl.setText(f"({px},{py}) #565=0x{v:04X} RGB=({r5<<3},{g6<<2},{b5<<3})")
             elif self._sel_layer == "L1" and sec.layer1 and idx < len(sec.layer1):
                 self._pixel_lbl.setText(f"({px},{py}) 深度={sec.layer1[idx]}")
             elif self._sel_layer == "L2" and sec.layer2 and idx < len(sec.layer2):
                 self._pixel_lbl.setText(f"({px},{py}) 碰撞类型={sec.layer2[idx]}")
-            else: self._pixel_lbl.setText(f"({px},{py})")
-        else: self._pixel_lbl.setText("")
+            else:
+                self._pixel_lbl.setText(f"({px},{py})")
+        else:
+            self._pixel_lbl.setText("")
 
     # ── Zoom & Pan ────────────────────────────────────────
     def _set_zoom(self, pct: int):
@@ -1302,8 +1532,10 @@ class GRPEditor(QMainWindow):
         pct = int(pct)
         pct = max(50, min(300, pct))
         pct = round(pct / 50) * 50  # 对齐到最近的 50% 步进
-        self._zoom = pct / 100.0; self._pil_img = None
-        self._pixmap_item = None; self._refresh_view()
+        self._zoom = pct / 100.0
+        self._pil_img = None
+        self._pixmap_item = None
+        self._refresh_view()
 
     def _zoom_step(self, step: int):
         """按整数百分比步进缩放 (step: ±1 表示 ±50%)"""
@@ -1320,11 +1552,14 @@ class GRPEditor(QMainWindow):
 
     # ── Audio ─────────────────────────────────────────────
     def _toggle_audio(self):
-        if self._audio_playing: self._stop_audio(); return
+        if self._audio_playing:
+            self._stop_audio()
+            return
         sec = self._get_sec()
         if not isinstance(sec, GRPAudioSection) or not sec._raw or len(sec._raw) < 44: return
         try:
-            tmp = tempfile.NamedTemporaryFile(suffix='.wav', delete=False); tmp.close()
+            tmp = tempfile.NamedTemporaryFile(suffix='.wav', delete=False)
+            tmp.close()
             Path(tmp.name).write_bytes(sec._raw)
             self._audio_tmp = tmp.name
             self._wave_start_time = time.time()
@@ -1334,21 +1569,25 @@ class GRPEditor(QMainWindow):
                 player = 'aplay' if shutil.which('aplay') else ('afplay' if sys.platform == 'darwin' else 'paplay')
                 self._audio_proc = subprocess.Popen([player, tmp.name],
                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            self._audio_playing = True; self._btn_play_act.setText("⏹ 停止")
+            self._audio_playing = True
+            self._btn_play_act.setText("⏹ 停止")
             self._draw_audio_view(sec)
             self._start_wave_timer(sec)
         except Exception as e:
             self._status_lbl.setText(f"播放失败: {e}")
 
     def _start_wave_timer(self, sec: GRPAudioSection):
-        if self._wave_timer: self._wave_timer.stop()
+        if self._wave_timer:
+            self._wave_timer.stop()
         self._wave_timer = QTimer(self)
-        self._wave_timer.timeout.connect(lambda: self._wave_tick(sec))
+        self._wave_timer.timeout.connect(partial(self._wave_tick, sec))
         self._wave_timer.start(80)
 
     def _wave_tick(self, sec: GRPAudioSection):
         if not self._audio_playing:
-            if self._wave_timer: self._wave_timer.stop(); self._wave_timer = None
+            if self._wave_timer:
+                self._wave_timer.stop()
+                self._wave_timer = None
             return
         dur = sec._duration if sec._duration > 0 else 1.0
         elapsed = time.time() - self._wave_start_time
@@ -1363,17 +1602,22 @@ class GRPEditor(QMainWindow):
             if sys.platform == 'win32':
                 winsound.PlaySound(None, winsound.SND_PURGE)
             elif hasattr(self, '_audio_proc') and self._audio_proc:
-                self._audio_proc.terminate(); self._audio_proc = None
+                self._audio_proc.terminate()
+                self._audio_proc = None
         except: pass
         self._audio_playing = False
         self._btn_play_act.setText("▶️ 播放")
-        if self._wave_timer: self._wave_timer.stop(); self._wave_timer = None
+        if self._wave_timer:
+            self._wave_timer.stop()
+            self._wave_timer = None
         if self._audio_tmp:
-            try: os.unlink(self._audio_tmp)
+            try:
+                os.unlink(self._audio_tmp)
             except: pass
             self._audio_tmp = None
         sec = self._get_sec()
-        if isinstance(sec, GRPAudioSection): self._draw_audio_view(sec)
+        if isinstance(sec, GRPAudioSection):
+            self._draw_audio_view(sec)
 
     def _replace_audio(self):
         sec = self._get_sec()
@@ -1382,22 +1626,31 @@ class GRPEditor(QMainWindow):
         if not p: return
         try:
             raw = Path(p).read_bytes()
-            sec._raw = raw; sec._samples = None; sec.parse_wav()
-            self._sync_list(); self._update_detail(); self._refresh_view()
+            sec._raw = raw
+            sec._samples = None
+            sec.parse_wav()
+            self._sync_list()
+            self._update_detail()
+            self._refresh_view()
             self._status_lbl.setText(f"音频已替换 → {Path(p).name} ({len(raw)}B)")
-        except Exception as e: QMessageBox.critical(self, "替换失败", str(e))
+        except Exception as e:
+            QMessageBox.critical(self, "替换失败", str(e))
 
     def _export_audio(self, sec: GRPAudioSection):
         p, _ = QFileDialog.getSaveFileName(self, "导出音频", f"sec{sec.index:03d}_audio.wav", "WAV (*.wav)")
         if not p: return
-        if sec._raw: Path(p).write_bytes(sec._raw); self._status_lbl.setText(f"已导出: {Path(p).name}")
+        if sec._raw:
+            Path(p).write_bytes(sec._raw)
+            self._status_lbl.setText(f"已导出: {Path(p).name}")
 
     # ── Replace / Export ──────────────────────────────
     def _replace_layer(self):
         sec = self._get_sec()
         if not isinstance(sec, GRPSection): return
-        if self._sel_layer == "A": self._replace_frame_a(sec)
-        elif self._sel_layer in ("L1", "L2"): self._replace_layer_byte(sec, self._sel_layer)
+        if self._sel_layer == "A":
+            self._replace_frame_a(sec)
+        elif self._sel_layer in ("L1", "L2"):
+            self._replace_layer_byte(sec, self._sel_layer)
 
     def _replace_frame_a(self, sec: GRPSection):
         p, _ = QFileDialog.getOpenFileName(self, "替换主图", "", "图片 (*.png *.bmp *.jpg)")
@@ -1409,10 +1662,14 @@ class GRPEditor(QMainWindow):
                     f"导入 {img.size[0]}×{img.size[1]} ≠ 原 {sec.width}×{sec.height}。缩放?") != QMessageBox.Yes: return
                 img = img.resize((sec.width, sec.height), Image.LANCZOS)
             sec._pixels = rgba_to_rgb565(img.tobytes(), sec.width, sec.height)
-            sec._decoded_a = True; sec._modified_a = True
-            self._pil_img = None; self._pixmap_item = None
-            self._refresh_view(); self._status_lbl.setText(f"Frame A 已替换 → {Path(p).name}")
-        except Exception as e: QMessageBox.critical(self, "替换失败", str(e))
+            sec._decoded_a = True
+            sec._modified_a = True
+            self._pil_img = None
+            self._pixmap_item = None
+            self._refresh_view()
+            self._status_lbl.setText(f"Frame A 已替换 → {Path(p).name}")
+        except Exception as e:
+            QMessageBox.critical(self, "替换失败", str(e))
 
     def _replace_layer_byte(self, sec: GRPSection, layer: str):
         p, _ = QFileDialog.getOpenFileName(self,
@@ -1420,30 +1677,42 @@ class GRPEditor(QMainWindow):
         if not p: return
         try:
             img = Image.open(p)
-            if img.mode == "P": data = img.tobytes()
+            if img.mode == "P":
+                data = img.tobytes()
             else:
-                img = img.convert("L"); data = img.tobytes()
+                img = img.convert("L")
+                data = img.tobytes()
             if img.size != (sec.width, sec.height):
                 if QMessageBox.question(self, "尺寸不匹配",
                     f"导入 {img.size[0]}×{img.size[1]} ≠ 原 {sec.width}×{sec.height}。缩放?") != QMessageBox.Yes: return
                 img2 = Image.frombytes("L", img.size, data) if img.mode != "P" else img
                 img2 = img2.resize((sec.width, sec.height), Image.NEAREST)
                 data = img2.tobytes()
-            if layer == "L1": sec._layer1 = data
-            else: sec._layer2 = data; sec.has_layer2 = True
-            sec._decoded_b = True; sec._modified_b = True
-            self._pil_img = None; self._pixmap_item = None
-            self._refresh_view(); self._update_detail()
+            if layer == "L1":
+                sec._layer1 = data
+            else:
+                sec._layer2 = data
+                sec.has_layer2 = True
+            sec._decoded_b = True
+            sec._modified_b = True
+            self._pil_img = None
+            self._pixmap_item = None
+            self._refresh_view()
+            self._update_detail()
             self._status_lbl.setText(f"{layer} 已替换 → {Path(p).name} (精确值映射)")
-        except Exception as e: QMessageBox.critical(self, "替换失败", str(e))
+        except Exception as e:
+            QMessageBox.critical(self, "替换失败", str(e))
 
     def _export_layer(self):
         sec = self._get_sec()
         if sec is None: return
-        if isinstance(sec, GRPAudioSection): self._export_audio(sec); return
+        if isinstance(sec, GRPAudioSection):
+            self._export_audio(sec)
+            return
         if isinstance(sec, GRPDataSection):
             p, _ = QFileDialog.getSaveFileName(self, "导出原始数据", f"sec{sec.index:03d}_data.bin", "Bin (*.bin)")
-            if p and sec._raw: Path(p).write_bytes(sec._raw)
+            if p and sec._raw:
+                Path(p).write_bytes(sec._raw)
             return
         if not isinstance(sec, GRPSection): return
 
@@ -1459,7 +1728,8 @@ class GRPEditor(QMainWindow):
             export_png_rgba(w, h, bytes(rgba), p)
 
         elif self._sel_layer == "L1":
-            if not sec.is_decoded_b: _decode_section_b(self.grp, sec)
+            if not sec.is_decoded_b:
+                _decode_section_b(self.grp, sec)
             data = sec.layer1
             if not data: return
             img = Image.frombytes("L", (w, h), data[:w*h])
@@ -1467,7 +1737,8 @@ class GRPEditor(QMainWindow):
             self._export_value_legend(p, data, "Layer 1 — 前景遮挡深度")
 
         elif self._sel_layer == "L2":
-            if not sec.is_decoded_b: _decode_section_b(self.grp, sec)
+            if not sec.is_decoded_b:
+                _decode_section_b(self.grp, sec)
             data = sec.layer2
             if not data: return
             pal = bytearray(768)
@@ -1486,9 +1757,12 @@ class GRPEditor(QMainWindow):
         vals = sorted(Counter(data).items())
         lines = [f"# {title}", f"# 像素值 → 含义", ""]
         for v, cnt in vals:
-            if v == 0: lines.append(f"  {v:3d} (共{cnt:6d}px) = 空白/无数据")
-            elif title.startswith("Layer 1"): lines.append(f"  {v:3d} (共{cnt:6d}px) = 遮挡深度等级 {v}")
-            else: lines.append(f"  {v:3d} (共{cnt:6d}px) = 碰撞类型 #{v}  ({_L2_VAL2RGB.get(v, (0,0,0))})")
+            if v == 0:
+                lines.append(f"  {v:3d} (共{cnt:6d}px) = 空白/无数据")
+            elif title.startswith("Layer 1"):
+                lines.append(f"  {v:3d} (共{cnt:6d}px) = 遮挡深度等级 {v}")
+            else:
+                lines.append(f"  {v:3d} (共{cnt:6d}px) = 碰撞类型 #{v}  ({_L2_VAL2RGB.get(v, (0,0,0))})")
         lines.append("")
         lines.append("# 编辑指南:")
         if title.startswith("Layer 1"):
@@ -1505,8 +1779,10 @@ class GRPEditor(QMainWindow):
     def _export_pseudo(self):
         sec = self._get_sec()
         if not isinstance(sec, GRPSection) or self._sel_layer not in ("L1", "L2"):
-            QMessageBox.information(self, "提示", "请先选中 Layer 1 或 Layer 2!"); return
-        if not sec.is_decoded_b: _decode_section_b(self.grp, sec)
+            QMessageBox.information(self, "提示", "请先选中 Layer 1 或 Layer 2!")
+            return
+        if not sec.is_decoded_b:
+            _decode_section_b(self.grp, sec)
         data = sec.layer1 if self._sel_layer == "L1" else sec.layer2
         if not data: return
         p, _ = QFileDialog.getSaveFileName(self, f"导出 {self._sel_layer} 伪彩图",
@@ -1524,21 +1800,25 @@ class GRPEditor(QMainWindow):
             if HAS_PIL:
                 pal_size = 24
                 vals = sorted(set(data[:sec.width * sec.height]))
-                cols = min(16, len(vals)); rows = (len(vals) - 1) // 16 + 1
+                cols = min(16, len(vals))
+                rows = (len(vals) - 1) // 16 + 1
                 pal_img = Image.new("RGB", (max(1, cols) * pal_size, max(1, rows) * pal_size), "black")
                 draw = ImageDraw.Draw(pal_img)
                 for idx2, val in enumerate(vals):
-                    x = (idx2 % 16) * pal_size; y = (idx2 // 16) * pal_size
+                    x = (idx2 % 16) * pal_size
+                    y = (idx2 // 16) * pal_size
                     draw.rectangle([x, y, x + pal_size - 1, y + pal_size - 1], fill=lut.get(val, (0,0,0)))
                 pal_path = str(Path(p).with_name(Path(p).stem + "_Palette.png"))
                 pal_img.save(pal_path, "PNG")
             self._status_lbl.setText(f"已导出伪彩图及配套吸色板: {Path(p).name}")
-        except Exception as e: QMessageBox.critical(self, "导出失败", str(e))
+        except Exception as e:
+            QMessageBox.critical(self, "导出失败", str(e))
 
     def _import_pseudo(self):
         sec = self._get_sec()
         if not isinstance(sec, GRPSection) or self._sel_layer not in ("L1", "L2"):
-            QMessageBox.information(self, "提示", "请先选中 Layer 1 或 Layer 2!"); return
+            QMessageBox.information(self, "提示", "请先选中 Layer 1 或 Layer 2!")
+            return
         p, _ = QFileDialog.getOpenFileName(self, f"导入伪彩图以替换 {self._sel_layer}", "", "PNG (*.png);;图片 (*.bmp)")
         if not p: return
         try:
@@ -1549,13 +1829,20 @@ class GRPEditor(QMainWindow):
             lut_rev = _L1_RGB2VAL if self._sel_layer == "L1" else _L2_RGB2VAL
             pixels = img.getdata()
             out_bytes = bytes([_nearest_color(p, lut_rev) for p in pixels])
-            if self._sel_layer == "L1": sec._layer1 = out_bytes
-            else: sec._layer2 = out_bytes; sec.has_layer2 = True
-            sec._decoded_b = True; sec._modified_b = True
-            self._pil_img = None; self._pixmap_item = None
-            self._refresh_view(); self._update_detail()
+            if self._sel_layer == "L1":
+                sec._layer1 = out_bytes
+            else:
+                sec._layer2 = out_bytes
+                sec.has_layer2 = True
+            sec._decoded_b = True
+            sec._modified_b = True
+            self._pil_img = None
+            self._pixmap_item = None
+            self._refresh_view()
+            self._update_detail()
             self._status_lbl.setText(f"{self._sel_layer} 伪彩图已导入并解析为精确数据!")
-        except Exception as e: QMessageBox.critical(self, "导入失败", str(e))
+        except Exception as e:
+            QMessageBox.critical(self, "导入失败", str(e))
 
     def _export_color_swatch(self, layer: str):
         p, _ = QFileDialog.getSaveFileName(self, f"导出 {layer} 色板参考",
@@ -1563,7 +1850,8 @@ class GRPEditor(QMainWindow):
         if not p: return
         try:
             lut = _L1_VAL2RGB if layer == "L1" else _L2_VAL2RGB
-            cols, size = 16, 28; rows = 256 // cols
+            cols, size = 16, 28
+            rows = 256 // cols
             w, h = cols * size, rows * size
             pal_img = Image.new("RGB", (w, h), "white")
             draw = ImageDraw.Draw(pal_img)
@@ -1578,8 +1866,10 @@ class GRPEditor(QMainWindow):
                 draw.rectangle([x, y, x + size - 1, y + size - 1], fill=color, outline="#333")
                 brightness = color[0] * 0.299 + color[1] * 0.587 + color[2] * 0.114
                 txt_color = "black" if brightness > 128 else "white"
-                if font: draw.text((x + 2, y + 2), str(v), fill=txt_color, font=font)
-                else: draw.text((x + 2, y + 2), str(v), fill=txt_color)
+                if font:
+                    draw.text((x + 2, y + 2), str(v), fill=txt_color, font=font)
+                else:
+                    draw.text((x + 2, y + 2), str(v), fill=txt_color)
             pal_img.save(p, "PNG")
 
             txt_path = str(Path(p).with_suffix('.txt'))
@@ -1589,10 +1879,12 @@ class GRPEditor(QMainWindow):
                      "# 每个格子的数字 = 游戏中的实际值", "# 格子的颜色 = 该值对应的 RGB 颜色",
                      "# 0 = 空白/类型0 (黑色)", ""]
             for v in range(256):
-                c = lut[v]; lines.append(f"  {v:3d}  RGB({c[0]:3d},{c[1]:3d},{c[2]:3d})")
+                c = lut[v]
+                lines.append(f"  {v:3d}  RGB({c[0]:3d},{c[1]:3d},{c[2]:3d})")
             Path(txt_path).write_text('\n'.join(lines), encoding='utf-8')
             self._status_lbl.setText(f"色板已导出: {Path(p).name}  (+ .txt 值表)")
-        except Exception as e: QMessageBox.critical(self, "导出失败", str(e))
+        except Exception as e:
+            QMessageBox.critical(self, "导出失败", str(e))
 
     # ── Add / Delete Section ─────────────────────────
     def _add_section_menu(self):
@@ -1611,43 +1903,62 @@ class GRPEditor(QMainWindow):
         return max_idx + 1
 
     def _add_image_section(self):
-        dlg = QDialog(self); dlg.setWindowTitle("新增图像区段")
+        dlg = QDialog(self)
+        dlg.setWindowTitle("新增图像区段")
         dlg.resize(320, 220)
         lay = QGridLayout(dlg)
         lay.addWidget(QLabel("宽度:"), 0, 0)
-        w_spin = QSpinBox(); w_spin.setRange(1, 4096); w_spin.setValue(800); lay.addWidget(w_spin, 0, 1)
+        w_spin = QSpinBox()
+        w_spin.setRange(1, 4096)
+        w_spin.setValue(800)
+        lay.addWidget(w_spin, 0, 1)
         lay.addWidget(QLabel("高度:"), 1, 0)
-        h_spin = QSpinBox(); h_spin.setRange(1, 4096); h_spin.setValue(600); lay.addWidget(h_spin, 1, 1)
-        png_lbl = QLabel(""); lay.addWidget(png_lbl, 2, 0, 1, 2)
+        h_spin = QSpinBox()
+        h_spin.setRange(1, 4096)
+        h_spin.setValue(600)
+        lay.addWidget(h_spin, 1, 1)
+        png_lbl = QLabel("")
+        lay.addWidget(png_lbl, 2, 0, 1, 2)
         png_path_var = [""]
         def _choose():
             p, _ = QFileDialog.getOpenFileName(dlg, "选择PNG图片", "", "PNG (*.png);;All (*.*)")
             if p:
-                png_path_var[0] = p; png_lbl.setText(os.path.basename(p))
+                png_path_var[0] = p
+                png_lbl.setText(os.path.basename(p))
                 if HAS_PIL:
                     try:
-                        img = Image.open(p); w_spin.setValue(img.width); h_spin.setValue(img.height)
+                        img = Image.open(p)
+                        w_spin.setValue(img.width)
+                        h_spin.setValue(img.height)
                     except: pass
-        btn_choose = QPushButton("选择PNG图片..."); btn_choose.clicked.connect(_choose)
+        btn_choose = QPushButton("选择PNG图片...")
+        btn_choose.clicked.connect(_choose)
         lay.addWidget(btn_choose, 2, 0, 1, 2)
         btn_row = QHBoxLayout()
-        btn_ok = QPushButton("确定"); btn_ok.setObjectName("PrimaryButton")
+        btn_ok = QPushButton("确定")
+        btn_ok.setObjectName("PrimaryButton")
         btn_cancel = QPushButton("取消")
         def _ok():
             w, h = w_spin.value(), h_spin.value()
             new_idx = self._next_index()
-            ca = w * h * 2 + 4; cb = w * h * 2 + 4
+            ca = w * h * 2 + 4
+            cb = w * h * 2 + 4
             sec = GRPSection(new_idx, 0, w, h, ca, cb)
-            sec._decoded_a = True; sec._modified_a = True
-            sec._decoded_b = True; sec._modified_b = True
+            sec._decoded_a = True
+            sec._modified_a = True
+            sec._decoded_b = True
+            sec._modified_b = True
             pp = png_path_var[0]
             if HAS_PIL and pp and os.path.exists(pp):
                 try:
                     img = Image.open(pp).convert("RGBA")
-                    if img.size != (w, h): img = img.resize((w, h), Image.LANCZOS)
+                    if img.size != (w, h):
+                        img = img.resize((w, h), Image.LANCZOS)
                     sec._pixels = rgba_to_rgb565(img.tobytes(), w, h)
-                except: sec._pixels = b'\x00' * (w * h * 2)
-            else: sec._pixels = b'\x00' * (w * h * 2)
+                except:
+                    sec._pixels = b'\x00' * (w * h * 2)
+            else:
+                sec._pixels = b'\x00' * (w * h * 2)
             sec._layer1 = b'\x00' * (w * h)
             sec._orig_frame_a = struct.pack("<I", w*h*2) + lzss_compress(sec._pixels)
             sec.comp_a = len(sec._orig_frame_a)
@@ -1655,12 +1966,16 @@ class GRPEditor(QMainWindow):
             fb_body = rle_bp_compress(fb_raw)
             sec._orig_fb_declared = len(fb_raw)
             fb_data = struct.pack("<I", len(fb_raw)) + fb_body
-            sec._orig_frame_b = fb_data; sec.comp_b = len(fb_data)
+            sec._orig_frame_b = fb_data
+            sec.comp_b = len(fb_data)
             self.grp.sections.append(sec)
-            self._sync_list(); self._status_lbl.setText(f"已新增图像区段 #{new_idx} ({w}x{h})")
+            self._sync_list()
+            self._status_lbl.setText(f"已新增图像区段 #{new_idx} ({w}x{h})")
             dlg.accept()
-        btn_ok.clicked.connect(_ok); btn_cancel.clicked.connect(dlg.reject)
-        btn_row.addWidget(btn_ok); btn_row.addWidget(btn_cancel)
+        btn_ok.clicked.connect(_ok)
+        btn_cancel.clicked.connect(dlg.reject)
+        btn_row.addWidget(btn_ok)
+        btn_row.addWidget(btn_cancel)
         lay.addLayout(btn_row, 3, 0, 1, 2)
         dlg.exec()
 
@@ -1670,10 +1985,13 @@ class GRPEditor(QMainWindow):
         try:
             raw = Path(p).read_bytes()
             new_idx = self._next_index()
-            sec = GRPAudioSection(new_idx, 0, len(raw), raw); sec.parse_wav()
+            sec = GRPAudioSection(new_idx, 0, len(raw), raw)
+            sec.parse_wav()
             self.grp.audio_sections.append(sec)
-            self._sync_list(); self._status_lbl.setText(f"已新增音频区段 #{new_idx} ({len(raw)}B)")
-        except Exception as e: QMessageBox.critical(self, "导入失败", str(e))
+            self._sync_list()
+            self._status_lbl.setText(f"已新增音频区段 #{new_idx} ({len(raw)}B)")
+        except Exception as e:
+            QMessageBox.critical(self, "导入失败", str(e))
 
     def _add_data_section(self):
         p, _ = QFileDialog.getOpenFileName(self, "导入数据文件", "", "All (*.*)")
@@ -1682,21 +2000,30 @@ class GRPEditor(QMainWindow):
             raw = Path(p).read_bytes()
             new_idx = self._next_index()
             self.grp.data_sections.append(GRPDataSection(new_idx, 0, len(raw), raw))
-            self._sync_list(); self._status_lbl.setText(f"已新增数据区段 #{new_idx} ({len(raw)}B)")
-        except Exception as e: QMessageBox.critical(self, "导入失败", str(e))
+            self._sync_list()
+            self._status_lbl.setText(f"已新增数据区段 #{new_idx} ({len(raw)}B)")
+        except Exception as e:
+            QMessageBox.critical(self, "导入失败", str(e))
 
     def _delete_section(self):
         sec = self._get_sec()
         if sec is None: return
-        idx = sec.index; label = sec.type_label
+        idx = sec.index
+        label = sec.type_label
         if QMessageBox.question(self, "确认删除",
             f"删除区段 #{idx:03d} — {label}\n此操作不可恢复!") != QMessageBox.Yes: return
         self._stop_audio()
-        if isinstance(sec, GRPSection): self.grp.sections.remove(sec)
-        elif isinstance(sec, GRPAudioSection): self.grp.audio_sections.remove(sec)
-        elif isinstance(sec, GRPDataSection): self.grp.data_sections.remove(sec)
-        self._sel_idx = -1; self._pil_img = None; self._pixmap_item = None
-        self._sync_list(); self._refresh_view()
+        if isinstance(sec, GRPSection):
+            self.grp.sections.remove(sec)
+        elif isinstance(sec, GRPAudioSection):
+            self.grp.audio_sections.remove(sec)
+        elif isinstance(sec, GRPDataSection):
+            self.grp.data_sections.remove(sec)
+        self._sel_idx = -1
+        self._pil_img = None
+        self._pixmap_item = None
+        self._sync_list()
+        self._refresh_view()
         self._status_lbl.setText(f"已删除区段 #{idx:03d}")
 
     def _show_pseudo_help(self):
@@ -1746,5 +2073,8 @@ def main():
     sys.exit(app.exec())
 
 if __name__ == "__main__":
-    if not HAS_PIL: print("需要 Pillow: pip install Pillow"); sys.exit(1)
+    if not HAS_PIL:
+        print("需要 Pillow: pip install Pillow")
+        sys.exit(1)
     main()
+

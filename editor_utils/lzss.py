@@ -58,7 +58,8 @@ def _decompress_core(data: bytes, pos: int, total_size: int,
         if flags & 1:
             if pos >= len(data):
                 break
-            b = data[pos]; pos += 1
+            b = data[pos]
+            pos += 1
             if block_size is not None:
                 bc += 1
             out.append(b)
@@ -67,7 +68,8 @@ def _decompress_core(data: bytes, pos: int, total_size: int,
         else:
             if pos + 1 >= len(data):
                 break
-            b1, b2 = data[pos], data[pos + 1]; pos += 2
+            b1, b2 = data[pos], data[pos + 1]
+            pos += 2
             if block_size is not None:
                 bc += 2
             offset = ((b2 & 0xF0) << 4) | b1
@@ -261,7 +263,8 @@ def lzss_compress_stream(data: bytes) -> bytes:
         if bl >= MIN_MATCH:
             rp = (RING_INIT_POS + pos) % RING_SIZE
             ao = (rp - bo) % RING_SIZE
-            entries.append((False, bytes([ao & 0xFF, ((ao >> 4) & 0xF0) | ((bl - 3) & 0x0F)])))
+            enc = bytes([ao & 0xFF, ((ao >> 4) & 0xF0) | ((bl - 3) & 0x0F)])
+            entries.append((False, enc))
             pos += bl
         else:
             entries.append((True, bytes([data[pos]])))

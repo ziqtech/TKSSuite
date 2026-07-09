@@ -81,7 +81,7 @@ DEFAULT_NAMES: dict[int, str] = {
 
 class KonNameResolver:
     """TKKon 索引动态名称解析器。
-    
+
     用法:
         resolver = KonNameResolver("/path/to/tks/game/dir")
         name = resolver.get_name(42)  # → "主角《金曦》"
@@ -90,7 +90,7 @@ class KonNameResolver:
 
     def __init__(self, tks_dir: str):
         """初始化解析器，加载所有 .dat 文件并构建名称映射。
-        
+
         Args:
             tks_dir: TKS 游戏根目录 (包含 WarPC.dat, TKSkill.dat, TKT.dat 等)
         """
@@ -102,7 +102,7 @@ class KonNameResolver:
 
     def get_name(self, kon_index: int, compact_threshold: int = 0) -> str:
         """获取指定 TKKon 索引的显示名称。
-        
+
         Args:
             kon_index: TKKon 条目索引 (0-649)
             compact_threshold: 精简阈值。当名称中角色引用数超过此值时，
@@ -115,10 +115,10 @@ class KonNameResolver:
 
     def get_all_names(self, compact_threshold: int = 0) -> dict[int, str]:
         """返回完整的 {TKKon索引: 显示名称} 字典。
-        
+
         Args:
             compact_threshold: 精简阈值，0 表示不精简。
-        
+
         兼容旧代码中以 dict 方式使用的场景 (如 TkkonPickerDialog)。
         """
         if compact_threshold <= 0:
@@ -133,7 +133,7 @@ class KonNameResolver:
     @staticmethod
     def _apply_compact(name: str, threshold: int) -> str:
         """当名称中角色引用数超过 threshold 时，仅保留技能名。
-        
+
         例: "角色A《集中》 角色B《集中》 角色C《集中》 角色D《集中》"
           threshold=3 → "《集中》"
         """
@@ -188,11 +188,11 @@ class KonNameResolver:
 
     def _load_skill_data(self, tks_dir: str, tkt: dict[int, str]):
         """加载 TKSkill.dat 并解析所有技能的名称和类型。
-        
+
         Returns: (names, types)
           names: {skill_index: skill_name}
           types: {skill_index: type_value}   (0=指令, 1=主动, 2=被动, 3=移动)
-        
+
         与 skill_editor_v2.py load_skills() + warpc_editor_v2.py
         _load_skill_names() 保持一致。
         """
@@ -229,9 +229,9 @@ class KonNameResolver:
 
     def _load_kon(self, tks_dir: str) -> list[dict]:
         """加载 TKKon.dat 条目。
-        
+
         Returns: [{index, tkact_id, exec_flags, ...}, ...]
-        
+
         与 kon_editor_v2.py 的 load_kon 保持一致。
         """
         path = os.path.join(tks_dir, 'TKKon.dat')
@@ -393,12 +393,12 @@ class KonNameResolver:
     def _resolve_from_items(self, tks_dir: str, tkt: dict[int, str],
                             kon_entries: list[dict]):
         """从 TKItem.dat 解析物品→TKKon 映射。
-        
+
         TKItem 每条记录:
           offset 0:  item_id  (int16)
           offset 4:  name_id  (int16, TKT ID)
           offset 12: tkkon_index (int16, TKKon 引用)
-        
+
         如果 TKKon 条目的 exec_flags bit1=1 (物品类型),
         且该 TKKon 条目尚未被 WarPC 链路解析，
         则用物品名填充名称。
@@ -524,3 +524,4 @@ class KonNameResolver:
         if name_id < 0 and -name_id in tkt:
             return tkt[-name_id].split('\n')[0].strip()
         return fallback
+

@@ -10,12 +10,12 @@ build_runtime.py — 构建共享运行时归档 (.lib)
 
 输出目录: dist/TKSEditors/
 """
+import argparse
+import importlib
 import os
 import sys
-import zipfile
-import importlib
-import argparse
 import time
+import zipfile
 from pathlib import Path
 
 # ═══════════════════════════════════════════════════════════════

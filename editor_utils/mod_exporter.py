@@ -11,33 +11,35 @@ mod_exporter — MOD 导出公共模块
 
 .tksmod 格式: ZIP 压缩包，内含 mod.json + data/*.json + resources/*
 """
+import base64
+import json
 import os
 import re
-import json
-import zlib
 import struct as _struct
-import zipfile
-import copy
 import uuid
-import base64
-from datetime import datetime, timezone, timedelta
+import zipfile
+import zlib
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QGridLayout,
-    QLabel, QLineEdit, QTextEdit, QSpinBox,
-    QPushButton, QMessageBox, QFileDialog,
-)
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QPixmap
+from PySide6.QtWidgets import (
+    QDialog, QFileDialog, QGridLayout, QHBoxLayout,
+    QLabel, QLineEdit, QMessageBox, QPushButton,
+    QSpinBox, QTextEdit, QVBoxLayout,
+)
 
 from editor_utils.lzss import (
-    lzss_decompress_stream as _lzss_decompress_stream,
+    MAX_MATCH as MAX_MATCH_LZ,
+    MIN_MATCH as MIN_MATCH_LZ,
+    RING_INIT_POS as RING_INIT,
+    RING_INIT_VAL,
+    RING_SIZE,
     lzss_compress_stream as _lzss_compress_stream,
-    RING_SIZE, RING_INIT_POS as RING_INIT,
-    RING_INIT_VAL, MIN_MATCH as MIN_MATCH_LZ,
-    MAX_MATCH as MAX_MATCH_LZ, lzss_decompress_dat,
+    lzss_decompress_dat,
+    lzss_decompress_stream as _lzss_decompress_stream,
 )
 from editor_utils.tkt_loader import load_tkt_full
 

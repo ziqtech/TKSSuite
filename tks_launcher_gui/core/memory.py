@@ -1,7 +1,7 @@
 """Win32 API ctypes 封装 — 从 tks_launcher.py 提取"""
+import ctypes
 import os
 import struct
-import ctypes
 from ctypes import wintypes
 from typing import List, Tuple
 

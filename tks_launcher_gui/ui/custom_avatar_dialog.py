@@ -1,28 +1,25 @@
 """自定义头像对话框 — 上传图片、1:1裁剪、预览、生成tksmod"""
-import os
-import sys
-import struct
-import zipfile
+import base64
 import json
+import os
+import struct
 import tempfile
-
-from PySide6.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
-    QFileDialog, QMessageBox, QWidget, QSizePolicy,
-)
-from PySide6.QtCore import Qt, QRect, QRectF, QPointF, QSizeF
-from PySide6.QtGui import (
-    QPixmap, QImage, QPainter, QColor, QPen, QBrush, QFont,
-)
+import zipfile
 
 from PIL import Image
-
-from editor_utils.mod_exporter import (
-    pack_tksmod, generate_mod_json, build_block_diff_json,
-    generate_short_uuid,
+from PySide6.QtCore import QPointF, QRect, QRectF, QSizeF, Qt
+from PySide6.QtGui import (
+    QBrush, QColor, QFont, QImage, QPainter, QPen, QPixmap,
+)
+from PySide6.QtWidgets import (
+    QDialog, QFileDialog, QHBoxLayout, QLabel, QMessageBox,
+    QPushButton, QSizePolicy, QVBoxLayout, QWidget,
 )
 
-import base64
+from editor_utils.mod_exporter import (
+    build_block_diff_json, generate_mod_json, generate_short_uuid,
+    pack_tksmod,
+)
 
 # MOD 常量
 MOD_FILENAME = "[美化] 自定义头像.tksmod"

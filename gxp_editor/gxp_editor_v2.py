@@ -7,17 +7,24 @@ GXP 图像编辑器 v4 — 外部独立主题版 (PySide6)
 """
 
 from __future__ import annotations
-import os, sys, struct, zlib
+
+import os
+import struct
+import sys
+import zlib
+from functools import partial
 from pathlib import Path
 from typing import Optional
 
-from PySide6.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QLabel, QPushButton, QFileDialog, QMessageBox, QFrame,
-    QSplitter, QGraphicsView, QGraphicsScene, QGraphicsPixmapItem
-)
 from PySide6.QtCore import Qt, QTranslator
-from PySide6.QtGui import QPixmap, QImage, QColor, QIcon, QPainter, QWheelEvent, QKeySequence
+from PySide6.QtGui import (
+    QColor, QIcon, QImage, QKeySequence, QPainter, QPixmap, QWheelEvent,
+)
+from PySide6.QtWidgets import (
+    QApplication, QFileDialog, QFrame, QGraphicsPixmapItem, QGraphicsScene,
+    QGraphicsView, QHBoxLayout, QLabel, QMainWindow, QMessageBox, QPushButton,
+    QSplitter, QVBoxLayout, QWidget,
+)
 
 HAS_PIL = False
 try:
@@ -27,15 +34,18 @@ except ImportError:
     pass
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-from editor_utils.theme_manager import ThemeManager
 from editor_utils.dock_components import DockHeader, create_dock
-from editor_utils.lzss import (lzss_decompress_stream as _lzss_decompress_stream,
-                                lzss_compress_stream as _lzss_compress_stream)
-from editor_utils.rgb565 import rgb565_to_rgba, rgba_to_rgb565
-from editor_utils.mod_exporter import (
-    compute_crc32, generate_mod_json, pack_tksmod, ModMetadataDialog, safe_mod_filename,
-    get_tksmod_info, read_tksmod, ModImportPreviewDialog,
+from editor_utils.lzss import (
+    lzss_compress_stream as _lzss_compress_stream,
+    lzss_decompress_stream as _lzss_decompress_stream,
 )
+from editor_utils.mod_exporter import (
+    ModImportPreviewDialog, ModMetadataDialog, compute_crc32,
+    generate_mod_json, get_tksmod_info, pack_tksmod, read_tksmod,
+    safe_mod_filename,
+)
+from editor_utils.rgb565 import rgb565_to_rgba, rgba_to_rgb565
+from editor_utils.theme_manager import ThemeManager
 from editor_utils.window_theme import apply_godot_theme
 
 # ── GXP 格式常量 ──────────────────────────────────────────
@@ -43,10 +53,21 @@ GXP_MAGIC = b"JGXP"
 GXP_HEADER_SIZE = 48
 
 # ── 本地别名: 保持向后兼容 ──
-def lzss_decompress(data, target_size): return _lzss_decompress_stream(data, target_size)
-def lzss_compress(data): return _lzss_compress_stream(data)
-def rgb565_bytes_to_rgba(raw, w, h): return rgb565_to_rgba(raw, w, h)
-def rgba_to_rgb565_bytes(rgba, w, h): return rgba_to_rgb565(rgba, w, h)
+def lzss_decompress(data, target_size):
+    return _lzss_decompress_stream(data, target_size)
+
+
+def lzss_compress(data):
+    return _lzss_compress_stream(data)
+
+
+def rgb565_bytes_to_rgba(raw, w, h):
+    return rgb565_to_rgba(raw, w, h)
+
+
+def rgba_to_rgb565_bytes(rgba, w, h):
+    return rgba_to_rgb565(rgba, w, h)
+
 
 class GXPImage:
     def __init__(self):
@@ -57,14 +78,20 @@ class GXPImage:
         self.filepath: Optional[str] = None
 
     @property
-    def pixel_count(self) -> int: return self.width * self.height
+    def pixel_count(self) -> int:
+        return self.width * self.height
+
     @property
-    def size_str(self) -> str: return f"{self.width}×{self.height}"
+    def size_str(self) -> str:
+        return f"{self.width}×{self.height}"
+
 
 def load_gxp(filepath: str) -> GXPImage:
     data = Path(filepath).read_bytes()
-    if len(data) < GXP_HEADER_SIZE + 4: raise ValueError("文件太小, 不足 48 字节头")
-    if data[0:4] != GXP_MAGIC: raise ValueError(f"无效魔数: {data[0:4]!r}")
+    if len(data) < GXP_HEADER_SIZE + 4:
+        raise ValueError("文件太小, 不足 48 字节头")
+    if data[0:4] != GXP_MAGIC:
+        raise ValueError(f"无效魔数: {data[0:4]!r}")
 
     width = ~struct.unpack_from("<i", data, 4)[0]
     height = ~struct.unpack_from("<i", data, 8)[0]
@@ -73,7 +100,7 @@ def load_gxp(filepath: str) -> GXPImage:
 
     uncompressed_size = struct.unpack_from("<I", data, GXP_HEADER_SIZE)[0]
     lzss_data = data[GXP_HEADER_SIZE + 4 : GXP_HEADER_SIZE + compressed_size]
-    
+
     raw_pixels = lzss_decompress(lzss_data, uncompressed_size)
     img = GXPImage()
     img.width, img.height, img.bpp, img.filepath = width, height, bpp, filepath
@@ -83,7 +110,7 @@ def load_gxp(filepath: str) -> GXPImage:
 def save_gxp(img: GXPImage, filepath: str):
     raw_rgb565 = rgba_to_rgb565_bytes(bytes(img.rgba), img.width, img.height)
     compressed = lzss_compress(raw_rgb565)
-    
+
     buf = bytearray()
     buf += GXP_MAGIC
     buf += struct.pack("<i", ~img.width)
@@ -101,8 +128,10 @@ def import_image(filepath: str, target_w: int = 0, target_h: int = 0) -> GXPImag
         pil = pil.resize((target_w, target_h), Image.LANCZOS)
     elif target_w > 0 or target_h > 0:
         ow, oh = pil.size
-        if target_w > 0: pil = pil.resize((target_w, int(oh * (target_w / ow))), Image.LANCZOS)
-        else: pil = pil.resize((int(ow * (target_h / oh)), target_h), Image.LANCZOS)
+        if target_w > 0:
+            pil = pil.resize((target_w, int(oh * (target_w / ow))), Image.LANCZOS)
+        else:
+            pil = pil.resize((int(ow * (target_h / oh)), target_h), Image.LANCZOS)
 
     img = GXPImage()
     img.width, img.height = pil.size
@@ -123,7 +152,7 @@ def export_png(img: GXPImage, filepath: str):
     stride_out = w * 3
     raw = bytearray(h * (stride_out + 1))
     mv = memoryview(img.rgba)
-    
+
     for row in range(h):
         out = row * (stride_out + 1)
         raw[out] = 0
@@ -153,7 +182,8 @@ class EnhancedGraphicsView(QGraphicsView):
     def wheelEvent(self, event: QWheelEvent):
         if event.modifiers() & Qt.ControlModifier:
             delta = 0.25 if event.angleDelta().y() > 0 else -0.25
-            if self.editor: self.editor._zoom_step(delta)
+            if self.editor:
+                self.editor._zoom_step(delta)
             event.accept()
         else:
             super().wheelEvent(event)
@@ -176,7 +206,8 @@ class GXPEditor(QMainWindow):
         self.resize(1200, 800)
 
         ico_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'TKS.ico')
-        if os.path.exists(ico_path): self.setWindowIcon(QIcon(ico_path))
+        if os.path.exists(ico_path):
+            self.setWindowIcon(QIcon(ico_path))
 
         self.theme_manager = ThemeManager()
         app_inst = QApplication.instance()
@@ -198,8 +229,10 @@ class GXPEditor(QMainWindow):
         self._setup_ui()
         self._apply_theme()
 
-        if filepath and os.path.exists(filepath): self._open(filepath)
-        else: self._new_empty()
+        if filepath and os.path.exists(filepath):
+            self._open(filepath)
+        else:
+            self._new_empty()
 
     def _create_dock(self, title, widget_content, header_layout=None):
         """Dock 面板包裹 — 委托给 editor_utils.dock_components"""
@@ -209,10 +242,10 @@ class GXPEditor(QMainWindow):
         stylesheet = self.theme_manager.get_stylesheet()
         if stylesheet:
             self.setStyleSheet(stylesheet)
-            
+
         scene_bg = QColor(32, 37, 49) if self.theme_manager.current_theme == 'dark' else QColor(224, 228, 232)
         self._scene.setBackgroundBrush(scene_bg)
-        
+
         # 强制刷新状态栏以更新 QSS 样式 (依据 tkt_editor 经验)
         status_bar = self.statusBar()
         if status_bar:
@@ -278,15 +311,26 @@ class GXPEditor(QMainWindow):
 
         ops_w = QWidget()
         ops_l = QVBoxLayout(ops_w)
-        
-        b1 = QPushButton("📂 打开 GXP"); b1.clicked.connect(self._open_dlg); ops_l.addWidget(b1)
-        b2 = QPushButton("💾 保存 / 另存为"); b2.clicked.connect(self._save); ops_l.addWidget(b2)
-        
-        fline = QFrame(); fline.setFrameShape(QFrame.HLine); fline.setProperty("class", "SepLine"); ops_l.addWidget(fline)
-        
-        b3 = QPushButton("📥 导入外部图片"); b3.clicked.connect(self._import_dlg); ops_l.addWidget(b3)
-        b4 = QPushButton("📤 导出 24位 PNG"); b4.clicked.connect(self._export_dlg); ops_l.addWidget(b4)
-        
+
+        b1 = QPushButton("📂 打开 GXP")
+        b1.clicked.connect(self._open_dlg)
+        ops_l.addWidget(b1)
+        b2 = QPushButton("💾 保存 / 另存为")
+        b2.clicked.connect(self._save)
+        ops_l.addWidget(b2)
+
+        fline = QFrame()
+        fline.setFrameShape(QFrame.HLine)
+        fline.setProperty("class", "SepLine")
+        ops_l.addWidget(fline)
+
+        b3 = QPushButton("📥 导入外部图片")
+        b3.clicked.connect(self._import_dlg)
+        ops_l.addWidget(b3)
+        b4 = QPushButton("📤 导出 24位 PNG")
+        b4.clicked.connect(self._export_dlg)
+        ops_l.addWidget(b4)
+
         left_layout.addWidget(self._create_dock("文件与资产操作", ops_w))
         left_layout.addStretch()
         splitter.addWidget(left_panel)
@@ -299,58 +343,72 @@ class GXPEditor(QMainWindow):
         tb_layout = QHBoxLayout()
         tb_layout.setContentsMargins(6, 2, 6, 2)
         tb_layout.setSpacing(6)
-        btn_zout = QPushButton("➖"); btn_zout.setProperty("class", "CompactBtn"); btn_zout.clicked.connect(lambda: self._zoom_step(-0.25))
-        self._zoom_label = QLabel("100%"); self._zoom_label.setAlignment(Qt.AlignCenter); self._zoom_label.setFixedWidth(50)
-        btn_zin = QPushButton("➕"); btn_zin.setProperty("class", "CompactBtn"); btn_zin.clicked.connect(lambda: self._zoom_step(0.25))
-        btn_fit = QPushButton("📐 适应窗口"); btn_fit.setProperty("class", "CompactBtn"); btn_fit.clicked.connect(self._fit_to_window)
-        btn_theme = QPushButton("🌗 切换主题"); btn_theme.setProperty("class", "CompactBtn"); btn_theme.clicked.connect(self._toggle_theme)
-        tb_layout.addWidget(btn_zout); tb_layout.addWidget(self._zoom_label); tb_layout.addWidget(btn_zin)
+        btn_zout = QPushButton("➖")
+        btn_zout.setProperty("class", "CompactBtn")
+        btn_zout.clicked.connect(partial(self._zoom_step, -0.25))
+        self._zoom_label = QLabel("100%")
+        self._zoom_label.setAlignment(Qt.AlignCenter)
+        self._zoom_label.setFixedWidth(50)
+        btn_zin = QPushButton("➕")
+        btn_zin.setProperty("class", "CompactBtn")
+        btn_zin.clicked.connect(partial(self._zoom_step, 0.25))
+        btn_fit = QPushButton("📐 适应窗口")
+        btn_fit.setProperty("class", "CompactBtn")
+        btn_fit.clicked.connect(self._fit_to_window)
+        btn_theme = QPushButton("🌗 切换主题")
+        btn_theme.setProperty("class", "CompactBtn")
+        btn_theme.clicked.connect(self._toggle_theme)
+        tb_layout.addWidget(btn_zout)
+        tb_layout.addWidget(self._zoom_label)
+        tb_layout.addWidget(btn_zin)
         tb_layout.addSpacing(12)
-        tb_layout.addWidget(btn_fit); tb_layout.addWidget(btn_theme)
+        tb_layout.addWidget(btn_fit)
+        tb_layout.addWidget(btn_theme)
         tb_layout.addStretch()
 
         self._scene = QGraphicsScene()
         self._canvas = EnhancedGraphicsView(self._scene)
         self._canvas.editor = self
-        
+
         # 工具栏容器
         tb_widget = QWidget()
         tb_widget.setLayout(tb_layout)
         tb_widget.setFixedHeight(32)
         right_layout.addWidget(tb_widget)
         right_layout.addWidget(self._canvas, 1)
-        
+
         splitter.addWidget(right_panel)
         splitter.setSizes([280, 920])
 
         # ---------------- 状态栏 ----------------
         sb = self.statusBar()
         sb.setSizeGripEnabled(False)  # 移除右下角大小调整手柄
-        
+
         self._status_left = QLabel(" 就绪")
         self._status_left.setObjectName("StatusLabel")
         sb.addWidget(self._status_left, 1)
-        
+
         self._status_pixel = QLabel("")
         self._status_pixel.setObjectName("StatusPixel")
         sb.addPermanentWidget(self._status_pixel)
-        
+
         self._status_sep = QLabel(" │ ")
         self._status_sep.setObjectName("StatusSep")
         sb.addPermanentWidget(self._status_sep)
-        
+
         self._status_size = QLabel("0×0")
         self._status_size.setObjectName("StatusInfo")
         sb.addPermanentWidget(self._status_size)
 
     def _update_pixel_info(self, x: float, y: float):
-        if not self.img or not self._pixmap_item: 
-            self._status_pixel.setText(""); return
-            
+        if not self.img or not self._pixmap_item:
+            self._status_pixel.setText("")
+            return
+
         z = self._zoom
         px, py = int(x / z), int(y / z)
         w, h = self.img.width, self.img.height
-        
+
         if 0 <= px < w and 0 <= py < h:
             idx = (py * w + px) * 4
             r, g, b, _ = self.img.rgba[idx:idx + 4]
@@ -374,7 +432,8 @@ class GXPEditor(QMainWindow):
 
     def _open_dlg(self):
         p, _ = QFileDialog.getOpenFileName(self, "打开 GXP", "", "GXP (*.gxp *.GXP);;All (*.*)")
-        if p: self._open(p)
+        if p:
+            self._open(p)
 
     def _open(self, p: str):
         try:
@@ -392,12 +451,15 @@ class GXPEditor(QMainWindow):
 
     def _save(self):
         if not self.img: return
-        if self.img.filepath: self._do_save(self.img.filepath)
-        else: self._save_as()
+        if self.img.filepath:
+            self._do_save(self.img.filepath)
+        else:
+            self._save_as()
 
     def _save_as(self):
         p, _ = QFileDialog.getSaveFileName(self, "打包输出 GXP", "", "GXP (*.gxp)")
-        if p: self._do_save(p)
+        if p:
+            self._do_save(p)
 
     def _do_save(self, p: str):
         try:
@@ -443,11 +505,13 @@ class GXPEditor(QMainWindow):
     def _export_tksmod(self):
         """导出当前 GXP 为 .tksmod 资源替换 MOD"""
         if not self.img or not self.img.filepath:
-            QMessageBox.information(self, "提示", "请先打开 GXP 文件"); return
-        
+            QMessageBox.information(self, "提示", "请先打开 GXP 文件")
+            return
+
         dlg = ModMetadataDialog(self, getattr(self, '_last_mod_metadata', None))
         if dlg.exec() != QDialog.Accepted: return
-        metadata = dlg.get_metadata(); self._last_mod_metadata = metadata
+        metadata = dlg.get_metadata()
+        self._last_mod_metadata = metadata
 
         target_name = os.path.basename(self.img.filepath)
         mod_json = generate_mod_json(metadata, [],
@@ -467,7 +531,8 @@ class GXPEditor(QMainWindow):
 
         info = get_tksmod_info(fp)
         if info is None:
-            QMessageBox.warning(self, "无效文件", "无法解析此 .tksmod 文件"); return
+            QMessageBox.warning(self, "无效文件", "无法解析此 .tksmod 文件")
+            return
 
         # GXP 编辑器查找资源文件中的 .gxp/.GXP 文件
         resources = info.get("resources", [])
@@ -476,14 +541,16 @@ class GXPEditor(QMainWindow):
         if not gxp_resources:
             QMessageBox.warning(self, "不兼容", "此 MOD 不包含 GXP 资源文件\n\n"
                 f"包含的数据: {', '.join(info.get('targets', []))}\n"
-                f"资源: {', '.join(r.get('target','') for r in resources)}"); return
+                f"资源: {', '.join(r.get('target','') for r in resources)}")
+            return
 
-        
+
         dlg = ModImportPreviewDialog(self, info)
         if dlg.exec() != QDialog.Accepted: return
 
         # 从 ZIP 中提取 GXP 资源并加载
-        import zipfile, tempfile
+        import tempfile
+        import zipfile
         res = gxp_resources[0]
         internal_path = res.get("file", "")
         target_name = res.get("target", "")
@@ -492,7 +559,8 @@ class GXPEditor(QMainWindow):
             with zipfile.ZipFile(fp, 'r') as zf:
                 if internal_path not in zf.namelist():
                     QMessageBox.warning(self, "导入失败",
-                        f"MOD 中找不到资源: {internal_path}"); return
+                        f"MOD 中找不到资源: {internal_path}")
+                    return
                 tmp = tempfile.mktemp(suffix='.gxp')
                 with zf.open(internal_path) as src:
                     Path(tmp).write_bytes(src.read())
@@ -500,7 +568,8 @@ class GXPEditor(QMainWindow):
                 self.img.filepath = None
                 os.remove(tmp)
         except Exception as e:
-            QMessageBox.warning(self, "导入失败", f"加载 GXP 失败: {e}"); return
+            QMessageBox.warning(self, "导入失败", f"加载 GXP 失败: {e}")
+            return
 
         self._last_mod_metadata = {
             "id": info.get("id", ""),
@@ -531,14 +600,14 @@ class GXPEditor(QMainWindow):
 
         qimg = QImage(bytes(self.img.rgba), w, h, QImage.Format_RGBA8888)
         pixmap = QPixmap.fromImage(qimg)
-        
+
         if self._zoom != 1.0:
             pixmap = pixmap.scaled(max(1, sw), max(1, sh), Qt.IgnoreAspectRatio, Qt.FastTransformation)
-        
+
         self._pixmap_item = QGraphicsPixmapItem(pixmap)
         self._scene.addItem(self._pixmap_item)
         self._scene.setSceneRect(0, 0, sw, sh)
-        
+
         self._zoom_label.setText(f"{int(self._zoom * 100)}%")
         self._status_size.setText(f"{self.img.size_str} ")
 

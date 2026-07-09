@@ -1,8 +1,8 @@
 """WarPC 缓冲区扩展与 .dat 文件管理 — 从 tks_launcher.py 提取"""
+import ctypes
 import os
 import shutil
-import ctypes
-from typing import Dict, Tuple, List, Optional
+from typing import Dict, List, Optional, Tuple
 from .memory import (
     i32b, b2i32, b2u16, bhex,
     read_pm, write_pm, vp_ex, write_mem16,
@@ -12,7 +12,7 @@ from .memory import (
     MEM_COMMIT, MEM_RESERVE,
     _OpenProcess, _CloseHandle, _VirtualAllocEx,
 )
-from .lzss import lzss_decompress, lzss_compress
+from .lzss import lzss_compress, lzss_decompress
 from .scanner import value_scan
 
 # ============================================================
@@ -92,7 +92,8 @@ def prepare_warpc_for_game(log_func=None) -> Tuple[bool, Optional[bytes], Dict[s
     for fname in DATA_FILE_ORIG_SIZES:
         bp = fname + ".orig"
         if os.path.isfile(bp):
-            shutil.copy2(bp, fname); os.remove(bp)
+            shutil.copy2(bp, fname)
+            os.remove(bp)
             log(f"  检测到上次未恢复的 {bp}, 已自动恢复")
 
     expanded = False
@@ -152,7 +153,8 @@ def scan_and_patch_const(h_proc: int, scan_start: int, scan_size: int,
                           old_val: int, new_val: int) -> Tuple[int, List[int]]:
     """扫描并修补 4 字节常量"""
     pr: List[int] = []
-    ole = i32b(old_val); nle = i32b(new_val)
+    ole = i32b(old_val)
+    nle = i32b(new_val)
     buf, nr = read_pm(h_proc, scan_start, scan_size)
     if nr <= 0:
         return 0, []
@@ -170,7 +172,8 @@ def scan_and_patch_const(h_proc: int, scan_start: int, scan_size: int,
             nw = write_pm(h_proc, aa, nle)
             vp_ex(h_proc, aa, 4, op)
             if nw == 4:
-                cnt += 1; pr.append(aa)
+                cnt += 1
+                pr.append(aa)
             pos += 4
         else:
             pos += 1
@@ -188,7 +191,8 @@ def patch_data_file_sizes(h_proc: int, base_addr: int, scan_start: int,
         bp = fname + ".orig"
         if not os.path.isfile(bp):
             continue
-        shutil.copy2(bp, fname); os.remove(bp)
+        shutil.copy2(bp, fname)
+        os.remove(bp)
         log(f"  已恢复原始 {fname}")
         patched, rvas = scan_and_patch_const(h_proc, scan_start, scan_size, osz, asz)
         if patched > 0:
@@ -218,9 +222,11 @@ def expand_warpc_buffer(child_pid: int, base_addr: int, module_size: int,
     nb = new_buf
     log(f"  修补代码引用: 缓冲区 0x{nb:08X}, 大小 {ns}")
 
-    nal = i32b(nb); nsl = i32b(ns)
+    nal = i32b(nb)
+    nsl = i32b(ns)
     ap, sp, fp, a0p = 0, 0, 0, 0
-    ss = code_start_addr; ssz = len(code_buf)
+    ss = code_start_addr
+    ssz = len(code_buf)
     _excl = exclude_ranges or []
 
     def _in_exclude(off: int) -> bool:
@@ -241,11 +247,13 @@ def expand_warpc_buffer(child_pid: int, base_addr: int, module_size: int,
         if _in_exclude(off):
             continue
         write_pm(hp, ss + off, nal)
-        code_buf[off:off+4] = nal; ap += 1
+        code_buf[off:off+4] = nal
+        ap += 1
     log(f"  WarPC 基址 0x{WARPC_BASE:08X} 扫描: 找到 {ap} 处")
 
     # word_757F0C 修补
-    w0c = WARPC_BASE + 4; n0c = i32b(nb + 4)
+    w0c = WARPC_BASE + 4
+    n0c = i32b(nb + 4)
     for off in value_scan(bytes(code_buf), w0c):
         if off >= 1 and code_buf[off - 1] in (0xE8, 0xE9):
             continue
@@ -255,7 +263,8 @@ def expand_warpc_buffer(child_pid: int, base_addr: int, module_size: int,
         op = vp_ex(hp, aa, 4, PAGE_EXECUTE_READWRITE)
         write_pm(hp, aa, n0c)
         vp_ex(hp, aa, 4, op)
-        code_buf[off:off+4] = n0c; a0p += 1
+        code_buf[off:off+4] = n0c
+        a0p += 1
     log(f"  word_757F0C 修补: {a0p} 处")
 
     # 字段基址修补
@@ -282,9 +291,12 @@ def expand_warpc_buffer(child_pid: int, base_addr: int, module_size: int,
                 continue
             v = b2i32(bytes(code_buf), read_pos)
             if rs <= v < re:
-                ofs = v - WARPC_BASE; nv = nb + ofs
+                ofs = v - WARPC_BASE
+                nv = nb + ofs
                 write_pm(hp, ss + read_pos, i32b(nv))
-                code_buf[read_pos:read_pos+4] = i32b(nv); fp += 1; pos += 4
+                code_buf[read_pos:read_pos+4] = i32b(nv)
+                fp += 1
+                pos += 4
             else:
                 pos += 1
         else:
@@ -301,8 +313,10 @@ def expand_warpc_buffer(child_pid: int, base_addr: int, module_size: int,
     log(f"  WarPC 大小常量修补: {sp} 处")
 
     # [补丁六] 存档/读档缓冲区
-    tos = WARPC_TOTAL_ORIG_SIZE; tns = 9200 + ns
-    tnl = i32b(tns); tp = 0
+    tos = WARPC_TOTAL_ORIG_SIZE
+    tns = 9200 + ns
+    tnl = i32b(tns)
+    tp = 0
     for off in value_scan(bytes(code_buf), tos):
         aa = ss + off
         op = vp_ex(hp, aa, 4, PAGE_EXECUTE_READWRITE)
@@ -316,7 +330,8 @@ def expand_warpc_buffer(child_pid: int, base_addr: int, module_size: int,
     patch_data_file_sizes(hp, base_addr, ss, ssz, log_func=log)
 
     # [补丁八] 新角色备份
-    es = WARPC_ORIG_COUNT * WARPC_REC_SIZE; exs = ns - es
+    es = WARPC_ORIG_COUNT * WARPC_REC_SIZE
+    exs = ns - es
     bbp = 0
     if exs > 0:
         bpv = _VirtualAllocEx(hp, None, exs, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE)

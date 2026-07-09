@@ -28,8 +28,10 @@ TKItem.dat 可视化编辑器 v3.0 (严格对照 Maker.exe TksModify.dll UI 布�
  11. 空槽 (40 条可新增物品): #560-#599, item_id=0 & name_id=0 & desc_id=600
 """
 
-import struct, os, tkinter as tk
-from tkinter import ttk, messagebox, filedialog
+import os
+import struct
+import tkinter as tk
+from tkinter import filedialog, messagebox, ttk
 
 # ============================================================
 # LZSS 编解码 (sub_452B14)
@@ -61,19 +63,19 @@ def lzss_compress(data):
     # 极速优化：使用线性 bytes 并借助底层 C 实现的 rfind 替代缓慢的纯 Python O(N^2) 搜索
     # 初始化完整的 4096 字节虚拟历史记录与当前数据拼接
     flat_bytes = bytes(bytearray([0x20]*4096) + src)
-    
+
     tokens = []; pos = 0
     while pos < sl:
         curr = 4096 + pos
         ms = min(18, sl - pos)
         bl, bo = 0, 0
-        
+
         if ms >= 3:
             for length in range(ms, 2, -1):
                 pat = flat_bytes[curr : curr + length]
                 end_idx = curr + length - 1
                 start_idx = max(0, curr - 4096)
-                
+
                 # 寻找在 4096 窗口内最近的匹配项
                 idx = flat_bytes.rfind(pat, start_idx, end_idx)
                 if idx != -1:
@@ -81,14 +83,14 @@ def lzss_compress(data):
                     # 将绝对索引直接转换为 Ring Buffer 的偏移量
                     bo = (idx - 18) & 0xFFF
                     break
-        
+
         if bl >= 3:
             tokens.append((False, bo, bl))
             pos += bl
         else:
             tokens.append((True, src[pos], 0))
             pos += 1
-            
+
     stream = bytearray(); ti = 0
     while ti < len(tokens):
         fb = 0; be = min(ti+8, len(tokens))
@@ -108,48 +110,76 @@ def lzss_compress(data):
 # TKT / TKSkill 文本加载
 # ============================================================
 def load_tkt(tkt_path):
-    if not tkt_path or not os.path.exists(tkt_path): return {}
-    with open(tkt_path, 'rb') as f: raw = f.read()
-    ts = struct.unpack_from('<I', raw, 0)[0]; cnt = struct.unpack_from('<I', raw, 4)[0]
-    enc = raw[8:8+ts]; dec = bytes([b ^ 0xFF for b in enc])
-    idsz, ofsz = cnt*4, cnt*4; lookup = {}; SKIP = set(range(0,10))
+    if not tkt_path or not os.path.exists(tkt_path):
+        return {}
+    with open(tkt_path, 'rb') as f:
+        raw = f.read()
+    ts = struct.unpack_from('<I', raw, 0)[0]
+    cnt = struct.unpack_from('<I', raw, 4)[0]
+    enc = raw[8:8+ts]
+    dec = bytes([b ^ 0xFF for b in enc])
+    idsz, ofsz = cnt*4, cnt*4
+    lookup = {}
+    SKIP = set(range(0,10))
     for i in range(cnt):
         eid = struct.unpack_from('<i', dec, i*4)[0]
-        if eid in SKIP: continue
-        off = struct.unpack_from('<I', dec, idsz + i*4)[0]; ao = idsz + ofsz + off
+        if eid in SKIP:
+            continue
+        off = struct.unpack_from('<I', dec, idsz + i*4)[0]
+        ao = idsz + ofsz + off
         if ao < len(dec):
             end = ao
-            while end < len(dec) and dec[end] != 0: end += 1
+            while end < len(dec) and dec[end] != 0:
+                end += 1
             txt = dec[ao:end].replace(b'\x1e', b'\n')
-            try: s = txt.decode('big5', errors='replace')
-            except: s = txt.decode('gbk', errors='replace')
-            if s and s != '0': lookup[eid] = s.split('\n')[0].strip()
+            try:
+                s = txt.decode('big5', errors='replace')
+            except:
+                s = txt.decode('gbk', errors='replace')
+            if s and s != '0':
+                lookup[eid] = s.split('\n')[0].strip()
     return lookup
 
 def load_tkt_full(tkt_path):
     """加载 TKT 全部文本（保留完整多行内容，\x1e 转为换行）"""
-    if not tkt_path or not os.path.exists(tkt_path): return {}
-    with open(tkt_path, 'rb') as f: raw = f.read()
-    ts = struct.unpack_from('<I', raw, 0)[0]; cnt = struct.unpack_from('<I', raw, 4)[0]
-    enc = raw[8:8+ts]; dec = bytes([b ^ 0xFF for b in enc])
-    idsz, ofsz = cnt*4, cnt*4; lookup = {}; SKIP = set(range(0,10))
+    if not tkt_path or not os.path.exists(tkt_path):
+        return {}
+    with open(tkt_path, 'rb') as f:
+        raw = f.read()
+    ts = struct.unpack_from('<I', raw, 0)[0]
+    cnt = struct.unpack_from('<I', raw, 4)[0]
+    enc = raw[8:8+ts]
+    dec = bytes([b ^ 0xFF for b in enc])
+    idsz, ofsz = cnt*4, cnt*4
+    lookup = {}
+    SKIP = set(range(0,10))
     for i in range(cnt):
         eid = struct.unpack_from('<i', dec, i*4)[0]
-        if eid in SKIP: continue
-        off = struct.unpack_from('<I', dec, idsz + i*4)[0]; ao = idsz + ofsz + off
+        if eid in SKIP:
+            continue
+        off = struct.unpack_from('<I', dec, idsz + i*4)[0]
+        ao = idsz + ofsz + off
         if ao < len(dec):
             end = ao
-            while end < len(dec) and dec[end] != 0: end += 1
+            while end < len(dec) and dec[end] != 0:
+                end += 1
             txt = dec[ao:end].replace(b'\x1e', b'\n')
-            try: s = txt.decode('big5', errors='replace')
-            except: s = txt.decode('gbk', errors='replace')
-            if s and s != '0': lookup[eid] = s.strip()
+            try:
+                s = txt.decode('big5', errors='replace')
+            except:
+                s = txt.decode('gbk', errors='replace')
+            if s and s != '0':
+                lookup[eid] = s.strip()
     return lookup
 
 def load_tkskill_names(sp, tkt):
-    if not sp or not os.path.exists(sp): return {}
-    with open(sp, 'rb') as f: raw = f.read()
-    dec = lzss_decompress(raw); REC = 94; names = {}
+    if not sp or not os.path.exists(sp):
+        return {}
+    with open(sp, 'rb') as f:
+        raw = f.read()
+    dec = lzss_decompress(raw)
+    REC = 94
+    names = {}
     # 兜底: LZSS 解压结果不对齐记录边界但原始文件对齐 → 未压缩 raw 数据
     if len(raw) % REC == 0 and (len(dec) == 0 or len(dec) % REC != 0):
         dec = raw
@@ -168,57 +198,92 @@ def load_mu_sprites(mu_path):
         from PIL import Image
     except ImportError:
         return None
-    if not mu_path or not os.path.exists(mu_path): return None
-    with open(mu_path, 'rb') as f: data = f.read()
-    if len(data) < 32 or data[:4] != b'@JVG': return None
+    if not mu_path or not os.path.exists(mu_path):
+        return None
+    with open(mu_path, 'rb') as f:
+        data = f.read()
+    if len(data) < 32 or data[:4] != b'@JVG':
+        return None
     bc = struct.unpack_from('<I', data, 8)[0]
-    off = 32; sprites = []
+    off = 32
+    sprites = []
     for bi in range(bc):
-        if off + 32 > len(data) or data[off:off+4] != b'@JVM': break
-        sc = struct.unpack_from('<I', data, off+4)[0]; ds = struct.unpack_from('<I', data, off+12)[0]
-        s1 = off + 32; co = [struct.unpack_from('<I', data, s1+j*4)[0] for j in range(sc+1)]
+        if off + 32 > len(data) or data[off:off+4] != b'@JVM':
+            break
+        sc = struct.unpack_from('<I', data, off+4)[0]
+        ds = struct.unpack_from('<I', data, off+12)[0]
+        s1 = off + 32
+        co = [struct.unpack_from('<I', data, s1+j*4)[0] for j in range(sc+1)]
         po = s1 + (sc+1)*4
         pal_entries = []
         for j in range(256):
             e = struct.unpack_from('<H', data, po+j*2)[0]
-            r = ((e>>11)&0x1F)<<3; g = ((e>>5)&0x3F)<<2; b = (e&0x1F)<<3
+            r = ((e>>11)&0x1F)<<3
+            g = ((e>>5)&0x3F)<<2
+            b = (e&0x1F)<<3
             pal_entries.extend([r,g,b])
         pal_bytes = bytes(pal_entries)
         dr = po + 512
         for si in range(sc):
-            mo = dr + co[si]; ws = struct.unpack_from('<8H', data, mo)
+            mo = dr + co[si]
+            ws = struct.unpack_from('<8H', data, mo)
             w, h = ws[2], ws[3]
             if w <= 0 or h <= 0:
                 sprites.append(None)
                 continue
-            eo = mo + 16; ed = data[eo:eo+co[si+1]-co[si]-16]
+            eo = mo + 16
+            ed = data[eo:eo+co[si+1]-co[si]-16]
             # RLE 解码 (对齐 jvg_editor _decode_rle)
-            total = w*h; px = bytearray(total); alpha = bytearray(total)
-            recs = []; rp = 0
+            total = w*h
+            px = bytearray(total)
+            alpha = bytearray(total)
+            recs = []
+            rp = 0
             while rp + 4 <= len(ed):
-                sk = struct.unpack_from('<H', ed, rp)[0]; rw = struct.unpack_from('<H', ed, rp+2)[0]; rp += 4
-                rw = min(rw, len(ed)-rp); rd = ed[rp:rp+rw] if rw>0 else b''; rp += rw
+                sk = struct.unpack_from('<H', ed, rp)[0]
+                rw = struct.unpack_from('<H', ed, rp+2)[0]
+                rp += 4
+                rw = min(rw, len(ed)-rp)
+                rd = ed[rp:rp+rw] if rw>0 else b''
+                rp += rw
                 recs.append((sk, rw, rd))
-            if not recs: continue
+            if not recs:
+                continue
             simple = (recs[0][0]==0 and recs[0][1]==w and all(r[1]==w for r in recs))
             if simple:
                 for ri, (_, rw, rpix) in enumerate(recs):
-                    if ri >= h: break
+                    if ri >= h:
+                        break
                     tr = h-1-ri
-                    for c in range(min(rw, len(rpix))): px[tr*w+c] = rpix[rw-1-c]; alpha[tr*w+c] = 255
+                    for c in range(min(rw, len(rpix))):
+                        px[tr*w+c] = rpix[rw-1-c]
+                        alpha[tr*w+c] = 255
             else:
-                scr_w = 640; gap = max(scr_w-w, 0); bp = total-1; pg = 0
+                scr_w = 640
+                gap = max(scr_w-w, 0)
+                bp = total-1
+                pg = 0
                 for sa, rw, rpix in recs:
-                    rem = sa-pg; pg = 0
-                    if rem < 0: rem = 0
+                    rem = sa-pg
+                    pg = 0
+                    if rem < 0:
+                        rem = 0
                     while rem > 0 and bp >= 0:
-                        col = (total-1-bp)%w; tb = w-col
-                        if rem <= tb: bp -= rem; rem = 0
-                        else: bp -= tb; rem -= tb+gap; rem = max(rem, 0)
+                        col = (total-1-bp)%w
+                        tb = w-col
+                        if rem <= tb:
+                            bp -= rem
+                            rem = 0
+                        else:
+                            bp -= tb
+                            rem -= tb+gap
+                            rem = max(rem, 0)
                     cb = (total-1-bp)%w if bp >= 0 else 0
                     al = min(rw, len(rpix))
                     for k in range(al):
-                        if 0 <= bp < total: px[bp] = rpix[k]; alpha[bp] = 255
+                        if 0 <= bp < total:
+                            px[bp] = rpix[k]
+                            alpha[bp] = 255
                         bp -= 1
                     pg = gap if al > 0 and cb+al >= w else 0
             # 创建 PIL Image (alpha 通道由 RLE 解码器提供, 不依赖 palette index 0)
@@ -282,8 +347,10 @@ def _use_right_label(val, page):
 PAGE_NAMES = {0:"药品", 1:"道具", 2:"武器", 3:"防具", 4:"饰品", 5:"特殊"}
 PAGE_VALUES = [f"{k}-{v}" for k,v in sorted(PAGE_NAMES.items())]
 
-ITEM_REC = 64; ITEM_CNT = 600  # 游戏硬编码: sub_45343C(aTkitemDat, word_77CBCA, 38400)
-FONT = ('Microsoft YaHei UI', 9); FONT_S = ('Microsoft YaHei UI', 8)
+ITEM_REC = 64
+ITEM_CNT = 600  # 游戏硬编码: sub_45343C(aTkitemDat, word_77CBCA, 38400)
+FONT = ('Microsoft YaHei UI', 9)
+FONT_S = ('Microsoft YaHei UI', 8)
 W_INPUT = 12
 
 # ============================================================
@@ -360,11 +427,14 @@ def is_empty_item(rec, tkt=None):
     - id=1 占位: 约 225 条游戏保留记录 (#550-559 等)
     - 无 TKT 名: 孤立记录, 无法显示
     """
-    if rec.get('item_id', 0) in (0, 1): return True
-    if rec.get('name_id', 0) <= 0: return True
+    if rec.get('item_id', 0) in (0, 1):
+        return True
+    if rec.get('name_id', 0) <= 0:
+        return True
     if tkt is not None:
         nm = tkt.get(rec['name_id'], "")
-        if not nm or not nm.strip(): return True
+        if not nm or not nm.strip():
+            return True
     return False
 
 def is_pure_empty_slot(rec):
@@ -383,7 +453,8 @@ def item_display_name(rec, tkt):
 # 数据加载/保存
 # ============================================================
 def load_items(fp):
-    with open(fp, 'rb') as f: raw = f.read()
+    with open(fp, 'rb') as f:
+        raw = f.read()
     dec = lzss_decompress(raw)
     # 兜底: LZSS 解压结果不对齐记录边界但原始文件对齐 → 未压缩 raw 数据
     if len(raw) % ITEM_REC == 0 and (len(dec) == 0 or len(dec) % ITEM_REC != 0):
@@ -391,7 +462,8 @@ def load_items(fp):
     recs = []
     for i in range(ITEM_CNT):
         off = i * ITEM_REC
-        if off + ITEM_REC > len(dec): break
+        if off + ITEM_REC > len(dec):
+            break
         fields = struct.unpack_from('<' + 'h'*32, dec, off)
         rec = {'index': i}
         for k, fo, _, _, _, _ in ALL_FIELDS:
@@ -403,13 +475,15 @@ def save_items(fp, recs):
     buf = bytearray(ITEM_CNT * ITEM_REC)
     # 空槽模板 (#560-#599 原始值: name_id=0, desc_id=600) 在保存时保持 desc_id=600
     for rec in recs[:ITEM_CNT]:
-        i = rec['index']; off = i * ITEM_REC
+        i = rec['index']
+        off = i * ITEM_REC
         for k, fo, _, _, _, _ in ALL_FIELDS:
             struct.pack_into('<h', buf, off + fo, rec[k])
     compressed = lzss_compress(bytes(buf))
     if lzss_decompress(compressed) != bytes(buf):
         raise RuntimeError("压缩回写验证失败!")
-    with open(fp, 'wb') as f: f.write(compressed)
+    with open(fp, 'wb') as f:
+        f.write(compressed)
     return True
 
 
@@ -421,29 +495,41 @@ class ItemEditor:
         self.root = root
         self.root.title("TKItem.dat 可视化编辑器")
         ico = os.path.join(os.path.dirname(__file__), 'TKS.ico')
-        if os.path.exists(ico): self.root.iconbitmap(default=ico)
-        self.root.geometry("1360x860"); self.root.minsize(1120, 700)
+        if os.path.exists(ico):
+            self.root.iconbitmap(default=ico)
+        self.root.geometry("1360x860")
+        self.root.minsize(1120, 700)
         self.item_path = self.tkt_path = self.skill_path = self.mu_path = None
-        self.records = []; self.tkt = {}; self.tkt_full = {}; self.skill_names = {}
-        self._mu_sprites = []; self._icon_photos = {}  # 图标缓存 (idx -> PhotoImage)
-        self.filtered_indices = []; self._dirty = False
+        self.records = []
+        self.tkt = {}
+        self.tkt_full = {}
+        self.skill_names = {}
+        self._mu_sprites = []
+        self._icon_photos = {}  # 图标缓存 (idx -> PhotoImage)
+        self.filtered_indices = []
+        self._dirty = False
         self.filter_page = tk.StringVar(value="全部页面")
         self.filter_right = tk.StringVar(value="全部权限")
         self.filter_empty = tk.BooleanVar(value=True)
-        self._build_ui(); self._set_edit_enabled(False)
-        sw = self.root.winfo_screenwidth(); sh = self.root.winfo_screenheight()
-        x = (sw - 1360) // 2; y = (sh - 860) // 2
+        self._build_ui()
+        self._set_edit_enabled(False)
+        sw = self.root.winfo_screenwidth()
+        sh = self.root.winfo_screenheight()
+        x = (sw - 1360) // 2
+        y = (sh - 860) // 2
         self.root.geometry(f'1360x860+{x}+{y}')
 
     # ----------- UI 构建 -----------
     def _build_ui(self):
-        mb = tk.Menu(self.root); self.root.config(menu=mb)
+        mb = tk.Menu(self.root)
+        self.root.config(menu=mb)
         fm = tk.Menu(mb, tearoff=0)
         fm.add_command(label="加载 TKS 目录…", command=self._load_tks_dir, accelerator="Ctrl+O")
         fm.add_separator()
         fm.add_command(label="保存", command=self._save, accelerator="Ctrl+S")
         fm.add_command(label="导出 CSV…", command=self._export_csv)
-        fm.add_separator(); fm.add_command(label="退出", command=self.root.quit)
+        fm.add_separator()
+        fm.add_command(label="退出", command=self.root.quit)
         mb.add_cascade(label="文件", menu=fm)
         em = tk.Menu(mb, tearoff=0)
         em.add_command(label="新建物品 (填充空槽)", command=self._new_item, accelerator="Ctrl+N")
@@ -458,10 +544,12 @@ class ItemEditor:
         self.root.bind('<Control-s>', lambda e: self._save())
         self.root.bind('<Control-n>', lambda e: self._new_item())
 
-        tb = ttk.Frame(self.root); tb.pack(fill=tk.X, padx=5, pady=(5,0))
+        tb = ttk.Frame(self.root)
+        tb.pack(fill=tk.X, padx=5, pady=(5,0))
         ttk.Label(tb, text="搜索:").pack(side=tk.LEFT)
         self.sv = tk.StringVar()
-        e_s = ttk.Entry(tb, textvariable=self.sv, width=18); e_s.pack(side=tk.LEFT, padx=2)
+        e_s = ttk.Entry(tb, textvariable=self.sv, width=18)
+        e_s.pack(side=tk.LEFT, padx=2)
         e_s.bind('<Return>', lambda e: self._apply_filter())
         ttk.Button(tb, text="搜索", command=self._apply_filter, width=5).pack(side=tk.LEFT, padx=1)
         ttk.Button(tb, text="清除", command=self._clear_filter, width=5).pack(side=tk.LEFT, padx=1)
@@ -487,7 +575,8 @@ class ItemEditor:
         paned.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
 
         # 左表 (tree headings 模式以支持 #0 列显示图标)
-        lf = ttk.Frame(paned); paned.add(lf, weight=2)
+        lf = ttk.Frame(paned)
+        paned.add(lf, weight=2)
         cols = ('index','item_id','page','name','right','price')
         self.tree = ttk.Treeview(lf, columns=cols, show='tree headings', selectmode='browse')
         self.tree.column('#0', width=36, minwidth=36, stretch=False, anchor='center')
@@ -499,12 +588,14 @@ class ItemEditor:
             self.tree.column(cid, width=cw, anchor='center' if cid != 'name' else 'w', minwidth=cw)
         vsb = ttk.Scrollbar(lf, orient=tk.VERTICAL, command=self.tree.yview)
         self.tree.configure(yscrollcommand=vsb.set)
-        self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True); vsb.pack(side=tk.RIGHT, fill=tk.Y)
+        self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        vsb.pack(side=tk.RIGHT, fill=tk.Y)
         self.tree.bind('<<TreeviewSelect>>', self._on_tree_select)
         self._tree_photos = []  # 防止 GC
 
         # 右编辑
-        rf = ttk.Frame(paned); paned.add(rf, weight=3)
+        rf = ttk.Frame(paned)
+        paned.add(rf, weight=3)
         self.edit_frame = rf
 
         self.lbl_rec_idx = ttk.Label(rf, text="未选中", font=('', 11, 'bold'))
@@ -537,12 +628,14 @@ class ItemEditor:
         canvas.configure(yscrollcommand=sb.set)
         self._bind_mousewheel(canvas)
 
-        self._edit_vars = {}; self._edit_extras = {}
+        self._edit_vars = {}
+        self._edit_extras = {}
 
         # 文本预览
         pv_lf = ttk.LabelFrame(self.edit_inner, text="物品预览", padding=4)
         pv_lf.grid(row=0, column=0, sticky='ew', padx=2, pady=2)
-        for c in range(1, 5): pv_lf.columnconfigure(c, weight=1)
+        for c in range(1, 5):
+            pv_lf.columnconfigure(c, weight=1)
         LBL_CLR = '#666'  # 统一标签颜色
         # 名称 + 图标
         ttk.Label(pv_lf, text="名称:", font=FONT_S, foreground=LBL_CLR).grid(
@@ -630,26 +723,35 @@ class ItemEditor:
         for hi, (fn, fo, fl, ft, fw, cmt) in enumerate(HIDDEN_FIELDS):
             self._build_field(hd_lf, 0, hi, fn, fo, fl, ft, fw, cmt)
 
-        pf = ttk.LabelFrame(self.root, text="当前加载"); pf.pack(fill=tk.X, padx=5, pady=(0,2))
-        self.lbl_item = ttk.Label(pf, text="", foreground="gray"); self.lbl_item.pack(side=tk.LEFT, padx=10, pady=2)
+        pf = ttk.LabelFrame(self.root, text="当前加载")
+        pf.pack(fill=tk.X, padx=5, pady=(0,2))
+        self.lbl_item = ttk.Label(pf, text="", foreground="gray")
+        self.lbl_item.pack(side=tk.LEFT, padx=10, pady=2)
         ttk.Separator(pf, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y)
-        self.lbl_tkt = ttk.Label(pf, text="", foreground="gray"); self.lbl_tkt.pack(side=tk.LEFT, padx=10, pady=2)
+        self.lbl_tkt = ttk.Label(pf, text="", foreground="gray")
+        self.lbl_tkt.pack(side=tk.LEFT, padx=10, pady=2)
         ttk.Separator(pf, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y)
-        self.lbl_skill = ttk.Label(pf, text="", foreground="gray"); self.lbl_skill.pack(side=tk.LEFT, padx=10, pady=2)
+        self.lbl_skill = ttk.Label(pf, text="", foreground="gray")
+        self.lbl_skill.pack(side=tk.LEFT, padx=10, pady=2)
 
     def _build_field(self, parent, row, col, fn, fo, fl, ft, fw, cmt):
-        frm = ttk.Frame(parent); frm.grid(row=row, column=col, sticky='nw', padx=3, pady=2)
-        lbl = ttk.Label(frm, text=fl, font=FONT_S); lbl.pack(anchor=tk.W)
+        frm = ttk.Frame(parent)
+        frm.grid(row=row, column=col, sticky='nw', padx=3, pady=2)
+        lbl = ttk.Label(frm, text=fl, font=FONT_S)
+        lbl.pack(anchor=tk.W)
         self._bind_tooltip(lbl, f"[{fo:02d}] {cmt}")
 
         if ft == 'page':
             cb = ttk.Combobox(frm, state='readonly', values=PAGE_VALUES,
                               width=W_INPUT, font=FONT)
-            cb.pack(fill=tk.X); self._edit_extras[fn] = cb
+            cb.pack(fill=tk.X)
+            self._edit_extras[fn] = cb
             self._edit_vars[fn] = tk.StringVar()
         elif ft == 'use_right':
-            box = ttk.Frame(frm); box.pack(fill=tk.X)
-            ev = tk.StringVar(); self._edit_vars[fn] = ev
+            box = ttk.Frame(frm)
+            box.pack(fill=tk.X)
+            ev = tk.StringVar()
+            self._edit_vars[fn] = ev
             ttk.Entry(box, textvariable=ev, width=W_INPUT, font=FONT).pack(side=tk.LEFT)
             ttk.Button(box, text="…", width=2,
                        command=lambda f=fn: self._pick_use_right(f)).pack(side=tk.LEFT, padx=1)
@@ -657,15 +759,19 @@ class ItemEditor:
                                                font=FONT_S, wraplength=180)
             self._edit_extras[fn].pack(anchor=tk.W)
         elif ft == 'tkt':
-            box = ttk.Frame(frm); box.pack(fill=tk.X)
-            ev = tk.StringVar(); self._edit_vars[fn] = ev
+            box = ttk.Frame(frm)
+            box.pack(fill=tk.X)
+            ev = tk.StringVar()
+            self._edit_vars[fn] = ev
             ttk.Entry(box, textvariable=ev, width=W_INPUT, font=FONT).pack(side=tk.LEFT)
             ttk.Button(box, text="…", width=2,
                        command=lambda f=fn: self._pick_tkt(f)).pack(side=tk.LEFT, padx=1)
             self._edit_extras[fn] = None
         elif ft == 'skill':
-            box = ttk.Frame(frm); box.pack(fill=tk.X)
-            ev = tk.StringVar(); self._edit_vars[fn] = ev
+            box = ttk.Frame(frm)
+            box.pack(fill=tk.X)
+            ev = tk.StringVar()
+            self._edit_vars[fn] = ev
             ttk.Entry(box, textvariable=ev, width=W_INPUT, font=FONT).pack(side=tk.LEFT)
             ttk.Button(box, text="…", width=2,
                        command=lambda f=fn: self._pick_skill(f)).pack(side=tk.LEFT, padx=1)
@@ -685,89 +791,114 @@ class ItemEditor:
             self._edit_extras[fn][1].pack(anchor=tk.W)
             self._edit_vars[fn] = tk.StringVar()
         elif ft == 'combat_flag':
-            box = ttk.Frame(frm); box.pack(fill=tk.X)
-            ev = tk.StringVar(); self._edit_vars[fn] = ev
+            box = ttk.Frame(frm)
+            box.pack(fill=tk.X)
+            ev = tk.StringVar()
+            self._edit_vars[fn] = ev
             ttk.Entry(box, textvariable=ev, width=W_INPUT, font=FONT).pack(side=tk.LEFT)
             ttk.Button(box, text="…", width=2,
                        command=lambda f=fn: self._pick_combat_flags(f)).pack(side=tk.LEFT, padx=1)
             self._edit_extras[fn] = ttk.Label(frm, text="", foreground='#666', font=FONT_S, wraplength=180)
             self._edit_extras[fn].pack(anchor=tk.W)
         elif ft == 'extra_flags':
-            box = ttk.Frame(frm); box.pack(fill=tk.X)
-            ev = tk.StringVar(); self._edit_vars[fn] = ev
+            box = ttk.Frame(frm)
+            box.pack(fill=tk.X)
+            ev = tk.StringVar()
+            self._edit_vars[fn] = ev
             ttk.Entry(box, textvariable=ev, width=W_INPUT, font=FONT).pack(side=tk.LEFT)
             ttk.Button(box, text="…", width=2,
                        command=lambda f=fn: self._pick_extra_flags(f)).pack(side=tk.LEFT, padx=1)
             self._edit_extras[fn] = ttk.Label(frm, text="", foreground='#666', font=FONT_S, wraplength=180)
             self._edit_extras[fn].pack(anchor=tk.W)
         elif ft == 'icon':
-            box = ttk.Frame(frm); box.pack(fill=tk.X)
-            ev = tk.StringVar(); self._edit_vars[fn] = ev
+            box = ttk.Frame(frm)
+            box.pack(fill=tk.X)
+            ev = tk.StringVar()
+            self._edit_vars[fn] = ev
             ttk.Entry(box, textvariable=ev, width=W_INPUT, font=FONT).pack(side=tk.LEFT)
             ttk.Button(box, text="…", width=2,
                        command=lambda f=fn: self._pick_icon(f)).pack(side=tk.LEFT, padx=1)
             self._edit_extras[fn] = ttk.Label(frm, text="", font=FONT_S)
             self._edit_extras[fn].pack(anchor=tk.W)
         else:
-            ev = tk.StringVar(); self._edit_vars[fn] = ev
+            ev = tk.StringVar()
+            self._edit_vars[fn] = ev
             ttk.Entry(frm, textvariable=ev, width=W_INPUT, font=FONT).pack(fill=tk.X)
 
     def _bind_tooltip(self, widget, text):
         tip = {'win': None}
         def _enter(e):
-            if tip['win']: return
-            x = widget.winfo_rootx() + 10; y = widget.winfo_rooty() + widget.winfo_height() + 2
-            w = tk.Toplevel(widget); w.wm_overrideredirect(True)
+            if tip['win']:
+                return
+            x = widget.winfo_rootx() + 10
+            y = widget.winfo_rooty() + widget.winfo_height() + 2
+            w = tk.Toplevel(widget)
+            w.wm_overrideredirect(True)
             w.wm_geometry(f"+{x}+{y}")
             ttk.Label(w, text=text, background='#FFFFE0', relief='solid', borderwidth=1,
                       font=FONT_S, wraplength=420, padding=3).pack()
             tip['win'] = w
         def _leave(e):
-            if tip['win']: tip['win'].destroy(); tip['win'] = None
-        widget.bind('<Enter>', _enter); widget.bind('<Leave>', _leave)
+            if tip['win']:
+                tip['win'].destroy()
+                tip['win'] = None
+        widget.bind('<Enter>', _enter)
+        widget.bind('<Leave>', _leave)
 
     def _bind_mousewheel(self, canvas):
-        def _mw(e): canvas.yview_scroll(int(-1*(e.delta/120)), "units")
+        def _mw(e):
+            canvas.yview_scroll(int(-1*(e.delta/120)), "units")
         canvas.bind("<Enter>", lambda e: canvas.bind_all("<MouseWheel>", _mw))
         canvas.bind("<Leave>", lambda e: canvas.unbind_all("<MouseWheel>"))
 
     # ----------- 数据加载 -----------
     def _load_tks_dir(self):
         d = filedialog.askdirectory(title="选择 TKS 游戏目录")
-        if not d: return
+        if not d:
+            return
         it = os.path.join(d, "TKItem.dat")
         tk_ = os.path.join(d, "TKT.dat")
         sk = os.path.join(d, "TKSkill.dat")
         if not os.path.exists(it):
-            messagebox.showwarning("文件缺失","未找到 TKItem.dat"); return
+            messagebox.showwarning("文件缺失","未找到 TKItem.dat")
+            return
         self.item_path = it
         self.tkt_path = tk_ if os.path.exists(tk_) else None
         self.skill_path = sk if os.path.exists(sk) else None
         self.mu_path = os.path.join(d, "Mu.JVG")
-        if not os.path.exists(self.mu_path): self.mu_path = None
+        if not os.path.exists(self.mu_path):
+            self.mu_path = None
         self._reload()
 
     def _reload(self):
-        if not self.item_path: return
-        self.status_var.set("加载中…"); self.root.update()
+        if not self.item_path:
+            return
+        self.status_var.set("加载中…")
+        self.root.update()
         if self.tkt_path:
             self.tkt = load_tkt(self.tkt_path)
             self.tkt_full = load_tkt_full(self.tkt_path)
         else:
             self.tkt_full = {}
-        if self.skill_path: self.skill_names = load_tkskill_names(self.skill_path, self.tkt)
+        if self.skill_path:
+            self.skill_names = load_tkskill_names(self.skill_path, self.tkt)
         if self.mu_path:
             self._mu_sprites = load_mu_sprites(self.mu_path) or []
             self._icon_photos.clear()
         try:
-            self.records = load_items(self.item_path); self._dirty = False
+            self.records = load_items(self.item_path)
+            self._dirty = False
             self.status_var.set(f"{len(self.records)} 条 | TKT {len(self.tkt)} 条 | 技能 {len(self.skill_names)} 条")
         except Exception as e:
-            messagebox.showerror("加载失败", str(e)); self.records = []
-        self._update_paths(); self._set_edit_enabled(True); self._apply_filter()
+            messagebox.showerror("加载失败", str(e))
+            self.records = []
+        self._update_paths()
+        self._set_edit_enabled(True)
+        self._apply_filter()
 
     def _set_edit_enabled(self, en):
-        for c in self.edit_frame.winfo_children(): self._set_ws(c, en)
+        for c in self.edit_frame.winfo_children():
+            self._set_ws(c, en)
     def _set_ws(self, w, en):
         try:
             if isinstance(w, (ttk.Entry, ttk.Spinbox)):
@@ -776,15 +907,20 @@ class ItemEditor:
                 w.configure(state='readonly' if en else 'disabled')
             elif isinstance(w, (ttk.Checkbutton, ttk.Radiobutton, ttk.Button)):
                 w.state(['!disabled'] if en else ['disabled'])
-        except: pass
-        for c in w.winfo_children(): self._set_ws(c, en)
+        except:
+            pass
+        for c in w.winfo_children():
+            self._set_ws(c, en)
 
     def _update_paths(self):
         g, r = "#228B22", "#CC3333"
         def _f(lb, p):
-            if not p: lb.config(text="(未加载)", foreground=r)
-            elif not os.path.exists(p): lb.config(text=f"(不存在){p}", foreground=r)
-            else: lb.config(text=p, foreground=g)
+            if not p:
+                lb.config(text="(未加载)", foreground=r)
+            elif not os.path.exists(p):
+                lb.config(text=f"(不存在){p}", foreground=r)
+            else:
+                lb.config(text=p, foreground=g)
         _f(self.lbl_item, self.item_path)
         _f(self.lbl_tkt, self.tkt_path)
         _f(self.lbl_skill, self.skill_path)
@@ -817,19 +953,25 @@ class ItemEditor:
     def _apply_filter(self, *_):
         if getattr(self, '_guard_right_reset', False):
             return
-        q = self.sv.get().strip().lower(); self.filtered_indices = []
+        q = self.sv.get().strip().lower()
+        self.filtered_indices = []
         self._update_right_options(self.filter_page.get())
-        fpg = self.filter_page.get(); frg = self.filter_right.get()
+        fpg = self.filter_page.get()
+        frg = self.filter_right.get()
         for rec in self.records:
-            if self.filter_empty.get() and is_empty_item(rec, self.tkt): continue
+            if self.filter_empty.get() and is_empty_item(rec, self.tkt):
+                continue
             if fpg and not fpg.startswith("全部"):
-                if rec['tab_code'] != int(fpg.split('-')[0]): continue
+                if rec['tab_code'] != int(fpg.split('-')[0]):
+                    continue
             if frg and not frg.startswith("全部"):
                 bit = int(frg.split('-')[0])
                 if bit == 0:
-                    if rec['equip_type'] != 0: continue
+                    if rec['equip_type'] != 0:
+                        continue
                 else:
-                    if (rec['equip_type'] & bit) == 0: continue
+                    if (rec['equip_type'] & bit) == 0:
+                        continue
             if q:
                 nm = item_display_name(rec, self.tkt)
                 if q not in f"{rec['index']} {rec['item_id']} {rec['tab_code']} {nm}".lower():
@@ -841,13 +983,16 @@ class ItemEditor:
             f"显示 {len(self.filtered_indices)}/{len(self.records)} | 真空槽剩余 {empty_cnt}/40 | Ctrl+S 保存")
 
     def _clear_filter(self):
-        self.sv.set(""); self.filter_page.set("全部页面")
-        self.filter_right.set("全部权限"); self.filter_empty.set(True)
+        self.sv.set("")
+        self.filter_page.set("全部页面")
+        self.filter_right.set("全部权限")
+        self.filter_empty.set(True)
         self._apply_filter()
 
     def _refresh_table(self):
         self._tree_photos.clear()
-        for it in self.tree.get_children(): self.tree.delete(it)
+        for it in self.tree.get_children():
+            self.tree.delete(it)
         for idx in self.filtered_indices:
             r = self.records[idx]
             et = r['equip_type']
@@ -865,12 +1010,14 @@ class ItemEditor:
         rev = getattr(self, '_sort_reverse', False)
         km = {'item_id':'item_id', 'page':'tab_code', 'price':'price', 'right':'equip_type'}
         self.filtered_indices.sort(key=lambda i: self.records[i].get(km.get(col, 'index'), 0), reverse=rev)
-        self._sort_reverse = not rev; self._refresh_table()
+        self._sort_reverse = not rev
+        self._refresh_table()
 
     # ----------- 编辑 -----------
     def _on_tree_select(self, event):
         sel = self.tree.selection()
-        if not sel: return
+        if not sel:
+            return
         idx = int(self.tree.item(sel[0])['values'][0])
         self._populate_edit(self.records[idx])
 
@@ -913,11 +1060,13 @@ class ItemEditor:
             self._update_preview_status(si, sel)
 
         for fn, fo, fl, ft, fw, cmt in ALL_FIELDS:
-            val = rec[fn]; sv = str(val)
+            val = rec[fn]
+            sv = str(val)
             self._edit_vars[fn].set(sv)
             if ft == 'page':
                 cb = self._edit_extras[fn]
-                if not self._set_combobox(cb, val): cb.set(sv)
+                if not self._set_combobox(cb, val):
+                    cb.set(sv)
             elif ft == 'use_right':
                 page = rec.get('tab_code', 0)
                 self._edit_extras[fn].config(text=_use_right_label(int(val) if val else 0, page))
@@ -939,7 +1088,9 @@ class ItemEditor:
 
     def _set_combobox(self, cb, val):
         for i, t in enumerate(cb['values']):
-            if t.startswith(f"{val}-"): cb.current(i); return True
+            if t.startswith(f"{val}-"):
+                cb.current(i)
+                return True
         return False
 
     def _update_status_label(self, fn, mask):
@@ -950,7 +1101,8 @@ class ItemEditor:
                 sel.append((base + i, STATUS_NAMES[base + i]))
         extras_frame, txt_lbl = self._edit_extras[fn]
         for w in extras_frame.winfo_children():
-            if w != txt_lbl: w.destroy()
+            if w != txt_lbl:
+                w.destroy()
         if sel:
             txt_lbl.config(text="")
             txt_lbl.pack_forget()
@@ -992,9 +1144,11 @@ class ItemEditor:
     # ----------- 图标 -----------
     def _get_icon_photo(self, icon_val, size=(48,48)):
         """获取图标的 PhotoImage (缓存), icon_val 为游戏原始值 (实际显示值 +130)"""
-        if not self._mu_sprites: return None
+        if not self._mu_sprites:
+            return None
         idx = icon_val + 130
-        if idx < 0 or idx >= len(self._mu_sprites): return None
+        if idx < 0 or idx >= len(self._mu_sprites):
+            return None
         cache_key = (idx, size)
         if cache_key in self._icon_photos:
             return self._icon_photos[cache_key]
@@ -1010,11 +1164,15 @@ class ItemEditor:
     def _pick_icon(self, fn):
         """弹窗选择物品图标"""
         if not self._mu_sprites:
-            messagebox.showinfo("提示", "未加载 Mu.JVG 图标文件"); return
-        dlg = tk.Toplevel(self.root); dlg.title("选择图标 (索引 = 游戏值 + 130)")
-        dlg.transient(self.root); dlg.grab_set()
+            messagebox.showinfo("提示", "未加载 Mu.JVG 图标文件")
+            return
+        dlg = tk.Toplevel(self.root)
+        dlg.title("选择图标 (索引 = 游戏值 + 130)")
+        dlg.transient(self.root)
+        dlg.grab_set()
         self._center_dialog(dlg, 780, 560)
-        dlg.grid_rowconfigure(0, weight=1); dlg.grid_columnconfigure(0, weight=1)
+        dlg.grid_rowconfigure(0, weight=1)
+        dlg.grid_columnconfigure(0, weight=1)
         dlg.resizable(True, True)
         cur_val = int(self._edit_vars[fn].get() or 0)
         cvs = tk.Canvas(dlg, highlightthickness=0)
@@ -1024,7 +1182,8 @@ class ItemEditor:
         cvs.configure(yscrollcommand=sb.set)
         cvs.grid(row=0, column=0, sticky='nsew', padx=4, pady=(4,0))
         sb.grid(row=0, column=1, sticky='ns', pady=(4,0))
-        def _mw(e): cvs.yview_scroll(int(-1*(e.delta/120)), "units")
+        def _mw(e):
+            cvs.yview_scroll(int(-1*(e.delta/120)), "units")
         cvs.bind("<Enter>", lambda e: cvs.bind_all("<MouseWheel>", _mw))
         cvs.bind("<Leave>", lambda e: cvs.unbind_all("<MouseWheel>"))
         bf = ttk.Frame(dlg, padding=4)
@@ -1033,14 +1192,18 @@ class ItemEditor:
         ttk.Label(bf, text="点击图标选择，索引 = 游戏精灵索引 - 130", foreground='#666', font=FONT_S).pack(side=tk.LEFT, padx=4)
 
         # 响应式图标网格
-        CELL_W = 46; _last_cols = [0]
+        CELL_W = 46
+        _last_cols = [0]
         def _build_grid(cols=None):
             if cols is None:
                 cols = max(5, (cvs.winfo_width() - 4) // CELL_W)
-                if cols <= 0: cols = 10
-            if cols == _last_cols[0]: return
+                if cols <= 0:
+                    cols = 10
+            if cols == _last_cols[0]:
+                return
             _last_cols[0] = cols
-            for w in grid_frame.winfo_children(): w.destroy()
+            for w in grid_frame.winfo_children():
+                w.destroy()
             photo_refs = []
             for si in range(len(self._mu_sprites)):
                 game_idx = si - 130
@@ -1089,26 +1252,34 @@ class ItemEditor:
 
     def _pick_extra_flags(self, fn):
         """弹窗选择额外标志位"""
-        dlg = tk.Toplevel(self.root); dlg.title("选择额外标志 (位掩码)")
-        dlg.transient(self.root); dlg.grab_set()
+        dlg = tk.Toplevel(self.root)
+        dlg.title("选择额外标志 (位掩码)")
+        dlg.transient(self.root)
+        dlg.grab_set()
         self._center_dialog(dlg, 400, 280)
         cur_val = int(self._edit_vars[fn].get() or 0) & 0xFFFF
-        wrap = ttk.Frame(dlg, padding=8); wrap.pack(fill=tk.BOTH, expand=True)
+        wrap = ttk.Frame(dlg, padding=8)
+        wrap.pack(fill=tk.BOTH, expand=True)
         vars_ = []
         for bit, name, desc in EXTRA_FLAG_BITS:
             v = tk.BooleanVar(value=bool(cur_val & (1 << bit)))
-            row = ttk.Frame(wrap); row.pack(anchor=tk.W, fill=tk.X, pady=1)
+            row = ttk.Frame(wrap)
+            row.pack(anchor=tk.W, fill=tk.X, pady=1)
             ttk.Checkbutton(row, text=f"bit{bit} {name}", variable=v).pack(side=tk.LEFT)
             ttk.Label(row, text=desc, foreground='#999', font=('', 7)).pack(side=tk.LEFT, padx=(8,0))
             vars_.append((bit, v))
-        bf = ttk.Frame(dlg, padding=4); bf.pack(side=tk.BOTTOM, fill=tk.X)
+        bf = ttk.Frame(dlg, padding=4)
+        bf.pack(side=tk.BOTTOM, fill=tk.X)
         def _ok():
             m = 0
             for bit, v in vars_:
-                if v.get(): m |= (1 << bit)
-            if m >= 0x8000: m -= 0x10000
+                if v.get():
+                    m |= (1 << bit)
+            if m >= 0x8000:
+                m -= 0x10000
             self._edit_vars[fn].set(str(m))
-            self._update_extra_flags_label(fn, m); dlg.destroy()
+            self._update_extra_flags_label(fn, m)
+            dlg.destroy()
         ttk.Button(bf, text="全选", command=lambda: [v.set(True) for _, v in vars_]).pack(side=tk.LEFT)
         ttk.Button(bf, text="全清", command=lambda: [v.set(False) for _, v in vars_]).pack(side=tk.LEFT, padx=4)
         ttk.Button(bf, text="取消", command=dlg.destroy).pack(side=tk.RIGHT, padx=2)
@@ -1123,26 +1294,34 @@ class ItemEditor:
 
     def _pick_combat_flags(self, fn):
         """弹窗选择战斗结算效果 (位掩码多选)"""
-        dlg = tk.Toplevel(self.root); dlg.title("选择战斗结算效果 (位掩码)")
-        dlg.transient(self.root); dlg.grab_set()
+        dlg = tk.Toplevel(self.root)
+        dlg.title("选择战斗结算效果 (位掩码)")
+        dlg.transient(self.root)
+        dlg.grab_set()
         self._center_dialog(dlg, 420, 210)
         cur_val = int(self._edit_vars[fn].get() or 0) & 0xFFFF
-        wrap = ttk.Frame(dlg, padding=8); wrap.pack(fill=tk.BOTH, expand=True)
+        wrap = ttk.Frame(dlg, padding=8)
+        wrap.pack(fill=tk.BOTH, expand=True)
         vars_ = []
         for bit, name, desc in COMBAT_FLAG_BITS:
             v = tk.BooleanVar(value=bool(cur_val & bit))
-            row = ttk.Frame(wrap); row.pack(anchor=tk.W, fill=tk.X, pady=1)
+            row = ttk.Frame(wrap)
+            row.pack(anchor=tk.W, fill=tk.X, pady=1)
             ttk.Checkbutton(row, text=name, variable=v).pack(side=tk.LEFT)
             ttk.Label(row, text=desc, foreground='#999', font=('', 7)).pack(side=tk.LEFT, padx=(8, 0))
             vars_.append((bit, v))
-        bf = ttk.Frame(dlg, padding=4); bf.pack(side=tk.BOTTOM, fill=tk.X)
+        bf = ttk.Frame(dlg, padding=4)
+        bf.pack(side=tk.BOTTOM, fill=tk.X)
         def _ok():
             m = 0
             for bit, v in vars_:
-                if v.get(): m |= bit
-            if m >= 0x8000: m -= 0x10000
+                if v.get():
+                    m |= bit
+            if m >= 0x8000:
+                m -= 0x10000
             self._edit_vars[fn].set(str(m))
-            self._update_combat_flags_label(fn, m); dlg.destroy()
+            self._update_combat_flags_label(fn, m)
+            dlg.destroy()
         ttk.Button(bf, text="全选", command=lambda: [v.set(True) for _, v in vars_]).pack(side=tk.LEFT)
         ttk.Button(bf, text="全清", command=lambda: [v.set(False) for _, v in vars_]).pack(side=tk.LEFT, padx=4)
         ttk.Button(bf, text="取消", command=dlg.destroy).pack(side=tk.RIGHT, padx=2)
@@ -1157,7 +1336,8 @@ class ItemEditor:
 
     def _pick_use_right(self, fn):
         """弹窗选择使用权限 (根据当前页面号动态切换选项)"""
-        if not self.records: return
+        if not self.records:
+            return
         page = self.records[self._editing_idx].get('tab_code', 0)
         opts = USE_RIGHT_OPTIONS.get(page, [])
         # 仅有一个值为0的选项时，直接设为0
@@ -1165,23 +1345,30 @@ class ItemEditor:
             self._edit_vars[fn].set("0")
             self._edit_extras[fn].config(text=_use_right_label(0, page))
             return
-        dlg = tk.Toplevel(self.root); dlg.title("选择使用权限 (多选位掩码)")
-        dlg.transient(self.root); dlg.grab_set()
+        dlg = tk.Toplevel(self.root)
+        dlg.title("选择使用权限 (多选位掩码)")
+        dlg.transient(self.root)
+        dlg.grab_set()
         self._center_dialog(dlg, 320, 60 + max(len(opts), 2) * 28)
         cur_val = int(self._edit_vars[fn].get() or 0) & 0xFFFF
-        wrap = ttk.Frame(dlg, padding=8); wrap.pack(fill=tk.BOTH, expand=True)
+        wrap = ttk.Frame(dlg, padding=8)
+        wrap.pack(fill=tk.BOTH, expand=True)
         vars_ = []
         for bit, name in opts:
             v = tk.BooleanVar(value=bool(cur_val & bit))
-            row = ttk.Frame(wrap); row.pack(anchor=tk.W, fill=tk.X, pady=1)
+            row = ttk.Frame(wrap)
+            row.pack(anchor=tk.W, fill=tk.X, pady=1)
             ttk.Checkbutton(row, text=f"{bit}-{name}" if bit != 0 else name, variable=v).pack(side=tk.LEFT)
             vars_.append((bit, v))
-        bf = ttk.Frame(dlg, padding=4); bf.pack(side=tk.BOTTOM, fill=tk.X)
+        bf = ttk.Frame(dlg, padding=4)
+        bf.pack(side=tk.BOTTOM, fill=tk.X)
         def _ok():
             m = 0
             for bit, v in vars_:
-                if v.get(): m += bit
-            if m >= 0x8000: m -= 0x10000
+                if v.get():
+                    m += bit
+            if m >= 0x8000:
+                m -= 0x10000
             self._edit_vars[fn].set(str(m))
             self._edit_extras[fn].config(text=_use_right_label(m, page))
             dlg.destroy()
@@ -1194,7 +1381,8 @@ class ItemEditor:
     def _update_preview_status(self, si, sel):
         """更新预览区中单个状态列 (含图标, 每行最多3个)"""
         frame = self._preview_statuses[si]
-        for w in frame.winfo_children(): w.destroy()
+        for w in frame.winfo_children():
+            w.destroy()
         COLS = 3
         for i, (idx, nm) in enumerate(sel):
             row, col = divmod(i, COLS)
@@ -1212,16 +1400,20 @@ class ItemEditor:
     def _pick_status(self, fn):
         is_cause = fn.startswith('cause_')
         title = "选择导致状态 (位掩码)" if is_cause else "选择解除状态 (位掩码)"
-        dlg = tk.Toplevel(self.root); dlg.title(title)
-        dlg.transient(self.root); dlg.grab_set()
+        dlg = tk.Toplevel(self.root)
+        dlg.title(title)
+        dlg.transient(self.root)
+        dlg.grab_set()
         self._center_dialog(dlg, 360, 520)
         base = 0 if fn.endswith('_mask1') else 16
         cur_mask = int(self._edit_vars[fn].get() or 0) & 0xFFFF
         vars_ = []
-        wrap = ttk.Frame(dlg, padding=8); wrap.pack(fill=tk.BOTH, expand=True)
+        wrap = ttk.Frame(dlg, padding=8)
+        wrap.pack(fill=tk.BOTH, expand=True)
         for i in range(16):
             idx = base + i
-            if idx >= len(STATUS_NAMES): break
+            if idx >= len(STATUS_NAMES):
+                break
             row_frm = ttk.Frame(wrap)
             row_frm.pack(anchor=tk.W, fill=tk.X, pady=1)
             photo = self._get_icon_photo(STATUS_ICON_BASE + idx - 130, (20,20))
@@ -1231,15 +1423,19 @@ class ItemEditor:
             ttk.Checkbutton(row_frm, text=f"{idx}. {STATUS_NAMES[idx]}",
                              variable=v).pack(side=tk.LEFT)
             vars_.append(v)
-        bf = ttk.Frame(dlg); bf.pack(fill=tk.X, padx=8, pady=8)
+        bf = ttk.Frame(dlg)
+        bf.pack(fill=tk.X, padx=8, pady=8)
         def _ok():
             m = 0
             for i, v in enumerate(vars_):
-                if v.get(): m |= (1 << i)
+                if v.get():
+                    m |= (1 << i)
             # 转回有符号 int16
-            if m >= 0x8000: m -= 0x10000
+            if m >= 0x8000:
+                m -= 0x10000
             self._edit_vars[fn].set(str(m))
-            self._update_status_label(fn, m & 0xFFFF); dlg.destroy()
+            self._update_status_label(fn, m & 0xFFFF)
+            dlg.destroy()
         ttk.Button(bf, text="全选", command=lambda: [v.set(True) for v in vars_]).pack(side=tk.LEFT)
         ttk.Button(bf, text="全清", command=lambda: [v.set(False) for v in vars_]).pack(side=tk.LEFT, padx=4)
         ttk.Button(bf, text="取消", command=dlg.destroy).pack(side=tk.RIGHT, padx=2)
@@ -1248,29 +1444,41 @@ class ItemEditor:
 
     # ----------- 弹窗: TKT -----------
     def _pick_tkt(self, fn):
-        dlg = tk.Toplevel(self.root); dlg.title("选择 TKT 文本")
-        dlg.transient(self.root); dlg.grab_set()
+        dlg = tk.Toplevel(self.root)
+        dlg.title("选择 TKT 文本")
+        dlg.transient(self.root)
+        dlg.grab_set()
         self._center_dialog(dlg, 520, 550)
         cur_val = int(self._edit_vars[fn].get() or 0)  # 当前选中值
-        sf = ttk.Frame(dlg, padding=5); sf.pack(fill=tk.X)
+        sf = ttk.Frame(dlg, padding=5)
+        sf.pack(fill=tk.X)
         ttk.Label(sf, text="搜索:").pack(side=tk.LEFT)
         qv = tk.StringVar()
         ttk.Entry(sf, textvariable=qv, width=30, font=FONT).pack(side=tk.LEFT, padx=5)
-        lf2 = ttk.Frame(dlg); lf2.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        lf2 = ttk.Frame(dlg)
+        lf2.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
         tree = ttk.Treeview(lf2, columns=('id','text'), show='headings', selectmode='browse', height=22)
-        tree.heading('id', text='ID'); tree.heading('text', text='文本')
-        tree.column('id', width=60, anchor='center'); tree.column('text', width=420, anchor='w')
+        tree.heading('id', text='ID')
+        tree.heading('text', text='文本')
+        tree.column('id', width=60, anchor='center')
+        tree.column('text', width=420, anchor='w')
         vsb = ttk.Scrollbar(lf2, orient=tk.VERTICAL, command=tree.yview)
-        tree.configure(yscrollcommand=vsb.set); tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        tree.configure(yscrollcommand=vsb.set)
+        tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         vsb.pack(side=tk.RIGHT, fill=tk.Y)
         _tkt_items = sorted(self.tkt.items(), key=lambda x: x[0])
         def _refresh(q=""):
-            tree.delete(*tree.get_children()); ql = q.strip().lower()
+            tree.delete(*tree.get_children())
+            ql = q.strip().lower()
             for eid, txt in _tkt_items:
-                if ql and ql not in txt.lower(): continue
+                if ql and ql not in txt.lower():
+                    continue
                 iid = tree.insert('', 'end', values=(eid, txt[:80]))
-                if eid == cur_val: tree.selection_set(iid); tree.see(iid)
-        _refresh(); qv.trace_add('write', lambda *a: _refresh(qv.get()))
+                if eid == cur_val:
+                    tree.selection_set(iid)
+                    tree.see(iid)
+        _refresh()
+        qv.trace_add('write', lambda *a: _refresh(qv.get()))
         def _sel():
             sel = tree.selection()
             if sel:
@@ -1287,39 +1495,53 @@ class ItemEditor:
                         self.preview_desc.delete('1.0', 'end')
                         self.preview_desc.insert('1.0', txt if txt else "(无 / TKT 未提供)")
                         self.preview_desc.configure(state='disabled')
-                except Exception: pass
+                except Exception:
+                    pass
                 dlg.destroy()
         tree.bind('<Double-1>', lambda e: _sel())
-        bf = ttk.Frame(dlg, padding=5); bf.pack(fill=tk.X)
+        bf = ttk.Frame(dlg, padding=5)
+        bf.pack(fill=tk.X)
         ttk.Button(bf, text="取消", command=dlg.destroy).pack(side=tk.RIGHT, padx=2)
         ttk.Button(bf, text="确定", command=_sel).pack(side=tk.RIGHT, padx=2)
         dlg.wait_window()
 
     # ----------- 弹窗: 技能 -----------
     def _pick_skill(self, fn):
-        dlg = tk.Toplevel(self.root); dlg.title("选择技能")
-        dlg.transient(self.root); dlg.grab_set()
+        dlg = tk.Toplevel(self.root)
+        dlg.title("选择技能")
+        dlg.transient(self.root)
+        dlg.grab_set()
         self._center_dialog(dlg, 460, 550)
         cur_val = int(self._edit_vars[fn].get() or 0)  # 当前选中值
-        sf = ttk.Frame(dlg, padding=5); sf.pack(fill=tk.X)
+        sf = ttk.Frame(dlg, padding=5)
+        sf.pack(fill=tk.X)
         ttk.Label(sf, text="搜索:").pack(side=tk.LEFT)
         qv = tk.StringVar()
         ttk.Entry(sf, textvariable=qv, width=30, font=FONT).pack(side=tk.LEFT, padx=5)
-        lf2 = ttk.Frame(dlg); lf2.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        lf2 = ttk.Frame(dlg)
+        lf2.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
         tree = ttk.Treeview(lf2, columns=('idx','name'), show='headings', selectmode='browse', height=22)
-        tree.heading('idx', text='索引'); tree.heading('name', text='技能名称')
-        tree.column('idx', width=50, anchor='center'); tree.column('name', width=380, anchor='w')
+        tree.heading('idx', text='索引')
+        tree.heading('name', text='技能名称')
+        tree.column('idx', width=50, anchor='center')
+        tree.column('name', width=380, anchor='w')
         vsb = ttk.Scrollbar(lf2, orient=tk.VERTICAL, command=tree.yview)
-        tree.configure(yscrollcommand=vsb.set); tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        tree.configure(yscrollcommand=vsb.set)
+        tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         vsb.pack(side=tk.RIGHT, fill=tk.Y)
         _skill_items = sorted(self.skill_names.items(), key=lambda x: x[0])
         def _refresh(q=""):
-            tree.delete(*tree.get_children()); ql = q.strip().lower()
+            tree.delete(*tree.get_children())
+            ql = q.strip().lower()
             for idx, nm in _skill_items:
-                if ql and ql not in nm.lower(): continue
+                if ql and ql not in nm.lower():
+                    continue
                 iid = tree.insert('', 'end', values=(idx, nm[:60]))
-                if idx == cur_val: tree.selection_set(iid); tree.see(iid)
-        _refresh(); qv.trace_add('write', lambda *a: _refresh(qv.get()))
+                if idx == cur_val:
+                    tree.selection_set(iid)
+                    tree.see(iid)
+        _refresh()
+        qv.trace_add('write', lambda *a: _refresh(qv.get()))
         def _sel():
             sel = tree.selection()
             if sel:
@@ -1332,14 +1554,16 @@ class ItemEditor:
                     self._preview_skills[skill_keys.index(fn)].config(text=str(v[1]))
                 dlg.destroy()
         tree.bind('<Double-1>', lambda e: _sel())
-        bf = ttk.Frame(dlg, padding=5); bf.pack(fill=tk.X)
+        bf = ttk.Frame(dlg, padding=5)
+        bf.pack(fill=tk.X)
         ttk.Button(bf, text="取消", command=dlg.destroy).pack(side=tk.RIGHT, padx=2)
         ttk.Button(bf, text="确定", command=_sel).pack(side=tk.RIGHT, padx=2)
         dlg.wait_window()
 
     # ----------- 编辑应用 -----------
     def _apply_edit(self):
-        if not hasattr(self, '_editing_idx'): return
+        if not hasattr(self, '_editing_idx'):
+            return
         rec = self.records[self._editing_idx]
         for fn, fo, fl, ft, fw, cmt in ALL_FIELDS:
             try:
@@ -1348,15 +1572,20 @@ class ItemEditor:
                     rec[fn] = int(sv.split('-', 1)[0]) if '-' in sv else int(sv)
                 else:
                     v = int(self._edit_vars[fn].get())
-                    if v > 32767: v = 32767
-                    if v < -32768: v = -32768
+                    if v > 32767:
+                        v = 32767
+                    if v < -32768:
+                        v = -32768
                     rec[fn] = v
             except ValueError:
                 rec[fn] = 0
-        self._dirty = True; self._apply_filter()
+        self._dirty = True
+        self._apply_filter()
         for child in self.tree.get_children():
             if int(self.tree.item(child)['values'][0]) == rec['index']:
-                self.tree.selection_set(child); self.tree.see(child); break
+                self.tree.selection_set(child)
+                self.tree.see(child)
+                break
         self.status_var.set(f"记录 #{rec['index']} 已修改 (内存, 未保存)")
 
     def _reset_edit(self):
@@ -1366,7 +1595,8 @@ class ItemEditor:
     def _clear_current(self):
         """把当前选中记录清为空槽模板 (恢复 #560-599 原始值)."""
         if not hasattr(self, '_editing_idx'):
-            messagebox.showinfo("提示", "请先选择一条记录"); return
+            messagebox.showinfo("提示", "请先选择一条记录")
+            return
         if not messagebox.askyesno("确认清空",
             f"将记录 #{self._editing_idx} 清为空槽模板 (item_id=0, name_id=0, desc_id=600).\n确定?"):
             return
@@ -1375,22 +1605,27 @@ class ItemEditor:
             rec[fn] = 0
         rec['desc_id'] = 600  # 空槽模板的默认 desc_id
         self._dirty = True
-        self._apply_filter(); self._populate_edit(rec)
+        self._apply_filter()
+        self._populate_edit(rec)
         self.status_var.set(f"记录 #{self._editing_idx} 已清空")
 
     def _copy_record(self):
         if not hasattr(self, '_editing_idx'):
-            messagebox.showinfo("提示", "请先选择一条记录"); return
+            messagebox.showinfo("提示", "请先选择一条记录")
+            return
         src = self.records[self._editing_idx]
         for i, rec in enumerate(self.records):
             if is_pure_empty_slot(rec):
                 for fn, fo, fl, ft, fw, cmt in ALL_FIELDS:
                     rec[fn] = src[fn]
                 rec['index'] = i
-                self._dirty = True; self._apply_filter()
+                self._dirty = True
+                self._apply_filter()
                 for child in self.tree.get_children():
                     if int(self.tree.item(child)['values'][0]) == i:
-                        self.tree.selection_set(child); self.tree.see(child); break
+                        self.tree.selection_set(child)
+                        self.tree.see(child)
+                        break
                 self.status_var.set(f"已复制到空槽 #{i}")
                 return
         messagebox.showwarning("已满", "无真·空槽 (id=0 的记录) 可复制到.\n可先使用『清空此记录』释放一个槽位.")
@@ -1400,11 +1635,13 @@ class ItemEditor:
         游戏硬编码限制 600 条, 无法扩容; 但 #560-#599 40 条空槽可用.
         """
         if not self.records:
-            messagebox.showinfo("提示", "请先加载 TKItem.dat"); return
+            messagebox.showinfo("提示", "请先加载 TKItem.dat")
+            return
         target = None
         for rec in self.records:
             if is_pure_empty_slot(rec):
-                target = rec; break
+                target = rec
+                break
         if target is None:
             messagebox.showwarning("已满",
                 "600 条记录上限已满 (sub_45343C 硬编码 38400 字节)\n"
@@ -1428,7 +1665,9 @@ class ItemEditor:
         # 选中新记录
         for child in self.tree.get_children():
             if int(self.tree.item(child)['values'][0]) == target['index']:
-                self.tree.selection_set(child); self.tree.see(child); break
+                self.tree.selection_set(child)
+                self.tree.see(child)
+                break
         self._populate_edit(target)
         messagebox.showinfo("新建物品",
             f"已在空槽 #{target['index']} 创建新物品\n"
@@ -1440,26 +1679,33 @@ class ItemEditor:
     # ----------- 保存/导出 -----------
     def _save(self):
         if not self.item_path or not self.records:
-            messagebox.showinfo("提示", "请先加载数据"); return
+            messagebox.showinfo("提示", "请先加载数据")
+            return
         if not messagebox.askyesno("确认保存",
             f"保存 {len(self.records)} 条到:\n{self.item_path}\n\n原文件将被覆盖 (生成 .bak)."):
             return
         try:
             with open(self.item_path, 'rb') as s:
-                with open(self.item_path + ".bak", 'wb') as d: d.write(s.read())
-        except: pass
+                with open(self.item_path + ".bak", 'wb') as d:
+                    d.write(s.read())
+        except:
+            pass
         try:
-            self.status_var.set("正在保存…"); self.root.update()
-            save_items(self.item_path, self.records); self._dirty = False
+            self.status_var.set("正在保存…")
+            self.root.update()
+            save_items(self.item_path, self.records)
+            self._dirty = False
             self.status_var.set(f"已保存 → {self.item_path}")
             messagebox.showinfo("保存成功", f"已保存\n备份: {self.item_path}.bak")
         except Exception as e:
             messagebox.showerror("保存失败", str(e))
 
     def _export_csv(self):
-        if not self.records: return
+        if not self.records:
+            return
         p = filedialog.asksaveasfilename(defaultextension=".csv", filetypes=[("CSV", "*.csv")])
-        if not p: return
+        if not p:
+            return
         with open(p, 'w', encoding='utf-8-sig') as f:
             hdr = ['索引'] + [fl for _, _, fl, _, _, _ in ALL_FIELDS]
             f.write(','.join(hdr) + '\n')
@@ -1474,35 +1720,45 @@ class ItemEditor:
         lines.append("【基础属性 (Maker UI 可见字段 22 条)】")
         for fn, fo, fl, ft, fw, cmt in GRID_FIELDS:
             lines.append(f"  [{fo:02d}] {fl:<12s}  {cmt}")
-        lines.append(""); lines.append("【技能 (Maker UI 4 字段)】")
+        lines.append("")
+        lines.append("【技能 (Maker UI 4 字段)】")
         for fn, fo, fl, cmt in SKILL_FIELDS:
             lines.append(f"  [{fo:02d}] {fl:<12s}  {cmt}")
-        lines.append(""); lines.append("【导致状态 (Maker UI; 战斗时读取角色 a2[67]/a2[68])】")
+        lines.append("")
+        lines.append("【导致状态 (Maker UI; 战斗时读取角色 a2[67]/a2[68])】")
         for fn, fo, fl, cmt in CAUSE_MASK_FIELDS:
             lines.append(f"  [{fo:02d}] {fl:<12s}  {cmt}")
-        lines.append(""); lines.append("【解除状态 (sub_41E40C 使用物品时清除)】")
+        lines.append("")
+        lines.append("【解除状态 (sub_41E40C 使用物品时清除)】")
         for fn, fo, fl, cmt in CURE_MASK_FIELDS:
             lines.append(f"  [{fo:02d}] {fl:<12s}  {cmt}")
-        lines.append(""); lines.append("【隐含数据 (Maker UI 未显示, 但 TKItem 记录占用)】")
+        lines.append("")
+        lines.append("【隐含数据 (Maker UI 未显示, 但 TKItem 记录占用)】")
         for fn, fo, fl, ft, fw, cmt in HIDDEN_FIELDS:
             lines.append(f"  [{fo:02d}] {fl:<12s}  {cmt}")
-        lines.append(""); lines.append("【使用权限 (equip_type) 实测值】")
+        lines.append("")
+        lines.append("【使用权限 (equip_type) 实测值】")
         for page, opts in sorted(USE_RIGHT_OPTIONS.items()):
             lines.append(f"  页面{page}({PAGE_NAMES.get(page,'?')}): {opts}")
-        lines.append(""); lines.append("【记录数硬限制】")
+        lines.append("")
+        lines.append("【记录数硬限制】")
         lines.append("  600 条 x 64 字节 = 38400 字节 (sub_45343C 固定加载量)")
         lines.append("  sub_42F8D4 搜索循环 `while (v3 < 600)` 是硬编码")
         lines.append("  #560-#599 (40条) 为真空槽, 可用于新增物品 (item_id=0, name_id=0)")
 
-        dlg = tk.Toplevel(self.root); dlg.title("字段来源 v3.0 (逆向+Maker 实证)")
-        dlg.geometry("820x580"); dlg.transient(self.root)
+        dlg = tk.Toplevel(self.root)
+        dlg.title("字段来源 v3.0 (逆向+Maker 实证)")
+        dlg.geometry("820x580")
+        dlg.transient(self.root)
         tx = tk.Text(dlg, font=('Consolas', 9), wrap='none')
         sb1 = ttk.Scrollbar(dlg, orient=tk.VERTICAL, command=tx.yview)
         sb2 = ttk.Scrollbar(dlg, orient=tk.HORIZONTAL, command=tx.xview)
         tx.configure(yscrollcommand=sb1.set, xscrollcommand=sb2.set)
-        sb1.pack(side=tk.RIGHT, fill=tk.Y); sb2.pack(side=tk.BOTTOM, fill=tk.X)
+        sb1.pack(side=tk.RIGHT, fill=tk.Y)
+        sb2.pack(side=tk.BOTTOM, fill=tk.X)
         tx.pack(fill=tk.BOTH, expand=True)
-        tx.insert('1.0', '\n'.join(lines)); tx.config(state='disabled')
+        tx.insert('1.0', '\n'.join(lines))
+        tx.config(state='disabled')
 
     def _show_about(self):
         messagebox.showinfo("关于",
@@ -1521,7 +1777,10 @@ class ItemEditor:
 
 
 def main():
-    root = tk.Tk(); ItemEditor(root); root.mainloop()
+    root = tk.Tk()
+    ItemEditor(root)
+    root.mainloop()
 
 if __name__ == '__main__':
     main()
+

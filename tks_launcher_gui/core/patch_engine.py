@@ -1,8 +1,8 @@
 """补丁应用引擎 — 从 tks_launcher.py 提取 & 重组"""
-import os
 import json
+import os
 import struct
-from typing import List, Dict, Optional
+from typing import Dict, List, Optional
 from .memory import (
     i32b, i16b, b2i32, b2u16, bhex,
     read_pm, write_pm, vp_ex,
@@ -618,7 +618,8 @@ def apply_patch_imm32_by_value(defn: PatchDef, code_buf: bytearray, code_start_a
     hits = value_scan(bytes(code_buf), ov)
     log(f"    扫描值 {ov} (0x{ov:X}) -> 匹配 {len(hits)} 处")
     log(f"    替换为 {nv} (0x{nv:X})")
-    nle = i32b(nv); ptd = 0
+    nle = i32b(nv)
+    ptd = 0
     for off in hits:
         # 安全检查: 跳过 call/jmp 指令的 rel32 偶然匹配, 避免破坏 hook 指令
         if off >= 1 and code_buf[off - 1] in (0xE8, 0xE9):
@@ -655,11 +656,13 @@ def apply_patch_imm32_by_pattern(defn: PatchDef, code_buf: bytearray, code_start
     pat, wc = parse_pattern(defn.pattern)
     hits = pattern_scan(bytes(code_buf), pat, wc)
     log(f"    模式: [{defn.pattern}] -> 匹配 {len(hits)} 处")
-    nv = resolve_var(defn.new_value_expr, variables, log_func=log); ov = defn.expect_value
+    nv = resolve_var(defn.new_value_expr, variables, log_func=log)
+    ov = defn.expect_value
     if nv is None:
         log(f"    -> 变量未定义, 跳过")
         return True
-    nle = i32b(nv); ptd = 0
+    nle = i32b(nv)
+    ptd = 0
     for off in hits:
         io = off + defn.value_offset
         if io + 4 <= len(code_buf):
@@ -1233,36 +1236,50 @@ def patch_4c33fc(cpid: int, base: int, log_func=None):
     log("\n--- [补丁十二] sub_4C33FC 入口检查修补 ---")
     hp = _OpenProcess(PROCESS_VM_READ | PROCESS_VM_WRITE | PROCESS_VM_OPERATION, False, cpid)
     if not hp:
-        log("  [ERROR] OpenProcess 失败"); return
+        log("  [ERROR] OpenProcess 失败")
+        return
 
     av = base + sr
     buf, nr = read_pm(hp, av, 64)
     if nr < 32:
-        log(f"  [ERROR] 读取 sub_4C33FC@0x{av:08X} 失败"); _CloseHandle(hp); return
+        log(f"  [ERROR] 读取 sub_4C33FC@0x{av:08X} 失败")
+        _CloseHandle(hp)
+        return
 
     co, cmr = -1, 0
     for i in range(min(nr, 32) - 4):
         if buf[i]==0x80 and (buf[i+1]&0xF8)==0x78 and buf[i+2]==0x0C and buf[i+3]==0x00:
-            co, cmr = i, buf[i+1]; break
+            co, cmr = i, buf[i+1]
+            break
 
     if co < 0:
-        log("  [WARN] 未找到 cmp [reg+0Ch],0 模式, 跳过"); _CloseHandle(hp); return
+        log("  [WARN] 未找到 cmp [reg+0Ch],0 模式, 跳过")
+        _CloseHandle(hp)
+        return
 
     bo, bo2 = buf[co+4], buf[co+5]
     ba = av + co + 4
 
     if bo == 0x74:
-        pb = bytes([0xEB, bo2]); pd = "je short -> jmp short"
+        pb = bytes([0xEB, bo2])
+        pd = "je short -> jmp short"
     elif bo == 0x75:
-        pb = bytes([0x90, 0x90]); pd = "jne short -> NOP NOP"
+        pb = bytes([0x90, 0x90])
+        pd = "jne short -> NOP NOP"
     elif bo == 0x0F and bo2 == 0x84:
         imm = b2i32(buf, co+6)
-        pb = bytearray(6); pb[0]=0xE9; pb[1:5]=i32b(imm+1); pb[5]=0x90
+        pb = bytearray(6)
+        pb[0]=0xE9
+        pb[1:5]=i32b(imm+1)
+        pb[5]=0x90
         pd = "je near -> jmp near + NOP"
     elif bo == 0x0F and bo2 == 0x85:
-        pb = bytes([0x90]*6); pd = "jne near -> NOP x 6"
+        pb = bytes([0x90]*6)
+        pd = "jne near -> NOP x 6"
     else:
-        log(f"  [WARN] 未识别 je/jne, 跳过"); _CloseHandle(hp); return
+        log(f"  [WARN] 未识别 je/jne, 跳过")
+        _CloseHandle(hp)
+        return
 
     op = vp_ex(hp, ba, len(pb), PAGE_EXECUTE_READWRITE)
     nw = write_pm(hp, ba, pb)
@@ -1283,25 +1300,33 @@ def patch_41c120(cpid: int, base: int, log_func=None):
     log("\n--- [补丁十三] sub_41C120 stream error 检查修补 ---")
     hp = _OpenProcess(PROCESS_VM_READ | PROCESS_VM_WRITE | PROCESS_VM_OPERATION, False, cpid)
     if not hp:
-        log("  [ERROR] OpenProcess 失败"); return
+        log("  [ERROR] OpenProcess 失败")
+        return
 
     av = base + sr
     buf, nr = read_pm(hp, av, 64)
     if nr < 16:
-        log(f"  [ERROR] 读取 sub_41C120@0x{av:08X} 失败"); _CloseHandle(hp); return
+        log(f"  [ERROR] 读取 sub_41C120@0x{av:08X} 失败")
+        _CloseHandle(hp)
+        return
 
     lo = -1
     for i in range(min(nr, 32) - 5):
         if buf[i]==0x8B and buf[i+1]==0x4A and buf[i+2]==0x08 and buf[i+3]==0x85 and buf[i+4]==0xC9:
-            lo = i; break
+            lo = i
+            break
 
     if lo < 0:
-        log("  [WARN] 未找到模式, 跳过"); _CloseHandle(hp); return
+        log("  [WARN] 未找到模式, 跳过")
+        _CloseHandle(hp)
+        return
 
     if (lo+13>nr or buf[lo+5]!=0x0F or buf[lo+6]!=0x94 or buf[lo+7]!=0xC0
         or buf[lo+8]!=0x83 or buf[lo+9]!=0xE0 or buf[lo+10]!=0x01
         or buf[lo+11]!=0x84 or buf[lo+12]!=0xC0):
-        log("  [WARN] sete/and/test 后续不匹配, 跳过"); _CloseHandle(hp); return
+        log("  [WARN] sete/and/test 后续不匹配, 跳过")
+        _CloseHandle(hp)
+        return
 
     pb = bytes([0xC7,0x42,0x08,0x00,0x00,0x00,0x00, 0xB0,0x01, 0x84,0xC0, 0x90,0x90])
     pa = av + lo
@@ -1321,14 +1346,17 @@ def patch_41c120(cpid: int, base: int, log_func=None):
 def patch_archive_portrait(cpid: int, base: int, cave_addr: int, warpc_base: int, log_func=None):
     """独立于 cave_hook 系统: 自开句柄, 写洞穴代码 + hooks"""
     log = log_func or (lambda x: None)
-    sr = 0x1AB94; ssz = 0x500
+    sr = 0x1AB94
+    ssz = 0x500
     log("\n--- [补丁十四] 存档界面队伍头像 hook ---")
     if cave_addr == 0:
-        log("  [WARN] ArchivePortraitCave 未分配, 跳过"); return
+        log("  [WARN] ArchivePortraitCave 未分配, 跳过")
+        return
 
     hp = _OpenProcess(PROCESS_VM_READ | PROCESS_VM_WRITE | PROCESS_VM_OPERATION, False, cpid)
     if not hp:
-        log("  [ERROR] OpenProcess 失败"); return
+        log("  [ERROR] OpenProcess 失败")
+        return
 
     # Step 1: 写入洞穴代码
     cd = build_cave_template("archive_portrait", warpc_base, log_func=log)
@@ -1345,9 +1373,12 @@ def patch_archive_portrait(cpid: int, base: int, cave_addr: int, warpc_base: int
     ptd = 0
     for i in range(nr - 5):
         if buf[i]==0x66 and buf[i+1]==0x05 and buf[i+2]==0xD3 and buf[i+3]==0x00 and buf[i+4]==0x50:
-            hrva = sr + i; ha = base + hrva
+            hrva = sr + i
+            ha = base + hrva
             co = (cave_addr - (ha + 5)) & 0xFFFFFFFF
-            cd_hook = bytearray(5); cd_hook[0]=0xE8; cd_hook[1:5]=i32b(co)
+            cd_hook = bytearray(5)
+            cd_hook[0]=0xE8
+            cd_hook[1:5]=i32b(co)
             op = vp_ex(hp, ha, 5, PAGE_EXECUTE_READWRITE)
             nw = write_pm(hp, ha, bytes(cd_hook))
             vp_ex(hp, ha, 5, op)
@@ -1364,11 +1395,13 @@ def patch_archive_portrait(cpid: int, base: int, cave_addr: int, warpc_base: int
 
 def patch_gold_display(cpid: int, base: int, log_func=None):
     log = log_func or (lambda x: None)
-    sr = 0x1AB94; ssz = 0x600
+    sr = 0x1AB94
+    ssz = 0x600
     log("\n--- [补丁十七] 存档界面金钱显示修复 (signed->unsigned) ---")
     hp = _OpenProcess(PROCESS_VM_READ | PROCESS_VM_WRITE | PROCESS_VM_OPERATION, False, cpid)
     if not hp:
-        log("  [ERROR] OpenProcess 失败"); return
+        log("  [ERROR] OpenProcess 失败")
+        return
 
     av = base + sr
     buf, nr = read_pm(hp, av, ssz)
@@ -1553,9 +1586,12 @@ def hook_save_load_portrait(cpid: int, base_addr: int, code_buf: bytearray,
         # 构建 cave 机器码
         cave = bytearray()
         cave.append(0x60)                                    # pushad
-        cave.append(0xBE); cave += struct.pack('<I', table_addr)    # mov esi, TABLE_ADDR
-        cave.append(0xBF); cave += struct.pack('<I', warpc_base)   # mov edi, WARPC_BASE
-        cave.append(0xB9); cave += struct.pack('<I', char_count)   # mov ecx, CHAR_COUNT
+        cave.append(0xBE)
+        cave += struct.pack('<I', table_addr)    # mov esi, TABLE_ADDR
+        cave.append(0xBF)
+        cave += struct.pack('<I', warpc_base)   # mov edi, WARPC_BASE
+        cave.append(0xB9)
+        cave += struct.pack('<I', char_count)   # mov ecx, CHAR_COUNT
         # .loop:
         cave += bytes([0x8B, 0x06])                          # mov eax, [esi]
         cave += bytes([0x85, 0xC0])                          # test eax, eax
@@ -1571,7 +1607,8 @@ def hook_save_load_portrait(cpid: int, base_addr: int, code_buf: bytearray,
         jmp_target = hook_abs + 5
         jmp_source = this_cave_addr + len(cave) + 5          # E9 指令之后的地址
         jmp_rel = (jmp_target - jmp_source) & 0xFFFFFFFF
-        cave.append(0xE9); cave += struct.pack('<I', jmp_rel) # jmp back
+        cave.append(0xE9)
+        cave += struct.pack('<I', jmp_rel) # jmp back
 
         log(f"  Cave[{hi}]: 0x{this_cave_addr:08X} ({len(cave)} bytes)")
 

@@ -1,9 +1,10 @@
 """补丁勾选列表 — 分必选/可选两组, 各自独立滚动, 从 PatchDef 列表动态生成 QCheckBox"""
-from PySide6.QtWidgets import (QWidget, QVBoxLayout, QCheckBox,
-                                QScrollArea, QLabel, QSplitter)
 from PySide6.QtCore import Qt
-from editor_utils.dock_components import DockHeader
+from PySide6.QtWidgets import (
+    QCheckBox, QLabel, QScrollArea, QSplitter, QVBoxLayout, QWidget,
+)
 from core.config_loader import PatchDef
+from editor_utils.dock_components import DockHeader
 
 # 可选补丁区固定默认高度（不再按条数动态计算）；MOD 详情预览区同步使用此值
 OPTIONAL_PATCH_DEFAULT_HEIGHT = 320

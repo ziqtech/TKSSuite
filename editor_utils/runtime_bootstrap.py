@@ -13,9 +13,9 @@ runtime_bootstrap — 运行时引导加载器
   - Nuitka 编译环境: 从 .lib 归档解压到 %LOCALAPPDATA%/TKSEditors/runtime/
   - 增量更新: 通过 mtime 对比, 仅解压有变化的归档
 """
-import sys
-import os
 import json
+import os
+import sys
 import zipfile
 
 

@@ -13,8 +13,8 @@ app_init — 编辑器应用初始化辅助模块
   - Nuitka --standalone: 独立目录
   - PyInstaller (frozen): 后向兼容
 """
-import sys
 import os
+import sys
 from pathlib import Path
 from PySide6.QtCore import QTranslator
 from PySide6.QtGui import QIcon

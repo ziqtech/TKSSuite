@@ -1,29 +1,28 @@
 """主窗口 — Godot 风格三面板布局 + 主题切换 + 启动逻辑"""
 import os
-import sys
-from PySide6.QtWidgets import (
-    QApplication, QMainWindow, QToolBar, QSplitter, QPushButton,
-    QStatusBar, QLabel, QFileDialog, QMessageBox, QWidget, QVBoxLayout,
-    QRadioButton, QButtonGroup,
-)
+
 from PySide6.QtCore import Qt, QSize
 from PySide6.QtGui import QIcon
+from PySide6.QtWidgets import (
+    QApplication, QButtonGroup, QFileDialog, QLabel, QMainWindow,
+    QMessageBox, QPushButton, QRadioButton, QSplitter, QStatusBar,
+    QToolBar, QVBoxLayout, QWidget,
+)
 
+from core.config_loader import PatchDef, load_config
+from editor_utils.dock_components import DockHeader
 from editor_utils.theme_manager import ThemeManager
 from editor_utils.window_theme import apply_godot_theme
-
-from core.config_loader import load_config, PatchDef
-from ui.patch_list import PatchListWidget
-from ui.mod_list import ModListWidget
-from ui.mod_info_preview import ModInfoPreviewWidget
-from ui.log_console import LogConsole
-from ui.game_overlay import GameOverlay
-from ui.mod_packer_dialog import ModPackerDialog
-from ui.mod_meta_editor_dialog import ModMetaEditorDialog
-from ui.mod_splitter_dialog import ModSplitterDialog
 from ui.custom_avatar_dialog import CustomAvatarDialog
+from ui.game_overlay import GameOverlay
+from ui.log_console import LogConsole
+from ui.mod_info_preview import ModInfoPreviewWidget
+from ui.mod_list import ModListWidget
+from ui.mod_meta_editor_dialog import ModMetaEditorDialog
+from ui.mod_packer_dialog import ModPackerDialog
+from ui.mod_splitter_dialog import ModSplitterDialog
+from ui.patch_list import PatchListWidget
 from workers.patcher_worker import PatcherWorker
-from editor_utils.dock_components import DockHeader
 
 # 确定启动器根目录（打包 exe 或开发模式）
 if "__compiled__" in globals():

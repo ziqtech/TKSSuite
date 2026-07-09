@@ -1,16 +1,15 @@
 """模组信息预览面板 — 独立面板，展示当前选中模组的元数据及预览图"""
 from html import escape as _html_escape
 
-from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QTextEdit, QLabel, QSplitter,
-    QSizePolicy,
-)
 from PySide6.QtCore import Qt, QSize
 from PySide6.QtGui import QPixmap
+from PySide6.QtWidgets import (
+    QLabel, QSizePolicy, QSplitter, QTextEdit, QVBoxLayout, QWidget,
+)
 
+from core.mod_loader import ModInfo
 from editor_utils.dock_components import create_dock
 from editor_utils.mod_exporter import extract_preview_image
-from core.mod_loader import ModInfo
 
 
 class _AspectLabel(QLabel):

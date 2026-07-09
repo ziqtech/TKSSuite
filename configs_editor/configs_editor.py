@@ -3,9 +3,10 @@
 TKS Configs Editor — 配置文件可视化编辑器
 为 configs/ 目录下的 JSON 配置文件提供面向普通用户的可视化编辑工具。
 """
-import sys
 import os
 import struct
+import sys
+from functools import partial
 from pathlib import Path
 
 # ── runtime bootstrap (必须在 PySide6 导入前) ──
@@ -225,7 +226,7 @@ class ConfigsEditorWindow(QMainWindow):
 
         for panel_cls in PANEL_REGISTRY:
             panel = panel_cls(self)
-            panel.modified.connect(lambda p=panel: self._on_panel_modified(p))
+            panel.modified.connect(partial(self._on_panel_modified, panel))
             loaded = panel.load(self._configs_dir)
             self._panels.append(panel)
 

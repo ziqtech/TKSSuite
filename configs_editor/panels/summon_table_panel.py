@@ -4,6 +4,7 @@ SummonTablePanel — 召唤技能→WarPC 映射配置面板
 包含 SummonEditDialog 编辑对话框。
 """
 import re
+from functools import partial
 from PySide6.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QLineEdit, QPushButton, QLabel, QWidget,
     QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView,
@@ -172,11 +173,11 @@ class SummonEditDialog(QDialog):
         rand_btn_row.addWidget(btn_del_rand)
 
         btn_up = QPushButton("🔼 上移")
-        btn_up.clicked.connect(lambda: self._move_random(-1))
+        btn_up.clicked.connect(partial(self._move_random, -1))
         rand_btn_row.addWidget(btn_up)
 
         btn_down = QPushButton("🔽 下移")
-        btn_down.clicked.connect(lambda: self._move_random(1))
+        btn_down.clicked.connect(partial(self._move_random, 1))
         rand_btn_row.addWidget(btn_down)
 
         rand_btn_row.addStretch()

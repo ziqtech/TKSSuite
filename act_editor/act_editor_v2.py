@@ -36,7 +36,11 @@ TKAct.dat 多图层 2D 精灵动画编辑器 v3.0 (PySide6 — Godot 4.6 风格)
   python act_editor_v2.py
 """
 
-import os, sys, struct, copy, time, collections
+import collections
+import os
+import struct
+import sys
+import time
 
 # ── PySide6 imports ──
 from PySide6.QtWidgets import (
@@ -332,8 +336,10 @@ class _LazyJvgReader:
             mo = dr + co[si]
             ws = struct.unpack('<8H', raw[mo:mo+16])
             f = jvg_mod.JVGFrame()
-            f.x_max = ws[0]; f.y_max = ws[1]
-            f.width = ws[2]; f.height = ws[3]
+            f.x_max = ws[0]
+            f.y_max = ws[1]
+            f.width = ws[2]
+            f.height = ws[3]
             f.row_count = ws[7]
             eo = mo + 16
             f.encoded_data = raw[eo:eo+co[si+1]-co[si]-16]
@@ -762,8 +768,10 @@ def _composite_additive(composite, rgba_src, dx, dy, param):
         return
     sw, sh = rgba_src.size
     cw, ch = composite.size
-    l = max(0, dx); t = max(0, dy)
-    r = min(cw, dx + sw); b = min(ch, dy + sh)
+    l = max(0, dx)
+    t = max(0, dy)
+    r = min(cw, dx + sw)
+    b = min(ch, dy + sh)
     if r <= l or b <= t:
         return
     sl, st = l - dx, t - dy
@@ -799,8 +807,10 @@ def _composite_subtract(composite, rgba_src, dx, dy):
         return
     sw, sh = rgba_src.size
     cw, ch = composite.size
-    l = max(0, dx); t = max(0, dy)
-    r = min(cw, dx + sw); b = min(ch, dy + sh)
+    l = max(0, dx)
+    t = max(0, dy)
+    r = min(cw, dx + sw)
+    b = min(ch, dy + sh)
     if r <= l or b <= t:
         return
     sl, st = l - dx, t - dy
@@ -829,8 +839,10 @@ def _composite_luma_alpha(composite, rgba_src, dx, dy):
         return
     sw, sh = rgba_src.size
     cw, ch = composite.size
-    l = max(0, dx); t = max(0, dy)
-    r = min(cw, dx + sw); b = min(ch, dy + sh)
+    l = max(0, dx)
+    t = max(0, dy)
+    r = min(cw, dx + sw)
+    b = min(ch, dy + sh)
     if r <= l or b <= t:
         return
     sl, st = l - dx, t - dy
@@ -2387,7 +2399,7 @@ class ActEditorV2(QMainWindow):
 
     def _build_act_names(self, tks_dir: str, compact_threshold: int = 3) -> dict[int, str]:
         """构建 TKAct 索引 → 名称 的反向映射。
-        
+
         TKAct 条目被 TKKon.tkact_id 和 TKItem.tkkon_index→TKKon.tkact_id
         多对一引用。此方法收集所有引用源并合并显示。
         """
@@ -3128,7 +3140,8 @@ class ActEditorV2(QMainWindow):
     def _export_tksmod(self):
         """导出 TKAct.dat 为 .tksmod — 记录级增量（仅导出修改过的动画条目）"""
         if not self.entries or not self.act_path:
-            QMessageBox.information(self, "提示", "请先加载数据"); return
+            QMessageBox.information(self, "提示", "请先加载数据")
+            return
 
         # 序列化函数（用于差异比对）
         def entry_to_bytes(entry):
@@ -3170,20 +3183,24 @@ class ActEditorV2(QMainWindow):
 
         ref_path = os.path.join(ref_dir, "TKAct.dat")
         if not os.path.isfile(ref_path):
-            QMessageBox.warning(self, "参考文件不存在", f"在 {ref_dir} 中未找到 TKAct.dat"); return
+            QMessageBox.warning(self, "参考文件不存在", f"在 {ref_dir} 中未找到 TKAct.dat")
+            return
         try:
             ref_entries = load_act(ref_path)
         except Exception as e:
-            QMessageBox.warning(self, "参考文件无效", str(e)); return
+            QMessageBox.warning(self, "参考文件无效", str(e))
+            return
         ref_blocks = [entry_to_bytes(e) for e in ref_entries]
 
         diff_result = diff_binary_blocks(ref_blocks, cur_blocks)
         if not diff_result['modified'] and not diff_result['appended']:
-            QMessageBox.information(self, "无差异", "当前动画数据与参考文件相同，无需导出。"); return
+            QMessageBox.information(self, "无差异", "当前动画数据与参考文件相同，无需导出。")
+            return
 
         dlg = ModMetadataDialog(self, getattr(self, '_last_mod_metadata', None))
         if dlg.exec() != QDialog.Accepted: return
-        metadata = dlg.get_metadata(); self._last_mod_metadata = metadata
+        metadata = dlg.get_metadata()
+        self._last_mod_metadata = metadata
 
         crc = compute_crc32(ref_path)
         data_json = build_block_diff_json(target="TKAct.dat", block_type="act_entry",
@@ -3195,7 +3212,8 @@ class ActEditorV2(QMainWindow):
         if not fp: return
         try:
             pack_tksmod(fp, mod_json, {"data/TKAct.dat.json": data_json})
-            n_mod = len(diff_result['modified']); n_app = len(diff_result['appended'])
+            n_mod = len(diff_result['modified'])
+            n_app = len(diff_result['appended'])
             self.status_var.setText(f"已导出 MOD: {os.path.basename(fp)} (修改{n_mod}条, 新增{n_app}条)")
             QMessageBox.information(self, "导出成功",
                 f"已导出 (记录级增量):\n{fp}\n\n参考: {ref_path}\n修改: {n_mod} 条动画记录\n新增: {n_app} 条")
@@ -3209,11 +3227,13 @@ class ActEditorV2(QMainWindow):
 
         info = get_tksmod_info(fp)
         if info is None:
-            QMessageBox.warning(self, "无效文件", "无法解析此 .tksmod 文件"); return
+            QMessageBox.warning(self, "无效文件", "无法解析此 .tksmod 文件")
+            return
 
         if "TKAct.dat" not in info.get("targets", []):
             QMessageBox.warning(self, "不兼容", "此 MOD 不包含 TKAct.dat 的数据\n\n"
-                f"包含的数据: {', '.join(info.get('targets', []))}"); return
+                f"包含的数据: {', '.join(info.get('targets', []))}")
+            return
 
         dlg = ModImportPreviewDialog(self, info, default_dir=os.path.dirname(self.act_path) if self.act_path else "")
         if dlg.exec() != QDialog.Accepted: return
@@ -3224,7 +3244,8 @@ class ActEditorV2(QMainWindow):
             fp, ref_dir, "TKAct.dat", block_type="act_entry")
         if blocks is None:
             QMessageBox.warning(self, "导入失败",
-                "无法导入 MOD 数据。\n请确认参考目录中包含有效的 TKAct.dat"); return
+                "无法导入 MOD 数据。\n请确认参考目录中包含有效的 TKAct.dat")
+            return
 
         # 将块字节重新解析为 entries 结构
         new_entries = []
@@ -3290,28 +3311,33 @@ class ActEditorV2(QMainWindow):
         if sid <= 0:
             lbl.setText("(空位)")
             lbl.setProperty("probe", "empty")
-            lbl.style().unpolish(lbl); lbl.style().polish(lbl)
+            lbl.style().unpolish(lbl)
+            lbl.style().polish(lbl)
             return
         if self.sws_grp is None:
             lbl.setText(f"SWS#{sid:04d}  (未加载 TKS 目录)")
             lbl.setProperty("probe", "warn")
-            lbl.style().unpolish(lbl); lbl.style().polish(lbl)
+            lbl.style().unpolish(lbl)
+            lbl.style().polish(lbl)
             return
         info = self.sws_grp.wav_info(sid)
         if info is not None:
             ch, sr, bits, dur = info
             lbl.setText(f"SWS#{sid:03d}  {ch}ch {sr}Hz {bits}bit {dur:.2f}s")
             lbl.setProperty("probe", "ok")
-            lbl.style().unpolish(lbl); lbl.style().polish(lbl)
+            lbl.style().unpolish(lbl)
+            lbl.style().polish(lbl)
             return
         if sid >= self.sws_grp.section_count:
             lbl.setText(f"SWS#{sid}  X 超出段数({self.sws_grp.section_count})")
             lbl.setProperty("probe", "error")
-            lbl.style().unpolish(lbl); lbl.style().polish(lbl)
+            lbl.style().unpolish(lbl)
+            lbl.style().polish(lbl)
             return
         lbl.setText(f"SWS#{sid:03d}  (非 WAV 段)")
         lbl.setProperty("probe", "warn")
-        lbl.style().unpolish(lbl); lbl.style().polish(lbl)
+        lbl.style().unpolish(lbl)
+        lbl.style().polish(lbl)
 
     def _resolve_sound_path(self, sid):
         if sid <= 0 or self.sws_grp is None:
@@ -3679,8 +3705,10 @@ class ActEditorV2(QMainWindow):
         if self._preview_bbox is not None:
             bbox_l, bbox_t, bbox_r, bbox_b = self._preview_bbox
         else:
-            bbox_l = min(dyn_x); bbox_r = max(dyn_x)
-            bbox_t = min(dyn_y); bbox_b = max(dyn_y)
+            bbox_l = min(dyn_x)
+            bbox_r = max(dyn_x)
+            bbox_t = min(dyn_y)
+            bbox_b = max(dyn_y)
 
         cw = self.preview_canvas.width()
         ch = self.preview_canvas.height()
@@ -4047,7 +4075,9 @@ class ActEditorV2(QMainWindow):
             if L[0] == 0:
                 continue
             points.append(L[22])
-            first = L[17]; last = L[18]; interval = max(1, L[21])
+            first = L[17]
+            last = L[18]
+            interval = max(1, L[21])
             span = max(1, last - first + 1)
             points.append(L[22] + span * interval)
         best = min(points, key=lambda p: abs(p - raw_tick))
@@ -4098,7 +4128,9 @@ class ActEditorV2(QMainWindow):
         dlayer_idx, dhit = ds
         L = entry['layers'][dlayer_idx]
         if dhit == 'right_edge':
-            delay = L[22]; interval = max(1, L[21]); first = L[17]
+            delay = L[22]
+            interval = max(1, L[21])
+            first = L[17]
             play_ticks = max(0, tick - delay)
             new_span = max(1, play_ticks // interval)
             new_end = max(first, first + new_span - 1)

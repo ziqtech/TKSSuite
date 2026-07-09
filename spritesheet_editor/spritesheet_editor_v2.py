@@ -14,7 +14,10 @@ Spritesheet Editor v2 - 精灵表编辑器 (PySide6)
 """
 
 from __future__ import annotations
-import os, sys, re
+import os
+import re
+import sys
+from functools import partial
 from pathlib import Path
 from typing import List, Optional, Set, Tuple
 
@@ -24,7 +27,7 @@ from PySide6.QtWidgets import (
     QGraphicsTextItem, QGraphicsItem,
     QVBoxLayout, QHBoxLayout, QGridLayout,
     QLabel, QPushButton, QSpinBox, QComboBox, QCheckBox, QRadioButton,
-    QGroupBox, QTextEdit, QScrollBar,
+    QGroupBox, QTextEdit,
     QMenuBar, QMenu, QToolBar, QStatusBar, QDialog, QFileDialog,
     QMessageBox, QFrame, QSizePolicy, QButtonGroup,
     QListView, QAbstractItemView, QSlider, QSplitter, QLineEdit, QScrollArea,
@@ -32,11 +35,10 @@ from PySide6.QtWidgets import (
 from PySide6.QtGui import (
     QImage, QPixmap, QPainter, QPalette, QColor, QIcon, QAction,
     QKeySequence, QShortcut, QFont, QPen, QBrush, QWheelEvent, QMouseEvent,
-    QFontMetrics,
 )
 from PySide6.QtCore import (
     Qt, QObject, Signal, QTimer, QSize, QRect, QPoint, QRectF, QPointF,
-    QMimeData, QEvent, QTranslator,
+    QMimeData, QEvent,
 )
 
 HAS_PIL = False
@@ -47,8 +49,8 @@ except ImportError:
     pass
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+from editor_utils.dock_components import create_dock
 from editor_utils.theme_manager import ThemeManager
-from editor_utils.dock_components import DockHeader, create_dock
 from editor_utils.window_theme import apply_godot_theme
 
 # ── 像素格式定义 ──────────────────────────────────────────────
@@ -1668,14 +1670,14 @@ class SettingsPanel(QWidget):
         shift_btn_grid.addWidget(self._btn_shift_right, 1, 1)
         shift_layout.addLayout(shift_btn_grid)
 
-        self._btn_shift_up.clicked.connect(lambda: self._shift_pixels(0, -1))
-        self._btn_shift_down.clicked.connect(lambda: self._shift_pixels(0, 1))
-        self._btn_shift_left.clicked.connect(lambda: self._shift_pixels(-1, 0))
-        self._btn_shift_right.clicked.connect(lambda: self._shift_pixels(1, 0))
+        self._btn_shift_up.clicked.connect(partial(self._shift_pixels, 0, -1))
+        self._btn_shift_down.clicked.connect(partial(self._shift_pixels, 0, 1))
+        self._btn_shift_left.clicked.connect(partial(self._shift_pixels, -1, 0))
+        self._btn_shift_right.clicked.connect(partial(self._shift_pixels, 1, 0))
 
         # — 拉伸 / 缩放 (无损化) —
         shift_layout.addWidget(QLabel("边缘操作 (无损防裁剪):"))
-        
+
         mode_row = QHBoxLayout()
         self._radio_stretch = QRadioButton("向外拉伸 (变大)")
         self._radio_stretch.setChecked(True)
@@ -1703,7 +1705,7 @@ class SettingsPanel(QWidget):
         self._btn_dir_right = QPushButton("右拉伸")
         self._btn_scale_up = QPushButton("中心放大")
         self._btn_scale_down = QPushButton("中心缩小")
-        
+
         stretch_btn_grid.addWidget(self._btn_dir_up, 0, 0)
         stretch_btn_grid.addWidget(self._btn_dir_down, 0, 1)
         stretch_btn_grid.addWidget(self._btn_dir_left, 1, 0)
@@ -1712,12 +1714,12 @@ class SettingsPanel(QWidget):
         stretch_btn_grid.addWidget(self._btn_scale_down, 2, 1)
         shift_layout.addLayout(stretch_btn_grid)
 
-        self._btn_dir_up.clicked.connect(lambda: self._directional_modify(0, -1))
-        self._btn_dir_down.clicked.connect(lambda: self._directional_modify(0, 1))
-        self._btn_dir_left.clicked.connect(lambda: self._directional_modify(-1, 0))
-        self._btn_dir_right.clicked.connect(lambda: self._directional_modify(1, 0))
-        self._btn_scale_up.clicked.connect(lambda: self._center_scale(True))
-        self._btn_scale_down.clicked.connect(lambda: self._center_scale(False))
+        self._btn_dir_up.clicked.connect(partial(self._directional_modify, 0, -1))
+        self._btn_dir_down.clicked.connect(partial(self._directional_modify, 0, 1))
+        self._btn_dir_left.clicked.connect(partial(self._directional_modify, -1, 0))
+        self._btn_dir_right.clicked.connect(partial(self._directional_modify, 1, 0))
+        self._btn_scale_up.clicked.connect(partial(self._center_scale, True))
+        self._btn_scale_down.clicked.connect(partial(self._center_scale, False))
 
         layout.addWidget(self._shift_section)
 
@@ -1801,9 +1803,11 @@ class SettingsPanel(QWidget):
     def _get_or_init_lossless_state(self, frame: Image.Image) -> dict:
         """从 PIL 的 info 字典中提取或初始化无损状态数据"""
         if "lossless_content" not in frame.info:
-            if frame.mode != "RGBA": frame = frame.convert("RGBA")
+            if frame.mode != "RGBA":
+                frame = frame.convert("RGBA")
             bbox = frame.getbbox()
-            if not bbox: bbox = (0, 0, frame.width, frame.height)
+            if not bbox:
+                bbox = (0, 0, frame.width, frame.height)
             l, t, r, b = bbox
             frame.info["lossless_content"] = frame.crop(bbox)
             frame.info["lossless_orig_W"] = frame.width
@@ -1836,7 +1840,7 @@ class SettingsPanel(QWidget):
         paste_y = render_t + E_y
 
         new_img.paste(resized, (paste_x, paste_y))
-        
+
         # 传递灵魂：把状态信息拷贝给新生成的帧，实现跨时代的无损溯源
         new_img.info = info.copy()
         self.model.frames[idx] = new_img
@@ -1862,23 +1866,23 @@ class SettingsPanel(QWidget):
             if current and 0 <= current.current_index < len(self.model.frames):
                 sel = {current.current_index}
         if not sel: return
-        
+
         px = self._spin_shift_px.value()
         for idx in sel:
             frame = self.model.frames[idx]
             if frame is None: continue
-            
+
             info = self._get_or_init_lossless_state(frame)
             rect = info["lossless_rect"]
-            
+
             # 【修复】必须创建全新的列表，切断 Python 浅拷贝带来的内存地址共享！
             # 否则平移其中一帧，会暗中破坏其他复制帧的坐标数据
             new_l = rect[0] + dx * px
             new_t = rect[1] + dy * px
             info["lossless_rect"] = [new_l, new_t, rect[2], rect[3]]
-            
+
             self._apply_lossless_render(idx, info)
-            
+
         self.editor._on_model_changed()
         self._update_output_info()
 
@@ -1896,7 +1900,7 @@ class SettingsPanel(QWidget):
         for idx in sel:
             frame = self.model.frames[idx]
             if frame is None: continue
-            
+
             info = self._get_or_init_lossless_state(frame)
             rect = info["lossless_rect"]
             l, t, w, h = rect
@@ -1934,11 +1938,11 @@ class SettingsPanel(QWidget):
         for idx in sel:
             frame = self.model.frames[idx]
             if frame is None: continue
-            
+
             info = self._get_or_init_lossless_state(frame)
             rect = info["lossless_rect"]
             l, t, w, h = rect
-            
+
             cx, cy = l + w/2.0, t + h/2.0
             w, h = w * ratio, h * ratio
             l, t = cx - w/2.0, cy - h/2.0
@@ -2465,16 +2469,16 @@ class SpriteSheetEditorWindow(QMainWindow):
         toolbar.addWidget(self._v_sep())
 
         btn_row_up = QPushButton("行上移")
-        btn_row_up.clicked.connect(lambda: self.settings._move_row(-1))
+        btn_row_up.clicked.connect(partial(self.settings._move_row, -1))
         toolbar.addWidget(btn_row_up)
         btn_row_down = QPushButton("行下移")
-        btn_row_down.clicked.connect(lambda: self.settings._move_row(1))
+        btn_row_down.clicked.connect(partial(self.settings._move_row, 1))
         toolbar.addWidget(btn_row_down)
         btn_col_left = QPushButton("列左移")
-        btn_col_left.clicked.connect(lambda: self.settings._move_col(-1))
+        btn_col_left.clicked.connect(partial(self.settings._move_col, -1))
         toolbar.addWidget(btn_col_left)
         btn_col_right = QPushButton("列右移")
-        btn_col_right.clicked.connect(lambda: self.settings._move_col(1))
+        btn_col_right.clicked.connect(partial(self.settings._move_col, 1))
         toolbar.addWidget(btn_col_right)
 
         # 深浅色切换
@@ -2507,11 +2511,11 @@ class SpriteSheetEditorWindow(QMainWindow):
         left_header.addWidget(btn_clear)
         btn_up = QPushButton("▲上移")
         btn_up.setProperty("class", "CompactBtn")
-        btn_up.clicked.connect(lambda: self.canvas.move_selected_left())
+        btn_up.clicked.connect(partial(self.canvas.move_selected_left))
         left_header.addWidget(btn_up)
         btn_down = QPushButton("▼下移")
         btn_down.setProperty("class", "CompactBtn")
-        btn_down.clicked.connect(lambda: self.canvas.move_selected_right())
+        btn_down.clicked.connect(partial(self.canvas.move_selected_right))
         left_header.addWidget(btn_down)
         left_panel.addLayout(left_header)
 
@@ -2553,11 +2557,11 @@ class SpriteSheetEditorWindow(QMainWindow):
         preview_bar.addWidget(QLabel("缩放:"))
         btn_zoom_out = QPushButton("−")
         btn_zoom_out.setProperty("class", "CompactBtn")
-        btn_zoom_out.clicked.connect(lambda: self._shared_zoom_step(-0.25))
+        btn_zoom_out.clicked.connect(partial(self._shared_zoom_step, -0.25))
         preview_bar.addWidget(btn_zoom_out)
         btn_zoom_in = QPushButton("+")
         btn_zoom_in.setProperty("class", "CompactBtn")
-        btn_zoom_in.clicked.connect(lambda: self._shared_zoom_step(0.25))
+        btn_zoom_in.clicked.connect(partial(self._shared_zoom_step, 0.25))
         preview_bar.addWidget(btn_zoom_in)
         btn_zoom_1 = QPushButton("1:1")
         btn_zoom_1.setProperty("class", "CompactBtn")
@@ -3179,3 +3183,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

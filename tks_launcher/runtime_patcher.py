@@ -12,16 +12,16 @@
 补丁配置文件: patch_config.json（与脚本同目录）
 """
 
+import argparse
 import ctypes
 import ctypes.wintypes as wt
-import struct
-import sys
-import os
-import time
 import json
+import os
+import struct
 import subprocess
+import sys
 import threading
-import argparse
+import time
 from pathlib import Path
 
 # ============================================================================

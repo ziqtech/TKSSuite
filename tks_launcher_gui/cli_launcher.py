@@ -12,26 +12,26 @@ TKS Launcher CLI — Headless 启动器 (Winlator 兼容)
 配置文件 (可选, 放在 exe 同目录):
   launcher_config.json
 """
-import os
-import sys
-import json
-import time
-import struct
-import ctypes
-import signal
 import argparse
+import ctypes
+import json
+import os
+import signal
+import struct
 import subprocess
+import sys
+import time
 import traceback
-from datetime import datetime, timezone, timedelta
+from datetime import datetime
 
 # 确保 core/ 可导入 (开发环境)
 _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 if _THIS_DIR not in sys.path:
     sys.path.insert(0, _THIS_DIR)
 
+from core.config_loader import load_config
 from core.memory import (
-    i32b, b2i32, b2u16, bhex,
-    read_pm, write_pm, vp_ex,
+    read_pm, write_pm,
     get_module_base, get_module_size, get_child_processes,
     find_window, get_decompressed_size,
     suspend_process, resume_process,
@@ -40,23 +40,22 @@ from core.memory import (
     MEM_COMMIT, MEM_RESERVE,
     _OpenProcess, _CloseHandle, _VirtualAllocEx,
 )
-from core.scanner import parse_pattern, pattern_scan, discover_warpc_base, detect_exe_profile
-from core.config_loader import load_config
+from core.mod_loader import (
+    scan_mods, resolve_dependencies, detect_conflicts,
+    merge_mods, apply_mod_data, restore_originals,
+    expand_pak_mods,
+)
 from core.patch_engine import (
     apply_config_patches,
     patch_4c33fc, patch_41c120, patch_archive_portrait, patch_gold_display,
     find_load_hook_points, hook_save_load_portrait,
 )
+from core.scanner import discover_warpc_base, detect_exe_profile
 from core.warpc_expander import (
-    WARPC_BASE, WARPC_REC_SIZE, WARPC_ORIG_COUNT, WARPC_ORIG_SIZE,
+    WARPC_BASE, WARPC_REC_SIZE, WARPC_ORIG_SIZE,
     WARPC_TOTAL_ORIG_SIZE, DATA_FILE_ORIG_SIZES,
     ensure_save_directory_healthy, prepare_warpc_for_game,
     expand_warpc_buffer, inject_warpc_data,
-)
-from core.mod_loader import (
-    scan_mods, resolve_dependencies, detect_conflicts,
-    merge_mods, apply_mod_data, restore_originals,
-    expand_pak_mods,
 )
 
 

@@ -107,7 +107,10 @@ Tab 分区 (按字段索引顺序排列):
   python warpc_editor.py
 """
 
-import struct, os, sys, tkinter as tk
+import os
+import struct
+import sys
+import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 
 # ============================================================
@@ -179,9 +182,12 @@ def lzss_compress(data):
 def load_tkt(tkt_path):
     if not tkt_path or not os.path.exists(tkt_path): return {}
     with open(tkt_path, 'rb') as f: raw = f.read()
-    ts = struct.unpack_from('<I', raw, 0)[0]; cnt = struct.unpack_from('<I', raw, 4)[0]
-    enc = raw[8:8 + ts]; dec = bytes([b ^ 0xFF for b in enc])
-    idsz, ofsz = cnt * 4, cnt * 4; lookup = {}
+    ts = struct.unpack_from('<I', raw, 0)[0]
+    cnt = struct.unpack_from('<I', raw, 4)[0]
+    enc = raw[8:8 + ts]
+    dec = bytes([b ^ 0xFF for b in enc])
+    idsz, ofsz = cnt * 4, cnt * 4
+    lookup = {}
     SKIP = set(range(0, 10))
     for i in range(cnt):
         eid = struct.unpack_from('<i', dec, i * 4)[0]
@@ -274,7 +280,8 @@ WARPC_FIELD_COUNT = 527
 WARPC_ORIG_COUNT = 143       # 原游戏硬编码角色数 (Maker.exe sub_4027FF)
 WARPC_ORIG_SIZE = 150722     # = 143 × 1054
 
-FONT = ('Microsoft YaHei UI', 9); FONT_S = ('Microsoft YaHei UI', 8)
+FONT = ('Microsoft YaHei UI', 9)
+FONT_S = ('Microsoft YaHei UI', 8)
 W_INPUT = 8
 
 # 状态效果名称 (共31种, 索引0-30; sub_41E40C 使用 status_id 1-32)
@@ -553,27 +560,46 @@ class WarpcEditor:
         self.root.title("WarPC.dat 可视化编辑器 v1.7")
         ico = os.path.join(os.path.dirname(__file__), 'TKS.ico')
         if os.path.exists(ico): self.root.iconbitmap(default=ico)
-        self.root.geometry("1500x820"); self.root.minsize(1050, 650)
+        self.root.geometry("1500x820")
+        self.root.minsize(1050, 650)
         self.warpc_path = self.tkt_path = None
-        self.records = []; self.tkt = {}; self.skill_names = {}; self._skill_types = {}; self.tkkon_names = {}; self.item_names = {}; self.item_idx_names = {}; self._idx_to_id = {}; self._id_to_idx = {}
-        self.filtered_indices = []; self._dirty = False
-        self._edit_vars = {}; self._edit_extras = {}; self._tab_grids = {}
-        self._fa_sprites = []; self._fa_photos = {}; self._tree_photos = []
-        self._build_ui(); self._set_edit_enabled(False)
-        sw = self.root.winfo_screenwidth(); sh = self.root.winfo_screenheight()
-        x = (sw - 1500) // 2; y = (sh - 820) // 2
+        self.records = []
+        self.tkt = {}
+        self.skill_names = {}
+        self._skill_types = {}
+        self.tkkon_names = {}
+        self.item_names = {}
+        self.item_idx_names = {}
+        self._idx_to_id = {}
+        self._id_to_idx = {}
+        self.filtered_indices = []
+        self._dirty = False
+        self._edit_vars = {}
+        self._edit_extras = {}
+        self._tab_grids = {}
+        self._fa_sprites = []
+        self._fa_photos = {}
+        self._tree_photos = []
+        self._build_ui()
+        self._set_edit_enabled(False)
+        sw = self.root.winfo_screenwidth()
+        sh = self.root.winfo_screenheight()
+        x = (sw - 1500) // 2
+        y = (sh - 820) // 2
         self.root.geometry(f'1500x820+{x}+{y}')
 
     # ----------- UI 构建 -----------
 
     def _build_ui(self):
-        mb = tk.Menu(self.root); self.root.config(menu=mb)
+        mb = tk.Menu(self.root)
+        self.root.config(menu=mb)
         fm = tk.Menu(mb, tearoff=0)
         fm.add_command(label="加载 TKS 目录…", command=self._load_tks_dir, accelerator="Ctrl+O")
         fm.add_separator()
         fm.add_command(label="保存", command=self._save, accelerator="Ctrl+S")
         fm.add_command(label="导出 CSV…", command=self._export_csv)
-        fm.add_separator(); fm.add_command(label="退出", command=self.root.quit)
+        fm.add_separator()
+        fm.add_command(label="退出", command=self.root.quit)
         mb.add_cascade(label="文件", menu=fm)
         hm = tk.Menu(mb, tearoff=0)
         hm.add_command(label="字段参考 (逆向来源)", command=self._show_field_ref)
@@ -584,10 +610,12 @@ class WarpcEditor:
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
         # Toolbar
-        tb = ttk.Frame(self.root); tb.pack(fill=tk.X, padx=5, pady=(5, 0))
+        tb = ttk.Frame(self.root)
+        tb.pack(fill=tk.X, padx=5, pady=(5, 0))
         ttk.Label(tb, text="搜索:").pack(side=tk.LEFT)
         self.sv = tk.StringVar()
-        e_s = ttk.Entry(tb, textvariable=self.sv, width=22); e_s.pack(side=tk.LEFT, padx=2)
+        e_s = ttk.Entry(tb, textvariable=self.sv, width=22)
+        e_s.pack(side=tk.LEFT, padx=2)
         e_s.bind('<Return>', lambda e: self._apply_filter())
         ttk.Button(tb, text="搜索", command=self._apply_filter, width=5).pack(side=tk.LEFT, padx=1)
         ttk.Button(tb, text="清除", command=self._clear_filter, width=5).pack(side=tk.LEFT, padx=1)
@@ -606,7 +634,8 @@ class WarpcEditor:
         paned.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
 
         # Left: TreeView
-        lf = ttk.Frame(paned); paned.add(lf, weight=1)
+        lf = ttk.Frame(paned)
+        paned.add(lf, weight=1)
         cols = ('index', 'name', 'level', 'role', 'hp', 'mp')
         self.tree = ttk.Treeview(lf, columns=cols, show='tree headings', selectmode='browse')
         self.tree.column('#0', width=28, minwidth=28, stretch=False, anchor='center')
@@ -622,14 +651,17 @@ class WarpcEditor:
             self.tree.column(cid, width=cw, anchor='center' if cid != 'name' else 'w', minwidth=cw)
         vsb = ttk.Scrollbar(lf, orient=tk.VERTICAL, command=self.tree.yview)
         self.tree.configure(yscrollcommand=vsb.set)
-        self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True); vsb.pack(side=tk.RIGHT, fill=tk.Y)
+        self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        vsb.pack(side=tk.RIGHT, fill=tk.Y)
         self.tree.bind('<<TreeviewSelect>>', self._on_tree_select)
 
         # Right: Edit panel with Notebook tabs
-        rf = ttk.Frame(paned); paned.add(rf, weight=3)
+        rf = ttk.Frame(paned)
+        paned.add(rf, weight=3)
         self.edit_frame = rf
 
-        hdr = ttk.Frame(rf); hdr.pack(fill=tk.X, pady=(0, 4), padx=4)
+        hdr = ttk.Frame(rf)
+        hdr.pack(fill=tk.X, pady=(0, 4), padx=4)
         self.lbl_rec_idx = ttk.Label(hdr, text="未选中", font=('', 11, 'bold'))
         self.lbl_rec_idx.pack(side=tk.LEFT)
         self.lbl_avatar = ttk.Label(hdr, text="")
@@ -639,62 +671,73 @@ class WarpcEditor:
         self.notebook.pack(fill=tk.BOTH, expand=True)
 
         # Tab 1: 核心属性 [0]-[68]
-        tab1 = ttk.Frame(self.notebook); self.notebook.add(tab1, text="核心属性 [0]-[68]")
+        tab1 = ttk.Frame(self.notebook)
+        self.notebook.add(tab1, text="核心属性 [0]-[68]")
         t1_canvas = tk.Canvas(tab1, highlightthickness=0)
         t1_sb = ttk.Scrollbar(tab1, orient=tk.VERTICAL, command=t1_canvas.yview)
         t1_canvas.configure(yscrollcommand=t1_sb.set)
         self.t1_inner = ttk.Frame(t1_canvas)
         t1_canvas.create_window((0, 0), window=self.t1_inner, anchor='nw')
-        t1_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True); t1_sb.pack(side=tk.RIGHT, fill=tk.Y)
+        t1_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        t1_sb.pack(side=tk.RIGHT, fill=tk.Y)
         self.t1_inner.bind('<Configure>', lambda e: t1_canvas.configure(scrollregion=t1_canvas.bbox('all')))
         self._bind_mousewheel(t1_canvas)
 
         # Tab 2: 装备与技能 [69]-[87] + [260]-[272]
-        tab2 = ttk.Frame(self.notebook); self.notebook.add(tab2, text="装备与技能 [69]-[87]")
+        tab2 = ttk.Frame(self.notebook)
+        self.notebook.add(tab2, text="装备与技能 [69]-[87]")
         t2_canvas = tk.Canvas(tab2, highlightthickness=0)
         t2_sb = ttk.Scrollbar(tab2, orient=tk.VERTICAL, command=t2_canvas.yview)
         t2_canvas.configure(yscrollcommand=t2_sb.set)
         self.t2_inner = ttk.Frame(t2_canvas)
         t2_canvas.create_window((0, 0), window=self.t2_inner, anchor='nw')
-        t2_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True); t2_sb.pack(side=tk.RIGHT, fill=tk.Y)
+        t2_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        t2_sb.pack(side=tk.RIGHT, fill=tk.Y)
         self.t2_inner.bind('<Configure>', lambda e: t2_canvas.configure(scrollregion=t2_canvas.bbox('all')))
         self._bind_mousewheel(t2_canvas)
 
         # Tab 3: 技能学习状态 [88]-[259]
-        tab3 = ttk.Frame(self.notebook); self.notebook.add(tab3, text="技能学习 [88]-[259]")
+        tab3 = ttk.Frame(self.notebook)
+        self.notebook.add(tab3, text="技能学习 [88]-[259]")
         t3_canvas = tk.Canvas(tab3, highlightthickness=0)
         t3_sb = ttk.Scrollbar(tab3, orient=tk.VERTICAL, command=t3_canvas.yview)
         t3_canvas.configure(yscrollcommand=t3_sb.set)
         self.t3_inner = ttk.Frame(t3_canvas)
         t3_canvas.create_window((0, 0), window=self.t3_inner, anchor='nw')
-        t3_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True); t3_sb.pack(side=tk.RIGHT, fill=tk.Y)
+        t3_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        t3_sb.pack(side=tk.RIGHT, fill=tk.Y)
         self.t3_inner.bind('<Configure>', lambda e: t3_canvas.configure(scrollregion=t3_canvas.bbox('all')))
         self._bind_mousewheel(t3_canvas)
 
         # Tab 4: 技能效果判定 [273]+
-        tab4 = ttk.Frame(self.notebook); self.notebook.add(tab4, text="技能效果判定 [273]+")
+        tab4 = ttk.Frame(self.notebook)
+        self.notebook.add(tab4, text="技能效果判定 [273]+")
         t4_canvas = tk.Canvas(tab4, highlightthickness=0)
         t4_sb = ttk.Scrollbar(tab4, orient=tk.VERTICAL, command=t4_canvas.yview)
         t4_canvas.configure(yscrollcommand=t4_sb.set)
         self.t4_inner = ttk.Frame(t4_canvas)
         t4_canvas.create_window((0, 0), window=self.t4_inner, anchor='nw')
-        t4_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True); t4_sb.pack(side=tk.RIGHT, fill=tk.Y)
+        t4_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        t4_sb.pack(side=tk.RIGHT, fill=tk.Y)
         self.t4_inner.bind('<Configure>', lambda e: t4_canvas.configure(scrollregion=t4_canvas.bbox('all')))
         self._bind_mousewheel(t4_canvas)
 
         # Tab 5: 全部字段 (raw grid)
-        tab5 = ttk.Frame(self.notebook); self.notebook.add(tab5, text="全部字段")
+        tab5 = ttk.Frame(self.notebook)
+        self.notebook.add(tab5, text="全部字段")
         t5_canvas = tk.Canvas(tab5, highlightthickness=0)
         t5_sb = ttk.Scrollbar(tab5, orient=tk.VERTICAL, command=t5_canvas.yview)
         t5_canvas.configure(yscrollcommand=t5_sb.set)
         self.t5_inner = ttk.Frame(t5_canvas)
         t5_canvas.create_window((0, 0), window=self.t5_inner, anchor='nw')
-        t5_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True); t5_sb.pack(side=tk.RIGHT, fill=tk.Y)
+        t5_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        t5_sb.pack(side=tk.RIGHT, fill=tk.Y)
         self.t5_inner.bind('<Configure>', lambda e: t5_canvas.configure(scrollregion=t5_canvas.bbox('all')))
         self._bind_mousewheel(t5_canvas)
 
         # Bottom buttons
-        bf = ttk.Frame(rf); bf.pack(side=tk.BOTTOM, fill=tk.X, pady=(2, 0))
+        bf = ttk.Frame(rf)
+        bf.pack(side=tk.BOTTOM, fill=tk.X, pady=(2, 0))
         ttk.Button(bf, text="应用修改", command=self._apply_edit, width=12).pack(side=tk.LEFT)
         ttk.Button(bf, text="重置为当前", command=self._reset_edit, width=12).pack(side=tk.LEFT, padx=2)
 
@@ -706,7 +749,8 @@ class WarpcEditor:
         self._build_tab5(self.t5_inner)
 
         # Bottom path bar
-        pf = ttk.LabelFrame(self.root, text="当前加载"); pf.pack(fill=tk.X, padx=5, pady=(0, 2))
+        pf = ttk.LabelFrame(self.root, text="当前加载")
+        pf.pack(fill=tk.X, padx=5, pady=(0, 2))
         self.lbl_warpc = ttk.Label(pf, text="", foreground="gray")
         self.lbl_warpc.pack(side=tk.LEFT, padx=10, pady=2)
         ttk.Separator(pf, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y)
@@ -743,7 +787,8 @@ class WarpcEditor:
             lf.columnconfigure(c, weight=1, minsize=90)
 
         for ci, (name, short, bo) in enumerate(zip(STAT_NAMES, STAT_SHORTS, STAT_BASE_OFFSETS)):
-            col = ttk.Frame(lf); col.grid(row=0, column=ci, sticky='n', padx=3, pady=2)
+            col = ttk.Frame(lf)
+            col.grid(row=0, column=ci, sticky='n', padx=3, pady=2)
 
             # 属性名
             lbl = ttk.Label(col, text=name, font=('', 9, 'bold'))
@@ -751,17 +796,21 @@ class WarpcEditor:
 
             # 基础值
             fn_base = f"{short}_base"
-            frm_b = ttk.Frame(col); frm_b.pack(fill=tk.X, pady=(2, 0))
+            frm_b = ttk.Frame(col)
+            frm_b.pack(fill=tk.X, pady=(2, 0))
             ttk.Label(frm_b, text="基础", font=FONT_S, foreground='#888').pack(side=tk.LEFT)
-            ev_b = tk.StringVar(); self._edit_vars[fn_base] = ev_b
+            ev_b = tk.StringVar()
+            self._edit_vars[fn_base] = ev_b
             ttk.Entry(frm_b, textvariable=ev_b, width=5, font=FONT, justify='center').pack(side=tk.RIGHT)
             self._bind_tooltip(frm_b, f"[{bo//2}] {name}基础值 (sub_42234C: a2[{11+ci*2}] initial)")
 
             # 当前值
             fn_cur = f"{short}_cur"
-            frm_c = ttk.Frame(col); frm_c.pack(fill=tk.X)
+            frm_c = ttk.Frame(col)
+            frm_c.pack(fill=tk.X)
             ttk.Label(frm_c, text="当前", font=FONT_S, foreground='#228B22').pack(side=tk.LEFT)
-            ev_c = tk.StringVar(); self._edit_vars[fn_cur] = ev_c
+            ev_c = tk.StringVar()
+            self._edit_vars[fn_cur] = ev_c
             ttk.Entry(frm_c, textvariable=ev_c, width=5, font=FONT, justify='center').pack(side=tk.RIGHT)
             self._bind_tooltip(frm_c, f"[{bo//2+1}] {name}当前值 (基础+装备; sub_42234C L63-70)")
 
@@ -773,15 +822,18 @@ class WarpcEditor:
         status_options = ["(无)"] + [f"{i+1}-{STATUS_NAMES[i]}" for i in range(len(STATUS_NAMES))]
         for si, (fn, fo, fl, cmt) in enumerate(STATUS_SLOT_FIELDS):
             r, c = divmod(si, 4)
-            col = ttk.Frame(lf); col.grid(row=r, column=c, sticky='n', padx=2, pady=1)
+            col = ttk.Frame(lf)
+            col.grid(row=r, column=c, sticky='n', padx=2, pady=1)
             # Title row: 槽N状态 | 回合
-            ttl = ttk.Frame(col); ttl.pack(fill=tk.X)
+            ttl = ttk.Frame(col)
+            ttl.pack(fill=tk.X)
             lbl = ttk.Label(ttl, text=f"状态{si}", font=FONT)
             lbl.pack(side=tk.LEFT)
             self._bind_tooltip(lbl, f"[{fo//2}] bo={fo}: {cmt}")
             ttk.Label(ttl, text="持续回合", font=FONT, foreground='#888').pack(side=tk.RIGHT)
             # Input row: Combobox | Entry
-            inp = ttk.Frame(col); inp.pack(fill=tk.X, pady=(1, 0))
+            inp = ttk.Frame(col)
+            inp.pack(fill=tk.X, pady=(1, 0))
             cb = ttk.Combobox(inp, values=status_options, state='readonly', width=6, font=FONT)
             cb.pack(side=tk.LEFT, fill=tk.X, expand=True)
             ev_dur = tk.StringVar(value="0")
@@ -817,12 +869,14 @@ class WarpcEditor:
         self._status_resist_widgets = []
         for i in range(32):
             r, c = divmod(i, 8)
-            col = ttk.Frame(lf); col.grid(row=r, column=c, sticky='n', padx=2, pady=1)
+            col = ttk.Frame(lf)
+            col.grid(row=r, column=c, sticky='n', padx=2, pady=1)
             sname = STATUS_NAMES[i] if i < len(STATUS_NAMES) else f"状态{i+1}"
             field_idx = 51 + i // 2
             byte_pos = "高" if i % 2 else "低"
             # Input row: label (status name) | entry
-            inp = ttk.Frame(col); inp.pack(fill=tk.X)
+            inp = ttk.Frame(col)
+            inp.pack(fill=tk.X)
             lbl = ttk.Label(inp, text=sname, font=FONT, width=6)
             lbl.pack(side=tk.LEFT)
             self._bind_tooltip(lbl, f"[{field_idx}] {byte_pos}字节: {sname}抵抗力")
@@ -836,15 +890,19 @@ class WarpcEditor:
         lf.grid(row=row, column=0, sticky='ew', padx=2, pady=2)
         for c in range(4):
             lf.columnconfigure(c, weight=1, minsize=180)
-        self._skill_learn_widgets = []; self._skill_learn_labels = []
+        self._skill_learn_widgets = []
+        self._skill_learn_labels = []
         for i in range(SKILL_LEARN_COUNT):
             r, c = divmod(i, 4)
-            col = ttk.Frame(lf); col.grid(row=r, column=c, sticky='n', padx=2, pady=1)
+            col = ttk.Frame(lf)
+            col.grid(row=r, column=c, sticky='n', padx=2, pady=1)
             sname = self.skill_names.get(i, f"技能#{i}") if self.skill_names else f"技能#{i}"
             if i == 343: sname = "普通攻击"
-            field_idx = 88 + i // 2; byte_pos = "高" if i % 2 else "低"
+            field_idx = 88 + i // 2
+            byte_pos = "高" if i % 2 else "低"
             # Input row: label (skill name) | combobox
-            inp = ttk.Frame(col); inp.pack(fill=tk.X)
+            inp = ttk.Frame(col)
+            inp.pack(fill=tk.X)
             lbl = ttk.Label(inp, text=sname, font=FONT, width=10)
             lbl.pack(side=tk.LEFT)
             self._bind_tooltip(lbl, f"[{field_idx}] {byte_pos}字节: {sname} 0不会 1~9进展 10可学 20父技 30独立技")
@@ -882,7 +940,8 @@ class WarpcEditor:
 
         for i in range(count):
             r, c = divmod(i, 4)
-            col = ttk.Frame(lf); col.grid(row=r, column=c, sticky='nw', padx=2, pady=1)
+            col = ttk.Frame(lf)
+            col.grid(row=r, column=c, sticky='nw', padx=2, pady=1)
 
             skill_idx = active_indices[i]
             if skill_idx == 344:
@@ -891,13 +950,15 @@ class WarpcEditor:
                 sname = self.skill_names.get(skill_idx, f"技能#{skill_idx}") if self.skill_names else f"技能#{skill_idx}"
             tip = f"[{273+i}] idx={i}: TKSkill#{skill_idx} {sname} → TKKon ID"
 
-            inp = ttk.Frame(col); inp.pack(fill=tk.X)
+            inp = ttk.Frame(col)
+            inp.pack(fill=tk.X)
             lbl = ttk.Label(inp, text=sname, font=FONT, width=10, anchor=tk.W)
             lbl.pack(side=tk.LEFT)
             self._bind_tooltip(lbl, tip)
             self._skill_effect_labels.append(lbl)
 
-            inp2 = ttk.Frame(col); inp2.pack(fill=tk.X, pady=(0, 2))
+            inp2 = ttk.Frame(col)
+            inp2.pack(fill=tk.X, pady=(0, 2))
             ev = tk.StringVar(value="-1")
             ttk.Entry(inp2, textvariable=ev, width=6, font=FONT, justify='center').pack(side=tk.LEFT)
             ttk.Button(inp2, text='…', width=2,
@@ -935,23 +996,30 @@ class WarpcEditor:
     def _pick_tkkon(self, idx, ev):
         """弹窗选择 TKKon.dat 条目 — 单选"""
         if not self.records: return
-        dlg = tk.Toplevel(self.root); dlg.title(f'选择 TKKon (技能效果判定 idx={idx})')
-        dlg.transient(self.root); dlg.grab_set()
+        dlg = tk.Toplevel(self.root)
+        dlg.title(f'选择 TKKon (技能效果判定 idx={idx})')
+        dlg.transient(self.root)
+        dlg.grab_set()
         self._center_dialog(dlg, 550, 550)
         cur_val = int(ev.get() or 0)
 
-        sf = ttk.Frame(dlg, padding=5); sf.pack(fill=tk.X)
+        sf = ttk.Frame(dlg, padding=5)
+        sf.pack(fill=tk.X)
         ttk.Label(sf, text='搜索:').pack(side=tk.LEFT)
         qv = tk.StringVar()
         ttk.Entry(sf, textvariable=qv, width=30, font=FONT).pack(side=tk.LEFT, padx=5)
 
-        lf2 = ttk.Frame(dlg); lf2.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        lf2 = ttk.Frame(dlg)
+        lf2.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
         tree = ttk.Treeview(lf2, columns=('id', 'name'),
                             show='headings', selectmode='browse', height=20)
-        tree.heading('id', text='TKKon#'); tree.column('id', width=70, anchor='center')
-        tree.heading('name', text='名称 (tkkon_names.csv)'); tree.column('name', width=440, anchor='w')
+        tree.heading('id', text='TKKon#')
+        tree.column('id', width=70, anchor='center')
+        tree.heading('name', text='名称 (tkkon_names.csv)')
+        tree.column('name', width=440, anchor='w')
         vsb = ttk.Scrollbar(lf2, orient=tk.VERTICAL, command=tree.yview)
-        tree.configure(yscrollcommand=vsb.set); tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        tree.configure(yscrollcommand=vsb.set)
+        tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         vsb.pack(side=tk.RIGHT, fill=tk.Y)
 
         items = sorted(self.tkkon_names.items(), key=lambda x: x[0]) if self.tkkon_names else []
@@ -962,7 +1030,9 @@ class WarpcEditor:
             for cid, nm in items:
                 if ql and ql not in f'{cid} {nm}'.lower(): continue
                 iid = tree.insert('', 'end', values=(cid, nm))
-                if cid == cur_val: tree.selection_set(iid); tree.see(iid)
+                if cid == cur_val:
+                    tree.selection_set(iid)
+                    tree.see(iid)
         _refresh()
         qv.trace_add('write', lambda *a: _refresh(qv.get()))
 
@@ -973,7 +1043,8 @@ class WarpcEditor:
                 ev.set(str(v))
                 dlg.destroy()
         tree.bind('<Double-1>', lambda e: _sel())
-        bf = ttk.Frame(dlg, padding=5); bf.pack(fill=tk.X)
+        bf = ttk.Frame(dlg, padding=5)
+        bf.pack(fill=tk.X)
         ttk.Button(bf, text='清空', command=lambda: [ev.set('-1'), dlg.destroy()]).pack(side=tk.LEFT, padx=2)
         ttk.Button(bf, text='取消', command=dlg.destroy).pack(side=tk.RIGHT, padx=2)
         ttk.Button(bf, text='确定', command=_sel).pack(side=tk.RIGHT, padx=2)
@@ -1000,15 +1071,18 @@ class WarpcEditor:
             end = min(base + 100, 527)
             lf = ttk.LabelFrame(parent, text=f"字段 [{base}] — [{end-1}] (int16 偏移)", padding=4)
             lf.pack(fill=tk.X, padx=2, pady=2)
-            grid = ttk.Frame(lf); grid.pack(fill=tk.X)
+            grid = ttk.Frame(lf)
+            grid.pack(fill=tk.X)
             for j in range(base, end):
                 r, c = divmod(j - base, COLS)
                 bo = j * 2
                 fn = f"raw_{j}"
-                frm = ttk.Frame(grid); frm.grid(row=r, column=c, sticky='w', padx=1, pady=1)
+                frm = ttk.Frame(grid)
+                frm.grid(row=r, column=c, sticky='w', padx=1, pady=1)
                 lbl = ttk.Label(frm, text=f"[{j}]", font=('Consolas', 7), foreground='#888')
                 lbl.pack(anchor=tk.W)
-                ev = tk.StringVar(); self._edit_vars[fn] = ev
+                ev = tk.StringVar()
+                self._edit_vars[fn] = ev
                 ent = ttk.Entry(frm, textvariable=ev, width=6, font=('Consolas', 7))
                 ent.pack(fill=tk.X)
                 self._tab3_entries.append((j, fn, lbl))
@@ -1019,7 +1093,8 @@ class WarpcEditor:
     def _build_section(self, parent, title, fields, row, cols=8, ft='int'):
         lf = ttk.LabelFrame(parent, text=title, padding=4)
         lf.grid(row=row, column=0, sticky='ew', padx=2, pady=2)
-        grid = ttk.Frame(lf); grid.pack(fill=tk.X)
+        grid = ttk.Frame(lf)
+        grid.pack(fill=tk.X)
         for fi, (fn, fo, fl, cmt) in enumerate(fields):
             if fn in FLAG_DEFS:
                 field_ft = 'flags'
@@ -1032,10 +1107,13 @@ class WarpcEditor:
             self._build_field_widget(grid, fi // cols, fi % cols, fn, fo, fl, W_INPUT, cmt, field_ft)
 
     def _build_field_widget(self, parent, row, col, fn, fo, fl, fw, cmt, ft='int'):
-        frm = ttk.Frame(parent); frm.grid(row=row, column=col, sticky='nw', padx=2, pady=1)
-        lbl = ttk.Label(frm, text=fl, font=FONT_S); lbl.pack(anchor=tk.W)
+        frm = ttk.Frame(parent)
+        frm.grid(row=row, column=col, sticky='nw', padx=2, pady=1)
+        lbl = ttk.Label(frm, text=fl, font=FONT_S)
+        lbl.pack(anchor=tk.W)
         self._bind_tooltip(lbl, f"[{fo//2}] byte {fo}: {cmt}")
-        ev = tk.StringVar(); self._edit_vars[fn] = ev
+        ev = tk.StringVar()
+        self._edit_vars[fn] = ev
         if fn == 'role':
             cb = ttk.Combobox(frm, state='readonly', values=['-1-未激活', '0-已激活'],
                               width=fw + 3, font=FONT)
@@ -1048,7 +1126,8 @@ class WarpcEditor:
             self._edit_extras[fn] = cb
         elif ft in ('skill_pick', 'item_pick'):
             pick_fn = self._pick_skill if ft == 'skill_pick' else self._pick_item
-            box = ttk.Frame(frm); box.pack(fill=tk.X)
+            box = ttk.Frame(frm)
+            box.pack(fill=tk.X)
             ttk.Entry(box, textvariable=ev, width=fw, font=FONT).pack(side=tk.LEFT)
             ttk.Button(box, text='…', width=2,
                        command=lambda f=fn: pick_fn(f)).pack(side=tk.LEFT, padx=1)
@@ -1057,8 +1136,10 @@ class WarpcEditor:
                                                font=FONT_S, wraplength=150)
             self._edit_extras[fn].pack(anchor=tk.W)
         elif ft == 'flags':
-            box = ttk.Frame(frm); box.pack(fill=tk.X)
-            ev = tk.StringVar(); self._edit_vars[fn] = ev
+            box = ttk.Frame(frm)
+            box.pack(fill=tk.X)
+            ev = tk.StringVar()
+            self._edit_vars[fn] = ev
             ttk.Entry(box, textvariable=ev, width=fw, font=FONT).pack(side=tk.LEFT)
             ttk.Button(box, text="…", width=2,
                        command=lambda f=fn: self._pick_flags(f)).pack(side=tk.LEFT, padx=1)
@@ -1066,8 +1147,10 @@ class WarpcEditor:
                                                font=FONT_S, wraplength=180)
             self._edit_extras[fn].pack(anchor=tk.W)
         elif ft == 'use_right':
-            box = ttk.Frame(frm); box.pack(fill=tk.X)
-            ev = tk.StringVar(); self._edit_vars[fn] = ev
+            box = ttk.Frame(frm)
+            box.pack(fill=tk.X)
+            ev = tk.StringVar()
+            self._edit_vars[fn] = ev
             ttk.Entry(box, textvariable=ev, width=fw, font=FONT).pack(side=tk.LEFT)
             ttk.Button(box, text="…", width=2,
                        command=lambda f=fn: self._pick_use_right(f)).pack(side=tk.LEFT, padx=1)
@@ -1085,8 +1168,10 @@ class WarpcEditor:
             self._edit_extras[fn].pack(anchor=tk.W)
             self._edit_vars[fn] = tk.StringVar()
         elif fn == 'portrait':
-            box = ttk.Frame(frm); box.pack(fill=tk.X)
-            ev = tk.StringVar(); self._edit_vars[fn] = ev
+            box = ttk.Frame(frm)
+            box.pack(fill=tk.X)
+            ev = tk.StringVar()
+            self._edit_vars[fn] = ev
             ttk.Entry(box, textvariable=ev, width=fw, font=FONT).pack(side=tk.LEFT)
             ttk.Button(box, text="…", width=2,
                        command=lambda: self._pick_portrait()).pack(side=tk.LEFT, padx=1)
@@ -1102,18 +1187,24 @@ class WarpcEditor:
         tip = {'win': None}
         def _enter(e):
             if tip['win']: return
-            x = widget.winfo_rootx() + 10; y = widget.winfo_rooty() + widget.winfo_height() + 2
-            w = tk.Toplevel(widget); w.wm_overrideredirect(True)
+            x = widget.winfo_rootx() + 10
+            y = widget.winfo_rooty() + widget.winfo_height() + 2
+            w = tk.Toplevel(widget)
+            w.wm_overrideredirect(True)
             w.wm_geometry(f"+{x}+{y}")
             ttk.Label(w, text=text, background='#FFFFE0', relief='solid', borderwidth=1,
                       font=FONT_S, wraplength=420, padding=3).pack()
             tip['win'] = w
         def _leave(e):
-            if tip['win']: tip['win'].destroy(); tip['win'] = None
-        widget.bind('<Enter>', _enter); widget.bind('<Leave>', _leave)
+            if tip['win']:
+                tip['win'].destroy()
+                tip['win'] = None
+        widget.bind('<Enter>', _enter)
+        widget.bind('<Leave>', _leave)
 
     def _bind_mousewheel(self, canvas):
-        def _mw(e): canvas.yview_scroll(int(-1 * (e.delta / 120)), "units")
+        def _mw(e):
+            canvas.yview_scroll(int(-1 * (e.delta / 120)), "units")
         canvas.bind("<Enter>", lambda e: canvas.bind_all("<MouseWheel>", _mw))
         canvas.bind("<Leave>", lambda e: canvas.unbind_all("<MouseWheel>"))
 
@@ -1125,7 +1216,8 @@ class WarpcEditor:
         wp = os.path.join(d, "WarPC.dat")
         tk_ = os.path.join(d, "TKT.dat")
         if not os.path.exists(wp):
-            messagebox.showwarning("文件缺失", "未找到 WarPC.dat"); return
+            messagebox.showwarning("文件缺失", "未找到 WarPC.dat")
+            return
         self.warpc_path = wp
         self.tkt_path = tk_ if os.path.exists(tk_) else None
         self._reload()
@@ -1142,7 +1234,8 @@ class WarpcEditor:
                 dec = lzss_decompress(raw)
                 if len(raw) % 94 == 0 and (len(dec) == 0 or len(dec) % 94 != 0):
                     dec = raw
-            name_lookup = {}; type_lookup = {}
+            name_lookup = {}
+            type_lookup = {}
             for i in range(350):
                 off = i * 94
                 if off + 6 > len(dec): break
@@ -1190,7 +1283,10 @@ class WarpcEditor:
                 dec = lzss_decompress(raw)
                 if len(raw) % 64 == 0 and (len(dec) == 0 or len(dec) % 64 != 0):
                     dec = raw
-            id_lookup = {}; idx_lookup = {}; idx_to_id = {}; id_to_idx = {}
+            id_lookup = {}
+            idx_lookup = {}
+            idx_to_id = {}
+            id_to_idx = {}
             for i in range(600):
                 off = i * 64
                 if off + 10 > len(dec): break
@@ -1213,7 +1309,8 @@ class WarpcEditor:
 
     def _reload(self):
         if not self.warpc_path: return
-        self.status_var.set("加载中…"); self.root.update()
+        self.status_var.set("加载中…")
+        self.root.update()
 
         # 检测 tks_launcher 未恢复的 .orig 备份, 提示用户恢复
         orig_path = self.warpc_path + ".orig"
@@ -1242,7 +1339,8 @@ class WarpcEditor:
         self._fa_sprites = load_jvg_sprites(fa_path) or []
         self._fa_photos.clear()
         try:
-            self.records = load_warpc(self.warpc_path); self._dirty = False
+            self.records = load_warpc(self.warpc_path)
+            self._dirty = False
             self.skill_names, self._skill_types = self._load_skill_names()
             self.tkkon_names = self._load_tkkon_names()
             if hasattr(self, '_skill_learn_labels'):
@@ -1261,8 +1359,11 @@ class WarpcEditor:
             self.status_var.set(
                 f"{len(self.records)} 角色 (1054字节/角色) | 有效 {nonempty} | TKT {len(self.tkt)} 条 | 物品 {len(self.item_names)} 技能 {len(self.skill_names)} TKKon {tkkon_count}")
         except Exception as e:
-            messagebox.showerror("加载失败", str(e)); self.records = []
-        self._update_paths(); self._set_edit_enabled(True); self._apply_filter()
+            messagebox.showerror("加载失败", str(e))
+            self.records = []
+        self._update_paths()
+        self._set_edit_enabled(True)
+        self._apply_filter()
 
     def _set_edit_enabled(self, en):
         for c in self.edit_frame.winfo_children():
@@ -1311,7 +1412,8 @@ class WarpcEditor:
         return f"#{nid}" if nid else f"(空-#{rec['index']})"
 
     def _apply_filter(self):
-        q = self.sv.get().strip().lower(); self.filtered_indices = []
+        q = self.sv.get().strip().lower()
+        self.filtered_indices = []
         for rec in self.records:
             if q:
                 nm = self._char_name(rec)
@@ -1326,7 +1428,8 @@ class WarpcEditor:
         self.status_var.set(msg)
 
     def _clear_filter(self):
-        self.sv.set(""); self._apply_filter()
+        self.sv.set("")
+        self._apply_filter()
 
     def _refresh_table(self):
         self._tree_photos.clear()
@@ -1337,9 +1440,11 @@ class WarpcEditor:
             nm = self._char_name(r)
             hp_str = f"{f[5]}/{f[8]}" if f[5] or f[8] else ""
             mp_str = f"{f[6]}/{f[10]}" if f[6] or f[10] else ""
-            role_val = f[3]; role_str = '未激活' if role_val == -1 else ('已激活' if role_val == 0 else str(role_val))
+            role_val = f[3]
+            role_str = '未激活' if role_val == -1 else ('已激活' if role_val == 0 else str(role_val))
             tag = 'inactive' if role_val == -1 else ('active' if role_val == 0 else '')
-            portrait = f[1]; thumb_idx = portrait * 2 + 1 if portrait >= 0 else 0
+            portrait = f[1]
+            thumb_idx = portrait * 2 + 1 if portrait >= 0 else 0
             photo = self._get_fa_photo(thumb_idx, (24, 24))
             self._tree_photos.append(photo)
             self.tree.insert('', 'end', image=photo if photo else '',
@@ -1354,7 +1459,8 @@ class WarpcEditor:
             self.filtered_indices.sort(key=lambda i: self.records[i]['fields'][{'level':2,'role':3}[col]], reverse=rev)
         else:
             self.filtered_indices.sort(reverse=rev)
-        self._sort_reverse = not rev; self._refresh_table()
+        self._sort_reverse = not rev
+        self._refresh_table()
 
     # ----------- 编辑 -----------
 
@@ -1374,7 +1480,8 @@ class WarpcEditor:
             f"等级={f[2]}  身份={'未激活' if f[3]==-1 else ('已激活' if f[3]==0 else str(f[3]))}    "
             f"HP={f[5]}/{f[8]}  MP={f[6]}/{f[10]}"
         ))
-        portrait = f[1]; large_idx = portrait * 2 if portrait >= 0 else 0
+        portrait = f[1]
+        large_idx = portrait * 2 if portrait >= 0 else 0
         photo = self._get_fa_photo(large_idx, (70, 70))
         if photo:
             self.lbl_avatar.configure(image=photo, text="")
@@ -1388,7 +1495,8 @@ class WarpcEditor:
             cb = self._edit_extras['role']
             for i, item in enumerate(cb['values']):
                 if item.startswith(f'{role_val}-'):
-                    cb.current(i); break
+                    cb.current(i)
+                    break
 
         # Populate reaction_group combobox
         rg_val = f[41]
@@ -1396,7 +1504,8 @@ class WarpcEditor:
             cb = self._edit_extras['reaction_group']
             for i, item in enumerate(cb['values']):
                 if item.startswith(f'{rg_val}-'):
-                    cb.current(i); break
+                    cb.current(i)
+                    break
 
         # Populate all known fields
         all_named_fields = (IDENTITY_FIELDS + HPMP_FIELDS + STAT_FIELDS + CHAR_ATTR_FIELDS +
@@ -1438,7 +1547,8 @@ class WarpcEditor:
                 byte_val = (unsigned >> (8 * is_high)) & 0xFF
                 for vi, item in enumerate(cb['values']):
                     if item.startswith(f'{byte_val}-'):
-                        cb.current(vi); break
+                        cb.current(vi)
+                        break
 
         # Populate skill effect widgets
         if hasattr(self, '_skill_effect_widgets'):
@@ -1544,33 +1654,47 @@ class WarpcEditor:
     # ----------- 弹窗 -----------
 
     def _center_dialog(self, dlg, w, h):
-        dlg.withdraw(); dlg.geometry(f'{w}x{h}'); dlg.update_idletasks()
-        rx = self.root.winfo_rootx(); ry = self.root.winfo_rooty()
-        rw = self.root.winfo_width(); rh = self.root.winfo_height()
-        x = rx + (rw - w) // 2; y = ry + (rh - h) // 2
-        dlg.geometry(f'+{x}+{y}'); dlg.deiconify()
+        dlg.withdraw()
+        dlg.geometry(f'{w}x{h}')
+        dlg.update_idletasks()
+        rx = self.root.winfo_rootx()
+        ry = self.root.winfo_rooty()
+        rw = self.root.winfo_width()
+        rh = self.root.winfo_height()
+        x = rx + (rw - w) // 2
+        y = ry + (rh - h) // 2
+        dlg.geometry(f'+{x}+{y}')
+        dlg.deiconify()
 
     def _pick_skill(self, fn):
         """弹出技能选择对话框 — 加载 TKSkill.dat 显示技能名称"""
         if not self.records: return
-        dlg = tk.Toplevel(self.root); dlg.title('选择技能')
-        dlg.transient(self.root); dlg.grab_set()
+        dlg = tk.Toplevel(self.root)
+        dlg.title('选择技能')
+        dlg.transient(self.root)
+        dlg.grab_set()
         self._center_dialog(dlg, 550, 550)
         cur_val = int(self._edit_vars[fn].get() or 0)
 
-        sf = ttk.Frame(dlg, padding=5); sf.pack(fill=tk.X)
+        sf = ttk.Frame(dlg, padding=5)
+        sf.pack(fill=tk.X)
         ttk.Label(sf, text='搜索:').pack(side=tk.LEFT)
         qv = tk.StringVar()
         ttk.Entry(sf, textvariable=qv, width=30, font=FONT).pack(side=tk.LEFT, padx=5)
 
-        lf2 = ttk.Frame(dlg); lf2.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        lf2 = ttk.Frame(dlg)
+        lf2.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
         tree = ttk.Treeview(lf2, columns=('index', 'type', 'name'),
                             show='headings', selectmode='browse', height=20)
-        tree.heading('index', text='技能#'); tree.column('index', width=55, anchor='center')
-        tree.heading('type', text='类型'); tree.column('type', width=55, anchor='center')
-        tree.heading('name', text='技能名称'); tree.column('name', width=400, anchor='w')
+        tree.heading('index', text='技能#')
+        tree.column('index', width=55, anchor='center')
+        tree.heading('type', text='类型')
+        tree.column('type', width=55, anchor='center')
+        tree.heading('name', text='技能名称')
+        tree.column('name', width=400, anchor='w')
         vsb = ttk.Scrollbar(lf2, orient=tk.VERTICAL, command=tree.yview)
-        tree.configure(yscrollcommand=vsb.set); tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        tree.configure(yscrollcommand=vsb.set)
+        tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         vsb.pack(side=tk.RIGHT, fill=tk.Y)
 
         type_names = {0: '指令', 1: '主动', 2: '被动', 3: '移动'}
@@ -1584,7 +1708,9 @@ class WarpcEditor:
             for idx, tp, nm in items:
                 if ql and ql not in f'{idx} {tp} {nm}'.lower(): continue
                 iid = tree.insert('', 'end', values=(idx, tp, nm))
-                if idx == cur_val: tree.selection_set(iid); tree.see(iid)
+                if idx == cur_val:
+                    tree.selection_set(iid)
+                    tree.see(iid)
         _refresh()
         qv.trace_add('write', lambda *a: _refresh(qv.get()))
 
@@ -1598,7 +1724,8 @@ class WarpcEditor:
                     self._edit_extras[fn].config(text=sk_name)
                 dlg.destroy()
         tree.bind('<Double-1>', lambda e: _sel())
-        bf = ttk.Frame(dlg, padding=5); bf.pack(fill=tk.X)
+        bf = ttk.Frame(dlg, padding=5)
+        bf.pack(fill=tk.X)
         ttk.Button(bf, text='清空', command=lambda: [
             self._edit_vars[fn].set('-1'),
             self._edit_extras[fn].config(text='(未装备)') if fn in self._edit_extras else None,
@@ -1612,24 +1739,31 @@ class WarpcEditor:
         """弹出物品选择对话框 — 装备索引(按TKItem下标)或装备ID"""
         if not self.records: return
         is_idx = fn.startswith('equip_idx')
-        dlg = tk.Toplevel(self.root); dlg.title('选择物品')
-        dlg.transient(self.root); dlg.grab_set()
+        dlg = tk.Toplevel(self.root)
+        dlg.title('选择物品')
+        dlg.transient(self.root)
+        dlg.grab_set()
         self._center_dialog(dlg, 550, 550)
         cur_val = int(self._edit_vars[fn].get() or 0)
 
-        sf = ttk.Frame(dlg, padding=5); sf.pack(fill=tk.X)
+        sf = ttk.Frame(dlg, padding=5)
+        sf.pack(fill=tk.X)
         ttk.Label(sf, text='搜索:').pack(side=tk.LEFT)
         qv = tk.StringVar()
         ttk.Entry(sf, textvariable=qv, width=30, font=FONT).pack(side=tk.LEFT, padx=5)
 
-        lf2 = ttk.Frame(dlg); lf2.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        lf2 = ttk.Frame(dlg)
+        lf2.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
         id_label = '物品#' if is_idx else '物品ID'
         tree = ttk.Treeview(lf2, columns=('key', 'name'),
                             show='headings', selectmode='browse', height=20)
-        tree.heading('key', text=id_label); tree.column('key', width=80, anchor='center')
-        tree.heading('name', text='物品名称'); tree.column('name', width=430, anchor='w')
+        tree.heading('key', text=id_label)
+        tree.column('key', width=80, anchor='center')
+        tree.heading('name', text='物品名称')
+        tree.column('name', width=430, anchor='w')
         vsb = ttk.Scrollbar(lf2, orient=tk.VERTICAL, command=tree.yview)
-        tree.configure(yscrollcommand=vsb.set); tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        tree.configure(yscrollcommand=vsb.set)
+        tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         vsb.pack(side=tk.RIGHT, fill=tk.Y)
 
         lookup = self.item_idx_names if is_idx else self.item_names
@@ -1641,7 +1775,9 @@ class WarpcEditor:
             for key_val, nm in items:
                 if ql and ql not in f'{key_val} {nm}'.lower(): continue
                 iid = tree.insert('', 'end', values=(key_val, nm))
-                if key_val == cur_val: tree.selection_set(iid); tree.see(iid)
+                if key_val == cur_val:
+                    tree.selection_set(iid)
+                    tree.see(iid)
         _refresh()
         qv.trace_add('write', lambda *a: _refresh(qv.get()))
 
@@ -1693,7 +1829,8 @@ class WarpcEditor:
             if pair_fn in self._edit_extras:
                 self._edit_extras[pair_fn].config(text='' if is_idx else '(未装备)')
             dlg.destroy()
-        bf = ttk.Frame(dlg, padding=5); bf.pack(fill=tk.X)
+        bf = ttk.Frame(dlg, padding=5)
+        bf.pack(fill=tk.X)
         ttk.Button(bf, text='清空', command=_clear).pack(side=tk.LEFT, padx=2)
         ttk.Button(bf, text='取消', command=dlg.destroy).pack(side=tk.RIGHT, padx=2)
         ttk.Button(bf, text='确定', command=_sel).pack(side=tk.RIGHT, padx=2)
@@ -1703,26 +1840,32 @@ class WarpcEditor:
         """弹窗选择标志位 (Checkbox 位掩码)"""
         if fn not in FLAG_DEFS: return
         title, bits = FLAG_DEFS[fn]
-        dlg = tk.Toplevel(self.root); dlg.title(f"选择{title} (位掩码)")
-        dlg.transient(self.root); dlg.grab_set()
+        dlg = tk.Toplevel(self.root)
+        dlg.title(f"选择{title} (位掩码)")
+        dlg.transient(self.root)
+        dlg.grab_set()
         self._center_dialog(dlg, 400, 250)
         cur_val = int(self._edit_vars[fn].get() or 0) & 0xFFFF
-        wrap = ttk.Frame(dlg, padding=8); wrap.pack(fill=tk.BOTH, expand=True)
+        wrap = ttk.Frame(dlg, padding=8)
+        wrap.pack(fill=tk.BOTH, expand=True)
         vars_ = []
         for bit, name, desc in bits:
             v = tk.BooleanVar(value=bool(cur_val & (1 << bit)))
-            row = ttk.Frame(wrap); row.pack(anchor=tk.W, fill=tk.X, pady=1)
+            row = ttk.Frame(wrap)
+            row.pack(anchor=tk.W, fill=tk.X, pady=1)
             ttk.Checkbutton(row, text=f"bit{bit} {name}", variable=v).pack(side=tk.LEFT)
             ttk.Label(row, text=desc, foreground='#999', font=('', 7)).pack(side=tk.LEFT, padx=(8, 0))
             vars_.append((bit, v))
-        bf = ttk.Frame(dlg, padding=4); bf.pack(side=tk.BOTTOM, fill=tk.X)
+        bf = ttk.Frame(dlg, padding=4)
+        bf.pack(side=tk.BOTTOM, fill=tk.X)
         def _ok():
             m = 0
             for bit, v in vars_:
                 if v.get(): m |= (1 << bit)
             if m >= 0x8000: m -= 0x10000
             self._edit_vars[fn].set(str(m))
-            self._update_flags_label(fn, m); dlg.destroy()
+            self._update_flags_label(fn, m)
+            dlg.destroy()
         ttk.Button(bf, text="全选", command=lambda: [v.set(True) for _, v in vars_]).pack(side=tk.LEFT)
         ttk.Button(bf, text="全清", command=lambda: [v.set(False) for _, v in vars_]).pack(side=tk.LEFT, padx=4)
         ttk.Button(bf, text="取消", command=dlg.destroy).pack(side=tk.RIGHT, padx=2)
@@ -1740,12 +1883,17 @@ class WarpcEditor:
     def _pick_portrait(self):
         """弹窗选择头像 — 展示 Fa.JVG 中所有大幅图 (偶数索引)"""
         if not self._fa_sprites:
-            messagebox.showinfo("提示", "未加载 Fa.JVG 头像文件"); return
-        fn = 'portrait'; cur_val = int(self._edit_vars[fn].get() or 0)
-        dlg = tk.Toplevel(self.root); dlg.title("选择头像 (Fa.JVG 大幅图)")
-        dlg.transient(self.root); dlg.grab_set()
+            messagebox.showinfo("提示", "未加载 Fa.JVG 头像文件")
+            return
+        fn = 'portrait'
+        cur_val = int(self._edit_vars[fn].get() or 0)
+        dlg = tk.Toplevel(self.root)
+        dlg.title("选择头像 (Fa.JVG 大幅图)")
+        dlg.transient(self.root)
+        dlg.grab_set()
         self._center_dialog(dlg, 800, 560)
-        dlg.grid_rowconfigure(0, weight=1); dlg.grid_columnconfigure(0, weight=1)
+        dlg.grid_rowconfigure(0, weight=1)
+        dlg.grid_columnconfigure(0, weight=1)
         dlg.resizable(True, True)
         cvs = tk.Canvas(dlg, highlightthickness=0)
         sb = ttk.Scrollbar(dlg, orient=tk.VERTICAL, command=cvs.yview)
@@ -1754,7 +1902,8 @@ class WarpcEditor:
         cvs.configure(yscrollcommand=sb.set)
         cvs.grid(row=0, column=0, sticky='nsew', padx=4, pady=(4,0))
         sb.grid(row=0, column=1, sticky='ns', pady=(4,0))
-        def _mw(e): cvs.yview_scroll(int(-1*(e.delta/120)), "units")
+        def _mw(e):
+            cvs.yview_scroll(int(-1*(e.delta/120)), "units")
         cvs.bind("<Enter>", lambda e: cvs.bind_all("<MouseWheel>", _mw))
         cvs.bind("<Leave>", lambda e: cvs.unbind_all("<MouseWheel>"))
         bf = ttk.Frame(dlg, padding=4)
@@ -1765,7 +1914,8 @@ class WarpcEditor:
         # 收集所有大幅图 (偶数索引)
         large_indices = [(si, si // 2) for si in range(0, len(self._fa_sprites), 2)
                          if self._fa_sprites[si] is not None]
-        CELL_W = 68; _last_cols = [0]
+        CELL_W = 68
+        _last_cols = [0]
         def _build_grid(cols=None):
             if cols is None:
                 cols = max(4, (cvs.winfo_width() - 4) // CELL_W)
@@ -1809,27 +1959,33 @@ class WarpcEditor:
         """弹窗选择使用/装备权限 (位掩码多选)"""
         if fn not in USE_RIGHT_DEFS: return
         title, opts = USE_RIGHT_DEFS[fn]
-        dlg = tk.Toplevel(self.root); dlg.title(f"选择{title} (位掩码)")
-        dlg.transient(self.root); dlg.grab_set()
+        dlg = tk.Toplevel(self.root)
+        dlg.title(f"选择{title} (位掩码)")
+        dlg.transient(self.root)
+        dlg.grab_set()
         self._center_dialog(dlg, 360, 60 + max(len(opts), 2) * 32)
         cur_val = int(self._edit_vars[fn].get() or 0) & 0xFFFF
-        wrap = ttk.Frame(dlg, padding=8); wrap.pack(fill=tk.BOTH, expand=True)
+        wrap = ttk.Frame(dlg, padding=8)
+        wrap.pack(fill=tk.BOTH, expand=True)
         vars_ = []
         for bit, name, desc in opts:
             v = tk.BooleanVar(value=bool(cur_val & bit))
-            row = ttk.Frame(wrap); row.pack(anchor=tk.W, fill=tk.X, pady=1)
+            row = ttk.Frame(wrap)
+            row.pack(anchor=tk.W, fill=tk.X, pady=1)
             ttk.Checkbutton(row, text=f"{name}", variable=v).pack(side=tk.LEFT)
             if desc:
                 ttk.Label(row, text=desc, foreground='#999', font=('', 7)).pack(side=tk.LEFT, padx=(8, 0))
             vars_.append((bit, v))
-        bf = ttk.Frame(dlg, padding=4); bf.pack(side=tk.BOTTOM, fill=tk.X)
+        bf = ttk.Frame(dlg, padding=4)
+        bf.pack(side=tk.BOTTOM, fill=tk.X)
         def _ok():
             m = 0
             for bit, v in vars_:
                 if v.get(): m += bit
             if m >= 0x8000: m -= 0x10000
             self._edit_vars[fn].set(str(m))
-            self._update_use_right_label(fn, m); dlg.destroy()
+            self._update_use_right_label(fn, m)
+            dlg.destroy()
         ttk.Button(bf, text="全选", command=lambda: [v.set(True) for _, v in vars_]).pack(side=tk.LEFT)
         ttk.Button(bf, text="全清", command=lambda: [v.set(False) for _, v in vars_]).pack(side=tk.LEFT, padx=4)
         ttk.Button(bf, text="取消", command=dlg.destroy).pack(side=tk.RIGHT, padx=2)
@@ -1848,13 +2004,16 @@ class WarpcEditor:
         """弹窗选择状态位掩码 (16个复选框, 对齐物品编辑器)"""
         is_cause = fn.startswith('cause_')
         title = "选择导致状态 (位掩码)" if is_cause else "选择解除状态 (位掩码)"
-        dlg = tk.Toplevel(self.root); dlg.title(title)
-        dlg.transient(self.root); dlg.grab_set()
+        dlg = tk.Toplevel(self.root)
+        dlg.title(title)
+        dlg.transient(self.root)
+        dlg.grab_set()
         self._center_dialog(dlg, 320, 500)
         base = 0 if fn.endswith('_mask1') else 16
         cur_mask = int(self._edit_vars[fn].get() or 0) & 0xFFFF
         vars_ = []
-        wrap = ttk.Frame(dlg, padding=8); wrap.pack(fill=tk.BOTH, expand=True)
+        wrap = ttk.Frame(dlg, padding=8)
+        wrap.pack(fill=tk.BOTH, expand=True)
         for i in range(16):
             idx = base + i
             if idx >= len(STATUS_NAMES): break
@@ -1862,14 +2021,16 @@ class WarpcEditor:
             ttk.Checkbutton(wrap, text=f"{idx}. {STATUS_NAMES[idx]}",
                              variable=v).pack(anchor=tk.W, pady=1)
             vars_.append(v)
-        bf = ttk.Frame(dlg); bf.pack(fill=tk.X, padx=8, pady=8)
+        bf = ttk.Frame(dlg)
+        bf.pack(fill=tk.X, padx=8, pady=8)
         def _ok():
             m = 0
             for i, v in enumerate(vars_):
                 if v.get(): m |= (1 << i)
             if m >= 0x8000: m -= 0x10000
             self._edit_vars[fn].set(str(m))
-            self._update_status_label(fn, m & 0xFFFF); dlg.destroy()
+            self._update_status_label(fn, m & 0xFFFF)
+            dlg.destroy()
         ttk.Button(bf, text="全选", command=lambda: [v.set(True) for v in vars_]).pack(side=tk.LEFT)
         ttk.Button(bf, text="全清", command=lambda: [v.set(False) for v in vars_]).pack(side=tk.LEFT, padx=4)
         ttk.Button(bf, text="取消", command=dlg.destroy).pack(side=tk.RIGHT, padx=2)
@@ -2023,14 +2184,16 @@ class WarpcEditor:
         nm = self._char_name(rec)
         hp_str = f"{f[5]}/{f[8]}" if f[5] or f[8] else ""
         mp_str = f"{f[6]}/{f[10]}" if f[6] or f[10] else ""
-        role_val = f[3]; role_str = '未激活' if role_val == -1 else ('已激活' if role_val == 0 else str(role_val))
+        role_val = f[3]
+        role_str = '未激活' if role_val == -1 else ('已激活' if role_val == 0 else str(role_val))
         tag = 'inactive' if role_val == -1 else ('active' if role_val == 0 else '')
         self.tree.unbind('<<TreeviewSelect>>')
         for child in self.tree.get_children():
             if int(self.tree.item(child)['values'][0]) == rec['index']:
                 self.tree.item(child, values=(rec['index'], nm, f[2], role_str, hp_str, mp_str),
                                tags=(tag,) if tag else ())
-                self.tree.selection_set(child); self.tree.see(child)
+                self.tree.selection_set(child)
+                self.tree.see(child)
                 break
         self.tree.bind('<<TreeviewSelect>>', self._on_tree_select)
         self.status_var.set(f"角色 #{rec['index']} 已修改 (内存, 未保存)")
@@ -2167,7 +2330,8 @@ class WarpcEditor:
 
     def _save(self):
         if not self.warpc_path or not self.records:
-            messagebox.showinfo("提示", "请先加载数据"); return
+            messagebox.showinfo("提示", "请先加载数据")
+            return
         if not messagebox.askyesno("确认保存",
             f"保存 {len(self.records)} 个角色到:\n{self.warpc_path}\n\n原文件将被覆盖 (生成 .bak)."):
             return
@@ -2176,8 +2340,10 @@ class WarpcEditor:
                 with open(self.warpc_path + ".bak", 'wb') as d: d.write(s.read())
         except: pass
         try:
-            self.status_var.set("正在保存…"); self.root.update()
-            save_warpc(self.warpc_path, self.records); self._dirty = False
+            self.status_var.set("正在保存…")
+            self.root.update()
+            save_warpc(self.warpc_path, self.records)
+            self._dirty = False
             self.status_var.set(f"已保存 → {self.warpc_path}")
             messagebox.showinfo("保存成功", f"已保存\n备份: {self.warpc_path}.bak")
         except Exception as e:
@@ -2255,14 +2421,17 @@ class WarpcEditor:
         lines.append("  sub_422BBC  被动技能效果计算")
         lines.append("  sub_4173F8  装备ID→索引匹配 ([69-72]←[73-76])")
 
-        dlg = tk.Toplevel(self.root); dlg.title("字段参考 v1.0 (逆向)")
-        dlg.geometry("680x600"); dlg.transient(self.root)
+        dlg = tk.Toplevel(self.root)
+        dlg.title("字段参考 v1.0 (逆向)")
+        dlg.geometry("680x600")
+        dlg.transient(self.root)
         tx = tk.Text(dlg, font=('Consolas', 9), wrap='word')
         sb1 = ttk.Scrollbar(dlg, orient=tk.VERTICAL, command=tx.yview)
         tx.configure(yscrollcommand=sb1.set)
         sb1.pack(side=tk.RIGHT, fill=tk.Y)
         tx.pack(fill=tk.BOTH, expand=True)
-        tx.insert('1.0', '\n'.join(lines)); tx.config(state='disabled')
+        tx.insert('1.0', '\n'.join(lines))
+        tx.config(state='disabled')
 
     def _show_about(self):
         cnt = len(self.records) if self.records else WARPC_ORIG_COUNT
@@ -2288,7 +2457,9 @@ class WarpcEditor:
 
 
 def main():
-    root = tk.Tk(); WarpcEditor(root); root.mainloop()
+    root = tk.Tk()
+    WarpcEditor(root)
+    root.mainloop()
 
 if __name__ == '__main__':
     main()

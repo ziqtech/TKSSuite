@@ -63,7 +63,11 @@ WarWay.dat 格式 (每条1024字节, 共100条, 32x32有符号字节网格):
 用法: python wardata_editor.py
 """
 
-import struct, os, sys, random, tkinter as tk
+import os
+import random
+import struct
+import sys
+import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 from pathlib import Path
 
@@ -341,7 +345,9 @@ def load_tkt(tkt_path: str) -> dict:
     cnt = struct.unpack_from('<I', raw, 4)[0]
     enc = raw[8:8 + ts]
     dec = bytes([b ^ 0xFF for b in enc])
-    idsz = cnt * 4; ofsz = cnt * 4; lookup = {}
+    idsz = cnt * 4
+    ofsz = cnt * 4
+    lookup = {}
     SKIP = set(range(0, 10))
     for i in range(cnt):
         eid = struct.unpack_from('<i', dec, i * 4)[0]
@@ -522,7 +528,8 @@ class WarDataEditor:
 
     def _build_ui(self):
         # ── 菜单栏 ──
-        mb = tk.Menu(self.root); self.root.config(menu=mb)
+        mb = tk.Menu(self.root)
+        self.root.config(menu=mb)
         fm = tk.Menu(mb, tearoff=0)
         fm.add_command(label="加载 TKS 目录…", command=self._load_tks_dir, accelerator="Ctrl+O")
         fm.add_separator()
@@ -549,7 +556,8 @@ class WarDataEditor:
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
         # ── 工具栏 ──
-        tb = ttk.Frame(self.root); tb.pack(fill=tk.X, padx=5, pady=(5, 0))
+        tb = ttk.Frame(self.root)
+        tb.pack(fill=tk.X, padx=5, pady=(5, 0))
         ttk.Label(tb, text="搜索:").pack(side=tk.LEFT)
         self.search_var = tk.StringVar()
         e_s = ttk.Entry(tb, textvariable=self.search_var, width=20)
@@ -591,7 +599,8 @@ class WarDataEditor:
         self.lbl_extra.pack(side=tk.LEFT, padx=10, pady=2)
 
     def _build_left_panel(self):
-        lf = ttk.Frame(self.paned); self.paned.add(lf, weight=1)
+        lf = ttk.Frame(self.paned)
+        self.paned.add(lf, weight=1)
         cols = ('index', 'map_info', 'enemy_count', 'trea_count', 'trap_count', 'trea_detail', 'chars_info', 'flags_info')
         self.tree = ttk.Treeview(lf, columns=cols, show='headings', selectmode='browse')
         col_config = [
@@ -683,7 +692,8 @@ class WarDataEditor:
                         trap_count, trea_detail, chars_info, flags_info))
 
     def _build_right_panel(self):
-        rf = ttk.Frame(self.paned); self.paned.add(rf, weight=3)
+        rf = ttk.Frame(self.paned)
+        self.paned.add(rf, weight=3)
         self.notebook = ttk.Notebook(rf)
         self.notebook.pack(fill=tk.BOTH, expand=True)
 
@@ -1075,8 +1085,10 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
     # ═══════════════════════════════════════════════════════════
 
     def _build_field(self, parent, row, col, label, var, width=12, tooltip=""):
-        frm = ttk.Frame(parent); frm.grid(row=row, column=col, sticky='nw', padx=3, pady=2)
-        lbl = ttk.Label(frm, text=label, font=FONT_S); lbl.pack(anchor=tk.W)
+        frm = ttk.Frame(parent)
+        frm.grid(row=row, column=col, sticky='nw', padx=3, pady=2)
+        lbl = ttk.Label(frm, text=label, font=FONT_S)
+        lbl.pack(anchor=tk.W)
         if tooltip:
             self._bind_tooltip(lbl, tooltip)
         entry = ttk.Entry(frm, textvariable=var, width=width, font=FONT)
@@ -1084,8 +1096,10 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
         return entry
 
     def _build_spinbox(self, parent, row, col, label, var, from_, to, tooltip=""):
-        frm = ttk.Frame(parent); frm.grid(row=row, column=col, sticky='nw', padx=3, pady=2)
-        lbl = ttk.Label(frm, text=label, font=FONT_S); lbl.pack(anchor=tk.W)
+        frm = ttk.Frame(parent)
+        frm.grid(row=row, column=col, sticky='nw', padx=3, pady=2)
+        lbl = ttk.Label(frm, text=label, font=FONT_S)
+        lbl.pack(anchor=tk.W)
         if tooltip:
             self._bind_tooltip(lbl, tooltip)
         sb = ttk.Spinbox(frm, textvariable=var, from_=from_, to=to, width=10, font=FONT)
@@ -1159,12 +1173,15 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
         for i in range(6):
             var = tk.StringVar()
             self.pvars['must_chars'].append(var)
-            c = i % 3; r = row + i // 3
-            frm = ttk.Frame(pf); frm.grid(row=r, column=c, sticky='w', padx=3, pady=1)
+            c = i % 3
+            r = row + i // 3
+            frm = ttk.Frame(pf)
+            frm.grid(row=r, column=c, sticky='w', padx=3, pady=1)
             ttk.Label(frm, text=f"槽{i}:", font=FONT_S, width=3).pack(side=tk.LEFT)
             ttk.Entry(frm, textvariable=var, width=6, font=FONT).pack(side=tk.LEFT, padx=2)
             lbl = ttk.Label(frm, text="", foreground='#3366cc', font=FONT_S)
-            lbl.pack(side=tk.LEFT); self.must_char_labels.append(lbl)
+            lbl.pack(side=tk.LEFT)
+            self.must_char_labels.append(lbl)
 
     def _on_flag_change(self):
         flags = 0
@@ -1245,7 +1262,8 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
             row=row, column=0, columnspan=6, sticky='w', pady=(4, 1))
         row += 1
         self.apvars['must_chars'] = []
-        frm_mc = ttk.Frame(inner); frm_mc.grid(row=row, column=0, columnspan=6, sticky='w', padx=3)
+        frm_mc = ttk.Frame(inner)
+        frm_mc.grid(row=row, column=0, columnspan=6, sticky='w', padx=3)
         for i in range(6):
             var = tk.StringVar()
             self.apvars['must_chars'].append(var)
@@ -1591,7 +1609,8 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
                 row=row, column=9, padx=1)
 
             vars_row['flags'] = tk.StringVar()
-            frm_flags = ttk.Frame(ef); frm_flags.grid(row=row, column=10, padx=1)
+            frm_flags = ttk.Frame(ef)
+            frm_flags.grid(row=row, column=10, padx=1)
             ttk.Entry(frm_flags, textvariable=vars_row['flags'], width=5, font=FONT).pack(side=tk.LEFT)
             vars_row['flag_lbl'] = ttk.Label(frm_flags, text="", foreground='#cc6633', font=('', 7), width=4)
             vars_row['flag_lbl'].pack(side=tk.LEFT)
@@ -1722,7 +1741,8 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
         canvas.configure(yscrollcommand=vsb.set)
         inner = ttk.Frame(canvas)
         canvas.create_window((0, 0), window=inner, anchor='nw')
-        def _conf(event): canvas.configure(scrollregion=canvas.bbox('all'))
+        def _conf(event):
+            canvas.configure(scrollregion=canvas.bbox('all'))
         inner.bind('<Configure>', _conf)
         canvas.bind('<MouseWheel>', lambda e: canvas.yview_scroll(int(-e.delta / 120), 'units'))
 
@@ -1736,9 +1756,12 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
         for j, (h, w) in enumerate(cols):
             ttk.Label(inner, text=h, font=FONT_S, width=w).grid(row=1, column=j, padx=1)
 
-        self.trea_vars = []; self.trea_name_labels = []; self.trap_vars = []
+        self.trea_vars = []
+        self.trea_name_labels = []
+        self.trap_vars = []
         for i in range(28):
-            row = i + 2; vr = {}
+            row = i + 2
+            vr = {}
             ttk.Label(inner, text=str(i), font=FONT_S).grid(row=row, column=0)
 
             vr['x'] = tk.StringVar()
@@ -1830,9 +1853,12 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
             except: pass
             try: rec['trap_xy'][i*2+1] = int(vr['y'].get() or 0)
             except: pass
-            tstr = vr['type'].get(); ttype = 0
+            tstr = vr['type'].get()
+            ttype = 0
             for c in tstr:
-                if c.isdigit(): ttype = int(c); break
+                if c.isdigit():
+                    ttype = int(c)
+                    break
             ttype = max(0, min(6, ttype))
             rec['trap_type'][i] = ttype
             try: pmin = int(vr['pwr_min'].get() or 0) & 0xFF
@@ -1853,7 +1879,8 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
         sf.pack(fill=tk.BOTH, expand=True)
 
         # 图层控制栏
-        ctrl = ttk.Frame(sf); ctrl.pack(fill=tk.X, padx=2, pady=2)
+        ctrl = ttk.Frame(sf)
+        ctrl.pack(fill=tk.X, padx=2, pady=2)
         ttk.Label(ctrl, text="图层:", font=FONT_S).pack(side=tk.LEFT, padx=2)
 
         self.show_bg = tk.BooleanVar(value=True)
@@ -1920,21 +1947,24 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
                   font=FONT).pack(side=tk.RIGHT, padx=10)
 
         # 地形图例色块
-        legend = ttk.Frame(sf); legend.pack(fill=tk.X, padx=2, pady=(0, 2))
+        legend = ttk.Frame(sf)
+        legend.pack(fill=tk.X, padx=2, pady=(0, 2))
         terrain_colors = [
             ('障碍', '#553322'), ('临时障碍', '#665544'),
             ('区域1', '#aa6633'), ('区域2', '#3366aa'), ('区域3', '#aa44aa'),
             ('区域4', '#33aa66'), ('区域5', '#aaaa33'),
         ]
         for label, color in terrain_colors:
-            f = ttk.Frame(legend); f.pack(side=tk.LEFT, padx=3)
+            f = ttk.Frame(legend)
+            f.pack(side=tk.LEFT, padx=3)
             c = tk.Canvas(f, width=10, height=10, highlightthickness=0)
             c.create_rectangle(0, 0, 10, 10, fill=color, outline=color)
             c.pack(side=tk.LEFT)
             ttk.Label(f, text=label, font=('Microsoft YaHei UI', 7)).pack(side=tk.LEFT, padx=1)
 
         # Canvas 容器
-        canvas_frame = ttk.Frame(sf); canvas_frame.pack(fill=tk.BOTH, expand=True)
+        canvas_frame = ttk.Frame(sf)
+        canvas_frame.pack(fill=tk.BOTH, expand=True)
         self.scene_canvas = tk.Canvas(canvas_frame, bg='#333333',
                                        highlightthickness=0, cursor='crosshair')
         hsb = ttk.Scrollbar(canvas_frame, orient=tk.HORIZONTAL, command=self.scene_canvas.xview)
@@ -2121,10 +2151,15 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
             is_trap = 1 <= ttype <= 6
             is_trea = sub_id > 0 and i < 10
             if not is_trap and not is_trea: continue
-            tx = rec['trap_xy'][i * 2]; ty = rec['trap_xy'][i * 2 + 1]
+            tx = rec['trap_xy'][i * 2]
+            ty = rec['trap_xy'][i * 2 + 1]
             if tx >= 0 and 0 <= tx < 32 and 0 <= ty < 32:
-                if is_trap: resolved_traps[i] = (tx, ty); fixed_trap_indices.add(i)
-                if is_trea: resolved_treas[i] = (tx, ty); fixed_trea_indices.add(i)
+                if is_trap:
+                    resolved_traps[i] = (tx, ty)
+                    fixed_trap_indices.add(i)
+                if is_trea:
+                    resolved_treas[i] = (tx, ty)
+                    fixed_trea_indices.add(i)
                 occupied.add((tx, ty))
 
         # 4b. 区域放置陷阱/宝物 (sub_431428:224-323)
@@ -2489,7 +2524,9 @@ sub_434D7C:60 — 非零非-1格触发地格视觉特效(sub_4544EC)"""
         cx = self.scene_canvas.canvasx(event.x)
         cy = self.scene_canvas.canvasy(event.y)
         g = self._scene_to_grid(cx, cy)
-        if g is None: self.scene_info_var.set(""); return
+        if g is None:
+            self.scene_info_var.set("")
+            return
         gx, gy = g
         unit = self._find_unit_at(gx, gy)
         if unit:

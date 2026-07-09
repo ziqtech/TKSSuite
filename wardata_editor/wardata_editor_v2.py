@@ -63,7 +63,11 @@ WarWay.dat 格式 (每条1024字节, 共100条, 32x32有符号字节网格):
 用法: python wardata_editor_v2.py
 """
 
-import struct, os, sys, random
+import os
+import random
+import struct
+import sys
+from functools import partial
 from pathlib import Path
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
@@ -543,9 +547,11 @@ class WarDataEditorV2(QMainWindow):
 
     # ── UI 构建 ──
     def _build_ui(self):
-        central = QWidget(); self.setCentralWidget(central)
+        central = QWidget()
+        self.setCentralWidget(central)
         main_layout = QVBoxLayout(central)
-        main_layout.setContentsMargins(8, 8, 8, 4); main_layout.setSpacing(4)
+        main_layout.setContentsMargins(8, 8, 8, 4)
+        main_layout.setSpacing(4)
 
         # 菜单栏
         mb = self.menuBar()
@@ -573,7 +579,8 @@ class WarDataEditorV2(QMainWindow):
         # 工具栏
         toolbar = QHBoxLayout()
         toolbar.addWidget(QLabel("搜索:"))
-        self.search_entry = QLineEdit(); self.search_entry.setFixedWidth(160)
+        self.search_entry = QLineEdit()
+        self.search_entry.setFixedWidth(160)
         self.search_entry.returnPressed.connect(self._apply_filter)
         toolbar.addWidget(self.search_entry)
         toolbar.addWidget(QPushButton("🔍 搜索", clicked=self._apply_filter))
@@ -589,15 +596,20 @@ class WarDataEditorV2(QMainWindow):
         main_layout.addLayout(toolbar)
 
         # 主 Splitter
-        splitter = QSplitter(Qt.Horizontal); splitter.setHandleWidth(7)
-        splitter.setChildrenCollapsible(False); main_layout.addWidget(splitter, 1)
+        splitter = QSplitter(Qt.Horizontal)
+        splitter.setHandleWidth(7)
+        splitter.setChildrenCollapsible(False)
+        main_layout.addWidget(splitter, 1)
 
         # 左侧：战斗列表
         self.table = QTableWidget(0, 8)
         self.table.setHorizontalHeaderLabels(["序号", "地图", "敌军数", "宝物数", "陷阱数", "固定/随机", "参战人物", "参数"])
-        self.table.setColumnWidth(0, 45); self.table.setColumnWidth(1, 90)
-        self.table.setColumnWidth(2, 50); self.table.setColumnWidth(3, 50)
-        self.table.setColumnWidth(4, 50); self.table.setColumnWidth(5, 70)
+        self.table.setColumnWidth(0, 45)
+        self.table.setColumnWidth(1, 90)
+        self.table.setColumnWidth(2, 50)
+        self.table.setColumnWidth(3, 50)
+        self.table.setColumnWidth(4, 50)
+        self.table.setColumnWidth(5, 70)
         self.table.setColumnWidth(6, 180)  # 参战人物列加宽
         self.table.horizontalHeader().setSectionResizeMode(6, QHeaderView.Stretch)
         self.table.setColumnWidth(7, 70)
@@ -610,8 +622,10 @@ class WarDataEditorV2(QMainWindow):
         splitter.addWidget(self.table)
 
         # 右侧：编辑面板
-        right = QWidget(); rl = QVBoxLayout(right)
-        rl.setContentsMargins(4, 4, 4, 4); rl.setSpacing(4)
+        right = QWidget()
+        rl = QVBoxLayout(right)
+        rl.setContentsMargins(4, 4, 4, 4)
+        rl.setSpacing(4)
         self.tabs = QTabWidget()
         self._build_scene_tab()
         self._build_enemy_tab()
@@ -626,11 +640,16 @@ class WarDataEditorV2(QMainWindow):
         self.tabs.currentChanged.connect(self._on_tab_changed)
 
         # 底部路径栏
-        path_layout = QHBoxLayout(); path_layout.setContentsMargins(4, 2, 4, 2)
-        self.lbl_wardata = QLabel(); self.lbl_warway = QLabel()
-        self.lbl_wsc = QLabel(); self.lbl_tkt = QLabel(); self.lbl_extra = QLabel()
+        path_layout = QHBoxLayout()
+        path_layout.setContentsMargins(4, 2, 4, 2)
+        self.lbl_wardata = QLabel()
+        self.lbl_warway = QLabel()
+        self.lbl_wsc = QLabel()
+        self.lbl_tkt = QLabel()
+        self.lbl_extra = QLabel()
         for w in [self.lbl_wardata, self.lbl_warway, self.lbl_wsc, self.lbl_tkt, self.lbl_extra]:
-            path_layout.addWidget(w); path_layout.addSpacing(15)
+            path_layout.addWidget(w)
+            path_layout.addSpacing(15)
         path_layout.addStretch()
         main_layout.addLayout(path_layout)
 
@@ -714,26 +733,33 @@ class WarDataEditorV2(QMainWindow):
         trea_count = sum(1 for i in range(10) if rec['trea_sub'][i] > 0)
         trap_count = sum(1 for i in range(28) if 1 <= self._trap_type_at(rec, i) <= 6)
         trea_detail = self._trea_detail_str(rec)
-        mid = rec['map_id']; res = self._get_wsc_resolution(mid)
+        mid = rec['map_id']
+        res = self._get_wsc_resolution(mid)
         map_info = f"{mid} ({res[0]}x{res[1]})" if res else str(mid)
-        enemy_names = []; seen = set()
+        enemy_names = []
+        seen = set()
         for eid in rec['enemy_ids']:
             if eid > 0 and eid not in seen:
-                seen.add(eid); enemy_names.append(self._enemy_name(eid))
+                seen.add(eid)
+                enemy_names.append(self._enemy_name(eid))
         if enemy_names:
             names = [n[:4] for n in enemy_names[:3]]
             chars_info = ','.join(names)
             if len(enemy_names) > 3: chars_info += '等'
-        else: chars_info = '-'
-        flags = rec['flags']; flag_parts = []
+        else:
+            chars_info = '-'
+        flags = rec['flags']
+        flag_parts = []
         if flags & 2: flag_parts.append('续')
         if flags & 4: flag_parts.append('随')
         flags_info = ','.join(flag_parts) if flag_parts else '-'
-        row = self.table.rowCount(); self.table.insertRow(row)
+        row = self.table.rowCount()
+        self.table.insertRow(row)
         vals = [str(rec['index']), map_info, str(enemy_count), str(trea_count),
                 str(trap_count), trea_detail, chars_info, flags_info]
         for c, v in enumerate(vals):
-            item = QTableWidgetItem(v); item.setTextAlignment(Qt.AlignCenter)
+            item = QTableWidgetItem(v)
+            item.setTextAlignment(Qt.AlignCenter)
             self.table.setItem(row, c, item)
 
     def _refresh_tree(self):
@@ -761,9 +787,12 @@ class WarDataEditorV2(QMainWindow):
     def _load_tks_dir(self):
         d = QFileDialog.getExistingDirectory(self, "选择 TKS 游戏目录")
         if not d: return
-        wd = os.path.join(d, 'WarData.dat'); ww = os.path.join(d, 'WarWay.dat')
-        wsc_g = os.path.join(d, 'WSC.GRP'); wsc_i = os.path.join(d, 'WSC.IDX')
-        tkt = os.path.join(d, 'TKT.dat'); warpc = os.path.join(d, 'WarPC.dat')
+        wd = os.path.join(d, 'WarData.dat')
+        ww = os.path.join(d, 'WarWay.dat')
+        wsc_g = os.path.join(d, 'WSC.GRP')
+        wsc_i = os.path.join(d, 'WSC.IDX')
+        tkt = os.path.join(d, 'TKT.dat')
+        warpc = os.path.join(d, 'WarPC.dat')
         tkitem = os.path.join(d, 'TKItem.dat')
         missing = []
         for p, n in [(wd,'WarData.dat'),(ww,'WarWay.dat'),(wsc_g,'WSC.GRP'),
@@ -771,7 +800,8 @@ class WarDataEditorV2(QMainWindow):
             if not os.path.exists(p): missing.append(n)
         if missing:
             if 'WarData.dat' in missing:
-                QMessageBox.critical(self, "错误", "缺少必要文件 WarData.dat"); return
+                QMessageBox.critical(self, "错误", "缺少必要文件 WarData.dat")
+                return
             QMessageBox.warning(self, "警告", "以下文件未找到:\n  " + "\n  ".join(missing))
         self.wardata_path = wd
         self.warway_path = ww if os.path.exists(ww) else None
@@ -794,51 +824,65 @@ class WarDataEditorV2(QMainWindow):
         if self.tkitem_path:
             self.tkitem_names, self.tkitem_names_by_id = load_tkitem_names(self.tkitem_path, self.tkt)
             self.tkitem_records = load_tkitem_records(self.tkitem_path, self.tkt)
-        else: self.tkitem_names, self.tkitem_names_by_id, self.tkitem_records = {}, {}, []
-        self._wsc_cache.clear(); self._wsc_res_cache.clear()
-        self._refresh_tree(); self._set_edit_enabled(True); self._dirty = False
+        else:
+            self.tkitem_names, self.tkitem_names_by_id, self.tkitem_records = {}, {}, []
+        self._wsc_cache.clear()
+        self._wsc_res_cache.clear()
+        self._refresh_tree()
+        self._set_edit_enabled(True)
+        self._dirty = False
         self._update_paths()
         self.status_var.setText(f"已加载 {len(self.records)} 场战斗")
 
     def _save(self):
         if not self.wardata_path or not self.records:
-            QMessageBox.information(self, "提示", "请先加载数据"); return
+            QMessageBox.information(self, "提示", "请先加载数据")
+            return
         if QMessageBox.question(self, "确认保存",
             f"保存 {len(self.records)} 条到:\n{self.wardata_path}\n\n原文件将被覆盖(生成.bak).",
             QMessageBox.Yes|QMessageBox.No) != QMessageBox.Yes: return
         self._apply_current_edit()
         save_wardata(self.wardata_path, self.records)
-        self._dirty = False; self.status_var.setText("已保存")
+        self._dirty = False
+        self.status_var.setText("已保存")
 
     def _save_as(self):
         fp, _ = QFileDialog.getSaveFileName(self, "另存 WarData.dat", "", "DAT files (*.dat);;All (*.*)")
         if fp:
-            self._apply_current_edit(); save_wardata(fp, self.records)
-            self.wardata_path = fp; self._dirty = False
+            self._apply_current_edit()
+            save_wardata(fp, self.records)
+            self.wardata_path = fp
+            self._dirty = False
             self.status_var.setText(f"已另存为 {fp}")
 
     def _apply_current_edit(self):
         if self._current_idx < 0: return
         rec = self.records[self._current_idx]
-        self._apply_params_tab(rec); self._apply_allparams_tab(rec)
-        self._apply_enemy_tab(rec); self._apply_ally_tab(rec)
-        self._apply_drops_tab(rec); self._apply_trap_tab(rec)
+        self._apply_params_tab(rec)
+        self._apply_allparams_tab(rec)
+        self._apply_enemy_tab(rec)
+        self._apply_ally_tab(rec)
+        self._apply_drops_tab(rec)
+        self._apply_trap_tab(rec)
 
     def _apply_filter(self):
         query = self.search_entry.text().strip().lower()
         self.table.setRowCount(0)
         for rec in self.records:
-            enemy_names = []; seen = set()
+            enemy_names = []
+            seen = set()
             for eid in rec['enemy_ids']:
                 if eid > 0 and eid not in seen:
-                    seen.add(eid); enemy_names.append(self._enemy_name(eid))
+                    seen.add(eid)
+                    enemy_names.append(self._enemy_name(eid))
             char_names = ','.join(enemy_names) if enemy_names else ''
             if query and query not in str(rec['index']) and query not in str(rec['map_id']) \
                and query not in char_names.lower(): continue
             self._fill_tree_row(rec)
 
     def _clear_filter(self):
-        self.search_entry.clear(); self._refresh_tree()
+        self.search_entry.clear()
+        self._refresh_tree()
 
     def _reload(self):
         if not self.wardata_path: return
@@ -851,7 +895,9 @@ class WarDataEditorV2(QMainWindow):
                 self.tkitem_names, self.tkitem_names_by_id = load_tkitem_names(self.tkitem_path, self.tkt)
                 self.tkitem_records = load_tkitem_records(self.tkitem_path, self.tkt)
         self._icon_pixmaps.clear()
-        self._refresh_tree(); self._dirty = False; self.status_var.setText("已重新加载")
+        self._refresh_tree()
+        self._dirty = False
+        self.status_var.setText("已重新加载")
 
     # ── 记录管理 ──
     def _new_battle(self):
@@ -864,16 +910,23 @@ class WarDataEditorV2(QMainWindow):
             'trap_xy':[0]*56,'trap_pwr':[0]*56,'trea_sub':[0]*10,'trea_quant':[0]*20,
             'trap_type':[0]*28,'enemy_flags':[0]*18,'lv_spread_lo':0,'lv_spread_hi':0,
             'battle_turn_limit':0,'_raw':bytes(bytearray(WAR_REC_SIZE))}
-        self.records.append(rec); self._refresh_tree(); self._dirty = True
+        self.records.append(rec)
+        self._refresh_tree()
+        self._dirty = True
         self.status_var.setText(f"已新增战场 #{new_idx}")
 
     def _copy_record(self):
         if self._current_idx < 0: return
         import copy
-        src = self.records[self._current_idx]; new_idx = len(self.records)
-        rec = copy.deepcopy(src); rec['index'] = new_idx; rec['battle_id'] = new_idx
-        rec['_raw'] = bytearray(src['_raw']); self.records.append(rec)
-        self._refresh_tree(); self._dirty = True
+        src = self.records[self._current_idx]
+        new_idx = len(self.records)
+        rec = copy.deepcopy(src)
+        rec['index'] = new_idx
+        rec['battle_id'] = new_idx
+        rec['_raw'] = bytearray(src['_raw'])
+        self.records.append(rec)
+        self._refresh_tree()
+        self._dirty = True
         self.status_var.setText(f"已复制 #{self._current_idx} -> #{new_idx}")
 
     def _delete_record(self):
@@ -881,8 +934,11 @@ class WarDataEditorV2(QMainWindow):
         if QMessageBox.question(self,"确认删除",f"删除战场 #{self._current_idx}?",
             QMessageBox.Yes|QMessageBox.No) != QMessageBox.Yes: return
         del self.records[self._current_idx]
-        for i,rec in enumerate(self.records): rec['index'] = i
-        self._current_idx = -1; self._refresh_tree(); self._dirty = True
+        for i, rec in enumerate(self.records):
+            rec['index'] = i
+        self._current_idx = -1
+        self._refresh_tree()
+        self._dirty = True
         self.status_var.setText("已删除战场")
 
     def _show_field_ref(self):
@@ -902,16 +958,19 @@ class WarDataEditorV2(QMainWindow):
     def _export_tksmod(self):
         """导出当前修改为 .tksmod MOD 文件（WarData 完整记录级差异）"""
         if not self.records:
-            QMessageBox.information(self, "提示", "请先加载数据"); return
-        
+            QMessageBox.information(self, "提示", "请先加载数据")
+            return
+
         dlg = ModMetadataDialog(self, getattr(self, '_last_mod_metadata', None))
         if dlg.exec() != QDialog.Accepted: return
-        metadata = dlg.get_metadata(); self._last_mod_metadata = metadata
+        metadata = dlg.get_metadata()
+        self._last_mod_metadata = metadata
 
         # WarData 使用完整记录的 _raw 字节比对
         # 重新加载原始数据进行比对
         if not self.wardata_path:
-            QMessageBox.warning(self, "错误", "无法确定原始文件路径"); return
+            QMessageBox.warning(self, "错误", "无法确定原始文件路径")
+            return
         original = load_wardata(self.wardata_path)
         self._apply_current_edit()
 
@@ -946,7 +1005,8 @@ class WarDataEditorV2(QMainWindow):
             appended.append({"index": i, "fields": fields})
 
         if not modified and not appended:
-            QMessageBox.information(self, "无差异", "当前数据与原始文件相同，无需导出。"); return
+            QMessageBox.information(self, "无差异", "当前数据与原始文件相同，无需导出。")
+            return
 
         crc = compute_crc32(self.wardata_path)
         data_json = {
@@ -967,7 +1027,8 @@ class WarDataEditorV2(QMainWindow):
     def _export_tksmod_with_ref(self):
         """导出 MOD — 指定原始参考目录的 WarData.dat 进行差异比对"""
         if not self.records:
-            QMessageBox.information(self, "提示", "请先加载数据"); return
+            QMessageBox.information(self, "提示", "请先加载数据")
+            return
         self._apply_current_edit()
 
         # 预构建当前记录（WarData 每条记录以 _raw 为标识）
@@ -1000,14 +1061,16 @@ class WarDataEditorV2(QMainWindow):
 
         ref_path = os.path.join(ref_dir, "WarData.dat")
         if not os.path.isfile(ref_path):
-            QMessageBox.warning(self, "参考目录无效", f"在 {ref_dir} 中未找到 WarData.dat"); return
+            QMessageBox.warning(self, "参考目录无效", f"在 {ref_dir} 中未找到 WarData.dat")
+            return
 
         original = load_wardata(ref_path)
 
         modified = []
         for i in range(min(len(original), len(self.records))):
             if original[i]['_raw'] != self.records[i]['_raw']:
-                rec = self.records[i]; fields = {}
+                rec = self.records[i]
+                fields = {}
                 for key in ['flags', 'battle_name_id', 'map_id', 'battle_turn_limit', 'lv_spread_lo', 'lv_spread_hi']:
                     fields[key] = rec[key]
                 for key in ['must_chars', 'enemy_ids', 'enemy_lv', 'enemy_power', 'enemy_lv_range',
@@ -1017,7 +1080,8 @@ class WarDataEditorV2(QMainWindow):
                 modified.append({"index": i, "fields": fields})
         appended = []
         for i in range(len(original), len(self.records)):
-            rec = self.records[i]; fields = {}
+            rec = self.records[i]
+            fields = {}
             for key in ['flags', 'battle_name_id', 'map_id', 'battle_turn_limit', 'lv_spread_lo', 'lv_spread_hi']:
                 fields[key] = rec[key]
             for key in ['must_chars', 'enemy_ids', 'enemy_lv', 'enemy_power', 'enemy_lv_range',
@@ -1027,11 +1091,13 @@ class WarDataEditorV2(QMainWindow):
             appended.append({"index": i, "fields": fields})
 
         if not modified and not appended:
-            QMessageBox.information(self, "无差异", "当前数据与参考文件相同，无需导出。"); return
+            QMessageBox.information(self, "无差异", "当前数据与参考文件相同，无需导出。")
+            return
 
         dlg = ModMetadataDialog(self, getattr(self, '_last_mod_metadata', None))
         if dlg.exec() != QDialog.Accepted: return
-        metadata = dlg.get_metadata(); self._last_mod_metadata = metadata
+        metadata = dlg.get_metadata()
+        self._last_mod_metadata = metadata
 
         crc = compute_crc32(ref_path)
         data_json = {"target": "WarData.dat", "record_size": WAR_REC_SIZE, "field_type": "structured",
@@ -1053,13 +1119,14 @@ class WarDataEditorV2(QMainWindow):
 
         info = get_tksmod_info(fp)
         if info is None:
-            QMessageBox.warning(self, "无效文件", "无法解析此 .tksmod 文件"); return
+            QMessageBox.warning(self, "无效文件", "无法解析此 .tksmod 文件")
+            return
 
         if "WarData.dat" not in info.get("targets", []):
             QMessageBox.warning(self, "不兼容", "此 MOD 不包含 WarData.dat 的数据\n\n"
-                f"包含的数据: {', '.join(info.get('targets', []))}"); return
+                f"包含的数据: {', '.join(info.get('targets', []))}")
+            return
 
-        
         dlg = ModImportPreviewDialog(self, info, default_dir=os.path.dirname(self.wardata_path) if self.wardata_path else "")
         if dlg.exec() != QDialog.Accepted: return
         ref_dir = dlg.get_ref_dir()
@@ -1067,18 +1134,21 @@ class WarDataEditorV2(QMainWindow):
 
         ref_path = os.path.join(ref_dir, "WarData.dat")
         if not os.path.isfile(ref_path):
-            QMessageBox.warning(self, "参考目录无效", f"在 {ref_dir} 中未找到 WarData.dat"); return
+            QMessageBox.warning(self, "参考目录无效", f"在 {ref_dir} 中未找到 WarData.dat")
+            return
 
         # 加载原始数据
         try:
             ref_records = load_wardata(ref_path)
         except Exception as e:
-            QMessageBox.warning(self, "参考文件无效", str(e)); return
+            QMessageBox.warning(self, "参考文件无效", str(e))
+            return
 
         # 解析 MOD 差异数据
         mod_json, data_files = read_tksmod(fp)
         if mod_json is None:
-            QMessageBox.warning(self, "导入失败", "无法解析 MOD 文件"); return
+            QMessageBox.warning(self, "导入失败", "无法解析 MOD 文件")
+            return
 
         # 找到 WarData.dat 的差异数据
         diff_data = None
@@ -1089,7 +1159,8 @@ class WarDataEditorV2(QMainWindow):
                     diff_data = data_files[internal]
                     break
         if diff_data is None:
-            QMessageBox.warning(self, "导入失败", "MOD 中找不到 WarData.dat 的差异数据"); return
+            QMessageBox.warning(self, "导入失败", "MOD 中找不到 WarData.dat 的差异数据")
+            return
 
         # 应用差异到原始数据
         records = list(ref_records)  # 浅拷贝
@@ -1154,9 +1225,12 @@ class WarDataEditorV2(QMainWindow):
     # ═══════════════════════════════════════════════════════════
 
     def _build_params_tab(self):
-        scroll = QScrollArea(); scroll.setWidgetResizable(True)
-        inner = QWidget(); layout = QVBoxLayout(inner)
-        layout.setContentsMargins(4,4,12,4); layout.setSpacing(4)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        inner = QWidget()
+        layout = QVBoxLayout(inner)
+        layout.setContentsMargins(4,4,12,4)
+        layout.setSpacing(4)
         self.pvars = {}
         COLS = 6  # 统一 6 列，确保各分组输入框宽度一致
 
@@ -1168,11 +1242,17 @@ class WarDataEditorV2(QMainWindow):
 
         # ── 基本信息 ──
         grp = QWidget()
-        gl = QVBoxLayout(grp); gl.setContentsMargins(0,0,0,0); gl.setSpacing(0)
+        gl = QVBoxLayout(grp)
+        gl.setContentsMargins(0,0,0,0)
+        gl.setSpacing(0)
         gl.addWidget(DockHeader("基本信息"))
-        body = QWidget(); body.setObjectName("DockBody")
-        bl = QVBoxLayout(body); bl.setContentsMargins(8,8,8,8)
-        g1 = QGridLayout(); g1.setHorizontalSpacing(8); g1.setVerticalSpacing(6)
+        body = QWidget()
+        body.setObjectName("DockBody")
+        bl = QVBoxLayout(body)
+        bl.setContentsMargins(8,8,8,8)
+        g1 = QGridLayout()
+        g1.setHorizontalSpacing(8)
+        g1.setVerticalSpacing(6)
         fields = [
             ("battle_id", "战场序号", "记录索引号(0-218)"),
             ("map_id", "地图编号", "[offset 32] WSC.GRP背景索引"),
@@ -1180,69 +1260,103 @@ class WarDataEditorV2(QMainWindow):
             ("battle_turn_limit", "回合限制", "[offset 482] >0时限制回合数"),
         ]
         for c, (key, label, tip) in enumerate(fields):
-            cell = QVBoxLayout(); cell.setSpacing(2)
-            lbl = QLabel(label); lbl.setProperty("class", "PropLabel"); lbl.setToolTip(tip)
+            cell = QVBoxLayout()
+            cell.setSpacing(2)
+            lbl = QLabel(label)
+            lbl.setProperty("class", "PropLabel")
+            lbl.setToolTip(tip)
             cell.addWidget(lbl)
-            ev = QLineEdit(); self.pvars[key] = ev
+            ev = QLineEdit()
+            self.pvars[key] = ev
             cell.addWidget(make_fake_input(line_edit=ev))
             g1.addLayout(cell, 0, c, Qt.AlignTop)
         _add_spacers(g1, 0, len(fields))
         for c in range(COLS): g1.setColumnStretch(c, 1)
-        bl.addLayout(g1); gl.addWidget(body); layout.addWidget(grp)
+        bl.addLayout(g1)
+        gl.addWidget(body)
+        layout.addWidget(grp)
 
         # ── 参数标志 ──
         grp2 = QWidget()
-        gl2 = QVBoxLayout(grp2); gl2.setContentsMargins(0,0,0,0); gl2.setSpacing(0)
+        gl2 = QVBoxLayout(grp2)
+        gl2.setContentsMargins(0,0,0,0)
+        gl2.setSpacing(0)
         gl2.addWidget(DockHeader("参数标志 [offset 0]"))
-        body2 = QWidget(); body2.setObjectName("DockBody")
-        bl2 = QVBoxLayout(body2); bl2.setContentsMargins(8,8,8,8)
-        g2 = QGridLayout(); g2.setHorizontalSpacing(8); g2.setVerticalSpacing(6)
-        cell = QVBoxLayout(); cell.setSpacing(2)
-        lbl = QLabel("标志值"); lbl.setProperty("class", "PropLabel")
+        body2 = QWidget()
+        body2.setObjectName("DockBody")
+        bl2 = QVBoxLayout(body2)
+        bl2.setContentsMargins(8,8,8,8)
+        g2 = QGridLayout()
+        g2.setHorizontalSpacing(8)
+        g2.setVerticalSpacing(6)
+        cell = QVBoxLayout()
+        cell.setSpacing(2)
+        lbl = QLabel("标志值")
+        lbl.setProperty("class", "PropLabel")
         lbl.setToolTip("bit1(&2)=失败条件, bit2(&4)=随机敌军")
         cell.addWidget(lbl)
         self.pvars['flags'] = ev = QLineEdit()
         cell.addWidget(make_fake_input(line_edit=ev))
         g2.addLayout(cell, 0, 0, 1, 1, Qt.AlignTop)
-        cb_cell = QVBoxLayout(); cb_cell.setSpacing(4)
+        cb_cell = QVBoxLayout()
+        cb_cell.setSpacing(4)
         cb_cell.addWidget(QLabel(""))
-        self.flag_bit1 = QCheckBox("bit1: 失败后继续"); self.flag_bit1.toggled.connect(self._on_flag_change)
+        self.flag_bit1 = QCheckBox("bit1: 失败后继续")
+        self.flag_bit1.toggled.connect(self._on_flag_change)
         cb_cell.addWidget(self.flag_bit1)
-        self.flag_bit2 = QCheckBox("bit2: 随机敌军数量"); self.flag_bit2.toggled.connect(self._on_flag_change)
+        self.flag_bit2 = QCheckBox("bit2: 随机敌军数量")
+        self.flag_bit2.toggled.connect(self._on_flag_change)
         cb_cell.addWidget(self.flag_bit2)
         g2.addLayout(cb_cell, 0, 1, 1, 5, Qt.AlignTop)
         for c in range(COLS): g2.setColumnStretch(c, 1)
-        bl2.addLayout(g2); gl2.addWidget(body2); layout.addWidget(grp2)
+        bl2.addLayout(g2)
+        gl2.addWidget(body2)
+        layout.addWidget(grp2)
 
         # ── 强制出战角色 ──
         grp3 = QWidget()
-        gl3 = QVBoxLayout(grp3); gl3.setContentsMargins(0,0,0,0); gl3.setSpacing(0)
+        gl3 = QVBoxLayout(grp3)
+        gl3.setContentsMargins(0,0,0,0)
+        gl3.setSpacing(0)
         gl3.addWidget(DockHeader("强制出战角色 [002-007] (6槽位, +1编码)"))
-        body3 = QWidget(); body3.setObjectName("DockBody")
-        bl3 = QVBoxLayout(body3); bl3.setContentsMargins(8,8,8,8)
-        g3 = QGridLayout(); g3.setHorizontalSpacing(8); g3.setVerticalSpacing(6)
-        self.pvars['must_chars'] = []; self.must_char_labels = []
+        body3 = QWidget()
+        body3.setObjectName("DockBody")
+        bl3 = QVBoxLayout(body3)
+        bl3.setContentsMargins(8,8,8,8)
+        g3 = QGridLayout()
+        g3.setHorizontalSpacing(8)
+        g3.setVerticalSpacing(6)
+        self.pvars['must_chars'] = []
+        self.must_char_labels = []
         for i in range(6):
-            cell = QVBoxLayout(); cell.setSpacing(2)
-            lbl = QLabel(f"槽{i}"); lbl.setProperty("class", "PropLabel")
+            cell = QVBoxLayout()
+            cell.setSpacing(2)
+            lbl = QLabel(f"槽{i}")
+            lbl.setProperty("class", "PropLabel")
             cell.addWidget(lbl)
-            var = QLineEdit(); self.pvars['must_chars'].append(var)
-            extra = QLabel(""); extra.setProperty("class", "ExtraPreviewText")
+            var = QLineEdit()
+            self.pvars['must_chars'].append(var)
+            extra = QLabel("")
+            extra.setProperty("class", "ExtraPreviewText")
             self.must_char_labels.append(extra)
             cell.addWidget(make_fake_input(line_edit=var))
             cell.addWidget(extra)
             g3.addLayout(cell, 0, i, Qt.AlignTop)
         for c in range(COLS): g3.setColumnStretch(c, 1)
-        bl3.addLayout(g3); gl3.addWidget(body3); layout.addWidget(grp3)
+        bl3.addLayout(g3)
+        gl3.addWidget(body3)
+        layout.addWidget(grp3)
 
         layout.addStretch()
-        scroll.setWidget(inner); self.tabs.addTab(scroll, "战场参数")
+        scroll.setWidget(inner)
+        self.tabs.addTab(scroll, "战场参数")
 
     def _on_flag_change(self):
         flags = 0
         if self.flag_bit1.isChecked(): flags |= 2
         if self.flag_bit2.isChecked(): flags |= 4
-        self.pvars['flags'].setText(str(flags)); self._dirty = True
+        self.pvars['flags'].setText(str(flags))
+        self._dirty = True
 
     def _populate_params_tab(self, rec):
         self.pvars['battle_id'].setText(str(rec['battle_id']))
@@ -1250,10 +1364,15 @@ class WarDataEditorV2(QMainWindow):
         self.pvars['battle_name_id'].setText(str(rec['battle_name_id']))
         self.pvars['battle_turn_limit'].setText(str(rec['battle_turn_limit']))
         self.pvars['flags'].setText(str(rec['flags']))
-        self.flag_bit1.blockSignals(True); self.flag_bit1.setChecked((rec['flags']&2)!=0); self.flag_bit1.blockSignals(False)
-        self.flag_bit2.blockSignals(True); self.flag_bit2.setChecked((rec['flags']&4)!=0); self.flag_bit2.blockSignals(False)
+        self.flag_bit1.blockSignals(True)
+        self.flag_bit1.setChecked((rec['flags']&2)!=0)
+        self.flag_bit1.blockSignals(False)
+        self.flag_bit2.blockSignals(True)
+        self.flag_bit2.setChecked((rec['flags']&4)!=0)
+        self.flag_bit2.blockSignals(False)
         for i in range(6):
-            v = rec['must_chars'][i]; self.pvars['must_chars'][i].setText(str(v))
+            v = rec['must_chars'][i]
+            self.pvars['must_chars'][i].setText(str(v))
             self.must_char_labels[i].setText(self._char_name(v-1)[:12] if v and v!=255 else "")
 
     def _apply_params_tab(self, rec):
@@ -1276,10 +1395,15 @@ class WarDataEditorV2(QMainWindow):
     # ═══════════════════════════════════════════════════════════
 
     def _build_allparams_tab(self):
-        scroll = QScrollArea(); scroll.setWidgetResizable(True)
-        inner = QWidget(); layout = QVBoxLayout(inner)
-        layout.setContentsMargins(4,4,12,4); layout.setSpacing(4)
-        self.apvars = {}; self.apflag_bit1 = None; self.apflag_bit2 = None
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        inner = QWidget()
+        layout = QVBoxLayout(inner)
+        layout.setContentsMargins(4,4,12,4)
+        layout.setSpacing(4)
+        self.apvars = {}
+        self.apflag_bit1 = None
+        self.apflag_bit2 = None
         COLS = 6  # 统一 6 列
 
         def _add_spacers(g, row, used):
@@ -1288,11 +1412,17 @@ class WarDataEditorV2(QMainWindow):
 
         # ── 基本信息 ──
         grp = QWidget()
-        gl = QVBoxLayout(grp); gl.setContentsMargins(0,0,0,0); gl.setSpacing(0)
+        gl = QVBoxLayout(grp)
+        gl.setContentsMargins(0,0,0,0)
+        gl.setSpacing(0)
         gl.addWidget(DockHeader("基本信息"))
-        body = QWidget(); body.setObjectName("DockBody")
-        bl = QVBoxLayout(body); bl.setContentsMargins(8,8,8,8)
-        g1 = QGridLayout(); g1.setHorizontalSpacing(8); g1.setVerticalSpacing(6)
+        body = QWidget()
+        body.setObjectName("DockBody")
+        bl = QVBoxLayout(body)
+        bl.setContentsMargins(8,8,8,8)
+        g1 = QGridLayout()
+        g1.setHorizontalSpacing(8)
+        g1.setVerticalSpacing(6)
         fields = [
             ("battle_id", "战场序号", "记录索引号(0-218)"),
             ("map_id", "地图编号", "[offset 32] WSC.GRP背景索引"),
@@ -1300,135 +1430,215 @@ class WarDataEditorV2(QMainWindow):
             ("battle_turn_limit", "回合限制", "[offset 482] >0时限制回合数"),
         ]
         for c, (key, label, tip) in enumerate(fields):
-            cell = QVBoxLayout(); cell.setSpacing(2)
-            lbl = QLabel(label); lbl.setProperty("class", "PropLabel"); lbl.setToolTip(tip)
+            cell = QVBoxLayout()
+            cell.setSpacing(2)
+            lbl = QLabel(label)
+            lbl.setProperty("class", "PropLabel")
+            lbl.setToolTip(tip)
             cell.addWidget(lbl)
-            ev = QLineEdit(); self.apvars[key] = ev
+            ev = QLineEdit()
+            self.apvars[key] = ev
             cell.addWidget(make_fake_input(line_edit=ev))
             g1.addLayout(cell, 0, c, Qt.AlignTop)
         _add_spacers(g1, 0, len(fields))
         for c in range(COLS): g1.setColumnStretch(c, 1)
-        bl.addLayout(g1); gl.addWidget(body); layout.addWidget(grp)
+        bl.addLayout(g1)
+        gl.addWidget(body)
+        layout.addWidget(grp)
 
         # ── 参数标志 ──
         grp2 = QWidget()
-        gl2 = QVBoxLayout(grp2); gl2.setContentsMargins(0,0,0,0); gl2.setSpacing(0)
+        gl2 = QVBoxLayout(grp2)
+        gl2.setContentsMargins(0,0,0,0)
+        gl2.setSpacing(0)
         gl2.addWidget(DockHeader("参数标志 [offset 0]"))
-        body2 = QWidget(); body2.setObjectName("DockBody")
-        bl2 = QVBoxLayout(body2); bl2.setContentsMargins(8,8,8,8)
-        g2 = QGridLayout(); g2.setHorizontalSpacing(8); g2.setVerticalSpacing(6)
-        cell = QVBoxLayout(); cell.setSpacing(2)
-        lbl = QLabel("标志值"); lbl.setProperty("class", "PropLabel")
+        body2 = QWidget()
+        body2.setObjectName("DockBody")
+        bl2 = QVBoxLayout(body2)
+        bl2.setContentsMargins(8,8,8,8)
+        g2 = QGridLayout()
+        g2.setHorizontalSpacing(8)
+        g2.setVerticalSpacing(6)
+        cell = QVBoxLayout()
+        cell.setSpacing(2)
+        lbl = QLabel("标志值")
+        lbl.setProperty("class", "PropLabel")
         lbl.setToolTip("bit1(&2)=失败条件, bit2(&4)=随机敌军")
         cell.addWidget(lbl)
         self.apvars['flags'] = ev = QLineEdit()
         cell.addWidget(make_fake_input(line_edit=ev))
         g2.addLayout(cell, 0, 0, 1, 1, Qt.AlignTop)
-        cb_cell = QVBoxLayout(); cb_cell.setSpacing(4)
+        cb_cell = QVBoxLayout()
+        cb_cell.setSpacing(4)
         cb_cell.addWidget(QLabel(""))
-        self.apflag_bit1 = QCheckBox("bit1: 失败后继续"); self.apflag_bit1.toggled.connect(self._on_apflag_change)
+        self.apflag_bit1 = QCheckBox("bit1: 失败后继续")
+        self.apflag_bit1.toggled.connect(self._on_apflag_change)
         cb_cell.addWidget(self.apflag_bit1)
-        self.apflag_bit2 = QCheckBox("bit2: 随机敌军数量"); self.apflag_bit2.toggled.connect(self._on_apflag_change)
+        self.apflag_bit2 = QCheckBox("bit2: 随机敌军数量")
+        self.apflag_bit2.toggled.connect(self._on_apflag_change)
         cb_cell.addWidget(self.apflag_bit2)
         g2.addLayout(cb_cell, 0, 1, 1, 5, Qt.AlignTop)
         for c in range(COLS): g2.setColumnStretch(c, 1)
-        bl2.addLayout(g2); gl2.addWidget(body2); layout.addWidget(grp2)
+        bl2.addLayout(g2)
+        gl2.addWidget(body2)
+        layout.addWidget(grp2)
 
         # ── 强制出战角色 ──
         grp3 = QWidget()
-        gl3 = QVBoxLayout(grp3); gl3.setContentsMargins(0,0,0,0); gl3.setSpacing(0)
+        gl3 = QVBoxLayout(grp3)
+        gl3.setContentsMargins(0,0,0,0)
+        gl3.setSpacing(0)
         gl3.addWidget(DockHeader("强制出战角色 [002-007] (6槽位, +1编码)"))
-        body3 = QWidget(); body3.setObjectName("DockBody")
-        bl3 = QVBoxLayout(body3); bl3.setContentsMargins(8,8,8,8)
-        g3 = QGridLayout(); g3.setHorizontalSpacing(8); g3.setVerticalSpacing(6)
-        self.apvars['must_chars'] = []; self.ap_must_char_labels = []
+        body3 = QWidget()
+        body3.setObjectName("DockBody")
+        bl3 = QVBoxLayout(body3)
+        bl3.setContentsMargins(8,8,8,8)
+        g3 = QGridLayout()
+        g3.setHorizontalSpacing(8)
+        g3.setVerticalSpacing(6)
+        self.apvars['must_chars'] = []
+        self.ap_must_char_labels = []
         for i in range(6):
-            cell = QVBoxLayout(); cell.setSpacing(2)
-            lbl = QLabel(f"槽{i}"); lbl.setProperty("class", "PropLabel")
+            cell = QVBoxLayout()
+            cell.setSpacing(2)
+            lbl = QLabel(f"槽{i}")
+            lbl.setProperty("class", "PropLabel")
             cell.addWidget(lbl)
-            var = QLineEdit(); self.apvars['must_chars'].append(var)
-            extra = QLabel(""); extra.setProperty("class", "ExtraPreviewText")
+            var = QLineEdit()
+            self.apvars['must_chars'].append(var)
+            extra = QLabel("")
+            extra.setProperty("class", "ExtraPreviewText")
             self.ap_must_char_labels.append(extra)
             cell.addWidget(make_fake_input(line_edit=var))
             cell.addWidget(extra)
             g3.addLayout(cell, 0, i, Qt.AlignTop)
         for c in range(COLS): g3.setColumnStretch(c, 1)
-        bl3.addLayout(g3); gl3.addWidget(body3); layout.addWidget(grp3)
+        bl3.addLayout(g3)
+        gl3.addWidget(body3)
+        layout.addWidget(grp3)
 
         # ── 敌军配置 ──
         grp_enemy = QWidget()
-        gl_enemy = QVBoxLayout(grp_enemy); gl_enemy.setContentsMargins(0,0,0,0); gl_enemy.setSpacing(0)
+        gl_enemy = QVBoxLayout(grp_enemy)
+        gl_enemy.setContentsMargins(0,0,0,0)
+        gl_enemy.setSpacing(0)
         gl_enemy.addWidget(DockHeader("敌军配置 [034-177] ×18"))
-        body_enemy = QWidget(); body_enemy.setObjectName("DockBody")
-        bl_enemy = QVBoxLayout(body_enemy); bl_enemy.setContentsMargins(8,8,8,8)
-        tbl = QTableWidget(18, 9); tbl.setMinimumHeight(350)
+        body_enemy = QWidget()
+        body_enemy.setObjectName("DockBody")
+        bl_enemy = QVBoxLayout(body_enemy)
+        bl_enemy.setContentsMargins(8,8,8,8)
+        tbl = QTableWidget(18, 9)
+        tbl.setMinimumHeight(350)
         tbl.setHorizontalHeaderLabels(["ID\nu16[034-069]","Lv\nu8[070-087]","加成\nu8[088-105]","LvP1\ni8[106-141]","LvP2\ni8[106-141]","X\ni8[142-177]","Y\ni8[142-177]","时序Delay\nu8[190-207]","标志\nu16[442-477]"])
-        tbl.setColumnWidth(0,55); tbl.setColumnWidth(1,45); tbl.setColumnWidth(2,45)
-        tbl.setColumnWidth(3,45); tbl.setColumnWidth(4,45); tbl.setColumnWidth(5,35)
-        tbl.setColumnWidth(6,35); tbl.setColumnWidth(7,65); tbl.setColumnWidth(8,55)
+        tbl.setColumnWidth(0,55)
+        tbl.setColumnWidth(1,45)
+        tbl.setColumnWidth(2,45)
+        tbl.setColumnWidth(3,45)
+        tbl.setColumnWidth(4,45)
+        tbl.setColumnWidth(5,35)
+        tbl.setColumnWidth(6,35)
+        tbl.setColumnWidth(7,65)
+        tbl.setColumnWidth(8,55)
         tbl.verticalHeader().setDefaultSectionSize(24)
         self.ap_enemy_table = tbl
-        bl_enemy.addWidget(tbl); gl_enemy.addWidget(body_enemy); layout.addWidget(grp_enemy)
+        bl_enemy.addWidget(tbl)
+        gl_enemy.addWidget(body_enemy)
+        layout.addWidget(grp_enemy)
 
         # ── 友军配置 ──
         grp_ally = QWidget()
-        gl_ally = QVBoxLayout(grp_ally); gl_ally.setContentsMargins(0,0,0,0); gl_ally.setSpacing(0)
+        gl_ally = QVBoxLayout(grp_ally)
+        gl_ally.setContentsMargins(0,0,0,0)
+        gl_ally.setSpacing(0)
         gl_ally.addWidget(DockHeader("友军配置 [178-213] ×6"))
-        body_ally = QWidget(); body_ally.setObjectName("DockBody")
-        bl_ally = QVBoxLayout(body_ally); bl_ally.setContentsMargins(8,8,8,8)
-        atbl = QTableWidget(6, 3); atbl.setMinimumHeight(160)
+        body_ally = QWidget()
+        body_ally.setObjectName("DockBody")
+        bl_ally = QVBoxLayout(body_ally)
+        bl_ally.setContentsMargins(8,8,8,8)
+        atbl = QTableWidget(6, 3)
+        atbl.setMinimumHeight(160)
         atbl.setHorizontalHeaderLabels(["X\ni8[178-189]","Y\ni8[178-189]","朝向\nu8[208-213]"])
-        atbl.setColumnWidth(0,35); atbl.setColumnWidth(1,35); atbl.setColumnWidth(2,65)
+        atbl.setColumnWidth(0,35)
+        atbl.setColumnWidth(1,35)
+        atbl.setColumnWidth(2,65)
         atbl.verticalHeader().setDefaultSectionSize(24)
         self.ap_ally_table = atbl
-        bl_ally.addWidget(atbl); gl_ally.addWidget(body_ally); layout.addWidget(grp_ally)
+        bl_ally.addWidget(atbl)
+        gl_ally.addWidget(body_ally)
+        layout.addWidget(grp_ally)
 
         # ── 宝物/陷阱 ──
         grp_trea = QWidget()
-        gl_trea = QVBoxLayout(grp_trea); gl_trea.setContentsMargins(0,0,0,0); gl_trea.setSpacing(0)
+        gl_trea = QVBoxLayout(grp_trea)
+        gl_trea.setContentsMargins(0,0,0,0)
+        gl_trea.setSpacing(0)
         gl_trea.addWidget(DockHeader("宝物/陷阱 [214-441] ×28"))
-        body_trea = QWidget(); body_trea.setObjectName("DockBody")
-        bl_trea = QVBoxLayout(body_trea); bl_trea.setContentsMargins(8,8,8,8)
-        ttbl = QTableWidget(28, 8); ttbl.setMinimumHeight(500)
+        body_trea = QWidget()
+        body_trea.setObjectName("DockBody")
+        bl_trea = QVBoxLayout(body_trea)
+        bl_trea.setContentsMargins(8,8,8,8)
+        ttbl = QTableWidget(28, 8)
+        ttbl.setMinimumHeight(500)
         ttbl.setHorizontalHeaderLabels(["陷阱类型\nu16[386-441]","副物品\nu16[326-345]","X\ni8[214-269]","Y\ni8[214-269]","威Min\nu8[270-325]","威Max\nu8[270-325]","QtMin\nu16[346-385]","QtMax\nu16[346-385]"])
-        ttbl.setColumnWidth(0,65); ttbl.setColumnWidth(1,65); ttbl.setColumnWidth(2,35)
-        ttbl.setColumnWidth(3,35); ttbl.setColumnWidth(4,45); ttbl.setColumnWidth(5,45)
-        ttbl.setColumnWidth(6,55); ttbl.setColumnWidth(7,55)
+        ttbl.setColumnWidth(0,65)
+        ttbl.setColumnWidth(1,65)
+        ttbl.setColumnWidth(2,35)
+        ttbl.setColumnWidth(3,35)
+        ttbl.setColumnWidth(4,45)
+        ttbl.setColumnWidth(5,45)
+        ttbl.setColumnWidth(6,55)
+        ttbl.setColumnWidth(7,55)
         ttbl.verticalHeader().setDefaultSectionSize(24)
         self.ap_trea_table = ttbl
-        bl_trea.addWidget(ttbl); gl_trea.addWidget(body_trea); layout.addWidget(grp_trea)
+        bl_trea.addWidget(ttbl)
+        gl_trea.addWidget(body_trea)
+        layout.addWidget(grp_trea)
 
         # ── 其他参数 ──
         grp4 = QWidget()
-        gl4 = QVBoxLayout(grp4); gl4.setContentsMargins(0,0,0,0); gl4.setSpacing(0)
+        gl4 = QVBoxLayout(grp4)
+        gl4.setContentsMargins(0,0,0,0)
+        gl4.setSpacing(0)
         gl4.addWidget(DockHeader("其他参数 [478-497]"))
-        body4 = QWidget(); body4.setObjectName("DockBody")
-        bl4 = QVBoxLayout(body4); bl4.setContentsMargins(8,8,8,8)
-        g4 = QGridLayout(); g4.setHorizontalSpacing(8); g4.setVerticalSpacing(6)
+        body4 = QWidget()
+        body4.setObjectName("DockBody")
+        bl4 = QVBoxLayout(body4)
+        bl4.setContentsMargins(8,8,8,8)
+        g4 = QGridLayout()
+        g4.setHorizontalSpacing(8)
+        g4.setVerticalSpacing(6)
         other_fields = [
             ("lv_spread_lo", "Lv浮动下限", "[offset 478]"),
             ("lv_spread_hi", "Lv浮动上限", "[offset 480]"),
         ]
         for c, (key, label, tip) in enumerate(other_fields):
-            cell = QVBoxLayout(); cell.setSpacing(2)
-            lbl = QLabel(label); lbl.setProperty("class", "PropLabel"); lbl.setToolTip(tip)
+            cell = QVBoxLayout()
+            cell.setSpacing(2)
+            lbl = QLabel(label)
+            lbl.setProperty("class", "PropLabel")
+            lbl.setToolTip(tip)
             cell.addWidget(lbl)
-            ev = QLineEdit(); self.apvars[key] = ev
+            ev = QLineEdit()
+            self.apvars[key] = ev
             cell.addWidget(make_fake_input(line_edit=ev))
             g4.addLayout(cell, 0, c, Qt.AlignTop)
         _add_spacers(g4, 0, len(other_fields))
         for c in range(COLS): g4.setColumnStretch(c, 1)
-        bl4.addLayout(g4); gl4.addWidget(body4); layout.addWidget(grp4)
+        bl4.addLayout(g4)
+        gl4.addWidget(body4)
+        layout.addWidget(grp4)
         layout.addWidget(QLabel("[484-497] (保留14字节 — 全零)"))
 
         layout.addStretch()
-        scroll.setWidget(inner); self.tabs.addTab(scroll, "全部参数")
+        scroll.setWidget(inner)
+        self.tabs.addTab(scroll, "全部参数")
 
     def _on_apflag_change(self):
         flags = 0
         if self.apflag_bit1.isChecked(): flags |= 2
         if self.apflag_bit2.isChecked(): flags |= 4
-        self.apvars['flags'].setText(str(flags)); self._dirty = True
+        self.apvars['flags'].setText(str(flags))
+        self._dirty = True
 
     def _populate_allparams_tab(self, rec):
         self.apvars['battle_id'].setText(str(rec['battle_id']))
@@ -1438,10 +1648,15 @@ class WarDataEditorV2(QMainWindow):
         self.apvars['flags'].setText(str(rec['flags']))
         self.apvars['lv_spread_lo'].setText(str(rec['lv_spread_lo']))
         self.apvars['lv_spread_hi'].setText(str(rec['lv_spread_hi']))
-        self.apflag_bit1.blockSignals(True); self.apflag_bit1.setChecked((rec['flags']&2)!=0); self.apflag_bit1.blockSignals(False)
-        self.apflag_bit2.blockSignals(True); self.apflag_bit2.setChecked((rec['flags']&4)!=0); self.apflag_bit2.blockSignals(False)
+        self.apflag_bit1.blockSignals(True)
+        self.apflag_bit1.setChecked((rec['flags']&2)!=0)
+        self.apflag_bit1.blockSignals(False)
+        self.apflag_bit2.blockSignals(True)
+        self.apflag_bit2.setChecked((rec['flags']&4)!=0)
+        self.apflag_bit2.blockSignals(False)
         for i in range(6):
-            v = rec['must_chars'][i]; self.apvars['must_chars'][i].setText(str(v))
+            v = rec['must_chars'][i]
+            self.apvars['must_chars'][i].setText(str(v))
             self.ap_must_char_labels[i].setText(self._char_name(v-1)[:12] if v and v!=255 else "")
         # 敌军表
         tbl = self.ap_enemy_table
@@ -1451,12 +1666,16 @@ class WarDataEditorV2(QMainWindow):
                     str(rec['enemy_xy'][i*2]), str(rec['enemy_xy'][i*2+1]),
                     str(rec['enemy_delay'][i]), str(rec['enemy_flags'][i])]
             for c, v in enumerate(vals):
-                item = QTableWidgetItem(v); item.setTextAlignment(Qt.AlignCenter); tbl.setItem(i, c, item)
+                item = QTableWidgetItem(v)
+                item.setTextAlignment(Qt.AlignCenter)
+                tbl.setItem(i, c, item)
         # 友军表
         atbl = self.ap_ally_table
         for i in range(6):
             for c, v in enumerate([str(rec['ally_xy'][i*2]), str(rec['ally_xy'][i*2+1]), str(rec['ally_facing'][i])]):
-                item = QTableWidgetItem(v); item.setTextAlignment(Qt.AlignCenter); atbl.setItem(i, c, item)
+                item = QTableWidgetItem(v)
+                item.setTextAlignment(Qt.AlignCenter)
+                atbl.setItem(i, c, item)
         # 宝物表
         ttbl = self.ap_trea_table
         for i in range(28):
@@ -1467,7 +1686,9 @@ class WarDataEditorV2(QMainWindow):
                     str(rec['trea_quant'][i*2]) if i < 10 else '',
                     str(rec['trea_quant'][i*2+1]) if i < 10 else '']
             for c, v in enumerate(vals):
-                item = QTableWidgetItem(v); item.setTextAlignment(Qt.AlignCenter); ttbl.setItem(i, c, item)
+                item = QTableWidgetItem(v)
+                item.setTextAlignment(Qt.AlignCenter)
+                ttbl.setItem(i, c, item)
 
     def _apply_allparams_tab(self, rec):
         try: rec['battle_id'] = int(self.apvars['battle_id'].text() or 0) & 0xFFFF
@@ -1489,7 +1710,8 @@ class WarDataEditorV2(QMainWindow):
             except: pass
         tbl = self.ap_enemy_table
         def _gi(tbl, r, c):
-            item = tbl.item(r, c); return int(item.text()) if item and item.text() else 0
+            item = tbl.item(r, c)
+            return int(item.text()) if item and item.text() else 0
         for i in range(18):
             try: rec['enemy_ids'][i] = _gi(tbl, i, 0)
             except: pass
@@ -1542,38 +1764,58 @@ class WarDataEditorV2(QMainWindow):
     # ═══════════════════════════════════════════════════════════
 
     def _build_enemy_tab(self):
-        scroll = QScrollArea(); scroll.setWidgetResizable(True)
-        inner = QWidget(); layout = QVBoxLayout(inner)
-        layout.setContentsMargins(8,8,8,8); layout.setSpacing(4)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        inner = QWidget()
+        layout = QVBoxLayout(inner)
+        layout.setContentsMargins(8,8,8,8)
+        layout.setSpacing(4)
         tbl = QTableWidget(18, 11)
         tbl.setHorizontalHeaderLabels(["槽","角色ID","角色名","等级","加成倍率","LvP1","LvP2","X","Y","Delay","特殊设定"])
-        tbl.setColumnWidth(0,35); tbl.setColumnWidth(1,55); tbl.setColumnWidth(2,100)
-        tbl.setColumnWidth(3,45); tbl.setColumnWidth(4,55); tbl.setColumnWidth(5,45)
-        tbl.setColumnWidth(6,45); tbl.setColumnWidth(7,45); tbl.setColumnWidth(8,45)
-        tbl.setColumnWidth(9,45); tbl.setColumnWidth(10, 90)
+        tbl.setColumnWidth(0,35)
+        tbl.setColumnWidth(1,55)
+        tbl.setColumnWidth(2,100)
+        tbl.setColumnWidth(3,45)
+        tbl.setColumnWidth(4,55)
+        tbl.setColumnWidth(5,45)
+        tbl.setColumnWidth(6,45)
+        tbl.setColumnWidth(7,45)
+        tbl.setColumnWidth(8,45)
+        tbl.setColumnWidth(9,45)
+        tbl.setColumnWidth(10, 90)
         tbl.verticalHeader().setDefaultSectionSize(24)
-        self.enemy_table = tbl; self.enemy_name_labels = []
+        self.enemy_table = tbl
+        self.enemy_name_labels = []
         for i in range(18):
-            item = QTableWidgetItem(str(i)); item.setTextAlignment(Qt.AlignCenter); tbl.setItem(i, 0, item)
-            name_lbl = QLabel(""); name_lbl.setProperty("class","ExtraPreviewText")
-            self.enemy_name_labels.append(name_lbl); tbl.setCellWidget(i, 2, name_lbl)
+            item = QTableWidgetItem(str(i))
+            item.setTextAlignment(Qt.AlignCenter)
+            tbl.setItem(i, 0, item)
+            name_lbl = QLabel("")
+            name_lbl.setProperty("class","ExtraPreviewText")
+            self.enemy_name_labels.append(name_lbl)
+            tbl.setCellWidget(i, 2, name_lbl)
         tbl.cellChanged.connect(self._on_enemy_cell_changed)
         tbl.cellDoubleClicked.connect(self._on_enemy_cell_clicked)
         layout.addWidget(tbl)
-        scroll.setWidget(inner); self.tabs.addTab(scroll, "敌军配置")
+        scroll.setWidget(inner)
+        self.tabs.addTab(scroll, "敌军配置")
 
     def _apply_and_refresh(self):
         """应用敌军/友军/掉落/陷阱标签页修改到记录并刷新场景预览"""
         if self._current_idx < 0: return
         rec = self.records[self._current_idx]
-        self._apply_enemy_tab(rec); self._apply_ally_tab(rec)
-        self._apply_drops_tab(rec); self._apply_trap_tab(rec)
+        self._apply_enemy_tab(rec)
+        self._apply_ally_tab(rec)
+        self._apply_drops_tab(rec)
+        self._apply_trap_tab(rec)
         # 仅刷新名称和标志列 (避免完整 repopulate 触发 cellChanged 递归)
-        tbl = self.enemy_table; tbl.blockSignals(True)
+        tbl = self.enemy_table
+        tbl.blockSignals(True)
         for i in range(18):
             eid = rec['enemy_ids'][i]
             self.enemy_name_labels[i].setText(self._enemy_name(eid)[:14] if eid else "(空)")
-            f = rec['enemy_flags'][i]; parts = []
+            f = rec['enemy_flags'][i]
+            parts = []
             if f&1: parts.append('精英')
             if f&2: parts.append('特殊')
             if f&0x2000: parts.append('阵营A')
@@ -1587,7 +1829,8 @@ class WarDataEditorV2(QMainWindow):
         self._redraw_scene(rerandomize=False)
 
     def _populate_enemy_tab(self, rec):
-        tbl = self.enemy_table; tbl.blockSignals(True)
+        tbl = self.enemy_table
+        tbl.blockSignals(True)
         for i in range(18):
             eid = rec['enemy_ids'][i]
             for c, v in enumerate([str(eid), None, str(rec['enemy_lv'][i]),
@@ -1596,8 +1839,11 @@ class WarDataEditorV2(QMainWindow):
                 str(rec['enemy_xy'][i*2+1]), str(rec['enemy_delay'][i]),
                 str(rec['enemy_flags'][i])], 1):
                 if v is None: continue
-                item = QTableWidgetItem(v); item.setTextAlignment(Qt.AlignCenter); tbl.setItem(i, c, item)
-            f = rec['enemy_flags'][i]; parts = []
+                item = QTableWidgetItem(v)
+                item.setTextAlignment(Qt.AlignCenter)
+                tbl.setItem(i, c, item)
+            f = rec['enemy_flags'][i]
+            parts = []
             if f&1: parts.append('精英')
             if f&2: parts.append('特殊')
             if f&0x2000: parts.append('阵营A')
@@ -1650,8 +1896,10 @@ class WarDataEditorV2(QMainWindow):
                 rec['enemy_ids'][row] = new_eid
                 self._dirty = True
                 # 刷新表格中的角色ID和角色名
-                tbl = self.enemy_table; tbl.blockSignals(True)
-                id_item = QTableWidgetItem(str(new_eid)); id_item.setTextAlignment(Qt.AlignCenter)
+                tbl = self.enemy_table
+                tbl.blockSignals(True)
+                id_item = QTableWidgetItem(str(new_eid))
+                id_item.setTextAlignment(Qt.AlignCenter)
                 tbl.setItem(row, 1, id_item)
                 tbl.blockSignals(False)
                 self.enemy_name_labels[row].setText(self._enemy_name(new_eid)[:14] if new_eid else "(空)")
@@ -1660,14 +1908,16 @@ class WarDataEditorV2(QMainWindow):
         if col != 10: return
         rec = self.records[self._current_idx]
         cur = rec['enemy_flags'][row] & 0xFFFF
-        dlg = QDialog(self); dlg.setWindowTitle(f"敌军槽{row} 特殊设定")
+        dlg = QDialog(self)
+        dlg.setWindowTitle(f"敌军槽{row} 特殊设定")
         dlg.resize(300, 220)
         layout = QVBoxLayout(dlg)
         checkboxes = []
         for bit, name, desc in ENEMY_FLAG_BITS:
             cb = QCheckBox(f"{name}" + (f" ({desc})" if desc else ""))
             cb.setChecked(bool(cur & bit))
-            checkboxes.append((bit, cb)); layout.addWidget(cb)
+            checkboxes.append((bit, cb))
+            layout.addWidget(cb)
         layout.addStretch()
         bl = QHBoxLayout()
         bl.addWidget(QPushButton("全选", clicked=lambda: [c.setChecked(True) for _, c in checkboxes]))
@@ -1689,14 +1939,16 @@ class WarDataEditorV2(QMainWindow):
             tip_item.setFlags(tip_item.flags() & ~Qt.ItemIsEditable)
             self.enemy_table.setItem(row, 10, tip_item)
             dlg.accept()
-        btn_ok.clicked.connect(_ok); bl.addWidget(btn_ok)
+        btn_ok.clicked.connect(_ok)
+        bl.addWidget(btn_ok)
         layout.addLayout(bl)
         dlg.exec()
 
     def _apply_enemy_tab(self, rec):
         tbl = self.enemy_table
         def _g(r, c):
-            item = tbl.item(r, c); return int(item.text()) if item and item.text() else 0
+            item = tbl.item(r, c)
+            return int(item.text()) if item and item.text() else 0
         for i in range(18):
             try: rec['enemy_ids'][i] = _g(i, 1)
             except: pass
@@ -1722,32 +1974,44 @@ class WarDataEditorV2(QMainWindow):
     # ═══════════════════════════════════════════════════════════
 
     def _build_ally_tab(self):
-        scroll = QScrollArea(); scroll.setWidgetResizable(True)
-        inner = QWidget(); layout = QVBoxLayout(inner)
-        layout.setContentsMargins(8,8,8,8); layout.setSpacing(4)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        inner = QWidget()
+        layout = QVBoxLayout(inner)
+        layout.setContentsMargins(8,8,8,8)
+        layout.setSpacing(4)
         layout.addWidget(QLabel("友军坐标+朝向 (sub_431428:74 — int8字节对):"))
         tbl = QTableWidget(6, 4)
         tbl.setHorizontalHeaderLabels(["槽","X","Y","朝向"])
-        tbl.setColumnWidth(0,35); tbl.setColumnWidth(1,55); tbl.setColumnWidth(2,55); tbl.setColumnWidth(3,55)
+        tbl.setColumnWidth(0,35)
+        tbl.setColumnWidth(1,55)
+        tbl.setColumnWidth(2,55)
+        tbl.setColumnWidth(3,55)
         tbl.verticalHeader().setDefaultSectionSize(24)
         self.ally_table = tbl
         for i in range(6):
-            item = QTableWidgetItem(str(i)); item.setTextAlignment(Qt.AlignCenter); tbl.setItem(i, 0, item)
+            item = QTableWidgetItem(str(i))
+            item.setTextAlignment(Qt.AlignCenter)
+            tbl.setItem(i, 0, item)
         layout.addWidget(tbl)
         layout.addWidget(QLabel("X,Y: int8(0-31), 0=不使用; 朝向: 0-7(八方), 255=无效"))
         layout.addStretch()
-        scroll.setWidget(inner); self.tabs.addTab(scroll, "友军配置")
+        scroll.setWidget(inner)
+        self.tabs.addTab(scroll, "友军配置")
 
     def _populate_ally_tab(self, rec):
         tbl = self.ally_table
         for i in range(6):
             for c, v in enumerate([str(rec['ally_xy'][i*2]), str(rec['ally_xy'][i*2+1]), str(rec['ally_facing'][i])], 1):
-                item = QTableWidgetItem(v); item.setTextAlignment(Qt.AlignCenter); tbl.setItem(i, c, item)
+                item = QTableWidgetItem(v)
+                item.setTextAlignment(Qt.AlignCenter)
+                tbl.setItem(i, c, item)
 
     def _apply_ally_tab(self, rec):
         tbl = self.ally_table
         def _g(r, c):
-            item = tbl.item(r, c); return int(item.text()) if item and item.text() else 0
+            item = tbl.item(r, c)
+            return int(item.text()) if item and item.text() else 0
         for i in range(6):
             try: rec['ally_xy'][i*2] = _g(i, 1)
             except: pass
@@ -1761,57 +2025,86 @@ class WarDataEditorV2(QMainWindow):
     # ═══════════════════════════════════════════════════════════
 
     def _build_drops_traps_tab(self):
-        scroll = QScrollArea(); scroll.setWidgetResizable(True)
-        inner = QWidget(); layout = QVBoxLayout(inner)
-        layout.setContentsMargins(8,8,8,8); layout.setSpacing(4)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        inner = QWidget()
+        layout = QVBoxLayout(inner)
+        layout.setContentsMargins(8,8,8,8)
+        layout.setSpacing(4)
         layout.addWidget(QLabel("宝物和陷阱 (sub_431428:198-323) — 28槽位, 共享X/Y"))
         tbl = QTableWidget(28, 10)
         tbl.setHorizontalHeaderLabels(["槽","X","Y","宝物ID","宝物名","数Min","数Max","陷阱类型","威Min","威Max"])
-        tbl.setColumnWidth(0,30); tbl.setColumnWidth(1,45); tbl.setColumnWidth(2,45)
-        tbl.setColumnWidth(3,55); tbl.setColumnWidth(4,90); tbl.setColumnWidth(5,50)
-        tbl.setColumnWidth(6,50); tbl.setColumnWidth(7,90); tbl.setColumnWidth(8,50); tbl.setColumnWidth(9,50)
+        tbl.setColumnWidth(0,30)
+        tbl.setColumnWidth(1,45)
+        tbl.setColumnWidth(2,45)
+        tbl.setColumnWidth(3,55)
+        tbl.setColumnWidth(4,90)
+        tbl.setColumnWidth(5,50)
+        tbl.setColumnWidth(6,50)
+        tbl.setColumnWidth(7,90)
+        tbl.setColumnWidth(8,50)
+        tbl.setColumnWidth(9,50)
         tbl.verticalHeader().setDefaultSectionSize(24)
-        self.dt_table = tbl; self.dt_name_labels = []
+        self.dt_table = tbl
+        self.dt_name_labels = []
         trap_items = list(TRAP_NAMES_MAP.values())
         for i in range(28):
-            item = QTableWidgetItem(str(i)); item.setTextAlignment(Qt.AlignCenter); tbl.setItem(i, 0, item)
-            name_lbl = QLabel(""); name_lbl.setProperty("class","ExtraPreviewText")
-            self.dt_name_labels.append(name_lbl); tbl.setCellWidget(i, 4, name_lbl)
-            cb = QComboBox(); cb.addItems(trap_items); tbl.setCellWidget(i, 7, cb)
+            item = QTableWidgetItem(str(i))
+            item.setTextAlignment(Qt.AlignCenter)
+            tbl.setItem(i, 0, item)
+            name_lbl = QLabel("")
+            name_lbl.setProperty("class","ExtraPreviewText")
+            self.dt_name_labels.append(name_lbl)
+            tbl.setCellWidget(i, 4, name_lbl)
+            cb = QComboBox()
+            cb.addItems(trap_items)
+            tbl.setCellWidget(i, 7, cb)
         tbl.cellChanged.connect(self._on_dt_cell_changed)
         tbl.cellDoubleClicked.connect(self._on_dt_cell_clicked)
         layout.addWidget(tbl)
         layout.addWidget(QLabel("陷阱1-6→TKKon[552-557] | 宝物:trea_sub+trea_quant(slot0-9)"))
-        scroll.setWidget(inner); self.tabs.addTab(scroll, "宝物和陷阱")
+        scroll.setWidget(inner)
+        self.tabs.addTab(scroll, "宝物和陷阱")
 
     def _populate_drops_tab(self, rec):
-        tbl = self.dt_table; tbl.blockSignals(True)
+        tbl = self.dt_table
+        tbl.blockSignals(True)
         for i in range(28):
             for c, v in enumerate([str(rec['trap_xy'][i*2]), str(rec['trap_xy'][i*2+1])], 1):
-                item = QTableWidgetItem(v); item.setTextAlignment(Qt.AlignCenter); tbl.setItem(i, c, item)
+                item = QTableWidgetItem(v)
+                item.setTextAlignment(Qt.AlignCenter)
+                tbl.setItem(i, c, item)
             tid = rec['trea_sub'][i] if i < 10 else 0
-            item = QTableWidgetItem(str(tid)); item.setTextAlignment(Qt.AlignCenter); tbl.setItem(i, 3, item)
+            item = QTableWidgetItem(str(tid))
+            item.setTextAlignment(Qt.AlignCenter)
+            tbl.setItem(i, 3, item)
             if tid == 10000: self.dt_name_labels[i].setText("金钱")
             elif tid and tid in self.tkitem_names_by_id: self.dt_name_labels[i].setText(self.tkitem_names_by_id[tid][:12])
             elif tid: self.dt_name_labels[i].setText(f"Item#{tid}")
             else: self.dt_name_labels[i].setText("")
             if i < 10:
                 for c, v in enumerate([str(rec['trea_quant'][i*2]), str(rec['trea_quant'][i*2+1])], 5):
-                    item = QTableWidgetItem(v); item.setTextAlignment(Qt.AlignCenter); tbl.setItem(i, c, item)
+                    item = QTableWidgetItem(v)
+                    item.setTextAlignment(Qt.AlignCenter)
+                    tbl.setItem(i, c, item)
         tbl.blockSignals(False)
 
     def _populate_trap_tab(self, rec):
-        tbl = self.dt_table; tbl.blockSignals(True)
+        tbl = self.dt_table
+        tbl.blockSignals(True)
         for i in range(28):
             ttype = rec['trap_type'][i]
             cb = tbl.cellWidget(i, 7)
             if cb:
                 cb.blockSignals(True)
                 idx = max(0, min(6, ttype)) if 0 <= ttype <= 6 else 0
-                cb.setCurrentIndex(idx); cb.blockSignals(False)
+                cb.setCurrentIndex(idx)
+                cb.blockSignals(False)
             pmin, pmax = self._trap_power_at(rec, i)
             for c, v in enumerate([str(pmin), str(pmax)], 8):
-                item = QTableWidgetItem(v); item.setTextAlignment(Qt.AlignCenter); tbl.setItem(i, c, item)
+                item = QTableWidgetItem(v)
+                item.setTextAlignment(Qt.AlignCenter)
+                tbl.setItem(i, c, item)
         tbl.blockSignals(False)
 
     def _on_dt_cell_clicked(self, row, col):
@@ -1830,8 +2123,10 @@ class WarDataEditorV2(QMainWindow):
             rec['trea_sub'][row] = new_tid & 0xFFFF
             self._dirty = True
             # 刷新表格中的宝物ID和宝物名
-            tbl = self.dt_table; tbl.blockSignals(True)
-            id_item = QTableWidgetItem(str(new_tid)); id_item.setTextAlignment(Qt.AlignCenter)
+            tbl = self.dt_table
+            tbl.blockSignals(True)
+            id_item = QTableWidgetItem(str(new_tid))
+            id_item.setTextAlignment(Qt.AlignCenter)
             tbl.setItem(row, 3, id_item)
             tbl.blockSignals(False)
             if new_tid == 10000: self.dt_name_labels[row].setText("金钱")
@@ -1868,7 +2163,8 @@ class WarDataEditorV2(QMainWindow):
     def _apply_drops_tab(self, rec):
         tbl = self.dt_table
         def _g(r, c):
-            item = tbl.item(r, c); return int(item.text()) if item and item.text() else 0
+            item = tbl.item(r, c)
+            return int(item.text()) if item and item.text() else 0
         for i in range(28):
             try: rec['trap_xy'][i*2] = _g(i, 1)
             except: pass
@@ -1885,7 +2181,8 @@ class WarDataEditorV2(QMainWindow):
     def _apply_trap_tab(self, rec):
         tbl = self.dt_table
         def _g(r, c):
-            item = tbl.item(r, c); return int(item.text()) if item and item.text() else 0
+            item = tbl.item(r, c)
+            return int(item.text()) if item and item.text() else 0
         for i in range(28):
             cb = tbl.cellWidget(i, 7)
             ttype = cb.currentIndex() if cb else 0
@@ -1896,7 +2193,8 @@ class WarDataEditorV2(QMainWindow):
             try: pmax = _g(i, 9) & 0xFF
             except: pmax = 0
             off = i * 2 if i < 10 else 20 + (i - 10) * 2
-            rec['trap_pwr'][off] = pmin; rec['trap_pwr'][off + 1] = pmax
+            rec['trap_pwr'][off] = pmin
+            rec['trap_pwr'][off + 1] = pmax
 
     # ═══════════════════════════════════════════════════════════
     # 场景预览标签页
@@ -1904,55 +2202,89 @@ class WarDataEditorV2(QMainWindow):
 
     def _build_scene_tab(self):
         """场景预览标签页 — QGraphicsView + 图层控制"""
-        tab = QWidget(); layout = QVBoxLayout(tab)
-        layout.setContentsMargins(2,2,2,2); layout.setSpacing(2)
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        layout.setContentsMargins(2,2,2,2)
+        layout.setSpacing(2)
 
         # 控制栏
-        ctrl = QHBoxLayout(); ctrl.setSpacing(4)
+        ctrl = QHBoxLayout()
+        ctrl.setSpacing(4)
         ctrl.addWidget(QLabel("图层:"))
-        self.show_bg = QCheckBox("背景"); self.show_bg.setChecked(True); self.show_bg.toggled.connect(self._redraw_scene)
+        self.show_bg = QCheckBox("背景")
+        self.show_bg.setChecked(True)
+        self.show_bg.toggled.connect(self._redraw_scene)
         ctrl.addWidget(self.show_bg)
-        self.show_grid = QCheckBox("网格"); self.show_grid.setChecked(True); self.show_grid.toggled.connect(self._redraw_scene)
+        self.show_grid = QCheckBox("网格")
+        self.show_grid.setChecked(True)
+        self.show_grid.toggled.connect(self._redraw_scene)
         ctrl.addWidget(self.show_grid)
         ctrl.addWidget(QLabel("透明度:"))
-        self.grid_alpha = QComboBox(); self.grid_alpha.addItems(['0%','25%','50%','75%','100%'])
-        self.grid_alpha.setCurrentText('25%'); self.grid_alpha.currentTextChanged.connect(lambda: self._redraw_scene())
+        self.grid_alpha = QComboBox()
+        self.grid_alpha.addItems(['0%','25%','50%','75%','100%'])
+        self.grid_alpha.setCurrentText('25%')
+        self.grid_alpha.currentTextChanged.connect(partial(self._redraw_scene))
         ctrl.addWidget(self.grid_alpha)
-        self.show_units = QCheckBox("单位"); self.show_units.setChecked(True); self.show_units.toggled.connect(self._redraw_scene)
+        self.show_units = QCheckBox("单位")
+        self.show_units.setChecked(True)
+        self.show_units.toggled.connect(self._redraw_scene)
         ctrl.addWidget(self.show_units)
-        self.show_trea = QCheckBox("宝物"); self.show_trea.setChecked(True); self.show_trea.toggled.connect(self._redraw_scene)
+        self.show_trea = QCheckBox("宝物")
+        self.show_trea.setChecked(True)
+        self.show_trea.toggled.connect(self._redraw_scene)
         ctrl.addWidget(self.show_trea)
-        self.show_trap = QCheckBox("陷阱"); self.show_trap.setChecked(True); self.show_trap.toggled.connect(self._redraw_scene)
+        self.show_trap = QCheckBox("陷阱")
+        self.show_trap.setChecked(True)
+        self.show_trap.toggled.connect(self._redraw_scene)
         ctrl.addWidget(self.show_trap)
-        self.show_obstacle = QCheckBox("障碍"); self.show_obstacle.setChecked(True); self.show_obstacle.toggled.connect(self._redraw_scene)
+        self.show_obstacle = QCheckBox("障碍")
+        self.show_obstacle.setChecked(True)
+        self.show_obstacle.toggled.connect(self._redraw_scene)
         ctrl.addWidget(self.show_obstacle)
-        self.show_temp_obstacle = QCheckBox("临时障碍"); self.show_temp_obstacle.setChecked(True); self.show_temp_obstacle.toggled.connect(self._redraw_scene)
+        self.show_temp_obstacle = QCheckBox("临时障碍")
+        self.show_temp_obstacle.setChecked(True)
+        self.show_temp_obstacle.toggled.connect(self._redraw_scene)
         ctrl.addWidget(self.show_temp_obstacle)
         self.show_zone = [QCheckBox(f"区域{i+1}") for i in range(5)]
-        for z in self.show_zone: z.setChecked(True); z.toggled.connect(self._redraw_scene); ctrl.addWidget(z)
+        for z in self.show_zone:
+            z.setChecked(True)
+            z.toggled.connect(self._redraw_scene)
+            ctrl.addWidget(z)
         ctrl.addStretch()
         ctrl.addWidget(QLabel("缩放:"))
-        self.zoom_combo = QComboBox(); self.zoom_combo.addItems(['25%','33%','50%','66%','75%','100%'])
-        self.zoom_combo.setCurrentText('75%'); self.zoom_combo.currentTextChanged.connect(self._on_zoom_change)
+        self.zoom_combo = QComboBox()
+        self.zoom_combo.addItems(['25%','33%','50%','66%','75%','100%'])
+        self.zoom_combo.setCurrentText('75%')
+        self.zoom_combo.currentTextChanged.connect(self._on_zoom_change)
         ctrl.addWidget(self.zoom_combo)
         ctrl.addWidget(QPushButton("🔄 刷新", clicked=lambda: self._redraw_scene(True)))
-        self.edit_mode = QCheckBox("编辑"); ctrl.addWidget(self.edit_mode)
-        _lbl_bg_hint = QLabel("背景=map_id(WSC)"); _lbl_bg_hint.setObjectName("hintLabel")
+        self.edit_mode = QCheckBox("编辑")
+        ctrl.addWidget(self.edit_mode)
+        _lbl_bg_hint = QLabel("背景=map_id(WSC)")
+        _lbl_bg_hint.setObjectName("hintLabel")
         ctrl.addWidget(_lbl_bg_hint)
         layout.addLayout(ctrl)
 
         # 图例
-        legend = QHBoxLayout(); legend.setSpacing(6)
+        legend = QHBoxLayout()
+        legend.setSpacing(6)
         terrain_colors = [('障碍','#553322'),('临时障碍','#665544'),('区域1','#aa6633'),
                           ('区域2','#3366aa'),('区域3','#aa44aa'),('区域4','#33aa66'),('区域5','#aaaa33')]
         for label, color in terrain_colors:
-            f = QWidget(); fl = QHBoxLayout(f); fl.setContentsMargins(0,0,0,0); fl.setSpacing(2)
-            swatch = QLabel(); swatch.setFixedSize(12,12)
+            f = QWidget()
+            fl = QHBoxLayout(f)
+            fl.setContentsMargins(0,0,0,0)
+            fl.setSpacing(2)
+            swatch = QLabel()
+            swatch.setFixedSize(12,12)
             swatch.setProperty("class", "ColorSwatch")
             swatch.setStyleSheet(f"background-color:{color};")
-            fl.addWidget(swatch); fl.addWidget(QLabel(label)); legend.addWidget(f)
+            fl.addWidget(swatch)
+            fl.addWidget(QLabel(label))
+            legend.addWidget(f)
         legend.addStretch()
-        self.scene_info_var = QLabel(""); self.scene_info_var.setProperty("class","ExtraPreviewText")
+        self.scene_info_var = QLabel("")
+        self.scene_info_var.setProperty("class","ExtraPreviewText")
         legend.addWidget(self.scene_info_var)
         layout.addLayout(legend)
 
@@ -1964,7 +2296,8 @@ class WarDataEditorV2(QMainWindow):
     def _on_zoom_change(self, text):
         try: self._preview_zoom = int(text.rstrip('%')) / 100.0
         except: return
-        self._wsc_cache.clear(); self._redraw_scene()
+        self._wsc_cache.clear()
+        self._redraw_scene()
 
     def _grid_to_screen(self, gx, gy):
         """网格坐标 → 屏幕像素 (sub_42F9C8 等距投影)
@@ -1999,7 +2332,8 @@ class WarDataEditorV2(QMainWindow):
         w, h, rgba = result
         img = Image.frombuffer('RGBA', (w, h), rgba, 'raw', 'RGBA', 0, 1)
         zoom = self._preview_zoom
-        new_w = int(w * zoom); new_h = int(h * zoom)
+        new_w = int(w * zoom)
+        new_h = int(h * zoom)
         img = img.resize((new_w, new_h), Image.LANCZOS)
         # Convert PIL Image to QPixmap
         qimg = QImage(img.tobytes(), new_w, new_h, new_w * 4, QImage.Format_RGBA8888)
@@ -2117,11 +2451,14 @@ class WarDataEditorV2(QMainWindow):
         敌军/宝物位置按照 sub_431428 游戏规则解析: 固定位置 + 区域随机放置
         rerandomize=False 时复用缓存的解析位置 (拖拽时不重新随机)
         """
-        gv = self.scene_gview; scene = gv.scene()
+        gv = self.scene_gview
+        scene = gv.scene()
         scene.clear()
         if self._current_idx < 0: return
-        rec = self.records[self._current_idx]; zoom = self._preview_zoom
-        tile_w = int(56 * zoom); tile_h = int(28 * zoom)
+        rec = self.records[self._current_idx]
+        zoom = self._preview_zoom
+        tile_w = int(56 * zoom)
+        tile_h = int(28 * zoom)
         bg_w = bg_h = 0
 
         # 背景
@@ -2183,10 +2520,12 @@ class WarDataEditorV2(QMainWindow):
                     brush = QBrush(Qt.NoBrush)
                     if val == -1:  # WarWay -1 (0xFF) = 永久障碍
                         if not self.show_obstacle.isChecked(): continue
-                        pen = QPen(QColor('#332211'), 1); brush = QBrush(QColor(85,51,34,alpha_val))
+                        pen = QPen(QColor('#332211'), 1)
+                        brush = QBrush(QColor(85,51,34,alpha_val))
                     elif val < -1:  # WarWay < -1 = 临时障碍(sub_4355C4每回合+1直到0)
                         if not self.show_temp_obstacle.isChecked(): continue
-                        pen = QPen(QColor('#443322'), 1); brush = QBrush(QColor(102,85,68,alpha_val))
+                        pen = QPen(QColor('#443322'), 1)
+                        brush = QBrush(QColor(102,85,68,alpha_val))
                     elif val == 0:  # WarWay 0 = 普通地面
                         brush = QBrush(Qt.NoBrush)
                     else:  # WarWay 1-5 = 特殊区域 (PlaceReq), 各区域不同颜色
@@ -2209,12 +2548,14 @@ class WarDataEditorV2(QMainWindow):
                 rect = QRectF(sx-r, sy-r, r*2, r*2)
                 scene.addRect(rect, QPen(QColor('white'),1), QBrush(fill_c))
                 tag = "固" if i in fixed_trea_indices else "随"
-                t = scene.addText(tag); t.setDefaultTextColor(QColor('white'))
+                t = scene.addText(tag)
+                t.setDefaultTextColor(QColor('white'))
                 t.setFont(QFont('', max(7, int(9*zoom)), QFont.Bold))
                 t.setPos(sx - t.boundingRect().width()/2, sy - t.boundingRect().height()/2)
                 label = self._trea_label(rec, i)
                 if label:
-                    lt = scene.addText(label); lt.setDefaultTextColor(fill_c)
+                    lt = scene.addText(label)
+                    lt.setDefaultTextColor(fill_c)
                     lt.setFont(QFont('', max(8, int(10*zoom))))
                     lt.setPos(sx - lt.boundingRect().width()/2, sy - r - lt.boundingRect().height())
             # 宝物区域请求标记(无法解析的, 画布底部)
@@ -2225,8 +2566,10 @@ class WarDataEditorV2(QMainWindow):
                     by_zone.setdefault(z, []).append(lbl)
                 for zone, labels in sorted(by_zone.items()):
                     txt = f"Z{zone}:" + ",".join(labels)
-                    t = scene.addText(txt); t.setDefaultTextColor(QColor('#FFD700'))
-                    t.setFont(QFont('', max(9, int(11*zoom)))); t.setPos(zr_x, bg_h - 15)
+                    t = scene.addText(txt)
+                    t.setDefaultTextColor(QColor('#FFD700'))
+                    t.setFont(QFont('', max(9, int(11*zoom))))
+                    t.setPos(zr_x, bg_h - 15)
                     zr_x += t.boundingRect().width() + 10
 
         # ── 图层3b: 陷阱 (sub_431428:283-323) ──
@@ -2242,10 +2585,12 @@ class WarDataEditorV2(QMainWindow):
                 scene.addPolygon(QPolygonF(pts), QPen(outline_c,1), QBrush(fc))
                 tname = TRAP_NAMES_SHORT.get(ttype, '?') + '陷阱'
                 tag = "固" if i in fixed_trap_indices else "随"
-                t = scene.addText(tag); t.setDefaultTextColor(QColor('white'))
+                t = scene.addText(tag)
+                t.setDefaultTextColor(QColor('white'))
                 t.setFont(QFont('', max(7, int(9*zoom)), QFont.Bold))
                 t.setPos(sx - t.boundingRect().width()/2, sy - t.boundingRect().height()/2)
-                lt = scene.addText(tname); lt.setDefaultTextColor(fc)
+                lt = scene.addText(tname)
+                lt.setDefaultTextColor(fc)
                 lt.setFont(QFont('', max(8, int(10*zoom))))
                 lt.setPos(sx - lt.boundingRect().width()/2, sy - r - lt.boundingRect().height())
             # 区域陷阱无法解析的, 在底部提示
@@ -2256,8 +2601,10 @@ class WarDataEditorV2(QMainWindow):
                     by_zone.setdefault(z, []).append(f'{TRAP_NAMES_SHORT.get(ttype,"?")}{i}')
                 for zone, labels in sorted(by_zone.items()):
                     txt = f'⚠Z{zone}陷阱:' + ','.join(labels)
-                    t = scene.addText(txt); t.setDefaultTextColor(QColor('#FF4444'))
-                    t.setFont(QFont('', max(9, int(11*zoom)))); t.setPos(zr_x, bg_h - 35)
+                    t = scene.addText(txt)
+                    t.setDefaultTextColor(QColor('#FF4444'))
+                    t.setFont(QFont('', max(9, int(11*zoom))))
+                    t.setPos(zr_x, bg_h - 35)
                     zr_x += t.boundingRect().width() + 10
 
         # ── 图层4: 单位 (sub_431428 解析后位置) ──
@@ -2265,33 +2612,42 @@ class WarDataEditorV2(QMainWindow):
         if self.show_units.isChecked():
             # 敌军 — 按 sub_431428 规则解析后的位置
             for i, (gx, gy) in resolved_enemies.items():
-                eid = rec['enemy_ids'][i]; sx, sy = self._grid_to_screen(gx, gy)
+                eid = rec['enemy_ids'][i]
+                sx, sy = self._grid_to_screen(gx, gy)
                 r = max(5, tile_h // 2)
                 if i in fixed_enemy_slots: fill_c = QColor('#9932CC')
                 else: fill_c = QColor('#cc3333')
                 rect = QRectF(sx-r, sy-r, r*2, r*2)
                 scene.addEllipse(rect, QPen(QColor('white'),1), QBrush(fill_c))
                 tag = "固" if i in fixed_enemy_slots else "随"
-                t = scene.addText(tag); t.setDefaultTextColor(QColor('white'))
+                t = scene.addText(tag)
+                t.setDefaultTextColor(QColor('white'))
                 t.setFont(QFont('', max(7, int(9*zoom)), QFont.Bold))
                 t.setPos(sx - t.boundingRect().width()/2, sy - t.boundingRect().height()/2)
                 name = self._enemy_name(eid)
-                nt = scene.addText(name); nt.setDefaultTextColor(QColor('#BA55D3' if i in fixed_enemy_slots else '#ff6666'))
+                nt = scene.addText(name)
+                nt.setDefaultTextColor(QColor('#BA55D3' if i in fixed_enemy_slots else '#ff6666'))
                 nt.setFont(QFont('', max(8, int(10*zoom))))
                 nt.setPos(sx - nt.boundingRect().width()/2, sy + r + 2)
             # 友军 — ally_xy [178-189] + 区域放置解析
             for i in range(6):
-                if i in resolved_allies: gx, gy = resolved_allies[i]; fill_c = QColor('#3366cc')
+                if i in resolved_allies:
+                    gx, gy = resolved_allies[i]
+                    fill_c = QColor('#3366cc')
                 else:
-                    ax = rec['ally_xy'][i*2]; ay = rec['ally_xy'][i*2+1]
+                    ax = rec['ally_xy'][i*2]
+                    ay = rec['ally_xy'][i*2+1]
                     if ax == 0 and ay == 0: continue
                     if ax < 0 or ay < 0 or ax >= 32 or ay >= 32: continue
-                    gx, gy = ax, ay; fill_c = QColor('#228B22')
-                sx, sy = self._grid_to_screen(gx, gy); r = max(5, tile_h // 2)
+                    gx, gy = ax, ay
+                    fill_c = QColor('#228B22')
+                sx, sy = self._grid_to_screen(gx, gy)
+                r = max(5, tile_h // 2)
                 rect = QRectF(sx-r, sy-r, r*2, r*2)
                 scene.addEllipse(rect, QPen(QColor('white'),1), QBrush(fill_c))
                 tag = "随" if i in resolved_allies else "固"
-                t = scene.addText(tag); t.setDefaultTextColor(QColor('white'))
+                t = scene.addText(tag)
+                t.setDefaultTextColor(QColor('white'))
                 t.setFont(QFont('', max(7, int(9*zoom)), QFont.Bold))
                 t.setPos(sx - t.boundingRect().width()/2, sy - t.boundingRect().height()/2)
             # 敌军区域请求标记(无法解析的, 画布顶部)
@@ -2302,20 +2658,26 @@ class WarDataEditorV2(QMainWindow):
                     by_zone.setdefault(z, []).append(self._enemy_name(eid))
                 for zone, labels in sorted(by_zone.items()):
                     txt = f"Z{zone}:" + ",".join(labels)
-                    t = scene.addText(txt); t.setDefaultTextColor(QColor('#ff6666'))
-                    t.setFont(QFont('', max(9, int(11*zoom)))); t.setPos(ezr_x, 20)
+                    t = scene.addText(txt)
+                    t.setDefaultTextColor(QColor('#ff6666'))
+                    t.setFont(QFont('', max(9, int(11*zoom))))
+                    t.setPos(ezr_x, 20)
                     ezr_x += t.boundingRect().width() + 10
             # 激活槽位提示
             if active_slots < 18:
-                t = scene.addText(f"[激活槽位:0-{active_slots-1}]"); t.setDefaultTextColor(QColor('#ff6666'))
-                t.setFont(QFont('', max(8, int(9*zoom)))); t.setPos(10, 40)
+                t = scene.addText(f"[激活槽位:0-{active_slots-1}]")
+                t.setDefaultTextColor(QColor('#ff6666'))
+                t.setFont(QFont('', max(8, int(9*zoom))))
+                t.setPos(10, 40)
             # 强制出战角色名称 — must_chars [2-7]
             for i in range(6):
                 cv = rec['must_chars'][i]
                 if cv <= 0: continue
                 name = self._char_name(cv-1)[:4]
-                t = scene.addText(f"[{name}]"); t.setDefaultTextColor(QColor('#66ccff'))
-                t.setFont(QFont('Microsoft YaHei UI', 9)); t.setPos(10 + i*60, 5)
+                t = scene.addText(f"[{name}]")
+                t.setDefaultTextColor(QColor('#66ccff'))
+                t.setFont(QFont('Microsoft YaHei UI', 9))
+                t.setPos(10 + i*60, 5)
 
         scene.setSceneRect(scene.itemsBoundingRect().adjusted(-50, -50, 50, 50))
         gv.horizontalScrollBar().setValue(0)
@@ -2331,7 +2693,8 @@ class WarDataEditorV2(QMainWindow):
             if agx == gx and agy == gy: return ('ally', i)
         rec = self.records[self._current_idx]
         for i in range(6):
-            ax = rec['ally_xy'][i*2]; ay = rec['ally_xy'][i*2+1]
+            ax = rec['ally_xy'][i*2]
+            ay = rec['ally_xy'][i*2+1]
             if ax == gx and ay == gy: return ('ally', i)
         return None
 
@@ -2380,11 +2743,13 @@ class SceneGraphicsView(QGraphicsView):
         # 右键拖拽平移
         if self._pan_start is not None and event.buttons() & Qt.RightButton:
             delta = event.position().toPoint() - self._pan_start
-            hbar = self.horizontalScrollBar(); vbar = self.verticalScrollBar()
+            hbar = self.horizontalScrollBar()
+            vbar = self.verticalScrollBar()
             hbar.setValue(hbar.value() - delta.x())
             vbar.setValue(vbar.value() - delta.y())
             self._pan_start = event.position().toPoint()
-            event.accept(); return
+            event.accept()
+            return
 
         # 编辑模式拖拽: 拦截所有左键 move, 不传给基类
         if self._drag_target and event.buttons() & Qt.LeftButton:
@@ -2395,28 +2760,34 @@ class SceneGraphicsView(QGraphicsView):
                 d_utype, d_uidx = self._drag_target
                 rec = self.editor.records[self.editor._current_idx]
                 if d_utype == 'enemy':
-                    rec['enemy_xy'][d_uidx*2] = gx; rec['enemy_xy'][d_uidx*2+1] = gy
+                    rec['enemy_xy'][d_uidx*2] = gx
+                    rec['enemy_xy'][d_uidx*2+1] = gy
                     self.editor._last_resolved_enemies[d_uidx] = (gx, gy)
                 else:
-                    rec['ally_xy'][d_uidx*2] = gx; rec['ally_xy'][d_uidx*2+1] = gy
+                    rec['ally_xy'][d_uidx*2] = gx
+                    rec['ally_xy'][d_uidx*2+1] = gy
                     self.editor._last_resolved_allies[d_uidx] = (gx, gy)
                 self.editor._dirty = True
                 self.editor._redraw_scene(rerandomize=False)
-            event.accept(); return
+            event.accept()
+            return
 
         sp = self.mapToScene(event.position().toPoint())
         g = self.editor._scene_to_grid(sp.x(), sp.y())
         if g is None:
-            self.editor.scene_info_var.setText(""); return
+            self.editor.scene_info_var.setText("")
+            return
         gx, gy = g
-        ed = self.editor; rec = ed.records[ed._current_idx] if ed._current_idx >= 0 else None
+        ed = self.editor
+        rec = ed.records[ed._current_idx] if ed._current_idx >= 0 else None
 
         # 悬停信息: 单位
         unit = ed._find_unit_at(gx, gy) if rec else None
         if unit:
             utype, uidx = unit
             if utype == 'enemy':
-                eid = rec['enemy_ids'][uidx]; uname = ed._enemy_name(eid)
+                eid = rec['enemy_ids'][uidx]
+                uname = ed._enemy_name(eid)
                 orig_x = rec['enemy_xy'][uidx * 2]
                 pos_tag = f"区域Z{abs(orig_x)}" if orig_x < 0 else "固定位置"
                 ed.scene_info_var.setText(f"({gx},{gy}) 敌军:{uname} Lv.{rec['enemy_lv'][uidx]} [{pos_tag}]")
@@ -2457,20 +2828,24 @@ class SceneGraphicsView(QGraphicsView):
             if g:
                 unit = self.editor._find_unit_at(g[0], g[1])
                 if unit: self._drag_target = unit
-            event.accept(); return
+            event.accept()
+            return
         elif event.button() == Qt.RightButton:
             self._pan_start = event.position().toPoint()
-            event.accept(); return
+            event.accept()
+            return
         super().mousePressEvent(event)
 
     def mouseReleaseEvent(self, event):
         if event.button() == Qt.LeftButton and self._drag_target:
             self.editor._populate_fields(self.editor.records[self.editor._current_idx])
             self._drag_target = None
-            event.accept(); return
+            event.accept()
+            return
         if event.button() == Qt.RightButton:
             self._pan_start = None
-            event.accept(); return
+            event.accept()
+            return
         super().mouseReleaseEvent(event)
 
     def wheelEvent(self, event):
@@ -2479,10 +2854,14 @@ class SceneGraphicsView(QGraphicsView):
         current = self.editor._preview_zoom
         if event.angleDelta().y() > 0:
             for z in zooms:
-                if z > current: self.editor._preview_zoom = z; break
+                if z > current:
+                    self.editor._preview_zoom = z
+                    break
         else:
             for z in reversed(zooms):
-                if z < current: self.editor._preview_zoom = z; break
+                if z < current:
+                    self.editor._preview_zoom = z
+                    break
         self.editor.zoom_combo.setCurrentText(f"{int(self.editor._preview_zoom*100)}%")
         self.editor._wsc_cache.clear()
         self.editor._redraw_scene()

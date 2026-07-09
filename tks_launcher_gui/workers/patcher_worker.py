@@ -1,19 +1,18 @@
 """PatcherWorker — QThread 封装完整补丁流程, 通过 Signal 通知 UI"""
-import os
-import sys
-import time
-import struct
 import ctypes
 import filecmp
+import os
 import shutil
+import struct
 import subprocess
-from datetime import datetime, timezone, timedelta
+import sys
+import time
 
 from PySide6.QtCore import QThread, Signal
 
+from core.config_loader import load_config
 from core.memory import (
-    i32b, b2i32, b2u16, bhex,
-    read_pm, write_pm, vp_ex,
+    read_pm, write_pm,
     get_module_base, get_module_size, get_child_processes,
     find_window, get_decompressed_size,
     suspend_process, resume_process,
@@ -22,23 +21,22 @@ from core.memory import (
     MEM_COMMIT, MEM_RESERVE,
     _OpenProcess, _CloseHandle, _VirtualAllocEx,
 )
-from core.scanner import parse_pattern, pattern_scan, discover_warpc_base, detect_exe_profile, detect_exe_profile_runtime
-from core.config_loader import load_config
+from core.mod_loader import (
+    scan_mods, resolve_dependencies, detect_conflicts,
+    merge_mods, apply_mod_data, restore_originals,
+    expand_pak_mods,
+)
 from core.patch_engine import (
     apply_config_patches,
     patch_4c33fc, patch_41c120, patch_archive_portrait, patch_gold_display,
     find_load_hook_points, hook_save_load_portrait,
 )
+from core.scanner import discover_warpc_base, detect_exe_profile
 from core.warpc_expander import (
-    WARPC_BASE, WARPC_REC_SIZE, WARPC_ORIG_COUNT, WARPC_ORIG_SIZE,
+    WARPC_BASE, WARPC_REC_SIZE, WARPC_ORIG_SIZE,
     WARPC_TOTAL_ORIG_SIZE, DATA_FILE_ORIG_SIZES,
     ensure_save_directory_healthy, prepare_warpc_for_game,
     expand_warpc_buffer, inject_warpc_data,
-)
-from core.mod_loader import (
-    scan_mods, resolve_dependencies, detect_conflicts,
-    merge_mods, apply_mod_data, restore_originals,
-    expand_pak_mods,
 )
 
 
@@ -273,7 +271,8 @@ class PatcherWorker(QThread):
                         if ht:
                             psig, nr = read_pm(ht, tb, 2)
                             if nr == 2 and psig[0]==0x4D and psig[1]==0x5A:
-                                target_pid = tpid; direct_mode = True
+                                target_pid = tpid
+                                direct_mode = True
                                 version_label = "TKS 未加密版 (主进程模式, 后备检测)"
                                 self._log(f"  游戏模块已加载到主进程: base=0x{tb:08X} -> {version_label}")
                                 self.overlay_update.emit("正在加载游戏补丁...", False)
@@ -360,9 +359,11 @@ class PatcherWorker(QThread):
         # [补丁十一] GUARD 区 + 分配 WarPC 缓冲区
         warpc_base_for_caves = 0
         if _warpc_expanded and _warpc_full_data:
-            wp = "WarPC.dat"; bp = wp + ".orig"
+            wp = "WarPC.dat"
+            bp = wp + ".orig"
             if os.path.isfile(bp):
-                shutil.copy2(bp, wp); os.remove(bp)
+                shutil.copy2(bp, wp)
+                os.remove(bp)
                 self._log("  已恢复原始 WarPC.dat")
 
             ns = len(_warpc_full_data)
@@ -375,7 +376,8 @@ class PatcherWorker(QThread):
                     abv = ctypes.cast(ab, ctypes.c_void_p).value or 0
                     nb = abv + GUARD_SIZE
                     write_pm(hw, nb, _warpc_full_data)
-                    _warpc_new_buf = nb; warpc_base_for_caves = nb
+                    _warpc_new_buf = nb
+                    warpc_base_for_caves = nb
                     self._log(f"  WarPC 缓冲区: 0x{nb:08X} ({ns} 字节, {ns // WARPC_REC_SIZE} 角色)")
                 _CloseHandle(hw)
 
@@ -385,7 +387,8 @@ class PatcherWorker(QThread):
                 continue
             bp = k + ".orig"
             if os.path.isfile(bp):
-                shutil.copy2(bp, k); os.remove(bp)
+                shutil.copy2(bp, k)
+                os.remove(bp)
                 self._log(f"  已恢复原始 {k}")
 
         # 设置配置变量
@@ -484,12 +487,14 @@ class PatcherWorker(QThread):
         for si in range(1, 10):
             ip = f"save\\{si}.sav"
             if not os.path.isfile(ip):
-                self._log(f"  slot {si}: 不存在"); continue
+                self._log(f"  slot {si}: 不存在")
+                continue
             try:
                 with open(ip, 'rb') as f:
                     idx = f.read()
                 if len(idx) != 28:
-                    self._log(f"  slot {si}: 大小={len(idx)} (异常)"); continue
+                    self._log(f"  slot {si}: 大小={len(idx)} (异常)")
+                    continue
                 team = [struct.unpack('b', idx[k:k+1])[0] for k in range(6)]
                 lvs = [b2i16(idx, 12 + k*2) for k in range(6)]
                 self._log(f"  slot {si}: team=[{','.join(str(t) for t in team)}] levels=[{','.join('Lv'+str(l) for l in lvs)}]")

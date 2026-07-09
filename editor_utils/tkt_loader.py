@@ -244,7 +244,8 @@ def load_tkt_full(tkt_path: str) -> list[OrderedDict]:
     entries: list[OrderedDict] = []
     for i in range(record_count):
         entry_id = struct.unpack_from('<i', decrypted, i * 4)[0]
-        text_offset = struct.unpack_from('<I', decrypted, id_table_size + i * 4)[0]
+        text_offset = struct.unpack_from('<I', decrypted,
+                                          id_table_size + i * 4)[0]
         abs_off = text_base + text_offset
 
         if abs_off >= len(decrypted):
@@ -258,6 +259,7 @@ def load_tkt_full(tkt_path: str) -> list[OrderedDict]:
         raw_lines = blob.split(bytes([LINE_SEPARATOR]))
         decoded_lines = [_decode_line(ln) for ln in raw_lines]
         text = '\n'.join(decoded_lines)
-        entries.append(OrderedDict([('slot', i), ('id', entry_id), ('text', text)]))
+        entries.append(OrderedDict([('slot', i), ('id', entry_id),
+                                    ('text', text)]))
 
     return entries

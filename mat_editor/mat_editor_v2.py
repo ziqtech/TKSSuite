@@ -18,15 +18,23 @@ TKMat.Dat 地图实体编辑器 v2.3 — PySide6 Godot 风格版
   sub_408B30: 特殊机关(110) — d50帧计数器, d51帧偏移, d52行为模式(0/1/2), d53-d64物品组 ✓已验证
   sub_40EBD4: 脚本VM — d42=PC, d43=saved_PC, d30-d32=max链, d33-d35=cur链, End模式0xFFFF-0xFFFA ✓已验证
   sub_405CBC+sub_4077E4+sub_408E5C: type=200 NPC — d51立绘ID→d52句柄, d53方向模式(4/8), d55阴影帧, d56-d62寻路备份, d64行走动画, d70站桩/行走 ✓已验证
-  
+
   验证方法: 反编译 .c 文件中 entity 指针偏移量 ÷ 4 = dword 索引, 与编辑器字段索引对照确认
 
 用法:
   python mat_editor_v2.py
 """
 
-import struct, os, sys, re, csv, json, base64, time, traceback
-from collections import OrderedDict, defaultdict, Counter
+import base64
+import csv
+import json
+import os
+import re
+import struct
+import sys
+import time
+import traceback
+from collections import Counter, OrderedDict, defaultdict
 from functools import partial
 
 from PySide6.QtWidgets import (
@@ -718,7 +726,7 @@ SCRIPT_CMD_DESC = {
         f"切换场景→#{a[0]} {_tkt_scene(t, a[0])}" if a else "切换场景"
     ),
     # opcode 20: SetAni(7) — 设置动画 (sub_40C1A4)
-    # 参数: 实体(-1=上下文 -2=自身), Ani.JVG块ID, 帧起点(-1=不变), 帧终点(-1=不变), 
+    # 参数: 实体(-1=上下文 -2=自身), Ani.JVG块ID, 帧起点(-1=不变), 帧终点(-1=不变),
     #        当前帧(-1=不变), 动画速度(-1=不变), 循环标志(0=不循环 1=循环 -1=不变)
     # 仅type=20/200有效; 设置anim_set=4(Ani.JVG), 修改子模型和动画参数
     'SetAni':       lambda a, t: (
@@ -1233,7 +1241,7 @@ def _get_blended_sprite(jvg, block_idx, frame_idx, mode=0, param=0):
             r_ch, g_ch, b_ch, a_ch = img.split()
             # 像素越亮 → 加法贡献越大; alpha = 亮度 * scale
             lum = r_ch.point(lambda v: int(v * 0.299)) if False else r_ch
-            
+
             lum = ImageChops.add(
                 ImageChops.add(
                     r_ch.point(lambda v: int(v * 0.299)),
@@ -1254,7 +1262,7 @@ def _get_blended_sprite(jvg, block_idx, frame_idx, mode=0, param=0):
     elif mode == 4:
         # 亮度 alpha: 按 src 亮度修改 alpha 通道 (sub_459854)
         r_ch, g_ch, b_ch, a_ch = img.split()
-        
+
         lum = ImageChops.add(
             ImageChops.add(
                 r_ch.point(lambda v: int(v * 0.299)),
@@ -1333,7 +1341,7 @@ def _pil_additive(composite, rgba_src, dx, dy, param):
     param=0或>31 → full min(dst+src, 255); 0<param<=31 → min(dst+src*param/32, 255)"""
     if composite is None or rgba_src is None: return
     try:
-    
+
         sw, sh = rgba_src.size
         cw, ch = composite.size
         l = max(0, dx)
@@ -1364,7 +1372,7 @@ def _pil_subtract(composite, rgba_src, dx, dy):
     dst.RGB = max(dst - src, 0) 逐通道独立"""
     if composite is None or rgba_src is None: return
     try:
-    
+
         sw, sh = rgba_src.size
         cw, ch = composite.size
         l = max(0, dx)
@@ -1392,7 +1400,7 @@ def _pil_luma_alpha(composite, rgba_src, dx, dy):
     α = NTSC_luma_5bit(src); α=0跳过; α>28覆盖; else dst*(32-α)/32+src*α/32"""
     if composite is None or rgba_src is None: return
     try:
-    
+
         sw, sh = rgba_src.size
         cw, ch = composite.size
         l = max(0, dx)
@@ -1732,7 +1740,7 @@ class DataLoaderThread(QThread):
             self.result_data = result
             self.finished_load.emit()
         except Exception as e:
-            
+
             self.error_load.emit(str(e) + "\n" + traceback.format_exc())
 
 
@@ -1799,7 +1807,7 @@ class JvgLoaderThread(QThread):
             self.jvg_result = res
             self.finished_jvg.emit()
         except Exception as e:
-            
+
             print("Background asset load error:", e, traceback.format_exc())
             self.jvg_result = {}
             self.finished_jvg.emit()
@@ -1904,7 +1912,7 @@ class SceneCanvasView(QGraphicsView):
 
     def _vis_render_scene(self, ents, w, h):
         """PIL 预合成整个场景并显示到 QGraphicsView"""
-        
+
         mode = DISPLAY_MODES.get(self._vis_display_mode, 'auto')
 
         # Background — 匹配 QGraphicsView 的 QSS 主题背景色
@@ -5006,9 +5014,11 @@ class MatEditorApp(QMainWindow):
                     # 扩展 sc_blocks 数组以容纳最大索引
                     while len(sc_blocks) <= max_idx:
                         sc_blocks.append(b'')  # 空区段占位
-                
+
                 # 现在应用 diff
-                import zipfile, json, base64 as b64
+                import base64 as b64
+                import json
+                import zipfile
                 with zipfile.ZipFile(fp, 'r') as zf:
                     mod_json = json.loads(zf.read('mod.json'))
                     sc_diff_data = None
@@ -5018,14 +5028,14 @@ class MatEditorApp(QMainWindow):
                             if internal:
                                 sc_diff_data = json.loads(zf.read(internal))
                                 break
-                
+
                 if sc_diff_data:
                     for entry in sc_diff_data.get('modified', []):
                         idx = entry.get('index', -1)
                         data_b64 = entry.get('data_b64', '')
                         if 0 <= idx < len(sc_blocks) and data_b64:
                             sc_blocks[idx] = b64.b64decode(data_b64)
-                
+
                 self._data._sc_grp_pending = sc_blocks
                 self._data._sc_grp_section_count = len(sc_blocks)
                 imported_parts.append(f"SC.GRP ({len(sc_blocks)}区段, 待保存)")
@@ -6155,3 +6165,4 @@ def main():
 
 if __name__ == '__main__':
     main()
+

@@ -2,14 +2,14 @@
 通用 UI 工具函数 — 供所有编辑器统一使用
 包含: 路径状态显示、FakeInputBox、窗口图标加载、CSV 导出等
 """
+import csv
 import os
 import sys
-import csv
-from PySide6.QtWidgets import (QFrame, QHBoxLayout, QLabel, QLineEdit,
-                               QComboBox, QPushButton, QFileDialog, QMessageBox,
-                               QWidget, QMenu)
 from PySide6.QtCore import Qt, QObject, QEvent
 from PySide6.QtGui import QIcon
+from PySide6.QtWidgets import (QComboBox, QFileDialog, QFrame, QHBoxLayout,
+                               QLabel, QLineEdit, QMenu, QMessageBox,
+                               QPushButton, QWidget)
 
 
 # ── 颜色常量 (与 editor_themes 一致) ──
@@ -38,7 +38,8 @@ def update_path_labels(labels_config, is_dark):
         label.style().polish(label)
 
 
-def make_fake_input(widget=None, line_edit=None, combo=None, button=None, stretch=True, height=28):
+def make_fake_input(widget=None, line_edit=None, combo=None,
+                    button=None, stretch=True, height=28):
     """创建 FakeInputBox 外壳 (内凹输入框风格)
     用法1: make_fake_input(some_widget) — 单控件
     用法2: make_fake_input(line_edit=le, combo=cb, button=btn) — 多控件组合
@@ -66,7 +67,8 @@ def make_fake_input(widget=None, line_edit=None, combo=None, button=None, stretc
 def load_window_icon(widget, editor_dir=None):
     """加载 TKS.ico 窗口图标"""
     if editor_dir is None:
-        editor_dir = os.path.dirname(widget.__class__.__module__.replace('.', os.sep))
+        editor_dir = os.path.dirname(
+            widget.__class__.__module__.replace('.', os.sep))
         if not os.path.isdir(editor_dir):
             editor_dir = os.getcwd()
     ico_path = os.path.join(editor_dir, 'TKS.ico')
@@ -83,7 +85,8 @@ def export_csv(parent, records, columns, row_func, default_name="export.csv"):
     row_func: record -> list 转换函数
     default_name: 默认文件名
     """
-    fp, _ = QFileDialog.getSaveFileName(parent, "导出 CSV", default_name, "CSV (*.csv)")
+    fp, _ = QFileDialog.getSaveFileName(parent, "导出 CSV",
+                                         default_name, "CSV (*.csv)")
     if not fp:
         return False
     try:
@@ -103,8 +106,8 @@ def confirm_close(parent, dirty, title="未保存", text="有未保存的修改,
     """未保存确认退出对话框，返回 True 表示可以关闭"""
     if not dirty:
         return True
-    return QMessageBox.question(parent, title, text,
-                                QMessageBox.Ok | QMessageBox.Cancel) == QMessageBox.Ok
+    buttons = QMessageBox.Ok | QMessageBox.Cancel
+    return QMessageBox.question(parent, title, text, buttons) == QMessageBox.Ok
 
 
 def themed_messagebox(parent, icon, title, text):

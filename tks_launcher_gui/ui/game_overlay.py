@@ -1,6 +1,6 @@
 """游戏内悬浮窗 — PySide6 无边框透明 QLabel, 替代原 Tkinter OverlayForm"""
-from PySide6.QtWidgets import QLabel
 from PySide6.QtCore import Qt, QTimer
+from PySide6.QtWidgets import QLabel
 from core.memory import get_window_rect
 
 

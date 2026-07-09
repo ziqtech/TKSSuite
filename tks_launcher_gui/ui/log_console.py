@@ -5,11 +5,11 @@
   LogHighlighter 在渲染时根据每行内容动态应用前景色。
   主题切换时调用 rehighlight() 即可立即重新着色全部行, 无需重建文档。
 """
-from PySide6.QtWidgets import QTextEdit
-from PySide6.QtGui import (
-    QTextCursor, QTextCharFormat, QColor, QSyntaxHighlighter, QTextDocument,
-)
 from PySide6.QtCore import Qt
+from PySide6.QtGui import (
+    QColor, QTextCharFormat, QTextCursor, QTextDocument, QSyntaxHighlighter,
+)
+from PySide6.QtWidgets import QTextEdit
 
 
 class LogHighlighter(QSyntaxHighlighter):

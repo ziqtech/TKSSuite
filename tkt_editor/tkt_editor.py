@@ -26,7 +26,7 @@ import re
 import struct
 import sys
 import tkinter as tk
-from tkinter import ttk, messagebox, filedialog, colorchooser
+from tkinter import colorchooser, filedialog, messagebox, ttk
 from collections import OrderedDict
 
 HAS_PIL = False
@@ -611,10 +611,14 @@ class Font9696:
             for x in range(96):
                 bi = row_off + (x // 8)
                 if raw[bi] & (1 << (7 - (x % 8))):
-                    if x < min_x: min_x = x
-                    if y < min_y: min_y = y
-                    if x > max_x: max_x = x
-                    if y > max_y: max_y = y
+                    if x < min_x:
+                        min_x = x
+                    if y < min_y:
+                        min_y = y
+                    if x > max_x:
+                        max_x = x
+                    if y > max_y:
+                        max_y = y
 
         if min_x > max_x:
             w = target_height // 2
@@ -1227,7 +1231,7 @@ class TktEditor:
 
     def _render_preview(self):
         """渲染预览: FONT9696 + PIL 优先, 回退纯文本
-        
+
         FONT9696 字体包含简体中文位图 (以 Big5 编码索引),
         因此 FONT9696 渲染显示的是简体字形 (与游戏实际渲染一致)。
         开启"繁体字体"时, CJK 字符改用系统繁体字体渲染。
@@ -1772,3 +1776,4 @@ def main():
 
 if __name__ == "__main__":
     sys.exit(main())
+

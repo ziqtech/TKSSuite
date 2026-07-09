@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """TKItem 字段实测 - 查找蝉翼刀/遁甲天书验证 [22]=装备后学习技能 假说"""
-import struct, os, sys
+import os
+import struct
+import sys
 sys.path.insert(0, os.path.dirname(__file__))
 from item_editor import lzss_decompress, load_tkt, load_tkskill_names
 
@@ -91,9 +93,12 @@ for i in [0, 100, 400, 500, 540, 545, 549, 550, 551, 555, 559, 560, 570, 580, 59
     f = recs[i]['f']
     nm = name_of(recs[i])
     tag = ''
-    if f[0] == 0 and f[2] == 0: tag = ' <空槽 (item_id=0 & name_id=0)>'
-    elif f[0] == 1: tag = ' <id=1 占位>'
-    elif f[0] == 0: tag = ' <id=0 但 name_id非零>'
+    if f[0] == 0 and f[2] == 0:
+        tag = ' <空槽 (item_id=0 & name_id=0)>'
+    elif f[0] == 1:
+        tag = ' <id=1 占位>'
+    elif f[0] == 0:
+        tag = ' <id=0 但 name_id非零>'
     print(f"  #{i:3d}  id={f[0]:5d} tab={f[1]:3d} name_id={f[2]:5d} desc_id={f[3]:5d} '{nm[:20]}'{tag}")
 
 # 全部空槽统计

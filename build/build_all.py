@@ -28,11 +28,11 @@ build_all.py — TKS Editors 一键构建脚本 (Nuitka)
     ├── configs/
     └── mods/
 """
-import os
-import sys
-import shutil
 import argparse
+import os
+import shutil
 import subprocess
+import sys
 import time
 from pathlib import Path
 

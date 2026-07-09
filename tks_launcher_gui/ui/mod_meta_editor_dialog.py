@@ -2,16 +2,16 @@
 import json
 import os
 import zipfile
-from PySide6.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QGridLayout,
-    QLabel, QLineEdit, QTextEdit, QSpinBox,
-    QPushButton, QFileDialog, QMessageBox,
-)
+
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QPixmap
+from PySide6.QtWidgets import (
+    QDialog, QFileDialog, QGridLayout, QHBoxLayout, QLabel, QLineEdit,
+    QMessageBox, QPushButton, QSpinBox, QTextEdit, QVBoxLayout,
+)
 
 from core.mod_packer import read_tksmod_content, rewrite_mod_metadata
-from editor_utils.mod_exporter import generate_short_uuid, extract_preview_image
+from editor_utils.mod_exporter import extract_preview_image, generate_short_uuid
 
 
 class ModMetaEditorDialog(QDialog):

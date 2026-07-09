@@ -6,13 +6,14 @@ TKT.dat 文本数据库编辑器 v5.0 (PySide6 最终完美融合版)
 并加入了 V4 的安全空槽边界扫描、联合渲染视口与智能分仓功能。
 """
 
+import argparse
+import json
 import os
 import re
 import struct
 import sys
-import json
-import argparse
 from collections import OrderedDict
+from functools import partial
 
 # ----------------- PySide6 Imports -----------------
 from PySide6.QtWidgets import (
@@ -54,10 +55,10 @@ from editor_utils.window_theme import apply_godot_theme
 # ============================================================
 # 常量 (来自反编译)
 # ============================================================
-XOR_KEY = 0xFF                       
-HDR_SIZE = 8                         
-ENTRY_TERMINATOR = 0x00              
-LINE_SEPARATOR = 0x1E                
+XOR_KEY = 0xFF
+HDR_SIZE = 8
+ENTRY_TERMINATOR = 0x00
+LINE_SEPARATOR = 0x1E
 
 CONTROL_TAGS = {
     0x01: ("FRESET",  1, 1, 4),
@@ -105,7 +106,7 @@ GAME_FONT_FAMILIES = {
 }
 
 DEFAULT_FTYPE = 2
-DEFAULT_FCOLOR = 32    
+DEFAULT_FCOLOR = 32
 FTYPE_BY_FAMILY_NAME = {v[0]: k - 1 for k, v in GAME_FONT_FAMILIES.items()}
 
 WORD_4EC810 = {
@@ -161,14 +162,14 @@ def load_g2b_dat(g2b_path):
         if idx + 1 < len(data):
             big5_lo = data[idx]
             big5_hi = data[idx + 1]
-            if big5_lo or big5_hi: 
+            if big5_lo or big5_hi:
                 big5_code = (big5_lo << 8) | big5_hi
                 _B2G_TABLE[big5_code] = gb_code
     return data
 
 def big5_to_gb(text):
     if _B2G_TABLE is None:
-        return text 
+        return text
     result = []
     for ch in text:
         try:
@@ -183,11 +184,11 @@ def big5_to_gb(text):
                     except (UnicodeEncodeError, UnicodeDecodeError):
                         result.append(gb_bytes.decode('gbk', errors='replace'))
                 else:
-                    result.append(ch) 
+                    result.append(ch)
             else:
-                result.append(ch) 
+                result.append(ch)
         except (UnicodeEncodeError, UnicodeDecodeError):
-            result.append(ch) 
+            result.append(ch)
     return ''.join(result)
 
 # ============================================================
@@ -202,8 +203,10 @@ def decode_line(line_bytes):
     buf = bytearray()
     def flush():
         if buf:
-            try: out.append(buf.decode('big5', errors='replace'))
-            except Exception: out.append(buf.decode('gbk', errors='replace'))
+            try:
+                out.append(buf.decode('big5', errors='replace'))
+            except Exception:
+                out.append(buf.decode('gbk', errors='replace'))
             buf.clear()
     i = 0
     n = len(line_bytes)
@@ -254,7 +257,8 @@ def encode_line(text):
                 code, data_len, min_val, max_val = TAG_NAME_MAP[tag_name]
                 val = int(val_str)
                 if min_val <= val <= max_val:
-                    out.append(code); out.append(val & 0xFF)
+                    out.append(code)
+                    out.append(val & 0xFF)
                     if data_len == 2:
                         out.append((val >> 8) & 0xFF)
                     i = m.end()
@@ -263,17 +267,19 @@ def encode_line(text):
                 out.extend(ch.encode('big5', errors='replace'))
             i = m.end()
             continue
-            
+
         if text[i] == '<' and i + 6 < n:
             rm = re.match(r'<RAW,0x([0-9A-Fa-f]{2})>', text[i:])
             if rm:
                 out.append(int(rm.group(1), 16))
                 i += rm.end()
                 continue
-                
+
         ch = text[i]
-        try: encoded = ch.encode('big5')
-        except (UnicodeEncodeError, UnicodeDecodeError): encoded = ch.encode('gbk', errors='replace')
+        try:
+            encoded = ch.encode('big5')
+        except (UnicodeEncodeError, UnicodeDecodeError):
+            encoded = ch.encode('gbk', errors='replace')
         out.extend(encoded)
         i += 1
     return bytes(out)
@@ -314,23 +320,28 @@ def parse_styled_segments(text):
                     current['family'] = GAME_FONT_FAMILIES[val]
             elif tag_name == 'FRESET':
                 val = int(val_str)
-                if val == 1: 
+                if val == 1:
                     current['fg'] = GAME_COLORS[DEFAULT_FCOLOR]
                     current['size'] = DEFAULT_FONT_SIZE
                     current['family'] = GAME_FONT_FAMILIES[DEFAULT_FTYPE]
-                elif val == 2: 
+                elif val == 2:
                     current['fg'] = prev_color
-                elif val == 3: 
+                elif val == 3:
                     current['fg'] = GAME_COLORS[DEFAULT_FCOLOR]
                     current['size'] = DEFAULT_FONT_SIZE
                     current['family'] = GAME_FONT_FAMILIES[DEFAULT_FTYPE]
-                elif val == 4: 
+                elif val == 4:
                     current['family'] = prev_family
-            elif tag_name == 'TEXT': buf.append(f'[文本:{val_str}]')
-            elif tag_name == 'VARNUM': buf.append(f'[數值變量:{val_str}]')
-            elif tag_name == 'VARTXT': buf.append(f'[文本變量:{val_str}]')
-            elif tag_name == 'NAME': buf.append('[姓]' if val_str == '1' else '[名]')
-            else: buf.append(text[m.start():m.end()])
+            elif tag_name == 'TEXT':
+                buf.append(f'[文本:{val_str}]')
+            elif tag_name == 'VARNUM':
+                buf.append(f'[數值變量:{val_str}]')
+            elif tag_name == 'VARTXT':
+                buf.append(f'[文本變量:{val_str}]')
+            elif tag_name == 'NAME':
+                buf.append('[姓]' if val_str == '1' else '[名]')
+            else:
+                buf.append(text[m.start():m.end()])
             i = m.end()
         elif text[i] == '<' and i + 6 < n:
             rm = re.match(r'<RAW,0x([0-9A-Fa-f]{2})>', text[i:])
@@ -358,7 +369,7 @@ class Font9696:
         self._f = open(path, 'rb')
         idx_bytes = self._f.read(8 * self.GLYPHS_PER_SECTION * 4)
         self._index = list(struct.unpack_from('<%dI' % (8 * self.GLYPHS_PER_SECTION), idx_bytes, 0))
-        self._cache = {} 
+        self._cache = {}
 
     def close(self):
         if self._f:
@@ -445,10 +456,14 @@ class Font9696:
             for x in range(96):
                 bi = row_off + (x // 8)
                 if raw[bi] & (1 << (7 - (x % 8))):
-                    if x < min_x: min_x = x
-                    if y < min_y: min_y = y
-                    if x > max_x: max_x = x
-                    if y > max_y: max_y = y
+                    if x < min_x:
+                        min_x = x
+                    if y < min_y:
+                        min_y = y
+                    if x > max_x:
+                        max_x = x
+                    if y > max_y:
+                        max_y = y
 
         if min_x > max_x:
             w = target_height // 2
@@ -515,7 +530,7 @@ def _unicode_to_big5_code(ch):
     return None, False
 
 def _remap_ascii_for_font9696(ascii_code):
-    return WORD_4EC810.get(ascii_code, 0xA140) 
+    return WORD_4EC810.get(ascii_code, 0xA140)
 
 _SYS_FONT_CACHE = {}
 
@@ -568,9 +583,9 @@ def _get_sys_font(size, family_tuple, prefer_traditional=False):
 def _render_fallback_char(ch, size, color, family_tuple, half_width=False, prefer_traditional=False):
     if not HAS_PIL:
         return Image.new('RGBA', (1, 1, 0, 0)), 0
-        
+
     font_obj = _get_sys_font(size, family_tuple, prefer_traditional)
-    
+
     if half_width:
         adv = max(size // 2, 1)
         if font_obj is None:
@@ -607,21 +622,21 @@ def _render_fallback_char(ch, size, color, family_tuple, half_width=False, prefe
     x0, y0, x1, y1 = bbox
     w = max(x1 - x0, 1)
     h = max(y1 - y0, 1)
-    
+
     r, g, b = int(color[1:3], 16), int(color[3:5], 16), int(color[5:7], 16)
     img = Image.new('RGBA', (w, h), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
     draw.text((-x0, -y0), ch, fill=(r, g, b, 255), font=font_obj)
-    
+
     return img, w
 
 def _render_text_image(segments, font, line_spacing=4, use_traditional_font=False, bg_color='#313c52', scale_factor=1.0):
     if not segments:
         return Image.new('RGBA', (1, 1), (0, 0, 0, 0))
-        
+
     bg_rgb = _hex_to_rgb(bg_color)
     scaled_spacing = int(line_spacing * scale_factor)
-    lines = [] 
+    lines = []
     current_line_glyphs = []
     current_line_height = 0
 
@@ -629,7 +644,7 @@ def _render_text_image(segments, font, line_spacing=4, use_traditional_font=Fals
         ftype = FTYPE_BY_FAMILY_NAME.get(style['family'][0], 0)
         size = max(int(style['size'] * scale_factor), 1)
         color = style['fg']
-        
+
         for ch in text:
             if ch == '\n':
                 if current_line_glyphs:
@@ -637,9 +652,9 @@ def _render_text_image(segments, font, line_spacing=4, use_traditional_font=Fals
                 current_line_glyphs = []
                 current_line_height = 0
                 continue
-                
+
             big5_code, is_cjk = _unicode_to_big5_code(ch)
-            
+
             if big5_code is not None and is_cjk:
                 if use_traditional_font:
                     img, adv = _render_fallback_char(ch, size, color, style['family'], half_width=False, prefer_traditional=True)
@@ -660,13 +675,13 @@ def _render_text_image(segments, font, line_spacing=4, use_traditional_font=Fals
                     img, adv = _render_fallback_char(ch, size, color, style['family'], half_width=False, prefer_traditional=True)
                 else:
                     img, adv = _render_fallback_char(ch, size, color, style['family'], half_width=True, prefer_traditional=use_traditional_font)
-                    
+
             current_line_glyphs.append((img, adv))
             current_line_height = max(current_line_height, size)
 
     if current_line_glyphs:
         lines.append((current_line_height, current_line_glyphs))
-        
+
     if not lines:
         return Image.new('RGBA', (1, 1), (0, 0, 0, 0))
 
@@ -682,7 +697,7 @@ def _render_text_image(segments, font, line_spacing=4, use_traditional_font=Fals
 
     canvas_w = max(max_w + 20, 1)
     canvas_h = max(total_h + 20, 1)
-    
+
     canvas = Image.new('RGBA', (canvas_w, canvas_h), (*bg_rgb, 255))
     y = 10
     for lh, glyphs in lines:
@@ -692,7 +707,7 @@ def _render_text_image(segments, font, line_spacing=4, use_traditional_font=Fals
             canvas.paste(img, (x, y + y_off), img)
             x += adv
         y += lh + scaled_spacing
-        
+
     return canvas
 
 def save_tkt(tkt_path, entries):
@@ -707,28 +722,30 @@ def save_tkt(tkt_path, entries):
         lines = text.split('\n')
         entry_bytes = bytearray()
         for li, line in enumerate(lines):
-            if li > 0: entry_bytes.append(LINE_SEPARATOR)  
+            if li > 0:
+                entry_bytes.append(LINE_SEPARATOR)
             entry_bytes.extend(encode_line(line))
-        entry_bytes.append(ENTRY_TERMINATOR)  
+        entry_bytes.append(ENTRY_TERMINATOR)
 
         current_offset = len(text_blob)
         text_blob.extend(entry_bytes)
-        
+
         id_table.extend(struct.pack('<i', entry_id))
         offset_table.extend(struct.pack('<I', current_offset))
 
     data = bytes(id_table) + bytes(offset_table) + bytes(text_blob)
     total_size = len(data)
-    
+
     encrypted = bytes(b ^ XOR_KEY for b in data)
-    
+
     with open(tkt_path, 'wb') as f:
         f.write(struct.pack('<I', total_size))
         f.write(struct.pack('<I', record_count))
         f.write(encrypted)
 
 def pil_to_qimage(pil_image):
-    if pil_image.mode != "RGBA": pil_image = pil_image.convert("RGBA")
+    if pil_image.mode != "RGBA":
+        pil_image = pil_image.convert("RGBA")
     data = pil_image.tobytes("raw", "RGBA")
     return QImage(data, pil_image.width, pil_image.height, QImage.Format_RGBA8888).copy()
 
@@ -745,21 +762,21 @@ class TktEditor(QMainWindow):
 
         self.font_mono = QFont('Consolas', 10)
         self.tkt_path = None
-        self.entries = []          
-        self.entry_by_id = {}      
-        self.filtered_indices = [] 
-        self.font9696 = None       
+        self.entries = []
+        self.entry_by_id = {}
+        self.filtered_indices = []
+        self.font9696 = None
         self.font_path = None
         self._dirty = False
-        self._current_idx = None   
-        
+        self._current_idx = None
+
         # 用于在加载文件时记录未受污染的原始文本状态，格式为 { (ID, 文本) } 元组集合
         # 使用 set 而非 dict，彻底免疫原版文件中重复 ID（废弃数据）导致的快照覆盖误判
         self.original_entry_snapshot = set()
-        
+
         self._zoom_level = 150
         self._sort_col = -1
-        self._sort_state = 0  
+        self._sort_state = 0
         self._last_focused_input = None
 
         app_inst = QApplication.instance()
@@ -807,34 +824,34 @@ class TktEditor(QMainWindow):
         edit_menu.addAction("删除当前条目", QKeySequence("Delete"), self._delete_entry)
         edit_menu.addSeparator()
         edit_menu.addAction("查找…", QKeySequence("Ctrl+F"), self._focus_search)
-        
+
         help_menu = menu_bar.addMenu("帮助(H)")
         help_menu.addAction("关于", self._show_about)
 
         self.main_tabs = QTabWidget()
-        
+
         # Tab 栏右上角角部控件
         corner_widget = QWidget()
         corner_layout = QHBoxLayout(corner_widget)
         corner_layout.setContentsMargins(0, 0, 4, 0)
-        
+
         self.lbl_dirty = QLabel("")
         self.lbl_dirty.setProperty("class", "DirtyIndicator")
         corner_layout.addWidget(self.lbl_dirty)
-        
+
         corner_layout.addSpacing(10)
         self.chk_traditional = QCheckBox("系统繁体字渲染")
         self.chk_traditional.toggled.connect(self._on_font_toggle)
         corner_layout.addWidget(self.chk_traditional)
-        
+
         corner_layout.addSpacing(10)
         btn_theme = QPushButton("🌓 切换主题")
         btn_theme.clicked.connect(self._toggle_theme)
         btn_theme.setProperty("class", "CompactBtn")
         corner_layout.addWidget(btn_theme)
-        
+
         self.main_tabs.setCornerWidget(corner_widget, Qt.TopRightCorner)
-        
+
         main_layout.addWidget(self.main_tabs, 1)
 
         # ==================== WORKSPACE 1: 原始全局线性维护 ====================
@@ -844,25 +861,40 @@ class TktEditor(QMainWindow):
 
         # 工具栏 (还原 Emoji)
         toolbar_layout = QHBoxLayout()
-        self.search_entry = QLineEdit(); self.search_entry.setPlaceholderText("关键词/ID搜索..."); self.search_entry.setFixedWidth(160)
+        self.search_entry = QLineEdit()
+        self.search_entry.setPlaceholderText("关键词/ID搜索...")
+        self.search_entry.setFixedWidth(160)
         self.search_entry.returnPressed.connect(self._apply_filter)
         toolbar_layout.addWidget(self.search_entry)
-        
-        btn_search = QPushButton("🔍 搜索"); btn_search.clicked.connect(self._apply_filter); toolbar_layout.addWidget(btn_search)
-        btn_clear = QPushButton("🧹 清除"); btn_clear.clicked.connect(self._clear_filter); toolbar_layout.addWidget(btn_clear)
-        
+
+        btn_search = QPushButton("🔍 搜索")
+        btn_search.clicked.connect(self._apply_filter)
+        toolbar_layout.addWidget(btn_search)
+        btn_clear = QPushButton("🧹 清除")
+        btn_clear.clicked.connect(self._clear_filter)
+        toolbar_layout.addWidget(btn_clear)
+
         toolbar_layout.addWidget(QLabel("  区间:"))
-        self.filter_from = QLineEdit(); self.filter_from.setFixedWidth(50); toolbar_layout.addWidget(self.filter_from)
+        self.filter_from = QLineEdit()
+        self.filter_from.setFixedWidth(50)
+        toolbar_layout.addWidget(self.filter_from)
         toolbar_layout.addWidget(QLabel("-"))
-        self.filter_to = QLineEdit(); self.filter_to.setFixedWidth(50); toolbar_layout.addWidget(self.filter_to)
-        btn_filter = QPushButton("🪄 过滤"); btn_filter.clicked.connect(self._apply_filter); toolbar_layout.addWidget(btn_filter)
-        
+        self.filter_to = QLineEdit()
+        self.filter_to.setFixedWidth(50)
+        toolbar_layout.addWidget(self.filter_to)
+        btn_filter = QPushButton("🪄 过滤")
+        btn_filter.clicked.connect(self._apply_filter)
+        toolbar_layout.addWidget(btn_filter)
+
         toolbar_layout.addSpacing(15)
-        btn_new_entry = QPushButton("➕ 新增条目"); btn_new_entry.clicked.connect(self._new_entry); toolbar_layout.addWidget(btn_new_entry)
+        btn_new_entry = QPushButton("➕ 新增条目")
+        btn_new_entry.clicked.connect(self._new_entry)
+        toolbar_layout.addWidget(btn_new_entry)
         toolbar_layout.addStretch()
         w1_layout.addLayout(toolbar_layout)
 
-        w1_splitter = QSplitter(Qt.Horizontal); w1_splitter.setHandleWidth(7)
+        w1_splitter = QSplitter(Qt.Horizontal)
+        w1_splitter.setHandleWidth(7)
         w1_layout.addWidget(w1_splitter, 1)
 
         self.table = QTableWidget(0, 3)
@@ -871,49 +903,85 @@ class TktEditor(QMainWindow):
         self.table.setSelectionMode(QAbstractItemView.SingleSelection)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.verticalHeader().setVisible(False)
-        self.table.setColumnWidth(0, 50); self.table.setColumnWidth(1, 70)
+        self.table.setColumnWidth(0, 50)
+        self.table.setColumnWidth(1, 70)
         self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
         self.table.itemSelectionChanged.connect(self._on_table_select)
         self.table.horizontalHeader().sectionClicked.connect(self._on_header_clicked)
         w1_splitter.addWidget(self._create_dock("低级全局数据表", self.table))
 
-        w1_right_splitter = QSplitter(Qt.Vertical); w1_right_splitter.setHandleWidth(7)
+        w1_right_splitter = QSplitter(Qt.Vertical)
+        w1_right_splitter.setHandleWidth(7)
         w1_splitter.addWidget(w1_right_splitter)
 
-        inspector_widget = QWidget(); ins_layout = QVBoxLayout(inspector_widget); ins_layout.setContentsMargins(0,0,0,0)
+        inspector_widget = QWidget()
+        ins_layout = QVBoxLayout(inspector_widget)
+        ins_layout.setContentsMargins(0, 0, 0, 0)
         self._build_tag_toolbar(ins_layout)
-        
-        self.text_widget = QPlainTextEdit(); self.text_widget.setFont(self.font_mono); self.text_widget.textChanged.connect(self._on_text_modified)
+
+        self.text_widget = QPlainTextEdit()
+        self.text_widget.setFont(self.font_mono)
+        self.text_widget.textChanged.connect(self._on_text_modified)
         ins_layout.addWidget(self.text_widget, 1)
-        
+
         btn_layout = QHBoxLayout()
-        btn_apply = QPushButton("✅ 应用修改"); btn_apply.clicked.connect(self._apply_edit); btn_layout.addWidget(btn_apply)
-        btn_reset = QPushButton("🔄 重置"); btn_reset.clicked.connect(self._reset_edit); btn_layout.addWidget(btn_reset)
+        btn_apply = QPushButton("✅ 应用修改")
+        btn_apply.clicked.connect(self._apply_edit)
+        btn_layout.addWidget(btn_apply)
+        btn_reset = QPushButton("🔄 重置")
+        btn_reset.clicked.connect(self._reset_edit)
+        btn_layout.addWidget(btn_reset)
         btn_layout.addStretch()
-        btn_del_this = QPushButton("❌ 删除"); btn_del_this.clicked.connect(self._delete_entry); btn_layout.addWidget(btn_del_this)
+        btn_del_this = QPushButton("❌ 删除")
+        btn_del_this.clicked.connect(self._delete_entry)
+        btn_layout.addWidget(btn_del_this)
         ins_layout.addLayout(btn_layout)
         w1_right_splitter.addWidget(self._create_dock("检查器 (属性/代码编辑)", inspector_widget))
 
         # 视口
-        viewport_widget = QWidget(); vp_layout = QVBoxLayout(viewport_widget); vp_layout.setContentsMargins(0,0,0,0)
+        viewport_widget = QWidget()
+        vp_layout = QVBoxLayout(viewport_widget)
+        vp_layout.setContentsMargins(0, 0, 0, 0)
         zoom_layout = QHBoxLayout()
-        zoom_layout.setContentsMargins(0,0,0,0)
-        btn_zoom_out = QToolButton(); btn_zoom_out.setText("➖"); btn_zoom_out.setAutoRaise(True); btn_zoom_out.setObjectName("dockToolButton"); btn_zoom_out.clicked.connect(self._zoom_out)
-        self.lbl_zoom = QLabel("150%"); self.lbl_zoom.setAlignment(Qt.AlignCenter); self.lbl_zoom.setFixedWidth(40); self.lbl_zoom.setProperty("class", "ZoomLabel")
-        btn_zoom_in = QToolButton(); btn_zoom_in.setText("➕"); btn_zoom_in.setAutoRaise(True); btn_zoom_in.setObjectName("dockToolButton"); btn_zoom_in.clicked.connect(self._zoom_in)
-        zoom_layout.addWidget(btn_zoom_out); zoom_layout.addWidget(self.lbl_zoom); zoom_layout.addWidget(btn_zoom_in)
+        zoom_layout.setContentsMargins(0, 0, 0, 0)
+        btn_zoom_out = QToolButton()
+        btn_zoom_out.setText("➖")
+        btn_zoom_out.setAutoRaise(True)
+        btn_zoom_out.setObjectName("dockToolButton")
+        btn_zoom_out.clicked.connect(self._zoom_out)
+        self.lbl_zoom = QLabel("150%")
+        self.lbl_zoom.setAlignment(Qt.AlignCenter)
+        self.lbl_zoom.setFixedWidth(40)
+        self.lbl_zoom.setProperty("class", "ZoomLabel")
+        btn_zoom_in = QToolButton()
+        btn_zoom_in.setText("➕")
+        btn_zoom_in.setAutoRaise(True)
+        btn_zoom_in.setObjectName("dockToolButton")
+        btn_zoom_in.clicked.connect(self._zoom_in)
+        zoom_layout.addWidget(btn_zoom_out)
+        zoom_layout.addWidget(self.lbl_zoom)
+        zoom_layout.addWidget(btn_zoom_in)
 
         self.preview_stack = QStackedWidget()
-        self.preview_scroll_area = QScrollArea(); self.preview_scroll_area.setWidgetResizable(True)
-        scroll_content = QWidget(); scroll_content.setObjectName("TransparentBg")
-        scroll_layout = QVBoxLayout(scroll_content); scroll_layout.setAlignment(Qt.AlignLeft | Qt.AlignTop)
-        self.preview_img = QLabel(); self.preview_img.setAlignment(Qt.AlignLeft | Qt.AlignTop); scroll_layout.addWidget(self.preview_img)
-        self.preview_scroll_area.setWidget(scroll_content); self.preview_stack.addWidget(self.preview_scroll_area)
-        self.preview_text = QTextEdit(); self.preview_text.setReadOnly(True); self.preview_stack.addWidget(self.preview_text)
+        self.preview_scroll_area = QScrollArea()
+        self.preview_scroll_area.setWidgetResizable(True)
+        scroll_content = QWidget()
+        scroll_content.setObjectName("TransparentBg")
+        scroll_layout = QVBoxLayout(scroll_content)
+        scroll_layout.setAlignment(Qt.AlignLeft | Qt.AlignTop)
+        self.preview_img = QLabel()
+        self.preview_img.setAlignment(Qt.AlignLeft | Qt.AlignTop)
+        scroll_layout.addWidget(self.preview_img)
+        self.preview_scroll_area.setWidget(scroll_content)
+        self.preview_stack.addWidget(self.preview_scroll_area)
+        self.preview_text = QTextEdit()
+        self.preview_text.setReadOnly(True)
+        self.preview_stack.addWidget(self.preview_text)
         vp_layout.addWidget(self.preview_stack)
         w1_right_splitter.addWidget(self._create_dock("2D 视口渲染器", viewport_widget, header_layout=zoom_layout))
-        
-        w1_splitter.setSizes([350, 950]); w1_right_splitter.setSizes([400, 400])
+
+        w1_splitter.setSizes([350, 950])
+        w1_right_splitter.setSizes([400, 400])
         self.main_tabs.addTab(w1_widget, "🔍 全局文件系统 (线性模式)")
 
         # ==================== WORKSPACE 2: 游戏语义化模块分类编辑 ====================
@@ -923,16 +991,20 @@ class TktEditor(QMainWindow):
 
         self.comp_cat_list = QListWidget()
         self.comp_cat_list.setFixedWidth(200)
-        for cat in SEMANTIC_CATEGORIES: self.comp_cat_list.addItem(cat['name'])
+        for cat in SEMANTIC_CATEGORIES:
+            self.comp_cat_list.addItem(cat['name'])
         self.comp_cat_list.currentRowChanged.connect(self._on_comp_category_changed)
         w2_layout.addWidget(self.comp_cat_list)
 
-        self.w2_splitter = QSplitter(Qt.Horizontal); self.w2_splitter.setHandleWidth(7)
+        self.w2_splitter = QSplitter(Qt.Horizontal)
+        self.w2_splitter.setHandleWidth(7)
         self.w2_splitter.splitterMoved.connect(self._adjust_comp_columns)
         w2_layout.addWidget(self.w2_splitter, 1)
 
-        comp_mid_widget = QWidget(); comp_mid_layout = QVBoxLayout(comp_mid_widget); comp_mid_layout.setContentsMargins(0,0,0,0)
-        
+        comp_mid_widget = QWidget()
+        comp_mid_layout = QVBoxLayout(comp_mid_widget)
+        comp_mid_layout.setContentsMargins(0, 0, 0, 0)
+
         self.comp_table = QTableWidget(0, 4)
         self.comp_table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.comp_table.setSelectionMode(QAbstractItemView.SingleSelection)
@@ -947,24 +1019,29 @@ class TktEditor(QMainWindow):
         w2_right_splitter.setHandleWidth(7)
         self.w2_splitter.addWidget(w2_right_splitter)
 
-        comp_right_widget = QWidget(); comp_right_layout = QVBoxLayout(comp_right_widget); comp_right_layout.setContentsMargins(0,0,0,0)
-        
+        comp_right_widget = QWidget()
+        comp_right_layout = QVBoxLayout(comp_right_widget)
+        comp_right_layout.setContentsMargins(0, 0, 0, 0)
+
         # 复用工具栏，控制当前处于焦点的输入框（不显示槽位/ID信息）
         self._build_tag_toolbar(comp_right_layout, show_info=False)
 
         self.comp_box1_title = QLabel("名称 / 主文本内容 (ID: ---)")
         self.comp_box1_title.setProperty("class", "PrimaryTitle")
         comp_right_layout.addWidget(self.comp_box1_title)
-        self.comp_text1 = QPlainTextEdit(); self.comp_text1.setFont(self.font_mono)
+        self.comp_text1 = QPlainTextEdit()
+        self.comp_text1.setFont(self.font_mono)
         self.comp_text1.textChanged.connect(self._on_comp_text_modified)
         comp_right_layout.addWidget(self.comp_text1, 1)
-        
+
         self.comp_desc_container = QWidget()
-        dc_layout = QVBoxLayout(self.comp_desc_container); dc_layout.setContentsMargins(0,0,0,0)
+        dc_layout = QVBoxLayout(self.comp_desc_container)
+        dc_layout.setContentsMargins(0, 0, 0, 0)
         self.comp_box2_title = QLabel("说明 / 描述文本内容 (ID: ---)")
         self.comp_box2_title.setProperty("class", "SecondaryTitle")
         dc_layout.addWidget(self.comp_box2_title)
-        self.comp_text2 = QPlainTextEdit(); self.comp_text2.setFont(self.font_mono)
+        self.comp_text2 = QPlainTextEdit()
+        self.comp_text2.setFont(self.font_mono)
         self.comp_text2.textChanged.connect(self._on_comp_text_modified)
         dc_layout.addWidget(self.comp_text2, 1)
         comp_right_layout.addWidget(self.comp_desc_container)
@@ -982,23 +1059,39 @@ class TktEditor(QMainWindow):
         # --- 将联合视口提取为独立分组 ---
         comp_preview_widget = QWidget()
         comp_preview_layout = QVBoxLayout(comp_preview_widget)
-        comp_preview_layout.setContentsMargins(0,0,0,0)
+        comp_preview_layout.setContentsMargins(0, 0, 0, 0)
 
         comp_preview_header = QHBoxLayout()
         comp_preview_header.setContentsMargins(0, 0, 0, 0)
-        btn_comp_zoom_out = QToolButton(); btn_comp_zoom_out.setText("➖"); btn_comp_zoom_out.setAutoRaise(True); btn_comp_zoom_out.setObjectName("dockToolButton"); btn_comp_zoom_out.clicked.connect(self._zoom_out)
-        self.lbl_comp_zoom = QLabel("150%"); self.lbl_comp_zoom.setAlignment(Qt.AlignCenter); self.lbl_comp_zoom.setFixedWidth(40); self.lbl_comp_zoom.setProperty("class", "ZoomLabel")
-        btn_comp_zoom_in = QToolButton(); btn_comp_zoom_in.setText("➕"); btn_comp_zoom_in.setAutoRaise(True); btn_comp_zoom_in.setObjectName("dockToolButton"); btn_comp_zoom_in.clicked.connect(self._zoom_in)
-        comp_preview_header.addWidget(btn_comp_zoom_out); comp_preview_header.addWidget(self.lbl_comp_zoom); comp_preview_header.addWidget(btn_comp_zoom_in)
+        btn_comp_zoom_out = QToolButton()
+        btn_comp_zoom_out.setText("➖")
+        btn_comp_zoom_out.setAutoRaise(True)
+        btn_comp_zoom_out.setObjectName("dockToolButton")
+        btn_comp_zoom_out.clicked.connect(self._zoom_out)
+        self.lbl_comp_zoom = QLabel("150%")
+        self.lbl_comp_zoom.setAlignment(Qt.AlignCenter)
+        self.lbl_comp_zoom.setFixedWidth(40)
+        self.lbl_comp_zoom.setProperty("class", "ZoomLabel")
+        btn_comp_zoom_in = QToolButton()
+        btn_comp_zoom_in.setText("➕")
+        btn_comp_zoom_in.setAutoRaise(True)
+        btn_comp_zoom_in.setObjectName("dockToolButton")
+        btn_comp_zoom_in.clicked.connect(self._zoom_in)
+        comp_preview_header.addWidget(btn_comp_zoom_out)
+        comp_preview_header.addWidget(self.lbl_comp_zoom)
+        comp_preview_header.addWidget(btn_comp_zoom_in)
 
         self.comp_preview_scroll = QScrollArea()
         self.comp_preview_scroll.setWidgetResizable(True)
-        sc_comp = QWidget(); sc_comp.setObjectName("TransparentBg")
-        scl_comp = QVBoxLayout(sc_comp); scl_comp.setContentsMargins(4,4,4,4)
-        self.comp_preview_img = QLabel(); self.comp_preview_img.setAlignment(Qt.AlignLeft | Qt.AlignTop)
+        sc_comp = QWidget()
+        sc_comp.setObjectName("TransparentBg")
+        scl_comp = QVBoxLayout(sc_comp)
+        scl_comp.setContentsMargins(4, 4, 4, 4)
+        self.comp_preview_img = QLabel()
+        self.comp_preview_img.setAlignment(Qt.AlignLeft | Qt.AlignTop)
         scl_comp.addWidget(self.comp_preview_img)
         self.comp_preview_scroll.setWidget(sc_comp)
-        
+
         comp_preview_layout.addWidget(self.comp_preview_scroll)
 
         w2_right_splitter.addWidget(self._create_dock("2D 视口渲染器 (文本预览)", comp_preview_widget, header_layout=comp_preview_header))
@@ -1008,17 +1101,31 @@ class TktEditor(QMainWindow):
         self.main_tabs.addTab(w2_widget, "📦 游戏数据分类编辑 (智能分舱扩展模式)")
 
         # --- 底部统一路径状态栏 ---
-        status_layout = QHBoxLayout(); status_layout.setContentsMargins(4, 4, 4, 0)
-        self.lbl_tkt = QLabel("(TKT未加载)"); status_layout.addWidget(self.lbl_tkt); status_layout.addWidget(self._make_v_sep())
-        self.lbl_font = QLabel("(FONT未加载)"); status_layout.addWidget(self.lbl_font); status_layout.addWidget(self._make_v_sep())
-        self.lbl_g2b = QLabel("(G2B未加载)"); status_layout.addWidget(self.lbl_g2b); status_layout.addStretch()
+        status_layout = QHBoxLayout()
+        status_layout.setContentsMargins(4, 4, 4, 0)
+        self.lbl_tkt = QLabel("(TKT未加载)")
+        status_layout.addWidget(self.lbl_tkt)
+        status_layout.addWidget(self._make_v_sep())
+        self.lbl_font = QLabel("(FONT未加载)")
+        status_layout.addWidget(self.lbl_font)
+        status_layout.addWidget(self._make_v_sep())
+        self.lbl_g2b = QLabel("(G2B未加载)")
+        status_layout.addWidget(self.lbl_g2b)
+        status_layout.addStretch()
         main_layout.addLayout(status_layout)
 
-        self._preview_timer = QTimer(self); self._preview_timer.setSingleShot(True); self._preview_timer.timeout.connect(self._render_preview)
-        self._comp_preview_timer = QTimer(self); self._comp_preview_timer.setSingleShot(True); self._comp_preview_timer.timeout.connect(self._render_comp_previews)
+        self._preview_timer = QTimer(self)
+        self._preview_timer.setSingleShot(True)
+        self._preview_timer.timeout.connect(self._render_preview)
+        self._comp_preview_timer = QTimer(self)
+        self._comp_preview_timer.setSingleShot(True)
+        self._comp_preview_timer.timeout.connect(self._render_comp_previews)
 
     def _make_v_sep(self):
-        sep = QFrame(); sep.setFrameShape(QFrame.VLine); sep.setFrameShadow(QFrame.Sunken); sep.setProperty("class", "SepLine")
+        sep = QFrame()
+        sep.setFrameShape(QFrame.VLine)
+        sep.setFrameShadow(QFrame.Sunken)
+        sep.setProperty("class", "SepLine")
         return sep
 
     def _toggle_theme(self):
@@ -1032,9 +1139,12 @@ class TktEditor(QMainWindow):
     def _apply_theme(self):
         qss = ThemeManager.dark_qss() if self._is_dark else ThemeManager.light_qss()
         self.setStyleSheet(qss)
-        if hasattr(self, 'preview_scroll_area'): self.preview_scroll_area.setObjectName("GamePreview")
-        if hasattr(self, 'preview_text'): self.preview_text.setObjectName("GamePreview")
-        if hasattr(self, 'comp_preview_scroll'): self.comp_preview_scroll.setObjectName("GamePreview")
+        if hasattr(self, 'preview_scroll_area'):
+            self.preview_scroll_area.setObjectName("GamePreview")
+        if hasattr(self, 'preview_text'):
+            self.preview_text.setObjectName("GamePreview")
+        if hasattr(self, 'comp_preview_scroll'):
+            self.comp_preview_scroll.setObjectName("GamePreview")
         self._update_paths()
 
     def _update_paths(self):
@@ -1055,62 +1165,77 @@ class TktEditor(QMainWindow):
         self.entry_by_id = {e['id']: e for e in self.entries}
 
     def _set_edit_enabled(self, enabled):
-        self.text_widget.setEnabled(enabled); self.id_entry.setEnabled(enabled)
+        self.text_widget.setEnabled(enabled)
+        self.id_entry.setEnabled(enabled)
 
     def _load_file(self, path):
         try:
             self.entries = load_tkt(path)
             self.tkt_path = path
             self._rebuild_id_map()
-            
+
             self.original_entry_snapshot.clear()
             for entry in self.entries:
                 self.original_entry_snapshot.add((entry['id'], entry['text']))
-            
+
             font_path = os.path.join(os.path.dirname(path), "FONT9696")
             if HAS_PIL and os.path.exists(font_path):
-                if self.font9696: self.font9696.close()
+                if self.font9696:
+                    self.font9696.close()
                 self.font9696, self.font_path = Font9696(font_path), font_path
-            
-            self._dirty = False; self._current_idx = None
+
+            self._dirty = False
+            self._current_idx = None
             self.lbl_dirty.setText("")
             self._populate_tree()
             self._set_edit_enabled(False)
-            
+
             self.comp_cat_list.setCurrentRow(0)
             self._on_comp_category_changed(0)
-            
+
             self.setWindowTitle(f"TKT.dat 编辑器 v5.0 - {os.path.basename(path)}")
             self._apply_theme()
-        except Exception as e: QMessageBox.critical(self, "数据载入溃散", str(e))
+        except Exception as e:
+            QMessageBox.critical(self, "数据载入溃散", str(e))
 
     def _load_tks_dir(self):
         d = QFileDialog.getExistingDirectory(self, "挂载 TKS 游戏核心环境目录")
-        if not d: return
+        if not d:
+            return
         tkt_path = os.path.join(d, "TKT.dat")
-        if not os.path.exists(tkt_path): QMessageBox.critical(self, "寻路失败", "目录内未检测到 TKT.dat"); return
-        
+        if not os.path.exists(tkt_path):
+            QMessageBox.critical(self, "寻路失败", "目录内未检测到 TKT.dat")
+            return
+
         g2b_path = os.path.join(d, "g2b.dat")
-        if os.path.exists(g2b_path): 
-            try: load_g2b_dat(g2b_path)
-            except: pass
+        if os.path.exists(g2b_path):
+            try:
+                load_g2b_dat(g2b_path)
+            except:
+                pass
         self._load_file(tkt_path)
 
     def _save(self):
-        if not self.tkt_path: self._save_as()
-        else: self._do_save(self.tkt_path)
+        if not self.tkt_path:
+            self._save_as()
+        else:
+            self._do_save(self.tkt_path)
 
     def _save_as(self):
         path, _ = QFileDialog.getSaveFileName(self, "打包输出解密 TKT.dat", "", "TKT.dat (*.dat)")
-        if path: self._do_save(path)
+        if path:
+            self._do_save(path)
 
     def _do_save(self, path):
         self._apply_edit()
         try:
             save_tkt(path, self.entries)
-            self.tkt_path = path; self._dirty = False; self.lbl_dirty.setText("")
+            self.tkt_path = path
+            self._dirty = False
+            self.lbl_dirty.setText("")
             QMessageBox.information(self, "成功", "引擎级 TKT 打包回填写盘完毕。")
-        except Exception as e: QMessageBox.critical(self, "构写失败", str(e))
+        except Exception as e:
+            QMessageBox.critical(self, "构写失败", str(e))
 
 
     def _export_tksmod(self):
@@ -1124,7 +1249,8 @@ class TktEditor(QMainWindow):
     def _do_export_tksmod(self, use_ref_dir=False):
         """统一 .tksmod 导出实现"""
         if not self.entries:
-            QMessageBox.information(self, "提示", "请先加载数据"); return
+            QMessageBox.information(self, "提示", "请先加载数据")
+            return
         self._apply_edit()
 
         current_entries = {entry['id']: entry['text'] for entry in self.entries}
@@ -1146,24 +1272,29 @@ class TktEditor(QMainWindow):
             preview_dlg = ModExportPreviewDialog(self,
                 default_dir=os.path.dirname(self.tkt_path) if self.tkt_path else "",
                 compute_stats=_compute_stats)
-            if preview_dlg.exec() != QDialog.Accepted: return
+            if preview_dlg.exec() != QDialog.Accepted:
+                return
             ref_dir = preview_dlg.get_ref_dir()
             ref_entries = load_reference_tkt_entries(ref_dir)
             if ref_entries is None:
-                QMessageBox.warning(self, "参考目录无效", f"在 {ref_dir} 中未找到 TKT.dat"); return
+                QMessageBox.warning(self, "参考目录无效", f"在 {ref_dir} 中未找到 TKT.dat")
+                return
         else:
             ref_entries = {eid: text for eid, text in self.original_entry_snapshot}
 
         # MOD 元数据
         dlg = ModMetadataDialog(self, getattr(self, '_last_mod_metadata', None))
-        if dlg.exec() != QDialog.Accepted: return
-        metadata = dlg.get_metadata(); self._last_mod_metadata = metadata
+        if dlg.exec() != QDialog.Accepted:
+            return
+        metadata = dlg.get_metadata()
+        self._last_mod_metadata = metadata
 
         # 计算差异
         diff_result = diff_text_entries(ref_entries, current_entries)
 
         if not diff_result['modified'] and not diff_result['appended'] and not diff_result['deleted']:
-            QMessageBox.information(self, "无差异", "当前数据与参考文件相同，无需导出。"); return
+            QMessageBox.information(self, "无差异", "当前数据与参考文件相同，无需导出。")
+            return
 
         # 构建数据文件
         crc = compute_crc32(self.tkt_path) if self.tkt_path else "0x00000000"
@@ -1172,10 +1303,12 @@ class TktEditor(QMainWindow):
         mod_json = generate_mod_json(metadata, components)
 
         fp, _ = QFileDialog.getSaveFileName(self, "导出为 MOD", f"{safe_mod_filename(metadata['name'], metadata['id'])}.tksmod", "TKS MOD (*.tksmod)")
-        if not fp: return
+        if not fp:
+            return
         try:
             pack_tksmod(fp, mod_json, {"data/TKT.dat.json": data_json})
-            n_mod = len(diff_result['modified']); n_app = len(diff_result['appended'])
+            n_mod = len(diff_result['modified'])
+            n_app = len(diff_result['appended'])
             n_del = len(diff_result['deleted'])
             self.lbl_dirty.setText(f"已导出 MOD: {os.path.basename(fp)}")
             QMessageBox.information(self, "导出成功",
@@ -1186,25 +1319,31 @@ class TktEditor(QMainWindow):
     def _import_tksmod(self):
         """从 .tksmod 导入 MOD 数据到 TKT 编辑器"""
         fp, _ = QFileDialog.getOpenFileName(self, "选择 MOD 文件", "", "TKS MOD (*.tksmod)")
-        if not fp: return
+        if not fp:
+            return
 
         info = get_tksmod_info(fp)
         if info is None:
-            QMessageBox.warning(self, "无效文件", "无法解析此 .tksmod 文件"); return
+            QMessageBox.warning(self, "无效文件", "无法解析此 .tksmod 文件")
+            return
 
         if "TKT.dat" not in info.get("targets", []):
             QMessageBox.warning(self, "不兼容", "此 MOD 不包含 TKT.dat 的数据\n\n"
-                f"包含的数据: {', '.join(info.get('targets', []))}"); return
+                f"包含的数据: {', '.join(info.get('targets', []))}")
+            return
 
         dlg = ModImportPreviewDialog(self, info, default_dir=os.path.dirname(self.tkt_path) if self.tkt_path else "")
-        if dlg.exec() != QDialog.Accepted: return
+        if dlg.exec() != QDialog.Accepted:
+            return
         ref_dir = dlg.get_ref_dir()
-        if not ref_dir: return
+        if not ref_dir:
+            return
 
         mod_json, entries_dict = import_tksmod_text_entries(fp, ref_dir)
         if entries_dict is None:
             QMessageBox.warning(self, "导入失败",
-                "无法导入 MOD 数据。\n请确认参考目录中包含有效的 TKT.dat"); return
+                "无法导入 MOD 数据。\n请确认参考目录中包含有效的 TKT.dat")
+            return
 
         # 将 dict 转化为编辑器内部格式
         new_entries = []
@@ -1242,35 +1381,36 @@ class TktEditor(QMainWindow):
         starts = []
         for c in SEMANTIC_CATEGORIES:
             if c['type'] == 'single':
-                for r in c['ranges']: starts.append(r[0])
+                for r in c['ranges']:
+                    starts.append(r[0])
             else:
                 starts.append(c['name_start'])
                 starts.append(c['desc_start'])
         return sorted(list(set(starts)))
-        
+
     def _get_safe_upper_bound(self, end_id, all_starts):
         for s in all_starts:
             if s > end_id:
                 return s - 1
-        return end_id + 100 
-        
+        return end_id + 100
+
     def _on_comp_category_changed(self, index):
         if index < 0 or not self.entries: return
         cat = SEMANTIC_CATEGORIES[index]
         all_starts = self._get_all_category_starts()
-        
+
         self.comp_table.blockSignals(True)
         self.comp_table.setRowCount(0)
-        
+
         empty_color = QColor("#888888")
-        
+
         if cat['type'] == "single":
             self.comp_desc_container.setVisible(False)
             self.comp_table.setColumnCount(2)
             self.comp_table.setHorizontalHeaderLabels(['条目 ID', '核心文本内容 Preview'])
             self.comp_table.setColumnWidth(0, 80)
             self.comp_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
-            
+
             row = 0
             for rs, re in cat['ranges']:
                 safe_end = self._get_safe_upper_bound(re, all_starts)
@@ -1289,35 +1429,38 @@ class TktEditor(QMainWindow):
             self.comp_desc_container.setVisible(True)
             self.comp_table.setColumnCount(4)
             self.comp_table.setHorizontalHeaderLabels(['名称 ID', '当前名称', '说明 ID', '当前说明预览'])
-            self.comp_table.setColumnWidth(0, 70); self.comp_table.setColumnWidth(2, 70)
+            self.comp_table.setColumnWidth(0, 70)
+            self.comp_table.setColumnWidth(2, 70)
             self.comp_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Interactive)
             self.comp_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.Stretch)
-            
+
             name_safe = self._get_safe_upper_bound(cat['name_end'], all_starts)
             desc_safe = self._get_safe_upper_bound(cat['desc_end'], all_starts)
             max_pairs = min(name_safe - cat['name_start'], desc_safe - cat['desc_start']) + 1
-            
+
             row = 0
             for i in range(max_pairs):
                 nid = cat['name_start'] + i
                 did = cat['desc_start'] + i
                 ne = self.entry_by_id.get(nid)
                 de = self.entry_by_id.get(did)
-                
+
                 self.comp_table.insertRow(row)
                 self.comp_table.setItem(row, 0, self._make_center_item(str(nid)))
                 if ne:
                     self.comp_table.setItem(row, 1, QTableWidgetItem(ne['text'].replace('\n','↵')))
                 else:
                     it = QTableWidgetItem("【名称空槽】")
-                    it.setForeground(empty_color); self.comp_table.setItem(row, 1, it)
-                    
+                    it.setForeground(empty_color)
+                    self.comp_table.setItem(row, 1, it)
+
                 self.comp_table.setItem(row, 2, self._make_center_item(str(did)))
                 if de:
                     self.comp_table.setItem(row, 3, QTableWidgetItem(de['text'].replace('\n','↵')[:50]))
                 else:
                     it = QTableWidgetItem("【配套说明空槽】")
-                    it.setForeground(empty_color); self.comp_table.setItem(row, 3, it)
+                    it.setForeground(empty_color)
+                    self.comp_table.setItem(row, 3, it)
                 row += 1
 
         self.comp_table.blockSignals(False)
@@ -1328,7 +1471,8 @@ class TktEditor(QMainWindow):
         self._comp_active_id1, self._comp_active_id2 = None, None
         self.comp_box1_title.setText("名称 / 主文本内容 (ID: ---)")
         self.comp_box2_title.setText("说明 / 描述文本内容 (ID: ---)")
-        self.comp_text1.clear(); self.comp_text2.clear()
+        self.comp_text1.clear()
+        self.comp_text2.clear()
         self.comp_preview_img.clear()
 
     def _adjust_comp_columns(self):
@@ -1343,11 +1487,13 @@ class TktEditor(QMainWindow):
 
     def _on_comp_table_select(self):
         selected = self.comp_table.selectedItems()
-        if not selected: return
+        if not selected:
+            return
         row = selected[0].row()
         cat = SEMANTIC_CATEGORIES[self.comp_cat_list.currentRow()]
-        self.comp_text1.blockSignals(True); self.comp_text2.blockSignals(True)
-        
+        self.comp_text1.blockSignals(True)
+        self.comp_text2.blockSignals(True)
+
         if cat['type'] == "single":
             self._comp_active_id1 = int(self.comp_table.item(row, 0).text())
             self._comp_active_id2 = None
@@ -1362,7 +1508,8 @@ class TktEditor(QMainWindow):
             self.comp_text1.setPlainText(self.entry_by_id.get(self._comp_active_id1, {}).get('text', ''))
             self.comp_text2.setPlainText(self.entry_by_id.get(self._comp_active_id2, {}).get('text', ''))
 
-        self.comp_text1.blockSignals(False); self.comp_text2.blockSignals(False)
+        self.comp_text1.blockSignals(False)
+        self.comp_text2.blockSignals(False)
         self._render_comp_previews()
 
     def _on_comp_text_modified(self):
@@ -1372,13 +1519,14 @@ class TktEditor(QMainWindow):
 
     def _apply_comp_edit(self):
         if getattr(self, '_comp_active_id1', None) is None: return
-        
+
         def _commit(eid, txt):
             if eid is None: return
             if eid in self.entry_by_id:
                 self.entry_by_id[eid]['text'] = txt
             else:
-                if not txt.strip(): return 
+                if not txt.strip():
+                    return
                 ne = OrderedDict([('slot', len(self.entries)), ('id', eid), ('text', txt)])
                 self.entries.append(ne)
                 self.entry_by_id[eid] = ne
@@ -1386,56 +1534,62 @@ class TktEditor(QMainWindow):
         _commit(self._comp_active_id1, self.comp_text1.toPlainText())
         if self._comp_active_id2 is not None:
             _commit(self._comp_active_id2, self.comp_text2.toPlainText())
-            
+
         row = self.comp_table.currentRow()
         if row >= 0:
             txt1 = self.comp_text1.toPlainText().replace('\n','↵')
             txt2 = self.comp_text2.toPlainText().replace('\n','↵')[:50]
-            
+
             i1 = QTableWidgetItem(txt1)
             i1.setForeground(QColor("#dcdcdc") if self._is_dark else QColor("#222222"))
             self.comp_table.setItem(row, 1, i1)
-            
+
             if self._comp_active_id2 is not None:
                 i2 = QTableWidgetItem(txt2)
                 i2.setForeground(QColor("#dcdcdc") if self._is_dark else QColor("#222222"))
                 self.comp_table.setItem(row, 3, i2)
-        
-        self._populate_tree() 
+
+        self._populate_tree()
 
     def _render_comp_previews(self):
         if not HAS_PIL or not self.font9696: return
         bg = '#1a1d24' if self._is_dark else '#313c52'
         sc = self._zoom_level / 100.0
         ut = self.chk_traditional.isChecked()
-        
+
         img1, img2 = None, None
         txt1 = self.comp_text1.toPlainText().strip()
         txt2 = self.comp_text2.toPlainText().strip()
-        
+
         if self._comp_active_id1 is not None and txt1:
-            try: img1 = _render_text_image(parse_styled_segments(txt1), self.font9696, use_traditional_font=ut, bg_color=bg, scale_factor=sc)
-            except: pass
-            
+            try:
+                img1 = _render_text_image(parse_styled_segments(txt1), self.font9696, use_traditional_font=ut, bg_color=bg, scale_factor=sc)
+            except:
+                pass
+
         if self._comp_active_id2 is not None and txt2:
-            try: img2 = _render_text_image(parse_styled_segments(txt2), self.font9696, use_traditional_font=ut, bg_color=bg, scale_factor=sc)
-            except: pass
-            
+            try:
+                img2 = _render_text_image(parse_styled_segments(txt2), self.font9696, use_traditional_font=ut, bg_color=bg, scale_factor=sc)
+            except:
+                pass
+
         if not img1 and not img2:
-            self.comp_preview_img.clear(); return
-            
+            self.comp_preview_img.clear()
+            return
+
         w1, h1 = (img1.width, img1.height) if img1 else (0, 0)
         w2, h2 = (img2.width, img2.height) if img2 else (0, 0)
-        
+
         spacing = 15 if (img1 and img2) else 0
         canvas_w = max(w1, w2)
         canvas_h = h1 + spacing + h2
-        
+
         bg_rgb = _hex_to_rgb(bg)
         canvas = Image.new('RGBA', (canvas_w, canvas_h), (*bg_rgb, 255))
         y = 0
         if img1:
-            canvas.paste(img1, (0, y)); y += h1
+            canvas.paste(img1, (0, y))
+            y += h1
         if img1 and img2:
             draw = ImageDraw.Draw(canvas)
             ly = y + spacing // 2
@@ -1443,11 +1597,13 @@ class TktEditor(QMainWindow):
             y += spacing
         if img2:
             canvas.paste(img2, (0, y))
-            
+
         self.comp_preview_img.setPixmap(QPixmap.fromImage(pil_to_qimage(canvas)))
 
     def _make_center_item(self, text):
-        it = QTableWidgetItem(text); it.setTextAlignment(Qt.AlignCenter); return it
+        it = QTableWidgetItem(text)
+        it.setTextAlignment(Qt.AlignCenter)
+        return it
 
     # ============================================================
     # 原始全选表（线性模式维护）
@@ -1459,124 +1615,191 @@ class TktEditor(QMainWindow):
     def _set_table_row(self, row, e):
         pv = e['text'].replace('\n', '↵').replace('\t', ' ')[:60]
         i1, i2 = self._make_center_item(str(e['slot'])), self._make_center_item(str(e['id']))
-        self.table.setItem(row, 0, i1); self.table.setItem(row, 1, i2); self.table.setItem(row, 2, QTableWidgetItem(pv))
+        self.table.setItem(row, 0, i1)
+        self.table.setItem(row, 1, i2)
+        self.table.setItem(row, 2, QTableWidgetItem(pv))
 
     def _apply_filter(self):
         query = self.search_entry.text().strip().lower()
-        try: id_from = int(self.filter_from.text()) if self.filter_from.text().strip() else None
-        except: id_from = None
-        try: id_to = int(self.filter_to.text()) if self.filter_to.text().strip() else None
-        except: id_to = None
+        try:
+            id_from = int(self.filter_from.text()) if self.filter_from.text().strip() else None
+        except:
+            id_from = None
+        try:
+            id_to = int(self.filter_to.text()) if self.filter_to.text().strip() else None
+        except:
+            id_to = None
 
         self.filtered_indices = []
         for idx, e in enumerate(self.entries):
-            if id_from is not None and e['id'] < id_from: continue
-            if id_to is not None and e['id'] > id_to: continue
-            if query and query not in e['text'].lower() and query not in str(e['id']): continue
+            if id_from is not None and e['id'] < id_from:
+                continue
+            if id_to is not None and e['id'] > id_to:
+                continue
+            if query and query not in e['text'].lower() and query not in str(e['id']):
+                continue
             self.filtered_indices.append(idx)
         self._apply_sort()
 
     def _clear_filter(self):
-        self.search_entry.clear(); self.filter_from.clear(); self.filter_to.clear()
+        self.search_entry.clear()
+        self.filter_from.clear()
+        self.filter_to.clear()
         self._populate_tree()
 
     def _focus_search(self):
-        self.search_entry.setFocus(); self.search_entry.selectAll()
+        self.search_entry.setFocus()
+        self.search_entry.selectAll()
 
     def _on_table_select(self):
         sel = self.table.selectedItems()
-        if not sel: return
+        if not sel:
+            return
         self._load_entry_to_edit(self.filtered_indices[sel[0].row()])
 
     def _load_entry_to_edit(self, idx):
-        if idx < 0 or idx >= len(self.entries): return
-        self._current_idx = idx; e = self.entries[idx]
+        if idx < 0 or idx >= len(self.entries):
+            return
+        self._current_idx = idx
+        e = self.entries[idx]
         self.lbl_info.setText(f"当前全项槽位置 slot={e['slot']}")
         self.id_entry.setText(str(e['id']))
         self._set_edit_enabled(True)
-        self.text_widget.blockSignals(True); self.text_widget.setPlainText(e['text']); self.text_widget.blockSignals(False)
+        self.text_widget.blockSignals(True)
+        self.text_widget.setPlainText(e['text'])
+        self.text_widget.blockSignals(False)
         self._render_preview()
 
     def _on_text_modified(self):
         self._dirty = True
         self.lbl_dirty.setText("[!] 未保存")
-        self._preview_timer.start(50) 
+        self._preview_timer.start(50)
 
     def _apply_edit(self):
-        if self._current_idx is None: return
-        try: nid = int(self.id_entry.text())
-        except: QMessageBox.critical(self, "错误", "ID必须是整数"); return
+        if self._current_idx is None:
+            return
+        try:
+            nid = int(self.id_entry.text())
+        except:
+            QMessageBox.critical(self, "错误", "ID必须是整数")
+            return
         ntxt = self.text_widget.toPlainText()
         e = self.entries[self._current_idx]
         if e['id'] != nid or e['text'] != ntxt:
             e['id'], e['text'] = nid, ntxt
-            self._dirty = True; self._rebuild_id_map()
-            try: self._set_table_row(self.filtered_indices.index(self._current_idx), e)
-            except: pass
+            self._dirty = True
+            self._rebuild_id_map()
+            try:
+                self._set_table_row(self.filtered_indices.index(self._current_idx), e)
+            except:
+                pass
 
     def _reset_edit(self):
-        if self._current_idx is not None: self._load_entry_to_edit(self._current_idx)
+        if self._current_idx is not None:
+            self._load_entry_to_edit(self._current_idx)
 
     def _new_entry(self):
-        if not self.entries: return
+        if not self.entries:
+            return
         mid = max(e['id'] for e in self.entries)
         ne = OrderedDict([('slot', len(self.entries)), ('id', mid + 1 if mid >= 0 else 1), ('text', '')])
-        self.entries.append(ne); self._dirty = True; self._rebuild_id_map(); self._apply_filter()
+        self.entries.append(ne)
+        self._dirty = True
+        self._rebuild_id_map()
+        self._apply_filter()
         try:
             r = self.filtered_indices.index(len(self.entries) - 1)
-            self.table.selectRow(r); self.table.scrollToItem(self.table.item(r,0))
-        except: pass
+            self.table.selectRow(r)
+            self.table.scrollToItem(self.table.item(r, 0))
+        except:
+            pass
 
     def _delete_entry(self):
-        if self._current_idx is None: return
+        if self._current_idx is None:
+            return
         if QMessageBox.question(self, "物理清空", "物理剥离该节点？", QMessageBox.Ok | QMessageBox.Cancel) == QMessageBox.Cancel:
             return
         self.entries.pop(self._current_idx)
-        for i, entry in enumerate(self.entries): entry['slot'] = i
-        self._dirty = True; self._current_idx = None; self._rebuild_id_map(); self._populate_tree()
-        self._set_edit_enabled(False); self.text_widget.clear()
+        for i, entry in enumerate(self.entries):
+            entry['slot'] = i
+        self._dirty = True
+        self._current_idx = None
+        self._rebuild_id_map()
+        self._populate_tree()
+        self._set_edit_enabled(False)
+        self.text_widget.clear()
 
     def _on_header_clicked(self, logical_index):
-        if logical_index not in (0, 1): return
-        if self._sort_col == logical_index: self._sort_state = (self._sort_state + 1) % 3
-        else: self._sort_col = logical_index; self._sort_state = 1
+        if logical_index not in (0, 1):
+            return
+        if self._sort_col == logical_index:
+            self._sort_state = (self._sort_state + 1) % 3
+        else:
+            self._sort_col = logical_index
+            self._sort_state = 1
         self._apply_sort()
 
     def _apply_sort(self):
-        if self._sort_state == 0: self.filtered_indices.sort()
+        if self._sort_state == 0:
+            self.filtered_indices.sort()
         else:
             rev = (self._sort_state == 2)
-            if self._sort_col == 0: self.filtered_indices.sort(key=lambda x: self.entries[x]['slot'], reverse=rev)
-            elif self._sort_col == 1: self.filtered_indices.sort(key=lambda x: self.entries[x]['id'], reverse=rev)
-        self.table.blockSignals(True); self.table.setRowCount(0); self.table.setRowCount(len(self.filtered_indices))
-        for r, idx in enumerate(self.filtered_indices): self._set_table_row(r, self.entries[idx])
+            if self._sort_col == 0:
+                self.filtered_indices.sort(key=lambda x: self.entries[x]['slot'], reverse=rev)
+            elif self._sort_col == 1:
+                self.filtered_indices.sort(key=lambda x: self.entries[x]['id'], reverse=rev)
+        self.table.blockSignals(True)
+        self.table.setRowCount(0)
+        self.table.setRowCount(len(self.filtered_indices))
+        for r, idx in enumerate(self.filtered_indices):
+            self._set_table_row(r, self.entries[idx])
         self.table.blockSignals(False)
         hd = ['#', 'ID', '文本内容 Preview']
-        if self._sort_col != -1 and self._sort_state != 0: hd[self._sort_col] += (' ▲' if self._sort_state == 1 else ' ▼')
+        if self._sort_col != -1 and self._sort_state != 0:
+            hd[self._sort_col] += (' ▲' if self._sort_state == 1 else ' ▼')
         self.table.setHorizontalHeaderLabels(hd)
 
     def _zoom_in(self):
-        if self._zoom_level < 300: self._zoom_level += 25; self._apply_zoom()
-    def _zoom_out(self):
-        if self._zoom_level > 100: self._zoom_level -= 25; self._apply_zoom()
-    def _apply_zoom(self):
-        if hasattr(self, 'lbl_zoom'): self.lbl_zoom.setText(f"{self._zoom_level}%")
-        if hasattr(self, 'lbl_comp_zoom'): self.lbl_comp_zoom.setText(f"{self._zoom_level}%")
-        self._render_preview(); self._render_comp_previews()
+        if self._zoom_level < 300:
+            self._zoom_level += 25
+            self._apply_zoom()
 
-    def _on_font_toggle(self, c): self._render_preview(); self._render_comp_previews()
-    
+    def _zoom_out(self):
+        if self._zoom_level > 100:
+            self._zoom_level -= 25
+            self._apply_zoom()
+
+    def _apply_zoom(self):
+        if hasattr(self, 'lbl_zoom'):
+            self.lbl_zoom.setText(f"{self._zoom_level}%")
+        if hasattr(self, 'lbl_comp_zoom'):
+            self.lbl_comp_zoom.setText(f"{self._zoom_level}%")
+        self._render_preview()
+        self._render_comp_previews()
+
+    def _on_font_toggle(self, c):
+        self._render_preview()
+        self._render_comp_previews()
+
     def _render_preview(self):
         t = self.text_widget.toPlainText()
-        if not t.strip(): self.preview_stack.setCurrentIndex(1); self.preview_text.setPlainText('[空槽]'); return
+        if not t.strip():
+            self.preview_stack.setCurrentIndex(1)
+            self.preview_text.setPlainText('[空槽]')
+            return
         if HAS_PIL and self.font9696:
             try:
                 seg = parse_styled_segments(t)
                 img = _render_text_image(seg, self.font9696, use_traditional_font=self.chk_traditional.isChecked(), bg_color=('#1a1d24' if self._is_dark else '#313c52'), scale_factor=self._zoom_level / 100.0)
                 self.preview_img.setPixmap(QPixmap.fromImage(pil_to_qimage(img)))
-                self.preview_stack.setCurrentIndex(0); return
-            except Exception as e: self.preview_stack.setCurrentIndex(1); self.preview_text.setPlainText(f'报错:\n{str(e)}'); return
-        self.preview_stack.setCurrentIndex(1); self.preview_text.setPlainText(t)
+                self.preview_stack.setCurrentIndex(0)
+                return
+            except Exception as e:
+                self.preview_stack.setCurrentIndex(1)
+                self.preview_text.setPlainText(f'报错:\n{str(e)}')
+                return
+        self.preview_stack.setCurrentIndex(1)
+        self.preview_text.setPlainText(t)
 
     # ----------- TAG 核心工具栏 (100% 恢复 V2 原版包含的所有组件) -----------
     def _build_tag_toolbar(self, parent_layout, show_info=True):
@@ -1596,7 +1819,7 @@ class TktEditor(QMainWindow):
             btn.setStyleSheet(f"background-color: {GAME_COLORS[ci]};")
             btn.clicked.connect(lambda checked=False, c=ci: self._insert_fcolor(c))
             toolbar.addWidget(btn)
-            
+
         btn_more_color = QPushButton("🎨")
         btn_more_color.clicked.connect(self._show_color_palette)
         toolbar.addWidget(btn_more_color)
@@ -1614,21 +1837,21 @@ class TktEditor(QMainWindow):
 
         toolbar.addSpacing(10)
         btn_name = QPushButton("👤 姓名宏")
-        btn_name.clicked.connect(lambda: self._insert_tag("<NAME,1><NAME,2>"))
+        btn_name.clicked.connect(partial(self._insert_tag, "<NAME,1><NAME,2>"))
         toolbar.addWidget(btn_name)
 
         toolbar.addStretch()
-        
+
         if show_info:
             self.lbl_info = QLabel("未选中")
             toolbar.addWidget(self.lbl_info)
-            
+
             toolbar.addSpacing(10)
             toolbar.addWidget(QLabel("绑定 ID:"))
             self.id_entry = QLineEdit()
             self.id_entry.setFixedWidth(70)
             toolbar.addWidget(self.id_entry)
-        
+
         parent_layout.addLayout(toolbar)
 
     def _on_focus_changed(self, old, new):
@@ -1648,12 +1871,12 @@ class TktEditor(QMainWindow):
 
         cursor = target.textCursor()
         selected_text = cursor.selectedText()
-        if selected_text: 
+        if selected_text:
             cursor.insertText(op + selected_text + (cl or ''))
-        else: 
+        else:
             cursor.insertText(op + (cl or ''))
         target.setFocus()
-        
+
         if target == self.text_widget:
             self._on_text_modified()
         else:
@@ -1695,7 +1918,7 @@ class TktEditor(QMainWindow):
         if idx == 0: return
         self._insert_tag(f"<FTYPE,{int(cb.currentText().split('-')[0])}>", "<FRESET,4>")
         cb.setCurrentIndex(0)
-        
+
     def _show_about(self):
         themed_messagebox(
             self, QMessageBox.Information, "关于",
@@ -1714,7 +1937,8 @@ class TktEditor(QMainWindow):
         if not confirm_close(self, self._dirty, text="直接退出？"):
             event.ignore()
             return
-        if self.font9696: self.font9696.close()
+        if self.font9696:
+            self.font9696.close()
         event.accept()
 
 # ============================================================
@@ -1727,13 +1951,13 @@ def run_cli(args):
         if not args.input or not os.path.exists(args.input):
             print("Error: 必须通过 -i / --input 指定有效的 TKT.dat 底包文件。", file=sys.stderr)
             sys.exit(1)
-            
+
         entries = load_tkt(args.input)
         entry_by_id = {e['id']: e for e in entries}
-        
+
         # 建立初始快照 (免疫原版游戏同 ID 脏数据干扰)
         original_snapshot = set((e['id'], e['text']) for e in entries)
-        
+
         print(f"Success: 成功加载底包 {args.input}，共 {len(entries)} 条数据。")
 
         # 2. 【全量导出】指令：给 AI 提供完整的游戏文本上下文阅读
@@ -1747,36 +1971,36 @@ def run_cli(args):
             if not os.path.exists(args.import_mod):
                 print(f"Error: 找不到待导入的 MOD 文件 {args.import_mod}", file=sys.stderr)
                 sys.exit(1)
-                
+
             # 后缀名分流：JSON 文本或 二进制文件
             if args.import_mod.lower().endswith('.json'):
                 with open(args.import_mod, 'r', encoding='utf-8') as f:
                     mod_data = json.load(f)
             else:
                 mod_data = load_tkt(args.import_mod)
-                
+
             overwrite_count = 0
             append_count = 0
-            
+
             # 执行数据覆盖与追加融合
             for mod_entry in mod_data:
                 eid = mod_entry['id']
                 mod_text = mod_entry['text']
-                
+
                 if eid in entry_by_id:
                     if entry_by_id[eid]['text'] != mod_text:
                         entry_by_id[eid]['text'] = mod_text
                         overwrite_count += 1
                 else:
                     new_entry = OrderedDict([
-                        ('slot', len(entries)), 
-                        ('id', eid), 
+                        ('slot', len(entries)),
+                        ('id', eid),
                         ('text', mod_text)
                     ])
                     entries.append(new_entry)
                     entry_by_id[eid] = new_entry
                     append_count += 1
-                    
+
             print(f"Success: 成功打入 MOD 补丁 [{args.import_mod}]")
             print(f"Stats: 覆盖 {overwrite_count} 条，追加 {append_count} 条")
 
@@ -1786,15 +2010,15 @@ def run_cli(args):
             for current_entry in entries:
                 eid = current_entry['id']
                 current_text = current_entry['text']
-                
+
                 # 差分对比：仅提取新增或修改过的数据
                 if (eid, current_text) not in original_snapshot:
                     mod_entries.append(OrderedDict([
-                        ('slot', len(mod_entries)), 
-                        ('id', eid), 
+                        ('slot', len(mod_entries)),
+                        ('id', eid),
                         ('text', current_text)
                     ]))
-            
+
             if not mod_entries:
                 print("Info: 经过对比，未检测到任何改动，跳过增量 MOD 导出。")
             else:
@@ -1812,7 +2036,7 @@ def run_cli(args):
             print(f"Success: 完整合并后的游戏二进制文件已生成至 {args.output}")
 
         sys.exit(0)
-            
+
     except Exception as e:
         print(f"Error: CLI 引擎执行期间发生致命崩溃:\n{str(e)}", file=sys.stderr)
         sys.exit(1)
@@ -1820,7 +2044,7 @@ def run_cli(args):
 def main():
     # 1. 挂载强化版的参数解析器
     parser = argparse.ArgumentParser(description="TKT.dat 文本数据库编辑器 v5.0 (支持全功能无头 CLI 模式)")
-    
+
     # 定义 CLI 工作流参数
     parser.add_argument("--cli", action="store_true", help="启用无头命令行模式 (跳过 GUI 加载)")
     parser.add_argument("-i", "--input", help="指定基础的 TKT.dat 底包路径 (CLI模式必填)")
@@ -1828,7 +2052,7 @@ def main():
     parser.add_argument("--import-mod", help="导入增量 MOD 文件 (根据后缀自动识别 .json 或 .dat)")
     parser.add_argument("--export-mod", help="对比提取并导出增量 MOD (根据后缀自动识别 .json 或 .dat)")
     parser.add_argument("-o", "--output", help="将最终的完整数据流封装导出为 TKT.dat")
-    
+
     # 兼容 GUI 拖拽打开
     parser.add_argument("gui_file", nargs="?", help="[GUI模式] 启动时直接打开的文件")
 

@@ -45,8 +45,10 @@ v3.0 语义修正 (基于 sub_43D53C/43D8B0/43E980/4458B0):
   python kon_editor.py
 """
 
-import struct, os, sys, tkinter as tk
-from tkinter import ttk, messagebox, filedialog
+import os
+import struct
+import tkinter as tk
+from tkinter import filedialog, messagebox, ttk
 
 # ============================================================
 # LZSS 编解码 (sub_452B14)
@@ -119,9 +121,12 @@ def lzss_compress(data):
 def load_tkt(tkt_path):
     if not tkt_path or not os.path.exists(tkt_path): return {}
     with open(tkt_path, 'rb') as f: raw = f.read()
-    ts = struct.unpack_from('<I', raw, 0)[0]; cnt = struct.unpack_from('<I', raw, 4)[0]
-    enc = raw[8:8 + ts]; dec = bytes([b ^ 0xFF for b in enc])
-    idsz, ofsz = cnt * 4, cnt * 4; lookup = {}
+    ts = struct.unpack_from('<I', raw, 0)[0]
+    cnt = struct.unpack_from('<I', raw, 4)[0]
+    enc = raw[8:8 + ts]
+    dec = bytes([b ^ 0xFF for b in enc])
+    idsz, ofsz = cnt * 4, cnt * 4
+    lookup = {}
     SKIP = set(range(0, 10))
     for i in range(cnt):
         eid = struct.unpack_from('<i', dec, i * 4)[0]
@@ -154,7 +159,8 @@ STATUS_NAMES = [
     "虚弱","麻痹","沈睡","中毒","迷恋","明镜","针灸",
 ]
 
-FONT = ('Microsoft YaHei UI', 9); FONT_S = ('Microsoft YaHei UI', 8)
+FONT = ('Microsoft YaHei UI', 9)
+FONT_S = ('Microsoft YaHei UI', 8)
 W_INPUT = 12
 
 # ============================================================
@@ -370,7 +376,8 @@ def load_kon(fp):
 def save_kon(fp, recs):
     buf = bytearray(KON_CNT * KON_REC)
     for rec in recs[:KON_CNT]:
-        i = rec['index']; off = i * KON_REC
+        i = rec['index']
+        off = i * KON_REC
         vals = [rec[fn] for fn, _, _, _ in KON_FIELDS]
         struct.pack_into('<' + 'h' * KON_FIELD_COUNT, buf, off, *vals)
     compressed = lzss_compress(bytes(buf))
@@ -388,27 +395,37 @@ class KonEditor:
         self.root = root
         self.root.title("TKKon.dat 可视化编辑器 v3.0")
         ico = os.path.join(os.path.dirname(__file__), 'TKS.ico')
-        if os.path.exists(ico): self.root.iconbitmap(default=ico)
-        self.root.geometry("1320x820"); self.root.minsize(1050, 650)
+        if os.path.exists(ico):
+            self.root.iconbitmap(default=ico)
+        self.root.geometry("1320x820")
+        self.root.minsize(1050, 650)
         self.kon_path = self.tkt_path = None
-        self.records = []; self.tkt = {}; self.names = {}
-        self.filtered_indices = []; self._dirty = False
+        self.records = []
+        self.tkt = {}
+        self.names = {}
+        self.filtered_indices = []
+        self._dirty = False
         self._edit_split = {}  # split spinboxes / bitmask checkboxes
-        self._build_ui(); self._set_edit_enabled(False)
-        sw = self.root.winfo_screenwidth(); sh = self.root.winfo_screenheight()
-        x = (sw - 1320) // 2; y = (sh - 820) // 2
+        self._build_ui()
+        self._set_edit_enabled(False)
+        sw = self.root.winfo_screenwidth()
+        sh = self.root.winfo_screenheight()
+        x = (sw - 1320) // 2
+        y = (sh - 820) // 2
         self.root.geometry(f'1320x820+{x}+{y}')
 
     # ----------- UI 构建 -----------
 
     def _build_ui(self):
-        mb = tk.Menu(self.root); self.root.config(menu=mb)
+        mb = tk.Menu(self.root)
+        self.root.config(menu=mb)
         fm = tk.Menu(mb, tearoff=0)
         fm.add_command(label="加载 TKS 目录…", command=self._load_tks_dir, accelerator="Ctrl+O")
         fm.add_separator()
         fm.add_command(label="保存", command=self._save, accelerator="Ctrl+S")
         fm.add_command(label="导出 CSV…", command=self._export_csv)
-        fm.add_separator(); fm.add_command(label="退出", command=self.root.quit)
+        fm.add_separator()
+        fm.add_command(label="退出", command=self.root.quit)
         mb.add_cascade(label="文件", menu=fm)
         em = tk.Menu(mb, tearoff=0)
         em.add_command(label="新建条目", command=self._new_record, accelerator="Ctrl+N")
@@ -425,10 +442,12 @@ class KonEditor:
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
         # Toolbar
-        tb = ttk.Frame(self.root); tb.pack(fill=tk.X, padx=5, pady=(5, 0))
+        tb = ttk.Frame(self.root)
+        tb.pack(fill=tk.X, padx=5, pady=(5, 0))
         ttk.Label(tb, text="搜索:").pack(side=tk.LEFT)
         self.sv = tk.StringVar()
-        e_s = ttk.Entry(tb, textvariable=self.sv, width=22); e_s.pack(side=tk.LEFT, padx=2)
+        e_s = ttk.Entry(tb, textvariable=self.sv, width=22)
+        e_s.pack(side=tk.LEFT, padx=2)
         e_s.bind('<Return>', lambda e: self._apply_filter())
         ttk.Button(tb, text="搜索", command=self._apply_filter, width=5).pack(side=tk.LEFT, padx=1)
         ttk.Button(tb, text="清除", command=self._clear_filter, width=5).pack(side=tk.LEFT, padx=1)
@@ -447,7 +466,8 @@ class KonEditor:
         paned.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
 
         # Left: TreeView
-        lf = ttk.Frame(paned); paned.add(lf, weight=1)
+        lf = ttk.Frame(paned)
+        paned.add(lf, weight=1)
         cols = ('index', 'tkact_id', 'atk_range', 'tkt_name', 'atk_area', 'hp_damage', 'target_f', 'exec_f')
         self.tree = ttk.Treeview(lf, columns=cols, show='headings', selectmode='browse')
         cc = [
@@ -465,25 +485,31 @@ class KonEditor:
             self.tree.column(cid, width=cw, anchor='center' if cid != 'tkt_name' else 'w', minwidth=cw)
         vsb = ttk.Scrollbar(lf, orient=tk.VERTICAL, command=self.tree.yview)
         self.tree.configure(yscrollcommand=vsb.set)
-        self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True); vsb.pack(side=tk.RIGHT, fill=tk.Y)
+        self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        vsb.pack(side=tk.RIGHT, fill=tk.Y)
         self.tree.bind('<<TreeviewSelect>>', self._on_tree_select)
         self.tree.tag_configure('active', foreground='#228B22')  # 有内容的条件
         self.tree.tag_configure('empty', foreground='#AAAAAA')    # 空记录
         self.tree.tag_configure('tkact_minus1', foreground='#2266CC')  # tkact_id=-1
 
         # Right: Edit panel
-        rf = ttk.Frame(paned); paned.add(rf, weight=4)
+        rf = ttk.Frame(paned)
+        paned.add(rf, weight=4)
         self.edit_frame = rf
 
         self.lbl_rec_idx = ttk.Label(rf, text="未选中", font=('', 11, 'bold'))
         self.lbl_rec_idx.pack(anchor=tk.W, pady=(0, 4), padx=4)
 
         # Scrollable edit area
-        middle = ttk.Frame(rf); middle.pack(fill=tk.BOTH, expand=True)
-        left_col = ttk.Frame(middle); left_col.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        sb = ttk.Scrollbar(middle, orient=tk.VERTICAL); sb.pack(side=tk.RIGHT, fill=tk.Y)
+        middle = ttk.Frame(rf)
+        middle.pack(fill=tk.BOTH, expand=True)
+        left_col = ttk.Frame(middle)
+        left_col.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        sb = ttk.Scrollbar(middle, orient=tk.VERTICAL)
+        sb.pack(side=tk.RIGHT, fill=tk.Y)
 
-        bf = ttk.Frame(left_col); bf.pack(side=tk.BOTTOM, fill=tk.X, pady=(2, 0))
+        bf = ttk.Frame(left_col)
+        bf.pack(side=tk.BOTTOM, fill=tk.X, pady=(2, 0))
         ttk.Button(bf, text="应用修改", command=self._apply_edit, width=12).pack(side=tk.LEFT)
         ttk.Button(bf, text="重置为当前", command=self._reset_edit, width=12).pack(side=tk.LEFT, padx=2)
 
@@ -497,7 +523,8 @@ class KonEditor:
         canvas.configure(yscrollcommand=sb.set)
         self._bind_mousewheel(canvas)
 
-        self._edit_vars = {}; self._edit_extras = {}
+        self._edit_vars = {}
+        self._edit_extras = {}
 
         # Preview panel
         pv_lf = ttk.LabelFrame(self.edit_inner, text="动作预览", padding=4)
@@ -524,7 +551,8 @@ class KonEditor:
         self._build_field_group("未使用 (offset 30–36) + 执行标志", KON_FIELDS[15:], 4, 5)
 
         # Bottom path bar
-        pf = ttk.LabelFrame(self.root, text="当前加载"); pf.pack(fill=tk.X, padx=5, pady=(0, 2))
+        pf = ttk.LabelFrame(self.root, text="当前加载")
+        pf.pack(fill=tk.X, padx=5, pady=(0, 2))
         self.lbl_kon = ttk.Label(pf, text="", foreground="gray")
         self.lbl_kon.pack(side=tk.LEFT, padx=10, pady=2)
         ttk.Separator(pf, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y)
@@ -534,14 +562,16 @@ class KonEditor:
     def _build_field_group(self, title, fields, row, cols):
         lf = ttk.LabelFrame(self.edit_inner, text=title, padding=4)
         lf.grid(row=row, column=0, sticky='ew', padx=2, pady=2)
-        grid = ttk.Frame(lf); grid.pack(fill=tk.X)
+        grid = ttk.Frame(lf)
+        grid.pack(fill=tk.X)
         for fi, (fn, fo, fl, cmt) in enumerate(fields):
             r, c = divmod(fi, cols)
             is_unused = fn.startswith('unused')
             self._build_field(grid, r, c, fn, fo, fl, W_INPUT, cmt, readonly=is_unused)
 
     def _build_field(self, parent, row, col, fn, fo, fl, fw, cmt, readonly=False):
-        frm = ttk.Frame(parent); frm.grid(row=row, column=col, sticky='nw', padx=3, pady=2)
+        frm = ttk.Frame(parent)
+        frm.grid(row=row, column=col, sticky='nw', padx=3, pady=2)
         lbl = ttk.Label(frm, text=fl, font=FONT_S)
         if readonly:
             lbl.configure(foreground='#AAA')
@@ -552,8 +582,11 @@ class KonEditor:
         is_split = fn in ('exec_mode', 'target_param', 'target_filter')
         is_bitmask = fn == 'exec_flags'
         if is_bitmask:
-            box = ttk.Frame(frm); box.pack(fill=tk.X)
-            v_bit0 = tk.BooleanVar(); v_bit1 = tk.BooleanVar(); v_bit2 = tk.BooleanVar()
+            box = ttk.Frame(frm)
+            box.pack(fill=tk.X)
+            v_bit0 = tk.BooleanVar()
+            v_bit1 = tk.BooleanVar()
+            v_bit2 = tk.BooleanVar()
             cb0 = ttk.Checkbutton(box, text="显示待机动画", variable=v_bit0)
             cb0.pack(side=tk.LEFT, padx=(0, 4))
             cb1 = ttk.Checkbutton(box, text="使用物品", variable=v_bit1)
@@ -570,7 +603,8 @@ class KonEditor:
                 self._edit_extras[fn].pack(anchor=tk.W)
         elif is_split:
             # 高/低字节拆分编辑
-            box = ttk.Frame(frm); box.pack(fill=tk.X)
+            box = ttk.Frame(frm)
+            box.pack(fill=tk.X)
             is_toggle = fn in ('exec_mode', 'target_param')
             is_filter = fn == 'target_filter'
             if fn == 'exec_mode':
@@ -624,8 +658,10 @@ class KonEditor:
                                        foreground=color, font=FONT_S, wraplength=180))
             self._edit_extras[fn][1].pack(anchor=tk.W)
         else:
-            box = ttk.Frame(frm); box.pack(fill=tk.X)
-            ev = tk.StringVar(); self._edit_vars[fn] = ev
+            box = ttk.Frame(frm)
+            box.pack(fill=tk.X)
+            ev = tk.StringVar()
+            self._edit_vars[fn] = ev
             ent = ttk.Entry(box, textvariable=ev, width=fw, font=FONT)
             if readonly:
                 ent.configure(state='readonly', foreground='#AAA')
@@ -639,19 +675,26 @@ class KonEditor:
     def _bind_tooltip(self, widget, text):
         tip = {'win': None}
         def _enter(e):
-            if tip['win']: return
-            x = widget.winfo_rootx() + 10; y = widget.winfo_rooty() + widget.winfo_height() + 2
-            w = tk.Toplevel(widget); w.wm_overrideredirect(True)
+            if tip['win']:
+                return
+            x = widget.winfo_rootx() + 10
+            y = widget.winfo_rooty() + widget.winfo_height() + 2
+            w = tk.Toplevel(widget)
+            w.wm_overrideredirect(True)
             w.wm_geometry(f"+{x}+{y}")
             ttk.Label(w, text=text, background='#FFFFE0', relief='solid', borderwidth=1,
                       font=FONT_S, wraplength=420, padding=3).pack()
             tip['win'] = w
         def _leave(e):
-            if tip['win']: tip['win'].destroy(); tip['win'] = None
-        widget.bind('<Enter>', _enter); widget.bind('<Leave>', _leave)
+            if tip['win']:
+                tip['win'].destroy()
+                tip['win'] = None
+        widget.bind('<Enter>', _enter)
+        widget.bind('<Leave>', _leave)
 
     def _bind_mousewheel(self, canvas):
-        def _mw(e): canvas.yview_scroll(int(-1 * (e.delta / 120)), "units")
+        def _mw(e):
+            canvas.yview_scroll(int(-1 * (e.delta / 120)), "units")
         canvas.bind("<Enter>", lambda e: canvas.bind_all("<MouseWheel>", _mw))
         canvas.bind("<Leave>", lambda e: canvas.unbind_all("<MouseWheel>"))
 
@@ -659,9 +702,12 @@ class KonEditor:
         dlg.withdraw()
         dlg.geometry(f"{w}x{h}")
         dlg.update_idletasks()
-        rx = self.root.winfo_rootx(); ry = self.root.winfo_rooty()
-        rw = self.root.winfo_width(); rh = self.root.winfo_height()
-        x = rx + (rw - w) // 2; y = ry + (rh - h) // 2
+        rx = self.root.winfo_rootx()
+        ry = self.root.winfo_rooty()
+        rw = self.root.winfo_width()
+        rh = self.root.winfo_height()
+        x = rx + (rw - w) // 2
+        y = ry + (rh - h) // 2
         dlg.geometry(f"+{x}+{y}")
         dlg.deiconify()
 
@@ -669,13 +715,16 @@ class KonEditor:
     def _pick_status(self, fn):
         inf = fn.startswith('inflict')
         title = "选择导致状态 (位掩码)" if inf else "选择解除状态 (位掩码)"
-        dlg = tk.Toplevel(self.root); dlg.title(title)
-        dlg.transient(self.root); dlg.grab_set()
+        dlg = tk.Toplevel(self.root)
+        dlg.title(title)
+        dlg.transient(self.root)
+        dlg.grab_set()
         self._center_dialog(dlg, 320, 520)
         base = 0 if fn.endswith('_lo') else 16
         cur_mask = int(self._edit_vars[fn].get() or 0) & 0xFFFF
         vars_ = []
-        wrap = ttk.Frame(dlg, padding=8); wrap.pack(fill=tk.BOTH, expand=True)
+        wrap = ttk.Frame(dlg, padding=8)
+        wrap.pack(fill=tk.BOTH, expand=True)
         for i in range(16):
             idx = base + i
             if idx >= len(STATUS_NAMES): break
@@ -683,14 +732,16 @@ class KonEditor:
             ttk.Checkbutton(wrap, text=f"{idx}. {STATUS_NAMES[idx]}",
                             variable=v).pack(anchor=tk.W, pady=1)
             vars_.append(v)
-        bf = ttk.Frame(dlg); bf.pack(fill=tk.X, padx=8, pady=8)
+        bf = ttk.Frame(dlg)
+        bf.pack(fill=tk.X, padx=8, pady=8)
         def _ok():
             m = 0
             for i, v in enumerate(vars_):
                 if v.get(): m |= (1 << i)
             if m >= 0x8000: m -= 0x10000
             self._edit_vars[fn].set(str(m))
-            self._update_status_label(fn, m & 0xFFFF); dlg.destroy()
+            self._update_status_label(fn, m & 0xFFFF)
+            dlg.destroy()
         ttk.Button(bf, text="全选", command=lambda: [v.set(True) for v in vars_]).pack(side=tk.LEFT)
         ttk.Button(bf, text="全清", command=lambda: [v.set(False) for v in vars_]).pack(side=tk.LEFT, padx=4)
         ttk.Button(bf, text="取消", command=dlg.destroy).pack(side=tk.RIGHT, padx=2)
@@ -729,28 +780,34 @@ class KonEditor:
         ko = os.path.join(d, "TKKon.dat")
         tk_ = os.path.join(d, "TKT.dat")
         if not os.path.exists(ko):
-            messagebox.showwarning("文件缺失", "未找到 TKKon.dat"); return
+            messagebox.showwarning("文件缺失", "未找到 TKKon.dat")
+            return
         self.kon_path = ko
         self.tkt_path = tk_ if os.path.exists(tk_) else None
         self._reload()
 
     def _reload(self):
         if not self.kon_path: return
-        self.status_var.set("加载中…"); self.root.update()
+        self.status_var.set("加载中…")
+        self.root.update()
         if self.tkt_path:
             self.tkt = load_tkt(self.tkt_path)
         # 加载名称配置表
         name_csv = os.path.join(os.path.dirname(__file__), 'tkkon_names.csv')
         self.names = load_tkkon_names(name_csv)
         try:
-            self.records = load_kon(self.kon_path); self._dirty = False
+            self.records = load_kon(self.kon_path)
+            self._dirty = False
             nonempty = sum(1 for r in self.records
                           if any(r[fn] != 0 for fn, _, _, _ in KON_FIELDS))
             self.status_var.set(
                 f"{len(self.records)} 条 (40字节/条) | 有效 {nonempty} | TKT {len(self.tkt)} 条")
         except Exception as e:
-            messagebox.showerror("加载失败", str(e)); self.records = []
-        self._update_paths(); self._set_edit_enabled(True); self._apply_filter()
+            messagebox.showerror("加载失败", str(e))
+            self.records = []
+        self._update_paths()
+        self._set_edit_enabled(True)
+        self._apply_filter()
 
     def _set_edit_enabled(self, en):
         for c in self.edit_frame.winfo_children(): self._set_ws(c, en)
@@ -784,7 +841,8 @@ class KonEditor:
     # ----------- 筛选/列表 -----------
 
     def _apply_filter(self):
-        q = self.sv.get().strip().lower(); self.filtered_indices = []
+        q = self.sv.get().strip().lower()
+        self.filtered_indices = []
         for rec in self.records:
             if not self.show_empty.get():
                 if all(rec[fn] == 0 for fn, _, _, _ in KON_FIELDS):
@@ -804,7 +862,8 @@ class KonEditor:
         self.status_var.set(msg)
 
     def _clear_filter(self):
-        self.sv.set(""); self._apply_filter()
+        self.sv.set("")
+        self._apply_filter()
 
     def _refresh_table(self):
         for it in self.tree.get_children(): self.tree.delete(it)
@@ -880,55 +939,70 @@ class KonEditor:
                   'hp_damage': 'hp_damage', 'target_f': 'target_filter', 'exec_f': 'exec_flags'}
             self.filtered_indices.sort(
                 key=lambda i: self.records[i].get(km.get(col, 'index'), 0), reverse=rev)
-        self._sort_reverse = not rev; self._refresh_table()
+        self._sort_reverse = not rev
+        self._refresh_table()
 
     # ----------- 编辑 -----------
 
     def _new_record(self):
         if not self.records:
-            messagebox.showinfo("提示", "请先加载数据"); return
+            messagebox.showinfo("提示", "请先加载数据")
+            return
         for rec in self.records:
             if all(rec[fn] == 0 for fn, _, _, _ in KON_FIELDS):
-                rec['exec_mode'] = 0; rec['target_param'] = 0
+                rec['exec_mode'] = 0
+                rec['target_param'] = 0
                 rec['tkact_id'] = rec['index']
-                rec['hp_damage'] = -1; rec['exec_flags'] = 4
-                self._dirty = True; self._apply_filter()
+                rec['hp_damage'] = -1
+                rec['exec_flags'] = 4
+                self._dirty = True
+                self._apply_filter()
                 for child in self.tree.get_children():
                     if int(self.tree.item(child)['values'][0]) == rec['index']:
-                        self.tree.selection_set(child); self.tree.see(child); break
+                        self.tree.selection_set(child)
+                        self.tree.see(child)
+                        break
                 self._populate_edit(rec)
-                self.status_var.set(f"已创建新条目 → 槽位 #{rec['index']} (ID={rec['tkact_id']})"); return
+                self.status_var.set(f"已创建新条目 → 槽位 #{rec['index']} (ID={rec['tkact_id']})")
+                return
         messagebox.showwarning("槽位已满", f"所有 {KON_CNT} 个记录槽位均已占用")
 
     def _copy_record(self):
         if not hasattr(self, '_editing_idx'): return
         src = self.records[self._editing_idx]
         if all(src[fn] == 0 for fn, _, _, _ in KON_FIELDS):
-            messagebox.showinfo("提示", "当前记录为空, 无需复制"); return
+            messagebox.showinfo("提示", "当前记录为空, 无需复制")
+            return
         for rec in self.records:
             if all(rec[fn] == 0 for fn, _, _, _ in KON_FIELDS):
                 idx_bak = rec['index']
                 rec.update({k: v for k, v in src.items() if k != 'index'})
                 rec['index'] = idx_bak
-                self._dirty = True; self._apply_filter()
+                self._dirty = True
+                self._apply_filter()
                 for child in self.tree.get_children():
                     if int(self.tree.item(child)['values'][0]) == rec['index']:
-                        self.tree.selection_set(child); self.tree.see(child); break
+                        self.tree.selection_set(child)
+                        self.tree.see(child)
+                        break
                 self._populate_edit(rec)
-                self.status_var.set(f"已复制 #{src['index']} → #{rec['index']}"); return
+                self.status_var.set(f"已复制 #{src['index']} → #{rec['index']}")
+                return
         messagebox.showwarning("槽位已满", f"所有 {KON_CNT} 个记录槽位均已占用")
 
     def _clear_current(self):
         if not hasattr(self, '_editing_idx'): return
         rec = self.records[self._editing_idx]
         if all(rec[fn] == 0 for fn, _, _, _ in KON_FIELDS):
-            messagebox.showinfo("提示", "当前记录已经为空"); return
+            messagebox.showinfo("提示", "当前记录已经为空")
+            return
         if not messagebox.askyesno("确认清空", f"确定清空记录 #{rec['index']} 的所有字段?"):
             return
         for fn, _, _, _ in KON_FIELDS:
             rec[fn] = 0
         rec['index'] = rec['index']  # preserve index
-        self._dirty = True; self._apply_filter()
+        self._dirty = True
+        self._apply_filter()
         self._populate_edit(rec)
         self.status_var.set(f"已清空记录 #{rec['index']}")
 
@@ -988,7 +1062,8 @@ class KonEditor:
             'mp_restore': lambda v: describe_resource_val(v, '内力回复'),
         }
         for fn, fo, fl, _ in KON_FIELDS:
-            val = rec.get(fn, 0); sv = str(val)
+            val = rec.get(fn, 0)
+            sv = str(val)
             self._edit_vars.get(fn, tk.StringVar()).set(sv)
             if fn in self._edit_extras:
                 if 'status' in fn:
@@ -1075,10 +1150,13 @@ class KonEditor:
                 rec[fn] = v
             except ValueError:
                 rec[fn] = 0
-        self._dirty = True; self._apply_filter()
+        self._dirty = True
+        self._apply_filter()
         for child in self.tree.get_children():
             if int(self.tree.item(child)['values'][0]) == rec['index']:
-                self.tree.selection_set(child); self.tree.see(child); break
+                self.tree.selection_set(child)
+                self.tree.see(child)
+                break
         self.status_var.set(f"记录 #{rec['index']} 已修改 (内存, 未保存)")
 
     def _reset_edit(self):
@@ -1089,7 +1167,8 @@ class KonEditor:
 
     def _save(self):
         if not self.kon_path or not self.records:
-            messagebox.showinfo("提示", "请先加载数据"); return
+            messagebox.showinfo("提示", "请先加载数据")
+            return
         if not messagebox.askyesno("确认保存",
             f"保存 {len(self.records)} 条到:\n{self.kon_path}\n\n原文件将被覆盖 (生成 .bak)."):
             return
@@ -1098,8 +1177,10 @@ class KonEditor:
                 with open(self.kon_path + ".bak", 'wb') as d: d.write(s.read())
         except: pass
         try:
-            self.status_var.set("正在保存…"); self.root.update()
-            save_kon(self.kon_path, self.records); self._dirty = False
+            self.status_var.set("正在保存…")
+            self.root.update()
+            save_kon(self.kon_path, self.records)
+            self._dirty = False
             self.status_var.set(f"已保存 → {self.kon_path}")
             messagebox.showinfo("保存成功", f"已保存\n备份: {self.kon_path}.bak")
         except Exception as e:
@@ -1159,14 +1240,17 @@ class KonEditor:
         lines.append("  hp_restore 特殊条件: 仅生命<25%时50%概率触发 (sub_43E980:491)")
         lines.append("  mp_restore 特殊条件: 仅内力<25%时50%概率触发 (sub_43E980:529)")
 
-        dlg = tk.Toplevel(self.root); dlg.title("字段参考 v2.0 (修正版)")
-        dlg.geometry("680x560"); dlg.transient(self.root)
+        dlg = tk.Toplevel(self.root)
+        dlg.title("字段参考 v2.0 (修正版)")
+        dlg.geometry("680x560")
+        dlg.transient(self.root)
         tx = tk.Text(dlg, font=('Consolas', 9), wrap='word')
         sb1 = ttk.Scrollbar(dlg, orient=tk.VERTICAL, command=tx.yview)
         tx.configure(yscrollcommand=sb1.set)
         sb1.pack(side=tk.RIGHT, fill=tk.Y)
         tx.pack(fill=tk.BOTH, expand=True)
-        tx.insert('1.0', '\n'.join(lines)); tx.config(state='disabled')
+        tx.insert('1.0', '\n'.join(lines))
+        tx.config(state='disabled')
 
     def _show_about(self):
         messagebox.showinfo("关于",
@@ -1189,7 +1273,9 @@ class KonEditor:
 
 
 def main():
-    root = tk.Tk(); KonEditor(root); root.mainloop()
+    root = tk.Tk()
+    KonEditor(root)
+    root.mainloop()
 
 if __name__ == '__main__':
     main()

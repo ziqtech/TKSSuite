@@ -158,14 +158,14 @@ TKS Launcher - 自动运行时内存补丁启动器 (Python版)
       python tks_launcher.py [--exe TKS.exe] [--wait 30] [--minimal] [--no-cave] [--only-portrait] [--only-awk] [--help]
 """
 
-import os
-import sys
-import json
-import struct
-import time
 import ctypes
 from ctypes import wintypes
+import json
+import os
+import struct
+import sys
 import threading
+import time
 import tkinter as tk
 from typing import List, Dict, Tuple, Optional, Any
 
@@ -876,7 +876,9 @@ def lzss_compress(data: bytes) -> bytes:
 
 class Patch:
     def __init__(self, rva: int, data: bytes, desc: str):
-        self.rva = rva; self.data = data; self.desc = desc
+        self.rva = rva
+        self.data = data
+        self.desc = desc
 
 STATIC_PATCHES = [
     Patch(0xDA15, bytes([0xC8, 0x87]),
@@ -1029,7 +1031,8 @@ class OverlayForm:
                 self.root.geometry(f"+{r.Right - self.w - 15}+{r.Bottom - self.h - 15}")
 
     def set_status(self, text: str, ok: bool = False):
-        self._text = text; self._ok = ok
+        self._text = text
+        self._ok = ok
         self.label.config(text=text, fg="lime" if ok else "white")
 
     def show(self):
@@ -1122,7 +1125,8 @@ def prepare_warpc_for_game():
     for fname in DATA_FILE_ORIG_SIZES:
         bp = fname + ".orig"
         if os.path.isfile(bp):
-            shutil.copy2(bp, fname); os.remove(bp)
+            shutil.copy2(bp, fname)
+            os.remove(bp)
             log(f"  检测到上次未恢复的 {bp}, 已自动恢复")
 
     wp = "WarPC.dat"
@@ -1132,7 +1136,8 @@ def prepare_warpc_for_game():
         dec = lzss_decompress(comp)
         cnt = len(dec) // WARPC_REC_SIZE
         if cnt > WARPC_ORIG_COUNT:
-            _warpc_expanded = True; _warpc_full_data = dec
+            _warpc_expanded = True
+            _warpc_full_data = dec
             log(f"  WarPC.dat 检测到扩展数据: {cnt} 角色 (原始 {WARPC_ORIG_COUNT})")
             tr = dec[:WARPC_ORIG_SIZE]
             tc = lzss_compress(tr)
@@ -1174,7 +1179,8 @@ def scan_and_patch_const(h_proc: int, scan_start: int, scan_size: int,
                           old_val: int, new_val: int) -> Tuple[int, List[int]]:
     """扫描并修补 4 字节常量(优化版: bytes.find + slice compare)"""
     pr: List[int] = []
-    ole = _i32b(old_val); nle = _i32b(new_val)
+    ole = _i32b(old_val)
+    nle = _i32b(new_val)
     buf, nr = read_pm(h_proc, scan_start, scan_size)
     if nr <= 0:
         return 0, []
@@ -1209,7 +1215,8 @@ def patch_data_file_sizes(h_proc: int, base_addr: int, scan_start: int, scan_siz
         bp = fname + ".orig"
         if not os.path.isfile(bp):
             continue
-        shutil.copy2(bp, fname); os.remove(bp)
+        shutil.copy2(bp, fname)
+        os.remove(bp)
         log(f"  已恢复原始 {fname}")
         patched, rvas = scan_and_patch_const(h_proc, scan_start, scan_size, osz, asz)
         if patched > 0:
@@ -1250,7 +1257,8 @@ def apply_patch_bytes(defn: PatchDef, code_buf: bytearray, code_start_addr: int,
 
 def apply_patch_imm32_by_value(defn: PatchDef, code_buf: bytearray, code_start_addr: int,
                                 h_proc: int, vars: Dict[str, int]) -> bool:
-    ov = defn.expect_value; nv = resolve_var(defn.new_value_expr, vars, strict=True)
+    ov = defn.expect_value
+    nv = resolve_var(defn.new_value_expr, vars, strict=True)
     if nv is None:
         log(f"    -> 变量未定义, 跳过")
         return True  # 不是失败, 仅是跳过
@@ -1259,7 +1267,8 @@ def apply_patch_imm32_by_value(defn: PatchDef, code_buf: bytearray, code_start_a
     log(f"    替换为 {nv} (0x{nv:X})")
     if defn.expect_count > 0 and len(hits) != defn.expect_count:
         log(f"  [WARN] 匹配数 {len(hits)} != 预期 {defn.expect_count}")
-    nle = _i32b(nv); ptd = 0
+    nle = _i32b(nv)
+    ptd = 0
     for off in hits:
         aa = code_start_addr + off
         op = vp_ex(h_proc, aa, 4, PAGE_EXECUTE_READWRITE)
@@ -1279,11 +1288,13 @@ def apply_patch_imm32_by_pattern(defn: PatchDef, code_buf: bytearray, code_start
     pat, wc = parse_pattern(defn.pattern)
     hits = pattern_scan(bytes(code_buf), pat, wc)
     log(f"    模式: [{defn.pattern}] -> 匹配 {len(hits)} 处 (预期 {defn.expect_count})")
-    nv = resolve_var(defn.new_value_expr, vars, strict=True); ov = defn.expect_value
+    nv = resolve_var(defn.new_value_expr, vars, strict=True)
+    ov = defn.expect_value
     if nv is None:
         log(f"    -> 变量未定义, 跳过")
         return True
-    nle = _i32b(nv); ptd = 0
+    nle = _i32b(nv)
+    ptd = 0
     for off in hits:
         io = off + defn.value_offset
         if io + 4 <= len(code_buf):
@@ -1349,7 +1360,9 @@ def apply_config_patches(config: PatchConfig, code_buf: bytearray, code_start_ad
                           h_proc: int, warpc_base: int, cave_addr: int,
                           minimal_mode: bool, no_cave_mode: bool,
                           only_portrait: bool, only_awk: bool) -> bool:
-    all_ok = True; pidx = 0; pch: List[PatchDef] = []
+    all_ok = True
+    pidx = 0
+    pch: List[PatchDef] = []
 
     for defn in config.patches:
         pidx += 1
@@ -1418,9 +1431,11 @@ def expand_warpc_buffer(child_pid: int, base_addr: int, module_size: int,
     nb = _warpc_new_buf
     log(f"  修补代码引用: 缓冲区 0x{nb:08X}, 大小 {ns}")
 
-    nal = _i32b(nb); nsl = _i32b(ns)
+    nal = _i32b(nb)
+    nsl = _i32b(ns)
     ap, sp, fp, a0p = 0, 0, 0, 0
-    ss = code_start_addr; ssz = len(code_buf)
+    ss = code_start_addr
+    ssz = len(code_buf)
 
     # WarPC 基址修补
     for off in value_scan(bytes(code_buf), WARPC_BASE):
@@ -1430,7 +1445,8 @@ def expand_warpc_buffer(child_pid: int, base_addr: int, module_size: int,
     log(f"  WarPC 基址 0x{WARPC_BASE:08X} 扫描: 找到 {ap} 处")
 
     # word_757F0C 修补
-    w0c = WARPC_BASE + 4; n0c = _i32b(nb + 4)
+    w0c = WARPC_BASE + 4
+    n0c = _i32b(nb + 4)
     for off in value_scan(bytes(code_buf), w0c):
         aa = ss + off
         op = vp_ex(hp, aa, 4, PAGE_EXECUTE_READWRITE)
@@ -1473,7 +1489,8 @@ def expand_warpc_buffer(child_pid: int, base_addr: int, module_size: int,
     log(f"  WarPC 大小常量修补: {sp} 处")
 
     # [补丁六] 存档/读档缓冲区大小修补 (优化: 使用 value_scan 替代逐字节扫描)
-    tos = WARPC_TOTAL_ORIG_SIZE; tns = 9200 + ns
+    tos = WARPC_TOTAL_ORIG_SIZE
+    tns = 9200 + ns
     tnl = _i32b(tns)
     tp = 0
     for off in value_scan(bytes(code_buf), tos):
@@ -1489,7 +1506,8 @@ def expand_warpc_buffer(child_pid: int, base_addr: int, module_size: int,
     patch_data_file_sizes(hp, base_addr, ss, ssz)
 
     # [补丁八] 新角色备份
-    es = WARPC_ORIG_COUNT * WARPC_REC_SIZE; exs = ns - es
+    es = WARPC_ORIG_COUNT * WARPC_REC_SIZE
+    exs = ns - es
     bbp = 0
     if exs > 0:
         bpv = _VirtualAllocEx(hp, None, exs, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE)
@@ -1657,7 +1675,8 @@ def patch_41c120(cpid: int, base: int):
 def patch_archive_portrait(cpid: int, base: int):
     """修补 sub_41AB94 内 add ax,0xD3+push eax 为 call archive_portrait cave"""
     global _archive_portrait_cave_addr
-    sr = 0x1AB94; ssz = 0x500
+    sr = 0x1AB94
+    ssz = 0x500
     log("\n--- [补丁十四] 存档界面队伍头像 hook ---")
     if _archive_portrait_cave_addr == 0:
         log("  [WARN] ArchivePortraitCave 未分配, 跳过"); return
@@ -1698,7 +1717,8 @@ def patch_archive_portrait(cpid: int, base: int):
 
 def patch_gold_display(cpid: int, base: int):
     """修补 movsx->movzx 修复 signed short 金钱显示"""
-    sr = 0x1AB94; ssz = 0x600
+    sr = 0x1AB94
+    ssz = 0x600
     log("\n--- [补丁十七] 存档界面金钱显示修复 (signed->unsigned) ---")
     hp = _OpenProcess(PROCESS_VM_READ | PROCESS_VM_WRITE | PROCESS_VM_OPERATION, False, cpid)
     if not hp:
@@ -1760,11 +1780,14 @@ def main():
     while i < len(args):
         a = args[i]
         if a == "--exe" and i + 1 < len(args):
-            i += 1; tks_path = args[i]
+            i += 1
+            tks_path = args[i]
         elif a == "--wait" and i + 1 < len(args):
-            i += 1; wait_timeout = int(args[i])
+            i += 1
+            wait_timeout = int(args[i])
         elif a == "--cwd" and i + 1 < len(args):
-            i += 1; game_dir = os.path.abspath(args[i])
+            i += 1
+            game_dir = os.path.abspath(args[i])
         elif a == "--minimal":
             minimal_mode = True
         elif a == "--no-cave":
@@ -1885,7 +1908,8 @@ def main():
                 if ht:
                     psig, nr = read_pm(ht, tb, 2)
                     if nr == 2 and psig[0]==0x4D and psig[1]==0x5A:
-                        target_pid = tpid; direct_mode = True
+                        target_pid = tpid
+                        direct_mode = True
                         version_label = "TKS 未加密版 (主进程模式)"
                         log(f"  游戏模块已加载到主进程: base=0x{tb:08X} PID={target_pid} -> {version_label}")
                         update_overlay("正在加载游戏补丁...")
@@ -1991,9 +2015,11 @@ def main():
     warpc_base_for_caves = 0
     if _warpc_expanded and _warpc_full_data:
         import shutil
-        wp = "WarPC.dat"; bp = wp + ".orig"
+        wp = "WarPC.dat"
+        bp = wp + ".orig"
         if os.path.isfile(bp):
-            shutil.copy2(bp, wp); os.remove(bp)
+            shutil.copy2(bp, wp)
+            os.remove(bp)
             log("  已恢复原始 WarPC.dat")
 
         ns = len(_warpc_full_data)
@@ -2007,7 +2033,8 @@ def main():
                 abv = ctypes.cast(ab, ctypes.c_void_p).value or 0
                 nb = abv + GUARD_SIZE
                 write_pm(hw, nb, _warpc_full_data)
-                _warpc_new_buf = nb; warpc_base_for_caves = nb
+                _warpc_new_buf = nb
+                warpc_base_for_caves = nb
                 log(f"  WarPC 缓冲区: 0x{nb:08X} ({ns} 字节, {ns // WARPC_REC_SIZE} 角色)")
                 log(f"  GUARD 安全垫: 0x{abv:08X}-0x{abv + GUARD_SIZE:08X} ({GUARD_SIZE} 字节)")
             _CloseHandle(hw)
@@ -2019,7 +2046,8 @@ def main():
             continue
         bp = k + ".orig"
         if os.path.isfile(bp):
-            shutil.copy2(bp, k); os.remove(bp)
+            shutil.copy2(bp, k)
+            os.remove(bp)
             log(f"  已恢复原始 {k}")
 
     # 设置配置变量
@@ -2145,7 +2173,8 @@ def main():
     log("\n--- 存档索引文件内容详细 dump ---")
     from datetime import datetime, timezone, timedelta
     for si in range(1, 10):
-        ip = f"save\\{si}.sav"; dp = f"save\\sav.{si}"
+        ip = f"save\\{si}.sav"
+        dp = f"save\\sav.{si}"
         if not os.path.isfile(ip):
             log(f"  slot {si}: 不存在"); continue
         try:

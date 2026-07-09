@@ -10,12 +10,12 @@ MOD 打包器 — 将多个 .tksmod 文件合并为一个统一的 MOD 包
   MOD 开发者通过各编辑器分别导出 .tksmod 文件后，使用本模块将
   属于同一 MOD 的多个文件合并为一个独立包，方便玩家分发和管理。
 """
-import os
 import json
+import os
 import zipfile
-from datetime import datetime, timezone, timedelta
 from dataclasses import dataclass, field
-from typing import List, Dict, Any, Optional, Tuple
+from datetime import datetime, timedelta, timezone
+from typing import Any, Dict, List, Optional, Tuple
 
 
 @dataclass
@@ -475,7 +475,6 @@ def create_tksmodpak(mod_paths: List[str], output_path: str,
     if not mod_paths:
         return False, "未提供要打包的模组文件"
 
-    from datetime import datetime, timezone, timedelta
     now = datetime.now(timezone(timedelta(hours=8)))
 
     # 处理预览图

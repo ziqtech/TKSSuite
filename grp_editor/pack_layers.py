@@ -14,12 +14,18 @@
 用法: python pack_layers.py --l1 layer1.png --l2 layer2.png [-o output.png]
 """
 
-import sys, struct, zlib, argparse
+import argparse
+import struct
+import sys
+import zlib
 from pathlib import Path
 
 HAS_PIL = False
-try:    from PIL import Image; HAS_PIL = True
-except ImportError: pass
+try:
+    from PIL import Image
+    HAS_PIL = True
+except ImportError:
+    pass
 
 # ── 伪彩色反向映射表 (与 grp_editor.py 完全一致) ──────────
 
@@ -38,7 +44,8 @@ _L2_RGB2VAL = {}
 # L1 颜色表 (seed=31, 与编辑器同步)
 for _v in range(256):
     c1 = _distinct_color(_v, seed=31)
-    while c1 in _L1_RGB2VAL: c1 = ((c1[0] + 1) % 256, c1[1], c1[2])
+    while c1 in _L1_RGB2VAL:
+        c1 = ((c1[0] + 1) % 256, c1[1], c1[2])
     _L1_RGB2VAL[c1] = _v
 
 # L2 颜色表 (seed=73, 优先复用碰撞色)
@@ -48,11 +55,15 @@ _COLLISION_COLORS = {
     8:(128,0,255,200), 9:(150,150,150,200), 10:(255,128,128,200),
 }
 for _v in range(256):
-    if _v == 0: c2 = (0, 0, 0)
+    if _v == 0:
+        c2 = (0, 0, 0)
     elif _v in _COLLISION_COLORS:
-        r, g, b, _a = _COLLISION_COLORS[_v]; c2 = (r, g, b)
-    else: c2 = _distinct_color(_v, seed=73)
-    while c2 in _L2_RGB2VAL: c2 = ((c2[0] + 1) % 256, c2[1], c2[2])
+        r, g, b, _a = _COLLISION_COLORS[_v]
+        c2 = (r, g, b)
+    else:
+        c2 = _distinct_color(_v, seed=73)
+    while c2 in _L2_RGB2VAL:
+        c2 = ((c2[0] + 1) % 256, c2[1], c2[2])
     _L2_RGB2VAL[c2] = _v
 
 
@@ -64,7 +75,8 @@ def _nearest_color(rgb: tuple, lut: dict) -> int:
     for color, val in lut.items():
         cr, cg, cb = color
         dist = (r - cr)**2 + (g - cg)**2 + (b - cb)**2
-        if dist < best_dist: best_val, best_dist = val, dist
+        if dist < best_dist:
+            best_val, best_dist = val, dist
     return best_val
 
 
@@ -78,7 +90,8 @@ def pseudo_to_bytes(img_path: str, lut: dict) -> bytes:
 # ── PNG 编码 ──────────────────────────────────────────────
 
 def _png_chunk(ct: bytes, d: bytes) -> bytes:
-    c = ct + d; return struct.pack(">I", len(d)) + c + struct.pack(">I", zlib.crc32(c) & 0xFFFFFFFF)
+    c = ct + d
+    return struct.pack(">I", len(d)) + c + struct.pack(">I", zlib.crc32(c) & 0xFFFFFFFF)
 
 def save_packed_rgba(w: int, h: int, l1: bytes, l2: bytes, path: str):
     """打包 R=L1, G=L2, B=0, A=(L2>0?255:0)"""
@@ -99,7 +112,8 @@ def save_packed_rgba(w: int, h: int, l1: bytes, l2: bytes, path: str):
     stride = w * 4
     raw = bytearray(h * (stride + 1))
     for row in range(h):
-        out = row * (stride + 1); raw[out] = 0
+        out = row * (stride + 1)
+        raw[out] = 0
         raw[out+1:out+1+stride] = rgba[row*stride:(row+1)*stride]
     png += _png_chunk(b"IDAT", zlib.compress(bytes(raw), 9))
     png += _png_chunk(b"IEND", b"")
@@ -116,14 +130,17 @@ def main():
     args = parser.parse_args()
 
     if not HAS_PIL:
-        print("需要 Pillow: pip install Pillow"); sys.exit(1)
+        print("需要 Pillow: pip install Pillow")
+        sys.exit(1)
 
     # 读取 L1
-    img1 = Image.open(args.l1); w1, h1 = img1.size
+    img1 = Image.open(args.l1)
+    w1, h1 = img1.size
     l1_bytes = pseudo_to_bytes(args.l1, _L1_RGB2VAL)
 
     # 读取 L2
-    img2 = Image.open(args.l2); w2, h2 = img2.size
+    img2 = Image.open(args.l2)
+    w2, h2 = img2.size
     l2_bytes = pseudo_to_bytes(args.l2, _L2_RGB2VAL)
 
     if (w1, h1) != (w2, h2):

@@ -1,8 +1,8 @@
 """模式扫描引擎 — 从 tks_launcher.py 提取"""
 import struct
 from dataclasses import dataclass, field
-from typing import List, Tuple, Dict, Optional
-from .memory import i32b, b2i32
+from typing import Dict, List, Optional, Tuple
+from .memory import b2i32, i32b, read_pm
 
 
 # ============================================================
@@ -80,7 +80,6 @@ def parse_pe_sections_from_memory(h_proc: int, base_addr: int, log_func=None) ->
 
     用于运行时检测目标进程的节布局。
     """
-    from .memory import read_pm
     log = log_func or (lambda x: None)
     sections = []
     try:

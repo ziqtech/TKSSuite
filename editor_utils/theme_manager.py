@@ -5,10 +5,10 @@
   2. 静态模式: ThemeManager.apply_dark_theme(app)
 """
 import os
-import sys
 import re
-from PySide6.QtGui import QPalette, QColor
+import sys
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QPalette, QColor
 
 # 打包环境: Nuitka/PyInstaller 将 editor_themes/ 烘焙进 exe
 # Nuitka: __file__ 始终指向正确位置 (无论 onefile/standalone)

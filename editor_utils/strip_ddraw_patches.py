@@ -21,8 +21,8 @@ Hook: DLL 在 .data 段中以 32 字节条目定义，结构为:
   - SkimFstDlg / NoTmpDatRead / NoTmpDatWrite / NoEnemy / ReadSave / WriteSave
 """
 
-import sys
 import shutil
+import sys
 from pathlib import Path
 
 # ============================================================

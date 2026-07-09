@@ -1,18 +1,18 @@
 """模组打包对话框 — 将多个 .tksmod 打包为一个 .tksmodpak 合集文件"""
 import os
-from PySide6.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QGridLayout,
-    QLabel, QLineEdit, QTextEdit, QComboBox, QSpinBox,
-    QPushButton, QListWidget, QListWidgetItem, QFileDialog,
-    QMessageBox, QGroupBox, QProgressBar, QAbstractItemView,
-)
+
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QPixmap
+from PySide6.QtWidgets import (
+    QAbstractItemView, QComboBox, QDialog, QFileDialog, QGridLayout,
+    QGroupBox, QHBoxLayout, QLabel, QLineEdit, QListWidget,
+    QListWidgetItem, QMessageBox, QProgressBar, QPushButton, QSpinBox,
+    QTextEdit, QVBoxLayout,
+)
 
 from core.mod_packer import (
-    read_tksmod_content,
-    suggest_output_name, list_tksmod_contents,
-    create_tksmodpak,
+    create_tksmodpak, list_tksmod_contents, read_tksmod_content,
+    suggest_output_name,
 )
 from editor_utils.mod_exporter import generate_short_uuid
 

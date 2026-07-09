@@ -13,7 +13,8 @@ Spritesheet Editor - 精灵表编辑器
 """
 
 from __future__ import annotations
-import os, sys
+import os
+import sys
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 from pathlib import Path
@@ -2092,8 +2093,10 @@ class SpriteSheetEditor(tk.Tk):
 
         if filepath:
             self._load_spritesheet(Path(filepath))
-        sw = self.winfo_screenwidth(); sh = self.winfo_screenheight()
-        x = (sw - 1180) // 2; y = (sh - 740) // 2
+        sw = self.winfo_screenwidth()
+        sh = self.winfo_screenheight()
+        x = (sw - 1180) // 2
+        y = (sh - 740) // 2
         self.geometry(f'1180x740+{x}+{y}')
 
     def _build_menu(self):

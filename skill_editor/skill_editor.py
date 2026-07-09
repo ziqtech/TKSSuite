@@ -18,8 +18,10 @@ TKSkill.dat 格式 (每条 94 字节, 共 350 条):
   python skill_editor.py
 """
 
-import struct, os, sys, tkinter as tk
-from tkinter import ttk, messagebox, filedialog
+import os
+import struct
+import tkinter as tk
+from tkinter import filedialog, messagebox, ttk
 
 # ============================================================
 # LZSS 编解码 (sub_452B14)
@@ -92,9 +94,12 @@ def lzss_compress(data):
 def load_tkt(tkt_path):
     if not tkt_path or not os.path.exists(tkt_path): return {}
     with open(tkt_path, 'rb') as f: raw = f.read()
-    ts = struct.unpack_from('<I', raw, 0)[0]; cnt = struct.unpack_from('<I', raw, 4)[0]
-    enc = raw[8:8 + ts]; dec = bytes([b ^ 0xFF for b in enc])
-    idsz, ofsz = cnt * 4, cnt * 4; lookup = {}
+    ts = struct.unpack_from('<I', raw, 0)[0]
+    cnt = struct.unpack_from('<I', raw, 4)[0]
+    enc = raw[8:8 + ts]
+    dec = bytes([b ^ 0xFF for b in enc])
+    idsz, ofsz = cnt * 4, cnt * 4
+    lookup = {}
     SKIP = set(range(0, 10))
     for i in range(cnt):
         eid = struct.unpack_from('<i', dec, i * 4)[0]
@@ -113,9 +118,12 @@ def load_tkt(tkt_path):
 def load_tkt_full(tkt_path):
     if not tkt_path or not os.path.exists(tkt_path): return {}
     with open(tkt_path, 'rb') as f: raw = f.read()
-    ts = struct.unpack_from('<I', raw, 0)[0]; cnt = struct.unpack_from('<I', raw, 4)[0]
-    enc = raw[8:8 + ts]; dec = bytes([b ^ 0xFF for b in enc])
-    idsz, ofsz = cnt * 4, cnt * 4; lookup = {}
+    ts = struct.unpack_from('<I', raw, 0)[0]
+    cnt = struct.unpack_from('<I', raw, 4)[0]
+    enc = raw[8:8 + ts]
+    dec = bytes([b ^ 0xFF for b in enc])
+    idsz, ofsz = cnt * 4, cnt * 4
+    lookup = {}
     SKIP = set(range(0, 10))
     for i in range(cnt):
         eid = struct.unpack_from('<i', dec, i * 4)[0]
@@ -135,7 +143,8 @@ def load_tkt_full(tkt_path):
 # 常量
 # ============================================================
 
-SKILL_REC = 94; SKILL_CNT = 350  # sub_45343C: 32900 = 94 × 350
+SKILL_REC = 94
+SKILL_CNT = 350  # sub_45343C: 32900 = 94 × 350
 
 SKILL_TYPES = {0: "指令技能", 1: "主动技能", 2: "被动技能", 3: "移动技能"}
 SKILL_TYPE_VALUES = [f"{k}-{v}" for k, v in sorted(SKILL_TYPES.items())]
@@ -156,7 +165,8 @@ SPECIAL_FLAG_BITS = [
     (3, "解陷", "自动解除陷阱 (sub_422BBC bit3)"),
 ]
 
-FONT = ('Microsoft YaHei UI', 9); FONT_S = ('Microsoft YaHei UI', 8)
+FONT = ('Microsoft YaHei UI', 9)
+FONT_S = ('Microsoft YaHei UI', 8)
 W_INPUT = 12
 
 # ============================================================
@@ -275,7 +285,8 @@ def load_skills(fp):
 def save_skills(fp, recs):
     buf = bytearray(SKILL_CNT * SKILL_REC)
     for rec in recs[:SKILL_CNT]:
-        i = rec['index']; off = i * SKILL_REC
+        i = rec['index']
+        off = i * SKILL_REC
         for k, fo, _, _, _ in ALL_FIELDS:
             struct.pack_into('<h', buf, off + fo, rec[k])
     compressed = lzss_compress(bytes(buf))
@@ -293,27 +304,37 @@ class SkillEditor:
         self.root = root
         self.root.title("TKSkill.dat 可视化编辑器")
         ico = os.path.join(os.path.dirname(__file__), 'TKS.ico')
-        if os.path.exists(ico): self.root.iconbitmap(default=ico)
-        self.root.geometry("1260x820"); self.root.minsize(1000, 650)
+        if os.path.exists(ico):
+            self.root.iconbitmap(default=ico)
+        self.root.geometry("1260x820")
+        self.root.minsize(1000, 650)
         self.skill_path = self.tkt_path = None
-        self.records = []; self.tkt = {}; self.tkt_full = {}
-        self.filtered_indices = []; self._dirty = False
+        self.records = []
+        self.tkt = {}
+        self.tkt_full = {}
+        self.filtered_indices = []
+        self._dirty = False
         self.filter_type = tk.StringVar(value="全部类型")
-        self._build_ui(); self._set_edit_enabled(False)
-        sw = self.root.winfo_screenwidth(); sh = self.root.winfo_screenheight()
-        x = (sw - 1260) // 2; y = (sh - 820) // 2
+        self._build_ui()
+        self._set_edit_enabled(False)
+        sw = self.root.winfo_screenwidth()
+        sh = self.root.winfo_screenheight()
+        x = (sw - 1260) // 2
+        y = (sh - 820) // 2
         self.root.geometry(f'1260x820+{x}+{y}')
 
     # ----------- UI 构建 -----------
 
     def _build_ui(self):
-        mb = tk.Menu(self.root); self.root.config(menu=mb)
+        mb = tk.Menu(self.root)
+        self.root.config(menu=mb)
         fm = tk.Menu(mb, tearoff=0)
         fm.add_command(label="加载 TKS 目录…", command=self._load_tks_dir, accelerator="Ctrl+O")
         fm.add_separator()
         fm.add_command(label="保存", command=self._save, accelerator="Ctrl+S")
         fm.add_command(label="导出 CSV…", command=self._export_csv)
-        fm.add_separator(); fm.add_command(label="退出", command=self.root.quit)
+        fm.add_separator()
+        fm.add_command(label="退出", command=self.root.quit)
         mb.add_cascade(label="文件", menu=fm)
         em = tk.Menu(mb, tearoff=0)
         em.add_command(label="新建技能", command=self._new_skill, accelerator="Ctrl+N")
@@ -331,10 +352,12 @@ class SkillEditor:
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
         # Toolbar
-        tb = ttk.Frame(self.root); tb.pack(fill=tk.X, padx=5, pady=(5, 0))
+        tb = ttk.Frame(self.root)
+        tb.pack(fill=tk.X, padx=5, pady=(5, 0))
         ttk.Label(tb, text="搜索:").pack(side=tk.LEFT)
         self.sv = tk.StringVar()
-        e_s = ttk.Entry(tb, textvariable=self.sv, width=20); e_s.pack(side=tk.LEFT, padx=2)
+        e_s = ttk.Entry(tb, textvariable=self.sv, width=20)
+        e_s.pack(side=tk.LEFT, padx=2)
         e_s.bind('<Return>', lambda e: self._apply_filter())
         ttk.Button(tb, text="搜索", command=self._apply_filter, width=5).pack(side=tk.LEFT, padx=1)
         ttk.Button(tb, text="清除", command=self._clear_filter, width=5).pack(side=tk.LEFT, padx=1)
@@ -354,7 +377,8 @@ class SkillEditor:
         paned.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
 
         # Left: TreeView
-        lf = ttk.Frame(paned); paned.add(lf, weight=2)
+        lf = ttk.Frame(paned)
+        paned.add(lf, weight=2)
         cols = ('index', 'skill_text_id', 'type', 'name', 'jp_cost', 'mp_cost')
         self.tree = ttk.Treeview(lf, columns=cols, show='headings', selectmode='browse')
         cc = [('index', '技能ID', 52), ('skill_text_id', '文本ID', 52), ('type', '类型', 72),
@@ -364,24 +388,30 @@ class SkillEditor:
             self.tree.column(cid, width=cw, anchor='center' if cid != 'name' else 'w', minwidth=cw)
         vsb = ttk.Scrollbar(lf, orient=tk.VERTICAL, command=self.tree.yview)
         self.tree.configure(yscrollcommand=vsb.set)
-        self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True); vsb.pack(side=tk.RIGHT, fill=tk.Y)
+        self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        vsb.pack(side=tk.RIGHT, fill=tk.Y)
         self.tree.bind('<<TreeviewSelect>>', self._on_tree_select)
         self.tree.tag_configure('cmd', foreground='#3366cc')
         self.tree.tag_configure('passive', foreground='#228B22')
 
         # Right: Edit panel
-        rf = ttk.Frame(paned); paned.add(rf, weight=3)
+        rf = ttk.Frame(paned)
+        paned.add(rf, weight=3)
         self.edit_frame = rf
 
         self.lbl_rec_idx = ttk.Label(rf, text="未选中", font=('', 11, 'bold'))
         self.lbl_rec_idx.pack(anchor=tk.W, pady=(0, 4), padx=4)
 
         # Scrollable edit area
-        middle = ttk.Frame(rf); middle.pack(fill=tk.BOTH, expand=True)
-        left_col = ttk.Frame(middle); left_col.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        sb = ttk.Scrollbar(middle, orient=tk.VERTICAL); sb.pack(side=tk.RIGHT, fill=tk.Y)
+        middle = ttk.Frame(rf)
+        middle.pack(fill=tk.BOTH, expand=True)
+        left_col = ttk.Frame(middle)
+        left_col.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        sb = ttk.Scrollbar(middle, orient=tk.VERTICAL)
+        sb.pack(side=tk.RIGHT, fill=tk.Y)
 
-        bf = ttk.Frame(left_col); bf.pack(side=tk.BOTTOM, fill=tk.X, pady=(2, 0))
+        bf = ttk.Frame(left_col)
+        bf.pack(side=tk.BOTTOM, fill=tk.X, pady=(2, 0))
         ttk.Button(bf, text="应用修改", command=self._apply_edit, width=12).pack(side=tk.LEFT)
         ttk.Button(bf, text="重置为当前", command=self._reset_edit, width=12).pack(side=tk.LEFT, padx=2)
 
@@ -395,7 +425,8 @@ class SkillEditor:
         canvas.configure(yscrollcommand=sb.set)
         self._bind_mousewheel(canvas)
 
-        self._edit_vars = {}; self._edit_extras = {}
+        self._edit_vars = {}
+        self._edit_extras = {}
 
         # Preview panel
         pv_lf = ttk.LabelFrame(self.edit_inner, text="技能预览", padding=4)
@@ -430,7 +461,8 @@ class SkillEditor:
         self._build_field_group("技能树引用表 (8组: 目标技能 / 技能进度权重)", TREE_FIELDS, 5, 6)
 
         # Bottom path bar
-        pf = ttk.LabelFrame(self.root, text="当前加载"); pf.pack(fill=tk.X, padx=5, pady=(0, 2))
+        pf = ttk.LabelFrame(self.root, text="当前加载")
+        pf.pack(fill=tk.X, padx=5, pady=(0, 2))
         self.lbl_skill = ttk.Label(pf, text="", foreground="gray")
         self.lbl_skill.pack(side=tk.LEFT, padx=10, pady=2)
         ttk.Separator(pf, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y)
@@ -444,19 +476,24 @@ class SkillEditor:
         hint_lbl = ttk.Label(lf, text="", font=FONT_S, foreground='#888')
         hint_lbl.pack(anchor=tk.W, padx=2, pady=(0, 2))
         setattr(self, f'_hint_{row}', hint_lbl)
-        grid = ttk.Frame(lf); grid.pack(fill=tk.X)
+        grid = ttk.Frame(lf)
+        grid.pack(fill=tk.X)
         for fi, (fn, fo, fl, ft, cmt) in enumerate(fields):
             r, c = divmod(fi, cols)
             self._build_field(grid, r, c, fn, fo, fl, ft, W_INPUT, cmt)
 
     def _build_field(self, parent, row, col, fn, fo, fl, ft, fw, cmt):
-        frm = ttk.Frame(parent); frm.grid(row=row, column=col, sticky='nw', padx=3, pady=2)
-        lbl = ttk.Label(frm, text=fl, font=FONT_S); lbl.pack(anchor=tk.W)
+        frm = ttk.Frame(parent)
+        frm.grid(row=row, column=col, sticky='nw', padx=3, pady=2)
+        lbl = ttk.Label(frm, text=fl, font=FONT_S)
+        lbl.pack(anchor=tk.W)
         self._bind_tooltip(lbl, f"[{fo:02d}] {cmt}")
 
         if ft == 'tkt':
-            box = ttk.Frame(frm); box.pack(fill=tk.X)
-            ev = tk.StringVar(); self._edit_vars[fn] = ev
+            box = ttk.Frame(frm)
+            box.pack(fill=tk.X)
+            ev = tk.StringVar()
+            self._edit_vars[fn] = ev
             ttk.Entry(box, textvariable=ev, width=fw, font=FONT).pack(side=tk.LEFT)
             ttk.Button(box, text="…", width=2,
                        command=lambda f=fn: self._pick_tkt(f)).pack(side=tk.LEFT, padx=1)
@@ -466,7 +503,8 @@ class SkillEditor:
         elif ft == 'type':
             cb = ttk.Combobox(frm, state='readonly', values=SKILL_TYPE_VALUES,
                               width=fw + 2, font=FONT)
-            cb.pack(fill=tk.X); self._edit_extras[fn] = cb
+            cb.pack(fill=tk.X)
+            self._edit_extras[fn] = cb
             self._edit_vars[fn] = tk.StringVar()
             cb.bind('<<ComboboxSelected>>', lambda e: self._on_type_change())
         elif ft == 'mask':
@@ -491,14 +529,18 @@ class SkillEditor:
             cb = ttk.Combobox(frm, state='readonly',
                               values=ATK_TYPE_VALUES,
                               width=fw + 6, font=FONT)
-            cb.pack(fill=tk.X); self._edit_extras[fn] = cb
+            cb.pack(fill=tk.X)
+            self._edit_extras[fn] = cb
             self._edit_vars[fn] = tk.StringVar()
         elif ft == 'byte':
-            ev = tk.StringVar(); self._edit_vars[fn] = ev
+            ev = tk.StringVar()
+            self._edit_vars[fn] = ev
             ttk.Entry(frm, textvariable=ev, width=4, font=FONT).pack(fill=tk.X)
         elif ft == 'skill_pick':
-            box = ttk.Frame(frm); box.pack(fill=tk.X)
-            ev = tk.StringVar(); self._edit_vars[fn] = ev
+            box = ttk.Frame(frm)
+            box.pack(fill=tk.X)
+            ev = tk.StringVar()
+            self._edit_vars[fn] = ev
             ttk.Entry(box, textvariable=ev, width=fw, font=FONT).pack(side=tk.LEFT)
             ttk.Button(box, text="…", width=2,
                        command=lambda f=fn: self._pick_skill(f)).pack(side=tk.LEFT, padx=1)
@@ -506,25 +548,32 @@ class SkillEditor:
                                                font=FONT_S, wraplength=150)
             self._edit_extras[fn].pack(anchor=tk.W)
         else:
-            ev = tk.StringVar(); self._edit_vars[fn] = ev
+            ev = tk.StringVar()
+            self._edit_vars[fn] = ev
             ttk.Entry(frm, textvariable=ev, width=fw, font=FONT).pack(fill=tk.X)
 
     def _bind_tooltip(self, widget, text):
         tip = {'win': None}
         def _enter(e):
             if tip['win']: return
-            x = widget.winfo_rootx() + 10; y = widget.winfo_rooty() + widget.winfo_height() + 2
-            w = tk.Toplevel(widget); w.wm_overrideredirect(True)
+            x = widget.winfo_rootx() + 10
+            y = widget.winfo_rooty() + widget.winfo_height() + 2
+            w = tk.Toplevel(widget)
+            w.wm_overrideredirect(True)
             w.wm_geometry(f"+{x}+{y}")
             ttk.Label(w, text=text, background='#FFFFE0', relief='solid', borderwidth=1,
                       font=FONT_S, wraplength=420, padding=3).pack()
             tip['win'] = w
         def _leave(e):
-            if tip['win']: tip['win'].destroy(); tip['win'] = None
-        widget.bind('<Enter>', _enter); widget.bind('<Leave>', _leave)
+            if tip['win']:
+                tip['win'].destroy()
+                tip['win'] = None
+        widget.bind('<Enter>', _enter)
+        widget.bind('<Leave>', _leave)
 
     def _bind_mousewheel(self, canvas):
-        def _mw(e): canvas.yview_scroll(int(-1 * (e.delta / 120)), "units")
+        def _mw(e):
+            canvas.yview_scroll(int(-1 * (e.delta / 120)), "units")
         canvas.bind("<Enter>", lambda e: canvas.bind_all("<MouseWheel>", _mw))
         canvas.bind("<Leave>", lambda e: canvas.unbind_all("<MouseWheel>"))
 
@@ -536,25 +585,31 @@ class SkillEditor:
         sk = os.path.join(d, "TKSkill.dat")
         tk_ = os.path.join(d, "TKT.dat")
         if not os.path.exists(sk):
-            messagebox.showwarning("文件缺失", "未找到 TKSkill.dat"); return
+            messagebox.showwarning("文件缺失", "未找到 TKSkill.dat")
+            return
         self.skill_path = sk
         self.tkt_path = tk_ if os.path.exists(tk_) else None
         self._reload()
 
     def _reload(self):
         if not self.skill_path: return
-        self.status_var.set("加载中…"); self.root.update()
+        self.status_var.set("加载中…")
+        self.root.update()
         if self.tkt_path:
             self.tkt = load_tkt(self.tkt_path)
             self.tkt_full = load_tkt_full(self.tkt_path)
         try:
-            self.records = load_skills(self.skill_path); self._dirty = False
+            self.records = load_skills(self.skill_path)
+            self._dirty = False
             nonempty = sum(1 for r in self.records if r['skill_text_id'] != 0)
             self.status_var.set(
                 f"{len(self.records)} 条 | 有效 {nonempty} | TKT {len(self.tkt)} 条")
         except Exception as e:
-            messagebox.showerror("加载失败", str(e)); self.records = []
-        self._update_paths(); self._set_edit_enabled(True); self._apply_filter()
+            messagebox.showerror("加载失败", str(e))
+            self.records = []
+        self._update_paths()
+        self._set_edit_enabled(True)
+        self._apply_filter()
 
     def _set_edit_enabled(self, en):
         for c in self.edit_frame.winfo_children(): self._set_ws(c, en)
@@ -588,7 +643,8 @@ class SkillEditor:
     # ----------- 筛选/列表 -----------
 
     def _apply_filter(self):
-        q = self.sv.get().strip().lower(); self.filtered_indices = []
+        q = self.sv.get().strip().lower()
+        self.filtered_indices = []
         ftype = self.filter_type.get()
         for rec in self.records:
             if rec['skill_text_id'] == 0: continue  # skip empty slots
@@ -606,7 +662,9 @@ class SkillEditor:
         self.status_var.set(msg)
 
     def _clear_filter(self):
-        self.sv.set(""); self.filter_type.set("全部类型"); self._apply_filter()
+        self.sv.set("")
+        self.filter_type.set("全部类型")
+        self._apply_filter()
 
     def _refresh_table(self):
         for it in self.tree.get_children(): self.tree.delete(it)
@@ -630,25 +688,33 @@ class SkillEditor:
             km = {'skill_text_id': 'skill_text_id', 'type': 'type', 'jp_cost': 'jp_cost', 'mp_cost': 'mp_cost'}
             self.filtered_indices.sort(
                 key=lambda i: self.records[i].get(km.get(col, 'index'), 0), reverse=rev)
-        self._sort_reverse = not rev; self._refresh_table()
+        self._sort_reverse = not rev
+        self._refresh_table()
 
     # ----------- 编辑 -----------
 
     def _new_skill(self):
         """查找第一个空槽(skill_text_id=0)，设置默认模板"""
         if not self.records:
-            messagebox.showinfo("提示", "请先加载数据"); return
+            messagebox.showinfo("提示", "请先加载数据")
+            return
         for rec in self.records:
             if rec['skill_text_id'] == 0:
                 rec['skill_text_id'] = rec['index'] + 1
-                rec['type'] = 1; rec['jp_cost'] = 1
-                rec['sub_count'] = -1; rec['atk_type'] = -1
-                self._dirty = True; self._apply_filter()
+                rec['type'] = 1
+                rec['jp_cost'] = 1
+                rec['sub_count'] = -1
+                rec['atk_type'] = -1
+                self._dirty = True
+                self._apply_filter()
                 for child in self.tree.get_children():
                     if int(self.tree.item(child)['values'][0]) == rec['index']:
-                        self.tree.selection_set(child); self.tree.see(child); break
+                        self.tree.selection_set(child)
+                        self.tree.see(child)
+                        break
                 self._populate_edit(rec)
-                self.status_var.set(f"已创建新技能 → 槽位 #{rec['index']}"); return
+                self.status_var.set(f"已创建新技能 → 槽位 #{rec['index']}")
+                return
         messagebox.showwarning("槽位已满", f"所有 {SKILL_CNT} 个槽位均已占用")
 
     def _copy_record(self):
@@ -656,18 +722,23 @@ class SkillEditor:
         if not hasattr(self, '_editing_idx'): return
         src = self.records[self._editing_idx]
         if src['skill_text_id'] == 0:
-            messagebox.showinfo("提示", "当前记录为空, 无需复制"); return
+            messagebox.showinfo("提示", "当前记录为空, 无需复制")
+            return
         for rec in self.records:
             if rec['skill_text_id'] == 0:
                 idx_bak = rec['index']
                 rec.update({k: v for k, v in src.items() if k != 'index'})
                 rec['index'] = idx_bak
-                self._dirty = True; self._apply_filter()
+                self._dirty = True
+                self._apply_filter()
                 for child in self.tree.get_children():
                     if int(self.tree.item(child)['values'][0]) == rec['index']:
-                        self.tree.selection_set(child); self.tree.see(child); break
+                        self.tree.selection_set(child)
+                        self.tree.see(child)
+                        break
                 self._populate_edit(rec)
-                self.status_var.set(f"已复制 #{src['index']} → #{rec['index']}"); return
+                self.status_var.set(f"已复制 #{src['index']} → #{rec['index']}")
+                return
         messagebox.showwarning("槽位已满", f"所有 {SKILL_CNT} 个槽位均已占用")
 
     def _clear_current(self):
@@ -675,13 +746,15 @@ class SkillEditor:
         if not hasattr(self, '_editing_idx'): return
         rec = self.records[self._editing_idx]
         if rec['skill_text_id'] == 0:
-            messagebox.showinfo("提示", "当前记录已经为空"); return
+            messagebox.showinfo("提示", "当前记录已经为空")
+            return
         if not messagebox.askyesno("确认清空", f"确定清空记录 #{rec['index']}?"):
             return
         for k, fo, _, _, _ in ALL_FIELDS:
             rec[k] = 0
         rec['sub_count'] = -1
-        self._dirty = True; self._apply_filter()
+        self._dirty = True
+        self._apply_filter()
         self._populate_edit(rec)
         self.status_var.set(f"已清空记录 #{rec['index']}")
 
@@ -725,12 +798,15 @@ class SkillEditor:
         self._update_type_hints(rec['type'])
 
         for fn, fo, fl, ft, _ in ALL_FIELDS:
-            val = rec.get(fn, 0); sv = str(val)
+            val = rec.get(fn, 0)
+            sv = str(val)
             self._edit_vars.get(fn, tk.StringVar()).set(sv)
             if ft == 'type':
                 cb = self._edit_extras[fn]
                 for i, t in enumerate(cb['values']):
-                    if t.startswith(f"{val}-"): cb.current(i); break
+                    if t.startswith(f"{val}-"):
+                        cb.current(i)
+                        break
             elif ft == 'tkt':
                 # update resolved name
                 nid = int(val) if val else 0
@@ -746,7 +822,9 @@ class SkillEditor:
             elif ft == 'atk_type':
                 cb = self._edit_extras[fn]
                 for i, t in enumerate(cb['values']):
-                    if t.startswith(f"{val}-"): cb.current(i); break
+                    if t.startswith(f"{val}-"):
+                        cb.current(i)
+                        break
             elif ft == 'skill_pick':
                 sidx = int(val) if val else 0
                 if sidx > 0 and sidx < len(self.records) and self.records[sidx]['skill_text_id'] != 0:
@@ -825,37 +903,54 @@ class SkillEditor:
     # ----------- 弹窗 -----------
 
     def _center_dialog(self, dlg, w, h):
-        dlg.withdraw(); dlg.geometry(f"{w}x{h}"); dlg.update_idletasks()
-        rx = self.root.winfo_rootx(); ry = self.root.winfo_rooty()
-        rw = self.root.winfo_width(); rh = self.root.winfo_height()
-        x = rx + (rw - w) // 2; y = ry + (rh - h) // 2
-        dlg.geometry(f"+{x}+{y}"); dlg.deiconify()
+        dlg.withdraw()
+        dlg.geometry(f"{w}x{h}")
+        dlg.update_idletasks()
+        rx = self.root.winfo_rootx()
+        ry = self.root.winfo_rooty()
+        rw = self.root.winfo_width()
+        rh = self.root.winfo_height()
+        x = rx + (rw - w) // 2
+        y = ry + (rh - h) // 2
+        dlg.geometry(f"+{x}+{y}")
+        dlg.deiconify()
 
     def _pick_tkt(self, fn):
         if not self.tkt: return
-        dlg = tk.Toplevel(self.root); dlg.title("选择 TKT 文本")
-        dlg.transient(self.root); dlg.grab_set()
+        dlg = tk.Toplevel(self.root)
+        dlg.title("选择 TKT 文本")
+        dlg.transient(self.root)
+        dlg.grab_set()
         self._center_dialog(dlg, 520, 550)
         cur_val = int(self._edit_vars[fn].get() or 0)
-        sf = ttk.Frame(dlg, padding=5); sf.pack(fill=tk.X)
+        sf = ttk.Frame(dlg, padding=5)
+        sf.pack(fill=tk.X)
         ttk.Label(sf, text="搜索:").pack(side=tk.LEFT)
         qv = tk.StringVar()
         ttk.Entry(sf, textvariable=qv, width=30, font=FONT).pack(side=tk.LEFT, padx=5)
-        lf2 = ttk.Frame(dlg); lf2.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        lf2 = ttk.Frame(dlg)
+        lf2.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
         tree = ttk.Treeview(lf2, columns=('id', 'text'), show='headings', selectmode='browse', height=22)
-        tree.heading('id', text='ID'); tree.heading('text', text='文本')
-        tree.column('id', width=60, anchor='center'); tree.column('text', width=420, anchor='w')
+        tree.heading('id', text='ID')
+        tree.heading('text', text='文本')
+        tree.column('id', width=60, anchor='center')
+        tree.column('text', width=420, anchor='w')
         vsb = ttk.Scrollbar(lf2, orient=tk.VERTICAL, command=tree.yview)
-        tree.configure(yscrollcommand=vsb.set); tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        tree.configure(yscrollcommand=vsb.set)
+        tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         vsb.pack(side=tk.RIGHT, fill=tk.Y)
         _tkt_items = sorted(self.tkt.items(), key=lambda x: x[0])
         def _refresh(q=""):
-            tree.delete(*tree.get_children()); ql = q.strip().lower()
+            tree.delete(*tree.get_children())
+            ql = q.strip().lower()
             for eid, txt in _tkt_items:
                 if ql and ql not in txt.lower(): continue
                 iid = tree.insert('', 'end', values=(eid, txt[:80]))
-                if eid == cur_val: tree.selection_set(iid); tree.see(iid)
-        _refresh(); qv.trace_add('write', lambda *a: _refresh(qv.get()))
+                if eid == cur_val:
+                    tree.selection_set(iid)
+                    tree.see(iid)
+        _refresh()
+        qv.trace_add('write', lambda *a: _refresh(qv.get()))
         def _sel():
             sel = tree.selection()
             if sel:
@@ -869,7 +964,8 @@ class SkillEditor:
                 except: pass
                 dlg.destroy()
         tree.bind('<Double-1>', lambda e: _sel())
-        bf = ttk.Frame(dlg, padding=5); bf.pack(fill=tk.X)
+        bf = ttk.Frame(dlg, padding=5)
+        bf.pack(fill=tk.X)
         ttk.Button(bf, text="取消", command=dlg.destroy).pack(side=tk.RIGHT, padx=2)
         ttk.Button(bf, text="确定", command=_sel).pack(side=tk.RIGHT, padx=2)
         dlg.wait_window()
@@ -877,11 +973,14 @@ class SkillEditor:
     def _pick_skill(self, fn):
         """弹出技能选择对话框，选中后回填技能索引"""
         if not self.records: return
-        dlg = tk.Toplevel(self.root); dlg.title("选择技能")
-        dlg.transient(self.root); dlg.grab_set()
+        dlg = tk.Toplevel(self.root)
+        dlg.title("选择技能")
+        dlg.transient(self.root)
+        dlg.grab_set()
         self._center_dialog(dlg, 550, 550)
         cur_val = int(self._edit_vars[fn].get() or 0)
-        sf = ttk.Frame(dlg, padding=5); sf.pack(fill=tk.X)
+        sf = ttk.Frame(dlg, padding=5)
+        sf.pack(fill=tk.X)
         ttk.Label(sf, text="搜索:").pack(side=tk.LEFT)
         qv = tk.StringVar()
         ttk.Entry(sf, textvariable=qv, width=30, font=FONT).pack(side=tk.LEFT, padx=5)
@@ -890,22 +989,29 @@ class SkillEditor:
         ftv = tk.StringVar(value="全部")
         ttk.Combobox(sf, textvariable=ftv, values=["全部"] + SKILL_TYPE_VALUES,
                      state='readonly', width=12).pack(side=tk.LEFT, padx=2)
-        lf2 = ttk.Frame(dlg); lf2.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        lf2 = ttk.Frame(dlg)
+        lf2.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
         tree = ttk.Treeview(lf2, columns=('index', 'id', 'type', 'name'),
                             show='headings', selectmode='browse', height=20)
-        tree.heading('index', text='技能ID'); tree.column('index', width=52, anchor='center')
-        tree.heading('id', text='文本ID'); tree.column('id', width=60, anchor='center')
-        tree.heading('type', text='类型'); tree.column('type', width=70, anchor='center')
-        tree.heading('name', text='技能名称'); tree.column('name', width=340, anchor='w')
+        tree.heading('index', text='技能ID')
+        tree.column('index', width=52, anchor='center')
+        tree.heading('id', text='文本ID')
+        tree.column('id', width=60, anchor='center')
+        tree.heading('type', text='类型')
+        tree.column('type', width=70, anchor='center')
+        tree.heading('name', text='技能名称')
+        tree.column('name', width=340, anchor='w')
         vsb = ttk.Scrollbar(lf2, orient=tk.VERTICAL, command=tree.yview)
-        tree.configure(yscrollcommand=vsb.set); tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        tree.configure(yscrollcommand=vsb.set)
+        tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         vsb.pack(side=tk.RIGHT, fill=tk.Y)
         # 构建技能列表 (排除空槽)
         skill_items = [(r['index'], r['skill_text_id'], r['type'],
                         skill_name(r, self.tkt))
                        for r in self.records if r['skill_text_id'] != 0]
         def _refresh(q="", ft=""):
-            tree.delete(*tree.get_children()); ql = q.strip().lower()
+            tree.delete(*tree.get_children())
+            ql = q.strip().lower()
             for idx, sid, st, sn in skill_items:
                 if ql and ql not in f"{idx} {sid} {sn}".lower(): continue
                 if ft and ft not in ("全部", ""):
@@ -913,8 +1019,11 @@ class SkillEditor:
                     except: ft_type = None
                     if st != ft_type: continue
                 iid = tree.insert('', 'end', values=(idx, sid, SKILL_TYPES.get(st, str(st)), sn))
-                if idx == cur_val: tree.selection_set(iid); tree.see(iid)
-        _refresh(); qv.trace_add('write', lambda *a: _refresh(qv.get(), ftv.get()))
+                if idx == cur_val:
+                    tree.selection_set(iid)
+                    tree.see(iid)
+        _refresh()
+        qv.trace_add('write', lambda *a: _refresh(qv.get(), ftv.get()))
         ftv.trace_add('write', lambda *a: _refresh(qv.get(), ftv.get()))
         def _sel():
             sel = tree.selection()
@@ -924,7 +1033,8 @@ class SkillEditor:
                 self._edit_extras[fn].config(text=f"{v[3]}"[:30])
                 dlg.destroy()
         tree.bind('<Double-1>', lambda e: _sel())
-        bf = ttk.Frame(dlg, padding=5); bf.pack(fill=tk.X)
+        bf = ttk.Frame(dlg, padding=5)
+        bf.pack(fill=tk.X)
         ttk.Button(bf, text="清空", command=lambda: [self._edit_vars[fn].set('0'), self._edit_extras[fn].config(text=''), dlg.destroy()]).pack(side=tk.LEFT, padx=2)
         ttk.Button(bf, text="取消", command=dlg.destroy).pack(side=tk.RIGHT, padx=2)
         ttk.Button(bf, text="确定", command=_sel).pack(side=tk.RIGHT, padx=2)
@@ -932,13 +1042,16 @@ class SkillEditor:
 
     def _pick_status(self, fn):
         title = "选择免疫状态 (位掩码)"
-        dlg = tk.Toplevel(self.root); dlg.title(title)
-        dlg.transient(self.root); dlg.grab_set()
+        dlg = tk.Toplevel(self.root)
+        dlg.title(title)
+        dlg.transient(self.root)
+        dlg.grab_set()
         self._center_dialog(dlg, 360, 520)
         base = 0 if fn == 'immunity1' else 16
         cur_mask = int(self._edit_vars.get(fn, tk.StringVar()).get() or 0) & 0xFFFF
         vars_ = []
-        wrap = ttk.Frame(dlg, padding=8); wrap.pack(fill=tk.BOTH, expand=True)
+        wrap = ttk.Frame(dlg, padding=8)
+        wrap.pack(fill=tk.BOTH, expand=True)
         for i in range(16):
             idx = base + i
             if idx >= len(STATUS_NAMES): break
@@ -946,7 +1059,8 @@ class SkillEditor:
             ttk.Checkbutton(wrap, text=f"{idx}. {STATUS_NAMES[idx]}",
                             variable=v).pack(anchor=tk.W, pady=2)
             vars_.append(v)
-        bf = ttk.Frame(dlg); bf.pack(fill=tk.X, padx=8, pady=8)
+        bf = ttk.Frame(dlg)
+        bf.pack(fill=tk.X, padx=8, pady=8)
         def _ok():
             m = 0
             for i, v in enumerate(vars_):
@@ -963,26 +1077,32 @@ class SkillEditor:
         dlg.wait_window()
 
     def _pick_flags(self, fn):
-        dlg = tk.Toplevel(self.root); dlg.title("选择特殊标志 (位掩码)")
-        dlg.transient(self.root); dlg.grab_set()
+        dlg = tk.Toplevel(self.root)
+        dlg.title("选择特殊标志 (位掩码)")
+        dlg.transient(self.root)
+        dlg.grab_set()
         self._center_dialog(dlg, 360, 220)
         cur_val = int(self._edit_vars[fn].get() or 0) & 0xFFFF
         vars_ = []
-        wrap = ttk.Frame(dlg, padding=8); wrap.pack(fill=tk.BOTH, expand=True)
+        wrap = ttk.Frame(dlg, padding=8)
+        wrap.pack(fill=tk.BOTH, expand=True)
         for bit, name, desc in SPECIAL_FLAG_BITS:
-            row = ttk.Frame(wrap); row.pack(anchor=tk.W, fill=tk.X, pady=2)
+            row = ttk.Frame(wrap)
+            row.pack(anchor=tk.W, fill=tk.X, pady=2)
             v = tk.BooleanVar(value=bool(cur_val & (1 << bit)))
             ttk.Checkbutton(row, text=f"bit{bit} {name}", variable=v).pack(side=tk.LEFT)
             ttk.Label(row, text=desc, foreground='#999', font=('', 7)).pack(side=tk.LEFT, padx=(8, 0))
             vars_.append((bit, v))
-        bf = ttk.Frame(dlg, padding=4); bf.pack(side=tk.BOTTOM, fill=tk.X)
+        bf = ttk.Frame(dlg, padding=4)
+        bf.pack(side=tk.BOTTOM, fill=tk.X)
         def _ok():
             m = 0
             for bit, v in vars_:
                 if v.get(): m |= (1 << bit)
             if m >= 0x8000: m -= 0x10000
             self._edit_vars[fn].set(str(m))
-            self._update_flags_label(fn, m); dlg.destroy()
+            self._update_flags_label(fn, m)
+            dlg.destroy()
         ttk.Button(bf, text="全清", command=lambda: [v.set(False) for _, v in vars_]).pack(side=tk.LEFT, padx=4)
         ttk.Button(bf, text="取消", command=dlg.destroy).pack(side=tk.RIGHT, padx=2)
         ttk.Button(bf, text="确定", command=_ok).pack(side=tk.RIGHT, padx=2)
@@ -1026,10 +1146,13 @@ class SkillEditor:
             messagebox.showwarning("数据验证警告",
                 "以下字段值可能存在问题:\n\n" + "\n".join(f"• {w}" for w in warnings) +
                 "\n\n修改已应用 (内存), 请确认后保存。")
-        self._dirty = True; self._apply_filter()
+        self._dirty = True
+        self._apply_filter()
         for child in self.tree.get_children():
             if int(self.tree.item(child)['values'][0]) == rec['index']:
-                self.tree.selection_set(child); self.tree.see(child); break
+                self.tree.selection_set(child)
+                self.tree.see(child)
+                break
         self.status_var.set(f"记录 #{rec['index']} 已修改 (内存, 未保存)")
 
     def _reset_edit(self):
@@ -1040,7 +1163,8 @@ class SkillEditor:
 
     def _save(self):
         if not self.skill_path or not self.records:
-            messagebox.showinfo("提示", "请先加载数据"); return
+            messagebox.showinfo("提示", "请先加载数据")
+            return
         if not messagebox.askyesno("确认保存",
             f"保存 {len(self.records)} 条到:\n{self.skill_path}\n\n原文件将被覆盖 (生成 .bak)."):
             return
@@ -1049,8 +1173,10 @@ class SkillEditor:
                 with open(self.skill_path + ".bak", 'wb') as d: d.write(s.read())
         except: pass
         try:
-            self.status_var.set("正在保存…"); self.root.update()
-            save_skills(self.skill_path, self.records); self._dirty = False
+            self.status_var.set("正在保存…")
+            self.root.update()
+            save_skills(self.skill_path, self.records)
+            self._dirty = False
             self.status_var.set(f"已保存 → {self.skill_path}")
             messagebox.showinfo("保存成功", f"已保存\n备份: {self.skill_path}.bak")
         except Exception as e:
@@ -1093,17 +1219,21 @@ class SkillEditor:
         lines.append("  sub_447DAC  攻击类型判定 (field[46]+1)")
         lines.append("  sub_4458B0  调整时序 (field[42])")
         lines.append("  sub_438AFC  图标/资源消耗读取")
-        lines.append(""); lines.append("【记录数】")
+        lines.append("")
+        lines.append("【记录数】")
         lines.append("  350 条 × 94 字节 = 32,900 字节 (sub_45343C 固定)")
 
-        dlg = tk.Toplevel(self.root); dlg.title("字段参考 v1.0 (逆向)")
-        dlg.geometry("700x560"); dlg.transient(self.root)
+        dlg = tk.Toplevel(self.root)
+        dlg.title("字段参考 v1.0 (逆向)")
+        dlg.geometry("700x560")
+        dlg.transient(self.root)
         tx = tk.Text(dlg, font=('Consolas', 9), wrap='word')
         sb1 = ttk.Scrollbar(dlg, orient=tk.VERTICAL, command=tx.yview)
         tx.configure(yscrollcommand=sb1.set)
         sb1.pack(side=tk.RIGHT, fill=tk.Y)
         tx.pack(fill=tk.BOTH, expand=True)
-        tx.insert('1.0', '\n'.join(lines)); tx.config(state='disabled')
+        tx.insert('1.0', '\n'.join(lines))
+        tx.config(state='disabled')
 
     def _show_ref_type_help(self):
         """技能进度权重说明 — 基于逆向工程代码 (sub_41E248) + 数据验证"""
@@ -1153,14 +1283,17 @@ ref_type 不是枚举语义，而是「技能学习进度」的数值权重。
   20:       已学会 (sub_count>0 的母/组技能)
   30:       已学会 (sub_count=-1 的独立技能)
   40:       装备加成后临时上限 (卸装后由 sub_42234C 降回 20 or 30)"""
-        dlg = tk.Toplevel(self.root); dlg.title("技能进度权重说明 — 逆向工程分析")
-        dlg.geometry("680x620"); dlg.transient(self.root)
+        dlg = tk.Toplevel(self.root)
+        dlg.title("技能进度权重说明 — 逆向工程分析")
+        dlg.geometry("680x620")
+        dlg.transient(self.root)
         tx = tk.Text(dlg, font=('Microsoft YaHei UI', 9), wrap='word', padx=10, pady=10)
         sb = ttk.Scrollbar(dlg, orient=tk.VERTICAL, command=tx.yview)
         tx.configure(yscrollcommand=sb.set)
         sb.pack(side=tk.RIGHT, fill=tk.Y)
         tx.pack(fill=tk.BOTH, expand=True)
-        tx.insert('1.0', text); tx.config(state='disabled')
+        tx.insert('1.0', text)
+        tx.config(state='disabled')
         # bold the type headers
         for lineno, line in enumerate(text.split('\n'), 1):
             if line.startswith('  ') and not line.startswith('    '):
@@ -1182,7 +1315,9 @@ ref_type 不是枚举语义，而是「技能学习进度」的数值权重。
 
 
 def main():
-    root = tk.Tk(); SkillEditor(root); root.mainloop()
+    root = tk.Tk()
+    SkillEditor(root)
+    root.mainloop()
 
 if __name__ == '__main__':
     main()

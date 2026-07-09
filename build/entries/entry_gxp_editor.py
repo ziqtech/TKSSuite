@@ -1,5 +1,6 @@
 """TKS Editor 薄入口 — 自动生成，请勿手动编辑"""
-import sys, os
+import os
+import sys
 
 # 确保 仓库根目录 在 path 中 (开发环境 + Nuitka 编译均适用)
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))

@@ -3,9 +3,8 @@ Windows 窗口标题栏主题工具 — 通过 DWM API 设置深色标题栏和�
 兼容 Windows 10 1809+ (深色模式) 和 Windows 11 (自定义颜色)
 颜色配置与 editor_themes/ 目录下的 QSS 主题保持一致
 """
-import sys
 import ctypes
-from ctypes import wintypes
+import sys
 
 # DWM 属性常量
 DWMWA_USE_IMMERSIVE_DARK_MODE = 20  # Windows 10 1809+

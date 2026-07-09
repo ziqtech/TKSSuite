@@ -8,7 +8,9 @@ FakeInputBox / InspectorTitle / PreviewFrame / DockHeader 体系。
 底层 LZSS 引擎与 TKKon/TKT 二进制解析逻辑 100% 保留。
 """
 
-import struct, os, sys
+import os
+import struct
+import sys
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QSplitter, QTableWidget, QTableWidgetItem, QHeaderView,
@@ -37,16 +39,22 @@ from editor_utils.window_theme import apply_godot_theme
 from editor_utils.kon_name_resolver import KonNameResolver
 
 # ── 本地别名: 保持向后兼容 ──
-def lzss_decompress(data): return lzss_decompress_dat(data)
-def lzss_compress(data): return lzss_compress_dat(data)
-def load_tkt(tkt_path): return load_tkt_simple(tkt_path)
+def lzss_decompress(data):
+    return lzss_decompress_dat(data)
+def lzss_compress(data):
+    return lzss_compress_dat(data)
+def load_tkt(tkt_path):
+    return load_tkt_simple(tkt_path)
 
 def load_tkkon_names(csv_path):
     """[已废弃] 保留以兼容旧代码.
     请使用 editor_utils.kon_name_resolver.KonNameResolver 替代。"""
     return {}
 
-KON_REC = 40; KON_CNT = 650; KON_FIELD_COUNT = 20; KON_DECOMPRESSED = 26000
+KON_REC = 40
+KON_CNT = 650
+KON_FIELD_COUNT = 20
+KON_DECOMPRESSED = 26000
 
 # STATUS_NAMES 由 editor_utils.picker_dialogs 提供 (见上方导入)
 
@@ -81,9 +89,11 @@ ACTIVE_FIELDS = [f for f in KON_FIELDS if not f[0].startswith('unused')]
 
 def describe_exec_mode(val):
     if val < 0: return "自身目标"
-    hi = (val >> 8) & 0xFF; lo = val & 0xFF
+    hi = (val >> 8) & 0xFF
+    lo = val & 0xFF
     if hi == 0 and lo == 0: return "单格"
-    parts = []; range_text = "" if lo == 0 else "[范围禁用]"
+    parts = []
+    range_text = "" if lo == 0 else "[范围禁用]"
     if hi > 0: parts.append(f"距离={hi}格")
     parts.append(range_text)
     return "  ".join(parts)
@@ -94,7 +104,8 @@ def describe_target_param(val):
         if hi == 255: return "全场目标"
         elif hi == 254: return "全场(排除自身)"
         return f"特殊({val})"
-    hi = (val >> 8) & 0xFF; lo = val & 0xFF
+    hi = (val >> 8) & 0xFF
+    lo = val & 0xFF
     if hi == 0 and lo == 0: return "无扩散(单体)"
     spread_text = "" if lo == 0 else "[扩散禁用]"
     parts = []
@@ -103,7 +114,8 @@ def describe_target_param(val):
     return "  ".join(parts)
 
 def describe_target_filter(val):
-    lo = val & 0xFF; hi = (val >> 8) & 0xFF
+    lo = val & 0xFF
+    hi = (val >> 8) & 0xFF
     target_map = {0: "全部", 1: "仅角色", 2: "仅空地"}
     faction_map = {0: "对立阵营", 1: "同阵营", 2: "任意阵营"}
     return f"{target_map.get(hi, f'目标{hi}')}  {faction_map.get(lo, f'阵营{lo}')}"
@@ -136,8 +148,10 @@ def kon_record_name(rec, tkt, resolver=None, compact_threshold=0):
         name = resolver.get_name(idx, compact_threshold)
         if name and not name.startswith('空槽-') and not name.startswith('动画#'):
             return name
-    cid = rec.get('tkact_id', 0); parts = []
-    em = rec.get('exec_mode', 0); tp = rec.get('target_param', 0)
+    cid = rec.get('tkact_id', 0)
+    parts = []
+    em = rec.get('exec_mode', 0)
+    tp = rec.get('target_param', 0)
     if em < 0: parts.append("自身")
     elif em != 0:
         rh = (em >> 8) & 0xFF
@@ -149,7 +163,8 @@ def kon_record_name(rec, tkt, resolver=None, compact_threshold=0):
     return f"空槽-#{idx}"
 
 def load_kon(fp):
-    with open(fp, 'rb') as f: raw = f.read()
+    with open(fp, 'rb') as f:
+        raw = f.read()
     dec = lzss_decompress(raw)
     # 兜底: LZSS 解压大小不匹配预期时, 检查是否已是未压缩 raw 数据
     if len(dec) != KON_DECOMPRESSED and len(raw) == KON_DECOMPRESSED:
@@ -161,20 +176,23 @@ def load_kon(fp):
         off = i * KON_REC
         vals = struct.unpack_from('<' + 'h' * KON_FIELD_COUNT, dec, off)
         rec = {'index': i}
-        for fi, (fn, _, _, _) in enumerate(KON_FIELDS): rec[fn] = vals[fi]
+        for fi, (fn, _, _, _) in enumerate(KON_FIELDS):
+            rec[fn] = vals[fi]
         recs.append(rec)
     return recs
 
 def save_kon(fp, recs):
     buf = bytearray(KON_CNT * KON_REC)
     for rec in recs[:KON_CNT]:
-        i = rec['index']; off = i * KON_REC
+        i = rec['index']
+        off = i * KON_REC
         vals = [rec[fn] for fn, _, _, _ in KON_FIELDS]
         struct.pack_into('<' + 'h' * KON_FIELD_COUNT, buf, off, *vals)
     compressed = lzss_compress(bytes(buf))
     if lzss_decompress(compressed) != bytes(buf):
         raise RuntimeError("压缩回写验证失败!")
-    with open(fp, 'wb') as f: f.write(compressed)
+    with open(fp, 'wb') as f:
+        f.write(compressed)
     return True
 
 # ============================================================
@@ -183,10 +201,13 @@ def save_kon(fp, recs):
 
 class NumericTableItem(QTableWidgetItem):
     def __lt__(self, other):
-        a = self.data(Qt.UserRole); b = other.data(Qt.UserRole)
+        a = self.data(Qt.UserRole)
+        b = other.data(Qt.UserRole)
         if a is not None and b is not None:
-            try: return float(a) < float(b)
-            except (ValueError, TypeError): pass
+            try:
+                return float(a) < float(b)
+            except (ValueError, TypeError):
+                pass
         return super().__lt__(other)
 
 # ============================================================
@@ -200,9 +221,12 @@ class NumericTableItem(QTableWidgetItem):
 class FieldRefDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("字段参考 v3.0 (逆向来源)"); self.resize(700, 580)
+        self.setWindowTitle("字段参考 v3.0 (逆向来源)")
+        self.resize(700, 580)
         layout = QVBoxLayout(self)
-        text = QTextEdit(); text.setReadOnly(True); text.setFont(QFont("Consolas", 9))
+        text = QTextEdit()
+        text.setReadOnly(True)
+        text.setFont(QFont("Consolas", 9))
         lines = ["TKKon.dat 字段映射 v3.0 (2026-05 语义修正)", ""]
         lines.append(f"【记录布局】{KON_CNT} 条 × {KON_REC} 字节 = {KON_DECOMPRESSED} 字节")
         lines.append(f"  20 × int16 (小端序) 共 {KON_REC} 字节/条")
@@ -225,9 +249,14 @@ class FieldRefDialog(QDialog):
         for s in ["0→无效果","1~999→固定值","1001~1999→最大值%(val-1000)",
                    "-1→ATK","2001~2999→ATK+(val-2000)","3001+→ATK×(1+(val-3000)/100)"]:
             lines.append(f"  {s}")
-        text.setPlainText('\n'.join(lines)); layout.addWidget(text)
-        btn_close = QPushButton("关闭"); btn_close.clicked.connect(self.close)
-        bl = QHBoxLayout(); bl.addStretch(); bl.addWidget(btn_close); layout.addLayout(bl)
+        text.setPlainText('\n'.join(lines))
+        layout.addWidget(text)
+        btn_close = QPushButton("关闭")
+        btn_close.clicked.connect(self.close)
+        bl = QHBoxLayout()
+        bl.addStretch()
+        bl.addWidget(btn_close)
+        layout.addLayout(bl)
 
 # ============================================================
 # 主编辑器窗口
@@ -237,7 +266,8 @@ class KonEditor(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("TKKon.dat 可视化编辑器 v3.3 - PySide6")
-        self.resize(1320, 820); self.setMinimumSize(1050, 650)
+        self.resize(1320, 820)
+        self.setMinimumSize(1050, 650)
 
         ico = os.path.join(os.path.dirname(__file__), 'TKS.ico')
         if os.path.exists(ico): self.setWindowIcon(QIcon(ico))
@@ -246,11 +276,18 @@ class KonEditor(QMainWindow):
         self.is_dark_theme = app_inst.styleHints().colorScheme() == Qt.ColorScheme.Dark if app_inst else True
 
         apply_godot_theme(self, self.is_dark_theme)
-        self.kon_path = None; self.tkt_path = None
-        self.records = []; self.tkt = {}; self._resolver = None
+        self.kon_path = None
+        self.tkt_path = None
+        self.records = []
+        self.tkt = {}
+        self._resolver = None
         self._original_records = []  # 原始快照，用于 MOD 导出
-        self.mu_path = None; self._mu_sprites = []; self._icon_pixmaps = {}
-        self.filtered_indices = []; self._dirty = False; self._editing_idx = -1
+        self.mu_path = None
+        self._mu_sprites = []
+        self._icon_pixmaps = {}
+        self.filtered_indices = []
+        self._dirty = False
+        self._editing_idx = -1
 
         self.widget_map = {}      # QLineEdit / QComboBox for direct value fields
         self.extra_map = {}       # QLabel for parsed description text
@@ -309,35 +346,45 @@ class KonEditor(QMainWindow):
         # -- 工具栏 --
         toolbar = QHBoxLayout()
         toolbar.addWidget(QLabel("搜索:"))
-        self.search_input = QLineEdit(); self.search_input.setFixedWidth(160)
+        self.search_input = QLineEdit()
+        self.search_input.setFixedWidth(160)
         self.search_input.returnPressed.connect(self._apply_filter)
         toolbar.addWidget(self.search_input)
 
-        btn_search = QPushButton("🔍 搜索"); btn_search.clicked.connect(self._apply_filter)
-        btn_clear = QPushButton("✕ 清除"); btn_clear.clicked.connect(self._clear_filter)
-        toolbar.addWidget(btn_search); toolbar.addWidget(btn_clear)
+        btn_search = QPushButton("🔍 搜索")
+        btn_search.clicked.connect(self._apply_filter)
+        btn_clear = QPushButton("✕ 清除")
+        btn_clear.clicked.connect(self._clear_filter)
+        toolbar.addWidget(btn_search)
+        toolbar.addWidget(btn_clear)
         toolbar.addSpacing(8)
 
-        self.chk_show_empty = QCheckBox("显示空槽"); self.chk_show_empty.setChecked(True)
+        self.chk_show_empty = QCheckBox("显示空槽")
+        self.chk_show_empty.setChecked(True)
         self.chk_show_empty.stateChanged.connect(self._apply_filter)
         toolbar.addWidget(self.chk_show_empty)
 
-        self.chk_compact = QCheckBox("精简显示"); self.chk_compact.setChecked(True)
+        self.chk_compact = QCheckBox("精简显示")
+        self.chk_compact.setChecked(True)
         self.chk_compact.setToolTip("当同一技能效果被超过3个角色配置时，仅显示技能名称")
         self.chk_compact.stateChanged.connect(self._apply_filter)
         toolbar.addWidget(self.chk_compact)
         toolbar.addSpacing(8)
 
-        btn_reload = QPushButton("🔄 重新加载"); btn_reload.clicked.connect(self._reload)
+        btn_reload = QPushButton("🔄 重新加载")
+        btn_reload.clicked.connect(self._reload)
         toolbar.addWidget(btn_reload)
 
-        btn_theme = QPushButton("🌗 切换主题"); btn_theme.clicked.connect(self._toggle_theme)
+        btn_theme = QPushButton("🌗 切换主题")
+        btn_theme.clicked.connect(self._toggle_theme)
         btn_theme.setToolTip("切换 Godot 深色/浅色主题 (F5)")
         toolbar.addWidget(btn_theme)
         toolbar.addStretch()
 
-        self.btn_apply = QPushButton("✅ 应用修改"); self.btn_apply.clicked.connect(self._apply_edit)
-        self.btn_reset = QPushButton("🔄 撤销修改"); self.btn_reset.clicked.connect(self._reset_edit)
+        self.btn_apply = QPushButton("✅ 应用修改")
+        self.btn_apply.clicked.connect(self._apply_edit)
+        self.btn_reset = QPushButton("🔄 撤销修改")
+        self.btn_reset.clicked.connect(self._reset_edit)
         toolbar.addWidget(self.btn_apply)
         toolbar.addWidget(self.btn_reset)
 
@@ -361,10 +408,14 @@ class KonEditor(QMainWindow):
         # 底部路径栏
         path_layout = QHBoxLayout()
         path_layout.setContentsMargins(4, 2, 4, 2)
-        self.lbl_kon = QLabel("TKKon.dat: 未加载"); self.lbl_kon.setObjectName("hintLabel")
-        self.lbl_tkt = QLabel("TKT.dat: 未加载"); self.lbl_tkt.setObjectName("hintLabel")
-        path_layout.addWidget(self.lbl_kon); path_layout.addSpacing(20)
-        path_layout.addWidget(self.lbl_tkt); path_layout.addStretch()
+        self.lbl_kon = QLabel("TKKon.dat: 未加载")
+        self.lbl_kon.setObjectName("hintLabel")
+        self.lbl_tkt = QLabel("TKT.dat: 未加载")
+        self.lbl_tkt.setObjectName("hintLabel")
+        path_layout.addWidget(self.lbl_kon)
+        path_layout.addSpacing(20)
+        path_layout.addWidget(self.lbl_tkt)
+        path_layout.addStretch()
         self.status_label = QLabel("请通过 文件 → 加载 TKS 目录 打开数据")
         self.status_label.setObjectName("hintLabel")
         path_layout.addWidget(self.status_label)
@@ -381,7 +432,8 @@ class KonEditor(QMainWindow):
         self.table.verticalHeader().setVisible(False)
 
         col_widths = [38, 42, 42, 95, 52, 55, 55, 50]
-        for i, w in enumerate(col_widths): self.table.setColumnWidth(i, w)
+        for i, w in enumerate(col_widths):
+            self.table.setColumnWidth(i, w)
         self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.Stretch)
         self.table.itemSelectionChanged.connect(self._on_table_select)
         parent.addWidget(self.table)
@@ -395,23 +447,35 @@ class KonEditor(QMainWindow):
         right_layout.setSpacing(4)
 
         # 滚动区域
-        scroll = QScrollArea(); scroll.setWidgetResizable(True)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
         edit_container = QWidget()
         self.edit_layout = QVBoxLayout(edit_container)
         self.edit_layout.setContentsMargins(4, 0, 4, 4)
         self.edit_layout.setSpacing(4)
 
         # 预览面板 (PreviewFrame — 对齐 skill_editor_v2)
-        preview = QFrame(); preview.setObjectName("PreviewFrame")
-        pl = QVBoxLayout(preview); pl.setContentsMargins(8, 12, 8, 12); pl.setSpacing(6)
-        self.preview_name = QLabel("(未选中)"); self.preview_name.setProperty("class", "PreviewName")
-        self.preview_name.setWordWrap(True); pl.addWidget(self.preview_name)
-        self.preview_type = QLabel(""); self.preview_type.setProperty("class", "PreviewMeta")
-        self.preview_type.setWordWrap(True); pl.addWidget(self.preview_type)
-        self.preview_desc = QLabel("(空动作)"); self.preview_desc.setProperty("class", "PreviewDesc")
-        self.preview_desc.setWordWrap(True); pl.addWidget(self.preview_desc)
-        self.preview_sub = QLabel(""); self.preview_sub.setProperty("class", "PreviewSubMeta")
-        self.preview_sub.setWordWrap(True); pl.addWidget(self.preview_sub)
+        preview = QFrame()
+        preview.setObjectName("PreviewFrame")
+        pl = QVBoxLayout(preview)
+        pl.setContentsMargins(8, 12, 8, 12)
+        pl.setSpacing(6)
+        self.preview_name = QLabel("(未选中)")
+        self.preview_name.setProperty("class", "PreviewName")
+        self.preview_name.setWordWrap(True)
+        pl.addWidget(self.preview_name)
+        self.preview_type = QLabel("")
+        self.preview_type.setProperty("class", "PreviewMeta")
+        self.preview_type.setWordWrap(True)
+        pl.addWidget(self.preview_type)
+        self.preview_desc = QLabel("(空动作)")
+        self.preview_desc.setProperty("class", "PreviewDesc")
+        self.preview_desc.setWordWrap(True)
+        pl.addWidget(self.preview_desc)
+        self.preview_sub = QLabel("")
+        self.preview_sub.setProperty("class", "PreviewSubMeta")
+        self.preview_sub.setWordWrap(True)
+        pl.addWidget(self.preview_sub)
         self.edit_layout.addWidget(preview)
 
         # 字段组 — Dock 风格分组 (列数: 4, 4, 5, 5)
@@ -442,7 +506,8 @@ class KonEditor(QMainWindow):
         body_inner.setContentsMargins(8, 8, 8, 8)
 
         grid = QGridLayout()
-        grid.setVerticalSpacing(4); grid.setHorizontalSpacing(8)
+        grid.setVerticalSpacing(4)
+        grid.setHorizontalSpacing(8)
         for c in range(cols):
             grid.setColumnStretch(c, 1)
 
@@ -461,7 +526,8 @@ class KonEditor(QMainWindow):
 
     def _build_field(self, grid, row, col, fn, fo, fl, cmt, span=1):
         """单个字段: PropLabel 在上, FakeInputBox 在中, ExtraPreviewText 在下"""
-        cell = QVBoxLayout(); cell.setSpacing(2)
+        cell = QVBoxLayout()
+        cell.setSpacing(2)
 
         lbl = QLabel(fl)
         lbl.setToolTip(f"[{fo:02d}] {cmt}")
@@ -475,72 +541,109 @@ class KonEditor(QMainWindow):
         is_bitmask = fn == 'exec_flags'
 
         if is_bitmask:
-            row_w = QWidget(); h = QHBoxLayout(row_w); h.setContentsMargins(0,0,0,0); h.setSpacing(4)
-            cb0 = QCheckBox("显示待机动画"); cb0.setToolTip("显示施法者待机动画 (bit0)")
-            cb1 = QCheckBox("使用物品"); cb1.setToolTip("物品触发逻辑 (bit1)")
-            cb2 = QCheckBox("物理攻击"); cb2.setToolTip("物理伤害公式 (bit2)")
-            h.addWidget(cb0); h.addWidget(cb1); h.addWidget(cb2); h.addStretch()
+            row_w = QWidget()
+            h = QHBoxLayout(row_w)
+            h.setContentsMargins(0, 0, 0, 0)
+            h.setSpacing(4)
+            cb0 = QCheckBox("显示待机动画")
+            cb0.setToolTip("显示施法者待机动画 (bit0)")
+            cb1 = QCheckBox("使用物品")
+            cb1.setToolTip("物品触发逻辑 (bit1)")
+            cb2 = QCheckBox("物理攻击")
+            cb2.setToolTip("物理伤害公式 (bit2)")
+            h.addWidget(cb0)
+            h.addWidget(cb1)
+            h.addWidget(cb2)
+            h.addStretch()
             self.split_map[fn] = (cb0, cb1, cb2)
-            extra = QLabel(""); extra.setProperty("class", "ExtraPreviewText")
-            cell.addWidget(row_w); cell.addWidget(extra, 0, Qt.AlignLeft | Qt.AlignTop)
+            extra = QLabel("")
+            extra.setProperty("class", "ExtraPreviewText")
+            cell.addWidget(row_w)
+            cell.addWidget(extra, 0, Qt.AlignLeft | Qt.AlignTop)
             self.extra_map[fn] = extra
 
         elif is_split:
-            hi_w = QLineEdit(); hi_w.setValidator(QIntValidator(-128, 127)); hi_w.setFixedWidth(48)
+            hi_w = QLineEdit()
+            hi_w.setValidator(QIntValidator(-128, 127))
+            hi_w.setFixedWidth(48)
             lo_w = QComboBox()
             lo_w.addItems(["启用", "禁用"])
-            box = QFrame(); box.setObjectName("FakeInputBox")
-            bh = QHBoxLayout(box); bh.setContentsMargins(0,0,0,0); bh.setSpacing(0)
+            box = QFrame()
+            box.setObjectName("FakeInputBox")
+            bh = QHBoxLayout(box)
+            bh.setContentsMargins(0, 0, 0, 0)
+            bh.setSpacing(0)
             if fn == 'exec_mode':
-                hi_label = "距离"; lo_label = "范围"
+                hi_label = "距离"
+                lo_label = "范围"
             elif fn == 'target_param':
-                hi_label = "面积"; lo_label = "扩散"
+                hi_label = "面积"
+                lo_label = "扩散"
             else:
-                hi_label = ""; lo_label = ""
+                hi_label = ""
+                lo_label = ""
             if hi_label:
-                hl = QLabel(hi_label); hl.setProperty("class", "SplitFieldLabel")
+                hl = QLabel(hi_label)
+                hl.setProperty("class", "SplitFieldLabel")
                 bh.addWidget(hl)
             bh.addWidget(hi_w)
-            sep_lbl = QLabel(lo_label); sep_lbl.setProperty("class", "SplitFieldLabel")
+            sep_lbl = QLabel(lo_label)
+            sep_lbl.setProperty("class", "SplitFieldLabel")
             bh.addWidget(sep_lbl)
             bh.addWidget(lo_w, 1)
             self.split_map[fn] = (hi_w, lo_w)
-            extra = QLabel(""); extra.setProperty("class", "ExtraPreviewText")
+            extra = QLabel("")
+            extra.setProperty("class", "ExtraPreviewText")
             box.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
-            cell.addWidget(box); cell.addWidget(extra, 0, Qt.AlignLeft | Qt.AlignTop)
+            cell.addWidget(box)
+            cell.addWidget(extra, 0, Qt.AlignLeft | Qt.AlignTop)
             self.extra_map[fn] = extra
 
         elif is_filter:
-            hi_w = QComboBox(); hi_w.addItems(["全部", "仅角色", "仅空地"])
-            lo_w = QComboBox(); lo_w.addItems(["对立阵营", "同阵营", "任意阵营"])
-            box = QFrame(); box.setObjectName("FakeInputBox")
-            bh = QHBoxLayout(box); bh.setContentsMargins(0,0,0,0); bh.setSpacing(0)
-            hl = QLabel("格子"); hl.setProperty("class", "SplitFieldLabel")
+            hi_w = QComboBox()
+            hi_w.addItems(["全部", "仅角色", "仅空地"])
+            lo_w = QComboBox()
+            lo_w.addItems(["对立阵营", "同阵营", "任意阵营"])
+            box = QFrame()
+            box.setObjectName("FakeInputBox")
+            bh = QHBoxLayout(box)
+            bh.setContentsMargins(0, 0, 0, 0)
+            bh.setSpacing(0)
+            hl = QLabel("格子")
+            hl.setProperty("class", "SplitFieldLabel")
             bh.addWidget(hl)
             bh.addWidget(hi_w)
-            sep_lbl = QLabel("阵营"); sep_lbl.setProperty("class", "SplitFieldLabel")
+            sep_lbl = QLabel("阵营")
+            sep_lbl.setProperty("class", "SplitFieldLabel")
             bh.addWidget(sep_lbl)
             bh.addWidget(lo_w, 1)
             bh.addWidget(lo_w, 1)
             self.split_map[fn] = (hi_w, lo_w)
-            extra = QLabel(""); extra.setProperty("class", "ExtraPreviewText")
+            extra = QLabel("")
+            extra.setProperty("class", "ExtraPreviewText")
             box.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
-            cell.addWidget(box); cell.addWidget(extra, 0, Qt.AlignLeft | Qt.AlignTop)
+            cell.addWidget(box)
+            cell.addWidget(extra, 0, Qt.AlignLeft | Qt.AlignTop)
             self.extra_map[fn] = extra
 
         elif is_mask:
             inf = fn.startswith('inflict')
             btn = QPushButton("选择导致状态…" if inf else "选择解除状态…")
-            hidden = QLineEdit(); hidden.hide()
-            box = QFrame(); box.setObjectName("FakeInputBox")
-            bh = QHBoxLayout(box); bh.setContentsMargins(0,0,0,0); bh.setSpacing(0)
+            hidden = QLineEdit()
+            hidden.hide()
+            box = QFrame()
+            box.setObjectName("FakeInputBox")
+            bh = QHBoxLayout(box)
+            bh.setContentsMargins(0, 0, 0, 0)
+            bh.setSpacing(0)
             bh.addWidget(btn, 1)
             self.widget_map[fn] = hidden
             status_frame = QWidget()
             self.extra_map[fn] = status_frame
             btn.clicked.connect(lambda checked, f=fn: self._pick_status(f))
             box.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
-            cell.addWidget(box); cell.addWidget(status_frame, 0, Qt.AlignLeft | Qt.AlignTop)
+            cell.addWidget(box)
+            cell.addWidget(status_frame, 0, Qt.AlignLeft | Qt.AlignTop)
 
         else:
             edit = QLineEdit()
@@ -551,8 +654,10 @@ class KonEditor(QMainWindow):
             box.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
             cell.addWidget(box)
             if not is_unused:
-                extra = QLabel(""); extra.setProperty("class", "ExtraPreviewText")
-                cell.addWidget(extra, 0, Qt.AlignLeft | Qt.AlignTop); self.extra_map[fn] = extra
+                extra = QLabel("")
+                extra.setProperty("class", "ExtraPreviewText")
+                cell.addWidget(extra, 0, Qt.AlignLeft | Qt.AlignTop)
+                self.extra_map[fn] = extra
 
         cell.addStretch()
         grid.addLayout(cell, row, col, 1, span)
@@ -577,16 +682,20 @@ class KonEditor(QMainWindow):
     def _load_tks_dir(self):
         d = QFileDialog.getExistingDirectory(self, "选择 TKS 游戏目录")
         if not d: return
-        ko = os.path.join(d, "TKKon.dat"); tk_ = os.path.join(d, "TKT.dat")
+        ko = os.path.join(d, "TKKon.dat")
+        tk_ = os.path.join(d, "TKT.dat")
         if not os.path.exists(ko):
-            QMessageBox.warning(self, "文件缺失", "未找到 TKKon.dat"); return
-        self.kon_path = ko; self.tkt_path = tk_ if os.path.exists(tk_) else None
+            QMessageBox.warning(self, "文件缺失", "未找到 TKKon.dat")
+            return
+        self.kon_path = ko
+        self.tkt_path = tk_ if os.path.exists(tk_) else None
         self.mu_path = os.path.join(d, "Mu.JVG")
         self._reload()
 
     def _reload(self):
         if not self.kon_path: return
-        self.status_label.setText("加载中…"); QApplication.processEvents()
+        self.status_label.setText("加载中…")
+        QApplication.processEvents()
         if self.tkt_path: self.tkt = load_tkt(self.tkt_path)
         if self.mu_path:
             self._mu_sprites = load_mu_sprites(self.mu_path) or []
@@ -597,13 +706,17 @@ class KonEditor(QMainWindow):
         except Exception:
             self._resolver = None
         try:
-            self.records = load_kon(self.kon_path); self._dirty = False
+            self.records = load_kon(self.kon_path)
+            self._dirty = False
             self._original_records = [[rec[fn] for fn, _, _, _ in KON_FIELDS] for rec in self.records]
             nonempty = sum(1 for r in self.records if any(r[fn] != 0 for fn, _, _, _ in KON_FIELDS))
             self.status_label.setText(f"{len(self.records)} 条 | 有效 {nonempty} | TKT {len(self.tkt)} 条")
         except Exception as e:
-            QMessageBox.critical(self, "加载失败", str(e)); self.records = []
-        self._update_paths(); self._set_edit_enabled(True); self._apply_filter()
+            QMessageBox.critical(self, "加载失败", str(e))
+            self.records = []
+        self._update_paths()
+        self._set_edit_enabled(True)
+        self._apply_filter()
 
     def _update_paths(self):
         update_path_labels([
@@ -634,10 +747,12 @@ class KonEditor(QMainWindow):
         self.status_label.setText(msg)
 
     def _clear_filter(self):
-        self.search_input.clear(); self._apply_filter()
+        self.search_input.clear()
+        self._apply_filter()
 
     def _refresh_table(self):
-        self.table.setSortingEnabled(False); self.table.blockSignals(True)
+        self.table.setSortingEnabled(False)
+        self.table.blockSignals(True)
         self.table.setRowCount(0)
 
         for row, idx in enumerate(self.filtered_indices):
@@ -660,12 +775,14 @@ class KonEditor(QMainWindow):
             else:
                 color = QColor("#AAAAAA") if self.is_dark_theme else QColor("#999999")
 
-            em = r['exec_mode'] & 0xFFFF; em_hi = (em >> 8) & 0xFF
+            em = r['exec_mode'] & 0xFFFF
+            em_hi = (em >> 8) & 0xFF
             if em_hi >= 128: dist_str = "自身"
             elif em_hi == 0: dist_str = "单格"
             else: dist_str = f"{em_hi}格"
 
-            tp = r['target_param'] & 0xFFFF; tp_hi = (tp >> 8) & 0xFF
+            tp = r['target_param'] & 0xFFFF
+            tp_hi = (tp >> 8) & 0xFF
             if tp_hi == 255: area_str = "全场"
             elif tp_hi == 254: area_str = "排除自身"
             elif tp_hi > 0: area_str = f"{tp_hi}格"
@@ -679,12 +796,15 @@ class KonEditor(QMainWindow):
             elif db >= 3001: dmg_str = f"攻×{100+db-3000}%"
             else: dmg_str = str(db)
 
-            tf_val = r['target_filter']; tf_lo = tf_val & 0xFF; tf_hi = (tf_val >> 8) & 0xFF
+            tf_val = r['target_filter']
+            tf_lo = tf_val & 0xFF
+            tf_hi = (tf_val >> 8) & 0xFF
             faction_map = {0: "敌", 1: "友", 2: "任意"}
             target_map = {0: "", 1: "仅人", 2: "仅地"}
             tf_str = f"{faction_map.get(tf_lo, '?')}{target_map.get(tf_hi, '')}"
 
-            ef = r['exec_flags'] & 0xFF; ef_str = "物理" if (ef & 4) else "法术"
+            ef = r['exec_flags'] & 0xFF
+            ef_str = "物理" if (ef & 4) else "法术"
 
             vals = [str(r['index']), str(r['tkact_id']), dist_str,
                     nm if nm else f"(空-#{idx})", area_str, dmg_str, tf_str, ef_str]
@@ -694,13 +814,15 @@ class KonEditor(QMainWindow):
 
             self.table.insertRow(row)
             for c_col, v in enumerate(vals):
-                item = NumericTableItem(v); item.setData(Qt.UserRole, sort_keys[c_col])
+                item = NumericTableItem(v)
+                item.setData(Qt.UserRole, sort_keys[c_col])
                 item.setForeground(color)
                 if c_col in (0, 1): item.setTextAlignment(Qt.AlignCenter)
                 self.table.setItem(row, c_col, item)
 
         self.table.horizontalHeader().setSortIndicator(-1, Qt.AscendingOrder)
-        self.table.setSortingEnabled(True); self.table.blockSignals(False)
+        self.table.setSortingEnabled(True)
+        self.table.blockSignals(False)
 
     def _compact_threshold(self) -> int:
         return 3 if self.compact_names else 0
@@ -716,7 +838,8 @@ class KonEditor(QMainWindow):
         self._editing_idx = rec['index']
         nm = kon_record_name(rec, self.tkt, self._resolver, self._compact_threshold())
         cid = rec.get('tkact_id', 0)
-        em = rec.get('exec_mode', 0); tp = rec.get('target_param', 0)
+        em = rec.get('exec_mode', 0)
+        tp = rec.get('target_param', 0)
 
         # 预览面板
         self.preview_name.setText(nm if nm else "空槽")
@@ -785,22 +908,28 @@ class KonEditor(QMainWindow):
         # 拆分字段
         for fn in ('exec_mode', 'target_param', 'target_filter'):
             val = rec.get(fn, 0)
-            hi = (val >> 8) & 0xFF; lo = val & 0xFF
+            hi = (val >> 8) & 0xFF
+            lo = val & 0xFF
             if fn not in self.split_map: continue
             w1, w2 = self.split_map[fn]
             if fn == 'exec_mode':
                 if hi >= 128: hi -= 256
-                w1.setText(str(hi)); w2.setCurrentIndex(0 if lo == 0 else 1)
+                w1.setText(str(hi))
+                w2.setCurrentIndex(0 if lo == 0 else 1)
             elif fn == 'target_param':
-                w1.setText(str(hi)); w2.setCurrentIndex(0 if lo == 0 else 1)
+                w1.setText(str(hi))
+                w2.setCurrentIndex(0 if lo == 0 else 1)
             elif fn == 'target_filter':
-                w1.setCurrentIndex(hi if hi < 3 else 0); w2.setCurrentIndex(lo if lo < 3 else 0)
+                w1.setCurrentIndex(hi if hi < 3 else 0)
+                w2.setCurrentIndex(lo if lo < 3 else 0)
 
         # exec_flags 复选框
         if 'exec_flags' in self.split_map:
             lo = rec.get('exec_flags', 0) & 0xFF
             cb0, cb1, cb2 = self.split_map['exec_flags']
-            cb0.setChecked(bool(lo & 1)); cb1.setChecked(bool(lo & 2)); cb2.setChecked(bool(lo & 4))
+            cb0.setChecked(bool(lo & 1))
+            cb1.setChecked(bool(lo & 2))
+            cb2.setChecked(bool(lo & 4))
 
     # ── 图标 ──
     def _get_icon_pixmap(self, icon_val, size=(24,24)):
@@ -829,7 +958,8 @@ class KonEditor(QMainWindow):
         frame_layout = frame.layout()
         if not frame_layout:
             frame_layout = QVBoxLayout(frame)
-            frame_layout.setContentsMargins(0,0,0,0); frame_layout.setSpacing(1)
+            frame_layout.setContentsMargins(0, 0, 0, 0)
+            frame_layout.setSpacing(1)
         sel = [f"{base+i}.{STATUS_NAMES[base+i]}" for i in range(16)
                if (mask & (1 << i)) and base + i < len(STATUS_NAMES)]
         if sel:
@@ -837,20 +967,24 @@ class KonEditor(QMainWindow):
             for si, nm in enumerate(sel):
                 r, c = divmod(si, COLS)
                 while frame_layout.count() <= r:
-                    row_w = QWidget(); row_lay = QHBoxLayout(row_w)
-                    row_lay.setContentsMargins(0,0,0,0); row_lay.setSpacing(6)
+                    row_w = QWidget()
+                    row_lay = QHBoxLayout(row_w)
+                    row_lay.setContentsMargins(0, 0, 0, 0)
+                    row_lay.setSpacing(6)
                     frame_layout.addWidget(row_w)
                 row_w = frame_layout.itemAt(r).widget()
                 row_lay = row_w.layout()
                 lbl = QLabel(nm)
                 lbl.setProperty("class", status_class)
                 # 需要强制刷新 QSS class
-                lbl.style().unpolish(lbl); lbl.style().polish(lbl)
+                lbl.style().unpolish(lbl)
+                lbl.style().polish(lbl)
                 row_lay.addWidget(lbl)
         else:
             lbl = QLabel("(无)")
             lbl.setProperty("class", status_class)
-            lbl.style().unpolish(lbl); lbl.style().polish(lbl)
+            lbl.style().unpolish(lbl)
+            lbl.style().polish(lbl)
             frame_layout.addWidget(lbl)
 
     def _apply_edit(self):
@@ -870,7 +1004,8 @@ class KonEditor(QMainWindow):
                     combined = (hi << 8) | lo
                     if combined >= 0x8000: combined -= 0x10000
                     rec[fn] = combined
-                except ValueError: pass
+                except ValueError:
+                    pass
 
         # exec_flags
         if 'exec_flags' in self.split_map:
@@ -888,12 +1023,16 @@ class KonEditor(QMainWindow):
                 if v > 32767: v = 32767
                 if v < -32768: v = -32768
                 rec[fn] = v
-            except ValueError: rec[fn] = 0
+            except ValueError:
+                rec[fn] = 0
 
-        self._dirty = True; self._apply_filter()
+        self._dirty = True
+        self._apply_filter()
         for row in range(self.table.rowCount()):
             if int(self.table.item(row, 0).text()) == rec['index']:
-                self.table.selectRow(row); self.table.scrollToItem(self.table.item(row, 0)); break
+                self.table.selectRow(row)
+                self.table.scrollToItem(self.table.item(row, 0))
+                break
         self.status_label.setText(f"记录 #{rec['index']} 已修改 (内存, 未保存)")
 
     def _reset_edit(self):
@@ -903,68 +1042,89 @@ class KonEditor(QMainWindow):
     # ----------- 编辑操作 -----------
 
     def _new_record(self):
-        if not self.records: QMessageBox.information(self, "提示", "请先加载数据"); return
+        if not self.records:
+            QMessageBox.information(self, "提示", "请先加载数据")
+            return
         for rec in self.records:
             if all(rec[fn] == 0 for fn, _, _, _ in KON_FIELDS):
-                rec['exec_mode'] = 0; rec['target_param'] = 0
+                rec['exec_mode'] = 0
+                rec['target_param'] = 0
                 rec['tkact_id'] = rec['index']
-                rec['hp_damage'] = -1; rec['exec_flags'] = 4
-                self._dirty = True; self._apply_filter()
+                rec['hp_damage'] = -1
+                rec['exec_flags'] = 4
+                self._dirty = True
+                self._apply_filter()
                 for row in range(self.table.rowCount()):
                     if int(self.table.item(row, 0).text()) == rec['index']:
-                        self.table.selectRow(row); break
+                        self.table.selectRow(row)
+                        break
                 self._populate_edit(rec)
-                self.status_label.setText(f"已创建新条目 → 槽位 #{rec['index']}"); return
+                self.status_label.setText(f"已创建新条目 → 槽位 #{rec['index']}")
+                return
         QMessageBox.warning(self, "槽位已满", f"所有 {KON_CNT} 个记录槽位均已占用")
 
     def _copy_record(self):
         if self._editing_idx < 0: return
         src = self.records[self._editing_idx]
         if all(src[fn] == 0 for fn, _, _, _ in KON_FIELDS):
-            QMessageBox.information(self, "提示", "当前记录为空"); return
+            QMessageBox.information(self, "提示", "当前记录为空")
+            return
         for rec in self.records:
             if all(rec[fn] == 0 for fn, _, _, _ in KON_FIELDS):
                 idx_bak = rec['index']
                 for k, v in src.items():
                     if k != 'index': rec[k] = v
                 rec['index'] = idx_bak
-                self._dirty = True; self._apply_filter()
+                self._dirty = True
+                self._apply_filter()
                 for row in range(self.table.rowCount()):
                     if int(self.table.item(row, 0).text()) == rec['index']:
-                        self.table.selectRow(row); break
+                        self.table.selectRow(row)
+                        break
                 self._populate_edit(rec)
-                self.status_label.setText(f"已复制 #{src['index']} → #{rec['index']}"); return
+                self.status_label.setText(f"已复制 #{src['index']} → #{rec['index']}")
+                return
         QMessageBox.warning(self, "槽位已满", f"所有 {KON_CNT} 个记录槽位均已占用")
 
     def _clear_current(self):
         if self._editing_idx < 0: return
         rec = self.records[self._editing_idx]
         if all(rec[fn] == 0 for fn, _, _, _ in KON_FIELDS):
-            QMessageBox.information(self, "提示", "当前记录已经为空"); return
+            QMessageBox.information(self, "提示", "当前记录已经为空")
+            return
         if QMessageBox.question(self, "确认清空", f"确定清空记录 #{rec['index']}?",
                                 QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes: return
-        for fn, _, _, _ in KON_FIELDS: rec[fn] = 0
-        self._dirty = True; self._apply_filter(); self._populate_edit(rec)
+        for fn, _, _, _ in KON_FIELDS:
+            rec[fn] = 0
+        self._dirty = True
+        self._apply_filter()
+        self._populate_edit(rec)
         self.status_label.setText(f"已清空记录 #{rec['index']}")
 
     # ----------- 保存/导出 -----------
 
     def _save(self):
         if not self.kon_path or not self.records:
-            QMessageBox.information(self, "提示", "请先加载数据"); return
+            QMessageBox.information(self, "提示", "请先加载数据")
+            return
         if QMessageBox.question(self, "确认保存",
             f"保存 {len(self.records)} 条到:\n{self.kon_path}\n\n原文件将被覆盖 (生成 .bak).",
             QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes: return
         try:
             with open(self.kon_path, 'rb') as s:
-                with open(self.kon_path + ".bak", 'wb') as d: d.write(s.read())
-        except: pass
+                with open(self.kon_path + ".bak", 'wb') as d:
+                    d.write(s.read())
+        except:
+            pass
         try:
-            self.status_label.setText("正在保存…"); QApplication.processEvents()
-            save_kon(self.kon_path, self.records); self._dirty = False
+            self.status_label.setText("正在保存…")
+            QApplication.processEvents()
+            save_kon(self.kon_path, self.records)
+            self._dirty = False
             self.status_label.setText(f"已保存 → {self.kon_path}")
             QMessageBox.information(self, "保存成功", f"已保存\n备份: {self.kon_path}.bak")
-        except Exception as e: QMessageBox.critical(self, "保存失败", str(e))
+        except Exception as e:
+            QMessageBox.critical(self, "保存失败", str(e))
 
     def _export_csv(self):
         if not self.records: return
@@ -983,17 +1143,20 @@ class KonEditor(QMainWindow):
     def _export_tksmod(self):
         """导出当前修改为 .tksmod MOD 文件"""
         if not self.records or not self._original_records:
-            QMessageBox.information(self, "提示", "请先加载数据"); return
-        
+            QMessageBox.information(self, "提示", "请先加载数据")
+            return
+
         dlg = ModMetadataDialog(self, getattr(self, '_last_mod_metadata', None))
         if dlg.exec() != QDialog.Accepted: return
-        metadata = dlg.get_metadata(); self._last_mod_metadata = metadata
+        metadata = dlg.get_metadata()
+        self._last_mod_metadata = metadata
 
         current_fields = [[rec[fn] for fn, _, _, _ in KON_FIELDS] for rec in self.records]
         field_count = KON_FIELD_COUNT
         diff_result = diff_records(self._original_records, current_fields, field_count, len(self._original_records))
         if not diff_result['modified'] and not diff_result['appended']:
-            QMessageBox.information(self, "无差异", "当前数据与原始文件相同，无需导出。"); return
+            QMessageBox.information(self, "无差异", "当前数据与原始文件相同，无需导出。")
+            return
 
         crc = compute_crc32(self.kon_path) if self.kon_path else "0x00000000"
         data_json = build_data_diff_json(target="TKKon.dat", record_size=KON_REC, field_type="int16",
@@ -1003,7 +1166,8 @@ class KonEditor(QMainWindow):
         if not fp: return
         try:
             pack_tksmod(fp, mod_json, {"data/TKKon.dat.json": data_json})
-            n_mod = len(diff_result['modified']); n_app = len(diff_result['appended'])
+            n_mod = len(diff_result['modified'])
+            n_app = len(diff_result['appended'])
             self.status_label.setText(f"已导出 MOD: {os.path.basename(fp)} (修改{n_mod}条, 追加{n_app}条)")
             QMessageBox.information(self, "导出成功", f"已导出:\n{fp}\n\n修改: {n_mod} 条\n追加: {n_app} 条")
         except Exception as e:
@@ -1012,7 +1176,8 @@ class KonEditor(QMainWindow):
     def _export_tksmod_with_ref(self):
         """导出 MOD — 指定原始参考目录进行差异比对"""
         if not self.records:
-            QMessageBox.information(self, "提示", "请先加载数据"); return
+            QMessageBox.information(self, "提示", "请先加载数据")
+            return
 
         # 预构建当前字段
         current_fields = [[rec[fn] for fn, _, _, _ in KON_FIELDS] for rec in self.records]
@@ -1040,14 +1205,17 @@ class KonEditor(QMainWindow):
         ref_records = load_reference_dat_fields(ref_dir, "TKKon.dat",
             rec_size=KON_REC, field_count=KON_FIELD_COUNT, field_fmt='h', use_lzss=True)
         if ref_records is None:
-            QMessageBox.warning(self, "参考目录无效", f"在 {ref_dir} 中未找到 TKKon.dat"); return
+            QMessageBox.warning(self, "参考目录无效", f"在 {ref_dir} 中未找到 TKKon.dat")
+            return
         diff_result = diff_records(ref_records, current_fields, KON_FIELD_COUNT, len(ref_records))
         if not diff_result['modified'] and not diff_result['appended']:
-            QMessageBox.information(self, "无差异", "当前数据与参考文件相同，无需导出。"); return
+            QMessageBox.information(self, "无差异", "当前数据与参考文件相同，无需导出。")
+            return
 
         dlg = ModMetadataDialog(self, getattr(self, '_last_mod_metadata', None))
         if dlg.exec() != QDialog.Accepted: return
-        metadata = dlg.get_metadata(); self._last_mod_metadata = metadata
+        metadata = dlg.get_metadata()
+        self._last_mod_metadata = metadata
 
         crc = compute_crc32(os.path.join(ref_dir, "TKKon.dat"))
         data_json = build_data_diff_json(target="TKKon.dat", record_size=KON_REC, field_type="int16",
@@ -1057,7 +1225,8 @@ class KonEditor(QMainWindow):
         if not fp: return
         try:
             pack_tksmod(fp, mod_json, {"data/TKKon.dat.json": data_json})
-            n_mod = len(diff_result['modified']); n_app = len(diff_result['appended'])
+            n_mod = len(diff_result['modified'])
+            n_app = len(diff_result['appended'])
             self.status_label.setText(f"已导出 MOD (参考目录): {os.path.basename(fp)}")
             QMessageBox.information(self, "导出成功", f"已导出 (参考目录模式):\n{fp}\n\n参考: {ref_dir}\n修改: {n_mod} 条\n追加: {n_app} 条")
         except Exception as e:
@@ -1070,11 +1239,13 @@ class KonEditor(QMainWindow):
 
         info = get_tksmod_info(fp)
         if info is None:
-            QMessageBox.warning(self, "无效文件", "无法解析此 .tksmod 文件"); return
+            QMessageBox.warning(self, "无效文件", "无法解析此 .tksmod 文件")
+            return
 
         if "TKKon.dat" not in info.get("targets", []):
             QMessageBox.warning(self, "不兼容", "此 MOD 不包含 TKKon.dat 的数据\n\n"
-                f"包含的数据: {', '.join(info.get('targets', []))}"); return
+                f"包含的数据: {', '.join(info.get('targets', []))}")
+            return
 
         dlg = ModImportPreviewDialog(self, info, default_dir=os.path.dirname(self.kon_path) if self.kon_path else "")
         if dlg.exec() != QDialog.Accepted: return
@@ -1088,7 +1259,8 @@ class KonEditor(QMainWindow):
         )
         if records is None:
             QMessageBox.warning(self, "导入失败",
-                "无法导入 MOD 数据。\n请确认参考目录中包含有效的 TKKon.dat"); return
+                "无法导入 MOD 数据。\n请确认参考目录中包含有效的 TKKon.dat")
+            return
 
         new_records = []
         for i, fields in enumerate(records):
@@ -1156,7 +1328,8 @@ def main():
     else:
         ThemeManager.apply_light_theme(app)
 
-    editor = KonEditor(); editor.show()
+    editor = KonEditor()
+    editor.show()
     sys.exit(app.exec())
 
 if __name__ == '__main__':

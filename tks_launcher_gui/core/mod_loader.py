@@ -9,17 +9,18 @@ MOD 加载器 — 扫描 mods/ 目录、解析 .tksmod、依赖排序、冲突�
   5. apply_mod_data(merged, game_dir)              写入文件
   6. restore_originals(game_dir)                   恢复原始文件
 """
-import os
-import json
-import struct
-import shutil
-import zipfile
 import base64
+import json
+import os
+import re as _re
+import shutil
+import struct
+import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional, Any, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
-from .lzss import lzss_decompress, lzss_compress
+from .lzss import lzss_compress, lzss_decompress
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -706,7 +707,6 @@ def _merge_tkd_file(file_path: str, target_name: str,
 # 4b-2. TKT.dat 文本表差异合并
 # ═══════════════════════════════════════════════════════════════
 
-import re as _re
 _TKT_TAG_PATTERN = _re.compile(r'<([A-Z]+),(\d+(?:,\d+)*)>')
 _TKT_CONTROL_TAGS = {
     0x01: ("FRESET",  1, 1, 4),

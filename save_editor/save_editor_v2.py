@@ -20,28 +20,36 @@ TKS Save Editor v2.0 (PySide6 — Godot 4.6 风格)
   python save_editor_v2.py
 """
 
-import struct, os, sys, time, datetime, csv
+import datetime
+import os
+import struct
+import sys
+import time
 
 from PySide6.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QSplitter, QTableWidget, QTableWidgetItem, QAbstractItemView,
-    QHeaderView, QLabel, QLineEdit, QPushButton, QCheckBox, QComboBox,
-    QMessageBox, QFileDialog, QDialog, QGridLayout, QFrame, QScrollArea,
-    QTabWidget, QTextEdit, QSpinBox, QGroupBox, QFormLayout, QInputDialog,
+    QAbstractItemView, QApplication, QCheckBox, QComboBox, QDialog,
+    QFileDialog, QGridLayout, QGroupBox, QHBoxLayout, QHeaderView,
+    QInputDialog, QLabel, QLineEdit, QMainWindow, QMessageBox,
+    QPushButton, QScrollArea, QSplitter, QTabWidget, QTableWidget,
+    QTableWidgetItem, QTextEdit, QVBoxLayout, QWidget,
 )
-from PySide6.QtGui import QIcon, QFont, QColor, QIntValidator, QPainter
-from PySide6.QtCore import Qt, QTranslator, QSize
+from PySide6.QtGui import QColor, QFont, QIcon
+from PySide6.QtCore import QSize, Qt
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-from editor_utils.theme_manager import ThemeManager
-from editor_utils.window_theme import apply_godot_theme
-from editor_utils.ui_helpers import update_path_labels, confirm_close, make_fake_input
-from editor_utils.lzss import lzss_decompress_save, lzss_compress_save, lzss_decompress_dat
-from editor_utils.tkt_loader import load_tkt_simple
-from editor_utils.jvg_loader import load_mu_sprites, get_sprite_pixmap
 from editor_utils.dock_components import DockHeader
+from editor_utils.jvg_loader import get_sprite_pixmap, load_mu_sprites
 from editor_utils.kon_name_resolver import KonNameResolver
+from editor_utils.lzss import (
+    lzss_compress_save, lzss_decompress_dat, lzss_decompress_save,
+)
 from editor_utils.picker_dialogs import ItemPickerDialog
+from editor_utils.theme_manager import ThemeManager
+from editor_utils.tkt_loader import load_tkt_simple
+from editor_utils.ui_helpers import (
+    confirm_close, make_fake_input, update_path_labels,
+)
+from editor_utils.window_theme import apply_godot_theme
 
 
 # ============================================================
@@ -380,16 +388,19 @@ def load_save_data(path):
     # Frame 1
     if offset + 4 > len(raw):
         raise ValueError("文件太短: 无法读取 Frame1 大小")
-    comp1 = struct.unpack_from('<I', raw, offset)[0]; offset += 4
+    comp1 = struct.unpack_from('<I', raw, offset)[0]
+    offset += 4
     if offset + comp1 > len(raw):
         raise ValueError(f"Frame1 数据不完整 (需要 {comp1} 字节)")
-    game_state = lzss_decompress_save(raw[offset:offset + comp1]); offset += comp1
+    game_state = lzss_decompress_save(raw[offset:offset + comp1])
+    offset += comp1
     if len(game_state) != GAMESTATE_SIZE:
         raise ValueError(f"Frame1 解压大小异常: {len(game_state)} (期望 {GAMESTATE_SIZE})")
     # Frame 2
     if offset + 4 > len(raw):
         raise ValueError("文件太短: 无法读取 Frame2 大小")
-    comp2 = struct.unpack_from('<I', raw, offset)[0]; offset += 4
+    comp2 = struct.unpack_from('<I', raw, offset)[0]
+    offset += 4
     if offset + comp2 > len(raw):
         raise ValueError(f"Frame2 数据不完整 (需要 {comp2} 字节)")
     frame2 = lzss_decompress_save(raw[offset:offset + comp2])
@@ -658,19 +669,29 @@ class SaveEditorApp(QMainWindow):
         self._team_edits = []
         self._team_name_labels = []
         team_grp = QWidget()
-        tvl = QVBoxLayout(team_grp); tvl.setContentsMargins(0, 0, 0, 0); tvl.setSpacing(0)
+        tvl = QVBoxLayout(team_grp)
+        tvl.setContentsMargins(0, 0, 0, 0)
+        tvl.setSpacing(0)
         tvl.addWidget(DockHeader("队伍成员 (word_75688C[6], -1=空)"))
-        tbody = QWidget(); tbody.setObjectName("DockBody")
-        tbl = QVBoxLayout(tbody); tbl.setContentsMargins(8, 8, 8, 8)
-        tgl = QGridLayout(); tgl.setVerticalSpacing(4); tgl.setHorizontalSpacing(8)
+        tbody = QWidget()
+        tbody.setObjectName("DockBody")
+        tbl = QVBoxLayout(tbody)
+        tbl.setContentsMargins(8, 8, 8, 8)
+        tgl = QGridLayout()
+        tgl.setVerticalSpacing(4)
+        tgl.setHorizontalSpacing(8)
         tgl.setContentsMargins(10, 0, 0, 0)
         for i in range(6):
-            cell = QVBoxLayout(); cell.setSpacing(2)
-            lbl = QLabel(f"成员{i+1}"); lbl.setProperty("class", "PropLabel")
+            cell = QVBoxLayout()
+            cell.setSpacing(2)
+            lbl = QLabel(f"成员{i+1}")
+            lbl.setProperty("class", "PropLabel")
             cell.addWidget(lbl)
-            edit = QLineEdit("-1"); edit.setFont(QFont("Consolas", 9))
+            edit = QLineEdit("-1")
+            edit.setFont(QFont("Consolas", 9))
             cell.addWidget(make_fake_input(line_edit=edit, stretch=False))
-            nlbl = QLabel(""); nlbl.setProperty("class", "ExtraPreviewText")
+            nlbl = QLabel("")
+            nlbl.setProperty("class", "ExtraPreviewText")
             cell.addWidget(nlbl)
             tgl.addLayout(cell, 0, i, Qt.AlignTop)
             self._team_edits.append(edit)
@@ -684,20 +705,29 @@ class SaveEditorApp(QMainWindow):
 
         # 经济
         econ_grp = QWidget()
-        evl = QVBoxLayout(econ_grp); evl.setContentsMargins(0, 0, 0, 0); evl.setSpacing(0)
+        evl = QVBoxLayout(econ_grp)
+        evl.setContentsMargins(0, 0, 0, 0)
+        evl.setSpacing(0)
         evl.addWidget(DockHeader("经济与声望"))
-        ebody = QWidget(); ebody.setObjectName("DockBody")
-        ebl = QVBoxLayout(ebody); ebl.setContentsMargins(8, 8, 8, 8)
-        egl = QGridLayout(); egl.setVerticalSpacing(4); egl.setHorizontalSpacing(8)
+        ebody = QWidget()
+        ebody.setObjectName("DockBody")
+        ebl = QVBoxLayout(ebody)
+        ebl.setContentsMargins(8, 8, 8, 8)
+        egl = QGridLayout()
+        egl.setVerticalSpacing(4)
+        egl.setHorizontalSpacing(8)
         egl.setContentsMargins(10, 0, 0, 0)
         self._econ_edits = {}
         econ_fields = [("gold", "金钱(上限30000)"), ("wisdom", "智慧"),
                        ("benevolence", "仁德"), ("courage", "勇气"), ("medicine", "医术(上限100)")]
         for col, (key, label) in enumerate(econ_fields):
-            cell = QVBoxLayout(); cell.setSpacing(2)
-            lbl = QLabel(label); lbl.setProperty("class", "PropLabel")
+            cell = QVBoxLayout()
+            cell.setSpacing(2)
+            lbl = QLabel(label)
+            lbl.setProperty("class", "PropLabel")
             cell.addWidget(lbl)
-            edit = QLineEdit("0"); edit.setFont(QFont("Consolas", 9))
+            edit = QLineEdit("0")
+            edit.setFont(QFont("Consolas", 9))
             cell.addWidget(make_fake_input(line_edit=edit, stretch=False))
             egl.addLayout(cell, 0, col, Qt.AlignTop)
             self._econ_edits[key] = edit
@@ -711,19 +741,28 @@ class SaveEditorApp(QMainWindow):
 
         # 战斗统计
         battle_grp = QWidget()
-        bvl = QVBoxLayout(battle_grp); bvl.setContentsMargins(0, 0, 0, 0); bvl.setSpacing(0)
+        bvl = QVBoxLayout(battle_grp)
+        bvl.setContentsMargins(0, 0, 0, 0)
+        bvl.setSpacing(0)
         bvl.addWidget(DockHeader("战斗统计"))
-        bbody = QWidget(); bbody.setObjectName("DockBody")
-        bbl = QVBoxLayout(bbody); bbl.setContentsMargins(8, 8, 8, 8)
-        bgl = QGridLayout(); bgl.setVerticalSpacing(4); bgl.setHorizontalSpacing(8)
+        bbody = QWidget()
+        bbody.setObjectName("DockBody")
+        bbl = QVBoxLayout(bbody)
+        bbl.setContentsMargins(8, 8, 8, 8)
+        bgl = QGridLayout()
+        bgl.setVerticalSpacing(4)
+        bgl.setHorizontalSpacing(8)
         bgl.setContentsMargins(10, 0, 0, 0)
         self._battle_edits = {}
         for col, (key, off, size, label, fmt, cmt) in enumerate(SEG2_BATTLE_FIELDS):
-            cell = QVBoxLayout(); cell.setSpacing(2)
-            lbl = QLabel(label); lbl.setProperty("class", "PropLabel")
+            cell = QVBoxLayout()
+            cell.setSpacing(2)
+            lbl = QLabel(label)
+            lbl.setProperty("class", "PropLabel")
             lbl.setToolTip(cmt)
             cell.addWidget(lbl)
-            edit = QLineEdit("0"); edit.setFont(QFont("Consolas", 9))
+            edit = QLineEdit("0")
+            edit.setFont(QFont("Consolas", 9))
             cell.addWidget(make_fake_input(line_edit=edit, stretch=False))
             bgl.addLayout(cell, 0, col, Qt.AlignTop)
             self._battle_edits[key] = edit
@@ -913,16 +952,23 @@ class SaveEditorApp(QMainWindow):
 
     def _build_global_section(self, parent_layout, title, fields, seg):
         grp = QWidget()
-        vl = QVBoxLayout(grp); vl.setContentsMargins(0, 0, 0, 0); vl.setSpacing(0)
+        vl = QVBoxLayout(grp)
+        vl.setContentsMargins(0, 0, 0, 0)
+        vl.setSpacing(0)
         vl.addWidget(DockHeader(title))
-        body = QWidget(); body.setObjectName("DockBody")
-        bl = QVBoxLayout(body); bl.setContentsMargins(8, 8, 8, 8)
-        gl = QGridLayout(); gl.setVerticalSpacing(6); gl.setHorizontalSpacing(8)
+        body = QWidget()
+        body.setObjectName("DockBody")
+        bl = QVBoxLayout(body)
+        bl.setContentsMargins(8, 8, 8, 8)
+        gl = QGridLayout()
+        gl.setVerticalSpacing(6)
+        gl.setHorizontalSpacing(8)
         gl.setContentsMargins(10, 0, 0, 0)
         cols = 5
         for fi, (key, off, size, label, fmt, cmt) in enumerate(fields):
             r, c = divmod(fi, cols)
-            cell = QVBoxLayout(); cell.setSpacing(2)
+            cell = QVBoxLayout()
+            cell.setSpacing(2)
             lbl = QLabel(f"{label} [+0x{off:X}]")
             lbl.setProperty("class", "PropLabel")
             lbl.setToolTip(cmt)
@@ -1086,7 +1132,7 @@ class SaveEditorApp(QMainWindow):
 
     def _load_tkkon_names(self, tks_dir=None):
         """[已废弃] 从游戏数据动态解析 TKKon 名称映射.
-        
+
         现在由 _load_resources() 通过 KonNameResolver 自动完成。
         保留此方法仅为兼容旧调用。
         """
@@ -1203,7 +1249,8 @@ class SaveEditorApp(QMainWindow):
             for lbl in self._ov_labels.values():
                 lbl.setText("—")
             for n, l in self._ov_team:
-                n.setText("—"); l.setText("")
+                n.setText("—")
+                l.setText("")
 
         # 摘要
         lines = []
@@ -1843,3 +1890,4 @@ def main():
 
 if __name__ == '__main__':
     main()
+

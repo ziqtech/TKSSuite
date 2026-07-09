@@ -1,11 +1,11 @@
 """模组拆分对话框 — 从 .tksmodpak 合集文件中提取原始模组"""
 import os
 import zipfile
+
 from PySide6.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout,
-    QLabel, QLineEdit, QTextEdit,
-    QPushButton, QListWidget, QListWidgetItem, QFileDialog,
-    QMessageBox, QGroupBox,
+    QDialog, QFileDialog, QGroupBox, QHBoxLayout, QLabel, QLineEdit,
+    QListWidget, QListWidgetItem, QMessageBox, QPushButton, QTextEdit,
+    QVBoxLayout,
 )
 
 from core.mod_packer import extract_tksmodpak

@@ -27,39 +27,43 @@ LZSS 文件头 (sub_45343C 读取):
   python shop_editor_pyside6.py
 """
 
-import struct
 import os
+import struct
 import sys
 
+from PySide6.QtCore import Qt, QSize
+from PySide6.QtGui import (
+    QColor, QFont, QAction, QKeySequence, QIcon
+)
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QSplitter,
     QTableWidget, QTableWidgetItem, QHeaderView, QPushButton, QLabel,
     QLineEdit, QComboBox, QSpinBox, QRadioButton, QButtonGroup, QTextEdit,
     QFileDialog, QMessageBox, QDialog, QFrame, QAbstractItemView
 )
-from PySide6.QtGui import (
-    QColor, QFont, QAction, QKeySequence, QShortcut, QIcon, QPalette
-)
-from PySide6.QtCore import Qt, QTranslator, QSize
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-from editor_utils.theme_manager import ThemeManager
-from editor_utils.dock_components import DockHeader, create_dock
+from editor_utils.dock_components import create_dock
+from editor_utils.jvg_loader import load_mu_sprites, get_sprite_pixmap
 from editor_utils.lzss import lzss_decompress_dat, lzss_compress_dat
-from editor_utils.ui_helpers import export_csv, themed_messagebox
 from editor_utils.mod_exporter import (
     diff_records, compute_crc32, generate_mod_json,
     pack_tksmod, build_data_diff_json, ModMetadataDialog, safe_mod_filename,
     load_reference_dat_fields,
     get_tksmod_info, import_tksmod_records, ModImportPreviewDialog, ModExportPreviewDialog,
 )
-from editor_utils.window_theme import apply_godot_theme
 from editor_utils.picker_dialogs import ItemPickerDialog
-from editor_utils.jvg_loader import load_mu_sprites, get_sprite_pixmap
+from editor_utils.theme_manager import ThemeManager
+from editor_utils.ui_helpers import export_csv, themed_messagebox
+from editor_utils.window_theme import apply_godot_theme
 
 # ── 本地别名: 保持向后兼容 ──
-def lzss_decompress(data): return lzss_decompress_dat(data)
-def lzss_compress(data): return lzss_compress_dat(data)
+def lzss_decompress(data):
+    return lzss_decompress_dat(data)
+
+
+def lzss_compress(data):
+    return lzss_compress_dat(data)
 
 
 # ============================================================
@@ -101,7 +105,7 @@ def load_tkitem_with_tkt(item_dat_path, tkt_dat_path):
         decrypted = bytes([b ^ 0xFF for b in encrypted])
         id_table_size = count * 4
         offset_table_size = count * 4
-        
+
         # TKT ID 0-9 是系统消息 (sub_4067E8)
         SYSTEM_IDS = set(range(0, 10))
 
@@ -263,7 +267,7 @@ class ShopEditorWindow(QMainWindow):
         self._build_ui()
         self._update_path_labels()
         self._set_edit_enabled(False)
-        
+
         self.sort_col = 0
         self.sort_reverse = False
 
@@ -279,36 +283,36 @@ class ShopEditorWindow(QMainWindow):
         # ---- 菜单栏 ----
         menubar = self.menuBar()
         file_menu = menubar.addMenu("文件")
-        
+
         action_load = QAction("加载 TKS 目录…", self)
         action_load.setShortcut(QKeySequence("Ctrl+O"))
         action_load.triggered.connect(self._load_tks_dir)
         file_menu.addAction(action_load)
-        
+
         file_menu.addSeparator()
-        
+
         action_save = QAction("保存", self)
         action_save.setShortcut(QKeySequence("Ctrl+S"))
         action_save.triggered.connect(self._save)
         file_menu.addAction(action_save)
-        
+
         action_export = QAction("导出 CSV…", self)
         action_export.triggered.connect(self._export_csv)
         file_menu.addAction(action_export)
-        
+
         action_export_mod = QAction("导出为 MOD (.tksmod)…", self)
         action_export_mod.triggered.connect(self._export_tksmod)
         file_menu.addAction(action_export_mod)
-        
+
         action_export_mod_ref = QAction("导出为 MOD (指定参考目录)…", self)
         action_export_mod_ref.triggered.connect(self._export_tksmod_with_ref)
         file_menu.addAction(action_export_mod_ref)
-        
+
         file_menu.addSeparator()
         action_import_mod = QAction("导入 MOD (.tksmod)…", self)
         action_import_mod.triggered.connect(self._import_tksmod)
         file_menu.addAction(action_import_mod)
-        
+
         file_menu.addSeparator()
         action_exit = QAction("退出", self)
         action_exit.triggered.connect(self.close)
@@ -330,7 +334,7 @@ class ShopEditorWindow(QMainWindow):
 
         # ---- 工具栏区域 ----
         toolbar_layout = QHBoxLayout()
-        
+
         toolbar_layout.addWidget(QLabel("区域:"))
         self.area_filter_combo = QComboBox()
         self.area_filter_combo.addItem("全部")
@@ -345,7 +349,7 @@ class ShopEditorWindow(QMainWindow):
         self.search_input.setFixedWidth(150)
         self.search_input.returnPressed.connect(self._apply_filter)
         toolbar_layout.addWidget(self.search_input)
-        
+
         btn_search = QPushButton("🔍 搜索")
         btn_search.clicked.connect(self._apply_filter)
         toolbar_layout.addWidget(btn_search)
@@ -378,11 +382,11 @@ class ShopEditorWindow(QMainWindow):
         toolbar_layout.addWidget(btn_theme)
 
         toolbar_layout.addStretch()
-        
+
         self.lbl_status = QLabel("请通过 文件 → 加载 TKS 目录 打开数据")
         self.lbl_status.setProperty("class", "StatusHint")
         toolbar_layout.addWidget(self.lbl_status)
-        
+
         main_layout.addLayout(toolbar_layout)
 
         # ---- 左右分栏 ----
@@ -418,7 +422,7 @@ class ShopEditorWindow(QMainWindow):
         self.edit_content = QWidget()
         edit_layout = QVBoxLayout(self.edit_content)
         edit_layout.setContentsMargins(0, 0, 0, 0)
-        
+
         self.lbl_rec_idx = QLabel("未选中")
         font_bold = QFont()
         font_bold.setBold(True)
@@ -433,7 +437,7 @@ class ShopEditorWindow(QMainWindow):
             self.edit_area_combo.addItem(v, userData=k)
         self.edit_area_combo.currentIndexChanged.connect(self._on_area_changed)
         edit_layout.addWidget(self.edit_area_combo)
-        
+
         self.lbl_compat = QLabel("")
         self.lbl_compat.setWordWrap(True)
         edit_layout.addWidget(self.lbl_compat)
@@ -444,11 +448,11 @@ class ShopEditorWindow(QMainWindow):
         self.lbl_editing_item_idx = QLabel("")
         self.lbl_editing_item_idx.setFont(font_bold)
         item_row.addWidget(self.lbl_editing_item_idx)
-        
+
         self.lbl_item_name = QLabel("(未选择)")
         self.lbl_item_name.setProperty("class", "PrimaryTitle")
         item_row.addWidget(self.lbl_item_name, 1)
-        
+
         btn_pick_item = QPushButton("📦 选择物品…")
         btn_pick_item.clicked.connect(self._pick_item)
         item_row.addWidget(btn_pick_item)
@@ -460,7 +464,7 @@ class ShopEditorWindow(QMainWindow):
         edit_layout.addWidget(QLabel("出现条件:"))
         cond_row = QHBoxLayout()
         self.cond_group = QButtonGroup(self)
-        
+
         self.radio_random = QRadioButton("随机")
         self.radio_always = QRadioButton("始终")
         self.radio_custom = QRadioButton("幸运:")
@@ -468,11 +472,11 @@ class ShopEditorWindow(QMainWindow):
         self.cond_group.addButton(self.radio_always)
         self.cond_group.addButton(self.radio_custom)
         self.cond_group.buttonClicked.connect(self._on_cond_mode)
-        
+
         cond_row.addWidget(self.radio_random)
         cond_row.addWidget(self.radio_always)
         cond_row.addWidget(self.radio_custom)
-        
+
         self.spin_cond = QSpinBox()
         self.spin_cond.setRange(-999, 999)
         self.spin_cond.valueChanged.connect(self._on_cond_changed)
@@ -494,7 +498,7 @@ class ShopEditorWindow(QMainWindow):
         btn_apply = QPushButton("✅ 应用修改")
         btn_apply.clicked.connect(self._apply_edit)
         btn_action_row.addWidget(btn_apply, 1)
-        
+
         btn_delete = QPushButton("❌ 删除")
         btn_delete.clicked.connect(self._delete_record)
         btn_action_row.addWidget(btn_delete)
@@ -529,7 +533,10 @@ class ShopEditorWindow(QMainWindow):
         self.edit_content.setEnabled(enabled)
 
     def _make_v_sep(self):
-        sep = QFrame(); sep.setFrameShape(QFrame.VLine); sep.setFrameShadow(QFrame.Sunken); sep.setProperty("class", "SepLine")
+        sep = QFrame()
+        sep.setFrameShape(QFrame.VLine)
+        sep.setFrameShadow(QFrame.Sunken)
+        sep.setProperty("class", "SepLine")
         return sep
 
     def _update_path_labels(self):
@@ -676,18 +683,18 @@ class ShopEditorWindow(QMainWindow):
             item_idx = QTableWidgetItem()
             item_idx.setData(Qt.DisplayRole, rec['index'])
             item_idx.setData(Qt.UserRole, rec['index'])  # 缓存原始索引
-            
+
             item_aid = QTableWidgetItem()
             item_aid.setData(Qt.DisplayRole, rec['area_id'])
-            
+
             item_aname = QTableWidgetItem(area_label(rec['area_id']))
-            
+
             item_iref = QTableWidgetItem()
             item_iref.setData(Qt.DisplayRole, rec['item_ref'])
-            
+
             item_iname = QTableWidgetItem(iname)
             item_cond = QTableWidgetItem(cond_str)
-            
+
             # 条件着色
             if rec['condition'] == 1:
                 for col_item in (item_idx, item_aid, item_aname, item_iref, item_iname, item_cond):
@@ -710,7 +717,7 @@ class ShopEditorWindow(QMainWindow):
 
         keys = {1: 'index', 2: 'area_id', 3: 'area_id', 4: 'item_ref', 5: 'item_ref', 6: 'condition'}
         key = keys.get(logicalIndex, 'index')
-        
+
         self.filtered_indices.sort(key=lambda i: self.records[i].get(key, 0), reverse=self.sort_reverse)
         self._refresh_table()
 
@@ -733,31 +740,31 @@ class ShopEditorWindow(QMainWindow):
     def _populate_edit(self, rec):
         self._editing_idx = rec['index']
         self.lbl_rec_idx.setText(f"记录 #{rec['index']}")
-        
+
         # area
         idx = self.edit_area_combo.findData(rec['area_id'])
         if idx >= 0:
             self.edit_area_combo.setCurrentIndex(idx)
-            
+
         # item
         self.lbl_editing_item_idx.setText(str(rec['item_ref']))
         iname = self.item_names.get(rec['item_ref'], f"Item#{rec['item_ref']}")
         self.lbl_item_name.setText(iname)
         self._update_compat_label(rec['area_id'], rec['item_ref'])
-        
+
         # condition
         cond = rec['condition']
         self.spin_cond.blockSignals(True)
         self.spin_cond.setValue(cond)
         self.spin_cond.blockSignals(False)
-        
+
         if cond == 1:
             self.radio_random.setChecked(True)
         elif cond <= -100:
             self.radio_always.setChecked(True)
         else:
             self.radio_custom.setChecked(True)
-            
+
         self._on_cond_mode()
 
     def _get_item_tab(self, item_ref):
@@ -769,7 +776,7 @@ class ShopEditorWindow(QMainWindow):
     def _update_compat_label(self, area_id, item_ref):
         item_tab = self._get_item_tab(item_ref)
         allowed = TAB_TO_SHOP.get(item_tab, [])
-        
+
         color_ok = "#4CAF50" if self._is_dark else "#228B22"
         color_err = "#E57373" if self._is_dark else "#CC3333"
 
@@ -813,7 +820,7 @@ class ShopEditorWindow(QMainWindow):
 
     def _refresh_cond_table(self):
         offset = self.spin_cond.value()
-        
+
         if offset == 1 and self.radio_random.isChecked():
             self.txt_cond_table.setPlainText(
                 "  (随机抽选模式)\n  每次进入商店时随机判定\n  最多同时出现5件商品"
@@ -828,7 +835,7 @@ class ShopEditorWindow(QMainWindow):
             desc = f"队伍最大幸运 ≥ 0 时已有 {min(100, -offset)}% 概率"
 
         lines = [f"  {desc}", f"  每多1点幸运, 概率+1%", ""]
-        
+
         for pct in [25, 50, 75, 100]:
             need_luk = offset + pct
             if need_luk >= 0:
@@ -862,21 +869,21 @@ class ShopEditorWindow(QMainWindow):
     def _apply_edit(self):
         if self._editing_idx < 0:
             return
-            
+
         rec = self.records[self._editing_idx]
         rec['area_id'] = self.edit_area_combo.currentData()
         rec['item_ref'] = int(self.lbl_editing_item_idx.text())
         rec['condition'] = self.spin_cond.value()
-        
+
         self._dirty = True
         self._apply_filter()
-        
+
         # 重新选中编辑行
         for r in range(self.table.rowCount()):
             if self.table.item(r, 1) and self.table.item(r, 1).data(Qt.UserRole) == rec['index']:
                 self.table.selectRow(r)
                 break
-                
+
         self.lbl_status.setText(f"记录 #{rec['index']} 已修改 (内存, 未保存到磁盘)")
 
     def _delete_record(self):
@@ -884,7 +891,7 @@ class ShopEditorWindow(QMainWindow):
             return
         if QMessageBox.question(self, "确认删除", f"确定要清空记录 #{self._editing_idx} 吗?\n\n记录将被重置为零值, 而非物理删除。") != QMessageBox.Yes:
             return
-            
+
         self.records[self._editing_idx] = {
             'index': self._editing_idx, 'area_id': 0, 'item_ref': 0,
             'condition': 0, 'display': 0, 'reserved': 0
@@ -904,13 +911,13 @@ class ShopEditorWindow(QMainWindow):
             if rec['area_id'] == 0 and rec['item_ref'] == 0 and rec['condition'] == 0:
                 self._dirty = True
                 self._apply_filter()
-                
+
                 for r in range(self.table.rowCount()):
                     if self.table.item(r, 1) and self.table.item(r, 1).data(Qt.UserRole) == rec['index']:
                         self.table.selectRow(r)
                         self.table.scrollToItem(self.table.item(r, 1))
                         break
-                        
+
                 self.lbl_status.setText(f"选中空槽 #{rec['index']}, 请在右侧编辑后应用修改")
                 return
 
@@ -957,17 +964,20 @@ class ShopEditorWindow(QMainWindow):
     def _export_tksmod(self):
         """导出当前修改为 .tksmod MOD 文件"""
         if not self.records or not self._original_records:
-            QMessageBox.information(self, "提示", "请先加载数据"); return
-        
+            QMessageBox.information(self, "提示", "请先加载数据")
+            return
+
         dlg = ModMetadataDialog(self, getattr(self, '_last_mod_metadata', None))
         if dlg.exec() != QDialog.Accepted: return
-        metadata = dlg.get_metadata(); self._last_mod_metadata = metadata
+        metadata = dlg.get_metadata()
+        self._last_mod_metadata = metadata
 
         current_fields = [[r['area_id'], r['item_ref'], r['condition'], r['display']] for r in self.records]
         field_count = 4
         diff_result = diff_records(self._original_records, current_fields, field_count, len(self._original_records))
         if not diff_result['modified'] and not diff_result['appended']:
-            QMessageBox.information(self, "无差异", "当前数据与原始文件相同，无需导出。"); return
+            QMessageBox.information(self, "无差异", "当前数据与原始文件相同，无需导出。")
+            return
 
         crc = compute_crc32(self.shop_path) if self.shop_path else "0x00000000"
         data_json = build_data_diff_json(target="TKShop.dat", record_size=8, field_type="mixed",
@@ -977,7 +987,8 @@ class ShopEditorWindow(QMainWindow):
         if not fp: return
         try:
             pack_tksmod(fp, mod_json, {"data/TKShop.dat.json": data_json})
-            n_mod = len(diff_result['modified']); n_app = len(diff_result['appended'])
+            n_mod = len(diff_result['modified'])
+            n_app = len(diff_result['appended'])
             self.lbl_status.setText(f"已导出 MOD: {os.path.basename(fp)} (修改{n_mod}条, 追加{n_app}条)")
             QMessageBox.information(self, "导出成功", f"已导出:\n{fp}\n\n修改: {n_mod} 条\n追加: {n_app} 条")
         except Exception as e:
@@ -986,7 +997,8 @@ class ShopEditorWindow(QMainWindow):
     def _export_tksmod_with_ref(self):
         """导出 MOD — 指定原始参考目录进行差异比对"""
         if not self.records:
-            QMessageBox.information(self, "提示", "请先加载数据"); return
+            QMessageBox.information(self, "提示", "请先加载数据")
+            return
 
         # 预构建当前字段
         current_fields = [[r['area_id'], r['item_ref'], r['condition'], r['display']] for r in self.records]
@@ -1014,14 +1026,17 @@ class ShopEditorWindow(QMainWindow):
         ref_records = load_reference_dat_fields(ref_dir, "TKShop.dat",
             rec_size=8, field_count=4, field_fmt='h', use_lzss=True)
         if ref_records is None:
-            QMessageBox.warning(self, "参考目录无效", f"在 {ref_dir} 中未找到 TKShop.dat"); return
+            QMessageBox.warning(self, "参考目录无效", f"在 {ref_dir} 中未找到 TKShop.dat")
+            return
         diff_result = diff_records(ref_records, current_fields, 4, len(ref_records))
         if not diff_result['modified'] and not diff_result['appended']:
-            QMessageBox.information(self, "无差异", "当前数据与参考文件相同，无需导出。"); return
+            QMessageBox.information(self, "无差异", "当前数据与参考文件相同，无需导出。")
+            return
 
         dlg = ModMetadataDialog(self, getattr(self, '_last_mod_metadata', None))
         if dlg.exec() != QDialog.Accepted: return
-        metadata = dlg.get_metadata(); self._last_mod_metadata = metadata
+        metadata = dlg.get_metadata()
+        self._last_mod_metadata = metadata
 
         crc = compute_crc32(os.path.join(ref_dir, "TKShop.dat"))
         data_json = build_data_diff_json(target="TKShop.dat", record_size=8, field_type="mixed",
@@ -1031,7 +1046,8 @@ class ShopEditorWindow(QMainWindow):
         if not fp: return
         try:
             pack_tksmod(fp, mod_json, {"data/TKShop.dat.json": data_json})
-            n_mod = len(diff_result['modified']); n_app = len(diff_result['appended'])
+            n_mod = len(diff_result['modified'])
+            n_app = len(diff_result['appended'])
             self.lbl_status.setText(f"已导出 MOD (参考目录): {os.path.basename(fp)}")
             QMessageBox.information(self, "导出成功", f"已导出 (参考目录模式):\n{fp}\n\n参考: {ref_dir}\n修改: {n_mod} 条\n追加: {n_app} 条")
         except Exception as e:
@@ -1044,13 +1060,15 @@ class ShopEditorWindow(QMainWindow):
 
         info = get_tksmod_info(fp)
         if info is None:
-            QMessageBox.warning(self, "无效文件", "无法解析此 .tksmod 文件"); return
+            QMessageBox.warning(self, "无效文件", "无法解析此 .tksmod 文件")
+            return
 
         if "TKShop.dat" not in info.get("targets", []):
             QMessageBox.warning(self, "不兼容", "此 MOD 不包含 TKShop.dat 的数据\n\n"
-                f"包含的数据: {', '.join(info.get('targets', []))}"); return
+                f"包含的数据: {', '.join(info.get('targets', []))}")
+            return
 
-        
+
         dlg = ModImportPreviewDialog(self, info, default_dir=os.path.dirname(self.shop_path) if self.shop_path else "")
         if dlg.exec() != QDialog.Accepted: return
         ref_dir = dlg.get_ref_dir()
@@ -1063,7 +1081,8 @@ class ShopEditorWindow(QMainWindow):
         )
         if records is None:
             QMessageBox.warning(self, "导入失败",
-                "无法导入 MOD 数据。\n请确认参考目录中包含有效的 TKShop.dat"); return
+                "无法导入 MOD 数据。\n请确认参考目录中包含有效的 TKShop.dat")
+            return
 
         new_records = []
         for i, fields in enumerate(records):

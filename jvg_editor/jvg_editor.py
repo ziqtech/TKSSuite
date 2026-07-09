@@ -7,10 +7,18 @@ JVG 图集编辑器 — 浏览和编辑三国群侠传 .jvg 格式精灵图集
 """
 
 from __future__ import annotations
-import os, sys, struct, io, json, zlib, math, tkinter as tk
-from tkinter import ttk, filedialog, messagebox, simpledialog
+
+import io
+import json
+import math
+import os
+import struct
+import sys
+import tkinter as tk
+import zlib
 from pathlib import Path
-from typing import List, Tuple, Optional
+from tkinter import filedialog, messagebox, simpledialog, ttk
+from typing import List, Optional, Tuple
 
 HAS_PIL = False
 try:
@@ -19,12 +27,15 @@ try:
 except ImportError:
     pass
 
-JVG_MAGIC = b"@JVG"; JVM_MAGIC = b"@JVM"
-SCREEN_W = 640; HEADER_SIZE = 32
+JVG_MAGIC = b"@JVG"
+JVM_MAGIC = b"@JVM"
+SCREEN_W = 640
+HEADER_SIZE = 32
 
 # ── JVG 数据模型 ──────────────────────────────────────────
 class PaletteRGB565:
-    def __init__(self): self.entries: List[int] = [0] * 256
+    def __init__(self):
+        self.entries: List[int] = [0] * 256
     def to_rgb888(self) -> bytes:
         r = bytearray(768)
         for i, e in enumerate(self.entries):
@@ -34,8 +45,13 @@ class PaletteRGB565:
 
 class JVGFrame:
     def __init__(self):
-        self.x_max=0; self.y_max=0; self.width=0; self.height=0
-        self.row_count=0; self._pixels:Optional[bytes]=None; self._alpha:Optional[bytes]=None
+        self.x_max=0
+        self.y_max=0
+        self.width=0
+        self.height=0
+        self.row_count=0
+        self._pixels:Optional[bytes]=None
+        self._alpha:Optional[bytes]=None
         self.encoded_data=b""
         self._palette: Optional[PaletteRGB565] = None  # per-frame palette for imports
 
@@ -46,7 +62,8 @@ class JVGFrame:
         return self._pixels if self._pixels is not None else b""
 
     @pixels.setter
-    def pixels(self,val:bytes): self._pixels=val
+    def pixels(self,val:bytes):
+        self._pixels=val
 
     @property
     def alpha(self)->bytes:
@@ -55,28 +72,45 @@ class JVGFrame:
         return self._alpha if self._alpha is not None else b""
 
     @alpha.setter
-    def alpha(self,val:bytes): self._alpha=val
+    def alpha(self,val:bytes):
+        self._alpha=val
 
     @property
-    def x_off(self)->int: v=self.x_max; return (v-65536 if v>=32768 else v)-self.width+1
+    def x_off(self)->int:
+        v=self.x_max
+        return (v-65536 if v>=32768 else v)-self.width+1
+
     @property
-    def y_off(self)->int: v=self.y_max; return (v-65536 if v>=32768 else v)-self.height+1
+    def y_off(self)->int:
+        v=self.y_max
+        return (v-65536 if v>=32768 else v)-self.height+1
 
 class JVMBlock:
     def __init__(self, name:str=""):
-        self.name=name; self.frames:List[JVGFrame]=[]; self.palette=PaletteRGB565()
+        self.name=name
+        self.frames:List[JVGFrame]=[]
+        self.palette=PaletteRGB565()
+
     @property
-    def frame_count(self)->int: return len(self.frames)
+    def frame_count(self)->int:
+        return len(self.frames)
 
 class JVGFile:
-    def __init__(self): self.blocks:List[JVMBlock]=[]; self.filepath:Optional[str]=None
+    def __init__(self):
+        self.blocks:List[JVMBlock]=[]
+        self.filepath:Optional[str]=None
+
     @property
-    def total_frames(self)->int: return sum(b.frame_count for b in self.blocks)
+    def total_frames(self)->int:
+        return sum(b.frame_count for b in self.blocks)
+
     @property
-    def block_count(self)->int: return len(self.blocks)
+    def block_count(self)->int:
+        return len(self.blocks)
 
 # ── JVG 解码器 ─────────────────────────────────────────
-def _u16s(v:int)->int: return v-65536 if v>=32768 else v
+def _u16s(v:int)->int:
+    return v-65536 if v>=32768 else v
 
 def _decode_rle(data:bytes, w:int, h:int)->Tuple[bytes,bytes]:
     total=w*h; out=bytearray(total); alpha=bytearray(total)
@@ -111,21 +145,34 @@ def _decode_rle(data:bytes, w:int, h:int)->Tuple[bytes,bytes]:
 def load_jvg(filepath:str)->JVGFile:
     data=Path(filepath).read_bytes()
     if len(data)<32 or data[:4]!=JVG_MAGIC: raise ValueError("不是有效的 @JVG 文件")
-    jvg=JVGFile(); jvg.filepath=filepath
-    bc=struct.unpack("<I",data[8:12])[0]; off=HEADER_SIZE
+    jvg=JVGFile()
+    jvg.filepath=filepath
+    bc=struct.unpack("<I",data[8:12])[0]
+    off=HEADER_SIZE
     for bi in range(bc):
         if off+32>len(data) or data[off:off+4]!=JVM_MAGIC: break
-        sc=struct.unpack("<I",data[off+4:off+8])[0]; ds=struct.unpack("<I",data[off+12:off+16])[0]
-        s1=off+32; co=[struct.unpack("<I",data[s1+j*4:s1+j*4+4])[0] for j in range(sc+1)]
-        po=s1+(sc+1)*4; blk=JVMBlock(f"block_{bi:02d}")
+        sc=struct.unpack("<I",data[off+4:off+8])[0]
+        ds=struct.unpack("<I",data[off+12:off+16])[0]
+        s1=off+32
+        co=[struct.unpack("<I",data[s1+j*4:s1+j*4+4])[0] for j in range(sc+1)]
+        po=s1+(sc+1)*4
+        blk=JVMBlock(f"block_{bi:02d}")
         for j in range(256): blk.palette.entries[j]=struct.unpack("<H",data[po+j*2:po+j*2+2])[0]
         dr=po+512
         for si in range(sc):
-            mo=dr+co[si]; ws=struct.unpack("<8H",data[mo:mo+16])
-            f=JVGFrame(); f.x_max=ws[0]; f.y_max=ws[1]; f.width=ws[2]; f.height=ws[3]; f.row_count=ws[7]
-            eo=mo+16; f.encoded_data=data[eo:eo+co[si+1]-co[si]-16]
+            mo=dr+co[si]
+            ws=struct.unpack("<8H",data[mo:mo+16])
+            f=JVGFrame()
+            f.x_max=ws[0]
+            f.y_max=ws[1]
+            f.width=ws[2]
+            f.height=ws[3]
+            f.row_count=ws[7]
+            eo=mo+16
+            f.encoded_data=data[eo:eo+co[si+1]-co[si]-16]
             blk.frames.append(f)
-        off+=32+(sc+1)*4+512+ds; jvg.blocks.append(blk)
+        off+=32+(sc+1)*4+512+ds
+        jvg.blocks.append(blk)
     return jvg
 
 # ── JVG 编码器 ─────────────────────────────────────────
@@ -202,7 +249,8 @@ def save_jvg(jvg:JVGFile,filepath:str):
         buf+=bytes(16)
 
         # Encode frames
-        fd=bytearray(); co=[0]
+        fd=bytearray()
+        co=[0]
         for f in blk.frames:
             meta=struct.pack("<8H",f.x_max&0xFFFF,f.y_max&0xFFFF,f.width,f.height,0,0,0,0)
             fd+=meta
@@ -240,7 +288,10 @@ def save_jvg(jvg:JVGFile,filepath:str):
 def _pil_frame(img:'Image.Image')->JVGFrame:
     """PIL 量化 — 使用 PIL convert('P',palette=ADAPTIVE) 快速生成索引像素"""
     if img.mode!='RGBA': img=img.convert('RGBA')
-    w,h=img.size; frame=JVGFrame(); frame.width=w; frame.height=h
+    w,h=img.size
+    frame=JVGFrame()
+    frame.width=w
+    frame.height=h
     # Extract alpha mask
     a_band=img.getchannel('A')
     alpha_data=a_band.tobytes()
@@ -284,7 +335,8 @@ def _remap_to_block_palette(f:JVGFrame,blk:JVMBlock):
     # 2. 构建可用索引: blk.palette 中值为0 且不被原始帧使用的空位
     f_colors=[None]*256
     for i in range(256):
-        e=f._palette.entries[i]; f_colors[i]=(((e>>11)&0x1F)<<3,((e>>5)&0x3F)<<2,(e&0x1F)<<3)
+        e=f._palette.entries[i]
+        f_colors[i]=(((e>>11)&0x1F)<<3,((e>>5)&0x3F)<<2,(e&0x1F)<<3)
     available=[i for i in range(1,256) if i not in used_by_original]
     # 3. 对导入帧中实际使用的颜色, 分配空位并写入调色板
     used=set(f.pixels)
@@ -292,11 +344,17 @@ def _remap_to_block_palette(f:JVGFrame,blk:JVMBlock):
     for fi in sorted(used):
         if fi>=256 or f_colors[fi] is None or f._palette.entries[fi]==0: continue
         # 尝试精确匹配已有颜色
-        fc=f_colors[fi]; exact=None
+        fc=f_colors[fi]
+        exact=None
         for bi in range(256):
-            e=blk.palette.entries[bi]; bc=(((e>>11)&0x1F)<<3,((e>>5)&0x3F)<<2,(e&0x1F)<<3)
-            if fc==bc and (bi not in used_by_original or bi==fi): exact=bi; break
-        if exact is not None: remap[fi]=exact; continue
+            e=blk.palette.entries[bi]
+            bc=(((e>>11)&0x1F)<<3,((e>>5)&0x3F)<<2,(e&0x1F)<<3)
+            if fc==bc and (bi not in used_by_original or bi==fi):
+                exact=bi
+                break
+        if exact is not None:
+            remap[fi]=exact
+            continue
         # 分配新空位
         if available:
             slot=available.pop(0)
@@ -306,7 +364,8 @@ def _remap_to_block_palette(f:JVGFrame,blk:JVMBlock):
             # 无空位时找最近颜色
             best,best_dist=0,999999
             for bi in range(256):
-                e=blk.palette.entries[bi]; bc=(((e>>11)&0x1F)<<3,((e>>5)&0x3F)<<2,(e&0x1F)<<3)
+                e=blk.palette.entries[bi]
+                bc=(((e>>11)&0x1F)<<3,((e>>5)&0x3F)<<2,(e&0x1F)<<3)
                 d=abs(fc[0]-bc[0])+abs(fc[1]-bc[1])+abs(fc[2]-bc[2])
                 if d<best_dist: best,best_dist=bi,d
             remap[fi]=best
@@ -366,9 +425,11 @@ def _batch_quantize_subs_to_block(subs:List['Image.Image'],blk:'JVMBlock',
         sampled=bytearray()
         for i in range(0,n_px,step):
             sampled+=rgb_bytes[i*3:i*3+3]
-        rgb_bytes=sampled; n_px=len(rgb_bytes)//3
+        rgb_bytes=sampled
+        n_px=len(rgb_bytes)//3
     # 3. 生成共享 palette 图
-    pal_img=None; n_colors=0
+    pal_img=None
+    n_colors=0
     if n_px>0 and n_avail>0:
         strip=Image.frombytes('RGB',(n_px,1),bytes(rgb_bytes))
         n_colors=min(n_avail,255)
@@ -405,8 +466,11 @@ def _batch_quantize_subs_to_block(subs:List['Image.Image'],blk:'JVMBlock',
                     pixels[i]=slot_map[pi] if pi<len(slot_map) else 0
         else:
             pixels=bytearray(w*h)  # 全透明
-        frame=JVGFrame(); frame.width=w; frame.height=h
-        frame.alpha=alpha; frame.pixels=bytes(pixels)
+        frame=JVGFrame()
+        frame.width=w
+        frame.height=h
+        frame.alpha=alpha
+        frame.pixels=bytes(pixels)
         frame.encoded_data,frame.row_count=_encode_rle_game(frame.pixels,frame.alpha,w,h)
         frame.x_max=(w-1 if w-1<32768 else w-1-65536)
         frame.y_max=(h-1 if h-1<32768 else h-1-65536)
@@ -426,15 +490,18 @@ def _align_anchor(new_f:JVGFrame,old_f:JVGFrame,mode:str="bottom_center")->None:
     """
     if old_f.width<=0 or old_f.height<=0: return
     if new_f.width<=0 or new_f.height<=0: return
-    old_xm=_u16s(old_f.x_max); old_ym=_u16s(old_f.y_max)
-    old_x_off=old_xm-old_f.width+1; old_y_off=old_ym-old_f.height+1
+    old_xm=_u16s(old_f.x_max)
+    old_ym=_u16s(old_f.y_max)
+    old_x_off=old_xm-old_f.width+1
+    old_y_off=old_ym-old_f.height+1
     if mode=="bottom_center":
         old_cx=old_xm-(old_f.width-1)/2.0
         new_x_off=int(round(old_cx-(new_f.width-1)/2.0))
         new_f.x_max=(new_x_off+new_f.width-1)&0xFFFF
         new_f.y_max=old_ym&0xFFFF  # 底边保持
     elif mode=="center":
-        old_cx=old_xm-(old_f.width-1)/2.0; old_cy=old_ym-(old_f.height-1)/2.0
+        old_cx=old_xm-(old_f.width-1)/2.0
+        old_cy=old_ym-(old_f.height-1)/2.0
         new_x_off=int(round(old_cx-(new_f.width-1)/2.0))
         new_y_off=int(round(old_cy-(new_f.height-1)/2.0))
         new_f.x_max=(new_x_off+new_f.width-1)&0xFFFF
@@ -447,20 +514,30 @@ def import_images(paths:List[str])->List[JVGFrame]:
     frames=[]
     for p in sorted(paths,key=lambda p:Path(p).name.lower()):
         try:
-            img=Image.open(p); frames.append(_pil_frame(img))
+            img=Image.open(p)
+            frames.append(_pil_frame(img))
         except Exception as e: print(f"  skip {Path(p).name}: {e}")
     return frames
 
 # ── 导出 ──────────────────────────────────────────────
 def _rgba_png(w:int,h:int,rgba:bytearray)->bytes:
-    def ch(ct,d): c=ct+d; return struct.pack(">I",len(d))+c+struct.pack(">I",zlib.crc32(c)&0xFFFFFFFF)
-    png=b"\x89PNG\r\n\x1a\n"; png+=ch(b"IHDR",struct.pack(">IIBBBBB",w,h,8,6,0,0,0))
+    def ch(ct,d):
+        c=ct+d
+        return struct.pack(">I",len(d))+c+struct.pack(">I",zlib.crc32(c)&0xFFFFFFFF)
+    png=b"\x89PNG\r\n\x1a\n"
+    png+=ch(b"IHDR",struct.pack(">IIBBBBB",w,h,8,6,0,0,0))
     raw=bytearray()
-    for row in range(h): raw.append(0); raw.extend(rgba[row*w*4:(row+1)*w*4])
-    png+=ch(b"IDAT",zlib.compress(bytes(raw),9)); png+=ch(b"IEND",b""); return png
+    for row in range(h):
+        raw.append(0)
+        raw.extend(rgba[row*w*4:(row+1)*w*4])
+    png+=ch(b"IDAT",zlib.compress(bytes(raw),9))
+    png+=ch(b"IEND",b"")
+    return png
 
 def frame_to_rgba(f:JVGFrame,pal:PaletteRGB565,greenscreen_set:Optional[set]=None)->bytearray:
-    pr=pal.to_rgb888(); w,h=f.width,f.height; rgba=bytearray(w*h*4)
+    pr=pal.to_rgb888()
+    w,h=f.width,f.height
+    rgba=bytearray(w*h*4)
     for y in range(h):
         for x in range(w):
             p=y*w+x; off=p*4
@@ -472,7 +549,8 @@ def frame_to_rgba(f:JVGFrame,pal:PaletteRGB565,greenscreen_set:Optional[set]=Non
     return rgba
 
 def export_single(f:JVGFrame,pal:PaletteRGB565,path:str,greenscreen_set:Optional[set]=None):
-    rgba=frame_to_rgba(f,pal,greenscreen_set); Path(path).write_bytes(_rgba_png(f.width,f.height,rgba))
+    rgba=frame_to_rgba(f,pal,greenscreen_set)
+    Path(path).write_bytes(_rgba_png(f.width,f.height,rgba))
 
 def export_group(blk:JVMBlock,outdir:str,prefix:str="frame",greenscreen_set:Optional[set]=None):
     os.makedirs(outdir,exist_ok=True)
@@ -487,18 +565,30 @@ def export_gridsheet(blk:JVMBlock,outdir:str,padding:int=1,columns:int=0,greensc
     # 虚拟矩形
     vrs=[]
     for f in frames:
-        xm=_u16s(f.x_max); ym=_u16s(f.y_max)
-        vl=xm-f.width+1; vt=ym-f.height+1; vrs.append((vl,vt,xm,ym))
-    min_vl=min(r[0] for r in vrs); max_vr=max(r[2] for r in vrs)
-    min_vt=min(r[1] for r in vrs); max_vb=max(r[3] for r in vrs)
-    cw=max_vr-min_vl+1; ch=max_vb-min_vt+1
+        xm=_u16s(f.x_max)
+        ym=_u16s(f.y_max)
+        vl=xm-f.width+1
+        vt=ym-f.height+1
+        vrs.append((vl,vt,xm,ym))
+    min_vl=min(r[0] for r in vrs)
+    max_vr=max(r[2] for r in vrs)
+    min_vt=min(r[1] for r in vrs)
+    max_vb=max(r[3] for r in vrs)
+    cw=max_vr-min_vl+1
+    ch=max_vb-min_vt+1
     cols=columns if columns>0 else max(1,int(math.ceil(math.sqrt(n))))
     rows=math.ceil(n/cols)
-    aw=cols*cw+(cols-1)*padding; ah=rows*ch+(rows-1)*padding
+    aw=cols*cw+(cols-1)*padding
+    ah=rows*ch+(rows-1)*padding
     atlas=bytearray(aw*ah*4)
     for fi,f in enumerate(frames):
-        ri=fi//cols; ci=fi%cols; cx=ci*(cw+padding); cy=ri*(ch+padding)
-        vl,vt,_,_=vrs[fi]; ox=vl-min_vl; oy=vt-min_vt
+        ri=fi//cols
+        ci=fi%cols
+        cx=ci*(cw+padding)
+        cy=ri*(ch+padding)
+        vl,vt,_,_=vrs[fi]
+        ox=vl-min_vl
+        oy=vt-min_vt
         pr=blk.palette.to_rgb888()
         for py in range(f.height):
             for px in range(f.width):
@@ -517,20 +607,30 @@ def export_gridsheet(blk:JVMBlock,outdir:str,padding:int=1,columns:int=0,greensc
 # ── GUI 编辑器 ──────────────────────────────────────────
 class JVGEditor:
     def __init__(self,root:tk.Tk,filepath:Optional[str]=None):
-        self.root=root; self.root.title("JVG 图集编辑器")
+        self.root=root
+        self.root.title("JVG 图集编辑器")
         ico = os.path.join(os.path.dirname(__file__), 'TKS.ico')
         if os.path.exists(ico): self.root.iconbitmap(default=ico)
         self.root.geometry("1280x800")
-        self.jvg:Optional[JVGFile]=None; self._bi=-1; self._fi=0; self._sel_fi=-1
-        self._view="tile"; self._tile_cols=tk.IntVar(value=0); self._anim_job=None
+        self.jvg:Optional[JVGFile]=None
+        self._bi=-1
+        self._fi=0
+        self._sel_fi=-1
+        self._view="tile"
+        self._tile_cols=tk.IntVar(value=0)
+        self._anim_job=None
         self._greenscreen_remove=tk.BooleanVar(value=True)
-        self._photos={}; self._detail_imgs={}
-        self._setup_menu(); self._setup_ui()
+        self._photos={}
+        self._detail_imgs={}
+        self._setup_menu()
+        self._setup_ui()
         if filepath and os.path.exists(filepath): self._open(filepath)
         else: self._new()
-        self.root.protocol("WM_DELETE_WINDOW",self._on_close)
-        sw = self.root.winfo_screenwidth(); sh = self.root.winfo_screenheight()
-        x = (sw - 1280) // 2; y = (sh - 800) // 2
+        self.root.protocol("WM_CLOSE_WINDOW",self._on_close)
+        sw = self.root.winfo_screenwidth()
+        sh = self.root.winfo_screenheight()
+        x = (sw - 1280) // 2
+        y = (sh - 800) // 2
         self.root.geometry(f'1280x800+{x}+{y}')
 
     def _setup_menu(self):
@@ -563,11 +663,14 @@ class JVGEditor:
 
     def _setup_ui(self):
         # Main layout
-        self.pw=ttk.PanedWindow(self.root,orient=tk.HORIZONTAL); self.pw.pack(fill=tk.BOTH,expand=True)
+        self.pw=ttk.PanedWindow(self.root,orient=tk.HORIZONTAL)
+        self.pw.pack(fill=tk.BOTH,expand=True)
 
         # ── LEFT panel ──────────────────────────────
-        lf=ttk.Frame(self.pw,width=240); self.pw.add(lf,weight=0)
-        hdr=ttk.Frame(lf); hdr.pack(fill=tk.X,padx=4,pady=(4,2))
+        lf=ttk.Frame(self.pw,width=240)
+        self.pw.add(lf,weight=0)
+        hdr=ttk.Frame(lf)
+        hdr.pack(fill=tk.X,padx=4,pady=(4,2))
         ttk.Label(hdr,text="分组列表",font=("",10,"bold")).pack(side=tk.LEFT)
         ttk.Button(hdr,text="+",width=3,command=self._add_block).pack(side=tk.RIGHT,padx=1)
         ttk.Button(hdr,text="-",width=3,command=self._del_block).pack(side=tk.RIGHT,padx=1)
@@ -576,22 +679,26 @@ class JVGEditor:
         self._blist.pack(fill=tk.BOTH,expand=True,padx=4,pady=2)
         self._blist.bind("<<ListboxSelect>>",self._on_block_sel)
 
-        bf=ttk.LabelFrame(lf,text="操作",padding=4); bf.pack(fill=tk.X,padx=4,pady=4)
+        bf=ttk.LabelFrame(lf,text="操作",padding=4)
+        bf.pack(fill=tk.X,padx=4,pady=4)
         ttk.Button(bf,text="添加图片",command=self._add_images).pack(fill=tk.X,pady=2)
         ttk.Button(bf,text="替换选中",command=self._replace_frame).pack(fill=tk.X,pady=2)
         ttk.Button(bf,text="导入图集",command=self._batch_replace_gridsheet).pack(fill=tk.X,pady=2)
         ttk.Button(bf,text="删除选中",command=self._del_frame).pack(fill=tk.X,pady=2)
 
-        ef=ttk.LabelFrame(lf,text="导出",padding=4); ef.pack(fill=tk.X,padx=4,pady=4)
+        ef=ttk.LabelFrame(lf,text="导出",padding=4)
+        ef.pack(fill=tk.X,padx=4,pady=4)
         ttk.Button(ef,text="导出选中",command=lambda:self._export("single")).pack(fill=tk.X,pady=1)
         ttk.Button(ef,text="导出分组",command=lambda:self._export("group")).pack(fill=tk.X,pady=1)
         ttk.Button(ef,text="导出图集",command=lambda:self._export("grid")).pack(fill=tk.X,pady=1)
 
         # ── RIGHT panel ──────────────────────────────
-        self._rp=ttk.PanedWindow(self.pw,orient=tk.VERTICAL); self.pw.add(self._rp,weight=1)
+        self._rp=ttk.PanedWindow(self.pw,orient=tk.VERTICAL)
+        self.pw.add(self._rp,weight=1)
 
         # Toolbar
-        tb=ttk.Frame(self._rp); self._rp.add(tb,weight=0)
+        tb=ttk.Frame(self._rp)
+        self._rp.add(tb,weight=0)
         ttk.Button(tb,text="平铺",command=lambda:self._set_view("tile")).pack(side=tk.LEFT,padx=2)
         ttk.Button(tb,text="逐帧",command=lambda:self._set_view("single")).pack(side=tk.LEFT,padx=2)
         ttk.Button(tb,text="动画",command=lambda:self._set_view("anim")).pack(side=tk.LEFT,padx=2)
@@ -610,8 +717,11 @@ class JVGEditor:
         ttk.Label(tb,text="速度:").pack(side=tk.LEFT)
         def _validate_speed(P):
             if P=="": return True
-            try: v=int(P); return 10<=v<=2000
-            except: return False
+            try:
+                v=int(P)
+                return 10<=v<=2000
+            except:
+                return False
         vcmd=(self.root.register(_validate_speed),'%P')
         self._speed=tk.IntVar(value=120)
         ttk.Spinbox(tb,textvariable=self._speed,width=5,from_=10,to=2000,increment=10,
@@ -623,20 +733,27 @@ class JVGEditor:
         self._zoom_label.pack(side=tk.RIGHT)
         ttk.Button(tb,text="+",width=2,command=lambda:self._zoom_step(0.5)).pack(side=tk.RIGHT,padx=1)
         ttk.Button(tb,text="−",width=2,command=lambda:self._zoom_step(-0.5)).pack(side=tk.RIGHT,padx=1)
-        self._info=ttk.Label(tb,text=""); self._info.pack(side=tk.RIGHT,padx=8)
+        self._info=ttk.Label(tb,text="")
+        self._info.pack(side=tk.RIGHT,padx=8)
 
         # Canvas area
-        cf=ttk.Frame(self._rp); self._rp.add(cf,weight=1)
+        cf=ttk.Frame(self._rp)
+        self._rp.add(cf,weight=1)
         self._canvas=tk.Canvas(cf,bg="#1e1e1e",highlightthickness=0)
         vsb=ttk.Scrollbar(cf,orient=tk.VERTICAL,command=self._canvas.yview)
         hsb=ttk.Scrollbar(cf,orient=tk.HORIZONTAL,command=self._canvas.xview)
         self._canvas.configure(yscrollcommand=vsb.set,xscrollcommand=hsb.set)
-        self._canvas.grid(row=0,column=0,sticky="nsew"); vsb.grid(row=0,column=1,sticky="ns")
-        hsb.grid(row=1,column=0,sticky="ew"); cf.grid_rowconfigure(0,weight=1); cf.grid_columnconfigure(0,weight=1)
+        self._canvas.grid(row=0,column=0,sticky="nsew")
+        vsb.grid(row=0,column=1,sticky="ns")
+        hsb.grid(row=1,column=0,sticky="ew")
+        cf.grid_rowconfigure(0,weight=1)
+        cf.grid_columnconfigure(0,weight=1)
         self._canvas.bind("<Configure>",lambda e:self._refresh_view())
         self._canvas.bind("<MouseWheel>",self._on_mousewheel)
         # Pan via click-drag
-        self._pan_x=0; self._pan_y=0; self._pan_start=None
+        self._pan_x=0
+        self._pan_y=0
+        self._pan_start=None
         self._canvas.bind("<ButtonPress-2>",self._pan_start_fn)
         self._canvas.bind("<B2-Motion>",self._pan_move_fn)
         self._canvas.bind("<ButtonRelease-2>",self._pan_end_fn)
@@ -650,15 +767,31 @@ class JVGEditor:
         self._rp.add(self._detail,weight=0)
 
     # ── File ops ───────────────────────────────────
-    def _new(self): self.jvg=JVGFile(); self._sync_list(); self._bi=-1; self._fi=0; self._sel_fi=-1; self._refresh_view(); self.root.title("JVG编辑器 — [新建]")
+    def _new(self):
+        self.jvg=JVGFile()
+        self._sync_list()
+        self._bi=-1
+        self._fi=0
+        self._sel_fi=-1
+        self._refresh_view()
+        self.root.title("JVG编辑器 — [新建]")
     def _open_dlg(self):
         p=filedialog.askopenfilename(title="打开 JVG",filetypes=[("JVG","*.jvg *.JVG"),("All","*.*")])
         if p: self._open(p)
     def _open(self,p:str):
-        try: self.jvg=load_jvg(p); self._sync_list()
-        except Exception as e: messagebox.showerror("打开失败",str(e)); return
-        if self.jvg.blocks: self._blist.selection_set(0); self._bi=0
-        self._fi=0; self._sel_fi=-1; self._refresh_view(); self.root.title(f"JVG编辑器 — {os.path.basename(p)}")
+        try:
+            self.jvg=load_jvg(p)
+            self._sync_list()
+        except Exception as e:
+            messagebox.showerror("打开失败",str(e))
+            return
+        if self.jvg.blocks:
+            self._blist.selection_set(0)
+            self._bi=0
+        self._fi=0
+        self._sel_fi=-1
+        self._refresh_view()
+        self.root.title(f"JVG编辑器 — {os.path.basename(p)}")
     def _save(self):
         if not self.jvg: return
         if self.jvg.filepath: self._do_save(self.jvg.filepath)
@@ -667,51 +800,72 @@ class JVGEditor:
         p=filedialog.asksaveasfilename(title="保存 JVG",defaultextension=".jvg",filetypes=[("JVG","*.jvg")])
         if p: self._do_save(p)
     def _do_save(self,p:str):
-        try: save_jvg(self.jvg,p); self.jvg.filepath=p; self.root.title(f"JVG编辑器 — {os.path.basename(p)}")
-        except Exception as e: messagebox.showerror("保存失败",str(e))
-    def _on_close(self): self._kill_anim(); self.root.destroy()
+        try:
+            save_jvg(self.jvg,p)
+            self.jvg.filepath=p
+            self.root.title(f"JVG编辑器 — {os.path.basename(p)}")
+        except Exception as e:
+            messagebox.showerror("保存失败",str(e))
+    def _on_close(self):
+        self._kill_anim()
+        self.root.destroy()
 
     # ── Block mgmt ──────────────────────────────────
     def _sync_list(self):
-        sel=self._blist.curselection(); prev_idx=sel[0] if sel else self._bi
+        sel=self._blist.curselection()
+        prev_idx=sel[0] if sel else self._bi
         self._blist.delete(0,tk.END)
         if not self.jvg: return
         for i,b in enumerate(self.jvg.blocks): self._blist.insert(tk.END,f"[{i}] {b.name} ({b.frame_count}f)")
         if self.jvg.blocks:
             new_idx=min(prev_idx,len(self.jvg.blocks)-1)
-            self._blist.selection_set(new_idx); self._bi=new_idx
+            self._blist.selection_set(new_idx)
+            self._bi=new_idx
             self._blist.see(new_idx)
 
     def _on_block_sel(self,ev=None):
         sel=self._blist.curselection()
-        if sel: self._bi=sel[0]; self._fi=0; self._sel_fi=-1; self._kill_anim(); self._refresh_view()
+        if sel:
+            self._bi=sel[0]
+            self._fi=0
+            self._sel_fi=-1
+            self._kill_anim()
+            self._refresh_view()
 
     def _add_block(self):
         if not self.jvg: self.jvg=JVGFile()
         name = f"block_{len(self.jvg.blocks):02d}"
-        self.jvg.blocks.append(JVMBlock(name)); self._sync_list()
-        self._blist.selection_clear(0,tk.END); idx=len(self.jvg.blocks)-1
-        self._blist.selection_set(idx); self._bi=idx; self._refresh_view()
+        self.jvg.blocks.append(JVMBlock(name))
+        self._sync_list()
+        self._blist.selection_clear(0,tk.END)
+        idx=len(self.jvg.blocks)-1
+        self._blist.selection_set(idx)
+        self._bi=idx
+        self._refresh_view()
 
     def _del_block(self):
         if not self.jvg or self._bi<0: return
         if messagebox.askyesno("确认",f"删除 [{self._bi}]?"):
-            del self.jvg.blocks[self._bi]; self._bi=min(self._bi,len(self.jvg.blocks)-1)
-            self._sync_list(); self._refresh_view()
+            del self.jvg.blocks[self._bi]
+            self._bi=min(self._bi,len(self.jvg.blocks)-1)
+            self._sync_list()
+            self._refresh_view()
 
     # ── Frame mgmt ───────────────────────────────────
     def _add_images(self):
         if not self.jvg or self._bi<0: return messagebox.showinfo("提示","请先选择分组")
         paths=filedialog.askopenfilenames(title="选择图片",filetypes=[("图片","*.png *.bmp *.jpg *.jpeg")])
         if not paths: return
-        self._info.config(text="正在导入..."); self.root.update()
+        self._info.config(text="正在导入...")
+        self.root.update()
         frames=import_images(list(paths))
         if frames:
             blk=self.jvg.blocks[self._bi]
             for f in frames:
                 if f._palette: _remap_to_block_palette(f,blk)
             blk.frames.extend(frames)
-            self._sync_list(); self._refresh_view()
+            self._sync_list()
+            self._refresh_view()
             self._info.config(text=f"导入 {len(frames)} 帧")
 
     def _replace_frame(self):
@@ -727,7 +881,9 @@ class JVGEditor:
             _align_anchor(new_f,old_f,mode="bottom_center")  # 保持原帧视觉锚点
             if new_f._palette: _remap_to_block_palette(new_f,blk)
             blk.frames[self._sel_fi]=new_f
-            self._sync_list(); self._kill_anim(); self._refresh_view()
+            self._sync_list()
+            self._kill_anim()
+            self._refresh_view()
             self._info.config(text=f"已替换帧 #{self._sel_fi} (偏移已自动对齐)")
 
     def _del_frame(self):
@@ -735,7 +891,10 @@ class JVGEditor:
         blk=self.jvg.blocks[self._bi]
         if self._sel_fi>=0 and self._sel_fi<blk.frame_count:
             del blk.frames[self._sel_fi]
-            self._sel_fi=-1; self._sync_list(); self._kill_anim(); self._refresh_view()
+            self._sel_fi=-1
+            self._sync_list()
+            self._kill_anim()
+            self._refresh_view()
 
     def _pick_reference_block(self) -> Optional[int]:
         """弹出参考分组选择对话框, 返回选中的 block 索引 (或 None)"""
@@ -746,7 +905,8 @@ class JVGEditor:
             return None
         dlg = tk.Toplevel(self.root)
         dlg.title("选择参考分组 (用于恢复offset)")
-        dlg.transient(self.root); dlg.grab_set()
+        dlg.transient(self.root)
+        dlg.grab_set()
         dlg.resizable(False, False)
         ico = os.path.join(os.path.dirname(__file__), 'TKS.ico')
         if os.path.exists(ico): dlg.iconbitmap(default=ico)
@@ -762,7 +922,8 @@ class JVGEditor:
             sel = lb.curselection()
             if sel: result[0] = blocks[sel[0]][0]
             dlg.destroy()
-        bf = ttk.Frame(dlg); bf.pack(fill=tk.X, padx=8, pady=8)
+        bf = ttk.Frame(dlg)
+        bf.pack(fill=tk.X, padx=8, pady=8)
         ttk.Button(bf, text="确定", command=on_ok).pack(side=tk.RIGHT, padx=4)
         ttk.Button(bf, text="取消", command=dlg.destroy).pack(side=tk.RIGHT, padx=4)
         lb.bind("<Double-Button-1>", lambda e: on_ok())
@@ -786,8 +947,10 @@ class JVGEditor:
         path=filedialog.askopenfilename(title="选择 Gridsheet 图片",
                                         filetypes=[("图片","*.png *.bmp *.jpg *.jpeg")])
         if not path: return
-        try: gs=Image.open(path).convert('RGBA')
-        except Exception as e: return messagebox.showerror("打开失败",str(e))
+        try:
+            gs=Image.open(path).convert('RGBA')
+        except Exception as e:
+            return messagebox.showerror("打开失败",str(e))
         gs_w,gs_h=gs.size
         cur_cols=self._tile_cols.get() if self._tile_cols.get()>0 else max(1,int(math.ceil(math.sqrt(max(n_valid,1)))))
         cols=simpledialog.askinteger("导入组图",f"columns (共 {n_valid} 帧):",parent=self.root,
@@ -812,7 +975,8 @@ class JVGEditor:
             return messagebox.showerror("尺寸错误",
                 f"图片尺寸 {gs_w}×{gs_h} 无法整除为 {cols}×{rows} 个 cell (pad={pad})\n"
                 f"cw_num={cw_num}, ch_num={ch_num}\n请确认 columns / rows / padding 参数")
-        cw=cw_num//cols; ch=ch_num//rows
+        cw=cw_num//cols
+        ch=ch_num//rows
 
         # X轴自动规则: cell 水平居中于 x=0
         auto_min_vl = -((cw - 1) // 2)
@@ -834,18 +998,27 @@ class JVGEditor:
             ref_frames = valid_list
 
         # 第一遍: 裁剪每个非空 cell 的 sub 图
-        self._info.config(text=f"导入组图: 裁剪 cell..."); self.root.update()
-        subs=[]; metas=[]; replace_set=set()
+        self._info.config(text=f"导入组图: 裁剪 cell...")
+        self.root.update()
+        subs=[]
+        metas=[]
+        replace_set=set()
         max_cells=cols*rows
         skipped=0
         if is_new_block:
             for cell_idx in range(max_cells):
-                ri=cell_idx//cols; ci=cell_idx%cols
-                cx=ci*(cw+pad); cy=ri*(ch+pad)
-                if cx+cw>gs_w or cy+ch>gs_h: skipped+=1; continue
+                ri=cell_idx//cols
+                ci=cell_idx%cols
+                cx=ci*(cw+pad)
+                cy=ri*(ch+pad)
+                if cx+cw>gs_w or cy+ch>gs_h:
+                    skipped+=1
+                    continue
                 cell=gs.crop((cx,cy,cx+cw,cy+ch))
                 bbox=cell.getchannel('A').getbbox()
-                if bbox is None: skipped+=1; continue
+                if bbox is None:
+                    skipped+=1
+                    continue
                 l,t,r,b=bbox
                 sub=cell.crop((l,t,r,b))
                 # 临时 offset: X轴用自动规则, Y轴待收集所有 b 后统一计算
@@ -854,21 +1027,32 @@ class JVGEditor:
                 metas.append((new_x_max, 0, b))  # (xm, ym_placeholder, b_for_y_calc)
         else:
             for cell_idx,(blk_fi,old_f) in enumerate(valid_list):
-                if cell_idx>=max_cells: skipped+=1; continue
-                ri=cell_idx//cols; ci=cell_idx%cols
-                cx=ci*(cw+pad); cy=ri*(ch+pad)
-                if cx+cw>gs_w or cy+ch>gs_h: skipped+=1; continue
+                if cell_idx>=max_cells:
+                    skipped+=1
+                    continue
+                ri=cell_idx//cols
+                ci=cell_idx%cols
+                cx=ci*(cw+pad)
+                cy=ri*(ch+pad)
+                if cx+cw>gs_w or cy+ch>gs_h:
+                    skipped+=1
+                    continue
                 cell=gs.crop((cx,cy,cx+cw,cy+ch))
                 bbox=cell.getchannel('A').getbbox()
-                if bbox is None: skipped+=1; continue
+                if bbox is None:
+                    skipped+=1
+                    continue
                 l,t,r,b=bbox
                 sub=cell.crop((l,t,r,b))
                 # 从旧帧反推坐标系原点, 然后用 bbox 计算新 offset
-                old_xm=_u16s(old_f.x_max); old_ym=_u16s(old_f.y_max)
-                old_vl=old_xm-old_f.width+1; old_vt=old_ym-old_f.height+1
+                old_xm=_u16s(old_f.x_max)
+                old_ym=_u16s(old_f.y_max)
+                old_vl=old_xm-old_f.width+1
+                old_vt=old_ym-old_f.height+1
                 new_x_max=(old_vl-l+r-1)&0xFFFF
                 new_y_max=(old_vt-t+b-1)&0xFFFF
-                subs.append(sub); metas.append((blk_fi,new_x_max,new_y_max))
+                subs.append(sub)
+                metas.append((blk_fi,new_x_max,new_y_max))
                 replace_set.add(blk_fi)
 
         # Y轴自动计算 (仅新block): max_vb=0 → min_vt = -max(b_i)
@@ -877,13 +1061,15 @@ class JVGEditor:
             metas = [(m[0], (auto_min_vt + m[2] - 1) & 0xFFFF) for m in metas]
 
         # 第二遍: 统一量化
-        self._info.config(text=f"导入组图: 统一量化 {len(subs)} 帧..."); self.root.update()
+        self._info.config(text=f"导入组图: 统一量化 {len(subs)} 帧...")
+        self.root.update()
         keep_indices=[i for i in range(len(blk.frames)) if i not in replace_set]
         new_frames=_batch_quantize_subs_to_block(subs,blk,keep_indices)
         # 第三遍: 写回 block
         if is_new_block:
             for (xm,ym),nf in zip(metas,new_frames):
-                nf.x_max=xm; nf.y_max=ym
+                nf.x_max=xm
+                nf.y_max=ym
                 blk.frames.append(nf)
             if ref_frames:
                 for cell_idx, (_, ref_f) in enumerate(ref_frames):
@@ -891,40 +1077,55 @@ class JVGEditor:
                     _align_anchor(blk.frames[cell_idx], ref_f, mode="bottom_center")
         else:
             for (blk_fi,xm,ym),nf in zip(metas,new_frames):
-                nf.x_max=xm; nf.y_max=ym
+                nf.x_max=xm
+                nf.y_max=ym
                 _align_anchor(nf, blk.frames[blk_fi], mode="bottom_center")
                 blk.frames[blk_fi]=nf
-        self._sync_list(); self._kill_anim(); self._refresh_view()
+        self._sync_list()
+        self._kill_anim()
+        self._refresh_view()
         self._info.config(text=f"导入组图完成: {'新增' if is_new_block else '替换'} {len(new_frames)} 帧, 跳过 {skipped} 空cell (cell={cw}×{ch})")
 
     def _nav(self,d:int):
         if self._view!="single": return
         if not self.jvg or self._bi<0: return
-        blk=self.jvg.blocks[self._bi]; self._fi=(self._fi+d)%max(1,blk.frame_count)
-        self._sel_fi=self._fi; self._refresh_view()
+        blk=self.jvg.blocks[self._bi]
+        self._fi=(self._fi+d)%max(1,blk.frame_count)
+        self._sel_fi=self._fi
+        self._refresh_view()
 
     # ── Zoom & Pan ──────────────────────────────────
     def _zoom_step(self,delta:float):
-        z=max(0.5,min(5.0,self._zoom.get()+delta)); self._zoom.set(z)
+        z=max(0.5,min(5.0,self._zoom.get()+delta))
+        self._zoom.set(z)
         self._zoom_label.config(text=f"{int(z*100)}%")
-        self._kill_anim(); self._refresh_view()
+        self._kill_anim()
+        self._refresh_view()
     def _on_mousewheel(self,ev):
         if ev.state&0x4:  # Ctrl+Wheel → zoom
-            delta=0.5 if ev.delta>0 else -0.5; self._zoom_step(delta)
+            delta=0.5 if ev.delta>0 else -0.5
+            self._zoom_step(delta)
         elif ev.state&0x1:  # Shift+Wheel → horizontal scroll
             self._canvas.xview_scroll(-ev.delta//120,"units")
         else:  # default → vertical scroll
             self._canvas.yview_scroll(-ev.delta//120,"units")
-    def _pan_start_fn(self,ev): self._pan_start=(ev.x,ev.y)
+    def _pan_start_fn(self,ev):
+        self._pan_start=(ev.x,ev.y)
     def _pan_move_fn(self,ev):
         if self._pan_start:
-            dx=ev.x-self._pan_start[0]; dy=ev.y-self._pan_start[1]
-            self._canvas.xview_scroll(-dx,"units"); self._canvas.yview_scroll(-dy,"units")
+            dx=ev.x-self._pan_start[0]
+            dy=ev.y-self._pan_start[1]
+            self._canvas.xview_scroll(-dx,"units")
+            self._canvas.yview_scroll(-dy,"units")
             self._pan_start=(ev.x,ev.y)
-    def _pan_end_fn(self,ev): self._pan_start=None
+    def _pan_end_fn(self,ev):
+        self._pan_start=None
 
     # ── Views ────────────────────────────────────────
-    def _set_view(self,mode:str): self._view=mode; self._kill_anim(); self._refresh_view()
+    def _set_view(self,mode:str):
+        self._view=mode
+        self._kill_anim()
+        self._refresh_view()
 
     def _get_pal(self,blk:JVMBlock,f:JVGFrame)->PaletteRGB565:
         return f._palette if f._palette else blk.palette
@@ -936,7 +1137,8 @@ class JVGEditor:
         no_green=self._greenscreen_remove.get()
         if no_green:
             green_set={i for i,e in enumerate(pal.entries) if e==0x07E0}
-        pr=pal.to_rgb888(); rgba=bytearray(w*h*4)
+        pr=pal.to_rgb888()
+        rgba=bytearray(w*h*4)
         for y in range(h):
             for x in range(w):
                 p=y*w+x; off=p*4
@@ -949,8 +1151,10 @@ class JVGEditor:
         return ImageTk.PhotoImage(img)
 
     def _show_detail(self,f:JVGFrame,blk:JVMBlock,fi:int):
-        self._detail.config(state=tk.NORMAL); self._detail.delete(1.0,tk.END)
-        pal=self._get_pal(blk,f); is_import=f._palette is not None
+        self._detail.config(state=tk.NORMAL)
+        self._detail.delete(1.0,tk.END)
+        pal=self._get_pal(blk,f)
+        is_import=f._palette is not None
         self._detail.insert(tk.END,
             f"Frame #{fi} │ {f.width}×{f.height} │ x_off={f.x_off} y_off={f.y_off} │ "
             f"pixels={len(f.pixels)}B │ enc={len(f.encoded_data)}B │ "
@@ -958,10 +1162,14 @@ class JVGEditor:
         self._detail.config(state=tk.DISABLED)
 
     def _refresh_view(self):
-        self._canvas.delete("all"); self._photos.clear()
+        self._canvas.delete("all")
+        self._photos.clear()
         if not self.jvg or self._bi<0 or self._bi>=len(self.jvg.blocks): return
-        blk=self.jvg.blocks[self._bi]; frames=blk.frames
-        if not frames: self._canvas.create_text(200,100,text="(空)",fill="#666",font=("",14)); return
+        blk=self.jvg.blocks[self._bi]
+        frames=blk.frames
+        if not frames:
+            self._canvas.create_text(200,100,text="(空)",fill="#666",font=("",14))
+            return
 
         if self._view=="tile": self._render_tile(frames,blk)
         elif self._view=="single": self._render_single(frames,blk)
@@ -976,7 +1184,8 @@ class JVGEditor:
             # estimate max frame width at current zoom
             max_w=max((f.width for f in frames if f.width>0),default=64)
             cols=max(1,int((cw-10)/(max_w*z+6)))
-        x,y,rh=10,10,0; col=0
+        x,y,rh=10,10,0
+        col=0
         for fi,f in enumerate(frames):
             if f.width<=0: continue
             pal=self._get_pal(blk,f)
@@ -989,23 +1198,36 @@ class JVGEditor:
             if fi==self._sel_fi:
                 self._canvas.create_rectangle(x,y,x+dw,y+dh,outline="#0f0",width=2,tags=("sel",))
             self._canvas.create_text(x+2,y+2,text=str(fi),fill="#0f0",font=("",7),anchor=tk.NW)
-            x+=dw+4; rh=max(rh,dh); col+=1
-            if col>=cols: x=10; y+=rh+8; rh=0; col=0
+            x+=dw+4
+            rh=max(rh,dh)
+            col+=1
+            if col>=cols:
+                x=10
+                y+=rh+8
+                rh=0
+                col=0
         y+=rh+20
         self._canvas.configure(scrollregion=(0,0,max(600,cols*(int(max((f.width for f in frames if f.width>0),default=64)*z)+4)+20),y))
         self._info.config(text=f"平铺 — {len(frames)}帧, 列数={cols}, {int(z*100)}%")
 
     def _render_single(self,frames,blk):
         if self._fi>=len(frames): self._fi=0
-        f=frames[self._fi]; pal=self._get_pal(blk,f)
-        cw=self._canvas.winfo_width(); ch=self._canvas.winfo_height()
+        f=frames[self._fi]
+        pal=self._get_pal(blk,f)
+        cw=self._canvas.winfo_width()
+        ch=self._canvas.winfo_height()
         scale=min(1.0,(cw-80)/max(f.width,1),(ch-80)/max(f.height,1))
         img=self._f2tk(f,pal,scale)
-        if img: self._photos[0]=img; self._canvas.create_image(cw//2,ch//2,anchor=tk.CENTER,image=img)
-        self._canvas.create_text(40,20,text="◀",fill="#4af",font=("",14),tags=("nav",)); self._canvas.tag_bind("nav","<Button-1>",lambda e:self._nav(-1))
-        self._canvas.create_text(cw-40,20,text="▶",fill="#4af",font=("",14),tags=("nav2",)); self._canvas.tag_bind("nav2","<Button-1>",lambda e:self._nav(1))
+        if img:
+            self._photos[0]=img
+            self._canvas.create_image(cw//2,ch//2,anchor=tk.CENTER,image=img)
+        self._canvas.create_text(40,20,text="◀",fill="#4af",font=("",14),tags=("nav",))
+        self._canvas.tag_bind("nav","<Button-1>",lambda e:self._nav(-1))
+        self._canvas.create_text(cw-40,20,text="▶",fill="#4af",font=("",14),tags=("nav2",))
+        self._canvas.tag_bind("nav2","<Button-1>",lambda e:self._nav(1))
         self._canvas.configure(scrollregion=(0,0,cw,ch))
-        self._sel_fi=self._fi; self._info.config(text=f"逐帧 — {self._fi+1}/{len(frames)} ({f.width}×{f.height})")
+        self._sel_fi=self._fi
+        self._info.config(text=f"逐帧 — {self._fi+1}/{len(frames)} ({f.width}×{f.height})")
         self._show_detail(f,blk,self._fi)
 
     def _on_frame_click(self,fi:int):
@@ -1022,26 +1244,39 @@ class JVGEditor:
         # 计算虚拟坐标union bounding box (与gridsheet逻辑一致)
         vrs=[]
         for f in frames:
-            if f.width<=0: vrs.append((0,0,0,0)); continue
-            xm=_u16s(f.x_max); ym=_u16s(f.y_max)
+            if f.width<=0:
+                vrs.append((0,0,0,0))
+                continue
+            xm=_u16s(f.x_max)
+            ym=_u16s(f.y_max)
             vrs.append((xm-f.width+1,ym-f.height+1,xm,ym))
-        min_vl=min(r[0] for r in vrs); min_vt=min(r[1] for r in vrs)
-        max_vr=max(r[2] for r in vrs); max_vb=max(r[3] for r in vrs)
-        cell_w=max_vr-min_vl+1; cell_h=max_vb-min_vt+1
+        min_vl=min(r[0] for r in vrs)
+        min_vt=min(r[1] for r in vrs)
+        max_vr=max(r[2] for r in vrs)
+        max_vb=max(r[3] for r in vrs)
+        cell_w=max_vr-min_vl+1
+        cell_h=max_vb-min_vt+1
         # 缩放
-        cw=self._canvas.winfo_width(); ch=self._canvas.winfo_height()
+        cw=self._canvas.winfo_width()
+        ch=self._canvas.winfo_height()
         scale=min(1.0,(cw-40)/max(cell_w,1),(ch-40)/max(cell_h,1))
-        scw=int(cell_w*scale); sch=int(cell_h*scale)
-        cx=(cw-scw)//2; cy=(ch-sch)//2
+        scw=int(cell_w*scale)
+        sch=int(cell_h*scale)
+        cx=(cw-scw)//2
+        cy=(ch-sch)//2
         # 预渲染所有帧
         self._anim_data=[]
         no_green=self._greenscreen_remove.get()
         for fi,f in enumerate(frames):
-            if f.width<=0: self._anim_data.append(None); continue
-            pal=self._get_pal(blk,f); pr=pal.to_rgb888()
+            if f.width<=0:
+                self._anim_data.append(None)
+                continue
+            pal=self._get_pal(blk,f)
+            pr=pal.to_rgb888()
             if no_green:
                 green_set={i for i,e in enumerate(pal.entries) if e==0x07E0}
-            ox=(_u16s(f.x_max)-f.width+1-min_vl); oy=(_u16s(f.y_max)-f.height+1-min_vt)
+            ox=(_u16s(f.x_max)-f.width+1-min_vl)
+            oy=(_u16s(f.y_max)-f.height+1-min_vt)
             rgba=bytearray(scw*sch*4)
             for py in range(f.height):
                 for px in range(f.width):
@@ -1054,12 +1289,15 @@ class JVGEditor:
                         off=(dy*scw+dx)*4; rgba[off]=pr[idx*3]; rgba[off+1]=pr[idx*3+1]; rgba[off+2]=pr[idx*3+2]; rgba[off+3]=255
             pil=Image.frombytes('RGBA',(scw,sch),bytes(rgba))
             self._anim_data.append(ImageTk.PhotoImage(pil))
-        self._anim_idx=0; self._anim_cx=cx; self._anim_cy=cy
+        self._anim_idx=0
+        self._anim_cx=cx
+        self._anim_cy=cy
         if self._anim_data: self._anim_next()
 
     def _anim_next(self):
         if self._view!="anim" or not hasattr(self,'_anim_data') or not self._anim_data: return
-        n=len(self._anim_data); fi=self._anim_idx%n
+        n=len(self._anim_data)
+        fi=self._anim_idx%n
         img=self._anim_data[fi]
         if img:
             self._photos['_a']=img
@@ -1072,7 +1310,9 @@ class JVGEditor:
         self._info.config(text=f"动画 — {n}帧")
 
     def _kill_anim(self):
-        if self._anim_job: self.root.after_cancel(self._anim_job); self._anim_job=None
+        if self._anim_job:
+            self.root.after_cancel(self._anim_job)
+            self._anim_job=None
         self._anim_data=[]
 
     # ── Export ────────────────────────────────────────
@@ -1088,8 +1328,10 @@ class JVGEditor:
                 return
             p=filedialog.asksaveasfilename(title="导出帧",defaultextension=".png",filetypes=[("PNG","*.png")])
             if not p: return
-            f=blk.frames[self._sel_fi]; pal=self._get_pal(blk,f)
-            export_single(f,pal,p,gs); self._info.config(text=f"已导出 {Path(p).name}")
+            f=blk.frames[self._sel_fi]
+            pal=self._get_pal(blk,f)
+            export_single(f,pal,p,gs)
+            self._info.config(text=f"已导出 {Path(p).name}")
         elif mode=="group":
             d=filedialog.askdirectory(title="选择导出目录")
             if not d: return
@@ -1103,9 +1345,13 @@ class JVGEditor:
 
 # ── Entry ──────────────────────────────────────────
 def main():
-    root=tk.Tk(); fp=sys.argv[1] if len(sys.argv)>1 else None
-    app=JVGEditor(root,fp); root.mainloop()
+    root=tk.Tk()
+    fp=sys.argv[1] if len(sys.argv)>1 else None
+    app=JVGEditor(root,fp)
+    root.mainloop()
 
 if __name__=="__main__":
-    if not HAS_PIL: print("需要 Pillow: pip install Pillow"); sys.exit(1)
+    if not HAS_PIL:
+        print("需要 Pillow: pip install Pillow")
+        sys.exit(1)
     main()

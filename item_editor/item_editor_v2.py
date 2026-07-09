@@ -35,38 +35,48 @@ TKItem.dat 可视化编辑器 v2.0 (PySide6 — Godot 4.6 风格)
   python item_editor_v2.py
 """
 
-import struct, os, sys, csv, json
+import csv
+import json
+import os
+import struct
+import sys
 
+from PySide6.QtCore import QPoint, QRect, QSize, Qt, QTranslator
+from PySide6.QtGui import QAction, QIcon, QKeySequence, QPainter
 from PySide6.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QSplitter, QTableWidget, QTableWidgetItem, QAbstractItemView,
-    QHeaderView, QLabel, QLineEdit, QPushButton, QCheckBox, QComboBox,
-    QMessageBox, QFileDialog, QDialog, QGridLayout, QFrame, QScrollArea,
-    QSizePolicy, QMenu, QMenuBar, QLayout
+    QAbstractItemView, QApplication, QCheckBox, QComboBox, QDialog,
+    QFileDialog, QFrame, QGridLayout, QHBoxLayout, QHeaderView, QLabel,
+    QLineEdit, QLayout, QMainWindow, QMenu, QMenuBar, QMessageBox,
+    QPushButton, QScrollArea, QSizePolicy, QSplitter, QTableWidget,
+    QTableWidgetItem, QVBoxLayout, QWidget
 )
-from PySide6.QtGui import QAction, QKeySequence, QIcon, QPainter
-from PySide6.QtCore import Qt, QRect, QPoint, QSize, QTranslator
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-from editor_utils.theme_manager import ThemeManager
 from editor_utils.dock_components import DockHeader, create_dock
-from editor_utils.picker_dialogs import (
-    TktPickerDialog, StatusPickerDialog, STATUS_NAMES, STATUS_ICON_BASE
-)
-from editor_utils.ui_helpers import make_fake_input, update_path_labels, confirm_close, export_csv, resolve_config_path, themed_messagebox
-from editor_utils.lzss import lzss_decompress_dat, lzss_compress_dat
-from editor_utils.tkt_loader import load_tkt_simple
+from editor_utils.jvg_loader import get_sprite_pixmap, load_mu_sprites
+from editor_utils.lzss import lzss_compress_dat, lzss_decompress_dat
 from editor_utils.mod_exporter import (
-    diff_records, compute_crc32, generate_mod_json,
-    pack_tksmod, build_data_diff_json, ModMetadataDialog, safe_mod_filename,
-    load_reference_dat_fields,
-    get_tksmod_info, import_tksmod_records, ModImportPreviewDialog, ModExportPreviewDialog,
+    ModExportPreviewDialog, ModImportPreviewDialog, ModMetadataDialog,
+    build_data_diff_json, compute_crc32, diff_records, generate_mod_json,
+    get_tksmod_info, import_tksmod_records, load_reference_dat_fields,
+    pack_tksmod, safe_mod_filename,
+)
+from editor_utils.picker_dialogs import (
+    STATUS_ICON_BASE, STATUS_NAMES, StatusPickerDialog, TktPickerDialog
+)
+from editor_utils.tkt_loader import load_tkt_simple
+from editor_utils.theme_manager import ThemeManager
+from editor_utils.ui_helpers import (
+    confirm_close, export_csv, make_fake_input, resolve_config_path,
+    themed_messagebox, update_path_labels
 )
 from editor_utils.window_theme import apply_godot_theme
 
 # ── 本地别名: 保持向后兼容 ──
-def lzss_decompress(data): return lzss_decompress_dat(data)
-def lzss_compress(data): return lzss_compress_dat(data)
+def lzss_decompress(data):
+    return lzss_decompress_dat(data)
+def lzss_compress(data):
+    return lzss_compress_dat(data)
 
 def load_tkt(tkt_path):
     """加载 TKT 文本 (仅第一行)"""
@@ -78,8 +88,11 @@ def load_tkt_full(tkt_path):
 
 def load_tkskill_names(sp, tkt):
     if not sp or not os.path.exists(sp): return {}
-    with open(sp, 'rb') as f: raw = f.read()
-    dec = lzss_decompress_dat(raw); REC = 94; names = {}
+    with open(sp, 'rb') as f:
+        raw = f.read()
+    dec = lzss_decompress_dat(raw)
+    REC = 94
+    names = {}
     # 兜底: 解压结果不对齐记录边界但原始文件对齐 → 未压缩 raw 数据
     if len(raw) % REC == 0 and (len(dec) == 0 or len(dec) % REC != 0):
         dec = raw
@@ -88,8 +101,6 @@ def load_tkskill_names(sp, tkt):
         n = tkt.get(sid,"") or tkt.get(-sid,"") or f"Skill#{sid}"
         names[i] = n
     return names
-
-from editor_utils.jvg_loader import load_mu_sprites, get_sprite_pixmap
 
 # ============================================================
 # 常量 (Maker.exe TksModify.dll 文案 + TKS.exe 反编译)
@@ -135,7 +146,8 @@ def _use_right_label(val, page, opts=None):
 PAGE_NAMES = {0:"药品", 1:"道具", 2:"武器", 3:"防具", 4:"饰品", 5:"特殊"}
 PAGE_VALUES = [f"{k}-{v}" for k,v in sorted(PAGE_NAMES.items())]
 
-ITEM_REC = 64; ITEM_CNT = 600  # 游戏硬编码: sub_45343C(aTkitemDat, word_77CBCA, 38400)
+ITEM_REC = 64
+ITEM_CNT = 600  # 游戏硬编码: sub_45343C(aTkitemDat, word_77CBCA, 38400)
 W_INPUT = 12
 
 # ============================================================
@@ -231,7 +243,8 @@ def item_display_name(rec, tkt):
 # 数据加载/保存
 # ============================================================
 def load_items(fp):
-    with open(fp, 'rb') as f: raw = f.read()
+    with open(fp, 'rb') as f:
+        raw = f.read()
     dec = lzss_decompress(raw)
     # 兜底: LZSS 解压结果不对齐记录边界但原始文件对齐 → 未压缩 raw 数据
     if len(raw) % ITEM_REC == 0 and (len(dec) == 0 or len(dec) % ITEM_REC != 0):
@@ -251,23 +264,30 @@ def save_items(fp, recs):
     buf = bytearray(ITEM_CNT * ITEM_REC)
     # 空槽模板 (#560-#599 原始值: name_id=0, desc_id=600) 在保存时保持 desc_id=600
     for rec in recs[:ITEM_CNT]:
-        i = rec['index']; off = i * ITEM_REC
+        i = rec['index']
+        off = i * ITEM_REC
         for k, fo, _, _, _, _ in ALL_FIELDS:
             struct.pack_into('<h', buf, off + fo, rec[k])
     compressed = lzss_compress(bytes(buf))
     if lzss_decompress(compressed) != bytes(buf):
         raise RuntimeError("压缩回写验证失败!")
-    with open(fp, 'wb') as f: f.write(compressed)
+    with open(fp, 'wb') as f:
+        f.write(compressed)
     return True
 
 class SkillPickerDialog(QDialog):
     def __init__(self, parent, skill_names, cur_val):
         super().__init__(parent)
-        self.setWindowTitle("选择技能"); self.resize(460, 550)
-        self.selected_index = None; self.skill_names = skill_names
+        self.setWindowTitle("选择技能")
+        self.resize(460, 550)
+        self.selected_index = None
+        self.skill_names = skill_names
         layout = QVBoxLayout(self)
-        sf = QHBoxLayout(); sf.addWidget(QLabel("搜索:"))
-        self.search_box = QLineEdit(); self.search_box.textChanged.connect(self._refresh); sf.addWidget(self.search_box)
+        sf = QHBoxLayout()
+        sf.addWidget(QLabel("搜索:"))
+        self.search_box = QLineEdit()
+        self.search_box.textChanged.connect(self._refresh)
+        sf.addWidget(self.search_box)
         layout.addLayout(sf)
         self.table = QTableWidget(0, 2)
         self.table.setHorizontalHeaderLabels(['索引', '技能名称'])
@@ -289,7 +309,8 @@ class SkillPickerDialog(QDialog):
 
     def _refresh(self):
         q = self.search_box.text().strip().lower()
-        self.table.setRowCount(0); row = 0
+        self.table.setRowCount(0)
+        row = 0
         for idx in sorted(self.skill_names.keys()):
             nm = self.skill_names[idx]
             if q and q not in f"{idx} {nm}".lower(): continue
@@ -305,32 +326,43 @@ class SkillPickerDialog(QDialog):
             self.accept()
 
     def _clear(self):
-        self.selected_index = 0; self.accept()
+        self.selected_index = 0
+        self.accept()
 
 class IconPickerDialog(QDialog):
     def __init__(self, parent, mu_sprites, get_pixmap_fn, cur_val):
         super().__init__(parent)
-        self.setWindowTitle("选择图标 (索引 = 游戏值 + 130)"); self.resize(780, 560)
+        self.setWindowTitle("选择图标 (索引 = 游戏值 + 130)")
+        self.resize(780, 560)
         self.selected_value = None
-        self.mu_sprites = mu_sprites; self.get_pixmap_fn = get_pixmap_fn; self.cur_val = cur_val
+        self.mu_sprites = mu_sprites
+        self.get_pixmap_fn = get_pixmap_fn
+        self.cur_val = cur_val
         layout = QVBoxLayout(self)
-        scroll = QScrollArea(); scroll.setWidgetResizable(True)
-        inner = QWidget(); self.grid = QGridLayout(inner); self.grid.setSpacing(2)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        inner = QWidget()
+        self.grid = QGridLayout(inner)
+        self.grid.setSpacing(2)
         COLS = 12
         for si in range(len(mu_sprites)):
             if mu_sprites[si] is None: continue
             game_idx = si - 130
             r, c = divmod(si, COLS)
-            btn = QPushButton(); btn.setFixedSize(52, 56); btn.setCursor(Qt.PointingHandCursor)
+            btn = QPushButton()
+            btn.setFixedSize(52, 56)
+            btn.setCursor(Qt.PointingHandCursor)
             btn.setProperty("selected", "true" if game_idx == cur_val else "false")
             pix = get_pixmap_fn(game_idx, (40, 40))
             if pix:
-                btn.setIcon(QIcon(pix)); btn.setIconSize(pix.size())
+                btn.setIcon(QIcon(pix))
+                btn.setIconSize(pix.size())
             btn.setText(str(game_idx))
             btn.setToolTip(f"精灵索引: {si}\n游戏值: {game_idx}")
             btn.clicked.connect(lambda checked, v=game_idx: self._select(v))
             self.grid.addWidget(btn, r, c)
-        scroll.setWidget(inner); layout.addWidget(scroll)
+        scroll.setWidget(inner)
+        layout.addWidget(scroll)
         bl = QHBoxLayout()
         bl.addWidget(QLabel("点击图标选择，索引 = 游戏精灵索引 - 130"))
         bl.addStretch()
@@ -338,14 +370,17 @@ class IconPickerDialog(QDialog):
         layout.addLayout(bl)
 
     def _select(self, v):
-        self.selected_value = v; self.accept()
+        self.selected_value = v
+        self.accept()
 
 class FlagPickerDialog(QDialog):
     """通用位标志选择弹窗 (combat_flag / extra_flags)"""
     def __init__(self, parent, title, flag_bits, cur_val, use_bit_shift=False):
         super().__init__(parent)
-        self.setWindowTitle(title); self.resize(420, 280)
-        self.selected_mask = None; self.use_bit_shift = use_bit_shift
+        self.setWindowTitle(title)
+        self.resize(420, 280)
+        self.selected_mask = None
+        self.use_bit_shift = use_bit_shift
         layout = QVBoxLayout(self)
         self.checkboxes = []
         for bit, name, desc in flag_bits:
@@ -353,7 +388,8 @@ class FlagPickerDialog(QDialog):
             mask = (1 << bit) if use_bit_shift else bit
             cb = QCheckBox(f"{name}" + (f" (bit{bit})" if use_bit_shift else ""))
             cb.setChecked(bool(cur_val & mask))
-            self.checkboxes.append((mask, cb)); row.addWidget(cb)
+            self.checkboxes.append((mask, cb))
+            row.addWidget(cb)
             row.addWidget(QLabel(desc), 1)
             layout.addLayout(row)
         layout.addStretch()
@@ -362,20 +398,26 @@ class FlagPickerDialog(QDialog):
         bl.addWidget(QPushButton("全清", clicked=lambda: [cb.setChecked(False) for _, cb in self.checkboxes]))
         bl.addStretch()
         bl.addWidget(QPushButton("取消", clicked=self.reject))
-        btn_ok = QPushButton("确定"); btn_ok.clicked.connect(self._ok); bl.addWidget(btn_ok)
+        btn_ok = QPushButton("确定")
+        btn_ok.clicked.connect(self._ok)
+        bl.addWidget(btn_ok)
         layout.addLayout(bl)
 
     def _ok(self):
         m = 0
         for mask, cb in self.checkboxes:
-            if cb.isChecked(): m |= mask
-        if m >= 0x8000: m -= 0x10000
-        self.selected_mask = m; self.accept()
+            if cb.isChecked():
+                m |= mask
+        if m >= 0x8000:
+            m -= 0x10000
+        self.selected_mask = m
+        self.accept()
 
 class UseRightPickerDialog(QDialog):
     def __init__(self, parent, opts, cur_val):
         super().__init__(parent)
-        self.setWindowTitle("选择使用权限 (多选位掩码)"); self.resize(320, 90 + max(len(opts), 2) * 28)
+        self.setWindowTitle("选择使用权限 (多选位掩码)")
+        self.resize(320, 90 + max(len(opts), 2) * 28)
         self.selected_mask = None
         layout = QVBoxLayout(self)
         # 手动输入框: MOD 可能使用超出内置预定义的位掩码，允许直接输入任意数值
@@ -390,21 +432,25 @@ class UseRightPickerDialog(QDialog):
             cb = QCheckBox(f"{bit}-{name}" if bit != 0 else name)
             cb.setChecked(bool(cur_val & bit) if bit != 0 else False)
             cb.toggled.connect(self._sync_from_boxes)
-            self.checkboxes.append((bit, cb)); layout.addWidget(cb)
+            self.checkboxes.append((bit, cb))
+            layout.addWidget(cb)
         layout.addStretch()
         bl = QHBoxLayout()
         bl.addWidget(QPushButton("全选", clicked=lambda: [cb.setChecked(True) for _, cb in self.checkboxes]))
         bl.addWidget(QPushButton("全清", clicked=lambda: [cb.setChecked(False) for _, cb in self.checkboxes]))
         bl.addStretch()
         bl.addWidget(QPushButton("取消", clicked=self.reject))
-        btn_ok = QPushButton("确定"); btn_ok.clicked.connect(self._ok); bl.addWidget(btn_ok)
+        btn_ok = QPushButton("确定")
+        btn_ok.clicked.connect(self._ok)
+        bl.addWidget(btn_ok)
         layout.addLayout(bl)
 
     def _sync_from_boxes(self):
         """勾选框变动时同步到手动输入框"""
         m = 0
         for bit, cb in self.checkboxes:
-            if cb.isChecked(): m |= bit
+            if cb.isChecked():
+                m |= bit
         self.manual_edit.setText(str(m))
 
     def _ok(self):
@@ -413,8 +459,10 @@ class UseRightPickerDialog(QDialog):
         except ValueError:
             m = 0
         m &= 0xFFFF                      # equip_type 为 16 位字段
-        if m >= 0x8000: m -= 0x10000      # 转有符号
-        self.selected_mask = m; self.accept()
+        if m >= 0x8000:
+            m -= 0x10000      # 转有符号
+        self.selected_mask = m
+        self.accept()
 
 # ============================================================
 # FlowLayout — 流式布局，子控件左右排列，超出自动换行
@@ -426,15 +474,18 @@ class FlowLayout(QLayout):
         self.setSpacing(spacing)
         self._items = []
 
-    def addItem(self, item): self._items.append(item)
-    def count(self): return len(self._items)
+    def addItem(self, item):
+        self._items.append(item)
+    def count(self):
+        return len(self._items)
     def itemAt(self, index):
         if 0 <= index < len(self._items): return self._items[index]
         return None
     def takeAt(self, index):
         if 0 <= index < len(self._items): return self._items.pop(index)
         return None
-    def hasHeightForWidth(self): return True
+    def hasHeightForWidth(self):
+        return True
 
     def heightForWidth(self, width):
         return self._do_layout(QRect(0, 0, width, 0), test_only=True)
@@ -443,24 +494,34 @@ class FlowLayout(QLayout):
         super().setGeometry(rect)
         self._do_layout(rect, test_only=False)
 
-    def sizeHint(self): return self.minimumSize()
+    def sizeHint(self):
+        return self.minimumSize()
     def minimumSize(self):
         size = QSize()
-        for item in self._items: size = size.expandedTo(item.minimumSize())
-        m = self.contentsMargins(); size += QSize(m.left()+m.right(), m.top()+m.bottom())
+        for item in self._items:
+            size = size.expandedTo(item.minimumSize())
+        m = self.contentsMargins()
+        size += QSize(m.left()+m.right(), m.top()+m.bottom())
         return size
 
     def _do_layout(self, rect, test_only):
         m = self.contentsMargins()
         effective = rect.adjusted(m.left(), m.top(), -m.right(), 0)
-        x = effective.x(); y = effective.y(); row_h = 0
+        x = effective.x()
+        y = effective.y()
+        row_h = 0
         for item in self._items:
-            sz = item.sizeHint(); nx = x + sz.width()
+            sz = item.sizeHint()
+            nx = x + sz.width()
             if nx - effective.x() > effective.width() and row_h > 0:
-                x = effective.x(); y += row_h + self.spacing(); row_h = 0
+                x = effective.x()
+                y += row_h + self.spacing()
+                row_h = 0
                 nx = x + sz.width()
-            if not test_only: item.setGeometry(QRect(QPoint(x, y), sz))
-            x = nx + self.spacing(); row_h = max(row_h, sz.height())
+            if not test_only:
+                item.setGeometry(QRect(QPoint(x, y), sz))
+            x = nx + self.spacing()
+            row_h = max(row_h, sz.height())
         return y + row_h - rect.y() + m.bottom()
 
 # ============================================================
@@ -470,20 +531,28 @@ class ItemEditorApp(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("TKItem.dat 可视化编辑器 v2.0 (PySide6)")
-        self.resize(1360, 860); self.setMinimumSize(1120, 700)
+        self.resize(1360, 860)
+        self.setMinimumSize(1120, 700)
 
         ico_path = os.path.join(os.path.dirname(__file__), 'TKS.ico')
-        if os.path.exists(ico_path): self.setWindowIcon(QIcon(ico_path))
+        if os.path.exists(ico_path):
+            self.setWindowIcon(QIcon(ico_path))
 
         app_inst = QApplication.instance()
         self._is_dark = app_inst.styleHints().colorScheme() == Qt.ColorScheme.Dark if app_inst else True
         apply_godot_theme(self, self._is_dark)
 
         self.item_path = self.tkt_path = self.skill_path = self.mu_path = None
-        self.records = []; self.tkt = {}; self.tkt_full = {}; self.skill_names = {}
+        self.records = []
+        self.tkt = {}
+        self.tkt_full = {}
+        self.skill_names = {}
         self._original_records = []  # 原始快照，用于 MOD 导出
-        self._mu_sprites = []; self._icon_pixmaps = {}
-        self.filtered_indices = []; self._dirty = False; self._editing_idx = None
+        self._mu_sprites = []
+        self._icon_pixmaps = {}
+        self.filtered_indices = []
+        self._dirty = False
+        self._editing_idx = None
         self._sort_reverse = False
         self._guard_right_reset = False
         # 使用权限选项运行时副本 (启动时自动从 configs/ 加载)
@@ -491,9 +560,12 @@ class ItemEditorApp(QMainWindow):
         # 启动时自动从 configs/ 加载 equip_type_labels.json
         self._auto_load_use_right_config()
 
-        self.widget_map = {}; self.extra_map = {}
+        self.widget_map = {}
+        self.extra_map = {}
 
-        self._build_ui(); self._set_edit_enabled(False); self._apply_theme()
+        self._build_ui()
+        self._set_edit_enabled(False)
+        self._apply_theme()
 
     # ── 主题 ──
     def _apply_theme(self):
@@ -501,7 +573,9 @@ class ItemEditorApp(QMainWindow):
         self._update_paths()
 
     def _toggle_theme(self):
-        self._is_dark = not self._is_dark; self._apply_theme(); self._refresh_table()
+        self._is_dark = not self._is_dark
+        self._apply_theme()
+        self._refresh_table()
         apply_godot_theme(self, self._is_dark)
 
     def _create_dock(self, title, widget_content):
@@ -510,9 +584,11 @@ class ItemEditorApp(QMainWindow):
 
     # ── UI 构建 ──
     def _build_ui(self):
-        central = QWidget(); self.setCentralWidget(central)
+        central = QWidget()
+        self.setCentralWidget(central)
         main_layout = QVBoxLayout(central)
-        main_layout.setContentsMargins(8, 8, 8, 4); main_layout.setSpacing(4)
+        main_layout.setContentsMargins(8, 8, 8, 4)
+        main_layout.setSpacing(4)
 
         # 菜单栏
         mb = self.menuBar()
@@ -525,7 +601,8 @@ class ItemEditorApp(QMainWindow):
         fm.addAction("导出为 MOD (指定参考目录)…", self._export_tksmod_with_ref)
         fm.addSeparator()
         fm.addAction("导入 MOD (.tksmod)…", self._import_tksmod)
-        fm.addSeparator(); fm.addAction("退出", self.close)
+        fm.addSeparator()
+        fm.addAction("退出", self.close)
         em = mb.addMenu("编辑(&E)")
         em.addAction("新建物品 (填充空槽)\tCtrl+N", self._new_item)
         em.addAction("复制当前到空槽", self._copy_record)
@@ -576,9 +653,12 @@ class ItemEditorApp(QMainWindow):
         # 左侧: 物品列表 (列顺序与原版一致: 图标在最前)
         self.table = QTableWidget(0, 7)
         self.table.setHorizontalHeaderLabels(['图标', '#', 'ID', '页面', '物品名称', '权限', '价格'])
-        self.table.setColumnWidth(0, 56); self.table.setColumnWidth(1, 40)
-        self.table.setColumnWidth(2, 50); self.table.setColumnWidth(3, 50)
-        self.table.setColumnWidth(4, 160); self.table.setColumnWidth(5, 90)
+        self.table.setColumnWidth(0, 56)
+        self.table.setColumnWidth(1, 40)
+        self.table.setColumnWidth(2, 50)
+        self.table.setColumnWidth(3, 50)
+        self.table.setColumnWidth(4, 160)
+        self.table.setColumnWidth(5, 90)
         self.table.setColumnWidth(6, 50)
         self.table.verticalHeader().setDefaultSectionSize(44)
         self.table.horizontalHeader().setStretchLastSection(True)
@@ -609,10 +689,12 @@ class ItemEditorApp(QMainWindow):
         right_layout.addLayout(header_row)
 
         # 滚动编辑区
-        scroll = QScrollArea(); scroll.setWidgetResizable(True)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
         self.edit_inner = QWidget()
         self.edit_layout = QVBoxLayout(self.edit_inner)
-        self.edit_layout.setContentsMargins(4, 4, 16, 4); self.edit_layout.setSpacing(4)
+        self.edit_layout.setContentsMargins(4, 4, 16, 4)
+        self.edit_layout.setSpacing(4)
 
         # 预览面板
         self._build_preview()
@@ -638,15 +720,20 @@ class ItemEditorApp(QMainWindow):
         self.lbl_item = QLabel("TKItem.dat: 未加载")
         self.lbl_tkt = QLabel("TKT.dat: 未加载")
         self.lbl_skill = QLabel("TKSkill.dat: 未加载")
-        path_layout.addWidget(self.lbl_item); path_layout.addSpacing(20)
-        path_layout.addWidget(self.lbl_tkt); path_layout.addSpacing(20)
-        path_layout.addWidget(self.lbl_skill); path_layout.addStretch()
+        path_layout.addWidget(self.lbl_item)
+        path_layout.addSpacing(20)
+        path_layout.addWidget(self.lbl_tkt)
+        path_layout.addSpacing(20)
+        path_layout.addWidget(self.lbl_skill)
+        path_layout.addStretch()
         main_layout.addLayout(path_layout)
 
     def _build_preview(self):
-        preview_frame = QFrame(); preview_frame.setObjectName("PreviewFrame")
+        preview_frame = QFrame()
+        preview_frame.setObjectName("PreviewFrame")
         pl = QVBoxLayout(preview_frame)
-        pl.setContentsMargins(8, 12, 8, 12); pl.setSpacing(6)
+        pl.setContentsMargins(8, 12, 8, 12)
+        pl.setSpacing(6)
 
         # 名称 + 图标
         top_row = QHBoxLayout()
@@ -677,9 +764,11 @@ class ItemEditorApp(QMainWindow):
         self._preview_skills = []
         for slbl in skill_labels:
             col = QVBoxLayout()
-            lbl_t = QLabel(f"{slbl}:"); lbl_t.setProperty("class", "PropLabel")
+            lbl_t = QLabel(f"{slbl}:")
+            lbl_t.setProperty("class", "PropLabel")
             col.addWidget(lbl_t)
-            lbl_v = QLabel("—"); lbl_v.setProperty("class", "PreviewDesc")
+            lbl_v = QLabel("—")
+            lbl_v.setProperty("class", "PreviewDesc")
             lbl_v.setWordWrap(True)
             col.addWidget(lbl_v)
             self._preview_skills.append(lbl_v)
@@ -688,12 +777,14 @@ class ItemEditorApp(QMainWindow):
 
         # 状态预览 (4列, QGridLayout 确保标题和内容行对齐)
         status_grid = QGridLayout()
-        status_grid.setHorizontalSpacing(8); status_grid.setVerticalSpacing(2)
+        status_grid.setHorizontalSpacing(8)
+        status_grid.setVerticalSpacing(2)
         status_grid.setContentsMargins(0, 0, 0, 0)
         status_labels = ["导致状态 1-16", "导致状态 17-32", "解除状态 1-16", "解除状态 17-32"]
         self._preview_status_containers = []
         for si, slbl in enumerate(status_labels):
-            lbl_t = QLabel(f"{slbl}:"); lbl_t.setProperty("class", "PropLabel")
+            lbl_t = QLabel(f"{slbl}:")
+            lbl_t.setProperty("class", "PropLabel")
             status_grid.addWidget(lbl_t, 0, si, Qt.AlignTop)
             container = QWidget()
             container_layout = FlowLayout(margin=0, spacing=2)
@@ -709,13 +800,16 @@ class ItemEditorApp(QMainWindow):
     def _build_field_group(self, title, fields, cols):
         group_widget = QWidget()
         v_layout = QVBoxLayout(group_widget)
-        v_layout.setContentsMargins(0, 4, 0, 4); v_layout.setSpacing(6)
+        v_layout.setContentsMargins(0, 4, 0, 4)
+        v_layout.setSpacing(6)
 
-        lbl_title = QLabel(title); lbl_title.setProperty("class", "InspectorTitle")
+        lbl_title = QLabel(title)
+        lbl_title.setProperty("class", "InspectorTitle")
         v_layout.addWidget(lbl_title)
 
         grid = QGridLayout()
-        grid.setVerticalSpacing(6); grid.setHorizontalSpacing(8)
+        grid.setVerticalSpacing(6)
+        grid.setHorizontalSpacing(8)
         grid.setContentsMargins(10, 0, 0, 0)
 
         for fi, field_def in enumerate(fields):
@@ -742,49 +836,68 @@ class ItemEditorApp(QMainWindow):
         ft = field_def[3] if len(field_def) > 3 else 'int'
         cmt = field_def[5] if len(field_def) > 5 else (field_def[4] if len(field_def) > 4 else "")
 
-        cell = QVBoxLayout(); cell.setSpacing(2)
+        cell = QVBoxLayout()
+        cell.setSpacing(2)
         lbl = QLabel(fl)
         lbl.setToolTip(f"[{fo:02d}] {cmt}")
         lbl.setProperty("class", "PropLabel")
         cell.addWidget(lbl)
 
         if ft == 'page':
-            cb = QComboBox(); cb.addItems(PAGE_VALUES)
+            cb = QComboBox()
+            cb.addItems(PAGE_VALUES)
             cell.addWidget(make_fake_input(combo=cb))
-            self.widget_map[fn] = cb; self.extra_map[fn] = None
+            self.widget_map[fn] = cb
+            self.extra_map[fn] = None
         elif ft in ('tkt', 'icon', 'use_right', 'combat_flag', 'extra_flags', 'skill'):
             inp = QLineEdit()
-            btn = QPushButton("..."); btn.setFixedWidth(28)
+            btn = QPushButton("...")
+            btn.setFixedWidth(28)
             btn.setCursor(Qt.PointingHandCursor)
-            extra = QLabel(""); extra.setProperty("class", "ExtraPreviewText")
+            extra = QLabel("")
+            extra.setProperty("class", "ExtraPreviewText")
             extra.setWordWrap(True)
             box = make_fake_input(line_edit=inp, button=btn, stretch=False)
-            cell.addWidget(box); cell.addWidget(extra)
-            self.widget_map[fn] = inp; self.extra_map[fn] = extra
-            if ft == 'tkt': btn.clicked.connect(lambda _, f=fn: self._pick_tkt(f))
-            elif ft == 'icon': btn.clicked.connect(lambda _, f=fn: self._pick_icon(f))
-            elif ft == 'use_right': btn.clicked.connect(lambda _, f=fn: self._pick_use_right(f))
-            elif ft == 'combat_flag': btn.clicked.connect(lambda _, f=fn: self._pick_combat_flags(f))
-            elif ft == 'extra_flags': btn.clicked.connect(lambda _, f=fn: self._pick_extra_flags(f))
-            elif ft == 'skill': btn.clicked.connect(lambda _, f=fn: self._pick_skill(f))
+            cell.addWidget(box)
+            cell.addWidget(extra)
+            self.widget_map[fn] = inp
+            self.extra_map[fn] = extra
+            if ft == 'tkt':
+                btn.clicked.connect(lambda _, f=fn: self._pick_tkt(f))
+            elif ft == 'icon':
+                btn.clicked.connect(lambda _, f=fn: self._pick_icon(f))
+            elif ft == 'use_right':
+                btn.clicked.connect(lambda _, f=fn: self._pick_use_right(f))
+            elif ft == 'combat_flag':
+                btn.clicked.connect(lambda _, f=fn: self._pick_combat_flags(f))
+            elif ft == 'extra_flags':
+                btn.clicked.connect(lambda _, f=fn: self._pick_extra_flags(f))
+            elif ft == 'skill':
+                btn.clicked.connect(lambda _, f=fn: self._pick_skill(f))
         elif ft == 'mask':
             is_cause = fn.startswith('cause_')
             btn = QPushButton("选择导致状态…" if is_cause else "选择解除状态…")
-            hidden = QLineEdit(); hidden.hide()
-            box = QFrame(); box.setObjectName("FakeInputBox")
+            hidden = QLineEdit()
+            hidden.hide()
+            box = QFrame()
+            box.setObjectName("FakeInputBox")
             box.setFixedHeight(28)
-            bh = QHBoxLayout(box); bh.setContentsMargins(0,0,0,0); bh.setSpacing(0)
+            bh = QHBoxLayout(box)
+            bh.setContentsMargins(0,0,0,0)
+            bh.setSpacing(0)
             bh.addWidget(btn, 1)
             self.widget_map[fn] = hidden
             status_frame = QWidget()
             status_frame.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
             self.extra_map[fn] = status_frame
             btn.clicked.connect(lambda _, f=fn: self._pick_status(f))
-            cell.addWidget(box); cell.addWidget(status_frame, 1)
+            cell.addWidget(box)
+            cell.addWidget(status_frame, 1)
         else:
             inp = QLineEdit()
             cell.addWidget(make_fake_input(line_edit=inp))
-            self.widget_map[fn] = inp; self.extra_map[fn] = None
+            self.widget_map[fn] = inp
+            self.extra_map[fn] = None
 
         grid.addLayout(cell, row, col, Qt.AlignTop)
 
@@ -807,12 +920,14 @@ class ItemEditorApp(QMainWindow):
         tk_ = os.path.join(d, "TKT.dat")
         sk = os.path.join(d, "TKSkill.dat")
         if not os.path.exists(it):
-            QMessageBox.warning(self, "文件缺失", "未找到 TKItem.dat"); return
+            QMessageBox.warning(self, "文件缺失", "未找到 TKItem.dat")
+            return
         self.item_path = it
         self.tkt_path = tk_ if os.path.exists(tk_) else None
         self.skill_path = sk if os.path.exists(sk) else None
         self.mu_path = os.path.join(d, "Mu.JVG")
-        if not os.path.exists(self.mu_path): self.mu_path = None
+        if not os.path.exists(self.mu_path):
+            self.mu_path = None
         self._reload()
 
     def _reload(self):
@@ -829,7 +944,8 @@ class ItemEditorApp(QMainWindow):
             self._mu_sprites = load_mu_sprites(self.mu_path) or []
             self._icon_pixmaps.clear()
         try:
-            self.records = load_items(self.item_path); self._dirty = False
+            self.records = load_items(self.item_path)
+            self._dirty = False
             # MOD 导出使用原始字节序 (word index = byte_offset // 2)，与启动器 _apply_fields_to_record 一致
             self._original_records = []
             for rec in self.records:
@@ -839,8 +955,11 @@ class ItemEditorApp(QMainWindow):
                 self._original_records.append(row)
             self.status_var.setText(f"{len(self.records)} 条 | TKT {len(self.tkt)} 条 | 技能 {len(self.skill_names)} 条")
         except Exception as e:
-            QMessageBox.critical(self, "加载失败", str(e)); self.records = []
-        self._update_paths(); self._set_edit_enabled(True); self._apply_filter()
+            QMessageBox.critical(self, "加载失败", str(e))
+            self.records = []
+        self._update_paths()
+        self._set_edit_enabled(True)
+        self._apply_filter()
 
     # ── 图标 ──
     def _get_icon_pixmap(self, icon_val, size=(24,24)):
@@ -850,12 +969,14 @@ class ItemEditorApp(QMainWindow):
     def _update_right_options(self, page_filter_text):
         """根据页面筛选值动态填充权限下拉框选项"""
         if page_filter_text.startswith("全部"):
-            seen = set(); all_opts = []
+            seen = set()
+            all_opts = []
             for page in sorted(self._use_right_options):
                 for bit, name in self._use_right_options[page]:
                     key = (bit, name)
                     if key not in seen:
-                        seen.add(key); all_opts.append(f"{bit}-{name}")
+                        seen.add(key)
+                        all_opts.append(f"{bit}-{name}")
         else:
             page = int(page_filter_text.split('-')[0])
             opts = self._use_right_options.get(page, [])
@@ -864,7 +985,8 @@ class ItemEditorApp(QMainWindow):
         current_vals = [self.filter_right.itemText(i) for i in range(self.filter_right.count())]
         if new_vals != current_vals:
             self._guard_right_reset = True
-            self.filter_right.clear(); self.filter_right.addItems(new_vals)
+            self.filter_right.clear()
+            self.filter_right.addItems(new_vals)
             self.filter_right.setCurrentIndex(0)  # 重置为"全部权限"
             self._guard_right_reset = False
 
@@ -913,7 +1035,8 @@ class ItemEditorApp(QMainWindow):
             # 列顺序: 图标(0) #(1) ID(2) 页面(3) 物品名称(4) 权限(5) 价格(6)
             icon_item = QTableWidgetItem()
             pix = self._get_icon_pixmap(r['icon'], (36, 36))
-            if pix: icon_item.setIcon(QIcon(pix))
+            if pix:
+                icon_item.setIcon(QIcon(pix))
             self.table.setItem(row, 0, icon_item)
             self.table.setItem(row, 1, QTableWidgetItem(str(r['index'])))
             self.table.setItem(row, 2, QTableWidgetItem(str(r['item_id'])))
@@ -929,7 +1052,8 @@ class ItemEditorApp(QMainWindow):
         km = {2:'item_id', 3:'tab_code', 5:'equip_type', 6:'price'}
         key = km.get(col, 'index')
         self.filtered_indices.sort(key=lambda i: self.records[i].get(key, 0), reverse=self._sort_reverse)
-        self._sort_reverse = not self._sort_reverse; self._refresh_table()
+        self._sort_reverse = not self._sort_reverse
+        self._refresh_table()
 
     # ── 编辑 ──
     def _on_table_select(self):
@@ -961,8 +1085,10 @@ class ItemEditorApp(QMainWindow):
 
         # 图标预览
         pix = self._get_icon_pixmap(rec.get('icon', 0), (40, 40))
-        if pix: self.preview_icon.setPixmap(pix)
-        else: self.preview_icon.clear()
+        if pix:
+            self.preview_icon.setPixmap(pix)
+        else:
+            self.preview_icon.clear()
 
         # 技能预览
         skill_keys = ['attach_skill', 'equip_learn', 'use_learn1', 'use_learn2']
@@ -984,12 +1110,15 @@ class ItemEditorApp(QMainWindow):
 
         # 填充字段
         for fn, fo, fl, ft, fw, cmt in ALL_FIELDS:
-            val = rec[fn]; sv = str(val)
+            val = rec[fn]
+            sv = str(val)
             w = self.widget_map.get(fn)
             if not w: continue
             if ft == 'page':
                 for i in range(w.count()):
-                    if w.itemText(i).startswith(f"{val}-"): w.setCurrentIndex(i); break
+                    if w.itemText(i).startswith(f"{val}-"):
+                        w.setCurrentIndex(i)
+                        break
             else:
                 w.setText(sv)
 
@@ -1021,9 +1150,11 @@ class ItemEditorApp(QMainWindow):
         sel = []
         for bit, name, _ in flag_bits:
             if use_bit_shift:
-                if mask & (1 << bit): sel.append(name)
+                if mask & (1 << bit):
+                    sel.append(name)
             else:
-                if mask & bit: sel.append(name)
+                if mask & bit:
+                    sel.append(name)
         self.extra_map[fn].setText(", ".join(sel) if sel else "(无)")
 
     def _update_status_label(self, fn, mask):
@@ -1037,20 +1168,23 @@ class ItemEditorApp(QMainWindow):
         frame_layout = frame.layout()
         if not frame_layout:
             frame_layout = QVBoxLayout(frame)
-            frame_layout.setContentsMargins(0,0,0,0); frame_layout.setSpacing(1)
+            frame_layout.setContentsMargins(0,0,0,0)
+            frame_layout.setSpacing(1)
             frame_layout.setAlignment(Qt.AlignLeft | Qt.AlignTop)
         # 清除所有子控件（保留 layout 本身）
         while frame_layout.count():
             item = frame_layout.takeAt(0)
             w = item.widget()
-            if w: w.deleteLater()
+            if w:
+                w.deleteLater()
         sel = [f"{base+i}.{STATUS_NAMES[base+i]}" for i in range(16)
                if (mask & (1 << i)) and base + i < len(STATUS_NAMES)]
         lbl = QLabel("  ".join(sel) if sel else "(无)")
         lbl.setWordWrap(True)
         lbl.setProperty("class", status_class)
         lbl.setAlignment(Qt.AlignLeft | Qt.AlignTop)
-        lbl.style().unpolish(lbl); lbl.style().polish(lbl)
+        lbl.style().unpolish(lbl)
+        lbl.style().polish(lbl)
         frame_layout.addWidget(lbl)
         frame.updateGeometry()
 
@@ -1062,20 +1196,27 @@ class ItemEditorApp(QMainWindow):
         while layout.count():
             item = layout.takeAt(0)
             w = item.widget()
-            if w: w.deleteLater()
+            if w:
+                w.deleteLater()
         if not sel:
-            lbl = QLabel("—"); lbl.setProperty("class", "PreviewDesc")
-            layout.addWidget(lbl); return
+            lbl = QLabel("—")
+            lbl.setProperty("class", "PreviewDesc")
+            layout.addWidget(lbl)
+            return
         for idx, nm in sel:
             chip = QWidget()
             chip_lay = QHBoxLayout(chip)
-            chip_lay.setContentsMargins(2, 1, 4, 1); chip_lay.setSpacing(2)
+            chip_lay.setContentsMargins(2, 1, 4, 1)
+            chip_lay.setSpacing(2)
             # 始终为图标预留固定 16x16 空间
-            il = QLabel(); il.setFixedSize(16, 16)
+            il = QLabel()
+            il.setFixedSize(16, 16)
             pix = self._get_icon_pixmap(STATUS_ICON_BASE + idx - 130, (16, 16))
-            if pix: il.setPixmap(pix)
+            if pix:
+                il.setPixmap(pix)
             chip_lay.addWidget(il)
-            lbl = QLabel(nm); lbl.setProperty("class", "ChipLabel")
+            lbl = QLabel(nm)
+            lbl.setProperty("class", "ChipLabel")
             chip_lay.addWidget(lbl)
             chip.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
             layout.addWidget(chip)
@@ -1091,7 +1232,8 @@ class ItemEditorApp(QMainWindow):
             txt = self.tkt.get(dlg.selected_id, "")
             t = txt.split('\n')[0] if txt else ""
             self.extra_map[fn].setText((t[:12]+'...') if len(t) > 12 else t)
-            if fn == 'name_id': self.preview_name.setText(txt if txt else "(无)")
+            if fn == 'name_id':
+                self.preview_name.setText(txt if txt else "(无)")
             elif fn == 'desc_id':
                 d_txt = self.tkt_full.get(dlg.selected_id, "")
                 self.preview_desc.setText(d_txt if d_txt else "(无 / TKT 未提供)")
@@ -1114,15 +1256,18 @@ class ItemEditorApp(QMainWindow):
     def _pick_icon(self, fn):
         """弹窗选择物品图标"""
         if not self._mu_sprites:
-            QMessageBox.information(self, "提示", "未加载 Mu.JVG 图标文件"); return
+            QMessageBox.information(self, "提示", "未加载 Mu.JVG 图标文件")
+            return
         cur_val = int(self.widget_map[fn].text() or 0)
         dlg = IconPickerDialog(self, self._mu_sprites, self._get_icon_pixmap, cur_val)
         if dlg.exec() == QDialog.Accepted and dlg.selected_value is not None:
             self.widget_map[fn].setText(str(dlg.selected_value))
             self.extra_map[fn].setText(f"[图标 {dlg.selected_value}]")
             pix = self._get_icon_pixmap(dlg.selected_value, (40, 40))
-            if pix: self.preview_icon.setPixmap(pix)
-            else: self.preview_icon.clear()
+            if pix:
+                self.preview_icon.setPixmap(pix)
+            else:
+                self.preview_icon.clear()
 
     # ── 弹窗: 状态 mask ──
     def _pick_status(self, fn):
@@ -1168,7 +1313,8 @@ class ItemEditorApp(QMainWindow):
         # 仅有一个值为0的选项时，直接设为0
         if len(opts) == 1 and opts[0][0] == 0:
             self.widget_map[fn].setText("0")
-            self.extra_map[fn].setText(_use_right_label(0, page, opts)); return
+            self.extra_map[fn].setText(_use_right_label(0, page, opts))
+            return
         cur_val = int(self.widget_map[fn].text() or 0) & 0xFFFF
         dlg = UseRightPickerDialog(self, opts, cur_val)
         if dlg.exec() == QDialog.Accepted and dlg.selected_mask is not None:
@@ -1219,15 +1365,19 @@ class ItemEditorApp(QMainWindow):
                     rec[fn] = int(sv.split('-', 1)[0]) if '-' in sv else int(sv)
                 else:
                     v = int(w.text() or 0)
-                    if v > 32767: v = 32767
-                    if v < -32768: v = -32768
+                    if v > 32767:
+                        v = 32767
+                    if v < -32768:
+                        v = -32768
                     rec[fn] = v
             except ValueError:
                 rec[fn] = 0
-        self._dirty = True; self._apply_filter()
+        self._dirty = True
+        self._apply_filter()
         for r in range(self.table.rowCount()):
             if int(self.table.item(r, 1).text()) == rec['index']:
-                self.table.selectRow(r); break
+                self.table.selectRow(r)
+                break
         self.status_var.setText(f"记录 #{rec['index']} 已修改 (内存, 未保存)")
 
     def _reset_edit(self):
@@ -1238,29 +1388,38 @@ class ItemEditorApp(QMainWindow):
     def _clear_current(self):
         """把当前选中记录清为空槽模板 (恢复 #560-599 原始值)."""
         if self._editing_idx is None:
-            QMessageBox.information(self, "提示", "请先选择一条记录"); return
+            QMessageBox.information(self, "提示", "请先选择一条记录")
+            return
         reply = QMessageBox.question(self, "确认清空",
             f"将记录 #{self._editing_idx} 清为空槽模板 (item_id=0, name_id=0, desc_id=600).\n确定?")
         if reply != QMessageBox.Yes: return
         rec = self.records[self._editing_idx]
-        for fn, _, _, _, _, _ in ALL_FIELDS: rec[fn] = 0
+        for fn, _, _, _, _, _ in ALL_FIELDS:
+            rec[fn] = 0
         rec['desc_id'] = 600
-        self._dirty = True; self._apply_filter(); self._populate_edit(rec)
+        self._dirty = True
+        self._apply_filter()
+        self._populate_edit(rec)
         self.status_var.setText(f"记录 #{self._editing_idx} 已清空")
 
     def _copy_record(self):
         if self._editing_idx is None:
-            QMessageBox.information(self, "提示", "请先选择一条记录"); return
+            QMessageBox.information(self, "提示", "请先选择一条记录")
+            return
         src = self.records[self._editing_idx]
         for i, rec in enumerate(self.records):
             if is_pure_empty_slot(rec):
-                for fn, fo, fl, ft, fw, cmt in ALL_FIELDS: rec[fn] = src[fn]
+                for fn, fo, fl, ft, fw, cmt in ALL_FIELDS:
+                    rec[fn] = src[fn]
                 rec['index'] = i
-                self._dirty = True; self._apply_filter()
+                self._dirty = True
+                self._apply_filter()
                 for r in range(self.table.rowCount()):
                     if int(self.table.item(r, 1).text()) == i:
-                        self.table.selectRow(r); break
-                self.status_var.setText(f"已复制到空槽 #{i}"); return
+                        self.table.selectRow(r)
+                        break
+                self.status_var.setText(f"已复制到空槽 #{i}")
+                return
         QMessageBox.warning(self, "已满", "无真·空槽 (id=0 的记录) 可复制到.\n可先使用『清空此记录』释放一个槽位.")
 
     def _new_item(self):
@@ -1268,19 +1427,25 @@ class ItemEditorApp(QMainWindow):
         游戏硬编码限制 600 条, 无法扩容; 但 #560-#599 40 条空槽可用.
         """
         if not self.records:
-            QMessageBox.information(self, "提示", "请先加载 TKItem.dat"); return
+            QMessageBox.information(self, "提示", "请先加载 TKItem.dat")
+            return
         target = None
         for rec in self.records:
-            if is_pure_empty_slot(rec): target = rec; break
+            if is_pure_empty_slot(rec):
+                target = rec
+                break
         if target is None:
             QMessageBox.warning(self, "已满",
-                "600 条记录上限已满 (sub_45343C 硬编码 38400 字节)\n无真·空槽 (id=0) 可用."); return
+                "600 条记录上限已满 (sub_45343C 硬编码 38400 字节)\n无真·空槽 (id=0) 可用.")
+            return
         # 填入默认值 (参考 #560-599 原始模板)
-        for fn, _, _, _, _, _ in ALL_FIELDS: target[fn] = 0
+        for fn, _, _, _, _, _ in ALL_FIELDS:
+            target[fn] = 0
         # 估算一个未占用的 item_id (避免碰撞)
         used_ids = {r['item_id'] for r in self.records if r['item_id'] > 0}
         new_id = 600
-        while new_id in used_ids and new_id < 9999: new_id += 1
+        while new_id in used_ids and new_id < 9999:
+            new_id += 1
         target['item_id'] = new_id
         target['desc_id'] = 600  # 模板默认
         target['price'] = 1
@@ -1289,7 +1454,8 @@ class ItemEditorApp(QMainWindow):
         self._apply_filter()
         for r in range(self.table.rowCount()):
             if int(self.table.item(r, 1).text()) == target['index']:
-                self.table.selectRow(r); break
+                self.table.selectRow(r)
+                break
         # 选中新记录
         self._populate_edit(target)
         QMessageBox.information(self, "新建物品",
@@ -1301,17 +1467,20 @@ class ItemEditorApp(QMainWindow):
     # ── 保存/导出 ──
     def _save(self):
         if not self.item_path or not self.records:
-            QMessageBox.information(self, "提示", "请先加载数据"); return
+            QMessageBox.information(self, "提示", "请先加载数据")
+            return
         reply = QMessageBox.question(self, "确认保存",
             f"保存 {len(self.records)} 条到:\n{self.item_path}\n\n原文件将被覆盖 (生成 .bak).")
         if reply != QMessageBox.Yes: return
         try:
             with open(self.item_path, 'rb') as s:
-                with open(self.item_path + ".bak", 'wb') as d: d.write(s.read())
+                with open(self.item_path + ".bak", 'wb') as d:
+                    d.write(s.read())
         except: pass
         try:
             self.status_var.setText("正在保存…")
-            save_items(self.item_path, self.records); self._dirty = False
+            save_items(self.item_path, self.records)
+            self._dirty = False
             self.status_var.setText(f"已保存 → {self.item_path}")
             QMessageBox.information(self, "保存成功", f"已保存\n备份: {self.item_path}.bak")
         except Exception as e:
@@ -1328,11 +1497,13 @@ class ItemEditorApp(QMainWindow):
     def _export_tksmod(self):
         """导出当前修改为 .tksmod MOD 文件"""
         if not self.records or not self._original_records:
-            QMessageBox.information(self, "提示", "请先加载数据"); return
-        
+            QMessageBox.information(self, "提示", "请先加载数据")
+            return
+
         dlg = ModMetadataDialog(self, getattr(self, '_last_mod_metadata', None))
         if dlg.exec() != QDialog.Accepted: return
-        metadata = dlg.get_metadata(); self._last_mod_metadata = metadata
+        metadata = dlg.get_metadata()
+        self._last_mod_metadata = metadata
 
         # 构建原始字节序字段数组 (word index = byte_offset // 2)，与启动器一致
         current_fields = []
@@ -1344,7 +1515,8 @@ class ItemEditorApp(QMainWindow):
         field_count = len(ALL_FIELDS)
         diff_result = diff_records(self._original_records, current_fields, field_count, len(self._original_records))
         if not diff_result['modified'] and not diff_result['appended']:
-            QMessageBox.information(self, "无差异", "当前数据与原始文件相同，无需导出。"); return
+            QMessageBox.information(self, "无差异", "当前数据与原始文件相同，无需导出。")
+            return
 
         crc = compute_crc32(self.item_path) if self.item_path else "0x00000000"
         data_json = build_data_diff_json(target="TKItem.dat", record_size=64, field_type="int16",
@@ -1354,7 +1526,8 @@ class ItemEditorApp(QMainWindow):
         if not fp: return
         try:
             pack_tksmod(fp, mod_json, {"data/TKItem.dat.json": data_json})
-            n_mod = len(diff_result['modified']); n_app = len(diff_result['appended'])
+            n_mod = len(diff_result['modified'])
+            n_app = len(diff_result['appended'])
             self.status_var.setText(f"已导出 MOD: {os.path.basename(fp)} (修改{n_mod}条, 追加{n_app}条)")
             QMessageBox.information(self, "导出成功", f"已导出:\n{fp}\n\n修改: {n_mod} 条\n追加: {n_app} 条")
         except Exception as e:
@@ -1363,7 +1536,8 @@ class ItemEditorApp(QMainWindow):
     def _export_tksmod_with_ref(self):
         """导出 MOD — 指定原始参考目录进行差异比对"""
         if not self.records:
-            QMessageBox.information(self, "提示", "请先加载数据"); return
+            QMessageBox.information(self, "提示", "请先加载数据")
+            return
 
         # 预构建当前字段数组
         current_fields = []
@@ -1398,14 +1572,17 @@ class ItemEditorApp(QMainWindow):
         ref_records = load_reference_dat_fields(ref_dir, "TKItem.dat",
             rec_size=64, field_count=32, field_fmt='h', use_lzss=True)
         if ref_records is None:
-            QMessageBox.warning(self, "参考目录无效", f"在 {ref_dir} 中未找到 TKItem.dat"); return
+            QMessageBox.warning(self, "参考目录无效", f"在 {ref_dir} 中未找到 TKItem.dat")
+            return
         diff_result = diff_records(ref_records, current_fields, field_count, len(ref_records))
         if not diff_result['modified'] and not diff_result['appended']:
-            QMessageBox.information(self, "无差异", "当前数据与参考文件相同，无需导出。"); return
+            QMessageBox.information(self, "无差异", "当前数据与参考文件相同，无需导出。")
+            return
 
         dlg = ModMetadataDialog(self, getattr(self, '_last_mod_metadata', None))
         if dlg.exec() != QDialog.Accepted: return
-        metadata = dlg.get_metadata(); self._last_mod_metadata = metadata
+        metadata = dlg.get_metadata()
+        self._last_mod_metadata = metadata
 
         crc = compute_crc32(os.path.join(ref_dir, "TKItem.dat"))
         data_json = build_data_diff_json(target="TKItem.dat", record_size=64, field_type="int16",
@@ -1415,7 +1592,8 @@ class ItemEditorApp(QMainWindow):
         if not fp: return
         try:
             pack_tksmod(fp, mod_json, {"data/TKItem.dat.json": data_json})
-            n_mod = len(diff_result['modified']); n_app = len(diff_result['appended'])
+            n_mod = len(diff_result['modified'])
+            n_app = len(diff_result['appended'])
             self.status_var.setText(f"已导出 MOD (参考目录): {os.path.basename(fp)}")
             QMessageBox.information(self, "导出成功", f"已导出 (参考目录模式):\n{fp}\n\n参考: {ref_dir}\n修改: {n_mod} 条\n追加: {n_app} 条")
         except Exception as e:
@@ -1428,11 +1606,13 @@ class ItemEditorApp(QMainWindow):
 
         info = get_tksmod_info(fp)
         if info is None:
-            QMessageBox.warning(self, "无效文件", "无法解析此 .tksmod 文件"); return
+            QMessageBox.warning(self, "无效文件", "无法解析此 .tksmod 文件")
+            return
 
         if "TKItem.dat" not in info.get("targets", []):
             QMessageBox.warning(self, "不兼容", "此 MOD 不包含 TKItem.dat 的数据\n\n"
-                f"包含的数据: {', '.join(info.get('targets', []))}"); return
+                f"包含的数据: {', '.join(info.get('targets', []))}")
+            return
 
         dlg = ModImportPreviewDialog(self, info, default_dir=os.path.dirname(self.item_path) if self.item_path else "")
         if dlg.exec() != QDialog.Accepted: return
@@ -1446,7 +1626,8 @@ class ItemEditorApp(QMainWindow):
         )
         if records is None:
             QMessageBox.warning(self, "导入失败",
-                "无法导入 MOD 数据。\n请确认参考目录中包含有效的 TKItem.dat"); return
+                "无法导入 MOD 数据。\n请确认参考目录中包含有效的 TKItem.dat")
+            return
 
         # 将导入的字段数组（原始字节序）转化为编辑器内部记录格式
         new_records = []
@@ -1487,29 +1668,39 @@ class ItemEditorApp(QMainWindow):
         lines.append("【基础属性 (Maker UI 可见字段 22 条)】")
         for fn, fo, fl, ft, fw, cmt in GRID_FIELDS:
             lines.append(f"  [{fo:02d}] {fl:<12s}  {cmt}")
-        lines.append(""); lines.append("【技能 (Maker UI 4 字段)】")
+        lines.append("")
+        lines.append("【技能 (Maker UI 4 字段)】")
         for fn, fo, fl, cmt in SKILL_FIELDS:
             lines.append(f"  [{fo:02d}] {fl:<12s}  {cmt}")
-        lines.append(""); lines.append("【导致状态 (Maker UI; 战斗时读取角色 a2[67]/a2[68])】")
+        lines.append("")
+        lines.append("【导致状态 (Maker UI; 战斗时读取角色 a2[67]/a2[68])】")
         for fn, fo, fl, cmt in CAUSE_MASK_FIELDS:
             lines.append(f"  [{fo:02d}] {fl:<12s}  {cmt}")
-        lines.append(""); lines.append("【解除状态 (sub_41E40C 使用物品时清除)】")
+        lines.append("")
+        lines.append("【解除状态 (sub_41E40C 使用物品时清除)】")
         for fn, fo, fl, cmt in CURE_MASK_FIELDS:
             lines.append(f"  [{fo:02d}] {fl:<12s}  {cmt}")
-        lines.append(""); lines.append("【隐含数据 (Maker UI 未显示, 但 TKItem 记录占用)】")
+        lines.append("")
+        lines.append("【隐含数据 (Maker UI 未显示, 但 TKItem 记录占用)】")
         for fn, fo, fl, ft, fw, cmt in HIDDEN_FIELDS:
             lines.append(f"  [{fo:02d}] {fl:<12s}  {cmt}")
-        lines.append(""); lines.append("【使用权限 (equip_type) 实测值】")
+        lines.append("")
+        lines.append("【使用权限 (equip_type) 实测值】")
         for page, opts in sorted(USE_RIGHT_OPTIONS.items()):
             lines.append(f"  页面{page}({PAGE_NAMES.get(page,'?')}): {opts}")
-        lines.append(""); lines.append("【记录数硬限制】")
+        lines.append("")
+        lines.append("【记录数硬限制】")
         lines.append("  600 条 x 64 字节 = 38400 字节 (sub_45343C 固定加载量)")
         lines.append("  sub_42F8D4 搜索循环 `while (v3 < 600)` 是硬编码")
         lines.append("  #560-#599 (40条) 为真空槽, 可用于新增物品 (item_id=0, name_id=0)")
-        dlg = QDialog(self); dlg.setWindowTitle("字段来源 v3.0 (逆向+Maker 实证)"); dlg.resize(820, 580)
+        dlg = QDialog(self)
+        dlg.setWindowTitle("字段来源 v3.0 (逆向+Maker 实证)")
+        dlg.resize(820, 580)
         layout = QVBoxLayout(dlg)
         from PySide6.QtWidgets import QTextEdit
-        tx = QTextEdit(); tx.setReadOnly(True); tx.setPlainText('\n'.join(lines))
+        tx = QTextEdit()
+        tx.setReadOnly(True)
+        tx.setPlainText('\n'.join(lines))
         tx.setProperty("class", "MonoText")
         layout.addWidget(tx)
         dlg.exec()

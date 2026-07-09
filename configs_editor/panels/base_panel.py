@@ -3,9 +3,9 @@ ConfigPanelBase — 配置编辑面板抽象基类
 所有配置面板继承此类，实现 load/save/is_modified/reset 接口。
 主窗口通过 modified 信号统一管理标签页标题的 `*` 标记。
 """
+import copy
 import json
 import os
-import copy
 from pathlib import Path
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel
 from PySide6.QtCore import Signal, Qt

@@ -2,6 +2,7 @@
 EquipTypeLabelsPanel — 装备使用权限位值→中文标签 配置面板
 编辑 equip_type_labels.json 中的 6 个页面，每页为 [[位值, 名称], ...]。
 """
+from functools import partial
 from PySide6.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QComboBox, QTableWidget, QTableWidgetItem,
     QPushButton, QToolButton, QLabel, QWidget, QHeaderView, QAbstractItemView,
@@ -177,7 +178,7 @@ class EquipTypeLabelsPanel(ConfigPanelBase):
         self._current_page = "2"
         self._refresh_table()
         # 连接 itemChanged 信号（在 _populate_ui 之后，避免初始填充时触发）
-        self._table.itemChanged.connect(lambda: self._on_item_changed())
+        self._table.itemChanged.connect(partial(self._on_item_changed))
 
     def _collect_ui(self) -> dict:
         """收集所有页面的数据。由于编辑时可能切换了页面，

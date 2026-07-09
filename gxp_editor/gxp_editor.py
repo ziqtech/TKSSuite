@@ -15,10 +15,15 @@ GXP = 单张 RGB565 直接色图像, LZSS 压缩, 48 字节 "JGXP" 头
 """
 
 from __future__ import annotations
-import os, sys, struct, zlib, tkinter as tk
-from tkinter import ttk, filedialog, messagebox
+
+import os
+import struct
+import sys
+import tkinter as tk
+import zlib
 from pathlib import Path
-from typing import Optional, Tuple
+from tkinter import filedialog, messagebox, ttk
+from typing import Optional
 
 HAS_PIL = False
 try:
@@ -358,7 +363,8 @@ class GXPEditor:
         self.root = root
         self.root.title("GXP 图像编辑器")
         ico = os.path.join(os.path.dirname(__file__), 'TKS.ico')
-        if os.path.exists(ico): self.root.iconbitmap(default=ico)
+        if os.path.exists(ico):
+            self.root.iconbitmap(default=ico)
         self.root.geometry("1100x750")
 
         self.img: Optional[GXPImage] = None
@@ -379,8 +385,10 @@ class GXPEditor:
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
         # 延迟绑定鼠标事件 (canvas 创建后)
         self.root.after(100, self._bind_canvas_events)
-        sw = self.root.winfo_screenwidth(); sh = self.root.winfo_screenheight()
-        x = (sw - 1100) // 2; y = (sh - 750) // 2
+        sw = self.root.winfo_screenwidth()
+        sh = self.root.winfo_screenheight()
+        x = (sw - 1100) // 2
+        y = (sh - 750) // 2
         self.root.geometry(f'1100x750+{x}+{y}')
 
     # ── Menu ──────────────────────────────────────────

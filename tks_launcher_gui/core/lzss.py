@@ -1,6 +1,6 @@
 """LZSS 压缩/解压 — 与游戏 sub_452B14 配对, 从 tks_launcher.py 提取"""
-from typing import List, Dict
-from .memory import i32b, b2i32
+from typing import Dict, List
+from .memory import b2i32, i32b
 
 def lzss_decompress(data: bytes) -> bytes:
     """最小化 LZSS 解压 (匹配 sub_452B14)"""

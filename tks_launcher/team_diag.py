@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """TeamMember 诊断工具 — 读取队伍槽数组，验证 TeamMember 是否生效"""
 
+import argparse
 import ctypes
 import ctypes.wintypes as wt
-import struct
-import time
-import subprocess
-import argparse
 import os
+import struct
+import subprocess
+import time
 
 kernel32 = ctypes.windll.kernel32
 

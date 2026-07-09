@@ -27,11 +27,10 @@ LZSS 文件头 (sub_45343C 读取):
   python shop_editor.py [TKShop.dat路径] [TKItem.dat路径]
 """
 
-import struct
 import os
-import sys
+import struct
 import tkinter as tk
-from tkinter import ttk, messagebox, filedialog
+from tkinter import filedialog, messagebox, ttk
 
 # ============================================================
 # LZSS 解压 (逆向自 sub_452B14, sub_45343C)
@@ -384,7 +383,8 @@ class ShopEditor:
         self.root = root
         self.root.title("TKShop.dat 可视化编辑器")
         ico = os.path.join(os.path.dirname(__file__), 'TKS.ico')
-        if os.path.exists(ico): self.root.iconbitmap(default=ico)
+        if os.path.exists(ico):
+            self.root.iconbitmap(default=ico)
         self.root.geometry("1050x620")
         self.root.minsize(900, 500)
 
@@ -400,8 +400,10 @@ class ShopEditor:
         self._build_ui()
         self._update_path_labels()
         self._set_edit_enabled(False)
-        sw = self.root.winfo_screenwidth(); sh = self.root.winfo_screenheight()
-        x = (sw - 1050) // 2; y = (sh - 620) // 2
+        sw = self.root.winfo_screenwidth()
+        sh = self.root.winfo_screenheight()
+        x = (sw - 1050) // 2
+        y = (sh - 620) // 2
         self.root.geometry(f'1050x620+{x}+{y}')
 
     # ================================================================
