@@ -1769,6 +1769,36 @@ class WarDataEditorV2(QMainWindow):
         for b1, b2 in [(self.flag_bit1, self.apflag_bit1), (self.flag_bit2, self.apflag_bit2)]:
             b1.toggled.connect(partial(_sync_check, b1, b2))
             b2.toggled.connect(partial(_sync_check, b2, b1))
+        # map_id 编辑完成 (Enter/失焦) 时检测空白地图并自动填充障碍覆盖整图。
+        # 程序化 setText (选择记录时) 不触发 editingFinished, 故浏览记录不会误触发。
+        self.pvars['map_id'].editingFinished.connect(self._on_map_id_committed)
+        self.apvars['map_id'].editingFinished.connect(self._on_map_id_committed)
+
+    def _on_map_id_committed(self):
+        """map_id 字段编辑完成 (editingFinished) 时触发。
+
+        若新 map_id 指向的 WarWay 网格为全零 (全新/未配置地图), 自动用 -1 (障碍)
+        覆盖整张 32x32 地图, 与 #198 (map_id=19) 等模板一致, 便于后续雕刻可通行区域。
+        仅在用户主动编辑并提交时触发; pvars/apvars 双标签页由 new_id==rec['map_id'] 去重。
+        """
+        if self._current_idx < 0: return
+        try:
+            new_id = int(self.pvars['map_id'].text() or 0) & 0xFFFF
+        except ValueError:
+            return
+        rec = self.records[self._current_idx]
+        if new_id == rec['map_id']:
+            return  # 值未变化 (双标签页去重 / 程序化填充后回访)
+        rec['map_id'] = new_id
+        grid = self._get_warway_grid(new_id)
+        if grid is not None and not any(grid):  # 全零 = 全新空白地图
+            for i in range(1024):
+                grid[i] = 0xFF  # -1 障碍, 从左上角覆盖整张地图
+            self._warway_dirty = True
+            self._dirty = True
+            self.status_var.setText(f"地图 #{new_id} 为空白, 已自动填充障碍覆盖整图 (可雕刻可通行区域)")
+        self._sync_raw(rec)
+        self._redraw_scene()
 
     def _populate_allparams_tab(self, rec):
         self.apvars['battle_id'].setText(str(rec['battle_id']))
@@ -2408,7 +2438,7 @@ class WarDataEditorV2(QMainWindow):
             self.zone_brush.addItem(label, val)
         self.zone_brush.setCurrentIndex(1)  # 默认通行
         ctrl.addWidget(self.zone_brush)
-        _lbl_bg_hint = QLabel("背景=map_id(WSC) | 编辑模式: 左键涂刷空格/拖拽单位")
+        _lbl_bg_hint = QLabel("背景=map_id(WSC) | 编辑模式: 左键拖拽绘制矩形/点击单位拖拽")
         _lbl_bg_hint.setObjectName("hintLabel")
         ctrl.addWidget(_lbl_bg_hint)
         layout.addLayout(ctrl)
@@ -2438,6 +2468,8 @@ class WarDataEditorV2(QMainWindow):
 
         # QGraphicsView
         self.scene_gview = SceneGraphicsView(self)
+        # 切换编辑模式时同步刷新悬停预览 (关闭时立即清除高亮)
+        self.edit_mode.toggled.connect(self.scene_gview._update_hover_overlay)
         layout.addWidget(self.scene_gview, 1)
         self.tabs.addTab(tab, "场景预览")
 
@@ -2602,6 +2634,11 @@ class WarDataEditorV2(QMainWindow):
         gv = self.scene_gview
         scene = gv.scene()
         scene.clear()
+        # scene.clear() 销毁所有 QGraphicsItem 的 C++ 对象, 必须重置 Python 引用避免悬空
+        # (否则后续 removeItem/访问会触发 RuntimeError: Internal C++ object already deleted)
+        gv._hover_item = None
+        gv._hover_label = None
+        gv._rect_item = None
         if self._current_idx < 0: return
         rec = self.records[self._current_idx]
         zoom = self._preview_zoom
@@ -2830,6 +2867,9 @@ class WarDataEditorV2(QMainWindow):
         scene.setSceneRect(scene.itemsBoundingRect().adjusted(-50, -50, 50, 50))
         gv.horizontalScrollBar().setValue(0)
         gv.verticalScrollBar().setValue(0)
+        # 场景清空后重建涂刷悬停预览叠加层 (编辑模式下)
+        gv._update_hover_overlay()
+        gv._update_rect_overlay()
 
     def _find_unit_at(self, gx, gy):
         if self._current_idx < 0: return None
@@ -2906,7 +2946,8 @@ class SceneGraphicsView(QGraphicsView):
 
     编辑模式 (edit_mode 勾选) 左键交互:
       - 点击单位(敌军/友军) → 拖拽移动单位, 释放后写回 enemy_xy/ally_xy
-      - 点击空格 → 用画笔值 (zone_brush) 涂刷 WarWay 网格, 可拖拽连续涂刷
+      - 点击空格 + 拖拽 → 矩形绘制模式: 预览矩形区域, 释放时用画笔值批量填充
+      - 点击空格 (无拖拽) → 单格涂刷 (矩形退化为 1x1)
     """
     def __init__(self, editor):
         super().__init__()
@@ -2919,6 +2960,14 @@ class SceneGraphicsView(QGraphicsView):
         self._drag_target = None
         self._pan_start = None
         self._painting = False
+        # 涂刷悬停预览状态 — 编辑模式下叠绘画笔颜色, 直观提示目标格与即将涂刷的区域
+        self._hover_grid = None    # (gx, gy) 当前悬停网格, None 表示不在网格内
+        self._hover_item = None    # 悬停高亮多边形 (QGraphicsPolygonItem)
+        self._hover_label = None   # 悬停画笔名称标签 (QGraphicsTextItem)
+        # 矩形绘制状态 — 长按拖拽时预览矩形区域, 释放时批量填充
+        self._rect_start = None    # (gx, gy) 矩形起点
+        self._rect_end = None      # (gx, gy) 矩形终点
+        self._rect_item = None     # 矩形预览多边形 (QGraphicsPolygonItem)
 
     def _brush_value(self):
         """当前画笔值 (signed int8 语义: -1/0/1-5)"""
@@ -2932,6 +2981,112 @@ class SceneGraphicsView(QGraphicsView):
         if 1 <= val <= 5: return f"区域{val}"
         if val < -1: return f"临时障碍{val}"
         return str(val)
+
+    def _brush_fill_rgb(self, val):
+        """画笔值 → 填充 RGB (与 _redraw_scene 网格配色一致), 用于悬停预览叠绘。
+
+        0(通行)在网格绘制中不填充, 这里返回浅色仅作边框辅助, 实际叠绘时用 NoBrush。
+        """
+        return {
+            -1: (85, 51, 34),
+            0:  (220, 220, 220),
+            1:  (170, 102, 51),
+            2:  (51, 102, 170),
+            3:  (170, 68, 170),
+            4:  (51, 170, 102),
+            5:  (170, 170, 51),
+        }.get(val, (200, 200, 200))
+
+    def _safe_remove(self, item):
+        """安全移除 QGraphicsItem — scene.clear() 可能已销毁其 C++ 对象, 需防御性捕获"""
+        if item is None: return
+        try:
+            self.scene().removeItem(item)
+        except RuntimeError:
+            pass  # C++ 对象已被 scene.clear() 销毁, 仅丢弃 Python 引用即可
+
+    def _update_hover_overlay(self, *_):
+        """更新涂刷悬停预览: 在当前悬停网格上叠绘画笔颜色 + 高亮边框 + 名称标签。
+
+        编辑模式开启时, 鼠标悬停的网格会显示即将涂刷的颜色, 直观提示目标格与画笔类型,
+        无需查看画笔下拉框即可知道当前要绘制的是哪个区域/颜色的色块。
+        场景被 _redraw_scene 清空后由其末尾调用本方法重建叠加层; *_ 吸收 toggled 信号参数。
+        """
+        self._safe_remove(self._hover_item)
+        self._hover_item = None
+        self._safe_remove(self._hover_label)
+        self._hover_label = None
+        if self._hover_grid is None or not self.editor.edit_mode.isChecked():
+            return
+        if self.editor._current_idx < 0:
+            return
+        gx, gy = self._hover_grid
+        zoom = self.editor._preview_zoom
+        tile_w = int(56 * zoom)
+        tile_h = int(28 * zoom)
+        sx, sy = self.editor._grid_to_screen(gx, gy)
+        pts = [QPointF(sx, sy - tile_h), QPointF(sx + tile_w, sy),
+               QPointF(sx, sy + tile_h), QPointF(sx - tile_w, sy)]
+        bval = self._brush_value()
+        # 0(通行)用 NoBrush, 仅靠亮黄边框+标签提示; 其余按画笔颜色半透明填充
+        if bval == 0:
+            fill = QBrush(Qt.NoBrush)
+        else:
+            r, g, b = self._brush_fill_rgb(bval)
+            fill = QBrush(QColor(r, g, b, 160))
+        item = self.scene().addPolygon(QPolygonF(pts), QPen(QColor('#FFFF00'), 2), fill)
+        item.setZValue(1000)
+        self._hover_item = item
+        name = self._terrain_tag(bval)
+        label = self.scene().addText(f"▸{name}")
+        label.setDefaultTextColor(QColor('#FFFF00'))
+        label.setFont(QFont('', max(8, int(10 * zoom)), QFont.Bold))
+        label.setZValue(1001)
+        lw = label.boundingRect().width()
+        label.setPos(sx - lw / 2, sy - tile_h - label.boundingRect().height())
+        self._hover_label = label
+
+    def _update_rect_overlay(self, *_):
+        """更新矩形绘制预览: 从 _rect_start 到 _rect_end 的网格矩形区域。
+
+        长按拖拽时实时显示半透明画笔色覆盖的矩形区域 + 虚线边框 + 尺寸标签,
+        释放时批量填充。等距投影下网格矩形呈平行四边形, 用4角格的外顶点构成多边形。
+        """
+        self._safe_remove(self._rect_item)
+        self._rect_item = None
+        if self._rect_start is None or self._rect_end is None:
+            return
+        if not self.editor.edit_mode.isChecked() or self.editor._current_idx < 0:
+            return
+        gx1, gy1 = self._rect_start
+        gx2, gy2 = self._rect_end
+        minx, maxx = min(gx1, gx2), max(gx1, gx2)
+        miny, maxy = min(gy1, gy2), max(gy1, gy2)
+        zoom = self.editor._preview_zoom
+        tile_w = int(56 * zoom)
+        tile_h = int(28 * zoom)
+        # 4角格中心 → 各自外顶点, 构成平行四边形覆盖整个网格矩形
+        sx_tl, sy_tl = self.editor._grid_to_screen(minx, miny)
+        sx_tr, sy_tr = self.editor._grid_to_screen(maxx, miny)
+        sx_br, sy_br = self.editor._grid_to_screen(maxx, maxy)
+        sx_bl, sy_bl = self.editor._grid_to_screen(minx, maxy)
+        pts = [QPointF(sx_tl, sy_tl - tile_h),   # 上
+               QPointF(sx_tr + tile_w, sy_tr),    # 右
+               QPointF(sx_br, sy_br + tile_h),    # 下
+               QPointF(sx_bl - tile_w, sy_bl)]    # 左
+        bval = self._brush_value()
+        r, g, b = self._brush_fill_rgb(bval)
+        fill = QBrush(QColor(r, g, b, 70))
+        item = self.scene().addPolygon(QPolygonF(pts), QPen(QColor('#FFFF00'), 2, Qt.DashLine), fill)
+        item.setZValue(999)
+        self._rect_item = item
+
+    def leaveEvent(self, event):
+        """鼠标离开视图时清除悬停预览, 避免残留高亮"""
+        self._hover_grid = None
+        self._update_hover_overlay()
+        self._update_rect_overlay()
+        super().leaveEvent(event)
 
     def mouseMoveEvent(self, event):
         """悬停显示网格信息 + 编辑拖拽/涂刷 + 右键平移"""
@@ -2967,22 +3122,35 @@ class SceneGraphicsView(QGraphicsView):
             event.accept()
             return
 
-        # 编辑模式涂刷网格: 左键拖拽连续涂刷
+        # 编辑模式矩形绘制: 左键拖拽时实时预览矩形区域 (不立即涂刷, 释放时批量填充)
         if self._painting and event.buttons() & Qt.LeftButton:
             sp = self.mapToScene(event.position().toPoint())
             g = self.editor._scene_to_grid(sp.x(), sp.y())
             if g:
-                if self.editor._paint_warway_cell(g[0], g[1], self._brush_value()):
-                    self.editor._redraw_scene(rerandomize=False)
+                self._rect_end = g
+                self._hover_grid = g
+                self._update_rect_overlay()
+                # 状态栏显示矩形尺寸
+                gx1, gy1 = self._rect_start or g
+                minx, maxx = min(gx1, g[0]), max(gx1, g[0])
+                miny, maxy = min(gy1, g[1]), max(gy1, g[1])
+                w, h = maxx - minx + 1, maxy - miny + 1
+                self.editor.scene_info_var.setText(
+                    f"矩形 ({minx},{miny})-({maxx},{maxy}) {w}x{h} | 画笔:{self._terrain_tag(self._brush_value())}")
             event.accept()
             return
 
         sp = self.mapToScene(event.position().toPoint())
         g = self.editor._scene_to_grid(sp.x(), sp.y())
         if g is None:
+            self._hover_grid = None
+            self._update_hover_overlay()
             self.editor.scene_info_var.setText("")
             return
         gx, gy = g
+        # 更新悬停预览叠加层 (高效, 仅增删2个item, 不触发全场景重绘)
+        self._hover_grid = (gx, gy)
+        self._update_hover_overlay()
         ed = self.editor
         rec = ed.records[ed._current_idx] if ed._current_idx >= 0 else None
 
@@ -3026,12 +3194,13 @@ class SceneGraphicsView(QGraphicsView):
             ed.scene_info_var.setText(f"({gx},{gy}) [{terrain}] 陷阱#{ti} {tname} 威力[{pmin},{pmax}] [{type_tag}]")
             return
 
-        # 悬停信息: 纯地形
+        # 悬停信息: 纯地形 (编辑模式追加当前画笔, 便于不看下拉框确认即将涂刷的颜色)
         terrain = self._terrain_tag(ed._warway_value_at(gx, gy)) if rec else ""
+        brush_tag = f" | 画笔:{self._terrain_tag(self._brush_value())}" if ed.edit_mode.isChecked() else ""
         if terrain:
-            ed.scene_info_var.setText(f"({gx},{gy}) [{terrain}]")
+            ed.scene_info_var.setText(f"({gx},{gy}) [{terrain}]{brush_tag}")
         else:
-            ed.scene_info_var.setText(f"({gx},{gy})")
+            ed.scene_info_var.setText(f"({gx},{gy}){brush_tag}")
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton and self.editor.edit_mode.isChecked():
@@ -3045,10 +3214,12 @@ class SceneGraphicsView(QGraphicsView):
                     # 拾取单位拖拽
                     self._drag_target = unit
                 else:
-                    # 空格涂刷 WarWay 网格
-                    if self.editor._paint_warway_cell(gx, gy, self._brush_value()):
-                        self.editor._redraw_scene(rerandomize=False)
+                    # 矩形绘制模式: 记录起点, 拖拽预览矩形, 释放时批量填充
+                    # 单击(无拖拽)时 start==end, 退化为单格涂刷
+                    self._rect_start = (gx, gy)
+                    self._rect_end = (gx, gy)
                     self._painting = True
+                    self._update_rect_overlay()
             event.accept()
             return
         elif event.button() == Qt.RightButton:
@@ -3064,9 +3235,26 @@ class SceneGraphicsView(QGraphicsView):
             event.accept()
             return
         if event.button() == Qt.LeftButton and self._painting:
-            # 涂刷结束: 同步当前记录 _raw (单位位置可能未变, 但保持一致性)
-            if self.editor._current_idx >= 0:
+            # 矩形绘制: 释放时批量填充从 _rect_start 到 _rect_end 的所有格子
+            if self._rect_start and self._rect_end and self.editor._current_idx >= 0:
+                gx1, gy1 = self._rect_start
+                gx2, gy2 = self._rect_end
+                minx, maxx = min(gx1, gx2), max(gx1, gx2)
+                miny, maxy = min(gy1, gy2), max(gy1, gy2)
+                bval = self._brush_value()
+                painted = False
+                for gy in range(miny, maxy + 1):
+                    for gx in range(minx, maxx + 1):
+                        if self.editor._paint_warway_cell(gx, gy, bval):
+                            painted = True
+                if painted:
+                    self.editor._redraw_scene(rerandomize=False)
                 self.editor._sync_raw(self.editor.records[self.editor._current_idx])
+                cnt = (maxx - minx + 1) * (maxy - miny + 1)
+                self.editor.status_var.setText(
+                    f"已涂刷 {cnt} 格 ({minx},{miny})-({maxx},{maxy}) [{self._terrain_tag(bval)}]")
+            self._rect_start = None
+            self._rect_end = None
             self._painting = False
             event.accept()
             return
