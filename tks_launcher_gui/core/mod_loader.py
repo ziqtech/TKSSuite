@@ -363,6 +363,47 @@ DAT_FILE_INFO = {
 }
 
 
+# 结构化记录文件元信息表
+# 与 DAT_FILE_INFO 不同: 字段通过字段名 (而非 f0/f1/... 索引) 引用,
+# 每个字段有自定义的偏移/大小/类型/元素数。
+# field_layout: {field_name: (offset, item_size, struct_fmt, item_count)}
+#   - item_size 仅用于校验
+#   - struct_fmt: struct 单元素格式 ('<B' uint8, '<b' int8, '<H' uint16)
+# 字段布局严格依据 wardata_editor_v2.py 中 sub_42FDF8 的逆向结果
+# (WarData.dat: 498 字节/条, 219 条, flat binary, 无 LZSS)
+WARDATA_FIELD_LAYOUT = {
+    "flags":             (0,   1,  '<B', 1),    # byte: sub_4307CC:200 &4=随机敌军; &2=失败条件
+    "must_chars":        (2,   1,  '<B', 6),    # byte[6]: sub_4307CC:51 (+1编码; 0/255=空)
+    "battle_name_id":    (30,  2,  '<H', 1),    # uint16: sub_43A8D8:39 → TKT
+    "map_id":            (32,  2,  '<H', 1),    # uint16: sub_42FE70:16
+    "enemy_ids":         (34,  2,  '<H', 18),   # uint16[18]: sub_4307CC:219 (WarPC索引)
+    "enemy_lv":          (70,  1,  '<B', 18),   # byte[18]: sub_4307CC:260
+    "enemy_power":       (88,  1,  '<B', 18),   # byte[18]: sub_4307CC:217 (0=普通, >=1=将领)
+    "enemy_lv_range":    (106, 1,  '<b', 36),   # int8[36]: sub_4307CC:227 (18对X,Y)
+    "enemy_xy":          (142, 1,  '<b', 36),   # int8[36]: sub_431428:94 (18对X,Y)
+    "ally_xy":           (178, 1,  '<b', 12),   # int8[12]: sub_431428:74 (6对X,Y)
+    "enemy_delay":       (190, 1,  '<B', 18),   # byte[18]: sub_4307CC:242
+    "ally_facing":       (208, 1,  '<B', 6),    # byte[6]
+    "trap_xy":           (214, 1,  '<b', 56),   # int8[56]: sub_431428:204 (28组坐标)
+    "trap_pwr":          (270, 1,  '<B', 56),   # byte[56]: sub_431428:296 (28对min,max)
+    "trea_sub":          (326, 2,  '<H', 10),   # uint16[10]: sub_431428:202 (TKItem ID)
+    "trea_quant":        (346, 2,  '<H', 20),   # uint16[20]: sub_434510:36 (10对min,max)
+    "trap_type":         (386, 2,  '<H', 28),   # uint16[28]: sub_431428:199 (1-6 陷阱类型)
+    "enemy_flags":       (442, 2,  '<H', 18),   # uint16[18]: sub_4307CC:263 (bit0=精英 bit1=特殊)
+    "lv_spread_lo":      (478, 1,  '<B', 1),    # byte: sub_430578:17
+    "lv_spread_hi":      (480, 1,  '<B', 1),    # byte: sub_430578:18
+    "battle_turn_limit": (482, 2,  '<H', 1),    # uint16: sub_43CA64:29
+}
+
+STRUCTURED_FILE_INFO = {
+    "WarData.dat": {
+        "rec_size": 498,
+        "lzss": False,
+        "field_layout": WARDATA_FIELD_LAYOUT,
+    },
+}
+
+
 def _is_text_diff(diff_data: dict) -> bool:
     """判断差异数据是否为文本级别差异 (TKD.dat 类型)
 
@@ -439,6 +480,16 @@ def merge_mods(mods: List[ModInfo], game_dir: str, log_func=None) -> MergedData:
             result = _merge_text_file(target_path, target, mod_diffs, log)
             if result is not None:
                 merged.file_data[target] = result
+
+        elif first_diff_data.get("field_type") == "structured":
+            # 结构化记录文件 (如 WarData.dat: 字段名引用 + 自定义偏移/类型)
+            info = STRUCTURED_FILE_INFO.get(target)
+            if info:
+                result = _merge_structured_file(target_path, target, info, mod_diffs, log)
+                if result is not None:
+                    merged.file_data[target] = result
+            else:
+                log(f"  [WARN] 未知结构化文件类型: {target}")
 
         else:
             # 定长记录 DAT 文件
@@ -548,6 +599,117 @@ def _apply_fields_to_record(buf: bytearray, index: int, rec_size: int,
             off = base_off + fi * 4
             if off + 4 <= len(buf):
                 struct.pack_into('<i', buf, off, int(value))
+
+
+# ═══════════════════════════════════════════════════════════════
+# 4a-2. 结构化记录文件差异合并 (WarData.dat 等)
+# ═══════════════════════════════════════════════════════════════
+
+def _merge_structured_file(file_path: str, target_name: str, info: dict,
+                           mod_diffs: List[Tuple[ModInfo, dict]],
+                           log_func=None) -> Optional[bytes]:
+    """合并结构化记录文件 (字段名引用 + 自定义偏移/类型/元素数)。
+
+    与 _merge_dat_file 的区别:
+      - DAT_FILE_INFO 使用统一的 field_type (int16/int32/uint16) + 字段索引 f0/f1/...
+      - STRUCTURED_FILE_INFO 通过 field_layout 表指定每个字段的偏移、类型、元素数
+        适用于 WarData.dat 这类字段类型异构的记录
+    """
+    log = log_func or (lambda x: None)
+    rec_size = info["rec_size"]
+    use_lzss = info.get("lzss", False)
+    field_layout = info["field_layout"]
+
+    # 加载原始数据
+    with open(file_path, 'rb') as f:
+        raw = f.read()
+    if use_lzss:
+        dec = lzss_decompress(raw)
+    else:
+        dec = raw
+
+    actual_count = len(dec) // rec_size
+    log(f"  合并 {target_name}: {actual_count} 条记录, {len(mod_diffs)} 个 MOD 差异")
+
+    records = bytearray(dec)
+
+    # 确定最大记录数 (可能因追加而增加)
+    max_count = actual_count
+    for mod, diff_data in mod_diffs:
+        for app in diff_data.get("appended", []):
+            idx = app.get("index", 0)
+            if idx >= max_count:
+                max_count = idx + 1
+
+    # 需要扩展时填充零字节
+    if max_count > actual_count:
+        records.extend(b'\x00' * ((max_count - actual_count) * rec_size))
+
+    # 按顺序应用每个 MOD 的差异
+    for mod, diff_data in mod_diffs:
+        for entry in diff_data.get("modified", []):
+            idx = entry.get("index", -1)
+            if idx < 0 or idx >= max_count:
+                continue
+            fields = entry.get("fields", {})
+            _apply_structured_fields(records, idx, rec_size, field_layout, fields)
+
+        for entry in diff_data.get("appended", []):
+            idx = entry.get("index", -1)
+            if idx < 0 or idx >= max_count:
+                continue
+            fields = entry.get("fields", {})
+            _apply_structured_fields(records, idx, rec_size, field_layout, fields)
+
+        log(f"    应用 MOD '{mod.name}': {len(diff_data.get('modified', []))} 修改, "
+            f"{len(diff_data.get('appended', []))} 追加")
+
+    result = bytes(records[:max_count * rec_size])
+
+    if use_lzss:
+        result = lzss_compress(result)
+
+    return result
+
+
+def _apply_structured_fields(buf: bytearray, index: int, rec_size: int,
+                             field_layout: dict, fields: dict):
+    """将结构化字段差异应用到记录缓冲区。
+
+    field_layout: {field_name: (offset, item_size, struct_fmt, item_count)}
+    fields: {field_name: scalar_or_list}
+      - 标量字段 (item_count == 1): 直接 pack 单个值
+      - 数组字段 (item_count > 1): 接受 list, 逐元素 pack
+    """
+    base_off = index * rec_size
+    # struct_fmt -> (元素字节数, 无符号掩码)
+    # 无符号类型用掩码截断, 有符号类型由 struct 自行检查范围
+    _FMT_INFO = {'<B': (1, 0xFF), '<b': (1, None),
+                 '<H': (2, 0xFFFF), '<h': (2, None),
+                 '<I': (4, 0xFFFFFFFF), '<i': (4, None)}
+
+    for field_name, value in fields.items():
+        layout = field_layout.get(field_name)
+        if layout is None:
+            continue
+        offset, _item_size, pack_fmt, item_count = layout
+        abs_off = base_off + offset
+        elem_size, mask = _FMT_INFO.get(pack_fmt, (1, None))
+
+        values = value if (item_count > 1 and isinstance(value, list)) else [value]
+        for i, v in enumerate(values):
+            if i >= item_count:
+                break
+            elem_off = abs_off + i * elem_size
+            if elem_off + elem_size > len(buf):
+                break
+            try:
+                iv = int(v)
+                if mask is not None:
+                    iv &= mask
+                struct.pack_into(pack_fmt, buf, elem_off, iv)
+            except (struct.error, ValueError, TypeError):
+                pass
 
 
 # ═══════════════════════════════════════════════════════════════
