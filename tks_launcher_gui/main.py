@@ -18,7 +18,9 @@ _ICON_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "TKS.ico")
 
 
 def main():
+    from editor_utils.ui_helpers import install_dialog_theme_filter
     app = QApplication(sys.argv)
+    install_dialog_theme_filter(app)
     app.setStyle("Fusion")  # 使用 Fusion 样式，避免 Windows 原生样式覆盖 QSS
     app.setApplicationName("TKS Mod Launcher")
     app.setApplicationVersion("2.0.0")

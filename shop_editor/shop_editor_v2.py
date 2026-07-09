@@ -1128,7 +1128,9 @@ class ShopEditorWindow(QMainWindow):
 
 def main():
     from editor_utils.app_init import install_translator, setup_app_icon
+    from editor_utils.ui_helpers import install_dialog_theme_filter
     app = QApplication(sys.argv)
+    install_dialog_theme_filter(app)
     app.setStyle("Fusion")
     app.setApplicationName("TKShop Editor")
     _t = install_translator(app)

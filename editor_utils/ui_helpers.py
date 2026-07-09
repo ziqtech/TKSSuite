@@ -5,8 +5,10 @@
 import os
 import sys
 import csv
-from PySide6.QtWidgets import QApplication, QFrame, QHBoxLayout, QLabel, QLineEdit, QComboBox, QPushButton, QFileDialog, QMessageBox
-from PySide6.QtCore import Qt
+from PySide6.QtWidgets import (QApplication, QFrame, QHBoxLayout, QLabel, QLineEdit,
+                               QComboBox, QPushButton, QFileDialog, QMessageBox,
+                               QWidget, QMenu)
+from PySide6.QtCore import Qt, QObject, QEvent
 from PySide6.QtGui import QIcon
 
 
@@ -123,6 +125,66 @@ def themed_messagebox(parent, icon, title, text):
     msg = QMessageBox(icon, title, text, QMessageBox.StandardButton.Ok, parent)
     dialog_show_event(msg)
     return msg.exec()
+
+
+class _DialogThemeFilter(QObject):
+    """全局事件过滤器: 自动为所有弹出的顶层窗口应用 DWM 标题栏主题。
+
+    由 install_dialog_theme_filter(app) 安装到 QApplication 上,
+    捕获所有 QWidget 的 Show 事件, 对顶层窗口 (QDialog/QMessageBox/
+    QInputDialog/QFileDialog/QColorDialog) 调用 apply_godot_theme,
+    使其标题栏跟随编辑器主题 (深色/浅色), 无需在每个弹窗处手动调用。
+    """
+
+    def __init__(self, app, parent=None):
+        super().__init__(parent)
+        self._app = app
+
+    def _resolve_is_dark(self, widget):
+        """从父窗口链查找 _is_dark / is_dark_theme, 回退到系统主题。"""
+        # 1. 沿父窗口链查找 (主窗口/QMainWindow 通常带 _is_dark)
+        p = widget.parentWidget() or widget.parent()
+        while p is not None:
+            for attr in ('_is_dark', 'is_dark_theme'):
+                v = getattr(p, attr, None)
+                if v is not None:
+                    return bool(v)
+            p = getattr(p, 'parentWidget', lambda: None)() or getattr(p, 'parent', lambda: None)()
+        # 2. 扫描所有顶层窗口 (找任意一个带 _is_dark 的主窗口)
+        for w in self._app.topLevelWidgets():
+            for attr in ('_is_dark', 'is_dark_theme'):
+                v = getattr(w, attr, None)
+                if v is not None:
+                    return bool(v)
+        # 3. 回退到系统颜色方案
+        return self._app.styleHints().colorScheme() == Qt.ColorScheme.Dark
+
+    def eventFilter(self, obj, event):
+        if (event.type() == QEvent.Show
+                and isinstance(obj, QWidget)
+                and obj.isWindow()):
+            # 跳过无标题栏的弹出控件 (QMenu/QToolTip 由 QSS 处理外观)
+            if not isinstance(obj, (QMenu,)):
+                try:
+                    from editor_utils.window_theme import apply_godot_theme
+                    apply_godot_theme(obj, self._resolve_is_dark(obj))
+                except Exception:
+                    pass  # 非 win32 或 winId 不可用, 静默跳过
+        return False
+
+
+def install_dialog_theme_filter(app):
+    """安装全局事件过滤器, 自动为所有弹出的顶层窗口
+    (QDialog/QMessageBox/QInputDialog/QFileDialog/QColorDialog) 应用 DWM 标题栏主题。
+
+    一次安装, 永久生效, 无需在每次创建弹窗时手动调用。
+    在每个编辑器的 main() 中 QApplication 创建后调用一次即可::
+
+        app = QApplication(sys.argv)
+        install_dialog_theme_filter(app)
+    """
+    app._dialog_theme_filter = _DialogThemeFilter(app)
+    app.installEventFilter(app._dialog_theme_filter)
 
 
 def resolve_config_path(config_filename):
