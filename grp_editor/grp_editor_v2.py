@@ -1960,9 +1960,14 @@ class GRPEditor(QMainWindow):
             else:
                 sec._pixels = b'\x00' * (w * h * 2)
             sec._layer1 = b'\x00' * (w * h)
+            # 默认碰撞层 (L2): 用 L2 色板第1个实际颜色 (值=1, #FF0000 红) 填充满整张图像,
+            # 表示默认全图不可通行, 与新建图后需要雕刻可通行区域的工作流一致。
+            sec._layer2 = bytes([1]) * (w * h)
+            sec.has_layer2 = True
             sec._orig_frame_a = struct.pack("<I", w*h*2) + lzss_compress(sec._pixels)
             sec.comp_a = len(sec._orig_frame_a)
-            fb_raw = sec._layer1[:w*h]
+            # Frame B 为双层遮罩 (L1+L2 拼接 = 2*w*h 字节), 与现有双层区段格式一致
+            fb_raw = (sec._layer1 + sec._layer2)[:w * h * 2]
             fb_body = rle_bp_compress(fb_raw)
             sec._orig_fb_declared = len(fb_raw)
             fb_data = struct.pack("<I", len(fb_raw)) + fb_body
