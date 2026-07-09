@@ -191,6 +191,36 @@ def load_warway(filepath: str, map_id: int) -> bytes:
     return data[off:off + 1024]
 
 
+def load_warway_all(filepath: str) -> list:
+    """加载完整 WarWay.dat 到内存, 返回 list[bytearray] (每条 1024 字节, 32x32网格)。
+
+    网格编辑直接修改内存中的 bytearray, 保存时由 save_warway 写回。
+    值语义 (sub_4355C4 + sub_431428):
+      -1 (0xFF): 永久障碍 (sub_4355C4 更新循环跳过)
+       0:        普通可通行地面
+       1-5:      特殊区域/放置区
+      <-1:       运行时临时障碍 (每回合+1直到0), 编辑器不产生此值
+    """
+    if not filepath or not os.path.exists(filepath):
+        return []
+    data = Path(filepath).read_bytes()
+    count = len(data) // 1024
+    return [bytearray(data[i * 1024:(i + 1) * 1024]) for i in range(count)]
+
+
+def save_warway(filepath: str, grids: list):
+    """保存全部 WarWay 网格到文件 (1024字节/条)"""
+    buf = bytearray(len(grids) * 1024)
+    for i, grid in enumerate(grids):
+        off = i * 1024
+        buf[off:off + 1024] = grid
+    if os.path.exists(filepath):
+        bak = filepath + '.bak'
+        if not os.path.exists(bak):
+            Path(filepath).rename(bak)
+    Path(filepath).write_bytes(bytes(buf))
+
+
 def load_wardata(filepath: str) -> list:
     data = Path(filepath).read_bytes()
     count = len(data) // WAR_REC_SIZE
@@ -226,47 +256,56 @@ def load_wardata(filepath: str) -> list:
     return records
 
 
+def build_record_bytes(rec) -> bytes:
+    """根据 rec 的结构化字段重建 498 字节原始数据 (镜像 save_wardata 的单条逻辑)。
+
+    以 _raw 为基底保留未引用/保留字节, 再覆盖所有已知字段。这样 _raw 始终与
+    字段保持一致, MOD 导出的差异检测 (original[i]['_raw'] != cur['_raw']) 才能生效。
+    """
+    chunk = bytearray(rec['_raw'])
+    chunk[0] = rec['flags'] & 0xFF
+    for j in range(6):
+        chunk[2 + j] = rec['must_chars'][j] & 0xFF
+    struct.pack_into('<H', chunk, 30, rec['battle_name_id'])
+    struct.pack_into('<H', chunk, 32, rec['map_id'])
+    for j in range(18):
+        struct.pack_into('<H', chunk, 34 + j * 2, rec['enemy_ids'][j])
+        chunk[70 + j] = rec['enemy_lv'][j] & 0xFF
+        chunk[88 + j] = rec['enemy_power'][j] & 0xFF
+    for j in range(36):
+        struct.pack_into('<b', chunk, 106 + j, rec['enemy_lv_range'][j])
+    for j in range(36):
+        struct.pack_into('<b', chunk, 142 + j, rec['enemy_xy'][j])
+    for j in range(12):
+        struct.pack_into('<b', chunk, 178 + j, rec['ally_xy'][j])
+    for j in range(18):
+        chunk[190 + j] = rec['enemy_delay'][j] & 0xFF
+    for j in range(6):
+        chunk[208 + j] = rec['ally_facing'][j] & 0xFF
+    for j in range(56):
+        struct.pack_into('<b', chunk, 214 + j, rec['trap_xy'][j])
+    for j in range(56):
+        chunk[270 + j] = rec['trap_pwr'][j] & 0xFF
+    for j in range(10):
+        struct.pack_into('<H', chunk, 326 + j * 2, rec['trea_sub'][j])
+    for j in range(20):
+        struct.pack_into('<H', chunk, 346 + j * 2, rec['trea_quant'][j])
+    for j in range(28):
+        struct.pack_into('<H', chunk, 386 + j * 2, rec['trap_type'][j])
+    for j in range(18):
+        struct.pack_into('<H', chunk, 442 + j * 2, rec['enemy_flags'][j])
+    chunk[478] = rec['lv_spread_lo'] & 0xFF
+    chunk[480] = rec['lv_spread_hi'] & 0xFF
+    struct.pack_into('<H', chunk, 482, rec['battle_turn_limit'])
+    return bytes(chunk)
+
+
 def save_wardata(filepath: str, records: list):
     buf = bytearray(len(records) * WAR_REC_SIZE)
     for rec in records:
         i = rec['index']
         off = i * WAR_REC_SIZE
-        chunk = bytearray(rec['_raw'])
-        chunk[0] = rec['flags'] & 0xFF
-        for j in range(6):
-            chunk[2 + j] = rec['must_chars'][j] & 0xFF
-        struct.pack_into('<H', chunk, 30, rec['battle_name_id'])
-        struct.pack_into('<H', chunk, 32, rec['map_id'])
-        for j in range(18):
-            struct.pack_into('<H', chunk, 34 + j * 2, rec['enemy_ids'][j])
-            chunk[70 + j] = rec['enemy_lv'][j] & 0xFF
-            chunk[88 + j] = rec['enemy_power'][j] & 0xFF
-        for j in range(36):
-            struct.pack_into('<b', chunk, 106 + j, rec['enemy_lv_range'][j])
-        for j in range(36):
-            struct.pack_into('<b', chunk, 142 + j, rec['enemy_xy'][j])
-        for j in range(12):
-            struct.pack_into('<b', chunk, 178 + j, rec['ally_xy'][j])
-        for j in range(18):
-            chunk[190 + j] = rec['enemy_delay'][j] & 0xFF
-        for j in range(6):
-            chunk[208 + j] = rec['ally_facing'][j] & 0xFF
-        for j in range(56):
-            struct.pack_into('<b', chunk, 214 + j, rec['trap_xy'][j])
-        for j in range(56):
-            chunk[270 + j] = rec['trap_pwr'][j] & 0xFF
-        for j in range(10):
-            struct.pack_into('<H', chunk, 326 + j * 2, rec['trea_sub'][j])
-        for j in range(20):
-            struct.pack_into('<H', chunk, 346 + j * 2, rec['trea_quant'][j])
-        for j in range(28):
-            struct.pack_into('<H', chunk, 386 + j * 2, rec['trap_type'][j])
-        for j in range(18):
-            struct.pack_into('<H', chunk, 442 + j * 2, rec['enemy_flags'][j])
-        chunk[478] = rec['lv_spread_lo'] & 0xFF
-        chunk[480] = rec['lv_spread_hi'] & 0xFF
-        struct.pack_into('<H', chunk, 482, rec['battle_turn_limit'])
-        buf[off:off + WAR_REC_SIZE] = chunk
+        buf[off:off + WAR_REC_SIZE] = build_record_bytes(rec)
     if os.path.exists(filepath):
         bak = filepath + '.bak'
         if not os.path.exists(bak):
@@ -490,6 +529,8 @@ class WarDataEditorV2(QMainWindow):
         self.wsc_offsets = []
         self.tkt = {}
         self._dirty = False
+        self._warway_dirty = False
+        self.warway_records = []  # 完整 WarWay.dat 内存网格 (list[bytearray], 编辑区格直接修改)
         self._current_idx = -1
 
         # 场景预览状态
@@ -633,6 +674,7 @@ class WarDataEditorV2(QMainWindow):
         self._build_drops_traps_tab()
         self._build_params_tab()
         self._build_allparams_tab()
+        self._link_params_tabs()  # 双向同步 pvars/apvars 重叠字段, 防止 apply 时互相覆盖
         rl.addWidget(self.tabs, 1)
         splitter.addWidget(right)
         splitter.setSizes([540, 860])
@@ -727,6 +769,20 @@ class WarDataEditorV2(QMainWindow):
             else: random_trea += 1
         return f"固{fixed}/随{random_trea}" if fixed or random_trea else "-"
 
+    def _get_warway_grid(self, map_id):
+        """获取指定 map_id 的可变 WarWay 网格 (bytearray, 32x32)。
+
+        优先使用内存中的 warway_records (支持编辑); 若未加载则回退到磁盘读取 (只读)。
+        返回 bytearray 或 None。网格索引: grid[gy*32+gx], signed int8 语义。
+        """
+        if self.warway_records:
+            if 0 <= map_id < len(self.warway_records):
+                return self.warway_records[map_id]
+            return None
+        # 回退: 未加载完整 WarWay 时从磁盘读单条 (只读 bytes, 不可编辑)
+        data = load_warway(self.warway_path, map_id) if self.warway_path else None
+        return bytearray(data) if data else None
+
     # ── 列表 ──
     def _fill_tree_row(self, rec):
         enemy_count = sum(1 for eid in rec['enemy_ids'] if eid > 0)
@@ -814,6 +870,7 @@ class WarDataEditorV2(QMainWindow):
         self.fa_path = fa_path if os.path.exists(fa_path) else None
         self.records = load_wardata(self.wardata_path)
         self.wsc_offsets = load_wsc_idx(self.wsc_idx_path) if self.wsc_idx_path else []
+        self.warway_records = load_warway_all(self.warway_path) if self.warway_path else []
         self.tkt = load_tkt(self.tkt_path) if self.tkt_path else {}
         self.warpc_names = load_warpc_names(self.warpc_path, self.tkt) if self.warpc_path else {}
         self.warpc_records = load_warpc_records(self.warpc_path) if self.warpc_path else []
@@ -831,6 +888,7 @@ class WarDataEditorV2(QMainWindow):
         self._refresh_tree()
         self._set_edit_enabled(True)
         self._dirty = False
+        self._warway_dirty = False
         self._update_paths()
         self.status_var.setText(f"已加载 {len(self.records)} 场战斗")
 
@@ -838,12 +896,18 @@ class WarDataEditorV2(QMainWindow):
         if not self.wardata_path or not self.records:
             QMessageBox.information(self, "提示", "请先加载数据")
             return
-        if QMessageBox.question(self, "确认保存",
-            f"保存 {len(self.records)} 条到:\n{self.wardata_path}\n\n原文件将被覆盖(生成.bak).",
+        msg = f"保存 {len(self.records)} 条到:\n{self.wardata_path}\n\n原文件将被覆盖(生成.bak)."
+        if self._warway_dirty and self.warway_path and self.warway_records:
+            msg += f"\n\n检测到 WarWay 网格修改, 将一并保存到:\n{self.warway_path}"
+        if QMessageBox.question(self, "确认保存", msg,
             QMessageBox.Yes|QMessageBox.No) != QMessageBox.Yes: return
         self._apply_current_edit()
         save_wardata(self.wardata_path, self.records)
         self._dirty = False
+        # WarWay 网格保存 (仅在已修改且已加载完整网格时)
+        if self._warway_dirty and self.warway_path and self.warway_records:
+            save_warway(self.warway_path, self.warway_records)
+            self._warway_dirty = False
         self.status_var.setText("已保存")
 
     def _save_as(self):
@@ -864,6 +928,24 @@ class WarDataEditorV2(QMainWindow):
         self._apply_ally_tab(rec)
         self._apply_drops_tab(rec)
         self._apply_trap_tab(rec)
+        self._sync_raw(rec)
+
+    def _sync_raw(self, rec):
+        """根据结构化字段重建 _raw, 保证 _raw 与字段一致。
+
+        关键: MOD 导出用 _raw 字节比对检测差异, 若 _raw 不同步则修改现有记录
+        无法被检测到 (历史 BUG)。保存 WarData 时也依赖 _raw 一致性。
+        """
+        rec['_raw'] = build_record_bytes(rec)
+
+    def _sync_all_raw(self):
+        """同步全部记录的 _raw — MOD 导出前调用, 确保差异检测覆盖所有记录。
+
+        单元格直接编辑 (敌军表/宝物表/场景拖拽) 会修改 rec 字段但不经过 _apply_*,
+        因此导出前需全量同步 _raw, 否则这些记录的修改不会被检测到。
+        """
+        for rec in self.records:
+            self._sync_raw(rec)
 
     def _apply_filter(self):
         query = self.search_entry.text().strip().lower()
@@ -887,6 +969,7 @@ class WarDataEditorV2(QMainWindow):
     def _reload(self):
         if not self.wardata_path: return
         self.records = load_wardata(self.wardata_path)
+        self.warway_records = load_warway_all(self.warway_path) if self.warway_path else []
         if self.tkt_path:
             self.tkt = load_tkt(self.tkt_path)
             self.warpc_names = load_warpc_names(self.warpc_path, self.tkt) if self.warpc_path else {}
@@ -897,6 +980,7 @@ class WarDataEditorV2(QMainWindow):
         self._icon_pixmaps.clear()
         self._refresh_tree()
         self._dirty = False
+        self._warway_dirty = False
         self.status_var.setText("已重新加载")
 
     # ── 记录管理 ──
@@ -909,11 +993,13 @@ class WarDataEditorV2(QMainWindow):
             'enemy_xy':[0]*36,'ally_xy':[0]*12,'ally_facing':[0]*6,
             'trap_xy':[0]*56,'trap_pwr':[0]*56,'trea_sub':[0]*10,'trea_quant':[0]*20,
             'trap_type':[0]*28,'enemy_flags':[0]*18,'lv_spread_lo':0,'lv_spread_hi':0,
-            'battle_turn_limit':0,'_raw':bytes(bytearray(WAR_REC_SIZE))}
+            'battle_turn_limit':0,'_raw':bytearray(WAR_REC_SIZE)}
         self.records.append(rec)
         self._refresh_tree()
         self._dirty = True
         self.status_var.setText(f"已新增战场 #{new_idx}")
+        # 自动选中新记录并填充编辑面板, 用户可立即编辑
+        self.table.selectRow(new_idx)
 
     def _copy_record(self):
         if self._current_idx < 0: return
@@ -928,6 +1014,7 @@ class WarDataEditorV2(QMainWindow):
         self._refresh_tree()
         self._dirty = True
         self.status_var.setText(f"已复制 #{self._current_idx} -> #{new_idx}")
+        self.table.selectRow(new_idx)
 
     def _delete_record(self):
         if self._current_idx < 0: return
@@ -940,6 +1027,11 @@ class WarDataEditorV2(QMainWindow):
         self._refresh_tree()
         self._dirty = True
         self.status_var.setText("已删除战场")
+        # 清除编辑面板 (无可选记录时禁用)
+        if self.records:
+            self.table.selectRow(0)
+        else:
+            self._set_edit_enabled(False)
 
     def _show_field_ref(self):
         themed_messagebox(self, QMessageBox.Information, "字段参考",
@@ -973,6 +1065,7 @@ class WarDataEditorV2(QMainWindow):
             return
         original = load_wardata(self.wardata_path)
         self._apply_current_edit()
+        self._sync_all_raw()
 
         modified = []
         for i in range(min(len(original), len(self.records))):
@@ -1030,6 +1123,7 @@ class WarDataEditorV2(QMainWindow):
             QMessageBox.information(self, "提示", "请先加载数据")
             return
         self._apply_current_edit()
+        self._sync_all_raw()
 
         # 预构建当前记录（WarData 每条记录以 _raw 为标识）
         current_records = [r for r in self.records]
@@ -1215,7 +1309,7 @@ class WarDataEditorV2(QMainWindow):
             f"您现在可以继续编辑并重新导出。")
 
     def closeEvent(self, event):
-        if not confirm_close(self, self._dirty):
+        if not confirm_close(self, self._dirty or self._warway_dirty):
             event.ignore()
         else:
             event.accept()
@@ -1640,6 +1734,42 @@ class WarDataEditorV2(QMainWindow):
         self.apvars['flags'].setText(str(flags))
         self._dirty = True
 
+    def _link_params_tabs(self):
+        """双向同步战场参数(pvars)与全部参数(apvars)标签页的重叠字段。
+
+        两个标签页共享字段: battle_id/map_id/battle_name_id/battle_turn_limit/flags/must_chars[6]。
+        若不同步, 用户在战场参数标签页修改后, _apply_allparams_tab 会用全部参数标签页的
+        旧值覆盖新值 (历史 BUG: 战场参数修改无法成功应用)。
+        同步策略: 任一标签页编辑时立即同步到另一个, 保证 apply 时两边值一致。
+        """
+        def _sync_text(src, dst, text):
+            # 值不同才写回, 且 blockSignals 防止递归
+            if dst.text() != text:
+                dst.blockSignals(True)
+                dst.setText(text)
+                dst.blockSignals(False)
+        def _sync_check(src, dst, state):
+            if dst.isChecked() != src.isChecked():
+                dst.blockSignals(True)
+                dst.setChecked(src.isChecked())
+                dst.blockSignals(False)
+        # 标量字段双向同步
+        for key in ['battle_id', 'map_id', 'battle_name_id', 'battle_turn_limit', 'flags']:
+            ev1 = self.pvars[key]
+            ev2 = self.apvars[key]
+            ev1.textChanged.connect(partial(_sync_text, ev1, ev2))
+            ev2.textChanged.connect(partial(_sync_text, ev2, ev1))
+        # must_chars 列表字段双向同步
+        for i in range(6):
+            ev1 = self.pvars['must_chars'][i]
+            ev2 = self.apvars['must_chars'][i]
+            ev1.textChanged.connect(partial(_sync_text, ev1, ev2))
+            ev2.textChanged.connect(partial(_sync_text, ev2, ev1))
+        # flags checkbox 双向同步 (与 flags 文本框联动由 _on_flag_change/_on_apflag_change 完成)
+        for b1, b2 in [(self.flag_bit1, self.apflag_bit1), (self.flag_bit2, self.apflag_bit2)]:
+            b1.toggled.connect(partial(_sync_check, b1, b2))
+            b2.toggled.connect(partial(_sync_check, b2, b1))
+
     def _populate_allparams_tab(self, rec):
         self.apvars['battle_id'].setText(str(rec['battle_id']))
         self.apvars['map_id'].setText(str(rec['map_id']))
@@ -1801,13 +1931,20 @@ class WarDataEditorV2(QMainWindow):
         self.tabs.addTab(scroll, "敌军配置")
 
     def _apply_and_refresh(self):
-        """应用敌军/友军/掉落/陷阱标签页修改到记录并刷新场景预览"""
+        """应用全部标签页修改到记录并刷新场景预览
+
+        注意: 战场参数/全部参数标签页也必须应用, 否则用户修改的 map_id/flags/turn_limit
+        等字段不会写回记录 (历史 BUG: 原实现仅应用敌军/友军/掉落/陷阱四个标签页)。
+        """
         if self._current_idx < 0: return
         rec = self.records[self._current_idx]
+        self._apply_params_tab(rec)
+        self._apply_allparams_tab(rec)
         self._apply_enemy_tab(rec)
         self._apply_ally_tab(rec)
         self._apply_drops_tab(rec)
         self._apply_trap_tab(rec)
+        self._sync_raw(rec)
         # 仅刷新名称和标志列 (避免完整 repopulate 触发 cellChanged 递归)
         tbl = self.enemy_table
         tbl.blockSignals(True)
@@ -2260,7 +2397,18 @@ class WarDataEditorV2(QMainWindow):
         ctrl.addWidget(QPushButton("🔄 刷新", clicked=lambda: self._redraw_scene(True)))
         self.edit_mode = QCheckBox("编辑")
         ctrl.addWidget(self.edit_mode)
-        _lbl_bg_hint = QLabel("背景=map_id(WSC)")
+        ctrl.addWidget(QLabel("画笔:"))
+        self.zone_brush = QComboBox()
+        # 索引顺序与 WarWay signed int8 值语义对应 (sub_4355C4/sub_431428)
+        self._brush_items = [
+            (-1, "障碍(-1)"), (0, "通行(0)"),
+            (1, "区域1"), (2, "区域2"), (3, "区域3"), (4, "区域4"), (5, "区域5"),
+        ]
+        for val, label in self._brush_items:
+            self.zone_brush.addItem(label, val)
+        self.zone_brush.setCurrentIndex(1)  # 默认通行
+        ctrl.addWidget(self.zone_brush)
+        _lbl_bg_hint = QLabel("背景=map_id(WSC) | 编辑模式: 左键涂刷空格/拖拽单位")
         _lbl_bg_hint.setObjectName("hintLabel")
         ctrl.addWidget(_lbl_bg_hint)
         layout.addLayout(ctrl)
@@ -2470,7 +2618,7 @@ class WarDataEditorV2(QMainWindow):
                 pixmap, bg_w, bg_h = bg
                 scene.addPixmap(pixmap)
 
-        warway = load_warway(self.warway_path, rec['map_id']) if self.warway_path else None
+        warway = self._get_warway_grid(rec['map_id'])
 
         if rerandomize:
             (resolved_enemies, resolved_treas, resolved_traps,
@@ -2721,12 +2869,45 @@ class WarDataEditorV2(QMainWindow):
         if index == 0 and self._current_idx >= 0:  # 场景预览是第0个tab
             self._redraw_scene()
 
+    def _warway_value_at(self, gx, gy):
+        """读取当前地图 (gx,gy) 的 WarWay signed int8 值, 无网格返回 None"""
+        if self._current_idx < 0: return None
+        rec = self.records[self._current_idx]
+        grid = self._get_warway_grid(rec['map_id'])
+        if not grid: return None
+        raw = grid[gy * 32 + gx]
+        return raw if raw < 128 else raw - 256
+
+    def _paint_warway_cell(self, gx, gy, value):
+        """用画笔值涂刷当前地图的 (gx,gy) 网格。
+
+        value 为 signed int8 语义 (-1/0/1-5), 存储为 unsigned byte (-1→0xFF)。
+        涂刷后标记 _warway_dirty 并局部重绘 (不重新随机放置)。
+        多个战场共享同一 map_id 时, 修改会同步影响所有使用该地图的战场 (游戏数据结构如此)。
+        """
+        if self._current_idx < 0: return False
+        rec = self.records[self._current_idx]
+        grid = self._get_warway_grid(rec['map_id'])
+        if not grid: return False
+        if not (0 <= gx < 32 and 0 <= gy < 32): return False
+        old = grid[gy * 32 + gx]
+        new = value & 0xFF
+        if old == new: return False
+        grid[gy * 32 + gx] = new
+        self._warway_dirty = True
+        return True
+
     # ═══════════════════════════════════════════════════════════
     # SceneGraphicsView
     # ═══════════════════════════════════════════════════════════
 
 class SceneGraphicsView(QGraphicsView):
-    """自定义 QGraphicsView — 支持悬停信息、缩放、拖拽编辑、右键平移"""
+    """自定义 QGraphicsView — 支持悬停信息、缩放、拖拽编辑、网格涂刷、右键平移
+
+    编辑模式 (edit_mode 勾选) 左键交互:
+      - 点击单位(敌军/友军) → 拖拽移动单位, 释放后写回 enemy_xy/ally_xy
+      - 点击空格 → 用画笔值 (zone_brush) 涂刷 WarWay 网格, 可拖拽连续涂刷
+    """
     def __init__(self, editor):
         super().__init__()
         self.editor = editor
@@ -2737,9 +2918,23 @@ class SceneGraphicsView(QGraphicsView):
         self.setMouseTracking(True)
         self._drag_target = None
         self._pan_start = None
+        self._painting = False
+
+    def _brush_value(self):
+        """当前画笔值 (signed int8 语义: -1/0/1-5)"""
+        return self.editor.zone_brush.currentData()
+
+    def _terrain_tag(self, val):
+        """WarWay 值 → 中文标签 (用于悬停信息)"""
+        if val is None: return ""
+        if val == -1: return "障碍"
+        if val == 0: return "通行"
+        if 1 <= val <= 5: return f"区域{val}"
+        if val < -1: return f"临时障碍{val}"
+        return str(val)
 
     def mouseMoveEvent(self, event):
-        """悬停显示网格信息 + 编辑拖拽 + 右键平移"""
+        """悬停显示网格信息 + 编辑拖拽/涂刷 + 右键平移"""
         # 右键拖拽平移
         if self._pan_start is not None and event.buttons() & Qt.RightButton:
             delta = event.position().toPoint() - self._pan_start
@@ -2751,7 +2946,7 @@ class SceneGraphicsView(QGraphicsView):
             event.accept()
             return
 
-        # 编辑模式拖拽: 拦截所有左键 move, 不传给基类
+        # 编辑模式拖拽单位: 拦截所有左键 move, 不传给基类
         if self._drag_target and event.buttons() & Qt.LeftButton:
             sp = self.mapToScene(event.position().toPoint())
             g = self.editor._scene_to_grid(sp.x(), sp.y())
@@ -2772,6 +2967,16 @@ class SceneGraphicsView(QGraphicsView):
             event.accept()
             return
 
+        # 编辑模式涂刷网格: 左键拖拽连续涂刷
+        if self._painting and event.buttons() & Qt.LeftButton:
+            sp = self.mapToScene(event.position().toPoint())
+            g = self.editor._scene_to_grid(sp.x(), sp.y())
+            if g:
+                if self.editor._paint_warway_cell(g[0], g[1], self._brush_value()):
+                    self.editor._redraw_scene(rerandomize=False)
+            event.accept()
+            return
+
         sp = self.mapToScene(event.position().toPoint())
         g = self.editor._scene_to_grid(sp.x(), sp.y())
         if g is None:
@@ -2785,40 +2990,48 @@ class SceneGraphicsView(QGraphicsView):
         unit = ed._find_unit_at(gx, gy) if rec else None
         if unit:
             utype, uidx = unit
+            terrain = self._terrain_tag(ed._warway_value_at(gx, gy))
             if utype == 'enemy':
                 eid = rec['enemy_ids'][uidx]
                 uname = ed._enemy_name(eid)
                 orig_x = rec['enemy_xy'][uidx * 2]
                 pos_tag = f"区域Z{abs(orig_x)}" if orig_x < 0 else "固定位置"
-                ed.scene_info_var.setText(f"({gx},{gy}) 敌军:{uname} Lv.{rec['enemy_lv'][uidx]} [{pos_tag}]")
+                ed.scene_info_var.setText(f"({gx},{gy}) [{terrain}] 敌军:{uname} Lv.{rec['enemy_lv'][uidx]} [{pos_tag}]")
             else:
                 ally_orig_x = rec['ally_xy'][uidx * 2]
                 pos_tag = f"区域Z{abs(ally_orig_x)}" if ally_orig_x < 0 else "固定位置"
-                ed.scene_info_var.setText(f"({gx},{gy}) 友军槽{uidx} [{pos_tag}]")
+                ed.scene_info_var.setText(f"({gx},{gy}) [{terrain}] 友军槽{uidx} [{pos_tag}]")
             return
 
         # 悬停信息: 宝物
         trea = ed._find_trea_at(gx, gy) if rec else None
         if trea:
             ti, is_fixed = trea
+            terrain = self._terrain_tag(ed._warway_value_at(gx, gy))
             label = ed._trea_label(rec, ti)
             type_tag = "固定" if is_fixed else f"区域Z{abs(rec['trap_xy'][ti*2])}"
-            if label: ed.scene_info_var.setText(f"({gx},{gy}) 宝物#{ti} {label} [{type_tag}]")
-            else: ed.scene_info_var.setText(f"({gx},{gy}) 宝物槽#{ti} (空) [{type_tag}]")
+            if label: ed.scene_info_var.setText(f"({gx},{gy}) [{terrain}] 宝物#{ti} {label} [{type_tag}]")
+            else: ed.scene_info_var.setText(f"({gx},{gy}) [{terrain}] 宝物槽#{ti} (空) [{type_tag}]")
             return
 
         # 悬停信息: 陷阱
         trap = ed._find_trap_at(gx, gy) if rec else None
         if trap:
             ti, is_fixed = trap
+            terrain = self._terrain_tag(ed._warway_value_at(gx, gy))
             ttype = ed._trap_type_at(rec, ti)
             tname = TRAP_NAMES_SHORT.get(ttype, '?') + '陷阱'
             pmin, pmax = ed._trap_power_at(rec, ti)
             type_tag = "固定" if is_fixed else f"区域Z{abs(rec['trap_xy'][ti*2])}"
-            ed.scene_info_var.setText(f"({gx},{gy}) 陷阱#{ti} {tname} 威力[{pmin},{pmax}] [{type_tag}]")
+            ed.scene_info_var.setText(f"({gx},{gy}) [{terrain}] 陷阱#{ti} {tname} 威力[{pmin},{pmax}] [{type_tag}]")
             return
 
-        ed.scene_info_var.setText(f"({gx},{gy})")
+        # 悬停信息: 纯地形
+        terrain = self._terrain_tag(ed._warway_value_at(gx, gy)) if rec else ""
+        if terrain:
+            ed.scene_info_var.setText(f"({gx},{gy}) [{terrain}]")
+        else:
+            ed.scene_info_var.setText(f"({gx},{gy})")
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton and self.editor.edit_mode.isChecked():
@@ -2826,8 +3039,16 @@ class SceneGraphicsView(QGraphicsView):
             sp = self.mapToScene(event.position().toPoint())
             g = self.editor._scene_to_grid(sp.x(), sp.y())
             if g:
-                unit = self.editor._find_unit_at(g[0], g[1])
-                if unit: self._drag_target = unit
+                gx, gy = g
+                unit = self.editor._find_unit_at(gx, gy)
+                if unit:
+                    # 拾取单位拖拽
+                    self._drag_target = unit
+                else:
+                    # 空格涂刷 WarWay 网格
+                    if self.editor._paint_warway_cell(gx, gy, self._brush_value()):
+                        self.editor._redraw_scene(rerandomize=False)
+                    self._painting = True
             event.accept()
             return
         elif event.button() == Qt.RightButton:
@@ -2840,6 +3061,13 @@ class SceneGraphicsView(QGraphicsView):
         if event.button() == Qt.LeftButton and self._drag_target:
             self.editor._populate_fields(self.editor.records[self.editor._current_idx])
             self._drag_target = None
+            event.accept()
+            return
+        if event.button() == Qt.LeftButton and self._painting:
+            # 涂刷结束: 同步当前记录 _raw (单位位置可能未变, 但保持一致性)
+            if self.editor._current_idx >= 0:
+                self.editor._sync_raw(self.editor.records[self.editor._current_idx])
+            self._painting = False
             event.accept()
             return
         if event.button() == Qt.RightButton:
