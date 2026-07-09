@@ -1774,6 +1774,23 @@ class WarDataEditorV2(QMainWindow):
         self.pvars['map_id'].editingFinished.connect(self._on_map_id_committed)
         self.apvars['map_id'].editingFinished.connect(self._on_map_id_committed)
 
+    def _auto_fill_obstacle_if_blank(self, new_id):
+        """若 new_id 指向的 WarWay 网格为全零 (全新/未配置地图), 自动用 -1 (障碍)
+        覆盖整张 32x32 地图, 与 #198 (map_id=19) 等模板一致, 便于后续雕刻可通行区域。
+
+        返回是否执行了填充。由 _on_map_id_committed (字段提交) 和 _apply_and_refresh
+        (应用修改按钮) 共同调用, 确保两条路径都能自动填充障碍。
+        """
+        grid = self._get_warway_grid(new_id)
+        if grid is not None and not any(grid):  # 全零 = 全新空白地图
+            for i in range(1024):
+                grid[i] = 0xFF  # -1 障碍, 从左上角覆盖整张地图
+            self._warway_dirty = True
+            self._dirty = True
+            self.status_var.setText(f"地图 #{new_id} 为空白, 已自动填充障碍覆盖整图 (可雕刻可通行区域)")
+            return True
+        return False
+
     def _on_map_id_committed(self):
         """map_id 字段编辑完成 (editingFinished) 时触发。
 
@@ -1790,13 +1807,7 @@ class WarDataEditorV2(QMainWindow):
         if new_id == rec['map_id']:
             return  # 值未变化 (双标签页去重 / 程序化填充后回访)
         rec['map_id'] = new_id
-        grid = self._get_warway_grid(new_id)
-        if grid is not None and not any(grid):  # 全零 = 全新空白地图
-            for i in range(1024):
-                grid[i] = 0xFF  # -1 障碍, 从左上角覆盖整张地图
-            self._warway_dirty = True
-            self._dirty = True
-            self.status_var.setText(f"地图 #{new_id} 为空白, 已自动填充障碍覆盖整图 (可雕刻可通行区域)")
+        self._auto_fill_obstacle_if_blank(new_id)
         self._sync_raw(rec)
         self._redraw_scene()
 
@@ -1968,12 +1979,18 @@ class WarDataEditorV2(QMainWindow):
         """
         if self._current_idx < 0: return
         rec = self.records[self._current_idx]
+        old_map_id = rec['map_id']
         self._apply_params_tab(rec)
         self._apply_allparams_tab(rec)
         self._apply_enemy_tab(rec)
         self._apply_ally_tab(rec)
         self._apply_drops_tab(rec)
         self._apply_trap_tab(rec)
+        # 检测 map_id 变化并自动填充障碍 (新增战场改地图编号后点"应用修改"时触发,
+        # editingFinished 在按钮点击时不一定触发, 故在此显式处理确保场景与网格同步)
+        new_map_id = rec['map_id']
+        if new_map_id != old_map_id:
+            self._auto_fill_obstacle_if_blank(new_map_id)
         self._sync_raw(rec)
         # 仅刷新名称和标志列 (避免完整 repopulate 触发 cellChanged 递归)
         tbl = self.enemy_table
