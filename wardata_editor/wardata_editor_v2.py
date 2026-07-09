@@ -784,7 +784,8 @@ class WarDataEditorV2(QMainWindow):
         return bytearray(data) if data else None
 
     # ── 列表 ──
-    def _fill_tree_row(self, rec):
+    def _tree_row_vals(self, rec):
+        """计算左侧列表一行的显示文本 (供 _fill_tree_row 和 _update_tree_row 共用)"""
         enemy_count = sum(1 for eid in rec['enemy_ids'] if eid > 0)
         trea_count = sum(1 for i in range(10) if rec['trea_sub'][i] > 0)
         trap_count = sum(1 for i in range(28) if 1 <= self._trap_type_at(rec, i) <= 6)
@@ -809,14 +810,31 @@ class WarDataEditorV2(QMainWindow):
         if flags & 2: flag_parts.append('续')
         if flags & 4: flag_parts.append('随')
         flags_info = ','.join(flag_parts) if flag_parts else '-'
+        return [str(rec['index']), map_info, str(enemy_count), str(trea_count),
+                str(trap_count), trea_detail, chars_info, flags_info]
+
+    def _fill_tree_row(self, rec):
         row = self.table.rowCount()
         self.table.insertRow(row)
-        vals = [str(rec['index']), map_info, str(enemy_count), str(trea_count),
-                str(trap_count), trea_detail, chars_info, flags_info]
-        for c, v in enumerate(vals):
+        for c, v in enumerate(self._tree_row_vals(rec)):
             item = QTableWidgetItem(v)
             item.setTextAlignment(Qt.AlignCenter)
             self.table.setItem(row, c, item)
+
+    def _update_tree_row(self, idx):
+        """原地刷新左侧列表指定行的显示 (应用修改后调用, 保持选中状态不变)"""
+        if idx < 0 or idx >= self.table.rowCount(): return
+        rec = self.records[idx]
+        self.table.blockSignals(True)
+        for c, v in enumerate(self._tree_row_vals(rec)):
+            item = self.table.item(idx, c)
+            if item:
+                item.setText(v)
+            else:
+                item = QTableWidgetItem(v)
+                item.setTextAlignment(Qt.AlignCenter)
+                self.table.setItem(idx, c, item)
+        self.table.blockSignals(False)
 
     def _refresh_tree(self):
         self.table.setRowCount(0)
@@ -1047,6 +1065,58 @@ class WarDataEditorV2(QMainWindow):
     def _show_about(self):
         themed_messagebox(self, QMessageBox.Information, "关于", "WarData.dat 可视化编辑器 v2.0\n\nPySide6 版本\n基于游戏逆向工程 (TKS.exe 反编译)")
 
+    def _build_warway_diff_json(self, ref_dir):
+        """构建 WarWay.dat 差异 JSON (与 ref_dir/WarWay.dat 比对)。
+
+        WarWay.dat 是 1024 字节/条的 32x32 int8 地形网格。差异格式与统一 DAT 一致:
+        field_type="int8", field_count=1024, fields 用 f0..f1023 引用每个网格字节。
+        新增战场改 map_id 后必须导出对应 WarWay 网格, 否则游戏 sub_431428 的 mc>0
+        断言失败 (战场记录要求单位放在区域N, 但地图里没有区域N的格)。
+        返回 dict 或 None (无差异/无 WarWay 数据)。
+        """
+        if not self.warway_records:
+            return None
+        ref_ww = os.path.join(ref_dir, "WarWay.dat")
+        if not os.path.isfile(ref_ww):
+            return None
+        try:
+            orig_ww = load_warway_all(ref_ww)
+        except Exception:
+            return None
+        modified = []
+        for i in range(min(len(orig_ww), len(self.warway_records))):
+            cur = self.warway_records[i]
+            ref = orig_ww[i]
+            if bytes(cur) == bytes(ref):
+                continue
+            # 只记录变化的格子 (f0..f1023 = 逐格 int8), 减小 MOD 体积
+            fields = {}
+            for j in range(1024):
+                if cur[j] != ref[j]:
+                    v = cur[j]
+                    # int8 范围: 0x80-0xFF 视为负数 (-128..-1), 与游戏 sub_42FE70 一致
+                    if v >= 0x80:
+                        v -= 0x100
+                    fields[f"f{j}"] = v
+            modified.append({"index": i, "fields": fields})
+        appended = []
+        for i in range(len(orig_ww), len(self.warway_records)):
+            cur = self.warway_records[i]
+            fields = {}
+            for j in range(1024):
+                v = cur[j]
+                if v >= 0x80:
+                    v -= 0x100
+                if v != 0:  # 跳过默认0, 减小体积
+                    fields[f"f{j}"] = v
+            appended.append({"index": i, "fields": fields})
+        if not modified and not appended:
+            return None
+        crc = compute_crc32(ref_ww)
+        return {"target": "WarWay.dat", "record_size": 1024, "field_type": "int8",
+                "field_count": 1024, "original_count": len(orig_ww),
+                "original_crc32": crc, "modified": modified, "appended": appended}
+
     def _export_tksmod(self):
         """导出当前修改为 .tksmod MOD 文件（WarData 完整记录级差异）"""
         if not self.records:
@@ -1097,7 +1167,10 @@ class WarDataEditorV2(QMainWindow):
                 fields[key] = rec[key]
             appended.append({"index": i, "fields": fields})
 
-        if not modified and not appended:
+        # WarWay 地形网格差异 (新增战场改 map_id 后必须随 MOD 导出, 否则游戏找不到地图崩溃)
+        warway_json = self._build_warway_diff_json(os.path.dirname(self.wardata_path))
+
+        if not modified and not appended and not warway_json:
             QMessageBox.information(self, "无差异", "当前数据与原始文件相同，无需导出。")
             return
 
@@ -1107,13 +1180,19 @@ class WarDataEditorV2(QMainWindow):
             "field_type": "structured", "original_count": len(original),
             "original_crc32": crc, "modified": modified, "appended": appended
         }
-        mod_json = generate_mod_json(metadata, [{"file": "data/WarData.dat.json", "target": "WarData.dat"}])
+        data_files = {"data/WarData.dat.json": data_json}
+        mod_targets = [{"file": "data/WarData.dat.json", "target": "WarData.dat"}]
+        if warway_json:
+            data_files["data/WarWay.dat.json"] = warway_json
+            mod_targets.append({"file": "data/WarWay.dat.json", "target": "WarWay.dat"})
+        mod_json = generate_mod_json(metadata, mod_targets)
         fp, _ = QFileDialog.getSaveFileName(self, "导出为 MOD", f"{safe_mod_filename(metadata['name'], metadata['id'])}.tksmod", "TKS MOD (*.tksmod)")
         if not fp: return
         try:
-            pack_tksmod(fp, mod_json, {"data/WarData.dat.json": data_json})
+            pack_tksmod(fp, mod_json, data_files)
+            ww_msg = f"\nWarWay 地图: {warway_json.get('modified', 0) if warway_json else 0} 条" if warway_json else ""
             self.status_var.setText(f"已导出 MOD: {os.path.basename(fp)} (修改{len(modified)}条, 追加{len(appended)}条)")
-            QMessageBox.information(self, "导出成功", f"已导出:\n{fp}\n\n修改: {len(modified)} 条\n追加: {len(appended)} 条")
+            QMessageBox.information(self, "导出成功", f"已导出:\n{fp}\n\n修改: {len(modified)} 条\n追加: {len(appended)} 条{ww_msg}")
         except Exception as e:
             QMessageBox.critical(self, "导出失败", str(e))
 
@@ -1145,6 +1224,21 @@ class WarDataEditorV2(QMainWindow):
             if modified or appended:
                 targets.append({"name": "WarData.dat",
                     "modified": modified, "appended": appended, "deleted": 0})
+            # 统计 WarWay 差异
+            ref_ww = os.path.join(ref_dir, "WarWay.dat")
+            if os.path.isfile(ref_ww):
+                try:
+                    orig_ww = load_warway_all(ref_ww)
+                    ww_mod = 0
+                    for i in range(min(len(orig_ww), len(self.warway_records))):
+                        if bytes(orig_ww[i]) != bytes(self.warway_records[i]):
+                            ww_mod += 1
+                    ww_app = max(0, len(self.warway_records) - len(orig_ww))
+                    if ww_mod or ww_app:
+                        targets.append({"name": "WarWay.dat",
+                            "modified": ww_mod, "appended": ww_app, "deleted": 0})
+                except Exception:
+                    pass
             return {"valid": True, "targets": targets}
 
         preview_dlg = ModExportPreviewDialog(self,
@@ -1196,13 +1290,21 @@ class WarDataEditorV2(QMainWindow):
         crc = compute_crc32(ref_path)
         data_json = {"target": "WarData.dat", "record_size": WAR_REC_SIZE, "field_type": "structured",
             "original_count": len(original), "original_crc32": crc, "modified": modified, "appended": appended}
-        mod_json = generate_mod_json(metadata, [{"file": "data/WarData.dat.json", "target": "WarData.dat"}])
+        # WarWay 地形网格差异 (与 WarData 同目录的 WarWay.dat 比对)
+        warway_json = self._build_warway_diff_json(ref_dir)
+        data_files = {"data/WarData.dat.json": data_json}
+        mod_targets = [{"file": "data/WarData.dat.json", "target": "WarData.dat"}]
+        if warway_json:
+            data_files["data/WarWay.dat.json"] = warway_json
+            mod_targets.append({"file": "data/WarWay.dat.json", "target": "WarWay.dat"})
+        mod_json = generate_mod_json(metadata, mod_targets)
         fp, _ = QFileDialog.getSaveFileName(self, "导出为 MOD", f"{safe_mod_filename(metadata['name'], metadata['id'])}.tksmod", "TKS MOD (*.tksmod)")
         if not fp: return
         try:
-            pack_tksmod(fp, mod_json, {"data/WarData.dat.json": data_json})
+            pack_tksmod(fp, mod_json, data_files)
+            ww_msg = f"\nWarWay 地图: {warway_json.get('modified', 0) if warway_json else 0} 条" if warway_json else ""
             self.status_var.setText(f"已导出 MOD (参考目录): {os.path.basename(fp)}")
-            QMessageBox.information(self, "导出成功", f"已导出 (参考目录模式):\n{fp}\n\n参考: {ref_dir}\n修改: {len(modified)} 条\n追加: {len(appended)} 条")
+            QMessageBox.information(self, "导出成功", f"已导出 (参考目录模式):\n{fp}\n\n参考: {ref_dir}\n修改: {len(modified)} 条\n追加: {len(appended)} 条{ww_msg}")
         except Exception as e:
             QMessageBox.critical(self, "导出失败", str(e))
 
@@ -2010,6 +2112,8 @@ class WarDataEditorV2(QMainWindow):
             tip_item.setFlags(tip_item.flags() & ~Qt.ItemIsEditable)
             tbl.setItem(i, 10, tip_item)
         tbl.blockSignals(False)
+        # 刷新左侧列表当前行 (地图/敌军数/参战人物等列随应用结果更新)
+        self._update_tree_row(self._current_idx)
         self._redraw_scene(rerandomize=False)
 
     def _populate_enemy_tab(self, rec):
@@ -2040,6 +2144,27 @@ class WarDataEditorV2(QMainWindow):
             tbl.setItem(i, 10, tip_item)
         tbl.blockSignals(False)
 
+    # 敌军配置表 (enemy_table) 列号 → 全部参数表 (ap_enemy_table) 列号映射
+    # 两表是同一敌军数据的双视图, 必须保持同步, 否则 _apply_allparams_tab 会用
+    # stale 数据覆盖 _apply_enemy_tab/对话框已写入 rec 的值 (历史 BUG: 特殊设定消失)
+    _ENEMY_COL_TO_AP = {1:0, 3:1, 4:2, 5:3, 6:4, 7:5, 8:6, 9:7, 10:8}
+
+    def _sync_ap_enemy_cell(self, row, enemy_col, value):
+        """将 enemy_table 的编辑同步到 ap_enemy_table 对应单元格 (数值视图)。
+
+        enemy_table col10 (特殊设定) 存的是中文标签 ("精英/特殊"), 无法被
+        _apply_enemy_tab 的 int() 解析; ap_enemy_table col8 存数值才是权威源。
+        故对话框/手动编辑 enemy_table 后必须同步 ap_enemy_table, 避免应用时覆盖。
+        """
+        ap_col = self._ENEMY_COL_TO_AP.get(enemy_col)
+        if ap_col is None: return
+        atbl = self.ap_enemy_table
+        atbl.blockSignals(True)
+        item = QTableWidgetItem(str(value))
+        item.setTextAlignment(Qt.AlignCenter)
+        atbl.setItem(row, ap_col, item)
+        atbl.blockSignals(False)
+
     def _on_enemy_cell_changed(self, row, col):
         """敌军表格单元格变更时同步写回记录并刷新名称"""
         if self._current_idx < 0: return
@@ -2061,6 +2186,8 @@ class WarDataEditorV2(QMainWindow):
         elif col == 8: rec['enemy_xy'][row*2+1] = v
         elif col == 9: rec['enemy_delay'][row] = v & 0xFF
         elif col == 10: rec['enemy_flags'][row] = v & 0xFFFF
+        # 同步到全部参数表, 防止 _apply_allparams_tab 用 stale 数据覆盖 rec
+        self._sync_ap_enemy_cell(row, col, v)
 
     def _on_enemy_cell_clicked(self, row, col):
         """双击角色ID列弹出WarPC选择器，双击特殊设定列弹出标志选择对话框"""
@@ -2087,6 +2214,8 @@ class WarDataEditorV2(QMainWindow):
                 tbl.setItem(row, 1, id_item)
                 tbl.blockSignals(False)
                 self.enemy_name_labels[row].setText(self._enemy_name(new_eid)[:14] if new_eid else "(空)")
+                # 同步到全部参数表 col0, 防止 _apply_allparams_tab 用 stale ID 覆盖
+                self._sync_ap_enemy_cell(row, 1, new_eid)
                 self._redraw_scene(rerandomize=False)
             return
         if col != 10: return
@@ -2122,6 +2251,8 @@ class WarDataEditorV2(QMainWindow):
             tip_item.setTextAlignment(Qt.AlignCenter)
             tip_item.setFlags(tip_item.flags() & ~Qt.ItemIsEditable)
             self.enemy_table.setItem(row, 10, tip_item)
+            # 同步数值到全部参数表 col8, 否则 _apply_allparams_tab 会用 stale 值覆盖 rec
+            self._sync_ap_enemy_cell(row, 10, m & 0xFFFF)
             dlg.accept()
         btn_ok.clicked.connect(_ok)
         bl.addWidget(btn_ok)

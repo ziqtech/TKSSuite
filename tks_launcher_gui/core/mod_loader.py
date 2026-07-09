@@ -360,6 +360,9 @@ DAT_FILE_INFO = {
     "TKKon.dat":    {"rec_size": 40,   "field_type": "int16", "field_count": 20,  "orig_count": 650, "lzss": True},
     "TKMat.Dat":    {"rec_size": 384,  "field_type": "int32", "field_count": 96,  "orig_count": 6000, "lzss": False},
     "TKDefUnit.Dat":{"rec_size": 16,   "field_type": "uint16","field_count": 8,   "orig_count": 5000, "lzss": False},
+    # WarWay.dat: 32x32 地形网格, 每格 int8 (-1障碍/0通行/1-5区域), 100条, flat binary 无LZSS
+    # field_count=1024 对应 f0..f1023 (逐格引用), 与 wardata_editor 导出格式一致
+    "WarWay.dat":   {"rec_size": 1024, "field_type": "int8",  "field_count": 1024,"orig_count": 100,  "lzss": False},
 }
 
 
@@ -601,6 +604,10 @@ def _apply_fields_to_record(buf: bytearray, index: int, rec_size: int,
             off = base_off + fi * 4
             if off + 4 <= len(buf):
                 struct.pack_into('<i', buf, off, int(value))
+        elif field_type == "int8":
+            # WarWay.dat 逐格 int8: f0..f1023 直接映射到 32x32 网格的每个字节
+            if base_off + fi < len(buf):
+                struct.pack_into('<b', buf, base_off + fi, int(value))
 
 
 # ═══════════════════════════════════════════════════════════════
