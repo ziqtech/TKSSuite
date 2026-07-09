@@ -363,9 +363,10 @@ DAT_FILE_INFO = {
 }
 
 
-# 结构化记录文件元信息表
-# 与 DAT_FILE_INFO 不同: 字段通过字段名 (而非 f0/f1/... 索引) 引用,
-# 每个字段有自定义的偏移/大小/类型/元素数。
+# WarData.dat 字段布局表
+# 与 DAT_FILE_INFO 不同: WarData.dat 的字段类型异构 (uint8/int8/uint16 混合),
+# 无法用统一的 field_type + 字段索引 (f0/f1/...) 描述, 因此通过字段名引用,
+# 每个字段独立指定偏移/类型/元素数。
 # field_layout: {field_name: (offset, item_size, struct_fmt, item_count)}
 #   - item_size 仅用于校验
 #   - struct_fmt: struct 单元素格式 ('<B' uint8, '<b' int8, '<H' uint16)
@@ -395,6 +396,7 @@ WARDATA_FIELD_LAYOUT = {
     "battle_turn_limit": (482, 2,  '<H', 1),    # uint16: sub_43CA64:29
 }
 
+# WarData.dat 元信息 (与 DAT_FILE_INFO 并列, 但因字段异构而使用 field_layout)
 STRUCTURED_FILE_INFO = {
     "WarData.dat": {
         "rec_size": 498,
@@ -482,7 +484,7 @@ def merge_mods(mods: List[ModInfo], game_dir: str, log_func=None) -> MergedData:
                 merged.file_data[target] = result
 
         elif first_diff_data.get("field_type") == "structured":
-            # 结构化记录文件 (如 WarData.dat: 字段名引用 + 自定义偏移/类型)
+            # WarData.dat 结构化记录差异 (字段名引用 + 异构字段类型)
             info = STRUCTURED_FILE_INFO.get(target)
             if info:
                 result = _merge_structured_file(target_path, target, info, mod_diffs, log)
@@ -602,18 +604,18 @@ def _apply_fields_to_record(buf: bytearray, index: int, rec_size: int,
 
 
 # ═══════════════════════════════════════════════════════════════
-# 4a-2. 结构化记录文件差异合并 (WarData.dat 等)
+# 4a-2. WarData.dat 结构化记录差异合并
 # ═══════════════════════════════════════════════════════════════
 
 def _merge_structured_file(file_path: str, target_name: str, info: dict,
                            mod_diffs: List[Tuple[ModInfo, dict]],
                            log_func=None) -> Optional[bytes]:
-    """合并结构化记录文件 (字段名引用 + 自定义偏移/类型/元素数)。
+    """合并 WarData.dat 结构化记录差异 (字段名引用 + 异构字段类型)。
 
     与 _merge_dat_file 的区别:
       - DAT_FILE_INFO 使用统一的 field_type (int16/int32/uint16) + 字段索引 f0/f1/...
-      - STRUCTURED_FILE_INFO 通过 field_layout 表指定每个字段的偏移、类型、元素数
-        适用于 WarData.dat 这类字段类型异构的记录
+      - WarData.dat 字段类型异构 (uint8/int8/uint16 混合), 通过 WARDATA_FIELD_LAYOUT
+        指定每个字段的偏移、类型、元素数
     """
     log = log_func or (lambda x: None)
     rec_size = info["rec_size"]
