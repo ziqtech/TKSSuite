@@ -21,7 +21,6 @@ from editor_utils.mod_exporter import (
     pack_tksmod, generate_mod_json, build_block_diff_json,
     generate_short_uuid,
 )
-from editor_utils.window_theme import apply_godot_theme
 
 import base64
 
@@ -433,12 +432,6 @@ class CustomAvatarDialog(QDialog):
         self._mods_dir = mods_dir
         self._mod_path = os.path.join(mods_dir, MOD_FILENAME)
         self._mod_id = generate_short_uuid()
-
-        # 应用窗口标题栏主题（跟随父窗口的深色/浅色模式）
-        is_dark = True
-        if parent and hasattr(parent, '_dark_mode'):
-            is_dark = parent._dark_mode
-        apply_godot_theme(self, is_dark=is_dark)
 
         self._setup_ui()
         self._load_existing()

@@ -5,7 +5,7 @@
 import os
 import sys
 import csv
-from PySide6.QtWidgets import (QApplication, QFrame, QHBoxLayout, QLabel, QLineEdit,
+from PySide6.QtWidgets import (QFrame, QHBoxLayout, QLabel, QLineEdit,
                                QComboBox, QPushButton, QFileDialog, QMessageBox,
                                QWidget, QMenu)
 from PySide6.QtCore import Qt, QObject, QEvent
@@ -107,23 +107,9 @@ def confirm_close(parent, dirty, title="未保存", text="有未保存的修改,
                                 QMessageBox.Ok | QMessageBox.Cancel) == QMessageBox.Ok
 
 
-def dialog_show_event(dialog):
-    """弹窗 title bar 主题跟随父窗口。在 QDialog.showEvent 中调用。"""
-    from editor_utils.window_theme import apply_godot_theme
-    parent = dialog.parent()
-    if parent:
-        is_dark = getattr(parent, '_is_dark', None) or getattr(parent, 'is_dark_theme', None)
-    else:
-        is_dark = None
-    if is_dark is None:
-        is_dark = QApplication.instance().styleHints().colorScheme() == Qt.ColorScheme.Dark
-    apply_godot_theme(dialog, bool(is_dark))
-
-
 def themed_messagebox(parent, icon, title, text):
-    """主题化 information/about 弹窗 — title bar 跟随父窗口主题。"""
+    """信息弹窗 (标题栏主题由全局过滤器自动处理)。"""
     msg = QMessageBox(icon, title, text, QMessageBox.StandardButton.Ok, parent)
-    dialog_show_event(msg)
     return msg.exec()
 
 
@@ -145,14 +131,14 @@ class _DialogThemeFilter(QObject):
         # 1. 沿父窗口链查找 (主窗口/QMainWindow 通常带 _is_dark)
         p = widget.parentWidget() or widget.parent()
         while p is not None:
-            for attr in ('_is_dark', 'is_dark_theme'):
+            for attr in ('_is_dark', 'is_dark_theme', '_dark_mode'):
                 v = getattr(p, attr, None)
                 if v is not None:
                     return bool(v)
             p = getattr(p, 'parentWidget', lambda: None)() or getattr(p, 'parent', lambda: None)()
         # 2. 扫描所有顶层窗口 (找任意一个带 _is_dark 的主窗口)
         for w in self._app.topLevelWidgets():
-            for attr in ('_is_dark', 'is_dark_theme'):
+            for attr in ('_is_dark', 'is_dark_theme', '_dark_mode'):
                 v = getattr(w, attr, None)
                 if v is not None:
                     return bool(v)

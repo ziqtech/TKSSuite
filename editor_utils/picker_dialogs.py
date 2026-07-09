@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, QSize
 from PySide6.QtGui import QPixmap, QImage, QIcon
 
-from editor_utils.ui_helpers import resolve_config_path, dialog_show_event
+from editor_utils.ui_helpers import resolve_config_path
 
 
 # 31 种状态名称 (Maker UI 状态列表; bit 0..30) — 供状态弹窗/标签渲染共用
@@ -72,7 +72,6 @@ class TktPickerDialog(QDialog):
 
     def showEvent(self, event):
         super().showEvent(event)
-        dialog_show_event(self)
 
         # 选中当前值
         if self.selected_id > 0:
@@ -146,10 +145,6 @@ class StatusPickerDialog(QDialog):
         bl.addWidget(QPushButton("✅ 确定", clicked=self._ok))
         bl.addWidget(QPushButton("❌ 取消", clicked=self.reject))
         layout.addLayout(bl)
-
-    def showEvent(self, event):
-        super().showEvent(event)
-        dialog_show_event(self)
 
     def _set_all_checked(self, state):
         for _, cb in self.checkboxes:
@@ -381,10 +376,6 @@ class ItemPickerDialog(QDialog):
         bl.addWidget(btn_ok)
         layout.addLayout(bl)
 
-    def showEvent(self, event):
-        super().showEvent(event)
-        dialog_show_event(self)
-
     # ── 权限联动 ──
     def _update_perm_options(self, page_text):
         """根据页面筛选值动态填充权限下拉框选项 (与 item_editor_v2 一致)"""
@@ -607,10 +598,6 @@ class WarpcPickerDialog(QDialog):
         layout.addLayout(btn_row)
 
         self._populate()
-
-    def showEvent(self, event):
-        super().showEvent(event)
-        dialog_show_event(self)
 
     def _get_name(self, idx):
         """通过 WarPC 索引获取角色名称。"""

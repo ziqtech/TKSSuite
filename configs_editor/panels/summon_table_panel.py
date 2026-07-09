@@ -8,12 +8,11 @@ from PySide6.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QLineEdit, QPushButton, QLabel, QWidget,
     QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView,
     QDialog, QListWidget, QListWidgetItem, QMessageBox, QFrame,
-    QApplication, QToolButton
+    QToolButton
 )
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QPixmap, QImage, QIcon
 
-from editor_utils.window_theme import apply_godot_theme
 from editor_utils.picker_dialogs import WarpcPickerDialog
 
 from .base_panel import ConfigPanelBase
@@ -131,17 +130,6 @@ class SummonEditDialog(QDialog):
         self.setWindowTitle(f"编辑: 技能{row_data['skill_num']} {row_data['label']}")
         self.resize(420, 480)
         self._build_ui()
-
-    def showEvent(self, event):
-        super().showEvent(event)
-        is_dark = False
-        app = QApplication.instance()
-        if app:
-            for w in app.topLevelWidgets():
-                if hasattr(w, '_is_dark'):
-                    is_dark = w._is_dark
-                    break
-        apply_godot_theme(self, is_dark)
 
     def _build_ui(self):
         layout = QVBoxLayout(self)

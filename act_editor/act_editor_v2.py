@@ -66,7 +66,7 @@ from editor_utils.lzss import lzss_decompress_dat
 from editor_utils.dock_components import DockHeader
 from editor_utils.ui_helpers import (
     make_fake_input, update_path_labels, confirm_close, export_csv,
-    themed_messagebox, dialog_show_event,
+    themed_messagebox,
 )
 from editor_utils.mod_exporter import (
     compute_crc32, generate_mod_json, pack_tksmod, ModMetadataDialog, safe_mod_filename,
@@ -4276,7 +4276,6 @@ class ActEditorV2(QMainWindow):
         bl.addStretch()
         bl.addWidget(QPushButton("✕ 关闭", clicked=dlg.close))
         layout.addLayout(bl)
-        dialog_show_event(dlg)
         dlg.exec()
 
     def _show_about(self):

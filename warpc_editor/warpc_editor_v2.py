@@ -66,7 +66,7 @@ from editor_utils.theme_manager import ThemeManager
 from editor_utils.dock_components import DockHeader
 from editor_utils.picker_dialogs import TktPickerDialog, StatusPickerDialog, STATUS_NAMES, ItemPickerDialog
 from editor_utils.jvg_loader import load_mu_sprites, get_sprite_pixmap
-from editor_utils.ui_helpers import make_fake_input, update_path_labels, confirm_close, export_csv, resolve_config_path, dialog_show_event, themed_messagebox
+from editor_utils.ui_helpers import make_fake_input, update_path_labels, confirm_close, export_csv, resolve_config_path, themed_messagebox
 from editor_utils.lzss import lzss_decompress_dat, lzss_compress_dat, lzss_decompress_save, lzss_compress_save
 from editor_utils.tkt_loader import load_tkt_simple
 from editor_utils.mod_exporter import (
@@ -459,10 +459,6 @@ class SkillPickerDialog(QDialog):
 
         self._refresh()
 
-    def showEvent(self, event):
-        super().showEvent(event)
-        dialog_show_event(self)
-
     def _refresh(self):
         q = self.search_box.text().strip().lower(); self.table.setRowCount(0); row = 0
         type_names = {0:"指令",1:"主动",2:"被动",3:"移动"}
@@ -496,10 +492,6 @@ class FlagsDialog(QDialog):
         bl.addStretch(); bl.addWidget(QPushButton("取消", clicked=self.reject))
         bl.addWidget(QPushButton("确定", clicked=self.accept)); layout.addLayout(bl)
 
-    def showEvent(self, event):
-        super().showEvent(event)
-        dialog_show_event(self)
-
     def get_value(self):
         m = sum((1<<bit) for bit, cb in self.vars if cb.isChecked())
         return m if m < 0x8000 else m - 0x10000
@@ -527,10 +519,6 @@ class UseRightDialog(QDialog):
         bl.addWidget(QPushButton("全清", clicked=lambda: [v.setChecked(False) for _,v in self.vars]))
         bl.addStretch(); bl.addWidget(QPushButton("取消", clicked=self.reject))
         bl.addWidget(QPushButton("确定", clicked=self.accept)); layout.addLayout(bl)
-
-    def showEvent(self, event):
-        super().showEvent(event)
-        dialog_show_event(self)
 
     def _sync_from_boxes(self):
         """勾选框变动时同步到手动输入框"""
@@ -569,10 +557,6 @@ class TkkonPickerDialog(QDialog):
         bl.addStretch(); bl.addWidget(QPushButton("取消", clicked=self.reject))
         bl.addWidget(QPushButton("确定", clicked=self._accept)); layout.addLayout(bl)
         self.items = sorted(tkkon_names.items(), key=lambda x: x[0]) if tkkon_names else []; self._refresh()
-
-    def showEvent(self, event):
-        super().showEvent(event)
-        dialog_show_event(self)
 
     def _refresh(self):
         q = self.search_box.text().strip().lower(); self.table.setRowCount(0); row = 0
@@ -641,10 +625,6 @@ class FieldRefDialog(QDialog):
             lines.append(f"  {s}")
         text.setPlainText('\n'.join(lines)); layout.addWidget(text)
         bl = QHBoxLayout(); bl.addStretch(); bl.addWidget(QPushButton("关闭", clicked=self.close)); layout.addLayout(bl)
-
-    def showEvent(self, event):
-        super().showEvent(event)
-        dialog_show_event(self)
 
 # ═══════════════════════════════════════════════════════════════
 # 成长数据表弹窗 (逆向来源: sub_410674 / sub_43066C / sub_4302D8)
@@ -2114,7 +2094,6 @@ class WarpcEditorV2(QMainWindow):
         scroll.setWidget(inner); layout.addWidget(scroll)
         bl = QHBoxLayout(); bl.addStretch(); bl.addWidget(QPushButton("取消", clicked=dlg.reject))
         layout.addLayout(bl)
-        dialog_show_event(dlg)
         dlg.exec()
 
     def _pick_tkkon(self, idx, ev):

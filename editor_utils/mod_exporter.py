@@ -40,7 +40,6 @@ from editor_utils.lzss import (
     MAX_MATCH as MAX_MATCH_LZ, lzss_decompress_dat,
 )
 from editor_utils.tkt_loader import load_tkt_full
-from editor_utils.ui_helpers import dialog_show_event
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -521,10 +520,6 @@ class ModMetadataDialog(QDialog):
         btn_ok.clicked.connect(self._accept)
         btn_layout.addWidget(btn_ok)
         layout.addLayout(btn_layout)
-
-    def showEvent(self, event):
-        super().showEvent(event)
-        dialog_show_event(self)
 
     def _on_pick_preview_image(self):
         path, _ = QFileDialog.getOpenFileName(
@@ -1278,10 +1273,6 @@ class ModImportPreviewDialog(QDialog):
         btn_layout.addWidget(btn_ok)
         layout.addLayout(btn_layout)
 
-    def showEvent(self, event):
-        super().showEvent(event)
-        dialog_show_event(self)
-
     def _on_browse_dir(self):
         d = QFileDialog.getExistingDirectory(self, "选择原始游戏目录", self._ref_dir)
         if d:
@@ -1361,10 +1352,6 @@ class ModExportPreviewDialog(QDialog):
 
         # 初始计算
         self._refresh_stats()
-
-    def showEvent(self, event):
-        super().showEvent(event)
-        dialog_show_event(self)
 
     def _on_browse_dir(self):
         d = QFileDialog.getExistingDirectory(self, "选择原始游戏目录", self._ref_dir)

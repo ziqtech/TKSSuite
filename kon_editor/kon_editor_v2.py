@@ -22,7 +22,7 @@ from PySide6.QtCore import Qt, QTranslator
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from editor_utils.theme_manager import ThemeManager
 from editor_utils.dock_components import DockHeader
-from editor_utils.ui_helpers import make_fake_input, update_path_labels, confirm_close, export_csv, themed_messagebox, dialog_show_event
+from editor_utils.ui_helpers import make_fake_input, update_path_labels, confirm_close, export_csv, themed_messagebox
 from editor_utils.lzss import lzss_decompress_dat, lzss_compress_dat
 from editor_utils.tkt_loader import load_tkt_simple
 from editor_utils.picker_dialogs import StatusPickerDialog, STATUS_NAMES
@@ -228,10 +228,6 @@ class FieldRefDialog(QDialog):
         text.setPlainText('\n'.join(lines)); layout.addWidget(text)
         btn_close = QPushButton("关闭"); btn_close.clicked.connect(self.close)
         bl = QHBoxLayout(); bl.addStretch(); bl.addWidget(btn_close); layout.addLayout(bl)
-
-    def showEvent(self, event):
-        super().showEvent(event)
-        dialog_show_event(self)
 
 # ============================================================
 # 主编辑器窗口

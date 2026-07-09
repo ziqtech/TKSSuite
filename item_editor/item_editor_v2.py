@@ -53,7 +53,7 @@ from editor_utils.dock_components import DockHeader, create_dock
 from editor_utils.picker_dialogs import (
     TktPickerDialog, StatusPickerDialog, STATUS_NAMES, STATUS_ICON_BASE
 )
-from editor_utils.ui_helpers import make_fake_input, update_path_labels, confirm_close, export_csv, resolve_config_path, dialog_show_event, themed_messagebox
+from editor_utils.ui_helpers import make_fake_input, update_path_labels, confirm_close, export_csv, resolve_config_path, themed_messagebox
 from editor_utils.lzss import lzss_decompress_dat, lzss_compress_dat
 from editor_utils.tkt_loader import load_tkt_simple
 from editor_utils.mod_exporter import (
@@ -287,10 +287,6 @@ class SkillPickerDialog(QDialog):
         layout.addLayout(bl)
         self._refresh()
 
-    def showEvent(self, event):
-        super().showEvent(event)
-        dialog_show_event(self)
-
     def _refresh(self):
         q = self.search_box.text().strip().lower()
         self.table.setRowCount(0); row = 0
@@ -341,10 +337,6 @@ class IconPickerDialog(QDialog):
         bl.addWidget(QPushButton("取消", clicked=self.reject))
         layout.addLayout(bl)
 
-    def showEvent(self, event):
-        super().showEvent(event)
-        dialog_show_event(self)
-
     def _select(self, v):
         self.selected_value = v; self.accept()
 
@@ -372,10 +364,6 @@ class FlagPickerDialog(QDialog):
         bl.addWidget(QPushButton("取消", clicked=self.reject))
         btn_ok = QPushButton("确定"); btn_ok.clicked.connect(self._ok); bl.addWidget(btn_ok)
         layout.addLayout(bl)
-
-    def showEvent(self, event):
-        super().showEvent(event)
-        dialog_show_event(self)
 
     def _ok(self):
         m = 0
@@ -411,10 +399,6 @@ class UseRightPickerDialog(QDialog):
         bl.addWidget(QPushButton("取消", clicked=self.reject))
         btn_ok = QPushButton("确定"); btn_ok.clicked.connect(self._ok); bl.addWidget(btn_ok)
         layout.addLayout(bl)
-
-    def showEvent(self, event):
-        super().showEvent(event)
-        dialog_show_event(self)
 
     def _sync_from_boxes(self):
         """勾选框变动时同步到手动输入框"""
@@ -1528,7 +1512,6 @@ class ItemEditorApp(QMainWindow):
         tx = QTextEdit(); tx.setReadOnly(True); tx.setPlainText('\n'.join(lines))
         tx.setProperty("class", "MonoText")
         layout.addWidget(tx)
-        dialog_show_event(dlg)
         dlg.exec()
 
     def _show_about(self):
