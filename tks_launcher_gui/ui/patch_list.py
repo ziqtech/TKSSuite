@@ -1,5 +1,5 @@
 """补丁勾选列表 — 分必选/可选两组, 各自独立滚动, 从 PatchDef 列表动态生成 QCheckBox"""
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox, QLabel, QScrollArea, QSplitter, QVBoxLayout, QWidget,
 )
@@ -14,10 +14,16 @@ class PatchListWidget(QWidget):
     """两组补丁各自独立滚动: DockHeader 固定, 下方 QScrollArea 仅滚动勾选列表
     必选/可选两组之间为可拖动分割条, 高度可自由调整"""
 
-    def __init__(self, patches: list[PatchDef], parent=None):
+    # 可选补丁勾选状态变化时发出, 供外部持久化保存
+    state_changed = Signal()
+
+    def __init__(self, patches: list[PatchDef],
+                 initial_states: dict[str, bool] | None = None, parent=None):
         super().__init__(parent)
 
         self._checkboxes: dict[str, QCheckBox] = {}
+        # 持久化的勾选状态快照 (仅对可选补丁生效)
+        self._initial_states: dict[str, bool] = initial_states or {}
 
         required = [p for p in patches if not p.optional]
         optional = [p for p in patches if p.optional]
@@ -99,18 +105,31 @@ class PatchListWidget(QWidget):
 
     def _make_checkbox(self, p: PatchDef, enabled: bool) -> QCheckBox:
         cb = QCheckBox(f"[{p.id}] {p.desc}")
-        # 可选补丁根据 default_checked 决定初始勾选状态；必选补丁始终勾选
-        cb.setChecked(True if not enabled else p.default_checked)
+        # 可选补丁: 优先用持久化状态, 其次用 default_checked; 必选补丁始终勾选
+        if not enabled:
+            checked = True
+        elif p.id in self._initial_states:
+            checked = self._initial_states[p.id]
+        else:
+            checked = p.default_checked
+        cb.setChecked(checked)
         cb.setEnabled(enabled)
         cb.setToolTip(f"类型: {p.type}\n模式: {p.pattern}")
         if not enabled:
             # 必选补丁：复选框保持禁用外观，文字颜色由主题 QSS 中 #requiredPatch 规则控制
             cb.setObjectName("requiredPatch")
+        else:
+            # 可选补丁勾选变化时通知外部保存
+            cb.stateChanged.connect(self.state_changed)
         self._checkboxes[p.id] = cb
         return cb
 
     def get_selected_patches(self) -> set[str]:
         return {pid for pid, cb in self._checkboxes.items() if cb.isChecked()}
+
+    def get_patch_states(self) -> dict[str, bool]:
+        """返回所有可选补丁的勾选状态 {id: bool}（必选补丁始终启用, 不记录）"""
+        return {pid: cb.isChecked() for pid, cb in self._checkboxes.items() if cb.isEnabled()}
 
     def select_all(self):
         for cb in self._checkboxes.values():

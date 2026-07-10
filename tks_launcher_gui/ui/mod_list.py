@@ -28,13 +28,19 @@ class ModListWidget(QWidget):
     mod_selected = Signal(object)
     # 重复 ID 检测结果：True 表示存在重复
     duplicate_ids_detected = Signal(bool)
+    # 勾选状态变化时发出, 供外部持久化保存
+    state_changed = Signal()
 
-    def __init__(self, mods_dir: str = "mods", parent=None):
+    def __init__(self, mods_dir: str = "mods",
+                 initial_states: dict[str, bool] | None = None, parent=None):
         super().__init__(parent)
         self._mods_dir = mods_dir
         self._mods: list[ModInfo] = []
         self._loading = False
         self._syncing = False  # 防止表头复选框与行同步时递归
+        # 持久化的启用状态快照 {mod_id: bool}; 刷新时会被当前表格状态覆盖
+        self._initial_states: dict[str, bool] = initial_states or {}
+        self._first_refresh = True  # 首次加载用传入快照, 后续刷新用当前表格状态
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -106,6 +112,10 @@ class ModListWidget(QWidget):
     def refresh_mods(self):
         """重新扫描 mods 目录"""
         self._loading = True
+        # 后续刷新: 先保留当前勾选状态, 用于刷新后恢复 (首次加载用构造时传入的快照)
+        if not self._first_refresh:
+            self._initial_states = self.get_mod_states()
+        self._first_refresh = False
         self._table.setRowCount(0)
         self._mods = scan_mods(self._mods_dir)
         # 默认按 MOD ID 排序（不区分大小写）
@@ -123,7 +133,12 @@ class ModListWidget(QWidget):
             enable_item = QTableWidgetItem()
             enable_item.setFlags(
                 Qt.ItemIsUserCheckable | Qt.ItemIsEnabled | Qt.ItemIsSelectable)
-            enable_item.setCheckState(Qt.Checked if mod.enabled else Qt.Unchecked)
+            # 优先用持久化状态覆盖; 持久化中无记录时用 mod.enabled
+            if mod.mod_id in self._initial_states:
+                is_enabled = self._initial_states[mod.mod_id]
+            else:
+                is_enabled = mod.enabled
+            enable_item.setCheckState(Qt.Checked if is_enabled else Qt.Unchecked)
             self._table.setItem(row, _COL_ENABLE, enable_item)
 
             self._set_text(row, _COL_NAME, mod.name)
@@ -190,6 +205,7 @@ class ModListWidget(QWidget):
         if self._loading or item.column() != _COL_ENABLE:
             return
         self._update_header_check_state()
+        self.state_changed.emit()
 
     def _on_header_check_changed(self, state):
         """点击表头复选框：全选/全不选。
@@ -213,6 +229,7 @@ class ModListWidget(QWidget):
                 cell.setCheckState(target)
         self._table.blockSignals(False)
         self._update_header_check_state()
+        self.state_changed.emit()
 
     def _update_header_check_state(self):
         """根据各行勾选情况刷新表头复选框状态（三态）"""
@@ -256,6 +273,16 @@ class ModListWidget(QWidget):
             if self._mods[i].enabled:
                 enabled.append(self._mods[i])
         return enabled
+
+    def get_mod_states(self) -> dict[str, bool]:
+        """返回所有模组的启用状态 {mod_id: bool}"""
+        result: dict[str, bool] = {}
+        for i in range(self._table.rowCount()):
+            if i >= len(self._mods):
+                break
+            item = self._table.item(i, _COL_ENABLE)
+            result[self._mods[i].mod_id] = bool(item and item.checkState() == Qt.Checked)
+        return result
 
     def set_mods_dir(self, mods_dir: str):
         """更新 MOD 目录并刷新"""

@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
 )
 
 from core.config_loader import PatchDef, load_config
+from core.state_persistence import GuiState, load_gui_state, save_gui_state
 from editor_utils.dock_components import DockHeader
 from editor_utils.theme_manager import ThemeManager
 from editor_utils.window_theme import apply_godot_theme
@@ -30,6 +31,9 @@ if "__compiled__" in globals():
     _LAUNCHER_DIR = get_app_dir()
 else:
     _LAUNCHER_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+# GUI 勾选状态持久化文件路径 (与 launcher_config.json 同目录, 独立存储)
+_STATE_PATH = os.path.join(_LAUNCHER_DIR, "gui_state.json")
 
 
 class MainWindow(QMainWindow):
@@ -59,10 +63,18 @@ class MainWindow(QMainWindow):
         config = load_config(config_path)
         self._patches: list[PatchDef] = config.patches if config else []
 
+        # 加载 GUI 勾选状态 (补丁/模组/辅助工具的勾选记录)
+        self._gui_state: GuiState = load_gui_state(_STATE_PATH) or GuiState()
+
         self._setup_toolbar()
         self._setup_central()
         self._setup_statusbar()
         self.set_theme("dark" if self._dark_mode else "light")
+
+        # 组件创建完成后, 连接状态变化信号实现自动保存
+        self.patch_list.state_changed.connect(self._save_state)
+        self.mod_list.state_changed.connect(self._save_state)
+        self._tool_btn_group.buttonClicked.connect(self._save_state)
 
     def _setup_toolbar(self):
         toolbar = QToolBar()
@@ -110,13 +122,14 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(splitter)
 
         # 左侧: 补丁列表
-        self.patch_list = PatchListWidget(self._patches)
+        self.patch_list = PatchListWidget(self._patches,
+                                          initial_states=self._gui_state.patches)
         self.patch_list.setMinimumWidth(300)
         splitter.addWidget(self.patch_list)
 
         # 中间: 模组列表 + 模组信息（垂直分割，互相独立）
         mods_dir = os.path.join(_LAUNCHER_DIR, "mods")
-        self.mod_list = ModListWidget(mods_dir)
+        self.mod_list = ModListWidget(mods_dir, initial_states=self._gui_state.mods)
         self.mod_list.setMinimumWidth(400)
         self.mod_preview = ModInfoPreviewWidget()
         self.mod_preview.set_default_height(self.patch_list.optional_default_height)
@@ -204,6 +217,14 @@ class MainWindow(QMainWindow):
             self._tool_btn_group.addButton(rb)
             body_lay.addWidget(rb)
 
+        # 根据持久化状态恢复选中的辅助工具 (无匹配项时保持"无"选中)
+        saved_tool = self._gui_state.tool
+        if saved_tool:
+            for btn in self._tool_btn_group.buttons():
+                if btn.property("tool_name") == saved_tool:
+                    btn.setChecked(True)
+                    break
+
         body_lay.addStretch()
         outer.addWidget(body, 1)
         return container
@@ -214,6 +235,15 @@ class MainWindow(QMainWindow):
         if btn:
             return btn.property("tool_name") or ""
         return ""
+
+    def _save_state(self, *_):
+        """收集所有列表勾选状态并保存到 gui_state.json (每次勾选变化时自动触发)。"""
+        state = GuiState(
+            patches=self.patch_list.get_patch_states(),
+            mods=self.mod_list.get_mod_states(),
+            tool=self._get_selected_tool(),
+        )
+        save_gui_state(_STATE_PATH, state)
 
     def _setup_statusbar(self):
         self.status_bar = QStatusBar()
