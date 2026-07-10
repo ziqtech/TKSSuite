@@ -21,6 +21,10 @@ def b2i32(data: bytes, off: int = 0) -> int:
     """bytes→int32 LE"""
     return struct.unpack_from('<i', data, off)[0]
 
+def b2i16(data: bytes, off: int = 0) -> int:
+    """bytes→int16 LE"""
+    return struct.unpack_from('<h', data, off)[0]
+
 def b2u16(data: bytes, off: int = 0) -> int:
     """bytes→uint16 LE"""
     return struct.unpack_from('<H', data, off)[0]

@@ -35,6 +35,7 @@ from core.memory import (
     get_module_base, get_module_size, get_child_processes,
     find_window, get_decompressed_size,
     suspend_process, resume_process,
+    b2i16,
     PROCESS_VM_READ, PROCESS_VM_WRITE, PROCESS_VM_OPERATION,
     PAGE_EXECUTE_READWRITE,
     MEM_COMMIT, MEM_RESERVE,
@@ -376,7 +377,7 @@ class CliLauncher:
         if not is_wine:
             # ── 原生 Windows: CREATE_SUSPENDED 早期模块检测 ──
             _base_addr = 0
-            for _ in range(3):
+            for _ in range(6):
                 _base_addr = get_module_base(tks_proc.pid)
                 if _base_addr:
                     break
@@ -424,10 +425,11 @@ class CliLauncher:
                 else:
                     self._log("  [INFO] 未检测到游戏窗口 (无头模式下不影响)")
 
-                # 7b. 等待进程就绪 (500ms 轮询, 3秒后才开始后备检测)
+                # 7b. 等待进程就绪 (500ms 轮询, 立即检查 SkimFstDlg 模式)
                 self._log(f"等待游戏进程就绪 (最多{self.wait_timeout}秒)...")
                 st = time.time()
                 tpid = tks_proc.pid
+                _fallback_checked = False  # 标记是否已检查过后备检测 (避免对加密壳重复读取 3MB 代码段)
                 while (time.time() - st) < self.wait_timeout:
                     if not self._is_running:
                         self._log("用户取消")
@@ -449,20 +451,34 @@ class CliLauncher:
                         time.sleep(3)
                         break
 
-                    # 后备: 3秒后才检查主进程模块 (避免误判解密器为游戏)
-                    elapsed = time.time() - st
-                    if elapsed > 3.0 and not direct_mode:
+                    # 后备: 立即检查主进程模块 (SkimFstDlg 模式)
+                    # 加密壳没有 SkimFstDlg 模式, 不会误判; 检查一次不匹配后标记, 不再重复读取
+                    if not direct_mode and not _fallback_checked:
                         tb = get_module_base(tpid)
                         if tb:
-                            ht = _OpenProcess(PROCESS_VM_READ, False, tpid)
-                            if ht:
-                                psig, nr = read_pm(ht, tb, 2)
-                                if nr == 2 and psig[0] == 0x4D and psig[1] == 0x5A:
-                                    target_pid = tpid
-                                    direct_mode = True
-                                    version_label = "TKS 未加密版 (主进程模式, Wine 后备)"
-                                    self._log(f"  游戏模块已加载到主进程: base=0x{tb:08X} -> {version_label}")
-                                _CloseHandle(ht)
+                            ms = get_module_size(tpid)
+                            cs = tb + 0x1000
+                            sz = min(ms - 0x1000, 0x300000) if ms > 0x1000 else 0
+                            if sz > 0:
+                                ht = _OpenProcess(PROCESS_VM_READ, False, tpid)
+                                if ht:
+                                    raw, nr = read_pm(ht, cs, sz)
+                                    _CloseHandle(ht)
+                                    # 检查游戏特征 (SkimFstDlg 模式前 7 字节: A1 14 A5 4F 00 50 E8)
+                                    if nr > 0 and b'\xA1\x14\xA5\x4F\x00\x50\xE8' in raw[:nr]:
+                                        target_pid = tpid
+                                        direct_mode = True
+                                        version_label = "TKS 未加密版 (主进程模式, Wine 后备)"
+                                        base_addr = tb
+                                        mod_size = ms
+                                        code_start = cs
+                                        code_buf = bytearray(sz)
+                                        code_buf[:nr] = raw[:nr]
+                                        self._log(f"  游戏代码已确认: base=0x{tb:08X} -> {version_label}")
+                                    else:
+                                        # 代码段不含 SkimFstDlg 模式, 是加密壳, 后续不再重复检查
+                                        _fallback_checked = True
+                                        self._log(f"  主进程代码段不含游戏特征 (可能是加密壳), 等待子进程...")
                             if direct_mode:
                                 break
 
@@ -481,6 +497,7 @@ class CliLauncher:
 
                 st = time.time()
                 tpid = tks_proc.pid
+                _fallback_checked = False  # 标记是否已检查过后备检测 (避免对加密壳重复读取 3MB 代码段)
                 while (time.time() - st) < self.wait_timeout:
                     if not self._is_running:
                         self._log("用户取消")
@@ -499,6 +516,12 @@ class CliLauncher:
                         version_label = "TKS 加密版 (子进程模式)"
                         en = children[0].szExeFile.decode('ascii', errors='replace')
                         self._log(f"  检测到子进程: PID={target_pid} Name={en} -> {version_label}")
+                        # 等待子进程主模块加载完成再挂起
+                        # (子进程刚创建时模块列表可能为空, 立即挂起会导致 get_module_base 返回 0)
+                        for _ in range(60):  # 最多等 3 秒
+                            if get_module_base(target_pid):
+                                break
+                            time.sleep(0.05)
                         # 立即挂起子进程所有线程 (在 TForm1_FormCreate 之前)
                         suspended = suspend_process(target_pid)
                         self._log(f"  已挂起子进程 {suspended} 个线程")
@@ -506,18 +529,34 @@ class CliLauncher:
                         break
 
                     # 后备: 未加密版模块加载延迟时 (CREATE_SUSPENDED 失效)
-                    if not direct_mode:
+                    # 立即检查 SkimFstDlg 模式 (不延迟, 避免未加密版补丁来不及应用)
+                    # 加密壳没有 SkimFstDlg 模式, 不会误判; 检查一次不匹配后标记, 不再重复读取
+                    if not direct_mode and not _fallback_checked:
                         tb = get_module_base(tpid)
                         if tb:
-                            ht = _OpenProcess(PROCESS_VM_READ, False, tpid)
-                            if ht:
-                                psig, nr = read_pm(ht, tb, 2)
-                                if nr == 2 and psig[0] == 0x4D and psig[1] == 0x5A:
-                                    target_pid = tpid
-                                    direct_mode = True
-                                    version_label = "TKS 未加密版 (主进程模式, 后备检测)"
-                                    self._log(f"  游戏模块已加载到主进程: base=0x{tb:08X} -> {version_label}")
-                                _CloseHandle(ht)
+                            ms = get_module_size(tpid)
+                            cs = tb + 0x1000
+                            sz = min(ms - 0x1000, 0x300000) if ms > 0x1000 else 0
+                            if sz > 0:
+                                ht = _OpenProcess(PROCESS_VM_READ, False, tpid)
+                                if ht:
+                                    raw, nr = read_pm(ht, cs, sz)
+                                    _CloseHandle(ht)
+                                    # 检查游戏特征 (SkimFstDlg 模式前 7 字节: A1 14 A5 4F 00 50 E8)
+                                    if nr > 0 and b'\xA1\x14\xA5\x4F\x00\x50\xE8' in raw[:nr]:
+                                        target_pid = tpid
+                                        direct_mode = True
+                                        version_label = "TKS 未加密版 (主进程模式, 后备检测)"
+                                        base_addr = tb
+                                        mod_size = ms
+                                        code_start = cs
+                                        code_buf = bytearray(sz)
+                                        code_buf[:nr] = raw[:nr]
+                                        self._log(f"  游戏代码已确认: base=0x{tb:08X} -> {version_label}")
+                                    else:
+                                        # 代码段不含 SkimFstDlg 模式, 是加密壳, 后续不再重复检查
+                                        _fallback_checked = True
+                                        self._log(f"  主进程代码段不含游戏特征 (可能是加密壳), 等待子进程...")
                             if direct_mode:
                                 break
 
@@ -534,7 +573,13 @@ class CliLauncher:
 
         # ── 8. 获取模块基址 + 读取代码段 (仅加密版/后备需要, 未加密版已读取) ──
         if code_buf is None:
-            base_addr = get_module_base(target_pid)
+            # 重试获取模块基址 (加密版子进程模块加载可能有延迟, 快照可能瞬时为空)
+            base_addr = 0
+            for _ in range(10):
+                base_addr = get_module_base(target_pid)
+                if base_addr:
+                    break
+                time.sleep(0.1)
             if base_addr == 0:
                 self._log(f"[ERROR] 无法获取目标进程 {target_pid} 的模块信息")
                 if tks_proc.poll() is None:
@@ -550,14 +595,19 @@ class CliLauncher:
             if code_size > 0x300000:
                 code_size = 0x300000
             code_buf = bytearray(code_size)
-            hr = _OpenProcess(PROCESS_VM_READ, False, target_pid)
-            if not hr:
-                self._log("[ERROR] 无法打开进程读取代码段")
-                if tks_proc.poll() is None:
-                    tks_proc.kill()
-                return False, {"error": "cannot read code"}
-            raw_buf, nr = read_pm(hr, code_start, code_size)
-            _CloseHandle(hr)
+            # 重试读取代码段 (页面可能尚未完全提交到物理内存)
+            nr = 0
+            raw_buf = b''
+            for _ in range(5):
+                hr = _OpenProcess(PROCESS_VM_READ, False, target_pid)
+                if not hr:
+                    time.sleep(0.1)
+                    continue
+                raw_buf, nr = read_pm(hr, code_start, code_size)
+                _CloseHandle(hr)
+                if nr > 0:
+                    break
+                time.sleep(0.1)
             if nr <= 0:
                 self._log("[ERROR] 无法读取代码段")
                 if tks_proc.poll() is None:
