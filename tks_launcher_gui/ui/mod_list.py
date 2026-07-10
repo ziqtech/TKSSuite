@@ -4,8 +4,8 @@ import os
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
-    QAbstractItemView, QHBoxLayout, QHeaderView, QTableWidget,
-    QTableWidgetItem, QToolButton, QVBoxLayout, QWidget,
+    QAbstractItemView, QCheckBox, QHBoxLayout, QHeaderView,
+    QTableWidget, QTableWidgetItem, QToolButton, QVBoxLayout, QWidget,
 )
 
 from core.mod_loader import ModInfo, scan_mods
@@ -33,6 +33,8 @@ class ModListWidget(QWidget):
         super().__init__(parent)
         self._mods_dir = mods_dir
         self._mods: list[ModInfo] = []
+        self._loading = False
+        self._syncing = False  # 防止表头复选框与行同步时递归
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -64,6 +66,22 @@ class ModListWidget(QWidget):
         self._table.setColumnWidth(_COL_NAME, 180)
         self._table.setColumnWidth(_COL_ID, 150)
         self._table.setColumnWidth(_COL_AUTHOR, 100)
+
+        # 启用列表头叠加一个真实 QCheckBox（受 QCheckBox::indicator QSS 样式控制，
+        # 与表格单元格复选框外观一致），用作全选/全不选
+        self._header = h
+        self._table.setHorizontalHeaderItem(_COL_ENABLE, QTableWidgetItem(""))
+        self._header_check = QCheckBox(h)
+        self._header_check.setTristate(True)
+        # 透明背景，使控件融入表头 section 背景（避免默认窗口背景色）
+        self._header_check.setAttribute(Qt.WA_TranslucentBackground, True)
+        self._header_check.setStyleSheet("background: transparent;")
+        self._header_check.stateChanged.connect(self._on_header_check_changed)
+        self._table.itemChanged.connect(self._on_item_changed)
+        # 表头尺寸/位置变化时重新定位复选框
+        h.geometriesChanged.connect(self._position_header_check)
+        h.sectionResized.connect(self._position_header_check)
+
         body.addWidget(self._table)
 
         # DockHeader 右侧操作按钮
@@ -83,9 +101,11 @@ class ModListWidget(QWidget):
 
         # 初始加载
         self.refresh_mods()
+        self._position_header_check()
 
     def refresh_mods(self):
         """重新扫描 mods 目录"""
+        self._loading = True
         self._table.setRowCount(0)
         self._mods = scan_mods(self._mods_dir)
         # 默认按 MOD ID 排序（不区分大小写）
@@ -128,6 +148,9 @@ class ModListWidget(QWidget):
                 if it is not None:
                     it.setToolTip(tip)
 
+        self._loading = False
+        self._update_header_check_state()
+
     def _set_text(self, row: int, col: int, text: str) -> QTableWidgetItem:
         item = QTableWidgetItem(text)
         item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
@@ -143,6 +166,74 @@ class ModListWidget(QWidget):
             self.mod_selected.emit(None)
             return
         self.mod_selected.emit(self._mods[row])
+
+    def _position_header_check(self):
+        """将表头复选框定位到启用列 section 的中心"""
+        h = self._header
+        x = h.sectionViewportPosition(_COL_ENABLE)
+        w = h.sectionSize(_COL_ENABLE)
+        if w <= 0:
+            self._header_check.setVisible(False)
+            return
+        sh = self._header_check.sizeHint()
+        cw, ch = sh.width(), sh.height()
+        self._header_check.setGeometry(
+            x + (w - cw) // 2,
+            (h.height() - ch) // 2,
+            cw, ch,
+        )
+        self._header_check.setVisible(True)
+        self._header_check.raise_()
+
+    def _on_item_changed(self, item):
+        """单行勾选状态变化时，同步表头复选框的三态"""
+        if self._loading or item.column() != _COL_ENABLE:
+            return
+        self._update_header_check_state()
+
+    def _on_header_check_changed(self, state):
+        """点击表头复选框：全选/全不选。
+
+        判定依据当前各行状态（点击前的状态）：
+        全部已选 -> 全不选；否则 -> 全选。
+        """
+        if self._syncing:
+            return
+        rows = self._table.rowCount()
+        all_checked = rows > 0 and all(
+            (self._table.item(i, _COL_ENABLE) is not None
+             and self._table.item(i, _COL_ENABLE).checkState() == Qt.Checked)
+            for i in range(rows)
+        )
+        target = Qt.Unchecked if all_checked else Qt.Checked
+        self._table.blockSignals(True)
+        for i in range(rows):
+            cell = self._table.item(i, _COL_ENABLE)
+            if cell is not None:
+                cell.setCheckState(target)
+        self._table.blockSignals(False)
+        self._update_header_check_state()
+
+    def _update_header_check_state(self):
+        """根据各行勾选情况刷新表头复选框状态（三态）"""
+        total = self._table.rowCount()
+        if total == 0:
+            st = Qt.Unchecked
+        else:
+            checked = sum(
+                1 for i in range(total)
+                if self._table.item(i, _COL_ENABLE) is not None
+                and self._table.item(i, _COL_ENABLE).checkState() == Qt.Checked
+            )
+            if checked == total:
+                st = Qt.Checked
+            elif checked == 0:
+                st = Qt.Unchecked
+            else:
+                st = Qt.PartiallyChecked
+        self._syncing = True
+        self._header_check.setCheckState(st)
+        self._syncing = False
 
     def get_selected_mod(self) -> ModInfo | None:
         """获取当前选中的 MOD，无选中则返回 None"""
