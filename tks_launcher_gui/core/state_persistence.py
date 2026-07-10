@@ -1,6 +1,6 @@
 """GUI 勾选状态持久化 — 保存/加载启动器各列表的勾选结果
 
-状态文件 (gui_state.json) 独立于 CLI 用的 launcher_config.json,
+状态文件 (launcher_setting.json) 独立于 CLI 用的 launcher_config.json,
 仅记录 GUI 中各列表的勾选情况, 每次勾选变化时自动更新, 下次启动时恢复。
 """
 import json

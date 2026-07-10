@@ -33,7 +33,7 @@ else:
     _LAUNCHER_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 # GUI 勾选状态持久化文件路径 (与 launcher_config.json 同目录, 独立存储)
-_STATE_PATH = os.path.join(_LAUNCHER_DIR, "gui_state.json")
+_STATE_PATH = os.path.join(_LAUNCHER_DIR, "launcher_setting.json")
 
 
 class MainWindow(QMainWindow):
@@ -237,7 +237,7 @@ class MainWindow(QMainWindow):
         return ""
 
     def _save_state(self, *_):
-        """收集所有列表勾选状态并保存到 gui_state.json (每次勾选变化时自动触发)。"""
+        """收集所有列表勾选状态并保存到 launcher_setting.json (每次勾选变化时自动触发)。"""
         state = GuiState(
             patches=self.patch_list.get_patch_states(),
             mods=self.mod_list.get_mod_states(),
