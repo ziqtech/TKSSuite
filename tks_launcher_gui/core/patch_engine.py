@@ -1103,6 +1103,185 @@ def apply_drop_probability(defn: PatchDef, code_buf: bytearray, code_start_addr:
     return all_ok
 
 # ============================================================
+# 补丁类型: patch_font_config (游戏默认字体自定义)
+# 逆向依据: sub_411624 @0x411624 游戏启动时初始化 3 个全局渲染器
+#   渲染器1 (dword_755B04): sub_44AF7C(v4, 1, 16, 1, 0, 1, 1)  — 主文本, FTYPE=1, FSIZE=16
+#   渲染器2 (dword_755B08): sub_44AF7C(v5, 2, 24, 1, 0, 0, 0)  — 辅助, FTYPE=2, FSIZE=24
+#   渲染器3 (dword_755B0C): sub_44AF7C(v6, 1, 24, 1, 0, 1, 1)  — 覆盖层, FTYPE=1, FSIZE=24
+# sub_44AF7C 的 a2 参数 = FTYPE_raw (0-7), 决定 FONT9696 区段索引
+# 字节模式: 6A a7 6A a6 6A a5 6A a4 6A fsize 6A ftype 8B 15 [ptr32] 52 E8
+#   push 序列 (右到左): a7,a6,a5,a4,FSIZE,FTYPE; FTYPE 字节在模式偏移 11
+# 3 个渲染器通过 dword 指针 (755B04/755B08/755B0C) 唯一区分
+#
+# 名称字体: 角色/物品名称渲染使用临时 sub_44AF7C 调用 (FTYPE=0, FSIZE=16)
+#   涉及 2 个渲染器: dword_755B08 (菜单/存档角色名) + dword_95193C (商店物品名)
+#   调用方式因寄存器分配不同而有变体 (mov edx/eax/ecx, [ptr]; push reg)
+#   通配符模式: 6A 10 6A 00 ?? ?? [ptr32] ?? E8  (FTYPE 字节在偏移 3)
+# ============================================================
+
+def apply_font_config(defn: PatchDef, code_buf: bytearray, code_start_addr: int,
+                      h_proc: int, log_func=None) -> bool:
+    log = log_func or (lambda x: None)
+    tag = f"[{defn.id}]"
+    log(f"\n  {tag}: {defn.desc}")
+
+    # 1. 读取 JSON 配置
+    jf = defn.json_file
+    if not jf or not os.path.isfile(jf):
+        log(f"    [WARN] JSON 配置不存在: {jf!r}, 跳过")
+        return True
+    try:
+        with open(jf, 'r', encoding='utf-8') as f:
+            cfg = json.load(f)
+    except Exception as e:
+        log(f"  [ERROR] 解析 font_config.json 失败: {e}")
+        return True
+
+    renderers = cfg.get("renderers", {})
+
+    # 2. 3 个渲染器的字节模式 (sub_411624 中 sub_44AF7C 调用点)
+    #    模式: 6A a7 6A a6 6A a5 6A a4 6A FSIZE 6A FTYPE 8B 15 [ptr32] 52 E8
+    #    FTYPE 字节在模式偏移 11; dword 指针在各模式中唯一
+    renderer_specs = {
+        "main": {
+            "pattern": "6A 01 6A 01 6A 00 6A 01 6A 10 6A 01 8B 15 04 5B 75 00",
+            "original_ftype": 1,
+            "ptr": "dword_755B04",
+        },
+        "auxiliary": {
+            "pattern": "6A 00 6A 00 6A 00 6A 01 6A 18 6A 02 8B 15 08 5B 75 00",
+            "original_ftype": 2,
+            "ptr": "dword_755B08",
+        },
+        "overlay": {
+            "pattern": "6A 01 6A 01 6A 00 6A 01 6A 18 6A 01 8B 15 0C 5B 75 00",
+            "original_ftype": 1,
+            "ptr": "dword_755B0C",
+        },
+    }
+
+    FTYPE_OFFSET = 11  # FTYPE 字节在模式中的偏移
+
+    all_ok = True
+    for name, spec in renderer_specs.items():
+        rc = renderers.get(name, {})
+        new_ftype = int(rc.get("ftype", spec["original_ftype"]))
+
+        # 验证 FTYPE 值域 (sub_44AF7C: >7 会重置为 0)
+        if new_ftype < 1 or new_ftype > 8:
+            log(f"    [ERROR] {name}: ftype={new_ftype} 超出 1~8")
+            all_ok = False
+            continue
+
+        if new_ftype > 7:
+            log(f"    [WARN] {name}: ftype={new_ftype} > 7, sub_44AF7C 将重置为 0")
+
+        # 与原始值相同则跳过
+        if new_ftype == spec["original_ftype"]:
+            log(f"    {name}: ftype={new_ftype} (与原始一致, 跳过)")
+            continue
+
+        # 扫描模式
+        pat, wc = parse_pattern(spec["pattern"])
+        hits = pattern_scan(bytes(code_buf), pat, wc)
+        log(f"    {name} ({spec['ptr']}): 模式扫描 -> {len(hits)} 处 (预期 1)")
+        if len(hits) != 1:
+            log(f"    [ERROR] {name}: 匹配数 != 1, 跳过")
+            all_ok = False
+            continue
+
+        off = hits[0]
+        ftype_off = off + FTYPE_OFFSET
+
+        # 验证当前值
+        actual = code_buf[ftype_off]
+        if actual != spec["original_ftype"]:
+            log(f"    [WARN] {name}: 当前值 {actual} != 预期 {spec['original_ftype']} (可能已被修改)")
+
+        # 写入新 FTYPE
+        ha = code_start_addr + ftype_off
+        op = vp_ex(h_proc, ha, 1, PAGE_EXECUTE_READWRITE)
+        write_pm(h_proc, ha, bytes([new_ftype & 0xFF]))
+        vp_ex(h_proc, ha, 1, op)
+        code_buf[ftype_off] = new_ftype & 0xFF
+
+        log(f"    [OK] {name}: FTYPE {actual} -> {new_ftype} @RVA 0x{ftype_off:X}")
+
+    # 3. 菜单人物名称字体 (dword_755B08 的 FTYPE=2 调用点)
+    #    菜单重绘路径中, 多个函数会调用 sub_44AF7C(dword_755B08, 2, 24, 1, 0, 1, 0) 设置/恢复 FTYPE=2。
+    #    若只 patch sub_41762C, 鼠标移动触发其他函数重绘时 FTYPE 会被恢复回 2。
+    #    方案: 扫描所有 FTYPE=2 + dword_755B08 的 sub_44AF7C 调用 (6种寄存器变体),
+    #          排除 sub_411624 初始化 (a6=0) 和 sub_4252E8 姓名输入 (a7=1,a6=1),
+    #          将剩余调用的 FTYPE 从 2 改为新值。
+    #
+    #    涉及 9 处调用点 (2处设置 + 7处恢复):
+    #      sub_41762C 第30行 (设置)   sub_41762C 第71行 (恢复)
+    #      sub_418E5C 第20行 (恢复)   sub_4195C4 第34行 (恢复)
+    #      sub_41A080 第96行 (恢复)   sub_41A080 第107行 (恢复)
+    #      sub_41AB94 第20行 (恢复)   sub_421B64 第11行 (恢复)
+    #      sub_4233C4 第17行 (恢复)
+    #
+    #    6种寄存器变体 (mov edx/eax/ecx 在 push 序列前或后):
+    #      O1: 8B 15 [ptr] 6A a7 6A a6 6A a5 6A a4 6A 18 6A 02 52 E8  (FTYPE@17, a7@7, a6@9)
+    #      O2: 6A a7 6A a6 6A a5 6A a4 6A 18 6A 02 8B 15 [ptr] 52 E8  (FTYPE@11, a7@1, a6@3)
+    #      O3: A1 [ptr] 6A a7 6A a6 6A a5 6A a4 6A 18 6A 02 50 E8      (FTYPE@16, a7@6, a6@8)
+    #      O4: 6A a7 6A a6 6A a5 6A a4 6A 18 6A 02 A1 [ptr] 50 E8      (FTYPE@11, a7@1, a6@3)
+    #      O5: 8B 0D [ptr] 6A a7 6A a6 6A a5 6A a4 6A 18 6A 02 51 E8  (FTYPE@17, a7@7, a6@9)
+    #      O6: 6A a7 6A a6 6A a5 6A a4 6A 18 6A 02 8B 0D [ptr] 51 E8  (FTYPE@11, a7@1, a6@3)
+    menu_rc = renderers.get("menu_name_font", {})
+    menu_ftype = int(menu_rc.get("ftype", 2))
+
+    if menu_ftype != 2:  # 2 是原始值, 不需要修改
+        # 验证 FTYPE 值域
+        if menu_ftype < 0 or menu_ftype > 7:
+            log(f"    [ERROR] menu_name_font: ftype={menu_ftype} 超出 0~7")
+            all_ok = False
+        else:
+            # 6种寄存器变体: (模式, FTYPE偏移, a7偏移, a6偏移)
+            variants = [
+                ("8B 15 08 5B 75 00 6A ?? 6A ?? 6A ?? 6A ?? 6A 18 6A 02 52 E8", 17, 7, 9),
+                ("6A ?? 6A ?? 6A ?? 6A ?? 6A 18 6A 02 8B 15 08 5B 75 00 52 E8", 11, 1, 3),
+                ("A1 08 5B 75 00 6A ?? 6A ?? 6A ?? 6A ?? 6A 18 6A 02 50 E8", 16, 6, 8),
+                ("6A ?? 6A ?? 6A ?? 6A ?? 6A 18 6A 02 A1 08 5B 75 00 50 E8", 11, 1, 3),
+                ("8B 0D 08 5B 75 00 6A ?? 6A ?? 6A ?? 6A ?? 6A 18 6A 02 51 E8", 17, 7, 9),
+                ("6A ?? 6A ?? 6A ?? 6A ?? 6A 18 6A 02 8B 0D 08 5B 75 00 51 E8", 11, 1, 3),
+            ]
+
+            patched_count = 0
+            for pat_str, ftype_off, a7_off, a6_off in variants:
+                pat, wc = parse_pattern(pat_str)
+                hits = pattern_scan(bytes(code_buf), pat, wc)
+                for h in hits:
+                    a7_val = code_buf[h + a7_off]
+                    a6_val = code_buf[h + a6_off]
+                    # 排除 sub_411624 初始化 (a6=0) 和 sub_4252E8 姓名输入 (a7=1,a6=1)
+                    if a6_val == 0:
+                        continue
+                    if a7_val == 1 and a6_val == 1:
+                        # sub_41762C 第30行 (设置) 需要 patch; sub_4252E8 (姓名输入) 跳过
+                        # sub_41762C 第30行是 O1 变体且全局唯一, sub_4252E8 是 O2 变体
+                        # 通过变体区分: O1 (mov edx before) = sub_41762C 第30行
+                        if not pat_str.startswith("8B 15"):
+                            continue
+
+                    foff = h + ftype_off
+                    actual = code_buf[foff]
+                    if actual != 2:
+                        log(f"    [WARN] menu_name_font: 当前值 {actual} != 预期 2 @RVA 0x{foff:X}")
+
+                    ha = code_start_addr + foff
+                    op = vp_ex(h_proc, ha, 1, PAGE_EXECUTE_READWRITE)
+                    write_pm(h_proc, ha, bytes([menu_ftype & 0xFF]))
+                    vp_ex(h_proc, ha, 1, op)
+                    code_buf[foff] = menu_ftype & 0xFF
+                    patched_count += 1
+                    log(f"    [OK] menu_name_font: FTYPE {actual} -> {menu_ftype} @RVA 0x{foff:X}")
+
+            log(f"    menu_name_font: 共 patch {patched_count} 处 FTYPE=2 调用 (预期 9)")
+
+    return all_ok
+
+# ============================================================
 # 配置补丁编排
 # ============================================================
 
@@ -1208,6 +1387,9 @@ def apply_config_patches(config: PatchConfig, code_buf: bytearray, code_start_ad
         elif defn.type == "patch_drop_probability":
             all_ok &= apply_drop_probability(defn, code_buf, code_start_addr,
                                               h_proc, log_func=log)
+        elif defn.type == "patch_font_config":
+            all_ok &= apply_font_config(defn, code_buf, code_start_addr,
+                                         h_proc, log_func=log)
         elif defn.type == "runtime_watchdog":
             log(f"    -> 由运行时看门狗处理 (游戏运行期间持续监控)")
         else:

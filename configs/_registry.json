@@ -25,5 +25,14 @@
     "consumers": ["tks_launcher_gui"],
     "merge_strategy": "key_override",
     "user_editable": true
+  },
+  "font_config": {
+    "description": "游戏默认字体自定义 (FTYPE 1-8 对应 FONT9696 区段)",
+    "category": "launcher",
+    "schema": "nested_key_value",
+    "primary_editor": null,
+    "consumers": ["tks_launcher_gui"],
+    "merge_strategy": "key_override",
+    "user_editable": true
   }
 }
