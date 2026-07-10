@@ -1104,19 +1104,18 @@ def apply_drop_probability(defn: PatchDef, code_buf: bytearray, code_start_addr:
 
 # ============================================================
 # 补丁类型: patch_font_config (游戏默认字体自定义)
-# 逆向依据: sub_411624 @0x411624 游戏启动时初始化 3 个全局渲染器
-#   渲染器1 (dword_755B04): sub_44AF7C(v4, 1, 16, 1, 0, 1, 1)  — 主文本, FTYPE=1, FSIZE=16
-#   渲染器2 (dword_755B08): sub_44AF7C(v5, 2, 24, 1, 0, 0, 0)  — 辅助, FTYPE=2, FSIZE=24
-#   渲染器3 (dword_755B0C): sub_44AF7C(v6, 1, 24, 1, 0, 1, 1)  — 覆盖层, FTYPE=1, FSIZE=24
+# 逆向依据: sub_411624 @0x411624 游戏启动时初始化全局渲染器
+#   主文本渲染器 (dword_755B04): sub_44AF7C(v4, 1, 16, 1, 0, 1, 1)  — FTYPE=1, FSIZE=16
 # sub_44AF7C 的 a2 参数 = FTYPE_raw (0-7), 决定 FONT9696 区段索引
 # 字节模式: 6A a7 6A a6 6A a5 6A a4 6A fsize 6A ftype 8B 15 [ptr32] 52 E8
 #   push 序列 (右到左): a7,a6,a5,a4,FSIZE,FTYPE; FTYPE 字节在模式偏移 11
-# 3 个渲染器通过 dword 指针 (755B04/755B08/755B0C) 唯一区分
 #
-# 名称字体: 角色/物品名称渲染使用临时 sub_44AF7C 调用 (FTYPE=0, FSIZE=16)
-#   涉及 2 个渲染器: dword_755B08 (菜单/存档角色名) + dword_95193C (商店物品名)
-#   调用方式因寄存器分配不同而有变体 (mov edx/eax/ecx, [ptr]; push reg)
-#   通配符模式: 6A 10 6A 00 ?? ?? [ptr32] ?? E8  (FTYPE 字节在偏移 3)
+# 菜单人物名称字体: 扫描所有 dword_755B08 的 FTYPE=2 调用 (6种寄存器变体, 共9处)
+#   涉及函数: sub_41762C/sub_418E5C/sub_4195C4/sub_41A080/sub_41AB94/sub_421B64/sub_4233C4
+#   排除 sub_411624 初始化 (a6=0) 和 sub_4252E8 姓名输入 (a7=1,a6=1)
+#
+# 说明弹出框字体: 扫描所有 dword_755B08 的 FTYPE=0 调用 (6种寄存器变体, 共4处)
+#   涉及函数: sub_4195C4(物品说明)/sub_418E5C(角色技能)/sub_41A080(技能/角色描述)
 # ============================================================
 
 def apply_font_config(defn: PatchDef, code_buf: bytearray, code_start_addr: int,
@@ -1139,24 +1138,14 @@ def apply_font_config(defn: PatchDef, code_buf: bytearray, code_start_addr: int,
 
     renderers = cfg.get("renderers", {})
 
-    # 2. 3 个渲染器的字节模式 (sub_411624 中 sub_44AF7C 调用点)
+    # 2. 主文本渲染器 (sub_411624 中 sub_44AF7C 调用点)
     #    模式: 6A a7 6A a6 6A a5 6A a4 6A FSIZE 6A FTYPE 8B 15 [ptr32] 52 E8
-    #    FTYPE 字节在模式偏移 11; dword 指针在各模式中唯一
+    #    FTYPE 字节在模式偏移 11; dword 指针唯一区分
     renderer_specs = {
         "main": {
             "pattern": "6A 01 6A 01 6A 00 6A 01 6A 10 6A 01 8B 15 04 5B 75 00",
             "original_ftype": 1,
             "ptr": "dword_755B04",
-        },
-        "auxiliary": {
-            "pattern": "6A 00 6A 00 6A 00 6A 01 6A 18 6A 02 8B 15 08 5B 75 00",
-            "original_ftype": 2,
-            "ptr": "dword_755B08",
-        },
-        "overlay": {
-            "pattern": "6A 01 6A 01 6A 00 6A 01 6A 18 6A 01 8B 15 0C 5B 75 00",
-            "original_ftype": 1,
-            "ptr": "dword_755B0C",
         },
     }
 
@@ -1278,6 +1267,52 @@ def apply_font_config(defn: PatchDef, code_buf: bytearray, code_start_addr: int,
                     log(f"    [OK] menu_name_font: FTYPE {actual} -> {menu_ftype} @RVA 0x{foff:X}")
 
             log(f"    menu_name_font: 共 patch {patched_count} 处 FTYPE=2 调用 (预期 9)")
+
+    # 4. 物品/技能/角色说明弹出框字体 (dword_755B08 的 FTYPE=0 调用点)
+    #    弹出框浮在画面上, 跟随鼠标位置, 背景为精灵158。
+    #    涉及4处 FTYPE=0 调用 (FSIZE=16):
+    #      sub_4195C4 第22行 (物品说明), sub_418E5C 第17行 (角色技能)
+    #      sub_41A080 第75行 (技能描述), sub_41A080 第103行 (角色描述)
+    #    扫描6种寄存器变体, 将 FTYPE 从 0 改为新值。
+    tooltip_rc = renderers.get("tooltip_font", {})
+    tooltip_ftype = int(tooltip_rc.get("ftype", 0))
+
+    if tooltip_ftype != 0:  # 0 是原始值, 不需要修改
+        # 验证 FTYPE 值域
+        if tooltip_ftype < 0 or tooltip_ftype > 7:
+            log(f"    [ERROR] tooltip_font: ftype={tooltip_ftype} 超出 0~7")
+            all_ok = False
+        else:
+            # 6种寄存器变体: (模式, FTYPE偏移, a7偏移, a6偏移)
+            # FSIZE=16 (0x10), FTYPE=0 (0x00)
+            tooltip_variants = [
+                ("8B 15 08 5B 75 00 6A ?? 6A ?? 6A ?? 6A ?? 6A 10 6A 00 52 E8", 17, 7, 9),
+                ("6A ?? 6A ?? 6A ?? 6A ?? 6A 10 6A 00 8B 15 08 5B 75 00 52 E8", 11, 1, 3),
+                ("A1 08 5B 75 00 6A ?? 6A ?? 6A ?? 6A ?? 6A 10 6A 00 50 E8", 16, 6, 8),
+                ("6A ?? 6A ?? 6A ?? 6A ?? 6A 10 6A 00 A1 08 5B 75 00 50 E8", 11, 1, 3),
+                ("8B 0D 08 5B 75 00 6A ?? 6A ?? 6A ?? 6A ?? 6A 10 6A 00 51 E8", 17, 7, 9),
+                ("6A ?? 6A ?? 6A ?? 6A ?? 6A 10 6A 00 8B 0D 08 5B 75 00 51 E8", 11, 1, 3),
+            ]
+
+            tooltip_patched_count = 0
+            for pat_str, ftype_off, a7_off, a6_off in tooltip_variants:
+                pat, wc = parse_pattern(pat_str)
+                hits = pattern_scan(bytes(code_buf), pat, wc)
+                for h in hits:
+                    foff = h + ftype_off
+                    actual = code_buf[foff]
+                    if actual != 0:
+                        log(f"    [WARN] tooltip_font: 当前值 {actual} != 预期 0 @RVA 0x{foff:X}")
+
+                    ha = code_start_addr + foff
+                    op = vp_ex(h_proc, ha, 1, PAGE_EXECUTE_READWRITE)
+                    write_pm(h_proc, ha, bytes([tooltip_ftype & 0xFF]))
+                    vp_ex(h_proc, ha, 1, op)
+                    code_buf[foff] = tooltip_ftype & 0xFF
+                    tooltip_patched_count += 1
+                    log(f"    [OK] tooltip_font: FTYPE {actual} -> {tooltip_ftype} @RVA 0x{foff:X}")
+
+            log(f"    tooltip_font: 共 patch {tooltip_patched_count} 处 FTYPE=0 调用 (预期 4)")
 
     return all_ok
 
