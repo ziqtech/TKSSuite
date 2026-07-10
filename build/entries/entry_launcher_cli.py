@@ -2,13 +2,13 @@
 import os
 import sys
 
-# 确保 仓库根目录 在 path 中 (开发环境 + Nuitka 编译均适用)
+# 将编辑器目录加入 sys.path (裸包名导入如 from panels import, from core import)
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'tks_launcher_gui'))
+
+# 确保 仓库根目录 在 path 中且优先级最高 (开发环境 + Nuitka 编译均适用)
+# 必须在 editor_dir 之后插入, 使 仓库根目录 排在 sys.path[0]
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 
-# ── 引导运行时 (必须在 PySide6/PIL 导入前) ──
-from editor_utils.runtime_bootstrap import bootstrap
-bootstrap()
-
-# ── 导入并运行编辑器 ──
-from tks_launcher_gui.cli_launcher import main
+# ── 导入并运行 (无 PySide6/PIL 依赖, 跳过 runtime bootstrap) ──
+from cli_launcher import main
 main()

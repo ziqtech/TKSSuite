@@ -2411,6 +2411,12 @@ class SpriteSheetEditorWindow(QMainWindow):
         main_layout.setSpacing(2)
 
         # ── 工具栏 ──
+        # 先创建 SettingsPanel, 工具栏按钮需要引用 self.settings._move_row/_move_col
+        self.settings = SettingsPanel(self.model, self)
+        # 先创建 canvas/preview_view, 左侧面板按钮需要引用 self.canvas.move_selected_*
+        self.canvas = SpriteGraphicsView(self.model, self)
+        self.preview_view = PreviewView(self)
+        self.preview_view.setVisible(False)
         toolbar = QHBoxLayout()
 
         toolbar.addWidget(QLabel("模式:"))
@@ -2582,13 +2588,11 @@ class SpriteSheetEditorWindow(QMainWindow):
         self._grid_container = QWidget()
         grid_layout = QVBoxLayout(self._grid_container)
         grid_layout.setContentsMargins(0, 0, 0, 0)
-        self.canvas = SpriteGraphicsView(self.model, self)
+        # self.canvas 已在工具栏构建前创建 (左侧面板按钮需要引用)
         grid_layout.addWidget(self.canvas)
         stack_layout.addWidget(self._grid_container)
 
-        # 预览视图 (初始隐藏)
-        self.preview_view = PreviewView(self)
-        self.preview_view.setVisible(False)
+        # 预览视图 (self.preview_view 已在工具栏构建前创建, 此处加入布局)
         stack_layout.addWidget(self.preview_view)
 
         center.addWidget(self._stack, 1)
@@ -2600,7 +2604,7 @@ class SpriteSheetEditorWindow(QMainWindow):
         main_splitter.addWidget(self._create_dock("2D 渲染视口", center_widget))
 
         # ── 右侧: 检查器 (每个区域独立 Dock 面板, ScrollArea 应对小窗口) ──
-        self.settings = SettingsPanel(self.model, self)
+        # self.settings 已在工具栏构建前创建 (工具栏按钮需要引用)
         right_container = QWidget()
         right_layout = QVBoxLayout(right_container)
         right_layout.setContentsMargins(0, 0, 0, 0)

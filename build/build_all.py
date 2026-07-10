@@ -16,6 +16,10 @@ build_all.py — TKS Editors 一键构建脚本 (Nuitka)
 
   python build/build_all.py --list             # 列出所有可构建编辑器
 
+构建优化:
+    python build/build_all.py --parallel 3     # 并行构建 3 个 exe (加速总构建)
+    python build/build_all.py --force          # 强制全量构建, 跳过增量检查
+
 前置条件:
     pip install nuitka ordered-set zstandard PySide6 Pillow
     需要 C 编译器: MSVC (VS Build Tools)
@@ -29,11 +33,15 @@ build_all.py — TKS Editors 一键构建脚本 (Nuitka)
     └── mods/
 """
 import argparse
+import hashlib
 import os
+import platform
 import shutil
 import subprocess
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime
 from pathlib import Path
 
 # ═══════════════════════════════════════════════════════════════
@@ -74,7 +82,8 @@ DIST_DIR = 仓库根目录 / "dist"
 RELEASE_DIR = DIST_DIR / "TKSEditors"
 
 
-def _build_thin_cmd(name: str, entry: str, editor_dir: str, release: bool = False) -> list:
+def _build_thin_cmd(name: str, entry: str, editor_dir: str,
+                    release: bool = False, jobs: int = 8) -> list:
     """生成 Nuitka 薄 exe 构建命令 (PySide6/PIL 由 .lib 提供, 不编译进 exe)"""
     entry_path = 仓库根目录 / entry
     icon_path = 仓库根目录 / editor_dir / "TKS.ico"
@@ -109,6 +118,9 @@ def _build_thin_cmd(name: str, entry: str, editor_dir: str, release: bool = Fals
         # ── 包含编辑器共享工具 (编译进 exe) ──
         "--include-package=editor_utils",
 
+        # ── 包含 zstandard (用于 .lib 归档解压) ──
+        "--include-package=zstandard",
+
         # ── 包含数据文件 (主题/翻译/图标) ──
         f"--include-data-dir={仓库根目录 / 'editor_themes'}=editor_themes",
         f"--include-data-files={仓库根目录 / 'editor_utils' / 'qtbase_zh_CN.qm'}=editor_utils/qtbase_zh_CN.qm",
@@ -124,7 +136,7 @@ def _build_thin_cmd(name: str, entry: str, editor_dir: str, release: bool = Fals
         "--nofollow-import-to=unittest",
 
         # ── 编译优化 ──
-        "--jobs=8",
+        f"--jobs={jobs}",
         f"--lto={'yes' if release else 'no'}",
         "--python-flag=no_docstrings",
         "--python-flag=no_asserts",
@@ -141,7 +153,8 @@ def _build_thin_cmd(name: str, entry: str, editor_dir: str, release: bool = Fals
     return cmd
 
 
-def _build_onefile_cmd(name: str, entry: str, editor_dir: str, release: bool = False) -> list:
+def _build_onefile_cmd(name: str, entry: str, editor_dir: str,
+                       release: bool = False, jobs: int = 8) -> list:
     """生成 Nuitka 完整 onefile 构建命令 (PySide6/PIL 编译进 exe)"""
     entry_path = 仓库根目录 / entry
     icon_path = 仓库根目录 / editor_dir / "TKS.ico"
@@ -190,7 +203,7 @@ def _build_onefile_cmd(name: str, entry: str, editor_dir: str, release: bool = F
         "--no-deployment-flag=excluded-module-usage",
 
         # ── 编译优化 ──
-        "--jobs=8",
+        f"--jobs={jobs}",
         f"--lto={'yes' if release else 'no'}",
         "--python-flag=no_docstrings",
         "--python-flag=no_asserts",
@@ -209,7 +222,8 @@ def _build_onefile_cmd(name: str, entry: str, editor_dir: str, release: bool = F
     return cmd
 
 
-def _build_cli_cmd(name: str, entry: str, editor_dir: str, release: bool = False) -> list:
+def _build_cli_cmd(name: str, entry: str, editor_dir: str,
+                   release: bool = False, jobs: int = 8) -> list:
     """生成 CLI 启动器 Nuitka 构建命令 (无 PySide6, 无 Qt, 极简 exe)"""
     entry_path = 仓库根目录 / entry
     icon_path = 仓库根目录 / editor_dir / "TKS.ico"
@@ -247,7 +261,7 @@ def _build_cli_cmd(name: str, entry: str, editor_dir: str, release: bool = False
         f"--include-data-files={tks_launcher_dir / 'summon_table.json'}=summon_table.json",
 
         # 编译优化
-        "--jobs=8",
+        f"--jobs={jobs}",
         f"--lto={'yes' if release else 'no'}",
         "--python-flag=no_docstrings",
         "--python-flag=no_asserts",
@@ -258,10 +272,66 @@ def _build_cli_cmd(name: str, entry: str, editor_dir: str, release: bool = False
     return cmd
 
 
+# ═══════════════════════════════════════════════════════════════
+# 增量构建支持
+# ═══════════════════════════════════════════════════════════════
+
+def _collect_source_files(entry: str, editor_dir: str) -> list:
+    """收集影响构建的源文件 (入口 + editor_utils + 编辑器目录 + 构建脚本)"""
+    files = [仓库根目录 / entry]
+
+    # editor_utils 整个包 (所有薄 exe 共享)
+    utils_dir = 仓库根目录 / "editor_utils"
+    if utils_dir.exists():
+        files.extend(utils_dir.rglob("*.py"))
+
+    # 编辑器目录所有 .py
+    editor_path = 仓库根目录 / editor_dir
+    if editor_path.exists():
+        files.extend(editor_path.rglob("*.py"))
+
+    # 构建脚本本身 (修改构建参数也应触发重建)
+    files.append(BUILD_DIR / "build_all.py")
+    files.append(BUILD_DIR / "gen_entries.py")
+
+    return [f for f in files if f.exists()]
+
+
+def _should_skip_build(name: str, source_files: list) -> bool:
+    """增量构建检查: 若 exe 比所有源文件新, 则跳过"""
+    exe_path = DIST_DIR / f"{name}.exe"
+    if not exe_path.exists():
+        return False
+    exe_mtime = exe_path.stat().st_mtime
+    for f in source_files:
+        try:
+            if f.stat().st_mtime > exe_mtime:
+                return False
+        except OSError:
+            return False
+    return True
+
+
+# ═══════════════════════════════════════════════════════════════
+# 构建逻辑
+# ═══════════════════════════════════════════════════════════════
+
 def build_one(name: str, entry: str, editor_dir: str,
               onefile: bool = False, verbose: bool = False,
-              release: bool = False) -> bool:
-    """构建单个 exe (薄模式或完整 onefile 模式)"""
+              release: bool = False, force: bool = False,
+              parallel: bool = False, nuitka_jobs: int = None,
+              log_dir: Path = None) -> tuple:
+    """构建单个 exe (薄模式或完整 onefile 模式)
+
+    返回 (success: bool, elapsed: float)
+    """
+    # 增量构建检查
+    if not force:
+        source_files = _collect_source_files(entry, editor_dir)
+        if _should_skip_build(name, source_files):
+            print(f"  [SKIP] {name} (源文件未变更)")
+            return True, 0.0
+
     # CLI 启动器使用专用构建 (无 PySide6)
     is_cli = (name == "TKSLauncherCLI")
     if is_cli:
@@ -270,19 +340,21 @@ def build_one(name: str, entry: str, editor_dir: str,
         mode_label = "完整 onefile (PySide6/PIL 内嵌)"
     else:
         mode_label = "薄 exe (无 PySide6/PIL)"
+
+    jobs = nuitka_jobs if nuitka_jobs else 8
     lto_label = "LTO=yes" if release else "LTO=no (调试加速)"
     print(f"\n{'='*60}")
     print(f"  构建: {name}")
     print(f"  入口: {entry}")
-    print(f"  模式: Nuitka --onefile ({mode_label}, {lto_label}, jobs=8)")
+    print(f"  模式: Nuitka --onefile ({mode_label}, {lto_label}, jobs={jobs})")
     print(f"{'='*60}")
 
     if is_cli:
-        cmd = _build_cli_cmd(name, entry, editor_dir, release)
+        cmd = _build_cli_cmd(name, entry, editor_dir, release, jobs)
     elif onefile:
-        cmd = _build_onefile_cmd(name, entry, editor_dir, release)
+        cmd = _build_onefile_cmd(name, entry, editor_dir, release, jobs)
     else:
-        cmd = _build_thin_cmd(name, entry, editor_dir, release)
+        cmd = _build_thin_cmd(name, entry, editor_dir, release, jobs)
 
     if verbose:
         print(f"  命令: {' '.join(str(c) for c in cmd)}")
@@ -294,15 +366,27 @@ def build_one(name: str, entry: str, editor_dir: str,
     env["PYTHONPATH"] = extra_path + os.pathsep + env.get("PYTHONPATH", "")
 
     t0 = time.time()
-    result = subprocess.run(cmd, cwd=str(仓库根目录), env=env)
-    elapsed = time.time() - t0
 
-    if result.returncode != 0:
-        print(f"  [FAIL] {name} 构建失败 (exit code: {result.returncode}, {elapsed:.1f}s)")
-        return False
-
-    print(f"  [OK] {name} 构建成功 ({elapsed:.1f}s)")
-    return True
+    # 并行模式下重定向输出到 log 文件, 避免输出交错
+    if parallel and log_dir:
+        log_path = log_dir / f"{name}.log"
+        with open(log_path, 'w', encoding='utf-8') as log_file:
+            result = subprocess.run(cmd, cwd=str(仓库根目录), env=env,
+                                    stdout=log_file, stderr=subprocess.STDOUT)
+        elapsed = time.time() - t0
+        if result.returncode != 0:
+            print(f"  [FAIL] {name} ({elapsed:.1f}s) — 日志: {log_path}")
+            return False, elapsed
+        print(f"  [OK] {name} ({elapsed:.1f}s)")
+        return True, elapsed
+    else:
+        result = subprocess.run(cmd, cwd=str(仓库根目录), env=env)
+        elapsed = time.time() - t0
+        if result.returncode != 0:
+            print(f"  [FAIL] {name} 构建失败 (exit code: {result.returncode}, {elapsed:.1f}s)")
+            return False, elapsed
+        print(f"  [OK] {name} 构建成功 ({elapsed:.1f}s)")
+        return True, elapsed
 
 
 def build_runtime():
@@ -315,7 +399,92 @@ def build_runtime():
     return result.returncode == 0
 
 
-def assemble_release():
+# ═══════════════════════════════════════════════════════════════
+# 构建信息生成
+# ═══════════════════════════════════════════════════════════════
+
+def _md5(path: Path, chunk_size: int = 65536) -> str:
+    """计算文件 MD5"""
+    h = hashlib.md5()
+    with open(path, 'rb') as f:
+        while True:
+            chunk = f.read(chunk_size)
+            if not chunk:
+                break
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _get_git_commit() -> str:
+    """获取 Git commit hash (失败返回空字符串)"""
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=str(仓库根目录), capture_output=True, text=True, timeout=5
+        )
+        if result.returncode == 0:
+            return result.stdout.strip()
+    except (subprocess.SubprocessError, OSError):
+        pass
+    return ""
+
+
+def _get_nuitka_version() -> str:
+    """获取 Nuitka 版本"""
+    try:
+        result = subprocess.run(
+            [sys.executable, "-m", "nuitka", "--version"],
+            capture_output=True, text=True, timeout=10
+        )
+        # Nuitka 版本信息在 stderr
+        out = result.stderr.strip() or result.stdout.strip()
+        return out.split('\n')[0] if out else "unknown"
+    except (subprocess.SubprocessError, OSError):
+        return "unknown"
+
+
+def _generate_build_info(onefile: bool, release: bool, success: list, failed: list):
+    """生成构建信息文件 build_info.json"""
+    info = {
+        "build_time": datetime.now().isoformat(),
+        "python_version": sys.version,
+        "python_executable": sys.executable,
+        "platform": platform.platform(),
+        "nuitka_version": _get_nuitka_version(),
+        "git_commit": _get_git_commit(),
+        "build_mode": "onefile" if onefile else "thin",
+        "release": release,
+        "editors_total": len(EDITORS),
+        "editors_success": len(success),
+        "editors_failed": len(failed),
+        "failed_names": failed,
+        "files": [],
+    }
+
+    # 记录发行目录所有文件
+    if RELEASE_DIR.exists():
+        for f in sorted(RELEASE_DIR.iterdir()):
+            if f.is_file():
+                stat = f.stat()
+                info["files"].append({
+                    "name": f.name,
+                    "size": stat.st_size,
+                    "md5": _md5(f),
+                })
+
+    info_path = RELEASE_DIR / "build_info.json"
+    import json
+    with open(info_path, 'w', encoding='utf-8') as f:
+        json.dump(info, f, indent=2, ensure_ascii=False)
+    print(f"  [OK] build_info.json ({info['editors_success']}/{info['editors_total']} 编辑器)")
+
+
+# ═══════════════════════════════════════════════════════════════
+# 发行目录组装
+# ═══════════════════════════════════════════════════════════════
+
+def assemble_release(onefile: bool = False, release: bool = False,
+                     success: list = None, failed: list = None):
     """组装发行目录"""
     print(f"\n{'='*60}")
     print(f"  组装发行目录: {RELEASE_DIR}")
@@ -329,6 +498,16 @@ def assemble_release():
         if not exe_src.exists():
             print(f"  [SKIP] {name}.exe 不存在")
             continue
+        # 增量复制: 源和目标 mtime+size 一致则跳过
+        exe_dst = RELEASE_DIR / f"{name}.exe"
+        if exe_dst.exists():
+            src_stat = exe_src.stat()
+            dst_stat = exe_dst.stat()
+            if src_stat.st_size == dst_stat.st_size and src_stat.st_mtime <= dst_stat.st_mtime:
+                size_mb = dst_stat.st_size / (1024 * 1024)
+                print(f"  [SKIP] {name}.exe ({size_mb:.1f} MB, 未变更)")
+                assembled += 1
+                continue
         shutil.copy2(str(exe_src), str(RELEASE_DIR / f"{name}.exe"))
         size_mb = exe_src.stat().st_size / (1024 * 1024)
         print(f"  [OK] {name}.exe ({size_mb:.1f} MB)")
@@ -371,6 +550,69 @@ def assemble_release():
     print(f"  发行目录总大小: {total_size / (1024*1024):.1f} MB")
     print(f"  发行目录: {RELEASE_DIR}")
 
+    # 生成构建信息
+    _generate_build_info(onefile, release, success or [], failed or [])
+
+
+# ═══════════════════════════════════════════════════════════════
+# 并行构建
+# ═══════════════════════════════════════════════════════════════
+
+def _build_parallel(targets: list, args) -> tuple:
+    """并行构建多个 exe
+
+    策略: 总 CPU 核心数 / 并发数 = 每个 Nuitka 的 jobs 数
+    避免 CPU 过载。
+    """
+    cpu_count = os.cpu_count() or 8
+    max_workers = min(args.parallel, len(targets))
+    per_job = max(1, cpu_count // max_workers)
+
+    log_dir = DIST_DIR / "build_logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+
+    print(f"\n  并行构建: {max_workers} 并发 × {per_job} jobs/进程 "
+          f"(共 {cpu_count} CPU 核心)")
+    print(f"  构建日志: {log_dir}/<EditorName>.log\n")
+
+    success = []
+    failed = []
+
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {
+            executor.submit(
+                build_one, name, entry, editor_dir,
+                args.onefile, args.verbose, args.release,
+                args.force, True, per_job, log_dir
+            ): name
+            for name, entry, editor_dir in targets
+        }
+        for future in as_completed(futures):
+            name = futures[future]
+            try:
+                ok, _ = future.result()
+                (success if ok else failed).append(name)
+            except Exception as e:
+                print(f"  [ERROR] {name}: {e}")
+                failed.append(name)
+
+    return success, failed
+
+
+def _build_serial(targets: list, args) -> tuple:
+    """串行构建多个 exe"""
+    success = []
+    failed = []
+    for name, entry, editor_dir in targets:
+        ok, _ = build_one(name, entry, editor_dir, args.onefile, args.verbose,
+                          args.release, args.force)
+        (success if ok else failed).append(name)
+    return success, failed
+
+
+# ═══════════════════════════════════════════════════════════════
+# 主入口
+# ═══════════════════════════════════════════════════════════════
 
 def main():
     parser = argparse.ArgumentParser(description="TKS Editors 一键构建 (Nuitka)")
@@ -386,6 +628,10 @@ def main():
     parser.add_argument("--verbose", action="store_true", help="详细输出")
     parser.add_argument("--release", action="store_true",
                         help="发布模式: --lto=yes (链接时优化, 更小体积, 构建更慢)")
+    parser.add_argument("--parallel", type=int, default=0,
+                        help="并行构建 N 个编辑器 (0=串行, 推荐 2-4)")
+    parser.add_argument("--force", action="store_true",
+                        help="强制全量构建, 跳过增量检查")
     args = parser.parse_args()
 
     if args.list:
@@ -402,9 +648,16 @@ def main():
         args.runtime = False
         args.all = False
 
-    # 生成入口脚本 (确保最新)
-    subprocess.run([sys.executable, str(BUILD_DIR / "gen_entries.py")],
-                   cwd=str(仓库根目录), capture_output=True)
+    # 生成入口脚本 (确保最新) — 检查返回码, 失败则中止
+    gen_result = subprocess.run(
+        [sys.executable, str(BUILD_DIR / "gen_entries.py")],
+        cwd=str(仓库根目录), capture_output=True, text=True
+    )
+    if gen_result.returncode != 0:
+        print(f"[ERROR] 入口脚本生成失败 (exit code: {gen_result.returncode})")
+        print(f"  stdout: {gen_result.stdout}")
+        print(f"  stderr: {gen_result.stderr}")
+        sys.exit(1)
 
     if args.runtime:
         build_runtime()
@@ -428,13 +681,12 @@ def main():
     DIST_DIR.mkdir(parents=True, exist_ok=True)
 
     # 构建
-    success = []
-    failed = []
     t_total = time.time()
 
-    for name, entry, editor_dir in targets:
-        ok = build_one(name, entry, editor_dir, args.onefile, args.verbose, args.release)
-        (success if ok else failed).append(name)
+    if args.parallel > 0 and len(targets) > 1:
+        success, failed = _build_parallel(targets, args)
+    else:
+        success, failed = _build_serial(targets, args)
 
     elapsed_total = time.time() - t_total
 
@@ -449,7 +701,7 @@ def main():
 
     # 组装
     if not args.no_assemble and success:
-        assemble_release()
+        assemble_release(args.onefile, args.release, success, failed)
 
 
 if __name__ == "__main__":

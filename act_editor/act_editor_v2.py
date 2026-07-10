@@ -355,13 +355,11 @@ _jvg_loader = None
 
 
 def _get_jvg_loader():
+    """获取 JVG 数据模块 (从 editor_utils.jvg_data 共享模块导入, 避免打包路径问题)"""
     global _jvg_loader
     if _jvg_loader is None:
-        jvg_dir = os.path.join(os.path.dirname(__file__), '..', 'jvg_editor')
-        if jvg_dir not in sys.path:
-            sys.path.insert(0, jvg_dir)
         try:
-            import jvg_editor as _jvg_editor
+            import editor_utils.jvg_data as _jvg_editor
             _jvg_loader = _jvg_editor
         except ImportError:
             _jvg_loader = False

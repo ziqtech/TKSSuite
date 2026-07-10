@@ -2,7 +2,10 @@
 build_runtime.py — 构建共享运行时归档 (.lib)
 ==============================================
 从已安装的 PySide6/PIL/shiboken6 包中提取必要文件，
-分别打包为 ZIP 归档（.lib 扩展名）。
+分别打包为 zstd 压缩的 tar 归档（.lib 扩展名）。
+
+zstd 比 ZIP DEFLATE 解压速度快 2-5 倍, 显著加快首次启动。
+runtime_bootstrap.py 自动检测 .lib 格式 (zst/zip), 向后兼容。
 
 用法:
     python build/build_runtime.py              # 构建全部归档
@@ -12,11 +15,19 @@ build_runtime.py — 构建共享运行时归档 (.lib)
 """
 import argparse
 import importlib
+import io
 import os
 import sys
+import tarfile
 import time
-import zipfile
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
+
+try:
+    import zstandard
+except ImportError:
+    print("[ERROR] 需要 zstandard: pip install zstandard")
+    sys.exit(1)
 
 # ═══════════════════════════════════════════════════════════════
 # 路径
@@ -26,6 +37,9 @@ BUILD_DIR = Path(__file__).parent
 仓库根目录 = BUILD_DIR.parent
 DIST_DIR = 仓库根目录 / "dist"
 RELEASE_DIR = DIST_DIR / "TKSEditors"
+
+# zstd 压缩级别 (3 = 平衡压缩率与速度; 解压速度与级别无关)
+_ZSTD_LEVEL = 3
 
 
 def _get_package_dir(package_name: str) -> Path:
@@ -115,46 +129,38 @@ ARCHIVES = {
 # 构建逻辑
 # ═══════════════════════════════════════════════════════════════
 
-def build_archive(name: str, spec: dict, output_dir: Path) -> Path:
-    """构建单个归档"""
-    output_path = output_dir / name
-    pyside6_dir = _get_package_dir("PySide6")
+def _collect_archive_entries(spec: dict) -> list:
+    """收集归档中所有 (source_path, arcname) 条目
 
-    print(f"\n  构建: {name}")
-    print(f"  描述: {spec.get('description', '')}")
+    延迟导入 PySide6/PIL — 只有需要时才导入。
+    PIL.lib 构建时不依赖 PySide6 已安装。
+    """
+    entries = []  # [(Path, arcname), ...]
 
-    file_count = 0
-    total_size = 0
+    # 1. 包含 shiboken6 整个包
+    if spec.get("shiboken6"):
+        shiboken6_dir = _get_package_dir("shiboken6")
+        for item in shiboken6_dir.rglob("*"):
+            if item.is_file() and "__pycache__" not in str(item):
+                arcname = "shiboken6/" + str(item.relative_to(shiboken6_dir)).replace("\\", "/")
+                entries.append((item, arcname))
 
-    with zipfile.ZipFile(output_path, 'w', zipfile.ZIP_DEFLATED, compresslevel=6) as zf:
+    # 2. 包含 PySide6 的 Python 文件 (__init__.py 等)
+    if spec.get("pyside6_py") or spec.get("pyside6_files") or spec.get("pyside6_plugins"):
+        pyside6_dir = _get_package_dir("PySide6")
 
-        # 1. 包含 shiboken6 整个包
-        if spec.get("shiboken6"):
-            shiboken6_dir = _get_package_dir("shiboken6")
-            for item in shiboken6_dir.rglob("*"):
-                if item.is_file() and "__pycache__" not in str(item):
-                    arcname = "shiboken6/" + str(item.relative_to(shiboken6_dir))
-                    zf.write(item, arcname)
-                    file_count += 1
-                    total_size += item.stat().st_size
-
-        # 2. 包含 PySide6 的 Python 文件 (__init__.py 等)
         if spec.get("pyside6_py"):
             for item in pyside6_dir.iterdir():
                 if item.is_file() and item.suffix == '.py':
                     arcname = "PySide6/" + item.name
-                    zf.write(item, arcname)
-                    file_count += 1
-                    total_size += item.stat().st_size
+                    entries.append((item, arcname))
 
         # 3. 包含指定的 PySide6 文件 (dll/pyd)
         for filename in spec.get("pyside6_files", []):
             filepath = pyside6_dir / filename
             if filepath.exists():
                 arcname = "PySide6/" + filename
-                zf.write(filepath, arcname)
-                file_count += 1
-                total_size += filepath.stat().st_size
+                entries.append((filepath, arcname))
             else:
                 print(f"    [WARN] 文件不存在: {filepath}")
 
@@ -164,35 +170,54 @@ def build_archive(name: str, spec: dict, output_dir: Path) -> Path:
             if plugin_dir.exists():
                 for item in plugin_dir.rglob("*"):
                     if item.is_file():
-                        arcname = "PySide6/plugins/" + plugin_dir_name + "/" + str(item.relative_to(plugin_dir))
-                        zf.write(item, arcname)
-                        file_count += 1
-                        total_size += item.stat().st_size
+                        rel = str(item.relative_to(plugin_dir)).replace("\\", "/")
+                        arcname = f"PySide6/plugins/{plugin_dir_name}/{rel}"
+                        entries.append((item, arcname))
             else:
                 print(f"    [WARN] 插件目录不存在: {plugin_dir}")
 
-        # 5. 包含整个 PIL 包
-        if spec.get("pil"):
-            pil_dir = _get_package_dir("PIL")
-            for item in pil_dir.rglob("*"):
-                if item.is_file() and "__pycache__" not in str(item):
-                    arcname = "PIL/" + str(item.relative_to(pil_dir))
-                    zf.write(item, arcname)
-                    file_count += 1
-                    total_size += item.stat().st_size
+    # 5. 包含整个 PIL 包
+    if spec.get("pil"):
+        pil_dir = _get_package_dir("PIL")
+        for item in pil_dir.rglob("*"):
+            if item.is_file() and "__pycache__" not in str(item):
+                arcname = "PIL/" + str(item.relative_to(pil_dir)).replace("\\", "/")
+                entries.append((item, arcname))
 
-        # 6. 包含 Python ABI3 DLL (python3.dll, abi3 扩展模块依赖此 DLL)
-        if spec.get("python_dlls"):
-            python_dir = Path(sys.executable).parent
-            for dll_name in ["python3.dll"]:
-                dll_path = python_dir / dll_name
-                if dll_path.exists():
-                    zf.write(dll_path, dll_name)
-                    file_count += 1
-                    total_size += dll_path.stat().st_size
-                    print(f"    [OK] 包含 {dll_name} ({dll_path})")
-                else:
-                    print(f"    [WARN] {dll_name} 不存在: {dll_path}")
+    # 6. 包含 Python ABI3 DLL (python3.dll, abi3 扩展模块依赖此 DLL)
+    if spec.get("python_dlls"):
+        python_dir = Path(sys.executable).parent
+        for dll_name in ["python3.dll"]:
+            dll_path = python_dir / dll_name
+            if dll_path.exists():
+                entries.append((dll_path, dll_name))
+                print(f"    [OK] 包含 {dll_name} ({dll_path})")
+            else:
+                print(f"    [WARN] {dll_name} 不存在: {dll_path}")
+
+    return entries
+
+
+def build_archive(name: str, spec: dict, output_dir: Path) -> Path:
+    """构建单个归档 (zstd 压缩的 tar)"""
+    output_path = output_dir / name
+
+    print(f"\n  构建: {name}")
+    print(f"  描述: {spec.get('description', '')}")
+
+    entries = _collect_archive_entries(spec)
+    file_count = len(entries)
+    total_size = sum(src.stat().st_size for src, _ in entries)
+
+    # 用 zstd 压缩 tar 归档
+    cctx = zstandard.ZstdCompressor(level=_ZSTD_LEVEL)
+
+    with open(output_path, 'wb') as raw:
+        with cctx.stream_writer(raw) as compressor:
+            # 使用流式 tar 写入, 避免内存中构建完整 tar
+            with tarfile.open(fileobj=compressor, mode='w|') as tar:
+                for src, arcname in entries:
+                    tar.add(str(src), arcname=arcname, recursive=False)
 
     compressed_size = output_path.stat().st_size
     ratio = compressed_size / total_size * 100 if total_size > 0 else 0
@@ -203,22 +228,48 @@ def build_archive(name: str, spec: dict, output_dir: Path) -> Path:
     return output_path
 
 
+def build_archive_parallel(output_dir: Path) -> list:
+    """并行构建所有归档 (I/O+压缩密集, GIL 影响小)"""
+    results = []
+    with ThreadPoolExecutor(max_workers=min(len(ARCHIVES), 4)) as executor:
+        futures = {
+            executor.submit(build_archive, name, spec, output_dir): name
+            for name, spec in ARCHIVES.items()
+        }
+        for future in as_completed(futures):
+            name = futures[future]
+            try:
+                path = future.result()
+                results.append((name, path))
+            except Exception as e:
+                print(f"  [ERROR] {name} 构建失败: {e}")
+                results.append((name, None))
+    return results
+
+
 def main():
     parser = argparse.ArgumentParser(description="构建共享运行时归档")
     parser.add_argument("--only", type=str, help="仅构建指定归档 (不含扩展名)")
     parser.add_argument("--output", type=str, help="输出目录 (默认: dist/TKSEditors/)")
+    parser.add_argument("--no-parallel", action="store_true",
+                        help="禁用并行构建 (串行模式, 调试用)")
     args = parser.parse_args()
 
     output_dir = Path(args.output) if args.output else RELEASE_DIR
     output_dir.mkdir(parents=True, exist_ok=True)
 
     print("=" * 60)
-    print("  TKS Editors — 运行时归档构建")
+    print("  TKS Editors — 运行时归档构建 (zstd)")
     print("=" * 60)
-    print(f"  PySide6: {_get_package_dir('PySide6')}")
-    print(f"  shiboken6: {_get_package_dir('shiboken6')}")
-    print(f"  PIL: {_get_package_dir('PIL')}")
+
+    # 延迟打印包路径 (只有需要时才导入)
+    if not args.only or args.only.rstrip(".lib") in ("PySide6", "QtCore", "QtGui", "QtWidgets", "QtSvg"):
+        print(f"  PySide6: {_get_package_dir('PySide6')}")
+        print(f"  shiboken6: {_get_package_dir('shiboken6')}")
+    if not args.only or args.only.rstrip(".lib") == "PIL":
+        print(f"  PIL: {_get_package_dir('PIL')}")
     print(f"  输出目录: {output_dir}")
+    print(f"  压缩格式: zstd (level={_ZSTD_LEVEL})")
 
     t0 = time.time()
 
@@ -229,9 +280,12 @@ def main():
             print(f"  可用: {', '.join(ARCHIVES.keys())}")
             sys.exit(1)
         build_archive(key, ARCHIVES[key], output_dir)
-    else:
+    elif args.no_parallel:
         for name, spec in ARCHIVES.items():
             build_archive(name, spec, output_dir)
+    else:
+        print(f"\n  并行构建 {len(ARCHIVES)} 个归档...")
+        build_archive_parallel(output_dir)
 
     elapsed = time.time() - t0
     print(f"\n{'=' * 60}")

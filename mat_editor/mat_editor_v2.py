@@ -1109,15 +1109,11 @@ def save_mat_to_save(save_path, records):
 # JVG 精灵帧辅助
 # ============================================================
 def _get_jvg(filepath):
-    """加载 JVG 文件 (缓存)"""
+    """加载 JVG 文件 (缓存) — 从 editor_utils.jvg_data 共享模块导入"""
     if filepath in _JVG_CACHE: return _JVG_CACHE[filepath]
     if not os.path.exists(filepath): return None
-    _grp_dir = os.path.normpath(os.path.join(os.path.dirname(__file__),'..','grp_editor'))
-    _jvg_dir = os.path.normpath(os.path.join(os.path.dirname(__file__),'..','jvg_editor'))
-    for d in [_grp_dir, _jvg_dir]:
-        if d not in sys.path: sys.path.insert(0, d)
     try:
-        from jvg_editor import load_jvg
+        from editor_utils.jvg_data import load_jvg
         jvg = load_jvg(filepath)
         _JVG_CACHE[filepath] = jvg
         return jvg
@@ -1434,9 +1430,7 @@ def load_scene_background(sc_grp_path, sc_idx_path, scene_id):
     必须按原始索引映射, 不能直接用 grp.sections 数组下标。"""
     if not os.path.exists(sc_grp_path): return None
     try:
-        _grp_dir = os.path.normpath(os.path.join(os.path.dirname(__file__), '..', 'grp_editor'))
-        if _grp_dir not in sys.path: sys.path.insert(0, _grp_dir)
-        from grp_editor import load_grp, _decode_section_a
+        from editor_utils.grp_data import load_grp, _decode_section_a
     except ImportError:
         return None
 
@@ -1463,9 +1457,7 @@ def load_scene_background_from_bytes(section_data: bytes):
     if not section_data or len(section_data) < 12:
         return None
     try:
-        _grp_dir = os.path.normpath(os.path.join(os.path.dirname(__file__), '..', 'grp_editor'))
-        if _grp_dir not in sys.path: sys.path.insert(0, _grp_dir)
-        from grp_editor import lzss_decompress as grp_lzss_decompress
+        from editor_utils.grp_data import lzss_decompress as grp_lzss_decompress
     except ImportError:
         return None
 

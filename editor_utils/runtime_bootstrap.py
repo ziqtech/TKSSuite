@@ -11,11 +11,14 @@ runtime_bootstrap — 运行时引导加载器
 支持:
   - 开发环境: 自动跳过（PySide6 已在 sys.path 中）
   - Nuitka 编译环境: 从 .lib 归档解压到 %LOCALAPPDATA%/TKSEditors/runtime/
-  - 增量更新: 通过 mtime 对比, 仅解压有变化的归档
+  - 增量更新: 通过 mtime+size 对比, 仅解压有变化的归档
+  - 格式自动检测: zstd (新) / zip (旧) 向后兼容
+  - 缓存清理: 升级归档时自动删除旧版本文件, 避免残留
 """
 import json
 import os
 import sys
+import tarfile
 import zipfile
 
 
@@ -84,7 +87,7 @@ _CACHE_DIR = os.path.join(
     "TKSEditors", "runtime"
 )
 
-# manifest 文件 (记录已解压归档的状态)
+# manifest 文件 (记录已解压归档的状态 + 文件列表, 用于增量清理)
 _MANIFEST = os.path.join(_CACHE_DIR, ".manifest.json")
 
 # 需要加载的归档列表 (按依赖顺序)
@@ -97,6 +100,87 @@ _RUNTIME_LIBS = [
     "PIL.lib",
 ]
 
+
+# ═══════════════════════════════════════════════════════════════
+# 归档格式检测与解压
+# ═══════════════════════════════════════════════════════════════
+
+# zstd magic number: 28 b5 2f fd
+_ZSTD_MAGIC = b'\x28\xb5\x2f\xfd'
+# zip magic number: PK\x03\x04
+_ZIP_MAGIC = b'PK\x03\x04'
+
+
+def _detect_archive_format(path: str) -> str:
+    """检测归档格式: 'zst' / 'zip' / 'unknown'"""
+    try:
+        with open(path, 'rb') as f:
+            magic = f.read(4)
+    except OSError:
+        return 'unknown'
+    if magic == _ZSTD_MAGIC:
+        return 'zst'
+    if magic == _ZIP_MAGIC:
+        return 'zip'
+    return 'unknown'
+
+
+def _extract_archive(lib_path: str, cache_dir: str) -> list:
+    """解压归档到缓存目录, 返回解压的文件列表 (arcname)
+
+    自动检测 zst / zip 格式。
+    """
+    fmt = _detect_archive_format(lib_path)
+    extracted_files = []
+
+    if fmt == 'zip':
+        with zipfile.ZipFile(lib_path, 'r') as zf:
+            for member in zf.infolist():
+                if not member.is_dir():
+                    zf.extract(member, cache_dir)
+                    # 统一用正斜杠
+                    extracted_files.append(member.filename.replace("\\", "/"))
+
+    elif fmt == 'zst':
+        import zstandard
+        dctx = zstandard.ZstdDecompressor()
+        with open(lib_path, 'rb') as f:
+            with dctx.stream_reader(f) as reader:
+                with tarfile.open(fileobj=reader, mode='r|') as tar:
+                    for member in tar:
+                        if member.isfile():
+                            tar.extract(member, cache_dir)
+                            extracted_files.append(member.name.replace("\\", "/"))
+    else:
+        raise ValueError(f"未知归档格式: {lib_path}")
+
+    return extracted_files
+
+
+def _remove_stale_files(old_files: list, cache_dir: str):
+    """删除旧版本归档中的过期文件 (缓存清理)"""
+    for arcname in old_files:
+        file_path = os.path.join(cache_dir, arcname.replace("/", os.sep))
+        try:
+            os.remove(file_path)
+        except OSError:
+            pass  # 文件可能已被删除或不复存在
+
+
+def _cleanup_empty_dirs(cache_dir: str):
+    """清理缓存目录中的空目录"""
+    for root, dirs, _ in os.walk(cache_dir, topdown=False):
+        for d in dirs:
+            dir_path = os.path.join(root, d)
+            try:
+                os.rmdir(dir_path)
+            except OSError:
+                pass  # 目录非空或不存在
+
+
+# ═══════════════════════════════════════════════════════════════
+# 主引导逻辑
+# ═══════════════════════════════════════════════════════════════
 
 def bootstrap():
     """引导加载共享运行时。必须在 PySide6/PIL 导入前调用。
@@ -115,6 +199,7 @@ def bootstrap():
     os.makedirs(_CACHE_DIR, exist_ok=True)
 
     # ── 加载 manifest ──
+    # manifest 结构: { "PySide6.lib": {"key": "...", "files": ["PySide6/...", ...]}, ... }
     manifest = {}
     if os.path.isfile(_MANIFEST):
         try:
@@ -134,15 +219,31 @@ def bootstrap():
         stat = os.stat(lib_path)
         current_key = f"{stat.st_mtime_ns}_{stat.st_size}"
 
-        if manifest.get(lib_name) != current_key:
-            # 解压此归档到缓存
+        lib_info = manifest.get(lib_name, {})
+        # 向后兼容: 旧版 manifest 值是字符串 (直接为 key), 新版是字典 {"key":..., "files":[...]}
+        # 检测到旧格式时强制重新解压, 并用新格式覆盖
+        if isinstance(lib_info, str):
+            lib_info = {}
+        if lib_info.get("key") != current_key:
+            # 清理旧版本文件 (缓存清理机制)
+            old_files = lib_info.get("files", [])
+            if old_files:
+                _remove_stale_files(old_files, _CACHE_DIR)
+
+            # 解压新归档
             try:
-                with zipfile.ZipFile(lib_path, 'r') as zf:
-                    zf.extractall(_CACHE_DIR)
-                manifest[lib_name] = current_key
+                extracted_files = _extract_archive(lib_path, _CACHE_DIR)
+                manifest[lib_name] = {
+                    "key": current_key,
+                    "files": extracted_files,
+                }
                 updated = True
-            except (zipfile.BadZipFile, OSError) as e:
+            except Exception as e:
                 print(f"[TKSEditors] 警告: 解压 {lib_name} 失败: {e}", file=sys.stderr)
+
+    # ── 清理空目录 (升级后可能产生空目录) ──
+    if updated:
+        _cleanup_empty_dirs(_CACHE_DIR)
 
     # ── 保存 manifest ──
     if updated:
