@@ -16,6 +16,7 @@ import argparse
 import ctypes
 import json
 import os
+import shutil
 import signal
 import struct
 import subprocess
@@ -280,6 +281,26 @@ class CliLauncher:
         if config is None:
             self._log("[ERROR] 无法加载补丁配置, 退出")
             return False, {"error": "config load failed"}
+
+        # ── 1b. 构建选中补丁集合 (匹配 GUI 默认勾选行为) ──
+        # selected_patches=None → 根据 default_checked 构建 (GUI 默认勾选的补丁)
+        # selected_patches=set(...) → 用户显式指定, 直接使用
+        if self.selected_patches is None:
+            self.selected_patches = {
+                p.id for p in config.patches if p.optional and p.default_checked
+            }
+            _names = ', '.join(sorted(self.selected_patches)) or "(无)"
+            self._log(f"  默认启用可选补丁: {_names}")
+
+        # ── 1c. Wine/Winlator 兼容: 自动跳过 portrait_reinject ──
+        # 补丁十八 (hook_save_load_portrait) 会 hook 存档加载函数,
+        # Wine 下可能导致加载存档卡死, 必须自动跳过
+        if _is_wine() and "portrait_reinject" in self.selected_patches:
+            self.selected_patches.discard("portrait_reinject")
+            _wv = _get_wine_version()
+            _wv_str = f" ({_wv})" if _wv else ""
+            self._log(f"  [Wine兼容] 检测到 Wine 环境{_wv_str}, 自动跳过 portrait_reinject "
+                      f"(补丁十八 hook 存档加载函数, Wine 下可能卡死)")
 
         # ── 2. 存档健康检查 ──
         ensure_save_directory_healthy(log_func=self._log)
@@ -636,14 +657,22 @@ class CliLauncher:
         config.variables["warpc_base"] = discovered_base
 
         # ── 12. 定位存档加载 Move 调用 ──
-        _load_hook_rvas = find_load_hook_points(
-            bytes(code_buf), discovered_base, WARPC_ORIG_SIZE, log_func=self._log
+        # 补丁十八 (portrait_reinject): 用户可通过取消勾选来跳过存档加载 hook + 看门狗
+        _portrait_reinject_enabled = (
+            self.selected_patches is None
+            or "portrait_reinject" in self.selected_patches
         )
+        _load_hook_rvas = []
+        if _portrait_reinject_enabled:
+            _load_hook_rvas = find_load_hook_points(
+                bytes(code_buf), discovered_base, WARPC_ORIG_SIZE, log_func=self._log
+            )
+        else:
+            self._log("\n  [补丁十八] 用户取消勾选, 跳过存档加载 hook")
 
         # ── 13. 分配 WarPC 缓冲区 ──
         warpc_base_for_caves = 0
         if _warpc_expanded and _warpc_full_data:
-            import shutil
             wp = "WarPC.dat"
             bp = wp + ".orig"
             if os.path.isfile(bp):
@@ -777,6 +806,8 @@ class CliLauncher:
             # 补丁十八: 存档加载 portrait 重注入 hook
             if self.no_save_load_hook:
                 self._log("  [补丁十八] 跳过 (no_save_load_hook)")
+            elif not _portrait_reinject_enabled:
+                self._log("  [补丁十八] 跳过 (portrait_reinject 未勾选)")
             elif _load_hook_rvas:
                 from core.lzss import lzss_decompress
                 _wp_file = "WarPC.dat"
@@ -831,13 +862,15 @@ class CliLauncher:
 
         # ── 21. 构建看门狗参数 ──
         _wd_params = None
-        if not self.no_runtime_hooks and not self.no_watchdog:
+        if not self.no_runtime_hooks and not self.no_watchdog and _portrait_reinject_enabled:
             _wd_params = self._build_portrait_watchdog_params(
                 target_pid,
                 warpc_base_for_caves if warpc_base_for_caves else discovered_base,
             )
         elif self.no_watchdog:
             self._log("  [看门狗] 已禁用 (--no-watchdog)")
+        elif not _portrait_reinject_enabled:
+            self._log("  [看门狗] 已跳过 (portrait_reinject 未勾选)")
 
         # ── 22. 等待游戏退出 (含看门狗) ──
         self._log("\n等待游戏退出...")
@@ -1019,12 +1052,19 @@ def main():
     timeout = args.timeout or cfg.get("advanced", {}).get("wait_timeout", 30)
 
     # 解析启用的可选补丁
+    # None  = 配置未指定 → _do_run 中根据 default_checked 构建 (匹配 GUI 默认勾选行为)
+    # set() = 配置显式指定 (可为空集 = 禁用全部可选补丁)
     selected_patches = None
     patches_cfg = cfg.get("patches", {})
-    enabled_list = patches_cfg.get("enabled", [])
-    if enabled_list:
+    enabled_list = patches_cfg.get("enabled", None)
+    if enabled_list is not None:
         selected_patches = set(enabled_list)
-        print(f"[配置] 启用可选补丁: {', '.join(sorted(selected_patches))}")
+        if selected_patches:
+            print(f"[配置] 显式启用可选补丁: {', '.join(sorted(selected_patches))}")
+        else:
+            print("[配置] 可选补丁: 全部禁用 (enabled=[])")
+    else:
+        print("[配置] 可选补丁: 使用默认勾选 (default_checked)")
 
     # 解析启用的 MOD
     enabled_mod_ids = None
