@@ -779,14 +779,13 @@ class GrowthTableDialog(QDialog):
         self._is_dark_init = is_dark
 
         # 主题颜色 (与 editor_themes 色板对齐)
+        # 注: 当前等级行不再用白色文字+蓝底高亮 — QSS 的 ::item background-color
+        # 会覆盖 item.setBackground(), 导致蓝底丢失、白字残留在浅色背景上不可读。
+        # 改为仅用粗体字标记当前等级行。
         if is_dark:
-            self._CLR_CUR_BG   = QColor("#2a5090")   # 当前等级行背景
-            self._CLR_CUR_FG   = QColor("#ffffff")   # 当前等级行文字
             self._CLR_DELTA    = QColor("#55b572")   # Δ增量 (取自 dark.qss PreviewDesc)
             self._CLR_GRP      = QColor("#e8a040")   # grp最终属性
         else:
-            self._CLR_CUR_BG   = QColor("#478cbf")   # 当前等级行背景 (light 强调色)
-            self._CLR_CUR_FG   = QColor("#ffffff")   # 当前等级行文字
             self._CLR_DELTA    = QColor("#2d7a2d")   # Δ增量 (深绿)
             self._CLR_GRP      = QColor("#cc7a20")   # grp最终属性 (深橙)
 
@@ -986,7 +985,6 @@ class GrowthTableDialog(QDialog):
         font_bold = QFont("Consolas", 9, QFont.Bold)
         for row, d in enumerate(self._table_data):
             is_cur = d['is_current']
-            bg = self._CLR_CUR_BG if is_cur else None
             items = [str(d['level']), str(d['divisor'])]
             for si in range(7):
                 items.append(str(d['stats'][si]))
@@ -997,9 +995,7 @@ class GrowthTableDialog(QDialog):
                 item.setTextAlignment(Qt.AlignCenter)
                 if is_cur:
                     item.setFont(font_bold)
-                    item.setBackground(bg)
-                    item.setForeground(self._CLR_CUR_FG)
-                elif ci in (3, 5, 7, 9, 11, 13, 15) and d['level'] > 1:
+                if ci in (3, 5, 7, 9, 11, 13, 15) and d['level'] > 1:
                     item.setForeground(self._CLR_DELTA)
                 self._growth_table.setItem(row, ci, item)
         # 滚动到当前等级
