@@ -119,7 +119,7 @@ class KonNameResolver:
         Args:
             compact_threshold: 精简阈值，0 表示不精简。
 
-        兼容旧代码中以 dict 方式使用的场景 (如 TkkonPickerDialog)。
+        适用于需要 dict 语义的调用方 (如 TkkonPickerDialog 接收名称字典)。
         """
         if compact_threshold <= 0:
             return dict(self._names)

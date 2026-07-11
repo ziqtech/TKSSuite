@@ -47,11 +47,6 @@ def lzss_compress(data):
 def load_tkt(tkt_path):
     return load_tkt_simple(tkt_path)
 
-def load_tkkon_names(csv_path):
-    """[已废弃] 保留以兼容旧代码.
-    请使用 editor_utils.kon_name_resolver.KonNameResolver 替代。"""
-    return {}
-
 KON_REC = 40
 KON_CNT = 650
 KON_FIELD_COUNT = 20

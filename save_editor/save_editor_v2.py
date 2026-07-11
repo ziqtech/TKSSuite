@@ -1132,20 +1132,6 @@ class SaveEditorApp(QMainWindow):
         except Exception:
             return {}
 
-    def _load_tkkon_names(self, tks_dir=None):
-        """[已废弃] 从游戏数据动态解析 TKKon 名称映射.
-
-        现在由 _load_resources() 通过 KonNameResolver 自动完成。
-        保留此方法仅为兼容旧调用。
-        """
-        if not tks_dir:
-            return {}
-        try:
-            resolver = KonNameResolver(tks_dir)
-            return resolver.get_all_names()
-        except Exception:
-            return {}
-
     def _parse_item_dat(self, path):
         try:
             with open(path, 'rb') as f:
