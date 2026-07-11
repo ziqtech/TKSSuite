@@ -1842,7 +1842,8 @@ class SaveEditorApp(QMainWindow):
         try:
             import zhconv
             text = zhconv.convert(text, 'zh-hant')
-        except ImportError:
+        except Exception:
+            # zhconv 不可用或数据文件缺失 (如打包时遗漏 zhcdict.json) — 跳过繁简转换
             pass
         try:
             b = text.encode('big5')

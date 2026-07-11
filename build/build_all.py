@@ -72,6 +72,9 @@ EDITORS = [
 # 需要 Pillow 的编辑器 (onefile 模式用, 薄模式 PIL 由 PIL.lib 统一提供)
 NEEDS_PILLOW = {"TKSJvgEditor", "TKSGrpEditor", "TKSGxpEditor", "TKSSpritesheetEditor"}
 
+# 需要 zhconv 数据文件 (zhcdict.json) 的编辑器 — Nuitka 不会自动打包 .json 数据文件
+NEEDS_ZHCONV = {"TKSSaveEditor"}
+
 # ═══════════════════════════════════════════════════════════════
 # 路径常量
 # ═══════════════════════════════════════════════════════════════
@@ -141,6 +144,10 @@ def _build_thin_cmd(name: str, entry: str, editor_dir: str,
         "--python-flag=no_docstrings",
         "--python-flag=no_asserts",
     ]
+
+    # zhconv 数据文件 (zhcdict.json) — 运行时按需加载, Nuitka 不会自动打包
+    if name in NEEDS_ZHCONV:
+        cmd.append("--include-package-data=zhconv")
 
     # ── 清理 ──
     cmd.extend([
@@ -215,6 +222,10 @@ def _build_onefile_cmd(name: str, entry: str, editor_dir: str,
     # Pillow 支持
     if name in NEEDS_PILLOW:
         cmd.append("--include-package=PIL")
+
+    # zhconv 数据文件 (zhcdict.json) — 运行时按需加载, Nuitka 不会自动打包
+    if name in NEEDS_ZHCONV:
+        cmd.append("--include-package-data=zhconv")
 
     # 入口脚本 (必须是最后一个参数)
     cmd.append(str(entry_path))
