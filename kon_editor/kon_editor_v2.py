@@ -218,10 +218,12 @@ class NumericTableItem(QTableWidgetItem):
 # 对话框: 字段参考
 # ============================================================
 
+# 逆向参考: sub_43D53C(目标区域), sub_43D8B0(目标验证), sub_43E980(伤害计算),
+# sub_4458B0(技能执行), sub_4434BC(动画运行时), sub_4173F8(TKKon加载)
 class FieldRefDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("字段参考 v3.0 (逆向来源)")
+        self.setWindowTitle("字段参考 v3.0")
         self.resize(700, 580)
         layout = QVBoxLayout(self)
         text = QTextEdit()
@@ -229,7 +231,7 @@ class FieldRefDialog(QDialog):
         text.setFont(QFont("Consolas", 9))
         lines = ["TKKon.dat 字段映射 v3.0 (2026-05 语义修正)", ""]
         lines.append(f"【记录布局】{KON_CNT} 条 × {KON_REC} 字节 = {KON_DECOMPRESSED} 字节")
-        lines.append(f"  20 × int16 (小端序) 共 {KON_REC} 字节/条")
+        lines.append(f"  每条 20 个字段 × 16位整数 = {KON_REC} 字节")
         lines.append("")
         lines.append("【★ v3.0 修正: 字段语义完全重分析】")
         lines.append("  field[0-2] 是战斗引擎操作参数，非TKT文本引用")
@@ -239,13 +241,13 @@ class FieldRefDialog(QDialog):
             lines.append(f"  [{fo:02d}] {fl:<10s}{marker}")
             lines.append(f"       {cmt}")
         lines.append("")
-        lines.append("【反编译函数引用】")
-        for s in ["sub_43D53C: 目标区域标记","sub_43D8B0: 目标验证过滤","sub_43E980: 伤害计算核心",
-                   "sub_4458B0: 技能执行主函数","sub_4434BC: 动画运行时","sub_4173F8: TKKon 加载入口",
-                   "Maker.exe sub_4027FF: 解压后大小校验"]:
-            lines.append(f"  {s}")
+        lines.append("【字段功能说明】")
+        lines.append("  [0-2]: 战斗操作参数 (目标区域/验证/伤害)")
+        lines.append("  [3-5]: 动画播放参数")
+        lines.append("  [6-9]: 显示效果 (特效/音效/画面)")
+        lines.append("  [10-19]: 伤害与状态参数")
         lines.append("")
-        lines.append("【伤害字段编码规则 (sub_43E980)】")
+        lines.append("【伤害字段编码规则】")
         for s in ["0→无效果","1~999→固定值","1001~1999→最大值%(val-1000)",
                    "-1→ATK","2001~2999→ATK+(val-2000)","3001+→ATK×(1+(val-3000)/100)"]:
             lines.append(f"  {s}")
@@ -337,7 +339,7 @@ class KonEditor(QMainWindow):
         em.addAction("清空当前记录", self._clear_current)
 
         hm = mb.addMenu("帮助(&H)")
-        hm.addAction("字段参考 (逆向来源)", self._show_field_ref)
+        hm.addAction("字段参考", self._show_field_ref)
         hm.addAction("切换 Godot 主题 (Dark/Light)\tF5", self._toggle_theme)
         hm.addAction("关于", self._show_about)
 
@@ -1298,13 +1300,16 @@ class KonEditor(QMainWindow):
     def _show_field_ref(self):
         FieldRefDialog(self).exec()
 
+    # 逆向参考: sub_43D53C, sub_43D8B0, sub_43E980, sub_4458B0, sub_4434BC, sub_4173F8
     def _show_about(self):
         themed_messagebox(self, QMessageBox.Information, "关于",
-            "TKKon.dat 可视化编辑器 v3.3 (PySide6)\n\n"
-            "基于《三国群侠传》 TKS.exe 反编译\n"
-            "Godot 4.6 风格 UI · FakeInputBox · ThemeManager\n\n"
-            "逆向来源:\n"
-            "  sub_43D53C/43D8B0/43E980/4458B0/4434BC/4173F8"
+            "TKKon.dat 技能动画编辑器 v3.3 (PySide6)\n\n"
+            "功能: 编辑《三国群侠传》技能动画数据\n"
+            "数据: 每条 20 个字段 × 16位整数\n\n"
+            "特性:\n"
+            "  · Godot 风格深/浅色主题切换\n"
+            "  · 技能动画参数可视化编辑\n"
+            "  · 伤害字段编码规则说明"
         )
 
 # ============================================================

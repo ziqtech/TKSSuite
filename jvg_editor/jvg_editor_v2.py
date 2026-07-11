@@ -809,6 +809,24 @@ class JVGEditor(QMainWindow):
         toggle_theme_action.triggered.connect(self._toggle_theme)
         theme_menu.addAction(toggle_theme_action)
 
+        # 帮助菜单
+        hm = menubar.addMenu("帮助(&H)")
+        hm.addAction("关于", self._show_about)
+
+    def _show_about(self):
+        QMessageBox.information(self, "关于",
+            "JVG 图集编辑器 v2 (PySide6)\n\n"
+            "功能: 浏览和编辑《三国群侠传》JVG 图像帧资源\n\n"
+            "特性:\n"
+            "  · 三种视图模式: 平铺 / 逐帧 / 动画播放\n"
+            "  · 导出单帧、分组或完整图集为 PNG\n"
+            "  · 头像资源批量导入/导出 (Fa.JVG)\n"
+            "  · 支持 MOD 格式导入导出 (.tksmod)\n"
+            "  · 深色/浅色主题切换\n\n"
+            "快捷键:\n"
+            "  1 = 平铺视图   2 = 逐帧视图   3 = 动画视图\n"
+            "  Ctrl+T = 切换主题")
+
     def _setup_ui(self):
         central_widget = QWidget()
         self.setCentralWidget(central_widget)

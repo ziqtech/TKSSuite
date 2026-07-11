@@ -2679,6 +2679,26 @@ class SpriteSheetEditorWindow(QMainWindow):
         view_menu.addAction("预览选中帧", self._preview_selected)
         view_menu.addAction("预览全部", self._preview_all)
 
+        # 帮助菜单
+        hm = menubar.addMenu("帮助")
+        hm.addAction("关于", self._show_about)
+
+    def _show_about(self):
+        QMessageBox.information(self, "关于",
+            "精灵表编辑器 v2 (PySide6)\n\n"
+            "功能: 制作和编辑游戏精灵表 (Spritesheet)\n\n"
+            "特性:\n"
+            "  · 导入多张图片拼合为精灵表\n"
+            "  · 按列数/行数/间距拆分已有精灵表\n"
+            "  · 拖拽调整帧顺序, 支持整行/整列移动\n"
+            "  · 选中多帧后可预览动画播放\n"
+            "  · 多种像素格式导出 (RGBA8888 / RGB888 / RGB565 等)\n"
+            "  · 深色/浅色主题切换\n\n"
+            "快捷键:\n"
+            "  Ctrl+A = 全选   Delete = 删除选中帧\n"
+            "  Ctrl+方向键 = 移动选中帧\n"
+            "  Shift+方向键 = 移动整行/整列")
+
     def _build_shortcuts(self):
         """统一快捷键注册 — 仅 QShortcut (避免与 QAction 双重注册冲突)"""
         _w = self._shortcut_wrap

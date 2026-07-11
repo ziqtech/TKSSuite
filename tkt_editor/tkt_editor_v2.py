@@ -2041,18 +2041,22 @@ class TktEditor(QMainWindow):
         self._insert_tag(f"<FTYPE,{int(cb.currentText().split('-')[0])}>", "<FRESET,4>")
         cb.setCurrentIndex(0)
 
+    # 逆向参考: sub_401E88, sub_4067E8, sub_4019D0
     def _show_about(self):
         themed_messagebox(
             self, QMessageBox.Information, "关于",
             "TKT.dat 文本数据库编辑器 v5.0 (PySide6)\n\n"
-            "基于逆向工程 sub_401E88/sub_4067E8/sub_4019D0 实现。\n"
-            "支持加载/编辑/保存/新增 TKT.dat 条目。\n\n"
-            "控制码:\n"
-            "  <FRESET,n>  n∈[1,4]     <FCOLOR,n>  n∈[1,32]\n"
-            "  <FSIZE,n>   n∈[12,48]   <FTYPE,n>   n∈[1,8]\n"
-            "  <TEXT,n>    n∈[1,32767] (2字节)\n"
-            "  <VARNUM,n>  n∈[1,255]   <VARTXT,n>  n∈[1,255]\n"
-            "  <NAME,n>    n∈[1,2]"
+            "功能: 编辑《三国群侠传》游戏文本数据\n"
+            "支持加载、编辑、保存、新增文本条目\n\n"
+            "文本控制码 (特殊格式标记):\n"
+            "  <FRESET,n>  重置字体, n 取值 1~4\n"
+            "  <FCOLOR,n>  设置颜色, n 取值 1~32\n"
+            "  <FSIZE,n>   设置字号, n 取值 12~48\n"
+            "  <FTYPE,n>    设置字体, n 取值 1~8\n"
+            "  <TEXT,n>     引用文本, n 取值 1~32767\n"
+            "  <VARNUM,n>  显示数字变量, n 取值 1~255\n"
+            "  <VARTXT,n>  显示文本变量, n 取值 1~255\n"
+            "  <NAME,n>    显示角色名, n 取值 1~2"
         )
 
     def closeEvent(self, event):

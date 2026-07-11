@@ -115,12 +115,12 @@ COMBAT_FLAG_BITS = [
     (8, "经验独得",            "战斗经验归一人独享 (無道戒; bit3)"),
 ]
 EXTRA_FLAG_BITS = [
-    (0, "遇敌率降低",     "随机阈值140→遇敌率↓; 战斗时序+30%; sub_4084E0 bit0 (偽裝戒指)"),
-    (1, "遇敌率大幅降低", "随机阈值200→遇敌率↓↓; 战斗时序+50%; sub_4084E0 bit1 (隱藏戒指)"),
-    (2, "免遇敌",         "完全跳过随机战斗; sub_4084E0 bit2 (虛無戒指)"),
-    (3, "战斗时序加速",   "敌方计时条额外扣减(每回合); sub_431E70 bit3 (無常戒)"),
-    (4, "银两×2~5",      "物品描述声称此效果; 逆向全量代码未找到实现, Cut Content (無心戒)"),
-    (5, "战斗时序强效",   "敌方计时条强制扣减(更强效); sub_431E70 bit5 (六無玄冥石)"),
+    (0, "遇敌率降低",     "随机阈值140→遇敌率↓; 战斗时序+30% (偽裝戒指)"),  # sub_4084E0 bit0
+    (1, "遇敌率大幅降低", "随机阈值200→遇敌率↓↓; 战斗时序+50% (隱藏戒指)"),  # sub_4084E0 bit1
+    (2, "免遇敌",         "完全跳过随机战斗 (虛無戒指)"),  # sub_4084E0 bit2
+    (3, "战斗时序加速",   "敌方计时条额外扣减(每回合) (無常戒)"),  # sub_431E70 bit3
+    (4, "银两×2~5",      "物品描述声称此效果, 实际未实现 (無心戒)"),  # 逆向未找到实现
+    (5, "战斗时序强效",   "敌方计时条强制扣减(更强效) (六無玄冥石)"),  # sub_431E70 bit5
 ]
 
 # 使用权限 (equip_type) — 多选位掩码，选项根据页面号动态切换
@@ -174,8 +174,8 @@ GRID_FIELDS = [
     ("luk",         32, "增加幸运",       'int',       W_INPUT, "运气(LUK)永久加成，商店物品出现条件的基准值 (v15[16])"),
     ("spi",         34, "增加悟性",       'int',       W_INPUT, "精神(SPI)悟性永久加成 (v15[17])"),
     ("vit",         36, "增加移动",       'int',       W_INPUT, "体力(VIT)移动永久加成 (v15[18])"),
-    ("jp_bonus",    38, "增加技能点",     'int',       W_INPUT, "技能点数(JP); sub_41E40C: word_757F46+=v15[19] 使用时增加; sub_41E248学习技能时消耗; sub_4189BC判定技能可用性。Maker.exe原标签'戒指判定'(误) (v15[19])"),
-    ("combat_flag", 40, "战斗结算效果",   'combat_flag', W_INPUT, "战斗结算位掩码; sub_42234C: a2[33]|=v9[20]; 战斗结束后按位触发奖励效果 (v15[20])"),
+    ("jp_bonus",    38, "增加技能点",     'int',       W_INPUT, "技能点数(JP); 使用时增加, 学习技能时消耗, 判定技能可用性 (v15[19])"),  # sub_41E40C, sub_41E248, sub_4189BC
+    ("combat_flag", 40, "战斗结算效果",   'combat_flag', W_INPUT, "战斗结算位掩码; 战斗结束后按位触发奖励效果 (v15[20])"),  # sub_42234C: a2[33]|=v9[20]
     ("medicine",    50, "增加医术",       'int',       W_INPUT, "使用后获得的医术点数，累加到全局医术计数 (v15[25])"),
     ("price",       62, "价格",           'int',       W_INPUT, "物品买卖价格，商店卖出时折半 (v15[31])"),
 ]
@@ -203,7 +203,7 @@ CURE_MASK_FIELDS = [
 # 隐含字段 (TKItem 记录占用但 Maker UI 未显示，读写透传保留原始数据)
 HIDDEN_FIELDS = [
     ("tab_code",     2, "页面号",       'page', W_INPUT, "物品在商店中的分页编号 (0=药品,1=道具,2=武器,3=防具,4=饰品,5=特殊)"),
-    ("extra_flags", 60, "额外标志",     'extra_flags', W_INPUT, "地图/战斗全局标志(sub_41F784 OR到dword_755C80) (v15[30])"),
+    ("extra_flags", 60, "额外标志",     'extra_flags', W_INPUT, "地图/战斗全局标志 (v15[30])"),  # sub_41F784 OR到dword_755C80
 ]
 
 ALL_FIELDS = (GRID_FIELDS + HIDDEN_FIELDS +
@@ -1435,8 +1435,9 @@ class ItemEditorApp(QMainWindow):
                 target = rec
                 break
         if target is None:
+            # sub_45343C 硬编码 38400 字节
             QMessageBox.warning(self, "已满",
-                "600 条记录上限已满 (sub_45343C 硬编码 38400 字节)\n无真·空槽 (id=0) 可用.")
+                "600 条记录上限已满\n无空槽 (id=0) 可用.")
             return
         # 填入默认值 (参考 #560-599 原始模板)
         for fn, _, _, _, _, _ in ALL_FIELDS:
@@ -1663,8 +1664,10 @@ class ItemEditorApp(QMainWindow):
             f"您现在可以继续编辑并重新导出。")
 
     # ── 帮助 ──
+    # 逆向参考: sub_45343C(数据载入), sub_41E40C(物品使用), sub_42234C(装备应用),
+    # sub_422BBC(附加技能效果), sub_42F8D4(物品查找), sub_424A2C(背包/商店显示)
     def _show_field_ref(self):
-        lines = ["TKItem.dat 字段映射 v3.0 (反编译 + Maker.exe TksModify.dll 实证):", ""]
+        lines = ["TKItem.dat 字段映射 v3.0:", ""]
         lines.append("【基础属性 (Maker UI 可见字段 22 条)】")
         for fn, fo, fl, ft, fw, cmt in GRID_FIELDS:
             lines.append(f"  [{fo:02d}] {fl:<12s}  {cmt}")
@@ -1677,7 +1680,7 @@ class ItemEditorApp(QMainWindow):
         for fn, fo, fl, cmt in CAUSE_MASK_FIELDS:
             lines.append(f"  [{fo:02d}] {fl:<12s}  {cmt}")
         lines.append("")
-        lines.append("【解除状态 (sub_41E40C 使用物品时清除)】")
+        lines.append("【解除状态 (使用物品时清除)】")
         for fn, fo, fl, cmt in CURE_MASK_FIELDS:
             lines.append(f"  [{fo:02d}] {fl:<12s}  {cmt}")
         lines.append("")
@@ -1690,11 +1693,11 @@ class ItemEditorApp(QMainWindow):
             lines.append(f"  页面{page}({PAGE_NAMES.get(page,'?')}): {opts}")
         lines.append("")
         lines.append("【记录数硬限制】")
-        lines.append("  600 条 x 64 字节 = 38400 字节 (sub_45343C 固定加载量)")
-        lines.append("  sub_42F8D4 搜索循环 `while (v3 < 600)` 是硬编码")
-        lines.append("  #560-#599 (40条) 为真空槽, 可用于新增物品 (item_id=0, name_id=0)")
+        lines.append("  600 条 x 64 字节 = 38400 字节 (游戏固定加载量)")
+        lines.append("  物品数量上限为 600 条 (游戏内部限制)")
+        lines.append("  #560-#599 (40条) 为空槽位, 可用于新增物品 (item_id=0, name_id=0)")
         dlg = QDialog(self)
-        dlg.setWindowTitle("字段来源 v3.0 (逆向+Maker 实证)")
+        dlg.setWindowTitle("字段来源 v3.0")
         dlg.resize(820, 580)
         layout = QVBoxLayout(dlg)
         from PySide6.QtWidgets import QTextEdit
@@ -1705,19 +1708,19 @@ class ItemEditorApp(QMainWindow):
         layout.addWidget(tx)
         dlg.exec()
 
+    # 逆向参考: sub_45343C(数据载入), sub_41E40C(物品使用), sub_42234C(装备应用),
+    # sub_422BBC(附加技能效果), sub_42F8D4(物品查找), sub_424A2C(背包/商店显示)
     def _show_about(self):
         themed_messagebox(self, QMessageBox.Information, "关于",
-            "TKItem.dat 可视化编辑器 v2.0 (PySide6)\n\n"
-            "基于《三国群侠传》 TKS.exe 反编译 + Maker.exe TksModify.dll 文案对照\n"
-            "600 条记录 x 32 字段 (int16 x 32 = 64 字节)\n\n"
-            "核心反编译函数:\n"
-            "  sub_45343C  数据载入 (硬编码 38400 字节)\n"
-            "  sub_41E40C  物品使用 (药品 / 使用后学习技能 / 解除状态)\n"
-            "  sub_42234C  装备应用 (装备后学习技能 / 导致状态)\n"
-            "  sub_422BBC  附加技能 type=1/2/3 效果展开\n"
-            "  sub_42F8D4  物品查找 (< 600 循环)\n"
-            "  sub_424A2C  背包/商店显示\n\n"
-            "v3.0 修正 v2.2 的错误字段映射 (原将 [22] 误标导致状态)")
+            "TKItem.dat 物品编辑器 v2.0 (PySide6)\n\n"
+            "功能: 编辑《三国群侠传》物品数据\n"
+            "数据: 600 条记录 × 32 个字段 = 64 字节/条\n\n"
+            "特性:\n"
+            "  · 可视化编辑物品属性 (名称/价格/效果等)\n"
+            "  · 自动关联 TKT.dat 显示物品名称\n"
+            "  · 支持物品分类筛选和搜索\n"
+            "  · 深色/浅色主题切换\n\n"
+            "v3.0 修正了字段映射错误")
 
     def closeEvent(self, event):
         if not confirm_close(self, self._dirty):

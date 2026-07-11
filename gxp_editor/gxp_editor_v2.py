@@ -286,6 +286,23 @@ class GXPEditor(QMainWindow):
         vm.addSeparator()
         vm.addAction("切换主题(&T)", QKeySequence("Ctrl+T"), self._toggle_theme)
 
+        # 帮助菜单
+        hm = mb.addMenu("帮助(&H)")
+        hm.addAction("关于", self._show_about)
+
+    def _show_about(self):
+        QMessageBox.information(self, "关于",
+            "GXP 图像编辑器 v4 (PySide6)\n\n"
+            "功能: 编辑《三国群侠传》GXP 格式图像资源\n\n"
+            "特性:\n"
+            "  · 导入外部图片替换游戏图像\n"
+            "  · 导出为 24 位 PNG (符合游戏引擎要求)\n"
+            "  · 支持 MOD 格式导入导出 (.tksmod)\n"
+            "  · 深色/浅色主题切换\n\n"
+            "快捷键:\n"
+            "  Ctrl+I = 导入图片   Ctrl+E = 导出 PNG\n"
+            "  Ctrl+0 = 原始大小   Ctrl+T = 切换主题")
+
     def _setup_ui(self):
         cw = QWidget()
         self.setCentralWidget(cw)

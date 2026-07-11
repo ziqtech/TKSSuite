@@ -5828,22 +5828,39 @@ class MatEditorApp(QMainWindow):
                    [ENTITY_TYPES.get(rec['d0'], ''), scene_name(self._data.tkt_scenes, rec['d1'])]
         export_csv(self, filtered, hdr, row_func, "TKMat.csv")
 
+    # 逆向参考: sub_412688(加载入口, 行21)
     def _show_field_ref(self):
-        msg = ("TKMat.Dat 实体表字段说明\n" + '─' * 50 + "\n\n加载: sub_412688:21\n结构: 6000条×384B(96×int32)\n\n已证实字段:\n"
-               " [0]type [1]scene_id [2]flags [3]timer [4]tick\n [10][11]x/y [13]direction [18][19]bound\n"
-               " [30-35]sub-scene [39-41]chain heads [42-43]PC [44]defunit_idx\n"
-               " [50]条件角色 [51]访问掩码 [52]目标场景 [53]目标X [54]目标Y [56]目标朝向\n"
-               "注意: [52-56]字段语义与实体类型相关 (type=10: 传送参数; type=200: 动画参数)")
+        msg = ("TKMat.Dat 实体表字段说明\n" + '─' * 50 + "\n\n"
+               "数据结构: 6000 条 × 384 字节 (每条 96 个 32 位整数字段)\n\n"
+               "常用字段说明:\n"
+               "  [0] 类型      [1] 场景编号   [2] 标志位     [3] 计时器     [4] 周期\n"
+               "  [10][11] 坐标X/Y    [13] 朝向        [18][19] 边界范围\n"
+               "  [30-35] 子场景参数  [39-41] 链式触发  [42-43] 玩家角色  [44] 定义单位\n"
+               "  [50] 条件角色  [51] 访问掩码   [52] 目标场景   [53-54] 目标坐标  [56] 目标朝向\n\n"
+               "注意: [52-56] 字段的含义随实体类型变化\n"
+               "  · 类型 10 (传送点): 作为传送目标参数\n"
+               "  · 类型 200 (动画对象): 作为动画播放参数")
         themed_messagebox(self, QMessageBox.Information, "字段说明", msg)
 
+    # 逆向参考: sub_412688, sub_405CBC, sub_4066F0, sub_40EBD4, sub_409618
     def _show_about(self):
         themed_messagebox(self, QMessageBox.Information, "关于",
                                 "TKMat.Dat 地图实体编辑器 v2.3 (PySide6)\n\n"
-                                "模式: 参数 + 可视化 + 脚本编辑 + 脚本调度分析\n"
-                                "逆向依据: sub_412688, sub_405CBC, sub_4066F0, sub_40EBD4, sub_409618\n"
-                                "脚本调度: A链=自动(Tick) B链=触发(交互) C链=其他\n"
-                                "格式: TKMat 6000×384B + TKDefUnit 5000×16B + TKD脚本\n"
-                                "保存时一次性写入三个文件")
+                                "功能: 编辑《三国群侠传》地图实体数据\n\n"
+                                "编辑模式:\n"
+                                "  · 参数编辑 - 修改实体属性\n"
+                                "  · 可视化预览 - 地图场景展示\n"
+                                "  · 脚本编辑 - 编辑事件脚本\n"
+                                "  · 脚本调度 - 管理脚本执行顺序\n\n"
+                                "数据文件:\n"
+                                "  · TKMat.dat - 实体表 (6000 条 × 384 字节)\n"
+                                "  · TKDefUnit.dat - 定义单位 (5000 条 × 16 字节)\n"
+                                "  · TKD.dat - 脚本数据\n"
+                                "  保存时一次性写入以上三个文件\n\n"
+                                "脚本链类型:\n"
+                                "  · A链 - 自动执行 (按周期触发)\n"
+                                "  · B链 - 交互触发 (玩家操作时)\n"
+                                "  · C链 - 其他类型")
 
     def _export_scene(self):
         """导出当前场景: TKMat实体 + DefUnit链 + TKD脚本 → .tkmat JSON"""

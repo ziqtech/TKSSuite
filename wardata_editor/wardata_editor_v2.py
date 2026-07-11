@@ -614,7 +614,7 @@ class WarDataEditorV2(QMainWindow):
         em.addAction("删除当前记录", self._delete_record)
 
         hm = mb.addMenu("帮助(&H)")
-        hm.addAction("字段参考 (逆向来源)", self._show_field_ref)
+        hm.addAction("字段参考", self._show_field_ref)
         hm.addAction("关于", self._show_about)
 
         # 工具栏
@@ -1053,17 +1053,43 @@ class WarDataEditorV2(QMainWindow):
 
     def _show_field_ref(self):
         themed_messagebox(self, QMessageBox.Information, "字段参考",
-            "WarData.dat 字段参考\n\n[0] flags [2-7] must_chars [30] name_id [32] map_id\n"
-            "[34-69] enemy_id×18 [70-87] enemy_lv [88-105] enemy_power\n"
-            "[106-141] enemy_lv_range [142-177] enemy_xy [178-189] ally_xy\n"
-            "[190-207] enemy_delay [208-213] ally_facing\n"
-            "[214-269] trap_xy [270-325] trap_pwr [326-345] trea_sub×10\n"
-            "[346-385] trea_quant×20 [386-441] trap_type×28 [442-477] enemy_flg×18\n"
-            "[478] lv_spread_lo [480] lv_spread_hi [482] turn_limit\n\n"
-            "WarWay.dat: 1024字节/条, 32x32网格, -1=障碍, 0=通行, 1-5=区域")
+            "WarData.dat 战场数据字段参考\n\n"
+            "基本设置:\n"
+            "  [0] 标志位        [2-7] 必出角色      [30] 名称编号      [32] 地图编号\n\n"
+            "敌方配置:\n"
+            "  [34-69] 敌方角色 (最多18个)\n"
+            "  [70-87] 敌方等级        [88-105] 敌方强化值\n"
+            "  [106-141] 等级波动范围  [142-177] 敌方坐标\n"
+            "  [190-207] 敌方出场延迟  [442-477] 敌方标志\n\n"
+            "我方配置:\n"
+            "  [178-189] 我方坐标      [208-213] 我方朝向\n\n"
+            "陷阱与宝箱:\n"
+            "  [214-269] 陷阱坐标 (最多28个)\n"
+            "  [270-325] 陷阱威力      [386-441] 陷阱类型\n"
+            "  [326-345] 宝箱子类型×10\n"
+            "  [346-385] 宝箱数量×20\n\n"
+            "其他:\n"
+            "  [478] 等级下限  [480] 等级上限  [482] 回合限制\n\n"
+            "WarWay.dat 寻路数据:\n"
+            "  每条 1024 字节, 32×32 网格\n"
+            "  -1 = 障碍物 (不可通行)\n"
+            "   0 = 可通行区域\n"
+            "  1~5 = 不同区域编号")
 
+    # 关于信息: 编辑器基于 TKS.exe 反编译/逆向工程分析 (原始依据已从用户可见文本中移除)
     def _show_about(self):
-        themed_messagebox(self, QMessageBox.Information, "关于", "WarData.dat 可视化编辑器 v2.0\n\nPySide6 版本\n基于游戏逆向工程 (TKS.exe 反编译)")
+        themed_messagebox(self, QMessageBox.Information, "关于",
+            "WarData.dat 战场数据编辑器 v2.0 (PySide6)\n\n"
+            "功能: 编辑《三国群侠传》战场数据\n\n"
+            "编辑内容:\n"
+            "  · 敌方角色配置 (角色/等级/强化值/坐标)\n"
+            "  · 我方出场配置 (坐标/朝向)\n"
+            "  · 陷阱与宝箱设置\n"
+            "  · 寻路网格数据 (WarWay.dat)\n"
+            "  · 地图可视化预览\n\n"
+            "特性:\n"
+            "  · 32×32 网格地图可视化\n"
+            "  · 深色/浅色主题切换")
 
     def _build_warway_diff_json(self, ref_dir):
         """构建 WarWay.dat 差异 JSON (与 ref_dir/WarWay.dat 比对)。

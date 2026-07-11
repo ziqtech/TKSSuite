@@ -1851,19 +1851,21 @@ class SaveEditorApp(QMainWindow):
             b = text.encode('big5', errors='replace')
         return b[:size - 1].ljust(size, b'\x00')[:size]
 
+    # 逆向参考: sub_410ED4(SaveTKMat), sub_41103C(LoadTKMat), sub_41CE10(SaveIndexWrite),
+    # sub_40EBD4(事件脚本处理器), sub_40CB08/40CB4C(标志设置/累加)
     def _show_about(self):
         QMessageBox.about(self, "关于",
             "TKS 存档编辑器 v2.0 (PySide6)\n\n"
-            "基于《三国群侠传》 TKS.exe 反编译\n"
-            "存档格式: 2帧LZSS压缩\n"
-            "  Frame1: 2304000B TKMat实体表\n"
-            "  Frame2: 3432B全局 + 5768B背包 + WarPC角色\n\n"
-            "核心逆向函数:\n"
-            "  sub_410ED4  SaveTKMat\n"
-            "  sub_41103C  LoadTKMat\n"
-            "  sub_41CE10  SaveIndexWrite\n"
-            "  sub_40EBD4  事件脚本处理器\n"
-            "  sub_40CB08/40CB4C  标志设置/累加")
+            "功能: 编辑《三国群侠传》游戏存档\n"
+            "存档采用 LZSS 压缩格式, 包含以下数据:\n"
+            "  · 场景实体表 (TKMat)\n"
+            "  · 全局游戏变量\n"
+            "  · 背包物品数据\n"
+            "  · 战斗角色信息\n\n"
+            "特性:\n"
+            "  · 自动解压/压缩存档\n"
+            "  · 可视化编辑存档数据\n"
+            "  · 深色/浅色主题切换")
 
     def closeEvent(self, event):
         if not confirm_close(self, self._dirty):

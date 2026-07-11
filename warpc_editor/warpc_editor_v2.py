@@ -214,26 +214,26 @@ SKILL_LEARN_STATES = ["0-不会","1-等待学","10-可以学","20-组技能学�
 
 # 核心字段 — 已验证 (格式: key, offset, label, comment)
 IDENTITY_FIELDS = [
-    ("name_id",    0,  "名称TKT ID",  "角色名称 → TKT.dat (sub_4067E8)"),
+    ("name_id",    0,  "名称TKT ID",  "角色名称 → TKT.dat"),  # sub_4067E8
     ("portrait",   2,  "头像索引",    "头像索引 ×2 = Fa.JVG 大幅图, ×2+1 = 缩略图"),
     ("level",      4,  "等级",        "角色等级 (数值显示)"),
-    ("role",       6,  "身份",        "-1=未激活 0=已激活(sub_410674 L40入队时置0)"),
+    ("role",       6,  "身份",        "-1=未激活 0=已激活(入队时置0)"),  # sub_410674 L40
     ("exp_to_next", 8,  "升级所需经验","升至下一级所需经验; 绝大多数角色=100, BOSS版较高(呂布5092 張角7292)"),
 ]
 # 补丁专用字段 [260]-[263] — 配合运行时补丁使用; 0=使用原硬编码公式
 PATCH_FIELDS = [
     ("awk_sprite_id", 520, "战场图集索引（补丁专用）", "战斗中Awk.JVG/Awt.JVG块号; 0=使用原硬编码公式(PATH1:WarPC索引+6, PATH2:WarPC记录号+12); 非0=补丁直接使用此值"),
     ("portrait_menu_id", 522, "队伍头像ID（补丁专用）", "队伍菜单Mu.JVG精灵块号; 0=使用原公式(portrait+211); 非0=直接使用此值"),
-    ("history_text_id", 524, "历史文本ID（补丁专用）", "角色界面「历史」标签页TKT文本ID; 0=使用原公式(9050+角色序号); 替代sub_41A080:104"),
-    ("entity_link", 526, "地图实体ID",  "离队后在地图上显示的NPC实体ID → TKMat.dat; sub_41EEC0→sub_40C648"),
+    ("history_text_id", 524, "历史文本ID（补丁专用）", "角色界面「历史」标签页TKT文本ID; 0=使用原公式(9050+角色序号)"),  # sub_41A080:104
+    ("entity_link", 526, "地图实体ID",  "离队后在地图上显示的NPC实体ID → TKMat.dat"),  # sub_41EEC0 → sub_40C648
 ]
 HPMP_FIELDS = [
     ("cur_hp",    10,  "当前HP",      "当前生命值 (cap at hp_max)"),
     ("cur_mp",    12,  "当前MP",      "当前内力值 (cap at mp_max)"),
     ("hp_base",   14,  "HP基础",      "HP基础值"),
-    ("hp_max",    16,  "HP上限",      "HP上限 (基础+装备; sub_42234C)"),
+    ("hp_max",    16,  "HP上限",      "HP上限 (基础+装备)"),  # sub_42234C
     ("mp_base",   18,  "MP基础",      "MP基础值"),
-    ("mp_max",    20,  "MP上限",      "MP上限 (基础+装备; sub_42234C)"),
+    ("mp_max",    20,  "MP上限",      "MP上限 (基础+装备)"),  # sub_42234C
 ]
 
 STAT_NAMES_CN = ["攻击","防御","命中","闪避","速度","幸运","移动","悟性"]
@@ -243,46 +243,46 @@ STAT_BASE_OFFSETS = [22, 26, 30, 34, 38, 42, 46, 50]
 STAT_FIELDS = []
 for i, (n, s, bo) in enumerate(zip(STAT_NAMES_CN, STAT_SHORTS, STAT_BASE_OFFSETS)):
     STAT_FIELDS.append((f"{s}_base", bo, f"{n}(基础)",
-                        f"{n}基础值 (sub_42234C: a2[{11+i*2}] initial)"))
+                        f"{n}基础值"))  # sub_42234C: a2[{11+i*2}]
     STAT_FIELDS.append((f"{s}_cur", bo+2, f"{n}(当前)",
-                        f"{n}当前值 (基础+装备; sub_42234C L63-70 a2[{12+i*2}]+=v9[{11+i}])"))
+                        f"{n}当前值 (基础+装备)"))  # sub_42234C L63-70 a2[{12+i*2}]+=v9[{11+i}]
 
 # 技能加成区 [32]-[40] — sub_422BBC 应用 TKSkill 效果, sub_42234C 初始化
 SKILL_BONUS_FIELDS = [
-    ("atk_count",   64,  "攻击次数",       "攻击次数 (sub_42234C=1; sub_422BBC L29: a2[32]+=v6[31]=TKSkill增攻次)"),
-    ("special_flag",66,  "特殊能力标志",   "来自装备 TKItem[20] (sub_42234C L73: a2[33]|=v9[20])"),
-    ("mp_reduce",   68,  "内力消耗减少%",  "内息百分比 来自主动技能 TKSkill[33] (sub_422BBC L29: a2[34]+=v6[33])"),
-    ("magic_def",   70,  "所受法伤减少%",  "抗魔百分比 来自主动技能 TKSkill[38] (sub_422BBC L45: a2[35]+=v6[38])"),
-    ("exp_bonus",   72,  "战斗经验增加%",  "鬼才百分比 来自主动技能 TKSkill[36] (sub_422BBC L43: a2[36]+=v6[36])"),
-    ("jp_bonus",    74,  "战斗技能点增加%","天才百分比 来自主动技能 TKSkill[37] (sub_422BBC L44: a2[37]+=v6[37])"),
-    ("move_flags",  76,  "移动特殊标志",   "来自移动技能 TKSkill[32] (sub_422BBC L124: a2[38]|=v6[32])"),
-    ("heal_move",   78,  "移动恢复生命%",  "自愈百分比 来自移动技能 TKSkill[22] (sub_422BBC L125: a2[39]+=v6[22])"),
-    ("mp_move",     80,  "移动恢复内力%",  "回气百分比 来自移动技能 TKSkill[24] (sub_422BBC L126: a2[40]+=v6[24])"),
+    ("atk_count",   64,  "攻击次数",       "攻击次数 (含TKSkill增加的攻击次数)"),  # sub_42234C=1; sub_422BBC L29: a2[32]+=v6[31]
+    ("special_flag",66,  "特殊能力标志",   "来自装备 TKItem[20]"),  # sub_42234C L73: a2[33]|=v9[20]
+    ("mp_reduce",   68,  "内力消耗减少%",  "内息百分比 来自主动技能 TKSkill[33]"),  # sub_422BBC L29: a2[34]+=v6[33]
+    ("magic_def",   70,  "所受法伤减少%",  "抗魔百分比 来自主动技能 TKSkill[38]"),  # sub_422BBC L45: a2[35]+=v6[38]
+    ("exp_bonus",   72,  "战斗经验增加%",  "鬼才百分比 来自主动技能 TKSkill[36]"),  # sub_422BBC L43: a2[36]+=v6[36]
+    ("jp_bonus",    74,  "战斗技能点增加%","天才百分比 来自主动技能 TKSkill[37]"),  # sub_422BBC L44: a2[37]+=v6[37]
+    ("move_flags",  76,  "移动特殊标志",   "来自移动技能 TKSkill[32]"),  # sub_422BBC L124: a2[38]|=v6[32]
+    ("heal_move",   78,  "移动恢复生命%",  "自愈百分比 来自移动技能 TKSkill[22]"),  # sub_422BBC L125: a2[39]+=v6[22]
+    ("mp_move",     80,  "移动恢复内力%",  "回气百分比 来自移动技能 TKSkill[24]"),  # sub_422BBC L126: a2[40]+=v6[24]
 ]
 # 角色五维 [27]-[31] — 曹操验证: 智慧5 仁德-1 勇气10 医术0 技能点数400
 CHAR_ATTR_FIELDS = [
     ("wisdom",      54,  "智慧",        "智慧值 (曹操=5 司马懿=20)"),
     ("benevolence", 56,  "仁德",        "仁德值 (曹操=-1 司马懿=-5)"),
     ("courage",     58,  "勇气",        "勇气值 (曹操=10 司马懿=0)"),
-    ("medicine",    60,  "医术",        "医术值 (曹操=0 司马懿=10; sub_40E11C case4→word_75688A capped 100)"),
-    ("jp_total",    62,  "技能点数",    "累计技能点数 (曹操=400 司马懿=300; r=0.992与等级相关; sub_422A5C入队累加)"),
+    ("medicine",    60,  "医术",        "医术值 (曹操=0 司马懿=10; 上限100)"),  # sub_40E11C case4→word_75688A
+    ("jp_total",    62,  "技能点数",    "累计技能点数 (曹操=400 司马懿=300; 与等级相关)"),  # sub_422A5C 入队累加
 ]
 # 反应组 [41]-[42] — 运行时字段, sub_422BBC type=2 写入, sub_42234C 初始化为0
 REACTION_FIELDS = [
-    ("reaction_group",  82,  "反应组",   "被动技能反应组编号 1-10 (sub_422BBC type=2; 初始化=0)"),
-    ("reaction_trigger",84,  "触发概率", "被动技能触发概率 %%, 来自 TKSkill[44] (sub_422BBC: a2[42]=v6[44])"),
+    ("reaction_group",  82,  "反应组",   "被动技能反应组编号 1-10 (初始化=0)"),  # sub_422BBC type=2
+    ("reaction_trigger",84,  "触发概率", "被动技能触发概率 %%, 来自 TKSkill[44]"),  # sub_422BBC: a2[42]=v6[44]
 ]
 REACTION_GROUP_VALUES = ["0-无","1-近戰反擊","2-遠程反擊","3-法術反彈","4-先發制人","5-時序回饋","6-損傷賠償","7-環境探索","8-國色天香","9-有福同享","10-國士無雙"]
 
 # 身上状态槽 [43]-[50] — sub_41E40C 验证: 8个状态效果槽, 每槽(status_id:byte, duration:byte)
 STATUS_SLOT_FIELDS = [
     (f"status_slot{i}", 86+i*2, f"状态槽{i}",
-     f"身上状态效果槽{i} (sub_41E40C: v8+{i*2}); 低字节=状态ID(1-32) 高字节=持续回合")
+     f"身上状态效果槽{i}; 低字节=状态ID(1-32) 高字节=持续回合")  # sub_41E40C: v8+{i*2}
     for i in range(8)
 ]
 
 EQUIP_FIELDS = [
-    ("equip_idx0", 138, "装备索引0",   "运行时装备索引缓存 (sub_4173F8 计算)"),
+    ("equip_idx0", 138, "装备索引0",   "运行时装备索引缓存"),  # sub_4173F8
     ("equip_idx1", 140, "装备索引1",   "运行时装备索引缓存"),
     ("equip_idx2", 142, "装备索引2",   "运行时装备索引缓存"),
     ("equip_idx3", 144, "装备索引3",   "运行时装备索引缓存"),
@@ -294,12 +294,12 @@ EQUIP_FIELDS = [
 # 装备技能 [82]-[87] — Maker Frm_WarPC 暴露, sub_42234C/sub_422BBC 应用
 # 周倉 验证: [82]=43武術 [83]=83輔助 [84]=273二連擊 [85]=279無隙1 [86]=303近戰反擊1 [87]=334飄浮
 EQUIP_SKILL_FIELDS = [
-    ("equip_skill0", 164, "装备技能0", "装备技能槽0 → TKSkill (sub_42234C v4 loop)"),
+    ("equip_skill0", 164, "装备技能0", "装备技能槽0 → TKSkill"),  # sub_42234C v4 loop
     ("equip_skill1", 166, "装备技能1", "装备技能槽1 → TKSkill"),
-    ("equip_skill2", 168, "装备技能2", "装备技能槽2 → TKSkill (sub_42234C: a2[84])"),
-    ("equip_skill3", 170, "装备技能3", "装备技能槽3 → TKSkill (sub_42234C: a2[85])"),
-    ("passive1",     172, "被动技能1", "被动技能1 → TKSkill (sub_422BBC)"),
-    ("passive2",     174, "被动技能2", "被动技能2 → TKSkill (sub_422BBC)"),
+    ("equip_skill2", 168, "装备技能2", "装备技能槽2 → TKSkill"),  # sub_42234C: a2[84]
+    ("equip_skill3", 170, "装备技能3", "装备技能槽3 → TKSkill"),  # sub_42234C: a2[85]
+    ("passive1",     172, "被动技能1", "被动技能1 → TKSkill"),  # sub_422BBC
+    ("passive2",     174, "被动技能2", "被动技能2 → TKSkill"),  # sub_422BBC
 ]
 # 角色使用/装备权限 [77]-[81] — sub_41928C: 按位与校验
 CHAR_USE_RIGHT_FIELDS = [
@@ -655,34 +655,37 @@ class TkkonPickerDialog(QDialog):
             self.selected_id = int(self.table.item(sel[0].row(), 0).text())
             self.accept()
 
+# 逆向参考函数: sub_42234C(装备/技能/属性应用), sub_41E40C(物品使用效果),
+# sub_422BBC(被动技能效果), sub_4173F8(装备索引匹配), sub_45343C(DAT加载),
+# sub_452B14(LZSS解压), sub_4307CC/sub_435D68(技能动画映射)
 class FieldRefDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("字段参考 v2.0 (逆向来源)")
+        self.setWindowTitle("字段参考 v2.0")
         self.resize(700, 600)
         layout = QVBoxLayout(self)
         text = QTextEdit()
         text.setReadOnly(True)
         text.setFont(QFont("Consolas", 9))
-        lines = ["WarPC.dat 字段映射 (反编译依据):", ""]
+        lines = ["WarPC.dat 字段说明:", ""]
         cnt = WARPC_ORIG_COUNT
         lines.append(f"【记录布局】{cnt} 角色 × {WARPC_REC} 字节 = {cnt*WARPC_REC} 字节")
         lines.append(f"  原游戏 143 角色 ({WARPC_ORIG_SIZE} 字节), 编辑器支持动态扩展")
-        lines.append(f"  {WARPC_FIELD_COUNT} × int16 (小端序) 共 {WARPC_REC} 字节/角色")
+        lines.append(f"  每条记录 {WARPC_FIELD_COUNT} 个字段 × 16位整数 = {WARPC_REC} 字节")
         lines.append("")
-        lines.append("【已验证字段 (反编译直接引用)】")
+        lines.append("【已验证字段】")
         for title, fields in [
             ("基本信息 [0]-[4]", IDENTITY_FIELDS), ("HP/MP [5]-[10]", HPMP_FIELDS),
             ("八属性 [11]-[26] (攻击/防御/命中/闪避/速度/幸运/悟性/移动)", STAT_FIELDS),
             ("角色五维 [27]-[31]", CHAR_ATTR_FIELDS),
-            ("技能加成 [32]-[40] (sub_422BBC TKSkill效果验证)", SKILL_BONUS_FIELDS),
+            ("技能加成 [32]-[40] (技能效果验证)", SKILL_BONUS_FIELDS),
             ("反应组 [41]-[42]", REACTION_FIELDS),
             ("身上状态 [43]-[50]", STATUS_SLOT_FIELDS),
             ("状态抵抗 [51]-[66] (32状态×1byte)", []),
-            ("攻击导致状态 [67]-[68] (sub_42234C L94-95; 来自装备)", STATUS_FIELDS_CAUSE),
+            ("攻击导致状态 [67]-[68] (来自装备)", STATUS_FIELDS_CAUSE),
             ("装备索引 [69]-[72]", EQUIP_FIELDS[:4]), ("装备ID [73]-[76]", EQUIP_FIELDS[4:]),
             ("使用/装备权限 [77]-[81]", CHAR_USE_RIGHT_FIELDS),
-            ("装备技能 [82]-[87] (Maker验证: 周倉)", EQUIP_SKILL_FIELDS),
+            ("装备技能 [82]-[87] (已验证: 周倉)", EQUIP_SKILL_FIELDS),
             ("补丁专用字段 [260]-[263]", PATCH_FIELDS),
             ("成长率 [264]-[266]", GROWTH_FIELDS),
             ("战后奖励 [268]-[269]", BATTLE_REWARD_FIELDS),
@@ -695,22 +698,19 @@ class FieldRefDialog(QDialog):
                 lines.append(f"  [{fo//2:3d}] bo={fo:4d} {fl:<14s} {cmt}")
         lines.append("")
         lines.append("【技能学习状态】")
-        lines.append(f"  [88-259] 反编译验证: 不会/等待学(1~9进展累积)/可以学(≥10)/父技学会(20)/独立技学会(30)")
+        lines.append(f"  [88-259] 技能学习状态说明: 不会/等待学(1~9进展累积)/可以学(≥10)/父技学会(20)/独立技学会(30)")
         lines.append(f"  344技能×1byte (TKSkill #0-#343), 存储在172个int16的高低字节中")
         lines.append("")
         lines.append("【技能效果判定】")
-        lines.append(f"  [273]-[273+count-1] sub_4307CC/sub_435D68 验证: 技能→TKKon动画映射表")
+        lines.append(f"  [273]-[273+count-1] 技能与动画对应: 技能→TKKon动画映射表")
         lines.append(f"  全部type=0指令技能(末尾为普通攻击); 每字段=int16 TKKon ID (0~649)")
         lines.append("")
-        lines.append("【核心反编译函数】")
-        for s in ["sub_42234C 装备/技能/属性应用 (字段 [5-10]/[11-26]/[32-42]/[67-72]/[86-87])",
-                  "sub_41E40C 物品使用效果",
-                  "sub_422768 角色初始化",
-                  "sub_422BBC 被动技能效果计算",
-                  "sub_4173F8 装备ID→索引匹配 ([69-72]←[73-76])",
-                  "sub_45343C DAT 文件统一加载",
-                  "sub_452B14 LZSS 解压引擎"]:
-            lines.append(f"  {s}")
+        lines.append("【功能说明】")
+        lines.append("  Tab 1: 核心属性 (生命/攻防/速度等)")
+        lines.append("  Tab 2: 装备与技能配置")
+        lines.append("  Tab 3: 技能学习进度 (0=未学, 1~9=学习中, ≥10=已学会)")
+        lines.append("  Tab 4: 技能效果判定")
+        lines.append("  Tab 5: 全部字段总览")
         text.setPlainText('\n'.join(lines))
         layout.addWidget(text)
         bl = QHBoxLayout()
@@ -1061,7 +1061,7 @@ class GrowthTableDialog(QDialog):
         if grp > 0:
             cap = self.STAT_CAP_HPMP_ENEMY
             self._grp_formula_lbl.setText(
-                f"<b>grp={grp}</b> (sub_4302D8): "
+                f"<b>grp={grp}</b>: "
                 f"★列 = 成长值 + grp加成  "
                 f"HP×{grp+1}(cap {cap})  MP+{grp}×MP/4  "
                 f"ATK/DEF+{grp}/8  HIT/EVA+{grp}/12  SPD+{grp}×Lv/10")
@@ -1251,7 +1251,7 @@ class WarpcEditorV2(QMainWindow):
         am.addAction("成长数据表 (1-60级)", self._show_growth_table)
 
         hm = mb.addMenu("帮助(&H)")
-        hm.addAction("字段参考 (逆向来源)", self._show_field_ref)
+        hm.addAction("字段参考", self._show_field_ref)
         hm.addAction("关于", self._show_about)
 
         # 工具栏
@@ -3057,27 +3057,17 @@ class WarpcEditorV2(QMainWindow):
     def _show_field_ref(self):
         FieldRefDialog(self).exec()
 
+    # 逆向参考: sub_42234C, sub_41E40C, sub_422BBC, sub_4173F8, sub_45343C, sub_452B14
     def _show_about(self):
         cnt = len(self.records) if self.records else WARPC_ORIG_COUNT
         themed_messagebox(self, QMessageBox.Information, "关于",
-            f"WarPC.dat 可视化编辑器 v2.0 (PySide6)\n\n"
-            f"基于《三国群侠传》 TKS.exe 反编译\n"
-            f"{cnt} 角色 × {WARPC_REC} 字节 ({WARPC_FIELD_COUNT}×int16)\n"
-            f"原游戏: {WARPC_ORIG_COUNT} 角色 ({WARPC_ORIG_SIZE} 字节), 支持动态扩展\n\n"
-            f"Godot 4.6 风格 UI · FakeInputBox · 深/浅色主题切换\n\n"
-            f"逆向依据:\n"
-            f"  sub_42234C  装备/技能/属性应用\n"
-            f"  sub_41E40C  物品使用效果\n"
-            f"  sub_422BBC  被动技能效果计算\n"
-            f"  sub_4173F8  装备索引匹配\n"
-            f"  sub_45343C  DAT 统一加载\n"
-            f"  sub_452B14  LZSS 解压引擎\n\n"
-            f"Tab 分区 (按字段索引顺序):\n"
-            f"  Tab 1: 核心属性 [0]-[68]\n"
-            f"  Tab 2: 装备与技能 [69]-[87] + [260]-[272]\n"
-            f"  Tab 3: 技能学习状态 [88]-[259]\n"
-            f"  Tab 4: 技能效果判定 [273]+\n"
-            f"  Tab 5: 全部字段 (raw grid)")
+            f"WarPC.dat 战斗角色编辑器 v2.0 (PySide6)\n\n"
+            f"功能: 编辑《三国群侠传》战斗角色数据\n"
+            f"数据: {cnt} 角色 × {WARPC_REC} 字节 (原游戏 {WARPC_ORIG_COUNT} 角色, 支持动态扩展)\n\n"
+            f"特性:\n"
+            f"  · Godot 风格深/浅色主题切换\n"
+            f"  · 分页编辑: 核心属性 / 装备技能 / 技能学习 / 效果判定 / 全部字段\n"
+            f"  · 自动关联 TKItem.dat 显示物品名称")
 
     def closeEvent(self, event):
         if not confirm_close(self, self._dirty):

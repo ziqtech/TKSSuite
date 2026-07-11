@@ -389,7 +389,7 @@ LAYER_TYPE_LABELS = {
     1: "1 角色攻击动作 (Aa.jvg, 攻击者位置)",
     2: "2 技能攻击特效 (Af.jvg, 攻击者位置)",
     3: "3 受击特效     (Af.jvg, 受击方位置)",
-    4: "4 命中锚点坐标 (sub_42F9C8, 不渲染)",
+    4: "4 命中锚点坐标 (不渲染)",  # sub_42F9C8
     5: "5 全屏特效     (屏幕中心 320,300)",
 }
 
@@ -461,34 +461,34 @@ def infer_jvg_layout(n_frames):
 FIELD_GROUPS = [
     ("来源", [
         ("layer_type",       0,  "类型",       W_INPUT,
-         "sub_4434BC: *(_WORD*)(+0)\n"
-         "  ==1 → Aa.jvg (dword_951924, 主角动作库)\n"
-         "  !=1 → Af.jvg (dword_951930, 特效/物件库)\n"
-         "  渲染阶段: <3 主段 / ==3 延迟段 / ==4 锚点 / ==5 结束"),
+         "图层类型\n"
+         "  1 → 主角动作库 (Aa.jvg)\n"
+         "  其他 → 特效/物件库 (Af.jvg)\n"
+         "  渲染阶段: <3 主段 / 3 延迟段 / 4 锚点 / 5 结束"),  # sub_4434BC: *(_WORD*)(+0)
         ("jvg_block_index",  1,  "JVG 块号",    W_INPUT,
-         "sub_4434BC: *(_WORD*)(+2) → sub_45410C 查表"),
+         "JVG 资源块编号"),  # sub_4434BC: +2 → sub_45410C
     ]),
     ("帧范围", [
         ("first_frame",      17, "起始帧",     W_INPUT,
-         "sub_4434BC L595: *(_WORD*)(+34)  动画起始帧号"),
+         "动画起始帧号"),  # sub_4434BC L595: +34
         ("last_frame",       18, "终止帧",     W_INPUT,
-         "sub_4434BC L593: *(_WORD*)(+36)  到达即触发循环/停止"),
+         "动画终止帧号 (到达后触发循环或停止)"),  # sub_4434BC L593: +36
         ("loop_behavior",    19, "循环行为",   W_INPUT,
-         "sub_4434BC L603: *(_WORD*)(+38)  -1 循环/-2 停止/≥0 跳帧"),
+         "循环行为: -1 循环 / -2 停止 / ≥0 跳帧"),  # sub_4434BC L603: +38
     ]),
     ("时序 ★", [
         ("tick_interval",    21, "帧停留 tick ★", W_INPUT,
-         "sub_4434BC L574: if(counter>=+42) 翻下一帧"),
+         "帧停留 tick 数 (计数器达到此值时翻到下一帧)"),  # sub_4434BC L574: +42
         ("start_delay",      22, "启动延迟 ★",    W_INPUT,
-         "sub_4434BC L248/L566: !*(+44) 才递增, --*(+44)"),
+         "启动延迟 (非0时等待递减至0才开始)"),  # sub_4434BC L248/L566: +44
     ]),
     ("渲染", [
         ("blend_mode",       11, "混合模式",   W_INPUT,
-         "sub_4434BC L320-339: switch(+22) → 6 种渲染"),
+         "混合模式 (6种渲染方式)"),  # sub_4434BC L320-339: +22
         ("blend_param",      12, "混合参数",   W_INPUT,
-         "sub_4434BC: *(_WORD*)(+24)  颜色/alpha/随机种等"),
+         "混合参数 (颜色/透明度/随机种等)"),  # sub_4434BC: +24
         ("blend_param_step", 13, "混合参数步进", W_INPUT,
-         "sub_4434BC L613: *(+24) += *(+26)  每翻帧的累加量"),
+         "混合参数步进 (每翻帧的累加量)"),  # sub_4434BC L613: +26
     ]),
     ("位移 (方向 0~3)", [
         ("x_off_d0",         3,  "X₀", W_INPUT_S, "方向0 的 X 偏移"),
@@ -502,25 +502,25 @@ FIELD_GROUPS = [
     ]),
     ("方向感知", [
         ("direction_mode",   2,  "方向模式",   W_INPUT,
-         "sub_4434BC L308: if(+4==4) 随朝向变 else 固定方向0"),
+         "方向模式: 4=随朝向变化 / 其他=固定方向0"),  # sub_4434BC L308: +4
         ("dir_frame_offset", 16, "方向帧偏移", W_INPUT,
-         "sub_4434BC L309: v35 += +32 × v33"),
+         "方向帧偏移 (按朝向偏移帧号)"),  # sub_4434BC L309: +32
     ]),
     ("自动移动", [
         ("move_mode",        25, "移动模式",   W_INPUT,
-         "sub_4434BC L577-591: +50 == 1 跟随 / == 2 四方往返"),
+         "移动模式: 1=跟随 / 2=四方往返"),  # sub_4434BC L577-591: +50
         ("step_value",       26, "步进值",     W_INPUT_S, ""),
         ("step_delta",       27, "步进增量",   W_INPUT_S, ""),
     ]),
     ("运行时 (只读, 文件=0)", [
-        ("_rt_frame_base",   14, "帧基址",     W_INPUT_S, "sub_4434BC: +28"),
-        ("_rt_cur_frame",    15, "当前帧",     W_INPUT_S, "sub_4434BC: +30"),
+        ("_rt_frame_base",   14, "帧基址",     W_INPUT_S, "帧基址 (运行时)"),  # sub_4434BC: +28
+        ("_rt_cur_frame",    15, "当前帧",     W_INPUT_S, "当前帧 (运行时)"),  # sub_4434BC: +30
         ("_rt_20",           20, "RT20",       W_INPUT_S, "运行时"),
-        ("_rt_counter",      23, "RT 计数",    W_INPUT_S, "sub_4434BC: *(+46)"),
-        ("_rt_dir_sign",     24, "RT 方向符",  W_INPUT_S, "sub_4434BC: +48"),
+        ("_rt_counter",      23, "RT 计数",    W_INPUT_S, "RT 计数 (运行时)"),  # sub_4434BC: +46
+        ("_rt_dir_sign",     24, "RT 方向符",  W_INPUT_S, "RT 方向符 (运行时)"),  # sub_4434BC: +48
     ]),
     ("保留 / 未知", [
-        (f"_res_{i}", i, f"[{i}]", W_INPUT_S, f"int16[{i}] 未在 sub_4434BC 中引用")
+        (f"_res_{i}", i, f"[{i}]", W_INPUT_S, f"int16[{i}] 保留字段 (未使用)")  # sub_4434BC 未引用
         for i in range(28, 40)
     ]),
 ]
@@ -1726,7 +1726,7 @@ class ActEditorV2(QMainWindow):
         em.addAction("清空当前条目", self._clear_entry)
 
         hm = mb.addMenu("帮助(&H)")
-        hm.addAction("字段参考 (逆向来源)", self._show_field_ref)
+        hm.addAction("字段参考", self._show_field_ref)
         hm.addAction("关于", self._show_about)
 
         # 快捷键
@@ -4268,9 +4268,10 @@ class ActEditorV2(QMainWindow):
 
     # ── 帮助 ──
 
+    # 逆向参考: sub_4434BC (动画运行时核心函数)
     def _show_field_ref(self):
         dlg = QDialog(self)
-        dlg.setWindowTitle("字段参考 (反编译来源)")
+        dlg.setWindowTitle("字段参考")
         dlg.resize(760, 640)
 
         layout = QVBoxLayout(dlg)
@@ -4279,7 +4280,7 @@ class ActEditorV2(QMainWindow):
         text.setFont(QFont("Consolas", 9))
 
         lines = [
-            "TKAct.dat 字段语义 v3.0 (基于 sub_4434BC 反编译)",
+            "TKAct.dat 字段说明 v3.0",
             "",
             f"【文件结构】{ACT_ENTRY_COUNT} 条 × {ACT_ENTRY_SIZE} 字节 = {ACT_DECOMPRESSED} 字节",
             "  每条 = 方向表[32B] + 条目级参数[48B] + 8图层×80B + 尾部[64B]",
@@ -4308,19 +4309,23 @@ class ActEditorV2(QMainWindow):
         layout.addLayout(bl)
         dlg.exec()
 
+    # 逆向参考: sub_4434BC, sub_42FEE0, sub_451780, sub_458D08
     def _show_about(self):
         themed_messagebox(self, QMessageBox.Information, "关于",
-            "TKAct.dat 多图层 2D 精灵动画编辑器 v3.0 (PySide6)\n\n"
-            "修订依据:\n"
-            "  · sub_4434BC / sub_42FEE0 / sub_451780 / sub_458D08 反编译\n\n"
-            "650 条 × 784 字节 = 509,600 字节\n\n"
-            "v3.0: PySide6 UI 重写, 深色/浅色主题切换\n"
-            "v2.4.4: mode=3/4 修正 (减法钳0 / 亮度alpha-blend)\n"
-            "v2.4.3: mode=2 修正为加法饱和混合\n"
-            "v2.4.1: 预览 PIL 合成修复黑底问题\n"
-            "v2.4: layer_type 精细化 + 6 种混合模式\n"
-            "v2.3: 音效触发表 + SWS.GRP 实时播放\n"
-            "v2.2: 贴图源 Aa.jvg / Af.jvg 修正")
+            "TKAct.dat 精灵动画编辑器 v3.0 (PySide6)\n\n"
+            "功能: 编辑《三国群侠传》角色动画数据\n"
+            "数据: 650 条 × 784 字节 = 509,600 字节\n\n"
+            "特性:\n"
+            "  · 多图层 2D 精灵动画编辑\n"
+            "  · 6 种图像混合模式\n"
+            "  · 实时动画预览\n"
+            "  · 音效触发表编辑\n"
+            "  · 深色/浅色主题切换\n\n"
+            "版本历史:\n"
+            "  v3.0: PySide6 UI 重写, 主题切换\n"
+            "  v2.4: 混合模式精细化修正\n"
+            "  v2.3: 音效触发表 + SWS.GRP 实时播放\n"
+            "  v2.2: 贴图源修正")
 
     # ── 窗口关闭 ──
 
