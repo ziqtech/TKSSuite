@@ -873,7 +873,7 @@ class JVGEditor(QMainWindow):
         tb_layout.addSpacing(10)
         self._greenscreen_remove = QCheckBox("预览去绿幕")
         self._greenscreen_remove.setChecked(True)
-        self._greenscreen_remove.stateChanged.connect(partial(self._refresh_view))
+        self._greenscreen_remove.stateChanged.connect(self._refresh_view)
         tb_layout.addWidget(self._greenscreen_remove)
         tb_layout.addSpacing(10)
         tb_layout.addWidget(QLabel("速度:"))
@@ -946,12 +946,12 @@ class JVGEditor(QMainWindow):
         self._tile_cols = QSpinBox()
         self._tile_cols.setRange(0, 32)
         self._tile_cols.setValue(0)
-        self._tile_cols.valueChanged.connect(partial(self._refresh_view))
+        self._tile_cols.valueChanged.connect(self._refresh_view)
         layout_form.addRow("平铺列数:", self._tile_cols)
         self._padding = QSpinBox()
         self._padding.setRange(0, 16)
         self._padding.setValue(1)
-        self._padding.valueChanged.connect(partial(self._refresh_view))
+        self._padding.valueChanged.connect(self._refresh_view)
         layout_form.addRow("导出间距:", self._padding)
         btn_theme = QPushButton("🌗 切换主题")
         btn_theme.clicked.connect(self._toggle_theme)
@@ -1814,7 +1814,7 @@ class JVGEditor(QMainWindow):
             f"来源状态: {'[临时外挂导入区]' if is_import else '[底层封存区]'}"
         )
 
-    def _refresh_view(self):
+    def _refresh_view(self, *_):
         # 清除场景
         self._scene.clear()
         self._photos.clear()

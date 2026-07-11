@@ -770,9 +770,10 @@ class TktEditor(QMainWindow):
         self._dirty = False
         self._current_idx = None
 
-        # 用于在加载文件时记录未受污染的原始文本状态，格式为 { (ID, 文本) } 元组集合
-        # 使用 set 而非 dict，彻底免疫原版文件中重复 ID（废弃数据）导致的快照覆盖误判
-        self.original_entry_snapshot = set()
+        # 用于在加载文件时记录未受污染的原始文本状态，格式为 { ID: 文本 } 字典
+        # 必须与 current_entries 的构造方式（按 entries 顺序、后写覆盖）保持一致，
+        # 否则原版文件中重复 ID 会导致两边 dict 取到不同文本，产生伪差异
+        self.original_entry_snapshot = {}
 
         self._zoom_level = 150
         self._sort_col = -1
@@ -1174,9 +1175,7 @@ class TktEditor(QMainWindow):
             self.tkt_path = path
             self._rebuild_id_map()
 
-            self.original_entry_snapshot.clear()
-            for entry in self.entries:
-                self.original_entry_snapshot.add((entry['id'], entry['text']))
+            self.original_entry_snapshot = {entry['id']: entry['text'] for entry in self.entries}
 
             font_path = os.path.join(os.path.dirname(path), "FONT9696")
             if HAS_PIL and os.path.exists(font_path):
@@ -1280,7 +1279,7 @@ class TktEditor(QMainWindow):
                 QMessageBox.warning(self, "参考目录无效", f"在 {ref_dir} 中未找到 TKT.dat")
                 return
         else:
-            ref_entries = {eid: text for eid, text in self.original_entry_snapshot}
+            ref_entries = dict(self.original_entry_snapshot)
 
         # MOD 元数据
         dlg = ModMetadataDialog(self, getattr(self, '_last_mod_metadata', None))
@@ -1351,7 +1350,7 @@ class TktEditor(QMainWindow):
             new_entries.append(OrderedDict([('slot', len(new_entries)), ('id', eid), ('text', entries_dict[eid])]))
 
         self.entries = new_entries
-        self.original_entry_snapshot = [(e['id'], e['text']) for e in new_entries]
+        self.original_entry_snapshot = {e['id']: e['text'] for e in new_entries}
         self._dirty = False
 
         self._last_mod_metadata = {
