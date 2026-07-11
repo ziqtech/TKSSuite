@@ -28,7 +28,7 @@ build_all.py — TKS Editors 一键构建脚本 (Nuitka)
     dist/TKSEditors/
     ├── TKSItemEditor.exe     (~5-8MB 薄 / ~40-80MB 完整)
     ├── ...
-    ├── [薄模式] PySide6.lib, QtCore.lib, ...
+    ├── libs/                 [薄模式] PySide6.lib, QtCore.lib, ...
     ├── configs/
     └── mods/
 """
@@ -83,6 +83,8 @@ BUILD_DIR = Path(__file__).parent                      # build/
 仓库根目录 = BUILD_DIR.parent                         # 
 DIST_DIR = 仓库根目录 / "dist"
 RELEASE_DIR = DIST_DIR / "TKSEditors"
+# .lib 归档统一存放于 libs/ 子目录, 与 exe 分离
+LIBS_DIR = RELEASE_DIR / "libs"
 
 
 def _build_thin_cmd(name: str, entry: str, editor_dir: str,
@@ -405,7 +407,7 @@ def build_runtime():
     print(f"\n{'='*60}")
     print(f"  构建运行时归档")
     print(f"{'='*60}")
-    cmd = [sys.executable, str(BUILD_DIR / "build_runtime.py"), "--output", str(RELEASE_DIR)]
+    cmd = [sys.executable, str(BUILD_DIR / "build_runtime.py"), "--output", str(LIBS_DIR)]
     result = subprocess.run(cmd, cwd=str(仓库根目录))
     return result.returncode == 0
 
@@ -482,6 +484,16 @@ def _generate_build_info(onefile: bool, release: bool, success: list, failed: li
                     "size": stat.st_size,
                     "md5": _md5(f),
                 })
+        # 扫描 libs/ 子目录 (.lib 归档)
+        if LIBS_DIR.exists():
+            for f in sorted(LIBS_DIR.iterdir()):
+                if f.is_file():
+                    stat = f.stat()
+                    info["files"].append({
+                        "name": f"libs/{f.name}",
+                        "size": stat.st_size,
+                        "md5": _md5(f),
+                    })
 
     info_path = RELEASE_DIR / "build_info.json"
     import json
@@ -524,9 +536,10 @@ def assemble_release(onefile: bool = False, release: bool = False,
         print(f"  [OK] {name}.exe ({size_mb:.1f} MB)")
         assembled += 1
 
-    # configs/ 和 mods/
+    # configs/ 和 mods/ 和 libs/
     (RELEASE_DIR / "configs").mkdir(exist_ok=True)
     (RELEASE_DIR / "mods").mkdir(exist_ok=True)
+    (RELEASE_DIR / "libs").mkdir(exist_ok=True)
 
     # 复制基线配置
     src_configs = 仓库根目录 / "configs"
@@ -553,6 +566,12 @@ def assemble_release(onefile: bool = False, release: bool = False,
         f.stat().st_size for f in RELEASE_DIR.iterdir()
         if f.is_file()
     )
+    # 包含 libs/ 子目录 (.lib 归档)
+    if LIBS_DIR.exists():
+        total_size += sum(
+            f.stat().st_size for f in LIBS_DIR.iterdir()
+            if f.is_file()
+        )
     print(f"\n  组装完成: {assembled} 个编辑器")
     print(f"  发行目录总大小: {total_size / (1024*1024):.1f} MB")
     print(f"  发行目录: {RELEASE_DIR}")

@@ -11,7 +11,7 @@ runtime_bootstrap.py 自动检测 .lib 格式 (zst/zip), 向后兼容。
     python build/build_runtime.py              # 构建全部归档
     python build/build_runtime.py --only QtCore  # 仅构建指定归档
 
-输出目录: dist/TKSEditors/
+输出目录: dist/TKSEditors/libs/
 """
 import argparse
 import importlib
@@ -37,6 +37,8 @@ BUILD_DIR = Path(__file__).parent
 仓库根目录 = BUILD_DIR.parent
 DIST_DIR = 仓库根目录 / "dist"
 RELEASE_DIR = DIST_DIR / "TKSEditors"
+# .lib 归档统一输出到 libs/ 子目录, 与 exe 分离
+LIBS_DIR = RELEASE_DIR / "libs"
 
 # zstd 压缩级别 (3 = 平衡压缩率与速度; 解压速度与级别无关)
 _ZSTD_LEVEL = 3
@@ -250,12 +252,12 @@ def build_archive_parallel(output_dir: Path) -> list:
 def main():
     parser = argparse.ArgumentParser(description="构建共享运行时归档")
     parser.add_argument("--only", type=str, help="仅构建指定归档 (不含扩展名)")
-    parser.add_argument("--output", type=str, help="输出目录 (默认: dist/TKSEditors/)")
+    parser.add_argument("--output", type=str, help="输出目录 (默认: dist/TKSEditors/libs/)")
     parser.add_argument("--no-parallel", action="store_true",
                         help="禁用并行构建 (串行模式, 调试用)")
     args = parser.parse_args()
 
-    output_dir = Path(args.output) if args.output else RELEASE_DIR
+    output_dir = Path(args.output) if args.output else LIBS_DIR
     output_dir.mkdir(parents=True, exist_ok=True)
 
     print("=" * 60)

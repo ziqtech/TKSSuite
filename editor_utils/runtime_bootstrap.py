@@ -10,7 +10,7 @@ runtime_bootstrap — 运行时引导加载器
 
 支持:
   - 开发环境: 自动跳过（PySide6 已在 sys.path 中）
-  - Nuitka 编译环境: 从 .lib 归档解压到 %LOCALAPPDATA%/TKSEditors/runtime/
+  - Nuitka 编译环境: 从 libs/ 子目录的 .lib 归档解压到 %LOCALAPPDATA%/TKSEditors/runtime/
   - 增量更新: 通过 mtime+size 对比, 仅解压有变化的归档
   - 格式自动检测: zstd (新) / zip (旧) 向后兼容
   - 缓存清理: 升级归档时自动删除旧版本文件, 避免残留
@@ -23,7 +23,7 @@ import zipfile
 
 
 def _detect_app_dir():
-    """检测 exe 所在的发行目录 (包含 .lib 文件的目录)。
+    """检测 exe 所在的发行目录 (包含 libs/ 子目录, 其中存放 .lib 归档)。
 
     Nuitka onefile 模式下 sys.executable 指向临时解压目录，
     需要通过其他方式定位原始 exe 所在目录。
@@ -31,18 +31,18 @@ def _detect_app_dir():
     # 方法1: Nuitka 2.0+ 提供 __nuitka_binary_dir (原始二进制所在目录)
     nuitka_dir = globals().get("__nuitka_binary_dir")
     if nuitka_dir and os.path.isdir(nuitka_dir):
-        if os.path.isfile(os.path.join(nuitka_dir, "PySide6.lib")):
+        if os.path.isfile(os.path.join(nuitka_dir, "libs", "PySide6.lib")):
             return nuitka_dir
 
     # 方法2: sys.argv[0] 通常保留原始 exe 路径
     if sys.argv and sys.argv[0]:
         argv0_dir = os.path.dirname(os.path.abspath(sys.argv[0]))
-        if os.path.isfile(os.path.join(argv0_dir, "PySide6.lib")):
+        if os.path.isfile(os.path.join(argv0_dir, "libs", "PySide6.lib")):
             return argv0_dir
 
     # 方法3: sys.executable (standalone 模式下有效)
     exe_dir = os.path.dirname(os.path.abspath(sys.executable))
-    if os.path.isfile(os.path.join(exe_dir, "PySide6.lib")):
+    if os.path.isfile(os.path.join(exe_dir, "libs", "PySide6.lib")):
         return exe_dir
 
     # 方法4: 从 sys.executable 向上查找 (兼容子目录场景)
@@ -51,7 +51,7 @@ def _detect_app_dir():
         parent = os.path.dirname(current)
         if parent == current:
             break
-        if os.path.isfile(os.path.join(parent, "PySide6.lib")):
+        if os.path.isfile(os.path.join(parent, "libs", "PySide6.lib")):
             return parent
         current = parent
 
@@ -65,6 +65,9 @@ def _detect_app_dir():
 
 # exe 所在目录 (发行目录)
 _APP_DIR = _detect_app_dir()
+
+# .lib 归档所在目录 (libs/ 子文件夹)
+_LIBS_DIR = os.path.join(_APP_DIR, "libs")
 
 
 def get_app_dir() -> str:
@@ -211,7 +214,7 @@ def bootstrap():
     # ── 检查并解压有变化的归档 ──
     updated = False
     for lib_name in _RUNTIME_LIBS:
-        lib_path = os.path.join(_APP_DIR, lib_name)
+        lib_path = os.path.join(_LIBS_DIR, lib_name)
         if not os.path.isfile(lib_path):
             continue
 
