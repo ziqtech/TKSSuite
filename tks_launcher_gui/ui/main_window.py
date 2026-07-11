@@ -2,7 +2,7 @@
 import os
 
 from PySide6.QtCore import Qt, QSize
-from PySide6.QtGui import QIcon
+from PySide6.QtGui import QAction, QIcon, QKeySequence
 from PySide6.QtWidgets import (
     QApplication, QButtonGroup, QFileDialog, QLabel, QMainWindow,
     QMessageBox, QPushButton, QRadioButton, QSplitter, QStatusBar,
@@ -13,6 +13,7 @@ from core.config_loader import PatchDef, load_config
 from core.state_persistence import GuiState, load_gui_state, save_gui_state
 from editor_utils.dock_components import DockHeader
 from editor_utils.theme_manager import ThemeManager
+from editor_utils.ui_helpers import themed_messagebox
 from editor_utils.window_theme import apply_godot_theme
 from ui.custom_avatar_dialog import CustomAvatarDialog
 from ui.game_overlay import GameOverlay
@@ -66,6 +67,7 @@ class MainWindow(QMainWindow):
         # 加载 GUI 勾选状态 (补丁/模组/辅助工具的勾选记录)
         self._gui_state: GuiState = load_gui_state(_STATE_PATH) or GuiState()
 
+        self._setup_menubar()
         self._setup_toolbar()
         self._setup_central()
         self._setup_statusbar()
@@ -75,6 +77,53 @@ class MainWindow(QMainWindow):
         self.patch_list.state_changed.connect(self._save_state)
         self.mod_list.state_changed.connect(self._save_state)
         self._tool_btn_group.buttonClicked.connect(self._save_state)
+
+    def _setup_menubar(self):
+        """顶部菜单栏 — 与其它 v2 编辑器保持一致风格"""
+        menu_bar = self.menuBar()
+
+        # 文件菜单: 启动 / 模组工具 / 退出
+        fm = menu_bar.addMenu("文件(F)")
+        fm.addAction("启动并注入…", QKeySequence("Ctrl+Return"), self._on_start)
+        fm.addSeparator()
+        fm.addAction("模组打包…", self._on_pack_mod)
+        fm.addAction("模组拆分…", self._on_split_mod)
+        fm.addAction("模组信息编辑…", self._on_edit_mod_meta)
+        fm.addAction("自定义头像…", self._on_custom_avatar)
+        fm.addSeparator()
+        fm.addAction("退出", self.close)
+
+        # 视图菜单: 主题切换
+        vm = menu_bar.addMenu("视图(V)")
+        vm.addAction("切换主题", QKeySequence("Ctrl+T"), self._toggle_theme)
+
+        # 帮助菜单: 使用说明 + 关于
+        hm = menu_bar.addMenu("帮助(H)")
+        hm.addAction("使用说明", self._show_help)
+        hm.addAction("关于", self._show_about)
+
+    def _show_help(self):
+        themed_messagebox(self, QMessageBox.Information, "使用说明",
+            "TKS Mod Launcher — 三国群侠传 MOD 启动器\n\n"
+            "1. 启动并注入 (Ctrl+Enter): 选择 TKS.exe, 启动游戏并注入勾选的补丁/模组\n"
+            "2. 左侧「补丁列表」: 勾选需要应用的二进制补丁 (来自 tks_patches.json)\n"
+            "3. 中间「模组列表」: 勾选要启用的 .tksmod 模组, 选中后下方显示模组详情\n"
+            "4. 右侧「辅助工具」: 选择需要注入的辅助工具 (如 cnc-ddraw / ddraw)\n"
+            "5. 模组打包: 将多个 .tksmod 文件打包为 .tksmodpak 合集\n"
+            "6. 模组拆分: 从 .tksmodpak 合集文件中提取原始模组\n"
+            "7. 模组信息编辑: 编辑 .tksmod 的元数据 (标题/作者/描述等)\n"
+            "8. 自定义头像: 上传图片并裁剪, 生成自定义头像 MOD\n"
+            "9. 视图 → 切换主题 (Ctrl+T): 在深色/浅色主题间切换\n\n"
+            "勾选状态会自动保存到 launcher_setting.json, 下次启动时自动恢复")
+
+    def _show_about(self):
+        themed_messagebox(self, QMessageBox.Information, "关于",
+            "TKS Mod Launcher v2.0.0 (PySide6)\n\n"
+            "三国群侠传 (TKS) MOD 启动器\n"
+            "支持二进制补丁注入、.tksmod 模组加载、辅助工具注入\n"
+            "提供模组打包/拆分/元数据编辑/自定义头像等工具\n\n"
+            "运行时基于内存补丁引擎 (runtime_patcher) 实现\n"
+            "兼容 Winlator / Wine 环境 (通过 cli_launcher.py)")
 
     def _setup_toolbar(self):
         toolbar = QToolBar()
