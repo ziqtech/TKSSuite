@@ -4,10 +4,10 @@ build_all.py — TKS Editors 一键构建脚本 (Nuitka)
 支持两种打包模式:
 
   薄 exe (默认) — 大型共享模块 (PySide6/PIL) 由 .lib 归档提供，不编译进 exe
-    python build/build_all.py                  # 构建全部薄 exe
-    python build/build_all.py --only TKSItemEditor   # 仅构建指定编辑器
+    python build/build_all.py                  # 构建运行时归档 + 全部薄 exe
+    python build/build_all.py --only TKSItemEditor   # 仅构建指定编辑器 (含归档)
     python build/build_all.py --runtime        # 仅生成运行时归档 (.lib)
-    python build/build_all.py --all            # 归档 + 全部 exe
+    python build/build_all.py --all            # 等同默认 (归档 + 全部 exe, 向后兼容)
 
   完整 exe (--onefile) — PySide6/PIL 烘焙进每个 exe，无外部 .lib 依赖
     python build/build_all.py --onefile                 # 调试模式: --lto=no --jobs=8 (快速)
@@ -648,7 +648,7 @@ def main():
     parser.add_argument("--runtime", action="store_true",
                         help="仅生成运行时归档 (仅薄模式)")
     parser.add_argument("--all", action="store_true",
-                        help="归档 + 全部 exe (仅薄模式)")
+                        help="等同默认行为 (薄模式自动构建归档+exe, 向后兼容)")
     parser.add_argument("--list", action="store_true", help="列出所有可构建编辑器")
     parser.add_argument("--no-assemble", action="store_true", help="构建后不组装发行目录")
     parser.add_argument("--verbose", action="store_true", help="详细输出")
@@ -689,7 +689,9 @@ def main():
         build_runtime()
         return
 
-    if args.all:
+    # 薄模式默认总是先构建运行时归档再打包 exe (除非 --onefile 完整模式)
+    # --all 标志向后兼容: 等同于默认薄模式行为
+    if not args.onefile:
         if not build_runtime():
             print("[ERROR] 运行时归档构建失败")
             sys.exit(1)
