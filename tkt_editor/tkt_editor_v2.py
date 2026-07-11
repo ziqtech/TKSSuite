@@ -27,7 +27,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtGui import (
     QAction, QKeySequence, QColor, QFont, QPixmap, QImage, QIcon,
-    QTextCursor, QTextDocument
+    QTextCursor, QTextDocument, QSyntaxHighlighter, QTextCharFormat
 )
 from PySide6.QtCore import Qt, QTimer, QUrl, QSize, QTranslator
 
@@ -529,6 +529,74 @@ def _unicode_to_big5_code(ch):
         pass
     return None, False
 
+# ============================================================
+# Big5 繁体中文输入校验 (游戏字体 FONT9696 基于 Big5 编码索引字形)
+# ============================================================
+def _is_big5_encodable(ch):
+    """判断字符能否被游戏 Big5 字体正确渲染
+    ASCII 字符走 WORD_4EC810 重映射，安全放行
+    CJK 字符必须能被 Big5 编码，否则游戏内会渲染乱码
+    """
+    if ord(ch) < 0x80:
+        return True
+    try:
+        ch.encode('big5')
+        return True
+    except UnicodeEncodeError:
+        return False
+
+def _find_non_big5_chars(text):
+    """扫描文本，找出所有无法用 Big5 编码的 CJK 字符
+    跳过控制标签 (<TAG,...>, <RAW,0xXX>) 和换行符
+    返回 [(char, position), ...]，position 为原始文本索引
+    """
+    bad = []
+    i = 0
+    n = len(text)
+    while i < n:
+        m = TAG_PATTERN.match(text, i)
+        if m:
+            i = m.end()
+            continue
+        if text[i] == '<' and i + 6 < n:
+            rm = re.match(r'<RAW,0x([0-9A-Fa-f]{2})>', text[i:])
+            if rm:
+                i += rm.end()
+                continue
+        ch = text[i]
+        if ch != '\n' and not _is_big5_encodable(ch):
+            bad.append((ch, i))
+        i += 1
+    return bad
+
+class Big5ValidationHighlighter(QSyntaxHighlighter):
+    """实时高亮无法被 Big5 编码的简体字（红色波浪下划线）"""
+
+    def __init__(self, document):
+        super().__init__(document)
+        self._fmt = QTextCharFormat()
+        self._fmt.setUnderlineColor(QColor("#ff4444"))
+        self._fmt.setUnderlineStyle(QTextCharFormat.WaveUnderline)
+        self._fmt.setBackground(QColor(255, 100, 100, 80))
+
+    def highlightBlock(self, text):
+        i = 0
+        n = len(text)
+        while i < n:
+            m = TAG_PATTERN.match(text, i)
+            if m:
+                i = m.end()
+                continue
+            if text[i] == '<' and i + 6 < n:
+                rm = re.match(r'<RAW,0x([0-9A-Fa-f]{2})>', text[i:])
+                if rm:
+                    i += rm.end()
+                    continue
+            ch = text[i]
+            if ch != '\n' and not _is_big5_encodable(ch):
+                self.setFormat(i, 1, self._fmt)
+            i += 1
+
 def _remap_ascii_for_font9696(ascii_code):
     return WORD_4EC810.get(ascii_code, 0xA140)
 
@@ -933,9 +1001,9 @@ class TktEditor(QMainWindow):
         btn_reset.clicked.connect(self._reset_edit)
         btn_layout.addWidget(btn_reset)
         btn_layout.addStretch()
-        btn_del_this = QPushButton("❌ 删除")
-        btn_del_this.clicked.connect(self._delete_entry)
-        btn_layout.addWidget(btn_del_this)
+        btn_clear_this = QPushButton("🧹 清空")
+        btn_clear_this.clicked.connect(self._clear_edit)
+        btn_layout.addWidget(btn_clear_this)
         ins_layout.addLayout(btn_layout)
         w1_right_splitter.addWidget(self._create_dock("检查器 (属性/代码编辑)", inspector_widget))
 
@@ -1121,6 +1189,11 @@ class TktEditor(QMainWindow):
         self._comp_preview_timer = QTimer(self)
         self._comp_preview_timer.setSingleShot(True)
         self._comp_preview_timer.timeout.connect(self._render_comp_previews)
+
+        # 为三个文本编辑框挂载 Big5 繁体字实时校验高亮器
+        self._highlighter_main = Big5ValidationHighlighter(self.text_widget.document())
+        self._highlighter_comp1 = Big5ValidationHighlighter(self.comp_text1.document())
+        self._highlighter_comp2 = Big5ValidationHighlighter(self.comp_text2.document())
 
     def _make_v_sep(self):
         sep = QFrame()
@@ -1513,11 +1586,29 @@ class TktEditor(QMainWindow):
 
     def _on_comp_text_modified(self):
         self._dirty = True
-        self.lbl_dirty.setText("[!] 未保存")
+        # 合并校验两个文本框，状态栏显示简体字提示
+        combined = self.comp_text1.toPlainText() + '\n' + self.comp_text2.toPlainText()
+        self._update_validation_status(combined)
         self._comp_preview_timer.start(50)
 
     def _apply_comp_edit(self):
         if getattr(self, '_comp_active_id1', None) is None: return
+
+        txt1 = self.comp_text1.toPlainText()
+        txt2 = self.comp_text2.toPlainText() if self._comp_active_id2 is not None else ''
+
+        # 方案A：提交拦截 — 含简体字则阻止保存
+        bad_chars = _find_non_big5_chars(txt1) + (_find_non_big5_chars(txt2) if txt2 else [])
+        if bad_chars:
+            unique_chars = list(dict.fromkeys(c for c, _ in bad_chars))
+            chars_str = ' '.join(f"'{c}'" for c in unique_chars[:15])
+            suffix = ' …' if len(unique_chars) > 15 else ''
+            QMessageBox.warning(self, "简体字拦截",
+                f"文本中包含 {len(bad_chars)} 个无法被游戏字体渲染的简体字:\n{chars_str}{suffix}\n\n"
+                f"游戏字体 (FONT9696) 基于 Big5 编码索引字形，\n"
+                f"简体字会导致游戏内文字图片转译异常 (乱码/缺字)。\n\n"
+                f"请将这些字符转换为繁体中文后再保存。")
+            return
 
         def _commit(eid, txt):
             if eid is None: return
@@ -1530,9 +1621,9 @@ class TktEditor(QMainWindow):
                 self.entries.append(ne)
                 self.entry_by_id[eid] = ne
 
-        _commit(self._comp_active_id1, self.comp_text1.toPlainText())
+        _commit(self._comp_active_id1, txt1)
         if self._comp_active_id2 is not None:
-            _commit(self._comp_active_id2, self.comp_text2.toPlainText())
+            _commit(self._comp_active_id2, txt2)
 
         row = self.comp_table.currentRow()
         if row >= 0:
@@ -1671,18 +1762,43 @@ class TktEditor(QMainWindow):
 
     def _on_text_modified(self):
         self._dirty = True
-        self.lbl_dirty.setText("[!] 未保存")
+        self._update_validation_status(self.text_widget.toPlainText())
         self._preview_timer.start(50)
+
+    def _update_validation_status(self, text):
+        """实时校验文本中的简体字并更新状态栏提示（方案B：实时反馈）"""
+        bad_chars = _find_non_big5_chars(text)
+        if bad_chars:
+            unique_chars = list(dict.fromkeys(c for c, _ in bad_chars))
+            preview = ''.join(unique_chars[:5])
+            suffix = '…' if len(unique_chars) > 5 else ''
+            self.lbl_dirty.setText(f"[!] ⚠简体字({len(bad_chars)}): {preview}{suffix}")
+            self.lbl_dirty.setStyleSheet("color: #ff6b6b; font-weight: bold;")
+        else:
+            self.lbl_dirty.setText("[!] 未保存")
+            self.lbl_dirty.setStyleSheet("")
 
     def _apply_edit(self):
         if self._current_idx is None:
+            return
+        ntxt = self.text_widget.toPlainText()
+        # 方案A：提交拦截 — 含简体字则阻止保存
+        bad_chars = _find_non_big5_chars(ntxt)
+        if bad_chars:
+            unique_chars = list(dict.fromkeys(c for c, _ in bad_chars))
+            chars_str = ' '.join(f"'{c}'" for c in unique_chars[:15])
+            suffix = ' …' if len(unique_chars) > 15 else ''
+            QMessageBox.warning(self, "简体字拦截",
+                f"文本中包含 {len(bad_chars)} 个无法被游戏字体渲染的简体字:\n{chars_str}{suffix}\n\n"
+                f"游戏字体 (FONT9696) 基于 Big5 编码索引字形，\n"
+                f"简体字会导致游戏内文字图片转译异常 (乱码/缺字)。\n\n"
+                f"请将这些字符转换为繁体中文后再保存。")
             return
         try:
             nid = int(self.id_entry.text())
         except:
             QMessageBox.critical(self, "错误", "ID必须是整数")
             return
-        ntxt = self.text_widget.toPlainText()
         e = self.entries[self._current_idx]
         if e['id'] != nid or e['text'] != ntxt:
             e['id'], e['text'] = nid, ntxt
@@ -1696,6 +1812,13 @@ class TktEditor(QMainWindow):
     def _reset_edit(self):
         if self._current_idx is not None:
             self._load_entry_to_edit(self._current_idx)
+
+    def _clear_edit(self):
+        """清空当前编辑框的文本内容（不删除条目本身）"""
+        if self._current_idx is None:
+            return
+        self.text_widget.clear()
+        self.text_widget.setFocus()
 
     def _new_entry(self):
         if not self.entries:
