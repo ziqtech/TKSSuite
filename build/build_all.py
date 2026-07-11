@@ -269,7 +269,7 @@ def _build_cli_cmd(name: str, entry: str, editor_dir: str,
 
         # 包含数据文件 (补丁配置)
         f"--include-data-files={tks_launcher_dir / 'tks_patches.json'}=tks_patches.json",
-        f"--include-data-files={tks_launcher_dir / 'summon_table.json'}=summon_table.json",
+        f"--include-data-files={仓库根目录 / 'configs' / 'summon_table.json'}=configs/summon_table.json",
 
         # 编译优化
         f"--jobs={jobs}",
@@ -546,11 +546,7 @@ def assemble_release(onefile: bool = False, release: bool = False,
         shutil.copy2(str(launcher_cfg_src), str(RELEASE_DIR / "launcher_config.json"))
         print(f"  [OK] launcher_config.json")
 
-    # 复制 summon_table.json (召唤表数据)
-    summon_src = 仓库根目录 / "tks_launcher_gui" / "summon_table.json"
-    if summon_src.exists():
-        shutil.copy2(str(summon_src), str(RELEASE_DIR / "summon_table.json"))
-        print(f"  [OK] summon_table.json")
+    # summon_table.json 已由上方 configs/*.json glob 复制到 RELEASE_DIR/configs/
 
     # 汇总
     total_size = sum(
