@@ -35,9 +35,10 @@ from editor_utils.picker_dialogs import (
 from editor_utils.theme_manager import ThemeManager
 from editor_utils.tkt_loader import load_tkt_simple
 from editor_utils.ui_helpers import (
-    confirm_close, export_csv, make_fake_input, themed_messagebox,
+    confirm_close, make_fake_input, themed_messagebox,
     update_path_labels,
 )
+from editor_utils.version import format_title, format_about_header
 from editor_utils.window_theme import apply_godot_theme
 
 # ── 本地别名: 保持向后兼容 ──
@@ -259,7 +260,7 @@ class SkillPickerDialog(QDialog):
 class SkillEditorApp(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("TKSkill.dat 可视化编辑器 (PySide6)")
+        self.setWindowTitle(format_title("skill_editor"))
         self.resize(1260, 820)
         self.setMinimumSize(1000, 650)
 
@@ -309,7 +310,6 @@ class SkillEditorApp(QMainWindow):
         fm.addAction("加载 TKS 目录…", QKeySequence("Ctrl+O"), self._load_tks_dir)
         fm.addSeparator()
         fm.addAction("保存", QKeySequence("Ctrl+S"), self._save)
-        fm.addAction("导出 CSV…", self._export_csv)
         fm.addAction("导出为 MOD (.tksmod)…", self._export_tksmod)
         fm.addAction("导出为 MOD (指定参考目录)…", self._export_tksmod_with_ref)
         fm.addSeparator()
@@ -323,7 +323,8 @@ class SkillEditorApp(QMainWindow):
         em.addAction("清空当前记录", self._clear_current)
 
         hm = menu_bar.addMenu("帮助(H)")
-        hm.addAction("关于", self._show_about)
+        hm.addAction("帮助说明", self._show_help)
+        hm.addAction("关于编辑器", self._show_about)
 
         # --- Toolbar ---
         toolbar = QHBoxLayout()
@@ -928,17 +929,6 @@ class SkillEditorApp(QMainWindow):
             except Exception as e:
                 QMessageBox.critical(self, "保存失败", str(e))
 
-    def _export_csv(self):
-        if not self.records: return
-        filtered = [r for r in self.records if r['skill_text_id'] != 0]
-        hdr = ['索引', '名称', '类型'] + [fl for _, _, fl, _, _ in ALL_FIELDS]
-        def row_func(rec):
-            return [rec['index'], skill_name(rec, self.tkt),
-                    SKILL_TYPES.get(rec['type'], str(rec['type']))] + \
-                   [rec[fn] for fn, _, _, _, _ in ALL_FIELDS]
-        if export_csv(self, filtered, hdr, row_func, "TKSkill.csv"):
-            self.status_var.setText("已导出 CSV")
-
     def _export_tksmod(self):
         """导出当前修改为 .tksmod MOD 文件"""
         if not self.records or not self._original_records:
@@ -1110,8 +1100,18 @@ class SkillEditorApp(QMainWindow):
             f"共加载 {len(records)} 条记录。\n"
             f"您现在可以继续编辑并重新导出。")
 
+    def _show_help(self):
+        themed_messagebox(self, QMessageBox.Information, "帮助说明",
+            "功能: 编辑《三国群侠传》技能数据\n"
+            "数据: 350 条 × 94 字节 = 32,900 字节\n\n"
+            "特性:\n"
+            "  · Godot 4.6 级别布局与纯净控件约束\n"
+            "  · 分页编辑: 基础/效果/免疫/进阶/技能树\n"
+            "  · 自动关联 TKT.dat 显示技能名称")
+
     def _show_about(self):
-        themed_messagebox(self, QMessageBox.Information, "关于", "TKSkill.dat PySide6 编辑器\n已应用 Godot 4.6 级别布局与纯净控件约束。")
+        themed_messagebox(self, QMessageBox.Information, "关于编辑器",
+            format_about_header('skill_editor'))
 
     def closeEvent(self, event):
         if not confirm_close(self, self._dirty):

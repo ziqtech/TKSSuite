@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-TKS Save Editor v2.0 (PySide6 — Godot 4.6 风格)
+TKS Save Editor (PySide6 — Godot 4.6 风格)
 ===========================================================
 加载/编辑/保存 游戏存档数据 (save\\sav.N + N.sav), 支持全部9个存档槽位。
 
@@ -49,6 +49,7 @@ from editor_utils.tkt_loader import load_tkt_simple
 from editor_utils.ui_helpers import (
     confirm_close, make_fake_input, update_path_labels,
 )
+from editor_utils.version import format_title, format_about_header
 from editor_utils.window_theme import apply_godot_theme
 
 
@@ -492,7 +493,7 @@ def warpc_get(seg3, char_idx, byte_offset):
 class SaveEditorApp(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("TKS 存档编辑器 v2.0 (PySide6)")
+        self.setWindowTitle(format_title("save_editor"))
         self.resize(1400, 880)
         self.setMinimumSize(1100, 700)
 
@@ -554,7 +555,8 @@ class SaveEditorApp(QMainWindow):
         tm = mb.addMenu("工具(&T)")
         tm.addAction("🔄 刷新数据显示", self._refresh_all)
         hm = mb.addMenu("帮助(&H)")
-        hm.addAction("ℹ️ 关于", self._show_about)
+        hm.addAction("帮助说明", self._show_help)
+        hm.addAction("关于编辑器", self._show_about)
 
         # 工具栏
         toolbar = QHBoxLayout()
@@ -1854,8 +1856,11 @@ class SaveEditorApp(QMainWindow):
     # 逆向参考: sub_410ED4(SaveTKMat), sub_41103C(LoadTKMat), sub_41CE10(SaveIndexWrite),
     # sub_40EBD4(事件脚本处理器), sub_40CB08/40CB4C(标志设置/累加)
     def _show_about(self):
-        QMessageBox.about(self, "关于",
-            "TKS 存档编辑器 v2.0 (PySide6)\n\n"
+        QMessageBox.about(self, "关于编辑器",
+            format_about_header('save_editor'))
+
+    def _show_help(self):
+        QMessageBox.about(self, "帮助说明",
             "功能: 编辑《三国群侠传》游戏存档\n"
             "存档采用 LZSS 压缩格式, 包含以下数据:\n"
             "  · 场景实体表 (TKMat)\n"

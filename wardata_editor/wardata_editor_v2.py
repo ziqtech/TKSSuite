@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-WarData.dat 可视化编辑器 v2.0 (PySide6 — Godot 4.6 风格)
+WarData.dat 可视化编辑器 (PySide6 — Godot 4.6 风格)
 =========================================================
 逆向依据:
   - sub_42FDF8: WarData.dat 加载 (498字节/条, 219条, fopen/fread/fseek, 无LZSS)
@@ -98,6 +98,7 @@ from editor_utils.mod_exporter import (
     compute_crc32, generate_mod_json, pack_tksmod, ModMetadataDialog, safe_mod_filename,
     get_tksmod_info, read_tksmod, ModImportPreviewDialog, ModExportPreviewDialog,
 )
+from editor_utils.version import format_title, format_about_header
 from editor_utils.window_theme import apply_godot_theme
 from editor_utils.picker_dialogs import WarpcPickerDialog, ItemPickerDialog
 
@@ -497,7 +498,7 @@ TRAP_NAMES_SHORT = {1: '山崩', 2: '泥沼', 3: '漩渦', 4: '火焰', 5: '滾�
 class WarDataEditorV2(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("WarData.dat 可视化编辑器 v2.0 - PySide6")
+        self.setWindowTitle(format_title("wardata_editor"))
         self.resize(1400, 860)
         self.setMinimumSize(1100, 700)
 
@@ -615,7 +616,8 @@ class WarDataEditorV2(QMainWindow):
 
         hm = mb.addMenu("帮助(&H)")
         hm.addAction("字段参考", self._show_field_ref)
-        hm.addAction("关于", self._show_about)
+        hm.addAction("帮助说明", self._show_help)
+        hm.addAction("关于编辑器", self._show_about)
 
         # 工具栏
         toolbar = QHBoxLayout()
@@ -1077,9 +1079,8 @@ class WarDataEditorV2(QMainWindow):
             "  1~5 = 不同区域编号")
 
     # 关于信息: 编辑器基于 TKS.exe 反编译/逆向工程分析 (原始依据已从用户可见文本中移除)
-    def _show_about(self):
-        themed_messagebox(self, QMessageBox.Information, "关于",
-            "WarData.dat 战场数据编辑器 v2.0 (PySide6)\n\n"
+    def _show_help(self):
+        themed_messagebox(self, QMessageBox.Information, "帮助说明",
             "功能: 编辑《三国群侠传》战场数据\n\n"
             "编辑内容:\n"
             "  · 敌方角色配置 (角色/等级/强化值/坐标)\n"
@@ -1090,6 +1091,10 @@ class WarDataEditorV2(QMainWindow):
             "特性:\n"
             "  · 32×32 网格地图可视化\n"
             "  · 深色/浅色主题切换")
+
+    def _show_about(self):
+        themed_messagebox(self, QMessageBox.Information, "关于编辑器",
+            format_about_header('wardata_editor'))
 
     def _build_warway_diff_json(self, ref_dir):
         """构建 WarWay.dat 差异 JSON (与 ref_dir/WarWay.dat 比对)。

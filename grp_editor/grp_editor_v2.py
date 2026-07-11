@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-GRP 资源包编辑器 v2 — PySide6 外部主题版
+GRP 资源包编辑器 — PySide6 外部主题版
 ==========================================
 格式依据: sub_451600 (GRP加载), sub_411308 (地图加载), sub_410E18 (Frame B RLE)
           sub_452B14 (LZSS), 分析报告 09_GXP_JVG_GRP格式深度对比分析.md
@@ -73,6 +73,7 @@ from editor_utils.mod_exporter import (
 from editor_utils.rgb565 import rgb565_to_rgba, rgba_to_rgb565
 from editor_utils.theme_manager import ThemeManager
 from editor_utils.ui_helpers import themed_messagebox
+from editor_utils.version import format_title, format_about_header
 from editor_utils.window_theme import apply_godot_theme
 
 # ── 本地别名: 保持向后兼容 ──
@@ -523,7 +524,7 @@ class GRPGraphicsView(QGraphicsView):
 class GRPEditor(QMainWindow):
     def __init__(self, filepath: Optional[str] = None):
         super().__init__()
-        self.setWindowTitle("GRP 资源包编辑器 v2")
+        self.setWindowTitle(format_title("grp_editor"))
         self.resize(1360, 900)
 
         ico_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'TKS.ico')
@@ -598,7 +599,8 @@ class GRPEditor(QMainWindow):
 
         hm = mb.addMenu("帮助(&H)")
         hm.addAction("伪彩工作流说明", self._show_pseudo_help)
-        hm.addAction("关于 GRP 格式", self._show_about)
+        hm.addAction("帮助说明", self._show_help)
+        hm.addAction("关于编辑器", self._show_about)
 
     def _toggle_theme(self):
         self.theme_manager.toggle_theme()
@@ -830,7 +832,7 @@ class GRPEditor(QMainWindow):
         self._sync_list()
         self._sel_idx = -1
         self._refresh_view()
-        self.setWindowTitle("GRP 编辑器 v2 — [新建]")
+        self.setWindowTitle(format_title("grp_editor", "[新建]"))
 
     def _open_dlg(self):
         p, _ = QFileDialog.getOpenFileName(self, "打开 GRP", "", "GRP (*.grp *.GRP);;All (*.*)")
@@ -851,7 +853,7 @@ class GRPEditor(QMainWindow):
             extra = f"  ({ni}IMG + {na}AUD" + (f" + {nd}DATA" if nd else "") + ")"
             id_info = f"  |  IDX: {Path(self.grp.idx_path).name}" if self.grp.idx_path else ""
             self._status_lbl.setText(f"已加载: {Path(p).name}  |  {self.grp.total_sections} sections{extra}{id_info}")
-            self.setWindowTitle(f"GRP 编辑器 v2 — {os.path.basename(p)}")
+            self.setWindowTitle(format_title("grp_editor", os.path.basename(p)))
         except Exception as e:
             QMessageBox.critical(self, "打开失败", str(e))
             import traceback
@@ -2050,9 +2052,8 @@ class GRPEditor(QMainWindow):
             "  0 = 类型0, 1~N = 各类地形障碍")
 
     # 逆向参考: sub_451600, sub_411308, sub_410E18, sub_452B14
-    def _show_about(self):
-        themed_messagebox(self, QMessageBox.Information, "关于 GRP 格式",
-            "GRP — 《三国群侠传》通用资源包编辑器\n\n"
+    def _show_help(self):
+        themed_messagebox(self, QMessageBox.Information, "帮助说明",
             "功能: 浏览和编辑游戏资源文件\n\n"
             "资源类型:\n"
             "  · 图像资源 - 支持前景层和地形层编辑\n"
@@ -2064,6 +2065,10 @@ class GRPEditor(QMainWindow):
             "  · 导出伪彩 PNG 进行图像编辑\n"
             "  · 支持图层色板导出\n"
             "  · 导入时自动校正颜色匹配")
+
+    def _show_about(self):
+        themed_messagebox(self, QMessageBox.Information, "关于编辑器",
+            format_about_header('grp_editor'))
 
 
 # ═══════════════════════════════════════════════════════════

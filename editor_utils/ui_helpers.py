@@ -1,8 +1,7 @@
 """
 通用 UI 工具函数 — 供所有编辑器统一使用
-包含: 路径状态显示、FakeInputBox、窗口图标加载、CSV 导出等
+包含: 路径状态显示、FakeInputBox、窗口图标加载等
 """
-import csv
 import os
 import sys
 from PySide6.QtCore import Qt, QObject, QEvent
@@ -75,31 +74,6 @@ def load_window_icon(widget, editor_dir=None):
     if os.path.exists(ico_path):
         widget.setWindowIcon(QIcon(ico_path))
 
-
-def export_csv(parent, records, columns, row_func, default_name="export.csv"):
-    """
-    通用 CSV 导出
-    parent: 父窗口
-    records: 记录列表
-    columns: 列名列表
-    row_func: record -> list 转换函数
-    default_name: 默认文件名
-    """
-    fp, _ = QFileDialog.getSaveFileName(parent, "导出 CSV",
-                                         default_name, "CSV (*.csv)")
-    if not fp:
-        return False
-    try:
-        with open(fp, 'w', encoding='utf-8-sig', newline='') as f:
-            writer = csv.writer(f)
-            writer.writerow(columns)
-            for rec in records:
-                writer.writerow(row_func(rec))
-        QMessageBox.information(parent, "导出成功", f"已导出到 {fp}")
-        return True
-    except Exception as e:
-        QMessageBox.critical(parent, "导出失败", str(e))
-        return False
 
 
 def confirm_close(parent, dirty, title="未保存", text="有未保存的修改, 确定退出?"):

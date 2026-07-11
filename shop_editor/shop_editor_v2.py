@@ -54,7 +54,8 @@ from editor_utils.mod_exporter import (
 )
 from editor_utils.picker_dialogs import ItemPickerDialog
 from editor_utils.theme_manager import ThemeManager
-from editor_utils.ui_helpers import export_csv, themed_messagebox
+from editor_utils.ui_helpers import themed_messagebox
+from editor_utils.version import format_title, format_about_header
 from editor_utils.window_theme import apply_godot_theme
 
 # ── 本地别名: 保持向后兼容 ──
@@ -296,10 +297,6 @@ class ShopEditorWindow(QMainWindow):
         action_save.triggered.connect(self._save)
         file_menu.addAction(action_save)
 
-        action_export = QAction("导出 CSV…", self)
-        action_export.triggered.connect(self._export_csv)
-        file_menu.addAction(action_export)
-
         action_export_mod = QAction("导出为 MOD (.tksmod)…", self)
         action_export_mod.triggered.connect(self._export_tksmod)
         file_menu.addAction(action_export_mod)
@@ -319,10 +316,10 @@ class ShopEditorWindow(QMainWindow):
         file_menu.addAction(action_exit)
 
         help_menu = menubar.addMenu("帮助")
-        action_help = QAction("使用说明", self)
+        action_help = QAction("帮助说明", self)
         action_help.triggered.connect(self._show_help)
         help_menu.addAction(action_help)
-        action_about = QAction("关于", self)
+        action_about = QAction("关于编辑器", self)
         action_about.triggered.connect(self._show_about)
         help_menu.addAction(action_about)
 
@@ -950,17 +947,6 @@ class ShopEditorWindow(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "保存失败", str(e))
 
-    def _export_csv(self):
-        if not self.records: return
-        hdr = ["索引","区域ID","区域名称","物品索引","物品名称","出现条件(原始)","出现条件(文本)"]
-        def row_func(rec):
-            iname = self.item_names.get(rec['item_ref'], f"Item#{rec['item_ref']}")
-            return [str(rec['index']), str(rec['area_id']), area_label(rec['area_id']),
-                    str(rec['item_ref']), iname, str(rec['condition']),
-                    self._cond_str(rec['condition'])]
-        if export_csv(self, self.records, hdr, row_func, "TKShop.csv"):
-            self.lbl_status.setText("已导出 CSV")
-
     def _export_tksmod(self):
         """导出当前修改为 .tksmod MOD 文件"""
         if not self.records or not self._original_records:
@@ -1132,19 +1118,16 @@ class ShopEditorWindow(QMainWindow):
             "   - 始终: 设为-100, 任意幸运值都100%出现\n"
             "   - 幸运: 出现概率 = clamp(幸运 - 条件值, 0, 100)%\n"
             "7. 物品与区域有兼容性限制 (由游戏代码决定):\n"
-            "   选择物品后区域下方会显示是否兼容及建议放置的商店")
+            "   选择物品后区域下方会显示是否兼容及建议放置的商店\n\n"
+            "功能: 编辑《三国群侠传》商店数据\n\n"
+            "特性:\n"
+            "  · 自动关联物品数据库显示物品名称\n"
+            "  · 深色/浅色主题切换")
 
     # 关于信息: 编辑器基于《三国群侠传》(TKS) 逆向工程分析 (原始依据已从用户可见文本中移除)
     def _show_about(self):
-        themed_messagebox(self, QMessageBox.Information, "关于",
-            "TKShop.dat 商店编辑器 (PySide6)\n\n"
-            "功能: 编辑《三国群侠传》商店数据\n\n"
-            "特性:\n"
-            "  · 支持商店商品的加载、编辑、保存\n"
-            "  · 自动关联物品数据库显示物品名称\n"
-            "  · 支持区域过滤和关键词搜索\n"
-            "  · 商品出现条件可配置\n"
-            "  · 深色/浅色主题切换")
+        themed_messagebox(self, QMessageBox.Information, "关于编辑器",
+            format_about_header('shop_editor'))
 
 # ============================================================
 # 入口

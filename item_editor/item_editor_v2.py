@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
-TKItem.dat 可视化编辑器 v2.0 (PySide6 — Godot 4.6 风格)
+TKItem.dat 可视化编辑器 (PySide6 — Godot 4.6 风格)
 ===========================================================
-基于 item_editor.py v3.0 的完整功能, 使用 PySide6 重写 UI 层。
+基于反编译源码 + Maker 文案 + 实测数据验证, 使用 PySide6 重写 UI 层。
 保留全部逆向分析、字段定义、LZSS 编解码、JVG 图标加载逻辑。
 支持深色/浅色主题切换 (默认跟随系统), 共享 editor_themes/ 主题。
 
-【v3.0 变更】基于反编译源码 (sub_41E40C/sub_42234C/sub_422BBC) + Maker 文案 + 实测数据验证:
+【字段语义】基于反编译源码 (sub_41E40C/sub_42234C/sub_422BBC) + Maker 文案 + 实测数据验证:
   1. 字段 [22] offset 44: "装备后学习技能" (v15[22] -> char+176+v15[22]=10, 装备时学会)
      ※实测验证: 蟬翼刀#178 [22]=135=技能"蟬翼刀"; 虎紋刀#177 [22]=134=技能"虎紋刀"
   2. 字段 [23] offset 46: "使用后学习技能1" (v15[23] -> byte_757FB8[1054*a2+v15[23]]=10, 使用时)
@@ -67,9 +67,10 @@ from editor_utils.picker_dialogs import (
 from editor_utils.tkt_loader import load_tkt_simple
 from editor_utils.theme_manager import ThemeManager
 from editor_utils.ui_helpers import (
-    confirm_close, export_csv, make_fake_input, resolve_config_path,
+    confirm_close, make_fake_input, resolve_config_path,
     themed_messagebox, update_path_labels
 )
+from editor_utils.version import format_title, format_about_header
 from editor_utils.window_theme import apply_godot_theme
 
 # ── 本地别名: 保持向后兼容 ──
@@ -530,7 +531,7 @@ class FlowLayout(QLayout):
 class ItemEditorApp(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("TKItem.dat 可视化编辑器 v2.0 (PySide6)")
+        self.setWindowTitle(format_title("item_editor"))
         self.resize(1360, 860)
         self.setMinimumSize(1120, 700)
 
@@ -596,7 +597,6 @@ class ItemEditorApp(QMainWindow):
         fm.addAction("加载 TKS 目录…\tCtrl+O", self._load_tks_dir)
         fm.addSeparator()
         fm.addAction("保存\tCtrl+S", self._save)
-        fm.addAction("导出 CSV…", self._export_csv)
         fm.addAction("导出为 MOD (.tksmod)…", self._export_tksmod)
         fm.addAction("导出为 MOD (指定参考目录)…", self._export_tksmod_with_ref)
         fm.addSeparator()
@@ -608,8 +608,9 @@ class ItemEditorApp(QMainWindow):
         em.addAction("复制当前到空槽", self._copy_record)
         em.addAction("清空当前记录", self._clear_current)
         hm = mb.addMenu("帮助(&H)")
+        hm.addAction("帮助说明", self._show_help)
         hm.addAction("字段来源 (逆向+Maker)", self._show_field_ref)
-        hm.addAction("关于", self._show_about)
+        hm.addAction("关于编辑器", self._show_about)
 
         # 工具栏
         toolbar = QHBoxLayout()
@@ -1487,14 +1488,6 @@ class ItemEditorApp(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "保存失败", str(e))
 
-    def _export_csv(self):
-        if not self.records: return
-        hdr = ['索引'] + [fl for _, _, fl, _, _, _ in ALL_FIELDS]
-        def row_func(rec):
-            return [str(rec['index'])] + [str(rec[fn]) for fn, _, _, _, _, _ in ALL_FIELDS]
-        if export_csv(self, self.records, hdr, row_func, "TKItem.csv"):
-            self.status_var.setText("已导出 CSV")
-
     def _export_tksmod(self):
         """导出当前修改为 .tksmod MOD 文件"""
         if not self.records or not self._original_records:
@@ -1667,7 +1660,7 @@ class ItemEditorApp(QMainWindow):
     # 逆向参考: sub_45343C(数据载入), sub_41E40C(物品使用), sub_42234C(装备应用),
     # sub_422BBC(附加技能效果), sub_42F8D4(物品查找), sub_424A2C(背包/商店显示)
     def _show_field_ref(self):
-        lines = ["TKItem.dat 字段映射 v3.0:", ""]
+        lines = ["TKItem.dat 字段映射:", ""]
         lines.append("【基础属性 (Maker UI 可见字段 22 条)】")
         for fn, fo, fl, ft, fw, cmt in GRID_FIELDS:
             lines.append(f"  [{fo:02d}] {fl:<12s}  {cmt}")
@@ -1697,7 +1690,7 @@ class ItemEditorApp(QMainWindow):
         lines.append("  物品数量上限为 600 条 (游戏内部限制)")
         lines.append("  #560-#599 (40条) 为空槽位, 可用于新增物品 (item_id=0, name_id=0)")
         dlg = QDialog(self)
-        dlg.setWindowTitle("字段来源 v3.0")
+        dlg.setWindowTitle("字段来源")
         dlg.resize(820, 580)
         layout = QVBoxLayout(dlg)
         from PySide6.QtWidgets import QTextEdit
@@ -1710,17 +1703,19 @@ class ItemEditorApp(QMainWindow):
 
     # 逆向参考: sub_45343C(数据载入), sub_41E40C(物品使用), sub_42234C(装备应用),
     # sub_422BBC(附加技能效果), sub_42F8D4(物品查找), sub_424A2C(背包/商店显示)
-    def _show_about(self):
-        themed_messagebox(self, QMessageBox.Information, "关于",
-            "TKItem.dat 物品编辑器 v2.0 (PySide6)\n\n"
+    def _show_help(self):
+        themed_messagebox(self, QMessageBox.Information, "帮助说明",
             "功能: 编辑《三国群侠传》物品数据\n"
             "数据: 600 条记录 × 32 个字段 = 64 字节/条\n\n"
             "特性:\n"
             "  · 可视化编辑物品属性 (名称/价格/效果等)\n"
             "  · 自动关联 TKT.dat 显示物品名称\n"
             "  · 支持物品分类筛选和搜索\n"
-            "  · 深色/浅色主题切换\n\n"
-            "v3.0 修正了字段映射错误")
+            "  · 深色/浅色主题切换")
+
+    def _show_about(self):
+        themed_messagebox(self, QMessageBox.Information, "关于编辑器",
+            format_about_header('item_editor'))
 
     def closeEvent(self, event):
         if not confirm_close(self, self._dirty):

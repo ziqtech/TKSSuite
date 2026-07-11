@@ -5,7 +5,7 @@ UI 层:
   - theme_manager:    QSS 主题加载/切换 (ThemeManager)
   - window_theme:     Windows DWM 标题栏颜色 (apply_godot_theme)
   - dock_components:  Godot 风格 Dock 面板 (DockHeader, create_dock)
-  - ui_helpers:       路径标签/输入框/图标/CSV/确认退出/弹窗标题栏主题过滤器
+  - ui_helpers:       路径标签/输入框/图标/确认退出/弹窗标题栏主题过滤器
   - picker_dialogs:   TKT ID 选择器对话框 (TktPickerDialog)
   - mod_exporter:     统一 .tksmod MOD 导出 (差异算法/打包/元数据对话框)
 
@@ -16,4 +16,5 @@ UI 层:
 
 初始化:
   - app_init:         打包/开发环境路径抽象 + 翻译器/图标帮助函数
+  - version:          各编辑器版本号登记表 (SemVer, 单一数据源)
 """

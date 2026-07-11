@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-WarPC.dat 可视化编辑器 v2.0 (PySide6 — Godot 4.6 风格)
+WarPC.dat 可视化编辑器 (PySide6 — Godot 4.6 风格)
 ===========================================================
 逆向依据:
   - sub_45343C:     DAT 文件统一加载 (LZSS 解压, 1054字节/角色, 143角色)
@@ -50,7 +50,6 @@ Tab 分区 (按字段索引顺序排列):
   python warpc_editor_v2.py
 """
 
-import csv
 import json
 import os
 import struct
@@ -71,7 +70,8 @@ from editor_utils.theme_manager import ThemeManager
 from editor_utils.dock_components import DockHeader
 from editor_utils.picker_dialogs import TktPickerDialog, StatusPickerDialog, STATUS_NAMES, ItemPickerDialog
 from editor_utils.jvg_loader import load_mu_sprites, get_sprite_pixmap
-from editor_utils.ui_helpers import make_fake_input, update_path_labels, confirm_close, export_csv, resolve_config_path, themed_messagebox
+from editor_utils.ui_helpers import make_fake_input, update_path_labels, confirm_close, resolve_config_path, themed_messagebox
+from editor_utils.version import format_title, format_about_header
 from editor_utils.lzss import lzss_decompress_dat, lzss_compress_dat, lzss_decompress_save, lzss_compress_save
 from editor_utils.tkt_loader import load_tkt_simple
 from editor_utils.mod_exporter import (
@@ -661,7 +661,7 @@ class TkkonPickerDialog(QDialog):
 class FieldRefDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("字段参考 v2.0")
+        self.setWindowTitle("字段参考")
         self.resize(700, 600)
         layout = QVBoxLayout(self)
         text = QTextEdit()
@@ -976,7 +976,6 @@ class GrowthTableDialog(QDialog):
 
         # 底部按钮
         bl = QHBoxLayout()
-        bl.addWidget(QPushButton("导出 CSV…", clicked=self._export_csv))
         bl.addStretch()
         bl.addWidget(QPushButton("关闭", clicked=self.close))
         layout.addLayout(bl)
@@ -1004,48 +1003,6 @@ class GrowthTableDialog(QDialog):
                 self._growth_table.scrollToItem(
                     self._growth_table.item(row, 0))
                 break
-
-    def _export_csv(self):
-        fp, _ = QFileDialog.getSaveFileName(
-            self, "导出成长数据", f"{self._char_name}_growth.csv",
-            "CSV (*.csv)")
-        if not fp:
-            return
-        headers = ["等级", "成长率", "HP", "dHP", "MP", "dMP",
-                    "攻击", "d攻击", "防御", "d防御", "命中", "d命中",
-                    "闪避", "d闪避", "速度", "d速度"]
-        with open(fp, 'w', newline='', encoding='utf-8-sig') as f:
-            w = csv.writer(f)
-            w.writerow(headers)
-            for d in self._table_data:
-                row = [d['level'], d['divisor']]
-                for si in range(7):
-                    row.append(d['stats'][si])
-                    row.append(d['deltas'][si])
-                w.writerow(row)
-            # grp 加成摘要 (每一级的最终值)
-            grp = self._grp_spin.value()
-            if grp > 0:
-                w.writerow([])
-                w.writerow([f'grp={grp} 各级最终属性 (sub_4302D8)'])
-                grp_h = ['等级'] + [f'{l}最终' for l in self.STAT_LABELS]
-                w.writerow(grp_h)
-                grp_divs = [1, 4, 8, 8, 12, 12, 0]
-                cap = self.STAT_CAP_HPMP_ENEMY
-                for d in self._table_data:
-                    lv = d['level']
-                    base = d['stats']
-                    row_g = [lv]
-                    for i in range(7):
-                        bonus = (grp * base[i] // grp_divs[i]
-                                 if grp_divs[i] else grp * lv // 10)
-                        v = base[i] + bonus
-                        if i < 2:
-                            v = min(v, cap)
-                        row_g.append(v)
-                    w.writerow(row_g)
-        QMessageBox.information(self, "导出成功",
-            f"已导出 {self._char_name} 成长数据至:\n{fp}")
 
     # ── grp 加成计算 (sub_4302D8:53-62) ──
 
@@ -1103,7 +1060,7 @@ class WarpcEditorV2(QMainWindow):
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("WarPC.dat 可视化编辑器 v2.0 - PySide6")
+        self.setWindowTitle(format_title("warpc_editor"))
         self.resize(1400, 850)
         self.setMinimumSize(1100, 680)
 
@@ -1232,7 +1189,6 @@ class WarpcEditorV2(QMainWindow):
         fm.addAction("加载存档 (从游戏目录)…\tCtrl+Shift+O", self._load_save_dir)
         fm.addSeparator()
         fm.addAction("保存\tCtrl+S", self._save)
-        fm.addAction("导出 CSV…", self._export_csv)
         fm.addAction("导出为 MOD (.tksmod)…", self._export_tksmod)
         fm.addAction("导出为 MOD (指定参考目录)…", self._export_tksmod_with_ref)
         fm.addSeparator()
@@ -1247,12 +1203,13 @@ class WarpcEditorV2(QMainWindow):
         em.addAction("导出当前角色(.warpc)…", self._export_warpc)
         em.addAction("导入角色(.warpc)…", self._import_warpc)
 
-        am = mb.addMenu("分析(&A)")
+        am = mb.addMenu("分析(&S)")
         am.addAction("成长数据表 (1-60级)", self._show_growth_table)
 
         hm = mb.addMenu("帮助(&H)")
+        hm.addAction("帮助说明", self._show_help)
         hm.addAction("字段参考", self._show_field_ref)
-        hm.addAction("关于", self._show_about)
+        hm.addAction("关于编辑器", self._show_about)
 
         # 工具栏
         toolbar = QHBoxLayout()
@@ -1891,7 +1848,7 @@ class WarpcEditorV2(QMainWindow):
         self.tkt_path = os.path.join(game_dir, 'TKT.dat') if os.path.exists(os.path.join(game_dir, 'TKT.dat')) else None
         self.mu_path = os.path.join(game_dir, 'Mu.JVG') if os.path.exists(os.path.join(game_dir, 'Mu.JVG')) else None
         self._reload()
-        self.setWindowTitle(f"WarPC.dat 可视化编辑器 v2.0 - PySide6 [存档模式 槽位{slot_num}]")
+        self.setWindowTitle(f"{format_title('warpc_editor')} [存档模式 槽位{slot_num}]")
 
     def _reload(self):
         if not self.warpc_path:
@@ -2762,7 +2719,7 @@ class WarpcEditorV2(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "导入失败", str(e))
 
-    # ── 保存/导出CSV ──
+    # ── 保存 ──
     def _save(self):
         if self._save_mode:
             self._save_to_save_file()
@@ -2806,25 +2763,6 @@ class WarpcEditorV2(QMainWindow):
             QMessageBox.information(self, "成功", f"已保存到存档\n备份: {self._save_path}.bak")
         except Exception as e:
             QMessageBox.critical(self, "保存失败", str(e))
-
-    def _export_csv(self):
-        if not self.records: return
-        hdr = ['索引','名称','等级','身份','类型','HP当前','HP上限','MP当前','MP上限']
-        for name in STAT_NAMES_CN:
-            hdr += [f'{name}(基础)', f'{name}(当前)']
-        hdr += [f'field[{i}]' for i in range(27, WARPC_FIELD_COUNT)]
-
-        def row_func(rec):
-            fl = rec['fields']
-            row = [str(rec['index']), self._char_name(rec), str(fl[2]), str(fl[3]), str(fl[4]),
-                   str(fl[5]), str(fl[8]), str(fl[6]), str(fl[10])]
-            for bo in STAT_BASE_OFFSETS:
-                row += [str(fl[bo//2]), str(fl[bo//2+1])]
-            row += [str(fl[i]) for i in range(27, WARPC_FIELD_COUNT)]
-            return row
-
-        if export_csv(self, self.records, hdr, row_func, "WarPC.csv"):
-            self.status_var.setText("已导出 CSV")
 
     def _export_tksmod(self):
         """导出当前修改为 .tksmod MOD 文件"""
@@ -3058,16 +2996,19 @@ class WarpcEditorV2(QMainWindow):
         FieldRefDialog(self).exec()
 
     # 逆向参考: sub_42234C, sub_41E40C, sub_422BBC, sub_4173F8, sub_45343C, sub_452B14
-    def _show_about(self):
+    def _show_help(self):
         cnt = len(self.records) if self.records else WARPC_ORIG_COUNT
-        themed_messagebox(self, QMessageBox.Information, "关于",
-            f"WarPC.dat 战斗角色编辑器 v2.0 (PySide6)\n\n"
+        themed_messagebox(self, QMessageBox.Information, "帮助说明",
             f"功能: 编辑《三国群侠传》战斗角色数据\n"
             f"数据: {cnt} 角色 × {WARPC_REC} 字节 (原游戏 {WARPC_ORIG_COUNT} 角色, 支持动态扩展)\n\n"
             f"特性:\n"
             f"  · Godot 风格深/浅色主题切换\n"
             f"  · 分页编辑: 核心属性 / 装备技能 / 技能学习 / 效果判定 / 全部字段\n"
             f"  · 自动关联 TKItem.dat 显示物品名称")
+
+    def _show_about(self):
+        themed_messagebox(self, QMessageBox.Information, "关于编辑器",
+            format_about_header('warpc_editor'))
 
     def closeEvent(self, event):
         if not confirm_close(self, self._dirty):

@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-TKT.dat 文本数据库编辑器 v5.0 (PySide6 最终完美融合版)
+TKT.dat 文本数据库编辑器 (PySide6)
 =============================
-融合了 V2 原版极高精度的文字测算渲染、Godot QSS/滚动条样式、文件图标加载逻辑，
-并加入了 V4 的安全空槽边界扫描、联合渲染视口与智能分仓功能。
+融合了高精度的文字测算渲染、Godot QSS/滚动条样式、文件图标加载逻辑，
+并加入了安全空槽边界扫描、联合渲染视口与智能分仓功能。
 """
 
 import argparse
@@ -50,6 +50,7 @@ from editor_utils.mod_exporter import (
     load_reference_tkt_entries,
     get_tksmod_info, import_tksmod_text_entries, ModImportPreviewDialog, ModExportPreviewDialog,
 )
+from editor_utils.version import format_title, format_about_header
 from editor_utils.window_theme import apply_godot_theme
 
 # ============================================================
@@ -144,7 +145,7 @@ SEMANTIC_CATEGORIES = [
 ]
 
 # ============================================================
-# GB2312 ↔ Big5 转换 (依据 V2 原版逻辑)
+# GB2312 ↔ Big5 转换
 # ============================================================
 _G2B_TABLE = None
 _B2G_TABLE = None
@@ -192,7 +193,7 @@ def big5_to_gb(text):
     return ''.join(result)
 
 # ============================================================
-# TKT 文件 I/O (V2 原版逻辑)
+# TKT 文件 I/O
 # ============================================================
 def load_tkt(tkt_path):
     """加载 TKT.dat — 委托给 editor_utils.tkt_loader"""
@@ -359,7 +360,7 @@ def parse_styled_segments(text):
     return segments
 
 # ============================================================
-# FONT9696 解码与渲染 (完全恢复 V2 原版多行代码)
+# FONT9696 解码与渲染
 # ============================================================
 class Font9696:
     GLYPHS_PER_SECTION = 14915
@@ -820,7 +821,7 @@ def pil_to_qimage(pil_image):
 class TktEditor(QMainWindow):
     def __init__(self, initial_path=None):
         super().__init__()
-        self.setWindowTitle("TKT.dat 语义化智能维护编辑器 - 引擎级界面")
+        self.setWindowTitle(format_title("tkt_editor"))
         self.resize(1350, 850)
 
         # --- 还原图标加载 ---
@@ -895,7 +896,8 @@ class TktEditor(QMainWindow):
         edit_menu.addAction("查找…", QKeySequence("Ctrl+F"), self._focus_search)
 
         help_menu = menu_bar.addMenu("帮助(H)")
-        help_menu.addAction("关于", self._show_about)
+        help_menu.addAction("帮助说明", self._show_help)
+        help_menu.addAction("关于编辑器", self._show_about)
 
         self.main_tabs = QTabWidget()
 
@@ -1265,7 +1267,7 @@ class TktEditor(QMainWindow):
             self.comp_cat_list.setCurrentRow(0)
             self._on_comp_category_changed(0)
 
-            self.setWindowTitle(f"TKT.dat 编辑器 v5.0 - {os.path.basename(path)}")
+            self.setWindowTitle(format_title("tkt_editor", os.path.basename(path)))
             self._apply_theme()
         except Exception as e:
             QMessageBox.critical(self, "数据载入溃散", str(e))
@@ -1923,7 +1925,7 @@ class TktEditor(QMainWindow):
         self.preview_stack.setCurrentIndex(1)
         self.preview_text.setPlainText(t)
 
-    # ----------- TAG 核心工具栏 (100% 恢复 V2 原版包含的所有组件) -----------
+    # ----------- TAG 核心工具栏 -----------
     def _build_tag_toolbar(self, parent_layout, show_info=True):
         toolbar = QHBoxLayout()
         toolbar.setContentsMargins(0, 5, 0, 5)
@@ -2042,10 +2044,9 @@ class TktEditor(QMainWindow):
         cb.setCurrentIndex(0)
 
     # 逆向参考: sub_401E88, sub_4067E8, sub_4019D0
-    def _show_about(self):
+    def _show_help(self):
         themed_messagebox(
-            self, QMessageBox.Information, "关于",
-            "TKT.dat 文本数据库编辑器 v5.0 (PySide6)\n\n"
+            self, QMessageBox.Information, "帮助说明",
             "功能: 编辑《三国群侠传》游戏文本数据\n"
             "支持加载、编辑、保存、新增文本条目\n\n"
             "文本控制码 (特殊格式标记):\n"
@@ -2057,6 +2058,12 @@ class TktEditor(QMainWindow):
             "  <VARNUM,n>  显示数字变量, n 取值 1~255\n"
             "  <VARTXT,n>  显示文本变量, n 取值 1~255\n"
             "  <NAME,n>    显示角色名, n 取值 1~2"
+        )
+
+    def _show_about(self):
+        themed_messagebox(
+            self, QMessageBox.Information, "关于编辑器",
+            format_about_header('tkt_editor')
         )
 
     def closeEvent(self, event):
@@ -2169,7 +2176,7 @@ def run_cli(args):
 
 def main():
     # 1. 挂载强化版的参数解析器
-    parser = argparse.ArgumentParser(description="TKT.dat 文本数据库编辑器 v5.0 (支持全功能无头 CLI 模式)")
+    parser = argparse.ArgumentParser(description="TKT.dat 文本数据库编辑器 (支持全功能无头 CLI 模式)")
 
     # 定义 CLI 工作流参数
     parser.add_argument("--cli", action="store_true", help="启用无头命令行模式 (跳过 GUI 加载)")

@@ -29,6 +29,7 @@ from editor_utils.ui_helpers import confirm_close, update_path_labels
 from editor_utils.app_init import install_translator, setup_app_icon
 from editor_utils.lzss import lzss_decompress_dat
 from editor_utils.tkt_loader import load_tkt_simple
+from editor_utils.version import format_title, format_about_header
 from editor_utils.jvg_loader import load_mu_sprites
 
 from panels import PANEL_REGISTRY
@@ -95,7 +96,7 @@ class ConfigsEditorWindow(QMainWindow):
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("TKS Configs Editor")
+        self.setWindowTitle(format_title("configs_editor"))
         self.resize(900, 650)
         self.setMinimumSize(700, 500)
 
@@ -158,7 +159,10 @@ class ConfigsEditorWindow(QMainWindow):
         file_menu.addAction(act_quit)
 
         help_menu = menubar.addMenu("帮助(&H)")
-        act_about = QAction("关于", self)
+        act_help = QAction("帮助说明", self)
+        act_help.triggered.connect(self._show_help)
+        help_menu.addAction(act_help)
+        act_about = QAction("关于编辑器", self)
         act_about.triggered.connect(self._show_about)
         help_menu.addAction(act_about)
 
@@ -393,9 +397,9 @@ class ConfigsEditorWindow(QMainWindow):
 
     def _update_window_title(self):
         if self._tks_dir:
-            self.setWindowTitle(f"TKS Configs Editor - [{self._tks_dir}]")
+            self.setWindowTitle(format_title("configs_editor", f"[{self._tks_dir}]"))
         else:
-            self.setWindowTitle(f"TKS Configs Editor - [{self._configs_dir}]")
+            self.setWindowTitle(format_title("configs_editor", f"[{self._configs_dir}]"))
 
     # ── 主题 ──
 
@@ -431,8 +435,11 @@ class ConfigsEditorWindow(QMainWindow):
     # ── 关于 ──
 
     def _show_about(self):
-        QMessageBox.about(self, "关于",
-            "TKS Configs Editor\n\n"
+        QMessageBox.about(self, "关于编辑器",
+            format_about_header('configs_editor'))
+
+    def _show_help(self):
+        QMessageBox.about(self, "帮助说明",
             "为 TKS 游戏配置文件提供可视化编辑工具。\n"
             "支持: 掉落概率、装备类型标签、召唤表")
 

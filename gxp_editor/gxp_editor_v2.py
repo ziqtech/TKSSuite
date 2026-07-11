@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-GXP 图像编辑器 v4 — 外部独立主题版 (PySide6)
+GXP 图像编辑器 — 外部独立主题版 (PySide6)
 ===========================================
 全面适配外部独立 themes/dark.qss 与 themes/light.qss
 强制剥离透明通道导出 24-bit RGB (符合游戏引擎要求)
@@ -46,6 +46,7 @@ from editor_utils.mod_exporter import (
 )
 from editor_utils.rgb565 import rgb565_to_rgba, rgba_to_rgb565
 from editor_utils.theme_manager import ThemeManager
+from editor_utils.version import format_title, format_about_header
 from editor_utils.window_theme import apply_godot_theme
 
 # ── GXP 格式常量 ──────────────────────────────────────────
@@ -202,7 +203,7 @@ class EnhancedGraphicsView(QGraphicsView):
 class GXPEditor(QMainWindow):
     def __init__(self, filepath: Optional[str] = None):
         super().__init__()
-        self.setWindowTitle("GXP 图像编辑器 v4 (独立外部主题)")
+        self.setWindowTitle(format_title("gxp_editor"))
         self.resize(1200, 800)
 
         ico_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'TKS.ico')
@@ -288,11 +289,11 @@ class GXPEditor(QMainWindow):
 
         # 帮助菜单
         hm = mb.addMenu("帮助(&H)")
-        hm.addAction("关于", self._show_about)
+        hm.addAction("帮助说明", self._show_help)
+        hm.addAction("关于编辑器", self._show_about)
 
-    def _show_about(self):
-        QMessageBox.information(self, "关于",
-            "GXP 图像编辑器 v4 (PySide6)\n\n"
+    def _show_help(self):
+        QMessageBox.information(self, "帮助说明",
             "功能: 编辑《三国群侠传》GXP 格式图像资源\n\n"
             "特性:\n"
             "  · 导入外部图片替换游戏图像\n"
@@ -302,6 +303,10 @@ class GXPEditor(QMainWindow):
             "快捷键:\n"
             "  Ctrl+I = 导入图片   Ctrl+E = 导出 PNG\n"
             "  Ctrl+0 = 原始大小   Ctrl+T = 切换主题")
+
+    def _show_about(self):
+        QMessageBox.information(self, "关于编辑器",
+            format_about_header('gxp_editor'))
 
     def _setup_ui(self):
         cw = QWidget()
@@ -445,7 +450,7 @@ class GXPEditor(QMainWindow):
         self._refresh_view()
         self._status_left.setText(" 新建空白画布 640×480")
         self._info_label.setText("尺寸: 640×480\n格式: RGB565\n状态: 内存新建")
-        self.setWindowTitle("GXP 编辑器 v4 — [新建]")
+        self.setWindowTitle(format_title("gxp_editor", "[新建]"))
 
     def _open_dlg(self):
         p, _ = QFileDialog.getOpenFileName(self, "打开 GXP", "", "GXP (*.gxp *.GXP);;All (*.*)")
@@ -461,7 +466,7 @@ class GXPEditor(QMainWindow):
             self._refresh_view()
             self._status_left.setText(f" 已加载: {Path(p).name}  |  {os.path.getsize(p)/1024:.1f} KB")
             self._info_label.setText(f"尺寸: {self.img.size_str}\n格式: RGB{self.img.bpp}\n文件: {os.path.getsize(p)/1024:.1f} KB")
-            self.setWindowTitle(f"GXP 编辑器 v4 — {os.path.basename(p)}")
+            self.setWindowTitle(format_title("gxp_editor", os.path.basename(p)))
         except Exception as e:
             QMessageBox.critical(self, "数据载入溃散", str(e))
             self._status_left.setText(" 打开失败")
@@ -486,7 +491,7 @@ class GXPEditor(QMainWindow):
             self.img.filepath = p
             size_kb = os.path.getsize(p) / 1024
             self._status_left.setText(f" 已保存: {Path(p).name}  |  {size_kb:.1f} KB")
-            self.setWindowTitle(f"GXP 编辑器 v4 — {os.path.basename(p)}")
+            self.setWindowTitle(format_title("gxp_editor", os.path.basename(p)))
         except Exception as e:
             QMessageBox.critical(self, "构写失败", str(e))
 
@@ -505,7 +510,7 @@ class GXPEditor(QMainWindow):
             self._refresh_view()
             self._status_left.setText(f" 已导入外部资产: {Path(p).name}")
             self._info_label.setText(f"尺寸: {self.img.size_str}\n格式: RGB{self.img.bpp}\n来源: 外部图片映射")
-            self.setWindowTitle(f"GXP 编辑器 v4 — [资产导入] {os.path.basename(p)}")
+            self.setWindowTitle(format_title("gxp_editor", f"[资产导入] {os.path.basename(p)}"))
         except Exception as e:
             QMessageBox.critical(self, "导入失败", str(e))
 

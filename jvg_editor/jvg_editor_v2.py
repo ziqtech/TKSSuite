@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-JVG 图集编辑器 v2 — PySide6 版本，支持深色/浅色主题切换
+JVG 图集编辑器 — PySide6 版本，支持深色/浅色主题切换
 ========================================================
 格式依据: sub_453BD0 (JVG加载), sub_4544EC (RLE渲染)
 用法: python jvg_editor_v2.py [file.jvg]
@@ -54,6 +54,7 @@ from editor_utils.mod_exporter import (
     safe_mod_filename,
 )
 from editor_utils.theme_manager import ThemeManager
+from editor_utils.version import format_title, format_about_header
 from editor_utils.window_theme import apply_godot_theme
 
 JVG_MAGIC = b"@JVG"
@@ -622,7 +623,7 @@ class CanvasView(QGraphicsView):
 class JVGEditor(QMainWindow):
     def __init__(self, filepath: Optional[str] = None):
         super().__init__()
-        self.setWindowTitle("JVG 图集编辑器 v2")
+        self.setWindowTitle(format_title("jvg_editor"))
         self.resize(1400, 900)
 
         # 窗口居中显示
@@ -811,11 +812,11 @@ class JVGEditor(QMainWindow):
 
         # 帮助菜单
         hm = menubar.addMenu("帮助(&H)")
-        hm.addAction("关于", self._show_about)
+        hm.addAction("帮助说明", self._show_help)
+        hm.addAction("关于编辑器", self._show_about)
 
-    def _show_about(self):
-        QMessageBox.information(self, "关于",
-            "JVG 图集编辑器 v2 (PySide6)\n\n"
+    def _show_help(self):
+        QMessageBox.information(self, "帮助说明",
             "功能: 浏览和编辑《三国群侠传》JVG 图像帧资源\n\n"
             "特性:\n"
             "  · 三种视图模式: 平铺 / 逐帧 / 动画播放\n"
@@ -826,6 +827,10 @@ class JVGEditor(QMainWindow):
             "快捷键:\n"
             "  1 = 平铺视图   2 = 逐帧视图   3 = 动画视图\n"
             "  Ctrl+T = 切换主题")
+
+    def _show_about(self):
+        QMessageBox.information(self, "关于编辑器",
+            format_about_header('jvg_editor'))
 
     def _setup_ui(self):
         central_widget = QWidget()
@@ -1120,7 +1125,7 @@ class JVGEditor(QMainWindow):
         self._refresh_view()
         self._update_avatar_actions()
         self._dirty = False
-        self.setWindowTitle("JVG编辑器 v2 — [新建]")
+        self.setWindowTitle(format_title("jvg_editor", "[新建]"))
 
     def _open_dlg(self):
         if not self._confirm_discard():
@@ -1144,7 +1149,7 @@ class JVGEditor(QMainWindow):
         self._refresh_view()
         self._update_avatar_actions()
         self._dirty = False
-        self.setWindowTitle(f"JVG编辑器 v2 — {os.path.basename(p)}")
+        self.setWindowTitle(format_title("jvg_editor", os.path.basename(p)))
 
     def _save(self):
         if not self.jvg:
@@ -1164,7 +1169,7 @@ class JVGEditor(QMainWindow):
             save_jvg(self.jvg, p)
             self.jvg.filepath = p
             self._dirty = False
-            self.setWindowTitle(f"JVG编辑器 v2 — {os.path.basename(p)}")
+            self.setWindowTitle(format_title("jvg_editor", os.path.basename(p)))
             self.statusBar().showMessage(f"已保存: {os.path.basename(p)}", 2000)
         except Exception as e:
             QMessageBox.critical(self, "保存失败", str(e))

@@ -1,30 +1,24 @@
 #!/usr/bin/env python3
 """
-TKAct.dat 多图层 2D 精灵动画编辑器 v3.0 (PySide6 — Godot 4.6 风格)
+TKAct.dat 多图层 2D 精灵动画编辑器 (PySide6 — Godot 4.6 风格)
 =============================================================
-修订依据:
-  - v2.0/v2.1: 逆向工作区/TKS_AI分析act_editor记录.md
-  - v2.2    : 逆向工作区/TKS_AI修正TKAct.dat实际JVG绑定.md
-  - v2.3    : 尾部 64B 逆向确认为"音效触发表"
-              (sub_4434BC L111-119 预加载 + L627-636 触发)
-  - v2.4    : layer_type 语义精细化 + 预览图像混合模式生效
-              (sub_4434BC L305/L414/L460/L518 四段位置分流)
-  - v2.4.1  : 修复预览 sprite 周围显示黑色底色的问题
-              (Windows Tk Canvas 对 RGBA PhotoImage 的 alpha 合成
-               在多 sprite 叠加场景下不稳定, 改由 PIL 自合成后
-               一次性以 RGB 贴图)
-  - v2.4.2  : [已被 v2.4.3 覆写] 错误地将 mode=2 标注为 50% 半透.
-  - v2.4.3  : mode=2 是加法饱和混合 (additive), 非 alpha 半透.
-              查表 word_A3AD30[i+j]=min(i+j,31) (sub_453554 L43-52)
-              param=0/>31 → full additive; 0<p<=31 → scaled additive.
-  - v2.4.4  : ★ mode=3/4 修正 (之前实现完全错误, 依据 sub_45871C / sub_459854):
-              mode=3 (sub_45871C L118-134): per-channel 减法钳 0
-                    dst.RGB = max(dst - src, 0)          # 非 RGB/3 阴影!
-              mode=4 (sub_459854 L109-124): 按 src 亮度 alpha-blend
-                    α = word_A3AEB0[src] & 0x1F          # NTSC 灰度 5-bit
-                    α==0 跳过; α>28 覆盖;
-                    其他 dst = dst*(32-α)/32 + src*α/32  # 非 RGB 取反!
-  - v3.0    : PySide6 UI 重写, 支持深色/浅色主题切换, 统一 editor_utils 公共模块
+逆向依据:
+  - 逆向工作区/TKS_AI分析act_editor记录.md
+  - 逆向工作区/TKS_AI修正TKAct.dat实际JVG绑定.md
+  - 尾部 64B 逆向确认为"音效触发表"
+    (sub_4434BC L111-119 预加载 + L627-636 触发)
+  - layer_type 语义精细化 + 预览图像混合模式生效
+    (sub_4434BC L305/L414/L460/L518 四段位置分流)
+  - mode=2 是加法饱和混合 (additive), 非 alpha 半透.
+    查表 word_A3AD30[i+j]=min(i+j,31) (sub_453554 L43-52)
+    param=0/>31 → full additive; 0<p<=31 → scaled additive.
+  - mode=3/4 修正 (依据 sub_45871C / sub_459854):
+    mode=3 (sub_45871C L118-134): per-channel 减法钳 0
+          dst.RGB = max(dst - src, 0)          # 非 RGB/3 阴影!
+    mode=4 (sub_459854 L109-124): 按 src 亮度 alpha-blend
+          α = word_A3AEB0[src] & 0x1F          # NTSC 灰度 5-bit
+          α==0 跳过; α>28 覆盖;
+          其他 dst = dst*(32-α)/32 + src*α/32  # 非 RGB 取反!
 
 文件结构 (784 字节/条, 共 650 条 = 509,600 字节):
   [0-31]    方向表: 4 方向 × 8 字节, 每字节为 1-based 图层号 (0=空)
@@ -64,12 +58,13 @@ from PySide6.QtCore import (
 # ── editor_utils 公共模块 ──
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from editor_utils.theme_manager import ThemeManager
+from editor_utils.version import format_title, format_about_header
 from editor_utils.window_theme import apply_godot_theme
 from editor_utils.kon_name_resolver import KonNameResolver
 from editor_utils.lzss import lzss_decompress_dat
 from editor_utils.dock_components import DockHeader
 from editor_utils.ui_helpers import (
-    make_fake_input, update_path_labels, confirm_close, export_csv,
+    make_fake_input, update_path_labels, confirm_close,
     themed_messagebox,
 )
 from editor_utils.mod_exporter import (
@@ -1602,7 +1597,7 @@ class ThumbnailStrip(QWidget):
 class ActEditorV2(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("TKAct.dat 多图层 2D 精灵动画编辑器 v3.0 - PySide6")
+        self.setWindowTitle(format_title("act_editor"))
         self.resize(1600, 900)
         self.setMinimumSize(1200, 680)
 
@@ -1715,7 +1710,6 @@ class ActEditorV2(QMainWindow):
         fm.addAction("加载 TKS 目录…\tCtrl+O", self._load_tks_dir)
         fm.addSeparator()
         fm.addAction("保存\tCtrl+S", self._save)
-        fm.addAction("导出 CSV…", self._export_csv)
         fm.addAction("导出为 MOD (.tksmod)…", self._export_tksmod)
         fm.addAction("导入 MOD (.tksmod)…", self._import_tksmod)
         fm.addSeparator()
@@ -1727,7 +1721,8 @@ class ActEditorV2(QMainWindow):
 
         hm = mb.addMenu("帮助(&H)")
         hm.addAction("字段参考", self._show_field_ref)
-        hm.addAction("关于", self._show_about)
+        hm.addAction("帮助说明", self._show_help)
+        hm.addAction("关于编辑器", self._show_about)
 
         # 快捷键
         act_save = QAction(self)
@@ -3112,29 +3107,6 @@ class ActEditorV2(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "保存失败", str(e))
 
-    def _export_csv(self):
-        if not self.entries:
-            return
-        fp, _ = QFileDialog.getSaveFileName(self, "导出 CSV", "TKAct.csv", "CSV (*.csv)")
-        if not fp:
-            return
-        with open(fp, 'w', encoding='utf-8-sig') as f:
-            cols = ['动画#', '图层组成']
-            for s in range(1, ACT_MAX_LAYER + 1):
-                for (fn, _, _, _, _) in ALL_FIELDS:
-                    cols.append(f"L{s}_{fn}")
-            f.write(','.join(cols) + '\n')
-            for entry in self.entries:
-                if entry_is_empty(entry):
-                    continue
-                row = [str(entry['index']), entry_summary(entry)]
-                for s in range(ACT_MAX_LAYER):
-                    L = entry['layers'][s]
-                    for (_, idx, _, _, _) in ALL_FIELDS:
-                        row.append(str(L[idx]))
-                f.write(','.join(row) + '\n')
-        self.status_var.setText(f"已导出: {fp}")
-
     def _export_tksmod(self):
         """导出 TKAct.dat 为 .tksmod — 记录级增量（仅导出修改过的动画条目）"""
         if not self.entries or not self.act_path:
@@ -4280,7 +4252,7 @@ class ActEditorV2(QMainWindow):
         text.setFont(QFont("Consolas", 9))
 
         lines = [
-            "TKAct.dat 字段说明 v3.0",
+            "TKAct.dat 字段说明",
             "",
             f"【文件结构】{ACT_ENTRY_COUNT} 条 × {ACT_ENTRY_SIZE} 字节 = {ACT_DECOMPRESSED} 字节",
             "  每条 = 方向表[32B] + 条目级参数[48B] + 8图层×80B + 尾部[64B]",
@@ -4310,9 +4282,8 @@ class ActEditorV2(QMainWindow):
         dlg.exec()
 
     # 逆向参考: sub_4434BC, sub_42FEE0, sub_451780, sub_458D08
-    def _show_about(self):
-        themed_messagebox(self, QMessageBox.Information, "关于",
-            "TKAct.dat 精灵动画编辑器 v3.0 (PySide6)\n\n"
+    def _show_help(self):
+        themed_messagebox(self, QMessageBox.Information, "帮助说明",
             "功能: 编辑《三国群侠传》角色动画数据\n"
             "数据: 650 条 × 784 字节 = 509,600 字节\n\n"
             "特性:\n"
@@ -4320,12 +4291,11 @@ class ActEditorV2(QMainWindow):
             "  · 6 种图像混合模式\n"
             "  · 实时动画预览\n"
             "  · 音效触发表编辑\n"
-            "  · 深色/浅色主题切换\n\n"
-            "版本历史:\n"
-            "  v3.0: PySide6 UI 重写, 主题切换\n"
-            "  v2.4: 混合模式精细化修正\n"
-            "  v2.3: 音效触发表 + SWS.GRP 实时播放\n"
-            "  v2.2: 贴图源修正")
+            "  · 深色/浅色主题切换")
+
+    def _show_about(self):
+        themed_messagebox(self, QMessageBox.Information, "关于编辑器",
+            format_about_header('act_editor'))
 
     # ── 窗口关闭 ──
 

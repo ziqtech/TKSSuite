@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Spritesheet Editor v2 - 精灵表编辑器 (PySide6)
+Spritesheet Editor - 精灵表编辑器 (PySide6)
 ================================================
 功能:
   1. 导入多张图片, 设置 columns/rows/padding, 拼成 Spritesheet
@@ -51,6 +51,7 @@ except ImportError:
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from editor_utils.dock_components import create_dock
 from editor_utils.theme_manager import ThemeManager
+from editor_utils.version import format_title, format_about_header
 from editor_utils.window_theme import apply_godot_theme
 
 # ── 像素格式定义 ──────────────────────────────────────────────
@@ -2360,7 +2361,7 @@ class SpriteSheetEditorWindow(QMainWindow):
 
     def __init__(self, filepath: Optional[str] = None, is_dark: bool = True):
         super().__init__()
-        self.setWindowTitle("Spritesheet Editor - 精灵表编辑器 (PySide6)")
+        self.setWindowTitle(format_title("spritesheet_editor"))
         ico = os.path.join(os.path.dirname(__file__), 'TKS.ico')
         if os.path.exists(ico):
             self.setWindowIcon(QIcon(ico))
@@ -2681,11 +2682,15 @@ class SpriteSheetEditorWindow(QMainWindow):
 
         # 帮助菜单
         hm = menubar.addMenu("帮助")
-        hm.addAction("关于", self._show_about)
+        hm.addAction("帮助说明", self._show_help)
+        hm.addAction("关于编辑器", self._show_about)
 
     def _show_about(self):
-        QMessageBox.information(self, "关于",
-            "精灵表编辑器 v2 (PySide6)\n\n"
+        QMessageBox.information(self, "关于编辑器",
+            format_about_header('spritesheet_editor'))
+
+    def _show_help(self):
+        QMessageBox.information(self, "帮助说明",
             "功能: 制作和编辑游戏精灵表 (Spritesheet)\n\n"
             "特性:\n"
             "  · 导入多张图片拼合为精灵表\n"

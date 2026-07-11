@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-TKMat.Dat 地图实体编辑器 v2.3 — PySide6 Godot 风格版
+TKMat.Dat 地图实体编辑器 — PySide6 Godot 风格版
 =============================================================
 逆向依据 (已通过 运行时转储 反编译源码逐字段验证):
   sub_412688:21: TKMat.Dat → dword_51AF40 (2304000B, 6000×384B, 96 DWORD/实体) ✓已验证
@@ -56,7 +56,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from editor_utils.theme_manager import ThemeManager
 from editor_utils.dock_components import DockHeader, create_dock
 from editor_utils.lzss import lzss_decompress_dat as lzss_decompress, lzss_decompress_save, lzss_compress_save
-from editor_utils.ui_helpers import export_csv, confirm_close, themed_messagebox
+from editor_utils.ui_helpers import confirm_close, themed_messagebox
+from editor_utils.version import format_title, format_about_header
 from editor_utils.mod_exporter import (
     diff_records, diff_text_defines, compute_crc32, generate_mod_json,
     pack_tksmod, build_data_diff_json, build_text_diff_json, ModMetadataDialog,
@@ -2760,7 +2761,7 @@ class MatEditorApp(QMainWindow):
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("TKMat.Dat 地图实体编辑器 v2.3 (PySide6)")
+        self.setWindowTitle(format_title("mat_editor"))
         self.resize(1560, 860)
         self.setMinimumSize(1340, 640)
 
@@ -2892,9 +2893,9 @@ class MatEditorApp(QMainWindow):
         vm.addAction("统计信息", self._show_stats)
 
         hm = menu_bar.addMenu("帮助(H)")
-        hm.addAction("导出 CSV…", self._export_csv)
+        hm.addAction("帮助说明", self._show_help)
         hm.addAction("字段说明", self._show_field_ref)
-        hm.addAction("关于", self._show_about)
+        hm.addAction("关于编辑器", self._show_about)
 
         # --- Main Splitter (三栏) ---
         self.splitter = QSplitter(Qt.Horizontal)
@@ -4234,7 +4235,7 @@ class MatEditorApp(QMainWindow):
             self._data._save_mode = False
             return
         self._reload()
-        self.setWindowTitle(f"TKMat.Dat 地图实体编辑器 v2.3 (PySide6) [存档模式 槽位{slot_num}]")
+        self.setWindowTitle(f"{format_title('mat_editor')} [存档模式 槽位{slot_num}]")
 
     def _reload(self):
         if not self._data.dat_path:
@@ -5819,15 +5820,6 @@ class MatEditorApp(QMainWindow):
             msg += f"  {tval}-{ENTITY_TYPES.get(tval, '?')}: {tc[tval]} ({tc[tval] / ne * 100:.1f}%)\n"
         QMessageBox.information(self, "统计信息", msg)
 
-    def _export_csv(self):
-        if not self._data.records: return
-        filtered = [r for r in self._data.records if has_data(r)]
-        hdr = ['index'] + [f'd{i}' for i in range(DWORD_COUNT)] + ['type_name', 'scene_name']
-        def row_func(rec):
-            return [str(rec['index'])] + [str(rec[f'd{di}']) for di in range(DWORD_COUNT)] + \
-                   [ENTITY_TYPES.get(rec['d0'], ''), scene_name(self._data.tkt_scenes, rec['d1'])]
-        export_csv(self, filtered, hdr, row_func, "TKMat.csv")
-
     # 逆向参考: sub_412688(加载入口, 行21)
     def _show_field_ref(self):
         msg = ("TKMat.Dat 实体表字段说明\n" + '─' * 50 + "\n\n"
@@ -5843,9 +5835,8 @@ class MatEditorApp(QMainWindow):
         themed_messagebox(self, QMessageBox.Information, "字段说明", msg)
 
     # 逆向参考: sub_412688, sub_405CBC, sub_4066F0, sub_40EBD4, sub_409618
-    def _show_about(self):
-        themed_messagebox(self, QMessageBox.Information, "关于",
-                                "TKMat.Dat 地图实体编辑器 v2.3 (PySide6)\n\n"
+    def _show_help(self):
+        themed_messagebox(self, QMessageBox.Information, "帮助说明",
                                 "功能: 编辑《三国群侠传》地图实体数据\n\n"
                                 "编辑模式:\n"
                                 "  · 参数编辑 - 修改实体属性\n"
@@ -5861,6 +5852,10 @@ class MatEditorApp(QMainWindow):
                                 "  · A链 - 自动执行 (按周期触发)\n"
                                 "  · B链 - 交互触发 (玩家操作时)\n"
                                 "  · C链 - 其他类型")
+
+    def _show_about(self):
+        themed_messagebox(self, QMessageBox.Information, "关于编辑器",
+                                format_about_header('mat_editor'))
 
     def _export_scene(self):
         """导出当前场景: TKMat实体 + DefUnit链 + TKD脚本 → .tkmat JSON"""

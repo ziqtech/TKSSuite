@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-TKKon.dat 可视化编辑器 v3.3 (PySide6 — Godot 4.6 风格)
+TKKon.dat 可视化编辑器 (PySide6 — Godot 4.6 风格)
 =============================================================
 UI 样式完全对齐 skill_editor_v2.py / shop_editor_v2.py 的
 FakeInputBox / InspectorTitle / PreviewFrame / DockHeader 体系。
@@ -24,7 +24,7 @@ from PySide6.QtCore import Qt, QTranslator
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from editor_utils.theme_manager import ThemeManager
 from editor_utils.dock_components import DockHeader
-from editor_utils.ui_helpers import make_fake_input, update_path_labels, confirm_close, export_csv, themed_messagebox
+from editor_utils.ui_helpers import make_fake_input, update_path_labels, confirm_close, themed_messagebox
 from editor_utils.lzss import lzss_decompress_dat, lzss_compress_dat
 from editor_utils.tkt_loader import load_tkt_simple
 from editor_utils.picker_dialogs import StatusPickerDialog, STATUS_NAMES
@@ -35,6 +35,7 @@ from editor_utils.mod_exporter import (
     load_reference_dat_fields,
     get_tksmod_info, import_tksmod_records, ModImportPreviewDialog, ModExportPreviewDialog,
 )
+from editor_utils.version import format_title, format_about_header
 from editor_utils.window_theme import apply_godot_theme
 from editor_utils.kon_name_resolver import KonNameResolver
 
@@ -223,17 +224,17 @@ class NumericTableItem(QTableWidgetItem):
 class FieldRefDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("字段参考 v3.0")
+        self.setWindowTitle("字段参考")
         self.resize(700, 580)
         layout = QVBoxLayout(self)
         text = QTextEdit()
         text.setReadOnly(True)
         text.setFont(QFont("Consolas", 9))
-        lines = ["TKKon.dat 字段映射 v3.0 (2026-05 语义修正)", ""]
+        lines = ["TKKon.dat 字段映射", ""]
         lines.append(f"【记录布局】{KON_CNT} 条 × {KON_REC} 字节 = {KON_DECOMPRESSED} 字节")
         lines.append(f"  每条 20 个字段 × 16位整数 = {KON_REC} 字节")
         lines.append("")
-        lines.append("【★ v3.0 修正: 字段语义完全重分析】")
+        lines.append("【字段语义说明】")
         lines.append("  field[0-2] 是战斗引擎操作参数，非TKT文本引用")
         lines.append("【字段详情】")
         for fn, fo, fl, cmt in KON_FIELDS:
@@ -267,7 +268,7 @@ class FieldRefDialog(QDialog):
 class KonEditor(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("TKKon.dat 可视化编辑器 v3.3 - PySide6")
+        self.setWindowTitle(format_title("kon_editor"))
         self.resize(1320, 820)
         self.setMinimumSize(1050, 650)
 
@@ -325,7 +326,6 @@ class KonEditor(QMainWindow):
         fm.addAction("加载 TKS 目录...\tCtrl+O", self._load_tks_dir)
         fm.addSeparator()
         fm.addAction("保存\tCtrl+S", self._save)
-        fm.addAction("导出 CSV...", self._export_csv)
         fm.addAction("导出为 MOD (.tksmod)…", self._export_tksmod)
         fm.addAction("导出为 MOD (指定参考目录)…", self._export_tksmod_with_ref)
         fm.addSeparator()
@@ -338,10 +338,13 @@ class KonEditor(QMainWindow):
         em.addAction("复制当前记录", self._copy_record)
         em.addAction("清空当前记录", self._clear_current)
 
+        vm = mb.addMenu("视图(&V)")
+        vm.addAction("切换 Godot 主题 (Dark/Light)\tF5", self._toggle_theme)
+
         hm = mb.addMenu("帮助(&H)")
         hm.addAction("字段参考", self._show_field_ref)
-        hm.addAction("切换 Godot 主题 (Dark/Light)\tF5", self._toggle_theme)
-        hm.addAction("关于", self._show_about)
+        hm.addAction("帮助说明", self._show_help)
+        hm.addAction("关于编辑器", self._show_about)
 
         QShortcut("F5", self).activated.connect(self._toggle_theme)
 
@@ -1128,20 +1131,6 @@ class KonEditor(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "保存失败", str(e))
 
-    def _export_csv(self):
-        if not self.records: return
-        filtered = [r for r in self.records
-                    if not all(r[fn] == 0 for fn, _, _, _ in KON_FIELDS)]
-        hdr = ['记录索引', '动画ID', '名称'] + [fn for fn, _, _, _ in KON_FIELDS]
-
-        def row_func(rec):
-            return [str(rec['index']), str(rec.get('tkact_id', '')),
-                    kon_record_name(rec, self.tkt, self._resolver)] + \
-                   [str(rec[fn]) for fn, _, _, _ in KON_FIELDS]
-
-        if export_csv(self, filtered, hdr, row_func, "TKKon.csv"):
-            self.status_label.setText("已导出 CSV")
-
     def _export_tksmod(self):
         """导出当前修改为 .tksmod MOD 文件"""
         if not self.records or not self._original_records:
@@ -1301,9 +1290,8 @@ class KonEditor(QMainWindow):
         FieldRefDialog(self).exec()
 
     # 逆向参考: sub_43D53C, sub_43D8B0, sub_43E980, sub_4458B0, sub_4434BC, sub_4173F8
-    def _show_about(self):
-        themed_messagebox(self, QMessageBox.Information, "关于",
-            "TKKon.dat 技能动画编辑器 v3.3 (PySide6)\n\n"
+    def _show_help(self):
+        themed_messagebox(self, QMessageBox.Information, "帮助说明",
             "功能: 编辑《三国群侠传》技能动画数据\n"
             "数据: 每条 20 个字段 × 16位整数\n\n"
             "特性:\n"
@@ -1311,6 +1299,10 @@ class KonEditor(QMainWindow):
             "  · 技能动画参数可视化编辑\n"
             "  · 伤害字段编码规则说明"
         )
+
+    def _show_about(self):
+        themed_messagebox(self, QMessageBox.Information, "关于编辑器",
+            format_about_header('kon_editor'))
 
 # ============================================================
 # 入口
