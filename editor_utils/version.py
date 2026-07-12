@@ -15,6 +15,11 @@ version.py — TKS 编辑器版本号管理 (单一数据源)
 所有编辑器处于开发阶段, 初始版本统一为 0.0.1。
 正式发布时将主版本号升至 1.0.0, 后续按 SemVer 规范递增。
 
+构建日期:
+  - 开发环境 (非编译): 显示 "开发阶段（未打包）"
+  - Nuitka 编译环境: 自动读取 exe 文件 mtime 作为构建日期
+    无需 build_all.py 注入, 纯运行时计算
+
 使用示例::
 
     from editor_utils.version import get_version, format_title
@@ -27,12 +32,36 @@ version.py — TKS 编辑器版本号管理 (单一数据源)
     self.setWindowTitle(format_title("item_editor"))
     self.setWindowTitle(format_title("item_editor", os.path.basename(path)))
 """
+import os
+import sys
 from dataclasses import dataclass
 
 
 # ── 构建日期 ──
-# 打包时由 build_all.py 注入实际日期; 开发阶段保持"开发阶段（未打包）"
-BUILD_DATE = "开发阶段（未打包）"
+# 开发阶段固定文案; 编译环境由 get_build_date() 运行时计算 exe mtime
+_BUILD_DATE_DEV = "开发阶段（未打包）"
+
+
+def _detect_build_date() -> str:
+    """检测构建日期。
+
+    开发环境: 返回 "开发阶段（未打包）"
+    Nuitka 编译环境: 返回 exe 文件的修改时间 (YYYY-MM-DD HH:MM)
+    """
+    # Nuitka 编译后存在 __compiled__ 全局变量
+    if "__compiled__" not in globals() and not getattr(sys, "frozen", False):
+        return _BUILD_DATE_DEV
+
+    # 编译环境: 从 sys.argv[0] (原始 exe 路径, Nuitka onefile 下保留) 读取 mtime
+    try:
+        exe_path = sys.argv[0] if sys.argv and sys.argv[0] else sys.executable
+        if exe_path and os.path.isfile(exe_path):
+            mtime = os.path.getmtime(exe_path)
+            from datetime import datetime
+            return datetime.fromtimestamp(mtime).strftime("%Y-%m-%d %H:%M")
+    except OSError:
+        pass
+    return _BUILD_DATE_DEV
 
 
 @dataclass(frozen=True)
@@ -112,15 +141,15 @@ def format_title(app_id: str, subtitle: str | None = None) -> str:
 
 
 def get_build_date() -> str:
-    """获取构建日期 (打包时由 build_all.py 注入)"""
-    return BUILD_DATE
+    """获取构建日期 (编译环境自动检测 exe mtime, 开发环境返回占位文案)"""
+    return _detect_build_date()
 
 
 def format_about_header(app_id: str) -> str:
     """格式化"关于"对话框的标题行 (含版本号与构建日期)
 
     Returns:
-        "{app_name} v{version}\\n构建日期: {BUILD_DATE}"
+        "{app_name} v{version}\\n构建日期: {build_date}"
     """
     v = get_version(app_id)
-    return f"{v.app_name} v{v.version}\n构建日期: {BUILD_DATE}"
+    return f"{v.app_name} v{v.version}\n构建日期: {get_build_date()}"
