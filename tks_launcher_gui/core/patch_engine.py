@@ -1329,6 +1329,111 @@ def apply_font_config(defn: PatchDef, code_buf: bytearray, code_start_addr: int,
     return all_ok
 
 # ============================================================
+# 补丁类型: patch_animation_speed (状态动画播放速度自定义)
+# 逆向依据: 6个状态动画函数中的帧延迟常量 0x3C (60ms)
+#
+# 状态动画主循环: sub_43292C 每回合遍历角色所有状态,依次调用:
+#   sub_433690 (12帧), sub_433A38 (18帧), sub_434188 (18帧),
+#   sub_434D7C (18帧), sub_445564 (22帧), sub_43339C
+#
+# 每个函数的帧延迟模式 (硬编码常量,非变量):
+#   while ( j_GetTickCount() - dword_4E7CD0 < 0x3C )  // 60ms
+#       ;
+#
+# 机器码: 2B C? 83 F8 3C  (sub eax,reg; cmp eax, 0x3C)
+#   变体1: 8B 15 D0 7C 4E 00 2B C2 83 F8 3C  (mov edx,dword_4E7CD0; sub eax,edx)
+#   变体2: 8B 0D D0 7C 4E 00 2B C1 83 F8 3C  (mov ecx,dword_4E7CD0; sub eax,ecx)
+#
+# 注意: 此 pattern 也会匹配非状态动画函数(技能/开场/主循环等),
+#   必须用状态动画函数地址范围过滤,只修改6个状态动画函数中的 0x3C
+# ============================================================
+
+def apply_animation_speed(defn: PatchDef, code_buf: bytearray, code_start_addr: int,
+                          h_proc: int, log_func=None) -> bool:
+    log = log_func or (lambda x: None)
+    tag = f"[{defn.id}]"
+    log(f"\n  {tag}: {defn.desc}")
+
+    # 1. 读取 JSON 配置
+    jf = defn.json_file
+    if not jf or not os.path.isfile(jf):
+        log(f"    [WARN] JSON 配置不存在: {jf!r}, 跳过")
+        return True
+    try:
+        with open(jf, 'r', encoding='utf-8') as f:
+            cfg = json.load(f)
+    except Exception as e:
+        log(f"  [ERROR] 解析 animation_speed.json 失败: {e}")
+        return True
+
+    ORIG_FRAME_DELAY = 60  # 游戏源码默认值 0x3C
+    frame_delay = int(cfg.get("frame_delay_ms", ORIG_FRAME_DELAY))
+
+    # 值域验证: 1~127 (有符号字节范围, jb 指令无符号比较, 值必须为正)
+    if not (1 <= frame_delay <= 127):
+        log(f"    [ERROR] frame_delay_ms={frame_delay} 超出 1~127")
+        log(f"            (jb 使用无符号比较, 值必须为正且 ≤127)")
+        return False
+
+    if frame_delay == ORIG_FRAME_DELAY:
+        log(f"    frame_delay_ms={frame_delay}ms (与原始一致, 跳过)")
+        return True
+
+    # 2. 定义6个状态动画函数的地址范围 (VA)
+    #    逆向依据: sub_43292C 调用的6个状态动画播放函数
+    #    每个函数内 0x3C 常量的偏移 < 0x120, 搜索范围 512 字节足够
+    STATUS_ANIM_FUNCS = [
+        (0x43339C, "sub_43339C"),  # 0x3C @偏移 0x4A
+        (0x433690, "sub_433690"),  # 0x3C @偏移 0x73
+        (0x433A38, "sub_433A38"),  # 0x3C @偏移 0x73
+        (0x434188, "sub_434188"),  # 0x3C @偏移 0x7D
+        (0x434D7C, "sub_434D7C"),  # 0x3C @偏移 0x116
+        (0x445564, "sub_445564"),  # 0x3C @偏移 0xC8
+    ]
+    SEARCH_RANGE = 512  # 每个函数内搜索范围
+
+    # 3. 通用 pattern: 2B C? 83 F8 3C (sub eax,reg; cmp eax, 0x3C)
+    #    用通配符匹配两种寄存器变体 (C0/C1/C2/C3)
+    pat_str = "2B ?? 83 F8 3C"
+    pat, wc = parse_pattern(pat_str)
+    all_hits = pattern_scan(bytes(code_buf), pat, wc)
+    log(f"    通用 pattern 扫描: {len(all_hits)} 处匹配")
+
+    # 4. 用状态动画函数地址范围过滤
+    new_byte = frame_delay & 0xFF
+    all_ok = True
+    modified = 0
+
+    for func_va, func_name in STATUS_ANIM_FUNCS:
+        func_rva = func_va - code_start_addr
+        func_end = func_rva + SEARCH_RANGE
+        # 在此函数范围内查找 0x3C 帧延迟
+        found = False
+        for hit in all_hits:
+            if func_rva <= hit < func_end:
+                # 验证: 0x3C 在 pattern 偏移 4 处 (2B ?? 83 F8 [3C])
+                off_3c = hit + 4
+                actual = code_buf[off_3c]
+                if actual != ORIG_FRAME_DELAY:
+                    log(f"    [WARN] {func_name}: 偏移 0x{off_3c:X} 处值=0x{actual:02X} (预期 0x3C), 跳过")
+                    continue
+                ha = code_start_addr + off_3c
+                op = vp_ex(h_proc, ha, 1, PAGE_EXECUTE_READWRITE)
+                write_pm(h_proc, ha, bytes([new_byte]))
+                vp_ex(h_proc, ha, 1, op)
+                code_buf[off_3c] = new_byte
+                log(f"    [OK] {func_name}: {actual}ms -> {frame_delay}ms @RVA 0x{off_3c:X}")
+                modified += 1
+                found = True
+                break
+        if not found:
+            log(f"    [ERROR] {func_name}: 未找到帧延迟常量, 跳过")
+            all_ok = False
+
+    log(f"    共修改 {modified}/{len(STATUS_ANIM_FUNCS)} 个状态动画函数")
+    return all_ok
+
+# ============================================================
 # 配置补丁编排
 # ============================================================
 
@@ -1449,6 +1554,9 @@ def apply_config_patches(config: PatchConfig, code_buf: bytearray, code_start_ad
         elif defn.type == "patch_font_config":
             all_ok &= apply_font_config(defn, code_buf, code_start_addr,
                                          h_proc, log_func=log)
+        elif defn.type == "patch_animation_speed":
+            all_ok &= apply_animation_speed(defn, code_buf, code_start_addr,
+                                             h_proc, log_func=log)
         elif defn.type == "runtime_watchdog":
             log(f"    -> 由运行时看门狗处理 (游戏运行期间持续监控)")
         else:
