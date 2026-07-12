@@ -174,7 +174,8 @@ def compute_crc32_bytes(data: bytes) -> str:
 # ═══════════════════════════════════════════════════════════════
 
 def generate_mod_json(metadata: dict, components: list[dict],
-                      resources: list[dict] | None = None) -> dict:
+                      resources: list[dict] | None = None,
+                      configs: list[dict] | None = None) -> dict:
     """生成 mod.json 内容。
 
     Args:
@@ -183,6 +184,8 @@ def generate_mod_json(metadata: dict, components: list[dict],
                   preview_image_path (可选, 本地预览图路径)
         components: [{"file": "data/X.json", "target": "X.dat"}, ...]
         resources: [{"file": "resources/X.JVG", "target": "X.JVG"}, ...]
+        configs: [{"file": "configs/summon_table.json", "name": "summon_table"}, ...]
+                 白名单内的启动器配置文件，MOD 包中携带时优先级最高
 
     Returns:
         完整的 mod.json 字典
@@ -216,6 +219,7 @@ def generate_mod_json(metadata: dict, components: list[dict],
 
         "components": components,
         "resources": resources or [],
+        "configs": configs or [],
     }
     if preview_image:
         mod_json["preview_image"] = preview_image
@@ -231,7 +235,8 @@ def generate_mod_json(metadata: dict, components: list[dict],
 def pack_tksmod(output_path: str, mod_json: dict,
                 data_files: dict[str, Any],
                 resource_files: dict[str, str] | None = None,
-                preview_image_path: str | None = None) -> bool:
+                preview_image_path: str | None = None,
+                config_files: dict[str, Any] | None = None) -> bool:
     """将 MOD 数据打包为 .tksmod (ZIP) 文件。
 
     Args:
@@ -242,6 +247,8 @@ def pack_tksmod(output_path: str, mod_json: dict,
         resource_files: {"resources/Cha.JVG": "/abs/path/to/file", ...}
                         value 为源文件的绝对路径
         preview_image_path: 预览图本地路径（可选），自动打入 ZIP 根目录
+        config_files: {"configs/summon_table.json": dict_content, ...}
+                      白名单内的启动器配置文件，value 为已解析的字典
 
     Returns:
         True 成功
@@ -261,6 +268,12 @@ def pack_tksmod(output_path: str, mod_json: dict,
         for internal_path, content_dict in data_files.items():
             json_str = json.dumps(content_dict, ensure_ascii=False, indent=2)
             zf.writestr(internal_path, json_str)
+
+        # 写入启动器配置文件 (白名单内)
+        if config_files:
+            for internal_path, content_dict in config_files.items():
+                json_str = json.dumps(content_dict, ensure_ascii=False, indent=2)
+                zf.writestr(internal_path, json_str)
 
         # 写入资源文件
         if resource_files:
@@ -1075,6 +1088,7 @@ def get_tksmod_info(mod_path: str) -> dict | None:
         "scene_name": mod_json.get("scene_name", ""),
         "components": mod_json.get("components", []),
         "resources": mod_json.get("resources", []),
+        "configs": mod_json.get("configs", []),
         "preview_image": mod_json.get("preview_image", ""),
         "targets": targets,
         "stats": stats,

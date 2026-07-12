@@ -26,6 +26,7 @@ class TksmodContent:
     mod_json: Dict[str, Any] = field(default_factory=dict)
     data_files: Dict[str, Any] = field(default_factory=dict)  # {internal_path: parsed_json}
     resource_files: List[str] = field(default_factory=list)    # ZIP 内资源文件路径列表
+    config_files: Dict[str, Any] = field(default_factory=dict)  # {configs/X.json: parsed_json} 白名单内
     valid: bool = False
     error: str = ""
 
@@ -73,6 +74,15 @@ def read_tksmod_content(mod_path: str) -> TksmodContent:
                     content = zf.read(name).decode('utf-8')
                     result.data_files[name] = json.loads(content)
 
+            # 读取 configs/ 下的 JSON 文件 (白名单内的启动器配置)
+            for name in zf.namelist():
+                if name.startswith("configs/") and name.endswith(".json") and not name.endswith("/"):
+                    try:
+                        content = zf.read(name).decode('utf-8')
+                        result.config_files[name] = json.loads(content)
+                    except Exception:
+                        pass
+
             # 收集 resources/ 下的文件
             for name in zf.namelist():
                 if name.startswith("resources/") and name != "resources/":
@@ -118,6 +128,8 @@ def list_tksmod_contents(mod_path: str) -> Dict[str, Any]:
         "author": mj.get("author", ""),
         "components": mj.get("components", []),
         "resources": mj.get("resources", []),
+        "configs": mj.get("configs", []),
+        "config_files": list(content.config_files.keys()),
         "valid": True,
         "error": "",
     }
@@ -236,6 +248,9 @@ def merge_tksmod_files(mod_paths: List[str], output_path: str,
     # 合并资源声明
     merged_resources: List[Dict[str, str]] = []
     merged_res_targets: Dict[str, Dict[str, str]] = {}
+    # 合并启动器配置文件 (白名单内, 后者覆盖前者)
+    merged_config_files: Dict[str, Any] = {}
+    merged_config_names: Dict[str, str] = {}  # config_name -> internal_path
     # 合并依赖和冲突
     merged_deps: List[str] = []
     merged_conflicts: List[str] = []
@@ -283,6 +298,12 @@ def merge_tksmod_files(mod_paths: List[str], output_path: str,
             if target:
                 merged_res_targets[target] = res
 
+        # 合并启动器配置文件 (白名单内, 后者覆盖前者)
+        for cfg_internal, cfg_data in c.config_files.items():
+            cfg_name = os.path.splitext(os.path.basename(cfg_internal))[0]
+            merged_config_files[cfg_internal] = cfg_data
+            merged_config_names[cfg_name] = cfg_internal
+
         # 合并依赖
         for dep in mj.get("dependencies", []):
             if dep not in merged_deps:
@@ -305,6 +326,9 @@ def merge_tksmod_files(mod_paths: List[str], output_path: str,
     # 构建最终 components 列表
     merged_components = list(merged_comp_targets.values())
     merged_resources = list(merged_res_targets.values())
+    # 构建 configs 元数据列表
+    merged_configs = [{"file": path, "name": name}
+                      for name, path in merged_config_names.items()]
 
     # 构建 mod.json
     now = datetime.now(timezone(timedelta(hours=8)))
@@ -327,12 +351,14 @@ def merge_tksmod_files(mod_paths: List[str], output_path: str,
         "warpc_expand": merged_warpc_expand,
         "components": merged_components,
         "resources": merged_resources,
+        "configs": merged_configs,
         # 记录源文件信息 (仅供参考)
         "_source_files": [c.filename for c in contents],
         "_packed_at": now.strftime("%Y-%m-%dT%H:%M:%S"),
     }
 
-    log(f"  合并结果: {len(merged_components)} 组件, {len(merged_resources)} 资源")
+    log(f"  合并结果: {len(merged_components)} 组件, {len(merged_resources)} 资源, "
+        f"{len(merged_config_files)} 配置")
 
     # 打包为 ZIP
     try:
@@ -345,6 +371,11 @@ def merge_tksmod_files(mod_paths: List[str], output_path: str,
             for internal_path, data_content in merged_data_files.items():
                 json_str = json.dumps(data_content, ensure_ascii=False, indent=2)
                 zf.writestr(internal_path, json_str)
+
+            # 写入启动器配置文件 (白名单内)
+            for cfg_path, cfg_content in merged_config_files.items():
+                json_str = json.dumps(cfg_content, ensure_ascii=False, indent=2)
+                zf.writestr(cfg_path, json_str)
 
             # 从源 .tksmod 中提取并写入资源文件
             for c in contents:

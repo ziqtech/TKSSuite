@@ -130,6 +130,8 @@ class PatcherWorker(QThread):
         mods_dir = os.path.join(exe_dir, "mods")
         self._log(f"\n=== MOD 加载 ({mods_dir}) ===")
         loaded_mods = scan_mods(mods_dir, log_func=self._log)
+        # MOD 包携带的启动器配置覆盖 (白名单内, 优先级最高)
+        _mod_config_overrides = None
         # 按 UI 勾选状态过滤: 仅启用勾选的 MOD，未勾选的跳过
         if loaded_mods:
             if self.enabled_mod_ids is not None:
@@ -158,6 +160,7 @@ class PatcherWorker(QThread):
                 self._log(f"  [WARN] 检测到 {len(conflicts)} 个冲突, 继续加载 (后加载覆盖)")
             self._log(f"\n--- 合并 MOD 数据 ---")
             merged = merge_mods(sorted_mods, game_dir or os.getcwd(), log_func=self._log)
+            _mod_config_overrides = merged.config_overrides
             if merged.file_data or merged.resource_replacements or merged.backed_up:
                 self._log(f"\n--- 写入 MOD 数据 ---")
                 apply_mod_data(merged, game_dir or os.getcwd(), log_func=self._log)
@@ -466,6 +469,7 @@ class PatcherWorker(QThread):
                 only_portrait=self.only_portrait, only_awk=self.only_awk,
                 selected_patches=self.selected_patches,
                 exe_profile=_exe_profile,
+                config_overrides=_mod_config_overrides,
             )
         except Exception as ex:
             self._log(f"[ERROR] ApplyConfigPatches 异常: {ex}")

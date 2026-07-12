@@ -31,8 +31,14 @@ from editor_utils.lzss import lzss_decompress_dat
 from editor_utils.tkt_loader import load_tkt_simple
 from editor_utils.version import format_title, format_about_header
 from editor_utils.jvg_loader import load_mu_sprites
+from editor_utils.mod_exporter import (
+    generate_mod_json, pack_tksmod, ModMetadataDialog, safe_mod_filename,
+)
 
 from panels import PANEL_REGISTRY
+
+# 允许通过 MOD 包携带的启动器配置文件白名单 (与 mod_loader.MOD_ALLOWED_CONFIGS 一致)
+_CONFIGS_ALLOWED_IN_MOD = {"summon_table", "drop_probability"}
 
 
 # ── WarPC 数据加载 ──
@@ -152,6 +158,11 @@ class ConfigsEditorWindow(QMainWindow):
         act_save.setShortcut("Ctrl+S")
         act_save.triggered.connect(self.save_all)
         file_menu.addAction(act_save)
+
+        file_menu.addSeparator()
+        act_export_mod = QAction("导出为 MOD (.tksmod)…", self)
+        act_export_mod.triggered.connect(self._export_tksmod)
+        file_menu.addAction(act_export_mod)
 
         file_menu.addSeparator()
         act_quit = QAction("退出", self)
@@ -278,6 +289,80 @@ class ConfigsEditorWindow(QMainWindow):
             QMessageBox.information(self, "保存成功", f"已保存 {saved} 个配置文件")
 
         self._update_tab_titles()
+
+    # ── MOD 导出 ──
+
+    def _export_tksmod(self):
+        """将白名单内的配置文件 (summon_table, drop_probability) 导出为 .tksmod。
+        MOD 包中携带的配置文件优先级最高，覆盖 configs/ 目录同名文件。
+        """
+        # 收集已加载的白名单配置面板
+        exportable = []
+        for panel in self._panels:
+            if panel.is_loaded and panel.config_name in _CONFIGS_ALLOWED_IN_MOD:
+                exportable.append(panel)
+
+        if not exportable:
+            QMessageBox.warning(self, "无法导出",
+                "没有可导出的配置文件。\n"
+                "仅 summon_table 和 drop_probability 可通过 MOD 包携带，\n"
+                "请确保对应配置文件已加载。")
+            return
+
+        # 收集配置数据
+        config_files = {}   # {internal_path: dict_content}
+        configs_meta = []   # [{"file": ..., "name": ...}]
+        names_summary = []
+        for panel in exportable:
+            data = panel.get_current_data()
+            if data is None:
+                continue
+            internal = f"configs/{panel.config_name}.json"
+            config_files[internal] = data
+            configs_meta.append({"file": internal, "name": panel.config_name})
+            names_summary.append(panel.config_name)
+
+        if not config_files:
+            QMessageBox.warning(self, "无法导出", "未能收集到任何配置数据。")
+            return
+
+        # 弹出元数据对话框
+        dlg = ModMetadataDialog(self, defaults={
+            "id": f"configs_{len(config_files)}",
+            "name": f"配置MOD ({', '.join(names_summary)})",
+        })
+        if dlg.exec() != dlg.DialogCode.Accepted:
+            return
+        metadata = dlg.get_metadata()
+
+        # 选择保存路径
+        default_name = safe_mod_filename(metadata.get("name", "configs_mod"),
+                                         metadata.get("id", "configs_mod"))
+        default_path = os.path.join(os.path.expanduser("~"), f"{default_name}.tksmod")
+        save_path, _ = QFileDialog.getSaveFileName(
+            self, "保存 MOD", default_path, "TKS MOD (*.tksmod)")
+        if not save_path:
+            return
+        if not save_path.lower().endswith(".tksmod"):
+            save_path += ".tksmod"
+
+        # 生成 mod.json (无数据组件, 无资源, 仅配置文件)
+        mod_json = generate_mod_json(
+            metadata, components=[], resources=None, configs=configs_meta)
+
+        # 打包
+        try:
+            pack_tksmod(save_path, mod_json, data_files={},
+                        config_files=config_files,
+                        preview_image_path=metadata.get("preview_image_path") or None)
+        except Exception as e:
+            QMessageBox.critical(self, "导出失败", f"打包 .tksmod 失败:\n{e}")
+            return
+
+        QMessageBox.information(self, "导出成功",
+            f"已导出 MOD:\n  {save_path}\n"
+            f"  包含配置: {', '.join(names_summary)}\n"
+            f"  MOD 包中配置文件优先级最高，将覆盖 configs/ 目录同名文件。")
 
     # ── TKS 目录加载 ──
 

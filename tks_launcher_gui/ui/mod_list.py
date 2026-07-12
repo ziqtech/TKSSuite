@@ -88,6 +88,11 @@ class ModListWidget(QWidget):
         h.geometriesChanged.connect(self._position_header_check)
         h.sectionResized.connect(self._position_header_check)
 
+        # 表头点击三态排序 (默认 → 升序 → 降序 → 默认)
+        self._sort_column: int = -1   # -1 = 默认顺序 (按 mod_id)
+        self._sort_state: int = 0     # 0=默认, 1=升序, 2=降序
+        h.sectionClicked.connect(self._on_header_clicked)
+
         body.addWidget(self._table)
 
         # DockHeader 右侧操作按钮
@@ -120,14 +125,30 @@ class ModListWidget(QWidget):
         self._mods = scan_mods(self._mods_dir)
         # 默认按 MOD ID 排序（不区分大小写）
         self._mods.sort(key=lambda m: m.mod_id.lower())
+        # 应用用户选择的排序
+        self._apply_user_sort()
 
         # 检测重复 ID
+        dup_ids = self._detect_dup_ids()
+        self.duplicate_ids_detected.emit(len(dup_ids) > 0)
+
+        self._populate_table(dup_ids)
+
+        self._loading = False
+        self._update_header_check_state()
+        self._update_sort_indicator()
+
+    def _detect_dup_ids(self) -> set[str]:
+        """检测当前模组列表中的重复 ID"""
         id_counts: dict[str, int] = {}
         for mod in self._mods:
             id_counts[mod.mod_id] = id_counts.get(mod.mod_id, 0) + 1
-        dup_ids = {k for k, v in id_counts.items() if v > 1}
-        self.duplicate_ids_detected.emit(len(dup_ids) > 0)
+        return {k for k, v in id_counts.items() if v > 1}
 
+    def _populate_table(self, dup_ids: set[str] | None = None):
+        """从 self._mods 填充表格行 (已排好序)"""
+        if dup_ids is None:
+            dup_ids = set()
         self._table.setRowCount(len(self._mods))
         for row, mod in enumerate(self._mods):
             enable_item = QTableWidgetItem()
@@ -163,8 +184,66 @@ class ModListWidget(QWidget):
                 if it is not None:
                     it.setToolTip(tip)
 
+    # ── 表头三态排序 ──
+
+    def _on_header_clicked(self, col: int):
+        """表头点击: 三态排序切换 (默认 → 升序 → 降序 → 默认)"""
+        if col == _COL_ENABLE:
+            return  # 启用列有表头复选框，不参与排序
+        if self._sort_column != col:
+            self._sort_column = col
+            self._sort_state = 1  # 升序
+        else:
+            self._sort_state = (self._sort_state + 1) % 3
+            if self._sort_state == 0:
+                self._sort_column = -1  # 回到默认
+        self._resort()
+
+    def _resort(self):
+        """重新排序并刷新表格 (不重新扫描目录)"""
+        self._loading = True
+        self._initial_states = self.get_mod_states()
+        self._mods.sort(key=lambda m: m.mod_id.lower())
+        self._apply_user_sort()
+        dup_ids = self._detect_dup_ids()
+        self._table.setRowCount(0)
+        self._populate_table(dup_ids)
         self._loading = False
         self._update_header_check_state()
+        self._update_sort_indicator()
+
+    def _apply_user_sort(self):
+        """根据用户选择的列和方向排序 self._mods"""
+        if self._sort_column < 0 or self._sort_state == 0:
+            return
+        col = self._sort_column
+        reverse = (self._sort_state == 2)
+        self._mods.sort(key=lambda m: self._get_sort_key(m, col), reverse=reverse)
+
+    def _get_sort_key(self, mod: ModInfo, col: int):
+        if col == _COL_NAME:
+            return (mod.name or "").lower()
+        elif col == _COL_VERSION:
+            return (mod.version or "").lower()
+        elif col == _COL_LOAD_ORDER:
+            return mod.load_order
+        elif col == _COL_ID:
+            return (mod.mod_id or "").lower()
+        elif col == _COL_AUTHOR:
+            return (mod.author or "").lower()
+        elif col == _COL_DESC:
+            return (mod.description or "").lower()
+        return ""
+
+    def _update_sort_indicator(self):
+        """更新表头排序指示器"""
+        h = self._table.horizontalHeader()
+        if self._sort_column < 0 or self._sort_state == 0:
+            h.setSortIndicatorShown(False)
+        else:
+            order = Qt.AscendingOrder if self._sort_state == 1 else Qt.DescendingOrder
+            h.setSortIndicator(self._sort_column, order)
+            h.setSortIndicatorShown(True)
 
     def _set_text(self, row: int, col: int, text: str) -> QTableWidgetItem:
         item = QTableWidgetItem(text)

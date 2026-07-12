@@ -105,6 +105,15 @@ class ConfigPanelBase(QWidget):
     def is_loaded(self) -> bool:
         return self._loaded
 
+    def get_current_data(self) -> dict | None:
+        """返回当前 UI 数据与 baseline 合并后的完整 dict（不写盘）。
+        用于 MOD 导出等需要获取实时配置内容的场景。
+        """
+        if not self._loaded:
+            return None
+        current = self._collect_ui()
+        return self._merge_with_baseline(current)
+
     # ── 子类需实现的接口 ──
 
     def _populate_ui(self, data: dict) -> None:
@@ -120,20 +129,33 @@ class ConfigPanelBase(QWidget):
     # ── 内部工具 ──
 
     def _merge_with_baseline(self, current: dict) -> dict:
-        """将当前 UI 数据与 baseline 合并，保留 baseline 中面板不认识的键。
+        """将当前 UI 数据与 baseline 深度合并，保留 baseline 中面板不认识的键
+        （包括嵌套字典内的未知键，如各 renderer 下的 _说明）。
         面板管理的键使用 current 的值，其余使用 baseline 的值。
         若 current 中某键值为 None，表示面板主动删除该键（从结果中移除）。
+        当 current[k] 与 baseline[k] 均为 dict 时递归合并，否则用 current[k] 覆盖。
         """
         if self._baseline is None:
             # 没有 baseline 时，直接返回 current（过滤 None）
             return {k: v for k, v in current.items() if v is not None}
         merged = copy.deepcopy(self._baseline)
+        self._deep_merge_into(merged, current)
+        return merged
+
+    @staticmethod
+    def _deep_merge_into(base: dict, current: dict) -> None:
+        """将 current 就地合并到 base（base 已为独立副本）。
+        - current[k] is None: 从 base 中删除 k
+        - current[k] 与 base[k] 均为 dict: 递归合并
+        - 否则: base[k] = current[k]
+        """
         for k, v in current.items():
             if v is None:
-                merged.pop(k, None)  # 主动删除键
+                base.pop(k, None)  # 主动删除键
+            elif isinstance(v, dict) and isinstance(base.get(k), dict):
+                ConfigPanelBase._deep_merge_into(base[k], v)
             else:
-                merged[k] = v
-        return merged
+                base[k] = v
 
     def _mark_dirty(self) -> None:
         """子类调用此方法标记面板已修改（发射 modified 信号）。"""

@@ -2,7 +2,7 @@
 import json
 import os
 import struct
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 from .memory import (
     i32b, i16b, b2i32, b2u16, bhex,
     read_pm, write_pm, vp_ex,
@@ -731,21 +731,27 @@ def apply_cave_hook(defn: PatchDef, hits: List[int], code_buf: bytearray,
 
 def apply_summon_table(defn: PatchDef, code_buf: bytearray, code_start_addr: int,
                        base_addr: int, h_proc: int, variables: Dict[str, int],
-                       log_func=None, cave_addr: int = 0) -> bool:
+                       log_func=None, cave_addr: int = 0,
+                       config_override: Optional[dict] = None) -> bool:
     log = log_func or (lambda x: None)
     all_ok = True
 
     # Step 0: 读取召唤表 JSON
-    if not defn.json_file or not os.path.isfile(defn.json_file):
-        log(f"    [WARN] 召唤表 JSON 不存在: {defn.json_file!r}, 跳过")
-        return True
-    try:
-        with open(defn.json_file, 'r', encoding='utf-8') as f:
-            summon = json.load(f)
-    except Exception as e:
-        log(f"  [ERROR] 解析召唤表 JSON 失败: {e}")
-        return False
-    log(f"    JSON: {len(summon)} 个键")
+    # 优先使用 MOD 包提供的配置覆盖 (白名单内), 否则回退到 configs/ 目录
+    if config_override is not None:
+        summon = config_override
+        log(f"    JSON (MOD 覆盖): {len(summon)} 个键")
+    else:
+        if not defn.json_file or not os.path.isfile(defn.json_file):
+            log(f"    [WARN] 召唤表 JSON 不存在: {defn.json_file!r}, 跳过")
+            return True
+        try:
+            with open(defn.json_file, 'r', encoding='utf-8') as f:
+                summon = json.load(f)
+        except Exception as e:
+            log(f"  [ERROR] 解析召唤表 JSON 失败: {e}")
+            return False
+        log(f"    JSON: {len(summon)} 个键")
 
     # Step 1: WarPC 记录数上限 (用于值域校验)
     rec_size = variables.get("warpc_rec_size", 1054)
@@ -1016,22 +1022,28 @@ def _write_cave_and_hook(cave_template: Optional[bytes], cave_offset: int, entry
 # ============================================================
 
 def apply_drop_probability(defn: PatchDef, code_buf: bytearray, code_start_addr: int,
-                           h_proc: int, log_func=None) -> bool:
+                           h_proc: int, log_func=None,
+                           config_override: Optional[dict] = None) -> bool:
     log = log_func or (lambda x: None)
     tag = f"[{defn.id}]"
     log(f"\n  {tag}: {defn.desc}")
 
     # 1. 读取 JSON 配置
-    jf = defn.json_file
-    if not jf or not os.path.isfile(jf):
-        log(f"    [WARN] JSON 配置不存在: {jf!r}, 跳过")
-        return True
-    try:
-        with open(jf, 'r', encoding='utf-8') as f:
-            cfg = json.load(f)
-    except Exception as e:
-        log(f"  [ERROR] 解析 drop_probability.json 失败: {e}")
-        return True
+    # 优先使用 MOD 包提供的配置覆盖 (白名单内), 否则回退到 configs/ 目录
+    if config_override is not None:
+        cfg = config_override
+        log(f"    JSON (MOD 覆盖)")
+    else:
+        jf = defn.json_file
+        if not jf or not os.path.isfile(jf):
+            log(f"    [WARN] JSON 配置不存在: {jf!r}, 跳过")
+            return True
+        try:
+            with open(jf, 'r', encoding='utf-8') as f:
+                cfg = json.load(f)
+        except Exception as e:
+            log(f"  [ERROR] 解析 drop_probability.json 失败: {e}")
+            return True
 
     mode = cfg.get("mode", "independent")
     if mode == "cascade":
@@ -1326,12 +1338,16 @@ def apply_config_patches(config: PatchConfig, code_buf: bytearray, code_start_ad
                           minimal_mode=False, no_cave_mode=False,
                           only_portrait=False, only_awk=False,
                           selected_patches: set = None,
-                          exe_profile=None) -> bool:
+                          exe_profile=None,
+                          config_overrides: Optional[Dict[str, Any]] = None) -> bool:
     """配置补丁编排
 
     Args:
         exe_profile: ExeProfile 实例, 用于第三方 MOD 兼容检测。
                      若为 None 则按原版处理。
+        config_overrides: MOD 包携带的启动器配置覆盖 (白名单内, 优先级最高)。
+                          键为不含扩展名的配置名 (如 "summon_table"),
+                          值为已解析的 dict。None 或空 dict 表示无覆盖。
     """
     log = log_func or (lambda x: None)
     all_ok = True
@@ -1416,12 +1432,20 @@ def apply_config_patches(config: PatchConfig, code_buf: bytearray, code_start_ad
         elif defn.type == "patch_warpc_addr":
             log(f"    -> 由 WarPC 扩展流程处理 (base=0x{warpc_base:08X})")
         elif defn.type == "patch_summon_table":
+            _summon_override = None
+            if config_overrides:
+                _summon_override = config_overrides.get("summon_table")
             all_ok &= apply_summon_table(defn, code_buf, code_start_addr, base_addr,
                                           h_proc, variables, log_func=log,
-                                          cave_addr=cave_addr)
+                                          cave_addr=cave_addr,
+                                          config_override=_summon_override)
         elif defn.type == "patch_drop_probability":
+            _drop_override = None
+            if config_overrides:
+                _drop_override = config_overrides.get("drop_probability")
             all_ok &= apply_drop_probability(defn, code_buf, code_start_addr,
-                                              h_proc, log_func=log)
+                                              h_proc, log_func=log,
+                                              config_override=_drop_override)
         elif defn.type == "patch_font_config":
             all_ok &= apply_font_config(defn, code_buf, code_start_addr,
                                          h_proc, log_func=log)

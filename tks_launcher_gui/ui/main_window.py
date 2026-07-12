@@ -23,6 +23,7 @@ from ui.mod_info_preview import ModInfoPreviewWidget
 from ui.mod_list import ModListWidget
 from ui.mod_meta_editor_dialog import ModMetaEditorDialog
 from ui.mod_packer_dialog import ModPackerDialog
+from ui.mod_editor_dialog import ModEditorDialog
 from ui.mod_splitter_dialog import ModSplitterDialog
 from ui.patch_list import PatchListWidget
 from workers.patcher_worker import PatcherWorker
@@ -89,6 +90,7 @@ class MainWindow(QMainWindow):
         fm.addSeparator()
         fm.addAction("模组打包…", self._on_pack_mod)
         fm.addAction("模组拆分…", self._on_split_mod)
+        fm.addAction("模组编辑…", self._on_edit_mod)
         fm.addAction("模组信息编辑…", self._on_edit_mod_meta)
         fm.addAction("自定义头像…", self._on_custom_avatar)
         fm.addSeparator()
@@ -112,9 +114,10 @@ class MainWindow(QMainWindow):
             "4. 右侧「辅助工具」: 选择需要注入的辅助工具 (如 cnc-ddraw / ddraw)\n"
             "5. 模组打包: 将多个 .tksmod 文件打包为 .tksmodpak 合集\n"
             "6. 模组拆分: 从 .tksmodpak 合集文件中提取原始模组\n"
-            "7. 模组信息编辑: 编辑 .tksmod 的元数据 (标题/作者/描述等)\n"
-            "8. 自定义头像: 上传图片并裁剪, 生成自定义头像 MOD\n"
-            "9. 视图 → 切换主题 (Ctrl+T): 在深色/浅色主题间切换\n\n"
+            "7. 模组编辑: 打开 .tksmod/.tksmodpak 添加/删除内部文件，原地保存\n"
+            "8. 模组信息编辑: 编辑 .tksmod 的元数据 (标题/作者/描述等)\n"
+            "9. 自定义头像: 上传图片并裁剪, 生成自定义头像 MOD\n"
+            "10. 视图 → 切换主题 (Ctrl+T): 在深色/浅色主题间切换\n\n"
             "勾选状态会自动保存到 launcher_setting.json, 下次启动时自动恢复\n\n"
             "运行时基于内存补丁引擎 (runtime_patcher) 实现\n"
             "兼容 Winlator / Wine 环境 (通过 cli_launcher.py)")
@@ -143,6 +146,11 @@ class MainWindow(QMainWindow):
         self.btn_split.setToolTip("从 .tksmodpak 合集文件中提取原始模组")
         self.btn_split.clicked.connect(self._on_split_mod)
         toolbar.addWidget(self.btn_split)
+
+        self.btn_edit_mod = QPushButton("🔧 模组编辑")
+        self.btn_edit_mod.setToolTip("打开 .tksmod/.tksmodpak，添加/删除内部文件，原地保存")
+        self.btn_edit_mod.clicked.connect(self._on_edit_mod)
+        toolbar.addWidget(self.btn_edit_mod)
 
         self.btn_edit_meta = QPushButton("✏️ 模组信息编辑")
         self.btn_edit_meta.setToolTip("加载 .tksmod 编辑元数据后保存（不改模组内容）")
@@ -401,6 +409,16 @@ class MainWindow(QMainWindow):
         dialog = ModSplitterDialog(mods_dir=mods_dir, parent=self)
         dialog.exec()
         # 拆分完成后刷新模组列表
+        self.mod_list.refresh_mods()
+
+    def _on_edit_mod(self):
+        """打开模组编辑对话框，自动加载列表中选中的模组"""
+        mods_dir = os.path.join(_LAUNCHER_DIR, "mods")
+        selected = self.mod_list.get_selected_mod()
+        initial_path = selected.path if selected else None
+        dialog = ModEditorDialog(mods_dir=mods_dir, parent=self, initial_path=initial_path)
+        dialog.exec()
+        # 保存后刷新模组列表（内容可能已变更）
         self.mod_list.refresh_mods()
 
     def _on_edit_mod_meta(self):

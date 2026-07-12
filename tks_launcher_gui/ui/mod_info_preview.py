@@ -121,6 +121,9 @@ class ModInfoPreviewWidget(QWidget):
                 for k, v in mod.id_ranges.items()
             )
             rows.append(("ID 范围", ranges, True))
+        if mod.config_files:
+            cfg_names = ", ".join(sorted(mod.config_files.keys()))
+            rows.append(("携带配置", f"{cfg_names} (优先级最高)", False))
 
         body = "".join(
             f"<tr><td align='right' style='padding-right:8px'>{_html_escape(label)}:</td>"
