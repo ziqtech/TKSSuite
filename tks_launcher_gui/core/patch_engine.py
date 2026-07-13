@@ -1329,24 +1329,203 @@ def apply_font_config(defn: PatchDef, code_buf: bytearray, code_start_addr: int,
     return all_ok
 
 # ============================================================
-# 补丁类型: patch_animation_speed (状态动画播放速度自定义)
-# 逆向依据: 6个状态动画函数中的帧延迟常量 0x3C (60ms)
+# 补丁类型: patch_animation_speed (战斗动画播放速度自定义)
+# 支持4类动画独立调整: 状态/攻击(技能)/移动/待机
 #
-# 状态动画主循环: sub_43292C 每回合遍历角色所有状态,依次调用:
-#   sub_433690 (12帧), sub_433A38 (18帧), sub_434188 (18帧),
-#   sub_434D7C (18帧), sub_445564 (22帧), sub_43339C
+# 逆向依据:
+# 1. 状态动画: 6个函数硬编码 0x3C (60ms)
+#    sub_433690/sub_433A38/sub_43339C/sub_434188/sub_434D7C/sub_445564
+# 2. 攻击+技能动画: sub_4434BC 使用 v30+60 变量延迟
+#    (技能动画通过 sub_447DAC→sub_4458B0→sub_4434BC 调用,与攻击共用)
+# 3. 移动动画: sub_43DE90 硬编码 0x3C (60ms)
+# 4. 待机动画: sub_43CA64 战场主循环帧率, 硬编码 0x3C (60ms)
+#    (待机动画在战场主循环中持续播放)
 #
-# 每个函数的帧延迟模式 (硬编码常量,非变量):
-#   while ( j_GetTickCount() - dword_4E7CD0 < 0x3C )  // 60ms
-#       ;
-#
-# 机器码: 2B C? 83 F8 3C  (sub eax,reg; cmp eax, 0x3C)
-#   变体1: 8B 15 D0 7C 4E 00 2B C2 83 F8 3C  (mov edx,dword_4E7CD0; sub eax,edx)
-#   变体2: 8B 0D D0 7C 4E 00 2B C1 83 F8 3C  (mov ecx,dword_4E7CD0; sub eax,ecx)
-#
-# 注意: 此 pattern 也会匹配非状态动画函数(技能/开场/主循环等),
-#   必须用状态动画函数地址范围过滤,只修改6个状态动画函数中的 0x3C
+# 通用 pattern: 2B C? 83 F8 3C (sub eax,reg; cmp eax, 0x3C)
+# 用函数地址范围过滤,只修改目标函数中的 0x3C
 # ============================================================
+
+# 状态动画函数列表 (6个)
+_STATUS_ANIM_FUNCS = [
+    (0x43339C, "sub_43339C"),
+    (0x433690, "sub_433690"),
+    (0x433A38, "sub_433A38"),
+    (0x434188, "sub_434188"),
+    (0x434D7C, "sub_434D7C"),
+    (0x445564, "sub_445564"),
+]
+
+# 移动动画函数 (1个)
+_MOVE_ANIM_FUNCS = [
+    (0x43DE90, "sub_43DE90"),
+]
+
+# 待机动画函数 (战场主循环,1个)
+_IDLE_ANIM_FUNCS = [
+    (0x43CA64, "sub_43CA64"),
+]
+
+
+def _patch_frame_delay_3c(frame_delay: int, func_list, code_buf: bytearray,
+                           code_start_addr: int, h_proc: int, log_func,
+                           all_hits=None, search_range: int = 512) -> bool:
+    """修改硬编码 0x3C (60ms) 帧延迟常量
+
+    用通用 pattern `2B ?? 83 F8 3C` 扫描,再用函数地址范围过滤。
+    返回是否全部修改成功。
+    """
+    log = log_func
+    ORIG = 60
+
+    if frame_delay == ORIG:
+        return True  # 与原始一致,无需修改
+
+    if not (1 <= frame_delay <= 127):
+        log(f"    [ERROR] frame_delay_ms={frame_delay} 超出 1~127")
+        return False
+
+    # 扫描通用 pattern (若调用者已提供则复用)
+    if all_hits is None:
+        pat, wc = parse_pattern("2B ?? 83 F8 3C")
+        all_hits = pattern_scan(bytes(code_buf), pat, wc)
+
+    new_byte = frame_delay & 0xFF
+    all_ok = True
+    modified = 0
+
+    for func_va, func_name in func_list:
+        func_rva = func_va - code_start_addr
+        func_end = func_rva + search_range
+        found = False
+        for hit in all_hits:
+            if func_rva <= hit < func_end:
+                off_3c = hit + 4
+                actual = code_buf[off_3c]
+                if actual != ORIG:
+                    log(f"    [WARN] {func_name}: 偏移 0x{off_3c:X} 处值=0x{actual:02X} (预期 0x3C), 跳过")
+                    continue
+                ha = code_start_addr + off_3c
+                op = vp_ex(h_proc, ha, 1, PAGE_EXECUTE_READWRITE)
+                write_pm(h_proc, ha, bytes([new_byte]))
+                vp_ex(h_proc, ha, 1, op)
+                code_buf[off_3c] = new_byte
+                log(f"    [OK] {func_name}: {actual}ms -> {frame_delay}ms @RVA 0x{off_3c:X}")
+                modified += 1
+                found = True
+                break
+        if not found:
+            log(f"    [ERROR] {func_name}: 未找到帧延迟常量, 跳过")
+            all_ok = False
+
+    log(f"    共修改 {modified}/{len(func_list)} 个函数")
+    return all_ok
+
+
+def _patch_attack_animation(cfg: dict, code_buf: bytearray, code_start_addr: int,
+                             h_proc: int, log_func) -> bool:
+    """修改 sub_4434BC 的 v30+60 变量延迟 (攻击+技能动画)
+
+    技能动画通过 sub_447DAC→sub_4458B0→sub_4434BC 调用,因此与攻击共用同一帧延迟。
+
+    三个可调常量:
+    1. base_frame_delay (60ms): add edx, 0x3C 中的 0x3C
+    2. extra_segment_delay (120ms): mov word[ebp-2Ah], 0x78 中的 0x78
+    3. extra_delay_decrement (30ms): add word[ebp-2Ah], -30 中的 0xE2
+    """
+    log = log_func
+    ORIG_BASE = 60
+    ORIG_EXTRA = 120
+    ORIG_DECR = 30
+
+    base = int(cfg.get("base_frame_delay_ms", ORIG_BASE))
+    extra = int(cfg.get("extra_segment_delay_ms", ORIG_EXTRA))
+    decr = int(cfg.get("extra_delay_decrement_ms", ORIG_DECR))
+
+    # 值域验证
+    if not (1 <= base <= 255):
+        log(f"    [ERROR] attack base_frame_delay_ms={base} 超出 1~255")
+        return False
+    if not (1 <= extra <= 32767):
+        log(f"    [ERROR] attack extra_segment_delay_ms={extra} 超出 1~32767")
+        return False
+    if not (1 <= decr <= 128):
+        log(f"    [ERROR] attack extra_delay_decrement_ms={decr} 超出 1~128")
+        return False
+
+    # 安全约束: extra 必须能被 decr 整除 (否则 v30 变负导致死循环卡死)
+    if extra % decr != 0:
+        log(f"    [ERROR] extra_segment_delay_ms({extra}) 必须能被 extra_delay_decrement_ms({decr}) 整除")
+        log(f"            否则 v30 递减后变负, 无符号比较导致死循环卡死")
+        return False
+
+    all_ok = True
+
+    # 1. base_frame_delay: 0F BF 55 D6 8B 0D D0 7C 4E 00 83 C2 3C (偏移12 = 0x3C)
+    if base != ORIG_BASE:
+        pat_str = "0F BF 55 D6 8B 0D D0 7C 4E 00 83 C2 3C"
+        pat, wc = parse_pattern(pat_str)
+        hits = pattern_scan(bytes(code_buf), pat, wc)
+        if len(hits) != 1:
+            log(f"    [ERROR] attack base_frame_delay: 匹配 {len(hits)} 处 (预期 1), 跳过")
+            all_ok = False
+        else:
+            off = hits[0] + 12
+            actual = code_buf[off]
+            new_byte = base & 0xFF
+            ha = code_start_addr + off
+            op = vp_ex(h_proc, ha, 1, PAGE_EXECUTE_READWRITE)
+            write_pm(h_proc, ha, bytes([new_byte]))
+            vp_ex(h_proc, ha, 1, op)
+            code_buf[off] = new_byte
+            log(f"    [OK] attack base_frame_delay: {actual}ms -> {base}ms @RVA 0x{off:X}")
+    else:
+        log(f"    attack base_frame_delay: {base}ms (与原始一致, 跳过)")
+
+    # 2. extra_segment_delay: 66 C7 45 D6 78 00 (偏移4-5 = 78 00 = 120)
+    if extra != ORIG_EXTRA:
+        pat_str = "66 C7 45 D6 78 00"
+        pat, wc = parse_pattern(pat_str)
+        hits = pattern_scan(bytes(code_buf), pat, wc)
+        if len(hits) != 1:
+            log(f"    [ERROR] attack extra_segment_delay: 匹配 {len(hits)} 处 (预期 1), 跳过")
+            all_ok = False
+        else:
+            off = hits[0] + 4
+            new_word = struct.pack('<h', extra)
+            actual = struct.unpack_from('<h', code_buf, off)[0]
+            ha = code_start_addr + off
+            op = vp_ex(h_proc, ha, 2, PAGE_EXECUTE_READWRITE)
+            write_pm(h_proc, ha, new_word)
+            vp_ex(h_proc, ha, 2, op)
+            code_buf[off:off+2] = new_word
+            log(f"    [OK] attack extra_segment_delay: {actual}ms -> {extra}ms @RVA 0x{off:X}")
+    else:
+        log(f"    attack extra_segment_delay: {extra}ms (与原始一致, 跳过)")
+
+    # 3. extra_delay_decrement: 66 83 45 D6 E2 (偏移4 = 0xE2 = -30)
+    if decr != ORIG_DECR:
+        pat_str = "66 83 45 D6 E2"
+        pat, wc = parse_pattern(pat_str)
+        hits = pattern_scan(bytes(code_buf), pat, wc)
+        if len(hits) != 1:
+            log(f"    [ERROR] attack extra_delay_decrement: 匹配 {len(hits)} 处 (预期 1), 跳过")
+            all_ok = False
+        else:
+            off = hits[0] + 4
+            actual_signed = struct.unpack_from('<b', code_buf, off)[0]
+            new_signed = -decr
+            new_byte = struct.pack('<b', new_signed)
+            ha = code_start_addr + off
+            op = vp_ex(h_proc, ha, 1, PAGE_EXECUTE_READWRITE)
+            write_pm(h_proc, ha, new_byte)
+            vp_ex(h_proc, ha, 1, op)
+            code_buf[off] = new_byte[0]
+            log(f"    [OK] attack extra_delay_decrement: {-actual_signed}ms -> {new_signed}ms @RVA 0x{off:X}")
+    else:
+        log(f"    attack extra_delay_decrement: {decr}ms (与原始一致, 跳过)")
+
+    return all_ok
+
 
 def apply_animation_speed(defn: PatchDef, code_buf: bytearray, code_start_addr: int,
                           h_proc: int, log_func=None) -> bool:
@@ -1366,71 +1545,46 @@ def apply_animation_speed(defn: PatchDef, code_buf: bytearray, code_start_addr: 
         log(f"  [ERROR] 解析 animation_speed.json 失败: {e}")
         return True
 
-    ORIG_FRAME_DELAY = 60  # 游戏源码默认值 0x3C
-    frame_delay = int(cfg.get("frame_delay_ms", ORIG_FRAME_DELAY))
-
-    # 值域验证: 1~127 (有符号字节范围, jb 指令无符号比较, 值必须为正)
-    if not (1 <= frame_delay <= 127):
-        log(f"    [ERROR] frame_delay_ms={frame_delay} 超出 1~127")
-        log(f"            (jb 使用无符号比较, 值必须为正且 ≤127)")
-        return False
-
-    if frame_delay == ORIG_FRAME_DELAY:
-        log(f"    frame_delay_ms={frame_delay}ms (与原始一致, 跳过)")
-        return True
-
-    # 2. 定义6个状态动画函数的地址范围 (VA)
-    #    逆向依据: sub_43292C 调用的6个状态动画播放函数
-    #    每个函数内 0x3C 常量的偏移 < 0x120, 搜索范围 512 字节足够
-    STATUS_ANIM_FUNCS = [
-        (0x43339C, "sub_43339C"),  # 0x3C @偏移 0x4A
-        (0x433690, "sub_433690"),  # 0x3C @偏移 0x73
-        (0x433A38, "sub_433A38"),  # 0x3C @偏移 0x73
-        (0x434188, "sub_434188"),  # 0x3C @偏移 0x7D
-        (0x434D7C, "sub_434D7C"),  # 0x3C @偏移 0x116
-        (0x445564, "sub_445564"),  # 0x3C @偏移 0xC8
-    ]
-    SEARCH_RANGE = 512  # 每个函数内搜索范围
-
-    # 3. 通用 pattern: 2B C? 83 F8 3C (sub eax,reg; cmp eax, 0x3C)
-    #    用通配符匹配两种寄存器变体 (C0/C1/C2/C3)
-    pat_str = "2B ?? 83 F8 3C"
-    pat, wc = parse_pattern(pat_str)
+    # 2. 预扫描通用 pattern (状态/移动/技能动画共用)
+    pat, wc = parse_pattern("2B ?? 83 F8 3C")
     all_hits = pattern_scan(bytes(code_buf), pat, wc)
     log(f"    通用 pattern 扫描: {len(all_hits)} 处匹配")
 
-    # 4. 用状态动画函数地址范围过滤
-    new_byte = frame_delay & 0xFF
     all_ok = True
-    modified = 0
 
-    for func_va, func_name in STATUS_ANIM_FUNCS:
-        func_rva = func_va - code_start_addr
-        func_end = func_rva + SEARCH_RANGE
-        # 在此函数范围内查找 0x3C 帧延迟
-        found = False
-        for hit in all_hits:
-            if func_rva <= hit < func_end:
-                # 验证: 0x3C 在 pattern 偏移 4 处 (2B ?? 83 F8 [3C])
-                off_3c = hit + 4
-                actual = code_buf[off_3c]
-                if actual != ORIG_FRAME_DELAY:
-                    log(f"    [WARN] {func_name}: 偏移 0x{off_3c:X} 处值=0x{actual:02X} (预期 0x3C), 跳过")
-                    continue
-                ha = code_start_addr + off_3c
-                op = vp_ex(h_proc, ha, 1, PAGE_EXECUTE_READWRITE)
-                write_pm(h_proc, ha, bytes([new_byte]))
-                vp_ex(h_proc, ha, 1, op)
-                code_buf[off_3c] = new_byte
-                log(f"    [OK] {func_name}: {actual}ms -> {frame_delay}ms @RVA 0x{off_3c:X}")
-                modified += 1
-                found = True
-                break
-        if not found:
-            log(f"    [ERROR] {func_name}: 未找到帧延迟常量, 跳过")
-            all_ok = False
+    # 3. 状态动画 (6个函数的 0x3C)
+    status_cfg = cfg.get("status_animation", {})
+    status_delay = int(status_cfg.get("frame_delay_ms", 60))
+    log(f"  [状态动画] frame_delay_ms={status_delay}")
+    if status_delay != 60:
+        all_ok &= _patch_frame_delay_3c(status_delay, _STATUS_ANIM_FUNCS, code_buf,
+                                          code_start_addr, h_proc, log, all_hits)
 
-    log(f"    共修改 {modified}/{len(STATUS_ANIM_FUNCS)} 个状态动画函数")
+    # 4. 攻击+技能动画 (sub_4434BC 的 v30+60)
+    attack_cfg = cfg.get("attack_animation", {})
+    if attack_cfg:
+        log(f"  [攻击+技能动画] base={attack_cfg.get('base_frame_delay_ms', 60)} "
+            f"extra={attack_cfg.get('extra_segment_delay_ms', 120)} "
+            f"decr={attack_cfg.get('extra_delay_decrement_ms', 30)}")
+        all_ok &= _patch_attack_animation(attack_cfg, code_buf,
+                                            code_start_addr, h_proc, log)
+
+    # 5. 移动动画 (sub_43DE90 的 0x3C)
+    move_cfg = cfg.get("move_animation", {})
+    move_delay = int(move_cfg.get("frame_delay_ms", 60))
+    log(f"  [移动动画] frame_delay_ms={move_delay}")
+    if move_delay != 60:
+        all_ok &= _patch_frame_delay_3c(move_delay, _MOVE_ANIM_FUNCS, code_buf,
+                                          code_start_addr, h_proc, log, all_hits)
+
+    # 6. 待机动画 (sub_43CA64 战场主循环的 0x3C)
+    idle_cfg = cfg.get("idle_animation", {})
+    idle_delay = int(idle_cfg.get("frame_delay_ms", 60))
+    log(f"  [待机动画] frame_delay_ms={idle_delay}")
+    if idle_delay != 60:
+        all_ok &= _patch_frame_delay_3c(idle_delay, _IDLE_ANIM_FUNCS, code_buf,
+                                          code_start_addr, h_proc, log, all_hits)
+
     return all_ok
 
 # ============================================================

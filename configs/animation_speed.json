@@ -1,16 +1,35 @@
 {
-  "_说明": "状态动画播放速度配置 (6个状态动画函数中的帧延迟常量控制)",
-  "_背景": "游戏中角色身上有多个状态时,每回合开始会依次播放每个状态动画,动画耗时长导致战斗节奏慢",
-  "_机制": "sub_43292C 每回合遍历角色所有状态,依次调用6个状态动画函数(sub_433690/sub_433A38/sub_434188/sub_434D7C/sub_445564/sub_43339C),每个函数内部用 while(GetTickCount()-dword_4E7CD0 < 0x3C) 控制每帧等待60ms",
-  "_参数说明": {
-    "frame_delay_ms": "状态动画每帧延迟(毫秒): 值越小动画播放越快。原始值60ms(约16.6FPS)。范围1~127(jb指令使用无符号比较,值必须为正且≤127)"
+  "_说明": "战斗动画播放速度配置 (支持状态/攻击(技能)/移动/待机 4类动画独立调整)",
+  "_背景": "游戏中角色身上有多个状态时,每回合开始会依次播放每个状态动画,动画耗时长导致战斗节奏慢。同时攻击/移动/待机动画也可独立加速",
+  "_类型说明": {
+    "status_animation": "状态动画 (中毒/出血/恢复/死战等状态效果动画, 6个函数 sub_433690/sub_433A38/sub_43339C/sub_434188/sub_434D7C/sub_445564, 硬编码 0x3C=60ms)",
+    "attack_animation": "攻击+技能动画 (Aa.JVG/TKAct.dat, sub_4434BC 人物动作主循环, 使用 v30+60 变量延迟。技能动画通过 sub_447DAC→sub_4458B0→sub_4434BC 调用, 因此与攻击共用同一帧延迟)",
+    "move_animation": "移动动画 (Awk.JVG, sub_43DE90, 硬编码 0x3C=60ms)",
+    "idle_animation": "待机动画 (Awt.JVG, sub_43CA64 战场主循环帧率, 硬编码 0x3C=60ms。待机动画在战场主循环中持续播放)"
   },
-  "_注意": "此配置只影响状态动画(中毒/出血/恢复/死战等状态效果动画),不影响人物动作动画(攻击/移动等)",
-  "_示例": {
-    "加速2倍": { "frame_delay_ms": 30 },
-    "加速3倍": { "frame_delay_ms": 20 },
-    "极速": { "frame_delay_ms": 10 }
+  "_安全约束": {
+    "frame_delay_ms": "范围 1~127 (jb 指令使用无符号比较, 值必须为正且 ≤127)",
+    "extra_segment_delay_ms": "必须能被 extra_delay_decrement_ms 整除 (游戏用无符号比较, v30 变负会导致死循环卡死)"
+  },
+  "_示例_2倍速": {
+    "status_animation": { "frame_delay_ms": 30 },
+    "attack_animation": { "base_frame_delay_ms": 30, "extra_segment_delay_ms": 60, "extra_delay_decrement_ms": 30 },
+    "move_animation": { "frame_delay_ms": 30 },
+    "idle_animation": { "frame_delay_ms": 30 }
   },
 
-  "frame_delay_ms": 10
+  "status_animation": {
+    "frame_delay_ms": 60
+  },
+  "attack_animation": {
+    "base_frame_delay_ms": 60,
+    "extra_segment_delay_ms": 120,
+    "extra_delay_decrement_ms": 30
+  },
+  "move_animation": {
+    "frame_delay_ms": 60
+  },
+  "idle_animation": {
+    "frame_delay_ms": 60
+  }
 }
