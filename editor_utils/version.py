@@ -91,6 +91,7 @@ _EDITORS: dict[str, EditorVersion] = {
     "spritesheet_editor": EditorVersion("spritesheet_editor", "精灵表编辑器",                    "1.0.0"),
     "save_editor":        EditorVersion("save_editor",        "TKS 存档编辑器",                  "1.0.0"),
     "configs_editor":     EditorVersion("configs_editor",     "TKS Configs Editor",              "1.0.0"),
+    "font_editor":        EditorVersion("font_editor",        "FONT9696 字体编辑器",             "0.0.1"),
     "launcher":           EditorVersion("launcher",           "TKS Mod Launcher",                "1.0.0"),
 }
 
