@@ -1151,6 +1151,10 @@ def apply_font_config(defn: PatchDef, code_buf: bytearray, code_start_addr: int,
     renderers = cfg.get("renderers", {})
     all_ok = True
 
+    # 保存原始字节快照 — outline patch 会修改 a7 字节, FTYPE patch 的排除条件
+    # 需要用原始 a7/a6 值判断, 否则恢复态被 outline 改 a7 后会误判为姓名输入
+    orig_code_buf = bytes(code_buf)
+
     # 1b. 描边 (outline) 处理 — 必须在 FTYPE 处理之前
     # a7 是 sub_44AF7C 的第 7 个参数 (存储在渲染器 offset+64), 1=启用描边, 0=禁用描边
     # 描边通过位图膨胀算法实现: 将字体位图向右下各膨胀2像素, 先用描边色(黑色)绘制, 再用前景色绘制
@@ -1311,8 +1315,9 @@ def apply_font_config(defn: PatchDef, code_buf: bytearray, code_start_addr: int,
                 pat, wc = parse_pattern(pat_str)
                 hits = pattern_scan(bytes(code_buf), pat, wc)
                 for h in hits:
-                    a7_val = code_buf[h + a7_off]
-                    a6_val = code_buf[h + a6_off]
+                    # 用原始快照判断排除条件 — outline patch 可能已修改 a7 字节
+                    a7_val = orig_code_buf[h + a7_off]
+                    a6_val = orig_code_buf[h + a6_off]
                     # 排除 sub_411624 初始化 (a6=0) 和 sub_4252E8 姓名输入 (a7=1,a6=1)
                     if a6_val == 0:
                         continue
