@@ -155,7 +155,7 @@ def _render_glyph_pillow(char: str, font, canvas_size: int = 96) -> Optional[byt
     text_w = bbox[2] - bbox[0]
     text_h = bbox[3] - bbox[1]
     if text_w <= 0 or text_h <= 0:
-        return None
+        return None   # 字体缺字
 
     # 居中绘制
     # 注意: bbox[0]/bbox[1] 是字符的左侧/顶部偏移 (可能为负, 因字体度量)
@@ -163,16 +163,29 @@ def _render_glyph_pillow(char: str, font, canvas_size: int = 96) -> Optional[byt
     py = (canvas_size - text_h) // 2 - bbox[1]
     draw.text((px, py), char, fill=255, font=font)
 
-    # 二值化 → 1bpp 位图
-    px_data = img.load()
-    bitmap = bytearray(Font9696.GLYPH_BUF_SIZE)
-    for y in range(canvas_size):
-        for x in range(canvas_size):
-            if px_data[x, y] >= 128:   # 笔画
-                byte_idx = y * (canvas_size // 8) + (x // 8)
-                bitmap[byte_idx] |= (1 << (7 - (x % 8)))
+    # 二值化 → 1bpp 位图 (numpy 向量化加速)
+    try:
+        import numpy as np
+        arr = np.frombuffer(img.tobytes(), dtype=np.uint8).reshape(
+            canvas_size, canvas_size)
+        # 笔画像素 (>=128) → True
+        stroke_mask = arr >= 128   # bool 数组, 96×96
 
-    return bytes(bitmap)
+        # 每 8 个像素打包为 1 字节 (MSB first)
+        # 96 列 = 12 字节, 行优先
+        # np.packbits 按行打包, axis=1
+        packed = np.packbits(stroke_mask, axis=1)   # shape: (96, 12)
+        return packed.tobytes()
+    except ImportError:
+        # numpy 不可用时回退到逐像素
+        px_data = img.load()
+        bitmap = bytearray(Font9696.GLYPH_BUF_SIZE)
+        for y in range(canvas_size):
+            for x in range(canvas_size):
+                if px_data[x, y] >= 128:
+                    byte_idx = y * (canvas_size // 8) + (x // 8)
+                    bitmap[byte_idx] |= (1 << (7 - (x % 8)))
+        return bytes(bitmap)
 
 
 def _render_glyph_qt(char: str, font_family: str, font_pixel_size: int,
@@ -339,6 +352,7 @@ def generate_font9696_multi_ttf(
     ftype_assignments: dict[int, str],
     simplified: bool = True,
     pixel_size: int = 80,
+    fallback_ttf: Optional[str] = None,
     progress_callback: Optional[Callable[[int, int, str], None]] = None,
 ) -> tuple[bool, str]:
     """从多个 TTF 生成 FONT9696 文件 (不同 FTYPE 区段使用不同 TTF)。
@@ -350,13 +364,17 @@ def generate_font9696_multi_ttf(
                           未列出的 FTYPE 区段填充空字形
         simplified: True=简体, False=繁体
         pixel_size: TTF 渲染像素大小
+        fallback_ttf: 回退字体路径 (主字体缺字时使用), None 表示不回退
         progress_callback: (current, total, message) 进度回调
 
     Returns:
         (success, message)
     """
     # 验证 TTF 文件
-    for ttf in set(ftype_assignments.values()):
+    all_ttfs = set(ftype_assignments.values())
+    if fallback_ttf:
+        all_ttfs.add(fallback_ttf)
+    for ttf in all_ttfs:
         if not os.path.isfile(ttf):
             return False, f"TTF 文件不存在: {ttf}"
 
@@ -367,7 +385,7 @@ def generate_font9696_multi_ttf(
     pil_fonts: dict[str, object] = {}
     try:
         from PIL import ImageFont
-        for ttf in set(ftype_assignments.values()):
+        for ttf in all_ttfs:
             try:
                 pil_fonts[ttf] = ImageFont.truetype(ttf, pixel_size)
             except Exception as e:
@@ -375,46 +393,117 @@ def generate_font9696_multi_ttf(
     except ImportError:
         return False, "Pillow 库未安装, 无法渲染 TTF"
 
-    all_codes = Font9696.iter_all_big5_codes()
-    total = len(all_codes) * len(ftype_assignments)
-    current = 0
+    fallback_font = pil_fonts.get(fallback_ttf) if fallback_ttf else None
 
-    glyphs: dict[int, bytes] = {}
+    all_codes = Font9696.iter_all_big5_codes()
+
+    # ── 预计算简繁转换 (批量处理) ──
+    all_chars: list[str | None] = [_BIG5_TO_UNICODE.get(code) for code, _ in all_codes]
+    if simplified:
+        unique_chars = set(c for c in all_chars if c is not None)
+        t2s_map: dict[str, str] = {}
+        for c in unique_chars:
+            t2s_map[c] = _convert_t2s(c)
+    else:
+        t2s_map = {}
+
+    # ── 收集所有渲染任务 ──
+    # 分两阶段: 主字体渲染 + 回退字体补缺
+    # 阶段1: 收集每个 (ftype, ttf_path) 的渲染任务
+    # task = (global_idx, char) — char 已完成简繁转换
+    main_tasks: dict[str, list[tuple[int, str]]] = {}   # ttf_path → tasks
+    empty_indices: list[int] = []   # 无 BIG5 映射的空字形索引
 
     for ftype, ttf_path in ftype_assignments.items():
         if not (0 <= ftype < Font9696.SECTIONS):
             continue
-        pil_font = pil_fonts.get(ttf_path)
-        if pil_font is None:
-            continue
-
-        for big5_code, idx_in_section in all_codes:
+        for i, (big5_code, idx_in_section) in enumerate(all_codes):
             global_idx = idx_in_section + Font9696.GLYPHS_PER_SECTION * ftype
-
-            ch = _BIG5_TO_UNICODE.get(big5_code)
+            ch = all_chars[i]
             if ch is None:
-                empty_bitmap = b'\x00' * Font9696.GLYPH_BUF_SIZE
-                glyphs[global_idx] = Font9696.encode_rle(empty_bitmap)
-                current += 1
+                empty_indices.append(global_idx)
                 continue
-
             if simplified:
-                ch = _convert_t2s(ch)
+                ch = t2s_map.get(ch, ch)
+            main_tasks.setdefault(ttf_path, []).append((global_idx, ch))
 
-            stroke_bitmap = _render_glyph_pillow(ch, pil_font)
-            if stroke_bitmap is None:
-                stroke_bitmap = b'\x00' * Font9696.GLYPH_BUF_SIZE
+    total_glyphs = sum(len(tasks) for tasks in main_tasks.values()) + len(empty_indices)
 
-            file_bitmap = Font9696.invert_polarity(stroke_bitmap)
-            glyphs[global_idx] = Font9696.encode_rle(file_bitmap)
+    # ── 单进程渲染 (带字符缓存, 多 FTYPE 用同 TTF 时复用) ──
+    # 注: Windows spawn 多进程开销过大, 单进程 + numpy 加速更优
+    rendered: dict[int, bytes | None] = {}
+    render_cache: dict[tuple[str, str], bytes | None] = {}   # (char, ttf_path) → bitmap
 
-            current += 1
-            if progress_callback and current % 500 == 0:
-                progress_callback(current, total,
-                                  f"FTYPE {ftype}: {current}/{total} ({ch})")
+    for ttf_path, tasks in main_tasks.items():
+        if progress_callback:
+            progress_callback(0, total_glyphs,
+                              f"正在渲染 {os.path.basename(ttf_path)} "
+                              f"({len(tasks)} 字形)…")
+        pil_font = pil_fonts.get(ttf_path)
+
+        for j, (global_idx, ch) in enumerate(tasks):
+            # 渲染缓存: 同字符同字体只渲染一次
+            cache_key = (ch, ttf_path)
+            bm = render_cache.get(cache_key, False)
+            if bm is False:
+                bm = _render_glyph_pillow(ch, pil_font)
+                render_cache[cache_key] = bm
+            rendered[global_idx] = bm
+
+            if progress_callback and (j + 1) % 2000 == 0:
+                done = len(rendered) + len(empty_indices)
+                progress_callback(done, total_glyphs,
+                                  f"已渲染 {done}/{total_glyphs}")
+
+    # ── 回退字体补缺 (通常缺字很少) ──
+    missing_count = 0
+    idx_to_char: dict[int, str] = {}
+    for tasks in main_tasks.values():
+        for global_idx, ch in tasks:
+            idx_to_char[global_idx] = ch
+
+    if fallback_font is not None:
+        fb_missing = [(idx, idx_to_char[idx]) for idx, bm in rendered.items()
+                      if bm is None and idx in idx_to_char]
+        if fb_missing:
+            if progress_callback:
+                progress_callback(0, total_glyphs,
+                                  f"回退字体补充 {len(fb_missing)} 字…")
+            for global_idx, ch in fb_missing:
+                cache_key = (ch, fallback_ttf)
+                bm = render_cache.get(cache_key, False)
+                if bm is False:
+                    bm = _render_glyph_pillow(ch, fallback_font)
+                    render_cache[cache_key] = bm
+                if bm is not None:
+                    rendered[global_idx] = bm
+                    missing_count += 1
+
+    # ── 组装 glyphs 字典 (invert_polarity + encode_rle) ──
+    if progress_callback:
+        progress_callback(0, total_glyphs, "正在编码 RLE…")
+
+    glyphs: dict[int, bytes] = {}
+    empty_rle = Font9696.encode_rle(b'\x00' * Font9696.GLYPH_BUF_SIZE)
+
+    # 空字形
+    for global_idx in empty_indices:
+        glyphs[global_idx] = empty_rle
+
+    # 渲染结果 → RLE
+    current = 0
+    for global_idx, stroke_bitmap in rendered.items():
+        if stroke_bitmap is None:
+            stroke_bitmap = b'\x00' * Font9696.GLYPH_BUF_SIZE
+        file_bitmap = Font9696.invert_polarity(stroke_bitmap)
+        glyphs[global_idx] = Font9696.encode_rle(file_bitmap)
+        current += 1
+        if progress_callback and current % 2000 == 0:
+            progress_callback(current, total_glyphs,
+                              f"RLE 编码 {current}/{total_glyphs}")
 
     if progress_callback:
-        progress_callback(total, total, "正在构建文件...")
+        progress_callback(total_glyphs, total_glyphs, "正在构建文件...")
 
     file_bytes = Font9696.build_font9696(glyphs)
 
@@ -424,6 +513,7 @@ def generate_font9696_multi_ttf(
     os.replace(tmp_path, output_path)
 
     if progress_callback:
-        progress_callback(total, total, f"完成: {output_path}")
+        progress_callback(total_glyphs, total_glyphs, f"完成: {output_path}")
 
-    return True, f"成功生成 {len(glyphs)} 个字形 → {output_path}"
+    fallback_msg = f" (回退字体补充 {missing_count} 字)" if missing_count > 0 else ""
+    return True, f"成功生成 {len(glyphs)} 个字形{fallback_msg} → {output_path}"

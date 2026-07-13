@@ -76,13 +76,14 @@ class _ConvertWorker(QObject):
 
     def __init__(self, ttf_paths: list[str], output_path: str,
                  ftype_assignments: dict[int, str], simplified: bool,
-                 pixel_size: int):
+                 pixel_size: int, fallback_ttf: str | None = None):
         super().__init__()
         self._ttf_paths = ttf_paths
         self._output_path = output_path
         self._ftype_assignments = ftype_assignments
         self._simplified = simplified
         self._pixel_size = pixel_size
+        self._fallback_ttf = fallback_ttf
 
     def run(self):
         try:
@@ -96,6 +97,7 @@ class _ConvertWorker(QObject):
                 self._ftype_assignments,
                 simplified=self._simplified,
                 pixel_size=self._pixel_size,
+                fallback_ttf=self._fallback_ttf,
                 progress_callback=lambda c, t, m: self.progress.emit(c, t, m),
             )
             self.finished.emit(ok, msg)
@@ -113,8 +115,8 @@ class FontEditorWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle(format_title("font_editor"))
-        self.resize(1000, 700)
-        self.setMinimumSize(800, 600)
+        self.resize(1100, 760)
+        self.setMinimumSize(900, 600)
 
         # 主题状态 (install_dialog_theme_filter 沿父链查找 _is_dark)
         app = QApplication.instance()
@@ -170,8 +172,14 @@ class FontEditorWindow(QMainWindow):
 
     def _build_create_tab(self) -> QWidget:
         """构建"创建字体"标签页。"""
+        # 外层: 滚动区域 (内容超过窗口高度时可滚动)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+
         page = QWidget()
         outer = QVBoxLayout(page)
+        outer.setContentsMargins(4, 4, 4, 4)
 
         # ── TTF 选择区 ──
         ttf_group = QGroupBox("TTF 字体文件")
@@ -214,29 +222,56 @@ class FontEditorWindow(QMainWindow):
         opt_layout.addRow(QLabel(
             "<small>建议 70-85。值越大字形越满, 但可能超出 96×96 边界。</small>"))
 
-        # FTYPE 区段选择
-        ftype_widget = QWidget()
-        ftype_grid = QGridLayout(ftype_widget)
-        ftype_grid.setContentsMargins(0, 0, 0, 0)
+        # 回退字体 (主字体缺字时使用)
+        self._fallback_combo = QComboBox()
+        self._fallback_combo.addItem("(不使用回退)", None)
+        opt_layout.addRow("回退字体:", self._fallback_combo)
+        opt_layout.addRow(QLabel(
+            "<small>主字体缺字时 (如像素字体覆盖不全) 自动用回退字体渲染。</small>"))
+
+        outer.addWidget(opt_group)
+
+        # ── FTYPE 区段 (独立 QGroupBox, 4行×2列布局) ──
+        ftype_group = QGroupBox("FTYPE 区段 (勾选要生成的区段, 并为每个区段独立选择 TTF)")
+        ftype_grid = QGridLayout(ftype_group)
+        ftype_grid.setHorizontalSpacing(16)
+        ftype_grid.setVerticalSpacing(6)
+
+        # 8 个 FTYPE, 4行×2列
         self._ftype_checks = []
+        self._ftype_ttf_combos: list[QComboBox] = []
         ftype_names = [
             "FTYPE 0 (主文本)", "FTYPE 1 (副文本)", "FTYPE 2 (菜单)", "FTYPE 3",
             "FTYPE 4 (战斗)", "FTYPE 5", "FTYPE 6", "FTYPE 7",
         ]
         for i, name in enumerate(ftype_names):
+            row = i // 2      # 0-3
+            col = i % 2       # 0 或 1
+            # 每列: 勾选框 (固定宽) + 下拉框 (stretch)
+            col_widget = QWidget()
+            col_layout = QHBoxLayout(col_widget)
+            col_layout.setContentsMargins(0, 0, 0, 0)
+            col_layout.setSpacing(8)
+
             chk = QCheckBox(name)
+            chk.setFixedWidth(150)
             if i in (0, 1, 2, 4):   # 默认勾选游戏使用的 FTYPE
                 chk.setChecked(True)
+            chk.toggled.connect(self._on_ftype_check_toggled)
             self._ftype_checks.append(chk)
-            ftype_grid.addWidget(chk, i // 4, i % 4)
-        opt_layout.addRow("FTYPE 区段:", ftype_widget)
+            col_layout.addWidget(chk)
 
-        # 区段→TTF 映射提示
-        opt_layout.addRow(QLabel(
-            "<small>所有勾选的 FTYPE 区段将使用 TTF 列表中<br>"
-            "第一个 TTF 文件渲染。若需不同区段使用不同字体, 可拆分多次生成后合并。</small>"))
+            combo = QComboBox()
+            combo.setEnabled(False)   # 未勾选时禁用
+            col_layout.addWidget(combo, 1)   # stretch=1 占满剩余空间
+            self._ftype_ttf_combos.append(combo)
 
-        outer.addWidget(opt_group)
+            ftype_grid.addWidget(col_widget, row, col)
+
+        ftype_grid.setColumnStretch(0, 1)
+        ftype_grid.setColumnStretch(1, 1)
+
+        outer.addWidget(ftype_group)
 
         # ── 转换按钮 + 进度 ──
         action_group = QGroupBox("生成")
@@ -256,8 +291,17 @@ class FontEditorWindow(QMainWindow):
         action_layout.addWidget(self._convert_status)
 
         outer.addWidget(action_group)
-        outer.addStretch()
-        return page
+        # 不加 addStretch(), 让内容自然展开, 超出部分由滚动区域处理
+        scroll.setWidget(page)
+
+        # 创建页选项变化时刷新预览 (TTF 预览模式实时更新)
+        self._simplified_check.toggled.connect(self._refresh_preview)
+        self._pixel_size_spin.valueChanged.connect(self._refresh_preview)
+        self._fallback_combo.currentIndexChanged.connect(self._refresh_preview)
+        for combo in self._ftype_ttf_combos:
+            combo.currentIndexChanged.connect(self._refresh_preview)
+
+        return scroll
 
     def _build_preview_tab(self) -> QWidget:
         """构建"字体预览"标签页。"""
@@ -339,7 +383,7 @@ class FontEditorWindow(QMainWindow):
 
         # ── 视图(&V) ──
         view_menu = menubar.addMenu("视图(&V)")
-        self._toggle_theme_act = QAction("切换 Godot 主题", self)
+        self._toggle_theme_act = QAction("切换主题", self)
         self._toggle_theme_act.triggered.connect(self._toggle_theme)
         view_menu.addAction(self._toggle_theme_act)
 
@@ -460,30 +504,90 @@ class FontEditorWindow(QMainWindow):
                 self._ttf_list.addItem(item)
         if self._ttf_list.count() > 0:
             self._ttf_list.setCurrentRow(0)
+        self._refresh_ttf_combos()
 
     def _on_remove_ttf(self):
         row = self._ttf_list.currentRow()
         if row >= 0:
             self._ttf_list.takeItem(row)
+        self._refresh_ttf_combos()
 
     def _on_clear_ttf(self):
         self._ttf_list.clear()
+        self._refresh_ttf_combos()
+
+    def _get_ttf_paths(self) -> list[str]:
+        """获取当前 TTF 列表的所有路径。"""
+        return [self._ttf_list.item(i).data(Qt.UserRole)
+                for i in range(self._ttf_list.count())]
+
+    def _refresh_ttf_combos(self):
+        """TTF 列表变化时, 同步刷新所有 FTYPE 下拉和回退字体下拉。"""
+        ttf_paths = self._get_ttf_paths()
+
+        # 刷新每个 FTYPE 的 TTF 下拉
+        for i, combo in enumerate(self._ftype_ttf_combos):
+            # 保留当前选中路径
+            current_data = combo.currentData()
+            combo.blockSignals(True)
+            combo.clear()
+            for p in ttf_paths:
+                name = os.path.basename(p)
+                combo.addItem(name, p)
+            # 恢复选中 (若仍存在), 否则选第一个
+            if current_data in ttf_paths:
+                idx = ttf_paths.index(current_data)
+                combo.setCurrentIndex(idx)
+            elif ttf_paths:
+                combo.setCurrentIndex(0)
+            combo.blockSignals(False)
+            # 启用状态: 勾选且有 TTF
+            combo.setEnabled(self._ftype_checks[i].isChecked() and bool(ttf_paths))
+
+        # 刷新回退字体下拉
+        current_fb = self._fallback_combo.currentData()
+        self._fallback_combo.blockSignals(True)
+        self._fallback_combo.clear()
+        self._fallback_combo.addItem("(不使用回退)", None)
+        for p in ttf_paths:
+            name = os.path.basename(p)
+            self._fallback_combo.addItem(name, p)
+        if current_fb in ttf_paths:
+            idx = ttf_paths.index(current_fb) + 1   # +1 跳过"不使用回退"
+            self._fallback_combo.setCurrentIndex(idx)
+        self._fallback_combo.blockSignals(False)
+        # TTF 列表变化后刷新预览 (TTF 预览模式)
+        self._refresh_preview()
+
+    def _on_ftype_check_toggled(self):
+        """FTYPE 勾选状态变化时, 启用/禁用对应的 TTF 下拉。"""
+        for i, chk in enumerate(self._ftype_checks):
+            self._ftype_ttf_combos[i].setEnabled(
+                chk.isChecked() and self._ftype_ttf_combos[i].count() > 0)
 
     # ── 转换流程 ──
 
     def _on_start_convert(self):
         """开始 TTF → FONT9696 转换。"""
         # 收集 TTF 路径
-        ttf_paths = [self._ttf_list.item(i).data(Qt.UserRole)
-                     for i in range(self._ttf_list.count())]
+        ttf_paths = self._get_ttf_paths()
         if not ttf_paths:
             QMessageBox.warning(self, "无 TTF", "请先添加至少一个 TTF 字体文件。")
             return
 
-        # 收集选中的 FTYPE 区段
-        selected_ftypes = [i for i, chk in enumerate(self._ftype_checks)
-                           if chk.isChecked()]
-        if not selected_ftypes:
+        # 收集选中的 FTYPE 区段及其 TTF 映射
+        ftype_assignments: dict[int, str] = {}
+        for i, chk in enumerate(self._ftype_checks):
+            if chk.isChecked():
+                combo = self._ftype_ttf_combos[i]
+                ttf_path = combo.currentData()
+                if not ttf_path:
+                    QMessageBox.warning(self, "未选择 TTF",
+                        f"FTYPE {i} 已勾选但未选择 TTF 字体。")
+                    return
+                ftype_assignments[i] = ttf_path
+
+        if not ftype_assignments:
             QMessageBox.warning(self, "无 FTYPE", "请至少选择一个 FTYPE 区段。")
             return
 
@@ -497,9 +601,7 @@ class FontEditorWindow(QMainWindow):
 
         simplified = self._simplified_check.isChecked()
         pixel_size = self._pixel_size_spin.value()
-
-        # 构造 FTYPE → TTF 映射 (统一用第一个 TTF)
-        ftype_assignments = {ftype: ttf_paths[0] for ftype in selected_ftypes}
+        fallback_ttf = self._fallback_combo.currentData()
 
         # 启动后台线程
         self._convert_btn.setEnabled(False)
@@ -510,7 +612,8 @@ class FontEditorWindow(QMainWindow):
 
         self._convert_thread = QThread()
         self._convert_worker = _ConvertWorker(
-            ttf_paths, save_path, ftype_assignments, simplified, pixel_size)
+            ttf_paths, save_path, ftype_assignments, simplified, pixel_size,
+            fallback_ttf)
         self._convert_worker.moveToThread(self._convert_thread)
 
         self._convert_thread.started.connect(self._convert_worker.run)
@@ -554,7 +657,12 @@ class FontEditorWindow(QMainWindow):
     # ── 字体预览 ──
 
     def _refresh_preview(self):
-        """刷新预览区。"""
+        """刷新预览区。
+
+        支持两种预览来源:
+        1. FONT9696 文件 (已加载索引表) — 从文件解码字形
+        2. TTF 直接预览 (未生成 FONT9696 时) — 用 PIL 直接渲染 TTF
+        """
         # 清空现有内容
         while self._preview_layout.count():
             item = self._preview_layout.takeAt(0)
@@ -562,8 +670,12 @@ class FontEditorWindow(QMainWindow):
             if w:
                 w.deleteLater()
 
-        if not self._font_path or not self._font_index:
-            hint = QLabel('请通过「文件 → 打开 FONT9696…」或「创建字体」标签页加载字体文件。')
+        has_font9696 = bool(self._font_path and self._font_index)
+        ttf_paths = self._get_ttf_paths()
+
+        if not has_font9696 and not ttf_paths:
+            hint = QLabel('请通过「文件 → 打开 FONT9696…」加载字体文件,\n'
+                          '或在「创建字体」标签页添加 TTF 后预览。')
             hint.setAlignment(Qt.AlignCenter)
             hint.setStyleSheet("color: gray; padding: 40px;")
             self._preview_layout.addWidget(hint)
@@ -575,17 +687,159 @@ class FontEditorWindow(QMainWindow):
         fg_color = "#E0E0E0" if self._is_dark else "#222222"
         bg_color = "#1e1e1e" if self._is_dark else "#ffffff"
 
-        # 示例文本预览 (按行渲染)
-        sample_group = QGroupBox("示例文本预览")
-        sample_layout = QVBoxLayout(sample_group)
+        if has_font9696:
+            # ── FONT9696 文件预览 ──
+            self._preview_path_label.setText(os.path.basename(self._font_path))
+            self._preview_path_label.setStyleSheet("")
 
-        for text in PREVIEW_SAMPLES:
-            row_widget = self._render_text_row(text, ftype, fg_color, bg_color)
-            sample_layout.addWidget(row_widget)
+            # 示例文本预览
+            sample_group = QGroupBox("示例文本预览 (FONT9696)")
+            sample_layout = QVBoxLayout(sample_group)
+            for text in PREVIEW_SAMPLES:
+                row_widget = self._render_text_row_from_font(text, ftype,
+                                                              fg_color, bg_color)
+                sample_layout.addWidget(row_widget)
+            self._preview_layout.addWidget(sample_group)
 
-        self._preview_layout.addWidget(sample_group)
+            # 字形网格
+            self._render_glyph_grid(ftype, fg_color, bg_color)
 
-        # 单字字形网格 (展示前 32 个 BIG5 字形)
+        else:
+            # ── TTF 直接预览 (未生成 FONT9696) ──
+            # 选择当前 FTYPE 对应的 TTF
+            ttf_path = self._get_ttf_for_ftype(ftype)
+            if not ttf_path:
+                ttf_path = ttf_paths[0]   # 回退到第一个
+
+            self._preview_path_label.setText(
+                f"TTF 预览: {os.path.basename(ttf_path)}")
+            self._preview_path_label.setStyleSheet("color: #4a9;")
+
+            simplified = self._simplified_check.isChecked()
+            pixel_size = self._pixel_size_spin.value()
+
+            try:
+                from PIL import ImageFont
+                pil_font = ImageFont.truetype(ttf_path, pixel_size)
+            except Exception as e:
+                hint = QLabel(f"无法加载 TTF: {e}")
+                hint.setStyleSheet("color: red; padding: 20px;")
+                self._preview_layout.addWidget(hint)
+                return
+
+            # 回退字体
+            fallback_path = self._fallback_combo.currentData()
+            fallback_font = None
+            if fallback_path:
+                try:
+                    fallback_font = ImageFont.truetype(fallback_path, pixel_size)
+                except Exception:
+                    pass
+
+            # 示例文本预览
+            sample_group = QGroupBox(
+                f"示例文本预览 (TTF 直接渲染, {pixel_size}px, "
+                f"{'简体' if simplified else '繁体'})")
+            sample_layout = QVBoxLayout(sample_group)
+            for text in PREVIEW_SAMPLES:
+                row_widget = self._render_text_row_from_ttf(
+                    text, pil_font, fallback_font, simplified,
+                    fg_color, bg_color)
+                sample_layout.addWidget(row_widget)
+            self._preview_layout.addWidget(sample_group)
+
+    def _get_ttf_for_ftype(self, ftype: int) -> str | None:
+        """获取指定 FTYPE 在创建页选中的 TTF 路径。"""
+        if 0 <= ftype < len(self._ftype_ttf_combos):
+            combo = self._ftype_ttf_combos[ftype]
+            data = combo.currentData()
+            if data:
+                return data
+        ttf_paths = self._get_ttf_paths()
+        return ttf_paths[0] if ttf_paths else None
+
+    def _render_text_row_from_font(self, text: str, ftype: int,
+                                    fg_color: str, bg_color: str) -> QWidget:
+        """从 FONT9696 文件渲染一行示例文本。"""
+        row = QWidget()
+        row_layout = QHBoxLayout(row)
+        row_layout.setContentsMargins(4, 4, 4, 4)
+        row_layout.setSpacing(0)
+
+        text_label = QLabel(f"{text}:")
+        text_label.setStyleSheet(f"color: {fg_color}; padding-right: 8px;")
+        text_label.setMinimumWidth(180)
+        row_layout.addWidget(text_label)
+
+        for ch in text:
+            glyph_label = self._render_char_from_font(ch, ftype, fg_color, bg_color)
+            row_layout.addWidget(glyph_label)
+
+        row_layout.addStretch()
+        return row
+
+    def _render_char_from_font(self, ch: str, ftype: int,
+                                fg_color: str, bg_color: str) -> QLabel:
+        """从 FONT9696 渲染单个字符为 QLabel。"""
+        try:
+            big5_bytes = ch.encode('big5')
+            if len(big5_bytes) != 2:
+                return self._make_placeholder("?", fg_color, bg_color)
+            big5_code = (big5_bytes[0] << 8) | big5_bytes[1]
+            idx = Font9696.big5_to_index(big5_code, ftype)
+            if idx is None:
+                return self._make_placeholder("?", fg_color, bg_color)
+
+            rle = Font9696.load_glyph_data(self._font_path, idx,
+                                            self._font_index)
+            if not rle:
+                return self._make_empty_glyph(bg_color)
+            bitmap = Font9696.decode_rle(rle)
+            stroke_bitmap = Font9696.invert_polarity(bitmap)
+            return self._make_glyph_label(stroke_bitmap, fg_color, bg_color)
+        except (UnicodeEncodeError, LookupError, ValueError):
+            return self._make_placeholder("?", fg_color, bg_color)
+
+    def _render_text_row_from_ttf(self, text: str, pil_font, fallback_font,
+                                   simplified: bool,
+                                   fg_color: str, bg_color: str) -> QWidget:
+        """从 TTF 直接渲染一行示例文本 (不依赖 FONT9696)。"""
+        row = QWidget()
+        row_layout = QHBoxLayout(row)
+        row_layout.setContentsMargins(4, 4, 4, 4)
+        row_layout.setSpacing(0)
+
+        text_label = QLabel(f"{text}:")
+        text_label.setStyleSheet(f"color: {fg_color}; padding-right: 8px;")
+        text_label.setMinimumWidth(180)
+        row_layout.addWidget(text_label)
+
+        for ch in text:
+            glyph_label = self._render_char_from_ttf(
+                ch, pil_font, fallback_font, simplified, fg_color, bg_color)
+            row_layout.addWidget(glyph_label)
+
+        row_layout.addStretch()
+        return row
+
+    def _render_char_from_ttf(self, ch: str, pil_font, fallback_font,
+                               simplified: bool,
+                               fg_color: str, bg_color: str) -> QLabel:
+        """从 TTF 直接渲染单个字符为 QLabel (32×32 缩放预览)。"""
+        from ttf_converter import _render_glyph_pillow, _convert_t2s
+
+        render_ch = _convert_t2s(ch) if simplified else ch
+
+        stroke_bitmap = _render_glyph_pillow(render_ch, pil_font)
+        if stroke_bitmap is None and fallback_font is not None:
+            stroke_bitmap = _render_glyph_pillow(render_ch, fallback_font)
+        if stroke_bitmap is None:
+            return self._make_placeholder("?", fg_color, bg_color)
+
+        return self._make_glyph_label(stroke_bitmap, fg_color, bg_color)
+
+    def _render_glyph_grid(self, ftype: int, fg_color: str, bg_color: str):
+        """渲染前 64 个 BIG5 字形网格 (FONT9696 文件模式)。"""
         grid_group = QGroupBox(f"字形网格 (FTYPE {ftype}, 前 64 个 BIG5 字符)")
         grid_layout = QGridLayout(grid_group)
         grid_layout.setSpacing(2)
@@ -601,14 +855,13 @@ class FontEditorWindow(QMainWindow):
                 if not rle:
                     glyph_img = self._make_empty_glyph(bg_color)
                 else:
-                    # 解码 → 反转极性 (bit=1 为笔画)
                     bitmap = Font9696.decode_rle(rle)
                     stroke_bitmap = Font9696.invert_polarity(bitmap)
-                    glyph_img = self._make_glyph_label(stroke_bitmap, fg_color, bg_color)
+                    glyph_img = self._make_glyph_label(stroke_bitmap,
+                                                        fg_color, bg_color)
             except Exception:
                 glyph_img = self._make_empty_glyph(bg_color)
 
-            # 字形 + BIG5 码标签
             cell = QWidget()
             cell_layout = QVBoxLayout(cell)
             cell_layout.setContentsMargins(2, 2, 2, 2)
@@ -623,62 +876,16 @@ class FontEditorWindow(QMainWindow):
 
         self._preview_layout.addWidget(grid_group)
 
-    def _render_text_row(self, text: str, ftype: int,
-                         fg_color: str, bg_color: str) -> QWidget:
-        """渲染一行示例文本为水平排列的字形。"""
-        row = QWidget()
-        row_layout = QHBoxLayout(row)
-        row_layout.setContentsMargins(4, 4, 4, 4)
-        row_layout.setSpacing(0)
-
-        # 文本标签
-        text_label = QLabel(f"{text}:")
-        text_label.setStyleSheet(f"color: {fg_color}; padding-right: 8px;")
-        text_label.setMinimumWidth(180)
-        row_layout.addWidget(text_label)
-
-        # 渲染每个字符
-        from PIL import Image as PILImage
-        for ch in text:
-            try:
-                big5_bytes = ch.encode('big5')
-                if len(big5_bytes) != 2:
-                    # ASCII 字符或不可编码, 用 '?' 占位
-                    placeholder = QLabel("?")
-                    placeholder.setStyleSheet(
-                        f"color: {fg_color}; background: {bg_color}; "
-                        f"padding: 2px; border: 1px solid #888;")
-                    placeholder.setFixedSize(32, 32)
-                    placeholder.setAlignment(Qt.AlignCenter)
-                    row_layout.addWidget(placeholder)
-                    continue
-                big5_code = (big5_bytes[0] << 8) | big5_bytes[1]
-                idx = Font9696.big5_to_index(big5_code, ftype)
-                if idx is None:
-                    raise ValueError("invalid big5")
-
-                rle = Font9696.load_glyph_data(self._font_path, idx,
-                                                self._font_index)
-                if not rle:
-                    glyph_label = self._make_empty_glyph(bg_color)
-                else:
-                    bitmap = Font9696.decode_rle(rle)
-                    stroke_bitmap = Font9696.invert_polarity(bitmap)
-                    glyph_label = self._make_glyph_label(stroke_bitmap,
-                                                         fg_color, bg_color)
-                row_layout.addWidget(glyph_label)
-            except (UnicodeEncodeError, LookupError, ValueError):
-                # 无法用 BIG5 编码的字符, 用 '?' 占位
-                placeholder = QLabel("?")
-                placeholder.setStyleSheet(
-                    f"color: {fg_color}; background: {bg_color}; "
-                    f"padding: 2px; border: 1px solid #888;")
-                placeholder.setFixedSize(32, 32)
-                placeholder.setAlignment(Qt.AlignCenter)
-                row_layout.addWidget(placeholder)
-
-        row_layout.addStretch()
-        return row
+    def _make_placeholder(self, char: str, fg_color: str,
+                           bg_color: str) -> QLabel:
+        """生成占位字符 QLabel。"""
+        placeholder = QLabel(char)
+        placeholder.setStyleSheet(
+            f"color: {fg_color}; background: {bg_color}; "
+            f"padding: 2px; border: 1px solid #888;")
+        placeholder.setFixedSize(32, 32)
+        placeholder.setAlignment(Qt.AlignCenter)
+        return placeholder
 
     def _make_glyph_label(self, stroke_bitmap: bytes,
                           fg_color: str, bg_color: str) -> QLabel:
