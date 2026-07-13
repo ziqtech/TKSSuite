@@ -1149,13 +1149,72 @@ def apply_font_config(defn: PatchDef, code_buf: bytearray, code_start_addr: int,
         return True
 
     renderers = cfg.get("renderers", {})
+    all_ok = True
+
+    # 1b. 描边 (outline) 处理 — 必须在 FTYPE 处理之前
+    # a7 是 sub_44AF7C 的第 7 个参数 (存储在渲染器 offset+64), 1=启用描边, 0=禁用描边
+    # 描边通过位图膨胀算法实现: 将字体位图向右下各膨胀2像素, 先用描边色(黑色)绘制, 再用前景色绘制
+    # 修改对应渲染器所有调用点的 a7 字节为配置值
+    # 在 FTYPE 处理之前执行, 以便用原始 FTYPE 值区分 menu_name_font(FTYPE=2) 和 tooltip_font(FTYPE=0)
+    _OUTLINE_CONFIGS = [
+        ("main",           0x04, None, False),  # dword_755B04, 不限定 FTYPE, 不排除
+        ("menu_name_font", 0x08, 2,    True),   # dword_755B08, FTYPE=2, 排除 init/姓名输入
+        ("tooltip_font",   0x08, 0,    False),  # dword_755B08, FTYPE=0, 不排除
+    ]
+    for rname, ptr_byte, orig_ftype, exclude_special in _OUTLINE_CONFIGS:
+        rc = renderers.get(rname, {})
+        outline = rc.get("outline", None)
+        if outline is None:
+            continue
+        outline = int(outline)
+        if outline not in (0, 1):
+            log(f"    [ERROR] {rname} outline: value={outline} 超出 0~1")
+            all_ok = False
+            continue
+
+        ft = f"{orig_ftype:02X}" if orig_ftype is not None else "??"
+        ptr = f"{ptr_byte:02X} 5B 75 00"
+        # 6种寄存器变体: (模式, a7偏移, a6偏移)
+        outline_variants = [
+            (f"8B 15 {ptr} 6A ?? 6A ?? 6A ?? 6A ?? 6A ?? 6A {ft} 52 E8", 7, 9),
+            (f"6A ?? 6A ?? 6A ?? 6A ?? 6A ?? 6A {ft} 8B 15 {ptr} 52 E8", 1, 3),
+            (f"A1 {ptr} 6A ?? 6A ?? 6A ?? 6A ?? 6A ?? 6A {ft} 50 E8", 6, 8),
+            (f"6A ?? 6A ?? 6A ?? 6A ?? 6A ?? 6A {ft} A1 {ptr} 50 E8", 1, 3),
+            (f"8B 0D {ptr} 6A ?? 6A ?? 6A ?? 6A ?? 6A ?? 6A {ft} 51 E8", 7, 9),
+            (f"6A ?? 6A ?? 6A ?? 6A ?? 6A ?? 6A {ft} 8B 0D {ptr} 51 E8", 1, 3),
+        ]
+        patched = 0
+        for pat_str, a7_off, a6_off in outline_variants:
+            pat, wc = parse_pattern(pat_str)
+            hits = pattern_scan(bytes(code_buf), pat, wc)
+            for h in hits:
+                # menu_name_font: 排除 init (a6=0) 和姓名输入 (a7=1,a6=1,非O1)
+                if exclude_special:
+                    a7_val = code_buf[h + a7_off]
+                    a6_val = code_buf[h + a6_off]
+                    if a6_val == 0:
+                        continue
+                    if a7_val == 1 and a6_val == 1 and not pat_str.startswith("8B 15"):
+                        continue
+                a7_foff = h + a7_off
+                actual = code_buf[a7_foff]
+                if actual == outline:
+                    continue
+                ha = code_start_addr + a7_foff
+                op = vp_ex(h_proc, ha, 1, PAGE_EXECUTE_READWRITE)
+                write_pm(h_proc, ha, bytes([outline & 0xFF]))
+                vp_ex(h_proc, ha, 1, op)
+                code_buf[a7_foff] = outline & 0xFF
+                patched += 1
+                log(f"    [OK] {rname} outline: a7 {actual} -> {outline} @RVA 0x{a7_foff:X}")
+        log(f"    {rname} outline: 共 patch {patched} 处 a7 调用")
 
     # 2. 主文本渲染器 (sub_411624 中 sub_44AF7C 调用点)
     #    模式: 6A a7 6A a6 6A a5 6A a4 6A FSIZE 6A FTYPE 8B 15 [ptr32] 52 E8
     #    FTYPE 字节在模式偏移 11; dword 指针唯一区分
     renderer_specs = {
         "main": {
-            "pattern": "6A 01 6A 01 6A 00 6A 01 6A 10 6A 01 8B 15 04 5B 75 00",
+            "pattern": "6A ?? 6A 01 6A 00 6A 01 6A 10 6A 01 8B 15 04 5B 75 00",
             "original_ftype": 1,
             "ptr": "dword_755B04",
         },
@@ -1163,7 +1222,6 @@ def apply_font_config(defn: PatchDef, code_buf: bytearray, code_start_addr: int,
 
     FTYPE_OFFSET = 11  # FTYPE 字节在模式中的偏移
 
-    all_ok = True
     for name, spec in renderer_specs.items():
         rc = renderers.get(name, {})
         new_ftype = int(rc.get("ftype", spec["original_ftype"]))

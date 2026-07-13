@@ -1,10 +1,11 @@
 """
 FontConfigPanel — 游戏默认字体自定义配置面板
-编辑 font_config.json 中的 3 个渲染器 FTYPE 值。
+编辑 font_config.json 中的 3 个渲染器 FTYPE 值和描边开关。
 """
+from functools import partial
 from PySide6.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QFormLayout, QGroupBox, QComboBox,
-    QLabel, QPushButton, QWidget, QFrame
+    QCheckBox, QLabel, QPushButton, QWidget
 )
 from PySide6.QtCore import Qt
 
@@ -26,6 +27,7 @@ class FontConfigPanel(ConfigPanelBase):
         super().__init__(parent)
         self._ftype_table = {}  # ftype_table 数据，用于显示字体名称
         self._combos: dict[str, QComboBox] = {}
+        self._outline_checks: dict[str, QCheckBox] = {}
         self._build_ui()
 
     def _build_ui(self):
@@ -38,15 +40,21 @@ class FontConfigPanel(ConfigPanelBase):
         font_layout.setLabelAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
 
         for key, display_name in RENDERERS:
-            combo = QComboBox()
-            combo.setFixedWidth(200)
-            # 信号在 _populate_ui 后连接，避免初始填充触发 dirty
-            self._combos[key] = combo
-
             row = QWidget()
             rh = QHBoxLayout(row)
             rh.setContentsMargins(0, 0, 0, 0)
+            rh.setSpacing(8)
+
+            combo = QComboBox()
+            combo.setFixedWidth(200)
+            self._combos[key] = combo
             rh.addWidget(combo)
+
+            outline_check = QCheckBox("描边")
+            outline_check.setToolTip("0=关闭描边, 1=开启描边 (sub_44AF7C 的 a7 参数)")
+            self._outline_checks[key] = outline_check
+            rh.addWidget(outline_check)
+
             rh.addStretch()
             font_layout.addRow(f"{display_name}:", row)
 
@@ -64,7 +72,8 @@ class FontConfigPanel(ConfigPanelBase):
         # ── 说明 ──
         tip_label = QLabel(
             "提示: 修改后需在启动器中勾选「字体配置」补丁才会生效。\n"
-            "游戏使用图片字体，FTYPE 对应 FONT9696 区段索引 (0-7)。"
+            "游戏使用图片字体，FTYPE 对应 FONT9696 区段索引 (0-7)。\n"
+            "描边通过位图膨胀算法实现 (向右下各扩展2像素), 描边色固定为黑色。"
         )
         tip_label.setWordWrap(True)
         tip_label.setObjectName("TipLabel")
@@ -90,7 +99,7 @@ class FontConfigPanel(ConfigPanelBase):
             combo.clear()
             for ftype in range(8):
                 key = str(ftype)
-                desc = self._ftype_table.get(key, f"区段{ftype}")
+                desc = self._ftype_table.get(key, f"字体{ftype}")
                 combo.addItem(f"{ftype} - {desc}", ftype)
             combo.blockSignals(False)
 
@@ -99,7 +108,7 @@ class FontConfigPanel(ConfigPanelBase):
         rows = []
         for ftype in range(8):
             key = str(ftype)
-            desc = self._ftype_table.get(key, f"区段{ftype}")
+            desc = self._ftype_table.get(key, f"字体{ftype}")
             rows.append(f"<tr><td><b>FTYPE {ftype}</b></td><td>{desc}</td></tr>")
         self._ref_label.setText(
             "<table cellpadding='4'>"
@@ -107,7 +116,7 @@ class FontConfigPanel(ConfigPanelBase):
             + "</table>"
         )
 
-    def _on_combo_changed(self):
+    def _on_changed(self):
         self._mark_dirty()
 
     # ── ConfigPanelBase 实现 ──
@@ -124,6 +133,8 @@ class FontConfigPanel(ConfigPanelBase):
         for key, _ in RENDERERS:
             rc = renderers.get(key, {})
             ftype = int(rc.get("ftype", 0))
+            outline = int(rc.get("outline", 0))
+
             combo = self._combos[key]
             combo.blockSignals(True)
             idx = combo.findData(ftype)
@@ -131,9 +142,15 @@ class FontConfigPanel(ConfigPanelBase):
                 combo.setCurrentIndex(idx)
             combo.blockSignals(False)
 
+            check = self._outline_checks[key]
+            check.blockSignals(True)
+            check.setChecked(bool(outline))
+            check.blockSignals(False)
+
         # 连接信号（在初始填充之后，避免触发 dirty）
-        for combo in self._combos.values():
-            combo.currentIndexChanged.connect(self._on_combo_changed)
+        for key, _ in RENDERERS:
+            self._combos[key].currentIndexChanged.connect(self._on_changed)
+            self._outline_checks[key].toggled.connect(self._on_changed)
 
     def _collect_ui(self) -> dict:
         result = {}
@@ -142,5 +159,6 @@ class FontConfigPanel(ConfigPanelBase):
             ftype = combo.currentData()
             if ftype is None:
                 ftype = 0
-            result[key] = {"ftype": int(ftype)}
+            outline = 1 if self._outline_checks[key].isChecked() else 0
+            result[key] = {"ftype": int(ftype), "outline": outline}
         return {"renderers": result}
