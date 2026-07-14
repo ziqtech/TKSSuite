@@ -61,7 +61,7 @@ from PySide6.QtWidgets import (
     QLineEdit, QComboBox, QCheckBox, QPushButton, QLabel,
     QScrollArea, QDialog, QFileDialog, QMessageBox, QTextEdit,
     QFrame, QGridLayout, QAbstractItemView, QMenuBar, QTabWidget,
-    QSpinBox, QSizePolicy,
+    QSpinBox, QSizePolicy, QMenu,
 )
 from PySide6.QtGui import QColor, QFont, QIcon, QIntValidator
 from PySide6.QtCore import Qt, QTranslator, Signal
@@ -1106,6 +1106,8 @@ class WarpcEditorV2(QMainWindow):
         self._skill_learn_widgets = []
         self._skill_effect_widgets = []
         self._skill_effect_name_labels = []
+        self._clip_skill_learn = None   # 跨角色复制粘贴: 技能学习数据
+        self._clip_skill_effect = None  # 跨角色复制粘贴: 技能效果数据
         self._fa_sprites = []
         self._fa_photos = {}
         # 使用权限定义运行时副本 (启动时自动从 configs/ 加载)
@@ -1607,6 +1609,9 @@ class WarpcEditorV2(QMainWindow):
     def _build_tab3(self):
         """技能学习状态 [176]-[518]"""
         p = self._build_scroll_tab("技能学习")
+        p.setContextMenuPolicy(Qt.CustomContextMenu)
+        p.customContextMenuRequested.connect(
+            partial(self._on_skill_tab_context_menu, p, 'learn'))
         self._skill_learn_labels = []
         grp = QWidget()
         gl = QVBoxLayout(grp)
@@ -1644,6 +1649,9 @@ class WarpcEditorV2(QMainWindow):
     def _build_tab4(self):
         """技能效果判定"""
         p = self._build_scroll_tab("技能效果判定")
+        p.setContextMenuPolicy(Qt.CustomContextMenu)
+        p.customContextMenuRequested.connect(
+            partial(self._on_skill_tab_context_menu, p, 'effect'))
         self._effect_inner = p
 
     def _build_skill_effect_section(self, parent):
@@ -1704,6 +1712,84 @@ class WarpcEditorV2(QMainWindow):
         bl.addLayout(grid)
         gl.addWidget(body)
         parent.layout().addWidget(grp)
+
+    # ── 技能数据跨角色复制/粘贴 ──
+    def _on_skill_tab_context_menu(self, widget, kind, pos):
+        menu = QMenu(self)
+        act_copy = menu.addAction("复制数据")
+        act_paste = menu.addAction("粘贴数据")
+        clip = self._clip_skill_learn if kind == 'learn' else self._clip_skill_effect
+        act_paste.setEnabled(clip is not None)
+        chosen = menu.exec(widget.mapToGlobal(pos))
+        if chosen is act_copy:
+            if kind == 'learn':
+                self._copy_skill_learn()
+            else:
+                self._copy_skill_effect()
+        elif chosen is act_paste:
+            if kind == 'learn':
+                self._paste_skill_learn()
+            else:
+                self._paste_skill_effect()
+
+    def _copy_skill_learn(self):
+        if self._editing_idx < 0 or not self._skill_learn_widgets:
+            self.status_var.setText("请先选择角色")
+            return
+        clip = []
+        for skill_idx, cb in self._skill_learn_widgets:
+            sv = cb.currentText()
+            sep = sv.find('-', 1) if sv.startswith('-') else sv.find('-')
+            byte_val = int(sv[:sep]) if sep >= 0 else 0
+            clip.append(byte_val)
+        self._clip_skill_learn = clip
+        self.status_var.setText(
+            f"已复制技能学习数据 (角色 #{self._editing_idx}, {len(clip)} 项)")
+
+    def _paste_skill_learn(self):
+        if self._editing_idx < 0:
+            self.status_var.setText("请先选择角色")
+            return
+        if self._clip_skill_learn is None:
+            self.status_var.setText("没有已复制的技能学习数据")
+            return
+        for (skill_idx, cb), byte_val in zip(self._skill_learn_widgets,
+                                              self._clip_skill_learn):
+            for vi in range(cb.count()):
+                if cb.itemText(vi).startswith(f'{byte_val}-'):
+                    cb.setCurrentIndex(vi)
+                    break
+        self._apply_edit()
+        self.status_var.setText(
+            f"已粘贴技能学习数据 → 角色 #{self._editing_idx}")
+
+    def _copy_skill_effect(self):
+        if self._editing_idx < 0 or not self._skill_effect_widgets:
+            self.status_var.setText("请先选择角色")
+            return
+        clip = []
+        for i, ev in self._skill_effect_widgets:
+            try:
+                clip.append(int(ev.text()))
+            except (ValueError, TypeError):
+                clip.append(-1)
+        self._clip_skill_effect = clip
+        self.status_var.setText(
+            f"已复制技能效果数据 (角色 #{self._editing_idx}, {len(clip)} 项)")
+
+    def _paste_skill_effect(self):
+        if self._editing_idx < 0:
+            self.status_var.setText("请先选择角色")
+            return
+        if self._clip_skill_effect is None:
+            self.status_var.setText("没有已复制的技能效果数据")
+            return
+        for (i, ev), val in zip(self._skill_effect_widgets,
+                                self._clip_skill_effect):
+            ev.setText(str(val))
+        self._apply_edit()
+        self.status_var.setText(
+            f"已粘贴技能效果数据 → 角色 #{self._editing_idx}")
 
     def _build_tab5(self):
         p = self._build_scroll_tab("全部字段")
