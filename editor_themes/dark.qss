@@ -951,3 +951,9 @@ QLabel#WarpcSelectedLabel {
     border-radius: 4px;
     background: rgba(255, 255, 0, 0.08);
 }
+
+/* ── 字形单元格 (font_editor) ── */
+QLabel[class="GlyphCell"] {
+    background-color: #1a1e27;
+    border: 1px solid #14171f;
+}
