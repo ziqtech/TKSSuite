@@ -123,8 +123,8 @@ class ModListWidget(QWidget):
         self._first_refresh = False
         self._table.setRowCount(0)
         self._mods = scan_mods(self._mods_dir)
-        # 默认按 MOD ID 排序（不区分大小写）
-        self._mods.sort(key=lambda m: m.mod_id.lower())
+        # 默认多级排序: 加载顺序 > 作者 > 模组名称 > 版本号 > 描述 > ID
+        self._mods.sort(key=self._default_sort_key)
         # 应用用户选择的排序
         self._apply_user_sort()
 
@@ -203,7 +203,7 @@ class ModListWidget(QWidget):
         """重新排序并刷新表格 (不重新扫描目录)"""
         self._loading = True
         self._initial_states = self.get_mod_states()
-        self._mods.sort(key=lambda m: m.mod_id.lower())
+        self._mods.sort(key=self._default_sort_key)
         self._apply_user_sort()
         dup_ids = self._detect_dup_ids()
         self._table.setRowCount(0)
@@ -213,12 +213,32 @@ class ModListWidget(QWidget):
         self._update_sort_indicator()
 
     def _apply_user_sort(self):
-        """根据用户选择的列和方向排序 self._mods"""
+        """根据用户选择的列和方向排序 self._mods
+
+        点击列作为主键, 其余列按默认优先级
+        (加载顺序 > 作者 > 模组名称 > 版本号 > 描述 > ID) 作为次级键
+        """
         if self._sort_column < 0 or self._sort_state == 0:
             return
         col = self._sort_column
         reverse = (self._sort_state == 2)
-        self._mods.sort(key=lambda m: self._get_sort_key(m, col), reverse=reverse)
+        self._mods.sort(
+            key=lambda m: self._composite_sort_key(m, col), reverse=reverse)
+
+    def _default_sort_key(self, mod: ModInfo):
+        """默认多级排序键: 加载顺序 > 作者 > 模组名称 > 版本号 > 描述 > ID"""
+        return (
+            mod.load_order,
+            (mod.author or "").lower(),
+            (mod.name or "").lower(),
+            (mod.version or "").lower(),
+            (mod.description or "").lower(),
+            (mod.mod_id or "").lower(),
+        )
+
+    def _composite_sort_key(self, mod: ModInfo, col: int):
+        """组合排序键: 用户点击列为主键, 默认优先级链为次级键 (tiebreaker)"""
+        return (self._get_sort_key(mod, col),) + self._default_sort_key(mod)
 
     def _get_sort_key(self, mod: ModInfo, col: int):
         if col == _COL_NAME:
