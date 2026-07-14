@@ -65,12 +65,13 @@ EDITORS = [
     ("TKSSpritesheetEditor", "build/entries/entry_spritesheet_editor.py", "spritesheet_editor"),
     ("TKSSaveEditor",        "build/entries/entry_save_editor.py",        "save_editor"),
     ("TKSConfigsEditor",      "build/entries/entry_configs_editor.py",     "configs_editor"),
+    ("TKSFontEditor",         "build/entries/entry_font_editor.py",        "font_editor"),
     ("TKSLauncher",          "build/entries/entry_launcher.py",           "tks_launcher_gui"),
     ("TKSLauncherCLI",       "build/entries/entry_launcher_cli.py",      "tks_launcher_gui"),
 ]
 
 # 需要 Pillow 的编辑器 (onefile 模式用, 薄模式 PIL 由 PIL.lib 统一提供)
-NEEDS_PILLOW = {"TKSJvgEditor", "TKSGrpEditor", "TKSGxpEditor", "TKSSpritesheetEditor"}
+NEEDS_PILLOW = {"TKSJvgEditor", "TKSGrpEditor", "TKSGxpEditor", "TKSSpritesheetEditor", "TKSFontEditor"}
 
 # 需要 zhconv 数据文件 (zhcdict.json) 的编辑器 — Nuitka 不会自动打包 .json 数据文件
 NEEDS_ZHCONV = {"TKSSaveEditor"}
