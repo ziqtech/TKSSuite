@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
 )
 
 from core.config_loader import PatchDef, load_config
+from core.save_manager import set_last_game_dir
 from core.state_persistence import GuiState, load_gui_state, save_gui_state
 from editor_utils.dock_components import DockHeader
 from editor_utils.theme_manager import ThemeManager
@@ -26,6 +27,7 @@ from ui.mod_packer_dialog import ModPackerDialog
 from ui.mod_editor_dialog import ModEditorDialog
 from ui.mod_splitter_dialog import ModSplitterDialog
 from ui.patch_list import PatchListWidget
+from ui.save_manager_dialog import SaveManagerDialog
 from workers.patcher_worker import PatcherWorker
 
 # 确定启动器根目录（打包 exe 或开发模式）
@@ -93,6 +95,7 @@ class MainWindow(QMainWindow):
         fm.addAction("模组编辑…", self._on_edit_mod)
         fm.addAction("模组信息编辑…", self._on_edit_mod_meta)
         fm.addAction("自定义头像…", self._on_custom_avatar)
+        fm.addAction("存档管理…", self._on_save_manager)
         fm.addSeparator()
         fm.addAction("退出", self.close)
 
@@ -117,7 +120,8 @@ class MainWindow(QMainWindow):
             "7. 模组编辑: 打开 .tksmod/.tksmodpak 添加/删除内部文件，原地保存\n"
             "8. 模组信息编辑: 编辑 .tksmod 的元数据 (标题/作者/描述等)\n"
             "9. 自定义头像: 上传图片并裁剪, 生成自定义头像 MOD\n"
-            "10. 视图 → 切换主题 (Ctrl+T): 在深色/浅色主题间切换\n\n"
+            "10. 存档管理: 备份/恢复游戏存档及补丁状态快照\n"
+            "11. 视图 → 切换主题 (Ctrl+T): 在深色/浅色主题间切换\n\n"
             "勾选状态会自动保存到 launcher_setting.json, 下次启动时自动恢复\n\n"
             "运行时基于内存补丁引擎 (runtime_patcher) 实现\n"
             "兼容 Winlator / Wine 环境 (通过 cli_launcher.py)")
@@ -161,6 +165,11 @@ class MainWindow(QMainWindow):
         self.btn_avatar.setToolTip("上传图片并裁剪，生成自定义头像 MOD")
         self.btn_avatar.clicked.connect(self._on_custom_avatar)
         toolbar.addWidget(self.btn_avatar)
+
+        self.btn_save_mgr = QPushButton("💾 存档管理")
+        self.btn_save_mgr.setToolTip("备份/恢复游戏存档及补丁状态")
+        self.btn_save_mgr.clicked.connect(self._on_save_manager)
+        toolbar.addWidget(self.btn_save_mgr)
 
         self.btn_theme = QPushButton("🌗 切换主题")
         self.btn_theme.clicked.connect(self._toggle_theme)
@@ -332,6 +341,8 @@ class MainWindow(QMainWindow):
             return
 
         game_dir = os.path.dirname(os.path.abspath(exe_path))
+        # 记忆游戏目录, 供存档管理器使用
+        set_last_game_dir(_LAUNCHER_DIR, game_dir)
 
         self.btn_start.setEnabled(False)
         self.status_bar.showMessage("正在启动游戏...")
@@ -438,6 +449,51 @@ class MainWindow(QMainWindow):
         dialog.exec()
         # 生成后刷新模组列表
         self.mod_list.refresh_mods()
+
+    def _on_save_manager(self):
+        """打开存档管理对话框"""
+        dialog = SaveManagerDialog(
+            launcher_dir=_LAUNCHER_DIR,
+            parent=self,
+            get_current_state=self._get_current_gui_state,
+            apply_state=self._apply_gui_state,
+            is_game_running=self._is_game_running,
+        )
+        dialog.exec()
+
+    def _get_current_gui_state(self) -> GuiState:
+        """收集当前 UI 勾选状态为 GuiState (供存档管理器使用)"""
+        return GuiState(
+            patches=self.patch_list.get_patch_states(),
+            mods=self.mod_list.get_mod_states(),
+            tool=self._get_selected_tool(),
+        )
+
+    def _apply_gui_state(self, state: dict) -> None:
+        """将备份中记录的补丁/模组/工具状态应用到 UI (用于存档恢复)
+
+        state: {"patches": {id: bool}, "mods": {id: bool}, "tool": str}
+        """
+        patches = state.get("patches", {})
+        if isinstance(patches, dict):
+            self.patch_list.set_patch_states(
+                {str(k): bool(v) for k, v in patches.items()})
+        mods = state.get("mods", {})
+        if isinstance(mods, dict):
+            self.mod_list.set_mod_states(
+                {str(k): bool(v) for k, v in mods.items()})
+        tool = state.get("tool", "")
+        if isinstance(tool, str):
+            for btn in self._tool_btn_group.buttons():
+                if (btn.property("tool_name") or "") == tool:
+                    btn.setChecked(True)
+                    break
+        # 持久化已恢复的状态
+        self._save_state()
+
+    def _is_game_running(self) -> bool:
+        """检查游戏是否正在运行 (PatcherWorker 仍在执行)"""
+        return self._worker is not None and self._worker.isRunning()
 
     def _on_duplicate_ids(self, has_dup: bool):
         """模组列表刷新后根据重复 ID 情况更新状态标签和启动按钮"""

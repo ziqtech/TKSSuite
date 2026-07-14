@@ -131,6 +131,12 @@ class PatchListWidget(QWidget):
         """返回所有可选补丁的勾选状态 {id: bool}（必选补丁始终启用, 不记录）"""
         return {pid: cb.isChecked() for pid, cb in self._checkboxes.items() if cb.isEnabled()}
 
+    def set_patch_states(self, states: dict[str, bool]) -> None:
+        """恢复可选补丁勾选状态 (用于存档恢复)"""
+        for pid, cb in self._checkboxes.items():
+            if pid in states and cb.isEnabled():
+                cb.setChecked(states[pid])
+
     def select_all(self):
         for cb in self._checkboxes.values():
             cb.setChecked(True)

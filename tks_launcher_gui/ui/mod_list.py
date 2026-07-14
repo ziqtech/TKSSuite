@@ -383,6 +383,21 @@ class ModListWidget(QWidget):
             result[self._mods[i].mod_id] = bool(item and item.checkState() == Qt.Checked)
         return result
 
+    def set_mod_states(self, states: dict[str, bool]) -> None:
+        """恢复模组启用状态 (用于存档恢复)"""
+        self._loading = True
+        for i in range(self._table.rowCount()):
+            if i >= len(self._mods):
+                break
+            mod_id = self._mods[i].mod_id
+            if mod_id in states:
+                item = self._table.item(i, _COL_ENABLE)
+                if item is not None:
+                    item.setCheckState(Qt.Checked if states[mod_id] else Qt.Unchecked)
+        self._loading = False
+        self._update_header_check_state()
+        self.state_changed.emit()
+
     def set_mods_dir(self, mods_dir: str):
         """更新 MOD 目录并刷新"""
         self._mods_dir = mods_dir
