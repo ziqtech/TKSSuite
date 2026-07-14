@@ -4271,8 +4271,10 @@ class MatEditorApp(QMainWindow):
         self._data.load_from_result(result)
 
         # 保存原始快照用于 MOD 导出
+        # 注意: defunit_recs 是跳过空记录的紧凑列表, 必须用文件位置对齐的完整列表,
+        # 否则 diff 产生的 index 是数组下标而非文件位置, 启动器会写入错误位置
         self._original_mat_records = [[r.get(f'd{i}', 0) for i in range(DWORD_COUNT)] for r in self._data.records]
-        self._original_defunit_recs = [[r.get(f'f{i}', 0) for i in range(8)] for r in self._data.defunit_recs]
+        self._original_defunit_recs = self._du_recs_to_full_fields()
 
         nonempty = sum(1 for r in self._data.records if has_data(r))
         scenes = set(r['d1'] for r in self._data.records if has_data(r))
@@ -4506,6 +4508,25 @@ class MatEditorApp(QMainWindow):
             self._script_dirty = False
             self.status_var.setText(f"已保存到存档 {self._data._save_path} 槽位{self._data._save_slot}")
 
+    def _du_recs_to_full_fields(self):
+        """将 defunit_recs 转换为与文件位置对齐的完整字段列表。
+
+        DataLoaderThread 加载 TKDefUnit.Dat 时跳过了 f0==0 and f1==0 的空记录,
+        导致 self._data.defunit_recs 是紧凑列表 (数组下标 ≠ 文件位置)。
+        而 diff_records 按数组下标比较, 启动器 _merge_dat_file 又按下标 * rec_size
+        写入文件。若直接用紧凑列表做 diff, 导出的 index 是数组下标而非文件位置,
+        会导致启动器写入错误位置, 破坏 DefUnit 数据。
+
+        此方法构建长度 DEFUNIT_REC_COUNT 的完整列表, 用 rec['index'] (真实文件位置)
+        作为下标, 缺失位置填 [0]*8, 确保 diff 产生的 index 即为真实文件位置。
+        """
+        full = [[0] * 8 for _ in range(DEFUNIT_REC_COUNT)]
+        for r in self._data.defunit_recs:
+            idx = r.get('index', -1)
+            if 0 <= idx < DEFUNIT_REC_COUNT:
+                full[idx] = [r.get(f'f{i}', 0) for i in range(8)]
+        return full
+
     def _export_tksmod(self):
         """导出当前修改为 .tksmod MOD 文件 (TKMat + TKDefUnit + TKD 三文件联动)"""
         if not self._data.records or not hasattr(self, '_original_mat_records'):
@@ -4531,7 +4552,7 @@ class MatEditorApp(QMainWindow):
 
         # TKDefUnit.Dat 差异
         if hasattr(self, '_original_defunit_recs') and hasattr(self, '_data'):
-            current_du = [[r.get(f'f{i}', 0) for i in range(8)] for r in self._data.defunit_recs]
+            current_du = self._du_recs_to_full_fields()
             du_diff = diff_records(self._original_defunit_recs, current_du, 8, len(self._original_defunit_recs))
             if du_diff['modified'] or du_diff['appended']:
                 du_path = os.path.join(self._get_game_dir(), "TKDefUnit.Dat")
@@ -4594,19 +4615,18 @@ class MatEditorApp(QMainWindow):
                     "deleted": 0})
             # TKDefUnit.dat (如果可加载)
             du_path = os.path.join(ref_dir, "TKDefUnit.Dat")
-            if os.path.isfile(du_path) and hasattr(self, '_du_records') and self._du_records:
-                from core.du_loader import load_defunit
+            if os.path.isfile(du_path) and hasattr(self, '_data'):
                 try:
-                    with open(du_path, 'rb') as f:
-                        du_raw = f.read()
-                    ref_du = load_defunit(du_raw)
-                    cur_du = [[r[f'd{i}'] for i in range(4)] for r in self._du_records]
-                    du_diff = diff_records(ref_du, cur_du, 4, len(ref_du))
-                    if du_diff['modified'] or du_diff['appended']:
-                        targets.append({"name": "TKDefUnit.dat",
-                            "modified": len(du_diff['modified']),
-                            "appended": len(du_diff['appended']),
-                            "deleted": 0})
+                    ref_du = load_reference_dat_fields(ref_dir, "TKDefUnit.Dat",
+                        rec_size=DEFUNIT_REC_SIZE, field_count=8, field_fmt='H', use_lzss=False)
+                    if ref_du is not None:
+                        cur_du = self._du_recs_to_full_fields()
+                        du_diff = diff_records(ref_du, cur_du, 8, len(ref_du))
+                        if du_diff['modified'] or du_diff['appended']:
+                            targets.append({"name": "TKDefUnit.dat",
+                                "modified": len(du_diff['modified']),
+                                "appended": len(du_diff['appended']),
+                                "deleted": 0})
                 except Exception:
                     pass
             return {"valid": True, "targets": targets}
@@ -4641,7 +4661,7 @@ class MatEditorApp(QMainWindow):
             ref_du = load_reference_dat_fields(ref_dir, "TKDefUnit.Dat",
                 rec_size=DEFUNIT_REC_SIZE, field_count=8, field_fmt='H', use_lzss=False)
             if ref_du is not None:
-                current_du = [[r.get(f'f{i}', 0) for i in range(8)] for r in self._data.defunit_recs]
+                current_du = self._du_recs_to_full_fields()
                 du_diff = diff_records(ref_du, current_du, 8, len(ref_du))
                 if du_diff['modified'] or du_diff['appended']:
                     crc = compute_crc32(os.path.join(ref_dir, "TKDefUnit.Dat"))
