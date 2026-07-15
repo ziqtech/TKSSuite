@@ -88,8 +88,8 @@ RELEASE_DIR = DIST_DIR / "TKSEditors"
 LIBS_DIR = RELEASE_DIR / "libs"
 # Nuitka C 编译缓存 (其下含 clcache); 固定到仓库内, 避免依赖外部环境变量丢失缓存
 NUITKA_CACHE_DIR = BUILD_DIR / "nuitka_cache"
-# 并行构建默认并发数 (CPU/4, 上限 4); 单编辑器构建自动串行
-_DEFAULT_PARALLEL = min(4, max(1, (os.cpu_count() or 4) // 4))
+# 并行构建默认并发数 (CPU/2, 基准测试为最佳拐点; 上限=编辑器数); 单编辑器构建自动串行
+_DEFAULT_PARALLEL = min(len(EDITORS), max(2, (os.cpu_count() or 4) // 2))
 
 
 def _build_thin_cmd(name: str, entry: str, editor_dir: str,
