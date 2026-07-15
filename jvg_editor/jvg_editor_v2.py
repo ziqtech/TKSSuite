@@ -1570,23 +1570,21 @@ class JVGEditor(QMainWindow):
         paths, _ = QFileDialog.getOpenFileNames(self, "选择替换图片", "", "图片 (*.png *.bmp *.jpg *.jpeg)")
         if not paths:
             return
-        frames = import_images([paths[0]])
-        if frames:
-            new_f = frames[0]
-            old_f = blk.frames[self._sel_fi]
+        try:
+            img = Image.open(paths[0]).convert('RGBA')
+        except Exception as e:
+            QMessageBox.critical(self, "打开失败", str(e))
+            return
+        old_f = blk.frames[self._sel_fi]
+        # 统一量化：保护分组内其他有效帧的颜色，新帧量化到剩余槽位。
+        # 相比“逐帧量化到 255 色再 remap 合并”（两次近似），批量量化一次性取新图
+        # 全局最优色，避免可用槽位不足时最近色匹配导致的颜色丢失。
+        keep_indices = [i for i, f in enumerate(blk.frames)
+                        if i != self._sel_fi and f.width > 0 and f.height > 0]
+        new_frames = _batch_quantize_subs_to_block([img], blk, keep_indices)
+        if new_frames:
+            new_f = new_frames[0]
             _align_anchor(new_f, old_f, mode="bottom_center")
-            # 检查是否有其他帧共享此block色板
-            other_frames = [f for i, f in enumerate(blk.frames)
-                           if i != self._sel_fi and f.width > 0 and f.height > 0]
-            if new_f._palette:
-                if other_frames:
-                    # 多帧block：先替换再 remap 合并色板
-                    blk.frames[self._sel_fi] = new_f
-                    _remap_to_block_palette(new_f, blk)
-                else:
-                    # 单帧block：直接替换色板（与"导入图集(拆分)"相同逻辑）
-                    blk.palette.entries = list(new_f._palette.entries)
-                    new_f._palette = None
             blk.frames[self._sel_fi] = new_f
             self._sync_list()
             self._kill_anim()
