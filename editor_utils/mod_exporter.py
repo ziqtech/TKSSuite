@@ -812,6 +812,35 @@ def load_grp_raw_sections(filepath: str, idx_path: str | None = None
     return sections
 
 
+# 定长记录文件的块大小映射 (与 tks_launcher_gui/core/mod_loader.py 保持一致)
+_FIXED_RECORD_SIZES = {
+    "act_entry": 784,   # TKAct.dat: 650 条 × 784 字节
+}
+
+
+def load_fixed_record_blocks(filepath: str, record_size: int
+                             ) -> list[bytes] | None:
+    """加载定长记录的平坦二进制文件为块列表 (无头部、无压缩)。
+
+    用于 TKAct.dat 等固定记录文件，每条记录作为一个独立的 block。
+
+    Args:
+        filepath: 文件路径
+        record_size: 每条记录的字节数 (如 TKAct.dat = 784)
+
+    Returns:
+        [record0_bytes, record1_bytes, ...] 或 None (文件不存在/大小不对齐)
+    """
+    if not os.path.isfile(filepath):
+        return None
+    with open(filepath, 'rb') as f:
+        data = f.read()
+    if len(data) == 0 or len(data) % record_size != 0:
+        return None
+    count = len(data) // record_size
+    return [data[i * record_size:(i + 1) * record_size] for i in range(count)]
+
+
 # ═══════════════════════════════════════════════════════════════
 # MOD 导入 — 核心函数
 # ═══════════════════════════════════════════════════════════════
@@ -971,15 +1000,15 @@ def import_tksmod_text_entries(mod_path: str, ref_dir: str
 def import_tksmod_blocks(mod_path: str, ref_dir: str, target_name: str,
                          block_type: str = "jvm_block"
                          ) -> tuple[dict | None, list[bytes] | None]:
-    """从 .tksmod 导入块级二进制差异 (JVG/GRP)。
+    """从 .tksmod 导入块级二进制差异 (JVG/GRP/定长记录)。
 
     流程: 加载原始块列表 → 应用块级 diff → 返回完整块列表
 
     Args:
         mod_path: .tksmod 文件路径
         ref_dir: 原始游戏目录
-        target_name: 目标文件名 (如 "Cha.JVG" 或 "BattleBG.GRP")
-        block_type: "jvm_block" | "grp_section"
+        target_name: 目标文件名 (如 "Cha.JVG" / "BattleBG.GRP" / "TKAct.dat")
+        block_type: "jvm_block" | "grp_section" | "act_entry"
 
     Returns:
         (metadata, blocks)
@@ -997,6 +1026,8 @@ def import_tksmod_blocks(mod_path: str, ref_dir: str, target_name: str,
     ref_path = os.path.join(ref_dir, target_name)
     if block_type == "jvm_block":
         blocks = load_jvg_raw_blocks(ref_path)
+    elif block_type in _FIXED_RECORD_SIZES:
+        blocks = load_fixed_record_blocks(ref_path, _FIXED_RECORD_SIZES[block_type])
     else:
         blocks = load_grp_raw_sections(ref_path)
 
