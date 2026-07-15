@@ -1540,17 +1540,25 @@ class JVGEditor(QMainWindow):
             return
         self._info.setText("正在导入...")
         QApplication.processEvents()
-        frames = import_images(list(paths))
-        if frames:
+        # 统一量化到分组调色板：一次性量化所有图片，避免空分组逐帧 remap
+        # 时第 0 色丢失变黑、以及多帧相互覆盖调色板槽位导致色板错乱的问题。
+        subs = []
+        for p in sorted(paths, key=lambda pp: Path(pp).name.lower()):
+            try:
+                subs.append(Image.open(p).convert('RGBA'))
+            except Exception as e:
+                print(f"  skip {Path(p).name}: {e}")
+        if subs:
             blk = self.jvg.blocks[self._bi]
-            for f in frames:
-                if f._palette:
-                    _remap_to_block_palette(f, blk)
-            blk.frames.extend(frames)
+            # 保护分组内已有有效帧的颜色，新帧颜色写入剩余槽位
+            keep_indices = [i for i, f in enumerate(blk.frames) if f.width > 0 and f.height > 0]
+            new_frames = _batch_quantize_subs_to_block(subs, blk, keep_indices)
+            blk.frames.extend(new_frames)
             self._sync_list()
+            self._kill_anim()
             self._refresh_view()
             self._dirty = True
-            self._info.setText(f"导入 {len(frames)} 帧")
+            self._info.setText(f"导入 {len(new_frames)} 帧")
 
     def _replace_frame(self):
         if not self.jvg or self._bi < 0 or self._sel_fi < 0:
