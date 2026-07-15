@@ -86,6 +86,10 @@ DIST_DIR = 仓库根目录 / "dist"
 RELEASE_DIR = DIST_DIR / "TKSEditors"
 # .lib 归档统一存放于 libs/ 子目录, 与 exe 分离
 LIBS_DIR = RELEASE_DIR / "libs"
+# Nuitka C 编译缓存 (其下含 clcache); 固定到仓库内, 避免依赖外部环境变量丢失缓存
+NUITKA_CACHE_DIR = BUILD_DIR / "nuitka_cache"
+# 并行构建默认并发数 (CPU/4, 上限 4); 单编辑器构建自动串行
+_DEFAULT_PARALLEL = min(4, max(1, (os.cpu_count() or 4) // 4))
 
 
 def _build_thin_cmd(name: str, entry: str, editor_dir: str,
@@ -378,6 +382,8 @@ def build_one(name: str, entry: str, editor_dir: str,
     env = os.environ.copy()
     extra_path = str(仓库根目录 / editor_dir)
     env["PYTHONPATH"] = extra_path + os.pathsep + env.get("PYTHONPATH", "")
+    # 固定 Nuitka 缓存目录 (clcache 在其下), 保证增量 C 编译缓存稳定命中
+    env.setdefault("NUITKA_CACHE_DIR", str(NUITKA_CACHE_DIR))
 
     t0 = time.time()
 
@@ -403,12 +409,14 @@ def build_one(name: str, entry: str, editor_dir: str,
         return True, elapsed
 
 
-def build_runtime():
+def build_runtime(force: bool = False):
     """构建运行时归档 (.lib)"""
     print(f"\n{'='*60}")
     print(f"  构建运行时归档")
     print(f"{'='*60}")
     cmd = [sys.executable, str(BUILD_DIR / "build_runtime.py"), "--output", str(LIBS_DIR)]
+    if force:
+        cmd.append("--force")
     result = subprocess.run(cmd, cwd=str(仓库根目录))
     return result.returncode == 0
 
@@ -655,8 +663,8 @@ def main():
     parser.add_argument("--verbose", action="store_true", help="详细输出")
     parser.add_argument("--release", action="store_true",
                         help="发布模式: --lto=yes (链接时优化, 更小体积, 构建更慢)")
-    parser.add_argument("--parallel", type=int, default=0,
-                        help="并行构建 N 个编辑器 (0=串行, 推荐 2-4)")
+    parser.add_argument("--parallel", type=int, default=_DEFAULT_PARALLEL,
+                        help=f"并行构建 N 个编辑器 (默认自动={_DEFAULT_PARALLEL}, 0=强制串行; 单编辑器构建自动串行)")
     parser.add_argument("--force", action="store_true",
                         help="强制全量构建, 跳过增量检查")
     args = parser.parse_args()
@@ -687,13 +695,13 @@ def main():
         sys.exit(1)
 
     if args.runtime:
-        build_runtime()
+        build_runtime(args.force)
         return
 
     # 薄模式默认总是先构建运行时归档再打包 exe (除非 --onefile 完整模式)
     # --all 标志向后兼容: 等同于默认薄模式行为
     if not args.onefile:
-        if not build_runtime():
+        if not build_runtime(args.force):
             print("[ERROR] 运行时归档构建失败")
             sys.exit(1)
 

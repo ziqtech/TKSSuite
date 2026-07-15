@@ -200,7 +200,7 @@ def _collect_archive_entries(spec: dict) -> list:
     return entries
 
 
-def build_archive(name: str, spec: dict, output_dir: Path) -> Path:
+def build_archive(name: str, spec: dict, output_dir: Path, force: bool = False) -> Path:
     """构建单个归档 (zstd 压缩的 tar)"""
     output_path = output_dir / name
 
@@ -210,6 +210,16 @@ def build_archive(name: str, spec: dict, output_dir: Path) -> Path:
     entries = _collect_archive_entries(spec)
     file_count = len(entries)
     total_size = sum(src.stat().st_size for src, _ in entries)
+
+    # 增量: 归档已存在且比所有源文件 + 构建脚本新 -> 跳过重压
+    if not force and output_path.exists():
+        lib_mtime = output_path.stat().st_mtime
+        script_mtime = (BUILD_DIR / "build_runtime.py").stat().st_mtime
+        newest_src = max([script_mtime] + [src.stat().st_mtime for src, _ in entries])
+        if lib_mtime >= newest_src:
+            size_mb = output_path.stat().st_size / 1024 / 1024
+            print(f"    [SKIP] {name} ({size_mb:.1f} MB, 源未变更)")
+            return output_path
 
     # 用 zstd 压缩 tar 归档
     cctx = zstandard.ZstdCompressor(level=_ZSTD_LEVEL)
@@ -230,12 +240,12 @@ def build_archive(name: str, spec: dict, output_dir: Path) -> Path:
     return output_path
 
 
-def build_archive_parallel(output_dir: Path) -> list:
+def build_archive_parallel(output_dir: Path, force: bool = False) -> list:
     """并行构建所有归档 (I/O+压缩密集, GIL 影响小)"""
     results = []
     with ThreadPoolExecutor(max_workers=min(len(ARCHIVES), 4)) as executor:
         futures = {
-            executor.submit(build_archive, name, spec, output_dir): name
+            executor.submit(build_archive, name, spec, output_dir, force): name
             for name, spec in ARCHIVES.items()
         }
         for future in as_completed(futures):
@@ -255,6 +265,8 @@ def main():
     parser.add_argument("--output", type=str, help="输出目录 (默认: dist/TKSEditors/libs/)")
     parser.add_argument("--no-parallel", action="store_true",
                         help="禁用并行构建 (串行模式, 调试用)")
+    parser.add_argument("--force", action="store_true",
+                        help="强制重建全部归档, 跳过增量检查")
     args = parser.parse_args()
 
     output_dir = Path(args.output) if args.output else LIBS_DIR
@@ -281,13 +293,13 @@ def main():
             print(f"\n  [ERROR] 未知归档: {key}")
             print(f"  可用: {', '.join(ARCHIVES.keys())}")
             sys.exit(1)
-        build_archive(key, ARCHIVES[key], output_dir)
+        build_archive(key, ARCHIVES[key], output_dir, args.force)
     elif args.no_parallel:
         for name, spec in ARCHIVES.items():
-            build_archive(name, spec, output_dir)
+            build_archive(name, spec, output_dir, args.force)
     else:
         print(f"\n  并行构建 {len(ARCHIVES)} 个归档...")
-        build_archive_parallel(output_dir)
+        build_archive_parallel(output_dir, args.force)
 
     elapsed = time.time() - t0
     print(f"\n{'=' * 60}")

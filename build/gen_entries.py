@@ -88,15 +88,20 @@ main()
 
 def main():
     ENTRIES_DIR.mkdir(exist_ok=True)
+    written = 0
     for filename, module, editor_dir, needs_bootstrap in EDITORS:
         template = TEMPLATE_BOOTSTRAP if needs_bootstrap else TEMPLATE_PLAIN
         content = template.format(module=module, editor_dir=editor_dir)
         path = ENTRIES_DIR / filename
+        # 内容未变则不重写, 保留 mtime — 否则会使增量构建 (_should_skip_build) 每次都重编译
+        if path.exists() and path.read_text(encoding='utf-8') == content:
+            continue
         path.write_text(content, encoding='utf-8')
+        written += 1
         tag = "" if needs_bootstrap else " [no-bootstrap]"
         print(f"  [OK] {filename}{tag}")
 
-    print(f"\n  共生成 {len(EDITORS)} 个入口脚本")
+    print(f"\n  共 {len(EDITORS)} 个入口脚本 ({written} 个更新)")
     print(f"  位置: {ENTRIES_DIR}")
 
 
