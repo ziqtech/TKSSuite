@@ -267,7 +267,8 @@ def save_jvg(jvg:JVGFile,filepath:str):
         n=blk.frame_count
         buf+=JVM_MAGIC
         buf+=struct.pack("<I",n)
-        buf+=struct.pack("<I",0)   # [8:12] 原始格式保留字段，必须为 0
+        psp=len(buf)               # [8:12] 块负载大小，待帧数据大小确定后回填
+        buf+=struct.pack("<I",0)
         dsp=len(buf)
         buf+=struct.pack("<I",0)
         buf+=blk._header_reserved if len(blk._header_reserved)==16 else bytes(16)
@@ -298,6 +299,9 @@ def save_jvg(jvg:JVGFile,filepath:str):
         for e in blk.palette.entries: buf+=struct.pack("<H",e&0xFFFF)
         buf+=fd
         struct.pack_into("<I",buf,dsp,block_data_size)
+        # [8:12] = 块头之后的负载大小(偏移表+调色板+帧数据)，原始游戏文件均按此存储；
+        # 若写 0 会导致与原始文件逐块比对时全部误判为"已修改"
+        struct.pack_into("<I",buf,psp,(n+1)*4+512+block_data_size)
 
     struct.pack_into("<I",buf,12,total_data_size)
     Path(filepath).write_bytes(bytes(buf))
