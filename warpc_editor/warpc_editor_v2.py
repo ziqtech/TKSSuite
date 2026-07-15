@@ -1256,7 +1256,28 @@ class WarpcEditorV2(QMainWindow):
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.verticalHeader().setVisible(False)
         self.table.itemSelectionChanged.connect(self._on_table_select)
-        splitter.addWidget(self.table)
+
+        # 左侧容器: 角色列表 + 排序按钮栏
+        left_panel = QWidget()
+        left_layout = QVBoxLayout(left_panel)
+        left_layout.setContentsMargins(0, 0, 0, 0)
+        left_layout.setSpacing(4)
+        left_layout.addWidget(self.table, 1)
+
+        order_bar = QHBoxLayout()
+        order_bar.setContentsMargins(0, 0, 0, 0)
+        self.btn_move_up = QPushButton("⬆ 上移")
+        self.btn_move_up.setToolTip("将选中角色与上一条整体交换位置 (槽位号互换)")
+        self.btn_move_up.clicked.connect(lambda: self._move_record(-1))
+        self.btn_move_down = QPushButton("⬇ 下移")
+        self.btn_move_down.setToolTip("将选中角色与下一条整体交换位置 (槽位号互换)")
+        self.btn_move_down.clicked.connect(lambda: self._move_record(1))
+        order_bar.addWidget(self.btn_move_up)
+        order_bar.addWidget(self.btn_move_down)
+        order_bar.addStretch()
+        left_layout.addLayout(order_bar)
+
+        splitter.addWidget(left_panel)
 
         # 右侧：编辑面板
         right = QWidget()
@@ -2828,6 +2849,37 @@ class WarpcEditorV2(QMainWindow):
                 self.table.selectRow(r)
                 break
         self.status_var.setText(f"已复制 #{self._editing_idx} → #{new_idx}")
+
+    def _move_record(self, delta):
+        """上移/下移选中角色: 与相邻角色整体交换数据。
+
+        delta=-1 上移(与上一行交换), delta=+1 下移(与下一行交换)。
+        交换两个槽位的全部字段(fields), 槽位号(index)保持不变——
+        即 #164 下移后数据位于 #165, 原 #165 数据移到 #164, 选择跟随移动的角色。
+        已到列表顶/底时静默忽略。
+        """
+        if not self.records:
+            return
+        sel = self.table.selectedItems()
+        if not sel:
+            self.status_var.setText("请先在左侧列表选择一条数据")
+            return
+        cur_row = sel[0].row()
+        tgt_row = cur_row + delta
+        if tgt_row < 0 or tgt_row >= self.table.rowCount():
+            return  # 已到列表边界
+        cur_idx = int(self.table.item(cur_row, 0).text())
+        tgt_idx = int(self.table.item(tgt_row, 0).text())
+        if cur_idx == tgt_idx:
+            return
+        # 整体交换两条记录的字段数据 (槽位号 index 不变, 数据互换位置)
+        self.records[cur_idx]['fields'], self.records[tgt_idx]['fields'] = \
+            self.records[tgt_idx]['fields'], self.records[cur_idx]['fields']
+        self._dirty = True
+        self._refresh_table()
+        # 选择跟随数据: 选中目标行, 使被移动的角色保持选中
+        self.table.selectRow(tgt_row)
+        self.status_var.setText(f"已交换 #{cur_idx} ↔ #{tgt_idx} (内存, 未保存)")
 
     def _export_warpc(self):
         if self._editing_idx < 0: return
