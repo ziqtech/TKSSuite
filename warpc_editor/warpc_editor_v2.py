@@ -337,6 +337,10 @@ ALL_NAMED_FIELDS = (IDENTITY_FIELDS + HPMP_FIELDS + STAT_FIELDS + CHAR_ATTR_FIEL
     STATUS_FIELDS_CAUSE + EQUIP_FIELDS + CHAR_USE_RIGHT_FIELDS +
     EQUIP_SKILL_FIELDS + PATCH_FIELDS + GROWTH_FIELDS + BATTLE_REWARD_FIELDS + DROP_ITEM_FIELDS)
 
+# 装备与技能标签页字段 (Tab2) — 供跨角色复制/粘贴使用 (顺序与 _build_tab2 一致)
+EQUIP_PANEL_FIELDS = (EQUIP_FIELDS + CHAR_USE_RIGHT_FIELDS + EQUIP_SKILL_FIELDS +
+    PATCH_FIELDS + GROWTH_FIELDS + BATTLE_REWARD_FIELDS + DROP_ITEM_FIELDS)
+
 # ═══════════════════════════════════════════════════════════════
 # 数据加载/保存 (100% 原始逻辑)
 # ═══════════════════════════════════════════════════════════════
@@ -1108,6 +1112,8 @@ class WarpcEditorV2(QMainWindow):
         self._skill_effect_name_labels = []
         self._clip_skill_learn = None   # 跨角色复制粘贴: 技能学习数据
         self._clip_skill_effect = None  # 跨角色复制粘贴: 技能效果数据
+        self._clip_equip = None         # 跨角色复制粘贴: 装备与技能数据
+        self._tab_copy_kind = {}        # 标签页索引 → 复制类型 (learn/effect/equip)
         self._fa_sprites = []
         self._fa_photos = {}
         # 使用权限定义运行时副本 (启动时自动从 configs/ 加载)
@@ -1293,6 +1299,9 @@ class WarpcEditorV2(QMainWindow):
         self._build_tab3()
         self._build_tab4()
         self._build_tab5()
+        # 页签标题右键菜单 (在标签上右键即可复制/粘贴对应标签页数据)
+        self.tabs.tabBar().setContextMenuPolicy(Qt.CustomContextMenu)
+        self.tabs.tabBar().customContextMenuRequested.connect(self._on_tab_bar_context_menu)
         rl.addWidget(self.tabs, 1)
         self._edit_panel = right  # 存储编辑面板引用, 供外部嵌入使用
         splitter.addWidget(right)
@@ -1597,6 +1606,7 @@ class WarpcEditorV2(QMainWindow):
 
     def _build_tab2(self):
         p = self._build_scroll_tab("装备与技能")
+        self._register_tab_copy(p, 'equip')
         self._build_section(p, "装备索引 [138]-[144]", EQUIP_FIELDS[:4], 6, 'item_pick')
         self._build_section(p, "装备物品ID [146]-[152]", EQUIP_FIELDS[4:], 6, 'item_pick')
         self._build_section(p, "使用/装备权限 [154]-[162]", CHAR_USE_RIGHT_FIELDS, 6)
@@ -1609,9 +1619,7 @@ class WarpcEditorV2(QMainWindow):
     def _build_tab3(self):
         """技能学习状态 [176]-[518]"""
         p = self._build_scroll_tab("技能学习")
-        p.setContextMenuPolicy(Qt.CustomContextMenu)
-        p.customContextMenuRequested.connect(
-            partial(self._on_skill_tab_context_menu, p, 'learn'))
+        self._register_tab_copy(p, 'learn')
         self._skill_learn_labels = []
         grp = QWidget()
         gl = QVBoxLayout(grp)
@@ -1649,9 +1657,7 @@ class WarpcEditorV2(QMainWindow):
     def _build_tab4(self):
         """技能效果判定"""
         p = self._build_scroll_tab("技能效果判定")
-        p.setContextMenuPolicy(Qt.CustomContextMenu)
-        p.customContextMenuRequested.connect(
-            partial(self._on_skill_tab_context_menu, p, 'effect'))
+        self._register_tab_copy(p, 'effect')
         self._effect_inner = p
 
     def _build_skill_effect_section(self, parent):
@@ -1714,23 +1720,50 @@ class WarpcEditorV2(QMainWindow):
         parent.layout().addWidget(grp)
 
     # ── 技能数据跨角色复制/粘贴 ──
+    def _register_tab_copy(self, inner, kind):
+        """为标签页注册复制/粘贴右键菜单 (内容区 + 页签标题均可触发)"""
+        self._tab_copy_kind[self.tabs.count() - 1] = kind
+        inner.setContextMenuPolicy(Qt.CustomContextMenu)
+        inner.customContextMenuRequested.connect(
+            partial(self._on_skill_tab_context_menu, inner, kind))
+
     def _on_skill_tab_context_menu(self, widget, kind, pos):
+        self._show_copy_menu(kind, widget.mapToGlobal(pos))
+
+    def _on_tab_bar_context_menu(self, pos):
+        """在页签标题上右键: 弹出对应标签页的复制/粘贴菜单"""
+        bar = self.tabs.tabBar()
+        idx = bar.tabAt(pos)
+        if idx < 0:
+            return
+        kind = self._tab_copy_kind.get(idx)
+        if kind is None:
+            return
+        self._show_copy_menu(kind, bar.mapToGlobal(pos))
+
+    def _show_copy_menu(self, kind, global_pos):
         menu = QMenu(self)
         act_copy = menu.addAction("复制数据")
         act_paste = menu.addAction("粘贴数据")
-        clip = self._clip_skill_learn if kind == 'learn' else self._clip_skill_effect
+        clip = {'learn': self._clip_skill_learn,
+                'effect': self._clip_skill_effect,
+                'equip': self._clip_equip}.get(kind)
         act_paste.setEnabled(clip is not None)
-        chosen = menu.exec(widget.mapToGlobal(pos))
+        chosen = menu.exec(global_pos)
         if chosen is act_copy:
             if kind == 'learn':
                 self._copy_skill_learn()
-            else:
+            elif kind == 'effect':
                 self._copy_skill_effect()
+            elif kind == 'equip':
+                self._copy_equip()
         elif chosen is act_paste:
             if kind == 'learn':
                 self._paste_skill_learn()
-            else:
+            elif kind == 'effect':
                 self._paste_skill_effect()
+            elif kind == 'equip':
+                self._paste_equip()
 
     def _copy_skill_learn(self):
         if self._editing_idx < 0 or not self._skill_learn_widgets:
@@ -1790,6 +1823,37 @@ class WarpcEditorV2(QMainWindow):
         self._apply_edit()
         self.status_var.setText(
             f"已粘贴技能效果数据 → 角色 #{self._editing_idx}")
+
+    def _copy_equip(self):
+        if self._editing_idx < 0:
+            self.status_var.setText("请先选择角色")
+            return
+        clip = {}
+        for fn, *_ in EQUIP_PANEL_FIELDS:
+            if fn in self._edit_vars:
+                clip[fn] = self._edit_vars[fn].text()
+        self._clip_equip = clip
+        self.status_var.setText(
+            f"已复制装备与技能数据 (角色 #{self._editing_idx}, {len(clip)} 项)")
+
+    def _paste_equip(self):
+        if self._editing_idx < 0:
+            self.status_var.setText("请先选择角色")
+            return
+        if not self._clip_equip:
+            self.status_var.setText("没有已复制的装备与技能数据")
+            return
+        for fn, val in self._clip_equip.items():
+            if fn in self._edit_vars:
+                self._edit_vars[fn].setText(val)
+        self._apply_edit()
+        # 刷新装备/技能名称等额外显示 (物品名、技能名、权限标签)
+        rec = (self._current_record
+               if (hasattr(self, '_current_record') and self._current_record)
+               else self.records[self._editing_idx])
+        self._populate_edit(rec)
+        self.status_var.setText(
+            f"已粘贴装备与技能数据 → 角色 #{self._editing_idx}")
 
     def _build_tab5(self):
         p = self._build_scroll_tab("全部字段")
