@@ -1829,8 +1829,13 @@ class JVGEditor(QMainWindow):
     def _show_detail(self, f: JVGFrame, blk: JVMBlock, fi: int):
         pal = self._get_pal(blk, f)
         is_import = f._palette is not None
+        # 计算选中帧在整个图集中的全局序号（累加当前分组之前所有分组的帧数 + 分组内序号）
+        base = sum(b.frame_count for b in self.jvg.blocks[:self._bi]) if (self.jvg and self._bi >= 0) else 0
+        global_fi = base + fi
+        total = self.jvg.total_frames if self.jvg else 0
         self._detail.setPlainText(
             f">> Frame [{fi}]\n"
+            f"选中帧序: 全局第 {global_fi}/{total} 帧 (分组内 #{fi})\n"
             f"几何边界: {f.width}×{f.height} px\n"
             f"物理偏移: X={f.x_off}, Y={f.y_off} (锚定补偿)\n"
             f"数据载荷: Pixels={len(f.pixels)}B, Encoded={len(f.encoded_data)}B\n"
