@@ -4593,10 +4593,13 @@ class MatEditorApp(QMainWindow):
             QMessageBox.critical(self, "导出失败", str(e))
 
     def _export_tksmod_with_ref(self):
-        """导出 MOD — 指定原始参考目录进行差异比对 (TKMat + TKDefUnit)"""
+        """导出 MOD — 指定原始参考目录进行差异比对 (TKMat + TKDefUnit + TKD)"""
         if not self._data.records:
             QMessageBox.information(self, "提示", "请先加载数据")
             return
+
+        # 先将编辑器中当前 DEFINE 的改动回写, 确保预览统计与实际导出一致
+        self._save_editor_to_define()
 
         # 预构建当前 TKMat 字段
         current_mat = [[r.get(f'd{i}', 0) for i in range(DWORD_COUNT)] for r in self._data.records]
@@ -4627,6 +4630,28 @@ class MatEditorApp(QMainWindow):
                                 "modified": len(du_diff['modified']),
                                 "appended": len(du_diff['appended']),
                                 "deleted": 0})
+                except Exception:
+                    pass
+            # TKD.dat 脚本差异 (与实际导出逻辑保持一致, 否则预览会漏报脚本改动)
+            ref_tkd_path = os.path.join(ref_dir, "TKD.dat")
+            if os.path.isfile(ref_tkd_path) and hasattr(self, '_data'):
+                try:
+                    ref_tkd_text = load_tkd(ref_tkd_path)
+                    ref_tkd_defs, _ = parse_defines(ref_tkd_text)
+                    ref_tkd_map = {
+                        str(dd['define_id']): '\r\n'.join([dd['header_line']] + dd['body_lines'])
+                        for dd in ref_tkd_defs
+                    }
+                    cur_tkd_map = {
+                        str(dd['define_id']): '\r\n'.join([dd['header_line']] + dd['body_lines'])
+                        for dd in self._data.tkd_defines
+                    }
+                    tkd_diff = diff_text_defines(ref_tkd_map, cur_tkd_map)
+                    if tkd_diff['modified'] or tkd_diff['appended'] or tkd_diff['deleted']:
+                        targets.append({"name": "TKD.dat",
+                            "modified": len(tkd_diff['modified']),
+                            "appended": len(tkd_diff['appended']),
+                            "deleted": len(tkd_diff['deleted'])})
                 except Exception:
                     pass
             return {"valid": True, "targets": targets}
@@ -5369,8 +5394,12 @@ class MatEditorApp(QMainWindow):
         entity_id = rec['index']
 
         # Find empty DefUnit slot
+        # 槽位 0 是保留的空/空指针哨兵 (head=0 表示"无链", f6=0 表示"链尾"),
+        # 绝不可分配给真实条目, 否则首次新增会令 head=0 被 _refresh_chain_list
+        # 判为空链而不刷新, 再次新增又会覆盖 head 导致槽位 0 记录与其 TKD 块成为孤块(数据损坏)。
+        # 因此从 1 开始搜索。
         empty_idx = None
-        for i in range(DEFUNIT_REC_COUNT):
+        for i in range(1, DEFUNIT_REC_COUNT):
             existing = next((r for r in self._data.defunit_recs if r['index'] == i), None)
             if existing is None:
                 empty_idx = i
