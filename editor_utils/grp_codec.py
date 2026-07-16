@@ -70,8 +70,11 @@ def rle_bp_compress(data: bytes) -> bytes:
 # 区段解码 / 编码
 # ═══════════════════════════════════════════════════════════════
 
-def decode_section(section_bytes: bytes):
+def decode_section(section_bytes: bytes, need_a: bool = True):
     """将单个 GRP 图像区段的原始字节解码为平面。
+
+    need_a=False 时跳过主图 LZSS 解压 (A=None), 用于“仅改图层”合并时
+    避免一次无意义的大图解压; 此时 fa_bytes 仍可用于原样复用。
 
     Returns:
         dict(width,height,comp_a,comp_b,fa_bytes,fb_bytes,A,L1,L2,has_layer2,
@@ -94,14 +97,17 @@ def decode_section(section_bytes: bytes):
     if len(fa_bytes) < 4:
         return None
 
-    # ── FrameA (主图) ──
-    uncomp_sz = struct.unpack_from("<I", fa_bytes, 0)[0]
-    a_stream = fa_bytes[4:]
-    A = lzss_decompress_stream(a_stream, min(uncomp_sz, uncomp_a))
-    if len(A) < uncomp_a:
-        A = A + b'\x00' * (uncomp_a - len(A))
+    # ── FrameA (主图) ── 仅在需要时解压 (避免图层-only 合并时浪费一次大图 LZSS 解压)
+    if need_a:
+        uncomp_sz = struct.unpack_from("<I", fa_bytes, 0)[0]
+        a_stream = fa_bytes[4:]
+        A = lzss_decompress_stream(a_stream, min(uncomp_sz, uncomp_a))
+        if len(A) < uncomp_a:
+            A = A + b'\x00' * (uncomp_a - len(A))
+        else:
+            A = A[:uncomp_a]
     else:
-        A = A[:uncomp_a]
+        A = None
 
     # ── FrameB (图层) ──
     L1 = None
@@ -340,10 +346,11 @@ def apply_layer_diff_to_sections(base_sections: list, diff_data: dict) -> list:
             if 'planes' in entry:
                 if not (0 <= sidx < len(base_sections)):
                     continue
-                dec = decode_section(base_sections[sidx])
+                need_a = 'A' in entry['planes']
+                dec = decode_section(base_sections[sidx], need_a=need_a)
                 if dec is None:
                     continue
-                A = bytearray(dec['A'])
+                A = bytearray(dec['A']) if dec['A'] is not None else None
                 L1 = bytearray(dec['L1'])
                 L2 = bytearray(dec['L2']) if dec['L2'] is not None else None
                 has2 = dec['has_layer2']
@@ -360,7 +367,8 @@ def apply_layer_diff_to_sections(base_sections: list, diff_data: dict) -> list:
                 reuse_fa = None if 'A' in touched else dec['fa_bytes']
                 reuse_fb = None if 'B' in touched else dec['fb_bytes']
                 sections[sidx] = encode_section(
-                    dec['width'], dec['height'], bytes(A), bytes(L1),
+                    dec['width'], dec['height'],
+                    bytes(A) if A is not None else None, bytes(L1),
                     bytes(L2) if L2 is not None else None,
                     has2, reuse_fa=reuse_fa, reuse_fb=reuse_fb)
             elif 'data_b64' in entry:

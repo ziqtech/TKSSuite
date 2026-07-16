@@ -1541,6 +1541,22 @@ def _merge_grp_layer_diff(file_path: str, target_name: str,
     writes = {}    # (sidx, plane, off) -> value
     n_conflict = 0
 
+    # 预扫描: 统计每个区段被改动的平面, 用于跳过不必要的主图 LZSS 解压
+    section_planes = {}
+    for _mod, _diff in mod_diffs:
+        _m = _diff.get("modified", {})
+        if not isinstance(_m, dict):
+            continue
+        for _sidx_str, _entry in _m.items():
+            _pl = _entry.get("planes") if isinstance(_entry, dict) else None
+            if not _pl:
+                continue
+            try:
+                _si = int(_sidx_str)
+            except (ValueError, TypeError):
+                continue
+            section_planes.setdefault(_si, set()).update(_pl.keys())
+
     for mod, diff in mod_diffs:
         modified = diff.get("modified", {})
         # 兼容: 若混入旧 block_diff (modified 为 list), 按整段替换处理
@@ -1560,12 +1576,13 @@ def _merge_grp_layer_diff(file_path: str, target_name: str,
                     if not (0 <= sidx < len(base_sections)):
                         continue
                     if sidx not in decoded:
-                        dec = _grp_codec.decode_section(base_sections[sidx])
+                        need_a = 'A' in section_planes.get(sidx, ())
+                        dec = _grp_codec.decode_section(base_sections[sidx], need_a=need_a)
                         if dec is None:
                             log(f"    [WARN] 区段 #{sidx} 无法解码, 跳过图层差分")
                             continue
                         decoded[sidx] = {
-                            'A': bytearray(dec['A']),
+                            'A': bytearray(dec['A']) if dec['A'] is not None else None,
                             'L1': bytearray(dec['L1']),
                             'L2': bytearray(dec['L2']) if dec['L2'] is not None else None,
                             'meta': dec, 'touched': set(),
@@ -1614,7 +1631,7 @@ def _merge_grp_layer_diff(file_path: str, target_name: str,
         try:
             sections[sidx] = _grp_codec.encode_section(
                 meta['width'], meta['height'],
-                bytes(d['A']), bytes(d['L1']),
+                bytes(d['A']) if d['A'] is not None else None, bytes(d['L1']),
                 bytes(d['L2']) if d['L2'] is not None else None,
                 meta['has_layer2'], reuse_fa=reuse_fa, reuse_fb=reuse_fb)
         except Exception as ex:
