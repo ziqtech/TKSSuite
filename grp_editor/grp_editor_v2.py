@@ -64,11 +64,12 @@ from editor_utils.lzss import (
     lzss_compress_stream as _lzss_compress_stream,
     lzss_decompress_stream as _lzss_decompress_stream,
 )
+from editor_utils import grp_codec
 from editor_utils.mod_exporter import (
     ModExportPreviewDialog, ModImportPreviewDialog, ModMetadataDialog,
-    build_block_diff_json, compute_crc32, diff_binary_blocks,
+    compute_crc32,
     generate_mod_json, get_tksmod_info, import_tksmod_blocks,
-    load_grp_raw_sections, pack_tksmod, safe_mod_filename,
+    load_grp_raw_sections, pack_tksmod, read_tksmod, safe_mod_filename,
 )
 from editor_utils.rgb565 import rgb565_to_rgba, rgba_to_rgb565
 from editor_utils.theme_manager import ThemeManager
@@ -148,38 +149,12 @@ def _nearest_color(rgb: tuple, lut_rev: dict) -> int:
 
 
 # ═══════════════════════════════════════════════════════════
-# RLE 字节对引擎 (GRP 特有, 不提取到 editor_utils)
+# RLE 字节对引擎 (GRP 特有) — 统一自 editor_utils.grp_codec
 # ═══════════════════════════════════════════════════════════
 
-def rle_bp_decompress(data: bytes, target_size: int) -> bytes:
-    out = bytearray()
-    pos = 0
-    while pos + 1 < len(data) and len(out) < target_size:
-        count, value = data[pos], data[pos + 1]
-        pos += 2
-        out.extend(bytes([value] * count))
-    return bytes(out[:target_size])
-
-def rle_bp_probe(data: bytes, expected_size: int) -> bool:
-    total, pos = 0, 0
-    while pos + 1 < len(data):
-        total += data[pos]
-        pos += 2
-    return total == expected_size
-
-def rle_bp_compress(data: bytes) -> bytes:
-    if not data: return b""
-    out = bytearray()
-    i = 0
-    while i < len(data):
-        v = data[i]
-        c = 1
-        while i + c < len(data) and data[i + c] == v and c < 255:
-            c += 1
-        out.append(c)
-        out.append(v)
-        i += c
-    return bytes(out)
+rle_bp_decompress = grp_codec.rle_bp_decompress
+rle_bp_probe = grp_codec.rle_bp_probe
+rle_bp_compress = grp_codec.rle_bp_compress
 
 
 # ═══════════════════════════════════════════════════════════
@@ -424,30 +399,23 @@ def save_grp(grp: GRPFile, filepath: str, idx_path: Optional[str] = None):
         if kind == 'IMG':
             sec = obj
             if sec._modified_a and sec._pixels:
-                fa_body = lzss_compress(sec._pixels)
-                comp_a = len(fa_body) + 4
-                fa_data = struct.pack("<I", sec.uncomp_a) + fa_body
+                A = sec._pixels
+                reuse_fa = None
             else:
-                comp_a = sec.comp_a
-                fa_data = sec._orig_frame_a if sec._orig_frame_a else (
+                A = None
+                reuse_fa = sec._orig_frame_a if sec._orig_frame_a else (
                     struct.pack("<I", sec.uncomp_a) + b"\x00" * (sec.comp_a - 4))
             if sec._modified_b:
-                if sec.has_layer2 and sec._layer1 and sec._layer2:
-                    fb_raw = (sec._layer1 + sec._layer2)[:sec.width * sec.height * 2]
-                elif sec._layer1:
-                    fb_raw = sec._layer1[:sec.width * sec.height]
-                else:
-                    fb_raw = b""
-                fb_body = rle_bp_compress(fb_raw)
-                comp_b = len(fb_body) + 4
-                fb_data = struct.pack("<I", len(fb_raw)) + fb_body
+                L1, L2, has2 = sec._layer1, sec._layer2, sec.has_layer2
+                reuse_fb = None
             else:
-                comp_b = sec.comp_b
-                fb_data = sec._orig_frame_b if sec._orig_frame_b else (
+                L1 = L2 = None
+                has2 = sec.has_layer2
+                reuse_fb = sec._orig_frame_b if sec._orig_frame_b else (
                     struct.pack("<I", sec._orig_fb_declared) + b"\x00" * (sec.comp_b - 4))
-            buf += struct.pack("<HHII", sec.width, sec.height, comp_a, comp_b)
-            buf += fa_data
-            buf += fb_data
+            buf += grp_codec.encode_section(
+                sec.width, sec.height, A, L1, L2, has2,
+                reuse_fa=reuse_fa, reuse_fb=reuse_fb)
         elif kind == 'AUD':
             if obj._raw:
                 buf += obj._raw
@@ -471,6 +439,21 @@ def save_grp(grp: GRPFile, filepath: str, idx_path: Optional[str] = None):
 def _png_chunk(ct: bytes, d: bytes) -> bytes:
     c = ct + d
     return struct.pack(">I", len(d)) + c + struct.pack(">I", zlib.crc32(c) & 0xFFFFFFFF)
+
+def _summarize_layer_stats(stats) -> str:
+    """将 grp_codec.build_layer_diff 的 stats 汇总为简短描述字符串。"""
+    if not stats:
+        return ""
+    parts = []
+    for idx, pc in stats[:4]:
+        if 'full' in pc:
+            parts.append(f"#{idx}整段")
+        else:
+            seg = "/".join(f"{p}:{pc[p]}" for p in ('A', 'L1', 'L2') if p in pc)
+            parts.append(f"#{idx}({seg})")
+    more = "…" if len(stats) > 4 else ""
+    return " [" + " ".join(parts) + more + "]"
+
 
 def export_png_rgba(w, h, rgba, path):
     png = b"\x89PNG\r\n\x1a\n"
@@ -882,24 +865,36 @@ class GRPEditor(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "保存失败", str(e))
 
+    def _serialize_current_sections(self):
+        """将当前 GRP 序列化为临时文件，返回区段原始字节列表。"""
+        tmp_grp = tempfile.mktemp(suffix='.grp')
+        tmp_idx = tempfile.mktemp(suffix='.idx')
+        try:
+            save_grp(self.grp, tmp_grp, tmp_idx)
+            return load_grp_raw_sections(tmp_grp, tmp_idx)
+        finally:
+            for p in [tmp_grp, tmp_idx]:
+                if os.path.exists(p):
+                    os.remove(p)
+
+    def _load_ref_sections(self, ref_path):
+        """加载参考 GRP 的区段原始字节列表 (自动查找配套 IDX)。"""
+        ref_idx = None
+        for ext in ['.IDX', '.idx']:
+            c = str(Path(ref_path).with_suffix(ext))
+            if os.path.exists(c):
+                ref_idx = c
+                break
+        return load_grp_raw_sections(ref_path, ref_idx)
+
     def _export_tksmod(self):
-        """导出 GRP 为 .tksmod — 区段级增量（仅导出修改过的区段）"""
+        """导出 GRP 为 .tksmod — 图层差分（主图 A / 前景 L1 / 碰撞 L2 可叠加并存）"""
         if not self.grp or not self.grp.filepath:
             QMessageBox.information(self, "提示", "请先打开 GRP 文件")
             return
 
         target_name = os.path.basename(self.grp.filepath)
-
-        # 先保存当前到临时文件获取当前区段
-        tmp_grp = tempfile.mktemp(suffix='.grp')
-        tmp_idx = tempfile.mktemp(suffix='.idx')
-        try:
-            save_grp(self.grp, tmp_grp, tmp_idx)
-            cur_sections = load_grp_raw_sections(tmp_grp, tmp_idx)
-        finally:
-            for p in [tmp_grp, tmp_idx]:
-                if os.path.exists(p):
-                    os.remove(p)
+        cur_sections = self._serialize_current_sections()
         if cur_sections is None:
             QMessageBox.warning(self, "错误", "无法序列化当前 GRP 数据")
             return
@@ -908,22 +903,14 @@ class GRPEditor(QMainWindow):
             ref_path = os.path.join(ref_dir, target_name)
             if not os.path.isfile(ref_path):
                 return {"valid": False, "error": f"目录中未找到 {target_name}"}
-            ref_idx = None
-            for ext in ['.IDX', '.idx']:
-                c = str(Path(ref_path).with_suffix(ext))
-                if os.path.exists(c):
-                    ref_idx = c
-                    break
-            ref_sections = load_grp_raw_sections(ref_path, ref_idx)
+            ref_sections = self._load_ref_sections(ref_path)
             if ref_sections is None:
                 return {"valid": False, "error": f"无法解析 {target_name}（需要配套 IDX 文件）"}
-            diff = diff_binary_blocks(ref_sections, cur_sections)
+            modified, appended, deleted, stats = grp_codec.build_layer_diff(ref_sections, cur_sections)
             targets = []
-            if diff['modified'] or diff['appended'] or diff['deleted_indices']:
-                targets.append({"name": target_name,
-                    "modified": len(diff['modified']),
-                    "appended": len(diff['appended']),
-                    "deleted": len(diff['deleted_indices'])})
+            if modified or appended or deleted:
+                targets.append({"name": f"{target_name}{_summarize_layer_stats(stats)}",
+                    "modified": len(modified), "appended": len(appended), "deleted": len(deleted)})
             return {"valid": True, "targets": targets}
 
         preview_dlg = ModExportPreviewDialog(self,
@@ -936,38 +923,13 @@ class GRPEditor(QMainWindow):
         if not os.path.isfile(ref_path):
             QMessageBox.warning(self, "参考文件不存在", f"在 {ref_dir} 中未找到 {target_name}")
             return
-
-        # 查找参考 IDX
-        ref_idx = None
-        for ext in ['.IDX', '.idx']:
-            c = str(Path(ref_path).with_suffix(ext))
-            if os.path.exists(c):
-                ref_idx = c
-                break
-
-        ref_sections = load_grp_raw_sections(ref_path, ref_idx)
+        ref_sections = self._load_ref_sections(ref_path)
         if ref_sections is None:
             QMessageBox.warning(self, "参考文件无效", f"无法解析 {target_name} 的区段结构（需要配套 IDX 文件）")
             return
 
-        # 保存当前到临时文件获取当前区段
-        tmp_grp = tempfile.mktemp(suffix='.grp')
-        tmp_idx = tempfile.mktemp(suffix='.idx')
-        try:
-            save_grp(self.grp, tmp_grp, tmp_idx)
-            cur_sections = load_grp_raw_sections(tmp_grp, tmp_idx)
-        finally:
-            for p in [tmp_grp, tmp_idx]:
-                if os.path.exists(p):
-                    os.remove(p)
-
-        if cur_sections is None:
-            QMessageBox.warning(self, "错误", "无法序列化当前 GRP 数据")
-            return
-
-        # 计算区段级差异
-        diff_result = diff_binary_blocks(ref_sections, cur_sections)
-        if not diff_result['modified'] and not diff_result['appended'] and not diff_result['deleted_indices']:
+        modified, appended, deleted, stats = grp_codec.build_layer_diff(ref_sections, cur_sections)
+        if not modified and not appended and not deleted:
             QMessageBox.information(self, "无差异", "当前 GRP 与参考文件相同，无需导出。")
             return
 
@@ -977,8 +939,9 @@ class GRPEditor(QMainWindow):
         self._last_mod_metadata = metadata
 
         crc = compute_crc32(ref_path)
-        data_json = build_block_diff_json(target=target_name, block_type="grp_section",
-            original_count=len(ref_sections), original_crc32=crc, diff_result=diff_result)
+        data_json = grp_codec.build_layer_diff_json(
+            target=target_name, original_count=len(ref_sections),
+            original_crc32=crc, modified=modified, appended=appended, deleted=deleted)
         internal_path = f"data/{target_name}.json"
         components = [{"file": internal_path, "target": target_name}]
         mod_json = generate_mod_json(metadata, components)
@@ -987,16 +950,19 @@ class GRPEditor(QMainWindow):
         if not fp: return
         try:
             pack_tksmod(fp, mod_json, {internal_path: data_json})
-            n_mod = len(diff_result['modified'])
-            n_app = len(diff_result['appended'])
-            self._status_lbl.setText(f"已导出 MOD: {Path(fp).name} (修改{n_mod}区段, 新增{n_app}区段)")
+            n_layer = sum(1 for e in modified.values() if 'planes' in e)
+            n_full = len(modified) - n_layer
+            self._status_lbl.setText(
+                f"已导出 MOD: {Path(fp).name} (图层差分{n_layer}段, 整段{n_full}, 新增{len(appended)})")
             QMessageBox.information(self, "导出成功",
-                f"已导出 (区段级增量):\n{fp}\n\n参考: {ref_path}\n修改: {n_mod} 个区段\n新增: {n_app} 个区段")
+                f"已导出 (图层差分):\n{fp}\n\n参考: {ref_path}\n"
+                f"图层差分: {n_layer} 段\n整段替换: {n_full} 段\n新增: {len(appended)} 段\n"
+                f"{_summarize_layer_stats(stats)}")
         except Exception as e:
             QMessageBox.critical(self, "导出失败", str(e))
 
     def _export_selected_as_mod(self):
-        """导出当前选中区段为 .tksmod — 块级增量模式，launcher 可正确合并到目标文件"""
+        """导出当前选中区段为 .tksmod — 图层差分模式，launcher 可正确叠加合并到目标文件"""
         if not self.grp or self._sel_idx < 0:
             QMessageBox.information(self, "提示", "请先选中一个区段")
             return
@@ -1048,20 +1014,24 @@ class GRPEditor(QMainWindow):
                 return
             section_bytes = cur_sections[0]
 
-            # 步骤2: 构建 block_diff — launcher 会加载游戏原文件并替换指定索引的区段
+            # 步骤2: 构建 grp_layer_diff — launcher 从原始图层解码并叠加差分
             target_name = os.path.basename(self.grp.filepath)
-            diff_result = {
-                "modified": [{"index": sec.index,
-                              "data_b64": base64.b64encode(section_bytes).decode('ascii')}],
-                "appended": [],
-                "deleted_indices": [],
-            }
+            if isinstance(sec, GRPSection):
+                orig_bytes = (struct.pack("<HHII", sec.width, sec.height,
+                                          sec.comp_a, sec.comp_b)
+                              + (sec._orig_frame_a or b"") + (sec._orig_frame_b or b""))
+                entry = grp_codec.diff_section_entry(orig_bytes, section_bytes)
+            else:
+                entry = {'data_b64': base64.b64encode(section_bytes).decode('ascii')}
+            if entry is None:
+                QMessageBox.information(self, "无差异", "选中区段与原始内容相同，无需导出。")
+                return
 
             crc = compute_crc32(self.grp.filepath)
-            data_json = build_block_diff_json(
-                target=target_name, block_type="grp_section",
-                original_count=self.grp.total_sections, original_crc32=crc,
-                diff_result=diff_result)
+            data_json = grp_codec.build_layer_diff_json(
+                target=target_name, original_count=self.grp.total_sections,
+                original_crc32=crc, modified={str(sec.index): entry},
+                appended=[], deleted=[])
 
             # 步骤3: MOD 元数据
             dlg = ModMetadataDialog(self, getattr(self, '_last_mod_metadata', None))
@@ -1081,10 +1051,11 @@ class GRPEditor(QMainWindow):
 
             self._status_lbl.setText(
                 f"已导出 MOD: {Path(fp).name} (区段 #{sec.index:03d} → {target_name})")
+            _kind = "图层差分" if (isinstance(sec, GRPSection) and 'planes' in entry) else "整段替换"
             QMessageBox.information(self, "导出成功",
-                f"已导出选中区段为 MOD (块级合并):\n{fp}\n\n"
+                f"已导出选中区段为 MOD ({_kind}):\n{fp}\n\n"
                 f"目标文件: {target_name}\n区段: #{sec.index:03d} ({sec.type_label})\n\n"
-                f"Launcher 加载时将替换 {target_name} 的第 {sec.index} 个区段。")
+                f"Launcher 加载时将把差分叠加到 {target_name} 的第 {sec.index} 个区段。")
         finally:
             for p in [tmp_grp_path, tmp_idx_path]:
                 if os.path.exists(p):
@@ -1114,8 +1085,24 @@ class GRPEditor(QMainWindow):
         ref_dir = dlg.get_ref_dir()
         if not ref_dir: return
 
-        mod_json, blocks = import_tksmod_blocks(
-            fp, ref_dir, target_name, block_type="grp_section")
+        # 判定补丁类型: grp_layer_diff (图层差分) 走图层叠加, 否则走块级替换
+        _mj_full, _data_files = read_tksmod(fp)
+        _diff_data = None
+        if _mj_full:
+            for _comp in _mj_full.get("components", []):
+                if _comp.get("target", "").lower() == target_name.lower():
+                    _diff_data = _data_files.get(_comp.get("file", ""))
+                    break
+        if _diff_data and _diff_data.get("patch_type") == "grp_layer_diff":
+            ref_sections = self._load_ref_sections(os.path.join(ref_dir, target_name))
+            if ref_sections is None:
+                QMessageBox.warning(self, "导入失败",
+                    f"参考目录中缺少有效的 {target_name}（需配套 IDX 文件）")
+                return
+            blocks = grp_codec.apply_layer_diff_to_sections(ref_sections, _diff_data)
+        else:
+            mod_json, blocks = import_tksmod_blocks(
+                fp, ref_dir, target_name, block_type="grp_section")
         if blocks is None:
             QMessageBox.warning(self, "导入失败",
                 f"无法导入 MOD 数据。\n请确认参考目录中包含有效的 {target_name}")

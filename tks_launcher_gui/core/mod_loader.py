@@ -22,6 +22,19 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from .lzss import lzss_compress, lzss_decompress
 
+# GRP 图层差分编解码 (与编辑器共用同一实现, 保证字节一致)
+try:
+    from editor_utils import grp_codec as _grp_codec
+except ImportError:  # 兼容 cli_launcher 只把自身目录加入 sys.path 的情况
+    import sys as _sys
+    _ai_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    if _ai_root not in _sys.path:
+        _sys.path.insert(0, _ai_root)
+    try:
+        from editor_utils import grp_codec as _grp_codec
+    except ImportError:
+        _grp_codec = None
+
 
 # ═══════════════════════════════════════════════════════════════
 # 允许通过 MOD 包携带的启动器配置文件白名单
@@ -360,10 +373,37 @@ def resolve_dependencies(mods: List[ModInfo], log_func=None) -> List[ModInfo]:
 # 3. 冲突检测
 # ═══════════════════════════════════════════════════════════════
 
+def _collect_grp_layer_offsets(mod: 'ModInfo') -> dict:
+    """收集某 MOD 的 GRP 图层差分改动位置: {(target_lower, section, plane): set(offsets)}。"""
+    result = {}
+    for comp in mod.components:
+        internal = comp.get("file", "")
+        target = comp.get("target", "")
+        d = mod.data_files.get(internal)
+        if not isinstance(d, dict) or d.get("patch_type") != "grp_layer_diff":
+            continue
+        modified = d.get("modified", {})
+        if not isinstance(modified, dict):
+            continue
+        for sidx, entry in modified.items():
+            planes = entry.get("planes") if isinstance(entry, dict) else None
+            if not planes:
+                continue
+            for plane, spans in planes.items():
+                offs = result.setdefault((target.lower(), str(sidx), plane), set())
+                for start, vals in spans:
+                    for j in range(len(vals)):
+                        offs.add(start + j)
+    return result
+
+
 def detect_conflicts(mods: List[ModInfo], log_func=None) -> List[Conflict]:
     """检测 MOD 之间的冲突"""
     log = log_func or (lambda x: None)
     conflicts = []
+
+    # 预计算每个 MOD 的 GRP 图层差分改动位置 (用于像素级重叠检测)
+    layer_maps = [_collect_grp_layer_offsets(m) for m in mods]
 
     for i in range(len(mods)):
         for j in range(i + 1, len(mods)):
@@ -399,6 +439,18 @@ def detect_conflicts(mods: List[ModInfo], log_func=None) -> List[Conflict]:
                     mod1_id=m1.mod_id, mod2_id=m2.mod_id,
                     conflict_type="resource", target=t,
                     detail=f"资源文件 '{t}' 被多个 MOD 替换"))
+
+            # GRP 图层差分: 同区段同平面同像素重叠 → 冲突 (不同像素自动共存)
+            lm1, lm2 = layer_maps[i], layer_maps[j]
+            for key in set(lm1) & set(lm2):
+                inter = lm1[key] & lm2[key]
+                if inter:
+                    tgt, sidx, plane = key
+                    conflicts.append(Conflict(
+                        mod1_id=m1.mod_id, mod2_id=m2.mod_id,
+                        conflict_type="grp_layer_overlap", target=tgt,
+                        detail=f"{tgt} 区段#{sidx} {plane}层 {len(inter)} 个像素被 "
+                               f"'{m1.name}' 与 '{m2.name}' 同时修改"))
 
     if conflicts:
         log(f"  检测到 {len(conflicts)} 个冲突")
@@ -526,8 +578,8 @@ def merge_mods(mods: List[ModInfo], game_dir: str, log_func=None) -> MergedData:
         first_diff_data = mod_diffs[0][1] if mod_diffs else {}
         patch_type = first_diff_data.get("patch_type", "")
 
-        if patch_type == "block_diff":
-            # GRP/JVG 块级二进制差异
+        if patch_type in ("block_diff", "grp_layer_diff"):
+            # GRP/JVG 块级二进制差异 / GRP 图层差分
             # 备份原始 GRP 和 IDX 文件
             orig_path = target_path + ".mod_orig"
             if os.path.isfile(target_path) and not os.path.isfile(orig_path):
@@ -544,10 +596,13 @@ def merge_mods(mods: List[ModInfo], game_dir: str, log_func=None) -> MergedData:
                         merged.backed_up.append(idx_candidate)
                         log(f"  备份: {os.path.basename(idx_candidate)} → {os.path.basename(idx_candidate)}.mod_orig")
                     break
-            # 合并并直接写入
-            result = _merge_block_file(target_path, target, mod_diffs, log)
+            # 合并并直接写入 (按补丁类型分派)
+            if patch_type == "grp_layer_diff":
+                result = _merge_grp_layer_diff(target_path, target, mod_diffs, log)
+            else:
+                result = _merge_block_file(target_path, target, mod_diffs, log)
             if result == "direct_write":
-                log(f"  写入: {target} (块级合并完成)")
+                log(f"  写入: {target} (合并完成)")
 
         elif _is_text_diff(first_diff_data):
             # TKD.dat 文本脚本差异
@@ -1419,6 +1474,156 @@ def _merge_block_file(file_path: str, target_name: str,
         _save_fixed_record_blocks(sections, file_path)
     else:
         _save_grp_sections(sections, file_path, idx_path)
+    return "direct_write"
+
+
+def _read_sections_with_idx(grp_path: str, idx_path: str) -> Optional[list]:
+    """按给定 GRP + IDX 路径读取区段原始字节列表。"""
+    if not os.path.isfile(grp_path) or not os.path.isfile(idx_path):
+        return None
+    with open(grp_path, 'rb') as f:
+        data = f.read()
+    with open(idx_path, 'rb') as f:
+        idx_data = f.read()
+    if len(idx_data) < 8 or len(idx_data) % 4 != 0:
+        return None
+    offsets = [struct.unpack_from('<I', idx_data, i)[0]
+               for i in range(0, len(idx_data), 4)]
+    sections = []
+    for i in range(len(offsets) - 1):
+        start, end = offsets[i], offsets[i + 1]
+        sections.append(data[start:end] if start <= end <= len(data) else b'')
+    return sections
+
+
+def _merge_grp_layer_diff(file_path: str, target_name: str,
+                          mod_diffs: List[Tuple['ModInfo', dict]],
+                          log_func=None) -> Optional[str]:
+    """合并 GRP 图层差分 (grp_layer_diff)。
+
+    从纯净基准解码 A/L1/L2 三平面, 逐 MOD (load_order 升序) 叠加差分,
+    只重压缩被改动的平面组 (未变平面复用原始压缩块), 再回写 GRP+IDX。
+    不同像素自动共存; 同一像素按 load_order 取胜并告警。
+    返回 'direct_write' 标记表示已处理。
+    """
+    log = log_func or (lambda x: None)
+    if _grp_codec is None:
+        log(f"  [WARN] grp_codec 不可用, 跳过 {target_name} 图层差分合并")
+        return None
+
+    # 定位可写 IDX (输出用)
+    live_idx = None
+    for ext in ['.IDX', '.idx']:
+        c = str(Path(file_path).with_suffix(ext))
+        if os.path.exists(c):
+            live_idx = c
+            break
+    if not live_idx:
+        log(f"  [WARN] {target_name} 缺少配套 IDX 文件, 无法图层合并")
+        return None
+
+    # 基准区段: 优先纯净备份 .mod_orig, 否则当前文件
+    base_grp = file_path + ".mod_orig"
+    base_idx = live_idx + ".mod_orig"
+    if os.path.isfile(base_grp) and os.path.isfile(base_idx):
+        base_sections = _read_sections_with_idx(base_grp, base_idx)
+    else:
+        base_sections = _read_sections_with_idx(file_path, live_idx)
+    if base_sections is None:
+        log(f"  [WARN] 无法加载 {target_name} 基准区段")
+        return None
+
+    log(f"  合并 {target_name}: {len(base_sections)} 个区段 (图层差分), "
+        f"{len(mod_diffs)} 个 MOD 差异")
+
+    sections = list(base_sections)
+    decoded = {}   # sidx -> {'A','L1','L2','meta','touched'}
+    writes = {}    # (sidx, plane, off) -> value
+    n_conflict = 0
+
+    for mod, diff in mod_diffs:
+        modified = diff.get("modified", {})
+        # 兼容: 若混入旧 block_diff (modified 为 list), 按整段替换处理
+        if isinstance(modified, list):
+            for e in modified:
+                idx = e.get("index", -1)
+                b = e.get("data_b64", "")
+                if 0 <= idx < len(sections) and b:
+                    sections[idx] = base64.b64decode(b)
+        else:
+            for sidx_str, entry in modified.items():
+                try:
+                    sidx = int(sidx_str)
+                except (ValueError, TypeError):
+                    continue
+                if 'planes' in entry:
+                    if not (0 <= sidx < len(base_sections)):
+                        continue
+                    if sidx not in decoded:
+                        dec = _grp_codec.decode_section(base_sections[sidx])
+                        if dec is None:
+                            log(f"    [WARN] 区段 #{sidx} 无法解码, 跳过图层差分")
+                            continue
+                        decoded[sidx] = {
+                            'A': bytearray(dec['A']),
+                            'L1': bytearray(dec['L1']),
+                            'L2': bytearray(dec['L2']) if dec['L2'] is not None else None,
+                            'meta': dec, 'touched': set(),
+                        }
+                    d = decoded[sidx]
+                    for plane, spans in entry['planes'].items():
+                        if plane == 'L2' and d['L2'] is None:
+                            d['L2'] = bytearray(d['meta']['total_px'])
+                            d['meta']['has_layer2'] = True
+                        buf = d.get(plane)
+                        if buf is None:
+                            continue
+                        for start, vals in spans:
+                            for j, v in enumerate(vals):
+                                off = start + j
+                                nv = v & 0xFF
+                                key = (sidx, plane, off)
+                                if key in writes and writes[key] != nv:
+                                    n_conflict += 1
+                                writes[key] = nv
+                                if 0 <= off < len(buf):
+                                    buf[off] = nv
+                        d['touched'].add('A' if plane == 'A' else 'B')
+                elif 'data_b64' in entry:
+                    if 0 <= sidx < len(sections):
+                        sections[sidx] = base64.b64decode(entry['data_b64'])
+
+        # 追加 / 删除 (与块级语义一致)
+        for e in diff.get("appended", []):
+            idx = e.get("index", -1)
+            b = e.get("data_b64", "")
+            if b and idx >= 0:
+                while len(sections) <= idx:
+                    sections.append(b'')
+                sections[idx] = base64.b64decode(b)
+        for idx in sorted(diff.get("deleted_indices", []), reverse=True):
+            if 0 <= idx < len(sections):
+                sections[idx] = b''
+
+    # 重编码被改动的区段 (只重压缩变化的平面组)
+    for sidx, d in decoded.items():
+        meta = d['meta']
+        touched = d['touched']
+        reuse_fa = None if 'A' in touched else meta['fa_bytes']
+        reuse_fb = None if 'B' in touched else meta['fb_bytes']
+        try:
+            sections[sidx] = _grp_codec.encode_section(
+                meta['width'], meta['height'],
+                bytes(d['A']), bytes(d['L1']),
+                bytes(d['L2']) if d['L2'] is not None else None,
+                meta['has_layer2'], reuse_fa=reuse_fa, reuse_fb=reuse_fb)
+        except Exception as ex:
+            log(f"    [WARN] 区段 #{sidx} 重编码失败: {ex}")
+
+    if n_conflict:
+        log(f"    [冲突] {n_conflict} 个像素被多个 MOD 同时修改, 已按 load_order 取胜")
+
+    _save_grp_sections(sections, file_path, live_idx)
     return "direct_write"
 
 
