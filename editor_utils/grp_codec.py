@@ -277,17 +277,23 @@ def diff_section_entry(ref_bytes: bytes, cur_bytes: bytes):
     return {'data_b64': base64.b64encode(bytes(cur_bytes)).decode('ascii')}
 
 
-def build_layer_diff(ref_sections: list, cur_sections: list):
+def build_layer_diff(ref_sections: list, cur_sections: list, target: str = "section"):
     """对比参考与当前区段列表，生成图层差分。
 
+    新增区段(新地图)以**原始二进制**形式单独返回(blobs), 由调用方写入
+    .tksmod 的 ZIP 二进制成员; appended 条目仅引用成员名(bin)。
+    这比 base64-in-JSON 体积更小(base64 会破坏 DEFLATE 的 LZ77 匹配)。
+
     Returns:
-        (modified: {str(idx): entry}, appended: [{index,data_b64}],
-         deleted_indices: [idx,...], stats: [(idx, {plane: pixels}), ...])
+        (modified: {str(idx): entry}, appended: [{index,bin}],
+         deleted_indices: [idx,...], stats: [(idx, {plane: pixels}), ...],
+         blobs: {member_name: raw_bytes})
     """
     modified = {}
     appended = []
     deleted = []
     stats = []
+    blobs = {}
 
     n = min(len(ref_sections), len(cur_sections))
     for i in range(n):
@@ -303,15 +309,14 @@ def build_layer_diff(ref_sections: list, cur_sections: list):
             stats.append((i, {'full': 1}))
 
     for i in range(len(ref_sections), len(cur_sections)):
-        appended.append({
-            'index': i,
-            'data_b64': base64.b64encode(bytes(cur_sections[i])).decode('ascii'),
-        })
+        name = f"blobs/{target}.{i}.bin"
+        appended.append({'index': i, 'bin': name})
+        blobs[name] = bytes(cur_sections[i])
 
     for i in range(len(cur_sections), len(ref_sections)):
         deleted.append(i)
 
-    return modified, appended, deleted, stats
+    return modified, appended, deleted, stats, blobs
 
 
 def build_layer_diff_json(target: str, original_count: int, original_crc32: str,
@@ -328,13 +333,17 @@ def build_layer_diff_json(target: str, original_count: int, original_crc32: str,
     }
 
 
-def apply_layer_diff_to_sections(base_sections: list, diff_data: dict) -> list:
+def apply_layer_diff_to_sections(base_sections: list, diff_data: dict,
+                                 blobs: dict | None = None) -> list:
     """将单个 grp_layer_diff 应用到基准区段列表, 返回完整区段列表。
 
     供编辑器导入预览使用 (单 MOD, 不做跨 MOD 冲突检测)。
     兼容 modified 为 dict (图层差分) 或 list (旧 block_diff)。
+    blobs: {member_name: raw_bytes} — appended 区段的二进制成员 (新格式);
+           旧格式的 appended 仍可用 data_b64。
     """
     sections = list(base_sections)
+    blobs = blobs or {}
     modified = diff_data.get("modified", {})
 
     if isinstance(modified, dict):
@@ -383,13 +392,36 @@ def apply_layer_diff_to_sections(base_sections: list, diff_data: dict) -> list:
 
     for e in diff_data.get("appended", []):
         idx = e.get('index', -1)
-        b = e.get('data_b64', '')
-        if b and idx >= 0:
+        raw = None
+        if e.get('bin') and blobs:
+            raw = blobs.get(e['bin'])
+        elif e.get('data_b64'):
+            raw = base64.b64decode(e['data_b64'])
+        if raw is not None and idx >= 0:
             while len(sections) <= idx:
                 sections.append(b'')
-            sections[idx] = base64.b64decode(b)
+            sections[idx] = raw
     for idx in sorted(diff_data.get("deleted_indices", []), reverse=True):
         if 0 <= idx < len(sections):
             sections[idx] = b''
 
     return sections
+
+
+def read_blob_members(source, prefix: str = "blobs/") -> dict:
+    """从 .tksmod (文件路径或 ZIP 字节) 读取指定前缀的二进制成员。
+
+    返回 {member_name: raw_bytes}。仅用标准库, 无 GUI 依赖, 可被启动器复用。
+    """
+    import io
+    import zipfile
+    try:
+        if isinstance(source, (bytes, bytearray)):
+            zf = zipfile.ZipFile(io.BytesIO(source))
+        else:
+            zf = zipfile.ZipFile(source)
+        with zf:
+            return {n: zf.read(n) for n in zf.namelist()
+                    if n.startswith(prefix) and not n.endswith('/')}
+    except Exception:
+        return {}

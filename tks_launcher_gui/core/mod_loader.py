@@ -1611,13 +1611,21 @@ def _merge_grp_layer_diff(file_path: str, target_name: str,
                         sections[sidx] = base64.b64decode(entry['data_b64'])
 
         # 追加 / 删除 (与块级语义一致)
+        _mod_blobs = None
         for e in diff.get("appended", []):
             idx = e.get("index", -1)
-            b = e.get("data_b64", "")
-            if b and idx >= 0:
+            raw = None
+            if e.get("bin"):
+                if _mod_blobs is None:
+                    _src = getattr(mod, '_data_raw', None) or getattr(mod, 'path', None)
+                    _mod_blobs = _grp_codec.read_blob_members(_src) if _src else {}
+                raw = _mod_blobs.get(e["bin"])
+            elif e.get("data_b64"):
+                raw = base64.b64decode(e["data_b64"])
+            if raw is not None and idx >= 0:
                 while len(sections) <= idx:
                     sections.append(b'')
-                sections[idx] = base64.b64decode(b)
+                sections[idx] = raw
         for idx in sorted(diff.get("deleted_indices", []), reverse=True):
             if 0 <= idx < len(sections):
                 sections[idx] = b''

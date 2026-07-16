@@ -236,7 +236,8 @@ def pack_tksmod(output_path: str, mod_json: dict,
                 data_files: dict[str, Any],
                 resource_files: dict[str, str] | None = None,
                 preview_image_path: str | None = None,
-                config_files: dict[str, Any] | None = None) -> bool:
+                config_files: dict[str, Any] | None = None,
+                blob_files: dict[str, bytes] | None = None) -> bool:
     """将 MOD 数据打包为 .tksmod (ZIP) 文件。
 
     Args:
@@ -274,6 +275,11 @@ def pack_tksmod(output_path: str, mod_json: dict,
             for internal_path, content_dict in config_files.items():
                 json_str = json.dumps(content_dict, ensure_ascii=False, indent=2)
                 zf.writestr(internal_path, json_str)
+
+        # 写入二进制成员 (如 GRP 新增区段的原始字节, 避免 base64 膨胀/阻碍压缩)
+        if blob_files:
+            for internal_path, raw in blob_files.items():
+                zf.writestr(internal_path, raw)
 
         # 写入资源文件
         if resource_files:

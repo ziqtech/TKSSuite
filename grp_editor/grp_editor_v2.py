@@ -906,7 +906,7 @@ class GRPEditor(QMainWindow):
             ref_sections = self._load_ref_sections(ref_path)
             if ref_sections is None:
                 return {"valid": False, "error": f"无法解析 {target_name}（需要配套 IDX 文件）"}
-            modified, appended, deleted, stats = grp_codec.build_layer_diff(ref_sections, cur_sections)
+            modified, appended, deleted, stats, _blobs = grp_codec.build_layer_diff(ref_sections, cur_sections, target=target_name)
             targets = []
             if modified or appended or deleted:
                 targets.append({"name": f"{target_name}{_summarize_layer_stats(stats)}",
@@ -928,7 +928,7 @@ class GRPEditor(QMainWindow):
             QMessageBox.warning(self, "参考文件无效", f"无法解析 {target_name} 的区段结构（需要配套 IDX 文件）")
             return
 
-        modified, appended, deleted, stats = grp_codec.build_layer_diff(ref_sections, cur_sections)
+        modified, appended, deleted, stats, blobs = grp_codec.build_layer_diff(ref_sections, cur_sections, target=target_name)
         if not modified and not appended and not deleted:
             QMessageBox.information(self, "无差异", "当前 GRP 与参考文件相同，无需导出。")
             return
@@ -949,7 +949,7 @@ class GRPEditor(QMainWindow):
         fp, _ = QFileDialog.getSaveFileName(self, "导出为 MOD", f"{safe_mod_filename(metadata['name'], metadata['id'])}.tksmod", "TKS MOD (*.tksmod)")
         if not fp: return
         try:
-            pack_tksmod(fp, mod_json, {internal_path: data_json})
+            pack_tksmod(fp, mod_json, {internal_path: data_json}, blob_files=blobs)
             n_layer = sum(1 for e in modified.values() if 'planes' in e)
             n_full = len(modified) - n_layer
             self._status_lbl.setText(
@@ -1099,7 +1099,8 @@ class GRPEditor(QMainWindow):
                 QMessageBox.warning(self, "导入失败",
                     f"参考目录中缺少有效的 {target_name}（需配套 IDX 文件）")
                 return
-            blocks = grp_codec.apply_layer_diff_to_sections(ref_sections, _diff_data)
+            blocks = grp_codec.apply_layer_diff_to_sections(
+                ref_sections, _diff_data, blobs=grp_codec.read_blob_members(fp))
         else:
             mod_json, blocks = import_tksmod_blocks(
                 fp, ref_dir, target_name, block_type="grp_section")
