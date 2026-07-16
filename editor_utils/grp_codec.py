@@ -425,3 +425,85 @@ def read_blob_members(source, prefix: str = "blobs/") -> dict:
                     if n.startswith(prefix) and not n.endswith('/')}
     except Exception:
         return {}
+
+
+def merge_layer_diff_into_sections(base_sections: list, diff_data: dict,
+                                   blobs: dict | None = None):
+    """将一个 grp_layer_diff 累加合并进 base_sections (编辑器"合并进当前GRP")。
+
+    与 apply_layer_diff_to_sections 的区别: appended 区段不再按声明索引放置,
+    而是 内容去重 + 顺延到空位, 用于把多个新地图 MOD 叠加成一份。
+
+      - modified(planes):   叠加到对应区段(就地);
+      - modified(data_b64): 覆盖该区段;
+      - appended:           与现有区段字节相同则去重复用, 否则追加到末尾新索引;
+      - deleted_indices:    合并模式下忽略 (不删现有内容)。
+
+    Returns:
+        (sections, remap) — remap: [{'declared': i, 'actual': j, 'action': '追加|去重复用|覆盖修改'}]
+    """
+    blobs = blobs or {}
+    sections = list(base_sections)
+    remap = []
+
+    modified = diff_data.get("modified", {})
+    if isinstance(modified, dict):
+        for sidx_str, entry in modified.items():
+            try:
+                sidx = int(sidx_str)
+            except (ValueError, TypeError):
+                continue
+            if not (0 <= sidx < len(sections)):
+                continue
+            if 'planes' in entry:
+                dec = decode_section(sections[sidx], need_a=('A' in entry['planes']))
+                if dec is None:
+                    continue
+                A = bytearray(dec['A']) if dec['A'] is not None else None
+                L1 = bytearray(dec['L1'])
+                L2 = bytearray(dec['L2']) if dec['L2'] is not None else None
+                has2 = dec['has_layer2']
+                touched = set()
+                for plane, spans in entry['planes'].items():
+                    if plane == 'L2' and L2 is None:
+                        L2 = bytearray(dec['total_px'])
+                        has2 = True
+                    buf = A if plane == 'A' else (L1 if plane == 'L1' else L2)
+                    if buf is None:
+                        continue
+                    apply_spans(buf, spans)
+                    touched.add('A' if plane == 'A' else 'B')
+                reuse_fa = None if 'A' in touched else dec['fa_bytes']
+                reuse_fb = None if 'B' in touched else dec['fb_bytes']
+                sections[sidx] = encode_section(
+                    dec['width'], dec['height'],
+                    bytes(A) if A is not None else None, bytes(L1),
+                    bytes(L2) if L2 is not None else None,
+                    has2, reuse_fa=reuse_fa, reuse_fb=reuse_fb)
+                remap.append({'declared': sidx, 'actual': sidx, 'action': '覆盖修改'})
+            elif 'data_b64' in entry:
+                sections[sidx] = base64.b64decode(entry['data_b64'])
+                remap.append({'declared': sidx, 'actual': sidx, 'action': '覆盖修改'})
+
+    for e in diff_data.get("appended", []):
+        declared = e.get("index", -1)
+        raw = None
+        if e.get('bin') and blobs:
+            raw = blobs.get(e['bin'])
+        elif e.get('data_b64'):
+            raw = base64.b64decode(e['data_b64'])
+        if raw is None:
+            continue
+        # 内容去重: 与现有区段字节完全相同则复用 (快速, 安全无损)
+        dup = None
+        for k, s in enumerate(sections):
+            if s == raw:
+                dup = k
+                break
+        if dup is not None:
+            remap.append({'declared': declared, 'actual': dup, 'action': '去重复用'})
+        else:
+            sections.append(raw)
+            remap.append({'declared': declared, 'actual': len(sections) - 1, 'action': '追加'})
+
+    return sections, remap

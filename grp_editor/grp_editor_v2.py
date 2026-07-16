@@ -562,6 +562,7 @@ class GRPEditor(QMainWindow):
         fm.addAction("导出为 MOD (.tksmod)…", self._export_tksmod)
         fm.addAction("导出选中区段为 MOD (.tksmod)…", self._export_selected_as_mod)
         fm.addAction("导入 MOD (.tksmod)…", self._import_tksmod)
+        fm.addAction("合并 MOD (.tksmod)…", self._import_tksmod_merge)
         fm.addSeparator()
         fm.addAction("导出 L1 色板", lambda: self._export_color_swatch("L1"))
         fm.addAction("导出 L2 色板", lambda: self._export_color_swatch("L2"))
@@ -1156,6 +1157,110 @@ class GRPEditor(QMainWindow):
             f"目标: {target_name}\n"
             f"区段数: {len(blocks)}\n\n"
             f"您现在可以继续编辑并重新导出。")
+
+    def _rebuild_from_sections(self, blocks, keep_path=False):
+        """用区段字节列表重建当前 GRP（写临时文件后重新加载）。keep_path 保留原文件路径。"""
+        prev_path = self.grp.filepath if (self.grp and keep_path) else None
+        prev_idx = self.grp.idx_path if (self.grp and keep_path) else None
+        tmp_grp = tempfile.mktemp(suffix='.grp')
+        tmp_idx = tempfile.mktemp(suffix='.idx')
+        try:
+            offsets = [0]
+            for sec in blocks:
+                offsets.append(offsets[-1] + len(sec))
+            Path(tmp_idx).write_bytes(b''.join(struct.pack('<I', o) for o in offsets))
+            with open(tmp_grp, 'wb') as f:
+                for sec in blocks:
+                    f.write(sec)
+            self._stop_audio()
+            self.grp = load_grp(tmp_grp, tmp_idx)
+            self.grp.filepath = prev_path
+            self.grp.idx_path = prev_idx
+        finally:
+            for p in [tmp_grp, tmp_idx]:
+                if os.path.exists(p):
+                    os.remove(p)
+
+    def _import_tksmod_merge(self):
+        """导入 MOD 并合并进当前 GRP（累加新地图: 内容去重/顺延区段号, 输出重映射清单）。"""
+        if not self.grp or self.grp.total_sections == 0:
+            QMessageBox.information(self, "提示", "请先打开一个 GRP 文件作为合并基准")
+            return
+        fp, _ = QFileDialog.getOpenFileName(self, "选择要合并的 MOD 文件", "", "TKS MOD (*.tksmod)")
+        if not fp: return
+
+        info = get_tksmod_info(fp)
+        if info is None:
+            QMessageBox.warning(self, "无效文件", "无法解析此 .tksmod 文件")
+            return
+        grp_targets = [t for t in info.get("targets", []) if t.upper().endswith(".GRP")]
+        if not grp_targets:
+            QMessageBox.warning(self, "不兼容", "此 MOD 不包含 GRP 文件的数据")
+            return
+        target_name = grp_targets[0]
+
+        # 目标文件名与当前打开文件不一致时提醒
+        if self.grp.filepath and os.path.basename(self.grp.filepath).lower() != target_name.lower():
+            r = QMessageBox.question(self, "目标不一致",
+                f"该 MOD 目标为 {target_name}，当前打开的是 "
+                f"{os.path.basename(self.grp.filepath)}。\n仍要合并吗？")
+            if r != QMessageBox.Yes: return
+
+        mj, data_files = read_tksmod(fp)
+        diff_data = None
+        if mj:
+            for comp in mj.get("components", []):
+                if comp.get("target", "").lower() == target_name.lower():
+                    diff_data = data_files.get(comp.get("file", ""))
+                    break
+        if diff_data is None:
+            QMessageBox.warning(self, "不兼容", f"未找到 {target_name} 的差异数据")
+            return
+        if diff_data.get("patch_type") != "grp_layer_diff":
+            QMessageBox.warning(self, "不支持",
+                "「合并进当前 GRP」仅支持图层差分(grp_layer_diff)格式的 MOD。\n"
+                "请对该 MOD 使用普通「导入 MOD」。")
+            return
+
+        cur_sections = self._serialize_current_sections()
+        if cur_sections is None:
+            QMessageBox.warning(self, "错误", "无法序列化当前 GRP 数据")
+            return
+
+        blobs = grp_codec.read_blob_members(fp)
+        try:
+            new_sections, remap = grp_codec.merge_layer_diff_into_sections(
+                cur_sections, diff_data, blobs)
+        except Exception as e:
+            QMessageBox.critical(self, "合并失败", str(e))
+            return
+
+        try:
+            self._rebuild_from_sections(new_sections, keep_path=True)
+        except Exception as e:
+            QMessageBox.critical(self, "合并失败", f"重建 GRP 失败: {e}")
+            return
+        self._sync_list()
+
+        n_add = sum(1 for r in remap if r['action'] == '追加')
+        n_dup = sum(1 for r in remap if r['action'] == '去重复用')
+        n_mod = sum(1 for r in remap if r['action'] == '覆盖修改')
+        lines = []
+        for r in remap:
+            if r['action'] == '追加':
+                lines.append(f"  新地图: 期望 #{r['declared']} → 实际 #{r['actual']} (追加)")
+            elif r['action'] == '去重复用':
+                lines.append(f"  新地图: 期望 #{r['declared']} → 复用已存在 #{r['actual']} (去重)")
+        detail = "\n".join(lines) if lines else "  (无新增区段)"
+
+        self._status_lbl.setText(
+            f"已合并 MOD: {info.get('name', '')} | 追加{n_add} 去重{n_dup} 覆盖{n_mod}")
+        QMessageBox.information(self, "合并完成",
+            f"已把 MOD「{info.get('name', '')}」合并进当前 GRP:\n"
+            f"追加新区段 {n_add} 个, 去重复用 {n_dup} 个, 覆盖修改 {n_mod} 处。\n\n"
+            f"区段号重映射(改脚本请以\"实际\"号为准):\n{detail}\n\n"
+            f"提示: 若新地图被顺延到新号, 请在剧情脚本中把对应场景号改为\"实际\"号, "
+            f"并确认 scene_id 与区段索引的映射关系。")
 
     def closeEvent(self, event):
         self._stop_audio()
