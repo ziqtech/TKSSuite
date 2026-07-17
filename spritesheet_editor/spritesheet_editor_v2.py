@@ -53,6 +53,7 @@ from editor_utils.dock_components import create_dock
 from editor_utils.theme_manager import ThemeManager
 from editor_utils.version import format_title, format_about_header
 from editor_utils.window_theme import apply_godot_theme
+from editor_utils.ui_helpers import NoWheelComboBox
 
 # ── 像素格式定义 ──────────────────────────────────────────────
 PIXEL_FORMATS: dict[str, str] = {
@@ -91,12 +92,6 @@ HEADER_ROW_H = 28
 HEADER_COL_W = 36
 DRAG_THRESHOLD = 5
 DEFAULT_FPS = 12
-
-
-class NoWheelComboBox(QComboBox):
-    """禁用鼠标滚轮切换选项的 QComboBox，防止误滚改变值"""
-    def wheelEvent(self, event: QWheelEvent):
-        event.ignore()
 
 
 # ═══════════════════════════════════════════════════════════════

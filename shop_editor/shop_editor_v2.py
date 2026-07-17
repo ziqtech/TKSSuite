@@ -38,7 +38,7 @@ from PySide6.QtGui import (
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QSplitter,
     QTableWidget, QTableWidgetItem, QHeaderView, QPushButton, QLabel,
-    QLineEdit, QComboBox, QSpinBox, QRadioButton, QButtonGroup, QTextEdit,
+    QLineEdit, QSpinBox, QRadioButton, QButtonGroup, QTextEdit,
     QFileDialog, QMessageBox, QDialog, QFrame, QAbstractItemView
 )
 
@@ -54,7 +54,7 @@ from editor_utils.mod_exporter import (
 )
 from editor_utils.picker_dialogs import ItemPickerDialog
 from editor_utils.theme_manager import ThemeManager
-from editor_utils.ui_helpers import themed_messagebox
+from editor_utils.ui_helpers import themed_messagebox, NoWheelComboBox
 from editor_utils.version import format_title, format_about_header
 from editor_utils.window_theme import apply_godot_theme
 
@@ -333,7 +333,7 @@ class ShopEditorWindow(QMainWindow):
         toolbar_layout = QHBoxLayout()
 
         toolbar_layout.addWidget(QLabel("区域:"))
-        self.area_filter_combo = QComboBox()
+        self.area_filter_combo = NoWheelComboBox()
         self.area_filter_combo.addItem("全部")
         for k, v in AREA_NAMES.items():
             self.area_filter_combo.addItem(f"{k}-{v}", userData=k)
@@ -429,7 +429,7 @@ class ShopEditorWindow(QMainWindow):
 
         # Area
         edit_layout.addWidget(QLabel("区域:"))
-        self.edit_area_combo = QComboBox()
+        self.edit_area_combo = NoWheelComboBox()
         for k, v in sorted(AREA_NAMES.items()):
             self.edit_area_combo.addItem(v, userData=k)
         self.edit_area_combo.currentIndexChanged.connect(self._on_area_changed)

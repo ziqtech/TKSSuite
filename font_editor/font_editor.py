@@ -41,7 +41,7 @@ from PySide6.QtWidgets import (
 )
 
 from editor_utils.theme_manager import ThemeManager
-from editor_utils.ui_helpers import install_dialog_theme_filter, themed_messagebox
+from editor_utils.ui_helpers import install_dialog_theme_filter, themed_messagebox, NoWheelComboBox
 from editor_utils.dock_components import create_dock
 from editor_utils.app_init import install_translator, setup_app_icon
 from editor_utils.version import format_title, format_about_header
@@ -244,7 +244,7 @@ class FontEditorWindow(QMainWindow):
         opt_layout.addRow("渲染像素大小:", self._pixel_size_spin)
 
         # 回退字体 (主字体缺字时使用)
-        self._fallback_combo = QComboBox()
+        self._fallback_combo = NoWheelComboBox()
         self._fallback_combo.addItem("(不使用回退)", None)
         opt_layout.addRow("回退字体:", self._fallback_combo)
 
@@ -280,7 +280,7 @@ class FontEditorWindow(QMainWindow):
             self._ftype_checks.append(chk)
             col_layout.addWidget(chk)
 
-            combo = QComboBox()
+            combo = NoWheelComboBox()
             combo.setEnabled(False)   # 未勾选时禁用
             col_layout.addWidget(combo, 1)   # stretch=1 占满剩余空间
             self._ftype_ttf_combos.append(combo)
@@ -339,7 +339,7 @@ class FontEditorWindow(QMainWindow):
         ctrl_row = QHBoxLayout()
         ctrl_row.addWidget(QLabel("FTYPE:"))
 
-        self._preview_ftype_combo = QComboBox()
+        self._preview_ftype_combo = NoWheelComboBox()
         for i in range(8):
             self._preview_ftype_combo.addItem(f"FTYPE {i}", i)
         self._preview_ftype_combo.currentIndexChanged.connect(self._refresh_preview)

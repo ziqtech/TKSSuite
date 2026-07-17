@@ -12,7 +12,7 @@ import sys
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QIcon, QKeySequence
 from PySide6.QtWidgets import (
-    QAbstractItemView, QApplication, QCheckBox, QComboBox, QDialog,
+    QAbstractItemView, QApplication, QCheckBox, QDialog,
     QFileDialog, QFrame, QGridLayout, QHBoxLayout, QHeaderView, QLabel,
     QLineEdit, QMainWindow, QMenu, QMenuBar, QMessageBox, QPushButton,
     QScrollArea, QSplitter, QTableWidget, QTableWidgetItem, QTextEdit,
@@ -36,7 +36,7 @@ from editor_utils.theme_manager import ThemeManager
 from editor_utils.tkt_loader import load_tkt_simple
 from editor_utils.ui_helpers import (
     confirm_close, make_fake_input, themed_messagebox,
-    update_path_labels,
+    update_path_labels, NoWheelComboBox,
 )
 from editor_utils.version import format_title, format_about_header
 from editor_utils.window_theme import apply_godot_theme
@@ -185,7 +185,7 @@ class SkillPickerDialog(QDialog):
         self.search_box.textChanged.connect(self._refresh)
         search_layout.addWidget(self.search_box)
         search_layout.addWidget(QLabel("类型:"))
-        self.type_box = QComboBox()
+        self.type_box = NoWheelComboBox()
         self.type_box.addItems(["全部"] + SKILL_TYPE_VALUES)
         self.type_box.currentIndexChanged.connect(self._refresh)
         search_layout.addWidget(self.type_box)
@@ -344,7 +344,7 @@ class SkillEditorApp(QMainWindow):
 
         toolbar.addSpacing(15)
         toolbar.addWidget(QLabel("类型:"))
-        self.type_filter = QComboBox()
+        self.type_filter = NoWheelComboBox()
         self.type_filter.addItems(["全部类型"] + SKILL_TYPE_VALUES)
         self.type_filter.currentIndexChanged.connect(self._apply_filter)
         toolbar.addWidget(self.type_filter)
@@ -535,7 +535,7 @@ class SkillEditorApp(QMainWindow):
             else: btn.clicked.connect(lambda _, f=fn: self._pick_skill(f))
 
         elif ft == 'type' or ft == 'atk_type':
-            cb = QComboBox()
+            cb = NoWheelComboBox()
             if ft == 'type': cb.addItems(SKILL_TYPE_VALUES)
             else: cb.addItems(ATK_TYPE_VALUES)
             cell.addWidget(make_fake_input(combo=cb))

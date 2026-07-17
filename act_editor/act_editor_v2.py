@@ -65,7 +65,7 @@ from editor_utils.lzss import lzss_decompress_dat
 from editor_utils.dock_components import DockHeader
 from editor_utils.ui_helpers import (
     make_fake_input, update_path_labels, confirm_close,
-    themed_messagebox,
+    themed_messagebox, NoWheelComboBox,
 )
 from editor_utils.mod_exporter import (
     compute_crc32, generate_mod_json, pack_tksmod, ModMetadataDialog, safe_mod_filename,
@@ -2021,9 +2021,8 @@ class ActEditorV2(QMainWindow):
 
     @staticmethod
     def _no_wheel_combo(items=None):
-        """创建禁用滚轮切换的 QComboBox (防止滚动面板时误改选项)"""
-        combo = QComboBox()
-        combo.wheelEvent = lambda e: e.ignore()
+        """创建禁用滚轮切换的下拉框 (防止滚动面板时误改选项)"""
+        combo = NoWheelComboBox()
         if items:
             combo.addItems(items)
         return combo

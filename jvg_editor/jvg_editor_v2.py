@@ -28,7 +28,7 @@ from PySide6.QtGui import (
 )
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QLabel, QPushButton, QComboBox, QSpinBox, QCheckBox, QFileDialog,
+    QLabel, QPushButton, QSpinBox, QCheckBox, QFileDialog,
     QMessageBox, QInputDialog, QScrollArea, QFrame, QSplitter,
     QMenuBar, QMenu, QStatusBar, QToolBar, QGroupBox, QSizePolicy,
     QListWidget, QListWidgetItem, QAbstractItemView, QDialog,

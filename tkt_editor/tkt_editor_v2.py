@@ -20,7 +20,7 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QMenuBar, QMenu, QSplitter, QTableWidget, QTableWidgetItem,
     QAbstractItemView, QHeaderView, QLabel, QLineEdit, QPushButton,
-    QCheckBox, QPlainTextEdit, QTextEdit, QComboBox,
+    QCheckBox, QPlainTextEdit, QTextEdit,
     QMessageBox, QFileDialog, QColorDialog, QDialog, QGridLayout,
     QFrame, QStackedWidget, QScrollArea, QTabWidget, QListWidget,
     QInputDialog, QToolButton
@@ -42,7 +42,7 @@ except ImportError:
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from editor_utils.theme_manager import ThemeManager
 from editor_utils.dock_components import DockHeader, create_dock
-from editor_utils.ui_helpers import update_path_labels, confirm_close, themed_messagebox
+from editor_utils.ui_helpers import update_path_labels, confirm_close, themed_messagebox, NoWheelComboBox
 from editor_utils.tkt_loader import load_tkt_full as _load_tkt_full
 from editor_utils.mod_exporter import (
     diff_text_entries, compute_crc32, generate_mod_json,
@@ -1930,7 +1930,7 @@ class TktEditor(QMainWindow):
         toolbar = QHBoxLayout()
         toolbar.setContentsMargins(0, 5, 0, 5)
 
-        cb_freset = QComboBox()
+        cb_freset = NoWheelComboBox()
         cb_freset.addItems(["格式控制", "1-全部恢复", "2-恢复颜色", "3-重新初始化", "4-恢复字体"])
         cb_freset.currentIndexChanged.connect(lambda idx, cb=cb_freset: self._on_combo_freset(idx, cb))
         toolbar.addWidget(cb_freset)
@@ -1949,12 +1949,12 @@ class TktEditor(QMainWindow):
         toolbar.addWidget(btn_more_color)
 
         toolbar.addSpacing(10)
-        cb_fsize = QComboBox()
+        cb_fsize = NoWheelComboBox()
         cb_fsize.addItems(["字号", "12", "16", "24", "32", "48"])
         cb_fsize.currentIndexChanged.connect(lambda idx, cb=cb_fsize: self._on_combo_fsize(idx, cb))
         toolbar.addWidget(cb_fsize)
 
-        cb_ftype = QComboBox()
+        cb_ftype = NoWheelComboBox()
         cb_ftype.addItems(["字体", "1-字体1", "2-字体2", "3-字体3", "4-字体4", "5-字体5", "6-字体6", "7-字体7", "8-字体8"])
         cb_ftype.currentIndexChanged.connect(lambda idx, cb=cb_ftype: self._on_combo_ftype(idx, cb))
         toolbar.addWidget(cb_ftype)

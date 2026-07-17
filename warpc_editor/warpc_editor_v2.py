@@ -58,7 +58,7 @@ from functools import partial
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QSplitter, QTableWidget, QTableWidgetItem, QHeaderView,
-    QLineEdit, QComboBox, QCheckBox, QPushButton, QLabel,
+    QLineEdit, QCheckBox, QPushButton, QLabel,
     QScrollArea, QDialog, QFileDialog, QMessageBox, QTextEdit,
     QFrame, QGridLayout, QAbstractItemView, QMenuBar, QTabWidget,
     QSpinBox, QSizePolicy, QMenu,
@@ -70,7 +70,7 @@ from editor_utils.theme_manager import ThemeManager
 from editor_utils.dock_components import DockHeader
 from editor_utils.picker_dialogs import TktPickerDialog, StatusPickerDialog, STATUS_NAMES, ItemPickerDialog
 from editor_utils.jvg_loader import load_mu_sprites, get_sprite_pixmap
-from editor_utils.ui_helpers import make_fake_input, update_path_labels, confirm_close, resolve_config_path, themed_messagebox
+from editor_utils.ui_helpers import make_fake_input, update_path_labels, confirm_close, resolve_config_path, themed_messagebox, NoWheelComboBox
 from editor_utils.version import format_title, format_about_header
 from editor_utils.lzss import lzss_decompress_dat, lzss_compress_dat, lzss_decompress_save, lzss_compress_save
 from editor_utils.tkt_loader import load_tkt_simple
@@ -462,15 +462,6 @@ def set_field(rec, byte_off, val):
 # 尾部未分析区域
 TAIL_START = 260  # int16 offset (技能学习状态结束于 [259])
 TAIL_END = 527
-
-# ═══════════════════════════════════════════════════════════════
-# Dock 面板组件 (对齐 kon_editor_v2)
-# ═══════════════════════════════════════════════════════════════
-
-class NoWheelComboBox(QComboBox):
-    """禁用鼠标滚轮切换值的下拉框，避免在滚动区域中误触"""
-    def wheelEvent(self, event):
-        event.ignore()
 
 # ═══════════════════════════════════════════════════════════════
 # 弹窗选择器

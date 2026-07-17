@@ -10,12 +10,12 @@ import json
 from PySide6.QtCore import Qt, QSize
 from PySide6.QtGui import QIcon, QImage, QPixmap
 from PySide6.QtWidgets import (
-    QAbstractItemView, QCheckBox, QComboBox, QDialog, QHBoxLayout,
+    QAbstractItemView, QCheckBox, QDialog, QHBoxLayout,
     QHeaderView, QLabel, QLineEdit, QPushButton, QScrollArea,
     QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
-from editor_utils.ui_helpers import resolve_config_path
+from editor_utils.ui_helpers import resolve_config_path, NoWheelComboBox
 
 
 # 31 种状态名称 (Maker UI 状态列表; bit 0..30) — 供状态弹窗/标签渲染共用
@@ -336,13 +336,13 @@ class ItemPickerDialog(QDialog):
         ff = QHBoxLayout()
         if not self._simple_mode:
             ff.addWidget(QLabel("页面号:"))
-            self._page_cb = QComboBox()
+            self._page_cb = NoWheelComboBox()
             self._page_cb.addItems(["全部页面"] + _PAGE_VALUES)
             self._page_cb.currentIndexChanged.connect(self._on_page_changed)
             ff.addWidget(self._page_cb)
             ff.addSpacing(6)
             ff.addWidget(QLabel("权限:"))
-            self._perm_cb = QComboBox()
+            self._perm_cb = NoWheelComboBox()
             self._perm_cb.addItems(["全部权限"])
             self._perm_cb.currentIndexChanged.connect(self._on_perm_changed)
             ff.addWidget(self._perm_cb)

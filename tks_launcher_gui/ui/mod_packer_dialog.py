@@ -4,7 +4,7 @@ import os
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
-    QAbstractItemView, QComboBox, QDialog, QFileDialog, QGridLayout,
+    QAbstractItemView, QDialog, QFileDialog, QGridLayout,
     QGroupBox, QHBoxLayout, QLabel, QLineEdit, QListWidget,
     QListWidgetItem, QMessageBox, QProgressBar, QPushButton, QSpinBox,
     QTextEdit, QVBoxLayout,
@@ -15,6 +15,7 @@ from core.mod_packer import (
     suggest_output_name,
 )
 from editor_utils.mod_exporter import generate_short_uuid
+from editor_utils.ui_helpers import NoWheelComboBox
 
 
 class ModPackerDialog(QDialog):
@@ -108,7 +109,7 @@ class ModPackerDialog(QDialog):
 
         row += 1
         grid.addWidget(QLabel("类型:"), row, 0)
-        self.combo_type = QComboBox()
+        self.combo_type = NoWheelComboBox()
         self.combo_type.addItems(["mixed", "data", "story", "visual"])
         grid.addWidget(self.combo_type, row, 1)
 

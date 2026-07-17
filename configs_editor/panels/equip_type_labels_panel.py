@@ -4,12 +4,13 @@ EquipTypeLabelsPanel — 装备使用权限位值→中文标签 配置面板
 """
 from functools import partial
 from PySide6.QtWidgets import (
-    QVBoxLayout, QHBoxLayout, QComboBox, QTableWidget, QTableWidgetItem,
+    QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem,
     QPushButton, QToolButton, QLabel, QWidget, QHeaderView, QAbstractItemView,
     QStyledItemDelegate, QMessageBox
 )
 from PySide6.QtCore import Qt
 
+from editor_utils.ui_helpers import NoWheelComboBox
 from .base_panel import ConfigPanelBase
 
 # 页面定义: (JSON键, 显示名)
@@ -26,7 +27,7 @@ class BitValueComboDelegate(QStyledItemDelegate):
     """位值列使用 QComboBox 下拉选择的委托"""
 
     def createEditor(self, parent, option, index):
-        combo = QComboBox(parent)
+        combo = NoWheelComboBox(parent)
         for v in ALLOWED_BIT_VALUES:
             combo.addItem(str(v), v)
         return combo
@@ -61,7 +62,7 @@ class EquipTypeLabelsPanel(ConfigPanelBase):
         # ── 页面选择 ──
         page_row = QHBoxLayout()
         page_row.addWidget(QLabel("页面:"))
-        self._page_combo = QComboBox()
+        self._page_combo = NoWheelComboBox()
         for key, name in PAGES:
             self._page_combo.addItem(name, key)
         self._page_combo.currentIndexChanged.connect(self._on_page_changed)

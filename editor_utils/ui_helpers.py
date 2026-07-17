@@ -18,6 +18,20 @@ COLOR_MISSING_DARK = "#e27d60"
 COLOR_MISSING_LIGHT = "#c93b16"
 
 
+class NoWheelComboBox(QComboBox):
+    """禁用鼠标滚轮切换值的下拉框。
+
+    普通 QComboBox 在 QScrollArea 等可滚动容器中, 鼠标滚轮悬停即会误触
+    切换当前选项。重写 wheelEvent 调用 event.ignore(), 使滚轮事件向上冒泡
+    交给父级滚动区域 (滚动页面), 而非改变当前选中项。
+
+    所有编辑器统一使用本类替代 QComboBox, 以获得一致的滚轮行为。
+    """
+
+    def wheelEvent(self, event):
+        event.ignore()
+
+
 def update_path_labels(labels_config, is_dark):
     """
     批量更新路径标签的文本和颜色

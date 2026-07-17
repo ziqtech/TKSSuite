@@ -56,7 +56,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from editor_utils.theme_manager import ThemeManager
 from editor_utils.dock_components import DockHeader, create_dock
 from editor_utils.lzss import lzss_decompress_dat as lzss_decompress, lzss_decompress_save, lzss_compress_save
-from editor_utils.ui_helpers import confirm_close, themed_messagebox
+from editor_utils.ui_helpers import confirm_close, themed_messagebox, NoWheelComboBox
 from editor_utils.version import format_title, format_about_header
 from editor_utils.mod_exporter import (
     diff_records, diff_text_defines, compute_crc32, generate_mod_json,
@@ -2429,7 +2429,7 @@ class InspectorPanelBuilder:
         lbl = QLabel("[00] 实体类型")
         lbl.setToolTip("[00] 实体类型: 5=脚本 10=出入传送 15=触发区 16=战斗区 20=事件 110=机关 200=NPC。源码: sub_405CBC")
         lbl.setProperty("class", "PropLabel")
-        cb = QComboBox()
+        cb = NoWheelComboBox()
         cb.addItems([f"{k}-{v}" for k, v in sorted(ENTITY_TYPES.items())])
         tvars['type'] = cb
         wrapper = QFrame()
@@ -2566,7 +2566,7 @@ class InspectorPanelBuilder:
 
             # Check if this needs a combobox
             if key == 'anim_set':
-                cb = QComboBox()
+                cb = NoWheelComboBox()
                 cb.addItems([f"{k}-{v}" for k, v in ANIM_SETS.items()])
                 tvars[key] = cb
                 wrapper = QFrame()
@@ -2577,7 +2577,7 @@ class InspectorPanelBuilder:
                 # Sync combobox to raw entry
                 cb.currentIndexChanged.connect(partial(self._sync_type_cb_to_raw, tvars, di, cb))
             elif key == 'blend_mode':
-                cb = QComboBox()
+                cb = NoWheelComboBox()
                 cb.addItems(["0-正常", "1-染色", "2-加法发光", "3-减法压暗", "4-亮度alpha", "5-水平翻转"])
                 tvars[key] = cb
                 wrapper = QFrame()
@@ -2587,7 +2587,7 @@ class InspectorPanelBuilder:
                 wl.addWidget(cb)
                 cb.currentIndexChanged.connect(partial(self._sync_type_cb_to_raw, tvars, di, cb))
             elif key == 'shadow_frame':
-                cb = QComboBox()
+                cb = NoWheelComboBox()
                 cb.addItems(["0-无阴影", "1-小阴影(39×23)", "2-大阴影(65×33)"])
                 tvars[key] = cb
                 wrapper = QFrame()
@@ -2597,7 +2597,7 @@ class InspectorPanelBuilder:
                 wl.addWidget(cb)
                 cb.currentIndexChanged.connect(partial(self._sync_type_cb_to_raw, tvars, di, cb))
             elif key == 'cursor_id':
-                cb = QComboBox()
+                cb = NoWheelComboBox()
                 cb.addItems([f"{k}-{v}" for k, v in sorted(_CURSOR_BLOCKS.items())])
                 tvars[key] = cb
                 wrapper = QFrame()
@@ -3020,7 +3020,7 @@ class MatEditorApp(QMainWindow):
         sep0.setFrameShadow(QFrame.Sunken)
         filter_row.addWidget(sep0)
         filter_row.addWidget(QLabel("类型:"))
-        self.filter_type = QComboBox()
+        self.filter_type = NoWheelComboBox()
         self.filter_type.addItems(["全部"] + [f"{k}-{v}" for k, v in sorted(ENTITY_TYPES.items()) if k != 0])
         self.filter_type.currentIndexChanged.connect(self._apply_filter)
         self.filter_type.setFixedWidth(120)
@@ -3067,13 +3067,13 @@ class MatEditorApp(QMainWindow):
         # Top toolbar row 1
         top = QHBoxLayout()
         top.addWidget(QLabel("场景:"))
-        self._vis_scene_combo = QComboBox()
+        self._vis_scene_combo = NoWheelComboBox()
         self._vis_scene_combo.setMinimumWidth(200)
         self._vis_scene_combo.currentIndexChanged.connect(self._on_vis_combo_select)
         top.addWidget(self._vis_scene_combo)
         top.addSpacing(10)
         top.addWidget(QLabel("显示:"))
-        self._display_mode_combo = QComboBox()
+        self._display_mode_combo = NoWheelComboBox()
         self._display_mode_combo.addItems(list(DISPLAY_MODES.keys()))
         self._display_mode_combo.currentIndexChanged.connect(self._canvas._on_display_mode_change)
         top.addWidget(self._display_mode_combo)
@@ -3903,7 +3903,7 @@ class MatEditorApp(QMainWindow):
         dl = QVBoxLayout(dlg)
 
         dl.addWidget(QLabel("实体类型:"))
-        type_cb = QComboBox()
+        type_cb = NoWheelComboBox()
         type_cb.addItems([f"{k}-{v}" for k, v in sorted(ENTITY_TYPES.items()) if k != 0])
         type_cb.setCurrentIndex(6)  # 200-NPC角色
         dl.addWidget(type_cb)
