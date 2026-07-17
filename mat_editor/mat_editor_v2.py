@@ -103,6 +103,8 @@ except ImportError:
 # ============================================================
 _JVG_CACHE = {}  # filepath → JVGFile
 _SPRITE_CACHE = {}  # filepath, global_idx → PIL.Image
+# [28] 对话颜色字段的 dword 索引 (IDX_DIALOG_COLOR='d28' → 28), 供新增实体默认值判断 (§需求4)
+_DIALOG_COLOR_IDX = int(IDX_DIALOG_COLOR[1:])
 
 # ============================================================
 # TKT 文本颜色渲染 (依据 tkt_editor.py / sub_44E49C)
@@ -1879,7 +1881,12 @@ class SceneCanvasView(QGraphicsView):
         self._vis_selected = None
         self._vis_drag = None
         self._vis_edit_mode = False
-        self._undo_pos = None
+        # 撤销栈: [(描述, [(实体index, 记录快照dict), ...]), ...]
+        # 覆盖 拖动移动 / 新增 / 复制 / 删除 四类操作, Ctrl+Z 逐步回退 (§需求3)
+        self._undo_stack = []
+        self._undo_limit = 100
+        # 拖动前的完整记录快照, 在 mouseReleaseEvent 判定确有位移后才压栈
+        self._drag_undo_snapshot = None
         self._vis_display_mode = "游戏默认"
         self._vis_anim_playing = False
         self._vis_anim_timer = None
@@ -2110,6 +2117,7 @@ class SceneCanvasView(QGraphicsView):
         cx, cy = int(scene_pos.x()), int(scene_pos.y())
         self._vis_selected = None
         self._vis_drag = None
+        self._drag_undo_snapshot = None
         found = None
         for idx, (x1, y1, x2, y2) in self._vis_hit_regions.items():
             if x1 <= cx <= x2 and y1 <= cy <= y2:
@@ -2121,8 +2129,9 @@ class SceneCanvasView(QGraphicsView):
             rec = self._data.records[found]
             tname = ENTITY_TYPES.get(rec[IDX_TYPE], '?')
             pos_x, pos_y = rec[IDX_POS_X], rec[IDX_POS_Y]
-            self._undo_pos = (found, pos_x, pos_y)
             if self._vis_edit_mode:
+                # 记录拖动前完整快照, 供 mouseReleaseEvent 判定确有位移后压入撤销栈 (§需求3)
+                self._drag_undo_snapshot = (found, dict(rec))
                 self._editor._vis_info_label.setText(f"选中: #{found} [{tname}] 坐标({pos_x},{pos_y}) — 拖拽可移动")
                 self._vis_drag = (found, cx, cy, pos_x, pos_y)
             else:
@@ -2161,6 +2170,13 @@ class SceneCanvasView(QGraphicsView):
         if self._vis_drag:
             eidx = self._vis_drag[0]
             rec = self._data.records[eidx]
+            # 拖动结束: 若坐标较拖动前确有变化, 将拖动前快照压入撤销栈 (§需求3)
+            if self._drag_undo_snapshot is not None:
+                snap_idx, snap_rec = self._drag_undo_snapshot
+                if snap_idx == eidx and (snap_rec.get('d10') != rec['d10']
+                                         or snap_rec.get('d11') != rec['d11']):
+                    self._append_undo(f"移动 #{eidx}", [(eidx, snap_rec)])
+                self._drag_undo_snapshot = None
             pos = event.position().toPoint()
             scene_pos = self.mapToScene(pos)
             cx, cy = int(scene_pos.x()), int(scene_pos.y())
@@ -2168,6 +2184,54 @@ class SceneCanvasView(QGraphicsView):
             self._vis_drag = (eidx, cx, cy, px, py)
             if hasattr(self, '_current_param_idx') and self._editor._current_param_idx == eidx:
                 self._editor._show_record(rec)
+
+    def contextMenuEvent(self, event):
+        """预览区右键菜单: 命中实体时提供 复制/删除 (§需求2); 空白处提供 在此新增实体,
+        落点为鼠标所在场景坐标 (§右键新增)。命中判定用 viewport→scene 坐标, 兼容各平台事件顺序。"""
+        vp_pos = self.viewport().mapFromGlobal(event.globalPos())
+        scene_pos = self.mapToScene(vp_pos)
+        cx, cy = int(scene_pos.x()), int(scene_pos.y())
+        found = None
+        for idx, (x1, y1, x2, y2) in self._vis_hit_regions.items():
+            if x1 <= cx <= x2 and y1 <= cy <= y2:
+                found = idx
+        if found is None:
+            # 空白处右键: 在鼠标所在坐标处新增实体 (§右键新增)
+            if not self._data.records:
+                return
+            nx, ny = max(0, cx), max(0, cy)
+            menu = QMenu(self)
+            act_new = menu.addAction(f"➕ 在此新增实体 ({nx},{ny})")
+            chosen = menu.exec(event.globalPos())
+            if chosen == act_new:
+                self._editor._new_record(pos=(nx, ny))
+            return
+        # 右键即选中该实体, 与左键点击保持一致的选中反馈
+        if self._vis_selected != found:
+            self._vis_selected = found
+            self._editor._sync_entity_list_select(found)
+            self._editor._current_param_idx = found
+            self._editor._show_record(self._data.records[found])
+            self._vis_redraw()
+        menu = QMenu(self)
+        act_copy = menu.addAction("📋 复制实体 (到旁边)")
+        act_del = menu.addAction("🗑️ 删除实体")
+        chosen = menu.exec(event.globalPos())
+        if chosen == act_copy:
+            self._editor._duplicate_entity(found, offset=True)
+        elif chosen == act_del:
+            self._editor._delete_entity(found, confirm=False)
+
+    def _append_undo(self, description, snap_list):
+        """将现成快照列表压入撤销栈 (拖动路径已在按下时抓取快照, 直接沿用)。"""
+        self._undo_stack.append((description, snap_list))
+        if len(self._undo_stack) > self._undo_limit:
+            self._undo_stack.pop(0)
+
+    def _push_undo(self, description, indices):
+        """抓取 indices 当前记录的完整快照并压栈 (新增/复制/删除在改数据前调用)。"""
+        snap = [(i, dict(self._data.records[i])) for i in indices]
+        self._append_undo(description, snap)
 
     def wheelEvent(self, event):
         delta = event.angleDelta().y()
@@ -2282,20 +2346,28 @@ class SceneCanvasView(QGraphicsView):
             self._editor._vis_info_label.setText("编辑模式已锁定 — 拖动已禁用")
 
     def _vis_canvas_undo(self):
-        if self._undo_pos is None:
+        """撤销上一步操作 (Ctrl+Z / 工具栏按钮 / 编辑菜单) (§需求3)。
+        从撤销栈弹出一项, 用快照整体恢复受影响记录, 覆盖 拖动/新增/复制/删除。"""
+        if not self._undo_stack:
+            self._editor._vis_info_label.setText("没有可撤销的操作")
             return
-        eidx, old_x, old_y = self._undo_pos
-        rec = self._data.records[eidx]
-        cur_d10, cur_d11 = rec['d10'], rec['d11']
-        rec['d10'], rec['d11'] = old_x, old_y
-        rec['d18'] += old_x - cur_d10
-        rec['d19'] += old_y - cur_d11
+        description, snap = self._undo_stack.pop()
+        cur = self._editor._current_param_idx
+        touch_cur = False
+        for i, snapshot in snap:
+            rec = self._data.records[i]
+            rec.clear()
+            rec.update(snapshot)
+            if i == cur:
+                touch_cur = True
         self._data._dirty = True
-        self._editor._vis_info_label.setText(f"已撤销: #{eidx} → ({old_x},{old_y})")
+        # 恢复的实体可能已不属于当前场景 (如撤销"新增到他场景"), 刷新列表与画布即可
+        self._editor._apply_filter()
+        self._editor._refresh_scene_counts()
         self._vis_redraw()
-        self._undo_pos = None
-        if hasattr(self, '_current_param_idx') and self._editor._current_param_idx == eidx:
-            self._editor._show_record(rec)
+        if touch_cur and cur is not None:
+            self._editor._show_record(self._data.records[cur])
+        self._editor._vis_info_label.setText(f"已撤销: {description}")
 
 
 class InspectorPanelBuilder:
@@ -2883,6 +2955,8 @@ class MatEditorApp(QMainWindow):
         fm.addAction("退出", self.close)
 
         em = menu_bar.addMenu("编辑(E)")
+        em.addAction("撤销", QKeySequence("Ctrl+Z"), self._undo)
+        em.addSeparator()
         em.addAction("新增记录", QKeySequence("Ctrl+N"), self._new_record)
         em.addAction("复制当前记录", self._copy_record)
         em.addAction("清空当前记录", self._clear_current)
@@ -3100,6 +3174,12 @@ class MatEditorApp(QMainWindow):
         self._vis_edit_cb = QCheckBox("允许拖动")
         self._vis_edit_cb.stateChanged.connect(self._canvas._on_edit_mode_change)
         top.addWidget(self._vis_edit_cb)
+        btn_undo = QPushButton("↩️ 撤销")
+        btn_undo.setFixedWidth(72)
+        btn_undo.setProperty("class", "CompactBtn")
+        btn_undo.setToolTip("撤销上一步操作 (Ctrl+Z): 移动 / 新增 / 复制 / 删除")
+        btn_undo.clicked.connect(self._undo)
+        top.addWidget(btn_undo)
         top.addStretch()
         btn_theme = QPushButton("🌓 切换主题")
         btn_theme.clicked.connect(self._toggle_theme)
@@ -3545,6 +3625,8 @@ class MatEditorApp(QMainWindow):
         if not sel:
             return
         sid = int(sel[0].text(0))
+        if sid != self._canvas._vis_scene_id:
+            self._canvas._undo_stack.clear()  # 切换场景后撤销栈失效, 清空避免跨场景误撤销
         self._canvas._vis_scene_id = sid
         # Sync combo
         for i in range(self._vis_scene_combo.count()):
@@ -3561,6 +3643,8 @@ class MatEditorApp(QMainWindow):
             sid = int(val.split(':')[0])
         except ValueError:
             return
+        if sid != self._canvas._vis_scene_id:
+            self._canvas._undo_stack.clear()  # 切换场景后撤销栈失效, 清空避免跨场景误撤销
         self._canvas._vis_scene_id = sid
         self._canvas._vis_stop_anim()
         self._vis_load_scene()
@@ -3884,7 +3968,31 @@ class MatEditorApp(QMainWindow):
         self._show_record(self._data.records[idx])
 
     # =========== 新增/复制/清空 ===========
-    def _new_record(self):
+    def _compute_new_entity_center(self, sel_scene):
+        """计算新增实体的落点坐标 (§需求1)。
+        新增到当前预览场景时, 返回画布可视区中心对应的场景坐标 (clamp 到场景范围内);
+        否则返回 None, 表示该场景未在预览、无可视中心可用, 由调用方回退到历史默认坐标。"""
+        if sel_scene != self._canvas._vis_scene_id:
+            return None
+        vp = self._canvas.viewport()
+        if vp.width() <= 0 or vp.height() <= 0:
+            return None
+        center = self._canvas.mapToScene(vp.rect().center())
+        cx, cy = int(center.x()), int(center.y())
+        rect = self._canvas._vis_gscene.sceneRect()
+        if rect.width() > 0 and rect.height() > 0:
+            cx = min(max(cx, 0), int(rect.width()))
+            cy = min(max(cy, 0), int(rect.height()))
+        else:
+            cx = max(cx, 0)
+            cy = max(cy, 0)
+        return cx, cy
+
+    def _new_record(self, pos=None):
+        # pos: 右键空白处新增时的鼠标场景坐标 (x, y); 菜单/按钮经 Qt 信号可能误传 bool,
+        # 故此处校验, 非法值一律视为 None (回退到可视区中心新增)
+        if not isinstance(pos, (tuple, list)) or len(pos) != 2:
+            pos = None
         if not self._data.records:
             return
         empty_idx = None
@@ -3898,7 +4006,7 @@ class MatEditorApp(QMainWindow):
 
         # Type/scene selection dialog
         dlg = QDialog(self)
-        dlg.setWindowTitle("新增实体")
+        dlg.setWindowTitle(f"新增实体 (落点 {int(pos[0])},{int(pos[1])})" if pos is not None else "新增实体")
         dlg.resize(400, 200)
         dl = QVBoxLayout(dlg)
 
@@ -3947,6 +4055,9 @@ class MatEditorApp(QMainWindow):
         except ValueError:
             sel_scene = self._canvas._vis_scene_id
 
+        # 撤销: 记录目标空槽的原始 (空) 状态, 供 Ctrl+Z 回退新增 (§需求3)
+        self._canvas._push_undo(f"新增 #{empty_idx}", [empty_idx])
+
         rec = self._data.records[empty_idx]
         for di in range(DWORD_COUNT):
             rec[f'd{di}'] = 0
@@ -3958,12 +4069,24 @@ class MatEditorApp(QMainWindow):
         rec['d44'] = -1     # 当前DefUnit#: -1=未遍历
         rec['d8'] = 3 if sel_type == 10 else 0
         rec['_has_data'] = True
-        rec['d18'] = 400
-        rec['d19'] = 384
         rec['d20'] = 30 if sel_type == 110 else 40
         rec['d21'] = 30 if sel_type == 110 else 24
-        rec['d10'] = rec['d18'] + rec['d20'] // 2
-        rec['d11'] = rec['d19'] + rec['d21'] // 2
+        # 落点: 右键空白处新增落到鼠标坐标; 否则新增到当前预览场景时放到可视区正中心 (§需求1/右键新增)
+        if pos is not None and sel_scene == self._canvas._vis_scene_id:
+            center = (max(0, int(pos[0])), max(0, int(pos[1])))
+        else:
+            center = self._compute_new_entity_center(sel_scene)
+        if center is None:
+            rec['d18'] = 400
+            rec['d19'] = 384
+            rec['d10'] = rec['d18'] + rec['d20'] // 2
+            rec['d11'] = rec['d19'] + rec['d21'] // 2
+        else:
+            cx, cy = center
+            rec['d10'] = cx
+            rec['d11'] = cy
+            rec['d18'] = max(0, cx - rec['d20'] // 2)
+            rec['d19'] = max(0, cy - rec['d21'] // 2)
         if sel_type in (20, 200):
             rec['d9'] = 1
             rec['d55'] = 1
@@ -3974,9 +4097,13 @@ class MatEditorApp(QMainWindow):
                 rec['d13'] = 4
         _d15_defaults = {200: 64, 20: 64, 10: 0, 16: 300, 110: 80, 15: 64, 5: 0}
         rec['d15'] = _d15_defaults.get(sel_type, 64)
+        # 对话颜色: 若该类型在属性面板显示 [28] 对话颜色字段, 给默认色号 16 (§需求4)
+        if _DIALOG_COLOR_IDX not in TYPE_SKIP_DWORDS.get(sel_type, set()):
+            rec[IDX_DIALOG_COLOR] = 16
 
         self._data._dirty = True
         self._apply_filter()
+        self._refresh_scene_counts()
         for i in range(self.entity_tree.topLevelItemCount()):
             item = self.entity_tree.topLevelItem(i)
             if item and int(item.text(0)) == empty_idx:
@@ -3985,7 +4112,80 @@ class MatEditorApp(QMainWindow):
                 self._show_record(rec)
                 break
         if sel_scene == self._canvas._vis_scene_id:
+            self._canvas._vis_selected = empty_idx
             self._canvas._vis_redraw()
+
+    def _find_empty_slot(self):
+        """返回首个空槽的 index; 无空槽返回 None。"""
+        for rec in self._data.records:
+            if is_empty(rec):
+                return rec['index']
+        return None
+
+    def _duplicate_entity(self, src_idx, offset=False):
+        """复制 src_idx 实体到首个空槽 (§需求2)。
+        offset=True 时副本坐标右下偏移一点, 避免与源实体完全重叠 (右键复制用)。
+        成功返回新实体 index, 失败返回 None。全过程支持撤销。"""
+        if not (0 <= src_idx < len(self._data.records)):
+            return None
+        src = self._data.records[src_idx]
+        empty_idx = self._find_empty_slot()
+        if empty_idx is None:
+            QMessageBox.information(self, "无空槽", f"所有{REC_COUNT}条记录均已占用")
+            return None
+        # 撤销: 记录目标空槽的原始 (空) 状态
+        self._canvas._push_undo(f"复制 → #{empty_idx}", [empty_idx])
+        dst = self._data.records[empty_idx]
+        for di in range(DWORD_COUNT):
+            dst[f'd{di}'] = src[f'd{di}']
+        dst['index'] = empty_idx
+        dst['_has_data'] = True
+        if offset:
+            OFF = 24  # "旁边一点" 的偏移像素, 右下方向
+            dst['d10'] += OFF
+            dst['d11'] += OFF
+            dst['d18'] += OFF
+            dst['d19'] += OFF
+        self._data._dirty = True
+        self._apply_filter()
+        self._refresh_scene_counts()
+        self._sync_entity_list_select(empty_idx)
+        self._current_param_idx = empty_idx
+        self._show_record(dst)
+        if dst['d1'] == self._canvas._vis_scene_id:
+            self._canvas._vis_selected = empty_idx
+            self._canvas._vis_redraw()
+        self._vis_info_label.setText(f"已复制: #{src_idx} → #{empty_idx}")
+        return empty_idx
+
+    def _delete_entity(self, idx, confirm=False):
+        """删除 (清空) 指定实体 (§需求2)。confirm=True 时弹确认框 (菜单/工具栏),
+        右键“删除”直接删 (confirm=False)。支持撤销。"""
+        if not (0 <= idx < len(self._data.records)):
+            return
+        if confirm:
+            if QMessageBox.question(self, "确认", f"清空实体 #{idx}? (type 设为 0)",
+                                    QMessageBox.Ok | QMessageBox.Cancel) != QMessageBox.Ok:
+                return
+        # 撤销: 记录删除前的完整数据
+        self._canvas._push_undo(f"删除 #{idx}", [idx])
+        rec = self._data.records[idx]
+        for di in range(DWORD_COUNT):
+            rec[f'd{di}'] = 0
+        rec['_has_data'] = False
+        self._data._dirty = True
+        self._apply_filter()
+        self._refresh_scene_counts()
+        if self._current_param_idx == idx:
+            self._show_record(rec)
+        if self._canvas._vis_selected == idx:
+            self._canvas._vis_selected = None
+        self._canvas._vis_redraw()
+        self._vis_info_label.setText(f"已删除: #{idx}")
+
+    def _undo(self):
+        """撤销上一步实体操作 (Ctrl+Z / 编辑菜单 / 画布按钮), 委托画布撤销栈 (§需求3)。"""
+        self._canvas._vis_canvas_undo()
 
     def _copy_record(self):
         sel = self.entity_tree.selectedItems()
@@ -3993,42 +4193,14 @@ class MatEditorApp(QMainWindow):
             QMessageBox.information(self, "提示", "请先选择记录")
             return
         idx = int(sel[0].text(0))
-        src = self._data.records[idx]
-        empty_idx = None
-        for rec in self._data.records:
-            if is_empty(rec):
-                empty_idx = rec['index']
-                break
-        if empty_idx is None:
-            QMessageBox.information(self, "无空槽", f"所有{REC_COUNT}条记录均已占用")
-            return
-        dst = self._data.records[empty_idx]
-        for di in range(DWORD_COUNT):
-            dst[f'd{di}'] = src[f'd{di}']
-        dst['index'] = empty_idx
-        dst['_has_data'] = True
-        self._data._dirty = True
-        self._apply_filter()
-        for i in range(self.entity_tree.topLevelItemCount()):
-            item = self.entity_tree.topLevelItem(i)
-            if item and int(item.text(0)) == empty_idx:
-                self.entity_tree.setCurrentItem(item)
-                self._show_record(dst)
-                break
+        self._duplicate_entity(idx, offset=False)
 
     def _clear_current(self):
         sel = self.entity_tree.selectedItems()
         if not sel:
             return
         idx = int(sel[0].text(0))
-        if QMessageBox.question(self, "确认", f"清空实体 #{idx}? (type 设为 0)", QMessageBox.Ok | QMessageBox.Cancel) != QMessageBox.Ok:
-            return
-        for di in range(DWORD_COUNT):
-            self._data.records[idx][f'd{di}'] = 0
-        self._data.records[idx]['_has_data'] = False
-        self._data._dirty = True
-        self._apply_filter()
-        self._show_record(self._data.records[idx])
+        self._delete_entity(idx, confirm=True)
 
     def _goto_empty(self):
         for rec in self._data.records:
@@ -4269,6 +4441,7 @@ class MatEditorApp(QMainWindow):
         result = self._loader_thread.result_data
 
         self._data.load_from_result(result)
+        self._canvas._undo_stack.clear()  # 载入新数据后旧撤销栈失效, 清空避免误恢复
 
         # 保存原始快照用于 MOD 导出
         # 注意: defunit_recs 是跳过空记录的紧凑列表, 必须用文件位置对齐的完整列表,
@@ -4379,6 +4552,27 @@ class MatEditorApp(QMainWindow):
         self._vis_scene_combo.blockSignals(True)
         self._vis_scene_combo.clear()
         self._vis_scene_combo.addItems(combo_vals)
+        self._vis_scene_combo.blockSignals(False)
+
+    def _refresh_scene_counts(self):
+        """重建场景列表/下拉框以刷新各场景「实体」计数, 并恢复当前场景的选中态。
+        新增/复制/删除/撤销实体后调用 — 恢复选中时阻断信号, 避免误触发场景切换
+        (进而清空撤销栈)。"""
+        cur_sid = self._canvas._vis_scene_id
+        self._vis_populate_scenes()
+        self.scene_tree.blockSignals(True)
+        for i in range(self.scene_tree.topLevelItemCount()):
+            item = self.scene_tree.topLevelItem(i)
+            if item and int(item.text(0)) == cur_sid:
+                self.scene_tree.setCurrentItem(item)
+                self.scene_tree.scrollToItem(item)
+                break
+        self.scene_tree.blockSignals(False)
+        self._vis_scene_combo.blockSignals(True)
+        for i in range(self._vis_scene_combo.count()):
+            if self._vis_scene_combo.itemText(i).startswith(f"{cur_sid}:"):
+                self._vis_scene_combo.setCurrentIndex(i)
+                break
         self._vis_scene_combo.blockSignals(False)
 
     # =========== 场景列表/实体列表 ===========
