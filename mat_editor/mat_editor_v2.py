@@ -499,7 +499,9 @@ class SceneCanvasView(QGraphicsView):
             cx, cy = int(scene_pos.x()), int(scene_pos.y())
             px, py = rec[IDX_POS_X], rec[IDX_POS_Y]
             self._vis_drag = (eidx, cx, cy, px, py)
-            if hasattr(self, '_current_param_idx') and self._editor._current_param_idx == eidx:
+            # 拖动结束后同步刷新参数面板 (坐标X/Y、碰撞X/Y): _current_param_idx 存在于
+            # editor 上, 此处须检查 self._editor 而非视图 self, 否则条件恒为 False 面板不更新
+            if hasattr(self._editor, '_current_param_idx') and self._editor._current_param_idx == eidx:
                 self._editor._show_record(rec)
 
     def contextMenuEvent(self, event):
