@@ -83,7 +83,7 @@ class Conflict:
     """冲突记录"""
     mod1_id: str = ""
     mod2_id: str = ""
-    conflict_type: str = ""  # "id_range" | "field_overlap" | "resource" | "explicit"
+    conflict_type: str = ""  # "id_range" | "field_overlap" | "resource" | "explicit" | "grp_layer_overlap" | "record_overlap" | "text_overlap"
     target: str = ""
     detail: str = ""
 
@@ -397,6 +397,73 @@ def _collect_grp_layer_offsets(mod: 'ModInfo') -> dict:
     return result
 
 
+def _collect_record_indices(mod: 'ModInfo') -> dict:
+    """收集某 MOD 的定长记录类改动位置: {target_lower: {index: set(field_keys)}}。
+
+    覆盖以 modified/appended 列表 + index 描述的定长记录差异
+    (TKMat/TKDefUnit/WarPC/TKItem/TKSkill/TKKon/TKShop/WarWay/WarData 等)。
+    不含块级(block_diff/grp_layer_diff)与文本(TKD/TKT)差异——它们各有专门检测。
+    """
+    result: dict = {}
+    for comp in mod.components:
+        internal = comp.get("file", "")
+        target = comp.get("target", "")
+        d = mod.data_files.get(internal)
+        if not isinstance(d, dict):
+            continue
+        if d.get("patch_type") in ("block_diff", "grp_layer_diff"):
+            continue
+        # 定长记录差异的 modified 为 list; 文本差异为 dict, 在此排除
+        if not isinstance(d.get("modified"), list):
+            continue
+        idx_map = result.setdefault(target.lower(), {})
+        for group in ("modified", "appended"):
+            for entry in d.get(group, []):
+                if not isinstance(entry, dict):
+                    continue
+                idx = entry.get("index")
+                if idx is None:
+                    continue
+                fields = entry.get("fields", {})
+                keys = set(fields.keys()) if isinstance(fields, dict) else set()
+                idx_map.setdefault(idx, set()).update(keys)
+    return result
+
+
+def _collect_text_entry_ids(mod: 'ModInfo') -> dict:
+    """收集某 MOD 的文本(TKD/TKT)改动条目 id: {target_lower: set(id_str)}。
+
+    TKD.dat: DEFINE 块 id; TKT.dat: 文本条目 id。
+    modified 为 dict 视为文本差异; appended 兼容 dict(TKT) 与 DEFINE 全文 list(TKD)。
+    """
+    result: dict = {}
+    for comp in mod.components:
+        internal = comp.get("file", "")
+        target = comp.get("target", "")
+        d = mod.data_files.get(internal)
+        if not isinstance(d, dict):
+            continue
+        modified = d.get("modified")
+        if not isinstance(modified, dict):
+            continue
+        ids = {str(k) for k in modified.keys()}
+        appended = d.get("appended")
+        if isinstance(appended, dict):
+            ids.update(str(k) for k in appended.keys())
+        elif isinstance(appended, list):
+            for content in appended:
+                for line in str(content).split('\n'):
+                    stripped = line.strip().rstrip('\r')
+                    if stripped.startswith('DEFINE'):
+                        parts = stripped.split(None, 1)
+                        if len(parts) > 1:
+                            ids.add(parts[1])
+                        break
+        if ids:
+            result.setdefault(target.lower(), set()).update(ids)
+    return result
+
+
 def detect_conflicts(mods: List[ModInfo], log_func=None) -> List[Conflict]:
     """检测 MOD 之间的冲突"""
     log = log_func or (lambda x: None)
@@ -404,6 +471,10 @@ def detect_conflicts(mods: List[ModInfo], log_func=None) -> List[Conflict]:
 
     # 预计算每个 MOD 的 GRP 图层差分改动位置 (用于像素级重叠检测)
     layer_maps = [_collect_grp_layer_offsets(m) for m in mods]
+
+    # 预计算每个 MOD 的定长记录改动索引 与 文本条目 id (用于槽位/条目重复检测)
+    record_maps = [_collect_record_indices(m) for m in mods]
+    text_maps = [_collect_text_entry_ids(m) for m in mods]
 
     for i in range(len(mods)):
         for j in range(i + 1, len(mods)):
@@ -451,6 +522,38 @@ def detect_conflicts(mods: List[ModInfo], log_func=None) -> List[Conflict]:
                         conflict_type="grp_layer_overlap", target=tgt,
                         detail=f"{tgt} 区段#{sidx} {plane}层 {len(inter)} 个像素被 "
                                f"'{m1.name}' 与 '{m2.name}' 同时修改"))
+
+            # 定长记录槽位重复: 两 MOD 改同一文件的同一记录索引 (如 TKMat 实体槽/TKDefUnit 槽位)
+            rm1, rm2 = record_maps[i], record_maps[j]
+            for tgt in set(rm1) & set(rm2):
+                shared_idx = set(rm1[tgt]) & set(rm2[tgt])
+                if not shared_idx:
+                    continue
+                field_overlap = [ix for ix in shared_idx if rm1[tgt][ix] & rm2[tgt][ix]]
+                sample = sorted(shared_idx)[:12]
+                detail = (f"{tgt} 记录槽位 {sample}"
+                          f"{' …等' if len(shared_idx) > 12 else ''} 被 "
+                          f"'{m1.name}' 与 '{m2.name}' 同时写入 (共 {len(shared_idx)} 处)")
+                if field_overlap:
+                    detail += f"; 其中 {len(field_overlap)} 处字段直接覆盖, 后加载者生效"
+                conflicts.append(Conflict(
+                    mod1_id=m1.mod_id, mod2_id=m2.mod_id,
+                    conflict_type="record_overlap", target=tgt,
+                    detail=detail))
+
+            # 文本条目重复: 两 MOD 改同一 TKD DEFINE 块 / TKT 文本条目
+            tm1, tm2 = text_maps[i], text_maps[j]
+            for tgt in set(tm1) & set(tm2):
+                shared_ids = tm1[tgt] & tm2[tgt]
+                if not shared_ids:
+                    continue
+                sample = sorted(shared_ids, key=lambda s: (len(s), s))[:12]
+                conflicts.append(Conflict(
+                    mod1_id=m1.mod_id, mod2_id=m2.mod_id,
+                    conflict_type="text_overlap", target=tgt,
+                    detail=f"{tgt} 条目/DEFINE {sample}"
+                           f"{' …等' if len(shared_ids) > 12 else ''} 被 "
+                           f"'{m1.name}' 与 '{m2.name}' 同时修改 (共 {len(shared_ids)} 处)"))
 
     if conflicts:
         log(f"  检测到 {len(conflicts)} 个冲突")
