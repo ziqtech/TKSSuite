@@ -39,7 +39,7 @@ from PySide6.QtWidgets import (
 
 HAS_PIL = False
 try:
-    from PIL import Image, ImageDraw
+    from PIL import Image, ImageChops, ImageDraw
     HAS_PIL = True
 except ImportError:
     pass
@@ -594,6 +594,57 @@ def export_gridsheet(blk:JVMBlock,outdir:str,padding:int=1,columns:int=0,greensc
     Path(os.path.join(outdir,name)).write_bytes(_rgba_png(aw,ah,atlas))
     print(f"  Gridsheet: {name} ({aw}x{ah}, {cols}x{rows}, cell {cw}x{ch})")
 
+# ── 游戏渲染预览合成 ─────────────────────
+def _frame_to_pil(f: JVGFrame, pal: PaletteRGB565, greenscreen_set: Optional[set] = None):
+    """将 JVG 帧转为 PIL RGBA 图像 (透明像素 alpha=0)，供预览合成使用"""
+    if f.width <= 0 or f.height <= 0:
+        return None
+    rgba = frame_to_rgba(f, pal, greenscreen_set)
+    return Image.frombytes('RGBA', (f.width, f.height), bytes(rgba))
+
+def _pil_paste_normal(composite, src, dx, dy):
+    """正常 alpha 贴图 (游戏混合模式 0 / sub_4544EC)"""
+    if composite is None or src is None:
+        return
+    try:
+        composite.paste(src, (int(dx), int(dy)), src)
+    except Exception:
+        pass
+
+def _pil_paste_subtract(composite, src, dx, dy):
+    """减法压暗混合 (游戏阴影渲染 sub_45871C): dst.RGB = max(dst - src, 0)"""
+    if composite is None or src is None:
+        return
+    try:
+        sw, sh = src.size
+        cw, ch = composite.size
+        dx, dy = int(dx), int(dy)
+        l, t = max(0, dx), max(0, dy)
+        r, b = min(cw, dx + sw), min(ch, dy + sh)
+        if r <= l or b <= t:
+            return
+        sub = src.crop((l - dx, t - dy, r - dx, b - dy))
+        if sub.mode != 'RGBA':
+            sub = sub.convert('RGBA')
+        masked = Image.composite(sub.convert('RGB'),
+                                 Image.new('RGB', sub.size, (0, 0, 0)),
+                                 sub.split()[3])
+        dst_crop = composite.crop((l, t, r, b))
+        composite.paste(ImageChops.subtract(dst_crop, masked), (l, t))
+    except Exception:
+        pass
+
+def _pil_to_qpixmap(img) -> QPixmap:
+    """PIL Image → QPixmap"""
+    if img is None:
+        return QPixmap()
+    if img.mode != 'RGBA':
+        img = img.convert('RGBA')
+    data = img.tobytes('raw', 'RGBA')
+    w, h = img.size
+    qimg = QImage(data, w, h, QImage.Format_RGBA8888)
+    return QPixmap.fromImage(qimg.copy())
+
 # ── GUI 组件 ──────────────────────────────────────────
 class CanvasView(QGraphicsView):
     """可点击的画布视图，支持鼠标点击事件和滚轮缩放"""
@@ -670,6 +721,11 @@ class JVGEditor(QMainWindow):
         self._act_export_avatars = None
         self._act_import_avatars = None
         self._dirty = False
+        # 预览面板状态
+        self._suppress_offset = False
+        self._preview_pix_full: Optional[QPixmap] = None
+        self._preview_dims = (1, 1)
+        self._preview_key = None
 
         # 创建UI
         self._setup_menu()
@@ -829,6 +885,8 @@ class JVGEditor(QMainWindow):
             "功能: 浏览和编辑《三国群侠传》JVG 图像帧资源\n\n"
             "特性:\n"
             "  · 三种视图模式: 平铺 / 逐帧 / 动画播放\n"
+            "  · 游戏渲染预览: 预览选中帧的实际渲染效果并编辑物理偏移\n"
+            "    (打开 Cha.JVG 时自动叠加阴影帧, 阴影默认取图集第 1 帧)\n"
             "  · 导出单帧、分组或完整图集为 PNG\n"
             "  · 头像资源批量导入/导出 (Fa.JVG)\n"
             "  · 支持 MOD 格式导入导出 (.tksmod)\n"
@@ -956,7 +1014,7 @@ class JVGEditor(QMainWindow):
 
         splitter.addWidget(self._create_dock("2D 视口渲染器", canvas_container))
 
-        # ================ 右侧：工作流选项 + 图元结构校验日志 ================
+        # ================ 右侧：工作流选项 + 游戏渲染预览 + 选中帧信息 ================
         right_panel = QWidget()
         right_panel.setMinimumWidth(180)
         right_layout = QVBoxLayout(right_panel)
@@ -1045,14 +1103,16 @@ class JVGEditor(QMainWindow):
         right_layout.addWidget(top_docks)
         right_layout.addWidget(self._grp_avatar)
 
-        # 图元结构校验日志
+        # 游戏渲染预览 (选中帧实际渲染效果 + 物理偏移编辑 + Cha.JVG 阴影帧)
+        right_layout.addWidget(self._build_preview_dock(), 3)
+
+        # 选中帧信息
         self._detail = QTextEdit()
         self._detail.setReadOnly(True)
         self._detail.setMinimumHeight(60)
+        self._detail.setMaximumHeight(150)
         self._detail.setProperty("class", "MonoText")
-        right_layout.addWidget(self._create_dock("图元结构校验日志", self._detail))
-
-        right_layout.addStretch()
+        right_layout.addWidget(self._create_dock("选中帧信息", self._detail))
 
         # 将右侧面板移到图集分组列表左边
         splitter.addWidget(right_panel)
@@ -1075,6 +1135,61 @@ class JVGEditor(QMainWindow):
         # 初始化视图按钮状态
         self._set_view(self._view)
 
+    def _build_preview_dock(self):
+        """构建“游戏渲染预览”面板：实时合成选中帧的游戏实际渲染效果，
+        支持编辑物理偏移；打开 Cha.JVG 时叠加 block0 阴影帧 (默认图集第 1 帧)。"""
+        w = QWidget()
+        v = QVBoxLayout(w)
+        v.setContentsMargins(4, 4, 4, 4)
+        v.setSpacing(6)
+
+        # 预览画面
+        self._preview_label = QLabel("(未选择帧)")
+        self._preview_label.setObjectName("JvgPreview")
+        self._preview_label.setAlignment(Qt.AlignCenter)
+        self._preview_label.setMinimumHeight(180)
+        self._preview_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        v.addWidget(self._preview_label, 1)
+
+        # 物理偏移编辑
+        off_form = QFormLayout()
+        off_form.setContentsMargins(0, 0, 0, 0)
+        off_form.setSpacing(4)
+        self._off_x = QSpinBox()
+        self._off_x.setRange(-4096, 4096)
+        self._off_x.setEnabled(False)
+        self._off_x.valueChanged.connect(self._on_offset_changed)
+        self._off_y = QSpinBox()
+        self._off_y.setRange(-4096, 4096)
+        self._off_y.setEnabled(False)
+        self._off_y.valueChanged.connect(self._on_offset_changed)
+        off_form.addRow("物理偏移 X:", self._off_x)
+        off_form.addRow("物理偏移 Y:", self._off_y)
+        v.addLayout(off_form)
+
+        # 阴影帧控制 (仅 Cha.JVG 显示；阴影帧取自 block0)
+        shadow_row = QHBoxLayout()
+        shadow_row.setContentsMargins(0, 0, 0, 0)
+        shadow_row.setSpacing(4)
+        self._shadow_enable = QCheckBox("叠加阴影帧")
+        self._shadow_enable.setChecked(True)
+        self._shadow_enable.stateChanged.connect(lambda *_: self._render_preview())
+        self._shadow_fi = QSpinBox()
+        self._shadow_fi.setRange(0, 9999)
+        self._shadow_fi.setValue(1)
+        self._shadow_fi.valueChanged.connect(lambda *_: self._render_preview())
+        shadow_row.addWidget(self._shadow_enable)
+        shadow_row.addWidget(QLabel("图集帧#"))
+        shadow_row.addWidget(self._shadow_fi)
+        shadow_row.addStretch()
+        self._shadow_row_widget = QWidget()
+        self._shadow_row_widget.setLayout(shadow_row)
+        self._shadow_row_widget.setVisible(False)
+        v.addWidget(self._shadow_row_widget)
+
+        self._grp_preview = self._create_dock("游戏渲染预览", w)
+        return self._grp_preview
+
     def _switch_theme(self, theme: str):
         self._is_dark = (theme == 'dark')
         self.theme_manager.set_theme(theme)
@@ -1090,6 +1205,12 @@ class JVGEditor(QMainWindow):
         apply_godot_theme(self, self._is_dark)
 
     # ── 未保存确认 ──────────────────────────────────────
+
+    def resizeEvent(self, event):
+        # 窗口尺寸变化时，按新预览区尺寸重新缩放已合成的预览图 (不重新逐像素合成)
+        super().resizeEvent(event)
+        if hasattr(self, '_preview_label'):
+            self._rescale_preview()
 
     def closeEvent(self, event: QCloseEvent):
         if self._dirty:
@@ -1486,6 +1607,8 @@ class JVGEditor(QMainWindow):
         self._sync_list()
         self._bi = 0
         self._fi = 0
+        self._sel_fi = -1
+        self._update_preview_controls()
         self._refresh_view()
         self._dirty = True
         self.statusBar().showMessage(
@@ -1843,32 +1966,202 @@ class JVGEditor(QMainWindow):
         return QPixmap.fromImage(qimg)
 
     def _show_detail(self, f: JVGFrame, blk: JVMBlock, fi: int):
-        pal = self._get_pal(blk, f)
         is_import = f._palette is not None
         # 计算选中帧在整个图集中的全局序号（累加当前分组之前所有分组的帧数 + 分组内序号）
         base = sum(b.frame_count for b in self.jvg.blocks[:self._bi]) if (self.jvg and self._bi >= 0) else 0
         global_fi = base + fi
         total = self.jvg.total_frames if self.jvg else 0
         self._detail.setPlainText(
-            f">> Frame [{fi}]\n"
-            f"选中帧序: 全局第 {global_fi}/{total} 帧 (分组内 #{fi})\n"
-            f"几何边界: {f.width}×{f.height} px\n"
-            f"物理偏移: X={f.x_off}, Y={f.y_off} (锚定补偿)\n"
-            f"数据载荷: Pixels={len(f.pixels)}B, Encoded={len(f.encoded_data)}B\n"
-            f"来源状态: {'[临时外挂导入区]' if is_import else '[底层封存区]'}"
+            f">> 帧 [{fi}]\n"
+            f"位置: 全局第 {global_fi}/{total} 帧 (分组内 #{fi})\n"
+            f"尺寸: {f.width}×{f.height} 像素\n"
+            f"物理偏移: X={f.x_off}, Y={f.y_off}\n"
+            f"数据大小: 像素 {len(f.pixels)}B, 编码 {len(f.encoded_data)}B\n"
+            f"来源: {'新导入(未量化)' if is_import else '文件原始帧'}"
         )
+        self._populate_offset_fields(f)
+        self._render_preview()
+
+    def _populate_offset_fields(self, f: JVGFrame):
+        """把选中帧的物理偏移写入编辑框 (阻断信号避免回环)"""
+        editable = f.width > 0 and f.height > 0
+        self._suppress_offset = True
+        self._off_x.setEnabled(editable)
+        self._off_y.setEnabled(editable)
+        if editable:
+            self._off_x.setValue(f.x_off)
+            self._off_y.setValue(f.y_off)
+        self._suppress_offset = False
+
+    def _clear_selection_panel(self):
+        """无有效选中帧时清空信息 / 偏移编辑 / 预览"""
+        if hasattr(self, '_detail'):
+            self._detail.clear()
+        if hasattr(self, '_off_x'):
+            self._suppress_offset = True
+            self._off_x.setEnabled(False)
+            self._off_y.setEnabled(False)
+            self._suppress_offset = False
+        self._clear_preview("(未选择帧)")
+
+    def _update_selection_panel(self):
+        """按当前选中帧刷新右侧信息面板与预览"""
+        if not self.jvg or self._bi < 0 or self._bi >= len(self.jvg.blocks):
+            self._clear_selection_panel()
+            return
+        blk = self.jvg.blocks[self._bi]
+        if self._sel_fi < 0 or self._sel_fi >= blk.frame_count:
+            self._clear_selection_panel()
+            return
+        self._show_detail(blk.frames[self._sel_fi], blk, self._sel_fi)
+
+    def _clear_preview(self, msg: str = "(未选择帧)"):
+        self._preview_pix_full = None
+        self._preview_key = None
+        if hasattr(self, '_preview_label'):
+            self._preview_label.setPixmap(QPixmap())
+            self._preview_label.setText(msg)
+
+    def _rescale_preview(self):
+        """按预览区当前尺寸缩放已合成的画面 (最近邻, 保持像素清晰)"""
+        if not hasattr(self, '_preview_label'):
+            return
+        full = self._preview_pix_full
+        if full is None or full.isNull():
+            return
+        cw, ch = self._preview_dims
+        avail_w = max(32, self._preview_label.width() - 8)
+        avail_h = max(32, self._preview_label.height() - 8)
+        scale = min(avail_w / cw, avail_h / ch, 6.0)
+        tw, th = max(1, int(cw * scale)), max(1, int(ch * scale))
+        self._preview_label.setPixmap(
+            full.scaled(tw, th, Qt.KeepAspectRatio, Qt.FastTransformation))
+
+    def _render_preview(self):
+        """合成选中帧的游戏实际渲染效果: 精灵按物理偏移落位, Cha.JVG 叠加 block0 阴影帧。
+        参考 mat_editor 地图预览 (sub_406864/sub_45871C): 先减法压暗画阴影, 再正常贴精灵。"""
+        if not hasattr(self, '_preview_label'):
+            return
+        if not self.jvg or self._bi < 0 or self._bi >= len(self.jvg.blocks):
+            self._clear_preview("(未选择帧)")
+            return
+        blk = self.jvg.blocks[self._bi]
+        fi = self._sel_fi
+        if fi < 0 or fi >= blk.frame_count:
+            self._clear_preview("(未选择帧)")
+            return
+        f = blk.frames[fi]
+        if f.width <= 0 or f.height <= 0:
+            self._clear_preview("(空帧)")
+            return
+        pal = self._get_pal(blk, f)
+        no_green = self._greenscreen_remove.isChecked()
+
+        # 解析阴影帧 (仅 Cha.JVG, 且当前不在阴影 block0 内)
+        shf = None
+        sh_fi = self._shadow_fi.value()
+        use_shadow = (self._is_cha_jvg() and self._shadow_enable.isChecked()
+                      and self._bi != 0 and self.jvg.blocks)
+        if use_shadow:
+            blk0 = self.jvg.blocks[0]
+            if 0 <= sh_fi < blk0.frame_count:
+                cand = blk0.frames[sh_fi]
+                if cand.width > 0 and cand.height > 0:
+                    shf = cand
+        # 合成缓存键: 避免平铺列数/间距等无关刷新时重复逐像素合成
+        key = (self._bi, fi, id(f), f.width, f.height, f.x_max, f.y_max,
+               len(f.encoded_data), no_green,
+               (id(shf), shf.x_max, shf.y_max, sh_fi) if shf else None)
+        if key == self._preview_key and self._preview_pix_full is not None:
+            self._rescale_preview()
+            return
+
+        gs = {i for i, e in enumerate(pal.entries) if e == 0x07E0} if no_green else None
+        sprite = _frame_to_pil(f, pal, gs)
+        if sprite is None:
+            self._clear_preview("(空帧)")
+            return
+        s_x, s_y = f.x_off, f.y_off
+
+        shadow = None
+        sh_x = sh_y = 0
+        if shf is not None:
+            blk0 = self.jvg.blocks[0]
+            g0 = {i for i, e in enumerate(blk0.palette.entries) if e == 0x07E0} if no_green else None
+            shadow = _frame_to_pil(shf, blk0.palette, g0)
+            sh_x, sh_y = shf.x_off, shf.y_off
+
+        # 包围盒 (含锚点原点 0,0 = 实体落点)
+        xs = [0, s_x, s_x + f.width]
+        ys = [0, s_y, s_y + f.height]
+        if shadow is not None:
+            xs += [sh_x, sh_x + shadow.width]
+            ys += [sh_y, sh_y + shadow.height]
+        min_x, max_x = min(xs), max(xs)
+        min_y, max_y = min(ys), max(ys)
+        pad = 8
+        cw = (max_x - min_x) + pad * 2
+        ch = (max_y - min_y) + pad * 2
+        if cw <= 0 or ch <= 0:
+            self._clear_preview("(空帧)")
+            return
+        # 中性灰地面, 使减法阴影可见
+        composite = Image.new('RGB', (cw, ch), (104, 112, 120))
+        ox0 = pad - min_x
+        oy0 = pad - min_y
+        if shadow is not None:
+            _pil_paste_subtract(composite, shadow, ox0 + sh_x, oy0 + sh_y)
+        _pil_paste_normal(composite, sprite, ox0 + s_x, oy0 + s_y)
+        # 锚点十字 (游戏世界坐标原点)
+        try:
+            dr = ImageDraw.Draw(composite)
+            dr.line([(ox0 - 5, oy0), (ox0 + 5, oy0)], fill=(230, 70, 70), width=1)
+            dr.line([(ox0, oy0 - 5), (ox0, oy0 + 5)], fill=(230, 70, 70), width=1)
+        except Exception:
+            pass
+
+        self._preview_pix_full = _pil_to_qpixmap(composite)
+        self._preview_dims = (cw, ch)
+        self._preview_key = key
+        self._preview_label.setText("")
+        self._rescale_preview()
+
+    def _on_offset_changed(self, *_):
+        """编辑物理偏移 → 回写帧的 x_max/y_max, 联动刷新预览与主视图"""
+        if self._suppress_offset:
+            return
+        if not self.jvg or self._bi < 0 or self._bi >= len(self.jvg.blocks):
+            return
+        blk = self.jvg.blocks[self._bi]
+        fi = self._sel_fi
+        if fi < 0 or fi >= blk.frame_count:
+            return
+        f = blk.frames[fi]
+        if f.width <= 0 or f.height <= 0:
+            return
+        f.x_max = (self._off_x.value() + f.width - 1) & 0xFFFF
+        f.y_max = (self._off_y.value() + f.height - 1) & 0xFFFF
+        self._dirty = True
+        if self._view == "single":
+            # 逐帧视图按偏移布局, 重绘主画布 (末尾会同步刷新信息面板)
+            self._refresh_view()
+        else:
+            # 平铺视图布局与偏移无关, 仅刷新信息与预览
+            self._show_detail(f, blk, fi)
 
     def _refresh_view(self, *_):
         # 清除场景
         self._scene.clear()
         self._photos.clear()
         if not self.jvg or self._bi < 0 or self._bi >= len(self.jvg.blocks):
+            self._clear_selection_panel()
             return
         blk = self.jvg.blocks[self._bi]
         frames = blk.frames
         if not frames:
             text = self._scene.addText("(空)", QFont("Microsoft YaHei", 14))
             text.setDefaultTextColor(QColor(102, 102, 102))
+            self._clear_selection_panel()
             return
 
         if self._view == "tile":
@@ -1877,6 +2170,8 @@ class JVGEditor(QMainWindow):
             self._render_single(frames, blk)
         elif self._view == "anim":
             self._start_anim(frames, blk)
+
+        self._update_selection_panel()
 
     def _render_tile(self, frames, blk):
         cols = self._tile_cols.value()
@@ -1989,15 +2284,10 @@ class JVGEditor(QMainWindow):
         self._sel_fi = self._fi
         self._scene.setSceneRect(0, 0, view_w, view_h)
         self._info.setText(f"逐帧 — {self._fi + 1}/{len(frames)} ({f.width}×{f.height})")
-        self._show_detail(f, blk, self._fi)
 
     def _on_frame_click(self, fi: int):
         self._sel_fi = fi
-        if not self.jvg or self._bi < 0:
-            return
-        blk = self.jvg.blocks[self._bi]
-        if fi < blk.frame_count:
-            self._show_detail(blk.frames[fi], blk, fi)
+        # 信息面板与预览由 _refresh_view 末尾的 _update_selection_panel 统一刷新
         self._refresh_view()
 
     def _nav(self, d: int):
@@ -2154,8 +2444,20 @@ class JVGEditor(QMainWindow):
             return False
         return os.path.basename(self.jvg.filepath).upper() == "FA.JVG"
 
+    def _is_cha_jvg(self) -> bool:
+        """检查当前加载文件是否为 Cha.JVG (角色立绘, block0 存放阴影帧)"""
+        if not self.jvg or not self.jvg.filepath:
+            return False
+        return os.path.basename(self.jvg.filepath).upper() == "CHA.JVG"
+
+    def _update_preview_controls(self):
+        """根据文件类型显示/隐藏阴影帧控制 (仅 Cha.JVG 需要阴影)"""
+        if hasattr(self, '_shadow_row_widget'):
+            self._shadow_row_widget.setVisible(self._is_cha_jvg())
+
     def _update_avatar_actions(self):
         """根据当前文件类型启用/禁用头像相关操作"""
+        self._update_preview_controls()
         is_fa = self._is_fa_jvg()
         if self._act_export_avatars:
             self._act_export_avatars.setEnabled(is_fa)
