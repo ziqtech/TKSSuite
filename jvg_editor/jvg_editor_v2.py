@@ -128,6 +128,7 @@ class JVMBlock:
         self.frames:List[JVGFrame]=[]
         self.palette=PaletteRGB565()
         self._header_reserved=bytes(16)  # block头 [16:32] 保留字节，原样保存
+        self._payload_size:Optional[int]=None  # block头 [8:12] 原值，原样保存以免 MOD diff 误判
 
     @property
     def frame_count(self)->int:
@@ -218,6 +219,7 @@ def load_jvg(filepath:str)->JVGFile:
             f.encoded_data=data[eo:eo+co[si+1]-co[si]-16]
             blk.frames.append(f)
         blk._header_reserved=data[off+16:off+32]
+        blk._payload_size=struct.unpack("<I",data[off+8:off+12])[0]
         off+=32+(sc+1)*4+512+ds
         jvg.blocks.append(blk)
     return jvg
@@ -299,9 +301,12 @@ def save_jvg(jvg:JVGFile,filepath:str):
         for e in blk.palette.entries: buf+=struct.pack("<H",e&0xFFFF)
         buf+=fd
         struct.pack_into("<I",buf,dsp,block_data_size)
-        # [8:12] = 块头之后的负载大小(偏移表+调色板+帧数据)，原始游戏文件均按此存储；
-        # 若写 0 会导致与原始文件逐块比对时全部误判为"已修改"
-        struct.pack_into("<I",buf,psp,(n+1)*4+512+block_data_size)
+        # [8:12] 各文件约定不一：部分文件全部写 0，部分文件写负载大小；游戏加载时并不使用它
+        # （加载按 [12:16] data_size 定位下一块）。为保证与原始文件逐块比对时字节一致、
+        # 避免 MOD 导出把未改动的块误判为"已修改"，这里原样回写读取到的原值；新建块无原值时回退为计算值。
+        payload_val=blk._payload_size if getattr(blk,'_payload_size',None) is not None \
+            else (n+1)*4+512+block_data_size
+        struct.pack_into("<I",buf,psp,payload_val&0xFFFFFFFF)
 
     struct.pack_into("<I",buf,12,total_data_size)
     Path(filepath).write_bytes(bytes(buf))
@@ -1294,6 +1299,7 @@ class JVGEditor(QMainWindow):
         new_blk.frames = copy.deepcopy(blk.frames)
         new_blk.palette.entries = list(blk.palette.entries)
         new_blk._header_reserved = blk._header_reserved
+        new_blk._payload_size = blk._payload_size
         tmp_jvg.blocks.append(new_blk)
 
         tmp_path = tempfile.mktemp(suffix='.jvg')
