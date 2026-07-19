@@ -3827,6 +3827,16 @@ class MatEditorApp(QMainWindow):
             return
         entity_id = rec['index']
 
+        # 检测共享头指针: 若 headA/headB/headC 中有多者指向同一 DefUnit 节点,
+        # 该节点会在多条链中重复显示 (数据异常, 如实体#44 headA==headB)。
+        # 记录被共享的头节点索引 → 使用它的链名列表, 供下方在链头标注 ⚠共享头。
+        _head_users = {}
+        for _sn, _hd in (('A', 39), ('B', 40), ('C', 41)):
+            _hv = rec.get(f'd{_hd}', 0)
+            if _hv > 0:
+                _head_users.setdefault(_hv, []).append(_sn)
+        _shared_heads = {_hv: _sns for _hv, _sns in _head_users.items() if len(_sns) > 1}
+
         for sub_name, h_di, mx_di, cur_di in [('A', 39, 30, 33), ('B', 40, 31, 34), ('C', 41, 32, 35)]:
             h = rec.get(f'd{h_di}', 0)
             mx = rec.get(f'd{mx_di}', 0)
@@ -3834,9 +3844,13 @@ class MatEditorApp(QMainWindow):
             if h <= 0 or mx <= 0:
                 continue
             cur_str = f'当前={cur}' if cur > 0 else '未激活'
-            # Group header
-            group_item = QTreeWidgetItem([f'{sub_name}链', '', '', '', '', f'head=#{h} max={mx} {cur_str}'])
-            group_item.setForeground(0, QColor("#3366cc"))
+            # Group header (共享头节点追加 ⚠共享头 警示)
+            _warn = ''
+            if h in _shared_heads:
+                _others = '/'.join(x for x in _shared_heads[h] if x != sub_name)
+                _warn = f'  ⚠共享头(与{_others}链共用#{h})'
+            group_item = QTreeWidgetItem([f'{sub_name}链', '', '', '', '', f'head=#{h} max={mx} {cur_str}{_warn}'])
+            group_item.setForeground(0, QColor("#CC6600") if h in _shared_heads else QColor("#3366cc"))
             self.chain_tree.addTopLevelItem(group_item)
             # Traverse chain (with loop detection)
             idx = h
@@ -3988,6 +4002,9 @@ class MatEditorApp(QMainWindow):
 
         rec = self._data.records[self._current_param_idx]
         _modified_dis = []
+        # 从 A/B/C 全部链中摘除该节点 (不能在首个匹配链后 break):
+        # 若多条链共享同一头节点 (如实体#44 headA==headB 指向同一 DefUnit),
+        # 只摘一条会残留悬空头指针 → 刷新后显示为 "空槽/断开" 且再也删不掉。
         for sub_name, h_di, mx_di, cur_di in [('A', 39, 30, 33), ('B', 40, 31, 34), ('C', 41, 32, 35)]:
             h = rec.get(f'd{h_di}', 0)
             mx = rec.get(f'd{mx_di}', 0)
@@ -4009,12 +4026,12 @@ class MatEditorApp(QMainWindow):
                 prev_rec = next((r for r in self._data.defunit_recs if r['index'] == prev), None)
                 if prev_rec:
                     prev_rec['f6'] = du_rec['f6']
-            rec[f'd{mx_di}'] = max(0, mx - 1)
+            new_mx = max(0, mx - 1)
+            rec[f'd{mx_di}'] = new_mx
             cur = rec.get(f'd{cur_di}', 0)
-            if cur > mx - 1:
-                rec[f'd{cur_di}'] = max(1, mx - 1)
-            _modified_dis = [h_di, mx_di, cur_di]
-            break
+            if cur > new_mx:
+                rec[f'd{cur_di}'] = new_mx
+            _modified_dis.extend([h_di, mx_di, cur_di])
 
         du_rec['f0'] = du_rec['f1'] = du_rec['f6'] = 0
         self._data.defunit_recs = [r for r in self._data.defunit_recs if r['index'] != du_idx]
