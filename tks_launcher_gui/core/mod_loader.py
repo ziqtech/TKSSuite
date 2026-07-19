@@ -1785,11 +1785,24 @@ def apply_mod_data(merged: MergedData, game_dir: str, log_func=None):
         target_path = os.path.join(game_dir, target_name)
         orig_path = target_path + ".mod_orig"
 
-        # 备份原始文件
-        if os.path.isfile(target_path) and not os.path.isfile(orig_path):
+        # 确保目标父目录存在 (支持子目录资源, 如 Sound/xxxx.mp3)
+        parent_dir = os.path.dirname(target_path)
+        if parent_dir and not os.path.isdir(parent_dir):
+            os.makedirs(parent_dir, exist_ok=True)
+
+        existed = os.path.isfile(target_path)
+        # 原文件存在: 备份为 .mod_orig (供游戏退出后恢复)
+        if existed and not os.path.isfile(orig_path):
             shutil.copy2(target_path, orig_path)
             merged.backed_up.append(target_path)
             log(f"  备份资源: {target_name} → {target_name}.mod_orig")
+        elif not existed:
+            # 新增文件 (原游戏无此文件): 留下 .mod_new 标记, 游戏退出后删除
+            try:
+                with open(target_path + ".mod_new", 'w'):
+                    pass
+            except Exception:
+                pass
 
         # 从 ZIP 中提取资源文件（支持内存数据或磁盘文件）
         try:
@@ -1812,22 +1825,61 @@ def apply_mod_data(merged: MergedData, game_dir: str, log_func=None):
 # ═══════════════════════════════════════════════════════════════
 
 def restore_originals(game_dir: str, log_func=None):
-    """恢复所有 .mod_orig 备份文件"""
+    """恢复所有 .mod_orig 备份文件, 并清理 MOD 新增的文件 (.mod_new 标记)。
+
+    递归遍历 game_dir (含子目录, 如 Sound/), 以支持子目录资源替换:
+      - <file>.mod_orig : 覆盖类备份 → 还原原始文件并删除备份
+      - <file>.mod_new  : 新增类标记 → 删除对应的新增文件并删除标记
+    最后清理因新增而产生的空目录 (不会删除 game_dir 本身)。
+    """
     log = log_func or (lambda x: None)
     restored = 0
+    removed = 0
 
-    for fname in os.listdir(game_dir):
-        if fname.endswith('.mod_orig'):
-            orig_path = os.path.join(game_dir, fname)
-            target_name = fname[:-len('.mod_orig')]
-            target_path = os.path.join(game_dir, target_name)
-            try:
-                shutil.copy2(orig_path, target_path)
-                os.remove(orig_path)
-                restored += 1
-            except Exception as e:
-                log(f"  [ERROR] 恢复 {target_name} 失败: {e}")
+    orig_backups: List[str] = []
+    new_markers: List[str] = []
+    for root, _dirs, files in os.walk(game_dir):
+        for fname in files:
+            if fname.endswith('.mod_orig'):
+                orig_backups.append(os.path.join(root, fname))
+            elif fname.endswith('.mod_new'):
+                new_markers.append(os.path.join(root, fname))
+
+    # 还原被覆盖的原始文件
+    for orig_path in orig_backups:
+        target_path = orig_path[:-len('.mod_orig')]
+        try:
+            shutil.copy2(orig_path, target_path)
+            os.remove(orig_path)
+            restored += 1
+        except Exception as e:
+            log(f"  [ERROR] 恢复 {os.path.relpath(target_path, game_dir)} 失败: {e}")
+
+    # 删除 MOD 新增的文件 (原游戏不存在的)
+    empty_dir_candidates: set = set()
+    for marker in new_markers:
+        target_path = marker[:-len('.mod_new')]
+        try:
+            if os.path.isfile(target_path):
+                os.remove(target_path)
+                removed += 1
+            os.remove(marker)
+            empty_dir_candidates.add(os.path.dirname(target_path))
+        except Exception as e:
+            log(f"  [ERROR] 清理新增文件 {os.path.relpath(target_path, game_dir)} 失败: {e}")
+
+    # 清理新增文件残留的空目录 (从深到浅, 保留 game_dir 本身)
+    game_dir_abs = os.path.abspath(game_dir)
+    for d in sorted(empty_dir_candidates, key=lambda p: p.count(os.sep), reverse=True):
+        try:
+            if (os.path.abspath(d) != game_dir_abs and os.path.isdir(d)
+                    and not os.listdir(d)):
+                os.rmdir(d)
+        except Exception:
+            pass
 
     if restored > 0:
         log(f"  已恢复 {restored} 个原始文件")
+    if removed > 0:
+        log(f"  已清理 {removed} 个新增文件")
     return restored

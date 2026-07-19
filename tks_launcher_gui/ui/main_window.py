@@ -18,6 +18,7 @@ from editor_utils.ui_helpers import themed_messagebox
 from editor_utils.version import format_title, format_about_header
 from editor_utils.window_theme import apply_godot_theme
 from ui.custom_avatar_dialog import CustomAvatarDialog
+from ui.custom_music_dialog import CustomMusicDialog
 from ui.game_overlay import GameOverlay
 from ui.log_console import LogConsole
 from ui.mod_info_preview import ModInfoPreviewWidget
@@ -95,6 +96,7 @@ class MainWindow(QMainWindow):
         fm.addAction("模组编辑…", self._on_edit_mod)
         fm.addAction("模组信息编辑…", self._on_edit_mod_meta)
         fm.addAction("自定义头像…", self._on_custom_avatar)
+        fm.addAction("自定义音乐…", self._on_custom_music)
         fm.addAction("存档管理…", self._on_save_manager)
         fm.addSeparator()
         fm.addAction("退出", self.close)
@@ -120,8 +122,9 @@ class MainWindow(QMainWindow):
             "7. 模组编辑: 打开 .tksmod/.tksmodpak 添加/删除内部文件，原地保存\n"
             "8. 模组信息编辑: 编辑 .tksmod 的元数据 (标题/作者/描述等)\n"
             "9. 自定义头像: 上传图片并裁剪, 生成自定义头像 MOD\n"
-            "10. 存档管理: 备份/恢复游戏存档及补丁状态快照\n"
-            "11. 视图 → 切换主题 (Ctrl+T): 在深色/浅色主题间切换\n\n"
+            "10. 自定义音乐: 覆盖/新增 Sound 目录 BGM, 生成音乐 MOD\n"
+            "11. 存档管理: 备份/恢复游戏存档及补丁状态快照\n"
+            "12. 视图 → 切换主题 (Ctrl+T): 在深色/浅色主题间切换\n\n"
             "勾选状态会自动保存到 launcher_setting.json, 下次启动时自动恢复\n\n"
             "运行时基于内存补丁引擎 (runtime_patcher) 实现\n"
             "兼容 Winlator / Wine 环境 (通过 cli_launcher.py)")
@@ -165,6 +168,11 @@ class MainWindow(QMainWindow):
         self.btn_avatar.setToolTip("上传图片并裁剪，生成自定义头像 MOD")
         self.btn_avatar.clicked.connect(self._on_custom_avatar)
         toolbar.addWidget(self.btn_avatar)
+
+        self.btn_music = QPushButton("🎵 自定义音乐")
+        self.btn_music.setToolTip("管理游戏 BGM，覆盖/新增 Sound 曲目并生成 MOD")
+        self.btn_music.clicked.connect(self._on_custom_music)
+        toolbar.addWidget(self.btn_music)
 
         self.btn_save_mgr = QPushButton("💾 存档管理")
         self.btn_save_mgr.setToolTip("备份/恢复游戏存档及补丁状态")
@@ -448,6 +456,14 @@ class MainWindow(QMainWindow):
         dialog = CustomAvatarDialog(mods_dir=mods_dir, parent=self)
         dialog.exec()
         # 生成后刷新模组列表
+        self.mod_list.refresh_mods()
+
+    def _on_custom_music(self):
+        """打开自定义音乐对话框"""
+        mods_dir = os.path.join(_LAUNCHER_DIR, "mods")
+        dialog = CustomMusicDialog(mods_dir=mods_dir, parent=self)
+        dialog.exec()
+        # 导出后刷新模组列表
         self.mod_list.refresh_mods()
 
     def _on_save_manager(self):
