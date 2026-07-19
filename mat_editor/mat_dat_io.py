@@ -7,7 +7,8 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from mat_constants import (DWORD_COUNT, FILE_SIZE, REC_COUNT, REC_SIZE,
-                           SCENE_NAME_TKT_BASE, DEFUNIT_FILE_SIZE, DEFUNIT_REC_SIZE)
+                           SCENE_NAME_TKT_BASE, DEFUNIT_FILE_SIZE, DEFUNIT_REC_SIZE,
+                           DEFUNIT_REC_COUNT, DEFUNIT_ORIG_COUNT)
 from editor_utils.lzss import lzss_decompress_save, lzss_compress_save
 
 
@@ -81,10 +82,26 @@ def is_empty(rec): return not rec.get('_has_data', rec['d0'] != 0)
 def has_data(rec): return rec.get('_has_data', rec['d0'] != 0)
 
 def save_defunit(fp, defunit_recs):
-    """保存 TKDefUnit.dat — 5000 条 × 16 字节"""
-    buf = bytearray(DEFUNIT_FILE_SIZE)
+    """保存 TKDefUnit.dat — 每条 16 字节, 文件长度动态确定。
+
+    写出条数 = max(原版 5000, 最高非空记录索引+1), 上限 DEFUNIT_REC_COUNT:
+      - 仅用到 ≤5000 条时写出 80000 字节 (与原版一致, 未打补丁的引擎可直接加载);
+      - 剧情扩充用到 5000+ 条时文件相应增长, 需 tks_launcher_gui 的 tkdefunit_count
+        补丁配合 (使引擎按文件实际条数分配缓冲区)。如此既不无谓增大未扩充
+        存档的文件, 又能支持扩充。
+    """
+    max_idx = -1
+    for rec in defunit_recs:
+        idx = rec.get('index', -1)
+        if 0 <= idx < DEFUNIT_REC_COUNT and any(rec.get(f'f{i}', 0) for i in range(8)):
+            if idx > max_idx:
+                max_idx = idx
+    count = min(max(DEFUNIT_ORIG_COUNT, max_idx + 1), DEFUNIT_REC_COUNT)
+    buf = bytearray(count * DEFUNIT_REC_SIZE)
     for rec in defunit_recs:
         off = rec['index'] * DEFUNIT_REC_SIZE
+        if off < 0 or off + DEFUNIT_REC_SIZE > len(buf):
+            continue
         for fi in range(8):
             struct.pack_into('<H', buf, off + fi * 2, rec.get(f'f{fi}', 0))
     with open(fp, 'wb') as f:

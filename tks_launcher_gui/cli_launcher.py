@@ -729,6 +729,19 @@ class CliLauncher:
             actual = get_decompressed_size(fname)
             config.variables[vn] = actual if actual > 0 else DATA_FILE_ORIG_SIZES[fname]
 
+        # TKDefUnit.Dat 记录数扩容 (剧情/脚本节点扩展)。
+        # 定长无压缩, 每条 16 字节; 按文件实际字节数推导条数, 下限为原版 5000。
+        # 未扩容时 = 5000 → tkdefunit_count 补丁写回原值 (无副作用); 扩容后引擎按此
+        # 条数分配缓冲区/读取/遍历 (sub_402E88 中 count<<4 派生)。
+        _du_orig = int(config.variables.get("tkdefunit_orig_count", 5000))
+        _du_count = _du_orig
+        try:
+            if os.path.isfile("TKDefUnit.Dat"):
+                _du_count = max(_du_orig, (os.path.getsize("TKDefUnit.Dat") + 15) // 16)
+        except OSError:
+            pass
+        config.variables["tkdefunit_new_count"] = _du_count
+
         # ── 15. 分配 cave 内存 ──
         hp = _OpenProcess(
             PROCESS_VM_READ | PROCESS_VM_WRITE | PROCESS_VM_OPERATION,

@@ -9,8 +9,15 @@ FILE_SIZE = 2304000
 DWORD_COUNT = 96
 SCENE_NAME_TKT_BASE = 300
 DEFUNIT_REC_SIZE = 16
-DEFUNIT_REC_COUNT = 5000
-DEFUNIT_FILE_SIZE = 80000
+# TKDefUnit 记录上限。原版引擎在 sub_402E88 中硬编码 5000 条 (mov eax,5000 → dword_753504),
+# 缓冲区分配/memset/文件读取/遍历均由该条数在运行时派生 (count<<4 = 字节数)。
+# 剧情/脚本扩充需要更多 DEFINE 链节点, 编辑器上限提升至 10000。
+# ⚠ 超过 5000 条的 TKDefUnit.dat 必须配合 tks_launcher_gui 的 tkdefunit_count 补丁
+#   (运行时把 dword_753504 由 5000 改为文件实际条数), 否则未打补丁的原版引擎会因
+#   缓冲区不足 (file_size > count*16) 拒绝加载 DefUnit, 导致剧情脚本失效。
+DEFUNIT_ORIG_COUNT = 5000                              # 原版引擎硬编码条数 (向后兼容基准)
+DEFUNIT_REC_COUNT = 10000                              # 编辑器支持的记录上限
+DEFUNIT_FILE_SIZE = DEFUNIT_REC_COUNT * DEFUNIT_REC_SIZE  # 160000 = 满额文件大小
 
 ENTITY_TYPES = {0:"空槽",5:"脚本对象",10:"出入传送点",15:"事件触发区",16:"随机战斗区",
                 20:"事件对象",110:"特殊机关",200:"NPC角色"}

@@ -761,13 +761,18 @@ def _merge_dat_file(file_path: str, target_name: str, info: dict,
     # 解析为可变数组
     records = bytearray(dec)
 
-    # 确定最大记录数（可能因追加而增加）
+    # 确定最大记录数（可能因追加/修改超出当前文件而增加）
+    # 注意: 编辑器 (mat_editor) 导出 TKDefUnit 扩容记录时, 因其 _du_recs_to_full_fields
+    # 按 DEFUNIT_REC_COUNT 补齐, diff 会把 5000+ 的新记录归类为 "modified" 而非 "appended"。
+    # 若仅依据 appended 扩展, 这些记录会因 idx >= max_count 被跳过而丢失。
+    # 故此处对 appended 与 modified 一并取最高索引来决定扩展后的大小。
     max_count = actual_count
     for mod, diff_data in mod_diffs:
-        for app in diff_data.get("appended", []):
-            idx = app.get("index", 0)
-            if idx >= max_count:
-                max_count = idx + 1
+        for _key in ("appended", "modified"):
+            for entry in diff_data.get(_key, []):
+                idx = entry.get("index", 0)
+                if idx >= max_count:
+                    max_count = idx + 1
 
     # 如果需要扩展，填充到新大小
     if max_count > actual_count:
