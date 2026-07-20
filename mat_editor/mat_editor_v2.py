@@ -1227,7 +1227,10 @@ class MatEditorApp(QMainWindow):
             self._canvas._vis_redraw()
         # 同步脚本编辑器语法高亮配色至当前主题
         if hasattr(self, '_script_highlighter') and self._script_highlighter:
+            # set_dark() 内部会 rehighlight() 触发 textChanged, 同样需屏蔽信号避免误标脏 (§修复)
+            self.script_text.blockSignals(True)
             self._script_highlighter.set_dark(self._is_dark)
+            self.script_text.blockSignals(False)
         # 同步行预览面板配色至当前主题 (行预览仅在加载 DEFINE 时渲染一次,
         # 切换主题后须重渲染, 否则保留旧主题配色 — 旧浅色 #333 落在深色背景上呈暗灰)
         if hasattr(self, 'script_preview') and self._current_edit_define_id is not None:
@@ -2199,13 +2202,21 @@ class MatEditorApp(QMainWindow):
                 elif isinstance(var, QCheckBox):
                     var.setChecked(False)
         # Clear script tab
+        # 先提交当前脚本到内存 (避免丢改动), 再复位 define 并屏蔽信号清空 chain_tree:
+        # chain_tree.clear() 会发出瞬时 itemSelectionChanged (Qt 行为) 误触 _on_chain_select,
+        # 若脚本编辑器已清空而 _current_edit_define_id 未复位, 会把空内容写回原 DEFINE
+        # 造成"切换回来脚本内容消失" (§修复)
+        self._save_editor_to_define()
+        self._current_edit_define_id = None
         self.script_text.setReadOnly(False)
         self.script_text.blockSignals(True)
         self.script_text.clear()
         self.script_text.blockSignals(False)
         self.script_text.setReadOnly(True)
         self.script_preview.clear()
+        self.chain_tree.blockSignals(True)
         self.chain_tree.clear()
+        self.chain_tree.blockSignals(False)
         self._current_edit_define_id = None
         self._update_sched_info(None)
 
@@ -2270,6 +2281,8 @@ class MatEditorApp(QMainWindow):
         for key, val in new_vals.items():
             rec[key] = val
         self._data._dirty = True
+        # 先把当前脚本编辑器内容提交到内存, 再刷新, 避免刷新链列表时丢失脚本改动 (§修复)
+        self._save_editor_to_define()
         self._show_record(rec)
         self._apply_filter()
         self._sync_entity_list_select(idx)
@@ -2957,6 +2970,7 @@ class MatEditorApp(QMainWindow):
             self._data._dirty = False
             self._script_dirty = False
             self.status_var.setText(f"已保存 — {file_count} 个文件")
+            QMessageBox.information(self, "保存成功", f"已成功保存 {file_count} 个文件。")
 
     def _save_as(self):
         if self._data._save_mode:
@@ -3020,6 +3034,7 @@ class MatEditorApp(QMainWindow):
             self._data._dirty = False
             self._script_dirty = False
             self.status_var.setText(f"已保存到存档 {self._data._save_path} 槽位{self._data._save_slot}")
+            QMessageBox.information(self, "保存成功", f"已保存到存档 {self._data._save_path} 槽位 {self._data._save_slot}。")
 
     def _du_recs_to_full_fields(self):
         """将 defunit_recs 转换为与文件位置对齐的完整字段列表。
@@ -3700,6 +3715,7 @@ class MatEditorApp(QMainWindow):
 
     def _on_script_edit(self):
         self._script_dirty = True
+        self._data._dirty = True  # 脚本编辑同属待保存修改, 防止切换链条目后丢失"未保存"判定 (§修复)
         if self._edit_debounce:
             self._edit_debounce.stop()
         timer = QTimer(self)
@@ -3715,7 +3731,12 @@ class MatEditorApp(QMainWindow):
         """语法高亮 — 逻辑对应 mat_editor.py _apply_syntax_highlight。
         实际逐行高亮由 ScriptSyntaxHighlighter 自动完成, 此处触发一次整文档重涂。"""
         if hasattr(self, '_script_highlighter') and self._script_highlighter:
+            # rehighlight() 会触发 QPlainTextEdit.textChanged (Qt 行为), 必须屏蔽信号,
+            # 否则会误触 _on_script_edit 并形成 "高亮→textChanged→防抖→高亮" 循环,
+            # 令脏标记在保存后被反复置位, 导致退出时误报"有未保存的修改" (§修复)
+            self.script_text.blockSignals(True)
             self._script_highlighter.rehighlight()
+            self.script_text.blockSignals(False)
 
     def _update_line_preview(self):
         """更新右侧行功能预览 (带颜色分类) — 解析与着色逻辑对应 mat_editor.py _update_line_preview"""
@@ -3814,7 +3835,13 @@ class MatEditorApp(QMainWindow):
 
     # =========== DefUnit 链 ===========
     def _refresh_chain_list(self):
+        # clear() 在清空过程中会瞬时选中其它行并发出 itemSelectionChanged (Qt 行为),
+        # 误触 _on_chain_select 会把 _current_edit_define_id 覆盖成错误条目 → 刷新后跳错行。
+        # 故先记录待保留的 DEFINE, 再屏蔽信号清空 (§修复: 应用修改后跳回第一条)
+        preserve_define_id = self._current_edit_define_id
+        self.chain_tree.blockSignals(True)
         self.chain_tree.clear()
+        self.chain_tree.blockSignals(False)
         if not self._data.records:
             return
         rec = None
@@ -3888,12 +3915,25 @@ class MatEditorApp(QMainWindow):
             self._clear_script_editor()
             self.script_info_lbl.setText("(无关联 DEFINE)")
         else:
+            # 刷新后优先恢复之前正在编辑的 DEFINE, 避免"应用修改"后跳回第一条 (§修复)
+            target_item = None
+            first_item = None
             for i in range(self.chain_tree.topLevelItemCount()):
                 item = self.chain_tree.topLevelItem(i)
-                if item.text(2).isdigit():
-                    self.chain_tree.setCurrentItem(item)
-                    self._on_chain_select()
+                if not (item.text(2).isdigit() and item.text(3).isdigit()):
+                    continue
+                if first_item is None:
+                    first_item = item
+                if preserve_define_id is not None and int(item.text(3)) == preserve_define_id:
+                    target_item = item
                     break
+            chosen = target_item or first_item
+            if chosen is not None:
+                # 阻断选择信号, 由下方显式调用 _on_chain_select 统一处理 (避免重复触发)
+                self.chain_tree.blockSignals(True)
+                self.chain_tree.setCurrentItem(chosen)
+                self.chain_tree.blockSignals(False)
+                self._on_chain_select()
         self._update_sched_info(rec)
 
     def _on_chain_select(self):
