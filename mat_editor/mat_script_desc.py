@@ -2,6 +2,7 @@
 """mat_editor_v2 脚本命令描述系统 — 命令列表/描述模板与人类可读描述辅助函数。
 从 mat_editor_v2.py 原样迁出, 无 UI 逻辑 (§工程化拆分)。"""
 import os
+import re
 import struct
 import sys
 
@@ -115,17 +116,18 @@ def _load_char_names(tks_dir, tkt_lookup):
         # 兜底: 解压结果不对齐记录边界但原始文件对齐 → 未压缩 raw 数据
         if len(raw) % REC == 0 and (len(dec) == 0 or len(dec) % REC != 0):
             dec = raw
-        cnt = min(50, len(dec) // REC)
-        for i in range(cnt):
+        # 加载全部记录: WarPC 原版含 143 个角色(远超旧的 min(50) 上限, 导致 index≥50 显示"角色#N"),
+        # 用文件实际记录数, 同时兼容 MOD 扩容后的更大花名册
+        cnt = len(dec) // REC
+        for i in range(1, cnt):   # 记录#0 是主角, 单独处理; 从 1 开始解析其余角色
             off = i * REC
             name_id = struct.unpack_from('<h', dec, off)[0]
             if name_id > 0 and name_id in tkt_lookup:
                 name = tkt_lookup[name_id].split('\n')[0].strip()
                 if name:
                     _char_name_cache[i] = name
-        # 主角 (index 0): TKT#9000 是控制字符占位, 用 "主角"
-        if 0 not in _char_name_cache:
-            _char_name_cache[0] = "主角"
+        # WarPC 记录#0 恒为主角: 其名字为玩家自定义(TKT 中是 NAME 占位符), 统一显示"主角"
+        _char_name_cache[0] = "主角"
     except Exception:
         pass
 
@@ -160,24 +162,26 @@ def _cm(char_id):
 # │ 11   │ 特殊物品 │ — (sub_40E11C)      │ TKD注释:"26個特殊物品"       │
 # └──────┴──────────┴─────────────────────┴──────────────────────────────┘
 _CAT_NAMES = {1:"角色", 2:"智慧", 3:"仁德", 4:"勇气", 5:"队伍人数", 6:"医术", 10:"事件完成度", 11:"特殊物品"}
-# CheckTeam arg3 比较运算符 (基于TKD脚本注释语义 + 队伍人数检查模式推断)
-_CMP_OPS = {'0':"==", '1':"≥", '-1':"<", '-2':"≤", '2':">"}
+# CheckTeam arg3 比较运算符 — 逆向验证 (CheckFlag/Item/Team/Member 四者共用同一 switch)
+# 源码 sub_40E40C/40E4E4/40E65C/40E88C: case-2:值<a2  case-1:值≤a2  case0:值==a2  case1:值≥a2  case2:值>a2  case3:值≠a2
+# ⚠ 旧表把 -1/-2 写反了 (曾 -1="<" -2="≤"), 实为 -1="≤" -2="<"; 并补全 3="≠"
+_CMP_OPS = {'0':"==", '1':"≥", '-1':"≤", '-2':"<", '2':">", '3':"≠"}
 
 def _checkteam_desc(args):
     """根据逆向 + TKD.dat 脚本注释生成 CheckTeam 的人类可读描述。
     ┌──────┬──────────┬──────────────────────────────────────┐
     │ arg1 │ 语义     │ 逆向依据                             │
     ├──────┼──────────┼──────────────────────────────────────┤
-    │  1   │ 角色存在 │ TKD: CheckTeam(1,N,0) 后跟角色操作    │
-    │  2   │ 智慧     │ TKD注释+save_editor SEG2 byte_756886 │
-    │  3   │ 仁德     │ TKD注释+save_editor SEG2 byte_756887 │
-    │  4   │ 勇气     │ TKD注释+save_editor SEG2 word_756888 │
-    │  5   │ 队伍人数 │ TKD:-2=有空位/1=已满 word_75688C[6]  │
-    │  6   │ 医术     │ TKD注释+save_editor SEG2 word_75688A │
-    │ 10   │ 随机概率 │ TKD注释:"事件概率N%触发"             │
-    │ 11   │ 特殊物品 │ TKD注释+save_editor sub_40E11C case11│
+    │  1   │ 角色存在 │ sub_40E65C case1: 遍历word_75688C[6]队伍槽 │
+    │  2   │ 智慧     │ sub_40E65C case2: word_756884        │
+    │  3   │ 仁德     │ sub_40E65C case3: word_756886        │
+    │  4   │ 勇气     │ sub_40E65C case4: word_756888        │
+    │  5   │ 队伍人数 │ sub_40E65C case5: 统计word_75688C非-1 │
+    │  6   │ 医术     │ sub_40E65C case6: word_75688A        │
+    │ 10   │ 事件完成度│ sub_40E65C case10: word_757EFE      │
+    │ 11   │ 特殊物品 │ sub_40E65C case11: word_757F00      │
     └──────┴──────────┴──────────────────────────────────────┘
-    arg3: 0=存在/==  1=≥  -1=<  -2=≤  2=>"""
+    arg3(逆向 sub_40E65C 比较开关): 0===  1=≥  -1=≤  -2=<  2=>  3=≠"""
     if not args:
         return "检查队伍"
     cat = args[0] if len(args) >= 1 else '?'
@@ -215,9 +219,10 @@ def _checkteam_desc(args):
         # 属性检查: CheckTeam(attr, threshold, op)
         return f"判断{cat_name} {op_str} {val}"
 
-# Attribute arg2 语义映射 (来源: TKD_decoded.txt 664处用法 + 脚本注释)
-# arg2: 1=智慧 2=仁德 3=勇气 5=体力值恢复 6=内力值恢复 10=事件完成度 11=特殊物品
-_ATTR_NAMES = {1:"智慧", 2:"仁德", 3:"勇气", 5:"体力值恢复", 6:"内力值恢复", 10:"事件完成度", 11:"特殊物品"}
+# Attribute arg2 语义映射 (逆向 sub_40E11C switch(a2))
+# arg2: 1=智慧(757F3E) 2=仁德(757F40) 3=勇气(757F42) 4=医术(757F44) 5=体力值恢复(757F12) 6=内力值恢复(757F14) 10=事件完成度(757EFE) 11=特殊物品(757F00)
+# ⚠ 旧表漏了 4=医术 (sub_40E11C case4: word_757F44[527*char]+=delta, 增/减显示SysTalk文本5/15)
+_ATTR_NAMES = {1:"智慧", 2:"仁德", 3:"勇气", 4:"医术", 5:"体力值恢复", 6:"内力值恢复", 10:"事件完成度", 11:"特殊物品"}
 
 # SetCursor 光标动画名称
 # SetCursor arg1→Cur.JVG块 (sub_411BA4→sub_45408C), arg2→帧延迟(dword_8242CC, sub_411D18)
@@ -236,33 +241,60 @@ _ATTR_NAMES = {1:"智慧", 2:"仁德", 3:"勇气", 5:"体力值恢复", 6:"内�
 _CURSOR_BLOCKS = {0:"禁止", 1:"常规", 2:"对话", 3:"开门", 4:"拾取", 5:"常规", 6:"常规", 7:"常规", 8:"常规", 9:"调查", 10:"苍溟"}
 
 def _setcursor_desc(args):
-    """SetCursor(Cur.JVG块, 帧延迟, 开关): arg1选择光标精灵块, arg2动画帧延迟, arg3显示开关"""
+    """SetCursor(Cur.JVG块, 帧延迟, 开关): arg1=光标精灵块(sub_411BA4→dword_8242C8选Cur.JVG), arg2=帧延迟(dword_8242CC), arg3=显隐开关(_initfmode)。⚠ arg1是光标块非实体"""
     if not args or len(args) < 3:
         return "设置光标"
-    ent = args[0]
+    blk = args[0]
     spd = args[1]
     en = args[2]
     en_str = "隐藏" if en == '0' else "显示" if en == '1' else f"模式{en}"
-    block_name = _CURSOR_BLOCKS.get(int(ent) if ent.lstrip('-').isdigit() else -1, f"块{ent}")
-    spd_str = f"延迟{spd}t" if spd != '3' else ""  # 3=引擎默认, 不显示
-    ent_str = "玩家" if ent == '1' else "当前" if ent == '-1' else f"实体{ent}"
-    return f"{ent_str}光标 {en_str} [{block_name}]{' '+spd_str if spd_str else ''}"
+    block_name = _CURSOR_BLOCKS.get(int(blk) if blk.lstrip('-').isdigit() else -1, f"块{blk}")
+    spd_str = f" 延迟{spd}t" if spd != '3' else ""  # 3=引擎默认, 不显示
+    return f"光标[{block_name}] {en_str}{spd_str}"
 
 def _attribute_desc(args):
-    """根据 TKD脚本注释生成 Attribute 的人类可读描述。
-    Attribute(实体, 属性, 变化值): arg2=1智慧 2仁德 3勇气 5体力 6内力 10事件 11特殊"""
+    """根据逆向 sub_40E11C 生成 Attribute 的人类可读描述。
+    Attribute(目标, 属性, 变化值): 目标 -1=全队(a1<0), 0~35=角色索引; arg2 见 _ATTR_NAMES"""
     if not args or len(args) < 3:
         return "属性变更"
     try:
+        target = "全队" if args[0] == '-1' else _cm(args[0])
         attr = int(args[1])
         val = int(args[2])
         name = _ATTR_NAMES.get(attr, f"属性{attr}")
         sign = "+" if val >= 0 else ""
         if attr in (5, 6) and val >= 9999:
-            return f"{name}完全恢复"
-        return f"属性变更 {name}{sign}{val}"
+            return f"{target} {name.replace('恢复','')}完全恢复"
+        return f"{target} {name}{sign}{val}"
     except (ValueError, TypeError):
         return f"属性变更 ({','.join(args[:3])})"
+
+def _menu_options(tkt, id_str, max_opts=8):
+    """MenuTalk 菜单文本 → 选项列表。选项在 TKT 中以 0x1E(解码为换行)分隔; 剥离 <TAG> 控制标记。
+    源码 sub_40B710: 按字节 0x1E 切分文本为若干可点击选项, 选中项 0-based 索引写入 word_755E50[槽]"""
+    try:
+        txt = tkt.get(int(id_str), '') if tkt else ''
+    except (ValueError, TypeError):
+        return []
+    if not txt:
+        return []
+    opts = []
+    for seg in txt.split('\n'):
+        clean = re.sub(r'<[^>]*>', '', seg).strip()
+        if clean:
+            opts.append(clean)
+    return opts[:max_opts]
+
+def _menutalk_desc(a, t):
+    """MenuTalk(文本ID, 变量槽): 解析并显示菜单选项。选中项索引存入 word_755E50[变量槽], 供 CheckResult 判断"""
+    if not a:
+        return "菜单对话"
+    if len(a) < 2:
+        return f"菜单对话 文本={a[0]}"
+    opts = _menu_options(t, a[0])
+    if opts:
+        return f"菜单[{'/'.join(opts)}]→变量[{a[1]}]"
+    return f"菜单对话 文本={a[0]}→变量[{a[1]}]"
 
 SCRIPT_CMD_DESC = {
     # ===== [Normal] 按 DEFCMD.LST 操作码顺序 =====
@@ -280,11 +312,14 @@ SCRIPT_CMD_DESC = {
         f"结束 → C链重置 (cur_C=0)" if a[0] in ('6', '-6') else
         f"结束 (模式={a[0]})"
     ),
-    # opcode 1: TalkB(4) — 阻塞式对话: 实体, 文本ID, 参数, 参数
+    # opcode 1: TalkB(4) — 阻塞式对话: 实体, 文本ID, 立绘/头像帧, 对话框位置
+    # 源码 sub_40A220(a6=1) 入队 + sub_40AEF4 立即显示至按键。⚠ 实体仅 type=20/200 有效
+    # a3(立绘): >0 选 Talk.JVG 头像; a4(位置): 1=上 2=下, 其他按实体朝向(1-4→下)自动
     'TalkB':        lambda a, t: f"对话(等待) 实体#{a[0]} 文本={a[1]} — {_tkt_text(t, a[1])}" if len(a)>=2 else f"对话(等待) 实体#{a[0]}" if a else "对话(等待)",
-    # opcode 2: SetTalkB(4) — 设置对话不等待: 实体, 文本ID, 参数, 参数
+    # opcode 2: SetTalkB(4) — 入队对话但不立即显示(等 DoTalkB): 实体, 文本ID, 立绘, 位置
+    # 源码 sub_40A220(a6=1), 不调 sub_40AEF4。参数同 TalkB, 仅 type=20/200
     'SetTalkB':     lambda a, t: f"设置对话(不等待) 实体#{a[0]} 文本={a[1]} — {_tkt_text(t, a[1])}" if len(a)>=2 else f"设置对话 实体#{a[0]}" if a else "设置对话",
-    # opcode 3: DoTalkB(0) — 执行对话显示
+    # opcode 3: DoTalkB(0) — 显示所有已入队的 TalkB 对话, 阻塞渲染至按键 (sub_40AEF4)
     'DoTalkB':      lambda a, t: "执行对话显示",
     # opcode 4: SetNowDef(3) — 切换DEFINE链位置: 实体(-1=上下文/-2=自身), 链(1=A/2=B/3=C), 新位置
     # sub_40B520: 修改目标实体的 cur_A/B/C, 实现 DEFINE 链跳转 (相当于 goto 到链中指定位置)
@@ -295,11 +330,16 @@ SCRIPT_CMD_DESC = {
         f"{'A链' if a[1]=='1' else 'B链' if a[1]=='2' else 'C链' if a[1]=='3' else '链'+a[1]} "
         f"→位置{a[2]}"
     ),
-    # opcode 5: SysTalk(6) — 系统对话 (sub_40B1B4)
-    # 参数: 实体, 文本ID, 颜色索引, 位置X, 位置Y, 模式(0=阻塞 1=非阻塞)
+    # opcode 5: SysTalk(6) — 系统提示消息 (sub_40B1B4 写入队列 + sub_40B2D0 渲染)
+    # 参数: 文本ID, 字体/颜色索引, 持续帧数, 闪烁(0=常亮 非0=每4帧闪), 位置(0=底部左 非0=中部右侧堆叠), 追加(0=移入队列 1=追加到同实体)
+    # ★ 首参是"文本ID"而非实体! sub_40B1B4(a1): sub_4067E8(a1)取TKT文本; 后续 dword_754710=字体色 754714=持续帧(每帧--归零自动消失) 754718=闪烁 75471C=位置
+    # 铁证: GetItem 内 sub_40B1B4(10,26,40,0,1,0)=获得道具提示; Attribute 内 sub_40B1B4(2,21,50,1,0,0)=智慧+提示; ShowMenu 内 sub_40B1B4(8,18,60,1,1,0)
     'SysTalk':      lambda a, t: (
-        f"系统对话 实体#{a[0]} 文本={a[1]} 色{a[2]} ({a[3]},{a[4]}) {'非阻塞' if a[5]=='1' else '阻塞'}"
-        if len(a)>=6 else f"系统对话 ({','.join(a)})" if a else "系统对话"
+        f"系统提示 文本={a[0]}({_tkt_text(t, a[0], 20)}) {a[2]}帧"
+        + (" 闪烁" if len(a) >= 4 and a[3] != '0' else "")
+        + (" 追加" if len(a) >= 6 and a[5] != '0' else "")
+        if len(a) >= 3 else
+        f"系统提示 文本={a[0]}" if a else "系统提示"
     ),
     # opcode 6: SetHint(3) — 设置提示 (sub_40B650)
     # 参数: 实体(-1=上下文 -2=自身), 提示文本ID, 开关(0=关闭提示 >0=开启提示)
@@ -307,13 +347,14 @@ SCRIPT_CMD_DESC = {
         f"设置提示 {'自身' if a[0]=='-2' else '上下文' if a[0]=='-1' else '实体#'+a[0]} 文本={a[1]} {'开启' if a[2]!='0' else '关闭'}"
         if len(a)>=3 else f"设置提示 ({','.join(a)})" if a else "设置提示"
     ),
-    # opcode 7: MenuTalk(2) — 菜单对话 (sub_40B710)
-    # 参数: 文本ID, 变量槽(存储选择结果)
-    'MenuTalk':     lambda a, t: f"菜单对话 文本={a[0]}→变量[{a[1]}]" if len(a)>=2 else f"菜单对话 ({','.join(a)})" if a else "菜单对话",
+    # opcode 7: MenuTalk(2) — 菜单选择 (sub_40B710)
+    # 参数: 文本ID(选项以0x1E分隔, 解码为换行), 变量槽(选中项0-based索引→word_755E50[槽], 供CheckResult判断)
+    # 菜单文本仅含各选项(提问通常由前置 TalkB 给出); 选项可从 TKT 解析显示
+    'MenuTalk':     lambda a, t: _menutalk_desc(a, t),
     # opcode 8: SetScene(2) — 设置场景状态 (sub_40BB70)
     # 参数: 实体(-1=上下文 -2=自身), 场景ID
     'SetScene':     lambda a, t: (
-        f"设置场景 {'自身' if a[0]=='-2' else '上下文' if a[0]=='-1' else '实体#'+a[0]} →场景{a[1]}"
+        f"设置场景 {'自身' if a[0]=='-2' else '上下文' if a[0]=='-1' else '实体#'+a[0]} →场景{a[1]}{('('+_tkt_scene(t,a[1])+')') if _tkt_scene(t,a[1]) else ''}"
         if len(a)>=2 else f"设置场景 ({','.join(a)})" if a else "设置场景"
     ),
     # opcode 9: SetWalk(3) — 设置行走 (sub_40BC10)
@@ -358,15 +399,16 @@ SCRIPT_CMD_DESC = {
     ),
     # opcode 15: Nop(0) — 空操作
     'Nop':          lambda a, t: f"空操作 (填充={a[0]})" if a else "空操作",
-    # opcode 16: SetCursor(3) — 设置光标
-    # 逆向: sub_411BA4/sub_412390, TKMat[d8]=cursor_id
-    # 参数: (实体, 光标动画, 开关)  动画:0=默认 1=标准 3=开门(传送)  开关:0=隐藏 1=显示
+    # opcode 16: SetCursor(3) — 设置鼠标光标 (sub_411BA4: dword_8242C8=光标块, dword_8242CC=帧延迟)
+    # 参数: (Cur.JVG块, 帧延迟, 显隐开关)  块:0=禁止 1=常规 2=对话 3=开门(传送) 4=拾取 9=调查 10=苍溟  开关:0=隐藏 1=显示
+    # ⚠ 首参是光标块(非实体); 帧延迟=3为引擎默认
     'SetCursor':    lambda a, t: _setcursor_desc(a),
-    # opcode 17: FadeOut(4) — 淡出 (sub_409830)
-    # 参数: R, G, B, 速度(越大越快)
-    'FadeOut':      lambda a, t: f"淡出 RGB({a[0]},{a[1]},{a[2]}) 速度={a[3]}" if len(a)>=4 else "淡出",
-    # opcode 18: FadeIn(4) — 淡入: R, G, B, 速度
-    'FadeIn':       lambda a, t: f"淡入 RGB({a[0]},{a[1]},{a[2]}) 速度={a[3]}" if len(a)>=4 else "淡入",
+    # opcode 17: FadeOut(4) — 淡出至纯色 (sub_409830(0,34,3,delay,R,G,B): 遮罩0→34)
+    # 参数: R, G, B, 每步延迟(ms) — ⚠ 越大越慢! 源码 while(GetTickCount-t<a4)忙等a4毫秒/步; 非"速度"
+    'FadeOut':      lambda a, t: f"淡出 RGB({a[0]},{a[1]},{a[2]}) 延迟{a[3]}ms/步" if len(a)>=4 else "淡出",
+    # opcode 18: FadeIn(4) — 从纯色淡入 (sub_409830(34,0,-3,delay,R,G,B): 遮罩34→0)
+    # 参数: R, G, B, 每步延迟(ms) — 越大越慢 (同FadeOut)
+    'FadeIn':       lambda a, t: f"淡入 RGB({a[0]},{a[1]},{a[2]}) 延迟{a[3]}ms/步" if len(a)>=4 else "淡入",
     # opcode 19: ChangeScene(4) — 切换场景 (sub_40C044)
     # 参数: 场景ID, 玩家X, 玩家Y, 朝向(1-8)
     # 加载新场景文件, 设置玩家位置和朝向, 重置天气/对话等状态
@@ -376,13 +418,22 @@ SCRIPT_CMD_DESC = {
         if len(a)>=4 else
         f"切换场景→#{a[0]} {_tkt_scene(t, a[0])}" if a else "切换场景"
     ),
-    # opcode 20: SetAni(7) — 设置动画 (sub_40C1A4)
-    # 参数: 实体(-1=上下文 -2=自身), Ani.JVG块ID, 帧起点(-1=不变), 帧终点(-1=不变),
-    #        当前帧(-1=不变), 动画速度(-1=不变), 循环标志(0=不循环 1=循环 -1=不变)
-    # 仅type=20/200有效; 设置anim_set=4(Ani.JVG), 修改子模型和动画参数
+    # opcode 20: SetAni(7) — 设置Ani.JVG动画 (sub_40C1A4)。仅 type=20/200 有效; 无条件置 anim_set(d9)=4
+    # 参数: 实体(-1=上下文 -2=自身), Ani.JVG块, 帧起点(-1=不变), 帧终点(-1=不变),
+    #        当前帧(-1=不变), 保留末帧(-1=不变), 循环(0=关 1=开 -1=不变)
+    # ★ 第6参是"保留末帧"(写 d69, 非零则播完停末帧不循环)——非"动画速度"! 速度由 SetTick(d4) 控制
+    # 源码 sub_40C1A4: a2(块)>0 且≠d64 时换块并整体复位 → d64=块 d65=句柄 d16=帧数 d67=0 d68=帧数-1 d17=0
+    #   a3≥0→d67(帧起点) a4≥0→d68(帧终点/最大帧) a5≥0→d17(当前帧,重播关键) a6≥0→d69(保留末帧) a7≥0→flags bit16(动画循环)
+    #   末尾 d14 = d17 + d65 重算渲染帧。⚠ 不复位等待计时 d3, 冻结的一次性动画需另配 SetWait
     'SetAni':       lambda a, t: (
-        f"设置动画 {'自身' if a[0]=='-2' else '上下文' if a[0]=='-1' else '实体#'+a[0]} 块={a[1]}"
-        if len(a)>=2 else f"设置动画 ({','.join(a)})" if a else "设置动画"
+        "设置动画 " + ('自身' if a[0]=='-2' else '上下文' if a[0]=='-1' else '实体#'+a[0])
+        + (f" 块{a[1]}" if len(a)>=2 and a[1] not in ('-1','0') else "")
+        + (f" 起{a[2]}" if len(a)>=3 and a[2]!='-1' else "")
+        + (f" 止{a[3]}" if len(a)>=4 and a[3]!='-1' else "")
+        + (f" 当前{a[4]}" if len(a)>=5 and a[4]!='-1' else "")
+        + (" 保留末帧" if len(a)>=6 and a[5] not in ('-1','0') else "")
+        + (" 循环" if len(a)>=7 and a[6]=='1' else " 单次" if len(a)>=7 and a[6]=='0' else "")
+        if a else "设置动画"
     ),
     # opcode 21: SetTick(2) — 设置Tick周期 (sub_40C388)
     # 参数: 实体(-1=上下文 -2=自身), tick周期值
@@ -450,8 +501,12 @@ SCRIPT_CMD_DESC = {
     'SetFlag':      lambda a, t: f"设置标志 #{a[0]}={a[1]}" if len(a)>=2 else f"设置标志 #{a[0]}" if a else "设置标志",
     # opcode 33: AddFlag(2) — 增加标志 (sub_40CB4C→word_756080[flag_id]+=value)
     'AddFlag':      lambda a, t: f"增加标志 #{a[0]}+{a[1]}" if len(a)>=2 else f"增加标志 #{a[0]}" if a else "增加标志",
-    # opcode 34: TalkA(5) — 即时式对话: 实体, 文本ID, 参数, 参数, 参数
-    'TalkA':        lambda a, t: f"对话(即时) 实体#{a[0]} 文本={a[1]} — {_tkt_text(t, a[1])}" if len(a)>=2 else f"对话(即时) 实体#{a[0]}" if a else "对话(即时)",
+    # opcode 34: TalkA(5) — 非阻塞浮动对话: 实体, 文本ID, 立绘/头像帧, 对话框位置, 持续帧数
+    # 源码 sub_40A220(a6=0) 入队(不阻塞), 由主循环 sub_40A518 渲染; a5=持续帧数(到期消失), 常配 SetWait(-2,a5,a5)。仅 type=20/200
+    'TalkA':        lambda a, t: (
+        f"对话(即时) 实体#{a[0]} 文本={a[1]}({_tkt_text(t, a[1])}) {a[4]}帧" if len(a)>=5 else
+        f"对话(即时) 实体#{a[0]} 文本={a[1]} — {_tkt_text(t, a[1])}" if len(a)>=2 else
+        f"对话(即时) 实体#{a[0]}" if a else "对话(即时)"),
     # opcode 35: Switch(2) — NPC状态切换 (sub_40CB90)
     # 参数: 实体(-1=上下文 -2=自身), 模式(0=常规/站桩 1=动画/行走)
     # 仅type=200有效; arg2=0: anim_set→1(Cha.JVG)+移动模式→0(静止)
@@ -495,18 +550,19 @@ SCRIPT_CMD_DESC = {
         if len(a)>=2 else f"设置立绘 ({','.join(a)})" if a else "设置立绘"
     ),
     # opcode 43: SetWeather(2) — 设置天气效果 (sub_40D2A0)
-    # 参数: 天气类型(0=关闭 1=雨), 保留
-    # a1=0: 清除天气粒子(sub_405B98)
-    # a1=1: 开启下雨效果(sub_405BE0), 参数: 类型=1, 粒子数=5, 最大=400, 增速=10, 速度=5
+    # 参数: 天气类型(1=雨), 开关 — ⚠ 是"开关"(arg2)决定关闭, 非arg1!
+    # 源码 sub_40D2A0: if(arg2==0)清除粒子sub_405B98; else if(arg1==1)下雨sub_405BE0(1,5,400,10,5)
     'SetWeather':   lambda a, t: (
-        f"天气→{'关闭' if a[0]=='0' else '下雨' if a[0]=='1' else '类型'+a[0]}"
-        if a else "设置天气"
+        "天气→关闭" if len(a)>=2 and a[1]=='0' else
+        "天气→下雨" if a and a[0]=='1' else
+        f"天气→类型{a[0]}" if a else "设置天气"
     ),
-    # opcode 44: ShowMenu(2) — 显示菜单
-    # 逆向: sub_40D2D0(__int16 a1), 参数: 0=主菜单 1=存档/读档菜单
+    # opcode 44: ShowMenu(2) — 显示菜单 (sub_40D2D0, 仅取用 arg1)
+    # arg1=0: 姓名输入界面(MBName.gxp), 结果写入玩家名 byte_755B6C/755B64 — 证据: TKD "ShowMenu(0,0)//玩家輸入名字"
+    # arg1=1: 传送/世界地图菜单(MB.gxp), 选中项经 sub_40C044 传送到预设场景(12/19/26/2); 身处场景内(dword_755B58≠0)时 SysTalk(8) 提示无法使用
     'ShowMenu':     lambda a, t: (
-        f"显示主菜单" if a and a[0] == '0' else
-        f"显示存档菜单" if a and a[0] == '1' else
+        "姓名输入" if a and a[0] == '0' else
+        "传送菜单(世界地图)" if a and a[0] == '1' else
         f"显示菜单 类型={a[0]}" if a else "显示菜单"
     ),
     # opcode 45: TeamMember(2) — 队伍成员增减 (sub_40DA00, a2=1加入/0离开, a1=0清空全队)
@@ -548,13 +604,14 @@ SCRIPT_CMD_DESC = {
         f"播放音效 {a[0]} {'循环' if len(a)>=2 and a[1]!='0' else '单次'}"
         if a else "播放音效"
     ),
-    # opcode 52: StopSound(1) — 停止音效 (sub_451D2C)
-    # 无参数; 停止当前播放的音效
-    'StopSound':    lambda a, t: "停止音效",
-    # opcode 53: PlayMusic(2) — 播放音乐 (sub_44AC50 + sub_44AC90)
-    # 参数: 音乐ID, 循环(0=不循环 1=循环)
-    # 音乐文件: sound\%04d.mp3; 使用DirectShow播放
+    # opcode 52: StopSound(1) — 停止指定音效 (sub_451D2C(&unk_A2C1D0, arg1))
+    # 参数: 音效ID — 停止该编号音效的播放 (arg1 作为音效缓冲区索引, 越界/负值则忽略)。非"无参数"
+    'StopSound':    lambda a, t: f"停止音效 {a[0]}" if a else "停止音效",
+    # opcode 53: PlayMusic(2) — 播放音乐 (sub_44AC50 加载 sound\%04d.mp3 + sub_44AC90 播放, DirectShow)
+    # 参数: 音乐ID(<0=停止当前音乐 sub_44ACE8), 循环(0=不循环 1=循环)
+    # 源码 case53: 循环!=0 时还会把该曲登记为当前场景BGM byte_755B74[dword_755B58]
     'PlayMusic':    lambda a, t: (
+        "停止音乐" if a and a[0].startswith('-') else
         f"播放音乐 {a[0]} {'循环' if len(a)>=2 and a[1]!='0' else '单次'}"
         if a else "播放音乐"
     ),
@@ -563,7 +620,7 @@ SCRIPT_CMD_DESC = {
     # 存储在byte_755B74[256], 切换场景时自动播放对应BGM
     # 如果设置的是当前场景的BGM且值<0, 则停止当前音乐
     'SetMusic':     lambda a, t: (
-        f"场景BGM 场景{a[0]}→{'停止' if a[1]=='-1' else '音乐'+a[1]}"
+        f"场景BGM 场景{a[0]}{('('+_tkt_scene(t,a[0])+')') if _tkt_scene(t,a[0]) else ''}→{'停止' if a[1]=='-1' else '音乐'+a[1]}"
         if len(a)>=2 else f"场景BGM ({','.join(a)})" if a else "场景BGM"
     ),
     # opcode 55: TheEnd(1) — 游戏结局 (case 55)
@@ -582,7 +639,7 @@ SCRIPT_CMD_DESC = {
     # word_755E50存储上次比较操作的结果
     'CheckResult':  lambda a, t: f"检查结果 变量[{a[0]}]=={a[1]}?" if len(a)>=2 else "检查结果",
     # opcode 61: CheckFlag(3) — 检查标志条件跳转 (sub_40E40C)
-    # 参数: 标志ID(0-1023), 期望值, 操作符(0=== 1=>= -1=< -2=<= 2=> 3=!=)
+    # 参数: 标志ID(0-1023), 期望值, 操作符(0=== 1=>= -1=<= -2=< 2=> 3=!=)
     # 比较word_756080[标志ID]与期望值, 结果存入dword_755AA0
     # 字节码中隐含跳转偏移: 如果比较失败则跳转
     'CheckFlag':    lambda a, t: (
@@ -590,30 +647,31 @@ SCRIPT_CMD_DESC = {
         if len(a)>=3 else f"检查标志 #{a[0]}" if a else "检查标志"
     ),
     # opcode 62: CheckItem(3) — 检查道具条件跳转 (sub_40E4E4)
-    # 参数: 道具ID(10000=金钱), 期望数量, 操作符(0=== 1=>= -1=< -2=<= 2=> 3=!=)
+    # 参数: 道具ID(10000=金钱), 期望数量, 操作符(0=== 1=>= -1=<= -2=< 2=> 3=!=)
     # 统计背包+队伍装备中的道具总数, 与期望值比较
     # 结果存入dword_755AA0, 字节码中隐含跳转偏移
-    'CheckItem':    lambda a, t: (
-        f"检查道具 {a[0]} {_CMP_OPS.get(a[2], a[2])} {a[1]}?"
-        if len(a)>=3 else f"检查道具 {a[0]}" if a else "检查道具"
+    'CheckItem':    lambda a, t, i=None: (
+        f"检查金钱 {_CMP_OPS.get(a[2], a[2])} {a[1]}?" if len(a)>=3 and a[0]=='10000' else
+        f"检查道具 {a[0]}{('('+_item_name(i,a[0])+')') if _item_name(i,a[0]) else ''} {_CMP_OPS.get(a[2], a[2])} {a[1]}?" if len(a)>=3 else
+        f"检查道具 {a[0]}" if a else "检查道具"
     ),
     # opcode 63: CheckTeam(3) — 检查队伍条件跳转
     'CheckTeam':    lambda a, t, i=None: _checkteam_desc(a),
-    # opcode 64: MiniGame(3) — 小游戏 (sub_40E97C)
-    # 参数: 游戏类型(1-7), 难度/参数, 跳转偏移(失败时跳转)
-    # 游戏类型: 1=华容道 2=八阵图 3=骰子 4=串珠 5=四四同数 6=拼图 7=龙蛇百变
-    # 返回dword_755AA0: 1=成功 0=失败; 失败时跳转到指定偏移
+    # opcode 64: MiniGame(3) — 小游戏 (sub_40E97C(type, threshold, mode, &result))
+    # 参数: 游戏类型(1-7), 通关分阈值, 比较模式(1=分数≥阈值判胜, 其他=分数<阈值判胜); 失败跳转偏移隐含于字节码
+    # 游戏类型(名称依原注, C层未逐一验证): 1=华容道 2=八阵图 3=骰子 4=串珠 5=四四同数 6=拼图 7=龙蛇百变
+    # 返回dword_755AA0: 1=成功(继续) 0=失败(跳转)
     'MiniGame':     lambda a, t: (
         f"小游戏 {'华容道' if a[0]=='1' else '八阵图' if a[0]=='2' else '骰子' if a[0]=='3' else '串珠' if a[0]=='4' else '四四同数' if a[0]=='5' else '拼图' if a[0]=='6' else '龙蛇百变' if a[0]=='7' else '类型'+a[0]}"
         if a else "小游戏"
     ),
     # opcode 65: CheckMember(4) — 检查队伍成员属性 (sub_40E88C)
-    # 参数: 角色ID, 属性类型(0=等级), 期望值, 操作符(0=== 1=>= -1=< -2=<= 2=> 3=!=)
+    # 参数: 角色ID, 属性类型(0=等级), 期望值, 操作符(0=== 1=>= -1=<= -2=< 2=> 3=!=)
     # 检查指定角色的属性值, 结果存入dword_755AA0
     # 字节码中隐含跳转偏移: 如果比较失败则跳转
     'CheckMember':  lambda a, t: (
-        f"检查成员 角色#{a[0]} 属性{a[1]} {_CMP_OPS.get(a[3], a[3])} {a[2]}?"
-        if len(a)>=4 else f"检查成员 ({','.join(a)})" if a else "检查成员"
+        f"检查成员 {_cm(a[0])} {'等级' if a[1]=='0' else '属性'+a[1]} {_CMP_OPS.get(a[3], a[3])} {a[2]}?"
+        if len(a)>=4 else f"检查成员 {_cm(a[0])}" if a else "检查成员"
     ),
     # opcode 66: War(1) — 战斗 (sub_40EB10)
     # 参数: 战斗ID

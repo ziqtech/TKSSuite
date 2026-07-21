@@ -112,7 +112,7 @@ from mat_dat_io import (
     get_script_info, is_empty, has_data, scene_name,
     save_mat, save_defunit, load_mat_from_save, save_mat_to_save,
 )
-from mat_script_desc import SCRIPT_CMD_DESC, _CURSOR_BLOCKS, _tkt_text
+from mat_script_desc import SCRIPT_CMD_DESC, _CURSOR_BLOCKS, _tkt_text, _menu_options
 from mat_render import (
     _SPRITE_CACHE, _SHADOW_CACHE, _BLEND_CACHE, _RGBA_CACHE,
     _get_dir_frame, _get_jvg_frame_rgba,
@@ -3777,6 +3777,7 @@ class MatEditorApp(QMainWindow):
         branch_cmds = {'CheckFlag', 'CheckResult', 'CheckItem', 'CheckTeam', 'CheckMember',
                        'Switch', 'Random'}
 
+        seen_cmds = []  # 累积已解析命令(cmd,args), 供 CheckResult 回溯配套 MenuTalk; DEFINE 边界重置
         for i, line in enumerate(lines):
             stripped = line.strip()
             if i > 0:
@@ -3787,9 +3788,12 @@ class MatEditorApp(QMainWindow):
                 cursor.insertText(trunc(stripped), fmt_comment)
                 continue
             if stripped in ('{', '}; end') or stripped.startswith('};'):
+                if stripped.startswith('};'):
+                    seen_cmds = []  # DEFINE 结束, 重置回溯作用域
                 cursor.insertText(trunc(stripped), fmt_block)
                 continue
             if stripped.startswith('DEFINE'):
+                seen_cmds = []  # 新 DEFINE, 重置回溯作用域
                 cursor.insertText(trunc(stripped), fmt_block)
                 continue
             m = re.match(r'([A-Za-z_]\w*)\s*\((.*)\)', stripped)
@@ -3798,6 +3802,14 @@ class MatEditorApp(QMainWindow):
                 args_str = m.group(2).strip()
                 args = [a.strip() for a in args_str.split(',') if a.strip()] if args_str else []
                 desc = self._format_cmd_desc(cmd_name, args)
+                maxlen = 28
+                # CheckResult: 回溯本 DEFINE 内配套 MenuTalk, 追加被判定的选项文本
+                if cmd_name == 'CheckResult' and len(args) >= 2:
+                    opt = self._resolve_menu_option(seen_cmds, len(seen_cmds), args[0], args[1])
+                    if opt:
+                        desc += f" →「{opt}」"
+                        maxlen = 40
+                seen_cmds.append((cmd_name, args))
                 fmt = fmt_cmd
                 if cmd_name in talk_cmds:
                     fmt = fmt_talk
@@ -3809,7 +3821,7 @@ class MatEditorApp(QMainWindow):
                     fmt = fmt_getitem
                 elif cmd_name in ('TeamMember', 'ChangeScene'):
                     fmt = fmt_scene
-                cursor.insertText(trunc(desc), fmt)
+                cursor.insertText(trunc(desc, maxlen), fmt)
             else:
                 m2 = re.match(r'([A-Za-z_]\w+)\s*$', stripped)
                 if m2 and m2.group(1) in SCRIPT_CMD_DESC:
@@ -3832,6 +3844,20 @@ class MatEditorApp(QMainWindow):
                 pass
         args_str = ', '.join(args) if args else ''
         return f"{cmd_name}({args_str})"
+
+    def _resolve_menu_option(self, commands, idx, slot, expected):
+        """CheckResult(变量槽, 期望值): 回溯 idx 之前最近的、写入同一变量槽的 MenuTalk,
+        把期望值当作选项索引解析出对应的菜单选项文本。找不到匹配则返回 None。"""
+        try:
+            exp = int(expected)
+        except (ValueError, TypeError):
+            return None
+        for pj in range(idx - 1, -1, -1):
+            pc, pa = commands[pj][0], commands[pj][1]
+            if pc == 'MenuTalk' and len(pa) >= 2 and pa[1] == slot:
+                opts = _menu_options(self._data.tkt_all, pa[0])
+                return opts[exp] if 0 <= exp < len(opts) else None
+        return None
 
     # =========== DefUnit 链 ===========
     def _refresh_chain_list(self):
@@ -4230,6 +4256,11 @@ class MatEditorApp(QMainWindow):
         c_default = QColor('#333333' if not dark else '#dcdcdc')   # 普通命令(深色=白色)
         for si, (cmd_name, args, line_text, line_idx) in enumerate(commands):
             desc = self._format_cmd_desc(cmd_name, args)
+            # CheckResult: 回溯配套 MenuTalk, 在描述后追加被判定的选项文本
+            if cmd_name == 'CheckResult' and len(args) >= 2:
+                opt = self._resolve_menu_option(commands, si, args[0], args[1])
+                if opt:
+                    desc += f" → 选中「{opt}」"
             item = QTreeWidgetItem([str(si + 1), cmd_name, desc])
             # 颜色分类
             if cmd_name in talk_cmds:
@@ -4317,6 +4348,12 @@ class MatEditorApp(QMainWindow):
                         cursor.insertText(item_name, self._pv_item_red_fmt)
                 except (ValueError, TypeError):
                     pass
+            # CheckResult: 回溯配套 MenuTalk, 显示被判定的具体选项文本
+            if cmd_name == 'CheckResult' and len(args) >= 2:
+                opt = self._resolve_menu_option(self._preview_cmds, step, args[0], args[1])
+                if opt:
+                    self._pv_detail.append("\n<b>━━━ 菜单选择判断 ━━━</b>")
+                    self._pv_detail.append(f"当 变量[{args[0]}] == {args[1]} 成立 → 玩家选择了「{opt}」")
             # 更新信息标签
             self._pv_info_lbl.setText(f"步骤 {step+1}/{len(self._preview_cmds)}")
         # 高亮当前步骤 (黄色背景)
