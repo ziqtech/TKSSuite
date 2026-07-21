@@ -120,6 +120,7 @@ from mat_render import (
     _pil_to_qpixmap, load_scene_background, load_scene_background_from_bytes,
 )
 from mat_widgets import CodeEditor, ScriptSyntaxHighlighter
+from mat_script_templates import SCRIPT_TEMPLATES
 from mat_threads import DataLoaderThread, JvgLoaderThread
 
 # [28] 对话颜色字段的 dword 索引 (IDX_DIALOG_COLOR='d28' → 28), 供新增实体默认值判断 (§需求4)
@@ -1678,6 +1679,11 @@ class MatEditorApp(QMainWindow):
         self._btn_fix_validate.setToolTip("校验脚本中 SetPos 等语句的实体号/坐标/朝向是否与当前实体一致, 不一致可一键修复")
         self._btn_fix_validate.clicked.connect(self._show_fix_validate_menu)
         stb.addWidget(self._btn_fix_validate)
+        self._btn_script_tpl = QPushButton("📋 脚本模板")
+        self._btn_script_tpl.setFixedWidth(104)
+        self._btn_script_tpl.setToolTip("从原版高频脚本写法中挑选模板, 一键填入脚本编辑框光标处")
+        self._btn_script_tpl.clicked.connect(self._show_script_template_dialog)
+        stb.addWidget(self._btn_script_tpl)
         btn_preview = QPushButton("▶ 预览")
         btn_preview.setFixedWidth(70)
         btn_preview.setToolTip("预览当前脚本执行流程")
@@ -4202,6 +4208,116 @@ class MatEditorApp(QMainWindow):
         if cur_a > 0:
             trigger += " + A链自动(Tick)"
         self._sched_labels['trigger'].setText(trigger)
+
+    # =========== 脚本模板 ===========
+    def _show_script_template_dialog(self):
+        """脚本模板选择器: 展示从原版 TKD.dat 高频写法归纳的模板, 选中后插入编辑框光标处。
+        模板数据见 mat_script_templates.SCRIPT_TEMPLATES (按命令频率/骨架统计归纳)。"""
+        if self._current_edit_define_id is None:
+            QMessageBox.information(self, "脚本模板", "请先在上方链列表选择一个 DEFINE 脚本块")
+            return
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle("脚本模板 — 常用脚本快速填充")
+        dlg.resize(760, 540)
+        ico = os.path.join(os.path.dirname(__file__), 'TKS.ico')
+        if os.path.exists(ico):
+            dlg.setWindowIcon(QIcon(ico))
+        dlg_layout = QVBoxLayout(dlg)
+
+        head = QLabel("挑选一个常用脚本模板, 双击或点击 [插入到光标处] 填入编辑框; "
+                     "模板中的数字为占位值, 按首行注释替换为实际编号即可。")
+        head.setProperty("class", "InfoTitle")
+        head.setWordWrap(True)
+        dlg_layout.addWidget(head)
+
+        splitter = QSplitter(Qt.Horizontal)
+
+        # 左: 模板树 (分类 → 模板)
+        tree = QTreeWidget()
+        tree.setHeaderLabels(["模板", "说明"])
+        tree.setColumnWidth(0, 170)
+        tree.setSelectionMode(QAbstractItemView.SingleSelection)
+        tree.setRootIsDecorated(True)
+        for cat_name, items in SCRIPT_TEMPLATES:
+            cat_item = QTreeWidgetItem([cat_name, ""])
+            cf = cat_item.font(0)
+            cf.setBold(True)
+            cat_item.setFont(0, cf)
+            cat_item.setFlags(Qt.ItemIsEnabled)  # 分类节点不可选中
+            tree.addTopLevelItem(cat_item)
+            for name, desc, body in items:
+                it = QTreeWidgetItem([name, desc])
+                it.setData(0, Qt.UserRole, body)
+                it.setToolTip(1, desc)
+                cat_item.addChild(it)
+            cat_item.setExpanded(True)
+        splitter.addWidget(tree)
+
+        # 右: 模板内容预览 (只读, 复用脚本语法高亮)
+        preview = QPlainTextEdit()
+        preview.setFont(QFont("Consolas", 10))
+        preview.setReadOnly(True)
+        preview.setLineWrapMode(QPlainTextEdit.NoWrap)
+        preview.setPlaceholderText("← 选择左侧模板查看内容")
+        self._tpl_preview_hl = ScriptSyntaxHighlighter(preview.document(), self._is_dark)
+        splitter.addWidget(preview)
+        splitter.setSizes([300, 440])
+        dlg_layout.addWidget(splitter, 1)
+
+        btn_row = QHBoxLayout()
+        btn_row.addStretch()
+        btn_insert = QPushButton("插入到光标处")
+        btn_insert.setDefault(True)
+        btn_insert.setEnabled(False)
+        btn_cancel = QPushButton("取消")
+        btn_row.addWidget(btn_insert)
+        btn_row.addWidget(btn_cancel)
+        dlg_layout.addLayout(btn_row)
+
+        def _current_body():
+            sel = tree.selectedItems()
+            return sel[0].data(0, Qt.UserRole) if sel else None
+
+        def _on_sel():
+            body = _current_body()
+            if body:
+                preview.setPlainText(body)
+                btn_insert.setEnabled(True)
+            else:
+                preview.clear()
+                btn_insert.setEnabled(False)
+        tree.itemSelectionChanged.connect(_on_sel)
+        tree.itemDoubleClicked.connect(
+            lambda item, col: dlg.accept() if item.data(0, Qt.UserRole) else None)
+        btn_insert.clicked.connect(dlg.accept)
+        btn_cancel.clicked.connect(dlg.reject)
+
+        if dlg.exec() != QDialog.Accepted:
+            return
+        body = _current_body()
+        if body:
+            self._insert_script_template(body)
+
+    def _insert_script_template(self, body):
+        """把模板 body 插入脚本编辑框光标处 (独占完整行), 随后刷新高亮/行预览并标记未保存。"""
+        body = body.rstrip('\n')
+        if not self.script_text.toPlainText().strip():
+            self.script_text.setPlainText(body)
+        else:
+            cursor = self.script_text.textCursor()
+            cursor.beginEditBlock()
+            cursor.movePosition(QTextCursor.EndOfBlock)
+            cursor.insertText('\n' + body)
+            cursor.endEditBlock()
+            self.script_text.setTextCursor(cursor)
+        self.script_text.setFocus()
+        self._apply_syntax_highlight()
+        self._update_line_preview()
+        self._save_editor_to_define()
+        self._script_dirty = True
+        self._data._dirty = True
+        self.status_var.setText("已插入脚本模板 (请按首行注释替换占位数字)")
 
     # =========== 脚本修复验证 ===========
     def _show_fix_validate_menu(self):
