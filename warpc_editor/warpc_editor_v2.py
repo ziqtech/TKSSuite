@@ -1648,8 +1648,6 @@ class WarpcEditorV2(QMainWindow):
         for i in range(SKILL_LEARN_COUNT):
             r, c = divmod(i, 8)
             sname = self.skill_names.get(i, f"技能#{i}") if self.skill_names else f"技能#{i}"
-            if i == 343:
-                sname = "普通攻击"
             cell = QVBoxLayout()
             cell.setSpacing(1)
             lbl = QLabel(sname[:12])
@@ -2065,8 +2063,6 @@ class WarpcEditorV2(QMainWindow):
                 for i, lbl in enumerate(self._skill_learn_labels):
                     if i < len(self._skill_learn_labels):
                         sname = self.skill_names.get(i, f"技能#{i}") if self.skill_names else f"技能#{i}"
-                        if i == 343:
-                            sname = "普通攻击"
                         lbl.setText(sname[:12])
 
             # 重建技能效果判定
@@ -2359,8 +2355,6 @@ class WarpcEditorV2(QMainWindow):
             if self.skill_names and hasattr(self, '_skill_learn_labels'):
                 for i, lbl in enumerate(self._skill_learn_labels):
                     sname = self.skill_names.get(i, f"技能#{i}")
-                    if i == 343:
-                        sname = "普通攻击"
                     lbl.setText(sname[:12])
                     lbl.setToolTip(f"[{88+i//2}] {sname}")
 
