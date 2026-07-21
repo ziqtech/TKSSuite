@@ -63,7 +63,7 @@ from PySide6.QtWidgets import (
     QFrame, QGridLayout, QAbstractItemView, QMenuBar, QTabWidget,
     QSpinBox, QSizePolicy, QMenu,
 )
-from PySide6.QtGui import QColor, QFont, QIcon, QIntValidator
+from PySide6.QtGui import QColor, QFont, QIcon, QIntValidator, QKeySequence
 from PySide6.QtCore import Qt, QTranslator, Signal
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from editor_utils.theme_manager import ThemeManager
@@ -1184,10 +1184,10 @@ class WarpcEditorV2(QMainWindow):
         # 菜单栏
         mb = self.menuBar()
         fm = mb.addMenu("文件(&F)")
-        fm.addAction("加载 TKS 目录…\tCtrl+O", self._load_tks_dir)
-        fm.addAction("加载存档 (从游戏目录)…\tCtrl+Shift+O", self._load_save_dir)
+        fm.addAction("加载 TKS 目录…", QKeySequence("Ctrl+O"), self._load_tks_dir)
+        fm.addAction("加载存档 (从游戏目录)…", QKeySequence("Ctrl+Shift+O"), self._load_save_dir)
         fm.addSeparator()
-        fm.addAction("保存\tCtrl+S", self._save)
+        fm.addAction("保存", QKeySequence("Ctrl+S"), self._save)
         fm.addAction("导出为 MOD (.tksmod)…", self._export_tksmod)
         fm.addAction("导出为 MOD (指定参考目录)…", self._export_tksmod_with_ref)
         fm.addSeparator()
@@ -1197,7 +1197,7 @@ class WarpcEditorV2(QMainWindow):
         fm.addAction("退出", self.close)
 
         em = mb.addMenu("编辑(&E)")
-        em.addAction("新增角色\tCtrl+N", self._add_new)
+        em.addAction("新增角色", QKeySequence("Ctrl+N"), self._add_new)
         em.addAction("复制当前角色", self._copy_record)
         em.addAction("导出当前角色(.warpc)…", self._export_warpc)
         em.addAction("导入角色(.warpc)…", self._import_warpc)

@@ -33,7 +33,7 @@ from PySide6.QtWidgets import (
     QPushButton, QScrollArea, QSplitter, QTabWidget, QTableWidget,
     QTableWidgetItem, QTextEdit, QVBoxLayout, QWidget,
 )
-from PySide6.QtGui import QColor, QFont, QIcon
+from PySide6.QtGui import QColor, QFont, QIcon, QKeySequence
 from PySide6.QtCore import QSize, Qt
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
@@ -548,8 +548,8 @@ class SaveEditorApp(QMainWindow):
         # 菜单栏
         mb = self.menuBar()
         fm = mb.addMenu("文件(&F)")
-        fm.addAction("📂 打开存档目录…\tCtrl+O", self._cmd_open)
-        fm.addAction("💾 保存当前槽位\tCtrl+S", self._cmd_save)
+        fm.addAction("📂 打开存档目录…", QKeySequence("Ctrl+O"), self._cmd_open)
+        fm.addAction("💾 保存当前槽位", QKeySequence("Ctrl+S"), self._cmd_save)
         fm.addSeparator()
         fm.addAction("🚪 退出", self.close)
         tm = mb.addMenu("工具(&T)")

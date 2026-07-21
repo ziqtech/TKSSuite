@@ -598,9 +598,9 @@ class WarDataEditorV2(QMainWindow):
         # 菜单栏
         mb = self.menuBar()
         fm = mb.addMenu("文件(&F)")
-        fm.addAction("加载 TKS 目录…\tCtrl+O", self._load_tks_dir)
+        fm.addAction("加载 TKS 目录…", QKeySequence("Ctrl+O"), self._load_tks_dir)
         fm.addSeparator()
-        fm.addAction("保存\tCtrl+S", self._save)
+        fm.addAction("保存", QKeySequence("Ctrl+S"), self._save)
         fm.addAction("另存为…", self._save_as)
         fm.addAction("导出为 MOD (.tksmod)…", self._export_tksmod)
         fm.addAction("导出为 MOD (指定参考目录)…", self._export_tksmod_with_ref)
@@ -610,7 +610,7 @@ class WarDataEditorV2(QMainWindow):
         fm.addAction("退出", self.close)
 
         em = mb.addMenu("编辑(&E)")
-        em.addAction("新增战场\tCtrl+N", self._new_battle)
+        em.addAction("新增战场", QKeySequence("Ctrl+N"), self._new_battle)
         em.addAction("复制当前记录", self._copy_record)
         em.addAction("删除当前记录", self._delete_record)
 

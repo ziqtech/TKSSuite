@@ -594,9 +594,9 @@ class ItemEditorApp(QMainWindow):
         # 菜单栏
         mb = self.menuBar()
         fm = mb.addMenu("文件(&F)")
-        fm.addAction("加载 TKS 目录…\tCtrl+O", self._load_tks_dir)
+        fm.addAction("加载 TKS 目录…", QKeySequence("Ctrl+O"), self._load_tks_dir)
         fm.addSeparator()
-        fm.addAction("保存\tCtrl+S", self._save)
+        fm.addAction("保存", QKeySequence("Ctrl+S"), self._save)
         fm.addAction("导出为 MOD (.tksmod)…", self._export_tksmod)
         fm.addAction("导出为 MOD (指定参考目录)…", self._export_tksmod_with_ref)
         fm.addSeparator()
