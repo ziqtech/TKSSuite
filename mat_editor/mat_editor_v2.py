@@ -112,7 +112,7 @@ from mat_dat_io import (
     get_script_info, is_empty, has_data, scene_name,
     save_mat, save_defunit, load_mat_from_save, save_mat_to_save,
 )
-from mat_script_desc import SCRIPT_CMD_DESC, _CURSOR_BLOCKS, _tkt_text, _menu_options, format_cmd_params
+from mat_script_desc import SCRIPT_CMD_DESC, _CURSOR_BLOCKS, _tkt_text, _menu_options, format_cmd_params, _dir_name
 from mat_render import (
     _SPRITE_CACHE, _SHADOW_CACHE, _BLEND_CACHE, _RGBA_CACHE,
     _get_dir_frame, _get_jvg_frame_rgba,
@@ -1673,6 +1673,11 @@ class MatEditorApp(QMainWindow):
         self.script_info_lbl = QLabel("(未选中 DEFINE)")
         self.script_info_lbl.setProperty("class", "PropLabel")
         stb.addWidget(self.script_info_lbl, 1)
+        self._btn_fix_validate = QPushButton("🔧 修复验证")
+        self._btn_fix_validate.setFixedWidth(104)
+        self._btn_fix_validate.setToolTip("校验脚本中 SetPos 等语句的实体号/坐标/朝向是否与当前实体一致, 不一致可一键修复")
+        self._btn_fix_validate.clicked.connect(self._show_fix_validate_menu)
+        stb.addWidget(self._btn_fix_validate)
         btn_preview = QPushButton("▶ 预览")
         btn_preview.setFixedWidth(70)
         btn_preview.setToolTip("预览当前脚本执行流程")
@@ -4197,6 +4202,148 @@ class MatEditorApp(QMainWindow):
         if cur_a > 0:
             trigger += " + A链自动(Tick)"
         self._sched_labels['trigger'].setText(trigger)
+
+    # =========== 脚本修复验证 ===========
+    def _show_fix_validate_menu(self):
+        """弹出"修复验证"菜单, 选择要校验的脚本语句类型 (当前仅 SetPos, 预留扩展)"""
+        if self._current_edit_define_id is None:
+            QMessageBox.information(self, "修复验证", "请先在上方链列表选择一个 DEFINE 脚本块")
+            return
+        menu = QMenu(self)
+        act_setpos = menu.addAction("SetPos — 校验实体号 / 坐标 / 朝向")
+        act_setpos.triggered.connect(self._fix_validate_setpos)
+        btn = self._btn_fix_validate
+        menu.exec(btn.mapToGlobal(QPoint(0, btn.height())))
+
+    def _current_script_entity(self):
+        """返回当前脚本所属实体记录 (由属性面板选中项决定, 与链列表同源)。无有效实体返回 None"""
+        if self._current_param_idx is None:
+            return None
+        if not (0 <= self._current_param_idx < len(self._data.records)):
+            return None
+        rec = self._data.records[self._current_param_idx]
+        return rec if has_data(rec) else None
+
+    def _fix_validate_setpos(self):
+        """校验当前脚本内所有 SetPos 的实体号/坐标/朝向是否与当前实体一致, 不一致时弹确认框修复。
+        用途: 通用模板脚本(如"通用加入")复制到不同角色后, 一键把 SetPos 同步到当前实体实际值。"""
+        rec = self._current_script_entity()
+        if rec is None:
+            QMessageBox.information(self, "SetPos 修复验证", "未找到当前脚本所属实体, 请先选中实体并选择 DEFINE")
+            return
+        ent_idx = rec['index']
+        cur_x = rec.get('d10', 0)
+        cur_y = rec.get('d11', 0)
+        cur_dir = rec.get('d13', 0)
+
+        lines = self.script_text.toPlainText().split('\n')
+        setpos_re = re.compile(r'^(\s*)SetPos\s*\(\s*(-?\d+)\s*,\s*(-?\d+)\s*,\s*(-?\d+)\s*,\s*(-?\d+)\s*\)(.*)$')
+        total = 0
+        mismatches = []  # (line_idx, indent, trailing, cur_stmt, new_stmt)
+        for i, line in enumerate(lines):
+            m = setpos_re.match(line)
+            if not m:
+                continue
+            total += 1
+            indent = m.group(1)
+            e = int(m.group(2)); x = int(m.group(3)); y = int(m.group(4)); dd = int(m.group(5))
+            trailing = m.group(6)
+            # 目标: 显式实体号→当前实体索引; -1(上下文)/-2(自身) 相对引用保持不变; 坐标/朝向一律对齐当前实体
+            tgt_e = e if e < 0 else ent_idx
+            if tgt_e == e and x == cur_x and y == cur_y and dd == cur_dir:
+                continue
+            cur_stmt = f"SetPos({e},{x},{y},{dd})"
+            new_stmt = f"SetPos({tgt_e},{cur_x},{cur_y},{cur_dir})"
+            mismatches.append((i, indent, trailing, cur_stmt, new_stmt))
+
+        if total == 0:
+            QMessageBox.information(self, "SetPos 修复验证", "当前脚本未找到 SetPos 语句")
+            return
+        dir_txt = _dir_name(str(cur_dir), str(ent_idx))
+        if not mismatches:
+            QMessageBox.information(
+                self, "SetPos 修复验证",
+                f"当前脚本共 {total} 处 SetPos, 均与当前实体一致, 无需修复\n\n"
+                f"当前实体 #{ent_idx} — 坐标({cur_x},{cur_y}) 朝向{cur_dir}({dir_txt})")
+            return
+
+        # 不一致 → 弹确认对话框 (逐条展示差异, 复选框默认全选, 用户确认后修复)
+        dlg = QDialog(self)
+        dlg.setWindowTitle("SetPos 修复验证")
+        dlg.resize(660, 440)
+        ico = os.path.join(os.path.dirname(__file__), 'TKS.ico')
+        if os.path.exists(ico):
+            dlg.setWindowIcon(QIcon(ico))
+        dlg_layout = QVBoxLayout(dlg)
+
+        head = QLabel(
+            f"当前实体 #{ent_idx} — 坐标({cur_x},{cur_y}) 朝向{cur_dir}({dir_txt})\n"
+            f"发现 {len(mismatches)} / {total} 处 SetPos 与当前实体不一致, 勾选需要修复的项后点击 [修复选中项]:")
+        head.setProperty("class", "InfoTitle")
+        head.setWordWrap(True)
+        dlg_layout.addWidget(head)
+
+        tree = QTreeWidget()
+        tree.setHeaderLabels(["修复", "行", "当前语句", "建议修复为"])
+        tree.setColumnWidth(0, 44)
+        tree.setColumnWidth(1, 48)
+        tree.setColumnWidth(2, 230)
+        tree.setRootIsDecorated(False)
+        tree.setSelectionMode(QAbstractItemView.NoSelection)
+        item_map = []  # (item, line_idx, indent, trailing, new_stmt)
+        for (i, indent, trailing, cur_stmt, new_stmt) in mismatches:
+            it = QTreeWidgetItem(["", str(i + 1), cur_stmt, new_stmt])
+            it.setFlags(it.flags() | Qt.ItemIsUserCheckable)
+            it.setCheckState(0, Qt.Checked)
+            it.setForeground(2, QColor("#CC0000"))
+            it.setForeground(3, QColor("#2E9B57"))
+            tree.addTopLevelItem(it)
+            item_map.append((it, i, indent, trailing, new_stmt))
+        dlg_layout.addWidget(tree, 1)
+
+        btn_row = QHBoxLayout()
+        btn_all = QPushButton("全选")
+        btn_none = QPushButton("全不选")
+        btn_row.addWidget(btn_all)
+        btn_row.addWidget(btn_none)
+        btn_row.addStretch()
+        btn_fix = QPushButton("修复选中项")
+        btn_fix.setDefault(True)
+        btn_cancel = QPushButton("取消")
+        btn_row.addWidget(btn_fix)
+        btn_row.addWidget(btn_cancel)
+        dlg_layout.addLayout(btn_row)
+
+        def _set_all(state):
+            for entry in item_map:
+                entry[0].setCheckState(0, state)
+        btn_all.clicked.connect(lambda: _set_all(Qt.Checked))
+        btn_none.clicked.connect(lambda: _set_all(Qt.Unchecked))
+        btn_cancel.clicked.connect(dlg.reject)
+        btn_fix.clicked.connect(dlg.accept)
+
+        if dlg.exec() != QDialog.Accepted:
+            return
+
+        new_lines = list(lines)
+        fixed = 0
+        for (it, i, indent, trailing, new_stmt) in item_map:
+            if it.checkState(0) == Qt.Checked:
+                new_lines[i] = f"{indent}{new_stmt}{trailing}"
+                fixed += 1
+        if fixed == 0:
+            QMessageBox.information(self, "SetPos 修复验证", "未勾选任何项, 未做修改")
+            return
+
+        self.script_text.blockSignals(True)
+        self.script_text.setPlainText('\n'.join(new_lines))
+        self.script_text.blockSignals(False)
+        self._apply_syntax_highlight()
+        self._update_line_preview()
+        self._save_editor_to_define()
+        self._script_dirty = True
+        self._data._dirty = True
+        QMessageBox.information(self, "SetPos 修复验证", f"已修复 {fixed} 处 SetPos → 对齐实体 #{ent_idx} 坐标({cur_x},{cur_y}) 朝向{cur_dir}")
 
     # =========== 脚本预览 ===========
     def _preview_script(self):
