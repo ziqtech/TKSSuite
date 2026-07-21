@@ -9,6 +9,8 @@ from PySide6.QtCore import Qt
 
 from mat_script_desc import SCRIPT_COMMANDS
 
+_CMD_SET = frozenset(SCRIPT_COMMANDS)   # 命令名集合 (供高亮整词匹配, 含无参命令如 Else)
+
 
 class CodeEditor(QPlainTextEdit):
     """代码编辑器 — 支持 Tab 缩进、多行缩进/反缩进、自动换行等 VSCode 风格操作"""
@@ -150,16 +152,12 @@ class ScriptSyntaxHighlighter(QSyntaxHighlighter):
             if comment_start >= 0 and m.start() >= comment_start:
                 continue
             self.setFormat(m.start(), m.end() - m.start(), self.fmt_number)
-        # 4. command (Cmd( 中的命令名部分)
-        for cmd in SCRIPT_COMMANDS:
-            needle = cmd + '('
-            idx = 0
-            while True:
-                pos = line.find(needle, idx)
-                if pos < 0:
-                    break
-                self.setFormat(pos, len(cmd), self.fmt_command)
-                idx = pos + 1
+        # 4. command: 命令名 (Cmd(...) 形式, 或无参命令如 Else/DoTalkB 单独成词均高亮)
+        for m in re.finditer(r'\b[A-Za-z_]\w*\b', line):
+            if comment_start >= 0 and m.start() >= comment_start:
+                continue  # 跳过注释内的词
+            if m.group(0) in _CMD_SET:
+                self.setFormat(m.start(), m.end() - m.start(), self.fmt_command)
         # 5. block (最高优先级, 整行)
         if stripped.startswith('{') or stripped.startswith('}'):
             self.setFormat(0, line_len, self.fmt_block)

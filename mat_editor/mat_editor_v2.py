@@ -112,7 +112,7 @@ from mat_dat_io import (
     get_script_info, is_empty, has_data, scene_name,
     save_mat, save_defunit, load_mat_from_save, save_mat_to_save,
 )
-from mat_script_desc import SCRIPT_CMD_DESC, _CURSOR_BLOCKS, _tkt_text, _menu_options
+from mat_script_desc import SCRIPT_CMD_DESC, _CURSOR_BLOCKS, _tkt_text, _menu_options, format_cmd_params
 from mat_render import (
     _SPRITE_CACHE, _SHADOW_CACHE, _BLEND_CACHE, _RGBA_CACHE,
     _get_dir_frame, _get_jvg_frame_rgba,
@@ -3825,19 +3825,28 @@ class MatEditorApp(QMainWindow):
             else:
                 m2 = re.match(r'([A-Za-z_]\w+)\s*$', stripped)
                 if m2 and m2.group(1) in SCRIPT_CMD_DESC:
-                    desc = self._format_cmd_desc(m2.group(1), [])
-                    cursor.insertText(trunc(desc), fmt_cmd)
+                    cmd_name = m2.group(1)
+                    desc = self._format_cmd_desc(cmd_name, [])
+                    fmt = fmt_cmd
+                    if cmd_name in talk_cmds:
+                        fmt = fmt_talk
+                    elif cmd_name in flow_cmds:
+                        fmt = fmt_flow
+                    elif cmd_name in branch_cmds:
+                        fmt = fmt_branch
+                    cursor.insertText(trunc(desc), fmt)
                 else:
                     cursor.insertText(trunc(stripped, 40), fmt_raw)
 
-    def _format_cmd_desc(self, cmd_name, args):
+    def _format_cmd_desc(self, cmd_name, args, tkt=None):
         desc_fn = SCRIPT_CMD_DESC.get(cmd_name)
+        tkt = self._data.tkt_all if tkt is None else tkt
         if desc_fn:
             try:
-                return desc_fn(args, self._data.tkt_all, self._data.item_names)
+                return desc_fn(args, tkt, self._data.item_names)
             except TypeError:
                 try:
-                    return desc_fn(args, self._data.tkt_all)
+                    return desc_fn(args, tkt)
                 except Exception:
                     pass
             except Exception:
@@ -4284,11 +4293,11 @@ class MatEditorApp(QMainWindow):
         self._pv_detail = QTextEdit()
         self._pv_detail.setReadOnly(True)
         self._pv_detail.setFont(QFont("Consolas", 10))
-        # 预配置 FCOLOR 1-32 颜色格式
+        # 预配置 FCOLOR 1-32 颜色格式 (按主题调整对比度, 避免白字白底不可见)
         self._pv_color_formats = {}
         for ci in range(1, 33):
             fmt = QTextCharFormat()
-            fmt.setForeground(QColor(GAME_COLORS[ci]))
+            fmt.setForeground(self._readable_tkt_color(GAME_COLORS[ci]))
             self._pv_color_formats[f'tkt_c{ci}'] = fmt
         # 物品名红色格式
         self._pv_item_red_fmt = QTextCharFormat()
@@ -4323,7 +4332,22 @@ class MatEditorApp(QMainWindow):
             self._pv_detail.clear()
             self._pv_detail.append(f"<b>原始:</b> {line_text}")
             self._pv_detail.append(f"<b>命令:</b> {cmd_name}({', '.join(args)})")
-            self._pv_detail.append(f"<b>描述:</b> {self._format_cmd_desc(cmd_name, args)}")
+            # 参数逐项说明 (在"命令"下方, 方便开发者理解每个参数)
+            param_lines = format_cmd_params(cmd_name, args, self._data.tkt_all, self._data.item_names)
+            if param_lines:
+                self._pv_detail.append("<b>参数:</b>")
+                cur = self._pv_detail.textCursor()
+                cur.movePosition(QTextCursor.End)
+                cur.insertText("\n" + "\n".join("　　" + pl for pl in param_lines))
+            # 描述: 对话类命令下方另有"TKT 对话文本"独立栏, 此处不重复正文, 避免冲突
+            #       (树列/右侧行预览仍走默认路径, 保留内联文本)
+            if cmd_name in ('TalkB', 'TalkA', 'SetTalkB', 'BlackTalk', 'ShowText', 'MenuTalk', 'SysTalk'):
+                desc = self._format_cmd_desc(cmd_name, args, tkt={})   # 空表 → 描述内不含正文
+                desc = re.sub(r'\(\s*\)', '', desc)          # 去空括号 (TalkA/SysTalk)
+                desc = re.sub(r'\s*—\s*$', '', desc).rstrip()  # 去结尾悬空的 —
+            else:
+                desc = self._format_cmd_desc(cmd_name, args)
+            self._pv_detail.append(f"<b>描述:</b> {desc}")
             # 对话命令: 解析 TKT 文本并用颜色渲染
             if cmd_name in ('TalkB', 'TalkA', 'SetTalkB', 'BlackTalk') and len(args) >= 2:
                 text_idx = 0 if cmd_name == 'BlackTalk' else 1
@@ -4345,7 +4369,7 @@ class MatEditorApp(QMainWindow):
                         self._pv_detail.append(f"\n<b>━━━ 物品名称 (ID={args[0]}) ━━━</b>")
                         cursor = self._pv_detail.textCursor()
                         cursor.movePosition(QTextCursor.End)
-                        cursor.insertText(item_name, self._pv_item_red_fmt)
+                        cursor.insertText("\n" + item_name, self._pv_item_red_fmt)
                 except (ValueError, TypeError):
                     pass
             # CheckResult: 回溯配套 MenuTalk, 显示被判定的具体选项文本
@@ -4372,9 +4396,26 @@ class MatEditorApp(QMainWindow):
         segments = parse_tkt_colored_segments(text)
         cursor = self._pv_detail.textCursor()
         cursor.movePosition(QTextCursor.End)
+        cursor.insertText("\n")  # 与上方"━━━ 标题 ━━━"分行
         for seg_text, color in segments:
             fmt = self._get_tkt_color_format(color)
             cursor.insertText(seg_text, fmt)
+
+    def _readable_tkt_color(self, color_hex):
+        """按主题调整游戏文字色对比度: 浅色主题压暗过亮色(白字→深灰), 深色主题提亮过暗色, 保证预览可读"""
+        c = QColor(color_hex)
+        lum = 0.299 * c.red() + 0.587 * c.green() + 0.114 * c.blue()
+        if self._is_dark:
+            if lum <= 30:            # 近黑, 深底不可见 → 浅灰
+                return QColor('#c8c8c8')
+            if lum < 70:
+                return c.lighter(180)
+            return c
+        if lum >= 235:               # 近白/纯白(默认色), 浅底不可见 → 深灰
+            return QColor('#333333')
+        if lum > 180:                # 偏亮 → 压暗保留色相
+            return c.darker(190)
+        return c
 
     def _get_tkt_color_format(self, color_hex):
         """获取 TKT 颜色的 QTextCharFormat。FCOLOR 1-32 用预配置, FCOLORD 动态创建"""
@@ -4384,7 +4425,7 @@ class MatEditorApp(QMainWindow):
         # FCOLORD 动态颜色
         if color_hex not in self._pv_dynamic_color_tags:
             fmt = QTextCharFormat()
-            fmt.setForeground(QColor(color_hex))
+            fmt.setForeground(self._readable_tkt_color(color_hex))
             self._pv_dynamic_color_tags[color_hex] = fmt
         return self._pv_dynamic_color_tags[color_hex]
 

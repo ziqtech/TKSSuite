@@ -590,12 +590,15 @@ SCRIPT_CMD_DESC = {
     # 存储在word_755E10[32], 仅运行时有效不存档; 用于UI流程/事件控制
     # 与SetFlag(存档持久)不同: SetSwitch是临时状态
     'SetSwitch':    lambda a, t: f"开关[{a[0]}]={a[1]}" if len(a)>=2 else f"开关[{a[0]}]" if a else "设置开关",
-    # opcode 50: BuyMenu(3) — 商店菜单
-    # 逆向: sub_40D804(__int16 a1, __int16 a2, __int16 a3)
-    # a1=商品ID, a2=商品索引, a3=商店模式(0-4: 0=武器 1=防具 2=药品 3=杂货 4=特殊)
+    # opcode 50: BuyMenu(3) — 商店 (sub_40D804 → sub_4233C4(state, arg1, arg2, arg3))
+    # ★ 商店分类是 arg2, 不是 arg3! sub_4233C4 switch(a1[28]=arg2) 选物品页(tab_code)过滤(v7/v6):
+    #   0=药品(页0) 1=道具(页1) 2=武器+防具(页2,3) 3=药品+道具(页0,1) 4=饰品(页4)  [页名同 item_editor PAGE_NAMES]
+    # arg1 存 a1[arg2+13]=商店编号(同编号10分钟内重进保持货物, 否则 sub_4244CC 重生成库存)
+    # arg3 存 a1[29] (实测 0 或 22, 疑为价格/折扣等附加标志, 由后续商店逻辑读取)
     'BuyMenu':      lambda a, t: (
-        f"商店菜单 商品={a[0]} 索引={a[1]} 模式={'武器' if a[2]=='0' else '防具' if a[2]=='1' else '药品' if a[2]=='2' else '杂货' if a[2]=='3' else '特殊' if a[2]=='4' else a[2]}"
-        if len(a)>=3 else "商店菜单"
+        f"商店#{a[0]} 分类={'药品' if a[1]=='0' else '道具' if a[1]=='1' else '武器+防具' if a[1]=='2' else '药品+道具' if a[1]=='3' else '饰品' if a[1]=='4' else a[1]}"
+        + (f" 参数{a[2]}" if len(a)>=3 and a[2] not in ('0', '') else "")
+        if len(a)>=2 else f"商店菜单 ({','.join(a)})" if a else "商店菜单"
     ),
     # opcode 51: PlaySound(2) — 播放音效 (sub_451780 + sub_451C38)
     # 参数: 音效ID, 循环(0=不循环 1=循环)
@@ -699,3 +702,128 @@ SCRIPT_CMD_DESC = {
     'WaitTimer':    lambda a, t: f"定时等待 {a[0]}×{a[1]}ms" if len(a)>=2 else "定时等待",
     'Music':        lambda a, t: f"播放音乐 ID={a[0]}" if a else "播放音乐",
 }
+
+# ============================================================
+# 逐参数说明 (脚本预览详情面板"参数"栏) — cmd → [(参数名, 解释器), ...]
+# 解释器: None=仅显示值; dict=枚举{值:含义}; callable=自定义(值→说明);
+#         'entity'/'char'/'scene'/'text'/'item'/'cmp'/'menu'=特殊解析器
+# ============================================================
+_DIR8 = {'1':'↑上', '2':'↗右上', '3':'→右', '4':'↘右下', '5':'↓下', '6':'↙左下', '7':'←左', '8':'↖左上'}
+_UNCHG = {'-1':'不变'}          # 帧参数 -1=不变
+_KEEP_BLK = {'0':'保持当前块', '-1':'保持当前块'}
+
+def _p_onoff(off, on):
+    """工厂: 生成 值=='0'→off, 否则→on 的解释器"""
+    return lambda v: off if v == '0' else on
+
+SCRIPT_CMD_PARAMS = {
+    'End':        [('结束模式', {'0':'正常返回(不改链)', '1':'A链递增','-1':'A链递增', '2':'B链递增','-2':'B链递增', '3':'C链递增','-3':'C链递增', '4':'A链重置','-4':'A链重置', '5':'B链重置','-5':'B链重置', '6':'C链重置','-6':'C链重置'})],
+    'TalkB':      [('实体','entity'), ('文本ID','text'), ('立绘/头像帧', _p_onoff('无立绘','有立绘')), ('对话框位置', {'1':'上','2':'下','-1':'按朝向自动'})],
+    'SetTalkB':   [('实体','entity'), ('文本ID','text'), ('立绘/头像帧', _p_onoff('无立绘','有立绘')), ('对话框位置', {'1':'上','2':'下','-1':'按朝向自动'})],
+    'DoTalkB':    [],
+    'SetNowDef':  [('实体','entity'), ('链', {'1':'A链','2':'B链','3':'C链'}), ('新位置(1-based)', None)],
+    'SysTalk':    [('文本ID','text'), ('字体/颜色索引', None), ('持续帧数', None), ('闪烁', _p_onoff('常亮','每4帧闪')), ('位置', {'0':'底部左','1':'中部右堆叠'}), ('追加', _p_onoff('移入队列','追加到同实体'))],
+    'SetHint':    [('实体','entity'), ('提示文本ID','text'), ('开关', _p_onoff('关闭提示','开启提示'))],
+    'MenuTalk':   [('文本ID(选项)','menu'), ('变量槽(存选中索引)', None)],
+    'SetScene':   [('实体','entity'), ('场景ID','scene')],
+    'SetWalk':    [('实体(仅type200)','entity'), ('目标X', None), ('目标Y', None)],
+    'WaitWalk':   [('实体(仅type200)','entity'), ('模式', _p_onoff('异步(检测忙碌位)','同步(阻塞至完成)'))],
+    'StopWalk':   [('实体(仅type200)','entity'), ('方向', dict(_DIR8, **{'0':'重置动画'}))],
+    'SetEnabled': [('实体','entity'), ('标志', _p_onoff('禁用(清bit0)','启用(置bit0)'))],
+    'SetVisible': [('实体','entity'), ('标志', _p_onoff('隐藏(清bit1)','显示(置bit1)'))],
+    'SetWait':    [('实体','entity'), ('最小tick', None), ('最大tick', None)],
+    'Nop':        [('填充', None)],
+    'SetCursor':  [('Cur.JVG块', lambda v: _CURSOR_BLOCKS.get(int(v), '') if v.lstrip('-').isdigit() else ''), ('帧延迟', lambda v: '引擎默认' if v == '3' else ''), ('显隐', _p_onoff('隐藏','显示'))],
+    'FadeOut':    [('R', None), ('G', None), ('B', None), ('每步延迟ms', lambda v: '越大越慢')],
+    'FadeIn':     [('R', None), ('G', None), ('B', None), ('每步延迟ms', lambda v: '越大越慢')],
+    'ChangeScene':[('场景ID','scene'), ('玩家X', None), ('玩家Y', None), ('朝向', _DIR8)],
+    'SetAni':     [('实体','entity'), ('Ani.JVG块', _KEEP_BLK), ('帧起点', _UNCHG), ('帧终点', _UNCHG), ('当前帧', _UNCHG), ('保留末帧', dict(_UNCHG, **{'0':'不保留','1':'播完停末帧'})), ('循环', {'0':'不循环','1':'循环','-1':'不变'})],
+    'SetTick':    [('实体','entity'), ('tick周期(帧)', None)],
+    'SetShadow':  [('实体','entity'), ('阴影帧', {'0':'无','1':'小','2':'大'})],
+    'SetPos':     [('实体','entity'), ('X', None), ('Y', None), ('朝向', _DIR8)],
+    'Disable':    [('实体','entity')],
+    'Enable':     [('实体','entity')],
+    'Redraw':     [('帧数', None)],
+    'SetPlayer':  [('实体(须type200)', None)],
+    'SetCamera':  [('实体', lambda v: '禁用镜头跟随' if v == '-1' else f'跟随实体#{v}')],
+    'SetView':    [('世界X', None), ('世界Y', None)],
+    'SlideTo':    [('目标X(视口中心)', None), ('目标Y', None), ('帧数(时长)', None)],
+    'PlayerAct':  [('模式', {'0':'锁定玩家操作','1':'恢复玩家操作'})],
+    'SetFlag':    [('标志ID(0-1023)', None), ('值', None)],
+    'AddFlag':    [('标志ID(0-1023)', None), ('增量', None)],
+    'TalkA':      [('实体','entity'), ('文本ID','text'), ('立绘/头像帧', _p_onoff('无立绘','有立绘')), ('对话框位置', {'1':'上','2':'下','-1':'按朝向自动'}), ('持续帧数', None)],
+    'Switch':     [('实体(仅type200)','entity'), ('模式', {'0':'常规/站桩(Cha.JVG)','1':'动画/行走(Ani.JVG)'})],
+    'SetVar':     [('变量槽(0-249)', None), ('值', None)],
+    'Random':     [('变量槽', None), ('最小值', None), ('最大值', None)],
+    'SetFlagVar': [('标志ID', None), ('变量槽', None)],
+    'AddFlagVar': [('标志ID', None), ('变量槽', None)],
+    'GetItem':    [('道具ID','item'), ('数量(正=获得 负=移除)', None)],
+    'BlackTalk':  [('文本ID','text'), ('X', None), ('Y', None), ('颜色索引', None)],
+    'SetChaPic':  [('实体(仅type200)','entity'), ('Cha.JVG立绘块', None)],
+    'SetWeather': [('天气类型', {'1':'雨','0':'—'}), ('开关', _p_onoff('关闭天气','开启'))],
+    'ShowMenu':   [('菜单类型', {'0':'姓名输入(命名)','1':'传送/世界地图菜单'})],
+    'TeamMember': [('角色','char'), ('模式', _p_onoff('离开队伍','加入队伍'))],
+    'Note':       [('标记槽(0-999)', None), ('值', None)],
+    'SetBlock':   [('传送点实体(仅type10)','entity'), ('封锁', _p_onoff('开放路径','封锁路径'))],
+    'Attribute':  [('目标', lambda v: '全队' if v == '-1' else _cm(v)), ('属性', lambda v: _ATTR_NAMES.get(int(v), '') if v.lstrip('-').isdigit() else ''), ('变化值(正=增 负=减)', None)],
+    'SetSwitch':  [('开关槽(0-31)', None), ('值', None)],
+    'BuyMenu':    [('商店编号', None), ('分类', {'0':'药品','1':'道具','2':'武器+防具','3':'药品+道具','4':'饰品'}), ('附加参数', None)],
+    'PlaySound':  [('音效ID', None), ('循环', _p_onoff('单次','循环'))],
+    'StopSound':  [('音效ID', None)],
+    'PlayMusic':  [('音乐ID', lambda v: '停止音乐' if v.startswith('-') else ''), ('循环', _p_onoff('单次','循环'))],
+    'SetMusic':   [('场景ID','scene'), ('音乐ID', lambda v: '停止当前音乐' if v == '-1' else '')],
+    'TheEnd':     [('结局ID', None)],
+    'Fix':        [('保留', None)],
+    'CheckResult':[('变量槽', None), ('期望值', None)],
+    'CheckFlag':  [('标志ID(0-1023)', None), ('期望值', None), ('操作符', _CMP_OPS)],
+    'CheckItem':  [('道具ID','item'), ('期望数量', None), ('操作符', _CMP_OPS)],
+    'CheckTeam':  [('类别', lambda v: _CAT_NAMES.get(int(v), '') if v.lstrip('-').isdigit() else ''), ('值', None), ('操作符', _CMP_OPS)],
+    'MiniGame':   [('游戏类型', {'1':'华容道','2':'八阵图','3':'骰子','4':'串珠','5':'四四同数','6':'拼图','7':'龙蛇百变'}), ('通关分阈值', None), ('比较模式', lambda v: '分数≥阈值判胜' if v == '1' else '分数<阈值判胜')],
+    'CheckMember':[('角色','char'), ('属性类型', {'0':'等级'}), ('期望值', None), ('操作符', _CMP_OPS)],
+    'War':        [('战斗ID', None)],
+    'Else':       [],
+}
+
+def _interp_param(interp, val, tkt, item_names):
+    """解释参数"做什么"(功能/角色), 而非把引用ID解析成内容(内容已在"描述"栏给出)。"""
+    if interp is None:
+        return ''
+    if isinstance(interp, dict):
+        return interp.get(val, '')
+    if callable(interp):
+        try:
+            return interp(val) or ''
+        except Exception:
+            return ''
+    # 字符串 tag: entity/cmp 说明该值选择了什么目标/运算(功能性);
+    #            引用类(char/scene/text/item/menu) 只说明该参数用途, 不解析其指向的内容
+    if interp == 'entity':
+        return '自身' if val == '-2' else '上下文' if val == '-1' else f'实体#{val}'
+    if interp == 'cmp':
+        return _CMP_OPS.get(val, '')
+    if interp == 'char':
+        return '角色花名册编号(非地图实体号)'
+    if interp == 'scene':
+        return '场景编号'
+    if interp == 'text':
+        return '要显示文本的 TKT 编号'
+    if interp == 'item':
+        return '道具编号 (10000=金钱)'
+    if interp == 'menu':
+        return '各菜单选项文本的 TKT 编号'
+    return ''
+
+_CIRCLED = '①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮'
+
+def format_cmd_params(cmd_name, args, tkt=None, item_names=None):
+    """逐参数说明: 返回 ['① 名称 = 值 — 解释', ...]; 无参数返回 []。供脚本预览"参数"栏使用。"""
+    if not args:
+        return []
+    specs = SCRIPT_CMD_PARAMS.get(cmd_name)
+    lines = []
+    for i, val in enumerate(args):
+        num = _CIRCLED[i] if i < len(_CIRCLED) else f'({i+1})'
+        name, interp = (specs[i] if specs and i < len(specs) else (f'参数{i+1}', None))
+        expl = _interp_param(interp, val, tkt, item_names)
+        lines.append(f"{num} {name} = {val}" + (f" — {expl}" if expl else ""))
+    return lines
