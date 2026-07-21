@@ -94,6 +94,8 @@ def _rgb565_to_hex(rgb565):
 GAME_COLORS = {i: _rgb565_to_hex(_GAME_PALETTE_565[i]) for i in range(1, 33)}
 GAME_FONT_SIZES = {12, 16, 24, 32, 48}
 DEFAULT_FONT_SIZE = 16
+# 预览位置标记：游戏文本框每行可容纳的完整（全角）字符数，一个图片字 = 一个完整字符
+PREVIEW_LINE_CHAR_LIMIT = 23
 
 GAME_FONT_FAMILIES = {
     1: ('字体1',),
@@ -745,6 +747,10 @@ def _render_text_image(segments, font, line_spacing=4, use_traditional_font=Fals
                 else:
                     img, adv = _render_fallback_char(ch, size, color, style['family'], half_width=True, prefer_traditional=use_traditional_font)
 
+            # 等宽渲染：中文/英文/数字/标点等每个字符统一占用一个图片字（full-width）的宽度；
+            # 空格特殊处理，只占半个字符（half-width）宽度，与游戏实际逐格渲染的效果一致
+            adv = max(size // 2, 1) if ch == ' ' else size
+
             current_line_glyphs.append((img, adv))
             current_line_height = max(current_line_height, size)
 
@@ -764,16 +770,41 @@ def _render_text_image(segments, font, line_spacing=4, use_traditional_font=Fals
         line_w = sum(adv for _img, adv in glyphs)
         max_w = max(max_w, line_w)
 
-    canvas_w = max(max_w + 20, 1)
-    canvas_h = max(total_h + 20, 1)
+    left_pad = 10
+    # 位置标记：在第 PREVIEW_LINE_CHAR_LIMIT 个完整字符宽度之后标出列位置，
+    # 用于对照游戏文本框每行可容纳的全角字符数（以默认字号的一个图片字为一格）
+    char_cell = max(int(DEFAULT_FONT_SIZE * scale_factor), 1)
+    marker_x = left_pad + PREVIEW_LINE_CHAR_LIMIT * char_cell
+    marker_h = max(char_cell // 2, 6)
+    marker_half = max(marker_h // 2, 3)
+    top_pad = 10 + marker_h
+
+    canvas_w = max(max_w + 20, marker_x + marker_half + 4, 1)
+    canvas_h = max(total_h + top_pad + 10, 1)
 
     canvas = Image.new('RGBA', (canvas_w, canvas_h), (*bg_rgb, 255))
-    y = 10
+
+    # 在第一行上方绘制倒三角位置标记，尖端指向该列边界
+    marker_draw = ImageDraw.Draw(canvas)
+    marker_base_y = 3
+    marker_tip_y = marker_base_y + marker_h
+    marker_draw.polygon(
+        [
+            (marker_x - marker_half, marker_base_y),
+            (marker_x + marker_half, marker_base_y),
+            (marker_x, marker_tip_y),
+        ],
+        fill=(255, 170, 40, 255),
+    )
+
+    y = top_pad
     for lh, glyphs in lines:
-        x = 10
+        x = left_pad
         for img, adv in glyphs:
             y_off = (lh - img.height) // 2
-            canvas.paste(img, (x, y + y_off), img)
+            # 图片在等宽单元格内水平居中，使英文/数字等窄字形与整格对齐
+            x_off = max((adv - img.width) // 2, 0)
+            canvas.paste(img, (x + x_off, y + y_off), img)
             x += adv
         y += lh + scaled_spacing
 
@@ -1650,16 +1681,17 @@ class TktEditor(QMainWindow):
         ut = self.chk_traditional.isChecked()
 
         img1, img2 = None, None
-        txt1 = self.comp_text1.toPlainText().strip()
-        txt2 = self.comp_text2.toPlainText().strip()
+        # 不能 strip：否则开头/结尾的空格会被丢弃，导致预览缩进与游戏不一致
+        txt1 = self.comp_text1.toPlainText()
+        txt2 = self.comp_text2.toPlainText()
 
-        if self._comp_active_id1 is not None and txt1:
+        if self._comp_active_id1 is not None and txt1.strip():
             try:
                 img1 = _render_text_image(parse_styled_segments(txt1), self.font9696, use_traditional_font=ut, bg_color=bg, scale_factor=sc)
             except:
                 pass
 
-        if self._comp_active_id2 is not None and txt2:
+        if self._comp_active_id2 is not None and txt2.strip():
             try:
                 img2 = _render_text_image(parse_styled_segments(txt2), self.font9696, use_traditional_font=ut, bg_color=bg, scale_factor=sc)
             except:
