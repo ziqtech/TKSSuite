@@ -1171,6 +1171,7 @@ class WarpcEditorV2(QMainWindow):
             (self.lbl_item, os.path.join(tks_dir, 'TKItem.dat') if tks_dir else '', "TKItem"),
             (self.lbl_skill, os.path.join(tks_dir, 'TKSkill.dat') if tks_dir else '', "TKSkill"),
             (self.lbl_fa, os.path.join(tks_dir, 'Fa.JVG') if tks_dir else '', "Fa.JVG"),
+            (self.lbl_mu, self.mu_path, "Mu.JVG"),
         ], self._is_dark)
 
     # ── UI 构建 ──
@@ -1327,7 +1328,8 @@ class WarpcEditorV2(QMainWindow):
         self.lbl_item = QLabel()
         self.lbl_skill = QLabel()
         self.lbl_fa = QLabel()
-        for w in [self.lbl_warpc, self.lbl_tkt, self.lbl_item, self.lbl_skill, self.lbl_fa]:
+        self.lbl_mu = QLabel()
+        for w in [self.lbl_warpc, self.lbl_tkt, self.lbl_item, self.lbl_skill, self.lbl_fa, self.lbl_mu]:
             path_layout.addWidget(w)
             path_layout.addSpacing(15)
         path_layout.addStretch()

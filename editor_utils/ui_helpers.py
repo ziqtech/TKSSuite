@@ -34,19 +34,22 @@ class NoWheelComboBox(QComboBox):
 
 def update_path_labels(labels_config, is_dark):
     """
-    批量更新路径标签的文本和颜色
+    批量更新路径标签的加载状态与颜色 (仅显示状态, 完整路径见鼠标悬浮提示)
     labels_config: [(QLabel, path_or_None, display_name), ...]
     """
     for label, path, name in labels_config:
         if path and os.path.exists(path):
-            label.setText(f"{name}: {path}")
+            label.setText(f"{name}: 已加载")
             label.setProperty("status", "loaded")
+            label.setToolTip(os.path.normpath(path))
         elif path:
-            label.setText(f"{name}: (不存在){path}")
+            label.setText(f"{name}: 文件缺失")
             label.setProperty("status", "missing")
+            label.setToolTip(os.path.normpath(path))
         else:
             label.setText(f"{name}: 未加载")
             label.setProperty("status", "missing")
+            label.setToolTip("")
         label.style().unpolish(label)
         label.style().polish(label)
 

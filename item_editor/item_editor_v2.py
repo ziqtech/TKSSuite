@@ -721,11 +721,14 @@ class ItemEditorApp(QMainWindow):
         self.lbl_item = QLabel("TKItem.dat: 未加载")
         self.lbl_tkt = QLabel("TKT.dat: 未加载")
         self.lbl_skill = QLabel("TKSkill.dat: 未加载")
+        self.lbl_mu = QLabel("Mu.JVG: 未加载")
         path_layout.addWidget(self.lbl_item)
         path_layout.addSpacing(20)
         path_layout.addWidget(self.lbl_tkt)
         path_layout.addSpacing(20)
         path_layout.addWidget(self.lbl_skill)
+        path_layout.addSpacing(20)
+        path_layout.addWidget(self.lbl_mu)
         path_layout.addStretch()
         main_layout.addLayout(path_layout)
 
@@ -911,6 +914,7 @@ class ItemEditorApp(QMainWindow):
             (self.lbl_item, self.item_path, 'TKItem'),
             (self.lbl_tkt, self.tkt_path, 'TKT'),
             (self.lbl_skill, self.skill_path, 'TKSkill'),
+            (self.lbl_mu, self.mu_path, 'Mu.JVG'),
         ], self._is_dark)
 
     # ── 数据加载 ──

@@ -54,7 +54,7 @@ from editor_utils.mod_exporter import (
 )
 from editor_utils.picker_dialogs import ItemPickerDialog
 from editor_utils.theme_manager import ThemeManager
-from editor_utils.ui_helpers import themed_messagebox, NoWheelComboBox
+from editor_utils.ui_helpers import themed_messagebox, update_path_labels, NoWheelComboBox
 from editor_utils.version import format_title, format_about_header
 from editor_utils.window_theme import apply_godot_theme
 
@@ -509,15 +509,18 @@ class ShopEditorWindow(QMainWindow):
         path_layout = QHBoxLayout(path_content)
         path_layout.setContentsMargins(4, 4, 4, 0)
 
-        self.lbl_shop_path = QLabel("(TKShop.dat 未挂载)")
-        self.lbl_item_path = QLabel("(TKItem.dat 未挂载)")
-        self.lbl_tkt_path = QLabel("(TKT.dat 未挂载)")
+        self.lbl_shop_path = QLabel("TKShop.dat: 未加载")
+        self.lbl_item_path = QLabel("TKItem.dat: 未加载")
+        self.lbl_tkt_path = QLabel("TKT.dat: 未加载")
+        self.lbl_mu_path = QLabel("Mu.JVG: 未加载")
 
         path_layout.addWidget(self.lbl_shop_path)
         path_layout.addWidget(self._make_v_sep())
         path_layout.addWidget(self.lbl_item_path)
         path_layout.addWidget(self._make_v_sep())
         path_layout.addWidget(self.lbl_tkt_path)
+        path_layout.addWidget(self._make_v_sep())
+        path_layout.addWidget(self.lbl_mu_path)
         path_layout.addStretch()
 
         main_layout.addWidget(path_content)
@@ -537,18 +540,12 @@ class ShopEditorWindow(QMainWindow):
         return sep
 
     def _update_path_labels(self):
-        def _f(lb, path, label):
-            if not path or not os.path.exists(path):
-                lb.setText(f"({label} 未挂载)")
-                lb.setProperty("status", "missing")
-            else:
-                lb.setText(f"{label}: {path}")
-                lb.setProperty("status", "loaded")
-            lb.style().unpolish(lb)
-            lb.style().polish(lb)
-        _f(self.lbl_shop_path, self.shop_path, "TKShop.dat")
-        _f(self.lbl_item_path, self.item_path, "TKItem.dat")
-        _f(self.lbl_tkt_path, self.tkt_path, "TKT.dat")
+        update_path_labels([
+            (self.lbl_shop_path, self.shop_path, "TKShop.dat"),
+            (self.lbl_item_path, self.item_path, "TKItem.dat"),
+            (self.lbl_tkt_path, self.tkt_path, "TKT.dat"),
+            (self.lbl_mu_path, self.mu_path, "Mu.JVG"),
+        ], self._is_dark)
 
     def _apply_theme(self):
         ThemeManager.apply_theme(self, "dark" if self._is_dark else "light")

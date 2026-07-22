@@ -2465,10 +2465,7 @@ class ActEditorV2(QMainWindow):
     # ── 路径更新 ──
 
     def _update_paths(self):
-        if not self.act_path:
-            self.lbl_act.setText("TKAct: (未加载)")
-        else:
-            self.lbl_act.setText(f"TKAct: {self.act_path}")
+        update_path_labels([(self.lbl_act, self.act_path, "TKAct")], self._is_dark)
 
         if self.aa_path and not self._aa_counts:
             rdr = _LazyJvgReader(self.aa_path)

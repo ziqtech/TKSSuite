@@ -519,7 +519,9 @@ class WarDataEditorV2(QMainWindow):
         self.warpc_path = None
         self.warpc_names = {}
         self.warpc_records = []
+        self.fa_path = None
         self.fa_sprites = []
+        self.mu_path = None
         self.mu_sprites = []
         self._icon_pixmaps = {}
         self.tkitem_path = None
@@ -572,6 +574,8 @@ class WarDataEditorV2(QMainWindow):
             (self.lbl_warway, self.warway_path, 'WarWay'),
             (self.lbl_tkt, self.tkt_path, 'TKT'),
             (self.lbl_wsc, self.wsc_grp_path, 'WSC'),
+            (self.lbl_fa, self.fa_path, 'Fa.JVG'),
+            (self.lbl_mu, self.mu_path, 'Mu.JVG'),
         ], self._is_dark)
         extra_parts = []
         if self.warpc_path and os.path.exists(self.warpc_path):
@@ -690,8 +694,10 @@ class WarDataEditorV2(QMainWindow):
         self.lbl_warway = QLabel()
         self.lbl_wsc = QLabel()
         self.lbl_tkt = QLabel()
+        self.lbl_fa = QLabel()
+        self.lbl_mu = QLabel()
         self.lbl_extra = QLabel()
-        for w in [self.lbl_wardata, self.lbl_warway, self.lbl_wsc, self.lbl_tkt, self.lbl_extra]:
+        for w in [self.lbl_wardata, self.lbl_warway, self.lbl_wsc, self.lbl_tkt, self.lbl_fa, self.lbl_mu, self.lbl_extra]:
             path_layout.addWidget(w)
             path_layout.addSpacing(15)
         path_layout.addStretch()
@@ -896,7 +902,8 @@ class WarDataEditorV2(QMainWindow):
         self.warpc_records = load_warpc_records(self.warpc_path) if self.warpc_path else []
         self.fa_sprites = load_mu_sprites(self.fa_path) if self.fa_path else []
         mu_path = os.path.join(d, 'Mu.JVG')
-        self.mu_sprites = load_mu_sprites(mu_path) if os.path.exists(mu_path) else []
+        self.mu_path = mu_path if os.path.exists(mu_path) else None
+        self.mu_sprites = load_mu_sprites(self.mu_path) if self.mu_path else []
         self._icon_pixmaps.clear()
         if self.tkitem_path:
             self.tkitem_names, self.tkitem_names_by_id = load_tkitem_names(self.tkitem_path, self.tkt)

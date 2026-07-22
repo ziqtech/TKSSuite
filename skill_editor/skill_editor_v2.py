@@ -465,9 +465,12 @@ class SkillEditorApp(QMainWindow):
         path_layout = QHBoxLayout()
         self.lbl_skill_path = QLabel("TKSkill.dat: 未加载")
         self.lbl_tkt_path = QLabel("TKT.dat: 未加载")
+        self.lbl_mu_path = QLabel("Mu.JVG: 未加载")
         path_layout.addWidget(self.lbl_skill_path)
         path_layout.addSpacing(20)
         path_layout.addWidget(self.lbl_tkt_path)
+        path_layout.addSpacing(20)
+        path_layout.addWidget(self.lbl_mu_path)
         path_layout.addStretch()
         main_layout.addLayout(path_layout)
 
@@ -588,6 +591,7 @@ class SkillEditorApp(QMainWindow):
         update_path_labels([
             (self.lbl_skill_path, self.skill_path, "TKSkill.dat"),
             (self.lbl_tkt_path, self.tkt_path, "TKT.dat"),
+            (self.lbl_mu_path, self.mu_path, "Mu.JVG"),
         ], self._is_dark)
 
     def _load_tks_dir(self):

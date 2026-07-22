@@ -1876,12 +1876,15 @@ class MatEditorApp(QMainWindow):
         if not self._data.dat_path:
             self.lbl_path.setText("(未加载)")
             self.lbl_path.setProperty("status", "missing")
+            self.lbl_path.setToolTip("")
         elif not os.path.exists(self._data.dat_path):
-            self.lbl_path.setText(f"(不存在){self._data.dat_path}")
+            self.lbl_path.setText(f"{os.path.basename(self._data.dat_path)} (不存在)")
             self.lbl_path.setProperty("status", "missing")
+            self.lbl_path.setToolTip(os.path.normpath(self._data.dat_path))
         else:
-            self.lbl_path.setText(self._data.dat_path)
+            self.lbl_path.setText(os.path.basename(self._data.dat_path))
             self.lbl_path.setProperty("status", "loaded")
+            self.lbl_path.setToolTip(os.path.normpath(self._data.dat_path))
         self.lbl_path.style().unpolish(self.lbl_path)
         self.lbl_path.style().polish(self.lbl_path)
 

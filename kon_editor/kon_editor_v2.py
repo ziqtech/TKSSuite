@@ -412,9 +412,13 @@ class KonEditor(QMainWindow):
         self.lbl_kon.setObjectName("hintLabel")
         self.lbl_tkt = QLabel("TKT.dat: 未加载")
         self.lbl_tkt.setObjectName("hintLabel")
+        self.lbl_mu = QLabel("Mu.JVG: 未加载")
+        self.lbl_mu.setObjectName("hintLabel")
         path_layout.addWidget(self.lbl_kon)
         path_layout.addSpacing(20)
         path_layout.addWidget(self.lbl_tkt)
+        path_layout.addSpacing(20)
+        path_layout.addWidget(self.lbl_mu)
         path_layout.addStretch()
         self.status_label = QLabel("请通过 文件 → 加载 TKS 目录 打开数据")
         self.status_label.setObjectName("hintLabel")
@@ -722,6 +726,7 @@ class KonEditor(QMainWindow):
         update_path_labels([
             (self.lbl_kon, self.kon_path, "TKKon.dat"),
             (self.lbl_tkt, self.tkt_path, "TKT.dat"),
+            (self.lbl_mu, self.mu_path, "Mu.JVG"),
         ], self.is_dark_theme)
 
     # ----------- 筛选/表格 -----------
