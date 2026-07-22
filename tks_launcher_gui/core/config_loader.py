@@ -8,6 +8,7 @@ from typing import Dict, List, Optional
 class PatchDef:
     type: str = ""
     id: str = ""
+    name: str = ""       # 补丁显示名称 (纯中文, 供启动器补丁列表展示)
     desc: str = ""
     pattern: str = ""
     value_offset: int = 0
@@ -102,6 +103,7 @@ def load_config(path: str, log_func=None) -> Optional[PatchConfig]:
             d = PatchDef()
             d.type = pr.get("type", "")
             d.id = pr.get("id", "")
+            d.name = pr.get("name", "")
             d.desc = pr.get("desc", "")
             d.pattern = pr.get("pattern", "")
             d.value_offset = pr.get("value_offset", 0)
