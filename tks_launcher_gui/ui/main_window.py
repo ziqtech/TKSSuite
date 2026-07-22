@@ -244,8 +244,8 @@ class MainWindow(QMainWindow):
         right.setSizes([600, 120])
         splitter.addWidget(right)
 
-        # 中间/右侧可伸缩（窗口最大化时自适应），左侧按内容固定宽度
-        splitter.setSizes([380, 570, 500])
+        # 中间/右侧可伸缩（窗口最大化时自适应），左侧补丁列表直接用最小宽度
+        splitter.setSizes([self.patch_list.minimumWidth(), 570, 500])
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)
         splitter.setStretchFactor(2, 0)

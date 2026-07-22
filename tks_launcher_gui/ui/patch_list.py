@@ -1,12 +1,13 @@
-"""补丁列表 — 分必选/可选两组表格, 各含 启用/补丁名称/类型 三列
+"""补丁列表 — 单一面板内用 Tab 切换 可选/必选 两组补丁表格
 
+每个表格含 启用/补丁名称/类型 三列。
 必选补丁始终勾选且锁定不可改; 可选补丁可勾选并持久化。
-两组之间为可拖动分割条, 高度可自由调整。
+Tab 顺序: 可选补丁 → 必选补丁, 默认选中可选补丁。
 """
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
-    QAbstractItemView, QHeaderView, QSplitter, QTableWidget,
-    QTableWidgetItem, QVBoxLayout, QWidget,
+    QAbstractItemView, QHeaderView, QTableWidget,
+    QTableWidgetItem, QTabWidget, QVBoxLayout, QWidget,
 )
 from core.config_loader import PatchDef
 from editor_utils.dock_components import DockHeader
@@ -34,7 +35,7 @@ _COL_TYPE = 2
 
 
 class PatchListWidget(QWidget):
-    """两组补丁各用一个表格独立显示; 必选/可选之间为可拖动分割条。"""
+    """单一“补丁列表”面板, 用 Tab 切换 可选/必选 两组补丁表格。"""
 
     # 可选补丁勾选状态变化时发出, 供外部持久化保存
     state_changed = Signal()
@@ -57,27 +58,18 @@ class PatchListWidget(QWidget):
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
 
+        # 单一面板标题
+        outer.addWidget(DockHeader("补丁列表"))
+
         self._req_table = self._make_table(required, interactive=False)
         self._opt_table = self._make_table(optional, interactive=True)
 
-        req_section = self._wrap_section(f"必选补丁 ({len(required)})", self._req_table)
-        opt_section = self._wrap_section(f"可选补丁 ({len(optional)})", self._opt_table)
-        # 必选区默认约显示 10 条高度, 少于此数时不铺满
-        req_section.setMinimumHeight(56 + min(len(required), 10) * 26)
-        opt_section.setMinimumHeight(48)
-
-        # 必选/可选之间用可拖动分割条, 高度可自由调整
-        split = QSplitter(Qt.Vertical)
-        split.setHandleWidth(4)
-        split.setChildrenCollapsible(False)
-        split.addWidget(req_section)
-        split.addWidget(opt_section)
-        # 必选区可伸缩，可选区固定高度（与 MOD 详情预览区保持等高）
-        split.setStretchFactor(0, 1)
-        split.setStretchFactor(1, 0)
-        req_h = 56 + min(len(required), 10) * 26
-        split.setSizes([req_h, OPTIONAL_PATCH_DEFAULT_HEIGHT])
-        outer.addWidget(split)
+        # Tab 切换: 可选补丁在前, 必选补丁在后; 默认选中可选补丁
+        self._tabs = QTabWidget()
+        self._tabs.addTab(self._opt_table, f"可选补丁 ({len(optional)})")
+        self._tabs.addTab(self._req_table, f"必选补丁 ({len(required)})")
+        self._tabs.setCurrentIndex(0)
+        outer.addWidget(self._tabs, 1)
 
     @property
     def optional_default_height(self) -> int:
@@ -85,16 +77,6 @@ class PatchListWidget(QWidget):
         return OPTIONAL_PATCH_DEFAULT_HEIGHT
 
     # ── 表格构建 ──
-
-    def _wrap_section(self, title: str, table: QTableWidget) -> QWidget:
-        """DockHeader(固定标题) + 表格(自带滚动) 组成一个分组。"""
-        section = QWidget()
-        lay = QVBoxLayout(section)
-        lay.setContentsMargins(0, 0, 0, 0)
-        lay.setSpacing(0)
-        lay.addWidget(DockHeader(title))
-        lay.addWidget(table, 1)
-        return section
 
     def _make_table(self, patches: list[PatchDef], interactive: bool) -> QTableWidget:
         """创建一个补丁表格。interactive=False 时行锁定(必选, 始终勾选)。"""
@@ -110,7 +92,9 @@ class PatchListWidget(QWidget):
 
         h = table.horizontalHeader()
         h.setHighlightSections(False)
-        h.setSectionResizeMode(_COL_ENABLE, QHeaderView.ResizeToContents)
+        # 启用列固定为窄宽度（仅容纳居中的复选框），避免被表头文字撞宽
+        h.setSectionResizeMode(_COL_ENABLE, QHeaderView.Fixed)
+        table.setColumnWidth(_COL_ENABLE, 40)
         h.setSectionResizeMode(_COL_NAME, QHeaderView.Stretch)
         h.setSectionResizeMode(_COL_TYPE, QHeaderView.ResizeToContents)
 
