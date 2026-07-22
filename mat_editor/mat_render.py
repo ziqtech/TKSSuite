@@ -390,11 +390,156 @@ def load_scene_background_from_bytes(section_data: bytes):
         pixels = grp_lzss_decompress(lzss_data, min(uncomp_sz, target_size))
         if len(pixels) < target_size:
             pixels = pixels + b'\x00' * (target_size - len(pixels))
-
-            img = Image.frombytes('RGB', (w, h), pixels[:target_size], 'raw', 'BGR;16')
+        img = Image.frombytes('RGB', (w, h), pixels[:target_size], 'raw', 'BGR;16')
         return img
     except Exception:
         return None
+
+
+# ============================================================
+# GRP Frame B 双层 (前景遮挡 L1 / 地形碰撞 L2) — 逆向 sub_411308/sub_42FA50/sub_459F78
+#   L1 = 前景遮挡深度 (逐像素): 精灵像素仅当 L1[世界] < 实体深度 时绘制
+#   L2 = 地形碰撞类型 (逐像素): 实体深度 = 脚下包围盒内 L2 最小值>1 (sub_406E50)
+# ============================================================
+
+
+def _decode_section_b_layers(section_data):
+    """从原始 GRP section 字节直接解码 Frame B → (L1, L2, w, h)。失败返回 (None,None,0,0)。"""
+    if not section_data or len(section_data) < 12:
+        return None, None, 0, 0
+    try:
+        from editor_utils.grp_data import rle_bp_decompress, rle_bp_probe
+    except ImportError:
+        return None, None, 0, 0
+    try:
+        w, h, comp_a, comp_b = struct.unpack_from('<HHII', section_data, 0)
+        if w <= 0 or h <= 0 or w > 4096 or h > 4096:
+            return None, None, 0, 0
+        if 12 + comp_a + comp_b > len(section_data) or comp_b < 4:
+            return None, None, 0, 0
+        fb_off = 12 + comp_a
+        declared = struct.unpack_from('<I', section_data, fb_off)[0]
+        comp = section_data[fb_off + 4: fb_off + comp_b]
+        total_px = w * h
+        if not rle_bp_probe(comp, declared):
+            return None, None, w, h
+        raw = rle_bp_decompress(comp, declared)
+        l1 = raw[:total_px]
+        l2 = raw[total_px:total_px * 2] if (declared == total_px * 2 and len(raw) >= total_px * 2) else None
+        return l1, l2, w, h
+    except Exception:
+        return None, None, 0, 0
+
+
+def load_scene_layers(sc_grp_path, sc_idx_path, scene_id):
+    """加载 SC.GRP 场景的 Frame B 双层 (L1 前景遮挡深度 / L2 地形碰撞类型)。
+    返回 (layer1_bytes, layer2_bytes, width, height); 失败返回 (None, None, 0, 0)。"""
+    if not os.path.exists(sc_grp_path):
+        return None, None, 0, 0
+    try:
+        from editor_utils.grp_data import load_grp, _decode_section_b
+    except ImportError:
+        return None, None, 0, 0
+    try:
+        grp = load_grp(sc_grp_path, sc_idx_path)
+        if not grp:
+            return None, None, 0, 0
+        idx_map = {sec.index: sec for sec in grp.sections}
+        sec = idx_map.get(scene_id)
+        if not sec or sec.width <= 0 or sec.height <= 0:
+            return None, None, 0, 0
+        _decode_section_b(grp, sec)
+        return sec.layer1, sec.layer2, sec.width, sec.height
+    except Exception:
+        return None, None, 0, 0
+
+
+def load_scene_layers_from_bytes(section_data):
+    """从内存 GRP section 字节解码 Frame B 双层 (供 _sc_grp_pending 路径)。"""
+    return _decode_section_b_layers(section_data)
+
+
+def load_scene_background_and_layers(sc_grp_path, sc_idx_path, scene_id):
+    """一次性加载场景背景图(Frame A) + Frame B 双层(L1/L2), 仅解析一次 GRP。
+    返回 (bg_pil_or_None, l1_bytes, l2_bytes, width, height)。"""
+    if not os.path.exists(sc_grp_path):
+        return None, None, None, 0, 0
+    try:
+        from editor_utils.grp_data import load_grp, _decode_section_a, _decode_section_b
+    except ImportError:
+        return None, None, None, 0, 0
+    try:
+        grp = load_grp(sc_grp_path, sc_idx_path)
+        if not grp:
+            return None, None, None, 0, 0
+        idx_map = {sec.index: sec for sec in grp.sections}
+        sec = idx_map.get(scene_id)
+        if not sec or sec.width <= 0 or sec.height <= 0:
+            return None, None, None, 0, 0
+        _decode_section_a(grp, sec)
+        bg = None
+        if sec.pixels:
+            bg = Image.frombytes('RGB', (sec.width, sec.height), sec.pixels, 'raw', 'BGR;16')
+        _decode_section_b(grp, sec)
+        return bg, sec.layer1, sec.layer2, sec.width, sec.height
+    except Exception:
+        return None, None, None, 0, 0
+
+
+def make_layer_image(layer_bytes, w, h):
+    """逐像素层字节 → PIL 'L' 灰度图 (供遮挡采样/深度计算); 失败返回 None。"""
+    if not layer_bytes or w <= 0 or h <= 0:
+        return None
+    try:
+        buf = layer_bytes
+        if len(buf) < w * h:
+            buf = buf + b'\x00' * (w * h - len(buf))
+        return Image.frombytes('L', (w, h), bytes(buf[:w * h]))
+    except Exception:
+        return None
+
+
+def entity_occlusion_depth(l2_img, w, h, bx, by, bw, bh):
+    """逆向 sub_406E50: 实体深度 = 脚下碰撞盒内 L2 的最小值(>1); 无则为 1。
+    l2_img 为 L2 的 PIL 'L' 图。越界/无数据返回 1 (走简单渲染, 不遮挡)。"""
+    if l2_img is None or bw <= 0 or bh <= 0:
+        return 1
+    l = max(0, bx); t = max(0, by)
+    r = min(w, bx + bw); b = min(h, by + bh)
+    if r <= l or b <= t:
+        return 1
+    try:
+        hist = l2_img.crop((l, t, r, b)).histogram()
+        for v in range(2, 256):
+            if hist[v]:
+                return v
+    except Exception:
+        pass
+    return 1
+
+
+def composite_occluded(composite, sprite_rgba, dx, dy, depth, l1_img, w, h):
+    """逆向 sub_459F78 前景遮挡: 精灵像素仅当 L1[世界像素] < depth 时绘制。
+    仅在 depth>1 时调用。l1_img=L1 前景深度 'L' 图 (世界坐标对齐背景左上)。"""
+    if composite is None or sprite_rgba is None:
+        return
+    try:
+        sw, sh = sprite_rgba.size
+        occ = Image.new('L', (sw, sh), 255)  # 默认可绘 (网格外无前景)
+        l = max(0, dx); t = max(0, dy)
+        r = min(w, dx + sw); b = min(h, dy + sh)
+        if l1_img is not None and r > l and b > t:
+            sub = l1_img.crop((l, t, r, b))
+            mask = sub.point(lambda v, d=depth: 255 if v < d else 0)
+            occ.paste(mask, (l - dx, t - dy))
+        alpha = sprite_rgba.split()[3]
+        final_mask = ImageChops.multiply(alpha, occ)
+        composite.paste(sprite_rgba, (dx, dy), final_mask)
+    except Exception:
+        try:
+            composite.paste(sprite_rgba, (dx, dy), sprite_rgba)
+        except Exception:
+            pass
 
 
 # ============================================================

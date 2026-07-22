@@ -263,3 +263,35 @@ def _decode_section_a(grp: GRPFile, sec: GRPSection):
     if len(sec._pixels) < sec.uncomp_a:
         sec._pixels = sec._pixels + b'\x00' * (sec.uncomp_a - len(sec._pixels))
     sec._decoded_a = True
+
+
+def _decode_section_b(grp: GRPFile, sec: GRPSection):
+    """解码 GRP section 的 B 帧 (逐像素双层遮罩数据)。
+
+    逆向依据 sub_410E18 (RLE 字节对) + sub_42FA50:
+      dword_824288 = 解压后首地址 = Layer1;  dword_82428C = dword_824288 + W*H = Layer2
+      精灵资源 +28 (a1[7]) 指向 dword_824288 (=L1), 表明 L1 为逐像素遮挡采样图。
+    语义:
+      L1 = 前景遮挡深度 (sub_459F78: 精灵像素仅当 L1[世界像素] < 实体深度 时绘制)
+      L2 = 地形碰撞类型 (sub_406E50: 实体深度=脚下包围盒内 L2 最小值>1)
+    单层回退: 非 RLE 时按 LZSS 解压, 隔字节取 L1。"""
+    if sec._decoded_b:
+        return
+    data = grp._raw_data
+    fb_off = sec.offset + 12 + sec.comp_a
+    if fb_off + 4 > len(data):
+        return
+    declared = struct.unpack_from("<I", data, fb_off)[0]
+    cs, ce = fb_off + 4, fb_off + 4 + sec.comp_b - 4
+    comp_data = data[cs:ce]
+    total_px = sec.width * sec.height
+    if rle_bp_probe(comp_data, declared):
+        raw = rle_bp_decompress(comp_data, declared)
+        sec._layer1 = raw[:total_px]
+        if declared == total_px * 2 and len(raw) >= total_px * 2:
+            sec._layer2 = raw[total_px:total_px * 2]
+            sec.has_layer2 = True
+    else:
+        raw = lzss_decompress(comp_data, sec.uncomp_a)
+        sec._layer1 = bytes(raw[i] for i in range(0, min(len(raw), total_px * 2), 2))
+    sec._decoded_b = True

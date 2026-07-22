@@ -118,6 +118,8 @@ from mat_render import (
     _get_dir_frame, _get_jvg_frame_rgba,
     _pil_normal, _pil_tint, _pil_additive, _pil_subtract, _pil_luma_alpha,
     _pil_to_qpixmap, load_scene_background, load_scene_background_from_bytes,
+    load_scene_background_and_layers, load_scene_layers_from_bytes,
+    make_layer_image, entity_occlusion_depth, composite_occluded,
 )
 from mat_widgets import CodeEditor, ScriptSyntaxHighlighter
 from mat_script_templates import SCRIPT_TEMPLATES
@@ -194,6 +196,12 @@ class SceneCanvasView(QGraphicsView):
         self._vis_scene_id = 0
         self._vis_bg_pil = None
         self._vis_bg_pixmap = None
+        # GRP Frame B 逐像素图层 (真实碰撞/前景数据, 逆向 sub_411308/sub_42FA50):
+        #   L1 前景遮挡深度 (逐像素遮挡采样) / L2 地形碰撞类型 (实体深度源)
+        self._vis_layer1_img = None       # L1 PIL 'L' (世界坐标对齐背景左上)
+        self._vis_layer2_img = None       # L2 PIL 'L' (供 entity_occlusion_depth 实体深度)
+        self._vis_layer_w = 0
+        self._vis_layer_h = 0
         self._vis_entities = {}
         self._vis_hit_regions = {}
         self._vis_selected = None
@@ -228,6 +236,24 @@ class SceneCanvasView(QGraphicsView):
         self.setBackgroundBrush(bg)
 
 
+    @staticmethod
+    def _vis_sort_key(r):
+        """实体渲染排序键 — 逆向 sub_405CBC / sub_406444 排序逻辑:
+          1) 主键 d29 图层 (原版数据恒为 0, 保留以兼容自定义 mod 的显式分层)
+          2) 背景标志 d2&0x1000 → 组0 最先绘制(最底层)
+             前景标志 d2&0x2000 → 组2 最后绘制(最顶层, 即"前景层"如树冠/屋檐)
+             其余普通实体 → 组1, 按 pos_y(d11) 升序 = Y 排序(越靠下越后画/越靠前)
+          注: d22(优先级)是运行时由碰撞网格求得的地形遮挡深度(sub_406E50),
+              不参与排序, 故此处不用。type=10 用碰撞盒 Y(d19) 作占位排序。"""
+        layer = r.get('d29', 0)
+        flags = r.get('d2', 0)
+        if flags & 0x1000:
+            return (layer, 0, 0)
+        if flags & 0x2000:
+            return (layer, 2, 0)
+        y = r['d19'] if r['d0'] == 10 else r['d11']
+        return (layer, 1, y)
+
     def _vis_render_scene(self, ents, w, h):
         """PIL 预合成整个场景并显示到 QGraphicsView"""
 
@@ -245,8 +271,18 @@ class SceneCanvasView(QGraphicsView):
         else:
             composite = Image.new('RGB', (w, h), bg_color)
 
-        dr = ImageDraw.Draw(composite)
-
+        # ============================================================
+        # Pass 1: 实体精灵合成 — 严格按游戏渲染顺序 (ents 已按 _vis_sort_key 排序)
+        #   背景标志(d2&0x1000)最先绘制(最底) → 普通实体按 pos_y 升序(Y排序)
+        #   → 前景标志(d2&0x2000)最后绘制(最顶), 复刻 sub_405CBC/sub_406444
+        #   逐实体先绘阴影(减法)再绘精灵(按混合模式), 复刻 sub_406864
+        # ============================================================
+        had_jvg = set()   # 尝试过精灵渲染(有有效 JVG 块)的实体
+        drawn = set()     # 成功合成了精灵的实体
+        # 前景遮挡开关: L1 前景深度存在且开关开启时, 精灵按逐像素深度被景物遮挡
+        occlude = getattr(self._editor, '_vis_occlusion_cb', None)
+        occlude = (occlude.isChecked() if occlude is not None else True) \
+            and self._vis_layer1_img is not None
         for r in ents:
             tval = r[IDX_TYPE]
             show = self._editor._type_filter_cbs.get(tval)
@@ -257,9 +293,7 @@ class SceneCanvasView(QGraphicsView):
             y = r[IDX_POS_Y]
             ox = r.get('d26', 0)
             oy = r.get('d27', 0)
-            color = TYPE_COLORS_RGBA.get(tval, (128, 128, 128))
 
-            sprite_rgba = None
             jvg = None
             blk_idx = 0
             should_animate = False
@@ -290,59 +324,87 @@ class SceneCanvasView(QGraphicsView):
                         jvg = self._editor._ani_jvg
                         blk_idx = r['d64']
 
-            if jvg and blk_idx < jvg.block_count:
-                blk = jvg.blocks[blk_idx]
-                if blk.frames:
-                    if should_animate and idx not in self._vis_anim_frame:
-                        self._vis_anim_frame[idx] = 0
-                    anim = self._vis_anim_frame.get(idx, 0) if should_animate else 0
-                    fi, fpd = _get_dir_frame(blk, r['d13'], r['d16'], r['d53'], anim)
-                    if fi < len(blk.frames):
-                        blend_mode = r.get('d24', 0)
-                        blend_param = r.get('d25', 0)
-                        sprite_rgba = _get_jvg_frame_rgba(jvg, blk_idx, fi)
-                        if sprite_rgba:
-                            sx = x + ox + blk.frames[fi].x_off
-                            sy = y + oy + blk.frames[fi].y_off
-                            if blend_mode == 5:
-                                sprite_rgba = ImageOps.mirror(sprite_rgba)
-                            if blend_mode == 1:
-                                sprite_rgba = _pil_tint(sprite_rgba, blend_param)
-                            # Shadow
-                            shadow_fi = r.get('d55', 0)
-                            if shadow_fi > 0 and (tval == 200 or tval == 20) and jvg is self._editor._cha_jvg and jvg.block_count > 0:
-                                blk0 = jvg.blocks[0]
-                                if blk0.frames and shadow_fi < blk0.frame_count:
-                                    shadow_rgba = _get_jvg_frame_rgba(jvg, 0, shadow_fi)
-                                    _pil_subtract(composite, shadow_rgba,
-                                                  x + ox + jvg.blocks[0].frames[shadow_fi].x_off,
-                                                  y + oy + jvg.blocks[0].frames[shadow_fi].y_off)
-                            # Store hit region
-                            bx, by = r[IDX_BOUND_X], r[IDX_BOUND_Y]
-                            bw = r[IDX_BOUND_W] if r[IDX_BOUND_W] > 0 else sprite_rgba.width
-                            bh = r[IDX_BOUND_H] if r[IDX_BOUND_H] > 0 else sprite_rgba.height
-                            self._vis_hit_regions[idx] = (bx, by, bx + bw, by + bh)
-                            # Composite sprite
-                            blend_func = {0: _pil_normal, 2: _pil_additive, 3: _pil_subtract,
-                                          4: _pil_luma_alpha, 5: _pil_normal}.get(blend_mode, _pil_normal)
-                            if blend_mode == 2:
-                                _pil_additive(composite, sprite_rgba, sx, sy, blend_param)
-                            elif blend_mode == 3:
-                                _pil_subtract(composite, sprite_rgba, sx, sy)
-                            elif blend_mode == 4:
-                                _pil_luma_alpha(composite, sprite_rgba, sx, sy)
-                            else:
-                                _pil_normal(composite, sprite_rgba, sx, sy)
+            if not (jvg and blk_idx < jvg.block_count):
+                continue
+            had_jvg.add(idx)
+            blk = jvg.blocks[blk_idx]
+            if not blk.frames:
+                continue
+            if should_animate and idx not in self._vis_anim_frame:
+                self._vis_anim_frame[idx] = 0
+            anim = self._vis_anim_frame.get(idx, 0) if should_animate else 0
+            fi, fpd = _get_dir_frame(blk, r['d13'], r['d16'], r['d53'], anim)
+            if fi >= len(blk.frames):
+                continue
+            blend_mode = r.get('d24', 0)
+            blend_param = r.get('d25', 0)
+            sprite_rgba = _get_jvg_frame_rgba(jvg, blk_idx, fi)
+            if not sprite_rgba:
+                continue
+            sx = x + ox + blk.frames[fi].x_off
+            sy = y + oy + blk.frames[fi].y_off
+            if blend_mode == 5:
+                sprite_rgba = ImageOps.mirror(sprite_rgba)
+            if blend_mode == 1:
+                sprite_rgba = _pil_tint(sprite_rgba, blend_param)
+            # 阴影(减法混合) — 复刻 sub_406864 精灵前先绘阴影帧
+            shadow_fi = r.get('d55', 0)
+            if shadow_fi > 0 and (tval == 200 or tval == 20) and jvg is self._editor._cha_jvg and jvg.block_count > 0:
+                blk0 = jvg.blocks[0]
+                if blk0.frames and shadow_fi < blk0.frame_count:
+                    shadow_rgba = _get_jvg_frame_rgba(jvg, 0, shadow_fi)
+                    _pil_subtract(composite, shadow_rgba,
+                                  x + ox + jvg.blocks[0].frames[shadow_fi].x_off,
+                                  y + oy + jvg.blocks[0].frames[shadow_fi].y_off)
+            # 命中区 (碰撞盒优先, 退化到精灵尺寸)
+            bx, by = r[IDX_BOUND_X], r[IDX_BOUND_Y]
+            bw = r[IDX_BOUND_W] if r[IDX_BOUND_W] > 0 else sprite_rgba.width
+            bh = r[IDX_BOUND_H] if r[IDX_BOUND_H] > 0 else sprite_rgba.height
+            self._vis_hit_regions[idx] = (bx, by, bx + bw, by + bh)
+            # 合成精灵 (按混合模式 d24)
+            if blend_mode == 2:
+                _pil_additive(composite, sprite_rgba, sx, sy, blend_param)
+            elif blend_mode == 3:
+                _pil_subtract(composite, sprite_rgba, sx, sy)
+            elif blend_mode == 4:
+                _pil_luma_alpha(composite, sprite_rgba, sx, sy)
+            elif occlude:
+                # 前景遮挡 (逆向 sub_406E50 + sub_459F78): 实体深度=脚下碰撞盒内 L2 最小值>1,
+                # 精灵像素仅当 L1[世界] < 深度 时绘制, 否则被前景景物遮挡
+                depth = entity_occlusion_depth(
+                    self._vis_layer2_img, self._vis_layer_w, self._vis_layer_h,
+                    r[IDX_BOUND_X], r[IDX_BOUND_Y], r[IDX_BOUND_W], r[IDX_BOUND_H])
+                if depth > 1:
+                    composite_occluded(composite, sprite_rgba, sx, sy, depth,
+                                       self._vis_layer1_img,
+                                       self._vis_layer_w, self._vis_layer_h)
+                else:
+                    _pil_normal(composite, sprite_rgba, sx, sy)
+            else:
+                _pil_normal(composite, sprite_rgba, sx, sy)
+            drawn.add(idx)
 
-                # Draw collision box
+        # ============================================================
+        # Pass 2: 编辑标注 (碰撞盒/路径线/标签) — 绘制在精灵之上
+        # ============================================================
+        dr = ImageDraw.Draw(composite)
+        for r in ents:
+            tval = r[IDX_TYPE]
+            show = self._editor._type_filter_cbs.get(tval)
+            if show and not show.isChecked():
+                continue
+            idx = r['index']
+            color = TYPE_COLORS_RGBA.get(tval, (128, 128, 128))
+
+            # 精灵实体的碰撞/交互盒 (细线, 编辑标注)
+            if idx in had_jvg:
                 bx, by = r[IDX_BOUND_X], r[IDX_BOUND_Y]
                 bw = r[IDX_BOUND_W] if r[IDX_BOUND_W] > 0 else 0
                 bh = r[IDX_BOUND_H] if r[IDX_BOUND_H] > 0 else 0
                 if bw > 0 and bh > 0:
                     dr.rectangle([bx, by, bx + bw, by + bh], outline=color, width=1)
-
-            # Draw geometric shape when no sprite
-            if sprite_rgba is None:
+            # 无精灵实体: 几何形状 (粗线) + 命中区, 始终显示以便选择
+            if idx not in drawn:
                 bx, by = r[IDX_BOUND_X], r[IDX_BOUND_Y]
                 bw = r[IDX_BOUND_W] if r[IDX_BOUND_W] > 0 else 40
                 bh = r[IDX_BOUND_H] if r[IDX_BOUND_H] > 0 else 40
@@ -369,7 +431,7 @@ class SceneCanvasView(QGraphicsView):
             bx_c = r[IDX_BOUND_X] + r[IDX_BOUND_W] // 2
             dr.text((bx_c - len(label) * 3, r[IDX_BOUND_Y] - 12), label, fill=color)
 
-            # type=10 path lines
+            # type=10 路径/封锁线 (绿=开放路径 红=封锁, SetBlock 运行时碰撞标注)
             if tval == 10:
                 d62 = r.get("d62", 0)
                 lc = (255, 80, 80) if d62 > 0 else (80, 255, 80)
@@ -416,7 +478,7 @@ class SceneCanvasView(QGraphicsView):
             h = min(max(view_h, MAX_MAP_H, bg_h), 8192)
             self._vis_render_scene(ents, w, h)
             return
-        ents.sort(key=lambda r: r['d19'] if r['d0'] == 10 else r['d11'])
+        ents.sort(key=self._vis_sort_key)
         # 过滤垃圾废弃坐标 (>10000)，防止画布被撑到 8192 导致显卡卡死
         xs = [r['d10'] for r in ents if -10000 < r['d10'] < 10000]
         ys = [r['d11'] for r in ents if -10000 < r['d11'] < 10000]
@@ -1519,6 +1581,15 @@ class MatEditorApp(QMainWindow):
             cb.stateChanged.connect(self._canvas._vis_redraw)
             self._type_filter_cbs[tval] = cb
             top2.addWidget(cb)
+        top2.addSpacing(12)
+        # 前景遮挡开关: L1 前景遮挡深度逐像素遮挡精灵 (游戏真实"前景层"渲染, 默认开)
+        self._vis_occlusion_cb = QCheckBox("前景遮挡")
+        self._vis_occlusion_cb.setChecked(True)
+        self._vis_occlusion_cb.setToolTip(
+            "按 GRP 场景 Frame B Layer1 前景遮挡深度逐像素遮挡实体精灵\n"
+            "(逆向 sub_406E50/sub_459F78: 精灵在前景景物如树冠/屋檐后被遮挡)")
+        self._vis_occlusion_cb.stateChanged.connect(self._canvas._vis_redraw)
+        top2.addWidget(self._vis_occlusion_cb)
         top2.addStretch()
         center_layout.addLayout(top2)
 
@@ -2585,9 +2656,16 @@ class MatEditorApp(QMainWindow):
         view_w = self._canvas.viewport().width()
         view_h = self._canvas.viewport().height()
 
-        # Background PIL Image
+        # Background PIL Image + Frame B 逐像素图层 (L1 前景遮挡深度 / L2 地形碰撞类型)
+        # 逆向: 背景(Frame A) 与碰撞/前景层(Frame B) 同属一个 GRP section, 一并加载。
         self._canvas._vis_bg_pil = None
-        # 优先从内存中的 _sc_grp_pending 加载背景（MOD 导入后尚未保存的数据）
+        self._canvas._vis_layer1_img = None
+        self._canvas._vis_layer2_img = None
+        self._canvas._vis_layer_w = 0
+        self._canvas._vis_layer_h = 0
+        l1 = l2 = None
+        lw = lh = 0
+        # 优先从内存中的 _sc_grp_pending 加载（MOD 导入后尚未保存的数据）
         if self._data._sc_grp_pending is not None and 0 <= sid < len(self._data._sc_grp_pending):
             section_bytes = self._data._sc_grp_pending[sid]
             if section_bytes:
@@ -2595,20 +2673,28 @@ class MatEditorApp(QMainWindow):
                     bg = load_scene_background_from_bytes(section_bytes)
                     if bg:
                         self._canvas._vis_bg_pil = bg
+                    l1, l2, lw, lh = load_scene_layers_from_bytes(section_bytes)
                 except Exception:
                     pass
-        # 回退到从磁盘文件加载
-        if self._canvas._vis_bg_pil is None and self._data.dat_path:
+        # 回退到从磁盘文件加载 (一次解析 GRP 同时取背景+双层)
+        if self._canvas._vis_bg_pil is None and l1 is None and self._data.dat_path:
             d = self._get_game_dir()
             grp_path = os.path.join(d, "SC.GRP")
             idx_path = os.path.join(d, "SC.IDX")
             if os.path.exists(grp_path):
                 try:
-                    bg = load_scene_background(grp_path, idx_path, sid)
+                    bg, l1, l2, lw, lh = load_scene_background_and_layers(grp_path, idx_path, sid)
                     if bg:
                         self._canvas._vis_bg_pil = bg
                 except Exception:
                     pass
+        # 构建图层图像 (L1 供逐像素前景遮挡, L2 供实体深度计算)
+        if l1 and lw > 0 and lh > 0:
+            self._canvas._vis_layer1_img = make_layer_image(l1, lw, lh)
+            self._canvas._vis_layer_w = lw
+            self._canvas._vis_layer_h = lh
+            if l2:
+                self._canvas._vis_layer2_img = make_layer_image(l2, lw, lh)
 
         ents = [r for r in self._data.records if has_data(r) and r['d1'] == sid]
         sname = scene_name(self._data.tkt_scenes, sid)
@@ -2621,7 +2707,7 @@ class MatEditorApp(QMainWindow):
             self._canvas._vis_render_scene(ents, w, h)
             self._vis_info_label.setText(f"SC.GRP #{sid}: {sname} — 无实体 (空场景)")
             return
-        ents.sort(key=lambda r: r['d19'] if r['d0'] == 10 else r['d11'])
+        ents.sort(key=self._canvas._vis_sort_key)
 
         # 过滤垃圾废弃坐标 (>10000)，防止画布被撑到 8192 导致显卡卡死
         xs = [r['d10'] for r in ents if -10000 < r['d10'] < 10000]
