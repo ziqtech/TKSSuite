@@ -438,11 +438,11 @@ CAVE_DUEL_COUNTER_SELF_FIX = bytes([
 # Cave 模板: 主角替换 — TeamMember 脚本路由
 # 逆向依据: sub_40DA00 @0x40DA1C (TeamMember 入口条件判断)
 # hook: cmp word [ebp+8], 0; jnz 0x40DA8D (7字节) -> E8 rel32 + 2xNOP
-# 路由逻辑:
-#   TeamMember(N, *)   (N>0) → 正常入队/离队
-#   TeamMember(0, -1)         → 清空全队
-#   TeamMember(0, 0)          → 主角离队 (走正常离队分支, 压缩移位)
-#   TeamMember(0, 1)          → 主角入队槽位0: 检查→必要时整体右移→写入→调加入代码
+# 路由逻辑 (最大化兼容原版脚本):
+#   TeamMember(N, *)   (N>0) → 正常入队/离队 (不变)
+#   TeamMember(0, 1)          → 主角入队槽位0: 检查→必要时整体右移→写入→调加入代码 (不变)
+#   TeamMember(0, -1)         → 主角离队 (走正常离队分支, 压缩移位; 自定义扩展语义)
+#   TeamMember(0, 0/其它)     → 清空全队 (原版语义: a1=0 恒清空, 兼容原版 TeamMember(0,0) 脚本)
 # 格式: 精确计算所有跳转偏移, 模板大小 158 bytes
 # ============================================================
 CAVE_TEAM_MEMBER_LEAVE_ROUTING = bytes([
@@ -450,10 +450,10 @@ CAVE_TEAM_MEMBER_LEAVE_ROUTING = bytes([
     0x66, 0x83, 0x7D, 0x08, 0x00,                      #  0 cmp [ebp+8], 0  ; a1==0?
     0x0F, 0x85, 0x89, 0x00, 0x00, 0x00,                #  5 jnz near .to_join_leave(148)
     0x66, 0x83, 0x7D, 0x0C, 0xFF,                      # 11 cmp [ebp+0Ch], -1  ; a2==-1?
-    0x0F, 0x84, 0x87, 0x00, 0x00, 0x00,                # 16 je near .to_clear_all(157)
+    0x0F, 0x84, 0x7E, 0x00, 0x00, 0x00,                # 16 je near .to_join_leave(148)  ; a2==-1: 主角离队
     0x66, 0x83, 0x7D, 0x0C, 0x01,                      # 22 cmp [ebp+0Ch], 1  ; a2==1? 主角入队!
     0x0F, 0x84, 0x05, 0x00, 0x00, 0x00,                # 27 je near .proto_join(38)
-    0xE9, 0x6E, 0x00, 0x00, 0x00,                      # 33 jmp near .to_join_leave(148)  ; a2==0: 主角离队
+    0xE9, 0x77, 0x00, 0x00, 0x00,                      # 33 jmp near .to_clear_all(157)  ; a2==0/其它: 清空全队(原版语义)
 
     # === .proto_join === (offset 38) 主角强制插入槽位0 ===
     0x66, 0x83, 0x3D, 0x8C, 0x68, 0x75, 0x00, 0x00,   # 38 cmp [0x75688C], 0  ; 已在槽位0?
