@@ -316,8 +316,12 @@ def _collect_source_files(entry: str, editor_dir: str) -> list:
 
 
 def _should_skip_build(name: str, source_files: list) -> bool:
-    """增量构建检查: 若 exe 比所有源文件新, 则跳过"""
-    exe_path = DIST_DIR / f"{name}.exe"
+    """增量构建检查: 若发行目录 exe 比所有源文件新, 则跳过
+
+    以发行目录 (RELEASE_DIR) 的 exe 作为增量标记 — 构建产物在 assemble
+    阶段会从 dist/ 根目录移入发行目录, dist/ 根目录不再保留中间 exe。
+    """
+    exe_path = RELEASE_DIR / f"{name}.exe"
     if not exe_path.exists():
         return False
     exe_mtime = exe_path.stat().st_mtime
@@ -527,23 +531,21 @@ def assemble_release(onefile: bool = False, release: bool = False,
     assembled = 0
     for name, _, _ in EDITORS:
         exe_src = DIST_DIR / f"{name}.exe"
-        if not exe_src.exists():
-            print(f"  [SKIP] {name}.exe 不存在")
-            continue
-        # 增量复制: 源和目标 mtime+size 一致则跳过
         exe_dst = RELEASE_DIR / f"{name}.exe"
-        if exe_dst.exists():
-            src_stat = exe_src.stat()
-            dst_stat = exe_dst.stat()
-            if src_stat.st_size == dst_stat.st_size and src_stat.st_mtime <= dst_stat.st_mtime:
-                size_mb = dst_stat.st_size / (1024 * 1024)
-                print(f"  [SKIP] {name}.exe ({size_mb:.1f} MB, 未变更)")
-                assembled += 1
-                continue
-        shutil.copy2(str(exe_src), str(RELEASE_DIR / f"{name}.exe"))
-        size_mb = exe_src.stat().st_size / (1024 * 1024)
-        print(f"  [OK] {name}.exe ({size_mb:.1f} MB)")
-        assembled += 1
+        if exe_src.exists():
+            # 移动 (而非复制) 构建产物到发行目录, 避免 dist/ 根目录残留无法独立运行的中间 exe
+            # (薄 exe 需与同级 libs/ 归档共存, 位于 dist/ 根目录时缺少 libs/ 无法启动)
+            os.replace(str(exe_src), str(exe_dst))
+            size_mb = exe_dst.stat().st_size / (1024 * 1024)
+            print(f"  [OK] {name}.exe ({size_mb:.1f} MB)")
+            assembled += 1
+        elif exe_dst.exists():
+            # 增量跳过: 中间产物已在上次构建时移入发行目录, 此处无需再处理
+            size_mb = exe_dst.stat().st_size / (1024 * 1024)
+            print(f"  [SKIP] {name}.exe ({size_mb:.1f} MB, 未变更)")
+            assembled += 1
+        else:
+            print(f"  [SKIP] {name}.exe 不存在 (构建失败或未构建)")
 
     # configs/ 和 mods/ 和 libs/
     (RELEASE_DIR / "configs").mkdir(exist_ok=True)
