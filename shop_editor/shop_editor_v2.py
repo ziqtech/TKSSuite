@@ -234,7 +234,7 @@ TAB_TO_SHOP = {
 class ShopEditorWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("TKShop.dat 可视化编辑器 (PySide6)")
+        self.setWindowTitle(format_title("shop_editor"))
         self.resize(1100, 680)
         self.setMinimumSize(950, 550)
 

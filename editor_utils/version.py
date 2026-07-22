@@ -42,6 +42,10 @@ from dataclasses import dataclass
 _BUILD_DATE_DEV = "开发阶段（未打包）"
 
 
+# ── 版权声明 (追加到所有编辑器窗口标题末尾) ──
+_LICENSE_NOTICE = "本软件免费开源，仅供个人学习、研究使用，不得用于商业目的"
+
+
 def _detect_build_date() -> str:
     """检测构建日期。
 
@@ -131,14 +135,14 @@ def format_title(app_id: str, subtitle: str | None = None) -> str:
         subtitle: 副标题 (如文件名), None 表示无副标题
 
     Returns:
-        无副标题: "{app_name} v{version}"
-        有副标题: "{app_name} v{version} — {subtitle}"
+        无副标题: "{app_name} v{version} — {版权声明}"
+        有副标题: "{app_name} v{version} — {subtitle} — {版权声明}"
     """
     v = get_version(app_id)
     base = f"{v.app_name} v{v.version}"
     if subtitle:
-        return f"{base} — {subtitle}"
-    return base
+        base = f"{base} — {subtitle}"
+    return f"{base} — {_LICENSE_NOTICE}"
 
 
 def get_build_date() -> str:
