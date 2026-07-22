@@ -6,7 +6,7 @@ Tab 顺序: 可选补丁 → 必选补丁, 默认选中可选补丁。
 """
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
-    QAbstractItemView, QHeaderView, QTableWidget,
+    QAbstractItemView, QCheckBox, QHeaderView, QTableWidget,
     QTableWidgetItem, QTabWidget, QVBoxLayout, QWidget,
 )
 from core.config_loader import PatchDef
@@ -50,6 +50,10 @@ class PatchListWidget(QWidget):
         self._row_index: dict[str, tuple[QTableWidget, int]] = {}
         # 可选(可编辑)补丁 id 集合
         self._optional_ids: set[str] = set()
+        # 各表格表头叠加的"全选"复选框 {table: QCheckBox}
+        self._header_checks: dict[QTableWidget, QCheckBox] = {}
+        self._syncing = False   # 防表头三态与行勾选互相触发的递归
+        self._loading = False   # 批量设置勾选态时抑制逐条回调
 
         required = [p for p in patches if not p.optional]
         optional = [p for p in patches if p.optional]
@@ -71,6 +75,9 @@ class PatchListWidget(QWidget):
         self._tabs.setCurrentIndex(0)
         outer.addWidget(self._tabs, 1)
 
+        # 初始化可选表"全选"框的三态显示
+        self._update_header_check_state()
+
     @property
     def optional_default_height(self) -> int:
         """可选补丁区的固定默认高度（供其他面板同步高度参考）。"""
@@ -82,8 +89,8 @@ class PatchListWidget(QWidget):
         """创建一个补丁表格。interactive=False 时行锁定(必选, 始终勾选)。"""
         table = QTableWidget(0, len(_COLUMNS))
         table.setHorizontalHeaderLabels(_COLUMNS)
-        table.setProperty("class", "GrowthTable")  # 复用主题的表格斑马纹/选中样式
-        table.setAlternatingRowColors(True)
+        table.setProperty("class", "GrowthTable")  # 复用主题的表格选中/行背景样式
+        table.setAlternatingRowColors(False)  # 移除斑马纹, 行背景统一
         table.setSelectionBehavior(QAbstractItemView.SelectRows)
         table.setSelectionMode(QAbstractItemView.SingleSelection)
         table.setEditTriggers(QAbstractItemView.NoEditTriggers)
@@ -94,7 +101,7 @@ class PatchListWidget(QWidget):
         h.setHighlightSections(False)
         # 启用列固定为窄宽度（仅容纳居中的复选框），避免被表头文字撞宽
         h.setSectionResizeMode(_COL_ENABLE, QHeaderView.Fixed)
-        table.setColumnWidth(_COL_ENABLE, 40)
+        table.setColumnWidth(_COL_ENABLE, 28)
         h.setSectionResizeMode(_COL_NAME, QHeaderView.Stretch)
         h.setSectionResizeMode(_COL_TYPE, QHeaderView.ResizeToContents)
 
@@ -108,6 +115,8 @@ class PatchListWidget(QWidget):
         # 可选表格的勾选变化才需要通知外部保存 (必选行锁定, 不会变)
         if interactive:
             table.itemChanged.connect(self._on_item_changed)
+        # 表头叠加"全选"复选框, 替代"启用"文字 (与模组列表一致)
+        self._setup_header_check(table, interactive)
         return table
 
     def _fill_row(self, table: QTableWidget, row: int,
@@ -158,11 +167,80 @@ class PatchListWidget(QWidget):
         table.setItem(0, _COL_NAME, hint)
         table.setSpan(0, 0, 1, len(_COLUMNS))
 
+    def _setup_header_check(self, table: QTableWidget, interactive: bool) -> None:
+        """在表头"启用"列叠加复选框, 替代文字标题 (与模组列表一致)。
+
+        可选表: 三态"全选/全不选"框; 必选表: 禁用的常勾选框 (仅示意锁定)。
+        """
+        h = table.horizontalHeader()
+        table.setHorizontalHeaderItem(_COL_ENABLE, QTableWidgetItem(""))
+        chk = QCheckBox(h)
+        chk.setAttribute(Qt.WA_TranslucentBackground, True)
+        chk.setStyleSheet("background: transparent;")
+        if interactive:
+            chk.setTristate(True)
+            chk.setToolTip("全选 / 全不选")
+            chk.stateChanged.connect(self._on_header_check_changed)
+        else:
+            chk.setChecked(True)
+            chk.setEnabled(False)
+            chk.setToolTip("必选补丁始终启用")
+        self._header_checks[table] = chk
+        h.geometriesChanged.connect(lambda: self._position_header_check(table))
+        h.sectionResized.connect(lambda *_: self._position_header_check(table))
+        self._position_header_check(table)
+
+    def _position_header_check(self, table: QTableWidget) -> None:
+        """将表头复选框定位到"启用"列 section 的中心。"""
+        chk = self._header_checks.get(table)
+        if chk is None:
+            return
+        h = table.horizontalHeader()
+        x = h.sectionViewportPosition(_COL_ENABLE)
+        w = h.sectionSize(_COL_ENABLE)
+        if w <= 0:
+            chk.setVisible(False)
+            return
+        sh = chk.sizeHint()
+        chk.setGeometry(
+            x + (w - sh.width()) // 2,
+            (h.height() - sh.height()) // 2,
+            sh.width(), sh.height())
+        chk.setVisible(True)
+        chk.raise_()
+
     # ── 事件 ──
 
     def _on_item_changed(self, item: QTableWidgetItem) -> None:
-        if item.column() == _COL_ENABLE:
-            self.state_changed.emit()
+        if self._loading or item.column() != _COL_ENABLE:
+            return
+        self._update_header_check_state()
+        self.state_changed.emit()
+
+    def _on_header_check_changed(self, _state) -> None:
+        """点击可选表"全选"框: 全部已选→全不选; 否则→全选。"""
+        if self._syncing:
+            return
+        all_checked = bool(self._optional_ids) and all(
+            self._is_checked(*self._row_index[pid]) for pid in self._optional_ids)
+        self._set_all_optional(Qt.Unchecked if all_checked else Qt.Checked)
+
+    def _update_header_check_state(self) -> None:
+        """根据可选行勾选情况刷新表头"全选"框的三态。"""
+        chk = self._header_checks.get(self._opt_table)
+        if chk is None:
+            return
+        ids = self._optional_ids
+        checked = sum(1 for pid in ids if self._is_checked(*self._row_index[pid]))
+        if not ids or checked == 0:
+            st = Qt.Unchecked
+        elif checked == len(ids):
+            st = Qt.Checked
+        else:
+            st = Qt.PartiallyChecked
+        self._syncing = True
+        chk.setCheckState(st)
+        self._syncing = False
 
     # ── 对外接口 (保持与原实现一致) ──
 
@@ -178,12 +256,16 @@ class PatchListWidget(QWidget):
 
     def set_patch_states(self, states: dict[str, bool]) -> None:
         """恢复可选补丁勾选状态 (用于存档恢复)。"""
+        self._loading = True
         for pid, val in states.items():
             if pid in self._optional_ids:
                 table, row = self._row_index[pid]
                 item = table.item(row, _COL_ENABLE)
                 if item is not None:
                     item.setCheckState(Qt.Checked if val else Qt.Unchecked)
+        self._loading = False
+        self._update_header_check_state()
+        self.state_changed.emit()
 
     def select_all(self):
         self._set_all_optional(Qt.Checked)
@@ -195,11 +277,15 @@ class PatchListWidget(QWidget):
 
     def _set_all_optional(self, state) -> None:
         """批量设置可选补丁勾选态 (必选行锁定, 不受影响)。"""
+        self._loading = True
         for pid in self._optional_ids:
             table, row = self._row_index[pid]
             item = table.item(row, _COL_ENABLE)
             if item is not None:
                 item.setCheckState(state)
+        self._loading = False
+        self._update_header_check_state()
+        self.state_changed.emit()
 
     @staticmethod
     def _is_checked(table: QTableWidget, row: int) -> bool:
