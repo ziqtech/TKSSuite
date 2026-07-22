@@ -106,13 +106,6 @@ def _build_thin_cmd(name: str, entry: str, editor_dir: str,
         "--onefile",
         "--assume-yes-for-downloads",
 
-        # ── onefile 自解压目录: 收进 exe 同目录 <exe名>.onefile/ (绿色便携, 不写 %TEMP%) ──
-        # temporary: 退出即删, 零残留。程序相对路径属运行时动态路径, 无法用 cached(故每次启动重解压)
-        # {PROGRAM_BASE}=exe 绝对路径(去后缀), 作绝对锚点置于开头; 每个 exe 名不同, 天然隔离
-        # 注: 要求 exe 所在目录可写; 装到只读目录(如 Program Files)将无法启动
-        "--onefile-tempdir-spec={PROGRAM_BASE}.onefile",
-        "--onefile-cache-mode=temporary",
-
         # ── 输出控制 ──
         f"--output-dir={DIST_DIR}",
         f"--output-filename={name}.exe",
@@ -188,13 +181,6 @@ def _build_onefile_cmd(name: str, entry: str, editor_dir: str,
         "--onefile",
         "--assume-yes-for-downloads",
 
-        # ── onefile 自解压目录: 收进 exe 同目录 <exe名>.onefile/ (绿色便携, 不写 %TEMP%) ──
-        # temporary: 退出即删, 零残留。程序相对路径属运行时动态路径, 无法用 cached(故每次启动重解压)
-        # {PROGRAM_BASE}=exe 绝对路径(去后缀), 作绝对锚点置于开头; 每个 exe 名不同, 天然隔离
-        # 注: 要求 exe 所在目录可写; 装到只读目录(如 Program Files)将无法启动
-        "--onefile-tempdir-spec={PROGRAM_BASE}.onefile",
-        "--onefile-cache-mode=temporary",
-
         # ── 输出控制 ──
         f"--output-dir={DIST_DIR}",
         f"--output-filename={name}.exe",
@@ -268,10 +254,6 @@ def _build_cli_cmd(name: str, entry: str, editor_dir: str,
         sys.executable, "-m", "nuitka",
         "--onefile",
         "--assume-yes-for-downloads",
-        # onefile 自解压目录: 收进 exe 同目录 <exe名>.onefile/ (绿色便携, 不写 %TEMP%; 退出即删)
-        # temporary 模式: 程序相对路径无法 cached; 要求 exe 目录可写
-        "--onefile-tempdir-spec={PROGRAM_BASE}.onefile",
-        "--onefile-cache-mode=temporary",
         f"--output-dir={DIST_DIR}",
         f"--output-filename={name}.exe",
         # CLI 需要控制台输出

@@ -10,8 +10,7 @@ runtime_bootstrap — 运行时引导加载器
 
 支持:
   - 开发环境: 自动跳过（PySide6 已在 sys.path 中）
-  - Nuitka 编译环境: 从 libs/ 子目录的 .lib 归档解压到 exe 同目录的 runtime/
-    (绿色便携: 删除程序文件夹即零残留, 不污染系统; 目录不可写时才回退 %LOCALAPPDATA%/TKSEditors/runtime/)
+  - Nuitka 编译环境: 从 libs/ 子目录的 .lib 归档解压到 %LOCALAPPDATA%/TKSEditors/runtime/
   - 增量更新: 通过 mtime+size 对比, 仅解压有变化的归档
   - 格式自动检测: zstd (新) / zip (旧) 向后兼容
   - 缓存清理: 升级归档时自动删除旧版本文件, 避免残留
@@ -85,13 +84,8 @@ def get_app_dir() -> str:
     return _APP_DIR
 
 
-# 运行时缓存目录 (绿色便携方案)
-# 优先解压到 exe 同目录的 runtime/ (与 libs/ 并列): 删除程序文件夹即零残留, 不污染系统。
-# 仅当该目录不可写 (如安装到 Program Files) 时, 才在 bootstrap() 中回退到 %LOCALAPPDATA%。
-# 注意: 此处仅拼接路径字符串 (无磁盘 I/O), 实际可写性检测与目录创建延迟到 bootstrap() 内,
-#       避免开发环境 (import 即执行) 在无关目录留下副作用文件夹。
-_CACHE_DIR = os.path.join(_APP_DIR, "runtime")
-_FALLBACK_CACHE_DIR = os.path.join(
+# 运行时缓存目录
+_CACHE_DIR = os.path.join(
     os.environ.get("LOCALAPPDATA") or os.path.expanduser("~"),
     "TKSEditors", "runtime"
 )
@@ -108,22 +102,6 @@ _RUNTIME_LIBS = [
     "QtSvg.lib",
     "PIL.lib",
 ]
-
-
-def _is_writable_dir(path: str) -> bool:
-    """测试目录能否创建并写入 (用于判断能否把运行时解压到 exe 同目录)。
-
-    成功创建目录并写入探针文件返回 True; 任何 OSError (如 Program Files 只读) 返回 False。
-    """
-    try:
-        os.makedirs(path, exist_ok=True)
-        probe = os.path.join(path, ".write_probe")
-        with open(probe, 'w') as f:
-            f.write("")
-        os.remove(probe)
-        return True
-    except OSError:
-        return False
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -219,12 +197,6 @@ def bootstrap():
     )
     if not is_compiled:
         return
-
-    # ── 解析运行时目录 (绿色便携): 优先 exe 同目录 runtime/, 不可写才回退 %LOCALAPPDATA% ──
-    global _CACHE_DIR, _MANIFEST
-    if not _is_writable_dir(_CACHE_DIR):
-        _CACHE_DIR = _FALLBACK_CACHE_DIR
-        _MANIFEST = os.path.join(_CACHE_DIR, ".manifest.json")
 
     # ── 确保缓存目录存在 ──
     os.makedirs(_CACHE_DIR, exist_ok=True)
