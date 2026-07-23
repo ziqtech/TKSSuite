@@ -1587,7 +1587,9 @@ class JVGEditor(QMainWindow):
 
             Path(tmp_path).write_bytes(bytes(buf))
             self.jvg = load_jvg(tmp_path)
-            self.jvg.filepath = None  # 清除临时路径
+            # 指向参考目录中的目标 JVG，保存时直接写回该文件（即应用 MOD），
+            # 避免 filepath 为空导致保存时再次弹出选择目录的对话框
+            self.jvg.filepath = os.path.join(ref_dir, target_name)
         except Exception as e:
             QMessageBox.warning(self, "导入失败", f"重建 JVG 数据失败: {e}")
             return
@@ -1611,6 +1613,7 @@ class JVGEditor(QMainWindow):
         self._update_preview_controls()
         self._refresh_view()
         self._dirty = True
+        self.setWindowTitle(format_title("jvg_editor", os.path.basename(self.jvg.filepath)))
         self.statusBar().showMessage(
             f"已导入 MOD: {info.get('name', '')} v{info.get('version', '')} | "
             f"{target_name}: {len(blocks)} 个精灵块", 5000)
