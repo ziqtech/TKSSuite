@@ -19,7 +19,7 @@
     {
       "type": "patch_bytes",
       "id": "team_member_limit",
-      "desc": "入队限制 30→200, cmp 0x1E→0xC8 + jg→ja (sub_40DA00)",
+      "desc": "入队限制放宽 (sub_40DA00): cmp 0x1E(30)→0xC8 + jg→ja; 0xC8 作 imm8 符号扩展为 0xFFC8, 配合无符号比较实际上限约为 65480(≈解除限制), 字面 200 非真实上限",
       "pattern": "66 83 7D 08 1E 0F 8F D1 01 00 00",
       "expect_count": 1,
       "replace": { "4": "C8", "6": "87" }
@@ -27,7 +27,7 @@
     {
       "type": "patch_bytes",
       "id": "check_team",
-      "desc": "队伍满员检查 30→200, jle→jbe (sub_40E65C, 1E 7E 26 0F BF 55 唯一出现)",
+      "desc": "队伍满员检查放宽 (sub_40E65C, 1E 7E 26 0F BF 55 唯一出现): 0x1E(30)→0xC8 + jle→jbe; 0xC8 作 imm8 符号扩展为 0xFFC8, 配合无符号比较实际上限约为 65480(≈解除限制), 字面 200 非真实上限",
       "pattern": "1E 7E 26 0F BF 55",
       "expect_count": 1,
       "replace": { "0": "C8", "1": "76" }
