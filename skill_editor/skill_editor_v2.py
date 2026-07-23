@@ -5,18 +5,21 @@ TKSkill.dat 可视化编辑器 (PySide6 最终完美 Godot 风格版)
 修复了布局对齐、去除了冗余线框，并 100% 还原了 Godot 4.6 滚动条及主题样式。
 """
 
+import math
 import os
 import struct
 import sys
 
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QColor, QIcon, QKeySequence
+from PySide6.QtCore import QPointF, QRectF, Qt
+from PySide6.QtGui import (
+    QBrush, QColor, QIcon, QKeySequence, QPainter, QPainterPath, QPen, QPolygonF
+)
 from PySide6.QtWidgets import (
     QAbstractItemView, QApplication, QCheckBox, QDialog,
     QFileDialog, QFrame, QGridLayout, QHBoxLayout, QHeaderView, QLabel,
     QLineEdit, QMainWindow, QMenu, QMenuBar, QMessageBox, QPushButton,
-    QScrollArea, QSplitter, QTableWidget, QTableWidgetItem, QTextEdit,
-    QVBoxLayout, QWidget
+    QGraphicsScene, QGraphicsView, QScrollArea, QSplitter, QTableWidget,
+    QTableWidgetItem, QTextEdit, QVBoxLayout, QWidget
 )
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
@@ -254,6 +257,401 @@ class SkillPickerDialog(QDialog):
         self.accept()
 
 # ============================================================
+# 技能链拓扑图查看器
+# ============================================================
+
+class SkillGraphView(QGraphicsView):
+    """可缩放 / 拖拽平移的技能拓扑图视图 (滚轮缩放, 双击节点回调)。"""
+
+    def __init__(self, on_node_double_clicked=None):
+        super().__init__()
+        self._on_dbl = on_node_double_clicked
+        self.setRenderHints(QPainter.Antialiasing | QPainter.TextAntialiasing)
+        self.setDragMode(QGraphicsView.ScrollHandDrag)
+        self.setTransformationAnchor(QGraphicsView.AnchorUnderMouse)
+        self.setResizeAnchor(QGraphicsView.AnchorViewCenter)
+
+    def wheelEvent(self, event):
+        factor = 1.15 if event.angleDelta().y() > 0 else 1.0 / 1.15
+        self.scale(factor, factor)
+
+    def _node_idx_at(self, view_pos):
+        item = self.itemAt(view_pos)
+        while item is not None:
+            data = item.data(0)
+            if data is not None:
+                return int(data)
+            item = item.parentItem()
+        return None
+
+    def mouseDoubleClickEvent(self, event):
+        idx = self._node_idx_at(event.position().toPoint())
+        if idx is not None and self._on_dbl:
+            self._on_dbl(idx)
+            return
+        super().mouseDoubleClickEvent(event)
+
+
+class SkillTreeDialog(QDialog):
+    """技能链拓扑图 — 只展示与选中技能直接相关的技能链 (向上全部前置 + 向下全部解锁),
+    以节点-连线拓扑图呈现, 而非整张关系网。
+
+    技能树引用表语义 (逆向 sub_41E248):
+      源技能.ref_skill[i] = 目标技能索引; 源技能.ref_type[i] = 学会该源技能后累加给目标的进度权重。
+      目标累计进度 ≥10 即可学习; 权重 10 = 自足解锁; 20 = 归组标记。
+      因此 A→B 表示 A 是 B 的前置, B 是学会 A 后可解锁的技能; 箭头由前置指向解锁。
+    """
+
+    NODE_W = 168
+    NODE_H = 50
+    HGAP = 44
+    VGAP = 104
+
+    def __init__(self, parent, records, tkt_dict, focus_idx, is_dark=True):
+        super().__init__(parent)
+        self.records = records
+        self.tkt_dict = tkt_dict
+        self.focus_idx = focus_idx
+        self.is_dark = is_dark
+        self._fitted = False
+        self._mode = 'all'  # all=前置+解锁 · down=仅向下(解锁链) · up=仅向上(前置链)
+        self._show_group = True  # 是否显示归组(ref_type==20)关系
+
+        self.resize(920, 720)
+        self._build_graph()
+        self._build_ui()
+        self._render_graph()
+
+    # ── 引用关系图构建 ──
+    def _build_graph(self):
+        """遍历全部技能, 构建父/子关系图与目标累计进度权重。"""
+        self.children = {}   # a -> [(b, weight, pair)]  学会 a 后为 b 贡献 weight 进度
+        self.parents = {}    # b -> [(a, weight, pair)]  b 由 a 贡献 weight 进度
+        self.total_in = {}   # b -> 累计进度权重合计
+        n = len(self.records)
+        for rec in self.records:
+            if rec.get('skill_text_id', 0) == 0:
+                continue
+            a = rec['index']
+            for i in range(8):
+                b = rec.get('ref_skill%d' % i, 0)
+                w = rec.get('ref_type%d' % i, 0)
+                if w == 0 or b <= 0 or b >= n or b == a:
+                    continue
+                if self.records[b].get('skill_text_id', 0) == 0:
+                    continue
+                self.children.setdefault(a, []).append((b, w, i))
+                self.parents.setdefault(b, []).append((a, w, i))
+                self.total_in[b] = self.total_in.get(b, 0) + w
+
+    # ── 关联范围: 仅当前技能自身的技能链 (向上全部前置 + 向下全部解锁) ──
+    def _reach(self, start, adj):
+        """从 start 出发, 沿单方向 (parents 或 children) 传递闭包可达集 (不含 start)。"""
+        seen = set()
+        stack = [start]
+        while stack:
+            n = stack.pop()
+            for (m, w, _i) in adj.get(n, []):
+                if not self._show_group and w == 20:
+                    continue
+                if m != start and m not in seen:
+                    seen.add(m)
+                    stack.append(m)
+        return seen
+
+    def _related_nodes(self):
+        # 按显示范围过滤: 仅向下只保留解锁链, 仅向上只保留前置链
+        anc = set() if self._mode == 'down' else self._reach(self.focus_idx, self.parents)
+        desc = set() if self._mode == 'up' else self._reach(self.focus_idx, self.children)
+        nodes = anc | desc | {self.focus_idx}
+        return nodes, anc, desc
+
+    def _sub_edges(self, nodes):
+        """仅保留两端均在链内的引用边 (a → b, w=进度权重)。"""
+        edges = []
+        for a in nodes:
+            for (b, w, _i) in self.children.get(a, []):
+                if not self._show_group and w == 20:
+                    continue
+                if b in nodes:
+                    edges.append((a, b, w))
+        return edges
+
+    def _compute_ranks(self, nodes, edges):
+        """按最长路径分层: 无前置节点 rank=0, 越靠下游 rank 越大 (环用访问栈兑底)。"""
+        pin = {n: [] for n in nodes}
+        for (a, b, _w) in edges:
+            pin[b].append(a)
+        rank = {}
+        visiting = set()
+
+        def rk(n):
+            if n in rank:
+                return rank[n]
+            if n in visiting:
+                return 0
+            visiting.add(n)
+            r = 0
+            for a in pin[n]:
+                r = max(r, rk(a) + 1)
+            visiting.discard(n)
+            rank[n] = r
+            return r
+
+        for n in nodes:
+            rk(n)
+        return rank
+
+    def _layout(self, nodes, rank):
+        rows = {}
+        for n in nodes:
+            rows.setdefault(rank[n], []).append(n)
+        pos = {}
+        for r, ns in rows.items():
+            ns.sort()
+            total_w = len(ns) * self.NODE_W + (len(ns) - 1) * self.HGAP
+            x0 = -total_w / 2.0
+            for i, n in enumerate(ns):
+                pos[n] = (x0 + i * (self.NODE_W + self.HGAP), r * (self.NODE_H + self.VGAP))
+        return pos
+
+    # ── 界面 ──
+    def _build_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(8)
+
+        self.lbl_head = QLabel("")
+        self.lbl_head.setProperty("class", "RecordHeader")
+        self.lbl_head.setWordWrap(True)
+        layout.addWidget(self.lbl_head)
+
+        legend = QLabel(
+            "箭头方向 = 前置 → 解锁; 连线标签为累加进度权重 (+N), 目标累计 ≥10 或标注 [自足] 即可学习, "
+            "[归组] 为技能组标记 (紫色虚线)。滚轮缩放 · 拖拽平移 · 双击节点重新聚焦。")
+        legend.setWordWrap(True)
+        legend.setProperty("class", "PropLabel")
+        layout.addWidget(legend)
+
+        mode_row = QHBoxLayout()
+        mode_row.addWidget(QLabel("显示范围:"))
+        self.mode_box = NoWheelComboBox()
+        self.mode_box.addItems(["全部关联 (前置 + 解锁)", "仅向下 (解锁链)", "仅向上 (前置链)"])
+        self.mode_box.setCurrentIndex({'all': 0, 'down': 1, 'up': 2}[self._mode])
+        self.mode_box.currentIndexChanged.connect(self._on_mode_changed)
+        mode_row.addWidget(self.mode_box)
+        mode_row.addSpacing(16)
+        self.chk_group = QCheckBox("显示归组")
+        self.chk_group.setChecked(self._show_group)
+        self.chk_group.toggled.connect(self._on_group_toggled)
+        mode_row.addWidget(self.chk_group)
+        mode_row.addStretch()
+        layout.addLayout(mode_row)
+
+        self.scene = QGraphicsScene(self)
+        self.view = SkillGraphView(self._on_node_double_clicked)
+        self.view.setScene(self.scene)
+        self.view.setBackgroundBrush(
+            QBrush(QColor("#161a22") if self.is_dark else QColor("#f7f8fa")))
+        layout.addWidget(self.view, 1)
+
+        btn_row = QHBoxLayout()
+        for label, slot in (
+            ("适应窗口", self._fit),
+            ("放大", lambda: self.view.scale(1.2, 1.2)),
+            ("缩小", lambda: self.view.scale(1 / 1.2, 1 / 1.2)),
+        ):
+            b = QPushButton(label)
+            b.clicked.connect(slot)
+            btn_row.addWidget(b)
+        btn_row.addStretch()
+        btn_close = QPushButton("关闭")
+        btn_close.clicked.connect(self.accept)
+        btn_row.addWidget(btn_close)
+        layout.addLayout(btn_row)
+
+    def _type_color(self, tv):
+        if self.is_dark:
+            return QColor({0: "#478cbf", 1: "#e27d60", 2: "#55b572", 3: "#b988db"}.get(tv, "#dcdcdc"))
+        return QColor({0: "#28638f", 1: "#bd5739", 2: "#2d8046", 3: "#8a5bb8"}.get(tv, "#222222"))
+
+    def _node_tooltip(self, idx):
+        rec = self.records[idx]
+        name = skill_name(rec, self.tkt_dict)
+        lines = [f"{name}  #{idx}  [{SKILL_TYPES.get(rec.get('type', 0), '')}]"]
+        plist = self.parents.get(idx, [])
+        if plist:
+            lines.append("前置 (往上):")
+            for (a, w, _i) in plist:
+                lines.append(f"  · {skill_name(self.records[a], self.tkt_dict)} #{a} → {w:+d}")
+            lines.append(f"  前置合计 {self.total_in.get(idx, 0)} (≥10 可学习)")
+        clist = self.children.get(idx, [])
+        if clist:
+            lines.append("解锁 (往下):")
+            for (b, w, _i) in clist:
+                lines.append(f"  · {skill_name(self.records[b], self.tkt_dict)} #{b} → {w:+d}")
+        return "\n".join(lines)
+
+    # ── 绘制 ──
+    def _draw_edge(self, a_xy, b_xy, w):
+        ax, ay = a_xy
+        bx, by = b_xy
+        p1 = QPointF(ax + self.NODE_W / 2, ay + self.NODE_H)  # 前置底部中点
+        p2 = QPointF(bx + self.NODE_W / 2, by)                # 解锁顶部中点
+        is_group = (w == 20)
+        if is_group:
+            color = QColor("#c58af0") if self.is_dark else QColor("#8e44ad")  # 归组: 紫色
+        else:
+            color = QColor("#7f8aa3") if self.is_dark else QColor("#8894a8")
+        pen = QPen(color, 1.8 if is_group else 1.6)
+        if is_group:
+            pen.setStyle(Qt.DashLine)
+        path = QPainterPath(p1)
+        path.lineTo(p2)
+        edge = self.scene.addPath(path, pen)
+        edge.setZValue(1)
+        self._draw_arrow(p1, p2, color)
+        self._draw_edge_label((p1 + p2) / 2.0, w)
+
+    def _draw_arrow(self, p1, p2, color):
+        ang = math.atan2(p2.y() - p1.y(), p2.x() - p1.x())
+        size = 10
+        left = QPointF(p2.x() - size * math.cos(ang - math.pi / 7),
+                       p2.y() - size * math.sin(ang - math.pi / 7))
+        right = QPointF(p2.x() - size * math.cos(ang + math.pi / 7),
+                        p2.y() - size * math.sin(ang + math.pi / 7))
+        arrow = self.scene.addPolygon(QPolygonF([p2, left, right]), QPen(color, 1), QBrush(color))
+        arrow.setZValue(2)
+
+    def _draw_edge_label(self, mid, w):
+        if w == 20:
+            txt = "归组"
+        elif w >= 10:
+            txt = "自足"
+        else:
+            txt = f"+{w}"
+        label = self.scene.addSimpleText(txt)
+        f = label.font()
+        f.setPointSize(8)
+        label.setFont(f)
+        label.setBrush(QBrush(QColor("#e0b060") if self.is_dark else QColor("#8a5a00")))
+        br = label.boundingRect()
+        chip = self.scene.addRect(
+            0, 0, br.width() + 8, br.height() + 2,
+            QPen(Qt.NoPen),
+            QBrush(QColor("#202531") if self.is_dark else QColor("#e8ecf1")))
+        chip.setPos(mid.x() - br.width() / 2 - 4, mid.y() - br.height() / 2 - 1)
+        chip.setZValue(3)
+        label.setPos(mid.x() - br.width() / 2, mid.y() - br.height() / 2)
+        label.setZValue(4)
+
+    def _draw_node(self, idx, xy):
+        x, y = xy
+        rec = self.records[idx]
+        tv = rec.get('type', 0)
+        name = skill_name(rec, self.tkt_dict)
+        tcol = self._type_color(tv)
+        is_focus = (idx == self.focus_idx)
+
+        if is_focus:
+            fill = QColor("#3a3320") if self.is_dark else QColor("#fff6d6")
+            border = QColor("#ffcc66") if self.is_dark else QColor("#a15c00")
+            pen_w = 3
+        else:
+            fill = QColor("#252a36") if self.is_dark else QColor("#ffffff")
+            border = tcol
+            pen_w = 2
+
+        path = QPainterPath()
+        path.addRoundedRect(QRectF(0, 0, self.NODE_W, self.NODE_H), 9, 9)
+        node = self.scene.addPath(path, QPen(border, pen_w), QBrush(fill))
+        node.setPos(x, y)
+        node.setZValue(5)
+        node.setData(0, idx)
+        node.setToolTip(self._node_tooltip(idx))
+
+        name_t = self.scene.addSimpleText(name)
+        nf = name_t.font()
+        nf.setPointSize(11)
+        nf.setBold(True)
+        name_t.setFont(nf)
+        name_t.setBrush(QBrush(tcol))
+        nb = name_t.boundingRect()
+        name_t.setPos(x + (self.NODE_W - nb.width()) / 2, y + 6)
+        name_t.setZValue(6)
+        name_t.setData(0, idx)
+
+        sub_t = self.scene.addSimpleText(f"#{idx} · {SKILL_TYPES.get(tv, tv)}")
+        sf = sub_t.font()
+        sf.setPointSize(8)
+        sub_t.setFont(sf)
+        sub_t.setBrush(QBrush(QColor("#9aa4b8") if self.is_dark else QColor("#5a6472")))
+        sbb = sub_t.boundingRect()
+        sub_t.setPos(x + (self.NODE_W - sbb.width()) / 2, y + 28)
+        sub_t.setZValue(6)
+        sub_t.setData(0, idx)
+
+    def _render_graph(self):
+        self.scene.clear()
+        nodes, anc, desc = self._related_nodes()
+        edges = self._sub_edges(nodes)
+        rank = self._compute_ranks(nodes, edges)
+        pos = self._layout(nodes, rank)
+
+        fname = skill_name(self.records[self.focus_idx], self.tkt_dict)
+        mode_label = {'all': '全部关联', 'down': '仅向下·解锁链', 'up': '仅向上·前置链'}[self._mode]
+        self.setWindowTitle(f"技能链拓扑图 — {fname} (#{self.focus_idx}) · {mode_label}")
+        if len(nodes) <= 1:
+            empty_hint = {'all': "无前置技能, 也不解锁其它技能",
+                          'down': "不解锁任何下游技能",
+                          'up': "无前置技能"}[self._mode]
+            self.lbl_head.setText(f"「{fname}」#{self.focus_idx}  [{mode_label}] — {empty_hint}。")
+        else:
+            parts = []
+            if self._mode != 'down':
+                parts.append(f"前置(往上) {len(anc)} 个")
+            if self._mode != 'up':
+                parts.append(f"解锁(往下) {len(desc)} 个")
+            self.lbl_head.setText(
+                f"以「{fname}」#{self.focus_idx} 为中心  [{mode_label}] · "
+                + " · ".join(parts) + f" · 共 {len(nodes)} 个节点")
+
+        for (a, b, w) in edges:
+            self._draw_edge(pos[a], pos[b], w)
+        for n in nodes:
+            self._draw_node(n, pos[n])
+
+        self.scene.setSceneRect(self.scene.itemsBoundingRect().adjusted(-60, -60, 60, 60))
+        if self._fitted:
+            self._fit()
+
+    def _fit(self):
+        rect = self.scene.itemsBoundingRect().adjusted(-40, -40, 40, 40)
+        if not rect.isEmpty():
+            self.view.fitInView(rect, Qt.KeepAspectRatio)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        if not self._fitted:
+            self._fitted = True
+            self._fit()
+
+    def _on_node_double_clicked(self, idx):
+        if idx != self.focus_idx and 0 <= idx < len(self.records):
+            self.focus_idx = idx
+            self._render_graph()
+
+    def _on_mode_changed(self, index):
+        self._mode = {0: 'all', 1: 'down', 2: 'up'}.get(index, 'all')
+        self._render_graph()
+        self._fit()
+
+    def _on_group_toggled(self, checked):
+        self._show_group = checked
+        self._render_graph()
+        self._fit()
+
+# ============================================================
 # GUI 核心编辑器
 # ============================================================
 
@@ -383,6 +781,8 @@ class SkillEditorApp(QMainWindow):
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.verticalHeader().setVisible(False)
         self.table.itemSelectionChanged.connect(self._on_table_select)
+        self.table.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.table.customContextMenuRequested.connect(self._show_table_context_menu)
         self.splitter.addWidget(self._create_dock("技能列表", self.table))
 
         # --- Right Pane (Inspector) ---
@@ -702,6 +1102,30 @@ class SkillEditorApp(QMainWindow):
         if not sel: return
         idx = int(self.table.item(sel[0].row(), 0).text())
         self._populate_edit(self.records[idx])
+
+    def _show_table_context_menu(self, pos):
+        """技能列表右键菜单: 任意技能均可查看其完整技能树。"""
+        item = self.table.itemAt(pos)
+        if item is None:
+            return
+        idx_item = self.table.item(item.row(), 0)
+        if idx_item is None:
+            return
+        try:
+            idx = int(idx_item.text())
+        except ValueError:
+            return
+        menu = QMenu(self)
+        act_tree = menu.addAction("🌳 查看技能树")
+        act_tree.triggered.connect(lambda: self._show_skill_tree(idx))
+        menu.exec(self.table.viewport().mapToGlobal(pos))
+
+    def _show_skill_tree(self, idx):
+        """弹出技能树窗口: 以该技能为中心双向关联展开。"""
+        if not self.records or idx < 0 or idx >= len(self.records):
+            return
+        dlg = SkillTreeDialog(self, self.records, self.tkt, idx, self._is_dark)
+        dlg.exec()
 
     def _populate_edit(self, rec):
         self._editing_idx = rec['index']
