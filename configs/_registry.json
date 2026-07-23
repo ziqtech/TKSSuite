@@ -34,5 +34,14 @@
     "consumers": ["tks_launcher_gui"],
     "merge_strategy": "key_override",
     "user_editable": true
+  },
+  "exp_lock": {
+    "description": "战斗经验锁定：锁定队伍槽位0-5指定槽的战斗经验增长",
+    "category": "launcher",
+    "schema": "key_value",
+    "primary_editor": "configs_editor",
+    "consumers": ["tks_launcher_gui"],
+    "merge_strategy": "key_override",
+    "user_editable": true
   }
 }

@@ -534,6 +534,39 @@ CAVE_CHECKMEMBER_LEVEL = bytes([
 ])
 
 # ============================================================
+# Cave 模板: 战斗经验锁定（压级）
+# 逆向依据: sub_43B7FC @0x43BAF3  (战后经验分配, 读取 v11 = *v19 处)
+# hook 点: mov eax,[esp+1C]; mov dx,[eax] (7字节) -> E8 rel32 + 2 NOP
+#   原始被偷指令在 cave 内重放; cave ret 回 0x43BAF8(NOP,NOP)→0x43BAFA(mov [esp+6],dx)
+# 目标: 锁定槽位将 dword_9D6F20[slot](=*v19, 每槽获得经验累加器) 置 0 ——
+#   既使结算屏显示 0 (sub_43B2D4 读 *v6=dword_9D6F20 显示),
+#   又使随后 v11=*v19=0 → 不升级、经验不写回。
+# 逻辑 (入口 esp 已因 call +4, 故 [esp+1C]→[esp+20], [esp]→[esp+04]):
+#   1. mov eax,[esp+20h]      — 重放: eax = v19 (dword_9D6F20[slot] 指针)
+#   2. movzx ecx,word[esp+4]  — ecx = v5 = 战斗队伍槽位 (0..5)
+#   3. mov dl, MASK           — dl = 锁定掩码 (imm8, 由 apply_exp_lock 按配置写入; bit i=锁定槽 i)
+#   4. shr dl, cl / test dl,1 — 测试槽位 slot 的锁定位
+#   5. jz .keep               — 未锁定 → 不改动
+#   6. mov dword[eax], 0      — 锁定 → dword_9D6F20[slot]=0 (显示与逻辑均为0)
+#   7. mov dx, [eax]          — 重放被偷指令2: dx=*v19 (锁定则=0), 随后存入 v11
+#   8. ret
+# 仅用 eax/ecx/dx (返回后原代码均重载), 无 push/pop, 栈平衡不变
+# ============================================================
+CAVE_EXP_LOCK_MASK_OFFSET = 10   # CAVE_EXP_LOCK 内 imm8 掩码字节偏移
+CAVE_EXP_LOCK = bytes([
+    0x8B, 0x44, 0x24, 0x20,                            #  0 mov eax, [esp+20h]        ; eax = v19 指针
+    0x0F, 0xB7, 0x4C, 0x24, 0x04,                      #  4 movzx ecx, word [esp+04h] ; ecx = 槽位 v5
+    0xB2, 0x00,                                        #  9 mov dl, MASK             ; [10]=掩码占位, 补丁写入
+    0xD2, 0xEA,                                        # 11 shr dl, cl               ; dl >>= 槽位
+    0xF6, 0xC2, 0x01,                                  # 13 test dl, 1
+    0x74, 0x06,                                        # 16 jz .keep (→ 24)          ; 未锁定→不改动
+    0xC7, 0x00, 0x00, 0x00, 0x00, 0x00,                # 18 mov dword [eax], 0       ; 锁定→dword_9D6F20[slot]=0
+    # .keep:
+    0x66, 0x8B, 0x10,                                  # 24 mov dx, [eax]            ; 重放: dx=*v19 (锁定则0)
+    0xC3,                                              # 27 ret
+])
+
+# ============================================================
 # Cave 模板构建
 # ============================================================
 
@@ -552,6 +585,7 @@ def build_cave_template(name: str, warpc_base: int, log_func=None) -> Optional[b
         "duel_counter_self_fix": CAVE_DUEL_COUNTER_SELF_FIX,
         "team_member_leave_routing": CAVE_TEAM_MEMBER_LEAVE_ROUTING,
         "checkmember_level": CAVE_CHECKMEMBER_LEVEL,
+        "exp_lock": CAVE_EXP_LOCK,
     }
     if name not in templates:
         log(f"    [WARN] 未知 cave 模板: {name}")
@@ -1113,6 +1147,89 @@ def apply_drop_probability(defn: PatchDef, code_buf: bytearray, code_start_addr:
             all_ok = False
 
     return all_ok
+
+# ============================================================
+# 补丁类型: patch_exp_lock (战斗经验锁定 / 压级)
+# 逆向依据: sub_43B7FC @0x43BAF3 (读取 v11=*v19); CAVE_EXP_LOCK
+# 配置: configs/exp_lock.json -> lock_slots[6] (bool); mask = Σ 1<<i (locked)
+# ============================================================
+
+def apply_exp_lock(defn: PatchDef, code_buf: bytearray, code_start_addr: int,
+                   h_proc: int, cave_addr: int, log_func=None,
+                   config_override: Optional[dict] = None) -> bool:
+    log = log_func or (lambda x: None)
+
+    if cave_addr == 0:
+        log(f"    [SKIP] Cave 未分配, 跳过")
+        return True
+
+    # 1. 读取 JSON 配置 (优先 MOD 覆盖)
+    if config_override is not None:
+        cfg = config_override
+        log(f"    JSON (MOD 覆盖)")
+    else:
+        jf = defn.json_file
+        if not jf or not os.path.isfile(jf):
+            log(f"    [WARN] JSON 配置不存在: {jf!r}, 跳过")
+            return True
+        try:
+            with open(jf, 'r', encoding='utf-8') as f:
+                cfg = json.load(f)
+        except Exception as e:
+            log(f"  [ERROR] 解析 exp_lock.json 失败: {e}")
+            return True
+
+    # 2. 计算锁定掩码 (bit i = 锁定槽位 i)
+    slots = cfg.get("lock_slots", [])
+    mask = 0
+    for i in range(6):
+        if i < len(slots) and slots[i]:
+            mask |= (1 << i)
+    if mask == 0:
+        log(f"    -> 无锁定槽位 (mask=0), 跳过 (等同原版)")
+        return True
+    locked = [i for i in range(6) if mask & (1 << i)]
+    log(f"    锁定槽位掩码 = 0x{mask:02X} (槽位 {locked})")
+
+    # 3. 模式扫描 hook 点 (失败回退 fallback_rva)
+    hpat, hwc = parse_pattern(defn.hook_pattern or "")
+    hits = pattern_scan(bytes(code_buf), hpat, hwc)
+    if defn.hook_expect_count > 0 and len(hits) != defn.hook_expect_count:
+        if len(hits) == 0 and defn.fallback_rva > 0:
+            fb_off = defn.fallback_rva - 0x1000
+            if 0 <= fb_off < len(code_buf) - defn.hook_size:
+                hits = [fb_off]
+                log(f"    模式无匹配, 使用 fallback_rva 0x{defn.fallback_rva:X} (offset 0x{fb_off:X})")
+            else:
+                log(f"    fallback_rva 0x{defn.fallback_rva:X} 越界, 跳过")
+                return True
+        else:
+            log(f"    Hook 模式匹配 {len(hits)} 处 (预期 {defn.hook_expect_count}), 跳过")
+            return True
+
+    # 4. 构建 cave (写入掩码 imm8) 并写到 cave 区
+    cd = bytearray(CAVE_EXP_LOCK)
+    cd[CAVE_EXP_LOCK_MASK_OFFSET] = mask & 0xFF
+    ct = cave_addr + defn.cave_offset
+    write_pm(h_proc, ct, bytes(cd))
+    log(f"    Cave 写入: 0x{ct:08X} ({len(cd)} bytes, mask=0x{mask:02X})")
+
+    # 5. 安装 hook (E8 rel32 + NOP 填充)
+    off = hits[0]
+    ha = code_start_addr + off
+    co = (ct - (ha + 5)) & 0xFFFFFFFF
+    ci = bytearray(defn.hook_size)
+    ci[0] = 0xE8
+    ci[1:5] = i32b(co)
+    for i in range(5, defn.hook_size):
+        ci[i] = 0x90
+    op = vp_ex(h_proc, ha, defn.hook_size, PAGE_EXECUTE_READWRITE)
+    write_pm(h_proc, ha, bytes(ci))
+    vp_ex(h_proc, ha, defn.hook_size, op)
+    for i in range(min(defn.hook_size, len(code_buf) - off)):
+        code_buf[off + i] = ci[i]
+    log(f"    [OK] Hook RVA 0x{off:X} -> call 0x{ct:08X}")
+    return True
 
 # ============================================================
 # 补丁类型: patch_font_config (游戏默认字体自定义)
@@ -1768,6 +1885,13 @@ def apply_config_patches(config: PatchConfig, code_buf: bytearray, code_start_ad
             all_ok &= apply_drop_probability(defn, code_buf, code_start_addr,
                                               h_proc, log_func=log,
                                               config_override=_drop_override)
+        elif defn.type == "patch_exp_lock":
+            _explock_override = None
+            if config_overrides:
+                _explock_override = config_overrides.get("exp_lock")
+            all_ok &= apply_exp_lock(defn, code_buf, code_start_addr,
+                                     h_proc, cave_addr, log_func=log,
+                                     config_override=_explock_override)
         elif defn.type == "patch_font_config":
             all_ok &= apply_font_config(defn, code_buf, code_start_addr,
                                          h_proc, log_func=log)

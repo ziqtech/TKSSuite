@@ -1,0 +1,4 @@
+{
+  "_说明": "战斗经验锁定。lock_slots 为长度6的布尔数组，索引=战斗队伍槽位0-5；true=锁定该槽队员的战斗经验，胜利结算时不获经验、不升级。全为 false 时补丁跳过，等同原版。",
+  "lock_slots": [false, false, false, false, false, false]
+}
