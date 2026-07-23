@@ -12,6 +12,7 @@ MOD 打包器 — 将多个 .tksmod 文件合并为一个统一的 MOD 包
 """
 import json
 import os
+import re
 import zipfile
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -404,7 +405,16 @@ def merge_tksmod_files(mod_paths: List[str], output_path: str,
 
 
 def suggest_output_name(mod_paths: List[str], metadata: Dict[str, Any]) -> str:
-    """根据元数据建议输出文件名。"""
+    """根据元数据建议输出文件名。
+
+    优先使用模组名称 (过滤 Windows 文件名非法字符, 移除首尾空格和点),
+    名称为空时回退到模组 ID。
+    """
+    name = (metadata.get("name") or "").strip()
+    if name:
+        safe = re.sub(r'[<>:"/\\|?*]', '_', name).strip('. ')
+        if safe:
+            return f"{safe}.tksmodpak"
     mod_id = metadata.get("id", "")
     if mod_id:
         return f"{mod_id}.tksmodpak"

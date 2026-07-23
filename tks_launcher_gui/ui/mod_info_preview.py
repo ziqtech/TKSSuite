@@ -7,7 +7,7 @@ from PySide6.QtWidgets import (
     QLabel, QSizePolicy, QSplitter, QTextEdit, QVBoxLayout, QWidget,
 )
 
-from core.mod_loader import ModInfo
+from core.mod_loader import ModInfo, collect_pak_changed_targets
 from editor_utils.dock_components import create_dock
 from editor_utils.mod_exporter import extract_preview_image
 
@@ -105,6 +105,24 @@ class ModInfoPreviewWidget(QWidget):
             ("加载顺序", str(mod.load_order), False),
             ("描述", mod.description, False),
         ]
+        # 模组改动的游戏文件 (components/resources 的 target)，去重保序
+        # .tksmodpak 合集：汇总内含各 .tksmod 的改动文件
+        if mod.pak_contents:
+            changed_files = collect_pak_changed_targets(mod.path)
+        else:
+            changed_files = []
+            _seen_targets: set[str] = set()
+            for entry in list(mod.components) + list(mod.resources):
+                target = (entry.get("target") or "").strip()
+                if target and target not in _seen_targets:
+                    _seen_targets.add(target)
+                    changed_files.append(target)
+        if changed_files:
+            files_html = "<br>".join(
+                f"&nbsp;&nbsp;{_html_escape(t)}" for t in changed_files
+            )
+            rows.append(("改动文件", f"{len(changed_files)} 个", False))
+            rows.append(("", files_html, True))
         if mod.dependencies:
             rows.append(("依赖", ", ".join(mod.dependencies), False))
         if mod.conflicts:

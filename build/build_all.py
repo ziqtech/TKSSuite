@@ -570,6 +570,14 @@ def assemble_release(onefile: bool = False, release: bool = False,
         shutil.copy2(str(launcher_cfg_src), str(RELEASE_DIR / "launcher_config.json"))
         print(f"  [OK] launcher_config.json")
 
+    # 复制 tools/ 辅助工具目录 (cnc-ddraw / ddraw 等, 启动器运行时按需注入游戏目录)
+    tools_src = 仓库根目录 / "tks_launcher_gui" / "tools"
+    if tools_src.is_dir():
+        tools_dst = RELEASE_DIR / "tools"
+        shutil.copytree(str(tools_src), str(tools_dst), dirs_exist_ok=True)
+        file_count = sum(1 for p in tools_dst.rglob("*") if p.is_file())
+        print(f"  [OK] tools/ ({file_count} 个文件)")
+
     # summon_table.json 已由上方 configs/*.json glob 复制到 RELEASE_DIR/configs/
 
     # 汇总

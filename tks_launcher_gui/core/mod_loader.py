@@ -326,6 +326,42 @@ def expand_pak_mods(pak_path: str, log_func=None) -> List[ModInfo]:
     return result
 
 
+def collect_pak_changed_targets(pak_path: str, log_func=None) -> List[str]:
+    """汇总 .tksmodpak 合集内所有 .tksmod 的改动目标文件。
+
+    仅读取每个内含 .tksmod 的 mod.json（不解析数据内容），收集其
+    components/resources 的 target 字段，去重保序后返回。用于模组信息
+    面板展示合集会改动哪些游戏文件。
+    """
+    import io
+    log = log_func or (lambda x: None)
+    targets: List[str] = []
+    seen: set = set()
+    try:
+        with zipfile.ZipFile(pak_path, 'r') as zf:
+            mod_entries = sorted(
+                n for n in zf.namelist()
+                if n.lower().endswith(".tksmod") and not n.endswith("/")
+            )
+            for entry in mod_entries:
+                try:
+                    with zipfile.ZipFile(io.BytesIO(zf.read(entry)), 'r') as izf:
+                        if "mod.json" not in izf.namelist():
+                            continue
+                        mj = json.loads(izf.read("mod.json").decode('utf-8'))
+                        for item in (list(mj.get("components", []))
+                                     + list(mj.get("resources", []))):
+                            tgt = (item.get("target") or "").strip()
+                            if tgt and tgt not in seen:
+                                seen.add(tgt)
+                                targets.append(tgt)
+                except Exception as e:
+                    log(f"    [WARN] 读取合集内 {entry} 失败: {e}")
+    except Exception as e:
+        log(f"  [WARN] 读取合集 {pak_path} 失败: {e}")
+    return targets
+
+
 # ═══════════════════════════════════════════════════════════════
 # 2. 依赖解析与拓扑排序
 # ═══════════════════════════════════════════════════════════════
