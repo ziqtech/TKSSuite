@@ -27,7 +27,7 @@ from PySide6.QtGui import (
     QMouseEvent, QPainter, QPixmap,
 )
 from PySide6.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
+    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
     QLabel, QPushButton, QSpinBox, QCheckBox, QFileDialog,
     QMessageBox, QInputDialog, QScrollArea, QFrame, QSplitter,
     QMenuBar, QMenu, QStatusBar, QToolBar, QGroupBox, QSizePolicy,
@@ -740,9 +740,10 @@ class JVGEditor(QMainWindow):
         else:
             self._new()
 
-    def _create_dock(self, title, widget_content, header_layout=None):
+    def _create_dock(self, title, widget_content, header_layout=None,
+                     body_margins=(8, 8, 8, 8)):
         """创建统一的 dock 面板 — 委托给 editor_utils.dock_components"""
-        return create_dock(title, widget_content, header_layout)
+        return create_dock(title, widget_content, header_layout, body_margins)
 
     def _apply_theme(self):
         stylesheet = self.theme_manager.get_stylesheet()
@@ -1048,11 +1049,14 @@ class JVGEditor(QMainWindow):
         layout_form.addRow(btn_theme)
         top_docks_layout.addWidget(self._create_dock("视图与布局", layout_widget))
 
-        # 帧导入与替换
+        # 帧导入与替换 (2 列网格，节省纵向空间)
         frame_ops_widget = QWidget()
-        frame_ops_layout = QVBoxLayout(frame_ops_widget)
+        frame_ops_layout = QGridLayout(frame_ops_widget)
         frame_ops_layout.setContentsMargins(4, 4, 4, 4)
-        frame_ops_layout.setSpacing(2)
+        frame_ops_layout.setHorizontalSpacing(4)
+        frame_ops_layout.setVerticalSpacing(3)
+        frame_ops_layout.setColumnStretch(0, 1)
+        frame_ops_layout.setColumnStretch(1, 1)
         btn_add_img = QPushButton("➕ 添加图片")
         btn_add_img.clicked.connect(self._add_images)
         btn_rep_img = QPushButton("🔄 替换选中")
@@ -1061,43 +1065,49 @@ class JVGEditor(QMainWindow):
         btn_bat_img.clicked.connect(self._batch_replace_gridsheet)
         btn_del_img = QPushButton("❌ 删除选中")
         btn_del_img.clicked.connect(self._del_frame)
-        frame_ops_layout.addWidget(btn_add_img)
-        frame_ops_layout.addWidget(btn_rep_img)
-        frame_ops_layout.addWidget(btn_bat_img)
-        frame_ops_layout.addWidget(btn_del_img)
-        top_docks_layout.addWidget(self._create_dock("帧导入与替换", frame_ops_widget))
+        frame_ops_layout.addWidget(btn_add_img, 0, 0)
+        frame_ops_layout.addWidget(btn_rep_img, 0, 1)
+        frame_ops_layout.addWidget(btn_bat_img, 1, 0)
+        frame_ops_layout.addWidget(btn_del_img, 1, 1)
+        top_docks_layout.addWidget(self._create_dock("帧导入与替换", frame_ops_widget, body_margins=(6, 4, 6, 4)))
 
-        # 导出
+        # 导出 (2 列网格，第 3 个按钮跨列)
         exp_widget = QWidget()
-        exp_layout = QVBoxLayout(exp_widget)
+        exp_layout = QGridLayout(exp_widget)
         exp_layout.setContentsMargins(4, 4, 4, 4)
-        exp_layout.setSpacing(2)
+        exp_layout.setHorizontalSpacing(4)
+        exp_layout.setVerticalSpacing(3)
+        exp_layout.setColumnStretch(0, 1)
+        exp_layout.setColumnStretch(1, 1)
         btn_exp_single = QPushButton("📤 导出选中帧")
         btn_exp_single.clicked.connect(partial(self._export, "single"))
         btn_exp_grp = QPushButton("📁 导出当前分组")
         btn_exp_grp.clicked.connect(partial(self._export, "group"))
         btn_exp_grid = QPushButton("🗺️ 导出网格图集")
         btn_exp_grid.clicked.connect(partial(self._export, "grid"))
-        exp_layout.addWidget(btn_exp_single)
-        exp_layout.addWidget(btn_exp_grp)
-        exp_layout.addWidget(btn_exp_grid)
-        top_docks_layout.addWidget(self._create_dock("导出", exp_widget))
+        exp_layout.addWidget(btn_exp_single, 0, 0)
+        exp_layout.addWidget(btn_exp_grp, 0, 1)
+        exp_layout.addWidget(btn_exp_grid, 1, 0, 1, 2)
+        top_docks_layout.addWidget(self._create_dock("导出", exp_widget, body_margins=(6, 4, 6, 4)))
 
-        # 头像操作
+        # 头像操作 (2 列网格，第 3 个按钮跨列)
         avatar_widget = QWidget()
-        avatar_layout = QVBoxLayout(avatar_widget)
+        avatar_layout = QGridLayout(avatar_widget)
         avatar_layout.setContentsMargins(4, 4, 4, 4)
-        avatar_layout.setSpacing(2)
+        avatar_layout.setHorizontalSpacing(4)
+        avatar_layout.setVerticalSpacing(3)
+        avatar_layout.setColumnStretch(0, 1)
+        avatar_layout.setColumnStretch(1, 1)
         self._btn_export_avatars = QPushButton("📤 导出全部头像")
         self._btn_export_avatars.clicked.connect(self._export_all_avatars)
         self._btn_export_avatars_split = QPushButton("📤 导出每帧头像")
         self._btn_export_avatars_split.clicked.connect(self._export_all_avatars_split)
         self._btn_import_avatars = QPushButton("📥 导入全部头像")
         self._btn_import_avatars.clicked.connect(self._import_all_avatars)
-        avatar_layout.addWidget(self._btn_export_avatars)
-        avatar_layout.addWidget(self._btn_export_avatars_split)
-        avatar_layout.addWidget(self._btn_import_avatars)
-        self._grp_avatar = self._create_dock("头像操作", avatar_widget)
+        avatar_layout.addWidget(self._btn_export_avatars, 0, 0)
+        avatar_layout.addWidget(self._btn_export_avatars_split, 0, 1)
+        avatar_layout.addWidget(self._btn_import_avatars, 1, 0, 1, 2)
+        self._grp_avatar = self._create_dock("头像操作", avatar_widget, body_margins=(6, 4, 6, 4))
         self._grp_avatar.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)
 
         right_layout.addWidget(top_docks)
