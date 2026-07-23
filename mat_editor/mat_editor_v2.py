@@ -1498,6 +1498,21 @@ class MatEditorApp(QMainWindow):
         filter_row.addWidget(self.show_global_cb)
         filter_row.addStretch()
         ent_body_layout.addLayout(filter_row)
+        # 实体搜索工具栏 — 按实体ID(索引)定位实体并查看其所属场景 (§实体搜索)
+        search_row = QHBoxLayout()
+        search_row.setSpacing(2)
+        search_row.addWidget(QLabel("🔍 搜索:"))
+        self.search_id_edit = QLineEdit()
+        self.search_id_edit.setPlaceholderText("输入实体ID(索引), 回车定位并显示其所属场景")
+        self.search_id_edit.setClearButtonEnabled(True)
+        self.search_id_edit.returnPressed.connect(self._search_entity_by_id)
+        search_row.addWidget(self.search_id_edit, 1)
+        btn_search = QPushButton("定位")
+        btn_search.setFixedWidth(48)
+        btn_search.setToolTip("按实体ID(索引)搜索: 自动切换到该实体所属场景并在列表中选中")
+        btn_search.clicked.connect(self._search_entity_by_id)
+        search_row.addWidget(btn_search)
+        ent_body_layout.addLayout(search_row)
         # 状态栏
         self.status_var = QLabel("请通过 文件 → 加载 TKS 目录 打开数据")
         self.status_var.setProperty("class", "StatusHint")
@@ -2007,6 +2022,95 @@ class MatEditorApp(QMainWindow):
             key=lambda i: self._data.records[i].get(key, 0) if isinstance(self._data.records[i].get(key, 0), (int, float)) else 0,
             reverse=reverse)
         self._refresh_table()
+
+    # =========== 实体搜索 ===========
+    def _search_entity_by_id(self):
+        """按实体ID(索引)搜索并定位实体, 自动切换到其所属场景 (§实体搜索)。
+
+        实体列表默认按当前场景联动筛选, 无法直接查看某实体属于哪个场景;
+        本方法读取搜索框中的实体ID(即列表「索引」列 = records 下标), 定位记录后:
+          - 普通场景实体(d1>=0): 切换到其所属场景并同步场景列表/下拉框;
+          - 全局实体(d1==-1): 勾选「全局」使其可见;
+          - 空槽(未使用): 勾选「空槽」并提示该实体不属于任何场景;
+        随后刷新列表、选中目标并在状态栏报告其所属场景。"""
+        if not self._data.records:
+            self.status_var.setText("请先通过 文件 → 加载 TKS 目录 打开数据")
+            return
+        txt = self.search_id_edit.text().strip()
+        if not txt:
+            return
+        try:
+            idx = int(txt)
+        except ValueError:
+            themed_messagebox(self, QMessageBox.Warning, "实体搜索",
+                              f"请输入有效的实体ID(整数)，当前输入：「{txt}」")
+            return
+        max_idx = len(self._data.records) - 1
+        if not (0 <= idx <= max_idx):
+            themed_messagebox(self, QMessageBox.Warning, "实体搜索",
+                              f"实体ID {idx} 超出范围 (有效范围 0 ~ {max_idx})")
+            return
+        rec = self._data.records[idx]
+        sid = rec['d1']
+        empty = is_empty(rec)
+        sname = scene_name(self._data.tkt_scenes, sid)
+
+        # 联动筛选条件, 确保目标实体不会被现有筛选器隐藏 (阻断信号避免重复刷新)
+        self.filter_type.blockSignals(True)
+        self.filter_type.setCurrentIndex(0)
+        self.filter_type.blockSignals(False)
+        if empty:
+            self.show_empty_cb.blockSignals(True)
+            self.show_empty_cb.setChecked(True)
+            self.show_empty_cb.blockSignals(False)
+        elif sid == -1:
+            self.show_global_cb.blockSignals(True)
+            self.show_global_cb.setChecked(True)
+            self.show_global_cb.blockSignals(False)
+
+        # 普通场景实体: 切换到其所属场景 (空槽/全局实体在任意场景下都可显示, 无需切换)
+        if not empty and sid >= 0 and sid != self._canvas._vis_scene_id:
+            self._canvas._undo_stack.clear()  # 跨场景撤销栈失效, 清空避免误撤销
+            self._canvas._vis_scene_id = sid
+            self._canvas._vis_stop_anim()
+            # 同步场景列表 + 下拉框选中态 (阻断信号避免二次触发场景切换)
+            self.scene_tree.blockSignals(True)
+            for i in range(self.scene_tree.topLevelItemCount()):
+                it = self.scene_tree.topLevelItem(i)
+                if it and int(it.text(0)) == sid:
+                    self.scene_tree.setCurrentItem(it)
+                    self.scene_tree.scrollToItem(it)
+                    break
+            self.scene_tree.blockSignals(False)
+            self._vis_scene_combo.blockSignals(True)
+            for i in range(self._vis_scene_combo.count()):
+                if self._vis_scene_combo.itemText(i).startswith(f"{sid}:"):
+                    self._vis_scene_combo.setCurrentIndex(i)
+                    break
+            self._vis_scene_combo.blockSignals(False)
+            self._vis_load_scene()
+
+        # 刷新列表并定位实体; 若因 500 条显示上限被截断, 置顶目标后重试确保可选中
+        self._apply_filter()
+        selected = self._sync_entity_list_select(idx)
+        if not selected and idx in self._data.filtered_indices:
+            self._data.filtered_indices.remove(idx)
+            self._data.filtered_indices.insert(0, idx)
+            self._refresh_table()
+            selected = self._sync_entity_list_select(idx)
+        if not selected:
+            # 兜底: 列表未能选中(极端情况)也在右侧表单显示该记录
+            self._current_param_idx = idx
+            self._show_record(rec)
+
+        # 状态栏报告实体所属场景
+        tname = f"{rec['d0']}-{ENTITY_TYPES.get(rec['d0'], '未知')}"
+        if empty:
+            self.status_var.setText(f"实体 #{idx} 为空槽 (未使用, 不属于任何场景)")
+        elif sid == -1:
+            self.status_var.setText(f"实体 #{idx} 属于「全局(所有场景)」 — 类型 {tname}")
+        else:
+            self.status_var.setText(f"实体 #{idx} 属于场景 {sid}: {sname} — 类型 {tname}, 坐标({rec['d10']},{rec['d11']})")
 
     # =========== 选择事件 ===========
     def _on_select(self):
