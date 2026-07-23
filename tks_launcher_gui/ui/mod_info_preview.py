@@ -64,7 +64,8 @@ class ModInfoPreviewWidget(QWidget):
         self._splitter.setStretchFactor(0, 1)  # 文字区可伸缩
         self._splitter.setStretchFactor(1, 0)  # 预览图区按 sizeHint
 
-        outer.addWidget(create_dock("模组信息", self._splitter))
+        outer.addWidget(create_dock("模组信息", self._splitter,
+                                    body_margins=(0, 0, 0, 0)))
 
     def set_default_height(self, height: int):
         """设置预览区默认最小高度（含 DockHeader 标题栏）。"""

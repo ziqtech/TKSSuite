@@ -2,15 +2,16 @@
 
 每个表格含 启用/补丁名称/类型 三列。
 必选补丁始终勾选且锁定不可改; 可选补丁可勾选并持久化。
-Tab 顺序: 可选补丁 → 必选补丁, 默认选中可选补丁。
+切换标签移至 DockHeader 右侧按钮; 顺序 可选补丁 → 必选补丁, 默认选中可选补丁。
 """
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
-    QAbstractItemView, QCheckBox, QHeaderView, QTableWidget,
-    QTableWidgetItem, QTabWidget, QVBoxLayout, QWidget,
+    QAbstractItemView, QButtonGroup, QCheckBox, QHBoxLayout, QHeaderView,
+    QTableWidget, QTableWidgetItem, QTabWidget, QToolButton, QVBoxLayout,
+    QWidget,
 )
 from core.config_loader import PatchDef
-from editor_utils.dock_components import DockHeader
+from editor_utils.dock_components import create_dock
 
 # 可选补丁区固定默认高度（不再按条数动态计算）；MOD 详情预览区同步使用此值
 OPTIONAL_PATCH_DEFAULT_HEIGHT = 320
@@ -62,18 +63,40 @@ class PatchListWidget(QWidget):
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
 
-        # 单一面板标题
-        outer.addWidget(DockHeader("补丁列表"))
-
         self._req_table = self._make_table(required, interactive=False)
         self._opt_table = self._make_table(optional, interactive=True)
 
-        # Tab 切换: 可选补丁在前, 必选补丁在后; 默认选中可选补丁
+        # Tab 切换: 隐藏原生标签栏, 改由 DockHeader 右侧按钮切换
+        # 顺序 可选补丁 → 必选补丁, 默认选中可选补丁
         self._tabs = QTabWidget()
-        self._tabs.addTab(self._opt_table, f"可选补丁 ({len(optional)})")
-        self._tabs.addTab(self._req_table, f"必选补丁 ({len(required)})")
+        self._tabs.tabBar().hide()
+        self._tabs.addTab(self._opt_table, "可选补丁")
+        self._tabs.addTab(self._req_table, "必选补丁")
         self._tabs.setCurrentIndex(0)
-        outer.addWidget(self._tabs, 1)
+
+        # 两个标签标题移至 DockHeader 右侧, 做成一组互斥的切换按钮
+        header_right = QHBoxLayout()
+        header_right.setContentsMargins(0, 0, 0, 0)
+        header_right.setSpacing(4)
+        self._tab_group = QButtonGroup(self)
+        self._tab_group.setExclusive(True)
+        for idx, text in enumerate(
+                (f"可选补丁 ({len(optional)})", f"必选补丁 ({len(required)})")):
+            btn = QToolButton()
+            btn.setText(text)
+            btn.setCheckable(True)
+            btn.setAutoRaise(True)
+            btn.setObjectName("dockToolButton")
+            btn.setCursor(Qt.PointingHandCursor)
+            self._tab_group.addButton(btn, idx)
+            header_right.addWidget(btn)
+        self._tab_group.button(0).setChecked(True)
+        self._tab_group.idClicked.connect(self._tabs.setCurrentIndex)
+
+        # 单一面板标题 + 右侧切换按钮 (统一走 create_dock 工厂; 内容齐平无边距)
+        outer.addWidget(
+            create_dock("补丁列表", self._tabs, header_layout=header_right,
+                        body_margins=(0, 0, 0, 0)), 1)
 
         # 初始化可选表"全选"框的三态显示
         self._update_header_check_state()

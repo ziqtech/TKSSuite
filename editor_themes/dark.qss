@@ -639,6 +639,14 @@ QToolButton#dockToolButton:pressed {
     background-color: #478cbf;
     color: #fff;
 }
+QToolButton#dockToolButton:checked {
+    background-color: #478cbf;
+    color: #ffffff;
+}
+QToolButton#dockToolButton:checked:hover {
+    background-color: #5a9ccc;
+    color: #ffffff;
+}
 
 /* ── 启动按钮高亮 (tks_launcher_gui) ── */
 QPushButton#btnStart {

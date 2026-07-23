@@ -108,7 +108,8 @@ class ModListWidget(QWidget):
         self.btn_refresh.clicked.connect(self.refresh_mods)
         header_row.addWidget(self.btn_refresh)
 
-        outer.addWidget(create_dock("模组列表", content, header_layout=header_row))
+        outer.addWidget(create_dock("模组列表", content, header_layout=header_row,
+                                    body_margins=(0, 0, 0, 0)))
 
         # 初始加载
         self.refresh_mods()

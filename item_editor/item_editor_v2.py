@@ -41,18 +41,19 @@ import os
 import struct
 import sys
 
-from PySide6.QtCore import QPoint, QRect, QSize, Qt, QTranslator
+from PySide6.QtCore import QSize, Qt, QTranslator
 from PySide6.QtGui import QAction, QIcon, QKeySequence, QPainter
 from PySide6.QtWidgets import (
     QAbstractItemView, QApplication, QCheckBox, QDialog,
     QFileDialog, QFrame, QGridLayout, QHBoxLayout, QHeaderView, QLabel,
-    QLineEdit, QLayout, QMainWindow, QMenu, QMenuBar, QMessageBox,
+    QLineEdit, QMainWindow, QMenu, QMenuBar, QMessageBox,
     QPushButton, QScrollArea, QSizePolicy, QSplitter, QTableWidget,
     QTableWidgetItem, QVBoxLayout, QWidget
 )
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from editor_utils.dock_components import DockHeader, create_dock
+from editor_utils.flow_layout import FlowLayout
 from editor_utils.jvg_loader import get_sprite_pixmap, load_mu_sprites
 from editor_utils.lzss import lzss_compress_dat, lzss_decompress_dat
 from editor_utils.mod_exporter import (
@@ -464,66 +465,6 @@ class UseRightPickerDialog(QDialog):
             m -= 0x10000      # 转有符号
         self.selected_mask = m
         self.accept()
-
-# ============================================================
-# FlowLayout — 流式布局，子控件左右排列，超出自动换行
-# ============================================================
-class FlowLayout(QLayout):
-    def __init__(self, parent=None, margin=0, spacing=-1):
-        super().__init__(parent)
-        self.setContentsMargins(margin, margin, margin, margin)
-        self.setSpacing(spacing)
-        self._items = []
-
-    def addItem(self, item):
-        self._items.append(item)
-    def count(self):
-        return len(self._items)
-    def itemAt(self, index):
-        if 0 <= index < len(self._items): return self._items[index]
-        return None
-    def takeAt(self, index):
-        if 0 <= index < len(self._items): return self._items.pop(index)
-        return None
-    def hasHeightForWidth(self):
-        return True
-
-    def heightForWidth(self, width):
-        return self._do_layout(QRect(0, 0, width, 0), test_only=True)
-
-    def setGeometry(self, rect):
-        super().setGeometry(rect)
-        self._do_layout(rect, test_only=False)
-
-    def sizeHint(self):
-        return self.minimumSize()
-    def minimumSize(self):
-        size = QSize()
-        for item in self._items:
-            size = size.expandedTo(item.minimumSize())
-        m = self.contentsMargins()
-        size += QSize(m.left()+m.right(), m.top()+m.bottom())
-        return size
-
-    def _do_layout(self, rect, test_only):
-        m = self.contentsMargins()
-        effective = rect.adjusted(m.left(), m.top(), -m.right(), 0)
-        x = effective.x()
-        y = effective.y()
-        row_h = 0
-        for item in self._items:
-            sz = item.sizeHint()
-            nx = x + sz.width()
-            if nx - effective.x() > effective.width() and row_h > 0:
-                x = effective.x()
-                y += row_h + self.spacing()
-                row_h = 0
-                nx = x + sz.width()
-            if not test_only:
-                item.setGeometry(QRect(QPoint(x, y), sz))
-            x = nx + self.spacing()
-            row_h = max(row_h, sz.height())
-        return y + row_h - rect.y() + m.bottom()
 
 # ============================================================
 # GUI 核心编辑器

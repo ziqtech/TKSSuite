@@ -20,8 +20,13 @@ class DockHeader(QFrame):
             layout.addLayout(right_layout)
 
 
-def create_dock(title, widget_content, header_layout=None):
-    """创建 Godot 风格 Dock 面板 (DockHeader + DockBody 包裹)"""
+def create_dock(title, widget_content, header_layout=None,
+                body_margins=(8, 8, 8, 8)):
+    """创建 Godot 风格 Dock 面板 (DockHeader + DockBody 包裹)
+
+    body_margins: DockBody 内容四周边距 (left, top, right, bottom)，
+    默认 8px；传 (0, 0, 0, 0) 可让内容与标题栏/边框齐平。
+    """
     container = QWidget()
     layout = QVBoxLayout(container)
     layout.setContentsMargins(0, 0, 0, 0)
@@ -30,7 +35,7 @@ def create_dock(title, widget_content, header_layout=None):
     body = QWidget()
     body.setObjectName("DockBody")
     body_layout = QVBoxLayout(body)
-    body_layout.setContentsMargins(8, 8, 8, 8)
+    body_layout.setContentsMargins(*body_margins)
     body_layout.addWidget(widget_content)
     layout.addWidget(body, 1)
     return container

@@ -6,13 +6,14 @@ from PySide6.QtGui import QAction, QIcon, QKeySequence
 from PySide6.QtWidgets import (
     QApplication, QButtonGroup, QFileDialog, QLabel, QMainWindow,
     QMessageBox, QPushButton, QRadioButton, QSplitter, QStatusBar,
-    QToolBar, QVBoxLayout, QWidget,
+    QToolBar, QWidget,
 )
 
 from core.config_loader import PatchDef, load_config
 from core.save_manager import set_last_game_dir
 from core.state_persistence import GuiState, load_gui_state, save_gui_state
-from editor_utils.dock_components import DockHeader
+from editor_utils.dock_components import create_dock
+from editor_utils.flow_layout import FlowLayout
 from editor_utils.theme_manager import ThemeManager
 from editor_utils.ui_helpers import themed_messagebox
 from editor_utils.version import format_title, format_about_header
@@ -224,12 +225,8 @@ class MainWindow(QMainWindow):
 
         # 右侧: 日志控制台 + 辅助工具（垂直分割）
         self.log_console = LogConsole()
-        log_wrap = QWidget()
-        log_lay = QVBoxLayout(log_wrap)
-        log_lay.setContentsMargins(0, 0, 0, 0)
-        log_lay.setSpacing(0)
-        log_lay.addWidget(DockHeader("启动日志"))
-        log_lay.addWidget(self.log_console, 1)
+        log_wrap = create_dock("启动日志", self.log_console,
+                               body_margins=(0, 0, 0, 0))
 
         # 辅助工具面板
         tools_panel = self._build_tools_panel()
@@ -241,7 +238,10 @@ class MainWindow(QMainWindow):
         right.addWidget(tools_panel)
         right.setStretchFactor(0, 1)
         right.setStretchFactor(1, 0)
-        right.setSizes([600, 120])
+        # 辅助工具面板高度取最小完整高度: 标题栏 + 一行工具正好显示
+        # (sizeHint 因 FlowLayout 的 height-for-width 特性会虚高, 故用 minimumSizeHint)
+        tools_h = tools_panel.minimumSizeHint().height()
+        right.setSizes([600, tools_h])
         splitter.addWidget(right)
 
         # 中间/右侧可伸缩（窗口最大化时自适应），左侧补丁列表直接用最小宽度
@@ -261,17 +261,9 @@ class MainWindow(QMainWindow):
                 if os.path.isdir(os.path.join(tools_dir, d))
             )
 
-        container = QWidget()
-        outer = QVBoxLayout(container)
-        outer.setContentsMargins(0, 0, 0, 0)
-        outer.setSpacing(0)
-        outer.addWidget(DockHeader("辅助工具"))
-
-        body = QWidget()
-        body.setObjectName("DockBody")
-        body_lay = QVBoxLayout(body)
-        body_lay.setContentsMargins(8, 6, 8, 6)
-        body_lay.setSpacing(4)
+        content = QWidget()
+        # 横向流式排列, 超出面板宽度自动换行 (工具数量少, 比纵向堆叠更紧凑)
+        body_lay = FlowLayout(content, margin=0, spacing=8)
 
         self._tool_btn_group = QButtonGroup(self)
         self._tool_btn_group.setExclusive(True)
@@ -297,9 +289,7 @@ class MainWindow(QMainWindow):
                     btn.setChecked(True)
                     break
 
-        body_lay.addStretch()
-        outer.addWidget(body, 1)
-        return container
+        return create_dock("辅助工具", content, body_margins=(8, 6, 8, 6))
 
     def _get_selected_tool(self) -> str:
         """返回当前选中的辅助工具名称（空字符串表示不注入）。"""
