@@ -1248,6 +1248,7 @@ class MatEditorApp(QMainWindow):
         self._current_param_idx = None
         self._current_edit_define_id = None
         self._script_dirty = False
+        self._script_baseline = {}  # {define_id_str: 去空白正文} 脚本删除检测基线 (载入/导入/保存后刷新)
         self._edit_debounce = None
 
         # 画布重绘防抖定时器，避免 resizeEvent 卡死主线程
@@ -3044,6 +3045,8 @@ class MatEditorApp(QMainWindow):
                 str(dd['define_id']): '\r\n'.join([dd['header_line']] + dd['body_lines'])
                 for dd in self._data.tkd_defines
             }
+            # 同步刷新脚本删除检测基线 (以刚载入的脚本为基准)
+            self._snapshot_script_baseline()
             # 刷新当前脚本预览
             if self._current_edit_define_id is not None:
                 self._update_line_preview()
@@ -3116,6 +3119,73 @@ class MatEditorApp(QMainWindow):
         """Sync scene tree selection to combo"""
         pass
 
+    # =========== 脚本删除检测 (§防止切换实体误删脚本) ===========
+    def _snapshot_script_baseline(self):
+        """记录当前各 DEFINE 正文快照 (define_id_str → 去空白正文), 作为脚本删除检测基线。
+
+        在载入完成、MOD 导入、每次保存成功后刷新, 使检测反映"相对上次落盘/载入状态"
+        的脚本内容丢失, 避免对已知状态重复告警。"""
+        self._script_baseline = {
+            str(dd['define_id']): '\n'.join(dd.get('body_lines', [])).strip()
+            for dd in self._data.tkd_defines
+        }
+
+    def _detect_deleted_scripts(self):
+        """检测相对基线被删除或清空的脚本, 返回 [(define_id_str, entity_id, comment), ...]。
+
+        判定为"删除/清空": 基线中该 DEFINE 正文非空, 而当前该 DEFINE 已不存在,
+        或其正文已被清空 (常见于切换实体等操作导致的误删)。
+        调用方应先 _save_editor_to_define() 提交编辑器未回写内容, 以免误报。"""
+        baseline = getattr(self, '_script_baseline', None)
+        if not baseline:
+            return []
+        current = {str(dd['define_id']): dd for dd in self._data.tkd_defines}
+        result = []
+        for did, orig_sig in baseline.items():
+            if not orig_sig:
+                continue  # 基线本就是空脚本, 不计入
+            cur = current.get(did)
+            cur_sig = '\n'.join(cur.get('body_lines', [])).strip() if cur else ''
+            if cur_sig:
+                continue  # 仍有内容 (可能被修改, 但未被删除)
+            try:
+                entity_id = int(did) >> 16
+            except ValueError:
+                entity_id = -1
+            result.append((did, entity_id, cur.get('comment', '') if cur else ''))
+        return result
+
+    def _format_deleted_scripts(self, deleted, limit=15):
+        """将删除脚本列表格式化为多行文本 (超出 limit 折叠计数)。"""
+        lines = []
+        for did, entity_id, comment in deleted[:limit]:
+            tail = f" — {comment}" if comment else ""
+            eid = f"实体 #{entity_id}" if entity_id >= 0 else "全局/未知实体"
+            lines.append(f"  • DEFINE {did} ({eid}){tail}")
+        if len(deleted) > limit:
+            lines.append(f"  … 其余 {len(deleted) - limit} 个未列出")
+        return '\n'.join(lines)
+
+    def _confirm_with_script_deletion(self, title, base_msg):
+        """确认对话框: 若检测到脚本被删除/清空, 先在弹窗内醒目提醒再请用户确认。
+
+        返回 True 表示用户确认继续 (保存); False 表示取消。
+        无脚本删除时行为等同普通 Ok/Cancel 确认框。"""
+        deleted = self._detect_deleted_scripts()
+        if not deleted:
+            return QMessageBox.question(self, title, base_msg,
+                                        QMessageBox.Ok | QMessageBox.Cancel) == QMessageBox.Ok
+        warn = (f"⚠ 检测到 {len(deleted)} 个脚本相对上次保存/载入已被删除或清空:\n\n"
+                f"{self._format_deleted_scripts(deleted)}\n\n"
+                f"这可能是切换实体等操作导致的误删。若非本意, 请点「取消」返回检查;\n"
+                f"确认放弃这些脚本内容请点「确定」。\n"
+                f"────────────────────\n"
+                f"{base_msg}")
+        box = QMessageBox(QMessageBox.Warning, title, warn,
+                          QMessageBox.Ok | QMessageBox.Cancel, self)
+        box.setDefaultButton(QMessageBox.Cancel)
+        return box.exec() == QMessageBox.Ok
+
     # =========== 保存 ===========
     def _save(self):
         if self._data._save_mode:
@@ -3133,7 +3203,7 @@ class MatEditorApp(QMainWindow):
         if has_sc_pending:
             files_msg += f"\nSC.GRP: {os.path.join(d, 'SC.GRP')}\nSC.IDX: {os.path.join(d, 'SC.IDX')}"
         file_count = 5 if has_sc_pending else 3
-        if QMessageBox.question(self, f"确认保存 — 将写入以下 {file_count} 个文件", files_msg, QMessageBox.Ok | QMessageBox.Cancel) != QMessageBox.Ok:
+        if not self._confirm_with_script_deletion(f"确认保存 — 将写入以下 {file_count} 个文件", files_msg):
             return
         errors = []
         try:
@@ -3173,6 +3243,7 @@ class MatEditorApp(QMainWindow):
         else:
             self._data._dirty = False
             self._script_dirty = False
+            self._snapshot_script_baseline()  # 保存成功后刷新基线, 后续删除检测以此为准
             self.status_var.setText(f"已保存 — {file_count} 个文件")
             QMessageBox.information(self, "保存成功", f"已成功保存 {file_count} 个文件。")
 
@@ -3191,6 +3262,7 @@ class MatEditorApp(QMainWindow):
         if not self._data._save_path or not self._data.records:
             QMessageBox.information(self, "提示", "无存档数据")
             return
+        self._save_editor_to_define()  # 先提交编辑器未回写内容, 保证保存与删除检测一致
         game_dir = self._data._game_dir or os.path.dirname(os.path.dirname(self._data._save_path))
         du_p = os.path.join(game_dir, "TKDefUnit.Dat")
         tkd_p = os.path.join(game_dir, "TKD.dat")
@@ -3199,8 +3271,7 @@ class MatEditorApp(QMainWindow):
         has_sc = self._data._sc_grp_pending is not None
         if has_sc:
             files_msg += f"\nSC.GRP/SC.IDX: {game_dir}"
-        if QMessageBox.question(self, f"确认保存到存档", files_msg,
-                                QMessageBox.Ok | QMessageBox.Cancel) != QMessageBox.Ok:
+        if not self._confirm_with_script_deletion("确认保存到存档", files_msg):
             return
         errors = []
         try:
@@ -3237,6 +3308,7 @@ class MatEditorApp(QMainWindow):
         else:
             self._data._dirty = False
             self._script_dirty = False
+            self._snapshot_script_baseline()  # 保存成功后刷新基线, 后续删除检测以此为准
             self.status_var.setText(f"已保存到存档 {self._data._save_path} 槽位{self._data._save_slot}")
             QMessageBox.information(self, "保存成功", f"已保存到存档 {self._data._save_path} 槽位 {self._data._save_slot}。")
 
@@ -3853,6 +3925,8 @@ class MatEditorApp(QMainWindow):
             self.scene_tree.blockSignals(False)
 
         self._vis_load_scene()
+        # 以导入后的脚本状态作为新的删除检测基线, 避免把本次导入误判为脚本删除
+        self._snapshot_script_baseline()
         self.status_var.setText(
             f"已导入 MOD: {info.get('name', '')} v{info.get('version', '')} | "
             f"{', '.join(imported_parts)}")
@@ -5297,6 +5371,22 @@ class MatEditorApp(QMainWindow):
     def closeEvent(self, event):
         self._canvas._vis_stop_anim()
         self._canvas._vis_stop_sel_anim()
+        # 退出前提交编辑器未回写内容并检测脚本删除/清空, 防止误删脚本被静默带走 (§防止切换实体误删脚本)
+        self._save_editor_to_define()
+        deleted = self._detect_deleted_scripts()
+        if deleted:
+            warn = (f"⚠ 检测到 {len(deleted)} 个脚本相对上次保存/载入已被删除或清空:\n\n"
+                    f"{self._format_deleted_scripts(deleted)}\n\n"
+                    f"这可能是切换实体等操作导致的误删。\n"
+                    f"点「取消」返回检查; 确认放弃这些脚本并退出请点「确定」。")
+            box = QMessageBox(QMessageBox.Warning, "脚本删除警告 — 确认退出", warn,
+                              QMessageBox.Ok | QMessageBox.Cancel, self)
+            box.setDefaultButton(QMessageBox.Cancel)
+            if box.exec() != QMessageBox.Ok:
+                event.ignore()
+                return
+            event.accept()
+            return
         if not confirm_close(self, self._data._dirty or self._script_dirty,
                              text="有未保存的修改 (含脚本), 确定退出?"):
             event.ignore()
