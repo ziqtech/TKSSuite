@@ -16,10 +16,10 @@ from PySide6.QtGui import (
 )
 from PySide6.QtWidgets import (
     QAbstractItemView, QApplication, QCheckBox, QDialog,
-    QFileDialog, QFrame, QGridLayout, QHBoxLayout, QHeaderView, QLabel,
-    QLineEdit, QMainWindow, QMenu, QMenuBar, QMessageBox, QPushButton,
-    QGraphicsScene, QGraphicsView, QScrollArea, QSplitter, QTableWidget,
-    QTableWidgetItem, QTextEdit, QVBoxLayout, QWidget
+    QFileDialog, QFrame, QGraphicsDropShadowEffect, QGridLayout, QHBoxLayout,
+    QHeaderView, QLabel, QLineEdit, QMainWindow, QMenu, QMenuBar, QMessageBox,
+    QPushButton, QGraphicsScene, QGraphicsView, QScrollArea, QSplitter,
+    QTableWidget, QTableWidgetItem, QTextEdit, QVBoxLayout, QWidget
 )
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
@@ -261,15 +261,37 @@ class SkillPickerDialog(QDialog):
 # ============================================================
 
 class SkillGraphView(QGraphicsView):
-    """可缩放 / 拖拽平移的技能拓扑图视图 (滚轮缩放, 双击节点回调)。"""
+    """可缩放 / 拖拽平移的技能拓扑图视图 (滚轮缩放, 双击节点回调, 点阵网格背景)。"""
 
-    def __init__(self, on_node_double_clicked=None):
+    def __init__(self, on_node_double_clicked=None, is_dark=True):
         super().__init__()
         self._on_dbl = on_node_double_clicked
-        self.setRenderHints(QPainter.Antialiasing | QPainter.TextAntialiasing)
+        self.is_dark = is_dark
+        self.setRenderHints(QPainter.Antialiasing | QPainter.TextAntialiasing
+                            | QPainter.SmoothPixmapTransform)
         self.setDragMode(QGraphicsView.ScrollHandDrag)
         self.setTransformationAnchor(QGraphicsView.AnchorUnderMouse)
         self.setResizeAnchor(QGraphicsView.AnchorViewCenter)
+        self.setViewportUpdateMode(QGraphicsView.SmartViewportUpdate)
+
+    def drawBackground(self, painter, rect):
+        super().drawBackground(painter, rect)   # 先绘制背景色
+        grid = 28
+        # 缩得太小时不绘点阵, 避免大量绘制卡顿
+        if rect.width() / grid * (rect.height() / grid) > 8000:
+            return
+        dot = QColor("#28303f") if self.is_dark else QColor("#dde3ee")
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QBrush(dot))
+        left = int(rect.left()) - (int(rect.left()) % grid)
+        top = int(rect.top()) - (int(rect.top()) % grid)
+        gx = left
+        while gx < rect.right():
+            gy = top
+            while gy < rect.bottom():
+                painter.drawEllipse(QPointF(gx, gy), 1.1, 1.1)
+                gy += grid
+            gx += grid
 
     def wheelEvent(self, event):
         factor = 1.15 if event.angleDelta().y() > 0 else 1.0 / 1.15
@@ -302,10 +324,12 @@ class SkillTreeDialog(QDialog):
       因此 A→B 表示 A 是 B 的前置, B 是学会 A 后可解锁的技能; 箭头由前置指向解锁。
     """
 
-    NODE_W = 168
-    NODE_H = 50
-    HGAP = 44
-    VGAP = 104
+    NODE_W = 190
+    NODE_H = 64
+    HGAP = 52
+    VGAP = 120
+    RADIUS = 12
+    ACCENT_W = 12
 
     def __init__(self, parent, records, tkt_dict, focus_idx, is_dark=True):
         super().__init__(parent)
@@ -427,9 +451,10 @@ class SkillTreeDialog(QDialog):
         layout.addWidget(self.lbl_head)
 
         legend = QLabel(
+            "卡片左侧色条 = 技能类型: 蓝=指令 · 橙=主动 · 绿=被动 · 紫=移动。"
             "箭头方向 = 前置 → 解锁; 连线标签为累加进度权重 (+N), 目标累计 ≥10 或标注 [自足] 即可学习, "
-            "[归组] 为技能组标记 (紫色虚线)。节点左上徽标 = WarPC 技能学习表建议初始状态: "
-            "🟢入口→可以学(10) · ⚪下游→等待学(1) · 🟣组头→等待学(1)。"
+            "[归组] 为技能组标记 (紫色虚线)。节点右上徽标 = WarPC 技能学习表建议初始状态: "
+            "入口(绿)→可以学(10) · 下游(灰蓝)→等待学(1) · 组头(紫)→等待学(1)。"
             "滚轮缩放 · 拖拽平移 · 双击节点重新聚焦。")
         legend.setWordWrap(True)
         legend.setProperty("class", "PropLabel")
@@ -451,10 +476,10 @@ class SkillTreeDialog(QDialog):
         layout.addLayout(mode_row)
 
         self.scene = QGraphicsScene(self)
-        self.view = SkillGraphView(self._on_node_double_clicked)
+        self.view = SkillGraphView(self._on_node_double_clicked, self.is_dark)
         self.view.setScene(self.scene)
         self.view.setBackgroundBrush(
-            QBrush(QColor("#161a22") if self.is_dark else QColor("#f7f8fa")))
+            QBrush(QColor("#12151d") if self.is_dark else QColor("#f4f6fa")))
         layout.addWidget(self.view, 1)
 
         btn_row = QHBoxLayout()
@@ -474,8 +499,28 @@ class SkillTreeDialog(QDialog):
 
     def _type_color(self, tv):
         if self.is_dark:
-            return QColor({0: "#478cbf", 1: "#e27d60", 2: "#55b572", 3: "#b988db"}.get(tv, "#dcdcdc"))
-        return QColor({0: "#28638f", 1: "#bd5739", 2: "#2d8046", 3: "#8a5bb8"}.get(tv, "#222222"))
+            return QColor({0: "#4d90d0", 1: "#e8815f", 2: "#5cbf82", 3: "#b98adb"}.get(tv, "#9aa4b8"))
+        return QColor({0: "#2f74b0", 1: "#cf6a49", 2: "#2f9457", 3: "#8a5bb8"}.get(tv, "#5a6472"))
+
+    @staticmethod
+    def _rounded_path(x, y, w, h, r, tl=True, tr=True, br=True, bl=True):
+        """构造可分别控制四角圆角的圆角矩形路径 (用于卡片与左侧强调条无缝拼合)。"""
+        p = QPainterPath()
+        p.moveTo(x + (r if tl else 0), y)
+        p.lineTo(x + w - (r if tr else 0), y)
+        if tr:
+            p.quadTo(x + w, y, x + w, y + r)
+        p.lineTo(x + w, y + h - (r if br else 0))
+        if br:
+            p.quadTo(x + w, y + h, x + w - r, y + h)
+        p.lineTo(x + (r if bl else 0), y + h)
+        if bl:
+            p.quadTo(x, y + h, x, y + h - r)
+        p.lineTo(x, y + (r if tl else 0))
+        if tl:
+            p.quadTo(x, y, x + r, y)
+        p.closeSubpath()
+        return p
 
     def _node_tooltip(self, idx):
         rec = self.records[idx]
@@ -497,75 +542,90 @@ class SkillTreeDialog(QDialog):
         return "\n".join(lines)
 
     # ── 绘制 ──
-    def _draw_edge(self, a_xy, b_xy, w):
+    def _draw_edge(self, a, b, a_xy, b_xy, w):
         ax, ay = a_xy
         bx, by = b_xy
         p1 = QPointF(ax + self.NODE_W / 2, ay + self.NODE_H)  # 前置底部中点
         p2 = QPointF(bx + self.NODE_W / 2, by)                # 解锁顶部中点
         is_group = (w == 20)
+        is_focus_edge = (a == self.focus_idx or b == self.focus_idx)
         if is_group:
-            color = QColor("#c58af0") if self.is_dark else QColor("#8e44ad")  # 归组: 紫色
+            color = QColor("#c58af0") if self.is_dark else QColor("#8e44ad")   # 归组: 紫色
+        elif is_focus_edge:
+            color = QColor("#ffc85a") if self.is_dark else QColor("#e0930f")   # 与聚焦相连: 琥珀
         else:
-            color = QColor("#7f8aa3") if self.is_dark else QColor("#8894a8")
-        pen = QPen(color, 1.8 if is_group else 1.6)
+            color = QColor("#586274") if self.is_dark else QColor("#a9b2c2")
+        pen = QPen(color, 2.4 if is_focus_edge else 1.8)
+        pen.setCapStyle(Qt.RoundCap)
+        pen.setJoinStyle(Qt.RoundJoin)
         if is_group:
             pen.setStyle(Qt.DashLine)
+        # 竖直方向三次贝塞尔 S 曲线, 更柔和专业
+        off = max(30.0, abs(p2.y() - p1.y()) * 0.42)
+        c2 = QPointF(p2.x(), p2.y() - off)
         path = QPainterPath(p1)
-        path.lineTo(p2)
+        path.cubicTo(QPointF(p1.x(), p1.y() + off), c2, p2)
         edge = self.scene.addPath(path, pen)
-        edge.setZValue(1)
-        self._draw_arrow(p1, p2, color)
+        edge.setZValue(2 if is_focus_edge else 1)
+        self._draw_arrow(c2, p2, color, is_focus_edge)
         self._draw_edge_label((p1 + p2) / 2.0, w)
 
-    def _draw_arrow(self, p1, p2, color):
-        ang = math.atan2(p2.y() - p1.y(), p2.x() - p1.x())
-        size = 10
-        left = QPointF(p2.x() - size * math.cos(ang - math.pi / 7),
-                       p2.y() - size * math.sin(ang - math.pi / 7))
-        right = QPointF(p2.x() - size * math.cos(ang + math.pi / 7),
-                        p2.y() - size * math.sin(ang + math.pi / 7))
-        arrow = self.scene.addPolygon(QPolygonF([p2, left, right]), QPen(color, 1), QBrush(color))
-        arrow.setZValue(2)
+    def _draw_arrow(self, p_from, p_to, color, emphasized=False):
+        ang = math.atan2(p_to.y() - p_from.y(), p_to.x() - p_from.x())
+        size = 11 if emphasized else 9
+        spread = math.pi / 7
+        left = QPointF(p_to.x() - size * math.cos(ang - spread),
+                       p_to.y() - size * math.sin(ang - spread))
+        right = QPointF(p_to.x() - size * math.cos(ang + spread),
+                        p_to.y() - size * math.sin(ang + spread))
+        arrow = self.scene.addPolygon(QPolygonF([p_to, left, right]),
+                                      QPen(color, 1), QBrush(color))
+        arrow.setZValue(3)
 
     def _draw_edge_label(self, mid, w):
         if w == 20:
             txt = "归组"
+            fg = QColor("#e6d2ff") if self.is_dark else QColor("#6a3d99")
+            bg = QColor("#392c4e") if self.is_dark else QColor("#efe4fb")
         elif w >= 10:
             txt = "自足"
+            fg = QColor("#bff0cd") if self.is_dark else QColor("#1f6b3a")
+            bg = QColor("#25402f") if self.is_dark else QColor("#e2f5e8")
         else:
             txt = f"+{w}"
+            fg = QColor("#f0d9a8") if self.is_dark else QColor("#8a5a00")
+            bg = QColor("#322f28") if self.is_dark else QColor("#f2ecdf")
         label = self.scene.addSimpleText(txt)
         f = label.font()
         f.setPointSize(8)
+        f.setBold(True)
         label.setFont(f)
-        label.setBrush(QBrush(QColor("#e0b060") if self.is_dark else QColor("#8a5a00")))
+        label.setBrush(QBrush(fg))
         br = label.boundingRect()
-        chip = self.scene.addRect(
-            0, 0, br.width() + 8, br.height() + 2,
-            QPen(Qt.NoPen),
-            QBrush(QColor("#202531") if self.is_dark else QColor("#e8ecf1")))
-        chip.setPos(mid.x() - br.width() / 2 - 4, mid.y() - br.height() / 2 - 1)
+        cw, ch = br.width() + 12, br.height() + 4
+        chip_path = QPainterPath()
+        chip_path.addRoundedRect(QRectF(0, 0, cw, ch), ch / 2.0, ch / 2.0)
+        chip = self.scene.addPath(chip_path, QPen(Qt.NoPen), QBrush(bg))
+        chip.setPos(mid.x() - cw / 2.0, mid.y() - ch / 2.0)
         chip.setZValue(3)
-        label.setPos(mid.x() - br.width() / 2, mid.y() - br.height() / 2)
+        label.setPos(mid.x() - br.width() / 2.0, mid.y() - br.height() / 2.0)
         label.setZValue(4)
 
     def _seed_role(self, idx):
         """按 warpc 播种规则给出该技能在角色技能学习表中的建议初始状态:
         组头(指令技能) → 等待学(1, 学会成员后自动升级);
         入口(无任何前置) → 可以学(10);
-        下游(有前置)   → 等待学(1, 学会前置后自动解锁)。"""
+        下游(有前置)   → 等待学(1, 学会前置后自动解锁)。
+        徽标底色为深饱和色 (配白字保证明暗对比), 三色区分明显; 深浅主题一致。"""
         rec = self.records[idx]
         if rec.get('type', 0) == 0 and rec.get('sub_count', -1) > 0:
-            return ("组头", "等待学(1)",
-                    QColor("#b98adb") if self.is_dark else QColor("#8a5bb8"))
+            return ("组头", "等待学(1)", QColor("#7a4fc0"))   # 紫
         if self.total_in.get(idx, 0) == 0:
-            return ("入口", "可以学(10)",
-                    QColor("#57b978") if self.is_dark else QColor("#2d8046"))
-        return ("下游", "等待学(1)",
-                QColor("#8a94a8") if self.is_dark else QColor("#5a6472"))
+            return ("入口", "可以学(10)", QColor("#1f9d55"))  # 绿
+        return ("下游", "等待学(1)", QColor("#526073"))       # 灰蓝
 
     def _draw_seed_badge(self, idx, x, y):
-        """在节点左上角骑顶边绘制建议初始状态徽标 (入口/下游/组头)。"""
+        """在节点右上角骑顶边绘制建议初始状态徽标药丸 (入口/下游/组头)。"""
         label, _state, col = self._seed_role(idx)
         txt = self.scene.addSimpleText(label)
         f = txt.font()
@@ -573,16 +633,17 @@ class SkillTreeDialog(QDialog):
         f.setBold(True)
         txt.setFont(f)
         br = txt.boundingRect()
-        cw, ch = br.width() + 10, br.height() + 3
-        cx, cy = x + 10, y - ch / 2.0
-        path = QPainterPath()
-        path.addRoundedRect(QRectF(0, 0, cw, ch), ch / 2.0, ch / 2.0)
-        chip = self.scene.addPath(path, QPen(col.darker(130), 1), QBrush(col))
+        cw, ch = br.width() + 13, br.height() + 5
+        cx = x + self.NODE_W - cw - 9
+        cy = y - ch / 2.0
+        chip_path = QPainterPath()
+        chip_path.addRoundedRect(QRectF(0, 0, cw, ch), ch / 2.0, ch / 2.0)
+        chip = self.scene.addPath(chip_path, QPen(col.darker(125), 1.1), QBrush(col))
         chip.setPos(cx, cy)
         chip.setZValue(7)
         chip.setData(0, idx)
-        txt.setBrush(QBrush(QColor("#12151c")))
-        txt.setPos(cx + 5, cy + (ch - br.height()) / 2.0)
+        txt.setBrush(QBrush(QColor("#ffffff")))
+        txt.setPos(cx + (cw - br.width()) / 2.0, cy + (ch - br.height()) / 2.0)
         txt.setZValue(8)
         txt.setData(0, idx)
 
@@ -593,32 +654,61 @@ class SkillTreeDialog(QDialog):
         name = skill_name(rec, self.tkt_dict)
         tcol = self._type_color(tv)
         is_focus = (idx == self.focus_idx)
+        W, H, R, AW = self.NODE_W, self.NODE_H, self.RADIUS, self.ACCENT_W
 
-        if is_focus:
-            fill = QColor("#3a3320") if self.is_dark else QColor("#fff6d6")
-            border = QColor("#ffcc66") if self.is_dark else QColor("#a15c00")
-            pen_w = 3
+        if self.is_dark:
+            fill_col = QColor("#312b1b") if is_focus else QColor("#282f3e")
+            border_col, name_col, sub_col = QColor("#3b4453"), QColor("#eef1f6"), QColor("#8b93a7")
+            shadow_col = QColor(0, 0, 0, 90)
+            focus_border, focus_glow = QColor("#ffc85a"), QColor(255, 200, 90, 130)
         else:
-            fill = QColor("#252a36") if self.is_dark else QColor("#ffffff")
-            border = tcol
-            pen_w = 2
+            fill_col = QColor("#fff7e3") if is_focus else QColor("#ffffff")
+            border_col, name_col, sub_col = QColor("#d9dfe8"), QColor("#1f2633"), QColor("#6b7385")
+            shadow_col = QColor(70, 84, 110, 40)
+            focus_border, focus_glow = QColor("#e0930f"), QColor(224, 147, 15, 95)
 
-        path = QPainterPath()
-        path.addRoundedRect(QRectF(0, 0, self.NODE_W, self.NODE_H), 9, 9)
-        node = self.scene.addPath(path, QPen(border, pen_w), QBrush(fill))
-        node.setPos(x, y)
-        node.setZValue(5)
-        node.setData(0, idx)
-        node.setToolTip(self._node_tooltip(idx))
+        # 底层: 类型强调色 (完整圆角矩形, 承载卡片轻投影; 左侧 AW=R 宽度露出, 完美贴合左圆角)
+        accent = self.scene.addPath(self._rounded_path(0, 0, W, H, R), QPen(Qt.NoPen), QBrush(tcol))
+        accent.setPos(x, y)
+        accent.setZValue(5.0)
+        accent.setData(0, idx)
+        eff = QGraphicsDropShadowEffect()
+        if is_focus:
+            eff.setBlurRadius(22)
+            eff.setColor(focus_glow)
+            eff.setOffset(0, 0)
+        else:
+            eff.setBlurRadius(11)
+            eff.setColor(shadow_col)
+            eff.setOffset(0, 2)
+        accent.setGraphicsEffect(eff)
 
+        # 中层: 卡片主体 (扁平纯色填充; 左侧直角贴合强调条, 右侧圆角)
+        body = self.scene.addPath(
+            self._rounded_path(AW, 0, W - AW, H, R, tl=False, tr=True, br=True, bl=False),
+            QPen(Qt.NoPen), QBrush(fill_col))
+        body.setPos(x, y)
+        body.setZValue(5.1)
+        body.setData(0, idx)
+
+        # 顶层: 整卡描边 (聚焦=琥珀描边)
+        outline = self.scene.addPath(
+            self._rounded_path(0, 0, W, H, R),
+            QPen(focus_border, 2.3) if is_focus else QPen(border_col, 1.3))
+        outline.setPos(x, y)
+        outline.setZValue(5.2)
+        outline.setData(0, idx)
+        outline.setToolTip(self._node_tooltip(idx))
+
+        # 名称 (中性高对比色, 类型已由强调条表达) + 副标题
         name_t = self.scene.addSimpleText(name)
         nf = name_t.font()
-        nf.setPointSize(11)
+        nf.setPointSize(12)
         nf.setBold(True)
         name_t.setFont(nf)
-        name_t.setBrush(QBrush(tcol))
+        name_t.setBrush(QBrush(name_col))
         nb = name_t.boundingRect()
-        name_t.setPos(x + (self.NODE_W - nb.width()) / 2, y + 6)
+        name_t.setPos(x + AW + (W - AW - nb.width()) / 2, y + 13)
         name_t.setZValue(6)
         name_t.setData(0, idx)
 
@@ -626,9 +716,9 @@ class SkillTreeDialog(QDialog):
         sf = sub_t.font()
         sf.setPointSize(8)
         sub_t.setFont(sf)
-        sub_t.setBrush(QBrush(QColor("#9aa4b8") if self.is_dark else QColor("#5a6472")))
+        sub_t.setBrush(QBrush(sub_col))
         sbb = sub_t.boundingRect()
-        sub_t.setPos(x + (self.NODE_W - sbb.width()) / 2, y + 28)
+        sub_t.setPos(x + AW + (W - AW - sbb.width()) / 2, y + 38)
         sub_t.setZValue(6)
         sub_t.setData(0, idx)
 
@@ -660,7 +750,7 @@ class SkillTreeDialog(QDialog):
                 + " · ".join(parts) + f" · 共 {len(nodes)} 个节点")
 
         for (a, b, w) in edges:
-            self._draw_edge(pos[a], pos[b], w)
+            self._draw_edge(a, b, pos[a], pos[b], w)
         for n in nodes:
             self._draw_node(n, pos[n])
 
