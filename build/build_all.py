@@ -70,9 +70,6 @@ EDITORS = [
     ("TKSLauncherCLI",       "build/entries/entry_launcher_cli.py",      "tks_launcher_gui"),
 ]
 
-# 需要 Pillow 的编辑器 (onefile 模式用, 薄模式 PIL 由 PIL.lib 统一提供)
-NEEDS_PILLOW = {"TKSJvgEditor", "TKSGrpEditor", "TKSGxpEditor", "TKSSpritesheetEditor", "TKSFontEditor"}
-
 # 需要 zhconv 数据文件 (zhcdict.json) 的编辑器 — Nuitka 不会自动打包 .json 数据文件
 NEEDS_ZHCONV = {"TKSSaveEditor"}
 
@@ -226,9 +223,13 @@ def _build_onefile_cmd(name: str, entry: str, editor_dir: str,
         "--remove-output",
     ]
 
-    # Pillow 支持
-    if name in NEEDS_PILLOW:
-        cmd.append("--include-package=PIL")
+    # Pillow 支持 — onefile 模式下所有 GUI 编辑器都依赖 Pillow:
+    #   · mat/act/warpc/wardata/tkt/jvg/grp/gxp/spritesheet/font 直接 import PIL
+    #   · item/skill/shop/kon/save/configs 经共享工具 editor_utils.jvg_loader 间接依赖
+    #   · GUI 启动器经 ui.custom_avatar_dialog 依赖
+    # 本函数不用于 CLI 启动器 (CLI 走 _build_cli_cmd), 故无条件包含 PIL,
+    # 确保 Pillow 惰性加载的图像插件与 _imaging 扩展被完整打包。
+    cmd.append("--include-package=PIL")
 
     # zhconv 数据文件 (zhcdict.json) — 运行时按需加载, Nuitka 不会自动打包
     if name in NEEDS_ZHCONV:
@@ -272,7 +273,9 @@ def _build_cli_cmd(name: str, entry: str, editor_dir: str,
         "--no-deployment-flag=excluded-module-usage",
 
         # 包含 core 包 (Nuitka 不会自动发现)
-        "--include-package=tks_launcher_gui.core",
+        # cli_launcher.py 以裸包名 `from core...` 导入, 且 tks_launcher_gui 无 __init__.py,
+        # 故用顶层包名 core (与运行时 sys.path 上的导入路径一致), 而非 tks_launcher_gui.core。
+        "--include-package=core",
 
         # 包含数据文件 (补丁配置)
         f"--include-data-files={tks_launcher_dir / 'tks_patches.json'}=tks_patches.json",
@@ -682,9 +685,7 @@ def main():
     if args.list:
         print("可构建编辑器:")
         for name, entry, _ in EDITORS:
-            tag = ""
-            if not args.onefile and name in NEEDS_PILLOW:
-                tag = " [+PIL]"
+            tag = " [CLI]" if name == "TKSLauncherCLI" else ""
             print(f"  {name:<24} {entry}{tag}")
         return
 

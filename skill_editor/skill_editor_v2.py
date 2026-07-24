@@ -164,6 +164,9 @@ def save_skills(fp, recs):
         for k, fo, _, _, _ in ALL_FIELDS:
             struct.pack_into('<h', buf, off + fo, rec[k])
     compressed = lzss_compress(bytes(buf))
+    # 压缩回写校验 — 与 item/shop/warpc/kon 编辑器保持一致, 防止压缩流损坏数据
+    if lzss_decompress(compressed) != bytes(buf):
+        raise RuntimeError("压缩回写验证失败!")
     with open(fp, 'wb') as f:
         f.write(compressed)
     return True
