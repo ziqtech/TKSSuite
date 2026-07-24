@@ -428,7 +428,9 @@ class SkillTreeDialog(QDialog):
 
         legend = QLabel(
             "箭头方向 = 前置 → 解锁; 连线标签为累加进度权重 (+N), 目标累计 ≥10 或标注 [自足] 即可学习, "
-            "[归组] 为技能组标记 (紫色虚线)。滚轮缩放 · 拖拽平移 · 双击节点重新聚焦。")
+            "[归组] 为技能组标记 (紫色虚线)。节点左上徽标 = WarPC 技能学习表建议初始状态: "
+            "🟢入口→可以学(10) · ⚪下游→等待学(1) · 🟣组头→等待学(1)。"
+            "滚轮缩放 · 拖拽平移 · 双击节点重新聚焦。")
         legend.setWordWrap(True)
         legend.setProperty("class", "PropLabel")
         layout.addWidget(legend)
@@ -479,6 +481,8 @@ class SkillTreeDialog(QDialog):
         rec = self.records[idx]
         name = skill_name(rec, self.tkt_dict)
         lines = [f"{name}  #{idx}  [{SKILL_TYPES.get(rec.get('type', 0), '')}]"]
+        role, state, _ = self._seed_role(idx)
+        lines.append(f"WarPC 建议初始状态: {role} → {state}")
         plist = self.parents.get(idx, [])
         if plist:
             lines.append("前置 (往上):")
@@ -545,6 +549,43 @@ class SkillTreeDialog(QDialog):
         label.setPos(mid.x() - br.width() / 2, mid.y() - br.height() / 2)
         label.setZValue(4)
 
+    def _seed_role(self, idx):
+        """按 warpc 播种规则给出该技能在角色技能学习表中的建议初始状态:
+        组头(指令技能) → 等待学(1, 学会成员后自动升级);
+        入口(无任何前置) → 可以学(10);
+        下游(有前置)   → 等待学(1, 学会前置后自动解锁)。"""
+        rec = self.records[idx]
+        if rec.get('type', 0) == 0 and rec.get('sub_count', -1) > 0:
+            return ("组头", "等待学(1)",
+                    QColor("#b98adb") if self.is_dark else QColor("#8a5bb8"))
+        if self.total_in.get(idx, 0) == 0:
+            return ("入口", "可以学(10)",
+                    QColor("#57b978") if self.is_dark else QColor("#2d8046"))
+        return ("下游", "等待学(1)",
+                QColor("#8a94a8") if self.is_dark else QColor("#5a6472"))
+
+    def _draw_seed_badge(self, idx, x, y):
+        """在节点左上角骑顶边绘制建议初始状态徽标 (入口/下游/组头)。"""
+        label, _state, col = self._seed_role(idx)
+        txt = self.scene.addSimpleText(label)
+        f = txt.font()
+        f.setPointSize(7)
+        f.setBold(True)
+        txt.setFont(f)
+        br = txt.boundingRect()
+        cw, ch = br.width() + 10, br.height() + 3
+        cx, cy = x + 10, y - ch / 2.0
+        path = QPainterPath()
+        path.addRoundedRect(QRectF(0, 0, cw, ch), ch / 2.0, ch / 2.0)
+        chip = self.scene.addPath(path, QPen(col.darker(130), 1), QBrush(col))
+        chip.setPos(cx, cy)
+        chip.setZValue(7)
+        chip.setData(0, idx)
+        txt.setBrush(QBrush(QColor("#12151c")))
+        txt.setPos(cx + 5, cy + (ch - br.height()) / 2.0)
+        txt.setZValue(8)
+        txt.setData(0, idx)
+
     def _draw_node(self, idx, xy):
         x, y = xy
         rec = self.records[idx]
@@ -590,6 +631,8 @@ class SkillTreeDialog(QDialog):
         sub_t.setPos(x + (self.NODE_W - sbb.width()) / 2, y + 28)
         sub_t.setZValue(6)
         sub_t.setData(0, idx)
+
+        self._draw_seed_badge(idx, x, y)
 
     def _render_graph(self):
         self.scene.clear()

@@ -1076,6 +1076,16 @@ class WarpcEditorV2(QMainWindow):
         self._icon_pixmaps = {}
         self.skill_names = {}
         self._skill_types = {}
+        # 技能树引用图 (从 TKSkill.dat 解析, 语义同 skill_editor):
+        #   _skill_children[a]=[(b,w)] 学会a给b累加w进度; _skill_parents[b]=[(a,w)];
+        #   _skill_total_in[b]=组外合计入权; _skill_sub_count[a]=子技能数;
+        #   _skill_group_heads=[指令技能组头索引]; _skill_group_of[m]=所属组头
+        self._skill_children = {}
+        self._skill_parents = {}
+        self._skill_total_in = {}
+        self._skill_sub_count = {}
+        self._skill_group_heads = []
+        self._skill_group_of = {}
         self.tkkon_names = {}
         self.item_names = {}
         self.item_idx_names = {}
@@ -1635,6 +1645,7 @@ class WarpcEditorV2(QMainWindow):
         p = self._build_scroll_tab("技能学习")
         self._register_tab_copy(p, 'learn')
         self._skill_learn_labels = []
+        self._skill_learn_widgets = []
         grp = QWidget()
         gl = QVBoxLayout(grp)
         gl.setContentsMargins(0,0,0,0)
@@ -1644,6 +1655,7 @@ class WarpcEditorV2(QMainWindow):
         body.setObjectName("DockBody")
         bl = QVBoxLayout(body)
         bl.setContentsMargins(8,8,8,8)
+        bl.addLayout(self._build_learn_toolbar())
         grid = QGridLayout()
         grid.setVerticalSpacing(2)
         grid.setHorizontalSpacing(4)
@@ -1665,6 +1677,30 @@ class WarpcEditorV2(QMainWindow):
         bl.addLayout(grid)
         gl.addWidget(body)
         p.layout().addWidget(grp)
+        self._skill_learn_by_idx = {i: cb for i, cb in self._skill_learn_widgets}
+
+    def _build_learn_toolbar(self):
+        """技能学习页顶部工具条: 技能组智能配置 / 精简当前配置。
+        依据游戏机制: 入口技能设「可以学(10)」, 下游技能设「等待学(1)」,
+        进游戏后随学习前置自动递进解锁, 避免把整组全设 10 导致列表臃肿且丢失递进关系。"""
+        row = QHBoxLayout()
+        row.setContentsMargins(0, 0, 0, 6)
+        row.setSpacing(6)
+        row.addWidget(QLabel("技能组:"))
+        self._skill_group_combo = NoWheelComboBox()
+        self._skill_group_combo.setMinimumWidth(200)
+        self._skill_group_combo.addItem("(未加载 TKSkill.dat)", -1)
+        row.addWidget(self._skill_group_combo)
+        btn_cfg = QPushButton("🌱 智能配置本组")
+        btn_cfg.setToolTip("入口技能→可以学(10), 下游技能→等待学(1); 组外保持不变。\n进游戏后学会前置会自动解锁下游技能。")
+        btn_cfg.clicked.connect(self._smart_config_group)
+        row.addWidget(btn_cfg)
+        btn_simplify = QPushButton("🧹 精简当前配置")
+        btn_simplify.setToolTip("把当前角色冗余的「可以学」(实为下游)降为「等待学」, 修复列表臃肿。\n已学会与未拥有的技能保持不变。")
+        btn_simplify.clicked.connect(self._simplify_current_config)
+        row.addWidget(btn_simplify)
+        row.addStretch()
+        return row
 
     def _build_tab4(self):
         """技能效果判定"""
@@ -2057,6 +2093,7 @@ class WarpcEditorV2(QMainWindow):
             # 保存原始快照用于 MOD 导出差异比对
             self._original_records = [list(r['fields']) for r in self.records]
             self.skill_names, self._skill_types = self._load_skill_names()
+            self._build_skill_graph()
             self.tkkon_names = self._load_tkkon_names()
             self.item_names, self.item_idx_names, self._idx_to_id, self._id_to_idx = self._load_item_names()
 
@@ -2129,6 +2166,239 @@ class WarpcEditorV2(QMainWindow):
             return names, types
         except:
             return {}, {}
+
+    def _build_skill_graph(self):
+        """从 TKSkill.dat 解析技能树引用表, 构建进度图 (逆向依据 sub_41E248):
+        源技能.ref_skill[i]=目标技能; ref_type[i]=学会源后累加给目标的进度权重;
+        目标学习状态处于 [1,10) 时累加, 达≥≥10 即可学习。"""
+        self._skill_children = {}
+        self._skill_parents = {}
+        self._skill_total_in = {}
+        self._skill_sub_count = {}
+        self._skill_group_heads = []
+        self._skill_group_of = {}
+        tks_dir = self._get_tks_dir()
+        sk_path = os.path.join(tks_dir, 'TKSkill.dat')
+        if not os.path.exists(sk_path):
+            self._refresh_group_combo()
+            return
+        try:
+            with open(sk_path, 'rb') as fp:
+                raw = fp.read()
+            dec = lzss_decompress(raw)
+            if len(raw) % 94 == 0 and (len(dec) == 0 or len(dec) % 94 != 0):
+                dec = raw
+            n = min(350, len(dec) // 94)
+            for i in range(n):
+                off = i * 94
+                if off + 94 > len(dec):
+                    break
+                text_id = struct.unpack_from('<h', dec, off)[0]
+                stype = struct.unpack_from('<h', dec, off + 4)[0]
+                sub = struct.unpack_from('<h', dec, off + 90)[0]
+                self._skill_sub_count[i] = sub
+                if text_id == 0:
+                    continue
+                for g in range(8):
+                    b = struct.unpack_from('<h', dec, off + 8 + g * 4)[0]
+                    w = struct.unpack_from('<h', dec, off + 10 + g * 4)[0]
+                    if w == 0 or b <= 0 or b >= n or b == i:
+                        continue
+                    self._skill_children.setdefault(i, []).append((b, w))
+                    self._skill_parents.setdefault(b, []).append((i, w))
+                    self._skill_total_in[b] = self._skill_total_in.get(b, 0) + w
+                # 指令技能组头: type=0 且 sub_count>0
+                if stype == 0 and sub > 0:
+                    self._skill_group_heads.append(i)
+                    for m in range(i, i + sub + 1):
+                        if m < n:
+                            self._skill_group_of[m] = i
+        except Exception:
+            pass
+        self._refresh_group_combo()
+
+    def _refresh_group_combo(self):
+        """刷新技能学习页的「技能组」下拉框 (列出所有指令技能组头)。"""
+        cb = getattr(self, '_skill_group_combo', None)
+        if cb is None:
+            return
+        cb.blockSignals(True)
+        cb.clear()
+        if not self._skill_group_heads:
+            cb.addItem("(未加载 TKSkill.dat)", -1)
+            cb.setEnabled(False)
+        else:
+            cb.setEnabled(True)
+            for h in self._skill_group_heads:
+                name = self.skill_names.get(h, f"技能#{h}")
+                sub = self._skill_sub_count.get(h, 0)
+                cb.addItem(f"{name}  (#{h}, {sub}子技能)", h)
+        cb.blockSignals(False)
+
+    def _skill_group_members(self, head):
+        """技能组成员 = 指令技能结构成员 [head, head+sub_count] + 下游进度闭包
+        (沿 children 边向下传递, 不吸收其它技能组的结构成员, 不超出可学习范围)。"""
+        sub = self._skill_sub_count.get(head, 0)
+        members = {head}
+        for m in range(head + 1, head + 1 + max(0, sub)):
+            if 0 <= m < SKILL_LEARN_COUNT:
+                members.add(m)
+        stack = list(members)
+        while stack:
+            a = stack.pop()
+            for (b, w) in self._skill_children.get(a, []):
+                if b in members or b >= SKILL_LEARN_COUNT:
+                    continue
+                owner = self._skill_group_of.get(b)
+                if owner is not None and owner != head:
+                    continue  # 属于其它技能组, 不吸收
+                members.add(b)
+                stack.append(b)
+        return members
+
+    def _compute_group_seed_states(self, members):
+        """计算成员最优初始学习状态: 入口(无组内前置)→可学(10), 下游→等待学(1)。
+        指令组头统一置 1 (学会成员后自动升级)。按游戏规则作可达性传播,
+        无法仅靠组内前置解锁的下游技能列入 unreachable, 不写入 seed (保持原值, 仅提醒)。
+        返回 (seed{idx:state}, roots[list], unreachable[list])。"""
+        members = set(members)
+        total_in = {m: 0 for m in members}
+        for m in members:
+            for (b, w) in self._skill_children.get(m, []):
+                if b in members and w > 0:
+                    total_in[b] += w
+        seed = {}
+        for m in members:
+            if self._skill_sub_count.get(m, -1) > 0:
+                seed[m] = 1          # 组头: 等待学 (学会成员后自动升级)
+            elif total_in[m] == 0:
+                seed[m] = 10         # 入口: 无前置 → 可以学
+            else:
+                seed[m] = 1          # 下游: 等待学
+        # 按游戏规则传播 (状态处于 [1,10) 时累加), 验证下游可达性
+        progress = dict(seed)
+        learned = set()
+        changed = True
+        while changed:
+            changed = False
+            for m in members:
+                if progress[m] >= 10 and m not in learned:
+                    learned.add(m)
+                    changed = True
+                    for (b, w) in self._skill_children.get(m, []):
+                        if b in members and 1 <= progress[b] < 10:
+                            progress[b] += w
+        unreachable = []
+        for m in members:
+            if progress[m] < 10 and self._skill_sub_count.get(m, -1) <= 0:
+                unreachable.append(m)
+                seed.pop(m, None)    # 无法仅靠组内前置解锁 → 保持原值, 仅提醒
+        roots = [m for m in members if seed.get(m) == 10]
+        return seed, roots, unreachable
+
+    def _set_learn_combo(self, skill_idx, state):
+        """将技能学习下拉框设为指定状态值 (不立即写回, 需调用 _apply_edit)。"""
+        cb = getattr(self, '_skill_learn_by_idx', {}).get(skill_idx)
+        if cb is None:
+            return False
+        for vi in range(cb.count()):
+            if cb.itemText(vi).startswith(f'{state}-'):
+                cb.setCurrentIndex(vi)
+                return True
+        return False
+
+    def _smart_config_group(self):
+        """智能配置选中技能组: 入口→可以学(10), 下游→等待学(1), 组外保持不变。"""
+        if self._editing_idx < 0:
+            self.status_var.setText("请先选择角色")
+            return
+        if not self._skill_group_heads:
+            themed_messagebox(self, QMessageBox.Warning, "未加载技能树",
+                "未能从 TKSkill.dat 解析技能树引用表。\n请确认游戏目录下存在 TKSkill.dat。")
+            return
+        head = self._skill_group_combo.currentData()
+        if head is None or head < 0:
+            return
+        members = self._skill_group_members(head)
+        seed, roots, unreachable = self._compute_group_seed_states(members)
+        entry = sorted(m for m in members if seed.get(m) == 10)
+        waiting = sorted(m for m in members if seed.get(m) == 1)
+        gname = self.skill_names.get(head, f"#{head}")
+
+        def nm(i):
+            return self.skill_names.get(i, f"#{i}")
+
+        lines = [f"技能组「{gname}」#{head} — 共 {len(members)} 个技能", "",
+                 f"● 设为「可以学(10)」入口技能 {len(entry)} 个:",
+                 "   " + "、".join(nm(i) for i in entry[:20]) + ("…" if len(entry) > 20 else ""), "",
+                 f"● 设为「等待学(1)」下游技能 {len(waiting)} 个 (学会前置后自动解锁):",
+                 "   " + "、".join(nm(i) for i in waiting[:30]) + ("…" if len(waiting) > 30 else "")]
+        if unreachable:
+            lines += ["", f"⚠ {len(unreachable)} 个技能无法仅靠组内前置解锁 → 保持原值不变 (仅提醒, 请手动确认):",
+                      "   " + "、".join(nm(i) for i in sorted(unreachable)[:15]) + ("…" if len(unreachable) > 15 else "")]
+        lines += ["", "组外技能保持不变。确定应用?"]
+        if QMessageBox.question(self, "智能配置预览", "\n".join(lines),
+                                QMessageBox.Yes | QMessageBox.No) != QMessageBox.Yes:
+            return
+        for m, st in seed.items():
+            self._set_learn_combo(m, st)
+        self._apply_edit()
+        kept = f", 保留{len(unreachable)}个仅提醒" if unreachable else ""
+        self.status_var.setText(
+            f"已智能配置「{gname}」: 入口{len(entry)} / 等待{len(waiting)}{kept} (共{len(members)}技能)")
+
+    def _simplify_current_config(self):
+        """精简当前角色配置: 将处于学习态(1~19)的技能重新按入口→10/下游→1 规范化,
+        把冗余的「可以学」(实为下游)降为「等待学」, 修复历史臃肿数据。
+        已学会(20/30)与未拥有(0)的技能保持不变。"""
+        if self._editing_idx < 0:
+            self.status_var.setText("请先选择角色")
+            return
+        if not self._skill_children and not self._skill_total_in:
+            themed_messagebox(self, QMessageBox.Warning, "未加载技能树",
+                "未能解析 TKSkill.dat 技能树, 无法精简。")
+            return
+        cur = {}
+        for skill_idx, cb in self._skill_learn_widgets:
+            sv = cb.currentText()
+            sep = sv.find('-', 1) if sv.startswith('-') else sv.find('-')
+            cur[skill_idx] = int(sv[:sep]) if sep >= 0 else 0
+        tree = {i for i, v in cur.items() if 1 <= v < 20}
+        if not tree:
+            themed_messagebox(self, QMessageBox.Information, "无需精简",
+                "当前角色没有处于「等待学/可以学」状态的技能。")
+            return
+        seed, roots, unreachable = self._compute_group_seed_states(tree)
+        demote = [i for i in tree if cur[i] >= 10 and seed.get(i) == 1]     # 可学→等待
+        promote = [i for i in tree if cur[i] < 10 and seed.get(i) == 10]    # 等待→可学(入口)
+        changed = [i for i in tree if i in seed and cur[i] != seed[i]]
+        if not changed:
+            themed_messagebox(self, QMessageBox.Information, "无需精简",
+                "当前配置已是最简形态 (入口=可学, 下游=等待学)。")
+            return
+
+        def nm(i):
+            return self.skill_names.get(i, f"#{i}")
+
+        lines = [f"分析当前角色 {len(tree)} 个在学技能:", "",
+                 f"● {len(demote)} 个「可以学」实为下游 → 降为「等待学(1)」:",
+                 "   " + "、".join(nm(i) for i in sorted(demote)[:20]) + ("…" if len(demote) > 20 else "")]
+        if promote:
+            lines += ["", f"● {len(promote)} 个入口技能 → 提升为「可以学(10)」:",
+                      "   " + "、".join(nm(i) for i in sorted(promote)[:15])]
+        if unreachable:
+            lines += ["", f"⚠ {len(unreachable)} 个技能无法仅靠组内前置解锁 → 保持原值不变 (仅提醒):",
+                      "   " + "、".join(nm(i) for i in sorted(unreachable)[:15]) + ("…" if len(unreachable) > 15 else "")]
+        lines += ["", f"共 {len(changed)} 处改动。已学会(20/30)与未拥有(0)的技能保持不变。", "确定应用?"]
+        if QMessageBox.question(self, "精简配置预览", "\n".join(lines),
+                                QMessageBox.Yes | QMessageBox.No) != QMessageBox.Yes:
+            return
+        for i in tree:
+            if i in seed:
+                self._set_learn_combo(i, seed[i])
+        self._apply_edit()
+        self.status_var.setText(
+            f"已精简: {len(demote)}个降为等待学, 共{len(changed)}处改动")
 
     def _load_tkkon_names(self):
         """从游戏数据动态解析 TKKon 名称映射 (替代静态 tkkon_names.csv)。"""
