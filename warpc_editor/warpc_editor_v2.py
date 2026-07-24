@@ -1691,6 +1691,10 @@ class WarpcEditorV2(QMainWindow):
         self._skill_group_combo.setMinimumWidth(200)
         self._skill_group_combo.addItem("(未加载 TKSkill.dat)", -1)
         row.addWidget(self._skill_group_combo)
+        btn_cancel = QPushButton("🚫 取消本组")
+        btn_cancel.setToolTip("将本组全部技能设为「不会(0)」; 组外技能保持不变。")
+        btn_cancel.clicked.connect(self._cancel_group)
+        row.addWidget(btn_cancel)
         btn_cfg = QPushButton("🌱 智能配置本组")
         btn_cfg.setToolTip("入口技能→可以学(10), 下游技能→等待学(1); 组外保持不变。\n进游戏后学会前置会自动解锁下游技能。")
         btn_cfg.clicked.connect(self._smart_config_group)
@@ -2346,6 +2350,38 @@ class WarpcEditorV2(QMainWindow):
         kept = f", 保留{len(unreachable)}个仅提醒" if unreachable else ""
         self.status_var.setText(
             f"已智能配置「{gname}」: 入口{len(entry)} / 等待{len(waiting)}{kept} (共{len(members)}技能)")
+
+    def _cancel_group(self):
+        """取消选中技能组: 将本组全部技能设为「不会(0)」, 组外保持不变。"""
+        if self._editing_idx < 0:
+            self.status_var.setText("请先选择角色")
+            return
+        if not self._skill_group_heads:
+            themed_messagebox(self, QMessageBox.Warning, "未加载技能树",
+                "未能从 TKSkill.dat 解析技能树引用表。\n请确认游戏目录下存在 TKSkill.dat。")
+            return
+        head = self._skill_group_combo.currentData()
+        if head is None or head < 0:
+            return
+        members = self._skill_group_members(head)
+        member_list = sorted(members)
+        gname = self.skill_names.get(head, f"#{head}")
+
+        def nm(i):
+            return self.skill_names.get(i, f"#{i}")
+
+        lines = [f"技能组「{gname}」#{head} — 共 {len(members)} 个技能", "",
+                 "● 全部设为「不会(0)」:",
+                 "   " + "、".join(nm(i) for i in member_list[:30]) + ("…" if len(member_list) > 30 else ""),
+                 "", "组外技能保持不变。确定应用?"]
+        if QMessageBox.question(self, "取消本组预览", "\n".join(lines),
+                                QMessageBox.Yes | QMessageBox.No) != QMessageBox.Yes:
+            return
+        for m in members:
+            self._set_learn_combo(m, 0)
+        self._apply_edit()
+        self.status_var.setText(
+            f"已取消「{gname}」: {len(members)} 个技能设为不会")
 
     def _simplify_current_config(self):
         """精简当前角色配置: 将处于学习态(1~19)的技能重新按入口→10/下游→1 规范化,
