@@ -4,7 +4,7 @@ import os
 from PySide6.QtCore import Qt, QSize
 from PySide6.QtGui import QAction, QIcon, QKeySequence
 from PySide6.QtWidgets import (
-    QApplication, QButtonGroup, QFileDialog, QLabel, QMainWindow,
+    QApplication, QButtonGroup, QDialog, QFileDialog, QLabel, QMainWindow,
     QMessageBox, QPushButton, QRadioButton, QSplitter, QStatusBar,
     QToolBar, QWidget,
 )
@@ -98,6 +98,8 @@ class MainWindow(QMainWindow):
         fm.addAction("模组拆分…", self._on_split_mod)
         fm.addAction("模组编辑…", self._on_edit_mod)
         fm.addAction("模组信息编辑…", self._on_edit_mod_meta)
+        fm.addAction("打包 TKS.exe 为 MOD…", self._on_pack_tks_exe)
+        fm.addSeparator()
         fm.addAction("自定义头像…", self._on_custom_avatar)
         fm.addAction("自定义音乐…", self._on_custom_music)
         fm.addAction("存档管理…", self._on_save_manager)
@@ -419,6 +421,71 @@ class MainWindow(QMainWindow):
         dialog.exec()
         # 打包完成后刷新模组列表
         self.mod_list.refresh_mods()
+
+    def _on_pack_tks_exe(self):
+        """将第三方 TKS.exe 打包为 .tksmod（复用 mod_exporter 框架）"""
+        from editor_utils.mod_exporter import (
+            ModMetadataDialog, generate_mod_json, pack_tksmod, safe_mod_filename,
+        )
+
+        # 1. 选择 TKS.exe
+        exe_path, _ = QFileDialog.getOpenFileName(
+            self, "选择第三方 TKS.exe", "",
+            "TKS 启动器 (TKS.exe);;EXE 文件 (*.exe);;All Files (*)")
+        if not exe_path:
+            return
+
+        # 2. 验证 MZ 头
+        try:
+            with open(exe_path, 'rb') as f:
+                if f.read(2) != b'MZ':
+                    QMessageBox.warning(self, "无效文件", "选择的文件不是有效的 EXE 文件 (缺少 MZ 头)")
+                    return
+        except Exception as e:
+            QMessageBox.warning(self, "读取失败", str(e))
+            return
+
+        # 3. 元数据对话框 (复用 mod_exporter 的 ModMetadataDialog)
+        base_name = os.path.splitext(os.path.basename(exe_path))[0]
+        defaults = {
+            "name": f"{base_name} (TKS.exe 替换)",
+            "description": f"第三方 TKS.exe 替换 (来源: {os.path.basename(exe_path)})",
+            "load_order": 0,
+        }
+        dlg = ModMetadataDialog(self, defaults)
+        dlg.setWindowTitle("打包 TKS.exe 为 MOD (.tksmod)")
+        if dlg.exec() != QDialog.Accepted:
+            return
+        metadata = dlg.get_metadata()
+
+        # 4. 构建 mod.json (强制 type=tks_exe, load_order=0)
+        metadata["type"] = "tks_exe"
+        metadata["load_order"] = 0
+        resources = [{"file": "resources/TKS.exe", "target": "TKS.exe"}]
+        mod_json = generate_mod_json(metadata, components=[], resources=resources)
+
+        # 5. 选择保存路径
+        mods_dir = os.path.join(_LAUNCHER_DIR, "mods")
+        default_name = f"{safe_mod_filename(metadata['name'], metadata['id'])}.tksmod"
+        fp, _ = QFileDialog.getSaveFileName(
+            self, "保存 TKS.exe MOD", os.path.join(mods_dir, default_name),
+            "TKS MOD (*.tksmod)")
+        if not fp:
+            return
+
+        # 6. 打包
+        try:
+            resource_files = {"resources/TKS.exe": exe_path}
+            pack_tksmod(fp, mod_json, data_files={}, resource_files=resource_files)
+            file_size = os.path.getsize(fp)
+            QMessageBox.information(self, "打包成功",
+                f"已导出 TKS.exe MOD:\n{os.path.basename(fp)}\n\n"
+                f"大小: {file_size / 1024:.1f} KB\n\n"
+                f"请在模组列表中勾选启用它，启动游戏时将自动替换 TKS.exe。\n"
+                f"游戏退出后会自动恢复原版 TKS.exe。")
+            self.mod_list.refresh_mods()
+        except Exception as e:
+            QMessageBox.critical(self, "打包失败", str(e))
 
     def _on_merge_mod(self):
         """打开模组合并对话框 (深度合并为单个 .tksmod)"""

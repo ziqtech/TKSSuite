@@ -57,6 +57,7 @@ class ModInfo:
     version: str = "1.0.0"
     author: str = ""
     description: str = ""
+    mod_type: str = ""       # "tks_exe" | "mixed" | "" 等
     load_order: int = 100
     dependencies: List[str] = field(default_factory=list)
     conflicts: List[str] = field(default_factory=list)
@@ -199,6 +200,7 @@ def _load_single_mod(mod_path: str, log_func=None) -> Optional[ModInfo]:
             version=mj.get("version", "1.0.0"),
             author=mj.get("author", ""),
             description=mj.get("description", ""),
+            mod_type=mj.get("type", ""),
             load_order=mj.get("load_order", 100),
             dependencies=mj.get("dependencies", []),
             conflicts=mj.get("conflicts", []),

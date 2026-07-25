@@ -170,6 +170,43 @@ class PatcherWorker(QThread):
         else:
             self._log(f"  未发现 MOD 文件")
 
+        # === TKS.exe 替换 (type=tks_exe MOD) ===
+        _tks_exe_replaced = False
+        if loaded_mods and 'sorted_mods' in dir():
+            # 在已排序的 MOD 中查找第一个 type="tks_exe" 的 MOD
+            tks_exe_mod = None
+            tks_exe_count = 0
+            for m in sorted_mods:
+                if getattr(m, 'mod_type', '') == 'tks_exe':
+                    tks_exe_count += 1
+                    if tks_exe_mod is None:
+                        tks_exe_mod = m
+            if tks_exe_count > 1:
+                self._log(f"  [WARN] 检测到 {tks_exe_count} 个 TKS.exe 替换 MOD, 仅使用第一个: {tks_exe_mod.name}")
+            if tks_exe_mod:
+                self._log(f"\n--- TKS.exe 替换 ({tks_exe_mod.name}) ---")
+                try:
+                    import zipfile as _zf
+                    tks_target = os.path.join(game_dir or os.getcwd(), "TKS.exe")
+                    tks_orig = tks_target + ".mod_orig"
+                    # 备份原始 TKS.exe
+                    if os.path.isfile(tks_target) and not os.path.isfile(tks_orig):
+                        shutil.copy2(tks_target, tks_orig)
+                        self._log(f"  备份: TKS.exe → TKS.exe.mod_orig")
+                    # 从 .tksmod ZIP 中提取 resources/TKS.exe
+                    mod_zip_path = tks_exe_mod.path
+                    with _zf.ZipFile(mod_zip_path, 'r') as zf:
+                        if "resources/TKS.exe" in zf.namelist():
+                            exe_data = zf.read("resources/TKS.exe")
+                            with open(tks_target, 'wb') as f:
+                                f.write(exe_data)
+                            self._log(f"  已替换 TKS.exe ({len(exe_data):,} bytes)")
+                            _tks_exe_replaced = True
+                        else:
+                            self._log(f"  [ERROR] MOD 中未找到 resources/TKS.exe")
+                except Exception as e:
+                    self._log(f"  [ERROR] TKS.exe 替换失败: {e}")
+
         expanded, full_data, truncated = prepare_warpc_for_game(log_func=self._log)
         _warpc_expanded = expanded
         _warpc_full_data = full_data
@@ -582,6 +619,9 @@ class PatcherWorker(QThread):
             self.status_changed.emit("补丁应用成功，游戏运行中", True)
         else:
             self._log("\n[WARN] 部分补丁未应用成功")
+            if _tks_exe_replaced:
+                self._log("[INFO] 当前使用非原版 TKS.exe（已加载第三方 MOD 版本），"
+                          "部分补丁因目标代码已被修改而无法定位，属正常现象。")
             self.overlay_update.emit("补丁应用失败！", False)
             self.status_changed.emit("部分补丁未成功", False)
 

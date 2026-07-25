@@ -103,6 +103,9 @@ def _build_thin_cmd(name: str, entry: str, editor_dir: str,
         "--onefile",
         "--assume-yes-for-downloads",
 
+        # ── 禁用 onefile 压缩 (规避 Python 3.14 stdlib zstd 内存分配错误) ──
+        "--onefile-no-compression",
+
         # ── 输出控制 ──
         f"--output-dir={DIST_DIR}",
         f"--output-filename={name}.exe",
@@ -177,6 +180,9 @@ def _build_onefile_cmd(name: str, entry: str, editor_dir: str,
         # ── 打包模式 ──
         "--onefile",
         "--assume-yes-for-downloads",
+
+        # ── 禁用 onefile 压缩 (规避 Python 3.14 stdlib zstd 内存分配错误) ──
+        "--onefile-no-compression",
 
         # ── 输出控制 ──
         f"--output-dir={DIST_DIR}",
@@ -255,6 +261,10 @@ def _build_cli_cmd(name: str, entry: str, editor_dir: str,
         sys.executable, "-m", "nuitka",
         "--onefile",
         "--assume-yes-for-downloads",
+
+        # ── 禁用 onefile 压缩 (规避 Python 3.14 stdlib zstd 内存分配错误) ──
+        "--onefile-no-compression",
+
         f"--output-dir={DIST_DIR}",
         f"--output-filename={name}.exe",
         # CLI 需要控制台输出

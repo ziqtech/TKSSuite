@@ -21,7 +21,7 @@ from PySide6.QtGui import (
     QColor, QIcon, QImage, QKeySequence, QPainter, QPixmap, QWheelEvent,
 )
 from PySide6.QtWidgets import (
-    QApplication, QFileDialog, QFrame, QGraphicsPixmapItem, QGraphicsScene,
+    QApplication, QDialog, QFileDialog, QFrame, QGraphicsPixmapItem, QGraphicsScene,
     QGraphicsView, QHBoxLayout, QLabel, QMainWindow, QMessageBox, QPushButton,
     QSplitter, QVBoxLayout, QWidget,
 )
