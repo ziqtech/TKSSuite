@@ -1587,6 +1587,12 @@ class SkillEditorApp(QMainWindow):
             QMessageBox.information(self, "无差异", "当前数据与参考文件相同，无需导出。")
             return
 
+        dlg = ModMetadataDialog(self, getattr(self, '_last_mod_metadata', None))
+        if dlg.exec() != QDialog.Accepted:
+            return
+        metadata = dlg.get_metadata()
+        self._last_mod_metadata = metadata
+
         crc = compute_crc32(os.path.join(ref_dir, "TKSkill.dat"))
         data_json = build_data_diff_json(target="TKSkill.dat", record_size=SKILL_REC, field_type="int16",
             field_count=field_count, original_count=len(ref_records), original_crc32=crc, diff_result=diff_result)
