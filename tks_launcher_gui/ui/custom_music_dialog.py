@@ -7,7 +7,8 @@
   3. 操作       播放 / 暂停 / 重置 / 修改 / 删除
 
 基础曲目 0000~0028 不可删除, 只能修改覆盖 (删除=清空修改, 变回未修改);
-新增曲目从 0200 开始编号, 可整条删除。
+新增曲目从 0101 开始编号, 可整条删除。
+新增时若文件名本身为数字则保留原编号, 否则从 0101 自动分配。
 
 设置完成后可导出为 .tksmod (通过 resources 机制将 .mp3 写入 Sound/),
 也可从已有 .tksmod 导入并重新编辑。
@@ -37,7 +38,7 @@ from editor_utils.ui_helpers import themed_messagebox
 # ── 常量 ──
 # 游戏内置 (默认) BGM 编号: 0000~0028 与 0100, 均不可删除, 只能修改覆盖
 BASE_SLOT_NUMBERS = tuple(range(0, 29)) + (100,)
-ADDED_SLOT_START = 200     # 新增曲目起始编号 → 0200.mp3
+ADDED_SLOT_START = 101     # 新增曲目起始编号 → 0101.mp3
 SOUND_SUBDIR = "Sound"     # 游戏目录下的 BGM 子目录
 
 MOD_NAME_DEFAULT = "[音乐] 自定义音乐"
@@ -213,7 +214,8 @@ class CustomMusicDialog(QDialog):
         # ── 说明 ──
         hint = QLabel(
             "基础曲目 <b>0000–0028</b>、<b>0100</b> 为游戏内置 BGM，可「修改」覆盖但不可删除"
-            "（对已修改项点「删除」= 清空修改）；「新增」曲目从 <b>0200</b> 起编号，用于扩展。")
+            "（对已修改项点「删除」= 清空修改）；「新增」曲目从 <b>0101</b> 起编号，用于扩展。"
+            "<br/>新增时若文件名本身为数字则保留原编号，否则自动分配。")
         hint.setWordWrap(True)
         layout.addWidget(hint)
 
@@ -252,7 +254,7 @@ class CustomMusicDialog(QDialog):
         bottom = QHBoxLayout()
         bottom.setSpacing(8)
         btn_add = QPushButton("➕ 新增音效")
-        btn_add.setToolTip(f"添加 .mp3 作为新曲目 (从 {ADDED_SLOT_START:04d}.mp3 开始编号)")
+        btn_add.setToolTip(f"添加 .mp3 作为新曲目 (文件名为数字时保留原编号，否则从 {ADDED_SLOT_START:04d}.mp3 开始编号)")
         btn_add.clicked.connect(self._on_add)
         bottom.addWidget(btn_add)
 
@@ -391,6 +393,8 @@ class CustomMusicDialog(QDialog):
         add_btn("暂停", "暂停播放", self._on_pause)
         add_btn("重置", "停止并回到开头", self._on_reset)
         add_btn("修改", "选择 .mp3 覆盖此曲目", self._on_modify)
+        if not entry.is_base:
+            add_btn("重命名", "修改此曲目的文件编号", self._on_rename)
         del_enabled = (not entry.is_base) or entry.is_modified
         del_tip = ("移除该新增曲目" if not entry.is_base
                    else "清空此曲目的修改 (变回未修改)")
@@ -545,13 +549,41 @@ class CustomMusicDialog(QDialog):
             return
         added = 0
         skipped = 0
+        used = {e.filename.lower() for e in self._entries}
         for path in paths:
             if not path.lower().endswith(".mp3"):
                 skipped += 1
                 continue
-            n = self._next_added_number()
+            # 检查原始文件名 (不含扩展名) 是否为纯数字
+            stem = os.path.splitext(os.path.basename(path))[0]
+            if stem.isdigit():
+                # 文件名为数字 → 保留原编号
+                n = int(stem)
+                target_fname = f"{n:04d}.mp3"
+                if target_fname.lower() in used:
+                    # 编号已存在 → 视为修改已有条目
+                    existing = next(
+                        (e for e in self._entries
+                         if e.filename.lower() == target_fname.lower()), None)
+                    if existing:
+                        existing.custom_path = path
+                        added += 1
+                        continue
+                # 基础曲目编号 → 修改对应基础条目
+                if _is_base_number(n):
+                    existing = next(
+                        (e for e in self._entries if e.number == n and e.is_base), None)
+                    if existing:
+                        existing.custom_path = path
+                        added += 1
+                        continue
+            else:
+                # 文件名非数字 → 从 ADDED_SLOT_START 自动分配
+                n = self._next_added_number()
+                target_fname = f"{n:04d}.mp3"
             self._entries.append(MusicEntry(
-                filename=f"{n:04d}.mp3", is_base=False, custom_path=path))
+                filename=target_fname, is_base=False, custom_path=path))
+            used.add(target_fname.lower())
             added += 1
         if added:
             self._sort_entries()
@@ -560,6 +592,38 @@ class CustomMusicDialog(QDialog):
             themed_messagebox(
                 self, QMessageBox.Warning, "部分文件已跳过",
                 f"已忽略 {skipped} 个非 .mp3 文件。")
+
+    def _on_rename(self, entry: MusicEntry):
+        """重命名非基础曲目的文件编号。"""
+        from PySide6.QtWidgets import QInputDialog
+        current_num = str(entry.number) if entry.number >= 0 else ""
+        new_num_str, ok = QInputDialog.getText(
+            self, "重命名曲目",
+            f"当前编号: {entry.filename}\n请输入新的编号 (纯数字):",
+            text=current_num)
+        if not ok or not new_num_str.strip():
+            return
+        new_num_str = new_num_str.strip()
+        if not new_num_str.isdigit():
+            themed_messagebox(
+                self, QMessageBox.Warning, "编号无效",
+                "编号必须为纯数字。")
+            return
+        new_num = int(new_num_str)
+        new_fname = f"{new_num:04d}.mp3"
+        # 检查冲突
+        if new_fname.lower() == entry.filename.lower():
+            return  # 未变化
+        if any(e.filename.lower() == new_fname.lower() for e in self._entries):
+            themed_messagebox(
+                self, QMessageBox.Warning, "编号冲突",
+                f"编号 {new_fname} 已被占用，请选择其他编号。")
+            return
+        # 更新
+        entry.filename = new_fname
+        entry.number = new_num
+        self._sort_entries()
+        self._rebuild_table()
 
     # ────────────────────────────────────────────────
     # 导出
