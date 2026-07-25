@@ -1,0 +1,9 @@
+# TKS Editors 构建依赖
+# 用法: pip install -r build/requirements.txt
+
+nuitka
+ordered-set
+zstandard
+PySide6
+Pillow
+zhconv

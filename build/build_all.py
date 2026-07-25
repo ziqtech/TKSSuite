@@ -31,6 +31,13 @@ build_all.py — TKS Editors 一键构建脚本 (Nuitka)
     ├── libs/                 [薄模式] PySide6.lib, QtCore.lib, ...
     ├── configs/
     └── mods/
+
+    dist/Winlator/            [Winlator 专用, 手机玩家部署包]
+    ├── TKSLauncherCLI.exe    CLI 启动器 (~5-10MB)
+    ├── launcher_config.json  配置模板
+    ├── tks_patches.json      补丁定义
+    ├── configs/summon_table.json  召唤表
+    └── mods/                 空目录 (用户放置 MOD)
 """
 import argparse
 import hashlib
@@ -81,6 +88,7 @@ BUILD_DIR = Path(__file__).parent                      # build/
 仓库根目录 = BUILD_DIR.parent                         # 
 DIST_DIR = 仓库根目录 / "dist"
 RELEASE_DIR = DIST_DIR / "TKSEditors"
+WINLATOR_DIR = DIST_DIR / "Winlator"
 # .lib 归档统一存放于 libs/ 子目录, 与 exe 分离
 LIBS_DIR = RELEASE_DIR / "libs"
 # Nuitka C 编译缓存 (其下含 clcache); 固定到仓库内, 避免依赖外部环境变量丢失缓存
@@ -102,9 +110,6 @@ def _build_thin_cmd(name: str, entry: str, editor_dir: str,
         # ── 打包模式 ──
         "--onefile",
         "--assume-yes-for-downloads",
-
-        # ── 禁用 onefile 压缩 (规避 Python 3.14 stdlib zstd 内存分配错误) ──
-        "--onefile-no-compression",
 
         # ── 输出控制 ──
         f"--output-dir={DIST_DIR}",
@@ -180,9 +185,6 @@ def _build_onefile_cmd(name: str, entry: str, editor_dir: str,
         # ── 打包模式 ──
         "--onefile",
         "--assume-yes-for-downloads",
-
-        # ── 禁用 onefile 压缩 (规避 Python 3.14 stdlib zstd 内存分配错误) ──
-        "--onefile-no-compression",
 
         # ── 输出控制 ──
         f"--output-dir={DIST_DIR}",
@@ -261,10 +263,6 @@ def _build_cli_cmd(name: str, entry: str, editor_dir: str,
         sys.executable, "-m", "nuitka",
         "--onefile",
         "--assume-yes-for-downloads",
-
-        # ── 禁用 onefile 压缩 (规避 Python 3.14 stdlib zstd 内存分配错误) ──
-        "--onefile-no-compression",
-
         f"--output-dir={DIST_DIR}",
         f"--output-filename={name}.exe",
         # CLI 需要控制台输出
@@ -612,6 +610,75 @@ def assemble_release(onefile: bool = False, release: bool = False,
     _generate_build_info(onefile, release, success or [], failed or [])
 
 
+def assemble_winlator():
+    """组装 Winlator 发行目录 (CLI 启动器 + 必要配置)
+
+    此目录专为 Winlator (Wine on Android) 用户设计，包含:
+    - TKSLauncherCLI.exe    无 GUI 的命令行启动器
+    - launcher_config.json  启动器配置模板
+    - tks_patches.json      补丁定义
+    - configs/summon_table.json  召唤表
+    - mods/                 MOD 目录 (空, 供用户放置)
+    """
+    print(f"\n{'='*60}")
+    print(f"  组装 Winlator 发行目录: {WINLATOR_DIR}")
+    print(f"{'='*60}")
+
+    # 清空并重建 Winlator 目录 (确保干净)
+    if WINLATOR_DIR.exists():
+        shutil.rmtree(str(WINLATOR_DIR))
+    WINLATOR_DIR.mkdir(parents=True, exist_ok=True)
+
+    assembled = []
+
+    # 1. 复制 TKSLauncherCLI.exe
+    cli_exe = RELEASE_DIR / "TKSLauncherCLI.exe"
+    if cli_exe.exists():
+        shutil.copy2(str(cli_exe), str(WINLATOR_DIR / "TKSLauncherCLI.exe"))
+        size_mb = cli_exe.stat().st_size / (1024 * 1024)
+        print(f"  [OK] TKSLauncherCLI.exe ({size_mb:.1f} MB)")
+        assembled.append("TKSLauncherCLI.exe")
+    else:
+        print(f"  [WARN] TKSLauncherCLI.exe 不存在 (未构建或构建失败)")
+
+    # 2. 复制 launcher_config.json (配置模板)
+    launcher_cfg_src = 仓库根目录 / "tks_launcher_gui" / "launcher_config.json"
+    if launcher_cfg_src.exists():
+        shutil.copy2(str(launcher_cfg_src), str(WINLATOR_DIR / "launcher_config.json"))
+        print(f"  [OK] launcher_config.json")
+        assembled.append("launcher_config.json")
+
+    # 3. 复制 tks_patches.json (补丁定义)
+    tks_patches_src = 仓库根目录 / "tks_launcher_gui" / "tks_patches.json"
+    if tks_patches_src.exists():
+        shutil.copy2(str(tks_patches_src), str(WINLATOR_DIR / "tks_patches.json"))
+        print(f"  [OK] tks_patches.json")
+        assembled.append("tks_patches.json")
+
+    # 4. 复制 summon_table.json (召唤表, 放入 configs/ 子目录)
+    configs_dst = WINLATOR_DIR / "configs"
+    configs_dst.mkdir(exist_ok=True)
+    summon_src = 仓库根目录 / "configs" / "summon_table.json"
+    if summon_src.exists():
+        shutil.copy2(str(summon_src), str(configs_dst / "summon_table.json"))
+        print(f"  [OK] configs/summon_table.json")
+        assembled.append("configs/summon_table.json")
+
+    # 5. 创建空 mods/ 目录 (供用户放置 MOD 文件)
+    mods_dst = WINLATOR_DIR / "mods"
+    mods_dst.mkdir(exist_ok=True)
+    print(f"  [OK] mods/ (空目录, 供用户放置 .tksmod/.tksmodpak)")
+
+    # 汇总
+    total_size = sum(
+        f.stat().st_size for f in WINLATOR_DIR.rglob("*")
+        if f.is_file()
+    )
+    print(f"\n  Winlator 组装完成: {len(assembled)} 个文件")
+    print(f"  总大小: {total_size / (1024*1024):.1f} MB")
+    print(f"  目录: {WINLATOR_DIR}")
+
+
 # ═══════════════════════════════════════════════════════════════
 # 并行构建
 # ═══════════════════════════════════════════════════════════════
@@ -760,6 +827,8 @@ def main():
     # 组装
     if not args.no_assemble and success:
         assemble_release(args.onefile, args.release, success, failed)
+        # 额外输出 Winlator 目录 (CLI 启动器 + 必要配置)
+        assemble_winlator()
 
 
 if __name__ == "__main__":
