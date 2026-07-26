@@ -38,6 +38,14 @@ build_all.py — TKS Editors 一键构建脚本 (Nuitka)
     ├── tks_patches.json      补丁定义
     ├── configs/summon_table.json  召唤表
     └── mods/                 空目录 (用户放置 MOD)
+
+    dist/TKSLauncher/         [玩家精简包, 供不编辑 MOD 的普通玩家使用]
+    ├── TKSLauncher.exe       GUI 启动器
+    ├── TKSConfigsEditor.exe  配置编辑器
+    ├── TKSSaveEditor.exe     存档编辑器
+    ├── libs/                 运行时归档 (薄 exe 依赖)
+    ├── configs/  mods/  tools/
+    ├── launcher_config.json  tks_patches.json
 """
 import argparse
 import hashlib
@@ -105,6 +113,10 @@ BUILD_DIR = Path(__file__).parent                      # build/
 DIST_DIR = 仓库根目录 / "dist"
 RELEASE_DIR = DIST_DIR / "TKSEditors"
 WINLATOR_DIR = DIST_DIR / "Winlator"
+# 玩家精简包目录 (TKSEditors 子集: 启动器 + 配置/存档编辑器, 供不编辑 MOD 的玩家)
+LAUNCHER_DIR = DIST_DIR / "TKSLauncher"
+# 玩家精简包包含的 exe (必须是 EDITORS 中的打包名)
+LAUNCHER_PACKAGE_EXES = ["TKSLauncher", "TKSConfigsEditor", "TKSSaveEditor"]
 # .lib 归档统一存放于 libs/ 子目录, 与 exe 分离
 LIBS_DIR = RELEASE_DIR / "libs"
 # Nuitka C 编译缓存 (其下含 clcache); 固定到仓库内, 避免依赖外部环境变量丢失缓存
@@ -701,6 +713,85 @@ def assemble_winlator():
     print(f"  目录: {WINLATOR_DIR}")
 
 
+def assemble_launcher():
+    """组装 TKSLauncher 玩家精简包 (TKSEditors 的子集)
+
+    面向不编辑 MOD 的普通玩家, 仅保留日常使用的三个程序:
+    - TKSLauncher.exe       GUI 启动器 (打补丁 / 应用 MOD / 启动游戏)
+    - TKSConfigsEditor.exe  配置编辑器
+    - TKSSaveEditor.exe     存档编辑器
+    及其运行所需的支撑文件 (libs/ 运行时归档、configs/、tools/、补丁定义等)。
+    """
+    print(f"\n{'='*60}")
+    print(f"  组装 TKSLauncher 玩家精简包: {LAUNCHER_DIR}")
+    print(f"{'='*60}")
+
+    # 清空并重建 (确保干净, 不残留旧版文件)
+    if LAUNCHER_DIR.exists():
+        shutil.rmtree(str(LAUNCHER_DIR))
+    LAUNCHER_DIR.mkdir(parents=True, exist_ok=True)
+
+    assembled = []
+
+    # 1. 复制精简包 exe (从发行目录复制, 保留 TKSEditors 完整版)
+    for name in LAUNCHER_PACKAGE_EXES:
+        exe_src = RELEASE_DIR / f"{name}.exe"
+        if exe_src.exists():
+            shutil.copy2(str(exe_src), str(LAUNCHER_DIR / f"{name}.exe"))
+            size_mb = exe_src.stat().st_size / (1024 * 1024)
+            print(f"  [OK] {name}.exe ({size_mb:.1f} MB)")
+            assembled.append(f"{name}.exe")
+        else:
+            print(f"  [WARN] {name}.exe 不存在 (未构建或构建失败)")
+
+    # 2. 复制 libs/ 运行时归档 (薄 exe 必需; 完整 onefile 模式下无此目录)
+    if LIBS_DIR.is_dir():
+        libs_dst = LAUNCHER_DIR / "libs"
+        shutil.copytree(str(LIBS_DIR), str(libs_dst), dirs_exist_ok=True)
+        lib_count = sum(1 for p in libs_dst.iterdir() if p.is_file())
+        print(f"  [OK] libs/ ({lib_count} 个归档)")
+        assembled.append("libs/")
+
+    # 3. 复制 configs/ 基线配置
+    src_configs = 仓库根目录 / "configs"
+    configs_dst = LAUNCHER_DIR / "configs"
+    configs_dst.mkdir(exist_ok=True)
+    if src_configs.exists():
+        for f in src_configs.glob("*.json"):
+            shutil.copy2(str(f), str(configs_dst / f.name))
+        print(f"  [OK] configs/")
+        assembled.append("configs/")
+
+    # 4. 复制 tools/ 辅助工具 (启动器运行时按需注入游戏目录)
+    tools_src = 仓库根目录 / "tks_launcher_gui" / "tools"
+    if tools_src.is_dir():
+        tools_dst = LAUNCHER_DIR / "tools"
+        shutil.copytree(str(tools_src), str(tools_dst), dirs_exist_ok=True)
+        print(f"  [OK] tools/")
+        assembled.append("tools/")
+
+    # 5. 复制补丁定义与启动器配置模板
+    for fname in ("tks_patches.json", "launcher_config.json"):
+        src = 仓库根目录 / "tks_launcher_gui" / fname
+        if src.exists():
+            shutil.copy2(str(src), str(LAUNCHER_DIR / fname))
+            print(f"  [OK] {fname}")
+            assembled.append(fname)
+
+    # 6. 创建空 mods/ 目录 (玩家放置他人制作的 MOD, 由启动器应用)
+    (LAUNCHER_DIR / "mods").mkdir(exist_ok=True)
+    print(f"  [OK] mods/ (空目录, 供玩家放置 .tksmod/.tksmodpak)")
+
+    # 汇总
+    total_size = sum(
+        f.stat().st_size for f in LAUNCHER_DIR.rglob("*")
+        if f.is_file()
+    )
+    print(f"\n  TKSLauncher 组装完成: {len(assembled)} 项")
+    print(f"  总大小: {total_size / (1024*1024):.1f} MB")
+    print(f"  目录: {LAUNCHER_DIR}")
+
+
 # ═══════════════════════════════════════════════════════════════
 # 并行构建
 # ═══════════════════════════════════════════════════════════════
@@ -851,6 +942,8 @@ def main():
         assemble_release(args.onefile, args.release, success, failed)
         # 额外输出 Winlator 目录 (CLI 启动器 + 必要配置)
         assemble_winlator()
+        # 额外输出 TKSLauncher 玩家精简包 (启动器 + 配置/存档编辑器)
+        assemble_launcher()
 
 
 if __name__ == "__main__":
