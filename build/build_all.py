@@ -80,6 +80,22 @@ EDITORS = [
 # 需要 zhconv 数据文件 (zhcdict.json) 的编辑器 — Nuitka 不会自动打包 .json 数据文件
 NEEDS_ZHCONV = {"TKSSaveEditor"}
 
+# 薄 exe 必须强制内嵌的 stdlib 模块 — PySide6/shiboken6/PIL 被 --nofollow-import-to
+# 排除后由外部 runtime 归档加载, 但它们 import 期依赖的 stdlib 不会被 Nuitka 静态
+# 追踪到 (exe 自身代码未引用), 缺失会导致运行时 ModuleNotFoundError (如 tempfile)。
+# 清单来源: 扫描 site-packages 中 shiboken6/PySide6/PIL 所有 .py 的顶层 import。
+THIN_STDLIB_HIDDEN_IMPORTS = [
+    # shiboken6/__init__ + 内嵌 shibokensupport (signature 支持)
+    "tempfile", "base64", "marshal", "keyword", "textwrap", "traceback",
+    "zipfile", "struct", "contextlib", "typing", "inspect", "enum",
+    "functools", "warnings", "pathlib",
+    # PIL 各图像插件的惰性导入
+    "array", "atexit", "binascii", "calendar", "colorsys", "copy",
+    "fractions", "gzip", "itertools", "logging", "math", "mmap",
+    "numbers", "operator", "random", "shlex", "shutil", "subprocess",
+    "xml.etree.ElementTree", "zlib",
+]
+
 # ═══════════════════════════════════════════════════════════════
 # 路径常量
 # ═══════════════════════════════════════════════════════════════
@@ -135,7 +151,13 @@ def _build_thin_cmd(name: str, entry: str, editor_dir: str,
 
         # ── 包含 zstandard (用于 .lib 归档解压) ──
         "--include-package=zstandard",
+    ]
 
+    # ── 强制内嵌外部运行时 (PySide6/shiboken6/PIL) import 期依赖的 stdlib ──
+    # 这些模块 exe 自身代码未引用, Nuitka 静态追踪不到, 必须显式包含
+    cmd.extend(f"--include-module={m}" for m in THIN_STDLIB_HIDDEN_IMPORTS)
+
+    cmd.extend([
         # ── 包含数据文件 (主题/翻译/图标) ──
         f"--include-data-dir={仓库根目录 / 'editor_themes'}=editor_themes",
         f"--include-data-files={仓库根目录 / 'editor_utils' / 'qtbase_zh_CN.qm'}=editor_utils/qtbase_zh_CN.qm",
@@ -155,7 +177,7 @@ def _build_thin_cmd(name: str, entry: str, editor_dir: str,
         f"--lto={'yes' if release else 'no'}",
         "--python-flag=no_docstrings",
         "--python-flag=no_asserts",
-    ]
+    ])
 
     # zhconv 数据文件 (zhcdict.json) — 运行时按需加载, Nuitka 不会自动打包
     if name in NEEDS_ZHCONV:
