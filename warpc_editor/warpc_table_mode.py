@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton,
     QTableView, QStyledItemDelegate, QSpinBox, QComboBox, QDialog,
-    QAbstractItemView, QApplication, QHeaderView, QAbstractSpinBox,
+    QAbstractItemView, QApplication, QHeaderView, QAbstractSpinBox, QMenu,
 )
 from PySide6.QtGui import QColor, QKeySequence, QPainter, QPen
 from PySide6.QtCore import (
@@ -706,6 +706,8 @@ class WarpcTablePanel(QWidget):
         # 撤销/重做栈: 元素为 (操作名, [(rec_idx, fi, old, new), ...])
         self._undo_stack = []
         self._redo_stack = []
+        # 整行(整条记录) 剪贴缓冲: 全 527 字段的 int16 列表
+        self._row_clip = None
         self._records_id = id(editor.records)
         self._build_ui()
 
@@ -737,7 +739,7 @@ class WarpcTablePanel(QWidget):
         btn_redo.clicked.connect(self._redo)
         bar.addWidget(btn_redo)
         bar.addSpacing(12)
-        hint = QLabel("选中后直接输数字编辑 | 引用字段双击弹选择器 | Ctrl+C/V 复制粘贴 | Ctrl+D/拖拽填充柄 填充 | Ctrl+Z/Y 撤销重做 | 橙色=未应用(点「应用修改」提交)")
+        hint = QLabel("选中后直接输数字编辑 | 右键/Ctrl+Shift+C·V 整行复制粘贴 | Ctrl+C/V 单元格 | Ctrl+D/拖拽填充柄 填充 | Ctrl+Z/Y 撤销重做 | 橙色=未应用")
         hint.setProperty("class", "PreviewMeta")
         bar.addWidget(hint)
         bar.addStretch()
@@ -775,6 +777,9 @@ class WarpcTablePanel(QWidget):
         # 选区变化时重绘填充柄
         self.view.selectionModel().selectionChanged.connect(
             lambda *_: self.view.viewport().update())
+        # 右键菜单: 整行复制/粘贴 (覆盖全部字段)
+        self.view.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.view.customContextMenuRequested.connect(self._show_context_menu)
         layout.addWidget(self.view, 1)
 
         # 批量编辑快捷键: 用事件过滤器在 KeyPress 阶段拦截 Ctrl+C/V/D。
@@ -805,6 +810,15 @@ class WarpcTablePanel(QWidget):
             if event.matches(QKeySequence.Redo):
                 self._redo()
                 return True
+            mods = event.modifiers()
+            # Ctrl+Shift+C/V: 整行(整条记录, 全字段)复制/粘贴覆盖
+            if (mods & Qt.ControlModifier) and (mods & Qt.ShiftModifier):
+                if event.key() == Qt.Key_C:
+                    self._copy_row()
+                    return True
+                if event.key() == Qt.Key_V:
+                    self._paste_row()
+                    return True
             if event.matches(QKeySequence.Copy):
                 self._copy_selection()
                 return True
@@ -812,10 +826,70 @@ class WarpcTablePanel(QWidget):
                 self._paste_selection()
                 return True
             if (event.key() == Qt.Key_D
-                    and event.modifiers() & Qt.ControlModifier):
+                    and mods & Qt.ControlModifier):
                 self._fill_down()
                 return True
         return super().eventFilter(obj, event)
+
+    # ── 右键菜单 / 整行复制粘贴 ──
+    def _current_source_row(self):
+        """当前单元格对应的源模型行号 (即草稿记录下标); 无效返回 None"""
+        idx = self.view.currentIndex()
+        if not idx.isValid():
+            return None
+        return self.proxy.mapToSource(idx).row()
+
+    def _show_context_menu(self, pos):
+        menu = QMenu(self.view)
+        row = self._current_source_row()
+        act_copy = menu.addAction("复制整行 (全部字段)")
+        act_copy.setEnabled(row is not None)
+        act_paste = menu.addAction("粘贴整行 (覆盖当前行)")
+        act_paste.setEnabled(row is not None and self._row_clip is not None)
+        menu.addSeparator()
+        act_ccell = menu.addAction("复制选中单元格 (Ctrl+C)")
+        act_pcell = menu.addAction("粘贴到选中 (Ctrl+V)")
+        chosen = menu.exec(self.view.viewport().mapToGlobal(pos))
+        if chosen is act_copy:
+            self._copy_row()
+        elif chosen is act_paste:
+            self._paste_row()
+        elif chosen is act_ccell:
+            self._copy_selection()
+        elif chosen is act_pcell:
+            self._paste_selection()
+
+    def _copy_row(self):
+        row = self._current_source_row()
+        if row is None:
+            return
+        rec = self.editor._draft_records[row]
+        self._row_clip = list(rec['fields'])
+        self.editor.status_var.setText(
+            f"已复制整行 #{rec['index']} 的全部 {len(self._row_clip)} 个字段 — 选中目标行后 Ctrl+Shift+V 覆盖")
+
+    def _paste_row(self):
+        if self._row_clip is None:
+            self.editor.status_var.setText("粘贴整行: 尚未复制任何行")
+            return
+        row = self._current_source_row()
+        if row is None:
+            return
+        rec = self.editor._draft_records[row]
+        clip = self._row_clip
+        changes = []
+        for fi in range(min(WARPC_FIELD_COUNT, len(clip))):
+            if rec['fields'][fi] != clip[fi]:
+                changes.append((rec['index'], fi, rec['fields'][fi], clip[fi]))
+                rec['fields'][fi] = clip[fi]
+        if changes:
+            self._push_undo_step(changes, "粘贴整行")
+            self.model.reload()
+            self.editor._on_table_mode_edited(rec['index'])
+            self.editor.status_var.setText(
+                f"已整行覆盖 → #{rec['index']} ({len(changes)} 个字段变更, 草稿未应用, Ctrl+Z 可撤销)")
+        else:
+            self.editor.status_var.setText(f"粘贴整行: #{rec['index']} 与源行完全相同, 无变更")
 
     # ── 撤销/重做 ──
     def _push_undo_step(self, changes, label="编辑单元格"):
