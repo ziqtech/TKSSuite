@@ -21,6 +21,7 @@ _TYPE_LABELS = {
     "patch_imm32":            "数值修改",
     "patch_warpc_addr":       "地址重定位",
     "patch_bytes":            "指令修补",
+    "patch_exp_lock":         "经验锁定",
     "cave_hook":              "代码注入",
     "patch_summon_table":     "召唤表",
     "runtime_watchdog":       "运行守护",
