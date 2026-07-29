@@ -1109,6 +1109,8 @@ class WarpcEditorV2(QMainWindow):
         self._status_widgets = []
         self._status_resist_widgets = []
         self._skill_learn_widgets = []
+        self._suspend_overflow_check = False  # 批量填充技能学习时抑制溢出重算
+        self._skill_overflow_label = None     # 技能组「学会超12」溢出提示标签
         self._skill_effect_widgets = []
         self._skill_effect_name_labels = []
         self._clip_skill_learn = None   # 跨角色复制粘贴: 技能学习数据
@@ -1656,6 +1658,13 @@ class WarpcEditorV2(QMainWindow):
         bl = QVBoxLayout(body)
         bl.setContentsMargins(8,8,8,8)
         bl.addLayout(self._build_learn_toolbar())
+        # 技能组「待学习+可学习+已学习」>12 溢出实时提示 (逆向依据 sub_438F28: 战斗菜单共享 12 格固定数组)
+        self._skill_overflow_label = QLabel("")
+        self._skill_overflow_label.setWordWrap(True)
+        self._skill_overflow_label.setVisible(False)
+        self._skill_overflow_label.setStyleSheet(
+            "color:#ffffff; background:#c0392b; font-weight:bold; padding:6px; border-radius:4px;")
+        bl.addWidget(self._skill_overflow_label)
         grid = QGridLayout()
         grid.setVerticalSpacing(2)
         grid.setHorizontalSpacing(4)
@@ -1678,6 +1687,9 @@ class WarpcEditorV2(QMainWindow):
         gl.addWidget(body)
         p.layout().addWidget(grp)
         self._skill_learn_by_idx = {i: cb for i, cb in self._skill_learn_widgets}
+        # 任一技能学习状态变动 → 实时重算同组溢出提示
+        for _i, _cb in self._skill_learn_widgets:
+            _cb.currentIndexChanged.connect(self._check_skill_group_overflow)
 
     def _build_learn_toolbar(self):
         """技能学习页顶部工具条: 技能组智能配置 / 精简当前配置。
@@ -2238,6 +2250,7 @@ class WarpcEditorV2(QMainWindow):
                 sub = self._skill_sub_count.get(h, 0)
                 cb.addItem(f"{name}  (#{h}, {sub}子技能)", h)
         cb.blockSignals(False)
+        self._check_skill_group_overflow()  # 技能组数据就绪后刷新溢出提示
 
     def _skill_group_members(self, head):
         """技能组成员 = 指令技能结构成员 [head, head+sub_count] + 下游进度闭包
@@ -2435,6 +2448,44 @@ class WarpcEditorV2(QMainWindow):
         self._apply_edit()
         self.status_var.setText(
             f"已精简: {len(demote)}个降为等待学, 共{len(changed)}处改动")
+
+    def _check_skill_group_overflow(self, *args):
+        """实时检测: 同一指令技能组内「待学习(1~9)+可学习(10)+已学习(20/30)」的技能数是否超过 12。
+        战斗技能菜单 (sub_438F28/sub_447BA8) 把本组已学子技能写入仅 12 格的固定数组 word_9D6D1A
+        (memset 0x18=24字节=12项) 且无越界检查, 超过 12 个会溢出踩坏相邻数据 → 战斗菜单错乱。
+        因待学习/可学习技能进游戏后会逐步变为已学习, 故按「非不会(≠0)」总数作前瞻性提示。"""
+        lbl = getattr(self, '_skill_overflow_label', None)
+        if lbl is None or getattr(self, '_suspend_overflow_check', False):
+            return
+        if self._editing_idx < 0 or not self._skill_group_heads or not self._skill_learn_widgets:
+            lbl.setVisible(False)
+            lbl.setText("")
+            return
+        # 读取当前 UI 各技能学习状态 (即时反映编辑中的改动)
+        states = {}
+        for skill_idx, cb in self._skill_learn_widgets:
+            sv = cb.currentText()
+            sep = sv.find('-', 1) if sv.startswith('-') else sv.find('-')
+            states[skill_idx] = int(sv[:sep]) if sep >= 0 else 0
+        offenders = []
+        for head in self._skill_group_heads:
+            sub = self._skill_sub_count.get(head, 0)
+            if sub <= 0:
+                continue
+            # 战斗子技能列表扫描范围 = [head+1, head+sub] (与 sub_438F28 一致, 不含组头)
+            cnt = sum(1 for m in range(head + 1, head + 1 + sub)
+                      if 0 <= m < SKILL_LEARN_COUNT and states.get(m, 0) != 0)
+            if cnt > 12:
+                gname = self.skill_names.get(head, f"#{head}")
+                offenders.append(f"「{gname}」#{head}: {cnt}个")
+        if offenders:
+            lbl.setText("⚠ 以下技能组「待学习+可学习+已学习」已超过 12 个，"
+                        "进入战斗后该组技能菜单会数据溢出 (仅能容纳 12 项)，请将其控制在 12 个以内：\n"
+                        + "；".join(offenders))
+            lbl.setVisible(True)
+        else:
+            lbl.setVisible(False)
+            lbl.setText("")
 
     def _load_tkkon_names(self):
         """从游戏数据动态解析 TKKon 名称映射 (替代静态 tkkon_names.csv)。"""
@@ -2650,6 +2701,7 @@ class WarpcEditorV2(QMainWindow):
 
         # 技能学习
         if hasattr(self, '_skill_learn_widgets'):
+            self._suspend_overflow_check = True   # 批量填充期间抑制逐项重算
             for skill_idx, cb in self._skill_learn_widgets:
                 field_idx = 88 + skill_idx//2
                 is_high = skill_idx%2
@@ -2659,6 +2711,8 @@ class WarpcEditorV2(QMainWindow):
                     if item.startswith(f'{byte_val}-'):
                         cb.setCurrentIndex(vi)
                         break
+            self._suspend_overflow_check = False
+            self._check_skill_group_overflow()   # 填充完毕后统一计算一次同组溢出提示
             # 刷新技能名称标签 (嵌入模式下 skill_names 可能在 Tab 构建后才加载)
             if self.skill_names and hasattr(self, '_skill_learn_labels'):
                 for i, lbl in enumerate(self._skill_learn_labels):

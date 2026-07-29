@@ -1292,7 +1292,17 @@ class SkillEditorApp(QMainWindow):
             f'| 点数={rec["jp_cost"]} | 内力={rec["mp_cost"]} | {hint}'
         )
         sc = rec.get('sub_count', -1)
-        self.preview_sub.setText(f"子技能: {sc} 个 (ID {rec['index']+1} - {rec['index']+sc})" if sc >= 0 else "")
+        if sc >= 0:
+            sub_txt = f"子技能: {sc} 个 (ID {rec['index']+1} - {rec['index']+sc})"
+            if sc > 12:
+                # 战斗技能菜单共享 12 格固定数组 (word_9D6D1A, memset 0x18=24B=12项),
+                # sub_438F28 列出本组已学子技能时无越界检查 → 超过12个即溢出相邻数据。
+                sub_txt += ('<br><span style="color:#e0533d; font-weight:bold;">'
+                            '⚠ 当前技能组的子技能数超过12个，请注意在编辑角色时设置当前技能组的'
+                            '可学习技能不要超过12个，否则战斗页面数据会溢出</span>')
+            self.preview_sub.setText(sub_txt)
+        else:
+            self.preview_sub.setText("")
 
         for fn, fo, fl, ft, _ in ALL_FIELDS:
             val = rec.get(fn, 0)
