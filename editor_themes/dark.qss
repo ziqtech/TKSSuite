@@ -8,7 +8,8 @@ QWidget {
 }
 
 /* ── 表格 ── */
-QTableWidget, QTreeWidget {
+/* 同时覆盖 model/view 基类 (QTableView/QTreeView), 否则纯 View 控件回退到默认白底调色板 */
+QTableWidget, QTreeWidget, QTableView, QTreeView {
     background-color: #1a1e27;
     color: #dcdcdc;
     border: 1px solid #14171f;
@@ -746,6 +747,20 @@ QTableWidget[class="GrowthTable"]::item:alternate {
 QTableWidget[class="GrowthTable"]::item:selected {
     background-color: #478cbf;
     color: #ffffff;
+}
+
+/* ── 表格编辑模式 (warpc_editor) ── */
+QTableView[class="WarpcGrid"] {
+    alternate-background-color: #202531;
+    gridline-color: #2a303d;
+}
+QTableView[class="WarpcGrid"]::item:selected {
+    background-color: #478cbf;
+    color: #ffffff;
+}
+QTableView[class="WarpcGrid"] QTableCornerButton::section {
+    background-color: #202531;
+    border: none;
 }
 
 /* ── 类型字段标签 (mat_editor 实体参数) ── */

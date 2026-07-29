@@ -61,10 +61,10 @@ from PySide6.QtWidgets import (
     QLineEdit, QCheckBox, QPushButton, QLabel,
     QScrollArea, QDialog, QFileDialog, QMessageBox, QTextEdit,
     QFrame, QGridLayout, QAbstractItemView, QMenuBar, QTabWidget,
-    QSpinBox, QSizePolicy, QMenu,
+    QSpinBox, QSizePolicy, QMenu, QCompleter, QStackedWidget,
 )
 from PySide6.QtGui import QColor, QFont, QIcon, QIntValidator, QKeySequence
-from PySide6.QtCore import Qt, QTranslator, Signal
+from PySide6.QtCore import Qt, QTranslator, Signal, QTimer
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from editor_utils.theme_manager import ThemeManager
 from editor_utils.dock_components import DockHeader
@@ -82,6 +82,10 @@ from editor_utils.mod_exporter import (
 )
 from editor_utils.window_theme import apply_godot_theme
 from editor_utils.kon_name_resolver import KonNameResolver
+# 字段 Schema (唯一字段定义源): 常量/字段列表/FieldDef/打包字节编解码
+# noqa: F401,F403 — 旧名称 (WARPC_REC/ALL_NAMED_FIELDS 等) 由 Schema 模块导出,
+# 保持本模块命名空间兼容 (batch_skill_learn.py 等外部导入)
+from warpc_schema import *  # noqa: F401,F403
 
 # ── 本地别名: 保持向后兼容 ──
 def lzss_decompress(data):
@@ -175,171 +179,9 @@ def load_jvg_sprites(jvg_path):
     return sprites
 
 # ═══════════════════════════════════════════════════════════════
-# 常量 (100% 原始定义)
+# 常量与字段定义 — 已迁移至 warpc_schema.py (顶部 from warpc_schema import *)
 # ═══════════════════════════════════════════════════════════════
 
-WARPC_REC = 1054
-WARPC_FIELD_COUNT = 527
-WARPC_ORIG_COUNT = 143
-WARPC_ORIG_SIZE = 150722
-
-# STATUS_NAMES 由 editor_utils.picker_dialogs 提供 (见上方导入)
-
-COMBAT_FLAG_BITS = [
-    (0, "JP×2~3", "战后技能点数×2~3"), (1, "战后全恢复+异常全解", "HP/MP全恢复+清除异常"),
-    (2, "经验×2~3平分队友", "经验×2~3并平分队友"), (3, "经验独得", "经验归一人独享"),
-]
-MOVE_FLAG_BITS = [
-    (0, "飘浮", "地形通行无阻"), (1, "飙行", "移动范围扩大"),
-    (2, "搜宝", "获得额外宝物"), (3, "解陷", "自动解除陷阱"),
-]
-FLAG_DEFS = {'special_flag': ("特殊能力标志", COMBAT_FLAG_BITS), 'move_flags': ("移动特殊标志", MOVE_FLAG_BITS)}
-
-USE_RIGHT_DEFS = {
-    'use_right_medicine': ("药品使用权限", [(1,"战斗"),(2,"非战斗")]),
-    'use_right_item': ("道具使用权限", [(1,"战斗"),(2,"非战斗"),(4,"主角限定")]),
-    'use_right_weapon': ("武器装备权限", [(1,"刀"),(2,"剑"),(4,"枪"),(8,"矛"),(16,"弓"),(32,"大刀"),(64,"戟"),(128,"锤")]),
-    'use_right_armor': ("防具装备权限", [(1,"衣袍"),(2,"铠甲")]),
-    'use_right_accessory': ("饰品使用权限", [(0,"通用")]),
-}
-# 页面号 → 权限字段名 (与 item_editor standard_config.json 的页面号语义一致)
-# 页面 0=药品 1=道具 2=武器 3=防具 4=饰品 5=特殊; 5=特殊在 WarPC 中无对应字段，故不映射
-USE_RIGHT_PAGE_TO_FIELD = {
-    0: 'use_right_medicine', 1: 'use_right_item', 2: 'use_right_weapon',
-    3: 'use_right_armor', 4: 'use_right_accessory',
-}
-
-SKILL_LEARN_COUNT = 344
-SKILL_LEARN_STATES = ["0-不会","1-等待学","10-可以学","20-组技能学会","30-子技能学会"]
-
-# 核心字段 — 已验证 (格式: key, offset, label, comment)
-IDENTITY_FIELDS = [
-    ("name_id",    0,  "名称TKT ID",  "角色名称 → TKT.dat"),  # sub_4067E8
-    ("portrait",   2,  "头像索引",    "头像索引 ×2 = Fa.JVG 大幅图, ×2+1 = 缩略图"),
-    ("level",      4,  "等级",        "角色等级 (数值显示)"),
-    ("role",       6,  "身份",        "-1=未激活 0=已激活(入队时置0)"),  # sub_410674 L40
-    ("exp_to_next", 8,  "升级所需经验","升至下一级所需经验; 绝大多数角色=100, BOSS版较高(呂布5092 張角7292)"),
-]
-# 补丁专用字段 [260]-[263] — 配合运行时补丁使用; 0=使用原硬编码公式
-PATCH_FIELDS = [
-    ("awk_sprite_id", 520, "战场图集索引（补丁专用）", "战斗中Awk.JVG/Awt.JVG块号; 0=使用原硬编码公式(PATH1:WarPC索引+6, PATH2:WarPC记录号+12); 非0=补丁直接使用此值"),
-    ("portrait_menu_id", 522, "队伍头像ID（补丁专用）", "队伍菜单Mu.JVG精灵块号; 0=使用原公式(portrait+211); 非0=直接使用此值"),
-    ("history_text_id", 524, "历史文本ID（补丁专用）", "角色界面「历史」标签页TKT文本ID; 0=使用原公式(9050+角色序号)"),  # sub_41A080:104
-    ("entity_link", 526, "地图实体ID",  "离队后在地图上显示的NPC实体ID → TKMat.dat"),  # sub_41EEC0 → sub_40C648
-]
-HPMP_FIELDS = [
-    ("cur_hp",    10,  "当前HP",      "当前生命值 (cap at hp_max)"),
-    ("cur_mp",    12,  "当前MP",      "当前内力值 (cap at mp_max)"),
-    ("hp_base",   14,  "HP基础",      "HP基础值"),
-    ("hp_max",    16,  "HP上限",      "HP上限 (基础+装备)"),  # sub_42234C
-    ("mp_base",   18,  "MP基础",      "MP基础值"),
-    ("mp_max",    20,  "MP上限",      "MP上限 (基础+装备)"),  # sub_42234C
-]
-
-STAT_NAMES_CN = ["攻击","防御","命中","闪避","速度","幸运","移动","悟性"]
-STAT_SHORTS = ["atk","def","hit","eva","spd","luk","mov","wis"]
-STAT_BASE_OFFSETS = [22, 26, 30, 34, 38, 42, 46, 50]
-# 8 属性对 (基础/当前) — sub_42234C L24-31/63-70 验证
-STAT_FIELDS = []
-for i, (n, s, bo) in enumerate(zip(STAT_NAMES_CN, STAT_SHORTS, STAT_BASE_OFFSETS)):
-    STAT_FIELDS.append((f"{s}_base", bo, f"{n}(基础)",
-                        f"{n}基础值"))  # sub_42234C: a2[{11+i*2}]
-    STAT_FIELDS.append((f"{s}_cur", bo+2, f"{n}(当前)",
-                        f"{n}当前值 (基础+装备)"))  # sub_42234C L63-70 a2[{12+i*2}]+=v9[{11+i}]
-
-# 技能加成区 [32]-[40] — sub_422BBC 应用 TKSkill 效果, sub_42234C 初始化
-SKILL_BONUS_FIELDS = [
-    ("atk_count",   64,  "攻击次数",       "攻击次数 (含TKSkill增加的攻击次数)"),  # sub_42234C=1; sub_422BBC L29: a2[32]+=v6[31]
-    ("special_flag",66,  "特殊能力标志",   "来自装备 TKItem[20]"),  # sub_42234C L73: a2[33]|=v9[20]
-    ("mp_reduce",   68,  "内力消耗减少%",  "内息百分比 来自主动技能 TKSkill[33]"),  # sub_422BBC L29: a2[34]+=v6[33]
-    ("magic_def",   70,  "所受法伤减少%",  "抗魔百分比 来自主动技能 TKSkill[38]"),  # sub_422BBC L45: a2[35]+=v6[38]
-    ("exp_bonus",   72,  "战斗经验增加%",  "鬼才百分比 来自主动技能 TKSkill[36]"),  # sub_422BBC L43: a2[36]+=v6[36]
-    ("jp_bonus",    74,  "战斗技能点增加%","天才百分比 来自主动技能 TKSkill[37]"),  # sub_422BBC L44: a2[37]+=v6[37]
-    ("move_flags",  76,  "移动特殊标志",   "来自移动技能 TKSkill[32]"),  # sub_422BBC L124: a2[38]|=v6[32]
-    ("heal_move",   78,  "移动恢复生命%",  "自愈百分比 来自移动技能 TKSkill[22]"),  # sub_422BBC L125: a2[39]+=v6[22]
-    ("mp_move",     80,  "移动恢复内力%",  "回气百分比 来自移动技能 TKSkill[24]"),  # sub_422BBC L126: a2[40]+=v6[24]
-]
-# 角色五维 [27]-[31] — 曹操验证: 智慧5 仁德-1 勇气10 医术0 技能点数400
-CHAR_ATTR_FIELDS = [
-    ("wisdom",      54,  "智慧",        "智慧值 (曹操=5 司马懿=20)"),
-    ("benevolence", 56,  "仁德",        "仁德值 (曹操=-1 司马懿=-5)"),
-    ("courage",     58,  "勇气",        "勇气值 (曹操=10 司马懿=0)"),
-    ("medicine",    60,  "医术",        "医术值 (曹操=0 司马懿=10; 上限100)"),  # sub_40E11C case4→word_75688A
-    ("jp_total",    62,  "技能点数",    "累计技能点数 (曹操=400 司马懿=300; 与等级相关)"),  # sub_422A5C 入队累加
-]
-# 反应组 [41]-[42] — 运行时字段, sub_422BBC type=2 写入, sub_42234C 初始化为0
-REACTION_FIELDS = [
-    ("reaction_group",  82,  "反应组",   "被动技能反应组编号 1-10 (初始化=0)"),  # sub_422BBC type=2
-    ("reaction_trigger",84,  "触发概率", "被动技能触发概率 %%, 来自 TKSkill[44]"),  # sub_422BBC: a2[42]=v6[44]
-]
-REACTION_GROUP_VALUES = ["0-无","1-近戰反擊","2-遠程反擊","3-法術反彈","4-先發制人","5-時序回饋","6-損傷賠償","7-環境探索","8-國色天香","9-有福同享","10-國士無雙"]
-
-# 身上状态槽 [43]-[50] — sub_41E40C 验证: 8个状态效果槽, 每槽(status_id:byte, duration:byte)
-STATUS_SLOT_FIELDS = [
-    (f"status_slot{i}", 86+i*2, f"状态槽{i}",
-     f"身上状态效果槽{i}; 低字节=状态ID(1-32) 高字节=持续回合")  # sub_41E40C: v8+{i*2}
-    for i in range(8)
-]
-
-EQUIP_FIELDS = [
-    ("equip_idx0", 138, "装备索引0",   "运行时装备索引缓存"),  # sub_4173F8
-    ("equip_idx1", 140, "装备索引1",   "运行时装备索引缓存"),
-    ("equip_idx2", 142, "装备索引2",   "运行时装备索引缓存"),
-    ("equip_idx3", 144, "装备索引3",   "运行时装备索引缓存"),
-    ("equip_id0",  146, "装备物品ID0", "装备物品 ID (DAT原始; 查 TKItem.field[0])"),
-    ("equip_id1",  148, "装备物品ID1", "装备物品 ID"),
-    ("equip_id2",  150, "装备物品ID2", "装备物品 ID"),
-    ("equip_id3",  152, "装备物品ID3", "装备物品 ID"),
-]
-# 装备技能 [82]-[87] — Maker Frm_WarPC 暴露, sub_42234C/sub_422BBC 应用
-# 周倉 验证: [82]=43武術 [83]=83輔助 [84]=273二連擊 [85]=279無隙1 [86]=303近戰反擊1 [87]=334飄浮
-EQUIP_SKILL_FIELDS = [
-    ("equip_skill0", 164, "装备技能0", "装备技能槽0 → TKSkill"),  # sub_42234C v4 loop
-    ("equip_skill1", 166, "装备技能1", "装备技能槽1 → TKSkill"),
-    ("equip_skill2", 168, "装备技能2", "装备技能槽2 → TKSkill"),  # sub_42234C: a2[84]
-    ("equip_skill3", 170, "装备技能3", "装备技能槽3 → TKSkill"),  # sub_42234C: a2[85]
-    ("passive1",     172, "被动技能1", "被动技能1 → TKSkill"),  # sub_422BBC
-    ("passive2",     174, "被动技能2", "被动技能2 → TKSkill"),  # sub_422BBC
-]
-# 角色使用/装备权限 [77]-[81] — sub_41928C: 按位与校验
-CHAR_USE_RIGHT_FIELDS = [
-    ("use_right_medicine",  154, "药品权限",   "药品使用权限位掩码 (待验证); 全143条原始值=0"),
-    ("use_right_item",      156, "道具权限",   "道具使用权限位掩码 (1=战斗 2=非战斗 4=主角限定); 主角#0=7"),
-    ("use_right_weapon",    158, "武器权限",   "武器装备权限位掩码 (1=刀 2=剑 4=枪 8=矛 16=弓 32=大刀 64=戟 128=锤); 主角#0=63"),
-    ("use_right_armor",     160, "防具权限",   "防具装备权限位掩码 (1=衣袍 2=铠甲); 主角#0=3"),
-    ("use_right_accessory", 162, "饰品权限",   "饰品装备权限位掩码 (待验证); 全143条原始值=0"),
-]
-STATUS_FIELDS_CAUSE = [
-    ("cause_mask1", 134, "攻击导致状态 1-16",  "攻击/命中时让目标进入的状态位掩码 (bit0-15; 来自装备 v9[26])"),
-    ("cause_mask2", 136, "攻击导致状态 17-32", "攻击/命中时让目标进入的状态位掩码 (bit16-31; 来自装备 v9[27])"),
-]
-# 战后奖励 — 实测验证: 盜賊嘍嘍 field[268]=2→JP=2, field[269]=20→Lv3 Gold=40
-BATTLE_REWARD_FIELDS = [
-    ("jp_reward",   536, "战后JP点",   "击败后获得技能点数 (直接值, 无等级缩放); 盜賊嘍嘍=2 西羌王=100"),
-    ("gold_reward", 538, "战后金钱基数","击败后获得金钱基数; 实际获得=基数×2; 盜賊嘍嘍=20→40 小混混=25→50"),
-]
-# 成长率 [264]-[266] — 五爪金龍验证: 初期27 中期24 后期21; 等级>=21中期, >=41后期
-GROWTH_FIELDS = [
-    ("growth_early", 528, "成长率初期", "成长率初期; 五爪金龍=27 西羌王=27 呂布=20"),
-    ("growth_mid",   530, "成长率中期", "成长率中期; 五爪金龍=24 西羌王=24 呂布=25"),
-    ("growth_late",  532, "成长率后期", "成长率后期; 五爪金龍=21 西羌王=21 呂布=25"),
-]
-# 可掉落物品 [270]-[272] — 双路径机制，详见 掉落物品概率分析.md
-# 路径A（死亡掉落, sub_4400DC）: 独立 100/20/5; 路径B（探寶技能, action 239）: 级联 80/15/5
-DROP_ITEM_FIELDS = [
-    ("drop_item0", 540, "必掉落物品", "死亡掉落(路径A)中100%掉落; 探寶技能(路径B)中80%掉落; 仅此槽有物品时必掉"),
-    ("drop_item1", 542, "高概率掉落", "死亡掉落(路径A)中20%掉落; 探寶技能(路径B)中15%掉落; 优先填第2槽"),
-    ("drop_item2", 544, "低概率掉落", "死亡掉落(路径A)中5%掉落; 探寶技能(路径B)中5%掉落; 判定优先级最高"),
-]
-
-ALL_NAMED_FIELDS = (IDENTITY_FIELDS + HPMP_FIELDS + STAT_FIELDS + CHAR_ATTR_FIELDS +
-    SKILL_BONUS_FIELDS + REACTION_FIELDS + STATUS_SLOT_FIELDS +
-    STATUS_FIELDS_CAUSE + EQUIP_FIELDS + CHAR_USE_RIGHT_FIELDS +
-    EQUIP_SKILL_FIELDS + PATCH_FIELDS + GROWTH_FIELDS + BATTLE_REWARD_FIELDS + DROP_ITEM_FIELDS)
-
-# 装备与技能标签页字段 (Tab2) — 供跨角色复制/粘贴使用 (顺序与 _build_tab2 一致)
-EQUIP_PANEL_FIELDS = (EQUIP_FIELDS + CHAR_USE_RIGHT_FIELDS + EQUIP_SKILL_FIELDS +
-    PATCH_FIELDS + GROWTH_FIELDS + BATTLE_REWARD_FIELDS + DROP_ITEM_FIELDS)
 
 # ═══════════════════════════════════════════════════════════════
 # 数据加载/保存 (100% 原始逻辑)
@@ -458,10 +300,6 @@ def get_field(rec, byte_off):
 def set_field(rec, byte_off, val):
     """写入指定字节偏移处的 int16 字段值"""
     rec['fields'][byte_off // 2] = val
-
-# 尾部未分析区域
-TAIL_START = 260  # int16 offset (技能学习状态结束于 [259])
-TAIL_END = 527
 
 # ═══════════════════════════════════════════════════════════════
 # 弹窗选择器
@@ -1069,6 +907,7 @@ class WarpcEditorV2(QMainWindow):
 
         self.warpc_path = self.tkt_path = None
         self.records = []
+        self._draft_records = []   # 共享草稿层: 表单/表格模式均编辑草稿, 「应用」才提交到 records
         self.tkt = {}
         self._original_records = []  # 原始快照，用于 MOD 导出
         self.mu_path = None
@@ -1106,6 +945,10 @@ class WarpcEditorV2(QMainWindow):
 
         self._edit_vars = {}
         self._edit_extras = {}
+        self._edit_snapshot = None      # 表单控件快照 (未应用修改守卫)
+        self._field_locator = {}        # fn → (tab索引, 标签控件) 供字段搜索定位
+        self._cur_tab_index = -1        # _build_scroll_tab 当前构建中的 tab 索引
+        self._table_panel = None        # 表格编辑模式面板 (懒构建)
         self._status_widgets = []
         self._status_resist_widgets = []
         self._skill_learn_widgets = []
@@ -1138,6 +981,68 @@ class WarpcEditorV2(QMainWindow):
         self._apply_theme()
         self._refresh_table()
         apply_godot_theme(self, self._is_dark)
+        if self._table_panel is not None:
+            self._table_panel.apply_theme(self._is_dark)
+
+    # ── 字段定位 / 编辑模式切换 ──
+    def _locate_field(self):
+        """工具栏字段搜索: 跳转到字段所在 Tab 并临时高亮标签"""
+        text = self.field_search.text().strip()
+        if not text:
+            return
+        key = self._field_search_map.get(text)
+        if key is None:
+            # 模糊包含匹配第一个
+            low = text.lower()
+            for disp in sorted(self._field_search_map.keys()):
+                if low in disp.lower():
+                    key = self._field_search_map[disp]
+                    break
+        if key is None or key not in self._field_locator:
+            self.status_var.setText(f"未找到字段: {text}")
+            return
+        # 表格模式下先切回表单模式
+        if self.btn_mode_toggle.isChecked():
+            self.btn_mode_toggle.setChecked(False)
+        tab_idx, lbl = self._field_locator[key]
+        self.tabs.setCurrentIndex(tab_idx)
+        scroll = self.tabs.widget(tab_idx)
+        if isinstance(scroll, QScrollArea):
+            scroll.ensureWidgetVisible(lbl, 50, 120)
+        orig = lbl.styleSheet()
+        lbl.setStyleSheet("background:#e8a040; color:#1a1a1a; border-radius:3px; padding:1px 3px;")
+        QTimer.singleShot(1500, lambda: lbl.setStyleSheet(orig))
+
+    def _toggle_edit_mode(self, checked):
+        """表单模式 ↔ 表格模式切换 (共享 self.records 唯一数据源)"""
+        if checked:
+            if not self.records:
+                self.btn_mode_toggle.blockSignals(True)
+                self.btn_mode_toggle.setChecked(False)
+                self.btn_mode_toggle.blockSignals(False)
+                self.status_var.setText("请先加载 WarPC 数据")
+                return
+            # 进入表格模式前静默暂存表单控件值到草稿 (两模式共享草稿, 无需弹窗)
+            if self._editing_idx >= 0:
+                self._flush_widgets_to_draft()
+            if self._table_panel is None:
+                from warpc_table_mode import WarpcTablePanel
+                self._table_panel = WarpcTablePanel(self)
+                self._mode_stack.addWidget(self._table_panel)
+            self._table_panel.refresh()
+            self._mode_stack.setCurrentWidget(self._table_panel)
+            self.btn_mode_toggle.setText("📝 表单模式")
+        else:
+            self._mode_stack.setCurrentIndex(0)
+            self.btn_mode_toggle.setText("📊 表格模式")
+            # 表格模式可能改动了草稿 → 从草稿刷新表单 (保持未应用状态同步)
+            self._refresh_table()
+            if 0 <= self._editing_idx < len(self._draft_records):
+                self._populate_edit(self._draft_records[self._editing_idx])
+
+    def _on_table_mode_edited(self, rec_idx):
+        """表格模式单元格编辑后回调: 仅改草稿, 不置脏不提交"""
+        self.status_var.setText(f"角色 #{rec_idx} 已修改 (草稿, 未应用 — 点「应用修改」提交)")
 
     # ── 配置自动加载 ──
     def _auto_load_use_right_defs(self):
@@ -1206,7 +1111,6 @@ class WarpcEditorV2(QMainWindow):
         fm.addSeparator()
         fm.addAction("导入 MOD (.tksmod)…", self._import_tksmod)
         fm.addSeparator()
-        fm.addSeparator()
         fm.addAction("退出", self.close)
 
         em = mb.addMenu("编辑(&E)")
@@ -1233,9 +1137,32 @@ class WarpcEditorV2(QMainWindow):
         toolbar.addWidget(QPushButton("🔍 搜索", clicked=self._apply_filter))
         toolbar.addWidget(QPushButton("🗑 清除", clicked=self._clear_filter))
         toolbar.addSpacing(10)
+        # 字段定位: 输入字段名/标签后回车跳转到对应 Tab 并高亮
+        toolbar.addWidget(QLabel("定位字段:"))
+        self.field_search = QLineEdit()
+        self.field_search.setFixedWidth(160)
+        self.field_search.setPlaceholderText("字段名称…")
+        self._field_search_map = {}
+        for _fd in FIELD_SCHEMA.values():
+            self._field_search_map[f"{_fd.label} [{_fd.index}]"] = _fd.key
+        completer = QCompleter(sorted(self._field_search_map.keys()))
+        completer.setFilterMode(Qt.MatchContains)
+        completer.setCaseSensitivity(Qt.CaseInsensitive)
+        self.field_search.setCompleter(completer)
+        self.field_search.returnPressed.connect(self._locate_field)
+        completer.activated.connect(lambda _t: QTimer.singleShot(0, self._locate_field))
+        toolbar.addWidget(self.field_search)
+        toolbar.addSpacing(10)
         toolbar.addWidget(QPushButton("🔄 重新加载", clicked=self._reload))
         toolbar.addWidget(QPushButton("🌗 切换主题", clicked=self._toggle_theme))
         toolbar.addStretch()
+        # 编辑模式切换: 表单(单角色深度编辑) / 表格(跨角色批量编辑)
+        self.btn_mode_toggle = QPushButton("📊 表格模式")
+        self.btn_mode_toggle.setCheckable(True)
+        self.btn_mode_toggle.setToolTip("在表单编辑与表格批量编辑之间切换")
+        self.btn_mode_toggle.toggled.connect(self._toggle_edit_mode)
+        toolbar.addWidget(self.btn_mode_toggle)
+        toolbar.addSpacing(10)
         toolbar.addWidget(QPushButton("✅ 应用修改", clicked=self._apply_edit))
         toolbar.addWidget(QPushButton("🔄 重置", clicked=self._reset_edit))
         main_layout.addLayout(toolbar)
@@ -1244,7 +1171,10 @@ class WarpcEditorV2(QMainWindow):
         splitter = QSplitter(Qt.Horizontal)
         splitter.setHandleWidth(7)
         splitter.setChildrenCollapsible(False)
-        main_layout.addWidget(splitter, 1)
+        # 中央堆叠容器: page0=表单模式(splitter) page1=表格模式(懒构建)
+        self._mode_stack = QStackedWidget()
+        self._mode_stack.addWidget(splitter)
+        main_layout.addWidget(self._mode_stack, 1)
 
         # 左侧：角色列表
         self.table = QTableWidget(0, 6)
@@ -1358,6 +1288,7 @@ class WarpcEditorV2(QMainWindow):
         inner.layout().setSpacing(4)
         scroll.setWidget(inner)
         self.tabs.addTab(scroll, name)
+        self._cur_tab_index = self.tabs.count() - 1  # 供字段定位注册
         return inner
 
     def _build_section(self, parent, title, fields, cols=6, field_ft='int'):
@@ -1402,6 +1333,7 @@ class WarpcEditorV2(QMainWindow):
         lbl.setToolTip(f"[{fo//2}] byte {fo}: {cmt}")
         lbl.setProperty("class", "PropLabel")
         cell.addWidget(lbl)
+        self._field_locator[fn] = (self._cur_tab_index, lbl)  # 字段搜索定位
 
         ev = QLineEdit()
         self._edit_vars[fn] = ev
@@ -1569,6 +1501,7 @@ class WarpcEditorV2(QMainWindow):
             lbl.setProperty("class", "PropLabel")
             lbl.setToolTip(f"[{fo//2}] {cmt}")
             cell.addWidget(lbl)
+            self._field_locator[fn] = (self._cur_tab_index, lbl)  # 字段搜索定位
             cb = NoWheelComboBox()
             cb.addItems(status_options)
             dur = QLineEdit("0")
@@ -1856,9 +1789,9 @@ class WarpcEditorV2(QMainWindow):
                 if cb.itemText(vi).startswith(f'{byte_val}-'):
                     cb.setCurrentIndex(vi)
                     break
-        self._apply_edit()
+        self._flush_widgets_to_draft()
         self.status_var.setText(
-            f"已粘贴技能学习数据 → 角色 #{self._editing_idx}")
+            f"已粘贴技能学习数据 → 角色 #{self._editing_idx} (草稿, 未应用)")
 
     def _copy_skill_effect(self):
         if self._editing_idx < 0 or not self._skill_effect_widgets:
@@ -1884,9 +1817,9 @@ class WarpcEditorV2(QMainWindow):
         for (i, ev), val in zip(self._skill_effect_widgets,
                                 self._clip_skill_effect):
             ev.setText(str(val))
-        self._apply_edit()
+        self._flush_widgets_to_draft()
         self.status_var.setText(
-            f"已粘贴技能效果数据 → 角色 #{self._editing_idx}")
+            f"已粘贴技能效果数据 → 角色 #{self._editing_idx} (草稿, 未应用)")
 
     def _copy_equip(self):
         if self._editing_idx < 0:
@@ -1910,14 +1843,11 @@ class WarpcEditorV2(QMainWindow):
         for fn, val in self._clip_equip.items():
             if fn in self._edit_vars:
                 self._edit_vars[fn].setText(val)
-        self._apply_edit()
+        self._flush_widgets_to_draft()
         # 刷新装备/技能名称等额外显示 (物品名、技能名、权限标签)
-        rec = (self._current_record
-               if (hasattr(self, '_current_record') and self._current_record)
-               else self.records[self._editing_idx])
-        self._populate_edit(rec)
+        self._populate_edit(self._draft_records[self._editing_idx])
         self.status_var.setText(
-            f"已粘贴装备与技能数据 → 角色 #{self._editing_idx}")
+            f"已粘贴装备与技能数据 → 角色 #{self._editing_idx} (草稿, 未应用)")
 
     def _build_tab5(self):
         p = self._build_scroll_tab("全部字段")
@@ -2108,6 +2038,8 @@ class WarpcEditorV2(QMainWindow):
             self._dirty = False
             # 保存原始快照用于 MOD 导出差异比对
             self._original_records = [list(r['fields']) for r in self.records]
+            # 重建共享草稿层 (与 records 一致, 无待应用修改)
+            self._sync_draft_from_records()
             self.skill_names, self._skill_types = self._load_skill_names()
             self._build_skill_graph()
             self.tkkon_names = self._load_tkkon_names()
@@ -2136,6 +2068,7 @@ class WarpcEditorV2(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "加载失败", str(e))
             self.records = []
+            self._draft_records = []
         self._update_paths()
         self._set_edit_enabled(True)
         self._apply_filter()
@@ -2628,13 +2561,145 @@ class WarpcEditorV2(QMainWindow):
         if not sel:
             # 清除视图
             self._editing_idx = -1
+            self._edit_snapshot = None
             self.preview_name.setText("(未选中)")
             self.preview_meta.setText("")
             self.preview_desc.setText("请在左侧列表中选择角色。")
             self.preview_avatar.clear()
             return
         idx = int(self.table.item(sel[0].row(), 0).text())
-        self._populate_edit(self.records[idx])
+        if idx == self._editing_idx:
+            return
+        # 切换角色前静默暂存到草稿 (不弹窗, 统一由「应用修改」提交)
+        if self._editing_idx >= 0:
+            self._flush_widgets_to_draft()
+        self._populate_edit(self._draft_records[idx])
+
+    def _capture_snapshot(self):
+        """抓取当前表单全部控件值的快照 (用于未应用修改检测)"""
+        snap = {}
+        for fn, w in self._edit_vars.items():
+            snap[fn] = w.text()
+        for fn in ('role', 'reaction_group'):
+            if fn in self._edit_extras:
+                snap['combo_' + fn] = self._edit_extras[fn].currentIndex()
+        for fs_fn, fo, cb, dur in self._status_widgets:
+            snap['slot_' + fs_fn] = (cb.currentIndex(), dur.text())
+        for byte_idx, ev in self._status_resist_widgets:
+            snap[f'resist_{byte_idx}'] = ev.text()
+        for skill_idx, cb in self._skill_learn_widgets:
+            snap[f'learn_{skill_idx}'] = cb.currentIndex()
+        for i, ev in getattr(self, '_skill_effect_widgets', []):
+            snap[f'effect_{i}'] = ev.text()
+        return snap
+
+    def _has_unapplied_changes(self):
+        return (self._edit_snapshot is not None
+                and self._capture_snapshot() != self._edit_snapshot)
+
+    # ── 共享草稿层 (表单/表格模式公用, 「应用修改」才提交到 records) ──
+    def _sync_draft_from_records(self):
+        """草稿重建为与 records 一致 (丢弃全部待应用修改)"""
+        self._draft_records = [{'index': r['index'], 'fields': list(r['fields'])}
+                               for r in self.records]
+
+    def _has_pending_draft(self):
+        """草稿中是否存在尚未应用到 records 的修改"""
+        if len(self._draft_records) != len(self.records):
+            return False
+        return any(d['fields'] != r['fields']
+                   for d, r in zip(self._draft_records, self.records))
+
+    def _commit_draft(self):
+        """将全部草稿修改提交到 records, 返回变更的角色编号列表"""
+        changed = []
+        for d, r in zip(self._draft_records, self.records):
+            if d['fields'] != r['fields']:
+                r['fields'] = list(d['fields'])
+                changed.append(r['index'])
+        if changed:
+            self._dirty = True
+            for i in changed:
+                self.record_applied.emit(i)
+        return changed
+
+    def _ensure_draft_resolved(self):
+        """保存/导出/结构操作前处理待应用草稿; 返回 False 表示用户取消"""
+        self._flush_widgets_to_draft()
+        if not self._has_pending_draft():
+            return True
+        ret = self._prompt_unapplied()
+        if ret == QMessageBox.Cancel:
+            return False
+        if ret == QMessageBox.Apply:
+            violations = self._validate_draft()
+            if violations:
+                self._show_draft_violations(violations)
+                return False
+            self._commit_draft()
+        else:  # Discard: 草稿回退到已应用状态
+            self._sync_draft_from_records()
+            if 0 <= self._editing_idx < len(self._draft_records):
+                self._populate_edit(self._draft_records[self._editing_idx])
+            if self._table_panel is not None:
+                self._table_panel.model.reload()
+        return True
+
+    def _validate_draft(self):
+        """应用前终检: 校验待应用草稿的取值域 (仅检查用户改动过的值,
+        文件自带的异常值不阻断)。返回 [(角色#, 名称, 字段, 当前值, 合法域)]"""
+        violations = []
+        enum_fields = []
+        for fd in FIELD_SCHEMA.values():
+            if fd.ftype == 'enum' and fd.enum_items:
+                domain = set()
+                for it in fd.enum_items:
+                    try:
+                        domain.add(parse_enum_value(it))
+                    except ValueError:
+                        pass
+                enum_fields.append((fd, domain))
+        for d, r in zip(self._draft_records, self.records):
+            if d['fields'] == r['fields']:
+                continue  # 无待应用修改
+            f, rf = d['fields'], r['fields']
+            nm = self._char_name(d)
+            for fd, domain in enum_fields:
+                v = f[fd.index]
+                if v not in domain and v != rf[fd.index]:
+                    dom_str = '/'.join(str(x) for x in sorted(domain))
+                    violations.append((d['index'], nm, fd.label, v, dom_str))
+            for i in range(8):
+                sid = get_packed_byte(f, STATUS_SLOT_BASE, i * 2)
+                if (sid > len(STATUS_NAMES)
+                        and sid != get_packed_byte(rf, STATUS_SLOT_BASE, i * 2)):
+                    violations.append((d['index'], nm, f'状态槽{i}状态ID', sid,
+                                       f'0-{len(STATUS_NAMES)}'))
+        return violations
+
+    def _show_draft_violations(self, violations):
+        lines = [f"#{i} {nm} — {label}: {v}  (合法值: {dom})"
+                 for i, nm, label, v, dom in violations[:15]]
+        if len(violations) > 15:
+            lines.append(f"… 等共 {len(violations)} 处")
+        QMessageBox.warning(self, "存在非法取值, 未应用",
+            "以下字段的值超出合法范围, 请修正后再应用:\n\n" + '\n'.join(lines))
+        self.status_var.setText(f"应用被阻止: {len(violations)} 处非法取值")
+
+    def _prompt_unapplied(self):
+        """弹出未应用修改三选框, 返回 QMessageBox.Apply/Discard/Cancel"""
+        pend = sum(1 for d, r in zip(self._draft_records, self.records)
+                   if d['fields'] != r['fields'])
+        box = QMessageBox(self)
+        box.setWindowTitle("未应用的修改")
+        box.setText(f"有 {pend} 个角色的修改尚未应用。")
+        box.setInformativeText("是否应用这些修改?")
+        box.setStandardButtons(QMessageBox.Apply | QMessageBox.Discard | QMessageBox.Cancel)
+        box.button(QMessageBox.Apply).setText("应用修改")
+        box.button(QMessageBox.Discard).setText("放弃修改")
+        box.button(QMessageBox.Cancel).setText("取消")
+        box.setIcon(QMessageBox.Question)
+        return box.exec()
 
     def _populate_edit(self, rec):
         self._editing_idx = rec['index']
@@ -2831,6 +2896,9 @@ class WarpcEditorV2(QMainWindow):
             if fn in self._edit_vars:
                 self._edit_vars[fn].setText(str(f[j]))
 
+        # 刷新快照 (未应用修改守卫基准)
+        self._edit_snapshot = self._capture_snapshot()
+
     # ── 弹窗 ──
     def _pick_skill(self, fn):
         if not self.skill_names: return
@@ -3024,8 +3092,39 @@ class WarpcEditorV2(QMainWindow):
 
     # ── 应用编辑 ──
     def _apply_edit(self):
-        if self._editing_idx < 0: return
-        rec = self._current_record if hasattr(self, '_current_record') and self._current_record else self.records[self._editing_idx]
+        """应用修改: 表单控件→草稿, 终检取值域, 再将全部待应用草稿提交到 records"""
+        if not self.records:
+            return
+        self._flush_widgets_to_draft()
+        violations = self._validate_draft()
+        if violations:
+            self._show_draft_violations(violations)
+            return
+        changed = self._commit_draft()
+        cur = self._editing_idx
+        if hasattr(self, 'table') and self.table.isVisible():
+            self._refresh_table()
+            for r in range(self.table.rowCount()):
+                if int(self.table.item(r, 0).text()) == cur:
+                    self.table.selectRow(r)
+                    break
+        if self._table_panel is not None:
+            self._table_panel.model.reload()
+        if hasattr(self, 'status_var'):
+            if changed:
+                self.status_var.setText(f"已应用 {len(changed)} 个角色的修改 (内存, 未保存)")
+            else:
+                self.status_var.setText("没有需要应用的修改")
+
+    def _flush_widgets_to_draft(self):
+        """表单控件当前值 → 当前角色草稿 (不提交到 records)"""
+        if self._editing_idx < 0 or self._editing_idx >= len(self._draft_records):
+            return
+        # 控件未改动时跳过: 避免 populate/flush 往返将等价编码归一化
+        # (如空状态槽 0 → -256) 产生幻影差异
+        if not self._has_unapplied_changes():
+            return
+        rec = self._draft_records[self._editing_idx]
         f = rec['fields']
 
         # Role / Reaction group
@@ -3132,28 +3231,18 @@ class WarpcEditorV2(QMainWindow):
                 except:
                     pass
 
-        self._dirty = True
-        # 同步回 records (独立模式需要)
-        if self.records and self._editing_idx < len(self.records):
-            self.records[self._editing_idx] = rec
-        nm = self._char_name(rec)
-        hp_str = f"{f[5]}/{f[8]}" if f[5] or f[8] else ""
-        mp_str = f"{f[6]}/{f[10]}" if f[6] or f[10] else ""
-        role_str = '未激活' if f[3]==-1 else ('已激活' if f[3]==0 else str(f[3]))
-        if hasattr(self, 'table') and self.table.isVisible():
-            self._refresh_table()
-            for r in range(self.table.rowCount()):
-                if int(self.table.item(r, 0).text()) == rec['index']:
-                    self.table.selectRow(r)
-                    break
-        if hasattr(self, 'status_var'):
-            self.status_var.setText(f"角色 #{rec['index']} 已修改 (内存, 未保存)")
-        self.record_applied.emit(rec['index'])
+        # 刷新快照基准 (草稿已吸收控件值)
+        self._edit_snapshot = self._capture_snapshot()
 
     def _reset_edit(self):
-        if self._editing_idx >= 0:
-            rec = self._current_record if hasattr(self, '_current_record') and self._current_record else self.records[self._editing_idx]
-            self._populate_edit(rec)
+        """重置: 当前角色草稿回退为已应用值并刷新表单"""
+        if 0 <= self._editing_idx < len(self.records):
+            self._draft_records[self._editing_idx]['fields'] = \
+                list(self.records[self._editing_idx]['fields'])
+            self._populate_edit(self._draft_records[self._editing_idx])
+            if self._table_panel is not None:
+                self._table_panel.model.reload()
+            self.status_var.setText(f"角色 #{self._editing_idx} 草稿已重置为已应用值")
 
     # ── 新增/复制/导出/导入 ──
     def _add_new(self):
@@ -3176,6 +3265,7 @@ class WarpcEditorV2(QMainWindow):
         for si in range(82, 88):
             fields[si] = -1
         self.records.append({'index': new_idx, 'fields': fields})
+        self._draft_records.append({'index': new_idx, 'fields': list(fields)})
         self._dirty = True
         self._apply_filter()
         for r in range(self.table.rowCount()):
@@ -3186,9 +3276,12 @@ class WarpcEditorV2(QMainWindow):
 
     def _copy_record(self):
         if self._editing_idx < 0: return
-        src = self.records[self._editing_idx]
+        # 以草稿为源 (复制用户当前看到/编辑中的状态)
+        self._flush_widgets_to_draft()
+        src = self._draft_records[self._editing_idx]
         new_idx = len(self.records)
         self.records.append({'index': new_idx, 'fields': list(src['fields'])})
+        self._draft_records.append({'index': new_idx, 'fields': list(src['fields'])})
         self._dirty = True
         self._apply_filter()
         for r in range(self.table.rowCount()):
@@ -3219,9 +3312,11 @@ class WarpcEditorV2(QMainWindow):
         tgt_idx = int(self.table.item(tgt_row, 0).text())
         if cur_idx == tgt_idx:
             return
-        # 整体交换两条记录的字段数据 (槽位号 index 不变, 数据互换位置)
+        # 整体交换两条记录的字段数据 (槽位号 index 不变, 数据互换位置); 草稿同步交换
         self.records[cur_idx]['fields'], self.records[tgt_idx]['fields'] = \
             self.records[tgt_idx]['fields'], self.records[cur_idx]['fields']
+        self._draft_records[cur_idx]['fields'], self._draft_records[tgt_idx]['fields'] = \
+            self._draft_records[tgt_idx]['fields'], self._draft_records[cur_idx]['fields']
         self._dirty = True
         self._refresh_table()
         # 选择跟随数据: 选中目标行, 使被移动的角色保持选中
@@ -3230,7 +3325,9 @@ class WarpcEditorV2(QMainWindow):
 
     def _export_warpc(self):
         if self._editing_idx < 0: return
-        rec = self.records[self._editing_idx]
+        # 导出当前草稿状态 (所见即所导)
+        self._flush_widgets_to_draft()
+        rec = self._draft_records[self._editing_idx]
         nm = self._char_name(rec)
         safe_name = "".join(c for c in nm if c not in r'\/:*?"<>|' and ord(c)>=32) or f"角色_{self._editing_idx}"
         fp, _ = QFileDialog.getSaveFileName(self, "导出角色", f"{safe_name}.warpc", "WarPC文件 (*.warpc)")
@@ -3258,6 +3355,7 @@ class WarpcEditorV2(QMainWindow):
             fields = list(struct.unpack_from('<' + 'h' * WARPC_FIELD_COUNT, raw, 0))
             new_idx = len(self.records)
             self.records.append({'index': new_idx, 'fields': fields})
+            self._draft_records.append({'index': new_idx, 'fields': list(fields)})
             self._dirty = True
             self._apply_filter()
             for r in range(self.table.rowCount()):
@@ -3270,6 +3368,9 @@ class WarpcEditorV2(QMainWindow):
 
     # ── 保存 ──
     def _save(self):
+        # 待应用草稿守卫: 保存前必须先应用或放弃
+        if not self._ensure_draft_resolved():
+            return
         if self._save_mode:
             self._save_to_save_file()
             return
@@ -3317,6 +3418,9 @@ class WarpcEditorV2(QMainWindow):
         """导出当前修改为 .tksmod MOD 文件"""
         if not self.records or not self._original_records:
             QMessageBox.information(self, "提示", "请先加载数据")
+            return
+        # 待应用草稿守卫: MOD 差异基于 records, 导出前先应用或放弃
+        if not self._ensure_draft_resolved():
             return
 
         # 收集 MOD 元数据
@@ -3397,6 +3501,9 @@ class WarpcEditorV2(QMainWindow):
         """导出 MOD — 指定原始参考目录进行差异比对（适用于当前文件已被修改的情况）"""
         if not self.records:
             QMessageBox.information(self, "提示", "请先加载数据")
+            return
+        # 待应用草稿守卫: 差异基于 records
+        if not self._ensure_draft_resolved():
             return
 
         # 预构建当前字段
@@ -3502,6 +3609,7 @@ class WarpcEditorV2(QMainWindow):
         # 将导入的数据填充到编辑器
         self.records = [{'index': i, 'fields': row} for i, row in enumerate(records)]
         self._original_records = [list(r['fields']) for r in self.records]
+        self._sync_draft_from_records()
         self._dirty = False
 
         # 记住 MOD 元数据，方便再次导出
@@ -3560,6 +3668,20 @@ class WarpcEditorV2(QMainWindow):
             format_about_header('warpc_editor'))
 
     def closeEvent(self, event):
+        # 待应用草稿守卫 (含表单控件未暂存的修改)
+        self._flush_widgets_to_draft()
+        if self._has_pending_draft():
+            ret = self._prompt_unapplied()
+            if ret == QMessageBox.Cancel:
+                event.ignore()
+                return
+            if ret == QMessageBox.Apply:
+                violations = self._validate_draft()
+                if violations:
+                    self._show_draft_violations(violations)
+                    event.ignore()
+                    return
+                self._commit_draft()
         if not confirm_close(self, self._dirty):
             event.ignore()
         else:
