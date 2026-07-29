@@ -23,7 +23,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtGui import QColor, QKeySequence, QPainter, QPen
 from PySide6.QtCore import (
     Qt, QAbstractTableModel, QModelIndex, QSortFilterProxyModel, QEvent,
-    QRect, QItemSelection, QItemSelectionModel,
+    QRect, QItemSelection, QItemSelectionModel, QTimer,
 )
 
 from warpc_schema import (
@@ -573,10 +573,23 @@ class FillHandleTableView(QTableView):
         self.fill_requested = None
         # 回调(proxy_index)->bool: 该单元格是否允许"直接输入数字开始编辑"
         self.digit_edit_allowed = None
+        # 冻结列总宽 (由面板同步); 键盘左移时防止当前格藏到冻结列下方
+        self.frozen_width = 0
         self._dragging = False
         self._drag_base = None
         self._fill_box = None
         self.viewport().setMouseTracking(True)
+
+    def moveCursor(self, action, modifiers):
+        """键盘左移时若目标格位于冻结列遮罩下, 额外滚动使其可见 (Qt 冻结列标准处理)"""
+        cur = super().moveCursor(action, modifiers)
+        if (self.frozen_width > 0 and action == QAbstractItemView.MoveLeft
+                and cur.column() > 1
+                and self.visualRect(cur).topLeft().x() < self.frozen_width):
+            new_val = (self.horizontalScrollBar().value()
+                       + self.visualRect(cur).topLeft().x() - self.frozen_width)
+            self.horizontalScrollBar().setValue(new_val)
+        return cur
 
     # ── Excel 式直接输入: 选中单元格后敲数字/负号立即进入编辑并替换原值 ──
     def keyPressEvent(self, e):
@@ -782,6 +795,9 @@ class WarpcTablePanel(QWidget):
         self.view.customContextMenuRequested.connect(self._show_context_menu)
         layout.addWidget(self.view, 1)
 
+        # 冻结列: #/角色名 固定不随横向滚动 (Qt Frozen Column 叠加视图方案)
+        self._setup_frozen_view()
+
         # 批量编辑快捷键: 用事件过滤器在 KeyPress 阶段拦截 Ctrl+C/V/D。
         # 不用 QShortcut — PySide6 构造函数直连回调+context 的重载绑定不生效
         # (构造不报错但按键不触发), 事件过滤器路径确定性更强。
@@ -790,6 +806,62 @@ class WarpcTablePanel(QWidget):
         self.view.viewport().installEventFilter(self)
 
         self._apply_preset(self.preset_combo.currentText())
+
+    # ── 冻结列 (#/角色名) ──
+    def _setup_frozen_view(self):
+        """在主表格上叠加只显示前两列的同步视图, 横向滚动时固定不动"""
+        fz = QTableView(self.view)
+        fz.setProperty("class", "WarpcGrid")
+        fz.setModel(self.proxy)
+        fz.setSelectionModel(self.view.selectionModel())  # 共享选区
+        fz.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        fz.setSelectionBehavior(QAbstractItemView.SelectItems)
+        fz.setEditTriggers(QAbstractItemView.NoEditTriggers)  # 两列均只读
+        fz.setFocusPolicy(Qt.NoFocus)
+        fz.verticalHeader().setVisible(False)
+        fz.setAlternatingRowColors(True)
+        fz.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        fz.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        # 右键菜单在冻结区同样可用
+        fz.setContextMenuPolicy(Qt.CustomContextMenu)
+        fz.customContextMenuRequested.connect(
+            lambda pos: self._show_context_menu(pos, fz))
+        # 竖直滚动双向同步
+        self.view.verticalScrollBar().valueChanged.connect(
+            fz.verticalScrollBar().setValue)
+        fz.verticalScrollBar().valueChanged.connect(
+            self.view.verticalScrollBar().setValue)
+        # 主表列宽变化 → 同步冻结列宽与遮罩几何
+        self.view.horizontalHeader().sectionResized.connect(self._on_frozen_section_resized)
+        # 排序: 冻结表头点击转发到主视图, 指示器双向同步
+        fz.horizontalHeader().setSectionsClickable(True)
+        fz.horizontalHeader().setSortIndicatorShown(True)
+        fz.horizontalHeader().sectionClicked.connect(self._frozen_header_clicked)
+        self.view.horizontalHeader().sortIndicatorChanged.connect(
+            lambda col, order: fz.horizontalHeader().setSortIndicator(col, order))
+        self.frozen = fz
+        fz.show()
+
+    def _frozen_header_clicked(self, col):
+        """冻结表头点击: 复刻主视图的排序切换逻辑 (升序↔降序)"""
+        hh = self.view.horizontalHeader()
+        if hh.sortIndicatorSection() == col and hh.sortIndicatorOrder() == Qt.AscendingOrder:
+            self.view.sortByColumn(col, Qt.DescendingOrder)
+        else:
+            self.view.sortByColumn(col, Qt.AscendingOrder)
+
+    def _on_frozen_section_resized(self, logical, _old, new):
+        if logical < 2:
+            self.frozen.setColumnWidth(logical, new)
+            self._update_frozen_geometry()
+
+    def _update_frozen_geometry(self):
+        """冻结遮罩定位: 覆盖主表前两列区域 (含表头)"""
+        w = self.view.columnWidth(0) + self.view.columnWidth(1)
+        self.frozen.setGeometry(
+            self.view.frameWidth(), self.view.frameWidth(), w,
+            self.view.viewport().height() + self.view.horizontalHeader().height())
+        self.view.frozen_width = w  # 供 moveCursor 防遮挡
 
     def _digit_edit_allowed(self, proxy_index):
         """数字直接输入仅适用于纯数值列; enum/状态/技能学习下拉列保持下拉编辑习惯"""
@@ -803,6 +875,9 @@ class WarpcTablePanel(QWidget):
         return True
 
     def eventFilter(self, obj, event):
+        if event.type() == QEvent.Resize and obj is self.view:
+            # 主表尺寸变化 → 延迟到布局稳定后重新定位冻结遮罩
+            QTimer.singleShot(0, self._update_frozen_geometry)
         if event.type() == QEvent.KeyPress and obj in (self.view, self.view.viewport()):
             if event.matches(QKeySequence.Undo):
                 self._undo()
@@ -839,8 +914,9 @@ class WarpcTablePanel(QWidget):
             return None
         return self.proxy.mapToSource(idx).row()
 
-    def _show_context_menu(self, pos):
-        menu = QMenu(self.view)
+    def _show_context_menu(self, pos, src_view=None):
+        src_view = src_view or self.view
+        menu = QMenu(src_view)
         row = self._current_source_row()
         act_copy = menu.addAction("复制整行 (全部字段)")
         act_copy.setEnabled(row is not None)
@@ -849,7 +925,7 @@ class WarpcTablePanel(QWidget):
         menu.addSeparator()
         act_ccell = menu.addAction("复制选中单元格 (Ctrl+C)")
         act_pcell = menu.addAction("粘贴到选中 (Ctrl+V)")
-        chosen = menu.exec(self.view.viewport().mapToGlobal(pos))
+        chosen = menu.exec(src_view.viewport().mapToGlobal(pos))
         if chosen is act_copy:
             self._copy_row()
         elif chosen is act_paste:
@@ -970,6 +1046,13 @@ class WarpcTablePanel(QWidget):
                 self.view.setColumnWidth(ci, 118)  # 容纳下拉标签如 "20-组技能学会"
             else:
                 self.view.setColumnWidth(ci, 96)
+        # 冻结视图: 仅显示前两列, 列宽/行高与主表一致 (模型重置后需重新隐藏)
+        if hasattr(self, 'frozen'):
+            self.frozen.setColumnWidth(0, self.view.columnWidth(0))
+            self.frozen.setColumnWidth(1, self.view.columnWidth(1))
+            for ci in range(2, len(cols)):
+                self.frozen.setColumnHidden(ci, True)
+            self._update_frozen_geometry()
         # 名称列筛选
         self.proxy.setFilterKeyColumn(1)
         self._apply_row_filter()
