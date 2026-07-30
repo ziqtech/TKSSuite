@@ -886,6 +886,16 @@ def apply_summon_table(defn: PatchDef, code_buf: bytearray, code_start_addr: int
         abs_addr = base_addr + rva
         if key not in summon:
             continue
+        # 安全校验: code_addrs 指向 `mov word[ebp-2], imm16` (66 C7 45 FE ..) 的 imm16 操作数。
+        # 第三方 MOD (如孝谈三国3终极版) 可能已把该指令整条替换为 JMP cave (E9 rel32),
+        # 此时盲写 imm16 会覆盖 JMP 的相对偏移, 破坏 MOD 跳转目标导致崩溃。
+        # 仅当目标前导字节确为该 mov 指令时才写入, 否则跳过 (版本无关, 对原版无副作用)。
+        _goff = abs_addr - code_start_addr
+        if not (4 <= _goff and _goff + 2 <= len(code_buf)
+                and bytes(code_buf[_goff - 4:_goff]) == b"\x66\xC7\x45\xFE"):
+            log(f"    [SKIP] {key}: @0x{abs_addr:08X} 非 mov word[ebp-2],imm16 "
+                f"(疑似已被 MOD 改为 JMP cave), 跳过盲写以避免破坏 MOD")
+            continue
         i, err = _warpc_i(summon[key], imm16=True)
         if err:
             log(f"    [WARN] {key}: {err}, 跳过")
@@ -2146,6 +2156,65 @@ def patch_gold_display(cpid: int, base: int, log_func=None):
 
     log(f"  共修补 {ptd} 处")
     _CloseHandle(hp)
+
+
+# ── 孝谈三国3终极版专用: 防御误触发魔将发光特效修复 ──
+# 原版 sub_43E958 (defend 状态处理) 执行 `or word[eax*2+9DF7C2],1000h` (仅置防御状态位 0x1000)。
+# MOD 在 0x43E95F 处 hook 跳到 .test 段 cave 0xA7D260, cave 内改成
+#   `mov word[eax*2+9DF7C2],7530h` (=0x7530, 含发光位 0x4000),
+# 导致战斗中选择“防御”后当前角色 word_9DF7C2 被写入 0x4000, 渲染走 sub_459168
+# 发光路径 (即“魔将特效”), 且覆盖原有状态位。本修复在 .test 段扫描该唯一指令,
+# 还原为 or ...,1000h, 与原版 defend 完全一致。cave 位于 .test 段(VA≈0xA7D262),
+# 在启动器 code_buf(base+0x1000, 3MB) 扫描窗口之外, 故独立处理 (扫描额外 PE 段)。
+_DEFEND_GLOW_FIND = bytes([0xC7, 0x04, 0x45, 0xC2, 0xF7, 0x9D, 0x00, 0x30, 0x75])  # mov word[eax*2+9DF7C2],7530h
+_DEFEND_GLOW_REPL = bytes([0x81, 0x0C, 0x45, 0xC2, 0xF7, 0x9D, 0x00, 0x00, 0x10])  # or  word[eax*2+9DF7C2],1000h
+
+
+def patch_defend_glow_xiaotan(cpid: int, extra_ranges, log_func=None):
+    """孝谈三国3终极版: 修复战斗选择“防御”错误开启魔将发光特效 (仅该 MOD 调用)。
+
+    Args:
+        cpid:         游戏进程 PID
+        extra_ranges: MOD 额外 PE 段绝对范围 [(start,end),...] (含 .test cave 段)
+
+    Returns:
+        已修补处数
+    """
+    log = log_func or (lambda x: None)
+    log("\n--- [孝谈兼容] 防御误触发魔将特效修复 ---")
+    if not extra_ranges:
+        log("  [SKIP] 无额外段范围 (非 MOD 版?), 跳过")
+        return 0
+    hp = _OpenProcess(PROCESS_VM_READ | PROCESS_VM_WRITE | PROCESS_VM_OPERATION, False, cpid)
+    if not hp:
+        log("  [ERROR] OpenProcess 失败")
+        return 0
+    patched = 0
+    try:
+        for (start, end) in extra_ranges:
+            size = end - start
+            if size <= 0 or size > 0x100000:
+                continue
+            buf, nr = read_pm(hp, start, size)
+            if nr <= 0:
+                continue
+            idx = buf.find(_DEFEND_GLOW_FIND)
+            while idx != -1:
+                va = start + idx
+                op = vp_ex(hp, va, len(_DEFEND_GLOW_REPL), PAGE_EXECUTE_READWRITE)
+                nw = write_pm(hp, va, _DEFEND_GLOW_REPL)
+                vp_ex(hp, va, len(_DEFEND_GLOW_REPL), op)
+                if nw == len(_DEFEND_GLOW_REPL):
+                    patched += 1
+                    log(f"  [OK] @0x{va:08X}: mov [9DF7C2+eax*2],7530h -> or ...,1000h (清除防御发光位 0x4000)")
+                else:
+                    log(f"  [FAIL] @0x{va:08X}: 写入失败 ({nw}/{len(_DEFEND_GLOW_REPL)})")
+                idx = buf.find(_DEFEND_GLOW_FIND, idx + 1)
+        if patched == 0:
+            log("  [WARN] 未找到目标指令 (MOD 版本不同或已修复), 跳过")
+    finally:
+        _CloseHandle(hp)
+    return patched
 
 # ============================================================
 # [补丁十八] 存档加载后自动重注入头像数据

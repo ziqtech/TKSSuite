@@ -282,3 +282,88 @@ mov word [ebp-2], 98        ; if:   i=98, WarPC 134 = 五爪金龙
 1. 技能222的 hook 点已被占用（原指令被替换为 JMP）
 2. 模式扫描 `66 C7 45 FE 3A 00 EB 2B`（skill_222）将匹配失败
 3. `.test` 节的 cave 代码可能与启动器的内存补丁产生地址冲突
+
+---
+
+## 十、启动器兼容性实测与适配（2026-07 更新）
+
+> 工具：`逆向工作区/compat_scan_xiaotan.py`（模拟启动器运行时扫描，逐条比对原版/MOD 两个 EXE 的 48 条 JSON 补丁 + 全部引擎内置补丁）。
+> 结论：**启动器核心功能对本 MOD 完全兼容**；仅 1 处存在数据损坏风险（已加守卫）、6 条针对原版 BUG 的修复因 MOD 已改写目标代码而不适用（已声明版本跳过）。
+
+### 10.1 兼容性总览（共 82 检查项）
+
+| 类别 | 结果 |
+|------|------|
+| 数据扩容（WarPC/TKMat/TKItem/TKSkill/TKShop/TKKon/TKDefUnit） | ✅ 全部匹配（模式与原版一致，MOD 未触碰这些大小常量） |
+| 队伍/属性上限、主角替换、成员等级重定向 | ✅ 全部匹配 |
+| 战场形象/队伍头像/存档头像（cave hook） | ✅ 全部匹配，且按 `override` 策略覆盖 |
+| 战斗修复（武器状态/死战/反击/破兵/技能菜单封顶/经验回写/经验加成溢出） | ✅ 全部匹配 |
+| 字体/动画速度/召唤224~231/251/经验锁定/跳过开场/不遇敌 | ✅ 全部匹配 |
+| WarPC 基址发现、游戏代码检测特征 | ✅ 原版/MOD 一致 |
+
+### 10.2 需处理项及适配措施
+
+| 项 | 性质 | 适配措施 |
+|----|------|---------|
+| **召唤表 skill_222 盲写**（`code_addrs` RVA 0x44CA0） | **危险**：MOD 已把 `mov word[ebp-2],imm16`（0x444C9C）整条改成 `E9 rel32`（JMP 到 0xA7D2A8 的 rand(3) cave），启动器旧逻辑会盲写 imm16 覆盖 JMP 偏移 → 破坏 MOD 跳转 → 崩溃 | 在 `patch_engine.apply_summon_table` 增加**版本无关守卫**：仅当目标前导字节确为 `66 C7 45 FE` 时才写入，否则 `[SKIP]`。对原版无副作用，对 MOD 自动放弃 222 定制（保留 224~231/251 定制） |
+| exp_cap_unsigned_fix（**必选**） | MOD 金钱系统重写波及 0x43BADF，经验上限特征码不存在 | `profile_rules: {"xiaotansanguo3":"skip"}` |
+| hp_cmp_unsigned_fix | MOD 改写 sub_4400DC | 同上，版本跳过 |
+| lusu_intel_duration_x4_fix | MOD 改写鲁肃技能代码 | 同上 |
+| shanhai_map_unlock | MOD 改写物品使用判定 | 同上 |
+| gold_limit | MOD 已自行解除金钱上限（§4.1），盲扫替换残留 0x7530 有误伤风险 | 同上 |
+| enter_key_item_fix | MOD 改写 0x420C8A 附近代码 | 同上 |
+
+> 上述 6 条中 exp_cap_unsigned_fix 为必选、其余 5 条为默认勾选，若不处理会因特征码失配触发「部分补丁未应用成功」假失败。改为 `profile_rules` 主动跳过后，孝谈版下这些补丁以清晰日志略过，`all_ok` 保持为真 → 启动器显示「补丁应用成功」。
+
+### 10.3 无需处理项（实测确认良性）
+
+- **summon skill_222 多随机 hook**（`66 C7 45 FE ** ** EB 2B`）：默认关闭的高级功能；MOD 已硬编码 222 为 rand(3)，此子功能在本 MOD 下不可用，属既定限制，不影响其余召唤定制。
+- **engine.load_hook_points（存档加载 Move 调用点）**：用启动器真实函数实测，**原版与 MOD 结果完全一致**（静态镜像下均为 0，运行期由 500ms 轮询看门狗兜底重注入头像），非 MOD 引入的回归。
+- **engine.gold_display（存档界面金钱 movsx→movzx）**：MOD 改写金钱显示代码，该内置补丁扫描 0 处、静默跳过、零写入，仅影响存档界面金钱显示的符号性，无损坏。
+
+### 10.4 版本识别与策略
+
+启动器 `detect_exe_profile` 通过 PE 节名集合识别：本 MOD 含 `.test` + `.Silvana` → 判定为 `xiaotansanguo3`（显示名「孝谈三国3终极版」）。策略为**启动器补丁最高优先级**：cave hook 一律 `override` 覆盖 MOD 已有修改；仅上述 6 条特征码已消失的原版 BUG 修复通过 `profile_rules` 主动跳过。失败提示文案现也会在 `profile.name != "original"` 时给出「检测为孝谈三国3终极版，部分补丁不适用属正常」的说明。
+
+### 10.5 涉及改动文件
+
+| 文件 | 改动 |
+|------|------|
+| `tks_launcher_gui/core/patch_engine.py` | `apply_summon_table` 增加 `66 C7 45 FE` 指令守卫；新增 `patch_defend_glow_xiaotan`（防御发光修复，见 §11） |
+| `tks_launcher_gui/tks_patches.json` | 6 条补丁增加 `profile_rules`/`_mod_note` |
+| `tks_launcher_gui/workers/patcher_worker.py` | 失败提示扩展到 `profile.name != "original"`；按 profile 调用防御发光修复 |
+
+---
+
+## 十一、BUG 修复：战斗“防御”误触发魔将发光特效
+
+### 11.1 现象
+
+使用孝谈三国3终极版时，战斗中对任意角色选择**防御**，该角色立即被套上“魔将发光特效”（角色渲染走发光/亮度 alpha 混合），**即使未勾选「开启魔将特效」补丁**。
+
+### 11.2 根因（逆向定位）
+
+防御状态由 `sub_43E958` 写入每单位渲染标志 `word_9DF7C2[当前行动者]`。
+
+- **原版**（`0x43E95F`）：`or word[eax*2+9DF7C2], 1000h` —— 仅**追加**防御状态位 `0x1000`，保留其它位。
+- **MOD**：在 `0x43E95F` 处 hook 跳转到 `.test` 段 cave `0xA7D260`，cave 内被改成 `mov word[eax*2+9DF7C2], 7530h`。
+
+`0x7530`(=30000，恰为 MOD 各处 HP/经验上限常量) 的位分解为 `0x4000 | 0x2000 | 0x1000 | 0x400 | 0x100 | 0x20 | 0x10`——其中 **`0x4000` 正是发光/魔将渲染位**（`word_9DF7C2 & 0x4000 → sub_459168`，见 §十/`十魔将特效补丁分析`）。因此防御会：①把当前角色写上 `0x4000` → 发光；②用 `mov` **覆盖**而非 `or`，抹掉该单位原有状态位。这是 MOD 自身的 cave 代码错误（疑似把 `or 0x1000` 误写成了 `mov 30000`）。
+
+> 该 cave 位于 `.test` 段（VA≈`0xA7D262`），落在启动器 `code_buf`（`base+0x1000`, 3MB）扫描窗口之外，常规 JSON 特征码补丁无法触及，故需专门扫描额外 PE 段处理。
+
+### 11.3 修复
+
+`patch_defend_glow_xiaotan`（仅在 `profile==xiaotansanguo3` 时由 worker 调用）读取 MOD 额外 PE 段，扫描全局唯一指令并还原为原版语义：
+
+```
+0xA7D262:  C7 04 45 C2 F7 9D 00 30 75   mov word[eax*2+9DF7C2],7530h   ← MOD(BUG)
+0xA7D262:  81 0C 45 C2 F7 9D 00 00 10   or  word[eax*2+9DF7C2],1000h   ← 修复后(=原版)
+```
+
+- 指令等长（9 字节，`66 3E` 前缀保留），`mov→or`(`C7 04→81 0C`) + imm16 `7530→1000`；
+- 修复后防御仅置 `0x1000`，**不再置 `0x4000`（及 `0x2000` 等伪造位）**，与原版逐字节一致；
+- 幂等（重复应用安全）；真正的魔将角色/「开启魔将特效」补丁在 `sub_4307CC` 初始化置位，与本修复互不影响；
+- 全局唯一命中，`.test` 段内 1 处，带 `read→verify→write` 校验，未命中则安全跳过。
+
+

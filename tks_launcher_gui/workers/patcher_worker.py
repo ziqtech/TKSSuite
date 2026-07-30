@@ -31,6 +31,7 @@ from core.patch_engine import (
     apply_config_patches,
     patch_4c33fc, patch_41c120, patch_archive_portrait, patch_gold_display,
     find_load_hook_points, hook_save_load_portrait,
+    patch_defend_glow_xiaotan,
 )
 from core.scanner import discover_warpc_base, detect_exe_profile
 from core.warpc_expander import (
@@ -548,6 +549,11 @@ class PatcherWorker(QThread):
                                    warpc_base_for_caves if warpc_base_for_caves else discovered_base,
                                    log_func=self._log)
             patch_gold_display(target_pid, base_addr, log_func=self._log)
+            # 孝谈三国3终极版专用: 修复战斗选择“防御”错误开启魔将发光特效
+            # (MOD 在 defend 的 .test cave 把 or 0x1000 误写为 mov 0x7530, 含发光位 0x4000)
+            if _exe_profile and _exe_profile.name == "xiaotansanguo3":
+                patch_defend_glow_xiaotan(
+                    target_pid, _exe_profile.extra_section_ranges, log_func=self._log)
             inject_warpc_data(target_pid, discovered_base, _warpc_expanded, log_func=self._log)
 
             # [补丁十八] 存档加载后自动重注入头像数据
@@ -619,9 +625,9 @@ class PatcherWorker(QThread):
             self.status_changed.emit("补丁应用成功，游戏运行中", True)
         else:
             self._log("\n[WARN] 部分补丁未应用成功")
-            if _tks_exe_replaced:
-                self._log("[INFO] 当前使用非原版 TKS.exe（已加载第三方 MOD 版本），"
-                          "部分补丁因目标代码已被修改而无法定位，属正常现象。")
+            if _tks_exe_replaced or _exe_profile.name != "original":
+                self._log(f"[INFO] 当前使用非原版 TKS.exe（检测为「{_exe_profile.display_name}」），"
+                          "部分补丁因目标代码已被该 MOD 修改而无法定位，属正常现象，不影响游戏运行。")
             self.overlay_update.emit("补丁应用失败！", False)
             self.status_changed.emit("部分补丁未成功", False)
 
