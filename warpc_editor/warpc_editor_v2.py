@@ -61,7 +61,7 @@ from PySide6.QtWidgets import (
     QLineEdit, QCheckBox, QPushButton, QLabel,
     QScrollArea, QDialog, QFileDialog, QMessageBox, QTextEdit,
     QFrame, QGridLayout, QAbstractItemView, QMenuBar, QTabWidget,
-    QSpinBox, QSizePolicy, QMenu, QCompleter, QStackedWidget,
+    QSpinBox, QSizePolicy, QMenu, QCompleter, QStackedWidget, QComboBox,
 )
 from PySide6.QtGui import QColor, QFont, QIcon, QIntValidator, QKeySequence
 from PySide6.QtCore import Qt, QTranslator, Signal, QTimer
@@ -70,7 +70,7 @@ from editor_utils.theme_manager import ThemeManager
 from editor_utils.dock_components import DockHeader
 from editor_utils.picker_dialogs import TktPickerDialog, StatusPickerDialog, STATUS_NAMES, ItemPickerDialog
 from editor_utils.jvg_loader import load_mu_sprites, get_sprite_pixmap
-from editor_utils.ui_helpers import make_fake_input, update_path_labels, confirm_close, resolve_config_path, themed_messagebox, NoWheelComboBox
+from editor_utils.ui_helpers import make_fake_input, update_path_labels, confirm_close, resolve_config_path, themed_messagebox, NoWheelComboBox, NoWheelSpinBox
 from editor_utils.version import format_title, format_about_header
 from editor_utils.lzss import lzss_decompress_dat, lzss_compress_dat, lzss_decompress_save, lzss_compress_save
 from editor_utils.tkt_loader import load_tkt_simple
@@ -1590,7 +1590,13 @@ class WarpcEditorV2(QMainWindow):
         body.setObjectName("DockBody")
         bl = QVBoxLayout(body)
         bl.setContentsMargins(8,8,8,8)
-        bl.addLayout(self._build_learn_toolbar())
+        bl.addWidget(self._build_learn_toolbar())
+        # 存档模式提示 (模板编排工具条隐藏时显示)
+        self._learn_mode_hint = QLabel("")
+        self._learn_mode_hint.setWordWrap(True)
+        self._learn_mode_hint.setVisible(False)
+        self._learn_mode_hint.setStyleSheet("color:#2c82c9; font-size:11px; padding:2px 0 4px 0;")
+        bl.addWidget(self._learn_mode_hint)
         # 技能组「待学习+可学习+已学习」>12 溢出实时提示 (逆向依据 sub_438F28: 战斗菜单共享 12 格固定数组)
         self._skill_overflow_label = QLabel("")
         self._skill_overflow_label.setWordWrap(True)
@@ -1598,9 +1604,24 @@ class WarpcEditorV2(QMainWindow):
         self._skill_overflow_label.setStyleSheet(
             "color:#ffffff; background:#c0392b; font-weight:bold; padding:6px; border-radius:4px;")
         bl.addWidget(self._skill_overflow_label)
-        grid = QGridLayout()
-        grid.setVerticalSpacing(2)
-        grid.setHorizontalSpacing(4)
+        self._skill_learn_grid = QGridLayout()
+        self._skill_learn_grid.setVerticalSpacing(2)
+        self._skill_learn_grid.setHorizontalSpacing(4)
+        bl.addLayout(self._skill_learn_grid)
+        self._populate_learn_grid()
+        gl.addWidget(body)
+        p.layout().addWidget(grp)
+
+    def _populate_learn_grid(self):
+        """按当前模式重建技能学习单元格: 存档模式用数字框(手动输入原值 0~255),
+        模板模式用带语义标签的下拉框。切换模式时会清空重建。"""
+        grid = getattr(self, '_skill_learn_grid', None)
+        if grid is None:
+            return
+        self._clear_layout(grid)
+        self._skill_learn_labels = []
+        self._skill_learn_widgets = []
+        save_mode = bool(getattr(self, '_save_mode', False))
         for i in range(SKILL_LEARN_COUNT):
             r, c = divmod(i, 8)
             sname = self.skill_names.get(i, f"技能#{i}") if self.skill_names else f"技能#{i}"
@@ -1610,25 +1631,29 @@ class WarpcEditorV2(QMainWindow):
             lbl.setToolTip(f"[{88+i//2}] {sname}")
             lbl.setProperty("class", "PropLabel")
             cell.addWidget(lbl)
-            cb = NoWheelComboBox()
-            cb.addItems(SKILL_LEARN_STATES)
-            cell.addWidget(cb)
-            self._skill_learn_widgets.append((i, cb))
+            if save_mode:
+                w = NoWheelSpinBox()
+                w.setRange(0, 255)
+                w.setToolTip("运行时学习进度原值: 0=不会  1~9=等待学  10~19=可以学(待学习)  20+=已学会")
+                w.valueChanged.connect(self._check_skill_group_overflow)
+            else:
+                w = NoWheelComboBox()
+                w.addItems(SKILL_LEARN_STATES)
+                w.currentIndexChanged.connect(self._check_skill_group_overflow)
+            cell.addWidget(w)
+            self._skill_learn_widgets.append((i, w))
             self._skill_learn_labels.append(lbl)
             grid.addLayout(cell, r, c, Qt.AlignTop)
-        bl.addLayout(grid)
-        gl.addWidget(body)
-        p.layout().addWidget(grp)
-        self._skill_learn_by_idx = {i: cb for i, cb in self._skill_learn_widgets}
-        # 任一技能学习状态变动 → 实时重算同组溢出提示
-        for _i, _cb in self._skill_learn_widgets:
-            _cb.currentIndexChanged.connect(self._check_skill_group_overflow)
+        self._skill_learn_by_idx = {i: w for i, w in self._skill_learn_widgets}
+
 
     def _build_learn_toolbar(self):
-        """技能学习页顶部工具条: 技能组智能配置 / 精简当前配置。
+        """技能学习页顶部工具条 (仅模板模式显示): 技能组智能配置 / 精简当前配置。
         依据游戏机制: 入口技能设「可以学(10)」, 下游技能设「等待学(1)」,
-        进游戏后随学习前置自动递进解锁, 避免把整组全设 10 导致列表臃肿且丢失递进关系。"""
-        row = QHBoxLayout()
+        进游戏后随学习前置自动递进解锁, 避免把整组全设 10 导致列表臃肿且丢失递进关系。
+        注: 这些均为「模板(WarPC.dat)编排」工具, 存档模式整体隐藏 (见 _refresh_learn_toolbar_mode)。"""
+        self._learn_toolbar_widget = QWidget()
+        row = QHBoxLayout(self._learn_toolbar_widget)
         row.setContentsMargins(0, 0, 0, 6)
         row.setSpacing(6)
         row.addWidget(QLabel("技能组:"))
@@ -1649,7 +1674,7 @@ class WarpcEditorV2(QMainWindow):
         btn_simplify.clicked.connect(self._simplify_current_config)
         row.addWidget(btn_simplify)
         row.addStretch()
-        return row
+        return self._learn_toolbar_widget
 
     def _build_tab4(self):
         """技能效果判定"""
@@ -1768,10 +1793,7 @@ class WarpcEditorV2(QMainWindow):
             return
         clip = []
         for skill_idx, cb in self._skill_learn_widgets:
-            sv = cb.currentText()
-            sep = sv.find('-', 1) if sv.startswith('-') else sv.find('-')
-            byte_val = int(sv[:sep]) if sep >= 0 else 0
-            clip.append(byte_val)
+            clip.append(self._learn_widget_value(cb))
         self._clip_skill_learn = clip
         self.status_var.setText(
             f"已复制技能学习数据 (角色 #{self._editing_idx}, {len(clip)} 项)")
@@ -1785,10 +1807,7 @@ class WarpcEditorV2(QMainWindow):
             return
         for (skill_idx, cb), byte_val in zip(self._skill_learn_widgets,
                                               self._clip_skill_learn):
-            for vi in range(cb.count()):
-                if cb.itemText(vi).startswith(f'{byte_val}-'):
-                    cb.setCurrentIndex(vi)
-                    break
+            self._set_learn_widget_value(cb, byte_val)
         self._flush_widgets_to_draft()
         self.status_var.setText(
             f"已粘贴技能学习数据 → 角色 #{self._editing_idx} (草稿, 未应用)")
@@ -2071,6 +2090,7 @@ class WarpcEditorV2(QMainWindow):
             self._draft_records = []
         self._update_paths()
         self._set_edit_enabled(True)
+        self._refresh_learn_toolbar_mode()
         self._apply_filter()
 
     def _clear_layout(self, layout):
@@ -2246,16 +2266,99 @@ class WarpcEditorV2(QMainWindow):
         roots = [m for m in members if seed.get(m) == 10]
         return seed, roots, unreachable
 
-    def _set_learn_combo(self, skill_idx, state):
-        """将技能学习下拉框设为指定状态值 (不立即写回, 需调用 _apply_edit)。"""
-        cb = getattr(self, '_skill_learn_by_idx', {}).get(skill_idx)
-        if cb is None:
-            return False
+    def _learn_item_label(self, byte_val):
+        """为非常规学习值生成下拉项文本 (前缀保持 'N-' 供读写/复制/溢出检测解析)。
+        游戏语义 (sub_41E248/sub_438F28): 1~9=等待学进度, 10~19=可以学(游戏技能栏显示待学习),
+        20+=组技能学会, 30+=子技能学会; 学会前置技能会向下游累加权重, 故存档中常见 2~9/11~19/21 等中间值。"""
+        if 1 <= byte_val <= 9:
+            return f"{byte_val}-等待学(进度{byte_val})"
+        if 10 <= byte_val <= 19:
+            return f"{byte_val}-可以学(累积{byte_val})"
+        if 20 <= byte_val <= 29:
+            return f"{byte_val}-组技能学会(+{byte_val-20})"
+        if 30 <= byte_val <= 39:
+            return f"{byte_val}-子技能学会(+{byte_val-30})"
+        return f"{byte_val}-非常规值"
+
+    def _select_learn_value(self, cb, byte_val):
+        """选中下拉框中 byte_val 对应项; 无匹配时按实际字节值动态追加。
+        修复: 存档中的中间值 (如 11=可以学+累积) 以前因下拉框缺项被误显示为「0-不会」,
+        且保存时会把原值破坏性清零。"""
         for vi in range(cb.count()):
-            if cb.itemText(vi).startswith(f'{state}-'):
+            if cb.itemText(vi).startswith(f'{byte_val}-'):
                 cb.setCurrentIndex(vi)
-                return True
-        return False
+                return
+        cb.addItem(self._learn_item_label(byte_val))
+        cb.setCurrentIndex(cb.count() - 1)
+
+    @staticmethod
+    def _parse_learn_text(text):
+        """从下拉文本解析学习字节值 (0~255)。
+        兼容预设项「0-不会」与动态项「11-可以学(累积11)」。取起始连续数字, 非法回退 0。"""
+        s = (text or '').strip()
+        num = ''
+        for ch in s:
+            if ch.isdigit():
+                num += ch
+            else:
+                break
+        try:
+            v = int(num) if num else 0
+        except ValueError:
+            v = 0
+        return max(0, min(255, v))
+
+    def _learn_widget_value(self, w):
+        """读取学习控件当前值 (0~255)。兼容数字框(存档模式)与下拉框(模板模式)。"""
+        if isinstance(w, QSpinBox):
+            return int(w.value())
+        return self._parse_learn_text(w.currentText())
+
+    def _set_learn_widget_value(self, w, val):
+        """写入学习控件。兼容数字框(直接置数)与下拉框(选中/动态追加规范标签)。"""
+        val = max(0, min(255, int(val)))
+        if isinstance(w, QSpinBox):
+            w.setValue(val)
+        else:
+            self._select_learn_value(w, val)
+
+    def _refresh_learn_toolbar_mode(self):
+        """按模式切换技能学习页:
+        - 存档模式: 单元格用数字框 (直接输入运行时原值), 整体隐藏模板编排工具条, 显示提示;
+        - 模板模式: 单元格用带语义下拉框, 显示编排工具条。
+        控件类型与模式不符时重建单元格, 并回填当前角色的值。"""
+        if not hasattr(self, '_skill_learn_grid'):
+            return
+        save_mode = bool(getattr(self, '_save_mode', False))
+        cur_is_spin = bool(self._skill_learn_widgets) and isinstance(self._skill_learn_widgets[0][1], QSpinBox)
+        if (not self._skill_learn_widgets) or (cur_is_spin != save_mode):
+            self._populate_learn_grid()
+            # 重建后回填当前角色的学习值 (若正在编辑)
+            if 0 <= self._editing_idx < len(self._draft_records):
+                self._populate_edit(self._draft_records[self._editing_idx])
+        tb = getattr(self, '_learn_toolbar_widget', None)
+        if tb is not None:
+            tb.setVisible(not save_mode)
+        hint = getattr(self, '_learn_mode_hint', None)
+        if hint is not None:
+            if save_mode:
+                hint.setText(
+                    "存档模式: 每个技能直接输入运行时学习进度原值 (0~255)。\n"
+                    "值含义:  0 = 不会  ·  1 = 等待学 (1~9 为进度累积)  ·  "
+                    "10 = 可以学 (10~19 待学习)  ·  20 = 组技能学会  ·  30 = 子技能学会。\n"
+                    "模板编排工具 (智能配置 / 精简) 仅在编辑 WarPC.dat 时可用。")
+                hint.setVisible(True)
+            else:
+                hint.setVisible(False)
+
+    def _set_learn_combo(self, skill_idx, state):
+        """将技能学习控件设为指定状态值 (不立即写回, 需调用 _apply_edit)。
+        走类型无关 helper: 下拉框选中/追加对应项, 数字框直接置数 (防御性, 通常仅模板模式可达)。"""
+        w = getattr(self, '_skill_learn_by_idx', {}).get(skill_idx)
+        if w is None:
+            return False
+        self._set_learn_widget_value(w, state)
+        return True
 
     def _smart_config_group(self):
         """智能配置选中技能组: 入口→可以学(10), 下游→等待学(1), 组外保持不变。"""
@@ -2342,9 +2445,7 @@ class WarpcEditorV2(QMainWindow):
             return
         cur = {}
         for skill_idx, cb in self._skill_learn_widgets:
-            sv = cb.currentText()
-            sep = sv.find('-', 1) if sv.startswith('-') else sv.find('-')
-            cur[skill_idx] = int(sv[:sep]) if sep >= 0 else 0
+            cur[skill_idx] = self._learn_widget_value(cb)
         tree = {i for i, v in cur.items() if 1 <= v < 20}
         if not tree:
             themed_messagebox(self, QMessageBox.Information, "无需精简",
@@ -2397,9 +2498,7 @@ class WarpcEditorV2(QMainWindow):
         # 读取当前 UI 各技能学习状态 (即时反映编辑中的改动)
         states = {}
         for skill_idx, cb in self._skill_learn_widgets:
-            sv = cb.currentText()
-            sep = sv.find('-', 1) if sv.startswith('-') else sv.find('-')
-            states[skill_idx] = int(sv[:sep]) if sep >= 0 else 0
+            states[skill_idx] = self._learn_widget_value(cb)
         offenders = []
         for head in self._skill_group_heads:
             sub = self._skill_sub_count.get(head, 0)
@@ -2588,7 +2687,8 @@ class WarpcEditorV2(QMainWindow):
         for byte_idx, ev in self._status_resist_widgets:
             snap[f'resist_{byte_idx}'] = ev.text()
         for skill_idx, cb in self._skill_learn_widgets:
-            snap[f'learn_{skill_idx}'] = cb.currentIndex()
+            # 必须用类型无关取值: 存档模式控件是 QSpinBox, 无 currentText()
+            snap[f'learn_{skill_idx}'] = self._learn_widget_value(cb)
         for i, ev in getattr(self, '_skill_effect_widgets', []):
             snap[f'effect_{i}'] = ev.text()
         return snap
@@ -2772,10 +2872,7 @@ class WarpcEditorV2(QMainWindow):
                 is_high = skill_idx%2
                 unsigned = f[field_idx] & 0xFFFF
                 byte_val = (unsigned>>(8*is_high)) & 0xFF
-                for vi, item in enumerate(cb.itemText(i) for i in range(cb.count())):
-                    if item.startswith(f'{byte_val}-'):
-                        cb.setCurrentIndex(vi)
-                        break
+                self._set_learn_widget_value(cb, byte_val)
             self._suspend_overflow_check = False
             self._check_skill_group_overflow()   # 填充完毕后统一计算一次同组溢出提示
             # 刷新技能名称标签 (嵌入模式下 skill_names 可能在 Tab 构建后才加载)
@@ -3181,9 +3278,7 @@ class WarpcEditorV2(QMainWindow):
         # 技能学习
         if hasattr(self, '_skill_learn_widgets'):
             for skill_idx, cb in self._skill_learn_widgets:
-                sv = cb.currentText()
-                sep = sv.find('-', 1) if sv.startswith('-') else sv.find('-')
-                byte_val = int(sv[:sep]) if sep >= 0 else 0
+                byte_val = self._learn_widget_value(cb)
                 field_idx = 88 + skill_idx//2
                 is_high = skill_idx % 2
                 unsigned = f[field_idx] & 0xFFFF

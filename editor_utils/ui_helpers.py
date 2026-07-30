@@ -8,7 +8,7 @@ from PySide6.QtCore import Qt, QObject, QEvent
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (QComboBox, QFileDialog, QFrame, QHBoxLayout,
                                QLabel, QLineEdit, QMenu, QMessageBox,
-                               QPushButton, QWidget)
+                               QPushButton, QWidget, QSpinBox)
 
 
 # ── 颜色常量 (与 editor_themes 一致) ──
@@ -26,6 +26,16 @@ class NoWheelComboBox(QComboBox):
     交给父级滚动区域 (滚动页面), 而非改变当前选中项。
 
     所有编辑器统一使用本类替代 QComboBox, 以获得一致的滚轮行为。
+    """
+
+    def wheelEvent(self, event):
+        event.ignore()
+
+
+class NoWheelSpinBox(QSpinBox):
+    """禁用鼠标滚轮改值的数字输入框 (同 NoWheelComboBox 的动机)。
+
+    在 QScrollArea 中滚轮悬停会误触改值, 重写 wheelEvent 令其向上冒泡滚动页面。
     """
 
     def wheelEvent(self, event):
