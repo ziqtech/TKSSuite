@@ -366,4 +366,59 @@ mov word [ebp-2], 98        ; if:   i=98, WarPC 134 = 五爪金龙
 - 幂等（重复应用安全）；真正的魔将角色/「开启魔将特效」补丁在 `sub_4307CC` 初始化置位，与本修复互不影响；
 - 全局唯一命中，`.test` 段内 1 处，带 `read→verify→write` 校验，未命中则安全跳过。
 
+---
+
+## 十二、全面差异重扫与“错误修改”排查（2026-07）
+
+> 工具：`逆向工作区/scan_mod_diff.py`（字节级 diff .text + capstone 反汇编）与 `scan_cave.py`（全量反汇编 .test cave + 入口映射）。
+> 目标：在全部代码改动中找出是否还有“已修改但错误”（如防御误触发魔将特效）的情况。
+
+### 12.1 扫描覆盖
+
+- **`.text` 字节级 diff**：517 个差异字节 → 合并为 **65 个改动区**（**25 处 cave hook** E9/E8→.test，**40 处内联修改**）。
+- **`.test` cave 全量反汇编**：30 个 cave 入口逐一与 hook 源地址匹配、逐条比对原版逻辑。
+- 覆盖了逆向文档所述全部“93 处代码改动”与 .test/.Newdata/.Silvana 三节。
+
+### 12.2 结论：未发现其他同类错误
+
+逐一核对 65 处改动 + 全部 cave 后，**防御→魔将特效（cave 0xA7D260）是唯一一处“修改错误导致可见异常行为”的缺陷（已修复）**。其余均为有意图的平衡/公式/系统改动：
+
+- **cave hook**：移动/行动力公式、伤害×1.5/×2、属性加算（武力+35/智力+30等，受 `byte_523078` 门控）、召唤222三选一、存档/金钱特殊值替换、战斗速度计数限 9999 等——均逻辑自洽。
+- **内联 40 处**：金钱上限/地址引用、经验阈值、移动×16→×18、阈值 3000→1800、回合计量重写等，均与逆向文档已记录的改动一致。
+
+重点排除的两个“可疑点”（经核实为正常）：
+
+| 位置 | 改动 | 结论 |
+|------|------|------|
+| `0x422644` / `0x422655` | `mov`→`or`（`a2[67]`/`a2[68]`，即单位结构 +0x86/+0x88 的 word 位域） | **有意/修正**：两字段循环前已置 0，且同循环内 `a2[33] |= v9[20]` 本就用 OR；MOD 改为 `|=` 使装备标志从 4 件装备累加（而非只取最后一件），与零初始化意图一致，无可见异常 |
+| `0x431F6E` | `push 100`→`push 0`（rand(100)→rand(0)） | **安全**：`sub_452AC0` 首行 `if(!a1) return 0`，rand(0) 固定返回 0（无除零崩溃），仅等价于禁用某随机事件 |
+
+### 12.3 重要发现：MOD 内置“伴随进程/保护”机制（非 gameplay 缺陷）
+
+`.Silvana` 新增导入 **`WinExec`（kernel32）+ `ShellExecuteA`（shell32）**；`.Newdata` 含字符串 `system.exe` / `closesystem.exe` / `open` / `YinShiXing2013`，以及提示文案“亲,请把辅助程序放在游戏目录下!!!”“未检测到辅助程序运行!!!游戏退出!!!”。桥函数：`0x4E542C=FindWindowExA`、`0x4E55B2=MessageBoxA`、`0x4E57C2=ShellExecuteA`、`0x4E57C8=ExitProcess`。
+
+**实测控制流（关键）**：
+
+- **反篡改检查已被 MOD 自己“阉割”**：三处 `FindWindowExA("YinShiXing2013")`（cave `0xA7D544/0xA7D586/0xA7D5CD`）之后均为 `test eax,eax` + **无条件 `jmp`**，结果被丢弃；四处 `MessageBoxA(...)+ExitProcess` 响应块（`0xA7D4E7/0xA7D551/0xA7D593/0xA7D5DA`）均为**死代码**（永不到达）。
+- **`system.exe` / `closesystem.exe` 实际并不存在于 MOD 目录**，游戏却正常运行——正因检查被丢弃、退出响应是死代码。
+- **唯一活跃的伴随调用**：启动 cave `0xA7D609`（源 `0x403587`）的 `ShellExecuteA("open","closesystem.exe")`（`0xA7D626`）。文件缺失时该调用静默失败。
+
+### 12.4 处理：可选“纯净运行”修复（已实现）
+
+应用户要求，新增 `patch_defend_glow_xiaotan` 的姊妹函数 **`patch_disable_companion_xiaotan`**（仅 `profile==xiaotansanguo3` 时由 worker 调用）：扫描 `.test` 段中唯一活跃的 `ShellExecuteA` 启动调用（anchor `68 D0 E0 A7 00 6A 00 E8` + 校验 call 目标 `==0x4E57C2`），将 5 字节 `call` 替换为 `add esp,0x18` + 2×`NOP`：
+
+```
+0xA7D626:  E8 xx xx xx xx        call ShellExecuteA            ← MOD
+0xA7D626:  83 C4 18 90 90        add esp,0x18; nop; nop        ← 修复后(跳过启动)
+```
+
+- **栈平衡**：`pushal` 后 6×`push`（+24B），`add esp,0x18`（-24B），`popal` 前净变化 0；
+- 原相对指令 `mov edx,[0x4FA514]`（cave 首条，位于 `pushal` 之前）保留，被 hook 的原函数逻辑不受影响；
+- **只中和唯一活跃的 ShellExecuteA**，已死的反篡改检查（FindWindowExA/MessageBox/Exit）不动，避免无谓风险；
+- 幂等（`E8` 被清除后目标校验不再命中），未命中安全跳过。
+
+> 效果：在我们的启动器下运行孝谈三国3终极版时，TKS.exe 不再尝试启动任何外部伴随进程（纯净运行）。因 `closesystem.exe` 本就不存在、检查已死，本修复对现有可玩性零影响，仅为“防御性净化”。
+
+
+
 

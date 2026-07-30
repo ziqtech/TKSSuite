@@ -2216,6 +2216,69 @@ def patch_defend_glow_xiaotan(cpid: int, extra_ranges, log_func=None):
         _CloseHandle(hp)
     return patched
 
+
+# ── 孝谈三国3终极版专用: 禁用伴随进程(system.exe)启动 ──
+# MOD 在启动 cave (0x403587→0xA7D609) 用 ShellExecuteA("open","closesystem.exe") 启动外部伴随进程,
+# 并在多处用 FindWindowExA("YinShiXing2013") 检查 —— 但这些检查结果均被无条件跳转丢弃,
+# 对应的 MessageBoxA+ExitProcess 响应为死代码, 故伴随进程缺失不影响运行。
+# 为“纯净运行”(不启动任何外部进程), 将唯一活跃的 ShellExecuteA 调用替换为
+# `add esp,0x18`(清理其 6 个 stdcall 参数=24字节)+NOP, 栈平衡、跳过启动。
+# cave 位于 .test 段, 在 code_buf 窗口外, 独立扫描额外 PE 段处理。
+_COMPANION_SHELLEXEC_VA = 0x4E57C2  # j_ShellExecuteA thunk
+_COMPANION_ANCHOR = bytes([0x68, 0xD0, 0xE0, 0xA7, 0x00, 0x6A, 0x00, 0xE8])  # push "open"; push 0; call ShellExecuteA
+_COMPANION_CALL_OFF = 7  # E8 在 anchor 内的偏移
+_COMPANION_REPL = bytes([0x83, 0xC4, 0x18, 0x90, 0x90])  # add esp,0x18; nop; nop (清 6*4=24 字节, 跳过启动)
+
+
+def patch_disable_companion_xiaotan(cpid: int, extra_ranges, log_func=None):
+    """孝谈三国3终极版: 禁用启动时 ShellExecuteA 伴随进程(纯净运行, 仅该 MOD 调用)。
+
+    仅中和唯一活跃的 ShellExecuteA 启动调用; 已死的反篡改检查(FindWindowExA/MessageBox/Exit)
+    不动, 避免无谓风险。替换为 add esp,0x18 保证栈平衡。
+
+    Returns:
+        已中和的调用处数
+    """
+    log = log_func or (lambda x: None)
+    log("\n--- [孝谈兼容] 禁用伴随进程(system.exe)启动 ---")
+    if not extra_ranges:
+        log("  [SKIP] 无额外段范围 (非 MOD 版?), 跳过")
+        return 0
+    hp = _OpenProcess(PROCESS_VM_READ | PROCESS_VM_WRITE | PROCESS_VM_OPERATION, False, cpid)
+    if not hp:
+        log("  [ERROR] OpenProcess 失败")
+        return 0
+    patched = 0
+    try:
+        for (start, end) in extra_ranges:
+            size = end - start
+            if size <= 0 or size > 0x100000:
+                continue
+            buf, nr = read_pm(hp, start, size)
+            if nr <= 0:
+                continue
+            idx = buf.find(_COMPANION_ANCHOR)
+            while idx != -1:
+                call_off = idx + _COMPANION_CALL_OFF
+                rel = struct.unpack_from('<i', bytes(buf[call_off + 1:call_off + 5]))[0]
+                call_va = start + call_off
+                target = (call_va + 5 + rel) & 0xFFFFFFFF
+                if target == _COMPANION_SHELLEXEC_VA:  # 确认确为 ShellExecuteA 调用才改
+                    op = vp_ex(hp, call_va, len(_COMPANION_REPL), PAGE_EXECUTE_READWRITE)
+                    nw = write_pm(hp, call_va, _COMPANION_REPL)
+                    vp_ex(hp, call_va, len(_COMPANION_REPL), op)
+                    if nw == len(_COMPANION_REPL):
+                        patched += 1
+                        log(f"  [OK] @0x{call_va:08X}: call ShellExecuteA -> add esp,0x18+nop (跳过伴随进程启动)")
+                    else:
+                        log(f"  [FAIL] @0x{call_va:08X}: 写入失败 ({nw}/{len(_COMPANION_REPL)})")
+                idx = buf.find(_COMPANION_ANCHOR, idx + 1)
+        if patched == 0:
+            log("  [WARN] 未找到 ShellExecuteA 伴随进程调用 (MOD 版本不同或已处理), 跳过")
+    finally:
+        _CloseHandle(hp)
+    return patched
+
 # ============================================================
 # [补丁十八] 存档加载后自动重注入头像数据
 # ============================================================

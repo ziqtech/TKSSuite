@@ -31,7 +31,7 @@ from core.patch_engine import (
     apply_config_patches,
     patch_4c33fc, patch_41c120, patch_archive_portrait, patch_gold_display,
     find_load_hook_points, hook_save_load_portrait,
-    patch_defend_glow_xiaotan,
+    patch_defend_glow_xiaotan, patch_disable_companion_xiaotan,
 )
 from core.scanner import discover_warpc_base, detect_exe_profile
 from core.warpc_expander import (
@@ -553,6 +553,10 @@ class PatcherWorker(QThread):
             # (MOD 在 defend 的 .test cave 把 or 0x1000 误写为 mov 0x7530, 含发光位 0x4000)
             if _exe_profile and _exe_profile.name == "xiaotansanguo3":
                 patch_defend_glow_xiaotan(
+                    target_pid, _exe_profile.extra_section_ranges, log_func=self._log)
+                # 纯净运行: 禁用启动时 ShellExecuteA("closesystem.exe") 伴随进程启动
+                # (反篡改检查已被 MOD 自身无条件跳转化为死代码, 故禁用启动安全)
+                patch_disable_companion_xiaotan(
                     target_pid, _exe_profile.extra_section_ranges, log_func=self._log)
             inject_warpc_data(target_pid, discovered_base, _warpc_expanded, log_func=self._log)
 
