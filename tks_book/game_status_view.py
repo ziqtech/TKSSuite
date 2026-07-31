@@ -834,7 +834,9 @@ class GameStatusView(QWidget):
         vis = self._skill_rows[self._skill_scroll:self._skill_scroll + SKILL_LIST_VISIBLE]
         for row, (si, state) in enumerate(vis):
             gi = self._skill_scroll + row
-            selected = (gi == self._skill_sel and self._skill_focus < 4)
+            # 高亮无条件 (sub_418C90 L26-30): 选中行 a1[614891]==v7 即高亮,
+            # 不依赖焦点 — 焦点在右侧槽时鼠标悬停列表行同样高亮
+            selected = (gi == self._skill_sel)
             if selected:
                 self._blit(p, self._mu_pix(80), 228, 31 * row + 143, 15)
             col = 1 if state >= 20 else (2 if selected else 16)
@@ -1385,13 +1387,14 @@ class GameStatusView(QWidget):
             self._scroll_skill(SKILL_LIST_VISIBLE)
             return
 
-        # 技能页: 列表行 (228..426, 143+31r, 行高31)
-        if 228 <= x <= 426 and y >= 143:
-            row = (y - 143) // 31
+        # 技能页: 列表行 (sub_42061C: x=228-417, y=142+31r..172+31r, 行高31)
+        # 游戏点击行 = sub_41F318 学习/装备动作; 图鉴只读仅确认选中 (hover 已选中),
+        # 不切焦点 (游戏 sub_41F318 不改 a1[614866])
+        if 228 <= x <= 417 and y >= 142:
+            row = (y - 142) // 31
             if 0 <= row < SKILL_LIST_VISIBLE:
                 gi = self._skill_scroll + row
                 if gi < len(self._skill_rows):
-                    self._skill_focus = self._skill_cat  # 焦点回到列表所属分类
                     self._skill_sel = gi
                     self._refresh()
             return
@@ -1434,20 +1437,40 @@ class GameStatusView(QWidget):
                 self._title_hover = new_hover
                 self._refresh()
             return
-        # 物品/装备页: 选中跟随鼠标 — 悬停到哪行选哪行, 移出列表区则取消选中 (-1)
+        # 技能页 hover (sub_4212E0 → sub_420730 case 1 → sub_422218):
+        #   X∈[228,417], Y∈[142+31r, 172+31r] → 选中行 = scroll+r
+        #   sub_422218 仅更新选中行 a1[614891], 不切焦点; 移出列表区保持选中
+        #   (游戏 sub_420730 返回 -1 时不更新, 高亮停留)
+        if self._page == 1:
+            pos = event.position().toPoint()
+            gi = self._skill_hover_row(pos.x(), pos.y())
+            if gi >= 0 and gi != self._skill_sel:
+                self._skill_sel = gi
+                self._refresh()
+            return
+        # 物品/装备页: 选中跟随鼠标 — 悬停到哪行选哪行; 移出列表区保持选中
+        # (游戏 sub_4212E0: sub_420730 返回 -1 时不更新, 与技能页一致)
         if self._page == 2:
             gi = self._item_at(event.position().toPoint())
-            new_sel = gi if gi >= 0 else -1
-            if new_sel != self._item_sel:
-                self._item_sel = new_sel
+            if gi >= 0 and gi != self._item_sel:
+                self._item_sel = gi
                 self._refresh()
         elif self._page == 3:
             gi = self._item_at(event.position().toPoint())
-            new_sel = gi if gi >= 0 else -1
-            if new_sel != self._equip_sel:
-                self._equip_sel = new_sel   # 悬停驱动换装差值预览
+            if gi >= 0 and gi != self._equip_sel:
+                self._equip_sel = gi   # 悬停驱动换装差值预览
                 self._refresh()
         super().mouseMoveEvent(event)
+
+    def _skill_hover_row(self, x, y):
+        """技能列表 hover 行检测 (sub_420730 case 1): X∈[228,417], Y∈[142+31r, 172+31r],
+        行高 31; 返回全局行号 (scroll+屏幕行), 不在区域/无行返回 -1"""
+        if 228 <= x <= 417:
+            for r in range(SKILL_LIST_VISIBLE):
+                if 142 + 31 * r <= y <= 172 + 31 * r:
+                    gi = self._skill_scroll + r
+                    return gi if gi < len(self._skill_rows) else -1
+        return -1
 
     def _item_at(self, pos):
         """物品/装备列表行命中 → 全局索引 (无则 -1)"""
