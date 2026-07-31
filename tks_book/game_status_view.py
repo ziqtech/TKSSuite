@@ -537,7 +537,19 @@ class GameStatusView(QWidget):
             # 装备页 (419B54 L17-19): 右面板38(a15) + 列表面板34(不透明) + 属性预览面板35(a12)
             self._blit(p, self._mu_pix(38), 465, 64, 15)
             self._blit(p, self._mu_pix(34), 215, 48)
-            self._blit(p, self._mu_pix(35), 478, 55, 12)
+            # frame35 分两段渲染: 上方面板(装备槽区) + 下方面板(属性预览区), 中间留间隙
+            # frame35 帧顶有13px透明区, 上方面板上移使透明区移出可见区(消除顶部间隙)
+            # 下方面板下移使透明区落入上下面板之间的间隙
+            # 上方面板: 实心内容从 y=54 开始, 裁剪到 y=54-216
+            p.save()
+            p.setClipRect(0, 54, 640, 163)
+            self._blit(p, self._mu_pix(35), 478, 42, 12)
+            p.restore()
+            # 下方面板: 实心内容从 y=234 开始, 裁剪到 y=234-470
+            p.save()
+            p.setClipRect(0, 234, 640, 236)
+            self._blit(p, self._mu_pix(35), 478, 222, 12)
+            p.restore()
         # page 4 (队伍): 面板随子页签变化, 全部在 _draw_team_page 动态绘制
         p.end()
         base = self._flush_texts(base)
@@ -1209,6 +1221,15 @@ class GameStatusView(QWidget):
     # ── 装备页交互 ──
 
     def _equip_mouse(self, x, y):
+        # 分类按钮 (61*cat+230, 52, 56x24): 武器/防具/饰品 → 切换槽 (与右侧槽相通)
+        if 48 <= y <= 78 and 230 <= x < 230 + 61 * 3:
+            cat = (x - 230) // 61
+            if 0 <= cat <= 2 and cat != self._equip_slot:
+                self._equip_slot = cat
+                self._equip_sel = -1
+                self._equip_scroll = 0
+                self._refresh()
+            return
         # 装备槽 (480.., 39v+58, 高39, 右侧含名字): 点选槽 → 切换列表分类
         if x >= 480 and 58 <= y < 58 + 39 * 4:
             v6 = (y - 58) // 39
