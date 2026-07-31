@@ -24,10 +24,16 @@
   sub_422A5C — 团队聚合属性: Σ队员智慧/仁德/勇气/医术 (前三钳≥0, 医术封顶100)
   sub_41A940 — 系统页: 标题帧84 + 5系统选项行(帧85/87/94-98) + 音效/BGM 开关(帧99/100)
                + 滑块旋钮(帧vol+88) + 开关旋钮(帧86); 状态 word_755C74/76/78/7A
+  sub_41FAAC — 系统页交互 case 5: "离开"(x=240-305, y=359-393) → word_4E8058=1 → 标题界面
+  sub_425EAC — 加载 TitleMenu.gxp (标题界面背景, 按钮文字内嵌于位图, 无文字绘制)
+  sub_425F3C — 标题界面 hover 检测: X∈[200,460], Y∈[44*(i-1)+290, 44*(i-1)+333]
+  sub_426164 — 标题界面调度: hover 高亮 = Cur.JVG 帧 116/117/118 @ (200, 44*i+246)
+  sub_426004 — 标题界面点击: 选项1新游戏→回主菜单 / 选项2继续→存档页读档 / 选项3离开→退出
   sub_417F0C — 翻页箭头: 帧21(x,y) / 帧22(x+20,y+5)
   sub_454D90 — 半透明混合公式 dst*(32-a)/32 + src*a/32 (alpha 10/13/15)
 资源: mb.gxp (JGXP 头 + LZSS + RGB565 全屏 640×480), Mu.JVG (帧偏移 x_off/y_off),
-      PFace.jvg (主角自定义头像, f[1]==0 时替代 Mu 帧)。
+      PFace.jvg (主角自定义头像, f[1]==0 时替代 Mu 帧),
+      TitleMenu.gxp (标题界面背景), Cur.JVG (标题按钮高亮帧 116-118)。
 头像帧规则 (含 tks_launcher 补丁): f[261] 非零 → 帧 f[261]; 否则 f[1]+211。
 """
 import struct
@@ -35,7 +41,7 @@ import time
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor, QFont, QFontMetrics, QImage, QPainter, QPixmap
-from PySide6.QtWidgets import QWidget
+from PySide6.QtWidgets import QApplication, QWidget
 
 from editor_utils.lzss import lzss_decompress_stream
 from editor_utils.rgb565 import rgb565_to_rgba
@@ -138,7 +144,9 @@ def _status_cache(data):
     c = getattr(data, '_status_view_cache', None)
     if c is None:
         c = {'mu': None, 'mu_tried': False, 'pface': None, 'pface_tried': False,
-             'bg': None, 'bg_tried': False, 'mu_pix': {}, 'pface_pix': {}}
+             'cur': None, 'cur_tried': False,
+             'bg': None, 'bg_tried': False, 'mu_pix': {}, 'pface_pix': {},
+             'cur_pix': {}, 'title_bg': None, 'title_bg_tried': False}
         data._status_view_cache = c
     return c
 
@@ -196,6 +204,12 @@ class GameStatusView(QWidget):
         self._save_mode = 0
         self._save_page = 0
         self._save_hover = 0
+        # 标题界面状态 (sub_425EAC/sub_425F3C/sub_426004/sub_426164):
+        #   系统页点"离开"(x=240-305,y=359-393) → word_4E8058=1 → 标题界面
+        #   背景 TitleMenu.gxp (按钮文字内嵌位图); 3 按钮 X∈[200,460], Y∈[44*(i-1)+290, 44*(i-1)+333]
+        #   hover 高亮 = Cur.JVG 帧 116/117/118 @ (200, 44*i+246); 点击: 1新游戏/2继续/3离开
+        self._title_mode = False
+        self._title_hover = 0      # 悬停选项 0=无, 1-3 (sub_425F3C)
         self._txt_queue = []     # 文字绘制队列 (精灵画完后统一按 FONT9696 像素混合)
         self._font = QFont("SimSun")
         self._font.setPixelSize(24)
@@ -239,7 +253,8 @@ class GameStatusView(QWidget):
                 'se_on': self._se_on, 'se_vol': self._se_vol,
                 'bgm_on': self._bgm_on, 'bgm_vol': self._bgm_vol,
                 'save_mode': self._save_mode, 'save_page': self._save_page,
-                'save_hover': self._save_hover}
+                'save_hover': self._save_hover,
+                'title_mode': self._title_mode, 'title_hover': self._title_hover}
 
     def restore_state(self, state):
         if not state:
@@ -262,6 +277,11 @@ class GameStatusView(QWidget):
         self._save_mode = state.get('save_mode', 0)
         self._save_page = state.get('save_page', 0)
         self._save_hover = state.get('save_hover', 0)
+        self._title_mode = state.get('title_mode', False)
+        self._title_hover = state.get('title_hover', 0)
+        if self._title_mode:
+            # 标题界面重建后无鼠标移动事件, 悬停高亮由下一次 mouseMove 重新计算
+            self._title_hover = 0
 
     def _refresh(self):
         self._rebuild()
@@ -346,6 +366,36 @@ class GameStatusView(QWidget):
                 except Exception:
                     c['save_bg'] = None
         return c['save_bg']
+
+    def _cur_frames(self):
+        """Cur.JVG 帧列表 (标题界面按钮高亮池, sub_411624 加载为 dword_755AF8)"""
+        c = self._cache()
+        if not c['cur_tried']:
+            c['cur_tried'] = True
+            p = self.data.paths.get("Cur.JVG")
+            if p:
+                try:
+                    jvg = load_jvg(p)
+                    c['cur'] = [(b, f) for b in jvg.blocks for f in b.frames]
+                except Exception:
+                    c['cur'] = None
+        return c['cur']
+
+    def _cur_pix(self, idx):
+        return self._frame_pix(self._cur_frames(), self._cache()['cur_pix'], idx)
+
+    def _title_background(self):
+        """标题界面背景 TitleMenu.gxp (sub_425EAC: sub_450264 加载 aTitlemenuGxp)"""
+        c = self._cache()
+        if not c.get('title_bg_tried'):
+            c['title_bg_tried'] = True
+            p = self.data.paths.get("TitleMenu.gxp")
+            if p:
+                try:
+                    c['title_bg'] = pil_to_qpixmap(_load_gxp_pil(p))
+                except Exception:
+                    c['title_bg'] = None
+        return c['title_bg']
 
     # ── 绘制原语 ──
 
@@ -647,6 +697,16 @@ class GameStatusView(QWidget):
             if bg:
                 p.drawPixmap(0, 0, bg)
             self._draw_save_page(p)
+            p.end()
+            self._image = self._flush_texts(img)
+            return
+        # 标题界面 (sub_425EAC/sub_426164): TitleMenu.gxp 全屏背景 + hover 高亮
+        #   (不画队伍列表/页签; 按钮文字内嵌于背景位图, 无 FONT9696 文字)
+        if self._title_mode:
+            img = QPixmap(GAME_W, GAME_H)
+            img.fill(QColor(0, 0, 0))
+            p = QPainter(img)
+            self._draw_title_page(p)
             p.end()
             self._image = self._flush_texts(img)
             return
@@ -1180,6 +1240,32 @@ class GameStatusView(QWidget):
         self._blit(p, self._mu_pix(21), 613, 190)
         self._blit(p, self._mu_pix(22), 613, 240)
 
+    # ── 标题界面 (sub_425EAC + sub_425F3C + sub_426004 + sub_426164) ──
+    # 进入: 系统页点"离开"(x=240-305, y=359-393) → word_4E8058=1 → 主循环重载标题
+    # 背景: TitleMenu.gxp 全屏 (按钮文字内嵌位图, 无 FONT9696 文字绘制)
+    # 3 按钮区域: X∈[200,460], Y∈[44*(i-1)+290, 44*(i-1)+333] (i=1..3)
+    # hover 高亮: Cur.JVG 帧 116/117/118 (sub_45408C(Cur,21)=116) @ (200, 44*i+246) 不透明
+    # 点击 (sub_426004): 1=新的游戏→回主菜单 / 2=继续游戏→存档页(读档) / 3=离开游戏→退出
+    TITLE_HOVER_BASE = 116      # Cur.JVG 帧号基址 (dword_824444, sub_45408C(Cur,21))
+
+    def _title_hit(self, x, y):
+        """按钮命中检测 (sub_425F3C/sub_426004): X∈[200,460], Y∈[44*(i-1)+290, 44*(i-1)+333]"""
+        if not (200 <= x <= 460):
+            return 0
+        for i in (1, 2, 3):
+            if 44 * (i - 1) + 290 <= y <= 44 * (i - 1) + 333:
+                return i
+        return 0
+
+    def _draw_title_page(self, p):
+        """标题界面渲染 (sub_426164 L27-32): 全屏背景 + hover 高亮帧 (不透明)"""
+        bg = self._title_background()
+        if bg:
+            p.drawPixmap(0, 0, bg)
+        if self._title_hover > 0:
+            self._blit(p, self._cur_pix(self.TITLE_HOVER_BASE + self._title_hover - 1),
+                       200, 44 * self._title_hover + 246)
+
     @staticmethod
     def _pad10(name):
         """复刻 C "%-10.10s" 字节语义: Big5 全角 2 字节, 截断/补 ASCII 空格到 10 字节"""
@@ -1220,6 +1306,11 @@ class GameStatusView(QWidget):
         # 存档页 (sub_41CE10): 全屏 save.gxp 背景, 不响应左侧列表/页签/系统页
         if self._save_mode > 0:
             self._save_mouse(x, y)
+            return
+
+        # 标题界面 (sub_426004): 全屏 TitleMenu.gxp, 3 按钮点击 (1新游戏/2继续/3离开)
+        if self._title_mode:
+            self._title_mouse(x, y)
             return
 
         # 左侧列表行 (行区域同帧0边框: x 3..205, 高 79)
@@ -1326,6 +1417,14 @@ class GameStatusView(QWidget):
                 self._save_hover = new_hover
                 self._refresh()
             return
+        # 标题界面 hover (sub_425F3C): 移到选项上高亮, 移出清除
+        if self._title_mode:
+            pos = event.position().toPoint()
+            new_hover = self._title_hit(pos.x(), pos.y())
+            if new_hover != self._title_hover:
+                self._title_hover = new_hover
+                self._refresh()
+            return
         # 物品/装备页: 选中跟随鼠标 — 悬停到哪行选哪行, 移出列表区则取消选中 (-1)
         if self._page == 2:
             gi = self._item_at(event.position().toPoint())
@@ -1373,6 +1472,10 @@ class GameStatusView(QWidget):
                 if self._save_page < 2:
                     self._save_page += 1
                     self._refresh()
+            event.accept()
+            return
+        # 标题界面: 无翻页逻辑 (sub_426164 不处理滚轮), 直接忽略
+        if self._title_mode:
             event.accept()
             return
         if self._page == 1:
@@ -1529,7 +1632,46 @@ class GameStatusView(QWidget):
             self._save_hover = 0
             self._refresh()
             return
-        # 系统选项 5 (离开): 图鉴只读, 点击无实际效果
+        # 系统选项 5 (离开, sub_41FAAC case 5 L241-251): y=359-393, x=240-305
+        # → sub_451C38(0) + word_4E8058=1 → 主循环重载资源进入标题界面 (sub_425EAC)
+        if 359 <= y <= 393 and 240 <= x <= 305:
+            # 标题界面资源缺失时保持只读 (不跳转)
+            if not (self.data.paths.get("TitleMenu.gxp")
+                    and self.data.paths.get("Cur.JVG")):
+                return
+            self._title_mode = True
+            self._title_hover = 0
+            self._refresh()
+            return
+
+    # ── 标题界面交互 (sub_426004) ──
+    # 左键点击: X∈[200,460], Y∈[44*(i-1)+290, 44*(i-1)+334] (sub_426004 L16-23)
+    #   1=新的游戏 → sub_426164 返回 100 → 主循环退出标题, 进入主菜单
+    #   2=继续游戏 → 加载 save.gxp, arglist[614953]=2, arglist[461]=6 → 存档页(读档)
+    #   3=离开游戏 → sub_44ACE8 + SendMessageA(hWnd, WM_CLOSE) → 退出程序
+
+    def _title_mouse(self, x, y):
+        if not (200 <= x <= 460):
+            return
+        for i in (1, 2, 3):
+            if 44 * (i - 1) + 290 <= y <= 44 * (i - 1) + 334:
+                if i == 1:
+                    # 新的游戏 → 回主菜单 (游戏: sub_412688 进入游戏主流程)
+                    self._title_mode = False
+                    self._title_hover = 0
+                    self._refresh()
+                elif i == 2:
+                    # 继续游戏 → 存档页 (读档模式, sub_426004 L33-42)
+                    self._save_mode = 2
+                    self._save_page = 0
+                    self._save_hover = 0
+                    self._refresh()
+                else:
+                    # 离开游戏 → 退出图鉴程序 (游戏: SendMessageA(hWnd, WM_CLOSE))
+                    app = QApplication.instance()
+                    if app is not None:
+                        app.quit()
+                return
 
     def _audio_click(self, x, kind):
         """音效/BGM 行点击 (sub_41FAAC case 5 L289-372):
@@ -1580,9 +1722,11 @@ class GameStatusView(QWidget):
                 if 150 * v + 127 <= y <= 150 * v + 155:
                     if 516 <= x <= 583:
                         # 取消 (sub_41CE10 L49-65): arglist[614953]=0, arglist[461]=8
+                        # → 10 → 1: 从标题界面进入则回标题界面, 否则回主菜单 (系统页)
                         self._save_mode = 0
                         self._save_page = 0
                         self._save_hover = 0
+                        self._title_hover = 0
                         self._refresh()
                     # 存档/读档按钮 x=452-515: 图鉴只读, 无实际效果
                     return

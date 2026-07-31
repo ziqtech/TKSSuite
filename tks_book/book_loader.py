@@ -310,6 +310,8 @@ class GameData:
         # 游戏状态界面复刻资源 (game_status_view 惰性解码, 此处仅登记路径)
         _p("mb.gxp")
         _p("save.gxp")
+        _p("TitleMenu.gxp")   # 标题界面背景 (系统页"离开"进入, sub_425EAC)
+        _p("Cur.JVG")         # 光标/标题按钮高亮精灵池 (sub_426164 帧 116-118)
         _p("PFace.jvg")
         _p("FONT9696")
 
