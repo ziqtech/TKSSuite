@@ -11,6 +11,7 @@
   sub_419704 — 物品页: 分类栏帧25 + 6分类高亮(帧27-32,61px步进) + 列表面板帧33 + 金钱帧206
   sub_419458 — 物品列表: 10行/页, 行高31, 图标(字段4+130)@235, 名字@285, 选中条帧81
   sub_4195C4 — 物品说明: 浮动提示框帧158, 行 Y+31 (靠底则 Y-139), 说明文本=字段3
+               (游戏内右键长按物品显示, 松开消失; 弹窗为最顶层, 覆盖列表文字)
   sub_41928C — 物品列表构建: 按字段1(分类)过滤, 每页 10 项
   sub_41A080 — 队伍页: 4子页签(帧50-53, 60px步进) + 团队(5成员/战绩统计)
                + 记事/功绩(每页3条, TKT=11201+序号) + 历史(TKT 9050+序号)
@@ -24,7 +25,7 @@
 """
 import struct
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, Signal, QTimer
 from PySide6.QtGui import QColor, QFont, QFontMetrics, QImage, QPainter, QPixmap
 from PySide6.QtWidgets import QWidget
 
@@ -159,6 +160,14 @@ class GameStatusView(QWidget):
         self._item_cat = 0
         self._item_sel = 0
         self._item_scroll = 0
+        # 物品说明弹窗: 右键长按显示 (游戏内 hold 右键弹出说明, 松开消失)
+        self._tooltip_item = -1   # 当前显示说明的物品全局索引 (-1=不显示)
+        self._press_item = -1     # 右键按下待触发长按的物品索引
+        self._right_pressed = False
+        self._press_timer = QTimer(self)
+        self._press_timer.setSingleShot(True)
+        self._press_timer.setInterval(300)   # 长按阈值 300ms
+        self._press_timer.timeout.connect(self._on_item_longpress)
         # 队伍页状态 (对应游戏 a1[614869]=子页签 0团队/1记事/2功绩/3历史, a1[614900]=页码)
         self._team_tab = 0
         self._journal_page = 0
@@ -569,6 +578,9 @@ class GameStatusView(QWidget):
             self._draw_team_page(p, f)
         p.end()
         self._image = self._flush_texts(img)
+        if self._page == 2:
+            # 物品说明弹窗作为最顶层覆盖 (在列表文字之上, 避免被物品名压住)
+            self._image = self._overlay_item_tooltip(self._image)
 
     def _draw_roster(self, p):
         """左侧列表 (41762C): 行高 79px, 选中行帧0边框+黄名字, 未选中行暗化"""
@@ -751,16 +763,29 @@ class GameStatusView(QWidget):
             self._blit(p, self._mu_pix(21), 598, 48)
         if self._item_scroll + ITEM_LIST_VISIBLE < n:
             self._blit(p, self._mu_pix(22), 618, 53)
+        # 说明弹窗不在此绘制: 由 _overlay_item_tooltip 在文字 flush 之后作为最顶层覆盖
 
-        # 说明浮动框 (4195C4): 帧158 @ (252, v5), 文本@(262,v5+8); v5=Y+31, 靠底则 Y-139
-        if 0 <= self._item_sel < n:
-            sel_row = self._item_sel - self._item_scroll
-            yy = 31 * sel_row + 103
-            v5 = yy + 31 if yy + 31 <= 360 else yy - 139
-            self._blit(p, self._mu_pix(158), 252, v5)
-            vals = rows[self._item_sel][1]
-            raw = self._expand_macros(self.data.tkt_raw_bytes(vals[3]))
-            self._rich(262, v5 + 8, raw, 16, px=16, ftype=0, max_y=v5 + 113)
+    def _overlay_item_tooltip(self, pixmap):
+        """物品说明弹窗最顶层覆盖 (4195C4): 右键长按时显示, 层级高于列表文字。
+
+        帧158 提示框 + 说明文本(字段3)。位置随长按物品的可见行: v5=Y+31, 靠底(>360)则 Y-139。
+        """
+        if self._page != 2 or self._tooltip_item < 0:
+            return pixmap
+        rows = self._build_item_rows(self._item_cat)
+        if not (0 <= self._tooltip_item < len(rows)):
+            return pixmap
+        sel_row = self._tooltip_item - self._item_scroll
+        if not (0 <= sel_row < ITEM_LIST_VISIBLE):
+            return pixmap   # 物品已滚出可见区
+        yy = 31 * sel_row + 103
+        v5 = yy + 31 if yy + 31 <= 360 else yy - 139
+        p = QPainter(pixmap)
+        self._blit(p, self._mu_pix(158), 252, v5)
+        p.end()
+        raw = self._expand_macros(self.data.tkt_raw_bytes(rows[self._tooltip_item][1][3]))
+        self._rich(262, v5 + 8, raw, 16, px=16, ftype=0, max_y=v5 + 113)
+        return self._flush_texts(pixmap)
 
     # ── 队伍页 (sub_41A080) ──
 
@@ -891,6 +916,16 @@ class GameStatusView(QWidget):
         pos = event.position().toPoint()
         x, y = pos.x(), pos.y()
 
+        # 右键: 物品页长按显示说明弹窗 (游戏内 hold 右键弹出, 松开消失)
+        if event.button() == Qt.RightButton:
+            if self._page == 2:
+                gi = self._item_at(pos)
+                if gi >= 0:
+                    self._right_pressed = True
+                    self._press_item = gi
+                    self._press_timer.start()
+            return
+
         # 左侧列表行 (行区域同帧0边框: x 3..205, 高 79)
         if x <= 205:
             row = (y - 3) // 79
@@ -958,6 +993,35 @@ class GameStatusView(QWidget):
             return
 
         super().mousePressEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        # 右键松开: 取消长按, 隐藏物品说明弹窗
+        if event.button() == Qt.RightButton:
+            self._right_pressed = False
+            self._press_timer.stop()
+            self._press_item = -1
+            if self._tooltip_item >= 0:
+                self._tooltip_item = -1
+                self._refresh()
+            return
+        super().mouseReleaseEvent(event)
+
+    def _on_item_longpress(self):
+        """长按阈值到达: 若右键仍按住且在物品页, 显示该物品说明弹窗"""
+        if self._right_pressed and self._page == 2 and self._press_item >= 0:
+            self._tooltip_item = self._press_item
+            self._refresh()
+
+    def _item_at(self, pos):
+        """物品列表行命中 → 全局物品索引 (无则 -1); 行区域 235..632, y=105+31r, 10 行"""
+        x, y = pos.x(), pos.y()
+        if 235 <= x <= 632 and y >= 105:
+            row = (y - 105) // 31
+            if 0 <= row < ITEM_LIST_VISIBLE:
+                gi = self._item_scroll + row
+                if gi < len(self._build_item_rows(self._item_cat)):
+                    return gi
+        return -1
 
     def wheelEvent(self, event):
         if self._page == 1:
