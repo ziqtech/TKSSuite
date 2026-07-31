@@ -8,6 +8,10 @@
   sub_418EE8 — 技能页: 面板(16/11/12/13/14) / 4分类页签(42px步进) / 右侧6槽(35px步进)
   sub_418C90 — 技能列表: 31px 行高, 选中条帧80, 学习消耗 = jp_cost×(250-悟性)/200
   sub_418E5C — 技能说明: 字号16, 坐标(453,305)
+  sub_419704 — 物品页: 分类栏帧25 + 6分类高亮(帧27-32,61px步进) + 列表面板帧33 + 金钱帧206
+  sub_419458 — 物品列表: 10行/页, 行高31, 图标(字段4+130)@235, 名字@285, 选中条帧81
+  sub_4195C4 — 物品说明: 浮动提示框帧158, 行 Y+31 (靠底则 Y-139), 说明文本=字段3
+  sub_41928C — 物品列表构建: 按字段1(分类)过滤, 每页 10 项
   sub_41A080 — 队伍页: 4子页签(帧50-53, 60px步进) + 团队(5成员/战绩统计)
                + 记事/功绩(每页3条, TKT=11201+序号) + 历史(TKT 9050+序号)
   sub_41A7A8 — 记事/功绩列表构建 (1000项标志数组, 1=记事 2=功绩, 页数=⌈n/3⌉)
@@ -68,6 +72,10 @@ SKILL_SLOT_IDX = [82, 83, 84, 85, 86, 87]  # 4主动+2被动 技能索引 (-1=�
 SLOT_CAT_FRAMES = (58, 58, 59, 59, 60, 61)  # 右侧6槽分类图标帧 (指令/主动/被动/移动)
 
 SKILL_LIST_VISIBLE = 10   # 技能列表面板 (帧12 高319, 行高31) 可见行数
+
+# 物品页 (sub_419704/sub_419458/sub_4195C4)
+ITEM_LIST_VISIBLE = 10    # 每页可见行数 (sub_41928C v8<9 → 10 项)
+ITEM_CATEGORIES = 6       # 分类数 0-5 (药品/道具/武器/防具/饰品/特殊, 高亮帧 27-32)
 
 # 队伍页 (sub_41A080): 团队统计标签 (繁体原文取自 exe 数据段, 值为存档数据 → 静态显示 0)
 TEAM_STAT_LEFT = [  # (标签, y) @ x=230, 值 %5d
@@ -141,12 +149,16 @@ class GameStatusView(QWidget):
         self._window = []        # 左侧列表当前显示的 warpc_idx 窗口 (≤6)
         self._image = None       # 渲染结果 QPixmap
         # 技能页状态 (对应游戏 a1[614866]=焦点 0-3分类/4-9槽, a1[614891]=列表选中行)
-        self._page = 0           # 0=状态, 1=技能, 4=队伍
+        self._page = 0           # 0=状态, 1=技能, 2=物品, 4=队伍
         self._skill_cat = 1      # 当前分类 0-3 (默认主动技能)
         self._skill_focus = 1    # 焦点: 0-3=分类页签, 4-9=右侧槽
         self._skill_sel = 0
         self._skill_scroll = 0
         self._skill_rows = []    # [(skill_idx, learn_state), ...] 当前分类
+        # 物品页状态 (对应游戏 a1[614867]=分类, a1[614891]=页内选中行)
+        self._item_cat = 0
+        self._item_sel = 0
+        self._item_scroll = 0
         # 队伍页状态 (对应游戏 a1[614869]=子页签 0团队/1记事/2功绩/3历史, a1[614900]=页码)
         self._team_tab = 0
         self._journal_page = 0
@@ -186,7 +198,8 @@ class GameStatusView(QWidget):
         """页面/子页签状态快照 (角色切换重建视图时由 CharTab 保持)"""
         return {'page': self._page, 'skill_cat': self._skill_cat,
                 'skill_focus': self._skill_focus, 'team_tab': self._team_tab,
-                'journal_page': self._journal_page}
+                'journal_page': self._journal_page, 'item_cat': self._item_cat,
+                'item_sel': self._item_sel, 'item_scroll': self._item_scroll}
 
     def restore_state(self, state):
         if not state:
@@ -196,6 +209,9 @@ class GameStatusView(QWidget):
         self._skill_focus = state.get('skill_focus', 1)
         self._team_tab = state.get('team_tab', 0)
         self._journal_page = state.get('journal_page', 0)
+        self._item_cat = state.get('item_cat', 0)
+        self._item_sel = state.get('item_sel', 0)
+        self._item_scroll = state.get('item_scroll', 0)
 
     def _refresh(self):
         self._rebuild()
@@ -487,6 +503,14 @@ class GameStatusView(QWidget):
             for i, fr in enumerate(SLOT_CAT_FRAMES):
                 self._blit(p, self._mu_pix(fr), 445, 35 * i + 65)
                 self._blit(p, self._mu_pix(15), 485, 35 * i + 69, 10)
+        elif page == 2:
+            # 物品页 (419704): 分类栏帧25 + 列表面板帧33 (均不透明) + 底栏帧26(a10) + 金钱帧206
+            self._blit(p, self._mu_pix(25), 221, 48)
+            self._blit(p, self._mu_pix(33), 216, 85)
+            self._blit(p, self._mu_pix(26), 246, 428, 10)
+            self._blit(p, self._mu_pix(206), 450, 430)
+            # 金钱 (419704 L15-17: 色19黄, "      %-d"; 运行时数据 → 静态查看显示 0)
+            self._text(p, 450, 440, "      0", 19)
         # page 4 (队伍): 面板随子页签变化, 全部在 _draw_team_page 动态绘制
         p.end()
         base = self._flush_texts(base)
@@ -539,6 +563,8 @@ class GameStatusView(QWidget):
             self._draw_status_page(p, f)
         elif self._page == 1:
             self._draw_skill_page(p, f)
+        elif self._page == 2:
+            self._draw_item_page(p, f)
         elif self._page == 4:
             self._draw_team_page(p, f)
         p.end()
@@ -673,6 +699,68 @@ class GameStatusView(QWidget):
         if rec:
             raw = self._expand_macros(self.data.tkt_raw_bytes(rec['vals'][1]))
             self._rich(453, 305, raw, 16, px=16, ftype=0, max_y=452)
+
+    # ── 物品页 (sub_419704 / sub_419458 / sub_4195C4) ──
+
+    def _build_item_rows(self, cat):
+        """当前分类的全部物品 [(rec_index, vals), ...] (过滤 field[1]==cat, 空槽同 tab_item)"""
+        c = self._cache()
+        key = ('items', cat)
+        if key not in c:
+            rows = []
+            for rec in self.data.item_recs:
+                vals = rec['vals']
+                if vals[0] in (0, 1) or vals[2] <= 0 or vals[1] != cat:
+                    continue
+                if not tkt_first_line(self.data.tkt, vals[2]):
+                    continue
+                rows.append((rec['index'], vals))
+            c[key] = rows
+        return c[key]
+
+    def _draw_item_page(self, p, f):
+        """物品页动态内容 (sub_419704 分类高亮 + sub_419458 列表 + sub_4195C4 说明框)"""
+        cat = self._item_cat
+        # 分类高亮 (419704 L14): 帧 cat+27 @ (61*cat+229, 54)
+        self._blit(p, self._mu_pix(cat + 27), 61 * cat + 229, 54)
+
+        rows = self._build_item_rows(cat)
+        n = len(rows)
+        self._item_sel = max(0, min(self._item_sel, n - 1)) if n else -1
+        # 选中行保持在可见窗口内 (10 行/页)
+        if self._item_sel >= 0:
+            if self._item_sel < self._item_scroll:
+                self._item_scroll = self._item_sel
+            elif self._item_sel >= self._item_scroll + ITEM_LIST_VISIBLE:
+                self._item_scroll = self._item_sel - ITEM_LIST_VISIBLE + 1
+        self._item_scroll = max(0, min(self._item_scroll, max(0, n - ITEM_LIST_VISIBLE)))
+
+        # 列表 (419458): 行高31, 图标@235 名字@285, 选中条帧81@281 (色2选中/色16默认)
+        vis = rows[self._item_scroll:self._item_scroll + ITEM_LIST_VISIBLE]
+        for r, (ridx, vals) in enumerate(vis):
+            gi = self._item_scroll + r
+            selected = (gi == self._item_sel)
+            if selected:
+                self._blit(p, self._mu_pix(81), 281, 31 * r + 103, 15)
+            self._blit(p, self._mu_pix(vals[4] + 130), 235, 31 * r + 105)
+            nm = tkt_first_line(self.data.tkt, vals[2]) or f"#{ridx}"
+            self._text(p, 285, 31 * r + 105, nm, 2 if selected else 16)
+
+        # 翻页箭头 (417F0C @ 598,48): 帧21 上 / 帧22 下 (+20,+5)
+        if self._item_scroll > 0:
+            self._blit(p, self._mu_pix(21), 598, 48)
+        if self._item_scroll + ITEM_LIST_VISIBLE < n:
+            self._blit(p, self._mu_pix(22), 618, 53)
+
+        # 说明浮动框 (4195C4): 帧158 @ (252, v5), 文本@(262,v5+8); v5=Y+31, 靠底则 Y-139
+        if 0 <= self._item_sel < n:
+            sel_row = self._item_sel - self._item_scroll
+            yy = 31 * sel_row + 103
+            v5 = yy + 31 if yy + 31 <= 360 else yy - 139
+            self._blit(p, self._mu_pix(158), 252, v5)
+            vals = rows[self._item_sel][1]
+            raw = self._expand_macros(self.data.tkt_raw_bytes(vals[3]))
+            self._rich(262, v5 + 8, raw, 16, px=16, ftype=0, max_y=v5 + 113)
 
     # ── 队伍页 (sub_41A080) ──
 
@@ -812,16 +900,20 @@ class GameStatusView(QWidget):
                     self.charClicked.emit(widx)
             return
 
-        # 顶部页签 (209+72j, 6, 68x32): 状态/技能/队伍可切换
+        # 顶部页签 (209+72j, 6, 68x32): 状态/技能/物品/队伍可切换
         if 6 <= y <= 40 and x >= 209:
             j = (x - 209) // 72
-            if j in (0, 1, 4) and j != self._page:
+            if j in (0, 1, 2, 4) and j != self._page:
                 self._page = j
                 self._refresh()
             return
 
         if self._page == 4:
             self._team_mouse(x, y)
+            return
+
+        if self._page == 2:
+            self._item_mouse(x, y)
             return
 
         if self._page != 1:
@@ -872,6 +964,10 @@ class GameStatusView(QWidget):
             self._scroll_skill(-3 if event.angleDelta().y() > 0 else 3)
             event.accept()
             return
+        if self._page == 2:
+            self._scroll_item(-3 if event.angleDelta().y() > 0 else 3)
+            event.accept()
+            return
         if self._page == 4 and self._team_tab in (1, 2):
             self._flip_journal(-1 if event.angleDelta().y() > 0 else 1)
             event.accept()
@@ -883,6 +979,42 @@ class GameStatusView(QWidget):
         new = max(0, min(self._skill_scroll + delta, max(0, n - SKILL_LIST_VISIBLE)))
         if new != self._skill_scroll:
             self._skill_scroll = new
+            self._refresh()
+
+    # ── 物品页交互 ──
+
+    def _item_mouse(self, x, y):
+        # 分类栏 (61*cat+229, 54, 56x24): 6 分类
+        if 48 <= y <= 78 and 229 <= x < 229 + 61 * ITEM_CATEGORIES:
+            i = (x - 229) // 61
+            if 0 <= i < ITEM_CATEGORIES and i != self._item_cat:
+                self._item_cat = i
+                self._item_sel = 0
+                self._item_scroll = 0
+                self._refresh()
+            return
+        # 翻页箭头 (598,48,20x30 上一页 / 618,53,20x30 下一页)
+        if 598 <= x < 618 and 48 <= y < 78:
+            self._scroll_item(-ITEM_LIST_VISIBLE)
+            return
+        if 618 <= x < 638 and 53 <= y < 83:
+            self._scroll_item(ITEM_LIST_VISIBLE)
+            return
+        # 列表行 (235..632, 105+31r, 行高31, 10 行)
+        if 235 <= x <= 632 and y >= 105:
+            row = (y - 105) // 31
+            if 0 <= row < ITEM_LIST_VISIBLE:
+                gi = self._item_scroll + row
+                if gi < len(self._build_item_rows(self._item_cat)) and gi != self._item_sel:
+                    self._item_sel = gi
+                    self._refresh()
+            return
+
+    def _scroll_item(self, delta):
+        n = len(self._build_item_rows(self._item_cat))
+        new = max(0, min(self._item_scroll + delta, max(0, n - ITEM_LIST_VISIBLE)))
+        if new != self._item_scroll:
+            self._item_scroll = new
             self._refresh()
 
     # ── 队伍页交互 ──
