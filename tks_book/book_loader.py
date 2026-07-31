@@ -260,6 +260,7 @@ class GameData:
         self.paths = {}
         self._sc_grp = None
         self._sc_grp_tried = False
+        self._status_view_cache = None  # game_status_view 资源缓存 (换目录后重建)
 
         def _p(name):
             fp = os.path.join(game_dir, name)
@@ -298,6 +299,10 @@ class GameData:
         # SC.GRP/SC.IDX 仅登记路径, 首次预览地图时再加载
         _p("SC.GRP")
         _p("SC.IDX")
+
+        # 游戏状态界面复刻资源 (game_status_view 惰性解码, 此处仅登记路径)
+        _p("mb.gxp")
+        _p("PFace.jvg")
 
         # 反向索引: 物品获得途径 / 人物入队事件 (TKD/TKMat/TKShop/WarData)
         try:

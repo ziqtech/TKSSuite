@@ -14,6 +14,7 @@ from book_loader import (
 )
 from editor_utils.ui_helpers import NoWheelComboBox
 from book_skill_graph import CharSkillGraph
+from game_status_view import GameStatusView
 from tab_common import BookTabBase
 
 
@@ -25,6 +26,7 @@ class CharTab(BookTabBase):
         self._fa_pix_cache = {}
         self._skill_filter = None   # 可学习技能的学习状态筛选 (None=全部)
         self._graph_mode = False    # False=列表视图, True=拓扑图视图
+        self._roster_order = []     # 列表顺序 (游戏视图左侧队伍窗口用)
 
     # ── 列表 ──
 
@@ -41,6 +43,7 @@ class CharTab(BookTabBase):
                 icon = QIcon(pix)
             items.append((rec['index'], f"{rec['index']:>3}  {name}", icon))
         self.set_list_items(items)
+        self._roster_order = [it[0] for it in items]
         self.clear_detail()
         self.finish_detail()
 
@@ -103,6 +106,9 @@ class CharTab(BookTabBase):
             hist_lbl.setTextInteractionFlags(Qt.TextSelectableByMouse)
             hv.addWidget(hist_lbl)
         self.detail_layout.addWidget(header)
+
+        # 游戏状态界面 1:1 复刻 (mb.gxp + Mu.JVG 按反编译坐标渲染, 缺资源时隐藏)
+        self._build_game_view(rec['index'])
 
         # 核心属性
         body = self.add_group("核心属性")
@@ -303,6 +309,36 @@ class CharTab(BookTabBase):
         self.add_text_block(body, "\n".join(lines))
 
     # ── 辅助 ──
+
+    def _build_game_view(self, warpc_idx):
+        """详情顶部嵌入 640×480 游戏状态界面复刻 (资源缺失时不显示)"""
+        view = GameStatusView()
+        view.set_data(self.data)
+        if not view.available():
+            view.deleteLater()
+            return
+        view.set_roster(self._roster_order)
+        view.charClicked.connect(self._on_game_view_char)
+        body = self.add_group("游戏界面 (状态页 1:1 复刻)")
+        row = QHBoxLayout()
+        row.addStretch()
+        row.addWidget(view)
+        row.addStretch()
+        body.addLayout(row)
+        hint = QLabel("点击左侧头像行可切换角色 · 布局坐标复刻自 TKS.exe 反编译 (sub_417F84 / sub_41762C)")
+        hint.setProperty("class", "StatusHint")
+        hint.setAlignment(Qt.AlignCenter)
+        body.addWidget(hint)
+        view.show_char(warpc_idx)
+
+    def _on_game_view_char(self, warpc_idx):
+        """游戏视图内点击头像行 → 同步选中左侧列表项 (触发 show_detail)"""
+        for i in range(self.list_widget.count()):
+            item = self.list_widget.item(i)
+            if item.data(Qt.UserRole) == warpc_idx:
+                self.list_widget.setCurrentItem(item)
+                return
+        self.show_detail(warpc_idx)  # 列表被过滤时直接刷新详情
 
     def _skill_label(self, sid):
         name = self.data.skill_name(sid) or f"技能#{sid}"
