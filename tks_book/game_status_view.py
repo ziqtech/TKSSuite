@@ -31,6 +31,7 @@
 头像帧规则 (含 tks_launcher 补丁): f[261] 非零 → 帧 f[261]; 否则 f[1]+211。
 """
 import struct
+import time
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor, QFont, QFontMetrics, QImage, QPainter, QPixmap
@@ -190,9 +191,11 @@ class GameStatusView(QWidget):
         self._bgm_vol = 3
         # 存档页状态 (对应游戏 arglist[614953]=操作模式 / arglist[614900]=页码)
         #   进入存档页: save_mode=1(存档)/2(读档); 0=未激活 (主菜单)
-        #   3 页 × 3 行 = 9 存档槽 (sub_41AB94); 图鉴无存档文件 → 全部为空槽
+        #   3 页 × 3 行 = 9 存档槽 (sub_41AB94)
+        #   save_hover: 0=未选中, 2*row+1=存档按钮, 2*row+2=读档/取消按钮 (sub_41DC5C)
         self._save_mode = 0
         self._save_page = 0
+        self._save_hover = 0
         self._txt_queue = []     # 文字绘制队列 (精灵画完后统一按 FONT9696 像素混合)
         self._font = QFont("SimSun")
         self._font.setPixelSize(24)
@@ -235,7 +238,8 @@ class GameStatusView(QWidget):
                 'equip_slot': self._equip_slot, 'equip_scroll': self._equip_scroll,
                 'se_on': self._se_on, 'se_vol': self._se_vol,
                 'bgm_on': self._bgm_on, 'bgm_vol': self._bgm_vol,
-                'save_mode': self._save_mode, 'save_page': self._save_page}
+                'save_mode': self._save_mode, 'save_page': self._save_page,
+                'save_hover': self._save_hover}
 
     def restore_state(self, state):
         if not state:
@@ -257,6 +261,7 @@ class GameStatusView(QWidget):
         self._bgm_vol = state.get('bgm_vol', 3)
         self._save_mode = state.get('save_mode', 0)
         self._save_page = state.get('save_page', 0)
+        self._save_hover = state.get('save_hover', 0)
 
     def _refresh(self):
         self._rebuild()
@@ -1101,25 +1106,60 @@ class GameStatusView(QWidget):
     # ── 存档页 (sub_41AB94 + sub_41B08C) ──
     # 进入: 系统页点 存档/读档 按钮 → arglist[614953]=1/2, arglist[461]=6, 加载 save.gxp
     # 取消: 点 "取消" → arglist[614953]=0, arglist[461]=8 → 10 → 1 (回主菜单)
-    # 布局: 3页 × 3行 = 9 存档槽; 行高 150px; 每槽 6 角色头像 + 金钱 + 日期/时间 + 角色名
-    # 图鉴无 save\*.sav → 全部为空槽 (SLOBYTE==-1): 不画头像/等级/日期/时间/角色名
+    # 布局: 3页 × 3行 = 9 存档槽; 行高 150px; 每槽 6 角色头像 + 金钱 + 日期/时间 + 地点
+    # 存档文件: Save\<N>.sav (28字节索引, N=1-9); file_idx = 3*page + row + 1
+
+    def _save_slot(self, row):
+        """存档槽元数据 (sub_41B1A8): row=0..2 → save_slots[3*page + row]"""
+        slots = getattr(self.data, 'save_slots', [])
+        idx = 3 * self._save_page + row
+        if 0 <= idx < len(slots):
+            return slots[idx]
+        return None
 
     def _draw_save_page(self, p):
-        """存档页渲染 (sub_41AB94 L20-70 + sub_41B08C 翻页箭头)"""
+        """存档页渲染 (sub_41AB94 L20-70 + sub_41B08C hover/箭头)"""
         # 字体 FTYPE2 @ 24px, 色16 (sub_44AF7C(2,24,1,0,1,0) + sub_44B028(16))
         # 页码 "第%d頁 共3頁" @ (450, 10) (byte_4E9944, 参数 page+1)
         self._text(p, 450, 10, f"第{self._save_page + 1}頁 共3頁", 16)
         # 3 行存档槽 (sub_41AB94 L23-69)
         for i in range(3):
             yb = 150 * i
-            # 行背景 frame 273 @ (9, yb+40) 半透明 a10
+            # 行背景 frame 273 @ (9, yb+40) 半透明 a10 (sub_41AB94 L25)
             self._blit(p, self._mu_pix(273), 9, yb + 40, 10)
-            # 角色头像 v7=0..5 (sub_41AB94 L29-50): 空存档 SLOBYTE(char_id)==-1 → break
-            # 图鉴无存档文件, 全部为空槽, 不画头像/等级
-            # 金钱图标 frame 206 @ (300, yb+125) 不透明 (sub_41AB94 L51)
-            self._blit(p, self._mu_pix(206), 300, yb + 125)
-            # 金钱数值 "%d" @ (390, yb+135) — 空存档为 0 (sub_41AB94 L52)
-            self._text(p, 390, yb + 135, "0", 16)
+            # 存档数据 (sub_41B1A8: file_idx = 3*page + row + 1)
+            slot = self._save_slot(i)
+            if slot is None:
+                # 空槽: 仅显示金钱"0"和按钮文字 (sub_41AB94 SLOBYTE==-1 分支)
+                self._blit(p, self._mu_pix(206), 300, yb + 125)
+                self._text(p, 390, yb + 135, "0", 16)
+            else:
+                # 非空槽: 画头像/等级/日期/时间/地点/金钱 (sub_41AB94 L29-67)
+                team_ids = slot['team_ids']
+                team_levels = slot['team_levels']
+                # 角色头像 v7=0..5 (sub_41AB94 L29-50): 空位 SLOBYTE==-1 → break
+                for v in range(6):
+                    cid = team_ids[v]
+                    if cid < 0:
+                        break  # 空位, 停止绘制后续头像
+                    # 帧号 = charID + 211 (sub_41AB94 L35)
+                    self._blit(p, self._mu_pix(cid + 211), 71 * v + 16, yb + 46)
+                    # 等级 "Lv %2d" @ (71*v+16, yb+110) 色20 (sub_41AB94 L43-45)
+                    self._text(p, 71 * v + 16, yb + 110, f"Lv {team_levels[v]:2d}", 20)
+                # 日期/时间 (sub_41AB94 L58-63): localtime → strftime
+                ts = slot['timestamp']
+                if ts > 0:
+                    tm = time.localtime(ts)
+                    self._text(p, 450, yb + 50,
+                               f"{tm.tm_year % 100:02d}年{tm.tm_mon:02d}月{tm.tm_mday:02d}日", 16)
+                    self._text(p, 450, yb + 80,
+                               f"{tm.tm_hour:02d}:{tm.tm_min:02d}:{tm.tm_sec:02d}", 16)
+                # 地点名称 @ (20, yb+135) 色16 (sub_41AB94 L65-66: sub_4067E8(sceneID+300))
+                self._text(p, 20, yb + 135, self.data.scene_name(slot['scene_id']), 16)
+                # 金钱图标 frame 206 @ (300, yb+125) (sub_41AB94 L51)
+                self._blit(p, self._mu_pix(206), 300, yb + 125)
+                # 金钱数值 "%d" @ (390, yb+135) (sub_41AB94 L52)
+                self._text(p, 390, yb + 135, str(slot['gold']), 16)
             # 存档/读档按钮 (sub_41AB94 L53-56): byte_4E995B "存檔" / byte_4E9960 "讀檔"
             if self._save_mode == 1:
                 self._text(p, 460, yb + 130, "存檔", 16)
@@ -1127,7 +1167,15 @@ class GameStatusView(QWidget):
                 self._text(p, 460, yb + 130, "讀檔", 16)
             # 取消按钮 (sub_41AB94 L57): byte_4E9965 "取消"
             self._text(p, 528, yb + 130, "取消", 16)
-            # 日期/时间/角色名 (sub_41AB94 L58-67): 空存档 SLOBYTE==-1 → 跳过
+        # hover 高亮 (sub_41B08C L13-19): frame86 alpha=10
+        if self._save_hover > 0:
+            for i in range(3):
+                if self._save_hover == 2 * i + 1:
+                    # 存档按钮 hover @ (451, 150*i+128)
+                    self._blit(p, self._mu_pix(86), 451, 150 * i + 128, 10)
+                elif self._save_hover == 2 * i + 2:
+                    # 读档/取消按钮 hover @ (519, 150*i+128)
+                    self._blit(p, self._mu_pix(86), 519, 150 * i + 128, 10)
         # 翻页箭头 (sub_41B08C L23-24): frame21 上 @ (613,190) / frame22 下 @ (613,240)
         self._blit(p, self._mu_pix(21), 613, 190)
         self._blit(p, self._mu_pix(22), 613, 240)
@@ -1260,6 +1308,24 @@ class GameStatusView(QWidget):
         super().mouseReleaseEvent(event)
 
     def mouseMoveEvent(self, event):
+        # 存档页 hover (sub_41DC5C): X∈[452,583], 分两子区域, 间隙[516,518]不触发
+        if self._save_mode > 0:
+            pos = event.position().toPoint()
+            x, y = pos.x(), pos.y()
+            new_hover = 0
+            if 452 <= x <= 583:
+                for v in range(3):
+                    if 150 * v + 127 <= y <= 150 * v + 155:
+                        if 452 <= x <= 515:
+                            new_hover = 2 * v + 1      # 存档按钮 (sub_41DC5C L24-26)
+                        elif 519 <= x <= 583:
+                            new_hover = 2 * v + 2      # 读档/取消按钮 (sub_41DC5C L28-30)
+                        # 间隙 [516,518] → new_hover=0 (原游戏瑕疵, 1:1 保留)
+                        break
+            if new_hover != self._save_hover:
+                self._save_hover = new_hover
+                self._refresh()
+            return
         # 物品/装备页: 选中跟随鼠标 — 悬停到哪行选哪行, 移出列表区则取消选中 (-1)
         if self._page == 2:
             gi = self._item_at(event.position().toPoint())
@@ -1452,6 +1518,7 @@ class GameStatusView(QWidget):
         if 229 <= y <= 263 and 240 <= x <= 305:
             self._save_mode = 1
             self._save_page = 0
+            self._save_hover = 0
             self._refresh()
             return
         # 系统选项 4 (读档, sub_41FAAC case 5 L253-271): y=294-328, x=240-305
@@ -1459,6 +1526,7 @@ class GameStatusView(QWidget):
         if 294 <= y <= 328 and 240 <= x <= 305:
             self._save_mode = 2
             self._save_page = 0
+            self._save_hover = 0
             self._refresh()
             return
         # 系统选项 5 (离开): 图鉴只读, 点击无实际效果
@@ -1514,6 +1582,7 @@ class GameStatusView(QWidget):
                         # 取消 (sub_41CE10 L49-65): arglist[614953]=0, arglist[461]=8
                         self._save_mode = 0
                         self._save_page = 0
+                        self._save_hover = 0
                         self._refresh()
                     # 存档/读档按钮 x=452-515: 图鉴只读, 无实际效果
                     return
@@ -1522,7 +1591,9 @@ class GameStatusView(QWidget):
         if 613 <= x <= 632:
             if 191 <= y <= 216 and self._save_page > 0:
                 self._save_page -= 1
+                self._save_hover = 0
                 self._refresh()
             elif 242 <= y <= 266 and self._save_page < 2:
                 self._save_page += 1
+                self._save_hover = 0
                 self._refresh()

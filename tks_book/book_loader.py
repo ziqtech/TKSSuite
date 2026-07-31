@@ -251,6 +251,10 @@ class GameData:
         self.battles = {}        # battle_id → WarData 简记录
         self.battle_scenes = {}  # battle_id → {场景ID}
         self.enemy_battles = {}  # warpc_idx → [battle_id]
+        # 存档索引 (sub_41B1A8 扫描 save\1.sav ~ save\9.sav)
+        # save_slots[i] = {'team_ids','gold','timestamp','team_levels','scene_id'} 或 None (空槽)
+        self.save_slots = []
+        self.save_dir = ""
 
     # ── 加载 ──
 
@@ -262,6 +266,8 @@ class GameData:
         self._sc_grp_tried = False
         self._status_view_cache = None  # game_status_view 资源缓存 (换目录后重建)
         self._tkt_raw = None            # TKT 原始字节 (含控制码, 游戏视图富文本用)
+        self.save_slots = []
+        self.save_dir = ""
 
         def _p(name):
             fp = os.path.join(game_dir, name)
@@ -307,6 +313,20 @@ class GameData:
         _p("PFace.jvg")
         _p("FONT9696")
 
+        # 存档索引 (sub_41B1A8: 循环打开 save\1.sav ~ save\9.sav, 28 字节/文件)
+        # Windows 文件系统不区分大小写, 实际目录可能写作 Save 或 save
+        self.save_slots = []
+        self.save_dir = ""
+        for sd_name in ("Save", "save"):
+            sd = os.path.join(game_dir, sd_name)
+            if os.path.isdir(sd):
+                self.save_dir = sd
+                break
+        if self.save_dir:
+            for idx in range(1, 10):  # 1-9 号存档槽
+                self.save_slots.append(self._load_save_index(
+                    os.path.join(self.save_dir, f"{idx}.sav")))
+
         # 反向索引: 物品获得途径 / 人物入队事件 (TKD/TKMat/TKShop/WarData)
         try:
             from book_index import build_indexes
@@ -340,6 +360,29 @@ class GameData:
         """场景名 = TKT[300+场景ID] 第一行 (同 mat_dat_io.scene_name)"""
         txt = tkt_first_line(self.tkt, SCENE_NAME_TKT_BASE + sid)
         return txt if txt else f"场景{sid}"
+
+    @staticmethod
+    def _load_save_index(path):
+        """加载 N.sav 索引文件 (28 字节, sub_41B1A8/sub_41CE10)
+
+        格式: [6×1B team_ids][2B gold][4B unix_timestamp][6×2B team_levels][4B scene_id]
+        team_ids 中 0xFF = 空位 (-1); 文件不存在/过短 → None (空槽)
+        """
+        if not os.path.exists(path):
+            return None
+        try:
+            data = bytearray(open(path, 'rb').read())
+        except Exception:
+            return None
+        if len(data) < 28:
+            return None
+        team_ids = [data[i] if data[i] != 0xFF else -1 for i in range(6)]
+        gold = struct.unpack_from('<H', data, 6)[0]
+        timestamp = struct.unpack_from('<I', data, 8)[0]
+        team_levels = [struct.unpack_from('<H', data, 12 + i * 2)[0] for i in range(6)]
+        scene_id = struct.unpack_from('<i', data, 24)[0]
+        return {'team_ids': team_ids, 'gold': gold, 'timestamp': timestamp,
+                'team_levels': team_levels, 'scene_id': scene_id}
 
     def scene_background(self, sid):
         """场景背景 PIL Image (仅 Frame A, 不解码前景/碰撞层 Frame B)"""
