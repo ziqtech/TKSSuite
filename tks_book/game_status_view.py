@@ -21,7 +21,7 @@
 import struct
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QColor, QFont, QFontMetrics, QPainter, QPixmap
+from PySide6.QtGui import QColor, QFont, QFontMetrics, QImage, QPainter, QPixmap
 from PySide6.QtWidgets import QWidget
 
 from editor_utils.lzss import lzss_decompress_stream
@@ -32,6 +32,7 @@ from book_loader import (
     SKILL_LEARN_BASE, SKILL_LEARN_COUNT, get_packed_byte,
     tkt_first_line, tkt_full_text, pil_to_qpixmap,
 )
+from game_font import load_game_font
 
 GAME_W, GAME_H = 640, 480
 
@@ -46,11 +47,11 @@ GAME_COLORS = {
     21: QColor(0, 244, 213),     # 青 (内力标签 / 核心标签)
 }
 
-# 状态页左列 (sub_417F84 L61-91): (标签, y)
-CORE_ROWS = [("等级:", 60), ("生命:", 83), ("内力:", 106), ("经验:", 129), ("升级:", 152)]
+# 状态页左列 (sub_417F84 L61-91): (标签, y) — 繁体原文取自 exe 数据段 (Big5, FONT9696 可查)
+CORE_ROWS = [("等級:", 60), ("生命:", 83), ("內力:", 106), ("經驗:", 129), ("升級:", 152)]
 STAT_ROWS = [  # (标签, y, 当前值字段)
-    ("攻击:", 244, 12), ("防御:", 267, 14), ("命中:", 290, 16), ("闪避:", 313, 18),
-    ("速度:", 336, 20), ("幸运:", 359, 22), ("悟性:", 382, 26), ("移动:", 405, 24),
+    ("攻擊:", 244, 12), ("防禦:", 267, 14), ("命中:", 290, 16), ("閃避:", 313, 18),
+    ("速度:", 336, 20), ("幸運:", 359, 22), ("悟性:", 382, 26), ("移動:", 405, 24),
 ]
 EQUIP_REC_IDX = [69, 70, 71, 72]         # 装备 TKItem 记录号 (-1=空)
 SKILL_SLOT_IDX = [82, 83, 84, 85, 86, 87]  # 4主动+2被动 技能索引 (-1=空)
@@ -58,16 +59,16 @@ SLOT_CAT_FRAMES = (58, 58, 59, 59, 60, 61)  # 右侧6槽分类图标帧 (指令/
 
 SKILL_LIST_VISIBLE = 10   # 技能列表面板 (帧12 高319, 行高31) 可见行数
 
-# 队伍页 (sub_41A080): 团队统计标签 (取自 exe 数据段 Big5 串, 值为存档数据 → 静态显示 0)
+# 队伍页 (sub_41A080): 团队统计标签 (繁体原文取自 exe 数据段, 值为存档数据 → 静态显示 0)
 TEAM_STAT_LEFT = [  # (标签, y) @ x=230, 值 %5d
-    ("胜场数  ", 100), ("败场数  ", 130), ("杀敌数  ", 160),
+    ("勝場數  ", 100), ("敗場數  ", 130), ("殺敵數  ", 160),
 ]
 TEAM_TASK_ROWS = [  # (标签, y, 后缀) @ x=230
-    ("完成任务", 250, "%"), ("特殊物品", 280, "%"),
-    ("收纳灵魂", 400, ""), ("收纳兽元", 430, ""),
+    ("完成任務", 250, "%"), ("特殊物品", 280, "%"),
+    ("收納靈魂", 400, ""), ("收納獸元", 430, ""),
 ]
 TEAM_ATTR_RIGHT = [  # (标签, y, 字段) @ x=440, 团队聚合 (sub_422A5C)
-    ("智慧    ", 110, 27), ("仁德    ", 145, 28), ("勇气    ", 180, 29), ("医术    ", 215, 30),
+    ("智慧    ", 110, 27), ("仁德    ", 145, 28), ("勇氣    ", 180, 29), ("醫術    ", 215, 30),
 ]
 JOURNAL_TKT_BASE = 11201   # 记事/功绩文本池 (sub_41A080 L78: 序号+11201)
 JOURNAL_TKT_SPAN = 200     # 记事 11201-11400, 功绩 11401-11600 (TKT 数据实证分段)
@@ -139,8 +140,9 @@ class GameStatusView(QWidget):
         # 队伍页状态 (对应游戏 a1[614869]=子页签 0团队/1记事/2功绩/3历史, a1[614900]=页码)
         self._team_tab = 0
         self._journal_page = 0
+        self._txt_queue = []     # 文字绘制队列 (精灵画完后统一按 FONT9696 像素混合)
         self._font = QFont("SimSun")
-        self._font.setPixelSize(20)
+        self._font.setPixelSize(24)
         self.setCursor(Qt.PointingHandCursor)
 
     # ── 数据 ──
@@ -268,11 +270,47 @@ class GameStatusView(QWidget):
         p.drawPixmap(x + xo, y + yo, pix)
         p.setOpacity(1.0)
 
-    def _text(self, p, x, y, text, color_idx=16, px=20):
-        """复刻游戏定宽字模: 全角 px / 半角 px/2, 黑色描边 (px 对应 sub_44AF7C 字号)"""
+    def _text(self, p, x, y, text, color_idx=16, px=24, shadow=False):
+        """文字入队 (精灵绘制完毕后由 _flush_texts 统一按 FONT9696 管线渲染)。
+
+        px 对应 sub_44B04C 字号 (菜单 FTYPE2@24 / 说明 FTYPE0@16); 全角 +px, ASCII 半宽 +px/2。
+        shadow 复刻 sub_44AF7C a7 (选中行文字阴影, sub_44C6A4 右下膨胀)。
+        """
+        self._txt_queue.append((x, y, text, color_idx, px, shadow))
+
+    def _game_font(self):
+        """FONT9696 渲染器 (懒加载, 挂 GameData 缓存; 缺失返回 None → SimSun 兜底)"""
+        c = self._cache()
+        if 'gf' not in c:
+            c['gf'] = load_game_font(self.data.paths.get("FONT9696")
+                                     or self.data.game_dir)
+        return c['gf']
+
+    def _flush_texts(self, pixmap):
+        """将排队文字渲染到 pixmap: FONT9696 像素混合; 字库缺失时 SimSun 描边兜底"""
+        if not self._txt_queue:
+            return pixmap
+        queue, self._txt_queue = self._txt_queue, []
+        gf = self._game_font()
+        if gf is None:
+            painter = QPainter(pixmap)
+            for x, y, text, color_idx, px, _shadow in queue:
+                self._text_fallback(painter, x, y, text, color_idx, px)
+            painter.end()
+            return pixmap
+        img = pixmap.toImage().convertToFormat(QImage.Format_ARGB32)
+        for x, y, text, color_idx, px, shadow in queue:
+            col = GAME_COLORS.get(color_idx, GAME_COLORS[16])
+            ftype = 0 if px == 16 else 2   # 说明文字 FTYPE0, 菜单 FTYPE2 (sub_44AF7C 调用点)
+            gf.draw_text(img, x, y, text, (col.red(), col.green(), col.blue()),
+                         size=px, ftype=ftype, shadow=shadow)
+        return QPixmap.fromImage(img)
+
+    def _text_fallback(self, p, x, y, text, color_idx=16, px=24):
+        """SimSun 描边兜底 (FONT9696 缺失时): 全角 px / 半角 px/2"""
         col = GAME_COLORS.get(color_idx, GAME_COLORS[16])
         font = self._font
-        if px != 20:
+        if px != 24:
             font = QFont("SimSun")
             font.setPixelSize(px)
         p.setFont(font)
@@ -339,7 +377,7 @@ class GameStatusView(QWidget):
                 self._text(p, 220, y, label, 21)
             for label, y, _fi in STAT_ROWS:
                 self._text(p, 220, y, label, 20)
-            self._text(p, 220, 428, "技能点数:", 20)
+            self._text(p, 220, 428, "技能點數:", 20)
         elif page == 1:
             # 技能页面板 (418EE8 L17-23): 16/8/11/12/13/14 半透明, 帧 7 不透明
             self._blit(p, self._mu_pix(16), 247, 67, 15)
@@ -355,6 +393,7 @@ class GameStatusView(QWidget):
                 self._blit(p, self._mu_pix(15), 485, 35 * i + 69, 10)
         # page 4 (队伍): 面板随子页签变化, 全部在 _draw_team_page 动态绘制
         p.end()
+        base = self._flush_texts(base)
         c[key] = base
         return base
 
@@ -407,7 +446,7 @@ class GameStatusView(QWidget):
         elif self._page == 4:
             self._draw_team_page(p, f)
         p.end()
-        self._image = img
+        self._image = self._flush_texts(img)
 
     def _draw_roster(self, p):
         """左侧列表 (41762C): 行高 79px, 选中行帧0边框+黄名字, 未选中行暗化"""
@@ -422,16 +461,17 @@ class GameStatusView(QWidget):
             if widx == self._current:
                 self._blit(p, self._mu_pix(0), 7, 79 * row + 3)
                 self._blit(p, self._mu_pix(row + 1), 208, 42)   # 选中行→面板连接条
-                self._text(p, 80, 79 * row + 4, name, 19)
-                self._text(p, 80, 79 * row + 27, "生命:", 20)
-                self._text(p, 80, 79 * row + 50, "内力:", 21)
-                self._text(p, 80, 79 * row + 27, f"     {rf[5]}", hp_c)
-                self._text(p, 80, 79 * row + 50, f"     {rf[6]}", mp_c)
+                # 选中行文字带阴影 (41762C L30: sub_44AF7C(...,1,1))
+                self._text(p, 80, 79 * row + 4, name, 19, shadow=True)
+                self._text(p, 80, 79 * row + 27, "生命:", 20, shadow=True)
+                self._text(p, 80, 79 * row + 50, "內力:", 21, shadow=True)
+                self._text(p, 80, 79 * row + 27, f"     {rf[5]}", hp_c, shadow=True)
+                self._text(p, 80, 79 * row + 50, f"     {rf[6]}", mp_c, shadow=True)
                 self._blit(p, self._portrait_pix(rf), 7, 79 * row + 4)
             else:
                 self._text(p, 76, 79 * row + 8, name, 16)
                 self._text(p, 80, 79 * row + 27, "生命:", 16)
-                self._text(p, 80, 79 * row + 50, "内力:", 16)
+                self._text(p, 80, 79 * row + 50, "內力:", 16)
                 self._text(p, 80, 79 * row + 27, f"     {rf[5]}", hp_c)
                 self._text(p, 80, 79 * row + 50, f"     {rf[6]}", mp_c)
                 self._blit(p, self._mu_pix(0), 3, 79 * row + 7, 10)
@@ -505,7 +545,7 @@ class GameStatusView(QWidget):
                 self._blit(p, self._mu_pix(17), 42 * i + 220, 99, 15)
 
         # 技能点数 (418EE8 L57: "技能點數%6d" @ 235,60)
-        self._text(p, 235, 60, f"技能点数{f[31]:6d}")
+        self._text(p, 235, 60, f"技能點數{f[31]:6d}")
 
         # 技能列表 (418C90): 选中条帧80, 学习消耗 = jp_cost×(250-悟性)/200
         vis = self._skill_rows[self._skill_scroll:self._skill_scroll + SKILL_LIST_VISIBLE]
@@ -520,7 +560,8 @@ class GameStatusView(QWidget):
             if self._skill_focus < 4:
                 rec = self._skill_by_idx.get(si)
                 cost = rec['vals'][3] * (250 - f[26]) // 200 if rec else 0
-                self._text(p, 340, 31 * row + 145, f"{cost:4d}", col)
+                # "%-10.10s%4d": 名字区 10 字节 = 120px → 消耗从 x=360 起
+                self._text(p, 360, 31 * row + 145, f"{cost:4d}", col)
 
         # 翻页箭头 (417F0C @ 390,98): 帧21 上 / 帧22 下 (+20,+5)
         if self._skill_scroll > 0:
@@ -528,16 +569,16 @@ class GameStatusView(QWidget):
         if self._skill_scroll + SKILL_LIST_VISIBLE < n:
             self._blit(p, self._mu_pix(22), 410, 103)
 
-        # 技能说明 (418E5C: 字号16 @ 453,305, 面板帧13 区域内换行)
+        # 技能说明 (418E5C: 字号16 @ 453,305, 面板帧13 区域内换行; 行距=字号 0x1E 步进)
         sid = self._desc_skill_idx(f)
         rec = self._skill_by_idx.get(sid) if sid >= 0 else None
         if rec:
             desc = tkt_full_text(self.data.tkt, rec['vals'][1])
             if desc:
                 for li, line in enumerate(self._wrap(desc, 180, 16)):
-                    if li >= 8:
+                    if li >= 9:
                         break
-                    self._text(p, 453, 305 + 18 * li, line, 16, px=16)
+                    self._text(p, 453, 305 + 16 * li, line, 16, px=16)
 
     # ── 队伍页 (sub_41A080) ──
 
@@ -618,9 +659,9 @@ class GameStatusView(QWidget):
             for slot, y in enumerate((108, 225, 339)):
                 if slot < len(page_entries):
                     for li, line in enumerate(self._wrap(page_entries[slot][1], 370, 16)):
-                        if li >= 5:
+                        if li >= 6:
                             break
-                        self._text(p, 237, y + 20 * li, line, 16, px=16)
+                        self._text(p, 237, y + 16 * li, line, 16, px=16)
             self._blit(p, self._mu_pix(57), 250, 210)
             self._blit(p, self._mu_pix(57), 250, 325)
             # 翻页箭头 (417F0C @ 460,50) + 页码
@@ -636,9 +677,9 @@ class GameStatusView(QWidget):
             history = self.data.char_history(rec) if rec else ""
             if history:
                 for li, line in enumerate(self._wrap(history.strip(), 370, 16)):
-                    if li >= 17:
+                    if li >= 21:
                         break
-                    self._text(p, 237, 108 + 20 * li, line, 16, px=16)
+                    self._text(p, 237, 108 + 16 * li, line, 16, px=16)
 
     @staticmethod
     def _clip10(name):
