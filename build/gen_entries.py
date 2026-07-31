@@ -37,6 +37,7 @@ EDITORS = [
     ("entry_save_editor.py",        "save_editor_v2",             "save_editor",       True),
     ("entry_configs_editor.py",     "configs_editor.configs_editor", "configs_editor",  True),
     ("entry_font_editor.py",        "font_editor.font_editor",   "font_editor",       True),
+    ("entry_tks_book.py",           "tks_book_v2",                "tks_book",          True),
     ("entry_launcher.py",           "main",                       "tks_launcher_gui",  True),
     ("entry_launcher_cli.py",       "cli_launcher",               "tks_launcher_gui",  False),
 ]

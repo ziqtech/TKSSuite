@@ -1,0 +1,246 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+TKS 游戏图鉴查看器 (PySide6 — Godot 风格)
+=============================================================
+只读查看器 (非编辑器): 加载 TKS 游戏目录后, 通过标签页浏览
+人物 / 技能 / 物品 / 地图 数据。
+UI 样式对齐 kon_editor_v2 / skill_editor_v2 的
+PreviewFrame / DockHeader / DockBody 体系, 主题从 editor_themes/ 加载。
+数据解析逻辑与各编辑器一致 (见 book_loader.py)。
+"""
+import os
+import sys
+
+from PySide6.QtWidgets import (
+    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
+    QTabWidget, QLabel, QFileDialog, QMessageBox, QPushButton,
+)
+from PySide6.QtGui import QIcon, QShortcut, QKeySequence
+from PySide6.QtCore import Qt
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+sys.path.insert(0, os.path.dirname(__file__))
+
+from editor_utils.theme_manager import ThemeManager
+from editor_utils.ui_helpers import update_path_labels
+from editor_utils.version import format_title, format_about_header
+from editor_utils.window_theme import apply_godot_theme
+
+from book_loader import GameData
+from tab_char import CharTab
+from tab_skill import SkillTab
+from tab_item import ItemTab
+from tab_map import MapTab
+
+
+class TksBookViewer(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle(format_title("tks_book"))
+        self.resize(1320, 820)
+        self.setMinimumSize(1000, 640)
+
+        ico = os.path.join(os.path.dirname(__file__), 'TKS.ico')
+        if os.path.exists(ico):
+            self.setWindowIcon(QIcon(ico))
+
+        app_inst = QApplication.instance()
+        self.is_dark_theme = (app_inst.styleHints().colorScheme() == Qt.ColorScheme.Dark
+                              if app_inst else True)
+        apply_godot_theme(self, self.is_dark_theme)
+
+        self.data = GameData()
+        self._loaded = False
+
+        self._build_ui()
+        self._apply_theme()
+        self._sync_corner_height()
+        self._center_window()
+
+    # ── 主题 ──
+
+    def _apply_theme(self):
+        ThemeManager.apply_theme(QApplication.instance(),
+                                 "dark" if self.is_dark_theme else "light")
+
+    def _sync_corner_height(self):
+        """角落按钮高度对齐标签栏 (QSS 生效后计算, 避免顶部被裁剪)"""
+        h = self.tabs.tabBar().sizeHint().height()
+        if h > 0:
+            self._btn_theme.setFixedHeight(max(22, h - 2))
+
+    def _toggle_theme(self):
+        self.is_dark_theme = not self.is_dark_theme
+        self._apply_theme()
+        apply_godot_theme(self, self.is_dark_theme)
+        self._sync_corner_height()
+        self._update_paths()
+        # 技能树拓扑图配色随主题重绘 (重选当前角色即按新主题重建)
+        cur = self.tab_char.list_widget.currentItem()
+        if cur is not None:
+            self.tab_char.show_detail(cur.data(Qt.UserRole))
+
+    # ── UI ──
+
+    def _build_ui(self):
+        mb = self.menuBar()
+        fm = mb.addMenu("文件(&F)")
+        fm.addAction("加载 TKS 目录...", QKeySequence("Ctrl+O"), self._load_tks_dir)
+        fm.addSeparator()
+        fm.addAction("退出", self.close)
+
+        vm = mb.addMenu("视图(&V)")
+        vm.addAction("切换 Godot 主题 (Dark/Light)\tF5", self._toggle_theme)
+
+        hm = mb.addMenu("帮助(&H)")
+        hm.addAction("使用说明", self._show_help)
+        hm.addAction("关于查看器", self._show_about)
+
+        QShortcut("F5", self).activated.connect(self._toggle_theme)
+
+        central = QWidget()
+        self.setCentralWidget(central)
+        main_layout = QVBoxLayout(central)
+        main_layout.setContentsMargins(8, 8, 8, 4)
+        main_layout.setSpacing(4)
+
+        # 标签页
+        self.tabs = QTabWidget()
+        self.tab_char = CharTab(self.data)
+        self.tab_skill = SkillTab(self.data)
+        self.tab_item = ItemTab(self.data)
+        self.tab_map = MapTab(self.data)
+        self.tabs.addTab(self.tab_char, "人物")
+        self.tabs.addTab(self.tab_skill, "技能")
+        self.tabs.addTab(self.tab_item, "物品")
+        self.tabs.addTab(self.tab_map, "地图")
+        self.tabs.currentChanged.connect(self._on_tab_changed)
+
+        # 标签页右侧按钮区: 切换主题 (角落区高度受 QTabBar 限制, 按钮高度须与标签栏同步)
+        self._btn_theme = QPushButton("🌗 切换主题")
+        self._btn_theme.setToolTip("切换 Godot 深色/浅色主题 (F5)")
+        self._btn_theme.clicked.connect(self._toggle_theme)
+        self.tabs.setCornerWidget(self._btn_theme, Qt.TopRightCorner)
+
+        main_layout.addWidget(self.tabs, 1)
+
+        # 底部路径栏 (与 item/warpc 等主流编辑器统一)
+        # 路径标签不设 objectName: 让 update_path_labels 写入的 [status] 属性
+        # 生效着色 (绿=已加载 / 橙=缺失 / 灰=未加载)。若设 #hintLabel,
+        # ID 选择器优先级高于 [status] 会把状态色盖成灰色 (kon_editor 的旧问题)。
+        path_layout = QHBoxLayout()
+        path_layout.setContentsMargins(4, 2, 4, 2)
+        self.lbl_tkt = QLabel("TKT.dat: 未加载")
+        self.lbl_warpc = QLabel("WarPC.dat: 未加载")
+        self.lbl_skill = QLabel("TKSkill.dat: 未加载")
+        self.lbl_item = QLabel("TKItem.dat: 未加载")
+        self.lbl_grp = QLabel("SC.GRP: 未加载")
+        path_labels = (self.lbl_tkt, self.lbl_warpc, self.lbl_skill,
+                       self.lbl_item, self.lbl_grp)
+        for i, lbl in enumerate(path_labels):
+            if i > 0:
+                path_layout.addSpacing(20)
+            path_layout.addWidget(lbl)
+        path_layout.addStretch()
+        # 右侧操作提示文字用 hintLabel (灰色小字), 与各编辑器一致
+        self.status_label = QLabel("请通过 文件 → 加载 TKS 目录 打开游戏数据")
+        self.status_label.setObjectName("hintLabel")
+        path_layout.addWidget(self.status_label)
+        main_layout.addLayout(path_layout)
+
+    def _center_window(self):
+        screen = QApplication.primaryScreen().availableGeometry()
+        self.move((screen.width() - self.width()) // 2,
+                  (screen.height() - self.height()) // 2)
+
+    # ── 数据加载 ──
+
+    def _load_tks_dir(self):
+        d = QFileDialog.getExistingDirectory(self, "选择 TKS 游戏目录")
+        if not d:
+            return
+        # 主文件校验: 查看器至少需要 TKT.dat (所有名称/文本的来源)
+        if not os.path.exists(os.path.join(d, "TKT.dat")):
+            QMessageBox.warning(self, "文件缺失",
+                                f"所选目录未找到 TKT.dat:\n{d}\n\n"
+                                f"请选择 TKS 游戏根目录。")
+            return
+        self.status_label.setText("加载中…")
+        QApplication.processEvents()
+        try:
+            self.data.load(d)
+        except Exception as e:
+            QMessageBox.critical(self, "加载失败", str(e))
+            return
+        self._loaded = True
+        self.tab_char.populate()
+        self.tab_skill.populate()
+        self.tab_item.populate()
+        self.tab_map.populate()
+        if self.tabs.currentWidget() is self.tab_map:
+            self.tab_map.ensure_populated()
+        self._update_paths()
+        self.setWindowTitle(format_title("tks_book", os.path.basename(d.rstrip('/\\'))))
+        self.status_label.setText(
+            f"角色 {sum(1 for r in self.data.warpc_recs if self.data.char_name(r))} | "
+            f"技能 {len(self.data.skill_names)} | "
+            f"物品 {len(self.data.item_by_id)} | "
+            f"TKT {len(self.data.tkt)} 条")
+
+    def _on_tab_changed(self, _index):
+        # 地图页惰性加载 SC.GRP (文件大, 避免拖慢初始加载)
+        if self._loaded and self.tabs.currentWidget() is self.tab_map:
+            self.tab_map.ensure_populated()
+            self._update_paths()
+
+    def _update_paths(self):
+        d = self.data.game_dir
+
+        def _p(name):
+            return os.path.join(d, name) if d else None
+
+        update_path_labels([
+            (self.lbl_tkt, _p("TKT.dat"), "TKT.dat"),
+            (self.lbl_warpc, _p("WarPC.dat"), "WarPC.dat"),
+            (self.lbl_skill, _p("TKSkill.dat"), "TKSkill.dat"),
+            (self.lbl_item, _p("TKItem.dat"), "TKItem.dat"),
+            (self.lbl_grp, _p("SC.GRP"), "SC.GRP"),
+        ], self.is_dark_theme)
+
+    # ── 帮助 ──
+
+    def _show_help(self):
+        QMessageBox.information(self, "使用说明",
+            "TKS 游戏图鉴查看器 (只读, 不修改任何游戏文件)\n\n"
+            "1. 文件 → 加载 TKS 目录 (Ctrl+O), 选择游戏根目录\n"
+            "2. 通过顶部标签页切换查看内容:\n"
+            "   · 人物 — 头像/核心属性/装备/技能/可学习技能树/历史\n"
+            "   · 技能 — 名称/说明文本/有值属性\n"
+            "   · 物品 — 图标/说明文本/有值属性\n"
+            "   · 地图 — 场景列表 + 背景预览 (首次切换时加载 SC.GRP)\n"
+            "3. 左侧列表上方输入关键字可即时过滤\n"
+            "4. F5 切换深色/浅色主题")
+
+    def _show_about(self):
+        QMessageBox.information(self, "关于查看器",
+            format_about_header("tks_book") +
+            "\n\n只读浏览 WarPC/TKSkill/TKItem/TKT/SC.GRP 数据, 不写入任何文件。")
+
+
+def main():
+    from editor_utils.app_init import install_translator, setup_app_icon
+    from editor_utils.ui_helpers import install_dialog_theme_filter
+    app = QApplication(sys.argv)
+    install_dialog_theme_filter(app)
+    app.setStyle("Fusion")
+    app.setApplicationName("TKS Book")
+    _t = install_translator(app)
+    setup_app_icon(app, os.path.dirname(__file__))
+    viewer = TksBookViewer()
+    viewer.show()
+    sys.exit(app.exec())
+
+
+if __name__ == '__main__':
+    main()

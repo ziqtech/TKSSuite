@@ -81,6 +81,7 @@ EDITORS = [
     ("TKSSaveEditor",        "build/entries/entry_save_editor.py",        "save_editor"),
     ("TKSConfigsEditor",      "build/entries/entry_configs_editor.py",     "configs_editor"),
     ("TKSFontEditor",         "build/entries/entry_font_editor.py",        "font_editor"),
+    ("TKSBook",              "build/entries/entry_tks_book.py",           "tks_book"),
     ("TKSLauncher",          "build/entries/entry_launcher.py",           "tks_launcher_gui"),
     ("TKSLauncherCLI",       "build/entries/entry_launcher_cli.py",      "tks_launcher_gui"),
 ]

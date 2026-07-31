@@ -406,20 +406,21 @@ class KonEditor(QMainWindow):
         splitter.setSizes([480, 820])
 
         # 底部路径栏
+        # 路径标签不设 objectName: 让 update_path_labels 写入的 [status] 属性生效着色
+        # (绿=已加载 / 橙=缺失 / 灰=未加载)。若设 #hintLabel, ID 选择器优先级高于
+        # [status] 会把状态色盖成灰色, 与 item/warpc 等主流编辑器不一致。
         path_layout = QHBoxLayout()
         path_layout.setContentsMargins(4, 2, 4, 2)
         self.lbl_kon = QLabel("TKKon.dat: 未加载")
-        self.lbl_kon.setObjectName("hintLabel")
         self.lbl_tkt = QLabel("TKT.dat: 未加载")
-        self.lbl_tkt.setObjectName("hintLabel")
         self.lbl_mu = QLabel("Mu.JVG: 未加载")
-        self.lbl_mu.setObjectName("hintLabel")
         path_layout.addWidget(self.lbl_kon)
         path_layout.addSpacing(20)
         path_layout.addWidget(self.lbl_tkt)
         path_layout.addSpacing(20)
         path_layout.addWidget(self.lbl_mu)
         path_layout.addStretch()
+        # 右侧操作提示文字用 hintLabel (灰色小字)
         self.status_label = QLabel("请通过 文件 → 加载 TKS 目录 打开数据")
         self.status_label.setObjectName("hintLabel")
         path_layout.addWidget(self.status_label)
