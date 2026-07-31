@@ -444,10 +444,11 @@ class GameStatusView(QWidget):
         self._skill_scroll = max(0, min(self._skill_scroll, max(0, n - SKILL_LIST_VISIBLE)))
         self._skill_sel = max(0, min(self._skill_sel, n - 1)) if n else -1
 
-        # 右侧6槽: 光标 (418EE8 L31-32, 帧20静态) + 技能名 (486, 35i+70)
+        # 右侧6槽: 光标 (418EE8 L31-33, 帧20静态, 先画光标再补画图标 → 光标为高亮底)
         for i, fi in enumerate(SKILL_SLOT_IDX):
             if self._skill_focus == i + 4:
                 self._blit(p, self._mu_pix(20), 443, 35 * i + 65)
+                self._blit(p, self._mu_pix(SLOT_CAT_FRAMES[i]), 445, 35 * i + 65)
             sid = f[fi]
             if sid > 0:
                 nm = self.data.skill_name(sid)
