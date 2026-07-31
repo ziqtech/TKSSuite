@@ -314,6 +314,10 @@ class GameData:
         _p("Cur.JVG")         # 光标/标题按钮高亮精灵池 (sub_426164 帧 116-118)
         _p("PFace.jvg")
         _p("FONT9696")
+        # 音频复刻资源 (game_audio 惰性加载; SSF.GRP 为点击音效包, Sound 为 BGM mp3)
+        _p("SSF.GRP")         # 菜单音效包 (PCM WAV, sub_451600 加载到 unk_A2C1D0)
+        _p("SSF.IDX")
+        _p("Sound")           # BGM mp3 目录 (sound\%04d.mp3, sub_44AC50)
 
         # 存档索引 (sub_41B1A8: 循环打开 save\1.sav ~ save\9.sav, 28 字节/文件)
         # Windows 文件系统不区分大小写, 实际目录可能写作 Save 或 save

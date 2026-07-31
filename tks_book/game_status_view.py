@@ -52,6 +52,7 @@ from book_loader import (
     tkt_first_line, tkt_full_text, pil_to_qpixmap,
 )
 from game_font import load_game_font
+from game_audio import GameAudio
 
 GAME_W, GAME_H = 640, 480
 
@@ -241,7 +242,42 @@ class GameStatusView(QWidget):
         self._window = self._roster[start:start + 6]
         self._skill_sel = 0
         self._skill_scroll = 0
+        # 音频状态同步 + BGM 启动 (游戏: 菜单期间 BGM 持续, sub_412BE8 播放 0000.mp3)
+        self._sync_audio()
         self._refresh()
+
+    # ── 音频 (sub_451C38 音效 / sub_412BE8 BGM) ──
+
+    def _audio(self):
+        """GameAudio 实例 (挂 GameData 缓存, 跨角色视图重建复用)"""
+        c = self._cache()
+        if 'audio' not in c:
+            a = GameAudio()
+            a.load(self.data.game_dir)
+            c['audio'] = a
+        return c['audio']
+
+    def _sfx(self, sfx_id=3):
+        """播放点击音效 (sub_451C38, SSF.GRP 音轨, 受第二行开关控制)。
+
+        音效 ID 为机器码 edx 实证 (Borland fastcall, 反编译 sub_451C38(0) 有误):
+        3=翻页/头像行, 4=页签/系统页/切页, 6=列表行/存档按钮, 7=分类/槽/焦点/队伍,
+        8=标题界面, 1=系统页离开。
+        """
+        self._audio().play_sfx(sfx_id)
+
+    def _sync_audio(self):
+        """视图音频状态 → 音频模块 (系统页两行: 第一行=BGM mp3, 第二行=音效 WAV)
+
+        游戏: 第一行 word_755C78/7A → sub_44AC90/44ACE8/44AD18 (BGM, 图鉴 _se_*)
+              第二行 word_755C74/76 → dword_A2C228/sub_451DF8 (音效, 图鉴 _bgm_*)
+        """
+        a = self._audio()
+        a.set_bgm_enabled(self._se_on)
+        a.set_bgm_volume(self._se_vol)
+        a.set_sfx_enabled(self._bgm_on)
+        a.set_sfx_volume(self._bgm_vol)
+        a.start_bgm()
 
     def view_state(self):
         """页面/子页签状态快照 (角色切换重建视图时由 CharTab 保持)"""
@@ -1306,10 +1342,13 @@ class GameStatusView(QWidget):
         x, y = pos.x(), pos.y()
 
         # 右键: 物品/装备页按住即时显示说明弹窗 (游戏内 hold 右键立即弹出, 松开消失, 无延时)
+        # 音效: 游戏 case 3 (sub_420844 机器码 0x420A59/0x420AA9) 物品/装备页行上右键
+        # → sub_451C38 音效 6 + a1[8]=1 (说明浮框显示标志, sub_4195C4 检查 a1[4])
         if event.button() == Qt.RightButton:
             if self._page in (2, 3):
                 gi = self._item_at(pos)
                 if gi >= 0 and gi != self._tooltip_item:
+                    self._sfx(6)   # 游戏 case 3: 右键显示说明音效
                     self._tooltip_item = gi
                     self._refresh()
             return
@@ -1330,6 +1369,7 @@ class GameStatusView(QWidget):
             if 0 <= row < len(self._window):
                 widx = self._window[row]
                 if widx != self._current:
+                    self._sfx(3)      # 游戏 sub_41F9D0
                     self.charClicked.emit(widx)
             return
 
@@ -1337,6 +1377,7 @@ class GameStatusView(QWidget):
         if 6 <= y <= 40 and x >= 209:
             j = (x - 209) // 72
             if j in (0, 1, 2, 3, 4, 5) and j != self._page:
+                self._sfx(4)      # 游戏 sub_41FA40
                 self._page = j
                 self._refresh()
             return
@@ -1364,6 +1405,7 @@ class GameStatusView(QWidget):
         if 99 <= y <= 137 and 219 <= x < 219 + 42 * 4:
             i = (x - 219) // 42
             if 0 <= i <= 3 and (self._skill_focus != i or self._skill_cat != i):
+                self._sfx(7)      # 游戏 sub_41FAAC case1 → sub_421F20
                 self._skill_cat = i
                 self._skill_focus = i
                 self._skill_sel = 0
@@ -1375,15 +1417,18 @@ class GameStatusView(QWidget):
         if x >= 443 and 65 <= y < 65 + 35 * 6:
             i = (y - 65) // 35
             if self._skill_focus != i + 4:
+                self._sfx(7)      # 游戏 sub_421F20
                 self._skill_focus = i + 4
                 self._refresh()
             return
 
         # 技能页: 翻页箭头 (390,98,20x30 上 / 410,103,20x30 下)
         if 390 <= x < 410 and 98 <= y < 128:
+            self._sfx(3)          # 游戏 sub_421FBC (翻上页)
             self._scroll_skill(-SKILL_LIST_VISIBLE)
             return
         if 410 <= x < 430 and 103 <= y < 133:
+            self._sfx(3)          # 游戏 sub_42200C (翻下页)
             self._scroll_skill(SKILL_LIST_VISIBLE)
             return
 
@@ -1395,6 +1440,7 @@ class GameStatusView(QWidget):
             if 0 <= row < SKILL_LIST_VISIBLE:
                 gi = self._skill_scroll + row
                 if gi < len(self._skill_rows):
+                    self._sfx(6)  # 游戏 sub_41F318
                     self._skill_sel = gi
                     self._refresh()
             return
@@ -1494,14 +1540,16 @@ class GameStatusView(QWidget):
         return -1
 
     def wheelEvent(self, event):
-        # 存档页翻页 (sub_41CE10 case 11/12/13)
+        # 存档页翻页 (sub_41CE10 case 11/12/13: 页码变化才响, 边界不响)
         if self._save_mode > 0:
             if event.angleDelta().y() > 0:
                 if self._save_page > 0:
+                    self._sfx(3)
                     self._save_page -= 1
                     self._refresh()
             else:
                 if self._save_page < 2:
+                    self._sfx(3)
                     self._save_page += 1
                     self._refresh()
             event.accept()
@@ -1511,27 +1559,29 @@ class GameStatusView(QWidget):
             event.accept()
             return
         if self._page == 1:
-            self._scroll_skill(-3 if event.angleDelta().y() > 0 else 3)
+            self._scroll_skill(-3 if event.angleDelta().y() > 0 else 3, sfx=True)
             event.accept()
             return
         if self._page == 2:
-            self._scroll_item(-3 if event.angleDelta().y() > 0 else 3)
+            self._scroll_item(-3 if event.angleDelta().y() > 0 else 3, sfx=True)
             event.accept()
             return
         if self._page == 3:
-            self._scroll_equip(-3 if event.angleDelta().y() > 0 else 3)
+            self._scroll_equip(-3 if event.angleDelta().y() > 0 else 3, sfx=True)
             event.accept()
             return
         if self._page == 4 and self._team_tab in (1, 2):
-            self._flip_journal(-1 if event.angleDelta().y() > 0 else 1)
+            self._flip_journal(-1 if event.angleDelta().y() > 0 else 1, sfx=True)
             event.accept()
             return
         super().wheelEvent(event)
 
-    def _scroll_skill(self, delta):
+    def _scroll_skill(self, delta, sfx=False):
         n = len(self._skill_rows)
         new = max(0, min(self._skill_scroll + delta, max(0, n - SKILL_LIST_VISIBLE)))
         if new != self._skill_scroll:
+            if sfx:
+                self._sfx(3)      # 游戏 sub_420844 case 12/13 → 翻页
             self._skill_scroll = new
             self._refresh()
 
@@ -1542,6 +1592,7 @@ class GameStatusView(QWidget):
         if 48 <= y <= 78 and 229 <= x < 229 + 61 * ITEM_CATEGORIES:
             i = (x - 229) // 61
             if 0 <= i < ITEM_CATEGORIES and i != self._item_cat:
+                self._sfx(7)      # 游戏 sub_422064
                 self._item_cat = i
                 self._item_sel = -1   # 切换分类后重置选中 (由鼠标悬停重新决定)
                 self._item_scroll = 0
@@ -1549,17 +1600,21 @@ class GameStatusView(QWidget):
             return
         # 翻页箭头 (598,48,20x30 上一页 / 618,53,20x30 下一页)
         if 598 <= x < 618 and 48 <= y < 78:
+            self._sfx(3)          # 游戏 sub_421FBC (翻上页)
             self._scroll_item(-ITEM_LIST_VISIBLE)
             return
         if 618 <= x < 638 and 53 <= y < 83:
+            self._sfx(3)          # 游戏 sub_42200C (翻下页)
             self._scroll_item(ITEM_LIST_VISIBLE)
             return
         # 列表行选中由 mouseMoveEvent (悬停跟随) 处理, 此处无需响应左键点击
 
-    def _scroll_item(self, delta):
+    def _scroll_item(self, delta, sfx=False):
         n = len(self._build_item_rows(self._item_cat))
         new = max(0, min(self._item_scroll + delta, max(0, n - ITEM_LIST_VISIBLE)))
         if new != self._item_scroll:
+            if sfx:
+                self._sfx(3)      # 游戏 sub_420844 case 12/13 → 翻页
             self._item_scroll = new
             self._refresh()
 
@@ -1570,6 +1625,7 @@ class GameStatusView(QWidget):
         if 48 <= y <= 78 and 230 <= x < 230 + 61 * 3:
             cat = (x - 230) // 61
             if 0 <= cat <= 2 and cat != self._equip_slot:
+                self._sfx(7)      # 游戏 sub_4220D8
                 self._equip_slot = cat
                 self._equip_sel = -1
                 self._equip_scroll = 0
@@ -1579,6 +1635,7 @@ class GameStatusView(QWidget):
         if x >= 480 and 58 <= y < 58 + 39 * 4:
             v6 = (y - 58) // 39
             if 0 <= v6 < 4 and v6 != self._equip_slot:
+                self._sfx(7)      # 游戏 sub_4220D8
                 self._equip_slot = v6
                 self._equip_sel = -1
                 self._equip_scroll = 0
@@ -1586,17 +1643,21 @@ class GameStatusView(QWidget):
             return
         # 翻页箭头 (426,42,20x30 上一页 / 446,47,20x30 下一页)
         if 426 <= x < 446 and 42 <= y < 72:
+            self._sfx(3)          # 游戏 sub_421FBC (翻上页)
             self._scroll_equip(-EQUIP_LIST_VISIBLE)
             return
         if 446 <= x < 466 and 47 <= y < 77:
+            self._sfx(3)          # 游戏 sub_42200C (翻下页)
             self._scroll_equip(EQUIP_LIST_VISIBLE)
             return
         # 列表行悬停选中由 mouseMoveEvent 处理 (驱动换装差值预览)
 
-    def _scroll_equip(self, delta):
+    def _scroll_equip(self, delta, sfx=False):
         n = len(self._build_equip_rows(self._equip_slot))
         new = max(0, min(self._equip_scroll + delta, max(0, n - EQUIP_LIST_VISIBLE)))
         if new != self._equip_scroll:
+            if sfx:
+                self._sfx(3)      # 游戏 sub_420844 case 12/13 → 翻页
             self._equip_scroll = new
             self._refresh()
 
@@ -1607,6 +1668,7 @@ class GameStatusView(QWidget):
         if 56 <= y <= 86 and 215 <= x < 215 + 60 * 4:
             i = (x - 215) // 60
             if 0 <= i <= 3 and self._team_tab != i:
+                self._sfx(7)      # 游戏 sub_422158
                 self._team_tab = i
                 self._journal_page = 0
                 self._refresh()
@@ -1614,9 +1676,11 @@ class GameStatusView(QWidget):
         # 记事/功绩: 翻页箭头 (460,50,20x30 上一页 / 480,55,20x30 下一页)
         if self._team_tab in (1, 2):
             if 460 <= x < 480 and 50 <= y < 80:
+                self._sfx(3)      # 游戏 sub_421FBC
                 self._flip_journal(-1)
                 return
             if 480 <= x < 500 and 55 <= y < 85:
+                self._sfx(3)      # 游戏 sub_42200C
                 self._flip_journal(1)
                 return
         # 团队: 队员行 (420.., 270+35i, 高35) → 切换选中角色
@@ -1624,14 +1688,17 @@ class GameStatusView(QWidget):
             members = self._team_members()
             i = (y - 270) // 35
             if i < len(members) and members[i] != self._current:
+                self._sfx(7)      # 游戏 sub_42359C
                 self.charClicked.emit(members[i])
             return
 
-    def _flip_journal(self, delta):
+    def _flip_journal(self, delta, sfx=False):
         entries = self._journal_entries(self._team_tab) if self._team_tab in (1, 2) else []
         pages = max(1, (len(entries) + JOURNAL_PER_PAGE - 1) // JOURNAL_PER_PAGE)
         new = max(0, min(self._journal_page + delta, pages - 1))
         if new != self._journal_page:
+            if sfx:
+                self._sfx(3)      # 游戏 sub_420844 case 12/13 → 翻页
             self._journal_page = new
             self._refresh()
 
@@ -1651,6 +1718,7 @@ class GameStatusView(QWidget):
         # 系统选项 3 (存档, sub_41FAAC case 5 L273-287): y=229-263, x=240-305
         # → arglist[614953]=1, arglist[461]=6, 加载 save.gxp
         if 229 <= y <= 263 and 240 <= x <= 305:
+            self._sfx(4)          # 游戏 sub_41FAAC: 存档点击
             self._save_mode = 1
             self._save_page = 0
             self._save_hover = 0
@@ -1659,6 +1727,7 @@ class GameStatusView(QWidget):
         # 系统选项 4 (读档, sub_41FAAC case 5 L253-271): y=294-328, x=240-305
         # → arglist[614953]=2, arglist[461]=6, 加载 save.gxp
         if 294 <= y <= 328 and 240 <= x <= 305:
+            self._sfx(4)          # 游戏 sub_41FAAC: 读档点击
             self._save_mode = 2
             self._save_page = 0
             self._save_hover = 0
@@ -1671,6 +1740,7 @@ class GameStatusView(QWidget):
             if not (self.data.paths.get("TitleMenu.gxp")
                     and self.data.paths.get("Cur.JVG")):
                 return
+            self._sfx(1)          # 游戏 sub_41FAAC: 离开点击
             self._title_mode = True
             self._title_hover = 0
             self._refresh()
@@ -1687,6 +1757,7 @@ class GameStatusView(QWidget):
             return
         for i in (1, 2, 3):
             if 44 * (i - 1) + 290 <= y <= 44 * (i - 1) + 334:
+                self._sfx(8)      # 游戏 sub_426004: 标题三按钮点击
                 if i == 1:
                     # 新的游戏 → 回主菜单 (游戏: sub_412688 进入游戏主流程)
                     self._title_mode = False
@@ -1706,27 +1777,36 @@ class GameStatusView(QWidget):
                 return
 
     def _audio_click(self, x, kind):
-        """音效/BGM 行点击 (sub_41FAAC case 5 L289-372):
+        """系统页两行点击 (sub_41FAAC case 5 L289-372):
         - x=441-504 且当前关 → 开启; x=541-604 且当前开 → 关闭
         - x=13v+332..13v+344 (v=1..5) 且当前开 → 设置音量 v
+        游戏语义: 第一行(图鉴 _se_*)=BGM(mp3, word_755C78/7A), 第二行(图鉴 _bgm_*)=音效
+        (WAV, word_755C74/76); 每个生效分支都有 sub_451C38(0) 点击音。
         """
         if kind == 'se':
             on, vol = self._se_on, self._se_vol
         else:
             on, vol = self._bgm_on, self._bgm_vol
+        a = self._audio()
         # 开关旋钮: 开位 441-504 / 关位 541-604
         if 441 <= x <= 504 and not on:
+            self._sfx(4)          # 游戏: 开启点击音
             if kind == 'se':
                 self._se_on = True
+                a.set_bgm_enabled(True)      # 第一行 = BGM (word_755C78)
             else:
                 self._bgm_on = True
+                a.set_sfx_enabled(True)      # 第二行 = 音效 (word_755C74)
             self._refresh()
             return
         if 541 <= x <= 604 and on:
+            self._sfx(4)          # 游戏: 关闭点击音
             if kind == 'se':
                 self._se_on = False
+                a.set_bgm_enabled(False)     # 第一行 = BGM
             else:
                 self._bgm_on = False
+                a.set_sfx_enabled(False)     # 第二行 = 音效
             self._refresh()
             return
         # 音量滑块 (5 档, 仅开启时生效): v=1..5 → x=13v+332..13v+344
@@ -1734,10 +1814,13 @@ class GameStatusView(QWidget):
             for v in range(1, 6):
                 if 13 * v + 332 <= x <= 13 * v + 344:
                     if v != vol:
+                        self._sfx(4)  # 游戏: 音量点击音
                         if kind == 'se':
                             self._se_vol = v
+                            a.set_bgm_volume(v)   # 第一行 = BGM 音量 (word_755C7A)
                         else:
                             self._bgm_vol = v
+                            a.set_sfx_volume(v)   # 第二行 = 音效音量 (word_755C76)
                         self._refresh()
                     return
 
@@ -1755,21 +1838,27 @@ class GameStatusView(QWidget):
                     if 516 <= x <= 583:
                         # 取消 (sub_41CE10 L49-65): arglist[614953]=0, arglist[461]=8
                         # → 10 → 1: 从标题界面进入则回标题界面, 否则回主菜单 (系统页)
+                        self._sfx(6)  # 游戏 sub_41CE10: 取消音效
                         self._save_mode = 0
                         self._save_page = 0
                         self._save_hover = 0
                         self._title_hover = 0
                         self._refresh()
-                    # 存档/读档按钮 x=452-515: 图鉴只读, 无实际效果
+                    else:
+                        # 存档/读档按钮 x=452-515: 图鉴只读无实际效果,
+                        # 但游戏 sub_41CE10 L69/L157 仍播放音效
+                        self._sfx(6)
                     return
             return
-        # 翻页箭头 (sub_41CE10 L174-198): x=613-632
+        # 翻页箭头 (sub_41CE10 L174-198): x=613-632 (成功翻页才响, 边界不响)
         if 613 <= x <= 632:
             if 191 <= y <= 216 and self._save_page > 0:
+                self._sfx(3)
                 self._save_page -= 1
                 self._save_hover = 0
                 self._refresh()
             elif 242 <= y <= 266 and self._save_page < 2:
+                self._sfx(3)
                 self._save_page += 1
                 self._save_hover = 0
                 self._refresh()
