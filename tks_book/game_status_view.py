@@ -839,14 +839,22 @@ class GameStatusView(QWidget):
                 self._blit(p, self._mu_pix(80), 228, 31 * row + 143, 15)
             col = 1 if state >= 20 else (2 if selected else 16)
             nm = self.data.skill_name(si) or f"技能#{si}"
+            rec = self._skill_by_idx.get(si)
+            # 名字 = TKT 原始字节 (含前导 ASCII 空格, 292/350 条), 与游戏
+            # sub_4067E8 → wvsprintfA 同一数据源; 图鉴 skill_name 的 strip 会丢前导空格
+            raw = self.data.tkt_raw_bytes(rec['vals'][0]) if rec else b""
+            if not raw:
+                raw = nm.encode('big5', errors='replace')
             if self._skill_focus < 4:
-                rec = self._skill_by_idx.get(si)
                 cost = rec['vals'][3] * (250 - f[26]) // 200 if rec else 0
-                # "%-10.10s%4d" 单流排版: 名字按字节截断/补空格到 10 字节,
-                # 空格半宽步进 → 消耗位置随名字全/半角构成浮动 (同 wvsprintfA)
-                self._text(p, 240, 31 * row + 145, f"{self._pad10(nm)}{cost:4d}", col)
+                # 游戏 sub_418C90 L44: wvsprintfA("%-10.10s%4d") → 字节流 → sub_44E49C
+                # 名字≤10B 硬截断, 补 ASCII 空格到 10 字节, 再接 %4d;
+                # 空格半宽步进 12px (sub_421B64 设菜单字体 66=1), 数字位置随名字字节数浮动
+                self._rich(240, 31 * row + 145,
+                           self._skill_row_bytes(raw, cost), col, px=24, ftype=2)
             else:
-                self._text(p, 240, 31 * row + 145, nm, col)
+                # 焦点在右侧槽 (sub_418C90 L31-37): 只画名字, 无格式串
+                self._rich(240, 31 * row + 145, raw, col, px=24, ftype=2)
 
         # 翻页箭头 (417F0C @ 390,98): 帧21 上 / 帧22 下 (+20,+5)
         if self._skill_scroll > 0:
@@ -1267,16 +1275,17 @@ class GameStatusView(QWidget):
                        200, 44 * self._title_hover + 246)
 
     @staticmethod
-    def _pad10(name):
-        """复刻 C "%-10.10s" 字节语义: Big5 全角 2 字节, 截断/补 ASCII 空格到 10 字节"""
-        w, out = 0, ""
-        for ch in name:
-            cw = 2 if ord(ch) > 0xFF else 1
-            if w + cw > 10:
-                break
-            out += ch
-            w += cw
-        return out + " " * (10 - w)
+    def _skill_row_bytes(raw_name, cost):
+        """复刻 wvsprintfA "%-10.10s%4d" 字节语义 (sub_418C90 L44)。
+
+        名字 = TKT 原始字节 (含前导 ASCII 空格, 图鉴 skill_name 的 strip 会丢失);
+        %.10s 最多 10 字节硬截断 (名字≤10B 时不截断, 本样本全部 ≤10B);
+        不足补 ASCII 空格到 10 字节 (空格在 FONT9696 中半宽 12px 占位);
+        再接 %4d 右对齐 4 位消耗。已用系统真实 wvsprintfA 实测验证一致
+        (_test_wvsprintf.py)。
+        """
+        name = raw_name[:10]
+        return name + b' ' * (10 - len(name)) + f'{cost:4d}'.encode('ascii')
 
     # ── 事件 ──
 
