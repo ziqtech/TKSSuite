@@ -318,15 +318,18 @@ class CharTab(BookTabBase):
             view.deleteLater()
             return
         view.set_roster(self._roster_order)
+        view.restore_state(getattr(self, '_game_view_state', None))  # 换角色保持页面/子页签
         view.charClicked.connect(self._on_game_view_char)
-        body = self.add_group("游戏界面 (状态/技能页 1:1 复刻)")
+        self._game_view = view
+        body = self.add_group("游戏界面 (状态/技能/队伍页 1:1 复刻)")
         row = QHBoxLayout()
         row.addStretch()
         row.addWidget(view)
         row.addStretch()
         body.addLayout(row)
-        hint = QLabel("点击头像行切换角色 · 点击顶部页签切换 状态/技能 · 技能页可点分类/技能行/滚轮翻页"
-                      " · 坐标复刻自 TKS.exe 反编译 (sub_417F84 / sub_41762C / sub_418EE8)")
+        hint = QLabel("点击头像行切换角色 · 顶部页签切换 状态/技能/队伍 · 队伍页含 团队/记事/功绩/历史 子页签"
+                      " · 列表页可点行/滚轮翻页 · 坐标复刻自 TKS.exe 反编译"
+                      " (sub_417F84 / sub_41762C / sub_418EE8 / sub_41A080)")
         hint.setProperty("class", "StatusHint")
         hint.setAlignment(Qt.AlignCenter)
         hint.setWordWrap(True)
@@ -335,6 +338,9 @@ class CharTab(BookTabBase):
 
     def _on_game_view_char(self, warpc_idx):
         """游戏视图内点击头像行 → 同步选中左侧列表项 (触发 show_detail)"""
+        view = getattr(self, '_game_view', None)
+        if view is not None:
+            self._game_view_state = view.view_state()
         for i in range(self.list_widget.count()):
             item = self.list_widget.item(i)
             if item.data(Qt.UserRole) == warpc_idx:

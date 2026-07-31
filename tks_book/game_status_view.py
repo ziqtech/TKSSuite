@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""游戏状态/技能界面 1:1 复刻视图 — mb.gxp 背景 + Mu.JVG 精灵 + 反编译坐标
+"""游戏状态/技能/队伍界面 1:1 复刻视图 — mb.gxp 背景 + Mu.JVG 精灵 + 反编译坐标
 
 布局与绘制顺序复刻自反编译代码:
   sub_41762C — 左侧队伍列表 (79px 行高) + 顶部页签 (x=209+72j, y=6)
@@ -8,6 +8,10 @@
   sub_418EE8 — 技能页: 面板(16/11/12/13/14) / 4分类页签(42px步进) / 右侧6槽(35px步进)
   sub_418C90 — 技能列表: 31px 行高, 选中条帧80, 学习消耗 = jp_cost×(250-悟性)/200
   sub_418E5C — 技能说明: 字号16, 坐标(453,305)
+  sub_41A080 — 队伍页: 4子页签(帧50-53, 60px步进) + 团队(5成员/战绩统计)
+               + 记事/功绩(每页3条, TKT=11201+序号) + 历史(TKT 9050+序号)
+  sub_41A7A8 — 记事/功绩列表构建 (1000项标志数组, 1=记事 2=功绩, 页数=⌈n/3⌉)
+  sub_422A5C — 团队聚合属性: Σ队员智慧/仁德/勇气/医术 (前三钳≥0, 医术封顶100)
   sub_417F0C — 翻页箭头: 帧21(x,y) / 帧22(x+20,y+5)
   sub_454D90 — 半透明混合公式 dst*(32-a)/32 + src*a/32 (alpha 10/13/15)
 资源: mb.gxp (JGXP 头 + LZSS + RGB565 全屏 640×480), Mu.JVG (帧偏移 x_off/y_off),
@@ -53,6 +57,21 @@ SKILL_SLOT_IDX = [82, 83, 84, 85, 86, 87]  # 4主动+2被动 技能索引 (-1=�
 SLOT_CAT_FRAMES = (58, 58, 59, 59, 60, 61)  # 右侧6槽分类图标帧 (指令/主动/被动/移动)
 
 SKILL_LIST_VISIBLE = 10   # 技能列表面板 (帧12 高319, 行高31) 可见行数
+
+# 队伍页 (sub_41A080): 团队统计标签 (取自 exe 数据段 Big5 串, 值为存档数据 → 静态显示 0)
+TEAM_STAT_LEFT = [  # (标签, y) @ x=230, 值 %5d
+    ("胜场数  ", 100), ("败场数  ", 130), ("杀敌数  ", 160),
+]
+TEAM_TASK_ROWS = [  # (标签, y, 后缀) @ x=230
+    ("完成任务", 250, "%"), ("特殊物品", 280, "%"),
+    ("收纳灵魂", 400, ""), ("收纳兽元", 430, ""),
+]
+TEAM_ATTR_RIGHT = [  # (标签, y, 字段) @ x=440, 团队聚合 (sub_422A5C)
+    ("智慧    ", 110, 27), ("仁德    ", 145, 28), ("勇气    ", 180, 29), ("医术    ", 215, 30),
+]
+JOURNAL_TKT_BASE = 11201   # 记事/功绩文本池 (sub_41A080 L78: 序号+11201)
+JOURNAL_TKT_SPAN = 200     # 记事 11201-11400, 功绩 11401-11600 (TKT 数据实证分段)
+JOURNAL_PER_PAGE = 3       # 每页3条 (41A080 L76-95: y=108/225/339, 分隔条帧57)
 
 
 def _load_gxp_pil(path):
@@ -111,12 +130,15 @@ class GameStatusView(QWidget):
         self._window = []        # 左侧列表当前显示的 warpc_idx 窗口 (≤6)
         self._image = None       # 渲染结果 QPixmap
         # 技能页状态 (对应游戏 a1[614866]=焦点 0-3分类/4-9槽, a1[614891]=列表选中行)
-        self._page = 0           # 0=状态, 1=技能
+        self._page = 0           # 0=状态, 1=技能, 4=队伍
         self._skill_cat = 1      # 当前分类 0-3 (默认主动技能)
         self._skill_focus = 1    # 焦点: 0-3=分类页签, 4-9=右侧槽
         self._skill_sel = 0
         self._skill_scroll = 0
         self._skill_rows = []    # [(skill_idx, learn_state), ...] 当前分类
+        # 队伍页状态 (对应游戏 a1[614869]=子页签 0团队/1记事/2功绩/3历史, a1[614900]=页码)
+        self._team_tab = 0
+        self._journal_page = 0
         self._font = QFont("SimSun")
         self._font.setPixelSize(20)
         self.setCursor(Qt.PointingHandCursor)
@@ -147,6 +169,21 @@ class GameStatusView(QWidget):
         self._skill_sel = 0
         self._skill_scroll = 0
         self._refresh()
+
+    def view_state(self):
+        """页面/子页签状态快照 (角色切换重建视图时由 CharTab 保持)"""
+        return {'page': self._page, 'skill_cat': self._skill_cat,
+                'skill_focus': self._skill_focus, 'team_tab': self._team_tab,
+                'journal_page': self._journal_page}
+
+    def restore_state(self, state):
+        if not state:
+            return
+        self._page = state.get('page', 0)
+        self._skill_cat = state.get('skill_cat', 1)
+        self._skill_focus = state.get('skill_focus', 1)
+        self._team_tab = state.get('team_tab', 0)
+        self._journal_page = state.get('journal_page', 0)
 
     def _refresh(self):
         self._rebuild()
@@ -303,7 +340,7 @@ class GameStatusView(QWidget):
             for label, y, _fi in STAT_ROWS:
                 self._text(p, 220, y, label, 20)
             self._text(p, 220, 428, "技能点数:", 20)
-        else:
+        elif page == 1:
             # 技能页面板 (418EE8 L17-23): 16/8/11/12/13/14 半透明, 帧 7 不透明
             self._blit(p, self._mu_pix(16), 247, 67, 15)
             self._blit(p, self._mu_pix(8), 209, 45, 10)
@@ -316,6 +353,7 @@ class GameStatusView(QWidget):
             for i, fr in enumerate(SLOT_CAT_FRAMES):
                 self._blit(p, self._mu_pix(fr), 445, 35 * i + 65)
                 self._blit(p, self._mu_pix(15), 485, 35 * i + 69, 10)
+        # page 4 (队伍): 面板随子页签变化, 全部在 _draw_team_page 动态绘制
         p.end()
         c[key] = base
         return base
@@ -364,8 +402,10 @@ class GameStatusView(QWidget):
         self._draw_roster(p)
         if self._page == 0:
             self._draw_status_page(p, f)
-        else:
+        elif self._page == 1:
             self._draw_skill_page(p, f)
+        elif self._page == 4:
+            self._draw_team_page(p, f)
         p.end()
         self._image = img
 
@@ -499,6 +539,107 @@ class GameStatusView(QWidget):
                         break
                     self._text(p, 453, 305 + 18 * li, line, 16, px=16)
 
+    # ── 队伍页 (sub_41A080) ──
+
+    def _team_members(self):
+        """团队构成: 当前选中人物 + 上方2人 + 下方2人 (花名册邻居, 边缘截断≤5)"""
+        if self._current not in self._roster:
+            return [self._current]
+        pos = self._roster.index(self._current)
+        return self._roster[max(0, pos - 2):pos + 3]
+
+    def _journal_entries(self, kind):
+        """记事(1)/功绩(2) 全部有值条目 [(tkt_id, 文本), ...] (静态数据按 TKT 分段)"""
+        c = self._cache()
+        key = ('journal', kind)
+        if key not in c:
+            lo = JOURNAL_TKT_BASE + (kind - 1) * JOURNAL_TKT_SPAN
+            hi = lo + JOURNAL_TKT_SPAN - 1
+            entries = []
+            for tid in range(lo, hi + 1):
+                txt = tkt_full_text(self.data.tkt, tid)
+                if txt and txt.strip():
+                    entries.append((tid, txt.strip()))
+            c[key] = entries
+        return c[key]
+
+    def _draw_team_page(self, p, f):
+        """队伍页 (41A080): 子页签 0团队 / 1记事 / 2功绩 / 3历史"""
+        tab = self._team_tab
+        if tab == 0:
+            # 团队面板 (L38-42): 42/39/40/41 半透明 + 页签高亮49
+            self._blit(p, self._mu_pix(42), 365, 210, 15)
+            self._blit(p, self._mu_pix(39), 210, 55, 15)
+            self._blit(p, self._mu_pix(40), 220, 94, 15)
+            self._blit(p, self._mu_pix(41), 430, 97, 15)
+            self._blit(p, self._mu_pix(49), 215, 56, 10)
+            members = self._team_members()
+            for i in range(5):
+                if i < 4:
+                    self._blit(p, self._mu_pix(50 + i), 60 * i + 215, 56)
+                self._blit(p, self._mu_pix(43), 420, 35 * i + 270, 15)
+                if i < len(members):
+                    r = self._rec_by_idx.get(members[i])
+                    if r is not None:
+                        nm = self.data.char_name(r) or f"#{members[i]}"
+                        self._text(p, 425, 35 * i + 273, nm, 16)
+                        self._text(p, 518, 35 * i + 273, f"{r['fields'][2]:3d}", 16)
+                self._blit(p, self._mu_pix(44), 560, 35 * i + 270, 15)
+                self._blit(p, self._mu_pix(54), 560, 35 * i + 270)
+            # 战绩统计 (L61-67, 存档运行时数据, 静态查看显示 0)
+            for label, y in TEAM_STAT_LEFT:
+                self._text(p, 230, y, f"{label}{0:5d}", 16)
+            for label, y, suffix in TEAM_TASK_ROWS:
+                self._text(p, 230, y, f"{label}{0:5d}{suffix}", 16)
+            # 团队聚合属性 (L68-71 + 422A5C): Σ队员属性, 前三钳≥0, 医术封顶100
+            for label, y, fi in TEAM_ATTR_RIGHT:
+                total = sum(self._rec_by_idx[m]['fields'][fi]
+                            for m in members if m in self._rec_by_idx)
+                total = min(total, 100) if fi == 30 else max(total, 0)
+                self._text(p, 440, y, f"{label}{total:5d}", 16)
+            return
+
+        # 记事/功绩/历史 共用面板 (L26-28): 55/39/56 半透明 + 4子页签
+        self._blit(p, self._mu_pix(55), 290, 140, 15)
+        self._blit(p, self._mu_pix(39), 210, 55, 15)
+        self._blit(p, self._mu_pix(56), 217, 92, 15)
+        for i in range(4):
+            if tab == i:
+                self._blit(p, self._mu_pix(49), 60 * i + 215, 56, 10)
+            self._blit(p, self._mu_pix(50 + i), 60 * i + 215, 56)
+
+        if tab in (1, 2):
+            # 记事/功绩列表 (L73-99): 每页3条 @ y=108/225/339, 分隔条帧57, 页码 %3d/%3d
+            entries = self._journal_entries(tab)
+            pages = max(1, (len(entries) + JOURNAL_PER_PAGE - 1) // JOURNAL_PER_PAGE)
+            self._journal_page = max(0, min(self._journal_page, pages - 1))
+            start = self._journal_page * JOURNAL_PER_PAGE
+            page_entries = entries[start:start + JOURNAL_PER_PAGE]
+            for slot, y in enumerate((108, 225, 339)):
+                if slot < len(page_entries):
+                    for li, line in enumerate(self._wrap(page_entries[slot][1], 370, 16)):
+                        if li >= 5:
+                            break
+                        self._text(p, 237, y + 20 * li, line, 16, px=16)
+            self._blit(p, self._mu_pix(57), 250, 210)
+            self._blit(p, self._mu_pix(57), 250, 325)
+            # 翻页箭头 (417F0C @ 460,50) + 页码
+            if self._journal_page > 0:
+                self._blit(p, self._mu_pix(21), 460, 50)
+            if self._journal_page < pages - 1:
+                self._blit(p, self._mu_pix(22), 480, 55)
+            if entries:
+                self._text(p, 525, 60, f"{self._journal_page + 1:3d}/{pages:3d}", 16)
+        else:
+            # 历史 (L101-108): 当前选中人物历史文本 (TKT 9050+序号 / 补丁字段[262])
+            rec = self._rec_by_idx.get(self._current)
+            history = self.data.char_history(rec) if rec else ""
+            if history:
+                for li, line in enumerate(self._wrap(history.strip(), 370, 16)):
+                    if li >= 17:
+                        break
+                    self._text(p, 237, 108 + 20 * li, line, 16, px=16)
+
     @staticmethod
     def _clip10(name):
         """复刻 C "%-10.10s" 按字节截断 (Big5 全角 2 字节, 共 10 字节)"""
@@ -551,12 +692,16 @@ class GameStatusView(QWidget):
                     self.charClicked.emit(widx)
             return
 
-        # 顶部页签 (209+72j, 6, 68x32): 状态/技能可切换
+        # 顶部页签 (209+72j, 6, 68x32): 状态/技能/队伍可切换
         if 6 <= y <= 40 and x >= 209:
             j = (x - 209) // 72
-            if j in (0, 1) and j != self._page:
+            if j in (0, 1, 4) and j != self._page:
                 self._page = j
                 self._refresh()
+            return
+
+        if self._page == 4:
+            self._team_mouse(x, y)
             return
 
         if self._page != 1:
@@ -607,6 +752,10 @@ class GameStatusView(QWidget):
             self._scroll_skill(-3 if event.angleDelta().y() > 0 else 3)
             event.accept()
             return
+        if self._page == 4 and self._team_tab in (1, 2):
+            self._flip_journal(-1 if event.angleDelta().y() > 0 else 1)
+            event.accept()
+            return
         super().wheelEvent(event)
 
     def _scroll_skill(self, delta):
@@ -614,4 +763,39 @@ class GameStatusView(QWidget):
         new = max(0, min(self._skill_scroll + delta, max(0, n - SKILL_LIST_VISIBLE)))
         if new != self._skill_scroll:
             self._skill_scroll = new
+            self._refresh()
+
+    # ── 队伍页交互 ──
+
+    def _team_mouse(self, x, y):
+        # 子页签 (215+60i, 56, 62x30): 团队/记事/功绩/历史
+        if 56 <= y <= 86 and 215 <= x < 215 + 60 * 4:
+            i = (x - 215) // 60
+            if 0 <= i <= 3 and self._team_tab != i:
+                self._team_tab = i
+                self._journal_page = 0
+                self._refresh()
+            return
+        # 记事/功绩: 翻页箭头 (460,50,20x30 上一页 / 480,55,20x30 下一页)
+        if self._team_tab in (1, 2):
+            if 460 <= x < 480 and 50 <= y < 80:
+                self._flip_journal(-1)
+                return
+            if 480 <= x < 500 and 55 <= y < 85:
+                self._flip_journal(1)
+                return
+        # 团队: 队员行 (420.., 270+35i, 高35) → 切换选中角色
+        if self._team_tab == 0 and x >= 420 and 270 <= y < 270 + 35 * 5:
+            members = self._team_members()
+            i = (y - 270) // 35
+            if i < len(members) and members[i] != self._current:
+                self.charClicked.emit(members[i])
+            return
+
+    def _flip_journal(self, delta):
+        entries = self._journal_entries(self._team_tab) if self._team_tab in (1, 2) else []
+        pages = max(1, (len(entries) + JOURNAL_PER_PAGE - 1) // JOURNAL_PER_PAGE)
+        new = max(0, min(self._journal_page + delta, pages - 1))
+        if new != self._journal_page:
+            self._journal_page = new
             self._refresh()
