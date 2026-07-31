@@ -158,7 +158,7 @@ class GameStatusView(QWidget):
         self._skill_rows = []    # [(skill_idx, learn_state), ...] 当前分类
         # 物品页状态 (对应游戏 a1[614867]=分类, a1[614891]=页内选中行)
         self._item_cat = 0
-        self._item_sel = 0
+        self._item_sel = -1      # 选中跟随鼠标 (-1=鼠标不在物品行上, 不选中)
         self._item_scroll = 0
         # 物品说明弹窗: 右键按住即时显示 (游戏内 hold 右键立即弹出说明, 松开消失, 无延时)
         self._tooltip_item = -1   # 当前显示说明的物品全局索引 (-1=不显示)
@@ -169,6 +169,7 @@ class GameStatusView(QWidget):
         self._font = QFont("SimSun")
         self._font.setPixelSize(24)
         self.setCursor(Qt.PointingHandCursor)
+        self.setMouseTracking(True)   # 物品页选中跟随鼠标 (mouseMoveEvent 无需按键)
 
     # ── 数据 ──
 
@@ -213,7 +214,7 @@ class GameStatusView(QWidget):
         self._team_tab = state.get('team_tab', 0)
         self._journal_page = state.get('journal_page', 0)
         self._item_cat = state.get('item_cat', 0)
-        self._item_sel = state.get('item_sel', 0)
+        self._item_sel = state.get('item_sel', -1)
         self._item_scroll = state.get('item_scroll', 0)
 
     def _refresh(self):
@@ -512,8 +513,8 @@ class GameStatusView(QWidget):
             self._blit(p, self._mu_pix(33), 216, 85)
             self._blit(p, self._mu_pix(26), 246, 428, 10)
             self._blit(p, self._mu_pix(206), 450, 430)
-            # 金钱 (419704 L15-17: 色19黄, "      %-d"; 运行时数据 → 静态查看显示 0)
-            self._text(p, 450, 440, "      0", 19)
+            # 金钱 (419704 L15-17: 色19黄, "      %-d"; 图鉴按游戏金钱上限 30000 显示)
+            self._text(p, 450, 440, "      30000", 19)
         # page 4 (队伍): 面板随子页签变化, 全部在 _draw_team_page 动态绘制
         p.end()
         base = self._flush_texts(base)
@@ -734,7 +735,9 @@ class GameStatusView(QWidget):
         n = len(rows)
         # 滚动与选中相互独立 (同技能页): 仅做边界钳制, 不因选中强制回拉滚动位置
         self._item_scroll = max(0, min(self._item_scroll, max(0, n - ITEM_LIST_VISIBLE)))
-        self._item_sel = max(0, min(self._item_sel, n - 1)) if n else -1
+        # 选中跟随鼠标, 允许 -1 (鼠标不在任何物品行上时不选中); ≥0 时钳到有效范围
+        if self._item_sel >= 0:
+            self._item_sel = min(self._item_sel, n - 1) if n else -1
 
         # 列表 (419458): 行高31, 图标@235 名字@285, 选中条帧81@281 (色2选中/色16默认)
         vis = rows[self._item_scroll:self._item_scroll + ITEM_LIST_VISIBLE]
@@ -991,6 +994,16 @@ class GameStatusView(QWidget):
             return
         super().mouseReleaseEvent(event)
 
+    def mouseMoveEvent(self, event):
+        # 物品页: 选中跟随鼠标 — 悬停到哪行选哪行, 移出物品区则取消选中 (-1)
+        if self._page == 2:
+            gi = self._item_at(event.position().toPoint())
+            new_sel = gi if gi >= 0 else -1
+            if new_sel != self._item_sel:
+                self._item_sel = new_sel
+                self._refresh()
+        super().mouseMoveEvent(event)
+
     def _item_at(self, pos):
         """物品列表行命中 → 全局物品索引 (无则 -1); 行区域 235..632, y=105+31r, 10 行"""
         x, y = pos.x(), pos.y()
@@ -1032,7 +1045,7 @@ class GameStatusView(QWidget):
             i = (x - 229) // 61
             if 0 <= i < ITEM_CATEGORIES and i != self._item_cat:
                 self._item_cat = i
-                self._item_sel = 0
+                self._item_sel = -1   # 切换分类后重置选中 (由鼠标悬停重新决定)
                 self._item_scroll = 0
                 self._refresh()
             return
@@ -1043,15 +1056,7 @@ class GameStatusView(QWidget):
         if 618 <= x < 638 and 53 <= y < 83:
             self._scroll_item(ITEM_LIST_VISIBLE)
             return
-        # 列表行 (235..632, 105+31r, 行高31, 10 行)
-        if 235 <= x <= 632 and y >= 105:
-            row = (y - 105) // 31
-            if 0 <= row < ITEM_LIST_VISIBLE:
-                gi = self._item_scroll + row
-                if gi < len(self._build_item_rows(self._item_cat)) and gi != self._item_sel:
-                    self._item_sel = gi
-                    self._refresh()
-            return
+        # 列表行选中由 mouseMoveEvent (悬停跟随) 处理, 此处无需响应左键点击
 
     def _scroll_item(self, delta):
         n = len(self._build_item_rows(self._item_cat))
