@@ -319,15 +319,17 @@ class CharTab(BookTabBase):
             return
         view.set_roster(self._roster_order)
         view.charClicked.connect(self._on_game_view_char)
-        body = self.add_group("游戏界面 (状态页 1:1 复刻)")
+        body = self.add_group("游戏界面 (状态/技能页 1:1 复刻)")
         row = QHBoxLayout()
         row.addStretch()
         row.addWidget(view)
         row.addStretch()
         body.addLayout(row)
-        hint = QLabel("点击左侧头像行可切换角色 · 布局坐标复刻自 TKS.exe 反编译 (sub_417F84 / sub_41762C)")
+        hint = QLabel("点击头像行切换角色 · 点击顶部页签切换 状态/技能 · 技能页可点分类/技能行/滚轮翻页"
+                      " · 坐标复刻自 TKS.exe 反编译 (sub_417F84 / sub_41762C / sub_418EE8)")
         hint.setProperty("class", "StatusHint")
         hint.setAlignment(Qt.AlignCenter)
+        hint.setWordWrap(True)
         body.addWidget(hint)
         view.show_char(warpc_idx)
 

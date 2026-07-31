@@ -1,10 +1,14 @@
 # -*- coding: utf-8 -*-
-"""游戏状态界面 1:1 复刻视图 — mb.gxp 背景 + Mu.JVG 精灵 + 反编译坐标
+"""游戏状态/技能界面 1:1 复刻视图 — mb.gxp 背景 + Mu.JVG 精灵 + 反编译坐标
 
 布局与绘制顺序复刻自反编译代码:
   sub_41762C — 左侧队伍列表 (79px 行高) + 顶部页签 (x=209+72j, y=6)
   sub_417F84 — 状态页: 面板装饰 / 4装备槽 / 6技能槽 / 属性文字 (x=220)
   sub_4188D4 — 异常状态图标 (帧 241+)
+  sub_418EE8 — 技能页: 面板(16/11/12/13/14) / 4分类页签(42px步进) / 右侧6槽(35px步进)
+  sub_418C90 — 技能列表: 31px 行高, 选中条帧80, 学习消耗 = jp_cost×(250-悟性)/200
+  sub_418E5C — 技能说明: 字号16, 坐标(453,305)
+  sub_417F0C — 翻页箭头: 帧21(x,y) / 帧22(x+20,y+5)
   sub_454D90 — 半透明混合公式 dst*(32-a)/32 + src*a/32 (alpha 10/13/15)
 资源: mb.gxp (JGXP 头 + LZSS + RGB565 全屏 640×480), Mu.JVG (帧偏移 x_off/y_off),
       PFace.jvg (主角自定义头像, f[1]==0 时替代 Mu 帧)。
@@ -20,12 +24,17 @@ from editor_utils.lzss import lzss_decompress_stream
 from editor_utils.rgb565 import rgb565_to_rgba
 from editor_utils.jvg_data import load_jvg
 
-from book_loader import tkt_first_line, pil_to_qpixmap
+from book_loader import (
+    SKILL_LEARN_BASE, SKILL_LEARN_COUNT, get_packed_byte,
+    tkt_first_line, tkt_full_text, pil_to_qpixmap,
+)
 
 GAME_W, GAME_H = 640, 480
 
-# 游戏调色板颜色索引 (sub_44B028) — 颜色值取自游戏截图采样
+# 游戏调色板颜色索引 (sub_44B028) — 颜色值取自游戏截图采样 (1/2 为技能列表推定色)
 GAME_COLORS = {
+    1: QColor(150, 150, 150),    # 灰 (技能列表: 已学会)
+    2: QColor(255, 235, 150),    # 亮黄白 (技能列表: 选中行)
     16: QColor(255, 255, 240),   # 白 (数值/未选中行)
     18: QColor(228, 56, 44),     # 红 (HP/MP < 一半)
     19: QColor(252, 248, 37),    # 黄 (选中行名字 / HP/MP ≥ 一半)
@@ -33,7 +42,7 @@ GAME_COLORS = {
     21: QColor(0, 244, 213),     # 青 (内力标签 / 核心标签)
 }
 
-# 状态页左列 (sub_417F84 L61-91): (标签, y, 颜色)
+# 状态页左列 (sub_417F84 L61-91): (标签, y)
 CORE_ROWS = [("等级:", 60), ("生命:", 83), ("内力:", 106), ("经验:", 129), ("升级:", 152)]
 STAT_ROWS = [  # (标签, y, 当前值字段)
     ("攻击:", 244, 12), ("防御:", 267, 14), ("命中:", 290, 16), ("闪避:", 313, 18),
@@ -41,6 +50,9 @@ STAT_ROWS = [  # (标签, y, 当前值字段)
 ]
 EQUIP_REC_IDX = [69, 70, 71, 72]         # 装备 TKItem 记录号 (-1=空)
 SKILL_SLOT_IDX = [82, 83, 84, 85, 86, 87]  # 4主动+2被动 技能索引 (-1=空)
+SLOT_CAT_FRAMES = (58, 58, 59, 59, 60, 61)  # 右侧6槽分类图标帧 (指令/主动/被动/移动)
+
+SKILL_LIST_VISIBLE = 10   # 技能列表面板 (帧12 高319, 行高31) 可见行数
 
 
 def _load_gxp_pil(path):
@@ -74,13 +86,17 @@ def _status_cache(data):
     c = getattr(data, '_status_view_cache', None)
     if c is None:
         c = {'mu': None, 'mu_tried': False, 'pface': None, 'pface_tried': False,
-             'bg': None, 'bg_tried': False, 'mu_pix': {}, 'pface_pix': {}, 'base': None}
+             'bg': None, 'bg_tried': False, 'mu_pix': {}, 'pface_pix': {}}
         data._status_view_cache = c
     return c
 
 
 class GameStatusView(QWidget):
-    """640×480 游戏状态界面复刻控件。左侧列表行可点击切换角色。"""
+    """640×480 游戏菜单界面复刻控件 (状态/技能页)。
+
+    可交互: 左侧头像行切换角色; 顶部页签切换 状态↔技能;
+    技能页内: 分类页签 / 列表行 / 右侧槽点击, 滚轮或箭头翻页。
+    """
 
     charClicked = Signal(int)
 
@@ -90,12 +106,19 @@ class GameStatusView(QWidget):
         self.data = None
         self._roster = []        # [warpc_idx, ...] (与人物列表同序)
         self._rec_by_idx = {}
+        self._skill_by_idx = {}
         self._current = -1
         self._window = []        # 左侧列表当前显示的 warpc_idx 窗口 (≤6)
         self._image = None       # 渲染结果 QPixmap
+        # 技能页状态 (对应游戏 a1[614866]=焦点 0-3分类/4-9槽, a1[614891]=列表选中行)
+        self._page = 0           # 0=状态, 1=技能
+        self._skill_cat = 1      # 当前分类 0-3 (默认主动技能)
+        self._skill_focus = 1    # 焦点: 0-3=分类页签, 4-9=右侧槽
+        self._skill_sel = 0
+        self._skill_scroll = 0
+        self._skill_rows = []    # [(skill_idx, learn_state), ...] 当前分类
         self._font = QFont("SimSun")
         self._font.setPixelSize(20)
-        self._fm = QFontMetrics(self._font)
         self.setCursor(Qt.PointingHandCursor)
 
     # ── 数据 ──
@@ -103,6 +126,7 @@ class GameStatusView(QWidget):
     def set_data(self, data):
         self.data = data
         self._rec_by_idx = {r['index']: r for r in data.warpc_recs}
+        self._skill_by_idx = {r['index']: r for r in data.skill_recs}
         self._image = None
 
     def set_roster(self, roster):
@@ -120,6 +144,11 @@ class GameStatusView(QWidget):
         pos = self._roster.index(warpc_idx) if warpc_idx in self._roster else 0
         start = min(max(0, pos - 2), max(0, len(self._roster) - 6))
         self._window = self._roster[start:start + 6]
+        self._skill_sel = 0
+        self._skill_scroll = 0
+        self._refresh()
+
+    def _refresh(self):
         self._rebuild()
         self.update()
 
@@ -202,14 +231,19 @@ class GameStatusView(QWidget):
         p.drawPixmap(x + xo, y + yo, pix)
         p.setOpacity(1.0)
 
-    def _text(self, p, x, y, text, color_idx=16):
-        """复刻游戏定宽字模: 全角 20px / 半角 10px, 黑色描边"""
+    def _text(self, p, x, y, text, color_idx=16, px=20):
+        """复刻游戏定宽字模: 全角 px / 半角 px/2, 黑色描边 (px 对应 sub_44AF7C 字号)"""
         col = GAME_COLORS.get(color_idx, GAME_COLORS[16])
-        p.setFont(self._font)
-        baseline = y + self._fm.ascent() - 2
+        font = self._font
+        if px != 20:
+            font = QFont("SimSun")
+            font.setPixelSize(px)
+        p.setFont(font)
+        fm = QFontMetrics(font)
+        baseline = y + fm.ascent() - 2
         cx = x
         for ch in text:
-            adv = 20 if ord(ch) > 0xFF else 10
+            adv = px if ord(ch) > 0xFF else px // 2
             if not ch.isspace():
                 p.setPen(QColor(20, 16, 12))
                 for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
@@ -235,41 +269,84 @@ class GameStatusView(QWidget):
         entry = self._pface_pix(0)
         return entry if entry else self._mu_pix(211)
 
-    # ── 静态底图 (跨角色复用): 背景 + 面板 + 页签 + 槽标签 + 属性标签 ──
+    # ── 静态底图 (跨角色复用): 背景 + 页签 + 面板 + 固定标签 ──
 
-    def _static_base(self):
+    def _static_base(self, page):
         c = self._cache()
-        if c['base'] is not None:
-            return c['base']
+        key = ('base', page)
+        if key in c:
+            return c[key]
         bg = self._background()
         base = QPixmap(GAME_W, GAME_H)
         base.fill(QColor(0, 0, 0))
         p = QPainter(base)
         if bg:
             p.drawPixmap(0, 0, bg)
-        # 面板装饰 (417F84 L21-24): 帧 10/8/9 半透明, 帧 7 不透明
-        self._blit(p, self._mu_pix(10), 460, 61, 15)
-        self._blit(p, self._mu_pix(8), 209, 45, 10)
-        self._blit(p, self._mu_pix(9), 214, 55, 13)
-        self._blit(p, self._mu_pix(7), 210, 50)
-        # 顶部页签 (41762C L120-126): 状态页选中 → 帧 74, 其余 68+j
+        # 顶部页签 (41762C L120-126): 选中页 → 帧 74+j, 其余 68+j
         for j in range(6):
-            self._blit(p, self._mu_pix((74 if j == 0 else 68) + j), 209 + 72 * j, 6)
-        # 装备槽标签 (417F84 L32): 帧 62武/64防/66饰/66饰
-        for i, fr in enumerate((62, 64, 66, 66)):
-            self._blit(p, self._mu_pix(fr), 450, 80 + 35 * i)
-        # 技能槽标签 (417F84 L50): 帧 58,58,59,59,60,61
-        for i, fr in enumerate((58, 58, 59, 59, 60, 61)):
-            self._blit(p, self._mu_pix(fr), 450, 240 + 36 * i)
-        # 属性标签 (417F84 L61-76): 核心色21青, 八属性+技能点数色20绿
-        for label, y in CORE_ROWS:
-            self._text(p, 220, y, label, 21)
-        for label, y, _fi in STAT_ROWS:
-            self._text(p, 220, y, label, 20)
-        self._text(p, 220, 428, "技能点数:", 20)
+            self._blit(p, self._mu_pix((74 + j) if j == page else (68 + j)), 209 + 72 * j, 6)
+        if page == 0:
+            # 状态页面板 (417F84 L21-24): 帧 10/8/9 半透明, 帧 7 不透明
+            self._blit(p, self._mu_pix(10), 460, 61, 15)
+            self._blit(p, self._mu_pix(8), 209, 45, 10)
+            self._blit(p, self._mu_pix(9), 214, 55, 13)
+            self._blit(p, self._mu_pix(7), 210, 50)
+            # 装备槽标签 (417F84 L32): 帧 62武/64防/66饰/66饰
+            for i, fr in enumerate((62, 64, 66, 66)):
+                self._blit(p, self._mu_pix(fr), 450, 80 + 35 * i)
+            # 技能槽标签 (417F84 L50): 帧 58,58,59,59,60,61
+            for i, fr in enumerate(SLOT_CAT_FRAMES):
+                self._blit(p, self._mu_pix(fr), 450, 240 + 36 * i)
+            # 属性标签 (417F84 L61-76): 核心色21青, 八属性+技能点数色20绿
+            for label, y in CORE_ROWS:
+                self._text(p, 220, y, label, 21)
+            for label, y, _fi in STAT_ROWS:
+                self._text(p, 220, y, label, 20)
+            self._text(p, 220, 428, "技能点数:", 20)
+        else:
+            # 技能页面板 (418EE8 L17-23): 16/8/11/12/13/14 半透明, 帧 7 不透明
+            self._blit(p, self._mu_pix(16), 247, 67, 15)
+            self._blit(p, self._mu_pix(8), 209, 45, 10)
+            self._blit(p, self._mu_pix(7), 210, 50)
+            self._blit(p, self._mu_pix(11), 214, 55, 13)
+            self._blit(p, self._mu_pix(12), 220, 139, 15)
+            self._blit(p, self._mu_pix(13), 452, 303, 15)
+            self._blit(p, self._mu_pix(14), 335, 59, 15)
+            # 右侧6槽 分类图标 + 名字底条 (418EE8 L33-34)
+            for i, fr in enumerate(SLOT_CAT_FRAMES):
+                self._blit(p, self._mu_pix(fr), 445, 35 * i + 65)
+                self._blit(p, self._mu_pix(15), 485, 35 * i + 69, 10)
         p.end()
-        c['base'] = base
+        c[key] = base
         return base
+
+    # ── 技能页数据 (对应游戏进入分类时构建的 a1[614873..] 列表) ──
+
+    def _build_skill_rows(self, f):
+        """当前分类的可学习技能行: [(skill_idx, learn_state>0), ...] 按索引升序"""
+        cat = self._skill_cat
+        rows = []
+        limit = min(SKILL_LEARN_COUNT, len(self.data.skill_recs) or SKILL_LEARN_COUNT)
+        for si in range(limit):
+            v = get_packed_byte(f, SKILL_LEARN_BASE, si)
+            if v <= 0:
+                continue
+            rec = self._skill_by_idx.get(si)
+            if rec is None:
+                continue
+            if cat is not None and rec['vals'][2] != cat:
+                continue
+            rows.append((si, v))
+        return rows
+
+    def _desc_skill_idx(self, f):
+        """说明面板显示的技能: 焦点在右侧槽 → 槽技能; 否则列表选中行"""
+        if self._skill_focus >= 4:
+            sid = f[SKILL_SLOT_IDX[self._skill_focus - 4]]
+            return sid if sid > 0 else -1
+        if 0 <= self._skill_sel < len(self._skill_rows):
+            return self._skill_rows[self._skill_sel][0]
+        return -1
 
     # ── 整帧渲染 ──
 
@@ -282,10 +359,18 @@ class GameStatusView(QWidget):
             self._image = None
             return
         f = rec['fields']
-        img = QPixmap(self._static_base())
+        img = QPixmap(self._static_base(self._page))
         p = QPainter(img)
+        self._draw_roster(p)
+        if self._page == 0:
+            self._draw_status_page(p, f)
+        else:
+            self._draw_skill_page(p, f)
+        p.end()
+        self._image = img
 
-        # 左侧列表 (41762C): 行高 79px, 选中行帧0边框+黄名字, 未选中行暗化
+    def _draw_roster(self, p):
+        """左侧列表 (41762C): 行高 79px, 选中行帧0边框+黄名字, 未选中行暗化"""
         for row, widx in enumerate(self._window):
             r = self._rec_by_idx.get(widx)
             if r is None:
@@ -312,6 +397,8 @@ class GameStatusView(QWidget):
                 self._blit(p, self._mu_pix(0), 3, 79 * row + 7, 10)
                 self._blit(p, self._portrait_pix(rf), 3, 79 * row + 8, 15)
 
+    def _draw_status_page(self, p, f):
+        """状态页动态内容 (sub_417F84 + sub_4188D4)"""
         # 装备槽名字 (417F84 L33-37): f[69..72] = TKItem 记录号
         for i, fi in enumerate(EQUIP_REC_IDX):
             ri = f[fi]
@@ -349,8 +436,94 @@ class GameStatusView(QWidget):
                 else:
                     self._blit(p, self._mu_pix(lo + 241), 40 * shown + 280, 175)
                 shown += 1
-        p.end()
-        self._image = img
+
+    def _draw_skill_page(self, p, f):
+        """技能页动态内容 (sub_418EE8 + sub_418C90 + sub_418E5C)"""
+        self._skill_rows = self._build_skill_rows(f)
+        n = len(self._skill_rows)
+        self._skill_scroll = max(0, min(self._skill_scroll, max(0, n - SKILL_LIST_VISIBLE)))
+        self._skill_sel = max(0, min(self._skill_sel, n - 1)) if n else -1
+
+        # 右侧6槽: 光标 (418EE8 L31-32, 帧20静态) + 技能名 (486, 35i+70)
+        for i, fi in enumerate(SKILL_SLOT_IDX):
+            if self._skill_focus == i + 4:
+                self._blit(p, self._mu_pix(20), 443, 35 * i + 65)
+            sid = f[fi]
+            if sid > 0:
+                nm = self.data.skill_name(sid)
+                if nm:
+                    self._text(p, 486, 35 * i + 70, nm, 16)
+
+        # 4 分类页签 (418EE8 L44-56): 选中 → 光标帧20; 未选中 → 帧17 暗化叠加
+        for i in range(4):
+            if self._skill_focus == i:
+                self._blit(p, self._mu_pix(20), 42 * i + 219, 98)
+                self._blit(p, self._mu_pix(58 + i), 42 * i + 220, 99)
+            else:
+                self._blit(p, self._mu_pix(58 + i), 42 * i + 220, 99)
+                self._blit(p, self._mu_pix(17), 42 * i + 220, 99, 15)
+
+        # 技能点数 (418EE8 L57: "技能點數%6d" @ 235,60)
+        self._text(p, 235, 60, f"技能点数{f[31]:6d}")
+
+        # 技能列表 (418C90): 选中条帧80, 学习消耗 = jp_cost×(250-悟性)/200
+        vis = self._skill_rows[self._skill_scroll:self._skill_scroll + SKILL_LIST_VISIBLE]
+        for row, (si, state) in enumerate(vis):
+            gi = self._skill_scroll + row
+            selected = (gi == self._skill_sel and self._skill_focus < 4)
+            if selected:
+                self._blit(p, self._mu_pix(80), 228, 31 * row + 143, 15)
+            col = 1 if state >= 20 else (2 if selected else 16)
+            nm = self.data.skill_name(si) or f"技能#{si}"
+            self._text(p, 240, 31 * row + 145, self._clip10(nm), col)
+            if self._skill_focus < 4:
+                rec = self._skill_by_idx.get(si)
+                cost = rec['vals'][3] * (250 - f[26]) // 200 if rec else 0
+                self._text(p, 340, 31 * row + 145, f"{cost:4d}", col)
+
+        # 翻页箭头 (417F0C @ 390,98): 帧21 上 / 帧22 下 (+20,+5)
+        if self._skill_scroll > 0:
+            self._blit(p, self._mu_pix(21), 390, 98)
+        if self._skill_scroll + SKILL_LIST_VISIBLE < n:
+            self._blit(p, self._mu_pix(22), 410, 103)
+
+        # 技能说明 (418E5C: 字号16 @ 453,305, 面板帧13 区域内换行)
+        sid = self._desc_skill_idx(f)
+        rec = self._skill_by_idx.get(sid) if sid >= 0 else None
+        if rec:
+            desc = tkt_full_text(self.data.tkt, rec['vals'][1])
+            if desc:
+                for li, line in enumerate(self._wrap(desc, 180, 16)):
+                    if li >= 8:
+                        break
+                    self._text(p, 453, 305 + 18 * li, line, 16, px=16)
+
+    @staticmethod
+    def _clip10(name):
+        """复刻 C "%-10.10s" 按字节截断 (Big5 全角 2 字节, 共 10 字节)"""
+        w, out = 0, ""
+        for ch in name:
+            w += 2 if ord(ch) > 0xFF else 1
+            if w > 10:
+                break
+            out += ch
+        return out
+
+    @staticmethod
+    def _wrap(text, width, px):
+        """按定宽字模宽度换行 (全角 px, 半角 px/2); 保留原始换行"""
+        lines = []
+        for raw in text.splitlines():
+            cur, w = "", 0
+            for ch in raw:
+                adv = px if ord(ch) > 0xFF else px // 2
+                if w + adv > width and cur:
+                    lines.append(cur)
+                    cur, w = "", 0
+                cur += ch
+                w += adv
+            lines.append(cur)
+        return lines
 
     # ── 事件 ──
 
@@ -365,13 +538,79 @@ class GameStatusView(QWidget):
                        "缺少 mb.gxp / Mu.JVG, 无法渲染游戏界面")
 
     def mousePressEvent(self, event):
-        # 左侧列表行命中 (行区域同帧0边框: x 3..205, 高 74)
         pos = event.position().toPoint()
-        if pos.x() <= 205:
-            row = (pos.y() - 3) // 79
+        x, y = pos.x(), pos.y()
+
+        # 左侧列表行 (行区域同帧0边框: x 3..205, 高 79)
+        if x <= 205:
+            row = (y - 3) // 79
             if 0 <= row < len(self._window):
                 widx = self._window[row]
                 if widx != self._current:
                     self.charClicked.emit(widx)
-                    return
+            return
+
+        # 顶部页签 (209+72j, 6, 68x32): 状态/技能可切换
+        if 6 <= y <= 40 and x >= 209:
+            j = (x - 209) // 72
+            if j in (0, 1) and j != self._page:
+                self._page = j
+                self._refresh()
+            return
+
+        if self._page != 1:
+            return
+
+        # 技能页: 分类页签 (220+42i, 99, 39x38)
+        if 99 <= y <= 137 and 219 <= x < 219 + 42 * 4:
+            i = (x - 219) // 42
+            if 0 <= i <= 3 and (self._skill_focus != i or self._skill_cat != i):
+                self._skill_cat = i
+                self._skill_focus = i
+                self._skill_sel = 0
+                self._skill_scroll = 0
+                self._refresh()
+            return
+
+        # 技能页: 右侧6槽 (443.., 65+35i, 高35)
+        if x >= 443 and 65 <= y < 65 + 35 * 6:
+            i = (y - 65) // 35
+            if self._skill_focus != i + 4:
+                self._skill_focus = i + 4
+                self._refresh()
+            return
+
+        # 技能页: 翻页箭头 (390,98,20x30 上 / 410,103,20x30 下)
+        if 390 <= x < 410 and 98 <= y < 128:
+            self._scroll_skill(-SKILL_LIST_VISIBLE)
+            return
+        if 410 <= x < 430 and 103 <= y < 133:
+            self._scroll_skill(SKILL_LIST_VISIBLE)
+            return
+
+        # 技能页: 列表行 (228..426, 143+31r, 行高31)
+        if 228 <= x <= 426 and y >= 143:
+            row = (y - 143) // 31
+            if 0 <= row < SKILL_LIST_VISIBLE:
+                gi = self._skill_scroll + row
+                if gi < len(self._skill_rows):
+                    self._skill_focus = self._skill_cat  # 焦点回到列表所属分类
+                    self._skill_sel = gi
+                    self._refresh()
+            return
+
         super().mousePressEvent(event)
+
+    def wheelEvent(self, event):
+        if self._page == 1:
+            self._scroll_skill(-3 if event.angleDelta().y() > 0 else 3)
+            event.accept()
+            return
+        super().wheelEvent(event)
+
+    def _scroll_skill(self, delta):
+        n = len(self._skill_rows)
+        new = max(0, min(self._skill_scroll + delta, max(0, n - SKILL_LIST_VISIBLE)))
+        if new != self._skill_scroll:
+            self._skill_scroll = new
+            self._refresh()
