@@ -22,6 +22,8 @@
                + 记事/功绩(每页3条, TKT=11201+序号) + 历史(TKT 9050+序号)
   sub_41A7A8 — 记事/功绩列表构建 (1000项标志数组, 1=记事 2=功绩, 页数=⌈n/3⌉)
   sub_422A5C — 团队聚合属性: Σ队员智慧/仁德/勇气/医术 (前三钳≥0, 医术封顶100)
+  sub_41A940 — 系统页: 标题帧84 + 5系统选项行(帧85/87/94-98) + 音效/BGM 开关(帧99/100)
+               + 滑块旋钮(帧vol+88) + 开关旋钮(帧86); 状态 word_755C74/76/78/7A
   sub_417F0C — 翻页箭头: 帧21(x,y) / 帧22(x+20,y+5)
   sub_454D90 — 半透明混合公式 dst*(32-a)/32 + src*a/32 (alpha 10/13/15)
 资源: mb.gxp (JGXP 头 + LZSS + RGB565 全屏 640×480), Mu.JVG (帧偏移 x_off/y_off),
@@ -160,7 +162,7 @@ class GameStatusView(QWidget):
         self._window = []        # 左侧列表当前显示的 warpc_idx 窗口 (≤6)
         self._image = None       # 渲染结果 QPixmap
         # 技能页状态 (对应游戏 a1[614866]=焦点 0-3分类/4-9槽, a1[614891]=列表选中行)
-        self._page = 0           # 0=状态, 1=技能, 2=物品, 4=队伍
+        self._page = 0           # 0=状态, 1=技能, 2=物品, 3=装备, 4=队伍, 5=系统
         self._skill_cat = 1      # 当前分类 0-3 (默认主动技能)
         self._skill_focus = 1    # 焦点: 0-3=分类页签, 4-9=右侧槽
         self._skill_sel = 0
@@ -179,6 +181,13 @@ class GameStatusView(QWidget):
         # 队伍页状态 (对应游戏 a1[614869]=子页签 0团队/1记事/2功绩/3历史, a1[614900]=页码)
         self._team_tab = 0
         self._journal_page = 0
+        # 系统页状态 (对应游戏 word_755C74/76/78/7A; 初值取自 sub_411624 初始化)
+        #   word_755C78 = SE 开关 / word_755C7A = SE 音量(1-5)
+        #   word_755C74 = BGM 开关 / word_755C76 = BGM 音量(1-5)
+        self._se_on = True
+        self._se_vol = 2
+        self._bgm_on = True
+        self._bgm_vol = 3
         self._txt_queue = []     # 文字绘制队列 (精灵画完后统一按 FONT9696 像素混合)
         self._font = QFont("SimSun")
         self._font.setPixelSize(24)
@@ -218,7 +227,9 @@ class GameStatusView(QWidget):
                 'skill_focus': self._skill_focus, 'team_tab': self._team_tab,
                 'journal_page': self._journal_page, 'item_cat': self._item_cat,
                 'item_sel': self._item_sel, 'item_scroll': self._item_scroll,
-                'equip_slot': self._equip_slot, 'equip_scroll': self._equip_scroll}
+                'equip_slot': self._equip_slot, 'equip_scroll': self._equip_scroll,
+                'se_on': self._se_on, 'se_vol': self._se_vol,
+                'bgm_on': self._bgm_on, 'bgm_vol': self._bgm_vol}
 
     def restore_state(self, state):
         if not state:
@@ -234,6 +245,10 @@ class GameStatusView(QWidget):
         self._equip_slot = state.get('equip_slot', 0)
         self._equip_scroll = state.get('equip_scroll', 0)
         self._equip_sel = -1
+        self._se_on = state.get('se_on', True)
+        self._se_vol = state.get('se_vol', 2)
+        self._bgm_on = state.get('bgm_on', True)
+        self._bgm_vol = state.get('bgm_vol', 3)
 
     def _refresh(self):
         self._rebuild()
@@ -550,7 +565,9 @@ class GameStatusView(QWidget):
             p.setClipRect(0, 234, 640, 236)
             self._blit(p, self._mu_pix(35), 478, 222, 12)
             p.restore()
-        # page 4 (队伍): 面板随子页签变化, 全部在 _draw_team_page 动态绘制
+        # page 4 (队伍) / page 5 (系统): 面板/元素全部在 _draw_team_page / _draw_system_page 动态绘制
+        #   (系统页渲染顺序关键: sub_41A940 先画旋钮/按钮, 最后画半透明选项行叠加其上,
+        #    若放入 _static_base 缓存会导致顺序错误 → 按钮全亮, 与原版不符)
         p.end()
         base = self._flush_texts(base)
         c[key] = base
@@ -608,6 +625,8 @@ class GameStatusView(QWidget):
             self._draw_equip_page(p, f)
         elif self._page == 4:
             self._draw_team_page(p, f)
+        elif self._page == 5:
+            self._draw_system_page(p, f)
         p.end()
         self._image = self._flush_texts(img)
         if self._page in (2, 3):
@@ -1009,6 +1028,43 @@ class GameStatusView(QWidget):
                 raw = self._expand_macros(self.data.tkt_raw_bytes(hid))
                 self._rich(237, 108, raw, 16, px=16, ftype=0, max_y=452)
 
+    # ── 系统页 (sub_41A940) ──
+
+    def _draw_system_page(self, p, f):
+        """系统页全部内容 (sub_41A940 L14-35) — 严格按反编译渲染顺序绘制。
+
+        渲染顺序关键: 先画旋钮/按钮(不透明/半透明), 最后画半透明选项行叠加其上。
+        若顺序反了 → 按钮全亮(不被选项行半透明面板覆盖), 与原版不符。
+        """
+        # ── 第 1-8 步: 音效/BGM 旋钮 + 开关按钮 (sub_41A940 L14-27) ──
+        # 音效滑块旋钮 (不透明): 帧 vol+88 @ (340,95)
+        self._blit(p, self._mu_pix(self._se_vol + 88), 340, 95)
+        # 音效开关旋钮 (半透明 a10): 帧86 @ (440 若开 / 540 若关, 103)
+        self._blit(p, self._mu_pix(86), 440 if self._se_on else 540, 103, 10)
+        # 音效 开/关 按钮 (不透明): 帧99 @ (440,100) / 帧100 @ (540,100)
+        self._blit(p, self._mu_pix(99), 440, 100)
+        self._blit(p, self._mu_pix(100), 540, 100)
+        # BGM 滑块旋钮 (不透明): 帧 vol+88 @ (340,160)
+        self._blit(p, self._mu_pix(self._bgm_vol + 88), 340, 160)
+        # BGM 开关旋钮 (半透明 a10): 帧86 @ (440 若开 / 540 若关, 168)
+        self._blit(p, self._mu_pix(86), 440 if self._bgm_on else 540, 168, 10)
+        # BGM 开/关 按钮 (不透明): 帧99 @ (440,165) / 帧100 @ (540,165)
+        self._blit(p, self._mu_pix(99), 440, 165)
+        self._blit(p, self._mu_pix(100), 540, 165)
+
+        # ── 第 9 步: 装饰 (sub_41A940 L28): 帧42 @ (550,200) 不透明 ──
+        self._blit(p, self._mu_pix(42), 550, 200)
+
+        # ── 第 10 步: 标题面板 (sub_41A940 L29): 帧84 @ (215,57) a10 ──
+        self._blit(p, self._mu_pix(84), 215, 57, 10)
+
+        # ── 第 11 步: 5 系统选项行 (sub_41A940 L30-35) — 最后绘制, 半透明叠加在按钮之上 ──
+        for i in range(5):
+            y = 65 * i + 100
+            self._blit(p, self._mu_pix(85), 240, y, 10)       # 背景 a10
+            self._blit(p, self._mu_pix(87), 240, y, 15)       # 叠加 a15
+            self._blit(p, self._mu_pix(i + 94), 240, y)        # 图标 不透明
+
     @staticmethod
     def _pad10(name):
         """复刻 C "%-10.10s" 字节语义: Big5 全角 2 字节, 截断/补 ASCII 空格到 10 字节"""
@@ -1055,16 +1111,20 @@ class GameStatusView(QWidget):
                     self.charClicked.emit(widx)
             return
 
-        # 顶部页签 (209+72j, 6, 68x32): 状态/技能/物品/装备/队伍可切换
+        # 顶部页签 (209+72j, 6, 68x32): 状态/技能/物品/装备/队伍/系统可切换
         if 6 <= y <= 40 and x >= 209:
             j = (x - 209) // 72
-            if j in (0, 1, 2, 3, 4) and j != self._page:
+            if j in (0, 1, 2, 3, 4, 5) and j != self._page:
                 self._page = j
                 self._refresh()
             return
 
         if self._page == 4:
             self._team_mouse(x, y)
+            return
+
+        if self._page == 5:
+            self._system_mouse(x, y)
             return
 
         if self._page == 2:
@@ -1289,3 +1349,54 @@ class GameStatusView(QWidget):
         if new != self._journal_page:
             self._journal_page = new
             self._refresh()
+
+    # ── 系统页交互 (sub_41FAAC case 5) ──
+    # 音效行 y=97-129 / BGM 行 y=164-198: 开关旋钮 + 5 档音量滑块
+    # 系统选项行 y=229-263 / 294-328 / 359-393: 存档/读档/离开 (图鉴只读, 仅视觉)
+
+    def _system_mouse(self, x, y):
+        # 音效行 (word_755C78 开关 / word_755C7A 音量)
+        if 97 <= y <= 129:
+            self._audio_click(x, 'se')
+            return
+        # BGM 行 (word_755C74 开关 / word_755C76 音量)
+        if 164 <= y <= 198:
+            self._audio_click(x, 'bgm')
+            return
+        # 系统选项 3-5 (存档/读档/离开): 图鉴只读, 点击无实际效果
+
+    def _audio_click(self, x, kind):
+        """音效/BGM 行点击 (sub_41FAAC case 5 L289-372):
+        - x=441-504 且当前关 → 开启; x=541-604 且当前开 → 关闭
+        - x=13v+332..13v+344 (v=1..5) 且当前开 → 设置音量 v
+        """
+        if kind == 'se':
+            on, vol = self._se_on, self._se_vol
+        else:
+            on, vol = self._bgm_on, self._bgm_vol
+        # 开关旋钮: 开位 441-504 / 关位 541-604
+        if 441 <= x <= 504 and not on:
+            if kind == 'se':
+                self._se_on = True
+            else:
+                self._bgm_on = True
+            self._refresh()
+            return
+        if 541 <= x <= 604 and on:
+            if kind == 'se':
+                self._se_on = False
+            else:
+                self._bgm_on = False
+            self._refresh()
+            return
+        # 音量滑块 (5 档, 仅开启时生效): v=1..5 → x=13v+332..13v+344
+        if on:
+            for v in range(1, 6):
+                if 13 * v + 332 <= x <= 13 * v + 344:
+                    if v != vol:
+                        if kind == 'se':
+                            self._se_vol = v
+                        else:
+                            self._bgm_vol = v
+                        self._refresh()
+                    return
