@@ -327,9 +327,9 @@ class CharTab(BookTabBase):
         row.addWidget(view)
         row.addStretch()
         body.addLayout(row)
-        hint = QLabel("点击头像行切换角色 · 顶部页签切换 状态/技能/物品/队伍 · 队伍页含 团队/记事/功绩/历史 子页签"
+        hint = QLabel("点击头像行切换角色 · 顶部页签切换 状态/技能/物品/装备/队伍 · 队伍页含 团队/记事/功绩/历史 子页签"
                       " · 列表页可点行/滚轮翻页 · 坐标复刻自 TKS.exe 反编译"
-                      " (sub_417F84 / sub_41762C / sub_418EE8 / sub_419704 / sub_41A080)")
+                      " (sub_417F84 / sub_41762C / sub_418EE8 / sub_419704 / sub_419B54 / sub_41A080)")
         hint.setProperty("class", "StatusHint")
         hint.setAlignment(Qt.AlignCenter)
         hint.setWordWrap(True)

@@ -13,6 +13,11 @@
   sub_4195C4 — 物品说明: 浮动提示框帧158, 行 Y+31 (靠底则 Y-139), 说明文本=字段3
                (游戏内右键长按物品显示, 松开消失; 弹窗为最顶层, 覆盖列表文字)
   sub_41928C — 物品列表构建: 按字段1(分类)过滤, 每页 10 项
+  sub_419B54 — 装备页: 面板38/34/35 + 4装备槽(帧62/64/66,39px步进) + 分类高亮(帧29-31)
+  sub_419A24 — 装备列表: 12行/页, 行高31, 图标(字段4+130)@225, 名字@265, 选中条帧82
+  sub_419D9C — 换装属性预览: 8属性差值@(486,240+28i) + 升降箭头(帧36/37)@610
+  sub_422268 — 换装差值计算: 悬停物品加成(字段11-18) - 当前槽装备加成
+  sub_419850 — 装备列表构建: 按槽分类(字段1=2/3/4)+职业掩码(字段5), 每页 12 项
   sub_41A080 — 队伍页: 4子页签(帧50-53, 60px步进) + 团队(5成员/战绩统计)
                + 记事/功绩(每页3条, TKT=11201+序号) + 历史(TKT 9050+序号)
   sub_41A7A8 — 记事/功绩列表构建 (1000项标志数组, 1=记事 2=功绩, 页数=⌈n/3⌉)
@@ -77,6 +82,11 @@ SKILL_LIST_VISIBLE = 10   # 技能列表面板 (帧12 高319, 行高31) 可见�
 # 物品页 (sub_419704/sub_419458/sub_4195C4)
 ITEM_LIST_VISIBLE = 10    # 每页可见行数 (sub_41928C v8<9 → 10 项)
 ITEM_CATEGORIES = 6       # 分类数 0-5 (药品/道具/武器/防具/饰品/特殊, 高亮帧 27-32)
+
+# 装备页 (sub_419B54/sub_419A24/sub_419D9C/sub_422268)
+EQUIP_LIST_VISIBLE = 12   # 每页可见行数 (sub_419850 v7<11 → 12 项)
+EQUIP_SLOT_CAT = (2, 3, 4, 4)  # 4 槽 → TKItem 分类 field[1] (武器/防具/饰品/饰品)
+EQUIP_ATTR_LABELS = ["攻擊:", "防禦:", "命中:", "閃避:", "速度:", "幸運:", "悟性:", "移動:"]  # 换装差值 (字段11-18)
 
 # 队伍页 (sub_41A080): 团队统计标签 (繁体原文取自 exe 数据段, 值为存档数据 → 静态显示 0)
 TEAM_STAT_LEFT = [  # (标签, y) @ x=230, 值 %5d
@@ -162,6 +172,10 @@ class GameStatusView(QWidget):
         self._item_scroll = 0
         # 物品说明弹窗: 右键按住即时显示 (游戏内 hold 右键立即弹出说明, 松开消失, 无延时)
         self._tooltip_item = -1   # 当前显示说明的物品全局索引 (-1=不显示)
+        # 装备页状态 (对应游戏 a1[614868]=选中槽 0-3, a1[614891]=页内悬停行)
+        self._equip_slot = 0     # 选中装备槽 → 决定列表分类
+        self._equip_sel = -1     # 悬停物品 (-1=不悬停, 差值预览显示0)
+        self._equip_scroll = 0
         # 队伍页状态 (对应游戏 a1[614869]=子页签 0团队/1记事/2功绩/3历史, a1[614900]=页码)
         self._team_tab = 0
         self._journal_page = 0
@@ -203,7 +217,8 @@ class GameStatusView(QWidget):
         return {'page': self._page, 'skill_cat': self._skill_cat,
                 'skill_focus': self._skill_focus, 'team_tab': self._team_tab,
                 'journal_page': self._journal_page, 'item_cat': self._item_cat,
-                'item_sel': self._item_sel, 'item_scroll': self._item_scroll}
+                'item_sel': self._item_sel, 'item_scroll': self._item_scroll,
+                'equip_slot': self._equip_slot, 'equip_scroll': self._equip_scroll}
 
     def restore_state(self, state):
         if not state:
@@ -216,6 +231,9 @@ class GameStatusView(QWidget):
         self._item_cat = state.get('item_cat', 0)
         self._item_sel = state.get('item_sel', -1)
         self._item_scroll = state.get('item_scroll', 0)
+        self._equip_slot = state.get('equip_slot', 0)
+        self._equip_scroll = state.get('equip_scroll', 0)
+        self._equip_sel = -1
 
     def _refresh(self):
         self._rebuild()
@@ -515,6 +533,11 @@ class GameStatusView(QWidget):
             self._blit(p, self._mu_pix(206), 450, 430)
             # 金钱 (419704 L15-17: 色19黄, "      %-d"; 图鉴按游戏金钱上限 30000 显示)
             self._text(p, 450, 440, "      30000", 19)
+        elif page == 3:
+            # 装备页 (419B54 L17-19): 右面板38(a15) + 列表面板34(不透明) + 属性预览面板35(a12)
+            self._blit(p, self._mu_pix(38), 465, 64, 15)
+            self._blit(p, self._mu_pix(34), 215, 48)
+            self._blit(p, self._mu_pix(35), 478, 55, 12)
         # page 4 (队伍): 面板随子页签变化, 全部在 _draw_team_page 动态绘制
         p.end()
         base = self._flush_texts(base)
@@ -569,12 +592,14 @@ class GameStatusView(QWidget):
             self._draw_skill_page(p, f)
         elif self._page == 2:
             self._draw_item_page(p, f)
+        elif self._page == 3:
+            self._draw_equip_page(p, f)
         elif self._page == 4:
             self._draw_team_page(p, f)
         p.end()
         self._image = self._flush_texts(img)
-        if self._page == 2:
-            # 物品说明弹窗作为最顶层覆盖 (在列表文字之上, 避免被物品名压住)
+        if self._page in (2, 3):
+            # 物品/装备说明弹窗作为最顶层覆盖 (在列表文字之上, 避免被物品名压住)
             self._image = self._overlay_item_tooltip(self._image)
 
     def _draw_roster(self, p):
@@ -758,19 +783,27 @@ class GameStatusView(QWidget):
         # 说明弹窗不在此绘制: 由 _overlay_item_tooltip 在文字 flush 之后作为最顶层覆盖
 
     def _overlay_item_tooltip(self, pixmap):
-        """物品说明弹窗最顶层覆盖 (4195C4): 右键长按时显示, 层级高于列表文字。
+        """物品/装备说明弹窗最顶层覆盖 (4195C4): 右键长按时显示, 层级高于列表文字。
 
         帧158 提示框 + 说明文本(字段3)。位置随长按物品的可见行: v5=Y+31, 靠底(>360)则 Y-139。
+        物品页列表行基线 31r+103; 装备页 31r+83。
         """
-        if self._page != 2 or self._tooltip_item < 0:
+        if self._tooltip_item < 0:
             return pixmap
-        rows = self._build_item_rows(self._item_cat)
+        if self._page == 2:
+            rows = self._build_item_rows(self._item_cat)
+            scroll, visible, base_y = self._item_scroll, ITEM_LIST_VISIBLE, 103
+        elif self._page == 3:
+            rows = self._build_equip_rows(self._equip_slot)
+            scroll, visible, base_y = self._equip_scroll, EQUIP_LIST_VISIBLE, 83
+        else:
+            return pixmap
         if not (0 <= self._tooltip_item < len(rows)):
             return pixmap
-        sel_row = self._tooltip_item - self._item_scroll
-        if not (0 <= sel_row < ITEM_LIST_VISIBLE):
+        sel_row = self._tooltip_item - scroll
+        if not (0 <= sel_row < visible):
             return pixmap   # 物品已滚出可见区
-        yy = 31 * sel_row + 103
+        yy = 31 * sel_row + base_y
         v5 = yy + 31 if yy + 31 <= 360 else yy - 139
         p = QPainter(pixmap)
         self._blit(p, self._mu_pix(158), 252, v5)
@@ -778,6 +811,90 @@ class GameStatusView(QWidget):
         raw = self._expand_macros(self.data.tkt_raw_bytes(rows[self._tooltip_item][1][3]))
         self._rich(262, v5 + 8, raw, 16, px=16, ftype=0, max_y=v5 + 113)
         return self._flush_texts(pixmap)
+
+    # ── 装备页 (sub_419B54 / sub_419A24 / sub_419D9C / sub_422268) ──
+
+    def _build_equip_rows(self, slot):
+        """选中槽可装备物品 [(rec_index, vals), ...]: 按槽分类 field[1] 过滤 + 职业掩码 field[5]"""
+        c = self._cache()
+        char = self._rec_by_idx.get(self._current)
+        cat = EQUIP_SLOT_CAT[slot]
+        # 职业掩码: 角色字段 [77+分类] (79/80/81); 缺角色时不限制
+        cmask = (char['fields'][77 + cat] & 0xFFFF) if char else 0xFFFF
+        key = ('equip', self._current, slot)
+        if key not in c:
+            rows = []
+            for rec in self.data.item_recs:
+                vals = rec['vals']
+                if vals[0] in (0, 1) or vals[2] <= 0 or vals[1] != cat:
+                    continue
+                imask = vals[5] & 0xFFFF   # 职业限制掩码 (sub_419850: (imask & cmask)==imask)
+                if (imask & cmask) != imask:
+                    continue
+                if not tkt_first_line(self.data.tkt, vals[2]):
+                    continue
+                rows.append((rec['index'], vals))
+            c[key] = rows
+        return c[key]
+
+    def _draw_equip_page(self, p, f):
+        """装备页动态内容 (419B54 槽/分类 + 419A24 列表 + 419D9C/422268 换装差值预览)"""
+        slot = self._equip_slot
+        v8 = slot if slot != 3 else 2
+        # 4 装备槽 (419B54 L22-44): 图标 2*v7+62 @ (483,39v+60), 选中槽高亮帧83
+        for v6 in range(4):
+            v7 = v6 if v6 != 3 else 2
+            if slot == v6:
+                self._blit(p, self._mu_pix(83), 480, 39 * v6 + 58, 15)
+            self._blit(p, self._mu_pix(2 * v7 + 62), 483, 39 * v6 + 60)
+            ri = f[69 + v6]   # 该槽装备 TKItem 记录号
+            if 0 <= ri < len(self.data.item_recs):
+                nm = tkt_first_line(self.data.tkt, self.data.item_recs[ri]['vals'][2])
+                if nm:
+                    self._text(p, 512, 39 * v6 + 60, nm, 16)
+        # 分类高亮 (419B54 L49): 帧 v8+29 @ (61*v8+230, 52)
+        self._blit(p, self._mu_pix(v8 + 29), 61 * v8 + 230, 52)
+
+        # 列表 (419A24): 行高31, 图标@225 名字@265, 选中条帧82@261
+        rows = self._build_equip_rows(slot)
+        n = len(rows)
+        self._equip_scroll = max(0, min(self._equip_scroll, max(0, n - EQUIP_LIST_VISIBLE)))
+        if self._equip_sel >= 0:
+            self._equip_sel = min(self._equip_sel, n - 1) if n else -1
+        vis = rows[self._equip_scroll:self._equip_scroll + EQUIP_LIST_VISIBLE]
+        for r, (ridx, vals) in enumerate(vis):
+            gi = self._equip_scroll + r
+            selected = (gi == self._equip_sel)
+            if selected:
+                self._blit(p, self._mu_pix(82), 261, 31 * r + 83, 15)
+            self._blit(p, self._mu_pix(vals[4] + 130), 225, 31 * r + 85)
+            nm = tkt_first_line(self.data.tkt, vals[2]) or f"#{ridx}"
+            self._text(p, 265, 31 * r + 85, nm, 2 if selected else 16)
+
+        # 翻页箭头 (417F0C @ 426,42): 帧21 上 / 帧22 下 (+20,+5)
+        if self._equip_scroll > 0:
+            self._blit(p, self._mu_pix(21), 426, 42)
+        if self._equip_scroll + EQUIP_LIST_VISIBLE < n:
+            self._blit(p, self._mu_pix(22), 446, 47)
+
+        # 换装属性差值预览 (419D9C L21-46 + 422268): 8属性 @ (486,240+28i), 升降箭头 @ (610,28i+246)
+        equipped = None
+        eri = f[69 + slot]
+        if 0 <= eri < len(self.data.item_recs):
+            equipped = self.data.item_recs[eri]['vals']
+        hovered = rows[self._equip_sel][1] if 0 <= self._equip_sel < n else None
+        for i, label in enumerate(EQUIP_ATTR_LABELS):
+            if hovered is None:
+                delta = 0
+            elif equipped is None:
+                delta = hovered[11 + i]                    # 空槽 → 悬停物品全额加成
+            else:
+                delta = hovered[11 + i] - equipped[11 + i]  # 有装备 → 差值
+            self._text(p, 486, 240 + 28 * i, f"{label}{delta}", 16)
+            if delta > 0:
+                self._blit(p, self._mu_pix(36), 610, 28 * i + 246)   # 升箭头
+            elif delta < 0:
+                self._blit(p, self._mu_pix(37), 610, 28 * i + 246)   # 降箭头
 
     # ── 队伍页 (sub_41A080) ──
 
@@ -908,9 +1025,9 @@ class GameStatusView(QWidget):
         pos = event.position().toPoint()
         x, y = pos.x(), pos.y()
 
-        # 右键: 物品页按住即时显示说明弹窗 (游戏内 hold 右键立即弹出, 松开消失, 无延时)
+        # 右键: 物品/装备页按住即时显示说明弹窗 (游戏内 hold 右键立即弹出, 松开消失, 无延时)
         if event.button() == Qt.RightButton:
-            if self._page == 2:
+            if self._page in (2, 3):
                 gi = self._item_at(pos)
                 if gi >= 0 and gi != self._tooltip_item:
                     self._tooltip_item = gi
@@ -926,10 +1043,10 @@ class GameStatusView(QWidget):
                     self.charClicked.emit(widx)
             return
 
-        # 顶部页签 (209+72j, 6, 68x32): 状态/技能/物品/队伍可切换
+        # 顶部页签 (209+72j, 6, 68x32): 状态/技能/物品/装备/队伍可切换
         if 6 <= y <= 40 and x >= 209:
             j = (x - 209) // 72
-            if j in (0, 1, 2, 4) and j != self._page:
+            if j in (0, 1, 2, 3, 4) and j != self._page:
                 self._page = j
                 self._refresh()
             return
@@ -940,6 +1057,10 @@ class GameStatusView(QWidget):
 
         if self._page == 2:
             self._item_mouse(x, y)
+            return
+
+        if self._page == 3:
+            self._equip_mouse(x, y)
             return
 
         if self._page != 1:
@@ -995,24 +1116,40 @@ class GameStatusView(QWidget):
         super().mouseReleaseEvent(event)
 
     def mouseMoveEvent(self, event):
-        # 物品页: 选中跟随鼠标 — 悬停到哪行选哪行, 移出物品区则取消选中 (-1)
+        # 物品/装备页: 选中跟随鼠标 — 悬停到哪行选哪行, 移出列表区则取消选中 (-1)
         if self._page == 2:
             gi = self._item_at(event.position().toPoint())
             new_sel = gi if gi >= 0 else -1
             if new_sel != self._item_sel:
                 self._item_sel = new_sel
                 self._refresh()
+        elif self._page == 3:
+            gi = self._item_at(event.position().toPoint())
+            new_sel = gi if gi >= 0 else -1
+            if new_sel != self._equip_sel:
+                self._equip_sel = new_sel   # 悬停驱动换装差值预览
+                self._refresh()
         super().mouseMoveEvent(event)
 
     def _item_at(self, pos):
-        """物品列表行命中 → 全局物品索引 (无则 -1); 行区域 235..632, y=105+31r, 10 行"""
+        """物品/装备列表行命中 → 全局索引 (无则 -1)"""
         x, y = pos.x(), pos.y()
-        if 235 <= x <= 632 and y >= 105:
-            row = (y - 105) // 31
-            if 0 <= row < ITEM_LIST_VISIBLE:
-                gi = self._item_scroll + row
-                if gi < len(self._build_item_rows(self._item_cat)):
-                    return gi
+        if self._page == 2:
+            # 物品: 235..632, y=105+31r, 10 行
+            if 235 <= x <= 632 and y >= 105:
+                row = (y - 105) // 31
+                if 0 <= row < ITEM_LIST_VISIBLE:
+                    gi = self._item_scroll + row
+                    if gi < len(self._build_item_rows(self._item_cat)):
+                        return gi
+        elif self._page == 3:
+            # 装备: 225..464, y=85+31r, 12 行 (右侧 465+ 为槽/属性区, 不算列表)
+            if 225 <= x <= 464 and y >= 85:
+                row = (y - 85) // 31
+                if 0 <= row < EQUIP_LIST_VISIBLE:
+                    gi = self._equip_scroll + row
+                    if gi < len(self._build_equip_rows(self._equip_slot)):
+                        return gi
         return -1
 
     def wheelEvent(self, event):
@@ -1022,6 +1159,10 @@ class GameStatusView(QWidget):
             return
         if self._page == 2:
             self._scroll_item(-3 if event.angleDelta().y() > 0 else 3)
+            event.accept()
+            return
+        if self._page == 3:
+            self._scroll_equip(-3 if event.angleDelta().y() > 0 else 3)
             event.accept()
             return
         if self._page == 4 and self._team_tab in (1, 2):
@@ -1063,6 +1204,34 @@ class GameStatusView(QWidget):
         new = max(0, min(self._item_scroll + delta, max(0, n - ITEM_LIST_VISIBLE)))
         if new != self._item_scroll:
             self._item_scroll = new
+            self._refresh()
+
+    # ── 装备页交互 ──
+
+    def _equip_mouse(self, x, y):
+        # 装备槽 (480.., 39v+58, 高39, 右侧含名字): 点选槽 → 切换列表分类
+        if x >= 480 and 58 <= y < 58 + 39 * 4:
+            v6 = (y - 58) // 39
+            if 0 <= v6 < 4 and v6 != self._equip_slot:
+                self._equip_slot = v6
+                self._equip_sel = -1
+                self._equip_scroll = 0
+                self._refresh()
+            return
+        # 翻页箭头 (426,42,20x30 上一页 / 446,47,20x30 下一页)
+        if 426 <= x < 446 and 42 <= y < 72:
+            self._scroll_equip(-EQUIP_LIST_VISIBLE)
+            return
+        if 446 <= x < 466 and 47 <= y < 77:
+            self._scroll_equip(EQUIP_LIST_VISIBLE)
+            return
+        # 列表行悬停选中由 mouseMoveEvent 处理 (驱动换装差值预览)
+
+    def _scroll_equip(self, delta):
+        n = len(self._build_equip_rows(self._equip_slot))
+        new = max(0, min(self._equip_scroll + delta, max(0, n - EQUIP_LIST_VISIBLE)))
+        if new != self._equip_scroll:
+            self._equip_scroll = new
             self._refresh()
 
     # ── 队伍页交互 ──
