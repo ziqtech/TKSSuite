@@ -36,7 +36,7 @@ _LUT = {
     48: bytes([0, 8, 16, 24, 32]),
 }
 _SIZES = (12, 16, 24, 32, 48)
-_SHADOW = (16, 12, 8)   # 阴影色 = 调色板颜色0 (黑, 与描边一致取暗色)
+_SHADOW = (0, 0, 0)   # 阴影色 = 调色板颜色0 黑 (sub_44ADB0: a1+12 = dword_A2C528[0])
 
 
 class GameFont:
@@ -143,6 +143,102 @@ class GameFont:
                 self._blit_glyph(img, qimage, alpha, cx, cy, color)
             cx += adv
         return cx
+
+    def draw_rich(self, qimage, x, y, data, palette, color_idx=16, size=24,
+                  ftype=2, max_y=None, shadow=False):
+        """复刻 sub_44E49C 完整控制码状态机, 渲染 TKT 原始字节流 (宏已展开)。
+
+        控制码 (与游戏/tkt_editor 一致):
+          0x01+n FRESET: 1=恢复色+字号+FTYPE / 2=恢复色 / 3=恢复字号 / 4=恢复FTYPE
+          0x02+n FCOLOR: 存旧色, 切调色板色 n-1 (dword_A2C524+4n = A2C528[n-1])
+          0x03+rgb     : 存旧色, 切直接 RGB 色 (sub_451F08)
+          0x04+n FSIZE : 存旧字号, 切字号 n (合法 12/16/24/32/48, 否则 24)
+          0x05+n FTYPE : 存旧区段, 切 FTYPE n-1 (>7 回退)
+          0x1E         : 换行 (行高 = 当前字号)
+          其余: ≥0x80 双字节 Big5 全角, <0x80 ASCII 半宽 (空格照常占位步进)
+
+        Args:
+            data: 原始字节流; palette: {0..31: (r,g,b)}
+            max_y: 超出该 y 停止 (屏幕/面板裁剪)
+        """
+        w, h = qimage.width(), qimage.height()
+        if _np is not None:
+            buf = _np.frombuffer(qimage.bits(), _np.uint8)
+            stride = qimage.bytesPerLine()
+            img = buf.reshape(h, stride)[:, :w * 4].reshape(h, w, 4)
+        else:
+            img = None
+        default = palette.get(16, (244, 242, 220))
+        cur_color = palette.get(color_idx, default)
+        saved_color = cur_color
+        cur_size = size if size in _SIZES else 24
+        restore_size = cur_size          # a1+32 (FSIZE 存入, FRESET 1/3 取出)
+        cur_ft, saved_ft = ftype, ftype
+        cx, cy = x, y
+        i, n = 0, len(data)
+        while i < n:
+            b = data[i]
+            if b == 0x01 and i + 1 < n:
+                sub = data[i + 1]
+                if sub == 1:
+                    cur_color = saved_color
+                    cur_size = restore_size
+                    cur_ft = saved_ft
+                elif sub == 2:
+                    cur_color = saved_color
+                elif sub == 3:
+                    cur_size = restore_size
+                elif sub == 4:
+                    cur_ft = saved_ft
+                i += 2
+                continue
+            if b == 0x02 and i + 1 < n:
+                saved_color = cur_color
+                cur_color = palette.get(data[i + 1] - 1, cur_color)
+                i += 2
+                continue
+            if b == 0x03 and i + 3 < n:
+                saved_color = cur_color
+                r5, g6, b5 = data[i + 1] >> 3, data[i + 2] >> 2, data[i + 3] >> 3
+                cur_color = ((r5 << 3) | (r5 >> 2), (g6 << 2) | (g6 >> 4),
+                             (b5 << 3) | (b5 >> 2))
+                i += 4
+                continue
+            if b == 0x04 and i + 1 < n:
+                restore_size = cur_size
+                cur_size = data[i + 1] if data[i + 1] in _SIZES else 24
+                i += 2
+                continue
+            if b == 0x05 and i + 1 < n:
+                saved_ft = cur_ft
+                v = data[i + 1] - 1
+                cur_ft = v if 0 <= v <= 7 else saved_ft
+                i += 2
+                continue
+            if b == 0x1E:
+                cx = x
+                cy += cur_size
+                i += 1
+                if max_y is not None and cy >= max_y:
+                    break
+                continue
+            if b < 0x20:
+                i += 1   # 未知控制码: 游戏报 MakeText error, 查看器静默跳过
+                continue
+            if b >= 0x80 and i + 1 < n:
+                code, half, adv = (b << 8) | data[i + 1], False, cur_size
+                i += 2
+            else:
+                code, half, adv = b, True, cur_size // 2
+                i += 1
+            alpha = self.glyph_alpha(code, cur_ft, cur_size, half)
+            if alpha is not None:
+                if shadow:
+                    self._blit_glyph(img, qimage, self._dilate(alpha, cur_size),
+                                     cx - 1, cy - 1, _SHADOW)
+                self._blit_glyph(img, qimage, alpha, cx, cy, cur_color)
+            cx += adv
+        return cy
 
     @staticmethod
     def _dilate(alpha, size):

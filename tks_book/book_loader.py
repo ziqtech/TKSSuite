@@ -261,6 +261,7 @@ class GameData:
         self._sc_grp = None
         self._sc_grp_tried = False
         self._status_view_cache = None  # game_status_view 资源缓存 (换目录后重建)
+        self._tkt_raw = None            # TKT 原始字节 (含控制码, 游戏视图富文本用)
 
         def _p(name):
             fp = os.path.join(game_dir, name)
@@ -386,6 +387,16 @@ class GameData:
 
     def skill_name(self, skill_idx):
         return self.skill_names.get(skill_idx, "")
+
+    def tkt_raw_bytes(self, tid):
+        """TKT 条目原始字节 (0x1E 分行 + 控制码原样保留; 游戏视图富文本渲染用)"""
+        if self._tkt_raw is None:
+            try:
+                from editor_utils.tkt_loader import load_tkt_raw
+                self._tkt_raw = load_tkt_raw(self.paths.get("TKT.dat"))
+            except Exception:
+                self._tkt_raw = {}
+        return self._tkt_raw.get(tid, b'')
 
     def char_name_by_index(self, warpc_idx):
         """WarPC 花名册索引 → 角色名 (脚本 TeamMember/CheckTeam 参数用)"""

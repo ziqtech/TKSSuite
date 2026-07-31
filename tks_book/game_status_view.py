@@ -36,15 +36,25 @@ from game_font import load_game_font
 
 GAME_W, GAME_H = 640, 480
 
-# 游戏调色板颜色索引 (sub_44B028) — 颜色值取自游戏截图采样 (1/2 为技能列表推定色)
+# 游戏文字调色板 (sub_451FA0 权威定义, 32 色; sub_451F08 存储为 RGB565 → 显示时量化)
+def _c565(r, g, b):
+    """按游戏 RGB565 存储量化 (与实际屏幕输出一致)"""
+    r5, g6, b5 = r >> 3, g >> 2, b >> 3
+    return QColor((r5 << 3) | (r5 >> 2), (g6 << 2) | (g6 >> 4), (b5 << 3) | (b5 >> 2))
+
+
 GAME_COLORS = {
-    1: QColor(150, 150, 150),    # 灰 (技能列表: 已学会)
-    2: QColor(255, 235, 150),    # 亮黄白 (技能列表: 选中行)
-    16: QColor(255, 255, 240),   # 白 (数值/未选中行)
-    18: QColor(228, 56, 44),     # 红 (HP/MP < 一半)
-    19: QColor(252, 248, 37),    # 黄 (选中行名字 / HP/MP ≥ 一半)
-    20: QColor(51, 218, 50),     # 绿 (生命标签 / 八属性标签)
-    21: QColor(0, 244, 213),     # 青 (内力标签 / 核心标签)
+    0: _c565(0, 0, 0),        1: _c565(128, 128, 128),  2: _c565(128, 0, 0),
+    3: _c565(128, 128, 0),    4: _c565(0, 128, 0),      5: _c565(0, 128, 128),
+    6: _c565(0, 0, 128),      7: _c565(128, 0, 128),    8: _c565(128, 64, 0),
+    9: _c565(128, 0, 64),     10: _c565(64, 128, 0),    11: _c565(0, 128, 64),
+    12: _c565(64, 0, 128),    13: _c565(0, 64, 128),    14: _c565(0, 0, 0),
+    15: _c565(0, 0, 0),       16: _c565(244, 242, 220), 17: _c565(192, 192, 192),
+    18: _c565(255, 0, 0),     19: _c565(255, 255, 0),   20: _c565(0, 255, 0),
+    21: _c565(0, 255, 255),   22: _c565(0, 0, 255),     23: _c565(255, 0, 255),
+    24: _c565(255, 128, 64),  25: _c565(255, 64, 128),  26: _c565(128, 255, 64),
+    27: _c565(64, 255, 128),  28: _c565(128, 64, 255),  29: _c565(64, 128, 255),
+    30: _c565(52, 62, 84),    31: _c565(255, 255, 255),
 }
 
 # 状态页左列 (sub_417F84 L61-91): (标签, y) — 繁体原文取自 exe 数据段 (Big5, FONT9696 可查)
@@ -276,7 +286,80 @@ class GameStatusView(QWidget):
         px 对应 sub_44B04C 字号 (菜单 FTYPE2@24 / 说明 FTYPE0@16); 全角 +px, ASCII 半宽 +px/2。
         shadow 复刻 sub_44AF7C a7 (选中行文字阴影, sub_44C6A4 右下膨胀)。
         """
-        self._txt_queue.append((x, y, text, color_idx, px, shadow))
+        self._txt_queue.append(('t', x, y, text, color_idx, px, shadow))
+
+    def _rich(self, x, y, raw, color_idx=16, px=16, ftype=0, max_y=None):
+        """TKT 原始字节流入队 (0x1E 换行 + FCOLOR/FSIZE/FTYPE/FRESET 控制码, 空格占位)"""
+        if raw:
+            self._txt_queue.append(('r', x, y, raw, color_idx, px, ftype, max_y))
+
+    def _expand_macros(self, raw, depth=0):
+        """复刻 sub_409C60 宏展开: 0x14 TEXT引用 / 0x15,0x16 变量 / 0x1D NAME 玩家名。
+        控制码 0x01/0x02/0x04/0x05 与 0x1E 原样保留 (交给 draw_rich)。"""
+        out = bytearray()
+        i, n = 0, len(raw)
+        while i < n:
+            b = raw[i]
+            if b == 0x14 and i + 2 < n:            # TEXT: 2字节 TKT id → 递归展开
+                tid = raw[i + 1] | (raw[i + 2] << 8)
+                if depth < 2:
+                    out += self._expand_macros(self.data.tkt_raw_bytes(tid), depth + 1)
+                i += 3
+                continue
+            if b in (0x15, 0x16) and i + 1 < n:    # VARNUM/VARTXT: 运行时变量, 静态置空
+                i += 2
+                continue
+            if b == 0x1D and i + 1 < n:            # NAME: 玩家名两段 (755B6C/755B64), 静态用默认名
+                if raw[i + 1] == 1:
+                    out += "主角".encode('big5')   # NAME,2 为姓名第二段, 避免重复置空
+                i += 2
+                continue
+            if b in (0x01, 0x02, 0x05) and i + 1 < n:
+                out += raw[i:i + 2]
+                i += 2
+                continue
+            if b == 0x04 and i + 1 < n:
+                out += raw[i:i + 2]
+                i += 2
+                continue
+            if b == 0x03 and i + 3 < n:
+                out += raw[i:i + 4]
+                i += 4
+                continue
+            if b >= 0x80 and i + 1 < n:
+                out += raw[i:i + 2]
+                i += 2
+                continue
+            out.append(b)
+            i += 1
+        return bytes(out)
+
+    @staticmethod
+    def _strip_controls(raw):
+        """剥控制码 → 纯文本 (SimSun 兜底渲染用)"""
+        out = bytearray()
+        i, n = 0, len(raw)
+        while i < n:
+            b = raw[i]
+            if b in (0x01, 0x02, 0x04, 0x05):
+                i += 2
+            elif b == 0x03:
+                i += 4
+            elif b == 0x1E:
+                out.append(0x0A)
+                i += 1
+            elif b < 0x20:
+                i += 1
+            elif b >= 0x80 and i + 1 < n:
+                out += raw[i:i + 2]
+                i += 2
+            else:
+                out.append(b)
+                i += 1
+        try:
+            return out.replace(b'\x0a', b'\n').decode('big5', errors='replace')
+        except Exception:
+            return ""
 
     def _game_font(self):
         """FONT9696 渲染器 (懒加载, 挂 GameData 缓存; 缺失返回 None → SimSun 兜底)"""
@@ -294,16 +377,29 @@ class GameStatusView(QWidget):
         gf = self._game_font()
         if gf is None:
             painter = QPainter(pixmap)
-            for x, y, text, color_idx, px, _shadow in queue:
-                self._text_fallback(painter, x, y, text, color_idx, px)
+            for op in queue:
+                if op[0] == 't':
+                    _k, x, y, text, color_idx, px, _shadow = op
+                    self._text_fallback(painter, x, y, text, color_idx, px)
+                else:
+                    _k, x, y, raw, color_idx, px, _ft, _my = op
+                    for li, line in enumerate(self._strip_controls(raw).split('\n')):
+                        self._text_fallback(painter, x, y + px * li, line, color_idx, px)
             painter.end()
             return pixmap
         img = pixmap.toImage().convertToFormat(QImage.Format_ARGB32)
-        for x, y, text, color_idx, px, shadow in queue:
-            col = GAME_COLORS.get(color_idx, GAME_COLORS[16])
-            ftype = 0 if px == 16 else 2   # 说明文字 FTYPE0, 菜单 FTYPE2 (sub_44AF7C 调用点)
-            gf.draw_text(img, x, y, text, (col.red(), col.green(), col.blue()),
-                         size=px, ftype=ftype, shadow=shadow)
+        pal = {i: (c.red(), c.green(), c.blue()) for i, c in GAME_COLORS.items()}
+        for op in queue:
+            if op[0] == 't':
+                _k, x, y, text, color_idx, px, shadow = op
+                col = GAME_COLORS.get(color_idx, GAME_COLORS[16])
+                ftype = 0 if px == 16 else 2   # 说明文字 FTYPE0, 菜单 FTYPE2 (sub_44AF7C 调用点)
+                gf.draw_text(img, x, y, text, (col.red(), col.green(), col.blue()),
+                             size=px, ftype=ftype, shadow=shadow)
+            else:
+                _k, x, y, raw, color_idx, px, ftype, max_y = op
+                gf.draw_rich(img, x, y, raw, pal, color_idx=color_idx,
+                             size=px, ftype=ftype, max_y=max_y)
         return QPixmap.fromImage(img)
 
     def _text_fallback(self, p, x, y, text, color_idx=16, px=24):
@@ -556,12 +652,14 @@ class GameStatusView(QWidget):
                 self._blit(p, self._mu_pix(80), 228, 31 * row + 143, 15)
             col = 1 if state >= 20 else (2 if selected else 16)
             nm = self.data.skill_name(si) or f"技能#{si}"
-            self._text(p, 240, 31 * row + 145, self._clip10(nm), col)
             if self._skill_focus < 4:
                 rec = self._skill_by_idx.get(si)
                 cost = rec['vals'][3] * (250 - f[26]) // 200 if rec else 0
-                # "%-10.10s%4d": 名字区 10 字节 = 120px → 消耗从 x=360 起
-                self._text(p, 360, 31 * row + 145, f"{cost:4d}", col)
+                # "%-10.10s%4d" 单流排版: 名字按字节截断/补空格到 10 字节,
+                # 空格半宽步进 → 消耗位置随名字全/半角构成浮动 (同 wvsprintfA)
+                self._text(p, 240, 31 * row + 145, f"{self._pad10(nm)}{cost:4d}", col)
+            else:
+                self._text(p, 240, 31 * row + 145, nm, col)
 
         # 翻页箭头 (417F0C @ 390,98): 帧21 上 / 帧22 下 (+20,+5)
         if self._skill_scroll > 0:
@@ -569,16 +667,12 @@ class GameStatusView(QWidget):
         if self._skill_scroll + SKILL_LIST_VISIBLE < n:
             self._blit(p, self._mu_pix(22), 410, 103)
 
-        # 技能说明 (418E5C: 字号16 @ 453,305, 面板帧13 区域内换行; 行距=字号 0x1E 步进)
+        # 技能说明 (418E5C: 字号16 FTYPE0 @ 453,305; 原始字节流含 0x1E 分行/FCOLOR 控制码)
         sid = self._desc_skill_idx(f)
         rec = self._skill_by_idx.get(sid) if sid >= 0 else None
         if rec:
-            desc = tkt_full_text(self.data.tkt, rec['vals'][1])
-            if desc:
-                for li, line in enumerate(self._wrap(desc, 180, 16)):
-                    if li >= 9:
-                        break
-                    self._text(p, 453, 305 + 16 * li, line, 16, px=16)
+            raw = self._expand_macros(self.data.tkt_raw_bytes(rec['vals'][1]))
+            self._rich(453, 305, raw, 16, px=16, ftype=0, max_y=452)
 
     # ── 队伍页 (sub_41A080) ──
 
@@ -590,7 +684,7 @@ class GameStatusView(QWidget):
         return self._roster[max(0, pos - 2):pos + 3]
 
     def _journal_entries(self, kind):
-        """记事(1)/功绩(2) 全部有值条目 [(tkt_id, 文本), ...] (静态数据按 TKT 分段)"""
+        """记事(1)/功绩(2) 全部有值条目 [(tkt_id, 宏展开原始字节), ...] (静态按 TKT 分段)"""
         c = self._cache()
         key = ('journal', kind)
         if key not in c:
@@ -600,7 +694,7 @@ class GameStatusView(QWidget):
             for tid in range(lo, hi + 1):
                 txt = tkt_full_text(self.data.tkt, tid)
                 if txt and txt.strip():
-                    entries.append((tid, txt.strip()))
+                    entries.append((tid, self._expand_macros(self.data.tkt_raw_bytes(tid))))
             c[key] = entries
         return c[key]
 
@@ -651,17 +745,17 @@ class GameStatusView(QWidget):
 
         if tab in (1, 2):
             # 记事/功绩列表 (L73-99): 每页3条 @ y=108/225/339, 分隔条帧57, 页码 %3d/%3d
+            # 条目 = 宏展开后的原始字节流 (44E49C 富文本: 0x1E 分行/FCOLOR/空格占位)
             entries = self._journal_entries(tab)
             pages = max(1, (len(entries) + JOURNAL_PER_PAGE - 1) // JOURNAL_PER_PAGE)
             self._journal_page = max(0, min(self._journal_page, pages - 1))
             start = self._journal_page * JOURNAL_PER_PAGE
             page_entries = entries[start:start + JOURNAL_PER_PAGE]
+            slot_max_y = (210, 325, 452)   # 裁剪到下一分隔条/面板底
             for slot, y in enumerate((108, 225, 339)):
                 if slot < len(page_entries):
-                    for li, line in enumerate(self._wrap(page_entries[slot][1], 370, 16)):
-                        if li >= 6:
-                            break
-                        self._text(p, 237, y + 16 * li, line, 16, px=16)
+                    self._rich(237, y, page_entries[slot][1], 16, px=16,
+                               ftype=0, max_y=slot_max_y[slot])
             self._blit(p, self._mu_pix(57), 250, 210)
             self._blit(p, self._mu_pix(57), 250, 325)
             # 翻页箭头 (417F0C @ 460,50) + 页码
@@ -672,41 +766,26 @@ class GameStatusView(QWidget):
             if entries:
                 self._text(p, 525, 60, f"{self._journal_page + 1:3d}/{pages:3d}", 16)
         else:
-            # 历史 (L101-108): 当前选中人物历史文本 (TKT 9050+序号 / 补丁字段[262])
+            # 历史 (L101-108): 当前选中人物历史原始字节流 (TKT 9050+序号 / 补丁字段[262])
             rec = self._rec_by_idx.get(self._current)
-            history = self.data.char_history(rec) if rec else ""
-            if history:
-                for li, line in enumerate(self._wrap(history.strip(), 370, 16)):
-                    if li >= 21:
-                        break
-                    self._text(p, 237, 108 + 16 * li, line, 16, px=16)
+            if rec is not None:
+                hid = rec['fields'][262]           # 补丁字段 [262] 覆盖历史文本ID
+                if hid == 0:
+                    hid = 9050 + rec['index']
+                raw = self._expand_macros(self.data.tkt_raw_bytes(hid))
+                self._rich(237, 108, raw, 16, px=16, ftype=0, max_y=452)
 
     @staticmethod
-    def _clip10(name):
-        """复刻 C "%-10.10s" 按字节截断 (Big5 全角 2 字节, 共 10 字节)"""
+    def _pad10(name):
+        """复刻 C "%-10.10s" 字节语义: Big5 全角 2 字节, 截断/补 ASCII 空格到 10 字节"""
         w, out = 0, ""
         for ch in name:
-            w += 2 if ord(ch) > 0xFF else 1
-            if w > 10:
+            cw = 2 if ord(ch) > 0xFF else 1
+            if w + cw > 10:
                 break
             out += ch
-        return out
-
-    @staticmethod
-    def _wrap(text, width, px):
-        """按定宽字模宽度换行 (全角 px, 半角 px/2); 保留原始换行"""
-        lines = []
-        for raw in text.splitlines():
-            cur, w = "", 0
-            for ch in raw:
-                adv = px if ord(ch) > 0xFF else px // 2
-                if w + adv > width and cur:
-                    lines.append(cur)
-                    cur, w = "", 0
-                cur += ch
-                w += adv
-            lines.append(cur)
-        return lines
+            w += cw
+        return out + " " * (10 - w)
 
     # ── 事件 ──
 
