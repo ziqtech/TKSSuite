@@ -188,6 +188,11 @@ class GameStatusView(QWidget):
         self._se_vol = 2
         self._bgm_on = True
         self._bgm_vol = 3
+        # 存档页状态 (对应游戏 arglist[614953]=操作模式 / arglist[614900]=页码)
+        #   进入存档页: save_mode=1(存档)/2(读档); 0=未激活 (主菜单)
+        #   3 页 × 3 行 = 9 存档槽 (sub_41AB94); 图鉴无存档文件 → 全部为空槽
+        self._save_mode = 0
+        self._save_page = 0
         self._txt_queue = []     # 文字绘制队列 (精灵画完后统一按 FONT9696 像素混合)
         self._font = QFont("SimSun")
         self._font.setPixelSize(24)
@@ -229,7 +234,8 @@ class GameStatusView(QWidget):
                 'item_sel': self._item_sel, 'item_scroll': self._item_scroll,
                 'equip_slot': self._equip_slot, 'equip_scroll': self._equip_scroll,
                 'se_on': self._se_on, 'se_vol': self._se_vol,
-                'bgm_on': self._bgm_on, 'bgm_vol': self._bgm_vol}
+                'bgm_on': self._bgm_on, 'bgm_vol': self._bgm_vol,
+                'save_mode': self._save_mode, 'save_page': self._save_page}
 
     def restore_state(self, state):
         if not state:
@@ -249,6 +255,8 @@ class GameStatusView(QWidget):
         self._se_vol = state.get('se_vol', 2)
         self._bgm_on = state.get('bgm_on', True)
         self._bgm_vol = state.get('bgm_vol', 3)
+        self._save_mode = state.get('save_mode', 0)
+        self._save_page = state.get('save_page', 0)
 
     def _refresh(self):
         self._rebuild()
@@ -320,6 +328,19 @@ class GameStatusView(QWidget):
                 except Exception:
                     c['bg'] = None
         return c['bg']
+
+    def _save_background(self):
+        """存档页背景 save.gxp (sub_41FAAC case 5: sub_450264 加载 aSaveGxp)"""
+        c = self._cache()
+        if not c.get('save_bg_tried'):
+            c['save_bg_tried'] = True
+            p = self.data.paths.get("save.gxp")
+            if p:
+                try:
+                    c['save_bg'] = pil_to_qpixmap(_load_gxp_pil(p))
+                except Exception:
+                    c['save_bg'] = None
+        return c['save_bg']
 
     # ── 绘制原语 ──
 
@@ -612,6 +633,18 @@ class GameStatusView(QWidget):
             self._image = None
             return
         f = rec['fields']
+        # 存档页 (sub_41AB94): save.gxp 全屏背景 + 存档列表 (不画队伍列表/页签)
+        if self._save_mode > 0:
+            img = QPixmap(GAME_W, GAME_H)
+            img.fill(QColor(0, 0, 0))
+            p = QPainter(img)
+            bg = self._save_background()
+            if bg:
+                p.drawPixmap(0, 0, bg)
+            self._draw_save_page(p)
+            p.end()
+            self._image = self._flush_texts(img)
+            return
         img = QPixmap(self._static_base(self._page))
         p = QPainter(img)
         self._draw_roster(p)
@@ -1065,6 +1098,40 @@ class GameStatusView(QWidget):
             self._blit(p, self._mu_pix(87), 240, y, 15)       # 叠加 a15
             self._blit(p, self._mu_pix(i + 94), 240, y)        # 图标 不透明
 
+    # ── 存档页 (sub_41AB94 + sub_41B08C) ──
+    # 进入: 系统页点 存档/读档 按钮 → arglist[614953]=1/2, arglist[461]=6, 加载 save.gxp
+    # 取消: 点 "取消" → arglist[614953]=0, arglist[461]=8 → 10 → 1 (回主菜单)
+    # 布局: 3页 × 3行 = 9 存档槽; 行高 150px; 每槽 6 角色头像 + 金钱 + 日期/时间 + 角色名
+    # 图鉴无 save\*.sav → 全部为空槽 (SLOBYTE==-1): 不画头像/等级/日期/时间/角色名
+
+    def _draw_save_page(self, p):
+        """存档页渲染 (sub_41AB94 L20-70 + sub_41B08C 翻页箭头)"""
+        # 字体 FTYPE2 @ 24px, 色16 (sub_44AF7C(2,24,1,0,1,0) + sub_44B028(16))
+        # 页码 "第%d頁 共3頁" @ (450, 10) (byte_4E9944, 参数 page+1)
+        self._text(p, 450, 10, f"第{self._save_page + 1}頁 共3頁", 16)
+        # 3 行存档槽 (sub_41AB94 L23-69)
+        for i in range(3):
+            yb = 150 * i
+            # 行背景 frame 273 @ (9, yb+40) 半透明 a10
+            self._blit(p, self._mu_pix(273), 9, yb + 40, 10)
+            # 角色头像 v7=0..5 (sub_41AB94 L29-50): 空存档 SLOBYTE(char_id)==-1 → break
+            # 图鉴无存档文件, 全部为空槽, 不画头像/等级
+            # 金钱图标 frame 206 @ (300, yb+125) 不透明 (sub_41AB94 L51)
+            self._blit(p, self._mu_pix(206), 300, yb + 125)
+            # 金钱数值 "%d" @ (390, yb+135) — 空存档为 0 (sub_41AB94 L52)
+            self._text(p, 390, yb + 135, "0", 16)
+            # 存档/读档按钮 (sub_41AB94 L53-56): byte_4E995B "存檔" / byte_4E9960 "讀檔"
+            if self._save_mode == 1:
+                self._text(p, 460, yb + 130, "存檔", 16)
+            else:
+                self._text(p, 460, yb + 130, "讀檔", 16)
+            # 取消按钮 (sub_41AB94 L57): byte_4E9965 "取消"
+            self._text(p, 528, yb + 130, "取消", 16)
+            # 日期/时间/角色名 (sub_41AB94 L58-67): 空存档 SLOBYTE==-1 → 跳过
+        # 翻页箭头 (sub_41B08C L23-24): frame21 上 @ (613,190) / frame22 下 @ (613,240)
+        self._blit(p, self._mu_pix(21), 613, 190)
+        self._blit(p, self._mu_pix(22), 613, 240)
+
     @staticmethod
     def _pad10(name):
         """复刻 C "%-10.10s" 字节语义: Big5 全角 2 字节, 截断/补 ASCII 空格到 10 字节"""
@@ -1100,6 +1167,11 @@ class GameStatusView(QWidget):
                 if gi >= 0 and gi != self._tooltip_item:
                     self._tooltip_item = gi
                     self._refresh()
+            return
+
+        # 存档页 (sub_41CE10): 全屏 save.gxp 背景, 不响应左侧列表/页签/系统页
+        if self._save_mode > 0:
+            self._save_mouse(x, y)
             return
 
         # 左侧列表行 (行区域同帧0边框: x 3..205, 高 79)
@@ -1225,6 +1297,18 @@ class GameStatusView(QWidget):
         return -1
 
     def wheelEvent(self, event):
+        # 存档页翻页 (sub_41CE10 case 11/12/13)
+        if self._save_mode > 0:
+            if event.angleDelta().y() > 0:
+                if self._save_page > 0:
+                    self._save_page -= 1
+                    self._refresh()
+            else:
+                if self._save_page < 2:
+                    self._save_page += 1
+                    self._refresh()
+            event.accept()
+            return
         if self._page == 1:
             self._scroll_skill(-3 if event.angleDelta().y() > 0 else 3)
             event.accept()
@@ -1363,7 +1447,21 @@ class GameStatusView(QWidget):
         if 164 <= y <= 198:
             self._audio_click(x, 'bgm')
             return
-        # 系统选项 3-5 (存档/读档/离开): 图鉴只读, 点击无实际效果
+        # 系统选项 3 (存档, sub_41FAAC case 5 L273-287): y=229-263, x=240-305
+        # → arglist[614953]=1, arglist[461]=6, 加载 save.gxp
+        if 229 <= y <= 263 and 240 <= x <= 305:
+            self._save_mode = 1
+            self._save_page = 0
+            self._refresh()
+            return
+        # 系统选项 4 (读档, sub_41FAAC case 5 L253-271): y=294-328, x=240-305
+        # → arglist[614953]=2, arglist[461]=6, 加载 save.gxp
+        if 294 <= y <= 328 and 240 <= x <= 305:
+            self._save_mode = 2
+            self._save_page = 0
+            self._refresh()
+            return
+        # 系统选项 5 (离开): 图鉴只读, 点击无实际效果
 
     def _audio_click(self, x, kind):
         """音效/BGM 行点击 (sub_41FAAC case 5 L289-372):
@@ -1400,3 +1498,31 @@ class GameStatusView(QWidget):
                             self._bgm_vol = v
                         self._refresh()
                     return
+
+    # ── 存档页交互 (sub_41CE10 case 1/7) ──
+    # 按钮区 x=452-583, 行 y=150*v+127~155 (v=0,1,2):
+    #   取消 x=516-583 → arglist[614953]=0, arglist[461]=8 → 回主菜单
+    #   存档/读档 x=452-515 → 图鉴只读, 无实际效果
+    # 翻页箭头 x=613-632: 上 y=191-216 / 下 y=242-266
+
+    def _save_mouse(self, x, y):
+        # 按钮区域 (sub_41CE10 L42-172): x=452-583
+        if 452 <= x <= 583:
+            for v in range(3):
+                if 150 * v + 127 <= y <= 150 * v + 155:
+                    if 516 <= x <= 583:
+                        # 取消 (sub_41CE10 L49-65): arglist[614953]=0, arglist[461]=8
+                        self._save_mode = 0
+                        self._save_page = 0
+                        self._refresh()
+                    # 存档/读档按钮 x=452-515: 图鉴只读, 无实际效果
+                    return
+            return
+        # 翻页箭头 (sub_41CE10 L174-198): x=613-632
+        if 613 <= x <= 632:
+            if 191 <= y <= 216 and self._save_page > 0:
+                self._save_page -= 1
+                self._refresh()
+            elif 242 <= y <= 266 and self._save_page < 2:
+                self._save_page += 1
+                self._refresh()

@@ -303,6 +303,7 @@ class GameData:
 
         # 游戏状态界面复刻资源 (game_status_view 惰性解码, 此处仅登记路径)
         _p("mb.gxp")
+        _p("save.gxp")
         _p("PFace.jvg")
         _p("FONT9696")
 
