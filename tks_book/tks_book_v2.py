@@ -4,7 +4,7 @@
 TKS 游戏图鉴查看器 (PySide6 — Godot 风格)
 =============================================================
 只读查看器 (非编辑器): 加载 TKS 游戏目录后, 通过标签页浏览
-人物 / 技能 / 物品 / 地图 数据。
+图鉴 / 人物 / 技能 / 物品 / 地图 数据。
 UI 样式对齐 kon_editor_v2 / skill_editor_v2 的
 PreviewFrame / DockHeader / DockBody 体系, 主题从 editor_themes/ 加载。
 数据解析逻辑与各编辑器一致 (见 book_loader.py)。
@@ -28,6 +28,7 @@ from editor_utils.version import format_title, format_about_header
 from editor_utils.window_theme import apply_godot_theme
 
 from book_loader import GameData
+from tab_gallery import GalleryTab
 from tab_char import CharTab
 from tab_skill import SkillTab
 from tab_item import ItemTab
@@ -107,10 +108,12 @@ class TksBookViewer(QMainWindow):
 
         # 标签页
         self.tabs = QTabWidget()
+        self.tab_gallery = GalleryTab(self.data)
         self.tab_char = CharTab(self.data)
         self.tab_skill = SkillTab(self.data)
         self.tab_item = ItemTab(self.data)
         self.tab_map = MapTab(self.data)
+        self.tabs.addTab(self.tab_gallery, "图鉴")
         self.tabs.addTab(self.tab_char, "人物")
         self.tabs.addTab(self.tab_skill, "技能")
         self.tabs.addTab(self.tab_item, "物品")
@@ -174,6 +177,7 @@ class TksBookViewer(QMainWindow):
             QMessageBox.critical(self, "加载失败", str(e))
             return
         self._loaded = True
+        self.tab_gallery.populate()
         self.tab_char.populate()
         self.tab_skill.populate()
         self.tab_item.populate()
@@ -215,6 +219,7 @@ class TksBookViewer(QMainWindow):
             "TKS 游戏图鉴查看器 (只读, 不修改任何游戏文件)\n\n"
             "1. 文件 → 加载 TKS 目录 (Ctrl+O), 选择游戏根目录\n"
             "2. 通过顶部标签页切换查看内容:\n"
+            "   · 图鉴 — 游戏界面 1:1 复刻 (状态/技能/物品/装备/队伍/系统页)\n"
             "   · 人物 — 头像/核心属性/装备/技能/可学习技能树/历史\n"
             "   · 技能 — 名称/说明文本/有值属性\n"
             "   · 物品 — 图标/说明文本/有值属性\n"
