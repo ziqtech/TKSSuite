@@ -32,6 +32,7 @@ from tab_gallery import GalleryTab
 from tab_char import CharTab
 from tab_skill import SkillTab
 from tab_item import ItemTab
+from tab_status import StatusTab
 from tab_map import MapTab
 
 
@@ -115,11 +116,13 @@ class TksBookViewer(QMainWindow):
         self.tab_char = CharTab(self.data)
         self.tab_skill = SkillTab(self.data)
         self.tab_item = ItemTab(self.data)
+        self.tab_status = StatusTab(self.data)
         self.tab_map = MapTab(self.data)
         self.tabs.addTab(self.tab_gallery, "图鉴")
         self.tabs.addTab(self.tab_char, "人物")
         self.tabs.addTab(self.tab_skill, "技能")
         self.tabs.addTab(self.tab_item, "物品")
+        self.tabs.addTab(self.tab_status, "状态")
         self.tabs.addTab(self.tab_map, "地图")
         self.tabs.currentChanged.connect(self._on_tab_changed)
 
@@ -198,6 +201,7 @@ class TksBookViewer(QMainWindow):
         self.tab_char.populate()
         self.tab_skill.populate()
         self.tab_item.populate()
+        self.tab_status.populate()
         self.tab_map.populate()
         if self.tabs.currentWidget() is self.tab_map:
             self.tab_map.ensure_populated()
@@ -245,6 +249,7 @@ class TksBookViewer(QMainWindow):
             "   · 人物 — 头像/核心属性/装备/技能/可学习技能树/历史\n"
             "   · 技能 — 名称/说明文本/有值属性/可学习角色\n"
             "   · 物品 — 图标/说明文本/有值属性/获得途径\n"
+            "   · 状态 — 异常状态图标/名称/功能描述/来源与解除途径\n"
             "   · 地图 — 场景列表 + 背景预览 (首次切换时加载 SC.GRP)\n"
             "3. 左侧列表上方输入关键字可即时过滤\n"
             "4. F5 切换深色/浅色主题")
