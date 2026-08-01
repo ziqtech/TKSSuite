@@ -266,7 +266,7 @@ class CharTab(BookTabBase):
         self._build_join_info(body, rec)
 
         # 可掉落物品 + 战后奖励 (水平并排)
-        drop_body, reward_body = self._add_group_pair("可掉落物品", "战后奖励")
+        drop_body, reward_body = self.add_group_pair("可掉落物品", "战后奖励")
         self._build_drops(drop_body, rec)
         self._build_battle_rewards(reward_body, rec)
 
@@ -551,31 +551,6 @@ class CharTab(BookTabBase):
             cell.addWidget(val_lbl, 1)
             row.addLayout(cell, 1)
         body.addLayout(row)
-
-    def _add_group_pair(self, title1, title2):
-        """创建两个并排的 DockHeader 分组, 返回 (body1_layout, body2_layout)"""
-        from editor_utils.dock_components import DockHeader
-        row_w = QWidget()
-        row_l = QHBoxLayout(row_w)
-        row_l.setContentsMargins(0, 0, 0, 0)
-        row_l.setSpacing(4)
-        bodies = []
-        for title in (title1, title2):
-            gw = QWidget()
-            gl = QVBoxLayout(gw)
-            gl.setContentsMargins(0, 0, 0, 0)
-            gl.setSpacing(0)
-            gl.addWidget(DockHeader(title))
-            bw = QWidget()
-            bw.setObjectName("DockBody")
-            bl = QVBoxLayout(bw)
-            bl.setContentsMargins(8, 8, 8, 8)
-            bl.setSpacing(4)
-            gl.addWidget(bw, 1)
-            row_l.addWidget(gw, 1)
-            bodies.append(bl)
-        self.detail_layout.addWidget(row_w)
-        return tuple(bodies)
 
     def _build_skill_bonuses(self, body, rec):
         """技能加成区 f[32]-f[40]: 攻击次数/特殊标志/百分比加成/移动标志"""

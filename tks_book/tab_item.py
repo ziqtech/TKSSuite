@@ -13,6 +13,7 @@ from editor_utils.picker_dialogs import STATUS_NAMES, STATUS_ICON_BASE
 
 from book_loader import (
     ITEM_VIEW_FIELDS, PAGE_NAMES, COMBAT_FLAG_NAMES, EXTRA_FLAG_NAMES,
+    EQUIP_ID_IDX,
     tkt_first_line, tkt_full_text, status_mask_names, flag_names, val1000_text,
     use_right_label,
 )
@@ -66,7 +67,12 @@ class ItemTab(BookTabBase):
         vals = rec['vals']
         self.clear_detail()
 
-        # 头部: 图标 + 名称 + 核心属性
+        dark = self._is_dark_theme()
+        blue = "#6699cc" if dark else "#3366cc"
+        green = "#55b572" if dark else "#178a39"
+        cyan = "#7ab8d4" if dark else "#2a6f8c"
+
+        # 头部: 图标 + 名称 + 元信息 + 说明文本
         header = QFrame()
         header.setObjectName("PreviewFrame")
         hv = QVBoxLayout(header)
@@ -85,14 +91,32 @@ class ItemTab(BookTabBase):
             icon_lbl.setText("(无图标)")
         top_row.addWidget(icon_lbl, 0, Qt.AlignVCenter)
         name_box = QVBoxLayout()
-        name_box.setSpacing(0)
+        name_box.setSpacing(4)
         name = tkt_first_line(self.data.tkt, vals[2]) or f"物品#{vals[0]}"
         name_lbl = QLabel(name)
         name_lbl.setProperty("class", "PreviewName")
         name_box.addWidget(name_lbl, 0, Qt.AlignVCenter)
+        # 元信息行: 页面 | 权限 | 价格 | TKKon
+        page = vals[1]
+        meta_parts = [
+            f"分类: {PAGE_NAMES.get(page, '?')}",
+            f"权限: {use_right_label(vals[5], page)}",
+            f"价格: {vals[31]}",
+        ]
+        if vals[6] > 0:
+            tkkon_name = self.data.tkkon_names.get(vals[6], "")
+            if tkkon_name:
+                meta_parts.append(f"效果: {tkkon_name}")
+            else:
+                meta_parts.append(f"TKKon: {vals[6]}")
+        meta_lbl = QLabel(" | ".join(meta_parts))
+        meta_lbl.setStyleSheet(f"color: {cyan}; padding: 0px;")
+        meta_lbl.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        name_box.addWidget(meta_lbl)
+        name_box.addStretch()
         top_row.addLayout(name_box, 1)
         hv.addLayout(top_row)
-        # 说明文本 (同人物页: 放在 PreviewFrame 内部, PreviewDesc 样式, 去除原数据换行)
+        # 说明文本 (放在 PreviewFrame 内部, PreviewDesc 样式, 去除原数据换行)
         desc = tkt_full_text(self.data.tkt, vals[3])
         if desc:
             desc_lbl = QLabel(" ".join(desc.split()))
@@ -103,73 +127,115 @@ class ItemTab(BookTabBase):
             hv.addWidget(desc_lbl)
         self.detail_layout.addWidget(header)
 
-        # 有值属性 (零值不显示, 同人物页装备物品布局: 6列grid, 标签在上值在下)
-        body = self.add_group("属性")
-        pairs = []
-        for key, off, label, kind in ITEM_VIEW_FIELDS:
-            v = vals[off // 2]
-            if v == 0:
-                continue
-            if kind == 'val1000':
-                pairs.append((label, val1000_text(v)))
-            elif kind == 'combat_flag':
-                names = flag_names(v, COMBAT_FLAG_NAMES)
-                pairs.append((label, "、".join(names) if names else str(v)))
-            elif kind == 'extra_flags':
-                names = flag_names(v, EXTRA_FLAG_NAMES)
-                pairs.append((label, "、".join(names) if names else str(v)))
-            elif kind == 'skill':
-                name_s = self.data.skill_name(abs(v)) or f"技能#{v}"
-                pairs.append((label, name_s))
-            elif kind == 'mask_lo':
-                is_cause = key.startswith('cause_')
-                chips = self._build_status_chips(v, hi=False, is_cause=is_cause)
-                if chips:
-                    pairs.append((label, chips))
-            elif kind == 'mask_hi':
-                is_cause = key.startswith('cause_')
-                chips = self._build_status_chips(v, hi=True, is_cause=is_cause)
-                if chips:
-                    pairs.append((label, chips))
-            else:
-                pairs.append((label, str(v)))
-        if pairs:
-            attr_grid = QGridLayout()
-            attr_grid.setHorizontalSpacing(8)
-            attr_grid.setVerticalSpacing(4)
-            cols = 6
-            for slot, (label, val) in enumerate(pairs):
-                r, c = divmod(slot, cols)
-                cell_w = QWidget()
-                cell_w.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
-                cell = QVBoxLayout(cell_w)
-                cell.setContentsMargins(0, 0, 0, 0)
-                cell.setSpacing(2)
-                lbl = QLabel(label)
-                lbl.setProperty("class", "PropLabel")
-                lbl.setAlignment(Qt.AlignLeft)
-                cell.addWidget(lbl)
-                if isinstance(val, list):
-                    val_w = self._make_chips_widget(val)
-                    cell.addWidget(val_w, 1)
+        # ── 基础属性 (纯数值: HP/MP/攻防/命中/闪避/速度/幸运/悟性/移动/技能点) ──
+        body = self.add_group("基础属性")
+        stat_pairs = []
+        field_map = {f[0]: f for f in ITEM_VIEW_FIELDS}
+        stat_fields = [
+            ("hp_inc", "增加生命", 'val1000'),
+            ("hp_heal", "恢复生命", 'val1000'),
+            ("mp_inc", "增加内力", 'val1000'),
+            ("mp_heal", "恢复内力", 'val1000'),
+            ("atk", "增加攻击", 'int'),
+            ("def_", "增加防御", 'int'),
+            ("hit", "增加命中", 'int'),
+            ("dodge", "增加闪避", 'int'),
+            ("spd", "增加速度", 'int'),
+            ("luk", "增加幸运", 'int'),
+            ("spi", "增加悟性", 'int'),
+            ("vit", "增加移动", 'int'),
+            ("jp_bonus", "增加技能点", 'int'),
+            ("medicine", "增加医术", 'int'),
+        ]
+        for key, label, kind in stat_fields:
+            if key in field_map:
+                off = field_map[key][1]
+                v = vals[off // 2]
+                if v == 0:
+                    continue
+                if kind == 'val1000':
+                    stat_pairs.append((label, val1000_text(v)))
                 else:
-                    val_lbl = self._val_label(val, True)
-                    cell.addWidget(val_lbl, 1)
-                attr_grid.addWidget(cell_w, r, c, Qt.AlignTop)
-            # 末列空白占位, 防止列宽不均
-            last_row_count = len(pairs) % cols
-            if last_row_count != 0:
-                last_row = len(pairs) // cols
-                for c in range(last_row_count, cols):
-                    spacer = QWidget()
-                    attr_grid.addWidget(spacer, last_row, c)
-            for c in range(cols):
-                attr_grid.setColumnStretch(c, 1)
-            body.addLayout(attr_grid)
+                    stat_pairs.append((label, str(v)))
+        if stat_pairs:
+            self._build_prop_grid(body, stat_pairs, cols=6)
         else:
-            self.add_text_block(body, "(无属性数值)", "StatusHint")
+            self.add_text_block(body, "(无基础属性数值)", "StatusHint")
 
-        # 获得途径 (TKD脚本/TKMat宝箱/TKShop商店/WarPC掉落/WarData战场宝物 反向索引)
+        # ── 技能效果 (4列: 附加技能/装备后学习/使用后学习1/2) ──
+        body = self.add_group("技能效果")
+        skill_fields = [
+            ("attach_skill", "附加技能"),
+            ("equip_learn", "装备后学习"),
+            ("use_learn1", "使用后学习1"),
+            ("use_learn2", "使用后学习2"),
+        ]
+        skill_pairs = []
+        for key, label in skill_fields:
+            if key in field_map:
+                off = field_map[key][1]
+                v = vals[off // 2]
+                if v == 0:
+                    skill_pairs.append((label, "(无)", False))
+                else:
+                    name_s = self.data.skill_name(abs(v)) or f"技能#{v}"
+                    skill_pairs.append((label, name_s, True))
+        self._build_skill_grid(body, skill_pairs)
+
+        # ── 状态效果 ──
+        # 导致状态 / 解除状态 (两个 DockHeader 一行并排, 标题不带括号)
+        cause_body, cure_body = self.add_group_pair("导致状态", "解除状态")
+        cause_chips = []
+        cause_chips += self._build_status_chips(vals[26], hi=False, is_cause=True)
+        cause_chips += self._build_status_chips(vals[27], hi=True, is_cause=True)
+        if cause_chips:
+            cause_body.addWidget(self._make_chips_widget(cause_chips))
+        else:
+            self.add_text_block(cause_body, "(无导致状态)", "StatusHint")
+        cure_chips = []
+        cure_chips += self._build_status_chips(vals[28], hi=False, is_cause=False)
+        cure_chips += self._build_status_chips(vals[29], hi=True, is_cause=False)
+        if cure_chips:
+            cure_body.addWidget(self._make_chips_widget(cure_chips))
+        else:
+            self.add_text_block(cure_body, "(无解除状态)", "StatusHint")
+
+        # ── 特殊效果 ──
+        body = self.add_group("特殊效果")
+        special_pairs = []
+        combat_flag = vals[20]
+        if combat_flag != 0:
+            names = flag_names(combat_flag, COMBAT_FLAG_NAMES)
+            special_pairs.append(("战斗结算", "、".join(names) if names else str(combat_flag)))
+        extra_flags = vals[30]
+        if extra_flags != 0:
+            names = flag_names(extra_flags, EXTRA_FLAG_NAMES)
+            special_pairs.append(("额外标志", "、".join(names) if names else str(extra_flags)))
+        if special_pairs:
+            self._build_prop_grid(body, special_pairs, cols=3, color=cyan)
+        else:
+            self.add_text_block(body, "(无特殊效果)", "StatusHint")
+
+        # ── 初始装备角色 ──
+        body = self.add_group("初始装备角色")
+        equipped_by = []
+        iid = vals[0]
+        for wrec in self.data.warpc_recs:
+            wname = self.data.char_name(wrec)
+            if not wname:
+                continue
+            wf = wrec['fields']
+            for slot, fi in enumerate(EQUIP_ID_IDX):
+                if wf[fi] == iid:
+                    slot_names = ["武器", "防具", "饰品", "饰品"]
+                    equipped_by.append(f"{wname}({slot_names[slot]})")
+                    break
+        if equipped_by:
+            self.add_text_block(body, "、".join(equipped_by))
+        else:
+            self.add_text_block(body, "(无角色初始装备此物品)", "StatusHint")
+
+        # ── 获得途径 (TKD脚本/TKMat宝箱/TKShop商店/WarPC掉落/WarData战场宝物 反向索引) ──
         body = self.add_group("获得途径")
         sources = self.data.item_sources.get(vals[0], [])
         if sources:
@@ -189,11 +255,78 @@ class ItemTab(BookTabBase):
 
         self.detail_layout.addStretch(1)
 
+    # ── 布局辅助 ──
+
+    def _build_prop_grid(self, body, pairs, cols=6, color=None):
+        """构建属性网格: 标签在上值在下, 末列空白占位保列宽"""
+        attr_grid = QGridLayout()
+        attr_grid.setHorizontalSpacing(8)
+        attr_grid.setVerticalSpacing(4)
+        for slot, (label, val) in enumerate(pairs):
+            r, c = divmod(slot, cols)
+            cell_w = QWidget()
+            cell_w.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+            cell = QVBoxLayout(cell_w)
+            cell.setContentsMargins(0, 0, 0, 0)
+            cell.setSpacing(2)
+            lbl = QLabel(label)
+            lbl.setProperty("class", "PropLabel")
+            lbl.setAlignment(Qt.AlignLeft)
+            cell.addWidget(lbl)
+            val_lbl = self._val_label(val, True, color=color)
+            cell.addWidget(val_lbl, 1)
+            attr_grid.addWidget(cell_w, r, c, Qt.AlignTop)
+        last_row_count = len(pairs) % cols
+        if last_row_count != 0:
+            last_row = len(pairs) // cols
+            for c in range(last_row_count, cols):
+                spacer = QWidget()
+                attr_grid.addWidget(spacer, last_row, c)
+        for c in range(cols):
+            attr_grid.setColumnStretch(c, 1)
+        body.addLayout(attr_grid)
+
+    def _build_skill_grid(self, body, pairs):
+        """构建技能效果网格: 4列等宽, 标签在上值在下"""
+        cols = 4
+        attr_grid = QGridLayout()
+        attr_grid.setHorizontalSpacing(8)
+        attr_grid.setVerticalSpacing(4)
+        for slot, (label, val, has_val) in enumerate(pairs):
+            cell_w = QWidget()
+            cell_w.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+            cell = QVBoxLayout(cell_w)
+            cell.setContentsMargins(0, 0, 0, 0)
+            cell.setSpacing(2)
+            lbl = QLabel(label)
+            lbl.setProperty("class", "PropLabel")
+            lbl.setAlignment(Qt.AlignLeft)
+            cell.addWidget(lbl)
+            val_lbl = self._val_label(val, has_val)
+            cell.addWidget(val_lbl, 1)
+            attr_grid.addWidget(cell_w, 0, slot, Qt.AlignTop)
+        for c in range(cols):
+            attr_grid.setColumnStretch(c, 1)
+        body.addLayout(attr_grid)
+
     # ── 辅助 ──
 
     def _is_dark_theme(self):
         w = self.window()
         return bool(getattr(w, 'is_dark_theme', True))
+
+    def _val_label(self, text, equipped=True, color=None):
+        """创建属性值标签: 无padding, 颜色适配主题"""
+        lbl = QLabel(text)
+        lbl.setWordWrap(True)
+        lbl.setAlignment(Qt.AlignLeft)
+        lbl.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        if color is None:
+            green = "#55b572" if self._is_dark_theme() else "#178a39"
+            gray = "#888" if self._is_dark_theme() else "#777"
+            color = green if equipped else gray
+        lbl.setStyleSheet(f"color: {color}; padding: 0px;")
+        return lbl
 
     def _build_status_chips(self, mask, hi=False, is_cause=True):
         """构建状态图标chips数据: [(name, sprite_idx, css_class), ...]"""
@@ -232,14 +365,3 @@ class ItemTab(BookTabBase):
             chip.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
             flow.addWidget(chip)
         return w
-
-    def _val_label(self, text, equipped=True):
-        """创建属性值标签: 无padding, 颜色适配主题"""
-        lbl = QLabel(text)
-        lbl.setWordWrap(True)
-        lbl.setAlignment(Qt.AlignLeft)
-        lbl.setTextInteractionFlags(Qt.TextSelectableByMouse)
-        green = "#55b572" if self._is_dark_theme() else "#178a39"
-        gray = "#888" if self._is_dark_theme() else "#777"
-        lbl.setStyleSheet(f"color: {green if equipped else gray}; padding: 0px;")
-        return lbl

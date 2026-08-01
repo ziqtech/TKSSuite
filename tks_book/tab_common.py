@@ -184,6 +184,30 @@ class BookTabBase(QWidget):
         self.detail_layout.addWidget(group_w, stretch)
         return bl
 
+    def add_group_pair(self, title1, title2):
+        """创建两个并排的 DockHeader 分组 (一行显示), 返回 (body1_layout, body2_layout)"""
+        row_w = QWidget()
+        row_l = QHBoxLayout(row_w)
+        row_l.setContentsMargins(0, 0, 0, 0)
+        row_l.setSpacing(4)
+        bodies = []
+        for title in (title1, title2):
+            gw = QWidget()
+            gl = QVBoxLayout(gw)
+            gl.setContentsMargins(0, 0, 0, 0)
+            gl.setSpacing(0)
+            gl.addWidget(DockHeader(title))
+            bw = QWidget()
+            bw.setObjectName("DockBody")
+            bl = QVBoxLayout(bw)
+            bl.setContentsMargins(8, 8, 8, 8)
+            bl.setSpacing(4)
+            gl.addWidget(bw, 1)
+            row_l.addWidget(gw, 1)
+            bodies.append(bl)
+        self.detail_layout.addWidget(row_w)
+        return tuple(bodies)
+
     def add_kv_grid(self, body_layout, pairs, cols=3):
         """在分组内添加 键: 值 网格。pairs: [(label, value_text), ...]"""
         grid = QGridLayout()
