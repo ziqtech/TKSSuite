@@ -3,11 +3,21 @@
 
 无左侧列表 / 无 DockHeader: 直接居中展示 640×480 游戏界面复刻。
 加载游戏目录后自动构建视图并选中花名册第 0 条角色。
+支持等比例缩放: 100% / 200% / 300% / 自适应窗口。
 """
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QHBoxLayout, QLabel, QVBoxLayout, QWidget
+from PySide6.QtWidgets import (
+    QHBoxLayout, QLabel, QPushButton, QSizePolicy, QVBoxLayout, QWidget,
+)
 
-from game_status_view import GameStatusView
+from game_status_view import GAME_H, GAME_W, GameStatusView
+
+
+# 缩放模式
+SCALE_100 = 1.0
+SCALE_200 = 2.0
+SCALE_300 = 3.0
+SCALE_FIT = -1.0   # 自适应窗口
 
 
 class GalleryTab(QWidget):
@@ -18,46 +28,106 @@ class GalleryTab(QWidget):
         self.data = data
         self._roster_order = []
         self._game_view = None
+        self._scale_mode = SCALE_100   # 当前缩放模式
         self._build_ui()
 
     def _build_ui(self):
         self._layout = QVBoxLayout(self)
         self._layout.setContentsMargins(4, 4, 4, 4)
         self._layout.setSpacing(4)
+
+        # 顶部缩放按钮栏
+        self._scale_bar = QHBoxLayout()
+        self._scale_bar.setContentsMargins(0, 0, 0, 0)
+        self._scale_bar.addStretch()
+        self._btn_100 = self._make_scale_btn("100%", SCALE_100)
+        self._btn_200 = self._make_scale_btn("200%", SCALE_200)
+        self._btn_300 = self._make_scale_btn("300%", SCALE_300)
+        self._btn_fit = self._make_scale_btn("自适应", SCALE_FIT)
+        self._scale_bar.addWidget(self._btn_100)
+        self._scale_bar.addWidget(self._btn_200)
+        self._scale_bar.addWidget(self._btn_300)
+        self._scale_bar.addWidget(self._btn_fit)
+        self._scale_bar.addStretch()
+        self._layout.addLayout(self._scale_bar)
+
+        # 内容区 (游戏视图 / 占位提示)
+        self._content = QWidget()
+        self._content_layout = QVBoxLayout(self._content)
+        self._content_layout.setContentsMargins(0, 0, 0, 0)
         self._show_placeholder("请通过 文件 → 加载 TKS 目录 打开游戏数据")
+        self._layout.addWidget(self._content, 1)
+
+        self._update_scale_buttons()
+
+    def _make_scale_btn(self, text, mode):
+        btn = QPushButton(text)
+        btn.setProperty("class", "CompactBtn")
+        btn.setCheckable(True)
+        btn.clicked.connect(lambda: self._set_scale_mode(mode))
+        return btn
+
+    def _update_scale_buttons(self):
+        for btn, mode in ((self._btn_100, SCALE_100), (self._btn_200, SCALE_200),
+                          (self._btn_300, SCALE_300), (self._btn_fit, SCALE_FIT)):
+            btn.setChecked(self._scale_mode == mode)
+
+    # ── 缩放 ──
+
+    def _set_scale_mode(self, mode):
+        self._scale_mode = mode
+        self._update_scale_buttons()
+        self._apply_scale()
+
+    def _apply_scale(self):
+        """按当前缩放模式调整视图大小"""
+        if self._game_view is None:
+            return
+        if self._scale_mode == SCALE_FIT:
+            scale = self._fit_scale()
+        else:
+            scale = self._scale_mode
+        self._game_view.set_scale(scale)
+
+    def _fit_scale(self):
+        """计算自适应缩放: 等比例撑满内容区 (取宽高较小者, 保证不溢出)"""
+        if self._game_view is None:
+            return SCALE_100
+        avail = self._content.rect()
+        aw = avail.width() - 4    # 留少量边距避免贴边
+        ah = avail.height() - 4
+        if aw <= 0 or ah <= 0:
+            return SCALE_100
+        return max(0.1, min(aw / GAME_W, ah / GAME_H))
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if self._scale_mode == SCALE_FIT:
+            self._apply_scale()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        # 标签页首次显示时内容区尺寸才就绪, 补一次自适应计算
+        if self._scale_mode == SCALE_FIT and self._game_view is not None:
+            self._apply_scale()
 
     # ── 内容区管理 ──
 
     def _clear_content(self):
-        """清空内容区所有子项 (widget / 子 layout)"""
-        while self._layout.count() > 0:
-            it = self._layout.takeAt(0)
+        """清空内容区所有子项"""
+        while self._content_layout.count() > 0:
+            it = self._content_layout.takeAt(0)
             w = it.widget()
             if w is not None:
                 w.deleteLater()
-            else:
-                sub = it.layout()
-                if sub is not None:
-                    self._clear_layout(sub)
         self._game_view = None
 
-    @staticmethod
-    def _clear_layout(layout):
-        while layout.count() > 0:
-            it = layout.takeAt(0)
-            w = it.widget()
-            if w is not None:
-                w.deleteLater()
-            else:
-                sub = it.layout()
-                if sub is not None:
-                    GalleryTab._clear_layout(sub)
-
     def _show_placeholder(self, text):
+        self._clear_content()
         tip = QLabel(text)
         tip.setProperty("class", "StatusHint")
         tip.setAlignment(Qt.AlignCenter)
-        self._layout.addWidget(tip, 1, Qt.AlignCenter)
+        self._content_layout.addWidget(tip, 1, Qt.AlignCenter)
 
     # ── 数据加载 ──
 
@@ -79,17 +149,21 @@ class GalleryTab(QWidget):
 
         view.set_roster(roster)
         view.charClicked.connect(self._on_game_view_char)
+        view.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         self._game_view = view
 
         row = QHBoxLayout()
         row.addStretch()
         row.addWidget(view)
         row.addStretch()
-        self._layout.addLayout(row, 1)
+        self._content_layout.addLayout(row, 1)
 
         # 自动选中第 0 条角色
         if roster:
             view.show_char(roster[0])
+
+        # 应用当前缩放
+        self._apply_scale()
 
     def _on_game_view_char(self, warpc_idx):
         """游戏视图内点击头像行 → 切换显示该角色 (保持页面/子页签状态)"""

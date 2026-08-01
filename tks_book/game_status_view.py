@@ -39,7 +39,7 @@
 import struct
 import time
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, Signal, QPoint
 from PySide6.QtGui import QColor, QFont, QFontMetrics, QImage, QPainter, QPixmap
 from PySide6.QtWidgets import QApplication, QWidget
 
@@ -166,6 +166,7 @@ class GameStatusView(QWidget):
         self.setFixedSize(GAME_W, GAME_H)
         self.data = None
         self._roster = []        # [warpc_idx, ...] (与人物列表同序)
+        self._roster_start = 0   # 左列表窗口起始索引 (滚轮翻动)
         self._rec_by_idx = {}
         self._skill_by_idx = {}
         self._current = -1
@@ -217,6 +218,7 @@ class GameStatusView(QWidget):
         self._txt_queue = []     # 文字绘制队列 (精灵画完后统一按 FONT9696 像素混合)
         self._font = QFont("SimSun")
         self._font.setPixelSize(24)
+        self._scale = 1.0        # 显示缩放 (1.0=640×480 原始尺寸)
         self.setCursor(Qt.PointingHandCursor)
         self.setMouseTracking(True)   # 物品页选中跟随鼠标 (mouseMoveEvent 无需按键)
 
@@ -241,13 +243,49 @@ class GameStatusView(QWidget):
         self._current = warpc_idx
         # 左列表窗口: 当前角色居中 (游戏内是队伍 6 人, 图鉴用花名册邻居)
         pos = self._roster.index(warpc_idx) if warpc_idx in self._roster else 0
-        start = min(max(0, pos - 2), max(0, len(self._roster) - 6))
-        self._window = self._roster[start:start + 6]
+        self._roster_start = min(max(0, pos - 2), max(0, len(self._roster) - 6))
+        self._rebuild_window()
         self._skill_sel = 0
         self._skill_scroll = 0
         # 音频状态同步 + BGM 启动 (游戏: 菜单期间 BGM 持续, sub_412BE8 播放 0000.mp3)
         self._sync_audio()
         self._refresh()
+
+    def _rebuild_window(self):
+        """根据 _roster_start 重建左列表窗口 (≤6 行)"""
+        self._window = self._roster[self._roster_start:self._roster_start + 6]
+
+    def _scroll_roster(self, delta, sfx=False):
+        """滚轮翻动左列表花名册窗口 (delta=±1)"""
+        n = len(self._roster)
+        new = max(0, min(self._roster_start + delta, max(0, n - 6)))
+        if new != self._roster_start:
+            if sfx:
+                self._sfx(3)
+            self._roster_start = new
+            self._rebuild_window()
+            self._refresh()
+
+    # ── 缩放 ──
+
+    def set_scale(self, scale):
+        """设置显示缩放 (1.0=原始 640×480)"""
+        scale = max(0.1, scale)
+        if abs(self._scale - scale) < 0.001:
+            return
+        self._scale = scale
+        self.setFixedSize(int(GAME_W * scale), int(GAME_H * scale))
+        self.update()
+
+    def scale_factor(self):
+        return self._scale
+
+    def _game_pos(self, pos):
+        """控件坐标 → 游戏坐标 (640×480 空间, 供鼠标事件用)"""
+        s = self._scale
+        if s == 1.0:
+            return pos
+        return QPoint(int(pos.x() / s), int(pos.y() / s))
 
     # ── 音频 (sub_451C38 音效 / sub_412BE8 BGM) ──
 
@@ -1338,6 +1376,9 @@ class GameStatusView(QWidget):
     def paintEvent(self, event):
         p = QPainter(self)
         if self._image is not None:
+            if self._scale != 1.0:
+                p.setRenderHint(QPainter.SmoothPixmapTransform)
+                p.scale(self._scale, self._scale)
             p.drawPixmap(0, 0, self._image)
         else:
             p.fillRect(self.rect(), QColor(24, 24, 28))
@@ -1346,7 +1387,7 @@ class GameStatusView(QWidget):
                        "缺少 mb.gxp / Mu.JVG, 无法渲染游戏界面")
 
     def mousePressEvent(self, event):
-        pos = event.position().toPoint()
+        pos = self._game_pos(event.position().toPoint())
         x, y = pos.x(), pos.y()
 
         # 右键: 物品/装备页按住即时显示说明弹窗 (游戏内 hold 右键立即弹出, 松开消失, 无延时)
@@ -1467,7 +1508,7 @@ class GameStatusView(QWidget):
     def mouseMoveEvent(self, event):
         # 存档页 hover (sub_41DC5C): X∈[452,583], 分两子区域, 间隙[516,518]不触发
         if self._save_mode > 0:
-            pos = event.position().toPoint()
+            pos = self._game_pos(event.position().toPoint())
             x, y = pos.x(), pos.y()
             new_hover = 0
             if 452 <= x <= 583:
@@ -1485,7 +1526,7 @@ class GameStatusView(QWidget):
             return
         # 标题界面 hover (sub_425F3C): 移到选项上高亮, 移出清除
         if self._title_mode:
-            pos = event.position().toPoint()
+            pos = self._game_pos(event.position().toPoint())
             new_hover = self._title_hit(pos.x(), pos.y())
             if new_hover != self._title_hover:
                 self._title_hover = new_hover
@@ -1496,7 +1537,7 @@ class GameStatusView(QWidget):
         #   sub_422218 仅更新选中行 a1[614891], 不切焦点; 移出列表区保持选中
         #   (游戏 sub_420730 返回 -1 时不更新, 高亮停留)
         if self._page == 1:
-            pos = event.position().toPoint()
+            pos = self._game_pos(event.position().toPoint())
             gi = self._skill_hover_row(pos.x(), pos.y())
             if gi >= 0 and gi != self._skill_sel:
                 self._skill_sel = gi
@@ -1505,7 +1546,7 @@ class GameStatusView(QWidget):
         # 队伍页团队子页 hover (sub_420730 case 4): X∈[562,618], Y∈[271+35i, 299+35i]
         # → 选中成员行 → 帧45 高亮 (sub_42131C L86-92); 移出区域保持 (游戏 -1 不更新)
         if self._page == 4 and self._team_tab == 0:
-            pos = event.position().toPoint()
+            pos = self._game_pos(event.position().toPoint())
             x, y = pos.x(), pos.y()
             new_sel = -1
             if 562 <= x <= 618:
@@ -1520,12 +1561,12 @@ class GameStatusView(QWidget):
         # 物品/装备页: 选中跟随鼠标 — 悬停到哪行选哪行; 移出列表区保持选中
         # (游戏 sub_4212E0: sub_420730 返回 -1 时不更新, 与技能页一致)
         if self._page == 2:
-            gi = self._item_at(event.position().toPoint())
+            gi = self._item_at(self._game_pos(event.position().toPoint()))
             if gi >= 0 and gi != self._item_sel:
                 self._item_sel = gi
                 self._refresh()
         elif self._page == 3:
-            gi = self._item_at(event.position().toPoint())
+            gi = self._item_at(self._game_pos(event.position().toPoint()))
             if gi >= 0 and gi != self._equip_sel:
                 self._equip_sel = gi   # 悬停驱动换装差值预览
                 self._refresh()
@@ -1579,6 +1620,12 @@ class GameStatusView(QWidget):
             return
         # 标题界面: 无翻页逻辑 (sub_426164 不处理滚轮), 直接忽略
         if self._title_mode:
+            event.accept()
+            return
+        # 左侧队伍列表: 鼠标在列表区 (x≤205) 时滚轮翻动花名册窗口
+        gx = self._game_pos(event.position().toPoint()).x()
+        if gx <= 205:
+            self._scroll_roster(-1 if event.angleDelta().y() > 0 else 1, sfx=True)
             event.accept()
             return
         if self._page == 1:
