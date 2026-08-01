@@ -136,9 +136,12 @@ class Font9696:
 
         3 字节组编码 4 个交替黑白游程, 每游程 6 bit (0-63)。
         游程序列固定为: 黑-白-黑-白 交替。
-        位图极性: bit=1 为黑(笔画), bit=0 为白(背景)。
+        位图极性: bit=1 为背景, bit=0 为笔画 (与文件格式一致)。
+
+        初始化为全背景 (0xFF): RLE 数据未覆盖的尾部像素视为背景而非笔画,
+        避免字形底部出现虚假横线 (法/拳/掌/功 等字 RLE 总游程 < 96×96)。
         """
-        bitmap = bytearray(Font9696.GLYPH_BUF_SIZE)
+        bitmap = bytearray(b'\xFF' * Font9696.GLYPH_BUF_SIZE)
         byte_pos, bit_pos = 0, 7
         i, n = 0, len(data)
         while i + 2 < n:
@@ -153,12 +156,14 @@ class Font9696:
             for ri, rlen in enumerate(runs):
                 if rlen == 0:
                     continue
-                is_black = (ri == 0 or ri == 2)
+                is_black = (ri == 0 or ri == 2)   # 黑=背景(bit=1) / 白=笔画(bit=0)
                 for _ in range(rlen):
                     if byte_pos >= Font9696.GLYPH_BUF_SIZE:
                         return bytes(bitmap)
                     if is_black:
                         bitmap[byte_pos] |= (1 << bit_pos)
+                    else:
+                        bitmap[byte_pos] &= ~(1 << bit_pos)
                     bit_pos -= 1
                     if bit_pos < 0:
                         bit_pos = 7

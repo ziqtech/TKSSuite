@@ -277,8 +277,9 @@ class GameStatusView(QWidget):
         if abs(self._scale - scale) < 0.001:
             return
         self._scale = scale
+        self._scaled_dirty = True   # 必须在 setFixedSize 之前置位 (setFixedSize 可能触发立即重绘)
+        self._scaled_pixmap = None  # 清除旧缓存, 避免重绘时使用过期尺寸的 pixmap
         self.setFixedSize(int(GAME_W * scale), int(GAME_H * scale))
-        self._scaled_dirty = True   # 缩放比变更 → 缓存失效
         self.update()
 
     def scale_factor(self):
@@ -1380,6 +1381,8 @@ class GameStatusView(QWidget):
 
     def paintEvent(self, event):
         p = QPainter(self)
+        # 先填充背景, 清除旧内容 (防止缩放/尺寸变更时残留上一帧)
+        p.fillRect(self.rect(), QColor(0, 0, 0))
         if self._image is None:
             p.fillRect(self.rect(), QColor(24, 24, 28))
             p.setPen(QColor(160, 160, 160))

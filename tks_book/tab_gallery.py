@@ -114,13 +114,24 @@ class GalleryTab(QWidget):
     # ── 内容区管理 ──
 
     def _clear_content(self):
-        """清空内容区所有子项"""
+        """清空内容区所有子项 (包括嵌套 layout 及其子 widget)"""
         while self._content_layout.count() > 0:
             it = self._content_layout.takeAt(0)
-            w = it.widget()
-            if w is not None:
-                w.deleteLater()
+            self._delete_item(it)
         self._game_view = None
+
+    @staticmethod
+    def _delete_item(item):
+        """递归删除 QLayoutItem (widget 或子 layout)"""
+        w = item.widget()
+        if w is not None:
+            w.deleteLater()
+            return
+        sub = item.layout()
+        if sub is not None:
+            while sub.count() > 0:
+                GalleryTab._delete_item(sub.takeAt(0))
+            sub.deleteLater()
 
     def _show_placeholder(self, text):
         self._clear_content()
