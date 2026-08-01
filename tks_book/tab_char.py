@@ -148,6 +148,7 @@ class CharTab(BookTabBase):
         equip_grid = QGridLayout()
         equip_grid.setHorizontalSpacing(8)
         equip_grid.setVerticalSpacing(4)
+        equip_labels = ["武器", "防具", "饰品", "饰品"]
         for slot, fi in enumerate(EQUIP_ID_IDX):
             iid = f[fi]
             cell_w = QWidget()
@@ -155,18 +156,15 @@ class CharTab(BookTabBase):
             cell = QVBoxLayout(cell_w)
             cell.setContentsMargins(0, 0, 0, 0)
             cell.setSpacing(2)
-            lbl = QLabel(f"装备{slot + 1}")
+            lbl = QLabel(equip_labels[slot])
             lbl.setProperty("class", "PropLabel")
+            lbl.setAlignment(Qt.AlignLeft)
             cell.addWidget(lbl)
             if iid > 0:
-                name = self.data.item_name_by_id(iid) or f"物品ID#{iid}"
-                val_lbl = QLabel(name)
-                val_lbl.setProperty("class", "ExtraPreviewText")
+                name = (self.data.item_name_by_id(iid) or f"物品ID#{iid}").strip()
+                val_lbl = self._val_label(name, True)
             else:
-                val_lbl = QLabel("(未装备)")
-                val_lbl.setProperty("class", "StatusHint")
-            val_lbl.setWordWrap(True)
-            val_lbl.setTextInteractionFlags(Qt.TextSelectableByMouse)
+                val_lbl = self._val_label("(未装备)", False)
             cell.addWidget(val_lbl, 1)
             equip_grid.addWidget(cell_w, 0, slot, Qt.AlignTop)
         # 末2列空白占位, 防止列宽不均 (同warpc_editor _build_section)
@@ -182,8 +180,8 @@ class CharTab(BookTabBase):
         skill_grid = QGridLayout()
         skill_grid.setHorizontalSpacing(8)
         skill_grid.setVerticalSpacing(4)
-        all_slots = [(f"技能{i+1}", fi) for i, fi in enumerate(EQUIP_SKILL_IDX)]
-        all_slots += [(f"被动{i+1}", fi) for i, fi in enumerate(PASSIVE_SKILL_IDX)]
+        skill_labels = ["指令技能", "指令技能", "主动技能", "主动技能", "被动技能", "移动技能"]
+        all_slots = list(zip(skill_labels, list(EQUIP_SKILL_IDX) + list(PASSIVE_SKILL_IDX)))
         for slot, (label, fi) in enumerate(all_slots):
             sid = f[fi]
             cell_w = QWidget()
@@ -193,15 +191,12 @@ class CharTab(BookTabBase):
             cell.setSpacing(2)
             lbl = QLabel(label)
             lbl.setProperty("class", "PropLabel")
+            lbl.setAlignment(Qt.AlignLeft)
             cell.addWidget(lbl)
             if sid > 0:
-                val_lbl = QLabel(self._skill_label(sid))
-                val_lbl.setProperty("class", "ExtraPreviewText")
+                val_lbl = self._val_label(self._skill_label(sid), True)
             else:
-                val_lbl = QLabel("(未装备)")
-                val_lbl.setProperty("class", "StatusHint")
-            val_lbl.setWordWrap(True)
-            val_lbl.setTextInteractionFlags(Qt.TextSelectableByMouse)
+                val_lbl = self._val_label("(未装备)", False)
             cell.addWidget(val_lbl, 1)
             skill_grid.addWidget(cell_w, 0, slot, Qt.AlignTop)
         for c in range(6):
@@ -320,6 +315,17 @@ class CharTab(BookTabBase):
         w = self.window()
         return bool(getattr(w, 'is_dark_theme', True))
 
+    def _val_label(self, text, equipped=True):
+        """创建装备/技能值标签: 无padding, 颜色适配主题"""
+        lbl = QLabel(text)
+        lbl.setWordWrap(True)
+        lbl.setAlignment(Qt.AlignLeft)
+        lbl.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        green = "#55b572" if self._is_dark_theme() else "#178a39"
+        gray = "#888" if self._is_dark_theme() else "#777"
+        lbl.setStyleSheet(f"color: {green if equipped else gray}; padding: 0px;")
+        return lbl
+
     def _build_join_info(self, body, rec):
         """入队方式/条件: TeamMember 脚本事件 + 引擎硬性限制"""
         idx = rec['index']
@@ -365,14 +371,7 @@ class CharTab(BookTabBase):
     # ── 辅助 ──
 
     def _skill_label(self, sid):
-        name = self.data.skill_name(sid) or f"技能#{sid}"
-        stype = None
-        for rec in self.data.skill_recs:
-            if rec['index'] == sid:
-                stype = rec['vals'][2]
-                break
-        tname = SKILL_TYPES.get(stype, "")
-        return f"{name} [{tname}]" if tname else name
+        return (self.data.skill_name(sid) or f"技能#{sid}").strip()
 
     @staticmethod
     def _learn_state_text(v):
