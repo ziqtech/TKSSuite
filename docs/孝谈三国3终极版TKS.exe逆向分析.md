@@ -527,6 +527,27 @@ case 1:
 - 等级读取仅取低字节（`cmp byte`，无符号 `ja`），正常等级范围内无副作用。
 - `.Newdata`/`.Silvana` 与此改动无关；逻辑全部在 `.test` 节 cave。§3.2 中 0xA7D14B 行原"属性比较/限制"推测已更正。
 
+### 14.4 启动器兼容补丁：赌场限制移除（2026-07 新增）
+
+**背景**：使用启动器运行时，WarPC 缓冲区被扩展并重定向（`word_757F0C` 静态地址 0x757F0C 不再指向主角等级数据），MOD 等级门 `cmp byte[757F0C],14h` 读取到的是非等级数据——因此**即使主角 ≥21 级，`CheckItem(10000,3000,1)` 也恒判失败**。该限制在启动器环境下无法通过正常游戏达成，需补丁解除。
+
+**补丁设计**（可选补丁 `xiaotan_gambling_unlock`，默认不勾选，玩家按需开启）：
+
+- **目标**：`.test` 段 cave `0xA7D154` 的 `cmp ax,0BB8h; jz +0x8E`（进入等级门的跳转）。
+- **方式**：将 6 字节 `0F 84 8E 00 00 00`（jz A7D1EC）NOP 化 → 数量=3000 的检查不再进入等级门，直接落入 `A7D15F` 原版数量比较，行为与原版逐字节一致（不依赖 0x757F0C 内容，规避 WarPC 重定向问题）。
+- **幂等**：替换后特征码 `66 3D B8 0B 0F 84 8E 00 00 00` 不再匹配，重复应用安全。
+- **架构**：新增补丁类型 `patch_extra_section`（`apply_patch_extra_section`），扫描 `exe_profile.extra_section_ranges`（.test 段在常规 code_buf 3MB 窗口之外），`profile_rules` 限定仅孝谈版应用、原版自动跳过；未命中（版本差异）安全跳过不误报。
+
+**涉及改动文件**：
+
+| 文件 | 改动 |
+|------|------|
+| `tks_launcher_gui/core/patch_engine.py` | 新增 `apply_patch_extra_section()`（额外 PE 段字节补丁）+ `apply_config_patches` 注册 `patch_extra_section` 类型 |
+| `tks_launcher_gui/tks_patches.json` | 新增可选补丁条目 `xiaotan_gambling_unlock`（`optional=true, default_checked=false, profile_rules: {_default:skip, xiaotansanguo3:apply}`） |
+| `tks_launcher_gui/ui/patch_list.py` | `_TYPE_LABELS` 增加 `patch_extra_section → 额外段修补` |
+
+> 验证（2026-07）：以 MOD 导出 `.test` 段内存转储（0xA7D000-0xA7E000）离线实测——模式在段内偏移 0x154 唯一命中；替换后重扫 0 命中（幂等）；`profile=None` 时安全跳过；GUI 启动正常。
+
 
 
 

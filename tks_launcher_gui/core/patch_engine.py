@@ -669,6 +669,58 @@ def apply_patch_bytes(defn: PatchDef, code_buf: bytearray, code_start_addr: int,
     return all_ok
 
 # ============================================================
+# 补丁类型: patch_extra_section (MOD 额外 PE 段字节修补)
+# ============================================================
+
+def apply_patch_extra_section(defn: PatchDef, h_proc: int, exe_profile, log_func=None) -> bool:
+    """在 MOD 额外 PE 段 (.test/.Newdata/.Silvana) 内扫描并应用字节补丁。
+
+    启动器常规补丁的扫描窗口为 code_buf (base+0x1000, 3MB), 第三方 MOD
+    注入的新 PE 段 (如孝谈三国3终极版 .test 节 cave) 落在此窗口之外,
+    无法被 patch_bytes 命中。本函数直接读取进程内存中 exe_profile 的
+    extra_section_ranges, 在该范围内做 pattern 扫描 + 逐字节替换,
+    流程与 apply_patch_bytes 一致 (vp_ex 切换页属性 + 写入 + 还原)。
+
+    非 MOD 版 (无额外段) 或未命中时安全跳过: 未命中且 expect_count>0 时
+    返回 False (供上层 all_ok 汇总), 其余情况返回 True。
+    """
+    log = log_func or (lambda x: None)
+    ranges = getattr(exe_profile, "extra_section_ranges", None) if exe_profile else None
+    if not ranges:
+        log("    -> 无 MOD 额外段 (非第三方 MOD 版), 跳过")
+        return True
+    pat, wc = parse_pattern(defn.pattern)
+    repl = dict(defn.replace)
+    expect = defn.expect_count
+    log(f"    模式: [{defn.pattern}] (额外段扫描)")
+    patched = 0
+    for (start, end) in ranges:
+        size = end - start
+        if size <= 0 or size > 0x100000:
+            continue
+        buf, nr = read_pm(h_proc, start, size)
+        if nr <= 0:
+            continue
+        hits = pattern_scan(bytes(buf[:nr]), pat, wc)
+        if hits:
+            log(f"    段 0x{start:08X}-0x{end:08X}: 匹配 {len(hits)} 处")
+        for off in hits:
+            for rk, bv in repl.items():
+                ro = int(rk)
+                aa = start + off + ro
+                op = vp_ex(h_proc, aa, 1, PAGE_EXECUTE_READWRITE)
+                write_pm(h_proc, aa, bytes([bv & 0xFF]))
+                vp_ex(h_proc, aa, 1, op)
+            log(f"    [OK] @0x{start + off:08X} (段内偏移 0x{off:X})")
+            patched += 1
+    if patched == 0:
+        if expect > 0:
+            log(f"  [FAIL] 未找到匹配模式 (MOD 版本不同或已处理), 跳过")
+            return False
+        log("    未命中 (预期 0), 跳过")
+    return True
+
+# ============================================================
 # 补丁类型: patch_imm32 (value_scan)
 # ============================================================
 
@@ -1865,6 +1917,9 @@ def apply_config_patches(config: PatchConfig, code_buf: bytearray, code_start_ad
 
         if defn.type == "patch_bytes":
             all_ok &= apply_patch_bytes(defn, code_buf, code_start_addr, h_proc, log_func=log)
+        elif defn.type == "patch_extra_section":
+            # MOD 额外 PE 段 (.test 等) 字节补丁: code_buf 扫描窗口之外的第三方 MOD 代码
+            all_ok &= apply_patch_extra_section(defn, h_proc, exe_profile, log_func=log)
         elif defn.type == "cave_hook":
             hp = defn.hook_pattern or defn.pattern
             hpat, hwc = parse_pattern(hp or "")
