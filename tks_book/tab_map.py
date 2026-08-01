@@ -15,8 +15,7 @@ class MapTab(BookTabBase):
         self._pix_cache = {}
         self._populated = False
         # 右侧预览: 直接放一张图 (滚动区已由基类提供)
-        # GamePreview = 公共游戏画面预览区样式 (深色底, 同 tkt_editor 预览)
-        self.detail_scroll.setObjectName("GamePreview")
+        # 不套 GamePreview 深色底: 场景图本身即内容, 用标准主题滚动区背景即可
         self.detail_scroll.setWidgetResizable(False)
         self._preview_lbl = QLabel("请从左侧选择地图")
         self._preview_lbl.setAlignment(Qt.AlignTop | Qt.AlignLeft)
@@ -27,7 +26,7 @@ class MapTab(BookTabBase):
         """惰性: SC.GRP 较大, 首次切到本页时才加载 (见 ensure_populated)"""
         self._populated = False
         self._pix_cache.clear()
-        self.set_list_items([])
+        self.set_table_items(["#", "场景"], [], widths={0: 45}, stretch_col=1)
         self._preview_lbl.setText("请从左侧选择地图")
         self._preview_lbl.adjustSize()
 
@@ -39,15 +38,15 @@ class MapTab(BookTabBase):
         self._preview_lbl.adjustSize()
         QApplication.processEvents()
         grp = self.data.sc_grp()
-        items = []
+        rows = []
         if grp is not None:
             for sec in grp.sections:
                 if sec.width <= 0 or sec.height <= 0:
                     continue
                 sid = sec.index
-                items.append((sid, f"{sid:>3}  {self.data.scene_name(sid)}"))
-        self.set_list_items(items)
-        if items:
+                rows.append((sid, [str(sid), self.data.scene_name(sid)]))
+        self.set_table_items(["#", "场景"], rows, widths={0: 45}, stretch_col=1)
+        if rows:
             self._preview_lbl.setText("请从左侧选择地图")
         else:
             self._preview_lbl.setText("未找到 SC.GRP / SC.IDX, 无法预览地图")

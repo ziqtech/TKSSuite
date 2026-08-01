@@ -1,26 +1,30 @@
 # -*- coding: utf-8 -*-
-"""tks_book 标签页公共组件 — 左侧搜索列表 + 右侧详情滚动区 (Dock 风格)"""
+"""tks_book 标签页公共组件 — 左侧搜索表格 + 右侧详情滚动区 (Dock 风格)"""
 from PySide6.QtCore import Qt, QSize
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QSplitter, QLineEdit, QListWidget,
-    QListWidgetItem, QScrollArea, QLabel, QGridLayout, QPushButton,
+    QWidget, QVBoxLayout, QHBoxLayout, QSplitter, QLineEdit, QTableWidget,
+    QTableWidgetItem, QHeaderView, QAbstractItemView,
+    QScrollArea, QLabel, QGridLayout, QPushButton,
 )
 
 from editor_utils.dock_components import DockHeader
 
 
 class BookTabBase(QWidget):
-    """查看器标签页基类: 左列表 (搜索过滤) + 右详情。
+    """查看器标签页基类: 左表格 (搜索过滤) + 右详情。
 
     子类实现:
-      populate()          — 数据加载后重建列表 (调用 set_list_items)
-      show_detail(key)    — 选中列表项后渲染右侧详情
+      populate()          — 数据加载后重建表格 (调用 set_table_items)
+      show_detail(key)    — 选中表格行后渲染右侧详情
     """
 
     def __init__(self, data, parent=None):
         super().__init__(parent)
         self.data = data          # GameData (共享引用, 由主窗口加载)
-        self._items = []          # [(key, display_text), ...] 全量
+        self._headers = []        # 列标题
+        self._rows = []           # [(key, [cell, ...]), ...] 全量
+        self._widths = None       # {col: pixel_width} 非拉伸列像素宽
+        self._stretch_col = None  # 拉伸列索引 (占用剩余空间)
         self._build_ui()
 
     # ── UI 骨架 ──
@@ -52,8 +56,13 @@ class BookTabBase(QWidget):
         btn_clear.clicked.connect(self.search_input.clear)
         search_row.addWidget(btn_clear)
         ll.addLayout(search_row)
-        self.list_widget = QListWidget()
+        self.list_widget = QTableWidget()
         self.list_widget.setIconSize(QSize(24, 24))
+        self.list_widget.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.list_widget.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.list_widget.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.list_widget.verticalHeader().setVisible(False)
+        self.list_widget.horizontalHeader().setStretchLastSection(True)
         self.list_widget.currentItemChanged.connect(self._on_select)
         ll.addWidget(self.list_widget, 1)
         splitter.addWidget(left)
@@ -68,31 +77,72 @@ class BookTabBase(QWidget):
         self.detail_layout.addStretch()
         self.detail_scroll.setWidget(self._detail_container)
         splitter.addWidget(self.detail_scroll)
-        splitter.setSizes([300, 720])
+        splitter.setSizes([420, 780])
         self._splitter = splitter
 
-    # ── 列表管理 ──
+    # ── 表格管理 ──
 
-    def set_list_items(self, items):
-        """items: [(key, display_text, icon_or_None), ...]"""
-        self._items = items
+    def set_table_items(self, headers, rows, widths=None, stretch_col=None):
+        """重建左侧表格。
+
+        headers:    [str, ...] 列标题
+        rows:       [(key, [cell, ...]), ...] 每行单元格;
+                    cell 为 str (纯文本) 或 (text, icon_or_None) (带图标)
+        widths:     可选 {col: pixel_width} 非拉伸列像素宽
+        stretch_col: 可选列索引, 该列占用剩余空间 (Stretch 模式);
+                     未指定时由末列撑满 (StretchLastSection)
+        """
+        self._headers = list(headers)
+        self._rows = rows
+        self._widths = widths
+        self._stretch_col = stretch_col
         self._apply_filter()
+
+    @staticmethod
+    def _normalize_cell(cell):
+        """单元格归一化: str → (str, None); (text, icon) 原样"""
+        if isinstance(cell, tuple):
+            return cell[0], cell[1]
+        return cell, None
 
     def _apply_filter(self):
         q = self.search_input.text().strip().lower()
-        self.list_widget.blockSignals(True)
-        self.list_widget.clear()
-        for entry in self._items:
-            key, text = entry[0], entry[1]
-            icon = entry[2] if len(entry) > 2 else None
-            if q and q not in text.lower():
+        tw = self.list_widget
+        tw.blockSignals(True)
+        tw.setRowCount(0)
+        ncol = len(self._headers)
+        tw.setColumnCount(ncol)
+        tw.setHorizontalHeaderLabels(self._headers)
+        for key, cells in self._rows:
+            norms = [self._normalize_cell(c) for c in cells]
+            texts = [n[0] for n in norms]
+            if q and not any(q in (t or "").lower() for t in texts):
                 continue
-            item = QListWidgetItem(text)
-            item.setData(Qt.UserRole, key)
-            if icon is not None:
-                item.setIcon(icon)
-            self.list_widget.addItem(item)
-        self.list_widget.blockSignals(False)
+            row = tw.rowCount()
+            tw.insertRow(row)
+            for col, (text, icon) in enumerate(norms):
+                item = QTableWidgetItem(str(text) if text is not None else "")
+                item.setData(Qt.UserRole, key)
+                if icon is not None:
+                    item.setIcon(icon)
+                    item.setTextAlignment(Qt.AlignCenter)
+                elif text and str(text).strip().lstrip("-").isdigit():
+                    # 纯数字列右对齐 (# / ID 等)
+                    item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                tw.setItem(row, col, item)
+        # 列宽 / 拉伸模式
+        header = tw.horizontalHeader()
+        header.setSectionResizeMode(QHeaderView.Interactive)
+        if self._stretch_col is not None and self._stretch_col < ncol:
+            header.setSectionResizeMode(self._stretch_col, QHeaderView.Stretch)
+            header.setStretchLastSection(False)
+        else:
+            header.setStretchLastSection(True)
+        if self._widths:
+            for col, w in self._widths.items():
+                if col < ncol:
+                    tw.setColumnWidth(col, w)
+        tw.blockSignals(False)
 
     def _on_select(self, current, _previous=None):
         if current is None:

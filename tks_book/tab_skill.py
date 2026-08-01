@@ -13,17 +13,20 @@ class SkillTab(BookTabBase):
     """技能查看页: 全部技能列表 + 名称/说明/非零属性"""
 
     def populate(self):
-        items = []
+        rows = []
         for rec in self.data.skill_recs:
-            name = tkt_first_line(self.data.tkt, rec['vals'][0])
+            vals = rec['vals']
+            name = tkt_first_line(self.data.tkt, vals[0])
             if not name:
                 continue  # 空槽不显示
-            tname = SKILL_TYPES.get(rec['vals'][2], "")
-            text = f"{rec['index']:>3}  {name}"
-            if tname:
-                text += f"  [{tname}]"
-            items.append((rec['index'], text))
-        self.set_list_items(items)
+            tname = SKILL_TYPES.get(vals[2], str(vals[2]))
+            rows.append((rec['index'], [
+                str(rec['index']), str(vals[0]), tname, name,
+                str(vals[3]), str(vals[43]),
+            ]))
+        self.set_table_items(
+            ["技能ID", "文本ID", "类型", "技能名称", "技能点数", "耗费内力"],
+            rows, widths={0: 60, 1: 60, 2: 80, 4: 70, 5: 70}, stretch_col=3)
         self.clear_detail()
         self.finish_detail()
 

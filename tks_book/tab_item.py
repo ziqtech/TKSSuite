@@ -9,6 +9,7 @@ from editor_utils.jvg_loader import get_sprite_pixmap
 from book_loader import (
     ITEM_VIEW_FIELDS, PAGE_NAMES, COMBAT_FLAG_NAMES, EXTRA_FLAG_NAMES,
     tkt_first_line, tkt_full_text, status_mask_names, flag_names, val1000_text,
+    use_right_label,
 )
 from tab_common import BookTabBase
 
@@ -22,7 +23,7 @@ class ItemTab(BookTabBase):
 
     def populate(self):
         self._icon_cache.clear()
-        items = []
+        rows = []
         for rec in self.data.item_recs:
             vals = rec['vals']
             # 空槽判定与 item_editor.is_empty_item 一致
@@ -31,17 +32,21 @@ class ItemTab(BookTabBase):
             name = tkt_first_line(self.data.tkt, vals[2])
             if not name:
                 continue
-            page = PAGE_NAMES.get(vals[1], "")
-            text = f"{rec['index']:>3}  {name}"
-            if page:
-                text += f"  [{page}]"
+            page = vals[1]
             icon = None
             pix = get_sprite_pixmap(self.data.mu_sprites, vals[4], (24, 24),
                                     self._icon_cache)
             if pix:
                 icon = QIcon(pix)
-            items.append((rec['index'], text, icon))
-        self.set_list_items(items)
+            rows.append((rec['index'], [
+                ("", icon), str(rec['index']), str(vals[0]),
+                PAGE_NAMES.get(page, "?"), name,
+                use_right_label(vals[5], page), str(vals[31]),
+            ]))
+        self.set_table_items(
+            ["图标", "#", "ID", "页面", "物品名称", "权限", "价格"], rows,
+            widths={0: 40, 1: 40, 2: 50, 3: 50, 5: 80, 6: 50},
+            stretch_col=4)
         self.clear_detail()
         self.finish_detail()
 

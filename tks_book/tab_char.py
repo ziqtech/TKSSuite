@@ -30,7 +30,7 @@ class CharTab(BookTabBase):
 
     def populate(self):
         self._fa_pix_cache.clear()
-        items = []
+        rows = []
         for rec in self.data.warpc_recs:
             name = self.data.char_name(rec)
             if not name:
@@ -39,8 +39,19 @@ class CharTab(BookTabBase):
             pix = self._fa_pixmap(rec['fields'][1] * 2 + 1, (24, 24))
             if pix:
                 icon = QIcon(pix)
-            items.append((rec['index'], f"{rec['index']:>3}  {name}", icon))
-        self.set_list_items(items)
+            f = rec['fields']
+            hp = f"{f[5]}/{f[8]}" if (f[5] or f[8]) else ""
+            mp = f"{f[6]}/{f[10]}" if (f[6] or f[10]) else ""
+            role = f[3]
+            role_str = ("未激活" if role == -1 else "已激活" if role == 0 else str(role))
+            rows.append((rec['index'], [
+                ("", icon), str(rec['index']), name,
+                str(f[2]), role_str, hp, mp,
+            ]))
+        self.set_table_items(
+            ["", "#", "角色名称", "等级", "身份", "HP", "MP"], rows,
+            widths={0: 40, 1: 40, 3: 45, 4: 55, 5: 70, 6: 70},
+            stretch_col=2)
         self.clear_detail()
         self.finish_detail()
 
