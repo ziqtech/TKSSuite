@@ -14,7 +14,7 @@ from editor_utils.picker_dialogs import STATUS_NAMES, STATUS_ICON_BASE
 from book_loader import (
     ITEM_VIEW_FIELDS, PAGE_NAMES, COMBAT_FLAG_NAMES, EXTRA_FLAG_NAMES,
     EQUIP_ID_IDX,
-    tkt_first_line, tkt_full_text, status_mask_names, flag_names, val1000_text,
+    tkt_first_line, tkt_full_text, flag_names, val1000_text,
     use_right_label,
 )
 from tab_common import BookTabBase
@@ -68,8 +68,6 @@ class ItemTab(BookTabBase):
         self.clear_detail()
 
         dark = self._is_dark_theme()
-        blue = "#6699cc" if dark else "#3366cc"
-        green = "#55b572" if dark else "#178a39"
         cyan = "#7ab8d4" if dark else "#2a6f8c"
 
         # 头部: 图标 + 名称 + 元信息 + 说明文本
@@ -127,74 +125,72 @@ class ItemTab(BookTabBase):
             hv.addWidget(desc_lbl)
         self.detail_layout.addWidget(header)
 
-        # ── 基础属性 (纯数值: HP/MP/攻防/命中/闪避/速度/幸运/悟性/移动/技能点) ──
-        body = self.add_group("基础属性")
-        stat_pairs = []
         field_map = {f[0]: f for f in ITEM_VIEW_FIELDS}
-        stat_fields = [
-            ("hp_inc", "增加生命", 'val1000'),
-            ("hp_heal", "恢复生命", 'val1000'),
-            ("mp_inc", "增加内力", 'val1000'),
-            ("mp_heal", "恢复内力", 'val1000'),
-            ("atk", "增加攻击", 'int'),
-            ("def_", "增加防御", 'int'),
-            ("hit", "增加命中", 'int'),
-            ("dodge", "增加闪避", 'int'),
-            ("spd", "增加速度", 'int'),
-            ("luk", "增加幸运", 'int'),
-            ("spi", "增加悟性", 'int'),
-            ("vit", "增加移动", 'int'),
-            ("jp_bonus", "增加技能点", 'int'),
-            ("medicine", "增加医术", 'int'),
+
+        # ── 基础属性 (数值加成) ──
+        body = self.add_group("属性")
+        stat_pairs = []
+        stat_keys = [
+            "hp_inc", "hp_heal", "mp_inc", "mp_heal",
+            "atk", "def_", "hit", "dodge", "spd", "luk", "spi", "vit",
+            "jp_bonus", "medicine",
         ]
-        for key, label, kind in stat_fields:
-            if key in field_map:
-                off = field_map[key][1]
-                v = vals[off // 2]
-                if v == 0:
-                    continue
-                if kind == 'val1000':
-                    stat_pairs.append((label, val1000_text(v)))
-                else:
-                    stat_pairs.append((label, str(v)))
+        for key in stat_keys:
+            if key not in field_map:
+                continue
+            off = field_map[key][1]
+            label = field_map[key][2]
+            kind = field_map[key][3]
+            v = vals[off // 2]
+            if v == 0:
+                continue
+            if kind == 'val1000':
+                stat_pairs.append((label, val1000_text(v)))
+            else:
+                stat_pairs.append((label, str(v)))
         if stat_pairs:
             self._build_prop_grid(body, stat_pairs, cols=6)
         else:
-            self.add_text_block(body, "(无基础属性数值)", "StatusHint")
+            self.add_text_block(body, "(无属性数值)", "StatusHint")
 
         # ── 技能效果 (4列: 附加技能/装备后学习/使用后学习1/2) ──
         body = self.add_group("技能效果")
-        skill_fields = [
-            ("attach_skill", "附加技能"),
-            ("equip_learn", "装备后学习"),
-            ("use_learn1", "使用后学习1"),
-            ("use_learn2", "使用后学习2"),
-        ]
+        skill_keys = ["attach_skill", "equip_learn", "use_learn1", "use_learn2"]
+        skill_labels = ["附加技能", "装备后学习", "使用后学习1", "使用后学习2"]
         skill_pairs = []
-        for key, label in skill_fields:
-            if key in field_map:
-                off = field_map[key][1]
-                v = vals[off // 2]
-                if v == 0:
-                    skill_pairs.append((label, "(无)", False))
-                else:
-                    name_s = self.data.skill_name(abs(v)) or f"技能#{v}"
-                    skill_pairs.append((label, name_s, True))
+        for key, label in zip(skill_keys, skill_labels):
+            if key not in field_map:
+                continue
+            off = field_map[key][1]
+            v = vals[off // 2]
+            if v == 0:
+                skill_pairs.append((label, "(无)", False))
+            else:
+                name_s = self.data.skill_name(abs(v)) or f"技能#{v}"
+                skill_pairs.append((label, name_s, True))
         self._build_skill_grid(body, skill_pairs)
 
-        # ── 状态效果 ──
-        # 导致状态 / 解除状态 (两个 DockHeader 一行并排, 标题不带括号)
+        # ── 导致状态 / 解除状态 (并排) ──
         cause_body, cure_body = self.add_group_pair("导致状态", "解除状态")
         cause_chips = []
-        cause_chips += self._build_status_chips(vals[26], hi=False, is_cause=True)
-        cause_chips += self._build_status_chips(vals[27], hi=True, is_cause=True)
+        for key in ("cause_mask1", "cause_mask2"):
+            if key in field_map:
+                off = field_map[key][1]
+                hi = key.endswith("2")
+                cause_chips += self._build_status_chips(
+                    vals[off // 2], hi=hi, is_cause=True)
         if cause_chips:
             cause_body.addWidget(self._make_chips_widget(cause_chips))
         else:
             self.add_text_block(cause_body, "(无导致状态)", "StatusHint")
+
         cure_chips = []
-        cure_chips += self._build_status_chips(vals[28], hi=False, is_cause=False)
-        cure_chips += self._build_status_chips(vals[29], hi=True, is_cause=False)
+        for key in ("cure_mask1", "cure_mask2"):
+            if key in field_map:
+                off = field_map[key][1]
+                hi = key.endswith("2")
+                cure_chips += self._build_status_chips(
+                    vals[off // 2], hi=hi, is_cause=False)
         if cure_chips:
             cure_body.addWidget(self._make_chips_widget(cure_chips))
         else:
@@ -203,20 +199,25 @@ class ItemTab(BookTabBase):
         # ── 特殊效果 ──
         body = self.add_group("特殊效果")
         special_pairs = []
-        combat_flag = vals[20]
-        if combat_flag != 0:
-            names = flag_names(combat_flag, COMBAT_FLAG_NAMES)
-            special_pairs.append(("战斗结算", "、".join(names) if names else str(combat_flag)))
-        extra_flags = vals[30]
-        if extra_flags != 0:
-            names = flag_names(extra_flags, EXTRA_FLAG_NAMES)
-            special_pairs.append(("额外标志", "、".join(names) if names else str(extra_flags)))
+        for key in ("combat_flag", "extra_flags"):
+            if key not in field_map:
+                continue
+            off = field_map[key][1]
+            label = field_map[key][2]
+            v = vals[off // 2]
+            if v == 0:
+                continue
+            if key == "combat_flag":
+                names = flag_names(v, COMBAT_FLAG_NAMES)
+            else:
+                names = flag_names(v, EXTRA_FLAG_NAMES)
+            special_pairs.append((label, "、".join(names) if names else str(v)))
         if special_pairs:
             self._build_prop_grid(body, special_pairs, cols=3, color=cyan)
         else:
             self.add_text_block(body, "(无特殊效果)", "StatusHint")
 
-        # ── 初始装备角色 ──
+        # ── 初始装备角色 (反向索引) ──
         body = self.add_group("初始装备角色")
         equipped_by = []
         iid = vals[0]

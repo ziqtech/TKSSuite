@@ -55,18 +55,30 @@ class SkillTab(BookTabBase):
         vals = rec['vals']
         self.clear_detail()
 
-        # 头部: 名称 + 类型 + 说明文本 (PreviewFrame 风格, 同 item/char 页)
+        # 头部: 名称 + 类型提示 + 说明文本 (PreviewFrame 风格)
         header = QFrame()
         header.setObjectName("PreviewFrame")
         hv = QVBoxLayout(header)
         hv.setContentsMargins(8, 12, 8, 12)
         hv.setSpacing(8)
         name_box = QVBoxLayout()
-        name_box.setSpacing(0)
+        name_box.setSpacing(4)
         name = tkt_first_line(self.data.tkt, vals[0]) or f"技能#{idx}"
         name_lbl = QLabel(name)
         name_lbl.setProperty("class", "PreviewName")
         name_box.addWidget(name_lbl, 0, Qt.AlignVCenter)
+        # 类型提示
+        stype = vals[2]
+        if stype in SKILL_TYPES:
+            type_hints = {
+                0: "指令技能: 技能组根节点, 含子技能列表",
+                1: "主动技能: 百分比属性加成 → 角色战斗属性",
+                2: "被动技能: 触发概率 → 角色反应系统",
+                3: "移动技能: 特殊标志 + 移动能力 → 角色地图能力",
+            }
+            hint_lbl = QLabel(type_hints[stype])
+            hint_lbl.setProperty("class", "PreviewDesc")
+            name_box.addWidget(hint_lbl)
         hv.addLayout(name_box)
         # 说明文本 (放在 PreviewFrame 内部, PreviewDesc 样式, 去除原数据换行)
         desc = tkt_full_text(self.data.tkt, vals[1])
@@ -79,24 +91,18 @@ class SkillTab(BookTabBase):
             hv.addWidget(desc_lbl)
         self.detail_layout.addWidget(header)
 
-        # 有值属性 (零值不显示, 同 item/char 页: 6列grid, 标签在上值在下)
+        # ── 属性 (零值不显示, 6列grid, mask类字段单独在状态免疫展示) ──
         body = self.add_group("属性")
         pairs = []
         for key, off, label, kind in SKILL_VIEW_FIELDS:
+            if kind in ('mask_lo', 'mask_hi'):
+                continue
             v = vals[off // 2]
             if v == 0:
                 continue
             if kind == 'flags':
                 names = flag_names(v, SPECIAL_FLAG_NAMES)
                 pairs.append((label, "、".join(names) if names else str(v)))
-            elif kind == 'mask_lo':
-                chips = self._build_status_chips(v, hi=False, is_immunity=True)
-                if chips:
-                    pairs.append((label, chips))
-            elif kind == 'mask_hi':
-                chips = self._build_status_chips(v, hi=True, is_immunity=True)
-                if chips:
-                    pairs.append((label, chips))
             elif kind == 'atk_type':
                 pairs.append((label, ATK_TYPES.get(v, str(v))))
             elif kind == 'pct':
@@ -107,42 +113,27 @@ class SkillTab(BookTabBase):
         if vals[46] == 0 and vals[2] in (0, 1):
             pairs.append(("攻击类型", ATK_TYPES[0]))
         if pairs:
-            attr_grid = QGridLayout()
-            attr_grid.setHorizontalSpacing(8)
-            attr_grid.setVerticalSpacing(4)
-            cols = 6
-            for slot, (label, val) in enumerate(pairs):
-                r, c = divmod(slot, cols)
-                cell_w = QWidget()
-                cell_w.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
-                cell = QVBoxLayout(cell_w)
-                cell.setContentsMargins(0, 0, 0, 0)
-                cell.setSpacing(2)
-                lbl = QLabel(label)
-                lbl.setProperty("class", "PropLabel")
-                lbl.setAlignment(Qt.AlignLeft)
-                cell.addWidget(lbl)
-                if isinstance(val, list):
-                    val_w = self._make_chips_widget(val)
-                    cell.addWidget(val_w, 1)
-                else:
-                    val_lbl = self._val_label(val, True)
-                    cell.addWidget(val_lbl, 1)
-                attr_grid.addWidget(cell_w, r, c, Qt.AlignTop)
-            # 末列空白占位, 防止列宽不均
-            last_row_count = len(pairs) % cols
-            if last_row_count != 0:
-                last_row = len(pairs) // cols
-                for c in range(last_row_count, cols):
-                    spacer = QWidget()
-                    attr_grid.addWidget(spacer, last_row, c)
-            for c in range(cols):
-                attr_grid.setColumnStretch(c, 1)
-            body.addLayout(attr_grid)
+            self._build_prop_grid(body, pairs, cols=6)
         else:
             self.add_text_block(body, "(无属性数值)", "StatusHint")
 
-        # 技能树关联 (ref_skill/ref_type 对, 零值不显示, 6列grid, 标签在上值在下)
+        # ── 状态免疫 (mask类字段用chips展示) ──
+        body = self.add_group("状态免疫")
+        immune_chips = []
+        for key, off, label, kind in SKILL_VIEW_FIELDS:
+            if kind not in ('mask_lo', 'mask_hi'):
+                continue
+            v = vals[off // 2]
+            if v == 0:
+                continue
+            hi = kind == 'mask_hi'
+            immune_chips += self._build_status_chips(v, hi=hi, is_immunity=True)
+        if immune_chips:
+            body.addWidget(self._make_chips_widget(immune_chips))
+        else:
+            self.add_text_block(body, "(无状态免疫)", "StatusHint")
+
+        # ── 技能树关联 (8组 目标/进度) ──
         tree_pairs = []
         for pi in range(8):
             ref_skill = vals[4 + pi * 2]
@@ -153,35 +144,36 @@ class SkillTab(BookTabBase):
             tree_pairs.append(("目标技能", f"{ref_name}  (进度 +{ref_type})"))
         if tree_pairs:
             body = self.add_group("技能树关联")
-            attr_grid = QGridLayout()
-            attr_grid.setHorizontalSpacing(8)
-            attr_grid.setVerticalSpacing(4)
-            cols = 6
-            for slot, (label, val) in enumerate(tree_pairs):
-                r, c = divmod(slot, cols)
-                cell_w = QWidget()
-                cell_w.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
-                cell = QVBoxLayout(cell_w)
-                cell.setContentsMargins(0, 0, 0, 0)
-                cell.setSpacing(2)
-                lbl = QLabel(label)
-                lbl.setProperty("class", "PropLabel")
-                lbl.setAlignment(Qt.AlignLeft)
-                cell.addWidget(lbl)
-                val_lbl = self._val_label(val, True)
-                cell.addWidget(val_lbl, 1)
-                attr_grid.addWidget(cell_w, r, c, Qt.AlignTop)
-            last_row_count = len(tree_pairs) % cols
-            if last_row_count != 0:
-                last_row = len(tree_pairs) // cols
-                for c in range(last_row_count, cols):
-                    spacer = QWidget()
-                    attr_grid.addWidget(spacer, last_row, c)
-            for c in range(cols):
-                attr_grid.setColumnStretch(c, 1)
-            body.addLayout(attr_grid)
+            self._build_prop_grid(body, tree_pairs, cols=4)
 
-        # 可学习角色: 反向索引所有 warpc_recs 中学习状态 > 0 的角色
+        # ── 关联物品 (反向索引: 附加/装备学习/使用学习) ──
+        body = self.add_group("关联物品")
+        related_items = []
+        for irec in self.data.item_recs:
+            ivals = irec['vals']
+            iname = tkt_first_line(self.data.tkt, ivals[2])
+            if not iname:
+                continue
+            iid = ivals[0]
+            if iid in (0, 1):
+                continue
+            rels = []
+            if ivals[21] == idx:
+                rels.append("附加技能")
+            if ivals[22] == idx:
+                rels.append("装备后学习")
+            if ivals[23] == idx:
+                rels.append("使用后学习1")
+            if ivals[24] == idx:
+                rels.append("使用后学习2")
+            if rels:
+                related_items.append(f"{iname}({'/'.join(rels)})")
+        if related_items:
+            self.add_text_block(body, "、".join(related_items))
+        else:
+            self.add_text_block(body, "(无物品关联此技能)", "StatusHint")
+
+        # ── 可学习角色: 反向索引所有 warpc_recs 中学习状态 > 0 的角色 ──
         body = self.add_group("可学习角色")
         learners = []
         limit = min(SKILL_LEARN_COUNT, len(self.data.skill_recs) or SKILL_LEARN_COUNT)
@@ -200,6 +192,37 @@ class SkillTab(BookTabBase):
             self.add_text_block(body, "(无角色配置学习此技能)", "StatusHint")
 
         self.detail_layout.addStretch(1)
+
+    # ── 布局辅助 ──
+
+    def _build_prop_grid(self, body, pairs, cols=6):
+        """构建属性网格: 标签在上值在下, 末列空白占位保列宽"""
+        attr_grid = QGridLayout()
+        attr_grid.setHorizontalSpacing(8)
+        attr_grid.setVerticalSpacing(4)
+        for slot, (label, val) in enumerate(pairs):
+            r, c = divmod(slot, cols)
+            cell_w = QWidget()
+            cell_w.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+            cell = QVBoxLayout(cell_w)
+            cell.setContentsMargins(0, 0, 0, 0)
+            cell.setSpacing(2)
+            lbl = QLabel(label)
+            lbl.setProperty("class", "PropLabel")
+            lbl.setAlignment(Qt.AlignLeft)
+            cell.addWidget(lbl)
+            val_lbl = self._val_label(val, True)
+            cell.addWidget(val_lbl, 1)
+            attr_grid.addWidget(cell_w, r, c, Qt.AlignTop)
+        last_row_count = len(pairs) % cols
+        if last_row_count != 0:
+            last_row = len(pairs) // cols
+            for c in range(last_row_count, cols):
+                spacer = QWidget()
+                attr_grid.addWidget(spacer, last_row, c)
+        for c in range(cols):
+            attr_grid.setColumnStretch(c, 1)
+        body.addLayout(attr_grid)
 
     # ── 辅助 ──
 
