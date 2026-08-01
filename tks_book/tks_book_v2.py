@@ -23,7 +23,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 sys.path.insert(0, os.path.dirname(__file__))
 
 from editor_utils.theme_manager import ThemeManager
-from editor_utils.ui_helpers import update_path_labels
+from editor_utils.ui_helpers import themed_messagebox, update_path_labels
 from editor_utils.version import format_title, format_about_header
 from editor_utils.window_theme import apply_godot_theme
 
@@ -69,7 +69,10 @@ class TksBookViewer(QMainWindow):
         """角落按钮高度对齐标签栏 (QSS 生效后计算, 避免顶部被裁剪)"""
         h = self.tabs.tabBar().sizeHint().height()
         if h > 0:
-            self._btn_theme.setFixedHeight(max(22, h - 2))
+            bh = max(22, h - 2)
+            self._btn_theme.setFixedHeight(bh)
+            for btn in self._scale_buttons:
+                btn.setFixedHeight(bh)
 
     def _toggle_theme(self):
         self.is_dark_theme = not self.is_dark_theme
@@ -92,10 +95,10 @@ class TksBookViewer(QMainWindow):
         fm.addAction("退出", self.close)
 
         vm = mb.addMenu("视图(&V)")
-        vm.addAction("切换 Godot 主题 (Dark/Light)\tF5", self._toggle_theme)
+        vm.addAction("切换主题\tF5", self._toggle_theme)
 
         hm = mb.addMenu("帮助(&H)")
-        hm.addAction("使用说明", self._show_help)
+        hm.addAction("帮助说明", self._show_help)
         hm.addAction("关于查看器", self._show_about)
 
         QShortcut("F5", self).activated.connect(self._toggle_theme)
@@ -120,11 +123,25 @@ class TksBookViewer(QMainWindow):
         self.tabs.addTab(self.tab_map, "地图")
         self.tabs.currentChanged.connect(self._on_tab_changed)
 
-        # 标签页右侧按钮区: 切换主题 (角落区高度受 QTabBar 限制, 按钮高度须与标签栏同步)
+        # 标签页右侧按钮区: 缩放按钮 (仅图鉴页显示) + 切换主题
+        self._scale_buttons = self.tab_gallery.scale_buttons()
+        corner = QWidget()
+        cl = QHBoxLayout(corner)
+        cl.setContentsMargins(0, 0, 0, 0)
+        cl.setSpacing(3)
+        for btn in self._scale_buttons:
+            btn.setParent(corner)
+            cl.addWidget(btn)
         self._btn_theme = QPushButton("🌗 切换主题")
-        self._btn_theme.setToolTip("切换 Godot 深色/浅色主题 (F5)")
+        self._btn_theme.setToolTip("切换深色/浅色主题 (F5)")
         self._btn_theme.clicked.connect(self._toggle_theme)
-        self.tabs.setCornerWidget(self._btn_theme, Qt.TopRightCorner)
+        cl.addWidget(self._btn_theme)
+        self.tabs.setCornerWidget(corner, Qt.TopRightCorner)
+        self._corner_scale_parent = corner
+
+        # 初始: 图鉴页是第一个标签, 显示缩放按钮
+        for btn in self._scale_buttons:
+            btn.show()
 
         main_layout.addWidget(self.tabs, 1)
 
@@ -165,7 +182,7 @@ class TksBookViewer(QMainWindow):
             return
         # 主文件校验: 查看器至少需要 TKT.dat (所有名称/文本的来源)
         if not os.path.exists(os.path.join(d, "TKT.dat")):
-            QMessageBox.warning(self, "文件缺失",
+            themed_messagebox(self, QMessageBox.Warning, "文件缺失",
                                 f"所选目录未找到 TKT.dat:\n{d}\n\n"
                                 f"请选择 TKS 游戏根目录。")
             return
@@ -174,7 +191,7 @@ class TksBookViewer(QMainWindow):
         try:
             self.data.load(d)
         except Exception as e:
-            QMessageBox.critical(self, "加载失败", str(e))
+            themed_messagebox(self, QMessageBox.Critical, "加载失败", str(e))
             return
         self._loaded = True
         self.tab_gallery.populate()
@@ -193,6 +210,10 @@ class TksBookViewer(QMainWindow):
             f"TKT {len(self.data.tkt)} 条")
 
     def _on_tab_changed(self, _index):
+        # 缩放按钮仅在图鉴页显示
+        is_gallery = self.tabs.currentWidget() is self.tab_gallery
+        for btn in self._scale_buttons:
+            btn.setVisible(is_gallery)
         # 地图页惰性加载 SC.GRP (文件大, 避免拖慢初始加载)
         if self._loaded and self.tabs.currentWidget() is self.tab_map:
             self.tab_map.ensure_populated()
@@ -215,22 +236,22 @@ class TksBookViewer(QMainWindow):
     # ── 帮助 ──
 
     def _show_help(self):
-        QMessageBox.information(self, "使用说明",
-            "TKS 游戏图鉴查看器 (只读, 不修改任何游戏文件)\n\n"
+        themed_messagebox(self, QMessageBox.Information, "帮助说明",
+            "TKS 游戏图鉴查看器 (只读, 不修改任何游戏文件)\n"
+            "只读浏览 WarPC/TKSkill/TKItem/TKT/SC.GRP 数据, 不写入任何文件。\n\n"
             "1. 文件 → 加载 TKS 目录 (Ctrl+O), 选择游戏根目录\n"
             "2. 通过顶部标签页切换查看内容:\n"
             "   · 图鉴 — 游戏界面 1:1 复刻 (状态/技能/物品/装备/队伍/系统页)\n"
             "   · 人物 — 头像/核心属性/装备/技能/可学习技能树/历史\n"
-            "   · 技能 — 名称/说明文本/有值属性\n"
-            "   · 物品 — 图标/说明文本/有值属性\n"
+            "   · 技能 — 名称/说明文本/有值属性/可学习角色\n"
+            "   · 物品 — 图标/说明文本/有值属性/获得途径\n"
             "   · 地图 — 场景列表 + 背景预览 (首次切换时加载 SC.GRP)\n"
             "3. 左侧列表上方输入关键字可即时过滤\n"
             "4. F5 切换深色/浅色主题")
 
     def _show_about(self):
-        QMessageBox.information(self, "关于查看器",
-            format_about_header("tks_book") +
-            "\n\n只读浏览 WarPC/TKSkill/TKItem/TKT/SC.GRP 数据, 不写入任何文件。")
+        themed_messagebox(self, QMessageBox.Information, "关于查看器",
+            format_about_header("tks_book"))
 
 
 def main():

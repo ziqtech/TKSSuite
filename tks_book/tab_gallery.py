@@ -4,6 +4,7 @@
 无左侧列表 / 无 DockHeader: 直接居中展示 640×480 游戏界面复刻。
 加载游戏目录后自动构建视图并选中花名册第 0 条角色。
 支持等比例缩放: 100% / 200% / 300% / 自适应窗口。
+缩放按钮由主窗口放置在标签栏右侧角落 (切换主题按钮左边)。
 """
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
@@ -28,28 +29,29 @@ class GalleryTab(QWidget):
         self.data = data
         self._roster_order = []
         self._game_view = None
-        self._scale_mode = SCALE_100   # 当前缩放模式
+        self._scale_mode = SCALE_FIT    # 默认自适应窗口
+        self._scale_buttons = []       # 缩放按钮 (由主窗口放到角落区)
+        self._build_scale_buttons()
         self._build_ui()
+
+    def _build_scale_buttons(self):
+        """创建缩放按钮 (不加入自身布局, 由主窗口放入标签栏角落)"""
+        self._btn_100 = self._make_scale_btn("100%", SCALE_100)
+        self._btn_200 = self._make_scale_btn("200%", SCALE_200)
+        self._btn_300 = self._make_scale_btn("300%", SCALE_300)
+        self._btn_fit = self._make_scale_btn("自适应", SCALE_FIT)
+        self._scale_buttons = [self._btn_100, self._btn_200,
+                               self._btn_300, self._btn_fit]
+        self._update_scale_buttons()
+
+    def scale_buttons(self):
+        """返回缩放按钮列表, 供主窗口放入标签栏角落区"""
+        return self._scale_buttons
 
     def _build_ui(self):
         self._layout = QVBoxLayout(self)
         self._layout.setContentsMargins(4, 4, 4, 4)
         self._layout.setSpacing(4)
-
-        # 顶部缩放按钮栏
-        self._scale_bar = QHBoxLayout()
-        self._scale_bar.setContentsMargins(0, 0, 0, 0)
-        self._scale_bar.addStretch()
-        self._btn_100 = self._make_scale_btn("100%", SCALE_100)
-        self._btn_200 = self._make_scale_btn("200%", SCALE_200)
-        self._btn_300 = self._make_scale_btn("300%", SCALE_300)
-        self._btn_fit = self._make_scale_btn("自适应", SCALE_FIT)
-        self._scale_bar.addWidget(self._btn_100)
-        self._scale_bar.addWidget(self._btn_200)
-        self._scale_bar.addWidget(self._btn_300)
-        self._scale_bar.addWidget(self._btn_fit)
-        self._scale_bar.addStretch()
-        self._layout.addLayout(self._scale_bar)
 
         # 内容区 (游戏视图 / 占位提示)
         self._content = QWidget()
@@ -57,8 +59,6 @@ class GalleryTab(QWidget):
         self._content_layout.setContentsMargins(0, 0, 0, 0)
         self._show_placeholder("请通过 文件 → 加载 TKS 目录 打开游戏数据")
         self._layout.addWidget(self._content, 1)
-
-        self._update_scale_buttons()
 
     def _make_scale_btn(self, text, mode):
         btn = QPushButton(text)

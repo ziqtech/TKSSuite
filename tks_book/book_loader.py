@@ -260,6 +260,9 @@ class GameData:
         self.skill_names = {}    # skill_index → 名称
         self.fa_sprites = []     # Fa.JVG 头像 (PIL RGBA)
         self.mu_sprites = []     # Mu.JVG 图标 (PIL RGBA)
+        self.tkkon_names = {}    # TKKon索引 → 显示名称 (KonNameResolver)
+        self.skill_types = {}    # skill_index → type (0指令/1主动/2被动/3移动)
+        self.cmd_skill_slots = {}  # skill_index → 效果判定槽位i (仅type==0)
         self._sc_grp = None      # 惰性: GRPFile
         self._sc_grp_tried = False
         self.paths = {}          # 文件名 → 绝对路径 (存在的才记录)
@@ -286,6 +289,9 @@ class GameData:
         self._tkt_raw = None            # TKT 原始字节 (含控制码, 游戏视图富文本用)
         self.save_slots = []
         self.save_dir = ""
+        self.tkkon_names = {}
+        self.skill_types = {}
+        self.cmd_skill_slots = {}
 
         def _p(name):
             fp = os.path.join(game_dir, name)
@@ -303,10 +309,30 @@ class GameData:
         sp = _p("TKSkill.dat")
         self.skill_recs = load_skills(sp) if sp else []
         self.skill_names = {}
+        self.skill_types = {}
         for rec in self.skill_recs:
             nm = tkt_first_line(self.tkt, rec['vals'][0])
             if nm:
                 self.skill_names[rec['index']] = nm
+            self.skill_types[rec['index']] = rec['vals'][2]
+        # 构建指令技能槽位映射: type==0 的技能按索引升序 → slot i
+        active_indices = sorted(
+            i for i, t in self.skill_types.items() if t == 0
+        )
+        self.cmd_skill_slots = {si: i for i, si in enumerate(active_indices)}
+
+        # TKKon 名称解析 (供角色技能效果判定显示用)
+        if _p("TKKon.dat"):
+            try:
+                import sys
+                _eu = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+                if _eu not in sys.path:
+                    sys.path.insert(0, _eu)
+                from editor_utils.kon_name_resolver import KonNameResolver
+                resolver = KonNameResolver(game_dir)
+                self.tkkon_names = resolver.get_all_names(compact_threshold=3)
+            except Exception:
+                self.tkkon_names = {}
 
         ip = _p("TKItem.dat")
         self.item_recs = load_items(ip) if ip else []
@@ -455,6 +481,21 @@ class GameData:
 
     def skill_name(self, skill_idx):
         return self.skill_names.get(skill_idx, "")
+
+    def skill_effect_judgment(self, rec, skill_idx):
+        """角色指令技能的效果判定文本: 从f[273+slot]读取TKKon ID并解析名称;
+        非指令技能返回\"—\"(无效果判定字段)"""
+        f = rec['fields']
+        stype = self.skill_types.get(skill_idx, -1)
+        if stype == 0:
+            slot = self.cmd_skill_slots.get(skill_idx)
+            if slot is not None and (273 + slot) < len(f):
+                kon_id = f[273 + slot]
+                if kon_id >= 0:
+                    return self.tkkon_names.get(kon_id, f"TKKon#{kon_id}")
+                return "(未设置)"
+            return "(未设置)"
+        return "—"
 
     def tkt_raw_bytes(self, tid):
         """TKT 条目原始字节 (0x1E 分行 + 控制码原样保留; 游戏视图富文本渲染用)"""

@@ -12,6 +12,7 @@ from editor_utils.picker_dialogs import STATUS_NAMES, STATUS_ICON_BASE
 
 from book_loader import (
     SKILL_VIEW_FIELDS, SKILL_TYPES, ATK_TYPES, SPECIAL_FLAG_NAMES,
+    SKILL_LEARN_BASE, SKILL_LEARN_COUNT, get_packed_byte,
     tkt_first_line, tkt_full_text, flag_names,
 )
 from tab_common import BookTabBase
@@ -66,9 +67,6 @@ class SkillTab(BookTabBase):
         name_lbl = QLabel(name)
         name_lbl.setProperty("class", "PreviewName")
         name_box.addWidget(name_lbl, 0, Qt.AlignVCenter)
-        meta_lbl = QLabel(f"{SKILL_TYPES.get(vals[2], f'类型{vals[2]}')}    记录 #{idx}")
-        meta_lbl.setProperty("class", "PreviewMeta")
-        name_box.addWidget(meta_lbl)
         hv.addLayout(name_box)
         # 说明文本 (放在 PreviewFrame 内部, PreviewDesc 样式, 去除原数据换行)
         desc = tkt_full_text(self.data.tkt, vals[1])
@@ -182,6 +180,24 @@ class SkillTab(BookTabBase):
             for c in range(cols):
                 attr_grid.setColumnStretch(c, 1)
             body.addLayout(attr_grid)
+
+        # 可学习角色: 反向索引所有 warpc_recs 中学习状态 > 0 的角色
+        body = self.add_group("可学习角色")
+        learners = []
+        limit = min(SKILL_LEARN_COUNT, len(self.data.skill_recs) or SKILL_LEARN_COUNT)
+        if idx < limit:
+            for wrec in self.data.warpc_recs:
+                wname = self.data.char_name(wrec)
+                if not wname:
+                    continue
+                wf = wrec['fields']
+                state = get_packed_byte(wf, SKILL_LEARN_BASE, idx)
+                if state > 0:
+                    learners.append(wname)
+        if learners:
+            self.add_text_block(body, "、".join(learners))
+        else:
+            self.add_text_block(body, "(无角色配置学习此技能)", "StatusHint")
 
         self.detail_layout.addStretch(1)
 

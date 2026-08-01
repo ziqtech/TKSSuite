@@ -1,20 +1,26 @@
 # -*- coding: utf-8 -*-
 """tks_book 人物标签页 — 头像/名称/核心属性/装备/技能/可学习技能树/历史文本"""
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QIcon
+from PySide6.QtGui import QFontMetrics, QIcon
 from PySide6.QtWidgets import (
     QLabel, QHBoxLayout, QVBoxLayout, QWidget, QFrame, QTreeWidget,
     QTreeWidgetItem, QTabWidget, QCheckBox, QGridLayout, QSizePolicy,
     QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView,
+    QPushButton,
 )
 
 from book_loader import (
     EQUIP_ID_IDX, EQUIP_SKILL_IDX,
     PASSIVE_SKILL_IDX, SKILL_LEARN_BASE, SKILL_LEARN_COUNT,
-    SKILL_TYPES, get_packed_byte, pil_to_qpixmap,
+    SKILL_TYPES, get_packed_byte, pil_to_qpixmap, use_right_label,
+    SPECIAL_FLAG_NAMES, flag_names,
 )
 from editor_utils.ui_helpers import NoWheelComboBox
+from editor_utils.jvg_loader import get_sprite_pixmap
+from editor_utils.flow_layout import FlowLayout
+from editor_utils.picker_dialogs import STATUS_NAMES, STATUS_ICON_BASE
 from book_skill_graph import CharSkillGraph
+from book_growth import GrowthTableDialog
 from tab_common import BookTabBase
 
 
@@ -24,6 +30,7 @@ class CharTab(BookTabBase):
     def __init__(self, data, parent=None):
         super().__init__(data, parent)
         self._fa_pix_cache = {}
+        self._icon_cache = {}
         self._skill_filter = None   # 可学习技能的学习状态筛选 (None=全部)
         self._graph_mode = False    # False=列表视图, True=拓扑图视图
 
@@ -77,6 +84,7 @@ class CharTab(BookTabBase):
                 break
         if rec is None:
             return
+        self._cur_detail_rec = rec
         f = rec['fields']
         self.clear_detail()
 
@@ -99,28 +107,50 @@ class CharTab(BookTabBase):
         top_row.addWidget(portrait_lbl, 0, Qt.AlignTop)
         name_box = QVBoxLayout()
         name_box.setSpacing(4)
+        # 名称 + 成长数据按钮 (左右布局)
+        name_row = QHBoxLayout()
+        name_row.setSpacing(6)
         name_lbl = QLabel(self.data.char_name(rec))
         name_lbl.setProperty("class", "PreviewName")
-        name_box.addWidget(name_lbl)
-        # 核心属性 (7列, 紧贴姓名下方)
-        stat_pairs = [
+        name_row.addWidget(name_lbl)
+        name_row.addStretch()
+        btn_growth = QPushButton("成长数据")
+        btn_growth.setProperty("class", "CompactBtn")
+        btn_growth.setToolTip("查看 1-60 级逐级成长数据表 (成长除数越小成长越快)")
+        btn_growth.clicked.connect(lambda: self._show_growth_dialog(rec))
+        name_row.addWidget(btn_growth)
+        name_box.addLayout(name_row)
+        # 主题色定义
+        dark = self._is_dark_theme()
+        blue = "#6699cc" if dark else "#3366cc"
+        green = "#55b572" if dark else "#178a39"
+        red = "#cc6666" if dark else "#cc3333"
+        purple = "#b58fd9" if dark else "#7b4fa0"
+        # 核心属性 (7列, 紧贴姓名下方): 前5个蓝色, 后9个绿色
+        blue_pairs = [
             ("等级", str(f[2])), ("生命", f"{f[5]}/{f[8]}"), ("内力", f"{f[6]}/{f[10]}"),
             ("经验", str(f[4])), ("升级", str(f[7])),
+        ]
+        green_pairs = [
             ("攻击", str(f[12])), ("防御", str(f[14])),
             ("命中", str(f[16])), ("闪避", str(f[18])),
             ("速度", str(f[20])), ("幸运", str(f[22])),
             ("悟性", str(f[26])), ("移动", str(f[24])),
             ("技能点数", str(f[31])),
         ]
+        stat_pairs = blue_pairs + green_pairs
+        stat_colors = [blue] * len(blue_pairs) + [green] * len(green_pairs)
         stat_grid = QGridLayout()
         stat_grid.setHorizontalSpacing(10)
         stat_grid.setVerticalSpacing(4)
         cols = 7
-        for i, (label, val) in enumerate(stat_pairs):
+        for i, ((label, val), color) in enumerate(zip(stat_pairs, stat_colors)):
             r, c = divmod(i, cols)
             lbl = QLabel(label)
             lbl.setProperty("class", "PropLabel")
+            lbl.setStyleSheet(f"color: {color}; padding: 0px;")
             val_lbl = QLabel(val)
+            val_lbl.setStyleSheet(f"color: {color}; padding: 0px;")
             cell = QHBoxLayout()
             cell.setSpacing(4)
             cell.addWidget(lbl)
@@ -129,6 +159,34 @@ class CharTab(BookTabBase):
         for c in range(cols):
             stat_grid.setColumnStretch(c, 1)
         name_box.addLayout(stat_grid)
+        # 五维属性 + 成长除数 (智慧/仁德/勇气/医术 红色, 成长除数初/中/后期 紫色, 7列对齐)
+        virtue_extra = [
+            ("智慧", str(f[27]), red), ("仁德", str(f[28]), red),
+            ("勇气", str(f[29]), red), ("医术", str(f[30]), red),
+            ("初期除数", str(f[264]), purple), ("中期除数", str(f[265]), purple),
+            ("后期除数", str(f[266]), purple),
+        ]
+        virtue_grid = QGridLayout()
+        virtue_grid.setHorizontalSpacing(10)
+        virtue_grid.setVerticalSpacing(4)
+        vcols = 7
+        for i, (label, val, color) in enumerate(virtue_extra):
+            lbl = QLabel(label)
+            lbl.setProperty("class", "PropLabel")
+            lbl.setStyleSheet(f"color: {color}; padding: 0px;")
+            val_lbl = QLabel(val)
+            val_lbl.setStyleSheet(f"color: {color}; padding: 0px;")
+            cell = QHBoxLayout()
+            cell.setSpacing(4)
+            cell.addWidget(lbl)
+            cell.addWidget(val_lbl, 1)
+            virtue_grid.addLayout(cell, 0, i)
+        for c in range(len(virtue_extra), vcols):
+            spacer = QWidget()
+            virtue_grid.addWidget(spacer, 0, c)
+        for c in range(vcols):
+            virtue_grid.setColumnStretch(c, 1)
+        name_box.addLayout(virtue_grid)
         name_box.addStretch()
         top_row.addLayout(name_box, 1)
         hv.addLayout(top_row)
@@ -206,6 +264,27 @@ class CharTab(BookTabBase):
         # 入队信息
         body = self.add_group("入队信息")
         self._build_join_info(body, rec)
+
+        # 可掉落物品 + 战后奖励 (水平并排)
+        drop_body, reward_body = self._add_group_pair("可掉落物品", "战后奖励")
+        self._build_drops(drop_body, rec)
+        self._build_battle_rewards(reward_body, rec)
+
+        # 物品装备权限 (f[77]-f[81], 位掩码)
+        body = self.add_group("物品装备权限")
+        self._build_use_rights(body, rec)
+
+        # 技能加成 (f[32]-f[40], 来自装备/技能的加成)
+        body = self.add_group("技能加成")
+        self._build_skill_bonuses(body, rec)
+
+        # 攻击导致状态 (f[67]/f[68], 位掩码)
+        body = self.add_group("攻击导致状态")
+        self._build_attack_status(body, rec)
+
+        # 状态抵抗 (f[51]-f[66], 32字节打包, 每状态1字节=抵抗率%)
+        body = self.add_group("状态抵抗")
+        self._build_status_resist(body, rec)
 
         # 可学习技能
         states_all = self._learn_states(f)
@@ -368,6 +447,260 @@ class CharTab(BookTabBase):
         lines.append("引擎限制: " + "; ".join(limits))
         self.add_text_block(body, "\n".join(lines))
 
+    def _build_drops(self, body, rec):
+        """可掉落物品: WarPC[270]/[271]/[272] 对应 100%/20%/5%"""
+        f = rec['fields']
+        slot_probs = [
+            (f[270], "必掉 (100%)"),
+            (f[271], "高概率 (20%)"),
+            (f[272], "低概率 (5%)"),
+        ]
+        pairs = []
+        for iid, prob in slot_probs:
+            if iid <= 0:
+                continue
+            name = self.data.item_name_by_id(iid) or f"物品ID#{iid}"
+            sprite_idx = None
+            item_rec = self.data.item_by_id.get(iid)
+            if item_rec is not None:
+                sprite_idx = item_rec['vals'][4]
+            pairs.append((prob, name.strip(), sprite_idx))
+        if pairs:
+            row = QHBoxLayout()
+            row.setSpacing(8)
+            for prob, name, sprite_idx in pairs:
+                cell = QHBoxLayout()
+                cell.setSpacing(3)
+                lbl = QLabel(prob)
+                lbl.setProperty("class", "PropLabel")
+                cell.addWidget(lbl)
+                if sprite_idx is not None:
+                    icon_lbl = QLabel()
+                    icon_lbl.setFixedSize(16, 16)
+                    icon_lbl.setAlignment(Qt.AlignCenter)
+                    pix = get_sprite_pixmap(self.data.mu_sprites, sprite_idx,
+                                            (16, 16), self._icon_cache)
+                    if pix:
+                        icon_lbl.setPixmap(pix)
+                    cell.addWidget(icon_lbl, 0, Qt.AlignVCenter)
+                val_lbl = self._val_label(name, True)
+                cell.addWidget(val_lbl, 1)
+                row.addLayout(cell, 1)
+            body.addLayout(row)
+        else:
+            self.add_text_block(body, "(无掉落物品配置)", "StatusHint")
+
+    def _show_growth_dialog(self, rec):
+        """打开成长数据表弹窗"""
+        char_name = self.data.char_name(rec)
+        dlg = GrowthTableDialog(self, rec, char_name, is_dark=self._is_dark_theme())
+        dlg.exec()
+
+    def _build_battle_rewards(self, body, rec):
+        """战后奖励: JP技能点数 + 金钱 (实际=基数×2)"""
+        f = rec['fields']
+        jp = f[268]
+        gold_base = f[269]
+        gold_actual = gold_base * 2
+        pairs = [
+            ("技能点", str(jp) if jp > 0 else "0"),
+            ("金钱", f"{gold_actual} (×2={gold_base})" if gold_base > 0 else "0"),
+        ]
+        dark = self._is_dark_theme()
+        reward_color = "#d4a855" if dark else "#a07820"
+        row = QHBoxLayout()
+        row.setSpacing(8)
+        for label, val in pairs:
+            cell = QHBoxLayout()
+            cell.setSpacing(3)
+            lbl = QLabel(label)
+            lbl.setProperty("class", "PropLabel")
+            val_lbl = QLabel(val)
+            val_lbl.setStyleSheet(f"color: {reward_color}; padding: 0px;")
+            val_lbl.setTextInteractionFlags(Qt.TextSelectableByMouse)
+            cell.addWidget(lbl)
+            cell.addWidget(val_lbl, 1)
+            row.addLayout(cell, 1)
+        body.addLayout(row)
+
+    def _build_use_rights(self, body, rec):
+        """物品装备权限: 药品/道具/武器/防具/饰品 (f[77]-f[81], 位掩码) — 单行水平排列"""
+        f = rec['fields']
+        right_defs = [
+            ("药品", f[77], 0),
+            ("道具", f[78], 1),
+            ("武器", f[79], 2),
+            ("防具", f[80], 3),
+            ("饰品", f[81], 4),
+        ]
+        dark = self._is_dark_theme()
+        right_color = "#7ab8d4" if dark else "#2a6f8c"
+        row = QHBoxLayout()
+        row.setSpacing(10)
+        for i, (label, val, page) in enumerate(right_defs):
+            lbl = QLabel(label)
+            lbl.setProperty("class", "PropLabel")
+            text = use_right_label(val, page)
+            val_lbl = QLabel(text)
+            val_lbl.setStyleSheet(f"color: {right_color}; padding: 0px;")
+            val_lbl.setTextInteractionFlags(Qt.TextSelectableByMouse)
+            val_lbl.setWordWrap(True)
+            cell = QHBoxLayout()
+            cell.setSpacing(4)
+            cell.addWidget(lbl)
+            cell.addWidget(val_lbl, 1)
+            row.addLayout(cell, 1)
+        body.addLayout(row)
+
+    def _add_group_pair(self, title1, title2):
+        """创建两个并排的 DockHeader 分组, 返回 (body1_layout, body2_layout)"""
+        from editor_utils.dock_components import DockHeader
+        row_w = QWidget()
+        row_l = QHBoxLayout(row_w)
+        row_l.setContentsMargins(0, 0, 0, 0)
+        row_l.setSpacing(4)
+        bodies = []
+        for title in (title1, title2):
+            gw = QWidget()
+            gl = QVBoxLayout(gw)
+            gl.setContentsMargins(0, 0, 0, 0)
+            gl.setSpacing(0)
+            gl.addWidget(DockHeader(title))
+            bw = QWidget()
+            bw.setObjectName("DockBody")
+            bl = QVBoxLayout(bw)
+            bl.setContentsMargins(8, 8, 8, 8)
+            bl.setSpacing(4)
+            gl.addWidget(bw, 1)
+            row_l.addWidget(gw, 1)
+            bodies.append(bl)
+        self.detail_layout.addWidget(row_w)
+        return tuple(bodies)
+
+    def _build_skill_bonuses(self, body, rec):
+        """技能加成区 f[32]-f[40]: 攻击次数/特殊标志/百分比加成/移动标志"""
+        f = rec['fields']
+        dark = self._is_dark_theme()
+        cyan = "#7ab8d4" if dark else "#2a6f8c"
+        yellow = "#d4a855" if dark else "#a07820"
+        atk_count = f[32]
+        special_flag = f[33] & 0xFFFF
+        mp_reduce = f[34]
+        magic_def = f[35]
+        exp_bonus = f[36]
+        jp_bonus = f[37]
+        move_flags = f[38] & 0xFFFF
+        heal_move = f[39]
+        mp_move = f[40]
+        pairs = [
+            ("攻击次数", f"+{atk_count - 1}" if atk_count > 1 else str(atk_count), yellow),
+        ]
+        sf_names = flag_names(special_flag, SPECIAL_FLAG_NAMES)
+        pairs.append(("特殊能力", "、".join(sf_names) if sf_names else "(无)", cyan))
+        for label, val in [("内耗减%", mp_reduce), ("法伤减%", magic_def),
+                           ("经验+%", exp_bonus), ("技点+%", jp_bonus)]:
+            pairs.append((label, f"{val}%" if val != 0 else "0%", cyan))
+        mf_names = flag_names(move_flags, SPECIAL_FLAG_NAMES)
+        pairs.append(("移动特效", "、".join(mf_names) if mf_names else "(无)", cyan))
+        for label, val in [("移步回血%", heal_move), ("移步回气%", mp_move)]:
+            pairs.append((label, f"{val}%" if val != 0 else "0%", cyan))
+        cols = 5
+        grid = QGridLayout()
+        grid.setHorizontalSpacing(8)
+        grid.setVerticalSpacing(4)
+        # 计算标签固定宽度 (以最长标签"移步回血%"为基准)
+        _tmpl = QLabel("移步回血%")
+        _tmpl.setProperty("class", "PropLabel")
+        _tmpl.setStyleSheet("padding: 0px;")
+        lw = QFontMetrics(_tmpl.font()).horizontalAdvance("移步回血%") + 4
+        for i, (label, val, color) in enumerate(pairs):
+            r, c = divmod(i, cols)
+            lbl = QLabel(label)
+            lbl.setProperty("class", "PropLabel")
+            lbl.setFixedWidth(lw)
+            lbl.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+            val_lbl = QLabel(val)
+            val_lbl.setStyleSheet(f"color: {color}; padding: 0px;")
+            val_lbl.setTextInteractionFlags(Qt.TextSelectableByMouse)
+            val_lbl.setWordWrap(True)
+            val_lbl.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+            cell = QHBoxLayout()
+            cell.setSpacing(4)
+            cell.addWidget(lbl)
+            cell.addWidget(val_lbl, 1)
+            grid.addLayout(cell, r, c)
+        for c in range(cols):
+            grid.setColumnStretch(c, 1)
+        body.addLayout(grid)
+
+    def _build_attack_status(self, body, rec):
+        """攻击导致状态: f[67]=mask_lo(1-16), f[68]=mask_hi(17-32), 位掩码"""
+        f = rec['fields']
+        mask_lo = f[67] & 0xFFFF
+        mask_hi = f[68] & 0xFFFF
+        chips = self._build_status_chips(mask_lo, hi=False, is_cause=True)
+        chips += self._build_status_chips(mask_hi, hi=True, is_cause=True)
+        if chips:
+            body.addWidget(self._make_chips_widget(chips))
+        else:
+            self.add_text_block(body, "(无攻击附加状态)", "StatusHint")
+
+    def _build_status_resist(self, body, rec):
+        """状态抵抗: f[51]-f[66] 32字节打包, 每字节=抵抗率% (0=无抵抗)"""
+        f = rec['fields']
+        STATUS_RESIST_BASE = 51
+        chips = []
+        for i in range(32):
+            val = get_packed_byte(f, STATUS_RESIST_BASE, i)
+            if val <= 0:
+                continue
+            if i < len(STATUS_NAMES):
+                name = STATUS_NAMES[i]
+                sprite_idx = STATUS_ICON_BASE + i - 130
+                chips.append((f"{name} {val}%", sprite_idx, "StatusRemove"))
+        if chips:
+            body.addWidget(self._make_chips_widget(chips))
+        else:
+            self.add_text_block(body, "(无状态抵抗)", "StatusHint")
+
+    def _build_status_chips(self, mask, hi=False, is_cause=True):
+        """构建状态图标chips数据: [(name, sprite_idx, css_class), ...]"""
+        chips = []
+        base = 16 if hi else 0
+        css_class = "StatusInflict" if is_cause else "StatusRemove"
+        for bit in range(16):
+            if mask & (1 << bit):
+                idx = base + bit
+                if idx < len(STATUS_NAMES):
+                    sprite_idx = STATUS_ICON_BASE + idx - 130
+                    chips.append((STATUS_NAMES[idx], sprite_idx, css_class))
+        return chips
+
+    def _make_chips_widget(self, chips):
+        """创建状态chips容器: FlowLayout中横向排列, 图标16x16+名称"""
+        w = QWidget()
+        flow = FlowLayout(w, margin=0, spacing=3)
+        for name, sprite_idx, css_class in chips:
+            chip = QWidget()
+            cl = QHBoxLayout(chip)
+            cl.setContentsMargins(1, 0, 3, 0)
+            cl.setSpacing(2)
+            il = QLabel()
+            il.setFixedSize(16, 16)
+            il.setAlignment(Qt.AlignCenter)
+            pix = get_sprite_pixmap(self.data.mu_sprites, sprite_idx, (16, 16),
+                                   self._icon_cache)
+            if pix:
+                il.setPixmap(pix)
+            cl.addWidget(il, 0, Qt.AlignVCenter)
+            nl = QLabel(name)
+            nl.setProperty("class", css_class)
+            nl.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+            cl.addWidget(nl, 0, Qt.AlignVCenter)
+            chip.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+            flow.addWidget(chip)
+        return w
+
     # ── 辅助 ──
 
     def _skill_label(self, sid):
@@ -399,7 +732,7 @@ class CharTab(BookTabBase):
         return states
 
     def _build_learn_list(self, states):
-        """可学习技能纯列表: 每个状态>0 的技能一行, 显示名称/类型/状态"""
+        """可学习技能纯列表: 每个状态>0 的技能一行, 显示名称/效果判定/类型/状态"""
         if not states:
             return None
 
@@ -407,8 +740,8 @@ class CharTab(BookTabBase):
         items = [(si, skill_by_idx.get(si)) for si in sorted(states)]
         n = len(items)
 
-        table = QTableWidget(n, 3)
-        table.setHorizontalHeaderLabels(["技能", "类型", "状态"])
+        table = QTableWidget(n, 4)
+        table.setHorizontalHeaderLabels(["技能", "效果判定", "类型", "状态"])
         table.verticalHeader().setVisible(False)
         table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         table.setSelectionBehavior(QAbstractItemView.SelectRows)
@@ -416,15 +749,19 @@ class CharTab(BookTabBase):
 
         header = table.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.Stretch)
-        header.setSectionResizeMode(1, QHeaderView.Fixed)
-        header.setSectionResizeMode(2, QHeaderView.ResizeToContents)
-        table.setColumnWidth(1, 80)
+        header.setSectionResizeMode(1, QHeaderView.Stretch)
+        header.setSectionResizeMode(2, QHeaderView.Fixed)
+        header.setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        table.setColumnWidth(2, 80)
 
-        for row, (si, rec) in enumerate(items):
+        # 获取当前角色记录 (用于效果判定查询)
+        rec = getattr(self, '_cur_detail_rec', None)
+        for row, (si, _skrec) in enumerate(items):
             name = self.data.skill_name(si) or f"技能#{si}"
-            tname = SKILL_TYPES.get(rec['vals'][2], "") if rec else ""
+            tname = SKILL_TYPES.get(_skrec['vals'][2], "") if _skrec else ""
             state_text = self._learn_state_text(states[si])
-            for col, txt in enumerate((name, tname, state_text)):
+            effect = self.data.skill_effect_judgment(rec, si) if rec else ""
+            for col, txt in enumerate((name, effect, tname, state_text)):
                 it = QTableWidgetItem(txt)
                 it.setFlags(it.flags() & ~Qt.ItemIsEditable)
                 table.setItem(row, col, it)
