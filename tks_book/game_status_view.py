@@ -191,6 +191,9 @@ class GameStatusView(QWidget):
         # 队伍页状态 (对应游戏 a1[614869]=子页签 0团队/1记事/2功绩/3历史, a1[614900]=页码)
         self._team_tab = 0
         self._journal_page = 0
+        # 团队子页选中成员行 (对应游戏 a1[614891], sub_42131C L86-92 画帧45 高亮;
+        # hover 区域 sub_420730 case 4: x∈[562,618], y∈[271+35i, 299+35i])
+        self._team_sel = -1
         # 系统页状态 (对应游戏 word_755C74/76/78/7A; 初值取自 sub_411624 初始化)
         #   word_755C78 = SE 开关 / word_755C7A = SE 音量(1-5)
         #   word_755C74 = BGM 开关 / word_755C76 = BGM 音量(1-5)
@@ -300,6 +303,7 @@ class GameStatusView(QWidget):
         self._skill_focus = state.get('skill_focus', 1)
         self._team_tab = state.get('team_tab', 0)
         self._journal_page = state.get('journal_page', 0)
+        self._team_sel = -1   # hover 状态瞬时, 重建后由鼠标位置重新决定
         self._item_cat = state.get('item_cat', 0)
         self._item_sel = state.get('item_sel', -1)
         self._item_scroll = state.get('item_scroll', 0)
@@ -1116,6 +1120,10 @@ class GameStatusView(QWidget):
                         nm = self.data.char_name(r) or f"#{members[i]}"
                         self._text(p, 425, 35 * i + 273, nm, 16)
                         self._text(p, 518, 35 * i + 273, f"{r['fields'][2]:3d}", 16)
+                # 成员行右侧按钮 (解散): 帧44 底(a15) + 帧54 图案(不透明);
+                # 选中行先画帧45 亮黄高亮 (sub_42131C L86-92: 45→44→54 顺序)
+                if i == self._team_sel:
+                    self._blit(p, self._mu_pix(45), 560, 35 * i + 270)
                 self._blit(p, self._mu_pix(44), 560, 35 * i + 270, 15)
                 self._blit(p, self._mu_pix(54), 560, 35 * i + 270)
             # 战绩统计 (L61-67, 存档运行时数据, 静态查看显示 0)
@@ -1492,6 +1500,21 @@ class GameStatusView(QWidget):
             gi = self._skill_hover_row(pos.x(), pos.y())
             if gi >= 0 and gi != self._skill_sel:
                 self._skill_sel = gi
+                self._refresh()
+            return
+        # 队伍页团队子页 hover (sub_420730 case 4): X∈[562,618], Y∈[271+35i, 299+35i]
+        # → 选中成员行 → 帧45 高亮 (sub_42131C L86-92); 移出区域保持 (游戏 -1 不更新)
+        if self._page == 4 and self._team_tab == 0:
+            pos = event.position().toPoint()
+            x, y = pos.x(), pos.y()
+            new_sel = -1
+            if 562 <= x <= 618:
+                for r in range(len(self._team_members())):
+                    if 271 + 35 * r <= y <= 299 + 35 * r:
+                        new_sel = r
+                        break
+            if new_sel >= 0 and new_sel != self._team_sel:
+                self._team_sel = new_sel
                 self._refresh()
             return
         # 物品/装备页: 选中跟随鼠标 — 悬停到哪行选哪行; 移出列表区保持选中
