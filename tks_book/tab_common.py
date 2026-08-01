@@ -7,6 +7,8 @@ from PySide6.QtWidgets import (
     QScrollArea, QLabel, QGridLayout, QPushButton,
 )
 
+import zhconv
+
 from editor_utils.dock_components import DockHeader
 
 
@@ -107,6 +109,8 @@ class BookTabBase(QWidget):
 
     def _apply_filter(self):
         q = self.search_input.text().strip().lower()
+        # 将简体转为繁体以匹配游戏数据（Big5编码的繁体中文）
+        q_tw = zhconv.convert(q, 'zh-tw') if q else ''
         tw = self.list_widget
         tw.blockSignals(True)
         tw.setRowCount(0)
@@ -116,7 +120,7 @@ class BookTabBase(QWidget):
         for key, cells in self._rows:
             norms = [self._normalize_cell(c) for c in cells]
             texts = [n[0] for n in norms]
-            if q and not any(q in (t or "").lower() for t in texts):
+            if q and not any(q_tw in "".join((t or "").lower().split()) for t in texts):
                 continue
             row = tw.rowCount()
             tw.insertRow(row)
@@ -162,8 +166,10 @@ class BookTabBase(QWidget):
     def finish_detail(self):
         self.detail_layout.addStretch()
 
-    def add_group(self, title):
-        """添加 DockHeader + DockBody 分组, 返回 body 的 QVBoxLayout"""
+    def add_group(self, title, stretch=0):
+        """添加 DockHeader + DockBody 分组, 返回 body 的 QVBoxLayout。
+        stretch>0 时该分组在 detail_layout 中占用对应拉伸因子 (填满剩余空间)。
+        """
         group_w = QWidget()
         gl = QVBoxLayout(group_w)
         gl.setContentsMargins(0, 0, 0, 0)
@@ -174,8 +180,8 @@ class BookTabBase(QWidget):
         bl = QVBoxLayout(body)
         bl.setContentsMargins(8, 8, 8, 8)
         bl.setSpacing(4)
-        gl.addWidget(body)
-        self.detail_layout.addWidget(group_w)
+        gl.addWidget(body, 1)
+        self.detail_layout.addWidget(group_w, stretch)
         return bl
 
     def add_kv_grid(self, body_layout, pairs, cols=3):

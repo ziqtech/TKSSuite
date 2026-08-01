@@ -4,11 +4,12 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QLabel, QHBoxLayout, QVBoxLayout, QWidget, QFrame, QTreeWidget,
-    QTreeWidgetItem, QTabWidget, QCheckBox,
+    QTreeWidgetItem, QTabWidget, QCheckBox, QGridLayout, QSizePolicy,
+    QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView,
 )
 
 from book_loader import (
-    STAT_DEFS, CHAR_ATTR_DEFS, EQUIP_ID_IDX, EQUIP_SKILL_IDX,
+    EQUIP_ID_IDX, EQUIP_SKILL_IDX,
     PASSIVE_SKILL_IDX, SKILL_LEARN_BASE, SKILL_LEARN_COUNT,
     SKILL_TYPES, get_packed_byte, pil_to_qpixmap,
 )
@@ -49,7 +50,7 @@ class CharTab(BookTabBase):
                 str(f[2]), role_str, hp, mp,
             ]))
         self.set_table_items(
-            ["", "#", "角色名称", "等级", "身份", "HP", "MP"], rows,
+            ["", "#", "角色名称", "等级", "状态", "HP", "MP"], rows,
             widths={0: 40, 1: 40, 3: 45, 4: 55, 5: 70, 6: 70},
             stretch_col=2)
         self.clear_detail()
@@ -79,7 +80,7 @@ class CharTab(BookTabBase):
         f = rec['fields']
         self.clear_detail()
 
-        # 头部: 头像 + 名称/等级, 人物历史紧贴头像下方 (方便阅读)
+        # 头部: 头像 + 名称/等级 + 核心属性
         header = QFrame()
         header.setObjectName("PreviewFrame")
         hv = QVBoxLayout(header)
@@ -97,81 +98,129 @@ class CharTab(BookTabBase):
             portrait_lbl.setText("(无头像)")
         top_row.addWidget(portrait_lbl, 0, Qt.AlignTop)
         name_box = QVBoxLayout()
+        name_box.setSpacing(4)
         name_lbl = QLabel(self.data.char_name(rec))
         name_lbl.setProperty("class", "PreviewName")
         name_box.addWidget(name_lbl)
-        meta_lbl = QLabel(f"等级 {f[2]}    升级所需经验 {f[4]}    记录 #{rec['index']}")
-        meta_lbl.setProperty("class", "PreviewMeta")
-        name_box.addWidget(meta_lbl)
+        # 核心属性 (7列, 紧贴姓名下方)
+        stat_pairs = [
+            ("等级", str(f[2])), ("生命", f"{f[5]}/{f[8]}"), ("内力", f"{f[6]}/{f[10]}"),
+            ("经验", str(f[4])), ("升级", str(f[7])),
+            ("攻击", str(f[12])), ("防御", str(f[14])),
+            ("命中", str(f[16])), ("闪避", str(f[18])),
+            ("速度", str(f[20])), ("幸运", str(f[22])),
+            ("悟性", str(f[26])), ("移动", str(f[24])),
+            ("技能点数", str(f[31])),
+        ]
+        stat_grid = QGridLayout()
+        stat_grid.setHorizontalSpacing(10)
+        stat_grid.setVerticalSpacing(4)
+        cols = 7
+        for i, (label, val) in enumerate(stat_pairs):
+            r, c = divmod(i, cols)
+            lbl = QLabel(label)
+            lbl.setProperty("class", "PropLabel")
+            val_lbl = QLabel(val)
+            cell = QHBoxLayout()
+            cell.setSpacing(4)
+            cell.addWidget(lbl)
+            cell.addWidget(val_lbl, 1)
+            stat_grid.addLayout(cell, r, c)
+        for c in range(cols):
+            stat_grid.setColumnStretch(c, 1)
+        name_box.addLayout(stat_grid)
         name_box.addStretch()
         top_row.addLayout(name_box, 1)
         hv.addLayout(top_row)
+        # 人物说明 (去除原数据换行, 单行流式)
         history = self.data.char_history(rec)
         if history:
-            hist_lbl = QLabel(history)
+            hist_lbl = QLabel(" ".join(history.split()))
             hist_lbl.setProperty("class", "PreviewDesc")
             hist_lbl.setWordWrap(True)
+            hist_lbl.setAlignment(Qt.AlignLeft | Qt.AlignTop)
             hist_lbl.setTextInteractionFlags(Qt.TextSelectableByMouse)
             hv.addWidget(hist_lbl)
         self.detail_layout.addWidget(header)
 
-        # 核心属性
-        body = self.add_group("核心属性")
-        pairs = [
-            ("生命", f"{f[5]} / {f[8]}"),
-            ("内力", f"{f[6]} / {f[10]}"),
-        ]
-        for label, base_i, cur_i in STAT_DEFS:
-            base, cur = f[base_i], f[cur_i]
-            pairs.append((label, f"{cur}" if cur == base else f"{cur} (基础 {base})"))
-        for label, fi in CHAR_ATTR_DEFS:
-            pairs.append((label, str(f[fi])))
-        self.add_kv_grid(body, pairs, cols=3)
-
-        # 装备物品
+        # 装备物品 (参考warpc_editor: 独立分组, 6列等宽, 标签在上值在下, 值自动换行, 末2列空白占位保列宽)
         body = self.add_group("装备物品")
-        equips = []
+        equip_grid = QGridLayout()
+        equip_grid.setHorizontalSpacing(8)
+        equip_grid.setVerticalSpacing(4)
         for slot, fi in enumerate(EQUIP_ID_IDX):
             iid = f[fi]
-            if iid <= 0:
-                continue
-            name = self.data.item_name_by_id(iid) or f"物品ID#{iid}"
-            equips.append((f"装备{slot + 1}", name))
-        if equips:
-            self.add_kv_grid(body, equips, cols=2)
-        else:
-            self.add_text_block(body, "(无装备)", "StatusHint")
+            cell_w = QWidget()
+            cell_w.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+            cell = QVBoxLayout(cell_w)
+            cell.setContentsMargins(0, 0, 0, 0)
+            cell.setSpacing(2)
+            lbl = QLabel(f"装备{slot + 1}")
+            lbl.setProperty("class", "PropLabel")
+            cell.addWidget(lbl)
+            if iid > 0:
+                name = self.data.item_name_by_id(iid) or f"物品ID#{iid}"
+                val_lbl = QLabel(name)
+                val_lbl.setProperty("class", "ExtraPreviewText")
+            else:
+                val_lbl = QLabel("(未装备)")
+                val_lbl.setProperty("class", "StatusHint")
+            val_lbl.setWordWrap(True)
+            val_lbl.setTextInteractionFlags(Qt.TextSelectableByMouse)
+            cell.addWidget(val_lbl, 1)
+            equip_grid.addWidget(cell_w, 0, slot, Qt.AlignTop)
+        # 末2列空白占位, 防止列宽不均 (同warpc_editor _build_section)
+        for c in range(len(EQUIP_ID_IDX), 6):
+            spacer = QWidget()
+            equip_grid.addWidget(spacer, 0, c)
+        for c in range(6):
+            equip_grid.setColumnStretch(c, 1)
+        body.addLayout(equip_grid)
 
-        # 装备技能
+        # 装备技能 (参考warpc_editor: 独立分组, 6列等宽, 标签在上值在下, 值自动换行)
         body = self.add_group("装备技能")
-        skills = []
-        for slot, fi in enumerate(EQUIP_SKILL_IDX):
+        skill_grid = QGridLayout()
+        skill_grid.setHorizontalSpacing(8)
+        skill_grid.setVerticalSpacing(4)
+        all_slots = [(f"技能{i+1}", fi) for i, fi in enumerate(EQUIP_SKILL_IDX)]
+        all_slots += [(f"被动{i+1}", fi) for i, fi in enumerate(PASSIVE_SKILL_IDX)]
+        for slot, (label, fi) in enumerate(all_slots):
             sid = f[fi]
+            cell_w = QWidget()
+            cell_w.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+            cell = QVBoxLayout(cell_w)
+            cell.setContentsMargins(0, 0, 0, 0)
+            cell.setSpacing(2)
+            lbl = QLabel(label)
+            lbl.setProperty("class", "PropLabel")
+            cell.addWidget(lbl)
             if sid > 0:
-                skills.append((f"技能{slot + 1}", self._skill_label(sid)))
-        for slot, fi in enumerate(PASSIVE_SKILL_IDX):
-            sid = f[fi]
-            if sid > 0:
-                skills.append((f"被动{slot + 1}", self._skill_label(sid)))
-        if skills:
-            self.add_kv_grid(body, skills, cols=2)
-        else:
-            self.add_text_block(body, "(无装备技能)", "StatusHint")
+                val_lbl = QLabel(self._skill_label(sid))
+                val_lbl.setProperty("class", "ExtraPreviewText")
+            else:
+                val_lbl = QLabel("(未装备)")
+                val_lbl.setProperty("class", "StatusHint")
+            val_lbl.setWordWrap(True)
+            val_lbl.setTextInteractionFlags(Qt.TextSelectableByMouse)
+            cell.addWidget(val_lbl, 1)
+            skill_grid.addWidget(cell_w, 0, slot, Qt.AlignTop)
+        for c in range(6):
+            skill_grid.setColumnStretch(c, 1)
+        body.addLayout(skill_grid)
 
-        # 入队信息 (扫描 TKD 脚本 TeamMember 命令 + 前置条件)
+        # 入队信息
         body = self.add_group("入队信息")
         self._build_join_info(body, rec)
 
-        # 可学习技能 — 按技能类型 (指令/主动/被动/移动) 分标签页
-        # 角落区: [拓扑图复选框] [学习状态下拉框]; 勾选拓扑图则内容由列表切换为拓扑图
+        # 可学习技能
         states_all = self._learn_states(f)
-        body = self.add_group("可学习技能")
+        body = self.add_group("可学习技能", stretch=1)
         if states_all:
             states = self._filter_by_state(states_all)
             builder = self._build_learn_graph if self._graph_mode else self._build_learn_list
             tabs = self._build_type_tabs(self._states_by_type(states), builder)
             self._attach_corner(tabs)
-            body.addWidget(tabs)
+            body.addWidget(tabs, 1)
         else:
             self.add_text_block(body, "(无已掌握或可学习的技能)", "StatusHint")
 
@@ -351,28 +400,36 @@ class CharTab(BookTabBase):
         return states
 
     def _build_learn_list(self, states):
-        """可学习技能纯列表: 每个状态>0 的技能一行, 显示名称/类型/状态 (不挂子节点)"""
+        """可学习技能纯列表: 每个状态>0 的技能一行, 显示名称/类型/状态"""
         if not states:
             return None
 
         skill_by_idx = {r['index']: r for r in self.data.skill_recs}
-        tree = QTreeWidget()
-        tree.setProperty("class", "CompactTree")  # 公共紧凑树样式 (同 mat_editor 场景列表)
-        tree.setHeaderLabels(["技能", "类型", "状态"])
-        tree.setColumnWidth(0, 220)
-        tree.setColumnWidth(1, 80)
-        tree.setRootIsDecorated(False)   # 纯列表: 无展开箭头/子节点缩进
+        items = [(si, skill_by_idx.get(si)) for si in sorted(states)]
+        n = len(items)
 
-        for si in sorted(states):
-            rec = skill_by_idx.get(si)
+        table = QTableWidget(n, 3)
+        table.setHorizontalHeaderLabels(["技能", "类型", "状态"])
+        table.verticalHeader().setVisible(False)
+        table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        table.setSelectionMode(QAbstractItemView.SingleSelection)
+
+        header = table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.Stretch)
+        header.setSectionResizeMode(1, QHeaderView.Fixed)
+        header.setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        table.setColumnWidth(1, 80)
+
+        for row, (si, rec) in enumerate(items):
             name = self.data.skill_name(si) or f"技能#{si}"
             tname = SKILL_TYPES.get(rec['vals'][2], "") if rec else ""
-            tree.addTopLevelItem(
-                QTreeWidgetItem([name, tname, self._learn_state_text(states[si])]))
+            state_text = self._learn_state_text(states[si])
+            for col, txt in enumerate((name, tname, state_text)):
+                it = QTableWidgetItem(txt)
+                it.setFlags(it.flags() & ~Qt.ItemIsEditable)
+                table.setItem(row, col, it)
 
-        # 高度自适应内容 (在滚动区内展开显示, 避免嵌套滚动过深)
-        row_h = tree.sizeHintForRow(0) if tree.topLevelItemCount() else 20
-        n = tree.topLevelItemCount()
-        tree.setFixedHeight(max(80, min(600, row_h * (n + 2))))
-        tree.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        return tree
+        # 垂直扩展填满可用空间 (最大化窗口时表格随之变高)
+        table.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        return table
