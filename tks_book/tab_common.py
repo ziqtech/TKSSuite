@@ -180,7 +180,7 @@ class BookTabBase(QWidget):
         bl = QVBoxLayout(body)
         bl.setContentsMargins(8, 8, 8, 8)
         bl.setSpacing(4)
-        gl.addWidget(body, 1)
+        gl.addWidget(body, 1 if stretch else 0)
         self.detail_layout.addWidget(group_w, stretch)
         return bl
 
