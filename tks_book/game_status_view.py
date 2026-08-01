@@ -32,9 +32,12 @@
   sub_417F0C — 翻页箭头: 帧21(x,y) / 帧22(x+20,y+5)
   sub_454D90 — 半透明混合公式 dst*(32-a)/32 + src*a/32 (alpha 10/13/15)
 资源: mb.gxp (JGXP 头 + LZSS + RGB565 全屏 640×480), Mu.JVG (帧偏移 x_off/y_off),
-      PFace.jvg (主角自定义头像, f[1]==0 时替代 Mu 帧),
+      PFace.jvg (主角自定义头像, 受全局 USE_PFACE 开关控制, 默认不使用),
       TitleMenu.gxp (标题界面背景), Cur.JVG (标题按钮高亮帧 116-118)。
-头像帧规则 (含 tks_launcher 补丁): f[261] 非零 → 帧 f[261]; 否则 f[1]+211。
+头像帧规则 (含 tks_launcher 补丁): f[261] 非零 → 帧 f[261]; 否则 f[1]+211;
+      f[1]==0 时: USE_PFACE=True → PFace 帧 0, 默认(False) → Mu 帧 211。
+      左侧列表头像受 USE_TABCHAR_PORTRAIT 全局开关控制 (默认 True):
+      True → tab_char 逻辑取值 Fa.JVG 帧 f[1]*2 (70×70, 保持尺寸); False → 原游戏逻辑。
 """
 import struct
 import time
@@ -56,6 +59,33 @@ from game_audio import GameAudio
 from jinc2_shader import resize_jinc2_sharp
 
 GAME_W, GAME_H = 640, 480
+
+# 全局设置: 是否使用 PFace.jvg 作为主角自定义头像 (f[1]==0 时)
+#   默认 False (不使用): f[1]==0 → Mu 帧 211
+#   True: f[1]==0 → PFace 帧 0 (存在时), 兜底 Mu 帧 211 (游戏原版行为)
+# 可用 set_use_pface() 运行时切换
+USE_PFACE = False
+
+
+def set_use_pface(flag):
+    """运行时切换 PFace 使用开关 (True=使用 PFace 帧0, False=用 Mu 帧211)"""
+    global USE_PFACE
+    USE_PFACE = bool(flag)
+
+
+# 全局设置: 游戏界面复刻左侧队伍列表头像是否按 tab_char 人物表格逻辑取值
+#   默认 True: Fa.JVG 帧 f[1]*2 (70×70 大头像, 保持原头像尺寸)
+#   False: 原游戏逻辑 (f[261] 非零 → Mu 帧 f[261]; f[1] → Mu 帧 f[1]+211;
+#           f[1]==0 → PFace 帧0 / Mu 帧211)
+# 可用 set_use_tabchar_portrait() 运行时切换
+USE_TABCHAR_PORTRAIT = True
+
+
+def set_use_tabchar_portrait(flag):
+    """运行时切换左侧列表头像取值逻辑 (True=tab_char 逻辑 Fa.JVG f[1]*2,
+    False=原游戏逻辑 Mu 帧)"""
+    global USE_TABCHAR_PORTRAIT
+    USE_TABCHAR_PORTRAIT = bool(flag)
 
 # 游戏文字调色板 (sub_451FA0 权威定义, 32 色; sub_451F08 存储为 RGB565 → 显示时量化)
 def _c565(r, g, b):
@@ -317,13 +347,16 @@ class GameStatusView(QWidget):
 
         游戏: 第一行 word_755C78/7A → sub_44AC90/44ACE8/44AD18 (BGM, 图鉴 _se_*)
               第二行 word_755C74/76 → dword_A2C228/sub_451DF8 (音效, 图鉴 _bgm_*)
+        BGM 仅在标题界面播放 (游戏 sub_412BE8: 标题循环里 sub_44AC50+44AC90
+        播 0000.mp3; 主菜单/存档页不启动 BGM)。
         """
         a = self._audio()
         a.set_bgm_enabled(self._se_on)
         a.set_bgm_volume(self._se_vol)
         a.set_sfx_enabled(self._bgm_on)
         a.set_sfx_volume(self._bgm_vol)
-        a.start_bgm()
+        if self._title_mode:
+            a.start_bgm()
 
     def view_state(self):
         """页面/子页签状态快照 (角色切换重建视图时由 CharTab 保持)"""
@@ -643,15 +676,43 @@ class GameStatusView(QWidget):
             return 16
         return 19 if cur >= mx / 2 else 18
 
+    def _fa_pix(self, idx):
+        """Fa.JVG 帧 → (QPixmap, 0, 0) (tab_char 人物表格头像逻辑, 帧偏移均为 0)"""
+        c = self._cache()
+        if 'fa_pix' not in c:
+            c['fa_pix'] = {}
+        if idx not in c['fa_pix']:
+            sprites = getattr(self.data, 'fa_sprites', []) or []
+            entry = None
+            if 0 <= idx < len(sprites) and sprites[idx] is not None:
+                pix = pil_to_qpixmap(sprites[idx])
+                if pix:
+                    entry = (pix, 0, 0)
+            c['fa_pix'][idx] = entry
+        return c['fa_pix'].get(idx)
+
     def _portrait_pix(self, f):
-        """头像帧: f[261] 非零 → Mu 帧 f[261]; f[1] 非零 → Mu 帧 f[1]+211;
-        否则 PFace 帧 0 (存在时), 兜底 Mu 帧 211"""
+        """左侧队伍列表头像帧。
+
+        USE_TABCHAR_PORTRAIT=True (默认): 按 tab_char 人物表格逻辑取值,
+            但保持原头像尺寸 — Fa.JVG 帧 f[1]*2 (70×70 大头像, 与 Mu 帧尺寸一致)。
+        False: 原游戏逻辑 — f[261] 非零 → Mu 帧 f[261];
+            f[1] 非零 → Mu 帧 f[1]+211; f[1]==0 → (USE_PFACE 时 PFace 帧 0) / Mu 帧 211。
+        """
+        if USE_TABCHAR_PORTRAIT:
+            entry = self._fa_pix(f[1] * 2)
+            if entry:
+                return entry
+            # Fa.JVG 缺失/越界时兜底原游戏逻辑
         if len(f) > 261 and f[261] > 0:
             return self._mu_pix(f[261])
         if f[1]:
             return self._mu_pix(f[1] + 211)
-        entry = self._pface_pix(0)
-        return entry if entry else self._mu_pix(211)
+        if USE_PFACE:
+            entry = self._pface_pix(0)
+            if entry:
+                return entry
+        return self._mu_pix(211)
 
     # ── 静态底图 (跨角色复用): 背景 + 页签 + 面板 + 固定标签 ──
 
@@ -1865,6 +1926,8 @@ class GameStatusView(QWidget):
             self._sfx(1)          # 游戏 sub_41FAAC: 离开点击
             self._title_mode = True
             self._title_hover = 0
+            # 进入标题界面 → 播放 BGM (游戏 sub_412BE8: sub_44AC50+44AC90 播 0000.mp3)
+            self._audio().start_bgm()
             self._refresh()
             return
 
@@ -1882,11 +1945,15 @@ class GameStatusView(QWidget):
                 self._sfx(8)      # 游戏 sub_426004: 标题三按钮点击
                 if i == 1:
                     # 新的游戏 → 回主菜单 (游戏: sub_412688 进入游戏主流程)
+                    # 离开标题界面 → 停止 BGM (主菜单不播, 对齐用户需求)
+                    self._audio().stop_bgm()
                     self._title_mode = False
                     self._title_hover = 0
                     self._refresh()
                 elif i == 2:
                     # 继续游戏 → 存档页 (读档模式, sub_426004 L33-42)
+                    # 离开标题界面 → 停止 BGM (存档页不播)
+                    self._audio().stop_bgm()
                     self._save_mode = 2
                     self._save_page = 0
                     self._save_hover = 0
@@ -1965,6 +2032,9 @@ class GameStatusView(QWidget):
                         self._save_page = 0
                         self._save_hover = 0
                         self._title_hover = 0
+                        # 回标题界面 → 恢复 BGM (标题界面专属播放)
+                        if self._title_mode:
+                            self._audio().start_bgm()
                         self._refresh()
                     else:
                         # 存档/读档按钮 x=452-515: 图鉴只读无实际效果,

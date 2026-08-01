@@ -142,14 +142,12 @@ class GameAudio(QObject):
             self._bgm.stop()
 
     def set_bgm_enabled(self, on):
-        """第一行 (BGM) 开关 (word_755C78): 开→sub_44AC90 播放, 关→sub_44ACE8 停止"""
+        """第一行 (BGM) 开关 (word_755C78): 仅记录状态。
+
+        播放由 start_bgm 触发 (标题界面进入时, 对齐 sub_412BE8); 关闭时停止。
+        """
         self._bgm_on = bool(on)
-        if self._bgm is None:
-            return
-        if on:
-            if self._bgm.playbackState() != QMediaPlayer.PlaybackState.PlayingState:
-                self._bgm.play()
-        else:
+        if not on and self._bgm is not None:
             self._bgm.stop()
 
     def set_bgm_volume(self, vol):
