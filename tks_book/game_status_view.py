@@ -53,6 +53,7 @@ from book_loader import (
 )
 from game_font import load_game_font
 from game_audio import GameAudio
+from jinc2_shader import resize_jinc2_sharp
 
 GAME_W, GAME_H = 640, 480
 
@@ -219,6 +220,8 @@ class GameStatusView(QWidget):
         self._font = QFont("SimSun")
         self._font.setPixelSize(24)
         self._scale = 1.0        # 显示缩放 (1.0=640×480 原始尺寸)
+        self._scaled_pixmap = None   # 缓存的 jinc2-sharp 缩放结果 QPixmap
+        self._scaled_dirty = True    # 缩放缓存失效标志
         self.setCursor(Qt.PointingHandCursor)
         self.setMouseTracking(True)   # 物品页选中跟随鼠标 (mouseMoveEvent 无需按键)
 
@@ -275,6 +278,7 @@ class GameStatusView(QWidget):
             return
         self._scale = scale
         self.setFixedSize(int(GAME_W * scale), int(GAME_H * scale))
+        self._scaled_dirty = True   # 缩放比变更 → 缓存失效
         self.update()
 
     def scale_factor(self):
@@ -363,6 +367,7 @@ class GameStatusView(QWidget):
 
     def _refresh(self):
         self._rebuild()
+        self._scaled_dirty = True   # 源图变更 → 缩放缓存失效
         self.update()
 
     # ── 资源 ──
@@ -1375,16 +1380,60 @@ class GameStatusView(QWidget):
 
     def paintEvent(self, event):
         p = QPainter(self)
-        if self._image is not None:
-            if self._scale != 1.0:
-                p.setRenderHint(QPainter.SmoothPixmapTransform)
-                p.scale(self._scale, self._scale)
-            p.drawPixmap(0, 0, self._image)
-        else:
+        if self._image is None:
             p.fillRect(self.rect(), QColor(24, 24, 28))
             p.setPen(QColor(160, 160, 160))
             p.drawText(self.rect(), Qt.AlignCenter,
                        "缺少 mb.gxp / Mu.JVG, 无法渲染游戏界面")
+            return
+
+        # scale=1.0: 直接绘制原始 640×480 图 (无需缩放)
+        if self._scale == 1.0:
+            p.drawPixmap(0, 0, self._image)
+            return
+
+        # scale≠1.0: 使用 jinc2-sharp 缩放 (缓存)
+        if self._scaled_dirty:
+            self._rebuild_scaled_pixmap()
+        if self._scaled_pixmap is not None:
+            p.drawPixmap(0, 0, self._scaled_pixmap)
+        else:
+            # 缩放失败回退: QPainter 平滑缩放
+            p.setRenderHint(QPainter.SmoothPixmapTransform)
+            p.scale(self._scale, self._scale)
+            p.drawPixmap(0, 0, self._image)
+
+    def _rebuild_scaled_pixmap(self):
+        """将 _image (640×480) 用 jinc2-sharp 缩放到当前 _scale 尺寸"""
+        self._scaled_dirty = False
+        if self._image is None:
+            self._scaled_pixmap = None
+            return
+        out_w = int(GAME_W * self._scale)
+        out_h = int(GAME_H * self._scale)
+        try:
+            from PIL import Image as PILImage
+            # QPixmap → PIL Image (注意 stride 可能 ≠ w*4)
+            qimg = self._image.toImage().convertToFormat(QImage.Format_RGBA8888)
+            w, h = qimg.width(), qimg.height()
+            stride = qimg.bytesPerLine()
+            raw = bytes(qimg.bits()[:qimg.sizeInBytes()])
+            if stride == w * 4:
+                pil_img = PILImage.frombytes('RGBA', (w, h), raw)
+            else:
+                # 去除 stride 填充字节
+                rows = [raw[i * stride:(i * stride) + w * 4] for i in range(h)]
+                pil_img = PILImage.frombytes('RGBA', (w, h), b''.join(rows))
+            pil_img = pil_img.convert('RGB')
+            # jinc2-sharp 缩放
+            pil_scaled = resize_jinc2_sharp(pil_img, out_w, out_h)
+            # PIL Image → QPixmap
+            pil_rgba = pil_scaled.convert('RGBA')
+            data = pil_rgba.tobytes('raw', 'RGBA')
+            qimg2 = QImage(data, out_w, out_h, QImage.Format_RGBA8888)
+            self._scaled_pixmap = QPixmap.fromImage(qimg2.copy())
+        except Exception:
+            self._scaled_pixmap = None
 
     def mousePressEvent(self, event):
         pos = self._game_pos(event.position().toPoint())
