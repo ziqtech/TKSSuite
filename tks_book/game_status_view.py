@@ -38,6 +38,9 @@
       f[1]==0 时: USE_PFACE=True → PFace 帧 0, 默认(False) → Mu 帧 211。
       左侧列表头像受 USE_TABCHAR_PORTRAIT 全局开关控制 (默认 True):
       True → tab_char 逻辑取值 Fa.JVG 帧 f[1]*2 (70×70, 保持尺寸); False → 原游戏逻辑。
+      存档/读档界面头像受 USE_SAVE_PORTRAIT 全局开关控制 (默认 True):
+      True → 按队伍头像逻辑取值 _portrait_pix (受 USE_TABCHAR_PORTRAIT 控制);
+      False → 原游戏逻辑 Mu 帧 cid+211 (cid 为存档 team_ids 中的 warpc 索引)。
 """
 import struct
 import time
@@ -86,6 +89,21 @@ def set_use_tabchar_portrait(flag):
     False=原游戏逻辑 Mu 帧)"""
     global USE_TABCHAR_PORTRAIT
     USE_TABCHAR_PORTRAIT = bool(flag)
+
+
+# 全局设置: 存档/读档界面人物头像是否按队伍头像逻辑取值
+#   默认 True: 按 _portrait_pix 取值 (受 USE_TABCHAR_PORTRAIT 控制,
+#       True→Fa.JVG 帧 f[1]*2; False→原游戏逻辑 Mu 帧)
+#   False: 原存档页逻辑 — Mu 帧 cid+211 (cid 为存档 team_ids 中的 warpc 索引)
+# 可用 set_use_save_portrait() 运行时切换
+USE_SAVE_PORTRAIT = True
+
+
+def set_use_save_portrait(flag):
+    """运行时切换存档/读档界面头像取值逻辑 (True=队伍头像逻辑 _portrait_pix,
+    False=原游戏逻辑 Mu 帧 cid+211)"""
+    global USE_SAVE_PORTRAIT
+    USE_SAVE_PORTRAIT = bool(flag)
 
 # 游戏文字调色板 (sub_451FA0 权威定义, 32 色; sub_451F08 存储为 RGB565 → 显示时量化)
 def _c565(r, g, b):
@@ -1361,8 +1379,19 @@ class GameStatusView(QWidget):
                     cid = team_ids[v]
                     if cid < 0:
                         break  # 空位, 停止绘制后续头像
-                    # 帧号 = charID + 211 (sub_41AB94 L35)
-                    self._blit(p, self._mu_pix(cid + 211), 71 * v + 16, yb + 46)
+                    # USE_SAVE_PORTRAIT=True (默认): 按队伍头像逻辑取值
+                    #   (_portrait_pix, 受 USE_TABCHAR_PORTRAIT 控制:
+                    #    True→Fa.JVG 帧 f[1]*2; False→原游戏逻辑 Mu 帧)
+                    # USE_SAVE_PORTRAIT=False: 原存档页逻辑 Mu 帧 cid+211
+                    if USE_SAVE_PORTRAIT:
+                        rec = self._rec_by_idx.get(cid)
+                        entry = self._portrait_pix(rec['fields']) if rec else None
+                        if entry is None:
+                            entry = self._mu_pix(cid + 211)
+                    else:
+                        # 帧号 = charID + 211 (sub_41AB94 L35)
+                        entry = self._mu_pix(cid + 211)
+                    self._blit(p, entry, 71 * v + 16, yb + 46)
                     # 等级 "Lv %2d" @ (71*v+16, yb+110) 色20 (sub_41AB94 L43-45)
                     self._text(p, 71 * v + 16, yb + 110, f"Lv {team_levels[v]:2d}", 20)
                 # 日期/时间 (sub_41AB94 L58-63): localtime → strftime
