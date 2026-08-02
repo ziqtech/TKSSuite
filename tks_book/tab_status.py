@@ -196,6 +196,7 @@ class StatusTab(BookTabBase):
     def _find_causes(self, status_idx):
         """扫描全部角色/物品的导致状态掩码, 返回 [(来源类型, 名称, sprite_idx?)]"""
         causes = []
+        seen = set()
         bit_lo = 1 << status_idx if status_idx < 16 else 0
         bit_hi = 1 << (status_idx - 16) if status_idx >= 16 else 0
         # 角色: WarPC f[67]=mask_lo, f[68]=mask_hi (攻击附加状态)
@@ -203,7 +204,10 @@ class StatusTab(BookTabBase):
             f = rec['fields']
             if (f[67] & 0xFFFF & bit_lo) or (f[68] & 0xFFFF & bit_hi):
                 name = self.data.char_name(rec) or f"角色#{rec['index']}"
-                causes.append(("角色", name, None))
+                key = ("角色", name, None)
+                if key not in seen:
+                    seen.add(key)
+                    causes.append(("角色", name, None))
         # 物品: vals[26]=cause_lo, vals[27]=cause_hi
         for rec in self.data.item_recs:
             vals = rec['vals']
@@ -211,12 +215,17 @@ class StatusTab(BookTabBase):
                 continue
             if (vals[26] & bit_lo) or (vals[27] & bit_hi):
                 name = tkt_first_line(self.data.tkt, vals[2]) or f"物品#{vals[0]}"
-                causes.append(("物品", name.strip(), vals[4]))
+                name = name.strip()
+                key = ("物品", name, vals[4])
+                if key not in seen:
+                    seen.add(key)
+                    causes.append(("物品", name, vals[4]))
         return causes
 
     def _find_cures(self, status_idx):
         """扫描全部物品/技能的解除状态掩码, 返回 [(来源类型, 名称, sprite_idx?)]"""
         cures = []
+        seen = set()
         bit_lo = 1 << status_idx if status_idx < 16 else 0
         bit_hi = 1 << (status_idx - 16) if status_idx >= 16 else 0
         # 物品: vals[28]=cure_lo, vals[29]=cure_hi
@@ -226,25 +235,37 @@ class StatusTab(BookTabBase):
                 continue
             if (vals[28] & bit_lo) or (vals[29] & bit_hi):
                 name = tkt_first_line(self.data.tkt, vals[2]) or f"物品#{vals[0]}"
-                cures.append(("物品", name.strip(), vals[4]))
+                name = name.strip()
+                key = ("物品", name, vals[4])
+                if key not in seen:
+                    seen.add(key)
+                    cures.append(("物品", name, vals[4]))
         # 技能: vals[34]=immunity_lo, vals[35]=immunity_hi (免疫=可解除)
         for rec in self.data.skill_recs:
             vals = rec['vals']
             if (vals[34] & bit_lo) or (vals[35] & bit_hi):
                 name = self.data.skill_name(rec['index']) or f"技能#{rec['index']}"
-                cures.append(("技能", name.strip(), None))
+                name = name.strip()
+                key = ("技能", name, None)
+                if key not in seen:
+                    seen.add(key)
+                    cures.append(("技能", name, None))
         return cures
 
     def _find_resists(self, status_idx):
         """扫描全部角色的状态抵抗, 返回 [(角色名, 抵抗%)] (仅>0)"""
         resists = []
+        seen = set()
         for rec in self.data.warpc_recs:
             name = self.data.char_name(rec)
             if not name:
                 continue
             val = get_packed_byte(rec['fields'], 51, status_idx)
             if val > 0:
-                resists.append((name, val))
+                key = (name, val)
+                if key not in seen:
+                    seen.add(key)
+                    resists.append((name, val))
         return resists
 
     # ── 辅助渲染 ──
