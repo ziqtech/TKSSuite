@@ -424,20 +424,37 @@ def _batch_quantize_subs_to_block(subs:List['Image.Image'],blk:'JVMBlock',
         n_px=len(rgb_bytes)//3
     pal_img=None
     n_colors=0
-    if n_px>0 and n_avail>0:
+    # 槽位充足时：新图量化后写入剩余槽位；槽位不足时：量化后最近色匹配到已有调色板，
+    # 避免像素退化为索引 0 导致整图变黑/变白
+    MIN_USABLE_SLOTS=16
+    slots_ok=n_avail>=MIN_USABLE_SLOTS
+    if n_px>0:
         strip=Image.frombytes('RGB',(n_px,1),bytes(rgb_bytes))
-        n_colors=min(n_avail,255)
+        n_colors=min(n_avail,255) if slots_ok else 255
         pal_img=strip.quantize(colors=n_colors,method=Image.Quantize.MEDIANCUT)
     slot_map=[]
     if pal_img is not None:
         raw_pal=pal_img.getpalette() or [0]*768
-        for pi in range(n_colors):
-            r=raw_pal[pi*3] if pi*3+2<len(raw_pal) else 0
-            g=raw_pal[pi*3+1] if pi*3+1<len(raw_pal) else 0
-            b=raw_pal[pi*3+2] if pi*3+2<len(raw_pal) else 0
-            blk_slot=available[pi]
-            blk.palette.entries[blk_slot]=((r>>3)<<11)|((g>>2)<<5)|(b>>3)
-            slot_map.append(blk_slot)
+        if slots_ok:
+            for pi in range(n_colors):
+                r=raw_pal[pi*3] if pi*3+2<len(raw_pal) else 0
+                g=raw_pal[pi*3+1] if pi*3+1<len(raw_pal) else 0
+                b=raw_pal[pi*3+2] if pi*3+2<len(raw_pal) else 0
+                blk_slot=available[pi]
+                blk.palette.entries[blk_slot]=((r>>3)<<11)|((g>>2)<<5)|(b>>3)
+                slot_map.append(blk_slot)
+        else:
+            # 槽位不足：不写 entries（保护旧帧颜色），量化色最近匹配到已有调色板
+            existing=blk.palette.to_rgb888()
+            for pi in range(n_colors):
+                r=raw_pal[pi*3] if pi*3+2<len(raw_pal) else 0
+                g=raw_pal[pi*3+1] if pi*3+1<len(raw_pal) else 0
+                b=raw_pal[pi*3+2] if pi*3+2<len(raw_pal) else 0
+                best,best_dist=0,1<<30
+                for bi in range(256):
+                    d=abs(r-existing[bi*3])+abs(g-existing[bi*3+1])+abs(b-existing[bi*3+2])
+                    if d<best_dist: best,best_dist=bi,d
+                slot_map.append(best)
     results=[]
     for s in subs:
         if s.mode!='RGBA': s_rgba=s.convert('RGBA')
