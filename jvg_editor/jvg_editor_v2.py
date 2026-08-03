@@ -1251,7 +1251,9 @@ class JVGEditor(QMainWindow):
         btn_help.setObjectName("dockToolButton")
         btn_help.setText("?")
         btn_help.setToolTip(
-            "BBOX裁剪：按 alpha 非透明区域裁剪新增图片并计算偏移（图中心对齐 0）\n\n"
+            "BBOX裁剪：按 alpha 非透明区域裁剪并计算偏移（图中心对齐 0）\n"
+            "　添加图片：裁剪透明边缘并计算偏移\n"
+            "　导入图集：bbox 模式（不勾选=精确匹配，按旧帧 offset 提取）\n\n"
             "自动重算色板：勾选后新增图片时新旧图片一起重新计算色板（新图精确，旧帧可能轻微调整）\n"
             "未勾选时，色板槽位不足则自动靠色（旧图不变，新图用旧图色板），不再弹窗\n\n"
             "槽位充足时始终自动增量分配颜色，无需处理")
@@ -2033,18 +2035,9 @@ class JVGEditor(QMainWindow):
         if not ok:
             return
 
-        # 导入模式选择 (仅替换分支需要)
-        use_bbox_mode = True  # 默认 bbox 模式
-        if not is_new_block:
-            mode_items = ["自适应 Bbox (外部图集)", "精确匹配 (本编辑器导出的图集)"]
-            mode_choice, ok = QInputDialog.getItem(self, "导入模式",
-                "选择导入模式:\n"
-                "· 自适应 Bbox — 用 alpha 通道自动检测精灵边界，适合外部图集\n"
-                "· 精确匹配 — 按旧帧 offset 精确提取，适合本编辑器导出的图集",
-                mode_items, 0, False)
-            if not ok:
-                return
-            use_bbox_mode = (mode_choice == mode_items[0])
+        # 导入模式跟随“BBOX裁剪”复选框：勾选=bbox 自适应，不勾选=精确匹配（不再弹窗）
+        # 注：新块模式无旧帧可参考，固定使用 bbox 逻辑
+        use_bbox_mode = self._chk_bbox.isChecked()
 
         if not is_new_block and cols * rows < n_valid:
             reply = QMessageBox.question(self, "容量不足",
