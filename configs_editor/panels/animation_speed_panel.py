@@ -1,6 +1,6 @@
 """
-AnimationSpeedPanel — 战斗动画播放速度配置面板
-编辑 animation_speed.json 中的 4 类动画速度参数。
+AnimationSpeedPanel — 动画/移动速度配置面板
+编辑 animation_speed.json 中的 4 类战斗动画速度 + 剧情地图移动速度参数。
 
 类型与有效范围 (与 patch_engine.py 中的验证一致):
 - status_animation.frame_delay_ms:        1~127  (状态动画, 6个函数硬编码 0x3C)
@@ -9,6 +9,7 @@ AnimationSpeedPanel — 战斗动画播放速度配置面板
 - attack_animation.extra_delay_decrement_ms: 1~128 (额外延迟衰减步长, add word[ebp-2Ah],-30)
 - move_animation.frame_delay_ms:          1~127  (移动动画, sub_43DE90 硬编码 0x3C)
 - idle_animation.frame_delay_ms:          1~127  (待机动画, sub_43CA64 战场主循环硬编码 0x3C)
+- map_movement.frame_delay_ms:            1~127  (剧情地图移动, sub_412BE8 地图主循环帧节流 0x3C)
 
 安全约束: extra_segment_delay_ms 必须能被 extra_delay_decrement_ms 整除
          (否则 v30 递减后变负, 无符号比较导致死循环卡死)
@@ -97,10 +98,23 @@ class AnimationSpeedPanel(ConfigPanelBase):
                     "原始值 60ms, 设为 30 可加速 2 倍")
         layout.addWidget(idle_group)
 
+        # ── 剧情地图移动 ──
+        map_group = QGroupBox("剧情地图移动速度 (sub_412BE8 地图主循环帧节流)")
+        map_layout = QFormLayout(map_group)
+        self._map_spin, self._map_slider, self._map_lbl = self._make_spin_slider(
+            map_layout, "每帧延迟",
+            spin_min=1, spin_max=127, default=ORIG_FRAME_DELAY, orig=ORIG_FRAME_DELAY,
+            tooltip="剧情地图主循环每帧延迟(毫秒), 范围 1~127\n"
+                    "控制主角在所有剧情地图(大地图/城镇/室内)中的移动速度\n"
+                    "原始值 60ms(约16.7帧/秒), 设为 30 移动加速 2 倍\n"
+                    "注意: 地图上的 NPC 行走/事件动画也会同步加速")
+        layout.addWidget(map_group)
+
         # ── 说明 ──
         tip_label = QLabel(
             "提示: 修改后需在启动器中勾选「战斗动画速度」补丁才会生效。\n"
             "所有值默认为游戏原始值 (60ms/120ms/30ms), 设小可加快动画播放。\n"
+            "剧情地图移动速度同理: 帧延迟设小, 主角行走越快。\n"
             "⚠ 攻击动画的「新段过渡延迟」必须能被「衰减步长」整除, 否则游戏会卡死。"
         )
         tip_label.setWordWrap(True)
@@ -228,6 +242,7 @@ class AnimationSpeedPanel(ConfigPanelBase):
         self._decr_spin.setValue(30)  # 60 % 30 == 0 ✓
         self._move_spin.setValue(30)
         self._idle_spin.setValue(30)
+        self._map_spin.setValue(30)
 
     def _apply_3x_speed(self):
         """3 倍速: 延迟除以 3, 确保整除约束"""
@@ -237,6 +252,7 @@ class AnimationSpeedPanel(ConfigPanelBase):
         self._decr_spin.setValue(60)  # 60 % 60 == 0 ✓
         self._move_spin.setValue(20)
         self._idle_spin.setValue(20)
+        self._map_spin.setValue(20)
 
     def _apply_max_speed(self):
         """极速: 所有延迟设为 10ms, 确保整除约束"""
@@ -246,6 +262,7 @@ class AnimationSpeedPanel(ConfigPanelBase):
         self._decr_spin.setValue(10)  # 10 % 10 == 0 ✓
         self._move_spin.setValue(10)
         self._idle_spin.setValue(10)
+        self._map_spin.setValue(10)
 
     def _reset_to_default(self):
         """重置为游戏原始值"""
@@ -255,6 +272,7 @@ class AnimationSpeedPanel(ConfigPanelBase):
         self._decr_spin.setValue(ORIG_DECREMENT)
         self._move_spin.setValue(ORIG_FRAME_DELAY)
         self._idle_spin.setValue(ORIG_FRAME_DELAY)
+        self._map_spin.setValue(ORIG_FRAME_DELAY)
 
     # ── 整除约束验证 ──
 
@@ -307,6 +325,12 @@ class AnimationSpeedPanel(ConfigPanelBase):
                         int(idle_cfg.get("frame_delay_ms", ORIG_FRAME_DELAY)),
                         ORIG_FRAME_DELAY)
 
+        # 剧情地图移动
+        map_cfg = data.get("map_movement", {})
+        self._set_value(self._map_spin, self._map_slider, self._map_lbl,
+                        int(map_cfg.get("frame_delay_ms", ORIG_FRAME_DELAY)),
+                        ORIG_FRAME_DELAY)
+
     def _set_value(self, spin, slider, lbl, value, orig, invert_multiplier=False):
         """统一设置 spinbox/slider/label 的值, 屏蔽信号避免触发 dirty"""
         spin.blockSignals(True)
@@ -336,6 +360,9 @@ class AnimationSpeedPanel(ConfigPanelBase):
             },
             "idle_animation": {
                 "frame_delay_ms": self._idle_spin.value()
+            },
+            "map_movement": {
+                "frame_delay_ms": self._map_spin.value()
             }
         }
 

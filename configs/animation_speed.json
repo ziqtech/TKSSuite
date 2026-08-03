@@ -1,23 +1,36 @@
 {
-  "_说明": "战斗动画播放速度配置 (支持状态/攻击(技能)/移动/待机 4类动画独立调整)",
-  "_背景": "游戏中角色身上有多个状态时,每回合开始会依次播放每个状态动画,动画耗时长导致战斗节奏慢。同时攻击/移动/待机动画也可独立加速",
+  "_说明": "动画/移动速度配置 (支持状态/攻击(技能)/移动/待机 4类战斗动画 + 剧情地图移动速度独立调整)",
+  "_背景": "游戏中角色身上有多个状态时,每回合开始会依次播放每个状态动画,动画耗时长导致战斗节奏慢。同时攻击/移动/待机动画也可独立加速; 剧情地图主角行走速度也可加速",
   "_类型说明": {
     "status_animation": "状态动画 (中毒/出血/恢复/死战等状态效果动画, 6个函数 sub_433690/sub_433A38/sub_43339C/sub_434188/sub_434D7C/sub_445564, 硬编码 0x3C=60ms)",
     "attack_animation": "攻击+技能动画 (Aa.JVG/TKAct.dat, sub_4434BC 人物动作主循环, 使用 v30+60 变量延迟。技能动画通过 sub_447DAC→sub_4458B0→sub_4434BC 调用, 因此与攻击共用同一帧延迟)",
     "move_animation": "移动动画 (Awk.JVG, sub_43DE90, 硬编码 0x3C=60ms)",
-    "idle_animation": "待机动画 (Awt.JVG, sub_43CA64 战场主循环帧率, 硬编码 0x3C=60ms。待机动画在战场主循环中持续播放)"
+    "idle_animation": "待机动画 (Awt.JVG, sub_43CA64 战场主循环帧率, 硬编码 0x3C=60ms。待机动画在战场主循环中持续播放)",
+    "map_movement": "剧情地图移动速度 (sub_412BE8 剧情地图主循环帧节流, 硬编码 0x3C=60ms/帧≈16.7fps。主角/实体按格移动每帧推进一次, 移动速度与帧率成正比; 减小帧延迟即加速主角在所有剧情地图中的移动, 同时地图上的 NPC/事件动画也同步加速)"
   },
   "_安全约束": {
     "frame_delay_ms": "范围 1~127 (jb 指令使用无符号比较, 值必须为正且 ≤127)",
     "extra_segment_delay_ms": "必须能被 extra_delay_decrement_ms 整除 (游戏用无符号比较, v30 变负会导致死循环卡死)"
   },
   "_示例_2倍速": {
-    "status_animation": { "frame_delay_ms": 30 },
-    "attack_animation": { "base_frame_delay_ms": 30, "extra_segment_delay_ms": 60, "extra_delay_decrement_ms": 30 },
-    "move_animation": { "frame_delay_ms": 30 },
-    "idle_animation": { "frame_delay_ms": 30 }
+    "status_animation": {
+      "frame_delay_ms": 30
+    },
+    "attack_animation": {
+      "base_frame_delay_ms": 30,
+      "extra_segment_delay_ms": 60,
+      "extra_delay_decrement_ms": 30
+    },
+    "move_animation": {
+      "frame_delay_ms": 30
+    },
+    "idle_animation": {
+      "frame_delay_ms": 30
+    },
+    "map_movement": {
+      "frame_delay_ms": 30
+    }
   },
-
   "status_animation": {
     "frame_delay_ms": 60
   },
@@ -31,5 +44,8 @@
   },
   "idle_animation": {
     "frame_delay_ms": 60
+  },
+  "map_movement": {
+    "frame_delay_ms": 12
   }
 }

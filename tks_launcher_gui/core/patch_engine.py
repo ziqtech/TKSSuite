@@ -1649,8 +1649,8 @@ def apply_font_config(defn: PatchDef, code_buf: bytearray, code_start_addr: int,
     return all_ok
 
 # ============================================================
-# 补丁类型: patch_animation_speed (战斗动画播放速度自定义)
-# 支持4类动画独立调整: 状态/攻击(技能)/移动/待机
+# 补丁类型: patch_animation_speed (动画/移动速度自定义)
+# 支持5类独立调整: 状态/攻击(技能)/移动/待机 战斗动画 + 剧情地图移动
 #
 # 逆向依据:
 # 1. 状态动画: 6个函数硬编码 0x3C (60ms)
@@ -1660,6 +1660,8 @@ def apply_font_config(defn: PatchDef, code_buf: bytearray, code_start_addr: int,
 # 3. 移动动画: sub_43DE90 硬编码 0x3C (60ms)
 # 4. 待机动画: sub_43CA64 战场主循环帧率, 硬编码 0x3C (60ms)
 #    (待机动画在战场主循环中持续播放)
+# 5. 剧情地图移动: sub_412BE8 剧情地图主循环帧节流, 硬编码 0x3C (60ms/帧≈16.7fps)
+#    实体更新(sub_409618)与渲染每帧节流一次, 主角按格移动, 速度与帧率成正比
 #
 # 通用 pattern: 2B C? 83 F8 3C (sub eax,reg; cmp eax, 0x3C)
 # 用函数地址范围过滤,只修改目标函数中的 0x3C
@@ -1847,6 +1849,62 @@ def _patch_attack_animation(cfg: dict, code_buf: bytearray, code_start_addr: int
     return all_ok
 
 
+def _patch_map_movement(cfg: dict, code_buf: bytearray, code_start_addr: int,
+                        h_proc: int, log_func) -> bool:
+    """修改 sub_412BE8 剧情地图主循环的帧节流常量 (主角地图移动速度)
+
+    剧情地图主循环以 GetTickCount 节流: 每帧等待 0x3C(60ms), 即地图模式约 16.7fps。
+    主角/实体按格移动, 每帧推进一次, 移动速度与帧率成正比 → 减小帧延迟即加速移动。
+
+    汇编形态 (sub_412BE8 @0x412E20, .text 段唯一命中):
+        call j_GetTickCount
+        mov  edx,[dword_4E7CD0]   ; 8B 15 D0 7C 4E 00
+        sub  eax,edx              ; 2B C2
+        cmp  eax,0x3C             ; 83 F8 3C
+        jb   rel32                ; 0F 82 (do-while 近跳回循环体顶部)
+
+    注意: 同函数内标题界面循环(0x412D4F)的节流为短跳转 jb rel8(72 EE),
+    以 0F 82 近跳转特征区分, 只改剧情地图循环, 不影响标题界面。
+    """
+    log = log_func
+    ORIG = 60
+
+    frame_delay = int(cfg.get("frame_delay_ms", ORIG))
+    if frame_delay == ORIG:
+        log(f"    map_movement: {frame_delay}ms (与原始一致, 跳过)")
+        return True
+
+    if not (1 <= frame_delay <= 127):
+        log(f"    [ERROR] map_movement frame_delay_ms={frame_delay} 超出 1~127")
+        return False
+
+    pat_str = "8B 15 D0 7C 4E 00 2B C2 83 F8 3C 0F 82"
+    pat, wc = parse_pattern(pat_str)
+    hits = pattern_scan(bytes(code_buf), pat, wc)
+    if len(hits) == 0:
+        log(f"    [WARN] map_movement: 特征码无匹配 (地图主循环已被 MOD 改写?), 跳过")
+        return True
+    if len(hits) != 1:
+        log(f"    [ERROR] map_movement: 匹配 {len(hits)} 处 (预期 1), 跳过")
+        return False
+
+    off = hits[0] + 10  # 0x3C 立即数字节偏移 (8B 15 xx4 / 2B C2 xx2 / 83 F8 [3C])
+    actual = code_buf[off]
+    if actual != ORIG:
+        log(f"    [WARN] map_movement: 偏移 0x{off:X} 处值=0x{actual:02X} (预期 0x3C), 跳过")
+        return False
+
+    new_byte = frame_delay & 0xFF
+    ha = code_start_addr + off
+    op = vp_ex(h_proc, ha, 1, PAGE_EXECUTE_READWRITE)
+    write_pm(h_proc, ha, bytes([new_byte]))
+    vp_ex(h_proc, ha, 1, op)
+    code_buf[off] = new_byte
+    log(f"    [OK] map_movement: {actual}ms -> {frame_delay}ms @RVA 0x{off:X} "
+        f"(地图速度 {ORIG / frame_delay:.1f}x)")
+    return True
+
+
 def apply_animation_speed(defn: PatchDef, code_buf: bytearray, code_start_addr: int,
                           h_proc: int, log_func=None) -> bool:
     log = log_func or (lambda x: None)
@@ -1904,6 +1962,14 @@ def apply_animation_speed(defn: PatchDef, code_buf: bytearray, code_start_addr: 
     if idle_delay != 60:
         all_ok &= _patch_frame_delay_3c(idle_delay, _IDLE_ANIM_FUNCS, code_buf,
                                           code_start_addr, h_proc, log, all_hits)
+
+    # 7. 剧情地图移动速度 (sub_412BE8 剧情地图主循环的 0x3C 帧节流)
+    map_cfg = cfg.get("map_movement", {})
+    if map_cfg:
+        map_delay = int(map_cfg.get("frame_delay_ms", 60))
+        log(f"  [剧情地图移动] frame_delay_ms={map_delay}")
+        all_ok &= _patch_map_movement(map_cfg, code_buf, code_start_addr,
+                                       h_proc, log)
 
     return all_ok
 
