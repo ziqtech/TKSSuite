@@ -161,7 +161,9 @@ def _decode_rle(data:bytes, w:int, h:int)->Tuple[bytes,bytes]:
         sk=struct.unpack("<H",data[pos:pos+2])[0]; rw=struct.unpack("<H",data[pos+2:pos+4])[0]; pos+=4
         px=data[pos:pos+min(rw,len(data)-pos)] if rw>0 else b""; pos+=len(px); recs.append((sk,rw,px))
     if not recs: return bytes(out),bytes(alpha)
-    simple=(recs[0][0]==0 and recs[0][1]==w and all(r[1]==w for r in recs))
+    # 快速路径仅当所有记录均为“无跳过、整行”时可用；
+    # 只要存在 skip>0 的记录（如整行透明产生的跨行跳过），必须走通用路径
+    simple=(recs[0][0]==0 and recs[0][1]==w and all(r[0]==0 and r[1]==w for r in recs))
     if simple:
         for ri,(_,rw,px) in enumerate(recs):
             if ri>=h: break
@@ -231,7 +233,8 @@ def _encode_rle_game(pixels:bytes,alpha:bytes,w:int,h:int,screen_w:int=SCREEN_W)
     pending=0
     first=True
     for row in range(h-1,-1,-1):
-        if not first: pending+=screen_w-w
+        # 行间补偿不能为负：宽 > screen_w 时按 0 处理（与 _decode_rle 的 gap=max(SCREEN_W-w,0) 对称）
+        if not first: pending+=max(screen_w-w,0)
         first=False; col=w-1
         while col>=0:
             t0=col
@@ -1374,15 +1377,15 @@ class JVGEditor(QMainWindow):
         shadow_row = QHBoxLayout()
         shadow_row.setContentsMargins(0, 0, 0, 0)
         shadow_row.setSpacing(4)
-        self._shadow_enable = QCheckBox("叠加阴影帧")
+        self._shadow_enable = QCheckBox("预览阴影帧")
         self._shadow_enable.setChecked(True)
         self._shadow_enable.stateChanged.connect(lambda *_: self._render_preview())
         self._shadow_fi = QSpinBox()
-        self._shadow_fi.setRange(0, 9999)
+        self._shadow_fi.setRange(1, 2)
         self._shadow_fi.setValue(1)
         self._shadow_fi.valueChanged.connect(lambda *_: self._render_preview())
         shadow_row.addWidget(self._shadow_enable)
-        shadow_row.addWidget(QLabel("图集帧#"))
+        shadow_row.addWidget(QLabel("阴影帧"))
         shadow_row.addWidget(self._shadow_fi)
         shadow_row.addStretch()
         self._shadow_row_widget = QWidget()
@@ -1870,26 +1873,6 @@ class JVGEditor(QMainWindow):
             self._refresh_view()
             self._dirty = True
 
-    def _ask_palette_strategy(self, n_avail: int, n_needed: int):
-        """新增图片所需颜色超过剩余槽位时询问处理方式；
-        返回 'match'=靠色处理, 'rebuild'=重新计算全部色板, None=取消"""
-        box = QMessageBox(self)
-        box.setWindowTitle("调色板槽位不足")
-        box.setIcon(QMessageBox.Warning)
-        box.setText(f"新增图片需要约 {n_needed} 种颜色，\n"
-                    f"但当前分组色板仅剩 {n_avail} 个可用槽位，无法精确分配。\n\n"
-                    f"靠色：旧图不变，新图采用旧图色板\n"
-                    f"重算：新图加旧图一起重新计算色板")
-        btn_match = box.addButton("靠色处理", QMessageBox.AcceptRole)
-        btn_rebuild = box.addButton("重算色板", QMessageBox.AcceptRole)
-        btn_cancel = box.addButton("取消", QMessageBox.RejectRole)
-        box.setDefaultButton(btn_match)
-        box.exec()
-        clicked = box.clickedButton()
-        if clicked is btn_cancel:
-            return None
-        return "rebuild" if clicked is btn_rebuild else "match"
-
     def _add_images(self):
         if not self.jvg or self._bi < 0:
             QMessageBox.information(self, "提示", "请先选择分组")
@@ -1970,12 +1953,13 @@ class JVGEditor(QMainWindow):
                         if i != self._sel_fi and f.width > 0 and f.height > 0]
         n_avail = _block_avail_slots(blk, keep_indices)
         n_needed = _subs_needed_colors([img])
-        mode = "auto"
-        if n_needed > n_avail:
-            # 新图需要颜色数超过剩余槽位：由用户决定靠色处理或全组重算色板
-            mode = self._ask_palette_strategy(n_avail, n_needed)
-            if mode is None:
-                return
+        # 色板策略：勾选自动重算 → 全组重算；否则槽位不足自动靠色（不弹窗）
+        if self._chk_rebuild.isChecked():
+            mode = "rebuild"
+        elif n_needed > n_avail:
+            mode = "match"
+        else:
+            mode = "auto"
         new_frames = _batch_quantize_subs_to_block([img], blk, keep_indices, mode=mode)
         if new_frames:
             new_f = new_frames[0]
@@ -2149,12 +2133,13 @@ class JVGEditor(QMainWindow):
         keep_indices = [i for i in range(len(blk.frames)) if i not in replace_set]
         n_avail = _block_avail_slots(blk, keep_indices)
         n_needed = _subs_needed_colors(subs)
-        mode = "auto"
-        if n_needed > n_avail:
-            # 新图需要颜色数超过剩余槽位：由用户决定靠色处理或全组重算色板
-            mode = self._ask_palette_strategy(n_avail, n_needed)
-            if mode is None:
-                return
+        # 色板策略：勾选自动重算 → 全组重算；否则槽位不足自动靠色（不弹窗）
+        if self._chk_rebuild.isChecked():
+            mode = "rebuild"
+        elif n_needed > n_avail:
+            mode = "match"
+        else:
+            mode = "auto"
         new_frames = _batch_quantize_subs_to_block(subs, blk, keep_indices, mode=mode)
 
         if is_new_block:
