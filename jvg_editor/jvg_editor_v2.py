@@ -393,9 +393,49 @@ def _remap_to_block_palette(f:JVGFrame,blk:JVMBlock):
         f.encoded_data,f.row_count=_encode_rle_game(f.pixels,alpha,f.width,f.height)
     f._palette=None
 
+MAX_PX=1_000_000
+
+def _subs_needed_colors(subs:List['Image.Image'])->int:
+    """统计新增图片经 255 色量化后实际需要的颜色数（用于判断剩余槽位是否够用）"""
+    rgb_bytes=bytearray()
+    for s in subs:
+        if s.mode!='RGBA': s_rgba=s.convert('RGBA')
+        else: s_rgba=s
+        a=s_rgba.getchannel('A').tobytes()
+        rgb=s_rgba.convert('RGB').tobytes()
+        for i,av in enumerate(a):
+            if av>=128: rgb_bytes+=rgb[i*3:i*3+3]
+    n_px=len(rgb_bytes)//3
+    if n_px==0: return 0
+    if n_px>MAX_PX:
+        step=(n_px+MAX_PX-1)//MAX_PX
+        sampled=bytearray()
+        for i in range(0,n_px,step):
+            sampled+=rgb_bytes[i*3:i*3+3]
+        rgb_bytes=sampled; n_px=len(rgb_bytes)//3
+    strip=Image.frombytes('RGB',(n_px,1),bytes(rgb_bytes))
+    pal=strip.quantize(colors=255,method=Image.Quantize.MEDIANCUT)
+    q=strip.quantize(palette=pal,dither=0)
+    return len(set(q.tobytes()))
+
+def _block_avail_slots(blk:'JVMBlock',keep_frame_indices:List[int])->int:
+    """统计保留帧占用的调色板槽位数，返回剩余可用槽位数（槽位 0 保留给透明像素）"""
+    used={0}
+    for ki in keep_frame_indices:
+        if 0<=ki<len(blk.frames):
+            kf=blk.frames[ki]
+            if kf.pixels:
+                for b in kf.pixels: used.add(b)
+    return 256-len(used)
+
 def _batch_quantize_subs_to_block(subs:List['Image.Image'],blk:'JVMBlock',
-                                   keep_frame_indices:List[int])->List['JVGFrame']:
+                                   keep_frame_indices:List[int],
+                                   mode:str="auto")->List['JVGFrame']:
+    # mode: auto=增量精确, match=靠色处理(最近色匹配已有调色板), rebuild=全组统一重量化
     if not subs: return []
+    if mode=="rebuild":
+        # 全分组统一重量化：旧帧+新图合并量化并 remap，新图颜色精确
+        return _rebuild_block_quantize(subs,blk,keep_frame_indices)
     used_by_kept={0}
     for ki in keep_frame_indices:
         if 0<=ki<len(blk.frames):
@@ -414,7 +454,6 @@ def _batch_quantize_subs_to_block(subs:List['Image.Image'],blk:'JVMBlock',
             if av>=128:
                 rgb_bytes+=rgb[i*3:i*3+3]
     n_px=len(rgb_bytes)//3
-    MAX_PX=1_000_000
     if n_px>MAX_PX:
         step=(n_px+MAX_PX-1)//MAX_PX
         sampled=bytearray()
@@ -424,18 +463,18 @@ def _batch_quantize_subs_to_block(subs:List['Image.Image'],blk:'JVMBlock',
         n_px=len(rgb_bytes)//3
     pal_img=None
     n_colors=0
-    # 槽位充足时：新图量化后写入剩余槽位；槽位不足时：量化后最近色匹配到已有调色板，
+    # auto+有剩余槽位：量化到剩余槽位数并写入（调用方已保证新图颜色数 <= 剩余槽位）；
+    # match 或无剩余槽位：量化 255 色后最近色匹配到已有调色板（不写 entries，保护旧帧颜色），
     # 避免像素退化为索引 0 导致整图变黑/变白
-    MIN_USABLE_SLOTS=16
-    slots_ok=n_avail>=MIN_USABLE_SLOTS
+    use_new_slots=(mode!="match") and n_avail>0
     if n_px>0:
         strip=Image.frombytes('RGB',(n_px,1),bytes(rgb_bytes))
-        n_colors=min(n_avail,255) if slots_ok else 255
+        n_colors=min(n_avail,255) if use_new_slots else 255
         pal_img=strip.quantize(colors=n_colors,method=Image.Quantize.MEDIANCUT)
     slot_map=[]
     if pal_img is not None:
         raw_pal=pal_img.getpalette() or [0]*768
-        if slots_ok:
+        if use_new_slots:
             for pi in range(n_colors):
                 r=raw_pal[pi*3] if pi*3+2<len(raw_pal) else 0
                 g=raw_pal[pi*3+1] if pi*3+1<len(raw_pal) else 0
@@ -444,7 +483,7 @@ def _batch_quantize_subs_to_block(subs:List['Image.Image'],blk:'JVMBlock',
                 blk.palette.entries[blk_slot]=((r>>3)<<11)|((g>>2)<<5)|(b>>3)
                 slot_map.append(blk_slot)
         else:
-            # 槽位不足：不写 entries（保护旧帧颜色），量化色最近匹配到已有调色板
+            # 靠色/无槽位：不写 entries（保护旧帧颜色），量化色最近匹配到已有调色板
             existing=blk.palette.to_rgb888()
             for pi in range(n_colors):
                 r=raw_pal[pi*3] if pi*3+2<len(raw_pal) else 0
@@ -478,6 +517,120 @@ def _batch_quantize_subs_to_block(subs:List['Image.Image'],blk:'JVMBlock',
         frame=JVGFrame()
         frame.width=w
         frame.height=h
+        frame.alpha=alpha
+        frame.pixels=bytes(pixels)
+        frame.encoded_data,frame.row_count=_encode_rle_game(frame.pixels,frame.alpha,w,h)
+        frame.x_max=(w-1 if w-1<32768 else w-1-65536)
+        frame.y_max=(h-1 if h-1<32768 else h-1-65536)
+        frame._palette=None
+        results.append(frame)
+    return results
+
+def _rebuild_block_quantize(subs:List['Image.Image'],blk:'JVMBlock',
+                             keep_frame_indices:List[int])->List['JVGFrame']:
+    """全分组统一重量化：旧帧+新图颜色合并量化到 255 色，旧帧精确优先 remap。
+
+    前提：keep_frame_indices 之外的帧会被调用方替换（像素失效），无需 remap。
+    entries[0] 保留原值，透明像素仍用索引 0；新帧像素索引 = 量化索引+1 (对应槽位 1..255)。"""
+    old_entries=blk.palette.entries[:]
+    old_rgb=bytearray(768)
+    for i,e in enumerate(old_entries):
+        r5,g6,b5=(e>>11)&0x1F,(e>>5)&0x3F,e&0x1F
+        old_rgb[i*3]=(r5<<3)|(r5>>2); old_rgb[i*3+1]=(g6<<2)|(g6>>4); old_rgb[i*3+2]=(b5<<3)|(b5>>2)
+    # ── 收集颜色样本（旧帧像素按出现次数加权 + 新图不透明像素）──
+    rgb_bytes=bytearray()
+    for ki in keep_frame_indices:
+        if not (0<=ki<len(blk.frames)): continue
+        kf=blk.frames[ki]
+        if not (kf.pixels and kf.width>0 and kf.height>0): continue
+        px=kf.pixels; al=kf.alpha
+        for i in range(len(px)):
+            if al and al[i]==0: continue
+            idx=px[i]
+            if idx<256: rgb_bytes+=old_rgb[idx*3:idx*3+3]
+    for s in subs:
+        if s.mode!='RGBA': s_rgba=s.convert('RGBA')
+        else: s_rgba=s
+        a=s_rgba.getchannel('A').tobytes()
+        rgb=s_rgba.convert('RGB').tobytes()
+        for i,av in enumerate(a):
+            if av>=128: rgb_bytes+=rgb[i*3:i*3+3]
+    n_px=len(rgb_bytes)//3
+    if n_px>MAX_PX:
+        step=(n_px+MAX_PX-1)//MAX_PX
+        sampled=bytearray()
+        for i in range(0,n_px,step):
+            sampled+=rgb_bytes[i*3:i*3+3]
+        rgb_bytes=sampled; n_px=len(rgb_bytes)//3
+    # ── 量化 255 色并写入 entries[1..255]（entries[0] 保留原值）──
+    pal_img=None
+    if n_px>0:
+        strip=Image.frombytes('RGB',(n_px,1),bytes(rgb_bytes))
+        pal_img=strip.quantize(colors=255,method=Image.Quantize.MEDIANCUT)
+    new_entries=old_entries[:]
+    if pal_img is not None:
+        raw_pal=pal_img.getpalette() or [0]*768
+        for pi in range(255):
+            r=raw_pal[pi*3] if pi*3+2<len(raw_pal) else 0
+            g=raw_pal[pi*3+1] if pi*3+1<len(raw_pal) else 0
+            b=raw_pal[pi*3+2] if pi*3+2<len(raw_pal) else 0
+            new_entries[pi+1]=((r>>3)<<11)|((g>>2)<<5)|(b>>3)
+    # ── 构建旧槽位 remap 表：精确匹配优先，否则最近色匹配 ──
+    def _rgb_of(entries,bi):
+        e=entries[bi]
+        r5,g6,b5=(e>>11)&0x1F,(e>>5)&0x3F,e&0x1F
+        return ((r5<<3)|(r5>>2),(g6<<2)|(g6>>4),(b5<<3)|(b5>>2))
+    new_rgb=[_rgb_of(new_entries,bi) for bi in range(256)]
+    remap=[0]*256
+    for old_idx in range(1,256):
+        rc=_rgb_of(old_entries,old_idx)
+        exact=None
+        for bi in range(1,256):
+            if new_rgb[bi]==rc: exact=bi; break
+        if exact is not None:
+            remap[old_idx]=exact
+            continue
+        best,best_dist=0,1<<30
+        for bi in range(1,256):
+            nr=new_rgb[bi]
+            d=abs(rc[0]-nr[0])+abs(rc[1]-nr[1])+abs(rc[2]-nr[2])
+            if d<best_dist: best,best_dist=bi,d
+        remap[old_idx]=best
+    # ── 写新调色板并 remap 旧帧（精确优先，零色差保留高频旧色）──
+    blk.palette.entries=new_entries
+    for ki in keep_frame_indices:
+        if not (0<=ki<len(blk.frames)): continue
+        kf=blk.frames[ki]
+        if not (kf.pixels and kf.width>0 and kf.height>0): continue
+        px=bytearray(kf.pixels)
+        for i in range(len(px)):
+            if px[i]!=0 and px[i]<256: px[i]=remap[px[i]]
+        kf.pixels=bytes(px)
+        alpha=kf.alpha if kf.alpha and len(kf.alpha)==kf.width*kf.height else bytes([255]*(kf.width*kf.height))
+        kf.encoded_data,kf.row_count=_encode_rle_game(kf.pixels,alpha,kf.width,kf.height)
+        kf._palette=None
+    # ── 新帧量化（索引+1 对齐槽位 1..255）──
+    results=[]
+    for s in subs:
+        if s.mode!='RGBA': s_rgba=s.convert('RGBA')
+        else: s_rgba=s
+        w,h=s_rgba.size
+        a_data=s_rgba.getchannel('A').tobytes()
+        alpha=bytes(255 if av>=128 else 0 for av in a_data)
+        if pal_img is not None:
+            rgb=s_rgba.convert('RGB')
+            q=rgb.quantize(palette=pal_img,dither=0)
+            idx_data=q.tobytes()
+            pixels=bytearray(w*h)
+            for i in range(w*h):
+                if alpha[i]==0: pixels[i]=0
+                else:
+                    pi=idx_data[i] if i<len(idx_data) else 0
+                    pixels[i]=pi+1 if pi<255 else 255
+        else:
+            pixels=bytearray(w*h)
+        frame=JVGFrame()
+        frame.width=w; frame.height=h
         frame.alpha=alpha
         frame.pixels=bytes(pixels)
         frame.encoded_data,frame.row_count=_encode_rle_game(frame.pixels,frame.alpha,w,h)
@@ -1694,6 +1847,26 @@ class JVGEditor(QMainWindow):
             self._refresh_view()
             self._dirty = True
 
+    def _ask_palette_strategy(self, n_avail: int, n_needed: int):
+        """新增图片所需颜色超过剩余槽位时询问处理方式；
+        返回 'match'=靠色处理, 'rebuild'=重新计算全部色板, None=取消"""
+        box = QMessageBox(self)
+        box.setWindowTitle("调色板槽位不足")
+        box.setIcon(QMessageBox.Warning)
+        box.setText(f"新增图片需要约 {n_needed} 种颜色，\n"
+                    f"但当前分组色板仅剩 {n_avail} 个可用槽位，无法精确分配。\n\n"
+                    f"靠色：旧图不变，新图采用旧图色板\n"
+                    f"重算：新图加旧图一起重新计算色板")
+        btn_match = box.addButton("靠色处理", QMessageBox.AcceptRole)
+        btn_rebuild = box.addButton("重算色板", QMessageBox.AcceptRole)
+        btn_cancel = box.addButton("取消", QMessageBox.RejectRole)
+        box.setDefaultButton(btn_match)
+        box.exec()
+        clicked = box.clickedButton()
+        if clicked is btn_cancel:
+            return None
+        return "rebuild" if clicked is btn_rebuild else "match"
+
     def _add_images(self):
         if not self.jvg or self._bi < 0:
             QMessageBox.information(self, "提示", "请先选择分组")
@@ -1715,13 +1888,22 @@ class JVGEditor(QMainWindow):
             blk = self.jvg.blocks[self._bi]
             # 保护分组内已有有效帧的颜色，新帧颜色写入剩余槽位
             keep_indices = [i for i, f in enumerate(blk.frames) if f.width > 0 and f.height > 0]
-            new_frames = _batch_quantize_subs_to_block(subs, blk, keep_indices)
+            n_avail = _block_avail_slots(blk, keep_indices)
+            n_needed = _subs_needed_colors(subs)
+            mode = "auto"
+            if n_needed > n_avail:
+                # 新图需要颜色数超过剩余槽位：由用户决定靠色处理或全组重算色板
+                mode = self._ask_palette_strategy(n_avail, n_needed)
+                if mode is None:
+                    return
+            new_frames = _batch_quantize_subs_to_block(subs, blk, keep_indices, mode=mode)
             blk.frames.extend(new_frames)
             self._sync_list()
             self._kill_anim()
             self._refresh_view()
             self._dirty = True
-            self._info.setText(f"导入 {len(new_frames)} 帧")
+            _note = {"rebuild": "（已重算全部色板）", "match": "（已靠色处理）"}.get(mode, "")
+            self._info.setText(f"导入 {len(new_frames)} 帧" + _note)
 
     def _replace_frame(self):
         if not self.jvg or self._bi < 0 or self._sel_fi < 0:
@@ -1744,7 +1926,15 @@ class JVGEditor(QMainWindow):
         # 全局最优色，避免可用槽位不足时最近色匹配导致的颜色丢失。
         keep_indices = [i for i, f in enumerate(blk.frames)
                         if i != self._sel_fi and f.width > 0 and f.height > 0]
-        new_frames = _batch_quantize_subs_to_block([img], blk, keep_indices)
+        n_avail = _block_avail_slots(blk, keep_indices)
+        n_needed = _subs_needed_colors([img])
+        mode = "auto"
+        if n_needed > n_avail:
+            # 新图需要颜色数超过剩余槽位：由用户决定靠色处理或全组重算色板
+            mode = self._ask_palette_strategy(n_avail, n_needed)
+            if mode is None:
+                return
+        new_frames = _batch_quantize_subs_to_block([img], blk, keep_indices, mode=mode)
         if new_frames:
             new_f = new_frames[0]
             _align_anchor(new_f, old_f, mode="bottom_center")
@@ -1753,7 +1943,8 @@ class JVGEditor(QMainWindow):
             self._kill_anim()
             self._refresh_view()
             self._dirty = True
-            self._info.setText(f"已替换帧 #{self._sel_fi} (偏移已自动对齐)")
+            _note = {"rebuild": "，已重算全部色板", "match": "，已靠色处理"}.get(mode, "")
+            self._info.setText(f"已替换帧 #{self._sel_fi} (偏移已自动对齐)" + _note)
 
     def _del_frame(self):
         if not self.jvg or self._bi < 0:
@@ -1923,7 +2114,15 @@ class JVGEditor(QMainWindow):
         QApplication.processEvents()
 
         keep_indices = [i for i in range(len(blk.frames)) if i not in replace_set]
-        new_frames = _batch_quantize_subs_to_block(subs, blk, keep_indices)
+        n_avail = _block_avail_slots(blk, keep_indices)
+        n_needed = _subs_needed_colors(subs)
+        mode = "auto"
+        if n_needed > n_avail:
+            # 新图需要颜色数超过剩余槽位：由用户决定靠色处理或全组重算色板
+            mode = self._ask_palette_strategy(n_avail, n_needed)
+            if mode is None:
+                return
+        new_frames = _batch_quantize_subs_to_block(subs, blk, keep_indices, mode=mode)
 
         if is_new_block:
             for (xm, ym), nf in zip(metas, new_frames):
@@ -1945,7 +2144,8 @@ class JVGEditor(QMainWindow):
         self._refresh_view()
         self._dirty = True
         _mode_label = "Bbox" if (is_new_block or use_bbox_mode) else "精确匹配"
-        self._info.setText(f"导入组图完成: {'新增' if is_new_block else '替换'} {len(new_frames)} 帧, 跳过 {skipped} 空cell (cell={cw}×{ch}, {_mode_label})")
+        _note = {"rebuild": "，已重算全部色板", "match": "，已靠色处理"}.get(mode, "")
+        self._info.setText(f"导入组图完成: {'新增' if is_new_block else '替换'} {len(new_frames)} 帧, 跳过 {skipped} 空cell (cell={cw}×{ch}, {_mode_label})" + _note)
 
     def _zoom_step(self, delta: float):
         self._zoom = max(1.0, min(3.0, self._zoom + delta))
