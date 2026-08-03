@@ -1809,12 +1809,14 @@ class JVGEditor(QMainWindow):
         cw_num = gs_w - max(0, cols - 1) * pad
         ch_num = gs_h - max(0, rows - 1) * pad
         if cw_num <= 0 or ch_num <= 0 or cw_num % cols != 0 or ch_num % rows != 0:
-            QMessageBox.critical(self, "尺寸错误",
+            # 仅提示尺寸不匹配，不禁止导入；图片边缘不足一格的格子会在裁剪时自动跳过
+            QMessageBox.warning(self, "尺寸不匹配",
                 f"图片尺寸 {gs_w}×{gs_h} 无法整除为 {cols}×{rows} 个 cell (pad={pad})\n"
-                f"cw_num={cw_num}, ch_num={ch_num}\n请确认 columns / rows / padding 参数")
-            return
-        cw = cw_num // cols
-        ch = ch_num // rows
+                f"cw_num={cw_num}, ch_num={ch_num}\n\n"
+                f"将按 cell ≈ {max(cw_num // cols, 1)}×{max(ch_num // rows, 1)} 切分，"
+                f"图片边缘不足一格的格子将被跳过。")
+        cw = max(cw_num // cols, 1)
+        ch = max(ch_num // rows, 1)
 
         auto_min_vl = -((cw - 1) // 2)
 
