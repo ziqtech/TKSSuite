@@ -1886,24 +1886,41 @@ class JVGEditor(QMainWindow):
                 print(f"  skip {Path(p).name}: {e}")
         if subs:
             blk = self.jvg.blocks[self._bi]
+            # bbox 裁剪：按 alpha 非透明区域裁剪每张图并记录 bbox（参照导入图集逻辑）
+            crop_metas = []
+            for s in subs:
+                bb = s.getchannel('A').getbbox()
+                crop_metas.append(bb)
+            cropped = [s.crop(bb) if bb else s for s, bb in zip(subs, crop_metas)]
             # 保护分组内已有有效帧的颜色，新帧颜色写入剩余槽位
             keep_indices = [i for i, f in enumerate(blk.frames) if f.width > 0 and f.height > 0]
             n_avail = _block_avail_slots(blk, keep_indices)
-            n_needed = _subs_needed_colors(subs)
+            n_needed = _subs_needed_colors(cropped)
             mode = "auto"
             if n_needed > n_avail:
                 # 新图需要颜色数超过剩余槽位：由用户决定靠色处理或全组重算色板
                 mode = self._ask_palette_strategy(n_avail, n_needed)
                 if mode is None:
                     return
-            new_frames = _batch_quantize_subs_to_block(subs, blk, keep_indices, mode=mode)
+            new_frames = _batch_quantize_subs_to_block(cropped, blk, keep_indices, mode=mode)
+            # 应用 bbox 偏移（参照导入图集：图水平中心对齐 0，y 按 bbox 底部基准映射）
+            max_b = max((bb[3] for bb in crop_metas if bb), default=0)
+            auto_min_vt = -max_b
+            for nf, s, bb in zip(new_frames, subs, crop_metas):
+                if bb is None:
+                    continue
+                w0, _ = s.size
+                auto_min_vl = -((w0 - 1) // 2)
+                _, _, r, b = bb
+                nf.x_max = (auto_min_vl + r - 1) & 0xFFFF
+                nf.y_max = (auto_min_vt + b - 1) & 0xFFFF
             blk.frames.extend(new_frames)
             self._sync_list()
             self._kill_anim()
             self._refresh_view()
             self._dirty = True
             _note = {"rebuild": "（已重算全部色板）", "match": "（已靠色处理）"}.get(mode, "")
-            self._info.setText(f"导入 {len(new_frames)} 帧" + _note)
+            self._info.setText(f"导入 {len(new_frames)} 帧" + _note + "（已按 bbox 计算偏移）")
 
     def _replace_frame(self):
         if not self.jvg or self._bi < 0 or self._sel_fi < 0:
