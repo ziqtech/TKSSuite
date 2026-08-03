@@ -1235,11 +1235,32 @@ class JVGEditor(QMainWindow):
         btn_bat_img.clicked.connect(self._batch_replace_gridsheet)
         btn_del_img = QPushButton("❌ 删除选中")
         btn_del_img.clicked.connect(self._del_frame)
-        frame_ops_layout.addWidget(btn_add_img, 0, 0)
-        frame_ops_layout.addWidget(btn_rep_img, 0, 1)
-        frame_ops_layout.addWidget(btn_bat_img, 1, 0)
-        frame_ops_layout.addWidget(btn_del_img, 1, 1)
-        top_docks_layout.addWidget(self._create_dock("帧导入与替换", frame_ops_widget, body_margins=(6, 4, 6, 4)))
+        # 内容区顶部：BBOX 裁剪 / 自动重算色板 开关
+        self._chk_bbox = QCheckBox("BBOX裁剪")
+        self._chk_bbox.setToolTip("新增图片时按 alpha 非透明区域裁剪并计算偏移（图片水平中心对齐 0）")
+        self._chk_rebuild = QCheckBox("自动重算色板")
+        self._chk_rebuild.setToolTip("新增图片时新旧图片一起重新计算色板（新图精确，旧帧可能轻微调整）")
+        frame_ops_layout.addWidget(self._chk_bbox, 0, 0)
+        frame_ops_layout.addWidget(self._chk_rebuild, 0, 1)
+        frame_ops_layout.addWidget(btn_add_img, 1, 0)
+        frame_ops_layout.addWidget(btn_rep_img, 1, 1)
+        frame_ops_layout.addWidget(btn_bat_img, 2, 0)
+        frame_ops_layout.addWidget(btn_del_img, 2, 1)
+        # 标题栏右侧：说明问号（复用主题内紧凑工具按钮样式）
+        btn_help = QToolButton()
+        btn_help.setObjectName("dockToolButton")
+        btn_help.setText("?")
+        btn_help.setToolTip(
+            "BBOX裁剪：按 alpha 非透明区域裁剪新增图片并计算偏移（图中心对齐 0）\n\n"
+            "自动重算色板：勾选后新增图片时新旧图片一起重新计算色板（新图精确，旧帧可能轻微调整）\n"
+            "未勾选时，色板槽位不足则自动靠色（旧图不变，新图用旧图色板），不再弹窗\n\n"
+            "槽位充足时始终自动增量分配颜色，无需处理")
+        frame_ops_header = QHBoxLayout()
+        frame_ops_header.setSpacing(6)
+        frame_ops_header.addWidget(btn_help)
+        top_docks_layout.addWidget(self._create_dock("帧导入与替换", frame_ops_widget,
+                                                     header_layout=frame_ops_header,
+                                                     body_margins=(6, 4, 6, 4)))
 
         # 导出 (2 列网格，第 3 个按钮跨列)
         exp_widget = QWidget()
@@ -1886,41 +1907,43 @@ class JVGEditor(QMainWindow):
                 print(f"  skip {Path(p).name}: {e}")
         if subs:
             blk = self.jvg.blocks[self._bi]
-            # bbox 裁剪：按 alpha 非透明区域裁剪每张图并记录 bbox（参照导入图集逻辑）
-            crop_metas = []
-            for s in subs:
-                bb = s.getchannel('A').getbbox()
-                crop_metas.append(bb)
+            use_bbox = self._chk_bbox.isChecked()
+            use_rebuild = self._chk_rebuild.isChecked()
+            # bbox 裁剪（可选）：按 alpha 非透明区域裁剪每张图并记录 bbox（参照导入图集逻辑）
+            crop_metas = [s.getchannel('A').getbbox() if use_bbox else None for s in subs]
             cropped = [s.crop(bb) if bb else s for s, bb in zip(subs, crop_metas)]
             # 保护分组内已有有效帧的颜色，新帧颜色写入剩余槽位
             keep_indices = [i for i, f in enumerate(blk.frames) if f.width > 0 and f.height > 0]
             n_avail = _block_avail_slots(blk, keep_indices)
             n_needed = _subs_needed_colors(cropped)
-            mode = "auto"
-            if n_needed > n_avail:
-                # 新图需要颜色数超过剩余槽位：由用户决定靠色处理或全组重算色板
-                mode = self._ask_palette_strategy(n_avail, n_needed)
-                if mode is None:
-                    return
+            # 色板策略：勾选自动重算 → 全组重算；否则槽位不足自动靠色（不弹窗）
+            if use_rebuild:
+                mode = "rebuild"
+            elif n_needed > n_avail:
+                mode = "match"
+            else:
+                mode = "auto"
             new_frames = _batch_quantize_subs_to_block(cropped, blk, keep_indices, mode=mode)
-            # 应用 bbox 偏移（参照导入图集：图水平中心对齐 0，y 按 bbox 底部基准映射）
-            max_b = max((bb[3] for bb in crop_metas if bb), default=0)
-            auto_min_vt = -max_b
-            for nf, s, bb in zip(new_frames, subs, crop_metas):
-                if bb is None:
-                    continue
-                w0, _ = s.size
-                auto_min_vl = -((w0 - 1) // 2)
-                _, _, r, b = bb
-                nf.x_max = (auto_min_vl + r - 1) & 0xFFFF
-                nf.y_max = (auto_min_vt + b - 1) & 0xFFFF
+            if use_bbox:
+                # 应用 bbox 偏移（参照导入图集：图水平中心对齐 0，y 按 bbox 底部基准映射）
+                max_b = max((bb[3] for bb in crop_metas if bb), default=0)
+                auto_min_vt = -max_b
+                for nf, s, bb in zip(new_frames, subs, crop_metas):
+                    if bb is None:
+                        continue
+                    w0, _ = s.size
+                    auto_min_vl = -((w0 - 1) // 2)
+                    _, _, r, b = bb
+                    nf.x_max = (auto_min_vl + r - 1) & 0xFFFF
+                    nf.y_max = (auto_min_vt + b - 1) & 0xFFFF
             blk.frames.extend(new_frames)
             self._sync_list()
             self._kill_anim()
             self._refresh_view()
             self._dirty = True
             _note = {"rebuild": "（已重算全部色板）", "match": "（已靠色处理）"}.get(mode, "")
-            self._info.setText(f"导入 {len(new_frames)} 帧" + _note + "（已按 bbox 计算偏移）")
+            _bbox_note = "（已按 bbox 计算偏移）" if use_bbox else ""
+            self._info.setText(f"导入 {len(new_frames)} 帧" + _note + _bbox_note)
 
     def _replace_frame(self):
         if not self.jvg or self._bi < 0 or self._sel_fi < 0:
