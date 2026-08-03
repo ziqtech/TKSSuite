@@ -2796,8 +2796,20 @@ class SpriteSheetEditorWindow(QMainWindow):
             return
 
         n = len(images)
-        cols = max(1, int(n ** 0.5 + 0.5))
-        rows = (n + cols - 1) // cols
+        # 当前网格足以容纳时保持用户已设置的 columns/rows (如默认 7×4=28)
+        if self.model.columns > 0 and self.model.rows > 0 and self.model.total_cells >= n:
+            cols, rows = self.model.columns, self.model.rows
+        else:
+            # 网格不足时自动计算最紧凑的接近正方形网格
+            # 优先总面积最小, 面积相同时取宽高差最小 (避免 3x10 这类长条)
+            base = max(1, int(n ** 0.5 + 0.5))
+            best = None
+            for c in range(max(1, base - 2), base + 3):
+                r = (n + c - 1) // c
+                key = (c * r, abs(c - r))
+                if best is None or key < best[0]:
+                    best = (key, c, r)
+            cols, rows = best[1], best[2]
 
         self.model.frames = list(images)
         self.model.columns = cols
