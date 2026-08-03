@@ -1905,8 +1905,105 @@ def _patch_map_movement(cfg: dict, code_buf: bytearray, code_start_addr: int,
     return True
 
 
+def _patch_map_animation(cfg: dict, defn: PatchDef, code_buf: bytearray,
+                         code_start_addr: int, h_proc: int, cave_addr: int,
+                         log_func) -> bool:
+    """为地图 Ani.JVG 实体动画 (sub_408704) 增加独立分频门
+
+    背景: map_movement 加速剧情地图主循环后, 实体动画与移动同步加速。
+    实体的逐帧分频值 (+16 字段) 来自 TKMat.dat 数据而非代码常量, 无法直接改常量。
+    方案: sub_408704 是 type 20/200 实体待机/站立 Ani.JVG 动画帧推进函数
+    (仅被实体调度器 sub_409618/sub_40944C 的非行走分支调用), 在其入口 cave hook
+    一个全局分频门: 每 K 次调用才真正推进 1 帧, 其余直接 ret 跳过。
+    行走中实体 (flag 0x10) 的动画在 sub_407AA8 内与位移 1:1 绑定, 不受影响;
+    type 10/15/16 是场景切换/事件触发点 (逻辑而非动画), 不受影响。
+
+    frame_divisor: 1 = 原版行为 (不安装 hook); K>=2 = 动画帧率 /= K
+    (地图移动加速 N 倍时设 K=N 可保持 Ani.JVG 动画原速)
+
+    Cave 布局 (defn.cave_offset 起, 总写入 52 bytes):
+        +0:  门逻辑代码 (25 bytes)
+        +25: 原始入口指令回放 (12 bytes)
+        +37: jmp 回跳 (5 bytes)
+        +42: 对齐填充 (6 bytes)
+        +48: 调用计数器 (4 bytes dword, 随 cave 写入显式置 0)
+    """
+    log = log_func
+    divisor = int(cfg.get("frame_divisor", 1))
+
+    if divisor <= 1:
+        log(f"    map_animation: frame_divisor={divisor} (原版行为, 跳过)")
+        return True
+    if divisor > 64:
+        log(f"    [ERROR] map_animation frame_divisor={divisor} 超出 1~64")
+        return False
+    if cave_addr == 0:
+        log(f"    [WARN] Cave 未分配, map_animation 跳过")
+        return True
+
+    # 1. 模式扫描 sub_408704 入口 (全 .text 唯一)
+    #    55 push ebp / 8B EC mov ebp,esp / 8B 45 0C mov eax,[ebp+C]
+    #    / 8B 90 40 01 00 00 mov edx,[eax+140h]
+    pat_str = defn.hook_pattern or "55 8B EC 8B 45 0C 8B 90 40 01 00 00"
+    hook_size = defn.hook_size or 12
+    pat, wc = parse_pattern(pat_str)
+    hits = pattern_scan(bytes(code_buf), pat, wc)
+    if len(hits) == 0:
+        log(f"    [WARN] map_animation: 特征码无匹配 (sub_408704 已被 MOD 改写?), 跳过")
+        return True
+    if len(hits) != 1:
+        log(f"    [ERROR] map_animation: 匹配 {len(hits)} 处 (预期 1), 跳过")
+        return False
+    off = hits[0]
+    if check_hook_conflict(code_buf, off):
+        log(f"    [WARN] map_animation: hook 点已被其他 MOD 占用, 跳过")
+        return True
+
+    hook_va = code_start_addr + off
+    ct = cave_addr + defn.cave_offset
+    counter_va = ct + 48
+    orig_bytes = bytes(code_buf[off:off + hook_size])
+
+    # 2. 构建 cave 代码 (门逻辑共 25 字节)
+    cave = bytearray()
+    cave += b'\xFF\x05' + struct.pack('<I', counter_va)     # inc dword [counter]  (6B @0)
+    cave += b'\xA1' + struct.pack('<I', counter_va)         # mov eax,[counter]    (5B @6)
+    cave += b'\x33\xD2'                                     # xor edx,edx          (2B @11)
+    cave += b'\xB9' + struct.pack('<I', divisor)            # mov ecx, K           (5B @13)
+    cave += b'\xF7\xF1'                                     # div ecx -> edx=eax%K (2B @18)
+    cave += b'\x85\xD2'                                     # test edx,edx         (2B @20)
+    cave += b'\x74\x01'                                     # jz +1 -> .allow @+25 (2B @22)
+    cave += b'\xC3'                                         # ret (跳过本次动画帧) (1B @24)
+    # .allow @ +25: 重放原始入口指令 + 跳回
+    assert len(cave) == 25
+    cave += orig_bytes                                       # 原始 12 字节
+    cave += b'\xE9' + i32b((hook_va + hook_size) - (ct + len(cave) + 5))  # jmp 回 sub_408704+12
+    assert len(cave) == 42
+    cave += b'\x00' * 10                                    # 对齐填充 + 计数器显式置 0
+    assert len(cave) == 52
+
+    write_pm(h_proc, ct, bytes(cave))
+    log(f"    Cave 写入: 0x{ct:08X} ({len(cave)} bytes, divisor={divisor})")
+
+    # 3. 安装 hook: E9 rel32 + NOP 填充
+    ci = bytearray(hook_size)
+    ci[0] = 0xE9
+    ci[1:5] = i32b(ct - (hook_va + 5))
+    for i in range(5, hook_size):
+        ci[i] = 0x90
+    op = vp_ex(h_proc, hook_va, hook_size, PAGE_EXECUTE_READWRITE)
+    write_pm(h_proc, hook_va, bytes(ci))
+    vp_ex(h_proc, hook_va, hook_size, op)
+    for i in range(min(hook_size, len(code_buf) - off)):
+        code_buf[off + i] = ci[i]
+    log(f"    [OK] map_animation: sub_408704 @RVA 0x{off:X} -> cave 0x{ct:08X} "
+        f"(Ani.JVG 动画帧率 /{divisor}, 不影响移动速度)")
+    return True
+
+
 def apply_animation_speed(defn: PatchDef, code_buf: bytearray, code_start_addr: int,
-                          h_proc: int, log_func=None) -> bool:
+                          h_proc: int, log_func=None, cave_addr: int = 0,
+                          no_cave_mode: bool = False) -> bool:
     log = log_func or (lambda x: None)
     tag = f"[{defn.id}]"
     log(f"\n  {tag}: {defn.desc}")
@@ -1970,6 +2067,16 @@ def apply_animation_speed(defn: PatchDef, code_buf: bytearray, code_start_addr: 
         log(f"  [剧情地图移动] frame_delay_ms={map_delay}")
         all_ok &= _patch_map_movement(map_cfg, code_buf, code_start_addr,
                                        h_proc, log)
+
+    # 8. 地图 Ani.JVG 实体动画分频 (sub_408704 入口 cave hook, 与移动速度解耦)
+    map_anim_cfg = cfg.get("map_animation", {})
+    if map_anim_cfg and int(map_anim_cfg.get("frame_divisor", 1)) > 1:
+        if cave_addr == 0 or no_cave_mode:
+            log(f"  [地图实体动画] Cave 未分配/禁用, 跳过")
+        else:
+            log(f"  [地图实体动画] frame_divisor={map_anim_cfg.get('frame_divisor')}")
+            all_ok &= _patch_map_animation(map_anim_cfg, defn, code_buf,
+                                           code_start_addr, h_proc, cave_addr, log)
 
     return all_ok
 
@@ -2106,7 +2213,9 @@ def apply_config_patches(config: PatchConfig, code_buf: bytearray, code_start_ad
                                          h_proc, log_func=log)
         elif defn.type == "patch_animation_speed":
             all_ok &= apply_animation_speed(defn, code_buf, code_start_addr,
-                                             h_proc, log_func=log)
+                                             h_proc, log_func=log,
+                                             cave_addr=cave_addr,
+                                             no_cave_mode=no_cave_mode)
         elif defn.type == "runtime_watchdog":
             log(f"    -> 由运行时看门狗处理 (游戏运行期间持续监控)")
         else:
