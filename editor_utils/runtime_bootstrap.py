@@ -11,15 +11,155 @@ runtime_bootstrap — 运行时引导加载器
 支持:
   - 开发环境: 自动跳过（PySide6 已在 sys.path 中）
   - Nuitka 编译环境: 从 libs/ 子目录的 .lib 归档解压到 %LOCALAPPDATA%/TKSEditors/runtime/
-  - 增量更新: 通过 mtime+size 对比, 仅解压有变化的归档
+  - 增量更新: 分层校验 (size+mtime 快判 → MD5 内容指纹确认), 仅解压内容真正变化的归档
   - 格式自动检测: zstd (新) / zip (旧) 向后兼容
   - 缓存清理: 升级归档时自动删除旧版本文件, 避免残留
+  - 重装兼容: 重装/复制导致 mtime 变化但内容不变时, 通过 MD5 确认复用缓存
+  - 进度提示: 解压时显示 Win32 提示窗口 (纯 ctypes, 无外部依赖)
 """
+import hashlib
 import json
 import os
 import sys
 import tarfile
+import threading
 import zipfile
+
+
+# ═══════════════════════════════════════════════════════════════
+# 进度提示窗口 (纯 Win32 API, 无外部依赖, 仅在解压缓存时显示)
+# ═══════════════════════════════════════════════════════════════
+
+_splash_hwnd = None       # 提示窗口句柄
+_splash_static = None     # 静态文本控件句柄
+_splash_thread = None     # 后台线程
+_splash_ready = threading.Event()
+_splash_close = threading.Event()
+
+
+def _splash_worker(title: str, text: str):
+    """后台线程: 创建并运行提示窗口的消息循环"""
+    global _splash_hwnd, _splash_static
+    try:
+        import ctypes
+        from ctypes import wintypes
+    except ImportError:
+        return
+
+    user32 = ctypes.windll.user32
+    kernel32 = ctypes.windll.kernel32
+    hinstance = kernel32.GetModuleHandleW(None)
+
+    WNDPROC = ctypes.WINFUNCTYPE(ctypes.c_long, wintypes.HWND, ctypes.c_uint,
+                                  wintypes.WPARAM, wintypes.LPARAM)
+
+    class WNDCLASSW(ctypes.Structure):
+        _fields_ = [
+            ("style", ctypes.c_uint), ("lpfnWndProc", WNDPROC),
+            ("cbClsExtra", ctypes.c_int), ("cbWndExtra", ctypes.c_int),
+            ("hInstance", wintypes.HINSTANCE), ("hIcon", wintypes.HICON),
+            ("hCursor", wintypes.HANDLE), ("hbrBackground", wintypes.HANDLE),
+            ("lpszMenuName", wintypes.LPCWSTR), ("lpszClassName", wintypes.LPCWSTR),
+        ]
+
+    def wnd_proc(hwnd, msg, wparam, lparam):
+        if msg == 0x0002:  # WM_DESTROY
+            user32.PostQuitMessage(0)
+            return 0
+        return user32.DefWindowProcW(hwnd, msg, wparam, lparam)
+
+    wndproc = WNDPROC(wnd_proc)
+    class_name = "TKSEditorsBootstrap"
+
+    wc = WNDCLASSW()
+    wc.lpfnWndProc = wndproc
+    wc.hInstance = hinstance
+    wc.hCursor = user32.LoadCursorW(None, 32512)
+    wc.hbrBackground = 15  # COLOR_BTNFACE + 1
+    wc.lpszClassName = class_name
+    user32.RegisterClassW(ctypes.byref(wc))
+
+    # 窗口居中
+    width, height = 380, 110
+    x = (user32.GetSystemMetrics(0) - width) // 2
+    y = (user32.GetSystemMetrics(1) - height) // 2
+
+    hwnd = user32.CreateWindowExW(
+        0x00000008,  # WS_EX_TOPMOST
+        class_name, title,
+        0x80000000 | 0x00C00000,  # WS_POPUP | WS_CAPTION
+        x, y, width, height,
+        None, None, hinstance, None
+    )
+    if not hwnd:
+        _splash_ready.set()
+        return
+
+    _splash_hwnd = hwnd
+
+    # 静态文本控件
+    _splash_static = user32.CreateWindowExW(
+        0, "STATIC", text,
+        0x40000000 | 0x10000000 | 0x00000001 | 0x00000200,  # WS_CHILD|WS_VISIBLE|SS_CENTER|SS_CENTERIMAGE
+        10, 10, width - 40, height - 40,
+        hwnd, 1, hinstance, None
+    )
+    # 设置系统默认 GUI 字体
+    if _splash_static:
+        user32.SendMessageW(_splash_static, 0x0030, user32.GetStockObject(17), 1)
+
+    user32.ShowWindow(hwnd, 5)  # SW_SHOW
+    user32.UpdateWindow(hwnd)
+    _splash_ready.set()
+
+    # 消息循环 (PeekMessage 非阻塞, 定期检查关闭信号)
+    msg = wintypes.MSG()
+    import time as _time
+    while not _splash_close.is_set():
+        if user32.PeekMessageW(ctypes.byref(msg), hwnd, 0, 0, 1):
+            if msg.message == 0x0012:  # WM_QUIT
+                break
+            user32.TranslateMessage(ctypes.byref(msg))
+            user32.DispatchMessageW(ctypes.byref(msg))
+        else:
+            _time.sleep(0.016)
+
+    user32.DestroyWindow(hwnd)
+    _splash_hwnd = None
+    _splash_static = None
+
+
+def _show_progress(text="正在初始化运行时缓存，请稍候..."):
+    """显示进度提示窗口 (仅 Windows 编译环境)"""
+    global _splash_thread
+    if sys.platform != "win32":
+        return
+    _splash_close.clear()
+    _splash_ready.clear()
+    _splash_thread = threading.Thread(target=_splash_worker,
+                                      args=("TKS Editors", text), daemon=True)
+    _splash_thread.start()
+    _splash_ready.wait(timeout=2.0)
+
+
+def _update_progress(text: str):
+    """更新提示窗口文本 (WM_SETTEXT)"""
+    if _splash_static and sys.platform == "win32":
+        import ctypes
+        ctypes.windll.user32.SendMessageW(_splash_static, 0x000C, 0, text)
+
+
+def _close_progress():
+    """关闭提示窗口"""
+    global _splash_thread
+    if _splash_thread is None:
+        return
+    _splash_close.set()
+    if _splash_hwnd and sys.platform == "win32":
+        import ctypes
+        ctypes.windll.user32.PostMessageW(_splash_hwnd, 0x0010, 0, 0)  # WM_CLOSE
+    _splash_thread.join(timeout=3.0)
+    _splash_thread = None
 
 
 def _detect_app_dir():
@@ -102,6 +242,22 @@ _RUNTIME_LIBS = [
     "QtSvg.lib",
     "PIL.lib",
 ]
+
+
+# ═══════════════════════════════════════════════════════════════
+# 内容指纹
+# ═══════════════════════════════════════════════════════════════
+
+def _file_md5(path: str, chunk_size: int = 1 << 20) -> str:
+    """计算文件 MD5 (1MB 分块读取, 适用于大文件)"""
+    h = hashlib.md5()
+    with open(path, 'rb') as f:
+        while True:
+            chunk = f.read(chunk_size)
+            if not chunk:
+                break
+            h.update(chunk)
+    return h.hexdigest()
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -202,7 +358,7 @@ def bootstrap():
     os.makedirs(_CACHE_DIR, exist_ok=True)
 
     # ── 加载 manifest ──
-    # manifest 结构: { "PySide6.lib": {"key": "...", "files": ["PySide6/...", ...]}, ... }
+    # manifest 结构: { "lib_name": {"size": N, "mtime_ns": N, "hash": "...", "files": [...]} }
     manifest = {}
     if os.path.isfile(_MANIFEST):
         try:
@@ -211,45 +367,92 @@ def bootstrap():
         except (json.JSONDecodeError, OSError):
             manifest = {}
 
+    # ── 缓存完整性哨兵检查 ──
+    # 如果 manifest 存在但关键文件被意外删除 (杀毒软件/手动清理), 强制重建
+    _SENTINEL = os.path.join(_CACHE_DIR, "PySide6", "__init__.py")
+    if manifest and not os.path.isfile(_SENTINEL):
+        manifest = {}  # 清空 manifest, 触发全量重新解压
+
     # ── 检查并解压有变化的归档 ──
+    # 缓存校验策略 (分层):
+    #   1. size + mtime 均未变 → 快速命中, 跳过 (零开销)
+    #   2. size 未变但 mtime 变了 → 计算 MD5 确认内容是否真的变了
+    #      (覆盖重装/复制导致 mtime 变化但内容不变的场景)
+    #   3. size 变了 → 内容肯定变了, 直接重新解压
+    # manifest 结构: {"lib_name": {"size": N, "mtime_ns": N, "hash": "...", "files": [...]}}
     updated = False
-    for lib_name in _RUNTIME_LIBS:
+    manifest_dirty = False
+    splash_shown = False
+    total_libs = len(_RUNTIME_LIBS)
+
+    for idx, lib_name in enumerate(_RUNTIME_LIBS, 1):
         lib_path = os.path.join(_LIBS_DIR, lib_name)
         if not os.path.isfile(lib_path):
             continue
 
-        # 使用文件大小+mtime作为变更标识 (比纯 mtime 更可靠)
         stat = os.stat(lib_path)
-        current_key = f"{stat.st_mtime_ns}_{stat.st_size}"
-
         lib_info = manifest.get(lib_name, {})
-        # 向后兼容: 旧版 manifest 值是字符串 (直接为 key), 新版是字典 {"key":..., "files":[...]}
-        # 检测到旧格式时强制重新解压, 并用新格式覆盖
+
+        # 向后兼容: 旧版 manifest 值是字符串或缺少新字段, 视为需要校验
         if isinstance(lib_info, str):
             lib_info = {}
-        if lib_info.get("key") != current_key:
-            # 清理旧版本文件 (缓存清理机制)
-            old_files = lib_info.get("files", [])
-            if old_files:
-                _remove_stale_files(old_files, _CACHE_DIR)
 
-            # 解压新归档
-            try:
-                extracted_files = _extract_archive(lib_path, _CACHE_DIR)
-                manifest[lib_name] = {
-                    "key": current_key,
-                    "files": extracted_files,
-                }
-                updated = True
-            except Exception as e:
-                print(f"[TKSEditors] 警告: 解压 {lib_name} 失败: {e}", file=sys.stderr)
+        cached_size = lib_info.get("size")
+        cached_mtime = lib_info.get("mtime_ns")
+        cached_hash = lib_info.get("hash")
+
+        # ── 快速路径: size + mtime 均未变 → 缓存有效 ──
+        if cached_size == stat.st_size and cached_mtime == stat.st_mtime_ns:
+            continue
+
+        # ── size 未变但 mtime 变了: 计算 MD5 确认内容是否真的变化 ──
+        need_extract = True
+        if cached_size == stat.st_size and cached_hash:
+            file_hash = _file_md5(lib_path)
+            if file_hash == cached_hash:
+                # 内容相同, 仅 mtime 变了 (重装/复制) → 更新 manifest 的 mtime, 不重新解压
+                lib_info["mtime_ns"] = stat.st_mtime_ns
+                manifest[lib_name] = lib_info
+                manifest_dirty = True
+                need_extract = False
+
+        if not need_extract:
+            continue
+
+        # ── 内容确实变了: 清理旧文件 + 重新解压 ──
+        # 首次需要解压时显示进度提示
+        if not splash_shown:
+            _show_progress(f"正在构建运行时缓存 ({idx}/{total_libs}) {lib_name} ...")
+            splash_shown = True
+        else:
+            _update_progress(f"正在构建运行时缓存 ({idx}/{total_libs}) {lib_name} ...")
+
+        old_files = lib_info.get("files", [])
+        if old_files:
+            _remove_stale_files(old_files, _CACHE_DIR)
+
+        try:
+            extracted_files = _extract_archive(lib_path, _CACHE_DIR)
+            manifest[lib_name] = {
+                "size": stat.st_size,
+                "mtime_ns": stat.st_mtime_ns,
+                "hash": _file_md5(lib_path),
+                "files": extracted_files,
+            }
+            updated = True
+        except Exception as e:
+            print(f"[TKSEditors] 警告: 解压 {lib_name} 失败: {e}", file=sys.stderr)
+
+    # ── 关闭进度提示 ──
+    if splash_shown:
+        _close_progress()
 
     # ── 清理空目录 (升级后可能产生空目录) ──
     if updated:
         _cleanup_empty_dirs(_CACHE_DIR)
 
     # ── 保存 manifest ──
-    if updated:
+    if updated or manifest_dirty:
         try:
             with open(_MANIFEST, 'w', encoding='utf-8') as f:
                 json.dump(manifest, f, indent=2)
