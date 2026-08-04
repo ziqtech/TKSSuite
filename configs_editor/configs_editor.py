@@ -104,7 +104,7 @@ class ConfigsEditorWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle(format_title("configs_editor"))
-        self.resize(900, 650)
+        self.resize(960, 720)
         self.setMinimumSize(700, 500)
 
         # 配置目录 — Nuitka onefile 下 __file__ 指向临时目录, 需用 exe 所在目录

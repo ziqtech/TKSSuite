@@ -16,7 +16,7 @@ AnimationSpeedPanel — 动画/移动速度配置面板
 """
 from PySide6.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QFormLayout, QGroupBox, QSlider, QSpinBox,
-    QLabel, QPushButton, QWidget, QMessageBox
+    QLabel, QPushButton, QWidget, QMessageBox, QScrollArea
 )
 from PySide6.QtCore import Qt
 
@@ -38,12 +38,23 @@ class AnimationSpeedPanel(ConfigPanelBase):
         self._build_ui()
 
     def _build_ui(self):
-        layout = QVBoxLayout(self)
-        layout.setSpacing(12)
+        # 外层: 内容放入 QScrollArea, 窗口高度不足时滚动而非压缩控件
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+
+        content = QWidget()
+        layout = QVBoxLayout(content)
+        layout.setContentsMargins(8, 6, 6, 6)
+        layout.setSpacing(8)
 
         # ── 状态动画 ──
-        status_group = QGroupBox("状态动画 (中毒/出血/恢复/死战等状态效果)")
-        status_layout = QFormLayout(status_group)
+        status_group, status_layout = self._new_group_box(
+            "状态动画 (中毒/出血/恢复/死战等状态效果)")
         self._status_spin, self._status_slider, self._status_lbl = self._make_spin_slider(
             status_layout, "每帧延迟",
             spin_min=1, spin_max=127, default=ORIG_FRAME_DELAY, orig=ORIG_FRAME_DELAY,
@@ -53,8 +64,8 @@ class AnimationSpeedPanel(ConfigPanelBase):
         layout.addWidget(status_group)
 
         # ── 攻击+技能动画 ──
-        attack_group = QGroupBox("攻击+技能动画 (Aa.JVG/TKAct.dat, sub_4434BC)")
-        attack_layout = QFormLayout(attack_group)
+        attack_group, attack_layout = self._new_group_box(
+            "攻击+技能动画 (Aa.JVG/TKAct.dat, sub_4434BC)")
         self._base_spin, self._base_slider, self._base_lbl = self._make_spin_slider(
             attack_layout, "基础帧延迟",
             spin_min=1, spin_max=255, default=ORIG_BASE_DELAY, orig=ORIG_BASE_DELAY,
@@ -79,8 +90,7 @@ class AnimationSpeedPanel(ConfigPanelBase):
         layout.addWidget(attack_group)
 
         # ── 移动动画 ──
-        move_group = QGroupBox("移动动画 (Awk.JVG, sub_43DE90)")
-        move_layout = QFormLayout(move_group)
+        move_group, move_layout = self._new_group_box("移动动画 (Awk.JVG, sub_43DE90)")
         self._move_spin, self._move_slider, self._move_lbl = self._make_spin_slider(
             move_layout, "每帧延迟",
             spin_min=1, spin_max=127, default=ORIG_FRAME_DELAY, orig=ORIG_FRAME_DELAY,
@@ -89,8 +99,8 @@ class AnimationSpeedPanel(ConfigPanelBase):
         layout.addWidget(move_group)
 
         # ── 待机动画 ──
-        idle_group = QGroupBox("待机动画 (Awt.JVG, sub_43CA64 战场主循环)")
-        idle_layout = QFormLayout(idle_group)
+        idle_group, idle_layout = self._new_group_box(
+            "待机动画 (Awt.JVG, sub_43CA64 战场主循环)")
         self._idle_spin, self._idle_slider, self._idle_lbl = self._make_spin_slider(
             idle_layout, "每帧延迟",
             spin_min=1, spin_max=127, default=ORIG_FRAME_DELAY, orig=ORIG_FRAME_DELAY,
@@ -99,8 +109,8 @@ class AnimationSpeedPanel(ConfigPanelBase):
         layout.addWidget(idle_group)
 
         # ── 剧情地图移动 ──
-        map_group = QGroupBox("剧情地图移动速度 (sub_412BE8 地图主循环帧节流)")
-        map_layout = QFormLayout(map_group)
+        map_group, map_layout = self._new_group_box(
+            "剧情地图移动速度 (sub_412BE8 地图主循环帧节流)")
         self._map_spin, self._map_slider, self._map_lbl = self._make_spin_slider(
             map_layout, "每帧延迟",
             spin_min=1, spin_max=127, default=ORIG_FRAME_DELAY, orig=ORIG_FRAME_DELAY,
@@ -149,7 +159,17 @@ class AnimationSpeedPanel(ConfigPanelBase):
         btn_layout.addStretch()
         layout.addWidget(btn_row)
 
-        layout.addStretch()
+        scroll.setWidget(content)
+        outer.addWidget(scroll)
+
+    @staticmethod
+    def _new_group_box(title: str):
+        """创建带紧凑边距的 QGroupBox, 减少组内空白占用。"""
+        group = QGroupBox(title)
+        form = QFormLayout(group)
+        form.setContentsMargins(10, 14, 10, 8)
+        form.setVerticalSpacing(6)
+        return group, form
 
     def _make_spin_slider(self, form_layout, label_text, spin_min, spin_max,
                            default, orig, tooltip, invert_multiplier=False):
