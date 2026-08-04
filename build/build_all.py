@@ -126,6 +126,55 @@ NUITKA_CACHE_DIR = BUILD_DIR / "nuitka_cache"
 _DEFAULT_PARALLEL = min(len(EDITORS), max(2, (os.cpu_count() or 4) // 2))
 
 
+# ═══════════════════════════════════════════════════════════════
+# Windows 版本资源 (降低杀毒软件误报)
+# ═══════════════════════════════════════════════════════════════
+# 无版本信息的"三无" exe 被杀毒启发式扫描标记的概率显著高于
+# 带完整版本信息的 exe; 故为所有构建产物嵌入公司/产品/版本号/描述。
+
+_COMPANY_NAME = "端木子青"
+_PRODUCT_NAME = "TKS Editors"
+_COPYRIGHT = "免费开源软件，仅供个人学习、研究使用，不得用于商业目的"
+
+
+def _version_flags(name: str, editor_dir: str) -> list:
+    """生成 Windows 版本资源参数 (CompanyName/FileDescription/FileVersion 等)
+
+    版本号与显示名称从 editor_utils/version.py 统一登记表读取,
+    读取失败时回退到默认值, 不阻断构建。
+    """
+    # editor_dir → version.py 中的 app_id (启动器目录名为 tks_launcher_gui)
+    app_id = "launcher" if editor_dir == "tks_launcher_gui" else editor_dir
+    version = "1.0.0"
+    description = name
+    try:
+        if str(仓库根目录) not in sys.path:
+            sys.path.insert(0, str(仓库根目录))
+        from editor_utils.version import get_version
+        ev = get_version(app_id)
+        version = ev.version
+        description = ev.app_name
+        if name == "TKSLauncherCLI":
+            description += " (命令行版)"
+    except Exception:
+        pass  # 版本表读取失败不阻断构建, 用默认值
+
+    # Nuitka 要求 x.x.x.x 数字格式
+    vparts = version.split(".")
+    while len(vparts) < 4:
+        vparts.append("0")
+    win_version = ".".join(vparts[:4])
+
+    return [
+        f"--company-name={_COMPANY_NAME}",
+        f"--product-name={_PRODUCT_NAME}",
+        f"--file-version={win_version}",
+        f"--product-version={win_version}",
+        f"--file-description={description}",
+        f"--copyright={_COPYRIGHT}",
+    ]
+
+
 def _build_thin_cmd(name: str, entry: str, editor_dir: str,
                     release: bool = False, jobs: int = 8) -> list:
     """生成 Nuitka 薄 exe 构建命令 (PySide6/PIL 由 .lib 提供, 不编译进 exe)"""
@@ -165,6 +214,9 @@ def _build_thin_cmd(name: str, entry: str, editor_dir: str,
         # ── 包含 zstandard (用于 .lib 归档解压) ──
         "--include-package=zstandard",
     ]
+
+    # ── 版本资源 (降低杀毒误报) ──
+    cmd.extend(_version_flags(name, editor_dir))
 
     # ── 强制内嵌外部运行时 (PySide6/shiboken6/PIL) import 期依赖的 stdlib ──
     # 这些模块 exe 自身代码未引用, Nuitka 静态追踪不到, 必须显式包含
@@ -266,6 +318,9 @@ def _build_onefile_cmd(name: str, entry: str, editor_dir: str,
         "--remove-output",
     ]
 
+    # ── 版本资源 (降低杀毒误报) ──
+    cmd.extend(_version_flags(name, editor_dir))
+
     # Pillow 支持 — onefile 模式下所有 GUI 编辑器都依赖 Pillow:
     #   · mat/act/warpc/wardata/tkt/jvg/grp/gxp/spritesheet/font 直接 import PIL
     #   · item/skill/shop/kon/save/configs 经共享工具 editor_utils.jvg_loader 间接依赖
@@ -331,6 +386,9 @@ def _build_cli_cmd(name: str, entry: str, editor_dir: str,
         "--python-flag=no_asserts",
         "--remove-output",
     ]
+
+    # ── 版本资源 (降低杀毒误报) ──
+    cmd.extend(_version_flags(name, editor_dir))
 
     cmd.append(str(entry_path))
     return cmd
