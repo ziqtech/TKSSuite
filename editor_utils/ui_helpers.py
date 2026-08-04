@@ -176,6 +176,15 @@ def install_dialog_theme_filter(app):
     app._dialog_theme_filter = _DialogThemeFilter(app)
     app.installEventFilter(app._dialog_theme_filter)
 
+    # ── 首次启动免费声明确认 (防倒卖) ──
+    # 全部 GUI 程序共用此挂载点: 仅编译环境首次启动弹窗,
+    # 确认后永不再弹; 具体逻辑见 editor_utils/free_notice.py
+    try:
+        from editor_utils.free_notice import ensure_free_declaration
+        ensure_free_declaration()
+    except Exception:
+        pass  # 声明功能异常不阻断启动 (SystemExit 不受此捕获影响)
+
 
 def resolve_config_path(config_filename):
     """解析 configs/ 目录下配置文件的绝对路径。

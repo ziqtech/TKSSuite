@@ -152,10 +152,13 @@ def get_build_date() -> str:
 
 
 def format_about_header(app_id: str) -> str:
-    """格式化"关于"对话框的标题行 (含版本号、作者与构建日期)
+    """格式化"关于"对话框的标题行 (含版本号、作者、构建日期与免费提示)
 
     Returns:
-        "{app_name} v{version}\\n作者：端木子青\\n构建日期: {build_date}"
+        "{app_name} v{version}\\n作者：端木子青\\n构建日期: {build_date}\\n\\n{免费提示}"
     """
     v = get_version(app_id)
-    return f"{v.app_name} v{v.version}\n作者：端木子青\n构建日期: {get_build_date()}"
+    return (
+        f"{v.app_name} v{v.version}\n作者：端木子青\n构建日期: {get_build_date()}"
+        f"\n\n{_LICENSE_NOTICE}\n本软件开源免费、永久为爱发电。若你付费获得，建议向卖家申请退款。"
+    )
