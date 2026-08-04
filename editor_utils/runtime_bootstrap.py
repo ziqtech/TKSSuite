@@ -240,6 +240,7 @@ _RUNTIME_LIBS = [
     "QtGui.lib",
     "QtWidgets.lib",
     "QtSvg.lib",
+    "QtMultimedia.lib",
     "PIL.lib",
 ]
 

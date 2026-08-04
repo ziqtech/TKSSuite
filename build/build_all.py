@@ -117,7 +117,7 @@ WINLATOR_DIR = DIST_DIR / "Winlator"
 # 玩家精简包目录 (TKSEditors 子集: 启动器 + 配置/存档编辑器, 供不编辑 MOD 的玩家)
 LAUNCHER_DIR = DIST_DIR / "TKSLauncher"
 # 玩家精简包包含的 exe (必须是 EDITORS 中的打包名)
-LAUNCHER_PACKAGE_EXES = ["TKSLauncher", "TKSConfigsEditor", "TKSSaveEditor"]
+LAUNCHER_PACKAGE_EXES = ["TKSLauncher", "TKSConfigsEditor", "TKSSaveEditor", "TKSBook"]
 # .lib 归档统一存放于 libs/ 子目录, 与 exe 分离
 LIBS_DIR = RELEASE_DIR / "libs"
 # Nuitka C 编译缓存 (其下含 clcache); 固定到仓库内, 避免依赖外部环境变量丢失缓存
@@ -320,6 +320,11 @@ def _build_onefile_cmd(name: str, entry: str, editor_dir: str,
 
     # ── 版本资源 (降低杀毒误报) ──
     cmd.extend(_version_flags(name, editor_dir))
+
+    # TKSBook 依赖 PySide6.QtMultimedia (game_audio.py 音频复刻);
+    # 显式包含确保模块及 multimedia 后端插件被打包
+    if name == "TKSBook":
+        cmd.append("--include-module=PySide6.QtMultimedia")
 
     # Pillow 支持 — onefile 模式下所有 GUI 编辑器都依赖 Pillow:
     #   · mat/act/warpc/wardata/tkt/jvg/grp/gxp/spritesheet/font 直接 import PIL

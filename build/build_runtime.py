@@ -120,6 +120,18 @@ ARCHIVES = {
             "QtSvgWidgets.pyd",
         ],
     },
+    "QtMultimedia.lib": {
+        "description": "Qt6Multimedia + QtMultimedia 绑定 + multimedia 后端插件 (TKSBook 音频)",
+        # Qt6Network.dll 已含于 QtGui.lib (Qt6Multimedia.dll 依赖它), 此处不重复
+        "pyside6_files": [
+            "Qt6Multimedia.dll",
+            "QtMultimedia.pyd",
+            # Windows Media Foundation 后端 (仅依赖系统 DLL, 支持 WAV/MP3,
+            # 满足 TKS 点击音效 + BGM 需求); 不含 FFmpeg 后端 (~18MB) 以控制体积,
+            # Qt 会自动回退到可用后端
+            "plugins/multimedia/windowsmediaplugin.dll",
+        ],
+    },
     "PIL.lib": {
         "description": "Pillow 图像处理库",
         "pil": True,
@@ -277,7 +289,7 @@ def main():
     print("=" * 60)
 
     # 延迟打印包路径 (只有需要时才导入)
-    if not args.only or args.only.rstrip(".lib") in ("PySide6", "QtCore", "QtGui", "QtWidgets", "QtSvg"):
+    if not args.only or args.only.rstrip(".lib") in ("PySide6", "QtCore", "QtGui", "QtWidgets", "QtSvg", "QtMultimedia"):
         print(f"  PySide6: {_get_package_dir('PySide6')}")
         print(f"  shiboken6: {_get_package_dir('shiboken6')}")
     if not args.only or args.only.rstrip(".lib") == "PIL":
