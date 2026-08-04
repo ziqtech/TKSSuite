@@ -30,6 +30,7 @@ from editor_utils.app_init import install_translator, setup_app_icon
 from editor_utils.lzss import lzss_decompress_dat
 from editor_utils.tkt_loader import load_tkt_simple
 from editor_utils.version import format_title, format_about_header
+from editor_utils.shared_state import pick_tks_directory
 from editor_utils.jvg_loader import load_mu_sprites
 from editor_utils.mod_exporter import (
     generate_mod_json, pack_tksmod, ModMetadataDialog, safe_mod_filename,
@@ -368,7 +369,7 @@ class ConfigsEditorWindow(QMainWindow):
 
     def load_tks_directory(self):
         """加载 TKS 游戏目录: WarPC.dat + TKT.dat + Fa.JVG。"""
-        d = QFileDialog.getExistingDirectory(self, "选择 TKS 游戏目录")
+        d = pick_tks_directory(self)
         if not d:
             return
 

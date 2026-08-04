@@ -58,6 +58,7 @@ from editor_utils.dock_components import DockHeader, create_dock
 from editor_utils.lzss import lzss_decompress_dat as lzss_decompress, lzss_decompress_save, lzss_compress_save
 from editor_utils.ui_helpers import confirm_close, themed_messagebox, NoWheelComboBox
 from editor_utils.version import format_title, format_about_header
+from editor_utils.shared_state import pick_tks_directory
 from editor_utils.mod_exporter import (
     diff_records, diff_text_defines, compute_crc32, generate_mod_json,
     pack_tksmod, build_data_diff_json, build_text_diff_json, ModMetadataDialog,
@@ -2836,7 +2837,7 @@ class MatEditorApp(QMainWindow):
 
     # =========== 数据加载 ===========
     def _load_dir(self):
-        d = QFileDialog.getExistingDirectory(self, "选择 TKS 游戏目录")
+        d = pick_tks_directory(self)
         if not d:
             return
         mat_p = os.path.join(d, "TKMat.Dat")
@@ -2851,7 +2852,7 @@ class MatEditorApp(QMainWindow):
 
     def _load_save_dir(self):
         """从存档文件 sav.N 加载 TKMat 地图实体数据 (先选游戏目录, 再自动定位 save/)"""
-        d = QFileDialog.getExistingDirectory(self, "选择 TKS 游戏目录 (含 save 子文件夹)")
+        d = pick_tks_directory(self, "选择 TKS 游戏目录 (含 save 子文件夹)")
         if not d: return
         # 确认选中的是游戏目录 (包含 TKMat.Dat 或 TKT.dat)
         is_game_dir = os.path.exists(os.path.join(d, 'TKMat.Dat')) or os.path.exists(os.path.join(d, 'TKT.dat'))

@@ -1343,6 +1343,16 @@ class ModImportPreviewDialog(QDialog):
 
 
 # ═══════════════════════════════════════════════════════════════
+# 跨编辑器共享状态 (最近使用的参考目录)
+# ═══════════════════════════════════════════════════════════════
+# 实现已迁移至 editor_utils.shared_state, 此处保留同名函数兼容现有调用
+from editor_utils.shared_state import (  # noqa: E402
+    get_last_ref_dir,
+    save_last_ref_dir,
+)
+
+
+# ═══════════════════════════════════════════════════════════════
 # MOD 导出预览对话框
 # ═══════════════════════════════════════════════════════════════
 
@@ -1350,6 +1360,9 @@ class ModExportPreviewDialog(QDialog):
     """MOD 导出预览对话框 — 选择参考目录并显示组件变更统计。
 
     流程: 用户确认目录和变更统计 → 点击"导出" → 调用方弹出 ModMetadataDialog 填写元数据。
+
+    参考目录记忆: 优先加载共享状态中最近一次选择的目录 (跨编辑器共享);
+    确认导出后自动保存当前目录供其它编辑器默认加载。
     """
 
     def __init__(self, parent=None, default_dir: str = "",
@@ -1358,7 +1371,9 @@ class ModExportPreviewDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("导出为 MOD — 选择参考目录")
         self.resize(520, 420)
-        self._ref_dir = default_dir
+        # 优先使用共享记忆中最近选择的参考目录, 否则回退到调用方默认目录
+        _saved_dir = get_last_ref_dir()
+        self._ref_dir = _saved_dir if _saved_dir else default_dir
         self._compute_stats = compute_stats
         self._info = mod_info or {}
         self._has_diff = False
@@ -1462,6 +1477,8 @@ class ModExportPreviewDialog(QDialog):
             return
         if not self._has_diff:
             return  # 无差异时静默忽略点击
+        # 记住本次选择的参考目录, 供所有编辑器下次导出默认加载
+        save_last_ref_dir(self._ref_dir)
         self.accept()
 
     def get_ref_dir(self) -> str:

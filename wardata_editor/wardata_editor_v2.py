@@ -94,6 +94,7 @@ from editor_utils.lzss import lzss_decompress_dat
 from editor_utils.jvg_loader import load_mu_sprites, get_sprite_pixmap
 from editor_utils.rgb565 import rgb565_to_rgba
 from editor_utils.tkt_loader import load_tkt_simple
+from editor_utils.shared_state import pick_tks_directory
 from editor_utils.mod_exporter import (
     compute_crc32, generate_mod_json, pack_tksmod, ModMetadataDialog, safe_mod_filename,
     get_tksmod_info, read_tksmod, ModImportPreviewDialog, ModExportPreviewDialog,
@@ -867,7 +868,7 @@ class WarDataEditorV2(QMainWindow):
 
     # ── 文件操作 ──
     def _load_tks_dir(self):
-        d = QFileDialog.getExistingDirectory(self, "选择 TKS 游戏目录")
+        d = pick_tks_directory(self)
         if not d: return
         wd = os.path.join(d, 'WarData.dat')
         ww = os.path.join(d, 'WarWay.dat')

@@ -46,6 +46,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from editor_utils.dock_components import create_dock
 from editor_utils.jvg_loader import load_mu_sprites, get_sprite_pixmap
 from editor_utils.lzss import lzss_decompress_dat, lzss_compress_dat
+from editor_utils.shared_state import pick_tks_directory
 from editor_utils.mod_exporter import (
     diff_records, compute_crc32, generate_mod_json,
     pack_tksmod, build_data_diff_json, ModMetadataDialog, safe_mod_filename,
@@ -562,7 +563,7 @@ class ShopEditorWindow(QMainWindow):
     # ================================================================
 
     def _load_tks_dir(self):
-        tks_dir = QFileDialog.getExistingDirectory(self, "选择 TKS 游戏目录 (包含 TKShop.dat / TKItem.dat / TKT.dat)")
+        tks_dir = pick_tks_directory(self, "选择 TKS 游戏目录 (包含 TKShop.dat / TKItem.dat / TKT.dat)")
         if not tks_dir:
             return
 

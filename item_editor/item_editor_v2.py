@@ -56,6 +56,7 @@ from editor_utils.dock_components import DockHeader, create_dock
 from editor_utils.flow_layout import FlowLayout
 from editor_utils.jvg_loader import get_sprite_pixmap, load_mu_sprites
 from editor_utils.lzss import lzss_compress_dat, lzss_decompress_dat
+from editor_utils.shared_state import pick_tks_directory
 from editor_utils.mod_exporter import (
     ModExportPreviewDialog, ModImportPreviewDialog, ModMetadataDialog,
     build_data_diff_json, compute_crc32, diff_records, generate_mod_json,
@@ -860,7 +861,7 @@ class ItemEditorApp(QMainWindow):
 
     # ── 数据加载 ──
     def _load_tks_dir(self):
-        d = QFileDialog.getExistingDirectory(self, "选择 TKS 游戏目录")
+        d = pick_tks_directory(self)
         if not d: return
         it = os.path.join(d, "TKItem.dat")
         tk_ = os.path.join(d, "TKT.dat")

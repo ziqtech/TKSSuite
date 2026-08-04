@@ -62,6 +62,7 @@ from editor_utils.version import format_title, format_about_header
 from editor_utils.window_theme import apply_godot_theme
 from editor_utils.kon_name_resolver import KonNameResolver
 from editor_utils.lzss import lzss_decompress_dat
+from editor_utils.shared_state import pick_tks_directory
 from editor_utils.dock_components import DockHeader
 from editor_utils.ui_helpers import (
     make_fake_input, update_path_labels, confirm_close,
@@ -2327,7 +2328,7 @@ class ActEditorV2(QMainWindow):
     # ── 数据加载 ──
 
     def _load_tks_dir(self):
-        d = QFileDialog.getExistingDirectory(self, "选择 TKS 游戏目录")
+        d = pick_tks_directory(self)
         if not d:
             return
 

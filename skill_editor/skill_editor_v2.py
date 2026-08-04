@@ -26,6 +26,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from editor_utils.dock_components import DockHeader, create_dock
 from editor_utils.jvg_loader import get_sprite_pixmap, load_mu_sprites
 from editor_utils.lzss import lzss_compress_dat, lzss_decompress_dat
+from editor_utils.shared_state import pick_tks_directory
 from editor_utils.mod_exporter import (
     ModExportPreviewDialog, ModImportPreviewDialog, ModMetadataDialog,
     build_data_diff_json, compute_crc32, diff_records, generate_mod_json,
@@ -1131,7 +1132,7 @@ class SkillEditorApp(QMainWindow):
         ], self._is_dark)
 
     def _load_tks_dir(self):
-        d = QFileDialog.getExistingDirectory(self, "选择 TKS 游戏目录")
+        d = pick_tks_directory(self)
         if not d: return
         sk = os.path.join(d, "TKSkill.dat")
         tk_ = os.path.join(d, "TKT.dat")

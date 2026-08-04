@@ -44,6 +44,7 @@ from editor_utils.theme_manager import ThemeManager
 from editor_utils.dock_components import DockHeader, create_dock
 from editor_utils.ui_helpers import update_path_labels, confirm_close, themed_messagebox, NoWheelComboBox
 from editor_utils.tkt_loader import load_tkt_full as _load_tkt_full
+from editor_utils.shared_state import pick_tks_directory
 from editor_utils.mod_exporter import (
     diff_text_entries, compute_crc32, generate_mod_json,
     pack_tksmod, build_text_diff_json, ModMetadataDialog, safe_mod_filename,
@@ -1304,7 +1305,7 @@ class TktEditor(QMainWindow):
             QMessageBox.critical(self, "数据载入溃散", str(e))
 
     def _load_tks_dir(self):
-        d = QFileDialog.getExistingDirectory(self, "挂载 TKS 游戏核心环境目录")
+        d = pick_tks_directory(self, "挂载 TKS 游戏核心环境目录")
         if not d:
             return
         tkt_path = os.path.join(d, "TKT.dat")

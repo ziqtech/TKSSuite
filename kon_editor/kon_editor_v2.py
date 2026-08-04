@@ -26,6 +26,7 @@ from editor_utils.theme_manager import ThemeManager
 from editor_utils.dock_components import DockHeader
 from editor_utils.ui_helpers import make_fake_input, update_path_labels, confirm_close, themed_messagebox, NoWheelComboBox
 from editor_utils.lzss import lzss_decompress_dat, lzss_compress_dat
+from editor_utils.shared_state import pick_tks_directory
 from editor_utils.tkt_loader import load_tkt_simple
 from editor_utils.picker_dialogs import StatusPickerDialog, STATUS_NAMES
 from editor_utils.jvg_loader import load_mu_sprites, get_sprite_pixmap
@@ -685,7 +686,7 @@ class KonEditor(QMainWindow):
     # ----------- 数据加载 -----------
 
     def _load_tks_dir(self):
-        d = QFileDialog.getExistingDirectory(self, "选择 TKS 游戏目录")
+        d = pick_tks_directory(self)
         if not d: return
         ko = os.path.join(d, "TKKon.dat")
         tk_ = os.path.join(d, "TKT.dat")

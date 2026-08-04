@@ -26,6 +26,7 @@ from editor_utils.theme_manager import ThemeManager
 from editor_utils.ui_helpers import themed_messagebox, update_path_labels
 from editor_utils.version import format_title, format_about_header
 from editor_utils.window_theme import apply_godot_theme
+from editor_utils.shared_state import pick_tks_directory
 
 from book_loader import GameData
 from tab_gallery import GalleryTab
@@ -180,7 +181,7 @@ class TksBookViewer(QMainWindow):
     # ── 数据加载 ──
 
     def _load_tks_dir(self):
-        d = QFileDialog.getExistingDirectory(self, "选择 TKS 游戏目录")
+        d = pick_tks_directory(self)
         if not d:
             return
         # 主文件校验: 查看器至少需要 TKT.dat (所有名称/文本的来源)
