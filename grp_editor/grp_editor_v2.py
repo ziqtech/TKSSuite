@@ -2167,6 +2167,8 @@ class GRPEditor(QMainWindow):
 # ═══════════════════════════════════════════════════════════
 
 def main():
+    from editor_utils.app_init import ensure_single_instance
+    ensure_single_instance()
     from editor_utils.app_init import install_translator, setup_app_icon
     from editor_utils.ui_helpers import install_dialog_theme_filter
     app = QApplication(sys.argv)

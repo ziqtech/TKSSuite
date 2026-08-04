@@ -20,6 +20,55 @@ from PySide6.QtCore import QTranslator
 from PySide6.QtGui import QIcon
 
 
+# 单实例互量句柄 — 必须持有到进程结束, 防止被 GC 提前释放互斥量
+_single_instance_mutex = None
+
+
+def ensure_single_instance(app_name: str | None = None):
+    """单实例守卫: 同一程序重复启动时弹窗提示并退出新实例。
+
+    实现: Windows 命名互斥量 (ctypes CreateMutexW)。
+      - 按编辑器锁定: 同名互斥量仅限制同一程序 (不同编辑器互不影响)
+      - 进程退出/崩溃后系统自动释放互斥量, 无死锁残留
+      - Wine (Winlator) 兼容
+      - 非 Windows 平台或创建失败时静默放行 (不阻断主流程)
+
+    互斥量名默认取自 sys.argv[0] 文件名 (不含扩展名):
+      - 编译模式: exe 名 (如 TKSItemEditor)
+      - 开发模式: 脚本名 (如 item_editor_v2)
+
+    应在 main() 入口处尽早调用。检测到重复实例时创建临时 QApplication
+    弹出提示框后 sys.exit(1)。
+    """
+    global _single_instance_mutex
+    if os.name != 'nt':
+        return
+
+    name = app_name or os.path.splitext(os.path.basename(sys.argv[0]))[0]
+    mutex_name = f"TKSEditors_{name}_Singleton"
+
+    try:
+        import ctypes
+        kernel32 = ctypes.windll.kernel32
+        handle = kernel32.CreateMutexW(None, False, mutex_name)
+        ERROR_ALREADY_EXISTS = 183
+        if not handle or kernel32.GetLastError() != ERROR_ALREADY_EXISTS:
+            _single_instance_mutex = handle  # 首个实例: 持有句柄到进程结束
+            return
+    except Exception:
+        return  # 创建失败时不阻断启动
+
+    # ── 已有实例在运行: 提示后退出 ──
+    from PySide6.QtWidgets import QApplication, QMessageBox
+    if QApplication.instance() is None:
+        QApplication(sys.argv)
+    QMessageBox.warning(None, "程序已在运行",
+        f"检测到 {name} 已有实例在运行。\n\n"
+        "为避免多窗口同时编辑导致数据错乱，新实例即将退出。\n"
+        "请在已打开的窗口中继续操作。")
+    sys.exit(1)
+
+
 def is_compiled() -> bool:
     """检测是否运行在编译环境 (Nuitka 或 PyInstaller)"""
     return (

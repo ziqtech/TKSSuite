@@ -1116,6 +1116,8 @@ class FontEditorWindow(QMainWindow):
 # ═══════════════════════════════════════════════════════════════
 
 def main():
+    from editor_utils.app_init import ensure_single_instance
+    ensure_single_instance()
     app = QApplication(sys.argv)
     install_dialog_theme_filter(app)              # 必须紧跟 QApplication 后调用
     app.setStyle("Fusion")

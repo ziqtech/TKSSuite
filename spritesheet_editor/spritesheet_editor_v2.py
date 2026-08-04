@@ -3183,6 +3183,8 @@ class SpriteSheetEditorWindow(QMainWindow):
 # ═══════════════════════════════════════════════════════════════
 
 def main():
+    from editor_utils.app_init import ensure_single_instance
+    ensure_single_instance()
     if not HAS_PIL:
         print("错误: 需要安装 Pillow 库")
         print("  pip install Pillow")

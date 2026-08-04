@@ -18,6 +18,8 @@ _ICON_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "TKS.ico")
 
 
 def main():
+    from editor_utils.app_init import ensure_single_instance
+    ensure_single_instance()
     from editor_utils.ui_helpers import install_dialog_theme_filter
     app = QApplication(sys.argv)
     install_dialog_theme_filter(app)
