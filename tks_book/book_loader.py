@@ -272,6 +272,8 @@ class GameData:
         self.battles = {}        # battle_id → WarData 简记录
         self.battle_scenes = {}  # battle_id → {场景ID}
         self.enemy_battles = {}  # warpc_idx → [battle_id]
+        self.special_items = []  # Attribute(-1,11,N) 特殊物品收集度来源列表
+        self.mat_entities = {}   # TKMat 轻量实体表 {实体ID: type/scene/flags/x/y/ext}
         # 存档索引 (sub_41B1A8 扫描 save\1.sav ~ save\9.sav)
         # save_slots[i] = {'team_ids','gold','timestamp','team_levels','scene_id'} 或 None (空槽)
         self.save_slots = []
@@ -387,6 +389,8 @@ class GameData:
             self.battles = {}
             self.battle_scenes = {}
             self.enemy_battles = {}
+            self.special_items = []
+            self.mat_entities = {}
 
     # ── 地图 ──
 

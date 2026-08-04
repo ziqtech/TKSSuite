@@ -58,6 +58,8 @@ class BookTabBase(QWidget):
         btn_clear.clicked.connect(self.search_input.clear)
         search_row.addWidget(btn_clear)
         ll.addLayout(search_row)
+        # 供子类向搜索行追加筛选控件 (如物品页分类下拉)
+        self._search_row_layout = search_row
         self.list_widget = QTableWidget()
         self.list_widget.setIconSize(QSize(24, 24))
         self.list_widget.setSelectionBehavior(QAbstractItemView.SelectRows)

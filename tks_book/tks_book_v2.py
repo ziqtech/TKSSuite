@@ -35,6 +35,7 @@ from tab_skill import SkillTab
 from tab_item import ItemTab
 from tab_status import StatusTab
 from tab_map import MapTab
+from tab_special import SpecialItemTab
 
 
 class TksBookViewer(QMainWindow):
@@ -119,12 +120,14 @@ class TksBookViewer(QMainWindow):
         self.tab_item = ItemTab(self.data)
         self.tab_status = StatusTab(self.data)
         self.tab_map = MapTab(self.data)
+        self.tab_special = SpecialItemTab(self.data)
         self.tabs.addTab(self.tab_gallery, "图鉴")
         self.tabs.addTab(self.tab_char, "人物")
         self.tabs.addTab(self.tab_skill, "技能")
         self.tabs.addTab(self.tab_item, "物品")
         self.tabs.addTab(self.tab_status, "状态")
         self.tabs.addTab(self.tab_map, "地图")
+        self.tabs.addTab(self.tab_special, "特殊物品")
         self.tabs.currentChanged.connect(self._on_tab_changed)
 
         # 标签页右侧按钮区: 缩放按钮 (仅图鉴页显示) + 切换主题
@@ -204,6 +207,7 @@ class TksBookViewer(QMainWindow):
         self.tab_item.populate()
         self.tab_status.populate()
         self.tab_map.populate()
+        self.tab_special.populate()
         if self.tabs.currentWidget() is self.tab_map:
             self.tab_map.ensure_populated()
         self._update_paths()
@@ -252,6 +256,7 @@ class TksBookViewer(QMainWindow):
             "   · 物品 — 图标/说明文本/有值属性/获得途径\n"
             "   · 状态 — 异常状态图标/名称/功能描述/来源与解除途径\n"
             "   · 地图 — 场景列表 + 背景预览 (首次切换时加载 SC.GRP)\n"
+            "   · 特殊物品 — TKD 脚本 Attribute(-1,11,N) 收集度来源统计\n"
             "3. 左侧列表上方输入关键字可即时过滤\n"
             "4. F5 切换深色/浅色主题")
 

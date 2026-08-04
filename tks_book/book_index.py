@@ -106,17 +106,24 @@ def load_tkd_defines(fp):
 
 
 def load_mat_lite(fp):
-    """TKMat.Dat → {实体ID: {'type','scene','ext'}} (ext=d52..d64 仅 type110/16)"""
+    """TKMat.Dat → {实体ID: {'type','scene','flags','x','y','box','ext'}}
+    (flags=d2 初始标志 bit0=启用; x/y=d10/d11 坐标(sub_407070);
+     box=(d18,d19,d20,d21) 碰撞盒左上角+宽高 (type15 触发区有效范围);
+     ext=d52..d64 仅 type110/16)"""
     with open(fp, 'rb') as f:
         raw = f.read()
     entities = {}
     count = min(MAT_REC_COUNT, len(raw) // MAT_REC_SIZE)
     for i in range(count):
         off = i * MAT_REC_SIZE
-        d0, d1 = struct.unpack_from('<ii', raw, off)
+        d = struct.unpack_from('<22i', raw, off)
+        d0, d1, d2 = d[0], d[1], d[2]
         if d0 == 0:
             continue
-        ent = {'type': d0, 'scene': d1, 'ext': None}
+        ent = {'type': d0, 'scene': d1, 'flags': d2,
+               'x': d[10], 'y': d[11],
+               'box': (d[18], d[19], d[20], d[21]),
+               'ext': None}
         if d0 in (110, 16):
             # d52..d64 (字节偏移 208..256) — type110 物品组 / type16 战斗组
             ent['ext'] = struct.unpack_from('<13i', raw, off + 208)
@@ -222,6 +229,7 @@ def build_indexes(data):
     data.char_joins = defaultdict(list)
     data.battles = {}
     data.battle_scenes = defaultdict(set)
+    data.special_items = []
 
     d = data.game_dir
     mat_p = None
@@ -236,6 +244,7 @@ def build_indexes(data):
             entities = load_mat_lite(mat_p)
         except Exception:
             entities = {}
+    data.mat_entities = entities   # 全量轻量实体表 (地图页标注用)
 
     def ent_scene(eid):
         ent = entities.get(eid)
@@ -250,6 +259,7 @@ def build_indexes(data):
 
     # ── 1. TKD 脚本扫描: GetItem / TeamMember / BuyMenu / War ──
     buy_scenes = defaultdict(set)   # area_id → {场景ID}
+    special_items = []              # Attribute(-1,11,N) 特殊物品收集度来源
     tkd_p = os.path.join(d, "TKD.dat")
     defines = []
     if os.path.exists(tkd_p):
@@ -262,6 +272,8 @@ def build_indexes(data):
         eid = block['define_id'] >> 16
         scene = ent_scene(eid)
         comment = _clean_comment(block['comment'])
+        attr_deltas = []   # Attribute(-1,11,N) 增量收集 (特殊物品收集度)
+        script_getitems = []  # 同块 GetItem(物品ID,数量) — 排除金钱10000
         # 花括号嵌套感知的条件栈:
         #   Check*/MiniGame/War 命令后紧跟 "{" 时开启条件作用域, "}" 关闭;
         #   TeamMember 的入队条件 = 当前包住它的所有条件作用域 (旁路分支不计入)
@@ -300,10 +312,15 @@ def build_indexes(data):
                     bid = _int(args[0], -1)
                     if bid >= 0 and scene is not None:
                         data.battle_scenes[bid].add(scene)
+            elif cmd == 'Attribute' and len(args) >= 3:
+                # Attribute(目标,属性,变化值): 目标-1 + 属性11 = 特殊物品收集度
+                if _int(args[0], 0) == -1 and _int(args[1], 0) == 11:
+                    attr_deltas.append(_int(args[2], 0))
             elif cmd == 'GetItem' and len(args) >= 1:
                 iid = _int(args[0])
                 qty = _int(args[1], 1) if len(args) >= 2 else 1
                 if iid != 10000 and qty > 0 and iid in data.item_by_id:
+                    script_getitems.append((iid, qty))
                     txt = scene_text(scene)
                     if comment:
                         txt += f" — {comment}"
@@ -325,6 +342,45 @@ def build_indexes(data):
                     buy_scenes[area].add(scene)
             # 命令之后的花括号 (如 "CheckResult(8,0) {" 同行开块写法)
             _scan_braces(line[m.end():])
+
+        # ── 特殊物品收集度来源登记 (Attribute(-1,11,N), 逆向 sub_40E11C case11) ──
+        # 物品本体双轨制 (docs/mat_editor/Attribute与GetItem双轨物品系统分析.md):
+        #   type110 机关 → TKMat d53-d64 三组物品 (sub_408B30 掉落)
+        #   其它实体     → 同块脚本 GetItem 命令 (sub_40CE30)
+        # Attribute 本身只累加 word_757F00 收集度, 不入物品栏
+        if attr_deltas:
+            ent = entities.get(eid)
+            etype = ent['type'] if ent else None
+            items_found = []
+            if ent and etype == 110 and ent['ext'] is not None:
+                ext = ent['ext']     # d52..d64
+                for base in (1, 5, 9):   # d53/d57/d61 三组物品
+                    id_min, id_max, q_min, q_max = ext[base:base + 4]
+                    if id_min <= 0:
+                        continue
+                    if id_max < id_min:
+                        id_max = id_min
+                    items_found.append((id_min, id_max,
+                                        max(q_min, 0), max(q_max, q_min),
+                                        'TKMat机关'))
+            for iid, qty in script_getitems:
+                items_found.append((iid, iid, qty, qty, '脚本GetItem'))
+            special_items.append({
+                'entity_id': eid,
+                'block_no': block['define_id'] & 0xFFFF,
+                'type': etype,
+                'scene': scene,
+                'scene_text': scene_text(scene),
+                'comment': comment,
+                'delta': sum(attr_deltas),
+                'items': items_found,
+                # d2 bit0=启用 (未启用实体初始不可交互, 脚本不会触发)
+                'enabled': bool(ent['flags'] & 1) if ent else True,
+            })
+    data.special_items = sorted(
+        special_items,
+        key=lambda e: (e['scene'] if e['scene'] is not None else 1 << 30,
+                       e['entity_id']))
 
     # ── 2. TKMat type110 宝箱/机关 三组物品; type16 随机战斗区 ──
     for eid, ent in entities.items():
