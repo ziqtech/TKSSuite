@@ -10,7 +10,6 @@ AnimationSpeedPanel — 动画/移动速度配置面板
 - move_animation.frame_delay_ms:          1~127  (移动动画, sub_43DE90 硬编码 0x3C)
 - idle_animation.frame_delay_ms:          1~127  (待机动画, sub_43CA64 战场主循环硬编码 0x3C)
 - map_movement.frame_delay_ms:            1~127  (剧情地图移动, sub_412BE8 地图主循环帧节流 0x3C)
-- map_animation.frame_divisor:            1~64   (地图 Ani.JVG 实体动画分频, sub_408704 入口 cave hook)
 
 安全约束: extra_segment_delay_ms 必须能被 extra_delay_decrement_ms 整除
          (否则 v30 递减后变负, 无符号比较导致死循环卡死)
@@ -28,7 +27,6 @@ ORIG_FRAME_DELAY = 60
 ORIG_BASE_DELAY = 60
 ORIG_EXTRA_DELAY = 120
 ORIG_DECREMENT = 30
-ORIG_ANIM_DIVISOR = 1
 
 
 class AnimationSpeedPanel(ConfigPanelBase):
@@ -109,57 +107,14 @@ class AnimationSpeedPanel(ConfigPanelBase):
             tooltip="剧情地图主循环每帧延迟(毫秒), 范围 1~127\n"
                     "控制主角在所有剧情地图(大地图/城镇/室内)中的移动速度\n"
                     "原始值 60ms(约16.7帧/秒), 设为 30 移动加速 2 倍\n"
-                    "注意: 加速后 NPC 待机动画也会变快, 可用下方「地图实体动画分频」单独回调")
+                    "注意: 地图上的 NPC 行走/事件动画也会同步加速")
         layout.addWidget(map_group)
-
-        # ── 地图实体动画分频 (Ani.JVG) ──
-        anim_group = QGroupBox("地图实体动画分频 (Ani.JVG, sub_408704 入口分频门)")
-        anim_layout = QFormLayout(anim_group)
-
-        anim_widget = QWidget()
-        ah = QHBoxLayout(anim_widget)
-        ah.setContentsMargins(0, 0, 0, 0)
-        ah.setSpacing(8)
-        self._anim_div_spin = QSpinBox()
-        self._anim_div_spin.setRange(1, 64)
-        self._anim_div_spin.setSingleStep(1)
-        self._anim_div_spin.setValue(ORIG_ANIM_DIVISOR)
-        self._anim_div_spin.setFixedWidth(80)
-        self._anim_div_lbl = QLabel("1.0x")
-        self._anim_div_lbl.setFixedWidth(50)
-        self._anim_div_lbl.setAlignment(
-            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-
-        def _update_div_label(val):
-            mult = 1.0 / val if val else 1.0
-            self._anim_div_lbl.setText(f"{mult:.1f}x")
-
-        def _on_div_change(val):
-            _update_div_label(val)
-            self._mark_dirty()
-
-        self._anim_div_spin.valueChanged.connect(_on_div_change)
-
-        hint = QLabel("(1=原版不分频; 值越大动画越慢)")
-        hint.setObjectName("TipLabel")
-        ah.addWidget(self._anim_div_spin)
-        ah.addWidget(self._anim_div_lbl)
-        ah.addWidget(hint, 1)
-        anim_layout.addRow("动画分频系数:", anim_widget)
-        anim_widget.setToolTip(
-            "地图 Ani.JVG 实体动画额外分频系数, 范围 1~64\n"
-            "与「剧情地图移动速度」解耦: 每 K 次动画帧推进才真正执行 1 次\n"
-            "地图移动加速 N 倍时, 设为 N 即可保持 NPC 待机/站立动画原速\n"
-            "示例: 移动每帧延迟 30ms(2倍速) + 分频 2 → 动画保持原速\n"
-            "仅影响待机/站立动画; 行走动画与位移绑定, 始终同步不受影响")
-        layout.addWidget(anim_group)
 
         # ── 说明 ──
         tip_label = QLabel(
-            "提示: 修改后需在启动器中勾选「动画/移动速度」补丁才会生效。\n"
-            "所有值默认为游戏原始值 (60ms/120ms/30ms/分频1), 设小可加快动画播放。\n"
+            "提示: 修改后需在启动器中勾选「战斗动画速度」补丁才会生效。\n"
+            "所有值默认为游戏原始值 (60ms/120ms/30ms), 设小可加快动画播放。\n"
             "剧情地图移动速度同理: 帧延迟设小, 主角行走越快。\n"
-            "加速地图移动后若觉得 NPC 动画太快, 调大「地图实体动画分频」即可。\n"
             "⚠ 攻击动画的「新段过渡延迟」必须能被「衰减步长」整除, 否则游戏会卡死。"
         )
         tip_label.setWordWrap(True)
@@ -376,15 +331,6 @@ class AnimationSpeedPanel(ConfigPanelBase):
                         int(map_cfg.get("frame_delay_ms", ORIG_FRAME_DELAY)),
                         ORIG_FRAME_DELAY)
 
-        # 地图实体动画分频
-        anim_cfg = data.get("map_animation", {})
-        div = int(anim_cfg.get("frame_divisor", ORIG_ANIM_DIVISOR))
-        div = max(1, min(64, div))
-        self._anim_div_spin.blockSignals(True)
-        self._anim_div_spin.setValue(div)
-        self._anim_div_spin.blockSignals(False)
-        self._anim_div_lbl.setText(f"{1.0 / div:.1f}x")
-
     def _set_value(self, spin, slider, lbl, value, orig, invert_multiplier=False):
         """统一设置 spinbox/slider/label 的值, 屏蔽信号避免触发 dirty"""
         spin.blockSignals(True)
@@ -417,9 +363,6 @@ class AnimationSpeedPanel(ConfigPanelBase):
             },
             "map_movement": {
                 "frame_delay_ms": self._map_spin.value()
-            },
-            "map_animation": {
-                "frame_divisor": self._anim_div_spin.value()
             }
         }
 
