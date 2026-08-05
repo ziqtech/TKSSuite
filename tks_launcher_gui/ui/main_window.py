@@ -9,7 +9,8 @@ from PySide6.QtWidgets import (
     QToolBar, QWidget,
 )
 
-from core.config_loader import PatchDef, load_config
+from core.config_loader import PatchDef
+from core.tkspatch_loader import load_config_merged
 from core.save_manager import set_last_game_dir
 from core.state_persistence import GuiState, load_gui_state, save_gui_state
 from editor_utils.dock_components import create_dock
@@ -66,9 +67,10 @@ class MainWindow(QMainWindow):
         app_inst = QApplication.instance()
         self._dark_mode = app_inst.styleHints().colorScheme() == Qt.ColorScheme.Dark if app_inst else True
 
-        # 加载配置用于补丁列表
+        # 加载配置用于补丁列表 (外置 .tkspatch 为唯一来源)
         config_path = os.path.join(_LAUNCHER_DIR, "tks_patches.json")
-        config = load_config(config_path)
+        patches_dir = os.path.join(_LAUNCHER_DIR, "patches")
+        config = load_config_merged(config_path, patches_dir)
         self._patches: list[PatchDef] = config.patches if config else []
 
         # 加载 GUI 勾选状态 (补丁/模组/辅助工具的勾选记录)
@@ -119,7 +121,7 @@ class MainWindow(QMainWindow):
         themed_messagebox(self, QMessageBox.Information, "帮助说明",
             "TKS Mod Launcher — 三国群侠传 MOD 启动器\n\n"
             "1. 启动并注入 (Ctrl+Enter): 选择 TKS.exe, 启动游戏并注入勾选的补丁/模组\n"
-            "2. 左侧「补丁列表」: 勾选需要应用的二进制补丁 (来自 tks_patches.json)\n"
+            "2. 左侧「补丁列表」: 勾选需要应用的二进制补丁 (来自 patches/ 目录 .tkspatch 文件)\n"
             "3. 中间「模组列表」: 勾选要启用的 .tksmod 模组, 选中后下方显示模组详情\n"
             "4. 右侧「辅助工具」: 选择需要注入的辅助工具 (如 cnc-ddraw / ddraw)\n"
             "5. 模组打包: 将多个 .tksmod 文件打包为 .tksmodpak 合集\n"

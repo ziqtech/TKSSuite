@@ -1,0 +1,11 @@
+{
+  "_format": 1,
+  "type": "patch_imm32",
+  "id": "tkitem_size",
+  "name": "物品数据扩容",
+  "desc": "TKItem.dat 大小常量 38400→实际大小",
+  "value_scan": true,
+  "expect_value": "0x9600",
+  "new_value": "{tkitem_actual_size}",
+  "expect_count": 0
+}

@@ -1,0 +1,13 @@
+{
+  "_format": 1,
+  "_group": "── 其他功能 ──",
+  "type": "cave_hook",
+  "id": "history_text",
+  "name": "历史文本扩展",
+  "desc": "历史文本 ID 扩展",
+  "hook_pattern": "81 ** 5A 23 00 00",
+  "hook_size": 6,
+  "cave_template": "history_text",
+  "cave_offset": 256,
+  "cave_code": "52 69 D2 1E 04 00 00 81 C2 08 7F 75 00 0F B7 82 0C 02 00 00 85 C0 75 08 5A 81 C2 5A 23 00 00 C3 8B D0 83 C4 04 C3"
+}

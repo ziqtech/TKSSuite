@@ -1,0 +1,13 @@
+{
+  "_format": 1,
+  "type": "cave_hook",
+  "id": "exp_bonus_overflow_fix",
+  "name": "经验加成溢出保护",
+  "desc": "经验加成乘法溢出保护 (乘法前将累积值钳位到[0,30000]防止int32溢出)",
+  "hook_pattern": "8B 10 0F BF 41 3E 0F AF D0 83 C2 63",
+  "hook_size": 9,
+  "hook_expect_count": 1,
+  "cave_template": "exp_bonus_safe_mul",
+  "cave_offset": 704,
+  "cave_code": "8B 10 81 FA 30 75 00 00 7E 05 BA 30 75 00 00 85 D2 79 02 33 D2 0F BF 41 3E 0F AF D0 C3"
+}

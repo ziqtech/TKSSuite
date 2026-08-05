@@ -11,6 +11,7 @@ import time
 from PySide6.QtCore import QThread, Signal
 
 from core.config_loader import load_config
+from core.tkspatch_loader import load_config_merged
 from core.memory import (
     read_pm, write_pm,
     get_module_base, get_module_size, get_child_processes,
@@ -115,12 +116,13 @@ class PatcherWorker(QThread):
         self._log("TKS Launcher - 自动运行时补丁启动器 (PySide6 GUI)")
         self._log("========================================")
 
-        # 加载配置
+        # 加载补丁配置 (外置 .tkspatch 为唯一来源, tks_patches.json 仅向后兼容)
         config_path = os.path.join(exe_dir, "tks_patches.json")
-        self._log(f"配置文件: {config_path} (存在={os.path.isfile(config_path)})")
-        config = load_config(config_path, log_func=self._log)
-        if config is None:
-            self._log("[ERROR] 无法加载补丁配置, 退出")
+        patches_dir = os.path.join(exe_dir, "patches")
+        self._log(f"补丁目录: {patches_dir} (存在={os.path.isdir(patches_dir)})")
+        config = load_config_merged(config_path, patches_dir, log_func=self._log)
+        if config is None or not config.patches:
+            self._log("[ERROR] 无法加载补丁配置 (patches/ 为空且无 tks_patches.json), 退出")
             self.finished.emit(False, {"error": "config load failed"})
             return
 

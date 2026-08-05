@@ -652,8 +652,23 @@ CAVE_WAR_MUSTCHAR_FALLBACK = bytes([
 _AWK_CAP_OLD = bytes([0x3D, 0xC8, 0x00, 0x00, 0x00])  # cmp eax, 200
 
 def build_cave_template(name: str, warpc_base: int, log_func=None,
-                        idx_cap: Optional[int] = None) -> Optional[bytes]:
+                        idx_cap: Optional[int] = None,
+                        external_code: Optional[bytes] = None) -> Optional[bytes]:
     log = log_func or (lambda x: None)
+
+    # 外置 cave 代码优先 (.tkspatch 文件提供)
+    if external_code is not None:
+        c = bytearray(external_code)
+        replace_addr_in_bytes(c, _WARPC_BASE_PLACEHOLDER, warpc_base)
+        # 动态调整战场形象 cave 的 WarPC 索引上限
+        if name in ("awk_sprite", "awk_sprite2") and idx_cap is not None:
+            pos = c.find(_AWK_CAP_OLD)
+            if pos >= 0:
+                c[pos:pos + 5] = bytes([0x3D]) + struct.pack('<I', idx_cap & 0xFFFFFFFF)
+        log(f"    Cave 来源: 外置 .tkspatch ({len(c)} bytes)")
+        return bytes(c)
+
+    # 回退: 内置模板
     templates = {
         "awk_sprite": CAVE_AWK_SPRITE,
         "awk_sprite2": CAVE_AWK_SPRITE2,
@@ -877,8 +892,10 @@ def apply_cave_hook(defn: PatchDef, hits: List[int], code_buf: bytearray,
     if idx_cap < 200:
         idx_cap = 200
 
+    # 外置 cave 代码优先 (.tkspatch 提供), 回退到内置模板
+    ext_cave = getattr(defn, '_cave_code_bytes', None)
     cd = build_cave_template(defn.cave_template, warpc_base, log_func=log,
-                             idx_cap=idx_cap)
+                             idx_cap=idx_cap, external_code=ext_cave)
     if cd is None:
         return False
 
@@ -1054,6 +1071,14 @@ def _apply_summon_random(defn: PatchDef, summon: dict, code_buf: bytearray,
     251 (entry 9, 合并 cave entry_251, hook 0x444CB3, 结果->[ebp-2])"""
     log = log_func or (lambda x: None)
 
+    # 外置 cave 代码支持 (.tkspatch 提供)
+    from .tkspatch_loader import _parse_hex_bytes
+    _extra = getattr(defn, '_extra', {})
+    _ext_cave1 = _parse_hex_bytes(_extra.get('summon_cave_code', '')) if _extra.get('summon_cave_code') else None
+    _ext_cave2 = _parse_hex_bytes(_extra.get('summon_cave2_code', '')) if _extra.get('summon_cave2_code') else None
+    _cave_summon_random = _ext_cave1 if _ext_cave1 else CAVE_SUMMON_RANDOM
+    _cave_summon_222_251 = _ext_cave2 if _ext_cave2 else CAVE_SUMMON_RANDOM_222_251
+
     # 4a. 收集候选列表 -> 90 字节候选表 (entry 0~7=224~231, 8=222, 9=251)
     table = bytearray(90)        # 10 entry x 9 字节
     any_random = False
@@ -1110,7 +1135,7 @@ def _apply_summon_random(defn: PatchDef, summon: dict, code_buf: bytearray,
     # 4c. 224~231: entry_224 cave + hook 0x444C84 (结果->edx, 由原 mov[ebp-2],dx 写回)
     if has_224:
         all_ok &= _write_cave_and_hook(
-            CAVE_SUMMON_RANDOM, defn.random_cave_offset, 0,           # cave 代码, 入口偏移 0
+            _cave_summon_random, defn.random_cave_offset, 0,           # cave 代码, 入口偏移 0
             defn.random_hook_pattern, defn.random_hook_size, defn.random_hook_expect_count,
             table_abs, code_buf, code_start_addr, h_proc, cave_addr,
             warpc_i_fn, log, tag="224~231")
@@ -1118,7 +1143,7 @@ def _apply_summon_random(defn: PatchDef, summon: dict, code_buf: bytearray,
     # 4d. 222/251: 合并 cave (entry_222+entry_251+shared) + 各 hook
     if extra_hooks_to_apply:
         cave2_abs = cave_addr + defn.random2_cave_offset
-        cave2_code = bytearray(CAVE_SUMMON_RANDOM_222_251)
+        cave2_code = bytearray(_cave_summon_222_251)
         if cave2_code.count(SUMMON_RANDOM_PLACEHOLDER.to_bytes(4, 'little')) != 1:
             log(f"  [ERROR] 222/251 cave 占位符次数异常, 中止")
             return False
@@ -1370,8 +1395,16 @@ def apply_exp_lock(defn: PatchDef, code_buf: bytearray, code_start_addr: int,
             return True
 
     # 4. 构建 cave (写入掩码 imm8) 并写到 cave 区
-    cd = bytearray(CAVE_EXP_LOCK)
-    cd[CAVE_EXP_LOCK_MASK_OFFSET] = mask & 0xFF
+    # 外置 cave 代码优先 (.tkspatch 提供)
+    ext_cave = getattr(defn, '_cave_code_bytes', None)
+    if ext_cave is not None:
+        cd = bytearray(ext_cave)
+        # 从 _extra 获取掩码偏移, 默认使用 CAVE_EXP_LOCK_MASK_OFFSET
+        mask_off = getattr(defn, '_extra', {}).get('cave_mask_offset', CAVE_EXP_LOCK_MASK_OFFSET)
+    else:
+        cd = bytearray(CAVE_EXP_LOCK)
+        mask_off = CAVE_EXP_LOCK_MASK_OFFSET
+    cd[mask_off] = mask & 0xFF
     ct = cave_addr + defn.cave_offset
     write_pm(h_proc, ct, bytes(cd))
     log(f"    Cave 写入: 0x{ct:08X} ({len(cd)} bytes, mask=0x{mask:02X})")

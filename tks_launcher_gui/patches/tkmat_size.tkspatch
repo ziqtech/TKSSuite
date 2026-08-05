@@ -1,0 +1,12 @@
+{
+  "_format": 1,
+  "_group": "── DAT 文件大小适配 ──",
+  "type": "patch_imm32",
+  "id": "tkmat_size",
+  "name": "战斗素材扩容",
+  "desc": "TKMat.dat 大小常量 2304000→实际大小",
+  "value_scan": true,
+  "expect_value": "0x232800",
+  "new_value": "{tkmat_actual_size}",
+  "expect_count": 0
+}

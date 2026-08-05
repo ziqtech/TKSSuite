@@ -1,0 +1,17 @@
+{
+  "_format": 1,
+  "type": "patch_bytes",
+  "id": "attribute_char_limit_unlock",
+  "name": "属性/休息恢复角色ID上限解除",
+  "desc": "Attribute命令(opcode 48, sub_40E11C @0x40E11C)角色ID上限解除: NOP掉上界判断 jg(0x40E132: 0F 8F CE 02 00 00→90×6), 解除 a1<=0x23(35) 限制, 修复新角色(WarPC ID>35)客栈休息 Attribute(-1,5/6,10000) 无法恢复体力/内力; 保留下界 jl(a1>=-1) 以维持 a1=-1 全队递归语义并拦截负数非法ID; 注意不可仿照 team_member_limit 改 0xC8+ja, 会把 -1(0xFFFF) 判为超限导致全队恢复失效",
+  "pattern": "66 83 7D 08 23 0F 8F CE 02 00 00",
+  "expect_count": 1,
+  "replace": {
+    "5": "90",
+    "6": "90",
+    "7": "90",
+    "8": "90",
+    "9": "90",
+    "10": "90"
+  }
+}

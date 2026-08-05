@@ -1,0 +1,15 @@
+{
+  "_format": 1,
+  "type": "cave_hook",
+  "id": "awk_sprite_cave2",
+  "name": "自定义战场形象（敌方）",
+  "desc": "战场形象 PATH2 — 敌方角色形象加载",
+  "hook_pattern": "66 83 45 08 0C 6A 00 0F BF 45 08",
+  "hook_size": 5,
+  "hook_expect_count": 1,
+  "cave_template": "awk_sprite2",
+  "cave_offset": 640,
+  "hook_conflict_action": "override",
+  "fallback_rva": "0x43CA8D",
+  "cave_code": "50 51 0F BF 45 08 66 85 C0 7E 1E 3D C8 00 00 00 77 17 69 C0 1E 04 00 00 05 08 7F 75 00 0F B7 88 08 02 00 00 66 85 C9 75 07 66 83 45 08 0C EB 04 66 89 4D 08 59 58 C3"
+}

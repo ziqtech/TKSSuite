@@ -1,0 +1,14 @@
+{
+  "_format": 1,
+  "type": "cave_hook",
+  "id": "duel_self_target_fix",
+  "name": "死战自我攻击修复",
+  "desc": "死战状态自我攻击修复：决斗目标为自身时跳过决斗循环，修复使用物品后自我攻击致死BUG",
+  "hook_pattern": "0F BE 0D A4 6F 9D 00 66 89 4C 24 02 6A 09",
+  "hook_size": 7,
+  "hook_expect_count": 1,
+  "cave_template": "duel_self_fix",
+  "cave_offset": 900,
+  "hook_conflict_action": "override",
+  "cave_code": "0F BE 0D A4 6F 9D 00 50 0F BF 05 58 6F 9D 00 39 C1 58 75 08 C7 04 24 F7 60 44 00 C3 C3"
+}

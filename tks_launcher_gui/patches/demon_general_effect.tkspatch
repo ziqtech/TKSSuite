@@ -1,0 +1,16 @@
+{
+  "_format": 1,
+  "_group": "── 魔将特效 ──",
+  "_comment": "sub_4307CC 我方队伍初始化循环: word_9DF7C2[我方槽位] 初值 0→0x4000。渲染时 sub_434D7C/sub_434188/sub_4434BC/sub_43DE90 检测 &0x4000 改走 sub_459168(发光/亮度alpha混合)特殊路径, 即 War(68)/魔将角色(WarPC 35-44/92/93/104)所用特效。0x4000 位经全量交叉验证仅用于渲染分支, 不参与HP/伤害/AI/寻敌逻辑, 强制置位安全。仅影响我方(word_75688C 队伍), 敌方(第二循环)不受影响。目标指令 0x430B70: 66 C7 01 00 00 (mov word[ecx],0) → 66 C7 01 00 40 (mov word[ecx],0x4000)",
+  "type": "patch_bytes",
+  "id": "demon_general_effect",
+  "name": "开启魔将特效",
+  "desc": "开启魔将特效：战斗中我方角色渲染强制开启 War(68)/魔将 同款特殊特效 (sub_459168 发光混合)",
+  "pattern": "C6 02 64 8B 4D CC 66 C7 01 00 00",
+  "expect_count": 1,
+  "replace": {
+    "10": "40"
+  },
+  "optional": true,
+  "default_checked": false
+}

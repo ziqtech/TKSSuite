@@ -1,0 +1,11 @@
+{
+  "_format": 1,
+  "type": "patch_imm32",
+  "id": "tkshop_size",
+  "name": "商店数据扩容",
+  "desc": "TKShop.dat 大小常量 1920→实际大小",
+  "value_scan": true,
+  "expect_value": "0x780",
+  "new_value": "{tkshop_actual_size}",
+  "expect_count": 0
+}

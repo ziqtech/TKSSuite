@@ -1,0 +1,14 @@
+{
+  "_format": 1,
+  "_group": "── 主角替换补丁 ──",
+  "type": "patch_bytes",
+  "id": "team_leave_slot0",
+  "name": "主角离队支持（离队）",
+  "desc": "主角离队搜索从槽位0开始 (sub_40DA00: 离队分支 v9=1→0, v4=&slot[1]→&slot[0])",
+  "pattern": "C7 45 FC 01 00 00 00 C7 45 F0 8E 68 75 00",
+  "expect_count": 1,
+  "replace": {
+    "3": "00",
+    "10": "8C"
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "_format": 1,
+  "type": "patch_warpc_addr",
+  "id": "warpc_base_refs",
+  "name": "武将数据重定位",
+  "desc": "WarPC.dat 基址引用全部重定位",
+  "original": "{warpc_base}",
+  "field_range": 1054,
+  "new_base": "{warpc_new_base}"
+}

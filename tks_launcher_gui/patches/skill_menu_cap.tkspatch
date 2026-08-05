@@ -1,0 +1,15 @@
+{
+  "_format": 1,
+  "_group": "── 战斗技能菜单溢出保护 ──",
+  "_comment": "战斗技能菜单的 5 组平行数组均只有 12 项且地址首尾相接: word_9D6D1A[12]技能索引(0x9D6D1A, memset -1,0x18=24B) / byte_9D6D32[12]可用标志(0x9D6D32, memset 1,0xC=12B) / unk_9D6D3E[12]标志备份(0x9D6D3E, memcpy 0xC) / dword_9D6D4A[12][3]技能名(0x9D6D4A, 144B=12*12) / word_9D6DF8[12]MP消耗(0x9D6DF8, 24B)。sub_438F28(指令技能组子技能列表) 与 sub_447BA8(子技能分页列表) 均以 word_9D6C8A(0x9D6C8A) 为下标写入这些数组并递增, 且无任何越界检查; 同组已学(skill_learn>=20)子技能超过 12 个时第 13 项起溢出踩坏相邻数组, 且菜单窗口高度 28*cnt 超屏, 导致战斗菜单错名/错可用态/选错技能甚至崩溃。物品菜单 sub_4391E0 有 `if(cnt==10) break` 保护, 技能菜单独缺此防线。本补丁 hook 两处完全相同的 8 字节状态载入指令 movsx ecx,byte[edx+eax*2+0xB0] (sub_438F28 @0x439049 / sub_447BA8 @0x447C6B, 全 .text 段仅此 2 处), cave 内复现该载入后若 word_9D6C8A>=12 则把 ecx 清零, 使紧随其后未改动的原始 `cmp ecx,14h`+`jl skip` 自然跳过本项, 计数器停止增长, 菜单稳定封顶 12 项。仅改 ecx(原指令自身输出), 标志位随后被原始 cmp 重设, 无副作用。原版数据每组子技能均不足 12 个, 该补丁为空操作; 仅在 MOD 扩充技能组后生效。",
+  "type": "cave_hook",
+  "id": "skill_menu_cap",
+  "name": "战斗技能菜单溢出保护",
+  "desc": "战斗技能菜单封顶 12 项：同一技能组已学子技能超过 12 个时只显示前 12 个, 不再溢出踩坏相邻数据 (sub_438F28 + sub_447BA8 双 hook), 修复战斗菜单错乱/崩溃",
+  "hook_pattern": "0F BE 8C 42 B0 00 00 00 83 F9 14 0F 8C",
+  "hook_size": 8,
+  "hook_expect_count": 2,
+  "cave_template": "skill_menu_cap",
+  "cave_offset": 1408,
+  "cave_code": "0F BE 8C 42 B0 00 00 00 66 83 3D 8A 6C 9D 00 0C 72 02 33 C9 C3"
+}

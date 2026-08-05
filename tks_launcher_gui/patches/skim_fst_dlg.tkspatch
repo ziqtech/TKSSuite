@@ -1,0 +1,18 @@
+{
+  "_format": 1,
+  "_group": "── ddraw.dll Hook 等价补丁 ──",
+  "type": "patch_bytes",
+  "id": "skim_fst_dlg",
+  "name": "跳过开场动画",
+  "desc": "跳过开场动画 (SkimFstDlg: call sub_44A2B8 → call sub_403CC8, 自动推进游戏状态避免黑屏)",
+  "pattern": "A1 14 A5 4F 00 50 E8 ** ** ** ** 83 C4 0C",
+  "expect_count": 1,
+  "replace": {
+    "6": "E8",
+    "7": "60",
+    "8": "00",
+    "9": "00",
+    "10": "00"
+  },
+  "optional": true
+}

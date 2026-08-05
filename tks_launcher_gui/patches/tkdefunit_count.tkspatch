@@ -1,0 +1,14 @@
+{
+  "_format": 1,
+  "_group": "── TKDefUnit 扩容 (剧情/脚本节点) ──",
+  "_说明": "原版 sub_402E88 硬编码 dword_753504=5000 (mov eax,5000; 机码 B8 88 13 00 00), 缓冲区分配/memset/文件读取/遍历均由该条数运行时派生 (count<<4)。因此只需把该立即数改为 TKDefUnit.Dat 实际条数, 引擎即可正确加载扩充后的文件。new_value 由启动器按文件实际大小注入 (未扩容时=5000, 写回原值无副作用)。地址操作数以通配符匹配, 版本无关。",
+  "type": "patch_imm32",
+  "id": "tkdefunit_count",
+  "name": "剧情脚本扩容",
+  "desc": "TKDefUnit 记录上限 5000→文件实际条数 (sub_402E88 mov eax,5000)",
+  "value_scan": false,
+  "pattern": "B8 88 13 00 00 A3 ?? ?? ?? ??",
+  "value_offset": 1,
+  "expect_value": 5000,
+  "new_value": "{tkdefunit_new_count}"
+}

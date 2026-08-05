@@ -1,0 +1,23 @@
+{
+  "_format": 1,
+  "_group": "── ENTER键BUG修复 ──",
+  "type": "patch_bytes",
+  "id": "enter_key_item_fix",
+  "name": "回车键物品误用修复",
+  "desc": "ENTER键物品误用修复（禁用背包界面ENTER操作）",
+  "_mod_note": "孝谈三国3终极版: 0x420C8A 附近代码已被 MOD 改写, 原版特征码不存在, skip",
+  "profile_rules": {
+    "xiaotansanguo3": "skip"
+  },
+  "pattern": "83 E9 0D 0F 84 36 04 00 00",
+  "expect_count": 1,
+  "replace": {
+    "3": "90",
+    "4": "90",
+    "5": "90",
+    "6": "90",
+    "7": "90",
+    "8": "90"
+  },
+  "optional": true
+}

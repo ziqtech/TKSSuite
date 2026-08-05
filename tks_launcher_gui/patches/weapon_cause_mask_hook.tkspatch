@@ -1,0 +1,15 @@
+{
+  "_format": 1,
+  "_group": "── 战斗与技能 ──",
+  "type": "cave_hook",
+  "id": "weapon_cause_mask_hook",
+  "name": "武器附加状态修复",
+  "desc": "武器附加状态修复：读取函数参数[ebp+8]并验证==word_9D6F58，仅攻击者本人的普通攻击动画才触发武器cause_mask，排除反击/连击场景",
+  "hook_pattern": "66 C7 05 8A 02 9E 00 00 00 6A 40 66 C7 05 8C 04 9E 00 00 00",
+  "hook_size": 9,
+  "hook_expect_count": 1,
+  "cave_template": "weapon_cause_mask",
+  "cave_offset": 800,
+  "hook_conflict_action": "override",
+  "cave_code": "60 0F BF 05 7C 6C 9D 00 83 F8 FF 75 4A 0F BF 45 08 66 3B 05 58 6F 9D 00 75 3D 3D 8F 00 00 00 73 36 69 C0 1E 04 00 00 05 08 7F 75 00 0F BF 90 8A 00 00 00 83 FA FF 74 1F C1 E2 06 66 8B 82 FE CB 77 00 66 09 05 3C 6C 9D 00 66 8B 82 00 CC 77 00 66 09 05 3E 6C 9D 00 61 66 C7 05 8A 02 9E 00 00 00 C3"
+}

@@ -31,6 +31,7 @@ if _THIS_DIR not in sys.path:
     sys.path.insert(0, _THIS_DIR)
 
 from core.config_loader import load_config
+from core.tkspatch_loader import load_config_merged
 from core.memory import (
     read_pm, write_pm,
     get_module_base, get_module_size, get_child_processes,
@@ -274,12 +275,13 @@ class CliLauncher:
         self._log("TKS Launcher CLI — Headless 启动器")
         self._log("=" * 40)
 
-        # ── 1. 加载补丁配置 ──
+        # ── 1. 加载补丁配置 (外置 .tkspatch 为唯一来源) ──
         config_path = os.path.join(exe_dir, "tks_patches.json")
-        self._log(f"配置文件: {config_path} (存在={os.path.isfile(config_path)})")
-        config = load_config(config_path, log_func=self._log)
-        if config is None:
-            self._log("[ERROR] 无法加载补丁配置, 退出")
+        patches_dir = os.path.join(exe_dir, "patches")
+        self._log(f"补丁目录: {patches_dir} (存在={os.path.isdir(patches_dir)})")
+        config = load_config_merged(config_path, patches_dir, log_func=self._log)
+        if config is None or not config.patches:
+            self._log("[ERROR] 无法加载补丁配置 (patches/ 为空且无 tks_patches.json), 退出")
             return False, {"error": "config load failed"}
 
         # ── 1b. 构建选中补丁集合 (匹配 GUI 默认勾选行为) ──

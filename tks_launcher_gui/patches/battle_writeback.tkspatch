@@ -1,0 +1,12 @@
+{
+  "_format": 1,
+  "type": "patch_bytes",
+  "id": "battle_writeback",
+  "name": "战斗经验回写修复",
+  "desc": "战斗经验回写修正 movsx→movzx",
+  "pattern": "0F BE 01 0F BF 54 24 04",
+  "expect_count": 1,
+  "replace": {
+    "1": "B6"
+  }
+}

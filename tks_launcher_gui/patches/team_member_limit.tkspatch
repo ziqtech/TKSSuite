@@ -1,0 +1,14 @@
+{
+  "_format": 1,
+  "_group": "── 队伍上限扩展 ──",
+  "type": "patch_bytes",
+  "id": "team_member_limit",
+  "name": "入队人数上限扩展",
+  "desc": "入队角色ID上限放宽 (sub_40DA00 if(a1<=0x1E)): 立即数 0x1E(30)→0xC8, jg→ja(有符号→无符号); 因 0xC8 作 imm8 会符号扩展为 0xFFC8, 配合无符号比较后实际放行的角色ID上限约为 65480(≈解除限制), 字面 200 仅为该字节的十进制值、非真实上限",
+  "pattern": "66 83 7D 08 1E 0F 8F D1 01 00 00",
+  "expect_count": 1,
+  "replace": {
+    "4": "C8",
+    "6": "87"
+  }
+}
