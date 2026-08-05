@@ -646,7 +646,13 @@ CAVE_WAR_MUSTCHAR_FALLBACK = bytes([
 # Cave 模板构建
 # ============================================================
 
-def build_cave_template(name: str, warpc_base: int, log_func=None) -> Optional[bytes]:
+# awk_sprite / awk_sprite2 cave 中索引上限检查指令 `cmp eax, 200` 的原始字节
+# 该上限是硬编码安全阈值, 角色 WarPC 索引 >200 时补丁被跳过 (回退原始公式),
+# 扩容 WarPC.dat 后需按实际记录数动态上调, 否则新角色 WORD[260] 不生效
+_AWK_CAP_OLD = bytes([0x3D, 0xC8, 0x00, 0x00, 0x00])  # cmp eax, 200
+
+def build_cave_template(name: str, warpc_base: int, log_func=None,
+                        idx_cap: Optional[int] = None) -> Optional[bytes]:
     log = log_func or (lambda x: None)
     templates = {
         "awk_sprite": CAVE_AWK_SPRITE,
@@ -670,6 +676,13 @@ def build_cave_template(name: str, warpc_base: int, log_func=None) -> Optional[b
         return None
     c = bytearray(templates[name])
     replace_addr_in_bytes(c, _WARPC_BASE_PLACEHOLDER, warpc_base)
+    # 动态调整战场形象 cave 的 WarPC 索引上限 (cmp eax, imm32, 长度不变)
+    if name in ("awk_sprite", "awk_sprite2") and idx_cap is not None:
+        pos = c.find(_AWK_CAP_OLD)
+        if pos >= 0:
+            c[pos:pos + 5] = bytes([0x3D]) + struct.pack('<I', idx_cap & 0xFFFFFFFF)
+        else:
+            log("    [WARN] awk cave 索引上限指令未找到, 保持默认 200")
     return bytes(c)
 
 # ============================================================
@@ -856,7 +869,16 @@ def apply_cave_hook(defn: PatchDef, hits: List[int], code_buf: bytearray,
         log("    [WARN] 未找到 hook 点")
         return False
 
-    cd = build_cave_template(defn.cave_template, warpc_base, log_func=log)
+    # WarPC 索引上限: 按扩容后的记录数计算 (默认模板硬编码 200,
+    # 索引 >200 的新角色会导致 WORD[260] 自定义形象不生效)
+    rec_size = variables.get("warpc_rec_size", 1054)
+    new_size = variables.get("warpc_new_size", 150722)
+    idx_cap = (new_size // rec_size - 1) if rec_size > 0 else 142
+    if idx_cap < 200:
+        idx_cap = 200
+
+    cd = build_cave_template(defn.cave_template, warpc_base, log_func=log,
+                             idx_cap=idx_cap)
     if cd is None:
         return False
 
