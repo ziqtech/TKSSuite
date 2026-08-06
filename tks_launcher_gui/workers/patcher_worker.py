@@ -427,11 +427,20 @@ class PatcherWorker(QThread):
             bytes(code_buf), code_start, int(fallback_base), log_func=self._log
         )
         config.variables["warpc_base"] = discovered_base
+        config.variables["warpc_new_base"] = discovered_base
 
         # [补丁十八] 在原始代码上定位存档加载函数的 Move 调用 (必须在任何常量/地址修补之前)
-        _load_hook_rvas = find_load_hook_points(
-            bytes(code_buf), discovered_base, WARPC_ORIG_SIZE, log_func=self._log
+        _portrait_reinject_enabled = (
+            self.selected_patches is None
+            or "portrait_reinject" in self.selected_patches
         )
+        _load_hook_rvas = []
+        if _portrait_reinject_enabled:
+            _load_hook_rvas = find_load_hook_points(
+                bytes(code_buf), discovered_base, WARPC_ORIG_SIZE, log_func=self._log
+            )
+        else:
+            self._log("\n  [补丁十八] 用户取消勾选, 跳过存档加载 hook")
 
         # [补丁十一] GUARD 区 + 分配 WarPC 缓冲区
         warpc_base_for_caves = 0
@@ -455,6 +464,7 @@ class PatcherWorker(QThread):
                     write_pm(hw, nb, _warpc_full_data)
                     _warpc_new_buf = nb
                     warpc_base_for_caves = nb
+                    config.variables["warpc_new_base"] = nb
                     self._log(f"  WarPC 缓冲区: 0x{nb:08X} ({ns} 字节, {ns // WARPC_REC_SIZE} 角色)")
                 _CloseHandle(hw)
 
@@ -539,6 +549,8 @@ class PatcherWorker(QThread):
                 code_buf, code_start, _warpc_new_buf, _warpc_full_data,
                 log_func=self._log,
                 exclude_ranges=_exe_profile.extra_section_ranges if _exe_profile else None,
+                warpc_base=discovered_base,
+                warpc_rec_size=int(config.variables.get("warpc_rec_size", WARPC_REC_SIZE)),
             )
 
         # [补丁十二~十四、十七] 运行时动态修补
@@ -563,7 +575,9 @@ class PatcherWorker(QThread):
             inject_warpc_data(target_pid, discovered_base, _warpc_expanded, log_func=self._log)
 
             # [补丁十八] 存档加载后自动重注入头像数据
-            if _load_hook_rvas:
+            if not _portrait_reinject_enabled:
+                self._log("  [补丁十八] 已跳过 (portrait_reinject 未勾选)")
+            elif _load_hook_rvas:
                 # 从 WarPC.dat 读取完整 mod 数据作为重注入源
                 from core.lzss import lzss_decompress
                 _wp_file = "WarPC.dat"
@@ -642,11 +656,13 @@ class PatcherWorker(QThread):
 
         # 构建 portrait 看门狗数据 (用于游戏运行期间持续保护)
         _wd_params = None
-        if not self.minimal_mode:
+        if not self.minimal_mode and _portrait_reinject_enabled:
             _wd_params = self._build_portrait_watchdog_params(
                 target_pid,
                 warpc_base_for_caves if warpc_base_for_caves else discovered_base,
             )
+        elif not _portrait_reinject_enabled:
+            self._log("  [看门狗] 已跳过 (portrait_reinject 未勾选)")
 
         # 等待游戏进程退出 (含 portrait 看门狗)
         # (游戏运行期间可能重新加载磁盘文件, 如 TitleMenu.gxp)

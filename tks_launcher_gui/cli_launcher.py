@@ -660,6 +660,7 @@ class CliLauncher:
             bytes(code_buf), code_start, int(fallback_base), log_func=self._log
         )
         config.variables["warpc_base"] = discovered_base
+        config.variables["warpc_new_base"] = discovered_base
 
         # ── 12. 定位存档加载 Move 调用 ──
         # 补丁十八 (portrait_reinject): 用户可通过取消勾选来跳过存档加载 hook + 看门狗
@@ -702,6 +703,7 @@ class CliLauncher:
                     write_pm(hw, nb, _warpc_full_data)
                     _warpc_new_buf = nb
                     warpc_base_for_caves = nb
+                    config.variables["warpc_new_base"] = nb
                     self._log(f"  WarPC 缓冲区: 0x{nb:08X} ({ns} 字节, "
                               f"{ns // WARPC_REC_SIZE} 角色)")
                 _CloseHandle(hw)
@@ -788,6 +790,8 @@ class CliLauncher:
                 code_buf, code_start, _warpc_new_buf, _warpc_full_data,
                 log_func=self._log,
                 exclude_ranges=_exe_profile.extra_section_ranges if _exe_profile else None,
+                warpc_base=discovered_base,
+                warpc_rec_size=int(config.variables.get("warpc_rec_size", WARPC_REC_SIZE)),
             )
 
         # ── 18. 运行时动态修补 ──

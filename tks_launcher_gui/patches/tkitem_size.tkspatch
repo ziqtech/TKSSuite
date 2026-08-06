@@ -7,5 +7,5 @@
   "value_scan": true,
   "expect_value": "0x9600",
   "new_value": "{tkitem_actual_size}",
-  "expect_count": 0
+  "expect_count": 1
 }

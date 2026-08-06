@@ -100,11 +100,16 @@ def load_tkspatch_file(path: str, log_func=None) -> Optional[PatchDef]:
             if "replace" in pe:
                 for rk, rv in pe["replace"].items():
                     prepl[rk] = int(rv, 16) if isinstance(rv, str) else int(rv)
-            d.patterns.append({
+            entry = {
                 "pattern": pe.get("pattern", ""),
                 "expect_count": pe.get("expect_count", 0),
                 "replace": prepl,
-            })
+            }
+            if "value_offset" in pe:
+                entry["value_offset"] = int(pe["value_offset"])
+            if "expect_value" in pe:
+                entry["expect_value"] = _parse_maybe_hex(pe["expect_value"])
+            d.patterns.append(entry)
 
     # patch_imm32
     d.value_scan = raw.get("value_scan", False)

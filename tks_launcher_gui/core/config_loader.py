@@ -157,11 +157,16 @@ def load_config(path: str, log_func=None) -> Optional[PatchConfig]:
                     if "replace" in pe:
                         for rk, rv in pe["replace"].items():
                             prepl[rk] = _parse_replace_val(rv)
-                    d.patterns.append({
+                    entry = {
                         "pattern": pe.get("pattern", ""),
                         "expect_count": pe.get("expect_count", 0),
                         "replace": prepl,
-                    })
+                    }
+                    if "value_offset" in pe:
+                        entry["value_offset"] = int(pe["value_offset"])
+                    if "expect_value" in pe:
+                        entry["expect_value"] = _parse_maybe_hex(pe["expect_value"])
+                    d.patterns.append(entry)
             config.patches.append(d)
 
     log(f"  已加载配置: {len(config.variables)} 个变量, {len(config.patches)} 个补丁")

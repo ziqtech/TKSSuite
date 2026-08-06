@@ -809,13 +809,18 @@ def apply_patch_imm32_by_value(defn: PatchDef, code_buf: bytearray, code_start_a
         return True
     hits = value_scan(bytes(code_buf), ov)
     log(f"    扫描值 {ov} (0x{ov:X}) -> 匹配 {len(hits)} 处")
+    expect = defn.expect_count
+    if expect > 0 and len(hits) != expect:
+        log(f"  [FAIL] 值扫描命中 {len(hits)} 处 (预期 {expect}), 跳过")
+        return False
     log(f"    替换为 {nv} (0x{nv:X})")
     nle = i32b(nv)
     ptd = 0
+    all_ok = True
     for off in hits:
-        # 安全检查: 跳过 call/jmp 指令的 rel32 偶然匹配, 避免破坏 hook 指令
-        if off >= 1 and code_buf[off - 1] in (0xE8, 0xE9):
-            log(f"    [SKIP] RVA 0x{off:X}: 前字节为 E8/E9 (call/jmp rel32), 跳过")
+        # 安全检查: 跳过 call/jmp 以及 0F 8x 条件跳转 rel32 的字节重叠
+        if off >= 1 and code_buf[off - 1] in (0xE8, 0xE9, 0x0F):
+            log(f"    [SKIP] RVA 0x{off:X}: 前字节为 E8/E9/0F (rel32 指令), 跳过")
             continue
         # 第三方 MOD 兼容: 排除额外段
         if _excl and defn.exclude_extra_sections:
@@ -830,13 +835,20 @@ def apply_patch_imm32_by_value(defn: PatchDef, code_buf: bytearray, code_start_a
                 continue
         aa = code_start_addr + off
         op = vp_ex(h_proc, aa, 4, PAGE_EXECUTE_READWRITE)
-        write_pm(h_proc, aa, nle)
+        nw = write_pm(h_proc, aa, nle)
         vp_ex(h_proc, aa, 4, op)
+        if nw != 4:
+            log(f"    [FAIL] WriteProcessMemory 失败 @0x{aa:08X}")
+            all_ok = False
+            continue
         if off + 4 <= len(code_buf):
             code_buf[off:off+4] = nle
         log(f"    [OK] RVA 0x{off:X} (abs 0x{aa:08X})")
         ptd += 1
-    return True
+    if ptd == 0 and expect > 0:
+        log("  [FAIL] 未写入任何匹配位置")
+        all_ok = False
+    return all_ok
 
 # ============================================================
 # 补丁类型: patch_imm32 (pattern scan)
@@ -845,32 +857,55 @@ def apply_patch_imm32_by_value(defn: PatchDef, code_buf: bytearray, code_start_a
 def apply_patch_imm32_by_pattern(defn: PatchDef, code_buf: bytearray, code_start_addr: int,
                                   h_proc: int, variables: Dict[str, int], log_func=None) -> bool:
     log = log_func or (lambda x: None)
-    pat, wc = parse_pattern(defn.pattern)
-    hits = pattern_scan(bytes(code_buf), pat, wc)
-    log(f"    模式: [{defn.pattern}] -> 匹配 {len(hits)} 处")
     nv = resolve_var(defn.new_value_expr, variables, log_func=log)
-    ov = defn.expect_value
     if nv is None:
         log(f"    -> 变量未定义, 跳过")
         return True
     nle = i32b(nv)
-    ptd = 0
-    for off in hits:
-        io = off + defn.value_offset
-        if io + 4 <= len(code_buf):
-            act = b2i32(bytes(code_buf), io)
-            if ov != 0 and act != ov:
-                log(f"    [SKIP] RVA 0x{off:X}: 原值 0x{act:08X} != 预期 0x{ov:08X}")
+    if defn.patterns:
+        entries = defn.patterns
+    else:
+        entries = [{
+            "pattern": defn.pattern,
+            "value_offset": defn.value_offset,
+            "expect_count": defn.expect_count,
+            "expect_value": defn.expect_value,
+        }]
+    all_ok = True
+    for entry in entries:
+        pat, wc = parse_pattern(entry.get("pattern", ""))
+        hits = pattern_scan(bytes(code_buf), pat, wc)
+        vo = int(entry.get("value_offset", defn.value_offset))
+        exp = int(entry.get("expect_count", defn.expect_count))
+        ov = int(entry.get("expect_value", defn.expect_value))
+        log(f"    模式: [{entry.get('pattern')}] -> 匹配 {len(hits)} 处 (预期 {exp})")
+        if exp > 0 and len(hits) != exp:
+            log(f"  [FAIL] 匹配数 {len(hits)} != 预期 {exp}, 跳过")
+            all_ok = False
+            continue
+        ptd = 0
+        for off in hits:
+            io = off + vo
+            if io + 4 <= len(code_buf):
+                act = b2i32(bytes(code_buf), io)
+                if ov != 0 and act != ov:
+                    log(f"    [SKIP] RVA 0x{off:X}: 原值 0x{act:08X} != 预期 0x{ov:08X}")
+                    continue
+            aa = code_start_addr + io
+            op = vp_ex(h_proc, aa, 4, PAGE_EXECUTE_READWRITE)
+            nw = write_pm(h_proc, aa, nle)
+            vp_ex(h_proc, aa, 4, op)
+            if nw != 4:
+                log(f"    [FAIL] WriteProcessMemory 失败 @0x{aa:08X}")
+                all_ok = False
                 continue
-        aa = code_start_addr + io
-        op = vp_ex(h_proc, aa, 4, PAGE_EXECUTE_READWRITE)
-        write_pm(h_proc, aa, nle)
-        vp_ex(h_proc, aa, 4, op)
-        if io + 4 <= len(code_buf):
-            code_buf[io:io+4] = nle
-        log(f"    [OK] RVA 0x{off:X} (abs 0x{aa:08X})")
-        ptd += 1
-    return True
+            if io + 4 <= len(code_buf):
+                code_buf[io:io+4] = nle
+            log(f"    [OK] RVA 0x{off:X} (abs 0x{aa:08X})")
+            ptd += 1
+        if ptd == 0 and exp > 0:
+            all_ok = False
+    return all_ok
 
 # ============================================================
 # 补丁类型: cave_hook
@@ -2504,9 +2539,6 @@ def patch_disable_companion_xiaotan(cpid: int, extra_ranges, log_func=None):
 # [补丁十八] 存档加载后自动重注入头像数据
 # ============================================================
 
-# 重注入 Cave 在主 cave 内的偏移 (1024 字节总分配, 前 706 字节已使用)
-REINJECT_CAVE_OFFSET = 768
-
 def find_load_hook_points(code_buf: bytes, warpc_base: int,
                           warpc_size: int = 150722, log_func=None) -> List[int]:
     """
@@ -2591,7 +2623,7 @@ def hook_save_load_portrait(cpid: int, base_addr: int, code_buf: bytearray,
         base_addr:   模块基址
         code_buf:    代码段缓冲区 (已修补后的, 用于读取原始字节)
         code_start:  代码段起始地址
-        cave_addr:   cave 内存基址 (VirtualAllocEx 分配的 1024 字节)
+        cave_addr:   保留参数 (旧版复用主 cave, 现已独立分配 reinject cave)
         warpc_base:  WarPC BSS 基址 (可能已重定位)
         warpc_data:  WarPC 完整解压数据 (从 .dat 读取的 mod 版本)
         char_count:  角色数量
@@ -2619,7 +2651,8 @@ def hook_save_load_portrait(cpid: int, base_addr: int, code_buf: bytearray,
     table_size = char_count * 4
     alloc_size = max(table_size, 1024)  # 至少 1KB
 
-    from .memory import MEM_COMMIT, MEM_RESERVE, PAGE_READWRITE, _VirtualAllocEx
+    from .memory import (MEM_COMMIT, MEM_RESERVE, PAGE_READWRITE,
+                         PAGE_EXECUTE_READWRITE, _VirtualAllocEx)
     import ctypes as _ctypes
     tbl_ptr = _VirtualAllocEx(hp, None, alloc_size, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE)
     if not tbl_ptr:
@@ -2646,12 +2679,21 @@ def hook_save_load_portrait(cpid: int, base_addr: int, code_buf: bytearray,
 
     write_pm(hp, table_addr, bytes(table_data))
 
-    # === 2. 构建 reinject cave 代码 ===
-    # Cave 逻辑: pushad; 遍历表写入 warpc[i].0x208; popad; 原始指令; jmp back
-    cave_code_addr = cave_addr + REINJECT_CAVE_OFFSET
+    # === 2. 分配独立的 reinject cave ===
+    # 不再复用主 cave (cave_addr + 768): 该区间与 weapon/duel 等 cave_offset
+    # 重叠, 独立分配后各 hook 点按 64 字节槽位排布, 互不覆盖。
+    # cave_addr 参数保留仅为兼容旧调用, 实际不参与写入。
+    cave_bytes = len(hook_rvas) * 64 + 64
+    cave_ptr = _VirtualAllocEx(
+        hp, None, cave_bytes, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE)
+    if not cave_ptr:
+        log("  [ERROR] VirtualAllocEx (reinject cave) 失败")
+        _CloseHandle(hp)
+        return
+    cave_code_addr = _ctypes.cast(cave_ptr, _ctypes.c_void_p).value or 0
+    log(f"  Reinject cave: 0x{cave_code_addr:08X} ({cave_bytes} 字节, 独立分配)")
 
-    # 对每个 hook 点安装独立 cave (由于 jmp-back 地址不同)
-    # 使用 REINJECT_CAVE_OFFSET + i*64 避免重叠
+    # Cave 逻辑: pushad; 遍历表写入 warpc[i].0x208; popad; 原始指令; jmp back
     for hi, hook_rva in enumerate(hook_rvas):
         hook_abs = code_start + hook_rva
         this_cave_addr = cave_code_addr + hi * 64

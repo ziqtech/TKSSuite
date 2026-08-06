@@ -203,7 +203,9 @@ def patch_data_file_sizes(h_proc: int, base_addr: int, scan_start: int,
 def expand_warpc_buffer(child_pid: int, base_addr: int, module_size: int,
                          cave_addr: int, code_buf: bytearray, code_start_addr: int,
                          new_buf: int, full_data: bytes, log_func=None,
-                         exclude_ranges: list = None) -> dict:
+                         exclude_ranges: list = None,
+                         warpc_base: Optional[int] = None,
+                         warpc_rec_size: Optional[int] = None) -> dict:
     """补丁五/六/七/八/十一: WarPC 缓冲区动态扩展
 
     Args:
@@ -220,6 +222,10 @@ def expand_warpc_buffer(child_pid: int, base_addr: int, module_size: int,
 
     diag: List[str] = []
     nb = new_buf
+    if warpc_base is None:
+        warpc_base = WARPC_BASE
+    if warpc_rec_size is None:
+        warpc_rec_size = WARPC_REC_SIZE
     log(f"  修补代码引用: 缓冲区 0x{nb:08X}, 大小 {ns}")
 
     nal = i32b(nb)
@@ -241,7 +247,7 @@ def expand_warpc_buffer(child_pid: int, base_addr: int, module_size: int,
 
     # WarPC 基址修补
     # 安全排除: 跳过 E8/E9 指令的 rel32 偶然匹配 + MOD 额外段
-    for off in value_scan(bytes(code_buf), WARPC_BASE):
+    for off in value_scan(bytes(code_buf), warpc_base):
         if off >= 1 and code_buf[off - 1] in (0xE8, 0xE9):
             continue
         if _in_exclude(off):
@@ -249,10 +255,10 @@ def expand_warpc_buffer(child_pid: int, base_addr: int, module_size: int,
         write_pm(hp, ss + off, nal)
         code_buf[off:off+4] = nal
         ap += 1
-    log(f"  WarPC 基址 0x{WARPC_BASE:08X} 扫描: 找到 {ap} 处")
+    log(f"  WarPC 基址 0x{warpc_base:08X} 扫描: 找到 {ap} 处")
 
     # word_757F0C 修补
-    w0c = WARPC_BASE + 4
+    w0c = warpc_base + 4
     n0c = i32b(nb + 4)
     for off in value_scan(bytes(code_buf), w0c):
         if off >= 1 and code_buf[off - 1] in (0xE8, 0xE9):
@@ -272,12 +278,13 @@ def expand_warpc_buffer(child_pid: int, base_addr: int, module_size: int,
     # 判断是否落在 WarPC 第一条记录的字段范围内.
     # 安全排除: 如果 4 字节前一字节是 E8(call) 或 E9(jmp) 操作码,
     # 说明该 4 字节是相对偏移 (rel32) 而非地址引用, 必须跳过.
-    rs, re = WARPC_BASE, WARPC_BASE + WARPC_REC_SIZE
+    rs, re = warpc_base, warpc_base + warpc_rec_size
     pos = 0
     end = ssz - 4
     marker = b'\x75\x00'
+    code_bytes = bytes(code_buf)
     while pos <= end:
-        pos = bytes(code_buf).find(marker, pos)
+        pos = code_bytes.find(marker, pos)
         if pos == -1 or pos > end:
             break
         read_pos = pos - 2
@@ -289,9 +296,9 @@ def expand_warpc_buffer(child_pid: int, base_addr: int, module_size: int,
             if _in_exclude(read_pos):
                 pos += 1
                 continue
-            v = b2i32(bytes(code_buf), read_pos)
+            v = b2i32(code_bytes, read_pos)
             if rs <= v < re:
-                ofs = v - WARPC_BASE
+                ofs = v - warpc_base
                 nv = nb + ofs
                 write_pm(hp, ss + read_pos, i32b(nv))
                 code_buf[read_pos:read_pos+4] = i32b(nv)
@@ -330,7 +337,7 @@ def expand_warpc_buffer(child_pid: int, base_addr: int, module_size: int,
     patch_data_file_sizes(hp, base_addr, ss, ssz, log_func=log)
 
     # [补丁八] 新角色备份
-    es = WARPC_ORIG_COUNT * WARPC_REC_SIZE
+    es = WARPC_ORIG_COUNT * WARPC_REC_SIZE  # 备份偏移按原始记录大小计算
     exs = ns - es
     bbp = 0
     if exs > 0:

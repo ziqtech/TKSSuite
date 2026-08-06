@@ -3,9 +3,10 @@
   "type": "patch_imm32",
   "id": "tkskill_size",
   "name": "技能数据扩容",
-  "desc": "TKSkill.dat 大小常量 32900→实际大小",
-  "value_scan": true,
+  "desc": "TKSkill.dat 大小常量 32900→实际大小（锚定 sub_4173F8 唯一 push 引用，避免误改 0F 84 rel32）",
+  "pattern": "68 84 80 00 00 68 CA 61 78 00",
+  "value_offset": 1,
   "expect_value": "0x8084",
   "new_value": "{tkskill_actual_size}",
-  "expect_count": 0
+  "expect_count": 1
 }

@@ -8,5 +8,5 @@
   "value_scan": true,
   "expect_value": "0x232800",
   "new_value": "{tkmat_actual_size}",
-  "expect_count": 0
+  "expect_count": 3
 }
