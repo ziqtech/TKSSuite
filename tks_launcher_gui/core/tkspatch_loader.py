@@ -1,8 +1,14 @@
 """
 .tkspatch 外置补丁加载器
 
-文件格式: JSON, 扩展名 .tkspatch
+文件格式: ZIP 容器, 扩展名 .tkspatch (旧版散装 JSON 兼容)
 每个文件定义一个完整的补丁 (含 cave 机器码), 可独立分发替换。
+
+新版 ZIP 格式 (类似 .tksmod):
+  patch.json  — 补丁清单 (原散装 JSON 的全部字段)
+  script.py   — type=script 时内嵌的外部脚本源码
+
+旧版散装 JSON 仍可加载, 用于向后兼容。
 
 优先级规则:
   patches/ 目录下的 .tkspatch 文件 (按 id) 覆盖 tks_patches.json 中同 id 的补丁。
@@ -11,10 +17,17 @@
 Cave 机器码字段:
   cave_code: 空格分隔的十六进制字符串 (与 pattern 格式一致)
   例: "50 51 0F BF 45 FA 66 85 C0 ..."
+
+外部脚本字段:
+  script_file: 散装 JSON 指向 patches/_scripts 下的 .py; ZIP 型直接内嵌为 script.py
+
+Cave hook 定位:
+  hook_offset: hook 点相对 hook_pattern 起点的字节偏移 (默认 0)
 """
 
 import json
 import os
+import zipfile
 from typing import Any, Dict, List, Optional
 
 from .config_loader import PatchDef, PatchConfig, load_config, resolve_config_path
@@ -57,19 +70,30 @@ def _parse_maybe_hex(val):
 
 
 def load_tkspatch_file(path: str, log_func=None) -> Optional[PatchDef]:
-    """加载单个 .tkspatch 文件, 返回 PatchDef (含外置 cave 数据)。
+    """加载单个 .tkspatch (ZIP 或旧版 JSON), 返回 PatchDef。
 
     PatchDef 新增属性:
         _cave_code_bytes: Optional[bytes]  — 外置 cave 机器码 (若定义)
         _extra: dict                       — 额外类型特定字段
+        script_source: str                 — ZIP 型 .tkspatch 内嵌脚本源码
     """
     log = log_func or (lambda x: None)
-    try:
-        with open(path, 'r', encoding='utf-8') as f:
-            raw = json.load(f)
-    except Exception as e:
-        log(f"  [WARN] 解析 .tkspatch 失败: {path} — {e}")
-        return None
+    if zipfile.is_zipfile(path):
+        return _load_tkspatch_zip(path, log_func=log)
+    return _load_tkspatch_json(path, log_func=log)
+
+
+def _load_tkspatch_json(path: str, log_func=None,
+                        raw: Optional[Dict[str, Any]] = None) -> Optional[PatchDef]:
+    """加载旧版散装 JSON .tkspatch; raw 存在时复用解析逻辑。"""
+    log = log_func or (lambda x: None)
+    if raw is None:
+        try:
+            with open(path, 'r', encoding='utf-8') as f:
+                raw = json.load(f)
+        except Exception as e:
+            log(f"  [WARN] 解析 .tkspatch 失败: {path} — {e}")
+            return None
 
     # 版本检查
     fmt_ver = raw.get("_format", 1)
@@ -120,6 +144,7 @@ def load_tkspatch_file(path: str, log_func=None) -> Optional[PatchDef]:
     # cave_hook
     d.hook_pattern = raw.get("hook_pattern", "")
     d.hook_size = raw.get("hook_size", 0)
+    d.hook_offset = raw.get("hook_offset", 0)
     d.hook_expect_count = raw.get("hook_expect_count", 0)
     d.cave_template = raw.get("cave_template", "")
     d.cave_offset = raw.get("cave_offset", 0)
@@ -135,6 +160,13 @@ def load_tkspatch_file(path: str, log_func=None) -> Optional[PatchDef]:
         # 解析顺序: .tkspatch 所在目录 → launcher root → launcher 上级目录
         jf = resolve_config_path(path, jf)
     d.json_file = jf
+
+    # 外置脚本补丁 (type=script): 路径相对于 .tkspatch 所在目录
+    sf = raw.get("script_file", "")
+    if sf and not os.path.isabs(sf):
+        sf = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(path)), sf))
+    d.script_path = sf
+    d.script_source = raw.get("script_source", "")
     d.data_rva = _parse_maybe_hex(raw.get("data_rva", 0))
     d.data_keys = list(raw.get("data_keys", []))
     d.code_addrs = list(raw.get("code_addrs", []))
@@ -160,6 +192,35 @@ def load_tkspatch_file(path: str, log_func=None) -> Optional[PatchDef]:
             d._extra[key] = raw[key]  # type: ignore
 
     return d
+
+
+def _load_tkspatch_zip(path: str, log_func=None) -> Optional[PatchDef]:
+    """加载 ZIP 型 .tkspatch: patch.json + 可选 script.py。"""
+    log = log_func or (lambda x: None)
+    try:
+        with zipfile.ZipFile(path, 'r') as zf:
+            names = set(zf.namelist())
+            if "patch.json" not in names:
+                log(f"  [WARN] .tkspatch ZIP 缺少 patch.json: {path}")
+                return None
+            raw = json.loads(zf.read("patch.json").decode('utf-8'))
+            d = _load_tkspatch_json(path, log_func=log, raw=raw)
+            if d is None:
+                return None
+            if d.type == "script":
+                script_name = (raw.get("script_file") or "script.py").replace("\\", "/")
+                script_name = script_name.lstrip("./")
+                if script_name not in names:
+                    script_name = "script.py"
+                if script_name not in names:
+                    log(f"  [WARN] .tkspatch ZIP 缺少 script.py: {path}")
+                    return None
+                d.script_source = zf.read(script_name).decode('utf-8')
+                d.script_path = ""
+            return d
+    except Exception as e:
+        log(f"  [WARN] 解析 .tkspatch ZIP 失败: {path} — {e}")
+        return None
 
 
 def load_variables_from_dir(patches_dir: str, log_func=None) -> Dict[str, int]:
@@ -253,6 +314,8 @@ def load_tkspatch_dir(patches_dir: str, log_func=None) -> List[PatchDef]:
     results: List[PatchDef] = []
     files = sorted(f for f in os.listdir(patches_dir) if f.endswith('.tkspatch'))
     for fname in files:
+        if fname == VARIABLES_FILE:
+            continue
         fpath = os.path.join(patches_dir, fname)
         defn = load_tkspatch_file(fpath, log_func=log)
         if defn is not None and defn.id:

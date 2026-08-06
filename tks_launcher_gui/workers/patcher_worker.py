@@ -28,11 +28,7 @@ from core.mod_loader import (
     merge_mods, apply_mod_data, restore_originals,
     expand_pak_mods,
 )
-from core.patch_engine import (
-    apply_config_patches,
-    patch_4c33fc, patch_41c120, patch_archive_portrait, patch_gold_display,
-    patch_defend_glow_xiaotan, patch_disable_companion_xiaotan,
-)
+from core.patch_engine import apply_config_patches
 from core.scanner import discover_warpc_base, detect_exe_profile
 from core.warpc_expander import (
     WARPC_BASE, WARPC_REC_SIZE, WARPC_ORIG_SIZE,
@@ -518,6 +514,14 @@ class PatcherWorker(QThread):
                 only_portrait=self.only_portrait, only_awk=self.only_awk,
                 selected_patches=self.selected_patches,
                 exe_profile=_exe_profile,
+                disabled_patches={
+                    "save_entry_check_fix",
+                    "save_stream_error_fix",
+                    "archive_portrait",
+                    "gold_display",
+                    "xiaotan_defend_glow",
+                    "xiaotan_disable_companion",
+                } if self.minimal_mode else None,
                 config_overrides=_mod_config_overrides,
             )
         except Exception as ex:
@@ -539,25 +543,8 @@ class PatcherWorker(QThread):
                 warpc_rec_size=int(config.variables.get("warpc_rec_size", WARPC_REC_SIZE)),
             )
 
-        # [补丁十二~十四、十七] 运行时动态修补
-        # archive_portrait 独立于 cave_hook 系统, 自开句柄, 避免与召唤洞穴交互
+        # 运行时补丁已全部迁移到 patches/*.tkspatch, 由 apply_config_patches 统一应用
         if not self.minimal_mode:
-            patch_4c33fc(target_pid, base_addr, log_func=self._log)
-            patch_41c120(target_pid, base_addr, log_func=self._log)
-            archive_cave = cave_addr + 192 if cave_addr else 0
-            patch_archive_portrait(target_pid, base_addr, archive_cave,
-                                   warpc_base_for_caves if warpc_base_for_caves else discovered_base,
-                                   log_func=self._log)
-            patch_gold_display(target_pid, base_addr, log_func=self._log)
-            # 孝谈三国3终极版专用: 修复战斗选择“防御”错误开启魔将发光特效
-            # (MOD 在 defend 的 .test cave 把 or 0x1000 误写为 mov 0x7530, 含发光位 0x4000)
-            if _exe_profile and _exe_profile.name == "xiaotansanguo3":
-                patch_defend_glow_xiaotan(
-                    target_pid, _exe_profile.extra_section_ranges, log_func=self._log)
-                # 纯净运行: 禁用启动时 ShellExecuteA("closesystem.exe") 伴随进程启动
-                # (反篡改检查已被 MOD 自身无条件跳转化为死代码, 故禁用启动安全)
-                patch_disable_companion_xiaotan(
-                    target_pid, _exe_profile.extra_section_ranges, log_func=self._log)
             inject_warpc_data(target_pid, discovered_base, _warpc_expanded, log_func=self._log)
 
         # 诊断 dump

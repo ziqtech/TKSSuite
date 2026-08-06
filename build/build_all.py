@@ -667,7 +667,7 @@ def assemble_release(onefile: bool = False, release: bool = False,
         for f in src_configs.glob("*.json"):
             shutil.copy2(str(f), str(RELEASE_DIR / "configs" / f.name))
 
-    # 复制外置补丁目录 (patches/ 是 .tkspatch 唯一来源, tks_patches.json 仅向后兼容)
+    # 复制外置补丁目录 (patches/ 为 ZIP 型 .tkspatch, 内含 script.py; tks_patches.json 仅向后兼容)
     patches_src = 仓库根目录 / "tks_launcher_gui" / "patches"
     if patches_src.is_dir():
         patches_dst = RELEASE_DIR / "patches"
@@ -760,7 +760,7 @@ def assemble_winlator():
         print(f"  [OK] tks_patches.json")
         assembled.append("tks_patches.json")
 
-    # 复制外置补丁目录 (CLI 同样使用 patches/ 作为 .tkspatch 唯一来源)
+    # 复制外置补丁目录 (CLI 同样使用 patches/ 的 ZIP 型 .tkspatch 作为唯一来源)
     patches_src = 仓库根目录 / "tks_launcher_gui" / "patches"
     if patches_src.is_dir():
         patches_dst = WINLATOR_DIR / "patches"
@@ -842,7 +842,7 @@ def assemble_launcher():
         print(f"  [OK] configs/")
         assembled.append("configs/")
 
-    # 复制外置补丁目录 (与开发模式共用同一套 .tkspatch)
+    # 复制外置补丁目录 (与开发模式共用同一套 ZIP 型 .tkspatch)
     patches_src = 仓库根目录 / "tks_launcher_gui" / "patches"
     if patches_src.is_dir():
         patches_dst = LAUNCHER_DIR / "patches"

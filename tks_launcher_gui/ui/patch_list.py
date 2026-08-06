@@ -28,6 +28,7 @@ _TYPE_LABELS = {
     "patch_drop_probability": "掉落概率",
     "patch_font_config":      "字体配置",
     "patch_animation_speed":  "动画速度",
+    "script":                 "外部脚本",
 }
 
 _COLUMNS = ["启用", "补丁名称", "类型"]

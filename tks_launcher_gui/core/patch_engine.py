@@ -1,7 +1,9 @@
 """补丁应用引擎 — 从 tks_launcher.py 提取 & 重组"""
 import json
+import importlib.util
 import os
 import struct
+import types
 from typing import Any, Dict, List, Optional
 from .memory import (
     i32b, i16b, b2i32, b2u16, bhex,
@@ -13,6 +15,61 @@ from .memory import (
 )
 from .scanner import parse_pattern, pattern_scan, value_scan
 from .config_loader import PatchDef, PatchConfig, resolve_var
+
+
+class PatchContext:
+    """外部脚本补丁的稳定运行上下文。"""
+
+    def __init__(self, defn: PatchDef, target_pid: int, h_proc: int,
+                 base_addr: int, code_buf: bytearray, code_start_addr: int,
+                 cave_addr: int, warpc_base: int, variables: Dict[str, int],
+                 log_func=None, exe_profile=None, config_overrides=None):
+        self.defn = defn
+        self.target_pid = target_pid
+        self.h_proc = h_proc
+        self.base_addr = base_addr
+        self.code_buf = code_buf
+        self.code_start_addr = code_start_addr
+        self.cave_addr = cave_addr
+        self.warpc_base = warpc_base
+        self.variables = variables
+        self.log = log_func or (lambda x: None)
+        self.exe_profile = exe_profile
+        self.config_overrides = config_overrides
+
+
+def run_script_patch(defn: PatchDef, ctx: PatchContext) -> bool:
+    """加载并执行 .tkspatch ZIP 内嵌或 patches/_scripts 下的脚本。"""
+    try:
+        source = getattr(defn, "script_source", "")
+        if source:
+            module = types.ModuleType(f"_tkspatch_script_{defn.id or 'zip'}")
+            module.__file__ = f"{defn.id or 'patch'}.tkspatch/script.py"
+            module.__package__ = ""
+            exec(compile(source, module.__file__, "exec"), module.__dict__)
+        else:
+            path = getattr(defn, "script_path", "")
+            if not path or not os.path.isfile(path):
+                ctx.log(f"  [WARN] 外部补丁脚本不存在: {path!r}, 跳过")
+                return False
+            spec = importlib.util.spec_from_file_location(
+                f"_tkspatch_script_{defn.id or abs(hash(path))}", path)
+            if spec is None or spec.loader is None:
+                ctx.log(f"  [ERROR] 无法加载外部补丁脚本: {path}")
+                return False
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+        fn = getattr(module, "apply", None)
+        if not callable(fn):
+            ctx.log(f"  [ERROR] 外部补丁脚本缺少 apply(ctx) 函数")
+            return False
+        return bool(fn(ctx))
+    except Exception as e:
+        ctx.log(f"  [ERROR] 外部补丁脚本执行失败: {e}")
+        import traceback
+        ctx.log(traceback.format_exc())
+        return False
+
 
 # ============================================================
 # Hook 冲突检测
@@ -940,11 +997,12 @@ def apply_cave_hook(defn: PatchDef, hits: List[int], code_buf: bytearray,
 
     ptd = 0
     for off in hits:
-        ha = code_start_addr + off
+        hook_off = off + defn.hook_offset
+        ha = code_start_addr + hook_off
         co = (ct - (ha + 5)) & 0xFFFFFFFF
         ci = bytearray(defn.hook_size)
         ci[0] = 0xE8
-        ci[1:5] = i32b(co)
+        ci[1:5] = struct.pack('<I', co)
         for i in range(5, defn.hook_size):
             ci[i] = 0x90
 
@@ -952,10 +1010,10 @@ def apply_cave_hook(defn: PatchDef, hits: List[int], code_buf: bytearray,
         write_pm(h_proc, ha, bytes(ci))
         vp_ex(h_proc, ha, defn.hook_size, op)
 
-        for i in range(min(defn.hook_size, len(code_buf) - off)):
-            code_buf[off + i] = ci[i]
+        for i in range(min(defn.hook_size, len(code_buf) - hook_off)):
+            code_buf[hook_off + i] = ci[i]
 
-        log(f"    [OK] Hook RVA 0x{off:X} -> call 0x{ct:08X}")
+        log(f"    [OK] Hook RVA 0x{hook_off:X} -> call 0x{ct:08X}")
         ptd += 1
 
     return ptd > 0
@@ -2074,6 +2132,7 @@ def apply_config_patches(config: PatchConfig, code_buf: bytearray, code_start_ad
                           only_portrait=False, only_awk=False,
                           selected_patches: set = None,
                           exe_profile=None,
+                          disabled_patches: set = None,
                           config_overrides: Optional[Dict[str, Any]] = None) -> bool:
     """配置补丁编排
 
@@ -2083,10 +2142,12 @@ def apply_config_patches(config: PatchConfig, code_buf: bytearray, code_start_ad
         config_overrides: MOD 包携带的启动器配置覆盖 (白名单内, 优先级最高)。
                           键为不含扩展名的配置名 (如 "summon_table"),
                           值为已解析的 dict。None 或空 dict 表示无覆盖。
+        disabled_patches: 诊断/兼容模式下强制跳过的补丁 ID 集合。
     """
     log = log_func or (lambda x: None)
     all_ok = True
     pch: List[PatchDef] = []
+    disabled_patches = disabled_patches or set()
 
     # 第三方 MOD 兼容: 从 profile 获取应跳过的补丁
     _profile_skip = set()
@@ -2101,6 +2162,10 @@ def apply_config_patches(config: PatchConfig, code_buf: bytearray, code_start_ad
 
         if selected_patches is not None and defn.optional and defn.id not in selected_patches:
             log(f"    -> 用户取消勾选, 跳过")
+            continue
+
+        if defn.id in disabled_patches:
+            log(f"    -> 诊断/兼容模式强制跳过")
             continue
 
         # 第三方 MOD 兼容: profile_rules 检查
@@ -2129,10 +2194,11 @@ def apply_config_patches(config: PatchConfig, code_buf: bytearray, code_start_ad
                 # 模式匹配失败 — 尝试 fallback_rva 回退定位
                 if len(hh) == 0 and defn.fallback_rva > 0:
                     # fallback_rva 是相对于基址的偏移, 转为 code_buf 内偏移
-                    fb_off = defn.fallback_rva - 0x1000  # RVA -> code_buf offset
+                    fb_hook = defn.fallback_rva - 0x1000  # RVA -> code_buf offset
+                    fb_off = fb_hook - defn.hook_offset
                     if 0 <= fb_off < len(code_buf) - defn.hook_size:
                         hh = [fb_off]
-                        log(f"  {tag}: 模式无匹配, 使用 fallback_rva 0x{defn.fallback_rva:X} (offset 0x{fb_off:X})")
+                        log(f"  {tag}: 模式无匹配, 使用 fallback_rva 0x{defn.fallback_rva:X} (offset 0x{fb_hook:X})")
                     else:
                         log(f"  {tag}: fallback_rva 0x{defn.fallback_rva:X} 越界, 跳过")
                         continue
@@ -2143,7 +2209,7 @@ def apply_config_patches(config: PatchConfig, code_buf: bytearray, code_start_ad
                     log(f"  {tag}: Hook 模式匹配 {len(hh)} 处 (预期 {defn.hook_expect_count}), 跳过")
                     continue
             # Hook 冲突检测: 检查 hook 点是否已被占用
-            if hh and check_hook_conflict(code_buf, hh[0]):
+            if hh and check_hook_conflict(code_buf, hh[0] + defn.hook_offset):
                 action = defn.hook_conflict_action
                 if action == "override":
                     log(f"  {tag}: Hook 点已被占用, 启动器优先级最高 → 覆盖")
@@ -2154,6 +2220,14 @@ def apply_config_patches(config: PatchConfig, code_buf: bytearray, code_start_ad
                     log(f"  {tag}: [WARN] Hook 点已被占用, 但仍尝试应用")
             defn._pre_scanned_hits = hh
             pch.append(defn)
+        elif defn.type == "script":
+            ctx = PatchContext(
+                defn, variables.get("_target_pid", 0), h_proc, base_addr,
+                code_buf, code_start_addr, cave_addr, warpc_base, variables,
+                log_func=log, exe_profile=exe_profile,
+                config_overrides=config_overrides,
+            )
+            all_ok &= run_script_patch(defn, ctx)
         elif defn.type == "patch_imm32":
             if defn.value_scan:
                 nv = resolve_var(defn.new_value_expr, variables, log_func=log)
@@ -2212,322 +2286,3 @@ def apply_config_patches(config: PatchConfig, code_buf: bytearray, code_start_ad
                                        code_start_addr, h_proc, cave_addr,
                                        warpc_base, variables, log_func=log)
     return all_ok
-
-# ============================================================
-# [补丁十二] sub_4C33FC 入口检查修补
-# ============================================================
-
-def patch_4c33fc(cpid: int, base: int, log_func=None):
-    log = log_func or (lambda x: None)
-    sr = 0xC33FC
-    log("\n--- [补丁十二] sub_4C33FC 入口检查修补 ---")
-    hp = _OpenProcess(PROCESS_VM_READ | PROCESS_VM_WRITE | PROCESS_VM_OPERATION, False, cpid)
-    if not hp:
-        log("  [ERROR] OpenProcess 失败")
-        return
-
-    av = base + sr
-    buf, nr = read_pm(hp, av, 64)
-    if nr < 32:
-        log(f"  [ERROR] 读取 sub_4C33FC@0x{av:08X} 失败")
-        _CloseHandle(hp)
-        return
-
-    co, cmr = -1, 0
-    for i in range(min(nr, 32) - 4):
-        if buf[i]==0x80 and (buf[i+1]&0xF8)==0x78 and buf[i+2]==0x0C and buf[i+3]==0x00:
-            co, cmr = i, buf[i+1]
-            break
-
-    if co < 0:
-        log("  [WARN] 未找到 cmp [reg+0Ch],0 模式, 跳过")
-        _CloseHandle(hp)
-        return
-
-    bo, bo2 = buf[co+4], buf[co+5]
-    ba = av + co + 4
-
-    if bo == 0x74:
-        pb = bytes([0xEB, bo2])
-        pd = "je short -> jmp short"
-    elif bo == 0x75:
-        pb = bytes([0x90, 0x90])
-        pd = "jne short -> NOP NOP"
-    elif bo == 0x0F and bo2 == 0x84:
-        imm = b2i32(buf, co+6)
-        pb = bytearray(6)
-        pb[0]=0xE9
-        pb[1:5]=i32b(imm+1)
-        pb[5]=0x90
-        pd = "je near -> jmp near + NOP"
-    elif bo == 0x0F and bo2 == 0x85:
-        pb = bytes([0x90]*6)
-        pd = "jne near -> NOP x 6"
-    else:
-        log(f"  [WARN] 未识别 je/jne, 跳过")
-        _CloseHandle(hp)
-        return
-
-    op = vp_ex(hp, ba, len(pb), PAGE_EXECUTE_READWRITE)
-    nw = write_pm(hp, ba, pb)
-    vp_ex(hp, ba, len(pb), op)
-    if nw == len(pb):
-        log(f"  [OK] sub_4C33FC+0x{co+4:X} 修补成功 ({pd})")
-    else:
-        log(f"  [ERROR] WriteProcessMemory 失败")
-    _CloseHandle(hp)
-
-# ============================================================
-# [补丁十三] sub_41C120 stream error 检查修补
-# ============================================================
-
-def patch_41c120(cpid: int, base: int, log_func=None):
-    log = log_func or (lambda x: None)
-    sr = 0x1C120
-    log("\n--- [补丁十三] sub_41C120 stream error 检查修补 ---")
-    hp = _OpenProcess(PROCESS_VM_READ | PROCESS_VM_WRITE | PROCESS_VM_OPERATION, False, cpid)
-    if not hp:
-        log("  [ERROR] OpenProcess 失败")
-        return
-
-    av = base + sr
-    buf, nr = read_pm(hp, av, 64)
-    if nr < 16:
-        log(f"  [ERROR] 读取 sub_41C120@0x{av:08X} 失败")
-        _CloseHandle(hp)
-        return
-
-    lo = -1
-    for i in range(min(nr, 32) - 5):
-        if buf[i]==0x8B and buf[i+1]==0x4A and buf[i+2]==0x08 and buf[i+3]==0x85 and buf[i+4]==0xC9:
-            lo = i
-            break
-
-    if lo < 0:
-        log("  [WARN] 未找到模式, 跳过")
-        _CloseHandle(hp)
-        return
-
-    if (lo+13>nr or buf[lo+5]!=0x0F or buf[lo+6]!=0x94 or buf[lo+7]!=0xC0
-        or buf[lo+8]!=0x83 or buf[lo+9]!=0xE0 or buf[lo+10]!=0x01
-        or buf[lo+11]!=0x84 or buf[lo+12]!=0xC0):
-        log("  [WARN] sete/and/test 后续不匹配, 跳过")
-        _CloseHandle(hp)
-        return
-
-    pb = bytes([0xC7,0x42,0x08,0x00,0x00,0x00,0x00, 0xB0,0x01, 0x84,0xC0, 0x90,0x90])
-    pa = av + lo
-    op = vp_ex(hp, pa, 13, PAGE_EXECUTE_READWRITE)
-    nw = write_pm(hp, pa, pb)
-    vp_ex(hp, pa, 13, op)
-    if nw == 13:
-        log(f"  [OK] sub_41C120+0x{lo:X} 清零补丁成功")
-    else:
-        log(f"  [ERROR] WriteProcessMemory 失败")
-    _CloseHandle(hp)
-
-# ============================================================
-# [补丁十四] 存档界面队伍头像 hook
-# ============================================================
-
-def patch_archive_portrait(cpid: int, base: int, cave_addr: int, warpc_base: int, log_func=None):
-    """独立于 cave_hook 系统: 自开句柄, 写洞穴代码 + hooks"""
-    log = log_func or (lambda x: None)
-    sr = 0x1AB94
-    ssz = 0x500
-    log("\n--- [补丁十四] 存档界面队伍头像 hook ---")
-    if cave_addr == 0:
-        log("  [WARN] ArchivePortraitCave 未分配, 跳过")
-        return
-
-    hp = _OpenProcess(PROCESS_VM_READ | PROCESS_VM_WRITE | PROCESS_VM_OPERATION, False, cpid)
-    if not hp:
-        log("  [ERROR] OpenProcess 失败")
-        return
-
-    # Step 1: 写入洞穴代码
-    cd = build_cave_template("archive_portrait", warpc_base, log_func=log)
-    if cd:
-        nw = write_pm(hp, cave_addr, cd)
-        log(f"    Cave 写入: 0x{cave_addr:08X} ({nw}/{len(cd)} bytes)")
-
-    # Step 2: 扫描 sub_41AB94 写入 hooks
-    av = base + sr
-    buf, nr = read_pm(hp, av, ssz)
-    if nr < 64:
-        log(f"  [ERROR] 读取 sub_41AB94@0x{av:08X} 失败"); _CloseHandle(hp); return
-
-    ptd = 0
-    for i in range(nr - 5):
-        if buf[i]==0x66 and buf[i+1]==0x05 and buf[i+2]==0xD3 and buf[i+3]==0x00 and buf[i+4]==0x50:
-            hrva = sr + i
-            ha = base + hrva
-            co = (cave_addr - (ha + 5)) & 0xFFFFFFFF
-            cd_hook = bytearray(5)
-            cd_hook[0]=0xE8
-            cd_hook[1:5]=i32b(co)
-            op = vp_ex(hp, ha, 5, PAGE_EXECUTE_READWRITE)
-            nw = write_pm(hp, ha, bytes(cd_hook))
-            vp_ex(hp, ha, 5, op)
-            if nw == 5:
-                ptd += 1
-                log(f"    [OK] RVA 0x{hrva:X}: hook add ax,0xD3+push eax -> cave")
-
-    log(f"  共 hook {ptd} 处")
-    _CloseHandle(hp)
-
-# ============================================================
-# [补丁十七] 存档界面金钱显示修复
-# ============================================================
-
-def patch_gold_display(cpid: int, base: int, log_func=None):
-    log = log_func or (lambda x: None)
-    sr = 0x1AB94
-    ssz = 0x600
-    log("\n--- [补丁十七] 存档界面金钱显示修复 (signed->unsigned) ---")
-    hp = _OpenProcess(PROCESS_VM_READ | PROCESS_VM_WRITE | PROCESS_VM_OPERATION, False, cpid)
-    if not hp:
-        log("  [ERROR] OpenProcess 失败")
-        return
-
-    av = base + sr
-    buf, nr = read_pm(hp, av, ssz)
-    if nr < 64:
-        log(f"  [ERROR] 读取 sub_41AB94@0x{av:08X} 失败"); _CloseHandle(hp); return
-
-    gp = bytes([0x0F,0xBF,0x84,0x41,0xD4,0x02,0x00,0x00])
-    ptd = 0
-    for i in range(nr - len(gp) + 1):
-        if buf[i:i+len(gp)] == gp:
-            ha = base + sr + i
-            fix = bytes([0x0F, 0xB7])
-            op = vp_ex(hp, ha, 2, PAGE_EXECUTE_READWRITE)
-            nw = write_pm(hp, ha, fix)
-            vp_ex(hp, ha, 2, op)
-            if nw == 2:
-                ptd += 1
-                log(f"    [OK] RVA 0x{sr + i:05X}: movsx->movzx")
-
-    log(f"  共修补 {ptd} 处")
-    _CloseHandle(hp)
-
-
-# ── 孝谈三国3终极版专用: 防御误触发魔将发光特效修复 ──
-# 原版 sub_43E958 (defend 状态处理) 执行 `or word[eax*2+9DF7C2],1000h` (仅置防御状态位 0x1000)。
-# MOD 在 0x43E95F 处 hook 跳到 .test 段 cave 0xA7D260, cave 内改成
-#   `mov word[eax*2+9DF7C2],7530h` (=0x7530, 含发光位 0x4000),
-# 导致战斗中选择“防御”后当前角色 word_9DF7C2 被写入 0x4000, 渲染走 sub_459168
-# 发光路径 (即“魔将特效”), 且覆盖原有状态位。本修复在 .test 段扫描该唯一指令,
-# 还原为 or ...,1000h, 与原版 defend 完全一致。cave 位于 .test 段(VA≈0xA7D262),
-# 在启动器 code_buf(base+0x1000, 3MB) 扫描窗口之外, 故独立处理 (扫描额外 PE 段)。
-_DEFEND_GLOW_FIND = bytes([0xC7, 0x04, 0x45, 0xC2, 0xF7, 0x9D, 0x00, 0x30, 0x75])  # mov word[eax*2+9DF7C2],7530h
-_DEFEND_GLOW_REPL = bytes([0x81, 0x0C, 0x45, 0xC2, 0xF7, 0x9D, 0x00, 0x00, 0x10])  # or  word[eax*2+9DF7C2],1000h
-
-
-def patch_defend_glow_xiaotan(cpid: int, extra_ranges, log_func=None):
-    """孝谈三国3终极版: 修复战斗选择“防御”错误开启魔将发光特效 (仅该 MOD 调用)。
-
-    Args:
-        cpid:         游戏进程 PID
-        extra_ranges: MOD 额外 PE 段绝对范围 [(start,end),...] (含 .test cave 段)
-
-    Returns:
-        已修补处数
-    """
-    log = log_func or (lambda x: None)
-    log("\n--- [孝谈兼容] 防御误触发魔将特效修复 ---")
-    if not extra_ranges:
-        log("  [SKIP] 无额外段范围 (非 MOD 版?), 跳过")
-        return 0
-    hp = _OpenProcess(PROCESS_VM_READ | PROCESS_VM_WRITE | PROCESS_VM_OPERATION, False, cpid)
-    if not hp:
-        log("  [ERROR] OpenProcess 失败")
-        return 0
-    patched = 0
-    try:
-        for (start, end) in extra_ranges:
-            size = end - start
-            if size <= 0 or size > 0x100000:
-                continue
-            buf, nr = read_pm(hp, start, size)
-            if nr <= 0:
-                continue
-            idx = buf.find(_DEFEND_GLOW_FIND)
-            while idx != -1:
-                va = start + idx
-                op = vp_ex(hp, va, len(_DEFEND_GLOW_REPL), PAGE_EXECUTE_READWRITE)
-                nw = write_pm(hp, va, _DEFEND_GLOW_REPL)
-                vp_ex(hp, va, len(_DEFEND_GLOW_REPL), op)
-                if nw == len(_DEFEND_GLOW_REPL):
-                    patched += 1
-                    log(f"  [OK] @0x{va:08X}: mov [9DF7C2+eax*2],7530h -> or ...,1000h (清除防御发光位 0x4000)")
-                else:
-                    log(f"  [FAIL] @0x{va:08X}: 写入失败 ({nw}/{len(_DEFEND_GLOW_REPL)})")
-                idx = buf.find(_DEFEND_GLOW_FIND, idx + 1)
-        if patched == 0:
-            log("  [WARN] 未找到目标指令 (MOD 版本不同或已修复), 跳过")
-    finally:
-        _CloseHandle(hp)
-    return patched
-
-# ── 孝谈三国3终极版专用: 禁用伴随进程(system.exe)启动 ──
-# MOD 在启动 cave (0x403587→0xA7D609) 用 ShellExecuteA("open","closesystem.exe") 启动外部伴随进程,
-# 并在多处用 FindWindowExA("YinShiXing2013") 检查 —— 但这些检查结果均被无条件跳转丢弃,
-# 对应的 MessageBoxA+ExitProcess 响应为死代码, 故伴随进程缺失不影响运行。
-# 为“纯净运行”(不启动任何外部进程), 将唯一活跃的 ShellExecuteA 调用替换为
-# `add esp,0x18`(清理其 6 个 stdcall 参数=24字节)+NOP, 栈平衡、跳过启动。
-# cave 位于 .test 段, 在 code_buf 窗口外, 独立扫描额外 PE 段处理。
-_COMPANION_SHELLEXEC_VA = 0x4E57C2  # j_ShellExecuteA thunk
-_COMPANION_ANCHOR = bytes([0x68, 0xD0, 0xE0, 0xA7, 0x00, 0x6A, 0x00, 0xE8])  # push "open"; push 0; call ShellExecuteA
-_COMPANION_CALL_OFF = 7  # E8 在 anchor 内的偏移
-_COMPANION_REPL = bytes([0x83, 0xC4, 0x18, 0x90, 0x90])  # add esp,0x18; nop; nop (清 6*4=24 字节, 跳过启动)
-
-
-def patch_disable_companion_xiaotan(cpid: int, extra_ranges, log_func=None):
-    """孝谈三国3终极版: 禁用启动时 ShellExecuteA 伴随进程(纯净运行, 仅该 MOD 调用)。
-
-    仅中和唯一活跃的 ShellExecuteA 启动调用; 已死的反篡改检查(FindWindowExA/MessageBox/Exit)
-    不动, 避免无谓风险。替换为 add esp,0x18 保证栈平衡。
-
-    Returns:
-        已中和的调用处数
-    """
-    log = log_func or (lambda x: None)
-    log("\n--- [孝谈兼容] 禁用伴随进程(system.exe)启动 ---")
-    if not extra_ranges:
-        log("  [SKIP] 无额外段范围 (非 MOD 版?), 跳过")
-        return 0
-    hp = _OpenProcess(PROCESS_VM_READ | PROCESS_VM_WRITE | PROCESS_VM_OPERATION, False, cpid)
-    if not hp:
-        log("  [ERROR] OpenProcess 失败")
-        return 0
-    patched = 0
-    try:
-        for (start, end) in extra_ranges:
-            size = end - start
-            if size <= 0 or size > 0x100000:
-                continue
-            buf, nr = read_pm(hp, start, size)
-            if nr <= 0:
-                continue
-            idx = buf.find(_COMPANION_ANCHOR)
-            while idx != -1:
-                call_off = idx + _COMPANION_CALL_OFF
-                rel = struct.unpack_from('<i', bytes(buf[call_off + 1:call_off + 5]))[0]
-                call_va = start + call_off
-                target = (call_va + 5 + rel) & 0xFFFFFFFF
-                if target == _COMPANION_SHELLEXEC_VA:  # 确认确为 ShellExecuteA 调用才改
-                    op = vp_ex(hp, call_va, len(_COMPANION_REPL), PAGE_EXECUTE_READWRITE)
-                    nw = write_pm(hp, call_va, _COMPANION_REPL)
-                    vp_ex(hp, call_va, len(_COMPANION_REPL), op)
-                    if nw == len(_COMPANION_REPL):
-                        patched += 1
-                        log(f"  [OK] @0x{call_va:08X}: call ShellExecuteA -> add esp,0x18+nop (跳过伴随进程启动)")
-                    else:
-                        log(f"  [FAIL] @0x{call_va:08X}: 写入失败 ({nw}/{len(_COMPANION_REPL)})")
-                idx = buf.find(_COMPANION_ANCHOR, idx + 1)
-        if patched == 0:
-            log("  [WARN] 未找到 ShellExecuteA 伴随进程调用 (MOD 版本不同或已处理), 跳过")
-    finally:
-        _CloseHandle(hp)
-    return patched

@@ -19,6 +19,7 @@ class PatchDef:
     cave_template: str = ""
     cave_offset: int = 0
     hook_size: int = 0
+    hook_offset: int = 0
     hook_verify_pattern: str = ""
     hook_pattern: str = ""
     hook_expect_count: int = 0
@@ -33,6 +34,8 @@ class PatchDef:
     patterns: List[Dict] = field(default_factory=list)  # patch_bytes 多模式: [{pattern, replace, expect_count}]
     # patch_summon_table 专用字段
     json_file: str = ""                       # 召唤表 JSON 路径 (load_config 解析为绝对路径)
+    script_path: str = ""                     # 外置脚本补丁路径 (type=script, 已解析为绝对路径)
+    script_source: str = ""                   # ZIP 型 .tkspatch 内嵌脚本源码 (type=script)
     data_rva: int = 0                         # .data 召唤表 8 字节的 RVA
     data_keys: List[str] = field(default_factory=list)   # .data 8 字节顺序对应的 JSON 键名
     code_addrs: List[Dict] = field(default_factory=list)  # 代码段 imm16 直接地址写入 [{rva, key}]
@@ -137,6 +140,7 @@ def load_config(path: str, log_func=None) -> Optional[PatchConfig]:
             d.new_value_expr = str(pr.get("new_value", ""))
             d.expect_count = pr.get("expect_count", 0)
             d.hook_size = pr.get("hook_size", 0)
+            d.hook_offset = pr.get("hook_offset", 0)
             d.cave_offset = pr.get("cave_offset", 0)
             d.cave_template = pr.get("cave_template", "")
             d.hook_verify_pattern = pr.get("hook_verify", "")
@@ -155,6 +159,11 @@ def load_config(path: str, log_func=None) -> Optional[PatchConfig]:
             if jf and not os.path.isabs(jf):
                 jf = resolve_config_path(path, jf)
             d.json_file = jf
+            sf = pr.get("script_file", "")
+            if sf and not os.path.isabs(sf):
+                sf = resolve_config_path(path, sf)
+            d.script_path = sf
+            d.script_source = pr.get("script_source", "")
             d.data_rva = _parse_maybe_hex(pr.get("data_rva", 0))
             d.data_keys = list(pr.get("data_keys", []))
             d.code_addrs = list(pr.get("code_addrs", []))

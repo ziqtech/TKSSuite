@@ -48,10 +48,7 @@ from core.mod_loader import (
     merge_mods, apply_mod_data, restore_originals,
     expand_pak_mods,
 )
-from core.patch_engine import (
-    apply_config_patches,
-    patch_4c33fc, patch_41c120, patch_archive_portrait, patch_gold_display,
-)
+from core.patch_engine import apply_config_patches
 from core.scanner import discover_warpc_base, detect_exe_profile
 from core.warpc_expander import (
     WARPC_BASE, WARPC_REC_SIZE, WARPC_ORIG_SIZE,
@@ -199,7 +196,7 @@ class CliLauncher:
                  no_archive_portrait: bool = False,
                  no_inject_warpc: bool = False,
                  no_gold_display: bool = False,
-                 no_4c33fc_41c120: bool = False,
+                 no_save_entry_stream_fixes: bool = False,
                  no_suspend: bool = False):
         self.tks_path = os.path.abspath(tks_path)
         self.game_dir = game_dir
@@ -210,7 +207,7 @@ class CliLauncher:
         self.no_archive_portrait = no_archive_portrait
         self.no_inject_warpc = no_inject_warpc
         self.no_gold_display = no_gold_display
-        self.no_4c33fc_41c120 = no_4c33fc_41c120
+        self.no_save_entry_stream_fixes = no_save_entry_stream_fixes
         self.no_suspend = no_suspend
         self._is_running = True
 
@@ -737,6 +734,25 @@ class CliLauncher:
         # ── 16. 应用配置补丁 ──
         self._log("\n=== 应用配置补丁 (模式扫描) ===")
         config.variables["_target_pid"] = target_pid
+        disabled_patches = set()
+        if self.no_runtime_hooks:
+            disabled_patches.update({
+                "save_entry_check_fix",
+                "save_stream_error_fix",
+                "archive_portrait",
+                "gold_display",
+                "xiaotan_defend_glow",
+                "xiaotan_disable_companion",
+            })
+        if self.no_save_entry_stream_fixes:
+            disabled_patches.update({
+                "save_entry_check_fix",
+                "save_stream_error_fix",
+            })
+        if self.no_archive_portrait:
+            disabled_patches.add("archive_portrait")
+        if self.no_gold_display:
+            disabled_patches.add("gold_display")
         ok = False
         try:
             ok = apply_config_patches(
@@ -745,6 +761,7 @@ class CliLauncher:
                 cave_addr, config.variables, log_func=self._log,
                 selected_patches=self.selected_patches,
                 exe_profile=_exe_profile,
+                disabled_patches=disabled_patches or None,
                 config_overrides=_mod_config_overrides,
             )
         except Exception as ex:
@@ -769,28 +786,6 @@ class CliLauncher:
         if self.no_runtime_hooks:
             self._log("\n=== 跳过运行时补丁 (no_runtime_hooks) ===")
         else:
-            # 补丁十二+十三: 入口检查 + stream error
-            if self.no_4c33fc_41c120:
-                self._log("  [补丁十二+十三] 跳过 (no_4c33fc_41c120)")
-            else:
-                patch_4c33fc(target_pid, base_addr, log_func=self._log)
-                patch_41c120(target_pid, base_addr, log_func=self._log)
-
-            # 补丁十四: 存档界面队伍头像 hook
-            if self.no_archive_portrait:
-                self._log("  [补丁十四] 跳过 (no_archive_portrait)")
-            else:
-                archive_cave = cave_addr + 192 if cave_addr else 0
-                patch_archive_portrait(target_pid, base_addr, archive_cave,
-                                       warpc_base_for_caves if warpc_base_for_caves else discovered_base,
-                                       log_func=self._log)
-
-            # 补丁十七: 存档界面金钱显示修复
-            if self.no_gold_display:
-                self._log("  [补丁十七] 跳过 (no_gold_display)")
-            else:
-                patch_gold_display(target_pid, base_addr, log_func=self._log)
-
             # WarPC 数据注入
             if self.no_inject_warpc:
                 self._log("  [inject_warpc_data] 跳过 (no_inject_warpc)")
@@ -904,7 +899,7 @@ def main():
     parser.add_argument("--no-mods", action="store_true",
                         help="跳过 MOD 加载")
     parser.add_argument("--no-runtime-hooks", action="store_true",
-                        help="[诊断] 跳过所有运行时补丁 (4c33fc/41c120/头像/gold)")
+                        help="[诊断] 跳过所有运行时补丁 (存档入口/stream error/头像/gold)")
     parser.add_argument("--no-suspend", action="store_true",
                         help="[Winlator] 禁用 CREATE_SUSPENDED + 线程挂起/恢复 (Wine 兼容)")
     parser.add_argument("--timeout", type=int, default=None,
@@ -957,17 +952,21 @@ def main():
     no_archive_portrait = adv.get("no_archive_portrait", False)
     no_inject_warpc = adv.get("no_inject_warpc", False)
     no_gold_display = adv.get("no_gold_display", False)
-    no_4c33fc_41c120 = adv.get("no_4c33fc_41c120", False)
+    no_save_entry_stream_fixes = adv.get(
+        "no_save_entry_stream_fixes",
+        adv.get("no_4c33fc_41c120", False),
+    )
     no_suspend = args.no_suspend or adv.get("no_suspend", False)
 
     # Wine/Winlator 环境已原生兼容 (CAVE_ARCHIVE_PORTRAIT 改用非 LOCK 指令)
 
     for label, flag in [
         ("no_runtime_hooks: 跳过所有运行时补丁", no_runtime_hooks),
-        ("no_archive_portrait: 跳过补丁十四", no_archive_portrait),
+        ("no_archive_portrait: 跳过存档头像补丁", no_archive_portrait),
         ("no_inject_warpc: 跳过 WarPC 注入", no_inject_warpc),
-        ("no_gold_display: 跳过补丁十七", no_gold_display),
-        ("no_4c33fc_41c120: 跳过补丁十二+十三", no_4c33fc_41c120),
+        ("no_gold_display: 跳过存档金钱显示补丁", no_gold_display),
+        ("no_save_entry_stream_fixes: 跳过存档入口/stream error 补丁",
+         no_save_entry_stream_fixes),
         ("no_suspend: 禁用 CREATE_SUSPENDED (Wine 兼容)", no_suspend),
     ]:
         if flag:
@@ -983,7 +982,7 @@ def main():
         no_archive_portrait=no_archive_portrait,
         no_inject_warpc=no_inject_warpc,
         no_gold_display=no_gold_display,
-        no_4c33fc_41c120=no_4c33fc_41c120,
+        no_save_entry_stream_fixes=no_save_entry_stream_fixes,
         no_suspend=no_suspend,
     )
     ok, diag = launcher.run()
