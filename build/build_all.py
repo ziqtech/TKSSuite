@@ -36,7 +36,7 @@ build_all.py — TKS Editors 一键构建脚本 (Nuitka)
     ├── TKSLauncherCLI.exe    CLI 启动器 (~5-10MB)
     ├── launcher_config.json  配置模板
     ├── tks_patches.json      补丁定义
-    ├── configs/summon_table.json  召唤表
+    ├── configs/              基线配置 (font_config/summon_table 等)
     └── mods/                 空目录 (用户放置 MOD)
 
     dist/TKSLauncher/         [玩家精简包, 供不编辑 MOD 的普通玩家使用]
@@ -667,6 +667,13 @@ def assemble_release(onefile: bool = False, release: bool = False,
         for f in src_configs.glob("*.json"):
             shutil.copy2(str(f), str(RELEASE_DIR / "configs" / f.name))
 
+    # 复制外置补丁目录 (patches/ 是 .tkspatch 唯一来源, tks_patches.json 仅向后兼容)
+    patches_src = 仓库根目录 / "tks_launcher_gui" / "patches"
+    if patches_src.is_dir():
+        patches_dst = RELEASE_DIR / "patches"
+        shutil.copytree(str(patches_src), str(patches_dst), dirs_exist_ok=True)
+        print(f"  [OK] patches/ ({len(list(patches_src.glob('*.tkspatch')))} 个 .tkspatch)")
+
     # 复制 tks_patches.json 到发行根目录 (补丁基础设施, 不在 configs/ 内)
     tks_patches_src = 仓库根目录 / "tks_launcher_gui" / "tks_patches.json"
     if tks_patches_src.exists():
@@ -753,14 +760,23 @@ def assemble_winlator():
         print(f"  [OK] tks_patches.json")
         assembled.append("tks_patches.json")
 
-    # 4. 复制 summon_table.json (召唤表, 放入 configs/ 子目录)
+    # 复制外置补丁目录 (CLI 同样使用 patches/ 作为 .tkspatch 唯一来源)
+    patches_src = 仓库根目录 / "tks_launcher_gui" / "patches"
+    if patches_src.is_dir():
+        patches_dst = WINLATOR_DIR / "patches"
+        shutil.copytree(str(patches_src), str(patches_dst), dirs_exist_ok=True)
+        print(f"  [OK] patches/")
+        assembled.append("patches/")
+
+    # 4. 复制全部基线配置 (configs/, 与发行目录一致)
     configs_dst = WINLATOR_DIR / "configs"
     configs_dst.mkdir(exist_ok=True)
-    summon_src = 仓库根目录 / "configs" / "summon_table.json"
-    if summon_src.exists():
-        shutil.copy2(str(summon_src), str(configs_dst / "summon_table.json"))
-        print(f"  [OK] configs/summon_table.json")
-        assembled.append("configs/summon_table.json")
+    src_configs = 仓库根目录 / "configs"
+    if src_configs.exists():
+        for f in src_configs.glob("*.json"):
+            shutil.copy2(str(f), str(configs_dst / f.name))
+        print(f"  [OK] configs/")
+        assembled.append("configs/")
 
     # 5. 创建空 mods/ 目录 (供用户放置 MOD 文件)
     mods_dst = WINLATOR_DIR / "mods"
@@ -825,6 +841,14 @@ def assemble_launcher():
             shutil.copy2(str(f), str(configs_dst / f.name))
         print(f"  [OK] configs/")
         assembled.append("configs/")
+
+    # 复制外置补丁目录 (与开发模式共用同一套 .tkspatch)
+    patches_src = 仓库根目录 / "tks_launcher_gui" / "patches"
+    if patches_src.is_dir():
+        patches_dst = LAUNCHER_DIR / "patches"
+        shutil.copytree(str(patches_src), str(patches_dst), dirs_exist_ok=True)
+        print(f"  [OK] patches/")
+        assembled.append("patches/")
 
     # 4. 复制 tools/ 辅助工具 (启动器运行时按需注入游戏目录)
     tools_src = 仓库根目录 / "tks_launcher_gui" / "tools"

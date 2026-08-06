@@ -17,7 +17,7 @@ import json
 import os
 from typing import Any, Dict, List, Optional
 
-from .config_loader import PatchDef, PatchConfig, load_config
+from .config_loader import PatchDef, PatchConfig, load_config, resolve_config_path
 
 FORMAT_VERSION = 1
 
@@ -132,17 +132,8 @@ def load_tkspatch_file(path: str, log_func=None) -> Optional[PatchDef]:
     # patch_summon_table / 其他需要 json_file 的类型
     jf = raw.get("json_file", "")
     if jf and not os.path.isabs(jf):
-        # 解析顺序: 1) 相对于 .tkspatch 文件目录  2) 上级目录 (launcher root)
-        abs_path = os.path.abspath(path)
-        patch_dir = os.path.dirname(abs_path)
-        resolved = os.path.join(patch_dir, jf)
-        if not os.path.isfile(resolved):
-            parent_dir = os.path.dirname(patch_dir)
-            if parent_dir and parent_dir != patch_dir:
-                alt = os.path.join(parent_dir, jf)
-                # 无论是否存在都使用上级目录路径 (configs/ 通常在 launcher root)
-                resolved = alt
-        jf = resolved
+        # 解析顺序: .tkspatch 所在目录 → launcher root → launcher 上级目录
+        jf = resolve_config_path(path, jf)
     d.json_file = jf
     d.data_rva = _parse_maybe_hex(raw.get("data_rva", 0))
     d.data_keys = list(raw.get("data_keys", []))

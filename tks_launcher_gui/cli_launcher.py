@@ -51,7 +51,6 @@ from core.mod_loader import (
 from core.patch_engine import (
     apply_config_patches,
     patch_4c33fc, patch_41c120, patch_archive_portrait, patch_gold_display,
-    find_load_hook_points, hook_save_load_portrait,
 )
 from core.scanner import discover_warpc_base, detect_exe_profile
 from core.warpc_expander import (
@@ -197,8 +196,6 @@ class CliLauncher:
                  selected_patches: set = None,
                  enabled_mod_ids: set = None,
                  no_runtime_hooks: bool = False,
-                 no_watchdog: bool = False,
-                 no_save_load_hook: bool = False,
                  no_archive_portrait: bool = False,
                  no_inject_warpc: bool = False,
                  no_gold_display: bool = False,
@@ -210,8 +207,6 @@ class CliLauncher:
         self.selected_patches = selected_patches
         self.enabled_mod_ids = enabled_mod_ids
         self.no_runtime_hooks = no_runtime_hooks
-        self.no_watchdog = no_watchdog
-        self.no_save_load_hook = no_save_load_hook
         self.no_archive_portrait = no_archive_portrait
         self.no_inject_warpc = no_inject_warpc
         self.no_gold_display = no_gold_display
@@ -293,16 +288,6 @@ class CliLauncher:
             }
             _names = ', '.join(sorted(self.selected_patches)) or "(无)"
             self._log(f"  默认启用可选补丁: {_names}")
-
-        # ── 1c. Wine/Winlator 兼容: 自动跳过 portrait_reinject ──
-        # 补丁十八 (hook_save_load_portrait) 会 hook 存档加载函数,
-        # Wine 下可能导致加载存档卡死, 必须自动跳过
-        if _is_wine() and "portrait_reinject" in self.selected_patches:
-            self.selected_patches.discard("portrait_reinject")
-            _wv = _get_wine_version()
-            _wv_str = f" ({_wv})" if _wv else ""
-            self._log(f"  [Wine兼容] 检测到 Wine 环境{_wv_str}, 自动跳过 portrait_reinject "
-                      f"(补丁十八 hook 存档加载函数, Wine 下可能卡死)")
 
         # ── 2. 存档健康检查 ──
         ensure_save_directory_healthy(log_func=self._log)
@@ -662,20 +647,6 @@ class CliLauncher:
         config.variables["warpc_base"] = discovered_base
         config.variables["warpc_new_base"] = discovered_base
 
-        # ── 12. 定位存档加载 Move 调用 ──
-        # 补丁十八 (portrait_reinject): 用户可通过取消勾选来跳过存档加载 hook + 看门狗
-        _portrait_reinject_enabled = (
-            self.selected_patches is None
-            or "portrait_reinject" in self.selected_patches
-        )
-        _load_hook_rvas = []
-        if _portrait_reinject_enabled:
-            _load_hook_rvas = find_load_hook_points(
-                bytes(code_buf), discovered_base, WARPC_ORIG_SIZE, log_func=self._log
-            )
-        else:
-            self._log("\n  [补丁十八] 用户取消勾选, 跳过存档加载 hook")
-
         # ── 13. 分配 WarPC 缓冲区 ──
         warpc_base_for_caves = 0
         if _warpc_expanded and _warpc_full_data:
@@ -826,30 +797,6 @@ class CliLauncher:
             else:
                 inject_warpc_data(target_pid, discovered_base, _warpc_expanded, log_func=self._log)
 
-            # 补丁十八: 存档加载 portrait 重注入 hook
-            if self.no_save_load_hook:
-                self._log("  [补丁十八] 跳过 (no_save_load_hook)")
-            elif not _portrait_reinject_enabled:
-                self._log("  [补丁十八] 跳过 (portrait_reinject 未勾选)")
-            elif _load_hook_rvas:
-                from core.lzss import lzss_decompress
-                _wp_file = "WarPC.dat"
-                _wp_orig = _wp_file + ".orig"
-                _reinject_src = _wp_orig if os.path.isfile(_wp_orig) else _wp_file
-                if os.path.isfile(_reinject_src):
-                    with open(_reinject_src, 'rb') as _f:
-                        _wp_dec = lzss_decompress(_f.read())
-                    _wp_count = len(_wp_dec) // WARPC_REC_SIZE
-                    _active_base = (warpc_base_for_caves
-                                    if warpc_base_for_caves else discovered_base)
-                    hook_save_load_portrait(
-                        target_pid, base_addr, code_buf, code_start,
-                        cave_addr, _active_base, _wp_dec, _wp_count,
-                        _load_hook_rvas, log_func=self._log
-                    )
-                else:
-                    self._log("  [补丁十八] WarPC.dat 不存在, 跳过重注入 hook")
-
         # ── 19. 诊断 dump ──
         self._log("\n--- 存档索引文件内容 dump ---")
         for si in range(1, 10):
@@ -883,21 +830,9 @@ class CliLauncher:
         else:
             self._log("\n[WARN] 部分补丁未应用成功")
 
-        # ── 21. 构建看门狗参数 ──
-        _wd_params = None
-        if not self.no_runtime_hooks and not self.no_watchdog and _portrait_reinject_enabled:
-            _wd_params = self._build_portrait_watchdog_params(
-                target_pid,
-                warpc_base_for_caves if warpc_base_for_caves else discovered_base,
-            )
-        elif self.no_watchdog:
-            self._log("  [看门狗] 已禁用 (--no-watchdog)")
-        elif not _portrait_reinject_enabled:
-            self._log("  [看门狗] 已跳过 (portrait_reinject 未勾选)")
-
-        # ── 22. 等待游戏退出 (含看门狗) ──
+        # ── 22. 等待游戏退出 ──
         self._log("\n等待游戏退出...")
-        self._wait_game_exit_with_watchdog(tks_proc, target_pid, _wd_params)
+        self._wait_game_exit(tks_proc, target_pid)
 
         # ── 23. 恢复 MOD 原始文件 ──
         if loaded_mods:
@@ -912,54 +847,8 @@ class CliLauncher:
             "new_buf": _warpc_new_buf,
         }
 
-    def _build_portrait_watchdog_params(self, target_pid: int, warpc_base: int):
-        """从 WarPC.dat 构建 portrait 看门狗重注入参数"""
-        from core.lzss import lzss_decompress
-        wp_file = "WarPC.dat"
-        wp_orig = wp_file + ".orig"
-        src = wp_orig if os.path.isfile(wp_orig) else wp_file
-        if not os.path.isfile(src):
-            return None
-
-        with open(src, 'rb') as f:
-            dec = lzss_decompress(f.read())
-        char_count = len(dec) // WARPC_REC_SIZE
-        if char_count == 0:
-            return None
-
-        entries = []
-        sentinel_offset = -1
-        sentinel_value = 0
-        for i in range(char_count):
-            bo = i * WARPC_REC_SIZE
-            if bo + 524 > len(dec):
-                break
-            w260 = int.from_bytes(dec[bo + 520:bo + 522], 'little')
-            w261 = int.from_bytes(dec[bo + 522:bo + 524], 'little')
-            dw = w260 | (w261 << 16)
-            if dw:
-                bss_off = bo + 520
-                entries.append((bss_off, dw))
-                if sentinel_offset < 0:
-                    sentinel_offset = bss_off
-                    sentinel_value = dw
-
-        if not entries or sentinel_offset < 0:
-            self._log("  [看门狗] 无自定义头像数据, 跳过")
-            return None
-
-        self._log(f"  [看门狗] 重注入表: {len(entries)} 条, "
-                  f"哨兵偏移=0x{sentinel_offset:X}")
-        return {
-            "pid": target_pid,
-            "warpc_base": warpc_base,
-            "entries": entries,
-            "sentinel_offset": sentinel_offset,
-            "sentinel_value": sentinel_value,
-        }
-
-    def _wait_game_exit_with_watchdog(self, tks_proc, target_pid: int, wd_params):
-        """等待游戏退出 + portrait 看门狗"""
+    def _wait_game_exit(self, tks_proc, target_pid: int):
+        """等待游戏进程退出 (已移除 portrait 看门狗)。"""
         pids_to_watch = set()
         if tks_proc and tks_proc.poll() is None:
             pids_to_watch.add(tks_proc.pid)
@@ -986,48 +875,9 @@ class CliLauncher:
                         break
             if not alive:
                 break
-
-            if wd_params:
-                self._watchdog_check_and_reinject(wd_params)
-
             time.sleep(POLL_INTERVAL)
 
         self._log("  游戏进程已退出。")
-
-    def _watchdog_check_and_reinject(self, wd):
-        """检查哨兵值, 若被清零则重新注入 portrait 条目"""
-        hp = _OpenProcess(
-            PROCESS_VM_READ | PROCESS_VM_WRITE | 0x0008,
-            False, wd["pid"]
-        )
-        if not hp:
-            return
-
-        warpc_base = wd["warpc_base"]
-        sentinel_addr = warpc_base + wd["sentinel_offset"]
-
-        buf, nr = read_pm(hp, sentinel_addr, 4)
-        if nr < 4:
-            _CloseHandle(hp)
-            return
-
-        current = int.from_bytes(buf[:4], 'little')
-        if current == wd["sentinel_value"]:
-            _CloseHandle(hp)
-            return
-
-        self._log(f"  [看门狗] 检测到存档加载 "
-                  f"(哨兵 0x{current:08X} != 0x{wd['sentinel_value']:08X}), "
-                  f"重注入...")
-        patched = 0
-        for bss_off, dw in wd["entries"]:
-            addr = warpc_base + bss_off
-            nw = write_pm(hp, addr, struct.pack('<I', dw))
-            if nw == 4:
-                patched += 1
-
-        _CloseHandle(hp)
-        self._log(f"  [看门狗] 重注入完成: {patched}/{len(wd['entries'])} 条")
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -1054,11 +904,7 @@ def main():
     parser.add_argument("--no-mods", action="store_true",
                         help="跳过 MOD 加载")
     parser.add_argument("--no-runtime-hooks", action="store_true",
-                        help="[诊断] 跳过所有运行时补丁 (4c33fc/41c120/头像/gold/补丁十八)")
-    parser.add_argument("--no-watchdog", action="store_true",
-                        help="[诊断] 禁用 portrait 看门狗 (保留其他运行时补丁)")
-    parser.add_argument("--no-save-load-hook", action="store_true",
-                        help="[诊断] 仅跳过补丁十八 (存档加载 portrait 重注入 hook)")
+                        help="[诊断] 跳过所有运行时补丁 (4c33fc/41c120/头像/gold)")
     parser.add_argument("--no-suspend", action="store_true",
                         help="[Winlator] 禁用 CREATE_SUSPENDED + 线程挂起/恢复 (Wine 兼容)")
     parser.add_argument("--timeout", type=int, default=None,
@@ -1104,14 +950,10 @@ def main():
 
     if args.no_runtime_hooks:
         print("[诊断] --no-runtime-hooks: 跳过所有运行时补丁")
-    if args.no_watchdog:
-        print("[诊断] --no-watchdog: 禁用看门狗")
 
     # 配置文件中的诊断选项 (命令行参数优先)
     adv = cfg.get("advanced", {})
     no_runtime_hooks = args.no_runtime_hooks or adv.get("no_runtime_hooks", False)
-    no_watchdog = args.no_watchdog or adv.get("no_watchdog", False)
-    no_save_load_hook = args.no_save_load_hook or adv.get("no_save_load_hook", False)
     no_archive_portrait = adv.get("no_archive_portrait", False)
     no_inject_warpc = adv.get("no_inject_warpc", False)
     no_gold_display = adv.get("no_gold_display", False)
@@ -1122,8 +964,6 @@ def main():
 
     for label, flag in [
         ("no_runtime_hooks: 跳过所有运行时补丁", no_runtime_hooks),
-        ("no_watchdog: 禁用看门狗", no_watchdog),
-        ("no_save_load_hook: 跳过补丁十八", no_save_load_hook),
         ("no_archive_portrait: 跳过补丁十四", no_archive_portrait),
         ("no_inject_warpc: 跳过 WarPC 注入", no_inject_warpc),
         ("no_gold_display: 跳过补丁十七", no_gold_display),
@@ -1140,8 +980,6 @@ def main():
         selected_patches=selected_patches,
         enabled_mod_ids=enabled_mod_ids,
         no_runtime_hooks=no_runtime_hooks,
-        no_watchdog=no_watchdog,
-        no_save_load_hook=no_save_load_hook,
         no_archive_portrait=no_archive_portrait,
         no_inject_warpc=no_inject_warpc,
         no_gold_display=no_gold_display,

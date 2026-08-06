@@ -53,6 +53,32 @@ class PatchConfig:
     variables: Dict[str, int] = field(default_factory=dict)
     patches: List[PatchDef] = field(default_factory=list)
 
+
+def resolve_config_path(base_path: str, rel: str) -> str:
+    """解析补丁定义中声明的相对 json_file 路径。
+
+    候选目录依次为: 配置文件所在目录, 启动器根目录, 启动器上级目录。
+    开发模式下 configs/ 位于启动器上级目录 (configs);
+    打包模式下 configs/ 与 exe 同级 (发行目录 configs/)。
+    """
+    if os.path.isabs(rel):
+        return rel
+    base_dir = os.path.dirname(os.path.abspath(base_path)) if base_path else os.getcwd()
+    cur = base_dir
+    candidates = []
+    for _ in range(3):
+        candidates.append(os.path.join(cur, rel))
+        parent = os.path.dirname(cur)
+        if parent == cur:
+            break
+        cur = parent
+    for c in candidates:
+        if os.path.isfile(c):
+            return c
+    # 无命中时返回启动器根目录下的路径 (保持原有日志提示行为)
+    return candidates[1] if len(candidates) > 1 else candidates[0]
+
+
 def load_config(path: str, log_func=None) -> Optional[PatchConfig]:
     log = log_func or (lambda x: None)
     if not os.path.isfile(path):
@@ -127,16 +153,7 @@ def load_config(path: str, log_func=None) -> Optional[PatchConfig]:
             # patch_summon_table 字段
             jf = pr.get("json_file", "")
             if jf and not os.path.isabs(jf):
-                # 先相对于 tks_patches.json 所在目录解析
-                resolved = os.path.join(os.path.dirname(path), jf)
-                # 若不存在, 向上搜索一层 (兼容开发环境 tks_patches.json 在子目录)
-                if not os.path.isfile(resolved):
-                    parent_dir = os.path.dirname(os.path.dirname(path))
-                    if parent_dir and parent_dir != os.path.dirname(path):
-                        alt = os.path.join(parent_dir, jf)
-                        if os.path.isfile(alt):
-                            resolved = alt
-                jf = resolved
+                jf = resolve_config_path(path, jf)
             d.json_file = jf
             d.data_rva = _parse_maybe_hex(pr.get("data_rva", 0))
             d.data_keys = list(pr.get("data_keys", []))

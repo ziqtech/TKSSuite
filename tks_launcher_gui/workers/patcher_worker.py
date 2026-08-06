@@ -31,7 +31,6 @@ from core.mod_loader import (
 from core.patch_engine import (
     apply_config_patches,
     patch_4c33fc, patch_41c120, patch_archive_portrait, patch_gold_display,
-    find_load_hook_points, hook_save_load_portrait,
     patch_defend_glow_xiaotan, patch_disable_companion_xiaotan,
 )
 from core.scanner import discover_warpc_base, detect_exe_profile
@@ -429,19 +428,6 @@ class PatcherWorker(QThread):
         config.variables["warpc_base"] = discovered_base
         config.variables["warpc_new_base"] = discovered_base
 
-        # [补丁十八] 在原始代码上定位存档加载函数的 Move 调用 (必须在任何常量/地址修补之前)
-        _portrait_reinject_enabled = (
-            self.selected_patches is None
-            or "portrait_reinject" in self.selected_patches
-        )
-        _load_hook_rvas = []
-        if _portrait_reinject_enabled:
-            _load_hook_rvas = find_load_hook_points(
-                bytes(code_buf), discovered_base, WARPC_ORIG_SIZE, log_func=self._log
-            )
-        else:
-            self._log("\n  [补丁十八] 用户取消勾选, 跳过存档加载 hook")
-
         # [补丁十一] GUARD 区 + 分配 WarPC 缓冲区
         warpc_base_for_caves = 0
         if _warpc_expanded and _warpc_full_data:
@@ -574,28 +560,6 @@ class PatcherWorker(QThread):
                     target_pid, _exe_profile.extra_section_ranges, log_func=self._log)
             inject_warpc_data(target_pid, discovered_base, _warpc_expanded, log_func=self._log)
 
-            # [补丁十八] 存档加载后自动重注入头像数据
-            if not _portrait_reinject_enabled:
-                self._log("  [补丁十八] 已跳过 (portrait_reinject 未勾选)")
-            elif _load_hook_rvas:
-                # 从 WarPC.dat 读取完整 mod 数据作为重注入源
-                from core.lzss import lzss_decompress
-                _wp_file = "WarPC.dat"
-                _wp_orig = _wp_file + ".orig"
-                _reinject_src = _wp_orig if os.path.isfile(_wp_orig) else _wp_file
-                if os.path.isfile(_reinject_src):
-                    with open(_reinject_src, 'rb') as _f:
-                        _wp_dec = lzss_decompress(_f.read())
-                    _wp_count = len(_wp_dec) // WARPC_REC_SIZE
-                    _active_base = warpc_base_for_caves if warpc_base_for_caves else discovered_base
-                    hook_save_load_portrait(
-                        target_pid, base_addr, code_buf, code_start,
-                        cave_addr, _active_base, _wp_dec, _wp_count,
-                        _load_hook_rvas, log_func=self._log
-                    )
-                else:
-                    self._log("  [补丁十八] WarPC.dat 不存在, 跳过重注入 hook")
-
         # 诊断 dump
         self._log("\n--- 存档索引文件内容详细 dump ---")
         for si in range(1, 10):
@@ -654,21 +618,10 @@ class PatcherWorker(QThread):
         time.sleep(2)
         self.overlay_update.emit("", False)
 
-        # 构建 portrait 看门狗数据 (用于游戏运行期间持续保护)
-        _wd_params = None
-        if not self.minimal_mode and _portrait_reinject_enabled:
-            _wd_params = self._build_portrait_watchdog_params(
-                target_pid,
-                warpc_base_for_caves if warpc_base_for_caves else discovered_base,
-            )
-        elif not _portrait_reinject_enabled:
-            self._log("  [看门狗] 已跳过 (portrait_reinject 未勾选)")
-
-        # 等待游戏进程退出 (含 portrait 看门狗)
-        # (游戏运行期间可能重新加载磁盘文件, 如 TitleMenu.gxp)
+        # 等待游戏进程退出
         self._log("\n等待游戏退出...")
         self.status_changed.emit("补丁已生效，等待游戏退出...", True)
-        self._wait_game_exit_with_watchdog(tks_proc, target_pid, _wd_params)
+        self._wait_game_exit(tks_proc, target_pid)
 
         if loaded_mods:
             restore_originals(game_dir or os.getcwd(), log_func=self._log)
@@ -684,60 +637,8 @@ class PatcherWorker(QThread):
             "new_buf": _warpc_new_buf,
         })
 
-    def _build_portrait_watchdog_params(self, target_pid: int, warpc_base: int):
-        """
-        从 WarPC.dat 构建 portrait 看门狗所需的重注入参数。
-        返回 dict 或 None (无需看门狗时)。
-        """
-        from core.lzss import lzss_decompress
-        wp_file = "WarPC.dat"
-        wp_orig = wp_file + ".orig"
-        src = wp_orig if os.path.isfile(wp_orig) else wp_file
-        if not os.path.isfile(src):
-            return None
-
-        with open(src, 'rb') as f:
-            dec = lzss_decompress(f.read())
-        char_count = len(dec) // WARPC_REC_SIZE
-        if char_count == 0:
-            return None
-
-        # 构建 (offset, dword) 写入列表 + 哨兵
-        entries = []  # [(bss_offset, dword_value), ...]
-        sentinel_offset = -1
-        sentinel_value = 0
-        for i in range(char_count):
-            bo = i * WARPC_REC_SIZE
-            if bo + 524 > len(dec):
-                break
-            w260 = int.from_bytes(dec[bo + 520:bo + 522], 'little')
-            w261 = int.from_bytes(dec[bo + 522:bo + 524], 'little')
-            dw = w260 | (w261 << 16)
-            if dw:
-                bss_off = bo + 520  # field_0x208 在 BSS 内的偏移
-                entries.append((bss_off, dw))
-                if sentinel_offset < 0:
-                    sentinel_offset = bss_off
-                    sentinel_value = dw
-
-        if not entries or sentinel_offset < 0:
-            self._log("  [看门狗] 无自定义头像数据, 跳过")
-            return None
-
-        self._log(f"  [看门狗] 已构建重注入表: {len(entries)} 条, 哨兵偏移=0x{sentinel_offset:X}")
-        return {
-            "pid": target_pid,
-            "warpc_base": warpc_base,
-            "entries": entries,
-            "sentinel_offset": sentinel_offset,
-            "sentinel_value": sentinel_value,
-        }
-
-    def _wait_game_exit_with_watchdog(self, tks_proc, target_pid: int, wd_params):
-        """
-        等待游戏进程退出, 同时运行 portrait 看门狗。
-        每 500ms 检测哨兵值, 若被清零则重新注入全部自定义头像数据。
-        """
+    def _wait_game_exit(self, tks_proc, target_pid: int):
+        """等待游戏进程退出 (已移除 portrait 看门狗)。"""
         pids_to_watch = set()
         if tks_proc and tks_proc.poll() is None:
             pids_to_watch.add(tks_proc.pid)
@@ -750,12 +651,9 @@ class PatcherWorker(QThread):
         self._log(f"  监控进程: {pids_to_watch}")
         SYNCHRONIZE = 0x00100000
         WAIT_TIMEOUT = 258
-        POLL_INTERVAL = 0.5  # 500ms
-
-        reinject_count = 0
+        POLL_INTERVAL = 0.5
 
         while self._is_running:
-            # --- 进程存活检查 ---
             alive = False
             for pid in list(pids_to_watch):
                 h = _OpenProcess(SYNCHRONIZE | 0x0400, False, pid)
@@ -767,51 +665,9 @@ class PatcherWorker(QThread):
                         break
             if not alive:
                 break
-
-            # --- Portrait 看门狗: 哨兵检测 + 重注入 ---
-            if wd_params:
-                self._watchdog_check_and_reinject(wd_params)
-
             time.sleep(POLL_INTERVAL)
 
         self._log("  游戏进程已退出。")
-
-    def _watchdog_check_and_reinject(self, wd):
-        """
-        检查哨兵值, 若被清零则重新注入所有 portrait 条目。
-        使用单次 OpenProcess → 检测 + 写入 → CloseHandle, 最小化开销。
-        """
-        hp = _OpenProcess(PROCESS_VM_READ | PROCESS_VM_WRITE | 0x0008, False, wd["pid"])
-        if not hp:
-            return
-
-        warpc_base = wd["warpc_base"]
-        sentinel_addr = warpc_base + wd["sentinel_offset"]
-
-        # 读取哨兵 (4 字节)
-        buf, nr = read_pm(hp, sentinel_addr, 4)
-        if nr < 4:
-            _CloseHandle(hp)
-            return
-
-        current = int.from_bytes(buf[:4], 'little')
-        if current == wd["sentinel_value"]:
-            # 未被覆盖, 无需操作
-            _CloseHandle(hp)
-            return
-
-        # 哨兵值变化 → 存档已加载, 重新注入所有条目
-        self._log(f"  [看门狗] 检测到存档加载 (哨兵 0x{current:08X} != 0x{wd['sentinel_value']:08X}), 重注入...")
-        patched = 0
-        for bss_off, dw in wd["entries"]:
-            addr = warpc_base + bss_off
-            nw = write_pm(hp, addr, struct.pack('<I', dw))
-            if nw == 4:
-                patched += 1
-
-        _CloseHandle(hp)
-        self._log(f"  [看门狗] 重注入完成: {patched}/{len(wd['entries'])} 条")
-        self.overlay_update.emit(f"头像数据已恢复 ({patched}条)", True)
 
     def stop(self):
         self._is_running = False

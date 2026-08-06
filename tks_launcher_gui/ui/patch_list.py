@@ -25,7 +25,6 @@ _TYPE_LABELS = {
     "patch_exp_lock":         "经验锁定",
     "cave_hook":              "代码注入",
     "patch_summon_table":     "召唤表",
-    "runtime_watchdog":       "运行守护",
     "patch_drop_probability": "掉落概率",
     "patch_font_config":      "字体配置",
     "patch_animation_speed":  "动画速度",

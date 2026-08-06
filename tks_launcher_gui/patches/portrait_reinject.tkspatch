@@ -1,9 +1,0 @@
-{
-  "_format": 1,
-  "_group": "── 存档保护 ──",
-  "type": "runtime_watchdog",
-  "id": "portrait_reinject",
-  "name": "读档后自定义形象保护",
-  "desc": "读档后自动恢复自定义头像/形象数据 (看门狗)",
-  "optional": true
-}
