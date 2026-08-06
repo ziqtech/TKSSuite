@@ -89,6 +89,17 @@ def apply(ctx):
 
 `tools/pack_tkspatch.py` 可以把旧版散装 JSON 批量转成 ZIP 型 `.tkspatch`。
 
+构建后的 CLI 可用以下命令快速验证补丁加载和脚本可执行性：
+
+```text
+TKSLauncherCLI.exe --verify-patches
+TKSLauncher.exe --verify-patches
+```
+
+该模式不启动游戏，只检查 `patches/` 目录下的 ZIP 补丁是否全部可加载、
+`script.py` 是否能编译并暴露 `apply(ctx)`。GUI 版无控制台窗口，
+验证结果会写入 exe 同目录的 `verify_patches_result.txt`。
+
 ## 注意
 
 外部脚本与 `cave_code` 一样属于可执行内容，只会从玩家自己目录中的

@@ -41,24 +41,9 @@ class PatchContext:
 def run_script_patch(defn: PatchDef, ctx: PatchContext) -> bool:
     """加载并执行 .tkspatch ZIP 内嵌或 patches/_scripts 下的脚本。"""
     try:
-        source = getattr(defn, "script_source", "")
-        if source:
-            module = types.ModuleType(f"_tkspatch_script_{defn.id or 'zip'}")
-            module.__file__ = f"{defn.id or 'patch'}.tkspatch/script.py"
-            module.__package__ = ""
-            exec(compile(source, module.__file__, "exec"), module.__dict__)
-        else:
-            path = getattr(defn, "script_path", "")
-            if not path or not os.path.isfile(path):
-                ctx.log(f"  [WARN] 外部补丁脚本不存在: {path!r}, 跳过")
-                return False
-            spec = importlib.util.spec_from_file_location(
-                f"_tkspatch_script_{defn.id or abs(hash(path))}", path)
-            if spec is None or spec.loader is None:
-                ctx.log(f"  [ERROR] 无法加载外部补丁脚本: {path}")
-                return False
-            module = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(module)
+        module = _load_script_module(defn, ctx.log)
+        if module is None:
+            return False
         fn = getattr(module, "apply", None)
         if not callable(fn):
             ctx.log(f"  [ERROR] 外部补丁脚本缺少 apply(ctx) 函数")
@@ -68,6 +53,47 @@ def run_script_patch(defn: PatchDef, ctx: PatchContext) -> bool:
         ctx.log(f"  [ERROR] 外部补丁脚本执行失败: {e}")
         import traceback
         ctx.log(traceback.format_exc())
+        return False
+
+
+def _load_script_module(defn: PatchDef, log):
+    """加载脚本模块，返回模块对象；失败时返回 None。"""
+    source = getattr(defn, "script_source", "")
+    if source:
+        module = types.ModuleType(f"_tkspatch_script_{defn.id or 'zip'}")
+        module.__file__ = f"{defn.id or 'patch'}.tkspatch/script.py"
+        module.__package__ = ""
+        exec(compile(source, module.__file__, "exec"), module.__dict__)
+        return module
+
+    path = getattr(defn, "script_path", "")
+    if not path or not os.path.isfile(path):
+        log(f"  [WARN] 外部补丁脚本不存在: {path!r}, 跳过")
+        return None
+    spec = importlib.util.spec_from_file_location(
+        f"_tkspatch_script_{defn.id or abs(hash(path))}", path)
+    if spec is None or spec.loader is None:
+        log(f"  [ERROR] 无法加载外部补丁脚本: {path}")
+        return None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def validate_script_patch(defn: PatchDef, log_func=None) -> bool:
+    """只验证脚本可加载且暴露 apply(ctx)，不执行补丁逻辑。"""
+    log = log_func or (lambda x: None)
+    try:
+        module = _load_script_module(defn, log)
+        if module is None:
+            return False
+        if not callable(getattr(module, "apply", None)):
+            log(f"  [ERROR] 外部补丁脚本缺少 apply(ctx) 函数: {defn.id}")
+            return False
+        log(f"  [OK] 脚本补丁可执行: {defn.id}")
+        return True
+    except Exception as e:
+        log(f"  [ERROR] 脚本补丁验证失败: {defn.id} — {e}")
         return False
 
 

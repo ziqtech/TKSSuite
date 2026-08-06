@@ -380,8 +380,7 @@ def _build_cli_cmd(name: str, entry: str, editor_dir: str,
         # 故用顶层包名 core (与运行时 sys.path 上的导入路径一致), 而非 tks_launcher_gui.core。
         "--include-package=core",
 
-        # 包含数据文件 (补丁配置)
-        f"--include-data-files={tks_launcher_dir / 'tks_patches.json'}=tks_patches.json",
+        # 包含数据文件 (补丁配置; patches/ 目录由发行组装复制到 exe 同级)
         f"--include-data-files={仓库根目录 / 'configs' / 'summon_table.json'}=configs/summon_table.json",
 
         # 编译优化

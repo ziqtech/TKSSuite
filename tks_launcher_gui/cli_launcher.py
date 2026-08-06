@@ -904,10 +904,29 @@ def main():
                         help="[Winlator] 禁用 CREATE_SUSPENDED + 线程挂起/恢复 (Wine 兼容)")
     parser.add_argument("--timeout", type=int, default=None,
                         help="等待超时秒数 (默认: 30)")
+    parser.add_argument("--verify-patches", action="store_true",
+                        help="[诊断] 仅验证 patches/ 补丁与外部脚本可加载后退出")
 
     args = parser.parse_args()
 
     exe_dir = _get_exe_dir()
+
+    if args.verify_patches:
+        from core.patch_engine import validate_script_patch
+        patches_dir = os.path.join(exe_dir, "patches")
+        config_path = os.path.join(exe_dir, "tks_patches.json")
+        cfg = load_config_merged(config_path, patches_dir, log_func=print)
+        if cfg is None or not cfg.patches:
+            print("[ERROR] 无法加载补丁配置 (patches/ 为空)")
+            sys.exit(1)
+        ok = True
+        for p in cfg.patches:
+            if p.type == "script":
+                ok = validate_script_patch(p, log_func=print) and ok
+        print(f"[VERIFY] 加载 {len(cfg.patches)} 个补丁, "
+              f"脚本验证 {'通过' if ok else '失败'}")
+        sys.exit(0 if ok else 1)
+
     cfg = _load_launcher_config(exe_dir, args)
 
     tks_path = _resolve_tks_exe(cfg, exe_dir)
