@@ -472,13 +472,14 @@ struct ScriptState {
 | --- | --- | --- | --- | --- |
 | Visual Studio 2022 Community | C++ 编译器、调试器、Windows SDK | 必需 | 已安装：`C:\Program Files\Microsoft Visual Studio\2022\Community` | 在 Visual Studio Installer 中增加“使用 C++ 的桌面开发”工作负载 |
 | MSVC v143 | 编译 C++20 | 必需 | 已安装：14.44.35207 | 随 NativeDesktop 工作负载安装 |
-| CMake | 构建系统 | 必需 | 未安装到 PATH | `winget install Kitware.CMake`，或在 VS Installer 中安装 CMake tools |
-| Ninja | 可选的快速构建后端 | 推荐 | 未安装 | `winget install Ninja-build.Ninja` |
+| CMake | 构建系统 | 必需 | 已安装：4.4.2，位于 `C:\Program Files\CMake\bin` | `winget install Kitware.CMake --source winget`，或在 VS Installer 中安装 CMake tools |
+| Ninja | 可选的快速构建后端 | 推荐 | 已安装：1.13.2，位于 `C:\dev\bin\ninja.exe` | `winget install Ninja-build.Ninja --source winget`；若 PATH 未更新，复制到 `C:\dev\bin` |
 | Git | 拉取 vcpkg 和源码 | 必需 | 已安装：2.53.0.windows.3 | `winget install Git.Git` |
 | Python 3.11+ | 运行 Python oracle、golden 对比、工具脚本 | 必需 | 已安装：3.13.14 | `winget install Python.Python.3.13` |
-| vcpkg | 安装 SDL2、SDL2_mixer 等 C++ 依赖 | 推荐 | 未安装 | `git clone` + `bootstrap-vcpkg.bat` |
-| SDL2 | 窗口、输入、纹理输出 | 必需 | 未安装 | 通过 vcpkg manifest 自动安装 |
-| SDL2_mixer | WAV/MP3 音频 | 必需 | 未安装 | 通过 vcpkg manifest 自动安装，启用 `mpg123` |
+| PowerShell 7 | vcpkg 编译部分依赖时需要 | 必需 | 已安装：7.6.4 | `winget install Microsoft.PowerShell --source winget` |
+| vcpkg | 安装 SDL2、SDL2_mixer 等 C++ 依赖 | 推荐 | 已安装：`C:\dev\vcpkg`，`VCPKG_ROOT` 已设置 | `git clone` + `bootstrap-vcpkg.bat`；GitHub 不可达时使用 Gitee 镜像 |
+| SDL2 | 窗口、输入、纹理输出 | 必需 | 已安装：2.32.10 | 通过 vcpkg manifest 自动安装 |
+| SDL2_mixer | WAV/MP3 音频 | 必需 | 已安装：2.8.2，启用 `mpg123` | 通过 vcpkg manifest 自动安装，启用 `mpg123` |
 | FFmpeg | 后续替换 DirectShow AVI | 可选 | 未安装 | `vcpkg install ffmpeg[avcodec,avformat,swresample,swscale]` |
 | clang-format / clang-tidy | 格式化与静态检查 | 可选 | 未安装 | `winget install LLVM.LLVM` |
 | Visual Studio 调试器 | 断点、内存、调用栈 | 必需 | 随 VS 安装 | 无需单独安装 |
@@ -514,6 +515,7 @@ winget install Kitware.CMake
 winget install Ninja-build.Ninja
 winget install Git.Git
 winget install Python.Python.3.13
+winget install Microsoft.PowerShell
 ```
 
 安装后关闭并重开终端，让 PATH 生效：
@@ -523,6 +525,15 @@ cmake --version
 ninja --version
 git --version
 python --version
+pwsh --version
+```
+
+如果 `ninja` 仍然无法识别，说明 winget 没有把包目录加入 PATH。可以把它复制到已经存在的 `C:\dev\bin`：
+
+```powershell
+New-Item -ItemType Directory -Force -Path C:\dev\bin | Out-Null
+Copy-Item "%USERPROFILE%/AppData\Local\Microsoft\WinGet\Packages\Ninja-build.Ninja_Microsoft.Winget.Source_8wekyb3d8bbwe\ninja.exe" C:\dev\bin\ninja.exe -Force
+[Environment]::SetEnvironmentVariable('Path', [Environment]::GetEnvironmentVariable('Path','User') + ';C:\dev\bin', 'User')
 ```
 
 #### 10.2.3 安装 vcpkg
@@ -532,6 +543,13 @@ git clone https://github.com/microsoft/vcpkg.git C:\dev\vcpkg
 C:\dev\vcpkg\bootstrap-vcpkg.bat
 setx VCPKG_ROOT "C:\dev\vcpkg"
 C:\dev\vcpkg\vcpkg.exe integrate install
+```
+
+如果 GitHub 直连失败，改用国内镜像：
+
+```powershell
+git clone https://gitee.com/mirrors/vcpkg.git C:\dev\vcpkg
+C:\dev\vcpkg\bootstrap-vcpkg.bat -disableMetrics
 ```
 
 推荐在 `remake/` 使用 manifest 模式，依赖声明放在项目的 `vcpkg.json`：
