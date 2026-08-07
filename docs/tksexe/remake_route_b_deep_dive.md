@@ -1,4 +1,4 @@
-# 方案 B 深入分析：C/C++ + CMake + SDL2/OpenGL 重制 TKS.exe
+﻿# 方案 B 深入分析：C/C++ + CMake + SDL2/OpenGL 重制 TKS.exe
 
 > 关联：[remake_feasibility.md](remake_feasibility.md)、[TKS_analysis.md](TKS_analysis.md)、[decompile_runtime_verification.md](decompile_runtime_verification.md)、[verification_gaps.md](verification_gaps.md)
 
@@ -149,10 +149,10 @@ IRenderBackend
 
 ## 5. 工程结构
 
-建议新建 `remake/`，避免继续扩大 `tks_reverse/` 的伪 C 目录：
+建议新建 `TKSRemake/`，避免继续扩大 `tks_reverse/` 的伪 C 目录：
 
 ```text
-remake/
+TKSRemake/
   CMakeLists.txt
   cmake/
     deps.cmake
@@ -314,7 +314,7 @@ struct ScriptState {
 
 范围：
 
-- 新建 `remake/`，CMake + C++20。
+- 新建 `TKSRemake/`，CMake + C++20。
 - 接入 SDL2、SDL_mixer 作为开发依赖，但 core 不依赖它们。
 - 移植 LZSS、GRP/IDX、JVG、GXP、FONT9696、TKT/TKD。
 - 定义上述结构体。
@@ -552,7 +552,7 @@ git clone https://gitee.com/mirrors/vcpkg.git C:\dev\vcpkg
 C:\dev\vcpkg\bootstrap-vcpkg.bat -disableMetrics
 ```
 
-推荐在 `remake/` 使用 manifest 模式，依赖声明放在项目的 `vcpkg.json`：
+推荐在 `TKSRemake/` 使用 manifest 模式，依赖声明放在项目的 `vcpkg.json`：
 
 ```json
 {
@@ -590,7 +590,7 @@ C:\dev\vcpkg\vcpkg.exe list
 
 ### 11.1 CMake 关键配置
 
-`remake/CMakeLists.txt` 至少需要：
+`TKSRemake/CMakeLists.txt` 至少需要：
 
 ```cmake
 cmake_minimum_required(VERSION 3.28)
@@ -627,8 +627,8 @@ endif()
 使用 Visual Studio 2022 生成器：
 
 ```powershell
-cmake -S remake `
-      -B remake\build `
+cmake -S TKSRemake `
+      -B TKSRemake\build `
       -G "Visual Studio 17 2022" `
       -A x64 `
       -DCMAKE_TOOLCHAIN_FILE=C:\dev\vcpkg\scripts\buildsystems\vcpkg.cmake `
@@ -638,19 +638,19 @@ cmake -S remake `
 构建 Debug：
 
 ```powershell
-cmake --build remake\build --config Debug
+cmake --build TKSRemake\build --config Debug
 ```
 
 构建 Release：
 
 ```powershell
-cmake --build remake\build --config Release
+cmake --build TKSRemake\build --config Release
 ```
 
 也可以直接打开生成的解决方案：
 
 ```powershell
-start remake\build\TKS.sln
+start TKSRemake\build\TKS.sln
 ```
 
 ### 11.3 运行项目
@@ -659,13 +659,13 @@ start remake\build\TKS.sln
 
 ```powershell
 cd "游戏目录（改版）"
-remake\build\bin\Debug\TKS.exe
+TKSRemake\build\bin\Debug\TKS.exe
 ```
 
 或：
 
 ```powershell
-remake\build\bin\Debug\TKS.exe `
+TKSRemake\build\bin\Debug\TKS.exe `
   --game-dir "游戏目录（改版）"
 ```
 
@@ -683,15 +683,15 @@ remake\build\bin\Debug\TKS.exe `
 数据层验证工具：
 
 ```powershell
-remake\build\bin\Debug\dump_assets.exe `
+TKSRemake\build\bin\Debug\dump_assets.exe `
   --game-dir "游戏目录（改版）" --format json
 ```
 
 ### 11.4 运行测试
 
 ```powershell
-ctest --test-dir remake\build -C Debug --output-on-failure
-ctest --test-dir remake\build -C Release --output-on-failure
+ctest --test-dir TKSRemake\build -C Debug --output-on-failure
+ctest --test-dir TKSRemake\build -C Release --output-on-failure
 ```
 
 建议在每个阶段都固定运行：
@@ -709,7 +709,7 @@ ctest --test-dir remake\build -C Release --output-on-failure
 方式一：用 Visual Studio 2022 以文件夹方式打开
 
 ```powershell
-start "" "C:\Program Files\Microsoft Visual Studio\2022\Community\Common7\IDE\devenv.exe" remake
+start "" "C:\Program Files\Microsoft Visual Studio\2022\Community\Common7\IDE\devenv.exe" TKSRemake
 ```
 
 Visual Studio 会识别 `CMakeLists.txt`。在 CMake 设置或 `launch.vs.json` 中配置启动：
@@ -734,7 +734,7 @@ Visual Studio 会识别 `CMakeLists.txt`。在 CMake 设置或 `launch.vs.json` 
 方式二：打开生成的 `.sln`
 
 ```powershell
-start remake\build\TKS.sln
+start TKSRemake\build\TKS.sln
 ```
 
 将 `TKS` 设为启动项目，在项目属性中设置：
@@ -752,7 +752,7 @@ start remake\build\TKS.sln
 
 ```powershell
 python tools\compare_python.py `
-  --dump remake\build\bin\Debug\dump_assets.exe `
+  --dump TKSRemake\build\bin\Debug\dump_assets.exe `
   --game-dir "游戏目录（改版）"
 ```
 
@@ -761,14 +761,14 @@ python tools\compare_python.py `
 #### 11.6.1 Release 构建
 
 ```powershell
-cmake --build remake\build --config Release
-ctest --test-dir remake\build -C Release --output-on-failure
+cmake --build TKSRemake\build --config Release
+ctest --test-dir TKSRemake\build -C Release --output-on-failure
 ```
 
 输出目录：
 
 ```text
-remake\build\bin\Release\
+TKSRemake\build\bin\Release\
   TKS.exe
 ```
 
@@ -783,7 +783,7 @@ mpg123 相关 DLL（如果启用 mpg123 feature）
 这些 DLL 通常位于：
 
 ```text
-remake\build\vcpkg_installed\x64-windows\bin
+TKSRemake\build\vcpkg_installed\x64-windows\bin
 ```
 
 #### 11.6.2 发布目录
@@ -802,12 +802,12 @@ dist\TKS\
 发布到原游戏目录时：
 
 ```powershell
-$dist = "remake\dist\TKS"
+$dist = "TKSRemake\dist\TKS"
 New-Item -ItemType Directory -Force -Path $dist | Out-Null
-Copy-Item "remake\build\bin\Release\TKS.exe" $dist
-Copy-Item "remake\build\vcpkg_installed\x64-windows\bin\SDL2.dll" $dist
-Copy-Item "remake\build\vcpkg_installed\x64-windows\bin\SDL2_mixer.dll" $dist
-Copy-Item "remake\build\vcpkg_installed\x64-windows\bin\*.mpg123*.dll" $dist
+Copy-Item "TKSRemake\build\bin\Release\TKS.exe" $dist
+Copy-Item "TKSRemake\build\vcpkg_installed\x64-windows\bin\SDL2.dll" $dist
+Copy-Item "TKSRemake\build\vcpkg_installed\x64-windows\bin\SDL2_mixer.dll" $dist
+Copy-Item "TKSRemake\build\vcpkg_installed\x64-windows\bin\*.mpg123*.dll" $dist
 ```
 
 然后将 `dist\TKS` 下的文件复制到原游戏目录，保持 `.dat/.GRP/.JVG/.GXP/.mp3/.avi` 原样，不覆盖资源文件。
@@ -848,7 +848,7 @@ Copy-Item "remake\build\vcpkg_installed\x64-windows\bin\*.mpg123*.dll" $dist
 
 下一步建议按这个顺序执行：
 
-1. 新建 `remake/` 的 CMake 骨架。
+1. 新建 `TKSRemake/` 的 CMake 骨架。
 2. 按第 10 节安装并验证工具链。
 3. 先移植 `LZSS` + `GRP/IDX` + `JVG` + `GXP`，写 golden 测试。
 4. 定义 `TksTypes.h` 和 `GameState.h`。
