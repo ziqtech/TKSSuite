@@ -93,12 +93,17 @@ DEFINE_ID = (entity_id << 16) | block_id
 
 ### `End`
 
-`End` 有结束模式参数：
+`End` 有结束模式参数（`decompile/40EBD4.c` case 0）：
 
 ```text
-End(0)  正常结束
-End(1)  返回上一级/保留状态
-End(2)  结束并继续后续外部流程
+End(0)  恢复 saved_PC 并返回
+End(1)  cur_A += 1，超过 max_A 归零
+End(2)  cur_B += 1，超过 max_B 归零
+End(3)  cur_C += 1，超过 max_C 归零
+End(4)  cur_A = 0
+End(5)  cur_B = 0
+End(6)  cur_C = 0
+其它    报 `unknown End mode` 错误
 ```
 
 ### `Else`

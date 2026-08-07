@@ -63,10 +63,10 @@
 | --- | --- | --- |
 | 0 | area_id | 商店区域 0/1/2/3/4/9 |
 | 2 | item_ref | TKItem 数组下标 |
-| 4 | condition | 等级偏移或 1=随机抽选 |
+| 4 | condition | 幸运偏移或 1=随机抽选 |
 | 6 | display | 显示状态 |
 
-商店条件：`显示概率 = clamp(level - condition, 0, 100)%`；`condition=1` 走随机抽选，最多 5 件。
+商店条件：`显示概率 = clamp(队伍最大幸运 - condition, 0, 100)%`；`condition=1` 走随机抽选，最多 5 件；`condition<=-100` 为始终出现。
 
 ## 4. TKKon.dat
 
@@ -77,7 +77,7 @@
 | 记录 | 40 字节 = 20 × int16 |
 | 上限 | 650 条 |
 
-`field[3]` 是条件唯一 ID，0-649 顺序递增；`field[15]-[18]` 始终为 0。条件记录被 TKD 脚本 `CheckFlag`/条件系统间接使用。
+`field[3]` 是 TKAct 动画索引（`tkact_id`，0-649，-1 表示无动画），不是条件唯一 ID；实际 650 条中该字段有 605 个不同值。`field[15]-[18]` 始终为 0；`field[19]` 为执行标志。TKKon 记录是技能/物品的动作配置，由 `WarPC[273+skill]` 与 `TKItem[6]` 引用。
 
 ## 5. 交叉引用
 
@@ -86,9 +86,12 @@ TKItem[2/3]  -> TKT.dat
 TKItem[4]    -> Mu.JVG
 TKItem[21-24]-> TKSkill.dat
 TKShop[2]    -> TKItem.dat 下标
-TKKon[0/1/8/9]-> TKT.dat
+TKKon[3]      -> TKAct.dat 动画索引
+TKKon[4]-[14] -> 伤害/回复/状态/时序效果
+TKKon[19]     -> 执行标志
 WarPC[73-76] -> TKItem.dat
 WarPC[82-87] -> TKSkill.dat
+WarPC[273+skill] -> TKKon.dat 动作配置
 ```
 
 ## 6. 扩展限制

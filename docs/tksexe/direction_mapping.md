@@ -21,7 +21,7 @@
 
 ## 2. 战斗 4 方向
 
-`sub_449F84` 以 `current - target` 的 delta 分类：
+`sub_449F84` 以 `target - current` 的 delta 分类：
 
 | 判定 | 方向 |
 | --- | --- |

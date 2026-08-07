@@ -2,6 +2,7 @@
 
 > 本目录汇总对脱壳版 `TKS.exe` 的静态逆向分析文档，当前批次已完成收尾。
 > 权威基准：[`反编译产物/`](../../../逆向工作区/逆向工作区/反编译产物) 的 `decompile/*.c`、`function_index.txt`、`disassembly/`、`pointers.txt`、`strings.txt`、`memory/`。
+> 二次交叉验证：[editor_source_verification.md](editor_source_verification.md) 使用 `build/build_all.py` 注册的编辑器源码及其实际加载函数核对文件格式、字段与容量；[decompile_runtime_verification.md](decompile_runtime_verification.md) 再对存档之外的脚本、战斗、AI、小游戏和运行时行为做反编译复核。
 
 ## 推荐阅读顺序
 
@@ -21,6 +22,8 @@
 - [startup_and_mainloop.md](startup_and_mainloop.md) — `WinMain`、`TForm1_FormCreate`、视频/标题状态机、`TKGMThread` 主循环、退出/结局
 - [ui_menu_world_flow.md](ui_menu_world_flow.md) — 主菜单状态机、场景切换、世界地图、保存/读取菜单、对话框、中文输入
 - [runtime_memory_map.md](runtime_memory_map.md) — 实体/脚本/战斗/渲染/存档关键全局变量与内存布局
+- [editor_source_verification.md](editor_source_verification.md) — 使用 19 个编辑器源码和实际文件加载结果交叉验证本文档目录
+- [decompile_runtime_verification.md](decompile_runtime_verification.md) — 使用反编译/反汇编复核脚本引擎、战斗、AI、小游戏、渲染与音视频
 - [verification_gaps.md](verification_gaps.md) — 当前未验证/未确认点清单，按已确认、待验证、外部工具分类
 - [direction_mapping.md](direction_mapping.md) — 地图 8 方向与战斗 4 方向编号算法
 
