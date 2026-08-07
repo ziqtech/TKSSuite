@@ -25,6 +25,7 @@
 - [editor_source_verification.md](editor_source_verification.md) — 使用 19 个编辑器源码和实际文件加载结果交叉验证本文档目录
 - [decompile_runtime_verification.md](decompile_runtime_verification.md) — 使用反编译/反汇编复核脚本引擎、战斗、AI、小游戏、渲染与音视频
 - [remake_feasibility.md](remake_feasibility.md) — 结合编辑器源码与反编译资料评估 TKS.exe 真实代码重制路线
+- [remake_route_b_deep_dive.md](remake_route_b_deep_dive.md) — 深入评估 C/C++ + CMake + SDL2/OpenGL 路线，给出依赖映射、工程分层、阶段与验证方案
 - [verification_gaps.md](verification_gaps.md) — 当前未验证/未确认点清单，按已确认、待验证、外部工具分类
 - [direction_mapping.md](direction_mapping.md) — 地图 8 方向与战斗 4 方向编号算法
 
