@@ -1,0 +1,2458 @@
+[
+  {
+    "skill_index": 1,
+    "skill_name": " 七 星 陣",
+    "records_used": 10,
+    "unique_tkkon_ids": [
+      68,
+      134,
+      182,
+      213,
+      331,
+      463
+    ],
+    "most_common_tkkon": 68
+  },
+  {
+    "skill_index": 2,
+    "skill_name": " 八 卦 陣",
+    "records_used": 10,
+    "unique_tkkon_ids": [
+      69,
+      135,
+      183,
+      214,
+      332,
+      464
+    ],
+    "most_common_tkkon": 69
+  },
+  {
+    "skill_index": 3,
+    "skill_name": " 猛 獸 陣",
+    "records_used": 10,
+    "unique_tkkon_ids": [
+      70,
+      136,
+      184,
+      215,
+      333,
+      465
+    ],
+    "most_common_tkkon": 70
+  },
+  {
+    "skill_index": 4,
+    "skill_name": " 山崩陷阱",
+    "records_used": 4,
+    "unique_tkkon_ids": [
+      639
+    ],
+    "most_common_tkkon": 639
+  },
+  {
+    "skill_index": 5,
+    "skill_name": " 泥沼陷阱",
+    "records_used": 4,
+    "unique_tkkon_ids": [
+      639
+    ],
+    "most_common_tkkon": 639
+  },
+  {
+    "skill_index": 6,
+    "skill_name": " 漩渦陷阱",
+    "records_used": 4,
+    "unique_tkkon_ids": [
+      639
+    ],
+    "most_common_tkkon": 639
+  },
+  {
+    "skill_index": 7,
+    "skill_name": " 火焰陷阱",
+    "records_used": 4,
+    "unique_tkkon_ids": [
+      639
+    ],
+    "most_common_tkkon": 639
+  },
+  {
+    "skill_index": 8,
+    "skill_name": " 滾木陷阱",
+    "records_used": 4,
+    "unique_tkkon_ids": [
+      639
+    ],
+    "most_common_tkkon": 639
+  },
+  {
+    "skill_index": 9,
+    "skill_name": " 瘴氣陷阱",
+    "records_used": 4,
+    "unique_tkkon_ids": [
+      639
+    ],
+    "most_common_tkkon": 639
+  },
+  {
+    "skill_index": 11,
+    "skill_name": " 治 療 術",
+    "records_used": 16,
+    "unique_tkkon_ids": [
+      7,
+      98,
+      137,
+      222,
+      273,
+      359,
+      413,
+      432,
+      467
+    ],
+    "most_common_tkkon": 7
+  },
+  {
+    "skill_index": 12,
+    "skill_name": " 強 療 術",
+    "records_used": 16,
+    "unique_tkkon_ids": [
+      8,
+      99,
+      138,
+      223,
+      274,
+      360,
+      414,
+      433,
+      468
+    ],
+    "most_common_tkkon": 8
+  },
+  {
+    "skill_index": 13,
+    "skill_name": " 復 活 術",
+    "records_used": 2,
+    "unique_tkkon_ids": [
+      275
+    ],
+    "most_common_tkkon": 275
+  },
+  {
+    "skill_index": 14,
+    "skill_name": " 靈 息 術",
+    "records_used": 16,
+    "unique_tkkon_ids": [
+      9,
+      100,
+      139,
+      224,
+      276,
+      361,
+      415,
+      434,
+      469
+    ],
+    "most_common_tkkon": 9
+  },
+  {
+    "skill_index": 15,
+    "skill_name": " 破 邪 術",
+    "records_used": 16,
+    "unique_tkkon_ids": [
+      10,
+      101,
+      140,
+      225,
+      277,
+      362,
+      416,
+      435,
+      470
+    ],
+    "most_common_tkkon": 10
+  },
+  {
+    "skill_index": 16,
+    "skill_name": " 定 心 術",
+    "records_used": 16,
+    "unique_tkkon_ids": [
+      11,
+      102,
+      141,
+      226,
+      278,
+      363,
+      417,
+      436,
+      471
+    ],
+    "most_common_tkkon": 11
+  },
+  {
+    "skill_index": 17,
+    "skill_name": " 鼓 舞 術",
+    "records_used": 16,
+    "unique_tkkon_ids": [
+      12,
+      103,
+      142,
+      227,
+      279,
+      364,
+      418,
+      437,
+      472
+    ],
+    "most_common_tkkon": 12
+  },
+  {
+    "skill_index": 18,
+    "skill_name": " 清 醒 術",
+    "records_used": 16,
+    "unique_tkkon_ids": [
+      13,
+      104,
+      143,
+      228,
+      280,
+      365,
+      419,
+      438,
+      473
+    ],
+    "most_common_tkkon": 13
+  },
+  {
+    "skill_index": 19,
+    "skill_name": " 解 毒 術",
+    "records_used": 16,
+    "unique_tkkon_ids": [
+      14,
+      105,
+      144,
+      229,
+      281,
+      366,
+      420,
+      439,
+      474
+    ],
+    "most_common_tkkon": 14
+  },
+  {
+    "skill_index": 20,
+    "skill_name": " 掙 脫 術",
+    "records_used": 16,
+    "unique_tkkon_ids": [
+      15,
+      106,
+      145,
+      230,
+      282,
+      367,
+      421,
+      440,
+      475
+    ],
+    "most_common_tkkon": 15
+  },
+  {
+    "skill_index": 22,
+    "skill_name": " 鎧 甲 術",
+    "records_used": 13,
+    "unique_tkkon_ids": [
+      16,
+      71,
+      165,
+      231,
+      283,
+      476
+    ],
+    "most_common_tkkon": 16
+  },
+  {
+    "skill_index": 23,
+    "skill_name": " 敏 捷 術",
+    "records_used": 13,
+    "unique_tkkon_ids": [
+      17,
+      72,
+      166,
+      232,
+      284,
+      477
+    ],
+    "most_common_tkkon": 17
+  },
+  {
+    "skill_index": 24,
+    "skill_name": " 瀚 力 術",
+    "records_used": 14,
+    "unique_tkkon_ids": [
+      18,
+      73,
+      167,
+      233,
+      285,
+      379,
+      478
+    ],
+    "most_common_tkkon": 18
+  },
+  {
+    "skill_index": 25,
+    "skill_name": " 遲 緩 術",
+    "records_used": 13,
+    "unique_tkkon_ids": [
+      19,
+      74,
+      168,
+      234,
+      286,
+      479
+    ],
+    "most_common_tkkon": 19
+  },
+  {
+    "skill_index": 26,
+    "skill_name": " 虛 脫 術",
+    "records_used": 13,
+    "unique_tkkon_ids": [
+      20,
+      75,
+      169,
+      235,
+      287,
+      480
+    ],
+    "most_common_tkkon": 20
+  },
+  {
+    "skill_index": 27,
+    "skill_name": " 定 身 術",
+    "records_used": 13,
+    "unique_tkkon_ids": [
+      21,
+      76,
+      170,
+      236,
+      288,
+      481
+    ],
+    "most_common_tkkon": 21
+  },
+  {
+    "skill_index": 28,
+    "skill_name": " 沈 默 術",
+    "records_used": 13,
+    "unique_tkkon_ids": [
+      22,
+      77,
+      171,
+      237,
+      289,
+      482
+    ],
+    "most_common_tkkon": 22
+  },
+  {
+    "skill_index": 29,
+    "skill_name": " 昏 迷 術",
+    "records_used": 13,
+    "unique_tkkon_ids": [
+      23,
+      78,
+      172,
+      238,
+      290,
+      483
+    ],
+    "most_common_tkkon": 23
+  },
+  {
+    "skill_index": 30,
+    "skill_name": " 疲 弱 術",
+    "records_used": 13,
+    "unique_tkkon_ids": [
+      24,
+      79,
+      173,
+      239,
+      291,
+      484
+    ],
+    "most_common_tkkon": 24
+  },
+  {
+    "skill_index": 31,
+    "skill_name": " 混 亂 術",
+    "records_used": 13,
+    "unique_tkkon_ids": [
+      25,
+      80,
+      174,
+      240,
+      292,
+      485
+    ],
+    "most_common_tkkon": 25
+  },
+  {
+    "skill_index": 33,
+    "skill_name": " 火 焰 術",
+    "records_used": 20,
+    "unique_tkkon_ids": [
+      26,
+      112,
+      185,
+      241,
+      293,
+      314,
+      335,
+      368,
+      382,
+      397,
+      441,
+      486,
+      528
+    ],
+    "most_common_tkkon": 26
+  },
+  {
+    "skill_index": 34,
+    "skill_name": " 洪 水 術",
+    "records_used": 20,
+    "unique_tkkon_ids": [
+      27,
+      113,
+      186,
+      242,
+      294,
+      315,
+      336,
+      369,
+      383,
+      398,
+      442,
+      487,
+      529
+    ],
+    "most_common_tkkon": 27
+  },
+  {
+    "skill_index": 35,
+    "skill_name": " 土 崩 術",
+    "records_used": 19,
+    "unique_tkkon_ids": [
+      28,
+      114,
+      187,
+      243,
+      295,
+      316,
+      337,
+      370,
+      384,
+      399,
+      488,
+      530
+    ],
+    "most_common_tkkon": 28
+  },
+  {
+    "skill_index": 36,
+    "skill_name": " 狂 風 術",
+    "records_used": 20,
+    "unique_tkkon_ids": [
+      29,
+      115,
+      188,
+      244,
+      296,
+      317,
+      338,
+      371,
+      385,
+      400,
+      444,
+      489,
+      531
+    ],
+    "most_common_tkkon": 29
+  },
+  {
+    "skill_index": 37,
+    "skill_name": " 冰 雪 術",
+    "records_used": 20,
+    "unique_tkkon_ids": [
+      30,
+      116,
+      189,
+      245,
+      297,
+      318,
+      339,
+      372,
+      386,
+      401,
+      445,
+      490,
+      532
+    ],
+    "most_common_tkkon": 30
+  },
+  {
+    "skill_index": 38,
+    "skill_name": " 落 雷 術",
+    "records_used": 20,
+    "unique_tkkon_ids": [
+      31,
+      117,
+      190,
+      246,
+      298,
+      319,
+      340,
+      373,
+      387,
+      402,
+      446,
+      491,
+      533
+    ],
+    "most_common_tkkon": 31
+  },
+  {
+    "skill_index": 39,
+    "skill_name": " 滾 木 術",
+    "records_used": 20,
+    "unique_tkkon_ids": [
+      32,
+      118,
+      191,
+      247,
+      299,
+      320,
+      341,
+      374,
+      388,
+      403,
+      447,
+      492,
+      534
+    ],
+    "most_common_tkkon": 32
+  },
+  {
+    "skill_index": 40,
+    "skill_name": " 毒 氣 術",
+    "records_used": 20,
+    "unique_tkkon_ids": [
+      33,
+      119,
+      192,
+      248,
+      300,
+      321,
+      342,
+      375,
+      389,
+      404,
+      448,
+      493,
+      535
+    ],
+    "most_common_tkkon": 33
+  },
+  {
+    "skill_index": 41,
+    "skill_name": " 熔 岩 術",
+    "records_used": 20,
+    "unique_tkkon_ids": [
+      34,
+      120,
+      193,
+      249,
+      301,
+      322,
+      343,
+      376,
+      390,
+      405,
+      449,
+      494,
+      536
+    ],
+    "most_common_tkkon": 34
+  },
+  {
+    "skill_index": 42,
+    "skill_name": " 海 嘯 術",
+    "records_used": 20,
+    "unique_tkkon_ids": [
+      35,
+      121,
+      194,
+      250,
+      302,
+      323,
+      344,
+      377,
+      391,
+      406,
+      450,
+      495,
+      537
+    ],
+    "most_common_tkkon": 35
+  },
+  {
+    "skill_index": 44,
+    "skill_name": "  合  擊",
+    "records_used": 143,
+    "unique_tkkon_ids": [
+      584
+    ],
+    "most_common_tkkon": 584
+  },
+  {
+    "skill_index": 45,
+    "skill_name": "  逆  襲",
+    "records_used": 143,
+    "unique_tkkon_ids": [
+      585
+    ],
+    "most_common_tkkon": 585
+  },
+  {
+    "skill_index": 46,
+    "skill_name": "  牽  制",
+    "records_used": 143,
+    "unique_tkkon_ids": [
+      586
+    ],
+    "most_common_tkkon": 586
+  },
+  {
+    "skill_index": 47,
+    "skill_name": "  迴  斬",
+    "records_used": 143,
+    "unique_tkkon_ids": [
+      587
+    ],
+    "most_common_tkkon": 587
+  },
+  {
+    "skill_index": 48,
+    "skill_name": "  突  擊",
+    "records_used": 143,
+    "unique_tkkon_ids": [
+      588
+    ],
+    "most_common_tkkon": 588
+  },
+  {
+    "skill_index": 49,
+    "skill_name": "  背  擊",
+    "records_used": 143,
+    "unique_tkkon_ids": [
+      589
+    ],
+    "most_common_tkkon": 589
+  },
+  {
+    "skill_index": 50,
+    "skill_name": "  連  擊",
+    "records_used": 143,
+    "unique_tkkon_ids": [
+      590
+    ],
+    "most_common_tkkon": 590
+  },
+  {
+    "skill_index": 51,
+    "skill_name": "  刺  擊",
+    "records_used": 143,
+    "unique_tkkon_ids": [
+      591
+    ],
+    "most_common_tkkon": 591
+  },
+  {
+    "skill_index": 52,
+    "skill_name": "  飆  擊",
+    "records_used": 143,
+    "unique_tkkon_ids": [
+      592
+    ],
+    "most_common_tkkon": 592
+  },
+  {
+    "skill_index": 53,
+    "skill_name": "  衝  鋒",
+    "records_used": 143,
+    "unique_tkkon_ids": [
+      593
+    ],
+    "most_common_tkkon": 593
+  },
+  {
+    "skill_index": 54,
+    "skill_name": "  逆  勾",
+    "records_used": 143,
+    "unique_tkkon_ids": [
+      594
+    ],
+    "most_common_tkkon": 594
+  },
+  {
+    "skill_index": 55,
+    "skill_name": "  震  擊",
+    "records_used": 143,
+    "unique_tkkon_ids": [
+      595
+    ],
+    "most_common_tkkon": 595
+  },
+  {
+    "skill_index": 56,
+    "skill_name": "  重  鎚",
+    "records_used": 143,
+    "unique_tkkon_ids": [
+      596
+    ],
+    "most_common_tkkon": 596
+  },
+  {
+    "skill_index": 57,
+    "skill_name": "  點  穴",
+    "records_used": 143,
+    "unique_tkkon_ids": [
+      597,
+      270
+    ],
+    "most_common_tkkon": 597
+  },
+  {
+    "skill_index": 58,
+    "skill_name": " 五 禽 功",
+    "records_used": 143,
+    "unique_tkkon_ids": [
+      598,
+      271
+    ],
+    "most_common_tkkon": 598
+  },
+  {
+    "skill_index": 59,
+    "skill_name": " 劈 天 式",
+    "records_used": 143,
+    "unique_tkkon_ids": [
+      599
+    ],
+    "most_common_tkkon": 599
+  },
+  {
+    "skill_index": 60,
+    "skill_name": " 獅 子 吼",
+    "records_used": 143,
+    "unique_tkkon_ids": [
+      600
+    ],
+    "most_common_tkkon": 600
+  },
+  {
+    "skill_index": 61,
+    "skill_name": " 破 元 擊",
+    "records_used": 143,
+    "unique_tkkon_ids": [
+      601
+    ],
+    "most_common_tkkon": 601
+  },
+  {
+    "skill_index": 62,
+    "skill_name": " 封 魔 擊",
+    "records_used": 143,
+    "unique_tkkon_ids": [
+      602
+    ],
+    "most_common_tkkon": 602
+  },
+  {
+    "skill_index": 63,
+    "skill_name": " 滅 魂 擊",
+    "records_used": 143,
+    "unique_tkkon_ids": [
+      603
+    ],
+    "most_common_tkkon": 603
+  },
+  {
+    "skill_index": 64,
+    "skill_name": " 滅 靈 擊",
+    "records_used": 143,
+    "unique_tkkon_ids": [
+      604
+    ],
+    "most_common_tkkon": 604
+  },
+  {
+    "skill_index": 65,
+    "skill_name": " 武器破壞",
+    "records_used": 143,
+    "unique_tkkon_ids": [
+      605
+    ],
+    "most_common_tkkon": 605
+  },
+  {
+    "skill_index": 66,
+    "skill_name": " 防具破壞",
+    "records_used": 143,
+    "unique_tkkon_ids": [
+      606
+    ],
+    "most_common_tkkon": 606
+  },
+  {
+    "skill_index": 67,
+    "skill_name": " 閃避破壞",
+    "records_used": 143,
+    "unique_tkkon_ids": [
+      607
+    ],
+    "most_common_tkkon": 607
+  },
+  {
+    "skill_index": 68,
+    "skill_name": " 命中破壞",
+    "records_used": 143,
+    "unique_tkkon_ids": [
+      608
+    ],
+    "most_common_tkkon": 608
+  },
+  {
+    "skill_index": 70,
+    "skill_name": "  火  箭",
+    "records_used": 13,
+    "unique_tkkon_ids": [
+      36,
+      95,
+      157,
+      218,
+      267,
+      506
+    ],
+    "most_common_tkkon": 36
+  },
+  {
+    "skill_index": 71,
+    "skill_name": "  毒  箭",
+    "records_used": 13,
+    "unique_tkkon_ids": [
+      609
+    ],
+    "most_common_tkkon": 609
+  },
+  {
+    "skill_index": 72,
+    "skill_name": "  咒  箭",
+    "records_used": 13,
+    "unique_tkkon_ids": [
+      610
+    ],
+    "most_common_tkkon": 610
+  },
+  {
+    "skill_index": 73,
+    "skill_name": " 遠程射擊",
+    "records_used": 13,
+    "unique_tkkon_ids": [
+      611
+    ],
+    "most_common_tkkon": 611
+  },
+  {
+    "skill_index": 74,
+    "skill_name": " 致命射擊",
+    "records_used": 13,
+    "unique_tkkon_ids": [
+      3,
+      96,
+      156,
+      217,
+      266,
+      506
+    ],
+    "most_common_tkkon": 3
+  },
+  {
+    "skill_index": 75,
+    "skill_name": " 引導射擊",
+    "records_used": 13,
+    "unique_tkkon_ids": [
+      3,
+      94,
+      159,
+      217,
+      266,
+      506
+    ],
+    "most_common_tkkon": 3
+  },
+  {
+    "skill_index": 76,
+    "skill_name": " 精準射擊",
+    "records_used": 13,
+    "unique_tkkon_ids": [
+      612
+    ],
+    "most_common_tkkon": 612
+  },
+  {
+    "skill_index": 77,
+    "skill_name": " 散箭射擊",
+    "records_used": 13,
+    "unique_tkkon_ids": [
+      3,
+      94,
+      158,
+      217,
+      266,
+      506
+    ],
+    "most_common_tkkon": 3
+  },
+  {
+    "skill_index": 78,
+    "skill_name": " 貫穿射擊",
+    "records_used": 13,
+    "unique_tkkon_ids": [
+      613
+    ],
+    "most_common_tkkon": 613
+  },
+  {
+    "skill_index": 79,
+    "skill_name": " 快速射擊",
+    "records_used": 13,
+    "unique_tkkon_ids": [
+      614
+    ],
+    "most_common_tkkon": 614
+  },
+  {
+    "skill_index": 80,
+    "skill_name": " 定身射擊",
+    "records_used": 13,
+    "unique_tkkon_ids": [
+      615
+    ],
+    "most_common_tkkon": 615
+  },
+  {
+    "skill_index": 81,
+    "skill_name": " 連續射擊",
+    "records_used": 13,
+    "unique_tkkon_ids": [
+      616
+    ],
+    "most_common_tkkon": 616
+  },
+  {
+    "skill_index": 82,
+    "skill_name": " 移動射擊",
+    "records_used": 13,
+    "unique_tkkon_ids": [
+      617
+    ],
+    "most_common_tkkon": 617
+  },
+  {
+    "skill_index": 84,
+    "skill_name": "  集  中",
+    "records_used": 138,
+    "unique_tkkon_ids": [
+      569
+    ],
+    "most_common_tkkon": 569
+  },
+  {
+    "skill_index": 85,
+    "skill_name": "  雲  身",
+    "records_used": 138,
+    "unique_tkkon_ids": [
+      570
+    ],
+    "most_common_tkkon": 570
+  },
+  {
+    "skill_index": 86,
+    "skill_name": "  蓄  勁",
+    "records_used": 138,
+    "unique_tkkon_ids": [
+      571
+    ],
+    "most_common_tkkon": 571
+  },
+  {
+    "skill_index": 87,
+    "skill_name": "  鋼  體",
+    "records_used": 138,
+    "unique_tkkon_ids": [
+      572
+    ],
+    "most_common_tkkon": 572
+  },
+  {
+    "skill_index": 88,
+    "skill_name": "  神  行",
+    "records_used": 138,
+    "unique_tkkon_ids": [
+      573
+    ],
+    "most_common_tkkon": 573
+  },
+  {
+    "skill_index": 89,
+    "skill_name": "  自  療",
+    "records_used": 138,
+    "unique_tkkon_ids": [
+      574
+    ],
+    "most_common_tkkon": 574
+  },
+  {
+    "skill_index": 90,
+    "skill_name": "  急  救",
+    "records_used": 138,
+    "unique_tkkon_ids": [
+      575
+    ],
+    "most_common_tkkon": 575
+  },
+  {
+    "skill_index": 91,
+    "skill_name": "  醫  療",
+    "records_used": 138,
+    "unique_tkkon_ids": [
+      576
+    ],
+    "most_common_tkkon": 576
+  },
+  {
+    "skill_index": 92,
+    "skill_name": "  運  功",
+    "records_used": 138,
+    "unique_tkkon_ids": [
+      577
+    ],
+    "most_common_tkkon": 577
+  },
+  {
+    "skill_index": 93,
+    "skill_name": "  解  毒",
+    "records_used": 138,
+    "unique_tkkon_ids": [
+      578
+    ],
+    "most_common_tkkon": 578
+  },
+  {
+    "skill_index": 94,
+    "skill_name": "  破  咒",
+    "records_used": 138,
+    "unique_tkkon_ids": [
+      579
+    ],
+    "most_common_tkkon": 579
+  },
+  {
+    "skill_index": 95,
+    "skill_name": "  剛  勁",
+    "records_used": 138,
+    "unique_tkkon_ids": [
+      580
+    ],
+    "most_common_tkkon": 580
+  },
+  {
+    "skill_index": 96,
+    "skill_name": "  專  注",
+    "records_used": 138,
+    "unique_tkkon_ids": [
+      581
+    ],
+    "most_common_tkkon": 581
+  },
+  {
+    "skill_index": 97,
+    "skill_name": "  戰  令",
+    "records_used": 138,
+    "unique_tkkon_ids": [
+      582
+    ],
+    "most_common_tkkon": 582
+  },
+  {
+    "skill_index": 98,
+    "skill_name": " 脫離戰場",
+    "records_used": 138,
+    "unique_tkkon_ids": [
+      583
+    ],
+    "most_common_tkkon": 583
+  },
+  {
+    "skill_index": 101,
+    "skill_name": "  赤  血",
+    "records_used": 4,
+    "unique_tkkon_ids": [
+      40
+    ],
+    "most_common_tkkon": 40
+  },
+  {
+    "skill_index": 102,
+    "skill_name": "  幻  橙",
+    "records_used": 4,
+    "unique_tkkon_ids": [
+      41
+    ],
+    "most_common_tkkon": 41
+  },
+  {
+    "skill_index": 103,
+    "skill_name": "  金  曦",
+    "records_used": 4,
+    "unique_tkkon_ids": [
+      42
+    ],
+    "most_common_tkkon": 42
+  },
+  {
+    "skill_index": 104,
+    "skill_name": "  綠  殺",
+    "records_used": 4,
+    "unique_tkkon_ids": [
+      43
+    ],
+    "most_common_tkkon": 43
+  },
+  {
+    "skill_index": 105,
+    "skill_name": "  藍  斷",
+    "records_used": 4,
+    "unique_tkkon_ids": [
+      44
+    ],
+    "most_common_tkkon": 44
+  },
+  {
+    "skill_index": 106,
+    "skill_name": "  紫  破",
+    "records_used": 4,
+    "unique_tkkon_ids": [
+      45
+    ],
+    "most_common_tkkon": 45
+  },
+  {
+    "skill_index": 108,
+    "skill_name": "  劍  一",
+    "records_used": 4,
+    "unique_tkkon_ids": [
+      46
+    ],
+    "most_common_tkkon": 46
+  },
+  {
+    "skill_index": 109,
+    "skill_name": "  劍  三",
+    "records_used": 4,
+    "unique_tkkon_ids": [
+      47
+    ],
+    "most_common_tkkon": 47
+  },
+  {
+    "skill_index": 110,
+    "skill_name": "  劍  七",
+    "records_used": 4,
+    "unique_tkkon_ids": [
+      48
+    ],
+    "most_common_tkkon": 48
+  },
+  {
+    "skill_index": 111,
+    "skill_name": " 劍 十 一",
+    "records_used": 4,
+    "unique_tkkon_ids": [
+      49
+    ],
+    "most_common_tkkon": 49
+  },
+  {
+    "skill_index": 112,
+    "skill_name": " 龍奔百里",
+    "records_used": 4,
+    "unique_tkkon_ids": [
+      50
+    ],
+    "most_common_tkkon": 50
+  },
+  {
+    "skill_index": 113,
+    "skill_name": " 連破五嶽",
+    "records_used": 4,
+    "unique_tkkon_ids": [
+      51
+    ],
+    "most_common_tkkon": 51
+  },
+  {
+    "skill_index": 114,
+    "skill_name": " 鳳舞九天",
+    "records_used": 4,
+    "unique_tkkon_ids": [
+      52
+    ],
+    "most_common_tkkon": 52
+  },
+  {
+    "skill_index": 115,
+    "skill_name": " 破 魔 斬",
+    "records_used": 4,
+    "unique_tkkon_ids": [
+      53
+    ],
+    "most_common_tkkon": 53
+  },
+  {
+    "skill_index": 116,
+    "skill_name": " 殺 神 斬",
+    "records_used": 4,
+    "unique_tkkon_ids": [
+      54
+    ],
+    "most_common_tkkon": 54
+  },
+  {
+    "skill_index": 117,
+    "skill_name": " 神並天地",
+    "records_used": 5,
+    "unique_tkkon_ids": [
+      37,
+      517
+    ],
+    "most_common_tkkon": 37
+  },
+  {
+    "skill_index": 118,
+    "skill_name": " 騰龍八齊",
+    "records_used": 5,
+    "unique_tkkon_ids": [
+      38,
+      39,
+      521
+    ],
+    "most_common_tkkon": 38
+  },
+  {
+    "skill_index": 119,
+    "skill_name": " 顛動滄溟",
+    "records_used": 5,
+    "unique_tkkon_ids": [
+      39,
+      38,
+      519
+    ],
+    "most_common_tkkon": 39
+  },
+  {
+    "skill_index": 120,
+    "skill_name": "  霸  氣",
+    "records_used": 2,
+    "unique_tkkon_ids": [
+      65
+    ],
+    "most_common_tkkon": 65
+  },
+  {
+    "skill_index": 121,
+    "skill_name": " 乘時而起",
+    "records_used": 2,
+    "unique_tkkon_ids": [
+      66
+    ],
+    "most_common_tkkon": 66
+  },
+  {
+    "skill_index": 122,
+    "skill_name": "  仁  義",
+    "records_used": 2,
+    "unique_tkkon_ids": [
+      131
+    ],
+    "most_common_tkkon": 131
+  },
+  {
+    "skill_index": 123,
+    "skill_name": " 待機而動",
+    "records_used": 2,
+    "unique_tkkon_ids": [
+      132
+    ],
+    "most_common_tkkon": 132
+  },
+  {
+    "skill_index": 124,
+    "skill_name": "  振  奮",
+    "records_used": 2,
+    "unique_tkkon_ids": [
+      179
+    ],
+    "most_common_tkkon": 179
+  },
+  {
+    "skill_index": 125,
+    "skill_name": " 逆勢而行",
+    "records_used": 2,
+    "unique_tkkon_ids": [
+      180
+    ],
+    "most_common_tkkon": 180
+  },
+  {
+    "skill_index": 126,
+    "skill_name": " 龍戰於野",
+    "records_used": 2,
+    "unique_tkkon_ids": [
+      153
+    ],
+    "most_common_tkkon": 153
+  },
+  {
+    "skill_index": 127,
+    "skill_name": " 曳 刀 式",
+    "records_used": 2,
+    "unique_tkkon_ids": [
+      220
+    ],
+    "most_common_tkkon": 220
+  },
+  {
+    "skill_index": 128,
+    "skill_name": " 斷 頭 斬",
+    "records_used": 2,
+    "unique_tkkon_ids": [
+      89
+    ],
+    "most_common_tkkon": 89
+  },
+  {
+    "skill_index": 129,
+    "skill_name": " 馳 走 槍",
+    "records_used": 2,
+    "unique_tkkon_ids": [
+      161
+    ],
+    "most_common_tkkon": 161
+  },
+  {
+    "skill_index": 130,
+    "skill_name": " 浴血奮戰",
+    "records_used": 2,
+    "unique_tkkon_ids": [
+      163
+    ],
+    "most_common_tkkon": 163
+  },
+  {
+    "skill_index": 131,
+    "skill_name": " 俠義一擊",
+    "records_used": 2,
+    "unique_tkkon_ids": [
+      155
+    ],
+    "most_common_tkkon": 155
+  },
+  {
+    "skill_index": 132,
+    "skill_name": " 天下無敵",
+    "records_used": 2,
+    "unique_tkkon_ids": [
+      256
+    ],
+    "most_common_tkkon": 256
+  },
+  {
+    "skill_index": 133,
+    "skill_name": " 憤怒一擊",
+    "records_used": 2,
+    "unique_tkkon_ids": [
+      91
+    ],
+    "most_common_tkkon": 91
+  },
+  {
+    "skill_index": 134,
+    "skill_name": " 虎 紋 刀",
+    "records_used": 2,
+    "unique_tkkon_ids": [
+      204
+    ],
+    "most_common_tkkon": 204
+  },
+  {
+    "skill_index": 135,
+    "skill_name": " 蟬 翼 刀",
+    "records_used": 2,
+    "unique_tkkon_ids": [
+      205
+    ],
+    "most_common_tkkon": 205
+  },
+  {
+    "skill_index": 136,
+    "skill_name": " 修 羅 刀",
+    "records_used": 2,
+    "unique_tkkon_ids": [
+      206
+    ],
+    "most_common_tkkon": 206
+  },
+  {
+    "skill_index": 137,
+    "skill_name": " 梟 雄 刀",
+    "records_used": 2,
+    "unique_tkkon_ids": [
+      207
+    ],
+    "most_common_tkkon": 207
+  },
+  {
+    "skill_index": 138,
+    "skill_name": " 紫 玉 刀",
+    "records_used": 2,
+    "unique_tkkon_ids": [
+      208
+    ],
+    "most_common_tkkon": 208
+  },
+  {
+    "skill_index": 139,
+    "skill_name": " 大漠金刀",
+    "records_used": 2,
+    "unique_tkkon_ids": [
+      209
+    ],
+    "most_common_tkkon": 209
+  },
+  {
+    "skill_index": 140,
+    "skill_name": " 潑 風 刀",
+    "records_used": 2,
+    "unique_tkkon_ids": [
+      210
+    ],
+    "most_common_tkkon": 210
+  },
+  {
+    "skill_index": 141,
+    "skill_name": " 嘯 月 刀",
+    "records_used": 2,
+    "unique_tkkon_ids": [
+      211
+    ],
+    "most_common_tkkon": 211
+  },
+  {
+    "skill_index": 142,
+    "skill_name": " 天搖地動",
+    "records_used": 4,
+    "unique_tkkon_ids": [
+      93,
+      345,
+      357
+    ],
+    "most_common_tkkon": 93
+  },
+  {
+    "skill_index": 144,
+    "skill_name": "  隱  藏",
+    "records_used": 2,
+    "unique_tkkon_ids": [
+      81
+    ],
+    "most_common_tkkon": 81
+  },
+  {
+    "skill_index": 145,
+    "skill_name": "  偽  裝",
+    "records_used": 2,
+    "unique_tkkon_ids": [
+      82
+    ],
+    "most_common_tkkon": 82
+  },
+  {
+    "skill_index": 146,
+    "skill_name": "  間  諜",
+    "records_used": 2,
+    "unique_tkkon_ids": [
+      83
+    ],
+    "most_common_tkkon": 83
+  },
+  {
+    "skill_index": 147,
+    "skill_name": "  誤  導",
+    "records_used": 2,
+    "unique_tkkon_ids": [
+      84
+    ],
+    "most_common_tkkon": 84
+  },
+  {
+    "skill_index": 148,
+    "skill_name": "  詭  道",
+    "records_used": 2,
+    "unique_tkkon_ids": [
+      85
+    ],
+    "most_common_tkkon": 85
+  },
+  {
+    "skill_index": 149,
+    "skill_name": "  刺  客",
+    "records_used": 2,
+    "unique_tkkon_ids": [
+      86
+    ],
+    "most_common_tkkon": 86
+  },
+  {
+    "skill_index": 150,
+    "skill_name": "  犧  牲",
+    "records_used": 2,
+    "unique_tkkon_ids": [
+      87
+    ],
+    "most_common_tkkon": 87
+  },
+  {
+    "skill_index": 152,
+    "skill_name": " 烈 陽 變",
+    "records_used": 5,
+    "unique_tkkon_ids": [
+      146,
+      324,
+      422,
+      496
+    ],
+    "most_common_tkkon": 146
+  },
+  {
+    "skill_index": 153,
+    "skill_name": " 暴 雨 變",
+    "records_used": 5,
+    "unique_tkkon_ids": [
+      147,
+      325,
+      423,
+      497
+    ],
+    "most_common_tkkon": 147
+  },
+  {
+    "skill_index": 154,
+    "skill_name": " 風 雲 變",
+    "records_used": 5,
+    "unique_tkkon_ids": [
+      148,
+      326,
+      424,
+      498
+    ],
+    "most_common_tkkon": 148
+  },
+  {
+    "skill_index": 155,
+    "skill_name": " 天 陰 變",
+    "records_used": 5,
+    "unique_tkkon_ids": [
+      149,
+      327,
+      425,
+      499
+    ],
+    "most_common_tkkon": 149
+  },
+  {
+    "skill_index": 156,
+    "skill_name": " 皓 月 變",
+    "records_used": 5,
+    "unique_tkkon_ids": [
+      150,
+      328,
+      426,
+      500
+    ],
+    "most_common_tkkon": 150
+  },
+  {
+    "skill_index": 157,
+    "skill_name": " 雷 霆 變",
+    "records_used": 5,
+    "unique_tkkon_ids": [
+      151,
+      329,
+      427,
+      501
+    ],
+    "most_common_tkkon": 151
+  },
+  {
+    "skill_index": 159,
+    "skill_name": " 御 風 行",
+    "records_used": 24,
+    "unique_tkkon_ids": [
+      562
+    ],
+    "most_common_tkkon": 562
+  },
+  {
+    "skill_index": 160,
+    "skill_name": " 乘 雲 起",
+    "records_used": 24,
+    "unique_tkkon_ids": [
+      563
+    ],
+    "most_common_tkkon": 563
+  },
+  {
+    "skill_index": 161,
+    "skill_name": " 地 氣 鎖",
+    "records_used": 24,
+    "unique_tkkon_ids": [
+      564
+    ],
+    "most_common_tkkon": 564
+  },
+  {
+    "skill_index": 162,
+    "skill_name": " 逆轉乾坤",
+    "records_used": 24,
+    "unique_tkkon_ids": [
+      565
+    ],
+    "most_common_tkkon": 565
+  },
+  {
+    "skill_index": 163,
+    "skill_name": " 梁 父 吟",
+    "records_used": 2,
+    "unique_tkkon_ids": [
+      195
+    ],
+    "most_common_tkkon": 195
+  },
+  {
+    "skill_index": 164,
+    "skill_name": " 垓 下 歌",
+    "records_used": 2,
+    "unique_tkkon_ids": [
+      196
+    ],
+    "most_common_tkkon": 196
+  },
+  {
+    "skill_index": 165,
+    "skill_name": " 大 風 歌",
+    "records_used": 2,
+    "unique_tkkon_ids": [
+      197
+    ],
+    "most_common_tkkon": 197
+  },
+  {
+    "skill_index": 166,
+    "skill_name": " 佳 人 歌",
+    "records_used": 2,
+    "unique_tkkon_ids": [
+      198
+    ],
+    "most_common_tkkon": 198
+  },
+  {
+    "skill_index": 167,
+    "skill_name": " 陌 上 桑",
+    "records_used": 2,
+    "unique_tkkon_ids": [
+      199
+    ],
+    "most_common_tkkon": 199
+  },
+  {
+    "skill_index": 168,
+    "skill_name": " 蒿 里 曲",
+    "records_used": 2,
+    "unique_tkkon_ids": [
+      200
+    ],
+    "most_common_tkkon": 200
+  },
+  {
+    "skill_index": 169,
+    "skill_name": " 戰 城 南",
+    "records_used": 2,
+    "unique_tkkon_ids": [
+      201
+    ],
+    "most_common_tkkon": 201
+  },
+  {
+    "skill_index": 170,
+    "skill_name": " 西 門 行",
+    "records_used": 2,
+    "unique_tkkon_ids": [
+      202
+    ],
+    "most_common_tkkon": 202
+  },
+  {
+    "skill_index": 172,
+    "skill_name": "  說  服",
+    "records_used": 2,
+    "unique_tkkon_ids": [
+      122
+    ],
+    "most_common_tkkon": 122
+  },
+  {
+    "skill_index": 173,
+    "skill_name": "  勸  誘",
+    "records_used": 2,
+    "unique_tkkon_ids": [
+      123
+    ],
+    "most_common_tkkon": 123
+  },
+  {
+    "skill_index": 174,
+    "skill_name": "  和  解",
+    "records_used": 2,
+    "unique_tkkon_ids": [
+      124
+    ],
+    "most_common_tkkon": 124
+  },
+  {
+    "skill_index": 175,
+    "skill_name": "  囔  嚷",
+    "records_used": 2,
+    "unique_tkkon_ids": [
+      125
+    ],
+    "most_common_tkkon": 125
+  },
+  {
+    "skill_index": 176,
+    "skill_name": "  激  怒",
+    "records_used": 2,
+    "unique_tkkon_ids": [
+      126
+    ],
+    "most_common_tkkon": 126
+  },
+  {
+    "skill_index": 177,
+    "skill_name": "  安  撫",
+    "records_used": 2,
+    "unique_tkkon_ids": [
+      127
+    ],
+    "most_common_tkkon": 127
+  },
+  {
+    "skill_index": 178,
+    "skill_name": "  演  講",
+    "records_used": 2,
+    "unique_tkkon_ids": [
+      128
+    ],
+    "most_common_tkkon": 128
+  },
+  {
+    "skill_index": 179,
+    "skill_name": " 強詞奪理",
+    "records_used": 2,
+    "unique_tkkon_ids": [
+      129
+    ],
+    "most_common_tkkon": 129
+  },
+  {
+    "skill_index": 189,
+    "skill_name": "    冰",
+    "records_used": 2,
+    "unique_tkkon_ids": [
+      107
+    ],
+    "most_common_tkkon": 107
+  },
+  {
+    "skill_index": 190,
+    "skill_name": "    火",
+    "records_used": 2,
+    "unique_tkkon_ids": [
+      108
+    ],
+    "most_common_tkkon": 108
+  },
+  {
+    "skill_index": 191,
+    "skill_name": "  治  癒",
+    "records_used": 2,
+    "unique_tkkon_ids": [
+      109
+    ],
+    "most_common_tkkon": 109
+  },
+  {
+    "skill_index": 192,
+    "skill_name": " 解除狀態",
+    "records_used": 2,
+    "unique_tkkon_ids": [
+      110
+    ],
+    "most_common_tkkon": 110
+  },
+  {
+    "skill_index": 194,
+    "skill_name": "  鎖  足",
+    "records_used": 4,
+    "unique_tkkon_ids": [
+      566
+    ],
+    "most_common_tkkon": 566
+  },
+  {
+    "skill_index": 195,
+    "skill_name": "  縮  地",
+    "records_used": 4,
+    "unique_tkkon_ids": [
+      567
+    ],
+    "most_common_tkkon": 567
+  },
+  {
+    "skill_index": 196,
+    "skill_name": "  異  位",
+    "records_used": 4,
+    "unique_tkkon_ids": [
+      568
+    ],
+    "most_common_tkkon": 568
+  },
+  {
+    "skill_index": 197,
+    "skill_name": " 設置障礙",
+    "records_used": 4,
+    "unique_tkkon_ids": [
+      175,
+      502
+    ],
+    "most_common_tkkon": 175
+  },
+  {
+    "skill_index": 198,
+    "skill_name": " 挪空幻景",
+    "records_used": 4,
+    "unique_tkkon_ids": [
+      176,
+      503
+    ],
+    "most_common_tkkon": 176
+  },
+  {
+    "skill_index": 199,
+    "skill_name": " 幻景看破",
+    "records_used": 4,
+    "unique_tkkon_ids": [
+      177,
+      504
+    ],
+    "most_common_tkkon": 177
+  },
+  {
+    "skill_index": 200,
+    "skill_name": " 必殺一擊",
+    "records_used": 2,
+    "unique_tkkon_ids": [
+      216
+    ],
+    "most_common_tkkon": 216
+  },
+  {
+    "skill_index": 201,
+    "skill_name": " 劍 之 舞",
+    "records_used": 2,
+    "unique_tkkon_ids": [
+      258
+    ],
+    "most_common_tkkon": 258
+  },
+  {
+    "skill_index": 202,
+    "skill_name": " 星 之 舞",
+    "records_used": 2,
+    "unique_tkkon_ids": [
+      259
+    ],
+    "most_common_tkkon": 259
+  },
+  {
+    "skill_index": 203,
+    "skill_name": " 風 之 舞",
+    "records_used": 2,
+    "unique_tkkon_ids": [
+      260
+    ],
+    "most_common_tkkon": 260
+  },
+  {
+    "skill_index": 204,
+    "skill_name": " 雪 之 舞",
+    "records_used": 2,
+    "unique_tkkon_ids": [
+      261
+    ],
+    "most_common_tkkon": 261
+  },
+  {
+    "skill_index": 205,
+    "skill_name": " 漣 之 舞",
+    "records_used": 2,
+    "unique_tkkon_ids": [
+      262
+    ],
+    "most_common_tkkon": 262
+  },
+  {
+    "skill_index": 206,
+    "skill_name": " 戀 之 舞",
+    "records_used": 2,
+    "unique_tkkon_ids": [
+      263
+    ],
+    "most_common_tkkon": 263
+  },
+  {
+    "skill_index": 207,
+    "skill_name": " 夢 之 舞",
+    "records_used": 2,
+    "unique_tkkon_ids": [
+      264
+    ],
+    "most_common_tkkon": 264
+  },
+  {
+    "skill_index": 208,
+    "skill_name": " 鳳 之 舞",
+    "records_used": 2,
+    "unique_tkkon_ids": [
+      265
+    ],
+    "most_common_tkkon": 265
+  },
+  {
+    "skill_index": 210,
+    "skill_name": "  針  灸",
+    "records_used": 2,
+    "unique_tkkon_ids": [
+      269,
+      618
+    ],
+    "most_common_tkkon": 269
+  },
+  {
+    "skill_index": 211,
+    "skill_name": "  麻  醉",
+    "records_used": 2,
+    "unique_tkkon_ids": [
+      269,
+      619
+    ],
+    "most_common_tkkon": 269
+  },
+  {
+    "skill_index": 212,
+    "skill_name": "  歸  真",
+    "records_used": 2,
+    "unique_tkkon_ids": [
+      269,
+      620
+    ],
+    "most_common_tkkon": 269
+  },
+  {
+    "skill_index": 213,
+    "skill_name": "  聖  手",
+    "records_used": 2,
+    "unique_tkkon_ids": [
+      269,
+      621
+    ],
+    "most_common_tkkon": 269
+  },
+  {
+    "skill_index": 214,
+    "skill_name": " 霸王項羽",
+    "records_used": 6,
+    "unique_tkkon_ids": [
+      57,
+      303
+    ],
+    "most_common_tkkon": 57
+  },
+  {
+    "skill_index": 215,
+    "skill_name": " 軍神孫武",
+    "records_used": 6,
+    "unique_tkkon_ids": [
+      58,
+      304
+    ],
+    "most_common_tkkon": 58
+  },
+  {
+    "skill_index": 216,
+    "skill_name": " 醫聖扁鵲",
+    "records_used": 6,
+    "unique_tkkon_ids": [
+      59,
+      305
+    ],
+    "most_common_tkkon": 59
+  },
+  {
+    "skill_index": 217,
+    "skill_name": " 始皇嬴政",
+    "records_used": 6,
+    "unique_tkkon_ids": [
+      60,
+      306
+    ],
+    "most_common_tkkon": 60
+  },
+  {
+    "skill_index": 218,
+    "skill_name": " 名相張良",
+    "records_used": 6,
+    "unique_tkkon_ids": [
+      61,
+      307
+    ],
+    "most_common_tkkon": 61
+  },
+  {
+    "skill_index": 219,
+    "skill_name": " 刺客豫讓",
+    "records_used": 6,
+    "unique_tkkon_ids": [
+      62,
+      308
+    ],
+    "most_common_tkkon": 62
+  },
+  {
+    "skill_index": 220,
+    "skill_name": " 搜 魂 擊",
+    "records_used": 6,
+    "unique_tkkon_ids": [
+      63,
+      309
+    ],
+    "most_common_tkkon": 63
+  },
+  {
+    "skill_index": 221,
+    "skill_name": "猛虎落地式",
+    "records_used": 2,
+    "unique_tkkon_ids": [
+      312,
+      637
+    ],
+    "most_common_tkkon": 312
+  },
+  {
+    "skill_index": 222,
+    "skill_name": "虎威震南天",
+    "records_used": 2,
+    "unique_tkkon_ids": [
+      312,
+      638
+    ],
+    "most_common_tkkon": 312
+  },
+  {
+    "skill_index": 224,
+    "skill_name": " 召喚野狼",
+    "records_used": 8,
+    "unique_tkkon_ids": [
+      55,
+      311,
+      392,
+      407
+    ],
+    "most_common_tkkon": 55
+  },
+  {
+    "skill_index": 225,
+    "skill_name": " 召喚翼蛇",
+    "records_used": 8,
+    "unique_tkkon_ids": [
+      55,
+      311,
+      392,
+      407
+    ],
+    "most_common_tkkon": 55
+  },
+  {
+    "skill_index": 226,
+    "skill_name": " 召喚猛虎",
+    "records_used": 8,
+    "unique_tkkon_ids": [
+      55,
+      311,
+      392,
+      407
+    ],
+    "most_common_tkkon": 55
+  },
+  {
+    "skill_index": 227,
+    "skill_name": " 召喚巨象",
+    "records_used": 8,
+    "unique_tkkon_ids": [
+      55,
+      311,
+      392,
+      407
+    ],
+    "most_common_tkkon": 55
+  },
+  {
+    "skill_index": 228,
+    "skill_name": " 召喚麒麟",
+    "records_used": 8,
+    "unique_tkkon_ids": [
+      55,
+      311,
+      392,
+      407
+    ],
+    "most_common_tkkon": 55
+  },
+  {
+    "skill_index": 229,
+    "skill_name": "召喚毒蜘蛛",
+    "records_used": 8,
+    "unique_tkkon_ids": [
+      55,
+      311,
+      392,
+      407
+    ],
+    "most_common_tkkon": 55
+  },
+  {
+    "skill_index": 230,
+    "skill_name": " 召喚金龍",
+    "records_used": 8,
+    "unique_tkkon_ids": [
+      55,
+      311,
+      392,
+      407
+    ],
+    "most_common_tkkon": 55
+  },
+  {
+    "skill_index": 231,
+    "skill_name": "召喚金翅鳥",
+    "records_used": 8,
+    "unique_tkkon_ids": [
+      55,
+      311,
+      392,
+      407
+    ],
+    "most_common_tkkon": 55
+  },
+  {
+    "skill_index": 232,
+    "skill_name": " 降 獸 擊",
+    "records_used": 8,
+    "unique_tkkon_ids": [
+      56,
+      312,
+      392,
+      407
+    ],
+    "most_common_tkkon": 56
+  },
+  {
+    "skill_index": 234,
+    "skill_name": "  估  價",
+    "records_used": 2,
+    "unique_tkkon_ids": [
+      252,
+      622
+    ],
+    "most_common_tkkon": 252
+  },
+  {
+    "skill_index": 235,
+    "skill_name": "  審  視",
+    "records_used": 2,
+    "unique_tkkon_ids": [
+      252,
+      623
+    ],
+    "most_common_tkkon": 252
+  },
+  {
+    "skill_index": 236,
+    "skill_name": "  評  量",
+    "records_used": 2,
+    "unique_tkkon_ids": [
+      252,
+      624
+    ],
+    "most_common_tkkon": 252
+  },
+  {
+    "skill_index": 238,
+    "skill_name": "  打  點",
+    "records_used": 2,
+    "unique_tkkon_ids": [
+      252,
+      625
+    ],
+    "most_common_tkkon": 252
+  },
+  {
+    "skill_index": 239,
+    "skill_name": "  探  寶",
+    "records_used": 2,
+    "unique_tkkon_ids": [
+      252,
+      626
+    ],
+    "most_common_tkkon": 252
+  },
+  {
+    "skill_index": 240,
+    "skill_name": "  直  覺",
+    "records_used": 2,
+    "unique_tkkon_ids": [
+      252,
+      627
+    ],
+    "most_common_tkkon": 252
+  },
+  {
+    "skill_index": 242,
+    "skill_name": "  單  雙",
+    "records_used": 2,
+    "unique_tkkon_ids": [
+      253,
+      628
+    ],
+    "most_common_tkkon": 253
+  },
+  {
+    "skill_index": 243,
+    "skill_name": " 十 八 啦",
+    "records_used": 2,
+    "unique_tkkon_ids": [
+      254,
+      629
+    ],
+    "most_common_tkkon": 254
+  },
+  {
+    "skill_index": 244,
+    "skill_name": " 玉 骰 子",
+    "records_used": 2,
+    "unique_tkkon_ids": [
+      253,
+      630
+    ],
+    "most_common_tkkon": 253
+  },
+  {
+    "skill_index": 245,
+    "skill_name": " 骨 骰 子",
+    "records_used": 2,
+    "unique_tkkon_ids": [
+      253,
+      631
+    ],
+    "most_common_tkkon": 253
+  },
+  {
+    "skill_index": 246,
+    "skill_name": " 鐵 骰 子",
+    "records_used": 2,
+    "unique_tkkon_ids": [
+      253,
+      632
+    ],
+    "most_common_tkkon": 253
+  },
+  {
+    "skill_index": 247,
+    "skill_name": " 木 骰 子",
+    "records_used": 2,
+    "unique_tkkon_ids": [
+      253,
+      633
+    ],
+    "most_common_tkkon": 253
+  },
+  {
+    "skill_index": 249,
+    "skill_name": " 純金打造",
+    "records_used": 2,
+    "unique_tkkon_ids": [
+      252,
+      634
+    ],
+    "most_common_tkkon": 252
+  },
+  {
+    "skill_index": 250,
+    "skill_name": " 乾坤一擲",
+    "records_used": 2,
+    "unique_tkkon_ids": [
+      252,
+      635
+    ],
+    "most_common_tkkon": 252
+  },
+  {
+    "skill_index": 251,
+    "skill_name": " 閃閃生光",
+    "records_used": 2,
+    "unique_tkkon_ids": [
+      252,
+      636
+    ],
+    "most_common_tkkon": 252
+  },
+  {
+    "skill_index": 252,
+    "skill_name": "生命＋20％",
+    "records_used": 134,
+    "unique_tkkon_ids": [
+      462,
+      466,
+      64,
+      67,
+      88,
+      90,
+      92,
+      94,
+      97,
+      111,
+      130,
+      133,
+      152,
+      154,
+      156,
+      160,
+      162,
+      164,
+      178,
+      181,
+      203,
+      212,
+      217,
+      219,
+      221,
+      251,
+      255,
+      257,
+      266,
+      268,
+      272,
+      310,
+      346,
+      347,
+      348,
+      349,
+      350,
+      351,
+      352,
+      353,
+      354,
+      355,
+      513,
+      515,
+      313,
+      330,
+      334,
+      356,
+      358,
+      378,
+      380,
+      381,
+      393,
+      394,
+      395,
+      396,
+      408,
+      410,
+      411,
+      412,
+      429,
+      430,
+      431,
+      451,
+      452,
+      453,
+      454,
+      455,
+      456,
+      457,
+      458,
+      460,
+      461,
+      505,
+      506,
+      507,
+      508,
+      509,
+      514,
+      516,
+      518,
+      520,
+      522,
+      523,
+      524,
+      525,
+      527,
+      538
+    ],
+    "most_common_tkkon": 462
+  }
+]
