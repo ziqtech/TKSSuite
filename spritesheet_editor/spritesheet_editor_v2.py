@@ -418,6 +418,44 @@ class SpriteSheetModel(QObject):
         self.rows += 1
         self.model_changed.emit()
 
+    def delete_col(self, col_idx: int) -> None:
+        """删除指定列, 后续列依次左移 (列数减 1, 行数不变)"""
+        self.normalize()
+        cols, rows = self.columns, self.rows
+        if not (0 <= col_idx < cols) or cols <= 1:
+            return
+        new_frames: List[Optional[Image.Image]] = []
+        for r in range(rows):
+            row = self.frames[r * cols:(r + 1) * cols]
+            del row[col_idx]
+            new_frames.extend(row)
+        self.frames = new_frames
+        self.columns = cols - 1
+        self.model_changed.emit()
+
+    def set_columns(self, new_cols: int) -> None:
+        """改变列数但保持现有帧的网格位置不变
+
+        直接改 columns 会使行优先的扁平索引重新洗牌 (帧错位),
+        故按行重排: 加列时在每行末尾补空格, 减列时移除最右侧列。
+        """
+        self.normalize()
+        old_cols = self.columns
+        new_cols = max(1, int(new_cols))
+        if new_cols == old_cols:
+            return
+        new_frames: List[Optional[Image.Image]] = []
+        for r in range(self.rows):
+            row = self.frames[r * old_cols:(r + 1) * old_cols]
+            if new_cols > old_cols:
+                row.extend([None] * (new_cols - old_cols))
+            else:
+                row = row[:new_cols]
+            new_frames.extend(row)
+        self.frames = new_frames
+        self.columns = new_cols
+        self.model_changed.emit()
+
     def get_frame(self, idx: int) -> Optional[Image.Image]:
         self.normalize()
         if 0 <= idx < len(self.frames):
@@ -1956,7 +1994,8 @@ class SettingsPanel(QWidget):
         if sender in (self._spin_cell_width, self._spin_cell_height):
             self.model._cell_size_set = True
         try:
-            self.model.columns = self._spin_columns.value()
+            # 改列数需按行重排数据, 保持现有帧位置不变 (直接赋值会错位)
+            self.model.set_columns(self._spin_columns.value())
             self.model.rows = self._spin_rows.value()
             self.model.padding = self._spin_padding.value()
             self.model.cell_width = self._spin_cell_width.value()
@@ -2464,6 +2503,10 @@ class SpriteSheetEditorWindow(QMainWindow):
         btn_copy_row.clicked.connect(self._copy_row)
         toolbar.addWidget(btn_copy_row)
 
+        btn_delete_col = QPushButton("删除列")
+        btn_delete_col.clicked.connect(self._delete_col)
+        toolbar.addWidget(btn_delete_col)
+
         btn_flip = QPushButton("水平翻转")
         btn_flip.clicked.connect(self._flip_horizontal)
         toolbar.addWidget(btn_flip)
@@ -2669,6 +2712,8 @@ class SpriteSheetEditorWindow(QMainWindow):
         edit_menu.addAction("当前列右移\tShift+→", lambda: self.settings._move_col(1))
         edit_menu.addAction("当前行上移\tShift+↑", lambda: self.settings._move_row(-1))
         edit_menu.addAction("当前行下移\tShift+↓", lambda: self.settings._move_row(1))
+        edit_menu.addSeparator()
+        edit_menu.addAction("删除当前列", self._delete_col)
 
         # 预览菜单
         view_menu = menubar.addMenu("预览")
@@ -2965,6 +3010,35 @@ class SpriteSheetEditorWindow(QMainWindow):
         self.settings._spin_rows.setValue(self.model.rows)
         self._on_model_changed()
         self._status_label.setText(f"已复制行 R{row} → R{new_row}")
+
+    def _delete_col(self):
+        sel = self.canvas.selection
+        if not sel:
+            QMessageBox.information(self, "提示", "请先在画布上选中要删除列中的任意帧")
+            return
+        cols = max(1, self.model.columns)
+        if cols <= 1:
+            QMessageBox.information(self, "提示", "仅剩 1 列, 无法删除")
+            return
+        idx = min(sel)
+        col = idx % cols
+        self.model.normalize()  # 确保 frames 填满网格, 下方按索引读取不越界
+        # 该列包含的非空帧数 — 有帧时需确认 (删列会一并移除这些帧)
+        removed = sum(
+            1 for r in range(self.model.rows)
+            if self.model.frames[r * cols + col] is not None)
+        if removed > 0:
+            if QMessageBox.question(
+                    self, "确认",
+                    f"删除列 C{col} 将一并移除其中 {removed} 个帧, "
+                    f"后续列左移, 确定吗?") != QMessageBox.Yes:
+                return
+        self.model.delete_col(col)
+        self.canvas.selection.clear()
+        self.settings._spin_columns.setValue(self.model.columns)
+        self._on_model_changed()
+        self._status_label.setText(
+            f"已删除列 C{col} → {self.model.columns}列 × {self.model.rows}行")
 
     def _flip_horizontal(self):
         sel = self.canvas.selection
