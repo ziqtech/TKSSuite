@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
     QLineEdit, QCheckBox, QPushButton, QLabel,
     QScrollArea, QGroupBox, QDialog, QFileDialog, QMessageBox, QTextEdit,
     QFrame, QGridLayout, QAbstractItemView, QMenuBar, QSizePolicy,
+    QMenu,
 )
 from PySide6.QtGui import QIntValidator, QColor, QFont, QIcon, QShortcut, QKeySequence
 from PySide6.QtCore import Qt, QTranslator
@@ -163,13 +164,16 @@ def load_kon(fp):
     with open(fp, 'rb') as f:
         raw = f.read()
     dec = lzss_decompress(raw)
-    # 兜底: LZSS 解压大小不匹配预期时, 检查是否已是未压缩 raw 数据
-    if len(dec) != KON_DECOMPRESSED and len(raw) == KON_DECOMPRESSED:
+    # 兜底: 解压结果无效时, 检查是否已是未压缩 raw 数据
+    if (len(dec) == 0 or len(dec) % KON_REC) and len(raw) % KON_REC == 0:
         dec = raw
-    if len(dec) != KON_DECOMPRESSED:
-        raise ValueError(f"解压后大小 {len(dec)} 不等于预期 26000")
+    if len(dec) == 0 or len(dec) % KON_REC:
+        raise ValueError(
+            f"解压后大小 {len(dec)} 不是 {KON_REC} 字节的整数倍, "
+            "无法按 TKKon 记录解析")
+    rec_count = len(dec) // KON_REC
     recs = []
-    for i in range(KON_CNT):
+    for i in range(rec_count):
         off = i * KON_REC
         vals = struct.unpack_from('<' + 'h' * KON_FIELD_COUNT, dec, off)
         rec = {'index': i}
@@ -179,9 +183,9 @@ def load_kon(fp):
     return recs
 
 def save_kon(fp, recs):
-    buf = bytearray(KON_CNT * KON_REC)
-    for rec in recs[:KON_CNT]:
-        i = rec['index']
+    buf = bytearray(len(recs) * KON_REC)
+    for i, rec in enumerate(recs):
+        rec['index'] = i
         off = i * KON_REC
         vals = [rec[fn] for fn, _, _, _ in KON_FIELDS]
         struct.pack_into('<' + 'h' * KON_FIELD_COUNT, buf, off, *vals)
@@ -227,7 +231,9 @@ class FieldRefDialog(QDialog):
         text.setReadOnly(True)
         text.setFont(QFont("Consolas", 9))
         lines = ["TKKon.dat 字段映射", ""]
-        lines.append(f"【记录布局】{KON_CNT} 条 × {KON_REC} 字节 = {KON_DECOMPRESSED} 字节")
+        lines.append(
+            f"【记录布局】原版 {KON_CNT} 条 × {KON_REC} 字节 = "
+            f"{KON_DECOMPRESSED} 字节；编辑器支持 650 条以上的扩展记录")
         lines.append(f"  每条 20 个字段 × 16位整数 = {KON_REC} 字节")
         lines.append("")
         lines.append("【字段语义说明】")
@@ -331,7 +337,9 @@ class KonEditor(QMainWindow):
 
         em = mb.addMenu("编辑(&E)")
         em.addAction("新建条目", QKeySequence("Ctrl+N"), self._new_record)
+        em.addAction("新增条目到末尾", self._append_record)
         em.addAction("复制当前记录", self._copy_record)
+        em.addAction("复制当前记录到末尾", self._append_copy_current)
         em.addAction("清空当前记录", self._clear_current)
 
         vm = mb.addMenu("视图(&V)")
@@ -370,6 +378,15 @@ class KonEditor(QMainWindow):
         self.chk_compact.setToolTip("当同一技能效果被超过3个角色配置时，仅显示技能名称")
         self.chk_compact.stateChanged.connect(self._apply_filter)
         toolbar.addWidget(self.chk_compact)
+        toolbar.addSpacing(8)
+
+        btn_append = QPushButton("＋ 新增到末尾")
+        btn_append.clicked.connect(self._append_record)
+        toolbar.addWidget(btn_append)
+
+        btn_copy_end = QPushButton("＋ 复制到末尾")
+        btn_copy_end.clicked.connect(self._append_copy_current)
+        toolbar.addWidget(btn_copy_end)
         toolbar.addSpacing(8)
 
         btn_reload = QPushButton("🔄 重新加载")
@@ -442,6 +459,8 @@ class KonEditor(QMainWindow):
             self.table.setColumnWidth(i, w)
         self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.Stretch)
         self.table.itemSelectionChanged.connect(self._on_table_select)
+        self.table.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.table.customContextMenuRequested.connect(self._on_table_context_menu)
         parent.addWidget(self.table)
 
     # ----------- 右侧编辑面板 (Dock 风格) -----------
@@ -749,7 +768,7 @@ class KonEditor(QMainWindow):
             self.filtered_indices.append(rec['index'])
         self._refresh_table()
         nonempty = sum(1 for r in self.records if any(r[fn] != 0 for fn, _, _, _ in KON_FIELDS))
-        msg = f"显示 {len(self.filtered_indices)}/{KON_CNT} (有效 {nonempty}) | Ctrl+S 保存"
+        msg = f"显示 {len(self.filtered_indices)}/{len(self.records)} (有效 {nonempty}) | Ctrl+S 保存"
         if self._dirty: msg += " [已修改]"
         self.status_label.setText(msg)
 
@@ -1048,6 +1067,89 @@ class KonEditor(QMainWindow):
 
     # ----------- 编辑操作 -----------
 
+    def _on_table_context_menu(self, pos):
+        item = self.table.itemAt(pos)
+        if not item:
+            menu = QMenu(self)
+            menu.addAction("新增到末尾", self._append_record)
+            menu.exec(self.table.viewport().mapToGlobal(pos))
+            return
+        row = item.row()
+        idx = int(self.table.item(row, 0).text())
+        rec = self.records[idx]
+        self._editing_idx = idx
+        self._populate_edit(rec)
+
+        menu = QMenu(self)
+        if any(rec[fn] != 0 for fn, _, _, _ in KON_FIELDS):
+            menu.addAction("复制到空位", self._copy_record)
+            menu.addAction("复制到末尾", lambda: self._append_record(source=rec))
+            menu.addAction("清空当前记录", self._clear_current)
+        if idx >= KON_CNT:
+            menu.addAction("删除扩展记录", lambda: self._remove_record(idx))
+        menu.exec(self.table.viewport().mapToGlobal(pos))
+
+    def _make_record(self, idx, source=None):
+        rec = {'index': idx}
+        for fn, _, _, _ in KON_FIELDS:
+            rec[fn] = 0
+        if source is not None:
+            for fn, _, _, _ in KON_FIELDS:
+                rec[fn] = source[fn]
+        else:
+            rec['exec_mode'] = 0
+            rec['target_param'] = 0
+            rec['tkact_id'] = idx
+            rec['hp_damage'] = -1
+            rec['exec_flags'] = 4
+        return rec
+
+    def _append_record(self, source=None):
+        if not self.records:
+            QMessageBox.information(self, "提示", "请先加载数据")
+            return
+        idx = len(self.records)
+        rec = self._make_record(idx, source=source)
+        self.records.append(rec)
+        self._dirty = True
+        self.search_input.clear()
+        if not self.chk_show_empty.isChecked():
+            self.chk_show_empty.setChecked(True)
+        else:
+            self._apply_filter()
+        for row in range(self.table.rowCount()):
+            if int(self.table.item(row, 0).text()) == idx:
+                self.table.selectRow(row)
+                self.table.scrollToItem(self.table.item(row, 0))
+                break
+        self._populate_edit(rec)
+        self.status_label.setText(
+            f"已新增记录 → 扩展条目 #{idx} (共 {len(self.records)} 条, 已修改)")
+
+    def _append_copy_current(self):
+        if self._editing_idx < 0:
+            QMessageBox.information(self, "提示", "请先选择要复制的记录")
+            return
+        self._append_record(source=self.records[self._editing_idx])
+
+    def _remove_record(self, idx):
+        if idx < KON_CNT or idx >= len(self.records):
+            return
+        if QMessageBox.question(
+                self, "确认删除",
+                f"确定删除扩展记录 #{idx} 吗？\n"
+                "删除后后续记录序号会自动前移。",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
+            return
+        self.records.pop(idx)
+        for i, rec in enumerate(self.records):
+            rec['index'] = i
+        self._dirty = True
+        self._editing_idx = -1
+        self._apply_filter()
+        self.status_label.setText(
+            f"已删除扩展记录 #{idx} (共 {len(self.records)} 条, 已修改)")
+
     def _new_record(self):
         if not self.records:
             QMessageBox.information(self, "提示", "请先加载数据")
@@ -1068,7 +1170,10 @@ class KonEditor(QMainWindow):
                 self._populate_edit(rec)
                 self.status_label.setText(f"已创建新条目 → 槽位 #{rec['index']}")
                 return
-        QMessageBox.warning(self, "槽位已满", f"所有 {KON_CNT} 个记录槽位均已占用")
+        QMessageBox.warning(
+            self, "槽位已满",
+            f"所有 {len(self.records)} 个记录槽位均已占用\n"
+            "可使用“新增到末尾”创建扩展记录")
 
     def _copy_record(self):
         if self._editing_idx < 0: return
@@ -1091,7 +1196,10 @@ class KonEditor(QMainWindow):
                 self._populate_edit(rec)
                 self.status_label.setText(f"已复制 #{src['index']} → #{rec['index']}")
                 return
-        QMessageBox.warning(self, "槽位已满", f"所有 {KON_CNT} 个记录槽位均已占用")
+        QMessageBox.warning(
+            self, "槽位已满",
+            f"所有 {len(self.records)} 个记录槽位均已占用\n"
+            "可使用“复制到末尾”创建扩展记录")
 
     def _clear_current(self):
         if self._editing_idx < 0: return
@@ -1295,11 +1403,14 @@ class KonEditor(QMainWindow):
     def _show_help(self):
         themed_messagebox(self, QMessageBox.Information, "帮助说明",
             "功能: 编辑《三国群侠传》技能动画数据\n"
-            "数据: 每条 20 个字段 × 16位整数\n\n"
+            "数据: 每条 20 个字段 × 16位整数\n"
+            "      原版 650 条 × 40 字节 = 26,000 字节\n"
+            "      支持新增扩展记录 (>650)，需配合启动器 TKKon 扩容补丁\n\n"
             "特性:\n"
             "  · Godot 风格深/浅色主题切换\n"
             "  · 技能动画参数可视化编辑\n"
-            "  · 伤害字段编码规则说明"
+            "  · 伤害字段编码规则说明\n"
+            "  · 新增/复制到末尾/删除扩展记录"
         )
 
     def _show_about(self):
