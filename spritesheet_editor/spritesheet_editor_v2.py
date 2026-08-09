@@ -2830,47 +2830,54 @@ class SpriteSheetEditorWindow(QMainWindow):
         ])
 
         images = []
+        paths = []  # 与 images 一一对应 (跳过加载失败的文件)
         for fp in files:
             try:
                 img = Image.open(fp).convert("RGBA")
                 images.append(img)
+                paths.append(fp)
             except Exception as e:
                 QMessageBox.warning(self, "警告", f"无法读取 {Path(fp).name}: {e}")
 
         if not images:
             return
 
-        n = len(images)
-        # 当前网格足以容纳时保持用户已设置的 columns/rows (如默认 7×4=28)
-        if self.model.columns > 0 and self.model.rows > 0 and self.model.total_cells >= n:
-            cols, rows = self.model.columns, self.model.rows
-        else:
-            # 网格不足时自动计算最紧凑的接近正方形网格
-            # 优先总面积最小, 面积相同时取宽高差最小 (避免 3x10 这类长条)
-            base = max(1, int(n ** 0.5 + 0.5))
-            best = None
-            for c in range(max(1, base - 2), base + 3):
-                r = (n + c - 1) // c
-                key = (c * r, abs(c - r))
-                if best is None or key < best[0]:
-                    best = (key, c, r)
-            cols, rows = best[1], best[2]
+        # 追加导入: 已有帧保持原位, 新图按扫描顺序填补空格,
+        # 空格不足时追加到末尾并扩展行数 (列数不变, 网格位置稳定)
+        m = self.model
+        m.normalize()
+        frames = list(m.frames)
+        pending = list(images)
+        for i in range(len(frames)):
+            if not pending:
+                break
+            if frames[i] is None:
+                frames[i] = pending.pop(0)
+        if pending:
+            frames.extend(pending)  # normalize 后长度=cols*rows, 追加从新行开头开始
+            cols = max(1, m.columns)
+            m.rows = max(m.rows, (len(frames) + cols - 1) // cols)
+        m.frames = frames
+        m.padding = self.settings._spin_padding.value()
+        # 用户未手动设定 cell 尺寸时自动适配 (含新导入的更大图片)
+        if not m._cell_size_set:
+            m.auto_detect_cell_size()
 
-        self.model.frames = list(images)
-        self.model.columns = cols
-        self.model.rows = rows
-        self.model.padding = self.settings._spin_padding.value()
-        self.model._cell_size_set = False  # 全新导入，重置手动设定标记
-        self.model.auto_detect_cell_size()
+        # 记录新图路径 (按对象 id 供左侧列表显示文件名, 保留旧图记录)
+        for img, fp in zip(images, paths):
+            self.image_list._path_by_id[id(img)] = fp
+        self.image_list._image_paths.extend(paths)
+
         self.canvas.selection.clear()
         self.canvas._drag_info = None
         self.canvas._header_drag = None
         self.canvas._last_click_idx = -1
         self.image_list._selected_idx = -1
-        self.image_list.set_images(list(images), list(files))
         self.settings.refresh_values()
         self._on_model_changed()
-        self._status_label.setText(f"已导入 {len(images)} 张图片 → {cols}×{rows} 网格")
+        self._status_label.setText(
+            f"已导入 {len(images)} 张图片 (共 {m.frame_count} 帧) "
+            f"→ {m.columns}×{m.rows} 网格")
 
     def _import_spritesheet(self):
         fp, _ = QFileDialog.getOpenFileName(
