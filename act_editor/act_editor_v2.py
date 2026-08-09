@@ -21,6 +21,8 @@ TKAct.dat 多图层 2D 精灵动画编辑器 (PySide6 — Godot 4.6 风格)
           其他 dst = dst*(32-α)/32 + src*α/32  # 非 RGB 取反!
 
 文件结构 (784 字节/条, 共 650 条 = 509,600 字节):
+  原版固定 650 条; 编辑器支持读取/保存 650 条以上的扩展文件,
+  游戏侧需启用 tks_launcher_gui 的 tkact_expand 补丁。
   [0-31]    方向表: 4 方向 × 8 字节, 每字节为 1-based 图层号 (0=空)
   [32-79]   条目级参数区 (24 int16, 多数预留/未知)
   [80-719]  图层 × 8 (各 80 字节 = 40 int16)
@@ -535,11 +537,12 @@ def load_act(fp):
     """加载 TKAct.dat (原始文件, 非 LZSS)"""
     with open(fp, 'rb') as f:
         raw = f.read()
-    if len(raw) != ACT_DECOMPRESSED:
+    if not raw or len(raw) % ACT_ENTRY_SIZE:
         raise ValueError(
-            f"文件大小 {len(raw)} 不等于预期 {ACT_DECOMPRESSED} (650×784)")
+            f"文件大小 {len(raw)} 不是 {ACT_ENTRY_SIZE} 字节的整数倍, 无法按 TKAct 记录解析")
+    entry_count = len(raw) // ACT_ENTRY_SIZE
     entries = []
-    for i in range(ACT_ENTRY_COUNT):
+    for i in range(entry_count):
         off = i * ACT_ENTRY_SIZE
         data = raw[off:off + ACT_ENTRY_SIZE]
 
@@ -568,9 +571,9 @@ def load_act(fp):
 
 def save_act(fp, entries):
     """保存 TKAct.dat (原始文件, 非 LZSS)"""
-    buf = bytearray(ACT_ENTRY_COUNT * ACT_ENTRY_SIZE)
-    for entry in entries:
-        i = entry['index']
+    buf = bytearray(len(entries) * ACT_ENTRY_SIZE)
+    for i, entry in enumerate(entries):
+        entry['index'] = i
         off = i * ACT_ENTRY_SIZE
 
         for d in range(4):
@@ -587,7 +590,7 @@ def save_act(fp, entries):
 
         struct.pack_into('<32h', buf, off + ACT_TAIL_OFFSET, *entry['tail'])
 
-    if len(buf) != ACT_DECOMPRESSED:
+    if len(buf) % ACT_ENTRY_SIZE:
         raise RuntimeError(f"回写缓冲区大小异常: {len(buf)}")
 
     with open(fp, 'wb') as f:
@@ -1718,6 +1721,8 @@ class ActEditorV2(QMainWindow):
 
         em = mb.addMenu("编辑(&E)")
         em.addAction("复制当前条目到空位", self._copy_entry)
+        em.addAction("复制当前条目到末尾", self._append_copy_current)
+        em.addAction("新增空白条目", self._append_entry)
         em.addAction("清空当前条目", self._clear_entry)
 
         hm = mb.addMenu("帮助(&H)")
@@ -1763,6 +1768,9 @@ class ActEditorV2(QMainWindow):
         self.greenscreen_cb.stateChanged.connect(self._on_greenscreen_toggle)
         toolbar.addWidget(self.greenscreen_cb)
 
+        toolbar.addSpacing(8)
+        toolbar.addWidget(QPushButton("＋ 新增条目", clicked=self._append_entry))
+        toolbar.addWidget(QPushButton("＋ 复制到末尾", clicked=self._append_copy_current))
         toolbar.addSpacing(8)
         toolbar.addWidget(QPushButton("🔄 重新加载", clicked=self._reload))
         toolbar.addWidget(QPushButton("🌗 切换主题", clicked=self._toggle_theme))
@@ -2415,7 +2423,7 @@ class ActEditorV2(QMainWindow):
                 dec = lzss_decompress_dat(raw)
                 if len(raw) % 40 == 0 and (len(dec) == 0 or len(dec) % 40 != 0):
                     dec = raw
-                for i in range(650):
+                for i in range(len(dec) // 40):
                     off = i * 40
                     if off + 8 > len(dec):
                         break
@@ -2442,7 +2450,7 @@ class ActEditorV2(QMainWindow):
                 dec = lzss_decompress_dat(raw)
                 if len(raw) % 64 == 0 and (len(dec) == 0 or len(dec) % 64 != 0):
                     dec = raw
-                for i in range(600):
+                for i in range(len(dec) // 64):
                     off = i * 64
                     if off + 14 > len(dec):
                         break
@@ -2504,7 +2512,7 @@ class ActEditorV2(QMainWindow):
             self.filtered_indices.append(entry['index'])
         self._refresh_table()
         nonempty = sum(1 for e in self.entries if not entry_is_empty(e))
-        msg = (f"显示 {len(self.filtered_indices)}/{ACT_ENTRY_COUNT} "
+        msg = (f"显示 {len(self.filtered_indices)}/{len(self.entries)} "
                f"(非空 {nonempty}) | Ctrl+S 保存")
         if self._dirty:
             msg += " [已修改]"
@@ -2535,7 +2543,9 @@ class ActEditorV2(QMainWindow):
             has_data = not entry_is_empty(entry)
             if has_data:
                 nm = self.names.get(idx, '')
-                if not nm and idx in (640, 641, 642):
+                if not nm and idx >= ACT_ENTRY_COUNT:
+                    nm = '新增'
+                elif not nm and idx in (640, 641, 642):
                     nm = '未知'
             else:
                 nm = '空槽'
@@ -2582,6 +2592,11 @@ class ActEditorV2(QMainWindow):
     def _on_table_context_menu(self, pos):
         item = self.table.itemAt(pos)
         if not item:
+            menu = QMenu(self)
+            menu.addAction("新增空白条目", self._append_entry)
+            if self._clipboard is not None:
+                menu.addAction("粘贴为新条目", self._paste_clipboard_as_new)
+            menu.exec(self.table.viewport().mapToGlobal(pos))
             return
         row = item.row()
         if row >= len(self.filtered_indices):
@@ -2592,10 +2607,14 @@ class ActEditorV2(QMainWindow):
         menu = QMenu(self)
         if not entry_is_empty(entry):
             menu.addAction("复制", lambda: self._clipboard_copy(idx))
+            menu.addAction("复制到末尾", lambda: self._append_entry(self.entries[idx]))
             menu.addAction("删除 (清空)", lambda: self._right_click_clear(idx))
         if self._clipboard is not None:
             if entry_is_empty(entry):
                 menu.addAction("粘贴到此", lambda: self._clipboard_paste(idx))
+            menu.addAction("粘贴为新条目", self._paste_clipboard_as_new)
+        if idx >= ACT_ENTRY_COUNT:
+            menu.addAction("移除扩展条目", lambda: self._remove_extended_entry(idx))
         menu.exec(self.table.viewport().mapToGlobal(pos))
 
     def _right_click_clear(self, idx):
@@ -3031,6 +3050,85 @@ class ActEditorV2(QMainWindow):
             self._populate_edit(entry)
             self.status_var.setText("已重置为编辑前的状态")
 
+    def _make_empty_entry(self, idx):
+        return {
+            'index': idx,
+            'dirs': [[0] * 8 for _ in range(4)],
+            'param16': [0] * 24,
+            'layers': [[0] * 40 for _ in range(ACT_MAX_LAYER)],
+            'tail': [0] * 32,
+        }
+
+    def _append_entry(self, source=None):
+        if not isinstance(source, dict):
+            source = None
+        idx = len(self.entries)
+        if source is None:
+            entry = self._make_empty_entry(idx)
+        else:
+            entry = {
+                'index': idx,
+                'dirs': [list(d) for d in source['dirs']],
+                'param16': list(source['param16']),
+                'layers': [list(L) for L in source['layers']],
+                'tail': list(source['tail']),
+            }
+        self.entries.append(entry)
+        self._dirty = True
+        self.search_entry.clear()
+        if not self.show_empty_cb.isChecked():
+            self.show_empty_cb.setChecked(True)
+        else:
+            self._apply_filter()
+        for row, i in enumerate(self.filtered_indices):
+            if i == idx:
+                self.table.selectRow(row)
+                break
+        if source is None:
+            self.status_var.setText(
+                f"已新增空白条目 #{idx} (共 {len(self.entries)} 条, 已修改)")
+        else:
+            src_label = source.get('index', -1)
+            self.status_var.setText(
+                f"已复制 #{src_label} → 扩展条目 #{idx} "
+                f"(共 {len(self.entries)} 条, 已修改)")
+
+    def _append_copy_current(self):
+        if self._editing_idx < 0:
+            QMessageBox.information(self, "提示", "请先选择要复制的条目")
+            return
+        self._append_entry(self.entries[self._editing_idx])
+
+    def _paste_clipboard_as_new(self):
+        if self._clipboard is None:
+            return
+        source = {
+            'dirs': [list(d) for d in self._clipboard['dirs']],
+            'param16': list(self._clipboard['param16']),
+            'layers': [list(L) for L in self._clipboard['layers']],
+            'tail': list(self._clipboard['tail']),
+        }
+        self._append_entry(source)
+
+    def _remove_extended_entry(self, idx):
+        if idx < ACT_ENTRY_COUNT or idx >= len(self.entries):
+            return
+        if QMessageBox.question(
+                self, "确认移除",
+                f"确定移除扩展条目 #{idx} 吗？\n"
+                "扩展区条目移除后，后续条目序号会自动前移。",
+                QMessageBox.Yes | QMessageBox.No) != QMessageBox.Yes:
+            return
+        self.entries.pop(idx)
+        for i, entry in enumerate(self.entries):
+            entry['index'] = i
+        self._dirty = True
+        self._editing_idx = -1
+        self._preview_stop()
+        self._apply_filter()
+        self.status_var.setText(
+            f"已移除扩展条目 #{idx} (共 {len(self.entries)} 条, 已修改)")
+
     def _copy_entry(self):
         if self._editing_idx < 0:
             return
@@ -3051,7 +3149,10 @@ class ActEditorV2(QMainWindow):
                 self._populate_edit(entry)
                 self.status_var.setText(f"已复制 #{src['index']} → #{idx_bak}")
                 return
-        QMessageBox.warning(self, "槽位已满", f"所有 {ACT_ENTRY_COUNT} 个条目均已占用")
+        QMessageBox.warning(
+            self, "槽位已满",
+            f"所有 {len(self.entries)} 个条目均已占用\n"
+            "可使用“复制当前条目到末尾”新增扩展条目")
 
     def _clear_entry(self):
         if self._editing_idx < 0:
@@ -4251,7 +4352,8 @@ class ActEditorV2(QMainWindow):
         lines = [
             "TKAct.dat 字段说明",
             "",
-            f"【文件结构】{ACT_ENTRY_COUNT} 条 × {ACT_ENTRY_SIZE} 字节 = {ACT_DECOMPRESSED} 字节",
+            f"【文件结构】原版 {ACT_ENTRY_COUNT} 条 × {ACT_ENTRY_SIZE} 字节 = "
+            f"{ACT_DECOMPRESSED} 字节；编辑器支持读取/保存 650 条以上的扩展文件",
             "  每条 = 方向表[32B] + 条目级参数[48B] + 8图层×80B + 尾部[64B]",
             "",
             "【方向表 (bytes 0-31)】",
@@ -4282,12 +4384,14 @@ class ActEditorV2(QMainWindow):
     def _show_help(self):
         themed_messagebox(self, QMessageBox.Information, "帮助说明",
             "功能: 编辑《三国群侠传》角色动画数据\n"
-            "数据: 650 条 × 784 字节 = 509,600 字节\n\n"
+            "数据: 原版 650 条 × 784 字节 = 509,600 字节\n"
+            "      支持新增扩展条目 (>650)，需配合启动器 TKAct 扩容补丁\n\n"
             "特性:\n"
             "  · 多图层 2D 精灵动画编辑\n"
             "  · 6 种图像混合模式\n"
             "  · 实时动画预览\n"
             "  · 音效触发表编辑\n"
+            "  · 新增/复制到末尾/粘贴为新条目\n"
             "  · 深色/浅色主题切换")
 
     def _show_about(self):

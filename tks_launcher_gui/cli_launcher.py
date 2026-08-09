@@ -56,6 +56,10 @@ from core.warpc_expander import (
     ensure_save_directory_healthy, prepare_warpc_for_game,
     expand_warpc_buffer, inject_warpc_data,
 )
+from core.tkact_expander import (
+    prepare_tkact_for_game,
+    restore_tkact_for_game,
+)
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -247,6 +251,7 @@ class CliLauncher:
         _warpc_full_data = None
         _warpc_new_buf = 0
         _truncated_files = {}
+        _tkact_expanded = False
 
         # ── 确定 exe 目录 ──
         exe_dir = _get_exe_dir()
@@ -359,6 +364,8 @@ class CliLauncher:
             self._log(f"[ERROR] TKS.exe 不存在: {tks_path}")
             return False, {"error": f"tks_exe not found: {tks_path}"}
 
+        _tkact_expanded = prepare_tkact_for_game(log_func=self._log)
+
         try:
             tks_proc = subprocess.Popen(
                 tks_path,
@@ -366,6 +373,8 @@ class CliLauncher:
                 creationflags=0x4 if not is_wine else 0,  # CREATE_SUSPENDED (原生Windows only)
             )
         except Exception as e:
+            if _tkact_expanded:
+                restore_tkact_for_game(log_func=self._log)
             self._log(f"[ERROR] 无法启动 {tks_path}: {e}")
             return False, {"error": f"launch failed: {e}"}
 
@@ -714,6 +723,23 @@ class CliLauncher:
             pass
         config.variables["tkdefunit_new_count"] = _du_count
 
+        # TKAct.dat 扩展大小 (定长无压缩, 每条 784 字节; 超过原版 509600 字节时
+        # 由 tkact_expand 脚本补丁分配新缓冲区并重定向加载/运行时引用)。
+        _tkact_orig = int(config.variables.get("tkact_orig_size", 509600))
+        _tkact_rec = int(config.variables.get("tkact_rec_size", 784))
+        _tkact_new = _tkact_orig
+        try:
+            if os.path.isfile("TKAct.dat"):
+                _tkact_path = "TKAct.dat.expanded"
+                if not os.path.isfile(_tkact_path):
+                    _tkact_path = "TKAct.dat"
+                _tkact_sz = os.path.getsize(_tkact_path)
+                if _tkact_sz % _tkact_rec == 0:
+                    _tkact_new = max(_tkact_orig, _tkact_sz)
+        except OSError:
+            pass
+        config.variables["tkact_new_size"] = _tkact_new
+
         # ── 15. 分配 cave 内存 ──
         hp = _OpenProcess(
             PROCESS_VM_READ | PROCESS_VM_WRITE | PROCESS_VM_OPERATION,
@@ -833,6 +859,9 @@ class CliLauncher:
         if loaded_mods:
             restore_originals(game_dir or os.getcwd(), log_func=self._log)
             self._log("原始文件已恢复。")
+
+        if _tkact_expanded:
+            restore_tkact_for_game(log_func=self._log)
 
         self._log("启动器退出。")
         return ok, {

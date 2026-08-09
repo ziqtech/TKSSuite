@@ -36,6 +36,10 @@ from core.warpc_expander import (
     ensure_save_directory_healthy, prepare_warpc_for_game,
     expand_warpc_buffer, inject_warpc_data,
 )
+from core.tkact_expander import (
+    prepare_tkact_for_game,
+    restore_tkact_for_game,
+)
 
 
 class PatcherWorker(QThread):
@@ -87,6 +91,7 @@ class PatcherWorker(QThread):
         _warpc_full_data = None
         _warpc_new_buf = 0
         _truncated_files = {}
+        _tkact_expanded = False
 
         # 确定启动器目录
         if "__compiled__" in globals():
@@ -213,6 +218,8 @@ class PatcherWorker(QThread):
         # === 辅助工具注入 ===
         self._inject_tool_files(exe_dir, game_dir or os.getcwd())
 
+        _tkact_expanded = prepare_tkact_for_game(log_func=self._log)
+
         # 启动游戏 (CREATE_SUSPENDED: 挂起主线程, 在 TForm1_FormCreate 之前应用补丁)
         self._log(f"\n启动 {tks_path}...")
         try:
@@ -222,6 +229,8 @@ class PatcherWorker(QThread):
                 creationflags=0x4,  # CREATE_SUSPENDED
             )
         except Exception as e:
+            if _tkact_expanded:
+                restore_tkact_for_game(log_func=self._log)
             self._log(f"[ERROR] 无法启动 {tks_path}: {e}")
             self.finished.emit(False, {"error": f"launch failed: {e}"})
             return
@@ -613,6 +622,9 @@ class PatcherWorker(QThread):
         if loaded_mods:
             restore_originals(game_dir or os.getcwd(), log_func=self._log)
             self._log("原始文件已恢复。")
+
+        if _tkact_expanded:
+            restore_tkact_for_game(log_func=self._log)
 
         # === 辅助工具清理 ===
         self._remove_tool_files(game_dir or os.getcwd())
