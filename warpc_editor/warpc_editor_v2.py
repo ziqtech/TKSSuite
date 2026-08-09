@@ -2089,6 +2089,17 @@ class WarpcEditorV2(QMainWindow):
             QMessageBox.critical(self, "加载失败", str(e))
             self.records = []
             self._draft_records = []
+        # 重载后旧的编辑上下文全部失效: 复位编辑状态。
+        # 否则 _editing_idx 残留会让下次点选同一编号角色时跳过 populate,
+        # 表单控件残留上一文件/槽位的值 (技能学习区为上一角色的值,
+        # 技能效果区为重建后的默认值-1), 任何其它字段的修改都会把这些
+        # 残留值连带写回, 造成「没改技能数据却被改」的数据损坏。
+        self._editing_idx = -1
+        self._edit_snapshot = None
+        self.preview_name.setText("(未选中)")
+        self.preview_meta.setText("")
+        self.preview_desc.setText("")
+        self.preview_avatar.clear()
         self._update_paths()
         self._set_edit_enabled(True)
         self._refresh_learn_toolbar_mode()
@@ -2668,7 +2679,7 @@ class WarpcEditorV2(QMainWindow):
             self.preview_avatar.clear()
             return
         idx = int(self.table.item(sel[0].row(), 0).text())
-        if idx == self._editing_idx:
+        if idx == self._editing_idx and self._edit_snapshot is not None:
             return
         # 切换角色前静默暂存到草稿 (不弹窗, 统一由「应用修改」提交)
         if self._editing_idx >= 0:
@@ -3408,11 +3419,23 @@ class WarpcEditorV2(QMainWindow):
         tgt_idx = int(self.table.item(tgt_row, 0).text())
         if cur_idx == tgt_idx:
             return
+        # 交换前先静默暂存当前编辑: flush 必须落在交换前的正确槽位。
+        # 若留到交换后由 selectRow 触发, 控件值会被写进对方角色的槽位,
+        # 导致相邻角色整体被覆盖 (含技能学习/技能效果区)。
+        if self._editing_idx >= 0:
+            self._flush_widgets_to_draft()
+        editing = self._editing_idx
         # 整体交换两条记录的字段数据 (槽位号 index 不变, 数据互换位置); 草稿同步交换
         self.records[cur_idx]['fields'], self.records[tgt_idx]['fields'] = \
             self.records[tgt_idx]['fields'], self.records[cur_idx]['fields']
         self._draft_records[cur_idx]['fields'], self._draft_records[tgt_idx]['fields'] = \
             self._draft_records[tgt_idx]['fields'], self._draft_records[cur_idx]['fields']
+        # 编辑状态跟随数据移动: 控件仍显示被移动角色的值, 槽位指向数据新位置,
+        # 避免后续 flush 写错槽位
+        if editing == cur_idx:
+            self._editing_idx = tgt_idx
+        elif editing == tgt_idx:
+            self._editing_idx = cur_idx
         self._dirty = True
         self._refresh_table()
         # 选择跟随数据: 选中目标行, 使被移动的角色保持选中
