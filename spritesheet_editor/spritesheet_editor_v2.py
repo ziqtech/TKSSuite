@@ -35,6 +35,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtGui import (
     QImage, QPixmap, QPainter, QPalette, QColor, QIcon, QAction,
     QKeySequence, QShortcut, QFont, QPen, QBrush, QWheelEvent, QMouseEvent,
+    QContextMenuEvent,
 )
 from PySide6.QtCore import (
     Qt, QObject, Signal, QTimer, QSize, QRect, QPoint, QRectF, QPointF,
@@ -695,6 +696,7 @@ class SpriteGraphicsView(QGraphicsView):
         self._header_drag: Optional[tuple] = None
         self._last_click_idx: int = -1
         self._zoom: float = 1.0
+        self._copied_frame: Optional[Image.Image] = None
 
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOn)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOn)
@@ -1079,6 +1081,42 @@ class SpriteGraphicsView(QGraphicsView):
             self._drag_info = None
             self.update_selection_display()
 
+    def contextMenuEvent(self, event: QContextMenuEvent):
+        pos = self.mapToScene(event.pos())
+        idx = self._idx_at_pos(pos.x(), pos.y())
+        if idx < 0:
+            super().contextMenuEvent(event)
+            return
+
+        self.selection = {idx}
+        self._last_click_idx = idx
+        if hasattr(self.editor, "image_list"):
+            self.editor.image_list._selected_idx = idx
+        self.update_selection_display()
+        self.selectionChangedCustom.emit()
+
+        frame = self.model.get_frame(idx)
+        menu = QMenu(self)
+        act_copy = menu.addAction("复制")
+        act_copy.setEnabled(frame is not None)
+        act_paste = menu.addAction("粘贴")
+        act_paste.setEnabled(self._copied_frame is not None)
+        menu.addSeparator()
+        act_flip = menu.addAction("水平翻转")
+        act_flip.setEnabled(frame is not None)
+        act_delete = menu.addAction("删除")
+        act_delete.setEnabled(frame is not None)
+
+        chosen = menu.exec(event.globalPos())
+        if chosen is act_copy:
+            self.copy_cell(idx)
+        elif chosen is act_paste:
+            self.paste_cell(idx)
+        elif chosen is act_flip:
+            self.flip_cell(idx)
+        elif chosen is act_delete:
+            self.delete_selected()
+
     def _show_frame_drag_indicator(self, cx: float, cy: float) -> None:
         self._remove_temp_items("drag_tgt")
         to_idx = self._idx_at_pos(cx, cy)
@@ -1273,6 +1311,44 @@ class SpriteGraphicsView(QGraphicsView):
         self.selection = set(moved)
         self.editor._on_model_changed()
         self.redraw()
+
+    def copy_cell(self, idx: int) -> None:
+        frame = self.model.get_frame(idx)
+        if frame is None:
+            return
+        self._copied_frame = frame.copy()
+        try:
+            self.editor._status_label.setText(f"已复制单元格 #{idx}")
+        except Exception:
+            pass
+
+    def paste_cell(self, idx: int) -> None:
+        if self._copied_frame is None:
+            return
+        self.model.normalize()
+        if not (0 <= idx < len(self.model.frames)):
+            return
+        self.model.frames[idx] = self._copied_frame.copy()
+        self.selection = {idx}
+        self._last_click_idx = idx
+        if hasattr(self.editor, "image_list"):
+            self.editor.image_list._selected_idx = idx
+        self.editor._on_model_changed()
+        try:
+            self.editor._status_label.setText(f"已粘贴到单元格 #{idx}")
+        except Exception:
+            pass
+
+    def flip_cell(self, idx: int) -> None:
+        frame = self.model.get_frame(idx)
+        if frame is None:
+            return
+        self.model.frames[idx] = frame.transpose(Image.FLIP_LEFT_RIGHT)
+        self.editor._on_model_changed()
+        try:
+            self.editor._status_label.setText(f"已水平翻转单元格 #{idx}")
+        except Exception:
+            pass
 
 
 # ═══════════════════════════════════════════════════════════════
