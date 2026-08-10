@@ -807,6 +807,22 @@ def _pil_paste_subtract(composite, src, dx, dy):
     except Exception:
         pass
 
+_battle_tile_ref_image = None
+
+def _build_battle_tile_ref_image():
+    """用代码绘制 110×56 平滑黄色菱形战场格子, 不依赖外部图片"""
+    global _battle_tile_ref_image
+    if _battle_tile_ref_image is None:
+        w, h = 110, 56
+        ss = 8
+        big = Image.new('RGBA', (w * ss, h * ss), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(big)
+        cx, cy = (w * ss) // 2, (h * ss) // 2
+        draw.polygon([(cx, 0), (w * ss - 1, cy), (cx, h * ss - 1), (0, cy)],
+                     fill=(255, 255, 0, 255))
+        _battle_tile_ref_image = big.resize((w, h), Image.LANCZOS)
+    return _battle_tile_ref_image
+
 def _pil_to_qpixmap(img) -> QPixmap:
     """PIL Image → QPixmap"""
     if img is None:
@@ -1343,7 +1359,8 @@ class JVGEditor(QMainWindow):
 
     def _build_preview_dock(self):
         """构建“游戏渲染预览”面板：实时合成选中帧的游戏实际渲染效果，
-        支持编辑物理偏移；打开 Cha.JVG 时叠加 block0 阴影帧 (默认图集第 1 帧)。"""
+        支持编辑物理偏移；打开 Cha.JVG 时叠加 block0 阴影帧 (默认图集第 1 帧)，
+        打开 Aa/Awt/Awk.JVG 时显示代码绘制的黄色战场格子参考图。"""
         w = QWidget()
         v = QVBoxLayout(w)
         v.setContentsMargins(4, 4, 4, 4)
@@ -1392,6 +1409,20 @@ class JVGEditor(QMainWindow):
         self._shadow_row_widget.setLayout(shadow_row)
         self._shadow_row_widget.setVisible(False)
         v.addWidget(self._shadow_row_widget)
+
+        # 战场格子参考 (仅 Aa/Awt/Awk.JVG 显示)
+        tile_ref_row = QHBoxLayout()
+        tile_ref_row.setContentsMargins(0, 0, 0, 0)
+        tile_ref_row.setSpacing(4)
+        self._tile_ref_enable = QCheckBox("战场格子")
+        self._tile_ref_enable.setChecked(True)
+        self._tile_ref_enable.stateChanged.connect(lambda *_: self._render_preview())
+        tile_ref_row.addWidget(self._tile_ref_enable)
+        tile_ref_row.addStretch()
+        self._tile_ref_row_widget = QWidget()
+        self._tile_ref_row_widget.setLayout(tile_ref_row)
+        self._tile_ref_row_widget.setVisible(False)
+        v.addWidget(self._tile_ref_row_widget)
 
         self._grp_preview = self._create_dock("游戏渲染预览", w)
         return self._grp_preview
@@ -2273,7 +2304,7 @@ class JVGEditor(QMainWindow):
             self._preview_label.setText(msg)
 
     def _rescale_preview(self):
-        """按预览区当前尺寸缩放已合成的画面 (最近邻, 保持像素清晰)"""
+        """按预览区当前尺寸平滑缩放已合成的画面, 减少参考线边缘锯齿"""
         if not hasattr(self, '_preview_label'):
             return
         full = self._preview_pix_full
@@ -2285,10 +2316,12 @@ class JVGEditor(QMainWindow):
         scale = min(avail_w / cw, avail_h / ch, 6.0)
         tw, th = max(1, int(cw * scale)), max(1, int(ch * scale))
         self._preview_label.setPixmap(
-            full.scaled(tw, th, Qt.KeepAspectRatio, Qt.FastTransformation))
+            full.scaled(tw, th, Qt.KeepAspectRatio, Qt.SmoothTransformation))
 
     def _render_preview(self):
         """合成选中帧的游戏实际渲染效果: 精灵按物理偏移落位, Cha.JVG 叠加 block0 阴影帧。
+        Aa/Awt/Awk.JVG 额外显示代码绘制的黄色战场格子参考图 (底部顶点 = 实体落点)。
+        同一分组内使用固定包围盒与缩放，避免逐帧切换时画面跳动。
         参考 mat_editor 地图预览 (sub_406864/sub_45871C): 先减法压暗画阴影, 再正常贴精灵。"""
         if not hasattr(self, '_preview_label'):
             return
@@ -2306,6 +2339,39 @@ class JVGEditor(QMainWindow):
             return
         pal = self._get_pal(blk, f)
         no_green = self._greenscreen_remove.isChecked()
+        has_tile_ref = self._is_battle_sprite_jvg()
+        draw_tile_ref = has_tile_ref and self._tile_ref_enable.isChecked()
+
+        # 固定分组预览视口：纳入当前分组全部有效帧，切换帧时避免画面缩放跳动
+        shadow_candidates = []
+        if self._is_cha_jvg() and self._bi != 0 and self.jvg.blocks:
+            blk0 = self.jvg.blocks[0]
+            for ci in range(self._shadow_fi.minimum(), self._shadow_fi.maximum() + 1):
+                if 0 <= ci < blk0.frame_count:
+                    cand = blk0.frames[ci]
+                    if cand.width > 0 and cand.height > 0:
+                        shadow_candidates.append(cand)
+
+        xs = [0]
+        ys = [0]
+        for cand in blk.frames:
+            if cand.width > 0 and cand.height > 0:
+                xs.extend((cand.x_off, cand.x_off + cand.width))
+                ys.extend((cand.y_off, cand.y_off + cand.height))
+        for cand in shadow_candidates:
+            xs.extend((cand.x_off, cand.x_off + cand.width))
+            ys.extend((cand.y_off, cand.y_off + cand.height))
+        if has_tile_ref:
+            xs.extend((-55, 55))
+            ys.extend((-56, 0))
+        min_x, max_x = min(xs), max(xs)
+        min_y, max_y = min(ys), max(ys)
+        pad = 8
+        cw = (max_x - min_x) + pad * 2
+        ch = (max_y - min_y) + pad * 2
+        if cw <= 0 or ch <= 0:
+            self._clear_preview("(空帧)")
+            return
 
         # 解析阴影帧 (仅 Cha.JVG, 且当前不在阴影 block0 内)
         shf = None
@@ -2320,7 +2386,8 @@ class JVGEditor(QMainWindow):
                     shf = cand
         # 合成缓存键: 避免平铺列数/间距等无关刷新时重复逐像素合成
         key = (self._bi, fi, id(f), f.width, f.height, f.x_max, f.y_max,
-               len(f.encoded_data), no_green,
+               len(f.encoded_data), no_green, has_tile_ref, draw_tile_ref,
+               cw, ch, min_x, min_y,
                (id(shf), shf.x_max, shf.y_max, sh_fi) if shf else None)
         if key == self._preview_key and self._preview_pix_full is not None:
             self._rescale_preview()
@@ -2341,26 +2408,31 @@ class JVGEditor(QMainWindow):
             shadow = _frame_to_pil(shf, blk0.palette, g0)
             sh_x, sh_y = shf.x_off, shf.y_off
 
-        # 包围盒 (含锚点原点 0,0 = 实体落点)
-        xs = [0, s_x, s_x + f.width]
-        ys = [0, s_y, s_y + f.height]
-        if shadow is not None:
-            xs += [sh_x, sh_x + shadow.width]
-            ys += [sh_y, sh_y + shadow.height]
-        min_x, max_x = min(xs), max(xs)
-        min_y, max_y = min(ys), max(ys)
-        pad = 8
-        cw = (max_x - min_x) + pad * 2
-        ch = (max_y - min_y) + pad * 2
-        if cw <= 0 or ch <= 0:
-            self._clear_preview("(空帧)")
-            return
         # 中性灰地面, 使减法阴影可见
         composite = Image.new('RGB', (cw, ch), (104, 112, 120))
         ox0 = pad - min_x
         oy0 = pad - min_y
         if shadow is not None:
             _pil_paste_subtract(composite, shadow, ox0 + sh_x, oy0 + sh_y)
+        # 战场格子参考: 先画在角色下方, 以实体落点为底部中心
+        if draw_tile_ref:
+            try:
+                tile_img = _build_battle_tile_ref_image()
+                if tile_img is not None:
+                    _pil_paste_normal(
+                        composite,
+                        tile_img,
+                        ox0 - tile_img.width // 2,
+                        oy0 - tile_img.height + 1,
+                    )
+                else:
+                    dr = ImageDraw.Draw(composite)
+                    dr.line([(ox0 - 55, oy0 - 28), (ox0, oy0 - 56),
+                             (ox0 + 55, oy0 - 28), (ox0, oy0),
+                             (ox0 - 55, oy0 - 28)],
+                            fill=(255, 40, 40), width=2)
+            except Exception:
+                pass
         _pil_paste_normal(composite, sprite, ox0 + s_x, oy0 + s_y)
         # 锚点十字 (游戏世界坐标原点)
         try:
@@ -2700,10 +2772,20 @@ class JVGEditor(QMainWindow):
             return False
         return os.path.basename(self.jvg.filepath).upper() == "CHA.JVG"
 
+    def _is_battle_sprite_jvg(self) -> bool:
+        """检查当前加载文件是否为战场精灵 (Aa/Awt/Awk.JVG)"""
+        if not self.jvg or not self.jvg.filepath:
+            return False
+        return os.path.basename(self.jvg.filepath).upper() in (
+            "AA.JVG", "AWT.JVG", "AWK.JVG"
+        )
+
     def _update_preview_controls(self):
-        """根据文件类型显示/隐藏阴影帧控制 (仅 Cha.JVG 需要阴影)"""
+        """根据文件类型显示/隐藏阴影帧与战场格子控制"""
         if hasattr(self, '_shadow_row_widget'):
             self._shadow_row_widget.setVisible(self._is_cha_jvg())
+        if hasattr(self, '_tile_ref_row_widget'):
+            self._tile_ref_row_widget.setVisible(self._is_battle_sprite_jvg())
 
     def _update_avatar_actions(self):
         """根据当前文件类型启用/禁用头像相关操作"""
@@ -2939,4 +3021,3 @@ if __name__ == "__main__":
         print("需要 Pillow: pip install Pillow")
         sys.exit(1)
     main()
-
