@@ -37,6 +37,7 @@ import os
 import struct
 import sys
 import time
+import zhconv
 
 # ── PySide6 imports ──
 from PySide6.QtWidgets import (
@@ -1720,10 +1721,11 @@ class ActEditorV2(QMainWindow):
         fm.addAction("退出", self.close)
 
         em = mb.addMenu("编辑(&E)")
-        em.addAction("复制当前条目到空位", self._copy_entry)
-        em.addAction("复制当前条目到末尾", self._append_copy_current)
-        em.addAction("新增空白条目", self._append_entry)
-        em.addAction("清空当前条目", self._clear_entry)
+        em.addAction("新建条目", QKeySequence("Ctrl+N"), self._new_entry)
+        em.addAction("复制当前条目", self._copy_current)
+        em.addAction("粘贴到当前条目", self._paste_current)
+        em.addAction("清除当前条目", self._clear_entry)
+        em.addAction("删除当前条目", self._delete_entry)
 
         hm = mb.addMenu("帮助(&H)")
         hm.addAction("字段参考", self._show_field_ref)
@@ -1746,7 +1748,7 @@ class ActEditorV2(QMainWindow):
         toolbar.addWidget(QLabel("搜索:"))
         self.search_entry = QLineEdit()
         self.search_entry.setFixedWidth(160)
-        self.search_entry.returnPressed.connect(self._apply_filter)
+        self.search_entry.textChanged.connect(self._apply_filter)
         toolbar.addWidget(self.search_entry)
         toolbar.addWidget(QPushButton("🔍 搜索", clicked=self._apply_filter))
         toolbar.addWidget(QPushButton("✕ 清除", clicked=self._clear_filter))
@@ -1768,9 +1770,6 @@ class ActEditorV2(QMainWindow):
         self.greenscreen_cb.stateChanged.connect(self._on_greenscreen_toggle)
         toolbar.addWidget(self.greenscreen_cb)
 
-        toolbar.addSpacing(8)
-        toolbar.addWidget(QPushButton("＋ 新增条目", clicked=self._append_entry))
-        toolbar.addWidget(QPushButton("＋ 复制到末尾", clicked=self._append_copy_current))
         toolbar.addSpacing(8)
         toolbar.addWidget(QPushButton("🔄 重新加载", clicked=self._reload))
         toolbar.addWidget(QPushButton("🌗 切换主题", clicked=self._toggle_theme))
@@ -2499,6 +2498,8 @@ class ActEditorV2(QMainWindow):
 
     def _apply_filter(self):
         q = self.search_entry.text().strip().lower()
+        q_norm = ''.join(q.split())
+        q_tw = zhconv.convert(q_norm, 'zh-tw') if q_norm else ''
         show_empty = self.show_empty_cb.isChecked()
         self.filtered_indices = []
         for entry in self.entries:
@@ -2507,7 +2508,8 @@ class ActEditorV2(QMainWindow):
             if q:
                 name = self.names.get(entry['index'], '')
                 text = f"{entry['index']} {name} {entry_summary(entry)}".lower()
-                if q not in text:
+                text_norm = ''.join(text.split())
+                if q_norm not in text_norm and q_tw not in text_norm:
                     continue
             self.filtered_indices.append(entry['index'])
         self._refresh_table()
@@ -2589,13 +2591,27 @@ class ActEditorV2(QMainWindow):
         }
         self._populate_edit(entry)
 
+    def _select_entry(self, idx):
+        for row, i in enumerate(self.filtered_indices):
+            if i == idx:
+                self.table.selectRow(row)
+                self.table.scrollToItem(self.table.item(row, 0))
+                return True
+        return False
+
+    def _clone_entry(self, src):
+        return {
+            'dirs': [list(d) for d in src['dirs']],
+            'param16': list(src['param16']),
+            'layers': [list(L) for L in src['layers']],
+            'tail': list(src['tail']),
+        }
+
     def _on_table_context_menu(self, pos):
         item = self.table.itemAt(pos)
         if not item:
             menu = QMenu(self)
-            menu.addAction("新增空白条目", self._append_entry)
-            if self._clipboard is not None:
-                menu.addAction("粘贴为新条目", self._paste_clipboard_as_new)
+            menu.addAction("新增条目", self._new_entry)
             menu.exec(self.table.viewport().mapToGlobal(pos))
             return
         row = item.row()
@@ -2603,60 +2619,56 @@ class ActEditorV2(QMainWindow):
             return
         idx = self.filtered_indices[row]
         entry = self.entries[idx]
+        self._editing_idx = idx
+        self._populate_edit(entry)
 
         menu = QMenu(self)
-        if not entry_is_empty(entry):
-            menu.addAction("复制", lambda: self._clipboard_copy(idx))
-            menu.addAction("复制到末尾", lambda: self._append_entry(self.entries[idx]))
-            menu.addAction("删除 (清空)", lambda: self._right_click_clear(idx))
-        if self._clipboard is not None:
-            if entry_is_empty(entry):
-                menu.addAction("粘贴到此", lambda: self._clipboard_paste(idx))
-            menu.addAction("粘贴为新条目", self._paste_clipboard_as_new)
+        menu.addAction("复制", lambda: self._clipboard_copy(idx))
+        paste_action = menu.addAction("粘贴", lambda: self._clipboard_paste(idx))
+        paste_action.setEnabled(self._clipboard is not None)
+        menu.addAction("清除", lambda: self._clear_entry_idx(idx))
         if idx >= ACT_ENTRY_COUNT:
-            menu.addAction("移除扩展条目", lambda: self._remove_extended_entry(idx))
+            menu.addAction("删除", lambda: self._delete_entry(idx))
         menu.exec(self.table.viewport().mapToGlobal(pos))
 
-    def _right_click_clear(self, idx):
-        if QMessageBox.question(self, "确认", f"确定要清空条目 #{idx} 吗？\n此操作不可撤销。",
-                               QMessageBox.Yes | QMessageBox.No) != QMessageBox.Yes:
+    def _clipboard_copy(self, idx=None):
+        if idx is None:
+            idx = self._editing_idx
+        if idx < 0 or idx >= len(self.entries):
+            return
+        self._clipboard = self._clone_entry(self.entries[idx])
+        self.status_var.setText(
+            f"已复制条目 #{idx} (可右键粘贴到任意条目)")
+
+    def _copy_current(self):
+        self._clipboard_copy()
+
+    def _clipboard_paste(self, idx=None):
+        if idx is None:
+            idx = self._editing_idx
+        if self._clipboard is None or idx < 0 or idx >= len(self.entries):
             return
         entry = self.entries[idx]
-        for d in range(4):
-            entry['dirs'][d] = [0] * 8
-        entry['param16'] = [0] * 24
-        for s in range(ACT_MAX_LAYER):
-            entry['layers'][s] = [0] * 40
-        entry['tail'] = [0] * 32
+        if not entry_is_empty(entry):
+            if QMessageBox.question(
+                    self, "确认覆盖",
+                    f"粘贴将覆盖条目 #{idx} 的现有内容，是否继续？",
+                    QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
+                return
+        data = self._clone_entry(self._clipboard)
+        data['index'] = idx
+        self.entries[idx] = data
         self._dirty = True
-        self._apply_filter()
-        if self._editing_idx == idx:
-            self._populate_edit(entry)
-            self._preview_stop()
-            self._preview_redraw()
-            self._tl_redraw()
-        self.status_var.setText(f"已清空条目 #{idx}")
-
-    def _clipboard_copy(self, idx):
-        src = self.entries[idx]
-        self._clipboard = {
-            'dirs': [list(d) for d in src['dirs']],
-            'param16': list(src['param16']),
-            'layers': [list(L) for L in src['layers']],
-            'tail': list(src['tail']),
-        }
-        self.status_var.setText(f"已复制条目 #{idx} (右键空条目粘贴)")
-
-    def _clipboard_paste(self, idx):
-        entry = self.entries[idx]
-        entry['dirs'] = [list(d) for d in self._clipboard['dirs']]
-        entry['param16'] = list(self._clipboard['param16'])
-        entry['layers'] = [list(L) for L in self._clipboard['layers']]
-        entry['tail'] = list(self._clipboard['tail'])
-        self._dirty = True
-        self._apply_filter()
-        self._populate_edit(entry)
+        if entry_is_empty(data) and not self.show_empty_cb.isChecked():
+            self.show_empty_cb.setChecked(True)
+        else:
+            self._apply_filter()
+        self._select_entry(idx)
+        self._populate_edit(self.entries[idx])
         self.status_var.setText(f"已粘贴到条目 #{idx}")
+
+    def _paste_current(self):
+        self._clipboard_paste()
 
     # ── 编辑填充 ──
 
@@ -3059,20 +3071,12 @@ class ActEditorV2(QMainWindow):
             'tail': [0] * 32,
         }
 
-    def _append_entry(self, source=None):
-        if not isinstance(source, dict):
-            source = None
+    def _new_entry(self, source=None):
+        if not self.entries:
+            QMessageBox.information(self, "提示", "请先加载数据")
+            return
         idx = len(self.entries)
-        if source is None:
-            entry = self._make_empty_entry(idx)
-        else:
-            entry = {
-                'index': idx,
-                'dirs': [list(d) for d in source['dirs']],
-                'param16': list(source['param16']),
-                'layers': [list(L) for L in source['layers']],
-                'tail': list(source['tail']),
-            }
+        entry = self._make_empty_entry(idx)
         self.entries.append(entry)
         self._dirty = True
         self.search_entry.clear()
@@ -3080,35 +3084,10 @@ class ActEditorV2(QMainWindow):
             self.show_empty_cb.setChecked(True)
         else:
             self._apply_filter()
-        for row, i in enumerate(self.filtered_indices):
-            if i == idx:
-                self.table.selectRow(row)
-                break
-        if source is None:
-            self.status_var.setText(
-                f"已新增空白条目 #{idx} (共 {len(self.entries)} 条, 已修改)")
-        else:
-            src_label = source.get('index', -1)
-            self.status_var.setText(
-                f"已复制 #{src_label} → 扩展条目 #{idx} "
-                f"(共 {len(self.entries)} 条, 已修改)")
-
-    def _append_copy_current(self):
-        if self._editing_idx < 0:
-            QMessageBox.information(self, "提示", "请先选择要复制的条目")
-            return
-        self._append_entry(self.entries[self._editing_idx])
-
-    def _paste_clipboard_as_new(self):
-        if self._clipboard is None:
-            return
-        source = {
-            'dirs': [list(d) for d in self._clipboard['dirs']],
-            'param16': list(self._clipboard['param16']),
-            'layers': [list(L) for L in self._clipboard['layers']],
-            'tail': list(self._clipboard['tail']),
-        }
-        self._append_entry(source)
+        self._select_entry(idx)
+        self._populate_edit(entry)
+        self.status_var.setText(
+            f"已新增空条目 #{idx} (共 {len(self.entries)} 条, 已修改)")
 
     def _remove_extended_entry(self, idx):
         if idx < ACT_ENTRY_COUNT or idx >= len(self.entries):
@@ -3129,54 +3108,58 @@ class ActEditorV2(QMainWindow):
         self.status_var.setText(
             f"已移除扩展条目 #{idx} (共 {len(self.entries)} 条, 已修改)")
 
-    def _copy_entry(self):
-        if self._editing_idx < 0:
-            return
-        src = self.entries[self._editing_idx]
-        if entry_is_empty(src):
-            QMessageBox.information(self, "提示", "当前条目为空, 无需复制")
-            return
-        for entry in self.entries:
-            if entry_is_empty(entry):
-                idx_bak = entry['index']
-                entry['dirs'] = [list(d) for d in src['dirs']]
-                entry['param16'] = list(src['param16'])
-                entry['layers'] = [list(L) for L in src['layers']]
-                entry['tail'] = list(src['tail'])
-                entry['index'] = idx_bak
-                self._dirty = True
-                self._apply_filter()
-                self._populate_edit(entry)
-                self.status_var.setText(f"已复制 #{src['index']} → #{idx_bak}")
-                return
-        QMessageBox.warning(
-            self, "槽位已满",
-            f"所有 {len(self.entries)} 个条目均已占用\n"
-            "可使用“复制当前条目到末尾”新增扩展条目")
+    def _clear_entry_at(self, idx, ask=True, title="确认清除", question_text=None):
+        if idx < 0 or idx >= len(self.entries):
+            return False
+        entry = self.entries[idx]
+        if entry_is_empty(entry):
+            return False
+        if ask and QMessageBox.question(
+                self, title,
+                question_text or f"确定要清除条目 #{idx} 吗？\n此操作不可撤销。",
+                QMessageBox.Yes | QMessageBox.No) != QMessageBox.Yes:
+            return False
+        self.entries[idx] = self._make_empty_entry(idx)
+        self._dirty = True
+        if not self.show_empty_cb.isChecked():
+            self.show_empty_cb.setChecked(True)
+        else:
+            self._apply_filter()
+        if self._editing_idx == idx:
+            self._populate_edit(self.entries[idx])
+            self._preview_stop()
+            self._preview_redraw()
+            self._tl_redraw()
+        return True
 
     def _clear_entry(self):
         if self._editing_idx < 0:
             return
-        entry = self.entries[self._editing_idx]
-        if entry_is_empty(entry):
+        if self._clear_entry_at(self._editing_idx):
+            self.status_var.setText(f"已清除条目 #{self._editing_idx}")
+        elif self._editing_idx < len(self.entries) and entry_is_empty(self.entries[self._editing_idx]):
             QMessageBox.information(self, "提示", "当前条目已经为空")
+
+    def _clear_entry_idx(self, idx):
+        if self._clear_entry_at(idx):
+            self.status_var.setText(f"已清除条目 #{idx}")
+        elif idx < len(self.entries) and entry_is_empty(self.entries[idx]):
+            QMessageBox.information(self, "提示", "当前条目已经为空")
+
+    def _delete_entry(self, idx=None):
+        if idx is None:
+            idx = self._editing_idx
+        if idx < 0 or idx >= len(self.entries):
             return
-        if QMessageBox.question(self, "确认清空",
-                               f"确定清空动画 #{entry['index']}?",
-                               QMessageBox.Yes | QMessageBox.No) != QMessageBox.Yes:
+        if idx < ACT_ENTRY_COUNT:
+            QMessageBox.information(
+                self, "提示",
+                f"原版条目 #{idx} 不能删除，只能使用清除功能。")
             return
-        idx_save = entry['index']
-        self.entries[idx_save] = {
-            'index': idx_save,
-            'dirs': [[0] * 8 for _ in range(4)],
-            'param16': [0] * 24,
-            'layers': [[0] * 40 for _ in range(ACT_MAX_LAYER)],
-            'tail': [0] * 32,
-        }
-        self._dirty = True
-        self._apply_filter()
-        self._populate_edit(self.entries[idx_save])
-        self.status_var.setText(f"已清空动画 #{idx_save}")
+        self._remove_extended_entry(idx)
+
+    def _delete_current(self):
+        self._delete_entry()
 
     # ── 保存/导出 ──
 
@@ -4385,13 +4368,14 @@ class ActEditorV2(QMainWindow):
         themed_messagebox(self, QMessageBox.Information, "帮助说明",
             "功能: 编辑《三国群侠传》角色动画数据\n"
             "数据: 原版 650 条 × 784 字节 = 509,600 字节\n"
-            "      支持新增扩展条目 (>650)，需配合启动器 TKAct 扩容补丁\n\n"
+            "      新建条目在列表末尾新增空条目；>650 为扩展条目，需扩容补丁\n\n"
             "特性:\n"
             "  · 多图层 2D 精灵动画编辑\n"
             "  · 6 种图像混合模式\n"
             "  · 实时动画预览\n"
             "  · 音效触发表编辑\n"
-            "  · 新增/复制到末尾/粘贴为新条目\n"
+            "  · 每行右键: 复制 / 粘贴 / 清除；扩展条目另有删除\n"
+            "  · 原版条目只能清除；扩展条目可清除或删除\n"
             "  · 深色/浅色主题切换")
 
     def _show_about(self):
