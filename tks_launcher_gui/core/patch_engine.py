@@ -36,8 +36,10 @@ def _check_cave_bounds(cave_addr: int, offset: int, size: int, budget: int,
 
 
 class PatchContext:
-    """外部脚本补丁的稳定运行上下文。"""
+    """外部脚本补丁的稳定运行上下文。
 
+    Phase 5: 作为所有 patch_type handler 的统一入参 (原本仅用于 script 类型)。
+    """
     def __init__(self, defn: PatchDef, target_pid: int, h_proc: int,
                  base_addr: int, code_buf: bytearray, code_start_addr: int,
                  cave_addr: int, warpc_base: int, variables: Dict[str, int],
@@ -54,6 +56,55 @@ class PatchContext:
         self.log = log_func or (lambda x: None)
         self.exe_profile = exe_profile
         self.config_overrides = config_overrides
+
+
+# ============================================================
+# 补丁类型注册表 (Phase 5)
+# ============================================================
+#
+# 将原本在 apply_config_patches 中的 if/elif 分派改为注册表派发:
+# - 每种 patch_type 对应一个 handler, 接受统一的 PatchContext 入参
+# - handler 通过 @register_patch_type("xxx") 装饰器注册
+# - apply_config_patches 只需在字典中查找, 无需硬编码类型分派
+# - 新增 patch_type 时只需实现并注册, 不再修改 dispatcher
+#
+# 特殊类型说明:
+# - "cave_hook": 两阶段提交 (pre-scan 在 dispatcher, apply 在 patch 后),
+#   由 dispatcher 显式处理, 不进入注册表。
+# - "script": 通过 run_script_patch 间接调用外部 apply(ctx), 单独保留。
+# - "patch_warpc_addr": 仅日志, 不实际应用 (由 WarPC 扩展流程处理)。
+# - 未知类型: 记日志并跳过, 由 dispatcher 处理。
+
+_PATCH_TYPE_HANDLERS: Dict[str, Any] = {}
+
+
+def register_patch_type(type_name: str):
+    """装饰器: 将 handler 函数注册到指定 patch_type。
+
+    用法:
+        @register_patch_type("patch_bytes")
+        def _handle_patch_bytes(ctx: PatchContext) -> bool:
+            ...
+            return True
+
+    Handler 签名: (ctx: PatchContext) -> bool
+    返回 True 表示成功, False 表示失败。
+    """
+    def decorator(fn):
+        if type_name in _PATCH_TYPE_HANDLERS:
+            raise ValueError(
+                f"patch_type '{type_name}' 已注册到 "
+                f"{_PATCH_TYPE_HANDLERS[type_name].__name__}, "
+                f"重复注册到 {fn.__name__}"
+            )
+        _PATCH_TYPE_HANDLERS[type_name] = fn
+        return fn
+    return decorator
+
+
+def get_registered_handlers() -> Dict[str, Any]:
+    """返回当前已注册的 patch_type handler 字典 (测试用)。"""
+    return dict(_PATCH_TYPE_HANDLERS)
 
 
 def run_script_patch(defn: PatchDef, ctx: PatchContext) -> bool:
@@ -113,6 +164,105 @@ def validate_script_patch(defn: PatchDef, log_func=None) -> bool:
     except Exception as e:
         log(f"  [ERROR] 脚本补丁验证失败: {defn.id} — {e}")
         return False
+
+
+# ============================================================
+# 补丁类型 handler 注册 (Phase 5)
+# ============================================================
+#
+# 每个 handler 接受 PatchContext, 返回 bool。
+# 内部委托给已存在的 apply_* 函数, 不改变原函数行为。
+# 注册表查找失败的类型由 dispatcher 走兜底分支 (warn)。
+
+
+@register_patch_type("patch_bytes")
+def _handle_patch_bytes(ctx: PatchContext) -> bool:
+    return apply_patch_bytes(
+        ctx.defn, ctx.code_buf, ctx.code_start_addr,
+        ctx.h_proc, log_func=ctx.log,
+    )
+
+
+@register_patch_type("patch_extra_section")
+def _handle_patch_extra_section(ctx: PatchContext) -> bool:
+    return apply_patch_extra_section(
+        ctx.defn, ctx.h_proc, ctx.exe_profile, log_func=ctx.log,
+    )
+
+
+@register_patch_type("patch_imm32")
+def _handle_patch_imm32(ctx: PatchContext) -> bool:
+    if ctx.defn.value_scan:
+        nv = resolve_var(ctx.defn.new_value_expr, ctx.variables, log_func=ctx.log)
+        if nv is None:
+            ctx.log(f"    -> 变量未定义, 跳过")
+            return True
+        if ctx.defn.expect_value != 0 and nv == ctx.defn.expect_value:
+            ctx.log(f"    -> 值未变化 ({ctx.defn.expect_value}), 跳过")
+            return True
+        return apply_patch_imm32_by_value(
+            ctx.defn, ctx.code_buf, ctx.code_start_addr,
+            ctx.h_proc, ctx.variables, log_func=ctx.log,
+            exclude_ranges=ctx.exe_profile.extra_section_ranges if ctx.exe_profile else None,
+        )
+    return apply_patch_imm32_by_pattern(
+        ctx.defn, ctx.code_buf, ctx.code_start_addr,
+        ctx.h_proc, ctx.variables, log_func=ctx.log,
+    )
+
+
+@register_patch_type("patch_summon_table")
+def _handle_patch_summon_table(ctx: PatchContext) -> bool:
+    _summon_override = None
+    if ctx.config_overrides:
+        _summon_override = ctx.config_overrides.get("summon_table")
+    return apply_summon_table(
+        ctx.defn, ctx.code_buf, ctx.code_start_addr, ctx.base_addr,
+        ctx.h_proc, ctx.variables, log_func=ctx.log,
+        cave_addr=ctx.cave_addr,
+        config_override=_summon_override,
+    )
+
+
+@register_patch_type("patch_drop_probability")
+def _handle_patch_drop_probability(ctx: PatchContext) -> bool:
+    _drop_override = None
+    if ctx.config_overrides:
+        _drop_override = ctx.config_overrides.get("drop_probability")
+    return apply_drop_probability(
+        ctx.defn, ctx.code_buf, ctx.code_start_addr,
+        ctx.h_proc, log_func=ctx.log,
+        config_override=_drop_override,
+    )
+
+
+@register_patch_type("patch_exp_lock")
+def _handle_patch_exp_lock(ctx: PatchContext) -> bool:
+    _explock_override = None
+    if ctx.config_overrides:
+        _explock_override = ctx.config_overrides.get("exp_lock")
+    return apply_exp_lock(
+        ctx.defn, ctx.code_buf, ctx.code_start_addr,
+        ctx.h_proc, ctx.cave_addr, log_func=ctx.log,
+        config_override=_explock_override,
+        cave_budget=ctx.variables.get("cave_total_size", 2048),
+    )
+
+
+@register_patch_type("patch_font_config")
+def _handle_patch_font_config(ctx: PatchContext) -> bool:
+    return apply_font_config(
+        ctx.defn, ctx.code_buf, ctx.code_start_addr,
+        ctx.h_proc, log_func=ctx.log,
+    )
+
+
+@register_patch_type("patch_animation_speed")
+def _handle_patch_animation_speed(ctx: PatchContext) -> bool:
+    return apply_animation_speed(
+        ctx.defn, ctx.code_buf, ctx.code_start_addr,
+        ctx.h_proc, log_func=ctx.log,
+    )
 
 
 # ============================================================
@@ -2248,19 +2398,15 @@ def apply_config_patches(config: PatchConfig, code_buf: bytearray, code_start_ad
             log(f"    -> 第三方 MOD 版本自动跳过")
             continue
 
-        if defn.type == "patch_bytes":
-            all_ok &= apply_patch_bytes(defn, code_buf, code_start_addr, h_proc, log_func=log)
-        elif defn.type == "patch_extra_section":
-            # MOD 额外 PE 段 (.test 等) 字节补丁: code_buf 扫描窗口之外的第三方 MOD 代码
-            all_ok &= apply_patch_extra_section(defn, h_proc, exe_profile, log_func=log)
-        elif defn.type == "cave_hook":
+        if defn.type == "cave_hook":
+            # Cave hook 是两阶段提交 (pre-scan 后批量 apply),
+            # 在 dispatcher 中显式处理, 不进入通用注册表。
             hp = defn.hook_pattern or defn.pattern
             hpat, hwc = parse_pattern(hp or "")
             hh = pattern_scan(bytes(code_buf), hpat, hwc)
             if defn.hook_expect_count > 0 and len(hh) != defn.hook_expect_count:
                 # 模式匹配失败 — 尝试 fallback_rva 回退定位
                 if len(hh) == 0 and defn.fallback_rva > 0:
-                    # fallback_rva 是相对于基址的偏移, 转为 code_buf 内偏移
                     fb_hook = defn.fallback_rva - 0x1000  # RVA -> code_buf offset
                     fb_off = fb_hook - defn.hook_offset
                     if 0 <= fb_off < len(code_buf) - defn.hook_size:
@@ -2287,60 +2433,32 @@ def apply_config_patches(config: PatchConfig, code_buf: bytearray, code_start_ad
                     log(f"  {tag}: [WARN] Hook 点已被占用, 但仍尝试应用")
             defn._pre_scanned_hits = hh
             pch.append(defn)
-        elif defn.type == "script":
-            ctx = PatchContext(
-                defn, variables.get("_target_pid", 0), h_proc, base_addr,
-                code_buf, code_start_addr, cave_addr, warpc_base, variables,
-                log_func=log, exe_profile=exe_profile,
-                config_overrides=config_overrides,
-            )
+            continue
+
+        # 构建统一 ctx, 委托给注册表 handler
+        ctx = PatchContext(
+            defn, variables.get("_target_pid", 0), h_proc, base_addr,
+            code_buf, code_start_addr, cave_addr, warpc_base, variables,
+            log_func=log, exe_profile=exe_profile,
+            config_overrides=config_overrides,
+        )
+
+        if defn.type == "script":
+            # 脚本类型通过 run_script_patch 加载外部 apply(ctx)
             all_ok &= run_script_patch(defn, ctx)
-        elif defn.type == "patch_imm32":
-            if defn.value_scan:
-                nv = resolve_var(defn.new_value_expr, variables, log_func=log)
-                if nv is None:
-                    log(f"    -> 变量未定义, 跳过")
-                    continue
-                if defn.expect_value != 0 and nv == defn.expect_value:
-                    log(f"    -> 值未变化 ({defn.expect_value}), 跳过")
-                    continue
-                all_ok &= apply_patch_imm32_by_value(defn, code_buf, code_start_addr, h_proc, variables, log_func=log,
-                                                       exclude_ranges=exe_profile.extra_section_ranges if exe_profile else None)
-            else:
-                all_ok &= apply_patch_imm32_by_pattern(defn, code_buf, code_start_addr, h_proc, variables, log_func=log)
-        elif defn.type == "patch_warpc_addr":
+            continue
+
+        if defn.type == "patch_warpc_addr":
+            # WarPC 地址由 WarPC 扩展流程统一处理, 此处仅日志
             log(f"    -> 由 WarPC 扩展流程处理 (base=0x{warpc_base:08X})")
-        elif defn.type == "patch_summon_table":
-            _summon_override = None
-            if config_overrides:
-                _summon_override = config_overrides.get("summon_table")
-            all_ok &= apply_summon_table(defn, code_buf, code_start_addr, base_addr,
-                                          h_proc, variables, log_func=log,
-                                          cave_addr=cave_addr,
-                                          config_override=_summon_override)
-        elif defn.type == "patch_drop_probability":
-            _drop_override = None
-            if config_overrides:
-                _drop_override = config_overrides.get("drop_probability")
-            all_ok &= apply_drop_probability(defn, code_buf, code_start_addr,
-                                              h_proc, log_func=log,
-                                              config_override=_drop_override)
-        elif defn.type == "patch_exp_lock":
-            _explock_override = None
-            if config_overrides:
-                _explock_override = config_overrides.get("exp_lock")
-            all_ok &= apply_exp_lock(defn, code_buf, code_start_addr,
-                                     h_proc, cave_addr, log_func=log,
-                                     config_override=_explock_override,
-                                     cave_budget=variables.get("cave_total_size", 2048))
-        elif defn.type == "patch_font_config":
-            all_ok &= apply_font_config(defn, code_buf, code_start_addr,
-                                         h_proc, log_func=log)
-        elif defn.type == "patch_animation_speed":
-            all_ok &= apply_animation_speed(defn, code_buf, code_start_addr,
-                                             h_proc, log_func=log)
-        else:
+            continue
+
+        # 注册表查找: 普通 patch_type
+        handler = _PATCH_TYPE_HANDLERS.get(defn.type)
+        if handler is None:
             log(f"  [WARN] 未知补丁类型: {defn.type}")
+            continue
+        all_ok &= handler(ctx)
 
     if pch and not minimal_mode and not no_cave_mode:
         hta = pch
