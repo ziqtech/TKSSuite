@@ -21,6 +21,7 @@
     "tkact_rec_size":        784,
     "tkact_orig_count":      650,
     "tkact_base":            "0x9539CA",
-    "tkdefunit_orig_count":  5000
+    "tkdefunit_orig_count":  5000,
+    "cave_total_size":       2048
   }
 }

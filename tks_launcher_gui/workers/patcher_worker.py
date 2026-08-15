@@ -502,11 +502,18 @@ class PatcherWorker(QThread):
         hp = _OpenProcess(PROCESS_VM_READ | PROCESS_VM_WRITE | PROCESS_VM_OPERATION, False, target_pid)
         cave_addr = 0
         if hp:
-            ca = _VirtualAllocEx(hp, None, 1024, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE)
+            # Phase 1: Cave 虚拟页 1024→2048 (实测需求 1526 字节, 1024 已越界)
+            # 环境变量 TKS_CAVE_BUDGET 可覆盖; 默认 2048 留 25% 余量
+            _CAVE_BUDGET = int(os.environ.get(
+                "TKS_CAVE_BUDGET",
+                config.variables.get("cave_total_size", 2048),
+            ))
+            ca = _VirtualAllocEx(hp, None, _CAVE_BUDGET,
+                                 MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE)
             if ca:
                 cave_addr = ctypes.cast(ca, ctypes.c_void_p).value or 0
         if cave_addr:
-            self._log(f"  Cave 内存: 0x{cave_addr:08X} (1024 bytes)")
+            self._log(f"  Cave 内存: 0x{cave_addr:08X} ({_CAVE_BUDGET} bytes)")
         else:
             self._log("  [WARN] VirtualAllocEx failed, caves skipped")
 

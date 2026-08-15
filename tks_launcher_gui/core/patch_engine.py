@@ -17,6 +17,24 @@ from .scanner import parse_pattern, pattern_scan, value_scan
 from .config_loader import PatchDef, PatchConfig, resolve_var
 
 
+def _check_cave_bounds(cave_addr: int, offset: int, size: int, budget: int,
+                        label: str, log) -> bool:
+    """Cave 越界硬校验。返回 True 表示在范围内, False 表示越界(已日志告警)。
+
+    Phase 2 引入: 防止 .tkspatch 中 cave_offset/size 超出 cave_total_size 时静默
+    越界写入损坏 WarPC 数据区或其他进程内存。仅日志告警, 不抛异常, 保持向后兼容。
+    """
+    if offset < 0 or size < 0:
+        log(f"  [CAVE-OOB] {label}: offset/size 负值 "
+            f"(offset=0x{offset:X}, size={size})")
+        return False
+    end = offset + size
+    if end > budget:
+        log(f"  [CAVE-OOB] {label}: 0x{offset:X}+{size}={end} > budget={budget}, 跳过")
+        return False
+    return True
+
+
 class PatchContext:
     """外部脚本补丁的稳定运行上下文。"""
 
@@ -1017,6 +1035,12 @@ def apply_cave_hook(defn: PatchDef, hits: List[int], code_buf: bytearray,
     if cd is None:
         return False
 
+    # Phase 2: Cave 越界硬校验 — 防止 .tkspatch 声明超出 budget 的 offset/size
+    cave_budget = variables.get("cave_total_size", 2048)
+    if not _check_cave_bounds(cave_addr, defn.cave_offset, len(cd),
+                              cave_budget, defn.id, log):
+        return False
+
     ct = cave_addr + defn.cave_offset
     write_pm(h_proc, ct, cd)
     log(f"    Cave 写入: 0x{ct:08X} ({len(cd)} bytes, 模板={defn.cave_template})")
@@ -1175,7 +1199,8 @@ def apply_summon_table(defn: PatchDef, code_buf: bytearray, code_start_addr: int
             log("  [WARN] 无 cave 内存, 跳过多随机注入")
         else:
             all_ok &= _apply_summon_random(defn, summon, code_buf, code_start_addr,
-                                            _hp, cave_addr, _warpc_i, log)
+                                            _hp, cave_addr, _warpc_i, log,
+                                            cave_budget=variables.get("cave_total_size", 2048))
 
     _CloseHandle(_hp)
     return all_ok
@@ -1183,12 +1208,23 @@ def apply_summon_table(defn: PatchDef, code_buf: bytearray, code_start_addr: int
 
 def _apply_summon_random(defn: PatchDef, summon: dict, code_buf: bytearray,
                          code_start_addr: int, h_proc: int, cave_addr: int,
-                         warpc_i_fn, log_func=None) -> bool:
+                         warpc_i_fn, log_func=None,
+                         cave_budget: int = 2048) -> bool:
     """多随机 cave: 读 *_random 列表 -> 90字节候选表 + cave代码 + hooks
     224~231 (entry 0~7, entry_224 cave, hook 0x444C84, 结果->edx)
     222 (entry 8, 合并 cave entry_222, hook 0x444C9C, 结果->[ebp-2])
     251 (entry 9, 合并 cave entry_251, hook 0x444CB3, 结果->[ebp-2])"""
     log = log_func or (lambda x: None)
+
+    # Phase 2: Cave 越界硬校验 — 在分配前一次性检查三块偏移
+    if cave_addr:
+        for off_key, size in [("random_table_offset", 90),
+                              ("random_cave_offset", len(CAVE_SUMMON_RANDOM)),
+                              ("random2_cave_offset", len(CAVE_SUMMON_RANDOM_222_251))]:
+            off = getattr(defn, off_key, 0)
+            if not _check_cave_bounds(cave_addr, off, size, cave_budget,
+                                      f"{defn.id}/{off_key}", log):
+                return False
 
     # 外置 cave 代码支持 (.tkspatch 提供)
     from .tkspatch_loader import _parse_hex_bytes
@@ -1462,7 +1498,8 @@ def apply_drop_probability(defn: PatchDef, code_buf: bytearray, code_start_addr:
 
 def apply_exp_lock(defn: PatchDef, code_buf: bytearray, code_start_addr: int,
                    h_proc: int, cave_addr: int, log_func=None,
-                   config_override: Optional[dict] = None) -> bool:
+                   config_override: Optional[dict] = None,
+                   cave_budget: int = 2048) -> bool:
     log = log_func or (lambda x: None)
 
     if cave_addr == 0:
@@ -1524,6 +1561,10 @@ def apply_exp_lock(defn: PatchDef, code_buf: bytearray, code_start_addr: int,
         cd = bytearray(CAVE_EXP_LOCK)
         mask_off = CAVE_EXP_LOCK_MASK_OFFSET
     cd[mask_off] = mask & 0xFF
+    # Phase 2: Cave 越界硬校验
+    if not _check_cave_bounds(cave_addr, defn.cave_offset, len(cd),
+                              cave_budget, defn.id, log):
+        return True
     ct = cave_addr + defn.cave_offset
     write_pm(h_proc, ct, bytes(cd))
     log(f"    Cave 写入: 0x{ct:08X} ({len(cd)} bytes, mask=0x{mask:02X})")
@@ -2290,7 +2331,8 @@ def apply_config_patches(config: PatchConfig, code_buf: bytearray, code_start_ad
                 _explock_override = config_overrides.get("exp_lock")
             all_ok &= apply_exp_lock(defn, code_buf, code_start_addr,
                                      h_proc, cave_addr, log_func=log,
-                                     config_override=_explock_override)
+                                     config_override=_explock_override,
+                                     cave_budget=variables.get("cave_total_size", 2048))
         elif defn.type == "patch_font_config":
             all_ok &= apply_font_config(defn, code_buf, code_start_addr,
                                          h_proc, log_func=log)
