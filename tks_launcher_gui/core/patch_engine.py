@@ -4,7 +4,7 @@ import importlib.util
 import os
 import struct
 import types
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 from .memory import (
     i32b, i16b, b2i32, b2u16, bhex,
     read_pm, write_pm, vp_ex,
@@ -266,14 +266,196 @@ def _handle_patch_animation_speed(ctx: PatchContext) -> bool:
 
 
 # ============================================================
-# Hook 冲突检测
+# Phase 6: Cave 布局
 # ============================================================
 
-def check_hook_conflict(code_buf: bytearray, off: int) -> bool:
-    """检测 hook 点是否已被其他 MOD 占用
+def _build_cave_layout(config: 'PatchConfig', cave_addr: int,
+                       variables: Dict[str, int], log) -> Optional['CaveLayout']:
+    """在主循环之前一次性为所有需要 cave 的补丁分配偏移。
 
-    若目标位置的第一字节已是 E8(call) 或 E9(jmp)，
-    说明已被其他补丁/MOD hook，存在冲稁。
+    Args:
+        config:      补丁配置
+        cave_addr:   cave 区基址 (0 = 未分配, 跳过)
+        variables:   全局变量 (cave_total_size 等)
+        log:         日志回调
+
+    Returns:
+        CaveLayout 实例 (cave_addr=0 时返回 None)。
+        解析后的偏移存到 defn._resolved_<key>, 供 apply_cave_hook/_apply_summon_random 使用。
+
+    Raises:
+        CaveLayoutError: 硬编码冲突或越界 (仅当严格模式)
+    """
+    if not cave_addr:
+        return None
+    from .cave_layout import CaveLayout, CaveLayoutError
+
+    cave_budget = variables.get("cave_total_size", 2048)
+    layout = CaveLayout(base_addr=cave_addr, budget=cave_budget)
+
+    # 1. 收集每个需要 cave 的补丁所需大小
+    #    cave_hook / patch_exp_lock: 1 个 main 槽位
+    #    patch_summon_table:         3 个槽位 (table + random_cave + random2_cave)
+    for defn in config.patches:
+        try:
+            if defn.type == "cave_hook":
+                # 估算 cave 大小: 优先 _cave_code_bytes, 否则 build_cave_template 估算
+                ext_cave = getattr(defn, '_cave_code_bytes', None)
+                size = len(ext_cave) if ext_cave else 64  # 估算默认值
+                force_off = None if getattr(defn, "autolayout_cave", True) else defn.cave_offset
+                slot = layout.allocate(defn.id, "main", size, force_offset=force_off)
+                defn._resolved_cave_offset = slot.offset
+
+            elif defn.type == "patch_exp_lock":
+                ext_cave = getattr(defn, '_cave_code_bytes', None)
+                size = len(ext_cave) if ext_cave else len(CAVE_EXP_LOCK) if 'CAVE_EXP_LOCK' in dir() else 32
+                force_off = None if getattr(defn, "autolayout_cave", True) else defn.cave_offset
+                slot = layout.allocate(defn.id, "main", size, force_offset=force_off)
+                defn._resolved_cave_offset = slot.offset
+
+            elif defn.type == "patch_summon_table":
+                _autolayout = getattr(defn, "autolayout_cave", True)
+                for purpose, size, off_attr in [
+                    ("random_table", 90, "random_table_offset"),
+                    ("random_cave",  77, "random_cave_offset"),
+                    ("random2_cave", 63, "random2_cave_offset"),
+                ]:
+                    force_off = None if _autolayout else getattr(defn, off_attr, 0)
+                    slot = layout.allocate(defn.id, purpose, size, force_offset=force_off)
+                    setattr(defn, f"_resolved_{off_attr}", slot.offset)
+        except CaveLayoutError as e:
+            log(f"  [CAVE-LAYOUT-ERR] {e}")
+            # 不抛异常, 而是标记该补丁的 _resolved 字段为 None, 让 apply_* 走默认路径
+            # 这样保证向后兼容: 硬编码模式下若冲突, 启动器仍尝试运行 (行为退化为覆盖)
+
+    # 启动器日志: 显示布局摘要
+    log(f"  [CAVE-LAYOUT] {len(layout.slots)} 槽位, "
+        f"已用 {layout.used_bytes()}/{layout.budget} "
+        f"({100 * layout.used_bytes() / max(1, layout.budget):.1f}%)")
+    return layout
+
+
+# ============================================================
+# Hook 冲突检测 (Phase 7)
+# ============================================================
+#
+# Phase 7 引入:
+# - detect_hook_type: 多模式识别 (call/jmp/jcc/push_imm32/jmp_indirect)
+# - HookTable: 跟踪启动器内部多个 cave_hook 之间的占用关系
+# - check_hook_conflict_v2: 联合识别 + 启动器内部 hook_table 查询
+# - 原 check_hook_conflict 保留, 仅作为简化版 fallback (返回 bool, 不带 owner 信息)
+
+# x86 Hook 类型识别 (基于首字节 + 必要的后续字节)
+# 参考 IA-32 手册 Vol.2B Table A-2 (One-byte Opcode Map)
+_HOOK_TYPE_TABLE: Dict[int, Tuple[str, int]] = {
+    0xE8: ("call_rel32", 5),       # CALL rel32
+    0xE9: ("jmp_rel32", 5),        # JMP rel32
+    0xEB: ("jmp_rel8", 2),         # JMP rel8
+    0x68: ("push_imm32", 5),       # PUSH imm32 (常搭配 C3 = ret 形成 hook stub)
+}
+
+
+def detect_hook_type(code_buf: bytearray, off: int) -> Tuple[str, int]:
+    """识别 hook 点位置 (off) 的 x86 指令类型。
+
+    返回 (类型名, 占用字节数):
+    - ("call_rel32", 5)  E8 xx xx xx xx
+    - ("jmp_rel32", 5)   E9 xx xx xx xx
+    - ("jmp_rel8", 2)    EB xx
+    - ("push_imm32", 5)  68 xx xx xx xx
+    - ("jmp_indirect", 6)  FF 25 xx xx xx xx
+    - ("jcc_rel32", 6)   0F 8x xx xx xx xx (Jcc long form)
+    - ("none", 0)        非 hook 指令 (普通代码)
+    - ("oob", 0)         越界
+
+    Args:
+        code_buf: 代码段缓冲
+        off: hook 点在 code_buf 中的偏移
+    """
+    if off < 0 or off >= len(code_buf):
+        return ("oob", 0)
+    b0 = code_buf[off]
+    if b0 in _HOOK_TYPE_TABLE:
+        return _HOOK_TYPE_TABLE[b0]
+    # FF /4 = JMP [mem32], 即 jmp_indirect
+    if b0 == 0xFF and off + 1 < len(code_buf) and code_buf[off + 1] == 0x25:
+        return ("jmp_indirect", 6)
+    # 0F 80~0F 8F = Jcc rel32 (JE/JNE/JB/JAE/JBE/JA/JS/JNS/JP/JNP/JL/JGE/JLE/JG)
+    if b0 == 0x0F and off + 1 < len(code_buf) and 0x80 <= code_buf[off + 1] <= 0x8F:
+        return ("jcc_rel32", 6)
+    return ("none", 0)
+
+
+class HookTable:
+    """启动器内部 hook 占用跟踪表。
+
+    在主循环中, 每个 cave_hook 写码前会向 HookTable 注册其 hook 点位置,
+    后续 cave_hook 检查冲突时, 优先查 HookTable (启动器内部冲突),
+    再用 detect_hook_type 查外部 MOD 的 hook 指令。
+
+    用途: 防止两个 cave_hook 写到同一位置 (原代码无此检查, 静默覆盖)。
+    """
+
+    def __init__(self):
+        self._table: Dict[int, str] = {}  # off -> owner_patch_id
+
+    def register(self, off: int, owner_id: str) -> None:
+        """注册一个 hook 点占用。重复注册不抛异常 (覆盖)。"""
+        self._table[off] = owner_id
+
+    def owner_at(self, off: int) -> Optional[str]:
+        """返回 off 位置的占用者 (启动器内 cave_hook id), 或 None。"""
+        return self._table.get(off)
+
+    def __len__(self) -> int:
+        return len(self._table)
+
+    def __contains__(self, off: int) -> bool:
+        return off in self._table
+
+
+def check_hook_conflict_v2(code_buf: bytearray, off: int,
+                         hook_table: Optional['HookTable'] = None
+                         ) -> Tuple[bool, str]:
+    """检测 hook 点是否已被占用 (Phase 7: v2)。
+
+    检测顺序:
+    1. HookTable 查询 (启动器内部)
+    2. detect_hook_type 外部 MOD 检测 (call_rel32 / jmp_rel32)
+
+    Args:
+        code_buf:   代码段缓冲
+        off:        hook 点偏移
+        hook_table: 启动器内部 hook 占用表 (可为 None)
+
+    Returns:
+        (是否冲突, 占用者 ID 或原因)
+        - (True, "<patch_id>")     启动器内部冲突
+        - (True, "external_call_or_jmp")  外部 MOD 占用 (call/jmp)
+        - (False, "none")          无冲突
+        - (False, "oob")           越界
+    """
+    # 1. HookTable (启动器内部)
+    if hook_table is not None:
+        owner = hook_table.owner_at(off)
+        if owner is not None:
+            return (True, owner)
+
+    # 2. 外部 MOD 检测
+    ht, _ = detect_hook_type(code_buf, off)
+    if ht in ("call_rel32", "jmp_rel32"):
+        return (True, "external_call_or_jmp")
+    if ht == "oob":
+        return (False, "oob")
+    return (False, "none")
+
+
+# 向后兼容: 旧 API 返回 bool, 简化版 fallback
+def check_hook_conflict(code_buf: bytearray, off: int) -> bool:
+    """[旧 API] 检测 hook 点是否已被其他 MOD 占用 (call/jmp 首字节)。
+
+    Phase 7 保留此函数以兼容 Phase 6 之前的调用代码。
+    推荐使用 check_hook_conflict_v2 (返回 (conflict, owner))。
     """
     if off < 0 or off >= len(code_buf):
         return False
@@ -1185,13 +1367,16 @@ def apply_cave_hook(defn: PatchDef, hits: List[int], code_buf: bytearray,
     if cd is None:
         return False
 
+    # Phase 6: 优先使用 CaveLayout 解析的偏移; 旧模式回退到 defn.cave_offset
+    cave_offset = getattr(defn, "_resolved_cave_offset", defn.cave_offset)
+
     # Phase 2: Cave 越界硬校验 — 防止 .tkspatch 声明超出 budget 的 offset/size
     cave_budget = variables.get("cave_total_size", 2048)
-    if not _check_cave_bounds(cave_addr, defn.cave_offset, len(cd),
+    if not _check_cave_bounds(cave_addr, cave_offset, len(cd),
                               cave_budget, defn.id, log):
         return False
 
-    ct = cave_addr + defn.cave_offset
+    ct = cave_addr + cave_offset
     write_pm(h_proc, ct, cd)
     log(f"    Cave 写入: 0x{ct:08X} ({len(cd)} bytes, 模板={defn.cave_template})")
 
@@ -1366,12 +1551,15 @@ def _apply_summon_random(defn: PatchDef, summon: dict, code_buf: bytearray,
     251 (entry 9, 合并 cave entry_251, hook 0x444CB3, 结果->[ebp-2])"""
     log = log_func or (lambda x: None)
 
+    # Phase 6: 优先使用 CaveLayout 解析的偏移; 旧模式回退到 defn.<key>
+    _ro = lambda k: getattr(defn, f"_resolved_{k}", getattr(defn, k, 0))
+
     # Phase 2: Cave 越界硬校验 — 在分配前一次性检查三块偏移
     if cave_addr:
         for off_key, size in [("random_table_offset", 90),
                               ("random_cave_offset", len(CAVE_SUMMON_RANDOM)),
                               ("random2_cave_offset", len(CAVE_SUMMON_RANDOM_222_251))]:
-            off = getattr(defn, off_key, 0)
+            off = _ro(off_key)
             if not _check_cave_bounds(cave_addr, off, size, cave_budget,
                                       f"{defn.id}/{off_key}", log):
                 return False
@@ -1428,8 +1616,8 @@ def _apply_summon_random(defn: PatchDef, summon: dict, code_buf: bytearray,
         log("    -> 无 *_random 配置, 跳过多随机 cave")
         return True
 
-    # 4b. 写 90 字节候选表
-    table_abs = cave_addr + defn.random_table_offset
+    # 4b. 写 90 字节候选表 (Phase 6: 优先 _resolved_random_table_offset)
+    table_abs = cave_addr + _ro("random_table_offset")
     if write_pm(h_proc, table_abs, bytes(table)) != len(table):
         log(f"  [FAIL] 候选表写入失败 @0x{table_abs:08X}")
         return False
@@ -1440,14 +1628,14 @@ def _apply_summon_random(defn: PatchDef, summon: dict, code_buf: bytearray,
     # 4c. 224~231: entry_224 cave + hook 0x444C84 (结果->edx, 由原 mov[ebp-2],dx 写回)
     if has_224:
         all_ok &= _write_cave_and_hook(
-            _cave_summon_random, defn.random_cave_offset, 0,           # cave 代码, 入口偏移 0
+            _cave_summon_random, _ro("random_cave_offset"), 0,           # cave 代码, 入口偏移 0
             defn.random_hook_pattern, defn.random_hook_size, defn.random_hook_expect_count,
             table_abs, code_buf, code_start_addr, h_proc, cave_addr,
             warpc_i_fn, log, tag="224~231")
 
     # 4d. 222/251: 合并 cave (entry_222+entry_251+shared) + 各 hook
     if extra_hooks_to_apply:
-        cave2_abs = cave_addr + defn.random2_cave_offset
+        cave2_abs = cave_addr + _ro("random2_cave_offset")
         cave2_code = bytearray(_cave_summon_222_251)
         if cave2_code.count(SUMMON_RANDOM_PLACEHOLDER.to_bytes(4, 'little')) != 1:
             log(f"  [ERROR] 222/251 cave 占位符次数异常, 中止")
@@ -1459,7 +1647,7 @@ def _apply_summon_random(defn: PatchDef, summon: dict, code_buf: bytearray,
         log(f"    [OK] 222/251 cave @0x{cave2_abs:08X} ({len(cave2_code)} 字节)")
         for hk in extra_hooks_to_apply:
             all_ok &= _write_cave_and_hook(
-                None, defn.random2_cave_offset, hk.get("entry_offset", 0),  # 复用已写 cave, 仅 hook
+                None, _ro("random2_cave_offset"), hk.get("entry_offset", 0),  # 复用已写 cave, 仅 hook
                 hk.get("pattern", ""), hk.get("hook_size", 0), hk.get("expect_count", 0),
                 table_abs, code_buf, code_start_addr, h_proc, cave_addr,
                 warpc_i_fn, log, tag=hk.get("json_key", ""),
@@ -1711,11 +1899,13 @@ def apply_exp_lock(defn: PatchDef, code_buf: bytearray, code_start_addr: int,
         cd = bytearray(CAVE_EXP_LOCK)
         mask_off = CAVE_EXP_LOCK_MASK_OFFSET
     cd[mask_off] = mask & 0xFF
+    # Phase 6: 优先使用 CaveLayout 解析的偏移
+    cave_offset = getattr(defn, "_resolved_cave_offset", defn.cave_offset)
     # Phase 2: Cave 越界硬校验
-    if not _check_cave_bounds(cave_addr, defn.cave_offset, len(cd),
+    if not _check_cave_bounds(cave_addr, cave_offset, len(cd),
                               cave_budget, defn.id, log):
         return True
-    ct = cave_addr + defn.cave_offset
+    ct = cave_addr + cave_offset
     write_pm(h_proc, ct, bytes(cd))
     log(f"    Cave 写入: 0x{ct:08X} ({len(cd)} bytes, mask=0x{mask:02X})")
 
@@ -2373,6 +2563,12 @@ def apply_config_patches(config: PatchConfig, code_buf: bytearray, code_start_ad
         _profile_skip = exe_profile.skip_patches or set()
         _profile_name = exe_profile.name
 
+    # ── Phase 6: Cave 布局 (在主循环之前一次性分配所有 cave 偏移) ──
+    cave_layout = _build_cave_layout(config, cave_addr, variables, log)
+
+    # ── Phase 7: Hook 占用跟踪表 (启动器内部多个 cave_hook 之间) ──
+    hook_table = HookTable()
+
     for defn in config.patches:
         tag = f"[{defn.id}]"
         log(f"\n  {tag}: {defn.desc}")
@@ -2421,16 +2617,25 @@ def apply_config_patches(config: PatchConfig, code_buf: bytearray, code_start_ad
                 else:
                     log(f"  {tag}: Hook 模式匹配 {len(hh)} 处 (预期 {defn.hook_expect_count}), 跳过")
                     continue
-            # Hook 冲突检测: 检查 hook 点是否已被占用
-            if hh and check_hook_conflict(code_buf, hh[0] + defn.hook_offset):
+            # Hook 冲突检测 (Phase 7 v2): 同时检查启动器内部 + 外部 MOD
+            hook_off_abs = hh[0] + defn.hook_offset
+            conflicted, owner = check_hook_conflict_v2(code_buf, hook_off_abs, hook_table)
+            if conflicted:
                 action = defn.hook_conflict_action
+                if owner == "external_call_or_jmp":
+                    ht, _sz = detect_hook_type(code_buf, hook_off_abs)
+                    log(f"  {tag}: Hook 点已被外部 MOD 占用 ({ht}), 启动器按 {action} 处理")
+                else:
+                    log(f"  {tag}: Hook 点已被启动器内部 {owner} 占用, 启动器按 {action} 处理")
                 if action == "override":
-                    log(f"  {tag}: Hook 点已被占用, 启动器优先级最高 → 覆盖")
+                    log(f"  {tag}: 启动器优先级最高 → 覆盖")
                 elif action == "skip":
-                    log(f"  {tag}: Hook 点已被占用 (E8/E9 开头), 跳过")
+                    log(f"  {tag}: 配置跳过此 hook")
                     continue
                 else:
-                    log(f"  {tag}: [WARN] Hook 点已被占用, 但仍尝试应用")
+                    log(f"  {tag}: [WARN] 未知 action={action}, 仍尝试应用")
+            # 注册 hook 点到 HookTable (即使冲突也注册, override 后以本补丁为准)
+            hook_table.register(hook_off_abs, defn.id)
             defn._pre_scanned_hits = hh
             pch.append(defn)
             continue

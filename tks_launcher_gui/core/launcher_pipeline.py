@@ -226,8 +226,10 @@ class PatcherPipeline:
         self.result.code_start = code_start
         self.result.code_size = len(code_buf)
 
-        # ── EXE 版本指纹识别 ──
-        exe_profile = detect_exe_profile(self.cfg.exe_path, base_addr, log_func=self.log)
+        # ── EXE 版本指纹识别 (Phase 13: 优先加载持久化缓存) ──
+        from .scanner import ExeProfileCache
+        exe_profile = ExeProfileCache.load_or_detect(
+            self.cfg.exe_path, base_addr, log_func=self.log)
         self.result.profile_name = exe_profile.name
         self.result.profile_display = exe_profile.display_name
         if exe_profile.name != "original":

@@ -51,6 +51,11 @@ class PatchDef:
     random2_hooks: List[Dict] = field(default_factory=list)  # [{pattern,hook_size,expect_count,entry_offset,json_key,entry_idx}]
     _pre_scanned_hits: List[int] = field(default_factory=list, repr=False)
 
+    # Phase 6: Cave 布局模式
+    # True (默认): 启动器自动分配 cave 偏移, .tkspatch 无需声明
+    # False:        沿用 .tkspatch 硬编码的 cave_offset / random_*_offset (旧模式)
+    autolayout_cave: bool = True
+
 @dataclass
 class PatchConfig:
     variables: Dict[str, int] = field(default_factory=dict)
@@ -128,72 +133,15 @@ def load_config(path: str, log_func=None) -> Optional[PatchConfig]:
         return int(val)
 
     if "patches" in raw:
-        for pr in raw["patches"]:
-            d = PatchDef()
-            d.type = pr.get("type", "")
-            d.id = pr.get("id", "")
-            d.name = pr.get("name", "")
-            d.desc = pr.get("desc", "")
-            d.pattern = pr.get("pattern", "")
-            d.value_offset = pr.get("value_offset", 0)
-            d.expect_value = _parse_maybe_hex(pr.get("expect_value", 0))
-            d.new_value_expr = str(pr.get("new_value", ""))
-            d.expect_count = pr.get("expect_count", 0)
-            d.hook_size = pr.get("hook_size", 0)
-            d.hook_offset = pr.get("hook_offset", 0)
-            d.cave_offset = pr.get("cave_offset", 0)
-            d.cave_template = pr.get("cave_template", "")
-            d.hook_verify_pattern = pr.get("hook_verify", "")
-            d.hook_pattern = pr.get("hook_pattern", "")
-            d.hook_expect_count = pr.get("hook_expect_count", 0)
-            d.value_scan = pr.get("value_scan", False)
-            d.optional = pr.get("optional", False)
-            d.default_checked = pr.get("default_checked", True)
-            # 第三方 MOD 兼容字段
-            d.profile_rules = dict(pr.get("profile_rules", {}))
-            d.hook_conflict_action = pr.get("hook_conflict_action", "override")
-            d.exclude_extra_sections = pr.get("exclude_extra_sections", True)
-            d.fallback_rva = _parse_maybe_hex(pr.get("fallback_rva", 0))
-            # patch_summon_table 字段
-            jf = pr.get("json_file", "")
-            if jf and not os.path.isabs(jf):
-                jf = resolve_config_path(path, jf)
-            d.json_file = jf
-            sf = pr.get("script_file", "")
-            if sf and not os.path.isabs(sf):
-                sf = resolve_config_path(path, sf)
-            d.script_path = sf
-            d.script_source = pr.get("script_source", "")
-            d.data_rva = _parse_maybe_hex(pr.get("data_rva", 0))
-            d.data_keys = list(pr.get("data_keys", []))
-            d.code_addrs = list(pr.get("code_addrs", []))
-            d.random_hook_pattern = pr.get("random_hook_pattern", "")
-            d.random_hook_size = pr.get("random_hook_size", 0)
-            d.random_hook_expect_count = pr.get("random_hook_expect_count", 0)
-            d.random_cave_offset = pr.get("random_cave_offset", 0)
-            d.random_table_offset = pr.get("random_table_offset", 0)
-            d.random2_cave_offset = pr.get("random2_cave_offset", 0)
-            d.random2_hooks = list(pr.get("random2_hooks", []))
-            if "replace" in pr:
-                for rk, rv in pr["replace"].items():
-                    d.replace[rk] = _parse_replace_val(rv)
-            if "patterns" in pr:
-                for pe in pr["patterns"]:
-                    prepl = {}
-                    if "replace" in pe:
-                        for rk, rv in pe["replace"].items():
-                            prepl[rk] = _parse_replace_val(rv)
-                    entry = {
-                        "pattern": pe.get("pattern", ""),
-                        "expect_count": pe.get("expect_count", 0),
-                        "replace": prepl,
-                    }
-                    if "value_offset" in pe:
-                        entry["value_offset"] = int(pe["value_offset"])
-                    if "expect_value" in pe:
-                        entry["expect_value"] = _parse_maybe_hex(pe["expect_value"])
-                    d.patterns.append(entry)
-            config.patches.append(d)
+        # Phase 8: 委托给 parse_patch_dict 统一字段映射
+        from .tkspatch_loader import parse_patch_dict
+        # 兼容: launcher_config.json 等可能用 patches.enabled 列表式而非数组
+        # 若 patches 是 list, 才是真正的补丁定义数组
+        if isinstance(raw["patches"], list):
+            for pr in raw["patches"]:
+                if isinstance(pr, dict):
+                    d = parse_patch_dict(pr, path, script_resolve_mode="config_path")
+                    config.patches.append(d)
 
     log(f"  已加载配置: {len(config.variables)} 个变量, {len(config.patches)} 个补丁")
     return config
