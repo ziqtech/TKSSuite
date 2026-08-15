@@ -1,0 +1,10 @@
+# Phase 13: ExeProfile 持久化缓存目录
+launcher_cache/
+
+# Phase 11: 模式扫描结果 LRU 磁盘缓存目录
+.pattern_cache/
+
+# 测试产物 (临时)
+_test_*.py
+_check_*.py
+_extracted/
