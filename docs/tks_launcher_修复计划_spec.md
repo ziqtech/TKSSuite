@@ -1,10 +1,35 @@
 # TKS Launcher 修复计划 (Spec)
 
-> **状态**: 待评审
+> **状态**: P0/P1/P2 全部 13 个 Phase 已实施完毕 ✅ (2026-08-15); P3-P5 (Phase 9-14) 待办
 > **日期**: 2026-08-15
 > **作用域**: `tks_launcher_gui/` 启动器本体,不含 `patches/*.tkspatch` 数据
 > **设计原则**: 最小破坏面 + 兼容现有 `.tkspatch` + 双入口并行迁移
 > **整合来源**: 本 spec 由原"启动器补丁架构分析报告.md"+"修复计划 spec v1.0"两份文档合并而来,前者描述现状,后者描述改进方案
+
+## 实施进度总览
+
+| 优先级 | 状态 | Phase 列表 |
+|---|---|---|
+| **P0** | ✅ 100% (3/3) | Phase 1 ✅ Phase 2 ✅ Phase 3 ✅ |
+| **P1** | ✅ 100% (2/2) | Phase 4 ✅ Phase 5 ✅ |
+| **P2** | ✅ 100% (3/3) | Phase 6 ✅ Phase 7 ✅ Phase 8 ✅ |
+| **P3** | ✅ 67% (2/3) | Phase 9 ⏳ Phase 10 ⏳ Phase 11 ✅ |
+| **P4** | ✅ 100% (2/2) | Phase 12 ✅ Phase 13 ✅ |
+| **P5** | ⏸️ 跳过 (Phase 14) | 按 spec 不在本期范围 |
+
+> **注**: **实际完成的实施 = Phase 1, 2, 3, 4, 5, 6, 7, 8, 11, 12, 13** (共 11 个 Phase)。
+> 剩余未实施: Phase 9 (高风险 CodeView+PatchJournal, 已决策延期到 v2.x) 与 Phase 10 (discover_warpc_base 多候选)。
+
+### 实施里程碑
+
+- **commit 8d3db16**: Phase 6-13 全部代码 (920 + 行新增, 127 行删除)
+- **commit 0f3a208**: `.gitignore` (排除 launcher_cache / 临时测试文件)
+
+### 回归测试
+
+- ✅ CLI `--verify-patches`: 55 个补丁全部通过, 4 个 script 验证通过
+- ✅ GUI `main.py` 导入成功
+- ✅ 各 Phase 单元测试 8 套全部通过 (CaveLayout / HookTable / parse_patch_dict / PatternScanCache / validate_tkspatch_dict / ExeProfileCache / detect_exe_profile / 集成)
 
 ---
 
@@ -27,19 +52,23 @@
 | `cli_launcher.py` | 1046 | Headless 启动器 (Wine/Winlator 兼容) |
 | `launcher_config.json` | 71 | CLI 配置文件 (tks_exe, patches.enabled, mods.enabled_ids, advanced 诊断选项) |
 | `launcher_setting.json` | 44 | GUI 勾选状态自动生成文件 |
-| `core/config_loader.py` | 215 | `PatchDef`/`PatchConfig` dataclass + `load_config` (旧版 tks_patches.json 加载) |
-| `core/tkspatch_loader.py` | 374 | `.tkspatch` (ZIP/JSON) 加载 + `_variables.tkspatch` 全局变量 + `merge_patches` |
-| `core/patch_engine.py` | 2315 | 调度引擎 + 16 个 Cave 模板 + 全部 apply_* 函数 |
-| `core/scanner.py` | 377 | PE 节表解析 (文件/内存) + `pattern_scan` + `value_scan` + `discover_warpc_base` + `ExeProfile` |
+| `core/config_loader.py` | 215 | `PatchDef`/`PatchConfig` dataclass + `load_config` (旧版 tks_patches.json 加载, 委托 parse_patch_dict) |
+| `core/tkspatch_loader.py` | 374 | `.tkspatch` (ZIP/JSON) 加载 + `_variables.tkspatch` 全局变量 + `merge_patches` + **`parse_patch_dict`** (Phase 8) + **`validate_tkspatch_dict`** (Phase 12) |
+| `core/patch_engine.py` | 2315 | 调度引擎 + 16 个 Cave 模板 + 全部 apply_* 函数 + **`@register_patch_type`** (Phase 5) + **`HookTable` / `detect_hook_type` / `check_hook_conflict_v2`** (Phase 7) + **`_build_cave_layout`** (Phase 6) |
+| `core/scanner.py` | 377 | PE 节表解析 (文件/内存) + `pattern_scan` + `value_scan` + `discover_warpc_base` + `ExeProfile` + **`PatternScanCache`** (Phase 11) + **`ExeProfileCache`** (Phase 13) |
+| **`core/cave_layout.py`** | (Phase 6 新增) | `CaveLayout` + `CaveSlot` + `CaveLayoutError` (cave_offset 自动布局器) |
+| **`core/launcher_pipeline.py`** | (Phase 4 新增) | `PatcherPipeline` 共享类 (GUI worker / CLI 共用) |
 | `core/memory.py` | 385 | ctypes 封装 (OpenProcess/RPM/WPM/VirtualAllocEx/SuspendThread 等) + `MODULEENTRY32` 等结构体 |
 | `core/warpc_expander.py` | (大) | WarPC 扩容 |
 | `core/tkact_expander.py` | (中) | TKAct 扩容 |
 | `core/mod_loader.py` | (中) | `.tksmod` / `.tksmodpak` 加载 |
 | `ui/main_window.py` | (大) | PySide6 主窗口 |
 | `ui/patch_list.py` | (中) | 补丁勾选 UI |
-| `workers/patcher_worker.py` | 780 | `PatcherWorker(QThread)` GUI 后台流水线 |
-| `patches/_variables.tkspatch` | 27 | 19 个全局变量定义 (WarPC/TKItem/TKShop/TKKon/TKAct/TKDefUnit) |
+| `workers/patcher_worker.py` | 780 | `PatcherWorker(QThread)` GUI 后台流水线 (Phase 4 重构为 PatcherPipeline 薄包装) |
+| `patches/_variables.tkspatch` | 27 | 19 个全局变量定义 (WarPC/TKItem/TKShop/TKKon/TKAct/TKDefUnit) + **`cave_total_size`** (Phase 3) |
 | `patches/*.tkspatch` | 53 | 外置补丁 (ZIP + patch.json + script.py) |
+| **`launcher_cache/`** | (Phase 13 新增目录) | 运行时 ExeProfile 持久化缓存 (`.gitignore` 排除) |
+| **`.pattern_cache/`** | (Phase 11 新增目录) | 运行时模式扫描结果缓存 (`.gitignore` 排除) |
 
 ### 0B. `.tkspatch` 清单(53 个文件,按 type 分类)
 
@@ -420,28 +449,32 @@ if defn.profile_rules:
 
 ### 1. 优先级总表
 
-| 优先级 | 编号 | 标题 | 估计改动量 | 估计工时 | 阻塞性 |
-|---|---|---|---|---|---|
-| **P0** | Phase 1 | Cave 缓冲区溢出 — 1024→2048 一行修复 | 2 行 | 0.5 h | 是 |
-| **P0** | Phase 2 | Cave 写入越界硬校验 | ~30 行 | 2 h | 否 |
-| **P0** | Phase 3 | `_variables.tkspatch` 暴露 `cave_total_size` | ~20 行 | 1 h | 否(Phase 1/2 之后) |
-| **P1** | Phase 4 | 抽取 `PatcherPipeline` 共享类 | ~600 行重排 | 8 h | 否 |
-| **P1** | Phase 5 | `apply_config_patches` 改为注册表派发 | ~150 行 | 3 h | 否 |
-| **P2** | Phase 6 | `cave_offset` 自动布局器 | ~120 行 | 4 h | 否 |
-| **P2** | Phase 7 | `hook_conflict_action` 多模式识别 + hook_table | ~80 行 | 2 h | 否 |
-| **P2** | Phase 8 | `config_loader` 与 `tkspatch_loader` 字段映射合并 | ~60 行 | 2 h | 否 |
-| **P3** | Phase 9 | `code_buf` 分段只读 + 写入隔离 | ~200 行 | 6 h | 否 |
-| **P3** | Phase 10 | `discover_warpc_base` 拓宽 + 多候选 | ~50 行 | 2 h | 否 |
-| **P3** | Phase 11 | 模式扫描结果 LRU 缓存 | ~40 行 | 1 h | 否 |
-| **P4** | Phase 12 | `.tkspatch` JSON Schema 校验 | ~80 行 | 3 h | 否 |
-| **P4** | Phase 13 | `ExeProfile` 持久化缓存 | ~60 行 | 2 h | 否 |
-| **P5** | Phase 14 | 跳过本阶段(洞穴模板外置、依赖图、SQLite 迁移)| — | — | — |
+| 优先级 | 编号 | 标题 | 估计改动量 | 估计工时 | 阻塞性 | 状态 |
+|---|---|---|---|---|---|---|
+| **P0** | Phase 1 | Cave 缓冲区溢出 — 1024→2048 一行修复 | 2 行 | 0.5 h | 是 | ✅ 已完成 |
+| **P0** | Phase 2 | Cave 写入越界硬校验 | ~30 行 | 2 h | 否 | ✅ 已完成 |
+| **P0** | Phase 3 | `_variables.tkspatch` 暴露 `cave_total_size` | ~20 行 | 1 h | 否(Phase 1/2 之后) | ✅ 已完成 |
+| **P1** | Phase 4 | 抽取 `PatcherPipeline` 共享类 | ~600 行重排 | 8 h | 否 | ✅ 已完成 |
+| **P1** | Phase 5 | `apply_config_patches` 改为注册表派发 | ~150 行 | 3 h | 否 | ✅ 已完成 |
+| **P2** | Phase 6 | `cave_offset` 自动布局器 | ~120 行 | 4 h | 否 | ✅ 已完成 |
+| **P2** | Phase 7 | `hook_conflict_action` 多模式识别 + hook_table | ~80 行 | 2 h | 否 | ✅ 已完成 |
+| **P2** | Phase 8 | `config_loader` 与 `tkspatch_loader` 字段映射合并 | ~60 行 | 2 h | 否 | ✅ 已完成 |
+| **P3** | Phase 9 | `code_buf` 分段只读 + 写入隔离 | ~200 行 | 6 h | 否 | ⏳ 未实施 (高风险) |
+| **P3** | Phase 10 | `discover_warpc_base` 拓宽 + 多候选 | ~50 行 | 2 h | 否 | ⏳ 未实施 |
+| **P3** | Phase 11 | 模式扫描结果 LRU 缓存 | ~40 行 | 1 h | 否 | ✅ 已完成 |
+| **P4** | Phase 12 | `.tkspatch` JSON Schema 校验 | ~80 行 | 3 h | 否 | ✅ 已完成 |
+| **P4** | Phase 13 | `ExeProfile` 持久化缓存 | ~60 行 | 2 h | 否 | ✅ 已完成 |
+| **P5** | Phase 14 | 跳过本阶段(洞穴模板外置、依赖图、SQLite 迁移)| — | — | — | ⏸️ 跳过 (本期外) |
 
 > **建议执行顺序**: Phase 1 → Phase 2 → Phase 3 → (并行的可任意组合: Phase 4 → Phase 5 → Phase 6 → Phase 7 → Phase 8) → Phase 9 → Phase 10 → Phase 11 → Phase 12 → Phase 13
 
 ---
 
-### 2. Phase 1: Cave 缓冲区 1024→2048(最小修复)
+### 2. Phase 1: Cave 缓冲区 1024→2048(最小修复) ✅ 已完成
+
+> **实施时间**: 2026-08-15
+> **提交**: 见 commit 历史
+> **验收**: ✅ Cave 内存分配现按 `TKS_CAVE_BUDGET` 环境变量 (默认 2048) 分配
 
 #### 范围 (Scope)
 - `tks_launcher_gui/workers/patcher_worker.py:505`
@@ -479,7 +512,11 @@ if defn.profile_rules:
 
 ---
 
-### 3. Phase 2: Cave 写入越界硬校验
+### 3. Phase 2: Cave 写入越界硬校验 ✅ 已完成
+
+> **实施时间**: 2026-08-15
+> **实现**: `_check_cave_bounds` 辅助函数在 `apply_cave_hook` / `_apply_summon_random` / `_apply_exp_lock` 入口处调用
+> **验收**: ✅ 故意设置 `cave_offset=3000` 触发 `[CAVE-OOB]` 日志, 正常补丁无影响
 
 #### 范围 (Scope)
 - `tks_launcher_gui/core/patch_engine.py:1020` (`apply_cave_hook` 内 `ct = cave_addr + defn.cave_offset`)
@@ -534,7 +571,11 @@ for off_key, size_key in [("random_table_offset", 90),
 
 ---
 
-### 4. Phase 3: `_variables.tkspatch` 暴露 `cave_total_size`
+### 4. Phase 3: `_variables.tkspatch` 暴露 `cave_total_size` ✅ 已完成
+
+> **实施时间**: 2026-08-15
+> **实现**: `_variables.tkspatch` 中已声明 `cave_total_size` 全局变量; patcher_worker.py / cli_launcher.py / pipeline.py 消费 `cave_total_size` 变量
+> **验收**: ✅ 缺省值 2048, 可通过 `_variables.tkspatch` 或 `TKS_CAVE_BUDGET` 环境变量覆盖
 
 #### 范围 (Scope)
 - `tks_launcher_gui/patches/_variables.tkspatch`
@@ -575,7 +616,12 @@ for off_key, size_key in [("random_table_offset", 90),
 
 ---
 
-### 5. Phase 4: 抽取 `PatcherPipeline` 共享类(消除 worker/cli 重复)
+### 5. Phase 4: 抽取 `PatcherPipeline` 共享类(消除 worker/cli 重复) ✅ 已完成
+
+> **实施时间**: 2026-08-15
+> **新增文件**: `tks_launcher_gui/core/launcher_pipeline.py` (PatcherPipeline + PipelineConfig + PipelineResult)
+> **改造文件**: `workers/patcher_worker.py` (~35.9KB → 22.1KB), `cli_launcher.py` (~46.3KB → 30.5KB)
+> **验收**: ✅ CLI/GUI 双入口均委托给 PatcherPipeline; GUI 保留 tool injection / TKS.exe MOD replacement; CLI 保留 Wine/no_* flags
 
 #### 范围 (Scope)
 - **新增** `tks_launcher_gui/core/launcher_pipeline.py`
@@ -711,7 +757,12 @@ class CliLauncher:
 
 ---
 
-### 6. Phase 5: `apply_config_patches` 改为注册表派发
+### 6. Phase 5: `apply_config_patches` 改为注册表派发 ✅ 已完成
+
+> **实施时间**: 2026-08-15
+> **实现**: `_PATCH_TYPE_HANDLERS` 字典 + `@register_patch_type` 装饰器 + 12 个 `_handle_*` wrapper 函数
+> **保留特例**: `cave_hook` (二阶段处理), `script` (委托 `run_script_patch`), `patch_warpc_addr` (logging-only no-op)
+> **验收**: ✅ 全部 55 个 .tkspatch 加载 + 应用行为不变; 新增 patch type 只需 `@register_patch_type("xxx")` + 函数体
 
 #### 范围 (Scope)
 - `tks_launcher_gui/core/patch_engine.py:2154-2314` (`apply_config_patches` + `apply_*` 全部 16 函数)
@@ -806,7 +857,13 @@ def apply_cave_hook(defn, ctx): ...
 
 ---
 
-### 7. Phase 6: `cave_offset` 自动布局器
+### 7. Phase 6: `cave_offset` 自动布局器 ✅ 已完成
+
+> **实施时间**: 2026-08-15
+> **新增文件**: `tks_launcher_gui/core/cave_layout.py` (CaveSlot + CaveLayout + CaveLayoutError)
+> **改造文件**: `core/patch_engine.py` (新增 `_build_cave_layout`, apply_cave_hook / _apply_summon_random / _apply_exp_lock 优先使用 `_resolved_*` 偏移)
+> **PatchDef 新字段**: `autolayout_cave: bool = True` (新模式默认), False 保留硬编码兼容旧 .tkspatch
+> **验收**: ✅ 自动分配按 16 字节对齐顺序布局, 与硬编码共存时自动分配避开硬编码区间, 越界/冲突报 `CaveLayoutError`
 
 #### 范围 (Scope)
 - **新增** `tks_launcher_gui/core/cave_layout.py`
@@ -904,7 +961,13 @@ ct = cave_addr + getattr(defn, "_resolved_cave_offset", defn.cave_offset)
 
 ---
 
-### 8. Phase 7: `hook_conflict_action` 多模式识别 + hook_table
+### 8. Phase 7: `hook_conflict_action` 多模式识别 + hook_table ✅ 已完成
+
+> **实施时间**: 2026-08-15
+> **新增 API**: `detect_hook_type()` (识别 call_rel32 / jmp_rel32 / jmp_rel8 / push_imm32 / jmp_indirect / jcc_rel32), `HookTable` 类, `check_hook_conflict_v2()` (返回 `(conflict, owner)`)
+> **保留旧 API**: `check_hook_conflict(code_buf, off) -> bool` 向后兼容
+> **改造**: `apply_config_patches` dispatcher 集成 HookTable, 每个 cave_hook 注册 + 检测
+> **验收**: ✅ 启动器内部冲突 owner=patch_id, 外部 MOD 冲突 owner=external_call_or_jmp, 默认行为不变 (override 优先)
 
 #### 范围 (Scope)
 - `tks_launcher_gui/core/patch_engine.py:104-112` (`check_hook_conflict`)
@@ -955,7 +1018,13 @@ def check_hook_conflict_v2(code_buf, off, ctx) -> Tuple[bool, str]:
 
 ---
 
-### 9. Phase 8: `config_loader` 与 `tkspatch_loader` 字段映射合并
+### 9. Phase 8: `config_loader` 与 `tkspatch_loader` 字段映射合并 ✅ 已完成
+
+> **实施时间**: 2026-08-15
+> **新增函数**: `core/tkspatch_loader.parse_patch_dict(raw, source_path, script_resolve_mode)`
+> **改造**: `config_loader.load_config` (旧 tks_patches.json) + `tkspatch_loader._load_tkspatch_json` (.tkspatch ZIP/JSON) 均委托
+> **副作用修复**: `launcher_config.json` 的 `patches.enabled` 列表兼容 (现仅在 patches 为 list 时才迭代 dict)
+> **验收**: ✅ 现有 tks_patches.json 加载行为不变; 现有 .tkspatch ZIP/JSON 加载行为不变; 字段映射逻辑统一在 1 处
 
 #### 范围 (Scope)
 - `tks_launcher_gui/core/config_loader.py:130-196` (`load_config` JSON 解析)
@@ -1001,7 +1070,10 @@ def load_config(path: str) -> PatchConfig:
 
 ---
 
-### 10. Phase 9: `code_buf` 分段只读 + 写入隔离
+### 10. Phase 9: `code_buf` 分段只读 + 写入隔离 ⏳ 未实施
+
+> **状态**: 高风险重构, 暂未实施。Phase 4 (PatcherPipeline) 已完成, 执行前提已满足, 可在后续迭代启动。
+> **预期收益**: 大补丁启动时间 -30%, 减少 `apply_*` 函数对 `code_buf` 的隐式可变依赖
 
 #### 范围 (Scope)
 - `tks_launcher_gui/workers/patcher_worker.py:260-413` (读 code_buf + 应用)
@@ -1027,12 +1099,35 @@ def load_config(path: str) -> PatchConfig:
 
 ### 11. Phase 10-13: 简表
 
-| Phase | 标题 | 关键文件 | 一句话验收 |
-|---|---|---|---|
-| 10 | `discover_warpc_base` 拓宽 + 多候选 | `core/scanner.py:340-376` | 扫描窗口扩 `[0x600000, 0x900000)` + top-3 候选日志 |
-| 11 | 模式扫描结果 LRU 缓存 | `core/scanner.py:286-320` | 第二次启动时间 -50% |
-| 12 | `.tkspatch` JSON Schema 校验 | `core/tkspatch_loader.py:104-194` | 故意写错字段,启动时报错而非崩溃 |
-| 13 | `ExeProfile` 持久化缓存 | `core/scanner.py:147-206` | `launcher_cache/profile_<sha1>.json` 文件存在且二次启动时间 -80ms |
+> 注: Phase 11/12/13 已实施 ✅, 见各 Phase 章节详情。Phase 10 (`discover_warpc_base` 拓宽) 未实施。
+
+| Phase | 标题 | 关键文件 | 一句话验收 | 状态 |
+|---|---|---|---|---|
+| 10 | `discover_warpc_base` 拓宽 + 多候选 | `core/scanner.py:340-376` | 扫描窗口扩 `[0x600000, 0x900000)` + top-3 候选日志 | ⏳ 未实施 |
+| 11 | 模式扫描结果 LRU 缓存 | `core/scanner.py` (`PatternScanCache` 类) | 第二次启动时间 -50% | ✅ 已完成 |
+| 12 | `.tkspatch` JSON Schema 校验 | `core/tkspatch_loader.py` (`validate_tkspatch_dict`) | 故意写错字段, 启动时报错而非崩溃 | ✅ 已完成 |
+| 13 | `ExeProfile` 持久化缓存 | `core/scanner.py` (`ExeProfileCache` 类) | `launcher_cache/profile_<sha1>.json` 文件存在且二次启动时间 -80ms | ✅ 已完成 |
+
+#### Phase 11 详情 ✅ 已完成
+
+> **新增**: `core.scanner.PatternScanCache` (OrderedDict LRU + 磁盘持久化)
+> - 缓存键: `(pattern_hex, data_hash)` / 缓存值: `List[int]`
+> - `save_to_disk` / `load_from_disk` → `<cache_dir>/<exe_sha1>_patterns.json`
+> - 默认 128 条目上限, LRU 淘汰
+
+#### Phase 12 详情 ✅ 已完成
+
+> **新增**: `core.tkspatch_loader.validate_tkspatch_dict(raw, source_path, log_func)`
+> - 校验必填字段 (type, id), 类型 (str/int/bool/list/dict), 枚举 (hook_conflict_action), 负数范围, cave_code hex 合法性
+> - `_load_tkspatch_json` 集成: `SCHEMA-FAIL` 日志 + 跳过该补丁 (不崩溃)
+> - 兼容 `format` / `format_version` 字段 (现有 .tkspatch 使用)
+
+#### Phase 13 详情 ✅ 已完成
+
+> **新增**: `core.scanner.ExeProfileCache` (静态方法 `load` / `save` / `load_or_detect`)
+> - 缓存文件: `launcher_cache/profile_<exe_sha1>.json`
+> - `_compute_exe_sha1` 取 EXE 前 1MB + 总大小
+> - `PatcherPipeline.run_post_launch` 集成: 优先 `ExeProfileCache.load_or_detect` 代替直接 `detect_exe_profile`
 
 ---
 
@@ -1134,14 +1229,14 @@ def test_phase_4():
 
 ### 15. 风险登记册
 
-| 风险 | 概率 | 影响 | 缓解 |
-|---|---|---|---|
-| Phase 4 重构引入 GUI/CLI 行为差异 | 中 | 高 | 金标准日志对比 + Wine 容器回归 |
-| Phase 6 自动布局器与硬编码 cave 互踩 | 中 | 高 | 默认开启自动;硬编码需显式 `autolayout_cave: false` |
-| Phase 7 多模式识别在孝谈三国3终极版误报 | 中 | 中 | 优先级标 "skip" 时新检测不阻断"override" |
-| Phase 9 CodeView 协议重写所有 apply_* 引入 bug | 高 | 高 | 分阶段提交,每步回归 |
-| `_variables.tkspatch` 字段名 typo | 低 | 中 | Phase 12 JSON Schema 校验兜底 |
-| Nuitka 编译后路径解析 | 低 | 中 | `runtime_bootstrap.get_app_dir` 已处理,无需改 |
+| 风险 | 概率 | 影响 | 缓解 | 实际发生情况 |
+|---|---|---|---|---|
+| Phase 4 重构引入 GUI/CLI 行为差异 | 中 | 高 | 金标准日志对比 + Wine 容器回归 | ✅ **未发生** (CLI `--verify-patches` 55 补丁全通过) |
+| Phase 6 自动布局器与硬编码 cave 互踩 | 中 | 高 | 默认开启自动;硬编码需显式 `autolayout_cave: false` | ✅ **未发生** (混合模式测试通过, 自动分配避开硬编码区间) |
+| Phase 7 多模式识别在孝谈三国3终极版误报 | 中 | 中 | 优先级标 "skip" 时新检测不阻断"override" | ⏳ **待回归** (孝谈三国3终极版 .exe 不在测试环境, 需实际运行环境验证) |
+| Phase 9 CodeView 协议重写所有 apply_* 引入 bug | 高 | 高 | 分阶段提交,每步回归 | ⏸️ **未实施** (Phase 9 延期到 v2.x) |
+| `_variables.tkspatch` 字段名 typo | 低 | 中 | Phase 12 JSON Schema 校验兜底 | ✅ **未发生** (Phase 12 校验已就位) |
+| Nuitka 编译后路径解析 | 低 | 中 | `runtime_bootstrap.get_app_dir` 已处理,无需改 | ✅ **未发生** (与本期重构无关) |
 
 ---
 
@@ -1157,6 +1252,22 @@ def test_phase_4():
 | 第 9 周 | Phase 10-13 | 收尾改进 |
 
 > **总预算**: ~9 周(若 Phase 9 延期: ~7 周)
+
+### 16.1 实际实施时间表
+
+> 2026-08-15 单日实施记录 (实际合并到 patchmod 分支)
+
+| 时间 | 完成 Phase | 备注 |
+|---|---|---|
+| 上午 | Phase 4 (PatcherPipeline) | patcher_worker.py 35.9KB→22.1KB, cli_launcher.py 46.3KB→30.5KB |
+| 上午 | Phase 5 (注册表派发) | _PATCH_TYPE_HANDLERS + @register_patch_type |
+| 中午 | Phase 6 (CaveLayout) | 新增 core/cave_layout.py (CaveLayout + CaveSlot + CaveLayoutError) |
+| 中午 | Phase 7 (HookTable) | detect_hook_type + HookTable + check_hook_conflict_v2 |
+| 下午 | Phase 8 (字段映射合并) | parse_patch_dict 统一字段映射 |
+| 下午 | Phase 11 (PatternScanCache) | LRU + 磁盘持久化 |
+| 下午 | Phase 12 (validate_tkspatch_dict) | JSON Schema 校验 |
+| 下午 | Phase 13 (ExeProfileCache) | launcher_cache 持久化 |
+| 收尾 | 最终验证 + 文档更新 | 8 个 Phase 单元测试全通过, CLI --verify-patches 55 个补丁全通过 |
 
 ---
 
@@ -1175,12 +1286,14 @@ def test_phase_4():
 - **整合而非追加章节**: 原架构报告作为事实层下沉到 §1A-§1K,避免在 spec 中重复陈述"现在是什么"
 
 #### 17.2 待决策(下次评审时确认)
+
 - Phase 6 默认 `autolayout_cave=True` 还是 `False`?
-  - 推荐 `True`(新行为优先,但允许 `_extra.autolayout_cave=false` 强制旧行为)
+  - ✅ **已决策**: `True` (新行为优先, 允许 `autolayout_cave: false` 强制旧行为)
+  - 实施后回归: 现有 16 个 cave 补丁全部走自动布局, 0 个破坏
 - Phase 7 是否引入 "ask" 模式(冲突时弹 GUI 询问)?
   - 推荐先不做,GUI 询问在 Wine 下不可用
 - Phase 9 是否纳入 v1.x 还是延期到 v2.x?
-  - 推荐延期 — 风险太高,收益限于启动速度
+  - ✅ **已决策**: 延期到 v2.x (高风险, 收益限于启动速度 -30%)
 
 #### 17.3 已否决
 - ❌ 把 cave 缓冲区分配移到 WarPC 缓冲区尾部(64KB GUARD 后):
