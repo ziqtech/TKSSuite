@@ -1,0 +1,15 @@
+{
+  "_format": 1,
+  "type": "cave_hook",
+  "id": "checkmember_level_redirect",
+  "name": "主角等级检测重定向",
+  "desc": "CheckMember 主角等级重定向: CheckMember(0,0,LV,cmp)→读取槽位0成员等级 (sub_40E88C)",
+  "hook_pattern": "0F BF 55 08 8B CA C1 E1 05 03 CA C1 E1 04 2B CA 66 8B 04 4D 0C 7F 75 00",
+  "hook_size": 5,
+  "hook_expect_count": 1,
+  "cave_template": "checkmember_level",
+  "cave_offset": 1088,
+  "cave_code": "59 50 66 83 7D 08 00 75 15 66 A1 8C 68 75 00 66 83 F8 FF 74 09 66 85 C0 74 04 66 89 45 08 58 0F BF 4D 08 8B D1 68 D1 E8 40 00 C3",
+  "format": "TKSPATCH",
+  "format_version": 1
+}

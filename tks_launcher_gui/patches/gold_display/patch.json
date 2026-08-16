@@ -1,0 +1,16 @@
+{
+  "_format": 1,
+  "_group": "── 存档兼容修复 ──",
+  "_comment": "存档界面金钱显示: movsx -> movzx, 修复大额金钱显示为负数。",
+  "type": "patch_bytes",
+  "id": "gold_display",
+  "name": "存档界面金钱显示修复",
+  "desc": "存档界面金钱显示 signed->unsigned (patch_bytes)",
+  "pattern": "0F BF 84 41 D4 02 00 00",
+  "replace": {
+    "0": "0F",
+    "1": "B7"
+  },
+  "format": "TKSPATCH",
+  "format_version": 1
+}

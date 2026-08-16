@@ -1,0 +1,29 @@
+{
+  "_format": 1,
+  "type": "patch_imm32",
+  "id": "gold_limit",
+  "name": "金钱上限提升",
+  "desc": "金钱上限 30000→65535（仅锚定两处金钱判定，不再盲扫经验上限 0x7530）",
+  "_mod_note": "孝谈三国3终极版: MOD 已自行解除金钱上限并改写金钱地址引用(见逆向文档§4.1), 盲扫替换残留 0x7530 有误伤风险, skip",
+  "profile_rules": {
+    "xiaotansanguo3": "skip"
+  },
+  "new_value": "0xFFFF",
+  "optional": true,
+  "patterns": [
+    {
+      "pattern": "BA 30 75 00 00 2B D0 0F BF 4D 0C 3B D1",
+      "value_offset": 1,
+      "expect_value": "0x7530",
+      "expect_count": 1
+    },
+    {
+      "pattern": "BA 30 75 00 00 2B D0 0F BF 01 D1 F8 79",
+      "value_offset": 1,
+      "expect_value": "0x7530",
+      "expect_count": 1
+    }
+  ],
+  "format": "TKSPATCH",
+  "format_version": 1
+}

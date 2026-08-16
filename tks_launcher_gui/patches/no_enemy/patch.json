@@ -1,0 +1,17 @@
+{
+  "_format": 1,
+  "type": "patch_bytes",
+  "id": "no_enemy",
+  "name": "大地图不遇敌",
+  "desc": "大地图不遇敌 (NoEnemy: NOP je → always return 0, 等价 ddraw.dll Hook)",
+  "pattern": "F6 05 80 5C 75 00 04 74 07 33 C0 E9",
+  "expect_count": 1,
+  "replace": {
+    "7": "90",
+    "8": "90"
+  },
+  "optional": true,
+  "default_checked": false,
+  "format": "TKSPATCH",
+  "format_version": 1
+}

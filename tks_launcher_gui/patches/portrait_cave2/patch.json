@@ -1,0 +1,16 @@
+{
+  "_format": 1,
+  "type": "cave_hook",
+  "id": "portrait_cave2",
+  "name": "自定义队伍头像（未选中）",
+  "desc": "队伍头像 PATH2 — 非选中队员头像",
+  "hook_pattern": "66 81 C2 D3 00 52",
+  "hook_size": 6,
+  "hook_expect_count": 1,
+  "cave_template": "portrait2",
+  "cave_offset": 128,
+  "hook_conflict_action": "override",
+  "cave_code": "50 51 85 C0 7E 1A 3D 00 00 02 00 77 13 03 C0 05 08 7F 75 00 0F B7 88 0A 02 00 00 66 85 C9 75 07 66 81 C2 D3 00 EB 03 66 89 CA 59 58 87 14 24 FF E2",
+  "format": "TKSPATCH",
+  "format_version": 1
+}

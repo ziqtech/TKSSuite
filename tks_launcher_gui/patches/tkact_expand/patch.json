@@ -1,0 +1,14 @@
+{
+  "_format": 1,
+  "_group": "── TKAct 数据扩容 ──",
+  "_comment": "必选补丁: 启动前 TKAct.dat 会被临时截断，完整扩展数据暂存为 TKAct.dat.expanded；本脚本读取暂存文件并注入新缓冲区。逆向依据: 411624.c:124 / 452544.c:20 / 4434BC.c:67,71,122。",
+  "type": "script",
+  "id": "tkact_expand",
+  "name": "TKAct 动画条目扩容 (>650)",
+  "desc": "TKAct.dat 超过原版 650 条时，动态扩容缓冲区并重定向动画寻址 (外部脚本)",
+  "script_file": "script.py",
+  "optional": false,
+  "default_checked": true,
+  "format": "TKSPATCH",
+  "format_version": 1
+}

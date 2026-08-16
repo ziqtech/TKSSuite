@@ -1,0 +1,27 @@
+{
+  "_format": 1,
+  "_group": "── 孝谈三国3终极版兼容 ──",
+  "_comment": "MOD 在 CheckItem(opcode 62) 实现 sub_40E4E4 的 ≥ 分支注入 cave hook (0x40E625→.test 0xA7D14B): 当检查数量==3000 时额外要求主角等级>20 (cmp byte[757F0C],14h), 否则直接判失败 —— 实体#785 的 CheckItem(10000,3000,1)//錢夠 即被此门拦截。启动器扩展 WarPC 后 0x757F0C 静态地址已非主角等级数据, 该门实际无法满足, 故提供可选补丁: 将 cave 内 `jz 进入等级门` 的 6 字节跳转 NOP 化 (0F 84 8E 00 00 00→90×6), 数量=3000 的检查恢复纯数量比较, 与原版行为一致。cave 位于 .test 段, 在 code_buf 扫描窗口之外, 由 apply_patch_extra_section 扫描额外 PE 段处理。目标指令 0xA7D154: 66 3D B8 0B 0F 84 8E 00 00 00 (cmp ax,0BB8h; jz +0x8E)。",
+  "type": "patch_extra_section",
+  "id": "xiaotan_gambling_unlock",
+  "name": "赌场限制移除(孝谈版兼容)",
+  "desc": "移除孝谈三国3终极版 CheckItem(10000,3000,1) 的主角≥21级等级门槛(仅数量=3000的≥检查), 恢复纯金钱比较",
+  "pattern": "66 3D B8 0B 0F 84 8E 00 00 00",
+  "expect_count": 1,
+  "replace": {
+    "4": "90",
+    "5": "90",
+    "6": "90",
+    "7": "90",
+    "8": "90",
+    "9": "90"
+  },
+  "optional": true,
+  "default_checked": false,
+  "profile_rules": {
+    "_default": "skip",
+    "xiaotansanguo3": "apply"
+  },
+  "format": "TKSPATCH",
+  "format_version": 1
+}

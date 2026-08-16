@@ -1,0 +1,14 @@
+{
+  "_format": 1,
+  "_group": "── WarPC 扩容 ──",
+  "type": "patch_imm32",
+  "id": "warpc_size_refs",
+  "name": "武将数据扩容",
+  "desc": "WarPC.dat 大小常量 150722→实际大小",
+  "value_scan": true,
+  "expect_value": "0x24CC2",
+  "new_value": "{warpc_new_size}",
+  "expect_count": 5,
+  "format": "TKSPATCH",
+  "format_version": 1
+}

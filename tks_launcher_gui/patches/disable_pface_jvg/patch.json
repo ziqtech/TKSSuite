@@ -1,0 +1,49 @@
+{
+  "_format": 1,
+  "_group": "── PFace.jvg 禁用 ──",
+  "_comment": "pface.jvg 是标题/菜单/开场/战斗界面的可选人物脸图覆盖层。原版在 5 处加载点 (sub_40D2D0 @0x40D354/0x40D557, sub_40D804 @0x40D88D, sub_412BE8 @0x412CB4, sub_42FEE0 @0x43004E) 均以 `if (sub_4524F0(pface.jvg) <= 0) dword_755B00=0; else 加载` 形式加载: 文件不存在时 sub_4524F0(取文件大小)返回<=0, 引擎置 dword_755B00=0 跳过, 属纯可选覆盖层。本补丁将各加载点的条件跳转 jle(7E) 改为无条件跳转 jmp(EB), 强制恒走 dword_755B00=0 分支, 使引擎无论磁盘上 pface.jvg 是否存在都按其不存在处理, 从而禁止 PFace.jvg 生效。各模式以唯一的 pface.jvg 字符串地址 (LE: 4E7919/4E7947/4E7969/4E80A2/4EB92A) 锚定, call rel32 以 ?? 通配, expect_count=1 精确定位, 绝不改动 sub_4524F0 本体, 不影响其对其他文件(Mu.jvg 等)的检查。目标指令 7E 5B (jle +5B) → EB 5B (jmp +5B)。",
+  "type": "patch_bytes",
+  "id": "disable_pface_jvg",
+  "name": "禁止 PFace.jvg 生效",
+  "desc": "优先使用启动器自定义头像，因此禁止 PFace.jvg 生效：强制跳过 pface.jvg 人物脸图加载 (标题/菜单/开场/战斗 5 处加载点恒置 dword_755B00=0), 游戏始终按该文件不存在运行",
+  "patterns": [
+    {
+      "pattern": "68 19 79 4E 00 E8 ?? ?? ?? ?? 59 85 C0 7E 5B",
+      "expect_count": 1,
+      "replace": {
+        "13": "EB"
+      }
+    },
+    {
+      "pattern": "68 47 79 4E 00 E8 ?? ?? ?? ?? 59 85 C0 7E 5B",
+      "expect_count": 1,
+      "replace": {
+        "13": "EB"
+      }
+    },
+    {
+      "pattern": "68 69 79 4E 00 E8 ?? ?? ?? ?? 59 85 C0 7E 5B",
+      "expect_count": 1,
+      "replace": {
+        "13": "EB"
+      }
+    },
+    {
+      "pattern": "68 A2 80 4E 00 E8 ?? ?? ?? ?? 59 85 C0 7E 5B",
+      "expect_count": 1,
+      "replace": {
+        "13": "EB"
+      }
+    },
+    {
+      "pattern": "68 2A B9 4E 00 E8 ?? ?? ?? ?? 59 85 C0 7E 5B",
+      "expect_count": 1,
+      "replace": {
+        "13": "EB"
+      }
+    }
+  ],
+  "optional": true,
+  "format": "TKSPATCH",
+  "format_version": 1
+}

@@ -1,0 +1,13 @@
+{
+  "_format": 1,
+  "_group": "── 动画与移动速度 ──",
+  "_comment": "第5类参数 map_movement.frame_delay_ms 控制剧情地图移动速度: sub_412BE8 剧情地图主循环以 GetTickCount 节流 0x3C(60ms/帧≈16.7fps), 主角/实体按格移动每帧推进一次, 速度与帧率成正比。特征码 8B 15 D0 7C 4E 00 2B C2 83 F8 3C 0F 82 (.text 唯一命中 @0x412E2B), 以 jb 近跳转(0F 82)区分同函数内标题界面循环(短跳转 72 EE), 仅修改剧情地图循环。",
+  "type": "patch_animation_speed",
+  "id": "animation_speed",
+  "name": "动画/移动速度自定义",
+  "desc": "动画播放速度自定义 (战斗状态/攻击/移动/技能 4类动画独立调整 + 剧情地图主角移动速度加速; 需配置 configs/animation_speed.json)",
+  "json_file": "configs/animation_speed.json",
+  "optional": true,
+  "format": "TKSPATCH",
+  "format_version": 1
+}

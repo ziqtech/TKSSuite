@@ -1,0 +1,19 @@
+{
+  "_format": 1,
+  "type": "patch_bytes",
+  "id": "hp_cmp_unsigned_fix",
+  "name": "生命值上限判定修复",
+  "desc": "生命最大值比较修复：hp_max比较改为无符号防止HP>32767误判（sub_4400DC: jle->jbe）",
+  "_mod_note": "孝谈三国3终极版: sub_4400DC 已被 MOD 改写(掉落/HP逻辑), 原版特征码不存在, skip",
+  "profile_rules": {
+    "xiaotansanguo3": "skip"
+  },
+  "pattern": "66 3B 14 4D 8A 70 9D 00 7E",
+  "expect_count": 1,
+  "replace": {
+    "8": "76"
+  },
+  "optional": true,
+  "format": "TKSPATCH",
+  "format_version": 1
+}

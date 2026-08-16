@@ -1,0 +1,15 @@
+{
+  "_format": 1,
+  "type": "cave_hook",
+  "id": "team_member_routing",
+  "name": "主角离队脚本路由",
+  "desc": "TeamMember 脚本路由: TeamMember(0,0)→清空全队(原版语义), TeamMember(0,-1)→主角离队, TeamMember(N,*)→不变",
+  "hook_pattern": "66 83 7D 08 00 75 6A",
+  "hook_size": 7,
+  "hook_expect_count": 1,
+  "cave_template": "team_member_leave_routing",
+  "cave_offset": 1152,
+  "cave_code": "66 83 7D 08 00 0F 85 89 00 00 00 66 83 7D 0C FF 0F 84 7E 00 00 00 66 83 7D 0C 01 0F 84 05 00 00 00 E9 77 00 00 00 66 83 3D 8C 68 75 00 00 0F 84 57 00 00 00 66 83 3D 8C 68 75 00 FF 0F 84 30 00 00 00 33 C9 66 83 3C 4D 8C 68 75 00 FF 74 0B 41 83 F9 06 7C EF E9 3A 00 00 00 85 C9 74 14 49 66 8B 04 4D 8C 68 75 00 66 89 04 4D 8E 68 75 00 49 79 ED 66 C7 05 8C 68 75 00 00 00 C7 45 FC 00 00 00 00 83 C4 04 68 BC DA 40 00 C3 83 C4 04 68 ED DB 40 00 C3 83 C4 04 68 8D DA 40 00 C3 C3",
+  "format": "TKSPATCH",
+  "format_version": 1
+}

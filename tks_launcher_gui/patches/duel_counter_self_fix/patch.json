@@ -1,0 +1,17 @@
+{
+  "_format": 1,
+  "_comment": "死战强制反击自伤修复：sub_4434BC入口hook，检查byte_9D6FA4[0]==a1且a1!=word_9D6F58(反击场景)，若满足则将目标修正为word_9D6F58(原始攻击者)",
+  "type": "cave_hook",
+  "id": "duel_counter_self_fix",
+  "name": "死战反击自伤修复",
+  "desc": "死战强制反击自伤修复：反击者目标被错误设为自身时，修正为原始攻击者(word_9D6F58)，确保反击正常还击而非自伤",
+  "hook_pattern": "55 8B EC 83 C4 9C 56 57 66 C7 45 F0 00 00",
+  "hook_size": 8,
+  "hook_expect_count": 1,
+  "cave_template": "duel_counter_self_fix",
+  "cave_offset": 960,
+  "hook_conflict_action": "override",
+  "cave_code": "5A 55 8B EC 83 C4 9C 56 57 50 51 0F BE 05 A4 6F 9D 00 0F BF 4D 08 3B C1 75 17 0F BF 0D 58 6F 9D 00 66 3B 4D 08 74 0A A0 58 6F 9D 00 A2 A4 6F 9D 00 59 58 52 C3",
+  "format": "TKSPATCH",
+  "format_version": 1
+}

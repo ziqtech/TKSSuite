@@ -1,0 +1,27 @@
+{
+  "_format": 1,
+  "_group": "── 存档兼容修复 ──",
+  "_comment": "sub_41C120 stream error 检查: 将 mov edx,[ecx+8]; test ecx,ecx; sete... 链改写为直接清零 + 返回成功, 修复 7~9 号槽位读取异常。",
+  "type": "patch_bytes",
+  "id": "save_stream_error_fix",
+  "name": "存档空槽读取错误修复",
+  "desc": "sub_41C120 stream error 检查修补 (patch_bytes)",
+  "pattern": "8B 4A 08 85 C9 0F 94 C0 83 E0 01 84 C0",
+  "replace": {
+    "0": "C7",
+    "1": "42",
+    "2": "08",
+    "3": "00",
+    "4": "00",
+    "5": "00",
+    "6": "00",
+    "7": "B0",
+    "8": "01",
+    "9": "84",
+    "10": "C0",
+    "11": "90",
+    "12": "90"
+  },
+  "format": "TKSPATCH",
+  "format_version": 1
+}

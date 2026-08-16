@@ -1,0 +1,18 @@
+{
+  "_format": 1,
+  "type": "cave_hook",
+  "id": "war_mustchar_fallback",
+  "name": "强制出战主角缺失时槽0顶替",
+  "desc": "强制出战主角(ID 0)但主角已离队时, 由队伍槽0角色顶替出战 (sub_4307CC 强制名单解析 @0x430895), 避免 0 人出战触发 0x430BC3 idiv 除零卡死",
+  "_comment": "sub_4307CC (PlaceUnits) 强制出战名单解析: 名单角色在队伍中才标记出战槽。主角离队后, WarData must_chars 含主角(值1)的战斗(war#20/21/22/33/34/57/62/65/86/212) v23 全 0 → 0 人出战 → 0x430BC3 `idiv cx` (cx=byte_9DF886=0) 除零崩溃。本 cave hook 0x430895 (movsx eax,byte[ecx]; dec eax; 5字节), 重放后若 v26==0 (强制主角) 且队伍 word_75688C[0..5] 无主角, 则把 v26 替换为队伍槽0角色ID (槽0空则为-1, 自然不匹配), 实现主角缺失时槽0顶替。与 checkmember_level_redirect (CheckMember 槽0顶替) 同一语义。非主角强制角色不受影响。",
+  "hook_pattern": "0F BE 01 48 66 89 45 FA",
+  "hook_size": 5,
+  "hook_expect_count": 1,
+  "cave_template": "war_mustchar_fallback",
+  "cave_offset": 1472,
+  "hook_conflict_action": "override",
+  "fallback_rva": "0x430895",
+  "cave_code": "58 0F BE 01 48 66 83 F8 00 75 21 51 52 B9 06 00 00 00 BA 8C 68 75 00 66 83 3A 00 74 0D 83 C2 02 49 75 F4 0F BF 05 8C 68 75 00 5A 59 66 89 45 FA 68 9D 08 43 00 C3",
+  "format": "TKSPATCH",
+  "format_version": 1
+}

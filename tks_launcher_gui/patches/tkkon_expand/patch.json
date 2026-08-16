@@ -1,0 +1,14 @@
+{
+  "_format": 1,
+  "_group": "── TKKon 数据扩容 ──",
+  "_comment": "必选补丁: TKKon.dat 解压后超过 26000 字节时, 分配新缓冲区并重定向全部 0x9D0698 引用。逆向依据: 4173F8.c:22 / 45343C.c / 452B14.c。",
+  "type": "script",
+  "id": "tkkon_expand",
+  "name": "TKKon 战斗效果记录扩容 (>650)",
+  "desc": "TKKon.dat 超过原版 650 条时，动态扩容缓冲区并重定向战斗效果寻址 (外部脚本)",
+  "script_file": "script.py",
+  "optional": false,
+  "default_checked": true,
+  "format": "TKSPATCH",
+  "format_version": 1
+}

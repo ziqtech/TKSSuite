@@ -1,0 +1,12 @@
+{
+  "_format": 1,
+  "_group": "── 默认字体自定义 ──",
+  "type": "patch_font_config",
+  "id": "font_config",
+  "name": "游戏默认字体自定义",
+  "desc": "游戏默认字体自定义 (sub_411624: 修改 3 个渲染器 sub_44AF7C 的 FTYPE_raw 参数; 需配置 configs/font_config.json)",
+  "optional": true,
+  "json_file": "configs/font_config.json",
+  "format": "TKSPATCH",
+  "format_version": 1
+}

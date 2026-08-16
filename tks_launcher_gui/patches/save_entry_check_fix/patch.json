@@ -1,0 +1,12 @@
+{
+  "_format": 1,
+  "_group": "── 存档兼容修复 ──",
+  "_comment": "外部脚本补丁: 扫描 sub_4C33FC 入口处的 cmp [reg+0Ch],0 + je/jne, 按实际指令形态改写为无条件通过, 修复存档列表空白。脚本随 patches/_scripts 一起分发, 更新补丁无需重编启动器。",
+  "type": "script",
+  "id": "save_entry_check_fix",
+  "name": "存档列表入口检查修补",
+  "desc": "sub_4C33FC 入口检查修补 (外部脚本)",
+  "script_file": "script.py",
+  "format": "TKSPATCH",
+  "format_version": 1
+}

@@ -1,0 +1,19 @@
+{
+  "_format": 1,
+  "_group": "── 存档兼容修复 ──",
+  "_comment": "sub_41AB94 存档列表队伍头像: 用前序 movsx 特征 + hook_offset 唯一定位, cave_code 外置可直接更新。",
+  "type": "cave_hook",
+  "id": "archive_portrait",
+  "name": "存档列表队伍头像修复",
+  "desc": "存档列表队伍头像 WORD[261] 优先查询 (cave_hook)",
+  "hook_pattern": "0F BE 84 41 9E 02 00 00 66 05 D3 00 50",
+  "hook_offset": 8,
+  "hook_size": 5,
+  "hook_expect_count": 1,
+  "cave_template": "archive_portrait",
+  "cave_offset": 192,
+  "hook_conflict_action": "override",
+  "cave_code": "52 51 0F B6 C8 80 F9 FF 74 17 69 C1 1E 04 00 00 05 08 7F 75 00 0F B7 90 0A 02 00 00 66 85 D2 75 09 8B C1 05 D3 00 00 00 EB 02 8B C2 59 5A 59 50 FF E1",
+  "format": "TKSPATCH",
+  "format_version": 1
+}

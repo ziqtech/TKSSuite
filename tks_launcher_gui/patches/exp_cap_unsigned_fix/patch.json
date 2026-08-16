@@ -1,0 +1,19 @@
+{
+  "_format": 1,
+  "_group": "── 战斗经验溢出修复 ──",
+  "type": "patch_bytes",
+  "id": "exp_cap_unsigned_fix",
+  "name": "战斗经验溢出修复",
+  "desc": "经验上限检查改为无符号比较 jle→jbe (负值被视为>30000从而触发上限保护)",
+  "_mod_note": "孝谈三国3终极版: 该处经验/金钱上限代码已被 MOD 二进制重写(原版 0x43BADF 附近), 特征码不存在; skip 避免必选补丁误报整体失败",
+  "profile_rules": {
+    "xiaotansanguo3": "skip"
+  },
+  "pattern": "8B 10 81 FA 30 75 00 00 7E 0A 8B 4C 24 ** C7 01 30 75 00 00",
+  "expect_count": 1,
+  "replace": {
+    "8": "76"
+  },
+  "format": "TKSPATCH",
+  "format_version": 1
+}

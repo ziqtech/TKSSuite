@@ -1,0 +1,21 @@
+{
+  "_format": 1,
+  "_group": "── 战斗经验锁定 ──",
+  "_comment": "sub_43B7FC 战后经验分配循环按队伍槽位 v5(0..byte_9DF886-1, ≤6) 逐个发放, dword_9D6F20[v5] 为每槽本战获得经验累加器。0x43BAF3 处 (movsx 前的 v11=*v19 读取, 位于30000上限截断之后、升级循环之前) hook: 重放 mov eax,[esp+1C]/mov dx,[eax], 用 [esp](=v5 槽位) 查 imm8 锁定掩码, 命中则 xor dx,dx 使 v11=0 → 该槽不升级、经验不写回。掩码字节由 apply_exp_lock 依 configs/exp_lock.json 计算。与 exp_cap_unsigned_fix(结束于0x43BAF2)零重叠。lock_slots 全 false → mask=0 跳过, 等同原版。",
+  "type": "patch_exp_lock",
+  "id": "exp_lock",
+  "name": "战斗经验锁定压级",
+  "desc": "锁定队伍槽位0-5指定槽的战斗经验：被锁定槽位战斗胜利不获经验、不升级 (sub_43B7FC @0x43BAF3 cave hook; 需配置 configs/exp_lock.json)",
+  "optional": true,
+  "default_checked": false,
+  "json_file": "configs/exp_lock.json",
+  "hook_pattern": "8B 44 24 1C 66 8B 10 66 89 54 24 06",
+  "hook_size": 7,
+  "hook_expect_count": 1,
+  "fallback_rva": "0x43BAF3",
+  "cave_offset": 1344,
+  "cave_code": "8B 44 24 20 0F B7 4C 24 04 B2 00 D2 EA F6 C2 01 74 06 C7 00 00 00 00 00 66 8B 10 C3",
+  "cave_mask_offset": 10,
+  "format": "TKSPATCH",
+  "format_version": 1
+}

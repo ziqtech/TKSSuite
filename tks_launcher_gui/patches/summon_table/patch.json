@@ -1,0 +1,63 @@
+{
+  "_format": 1,
+  "type": "patch_summon_table",
+  "id": "summon_table",
+  "name": "召唤角色自定义",
+  "desc": "召唤表自定义 (222/224~231/251 召唤角色, 支持多随机)",
+  "optional": true,
+  "json_file": "configs/summon_table.json",
+  "data_rva": "0xEB7D0",
+  "data_keys": [
+    "skill_224",
+    "skill_225",
+    "skill_226",
+    "skill_227",
+    "skill_228",
+    "skill_229",
+    "skill_230",
+    "skill_231"
+  ],
+  "code_addrs": [
+    {
+      "rva": "0x44CA0",
+      "key": "skill_222"
+    },
+    {
+      "rva": "0x44CC5",
+      "key": "skill_251_a"
+    },
+    {
+      "rva": "0x44CCD",
+      "key": "skill_251_b"
+    }
+  ],
+  "random_hook_pattern": "0F BE 90 F0 B6 4E 00 66 89 55 FE",
+  "random_hook_size": 7,
+  "random_hook_expect_count": 1,
+  "random_cave_offset": 320,
+  "random_table_offset": 448,
+  "random2_cave_offset": 560,
+  "random2_hooks": [
+    {
+      "json_key": "skill_222_random",
+      "entry_idx": 8,
+      "entry_offset": 0,
+      "pattern": "66 C7 45 FE ** ** EB 2B",
+      "hook_size": 6,
+      "expect_count": 1
+    },
+    {
+      "json_key": "skill_251_random",
+      "entry_idx": 9,
+      "entry_offset": 8,
+      "pattern": "6A 64 E8 06 DE 00 00 59 66 83 F8 32",
+      "hook_size": 28,
+      "expect_count": 1
+    }
+  ],
+  "default_checked": false,
+  "summon_cave_code": "53 56 0F BF 1D 7C 6C 9D 00 81 EB E0 00 00 00 6B DB 09 81 C3 44 4E 41 52 8B F3 0F B6 0E 85 C9 74 1B 83 F9 01 76 10 51 B8 C0 2A 45 00 FF D0 59 0F B6 54 06 01 EB 14 0F B6 56 01 EB 0E 0F BF 05 7C 6C 9D 00 0F BE 90 F0 B6 4E 00 5E 5B C3",
+  "summon_cave2_code": "53 BB 08 00 00 00 EB 08 53 BB 09 00 00 00 EB 00 56 6B DB 09 81 C3 44 4E 41 52 8B F3 0F B6 0E 83 F9 01 76 10 51 B8 C0 2A 45 00 FF D0 59 0F B6 54 06 01 EB 04 0F B6 56 01 66 89 55 FE 5E 5B C3",
+  "format": "TKSPATCH",
+  "format_version": 1
+}

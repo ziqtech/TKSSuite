@@ -1,0 +1,42 @@
+{
+  "_format": 1,
+  "_group": "── 鲁肃情报技能等级溢出修复 ──",
+  "type": "patch_bytes",
+  "id": "lusu_intel_duration_x4_fix",
+  "name": "鲁肃情报技能溢出修复",
+  "desc": "鲁肃商賈情报技能修复：等级×5→等级×4，防止Lv>51时byte/word溢出导致持续时间缩短",
+  "_mod_note": "孝谈三国3终极版: 鲁肃技能相关代码已被 MOD 改写, 两处特征码之一(等级×5)缺失, skip",
+  "profile_rules": {
+    "xiaotansanguo3": "skip"
+  },
+  "patterns": [
+    {
+      "pattern": "8D 04 89 88 82 65 28 95 00",
+      "expect_count": 1,
+      "replace": {
+        "0": "C1",
+        "1": "E1",
+        "2": "02",
+        "4": "8A"
+      }
+    },
+    {
+      "pattern": "8D 14 80 66 89 15 52 29 95 00",
+      "expect_count": 1,
+      "replace": {
+        "0": "C1",
+        "1": "E0",
+        "2": "02",
+        "4": "A3",
+        "5": "52",
+        "6": "29",
+        "7": "95",
+        "8": "00",
+        "9": "90"
+      }
+    }
+  ],
+  "optional": true,
+  "format": "TKSPATCH",
+  "format_version": 1
+}
