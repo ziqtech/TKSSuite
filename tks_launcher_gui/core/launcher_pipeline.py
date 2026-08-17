@@ -26,12 +26,12 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
-from .config_loader import PatchConfig
+from .config_loader import PatchConfig, PatchRuntimeState, PatchSettings
 from .mod_loader import (
     apply_mod_data, detect_conflicts, expand_pak_mods,
     merge_mods, resolve_dependencies, restore_originals, scan_mods,
 )
-from .patch_engine import apply_config_patches
+from .patch_engine import apply_config_patches, apply_deferred_archive_portrait
 from .scanner import detect_exe_profile, discover_warpc_base
 from .tkact_expander import (
     prepare_tkact_for_game, restore_tkact_for_game,
@@ -69,7 +69,6 @@ class PipelineConfig:
     game_dir: Optional[str] = None
     patches_dir: Optional[str] = None
     mods_dir: Optional[str] = None
-    config_path: Optional[str] = None
     selected_patches: Optional[Set[str]] = None
     enabled_mod_ids: Optional[Any] = None  # set | "__NONE__" | None
     disabled_patches: Optional[Set[str]] = None
@@ -134,6 +133,8 @@ class PatcherPipeline:
         self.status = status or (lambda *_: None)
         self.overlay = overlay or (lambda *_: None)
         self.result = PipelineResult()
+        self.settings = PatchSettings()
+        self.runtime = PatchRuntimeState()
 
         # 内部状态 (在 run_pre_launch / run_post_launch 中填充)
         self.config: Optional[PatchConfig] = None
@@ -168,14 +169,13 @@ class PatcherPipeline:
                 return self.result
 
         # 加载配置
-        config_path = self.cfg.config_path or os.path.join(self.cfg.exe_dir, "tks_patches.json")
         patches_dir = self.cfg.patches_dir or os.path.join(self.cfg.exe_dir, "patches")
         self.log(f"补丁目录: {patches_dir} (存在={os.path.isdir(patches_dir)})")
 
-        from .tkspatch_loader import load_config_merged
-        self.config = load_config_merged(config_path, patches_dir, log_func=self.log)
+        from .tkspatch_loader import load_patch_directory
+        self.config = load_patch_directory(patches_dir, log_func=self.log)
         if self.config is None or not self.config.patches:
-            self.log("[ERROR] 无法加载补丁配置 (patches/ 为空且无 tks_patches.json), 退出")
+            self.log("[ERROR] 无法加载补丁配置 (patches/ 不存在或为空), 退出")
             self.result.error = "config load failed"
             return self.result
 
@@ -241,12 +241,12 @@ class PatcherPipeline:
             self.log(f"  EXE 版本: 原版")
 
         # ── 自动发现 WarPC BSS 基址 ──
-        fallback_base = self.config.variables.get("warpc_base", WARPC_BASE)
+        fallback_base = self.settings.warpc_base_fallback
         self._discovered_base = discover_warpc_base(
             bytes(code_buf), code_start, int(fallback_base), log_func=self.log
         )
-        self.config.variables["warpc_base"] = self._discovered_base
-        self.config.variables["warpc_new_base"] = self._discovered_base
+        self.runtime.warpc_base = self._discovered_base
+        self.runtime.warpc_new_base = self._discovered_base
 
         # ── 分配 WarPC 缓冲区 (GUARD + 数据) ──
         self._allocate_warpc_buffer(target_pid)
@@ -255,7 +255,7 @@ class PatcherPipeline:
         self._restore_truncated_dats()
 
         # ── 设置配置变量 (新大小、实际大小) ──
-        self._populate_runtime_variables()
+        self._populate_runtime_state()
 
         # ── 分配 Cave 内存 ──
         cave_addr, cave_budget = self._allocate_cave(target_pid)
@@ -281,7 +281,15 @@ class PatcherPipeline:
                 log_func=self.log,
                 exclude_ranges=exe_profile.extra_section_ranges if exe_profile else None,
                 warpc_base=self._discovered_base,
-                warpc_rec_size=int(self.config.variables.get("warpc_rec_size", WARPC_REC_SIZE)),
+                warpc_rec_size=self.settings.warpc_rec_size,
+            )
+
+        # ── 存档列表头像: WarPC 引用重定位后按基线独立安装 ──
+        if "archive_portrait" not in (self.cfg.disabled_patches or set()):
+            applied_ok &= apply_deferred_archive_portrait(
+                target_pid, base_addr, cave_addr + 192,
+                self._warpc_base_for_caves or self._discovered_base,
+                log_func=self.log,
             )
 
         # ── 运行时 WarPC 数据注入 ──
@@ -454,7 +462,7 @@ class PatcherPipeline:
                 write_pm(hw, nb, self._warpc_full_data)
                 self._warpc_new_buf = nb
                 self._warpc_base_for_caves = nb
-                self.config.variables["warpc_new_base"] = nb
+                self.runtime.warpc_new_base = nb
                 self.result.warpc_new_buf = nb
                 self.result.warpc_new_base = nb
                 self.log(f"  WarPC 缓冲区: 0x{nb:08X} ({ns} 字节, "
@@ -473,47 +481,43 @@ class PatcherPipeline:
                 os.remove(bp)
                 self.log(f"  已恢复原始 {k}")
 
-    def _populate_runtime_variables(self) -> None:
-        """填充运行时变量 (warpc_new_size / save_new_size / *_actual_size)。"""
+    def _populate_runtime_state(self) -> None:
+        """填充运行时状态 (warpc_new_size / save_new_size / *_actual_size)。"""
         if self._warpc_expanded and self._warpc_full_data:
             ns = len(self._warpc_full_data)
-            self.config.variables["warpc_new_size"] = ns
-            self.config.variables["save_new_size"] = 9200 + ns
+            self.runtime.warpc_new_size = ns
+            self.runtime.save_new_size = self.settings.save_block_ab_size + ns
         else:
-            self.config.variables["warpc_new_size"] = WARPC_ORIG_SIZE
-            self.config.variables["save_new_size"] = WARPC_TOTAL_ORIG_SIZE
+            self.runtime.warpc_new_size = WARPC_ORIG_SIZE
+            self.runtime.save_new_size = WARPC_TOTAL_ORIG_SIZE
 
         for fname in DATA_FILE_ORIG_SIZES:
             basename = os.path.splitext(fname)[0]
-            vn = basename.lower() + "_actual_size"
+            attr_name = basename.lower() + "_actual_size"
             actual = get_decompressed_size(fname)
-            self.config.variables[vn] = actual if actual > 0 else DATA_FILE_ORIG_SIZES[fname]
+            setattr(self.runtime, attr_name,
+                    actual if actual > 0 else DATA_FILE_ORIG_SIZES[fname])
 
-        # TKDefUnit.Dat 记录数
-        _du_orig = int(self.config.variables.get("tkdefunit_orig_count", 5000))
-        _du_count = _du_orig
+        count = self.settings.tkdefunit_orig_count
         try:
             if os.path.isfile("TKDefUnit.Dat"):
-                _du_count = max(_du_orig, (os.path.getsize("TKDefUnit.Dat") + 15) // 16)
+                count = max(count, (os.path.getsize("TKDefUnit.Dat") + 15) // 16)
         except OSError:
             pass
-        self.config.variables["tkdefunit_new_count"] = _du_count
+        self.runtime.tkdefunit_new_count = count
 
-        # TKAct.Dat 大小
-        _tkact_orig = int(self.config.variables.get("tkact_orig_size", 509600))
-        _tkact_rec = int(self.config.variables.get("tkact_rec_size", 784))
-        _tkact_new = _tkact_orig
+        new_size = self.settings.tkact_orig_size
         try:
             if os.path.isfile("TKAct.dat"):
-                _tkact_path = "TKAct.dat.expanded"
-                if not os.path.isfile(_tkact_path):
-                    _tkact_path = "TKAct.dat"
-                _tkact_sz = os.path.getsize(_tkact_path)
-                if _tkact_sz % _tkact_rec == 0:
-                    _tkact_new = max(_tkact_orig, _tkact_sz)
+                path = "TKAct.dat.expanded"
+                if not os.path.isfile(path):
+                    path = "TKAct.dat"
+                size = os.path.getsize(path)
+                if size % self.settings.tkact_rec_size == 0:
+                    new_size = max(new_size, size)
         except OSError:
             pass
-        self.config.variables["tkact_new_size"] = _tkact_new
+        self.runtime.tkact_new_size = new_size
 
     def _allocate_cave(self, target_pid: int) -> Tuple[int, int]:
         """分配 Cave 内存 (Phase 1: 1024→2048 + Phase 3: cave_total_size)。"""
@@ -528,7 +532,7 @@ class PatcherPipeline:
         # Phase 1+3: Cave 虚拟页大小 (cave_total_size 变量 + TKS_CAVE_BUDGET 环境变量覆盖)
         cave_budget = int(os.environ.get(
             "TKS_CAVE_BUDGET",
-            self.config.variables.get("cave_total_size", 2048),
+            self.settings.cave_total_size,
         ))
         try:
             ca = _VirtualAllocEx(hp, None, cave_budget,
@@ -551,7 +555,7 @@ class PatcherPipeline:
         单独打开进程句柄 (apply_config_patches 需要 HANDLE 而非 PID),
         调用结束后关闭。
         """
-        self.config.variables["_target_pid"] = target_pid
+        self.runtime.target_pid = target_pid
         hp = _OpenProcess(
             PROCESS_VM_READ | PROCESS_VM_WRITE | PROCESS_VM_OPERATION,
             False, target_pid
@@ -564,7 +568,7 @@ class PatcherPipeline:
                 self.config, code_buf, code_start, base_addr,
                 hp,
                 self._warpc_base_for_caves if self._warpc_base_for_caves else self._discovered_base,
-                cave_addr, self.config.variables, log_func=self.log,
+                cave_addr, self.settings, self.runtime, log_func=self.log,
                 minimal_mode=False,
                 selected_patches=self.cfg.selected_patches,
                 exe_profile=exe_profile,

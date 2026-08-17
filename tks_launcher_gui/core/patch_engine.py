@@ -14,7 +14,22 @@ from .memory import (
     _OpenProcess, _CloseHandle,
 )
 from .scanner import parse_pattern, pattern_scan, value_scan
-from .config_loader import PatchDef, PatchConfig, resolve_var
+from .config_loader import (
+    PatchConfig,
+    PatchDef,
+    PatchRuntimeState,
+    PatchSettings,
+    resolve_patch_value,
+)
+
+
+
+_DEFERRED_CAVE_PATCH_IDS = frozenset({"archive_portrait"})
+
+
+def _is_deferred_cave_patch(patch_id: str) -> bool:
+    """Return whether a cave hook must be installed after WarPC relocation."""
+    return patch_id in _DEFERRED_CAVE_PATCH_IDS
 
 
 def _check_cave_bounds(cave_addr: int, offset: int, size: int, budget: int,
@@ -42,7 +57,8 @@ class PatchContext:
     """
     def __init__(self, defn: PatchDef, target_pid: int, h_proc: int,
                  base_addr: int, code_buf: bytearray, code_start_addr: int,
-                 cave_addr: int, warpc_base: int, variables: Dict[str, int],
+                 cave_addr: int, warpc_base: int,
+                 settings: PatchSettings, runtime: PatchRuntimeState,
                  log_func=None, exe_profile=None, config_overrides=None):
         self.defn = defn
         self.target_pid = target_pid
@@ -52,7 +68,8 @@ class PatchContext:
         self.code_start_addr = code_start_addr
         self.cave_addr = cave_addr
         self.warpc_base = warpc_base
-        self.variables = variables
+        self.settings = settings
+        self.runtime = runtime
         self.log = log_func or (lambda x: None)
         self.exe_profile = exe_profile
         self.config_overrides = config_overrides
@@ -193,7 +210,9 @@ def _handle_patch_extra_section(ctx: PatchContext) -> bool:
 @register_patch_type("patch_imm32")
 def _handle_patch_imm32(ctx: PatchContext) -> bool:
     if ctx.defn.value_scan:
-        nv = resolve_var(ctx.defn.new_value_expr, ctx.variables, log_func=ctx.log)
+        nv = resolve_patch_value(
+            ctx.defn.new_value_expr, ctx.settings, ctx.runtime, log_func=ctx.log
+        )
         if nv is None:
             ctx.log(f"    -> 变量未定义, 跳过")
             return True
@@ -202,12 +221,12 @@ def _handle_patch_imm32(ctx: PatchContext) -> bool:
             return True
         return apply_patch_imm32_by_value(
             ctx.defn, ctx.code_buf, ctx.code_start_addr,
-            ctx.h_proc, ctx.variables, log_func=ctx.log,
+            ctx.h_proc, ctx.settings, ctx.runtime, log_func=ctx.log,
             exclude_ranges=ctx.exe_profile.extra_section_ranges if ctx.exe_profile else None,
         )
     return apply_patch_imm32_by_pattern(
         ctx.defn, ctx.code_buf, ctx.code_start_addr,
-        ctx.h_proc, ctx.variables, log_func=ctx.log,
+        ctx.h_proc, ctx.settings, ctx.runtime, log_func=ctx.log,
     )
 
 
@@ -218,7 +237,7 @@ def _handle_patch_summon_table(ctx: PatchContext) -> bool:
         _summon_override = ctx.config_overrides.get("summon_table")
     return apply_summon_table(
         ctx.defn, ctx.code_buf, ctx.code_start_addr, ctx.base_addr,
-        ctx.h_proc, ctx.variables, log_func=ctx.log,
+        ctx.h_proc, ctx.settings, ctx.runtime, log_func=ctx.log,
         cave_addr=ctx.cave_addr,
         config_override=_summon_override,
     )
@@ -245,7 +264,7 @@ def _handle_patch_exp_lock(ctx: PatchContext) -> bool:
         ctx.defn, ctx.code_buf, ctx.code_start_addr,
         ctx.h_proc, ctx.cave_addr, log_func=ctx.log,
         config_override=_explock_override,
-        cave_budget=ctx.variables.get("cave_total_size", 2048),
+        cave_budget=ctx.settings.cave_total_size,
     )
 
 
@@ -270,13 +289,13 @@ def _handle_patch_animation_speed(ctx: PatchContext) -> bool:
 # ============================================================
 
 def _build_cave_layout(config: 'PatchConfig', cave_addr: int,
-                       variables: Dict[str, int], log) -> Optional['CaveLayout']:
+                       settings: PatchSettings, log) -> Optional['CaveLayout']:
     """在主循环之前一次性为所有需要 cave 的补丁分配偏移。
 
     Args:
         config:      补丁配置
         cave_addr:   cave 区基址 (0 = 未分配, 跳过)
-        variables:   全局变量 (cave_total_size 等)
+        settings:    固定补丁参数 (包含 cave_total_size)
         log:         日志回调
 
     Returns:
@@ -290,14 +309,28 @@ def _build_cave_layout(config: 'PatchConfig', cave_addr: int,
         return None
     from .cave_layout import CaveLayout, CaveLayoutError
 
-    cave_budget = variables.get("cave_total_size", 2048)
+    cave_budget = settings.cave_total_size
     layout = CaveLayout(base_addr=cave_addr, budget=cave_budget)
+
+    # 存档列表头像仍沿用基线的固定 cave 地址 0xC0，必须在自动布局前预留，
+    # 否则后续自动槽位会覆盖延后安装的 archive_portrait 代码。
+    for defn in config.patches:
+        if defn.type == "cave_hook" and _is_deferred_cave_patch(defn.id):
+            try:
+                cave_code = getattr(defn, "_cave_code_bytes", None)
+                size = len(cave_code) if cave_code else len(CAVE_ARCHIVE_PORTRAIT)
+                slot = layout.allocate(defn.id, "main", size, force_offset=192)
+                defn._resolved_cave_offset = slot.offset
+            except CaveLayoutError as e:
+                log(f"  [CAVE-LAYOUT-ERR] {e}")
 
     # 1. 收集每个需要 cave 的补丁所需大小
     #    cave_hook / patch_exp_lock: 1 个 main 槽位
     #    patch_summon_table:         3 个槽位 (table + random_cave + random2_cave)
     for defn in config.patches:
         try:
+            if defn.type == "cave_hook" and _is_deferred_cave_patch(defn.id):
+                continue
             if defn.type == "cave_hook":
                 # 估算 cave 大小: 优先 _cave_code_bytes, 否则 build_cave_template 估算
                 ext_cave = getattr(defn, '_cave_code_bytes', None)
@@ -1231,12 +1264,13 @@ def apply_patch_extra_section(defn: PatchDef, h_proc: int, exe_profile, log_func
 # ============================================================
 
 def apply_patch_imm32_by_value(defn: PatchDef, code_buf: bytearray, code_start_addr: int,
-                                h_proc: int, variables: Dict[str, int], log_func=None,
+                                h_proc: int, settings: PatchSettings,
+                                runtime: PatchRuntimeState, log_func=None,
                                 exclude_ranges: list = None) -> bool:
     log = log_func or (lambda x: None)
     _excl = exclude_ranges or []
     ov = defn.expect_value
-    nv = resolve_var(defn.new_value_expr, variables, log_func=log)
+    nv = resolve_patch_value(defn.new_value_expr, settings, runtime, log_func=log)
     if nv is None:
         log(f"    -> 变量未定义, 跳过")
         return True
@@ -1288,9 +1322,10 @@ def apply_patch_imm32_by_value(defn: PatchDef, code_buf: bytearray, code_start_a
 # ============================================================
 
 def apply_patch_imm32_by_pattern(defn: PatchDef, code_buf: bytearray, code_start_addr: int,
-                                  h_proc: int, variables: Dict[str, int], log_func=None) -> bool:
+                                  h_proc: int, settings: PatchSettings,
+                                  runtime: PatchRuntimeState, log_func=None) -> bool:
     log = log_func or (lambda x: None)
-    nv = resolve_var(defn.new_value_expr, variables, log_func=log)
+    nv = resolve_patch_value(defn.new_value_expr, settings, runtime, log_func=log)
     if nv is None:
         log(f"    -> 变量未定义, 跳过")
         return True
@@ -1346,7 +1381,8 @@ def apply_patch_imm32_by_pattern(defn: PatchDef, code_buf: bytearray, code_start
 
 def apply_cave_hook(defn: PatchDef, hits: List[int], code_buf: bytearray,
                      code_start_addr: int, h_proc: int, cave_addr: int,
-                     warpc_base: int, variables: Dict[str, int], log_func=None) -> bool:
+                     warpc_base: int, settings: PatchSettings,
+                     runtime: PatchRuntimeState, log_func=None) -> bool:
     log = log_func or (lambda x: None)
     if not hits:
         log("    [WARN] 未找到 hook 点")
@@ -1354,8 +1390,8 @@ def apply_cave_hook(defn: PatchDef, hits: List[int], code_buf: bytearray,
 
     # WarPC 索引上限: 按扩容后的记录数计算 (默认模板硬编码 200,
     # 索引 >200 的新角色会导致 WORD[260] 自定义形象不生效)
-    rec_size = variables.get("warpc_rec_size", 1054)
-    new_size = variables.get("warpc_new_size", 150722)
+    rec_size = settings.warpc_rec_size
+    new_size = runtime.warpc_new_size or 150722
     idx_cap = (new_size // rec_size - 1) if rec_size > 0 else 142
     if idx_cap < 200:
         idx_cap = 200
@@ -1371,7 +1407,7 @@ def apply_cave_hook(defn: PatchDef, hits: List[int], code_buf: bytearray,
     cave_offset = getattr(defn, "_resolved_cave_offset", defn.cave_offset)
 
     # Phase 2: Cave 越界硬校验 — 防止 .tkspatch 声明超出 budget 的 offset/size
-    cave_budget = variables.get("cave_total_size", 2048)
+    cave_budget = settings.cave_total_size
     if not _check_cave_bounds(cave_addr, cave_offset, len(cd),
                               cave_budget, defn.id, log):
         return False
@@ -1403,6 +1439,69 @@ def apply_cave_hook(defn: PatchDef, hits: List[int], code_buf: bytearray,
 
     return ptd > 0
 
+
+# ============================================================
+# 延后 Cave: 存档列表头像
+# ============================================================
+
+def apply_deferred_archive_portrait(cpid: int, base_addr: int, cave_addr: int,
+                                    warpc_base: int, log_func=None) -> bool:
+    """Install the archive portrait hook using the baseline live-memory scan."""
+    log = log_func or (lambda x: None)
+    scan_rva = 0x1AB94
+    scan_size = 0x500
+    if cave_addr == 0:
+        log("  [archive_portrait]: Cave 未分配, 跳过")
+        return False
+
+    h_proc = _OpenProcess(
+        PROCESS_VM_READ | PROCESS_VM_WRITE | PROCESS_VM_OPERATION,
+        False, cpid,
+    )
+    if not h_proc:
+        log("  [archive_portrait]: OpenProcess 失败")
+        return False
+
+    try:
+        cave_code = build_cave_template("archive_portrait", warpc_base, log_func=log)
+        if cave_code is None:
+            return False
+        written = write_pm(h_proc, cave_addr, cave_code)
+        log(f"  [archive_portrait]: Cave 写入: 0x{cave_addr:08X} "
+            f"({written}/{len(cave_code)} bytes)")
+        if written != len(cave_code):
+            return False
+
+        scan_addr = base_addr + scan_rva
+        buffer, read_count = read_pm(h_proc, scan_addr, scan_size)
+        if read_count < 64:
+            log(f"  [archive_portrait]: 读取 sub_41AB94@0x{scan_addr:08X} 失败")
+            return False
+
+        applied = 0
+        for index in range(read_count - 5):
+            if buffer[index:index + 5] != b"\x66\x05\xD3\x00\x50":
+                continue
+            hook_rva = scan_rva + index
+            hook_addr = base_addr + hook_rva
+            call_offset = (cave_addr - (hook_addr + 5)) & 0xFFFFFFFF
+            hook = bytes([0xE8]) + struct.pack("<I", call_offset)
+            old_protection = vp_ex(h_proc, hook_addr, len(hook), PAGE_EXECUTE_READWRITE)
+            hook_written = write_pm(h_proc, hook_addr, hook)
+            vp_ex(h_proc, hook_addr, len(hook), old_protection)
+            if hook_written == len(hook):
+                applied += 1
+                log(f"  [archive_portrait]: [OK] RVA 0x{hook_rva:X}: "
+                    "hook add ax,0xD3+push eax -> cave")
+            else:
+                log(f"  [archive_portrait]: Hook 写入失败 @0x{hook_addr:08X}")
+
+        log(f"  [archive_portrait]: 共 hook {applied} 处")
+        return applied > 0
+    finally:
+        _CloseHandle(h_proc)
+
+
 # ============================================================
 # 补丁类型: patch_summon_table (召唤表自定义)
 # 逆向依据: sub_444BB0 召唤角色选择; stru_4EB6F0 区域 .data 8字节 (技能224~231)
@@ -1411,7 +1510,8 @@ def apply_cave_hook(defn: PatchDef, hits: List[int], code_buf: bytearray,
 # ============================================================
 
 def apply_summon_table(defn: PatchDef, code_buf: bytearray, code_start_addr: int,
-                       base_addr: int, h_proc: int, variables: Dict[str, int],
+                       base_addr: int, h_proc: int, settings: PatchSettings,
+                       runtime: PatchRuntimeState,
                        log_func=None, cave_addr: int = 0,
                        config_override: Optional[dict] = None) -> bool:
     log = log_func or (lambda x: None)
@@ -1435,8 +1535,8 @@ def apply_summon_table(defn: PatchDef, code_buf: bytearray, code_start_addr: int
         log(f"    JSON: {len(summon)} 个键")
 
     # Step 1: WarPC 记录数上限 (用于值域校验)
-    rec_size = variables.get("warpc_rec_size", 1054)
-    new_size = variables.get("warpc_new_size", 150722)
+    rec_size = settings.warpc_rec_size
+    new_size = runtime.warpc_new_size or 150722
     max_count = new_size // rec_size if rec_size > 0 else 143
 
     def _warpc_i(warpc_idx, imm16):
@@ -1481,7 +1581,7 @@ def apply_summon_table(defn: PatchDef, code_buf: bytearray, code_start_addr: int
                 log(f"    -> .data 与默认值一致")
 
     # Step 3: 写代码段 imm16 — 使用独立句柄确保写入成功
-    _pid = variables.get("_target_pid", 0)
+    _pid = runtime.target_pid
     if not _pid:
         log("  [WARN] 缺少 target_pid, 跳过 imm16 补丁")
         return all_ok
@@ -1535,7 +1635,7 @@ def apply_summon_table(defn: PatchDef, code_buf: bytearray, code_start_addr: int
         else:
             all_ok &= _apply_summon_random(defn, summon, code_buf, code_start_addr,
                                             _hp, cave_addr, _warpc_i, log,
-                                            cave_budget=variables.get("cave_total_size", 2048))
+                                            cave_budget=settings.cave_total_size)
 
     _CloseHandle(_hp)
     return all_ok
@@ -2534,7 +2634,8 @@ def apply_animation_speed(defn: PatchDef, code_buf: bytearray, code_start_addr: 
 
 def apply_config_patches(config: PatchConfig, code_buf: bytearray, code_start_addr: int,
                           base_addr: int, h_proc: int, warpc_base: int, cave_addr: int,
-                          variables: Dict[str, int], log_func=None,
+                          settings: PatchSettings, runtime: PatchRuntimeState,
+                          log_func=None,
                           minimal_mode=False, no_cave_mode=False,
                           only_portrait=False, only_awk=False,
                           selected_patches: set = None,
@@ -2564,7 +2665,7 @@ def apply_config_patches(config: PatchConfig, code_buf: bytearray, code_start_ad
         _profile_name = exe_profile.name
 
     # ── Phase 6: Cave 布局 (在主循环之前一次性分配所有 cave 偏移) ──
-    cave_layout = _build_cave_layout(config, cave_addr, variables, log)
+    cave_layout = _build_cave_layout(config, cave_addr, settings, log)
 
     # ── Phase 7: Hook 占用跟踪表 (启动器内部多个 cave_hook 之间) ──
     hook_table = HookTable()
@@ -2592,6 +2693,10 @@ def apply_config_patches(config: PatchConfig, code_buf: bytearray, code_start_ad
         # 第三方 MOD 兼容: profile skip_patches 检查
         if defn.id in _profile_skip:
             log(f"    -> 第三方 MOD 版本自动跳过")
+            continue
+
+        if defn.type == "cave_hook" and _is_deferred_cave_patch(defn.id):
+            log("    -> WarPC 重定位后由独立生命周期安装")
             continue
 
         if defn.type == "cave_hook":
@@ -2642,8 +2747,8 @@ def apply_config_patches(config: PatchConfig, code_buf: bytearray, code_start_ad
 
         # 构建统一 ctx, 委托给注册表 handler
         ctx = PatchContext(
-            defn, variables.get("_target_pid", 0), h_proc, base_addr,
-            code_buf, code_start_addr, cave_addr, warpc_base, variables,
+            defn, runtime.target_pid, h_proc, base_addr,
+            code_buf, code_start_addr, cave_addr, warpc_base, settings, runtime,
             log_func=log, exe_profile=exe_profile,
             config_overrides=config_overrides,
         )
@@ -2675,5 +2780,5 @@ def apply_config_patches(config: PatchConfig, code_buf: bytearray, code_start_ad
         for defn in hta:
             all_ok &= apply_cave_hook(defn, defn._pre_scanned_hits, code_buf,
                                        code_start_addr, h_proc, cave_addr,
-                                       warpc_base, variables, log_func=log)
+                                       warpc_base, settings, runtime, log_func=log)
     return all_ok

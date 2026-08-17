@@ -10,7 +10,7 @@ from PySide6.QtWidgets import (
 )
 
 from core.config_loader import PatchDef
-from core.tkspatch_loader import load_config_merged
+from core.tkspatch_loader import load_patch_directory
 from core.save_manager import set_last_game_dir
 from core.state_persistence import GuiState, load_gui_state, save_gui_state
 from editor_utils.dock_components import create_dock
@@ -68,9 +68,8 @@ class MainWindow(QMainWindow):
         self._dark_mode = app_inst.styleHints().colorScheme() == Qt.ColorScheme.Dark if app_inst else True
 
         # 加载配置用于补丁列表 (外置 .tkspatch 为唯一来源)
-        config_path = os.path.join(_LAUNCHER_DIR, "tks_patches.json")
         patches_dir = os.path.join(_LAUNCHER_DIR, "patches")
-        config = load_config_merged(config_path, patches_dir)
+        config = load_patch_directory(patches_dir)
         self._patches: list[PatchDef] = config.patches if config else []
 
         # 加载 GUI 勾选状态 (补丁/模组/辅助工具的勾选记录)

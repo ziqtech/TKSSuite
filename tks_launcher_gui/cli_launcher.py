@@ -37,7 +37,7 @@ from core.memory import (
     PROCESS_VM_READ,
     _OpenProcess, _CloseHandle,
 )
-from core.tkspatch_loader import load_config_merged
+from core.tkspatch_loader import load_patch_directory
 from core.patch_engine import validate_script_patch
 
 
@@ -328,9 +328,8 @@ class CliLauncher:
 
     def _build_default_selection(self, exe_dir: str) -> set:
         """构建 GUI 默认勾选集合: 仅 optional + default_checked=True 的补丁。"""
-        config_path = os.path.join(exe_dir, "tks_patches.json")
         patches_dir = os.path.join(exe_dir, "patches")
-        cfg = load_config_merged(config_path, patches_dir, log_func=self._log)
+        cfg = load_patch_directory(patches_dir, log_func=self._log)
         if cfg is None:
             return set()
         return {p.id for p in cfg.patches if p.optional and p.default_checked}
@@ -609,8 +608,7 @@ def main():
 
     if args.verify_patches:
         patches_dir = os.path.join(exe_dir, "patches")
-        config_path = os.path.join(exe_dir, "tks_patches.json")
-        cfg = load_config_merged(config_path, patches_dir, log_func=print)
+        cfg = load_patch_directory(patches_dir, log_func=print)
         if cfg is None or not cfg.patches:
             print("[ERROR] 无法加载补丁配置 (patches/ 为空)")
             sys.exit(1)

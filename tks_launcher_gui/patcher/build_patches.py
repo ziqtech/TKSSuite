@@ -88,7 +88,7 @@ def build_all_patches(src_patches_dir: str, dst_patches_dir: str) -> bool:
     success_count = 0
     fail_count = 0
     
-    # 所有补丁（包括 global_variables）均按统一 ZIP 格式构建。
+    # 所有补丁均按统一 ZIP 格式构建。
     # 遍历所有补丁目录
     patch_dirs = [d for d in src_path.iterdir() 
                   if d.is_dir() and not d.name.startswith("_")]

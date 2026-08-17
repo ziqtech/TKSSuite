@@ -1,18 +1,14 @@
 """
 .tkspatch 外置补丁加载器
 
-文件格式: ZIP 容器, 扩展名 .tkspatch (旧版散装 JSON 兼容)
+文件格式: ZIP 容器, 扩展名 .tkspatch
 每个文件定义一个完整的补丁 (含 cave 机器码), 可独立分发替换。
 
-新版 ZIP 格式 (类似 .tksmod):
-  patch.json  — 补丁清单 (原散装 JSON 的全部字段)
+ZIP 格式:
+  patch.json  — 补丁清单
   script.py   — type=script 时内嵌的外部脚本源码
 
-旧版散装 JSON 仍可加载, 用于向后兼容。
-
-优先级规则:
-  patches/ 目录下的 .tkspatch 文件 (按 id) 覆盖 tks_patches.json 中同 id 的补丁。
-  若 patches/ 目录不存在或为空, 完全回退到 tks_patches.json (向后兼容)。
+补丁目录也支持开发模式的子目录结构，每个子目录包含 patch.json。
 
 Cave 机器码字段:
   cave_code: 空格分隔的十六进制字符串 (与 pattern 格式一致)
@@ -30,15 +26,9 @@ import os
 import zipfile
 from typing import Any, Dict, List, Optional
 
-from .config_loader import PatchDef, PatchConfig, load_config, resolve_config_path
+from .config_loader import PatchDef, PatchConfig, resolve_config_path
 
 FORMAT_VERSION = 1
-
-# 旧版全局变量文件名，仅用于兼容迁移前的发行目录。
-VARIABLES_FILE = "_variables.tkspatch"
-GLOBAL_VARIABLES_ID = "global_variables"
-GLOBAL_VARIABLES_TYPE = "global_variables"
-
 
 def _parse_hex_bytes(hex_str: str) -> Optional[bytes]:
     """解析空格分隔的十六进制字符串为 bytes。
@@ -110,8 +100,6 @@ _TKSPATCH_SCHEMA = {
         "_group", "_comment", "_说明", "_mod_note",
         "original", "field_range", "new_base",
         "cave_mask_offset", "summon_cave_code", "summon_cave2_code",
-        # 全局变量补丁
-        "variables",
         # 版本
         "_format", "format", "format_version",
     ],
@@ -159,7 +147,6 @@ _TKSPATCH_SCHEMA = {
         "_format": int,
         "format": str,
         "format_version": int,
-        "variables": dict,
     },
     "valid_hook_conflict_actions": {"override", "skip"},
 }
@@ -259,19 +246,16 @@ def validate_tkspatch_dict(raw: dict, source_path: str = "",
     return errors
 
 
-# Phase 8: 统一字段映射 — 供 .tkspatch (ZIP/JSON) 与 tks_patches.json 共用
-# 不同之处仅 script_file 路径解析策略 (tkspatch 用相对 .tkspatch 目录, config 用多级回退)
-# json_file 与 fallback_rva 字段两者都用 resolve_config_path
+# 统一字段映射 — 供目录型和 ZIP 型 .tkspatch 共用。
+# json_file 与 fallback_rva 字段使用共享路径解析规则。
 def parse_patch_dict(raw: dict, source_path: str,
                      script_resolve_mode: str = "tkspatch_dir") -> PatchDef:
-    """统一字段映射, 供 .tkspatch ZIP/JSON 和 tks_patches.json 共用。
+    """统一字段映射, 供目录型和 ZIP 型 .tkspatch 共用。
 
     Args:
         raw:                   已解析的 JSON dict
         source_path:           配置文件路径 (用于解析 json_file/script_file 相对路径)
         script_resolve_mode:   "tkspatch_dir" — script_file 相对 .tkspatch 所在目录
-                               "config_path"  — script_file 经 resolve_config_path 多级回退
-
     Returns:
         PatchDef 实例。raw 非 dict 时返回空的 PatchDef (避免崩溃)。
         """
@@ -342,7 +326,6 @@ def parse_patch_dict(raw: dict, source_path: str,
             # .tkspatch: 相对 .tkspatch 所在目录
             sf = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(source_path)), sf))
         else:
-            # tks_patches.json: 多级回退 (启动器根目录、上级目录)
             sf = resolve_config_path(source_path, sf)
     d.script_path = sf
     d.script_source = raw.get("script_source", "")
@@ -371,8 +354,7 @@ def parse_patch_dict(raw: dict, source_path: str,
     d._extra = {}  # type: ignore
     for key in ("_group", "_comment", "_说明", "_mod_note",
                 "original", "field_range", "new_base",
-                "cave_mask_offset", "summon_cave_code", "summon_cave2_code",
-                "variables"):
+                "cave_mask_offset", "summon_cave_code", "summon_cave2_code"):
         if key in raw:
             d._extra[key] = raw[key]  # type: ignore
 
@@ -380,7 +362,7 @@ def parse_patch_dict(raw: dict, source_path: str,
 
 
 def load_tkspatch_file(path: str, log_func=None) -> Optional[PatchDef]:
-    """加载单个 .tkspatch (ZIP 或旧版 JSON), 返回 PatchDef。
+    """加载单个 ZIP 型 .tkspatch，返回 PatchDef。
 
     PatchDef 新增属性:
         _cave_code_bytes: Optional[bytes]  — 外置 cave 机器码 (若定义)
@@ -390,16 +372,13 @@ def load_tkspatch_file(path: str, log_func=None) -> Optional[PatchDef]:
     log = log_func or (lambda x: None)
     if zipfile.is_zipfile(path):
         return _load_tkspatch_zip(path, log_func=log)
-    return _load_tkspatch_json(path, log_func=log)
+    log(f"  [WARN] 补丁文件不是 ZIP 格式: {path}")
+    return None
 
 
-def _load_tkspatch_json(path: str, log_func=None,
-                        raw: Optional[Dict[str, Any]] = None) -> Optional[PatchDef]:
-    """加载旧版散装 JSON .tkspatch; raw 存在时复用解析逻辑。
-
-    Phase 8: 委托给 parse_patch_dict, 统一字段映射。
-    Phase 12: 先做 JSON Schema 校验, 失败则跳过 (返回 None)。
-    """
+def _parse_patch_json(path: str, log_func=None,
+                      raw: Optional[Dict[str, Any]] = None) -> Optional[PatchDef]:
+    """解析 ZIP 内的 patch.json。"""
     log = log_func or (lambda x: None)
     if raw is None:
         try:
@@ -434,7 +413,7 @@ def _load_tkspatch_zip(path: str, log_func=None) -> Optional[PatchDef]:
                 log(f"  [WARN] .tkspatch ZIP 缺少 patch.json: {path}")
                 return None
             raw = json.loads(zf.read("patch.json").decode('utf-8'))
-            d = _load_tkspatch_json(path, log_func=log, raw=raw)
+            d = _parse_patch_json(path, log_func=log, raw=raw)
             if d is None:
                 return None
             if d.type == "script":
@@ -453,131 +432,21 @@ def _load_tkspatch_zip(path: str, log_func=None) -> Optional[PatchDef]:
         return None
 
 
-def _parse_variables(raw: Any, source_label: str, log_func=None) -> Dict[str, int]:
-    """将全局变量清单解析为运行时整数值。"""
+def load_patch_directory(patches_dir: str, log_func=None) -> Optional[PatchConfig]:
+    """只从 patches/ 目录加载补丁，不读取任何旧版配置。"""
     log = log_func or (lambda x: None)
-    vars_raw = raw.get("variables", {}) if isinstance(raw, dict) else {}
-    if not isinstance(vars_raw, dict):
-        log(f"  [WARN] {source_label} 缺少 variables 段")
-        return {}
+    if not os.path.isdir(patches_dir):
+        log(f"  [ERROR] 补丁目录不存在: {patches_dir}")
+        return None
 
-    variables: Dict[str, int] = {}
-    for key, value in vars_raw.items():
-        try:
-            if isinstance(value, dict):
-                value = value.get("fallback", 0)
-            if isinstance(value, str):
-                variables[key] = int(value, 16) if value.lower().startswith("0x") else int(value)
-            elif isinstance(value, bool):
-                variables[key] = 1 if value else 0
-            else:
-                variables[key] = int(value)
-        except (ValueError, TypeError):
-            log(f"  [WARN] {source_label} 变量 {key} 解析失败, 跳过")
-    return variables
+    external_patches = load_tkspatch_dir(patches_dir, log_func=log)
+    patches = external_patches
+    if not patches:
+        log(f"  [ERROR] 补丁目录为空: {patches_dir}")
+        return None
 
-
-def load_variables_from_dir(patches_dir: str, log_func=None) -> Dict[str, int]:
-    """读取旧版全局变量文件，作为新格式的兼容回退。
-
-    开发目录使用可编辑的 ``_variables.json``；发行目录使用
-    ``_variables.tkspatch``。迁移后两者可能同时存在，因此必须优先读取
-    源码文件，否则修改开发文件不会生效。
-    """
-    log = log_func or (lambda x: None)
-    source_path = os.path.join(patches_dir, "_variables.json")
-    packaged_path = os.path.join(patches_dir, VARIABLES_FILE)
-    if os.path.isfile(source_path):
-        vpath = source_path
-        source_label = "_variables.json"
-    elif os.path.isfile(packaged_path):
-        vpath = packaged_path
-        source_label = VARIABLES_FILE
-    else:
-        log(f"  [WARN] 全局变量文件不存在: {packaged_path}")
-        return {}
-    try:
-        with open(vpath, 'r', encoding='utf-8') as f:
-            raw = json.load(f)
-    except Exception as e:
-        log(f"  [ERROR] 解析 {source_label} 失败: {e}")
-        return {}
-
-    vars_raw = raw.get("variables", {})
-    if not isinstance(vars_raw, dict):
-        log(f"  [WARN] {source_label} 缺少 variables 段")
-        return {}
-
-    variables: Dict[str, int] = {}
-    for k, v in vars_raw.items():
-        try:
-            if isinstance(v, dict):
-                fbv = v.get("fallback", 0)
-                if isinstance(fbv, str) and fbv.lower().startswith("0x"):
-                    variables[k] = int(fbv, 16)
-                else:
-                    variables[k] = int(fbv)
-            elif isinstance(v, str):
-                if v.lower().startswith("0x"):
-                    variables[k] = int(v, 16)
-                else:
-                    variables[k] = int(v)
-            elif isinstance(v, bool):
-                variables[k] = 1 if v else 0
-            else:
-                variables[k] = int(v)
-        except (ValueError, TypeError):
-            log(f"  [WARN] {source_label} 变量 {k} 解析失败, 跳过")
-    return variables
-
-
-def load_config_merged(config_path: str, patches_dir: str,
-                       log_func=None) -> Optional[PatchConfig]:
-    """统一补丁配置加载入口 — 不依赖 tks_patches.json。
-
-    加载顺序:
-      1. 若 tks_patches.json 存在 → 加载为基础配置 (仅向后兼容, 不更新)
-      2. 从 patches/_variables.tkspatch 读取全局变量 (覆盖 json 中的 variables)
-      3. 加载 patches/*.tkspatch → 合并 (同 id 覆盖)
-
-    返回 None 仅当 patches/ 目录不存在且 tks_patches.json 也不存在。
-    """
-    log = log_func or (lambda x: None)
-
-    # 1. 基础配置: 优先 tks_patches.json (旧版兼容), 否则空配置
-    config = None
-    if os.path.isfile(config_path):
-        config = load_config(config_path, log_func=log)
-        if config is not None:
-            log(f"  [config] 基础配置: {config_path}")
-    if config is None:
-        config = PatchConfig()
-
-    # 2. 加载统一格式的全局变量补丁；旧文件仅作回退。
-    ext_patches = load_tkspatch_dir(patches_dir, log_func=log)
-    variable_patches = [p for p in ext_patches if p.type == GLOBAL_VARIABLES_TYPE]
-    if variable_patches:
-        for variable_patch in variable_patches:
-            variables = _parse_variables(
-                {"variables": getattr(variable_patch, "_extra", {}).get("variables", {})},
-                f"{GLOBAL_VARIABLES_ID}.tkspatch",
-                log_func=log,
-            )
-            if variables:
-                config.variables.update(variables)
-                log(f"  [config] 全局变量: {len(variables)} 个 (来自 {GLOBAL_VARIABLES_ID}.tkspatch)")
-        ext_patches = [p for p in ext_patches if p.type != GLOBAL_VARIABLES_TYPE]
-    else:
-        ext_vars = load_variables_from_dir(patches_dir, log_func=log)
-        if ext_vars:
-            config.variables.update(ext_vars)
-            variable_source = "_variables.json" if os.path.isfile(os.path.join(patches_dir, "_variables.json")) else VARIABLES_FILE
-            log(f"  [config] 全局变量: {len(ext_vars)} 个 (来自 {variable_source})")
-
-    # 3. 外置补丁合并
-    if ext_patches:
-        config = merge_patches(config, ext_patches, log_func=log)
-
+    config = PatchConfig(patches=patches)
+    log(f"  [config] 从 patches/ 加载 {len(config.patches)} 个补丁")
     return config
 
 
@@ -588,7 +457,6 @@ def load_tkspatch_dir(patches_dir: str, log_func=None) -> List[PatchDef]:
     1. 生产环境: patches/*.tkspatch 文件（统一 ZIP 格式；旧 JSON 仍兼容）
     2. 开发环境: patches/补丁名/ 源码目录（包含 patch.json）
 
-    global_variables 类型会被返回给上层提取变量，但不会进入 UI 补丁列表。
     """
     log = log_func or (lambda x: None)
     if not os.path.isdir(patches_dir):
@@ -642,8 +510,6 @@ def load_tkspatch_dir(patches_dir: str, log_func=None) -> List[PatchDef]:
     else:
         # 没有源码目录时，兼容发行目录中的 .tkspatch 文件。
         for fname in files:
-            if fname == VARIABLES_FILE:
-                continue
             fpath = os.path.join(patches_dir, fname)
             defn = load_tkspatch_file(fpath, log_func=log)
             if defn is not None and defn.id:

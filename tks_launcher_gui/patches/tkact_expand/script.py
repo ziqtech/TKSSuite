@@ -52,9 +52,9 @@ def apply(ctx):
     log = ctx.log
     log("\\n--- [tkact_expand] TKAct 动画条目扩容 ---")
 
-    orig_size = int(ctx.variables.get("tkact_orig_size", TKACT_OLD_SIZE))
-    rec_size = int(ctx.variables.get("tkact_rec_size", TKACT_REC_SIZE))
-    old_base = int(ctx.variables.get("tkact_base", TKACT_OLD_BASE))
+    orig_size = ctx.settings.tkact_orig_size
+    rec_size = ctx.settings.tkact_rec_size
+    old_base = ctx.settings.tkact_base
 
     full_path = TKACT_TEMP_FILE
     if not os.path.isfile(full_path):

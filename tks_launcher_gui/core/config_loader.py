@@ -1,8 +1,41 @@
 """补丁配置加载 — 从 tks_launcher.py 提取"""
-import json
 import os
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
+
+
+@dataclass(frozen=True)
+class PatchSettings:
+    """固定的补丁执行参数。"""
+    warpc_base_fallback: int = 0x757F08
+    warpc_rec_size: int = 1054
+    save_block_ab_size: int = 9200
+    tkkon_orig_size: int = 26000
+    tkkon_rec_size: int = 40
+    tkkon_base: int = 0x9D0698
+    tkact_orig_size: int = 509600
+    tkact_rec_size: int = 784
+    tkact_base: int = 0x9539CA
+    tkdefunit_orig_count: int = 5000
+    cave_total_size: int = 2048
+
+
+@dataclass
+class PatchRuntimeState:
+    """单次启动期间计算出的补丁运行时状态。"""
+    target_pid: int = 0
+    warpc_base: int = 0
+    warpc_new_base: int = 0
+    warpc_new_size: int = 0
+    save_new_size: int = 0
+    tkmat_actual_size: int = 0
+    tkitem_actual_size: int = 0
+    tkskill_actual_size: int = 0
+    tkshop_actual_size: int = 0
+    tkkon_actual_size: int = 0
+    tkact_new_size: int = 0
+    tkdefunit_new_count: int = 0
+
 
 @dataclass
 class PatchDef:
@@ -58,7 +91,6 @@ class PatchDef:
 
 @dataclass
 class PatchConfig:
-    variables: Dict[str, int] = field(default_factory=dict)
     patches: List[PatchDef] = field(default_factory=list)
 
 
@@ -87,75 +119,19 @@ def resolve_config_path(base_path: str, rel: str) -> str:
     return candidates[1] if len(candidates) > 1 else candidates[0]
 
 
-def load_config(path: str, log_func=None) -> Optional[PatchConfig]:
-    log = log_func or (lambda x: None)
-    if not os.path.isfile(path):
-        log(f"  [WARN] 配置文件 {path} 不存在")
-        return None
-    try:
-        with open(path, 'r', encoding='utf-8') as f:
-            raw = json.load(f)
-    except Exception as e:
-        log(f"  [ERROR] 解析 JSON 配置失败: {e}")
-        return None
-
-    config = PatchConfig()
-
-    if "variables" in raw:
-        for k, v in raw["variables"].items():
-            if isinstance(v, dict):
-                if "fallback" in v:
-                    fbv = v["fallback"]
-                    if isinstance(fbv, str) and fbv.lower().startswith("0x"):
-                        config.variables[k] = int(fbv, 16)
-                    else:
-                        config.variables[k] = int(fbv)
-            elif isinstance(v, str):
-                if v.lower().startswith("0x"):
-                    config.variables[k] = int(v, 16)
-                else:
-                    config.variables[k] = int(v)
-            elif isinstance(v, bool):
-                config.variables[k] = 1 if v else 0
-            else:
-                config.variables[k] = int(v)
-
-    def _parse_maybe_hex(val):
-        if isinstance(val, str):
-            if val.lower().startswith("0x"):
-                return int(val, 16)
-            return int(val)
-        return int(val)
-
-    def _parse_replace_val(val):
-        if isinstance(val, str):
-            return int(val, 16)
-        return int(val)
-
-    if "patches" in raw:
-        # Phase 8: 委托给 parse_patch_dict 统一字段映射
-        from .tkspatch_loader import parse_patch_dict
-        # 兼容: launcher_config.json 等可能用 patches.enabled 列表式而非数组
-        # 若 patches 是 list, 才是真正的补丁定义数组
-        if isinstance(raw["patches"], list):
-            for pr in raw["patches"]:
-                if isinstance(pr, dict):
-                    d = parse_patch_dict(pr, path, script_resolve_mode="config_path")
-                    config.patches.append(d)
-
-    log(f"  已加载配置: {len(config.variables)} 个变量, {len(config.patches)} 个补丁")
-    return config
-
-def resolve_var(expr: str, variables: Dict[str, int], log_func=None) -> Optional[int]:
-    """解析变量引用。strict 模式下未定义变量返回 None"""
+def resolve_patch_value(expr: str, settings: PatchSettings,
+                        runtime: PatchRuntimeState, log_func=None) -> Optional[int]:
+    """解析补丁表达式，运行时状态优先于固定设置。"""
     log = log_func or (lambda x: None)
     if expr is None:
         return 0
     if expr.startswith('{') and expr.endswith('}'):
-        vn = expr[1:-1]
-        if vn in variables:
-            return variables[vn]
-        log(f"  [WARN] 未定义变量: {vn}")
+        name = expr[1:-1]
+        if hasattr(runtime, name):
+            return int(getattr(runtime, name))
+        if hasattr(settings, name):
+            return int(getattr(settings, name))
+        log(f"  [WARN] 未定义参数: {name}")
         return None
     if expr.lower().startswith('0x'):
         return int(expr[2:], 16)

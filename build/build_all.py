@@ -35,7 +35,7 @@ build_all.py — TKS Editors 一键构建脚本 (Nuitka)
     dist/Winlator/            [Winlator 专用, 手机玩家部署包]
     ├── TKSLauncherCLI.exe    CLI 启动器 (~5-10MB)
     ├── launcher_config.json  配置模板
-    ├── tks_patches.json      补丁定义
+    ├── patches/              补丁定义
     ├── configs/              基线配置 (font_config/summon_table 等)
     └── mods/                 空目录 (用户放置 MOD)
 
@@ -45,7 +45,7 @@ build_all.py — TKS Editors 一键构建脚本 (Nuitka)
     ├── TKSSaveEditor.exe     存档编辑器
     ├── libs/                 运行时归档 (薄 exe 依赖)
     ├── configs/  mods/  tools/
-    ├── launcher_config.json  tks_patches.json
+    ├── launcher_config.json  启动器配置模板
 """
 import argparse
 import hashlib
@@ -696,12 +696,6 @@ def assemble_release(onefile: bool = False, release: bool = False,
             patch_count = len(list(patches_dst.glob("*.tkspatch")))
             print(f"  [OK] patches/ ({patch_count} 个现有 .tkspatch)")
 
-    # 复制 tks_patches.json 到发行根目录 (补丁基础设施, 不在 configs/ 内)
-    tks_patches_src = 仓库根目录 / "tks_launcher_gui" / "tks_patches.json"
-    if tks_patches_src.exists():
-        shutil.copy2(str(tks_patches_src), str(RELEASE_DIR / "tks_patches.json"))
-        print(f"  [OK] tks_patches.json")
-
     # 复制 launcher_config.json (CLI 启动器配置模板)
     launcher_cfg_src = 仓库根目录 / "tks_launcher_gui" / "launcher_config.json"
     if launcher_cfg_src.exists():
@@ -743,7 +737,7 @@ def assemble_winlator():
     此目录专为 Winlator (Wine on Android) 用户设计，包含:
     - TKSLauncherCLI.exe    无 GUI 的命令行启动器
     - launcher_config.json  启动器配置模板
-    - tks_patches.json      补丁定义
+    - patches/              补丁定义
     - configs/summon_table.json  召唤表
     - mods/                 MOD 目录 (空, 供用户放置)
     """
@@ -775,14 +769,7 @@ def assemble_winlator():
         print(f"  [OK] launcher_config.json")
         assembled.append("launcher_config.json")
 
-    # 3. 复制 tks_patches.json (补丁定义)
-    tks_patches_src = 仓库根目录 / "tks_launcher_gui" / "tks_patches.json"
-    if tks_patches_src.exists():
-        shutil.copy2(str(tks_patches_src), str(WINLATOR_DIR / "tks_patches.json"))
-        print(f"  [OK] tks_patches.json")
-        assembled.append("tks_patches.json")
-
-    # 复制外置补丁目录 (CLI 同样使用 patches/ 的 ZIP 型 .tkspatch 作为唯一来源)
+    # 3. 复制外置补丁目录 (CLI 同样使用 patches/ 的 ZIP 型 .tkspatch 作为唯一来源)
     patches_src = 仓库根目录 / "tks_launcher_gui" / "patches"
     if patches_src.is_dir():
         patches_dst = WINLATOR_DIR / "patches"
@@ -880,8 +867,8 @@ def assemble_launcher():
         print(f"  [OK] tools/")
         assembled.append("tools/")
 
-    # 5. 复制补丁定义与启动器配置模板
-    for fname in ("tks_patches.json", "launcher_config.json"):
+    # 5. 复制启动器配置模板
+    for fname in ("launcher_config.json",):
         src = 仓库根目录 / "tks_launcher_gui" / fname
         if src.exists():
             shutil.copy2(str(src), str(LAUNCHER_DIR / fname))

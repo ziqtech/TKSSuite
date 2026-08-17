@@ -53,9 +53,9 @@ def apply(ctx):
     log = ctx.log
     log("\n--- [tkkon_expand] TKKon 动画/效果记录扩容 ---")
 
-    orig_size = int(ctx.variables.get("tkkon_orig_size", TKKON_OLD_SIZE))
-    rec_size = int(ctx.variables.get("tkkon_rec_size", TKKON_REC_SIZE))
-    old_base = int(ctx.variables.get("tkkon_base", TKKON_OLD_BASE))
+    orig_size = ctx.settings.tkkon_orig_size
+    rec_size = ctx.settings.tkkon_rec_size
+    old_base = ctx.settings.tkkon_base
 
     if not os.path.isfile("TKKon.dat"):
         log("  [SKIP] TKKon.dat not found")

@@ -26,12 +26,11 @@ def _launcher_dir() -> str:
 
 def _verify_patches() -> int:
     from core.patch_engine import validate_script_patch
-    from core.tkspatch_loader import load_config_merged
+    from core.tkspatch_loader import load_patch_directory
 
     exe_dir = _launcher_dir()
     lines: list[str] = []
-    cfg = load_config_merged(
-        os.path.join(exe_dir, "tks_patches.json"),
+    cfg = load_patch_directory(
         os.path.join(exe_dir, "patches"),
         log_func=lines.append,
     )
