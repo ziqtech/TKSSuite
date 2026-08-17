@@ -1,4 +1,4 @@
-"""召唤数量扩展补丁 v14 — 4 个 cave_hook + 3 个精确单点 patch. (V14 修复 V13 Phase 5 栈错位 bug)
+"""召唤数量扩展补丁 — 4 个 cave_hook + 精确单点 patch.
 
 逆向依据: sub_436BD4 / sub_444BB0 / sub_431094 / sub_43C734 / sub_444FD4 / sub_445564
 
@@ -607,22 +607,36 @@ def _verify_capacity_hook(ctx, cave_addr, log):
 
 
 def apply(ctx):
-    global _IMAGE_DELTA
+    global N, ENEMY_MAX, PATCH_5_NEW, _IMAGE_DELTA
+    raw_limit = getattr(ctx.defn, "_extra", {}).get("summon_limit", 4)
+    if isinstance(raw_limit, bool):
+        log = ctx.log
+        log("  [ERROR] summon_limit 不能是布尔值")
+        return False
+    try:
+        configured_limit = int(raw_limit)
+    except (TypeError, ValueError):
+        ctx.log(f"  [ERROR] summon_limit 无效: {raw_limit!r}")
+        return False
+    if configured_limit < 2 or configured_limit > 8:
+        ctx.log(f"  [ERROR] summon_limit={configured_limit} 超出允许范围 2..8")
+        return False
+    N = configured_limit
+    ENEMY_MAX = 8 - N
+    PATCH_5_NEW = bytes.fromhex("66 83 C0 " + f"{N:02X}")
     _IMAGE_DELTA = ctx.base_addr - IMAGE_BASE
     log = ctx.log
-    log(f"\n--- [summon_extend] v16 (N={N}, enemy_max={ENEMY_MAX}) ---")
-    log(f"  V15 修复 V14 Phase 5 错位 add esp, 8 导致引擎后卡死的 bug")
-    log(f"  V16 修复 V13/V14/V15 cave_4 遗留 bug:")
+    log(f"\n--- [summon_extend] (N={N}, enemy_max={ENEMY_MAX}) ---")
+    log(f"  使用原版控制流并扩展召唤槽位")
     log(f"    - `je +2` 错跳到 popad → 改为 `je +8` 跳到 clear slot")
     log(f"    - `loop -9` 错跳到 movzx 中间 → 改为 `loop -11` 跳回 movzx 起始")
     log(f"    (原 bug: entity 死亡后 slot[k] 永远不会被清空, 召唤数被错误占用)")
-    log(f"  V16 还在 cave_1 追加 byte_9DF88E[0/1] = -1 初始化 (16-bit 写覆盖两字节)")
 
     cave_addr = ctx.cave_addr
     if not cave_addr:
         log("  [ERROR] cave_addr 为 0")
         return False
-    if N < 1 or N > 7:
+    if N < 2 or N > 8:
         log(f"  [ERROR] N={N} 越界")
         return False
     cave_total_size = ctx.settings.cave_total_size
@@ -699,5 +713,5 @@ def apply(ctx):
     if nw != N:
         return False
 
-    log(f"  [OK] 召唤数量扩展 v14 完成")
+    log(f"  [OK] 召唤数量扩展完成")
     return True

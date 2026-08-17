@@ -100,6 +100,7 @@ _TKSPATCH_SCHEMA = {
         "_group", "_comment", "_说明", "_mod_note",
         "original", "field_range", "new_base",
         "cave_mask_offset", "summon_cave_code", "summon_cave2_code",
+        "summon_limit",
         # 版本
         "_format", "format", "format_version",
     ],
@@ -108,6 +109,7 @@ _TKSPATCH_SCHEMA = {
         "id": str,
         "name": str,
         "desc": str,
+        "summon_limit": int,
         "optional": bool,
         "default_checked": bool,
         "profile_rules": dict,
@@ -357,6 +359,8 @@ def parse_patch_dict(raw: dict, source_path: str,
                 "cave_mask_offset", "summon_cave_code", "summon_cave2_code"):
         if key in raw:
             d._extra[key] = raw[key]  # type: ignore
+    if "summon_limit" in raw:
+        d._extra["summon_limit"] = raw["summon_limit"]  # type: ignore
 
     return d
 
