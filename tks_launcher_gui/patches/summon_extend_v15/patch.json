@@ -1,0 +1,14 @@
+{
+  "_format": 1,
+  "_group": "战斗 - 召唤数量扩展补丁",
+  "_comment": "原版游戏召唤系统只支持 2 个玩家召唤物, 安全战场实体硬上限 32. 本补丁把玩家召唤物扩展到 N 个 (默认 4), 自动调整'嚷嚷'技能召唤物值的上限, 维持战场实体数稳定. 逆向依据: sub_436BD4 战场初始化/byte_9DF88E/byte_9DF88F/byte_9DF883/byte_9DF887/byte_9DF885, sub_444BB0 召唤技能检查 (3个byte_9DF88E/byte_9DF88F检查), sub_431094 召唤鸟分配 (v5/v6/v7 写入), sub_43C734 空位释放时清理召唤物, sub_444FD4 '嚷嚷' enemy 数量 +2 改 +N, sub_445564 '嚷嚷' 召唤物 6 改 8-N. patch 全部走外部召唤数量扩展补丁可行性分析.md. Cave 内存布局: [0..3]N 槽数组 (动态初始化 -1) + [0..31]cave1 init (含 byte_9DF88E[0/1] 初始化) + [32..79]cave2 full check + [80..223]cave3 alloc + [224..287]cave4 clear (V16 修复了 slot 永不清理 bug).",
+  "type": "script",
+  "id": "summon_extend_v15",
+  "name": "召唤数量扩展 (4 个) V16",
+  "desc": "玩家召唤上限从 2 扩展到 N (默认 4). 同时调整'嚷嚷'技能召唤物上限, 维持战场实体总数不变. Cave 内存占用 288 字节 (固定偏移 0~287). V14 修复 V13 Phase 5 栈错位导致 epilogue 读 v6 当 ret addr 而 crash 的 bug. V15 修复 V14 Phase 5 错位 add esp, 8 导致引擎后卡死的 bug. V16 修复 V13/V14/V15 cave_4 遗留 bug: `je +2` 错跳到 popad (slot 永不清理) → `je +8` 跳到 clear slot; `loop -9` 错跳到 movzx 中间 → `loop -11` 跳回 movzx 起始. 原 bug 导致 entity 死亡后 slot[k] 永远不释放, 召唤数被错误占用, 玩家无法召唤新单位. V16 同时在 cave_1 追加 16-bit 写覆盖 byte_9DF88E[0/1] = -1, 干净初始化.",
+  "optional": true,
+  "default_checked": false,
+  "script_file": "script.py",
+  "format": "TKSPATCH",
+  "format_version": 1
+}
