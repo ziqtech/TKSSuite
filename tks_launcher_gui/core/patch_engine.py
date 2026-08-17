@@ -309,16 +309,24 @@ def _build_cave_layout(config: 'PatchConfig', cave_addr: int,
     for defn in config.patches:
         try:
             if defn.type == "cave_hook":
-                # 估算 cave 大小: 优先 _cave_code_bytes, 否则 build_cave_template 估算
+                # 必须按实际模板长度预留。固定 64 字节会让较长模板互相覆盖。
                 ext_cave = getattr(defn, '_cave_code_bytes', None)
-                size = len(ext_cave) if ext_cave else 64  # 估算默认值
+                if ext_cave:
+                    size = len(ext_cave)
+                else:
+                    template = build_cave_template(
+                        defn.cave_template, 0x70000000, log_func=log)
+                    size = len(template) if template else 0
+                if size <= 0:
+                    log(f"  [CAVE-LAYOUT-ERR] {defn.id}: 无法确定 cave 模板大小")
+                    continue
                 force_off = None if getattr(defn, "autolayout_cave", True) else defn.cave_offset
                 slot = layout.allocate(defn.id, "main", size, force_offset=force_off)
                 defn._resolved_cave_offset = slot.offset
 
             elif defn.type == "patch_exp_lock":
                 ext_cave = getattr(defn, '_cave_code_bytes', None)
-                size = len(ext_cave) if ext_cave else len(CAVE_EXP_LOCK) if 'CAVE_EXP_LOCK' in dir() else 32
+                size = len(ext_cave) if ext_cave else len(CAVE_EXP_LOCK)
                 force_off = None if getattr(defn, "autolayout_cave", True) else defn.cave_offset
                 slot = layout.allocate(defn.id, "main", size, force_offset=force_off)
                 defn._resolved_cave_offset = slot.offset
@@ -1166,17 +1174,23 @@ def apply_patch_bytes(defn: PatchDef, code_buf: bytearray, code_start_addr: int,
         log(f"    模式: [{entry['pattern']}] -> 匹配 {len(hits)} 处 (预期 {expect})")
         if expect > 0 and len(hits) != expect:
             log(f"  [WARN] 匹配数 {len(hits)} != 预期 {expect}")
+            # 命中数不符合定义时，继续写入会把模糊特征误应用到错误位置。
+            all_ok = False
+            continue
         ptd = 0
         for off in hits:
             for rk, bv in entry["replace"].items():
                 ro = int(rk)
-                aa = code_start_addr + off + ro
+                idx = off + ro
+                if idx < 0 or idx >= len(code_buf):
+                    log(f"  [FAIL] 替换偏移越界: RVA 0x{idx:X} (缓冲区 0x0..0x{len(code_buf)-1:X})")
+                    all_ok = False
+                    continue
+                aa = code_start_addr + idx
                 op = vp_ex(h_proc, aa, 1, PAGE_EXECUTE_READWRITE)
                 write_pm(h_proc, aa, bytes([bv & 0xFF]))
                 vp_ex(h_proc, aa, 1, op)
-                idx = off + ro
-                if idx < len(code_buf):
-                    code_buf[idx] = bv & 0xFF
+                code_buf[idx] = bv & 0xFF
             log(f"    [OK] RVA 0x{off:X} (abs 0x{code_start_addr + off:08X})")
             ptd += 1
         if ptd == 0 and expect > 0:
@@ -1224,6 +1238,10 @@ def apply_patch_extra_section(defn: PatchDef, h_proc: int, exe_profile, log_func
             for rk, bv in repl.items():
                 ro = int(rk)
                 aa = start + off + ro
+                if aa < start or aa >= end:
+                    log(f"  [FAIL] 额外段替换偏移越界: 0x{aa:08X} "
+                        f"(段范围 0x{start:08X}-0x{end:08X})")
+                    continue
                 op = vp_ex(h_proc, aa, 1, PAGE_EXECUTE_READWRITE)
                 write_pm(h_proc, aa, bytes([bv & 0xFF]))
                 vp_ex(h_proc, aa, 1, op)
@@ -1396,6 +1414,10 @@ def apply_cave_hook(defn: PatchDef, hits: List[int], code_buf: bytearray,
     ptd = 0
     for off in hits:
         hook_off = off + defn.hook_offset
+        if (hook_off < 0 or defn.hook_size <= 0 or
+                hook_off + defn.hook_size > len(code_buf)):
+            log(f"  [FAIL] {defn.id}: hook 写入越界 (RVA 0x{hook_off:X}, size={defn.hook_size})")
+            continue
         ha = code_start_addr + hook_off
         co = (ct - (ha + 5)) & 0xFFFFFFFF
         ci = bytearray(defn.hook_size)

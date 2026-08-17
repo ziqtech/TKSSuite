@@ -159,7 +159,12 @@ def apply(ctx):
                 "assuming loader already accepts expanded size")
 
         if not base_hits or not size_hits:
-            log("  [WARN] some expected TKAct references were not patched")
+            log("  [ERROR] some expected TKAct references were not found; "
+                "expanded data is not safe to use")
+            return False
+        if patched_base != len(base_hits) or patched_size != len(size_hits):
+            log("  [ERROR] some TKAct references failed to patch")
+            return False
         return True
     finally:
         _CloseHandle(hp)
