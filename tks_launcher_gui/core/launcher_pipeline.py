@@ -31,7 +31,7 @@ from .mod_loader import (
     apply_mod_data, detect_conflicts, expand_pak_mods,
     merge_mods, resolve_dependencies, restore_originals, scan_mods,
 )
-from .patch_engine import apply_config_patches, apply_deferred_archive_portrait
+from .patch_engine import apply_config_patches
 from .scanner import detect_exe_profile, discover_warpc_base
 from .tkact_expander import (
     prepare_tkact_for_game, restore_tkact_for_game,
@@ -282,14 +282,6 @@ class PatcherPipeline:
                 exclude_ranges=exe_profile.extra_section_ranges if exe_profile else None,
                 warpc_base=self._discovered_base,
                 warpc_rec_size=self.settings.warpc_rec_size,
-            )
-
-        # ── 存档列表头像: WarPC 引用重定位后按基线独立安装 ──
-        if "archive_portrait" not in (self.cfg.disabled_patches or set()):
-            applied_ok &= apply_deferred_archive_portrait(
-                target_pid, base_addr, cave_addr + 192,
-                self._warpc_base_for_caves or self._discovered_base,
-                log_func=self.log,
             )
 
         # ── 运行时 WarPC 数据注入 ──

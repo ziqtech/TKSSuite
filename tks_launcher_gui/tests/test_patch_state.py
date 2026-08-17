@@ -28,27 +28,16 @@ class PatchStateTests(unittest.TestCase):
             1054,
         )
 
-    def test_deferred_archive_portrait_reserves_its_baseline_cave_slot(self):
-        from core.patch_engine import _build_cave_layout
-        from core.config_loader import PatchConfig, PatchDef
+    def test_unknown_value_returns_none(self):
+        messages = []
 
-        config = PatchConfig(patches=[
-            PatchDef(id="archive_portrait", type="cave_hook"),
-            PatchDef(id="another_cave", type="cave_hook"),
-        ])
+        value = resolve_patch_value(
+            "{missing_value}", PatchSettings(), PatchRuntimeState(),
+            log_func=messages.append,
+        )
 
-        layout = _build_cave_layout(config, 0x10000000, PatchSettings(), lambda _: None)
-        archive_slot = next(slot for slot in layout.slots
-                            if slot.owner_id == "archive_portrait")
-
-        self.assertEqual(archive_slot.offset, 192)
-        self.assertEqual(archive_slot.size, 50)
-        self.assertTrue(all(
-            slot.owner_id == "archive_portrait"
-            or slot.end() <= archive_slot.offset
-            or slot.offset >= archive_slot.end()
-            for slot in layout.slots
-        ))
+        self.assertIsNone(value)
+        self.assertTrue(any("未定义参数" in message for message in messages))
 
 
 if __name__ == "__main__":

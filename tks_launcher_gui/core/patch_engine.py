@@ -23,15 +23,6 @@ from .config_loader import (
 )
 
 
-
-_DEFERRED_CAVE_PATCH_IDS = frozenset({"archive_portrait"})
-
-
-def _is_deferred_cave_patch(patch_id: str) -> bool:
-    """Return whether a cave hook must be installed after WarPC relocation."""
-    return patch_id in _DEFERRED_CAVE_PATCH_IDS
-
-
 def _check_cave_bounds(cave_addr: int, offset: int, size: int, budget: int,
                         label: str, log) -> bool:
     """Cave 越界硬校验。返回 True 表示在范围内, False 表示越界(已日志告警)。
@@ -312,25 +303,11 @@ def _build_cave_layout(config: 'PatchConfig', cave_addr: int,
     cave_budget = settings.cave_total_size
     layout = CaveLayout(base_addr=cave_addr, budget=cave_budget)
 
-    # 存档列表头像仍沿用基线的固定 cave 地址 0xC0，必须在自动布局前预留，
-    # 否则后续自动槽位会覆盖延后安装的 archive_portrait 代码。
-    for defn in config.patches:
-        if defn.type == "cave_hook" and _is_deferred_cave_patch(defn.id):
-            try:
-                cave_code = getattr(defn, "_cave_code_bytes", None)
-                size = len(cave_code) if cave_code else len(CAVE_ARCHIVE_PORTRAIT)
-                slot = layout.allocate(defn.id, "main", size, force_offset=192)
-                defn._resolved_cave_offset = slot.offset
-            except CaveLayoutError as e:
-                log(f"  [CAVE-LAYOUT-ERR] {e}")
-
     # 1. 收集每个需要 cave 的补丁所需大小
     #    cave_hook / patch_exp_lock: 1 个 main 槽位
     #    patch_summon_table:         3 个槽位 (table + random_cave + random2_cave)
     for defn in config.patches:
         try:
-            if defn.type == "cave_hook" and _is_deferred_cave_patch(defn.id):
-                continue
             if defn.type == "cave_hook":
                 # 估算 cave 大小: 优先 _cave_code_bytes, 否则 build_cave_template 估算
                 ext_cave = getattr(defn, '_cave_code_bytes', None)
@@ -1438,69 +1415,6 @@ def apply_cave_hook(defn: PatchDef, hits: List[int], code_buf: bytearray,
         ptd += 1
 
     return ptd > 0
-
-
-# ============================================================
-# 延后 Cave: 存档列表头像
-# ============================================================
-
-def apply_deferred_archive_portrait(cpid: int, base_addr: int, cave_addr: int,
-                                    warpc_base: int, log_func=None) -> bool:
-    """Install the archive portrait hook using the baseline live-memory scan."""
-    log = log_func or (lambda x: None)
-    scan_rva = 0x1AB94
-    scan_size = 0x500
-    if cave_addr == 0:
-        log("  [archive_portrait]: Cave 未分配, 跳过")
-        return False
-
-    h_proc = _OpenProcess(
-        PROCESS_VM_READ | PROCESS_VM_WRITE | PROCESS_VM_OPERATION,
-        False, cpid,
-    )
-    if not h_proc:
-        log("  [archive_portrait]: OpenProcess 失败")
-        return False
-
-    try:
-        cave_code = build_cave_template("archive_portrait", warpc_base, log_func=log)
-        if cave_code is None:
-            return False
-        written = write_pm(h_proc, cave_addr, cave_code)
-        log(f"  [archive_portrait]: Cave 写入: 0x{cave_addr:08X} "
-            f"({written}/{len(cave_code)} bytes)")
-        if written != len(cave_code):
-            return False
-
-        scan_addr = base_addr + scan_rva
-        buffer, read_count = read_pm(h_proc, scan_addr, scan_size)
-        if read_count < 64:
-            log(f"  [archive_portrait]: 读取 sub_41AB94@0x{scan_addr:08X} 失败")
-            return False
-
-        applied = 0
-        for index in range(read_count - 5):
-            if buffer[index:index + 5] != b"\x66\x05\xD3\x00\x50":
-                continue
-            hook_rva = scan_rva + index
-            hook_addr = base_addr + hook_rva
-            call_offset = (cave_addr - (hook_addr + 5)) & 0xFFFFFFFF
-            hook = bytes([0xE8]) + struct.pack("<I", call_offset)
-            old_protection = vp_ex(h_proc, hook_addr, len(hook), PAGE_EXECUTE_READWRITE)
-            hook_written = write_pm(h_proc, hook_addr, hook)
-            vp_ex(h_proc, hook_addr, len(hook), old_protection)
-            if hook_written == len(hook):
-                applied += 1
-                log(f"  [archive_portrait]: [OK] RVA 0x{hook_rva:X}: "
-                    "hook add ax,0xD3+push eax -> cave")
-            else:
-                log(f"  [archive_portrait]: Hook 写入失败 @0x{hook_addr:08X}")
-
-        log(f"  [archive_portrait]: 共 hook {applied} 处")
-        return applied > 0
-    finally:
-        _CloseHandle(h_proc)
-
 
 # ============================================================
 # 补丁类型: patch_summon_table (召唤表自定义)
@@ -2693,10 +2607,6 @@ def apply_config_patches(config: PatchConfig, code_buf: bytearray, code_start_ad
         # 第三方 MOD 兼容: profile skip_patches 检查
         if defn.id in _profile_skip:
             log(f"    -> 第三方 MOD 版本自动跳过")
-            continue
-
-        if defn.type == "cave_hook" and _is_deferred_cave_patch(defn.id):
-            log("    -> WarPC 重定位后由独立生命周期安装")
             continue
 
         if defn.type == "cave_hook":
