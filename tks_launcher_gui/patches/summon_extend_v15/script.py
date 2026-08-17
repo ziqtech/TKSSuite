@@ -108,7 +108,7 @@ V4 修复 (V3 栈错位):
 
 import struct
 
-from core.memory import write_pm, vp_ex, PAGE_EXECUTE_READWRITE
+from core.memory import read_pm, write_pm, vp_ex, PAGE_EXECUTE_READWRITE
 from core.patch_engine import apply_cave_hook
 
 
@@ -150,16 +150,20 @@ PATCH_5_ADDR = 0x445088
 PATCH_5_OLD = bytes.fromhex("66 83 C0 02")
 PATCH_5_NEW = bytes.fromhex("66 83 C0 " + f"{N:02X}")
 
-PATCH_6_ADDR = 0x445582
-PATCH_6_OLD = bytes.fromhex("83 FA 06")
-PATCH_6_NEW = bytes.fromhex("83 FA " + f"{ENEMY_MAX:02X}")
-
 # V5 新增: NOP 掉 sub_431094 内部的 mov byte [ecx+0x9DF88E], dl
 # 原版这条指令在 v5+2/v5+3 时会写到 byte_9DF890/byte_9DF891 (其他全局变量)
 # 破坏其他数据导致卡死. cave 3 已手动同步 byte_9DF88E[0/1], 这条指令是多余的.
 PATCH_7_ADDR = 0x431417
 PATCH_7_OLD = bytes.fromhex("88 91 8E F8 9D 00")
 PATCH_7_NEW = bytes.fromhex("90 90 90 90 90 90")  # 6 NOPs
+
+# 鲁肃创建前的原版检查点。扩展后还必须检查普通召唤槽是否已满。
+CAPACITY_HOOK_ADDR = 0x445582
+CAPACITY_HOOK_SIZE = 7
+CAPACITY_HOOK_PATTERN = "83 FA 06 7C 07 33 C0"
+CAPACITY_CAVE_OFFSET = 0x730
+CAPACITY_FAIL_ADDR = 0x445589  # 原版失败 E9 指令起点
+CAPACITY_SUCCESS_ADDR = 0x44558E  # 原版 E9 之后的成功路径
 
 # === Cave 跳转目标 ===
 SUB_444BDC = 0x444BDC   # sub_444BB0 满槽错误分支入口
@@ -172,6 +176,7 @@ SUB_43C768 = 0x43C768   # sub_43C734 hook+42 后 (i=0 重置)
 ADDR_BYTE_9DF883 = 0x9DF883
 ADDR_BYTE_9DF88E = 0x9DF88E
 ADDR_BYTE_9DF88F = 0x9DF88F
+ADDR_BYTE_9DF887 = 0x9DF887
 IMAGE_BASE = 0x400000
 _IMAGE_DELTA = 0
 
@@ -286,9 +291,9 @@ def _build_cave_full_check(cave_addr):
     cave += bytes.fromhex("80 7C 0E FF FF")  # cmp byte [esi+ecx-1], 0xFF
     cave += bytes.fromhex("74 02")  # je +2 (found, skip dec)
     cave += bytes.fromhex("E2 F7")  # loop -9 (dec ecx, loop if ecx != 0)
-    # 将循环结果写入 pushad 保存区的 ECX 槽，再恢复全部寄存器。
-    # pushad 保存区中 ECX 位于 [ESP+0x1C]；[ESP+0x18] 是 EDX。
-    cave += bytes.fromhex("89 4C 24 1C 61")
+    # pushad 保存布局为 EDI, ESI, EBP, ESP, EBX, EDX, ECX, EAX。
+    # ECX 位于 [ESP+0x18]；写回后 popad 才会把扫描结果带回 ECX。
+    cave += bytes.fromhex("89 4C 24 18 61")
     cave += bytes.fromhex("85 C9")  # test ecx, ecx
     cave += bytes.fromhex("75 05")  # jnz +5 (skip jmp FULL)
     jmp_full_pos = len(cave)
@@ -498,6 +503,50 @@ def _build_cave_clear(cave_addr):
     return bytes(cave)
 
 
+def _build_capacity_cave(cave_addr):
+    """Reject any summon when ordinary slots + Lu Su summons reach N.
+
+    Skills 224-231/222/251 can all reach the summon creation paths. The
+    ordinary path is tracked by the extension slots; Lu Su's path is tracked
+    separately by byte_9DF887. The original game only checked the latter, so
+    both values must be combined before entering sub_444FD4.
+    """
+    base = cave_addr + CAPACITY_CAVE_OFFSET
+    code = bytearray()
+    code += b"\x60"  # pushad
+    # Count occupied ordinary extension slots in EAX.
+    code += b"\xBE" + struct.pack('<I', cave_addr + SLOTS_OFFSET)
+    code += b"\xB9" + struct.pack('<I', N)
+    code += b"\x33\xC0"
+    loop_start = len(code)
+    code += b"\x80\x7C\x0E\xFF\xFF"  # cmp byte [esi+ecx-1], FF
+    code += b"\x74\x02"  # free slot: skip inc
+    code += b"\x40"      # occupied++
+    code += b"\xE2" + bytes([(loop_start - (len(code) + 2)) & 0xFF])
+    # Add Lu Su-path summons tracked by the original game.
+    code += b"\x0F\xB6\x15" + struct.pack('<I', _va(ADDR_BYTE_9DF887))
+    code += b"\x01\xD0"  # eax = ordinary occupied + lusu count
+    code += b"\x83\xF8" + bytes([N])
+    code += b"\x61"      # preserve flags across register restore
+    code += b"\x0F\x83\x00\x00\x00\x00"  # jae fail
+    jae_full = len(code) - 4
+    code += b"\xE9\x00\x00\x00\x00"  # success
+    success_jmp = len(code) - 5
+    fail_jmp = len(code)
+    # Hook 覆盖了原版 33 C0，因此失败分支必须显式恢复 eax=0。
+    code += b"\x33\xC0\xE9\x00\x00\x00\x00"  # xor eax,eax; fail
+    fail_jmp_pos = len(code) - 5
+    fail_target = _va(CAPACITY_FAIL_ADDR)
+    success_target = _va(CAPACITY_SUCCESS_ADDR)
+    code[jae_full:jae_full + 4] = struct.pack(
+        '<i', base + fail_jmp - (base + jae_full + 4))
+    code[success_jmp + 1:success_jmp + 5] = struct.pack(
+        '<i', success_target - (base + success_jmp + 5))
+    code[fail_jmp_pos + 1:fail_jmp_pos + 5] = struct.pack(
+        '<i', fail_target - (base + fail_jmp_pos + 5))
+    return bytes(code)
+
+
 def _make_hook_defn(cid, hook_addr, hook_size, hook_pattern, cave_offset, cave_bytes):
     d = type('D', (), {})()
     d.type = "cave_hook"
@@ -540,6 +589,23 @@ def _write_patch_bytes_exact(ctx, addr, old_bytes, new_bytes, log):
     return True
 
 
+def _verify_capacity_hook(ctx, cave_addr, log):
+    """Fail closed unless the running process points 0x445582 at our cave."""
+    addr = _target_va(ctx, CAPACITY_HOOK_ADDR)
+    raw, nr = read_pm(ctx.h_proc, addr, CAPACITY_HOOK_SIZE)
+    if nr != CAPACITY_HOOK_SIZE or raw[0] != 0xE8:
+        log(f"  [ERROR] 鲁肃容量 Hook 回读失败 @0x{addr:08X}: {raw[:nr].hex()}")
+        return False
+    rel = struct.unpack_from('<i', raw, 1)[0]
+    target = addr + 5 + rel
+    expected = cave_addr + CAPACITY_CAVE_OFFSET
+    if target != expected:
+        log(f"  [ERROR] 鲁肃容量 Hook 目标错误: 0x{target:08X} != 0x{expected:08X}")
+        return False
+    log(f"  [OK] 鲁肃容量 Hook 已回读确认 -> 0x{target:08X}")
+    return True
+
+
 def apply(ctx):
     global _IMAGE_DELTA
     _IMAGE_DELTA = ctx.base_addr - IMAGE_BASE
@@ -560,7 +626,8 @@ def apply(ctx):
         log(f"  [ERROR] N={N} 越界")
         return False
     cave_total_size = ctx.settings.cave_total_size
-    cave_end = max(CAVE_4_OFFSET + 64, SLOTS_OFFSET + N)
+    cave_end = max(CAVE_4_OFFSET + 64, SLOTS_OFFSET + N,
+                   CAPACITY_CAVE_OFFSET + len(_build_capacity_cave(cave_addr)))
     if cave_end > cave_total_size:
         log(f"  [ERROR] cave 内存不足: 需要 {cave_end}, budget={cave_total_size}")
         return False
@@ -570,16 +637,21 @@ def apply(ctx):
     cave2 = _build_cave_full_check(cave_addr)
     cave3 = _build_cave_alloc(cave_addr)
     cave4 = _build_cave_clear(cave_addr)
+    capacity_cave = _build_capacity_cave(cave_addr)
 
     hook1 = _make_hook_defn(1, HOOK_1_ADDR, HOOK_1_SIZE, HOOK_1_PATTERN, CAVE_1_OFFSET, cave1)
     hook2 = _make_hook_defn(2, HOOK_2_ADDR, HOOK_2_SIZE, HOOK_2_PATTERN, CAVE_2_OFFSET, cave2)
     hook3 = _make_hook_defn(3, HOOK_3_ADDR, HOOK_3_SIZE, HOOK_3_PATTERN, CAVE_3_OFFSET, cave3)
     hook4 = _make_hook_defn(4, HOOK_4_ADDR, HOOK_4_SIZE, HOOK_4_PATTERN, CAVE_4_OFFSET, cave4)
+    capacity_hook = _make_hook_defn(
+        "capacity", CAPACITY_HOOK_ADDR, CAPACITY_HOOK_SIZE,
+        CAPACITY_HOOK_PATTERN, CAPACITY_CAVE_OFFSET, capacity_cave)
 
     all_ok = True
     from core.scanner import parse_pattern, pattern_scan
     for hook, name in [(hook1, "init"), (hook2, "full_check"),
-                       (hook3, "alloc"), (hook4, "clear")]:
+                       (hook3, "alloc"), (hook4, "clear"),
+                       (capacity_hook, "capacity")]:
         pat, wc = parse_pattern(hook.hook_pattern)
         hits = pattern_scan(bytes(ctx.code_buf), pat, wc)
         if hook.hook_expect_count > 0 and len(hits) != hook.hook_expect_count:
@@ -595,6 +667,8 @@ def apply(ctx):
         if not ok:
             log(f"  [FAIL] hook_{name} 应用失败")
             all_ok = False
+        elif name == "capacity" and not _verify_capacity_hook(ctx, cave_addr, log):
+            all_ok = False
 
     log(f"  应用 patch_bytes_sub_444FD4_ax_add_N @ 0x{PATCH_5_ADDR:08X}")
     if not _write_patch_bytes_exact(ctx, PATCH_5_ADDR, PATCH_5_OLD, PATCH_5_NEW, log):
@@ -602,14 +676,6 @@ def apply(ctx):
     abs_off = _target_va(ctx, PATCH_5_ADDR) - ctx.code_start_addr
     if 0 <= abs_off < len(ctx.code_buf) - len(PATCH_5_OLD):
         for i, b in enumerate(PATCH_5_NEW):
-            ctx.code_buf[abs_off + i] = b
-
-    log(f"  应用 patch_bytes_sub_445564_cmp_8_minus_N @ 0x{PATCH_6_ADDR:08X}")
-    if not _write_patch_bytes_exact(ctx, PATCH_6_ADDR, PATCH_6_OLD, PATCH_6_NEW, log):
-        all_ok = False
-    abs_off = _target_va(ctx, PATCH_6_ADDR) - ctx.code_start_addr
-    if 0 <= abs_off < len(ctx.code_buf) - len(PATCH_6_OLD):
-        for i, b in enumerate(PATCH_6_NEW):
             ctx.code_buf[abs_off + i] = b
 
     # V5: NOP 掉 sub_431094 0x431417 (mov byte [ecx+0x9DF88E], dl)
