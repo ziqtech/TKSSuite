@@ -44,6 +44,7 @@ from editor_utils.ui_helpers import (
 )
 from editor_utils.version import format_title, format_about_header
 from editor_utils.window_theme import apply_godot_theme
+from editor_utils.search_utils import search_match
 
 # ── 本地别名: 保持向后兼容 ──
 
@@ -226,7 +227,7 @@ class SkillPickerDialog(QDialog):
         self._refresh()
 
     def _refresh(self):
-        query = self.search_box.text().strip().lower()
+        query = self.search_box.text()
         ft = self.type_box.currentText()
         self.table.setRowCount(0)
         row = 0
@@ -236,7 +237,7 @@ class SkillPickerDialog(QDialog):
             sid = r['skill_text_id']
             st = r['type']
             sn = skill_name(r, self.tkt_dict)
-            if query and query not in f"{idx} {sid} {sn}".lower(): continue
+            if not search_match(query, idx, sid, sn): continue
             if ft != "全部":
                 try:
                     ft_val = int(ft.split('-')[0])
@@ -1180,7 +1181,7 @@ class SkillEditorApp(QMainWindow):
         self.edit_inner.setEnabled(en)
 
     def _apply_filter(self):
-        q = self.search_entry.text().strip().lower()
+        q = self.search_entry.text()
         self.filtered_indices = []
         ftype = self.type_filter.currentText()
         for rec in self.records:
@@ -1189,7 +1190,7 @@ class SkillEditorApp(QMainWindow):
                 if rec['type'] != int(ftype.split('-')[0]): continue
             if q:
                 nm = skill_name(rec, self.tkt)
-                if q not in f"{rec['index']} {rec['skill_text_id']} {nm}".lower():
+                if not search_match(q, rec['index'], rec['skill_text_id'], nm):
                     continue
             self.filtered_indices.append(rec['index'])
         self._refresh_table()

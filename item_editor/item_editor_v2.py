@@ -74,6 +74,7 @@ from editor_utils.ui_helpers import (
 )
 from editor_utils.version import format_title, format_about_header
 from editor_utils.window_theme import apply_godot_theme
+from editor_utils.search_utils import search_match
 
 # ── 本地别名: 保持向后兼容 ──
 def lzss_decompress(data):
@@ -311,12 +312,12 @@ class SkillPickerDialog(QDialog):
         self._refresh()
 
     def _refresh(self):
-        q = self.search_box.text().strip().lower()
+        q = self.search_box.text()
         self.table.setRowCount(0)
         row = 0
         for idx in sorted(self.skill_names.keys()):
             nm = self.skill_names[idx]
-            if q and q not in f"{idx} {nm}".lower(): continue
+            if not search_match(q, idx, nm): continue
             self.table.insertRow(row)
             self.table.setItem(row, 0, QTableWidgetItem(str(idx)))
             self.table.setItem(row, 1, QTableWidgetItem(nm[:60]))
@@ -939,7 +940,7 @@ class ItemEditorApp(QMainWindow):
 
     def _apply_filter(self):
         if self._guard_right_reset: return
-        q = self.search_entry.text().strip().lower()
+        q = self.search_entry.text()
         self.filtered_indices = []
         fpg = self.filter_page.currentText()
         self._update_right_options(fpg)
@@ -956,7 +957,7 @@ class ItemEditorApp(QMainWindow):
                     if (rec['equip_type'] & bit) == 0: continue
             if q:
                 nm = item_display_name(rec, self.tkt)
-                if q not in f"{rec['index']} {rec['item_id']} {rec['tab_code']} {nm}".lower():
+                if not search_match(q, rec['index'], rec['item_id'], rec['tab_code'], nm):
                     continue
             self.filtered_indices.append(rec['index'])
         self._refresh_table()

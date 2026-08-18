@@ -53,6 +53,7 @@ from editor_utils.mod_exporter import (
 )
 from editor_utils.version import format_title, format_about_header
 from editor_utils.window_theme import apply_godot_theme
+from editor_utils.search_utils import search_match
 
 # ============================================================
 # 常量 (来自反编译)
@@ -1745,7 +1746,7 @@ class TktEditor(QMainWindow):
         self.table.setItem(row, 2, QTableWidgetItem(pv))
 
     def _apply_filter(self):
-        query = self.search_entry.text().strip().lower()
+        query = self.search_entry.text()
         try:
             id_from = int(self.filter_from.text()) if self.filter_from.text().strip() else None
         except:
@@ -1761,7 +1762,7 @@ class TktEditor(QMainWindow):
                 continue
             if id_to is not None and e['id'] > id_to:
                 continue
-            if query and query not in e['text'].lower() and query not in str(e['id']):
+            if not search_match(query, e['text'], e['id']):
                 continue
             self.filtered_indices.append(idx)
         self._apply_sort()

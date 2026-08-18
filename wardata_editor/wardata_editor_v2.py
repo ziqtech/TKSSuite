@@ -101,6 +101,7 @@ from editor_utils.mod_exporter import (
 )
 from editor_utils.version import format_title, format_about_header
 from editor_utils.window_theme import apply_godot_theme
+from editor_utils.search_utils import search_match
 from editor_utils.picker_dialogs import WarpcPickerDialog, ItemPickerDialog
 
 HAS_PIL = False
@@ -976,7 +977,7 @@ class WarDataEditorV2(QMainWindow):
             self._sync_raw(rec)
 
     def _apply_filter(self):
-        query = self.search_entry.text().strip().lower()
+        query = self.search_entry.text()
         self.table.setRowCount(0)
         for rec in self.records:
             enemy_names = []
@@ -986,8 +987,8 @@ class WarDataEditorV2(QMainWindow):
                     seen.add(eid)
                     enemy_names.append(self._enemy_name(eid))
             char_names = ','.join(enemy_names) if enemy_names else ''
-            if query and query not in str(rec['index']) and query not in str(rec['map_id']) \
-               and query not in char_names.lower(): continue
+            if not search_match(query, rec['index'], rec['map_id'], char_names):
+                continue
             self._fill_tree_row(rec)
 
     def _clear_filter(self):

@@ -37,6 +37,7 @@ from warpc_schema import (
 )
 from editor_utils.ui_helpers import NoWheelComboBox
 from editor_utils.picker_dialogs import STATUS_NAMES
+from editor_utils.search_utils import search_match
 
 # 双击弹出选择器的字段类型
 PICKER_FTYPES = {'skill_ref', 'item_idx_ref', 'item_id_ref',
@@ -194,6 +195,7 @@ class WarpcTableModel(QAbstractTableModel):
         self.beginResetModel()
         self.columns = columns
         self.endResetModel()
+
 
     def reload(self):
         self.beginResetModel()
@@ -458,6 +460,28 @@ class WarpcTableModel(QAbstractTableModel):
             self.dataChanged.emit(index, index)
             return True
         return False
+
+
+class WarpcRowFilterProxyModel(QSortFilterProxyModel):
+    """表格模式行筛选: 统一支持简繁、去空格和模糊匹配。"""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._query = ""
+
+    def set_search_query(self, query: str) -> None:
+        self._query = query or ""
+        self.invalidateFilter()
+
+    def filterAcceptsRow(self, source_row: int, source_parent: QModelIndex) -> bool:
+        if not self._query:
+            return True
+        model = self.sourceModel()
+        if model is None:
+            return False
+        index_value = model.data(model.index(source_row, 0, source_parent), Qt.DisplayRole)
+        name_value = model.data(model.index(source_row, 1, source_parent), Qt.DisplayRole)
+        return search_match(self._query, index_value, name_value)
 
 
 class TableFieldDelegate(QStyledItemDelegate):
@@ -760,7 +784,7 @@ class WarpcTablePanel(QWidget):
 
         self.model = WarpcTableModel(self.editor, self)
         self.model.undo_sink = self._push_undo_step  # 单格编辑(委托/选择器)逐步入栈
-        self.proxy = QSortFilterProxyModel(self)
+        self.proxy = WarpcRowFilterProxyModel(self)
         self.proxy.setSourceModel(self.model)
         self.proxy.setFilterCaseSensitivity(Qt.CaseInsensitive)
         self.proxy.setSortRole(Qt.EditRole)
@@ -1054,19 +1078,10 @@ class WarpcTablePanel(QWidget):
                 self.frozen.setColumnHidden(ci, True)
             self._update_frozen_geometry()
         # 名称列筛选
-        self.proxy.setFilterKeyColumn(1)
         self._apply_row_filter()
 
     def _apply_row_filter(self):
-        q = self.filter_edit.text().strip()
-        # 同时匹配名称列与编号: 编号匹配通过名称列筛选做不到, 用正则合并
-        if q.isdigit():
-            # 数字优先按记录编号精确/前缀匹配 → 用编号列
-            self.proxy.setFilterKeyColumn(0)
-            self.proxy.setFilterFixedString(q)
-        else:
-            self.proxy.setFilterKeyColumn(1)
-            self.proxy.setFilterFixedString(q)
+        self.proxy.set_search_query(self.filter_edit.text())
 
     # ── 双击: 引用/掩码/技能效果字段弹选择器 ──
     def _on_double_click(self, proxy_index):

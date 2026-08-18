@@ -58,6 +58,7 @@ from editor_utils.theme_manager import ThemeManager
 from editor_utils.ui_helpers import themed_messagebox, update_path_labels, NoWheelComboBox
 from editor_utils.version import format_title, format_about_header
 from editor_utils.window_theme import apply_godot_theme
+from editor_utils.search_utils import search_match
 
 # ── 本地别名: 保持向后兼容 ──
 def lzss_decompress(data):
@@ -627,7 +628,7 @@ class ShopEditorWindow(QMainWindow):
 
     def _apply_filter(self):
         area_filter_idx = self.area_filter_combo.currentIndex()
-        search_text = self.search_input.text().strip().lower()
+        search_text = self.search_input.text()
 
         self.filtered_indices = []
         for rec in self.records:
@@ -638,8 +639,11 @@ class ShopEditorWindow(QMainWindow):
             if search_text:
                 iname = self.item_names.get(rec['item_ref'], f"Item#{rec['item_ref']}")
                 cond_str = self._cond_str(rec['condition'])
-                search_target = f"{rec['index']} {rec['area_id']} {area_label(rec['area_id'])} {rec['item_ref']} {iname} {cond_str}".lower()
-                if search_text not in search_target:
+                if not search_match(
+                    search_text,
+                    rec['index'], rec['area_id'], area_label(rec['area_id']),
+                    rec['item_ref'], iname, cond_str,
+                ):
                     continue
             self.filtered_indices.append(rec['index'])
 

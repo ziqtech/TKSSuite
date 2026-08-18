@@ -7,9 +7,8 @@ from PySide6.QtWidgets import (
     QScrollArea, QLabel, QGridLayout, QPushButton,
 )
 
-import zhconv
-
 from editor_utils.dock_components import DockHeader
+from editor_utils.search_utils import search_match
 
 
 class BookTabBase(QWidget):
@@ -110,9 +109,7 @@ class BookTabBase(QWidget):
         return cell, None
 
     def _apply_filter(self):
-        q = self.search_input.text().strip().lower()
-        # 将简体转为繁体以匹配游戏数据（Big5编码的繁体中文）
-        q_tw = zhconv.convert(q, 'zh-tw') if q else ''
+        q = self.search_input.text()
         tw = self.list_widget
         tw.blockSignals(True)
         tw.setRowCount(0)
@@ -122,7 +119,7 @@ class BookTabBase(QWidget):
         for key, cells in self._rows:
             norms = [self._normalize_cell(c) for c in cells]
             texts = [n[0] for n in norms]
-            if q and not any(q_tw in "".join((t or "").lower().split()) for t in texts):
+            if not search_match(q, *texts):
                 continue
             row = tw.rowCount()
             tw.insertRow(row)

@@ -11,7 +11,6 @@ FakeInputBox / InspectorTitle / PreviewFrame / DockHeader 体系。
 import os
 import struct
 import sys
-import zhconv
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QSplitter, QTableWidget, QTableWidgetItem, QHeaderView,
@@ -40,6 +39,7 @@ from editor_utils.mod_exporter import (
 )
 from editor_utils.version import format_title, format_about_header
 from editor_utils.window_theme import apply_godot_theme
+from editor_utils.search_utils import search_match
 from editor_utils.kon_name_resolver import KonNameResolver
 
 # ── 本地别名: 保持向后兼容 ──
@@ -746,9 +746,7 @@ class KonEditor(QMainWindow):
     # ----------- 筛选/表格 -----------
 
     def _apply_filter(self):
-        q = self.search_input.text().strip().lower()
-        q_norm = ''.join(q.split())
-        q_tw = zhconv.convert(q_norm, 'zh-tw') if q_norm else ''
+        q = self.search_input.text()
         show_empty = self.chk_show_empty.isChecked()
         self.compact_names = self.chk_compact.isChecked()
         self.filtered_indices = []
@@ -757,10 +755,12 @@ class KonEditor(QMainWindow):
                 if all(rec[fn] == 0 for fn, _, _, _ in KON_FIELDS): continue
             if q:
                 nm = kon_record_name(rec, self.tkt, self._resolver)
-                search_text = f"{rec['index']} {rec['tkact_id']} {rec['exec_mode']} {nm} " \
-                              f"{' '.join(str(rec[fn]) for fn,_,_,_ in KON_FIELDS)}".lower()
-                search_text_norm = ''.join(search_text.split())
-                if q_norm not in search_text_norm and q_tw not in search_text_norm: continue
+                if not search_match(
+                    q,
+                    rec['index'], rec['tkact_id'], rec['exec_mode'], nm,
+                    *(rec[fn] for fn, _, _, _ in KON_FIELDS),
+                ):
+                    continue
             self.filtered_indices.append(rec['index'])
         self._refresh_table()
         nonempty = sum(1 for r in self.records if any(r[fn] != 0 for fn, _, _, _ in KON_FIELDS))

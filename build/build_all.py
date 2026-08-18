@@ -87,7 +87,14 @@ EDITORS = [
 ]
 
 # 需要 zhconv 数据文件 (zhcdict.json) 的编辑器 — Nuitka 不会自动打包 .json 数据文件
-NEEDS_ZHCONV = {"TKSKonEditor", "TKSActEditor", "TKSSaveEditor", "TKSBook"}
+NEEDS_ZHCONV = {
+    # search_utils.py: 简繁转换搜索数据
+    "TKSItemEditor", "TKSWarpcEditor", "TKSSkillEditor", "TKSShopEditor",
+    "TKSTktEditor", "TKSKonEditor", "TKSActEditor", "TKSWardataEditor",
+    "TKSBook",
+    # save_editor 的文本转换功能
+    "TKSSaveEditor",
+}
 
 # 薄 exe 必须强制内嵌的 stdlib 模块 — PySide6/shiboken6/PIL 被 --nofollow-import-to
 # 排除后由外部 runtime 归档加载, 但它们 import 期依赖的 stdlib 不会被 Nuitka 静态

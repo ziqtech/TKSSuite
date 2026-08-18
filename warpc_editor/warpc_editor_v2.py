@@ -82,6 +82,7 @@ from editor_utils.mod_exporter import (
     get_tksmod_info, import_tksmod_records, ModImportPreviewDialog, ModExportPreviewDialog,
 )
 from editor_utils.window_theme import apply_godot_theme
+from editor_utils.search_utils import search_match
 from editor_utils.kon_name_resolver import KonNameResolver
 # 字段 Schema (唯一字段定义源): 常量/字段列表/FieldDef/打包字节编解码
 # noqa: F401,F403 — 旧名称 (WARPC_REC/ALL_NAMED_FIELDS 等) 由 Schema 模块导出,
@@ -347,14 +348,14 @@ class SkillPickerDialog(QDialog):
         self._refresh()
 
     def _refresh(self):
-        q = self.search_box.text().strip().lower()
+        q = self.search_box.text()
         self.table.setRowCount(0)
         row = 0
         type_names = {0:"指令",1:"主动",2:"被动",3:"移动"}
         for idx in sorted(self.skill_names.keys()):
             nm = self.skill_names[idx]
             tp = type_names.get(self.skill_types.get(idx,-1),"?")
-            if q and q not in f"{idx} {tp} {nm}".lower():
+            if not search_match(q, idx, tp, nm):
                 continue
             self.table.insertRow(row)
             self.table.setItem(row, 0, QTableWidgetItem(str(idx)))
@@ -472,11 +473,11 @@ class TkkonPickerDialog(QDialog):
         self._refresh()
 
     def _refresh(self):
-        q = self.search_box.text().strip().lower()
+        q = self.search_box.text()
         self.table.setRowCount(0)
         row = 0
         for idx, nm in self.items:
-            if q and q not in f"{idx} {nm}".lower():
+            if not search_match(q, idx, nm):
                 continue
             self.table.insertRow(row)
             self.table.setItem(row, 0, QTableWidgetItem(str(idx)))
@@ -2603,12 +2604,12 @@ class WarpcEditorV2(QMainWindow):
         return f"#{nid}" if nid else f"(空-#{rec['index']})"
 
     def _apply_filter(self):
-        q = self.search_entry.text().strip().lower()
+        q = self.search_entry.text()
         self.filtered_indices = []
         for rec in self.records:
             if q:
                 nm = self._char_name(rec)
-                if q not in f"{rec['index']} {nm} {rec['fields'][2]} {rec['fields'][3]}".lower():
+                if not search_match(q, rec['index'], nm, rec['fields'][2], rec['fields'][3]):
                     continue
             self.filtered_indices.append(rec['index'])
         self._refresh_table()

@@ -37,7 +37,6 @@ import os
 import struct
 import sys
 import time
-import zhconv
 
 # ── PySide6 imports ──
 from PySide6.QtWidgets import (
@@ -63,6 +62,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from editor_utils.theme_manager import ThemeManager
 from editor_utils.version import format_title, format_about_header
 from editor_utils.window_theme import apply_godot_theme
+from editor_utils.search_utils import search_match
 from editor_utils.kon_name_resolver import KonNameResolver
 from editor_utils.lzss import lzss_decompress_dat
 from editor_utils.shared_state import pick_tks_directory
@@ -2497,9 +2497,7 @@ class ActEditorV2(QMainWindow):
     # ── 筛选/列表 ──
 
     def _apply_filter(self):
-        q = self.search_entry.text().strip().lower()
-        q_norm = ''.join(q.split())
-        q_tw = zhconv.convert(q_norm, 'zh-tw') if q_norm else ''
+        q = self.search_entry.text()
         show_empty = self.show_empty_cb.isChecked()
         self.filtered_indices = []
         for entry in self.entries:
@@ -2507,9 +2505,7 @@ class ActEditorV2(QMainWindow):
                 continue
             if q:
                 name = self.names.get(entry['index'], '')
-                text = f"{entry['index']} {name} {entry_summary(entry)}".lower()
-                text_norm = ''.join(text.split())
-                if q_norm not in text_norm and q_tw not in text_norm:
+                if not search_match(q, entry['index'], name, entry_summary(entry)):
                     continue
             self.filtered_indices.append(entry['index'])
         self._refresh_table()
