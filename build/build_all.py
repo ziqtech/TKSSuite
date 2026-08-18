@@ -131,10 +131,45 @@ LIBS_DIR = RELEASE_DIR / "libs"
 NUITKA_CACHE_DIR = BUILD_DIR / "nuitka_cache"
 # Nuitka onefile 默认把依赖解压到系统 TEMP 的随机目录。随机目录会导致
 # 杀毒软件清理、权限变化或多版本并行启动时出现“找不到依赖”。统一改到
-# 用户本地缓存目录，目录名包含程序和版本，既避免 TEMP，又避免版本互相覆盖。
-ONEFILE_TEMP_DIR_SPEC = "{CACHE_DIR}/TKSEditors/{PROGRAM}/{VERSION}"
-# 并行构建默认并发数 (CPU/2, 基准测试为最佳拐点; 上限=编辑器数); 单编辑器构建自动串行
-_DEFAULT_PARALLEL = min(len(EDITORS), max(2, (os.cpu_count() or 4) // 2))
+# 当前 Nuitka 版本要求绝对运行时变量只能出现在路径开头，不能把
+# {PROGRAM} 放在 {CACHE_DIR} 后面。使用官方推荐模板，并让 PRODUCT
+# 通过每个 exe 的唯一产品名隔离不同编辑器的 onefile 缓存。
+ONEFILE_TEMP_DIR_SPEC = "{CACHE_DIR}/{COMPANY}/{PRODUCT}/{VERSION}"
+
+# onefile 体积优化：这些模块在当前 v2 编辑器和 TKSBook 之外均没有运行时
+# 引用。保留 PySide6/PIL 主包，只排除明确不用的功能，避免误伤 Qt/Pillow
+# 的基础依赖。若未来编辑器新增对应 import，应从这里移除该项。
+ONEFILE_UNUSED_QT_MODULES = (
+    "PySide6.QtQml",
+    "PySide6.QtQuick",
+    "PySide6.QtWebEngine",
+    "PySide6.QtWebEngineCore",
+    "PySide6.QtWebEngineWidgets",
+    "PySide6.QtSql",
+    "PySide6.QtTest",
+    "PySide6.QtHelp",
+    "PySide6.QtXml",
+)
+
+# v2 编辑器使用 QImage/QPixmap，不使用 Tkinter、Qt 图像桥接或 Pillow 的
+# 文档/系统集成格式。排除这些惰性模块可减少 onefile 中重复的 Python 代码。
+ONEFILE_UNUSED_PIL_MODULES = (
+    "PIL.ImageTk",
+    "PIL.ImageQt",
+    "PIL.ImageCms",
+    "PIL.ImageGrab",
+    "PIL.ImageShow",
+    "PIL.ImageWin",
+    "PIL.PdfImagePlugin",
+    "PIL.PdfParser",
+    "PIL.PsdImagePlugin",
+    "PIL.WmfImagePlugin",
+)
+# onefile 每个目标都会独立分析、编译、链接 PySide6/PIL。并发过高会让磁盘、
+# 内存和链接器互相争抢，CPU 反而利用率下降；默认只并行 2 个目标。
+_CPU_COUNT = os.cpu_count() or 4
+_DEFAULT_THIN_PARALLEL = min(len(EDITORS), max(2, _CPU_COUNT // 2))
+_DEFAULT_ONEFILE_PARALLEL = min(len(EDITORS), 2)
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -178,7 +213,8 @@ def _version_flags(name: str, editor_dir: str) -> list:
 
     return [
         f"--company-name={_COMPANY_NAME}",
-        f"--product-name={_PRODUCT_NAME}",
+        # PRODUCT 同时用于 Nuitka onefile 缓存路径，必须按编辑器隔离。
+        f"--product-name={_PRODUCT_NAME}_{name}",
         f"--file-version={win_version}",
         f"--product-version={win_version}",
         f"--file-description={description}",
@@ -307,7 +343,7 @@ def _build_onefile_cmd(name: str, entry: str, editor_dir: str,
         # ── 包含 editor_utils 包 ──
         f"--include-package=editor_utils",
 
-        # ── 排除无用模块 (减小体积) ──
+        # ── 排除明确不使用的 Qt/Pillow 功能，降低 onefile 体积 ──
         "--nofollow-import-to=tkinter",
         "--nofollow-import-to=matplotlib",
         "--nofollow-import-to=numpy",
@@ -315,10 +351,8 @@ def _build_onefile_cmd(name: str, entry: str, editor_dir: str,
         "--nofollow-import-to=pytest",
         "--nofollow-import-to=IPython",
         "--nofollow-import-to=unittest",
-        "--nofollow-import-to=PySide6.QtQml",
-        "--nofollow-import-to=PySide6.QtQuick",
-        "--nofollow-import-to=PySide6.QtNetwork",
-        "--nofollow-import-to=PySide6.QtWebEngine",
+        *[f"--nofollow-import-to={m}" for m in ONEFILE_UNUSED_QT_MODULES],
+        *[f"--nofollow-import-to={m}" for m in ONEFILE_UNUSED_PIL_MODULES],
 
         # ── 允许运行时导入被排除模块 (意外导入链如 item_editor.py→tkinter 不会 crash) ──
         "--no-deployment-flag=excluded-module-usage",
@@ -471,6 +505,34 @@ def _validate_runtime_archives() -> None:
         )
 
 
+def _copy_runtime_tools(destination: Path) -> int:
+    """复制发行版需要的辅助工具资源，排除开发脚本和缓存文件。"""
+    source = 仓库根目录 / "tks_launcher_gui" / "tools"
+    if not source.is_dir():
+        return 0
+
+    destination.mkdir(parents=True, exist_ok=True)
+    # 清理旧版本无过滤复制留下的根目录开发脚本。
+    for stale in destination.iterdir():
+        if stale.is_file() and stale.suffix.lower() in {".py", ".pyc"}:
+            stale.unlink()
+    copied = 0
+    for path in source.rglob("*"):
+        if not path.is_file():
+            continue
+        rel = path.relative_to(source)
+        # tools 根目录的 Python 文件是开发/诊断脚本，不是启动器运行资源。
+        if len(rel.parts) == 1 and path.suffix.lower() in {".py", ".pyc"}:
+            continue
+        if any(part == "__pycache__" or part.startswith(".") for part in rel.parts):
+            continue
+        target = destination / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(str(path), str(target))
+        copied += 1
+    return copied
+
+
 def _should_skip_build(name: str, source_files: list) -> bool:
     """增量构建检查: 若发行目录 exe 比所有源文件新, 则跳过
 
@@ -544,8 +606,10 @@ def build_one(name: str, entry: str, editor_dir: str,
     env = os.environ.copy()
     extra_path = str(仓库根目录 / editor_dir)
     env["PYTHONPATH"] = extra_path + os.pathsep + env.get("PYTHONPATH", "")
-    # 固定 Nuitka 缓存目录 (clcache 在其下), 保证增量 C 编译缓存稳定命中
+    # 固定 Nuitka/编译器缓存目录，保证增量 C 编译缓存稳定命中。
     env.setdefault("NUITKA_CACHE_DIR", str(NUITKA_CACHE_DIR))
+    env.setdefault("CLCACHE_DIR", str(NUITKA_CACHE_DIR / "clcache"))
+    env.setdefault("CCACHE_DIR", str(NUITKA_CACHE_DIR / "ccache"))
 
     t0 = time.time()
 
@@ -756,8 +820,7 @@ def assemble_release(onefile: bool = False, release: bool = False,
     tools_src = 仓库根目录 / "tks_launcher_gui" / "tools"
     if tools_src.is_dir():
         tools_dst = RELEASE_DIR / "tools"
-        shutil.copytree(str(tools_src), str(tools_dst), dirs_exist_ok=True)
-        file_count = sum(1 for p in tools_dst.rglob("*") if p.is_file())
+        file_count = _copy_runtime_tools(tools_dst)
         print(f"  [OK] tools/ ({file_count} 个文件)")
 
     # summon_table.json 已由上方 configs/*.json glob 复制到 RELEASE_DIR/configs/
@@ -913,8 +976,8 @@ def assemble_launcher():
     tools_src = 仓库根目录 / "tks_launcher_gui" / "tools"
     if tools_src.is_dir():
         tools_dst = LAUNCHER_DIR / "tools"
-        shutil.copytree(str(tools_src), str(tools_dst), dirs_exist_ok=True)
-        print(f"  [OK] tools/")
+        file_count = _copy_runtime_tools(tools_dst)
+        print(f"  [OK] tools/ ({file_count} 个文件)")
         assembled.append("tools/")
 
     # 5. 复制启动器配置模板
@@ -951,7 +1014,7 @@ def _build_parallel(targets: list, args) -> tuple:
     """
     cpu_count = os.cpu_count() or 8
     max_workers = min(args.parallel, len(targets))
-    per_job = max(1, cpu_count // max_workers)
+    per_job = args.nuitka_jobs or max(1, cpu_count // max_workers)
 
     log_dir = DIST_DIR / "build_logs"
     log_dir.mkdir(parents=True, exist_ok=True)
@@ -1013,8 +1076,10 @@ def main():
     parser.add_argument("--verbose", action="store_true", help="详细输出")
     parser.add_argument("--release", action="store_true",
                         help="发布模式: --lto=yes (链接时优化, 更小体积, 构建更慢)")
-    parser.add_argument("--parallel", type=int, default=_DEFAULT_PARALLEL,
-                        help=f"并行构建 N 个编辑器 (默认自动={_DEFAULT_PARALLEL}, 0=强制串行; 单编辑器构建自动串行)")
+    parser.add_argument("--parallel", type=int, default=None,
+                        help="并行构建 N 个编辑器；onefile 默认 2，薄模式默认按 CPU/2")
+    parser.add_argument("--nuitka-jobs", type=int, default=None,
+                        help="每个 Nuitka 进程使用的 C 编译任务数；默认按 CPU/进程数分配")
     parser.add_argument("--force", action="store_true",
                         help="强制全量构建, 跳过增量检查")
     args = parser.parse_args()
@@ -1068,6 +1133,13 @@ def main():
             sys.exit(1)
     else:
         targets = EDITORS
+
+    # onefile 默认低目标并发、高单目标并行，避免多个大型 LTO 链接任务互相拖慢。
+    if args.parallel is None:
+        args.parallel = _DEFAULT_ONEFILE_PARALLEL if args.onefile else _DEFAULT_THIN_PARALLEL
+    if args.nuitka_jobs is not None and args.nuitka_jobs < 1:
+        print("[ERROR] --nuitka-jobs 必须大于 0")
+        sys.exit(1)
 
     DIST_DIR.mkdir(parents=True, exist_ok=True)
 
