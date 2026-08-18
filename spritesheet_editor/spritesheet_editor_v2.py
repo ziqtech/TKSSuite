@@ -787,7 +787,9 @@ class SpriteGraphicsView(QGraphicsView):
         self._header_drag: Optional[tuple] = None
         self._last_click_idx: int = -1
         self._zoom: float = 1.0
-        self._copied_frame: Optional[Image.Image] = None
+        self._copied_frame: Optional[Image.Image] = None  # 兼容旧 API, 已弃用
+        # 块级剪贴板: 每条 (dr, dc, frame_or_None), 锚点 = min(selection)
+        self._copied_cells: List[Tuple[int, int, Optional[Image.Image]]] = []
 
         self._selection_box: Optional[QGraphicsRectItem] = None
         self._box_start: Optional[Tuple[float, float]] = None
@@ -1321,11 +1323,18 @@ class SpriteGraphicsView(QGraphicsView):
             return
 
         frame = self.model.get_frame(idx)
+        # 命中点是否在 selection 内: 决定"作用对象 = selection" 还是 "作用对象 = 单格"
+        in_selection = idx in self.selection and len(self.selection) > 0
+        n = len(self.selection) if in_selection else 0
+
         menu = QMenu(self)
-        act_copy = menu.addAction("复制")
+        copy_label = f"复制 ({n})" if in_selection and n > 1 else "复制"
+        paste_label = f"粘贴 ({len(self._copied_cells)})" if self._copied_cells else "粘贴"
+        act_copy = menu.addAction(copy_label)
         act_copy.setEnabled(frame is not None)
-        act_paste = menu.addAction("粘贴")
-        act_paste.setEnabled(self._copied_frame is not None)
+        act_paste = menu.addAction(paste_label)
+        # 粘贴可用条件: 剪贴板非空, 且 (有 selection, 或命中点有效)
+        act_paste.setEnabled(bool(self._copied_cells) and (in_selection or idx >= 0))
         menu.addSeparator()
         act_copy_row = menu.addAction("复制行")
         act_delete_row = menu.addAction("删除行")
@@ -1341,9 +1350,25 @@ class SpriteGraphicsView(QGraphicsView):
 
         chosen = menu.exec(event.globalPos())
         if chosen is act_copy:
-            self.copy_cell(idx)
+            if in_selection and len(self.selection) > 1:
+                n_copy = self.copy_selection()
+                try:
+                    self.editor._status_label.setText(f"已复制 {n_copy} 个单元格")
+                except Exception:
+                    pass
+            else:
+                self.copy_cell(idx)
         elif chosen is act_paste:
-            self.paste_cell(idx)
+            if in_selection:
+                pasted = self.paste_cells_to(set(self.selection))
+                try:
+                    self.editor._status_label.setText(
+                        f"已粘贴 {len(pasted)} 个单元格 (越界 {len(self._copied_cells) - len(pasted)} 个已丢弃)"
+                        if pasted else "粘贴未命中任何单元格")
+                except Exception:
+                    pass
+            else:
+                self.paste_cell(idx)
         elif chosen is act_copy_row:
             self.editor._copy_row()
         elif chosen is act_delete_row:
@@ -1557,27 +1582,86 @@ class SpriteGraphicsView(QGraphicsView):
         if frame is None:
             return
         self._copied_frame = frame.copy()
+        # 块级剪贴板: 单格也走批量, 方便 paste_cell 走同一路径
+        self._copied_cells = [(0, 0, frame.copy())]
         try:
             self.editor._status_label.setText(f"已复制单元格 #{idx}")
         except Exception:
             pass
 
     def paste_cell(self, idx: int) -> None:
-        if self._copied_frame is None:
+        """单格粘贴保留: 优先用 _copied_frame 旧路径, 否则退化到 _copied_cells 的 1×1."""
+        if self._copied_frame is not None:
+            self.model.normalize()
+            if not (0 <= idx < len(self.model.frames)):
+                return
+            self.model.frames[idx] = self._copied_frame.copy()
+            self.selection = {idx}
+            self._last_click_idx = idx
+            if hasattr(self.editor, "image_list"):
+                self.editor.image_list._selected_idx = idx
+            self.editor._on_model_changed()
+            try:
+                self.editor._status_label.setText(f"已粘贴到单元格 #{idx}")
+            except Exception:
+                pass
             return
-        self.model.normalize()
-        if not (0 <= idx < len(self.model.frames)):
+        # 退化到块级粘贴
+        if not self._copied_cells:
             return
-        self.model.frames[idx] = self._copied_frame.copy()
-        self.selection = {idx}
-        self._last_click_idx = idx
-        if hasattr(self.editor, "image_list"):
-            self.editor.image_list._selected_idx = idx
-        self.editor._on_model_changed()
+        pasted = self.paste_cells_to({idx})
         try:
             self.editor._status_label.setText(f"已粘贴到单元格 #{idx}")
         except Exception:
             pass
+
+    # ── 块级复制/粘贴 ──────────────────────
+    def copy_selection(self) -> int:
+        """把当前 selection 装入 _copied_cells. 返回复制条目数."""
+        sel = self.selection
+        if not sel:
+            return 0
+        m = self.model
+        m.normalize()
+        cols = m.columns
+        anchor = min(sel)
+        ar, ac = divmod(anchor, cols)
+        cells: List[Tuple[int, int, Optional[Image.Image]]] = []
+        for idx in sorted(sel):
+            r, c = divmod(idx, cols)
+            f = m.frames[idx]
+            cells.append((r - ar, c - ac, f.copy() if f is not None else None))
+        self._copied_cells = cells
+        # 兼容旧路径: 单帧时也填一下 _copied_frame
+        self._copied_frame = cells[0][2].copy() if len(cells) == 1 and cells[0][2] is not None else None
+        return len(cells)
+
+    def paste_cells_to(self, target: Set[int]) -> Set[int]:
+        """Excel 语义: target 只决定锚点(min), 剪贴板按形状铺, 越界丢弃.
+        返回实际贴入的位置 (None 帧不算)."""
+        if not self._copied_cells or not target:
+            return set()
+        m = self.model
+        m.normalize()
+        cols, rows = m.columns, m.rows
+        anchor = min(target)
+        ar, ac = divmod(anchor, cols)
+        pasted: Set[int] = set()
+        for dr, dc, f in self._copied_cells:
+            tr, tc = ar + dr, ac + dc
+            if not (0 <= tr < rows and 0 <= tc < cols):
+                continue
+            idx = tr * cols + tc
+            m.frames[idx] = f.copy() if f is not None else None
+            if f is not None:
+                pasted.add(idx)
+        # 粘贴后 selection = 实际贴入的位置
+        self.selection = pasted
+        self._last_click_idx = max(pasted) if pasted else -1
+        if hasattr(self.editor, "image_list") and pasted:
+            self.editor.image_list._selected_idx = max(pasted)
+        self.editor._on_model_changed()
+        return pasted
 
     def flip_cell(self, idx: int) -> None:
         frame = self.model.get_frame(idx)
@@ -3336,6 +3420,14 @@ class SpriteSheetEditorWindow(QMainWindow):
             return
         old_cols = max(1, self.model.columns)
         rows = sorted(set(idx // old_cols for idx in sel))
+        # 先把选中行装入块级剪贴板（在原地插入之前抓取, 避免索引错位）
+        cells: List[Tuple[int, int, Optional[Image.Image]]] = []
+        for row in rows:
+            for dc in range(old_cols):
+                idx = row * old_cols + dc
+                f = self.model.frames[idx] if idx < len(self.model.frames) else None
+                cells.append((0, dc, f.copy() if f is not None else None))
+        self.canvas._copied_cells = cells
         # 将原 sel 按旧列数转换为 (row, col) 对
         old_sel_positions = [(idx // old_cols, idx % old_cols) for idx in sel]
         if len(rows) == 1:
@@ -3347,7 +3439,8 @@ class SpriteSheetEditorWindow(QMainWindow):
             self.canvas.selection = new_sel
             self.settings._spin_rows.setValue(self.model.rows)
             self._on_model_changed()
-            self._status_label.setText(f"已复制行 R{rows[0]} → R{rows[0] + 1}")
+            self._status_label.setText(
+                f"已复制行 R{rows[0]} → R{rows[0] + 1} (剪贴板 {len(cells)} 帧)")
         else:
             new_rows = self.model.copy_rows(rows)
             new_sel = set()
@@ -3358,7 +3451,8 @@ class SpriteSheetEditorWindow(QMainWindow):
             self._on_model_changed()
             row_str = ", ".join(f"R{r}" for r in rows)
             new_row_str = ", ".join(f"R{r}" for r in new_rows)
-            self._status_label.setText(f"已复制行 {row_str} → {new_row_str}")
+            self._status_label.setText(
+                f"已复制行 {row_str} → {new_row_str} (剪贴板 {len(cells)} 帧)")
 
     def _delete_row(self):
         """删除当前选中行（支持多行）"""
@@ -3437,7 +3531,16 @@ class SpriteSheetEditorWindow(QMainWindow):
             QMessageBox.information(self, "提示", "请先在画布上选中要复制列中的任意帧")
             return
         old_cols = max(1, self.model.columns)
+        old_rows = max(1, self.model.rows)
         col_set = sorted(set(idx % old_cols for idx in sel))
+        # 先把选中列装入块级剪贴板（在原地插入之前抓取, 避免索引错位）
+        cells: List[Tuple[int, int, Optional[Image.Image]]] = []
+        for dc, col in enumerate(col_set):
+            for dr in range(old_rows):
+                idx = dr * old_cols + col
+                f = self.model.frames[idx] if idx < len(self.model.frames) else None
+                cells.append((dr, dc, f.copy() if f is not None else None))
+        self.canvas._copied_cells = cells
         # 将原 sel 按旧列数转换为 (row, col) 对，复制后用新列数重新映射
         old_sel_positions = [(idx // old_cols, idx % old_cols) for idx in sel]
         if len(col_set) == 1:
@@ -3451,7 +3554,8 @@ class SpriteSheetEditorWindow(QMainWindow):
             self.canvas.selection = new_sel
             self.settings._spin_columns.setValue(self.model.columns)
             self._on_model_changed()
-            self._status_label.setText(f"已复制列 C{col} → C{new_col}")
+            self._status_label.setText(
+                f"已复制列 C{col} → C{new_col} (剪贴板 {len(cells)} 帧)")
         else:
             new_cols = self.model.copy_cols(col_set)
             # 仅保留原选择
@@ -3463,7 +3567,8 @@ class SpriteSheetEditorWindow(QMainWindow):
             self._on_model_changed()
             col_str = ", ".join(f"C{c}" for c in col_set)
             new_col_str = ", ".join(f"C{c}" for c in new_cols)
-            self._status_label.setText(f"已复制列 {col_str} → {new_col_str}")
+            self._status_label.setText(
+                f"已复制列 {col_str} → {new_col_str} (剪贴板 {len(cells)} 帧)")
 
     def _flip_horizontal(self):
         sel = self.canvas.selection
