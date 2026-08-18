@@ -92,6 +92,9 @@ ALPHA_MODE_DESC: dict[str, str] = {
 HEADER_ROW_H = 28
 HEADER_COL_W = 36
 DRAG_THRESHOLD = 5
+LONG_PRESS_DURATION = 1000
+SELECTION_BOX_COLOR = "#4a9eff"
+SELECTION_BOX_FILL = QColor(74, 158, 255, 40)
 DEFAULT_FPS = 12
 
 
@@ -419,6 +422,31 @@ class SpriteSheetModel(QObject):
         self.rows += 1
         self.model_changed.emit()
 
+    def copy_rows(self, row_indices: List[int]) -> List[int]:
+        """复制多行（按连续块插入到下方），返回插入块的起始行号"""
+        self.normalize()
+        if not row_indices:
+            return []
+        cols = self.columns
+        sorted_rows = sorted(row_indices)
+        max_row = sorted_rows[-1]
+        # 收集每行的副本
+        copied: List[List[Optional[Image.Image]]] = []
+        for row in sorted_rows:
+            start = row * cols
+            end = start + cols
+            row_copy = []
+            for i in range(start, end):
+                frame = self.frames[i]
+                row_copy.append(frame.copy() if frame is not None else None)
+            copied.append(row_copy)
+        # 在 max_row+1 处插入所有复制行
+        insert_pos = (max_row + 1) * cols
+        self.frames[insert_pos:insert_pos] = [f for row in copied for f in row]
+        self.rows += len(sorted_rows)
+        self.model_changed.emit()
+        return [max_row + 1]
+
     def delete_col(self, col_idx: int) -> None:
         """删除指定列, 后续列依次左移 (列数减 1, 行数不变)"""
         self.normalize()
@@ -461,6 +489,41 @@ class SpriteSheetModel(QObject):
         self.frames = new_frames
         self.columns = cols + 1
         self.model_changed.emit()
+
+    def copy_cols(self, col_indices: List[int]) -> List[int]:
+        """复制多列（按连续块插入到右侧），返回插入块的列号列表"""
+        self.normalize()
+        if not col_indices:
+            return []
+        cols = self.columns
+        rows = self.rows
+        sorted_cols = sorted(col_indices)
+        max_col = sorted_cols[-1]
+        # 按选中顺序复制每列
+        copied_data: List[List[Optional[Image.Image]]] = []
+        for col in sorted_cols:
+            col_data = []
+            for r in range(rows):
+                idx = r * cols + col
+                frame = self.frames[idx]
+                col_data.append(frame.copy() if frame is not None else None)
+            copied_data.append(col_data)
+        # 重新构建 frames：在 max_col 后插入所有复制列
+        new_frames: List[Optional[Image.Image]] = []
+        for r in range(rows):
+            row_start = r * cols
+            row = self.frames[row_start:row_start + cols]
+            insert_at = max_col + 1
+            new_row = row[:insert_at]
+            for col_data in copied_data:
+                new_row.append(col_data[r])
+            new_row.extend(row[insert_at:])
+            new_frames.extend(new_row)
+        self.frames = new_frames
+        self.columns = cols + len(sorted_cols)
+        self.model_changed.emit()
+        # 返回插入块的列号列表
+        return [max_col + 1 + i for i in range(len(sorted_cols))]
 
     def set_columns(self, new_cols: int) -> None:
         """改变列数但保持现有帧的网格位置不变
@@ -726,6 +789,12 @@ class SpriteGraphicsView(QGraphicsView):
         self._zoom: float = 1.0
         self._copied_frame: Optional[Image.Image] = None
 
+        self._selection_box: Optional[QGraphicsRectItem] = None
+        self._box_start: Optional[Tuple[float, float]] = None
+        self._long_press_timer: Optional[QTimer] = None
+        self._long_press_idx: int = -1
+        self._long_press_pos: Optional[Tuple[float, float]] = None
+
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOn)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOn)
 
@@ -973,6 +1042,7 @@ class SpriteGraphicsView(QGraphicsView):
             hdr = self._header_at_pos(x, y)
             if hdr:
                 self._header_drag = (hdr[0], hdr[1], x, y)
+                self._cancel_selection_box()
                 self.redraw()
                 return
 
@@ -1009,15 +1079,22 @@ class SpriteGraphicsView(QGraphicsView):
 
         # 普通点击
         if idx < 0:
+            # 点击空白区域，清除选中并开始框选
             if self.selection:
                 self.selection.clear()
                 if hasattr(self.editor, "image_list"):
                     self.editor.image_list._selected_idx = -1
                 self.update_selection_display()
                 self.selectionChangedCustom.emit()
+            self._box_start = (x, y)
+            self._long_press_timer = None
+            self._long_press_idx = -1
             return
 
-        self._drag_info = {"from_idx": idx, "start_x": x, "start_y": y, "moved": False}
+        # 点击帧，开始长按计时器
+        self._box_start = (x, y)
+        self._long_press_idx = idx
+        self._long_press_pos = (x, y)
         self._last_click_idx = idx
         if idx not in self.selection:
             self.selection = {idx}
@@ -1025,6 +1102,35 @@ class SpriteGraphicsView(QGraphicsView):
             self.editor.image_list._selected_idx = idx
         self.update_selection_display()
         self.selectionChangedCustom.emit()
+
+        # 启动长按计时器
+        self._long_press_timer = QTimer(self)
+        self._long_press_timer.setSingleShot(True)
+        self._long_press_timer.timeout.connect(self._on_long_press)
+        self._long_press_timer.start(LONG_PRESS_DURATION)
+
+    def _on_long_press(self):
+        """长按触发，取消框选并进入单帧拖拽模式"""
+        self._long_press_timer = None
+        # 取消框选意图，转入拖拽模式
+        self._box_start = None
+        # 移除已绘制的框选矩形和临时高亮（如果有）
+        if self._selection_box:
+            try:
+                self.scene.removeItem(self._selection_box)
+            except RuntimeError:
+                pass
+            self._selection_box = None
+        self._remove_temp_items("sel_preview")
+        if self._long_press_idx >= 0:
+            sx, sy = self._long_press_pos if self._long_press_pos else (0, 0)
+            self._drag_info = {
+                "from_idx": self._long_press_idx,
+                "start_x": sx,
+                "start_y": sy,
+                "moved": False
+            }
+            self.redraw()
 
     def mouseMoveEvent(self, event: QMouseEvent):
         pos = self.mapToScene(event.position().toPoint())
@@ -1039,16 +1145,102 @@ class SpriteGraphicsView(QGraphicsView):
                                                   self._header_drag[1], x, y)
             return
 
-        # 帧拖拽
-        if not self._drag_info:
+        # 长按后的帧拖拽模式
+        if self._drag_info and self._long_press_timer is None:
+            dx = abs(x - self._drag_info["start_x"])
+            dy = abs(y - self._drag_info["start_y"])
+            if not self._drag_info["moved"] and (dx > DRAG_THRESHOLD or dy > DRAG_THRESHOLD):
+                self._drag_info["moved"] = True
+            if self._drag_info["moved"]:
+                self._show_frame_drag_indicator(x, y)
             return
-        dx = abs(x - self._drag_info["start_x"])
-        dy = abs(y - self._drag_info["start_y"])
-        if not self._drag_info["moved"] and (dx > DRAG_THRESHOLD or dy > DRAG_THRESHOLD):
-            self._drag_info["moved"] = True
-            self._drag_info["from_idx"] = self._drag_info.get("from_idx", self._last_click_idx)
-        if self._drag_info["moved"]:
-            self._show_frame_drag_indicator(x, y)
+
+        # 框选模式
+        if self._box_start is not None:
+            # 用户开始移动并超过阈值，视为已进入框选，取消长按计时器
+            if self._long_press_timer is not None:
+                bdx = abs(x - self._box_start[0])
+                bdy = abs(y - self._box_start[1])
+                if bdx > DRAG_THRESHOLD or bdy > DRAG_THRESHOLD:
+                    self._long_press_timer.stop()
+                    self._long_press_timer = None
+                    self._long_press_idx = -1
+                    self._long_press_pos = None
+            self._update_selection_box(x, y)
+
+    def _cancel_selection_box(self):
+        """取消框选，清理临时对象"""
+        self._remove_temp_items("sel_preview")
+        if self._selection_box:
+            try:
+                self.scene.removeItem(self._selection_box)
+            except RuntimeError:
+                pass
+            self._selection_box = None
+        self._box_start = None
+        if self._long_press_timer:
+            self._long_press_timer.stop()
+            self._long_press_timer = None
+
+    def _update_selection_box(self, end_x: float, end_y: float):
+        """更新框选矩形和预览选中效果"""
+        start_x, start_y = self._box_start
+        sx, sy = min(start_x, end_x), min(start_y, end_y)
+        w, h = abs(end_x - start_x), abs(end_y - start_y)
+
+        if self._selection_box:
+            try:
+                self._selection_box.setRect(sx, sy, w, h)
+            except RuntimeError:
+                self._selection_box = None
+        if not self._selection_box:
+            self._selection_box = QGraphicsRectItem(sx, sy, w, h)
+            self._selection_box.setPen(QPen(QColor(SELECTION_BOX_COLOR), 1))
+            self._selection_box.setBrush(QBrush(SELECTION_BOX_FILL))
+            self._selection_box.setZValue(999)
+            self.scene.addItem(self._selection_box)
+
+        # 预览选中效果
+        self._remove_temp_items("sel_preview")
+        sel_rect = QRectF(sx, sy, w, h)
+        cols = self.model.columns
+        for idx in range(len(self.model.frames)):
+            r, c = divmod(idx, cols)
+            fx, fy, fx2, fy2 = self._cell_bbox(r, c)
+            if (fx < sel_rect.right() and fx2 > sel_rect.left() and
+                fy < sel_rect.bottom() and fy2 > sel_rect.top()):
+                rect_item = QGraphicsRectItem(fx, fy, fx2 - fx, fy2 - fy)
+                rect_item.setPen(QPen(QColor("#4a9eff"), 2))
+                rect_item.setBrush(QBrush(QColor(74, 158, 255, 60)))
+                rect_item.setZValue(998)
+                rect_item.setData(0, "sel_preview")
+                self.scene.addItem(rect_item)
+
+    def _finish_selection_box(self, end_x: float, end_y: float):
+        """完成框选，选中框内所有帧"""
+        self._remove_temp_items("sel_preview")
+        if self._selection_box:
+            try:
+                rect = self._selection_box.rect()
+                cols = self.model.columns
+                newly_selected: Set[int] = set()
+                for idx in range(len(self.model.frames)):
+                    r, c = divmod(idx, cols)
+                    fx, fy, fx2, fy2 = self._cell_bbox(r, c)
+                    # 线框与矩形相交即选中
+                    if (fx < rect.right() and fx2 > rect.left() and
+                        fy < rect.bottom() and fy2 > rect.top()):
+                        newly_selected.add(idx)
+                self.scene.removeItem(self._selection_box)
+                self._selection_box = None
+                if newly_selected:
+                    self.selection = newly_selected
+                    if hasattr(self.editor, "image_list"):
+                        self.editor.image_list._selected_idx = min(newly_selected)
+                    self.update_selection_display()
+                    self.selectionChangedCustom.emit()
+            except RuntimeError:
+                self._selection_box = None
 
     def mouseReleaseEvent(self, event: QMouseEvent):
         if event.button() != Qt.LeftButton:
@@ -1093,8 +1285,13 @@ class SpriteGraphicsView(QGraphicsView):
                 self.redraw()
             return
 
-        # 帧释放
-        if self._drag_info:
+        # 取消长按计时器
+        if self._long_press_timer:
+            self._long_press_timer.stop()
+            self._long_press_timer = None
+
+        # 长按触发的帧拖拽
+        if self._drag_info and self._long_press_timer is None:
             if self._drag_info.get("moved"):
                 to_idx = self._idx_at_pos(x, y)
                 from_idx = self._drag_info["from_idx"]
@@ -1107,6 +1304,13 @@ class SpriteGraphicsView(QGraphicsView):
                     self.editor._on_model_changed()
                     return
             self._drag_info = None
+            self.update_selection_display()
+            return
+
+        # 框选模式释放
+        if self._box_start is not None:
+            self._finish_selection_box(x, y)
+            self._box_start = None
             self.update_selection_display()
 
     def contextMenuEvent(self, event: QContextMenuEvent):
@@ -3125,20 +3329,36 @@ class SpriteSheetEditorWindow(QMainWindow):
         self.image_list.clear_all()
 
     def _copy_row(self):
+        """复制当前选中行（支持多行）"""
         sel = self.canvas.selection
         if not sel:
             QMessageBox.information(self, "提示", "请先在画布上选中要复制行中的任意帧")
             return
-        idx = min(sel)
-        row = idx // max(1, self.model.columns)
-        self.model.copy_row(row)
-        new_row = row + 1
-        cols = self.model.columns
-        new_start = new_row * cols
-        self.canvas.selection = set(range(new_start, new_start + cols))
-        self.settings._spin_rows.setValue(self.model.rows)
-        self._on_model_changed()
-        self._status_label.setText(f"已复制行 R{row} → R{new_row}")
+        old_cols = max(1, self.model.columns)
+        rows = sorted(set(idx // old_cols for idx in sel))
+        # 将原 sel 按旧列数转换为 (row, col) 对
+        old_sel_positions = [(idx // old_cols, idx % old_cols) for idx in sel]
+        if len(rows) == 1:
+            self.model.copy_row(rows[0])
+            # 仅保留原选择（按新列数重新索引）
+            new_sel = set()
+            for r, c in old_sel_positions:
+                new_sel.add(r * self.model.columns + c)
+            self.canvas.selection = new_sel
+            self.settings._spin_rows.setValue(self.model.rows)
+            self._on_model_changed()
+            self._status_label.setText(f"已复制行 R{rows[0]} → R{rows[0] + 1}")
+        else:
+            new_rows = self.model.copy_rows(rows)
+            new_sel = set()
+            for r, c in old_sel_positions:
+                new_sel.add(r * self.model.columns + c)
+            self.canvas.selection = new_sel
+            self.settings._spin_rows.setValue(self.model.rows)
+            self._on_model_changed()
+            row_str = ", ".join(f"R{r}" for r in rows)
+            new_row_str = ", ".join(f"R{r}" for r in new_rows)
+            self._status_label.setText(f"已复制行 {row_str} → {new_row_str}")
 
     def _delete_row(self):
         """删除当前选中行（支持多行）"""
@@ -3211,21 +3431,39 @@ class SpriteSheetEditorWindow(QMainWindow):
             f"已删除列 {col_str} → {self.model.columns}列 × {self.model.rows}行")
 
     def _copy_col(self):
-        """复制当前选中列"""
+        """复制当前选中列（支持多列）"""
         sel = self.canvas.selection
         if not sel:
             QMessageBox.information(self, "提示", "请先在画布上选中要复制列中的任意帧")
             return
-        cols = max(1, self.model.columns)
-        idx = min(sel)
-        col = idx % cols
-        self.model.copy_col(col)
-        new_col = col + 1
-        rows = self.model.rows
-        self.canvas.selection = set(range(col, rows * self.model.columns + col, self.model.columns))
-        self.settings._spin_columns.setValue(self.model.columns)
-        self._on_model_changed()
-        self._status_label.setText(f"已复制列 C{col} → C{new_col}")
+        old_cols = max(1, self.model.columns)
+        col_set = sorted(set(idx % old_cols for idx in sel))
+        # 将原 sel 按旧列数转换为 (row, col) 对，复制后用新列数重新映射
+        old_sel_positions = [(idx // old_cols, idx % old_cols) for idx in sel]
+        if len(col_set) == 1:
+            col = col_set[0]
+            self.model.copy_col(col)
+            new_col = col + 1
+            # 仅保留原选择（按新列数重新索引）
+            new_sel = set()
+            for r, c in old_sel_positions:
+                new_sel.add(r * self.model.columns + c)
+            self.canvas.selection = new_sel
+            self.settings._spin_columns.setValue(self.model.columns)
+            self._on_model_changed()
+            self._status_label.setText(f"已复制列 C{col} → C{new_col}")
+        else:
+            new_cols = self.model.copy_cols(col_set)
+            # 仅保留原选择
+            new_sel = set()
+            for r, c in old_sel_positions:
+                new_sel.add(r * self.model.columns + c)
+            self.canvas.selection = new_sel
+            self.settings._spin_columns.setValue(self.model.columns)
+            self._on_model_changed()
+            col_str = ", ".join(f"C{c}" for c in col_set)
+            new_col_str = ", ".join(f"C{c}" for c in new_cols)
+            self._status_label.setText(f"已复制列 {col_str} → {new_col_str}")
 
     def _flip_horizontal(self):
         sel = self.canvas.selection
