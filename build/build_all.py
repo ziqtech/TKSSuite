@@ -129,6 +129,10 @@ LAUNCHER_PACKAGE_EXES = ["TKSLauncher", "TKSConfigsEditor", "TKSSaveEditor", "TK
 LIBS_DIR = RELEASE_DIR / "libs"
 # Nuitka C 编译缓存 (其下含 clcache); 固定到仓库内, 避免依赖外部环境变量丢失缓存
 NUITKA_CACHE_DIR = BUILD_DIR / "nuitka_cache"
+# Nuitka onefile 默认把依赖解压到系统 TEMP 的随机目录。随机目录会导致
+# 杀毒软件清理、权限变化或多版本并行启动时出现“找不到依赖”。统一改到
+# 用户本地缓存目录，目录名包含程序和版本，既避免 TEMP，又避免版本互相覆盖。
+ONEFILE_TEMP_DIR_SPEC = "{CACHE_DIR}/TKSEditors/{PROGRAM}/{VERSION}"
 # 并行构建默认并发数 (CPU/2, 基准测试为最佳拐点; 上限=编辑器数); 单编辑器构建自动串行
 _DEFAULT_PARALLEL = min(len(EDITORS), max(2, (os.cpu_count() or 4) // 2))
 
@@ -194,6 +198,8 @@ def _build_thin_cmd(name: str, entry: str, editor_dir: str,
         sys.executable, "-m", "nuitka",
         # ── 打包模式 ──
         "--onefile",
+        f"--onefile-tempdir-spec={ONEFILE_TEMP_DIR_SPEC}",
+        "--onefile-cache-mode=cached",
         "--assume-yes-for-downloads",
 
         # ── 输出控制 ──
@@ -278,6 +284,8 @@ def _build_onefile_cmd(name: str, entry: str, editor_dir: str,
         sys.executable, "-m", "nuitka",
         # ── 打包模式 ──
         "--onefile",
+        f"--onefile-tempdir-spec={ONEFILE_TEMP_DIR_SPEC}",
+        "--onefile-cache-mode=cached",
         "--assume-yes-for-downloads",
 
         # ── 输出控制 ──
@@ -364,6 +372,8 @@ def _build_cli_cmd(name: str, entry: str, editor_dir: str,
     cmd = [
         sys.executable, "-m", "nuitka",
         "--onefile",
+        f"--onefile-tempdir-spec={ONEFILE_TEMP_DIR_SPEC}",
+        "--onefile-cache-mode=cached",
         "--assume-yes-for-downloads",
         f"--output-dir={DIST_DIR}",
         f"--output-filename={name}.exe",
@@ -430,6 +440,37 @@ def _collect_source_files(entry: str, editor_dir: str) -> list:
     return [f for f in files if f.exists()]
 
 
+def _validate_editor_registry() -> None:
+    """构建前校验 EDITORS，避免漏打包或入口路径错误。"""
+    names = [name for name, _, _ in EDITORS]
+    if len(names) != len(set(names)):
+        raise RuntimeError("EDITORS 中存在重复的编辑器名称")
+    missing = []
+    for name, entry, editor_dir in EDITORS:
+        entry_path = 仓库根目录 / entry
+        source_dir = 仓库根目录 / editor_dir
+        if not entry_path.is_file():
+            missing.append(f"{name}: 入口不存在 {entry_path}")
+        if not source_dir.is_dir():
+            missing.append(f"{name}: 编辑器目录不存在 {source_dir}")
+    unknown_zhconv = NEEDS_ZHCONV.difference(names)
+    if unknown_zhconv:
+        missing.append(f"NEEDS_ZHCONV 包含未注册编辑器: {sorted(unknown_zhconv)}")
+    if missing:
+        raise RuntimeError("构建注册表校验失败:\n  " + "\n  ".join(missing))
+
+
+def _validate_runtime_archives() -> None:
+    """校验薄 exe 所需的运行时归档确实位于发行目录 libs/。"""
+    required = ("PySide6.lib", "QtCore.lib", "QtGui.lib", "QtWidgets.lib", "PIL.lib")
+    missing = [name for name in required if not (LIBS_DIR / name).is_file()]
+    if missing:
+        raise RuntimeError(
+            "薄模式运行时归档不完整，缺少: " + ", ".join(missing) +
+            f"\n期望目录: {LIBS_DIR}"
+        )
+
+
 def _should_skip_build(name: str, source_files: list) -> bool:
     """增量构建检查: 若发行目录 exe 比所有源文件新, 则跳过
 
@@ -462,6 +503,8 @@ def build_one(name: str, entry: str, editor_dir: str,
 
     返回 (success: bool, elapsed: float)
     """
+    if not onefile and name != "TKSLauncherCLI":
+        _validate_runtime_archives()
     # 增量构建检查
     if not force:
         source_files = _collect_source_files(entry, editor_dir)
@@ -975,6 +1018,12 @@ def main():
     parser.add_argument("--force", action="store_true",
                         help="强制全量构建, 跳过增量检查")
     args = parser.parse_args()
+
+    try:
+        _validate_editor_registry()
+    except RuntimeError as exc:
+        print(f"[ERROR] {exc}")
+        sys.exit(1)
 
     if args.list:
         print("可构建编辑器:")

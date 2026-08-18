@@ -230,6 +230,27 @@ _CACHE_DIR = os.path.join(
     "TKSEditors", "runtime"
 )
 
+
+def _is_system_temp_path(path: str) -> bool:
+    """判断路径是否落在系统临时目录，避免依赖被随机临时目录承载。"""
+    try:
+        candidate = os.path.normcase(os.path.abspath(path))
+        temp_root = os.path.normcase(os.path.abspath(
+            os.environ.get("TEMP") or os.environ.get("TMP") or ""
+        ))
+        return bool(temp_root and (
+            candidate == temp_root or candidate.startswith(temp_root + os.sep)
+        ))
+    except OSError:
+        return False
+
+
+if _is_system_temp_path(_CACHE_DIR):
+    raise RuntimeError(
+        "TKS Editors 运行时缓存路径落在系统临时目录，已拒绝启动: "
+        f"{_CACHE_DIR}"
+    )
+
 # manifest 文件 (记录已解压归档的状态 + 文件列表, 用于增量清理)
 _MANIFEST = os.path.join(_CACHE_DIR, ".manifest.json")
 
@@ -354,6 +375,17 @@ def bootstrap():
     )
     if not is_compiled:
         return
+
+    # 薄 exe 必须从 exe 同级 libs/ 读取归档。若 libs 目录存在但缺少核心归档，
+    # 不要静默跳过后再让 PySide6 导入报一个难以定位的错误。
+    libs_dir = os.path.join(_APP_DIR, "libs")
+    if os.path.isdir(libs_dir):
+        core_lib = os.path.join(libs_dir, "PySide6.lib")
+        if not os.path.isfile(core_lib):
+            raise RuntimeError(
+                "TKS Editors 运行时归档不完整，缺少 libs/PySide6.lib。\n"
+                f"请将 libs 目录放在程序同级目录: {_APP_DIR}"
+            )
 
     # ── 确保缓存目录存在 ──
     os.makedirs(_CACHE_DIR, exist_ok=True)
