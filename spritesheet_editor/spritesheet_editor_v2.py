@@ -17,6 +17,7 @@ from __future__ import annotations
 import os
 import re
 import sys
+from contextlib import contextmanager
 from functools import partial
 from pathlib import Path
 from typing import List, Optional, Set, Tuple
@@ -24,11 +25,11 @@ from typing import List, Optional, Set, Tuple
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QListWidget, QListWidgetItem,
     QGraphicsView, QGraphicsScene, QGraphicsPixmapItem, QGraphicsRectItem,
-    QGraphicsTextItem, QGraphicsItem,
+    QGraphicsTextItem,
     QVBoxLayout, QHBoxLayout, QGridLayout,
     QLabel, QPushButton, QSpinBox, QComboBox, QCheckBox, QRadioButton,
     QGroupBox, QTextEdit,
-    QMenuBar, QMenu, QToolBar, QStatusBar, QDialog, QFileDialog,
+    QMenu, QDialog, QFileDialog,
     QMessageBox, QFrame, QSizePolicy, QButtonGroup,
     QListView, QAbstractItemView, QSlider, QSplitter, QLineEdit, QScrollArea,
 )
@@ -39,12 +40,11 @@ from PySide6.QtGui import (
 )
 from PySide6.QtCore import (
     Qt, QObject, Signal, QTimer, QSize, QRect, QPoint, QRectF, QPointF,
-    QMimeData, QEvent,
 )
 
 HAS_PIL = False
 try:
-    from PIL import Image, ImageDraw
+    from PIL import Image
     HAS_PIL = True
 except ImportError:
     pass
@@ -95,6 +95,9 @@ DRAG_THRESHOLD = 5
 LONG_PRESS_DURATION = 1000
 SELECTION_BOX_COLOR = "#4a9eff"
 SELECTION_BOX_FILL = QColor(74, 158, 255, 40)
+SELECTION_BORDER_COLOR = "#80c0ff"
+LONG_PRESS_PENDING_COLOR = "#ffb347"
+LONG_PRESS_ACTIVE_COLOR = "#39e58c"
 DEFAULT_FPS = 12
 
 
@@ -303,9 +306,26 @@ class SpriteSheetModel(QObject):
         self.cell_width: int = 64
         self.cell_height: int = 64
         self._cell_size_set: bool = False  # 用户是否手动设定过 cell 宽高
-        # 像素调节：保存原图和累积缩放比例
-        self._original_frames: dict[int, Image.Image] = {}
-        self._scale_factors: dict[int, tuple[float, float]] = {}
+        self._change_batch_depth = 0
+        self._change_pending = False
+
+    def _emit_changed(self) -> None:
+        if self._change_batch_depth:
+            self._change_pending = True
+        else:
+            self.model_changed.emit()
+
+    @contextmanager
+    def batch_update(self):
+        """合并多个连续修改，只通知界面刷新一次。"""
+        self._change_batch_depth += 1
+        try:
+            yield
+        finally:
+            self._change_batch_depth -= 1
+            if self._change_batch_depth == 0 and self._change_pending:
+                self._change_pending = False
+                self.model_changed.emit()
 
     @property
     def total_cells(self) -> int:
@@ -365,14 +385,14 @@ class SpriteSheetModel(QObject):
                     self.frames.append(frame.copy())
                 else:
                     self.frames.append(None)
-        self.model_changed.emit()
+        self._emit_changed()
 
     def swap_frames(self, idx_a: int, idx_b: int) -> None:
         self.normalize()
         n = len(self.frames)
         if 0 <= idx_a < n and 0 <= idx_b < n:
             self.frames[idx_a], self.frames[idx_b] = self.frames[idx_b], self.frames[idx_a]
-            self.model_changed.emit()
+            self._emit_changed()
 
     def move_frame(self, src: int, dst: int) -> None:
         """将帧从 src 位置移动到 dst (pop+insert 语义)"""
@@ -384,7 +404,7 @@ class SpriteSheetModel(QObject):
         dst_adj = dst if dst <= src else dst - 1
         dst_adj = max(0, min(dst_adj, len(self.frames)))
         self.frames.insert(dst_adj, frame)
-        self.model_changed.emit()
+        self._emit_changed()
 
     def swap_rows(self, r1: int, r2: int) -> None:
         self.normalize()
@@ -394,7 +414,7 @@ class SpriteSheetModel(QObject):
         for c in range(cols):
             i1, i2 = r1 * cols + c, r2 * cols + c
             self.frames[i1], self.frames[i2] = self.frames[i2], self.frames[i1]
-        self.model_changed.emit()
+        self._emit_changed()
 
     def swap_cols(self, c1: int, c2: int) -> None:
         self.normalize()
@@ -404,7 +424,7 @@ class SpriteSheetModel(QObject):
         for r in range(rows):
             i1, i2 = r * cols + c1, r * cols + c2
             self.frames[i1], self.frames[i2] = self.frames[i2], self.frames[i1]
-        self.model_changed.emit()
+        self._emit_changed()
 
     def copy_row(self, row_idx: int) -> None:
         self.normalize()
@@ -420,15 +440,15 @@ class SpriteSheetModel(QObject):
         insert_pos = (row_idx + 1) * cols
         self.frames[insert_pos:insert_pos] = copied
         self.rows += 1
-        self.model_changed.emit()
+        self._emit_changed()
 
     def copy_rows(self, row_indices: List[int]) -> List[int]:
         """复制多行（按连续块插入到下方），返回插入块的起始行号"""
         self.normalize()
-        if not row_indices:
+        sorted_rows = sorted(set(row_indices))
+        if not sorted_rows or any(row < 0 or row >= self.rows for row in sorted_rows):
             return []
         cols = self.columns
-        sorted_rows = sorted(row_indices)
         max_row = sorted_rows[-1]
         # 收集每行的副本
         copied: List[List[Optional[Image.Image]]] = []
@@ -444,8 +464,8 @@ class SpriteSheetModel(QObject):
         insert_pos = (max_row + 1) * cols
         self.frames[insert_pos:insert_pos] = [f for row in copied for f in row]
         self.rows += len(sorted_rows)
-        self.model_changed.emit()
-        return [max_row + 1]
+        self._emit_changed()
+        return list(range(max_row + 1, max_row + 1 + len(sorted_rows)))
 
     def delete_col(self, col_idx: int) -> None:
         """删除指定列, 后续列依次左移 (列数减 1, 行数不变)"""
@@ -460,7 +480,7 @@ class SpriteSheetModel(QObject):
             new_frames.extend(row)
         self.frames = new_frames
         self.columns = cols - 1
-        self.model_changed.emit()
+        self._emit_changed()
 
     def delete_row(self, row_idx: int) -> None:
         """删除指定行, 后续行上移（行数减1）"""
@@ -471,7 +491,7 @@ class SpriteSheetModel(QObject):
         start = row_idx * cols
         self.frames = self.frames[:start] + self.frames[start + cols:]
         self.rows -= 1
-        self.model_changed.emit()
+        self._emit_changed()
 
     def copy_col(self, col_idx: int) -> None:
         """复制指定列到右侧（列数加1）"""
@@ -488,16 +508,16 @@ class SpriteSheetModel(QObject):
             new_frames.extend(row)
         self.frames = new_frames
         self.columns = cols + 1
-        self.model_changed.emit()
+        self._emit_changed()
 
     def copy_cols(self, col_indices: List[int]) -> List[int]:
         """复制多列（按连续块插入到右侧），返回插入块的列号列表"""
         self.normalize()
-        if not col_indices:
+        sorted_cols = sorted(set(col_indices))
+        if not sorted_cols or any(col < 0 or col >= self.columns for col in sorted_cols):
             return []
         cols = self.columns
         rows = self.rows
-        sorted_cols = sorted(col_indices)
         max_col = sorted_cols[-1]
         # 按选中顺序复制每列
         copied_data: List[List[Optional[Image.Image]]] = []
@@ -521,7 +541,7 @@ class SpriteSheetModel(QObject):
             new_frames.extend(new_row)
         self.frames = new_frames
         self.columns = cols + len(sorted_cols)
-        self.model_changed.emit()
+        self._emit_changed()
         # 返回插入块的列号列表
         return [max_col + 1 + i for i in range(len(sorted_cols))]
 
@@ -546,7 +566,7 @@ class SpriteSheetModel(QObject):
             new_frames.extend(row)
         self.frames = new_frames
         self.columns = new_cols
-        self.model_changed.emit()
+        self._emit_changed()
 
     def get_frame(self, idx: int) -> Optional[Image.Image]:
         self.normalize()
@@ -796,6 +816,8 @@ class SpriteGraphicsView(QGraphicsView):
         self._long_press_timer: Optional[QTimer] = None
         self._long_press_idx: int = -1
         self._long_press_pos: Optional[Tuple[float, float]] = None
+        self._long_press_pending: bool = False
+        self._long_press_active: bool = False
 
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOn)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOn)
@@ -947,11 +969,16 @@ class SpriteGraphicsView(QGraphicsView):
             self.scene.addItem(txt)
 
         # 选中边框
+        border_color = SELECTION_BORDER_COLOR
+        if self._long_press_active:
+            border_color = LONG_PRESS_ACTIVE_COLOR
+        elif self._long_press_pending:
+            border_color = LONG_PRESS_PENDING_COLOR
         for idx in self.selection:
             r, c = divmod(idx, cols)
             x, y, _, _ = self._cell_bbox(r, c)
             border = QGraphicsRectItem(x, y, cw, ch)
-            border.setPen(QPen(QColor("#80c0ff"), 2))
+            border.setPen(QPen(QColor(border_color), 3 if self._long_press_active else 2))
             border.setBrush(QBrush(Qt.NoBrush))
             self.scene.addItem(border)
 
@@ -1052,6 +1079,8 @@ class SpriteGraphicsView(QGraphicsView):
 
         # Ctrl+点击: 切换选中
         if modifiers & Qt.ControlModifier:
+            self._long_press_pending = False
+            self._long_press_active = False
             if idx >= 0:
                 if idx in self.selection:
                     self.selection.discard(idx)
@@ -1070,6 +1099,8 @@ class SpriteGraphicsView(QGraphicsView):
 
         # Shift+点击: 范围选中
         if modifiers & Qt.ShiftModifier:
+            self._long_press_pending = False
+            self._long_press_active = False
             if idx >= 0 and self._last_click_idx >= 0:
                 lo, hi = min(self._last_click_idx, idx), max(self._last_click_idx, idx)
                 self.selection = set(range(lo, hi + 1))
@@ -1091,6 +1122,8 @@ class SpriteGraphicsView(QGraphicsView):
             self._box_start = (x, y)
             self._long_press_timer = None
             self._long_press_idx = -1
+            self._long_press_pending = False
+            self._long_press_active = False
             return
 
         # 点击帧，开始长按计时器
@@ -1100,10 +1133,16 @@ class SpriteGraphicsView(QGraphicsView):
         self._last_click_idx = idx
         if idx not in self.selection:
             self.selection = {idx}
+        self._long_press_pending = True
+        self._long_press_active = False
         if hasattr(self.editor, "image_list"):
             self.editor.image_list._selected_idx = idx
         self.update_selection_display()
         self.selectionChangedCustom.emit()
+        try:
+            self.editor._status_label.setText("按住中… 长按 1 秒进入拖拽")
+        except AttributeError:
+            pass
 
         # 启动长按计时器
         self._long_press_timer = QTimer(self)
@@ -1114,6 +1153,8 @@ class SpriteGraphicsView(QGraphicsView):
     def _on_long_press(self):
         """长按触发，取消框选并进入单帧拖拽模式"""
         self._long_press_timer = None
+        self._long_press_pending = False
+        self._long_press_active = True
         # 取消框选意图，转入拖拽模式
         self._box_start = None
         # 移除已绘制的框选矩形和临时高亮（如果有）
@@ -1133,6 +1174,10 @@ class SpriteGraphicsView(QGraphicsView):
                 "moved": False
             }
             self.redraw()
+            try:
+                self.editor._status_label.setText("长按成功，可拖动当前帧")
+            except AttributeError:
+                pass
 
     def mouseMoveEvent(self, event: QMouseEvent):
         pos = self.mapToScene(event.position().toPoint())
@@ -1168,6 +1213,9 @@ class SpriteGraphicsView(QGraphicsView):
                     self._long_press_timer = None
                     self._long_press_idx = -1
                     self._long_press_pos = None
+                    self._long_press_pending = False
+                    self._long_press_active = False
+                    self.update_selection_display()
             self._update_selection_box(x, y)
 
     def _cancel_selection_box(self):
@@ -1180,6 +1228,8 @@ class SpriteGraphicsView(QGraphicsView):
                 pass
             self._selection_box = None
         self._box_start = None
+        self._long_press_pending = False
+        self._long_press_active = False
         if self._long_press_timer:
             self._long_press_timer.stop()
             self._long_press_timer = None
@@ -1256,6 +1306,8 @@ class SpriteGraphicsView(QGraphicsView):
         if self._header_drag:
             hdr_type, hdr_idx = self._header_drag[0], self._header_drag[1]
             self._header_drag = None
+            self._long_press_pending = False
+            self._long_press_active = False
             if hdr_type == "row":
                 target = self._row_at_y(y)
             else:
@@ -1303,9 +1355,11 @@ class SpriteGraphicsView(QGraphicsView):
                     if hasattr(self.editor, "image_list"):
                         self.editor.image_list._selected_idx = to_idx
                     self._drag_info = None
+                    self._long_press_active = False
                     self.editor._on_model_changed()
                     return
             self._drag_info = None
+            self._long_press_active = False
             self.update_selection_display()
             return
 
@@ -1313,6 +1367,7 @@ class SpriteGraphicsView(QGraphicsView):
         if self._box_start is not None:
             self._finish_selection_box(x, y)
             self._box_start = None
+            self._long_press_pending = False
             self.update_selection_display()
 
     def contextMenuEvent(self, event: QContextMenuEvent):
@@ -1443,7 +1498,10 @@ class SpriteGraphicsView(QGraphicsView):
             if isinstance(item, QGraphicsRectItem):
                 pen_color = item.pen().color().name()
                 # 跳过选中边框 (#80c0ff) / 行高亮 / 列高亮 / header 等
-                if pen_color in ("#80c0ff", "#a0d0ff", "#606060", "#ffcc00"):
+                if pen_color in (SELECTION_BORDER_COLOR.lower(),
+                                 LONG_PRESS_PENDING_COLOR.lower(),
+                                 LONG_PRESS_ACTIVE_COLOR.lower(),
+                                 "#a0d0ff", "#606060", "#ffcc00"):
                     continue
                 if pen_color == "#555555" or item.pen().style() == Qt.NoPen:
                     r, c = divmod(idx, cols)
@@ -1453,7 +1511,12 @@ class SpriteGraphicsView(QGraphicsView):
 
         # 选中边框 → 删除旧的, 按需重建 (轻量)
         for item in list(self.scene.items()):
-            if isinstance(item, QGraphicsRectItem) and item.pen().color().name() == "#80c0ff":
+            if (isinstance(item, QGraphicsRectItem) and
+                    item.pen().color().name() in {
+                        SELECTION_BORDER_COLOR.lower(),
+                        LONG_PRESS_PENDING_COLOR.lower(),
+                        LONG_PRESS_ACTIVE_COLOR.lower(),
+                    }):
                 self.scene.removeItem(item)
         # 行/列高亮 → 删除旧的
         for item in list(self.scene.items()):
@@ -1466,7 +1529,14 @@ class SpriteGraphicsView(QGraphicsView):
             x = HEADER_COL_W + c * (cw + m.padding)
             y = HEADER_ROW_H + r * (ch + m.padding)
             border = QGraphicsRectItem(x, y, cw, ch)
-            border.setPen(QPen(QColor("#80c0ff"), 2))
+            border_color = SELECTION_BORDER_COLOR
+            border_width = 2
+            if idx == self._long_press_idx and self._long_press_active:
+                border_color = LONG_PRESS_ACTIVE_COLOR
+                border_width = 3
+            elif idx == self._long_press_idx and self._long_press_pending:
+                border_color = LONG_PRESS_PENDING_COLOR
+            border.setPen(QPen(QColor(border_color), border_width))
             border.setBrush(QBrush(Qt.NoBrush))
             self.scene.addItem(border)
 
@@ -1526,24 +1596,26 @@ class SpriteGraphicsView(QGraphicsView):
 
     def move_selected_left(self) -> None:
         moved = []
-        for idx in sorted(self.selection):
-            if idx > 0 and (idx - 1) not in self.selection:
-                self.model.swap_frames(idx, idx - 1)
-                moved.append(idx - 1)
-            else:
-                moved.append(idx)
+        with self.model.batch_update():
+            for idx in sorted(self.selection):
+                if idx > 0 and (idx - 1) not in self.selection:
+                    self.model.swap_frames(idx, idx - 1)
+                    moved.append(idx - 1)
+                else:
+                    moved.append(idx)
         self.selection = set(moved)
         self.editor._on_model_changed()
         self.redraw()
 
     def move_selected_right(self) -> None:
         moved = []
-        for idx in sorted(self.selection, reverse=True):
-            if idx < len(self.model.frames) - 1 and (idx + 1) not in self.selection:
-                self.model.swap_frames(idx, idx + 1)
-                moved.append(idx + 1)
-            else:
-                moved.append(idx)
+        with self.model.batch_update():
+            for idx in sorted(self.selection, reverse=True):
+                if idx < len(self.model.frames) - 1 and (idx + 1) not in self.selection:
+                    self.model.swap_frames(idx, idx + 1)
+                    moved.append(idx + 1)
+                else:
+                    moved.append(idx)
         self.selection = set(moved)
         self.editor._on_model_changed()
         self.redraw()
@@ -1551,13 +1623,14 @@ class SpriteGraphicsView(QGraphicsView):
     def move_selected_up(self) -> None:
         cols = max(1, int(self.model.columns))
         moved = []
-        for idx in sorted(self.selection):
-            target = idx - cols
-            if target >= 0 and target not in self.selection:
-                self.model.swap_frames(idx, target)
-                moved.append(target)
-            else:
-                moved.append(idx)
+        with self.model.batch_update():
+            for idx in sorted(self.selection):
+                target = idx - cols
+                if target >= 0 and target not in self.selection:
+                    self.model.swap_frames(idx, target)
+                    moved.append(target)
+                else:
+                    moved.append(idx)
         self.selection = set(moved)
         self.editor._on_model_changed()
         self.redraw()
@@ -1566,13 +1639,14 @@ class SpriteGraphicsView(QGraphicsView):
         cols = max(1, int(self.model.columns))
         total = len(self.model.frames)
         moved = []
-        for idx in sorted(self.selection, reverse=True):
-            target = idx + cols
-            if target < total and target not in self.selection:
-                self.model.swap_frames(idx, target)
-                moved.append(target)
-            else:
-                moved.append(idx)
+        with self.model.batch_update():
+            for idx in sorted(self.selection, reverse=True):
+                target = idx + cols
+                if target < total and target not in self.selection:
+                    self.model.swap_frames(idx, target)
+                    moved.append(target)
+                else:
+                    moved.append(idx)
         self.selection = set(moved)
         self.editor._on_model_changed()
         self.redraw()
@@ -1635,6 +1709,37 @@ class SpriteGraphicsView(QGraphicsView):
         # 兼容旧路径: 单帧时也填一下 _copied_frame
         self._copied_frame = cells[0][2].copy() if len(cells) == 1 and cells[0][2] is not None else None
         return len(cells)
+
+    def shortcut_copy(self) -> None:
+        """处理 Ctrl+C：优先复制多选块，否则复制当前帧。"""
+        if len(self.selection) > 1:
+            count = self.copy_selection()
+        else:
+            idx = next(iter(self.selection), self._last_click_idx)
+            if idx < 0 or self.model.get_frame(idx) is None:
+                return
+            self.copy_cell(idx)
+            count = 1
+        try:
+            self.editor._status_label.setText(f"已复制 {count} 个单元格")
+        except AttributeError:
+            pass
+
+    def shortcut_paste(self) -> None:
+        """处理 Ctrl+V：粘贴到选区锚点或当前帧。"""
+        if not self._copied_cells:
+            return
+        target = set(self.selection)
+        if not target and self._last_click_idx >= 0:
+            target = {self._last_click_idx}
+        if not target:
+            return
+        pasted = self.paste_cells_to(target)
+        if pasted:
+            try:
+                self.editor._status_label.setText(f"已粘贴 {len(pasted)} 个单元格")
+            except AttributeError:
+                pass
 
     def paste_cells_to(self, target: Set[int]) -> Set[int]:
         """Excel 语义: target 只决定锚点(min), 剪贴板按形状铺, 越界丢弃.
@@ -2393,18 +2498,15 @@ class SettingsPanel(QWidget):
         sender = self.sender()
         if sender in (self._spin_cell_width, self._spin_cell_height):
             self.model._cell_size_set = True
-        try:
-            # 改列数需按行重排数据, 保持现有帧位置不变 (直接赋值会错位)
-            self.model.set_columns(self._spin_columns.value())
-            self.model.rows = self._spin_rows.value()
-            self.model.padding = self._spin_padding.value()
-            self.model.cell_width = self._spin_cell_width.value()
-            self.model.cell_height = self._spin_cell_height.value()
-        except Exception: return
+        # 改列数需按行重排数据, 保持现有帧位置不变 (直接赋值会错位)
+        self.model.set_columns(self._spin_columns.value())
+        self.model.rows = self._spin_rows.value()
+        self.model.padding = self._spin_padding.value()
+        self.model.cell_width = self._spin_cell_width.value()
+        self.model.cell_height = self._spin_cell_height.value()
         self.editor._on_model_changed()
         self._update_output_info()
-        try: self._refresh_export_info()
-        except Exception: pass
+        self._refresh_export_info()
 
     def _auto_detect(self):
         self.model.auto_detect_cell_size()
@@ -2415,8 +2517,7 @@ class SettingsPanel(QWidget):
         self.model._cell_size_set = False
         self.editor._on_model_changed()
         self._update_output_info()
-        try: self._refresh_export_info()
-        except Exception: pass
+        self._refresh_export_info()
 
     def _move_row(self, delta: int):
         sel = self.editor.canvas.selection
@@ -2539,7 +2640,8 @@ class SettingsPanel(QWidget):
                 f"帧: {m.frame_count}/{m.total_cells}",
             ]
             self._output_info.setPlainText("\n".join(lines))
-        except Exception: pass
+        except (AttributeError, ValueError):
+            self._output_info.setPlainText("(无数据)")
 
     def refresh_values(self):
         self._suppress_changes = True
@@ -2550,8 +2652,7 @@ class SettingsPanel(QWidget):
         self._spin_cell_height.setValue(self.model.cell_height)
         self._suppress_changes = False
         self._update_output_info()
-        try: self._refresh_export_info()
-        except Exception: pass
+        self._refresh_export_info()
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -2802,8 +2903,7 @@ class SpriteSheetEditorWindow(QMainWindow):
 
         apply_godot_theme(self, is_dark)
 
-        self.model = SpriteSheetModel()
-        self._filepath: Optional[str] = None
+        self._set_model(SpriteSheetModel())
         self._source_sheet: Optional[Image.Image] = None
         self._is_dark: bool = is_dark
         self._preview_mode: str = "grid"
@@ -3075,7 +3175,6 @@ class SpriteSheetEditorWindow(QMainWindow):
         main_layout.addWidget(main_splitter, 1)
 
         # ── 信号/槽连接 (MVC 解耦) ──
-        self.model.model_changed.connect(self._on_model_changed)
         self.canvas.selectionChangedCustom.connect(self._on_selection_changed)
         self.image_list.selectionChangedCustom.connect(self._on_selection_changed)
 
@@ -3085,6 +3184,40 @@ class SpriteSheetEditorWindow(QMainWindow):
     def _create_dock(self, title, widget_content, header_layout=None):
         """Dock 面板包裹 — 委托给 editor_utils.dock_components"""
         return create_dock(title, widget_content, header_layout)
+
+    def _set_model(self, model: SpriteSheetModel) -> None:
+        """替换数据模型并保持所有视图订阅同一个变更信号。"""
+        self.model = model
+        self.model.model_changed.connect(self._on_model_changed)
+        if hasattr(self, "canvas"):
+            self.canvas.model = model
+        if hasattr(self, "settings"):
+            self.settings.model = model
+
+    def _replace_model(self, *, clear_source: bool = True) -> None:
+        """创建空模型并清理依赖旧模型的 UI 状态。"""
+        self._set_model(SpriteSheetModel())
+        if clear_source:
+            self._source_sheet = None
+        self.image_list._image_paths.clear()
+        self.image_list._path_by_id.clear()
+        self.image_list._selected_idx = -1
+        self.image_list._anchor_idx = -1
+        self.canvas.selection.clear()
+        self.canvas._drag_info = None
+        self.canvas._header_drag = None
+        self.canvas._last_click_idx = -1
+
+    def _reset_import_state(self) -> None:
+        """清理导入/拆分后需要重新计算的列表和选择状态。"""
+        self.image_list._image_paths.clear()
+        self.image_list._path_by_id.clear()
+        self.image_list._selected_idx = -1
+        self.image_list._anchor_idx = -1
+        self.canvas.selection.clear()
+        self.canvas._drag_info = None
+        self.canvas._header_drag = None
+        self.canvas._last_click_idx = -1
 
     def _v_sep(self):
         sep = QFrame()
@@ -3109,6 +3242,8 @@ class SpriteSheetEditorWindow(QMainWindow):
         # 编辑菜单 — 仅显示快捷键提示, 实际绑定由 QShortcut 统一处理
         edit_menu = menubar.addMenu("编辑")
         edit_menu.addAction("全选\tCtrl+A", self.canvas.select_all)
+        edit_menu.addAction("复制\tCtrl+C", self.canvas.shortcut_copy)
+        edit_menu.addAction("粘贴\tCtrl+V", self.canvas.shortcut_paste)
         edit_menu.addAction("取消选择\tEscape", self.canvas.select_none)
         edit_menu.addSeparator()
         edit_menu.addAction("删除选中帧\tDelete", self.canvas.delete_selected)
@@ -3150,7 +3285,7 @@ class SpriteSheetEditorWindow(QMainWindow):
             "  · 多种像素格式导出 (RGBA8888 / RGB888 / RGB565 等)\n"
             "  · 深色/浅色主题切换\n\n"
             "快捷键:\n"
-            "  Ctrl+A = 全选   Delete = 删除选中帧\n"
+            "  Ctrl+A = 全选   Ctrl+C/V = 复制/粘贴   Delete = 删除选中帧\n"
             "  Ctrl+方向键 = 移动选中帧\n"
             "  Shift+方向键 = 移动整行/整列")
 
@@ -3160,6 +3295,8 @@ class SpriteSheetEditorWindow(QMainWindow):
         # 基础快捷键 (不经过输入控件检测, 因其不与文本编辑冲突)
         QShortcut(QKeySequence("Ctrl+S"), self, self._save)
         QShortcut(QKeySequence("Ctrl+A"), self, self.canvas.select_all)
+        QShortcut(QKeySequence("Ctrl+C"), self, _w(self.canvas.shortcut_copy))
+        QShortcut(QKeySequence("Ctrl+V"), self, _w(self.canvas.shortcut_paste))
         QShortcut(QKeySequence("Escape"), self, self.canvas.select_none)
         QShortcut(QKeySequence("Delete"), self, self.canvas.delete_selected)
         # 方向键移动 — 必须经 _shortcut_wrap 避开输入控件焦点
@@ -3208,15 +3345,7 @@ class SpriteSheetEditorWindow(QMainWindow):
         if self.model.frame_count > 0:
             if QMessageBox.question(self, "确认", "当前内容将被清除，确定新建吗?") != QMessageBox.Yes:
                 return
-        self.model = SpriteSheetModel()
-        self.canvas.model = self.model
-        self.settings.model = self.model
-        self.image_list._image_paths.clear()
-        self.image_list._path_by_id.clear()
-        self.canvas.selection.clear()
-        self.canvas._drag_info = None
-        self.canvas._header_drag = None
-        self.canvas._last_click_idx = -1
+        self._replace_model()
         self.settings.refresh_values()
         self._on_model_changed()
         self._status_label.setText("新建空白 Spritesheet")
@@ -3307,7 +3436,6 @@ class SpriteSheetEditorWindow(QMainWindow):
             QMessageBox.critical(self, "错误", f"无法读取图片: {e}")
             return
 
-        self._filepath = str(path)
         self._source_sheet = img
 
         m = self.model
@@ -3319,16 +3447,9 @@ class SpriteSheetEditorWindow(QMainWindow):
             iw, ih = img.size
             m.cell_width = max(1, (iw - max(0, cols - 1) * pad) // cols)
             m.cell_height = max(1, (ih - max(0, rows - 1) * pad) // rows)
+        self._reset_import_state()
         m.split_spritesheet(img)
-        self.image_list._image_paths = []
-        self.image_list._path_by_id = {}
-        self.image_list._selected_idx = -1
-        self.canvas.selection.clear()
-        self.canvas._drag_info = None
-        self.canvas._header_drag = None
-        self.canvas._last_click_idx = -1
         self.settings.refresh_values()
-        self._on_model_changed()
         self._status_label.setText(
             f"已拆分: {path.name} → {m.frame_count} 帧 "
             f"(cols={m.columns} rows={m.rows} "
@@ -3353,16 +3474,9 @@ class SpriteSheetEditorWindow(QMainWindow):
             pad = max(0, int(m.padding))
             m.cell_width = max(1, (iw - max(0, cols - 1) * pad) // cols)
             m.cell_height = max(1, (ih - max(0, rows - 1) * pad) // rows)
+        self._reset_import_state()
         m.split_spritesheet(img)
-        self.image_list._image_paths = []
-        self.image_list._path_by_id = {}
-        self.image_list._selected_idx = -1
-        self.canvas.selection.clear()
-        self.canvas._drag_info = None
-        self.canvas._header_drag = None
-        self.canvas._last_click_idx = -1
         self.settings.refresh_values()
-        self._on_model_changed()
         self._status_label.setText(
             f"已重新拆分 → {m.frame_count} 帧 "
             f"(cols={m.columns} rows={m.rows} "
@@ -3620,16 +3734,7 @@ class SpriteSheetEditorWindow(QMainWindow):
             "已切换到组合模式" if self._mode_merge.isChecked() else "已切换到拆分模式")
 
     def _reset_model(self):
-        self.model = SpriteSheetModel()
-        self.canvas.model = self.model
-        self.settings.model = self.model
-        self.image_list._image_paths.clear()
-        self.image_list._path_by_id.clear()
-        self.image_list._selected_idx = -1
-        self.canvas.selection.clear()
-        self.canvas._drag_info = None
-        self.canvas._header_drag = None
-        self.canvas._last_click_idx = -1
+        self._replace_model()
         self.settings.refresh_values()
         self._on_model_changed()
 
