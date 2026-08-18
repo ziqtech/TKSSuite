@@ -434,6 +434,34 @@ class SpriteSheetModel(QObject):
         self.columns = cols - 1
         self.model_changed.emit()
 
+    def delete_row(self, row_idx: int) -> None:
+        """删除指定行, 后续行上移（行数减1）"""
+        self.normalize()
+        if not (0 <= row_idx < self.rows) or self.rows <= 1:
+            return
+        cols = self.columns
+        start = row_idx * cols
+        self.frames = self.frames[:start] + self.frames[start + cols:]
+        self.rows -= 1
+        self.model_changed.emit()
+
+    def copy_col(self, col_idx: int) -> None:
+        """复制指定列到右侧（列数加1）"""
+        self.normalize()
+        cols = self.columns
+        if not (0 <= col_idx < cols):
+            return
+        new_frames = []
+        for r in range(self.rows):
+            row_start = r * cols
+            row = self.frames[row_start:row_start + cols]
+            col_copy = row[col_idx].copy() if row[col_idx] is not None else None
+            row.insert(col_idx + 1, col_copy)
+            new_frames.extend(row)
+        self.frames = new_frames
+        self.columns = cols + 1
+        self.model_changed.emit()
+
     def set_columns(self, new_cols: int) -> None:
         """改变列数但保持现有帧的网格位置不变
 
@@ -1088,13 +1116,6 @@ class SpriteGraphicsView(QGraphicsView):
             super().contextMenuEvent(event)
             return
 
-        self.selection = {idx}
-        self._last_click_idx = idx
-        if hasattr(self.editor, "image_list"):
-            self.editor.image_list._selected_idx = idx
-        self.update_selection_display()
-        self.selectionChangedCustom.emit()
-
         frame = self.model.get_frame(idx)
         menu = QMenu(self)
         act_copy = menu.addAction("复制")
@@ -1102,8 +1123,15 @@ class SpriteGraphicsView(QGraphicsView):
         act_paste = menu.addAction("粘贴")
         act_paste.setEnabled(self._copied_frame is not None)
         menu.addSeparator()
+        act_copy_row = menu.addAction("复制行")
+        act_delete_row = menu.addAction("删除行")
+        menu.addSeparator()
+        act_copy_col = menu.addAction("复制列")
+        act_delete_col = menu.addAction("删除列")
+        menu.addSeparator()
         act_flip = menu.addAction("水平翻转")
         act_flip.setEnabled(frame is not None)
+        menu.addSeparator()
         act_delete = menu.addAction("删除")
         act_delete.setEnabled(frame is not None)
 
@@ -1112,8 +1140,16 @@ class SpriteGraphicsView(QGraphicsView):
             self.copy_cell(idx)
         elif chosen is act_paste:
             self.paste_cell(idx)
+        elif chosen is act_copy_row:
+            self.editor._copy_row()
+        elif chosen is act_delete_row:
+            self.editor._delete_row()
+        elif chosen is act_copy_col:
+            self.editor._copy_col()
+        elif chosen is act_delete_col:
+            self.editor._delete_col()
         elif chosen is act_flip:
-            self.flip_cell(idx)
+            self.editor._flip_horizontal()
         elif chosen is act_delete:
             self.delete_selected()
 
@@ -2579,6 +2615,16 @@ class SpriteSheetEditorWindow(QMainWindow):
         btn_copy_row.clicked.connect(self._copy_row)
         toolbar.addWidget(btn_copy_row)
 
+        btn_delete_row = QPushButton("删除行")
+        btn_delete_row.clicked.connect(self._delete_row)
+        toolbar.addWidget(btn_delete_row)
+
+        toolbar.addWidget(self._v_sep())
+
+        btn_copy_col = QPushButton("复制列")
+        btn_copy_col.clicked.connect(self._copy_col)
+        toolbar.addWidget(btn_copy_col)
+
         btn_delete_col = QPushButton("删除列")
         btn_delete_col.clicked.connect(self._delete_col)
         toolbar.addWidget(btn_delete_col)
@@ -3094,34 +3140,92 @@ class SpriteSheetEditorWindow(QMainWindow):
         self._on_model_changed()
         self._status_label.setText(f"已复制行 R{row} → R{new_row}")
 
+    def _delete_row(self):
+        """删除当前选中行（支持多行）"""
+        sel = self.canvas.selection
+        if not sel:
+            QMessageBox.information(self, "提示", "请先在画布上选中要删除行中的任意帧")
+            return
+        cols = max(1, self.model.columns)
+        self.model.normalize()
+        # 计算所有涉及的行
+        rows_to_delete = sorted(set(idx // cols for idx in sel), reverse=True)
+        if len(rows_to_delete) == 1 and self.model.rows <= 1:
+            QMessageBox.information(self, "提示", "仅剩 1 行, 无法删除")
+            return
+        # 统计要删除的非空帧数
+        removed = 0
+        for row in rows_to_delete:
+            removed += sum(
+                1 for c in range(self.model.columns)
+                if self.model.frames[row * self.model.columns + c] is not None)
+        row_str = ", ".join(f"R{r}" for r in sorted(rows_to_delete))
+        if removed > 0:
+            if QMessageBox.question(
+                    self, "确认",
+                    f"删除行 {row_str} 将一并移除其中 {removed} 个帧, "
+                    f"后续行上移, 确定吗?") != QMessageBox.Yes:
+                return
+        # 从最大行号开始删除，避免索引变化
+        for row in rows_to_delete:
+            self.model.delete_row(row)
+        self.canvas.selection.clear()
+        self.settings._spin_rows.setValue(self.model.rows)
+        self._on_model_changed()
+        self._status_label.setText(
+            f"已删除行 {row_str} → {self.model.columns}列 × {self.model.rows}行")
+
     def _delete_col(self):
+        """删除当前选中列（支持多列）"""
         sel = self.canvas.selection
         if not sel:
             QMessageBox.information(self, "提示", "请先在画布上选中要删除列中的任意帧")
             return
         cols = max(1, self.model.columns)
-        if cols <= 1:
+        self.model.normalize()
+        # 计算所有涉及的列
+        cols_to_delete = sorted(set(idx % cols for idx in sel), reverse=True)
+        if len(cols_to_delete) == 1 and cols <= 1:
             QMessageBox.information(self, "提示", "仅剩 1 列, 无法删除")
             return
-        idx = min(sel)
-        col = idx % cols
-        self.model.normalize()  # 确保 frames 填满网格, 下方按索引读取不越界
-        # 该列包含的非空帧数 — 有帧时需确认 (删列会一并移除这些帧)
-        removed = sum(
-            1 for r in range(self.model.rows)
-            if self.model.frames[r * cols + col] is not None)
+        # 统计要删除的非空帧数
+        removed = 0
+        for col in cols_to_delete:
+            removed += sum(
+                1 for r in range(self.model.rows)
+                if self.model.frames[r * cols + col] is not None)
+        col_str = ", ".join(f"C{c}" for c in sorted(cols_to_delete))
         if removed > 0:
             if QMessageBox.question(
                     self, "确认",
-                    f"删除列 C{col} 将一并移除其中 {removed} 个帧, "
+                    f"删除列 {col_str} 将一并移除其中 {removed} 个帧, "
                     f"后续列左移, 确定吗?") != QMessageBox.Yes:
                 return
-        self.model.delete_col(col)
+        # 从最大列号开始删除，避免索引变化
+        for col in cols_to_delete:
+            self.model.delete_col(col)
         self.canvas.selection.clear()
         self.settings._spin_columns.setValue(self.model.columns)
         self._on_model_changed()
         self._status_label.setText(
-            f"已删除列 C{col} → {self.model.columns}列 × {self.model.rows}行")
+            f"已删除列 {col_str} → {self.model.columns}列 × {self.model.rows}行")
+
+    def _copy_col(self):
+        """复制当前选中列"""
+        sel = self.canvas.selection
+        if not sel:
+            QMessageBox.information(self, "提示", "请先在画布上选中要复制列中的任意帧")
+            return
+        cols = max(1, self.model.columns)
+        idx = min(sel)
+        col = idx % cols
+        self.model.copy_col(col)
+        new_col = col + 1
+        rows = self.model.rows
+        self.canvas.selection = set(range(col, rows * self.model.columns + col, self.model.columns))
+        self.settings._spin_columns.setValue(self.model.columns)
+        self._on_model_changed()
+        self._status_label.setText(f"已复制列 C{col} → C{new_col}")
 
     def _flip_horizontal(self):
         sel = self.canvas.selection
