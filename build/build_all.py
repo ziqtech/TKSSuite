@@ -506,30 +506,34 @@ def _validate_runtime_archives() -> None:
 
 
 def _copy_runtime_tools(destination: Path) -> int:
-    """复制发行版需要的辅助工具资源，排除开发脚本和缓存文件。"""
+    """仅复制发行版允许携带的辅助工具资源。"""
     source = 仓库根目录 / "tks_launcher_gui" / "tools"
     if not source.is_dir():
         return 0
 
+    # 严格白名单：发行包只携带这两个工具，明确不包含 ddraw。
+    allowed_tools = {"cnc-ddraw", "ddraw-mod"}
+
+    # 每次重新组装前清空目标目录，避免旧版本残留 ddraw 或其它工具。
+    if destination.exists():
+        shutil.rmtree(str(destination))
     destination.mkdir(parents=True, exist_ok=True)
-    # 清理旧版本无过滤复制留下的根目录开发脚本。
-    for stale in destination.iterdir():
-        if stale.is_file() and stale.suffix.lower() in {".py", ".pyc"}:
-            stale.unlink()
+
     copied = 0
-    for path in source.rglob("*"):
-        if not path.is_file():
+    for tool_name in sorted(allowed_tools):
+        tool_source = source / tool_name
+        if not tool_source.is_dir():
             continue
-        rel = path.relative_to(source)
-        # tools 根目录的 Python 文件是开发/诊断脚本，不是启动器运行资源。
-        if len(rel.parts) == 1 and path.suffix.lower() in {".py", ".pyc"}:
-            continue
-        if any(part == "__pycache__" or part.startswith(".") for part in rel.parts):
-            continue
-        target = destination / rel
-        target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(str(path), str(target))
-        copied += 1
+        for path in tool_source.rglob("*"):
+            if not path.is_file():
+                continue
+            rel = path.relative_to(source)
+            if any(part == "__pycache__" or part.startswith(".") for part in rel.parts):
+                continue
+            target = destination / rel
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(str(path), str(target))
+            copied += 1
     return copied
 
 
@@ -838,7 +842,7 @@ def assemble_release(onefile: bool = False, release: bool = False,
         shutil.copy2(str(launcher_cfg_src), str(RELEASE_DIR / "launcher_config.json"))
         print(f"  [OK] launcher_config.json")
 
-    # 复制 tools/ 辅助工具目录 (cnc-ddraw / ddraw 等, 启动器运行时按需注入游戏目录)
+    # 复制 tools/ 辅助工具目录 (仅 cnc-ddraw / ddraw-mod)
     tools_src = 仓库根目录 / "tks_launcher_gui" / "tools"
     if tools_src.is_dir():
         tools_dst = RELEASE_DIR / "tools"
