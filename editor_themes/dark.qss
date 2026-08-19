@@ -1,90 +1,98 @@
-/* Godot Editor 风格深色主题 — 全局共享主题 (所有编辑器统一使用) */
-/* 色板: 底色 #202531 / 边框 #14171f / 强调 #478cbf */
+/* Godot 4.7 编辑器风格深色主题 — 全局共享主题 (所有编辑器统一使用) */
+/* 色板源自 Godot 4.7 Default 预设: base #292929 / accent #569eff / contrast 0.3 推导 */
 
 QWidget {
-    background-color: #202531;
-    color: #dcdcdc;
+    background-color: #292929;
+    color: rgba(255,255,255,0.75);
     font-family: 'Segoe UI', 'Microsoft YaHei';
+    font-size: 14px;
 }
 
 /* ── 表格 ── */
 /* 同时覆盖 model/view 基类 (QTableView/QTreeView), 否则纯 View 控件回退到默认白底调色板 */
 QTableWidget, QTreeWidget, QTableView, QTreeView {
-    background-color: #1a1e27;
-    color: #dcdcdc;
-    border: 1px solid #14171f;
-    selection-background-color: #478cbf;
+    background-color: #171717;
+    color: rgba(255,255,255,0.75);
+    border: none;
+    border-radius: 4px;
+    selection-background-color: #569eff;
     selection-color: #ffffff;
 }
 QHeaderView::section {
-    background-color: #202531;
+    background-color: #1c1c1c;
+    color: rgba(255,255,255,0.55);
     border: none;
-    border-bottom: 1px solid #14171f;
-    padding: 4px;
+    border-bottom: 1px solid #1b1b1b;
+    padding: 4px 8px;
 }
 
 /* ── 文本输入 ── */
 QPlainTextEdit, QLineEdit, QTextEdit {
-    background-color: #1a1e27;
-    border: 1px solid #14171f;
-    padding: 4px;
-    border-radius: 2px;
-    selection-background-color: #478cbf;
+    background-color: #1c1c1c;
+    border: 1px solid #1c1c1c;
+    padding: 4px 8px;
+    border-radius: 4px;
+    selection-background-color: #569eff;
 }
 QLineEdit:focus, QPlainTextEdit:focus, QTextEdit:focus {
-    border-color: #478cbf;
+    border-color: #569eff;
 }
 QLineEdit:disabled {
-    background-color: #202531;
-    color: #666;
-    border: 1px dashed #2a303d;
+    background-color: #202020;
+    color: rgba(255,255,255,0.35);
+    border: 1px solid #262626;
 }
 
 /* ── 按钮 ── */
 QPushButton {
-    background-color: #2e3548;
-    color: #dcdcdc;
-    border: 1px solid #14171f;
+    background-color: #424242;
+    color: rgba(255,255,255,0.75);
+    border: 1px solid #484848;
     border-radius: 4px;
     padding: 5px 12px;
 }
 QPushButton:hover {
-    background-color: #3b445c;
+    background-color: #4d4d4d;
+    border-color: #535353;
 }
 QPushButton:pressed {
-    background-color: #478cbf;
-    color: #fff;
+    background-color: #515151;
+    border-color: #575757;
+    color: rgba(255,255,255,0.85);
 }
 QPushButton:disabled {
-    background-color: #252a35;
-    color: #555;
+    background-color: #333333;
+    color: rgba(255,255,255,0.35);
 }
 
 /* ── 下拉框 ── */
 QComboBox {
-    background-color: #2e3548;
-    color: #dcdcdc;
-    border: 1px solid #14171f;
+    background-color: #1c1c1c;
+    color: rgba(255,255,255,0.75);
+    border: 1px solid #1c1c1c;
     border-radius: 4px;
-    padding: 4px;
+    padding: 4px 8px;
+}
+QComboBox:hover {
+    border-color: #3d3d3d;
 }
 QComboBox::drop-down {
     border: none;
 }
 QComboBox QAbstractItemView {
-    background-color: #202531;
-    color: #dcdcdc;
-    border: 1px solid #14171f;
-    selection-background-color: #478cbf;
-    selection-color: #ffffff;
+    background-color: #121212;
+    color: rgba(255,255,255,0.75);
+    border: none;
+    selection-background-color: #383838;
+    selection-color: rgba(255,255,255,0.85);
     outline: none;
 }
 
 /* ── 数值输入 ── */
 QSpinBox {
-    background-color: #1a1e27;
-    color: #dcdcdc;
-    border: 1px solid #14171f;
+    background-color: #1c1c1c;
+    color: rgba(255,255,255,0.75);
+    border: 1px solid #1b1b1b;
     border-radius: 3px;
     padding: 2px 22px 2px 6px;
     min-width: 60px;
@@ -92,10 +100,10 @@ QSpinBox {
 QSpinBox::up-button {
     subcontrol-origin: border;
     subcontrol-position: top right;
-    background-color: #2e3548;
+    background-color: #424242;
     width: 18px;
-    border-left: 1px solid #14171f;
-    border-bottom: 1px solid #14171f;
+    border-left: 1px solid #1b1b1b;
+    border-bottom: 1px solid #1b1b1b;
     border-top-right-radius: 3px;
 }
 QSpinBox::up-arrow {
@@ -106,10 +114,10 @@ QSpinBox::up-arrow {
 QSpinBox::down-button {
     subcontrol-origin: border;
     subcontrol-position: bottom right;
-    background-color: #2e3548;
+    background-color: #424242;
     width: 18px;
-    border-left: 1px solid #14171f;
-    border-top: 1px solid #14171f;
+    border-left: 1px solid #1b1b1b;
+    border-top: 1px solid #1b1b1b;
     border-bottom-right-radius: 3px;
 }
 QSpinBox::down-arrow {
@@ -118,16 +126,16 @@ QSpinBox::down-arrow {
     height: 10px;
 }
 QSpinBox::up-button:hover, QSpinBox::down-button:hover {
-    background-color: #3b445c;
+    background-color: #4d4d4d;
 }
 QSpinBox:focus {
-    border-color: #478cbf;
+    border-color: #569eff;
 }
 
 /* ── 列表控件 ── */
 QListWidget {
-    background-color: #1a1e27;
-    border: 1px solid #14171f;
+    background-color: #171717;
+    border: none;
     outline: none;
 }
 QListWidget::item {
@@ -136,7 +144,7 @@ QListWidget::item {
     padding: 2px 4px;
 }
 QListWidget::item:selected {
-    background-color: #478cbf;
+    background-color: #569eff;
     color: white;
     border: none;
     border-radius: 0;
@@ -145,23 +153,23 @@ QListWidget::item:selected {
 QListWidget::indicator, QTableWidget::indicator {
     width: 16px;
     height: 16px;
-    background-color: #1a1e27;
-    border: 1px solid #14171f;
+    background-color: #1c1c1c;
+    border: 1px solid #1b1b1b;
     border-radius: 3px;
 }
 QListWidget::indicator:checked, QTableWidget::indicator:checked {
-    background-color: #478cbf;
-    border-color: #478cbf;
+    background-color: #569eff;
+    border-color: #569eff;
     image: url(svg/checkmark.svg);
 }
 QListWidget::indicator:hover, QTableWidget::indicator:hover {
-    border-color: #3b445c;
+    border-color: #4d4d4d;
 }
 
 /* ── 分组框 ── */
 QGroupBox {
-    background-color: #202531;
-    border: 1px solid #14171f;
+    background-color: #292929;
+    border: 1px solid #1b1b1b;
     border-radius: 4px;
     margin-top: 12px;
     padding-top: 10px;
@@ -170,57 +178,57 @@ QGroupBox::title {
     subcontrol-origin: margin;
     subcontrol-position: top left;
     padding: 0 4px;
-    color: #a5b0cb;
+    color: rgba(255,255,255,0.6);
 }
 
 /* ── 复选框 ── */
 QCheckBox {
-    color: #dcdcdc;
+    color: rgba(255,255,255,0.75);
     spacing: 6px;
     padding: 2px 0px;
 }
 QCheckBox::indicator {
     width: 16px;
     height: 16px;
-    background-color: #1a1e27;
-    border: 1px solid #14171f;
+    background-color: #1c1c1c;
+    border: 1px solid #1b1b1b;
     border-radius: 3px;
 }
 QCheckBox::indicator:checked {
-    background-color: #478cbf;
-    border-color: #478cbf;
+    background-color: #569eff;
+    border-color: #569eff;
     image: url(svg/checkmark.svg);
 }
 QCheckBox::indicator:hover {
-    border-color: #3b445c;
+    border-color: #4d4d4d;
 }
 QCheckBox:disabled {
-    color: #555;
+    color: rgba(255,255,255,0.35);
 }
 
 /* ── 单选按钮 ── */
 QRadioButton {
-    color: #dcdcdc;
+    color: rgba(255,255,255,0.75);
     spacing: 6px;
     padding: 2px 1px;
 }
 QRadioButton::indicator {
     width: 16px;
     height: 16px;
-    background-color: #1a1e27;
-    border: 1px solid #14171f;
+    background-color: #1c1c1c;
+    border: 1px solid #1b1b1b;
     border-radius: 8px;
 }
 QRadioButton::indicator:checked {
-    background-color: #478cbf;
-    border-color: #478cbf;
+    background-color: #569eff;
+    border-color: #569eff;
     image: url(svg/checkmark.svg);
 }
 QRadioButton::indicator:hover {
-    border-color: #3b445c;
+    border-color: #4d4d4d;
 }
 QRadioButton:disabled {
-    color: #555;
+    color: rgba(255,255,255,0.35);
 }
 
 /* ── 分割线 ── */
@@ -229,29 +237,29 @@ QSplitter::handle {
     background-color: transparent;
 }
 QSplitter::handle:horizontal {
-    border-left: 1px solid #14171f;
+    border-left: 1px solid #1b1b1b;
     margin-left: 3px;
     margin-right: 3px;
 }
 QSplitter::handle:vertical {
-    border-top: 1px solid #14171f;
+    border-top: 1px solid #1b1b1b;
     margin-top: 3px;
     margin-bottom: 3px;
 }
 QSplitter::handle:horizontal:hover {
-    border-left: 1px solid #478cbf;
+    border-left: 1px solid #569eff;
 }
 QSplitter::handle:vertical:hover {
-    border-top: 1px solid #478cbf;
+    border-top: 1px solid #569eff;
 }
 
 /* ── 滚动条 ── */
 QScrollBar:vertical {
-    background: #1a1e27;
+    background: #1f1f1f;
     width: 12px;
 }
 QScrollBar::handle:vertical {
-    background: #3b445c;
+    background: #4d4d4d;
     border-radius: 6px;
     min-height: 20px;
     margin: 2px;
@@ -260,11 +268,11 @@ QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
     height: 0px;
 }
 QScrollBar:horizontal {
-    background: #1a1e27;
+    background: #1f1f1f;
     height: 12px;
 }
 QScrollBar::handle:horizontal {
-    background: #3b445c;
+    background: #4d4d4d;
     border-radius: 6px;
     min-width: 20px;
     margin: 2px;
@@ -275,147 +283,148 @@ QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {
 
 /* ── 菜单栏 ── */
 QMenuBar {
-    background-color: #202531;
-    color: #dcdcdc;
-    border-bottom: 1px solid #14171f;
+    background-color: #292929;
+    color: rgba(255,255,255,0.75);
+    border-bottom: 1px solid #1b1b1b;
 }
 QMenuBar::item {
     background: transparent;
     padding: 5px 10px;
 }
 QMenuBar::item:selected {
-    background-color: #3b445c;
-    border-radius: 2px;
+    background-color: #383838;
+    border-radius: 4px;
 }
 QMenuBar::item:pressed {
-    background-color: #478cbf;
+    background-color: #569eff;
     color: #ffffff;
 }
 QMenu {
-    background-color: #202531;
-    border: 1px solid #14171f;
+    background-color: #121212;
+    border: none;
     padding: 4px;
 }
 QMenu::item {
     padding: 6px 24px 6px 24px;
+    border-radius: 4px;
 }
 QMenu::item:selected {
-    background-color: #478cbf;
-    color: #ffffff;
-    border-radius: 2px;
+    background-color: #383838;
+    color: rgba(255,255,255,0.85);
 }
 QMenu::separator {
     height: 1px;
-    background-color: #14171f;
+    background-color: #1b1b1b;
     margin: 3px 6px;
 }
 
-/* ── Tab 页 ── */
+/* ── Tab 页 — 选中项独立表面色 (与容器背景拉开对比) ── */
 QTabWidget::pane {
-    border: 1px solid #14171f;
-    background-color: #202531;
+    border: none;
+    background-color: #292929;
     top: -1px;
 }
 QTabBar::tab {
-    background: #202531;
-    border: 1px solid #14171f;
-    padding: 6px 12px;
+    background: transparent;
+    border: none;
+    padding: 6px 16px;
     margin-right: 2px;
     border-top-left-radius: 4px;
     border-top-right-radius: 4px;
+    color: rgba(255,255,255,0.55);
 }
 QTabBar::tab:selected {
-    background: #1a1e27;
-    border-bottom-color: #1a1e27;
-    font-weight: bold;
-    color: #478cbf;
+    background: #1f1f1f;
+    color: rgba(255,255,255,0.85);
 }
 QTabBar::tab:hover:!selected {
-    background: #3b445c;
+    background: #333333;
 }
 
-/* ── 面板头与内部边框 (Dock 风格) ── */
+/* ── 面板头与内部边框 (Dock 风格) ──
+   DockHeader = surface_low 深色标题带; DockBody = 内容面板; 表格再内嵌更深一层 */
 QFrame#DockHeader {
-    background-color: #14171f;
+    background-color: #1f1f1f;
     border-top-left-radius: 4px;
     border-top-right-radius: 4px;
 }
 QWidget#DockBody {
-    background-color: #202531;
-    border: 1px solid #14171f;
-    border-top: none;
+    background-color: #292929;
+    border: none;
+    border-bottom-left-radius: 4px;
+    border-bottom-right-radius: 4px;
 }
 QLabel#DockTitle {
     background-color: transparent;
-    color: #a5b0cb;
+    color: rgba(255,255,255,0.6);
     font-weight: bold;
 }
 
 /* ── 图形视图 ── */
 QGraphicsView {
-    border: 1px solid #14171f;
-    background-color: #1a1e27;
+    border: 1px solid #1b1b1b;
+    background-color: #1c1c1c;
 }
 
 /* ── 滚动区域 ── */
 QScrollArea {
-    background-color: #202531;
+    background-color: #292929;
     border: none;
 }
 
 /* ── 滑块 ── */
 QSlider::groove:horizontal {
-    background-color: #1a1e27;
-    border: 1px solid #14171f;
+    background-color: #1c1c1c;
+    border: 1px solid #1b1b1b;
     height: 6px;
     border-radius: 3px;
 }
 QSlider::handle:horizontal {
-    background-color: #3b445c;
+    background-color: #4d4d4d;
     width: 14px;
     margin: -4px 0;
     border-radius: 7px;
 }
 QSlider::handle:horizontal:hover {
-    background-color: #478cbf;
+    background-color: #569eff;
 }
 
 /* ── 状态栏 ── */
 QStatusBar {
-    background-color: #202531;
-    color: #888;
-    border-top: 1px solid #14171f;
+    background-color: #292929;
+    color: rgba(255,255,255,0.5);
+    border-top: 1px solid #1b1b1b;
     padding: 1px 6px;
 }
 
 /* ── 标签 ── */
 QLabel {
-    color: #dcdcdc;
+    color: rgba(255,255,255,0.75);
     background-color: transparent;
 }
 
 /* ── 状态栏子标签 ── */
 QLabel#StatusLabel {
     background-color: transparent;
-    color: #a5b0cb;
+    color: rgba(255,255,255,0.6);
     font-size: 12px;
     padding: 0 4px;
 }
 QLabel#StatusSep {
     background-color: transparent;
-    color: #3b445c;
+    color: #4d4d4d;
     font-size: 12px;
     padding: 0 2px;
 }
 QLabel#StatusInfo {
     background-color: transparent;
-    color: #8a96b3;
+    color: rgba(255,255,255,0.55);
     font-size: 12px;
     padding: 0 4px;
 }
 QLabel#StatusPixel {
     background-color: transparent;
-    color: #6a7590;
+    color: rgba(255,255,255,0.4);
     font-size: 11px;
     padding: 0 4px;
     font-family: "Consolas", "Courier New", monospace;
@@ -423,52 +432,52 @@ QLabel#StatusPixel {
 
 /* ── 提示标签 ── */
 QLabel#hintLabel {
-    color: #888888;
+    color: rgba(255,255,255,0.45);
     font-size: 11px;
 }
 
 /* ── Inspector 标题 (kon/wardata/warpc) ── */
 QLabel[class="InspectorTitle"] {
     font-weight: bold;
-    color: #a5b0cb;
-    border-bottom: 1px solid #14171f;
+    color: rgba(255,255,255,0.6);
+    border-bottom: 1px solid #1b1b1b;
     padding-bottom: 2px;
     margin-top: 8px;
 }
 QLabel[class="PropLabel"] {
-    color: #8a96b3;
+    color: rgba(255,255,255,0.55);
 }
 
 /* ── 预览区面板 (kon/wardata/warpc) ── */
 QFrame#PreviewFrame {
     background-color: transparent;
     border: none;
-    border-top: 2px solid #2b4f70;
-    border-bottom: 1px solid #14171f;
+    border-top: 2px solid #3a6db3;
+    border-bottom: 1px solid #1b1b1b;
     border-radius: 0px;
     margin-top: 4px;
     margin-bottom: 8px;
 }
 QLabel[class="PreviewName"] {
-    color: #e0e4eb;
+    color: #e6e6e6;
     font-size: 18px;
     font-weight: bold;
     font-family: 'Microsoft YaHei', 'Segoe UI';
 }
 QLabel[class="PreviewMeta"] {
-    color: #8a96b3;
+    color: rgba(255,255,255,0.55);
     font-size: 11px;
-    border-bottom: 1px solid #2e3548;
+    border-bottom: 1px solid #424242;
     padding-bottom: 8px;
     margin-bottom: 4px;
 }
 QLabel[class="PreviewDesc"] {
-    color: #55b572;
+    color: #73f280;
     font-size: 13px;
     padding-top: 4px;
 }
 QLabel[class="PreviewSubMeta"] {
-    color: #e27d60;
+    color: #ff786b;
     font-size: 12px;
     font-weight: bold;
     padding-top: 4px;
@@ -476,34 +485,34 @@ QLabel[class="PreviewSubMeta"] {
 
 /* ── FakeInputBox 内凹输入框 (kon/wardata/warpc) ── */
 QFrame#FakeInputBox {
-    background-color: #161923;
-    border: 1px solid #0b0c12;
+    background-color: #1c1c1c;
+    border: 1px solid #141414;
     border-radius: 4px;
 }
 QFrame#FakeInputBox:hover, QFrame#FakeInputBox:focus-within {
-    background-color: #1a1e29;
-    border: 1px solid #478cbf;
+    background-color: #242424;
+    border: 1px solid #569eff;
 }
 QFrame#FakeInputBox > QLineEdit {
     background: transparent;
     border: none;
     padding: 4px 8px;
-    color: #e0e4eb;
+    color: #e6e6e6;
     font-family: 'Consolas', 'Segoe UI';
-    selection-background-color: #478cbf;
+    selection-background-color: #569eff;
 }
 QFrame#FakeInputBox > QPushButton {
     background: transparent;
     border: none;
-    border-left: 1px solid #202531;
-    border-right: 1px solid #202531;
+    border-left: 1px solid #292929;
+    border-right: 1px solid #292929;
     border-radius: 0px;
     padding: 4px 8px;
     margin: 0px;
-    color: #8a96b3;
+    color: rgba(255,255,255,0.55);
 }
 QFrame#FakeInputBox > QPushButton:hover {
-    background-color: #2e3548;
+    background-color: #424242;
     color: #ffffff;
 }
 QFrame#FakeInputBox > QPushButton:first-child:hover {
@@ -514,33 +523,33 @@ QFrame#FakeInputBox > QComboBox {
     border: none;
     background: transparent;
     padding: 4px 8px;
-    color: #e0e4eb;
+    color: #e6e6e6;
 }
 QFrame#FakeInputBox > QComboBox::drop-down {
     border: none;
 }
 QFrame[class="FakeInputSep"] {
-    background-color: #202531;
+    background-color: #292929;
     border: none;
 }
 
 /* ── 额外预览文本 ── */
 QLabel[class="ExtraPreviewText"] {
     padding: 4px 8px;
-    color: #55b572;
+    color: #73f280;
     font-size: 11px;
 }
 
 /* ── 拆分字段内部标签 ── */
 QLabel[class="SplitFieldLabel"] {
-    color: #8a96b3;
+    color: rgba(255,255,255,0.55);
     font-size: 11px;
     padding: 0 2px;
 }
 
 /* ── 状态掩码标签颜色 (kon) ── */
 QLabel[class="StatusInflict"] {
-    color: #CC3333;
+    color: #ff786b;
     font-size: 11px;
 }
 QLabel[class="StatusRemove"] {
@@ -550,22 +559,22 @@ QLabel[class="StatusRemove"] {
 
 /* ── 弹窗高亮主按钮 ── */
 QPushButton#PrimaryButton {
-    background-color: #478cbf;
+    background-color: #569eff;
     color: #ffffff;
-    border: 1px solid #366a91;
+    border: 1px solid #3a6db3;
     font-weight: bold;
 }
 QPushButton#PrimaryButton:hover {
-    background-color: #5aa1d5;
+    background-color: #71adff;
 }
 QPushButton#PrimaryButton:pressed {
-    background-color: #366a91;
+    background-color: #3a6db3;
 }
 
 /* ── 工具栏 (tks_launcher_gui) ── */
 QToolBar {
-    background-color: #1a1e27;
-    border-bottom: 1px solid #14171f;
+    background-color: #1c1c1c;
+    border-bottom: 1px solid #1b1b1b;
     padding: 4px;
     spacing: 6px;
 }
@@ -573,52 +582,52 @@ QToolBar {
 /* ── 控制台日志文本区 (tks_launcher_gui) ── */
 /* 注意: 文字颜色由 log_console.py 通过 HTML 内联样式控制, 此处不设置 color */
 QTextEdit#LogConsole {
-    background-color: #171A21;
-    border: 1px solid #14171f;
+    background-color: #141414;
+    border: 1px solid #1b1b1b;
     border-radius: 4px;
     padding: 8px;
     font-family: "Consolas", "Courier New", monospace;
     font-size: 12px;
-    selection-background-color: #478cbf;
+    selection-background-color: #569eff;
     selection-color: #ffffff;
 }
 
 /* ── QCheckBox 禁用状态 ── */
 QCheckBox::indicator:disabled {
-    background-color: #252a35;
-    border-color: #1a1e27;
+    background-color: #333333;
+    border-color: #1c1c1c;
 }
 QCheckBox::indicator:checked:disabled {
-    background-color: #2D4A5E;
-    border-color: #2D4A5E;
+    background-color: #3a6db3;
+    border-color: #3a6db3;
     image: url(svg/checkmark.svg);
 }
 /* 必选补丁复选框：禁用态文字保持正常颜色 */
 QCheckBox#requiredPatch:disabled {
-    color: #dcdcdc;
+    color: rgba(255,255,255,0.75);
 }
 
 /* ── 滚动条悬停 (tks_launcher_gui) ── */
 QScrollBar::handle:vertical:hover {
-    background-color: #478cbf;
+    background-color: #569eff;
 }
 QScrollBar::handle:horizontal:hover {
-    background-color: #478cbf;
+    background-color: #569eff;
 }
 
 /* ── 状态栏标签 (tks_launcher_gui) ── */
 QLabel#statusLabel {
-    color: #dcdcdc;
+    color: rgba(255,255,255,0.75);
     font-weight: bold;
     padding: 4px 8px;
 }
 QLabel#statusLabelOk {
-    color: #98C379;
+    color: #73f280;
     font-weight: bold;
     padding: 4px 8px;
 }
 QLabel#statusLabelError {
-    color: #E06C75;
+    color: #ff786b;
     font-weight: bold;
     padding: 4px 8px;
 }
@@ -626,26 +635,26 @@ QLabel#statusLabelError {
 /* ── DockHeader 内紧凑工具按钮 (tks_launcher_gui) ── */
 QToolButton#dockToolButton {
     background-color: transparent;
-    color: #a5b0cb;
+    color: rgba(255,255,255,0.6);
     border: none;
     border-radius: 3px;
     padding: 0px 6px;
-    max-height: 16px;
+    max-height: 20px;
 }
 QToolButton#dockToolButton:hover {
-    background-color: #2e3548;
-    color: #dcdcdc;
+    background-color: #424242;
+    color: rgba(255,255,255,0.75);
 }
 QToolButton#dockToolButton:pressed {
-    background-color: #478cbf;
+    background-color: #569eff;
     color: #fff;
 }
 QToolButton#dockToolButton:checked {
-    background-color: #478cbf;
+    background-color: #569eff;
     color: #ffffff;
 }
 QToolButton#dockToolButton:checked:hover {
-    background-color: #5a9ccc;
+    background-color: #71adff;
     color: #ffffff;
 }
 
@@ -664,9 +673,9 @@ QPushButton#btnStart:pressed {
     color: #ffffff;
 }
 QPushButton#btnStart:disabled {
-    background-color: #252a35;
-    color: #555;
-    border-color: #14171f;
+    background-color: #333333;
+    color: rgba(255,255,255,0.35);
+    border-color: #1b1b1b;
 }
 
 /* ── 记录标题标签 (item/skill/mat/warpc 编辑器) ── */
@@ -677,7 +686,7 @@ QLabel[class="RecordHeader"] {
 
 /* ── 状态提示标签 (mat_editor) ── */
 QLabel[class="StatusHint"] {
-    color: #888;
+    color: rgba(255,255,255,0.5);
     font-size: 11px;
 }
 
@@ -695,8 +704,8 @@ QPushButton#btnPack {
 
 /* ── 图标选择器按钮 (item/warpc 编辑器) ── */
 QPushButton[selected="true"] {
-    background-color: #2e3548;
-    border: 2px solid #478cbf;
+    background-color: #424242;
+    border: 2px solid #569eff;
 }
 QPushButton[selected="false"] {
     background-color: transparent;
@@ -706,11 +715,11 @@ QPushButton[selected="false"] {
 /* ── 活动槽位按钮 (save_editor) ── */
 QPushButton[active="true"] {
     font-weight: bold;
-    color: #478cbf;
+    color: #569eff;
 }
 QPushButton[active="false"] {
     font-weight: normal;
-    color: #dcdcdc;
+    color: rgba(255,255,255,0.75);
 }
 
 /* ── Chip 小标签 (item_editor) ── */
@@ -739,71 +748,71 @@ QTreeWidget[class="CompactTree"] QHeaderView::section {
 
 /* ── 成长率表格 (warpc_editor) ── */
 QTableWidget[class="GrowthTable"]::item {
-    background-color: #1a1e27;
+    background-color: #171717;
 }
 QTableWidget[class="GrowthTable"]::item:alternate {
-    background-color: #202531;
+    background-color: #1d1d1d;
 }
 QTableWidget[class="GrowthTable"]::item:selected {
-    background-color: #478cbf;
+    background-color: #569eff;
     color: #ffffff;
 }
 
 /* ── 表格编辑模式 (warpc_editor) ── */
 QTableView[class="WarpcGrid"] {
-    alternate-background-color: #202531;
-    gridline-color: #2a303d;
+    alternate-background-color: #2f2f2f;
+    gridline-color: #3d3d3d;
 }
 QTableView[class="WarpcGrid"]::item:selected {
-    background-color: #478cbf;
+    background-color: #569eff;
     color: #ffffff;
 }
 QTableView[class="WarpcGrid"] QTableCornerButton::section {
-    background-color: #202531;
+    background-color: #292929;
     border: none;
 }
 
 /* ── 类型字段标签 (mat_editor 实体参数) ── */
 QLabel[class="TypeFieldLabel"] {
-    color: #cc6600;
+    color: #d4c79e;
 }
 
 /* ── 颜色色块 (mat/grp/wardata 色块通用) ── */
 QFrame[class="ColorSwatch"], QLabel[class="ColorSwatch"] {
     background-color: #000000;
-    border: 1px solid #666;
+    border: 1px solid rgba(255,255,255,0.35);
     border-radius: 3px;
 }
 
 /* ── 色块按钮 - 圆形 (tkt_editor 工具栏颜色快捷键) ── */
 QPushButton[class="ColorSwatchRound"] {
-    border: 1px solid #777;
+    border: 1px solid rgba(255,255,255,0.4);
     border-radius: 10px;
     padding: 0px;
 }
 QPushButton[class="ColorSwatchRound"]:hover {
-    border: 2px solid #478cbf;
+    border: 2px solid #569eff;
 }
 
 /* ── 色块按钮 - 方形 (tkt_editor 调色板弹窗) ── */
 QPushButton[class="ColorSwatchBtn"] {
-    border: 1px solid #555;
+    border: 1px solid rgba(255,255,255,0.35);
     border-radius: 4px;
     padding: 0px;
 }
 QPushButton[class="ColorSwatchBtn"]:hover {
-    border: 2px solid #478cbf;
+    border: 2px solid #569eff;
 }
 
 /* ── 路径状态标签 (loaded/missing/unloaded) ── */
 QLabel[status="loaded"] {
-    color: #55b572;
+    color: #73f280;
 }
 QLabel[status="missing"] {
-    color: #e27d60;
+    color: #ff786b;
 }
 QLabel[status="unloaded"] {
-    color: #888;
+    color: rgba(255,255,255,0.5);
 }
 
 /* ── 方向指示复选框 (mat_editor) ── */
@@ -815,32 +824,32 @@ QCheckBox[class="DirCheckBox"] {
 QLabel[class="FieldHint"] {
     padding-left: 0px;
     font-size: 11px;
-    color: #55b572;
+    color: #73f280;
 }
 
 /* ── 脏标记标签 (tkt_editor) ── */
 QLabel[class="DirtyIndicator"] {
-    color: #e27d60;
+    color: #ff786b;
     font-weight: bold;
 }
 
 /* ── 未知字段标签 (mat_editor “全部”页 d-index) ── */
 QLabel[class="UnknownFieldLabel"] {
-    color: #888;
+    color: rgba(255,255,255,0.5);
 }
 
 /* ── 探针标签 (act_editor 层/音效状态) ── */
 QLabel[probe="ok"] {
-    color: #55b572;
+    color: #73f280;
 }
 QLabel[probe="warn"] {
-    color: #CC6600;
+    color: #d4c79e;
 }
 QLabel[probe="error"] {
-    color: #CC3333;
+    color: #ff786b;
 }
 QLabel[probe="empty"] {
-    color: #AAAAAA;
+    color: rgba(255,255,255,0.45);
 }
 
 /* ── 信息标题标签 (mat_editor 脚本预览) ── */
@@ -869,13 +878,13 @@ QWidget#TransparentBg {
 /* ── 主标题标签 (tkt_editor 蓝色强调) ── */
 QLabel[class="PrimaryTitle"] {
     font-weight: bold;
-    color: #478cbf;
+    color: #569eff;
 }
 
 /* ── 副标题标签 (tkt_editor 绿色强调) ── */
 QLabel[class="SecondaryTitle"] {
     font-weight: bold;
-    color: #55b572;
+    color: #73f280;
     padding-top: 10px;
 }
 
@@ -888,7 +897,7 @@ QPushButton[class="ConfirmBtn"] {
 
 /* ── 分隔线框架 (QFrame separator) ── */
 QFrame[class="SepLine"] {
-    color: #555;
+    color: rgba(255,255,255,0.35);
 }
 
 /* ── 游戏预览区 (tkt_editor 模拟游戏文本渲染背景) ── */
@@ -908,14 +917,14 @@ QFrame#Toolbar {
 
 /* 召唤编辑对话框 — 目标选择器显示区 */
 QWidget[class="TargetDisplay"] {
-    border: 1px solid #14171f;
+    border: 1px solid #1b1b1b;
     border-radius: 3px;
-    background-color: #1a1e27;
+    background-color: #1c1c1c;
 }
 QLabel[class="TargetIcon"], QLabel[class="TargetName"] {
     border: none;
     background: transparent;
-    color: #dcdcdc;
+    color: rgba(255,255,255,0.75);
 }
 QLabel[class="TargetName"] {
     padding: 2px 0px;
@@ -934,7 +943,7 @@ QLabel#SummonHintLabel {
 /* 掉落概率面板 — 常规槽标签 */
 QLabel#RegularPctLabel {
     font-weight: bold;
-    color: #55b572;
+    color: #73f280;
 }
 
 /* 状态栏标签 — configs_editor */
@@ -942,30 +951,30 @@ QLabel#ConfigDirLabel[status="loaded"],
 QLabel#StatusWarpcLabel[status="loaded"],
 QLabel#StatusTktLabel[status="loaded"],
 QLabel#StatusFaLabel[status="loaded"] {
-    color: #55b572;
+    color: #73f280;
     font-weight: bold;
 }
 QLabel#ConfigDirLabel[status="missing"],
 QLabel#StatusWarpcLabel[status="missing"],
 QLabel#StatusTktLabel[status="missing"],
 QLabel#StatusFaLabel[status="missing"] {
-    color: #e27d60;
+    color: #ff786b;
 }
 QLabel#ConfigDirLabel[status="unloaded"],
 QLabel#StatusWarpcLabel[status="unloaded"],
 QLabel#StatusTktLabel[status="unloaded"],
 QLabel#StatusFaLabel[status="unloaded"] {
-    color: #888888;
+    color: rgba(255,255,255,0.45);
 }
 QLabel#StatusSkillLabel[status="loaded"] {
-    color: #55b572;
+    color: #73f280;
     font-weight: bold;
 }
 QLabel#StatusSkillLabel[status="missing"] {
-    color: #e27d60;
+    color: #ff786b;
 }
 QLabel#StatusSkillLabel[status="unloaded"] {
-    color: #888888;
+    color: rgba(255,255,255,0.45);
 }
 
 /* WarPC 选择器 — 已选提示栏 */
@@ -977,6 +986,78 @@ QLabel#WarpcSelectedLabel {
 
 /* ── 字形单元格 (font_editor) ── */
 QLabel[class="GlyphCell"] {
-    background-color: #1a1e27;
-    border: 1px solid #14171f;
+    background-color: #1c1c1c;
+    border: 1px solid #1b1b1b;
 }
+
+/* ── 状态 chips (tks_book) ── */
+QWidget[class="Chip"] {
+    background-color: #333333;
+    border-radius: 3px;
+}
+
+/* ── 对话框 (Window = surface_lowest 更深一层) ── */
+QDialog {
+    background-color: #141414;
+}
+
+/* ── 预览图占位框 (mod 导出/打包/合并/元数据编辑弹窗) ── */
+QLabel#previewThumb {
+    border: 2px dashed rgba(255,255,255,0.35);
+    border-radius: 6px;
+    background-color: #1c1c1c;
+    color: rgba(255,255,255,0.45);
+}
+QLabel#avatarPreview {
+    border: 1px solid #484848;
+    background-color: #1c1c1c;
+}
+
+/* ── 播放状态标签 (custom_music_dialog) ── */
+QLabel#nowPlaying {
+    color: rgba(255,255,255,0.45);
+}
+QLabel#nowPlaying[state="playing"] {
+    color: #569eff;
+}
+
+/* ── 表头全选复选框 (launcher 列表) ── */
+QCheckBox#headerCheck {
+    background: transparent;
+}
+
+/* ── 学习模式提示 / 技能溢出警告 (warpc_editor) ── */
+QLabel#learnModeHint {
+    color: #569eff;
+    font-size: 11px;
+    padding: 2px 0 4px 0;
+}
+QLabel#overflowBanner {
+    color: #ffffff;
+    background-color: #cc4a41;
+    font-weight: bold;
+    padding: 6px;
+    border-radius: 4px;
+}
+
+/* ── 定位闪烁高亮 (warpc_editor 字段定位) ── */
+QLabel[class="FlashHint"] {
+    background-color: #e8a040;
+    color: #1a1a1a;
+    border-radius: 3px;
+    padding: 1px 3px;
+}
+
+/* ── tks_book 语义值标签 (Godot Modern 语义色) ── */
+QLabel[class="BookInfo"], QLabel[class="BookOk"], QLabel[class="BookBad"],
+QLabel[class="BookSpecial"], QLabel[class="BookGold"], QLabel[class="BookMeta"],
+QLabel[class="BookMuted"] {
+    padding: 0px;
+}
+QLabel[class="BookInfo"]    { color: #569eff; }
+QLabel[class="BookOk"]      { color: #73f280; }
+QLabel[class="BookBad"]     { color: #ff786b; }
+QLabel[class="BookSpecial"] { color: #b58fd9; }
+QLabel[class="BookGold"]    { color: #d4a855; }
+QLabel[class="BookMeta"]    { color: #6babf5; }
+QLabel[class="BookMuted"]   { color: rgba(255,255,255,0.45); }
