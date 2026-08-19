@@ -126,7 +126,6 @@ class StatusTab(BookTabBase):
         name = STATUS_NAMES[idx]
         cat, duration, desc = STATUS_DESCRIPTIONS[idx]
 
-        dark = self._is_dark_theme()
         # 头部: 大图标 + 名称 + 类型 + 作用回合
         header = QFrame()
         header.setObjectName("PreviewFrame")
@@ -154,17 +153,15 @@ class StatusTab(BookTabBase):
         # 类型 + 作用回合 行: 增益绿 / 减益红, 作用回合蓝色
         info_row = QHBoxLayout()
         info_row.setSpacing(12)
-        cat_color = "#55b572" if (cat == "增益" and dark) else \
-                    ("#178a39" if cat == "增益" else
-                     ("#cc6666" if dark else "#cc3333"))
+        cat_color = "BookOk" if cat == "增益" else "BookBad"
         cat_lbl = QLabel(f"类型: {cat}")
-        cat_lbl.setStyleSheet(f"color: {cat_color}; padding: 0px;")
+        cat_lbl.setProperty("class", cat_color)
         cat_lbl.setTextInteractionFlags(Qt.TextSelectableByMouse)
         info_row.addWidget(cat_lbl)
         dur_str = "持续" if duration < 0 else f"{duration}回合"
-        dur_color = "#6f9fc4" if dark else "#2a6f8c"
+        dur_color = "BookMeta"
         dur_lbl = QLabel(f"作用回合: {dur_str}")
-        dur_lbl.setStyleSheet(f"color: {dur_color}; padding: 0px;")
+        dur_lbl.setProperty("class", dur_color)
         dur_lbl.setTextInteractionFlags(Qt.TextSelectableByMouse)
         info_row.addWidget(dur_lbl)
         info_row.addStretch()
@@ -283,16 +280,17 @@ class StatusTab(BookTabBase):
             self.add_text_block(body, "(无)", "StatusHint")
             return
         w = QWidget()
+        w.setObjectName("TransparentBg")
         flow = FlowLayout(w, margin=0, spacing=4)
-        dark = self._is_dark_theme()
-        type_color = "#7ab8d4" if dark else "#2a6f8c"
+        type_color = "BookMeta"
         for src_type, name, sprite_idx in sources:
             chip = QWidget()
+            chip.setProperty("class", "Chip")
             cl = QHBoxLayout(chip)
             cl.setContentsMargins(1, 0, 3, 0)
             cl.setSpacing(3)
             tl = QLabel(src_type)
-            tl.setStyleSheet(f"color: {type_color}; padding: 0px;")
+            tl.setProperty("class", type_color)
             tl.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
             cl.addWidget(tl, 0, Qt.AlignVCenter)
             if sprite_idx is not None:
@@ -317,11 +315,12 @@ class StatusTab(BookTabBase):
         """抵抗列表: 角色名 + 抵抗%, 按抵抗值降序"""
         resists.sort(key=lambda x: -x[1])
         w = QWidget()
+        w.setObjectName("TransparentBg")
         flow = FlowLayout(w, margin=0, spacing=4)
-        dark = self._is_dark_theme()
-        val_color = "#55b572" if dark else "#178a39"
+        val_color = "BookOk"
         for name, val in resists:
             chip = QWidget()
+            chip.setProperty("class", "Chip")
             cl = QHBoxLayout(chip)
             cl.setContentsMargins(1, 0, 3, 0)
             cl.setSpacing(3)
@@ -330,7 +329,7 @@ class StatusTab(BookTabBase):
             nl.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
             cl.addWidget(nl, 0, Qt.AlignVCenter)
             vl = QLabel(f"{val}%")
-            vl.setStyleSheet(f"color: {val_color}; padding: 0px;")
+            vl.setProperty("class", val_color)
             vl.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
             cl.addWidget(vl, 0, Qt.AlignVCenter)
             chip.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)

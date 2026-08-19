@@ -127,7 +127,7 @@ def ensure_free_declaration():
     layout.addLayout(btn_row)
 
     hint = QLabel("提示：逐字输入上方要求的口号后，“确认并继续”才会点亮。")
-    hint.setStyleSheet("color: gray; font-size: 11px;")
+    hint.setObjectName("hintLabel")
     layout.addWidget(hint)
 
     def _on_text_changed(text: str):

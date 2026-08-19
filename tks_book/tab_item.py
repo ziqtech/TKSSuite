@@ -98,6 +98,7 @@ class ItemTab(BookTabBase):
         for slot, (label, val) in enumerate(pairs):
             r, c = divmod(slot, cols)
             cell_w = QWidget()
+            cell_w.setObjectName("TransparentBg")
             cell_w.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
             cell = QVBoxLayout(cell_w)
             cell.setContentsMargins(0, 0, 0, 0)
@@ -114,6 +115,7 @@ class ItemTab(BookTabBase):
             last_row = len(pairs) // cols
             for c in range(last_row_count, cols):
                 spacer = QWidget()
+                spacer.setObjectName("TransparentBg")
                 attr_grid.addWidget(spacer, last_row, c)
         for c in range(cols):
             attr_grid.setColumnStretch(c, 1)
@@ -127,6 +129,7 @@ class ItemTab(BookTabBase):
         attr_grid.setVerticalSpacing(4)
         for slot, (label, val, has_val) in enumerate(pairs):
             cell_w = QWidget()
+            cell_w.setObjectName("TransparentBg")
             cell_w.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
             cell = QVBoxLayout(cell_w)
             cell.setContentsMargins(0, 0, 0, 0)
@@ -155,10 +158,8 @@ class ItemTab(BookTabBase):
         lbl.setAlignment(Qt.AlignLeft)
         lbl.setTextInteractionFlags(Qt.TextSelectableByMouse)
         if color is None:
-            green = "#55b572" if self._is_dark_theme() else "#178a39"
-            gray = "#888" if self._is_dark_theme() else "#777"
-            color = green if equipped else gray
-        lbl.setStyleSheet(f"color: {color}; padding: 0px;")
+            color = "BookOk" if equipped else "BookMuted"
+        lbl.setProperty("class", color)
         return lbl
 
     def _build_status_chips(self, mask, hi=False, is_cause=True):
@@ -177,9 +178,11 @@ class ItemTab(BookTabBase):
     def _make_chips_widget(self, chips):
         """创建状态chips容器: FlowLayout中横向排列, 图标16x16+名称"""
         w = QWidget()
+        w.setObjectName("TransparentBg")
         flow = FlowLayout(w, margin=0, spacing=3)
         for name, sprite_idx, css_class in chips:
             chip = QWidget()
+            chip.setProperty("class", "Chip")
             cl = QHBoxLayout(chip)
             cl.setContentsMargins(1, 0, 3, 0)
             cl.setSpacing(2)
@@ -209,9 +212,6 @@ def render_item_header(view, rec):
     供只需头部概览的页面 (如特殊物品页) 单独调用。
     """
     vals = rec['vals']
-
-    dark = view._is_dark_theme()
-    cyan = "#7ab8d4" if dark else "#2a6f8c"
 
     # 头部: 图标 + 名称 + 元信息 + 说明文本
     header = QFrame()
@@ -251,7 +251,7 @@ def render_item_header(view, rec):
         else:
             meta_parts.append(f"TKKon: {vals[6]}")
     meta_lbl = QLabel(" | ".join(meta_parts))
-    meta_lbl.setStyleSheet(f"color: {cyan}; padding: 0px;")
+    meta_lbl.setProperty("class", "BookMeta")
     meta_lbl.setTextInteractionFlags(Qt.TextSelectableByMouse)
     name_box.addWidget(meta_lbl)
     name_box.addStretch()
@@ -278,8 +278,7 @@ def render_item_detail(view, rec, include_sources=True):
     """
     vals = rec['vals']
 
-    dark = view._is_dark_theme()
-    cyan = "#7ab8d4" if dark else "#2a6f8c"
+    cyan = "BookMeta"
 
     render_item_header(view, rec)
 

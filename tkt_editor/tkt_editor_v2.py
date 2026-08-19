@@ -1809,10 +1809,12 @@ class TktEditor(QMainWindow):
             preview = ''.join(unique_chars[:5])
             suffix = '…' if len(unique_chars) > 5 else ''
             self.lbl_dirty.setText(f"[!] ⚠简体字({len(bad_chars)}): {preview}{suffix}")
-            self.lbl_dirty.setStyleSheet("color: #ff6b6b; font-weight: bold;")
+            self.lbl_dirty.setProperty("class", "DirtyIndicator")
         else:
             self.lbl_dirty.setText("[!] 未保存")
-            self.lbl_dirty.setStyleSheet("")
+            self.lbl_dirty.setProperty("class", "")
+        self.lbl_dirty.style().unpolish(self.lbl_dirty)
+        self.lbl_dirty.style().polish(self.lbl_dirty)
 
     def _apply_edit(self):
         if self._current_idx is None:

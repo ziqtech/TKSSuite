@@ -120,12 +120,8 @@ class CharTab(BookTabBase):
         btn_growth.clicked.connect(lambda: self._show_growth_dialog(rec))
         name_row.addWidget(btn_growth)
         name_box.addLayout(name_row)
-        # 主题色定义
-        dark = self._is_dark_theme()
-        blue = "#6699cc" if dark else "#3366cc"
-        green = "#55b572" if dark else "#178a39"
-        red = "#cc6666" if dark else "#cc3333"
-        purple = "#b58fd9" if dark else "#7b4fa0"
+        # 语义色 class 定义 (颜色统一维护于 editor_themes 的 Book* 规则)
+        blue, green, red, purple = "BookInfo", "BookOk", "BookBad", "BookSpecial"
         # 核心属性 (7列, 紧贴姓名下方): 前5个蓝色, 后9个绿色
         blue_pairs = [
             ("等级", str(f[2])), ("生命", f"{f[5]}/{f[8]}"), ("内力", f"{f[6]}/{f[10]}"),
@@ -147,10 +143,9 @@ class CharTab(BookTabBase):
         for i, ((label, val), color) in enumerate(zip(stat_pairs, stat_colors)):
             r, c = divmod(i, cols)
             lbl = QLabel(label)
-            lbl.setProperty("class", "PropLabel")
-            lbl.setStyleSheet(f"color: {color}; padding: 0px;")
+            lbl.setProperty("class", color)
             val_lbl = QLabel(val)
-            val_lbl.setStyleSheet(f"color: {color}; padding: 0px;")
+            val_lbl.setProperty("class", color)
             cell = QHBoxLayout()
             cell.setSpacing(4)
             cell.addWidget(lbl)
@@ -172,10 +167,9 @@ class CharTab(BookTabBase):
         vcols = 7
         for i, (label, val, color) in enumerate(virtue_extra):
             lbl = QLabel(label)
-            lbl.setProperty("class", "PropLabel")
-            lbl.setStyleSheet(f"color: {color}; padding: 0px;")
+            lbl.setProperty("class", color)
             val_lbl = QLabel(val)
-            val_lbl.setStyleSheet(f"color: {color}; padding: 0px;")
+            val_lbl.setProperty("class", color)
             cell = QHBoxLayout()
             cell.setSpacing(4)
             cell.addWidget(lbl)
@@ -183,6 +177,7 @@ class CharTab(BookTabBase):
             virtue_grid.addLayout(cell, 0, i)
         for c in range(len(virtue_extra), vcols):
             spacer = QWidget()
+            spacer.setObjectName("TransparentBg")
             virtue_grid.addWidget(spacer, 0, c)
         for c in range(vcols):
             virtue_grid.setColumnStretch(c, 1)
@@ -400,9 +395,7 @@ class CharTab(BookTabBase):
         lbl.setWordWrap(True)
         lbl.setAlignment(Qt.AlignLeft)
         lbl.setTextInteractionFlags(Qt.TextSelectableByMouse)
-        green = "#55b572" if self._is_dark_theme() else "#178a39"
-        gray = "#888" if self._is_dark_theme() else "#777"
-        lbl.setStyleSheet(f"color: {green if equipped else gray}; padding: 0px;")
+        lbl.setProperty("class", "BookOk" if equipped else "BookMuted")
         return lbl
 
     def _build_join_info(self, body, rec):
@@ -506,8 +499,7 @@ class CharTab(BookTabBase):
             ("技能点", str(jp) if jp > 0 else "0"),
             ("金钱", f"{gold_actual} (×2={gold_base})" if gold_base > 0 else "0"),
         ]
-        dark = self._is_dark_theme()
-        reward_color = "#d4a855" if dark else "#a07820"
+        reward_color = "BookGold"
         row = QHBoxLayout()
         row.setSpacing(8)
         for label, val in pairs:
@@ -516,7 +508,7 @@ class CharTab(BookTabBase):
             lbl = QLabel(label)
             lbl.setProperty("class", "PropLabel")
             val_lbl = QLabel(val)
-            val_lbl.setStyleSheet(f"color: {reward_color}; padding: 0px;")
+            val_lbl.setProperty("class", reward_color)
             val_lbl.setTextInteractionFlags(Qt.TextSelectableByMouse)
             cell.addWidget(lbl)
             cell.addWidget(val_lbl, 1)
@@ -533,8 +525,7 @@ class CharTab(BookTabBase):
             ("防具", f[80], 3),
             ("饰品", f[81], 4),
         ]
-        dark = self._is_dark_theme()
-        right_color = "#7ab8d4" if dark else "#2a6f8c"
+        right_color = "BookMeta"
         row = QHBoxLayout()
         row.setSpacing(10)
         for i, (label, val, page) in enumerate(right_defs):
@@ -542,7 +533,7 @@ class CharTab(BookTabBase):
             lbl.setProperty("class", "PropLabel")
             text = use_right_label(val, page)
             val_lbl = QLabel(text)
-            val_lbl.setStyleSheet(f"color: {right_color}; padding: 0px;")
+            val_lbl.setProperty("class", right_color)
             val_lbl.setTextInteractionFlags(Qt.TextSelectableByMouse)
             val_lbl.setWordWrap(True)
             cell = QHBoxLayout()
@@ -555,9 +546,7 @@ class CharTab(BookTabBase):
     def _build_skill_bonuses(self, body, rec):
         """技能加成区 f[32]-f[40]: 攻击次数/特殊标志/百分比加成/移动标志"""
         f = rec['fields']
-        dark = self._is_dark_theme()
-        cyan = "#7ab8d4" if dark else "#2a6f8c"
-        yellow = "#d4a855" if dark else "#a07820"
+        cyan, yellow = "BookMeta", "BookGold"
         atk_count = f[32]
         special_flag = f[33] & 0xFFFF
         mp_reduce = f[34]
@@ -586,7 +575,6 @@ class CharTab(BookTabBase):
         # 计算标签固定宽度 (以最长标签"移步回血%"为基准)
         _tmpl = QLabel("移步回血%")
         _tmpl.setProperty("class", "PropLabel")
-        _tmpl.setStyleSheet("padding: 0px;")
         lw = QFontMetrics(_tmpl.font()).horizontalAdvance("移步回血%") + 4
         for i, (label, val, color) in enumerate(pairs):
             r, c = divmod(i, cols)
@@ -595,7 +583,7 @@ class CharTab(BookTabBase):
             lbl.setFixedWidth(lw)
             lbl.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
             val_lbl = QLabel(val)
-            val_lbl.setStyleSheet(f"color: {color}; padding: 0px;")
+            val_lbl.setProperty("class", color)
             val_lbl.setTextInteractionFlags(Qt.TextSelectableByMouse)
             val_lbl.setWordWrap(True)
             val_lbl.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)

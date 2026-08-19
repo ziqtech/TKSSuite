@@ -341,9 +341,7 @@ class SkillTab(BookTabBase):
         lbl.setWordWrap(True)
         lbl.setAlignment(Qt.AlignLeft)
         lbl.setTextInteractionFlags(Qt.TextSelectableByMouse)
-        green = "#55b572" if self._is_dark_theme() else "#178a39"
-        gray = "#888" if self._is_dark_theme() else "#777"
-        lbl.setStyleSheet(f"color: {green if equipped else gray}; padding: 0px;")
+        lbl.setProperty("class", "BookOk" if equipped else "BookMuted")
         return lbl
 
     def _build_status_chips(self, mask, hi=False, is_immunity=True):

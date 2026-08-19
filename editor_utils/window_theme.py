@@ -12,19 +12,19 @@ DWMWA_BORDER_COLOR = 34             # Windows 11
 DWMWA_CAPTION_COLOR = 35            # Windows 11
 DWMWA_TEXT_COLOR = 36               # Windows 11
 
-# 深色主题配色 (与 dark.qss 一致: 底色 #202531, 边框加深区分)
+# 深色主题配色 (与 dark.qss 的 Godot 4.7 色板一致: chrome #292929)
 DARK_COLORS = {
-    'caption': 0x00312520,   # #202531 → BGR
-    'border':  0x00282018,   # 比背景深一点 #182028 → BGR
-    'text':    0x00DCDCDC,   # #dcdcdc
+    'caption': 0x00292929,   # #292929 → BGR (灰阶 R=G=B)
+    'border':  0x001b1b1b,   # 标题带同层 #1b1b1b → BGR
+    'text':    0x00bfbfbf,   # #bfbfbf (白 75% 于 caption 的等效色)
     'dark_mode': 1,
 }
 
-# 浅色主题配色 (与 light.qss 一致: 底色 #e0e4e8, 边框加深区分)
+# 浅色主题配色 (与 light.qss 的 Godot 4.7 色板一致: chrome #e6e6e6)
 LIGHT_COLORS = {
-    'caption': 0x00e8e4e0,   # #e0e4e8 → BGR
-    'border':  0x00b8b0a8,   # 比背景深一点 #a8b0b8 → BGR
-    'text':    0x00222222,   # #222222
+    'caption': 0x00e6e6e6,   # #e6e6e6 → BGR
+    'border':  0x00b7b7b7,   # 边框 #b7b7b7 → BGR
+    'text':    0x00404040,   # #404040 (黑 75% 于 caption 的等效色)
     'dark_mode': 0,
 }
 

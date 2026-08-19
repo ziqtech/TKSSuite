@@ -33,27 +33,27 @@ def _load_qss(theme: str) -> str:
 
 
 def _make_palette(dark: bool) -> QPalette:
-    """生成 QPalette 后备方案"""
+    """QPalette 后备方案 — 色板与 Godot 4.7 预设保持一致 (Default / Light)"""
     p = QPalette()
     if dark:
-        p.setColor(QPalette.Window, QColor('#202531'))
-        p.setColor(QPalette.WindowText, QColor('#dcdcdc'))
-        p.setColor(QPalette.Base, QColor('#1a1e27'))
-        p.setColor(QPalette.AlternateBase, QColor('#252a36'))
-        p.setColor(QPalette.Text, QColor('#dcdcdc'))
-        p.setColor(QPalette.Button, QColor('#2e3548'))
-        p.setColor(QPalette.ButtonText, QColor('#dcdcdc'))
-        p.setColor(QPalette.Highlight, QColor('#478cbf'))
+        p.setColor(QPalette.Window, QColor('#292929'))
+        p.setColor(QPalette.WindowText, QColor('#bfbfbf'))
+        p.setColor(QPalette.Base, QColor('#1c1c1c'))
+        p.setColor(QPalette.AlternateBase, QColor('#2f2f2f'))
+        p.setColor(QPalette.Text, QColor('#bfbfbf'))
+        p.setColor(QPalette.Button, QColor('#424242'))
+        p.setColor(QPalette.ButtonText, QColor('#bfbfbf'))
+        p.setColor(QPalette.Highlight, QColor('#569eff'))
         p.setColor(QPalette.HighlightedText, QColor('#ffffff'))
     else:
-        p.setColor(QPalette.Window, QColor('#e0e4e8'))
-        p.setColor(QPalette.WindowText, QColor('#222222'))
-        p.setColor(QPalette.Base, QColor('#ffffff'))
-        p.setColor(QPalette.AlternateBase, QColor('#f0f2f5'))
-        p.setColor(QPalette.Text, QColor('#222222'))
-        p.setColor(QPalette.Button, QColor('#cdd3d9'))
-        p.setColor(QPalette.ButtonText, QColor('#111111'))
-        p.setColor(QPalette.Highlight, QColor('#478cbf'))
+        p.setColor(QPalette.Window, QColor('#e6e6e6'))
+        p.setColor(QPalette.WindowText, QColor('#404040'))
+        p.setColor(QPalette.Base, QColor('#f5f5f5'))
+        p.setColor(QPalette.AlternateBase, QColor('#dedede'))
+        p.setColor(QPalette.Text, QColor('#404040'))
+        p.setColor(QPalette.Button, QColor('#cacaca'))
+        p.setColor(QPalette.ButtonText, QColor('#323232'))
+        p.setColor(QPalette.Highlight, QColor('#2e80ff'))
         p.setColor(QPalette.HighlightedText, QColor('#ffffff'))
     return p
 

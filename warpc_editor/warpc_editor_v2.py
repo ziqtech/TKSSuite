@@ -1011,9 +1011,16 @@ class WarpcEditorV2(QMainWindow):
         scroll = self.tabs.widget(tab_idx)
         if isinstance(scroll, QScrollArea):
             scroll.ensureWidgetVisible(lbl, 50, 120)
-        orig = lbl.styleSheet()
-        lbl.setStyleSheet("background:#e8a040; color:#1a1a1a; border-radius:3px; padding:1px 3px;")
-        QTimer.singleShot(1500, lambda: lbl.setStyleSheet(orig))
+        orig = lbl.property("class") or ""
+        lbl.setProperty("class", "FlashHint")
+        lbl.style().unpolish(lbl)
+        lbl.style().polish(lbl)
+
+        def _restore_flash():
+            lbl.setProperty("class", orig)
+            lbl.style().unpolish(lbl)
+            lbl.style().polish(lbl)
+        QTimer.singleShot(1500, _restore_flash)
 
     def _toggle_edit_mode(self, checked):
         """表单模式 ↔ 表格模式切换 (共享 self.records 唯一数据源)"""
@@ -1322,6 +1329,7 @@ class WarpcEditorV2(QMainWindow):
                 last_row = len(fields) // cols
                 for c in range(last_row_count, cols):
                     spacer = QWidget()
+                    spacer.setObjectName("TransparentBg")
                     grid.addWidget(spacer, last_row, c)
         bl.addLayout(grid)
         gl.addWidget(body)
@@ -1595,16 +1603,15 @@ class WarpcEditorV2(QMainWindow):
         bl.addWidget(self._build_learn_toolbar())
         # 存档模式提示 (模板编排工具条隐藏时显示)
         self._learn_mode_hint = QLabel("")
+        self._learn_mode_hint.setObjectName("learnModeHint")
         self._learn_mode_hint.setWordWrap(True)
         self._learn_mode_hint.setVisible(False)
-        self._learn_mode_hint.setStyleSheet("color:#2c82c9; font-size:11px; padding:2px 0 4px 0;")
         bl.addWidget(self._learn_mode_hint)
         # 技能组「待学习+可学习+已学习」>12 溢出实时提示 (逆向依据 sub_438F28: 战斗菜单共享 12 格固定数组)
         self._skill_overflow_label = QLabel("")
+        self._skill_overflow_label.setObjectName("overflowBanner")
         self._skill_overflow_label.setWordWrap(True)
         self._skill_overflow_label.setVisible(False)
-        self._skill_overflow_label.setStyleSheet(
-            "color:#ffffff; background:#c0392b; font-weight:bold; padding:6px; border-radius:4px;")
         bl.addWidget(self._skill_overflow_label)
         self._skill_learn_grid = QGridLayout()
         self._skill_learn_grid.setVerticalSpacing(2)
