@@ -7,3 +7,4 @@ zstandard
 PySide6
 Pillow
 zhconv
+markdown-it-py>=3.0,<4

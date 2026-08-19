@@ -21,7 +21,7 @@ build_all.py — TKS Editors 一键构建脚本 (Nuitka)
     python build/build_all.py --force          # 强制全量构建, 跳过增量检查
 
 前置条件:
-    pip install nuitka ordered-set zstandard PySide6 Pillow
+    pip install -r build/requirements.txt
     需要 C 编译器: MSVC (VS Build Tools)
 
 输出目录:
@@ -58,6 +58,8 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
+
+from markdown_it import MarkdownIt
 
 # ═══════════════════════════════════════════════════════════════
 # 编辑器配置表
@@ -537,6 +539,137 @@ def _copy_runtime_tools(destination: Path) -> int:
     return copied
 
 
+def _markdown_to_plain_text(markdown: str) -> str:
+    """使用 markdown-it-py 将 Markdown 转为适合玩家阅读的纯文本。"""
+    tokens = MarkdownIt("commonmark").parse(markdown)
+    lines: list[str] = []
+    version_heading_seen = False
+
+    def inline_text(token) -> str:
+        """提取 inline token 的可读文字，忽略 Markdown 格式标记。"""
+        if not token.children:
+            return token.content
+        parts = []
+        for child in token.children:
+            if child.type in {"softbreak", "hardbreak"}:
+                parts.append("\n")
+            elif child.type != "image":
+                parts.append(child.content)
+        return "".join(parts)
+
+    def add_block(text: str = "") -> None:
+        lines.extend(text.rstrip().splitlines() if text.strip() else [""])
+
+    i = 0
+    list_stack: list[tuple[str, int]] = []
+    pending_list_marker = ""
+    while i < len(tokens):
+        token = tokens[i]
+        if token.type == "heading_open":
+            level = int(token.tag[1:])
+            inline = tokens[i + 1]
+            text = inline_text(inline).strip()
+            if level == 1:
+                add_block(text)
+                add_block()
+                add_block("=" * 60)
+            elif level == 2 and text.startswith("TKS") and "V" in text:
+                if version_heading_seen:
+                    while lines and not lines[-1].strip():
+                        lines.pop()
+                    lines.extend(("", "=" * 60))
+                version_heading_seen = True
+                add_block(text)
+                add_block("=" * 60)
+            elif level >= 3:
+                add_block()
+                add_block(f"【{text}】")
+                add_block()
+            else:
+                add_block(text)
+            i += 3
+            continue
+        if token.type == "paragraph_open":
+            if i + 1 < len(tokens) and tokens[i + 1].type == "inline":
+                text = inline_text(tokens[i + 1])
+                # 版本日期作为独立信息行，与版本标题块留出视觉间距。
+                if (
+                    len(text.strip()) == 10
+                    and text.strip()[4] == "."
+                    and text.strip()[7] == "."
+                    and text.strip()[:4].isdigit()
+                    and text.strip()[5:7].isdigit()
+                    and text.strip()[8:].isdigit()
+                ):
+                    add_block()
+                add_block(pending_list_marker + text)
+                pending_list_marker = ""
+            i += 3
+            continue
+        if token.type == "blockquote_open":
+            i += 1
+            continue
+        if token.type == "blockquote_close":
+            add_block()
+            i += 1
+            continue
+        if token.type in {"bullet_list_open", "ordered_list_open"}:
+            add_block()
+            list_stack.append(("ordered" if token.type.startswith("ordered") else "bullet", 0))
+            i += 1
+            continue
+        if token.type in {"bullet_list_close", "ordered_list_close"}:
+            if list_stack:
+                list_stack.pop()
+            add_block()
+            i += 1
+            continue
+        if token.type == "list_item_open":
+            marker = "- "
+            if list_stack and list_stack[-1][0] == "ordered":
+                number = list_stack[-1][1] + 1
+                list_stack[-1] = ("ordered", number)
+                marker = f"{number}. "
+            indent = "  " * max(0, len(list_stack) - 1)
+            pending_list_marker = indent + marker
+            i += 1
+            continue
+        if token.type == "fence":
+            add_block(token.content.rstrip())
+            i += 1
+            continue
+        i += 1
+
+    output = []
+    blank = False
+    for line in lines:
+        if line.strip():
+            output.append(line.rstrip())
+            blank = False
+        elif not blank:
+            output.append("")
+            blank = True
+    return "\n".join(output).strip() + "\n"
+
+
+def _copy_release_notes(destination: Path) -> bool:
+    """将 build/更新记录.md 转为发行目录中的 更新记录.txt。"""
+    source = BUILD_DIR / "更新记录.md"
+    if not source.is_file():
+        print(f"  [WARN] 更新记录不存在: {source}")
+        return False
+    try:
+        markdown = source.read_text(encoding="utf-8")
+        destination.mkdir(parents=True, exist_ok=True)
+        (destination / "更新记录.txt").write_text(
+            _markdown_to_plain_text(markdown), encoding="utf-8"
+        )
+        return True
+    except OSError as exc:
+        print(f"  [WARN] 更新记录生成失败: {exc}")
+        return False
+
+
 def _build_release_patches(destination: Path) -> bool:
     """将补丁源码构建为发行版 .tkspatch 文件。"""
     patches_src = 仓库根目录 / "tks_launcher_gui" / "patches"
@@ -849,6 +982,9 @@ def assemble_release(onefile: bool = False, release: bool = False,
         file_count = _copy_runtime_tools(tools_dst)
         print(f"  [OK] tools/ ({file_count} 个文件)")
 
+    if _copy_release_notes(RELEASE_DIR):
+        print("  [OK] 更新记录.txt")
+
     # summon_table.json 已由上方 configs/*.json glob 复制到 RELEASE_DIR/configs/
 
     # 汇总
@@ -923,6 +1059,10 @@ def assemble_winlator():
             shutil.copy2(str(f), str(configs_dst / f.name))
         print(f"  [OK] configs/")
         assembled.append("configs/")
+
+    if _copy_release_notes(WINLATOR_DIR):
+        print("  [OK] 更新记录.txt")
+        assembled.append("更新记录.txt")
 
     # 5. 创建空 mods/ 目录 (供用户放置 MOD 文件)
     mods_dst = WINLATOR_DIR / "mods"
@@ -1001,6 +1141,10 @@ def assemble_launcher():
         file_count = _copy_runtime_tools(tools_dst)
         print(f"  [OK] tools/ ({file_count} 个文件)")
         assembled.append("tools/")
+
+    if _copy_release_notes(LAUNCHER_DIR):
+        print("  [OK] 更新记录.txt")
+        assembled.append("更新记录.txt")
 
     # 5. 复制启动器配置模板
     for fname in ("launcher_config.json",):
