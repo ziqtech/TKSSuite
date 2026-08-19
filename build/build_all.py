@@ -533,6 +533,48 @@ def _copy_runtime_tools(destination: Path) -> int:
     return copied
 
 
+def _build_release_patches(destination: Path) -> bool:
+    """将补丁源码构建为发行版 .tkspatch 文件。"""
+    patches_src = 仓库根目录 / "tks_launcher_gui" / "patches"
+    if not patches_src.is_dir():
+        return False
+
+    source_dirs = [
+        p for p in patches_src.iterdir()
+        if p.is_dir() and not p.name.startswith("_")
+        and (p / "patch.json").is_file()
+    ]
+    if destination.exists():
+        shutil.rmtree(str(destination))
+    destination.mkdir(parents=True, exist_ok=True)
+
+    if not source_dirs:
+        for patch_file in patches_src.glob("*.tkspatch"):
+            shutil.copy2(str(patch_file), str(destination / patch_file.name))
+        return bool(list(destination.glob("*.tkspatch")))
+
+    launcher_dir = str(仓库根目录 / "tks_launcher_gui")
+    if launcher_dir not in sys.path:
+        sys.path.insert(0, launcher_dir)
+    try:
+        from patcher.build_patches import build_all_patches
+        return build_all_patches(str(patches_src), str(destination))
+    except Exception as exc:
+        print(f"  [ERROR] 补丁构建出错: {exc}")
+        return False
+
+
+def _copy_built_patches(destination: Path) -> bool:
+    """复制 TKSEditors 已构建的生产版补丁到其他发行包。"""
+    source = RELEASE_DIR / "patches"
+    if not source.is_dir():
+        return False
+    if destination.exists():
+        shutil.rmtree(str(destination))
+    shutil.copytree(str(source), str(destination))
+    return bool(list(destination.glob("*.tkspatch")))
+
+
 def _should_skip_build(name: str, source_files: list) -> bool:
     """增量构建检查: 若发行目录 exe 比所有源文件新, 则跳过
 
@@ -780,35 +822,15 @@ def assemble_release(onefile: bool = False, release: bool = False,
         for f in src_configs.glob("*.json"):
             shutil.copy2(str(f), str(RELEASE_DIR / "configs" / f.name))
 
-    # 构建并复制补丁目录：有源码目录时打包，否则保留现有 .tkspatch。
-    patches_src = 仓库根目录 / "tks_launcher_gui" / "patches"
-    if patches_src.is_dir():
-        patches_dst = RELEASE_DIR / "patches"
-        source_dirs = [
-            p for p in patches_src.iterdir()
-            if p.is_dir() and not p.name.startswith("_")
-            and (p / "patch.json").is_file()
-        ]
-        if source_dirs:
-            launcher_dir = str(仓库根目录 / "tks_launcher_gui")
-            if launcher_dir not in sys.path:
-                sys.path.insert(0, launcher_dir)
-            try:
-                from patcher.build_patches import build_all_patches
-                print("  [构建] 开始构建补丁...")
-                success = build_all_patches(str(patches_src), str(patches_dst))
-                if success:
-                    patch_count = len(list(patches_dst.glob("*.tkspatch")))
-                    print(f"  [OK] patches/ ({patch_count} 个 .tkspatch)")
-                else:
-                    print("  [WARN] 补丁构建失败，但不影响启动器运行")
-            except Exception as e:
-                print(f"  [ERROR] 补丁构建出错: {e}")
-                print("  [WARN] 跳过补丁构建")
-        else:
-            shutil.copytree(str(patches_src), str(patches_dst), dirs_exist_ok=True)
-            patch_count = len(list(patches_dst.glob("*.tkspatch")))
-            print(f"  [OK] patches/ ({patch_count} 个现有 .tkspatch)")
+    # 构建补丁；生产目录只保留 .tkspatch，不保留源码目录。
+    patches_dst = RELEASE_DIR / "patches"
+    print("  [构建] 开始构建补丁...")
+    patch_ok = _build_release_patches(patches_dst)
+    patch_count = len(list(patches_dst.glob("*.tkspatch"))) if patches_dst.is_dir() else 0
+    if patch_ok:
+        print(f"  [OK] patches/ ({patch_count} 个 .tkspatch)")
+    else:
+        print("  [WARN] 补丁构建失败，但不影响启动器运行")
 
     # 复制 launcher_config.json (CLI 启动器配置模板)
     launcher_cfg_src = 仓库根目录 / "tks_launcher_gui" / "launcher_config.json"
@@ -883,11 +905,9 @@ def assemble_winlator():
         assembled.append("launcher_config.json")
 
     # 3. 复制外置补丁目录 (CLI 同样使用 patches/ 的 ZIP 型 .tkspatch 作为唯一来源)
-    patches_src = 仓库根目录 / "tks_launcher_gui" / "patches"
-    if patches_src.is_dir():
-        patches_dst = WINLATOR_DIR / "patches"
-        shutil.copytree(str(patches_src), str(patches_dst), dirs_exist_ok=True)
-        print(f"  [OK] patches/")
+    if _copy_built_patches(WINLATOR_DIR / "patches"):
+        patch_count = len(list((WINLATOR_DIR / "patches").glob("*.tkspatch")))
+        print(f"  [OK] patches/ ({patch_count} 个 .tkspatch)")
         assembled.append("patches/")
 
     # 4. 复制全部基线配置 (configs/, 与发行目录一致)
@@ -965,11 +985,9 @@ def assemble_launcher():
         assembled.append("configs/")
 
     # 复制外置补丁目录 (与开发模式共用同一套 ZIP 型 .tkspatch)
-    patches_src = 仓库根目录 / "tks_launcher_gui" / "patches"
-    if patches_src.is_dir():
-        patches_dst = LAUNCHER_DIR / "patches"
-        shutil.copytree(str(patches_src), str(patches_dst), dirs_exist_ok=True)
-        print(f"  [OK] patches/")
+    if _copy_built_patches(LAUNCHER_DIR / "patches"):
+        patch_count = len(list((LAUNCHER_DIR / "patches").glob("*.tkspatch")))
+        print(f"  [OK] patches/ ({patch_count} 个 .tkspatch)")
         assembled.append("patches/")
 
     # 4. 复制 tools/ 辅助工具 (启动器运行时按需注入游戏目录)
