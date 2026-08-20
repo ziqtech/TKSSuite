@@ -105,6 +105,7 @@ class ModListWidget(QWidget):
 
         # 表格
         self._table = QTableWidget(0, len(_COLUMNS))
+        self._table.setObjectName("LauncherModTable")
         self._table.setHorizontalHeaderLabels(_COLUMNS)
         self._table.setProperty("class", "GrowthTable")  # 复用主题的表格选中/行背景样式
         self._table.setAlternatingRowColors(False)
@@ -112,6 +113,7 @@ class ModListWidget(QWidget):
         self._table.setSelectionMode(QAbstractItemView.SingleSelection)
         self._table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self._table.verticalHeader().setVisible(False)
+        self._table.verticalHeader().setDefaultSectionSize(32)
         self._table.currentItemChanged.connect(self._on_current_changed)
 
         h = self._table.horizontalHeader()

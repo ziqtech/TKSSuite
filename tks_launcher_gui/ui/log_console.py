@@ -16,19 +16,19 @@ class LogHighlighter(QSyntaxHighlighter):
     """日志行级别着色器 — 根据行内容中的标记应用前景色"""
 
     _LEVEL_COLORS_DARK = {
-        'error': '#E06C75',
-        'warn':  '#E5C07B',
-        'ok':    '#98C379',
-        'info':  '#61AFEF',
+        'error': '#F87171',
+        'warn':  '#F6C56B',
+        'ok':    '#4ADE80',
+        'info':  '#7AA2F7',
     }
     _LEVEL_COLORS_LIGHT = {
         'error': '#C62828',
-        'warn':  '#B8860B',
+        'warn':  '#9A6A00',
         'ok':    '#2E7D32',
-        'info':  '#1565C0',
+        'info':  '#4F6FD6',
     }
-    _DEFAULT_FG_DARK = '#dcdcdc'
-    _DEFAULT_FG_LIGHT = '#333333'
+    _DEFAULT_FG_DARK = '#ececec'
+    _DEFAULT_FG_LIGHT = '#2d2d2d'
 
     def __init__(self, document: QTextDocument, dark: bool = True):
         super().__init__(document)

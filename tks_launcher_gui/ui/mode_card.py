@@ -3,7 +3,7 @@
 背景/边框/文本全部在 paintEvent 中绘制, 不依赖 QSS 伪态:
 QSS 的 :checked 伪状态对自定义 QAbstractButton 子类不生效
 (仅对 QPushButton 等内置按钮生效), 故颜色改由内置主题色表驱动,
-色值与 editor_themes 的深/浅主题保持一致 (标准=蓝, 兼容=琥珀)。
+色值与 editor_themes 的深/浅主题保持一致 (标准=绿色主操作, 兼容=蓝色辅助操作)。
 """
 from PySide6.QtCore import Qt, QRect, QRectF
 from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen
@@ -12,24 +12,24 @@ from PySide6.QtWidgets import QAbstractButton, QSizePolicy
 # (背景, 边框, 标题文字) — 与 editor_themes/dark.qss、light.qss 同步维护
 _CARD_COLORS = {
     "dark": {
-        "base": ("#202531", "#2a303d", (255, 255, 255, 191)),
-        "base_hover": ("#2e3548", "#3b445c", (255, 255, 255, 191)),
-        "std": ("#1e3a5f", "#478cbf", (220, 235, 255, 255)),
-        "std_hover": ("#24456e", "#478cbf", (220, 235, 255, 255)),
-        "compat": ("#4a3a16", "#e8a33d", (255, 233, 196, 255)),
-        "compat_hover": ("#57441b", "#e8a33d", (255, 233, 196, 255)),
-        "disabled": ("#252a35", "#2a303d", (255, 255, 255, 77)),
-        "checked_disabled": ("#252b33", "#3d5570", (255, 255, 255, 89)),
+        "base": ("#2f2f2f", "#444444", (236, 236, 236, 220)),
+        "base_hover": ("#383838", "#5a5a5a", (236, 236, 236, 235)),
+        "std": ("#0f5f4c", "#10a37f", (230, 255, 247, 255)),
+        "std_hover": ("#126e59", "#1aaf89", (240, 255, 250, 255)),
+        "compat": ("#303b52", "#7aa2f7", (229, 237, 255, 255)),
+        "compat_hover": ("#384967", "#91b2ff", (240, 245, 255, 255)),
+        "disabled": ("#2a2a2a", "#333333", (236, 236, 236, 75)),
+        "checked_disabled": ("#2a2f2e", "#3d5c56", (236, 236, 236, 90)),
     },
     "light": {
-        "base": ("#d9dee4", "#b0b5bd", (0, 0, 0, 191)),
-        "base_hover": ("#cdd3d9", "#a6abb2", (0, 0, 0, 191)),
-        "std": ("#dbe9ff", "#478cbf", (19, 59, 118, 255)),
-        "std_hover": ("#c9defc", "#478cbf", (19, 59, 118, 255)),
-        "compat": ("#ffedd0", "#d47d03", (122, 72, 0, 255)),
-        "compat_hover": ("#fde3b8", "#d47d03", (122, 72, 0, 255)),
-        "disabled": ("#d5d9dd", "#c3c8cf", (0, 0, 0, 89)),
-        "checked_disabled": ("#e3e9f2", "#9db8dc", (0, 0, 0, 102)),
+        "base": ("#f7f7f8", "#d9d9e3", (45, 45, 45, 220)),
+        "base_hover": ("#f1f1f1", "#b6b6c4", (45, 45, 45, 235)),
+        "std": ("#e8f7f2", "#10a37f", (8, 127, 99, 255)),
+        "std_hover": ("#d9f1e9", "#0d8c6d", (8, 111, 88, 255)),
+        "compat": ("#eef2ff", "#7c83fd", (63, 74, 154, 255)),
+        "compat_hover": ("#e3e8ff", "#6570d9", (52, 63, 138, 255)),
+        "disabled": ("#f7f7f8", "#ececf1", (45, 45, 45, 80)),
+        "checked_disabled": ("#edf5f2", "#9acfc0", (45, 45, 45, 105)),
     },
 }
 
@@ -50,7 +50,7 @@ class ModeCardButton(QAbstractButton):
         self.setCheckable(True)
         self.setFocusPolicy(Qt.StrongFocus)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        self.setMinimumHeight(54)
+        self.setMinimumHeight(66)
         font = self.font()
         font.setPixelSize(13)
         self.setFont(font)
@@ -92,7 +92,7 @@ class ModeCardButton(QAbstractButton):
         # 圆角背景 + 1px 描边 (rect 内收 0.5px 保证描边完整)
         rect = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
         path = QPainterPath()
-        path.addRoundedRect(rect, 6.0, 6.0)
+        path.addRoundedRect(rect, 10.0, 10.0)
         p.fillPath(path, bg)
         p.setPen(QPen(border, 1.0))
         p.drawPath(path)
@@ -101,7 +101,7 @@ class ModeCardButton(QAbstractButton):
         sub_color = QColor(title)
         sub_color.setAlphaF(min(1.0, sub_color.alphaF() * 0.65 + 0.05))
 
-        text_rect = self.rect().adjusted(14, 6, -14, -6)
+        text_rect = self.rect().adjusted(16, 8, -16, -8)
         half = text_rect.height() // 2
 
         title_font = self.font()

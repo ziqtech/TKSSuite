@@ -54,6 +54,7 @@ _STATE_PATH = os.path.join(_LAUNCHER_DIR, "launcher_setting.json")
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
+        self.setObjectName("LauncherWindow")
         self.setWindowTitle(format_title("launcher"))
         self.resize(1600, 900)
         self.setMinimumSize(800, 500)
@@ -220,8 +221,9 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "恢复不完整", "部分文件恢复失败，请查看详细日志或手动检查游戏目录。")
 
     def _setup_toolbar(self):
-        """顶部工具栏 — 使用编辑器主题规范的 QToolBar 与 #btnStart 主按钮样式。"""
+        """顶部工具栏 — 启动操作突出，辅助操作保持轻量。"""
         toolbar = QToolBar()
+        toolbar.setObjectName("LauncherToolbar")
         toolbar.setMovable(False)
         toolbar.setIconSize(QSize(20, 20))
         self.addToolBar(toolbar)
@@ -231,13 +233,16 @@ class MainWindow(QMainWindow):
         self.btn_start.setToolTip("按当前模式加载游戏功能与 MOD 并启动游戏 (Ctrl+Enter)")
         self.btn_start.clicked.connect(self._on_start)
         toolbar.addWidget(self.btn_start)
+        toolbar.addSeparator()
 
         self.btn_refresh_mods = QPushButton("↻ 刷新 MOD")
+        self.btn_refresh_mods.setObjectName("toolbarSecondary")
         self.btn_refresh_mods.setToolTip("重新扫描 mods 目录")
         self.btn_refresh_mods.clicked.connect(self._refresh_mods)
         toolbar.addWidget(self.btn_refresh_mods)
 
         self.btn_save_mgr = QPushButton("💾 存档管理")
+        self.btn_save_mgr.setObjectName("toolbarSecondary")
         self.btn_save_mgr.setToolTip("备份/恢复游戏存档及补丁状态")
         self.btn_save_mgr.clicked.connect(self._on_save_manager)
         toolbar.addWidget(self.btn_save_mgr)
@@ -270,31 +275,40 @@ class MainWindow(QMainWindow):
 
     def _setup_central(self):
         splitter = QSplitter(Qt.Horizontal)
+        splitter.setObjectName("LauncherSplitter")
+        splitter.setHandleWidth(8)
         root = QWidget()
+        root.setObjectName("LauncherRoot")
         root_layout = QVBoxLayout(root)
-        root_layout.setContentsMargins(8, 6, 8, 6)
-        root_layout.setSpacing(6)
+        root_layout.setContentsMargins(12, 10, 12, 12)
+        root_layout.setSpacing(10)
 
-        # 模式行: 分段式模式卡片按钮 (已启用 MOD 计数移至底部状态栏)
-        mode_row = QHBoxLayout()
-        mode_row.setSpacing(8)
+        # 模式行: 独立容器让两张模式卡片与下方工作区形成清晰层级
+        mode_bar = QWidget()
+        mode_bar.setObjectName("LauncherModeBar")
+        mode_row = QHBoxLayout(mode_bar)
+        mode_row.setContentsMargins(0, 0, 0, 0)
+        mode_row.setSpacing(10)
         mode_row.addWidget(self._standard_mode, 1)
         mode_row.addWidget(self._compatible_mode, 1)
-        root_layout.addLayout(mode_row)
+        root_layout.addWidget(mode_bar)
         root_layout.addWidget(splitter, 1)
         self.setCentralWidget(root)
 
         # 左侧: 补丁列表
         self.patch_list = PatchListWidget(self._patches,
                                           initial_states=self._gui_state.patches)
+        self.patch_list.setObjectName("LauncherPatchPanel")
         self.patch_list.setMinimumWidth(300)
         splitter.addWidget(self.patch_list)
 
         # 中间: 模组列表 (全高)
         mods_dir = os.path.join(_LAUNCHER_DIR, "mods")
         self.mod_list = ModListWidget(mods_dir, initial_states=self._gui_state.mods)
+        self.mod_list.setObjectName("LauncherModPanel")
         self.mod_list.setMinimumWidth(400)
         self.mod_preview = ModInfoPreviewWidget()
+        self.mod_preview.setObjectName("LauncherPreviewPanel")
         self.mod_preview.set_default_height(self.patch_list.optional_default_height)
         # 选中模组时更新预览
         self.mod_list.mod_selected.connect(self.mod_preview.show_mod)
@@ -308,6 +322,7 @@ class MainWindow(QMainWindow):
         self.log_console = LogConsole()
         self._tools_panel = self._build_tools_panel()
         right = QSplitter(Qt.Vertical)
+        right.setObjectName("LauncherRightSplitter")
         right.setHandleWidth(4)
         right.setChildrenCollapsible(False)
         right.addWidget(self.mod_preview)
@@ -353,8 +368,7 @@ class MainWindow(QMainWindow):
     def _build_status_panel(self) -> QWidget:
         """构建面向普通玩家的启动状态摘要面板。"""
         content = QWidget()
-        # 裸 QWidget 会被全局 QWidget 背景规则染色, 透明以露出 DockBody 表面
-        content.setObjectName("TransparentBg")
+        content.setObjectName("LauncherSummaryContent")
         layout = QVBoxLayout(content)
         layout.setContentsMargins(14, 14, 14, 14)
         layout.setSpacing(10)
@@ -373,6 +387,9 @@ class MainWindow(QMainWindow):
         self._summary_features = QLabel()
         self._summary_mods = QLabel()
         self._summary_tool = QLabel()
+        for value in (self._summary_mode, self._summary_features,
+                      self._summary_mods, self._summary_tool):
+            value.setProperty("class", "SummaryValue")
         self._summary_status = QLabel()
         self._summary_status.setObjectName("statusLabel")
 
@@ -387,10 +404,12 @@ class MainWindow(QMainWindow):
         self._summary_hint.setWordWrap(True)
         layout.addWidget(self._summary_hint)
         self._btn_show_log = QPushButton("查看详细日志")
+        self._btn_show_log.setObjectName("showLogButton")
         self._btn_show_log.clicked.connect(self._show_log_dialog)
         layout.addWidget(self._btn_show_log)
 
         panel = create_dock("启动状态", content, body_margins=(0, 0, 0, 0))
+        panel.setObjectName("LauncherStatusPanel")
         self._update_summary()
         return panel
 
@@ -445,8 +464,7 @@ class MainWindow(QMainWindow):
             )
 
         content = QWidget()
-        # 裸 QWidget 会被全局 QWidget 背景规则染色, 设为透明以露出 DockBody 表面
-        content.setObjectName("TransparentBg")
+        content.setObjectName("LauncherToolsContent")
         # 横向流式排列, 超出面板宽度自动换行 (工具数量少, 比纵向堆叠更紧凑)
         body_lay = FlowLayout(content, margin=0, spacing=8)
 
@@ -474,7 +492,9 @@ class MainWindow(QMainWindow):
                     btn.setChecked(True)
                     break
 
-        return create_dock("画面兼容工具", content, body_margins=(8, 6, 8, 6))
+        panel = create_dock("画面兼容工具", content, body_margins=(10, 8, 10, 8))
+        panel.setObjectName("LauncherToolsPanel")
+        return panel
 
     def _get_selected_tool(self) -> str:
         """返回当前选中的辅助工具名称（空字符串表示不注入）。"""
@@ -556,9 +576,11 @@ class MainWindow(QMainWindow):
 
     def _setup_statusbar(self):
         self.status_bar = QStatusBar()
+        self.status_bar.setObjectName("LauncherStatusBar")
         self.setStatusBar(self.status_bar)
         # 已启用 MOD 计数 (原模式行右侧, 现改为底部状态栏常驻显示)
         self._enabled_mod_summary = QLabel()
+        self._enabled_mod_summary.setObjectName("enabledModSummary")
         self.status_bar.addPermanentWidget(self._enabled_mod_summary)
         self.status_bar.addPermanentWidget(self.status_label)
         self.status_bar.showMessage("就绪 — 请点击「启动游戏」")

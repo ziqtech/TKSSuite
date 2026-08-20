@@ -148,6 +148,7 @@ class PatchListWidget(QWidget):
 
     def _make_table(self) -> QTableWidget:
         table = QTableWidget(0, len(_COLUMNS))
+        table.setObjectName("LauncherPatchTable")
         table.setHorizontalHeaderLabels(_COLUMNS)
         table.setProperty("class", "GrowthTable")  # 复用主题的表格选中/行背景样式
         table.setAlternatingRowColors(False)
@@ -155,7 +156,7 @@ class PatchListWidget(QWidget):
         table.setSelectionMode(QAbstractItemView.SingleSelection)
         table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         table.verticalHeader().setVisible(False)
-        table.verticalHeader().setDefaultSectionSize(26)
+        table.verticalHeader().setDefaultSectionSize(30)
 
         h = table.horizontalHeader()
         h.setHighlightSections(False)

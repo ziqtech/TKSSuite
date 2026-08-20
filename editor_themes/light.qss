@@ -712,16 +712,16 @@ QToolButton#dockToolButton:checked:hover {
 
 /* ── 启动按钮高亮 (tks_launcher_gui) ── */
 QPushButton#btnStart {
-    background-color: #3a8c52;
+    background-color: #10a37f;
     color: #ffffff;
-    border: 1px solid #2e7041;
+    border: 1px solid #0d8c6d;
     font-weight: bold;
 }
 QPushButton#btnStart:hover {
-    background-color: #45a362;
+    background-color: #1aaf89;
 }
 QPushButton#btnStart:pressed {
-    background-color: #2e7041;
+    background-color: #0d8c6d;
     color: #ffffff;
 }
 QPushButton#btnStart:disabled {
@@ -1058,18 +1058,18 @@ QLabel#statusLabelWarn {
     padding: 4px 8px;
 }
 
-/* ── 兼容模式启动按钮 (tks_launcher_gui): 琥珀色区分标准模式绿 ── */
+/* ── 兼容模式启动按钮 (tks_launcher_gui): 蓝色区分标准模式绿 ── */
 QPushButton#btnStartCompat {
-    background-color: #d47d03;
-    color: #ffffff;
-    border: 1px solid #a86302;
+    background-color: #eef2ff;
+    color: #4f5bb5;
+    border: 1px solid #7c83fd;
     font-weight: bold;
 }
 QPushButton#btnStartCompat:hover {
-    background-color: #e8890a;
+    background-color: #e3e8ff;
 }
 QPushButton#btnStartCompat:pressed {
-    background-color: #a86302;
+    background-color: #d8dfff;
     color: #ffffff;
 }
 QPushButton#btnStartCompat:disabled {
@@ -1084,7 +1084,7 @@ QLabel#modeValueStd {
     font-weight: bold;
 }
 QLabel#modeValueCompat {
-    color: #d47d03;
+    color: #4f5bb5;
     font-weight: bold;
 }
 
@@ -1177,3 +1177,162 @@ QLabel[class="BookSpecial"] { color: #7b4fa0; }
 QLabel[class="BookGold"]    { color: #a07820; }
 QLabel[class="BookMeta"]    { color: #2a6f8c; }
 QLabel[class="BookMuted"]   { color: #8e8ea0; }
+
+/* ══ TKS Launcher 视觉优化 ══ */
+QMainWindow#LauncherWindow,
+QWidget#LauncherRoot {
+    background-color: #ffffff;
+}
+QToolBar#LauncherToolbar {
+    background-color: #f7f7f8;
+    border-bottom: 1px solid #ececf1;
+    padding: 8px 12px;
+    spacing: 8px;
+    min-height: 42px;
+}
+QToolBar#LauncherToolbar::separator {
+    width: 1px;
+    background-color: #d9d9e3;
+    margin: 7px 3px;
+}
+QToolBar#LauncherToolbar QPushButton#toolbarSecondary {
+    background-color: #ffffff;
+    color: #6e6e80;
+    border: 1px solid #d9d9e3;
+    border-radius: 8px;
+    padding: 7px 12px;
+}
+QToolBar#LauncherToolbar QPushButton#toolbarSecondary:hover {
+    background-color: #f1f1f1;
+    color: #2d2d2d;
+    border-color: #b6b6c4;
+}
+QToolBar#LauncherToolbar QPushButton#toolbarSecondary:pressed {
+    background-color: #e7e7e7;
+    border-color: #10a37f;
+}
+QWidget#LauncherModeBar {
+    background-color: #f7f7f8;
+    border: 1px solid #ececf1;
+    border-radius: 12px;
+    padding: 2px;
+}
+QSplitter#LauncherSplitter {
+    background-color: #ffffff;
+}
+QSplitter#LauncherSplitter::handle:horizontal,
+QSplitter#LauncherRightSplitter::handle:vertical {
+    background-color: #ffffff;
+    border: none;
+    margin: 0;
+}
+QWidget#LauncherPatchPanel QWidget#DockBody,
+QWidget#LauncherModPanel QWidget#DockBody,
+QWidget#LauncherPreviewPanel QWidget#DockBody,
+QWidget#LauncherStatusPanel QWidget#DockBody,
+QWidget#LauncherToolsPanel QWidget#DockBody {
+    background-color: #f7f7f8;
+    border-color: #d9d9e3;
+}
+QWidget#LauncherPatchPanel QFrame#DockHeader,
+QWidget#LauncherModPanel QFrame#DockHeader,
+QWidget#LauncherPreviewPanel QFrame#DockHeader,
+QWidget#LauncherStatusPanel QFrame#DockHeader,
+QWidget#LauncherToolsPanel QFrame#DockHeader {
+    background-color: #f1f1f1;
+}
+QWidget#LauncherPatchPanel QToolButton#dockToolButton,
+QWidget#LauncherModPanel QToolButton#dockToolButton {
+    max-height: 24px;
+    padding: 4px 8px;
+    border-radius: 6px;
+}
+QTableWidget#LauncherPatchTable,
+QTableWidget#LauncherModTable {
+    background-color: #f7f7f8;
+    border: none;
+    gridline-color: #e3e3e8;
+    alternate-background-color: #f7f7f8;
+}
+QTableWidget#LauncherPatchTable::item,
+QTableWidget#LauncherModTable::item {
+    background-color: transparent;
+    border-bottom: 1px solid #e3e3e8;
+    padding: 4px 8px;
+}
+QTableWidget#LauncherPatchTable::item:selected,
+QTableWidget#LauncherModTable::item:selected {
+    background-color: rgba(16, 163, 127, 0.14);
+    color: #2d2d2d;
+}
+QTableWidget#LauncherPatchTable QHeaderView::section,
+QTableWidget#LauncherModTable QHeaderView::section {
+    background-color: #f7f7f8;
+    border-bottom: 1px solid #d9d9e3;
+    padding: 8px;
+    color: #6e6e80;
+}
+QTextBrowser#detailBox {
+    background-color: #f7f7f8;
+    border: none;
+    color: #2d2d2d;
+    padding: 14px;
+}
+QWidget#LauncherSummaryContent,
+QWidget#LauncherToolsContent {
+    background-color: #f7f7f8;
+}
+QLabel[class="SummaryValue"] {
+    color: #2d2d2d;
+    font-weight: 600;
+}
+QLabel#modeValueStd,
+QLabel#modeValueCompat {
+    border-radius: 6px;
+    padding: 2px 8px;
+    font-weight: bold;
+}
+QLabel#modeValueStd {
+    color: #087f63;
+    background-color: rgba(16, 163, 127, 0.12);
+}
+QLabel#modeValueCompat {
+    color: #4f5bb5;
+    background-color: rgba(124, 131, 253, 0.14);
+}
+QPushButton#showLogButton {
+    background-color: transparent;
+    color: #6e6e80;
+    border: 1px solid #d9d9e3;
+    border-radius: 8px;
+    padding: 6px 10px;
+}
+QPushButton#showLogButton:hover {
+    background-color: #f1f1f1;
+    color: #2d2d2d;
+    border-color: #b6b6c4;
+}
+QWidget#LauncherToolsContent QRadioButton {
+    background-color: #ffffff;
+    border: 1px solid #d9d9e3;
+    border-radius: 7px;
+    padding: 5px 9px;
+}
+QWidget#LauncherToolsContent QRadioButton:hover {
+    border-color: #b6b6c4;
+    background-color: #f1f1f1;
+}
+QWidget#LauncherToolsContent QRadioButton:checked {
+    color: #087f63;
+    border-color: #10a37f;
+    background-color: rgba(16, 163, 127, 0.12);
+}
+QStatusBar#LauncherStatusBar {
+    background-color: #f7f7f8;
+    border-top: 1px solid #ececf1;
+    padding: 3px 10px;
+}
+QLabel#enabledModSummary {
+    color: #8e8ea0;
+    padding: 4px 10px;
+}
