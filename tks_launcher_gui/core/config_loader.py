@@ -97,26 +97,39 @@ class PatchConfig:
 def resolve_config_path(base_path: str, rel: str) -> str:
     """解析补丁定义中声明的相对 json_file 路径。
 
-    候选目录依次为: 配置文件所在目录, 启动器根目录, 启动器上级目录。
+    候选目录依次为: 配置文件所在目录及其各级父目录, 启动器根目录, 启动器上级目录。
     开发模式下 configs/ 位于启动器上级目录 (configs);
     打包模式下 configs/ 与 exe 同级 (发行目录 configs/)。
+    源码补丁 patch.json 位于 patches/<name>/ 下 (距启动器根目录两层),
+    向上回溯需覆盖到启动器上级目录, 否则找不到 configs/。
     """
     if os.path.isabs(rel):
         return rel
     base_dir = os.path.dirname(os.path.abspath(base_path)) if base_path else os.getcwd()
-    cur = base_dir
+    # 启动器根目录 = core/ 的上级目录 (不依赖 base_path 的嵌套深度)
+    launcher_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    seen = set()
     candidates = []
-    for _ in range(3):
-        candidates.append(os.path.join(cur, rel))
+    cur = base_dir
+    for _ in range(4):
+        c = os.path.join(cur, rel)
+        if c not in seen:
+            seen.add(c)
+            candidates.append(c)
         parent = os.path.dirname(cur)
         if parent == cur:
             break
         cur = parent
+    for root in (launcher_root, os.path.dirname(launcher_root)):
+        c = os.path.join(root, rel)
+        if c not in seen:
+            seen.add(c)
+            candidates.append(c)
     for c in candidates:
         if os.path.isfile(c):
             return c
     # 无命中时返回启动器根目录下的路径 (保持原有日志提示行为)
-    return candidates[1] if len(candidates) > 1 else candidates[0]
+    return os.path.join(launcher_root, rel)
 
 
 def resolve_patch_value(expr: str, settings: PatchSettings,
