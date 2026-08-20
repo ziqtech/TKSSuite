@@ -1812,7 +1812,8 @@ class TktEditor(QMainWindow):
             self.lbl_dirty.setProperty("class", "DirtyIndicator")
         else:
             self.lbl_dirty.setText("[!] 未保存")
-            self.lbl_dirty.setProperty("class", "")
+            # 未保存态沿用 Tag 1.2 的实际渲染效果 (当时 class 未被清除, 继承脏标记红色)
+            self.lbl_dirty.setProperty("class", "DirtyUnsaved")
         self.lbl_dirty.style().unpolish(self.lbl_dirty)
         self.lbl_dirty.style().polish(self.lbl_dirty)
 

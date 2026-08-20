@@ -1,12 +1,12 @@
-"""主窗口 — Godot 风格三面板布局 + 主题切换 + 启动逻辑"""
+"""主窗口 — Dock 风格三面板布局 + 主题切换 + 启动逻辑"""
 import os
 
 from PySide6.QtCore import Qt, QSize
 from PySide6.QtGui import QIcon, QKeySequence
 from PySide6.QtWidgets import (
     QApplication, QButtonGroup, QDialog, QFileDialog, QLabel, QMainWindow,
-    QMessageBox, QPushButton, QRadioButton, QSplitter, QStatusBar, QToolBar,
-    QWidget, QVBoxLayout, QHBoxLayout,
+    QMessageBox, QPushButton, QRadioButton, QSplitter, QStatusBar, QTextBrowser,
+    QToolBar, QWidget, QVBoxLayout, QHBoxLayout,
 )
 
 from core.config_loader import PatchDef
@@ -32,6 +32,7 @@ from ui.mod_packer_dialog import ModPackerDialog
 from ui.mod_merger_dialog import ModMergerDialog
 from ui.mod_editor_dialog import ModEditorDialog
 from ui.mod_splitter_dialog import ModSplitterDialog
+from ui.mode_card import ModeCardButton
 from ui.patch_list import PatchListWidget
 from ui.save_manager_dialog import SaveManagerDialog
 from workers.patcher_worker import PatcherWorker
@@ -146,7 +147,8 @@ class MainWindow(QMainWindow):
             "请以 MOD 作者说明为准。")
 
     def _show_help(self):
-        themed_messagebox(self, QMessageBox.Information, "帮助说明",
+        # 内容较长, 用可滚动对话框展示 (比 QMessageBox 可读性更好)
+        text = (
             "TKS Mod Launcher — 三国群侠传 MOD 启动器\n\n"
             "1. 启动游戏 (Ctrl+Enter): 选择 TKS.exe, 按当前模式加载游戏功能和 MOD\n"
             "2. 左侧「补丁列表」: 勾选需要应用的启动器游戏功能, 标题栏右侧可切换 可选/必选 补丁\n"
@@ -160,10 +162,22 @@ class MainWindow(QMainWindow):
             "10. 自定义头像: 上传图片并裁剪, 生成自定义头像 MOD\n"
             "11. 自定义音乐: 覆盖/新增 Sound 目录 BGM, 生成音乐 MOD\n"
             "12. 存档管理: 备份/恢复游戏存档及补丁状态快照\n"
-            "13. 视图 → 切换主题 (Ctrl+T): 在深色/浅色主题间切换\n\n"
+            "13. 设置 → 切换主题 (Ctrl+T): 在深色/浅色主题间切换\n\n"
             "勾选状态会自动保存到 launcher_setting.json, 下次启动时自动恢复\n\n"
             "运行时基于内存补丁引擎 (runtime_patcher) 实现\n"
             "兼容 Winlator / Wine 环境 (通过 cli_launcher.py)")
+        dlg = QDialog(self)
+        dlg.setWindowTitle("使用说明")
+        dlg.resize(680, 520)
+        layout = QVBoxLayout(dlg)
+        view = QTextBrowser()
+        view.setOpenExternalLinks(False)
+        view.setPlainText(text)
+        layout.addWidget(view)
+        close_btn = QPushButton("关闭")
+        close_btn.clicked.connect(dlg.close)
+        layout.addWidget(close_btn)
+        dlg.exec()
 
     def _show_about(self):
         themed_messagebox(self, QMessageBox.Information, "关于编辑器",
@@ -228,21 +242,31 @@ class MainWindow(QMainWindow):
         self.btn_save_mgr.clicked.connect(self._on_save_manager)
         toolbar.addWidget(self.btn_save_mgr)
 
-        # 模式单选按钮 (创建于此, 放置于中部模式行; 样式走主题 QRadioButton 规范)
+        # 模式卡片按钮 (创建于此, 放置于顶部模式行; 样式走主题 #modeCard 规范)
+        # 仍由 QButtonGroup 互斥管理, property("mode") 语义与原单选按钮一致
         self._mode_group = QButtonGroup(self)
         self._mode_group.setExclusive(True)
-        self._standard_mode = QRadioButton("标准模式")
-        self._standard_mode.setProperty("mode", "standard")
-        self._compatible_mode = QRadioButton("兼容模式")
-        self._compatible_mode.setProperty("mode", "compatible")
-        self._mode_group.addButton(self._standard_mode)
-        self._mode_group.addButton(self._compatible_mode)
+        self._standard_mode = self._make_mode_card(
+            "standard", "⚙ 标准模式",
+            "使用启动器游戏功能，并加载已勾选的 MOD（推荐原版游戏）",
+            "使用左侧勾选的启动器游戏功能（内存补丁），并加载已勾选的 MOD。\n"
+            "推荐原版 TKS.exe 使用。")
+        self._compatible_mode = self._make_mode_card(
+            "compatible", "🛡 兼容模式",
+            "跳过启动器游戏功能，只加载已勾选的 MOD（适合其他版本）",
+            "跳过启动器游戏功能，只加载已勾选的 MOD。\n"
+            "适合其他作者的游戏版本或第三方启动器制作的 MOD。")
         (self._compatible_mode if self._gui_state.mode == "compatible" else self._standard_mode).setChecked(True)
         self._mode_group.buttonClicked.connect(self._on_mode_changed)
 
-        self._enabled_mod_summary = QLabel()
-        self._mode_description = QLabel()
-        self._mode_description.setWordWrap(True)
+    def _make_mode_card(self, mode: str, title: str, subtitle: str, tip: str) -> ModeCardButton:
+        """创建分段式模式卡片按钮: 大号可选中按钮, 选中态由主题按 mode 属性着色。"""
+        btn = ModeCardButton(title, subtitle)
+        btn.setObjectName("modeCard")
+        btn.setProperty("mode", mode)
+        btn.setToolTip(tip)
+        self._mode_group.addButton(btn)
+        return btn
 
     def _setup_central(self):
         splitter = QSplitter(Qt.Horizontal)
@@ -251,13 +275,11 @@ class MainWindow(QMainWindow):
         root_layout.setContentsMargins(8, 6, 8, 6)
         root_layout.setSpacing(6)
 
-        # 模式行: 单选按钮 + 当前说明 + 已启用 MOD 摘要 (文档 §5.3 / §7.1)
+        # 模式行: 分段式模式卡片按钮 (已启用 MOD 计数移至底部状态栏)
         mode_row = QHBoxLayout()
-        mode_row.addWidget(QLabel("启动模式:"))
-        mode_row.addWidget(self._standard_mode)
-        mode_row.addWidget(self._compatible_mode)
-        mode_row.addWidget(self._mode_description, 1)
-        mode_row.addWidget(self._enabled_mod_summary)
+        mode_row.setSpacing(8)
+        mode_row.addWidget(self._standard_mode, 1)
+        mode_row.addWidget(self._compatible_mode, 1)
         root_layout.addLayout(mode_row)
         root_layout.addWidget(splitter, 1)
         self.setCentralWidget(root)
@@ -308,24 +330,25 @@ class MainWindow(QMainWindow):
         self._update_mode_header()
 
     def _update_mode_header(self):
-        if not hasattr(self, "_mode_description"):
-            return
         compatible = self._get_mode() == "compatible"
-        self._mode_description.setText(
-            "当前：兼容模式。将跳过启动器游戏功能，但仍加载已勾选的 MOD。"
-            if compatible else
-            "当前：标准模式。将使用启动器游戏功能，并加载已勾选的 MOD。")
+        # 启动按钮带当前模式后缀并随模式换色, 防止带错误模式误启动
+        if hasattr(self, "btn_start"):
+            self.btn_start.setText(
+                "▶ 启动游戏 · 兼容模式" if compatible else "▶ 启动游戏 · 标准模式")
+            self.btn_start.setObjectName("btnStartCompat" if compatible else "btnStart")
+            self.btn_start.style().unpolish(self.btn_start)
+            self.btn_start.style().polish(self.btn_start)
+        # 启动状态面板的当前模式值随模式着色
+        if hasattr(self, "_summary_mode"):
+            self._summary_mode.setObjectName("modeValueCompat" if compatible else "modeValueStd")
+            self._summary_mode.style().unpolish(self._summary_mode)
+            self._summary_mode.style().polish(self._summary_mode)
         if hasattr(self, "_enabled_mod_summary"):
             self._enabled_mod_summary.setText(
                 f"已启用 MOD：{len(self.mod_list.get_enabled_mods())} 个")
-        # 文档 §12: 兼容模式下游戏功能面板置灰保留勾选; 提示文案移入底部状态栏
+        # 文档 §12: 兼容模式下游戏功能面板置灰保留勾选; 说明文案已由模式卡片副标题承载
         if hasattr(self, "patch_list"):
             self.patch_list.set_compatible_mode(compatible)
-        if hasattr(self, "_compat_hint_label"):
-            self._compat_hint_label.setText(
-                "兼容模式：跳过启动器游戏功能（勾选已保留），仍可加载已勾选的 MOD"
-                if compatible else "")
-            self._compat_hint_label.setVisible(compatible)
 
     def _build_status_panel(self) -> QWidget:
         """构建面向普通玩家的启动状态摘要面板。"""
@@ -387,9 +410,10 @@ class MainWindow(QMainWindow):
             if compatible else "将使用启动器游戏功能，并加载已勾选的 MOD。")
 
     def _set_summary_status(self, text: str, level: str = "idle") -> None:
-        """设置启动状态文本, 复用主题规范的状态标签样式 (statusLabel/Ok/Error)。"""
+        """设置启动状态文本, 复用主题规范的状态标签样式 (statusLabel/Ok/Warn/Error)。"""
         self._summary_status.setText(text)
-        name = {"ok": "statusLabelOk", "err": "statusLabelError"}.get(level, "statusLabel")
+        name = {"ok": "statusLabelOk", "err": "statusLabelError",
+                "warn": "statusLabelWarn"}.get(level, "statusLabel")
         self._summary_status.setObjectName(name)
         self._summary_status.style().unpolish(self._summary_status)
         self._summary_status.style().polish(self._summary_status)
@@ -533,13 +557,13 @@ class MainWindow(QMainWindow):
     def _setup_statusbar(self):
         self.status_bar = QStatusBar()
         self.setStatusBar(self.status_bar)
-        # 兼容模式提示 (常驻状态栏, 仅兼容模式可见)
-        self._compat_hint_label = QLabel()
-        self._compat_hint_label.setProperty("probe", "warn")
-        self._compat_hint_label.setVisible(False)
-        self.status_bar.addPermanentWidget(self._compat_hint_label)
+        # 已启用 MOD 计数 (原模式行右侧, 现改为底部状态栏常驻显示)
+        self._enabled_mod_summary = QLabel()
+        self.status_bar.addPermanentWidget(self._enabled_mod_summary)
         self.status_bar.addPermanentWidget(self.status_label)
         self.status_bar.showMessage("就绪 — 请点击「启动游戏」")
+        # MOD 计数标签在此创建, 补一次刷新使初始计数生效
+        self._update_mode_header()
 
     def _toggle_theme(self):
         self._dark_mode = not self._dark_mode
@@ -555,6 +579,10 @@ class MainWindow(QMainWindow):
 
         # 应用 Windows 标题栏/边框主题
         apply_godot_theme(self, is_dark=self._dark_mode)
+
+        # 模式卡片为自绘组件, 主题色表需随主题同步
+        for card in (self._standard_mode, self._compatible_mode):
+            card.set_dark_mode(self._dark_mode)
 
         # 更新日志控制台深色状态
         self.log_console.set_dark_mode(self._dark_mode)

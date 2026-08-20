@@ -82,7 +82,8 @@ class LogConsole(QTextEdit):
         super().__init__(parent)
         self.setObjectName("LogConsole")
         self.setReadOnly(True)
-        self.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOn)
+        # 按需显示滚动条: 空日志时不占轨道, 追加日志时 ensureCursorVisible 自动滚到底
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         # 创建高亮器 (绑定到 document)
         self._highlighter = LogHighlighter(self.document(), dark=True)
 

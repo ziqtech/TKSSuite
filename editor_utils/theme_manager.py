@@ -8,7 +8,7 @@ import os
 import re
 import sys
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QPalette, QColor
+from PySide6.QtGui import QIcon, QPalette, QColor
 
 # 打包环境: Nuitka/PyInstaller 将 editor_themes/ 烘焙进 exe
 # Nuitka: __file__ 始终指向正确位置 (无论 onefile/standalone)
@@ -32,28 +32,40 @@ def _load_qss(theme: str) -> str:
     return re.sub(r'url\(([^)]+)\)', lambda m: f'url({abs_dir}/{m.group(1)})', qss)
 
 
+def svg_path(name: str) -> str:
+    """返回 editor_themes/svg/ 下指定图标文件的绝对路径 (不含扩展名时自动补 .svg)"""
+    if not name.endswith('.svg'):
+        name += '.svg'
+    return os.path.join(os.path.abspath(_THEMES_DIR), 'svg', name)
+
+
+def svg_icon(name: str) -> QIcon:
+    """从 editor_themes/svg/ 加载 QIcon (深/浅主题图标用 -light 后缀区分)"""
+    return QIcon(svg_path(name))
+
+
 def _make_palette(dark: bool) -> QPalette:
-    """QPalette 后备方案 — 色板与 Godot 4.7 预设保持一致 (Default / Light)"""
+    """生成 QPalette 后备方案"""
     p = QPalette()
     if dark:
-        p.setColor(QPalette.Window, QColor('#292929'))
-        p.setColor(QPalette.WindowText, QColor('#bfbfbf'))
-        p.setColor(QPalette.Base, QColor('#1c1c1c'))
-        p.setColor(QPalette.AlternateBase, QColor('#2f2f2f'))
-        p.setColor(QPalette.Text, QColor('#bfbfbf'))
-        p.setColor(QPalette.Button, QColor('#424242'))
-        p.setColor(QPalette.ButtonText, QColor('#bfbfbf'))
-        p.setColor(QPalette.Highlight, QColor('#569eff'))
+        p.setColor(QPalette.Window, QColor('#202531'))
+        p.setColor(QPalette.WindowText, QColor('#dcdcdc'))
+        p.setColor(QPalette.Base, QColor('#1a1e27'))
+        p.setColor(QPalette.AlternateBase, QColor('#252a36'))
+        p.setColor(QPalette.Text, QColor('#dcdcdc'))
+        p.setColor(QPalette.Button, QColor('#2e3548'))
+        p.setColor(QPalette.ButtonText, QColor('#dcdcdc'))
+        p.setColor(QPalette.Highlight, QColor('#478cbf'))
         p.setColor(QPalette.HighlightedText, QColor('#ffffff'))
     else:
-        p.setColor(QPalette.Window, QColor('#e6e6e6'))
-        p.setColor(QPalette.WindowText, QColor('#404040'))
-        p.setColor(QPalette.Base, QColor('#f5f5f5'))
-        p.setColor(QPalette.AlternateBase, QColor('#dedede'))
-        p.setColor(QPalette.Text, QColor('#404040'))
-        p.setColor(QPalette.Button, QColor('#cacaca'))
-        p.setColor(QPalette.ButtonText, QColor('#323232'))
-        p.setColor(QPalette.Highlight, QColor('#2e80ff'))
+        p.setColor(QPalette.Window, QColor('#e0e4e8'))
+        p.setColor(QPalette.WindowText, QColor('#222222'))
+        p.setColor(QPalette.Base, QColor('#ffffff'))
+        p.setColor(QPalette.AlternateBase, QColor('#f0f2f5'))
+        p.setColor(QPalette.Text, QColor('#222222'))
+        p.setColor(QPalette.Button, QColor('#cdd3d9'))
+        p.setColor(QPalette.ButtonText, QColor('#111111'))
+        p.setColor(QPalette.Highlight, QColor('#478cbf'))
         p.setColor(QPalette.HighlightedText, QColor('#ffffff'))
     return p
 

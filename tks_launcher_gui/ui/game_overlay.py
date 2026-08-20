@@ -3,6 +3,21 @@ from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import QLabel
 from core.memory import get_window_rect
 
+# 状态色 → 完整样式表 (缓存两份, 避免每次更新重建字符串)
+_STYLE_TMPL = """
+    QLabel {{
+        background-color: rgba(32, 37, 49, 210);
+        color: {color};
+        font-family: "Microsoft YaHei", "Segoe UI";
+        font-size: 13px;
+        font-weight: bold;
+        padding: 8px 14px;
+        border-radius: 6px;
+    }}
+"""
+_STYLE_NORMAL = _STYLE_TMPL.format(color="#E0E0E0")
+_STYLE_OK = _STYLE_TMPL.format(color="#98C379")
+
 
 class GameOverlay(QLabel):
     def __init__(self, game_hwnd: int):
@@ -20,17 +35,7 @@ class GameOverlay(QLabel):
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setAttribute(Qt.WA_ShowWithoutActivating)
 
-        self.setStyleSheet("""
-            QLabel {
-                background-color: rgba(32, 37, 49, 210);
-                color: #E0E0E0;
-                font-family: "Microsoft YaHei", "Segoe UI";
-                font-size: 13px;
-                font-weight: bold;
-                padding: 8px 14px;
-                border-radius: 6px;
-            }
-        """)
+        self.setStyleSheet(_STYLE_NORMAL)
 
         self.setText("正在等待游戏加载...")
         self.adjustSize()
@@ -57,20 +62,10 @@ class GameOverlay(QLabel):
         if not text:
             self.close_overlay()
             return
-        self._ok = ok
+        if ok != self._ok:
+            self._ok = ok
+            self.setStyleSheet(_STYLE_OK if ok else _STYLE_NORMAL)
         self.setText(text)
-        color = "#98C379" if ok else "#E0E0E0"
-        self.setStyleSheet(f"""
-            QLabel {{
-                background-color: rgba(32, 37, 49, 210);
-                color: {color};
-                font-family: "Microsoft YaHei", "Segoe UI";
-                font-size: 13px;
-                font-weight: bold;
-                padding: 8px 14px;
-                border-radius: 6px;
-            }}
-        """)
 
     def close_overlay(self):
         self._tracker.stop()

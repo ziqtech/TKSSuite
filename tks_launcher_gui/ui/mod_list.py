@@ -221,8 +221,11 @@ class ModListWidget(QWidget):
             name_item = self._set_text(row, _COL_NAME, mod.name)
             is_dup = mod.mod_id in dup_ids
             if is_dup:
+                # 重复 ID 双重指示: 红色 + 加粗 (避免颜色作为唯一信号)
                 name_item.setForeground(QColor(220, 50, 50))
-            
+                font = name_item.font()
+                font.setBold(True)
+                name_item.setFont(font)
             # 分类列: 彩色 Tag 标签 (列表不显示"自动识别"字样, 仅保留在悬浮提示)
             inferred = "（自动识别）" if mod.inferred_metadata else ""
             tag = _CategoryTag(mod.category or "other")
