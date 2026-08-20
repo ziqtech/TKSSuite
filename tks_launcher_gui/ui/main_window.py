@@ -252,12 +252,12 @@ class MainWindow(QMainWindow):
         self._mode_group = QButtonGroup(self)
         self._mode_group.setExclusive(True)
         self._standard_mode = self._make_mode_card(
-            "standard", "⚙ 标准模式",
+            "standard", "标准模式",
             "使用启动器游戏功能，并加载已勾选的 MOD（推荐原版游戏）",
             "使用左侧勾选的启动器游戏功能（内存补丁），并加载已勾选的 MOD。\n"
             "推荐原版 TKS.exe 使用。")
         self._compatible_mode = self._make_mode_card(
-            "compatible", "🛡 兼容模式",
+            "compatible", "兼容模式",
             "跳过启动器游戏功能，只加载已勾选的 MOD（适合其他版本）",
             "跳过启动器游戏功能，只加载已勾选的 MOD。\n"
             "适合其他作者的游戏版本或第三方启动器制作的 MOD。")
