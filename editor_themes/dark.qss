@@ -1212,10 +1212,9 @@ QToolBar#LauncherToolbar QPushButton#toolbarSecondary:pressed {
     border-color: #10a37f;
 }
 QWidget#LauncherModeBar {
-    background-color: #171717;
-    border: 1px solid #333333;
-    border-radius: 12px;
-    padding: 2px;
+    background-color: transparent;
+    border: none;
+    padding: 0px;
 }
 QSplitter#LauncherSplitter {
     background-color: #212121;
@@ -1240,6 +1239,10 @@ QWidget#LauncherPreviewPanel QFrame#DockHeader,
 QWidget#LauncherStatusPanel QFrame#DockHeader,
 QWidget#LauncherToolsPanel QFrame#DockHeader {
     background-color: #1c1c1c;
+    border-radius: 8px;
+}
+QWidget#LauncherPatchPanel QWidget#TransparentBg {
+    background-color: #212121;
 }
 QWidget#LauncherPatchPanel QToolButton#dockToolButton,
 QWidget#LauncherModPanel QToolButton#dockToolButton {
@@ -1274,9 +1277,10 @@ QTableWidget#LauncherModTable QHeaderView::section {
 }
 QTextBrowser#detailBox {
     background-color: #262626;
-    border: none;
+    border: 1px solid #3a3a3a;
+    border-radius: 10px;
     color: #ececec;
-    padding: 14px;
+    padding: 12px 14px;
 }
 QWidget#LauncherSummaryContent,
 QWidget#LauncherToolsContent {

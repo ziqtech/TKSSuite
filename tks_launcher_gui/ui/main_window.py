@@ -228,14 +228,14 @@ class MainWindow(QMainWindow):
         toolbar.setIconSize(QSize(20, 20))
         self.addToolBar(toolbar)
 
-        self.btn_start = QPushButton("▶ 启动游戏")
+        self.btn_start = QPushButton("🎮 启动游戏")
         self.btn_start.setObjectName("btnStart")
         self.btn_start.setToolTip("按当前模式加载游戏功能与 MOD 并启动游戏 (Ctrl+Enter)")
         self.btn_start.clicked.connect(self._on_start)
         toolbar.addWidget(self.btn_start)
         toolbar.addSeparator()
 
-        self.btn_refresh_mods = QPushButton("↻ 刷新 MOD")
+        self.btn_refresh_mods = QPushButton("🔄 刷新 MOD")
         self.btn_refresh_mods.setObjectName("toolbarSecondary")
         self.btn_refresh_mods.setToolTip("重新扫描 mods 目录")
         self.btn_refresh_mods.clicked.connect(self._refresh_mods)
@@ -349,7 +349,7 @@ class MainWindow(QMainWindow):
         # 启动按钮带当前模式后缀并随模式换色, 防止带错误模式误启动
         if hasattr(self, "btn_start"):
             self.btn_start.setText(
-                "▶ 启动游戏 · 兼容模式" if compatible else "▶ 启动游戏 · 标准模式")
+                "🎮 启动游戏 · 兼容模式" if compatible else "🎮 启动游戏 · 标准模式")
             self.btn_start.setObjectName("btnStartCompat" if compatible else "btnStart")
             self.btn_start.style().unpolish(self.btn_start)
             self.btn_start.style().polish(self.btn_start)

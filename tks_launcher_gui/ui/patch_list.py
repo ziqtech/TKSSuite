@@ -79,8 +79,9 @@ class PatchListWidget(QWidget):
         # 裸 QWidget 会被全局 QWidget 背景规则染色, 透明以露出 DockBody 表面
         content.setObjectName("TransparentBg")
         layout = QVBoxLayout(content)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(4)
+        # 列表与详情之间留出清晰的层级间距，避免两个表面粘连。
+        layout.setContentsMargins(0, 0, 0, 8)
+        layout.setSpacing(8)
 
         # 可滚动表格
         self._table = self._make_table()
