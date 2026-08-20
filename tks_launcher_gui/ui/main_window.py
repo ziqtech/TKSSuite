@@ -1,7 +1,7 @@
 """主窗口 — Dock 风格三面板布局 + 主题切换 + 启动逻辑"""
 import os
 
-from PySide6.QtCore import Qt, QSize
+from PySide6.QtCore import Qt, QSize, QTimer
 from PySide6.QtGui import QIcon, QKeySequence
 from PySide6.QtWidgets import (
     QApplication, QButtonGroup, QDialog, QFileDialog, QLabel, QMainWindow,
@@ -56,8 +56,9 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setObjectName("LauncherWindow")
         self.setWindowTitle(format_title("launcher"))
-        self.resize(1600, 900)
         self.setMinimumSize(800, 500)
+        # 初始 1600x900, 但按屏幕可用区域夹取并居中, 保证 1920x1080 (含缩放) 下完整显示
+        self._fit_initial_geometry()
 
         # 窗口图标
         icon_path = os.path.join(_LAUNCHER_DIR, "TKS.ico")
@@ -98,6 +99,80 @@ class MainWindow(QMainWindow):
         self.patch_list.state_changed.connect(self._save_state)
         self.mod_list.state_changed.connect(self._save_state)
         self._tool_btn_group.buttonClicked.connect(self._save_state)
+
+    def _fit_initial_geometry(self):
+        """将期望的 1600x900 初始尺寸夹取到当前屏幕可用区域内。
+
+        1920x1080 @100% 下保持 1600x900; 开启缩放 (125%/150%) 导致逻辑
+        分辨率变小时自动缩小窗口, 避免超出屏幕被裁切。
+        高度预留 64px 给标题栏/边框 (frame), 精确夹取在 showEvent 中补一次。
+        """
+        target_w, target_h = 1600, 900
+        screen = QApplication.primaryScreen()
+        if screen is None:
+            self.resize(target_w, target_h)
+            return
+        avail = screen.availableGeometry()
+        w = max(self.minimumWidth(), min(target_w, avail.width() - 32))
+        h = max(self.minimumHeight(), min(target_h, avail.height() - 64))
+        self.resize(w, h)
+
+    def _clamp_and_center(self):
+        """按外框 (frameGeometry) 精确夹取到屏幕可用区域并居中。"""
+        screen = (QApplication.screenAt(self.frameGeometry().center())
+                  or QApplication.primaryScreen())
+        if screen is None:
+            return
+        avail = screen.availableGeometry()
+        frame = self.frameGeometry()
+        dw = max(0, frame.width() - avail.width())
+        dh = max(0, frame.height() - avail.height())
+        if dw or dh:
+            self.resize(max(self.minimumWidth(), self.width() - dw),
+                        max(self.minimumHeight(), self.height() - dh))
+            frame = self.frameGeometry()
+        # move() 定位客户区, 需扣除边框/标题栏偏移使外框居中
+        off_x = frame.x() - self.x()
+        off_y = frame.y() - self.y()
+        self.move(avail.x() + (avail.width() - frame.width()) // 2 - off_x,
+                  avail.y() + (avail.height() - frame.height()) // 2 - off_y)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        if getattr(self, "_geo_clamped", False):
+            return
+        self._geo_clamped = True
+        self._clamp_and_center()
+        # 延迟到布局完成后执行, 保证读到最终的 splitter 高度
+        QTimer.singleShot(0, self._adjust_right_column_minimums)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        QTimer.singleShot(0, self._adjust_right_column_minimums)
+
+    def _adjust_right_column_minimums(self):
+        """垂直空间不足时下调模组信息面板最小高度, 避免 QSplitter 面板重叠裁切。
+
+        右列三个面板的最小高度之和超出可用高度时, QSplitter 会让面板
+        互相重叠; 模组信息面板为弹性面板 (stretch=1), 优先压缩它。
+        """
+        right = getattr(self, "_right_splitter", None)
+        if right is None or right.height() <= 0:
+            return
+        handles = right.handleWidth() * (right.count() - 1)
+        others = (self._status_panel.minimumSizeHint().height()
+                  + self._tools_panel.minimumSizeHint().height() + handles)
+        self.mod_preview.setMinimumHeight(
+            max(120, min(320, right.height() - others)))
+        # 最小值之和仍超出可用高度时面板会重叠, 此时按可用高度重写分割
+        preview = right.widget(0)
+        status = right.widget(1)
+        if preview.y() + preview.height() > status.y():
+            tools_min = self._tools_panel.minimumSizeHint().height()
+            status_min = self._status_panel.minimumSizeHint().height()
+            right.setSizes([
+                max(120, right.height() - status_min - tools_min - handles),
+                status_min, tools_min])
 
     def _setup_menubar(self):
         """顶部菜单栏 — 与其它编辑器保持一致风格"""
@@ -321,13 +396,15 @@ class MainWindow(QMainWindow):
         # 右侧: 模组信息 (上) + 启动状态 (中) + 画面兼容工具 (下)
         self.log_console = LogConsole()
         self._tools_panel = self._build_tools_panel()
+        self._status_panel = self._build_status_panel()
         right = QSplitter(Qt.Vertical)
         right.setObjectName("LauncherRightSplitter")
         right.setHandleWidth(4)
         right.setChildrenCollapsible(False)
         right.addWidget(self.mod_preview)
-        right.addWidget(self._build_status_panel())
+        right.addWidget(self._status_panel)
         right.addWidget(self._tools_panel)
+        self._right_splitter = right
         right.setStretchFactor(0, 1)
         right.setStretchFactor(1, 0)
         right.setStretchFactor(2, 0)
@@ -577,6 +654,9 @@ class MainWindow(QMainWindow):
     def _setup_statusbar(self):
         self.status_bar = QStatusBar()
         self.status_bar.setObjectName("LauncherStatusBar")
+        # 隐藏右下角默认缩放手柄 (QSizeGrip, 深色主题下显示为白色方块);
+        # 对齐 ChatGPT 桌面端风格: 无可视操作柄, 窗口仍可通过原生边框缩放
+        self.status_bar.setSizeGripEnabled(False)
         self.setStatusBar(self.status_bar)
         # 已启用 MOD 计数 (原模式行右侧, 现改为底部状态栏常驻显示)
         self._enabled_mod_summary = QLabel()

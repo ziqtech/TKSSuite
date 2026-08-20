@@ -39,8 +39,9 @@ class ModInfoPreviewWidget(QWidget):
         self._detail.document().setDefaultStyleSheet("a { text-decoration: none; }")
         self._detail.anchorClicked.connect(self._on_anchor_clicked)
 
+        # body_margins 内收: 详情文档避开 DockBody 圆角, 融入卡片表面 (样式见主题 QSS)
         outer.addWidget(create_dock("模组信息", self._detail,
-                                    body_margins=(0, 0, 0, 0)))
+                                    body_margins=(8, 4, 8, 8)))
 
     def set_default_height(self, height: int):
         """设置预览区默认最小高度（含 DockHeader 标题栏）。"""

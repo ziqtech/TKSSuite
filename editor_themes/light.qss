@@ -1225,24 +1225,33 @@ QSplitter#LauncherRightSplitter::handle:vertical {
     border: none;
     margin: 0;
 }
-QWidget#LauncherPatchPanel QWidget#DockBody,
-QWidget#LauncherModPanel QWidget#DockBody,
-QWidget#LauncherPreviewPanel QWidget#DockBody,
-QWidget#LauncherStatusPanel QWidget#DockBody,
-QWidget#LauncherToolsPanel QWidget#DockBody {
-    background-color: #f7f7f8;
-    border-color: #d9d9e3;
-}
+/* ── Dock 卡片化 (ChatGPT 风格): 标题栏只圆上角, 主体圆下角, 边框连成完整圆角卡片 ──
+   (修复模组信息/画面兼容工具面板左下右直角边框、启动状态面板底部直角) */
 QWidget#LauncherPatchPanel QFrame#DockHeader,
 QWidget#LauncherModPanel QFrame#DockHeader,
 QWidget#LauncherPreviewPanel QFrame#DockHeader,
 QWidget#LauncherStatusPanel QFrame#DockHeader,
 QWidget#LauncherToolsPanel QFrame#DockHeader {
     background-color: #f1f1f1;
-    border-radius: 8px;
+    border: 1px solid #d9d9e3;
+    border-bottom: none;
+    border-top-left-radius: 10px;
+    border-top-right-radius: 10px;
 }
-QWidget#LauncherPatchPanel QWidget#TransparentBg {
-    background-color: #ffffff;
+QWidget#LauncherPatchPanel QWidget#DockBody,
+QWidget#LauncherModPanel QWidget#DockBody,
+QWidget#LauncherPreviewPanel QWidget#DockBody,
+QWidget#LauncherStatusPanel QWidget#DockBody,
+QWidget#LauncherToolsPanel QWidget#DockBody {
+    background-color: #f7f7f8;
+    border: 1px solid #d9d9e3;
+    border-bottom-left-radius: 10px;
+    border-bottom-right-radius: 10px;
+}
+/* 列表面板内容容器透明以露出 DockBody 表面 (表格由 body_margins 内收避开圆角) */
+QWidget#LauncherPatchPanel QWidget#TransparentBg,
+QWidget#LauncherModPanel QWidget#TransparentBg {
+    background-color: transparent;
 }
 QWidget#LauncherPatchPanel QToolButton#dockToolButton,
 QWidget#LauncherModPanel QToolButton#dockToolButton {
@@ -1281,6 +1290,12 @@ QTextBrowser#detailBox {
     border-radius: 10px;
     color: #2d2d2d;
     padding: 12px 14px;
+}
+/* 模组信息面板: 详情文档融入卡片表面, 避免双重边框与直角溢出 */
+QWidget#LauncherPreviewPanel QTextBrowser#detailBox {
+    background-color: transparent;
+    border: none;
+    padding: 8px 10px;
 }
 QWidget#LauncherSummaryContent,
 QWidget#LauncherToolsContent {

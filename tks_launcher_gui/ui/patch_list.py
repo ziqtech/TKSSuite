@@ -95,9 +95,10 @@ class PatchListWidget(QWidget):
         self._detail.setOpenLinks(False)
         layout.addWidget(self._detail)
 
+        # body_margins 左右下内收: 表格避开 DockBody 圆角, 保持卡片圆角可见
         outer.addWidget(
             create_dock("补丁列表", content, header_layout=self._build_header_toggle(),
-                        body_margins=(0, 0, 0, 0)), 1)
+                        body_margins=(6, 0, 6, 6)), 1)
 
         self._populate()
         self._apply_view()

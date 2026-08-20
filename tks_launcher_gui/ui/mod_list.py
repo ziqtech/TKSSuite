@@ -162,8 +162,9 @@ class ModListWidget(QWidget):
         self.btn_refresh.clicked.connect(self.refresh_mods)
         header_row.addWidget(self.btn_refresh)
 
+        # body_margins 左右下内收: 表格避开 DockBody 圆角, 保持卡片圆角可见
         outer.addWidget(create_dock("MOD列表", content, header_layout=header_row,
-                                    body_margins=(0, 0, 0, 0)))
+                                    body_margins=(6, 0, 6, 6)))
 
         # 初始加载
         self.refresh_mods()
