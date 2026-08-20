@@ -25,6 +25,7 @@ class TksmodContent:
     path: str = ""
     filename: str = ""
     mod_json: Dict[str, Any] = field(default_factory=dict)
+    names: List[str] = field(default_factory=list)               # ZIP 内全部文件名 (与加载器推断输入一致)
     data_files: Dict[str, Any] = field(default_factory=dict)  # {internal_path: parsed_json}
     resource_files: List[str] = field(default_factory=list)    # ZIP 内资源文件路径列表
     config_files: Dict[str, Any] = field(default_factory=dict)  # {configs/X.json: parsed_json} 白名单内
@@ -64,6 +65,7 @@ def read_tksmod_content(mod_path: str) -> TksmodContent:
 
             mod_json_str = zf.read("mod.json").decode('utf-8')
             result.mod_json = json.loads(mod_json_str)
+            result.names = zf.namelist()
 
             if result.mod_json.get("format") != "TKSMOD":
                 result.error = f"无效格式: {result.mod_json.get('format')}"

@@ -128,11 +128,9 @@ class ModPackerDialog(QDialog):
         _preview_card.setContentsMargins(0, 4, 0, 4)
         _preview_card.setSpacing(14)
         self._lbl_preview_thumb = QLabel()
+        self._lbl_preview_thumb.setObjectName("previewThumb")
         self._lbl_preview_thumb.setFixedSize(120, 120)
         self._lbl_preview_thumb.setAlignment(Qt.AlignCenter)
-        self._lbl_preview_thumb.setStyleSheet(
-            "QLabel { border: 2px dashed #555; border-radius: 6px; "
-            "background: #1e1e1e; color: #666; }")
         self._lbl_preview_thumb.setText("无预览图")
         _preview_card.addWidget(self._lbl_preview_thumb)
         _preview_info = QVBoxLayout()

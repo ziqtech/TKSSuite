@@ -183,6 +183,8 @@ QGroupBox::title {
 /* ── 复选框 ── */
 QCheckBox {
     color: rgba(0,0,0,0.75);
+    /* 透明背景: 避免被全局 QWidget 背景规则染成灰块 */
+    background-color: transparent;
     spacing: 6px;
     padding: 2px 0px;
 }
@@ -208,6 +210,8 @@ QCheckBox:disabled {
 /* ── 单选按钮 ── */
 QRadioButton {
     color: rgba(0,0,0,0.75);
+    /* 透明背景: 避免被全局 QWidget 背景规则染成灰块 */
+    background-color: transparent;
     spacing: 6px;
     padding: 2px 1px;
 }
@@ -994,6 +998,28 @@ QLabel[class="GlyphCell"] {
 QWidget[class="Chip"] {
     background-color: #ececec;
     border-radius: 3px;
+}
+
+/* ── MOD 分类 Tag 标签 (mod_list 分类列, 按类型着色) ── */
+QLabel[class="TagVisual"]   { color: #b0308a; background: rgba(176,48,138,0.10); border-radius: 3px; padding: 1px 6px; }
+QLabel[class="TagAvatar"]   { color: #b05a1a; background: rgba(176,90,26,0.10); border-radius: 3px; padding: 1px 6px; }
+QLabel[class="TagMusic"]    { color: #2e7d32; background: rgba(46,125,50,0.10); border-radius: 3px; padding: 1px 6px; }
+QLabel[class="TagStory"]    { color: #00796b; background: rgba(0,121,107,0.10); border-radius: 3px; padding: 1px 6px; }
+QLabel[class="TagGameplay"] { color: #1565c0; background: rgba(21,101,192,0.10); border-radius: 3px; padding: 1px 6px; }
+QLabel[class="TagSave"]     { color: #8d6e00; background: rgba(141,110,0,0.12); border-radius: 3px; padding: 1px 6px; }
+QLabel[class="TagExe"]      { color: #c62828; background: rgba(198,40,40,0.10); border-radius: 3px; padding: 1px 6px; }
+QLabel[class="TagConfig"]   { color: #455a64; background: rgba(69,90,100,0.10); border-radius: 3px; padding: 1px 6px; }
+QLabel[class="TagMixed"]    { color: #6a3ab2; background: rgba(106,58,178,0.10); border-radius: 3px; padding: 1px 6px; }
+QLabel[class="TagOther"]    { color: #606878; background: rgba(96,104,120,0.12); border-radius: 3px; padding: 1px 6px; }
+QLabel[class="TagFont"]     { color: #5d4037; background: rgba(93,64,55,0.10); border-radius: 3px; padding: 1px 6px; }
+QLabel[class="TagInterface"]{ color: #3949ab; background: rgba(57,73,171,0.10); border-radius: 3px; padding: 1px 6px; }
+QLabel[class="TagMap"]      { color: #558b2f; background: rgba(85,139,47,0.10); border-radius: 3px; padding: 1px 6px; }
+
+/* ── 详情区 ── */
+QTextBrowser#detailBox {
+    background-color: transparent;
+    border: none;
+    color: rgba(0,0,0,0.75);
 }
 
 /* ── 对话框 (Window = surface_lowest 近白) ── */

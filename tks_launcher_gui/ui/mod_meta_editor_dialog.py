@@ -6,12 +6,21 @@ import zipfile
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
-    QDialog, QFileDialog, QGridLayout, QHBoxLayout, QLabel, QLineEdit,
+    QCheckBox, QComboBox, QDialog, QFileDialog, QGridLayout, QHBoxLayout, QLabel, QLineEdit,
     QMessageBox, QPushButton, QSpinBox, QTextEdit, QVBoxLayout,
 )
 
+from core.mod_loader import infer_category_from_names
 from core.mod_packer import read_tksmod_content, rewrite_mod_metadata
 from editor_utils.mod_exporter import extract_preview_image, generate_short_uuid
+
+# 分类内部值 → 界面名称 (与启动器列表 ui/mod_list.py 保持一致)
+_CATEGORY_LABELS = {
+    "other": "其他", "visual": "美化", "avatar": "头像", "music": "音乐",
+    "story": "剧情", "gameplay": "功能", "save": "存档", "config": "配置",
+    "tks_exe": "TKS.exe 替换", "mixed": "综合",
+    "font": "字体", "interface": "界面", "map": "地图",
+}
 
 
 class ModMetaEditorDialog(QDialog):
@@ -90,21 +99,18 @@ class ModMetaEditorDialog(QDialog):
         grid.addWidget(self.spin_order, row, 1)
 
         row += 1
-        grid.addWidget(QLabel("游戏版本:"), row, 0)
-        self.edit_gamever = QLineEdit()
-        grid.addWidget(self.edit_gamever, row, 1)
+        grid.addWidget(QLabel("分类:"), row, 0)
+        self.edit_category = QComboBox()
+        for value, label in _CATEGORY_LABELS.items():
+            self.edit_category.addItem(label, value)
+        self.edit_category.currentIndexChanged.connect(self._on_category_user_changed)
+        grid.addWidget(self.edit_category, row, 1)
 
         row += 1
-        grid.addWidget(QLabel("依赖:"), row, 0)
-        self.edit_deps = QLineEdit()
-        self.edit_deps.setPlaceholderText("逗号分隔的模组 ID")
-        grid.addWidget(self.edit_deps, row, 1)
-
-        row += 1
-        grid.addWidget(QLabel("冲突:"), row, 0)
-        self.edit_conflicts = QLineEdit()
-        self.edit_conflicts.setPlaceholderText("逗号分隔的模组 ID")
-        grid.addWidget(self.edit_conflicts, row, 1)
+        grid.addWidget(QLabel("标签:"), row, 0)
+        self.edit_tags = QLineEdit()
+        self.edit_tags.setPlaceholderText("逗号分隔，例如 avatar, visual, resource")
+        grid.addWidget(self.edit_tags, row, 1)
 
         # 预览图行
         row += 1
@@ -115,11 +121,9 @@ class ModMetaEditorDialog(QDialog):
         _preview_card.setContentsMargins(0, 4, 0, 4)
         _preview_card.setSpacing(14)
         self._lbl_preview_thumb = QLabel()
+        self._lbl_preview_thumb.setObjectName("previewThumb")
         self._lbl_preview_thumb.setFixedSize(120, 120)
         self._lbl_preview_thumb.setAlignment(Qt.AlignCenter)
-        self._lbl_preview_thumb.setStyleSheet(
-            "QLabel { border: 2px dashed #555; border-radius: 6px; "
-            "background: #1e1e1e; color: #666; }")
         self._lbl_preview_thumb.setText("无预览图")
         _preview_card.addWidget(self._lbl_preview_thumb)
         _preview_info = QVBoxLayout()
@@ -183,7 +187,7 @@ class ModMetaEditorDialog(QDialog):
     def _fields(self):
         return (self.edit_id, self.btn_regen_id, self.edit_name, self.edit_version,
                 self.edit_author, self.edit_desc,
-                self.spin_order, self.edit_gamever, self.edit_deps, self.edit_conflicts)
+                self.spin_order, self.edit_category, self.edit_tags)
 
     def _set_fields_enabled(self, enabled: bool):
         for w in self._fields():
@@ -216,7 +220,10 @@ class ModMetaEditorDialog(QDialog):
             return
         self._mod_path = path
         self.edit_path.setText(path)
-        self._fill_fields(content.mod_json)
+        # 与启动器列表同源的分类推断 (仅在未声明时作为建议显示)
+        inferred = infer_category_from_names(
+            content.mod_json.get("type", ""), content.names)
+        self._fill_fields(content.mod_json, inferred)
 
     def _load_tksmodpak(self, path: str):
         try:
@@ -232,9 +239,10 @@ class ModMetaEditorDialog(QDialog):
 
         self._mod_path = path
         self.edit_path.setText(path)
-        self._fill_fields(mj)
+        # 合集内层为嵌套 .tksmod, 无法从文件名推断内容分类, 不作推断
+        self._fill_fields(mj, None)
 
-    def _fill_fields(self, mj: dict):
+    def _fill_fields(self, mj: dict, inferred=None):
         self.edit_id.setText(mj.get("id", ""))
         self.edit_name.setText(mj.get("name", ""))
         self.edit_version.setText(mj.get("version", "1.0.0"))
@@ -242,9 +250,17 @@ class ModMetaEditorDialog(QDialog):
         self.edit_desc.setPlainText(mj.get("description", ""))
 
         self.spin_order.setValue(mj.get("load_order", 100))
-        self.edit_gamever.setText(mj.get("game_version", "1.0"))
-        self.edit_deps.setText(", ".join(mj.get("dependencies", [])))
-        self.edit_conflicts.setText(", ".join(mj.get("conflicts", [])))
+        # 分类: 与启动器列表显示保持一致 — 已声明用声明值, 未声明时
+        # 采用同一推断规则的建议值并以"（自动识别）"后缀标明 (文档 §27.7)
+        declared_category = mj.get("category")
+        has_declared = isinstance(declared_category, str) and declared_category.strip()
+        category = declared_category if has_declared else "other"
+        if not has_declared and inferred:
+            category = inferred[0]
+        self._category_inferred = bool(not has_declared and inferred)
+        self._fill_category_combo(category)
+        tags = mj.get("tags", [])
+        self.edit_tags.setText(", ".join(tags) if isinstance(tags, list) else "")
 
         # 预览图
         self._preview_path = ""
@@ -278,9 +294,37 @@ class ModMetaEditorDialog(QDialog):
     # 收集 / 校验 / 保存
     # ────────────────────────────────────────────────
 
+    def _fill_category_combo(self, category: str):
+        """按内部值选中分类项; 推断建议值在显示文本上标注（自动识别）。"""
+        combo = self.edit_category
+        combo.blockSignals(True)
+        for i in range(combo.count()):
+            value = combo.itemData(i)
+            label = _CATEGORY_LABELS.get(value, "其他")
+            if value == category and self._category_inferred:
+                label += "（自动识别）"
+            combo.setItemText(i, label)
+        index = combo.findData(category)
+        combo.setCurrentIndex(index if index >= 0 else 0)
+        combo.blockSignals(False)
+        combo.setToolTip(
+            "未声明分类，此处为启动器根据 MOD 内容自动识别的建议值，保存后生效"
+            if self._category_inferred else "")
+
+    def _on_category_user_changed(self, _index: int):
+        """用户手动更换分类后移除"自动识别"标记 (保存时即成为作者声明)。"""
+        if not getattr(self, "_category_inferred", False):
+            return
+        self._category_inferred = False
+        combo = self.edit_category
+        for i in range(combo.count()):
+            combo.setItemText(i, _CATEGORY_LABELS.get(combo.itemData(i), "其他"))
+        combo.setToolTip("")
+
     def _collect_metadata(self) -> dict:
-        deps = [s.strip() for s in self.edit_deps.text().split(",") if s.strip()]
-        conflicts = [s.strip() for s in self.edit_conflicts.text().split(",") if s.strip()]
+        tags = [s.strip() for s in self.edit_tags.text().split(",") if s.strip()]
+        # 游戏版本/依赖/冲突/兼容模式/兼容说明 不在本编辑器维护,
+        # 不写入 meta → 保存时保留 mod.json 原有值
         meta = {
             "id": self.edit_id.text().strip(),
             "name": self.edit_name.text().strip(),
@@ -288,9 +332,8 @@ class ModMetaEditorDialog(QDialog):
             "author": self.edit_author.text().strip(),
             "description": self.edit_desc.toPlainText().strip(),
             "load_order": self.spin_order.value(),
-            "game_version": self.edit_gamever.text().strip() or "1.0",
-            "dependencies": deps,
-            "conflicts": conflicts,
+            "category": self.edit_category.currentData() or "other",
+            "tags": tags,
         }
         # 预览图：优先用新选择的，否则保留原始的
         if self._preview_path and os.path.isfile(self._preview_path):

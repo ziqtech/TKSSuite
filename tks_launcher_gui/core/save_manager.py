@@ -24,7 +24,7 @@ _SAVE_DIR_NAME = "Save"
 # 备份元数据文件名 (zip 内)
 _META_NAME = "backup_meta.json"
 # 元数据格式版本
-_META_VERSION = 1
+_META_VERSION = 2
 # game_dir 持久化文件名
 _STATE_NAME = "save_manager_state.json"
 
@@ -41,6 +41,9 @@ class BackupInfo:
     patch_state: Dict[str, bool] = field(default_factory=dict)
     mod_state: Dict[str, bool] = field(default_factory=dict)
     tool: str = ""
+    mode: str = "standard"
+    game_path: str = ""
+    state_schema_version: int = 2
     save_file_count: int = 0           # 存档文件数量
 
 
@@ -135,6 +138,9 @@ def _read_backup_meta(zip_path: str) -> Optional[BackupInfo]:
                 mod_state=_to_bool_dict(raw.get("mod_state")),
                 tool=raw.get("tool", "") if isinstance(
                     raw.get("tool"), str) else "",
+                mode=raw.get("mode", "standard") if raw.get("mode") in {"standard", "compatible"} else "standard",
+                game_path=raw.get("game_path", "") if isinstance(raw.get("game_path"), str) else "",
+                state_schema_version=int(raw.get("state_schema_version", 1) or 1),
                 save_file_count=save_count,
             )
     except Exception:
@@ -158,6 +164,9 @@ def create_backup(
     patch_state: Dict[str, bool],
     mod_state: Dict[str, bool],
     tool: str,
+    mode: str = "standard",
+    game_path: str = "",
+    state_schema_version: int = 2,
 ) -> str:
     """创建存档备份 (最高压缩比 ZIP_DEFLATED level=9)
 
@@ -189,6 +198,9 @@ def create_backup(
         "patch_state": patch_state,
         "mod_state": mod_state,
         "tool": tool,
+        "mode": mode if mode in {"standard", "compatible"} else "standard",
+        "game_path": game_path,
+        "state_schema_version": state_schema_version,
         "save_file_count": len(save_files),
     }
 

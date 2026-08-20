@@ -73,7 +73,17 @@ class ModInfoPreviewWidget(QWidget):
             ("作者", mod.author, False),
             ("加载顺序", str(mod.load_order), False),
             ("描述", mod.description, False),
+            ("分类", f"{mod.category or '未分类'}（自动识别）" if mod.inferred_metadata else mod.category or "未分类", False),
+            ("标签", ", ".join(mod.tags) if mod.tags else "未声明", False),
         ]
+        compat = mod.compatibility.get("compatible")
+        compat_text = ("作者声明支持" if compat is True else
+                       "作者声明不支持" if compat is False else "作者未声明")
+        rows.append(("兼容模式", compat_text, False))
+        if mod.requires_features:
+            rows.append(("依赖游戏功能", ", ".join(mod.requires_features), False))
+        if mod.notes:
+            rows.append(("兼容说明", mod.notes, False))
         # 模组改动的游戏文件 (components/resources 的 target)，去重保序
         # .tksmodpak 合集：汇总内含各 .tksmod 的改动文件
         if mod.pak_contents:

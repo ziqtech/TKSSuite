@@ -58,6 +58,12 @@ class ModInfo:
     author: str = ""
     description: str = ""
     mod_type: str = ""       # "tks_exe" | "mixed" | "" 等
+    category: str = "other"
+    tags: List[str] = field(default_factory=list)
+    compatibility: Dict[str, Any] = field(default_factory=dict)
+    requires_features: List[str] = field(default_factory=list)
+    notes: str = ""
+    inferred_metadata: bool = False
     load_order: int = 100
     dependencies: List[str] = field(default_factory=list)
     conflicts: List[str] = field(default_factory=list)
@@ -103,6 +109,97 @@ class MergedData:
     # MOD 携带的启动器配置覆盖 (白名单内): {config_name: parsed_dict}
     # 后加载的 MOD 覆盖先加载的; 传递给 patch_engine 优先于 configs/ 目录
     config_overrides: Dict[str, Any] = field(default_factory=dict)
+
+
+def _metadata_fields(mj: dict, fallback: dict | None = None) -> dict:
+    """读取可选元数据字段，旧 MOD 缺失时保持未声明而不是伪造兼容结论。"""
+    fallback = fallback or {}
+    category = mj.get("category", fallback.get("category", "other"))
+    if not isinstance(category, str) or not category.strip():
+        category = "other"
+    tags = mj.get("tags", fallback.get("tags", []))
+    if not isinstance(tags, list):
+        tags = []
+    tags = [str(tag) for tag in tags if str(tag).strip()]
+    compatibility = mj.get("compatibility")
+    if not isinstance(compatibility, dict):
+        compatibility = dict(fallback.get("compatibility", {}))
+    elif fallback.get("compatibility"):
+        merged_compatibility = dict(fallback["compatibility"])
+        merged_compatibility.update(compatibility)
+        compatibility = merged_compatibility
+    if not isinstance(compatibility, dict):
+        compatibility = {}
+    requires = mj.get(
+        "requires_features",
+        compatibility.get("requires_features", fallback.get("requires_features", [])),
+    )
+    if not isinstance(requires, list):
+        requires = []
+    notes = mj.get("notes", fallback.get("notes", ""))
+    return {
+        "category": category,
+        "tags": tags,
+        "compatibility": compatibility,
+        "requires_features": [str(item) for item in requires if str(item).strip()],
+        "notes": notes if isinstance(notes, str) else str(notes),
+        "inferred_metadata": False,
+    }
+
+
+def infer_category_from_names(mod_type: str, names: list[str]) -> tuple[str, list[str]] | None:
+    """根据 MOD 类型与包内文件名推断分类/标签 (文档 §27.8)。
+
+    供加载器与编辑工具共用, 保证列表显示与编辑弹窗的推断结论一致。
+    无法推断时返回 None; 推断结果只能作为建议, 不能替代作者声明。
+    预览图 (preview.*) 不作为分类依据, 否则携带预览图的 MOD 都会被误判为美化。
+    """
+    lowered = [
+        name.replace("\\", "/").lower()
+        for name in names
+        if not os.path.basename(name.replace("\\", "/")).startswith("preview")
+    ]
+
+    def _is_image_path(n: str) -> bool:
+        """图片资源或图片补丁数据 (data/XXX.JVG.json 等) 都视为图片类内容。"""
+        if n.endswith((".jvg", ".grp", ".png", ".jpg", ".jpeg", ".bmp")):
+            return True
+        return any(n.endswith(ext + ".json")
+                   for ext in (".jvg", ".grp", ".png", ".jpg", ".jpeg", ".bmp"))
+
+    if mod_type == "tks_exe" or any(name.endswith("resources/tks.exe") for name in lowered):
+        return "tks_exe", ["tks_exe"]
+    if any("sound/" in name or "/bgm" in name or name.endswith((".wav", ".mp3", ".ogg")) for name in lowered):
+        return "music", ["music", "resource"]
+    if any(_is_image_path(name) for name in lowered):
+        if any("avatar" in name or "portrait" in name or "face" in name for name in lowered):
+            return "avatar", ["avatar", "visual", "resource"]
+        return "visual", ["visual", "resource"]
+    # 字体资源 (如 resources/FONT9696) → 美化 (与文档 §27.6 字体编辑器默认分类一致)
+    if any(name.startswith("resources/") and os.path.basename(name).startswith("font")
+           for name in lowered):
+        return "visual", ["font", "visual", "resource"]
+    if any(name.endswith("tkd.dat") or name.endswith("tkt.dat") for name in lowered):
+        return "story", ["story", "text"]
+    if any(name.startswith("configs/") for name in lowered):
+        return "config", ["config"]
+    if any(name.startswith("data/") for name in lowered):
+        return "gameplay", ["data"]
+    return None
+
+
+def _infer_metadata(mod: ModInfo, names: list[str], explicit_metadata: bool) -> None:
+    """为旧 MOD 提供保守分类建议；不推断兼容性。"""
+    if explicit_metadata:
+        return
+    inferred = infer_category_from_names(mod.mod_type, names)
+    if inferred is None:
+        return
+    category, tags = inferred
+    mod.category = category
+    if not mod.tags:
+        mod.tags = tags
+    mod.inferred_metadata = True
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -209,6 +306,11 @@ def _load_single_mod(mod_path: str, log_func=None) -> Optional[ModInfo]:
             components=mj.get("components", []),
             resources=mj.get("resources", []),
             preview_image=mj.get("preview_image", ""),
+            **_metadata_fields(mj),
+        )
+        _infer_metadata(
+            mod, zf.namelist(),
+            any(key in mj for key in ("category", "tags")),
         )
 
         # 预加载数据文件
@@ -258,6 +360,7 @@ def _load_pak_mod_info(pak_path: str, log_func=None) -> Optional[ModInfo]:
             conflicts=mj.get("conflicts", []),
             pak_contents=pak_contents,
             preview_image=mj.get("preview_image", ""),
+            **_metadata_fields(mj),
         )
         return mod
 
@@ -278,6 +381,8 @@ def expand_pak_mods(pak_path: str, log_func=None) -> List[ModInfo]:
     with zipfile.ZipFile(pak_path, 'r') as zf:
         # 读取 pak 根目录下的白名单配置文件 (合集级配置覆盖)
         pak_config_files = _load_mod_config_files(zf, log_func=log)
+        pak_root_json = json.loads(zf.read("mod.json").decode("utf-8")) if "mod.json" in zf.namelist() else {}
+        pak_metadata = _metadata_fields(pak_root_json)
 
         mod_entries = sorted(
             n for n in zf.namelist()
@@ -307,6 +412,12 @@ def expand_pak_mods(pak_path: str, log_func=None) -> List[ModInfo]:
                     components=mj.get("components", []),
                     resources=mj.get("resources", []),
                     _data_raw=raw_data,
+                    **_metadata_fields(mj, fallback=pak_metadata),
+                )
+                _infer_metadata(
+                    mod, izf.namelist(),
+                    any(key in mj for key in ("category", "tags")) or
+                    any(key in pak_root_json for key in ("category", "tags")),
                 )
 
                 # 预加载数据文件（内存中）

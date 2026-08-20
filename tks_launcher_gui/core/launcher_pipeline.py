@@ -72,6 +72,8 @@ class PipelineConfig:
     selected_patches: Optional[Set[str]] = None
     enabled_mod_ids: Optional[Any] = None  # set | "__NONE__" | None
     disabled_patches: Optional[Set[str]] = None
+    # standard: 应用启动器游戏功能；compatible: 只处理可独立加载的 MOD。
+    mode: str = "standard"
 
 
 @dataclass
@@ -93,6 +95,14 @@ class PipelineResult:
     applied_patch_count: int = 0
     skipped_patch_count: int = 0
     error: str = ""
+    mode: str = "standard"
+    process_started: bool = False
+    patches_status: str = "not_started"
+    mods_loaded_count: int = 0
+    mods_failed_count: int = 0
+    tool_status: str = "not_started"
+    cleanup_status: str = "pending"
+    warnings: List[str] = field(default_factory=list)
 
     def as_dict(self) -> dict:
         return {
@@ -104,6 +114,14 @@ class PipelineResult:
             "profile_name": self.profile_name,
             "applied_patch_count": self.applied_patch_count,
             "error": self.error,
+            "mode": self.mode,
+            "process_started": self.process_started,
+            "patches_status": self.patches_status,
+            "mods_loaded_count": self.mods_loaded_count,
+            "mods_failed_count": self.mods_failed_count,
+            "tool_status": self.tool_status,
+            "cleanup_status": self.cleanup_status,
+            "warnings": list(self.warnings),
         }
 
 
@@ -133,6 +151,7 @@ class PatcherPipeline:
         self.status = status or (lambda *_: None)
         self.overlay = overlay or (lambda *_: None)
         self.result = PipelineResult()
+        self.result.mode = cfg.mode if cfg.mode in {"standard", "compatible"} else "standard"
         self.settings = PatchSettings()
         self.runtime = PatchRuntimeState()
 
@@ -168,16 +187,20 @@ class PatcherPipeline:
                 self.result.error = f"chdir failed: {e}"
                 return self.result
 
-        # 加载配置
+        compatible_mode = self.result.mode == "compatible"
+
+        # 兼容模式不读取启动器补丁配置作为执行依据，但仍扫描 MOD。
         patches_dir = self.cfg.patches_dir or os.path.join(self.cfg.exe_dir, "patches")
         self.log(f"补丁目录: {patches_dir} (存在={os.path.isdir(patches_dir)})")
 
         from .tkspatch_loader import load_patch_directory
         self.config = load_patch_directory(patches_dir, log_func=self.log)
-        if self.config is None or not self.config.patches:
+        if not compatible_mode and (self.config is None or not self.config.patches):
             self.log("[ERROR] 无法加载补丁配置 (patches/ 不存在或为空), 退出")
             self.result.error = "config load failed"
             return self.result
+        if compatible_mode:
+            self.log("兼容模式: 跳过启动器游戏功能补丁")
 
         # 存档健康检查
         ensure_save_directory_healthy(log_func=self.log)
@@ -186,13 +209,16 @@ class PatcherPipeline:
         mods_dir = self.cfg.mods_dir or os.path.join(self.cfg.exe_dir, "mods")
         self._load_mods(mods_dir)
 
-        # WarPC / DAT 预截断
-        self._warpc_expanded, self._warpc_full_data, self._truncated_files = (
-            prepare_warpc_for_game(log_func=self.log)
-        )
+        if compatible_mode:
+            self.log("兼容模式: 跳过 WarPC/TKAct 启动器数据扩展")
+        else:
+            # WarPC / DAT 预截断
+            self._warpc_expanded, self._warpc_full_data, self._truncated_files = (
+                prepare_warpc_for_game(log_func=self.log)
+            )
 
-        # TKAct 预截断
-        self._tkact_expanded = prepare_tkact_for_game(log_func=self.log)
+            # TKAct 预截断
+            self._tkact_expanded = prepare_tkact_for_game(log_func=self.log)
 
         return self.result
 
@@ -216,6 +242,12 @@ class PatcherPipeline:
             need_resume_pid: 需要最后 resume 的 PID (0 = 不需要)
             tks_exe_replaced: GUI 侧是否已替换 TKS.exe (用于诊断提示)
         """
+        if self.result.mode == "compatible":
+            self.result.patches_status = "skipped"
+            self.result.success = True
+            self.log("兼容模式: 不执行目标进程内存补丁")
+            return self.result
+
         if self.config is None:
             self.log("[ERROR] run_post_launch 调用前必须先 run_pre_launch")
             self.result.error = "pre_launch not called"
@@ -236,7 +268,7 @@ class PatcherPipeline:
             self.log(f"  [MOD兼容] {exe_profile.display_name}")
             for w in exe_profile.warnings:
                 self.log(f"  [MOD兼容] {w}")
-            self.status(f"检测到: {exe_profile.display_name}", True)
+            self.status(f"检测到游戏版本: {exe_profile.display_name}", True)
         else:
             self.log(f"  EXE 版本: 原版")
 
@@ -263,7 +295,7 @@ class PatcherPipeline:
         self.result.cave_budget = cave_budget
 
         # ── 应用配置补丁 ──
-        self.overlay("正在应用内存补丁...", False)
+        self.overlay("正在应用游戏功能...", False)
         applied_ok = self._apply_patches(
             target_pid, code_buf, code_start, base_addr,
             cave_addr, exe_profile,
@@ -274,7 +306,7 @@ class PatcherPipeline:
 
         # ── WarPC 代码引用修补 ──
         if self._warpc_expanded and self._warpc_new_buf:
-            self.overlay("正在扩展 WarPC 缓冲区...", False)
+            self.overlay("正在准备游戏数据...", False)
             expand_warpc_buffer(
                 target_pid, base_addr, mod_size, cave_addr,
                 code_buf, code_start, self._warpc_new_buf, self._warpc_full_data,
@@ -300,18 +332,19 @@ class PatcherPipeline:
         if applied_ok:
             self.log("\n补丁已应用！游戏正在运行。")
             self.log("关闭游戏后补丁失效（每次运行本启动器即可重新应用）。")
-            self.overlay("补丁应用成功！游戏运行中", True)
-            self.status("补丁应用成功，游戏运行中", True)
+            self.overlay("游戏功能已应用，祝游戏愉快！", True)
+            self.status("游戏功能已应用，游戏运行中", True)
         else:
             self.log("\n[WARN] 部分补丁未应用成功")
             if tks_exe_replaced or exe_profile.name != "original":
                 self.log(f"[INFO] 当前使用非原版 TKS.exe（检测为「{exe_profile.display_name}」），"
                           "部分补丁因目标代码已被该 MOD 修改而无法定位，属正常现象，不影响游戏运行。")
-            self.overlay("补丁应用失败！", False)
-            self.status("部分补丁未成功", False)
+            self.overlay("部分游戏功能未能应用", False)
+            self.status("部分游戏功能未应用", False)
             self.result.error = "some patches failed"
 
         self.result.success = applied_ok
+        self.result.patches_status = "applied" if applied_ok else "partial"
         return self.result
 
     # ═══════════════════════════════════════════════════════════════
@@ -320,18 +353,22 @@ class PatcherPipeline:
 
     def cleanup(self) -> None:
         """游戏退出后清理: 还原 MOD 原始文件 + 还原 TKAct。"""
+        cleanup_ok = True
         if self.loaded_mods:
             try:
                 restore_originals(self.cfg.game_dir or os.getcwd(), log_func=self.log)
                 self.log("原始文件已恢复。")
             except Exception as e:
+                cleanup_ok = False
                 self.log(f"  [WARN] 还原 MOD 原始文件失败: {e}")
 
         if self._tkact_expanded:
             try:
                 restore_tkact_for_game(log_func=self.log)
             except Exception as e:
+                cleanup_ok = False
                 self.log(f"  [WARN] 还原 TKAct 失败: {e}")
+        self.result.cleanup_status = "succeeded" if cleanup_ok else "failed"
 
     def wait_game_exit(self, tks_proc, target_pid: int,
                        poll_interval: float = 0.5) -> None:
@@ -421,6 +458,7 @@ class PatcherPipeline:
             self.log(f"  MOD 无数据变更")
 
         self.result.loaded_mods = [m.mod_id for m in self.loaded_mods if m.enabled]
+        self.result.mods_loaded_count = len(self.result.loaded_mods)
 
     def _allocate_warpc_buffer(self, target_pid: int) -> None:
         """分配 WarPC 缓冲区 (GUARD + 数据)。"""

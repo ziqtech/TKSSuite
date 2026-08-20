@@ -26,7 +26,7 @@ from typing import Any
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
-    QDialog, QFileDialog, QGridLayout, QHBoxLayout,
+    QComboBox, QDialog, QFileDialog, QGridLayout, QHBoxLayout,
     QLabel, QLineEdit, QMessageBox, QPushButton,
     QSpinBox, QTextEdit, QVBoxLayout,
 )
@@ -207,6 +207,11 @@ def generate_mod_json(metadata: dict, components: list[dict],
         "version": metadata.get("version", "1.0.0"),
         "author": metadata.get("author", ""),
         "description": metadata.get("description", ""),
+        "category": metadata.get("category", "other"),
+        "tags": metadata.get("tags", []),
+        "compatibility": metadata.get("compatibility", {}),
+        "requires_features": metadata.get("requires_features", []),
+        "notes": metadata.get("notes", ""),
         "created": now.strftime("%Y-%m-%dT%H:%M:%S"),
         "game_version": metadata.get("game_version", "1.0"),
 
@@ -482,6 +487,29 @@ class ModMetadataDialog(QDialog):
         self.spin_order.setValue(defaults.get("load_order", 100))
         grid.addWidget(self.spin_order, row, 1)
 
+        row += 1
+        grid.addWidget(QLabel("分类:"), row, 0)
+        self.edit_category = QComboBox()
+        for value, label in (("other", "其他"), ("visual", "美化"),
+                             ("avatar", "头像"), ("music", "音乐"),
+                             ("story", "剧情"), ("gameplay", "功能"),
+                             ("save", "存档"), ("config", "配置"),
+                             ("tks_exe", "TKS.exe 替换"), ("mixed", "综合"),
+                             ("font", "字体"), ("interface", "界面"),
+                             ("map", "地图")):
+            self.edit_category.addItem(label, value)
+        default_category = self.edit_category.findData(defaults.get("category", "other"))
+        self.edit_category.setCurrentIndex(default_category if default_category >= 0 else 0)
+        grid.addWidget(self.edit_category, row, 1)
+
+        row += 1
+        grid.addWidget(QLabel("标签:"), row, 0)
+        self.edit_tags = QLineEdit()
+        self.edit_tags.setPlaceholderText("逗号分隔，例如 avatar, visual, resource")
+        default_tags = defaults.get("tags", [])
+        self.edit_tags.setText(", ".join(default_tags) if isinstance(default_tags, list) else "")
+        grid.addWidget(self.edit_tags, row, 1)
+
         # 预览图行
         row += 1
         grid.addWidget(QLabel("预览图:"), row, 0, Qt.AlignTop)
@@ -490,12 +518,10 @@ class ModMetadataDialog(QDialog):
         preview_card.setSpacing(14)
 
         self._lbl_preview_thumb = QLabel()
+        self._lbl_preview_thumb.setObjectName("previewThumb")
         self._lbl_preview_thumb.setFixedSize(
             self._PREVIEW_THUMB_SIZE, self._PREVIEW_THUMB_SIZE)
         self._lbl_preview_thumb.setAlignment(Qt.AlignCenter)
-        self._lbl_preview_thumb.setStyleSheet(
-            "QLabel { border: 2px dashed #555; border-radius: 6px; "
-            "background: #1e1e1e; color: #666; }")
         self._lbl_preview_thumb.setText("无预览图")
         preview_card.addWidget(self._lbl_preview_thumb)
 
@@ -583,6 +609,8 @@ class ModMetadataDialog(QDialog):
             "author": self.edit_author.text().strip(),
             "description": self.edit_desc.toPlainText().strip(),
             "load_order": self.spin_order.value(),
+            "category": self.edit_category.currentData() or "other",
+            "tags": [s.strip() for s in self.edit_tags.text().split(",") if s.strip()],
             "preview_image_path": self._preview_path,
         }
         self.accept()

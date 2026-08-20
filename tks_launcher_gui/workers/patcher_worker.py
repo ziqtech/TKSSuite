@@ -13,6 +13,8 @@ import time
 from PySide6.QtCore import QThread, Signal
 
 from core.launcher_pipeline import PatcherPipeline, PipelineConfig
+from core.launch_context import LaunchContext
+from core.recovery_snapshot import begin_snapshot, finish_snapshot
 from core.memory import (
     find_window, get_child_processes, get_module_base, get_module_size,
     resume_process, suspend_process, read_pm,
@@ -42,7 +44,8 @@ class PatcherWorker(QThread):
                  wait_timeout: int = 30, minimal_mode: bool = False,
                  no_cave_mode: bool = False, only_portrait: bool = False,
                  only_awk: bool = False, selected_patches: set = None,
-                 enabled_mod_ids: set = None, selected_tool: str = ""):
+                 enabled_mod_ids: set = None, selected_tool: str = "",
+                 mode: str = "standard"):
         super().__init__()
         self.exe_path = exe_path
         self.game_dir = game_dir
@@ -54,9 +57,28 @@ class PatcherWorker(QThread):
         self.selected_patches = selected_patches
         self.enabled_mod_ids = enabled_mod_ids
         self.selected_tool = selected_tool
+        self.mode = mode if mode in {"standard", "compatible"} else "standard"
         self._is_running = True
+        self._tks_exe_replaced = False
+        self._tks_exe_conflict = False
         # 辅助工具注入追踪: {相对路径: True=新建 | False=覆盖已有}
         self._tool_injected_files: dict[str, bool] = {}
+        self._launcher_dir: str = ""
+        self._recovery_task_id: str = ""
+
+    @classmethod
+    def from_context(cls, context: LaunchContext, **kwargs):
+        """从不可变启动快照创建 Worker，避免启动期间读取 UI 状态。"""
+        ctx = context.normalized()
+        return cls(
+            exe_path=ctx.exe_path,
+            game_dir=ctx.game_dir,
+            selected_patches=set(ctx.selected_patches),
+            enabled_mod_ids=set(ctx.enabled_mod_ids),
+            selected_tool=ctx.selected_tool,
+            mode=ctx.mode,
+            **kwargs,
+        )
 
     def _log(self, msg: str):
         self.log_emitted.emit(msg)
@@ -74,6 +96,7 @@ class PatcherWorker(QThread):
             self._log(f"[FATAL] 未捕获异常: {e}")
             import traceback
             self._log(traceback.format_exc())
+            # 异常路径不在未知游戏进程状态下强行恢复；保留 active 快照交给下次启动确认。
             self.finished.emit(False, {"error": str(e)})
 
     def _do_run(self):
@@ -85,6 +108,9 @@ class PatcherWorker(QThread):
             exe_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # workers/ -> root
         if not exe_dir:
             exe_dir = os.getcwd()
+        self._launcher_dir = exe_dir
+        self._recovery_task_id = begin_snapshot(
+            exe_dir, self.game_dir or os.path.dirname(self.exe_path), self.exe_path)
 
         self._log(f"启动器目录: {exe_dir}")
         self._log(f"工作目录: {os.getcwd()}")
@@ -100,6 +126,7 @@ class PatcherWorker(QThread):
             game_dir=self.game_dir,
             selected_patches=self.selected_patches,
             enabled_mod_ids=self.enabled_mod_ids,
+            mode=self.mode,
             disabled_patches={
                 "save_entry_check_fix",
                 "save_stream_error_fix",
@@ -119,6 +146,7 @@ class PatcherWorker(QThread):
         # ── Phase 1: 启动前准备 (config/MOD/WarPC/TKAct 截断) ──
         pre = pipeline.run_pre_launch()
         if pre.error:
+            finish_snapshot(self._launcher_dir, self._recovery_task_id)
             self.finished.emit(False, pre.as_dict())
             return
 
@@ -127,6 +155,13 @@ class PatcherWorker(QThread):
             pipeline.loaded_mods,
             game_dir=self.game_dir or os.getcwd(),
         )
+        if self._tks_exe_conflict:
+            pipeline.cleanup()
+            self._restore_tks_exe(self.game_dir or os.getcwd())
+            finish_snapshot(self._launcher_dir, self._recovery_task_id)
+            self._log("启动已取消：请只保留一个 TKS.exe 替换 MOD")
+            self.finished.emit(False, {"error": "multiple TKS.exe replacement mods"})
+            return
 
         # ── GUI 特有: 辅助工具注入 ──
         self._inject_tool_files(exe_dir, self.game_dir or os.getcwd())
@@ -142,11 +177,27 @@ class PatcherWorker(QThread):
             )
         except Exception as e:
             pipeline.cleanup()
+            self._remove_tool_files(self.game_dir or os.getcwd())
+            self._restore_tks_exe(self.game_dir or os.getcwd())
+            finish_snapshot(self._launcher_dir, self._recovery_task_id)
             self._log(f"[ERROR] 无法启动 {tks_path}: {e}")
             self.finished.emit(False, {"error": f"launch failed: {e}"})
             return
         self._log(f"  TKS.exe PID = {tks_proc.pid} (CREATE_SUSPENDED)")
-        self._status("游戏已启动 (已挂起)，正在应用补丁...", True)
+        pipeline.result.process_started = True
+        if self.mode == "compatible":
+            # 兼容模式不读取或修改目标进程内存，直接恢复主进程并监控其退出。
+            resume_process(tks_proc.pid)
+            self._status("游戏运行中（兼容模式）", True)
+            self._log("兼容模式: 已跳过目标进程检测和内存补丁")
+            pipeline.wait_game_exit(tks_proc, 0)
+            pipeline.cleanup()
+            self._remove_tool_files(self.game_dir or os.getcwd())
+            self._restore_tks_exe(self.game_dir or os.getcwd())
+            finish_snapshot(self._launcher_dir, self._recovery_task_id)
+            self.finished.emit(True, pipeline.result.as_dict())
+            return
+        self._status("正在应用游戏功能...", True)
 
         # ── 进程检测 (早期 + 加密版后备) ──
         target_pid, direct_mode, version_label, _need_resume_pid, \
@@ -154,12 +205,16 @@ class PatcherWorker(QThread):
                 tks_proc, SKIMFSTDLG_SENTINEL
             )
         if target_pid == 0:
+            pipeline.cleanup()
+            self._remove_tool_files(self.game_dir or os.getcwd())
+            self._restore_tks_exe(self.game_dir or os.getcwd())
+            finish_snapshot(self._launcher_dir, self._recovery_task_id)
             self.finished.emit(False, {"error": "no target process"})
             return
 
         self._log(f"  版本: {version_label}")
         self._log(f"  目标 PID: {target_pid}, 直接模式: {direct_mode}")
-        self._status(f"目标进程 PID={target_pid}，正在应用补丁...", True)
+        self._status("正在应用游戏功能...", True)
 
         # ── Phase 2: 应用补丁 (委托给 pipeline) ──
         result = pipeline.run_post_launch(
@@ -197,12 +252,15 @@ class PatcherWorker(QThread):
 
         # ── 等待游戏退出 ──
         self._log("\n等待游戏退出...")
-        self._status("补丁已生效，等待游戏退出...", True)
+        self._status("游戏功能已生效，游戏运行中" if result.success
+                     else "游戏运行中（部分功能未应用）", True)
         pipeline.wait_game_exit(tks_proc, target_pid)
 
         # ── 收尾 ──
         pipeline.cleanup()
         self._remove_tool_files(self.game_dir or os.getcwd())
+        self._restore_tks_exe(self.game_dir or os.getcwd())
+        finish_snapshot(self._launcher_dir, self._recovery_task_id)
 
         self.finished.emit(result.success, result.as_dict())
 
@@ -281,7 +339,7 @@ class PatcherWorker(QThread):
                     version_label = "TKS 加密版 (子进程模式)"
                     en = children[0].szExeFile.decode('ascii', errors='replace')
                     self._log(f"  检测到子进程: PID={target_pid} Name={en} -> {version_label}")
-                    self._overlay("正在加载游戏补丁...", False)
+                    self._overlay("正在加载游戏功能...", False)
                     for _ in range(60):
                         if get_module_base(target_pid):
                             break
@@ -312,7 +370,7 @@ class PatcherWorker(QThread):
                                     code_buf = bytearray(sz)
                                     code_buf[:nr] = raw[:nr]
                                     self._log(f"  游戏代码已确认: base=0x{tb:08X} -> {version_label}")
-                                    self._overlay("正在加载游戏补丁...", False)
+                                    self._overlay("正在加载游戏功能...", False)
                                 else:
                                     _fallback_checked = True
                                     self._log(f"  主进程代码段不含游戏特征 (可能是加密壳), 等待子进程...")
@@ -379,6 +437,7 @@ class PatcherWorker(QThread):
         必须在 process launch 之前完成。
         """
         tks_exe_mod = None
+        tks_exe_payload = None
         tks_exe_count = 0
         for m in loaded_mods:
             if getattr(m, 'mod_type', '') == "tks_exe":
@@ -386,7 +445,9 @@ class PatcherWorker(QThread):
                 if tks_exe_mod is None:
                     tks_exe_mod = m
         if tks_exe_count > 1:
-            self._log(f"  [WARN] 检测到 {tks_exe_count} 个 TKS.exe 替换 MOD, 仅使用第一个: {tks_exe_mod.name}")
+            self._tks_exe_conflict = True
+            self._log(f"  [ERROR] 检测到 {tks_exe_count} 个 TKS.exe 替换 MOD，无法安全选择")
+            return False
         if not tks_exe_mod:
             return False
         try:
@@ -397,19 +458,43 @@ class PatcherWorker(QThread):
             if os.path.isfile(tks_target) and not os.path.isfile(tks_orig):
                 shutil.copy2(tks_target, tks_orig)
                 self._log(f"  备份: TKS.exe → TKS.exe.mod_orig")
-            with _zf.ZipFile(tks_exe_mod.path, 'r') as zf:
-                if "resources/TKS.exe" in zf.namelist():
-                    exe_data = zf.read("resources/TKS.exe")
+            if getattr(tks_exe_mod, "_data_raw", None):
+                import io
+                with _zf.ZipFile(io.BytesIO(tks_exe_mod._data_raw), 'r') as zf:
+                    tks_exe_payload = zf.read("resources/TKS.exe") if "resources/TKS.exe" in zf.namelist() else None
+            else:
+                with _zf.ZipFile(tks_exe_mod.path, 'r') as zf:
+                    tks_exe_payload = zf.read("resources/TKS.exe") if "resources/TKS.exe" in zf.namelist() else None
+            if tks_exe_payload is not None:
+                    exe_data = tks_exe_payload
                     with open(tks_target, 'wb') as f:
                         f.write(exe_data)
+                    self._tks_exe_replaced = True
                     self._log(f"  已替换 TKS.exe ({len(exe_data):,} bytes)")
                     return True
-                else:
-                    self._log(f"  [ERROR] MOD 中未找到 resources/TKS.exe")
-                    return False
+            self._log(f"  [ERROR] MOD 中未找到 resources/TKS.exe")
+            return False
         except Exception as e:
             self._log(f"  [ERROR] TKS.exe 替换失败: {e}")
             return False
+
+    def _restore_tks_exe(self, game_dir: str):
+        """恢复本次启动替换的 TKS.exe，避免第三方 EXE 永久留在游戏目录。"""
+        if not self._tks_exe_replaced:
+            return
+        target = os.path.join(game_dir, "TKS.exe")
+        backup = target + ".mod_orig"
+        try:
+            if os.path.isfile(backup):
+                shutil.copy2(backup, target)
+                os.remove(backup)
+                self._log("已恢复原版 TKS.exe")
+            else:
+                self._log("[WARN] 找不到 TKS.exe 备份，无法自动恢复")
+        except Exception as e:
+            self._log(f"[WARN] 恢复 TKS.exe 失败: {e}")
+        finally:
+            self._tks_exe_replaced = False
 
     def stop(self):
         self._is_running = False

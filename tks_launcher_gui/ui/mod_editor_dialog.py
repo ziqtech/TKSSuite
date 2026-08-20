@@ -91,8 +91,8 @@ class ModEditorDialog(QDialog):
 
         # 提示
         self._label_info = QLabel("")
+        self._label_info.setObjectName("hintLabel")
         self._label_info.setWordWrap(True)
-        self._label_info.setStyleSheet("color: #888;")
         layout.addWidget(self._label_info)
 
         # 底部按钮

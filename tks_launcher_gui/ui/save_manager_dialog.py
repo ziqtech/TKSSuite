@@ -135,8 +135,8 @@ class SaveManagerDialog(QDialog):
 
         # 当前状态预览
         self._state_label = QLabel()
+        self._state_label.setObjectName("hintLabel")
         self._state_label.setWordWrap(True)
-        self._state_label.setStyleSheet("color: gray; font-size: 11px;")
         create_lay.addWidget(self._state_label)
 
         layout.addWidget(create_group)
@@ -256,11 +256,18 @@ class SaveManagerDialog(QDialog):
             patch_state = state.patches
             mod_state = state.mods
             tool = state.tool
+            mode = state.mode
+            game_path = state.last_game_path
+            state_schema_version = state.schema_version
+        else:
+            mode = "standard"
+            game_path = ""
+            state_schema_version = 2
 
         try:
             zip_path = create_backup(
                 self._backups_dir, self._game_dir, name,
-                patch_state, mod_state, tool)
+                patch_state, mod_state, tool, mode, game_path, state_schema_version)
         except Exception as e:
             QMessageBox.critical(self, "备份失败", f"创建备份时出错:\n{e}")
             return
@@ -303,7 +310,10 @@ class SaveManagerDialog(QDialog):
                     self._backups_dir, self._game_dir, auto_name,
                     cur_state.patches if cur_state else {},
                     cur_state.mods if cur_state else {},
-                    cur_state.tool if cur_state else "")
+                    cur_state.tool if cur_state else "",
+                    cur_state.mode if cur_state else "standard",
+                    cur_state.last_game_path if cur_state else "",
+                    cur_state.schema_version if cur_state else 2)
                 self._log_msg(f"恢复前已自动备份当前存档: {auto_name}")
             except Exception as e:
                 self._log_msg(f"⚠ 自动备份失败 (继续恢复): {e}")
@@ -319,7 +329,7 @@ class SaveManagerDialog(QDialog):
         self._log_msg(f"已恢复 {count} 个存档文件")
 
         # 询问是否恢复补丁状态
-        if self._apply_state and (backup.patch_state or backup.mod_state):
+        if self._apply_state and (backup.patch_state or backup.mod_state or backup.mode != "standard"):
             # 检测是否有差异
             has_diff = self._has_state_diff(backup)
             if has_diff:
@@ -333,6 +343,8 @@ class SaveManagerDialog(QDialog):
                         "patches": backup.patch_state,
                         "mods": backup.mod_state,
                         "tool": backup.tool,
+                        "mode": backup.mode,
+                        "last_game_path": backup.game_path,
                     })
                     self._log_msg("补丁状态已恢复")
                     self._update_state_preview()
@@ -351,6 +363,10 @@ class SaveManagerDialog(QDialog):
         if cur.mods != backup.mod_state:
             return True
         if cur.tool != backup.tool:
+            return True
+        if cur.mode != backup.mode:
+            return True
+        if backup.game_path and cur.last_game_path != backup.game_path:
             return True
         return False
 

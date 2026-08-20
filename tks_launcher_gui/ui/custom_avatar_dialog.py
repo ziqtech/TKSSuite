@@ -477,10 +477,9 @@ class CustomAvatarDialog(QDialog):
         h.setContentsMargins(0, 0, 0, 0)
         # 预览图在左
         preview = QLabel()
+        preview.setObjectName("avatarPreview")
         preview.setFixedSize(size, size)
         preview.setAlignment(Qt.AlignCenter)
-        preview.setStyleSheet(
-            "QLabel { border: 2px solid #555; background: #1a1a1a; }")
         h.addWidget(preview)
         # 标签在右，文字右对齐
         lbl = QLabel(label)

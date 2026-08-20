@@ -259,7 +259,7 @@ class CustomMusicDialog(QDialog):
         bottom.addWidget(btn_add)
 
         self._now_playing = QLabel("未播放")
-        self._now_playing.setStyleSheet("color: #888;")
+        self._now_playing.setObjectName("nowPlaying")
         bottom.addWidget(self._now_playing)
 
         bottom.addStretch()
@@ -491,13 +491,19 @@ class CustomMusicDialog(QDialog):
         name = self._current_entry.filename if self._current_entry else ""
         if mode == "playing" and name:
             self._now_playing.setText(f"正在播放：{name}")
-            self._now_playing.setStyleSheet(f"color: {COLOR_MODIFIED};")
+            self._set_now_playing_state(True)
         elif mode == "paused" and name:
             self._now_playing.setText(f"已暂停：{name}")
-            self._now_playing.setStyleSheet("color: #888;")
+            self._set_now_playing_state(False)
         else:
             self._now_playing.setText("未播放")
-            self._now_playing.setStyleSheet("color: #888;")
+            self._set_now_playing_state(False)
+
+    def _set_now_playing_state(self, playing: bool) -> None:
+        """播放状态样式走主题 #nowPlaying[state] 规则, 动态属性需重新 polish。"""
+        self._now_playing.setProperty("state", "playing" if playing else "")
+        self._now_playing.style().unpolish(self._now_playing)
+        self._now_playing.style().polish(self._now_playing)
 
     # ────────────────────────────────────────────────
     # 修改 / 删除 / 新增
