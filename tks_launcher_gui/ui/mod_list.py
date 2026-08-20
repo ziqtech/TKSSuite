@@ -14,6 +14,9 @@ from PySide6.QtWidgets import (
 )
 
 from core.mod_loader import ModInfo, scan_mods
+from ui.centered_checkbox_delegate import (
+    CenteredCheckBoxDelegate, position_checkbox_indicator,
+)
 from editor_utils.dock_components import create_dock
 
 # 行布局: 名称 + 分类 + 作者; ID/加载顺序/描述进悬浮提示与详情面板
@@ -112,6 +115,8 @@ class ModListWidget(QWidget):
         self._table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self._table.setSelectionMode(QAbstractItemView.SingleSelection)
         self._table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self._table.setWordWrap(False)
+        self._table.setTextElideMode(Qt.ElideRight)
         self._table.verticalHeader().setVisible(False)
         self._table.verticalHeader().setDefaultSectionSize(32)
         self._table.currentItemChanged.connect(self._on_current_changed)
@@ -119,10 +124,15 @@ class ModListWidget(QWidget):
         h = self._table.horizontalHeader()
         h.setHighlightSections(False)
         h.setSectionResizeMode(_COL_ENABLE, QHeaderView.Fixed)
-        self._table.setColumnWidth(_COL_ENABLE, 28)
+        self._table.setColumnWidth(_COL_ENABLE, 40)
         h.setSectionResizeMode(_COL_NAME, QHeaderView.Stretch)
-        h.setSectionResizeMode(_COL_CATEGORY, QHeaderView.ResizeToContents)
-        h.setSectionResizeMode(_COL_AUTHOR, QHeaderView.ResizeToContents)
+        # 分类使用彩色 Tag，给它稳定的呼吸空间，避免长分类被压成色块。
+        h.setSectionResizeMode(_COL_CATEGORY, QHeaderView.Fixed)
+        self._table.setColumnWidth(_COL_CATEGORY, 120)
+        h.setSectionResizeMode(_COL_AUTHOR, QHeaderView.Interactive)
+        self._table.setColumnWidth(_COL_AUTHOR, 96)
+        self._table.setItemDelegateForColumn(
+            _COL_ENABLE, CenteredCheckBoxDelegate(self._table))
 
         # 启用列表头叠加一个真实 QCheckBox（受 QCheckBox::indicator QSS 样式控制，
         # 与表格单元格复选框外观一致），用作全选/全不选
@@ -266,13 +276,7 @@ class ModListWidget(QWidget):
         if w <= 0:
             self._header_check.setVisible(False)
             return
-        sh = self._header_check.sizeHint()
-        cw, ch = sh.width(), sh.height()
-        self._header_check.setGeometry(
-            x + (w - cw) // 2,
-            (h.height() - ch) // 2,
-            cw, ch,
-        )
+        position_checkbox_indicator(self._header_check, x, w, h.height())
         self._header_check.setVisible(True)
         self._header_check.raise_()
 

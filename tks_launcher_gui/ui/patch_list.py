@@ -15,6 +15,9 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
 )
 from core.config_loader import PatchDef
+from ui.centered_checkbox_delegate import (
+    CenteredCheckBoxDelegate, position_checkbox_indicator,
+)
 from editor_utils.dock_components import create_dock
 
 # 可选补丁区固定默认高度（供 MOD 详情预览区同步高度参照）
@@ -155,16 +158,20 @@ class PatchListWidget(QWidget):
         table.setSelectionBehavior(QAbstractItemView.SelectRows)
         table.setSelectionMode(QAbstractItemView.SingleSelection)
         table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        table.setWordWrap(False)
+        table.setTextElideMode(Qt.ElideRight)
         table.verticalHeader().setVisible(False)
         table.verticalHeader().setDefaultSectionSize(30)
 
         h = table.horizontalHeader()
         h.setHighlightSections(False)
-        # 启用列固定为窄宽度（仅容纳居中的复选框）
+        # 启用列保留足够左右留白，复选框由专用委托严格居中绘制。
         h.setSectionResizeMode(_COL_ENABLE, QHeaderView.Fixed)
-        table.setColumnWidth(_COL_ENABLE, 28)
+        table.setColumnWidth(_COL_ENABLE, 40)
         h.setSectionResizeMode(_COL_NAME, QHeaderView.Stretch)
         h.setSectionResizeMode(_COL_TYPE, QHeaderView.ResizeToContents)
+        table.setItemDelegateForColumn(
+            _COL_ENABLE, CenteredCheckBoxDelegate(table))
 
         table.itemChanged.connect(self._on_item_changed)
         table.itemSelectionChanged.connect(self._on_selection_changed)
@@ -248,11 +255,7 @@ class PatchListWidget(QWidget):
         if w <= 0:
             chk.setVisible(False)
             return
-        sh = chk.sizeHint()
-        chk.setGeometry(
-            x + (w - sh.width()) // 2,
-            (h.height() - sh.height()) // 2,
-            sh.width(), sh.height())
+        position_checkbox_indicator(chk, x, w, h.height())
         chk.setVisible(True)
         chk.raise_()
 
