@@ -750,9 +750,27 @@ QFrame#FakeInputBox > QPushButton:hover {
     background-color: #ececf1;
     color: #2d2d2d;
 }
-QFrame#FakeInputBox > QPushButton:first-child:hover {
+QFrame#FakeInputBox > QPushButton:first:hover {
     border-top-left-radius: 7px;
     border-bottom-left-radius: 7px;
+}
+QFrame#FakeInputBox > QPushButton#FakeInputRightButton {
+    border-right: none;
+    border-top-right-radius: 7px;
+    border-bottom-right-radius: 7px;
+}
+QFrame#FakeInputBox > QPushButton#FakeInputRightButton:hover {
+    border-right: none;
+    border-top-right-radius: 7px;
+    border-bottom-right-radius: 7px;
+}
+QFrame#FakeInputBox > QPushButton#StatusPickerButton {
+    border: none;
+    border-radius: 7px;
+}
+QFrame#FakeInputBox > QPushButton#StatusPickerButton:hover {
+    background-color: #ececf1;
+    color: #2d2d2d;
 }
 QFrame#FakeInputBox > QComboBox {
     border: none;
@@ -955,6 +973,22 @@ QPushButton[selected="true"] {
 QPushButton[selected="false"] {
     background-color: transparent;
     border: 1px solid transparent;
+}
+QToolButton#IconPickerButton {
+    background-color: transparent;
+    border: 1px solid transparent;
+    border-radius: 8px;
+    padding: 1px 2px 3px 2px;
+    color: #2d2d2d;
+}
+QToolButton#IconPickerButton:hover {
+    background-color: #f1f1f1;
+    border-color: #d9d9e3;
+}
+QToolButton#IconPickerButton[selected="true"] {
+    background-color: rgba(16, 163, 127, 0.14);
+    border: 2px solid #10a37f;
+    color: #087f63;
 }
 QPushButton#PortraitTile {
     padding: 0px;

@@ -48,7 +48,7 @@ from PySide6.QtWidgets import (
     QFileDialog, QFrame, QGridLayout, QHBoxLayout, QHeaderView, QLabel,
     QLineEdit, QMainWindow, QMenu, QMenuBar, QMessageBox,
     QPushButton, QScrollArea, QSizePolicy, QSplitter, QTableWidget,
-    QTableWidgetItem, QVBoxLayout, QWidget
+    QTableWidgetItem, QToolButton, QVBoxLayout, QWidget
 )
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
@@ -334,13 +334,27 @@ class SkillPickerDialog(QDialog):
         self.accept()
 
 class IconPickerDialog(QDialog):
-    def __init__(self, parent, mu_sprites, get_pixmap_fn, cur_val):
+    @staticmethod
+    def _sprite_pixmap(sprite, max_size=(40, 40)):
+        try:
+            from PIL import Image
+            from PySide6.QtGui import QImage, QPixmap
+
+            img = sprite.copy()
+            img.thumbnail(max_size, Image.NEAREST)
+            img = img.convert('RGBA')
+            data = img.tobytes('raw', 'RGBA')
+            qimg = QImage(data, img.width, img.height, QImage.Format_RGBA8888)
+            return QPixmap.fromImage(qimg)
+        except Exception:
+            return None
+
+    def __init__(self, parent, mu_sprites, cur_val):
         super().__init__(parent)
         self.setWindowTitle("选择图标 (索引 = 游戏值 + 130)")
         self.resize(780, 560)
         self.selected_value = None
         self.mu_sprites = mu_sprites
-        self.get_pixmap_fn = get_pixmap_fn
         self.cur_val = cur_val
         layout = QVBoxLayout(self)
         scroll = QScrollArea()
@@ -353,18 +367,31 @@ class IconPickerDialog(QDialog):
             if mu_sprites[si] is None: continue
             game_idx = si - 130
             r, c = divmod(si, COLS)
-            btn = QPushButton()
-            btn.setFixedSize(52, 56)
+            tile = QWidget()
+            tile_layout = QVBoxLayout(tile)
+            tile_layout.setContentsMargins(0, 0, 0, 0)
+            tile_layout.setSpacing(1)
+
+            btn = QToolButton()
+            btn.setObjectName("IconPickerButton")
+            btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
+            btn.setFixedSize(52, 48)
             btn.setCursor(Qt.PointingHandCursor)
             btn.setProperty("selected", "true" if game_idx == cur_val else "false")
-            pix = get_pixmap_fn(game_idx, (40, 40))
+            pix = self._sprite_pixmap(mu_sprites[si], (40, 40))
             if pix:
                 btn.setIcon(QIcon(pix))
                 btn.setIconSize(pix.size())
-            btn.setText(str(game_idx))
             btn.setToolTip(f"精灵索引: {si}\n游戏值: {game_idx}")
             btn.clicked.connect(lambda checked, v=game_idx: self._select(v))
-            self.grid.addWidget(btn, r, c)
+            tile_layout.addWidget(btn, 0, Qt.AlignHCenter)
+
+            index_label = QLabel(str(game_idx))
+            index_label.setProperty("class", "ChipLabel")
+            index_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            index_label.setToolTip(btn.toolTip())
+            tile_layout.addWidget(index_label, 0, Qt.AlignHCenter)
+            self.grid.addWidget(tile, r, c, Qt.AlignmentFlag.AlignTop)
         scroll.setWidget(inner)
         layout.addWidget(scroll)
         bl = QHBoxLayout()
@@ -471,6 +498,96 @@ class UseRightPickerDialog(QDialog):
 # ============================================================
 # GUI 核心编辑器
 # ============================================================
+class ItemListTable(QTableWidget):
+    """物品列表表格：默认宽度保证各列可读，窗口变大时按权重小幅自适应。"""
+
+    _BASE_WIDTHS = (56, 44, 60, 50, 170, 86, 66)
+    _MIN_WIDTHS = (48, 36, 52, 44, 96, 72, 54)
+    _GROWTH_WEIGHTS = (0.02, 0.01, 0.03, 0.03, 0.78, 0.08, 0.05)
+    _SHRINK_WEIGHTS = (0.03, 0.02, 0.03, 0.03, 0.77, 0.07, 0.05)
+
+    def __init__(self, rows, columns, parent=None):
+        super().__init__(rows, columns, parent)
+        self._applying_columns = False
+        header = self.horizontalHeader()
+        header.setSectionResizeMode(QHeaderView.Interactive)
+        header.setStretchLastSection(False)
+        header.setMinimumSectionSize(min(self._MIN_WIDTHS))
+        self.apply_responsive_widths()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self.apply_responsive_widths()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.apply_responsive_widths()
+
+    def apply_responsive_widths(self):
+        if self._applying_columns or self.columnCount() != 7:
+            return
+        self._applying_columns = True
+        try:
+            available = max(self.viewport().width(), sum(self._MIN_WIDTHS))
+            base_total = sum(self._BASE_WIDTHS)
+            min_total = sum(self._MIN_WIDTHS)
+            if available >= base_total:
+                extra = available - base_total
+                widths = [
+                    base + extra * weight
+                    for base, weight in zip(self._BASE_WIDTHS, self._GROWTH_WEIGHTS)
+                ]
+            else:
+                deficit = base_total - available
+                name_width = max(
+                    self._MIN_WIDTHS[4],
+                    self._BASE_WIDTHS[4] - deficit * self._SHRINK_WEIGHTS[4],
+                )
+                nonname_budget = available - name_width
+                nonname_base_total = base_total - self._BASE_WIDTHS[4]
+                nonname_min_total = min_total - self._MIN_WIDTHS[4]
+                if nonname_budget >= nonname_min_total:
+                    nonname_deficit = nonname_base_total - nonname_budget
+                    nonname_weights = [
+                        weight
+                        for index, weight in enumerate(self._SHRINK_WEIGHTS)
+                        if index != 4
+                    ]
+                    weight_total = sum(nonname_weights)
+                    nonname_widths = [
+                        max(
+                            min_w,
+                            base - nonname_deficit * weight / weight_total,
+                        )
+                        for min_w, base, weight in zip(
+                            (
+                                self._MIN_WIDTHS[0:4]
+                                + self._MIN_WIDTHS[5:7]
+                            ),
+                            (
+                                self._BASE_WIDTHS[0:4]
+                                + self._BASE_WIDTHS[5:7]
+                            ),
+                            nonname_weights,
+                        )
+                    ]
+                else:
+                    nonname_widths = list(
+                        self._MIN_WIDTHS[0:4] + self._MIN_WIDTHS[5:7]
+                    )
+                    name_width = available - sum(nonname_widths)
+                widths = (
+                    nonname_widths[0:4]
+                    + [name_width]
+                    + nonname_widths[4:6]
+                )
+            widths[4] += available - sum(widths)
+            for column, width in enumerate(widths):
+                self.setColumnWidth(column, max(1, round(width)))
+        finally:
+            self._applying_columns = False
+
+
 class ItemEditorApp(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -596,18 +713,9 @@ class ItemEditorApp(QMainWindow):
         main_layout.addWidget(self.splitter, 1)
 
         # 左侧: 物品列表 (列顺序与原版一致: 图标在最前)
-        self.table = QTableWidget(0, 7)
+        self.table = ItemListTable(0, 7)
         self.table.setHorizontalHeaderLabels(['图标', '#', 'ID', '页面', '物品名称', '权限', '价格'])
-        self.table.setColumnWidth(0, 56)
-        self.table.setColumnWidth(1, 40)
-        self.table.setColumnWidth(2, 50)
-        self.table.setColumnWidth(3, 50)
-        self.table.setColumnWidth(4, 160)
-        self.table.setColumnWidth(5, 90)
-        self.table.setColumnWidth(6, 50)
         self.table.verticalHeader().setDefaultSectionSize(44)
-        # 名称列随列表面板伸缩，价格列保持紧凑的默认宽度。
-        self.table.horizontalHeader().setSectionResizeMode(4, QHeaderView.Stretch)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SingleSelection)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
@@ -736,6 +844,7 @@ class ItemEditorApp(QMainWindow):
             lbl_t.setProperty("class", "PropLabel")
             status_grid.addWidget(lbl_t, 0, si, Qt.AlignTop)
             container = QWidget()
+            container.setObjectName("TransparentBg")
             container_layout = FlowLayout(margin=0, spacing=2)
             container.setLayout(container_layout)
             status_grid.addWidget(container, 1, si, Qt.AlignTop)
@@ -801,6 +910,7 @@ class ItemEditorApp(QMainWindow):
         elif ft in ('tkt', 'icon', 'use_right', 'combat_flag', 'extra_flags', 'skill'):
             inp = QLineEdit()
             btn = QPushButton("...")
+            btn.setObjectName("FakeInputRightButton")
             btn.setFixedWidth(28)
             btn.setCursor(Qt.PointingHandCursor)
             extra = QLabel("")
@@ -826,6 +936,7 @@ class ItemEditorApp(QMainWindow):
         elif ft == 'mask':
             is_cause = fn.startswith('cause_')
             btn = QPushButton("选择导致状态…" if is_cause else "选择解除状态…")
+            btn.setObjectName("StatusPickerButton")
             hidden = QLineEdit()
             hidden.hide()
             box = QFrame()
@@ -837,6 +948,7 @@ class ItemEditorApp(QMainWindow):
             bh.addWidget(btn, 1)
             self.widget_map[fn] = hidden
             status_frame = QWidget()
+            status_frame.setObjectName("TransparentBg")
             status_frame.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
             self.extra_map[fn] = status_frame
             btn.clicked.connect(lambda _, f=fn: self._pick_status(f))
@@ -995,6 +1107,7 @@ class ItemEditorApp(QMainWindow):
             self.table.setItem(row, 5, QTableWidgetItem(rt))
             self.table.setItem(row, 6, QTableWidgetItem(str(r['price'])))
         self.table.blockSignals(False)
+        self.table.apply_responsive_widths()
 
     def _sort_by(self, col):
         """按列排序"""
@@ -1155,6 +1268,7 @@ class ItemEditorApp(QMainWindow):
             return
         for idx, nm in sel:
             chip = QWidget()
+            chip.setObjectName("TransparentBg")
             chip_lay = QHBoxLayout(chip)
             chip_lay.setContentsMargins(2, 1, 4, 1)
             chip_lay.setSpacing(2)
@@ -1209,7 +1323,7 @@ class ItemEditorApp(QMainWindow):
             QMessageBox.information(self, "提示", "未加载 Mu.JVG 图标文件")
             return
         cur_val = int(self.widget_map[fn].text() or 0)
-        dlg = IconPickerDialog(self, self._mu_sprites, self._get_icon_pixmap, cur_val)
+        dlg = IconPickerDialog(self, self._mu_sprites, cur_val)
         if dlg.exec() == QDialog.Accepted and dlg.selected_value is not None:
             self.widget_map[fn].setText(str(dlg.selected_value))
             self.extra_map[fn].setText(f"[图标 {dlg.selected_value}]")
