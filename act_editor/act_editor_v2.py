@@ -1840,11 +1840,12 @@ class ActEditorV2(QMainWindow):
         rl.addWidget(self.tabs, 1)
         splitter.addWidget(right)
 
-        # 左右面板保持可读宽度，中央栏随窗口扩展。
-        splitter.setStretchFactor(0, 0)
-        splitter.setStretchFactor(1, 1)
+        # 左侧列表随窗口一起响应式拉伸（让出一部分增量），中央栏仍是主扩容区，
+        # 右侧参数面板保持可读宽度。拉伸权重决定最大化时各栏分到的剩余空间比例。
+        splitter.setStretchFactor(0, 1)
+        splitter.setStretchFactor(1, 2)
         splitter.setStretchFactor(2, 0)
-        splitter.setSizes([280, 800, 520])
+        splitter.setSizes([300, 800, 520])
 
         # 底部路径栏
         path_layout = QHBoxLayout()
