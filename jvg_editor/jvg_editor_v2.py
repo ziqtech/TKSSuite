@@ -874,7 +874,7 @@ class JVGEditor(QMainWindow):
         super().__init__()
         self.setObjectName("EditorWindow")
         self.setWindowTitle(format_title("jvg_editor"))
-        self.resize(1400, 900)
+        self.resize(1600, 900)
 
         # 窗口居中显示
         screen = QApplication.primaryScreen()
@@ -1090,7 +1090,92 @@ class JVGEditor(QMainWindow):
         QMessageBox.information(self, "关于编辑器",
             format_about_header('jvg_editor'))
 
+    def _create_operations_toolbar(self, title):
+        toolbar = QToolBar(title, self)
+        toolbar.setObjectName("EditorToolbar")
+        toolbar.setMovable(False)
+        toolbar.setFloatable(False)
+        toolbar.setToolButtonStyle(Qt.ToolButtonTextOnly)
+        self.addToolBar(Qt.TopToolBarArea, toolbar)
+        return toolbar
+
+    def _setup_operations_toolbar(self):
+        """在菜单栏下方创建帧、导出和头像操作工具栏。"""
+        frame_toolbar = self._create_operations_toolbar("帧导入与替换")
+
+        # 帧导入与替换
+        frame_toolbar.addWidget(QLabel("帧导入与替换"))
+
+        self._chk_bbox = QCheckBox("BBOX裁剪")
+        self._chk_bbox.setToolTip("新增图片时按 alpha 非透明区域裁剪并计算偏移（图片水平中心对齐 0）")
+        self._chk_rebuild = QCheckBox("自动重算色板")
+        self._chk_rebuild.setToolTip("新增图片时新旧图片一起重新计算色板（新图精确，旧帧可能轻微调整）")
+        frame_toolbar.addWidget(self._chk_bbox)
+        frame_toolbar.addWidget(self._chk_rebuild)
+        frame_toolbar.addSeparator()
+
+        add_images_action = QAction("➕ 添加图片", self)
+        add_images_action.triggered.connect(self._add_images)
+        frame_toolbar.addAction(add_images_action)
+
+        replace_frame_action = QAction("🔄 替换选中", self)
+        replace_frame_action.triggered.connect(self._replace_frame)
+        frame_toolbar.addAction(replace_frame_action)
+
+        batch_images_action = QAction("📦 导入图集", self)
+        batch_images_action.triggered.connect(self._batch_replace_gridsheet)
+        frame_toolbar.addAction(batch_images_action)
+
+        delete_frame_action = QAction("❌ 删除选中", self)
+        delete_frame_action.triggered.connect(self._del_frame)
+        frame_toolbar.addAction(delete_frame_action)
+
+        help_action = QAction("?", self)
+        help_action.setToolTip(
+            "BBOX裁剪：按 alpha 非透明区域裁剪并计算偏移（图中心对齐 0）\n"
+            "　添加图片：裁剪透明边缘并计算偏移\n"
+            "　导入图集：bbox 模式（不勾选=精确匹配，按旧帧 offset 提取）\n\n"
+            "自动重算色板：勾选后新增图片时新旧图片一起重新计算色板（新图精确，旧帧可能轻微调整）\n"
+            "未勾选时，色板槽位不足则自动靠色（旧图不变，新图用旧图色板），不再弹窗\n\n"
+            "槽位充足时始终自动增量分配颜色，无需处理")
+        frame_toolbar.addAction(help_action)
+
+        # 导出
+        export_toolbar = self._create_operations_toolbar("导出")
+        export_toolbar.addWidget(QLabel("导出"))
+
+        export_single_action = QAction("📤 导出选中帧", self)
+        export_single_action.triggered.connect(partial(self._export, "single"))
+        export_toolbar.addAction(export_single_action)
+
+        export_group_action = QAction("📁 导出当前分组", self)
+        export_group_action.triggered.connect(partial(self._export, "group"))
+        export_toolbar.addAction(export_group_action)
+
+        export_grid_action = QAction("🗺️ 导出网格图集", self)
+        export_grid_action.triggered.connect(partial(self._export, "grid"))
+        export_toolbar.addAction(export_grid_action)
+
+        # 头像操作
+        self.addToolBarBreak(Qt.TopToolBarArea)
+        avatar_toolbar = self._create_operations_toolbar("头像操作")
+        avatar_toolbar.addWidget(QLabel("头像操作"))
+
+        self._act_toolbar_export_avatars = QAction("📤 导出全部头像", self)
+        self._act_toolbar_export_avatars.triggered.connect(self._export_all_avatars)
+        avatar_toolbar.addAction(self._act_toolbar_export_avatars)
+
+        self._act_toolbar_export_avatars_split = QAction("📤 导出每帧头像", self)
+        self._act_toolbar_export_avatars_split.triggered.connect(self._export_all_avatars_split)
+        avatar_toolbar.addAction(self._act_toolbar_export_avatars_split)
+
+        self._act_toolbar_import_avatars = QAction("📥 导入全部头像", self)
+        self._act_toolbar_import_avatars.triggered.connect(self._import_all_avatars)
+        avatar_toolbar.addAction(self._act_toolbar_import_avatars)
+
     def _setup_ui(self):
+        self._setup_operations_toolbar()
+
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
         main_layout = QVBoxLayout(central_widget)
@@ -1240,92 +1325,7 @@ class JVGEditor(QMainWindow):
         layout_form.addRow(btn_theme)
         top_docks_layout.addWidget(self._create_dock("视图与布局", layout_widget))
 
-        # 帧导入与替换 (2 列网格，节省纵向空间)
-        frame_ops_widget = QWidget()
-        frame_ops_layout = QGridLayout(frame_ops_widget)
-        frame_ops_layout.setContentsMargins(4, 4, 4, 4)
-        frame_ops_layout.setHorizontalSpacing(4)
-        frame_ops_layout.setVerticalSpacing(3)
-        frame_ops_layout.setColumnStretch(0, 1)
-        frame_ops_layout.setColumnStretch(1, 1)
-        btn_add_img = QPushButton("➕ 添加图片")
-        btn_add_img.clicked.connect(self._add_images)
-        btn_rep_img = QPushButton("🔄 替换选中")
-        btn_rep_img.clicked.connect(self._replace_frame)
-        btn_bat_img = QPushButton("📦 导入图集")
-        btn_bat_img.clicked.connect(self._batch_replace_gridsheet)
-        btn_del_img = QPushButton("❌ 删除选中")
-        btn_del_img.clicked.connect(self._del_frame)
-        # 内容区顶部：BBOX 裁剪 / 自动重算色板 开关
-        self._chk_bbox = QCheckBox("BBOX裁剪")
-        self._chk_bbox.setToolTip("新增图片时按 alpha 非透明区域裁剪并计算偏移（图片水平中心对齐 0）")
-        self._chk_rebuild = QCheckBox("自动重算色板")
-        self._chk_rebuild.setToolTip("新增图片时新旧图片一起重新计算色板（新图精确，旧帧可能轻微调整）")
-        frame_ops_layout.addWidget(self._chk_bbox, 0, 0)
-        frame_ops_layout.addWidget(self._chk_rebuild, 0, 1)
-        frame_ops_layout.addWidget(btn_add_img, 1, 0)
-        frame_ops_layout.addWidget(btn_rep_img, 1, 1)
-        frame_ops_layout.addWidget(btn_bat_img, 2, 0)
-        frame_ops_layout.addWidget(btn_del_img, 2, 1)
-        # 标题栏右侧：说明问号（复用主题内紧凑工具按钮样式）
-        btn_help = QToolButton()
-        btn_help.setObjectName("dockToolButton")
-        btn_help.setText("?")
-        btn_help.setToolTip(
-            "BBOX裁剪：按 alpha 非透明区域裁剪并计算偏移（图中心对齐 0）\n"
-            "　添加图片：裁剪透明边缘并计算偏移\n"
-            "　导入图集：bbox 模式（不勾选=精确匹配，按旧帧 offset 提取）\n\n"
-            "自动重算色板：勾选后新增图片时新旧图片一起重新计算色板（新图精确，旧帧可能轻微调整）\n"
-            "未勾选时，色板槽位不足则自动靠色（旧图不变，新图用旧图色板），不再弹窗\n\n"
-            "槽位充足时始终自动增量分配颜色，无需处理")
-        frame_ops_header = QHBoxLayout()
-        frame_ops_header.setSpacing(6)
-        frame_ops_header.addWidget(btn_help)
-        top_docks_layout.addWidget(self._create_dock("帧导入与替换", frame_ops_widget,
-                                                     header_layout=frame_ops_header,
-                                                     body_margins=(6, 4, 6, 4)))
-
-        # 导出 (2 列网格，第 3 个按钮跨列)
-        exp_widget = QWidget()
-        exp_layout = QGridLayout(exp_widget)
-        exp_layout.setContentsMargins(4, 4, 4, 4)
-        exp_layout.setHorizontalSpacing(4)
-        exp_layout.setVerticalSpacing(3)
-        exp_layout.setColumnStretch(0, 1)
-        exp_layout.setColumnStretch(1, 1)
-        btn_exp_single = QPushButton("📤 导出选中帧")
-        btn_exp_single.clicked.connect(partial(self._export, "single"))
-        btn_exp_grp = QPushButton("📁 导出当前分组")
-        btn_exp_grp.clicked.connect(partial(self._export, "group"))
-        btn_exp_grid = QPushButton("🗺️ 导出网格图集")
-        btn_exp_grid.clicked.connect(partial(self._export, "grid"))
-        exp_layout.addWidget(btn_exp_single, 0, 0)
-        exp_layout.addWidget(btn_exp_grp, 0, 1)
-        exp_layout.addWidget(btn_exp_grid, 1, 0, 1, 2)
-        top_docks_layout.addWidget(self._create_dock("导出", exp_widget, body_margins=(6, 4, 6, 4)))
-
-        # 头像操作 (2 列网格，第 3 个按钮跨列)
-        avatar_widget = QWidget()
-        avatar_layout = QGridLayout(avatar_widget)
-        avatar_layout.setContentsMargins(4, 4, 4, 4)
-        avatar_layout.setHorizontalSpacing(4)
-        avatar_layout.setVerticalSpacing(3)
-        avatar_layout.setColumnStretch(0, 1)
-        avatar_layout.setColumnStretch(1, 1)
-        self._btn_export_avatars = QPushButton("📤 导出全部头像")
-        self._btn_export_avatars.clicked.connect(self._export_all_avatars)
-        self._btn_export_avatars_split = QPushButton("📤 导出每帧头像")
-        self._btn_export_avatars_split.clicked.connect(self._export_all_avatars_split)
-        self._btn_import_avatars = QPushButton("📥 导入全部头像")
-        self._btn_import_avatars.clicked.connect(self._import_all_avatars)
-        avatar_layout.addWidget(self._btn_export_avatars, 0, 0)
-        avatar_layout.addWidget(self._btn_export_avatars_split, 0, 1)
-        avatar_layout.addWidget(self._btn_import_avatars, 1, 0, 1, 2)
-        self._grp_avatar = self._create_dock("头像操作", avatar_widget, body_margins=(6, 4, 6, 4))
-        self._grp_avatar.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)
-
         right_layout.addWidget(top_docks)
-        right_layout.addWidget(self._grp_avatar)
 
         # 游戏渲染预览 (选中帧实际渲染效果 + 物理偏移编辑 + Cha.JVG 阴影帧)
         right_layout.addWidget(self._build_preview_dock(), 3)
@@ -2799,12 +2799,12 @@ class JVGEditor(QMainWindow):
             self._act_export_avatars_split.setEnabled(is_fa)
         if self._act_import_avatars:
             self._act_import_avatars.setEnabled(is_fa)
-        if hasattr(self, '_btn_export_avatars'):
-            self._btn_export_avatars.setEnabled(is_fa)
-        if hasattr(self, '_btn_export_avatars_split'):
-            self._btn_export_avatars_split.setEnabled(is_fa)
-        if hasattr(self, '_btn_import_avatars'):
-            self._btn_import_avatars.setEnabled(is_fa)
+        if hasattr(self, '_act_toolbar_export_avatars'):
+            self._act_toolbar_export_avatars.setEnabled(is_fa)
+        if hasattr(self, '_act_toolbar_export_avatars_split'):
+            self._act_toolbar_export_avatars_split.setEnabled(is_fa)
+        if hasattr(self, '_act_toolbar_import_avatars'):
+            self._act_toolbar_import_avatars.setEnabled(is_fa)
 
     def _export_all_avatars(self):
         """导出全部头像：取所有偶数block的frame0(70×70)，以padding=1排列成近正方形图集"""
