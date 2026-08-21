@@ -34,14 +34,15 @@ class ModInfoPreviewWidget(QWidget):
         # 图文混排: 单个富文本浏览器, 预览图浮动到右上角, 文字自动环绕
         self._raw_pixmap: QPixmap | None = None
         self._detail = QTextBrowser()
+        self._detail.setObjectName("detailBox")  # 套用主题圆角内嵌组件样式 (LauncherPreviewPanel 内有覆盖规则)
         self._detail.setPlaceholderText("选中模组查看详情")
         self._detail.setOpenLinks(False)  # 点击图片锚点不导航, 交由我们处理
         self._detail.document().setDefaultStyleSheet("a { text-decoration: none; }")
         self._detail.anchorClicked.connect(self._on_anchor_clicked)
 
-        # body_margins 内收: 详情文档避开 DockBody 圆角, 融入卡片表面 (样式见主题 QSS)
+        # body_margins 内收: 详情文档避开 DockBody 圆角, 以圆角内嵌组件形式适配 (样式见主题 QSS)
         outer.addWidget(create_dock("模组信息", self._detail,
-                                    body_margins=(8, 4, 8, 8)))
+                                    body_margins=(8, 6, 8, 8)))
 
     def set_default_height(self, height: int):
         """设置预览区默认最小高度（含 DockHeader 标题栏）。"""

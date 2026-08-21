@@ -414,7 +414,7 @@ QWidget#DockBody {
 }
 QLabel#DockTitle {
     background-color: transparent;
-    color: #b4b4b4;
+    color: #d6d6d6;
     font-weight: bold;
 }
 QGraphicsView {
@@ -1262,7 +1262,8 @@ QWidget#LauncherModPanel QToolButton#dockToolButton {
 QTableWidget#LauncherPatchTable,
 QTableWidget#LauncherModTable {
     background-color: #262626;
-    border: none;
+    border: 1px solid #3a3a3a;
+    border-radius: 8px;
     gridline-color: #393939;
     alternate-background-color: #262626;
 }
@@ -1291,10 +1292,11 @@ QTextBrowser#detailBox {
     color: #ececec;
     padding: 12px 14px;
 }
-/* 模组信息面板: 详情文档融入卡片表面, 避免双重边框与直角溢出 */
+/* 模组信息面板: 详情文档以圆角内嵌组件形式适配 DockBody 圆角 */
 QWidget#LauncherPreviewPanel QTextBrowser#detailBox {
     background-color: transparent;
-    border: none;
+    border: 1px solid #3a3a3a;
+    border-radius: 8px;
     padding: 8px 10px;
 }
 QWidget#LauncherSummaryContent,
