@@ -25,6 +25,7 @@ class DropProbabilityPanel(ConfigPanelBase):
 
         # ── 概率设置 ──
         prob_group = QGroupBox("概率设置")
+        prob_group.setProperty("configEditorSurface", True)
         prob_layout = QFormLayout(prob_group)
 
         # 常规槽 (只读)
@@ -83,7 +84,7 @@ class DropProbabilityPanel(ConfigPanelBase):
         spin.setRange(0, 100)
         spin.setSingleStep(5)
         spin.setSuffix("%")
-        spin.setFixedWidth(60)
+        spin.setFixedWidth(90)
 
         # 联动
         def on_slider(val):

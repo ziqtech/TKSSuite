@@ -1265,6 +1265,62 @@ QLabel#RegularPctLabel {
     color: #178a39;
 }
 
+/* Config editor controls share the surrounding group-box surface. */
+QGroupBox[configEditorSurface="true"] {
+    background-color: transparent;
+}
+QGroupBox[configEditorSurface="true"] QSlider {
+    background-color: transparent;
+}
+QGroupBox[configEditorSurface="true"] QSlider::groove:horizontal {
+    background-color: transparent;
+    border: 1px solid #d9d9e3;
+}
+QGroupBox[configEditorSurface="true"] QSlider::sub-page:horizontal {
+    background-color: rgba(16, 163, 127, 0.18);
+    border-radius: 3px;
+}
+QGroupBox[configEditorSurface="true"] QSlider::handle:horizontal {
+    background-color: #9a9aa6;
+}
+QGroupBox[configEditorSurface="true"] QSlider::handle:horizontal:hover {
+    background-color: #10a37f;
+}
+QGroupBox[configEditorSurface="true"] QSpinBox,
+QGroupBox[configEditorSurface="true"] QDoubleSpinBox,
+QGroupBox[configEditorSurface="true"] QComboBox {
+    background-color: transparent;
+    border-color: #d9d9e3;
+}
+QGroupBox[configEditorSurface="true"] QSpinBox:hover,
+QGroupBox[configEditorSurface="true"] QDoubleSpinBox:hover,
+QGroupBox[configEditorSurface="true"] QComboBox:hover {
+    border-color: #b6b6c4;
+}
+QGroupBox[configEditorSurface="true"] QSpinBox:focus,
+QGroupBox[configEditorSurface="true"] QDoubleSpinBox:focus,
+QGroupBox[configEditorSurface="true"] QComboBox:focus {
+    border-color: #10a37f;
+}
+QGroupBox[configEditorSurface="true"] QCheckBox,
+QGroupBox[configEditorSurface="true"] QRadioButton {
+    background: transparent;
+}
+QGroupBox[configEditorSurface="true"] QCheckBox::indicator,
+QGroupBox[configEditorSurface="true"] QRadioButton::indicator {
+    background-color: transparent;
+    border-color: #b6b6c4;
+}
+QGroupBox[configEditorSurface="true"] QCheckBox::indicator:hover,
+QGroupBox[configEditorSurface="true"] QRadioButton::indicator:hover {
+    border-color: #10a37f;
+}
+QGroupBox[configEditorSurface="true"] QCheckBox::indicator:checked,
+QGroupBox[configEditorSurface="true"] QRadioButton::indicator:checked {
+    background-color: #10a37f;
+    border-color: #10a37f;
+}
+
 /* 状态栏标签 — configs_editor */
 QLabel#ConfigDirLabel[status="loaded"],
 QLabel#StatusWarpcLabel[status="loaded"],

@@ -38,6 +38,7 @@ class ExpLockPanel(ConfigPanelBase):
 
         # ── 槽位勾选 ──
         slot_group = QGroupBox("锁定槽位（勾选=锁定该槽经验）")
+        slot_group.setProperty("configEditorSurface", True)
         slot_layout = QVBoxLayout(slot_group)
         slot_layout.setSpacing(6)
         for i in range(SLOT_COUNT):

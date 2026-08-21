@@ -166,6 +166,7 @@ class AnimationSpeedPanel(ConfigPanelBase):
     def _new_group_box(title: str):
         """创建带紧凑边距的 QGroupBox, 减少组内空白占用。"""
         group = QGroupBox(title)
+        group.setProperty("configEditorSurface", True)
         form = QFormLayout(group)
         form.setContentsMargins(10, 14, 10, 8)
         form.setVerticalSpacing(6)
@@ -197,7 +198,7 @@ class AnimationSpeedPanel(ConfigPanelBase):
         spin.setRange(spin_min, spin_max)
         spin.setSingleStep(5)
         spin.setSuffix(" ms")
-        spin.setFixedWidth(80)
+        spin.setFixedWidth(112)
 
         mult_lbl = QLabel()
         mult_lbl.setFixedWidth(50)

@@ -3,6 +3,7 @@ FontConfigPanel — 游戏默认字体自定义配置面板
 编辑 font_config.json 中的 3 个渲染器 FTYPE 值和描边开关。
 """
 from functools import partial
+from html import escape
 from PySide6.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QFormLayout, QGroupBox,
     QCheckBox, QLabel, QPushButton, QWidget
@@ -37,6 +38,7 @@ class FontConfigPanel(ConfigPanelBase):
 
         # ── 字体类型设置 ──
         font_group = QGroupBox("字体类型设置")
+        font_group.setProperty("configEditorSurface", True)
         font_layout = QFormLayout(font_group)
         font_layout.setLabelAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
 
@@ -63,6 +65,7 @@ class FontConfigPanel(ConfigPanelBase):
 
         # ── 字体类型对照表 ──
         ref_group = QGroupBox("字体类型对照表 (FTYPE → FONT9696 区段)")
+        ref_group.setProperty("configEditorSurface", True)
         ref_layout = QVBoxLayout(ref_group)
         self._ref_label = QLabel()
         self._ref_label.setWordWrap(True)
@@ -107,12 +110,15 @@ class FontConfigPanel(ConfigPanelBase):
     def _refresh_ref_label(self):
         """刷新字体类型对照表显示。"""
         rows = []
-        for ftype in range(8):
-            key = str(ftype)
-            desc = self._ftype_table.get(key, f"字体{ftype}")
-            rows.append(f"<tr><td><b>FTYPE {ftype}</b></td><td>{desc}</td></tr>")
+        for row_start in range(0, 8, 2):
+            cells = []
+            for ftype in (row_start, row_start + 1):
+                key = str(ftype)
+                desc = escape(str(self._ftype_table.get(key, f"字体{ftype}")))
+                cells.append(f"<td><b>FTYPE {ftype}</b></td><td>{desc}</td>")
+            rows.append("<tr>" + "".join(cells) + "</tr>")
         self._ref_label.setText(
-            "<table cellpadding='4'>"
+            "<table cellpadding='4' cellspacing='0' width='100%'>"
             + "".join(rows)
             + "</table>"
         )
