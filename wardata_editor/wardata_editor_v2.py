@@ -74,7 +74,7 @@ from PySide6.QtWidgets import (
     QSplitter, QTableWidget, QTableWidgetItem, QHeaderView,
     QLineEdit, QCheckBox, QPushButton, QLabel,
     QScrollArea, QDialog, QFileDialog, QMessageBox, QTextEdit,
-    QFrame, QGridLayout, QAbstractItemView, QMenuBar, QTabWidget,
+    QFrame, QGridLayout, QAbstractItemView, QMenuBar,
     QSpinBox, QGraphicsView, QGraphicsScene, QGraphicsRectItem,
     QGraphicsEllipseItem, QGraphicsPolygonItem, QGraphicsTextItem,
     QSizePolicy,
@@ -101,6 +101,7 @@ from editor_utils.mod_exporter import (
 )
 from editor_utils.version import format_title, format_about_header
 from editor_utils.window_theme import apply_godot_theme
+from editor_utils.tab_widget import EditorTabWidget
 from editor_utils.search_utils import search_match
 from editor_utils.picker_dialogs import WarpcPickerDialog, ItemPickerDialog
 
@@ -564,6 +565,7 @@ class WarDataEditorV2(QMainWindow):
     # ── 主题 ──
     def _apply_theme(self):
         self.setStyleSheet(ThemeManager.dark_qss() if self._is_dark else ThemeManager.light_qss())
+        self.tabs.set_theme(self._is_dark)
         self._update_paths()
 
     def _toggle_theme(self):
@@ -676,7 +678,10 @@ class WarDataEditorV2(QMainWindow):
         rl = QVBoxLayout(right)
         rl.setContentsMargins(4, 4, 4, 4)
         rl.setSpacing(4)
-        self.tabs = QTabWidget()
+        self.tabs = EditorTabWidget(
+            flat=True,
+            object_name="WarDataEditorTabs",
+        )
         self._build_scene_tab()
         self._build_enemy_tab()
         self._build_ally_tab()

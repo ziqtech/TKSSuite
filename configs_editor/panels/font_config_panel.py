@@ -4,7 +4,7 @@ FontConfigPanel — 游戏默认字体自定义配置面板
 """
 from functools import partial
 from PySide6.QtWidgets import (
-    QVBoxLayout, QHBoxLayout, QFormLayout, QGroupBox, QComboBox,
+    QVBoxLayout, QHBoxLayout, QFormLayout, QGroupBox,
     QCheckBox, QLabel, QPushButton, QWidget
 )
 from PySide6.QtCore import Qt
@@ -27,7 +27,7 @@ class FontConfigPanel(ConfigPanelBase):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._ftype_table = {}  # ftype_table 数据，用于显示字体名称
-        self._combos: dict[str, QComboBox] = {}
+        self._combos: dict[str, EditorComboBox] = {}
         self._outline_checks: dict[str, QCheckBox] = {}
         self._build_ui()
 

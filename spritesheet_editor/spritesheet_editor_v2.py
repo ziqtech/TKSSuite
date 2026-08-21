@@ -27,7 +27,7 @@ from PySide6.QtWidgets import (
     QGraphicsView, QGraphicsScene, QGraphicsPixmapItem, QGraphicsRectItem,
     QGraphicsTextItem,
     QVBoxLayout, QHBoxLayout, QGridLayout,
-    QLabel, QPushButton, QSpinBox, QComboBox, QCheckBox, QRadioButton,
+    QLabel, QPushButton, QSpinBox, QCheckBox, QRadioButton,
     QGroupBox, QTextEdit,
     QMenu, QDialog, QFileDialog,
     QMessageBox, QFrame, QSizePolicy, QButtonGroup,
@@ -3315,7 +3315,7 @@ class SpriteSheetEditorWindow(QMainWindow):
         """包装快捷键回调: SpinBox/TextEdit/ComboBox 获得焦点时不劫持文本编辑"""
         def wrapper():
             w = QApplication.focusWidget()
-            if isinstance(w, (QLineEdit, QTextEdit, QSpinBox, QComboBox)):
+            if isinstance(w, (QLineEdit, QTextEdit, QSpinBox, EditorComboBox)):
                 return
             func()
         return wrapper
@@ -3908,7 +3908,7 @@ def main():
     _t = install_translator(app)
     setup_app_icon(app, os.path.dirname(__file__))
     # 设置应用默认字体 (用 pointSize 而非 pixelSize:
-    # pixelSize 会使 font.pointSize() 返回 -1, 点击 QComboBox 弹出菜单时
+        # pixelSize 会使 font.pointSize() 返回 -1, 点击 EditorComboBox 弹出菜单时
     # Qt 内部以 font.pointSize() 调 setPointSize 触发 "Point size <= 0 (-1)" 警告;
     # 实际显示由 QSS 的 px 字号覆盖)
     font = QFont()
@@ -3931,4 +3931,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

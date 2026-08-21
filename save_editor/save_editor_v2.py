@@ -30,7 +30,7 @@ from PySide6.QtWidgets import (
     QAbstractItemView, QApplication, QCheckBox, QDialog,
     QFileDialog, QGridLayout, QGroupBox, QHBoxLayout, QHeaderView,
     QInputDialog, QLabel, QLineEdit, QMainWindow, QMessageBox,
-    QPushButton, QScrollArea, QSplitter, QTabWidget, QTableWidget,
+    QPushButton, QScrollArea, QSplitter, QTableWidget,
     QTableWidgetItem, QTextEdit, QVBoxLayout, QWidget,
 )
 from PySide6.QtGui import QColor, QFont, QIcon, QKeySequence
@@ -51,6 +51,7 @@ from editor_utils.ui_helpers import (
 )
 from editor_utils.version import format_title, format_about_header
 from editor_utils.window_theme import apply_godot_theme
+from editor_utils.tab_widget import EditorTabWidget
 
 
 # ============================================================
@@ -531,6 +532,9 @@ class SaveEditorApp(QMainWindow):
     # ── 主题 ──
     def _apply_theme(self):
         self.setStyleSheet(ThemeManager.dark_qss() if self._is_dark else ThemeManager.light_qss())
+        self.tabs.set_theme(self._is_dark)
+        if hasattr(self, "_event_tabs"):
+            self._event_tabs.set_theme(self._is_dark)
         self._update_paths()
 
     def _toggle_theme(self):
@@ -582,7 +586,10 @@ class SaveEditorApp(QMainWindow):
         main_layout.addLayout(toolbar)
 
         # 主 TabWidget
-        self.tabs = QTabWidget()
+        self.tabs = EditorTabWidget(
+            flat=True,
+            object_name="SaveEditorTabs",
+        )
         self.tabs.setObjectName("SaveEditorTabs")
         main_layout.addWidget(self.tabs, 1)
 
@@ -854,7 +861,10 @@ class SaveEditorApp(QMainWindow):
         layout = QVBoxLayout(w)
         layout.setContentsMargins(8, 8, 8, 8)
 
-        self._event_tabs = QTabWidget()
+        self._event_tabs = EditorTabWidget(
+            flat=True,
+            object_name="SaveEventTabs",
+        )
         self._event_tabs.setObjectName("SaveEventTabs")
         layout.addWidget(self._event_tabs)
 
@@ -1896,4 +1906,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-

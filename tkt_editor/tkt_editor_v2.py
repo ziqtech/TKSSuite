@@ -22,7 +22,7 @@ from PySide6.QtWidgets import (
     QAbstractItemView, QHeaderView, QLabel, QLineEdit, QPushButton,
     QCheckBox, QPlainTextEdit, QTextEdit,
     QMessageBox, QFileDialog, QColorDialog, QDialog, QGridLayout,
-    QFrame, QStackedWidget, QScrollArea, QTabWidget, QListWidget,
+    QFrame, QStackedWidget, QScrollArea, QListWidget,
     QInputDialog, QToolButton
 )
 from PySide6.QtGui import (
@@ -53,6 +53,7 @@ from editor_utils.mod_exporter import (
 )
 from editor_utils.version import format_title, format_about_header
 from editor_utils.window_theme import apply_godot_theme
+from editor_utils.tab_widget import EditorTabWidget
 from editor_utils.search_utils import search_match
 
 # ============================================================
@@ -940,7 +941,10 @@ class TktEditor(QMainWindow):
         help_menu.addAction("帮助说明", self._show_help)
         help_menu.addAction("关于编辑器", self._show_about)
 
-        self.main_tabs = QTabWidget()
+        self.main_tabs = EditorTabWidget(
+            flat=True,
+            object_name="TktEditorTabs",
+        )
 
         # Tab 栏右上角角部控件
         corner_widget = QWidget()
@@ -1256,6 +1260,7 @@ class TktEditor(QMainWindow):
     def _apply_theme(self):
         qss = ThemeManager.dark_qss() if self._is_dark else ThemeManager.light_qss()
         self.setStyleSheet(qss)
+        self.main_tabs.set_theme(self._is_dark)
         if hasattr(self, 'preview_scroll_area'):
             self.preview_scroll_area.setObjectName("GamePreview")
         if hasattr(self, 'preview_text'):

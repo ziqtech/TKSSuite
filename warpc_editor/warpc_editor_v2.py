@@ -60,15 +60,13 @@ from PySide6.QtWidgets import (
     QSplitter, QTableWidget, QTableWidgetItem, QHeaderView,
     QLineEdit, QCheckBox, QPushButton, QLabel,
     QScrollArea, QDialog, QFileDialog, QMessageBox, QTextEdit,
-    QFrame, QGridLayout, QAbstractItemView, QMenuBar, QTabWidget,
-    QSpinBox, QSizePolicy, QMenu, QCompleter, QStackedWidget, QComboBox,
-    QTabBar,
+    QFrame, QGridLayout, QAbstractItemView, QMenuBar,
+    QSpinBox, QSizePolicy, QMenu, QCompleter, QStackedWidget,
 )
 from PySide6.QtGui import (
     QColor, QFont, QIcon, QIntValidator, QKeySequence,
-    QPainter, QPainterPath, QPen,
 )
-from PySide6.QtCore import Qt, QTranslator, Signal, QTimer, QSize, QRectF
+from PySide6.QtCore import Qt, QTranslator, Signal, QTimer, QSize
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from editor_utils.theme_manager import ThemeManager
 from editor_utils.dock_components import DockHeader
@@ -86,6 +84,7 @@ from editor_utils.mod_exporter import (
     get_tksmod_info, import_tksmod_records, ModImportPreviewDialog, ModExportPreviewDialog,
 )
 from editor_utils.window_theme import apply_godot_theme
+from editor_utils.tab_widget import EditorTabWidget
 from editor_utils.search_utils import search_match
 from editor_utils.kon_name_resolver import KonNameResolver
 # 字段 Schema (唯一字段定义源): 常量/字段列表/FieldDef/打包字节编解码
@@ -895,97 +894,6 @@ class GrowthTableDialog(QDialog):
 # ═══════════════════════════════════════════════════════════════
 
 
-class WarpcEditorTabBar(QTabBar):
-    """让主编辑器 tab 的底边线延伸到整个内容面板宽度。"""
-
-    def sizeHint(self):
-        hint = super().sizeHint()
-        host = self.parentWidget()
-        if host is not None:
-            hint.setWidth(max(hint.width(), host.width()))
-        return hint
-
-
-class WarpcPaneBorder(QWidget):
-    """绘制 tab pane 的外边框；QTabWidget 的子控件会遮住原生 pane 边框。"""
-
-    def __init__(self, parent):
-        super().__init__(parent)
-        self.setAttribute(Qt.WA_TransparentForMouseEvents)
-        self.setAttribute(Qt.WA_NoSystemBackground, True)
-        self.setFocusPolicy(Qt.NoFocus)
-        self._dark = True
-
-    def set_theme(self, dark):
-        self._dark = bool(dark)
-        self.update()
-
-    def paintEvent(self, event):
-        parent = self.parentWidget()
-        if not isinstance(parent, QTabWidget):
-            return
-        bar = parent.tabBar()
-        if bar is None:
-            return
-        top = bar.height()
-        if top >= self.height():
-            return
-
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing, False)
-        border = QColor("#444444" if self._dark else "#d9d9e3")
-        painter.setPen(QPen(border, 1))
-        painter.setBrush(Qt.NoBrush)
-
-        width = float(self.width() - 1)
-        height = float(self.height() - top - 1)
-        radius = 8.0
-        path = QPainterPath()
-        path.moveTo(0.0, float(top))
-        path.lineTo(0.0, float(top) + height - radius)
-        path.arcTo(
-            QRectF(0.0, float(top) + height - 2 * radius, 2 * radius, 2 * radius),
-            180.0,
-            90.0,
-        )
-        path.lineTo(width - radius, float(top) + height)
-        path.arcTo(
-            QRectF(
-                width - 2 * radius,
-                float(top) + height - 2 * radius,
-                2 * radius,
-                2 * radius,
-            ),
-            270.0,
-            90.0,
-        )
-        path.lineTo(width, float(top))
-        painter.drawPath(path)
-        painter.end()
-
-
-class WarpcEditorTabs(QTabWidget):
-    """主编辑器的 tab 容器，负责让 pane 边框覆盖在滚动内容之上。"""
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self._pane_border = WarpcPaneBorder(self)
-        self._pane_border.show()
-        self._pane_border.raise_()
-
-    def set_theme(self, dark):
-        self._pane_border.set_theme(dark)
-
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        self._pane_border.setGeometry(self.rect())
-        self._pane_border.raise_()
-
-    def showEvent(self, event):
-        super().showEvent(event)
-        self._pane_border.raise_()
-
-
 class WarpcEditorV2(QMainWindow):
     # 信号: 角色编辑已应用 (参数: 角色索引)
     record_applied = Signal(int)
@@ -1367,16 +1275,10 @@ class WarpcEditorV2(QMainWindow):
         rl.addWidget(preview)
 
         # Tab 页
-        self.tabs = WarpcEditorTabs()
-        self.tabs.setTabBar(WarpcEditorTabBar())
-        self.tabs.setObjectName("WarpcEditorTabs")
-        # 文档模式让页签与内容面板共享一条连续边界。
-        self.tabs.setDocumentMode(True)
-        self.tabs.tabBar().setObjectName("WarpcEditorTabBar")
-        self.tabs.tabBar().setExpanding(False)
-        # Fusion 样式会额外绘制 QTabBar 的原生 base 线；主编辑器由 QSS
-        # 统一绘制页签/内容分界线，关闭原生线以免出现醒目的重复上边线。
-        self.tabs.tabBar().setDrawBase(False)
+        self.tabs = EditorTabWidget(
+            flat=True,
+            object_name="WarpcEditorTabs",
+        )
         self._build_tab1()
         self._build_tab2()
         self._build_tab3()

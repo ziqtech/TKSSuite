@@ -33,14 +33,15 @@ bootstrap()
 from PySide6.QtCore import Qt, QThread, Signal, QObject, QSize
 from PySide6.QtGui import QAction, QIcon, QImage, QPixmap, QFont, QColor
 from PySide6.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QTabWidget, QVBoxLayout, QHBoxLayout,
-    QFormLayout, QGridLayout, QPushButton, QLabel, QLineEdit, QComboBox,
+    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
+    QFormLayout, QGridLayout, QPushButton, QLabel, QLineEdit,
     QCheckBox, QFileDialog, QMessageBox, QGroupBox, QSpinBox, QProgressBar,
     QScrollArea, QFrame, QSplitter, QStatusBar, QListWidget, QListWidgetItem,
     QTextEdit,
 )
 
 from editor_utils.theme_manager import ThemeManager
+from editor_utils.tab_widget import EditorTabWidget
 from editor_utils.ui_helpers import install_dialog_theme_filter, themed_messagebox, EditorComboBox
 from editor_utils.dock_components import create_dock
 from editor_utils.app_init import install_translator, setup_app_icon
@@ -144,7 +145,7 @@ class FontEditorWindow(QMainWindow):
         self._convert_status: QLabel | None = None
 
         # 预览页面控件
-        self._preview_ftype_combo: QComboBox | None = None
+        self._preview_ftype_combo: EditorComboBox | None = None
         self._preview_path_label: QLabel | None = None
         self._preview_container: QWidget | None = None
 
@@ -158,14 +159,18 @@ class FontEditorWindow(QMainWindow):
     # ── UI 构建 ──
 
     def _build_ui(self):
-        """构建主界面: QTabWidget 三个标签页。"""
+        """构建主界面: EditorTabWidget 三个标签页。"""
         central = QWidget()
         self.setCentralWidget(central)
         layout = QVBoxLayout(central)
         layout.setContentsMargins(12, 10, 12, 10)
         layout.setSpacing(8)
 
-        tabs = QTabWidget()
+        self.tabs = EditorTabWidget(
+            flat=True,
+            object_name="FontEditorTabs",
+        )
+        tabs = self.tabs
         layout.addWidget(tabs)
 
         tabs.addTab(self._build_create_tab(), "创建字体")
@@ -262,7 +267,7 @@ class FontEditorWindow(QMainWindow):
 
         # 8 个 FTYPE, 4行×2列
         self._ftype_checks = []
-        self._ftype_ttf_combos: list[QComboBox] = []
+        self._ftype_ttf_combos: list[EditorComboBox] = []
         ftype_names = [
             "FTYPE 0", "FTYPE 1", "FTYPE 2", "FTYPE 3",
             "FTYPE 4", "FTYPE 5", "FTYPE 6", "FTYPE 7",
@@ -426,6 +431,7 @@ class FontEditorWindow(QMainWindow):
     def _apply_theme(self):
         """应用主题: QSS 客户区 + DWM 标题栏 (双机制)。"""
         ThemeManager.apply_theme(self, 'dark' if self._is_dark else 'light')
+        self.tabs.set_theme(self._is_dark)
         from editor_utils.window_theme import apply_godot_theme
         apply_godot_theme(self, self._is_dark)
         # 切换主题后刷新预览 (颜色变化)

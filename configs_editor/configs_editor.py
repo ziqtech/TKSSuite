@@ -18,13 +18,14 @@ bootstrap()
 
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QTabWidget, QLabel, QPushButton, QFileDialog, QMessageBox,
+    QLabel, QPushButton, QFileDialog, QMessageBox,
     QStatusBar, QFrame
 )
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QAction, QIcon
 
 from editor_utils.theme_manager import ThemeManager
+from editor_utils.tab_widget import EditorTabWidget
 from editor_utils.ui_helpers import confirm_close, update_path_labels
 from editor_utils.app_init import install_translator, setup_app_icon
 from editor_utils.lzss import lzss_decompress_dat
@@ -99,7 +100,7 @@ def load_skill_names(skill_path: str, tkt_names: dict) -> dict:
 
 
 class ConfigsEditorWindow(QMainWindow):
-    """主窗口 — 菜单栏 + 工具栏 + QTabWidget + 状态栏"""
+    """主窗口 — 菜单栏 + 工具栏 + EditorTabWidget + 状态栏"""
 
     def __init__(self):
         super().__init__()
@@ -212,8 +213,11 @@ class ConfigsEditorWindow(QMainWindow):
 
         layout.addWidget(toolbar)
 
-        # ── QTabWidget ──
-        self._tab_widget = QTabWidget()
+        # ── 通用编辑器标签页 ──
+        self._tab_widget = EditorTabWidget(
+            flat=True,
+            object_name="ConfigsEditorTabs",
+        )
         layout.addWidget(self._tab_widget, 1)
 
         # ── 状态栏 ──
@@ -237,7 +241,7 @@ class ConfigsEditorWindow(QMainWindow):
         self._update_status_bar()
 
     def _load_panels(self):
-        """扫描 PANEL_REGISTRY，实例化面板并加入 QTabWidget。"""
+        """扫描 PANEL_REGISTRY，实例化面板并加入 EditorTabWidget。"""
         self._tab_widget.clear()
         self._panels = []
 
@@ -492,6 +496,7 @@ class ConfigsEditorWindow(QMainWindow):
 
     def _apply_theme(self):
         ThemeManager.apply_theme(self, 'dark' if self._is_dark else 'light')
+        self._tab_widget.set_theme(self._is_dark)
         from editor_utils.window_theme import apply_godot_theme
         apply_godot_theme(self, self._is_dark)
 

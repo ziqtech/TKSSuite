@@ -14,7 +14,7 @@ import sys
 
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QTabWidget, QLabel, QFileDialog, QMessageBox, QPushButton,
+    QLabel, QFileDialog, QMessageBox, QPushButton,
 )
 from PySide6.QtGui import QIcon, QShortcut, QKeySequence
 from PySide6.QtCore import Qt
@@ -23,6 +23,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 sys.path.insert(0, os.path.dirname(__file__))
 
 from editor_utils.theme_manager import ThemeManager
+from editor_utils.tab_widget import EditorTabWidget
 from editor_utils.ui_helpers import themed_messagebox, update_path_labels
 from editor_utils.version import format_title, format_about_header
 from editor_utils.window_theme import apply_godot_theme
@@ -68,6 +69,7 @@ class TksBookViewer(QMainWindow):
     def _apply_theme(self):
         ThemeManager.apply_theme(QApplication.instance(),
                                  "dark" if self.is_dark_theme else "light")
+        self.tabs.set_theme(self.is_dark_theme)
 
     def _sync_corner_height(self):
         """角落按钮高度对齐标签栏 (QSS 生效后计算, 避免顶部被裁剪)"""
@@ -114,7 +116,10 @@ class TksBookViewer(QMainWindow):
         main_layout.setSpacing(8)
 
         # 标签页
-        self.tabs = QTabWidget()
+        self.tabs = EditorTabWidget(
+            flat=True,
+            object_name="TksBookTabs",
+        )
         self.tab_gallery = GalleryTab(self.data)
         self.tab_char = CharTab(self.data)
         self.tab_skill = SkillTab(self.data)

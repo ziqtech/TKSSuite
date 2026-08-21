@@ -42,8 +42,8 @@ from PySide6.QtWidgets import (
     QMenuBar, QMenu, QSplitter, QTableWidget, QTableWidgetItem,
     QTreeWidget, QTreeWidgetItem,
     QAbstractItemView, QHeaderView, QLabel, QLineEdit, QPushButton,
-    QCheckBox, QTextEdit, QPlainTextEdit, QComboBox, QMessageBox, QFileDialog,
-    QDialog, QGridLayout, QFrame, QScrollArea, QTabWidget, QGraphicsView,
+    QCheckBox, QTextEdit, QPlainTextEdit, QMessageBox, QFileDialog,
+    QDialog, QGridLayout, QFrame, QScrollArea, QGraphicsView,
     QGraphicsScene, QGraphicsPixmapItem, QSizePolicy, QStatusBar
 )
 from PySide6.QtGui import (
@@ -57,6 +57,7 @@ from editor_utils.theme_manager import ThemeManager
 from editor_utils.dock_components import DockHeader, create_dock
 from editor_utils.lzss import lzss_decompress_dat as lzss_decompress, lzss_decompress_save, lzss_compress_save
 from editor_utils.ui_helpers import confirm_close, themed_messagebox, EditorComboBox
+from editor_utils.tab_widget import EditorTabWidget
 from editor_utils.version import format_title, format_about_header
 from editor_utils.shared_state import pick_tks_directory
 from editor_utils.mod_exporter import (
@@ -1285,6 +1286,7 @@ class MatEditorApp(QMainWindow):
     def _apply_theme(self):
         qss = ThemeManager.dark_qss() if self._is_dark else ThemeManager.light_qss()
         self.setStyleSheet(qss)
+        self.notebook.set_theme(self._is_dark)
         self._update_path()
         self._update_entity_type_colors()
         self._canvas.update_vis_background()
@@ -1629,8 +1631,11 @@ class MatEditorApp(QMainWindow):
         self.lbl_title.setProperty("class", "RecordHeader")
         right_layout.addWidget(self.lbl_title)
 
-        # Notebook (QTabWidget)
-        self.notebook = QTabWidget()
+        # Notebook (通用编辑器标签页)
+        self.notebook = EditorTabWidget(
+            flat=True,
+            object_name="MatEditorTabs",
+        )
         right_layout.addWidget(self.notebook, 1)
 
         # Tab "参数"
@@ -2228,7 +2233,7 @@ class MatEditorApp(QMainWindow):
             for key, di, label, cmt in ALL_EDIT_FIELDS:
                 val = rec[f'd{di}']
                 w = tvars.get(key)
-                if isinstance(w, QComboBox):
+                if isinstance(w, EditorComboBox):
                     if key == 'type':
                         for i in range(w.count()):
                             if w.itemText(i).startswith(f"{val}-"):
@@ -2381,7 +2386,7 @@ class MatEditorApp(QMainWindow):
         for key, var in self._edit_vars.items():
             if isinstance(var, QLineEdit):
                 var.clear()
-            elif isinstance(var, QComboBox):
+            elif isinstance(var, EditorComboBox):
                 var.setCurrentIndex(0)
         for lbl_key in ('_scene_label', '_hint_label', '_item_g1_id_label', '_item_g2_id_label', '_item_g3_id_label'):
             lbl = self._edit_vars.get(lbl_key)
@@ -2393,7 +2398,7 @@ class MatEditorApp(QMainWindow):
             for key, var in tvars.items():
                 if isinstance(var, QLineEdit):
                     var.clear()
-                elif isinstance(var, QComboBox):
+                elif isinstance(var, EditorComboBox):
                     var.setCurrentIndex(0)
                 elif isinstance(var, QCheckBox):
                     var.setChecked(False)
@@ -2426,7 +2431,7 @@ class MatEditorApp(QMainWindow):
             for fields in (ALL_EDIT_FIELDS, RUNTIME_FIELDS):
                 for cb_key, cb_di, *_ in fields:
                     w = tvars.get(cb_key)
-                    if isinstance(w, QComboBox):
+                    if isinstance(w, EditorComboBox):
                         try:
                             v = int(w.currentText().split('-')[0])
                             vals[f'd{cb_di}'] = v
@@ -5423,4 +5428,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-

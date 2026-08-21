@@ -42,9 +42,9 @@ import time
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QSplitter, QTableWidget, QTableWidgetItem, QHeaderView,
-    QLineEdit, QComboBox, QCheckBox, QPushButton, QLabel,
+    QLineEdit, QCheckBox, QPushButton, QLabel,
     QScrollArea, QDialog, QFileDialog, QMessageBox, QTextEdit,
-    QFrame, QGridLayout, QAbstractItemView, QMenuBar, QTabWidget,
+    QFrame, QGridLayout, QAbstractItemView, QMenuBar,
     QSpinBox, QSlider, QRadioButton, QButtonGroup, QGroupBox, QStyle, QMenu,
     QToolTip,
 )
@@ -71,6 +71,7 @@ from editor_utils.ui_helpers import (
     make_fake_input, update_path_labels, confirm_close,
     themed_messagebox, EditorComboBox,
 )
+from editor_utils.tab_widget import EditorTabWidget
 from editor_utils.mod_exporter import (
     compute_crc32, generate_mod_json, pack_tksmod, ModMetadataDialog, safe_mod_filename,
     diff_binary_blocks, build_block_diff_json,
@@ -1675,6 +1676,7 @@ class ActEditorV2(QMainWindow):
 
     def _apply_theme(self):
         self.setStyleSheet(ThemeManager.dark_qss() if self._is_dark else ThemeManager.light_qss())
+        self.tabs.set_theme(self._is_dark)
         self._update_paths()
 
     def _toggle_theme(self):
@@ -1821,9 +1823,11 @@ class ActEditorV2(QMainWindow):
         rl.setSpacing(4)
         right.setMinimumWidth(420)
 
-        self.tabs = QTabWidget()
-        self.tabs.setDocumentMode(True)
-        self.tabs.tabBar().setDrawBase(False)
+        # 与 WarPC 主编辑区一致：标签栏和内容区共享连续的 flat Pane 边界。
+        self.tabs = EditorTabWidget(
+            flat=True,
+            object_name="ActEditorTabs",
+        )
         self._build_direction_tab()
         self._build_param_tab()
         self._build_layer_cards_tab()
@@ -2746,7 +2750,7 @@ class ActEditorV2(QMainWindow):
                 else:
                     widget.setText(str(v))
                 widget.blockSignals(False)
-            elif isinstance(widget, QComboBox):
+            elif isinstance(widget, EditorComboBox):
                 widget.blockSignals(True)
                 if fn == 'blend_mode':
                     label = _enum_to_label(v, BLEND_MODE_LABELS)
@@ -2808,7 +2812,7 @@ class ActEditorV2(QMainWindow):
                     return default
                 if isinstance(w, QLineEdit):
                     raw = w.text()
-                elif isinstance(w, QComboBox):
+                elif isinstance(w, EditorComboBox):
                     raw = w.currentText()
                 else:
                     return default
@@ -2953,7 +2957,7 @@ class ActEditorV2(QMainWindow):
             w = vr.get(key)
             if isinstance(w, QLineEdit):
                 w.setText(val)
-            elif isinstance(w, QComboBox):
+            elif isinstance(w, EditorComboBox):
                 idx_c = w.findText(val, Qt.MatchStartsWith)
                 if idx_c >= 0:
                     w.setCurrentIndex(idx_c)
@@ -3005,7 +3009,7 @@ class ActEditorV2(QMainWindow):
                 w = vr[fn]
                 if isinstance(w, QLineEdit):
                     raw = w.text()
-                elif isinstance(w, QComboBox):
+                elif isinstance(w, EditorComboBox):
                     raw = w.currentText()
                 else:
                     continue
@@ -4281,7 +4285,7 @@ class ActEditorV2(QMainWindow):
 
     def _nle_toggle_playback(self):
         w = QApplication.focusWidget()
-        if isinstance(w, (QLineEdit, QSpinBox, QComboBox, QTextEdit)):
+        if isinstance(w, (QLineEdit, QSpinBox, EditorComboBox, QTextEdit)):
             return
         if self._is_playing:
             self._preview_stop()
@@ -4292,7 +4296,7 @@ class ActEditorV2(QMainWindow):
         if not self._tl_edit_enabled or self._editing_idx < 0:
             return
         w = QApplication.focusWidget()
-        if isinstance(w, (QLineEdit, QSpinBox, QComboBox, QTextEdit)):
+        if isinstance(w, (QLineEdit, QSpinBox, EditorComboBox, QTextEdit)):
             return
         entry = self.entries[self._editing_idx]
         current = (min(self._tl_selected_layers)
@@ -4306,7 +4310,7 @@ class ActEditorV2(QMainWindow):
         if not self._tl_edit_enabled or self._editing_idx < 0:
             return
         w = QApplication.focusWidget()
-        if isinstance(w, (QLineEdit, QSpinBox, QComboBox, QTextEdit)):
+        if isinstance(w, (QLineEdit, QSpinBox, EditorComboBox, QTextEdit)):
             return
         entry = self.entries[self._editing_idx]
         current = (max(self._tl_selected_layers)

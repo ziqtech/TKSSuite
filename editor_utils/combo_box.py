@@ -120,6 +120,9 @@ class EditorComboBox(QComboBox):
         return bool(model_index.flags() & Qt.ItemIsEnabled)
 
     def showPopup(self):
+        if self.count() == 0:
+            return
+
         menu = RoundedComboMenu(self)
         menu.setObjectName(self.MENU_OBJECT_NAME)
         menu.setToolTipsVisible(False)
@@ -132,13 +135,15 @@ class EditorComboBox(QComboBox):
             action.setEnabled(self._item_enabled(index))
             menu.addAction(action)
 
-        width = self._menu_width()
-        menu.setFixedWidth(width)
-
         # 默认从控件正下方弹出；靠近屏幕底部时才翻到控件上方，避免
         # Qt 自动选择侧向弹出造成“没有向下弹出”的视觉问题。
         below = self.mapToGlobal(QPoint(0, self.height()))
         screen = QApplication.screenAt(below) or QApplication.primaryScreen()
+        width = self._menu_width()
+        if screen is not None:
+            width = min(width, max(1, screen.availableGeometry().width()))
+        menu.setFixedWidth(width)
+
         anchor = below
         if screen is not None:
             available = screen.availableGeometry()
@@ -148,6 +153,7 @@ class EditorComboBox(QComboBox):
             y = below.y()
             if y + menu_height > available.bottom() + 1:
                 y = self.mapToGlobal(QPoint(0, 0)).y() - menu_height
+            y = max(available.top(), y)
             anchor = QPoint(x, y)
 
         selected = menu.exec(anchor)

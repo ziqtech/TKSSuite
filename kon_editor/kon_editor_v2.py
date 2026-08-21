@@ -297,7 +297,7 @@ class KonEditor(QMainWindow):
         self._editing_idx = -1
         self._clipboard = None
 
-        self.widget_map = {}      # QLineEdit / QComboBox for direct value fields
+        self.widget_map = {}      # QLineEdit / EditorComboBox for direct value fields
         self.extra_map = {}       # QLabel for parsed description text
         self.split_map = {}       # (hi_w, lo_w) for split fields
         self.compact_names = True # 精简显示: >3角色时仅显示技能名

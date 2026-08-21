@@ -4,7 +4,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QFontMetrics, QIcon
 from PySide6.QtWidgets import (
     QLabel, QHBoxLayout, QVBoxLayout, QWidget, QFrame, QTreeWidget,
-    QTreeWidgetItem, QTabWidget, QCheckBox, QGridLayout, QSizePolicy,
+    QTreeWidgetItem, QCheckBox, QGridLayout, QSizePolicy,
     QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView,
     QPushButton,
 )
@@ -16,6 +16,7 @@ from book_loader import (
     SPECIAL_FLAG_NAMES, flag_names,
 )
 from editor_utils.ui_helpers import EditorComboBox
+from editor_utils.tab_widget import EditorTabWidget
 from editor_utils.jvg_loader import get_sprite_pixmap
 from editor_utils.flow_layout import FlowLayout
 from editor_utils.picker_dialogs import STATUS_NAMES, STATUS_ICON_BASE
@@ -365,7 +366,10 @@ class CharTab(BookTabBase):
 
     def _build_type_tabs(self, by_type, builder):
         """构建 指令/主动/被动/移动 四标签页; builder(type_states)→widget|None"""
-        tabs = QTabWidget()
+        tabs = EditorTabWidget(
+            flat=True,
+            object_name="TksBookCharTabs",
+        )
         for tv in (0, 1, 2, 3):
             tstates = by_type.get(tv, {})
             w = builder(tstates) if tstates else None

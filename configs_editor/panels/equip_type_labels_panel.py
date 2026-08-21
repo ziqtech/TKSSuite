@@ -24,7 +24,7 @@ ALLOWED_BIT_VALUES = [0] + [1 << i for i in range(16)]
 
 
 class BitValueComboDelegate(QStyledItemDelegate):
-    """位值列使用 QComboBox 下拉选择的委托"""
+    """位值列使用 EditorComboBox 下拉选择的委托"""
 
     def createEditor(self, parent, option, index):
         combo = EditorComboBox(parent)
@@ -150,7 +150,7 @@ class EquipTypeLabelsPanel(ConfigPanelBase):
             self._refresh_table()
             self._mark_dirty()
 
-    def _on_item_changed(self):
+    def _on_item_changed(self, _item=None):
         """表格内容变化时收集数据并标记 dirty。"""
         self._collect_table_to_data()
         self._mark_dirty()

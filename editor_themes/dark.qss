@@ -498,12 +498,12 @@ QTabBar QToolButton {
     padding: 2px;
 }
 
-/* ── warpc_editor 主编辑区页签: 平面导航 + 连续内容面板 ── */
-QTabWidget#WarpcEditorTabs {
+/* ── 连续内容面板页签: 平面导航 + 统一 TabPane ── */
+QTabWidget[tabStyle="flat"] {
     background-color: transparent;
     border: none;
 }
-QTabWidget#WarpcEditorTabs::pane {
+QTabWidget[tabStyle="flat"]::pane {
     border: 1px solid #444444;
     border-top: none;
     border-radius: 0px 0px 8px 8px;
@@ -511,12 +511,12 @@ QTabWidget#WarpcEditorTabs::pane {
     padding: 0px;
     top: 0px;
 }
-QTabWidget#WarpcEditorTabs QTabBar {
+QTabWidget[tabStyle="flat"] QTabBar {
     background-color: #212121;
     border: none;
     border-bottom: 1px solid #444444;
 }
-QTabWidget#WarpcEditorTabs QTabBar::tab {
+QTabWidget[tabStyle="flat"] QTabBar::tab {
     background-color: transparent;
     color: #a0a0a0;
     border: none;
@@ -526,13 +526,13 @@ QTabWidget#WarpcEditorTabs QTabBar::tab {
     margin: 0px;
     min-height: 20px;
 }
-QTabWidget#WarpcEditorTabs QTabBar::tab:hover:!selected {
+QTabWidget[tabStyle="flat"] QTabBar::tab:hover:!selected {
     background-color: #2a2a2a;
     color: #ececec;
     border-top-left-radius: 8px;
     border-top-right-radius: 8px;
 }
-QTabWidget#WarpcEditorTabs QTabBar::tab:selected {
+QTabWidget[tabStyle="flat"] QTabBar::tab:selected {
     background-color: #212121;
     color: #ececec;
     font-weight: 600;
@@ -543,7 +543,7 @@ QTabWidget#WarpcEditorTabs QTabBar::tab:selected {
     border-top-right-radius: 8px;
     margin-bottom: -1px;
 }
-QTabWidget#WarpcEditorTabs QTabBar::tab:disabled {
+QTabWidget[tabStyle="flat"] QTabBar::tab:disabled {
     color: #666666;
 }
 
@@ -588,7 +588,7 @@ QScrollArea {
 }
 
 /* 主编辑区滚动页不再叠加自己的矩形边框，边框只由 tab 外壳负责。 */
-QTabWidget#WarpcEditorTabs QScrollArea {
+QTabWidget[tabStyle="flat"] QScrollArea {
     background-color: transparent;
     border: none;
     border-radius: 0px;

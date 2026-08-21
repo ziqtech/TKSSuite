@@ -6,7 +6,7 @@ WarPC 表格编辑模式 (model/view 虚拟化)
   - WarpcTableModel: QAbstractTableModel, 行=角色, 列=字段 (按列集预设)
   - 列集预设: 核心属性 / 装备与技能 / 成长·奖励·掉落 / 技能学习矩阵 /
     全部命名字段 / Raw 527列
-  - Delegates: int→QSpinBox, enum→QComboBox;
+  - Delegates: int→QSpinBox, enum→EditorComboBox;
     引用/掩码类字段 (skill_ref/item_*_ref/flags/use_right/status_mask)
     双击弹出与表单模式相同的选择器弹窗
   - 批量编辑: 行筛选 / TSV 复制粘贴 (Ctrl+C/V) / 选区向下填充 (Ctrl+D)
@@ -17,7 +17,7 @@ from dataclasses import dataclass
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton,
-    QTableView, QStyledItemDelegate, QSpinBox, QComboBox, QDialog,
+    QTableView, QStyledItemDelegate, QSpinBox, QDialog,
     QAbstractItemView, QApplication, QHeaderView, QAbstractSpinBox, QMenu,
 )
 from PySide6.QtGui import QColor, QKeySequence, QPainter, QPen
@@ -550,7 +550,7 @@ class TableFieldDelegate(QStyledItemDelegate):
         v = index.data(Qt.EditRole)
         if v is None:
             return
-        if isinstance(editor, QComboBox):
+        if isinstance(editor, EditorComboBox):
             for i in range(editor.count()):
                 try:
                     if parse_enum_value(editor.itemText(i)) == v:
@@ -568,7 +568,7 @@ class TableFieldDelegate(QStyledItemDelegate):
             editor.setValue(int(v))
 
     def setModelData(self, editor, model, index):
-        if isinstance(editor, QComboBox):
+        if isinstance(editor, EditorComboBox):
             txt = editor.currentText()
             try:
                 v = parse_enum_value(txt)
