@@ -45,7 +45,8 @@ from PySide6.QtWidgets import (
     QLineEdit, QCheckBox, QPushButton, QLabel,
     QScrollArea, QDialog, QFileDialog, QMessageBox, QTextEdit,
     QFrame, QGridLayout, QAbstractItemView, QMenuBar,
-    QSpinBox, QSlider, QRadioButton, QButtonGroup, QGroupBox, QStyle, QMenu,
+    QComboBox, QSpinBox, QSlider, QRadioButton, QButtonGroup, QGroupBox,
+    QStyle, QMenu,
     QToolTip,
 )
 from PySide6.QtGui import (
@@ -1605,8 +1606,10 @@ class ActEditorV2(QMainWindow):
         super().__init__()
         self.setObjectName("EditorWindow")
         self.setWindowTitle(format_title("act_editor"))
-        self.resize(1600, 900)
-        self.setMinimumSize(1200, 680)
+        # 右侧图层卡片需要约 520px，左侧列表需要约 280px；控制栏拆行后，
+        # 1680×960 可以在默认布局下同时保留两侧面板和足够的预览空间。
+        self.resize(1680, 960)
+        self.setMinimumSize(1420, 800)
 
         ico = os.path.join(os.path.dirname(__file__), 'TKS.ico')
         if os.path.exists(ico):
@@ -1804,6 +1807,7 @@ class ActEditorV2(QMainWindow):
         self.table.customContextMenuRequested.connect(self._on_table_context_menu)
         self.table.horizontalHeader().sectionClicked.connect(self._sort_by)
         self.table.setSortingEnabled(False)
+        self.table.setMinimumWidth(280)
         splitter.addWidget(self.table)
 
         # 中栏: 时间轴与预览
@@ -1821,7 +1825,7 @@ class ActEditorV2(QMainWindow):
         rl = QVBoxLayout(right)
         rl.setContentsMargins(4, 4, 4, 4)
         rl.setSpacing(4)
-        right.setMinimumWidth(420)
+        right.setMinimumWidth(520)
 
         # 与 WarPC 主编辑区一致：标签栏和内容区共享连续的 flat Pane 边界。
         self.tabs = EditorTabWidget(
@@ -1836,6 +1840,10 @@ class ActEditorV2(QMainWindow):
         rl.addWidget(self.tabs, 1)
         splitter.addWidget(right)
 
+        # 左右面板保持可读宽度，中央栏随窗口扩展。
+        splitter.setStretchFactor(0, 0)
+        splitter.setStretchFactor(1, 1)
+        splitter.setStretchFactor(2, 0)
         splitter.setSizes([280, 800, 520])
 
         # 底部路径栏
@@ -1910,65 +1918,78 @@ class ActEditorV2(QMainWindow):
         inner.layout().setSpacing(4)
         parent_layout.addWidget(inner, 1)
 
-        # 控制栏
-        ctrl = QHBoxLayout()
+        # 控制栏分两行：单行会把中央栏的最小宽度推到 1000px 以上，
+        # 进而在默认窗口下挤压左侧列表。第一行放播放/方向/周期，
+        # 第二行放播放头和编辑操作。
+        ctrl = QVBoxLayout()
+        ctrl.setContentsMargins(0, 0, 0, 0)
+        ctrl.setSpacing(2)
+
+        playback_ctrl = QHBoxLayout()
+        playback_ctrl.setSpacing(4)
 
         btn_first = QPushButton("⏮️", clicked=self._tl_goto_first)
         btn_first.setToolTip("跳至首帧 (Ctrl+◀◀)")
-        ctrl.addWidget(btn_first)
+        playback_ctrl.addWidget(btn_first)
 
         btn_prev = QPushButton("◀️", clicked=self._tl_step_prev)
         btn_prev.setToolTip("后退一帧 (J / ←)")
-        ctrl.addWidget(btn_prev)
+        playback_ctrl.addWidget(btn_prev)
 
         btn_play = QPushButton("▶️", clicked=self._preview_play)
         btn_play.setToolTip("播放动画 (L)")
-        ctrl.addWidget(btn_play)
+        playback_ctrl.addWidget(btn_play)
 
         btn_stop = QPushButton("⏹️", clicked=self._preview_stop)
         btn_stop.setToolTip("停止播放 (K)")
-        ctrl.addWidget(btn_stop)
+        playback_ctrl.addWidget(btn_stop)
 
         btn_last = QPushButton("⏭️", clicked=self._tl_goto_last)
         btn_last.setToolTip("跳至末帧 (Ctrl+▶▶)")
-        ctrl.addWidget(btn_last)
+        playback_ctrl.addWidget(btn_last)
 
-        ctrl.addSpacing(4)
-        ctrl.addWidget(QLabel("方向:"))
+        playback_ctrl.addSpacing(4)
+        playback_ctrl.addWidget(QLabel("方向:"))
 
         self._dir_btns = QButtonGroup(self)
         for d in range(4):
             rb = QRadioButton(DIRECTION_SHORT[d])
             rb.setChecked(d == 0)
             self._dir_btns.addButton(rb, d)
-            ctrl.addWidget(rb)
+            playback_ctrl.addWidget(rb)
         self._dir_btns.buttonClicked.connect(self._on_dir_changed)
 
-        ctrl.addSpacing(4)
-        ctrl.addWidget(QLabel("周期:"))
+        playback_ctrl.addSpacing(4)
+        playback_ctrl.addWidget(QLabel("周期:"))
         self._speed_spin = QSpinBox()
         self._speed_spin.setRange(10, 500)
         self._speed_spin.setValue(120)
         self._speed_spin.setSingleStep(10)
-        self._speed_spin.setMaximumWidth(52)
-        ctrl.addWidget(self._speed_spin)
+        # 主题 QSS 会为边框、内边距和右侧上下箭头预留空间；52px 会
+        # 把 QSpinBox 内部的 QLineEdit 压成几乎不可见，导致无法输入。
+        # 周期范围是 10~500，固定留出三位数字的可编辑区域。
+        self._speed_spin.setFixedWidth(80)
+        playback_ctrl.addWidget(self._speed_spin)
+        playback_ctrl.addStretch()
+        ctrl.addLayout(playback_ctrl)
 
-        ctrl.addSpacing(4)
+        edit_ctrl = QHBoxLayout()
+        edit_ctrl.setSpacing(4)
         btn_zero = QPushButton("↩️ 归零", clicked=self._tl_reset_playhead)
         btn_zero.setToolTip("播放头归零")
-        ctrl.addWidget(btn_zero)
+        edit_ctrl.addWidget(btn_zero)
         self._tl_tick_lbl = QLabel("tick: 0")
-        ctrl.addWidget(self._tl_tick_lbl)
+        edit_ctrl.addWidget(self._tl_tick_lbl)
 
-        ctrl.addSpacing(4)
         self._edit_mode_cb = QCheckBox("编辑模式")
         self._edit_mode_cb.setChecked(False)
         self._edit_mode_cb.stateChanged.connect(self._toggle_edit_mode)
-        ctrl.addWidget(self._edit_mode_cb)
+        edit_ctrl.addWidget(self._edit_mode_cb)
 
-        ctrl.addStretch()
-        ctrl.addWidget(QPushButton("✅ 应用修改", clicked=self._apply_edit))
-        ctrl.addWidget(QPushButton("🔄 重置", clicked=self._reset_edit))
+        edit_ctrl.addStretch()
+        edit_ctrl.addWidget(QPushButton("✅ 应用修改", clicked=self._apply_edit))
+        edit_ctrl.addWidget(QPushButton("🔄 重置", clicked=self._reset_edit))
+        ctrl.addLayout(edit_ctrl)
         inner.layout().addLayout(ctrl)
 
         # 垂直分割: 预览区 + 时间轴区 (工具栏附在时间轴顶部)
@@ -2040,6 +2061,22 @@ class ActEditorV2(QMainWindow):
             combo.addItems(items)
         return combo
 
+    @staticmethod
+    def _sync_editable_combo_value(combo, index=None):
+        """让可编辑枚举框显示底层数值，而不是选项说明文字。"""
+        if not combo.isEditable():
+            return
+        if index is None:
+            index = combo.currentIndex()
+        if index < 0:
+            return
+        value = combo.itemData(index)
+        if value is None:
+            return
+        line_edit = combo.lineEdit()
+        if line_edit is not None:
+            line_edit.setText(str(value))
+
     def _build_layer_cards(self):
         """构建 8 个图层的紧凑卡片"""
         for s in range(ACT_MAX_LAYER):
@@ -2102,10 +2139,17 @@ class ActEditorV2(QMainWindow):
             return le
 
         def _cb(key, labels_dict, editable=False):
-            cb = self._no_wheel_combo(list(labels_dict.values()))
+            cb = self._no_wheel_combo()
+            for value, label in labels_dict.items():
+                cb.addItem(label, value)
             cb.setMinimumWidth(FW)
             if editable:
                 cb.setEditable(True)
+                cb.setInsertPolicy(QComboBox.NoInsert)
+                cb.currentIndexChanged.connect(
+                    lambda idx, combo=cb:
+                    self._sync_editable_combo_value(combo, idx))
+                self._sync_editable_combo_value(cb)
             vars_row[key] = cb
             return cb
 
@@ -2763,6 +2807,8 @@ class ActEditorV2(QMainWindow):
                 idx_c = widget.findText(label)
                 if idx_c >= 0:
                     widget.setCurrentIndex(idx_c)
+                    if widget.isEditable():
+                        self._sync_editable_combo_value(widget, idx_c)
                 elif widget.isEditable():
                     widget.setCurrentText(str(v))
                 widget.blockSignals(False)
@@ -2785,6 +2831,7 @@ class ActEditorV2(QMainWindow):
             idx_c = loop_combo.findText(label)
             if idx_c >= 0:
                 loop_combo.setCurrentIndex(idx_c)
+                self._sync_editable_combo_value(loop_combo, idx_c)
             elif loop_combo.isEditable():
                 loop_combo.setCurrentText(str(v))
             loop_combo.blockSignals(False)

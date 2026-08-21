@@ -179,13 +179,11 @@ QComboBox::drop-down {
     subcontrol-origin: padding;
     subcontrol-position: top right;
     width: 28px;
-    border-left: 1px solid transparent;
     border-top-right-radius: 7px;
     border-bottom-right-radius: 7px;
 }
 QComboBox:hover::drop-down, QComboBox:focus::drop-down {
     background-color: rgba(255, 255, 255, 0.04);
-    border-left-color: #444444;
 }
 QComboBox::down-arrow {
     image: url(svg/down-arrow.svg);
