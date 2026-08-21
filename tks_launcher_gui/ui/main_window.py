@@ -2,11 +2,11 @@
 import os
 
 from PySide6.QtCore import Qt, QSize, QTimer
-from PySide6.QtGui import QIcon, QKeySequence
+from PySide6.QtGui import QIcon, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QApplication, QButtonGroup, QDialog, QFileDialog, QLabel, QMainWindow,
-    QMessageBox, QPushButton, QRadioButton, QSplitter, QStatusBar, QTextBrowser,
-    QToolBar, QWidget, QVBoxLayout, QHBoxLayout,
+    QMessageBox, QPushButton, QRadioButton, QSizePolicy, QSplitter, QStatusBar,
+    QTextBrowser, QToolBar, QWidget, QVBoxLayout, QHBoxLayout,
 )
 
 from core.config_loader import PatchDef
@@ -198,14 +198,7 @@ class MainWindow(QMainWindow):
         mm.addAction("制作头像 MOD…", self._on_custom_avatar)
         mm.addAction("制作音乐 MOD…", self._on_custom_music)
 
-        sm = menu_bar.addMenu("设置(S)")
-        sm.addAction("启动模式设置", self._focus_mode)
-        sm.addAction("查看详细日志", self._show_log_dialog)
-        sm.addSeparator()
-        vm = sm.addMenu("主题")
-        vm.addAction("切换主题", QKeySequence("Ctrl+T"), self._toggle_theme)
-
-        # 帮助菜单: 使用说明 + 关于编辑器
+        # 帮助菜单: 使用说明 + 关于编辑器 (设置菜单已移除: 切换主题移至工具栏, 详细日志在启动状态面板行内按钮)
         hm = menu_bar.addMenu("帮助(H)")
         hm.addAction("使用说明", self._show_help)
         hm.addAction("标准模式与兼容模式", self._show_mode_help)
@@ -303,11 +296,23 @@ class MainWindow(QMainWindow):
         toolbar.setIconSize(QSize(20, 20))
         self.addToolBar(toolbar)
 
+        # 分割按钮: 外形是一个按钮, 内部为主按钮 + 齿轮按钮组 (圆角/分隔线样式见 QSS)
+        start_split = QWidget()
+        start_split.setObjectName("startSplitButton")
+        split_lay = QHBoxLayout(start_split)
+        split_lay.setContentsMargins(0, 0, 0, 0)
+        split_lay.setSpacing(0)
         self.btn_start = QPushButton("🎮 启动游戏")
         self.btn_start.setObjectName("btnStart")
         self.btn_start.setToolTip("按当前模式加载游戏功能与 MOD 并启动游戏 (Ctrl+Enter)")
         self.btn_start.clicked.connect(self._on_start)
-        toolbar.addWidget(self.btn_start)
+        self.btn_start_gear = QPushButton("⚙")
+        self.btn_start_gear.setObjectName("btnStartGear")
+        self.btn_start_gear.setToolTip("选择游戏程序…")
+        self.btn_start_gear.clicked.connect(self._choose_game_path)
+        split_lay.addWidget(self.btn_start)
+        split_lay.addWidget(self.btn_start_gear)
+        toolbar.addWidget(start_split)
         toolbar.addSeparator()
 
         self.btn_refresh_mods = QPushButton("🔄 刷新 MOD")
@@ -321,6 +326,19 @@ class MainWindow(QMainWindow):
         self.btn_save_mgr.setToolTip("备份/恢复游戏存档及补丁状态")
         self.btn_save_mgr.clicked.connect(self._on_save_manager)
         toolbar.addWidget(self.btn_save_mgr)
+
+        # 弹性占位将切换主题按钮推到工具栏最右侧 (透明, 避免裸 QWidget 被全局背景规则染色)
+        spacer = QWidget()
+        spacer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        spacer.setStyleSheet("background: transparent; border: none;")
+        toolbar.addWidget(spacer)
+        self.btn_theme = QPushButton("🌓 切换主题")
+        self.btn_theme.setObjectName("toolbarSecondary")
+        self.btn_theme.setToolTip("深色/浅色主题切换 (Ctrl+T)")
+        self.btn_theme.clicked.connect(self._toggle_theme)
+        toolbar.addWidget(self.btn_theme)
+        # 设置菜单移除后保留 Ctrl+T 快捷键
+        QShortcut(QKeySequence("Ctrl+T"), self, activated=self._toggle_theme)
 
         # 模式卡片按钮 (创建于此, 放置于顶部模式行; 样式走主题 #modeCard 规范)
         # 仍由 QButtonGroup 互斥管理, property("mode") 语义与原单选按钮一致
@@ -411,7 +429,7 @@ class MainWindow(QMainWindow):
         # 辅助工具面板高度取最小完整高度 = 标题栏 + 一行工具正好显示
         # (sizeHint 因 FlowLayout 的 height-for-width 特性会虚高, 故用 minimumSizeHint)
         tools_h = self._tools_panel.minimumSizeHint().height()
-        right.setSizes([640, 280, tools_h])
+        right.setSizes([640, 210, tools_h])
         splitter.addWidget(right)
 
         # 中间/右侧可伸缩（窗口最大化时自适应），左侧补丁列表直接用最小宽度
@@ -430,6 +448,12 @@ class MainWindow(QMainWindow):
             self.btn_start.setObjectName("btnStartCompat" if compatible else "btnStart")
             self.btn_start.style().unpolish(self.btn_start)
             self.btn_start.style().polish(self.btn_start)
+        # 齿轮按钮随模式同步换色
+        if hasattr(self, "btn_start_gear"):
+            self.btn_start_gear.setObjectName(
+                "btnStartGearCompat" if compatible else "btnStartGear")
+            self.btn_start_gear.style().unpolish(self.btn_start_gear)
+            self.btn_start_gear.style().polish(self.btn_start_gear)
         # 启动状态面板的当前模式值随模式着色
         if hasattr(self, "_summary_mode"):
             self._summary_mode.setObjectName("modeValueCompat" if compatible else "modeValueStd")
@@ -447,17 +471,22 @@ class MainWindow(QMainWindow):
         content = QWidget()
         content.setObjectName("LauncherSummaryContent")
         layout = QVBoxLayout(content)
-        layout.setContentsMargins(14, 14, 14, 14)
-        layout.setSpacing(10)
+        layout.setContentsMargins(14, 12, 14, 12)
+        layout.setSpacing(8)
 
-        def _row(label_text: str, value: QLabel) -> None:
+        def _row(label_text: str, value: QLabel, extra: QWidget | None = None,
+                 value_stretch: bool = True) -> None:
             row = QHBoxLayout()
             row.setSpacing(12)
             lab = QLabel(label_text)
             lab.setProperty("class", "PropLabel")
             lab.setFixedWidth(96)
             row.addWidget(lab)
-            row.addWidget(value, 1)
+            row.addWidget(value, 1 if value_stretch else 0)
+            if not value_stretch:
+                row.addStretch(1)  # 值标签 inline fit-content, 剩余空间留白
+            if extra is not None:
+                row.addWidget(extra)
             layout.addLayout(row)
 
         self._summary_mode = QLabel()
@@ -470,20 +499,15 @@ class MainWindow(QMainWindow):
         self._summary_status = QLabel()
         self._summary_status.setObjectName("statusLabel")
 
-        _row("当前模式", self._summary_mode)
+        _row("当前模式", self._summary_mode, value_stretch=False)
         _row("已启用游戏功能", self._summary_features)
         _row("已启用 MOD", self._summary_mods)
         _row("画面兼容工具", self._summary_tool)
-        _row("启动状态", self._summary_status)
-
-        self._summary_hint = QLabel()
-        self._summary_hint.setObjectName("hintLabel")
-        self._summary_hint.setWordWrap(True)
-        layout.addWidget(self._summary_hint)
+        # 「查看详细日志」改为启动状态值右侧的行内按钮 (靠右对齐)
         self._btn_show_log = QPushButton("查看详细日志")
-        self._btn_show_log.setObjectName("showLogButton")
+        self._btn_show_log.setObjectName("showLogInlineButton")
         self._btn_show_log.clicked.connect(self._show_log_dialog)
-        layout.addWidget(self._btn_show_log)
+        _row("启动状态", self._summary_status, self._btn_show_log)
 
         panel = create_dock("启动状态", content, body_margins=(0, 0, 0, 0))
         panel.setObjectName("LauncherStatusPanel")
@@ -501,9 +525,6 @@ class MainWindow(QMainWindow):
         tool = self._get_selected_tool() if hasattr(self, "_tool_btn_group") else ""
         self._summary_tool.setText(tool or "未使用")
         self._set_summary_status("准备就绪", "idle")
-        self._summary_hint.setText(
-            "兼容模式下将跳过启动器游戏功能；依赖这些功能的 MOD 可能无法工作。"
-            if compatible else "将使用启动器游戏功能，并加载已勾选的 MOD。")
 
     def _set_summary_status(self, text: str, level: str = "idle") -> None:
         """设置启动状态文本, 复用主题规范的状态标签样式 (statusLabel/Ok/Warn/Error)。"""
@@ -634,16 +655,12 @@ class MainWindow(QMainWindow):
             self._save_state()
             self.status_bar.showMessage(f"已选择游戏程序: {os.path.basename(path)}")
 
-    def _focus_mode(self):
-        if hasattr(self, "_standard_mode"):
-            self._standard_mode.setFocus()
-
     def _set_running_state(self, running: bool):
         """锁定会影响本次启动快照的控件，避免运行中状态漂移。"""
         for widget in (
             self._standard_mode, self._compatible_mode,
             self.patch_list, self.mod_list, self._tools_panel,
-            self.btn_refresh_mods, self.btn_save_mgr,
+            self.btn_refresh_mods, self.btn_save_mgr, self.btn_start_gear,
         ):
             widget.setEnabled(not running)
         self._action_start.setEnabled(not running)
@@ -777,10 +794,6 @@ class MainWindow(QMainWindow):
             else:
                 # finished 在游戏退出且清理完成后才发出, 此时不应再显示"运行中"
                 self._set_summary_status("游戏已退出", "ok")
-            self._summary_hint.setText(
-                f"本次：游戏功能 {patch_text}，MOD {mod_text}\n"
-                + ("如有异常请点击「查看详细日志」排查。" if has_issue
-                   else "详细过程可在「查看详细日志」中查看。"))
         if success:
             # 游戏已退出: 状态栏给出本次会话的分项小结, 右下角回到就绪
             self.status_bar.showMessage(

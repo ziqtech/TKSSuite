@@ -1078,6 +1078,67 @@ QPushButton#btnStartCompat:disabled {
     border-color: #444444;
 }
 
+/* ── 启动游戏分割按钮: 主按钮圆左角, 齿轮按钮圆右角, 拼接处共享分隔线 ── */
+QPushButton#btnStart,
+QPushButton#btnStartCompat {
+    border-top-right-radius: 0px;
+    border-bottom-right-radius: 0px;
+}
+QPushButton#btnStartGear {
+    background-color: #0f5f4c;
+    color: #e6fff7;
+    border: 1px solid #0b4c3d;
+    border-left: none;
+    border-top-left-radius: 0px;
+    border-bottom-left-radius: 0px;
+    padding: 6px 9px;
+}
+QPushButton#btnStartGear:hover {
+    background-color: #126e59;
+}
+QPushButton#btnStartGear:pressed {
+    background-color: #0b4c3d;
+    color: #ffffff;
+}
+QPushButton#btnStartGear:disabled {
+    background-color: #2a2a2a;
+    color: #737373;
+    border-color: #444444;
+}
+QPushButton#btnStartGearCompat {
+    background-color: #303b52;
+    color: #e5edff;
+    border: 1px solid #7aa2f7;
+    border-left: none;
+    border-top-left-radius: 0px;
+    border-bottom-left-radius: 0px;
+    padding: 6px 9px;
+}
+QPushButton#btnStartGearCompat:hover {
+    background-color: #384967;
+}
+QPushButton#btnStartGearCompat:pressed {
+    background-color: #26344a;
+    color: #ffffff;
+}
+QPushButton#btnStartGearCompat:disabled {
+    background-color: #2a2a2a;
+    color: #737373;
+    border-color: #444444;
+}
+
+/* ── 兼容模式蒙板 (补丁列表): 圆角与 DockHeader/DockBody 一致 ── */
+QWidget#compatOverlay {
+    background-color: rgba(0, 0, 0, 0.45);
+    border-radius: 10px;
+}
+QLabel#compatOverlayLabel {
+    background: transparent;
+    color: #ffffff;
+    font-size: 14px;
+    font-weight: bold;
+}
+
 /* ── 启动状态面板当前模式值着色 (tks_launcher_gui) ── */
 QLabel#modeValueStd {
     color: #10a37f;
@@ -1278,9 +1339,16 @@ QTableWidget#LauncherModTable::item:selected {
     background-color: rgba(16, 163, 127, 0.22);
     color: #ececec;
 }
+/* 表头顶部圆角: 表头组件自身圆角背景, section 透明以避免直角盖住卡片圆角 */
+QTableWidget#LauncherPatchTable QHeaderView,
+QTableWidget#LauncherModTable QHeaderView {
+    background-color: #262626;
+    border-top-left-radius: 7px;
+    border-top-right-radius: 7px;
+}
 QTableWidget#LauncherPatchTable QHeaderView::section,
 QTableWidget#LauncherModTable QHeaderView::section {
-    background-color: #262626;
+    background-color: transparent;
     border-bottom: 1px solid #444444;
     padding: 8px;
     color: #a0a0a0;
@@ -1299,9 +1367,10 @@ QWidget#LauncherPreviewPanel QTextBrowser#detailBox {
     border-radius: 8px;
     padding: 8px 10px;
 }
+/* 内容容器透明, 露出 DockBody 圆角表面 (不透明背景会盖住底部圆角) */
 QWidget#LauncherSummaryContent,
 QWidget#LauncherToolsContent {
-    background-color: #262626;
+    background-color: transparent;
 }
 QLabel[class="SummaryValue"] {
     color: #ececec;
@@ -1321,17 +1390,27 @@ QLabel#modeValueCompat {
     color: #91b2ff;
     background-color: rgba(122, 162, 247, 0.16);
 }
-QPushButton#showLogButton {
-    background-color: transparent;
-    color: #b4b4b4;
-    border: 1px solid #444444;
-    border-radius: 8px;
-    padding: 6px 10px;
+/* 启动状态值去除内边距, 与上方各行值左对齐 */
+QWidget#LauncherSummaryContent QLabel#statusLabel,
+QWidget#LauncherSummaryContent QLabel#statusLabelOk,
+QWidget#LauncherSummaryContent QLabel#statusLabelWarn,
+QWidget#LauncherSummaryContent QLabel#statusLabelError {
+    padding: 0px;
 }
-QPushButton#showLogButton:hover {
+/* 启动状态行内按钮 (启动状态值右侧, 靠右对齐) */
+QPushButton#showLogInlineButton {
+    background-color: transparent;
+    color: #45c49a;
+    border: none;
+    border-radius: 6px;
+    padding: 3px 8px;
+}
+QPushButton#showLogInlineButton:hover {
     background-color: #343434;
     color: #ececec;
-    border-color: #5a5a5a;
+}
+QPushButton#showLogInlineButton:pressed {
+    background-color: #424242;
 }
 QWidget#LauncherToolsContent QRadioButton {
     background-color: #2f2f2f;

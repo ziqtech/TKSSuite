@@ -10,7 +10,7 @@
 """
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
-    QAbstractItemView, QButtonGroup, QCheckBox, QHeaderView, QToolButton,
+    QAbstractItemView, QButtonGroup, QCheckBox, QHeaderView, QLabel, QToolButton,
     QTableWidget, QTableWidgetItem, QTextBrowser, QVBoxLayout, QWidget,
     QHBoxLayout,
 )
@@ -95,10 +95,21 @@ class PatchListWidget(QWidget):
         self._detail.setOpenLinks(False)
         layout.addWidget(self._detail)
 
-        # body_margins 左右下内收: 表格避开 DockBody 圆角, 保持卡片圆角可见
+        # body_margins 四周内收: 表格避开 DockBody 圆角, 顶部与左右间距一致
         outer.addWidget(
             create_dock("补丁列表", content, header_layout=self._build_header_toggle(),
-                        body_margins=(6, 0, 6, 6)), 1)
+                        body_margins=(6, 6, 6, 6)), 1)
+
+        # 兼容模式蒙板: 覆盖整个面板 (含标题栏), 圆角与 DockHeader/DockBody 一致 (样式见 QSS)
+        self._compat_overlay = QWidget(self)
+        self._compat_overlay.setObjectName("compatOverlay")
+        ov_lay = QVBoxLayout(self._compat_overlay)
+        ov_lay.setContentsMargins(0, 0, 0, 0)
+        ov_lab = QLabel("兼容模式不启用")
+        ov_lab.setObjectName("compatOverlayLabel")
+        ov_lab.setAlignment(Qt.AlignCenter)
+        ov_lay.addWidget(ov_lab)
+        self._compat_overlay.hide()
 
         self._populate()
         self._apply_view()
@@ -332,10 +343,19 @@ class PatchListWidget(QWidget):
     # ── 兼容模式 ──
 
     def set_compatible_mode(self, compatible: bool) -> None:
-        """兼容模式下整体置灰; 勾选状态保留, 不清空。提示文案由主窗口状态栏展示。"""
+        """兼容模式下整体置灰并罩上蒙板; 勾选状态保留, 不清空。提示文案由主窗口状态栏展示。"""
         for widget in (self._table, self._header_check,
                        self._btn_opt, self._btn_req):
             widget.setEnabled(not compatible)
+        self._compat_overlay.setVisible(compatible)
+        if compatible:
+            self._compat_overlay.raise_()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        # 蒙板始终铺满整个面板
+        if hasattr(self, "_compat_overlay"):
+            self._compat_overlay.setGeometry(0, 0, self.width(), self.height())
 
     # ── 对外接口 (保持与原实现一致) ──
 
