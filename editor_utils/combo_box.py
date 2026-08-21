@@ -11,9 +11,83 @@
 ``QMenu#EditorComboMenu`` 统一控制。
 """
 
-from PySide6.QtCore import QPoint, Qt
-from PySide6.QtGui import QAction
+import sys
+
+from PySide6.QtCore import QPoint, QRectF, Qt
+from PySide6.QtGui import QAction, QBitmap, QPainter
 from PySide6.QtWidgets import QApplication, QComboBox, QMenu
+
+
+class RoundedComboMenu(QMenu):
+    """带统一圆角裁剪的下拉菜单。
+
+    Windows 的 QMenu 弹出层通常不会可靠遵守 QSS 的底部 border-radius，
+    这里通过原生窗口区域 API 将整个菜单裁剪成圆角矩形；其他平台回退到
+    QBitmap mask。
+    """
+
+    RADIUS = 8
+
+    def _apply_window_region(self):
+        if sys.platform == "win32":
+            try:
+                import ctypes
+
+                width = max(1, self.width())
+                height = max(1, self.height())
+                diameter = self.RADIUS * 2
+                gdi32 = ctypes.windll.gdi32
+                user32 = ctypes.windll.user32
+                gdi32.CreateRoundRectRgn.restype = ctypes.c_void_p
+                gdi32.CreateRoundRectRgn.argtypes = [
+                    ctypes.c_int,
+                    ctypes.c_int,
+                    ctypes.c_int,
+                    ctypes.c_int,
+                    ctypes.c_int,
+                    ctypes.c_int,
+                ]
+                user32.SetWindowRgn.argtypes = [
+                    ctypes.c_void_p,
+                    ctypes.c_void_p,
+                    ctypes.c_bool,
+                ]
+                region = gdi32.CreateRoundRectRgn(
+                    0,
+                    0,
+                    width + 1,
+                    height + 1,
+                    diameter,
+                    diameter,
+                )
+                if region:
+                    hwnd = int(self.winId())
+                    user32.SetWindowRgn(ctypes.c_void_p(hwnd), region, True)
+                return
+            except Exception:
+                pass
+
+        bitmap = QBitmap(self.size())
+        bitmap.fill(Qt.color0)
+        painter = QPainter(bitmap)
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(Qt.color1)
+        painter.drawRoundedRect(
+            QRectF(0, 0, self.width(), self.height()),
+            self.RADIUS,
+            self.RADIUS,
+        )
+        painter.end()
+        self.setMask(bitmap)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._apply_window_region()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._apply_window_region()
 
 
 class EditorComboBox(QComboBox):
@@ -46,7 +120,7 @@ class EditorComboBox(QComboBox):
         return bool(model_index.flags() & Qt.ItemIsEnabled)
 
     def showPopup(self):
-        menu = QMenu(self)
+        menu = RoundedComboMenu(self)
         menu.setObjectName(self.MENU_OBJECT_NAME)
         menu.setToolTipsVisible(False)
 
@@ -85,4 +159,3 @@ class EditorComboBox(QComboBox):
 
 # 旧名称保留给外部脚本和未迁移的第三方调用方；实际类型就是统一组件。
 NoWheelComboBox = EditorComboBox
-

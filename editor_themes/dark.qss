@@ -454,6 +454,11 @@ QMenu#EditorComboMenu::item:selected {
     background-color: #3a3a3a;
     color: #ececec;
 }
+QMenu#EditorComboMenu::item:checked {
+    background-color: #10a37f;
+    color: #ffffff;
+    font-weight: 600;
+}
 
 /* ── Tab 页 ── */
 QTabWidget::pane {
@@ -500,19 +505,22 @@ QTabWidget#WarpcEditorTabs {
 }
 QTabWidget#WarpcEditorTabs::pane {
     border: 1px solid #444444;
-    border-radius: 8px;
+    border-top: none;
+    border-radius: 0px 0px 8px 8px;
     background-color: #212121;
-    padding: 8px;
-    top: -1px;
+    padding: 0px;
+    top: 0px;
 }
 QTabWidget#WarpcEditorTabs QTabBar {
     background-color: #212121;
     border: none;
+    border-bottom: 1px solid #444444;
 }
 QTabWidget#WarpcEditorTabs QTabBar::tab {
     background-color: transparent;
     color: #a0a0a0;
     border: none;
+    border-bottom: 1px solid #444444;
     border-radius: 0px;
     padding: 8px 13px;
     margin: 0px;
@@ -521,14 +529,19 @@ QTabWidget#WarpcEditorTabs QTabBar::tab {
 QTabWidget#WarpcEditorTabs QTabBar::tab:hover:!selected {
     background-color: #2a2a2a;
     color: #ececec;
+    border-top-left-radius: 8px;
+    border-top-right-radius: 8px;
 }
 QTabWidget#WarpcEditorTabs QTabBar::tab:selected {
-    background-color: #2f2f2f;
+    background-color: #212121;
     color: #ececec;
     font-weight: 600;
-    border: none;
-    border-top-left-radius: 6px;
-    border-top-right-radius: 6px;
+    border: 1px solid #444444;
+    border-top: 2px solid #10a37f;
+    border-bottom: 1px solid #212121;
+    border-top-left-radius: 8px;
+    border-top-right-radius: 8px;
+    margin-bottom: -1px;
 }
 QTabWidget#WarpcEditorTabs QTabBar::tab:disabled {
     color: #666666;
