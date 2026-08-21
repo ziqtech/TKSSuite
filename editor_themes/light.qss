@@ -1328,10 +1328,10 @@ QTableWidget#LauncherModTable {
     gridline-color: #e3e3e8;
     alternate-background-color: #ffffff;
 }
+/* 行/列分隔线统一由 gridline-color 绘制 (1px), ::item 不再加 border-bottom 避免双线叠加 */
 QTableWidget#LauncherPatchTable::item,
 QTableWidget#LauncherModTable::item {
     background-color: transparent;
-    border-bottom: 1px solid #e3e3e8;
     padding: 4px 8px;
 }
 QTableWidget#LauncherPatchTable::item:selected,
