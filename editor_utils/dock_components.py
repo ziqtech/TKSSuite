@@ -11,8 +11,10 @@ class DockHeader(QFrame):
         super().__init__()
         self.setObjectName("DockHeader")
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(8, 6, 8, 6)
-        layout.setSpacing(4)
+        # 标题栏保持紧凑，但给文字和右侧工具留出稳定的呼吸空间。
+        # 外框、圆角和底部分界线由主题 QSS 统一绘制。
+        layout.setContentsMargins(10, 7, 10, 7)
+        layout.setSpacing(6)
         lbl = QLabel(title)
         lbl.setObjectName("DockTitle")
         layout.addWidget(lbl, 1)
@@ -28,6 +30,7 @@ def create_dock(title, widget_content, header_layout=None,
     默认 8px；传 (0, 0, 0, 0) 可让内容与标题栏/边框齐平。
     """
     container = QWidget()
+    container.setObjectName("DockPanel")
     layout = QVBoxLayout(container)
     layout.setContentsMargins(0, 0, 0, 0)
     layout.setSpacing(0)
@@ -36,6 +39,7 @@ def create_dock(title, widget_content, header_layout=None,
     body.setObjectName("DockBody")
     body_layout = QVBoxLayout(body)
     body_layout.setContentsMargins(*body_margins)
+    body_layout.setSpacing(6)
     body_layout.addWidget(widget_content)
     layout.addWidget(body, 1)
     return container

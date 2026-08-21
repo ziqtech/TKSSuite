@@ -115,6 +115,7 @@ class FontEditorWindow(QMainWindow):
 
     def __init__(self):
         super().__init__()
+        self.setObjectName("EditorWindow")
         self.setWindowTitle(format_title("font_editor"))
         self.resize(960, 580)
         self.setMinimumSize(820, 520)
@@ -161,7 +162,8 @@ class FontEditorWindow(QMainWindow):
         central = QWidget()
         self.setCentralWidget(central)
         layout = QVBoxLayout(central)
-        layout.setContentsMargins(4, 4, 4, 4)
+        layout.setContentsMargins(12, 10, 12, 10)
+        layout.setSpacing(8)
 
         tabs = QTabWidget()
         layout.addWidget(tabs)
@@ -190,7 +192,8 @@ class FontEditorWindow(QMainWindow):
         """
         page = QWidget()
         outer = QHBoxLayout(page)
-        outer.setContentsMargins(4, 4, 4, 4)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(8)
 
         main_splitter = QSplitter(Qt.Horizontal)
 
@@ -223,7 +226,7 @@ class FontEditorWindow(QMainWindow):
         right_panel = QWidget()
         right_layout = QVBoxLayout(right_panel)
         right_layout.setContentsMargins(0, 0, 0, 0)
-        right_layout.setSpacing(4)
+        right_layout.setSpacing(8)
 
         # ── 生成选项 ──
         opt_content = QWidget()

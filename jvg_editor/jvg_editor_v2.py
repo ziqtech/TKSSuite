@@ -872,6 +872,7 @@ class CanvasView(QGraphicsView):
 class JVGEditor(QMainWindow):
     def __init__(self, filepath: Optional[str] = None):
         super().__init__()
+        self.setObjectName("EditorWindow")
         self.setWindowTitle(format_title("jvg_editor"))
         self.resize(1400, 900)
 
@@ -1093,11 +1094,12 @@ class JVGEditor(QMainWindow):
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
         main_layout = QVBoxLayout(central_widget)
-        main_layout.setContentsMargins(8, 8, 8, 8)
+        main_layout.setContentsMargins(12, 10, 12, 10)
+        main_layout.setSpacing(8)
 
         # 主水平分割器：左-中-右三栏布局
         splitter = QSplitter(Qt.Horizontal)
-        splitter.setHandleWidth(7)
+        splitter.setHandleWidth(6)
         main_layout.addWidget(splitter, 1)
 
         # ================ 左侧：图集分组列表 ================

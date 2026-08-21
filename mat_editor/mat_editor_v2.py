@@ -1216,6 +1216,7 @@ class MatEditorApp(QMainWindow):
 
     def __init__(self):
         super().__init__()
+        self.setObjectName("EditorWindow")
         self.setWindowTitle(format_title("mat_editor"))
         self.resize(1560, 860)
         self.setMinimumSize(1340, 640)
@@ -1319,7 +1320,8 @@ class MatEditorApp(QMainWindow):
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
         main_layout = QVBoxLayout(central_widget)
-        main_layout.setContentsMargins(8, 8, 8, 8)
+        main_layout.setContentsMargins(12, 10, 12, 10)
+        main_layout.setSpacing(8)
 
         # --- Menu Bar ---
         menu_bar = self.menuBar()
@@ -1360,7 +1362,7 @@ class MatEditorApp(QMainWindow):
 
         # --- Main Splitter (三栏) ---
         self.splitter = QSplitter(Qt.Horizontal)
-        self.splitter.setHandleWidth(7)
+        self.splitter.setHandleWidth(6)
         main_layout.addWidget(self.splitter, 1)
 
         # Left pane
@@ -1412,7 +1414,7 @@ class MatEditorApp(QMainWindow):
 
         # Splitter for scene list / entity list
         left_splitter = QSplitter(Qt.Vertical)
-        left_splitter.setHandleWidth(5)
+        left_splitter.setHandleWidth(6)
 
         # Scene list
         self.scene_tree = QTreeWidget()
@@ -1679,6 +1681,7 @@ class MatEditorApp(QMainWindow):
 
         # Script splitter (vertical)
         script_splitter = QSplitter(Qt.Vertical)
+        script_splitter.setHandleWidth(6)
 
         # Top: 脚本调度信息 + DefUnit链列表
         top_widget = QWidget()
@@ -1781,6 +1784,7 @@ class MatEditorApp(QMainWindow):
 
         # Editor + preview (horizontal splitter)
         editor_splitter = QSplitter(Qt.Horizontal)
+        editor_splitter.setHandleWidth(6)
 
         # Left: Script editor (CodeEditor)
         self.script_text = CodeEditor()

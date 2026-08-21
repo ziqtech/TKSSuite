@@ -1602,6 +1602,7 @@ class ThumbnailStrip(QWidget):
 class ActEditorV2(QMainWindow):
     def __init__(self):
         super().__init__()
+        self.setObjectName("EditorWindow")
         self.setWindowTitle(format_title("act_editor"))
         self.resize(1600, 900)
         self.setMinimumSize(1200, 680)
@@ -1706,8 +1707,8 @@ class ActEditorV2(QMainWindow):
         central = QWidget()
         self.setCentralWidget(central)
         main_layout = QVBoxLayout(central)
-        main_layout.setContentsMargins(8, 8, 8, 4)
-        main_layout.setSpacing(4)
+        main_layout.setContentsMargins(12, 10, 12, 10)
+        main_layout.setSpacing(8)
 
         # 菜单栏
         mb = self.menuBar()
@@ -1781,7 +1782,7 @@ class ActEditorV2(QMainWindow):
 
         # 主 Splitter (三栏: 条目列表 | 时间轴与预览 | 参数面板)
         splitter = QSplitter(Qt.Horizontal)
-        splitter.setHandleWidth(7)
+        splitter.setHandleWidth(6)
         splitter.setChildrenCollapsible(False)
         main_layout.addWidget(splitter, 1)
 
@@ -1968,7 +1969,7 @@ class ActEditorV2(QMainWindow):
 
         # 垂直分割: 预览区 + 时间轴区 (工具栏附在时间轴顶部)
         vpw = QSplitter(Qt.Vertical)
-        vpw.setHandleWidth(5)
+        vpw.setHandleWidth(6)
         vpw.setChildrenCollapsible(False)
         inner.layout().addWidget(vpw, 1)
 

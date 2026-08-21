@@ -103,6 +103,7 @@ class ConfigsEditorWindow(QMainWindow):
 
     def __init__(self):
         super().__init__()
+        self.setObjectName("EditorWindow")
         self.setWindowTitle(format_title("configs_editor"))
         self.resize(960, 720)
         self.setMinimumSize(700, 500)
@@ -143,8 +144,8 @@ class ConfigsEditorWindow(QMainWindow):
         central = QWidget()
         self.setCentralWidget(central)
         layout = QVBoxLayout(central)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
+        layout.setContentsMargins(12, 10, 12, 10)
+        layout.setSpacing(8)
 
         # ── 菜单栏 ──
         menubar = self.menuBar()

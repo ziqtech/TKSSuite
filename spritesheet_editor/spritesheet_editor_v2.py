@@ -2896,6 +2896,7 @@ class SpriteSheetEditorWindow(QMainWindow):
 
     def __init__(self, filepath: Optional[str] = None, is_dark: bool = True):
         super().__init__()
+        self.setObjectName("EditorWindow")
         self.setWindowTitle(format_title("spritesheet_editor"))
         ico = os.path.join(os.path.dirname(__file__), 'TKS.ico')
         if os.path.exists(ico):
@@ -2942,8 +2943,8 @@ class SpriteSheetEditorWindow(QMainWindow):
         central = QWidget()
         self.setCentralWidget(central)
         main_layout = QVBoxLayout(central)
-        main_layout.setContentsMargins(4, 4, 4, 4)
-        main_layout.setSpacing(2)
+        main_layout.setContentsMargins(12, 10, 12, 10)
+        main_layout.setSpacing(8)
 
         # ── 工具栏 ──
         # 先创建 SettingsPanel, 工具栏按钮需要引用 self.settings._move_row/_move_col
@@ -3051,7 +3052,7 @@ class SpriteSheetEditorWindow(QMainWindow):
 
         # ── 主内容区 (QSplitter + Dock 面板) ──
         main_splitter = QSplitter(Qt.Horizontal)
-        main_splitter.setHandleWidth(7)
+        main_splitter.setHandleWidth(6)
 
         # ── 左侧: 精灵资产库 ──
         left_widget = QWidget()

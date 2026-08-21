@@ -895,6 +895,7 @@ class WarpcEditorV2(QMainWindow):
 
     def __init__(self):
         super().__init__()
+        self.setObjectName("EditorWindow")
         self.setWindowTitle(format_title("warpc_editor"))
         self.resize(1400, 850)
         self.setMinimumSize(1100, 680)
@@ -1105,8 +1106,8 @@ class WarpcEditorV2(QMainWindow):
         central = QWidget()
         self.setCentralWidget(central)
         main_layout = QVBoxLayout(central)
-        main_layout.setContentsMargins(8,8,8,4)
-        main_layout.setSpacing(4)
+        main_layout.setContentsMargins(12, 10, 12, 10)
+        main_layout.setSpacing(8)
 
         # 菜单栏
         mb = self.menuBar()
@@ -1178,7 +1179,7 @@ class WarpcEditorV2(QMainWindow):
 
         # 主 Splitter
         splitter = QSplitter(Qt.Horizontal)
-        splitter.setHandleWidth(7)
+        splitter.setHandleWidth(6)
         splitter.setChildrenCollapsible(False)
         # 中央堆叠容器: page0=表单模式(splitter) page1=表格模式(懒构建)
         self._mode_stack = QStackedWidget()

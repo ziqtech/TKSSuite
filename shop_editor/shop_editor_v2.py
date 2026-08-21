@@ -236,6 +236,7 @@ TAB_TO_SHOP = {
 class ShopEditorWindow(QMainWindow):
     def __init__(self):
         super().__init__()
+        self.setObjectName("EditorWindow")
         self.setWindowTitle(format_title("shop_editor"))
         self.resize(1100, 680)
         self.setMinimumSize(950, 550)
@@ -329,7 +330,8 @@ class ShopEditorWindow(QMainWindow):
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
         main_layout = QVBoxLayout(central_widget)
-        main_layout.setContentsMargins(8, 8, 8, 8)
+        main_layout.setContentsMargins(12, 10, 12, 10)
+        main_layout.setSpacing(8)
 
         # ---- 工具栏区域 ----
         toolbar_layout = QHBoxLayout()
@@ -390,7 +392,7 @@ class ShopEditorWindow(QMainWindow):
 
         # ---- 左右分栏 ----
         splitter = QSplitter(Qt.Horizontal)
-        splitter.setHandleWidth(7)
+        splitter.setHandleWidth(6)
         splitter.setChildrenCollapsible(False)
         main_layout.addWidget(splitter, 1)
 

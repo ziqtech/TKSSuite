@@ -271,6 +271,7 @@ class FieldRefDialog(QDialog):
 class KonEditor(QMainWindow):
     def __init__(self):
         super().__init__()
+        self.setObjectName("EditorWindow")
         self.setWindowTitle(format_title("kon_editor"))
         self.resize(1320, 820)
         self.setMinimumSize(1050, 650)
@@ -403,12 +404,12 @@ class KonEditor(QMainWindow):
         central = QWidget()
         self.setCentralWidget(central)
         main_layout = QVBoxLayout(central)
-        main_layout.setContentsMargins(8, 8, 8, 4)
-        main_layout.setSpacing(4)
+        main_layout.setContentsMargins(12, 10, 12, 10)
+        main_layout.setSpacing(8)
         main_layout.addLayout(toolbar)
 
         splitter = QSplitter(Qt.Horizontal)
-        splitter.setHandleWidth(7)
+        splitter.setHandleWidth(6)
         splitter.setChildrenCollapsible(False)
         main_layout.addWidget(splitter, 1)
 

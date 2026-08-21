@@ -493,6 +493,7 @@ def warpc_get(seg3, char_idx, byte_offset):
 class SaveEditorApp(QMainWindow):
     def __init__(self):
         super().__init__()
+        self.setObjectName("EditorWindow")
         self.setWindowTitle(format_title("save_editor"))
         self.resize(1400, 880)
         self.setMinimumSize(1100, 700)
@@ -542,8 +543,8 @@ class SaveEditorApp(QMainWindow):
         central = QWidget()
         self.setCentralWidget(central)
         main_layout = QVBoxLayout(central)
-        main_layout.setContentsMargins(8, 8, 8, 4)
-        main_layout.setSpacing(4)
+        main_layout.setContentsMargins(12, 10, 12, 10)
+        main_layout.setSpacing(8)
 
         # 菜单栏
         mb = self.menuBar()

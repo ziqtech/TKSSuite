@@ -474,6 +474,7 @@ class UseRightPickerDialog(QDialog):
 class ItemEditorApp(QMainWindow):
     def __init__(self):
         super().__init__()
+        self.setObjectName("EditorWindow")
         self.setWindowTitle(format_title("item_editor"))
         self.resize(1360, 860)
         self.setMinimumSize(1120, 700)
@@ -531,8 +532,8 @@ class ItemEditorApp(QMainWindow):
         central = QWidget()
         self.setCentralWidget(central)
         main_layout = QVBoxLayout(central)
-        main_layout.setContentsMargins(8, 8, 8, 4)
-        main_layout.setSpacing(4)
+        main_layout.setContentsMargins(12, 10, 12, 10)
+        main_layout.setSpacing(8)
 
         # 菜单栏
         mb = self.menuBar()
@@ -591,7 +592,7 @@ class ItemEditorApp(QMainWindow):
 
         # 主分割窗口
         self.splitter = QSplitter(Qt.Horizontal)
-        self.splitter.setHandleWidth(7)
+        self.splitter.setHandleWidth(6)
         main_layout.addWidget(self.splitter, 1)
 
         # 左侧: 物品列表 (列顺序与原版一致: 图标在最前)

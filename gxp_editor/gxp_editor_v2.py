@@ -203,6 +203,7 @@ class EnhancedGraphicsView(QGraphicsView):
 class GXPEditor(QMainWindow):
     def __init__(self, filepath: Optional[str] = None):
         super().__init__()
+        self.setObjectName("EditorWindow")
         self.setWindowTitle(format_title("gxp_editor"))
         self.resize(1200, 800)
 
@@ -312,10 +313,11 @@ class GXPEditor(QMainWindow):
         cw = QWidget()
         self.setCentralWidget(cw)
         layout = QVBoxLayout(cw)
-        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setContentsMargins(12, 10, 12, 10)
+        layout.setSpacing(8)
 
         splitter = QSplitter(Qt.Horizontal)
-        splitter.setHandleWidth(7)
+        splitter.setHandleWidth(6)
         layout.addWidget(splitter, 1)
 
         # ---------------- 左侧控制面板 ----------------

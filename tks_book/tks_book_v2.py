@@ -41,6 +41,7 @@ from tab_special import SpecialItemTab
 class TksBookViewer(QMainWindow):
     def __init__(self):
         super().__init__()
+        self.setObjectName("EditorWindow")
         self.setWindowTitle(format_title("tks_book"))
         self.resize(1320, 820)
         self.setMinimumSize(1000, 640)
@@ -109,8 +110,8 @@ class TksBookViewer(QMainWindow):
         central = QWidget()
         self.setCentralWidget(central)
         main_layout = QVBoxLayout(central)
-        main_layout.setContentsMargins(8, 8, 8, 4)
-        main_layout.setSpacing(4)
+        main_layout.setContentsMargins(12, 10, 12, 10)
+        main_layout.setSpacing(8)
 
         # 标签页
         self.tabs = QTabWidget()

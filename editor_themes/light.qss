@@ -10,6 +10,9 @@ QWidget {
 QMainWindow, QDialog {
     background-color: #ffffff;
 }
+QMainWindow#EditorWindow {
+    background-color: #ffffff;
+}
 QToolTip {
     background-color: #2d2d2d;
     color: #ffffff;
@@ -30,6 +33,7 @@ QTableWidget, QTreeWidget, QTableView, QTreeView {
     background-color: #ffffff;
     color: #2d2d2d;
     border: 1px solid #d9d9e3;
+    border-radius: 8px;
     gridline-color: #ececf1;
     selection-background-color: rgba(16, 163, 127, 0.14);
     selection-color: #2d2d2d;
@@ -213,6 +217,7 @@ QListWidget {
     background-color: #ffffff;
     color: #2d2d2d;
     border: 1px solid #d9d9e3;
+    border-radius: 8px;
     outline: none;
 }
 QListWidget::item, QTreeWidget::item {
@@ -286,6 +291,9 @@ QCheckBox:disabled, QRadioButton:disabled {
 /* ── 分割线与滚动条 ── */
 QSplitter::handle {
     image: none;
+    background-color: transparent;
+}
+QSplitter {
     background-color: transparent;
 }
 QSplitter::handle:horizontal {
@@ -402,8 +410,14 @@ QTabBar::tab:hover:!selected {
 }
 
 /* ── 编辑器面板、图形视图与滚动区域 ── */
+QWidget#DockPanel {
+    background-color: transparent;
+    border: none;
+}
 QFrame#DockHeader {
     background-color: #f7f7f8;
+    border: 1px solid #d9d9e3;
+    border-bottom: none;
     border-top-left-radius: 8px;
     border-top-right-radius: 8px;
 }
@@ -411,6 +425,8 @@ QWidget#DockBody {
     background-color: #ffffff;
     border: 1px solid #d9d9e3;
     border-top: none;
+    border-bottom-left-radius: 8px;
+    border-bottom-right-radius: 8px;
 }
 QLabel#DockTitle {
     background-color: transparent;
@@ -419,11 +435,13 @@ QLabel#DockTitle {
 }
 QGraphicsView {
     border: 1px solid #d9d9e3;
+    border-radius: 8px;
     background-color: #f7f7f8;
 }
 QScrollArea {
     background-color: #ffffff;
-    border: none;
+    border: 1px solid #ececf1;
+    border-radius: 8px;
 }
 QSlider::groove:horizontal {
     background-color: #ececf1;

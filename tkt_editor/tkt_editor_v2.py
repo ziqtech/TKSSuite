@@ -854,6 +854,7 @@ def pil_to_qimage(pil_image):
 class TktEditor(QMainWindow):
     def __init__(self, initial_path=None):
         super().__init__()
+        self.setObjectName("EditorWindow")
         self.setWindowTitle(format_title("tkt_editor"))
         self.resize(1350, 850)
 
@@ -906,7 +907,8 @@ class TktEditor(QMainWindow):
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
         main_layout = QVBoxLayout(central_widget)
-        main_layout.setContentsMargins(8, 8, 8, 8)
+        main_layout.setContentsMargins(12, 10, 12, 10)
+        main_layout.setSpacing(8)
 
         # --- 菜单栏 (还原全部项) ---
         menu_bar = self.menuBar()
@@ -998,7 +1000,7 @@ class TktEditor(QMainWindow):
         w1_layout.addLayout(toolbar_layout)
 
         w1_splitter = QSplitter(Qt.Horizontal)
-        w1_splitter.setHandleWidth(7)
+        w1_splitter.setHandleWidth(6)
         w1_layout.addWidget(w1_splitter, 1)
 
         self.table = QTableWidget(0, 3)
@@ -1015,7 +1017,7 @@ class TktEditor(QMainWindow):
         w1_splitter.addWidget(self._create_dock("低级全局数据表", self.table))
 
         w1_right_splitter = QSplitter(Qt.Vertical)
-        w1_right_splitter.setHandleWidth(7)
+        w1_right_splitter.setHandleWidth(6)
         w1_splitter.addWidget(w1_right_splitter)
 
         inspector_widget = QWidget()
@@ -1101,7 +1103,7 @@ class TktEditor(QMainWindow):
         w2_layout.addWidget(self.comp_cat_list)
 
         self.w2_splitter = QSplitter(Qt.Horizontal)
-        self.w2_splitter.setHandleWidth(7)
+        self.w2_splitter.setHandleWidth(6)
         self.w2_splitter.splitterMoved.connect(self._adjust_comp_columns)
         w2_layout.addWidget(self.w2_splitter, 1)
 
@@ -1120,7 +1122,7 @@ class TktEditor(QMainWindow):
 
         # --- 创建右侧垂直分割器 (用于存放检查器和独立视口) ---
         w2_right_splitter = QSplitter(Qt.Vertical)
-        w2_right_splitter.setHandleWidth(7)
+        w2_right_splitter.setHandleWidth(6)
         self.w2_splitter.addWidget(w2_right_splitter)
 
         comp_right_widget = QWidget()

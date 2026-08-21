@@ -507,6 +507,7 @@ class GRPGraphicsView(QGraphicsView):
 class GRPEditor(QMainWindow):
     def __init__(self, filepath: Optional[str] = None):
         super().__init__()
+        self.setObjectName("EditorWindow")
         self.setWindowTitle(format_title("grp_editor"))
         self.resize(1360, 900)
 
@@ -630,16 +631,21 @@ class GRPEditor(QMainWindow):
     # ── Main UI Layout ────────────────────────────────────
     def _setup_ui(self):
         splitter = QSplitter(Qt.Horizontal)
+        splitter.setContentsMargins(12, 10, 12, 10)
+        splitter.setHandleWidth(6)
         self.setCentralWidget(splitter)
 
         # LEFT: 区段列表 + 详情
         left_w = QWidget()
         left_lay = QVBoxLayout(left_w)
-        left_lay.setContentsMargins(0,0,0,0)
+        left_lay.setContentsMargins(0, 0, 0, 0)
+        left_lay.setSpacing(8)
         left_lay.addWidget(DockHeader("区段列表"))
         body = QWidget()
         body.setObjectName("DockBody")
         body_lay = QVBoxLayout(body)
+        body_lay.setContentsMargins(8, 8, 8, 8)
+        body_lay.setSpacing(6)
 
         self._sec_list = QListWidget()
         self._sec_list.setFont(QFont("Consolas", 9))

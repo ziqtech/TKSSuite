@@ -796,6 +796,7 @@ class SkillTreeDialog(QDialog):
 class SkillEditorApp(QMainWindow):
     def __init__(self):
         super().__init__()
+        self.setObjectName("EditorWindow")
         self.setWindowTitle(format_title("skill_editor"))
         self.resize(1260, 820)
         self.setMinimumSize(1000, 650)
@@ -838,7 +839,8 @@ class SkillEditorApp(QMainWindow):
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
         main_layout = QVBoxLayout(central_widget)
-        main_layout.setContentsMargins(8, 8, 8, 8)
+        main_layout.setContentsMargins(12, 10, 12, 10)
+        main_layout.setSpacing(8)
 
         # --- Menu Bar ---
         menu_bar = self.menuBar()
@@ -902,7 +904,7 @@ class SkillEditorApp(QMainWindow):
 
         # --- Main Splitter ---
         self.splitter = QSplitter(Qt.Horizontal)
-        self.splitter.setHandleWidth(7)
+        self.splitter.setHandleWidth(6)
         main_layout.addWidget(self.splitter, 1)
 
         # --- Left Pane (Table) ---
