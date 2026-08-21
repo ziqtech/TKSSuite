@@ -6,12 +6,13 @@ import zipfile
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
-    QCheckBox, QComboBox, QDialog, QFileDialog, QGridLayout, QHBoxLayout, QLabel, QLineEdit,
+    QCheckBox, QDialog, QFileDialog, QGridLayout, QHBoxLayout, QLabel, QLineEdit,
     QMessageBox, QPushButton, QSpinBox, QTextEdit, QVBoxLayout,
 )
 
 from core.mod_loader import infer_category_from_names
 from core.mod_packer import read_tksmod_content, rewrite_mod_metadata
+from editor_utils.combo_box import EditorComboBox
 from editor_utils.mod_exporter import extract_preview_image, generate_short_uuid
 
 # 分类内部值 → 界面名称 (与启动器列表 ui/mod_list.py 保持一致)
@@ -100,7 +101,7 @@ class ModMetaEditorDialog(QDialog):
 
         row += 1
         grid.addWidget(QLabel("分类:"), row, 0)
-        self.edit_category = QComboBox()
+        self.edit_category = EditorComboBox()
         for value, label in _CATEGORY_LABELS.items():
             self.edit_category.addItem(label, value)
         self.edit_category.currentIndexChanged.connect(self._on_category_user_changed)

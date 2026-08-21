@@ -35,7 +35,7 @@ from warpc_schema import (
     get_packed_byte, set_packed_byte, parse_enum_value,
     FLAG_DEFS,
 )
-from editor_utils.ui_helpers import NoWheelComboBox
+from editor_utils.ui_helpers import EditorComboBox
 from editor_utils.picker_dialogs import STATUS_NAMES
 from editor_utils.search_utils import search_match
 
@@ -499,7 +499,7 @@ class TableFieldDelegate(QStyledItemDelegate):
         col = self._model.columns[index.column()]
         if col.kind == 'learn':
             # 与表单模式一致: 技能学习状态下拉框 (SKILL_LEARN_STATES)
-            cb = QComboBox(parent)
+            cb = EditorComboBox(parent)
             cb.addItems(SKILL_LEARN_STATES)
             v = index.data(Qt.EditRole)
             # 保留非预设进度值 (1~9 等): 临时追加一项, 避免提交时被归一化丢失
@@ -508,7 +508,7 @@ class TableFieldDelegate(QStyledItemDelegate):
             return cb
         if col.kind == 'byte':
             if col.role == 'status_id':
-                cb = QComboBox(parent)
+                cb = EditorComboBox(parent)
                 cb.addItem('0 (无)')
                 for i, nm in enumerate(STATUS_NAMES):
                     cb.addItem(f'{i+1}-{nm}')
@@ -518,7 +518,7 @@ class TableFieldDelegate(QStyledItemDelegate):
             sp.setButtonSymbols(QAbstractSpinBox.NoButtons)
             return sp
         if col.kind == 'field' and col.fdef.ftype == 'enum' and col.fdef.enum_items:
-            cb = QComboBox(parent)
+            cb = EditorComboBox(parent)
             cb.addItems(col.fdef.enum_items)
             return cb
         sp = QSpinBox(parent)
@@ -755,7 +755,7 @@ class WarpcTablePanel(QWidget):
 
         bar = QHBoxLayout()
         bar.addWidget(QLabel("列集预设:"))
-        self.preset_combo = NoWheelComboBox()
+        self.preset_combo = EditorComboBox()
         self.preset_combo.addItems(COLUMN_PRESETS)
         self.preset_combo.currentTextChanged.connect(self._apply_preset)
         bar.addWidget(self.preset_combo)

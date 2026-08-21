@@ -65,13 +65,13 @@ from PySide6.QtWidgets import (
     QTabBar,
 )
 from PySide6.QtGui import QColor, QFont, QIcon, QIntValidator, QKeySequence
-from PySide6.QtCore import Qt, QTranslator, Signal, QTimer, QPoint, QSize
+from PySide6.QtCore import Qt, QTranslator, Signal, QTimer, QSize
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from editor_utils.theme_manager import ThemeManager
 from editor_utils.dock_components import DockHeader
 from editor_utils.picker_dialogs import TktPickerDialog, StatusPickerDialog, STATUS_NAMES, ItemPickerDialog
 from editor_utils.jvg_loader import load_mu_sprites, get_sprite_pixmap
-from editor_utils.ui_helpers import make_fake_input, update_path_labels, confirm_close, resolve_config_path, themed_messagebox, NoWheelComboBox, NoWheelSpinBox
+from editor_utils.ui_helpers import make_fake_input, update_path_labels, confirm_close, resolve_config_path, themed_messagebox, EditorComboBox, NoWheelSpinBox
 from editor_utils.version import format_title, format_about_header
 from editor_utils.lzss import lzss_decompress_dat, lzss_compress_dat, lzss_decompress_save, lzss_compress_save
 from editor_utils.tkt_loader import load_tkt_simple
@@ -903,44 +903,6 @@ class WarpcEditorTabBar(QTabBar):
         return hint
 
 
-class WarpcComboBox(NoWheelComboBox):
-    """主编辑器下拉框: 使用 Qt 标准 QMenu 弹层，避免自建 popup 的生命周期崩溃。"""
-
-    def showPopup(self):
-        menu = QMenu(self)
-        menu.setObjectName("WarpcComboMenu")
-        menu.setToolTipsVisible(False)
-
-        for index in range(self.count()):
-            action = menu.addAction(self.itemText(index))
-            action.setData(index)
-            action.setCheckable(True)
-            action.setChecked(index == self.currentIndex())
-
-        width = max(self.width(), max(
-            (self.fontMetrics().horizontalAdvance(self.itemText(i)) for i in range(self.count())),
-            default=0,
-        ) + 34)
-        menu.setFixedWidth(width)
-
-        anchor = self.mapToGlobal(QPoint(0, self.height()))
-        screen = QApplication.screenAt(anchor) or QApplication.primaryScreen()
-        if screen is not None:
-            available = screen.availableGeometry()
-            menu_height = menu.sizeHint().height()
-            x = max(available.left(), min(anchor.x(), available.right() - width + 1))
-            y = anchor.y()
-            if y + menu_height > available.bottom() + 1:
-                y = self.mapToGlobal(QPoint(0, 0)).y() - menu_height
-            anchor = QPoint(x, y)
-
-        selected = menu.exec(anchor)
-        if selected is not None:
-            index = selected.data()
-            if index is not None:
-                self.setCurrentIndex(int(index))
-
-
 class WarpcEditorV2(QMainWindow):
     # 信号: 角色编辑已应用 (参数: 角色索引)
     record_applied = Signal(int)
@@ -1423,12 +1385,12 @@ class WarpcEditorV2(QMainWindow):
         self._edit_vars[fn] = ev
 
         if fn == 'role':
-            cb = WarpcComboBox()
+            cb = EditorComboBox()
             cb.addItems(["-1-未激活", "0-已激活"])
             cell.addWidget(make_fake_input(combo=cb))
             self._edit_extras[fn] = cb
         elif fn == 'reaction_group':
-            cb = WarpcComboBox()
+            cb = EditorComboBox()
             cb.addItems(REACTION_GROUP_VALUES)
             cell.addWidget(make_fake_input(combo=cb))
             self._edit_extras[fn] = cb
@@ -1586,7 +1548,7 @@ class WarpcEditorV2(QMainWindow):
             lbl.setToolTip(f"[{fo//2}] {cmt}")
             cell.addWidget(lbl)
             self._field_locator[fn] = (self._cur_tab_index, lbl)  # 字段搜索定位
-            cb = WarpcComboBox()
+            cb = EditorComboBox()
             cb.addItems(status_options)
             dur = QLineEdit("0")
             dur.setMinimumWidth(40)
@@ -1720,7 +1682,7 @@ class WarpcEditorV2(QMainWindow):
                 w.setToolTip("运行时学习进度原值: 0=不会  1~9=等待学  10~19=可以学(待学习)  20+=已学会")
                 w.valueChanged.connect(self._check_skill_group_overflow)
             else:
-                w = WarpcComboBox()
+                w = EditorComboBox()
                 w.addItems(SKILL_LEARN_STATES)
                 w.currentIndexChanged.connect(self._check_skill_group_overflow)
             cell.addWidget(w)
@@ -1740,7 +1702,7 @@ class WarpcEditorV2(QMainWindow):
         row.setContentsMargins(0, 0, 0, 6)
         row.setSpacing(6)
         row.addWidget(QLabel("技能组:"))
-        self._skill_group_combo = WarpcComboBox()
+        self._skill_group_combo = EditorComboBox()
         self._skill_group_combo.setMinimumWidth(200)
         self._skill_group_combo.addItem("(未加载 TKSkill.dat)", -1)
         row.addWidget(self._skill_group_combo)

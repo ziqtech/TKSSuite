@@ -9,7 +9,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt
 
-from editor_utils.ui_helpers import NoWheelComboBox
+from editor_utils.ui_helpers import EditorComboBox
 from .base_panel import ConfigPanelBase
 
 # 渲染器显示名: (JSON键, 显示名)
@@ -46,7 +46,7 @@ class FontConfigPanel(ConfigPanelBase):
             rh.setContentsMargins(0, 0, 0, 0)
             rh.setSpacing(8)
 
-            combo = NoWheelComboBox()
+            combo = EditorComboBox()
             combo.setFixedWidth(200)
             self._combos[key] = combo
             rh.addWidget(combo)

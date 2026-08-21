@@ -88,7 +88,7 @@ from PySide6.QtCore import Qt, QPointF, QRectF, QTranslator
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from editor_utils.theme_manager import ThemeManager
 from editor_utils.dock_components import DockHeader
-from editor_utils.ui_helpers import make_fake_input, update_path_labels, confirm_close, themed_messagebox, NoWheelComboBox
+from editor_utils.ui_helpers import make_fake_input, update_path_labels, confirm_close, themed_messagebox, EditorComboBox
 from editor_utils.lzss import lzss_decompress_stream as lzss_decompress
 from editor_utils.lzss import lzss_decompress_dat
 from editor_utils.jvg_loader import load_mu_sprites, get_sprite_pixmap
@@ -2418,7 +2418,7 @@ class WarDataEditorV2(QMainWindow):
             name_lbl.setProperty("class","ExtraPreviewText")
             self.dt_name_labels.append(name_lbl)
             tbl.setCellWidget(i, 4, name_lbl)
-            cb = NoWheelComboBox()
+            cb = EditorComboBox()
             cb.addItems(trap_items)
             tbl.setCellWidget(i, 7, cb)
         tbl.cellChanged.connect(self._on_dt_cell_changed)
@@ -2582,7 +2582,7 @@ class WarDataEditorV2(QMainWindow):
         self.show_grid.toggled.connect(self._redraw_scene)
         ctrl.addWidget(self.show_grid)
         ctrl.addWidget(QLabel("透明度:"))
-        self.grid_alpha = NoWheelComboBox()
+        self.grid_alpha = EditorComboBox()
         self.grid_alpha.addItems(['0%','25%','50%','75%','100%'])
         self.grid_alpha.setCurrentText('25%')
         self.grid_alpha.currentTextChanged.connect(partial(self._redraw_scene))
@@ -2614,7 +2614,7 @@ class WarDataEditorV2(QMainWindow):
             ctrl.addWidget(z)
         ctrl.addStretch()
         ctrl.addWidget(QLabel("缩放:"))
-        self.zoom_combo = NoWheelComboBox()
+        self.zoom_combo = EditorComboBox()
         self.zoom_combo.addItems(['25%','33%','50%','66%','75%','100%'])
         self.zoom_combo.setCurrentText('75%')
         self.zoom_combo.currentTextChanged.connect(self._on_zoom_change)
@@ -2623,7 +2623,7 @@ class WarDataEditorV2(QMainWindow):
         self.edit_mode = QCheckBox("编辑")
         ctrl.addWidget(self.edit_mode)
         ctrl.addWidget(QLabel("画笔:"))
-        self.zone_brush = NoWheelComboBox()
+        self.zone_brush = EditorComboBox()
         # 索引顺序与 WarWay signed int8 值语义对应 (sub_4355C4/sub_431428)
         self._brush_items = [
             (-1, "障碍(-1)"), (0, "通行(0)"),

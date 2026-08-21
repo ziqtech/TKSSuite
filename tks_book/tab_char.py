@@ -15,7 +15,7 @@ from book_loader import (
     SKILL_TYPES, get_packed_byte, pil_to_qpixmap, use_right_label,
     SPECIAL_FLAG_NAMES, flag_names,
 )
-from editor_utils.ui_helpers import NoWheelComboBox
+from editor_utils.ui_helpers import EditorComboBox
 from editor_utils.jvg_loader import get_sprite_pixmap
 from editor_utils.flow_layout import FlowLayout
 from editor_utils.picker_dialogs import STATUS_NAMES, STATUS_ICON_BASE
@@ -310,7 +310,7 @@ class CharTab(BookTabBase):
         chk.toggled.connect(self._on_graph_toggled)
         h.addWidget(chk)
 
-        combo = NoWheelComboBox()
+        combo = EditorComboBox()
         combo.addItems(
             ["全部状态", "可学习", "待学习", "已学习", "技能组学会", "子技能学会"])
         combo.setToolTip("按学习状态筛选")
@@ -319,7 +319,7 @@ class CharTab(BookTabBase):
             if i >= 0:
                 combo.setCurrentIndex(i)
         # 不强制宽度: 角落区宽=sizeHint(含文本+箭头), 强制超宽会溢出被裁
-        combo.setSizeAdjustPolicy(NoWheelComboBox.AdjustToContents)
+        combo.setSizeAdjustPolicy(EditorComboBox.AdjustToContents)
         combo.currentIndexChanged.connect(
             lambda idx, c=combo: self._on_filter_changed(idx, c))  # 设值后再连
         h.addWidget(combo)

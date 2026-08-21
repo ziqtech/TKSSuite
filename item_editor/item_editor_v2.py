@@ -70,7 +70,7 @@ from editor_utils.tkt_loader import load_tkt_simple
 from editor_utils.theme_manager import ThemeManager
 from editor_utils.ui_helpers import (
     confirm_close, make_fake_input, resolve_config_path,
-    themed_messagebox, update_path_labels, NoWheelComboBox,
+    themed_messagebox, update_path_labels, EditorComboBox,
 )
 from editor_utils.version import format_title, format_about_header
 from editor_utils.window_theme import apply_godot_theme
@@ -566,13 +566,13 @@ class ItemEditorApp(QMainWindow):
         toolbar.addWidget(QPushButton("清除", clicked=self._clear_filter))
         toolbar.addSpacing(10)
         toolbar.addWidget(QLabel("页面号:"))
-        self.filter_page = NoWheelComboBox()
+        self.filter_page = EditorComboBox()
         self.filter_page.addItems(["全部页面"] + PAGE_VALUES)
         self.filter_page.currentIndexChanged.connect(self._apply_filter)
         toolbar.addWidget(self.filter_page)
         toolbar.addSpacing(6)
         toolbar.addWidget(QLabel("权限:"))
-        self.filter_right = NoWheelComboBox()
+        self.filter_right = EditorComboBox()
         self.filter_right.addItems(["全部权限"])
         self.filter_right.currentIndexChanged.connect(self._apply_filter)
         toolbar.addWidget(self.filter_right)
@@ -793,7 +793,7 @@ class ItemEditorApp(QMainWindow):
         cell.addWidget(lbl)
 
         if ft == 'page':
-            cb = NoWheelComboBox()
+            cb = EditorComboBox()
             cb.addItems(PAGE_VALUES)
             cell.addWidget(make_fake_input(combo=cb))
             self.widget_map[fn] = cb

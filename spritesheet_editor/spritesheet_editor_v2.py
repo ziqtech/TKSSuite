@@ -54,7 +54,7 @@ from editor_utils.dock_components import create_dock
 from editor_utils.theme_manager import ThemeManager
 from editor_utils.version import format_title, format_about_header
 from editor_utils.window_theme import apply_godot_theme
-from editor_utils.ui_helpers import NoWheelComboBox
+from editor_utils.ui_helpers import EditorComboBox
 
 # ── 像素格式定义 ──────────────────────────────────────────────
 PIXEL_FORMATS: dict[str, str] = {
@@ -2278,7 +2278,7 @@ class SettingsPanel(QWidget):
 
         tex_row = QHBoxLayout()
         tex_row.addWidget(QLabel("纹理格式:"))
-        self._tex_combo = NoWheelComboBox()
+        self._tex_combo = EditorComboBox()
         self._tex_combo.addItems(list(TEXTURE_FORMATS.keys()))
         self._tex_combo.currentTextChanged.connect(self._on_tex_fmt_changed)
         tex_row.addWidget(self._tex_combo)
@@ -2286,7 +2286,7 @@ class SettingsPanel(QWidget):
 
         pix_row = QHBoxLayout()
         pix_row.addWidget(QLabel("像素格式:"))
-        self._fmt_combo = NoWheelComboBox()
+        self._fmt_combo = EditorComboBox()
         self._fmt_combo.addItems(TEXTURE_FORMATS["PNG-32"])
         self._fmt_combo.setCurrentText("RGBA8888")
         self._fmt_combo.currentTextChanged.connect(self._refresh_export_info)
@@ -2295,7 +2295,7 @@ class SettingsPanel(QWidget):
 
         alpha_row = QHBoxLayout()
         alpha_row.addWidget(QLabel("透明处理:"))
-        self._alpha_combo = NoWheelComboBox()
+        self._alpha_combo = EditorComboBox()
         self._alpha_combo.addItems(ALPHA_MODES)
         self._alpha_combo.setCurrentText("无")
         self._alpha_combo.currentTextChanged.connect(self._refresh_export_info)

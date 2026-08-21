@@ -438,19 +438,19 @@ QMenu::separator {
     margin: 5px 7px;
 }
 
-/* 主编辑器下拉菜单使用原生 QMenu，保持单层圆角边框。 */
-QMenu#WarpcComboMenu {
+/* 所有编辑器下拉菜单共用原生 QMenu，保持单层圆角边框。 */
+QMenu#EditorComboMenu {
     background-color: #ffffff;
     color: #2d2d2d;
     border: 1px solid #d9d9e3;
     border-radius: 8px;
     padding: 4px;
 }
-QMenu#WarpcComboMenu::item {
+QMenu#EditorComboMenu::item {
     padding: 6px 28px 6px 10px;
     border-radius: 5px;
 }
-QMenu#WarpcComboMenu::item:selected {
+QMenu#EditorComboMenu::item:selected {
     background-color: #f1f1f1;
     color: #2d2d2d;
 }

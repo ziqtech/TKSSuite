@@ -9,7 +9,7 @@ from PySide6.QtWidgets import (
 from editor_utils.jvg_loader import get_sprite_pixmap
 from editor_utils.flow_layout import FlowLayout
 from editor_utils.picker_dialogs import STATUS_NAMES, STATUS_ICON_BASE
-from editor_utils.ui_helpers import themed_messagebox, NoWheelComboBox
+from editor_utils.ui_helpers import themed_messagebox, EditorComboBox
 
 from book_loader import (
     SKILL_VIEW_FIELDS, SKILL_TYPES, ATK_TYPES, SPECIAL_FLAG_NAMES,
@@ -33,7 +33,7 @@ class SkillTab(BookTabBase):
         # 类型筛选 (同物品页分类筛选模式)
         self._filter_lbl = QLabel("类型")
         self._filter_lbl.setProperty("class", "PropLabel")
-        self._filter_type = NoWheelComboBox()
+        self._filter_type = EditorComboBox()
         self._filter_type.addItems(
             ["全部类型"] + [SKILL_TYPES[i] for i in sorted(SKILL_TYPES)])
         self._filter_type.setToolTip("按技能类型筛选列表")

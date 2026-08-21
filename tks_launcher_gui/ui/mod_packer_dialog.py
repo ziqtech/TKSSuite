@@ -15,7 +15,7 @@ from core.mod_packer import (
     suggest_output_name,
 )
 from editor_utils.mod_exporter import generate_short_uuid
-from editor_utils.ui_helpers import NoWheelComboBox
+from editor_utils.ui_helpers import EditorComboBox
 
 
 class ModPackerDialog(QDialog):
@@ -109,7 +109,7 @@ class ModPackerDialog(QDialog):
 
         row += 1
         grid.addWidget(QLabel("类型:"), row, 0)
-        self.combo_type = NoWheelComboBox()
+        self.combo_type = EditorComboBox()
         self.combo_type.addItems(["mixed", "data", "story", "visual"])
         grid.addWidget(self.combo_type, row, 1)
 

@@ -10,7 +10,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt
 
-from editor_utils.ui_helpers import NoWheelComboBox
+from editor_utils.ui_helpers import EditorComboBox
 from .base_panel import ConfigPanelBase
 
 # 页面定义: (JSON键, 显示名)
@@ -27,7 +27,7 @@ class BitValueComboDelegate(QStyledItemDelegate):
     """位值列使用 QComboBox 下拉选择的委托"""
 
     def createEditor(self, parent, option, index):
-        combo = NoWheelComboBox(parent)
+        combo = EditorComboBox(parent)
         for v in ALLOWED_BIT_VALUES:
             combo.addItem(str(v), v)
         return combo
@@ -62,7 +62,7 @@ class EquipTypeLabelsPanel(ConfigPanelBase):
         # ── 页面选择 ──
         page_row = QHBoxLayout()
         page_row.addWidget(QLabel("页面:"))
-        self._page_combo = NoWheelComboBox()
+        self._page_combo = EditorComboBox()
         for key, name in PAGES:
             self._page_combo.addItem(name, key)
         self._page_combo.currentIndexChanged.connect(self._on_page_changed)

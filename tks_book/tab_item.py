@@ -10,7 +10,7 @@ from PySide6.QtWidgets import (
 from editor_utils.jvg_loader import get_sprite_pixmap
 from editor_utils.flow_layout import FlowLayout
 from editor_utils.picker_dialogs import STATUS_NAMES, STATUS_ICON_BASE
-from editor_utils.ui_helpers import NoWheelComboBox
+from editor_utils.ui_helpers import EditorComboBox
 
 from book_loader import (
     ITEM_VIEW_FIELDS, PAGE_NAMES, COMBAT_FLAG_NAMES, EXTRA_FLAG_NAMES,
@@ -34,7 +34,7 @@ class ItemTab(BookTabBase):
         # 分类筛选 (参考 item_editor_v2 页面号筛选; 查看器无空槽无需仅非空)
         self._filter_lbl = QLabel("分类")
         self._filter_lbl.setProperty("class", "PropLabel")
-        self._filter_page = NoWheelComboBox()
+        self._filter_page = EditorComboBox()
         self._filter_page.addItems(
             ["全部分类"] + [PAGE_NAMES[i] for i in sorted(PAGE_NAMES)])
         self._filter_page.setToolTip("按物品分类 (页面号) 筛选列表")

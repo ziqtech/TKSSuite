@@ -6,9 +6,10 @@ import os
 import sys
 from PySide6.QtCore import Qt, QObject, QEvent
 from PySide6.QtGui import QIcon
-from PySide6.QtWidgets import (QComboBox, QFileDialog, QFrame, QHBoxLayout,
-                               QLabel, QLineEdit, QMenu, QMessageBox,
+from PySide6.QtWidgets import (QFileDialog, QFrame, QHBoxLayout, QLabel,
+                               QLineEdit, QMenu, QMessageBox,
                                QPushButton, QWidget, QSpinBox)
+from editor_utils.combo_box import EditorComboBox
 
 
 # ── 颜色常量 (与 editor_themes 一致) ──
@@ -18,18 +19,9 @@ COLOR_MISSING_DARK = "#e27d60"
 COLOR_MISSING_LIGHT = "#c93b16"
 
 
-class NoWheelComboBox(QComboBox):
-    """禁用鼠标滚轮切换值的下拉框。
-
-    普通 QComboBox 在 QScrollArea 等可滚动容器中, 鼠标滚轮悬停即会误触
-    切换当前选项。重写 wheelEvent 调用 event.ignore(), 使滚轮事件向上冒泡
-    交给父级滚动区域 (滚动页面), 而非改变当前选中项。
-
-    所有编辑器统一使用本类替代 QComboBox, 以获得一致的滚轮行为。
-    """
-
-    def wheelEvent(self, event):
-        event.ignore()
+# 兼容旧导入；新代码统一从 editor_utils.ui_helpers 导入 EditorComboBox，
+# 外部脚本仍可继续使用 NoWheelComboBox，不会产生两套下拉框实现。
+NoWheelComboBox = EditorComboBox
 
 
 class NoWheelSpinBox(QSpinBox):

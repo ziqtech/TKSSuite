@@ -20,7 +20,7 @@ from core.mod_merger import (
 )
 from core.mod_packer import list_tksmod_contents, read_tksmod_content
 from editor_utils.mod_exporter import generate_short_uuid
-from editor_utils.ui_helpers import NoWheelComboBox
+from editor_utils.ui_helpers import EditorComboBox
 
 # 差异类别 -> 中文显示
 _KIND_LABEL = {
@@ -137,7 +137,7 @@ class ModMergerDialog(QDialog):
 
         row += 1
         grid.addWidget(QLabel("类型:"), row, 0)
-        self.combo_type = NoWheelComboBox()
+        self.combo_type = EditorComboBox()
         self.combo_type.addItems(["mixed", "data", "story", "visual"])
         grid.addWidget(self.combo_type, row, 1)
 

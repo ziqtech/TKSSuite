@@ -25,7 +25,7 @@ from PySide6.QtCore import Qt, QTranslator
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from editor_utils.theme_manager import ThemeManager
 from editor_utils.dock_components import DockHeader
-from editor_utils.ui_helpers import make_fake_input, update_path_labels, confirm_close, themed_messagebox, NoWheelComboBox
+from editor_utils.ui_helpers import make_fake_input, update_path_labels, confirm_close, themed_messagebox, EditorComboBox
 from editor_utils.lzss import lzss_decompress_dat, lzss_compress_dat
 from editor_utils.shared_state import pick_tks_directory
 from editor_utils.tkt_loader import load_tkt_simple
@@ -585,7 +585,7 @@ class KonEditor(QMainWindow):
             hi_w = QLineEdit()
             hi_w.setValidator(QIntValidator(-128, 127))
             hi_w.setFixedWidth(48)
-            lo_w = NoWheelComboBox()
+            lo_w = EditorComboBox()
             lo_w.addItems(["启用", "禁用"])
             box = QFrame()
             box.setObjectName("FakeInputBox")
@@ -619,9 +619,9 @@ class KonEditor(QMainWindow):
             self.extra_map[fn] = extra
 
         elif is_filter:
-            hi_w = NoWheelComboBox()
+            hi_w = EditorComboBox()
             hi_w.addItems(["全部", "仅角色", "仅空地"])
-            lo_w = NoWheelComboBox()
+            lo_w = EditorComboBox()
             lo_w.addItems(["对立阵营", "同阵营", "任意阵营"])
             box = QFrame()
             box.setObjectName("FakeInputBox")

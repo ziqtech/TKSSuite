@@ -47,7 +47,7 @@ from editor_utils.picker_dialogs import ItemPickerDialog
 from editor_utils.theme_manager import ThemeManager
 from editor_utils.tkt_loader import load_tkt_simple
 from editor_utils.ui_helpers import (
-    confirm_close, make_fake_input, update_path_labels, NoWheelComboBox,
+    confirm_close, make_fake_input, update_path_labels, EditorComboBox,
 )
 from editor_utils.version import format_title, format_about_header
 from editor_utils.window_theme import apply_godot_theme
@@ -1018,7 +1018,7 @@ class SaveEditorApp(QMainWindow):
         self._warpc_search.setPlaceholderText("🔍 搜索角色...")
         self._warpc_search.textChanged.connect(self._refresh_warpc_list)
         sf.addWidget(self._warpc_search)
-        self._warpc_filter = NoWheelComboBox()
+        self._warpc_filter = EditorComboBox()
         self._warpc_filter.addItems(["全部", "✅ 已激活", "❌ 未激活", "👥 队伍中"])
         self._warpc_filter.currentIndexChanged.connect(self._refresh_warpc_list)
         sf.addWidget(self._warpc_filter)

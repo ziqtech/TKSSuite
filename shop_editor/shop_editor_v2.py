@@ -55,7 +55,7 @@ from editor_utils.mod_exporter import (
 )
 from editor_utils.picker_dialogs import ItemPickerDialog
 from editor_utils.theme_manager import ThemeManager
-from editor_utils.ui_helpers import themed_messagebox, update_path_labels, NoWheelComboBox
+from editor_utils.ui_helpers import themed_messagebox, update_path_labels, EditorComboBox
 from editor_utils.version import format_title, format_about_header
 from editor_utils.window_theme import apply_godot_theme
 from editor_utils.search_utils import search_match
@@ -337,7 +337,7 @@ class ShopEditorWindow(QMainWindow):
         toolbar_layout = QHBoxLayout()
 
         toolbar_layout.addWidget(QLabel("区域:"))
-        self.area_filter_combo = NoWheelComboBox()
+        self.area_filter_combo = EditorComboBox()
         self.area_filter_combo.addItem("全部")
         for k, v in AREA_NAMES.items():
             self.area_filter_combo.addItem(f"{k}-{v}", userData=k)
@@ -433,7 +433,7 @@ class ShopEditorWindow(QMainWindow):
 
         # Area
         edit_layout.addWidget(QLabel("区域:"))
-        self.edit_area_combo = NoWheelComboBox()
+        self.edit_area_combo = EditorComboBox()
         for k, v in sorted(AREA_NAMES.items()):
             self.edit_area_combo.addItem(v, userData=k)
         self.edit_area_combo.currentIndexChanged.connect(self._on_area_changed)

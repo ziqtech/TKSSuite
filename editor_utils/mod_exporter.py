@@ -26,11 +26,12 @@ from typing import Any
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
-    QComboBox, QDialog, QFileDialog, QGridLayout, QHBoxLayout,
+    QDialog, QFileDialog, QGridLayout, QHBoxLayout,
     QLabel, QLineEdit, QMessageBox, QPushButton,
     QSpinBox, QTextEdit, QVBoxLayout,
 )
 
+from editor_utils.combo_box import EditorComboBox
 from editor_utils.lzss import (
     MAX_MATCH as MAX_MATCH_LZ,
     MIN_MATCH as MIN_MATCH_LZ,
@@ -489,7 +490,7 @@ class ModMetadataDialog(QDialog):
 
         row += 1
         grid.addWidget(QLabel("分类:"), row, 0)
-        self.edit_category = QComboBox()
+        self.edit_category = EditorComboBox()
         for value, label in (("other", "其他"), ("visual", "美化"),
                              ("avatar", "头像"), ("music", "音乐"),
                              ("story", "剧情"), ("gameplay", "功能"),
