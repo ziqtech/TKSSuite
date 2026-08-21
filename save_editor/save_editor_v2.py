@@ -568,6 +568,7 @@ class SaveEditorApp(QMainWindow):
         self._slot_btns = []
         for i in range(1, 10):
             btn = QPushButton(f"{i}")
+            btn.setProperty("class", "SaveSlotButton")
             btn.setFixedWidth(32)
             btn.setToolTip(f"槽位 {i}")
             btn.clicked.connect(lambda checked, s=i: self._switch_slot(s))
@@ -576,11 +577,13 @@ class SaveEditorApp(QMainWindow):
         toolbar.addStretch()
         toolbar.addWidget(QPushButton("🌗 切换主题", clicked=self._toggle_theme))
         self._status_label = QLabel("请打开存档目录")
+        self._status_label.setProperty("class", "SaveStatusLabel")
         toolbar.addWidget(self._status_label)
         main_layout.addLayout(toolbar)
 
         # 主 TabWidget
         self.tabs = QTabWidget()
+        self.tabs.setObjectName("SaveEditorTabs")
         main_layout.addWidget(self.tabs, 1)
 
         self._build_overview_tab()
@@ -806,6 +809,7 @@ class SaveEditorApp(QMainWindow):
 
         # 物品表格
         self._inv_table = QTableWidget(0, 6)
+        self._inv_table.setObjectName("SaveInventoryTable")
         self._inv_table.setHorizontalHeaderLabels(['图标', '#', 'ID', '页面', '物品名称', '数量'])
         self._inv_table.setColumnWidth(0, 50)
         self._inv_table.setColumnWidth(1, 36)
@@ -818,7 +822,8 @@ class SaveEditorApp(QMainWindow):
         self._inv_table.setSelectionMode(QAbstractItemView.SingleSelection)
         self._inv_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self._inv_table.verticalHeader().setVisible(False)
-        self._inv_table.horizontalHeader().setStretchLastSection(True)
+        # 物品名称是主要文本列，数量列保持紧凑宽度并避免最大化时被拉长。
+        self._inv_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.Stretch)
         self._inv_table.setIconSize(QSize(36, 36))
         layout.addWidget(self._inv_table, 1)
         self._inv_photos = []  # prevent GC
@@ -850,6 +855,7 @@ class SaveEditorApp(QMainWindow):
         layout.setContentsMargins(8, 8, 8, 8)
 
         self._event_tabs = QTabWidget()
+        self._event_tabs.setObjectName("SaveEventTabs")
         layout.addWidget(self._event_tabs)
 
         # 子Tab: 开关
@@ -1019,6 +1025,7 @@ class SaveEditorApp(QMainWindow):
         left_layout.addLayout(sf)
 
         self._warpc_table = QTableWidget(0, 6)
+        self._warpc_table.setObjectName("SaveWarpcTable")
         self._warpc_table.setHorizontalHeaderLabels(['#', '名称', 'LV', '身份', 'HP', 'MP'])
         self._warpc_table.setColumnWidth(0, 35)
         self._warpc_table.setColumnWidth(1, 110)
@@ -1026,6 +1033,8 @@ class SaveEditorApp(QMainWindow):
         self._warpc_table.setColumnWidth(3, 50)
         self._warpc_table.setColumnWidth(4, 55)
         self._warpc_table.setColumnWidth(5, 55)
+        # 角色名称列随存档编辑器宽度伸缩，其余数值列保留默认宽度。
+        self._warpc_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
         self._warpc_table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self._warpc_table.setSelectionMode(QAbstractItemView.SingleSelection)
         self._warpc_table.setEditTriggers(QAbstractItemView.NoEditTriggers)

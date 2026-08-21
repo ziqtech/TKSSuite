@@ -606,7 +606,8 @@ class ItemEditorApp(QMainWindow):
         self.table.setColumnWidth(5, 90)
         self.table.setColumnWidth(6, 50)
         self.table.verticalHeader().setDefaultSectionSize(44)
-        self.table.horizontalHeader().setStretchLastSection(True)
+        # 名称列随列表面板伸缩，价格列保持紧凑的默认宽度。
+        self.table.horizontalHeader().setSectionResizeMode(4, QHeaderView.Stretch)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SingleSelection)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)

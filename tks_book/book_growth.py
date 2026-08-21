@@ -203,6 +203,8 @@ class GrowthTableDialog(QDialog):
         for ci in range(2, len(cols)):
             hh.setSectionResizeMode(ci, QHeaderView.Fixed)
             self._table.setColumnWidth(ci, 55)
+        # 保留密集成长列的默认宽度，最大化时由最后一个可见列填充额外空间。
+        hh.setStretchLastSection(True)
 
         for row, d in enumerate(self._table_data):
             if d['is_current']:

@@ -1070,6 +1070,9 @@ class WarpcTablePanel(QWidget):
                 self.view.setColumnWidth(ci, 118)  # 容纳下拉标签如 "20-组技能学会"
             else:
                 self.view.setColumnWidth(ci, 96)
+        # 各字段保留预设的默认宽度；窗口有多余空间时由最后一列自然填充，
+        # 避免表格右侧出现大片空白，同时不改变列数或冻结列逻辑。
+        self.view.horizontalHeader().setStretchLastSection(True)
         # 冻结视图: 仅显示前两列, 列宽/行高与主表一致 (模型重置后需重新隐藏)
         if hasattr(self, 'frozen'):
             self.frozen.setColumnWidth(0, self.view.columnWidth(0))

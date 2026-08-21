@@ -903,6 +903,12 @@ class TktEditor(QMainWindow):
         """Dock 面板包裹 — 委托给 editor_utils.dock_components"""
         return create_dock(title, widget_content, header_layout)
 
+    def resizeEvent(self, event):
+        """窗口尺寸变化后同步关联表的文本列比例。"""
+        super().resizeEvent(event)
+        if hasattr(self, 'comp_table'):
+            QTimer.singleShot(0, self._adjust_comp_columns)
+
     def _build_ui(self):
         central_widget = QWidget()
         self.setCentralWidget(central_widget)

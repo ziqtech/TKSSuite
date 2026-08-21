@@ -62,9 +62,10 @@ from PySide6.QtWidgets import (
     QScrollArea, QDialog, QFileDialog, QMessageBox, QTextEdit,
     QFrame, QGridLayout, QAbstractItemView, QMenuBar, QTabWidget,
     QSpinBox, QSizePolicy, QMenu, QCompleter, QStackedWidget, QComboBox,
+    QTabBar,
 )
 from PySide6.QtGui import QColor, QFont, QIcon, QIntValidator, QKeySequence
-from PySide6.QtCore import Qt, QTranslator, Signal, QTimer
+from PySide6.QtCore import Qt, QTranslator, Signal, QTimer, QPoint, QSize
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from editor_utils.theme_manager import ThemeManager
 from editor_utils.dock_components import DockHeader
@@ -806,6 +807,8 @@ class GrowthTableDialog(QDialog):
         # 初始隐藏 grp 列
         for ci in range(16, 23):
             self._growth_table.setColumnHidden(ci, True)
+        # 保留默认列宽，同时让最后一个可见成长列在窗口变宽时填充余量。
+        self._growth_table.horizontalHeader().setStretchLastSection(True)
         self._populate_table()
         layout.addWidget(self._growth_table, 1)
 
@@ -887,6 +890,55 @@ class GrowthTableDialog(QDialog):
 # ═══════════════════════════════════════════════════════════════
 # 主编辑器窗口
 # ═══════════════════════════════════════════════════════════════
+
+
+class WarpcEditorTabBar(QTabBar):
+    """让主编辑器 tab 的底边线延伸到整个内容面板宽度。"""
+
+    def sizeHint(self):
+        hint = super().sizeHint()
+        host = self.parentWidget()
+        if host is not None:
+            hint.setWidth(max(hint.width(), host.width()))
+        return hint
+
+
+class WarpcComboBox(NoWheelComboBox):
+    """主编辑器下拉框: 使用 Qt 标准 QMenu 弹层，避免自建 popup 的生命周期崩溃。"""
+
+    def showPopup(self):
+        menu = QMenu(self)
+        menu.setObjectName("WarpcComboMenu")
+        menu.setToolTipsVisible(False)
+
+        for index in range(self.count()):
+            action = menu.addAction(self.itemText(index))
+            action.setData(index)
+            action.setCheckable(True)
+            action.setChecked(index == self.currentIndex())
+
+        width = max(self.width(), max(
+            (self.fontMetrics().horizontalAdvance(self.itemText(i)) for i in range(self.count())),
+            default=0,
+        ) + 34)
+        menu.setFixedWidth(width)
+
+        anchor = self.mapToGlobal(QPoint(0, self.height()))
+        screen = QApplication.screenAt(anchor) or QApplication.primaryScreen()
+        if screen is not None:
+            available = screen.availableGeometry()
+            menu_height = menu.sizeHint().height()
+            x = max(available.left(), min(anchor.x(), available.right() - width + 1))
+            y = anchor.y()
+            if y + menu_height > available.bottom() + 1:
+                y = self.mapToGlobal(QPoint(0, 0)).y() - menu_height
+            anchor = QPoint(x, y)
+
+        selected = menu.exec(anchor)
+        if selected is not None:
+            index = selected.data()
+            if index is not None:
+                self.setCurrentIndex(int(index))
 
 
 class WarpcEditorV2(QMainWindow):
@@ -1188,13 +1240,22 @@ class WarpcEditorV2(QMainWindow):
 
         # 左侧：角色列表
         self.table = QTableWidget(0, 6)
+        self.table.setObjectName("WarpcCharacterTable")
         self.table.setHorizontalHeaderLabels(["#","角色名称","等级","身份","HP","MP"])
-        self.table.setColumnWidth(0, 40)
-        self.table.setColumnWidth(2, 45)
-        self.table.setColumnWidth(3, 55)
-        self.table.setColumnWidth(4, 70)
-        self.table.setColumnWidth(5, 70)
-        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        self.table.setWordWrap(False)
+        self.table.setTextElideMode(Qt.ElideRight)
+        self.table.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        table_header = self.table.horizontalHeader()
+        # 识别类字段按内容占宽，名称与数值列随左侧面板一起伸缩。
+        # 这样窗口最大化后，HP/MP 不会继续挤压角色名称列。
+        table_header.setStretchLastSection(False)
+        table_header.setMinimumSectionSize(44)
+        table_header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        table_header.setSectionResizeMode(1, QHeaderView.Stretch)
+        table_header.setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        table_header.setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        table_header.setSectionResizeMode(4, QHeaderView.Stretch)
+        table_header.setSectionResizeMode(5, QHeaderView.Stretch)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SingleSelection)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
@@ -1203,6 +1264,8 @@ class WarpcEditorV2(QMainWindow):
 
         # 左侧容器: 角色列表 + 排序按钮栏
         left_panel = QWidget()
+        # 预留常见的 "1200/1200" HP/MP 文本宽度，恢复窗口大小后也不截断数值。
+        left_panel.setMinimumWidth(420)
         left_layout = QVBoxLayout(left_panel)
         left_layout.setContentsMargins(0, 0, 0, 0)
         left_layout.setSpacing(4)
@@ -1259,6 +1322,13 @@ class WarpcEditorV2(QMainWindow):
 
         # Tab 页
         self.tabs = QTabWidget()
+        self.tabs.setTabBar(WarpcEditorTabBar())
+        self.tabs.setObjectName("WarpcEditorTabs")
+        self.tabs.tabBar().setObjectName("WarpcEditorTabBar")
+        self.tabs.tabBar().setExpanding(False)
+        # Fusion 样式会额外绘制 QTabBar 的原生 base 线；主编辑器由 QSS
+        # 统一绘制页签/内容分界线，关闭原生线以免出现醒目的重复上边线。
+        self.tabs.tabBar().setDrawBase(False)
         self._build_tab1()
         self._build_tab2()
         self._build_tab3()
@@ -1270,7 +1340,10 @@ class WarpcEditorV2(QMainWindow):
         rl.addWidget(self.tabs, 1)
         self._edit_panel = right  # 存储编辑面板引用, 供外部嵌入使用
         splitter.addWidget(right)
-        splitter.setSizes([350, 1050])
+        # 主窗口变宽时，左侧列表按比例获得空间，避免只扩大右侧表单。
+        splitter.setStretchFactor(0, 1)
+        splitter.setStretchFactor(1, 3)
+        splitter.setSizes([420, 980])
 
         # 底部路径栏
         path_layout = QHBoxLayout()
@@ -1350,12 +1423,12 @@ class WarpcEditorV2(QMainWindow):
         self._edit_vars[fn] = ev
 
         if fn == 'role':
-            cb = NoWheelComboBox()
+            cb = WarpcComboBox()
             cb.addItems(["-1-未激活", "0-已激活"])
             cell.addWidget(make_fake_input(combo=cb))
             self._edit_extras[fn] = cb
         elif fn == 'reaction_group':
-            cb = NoWheelComboBox()
+            cb = WarpcComboBox()
             cb.addItems(REACTION_GROUP_VALUES)
             cell.addWidget(make_fake_input(combo=cb))
             self._edit_extras[fn] = cb
@@ -1513,7 +1586,7 @@ class WarpcEditorV2(QMainWindow):
             lbl.setToolTip(f"[{fo//2}] {cmt}")
             cell.addWidget(lbl)
             self._field_locator[fn] = (self._cur_tab_index, lbl)  # 字段搜索定位
-            cb = NoWheelComboBox()
+            cb = WarpcComboBox()
             cb.addItems(status_options)
             dur = QLineEdit("0")
             dur.setMinimumWidth(40)
@@ -1647,7 +1720,7 @@ class WarpcEditorV2(QMainWindow):
                 w.setToolTip("运行时学习进度原值: 0=不会  1~9=等待学  10~19=可以学(待学习)  20+=已学会")
                 w.valueChanged.connect(self._check_skill_group_overflow)
             else:
-                w = NoWheelComboBox()
+                w = WarpcComboBox()
                 w.addItems(SKILL_LEARN_STATES)
                 w.currentIndexChanged.connect(self._check_skill_group_overflow)
             cell.addWidget(w)
@@ -1667,7 +1740,7 @@ class WarpcEditorV2(QMainWindow):
         row.setContentsMargins(0, 0, 0, 6)
         row.setSpacing(6)
         row.addWidget(QLabel("技能组:"))
-        self._skill_group_combo = NoWheelComboBox()
+        self._skill_group_combo = WarpcComboBox()
         self._skill_group_combo.setMinimumWidth(200)
         self._skill_group_combo.addItem("(未加载 TKSkill.dat)", -1)
         row.addWidget(self._skill_group_combo)
@@ -3159,26 +3232,40 @@ class WarpcEditorV2(QMainWindow):
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         inner = QWidget()
+        inner.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)
         grid = QGridLayout(inner)
         grid.setSpacing(2)
         large_indices = [(si, si//2) for si in range(0, len(self._fa_sprites), 2) if self._fa_sprites[si] is not None]
         COLS = 8
         for sprite_idx, portrait_idx in large_indices:
             r, c = divmod(portrait_idx, COLS)
+            tile = QWidget()
+            tile.setFixedSize(78, 94)
+            tile_layout = QVBoxLayout(tile)
+            tile_layout.setContentsMargins(2, 1, 2, 1)
+            tile_layout.setSpacing(2)
+
             btn = QPushButton()
-            btn.setFixedSize(80, 90)
+            btn.setObjectName("PortraitTile")
+            btn.setFixedSize(74, 74)
             btn.setCursor(Qt.PointingHandCursor)
             if portrait_idx == cur_val:
                 btn.setProperty("selected", "true")
             else:
                 btn.setProperty("selected", "false")
-            pix = self._get_fa_photo(sprite_idx, (64, 64))
+            pix = self._get_fa_photo(sprite_idx, (70, 70))
             if pix:
                 btn.setIcon(QIcon(pix))
-                btn.setIconSize(pix.size())
-            btn.setText(str(portrait_idx))
+                btn.setIconSize(QSize(70, 70))
+            else:
+                btn.setText("👤")
             btn.clicked.connect(lambda checked, v=portrait_idx: (self._edit_vars[fn].setText(str(v)), dlg.accept()))
-            grid.addWidget(btn, r, c)
+            tile_layout.addWidget(btn)
+            index_label = QLabel(str(portrait_idx))
+            index_label.setObjectName("PortraitIndex")
+            index_label.setAlignment(Qt.AlignCenter)
+            tile_layout.addWidget(index_label)
+            grid.addWidget(tile, r, c, Qt.AlignTop)
         scroll.setWidget(inner)
         layout.addWidget(scroll)
         bl = QHBoxLayout()

@@ -1748,6 +1748,7 @@ class MatEditorApp(QMainWindow):
         self.chain_tree.setColumnWidth(2, 55)
         self.chain_tree.setColumnWidth(3, 70)
         self.chain_tree.setColumnWidth(4, 35)
+        self.chain_tree.header().setSectionResizeMode(5, QHeaderView.Stretch)
         self.chain_tree.setSelectionMode(QAbstractItemView.SingleSelection)
         self.chain_tree.setRootIsDecorated(False)
         self.chain_tree.itemSelectionChanged.connect(self._on_chain_select)
@@ -4509,6 +4510,7 @@ class MatEditorApp(QMainWindow):
         tree = QTreeWidget()
         tree.setHeaderLabels(["模板", "说明"])
         tree.setColumnWidth(0, 170)
+        tree.header().setSectionResizeMode(1, QHeaderView.Stretch)
         tree.setSelectionMode(QAbstractItemView.SingleSelection)
         tree.setRootIsDecorated(True)
         for cat_name, items in SCRIPT_TEMPLATES:
@@ -4676,6 +4678,7 @@ class MatEditorApp(QMainWindow):
         tree.setColumnWidth(0, 44)
         tree.setColumnWidth(1, 48)
         tree.setColumnWidth(2, 230)
+        tree.header().setSectionResizeMode(3, QHeaderView.Stretch)
         tree.setRootIsDecorated(False)
         tree.setSelectionMode(QAbstractItemView.NoSelection)
         item_map = []  # (item, line_idx, indent, trailing, new_stmt)
@@ -4782,6 +4785,7 @@ class MatEditorApp(QMainWindow):
         self._pv_tree.setHeaderLabels(["#", "命令", "描述"])
         self._pv_tree.setColumnWidth(0, 35)
         self._pv_tree.setColumnWidth(1, 110)
+        self._pv_tree.header().setSectionResizeMode(2, QHeaderView.Stretch)
         self._pv_tree.setSelectionMode(QAbstractItemView.SingleSelection)
         self._pv_tree.setRootIsDecorated(False)
 

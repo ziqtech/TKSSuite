@@ -1777,6 +1777,7 @@ class WarDataEditorV2(QMainWindow):
         tbl.setColumnWidth(7,65)
         tbl.setColumnWidth(8,55)
         tbl.verticalHeader().setDefaultSectionSize(24)
+        tbl.horizontalHeader().setStretchLastSection(True)
         self.ap_enemy_table = tbl
         bl_enemy.addWidget(tbl)
         gl_enemy.addWidget(body_enemy)
@@ -1799,6 +1800,7 @@ class WarDataEditorV2(QMainWindow):
         atbl.setColumnWidth(1,35)
         atbl.setColumnWidth(2,65)
         atbl.verticalHeader().setDefaultSectionSize(24)
+        atbl.horizontalHeader().setStretchLastSection(True)
         self.ap_ally_table = atbl
         bl_ally.addWidget(atbl)
         gl_ally.addWidget(body_ally)
@@ -1826,6 +1828,7 @@ class WarDataEditorV2(QMainWindow):
         ttbl.setColumnWidth(6,55)
         ttbl.setColumnWidth(7,55)
         ttbl.verticalHeader().setDefaultSectionSize(24)
+        ttbl.horizontalHeader().setStretchLastSection(True)
         self.ap_trea_table = ttbl
         bl_trea.addWidget(ttbl)
         gl_trea.addWidget(body_trea)
@@ -2098,6 +2101,7 @@ class WarDataEditorV2(QMainWindow):
         tbl.setColumnWidth(9,45)
         tbl.setColumnWidth(10, 90)
         tbl.verticalHeader().setDefaultSectionSize(24)
+        tbl.horizontalHeader().setStretchLastSection(True)
         self.enemy_table = tbl
         self.enemy_name_labels = []
         for i in range(18):
@@ -2344,6 +2348,7 @@ class WarDataEditorV2(QMainWindow):
         tbl.setColumnWidth(2,55)
         tbl.setColumnWidth(3,55)
         tbl.verticalHeader().setDefaultSectionSize(24)
+        tbl.horizontalHeader().setStretchLastSection(True)
         self.ally_table = tbl
         for i in range(6):
             item = QTableWidgetItem(str(i))
@@ -2401,6 +2406,7 @@ class WarDataEditorV2(QMainWindow):
         tbl.setColumnWidth(8,50)
         tbl.setColumnWidth(9,50)
         tbl.verticalHeader().setDefaultSectionSize(24)
+        tbl.horizontalHeader().setStretchLastSection(True)
         self.dt_table = tbl
         self.dt_name_labels = []
         trap_items = list(TRAP_NAMES_MAP.values())
