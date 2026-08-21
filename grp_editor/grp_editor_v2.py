@@ -639,7 +639,7 @@ class GRPEditor(QMainWindow):
         left_w = QWidget()
         left_lay = QVBoxLayout(left_w)
         left_lay.setContentsMargins(0, 0, 0, 0)
-        left_lay.setSpacing(8)
+        left_lay.setSpacing(0)
         left_lay.addWidget(DockHeader("区段列表"))
         body = QWidget()
         body.setObjectName("DockBody")
