@@ -3,8 +3,12 @@
 TKAct.dat 多图层 2D 精灵动画编辑器 (PySide6 — Godot 4.6 风格)
 =============================================================
 逆向依据:
-  - 逆向工作区/TKS_AI分析act_editor记录.md
-  - 逆向工作区/TKS_AI修正TKAct.dat实际JVG绑定.md
+  - 反编译产物/decompile/4434BC.c
+    (TKAct 动画运行时与 Tick 触发)
+  - 反编译产物/disassembly/4400DC.asm
+    (战斗效果处理与飘字分段调用)
+  - 反编译产物/decompile/433F04.c
+    (伤害数字队列写入)
   - 尾部 64B 逆向确认为"音效触发表"
     (sub_4434BC L111-119 预加载 + L627-636 触发)
   - layer_type 语义精细化 + 预览图像混合模式生效
@@ -24,7 +28,8 @@ TKAct.dat 多图层 2D 精灵动画编辑器 (PySide6 — Godot 4.6 风格)
   原版固定 650 条; 编辑器支持读取/保存 650 条以上的扩展文件,
   游戏侧需启用 tks_launcher_gui 的 tkact_expand 补丁。
   [0-31]    方向表: 4 方向 × 8 字节, 每字节为 1-based 图层号 (0=空)
-  [32-79]   条目级参数区 (24 int16, 多数预留/未知)
+  [32-79]   条目级参数区 (24 int16): [18] 动画总 Tick, [19] 运行时当前 Tick,
+             [20..27] 伤害/效果触发 Tick, 其余为预留/未知
   [80-719]  图层 × 8 (各 80 字节 = 40 int16)
   [720-783] 尾部 = 音效触发表 16 对 × (sound_id, trigger_tick) × int16
 
@@ -461,70 +466,92 @@ def infer_jvg_layout(n_frames):
 
 FIELD_GROUPS = [
     ("来源", [
-        ("layer_type",       0,  "类型",       W_INPUT,
+        ("layer_type",       0,  "资源与渲染类型", W_INPUT,
          "图层类型\n"
          "  1 → 主角动作库 (Aa.jvg)\n"
          "  其他 → 特效/物件库 (Af.jvg)\n"
          "  渲染阶段: <3 主段 / 3 延迟段 / 4 锚点 / 5 结束"),  # sub_4434BC: *(_WORD*)(+0)
-        ("jvg_block_index",  1,  "JVG 块号",    W_INPUT,
+        ("jvg_block_index",  1,  "JVG 资源块索引", W_INPUT,
          "JVG 资源块编号"),  # sub_4434BC: +2 → sub_45410C
     ]),
-    ("帧范围", [
+    ("动画帧范围", [
         ("first_frame",      17, "起始帧",     W_INPUT,
          "动画起始帧号"),  # sub_4434BC L595: +34
         ("last_frame",       18, "终止帧",     W_INPUT,
          "动画终止帧号 (到达后触发循环或停止)"),  # sub_4434BC L593: +36
-        ("loop_behavior",    19, "循环行为",   W_INPUT,
-         "循环行为: -1 循环 / -2 停止 / ≥0 跳帧"),  # sub_4434BC L603: +38
+        ("loop_behavior",    19, "结束行为",   W_INPUT,
+         "动画到达终止帧后的行为: -1 循环 / -2 停止 / ≥0 跳转到指定帧"),  # sub_4434BC L603: +38
     ]),
-    ("时序 ★", [
-        ("tick_interval",    21, "帧停留 tick ★", W_INPUT,
-         "帧停留 tick 数 (计数器达到此值时翻到下一帧)"),  # sub_4434BC L574: +42
-        ("start_delay",      22, "启动延迟 ★",    W_INPUT,
-         "启动延迟 (非0时等待递减至0才开始)"),  # sub_4434BC L248/L566: +44
+    ("动画时序 ★", [
+        ("tick_interval",    21, "每帧停留 Tick ★", W_INPUT,
+         "每帧停留的 Tick 数; 计数器达到此值时切换到下一帧"),  # sub_4434BC L574: +42
+        ("start_delay",      22, "播放启动延迟 ★", W_INPUT,
+         "播放启动前的延迟 Tick; 非0时等待递减至0才开始"),  # sub_4434BC L248/L566: +44
     ]),
     ("渲染", [
-        ("blend_mode",       11, "混合模式",   W_INPUT,
+        ("blend_mode",       11, "图像混合模式", W_INPUT,
          "混合模式 (6种渲染方式)"),  # sub_4434BC L320-339: +22
         ("blend_param",      12, "混合参数",   W_INPUT,
          "混合参数 (颜色/透明度/随机种等)"),  # sub_4434BC: +24
         ("blend_param_step", 13, "混合参数步进", W_INPUT,
          "混合参数步进 (每翻帧的累加量)"),  # sub_4434BC L613: +26
     ]),
-    ("位移 (方向 0~3)", [
-        ("x_off_d0",         3,  "X₀", W_INPUT_S, "方向0 的 X 偏移"),
-        ("x_off_d1",         4,  "X₁", W_INPUT_S, "方向1 的 X 偏移"),
-        ("x_off_d2",         5,  "X₂", W_INPUT_S, "方向2 的 X 偏移"),
-        ("x_off_d3",         6,  "X₃", W_INPUT_S, "方向3 的 X 偏移"),
-        ("y_off_d0",         7,  "Y₀", W_INPUT_S, "方向0 的 Y 偏移"),
-        ("y_off_d1",         8,  "Y₁", W_INPUT_S, "方向1 的 Y 偏移"),
-        ("y_off_d2",         9,  "Y₂", W_INPUT_S, "方向2 的 Y 偏移"),
-        ("y_off_d3",         10, "Y₃", W_INPUT_S, "方向3 的 Y 偏移"),
+    ("方向位移 (方向 0~3)", [
+        ("x_off_d0",         3,  "方向0 X偏移", W_INPUT_S, "方向0 的 X 偏移"),
+        ("x_off_d1",         4,  "方向1 X偏移", W_INPUT_S, "方向1 的 X 偏移"),
+        ("x_off_d2",         5,  "方向2 X偏移", W_INPUT_S, "方向2 的 X 偏移"),
+        ("x_off_d3",         6,  "方向3 X偏移", W_INPUT_S, "方向3 的 X 偏移"),
+        ("y_off_d0",         7,  "方向0 Y偏移", W_INPUT_S, "方向0 的 Y 偏移"),
+        ("y_off_d1",         8,  "方向1 Y偏移", W_INPUT_S, "方向1 的 Y 偏移"),
+        ("y_off_d2",         9,  "方向2 Y偏移", W_INPUT_S, "方向2 的 Y 偏移"),
+        ("y_off_d3",         10, "方向3 Y偏移", W_INPUT_S, "方向3 的 Y 偏移"),
     ]),
-    ("方向感知", [
-        ("direction_mode",   2,  "方向模式",   W_INPUT,
+    ("朝向与帧选择", [
+        ("direction_mode",   2,  "朝向模式",   W_INPUT,
          "方向模式: 4=随朝向变化 / 其他=固定方向0"),  # sub_4434BC L308: +4
-        ("dir_frame_offset", 16, "方向帧偏移", W_INPUT,
-         "方向帧偏移 (按朝向偏移帧号)"),  # sub_4434BC L309: +32
+        ("dir_frame_offset", 16, "朝向帧偏移", W_INPUT,
+         "按朝向偏移帧号"),  # sub_4434BC L309: +32
     ]),
     ("自动移动", [
-        ("move_mode",        25, "移动模式",   W_INPUT,
+        ("move_mode",        25, "自动移动模式", W_INPUT,
          "移动模式: 1=跟随 / 2=四方往返"),  # sub_4434BC L577-591: +50
-        ("step_value",       26, "步进值",     W_INPUT_S, ""),
-        ("step_delta",       27, "步进增量",   W_INPUT_S, ""),
+        ("step_value",       26, "自动移动步进值", W_INPUT_S, "自动移动使用的步进值"),
+        ("step_delta",       27, "自动移动步进增量", W_INPUT_S, "自动移动使用的步进增量"),
     ]),
-    ("运行时 (只读, 文件=0)", [
-        ("_rt_frame_base",   14, "帧基址",     W_INPUT_S, "帧基址 (运行时)"),  # sub_4434BC: +28
-        ("_rt_cur_frame",    15, "当前帧",     W_INPUT_S, "当前帧 (运行时)"),  # sub_4434BC: +30
-        ("_rt_20",           20, "RT20",       W_INPUT_S, "运行时"),
-        ("_rt_counter",      23, "RT 计数",    W_INPUT_S, "RT 计数 (运行时)"),  # sub_4434BC: +46
-        ("_rt_dir_sign",     24, "RT 方向符",  W_INPUT_S, "RT 方向符 (运行时)"),  # sub_4434BC: +48
+    ("运行时工作字段 (只读, 文件=0)", [
+        ("_rt_frame_base",   14, "运行时帧基准", W_INPUT_S, "运行时工作字段; 原版文件值为0"),  # sub_4434BC: +28
+        ("_rt_cur_frame",    15, "运行时当前帧", W_INPUT_S, "运行时工作字段; 原版文件值为0"),  # sub_4434BC: +30
+        ("_rt_20",           20, "运行时字段[20]", W_INPUT_S, "运行时工作字段; 原版文件值为0"),
+        ("_rt_counter",      23, "运行时计数器", W_INPUT_S, "运行时工作字段; 原版文件值为0"),  # sub_4434BC: +46
+        ("_rt_dir_sign",     24, "运行时方向符号", W_INPUT_S, "运行时工作字段; 原版文件值为0"),  # sub_4434BC: +48
     ]),
     ("保留 / 未知", [
-        (f"_res_{i}", i, f"[{i}]", W_INPUT_S, f"int16[{i}] 保留字段 (未使用)")  # sub_4434BC 未引用
+        (f"_res_{i}", i, f"保留字段[{i}]", W_INPUT_S, f"int16[{i}] 保留字段 (未使用)")  # sub_4434BC 未引用
         for i in range(28, 40)
     ]),
 ]
+
+# 条目级参数字段说明 (entry bytes 32-79, int16[16..39])。
+# 这里只保存显示名称和提示，不参与二进制编解码；索引与原版寻址保持不变。
+PARAM_FIELD_INFO = {
+    16: ("保留字段[16]", "原版逆向代码中未发现该字段的有效引用。"),
+    17: ("保留字段[17]", "原版逆向代码中未发现该字段的有效引用。"),
+    18: ("动画总 Tick", "动画总 Tick 上限; 原版按 0..总Tick-1 检查触发 Tick。"),
+    19: ("运行时当前 Tick", "原版播放时使用的当前 Tick; 开始播放时重置并逐 Tick 递增，属于运行时字段。"),
+    20: ("伤害/效果触发 Tick #1", "按顺序填写的第1个伤害/效果触发 Tick; 有效触发点数量决定分段数。"),
+    21: ("伤害/效果触发 Tick #2", "按顺序填写的第2个伤害/效果触发 Tick; 有效触发点数量决定分段数。"),
+    22: ("伤害/效果触发 Tick #3", "按顺序填写的第3个伤害/效果触发 Tick; 有效触发点数量决定分段数。"),
+    23: ("伤害/效果触发 Tick #4", "按顺序填写的第4个伤害/效果触发 Tick; 有效触发点数量决定分段数。"),
+    24: ("伤害/效果触发 Tick #5", "按顺序填写的第5个伤害/效果触发 Tick; 有效触发点数量决定分段数。"),
+    25: ("伤害/效果触发 Tick #6", "按顺序填写的第6个伤害/效果触发 Tick; 有效触发点数量决定分段数。"),
+    26: ("伤害/效果触发 Tick #7", "按顺序填写的第7个伤害/效果触发 Tick; 有效触发点数量决定分段数。"),
+    27: ("伤害/效果触发 Tick #8", "按顺序填写的第8个伤害/效果触发 Tick; 有效触发点数量决定分段数。"),
+}
+for _idx in range(28, 40):
+    PARAM_FIELD_INFO[_idx] = (
+        f"保留字段[{_idx}]",
+        "原版逆向代码中未发现该字段与伤害飘字分段有关的有效引用。",
+    )
 
 ALL_FIELDS = [f for _, grp in FIELD_GROUPS for f in grp]
 
@@ -2283,9 +2310,11 @@ class ActEditorV2(QMainWindow):
 
         lbl = QLabel(
             "条目级参数区 (bytes 32-79, int16[16..39], 共 24 项)。\n"
-            "sub_4434BC: word_9D039E(+36) 动画总 tick; "
-            "word_9D03A2[0..7](+40..+54) 各层 tick 配额;\n"
-            "其余字段源码中无引用 (预留/未使用)。")
+            "[18] 是动画总 Tick，[19] 是原版运行时当前 Tick；"
+            "[20]~[27] 是按顺序排列的伤害/效果触发 Tick。\n"
+            "原版先统计总 Tick 范围内有效的触发点数量，再按该数量拆分进入战斗飘字流程的总伤害；"
+            "已配置的有效触发 Tick 应严格递增且满足 0 <= Tick < [18]，最多 8 段。\n"
+            "[19] 属于运行时字段，通常不需要手工配置；其余未标明字段目前按原版逆向结果保留/未知处理。")
         lbl.setWordWrap(True)
         lbl.setProperty("class", "PropLabel")
         inner.layout().addWidget(lbl)
@@ -2300,20 +2329,15 @@ class ActEditorV2(QMainWindow):
             cell = QVBoxLayout()
             cell.setSpacing(2)
 
-            hint = ""
-            if idx == 18:
-                hint = " 总tick"
-            elif idx == 19:
-                hint = " cur_tick"
-            elif 20 <= idx <= 27:
-                layer_n = idx - 19
-                hint = f" L{layer_n}配额"
-            lbl_f = QLabel(f"[{idx}]{hint}")
+            label, comment = PARAM_FIELD_INFO[idx]
+            lbl_f = QLabel(f"[{idx}] {label}")
             lbl_f.setProperty("class", "PropLabel")
+            lbl_f.setToolTip(comment)
             cell.addWidget(lbl_f)
 
             le = QLineEdit("0")
             le.setMinimumWidth(60)
+            le.setToolTip(comment)
             self._param_vars.append(le)
             cell.addWidget(le)
             grid.addLayout(cell, r, c)
@@ -4390,6 +4414,11 @@ class ActEditorV2(QMainWindow):
             "",
             "【方向表 (bytes 0-31)】",
             "  4 方向 × 8 字节, 每字节 = 1-based 图层号 (0=空)",
+            "",
+            "【条目级参数 (bytes 32-79, int16[16..39])】",
+            "  [18] 动画总 Tick; [19] 运行时当前 Tick; [20..27] 伤害/效果触发 Tick #1~#8",
+            "  原版按总 Tick 范围统计有效触发点数量，该数量决定战斗飘字总伤害的分段数；最多8段",
+            "  已配置的有效触发 Tick 应严格递增且满足 0 <= Tick < [18]；[19] 为运行时字段",
             "",
             "【图层 × 8 (各 80 字节, 40 int16)】",
         ]
