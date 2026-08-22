@@ -75,7 +75,7 @@ from editor_utils.window_theme import apply_godot_theme
 from mat_constants import (
     REC_SIZE, REC_COUNT, FILE_SIZE, DWORD_COUNT, SCENE_NAME_TKT_BASE,
     DEFUNIT_REC_SIZE, DEFUNIT_REC_COUNT, DEFUNIT_FILE_SIZE,
-    ENTITY_TYPES, TYPE_COLORS, TYPE_COLORS_RGBA, ANIM_SETS, DISPLAY_MODES,
+    ENTITY_TYPES, TYPE_COLORS, TYPE_COLORS_RGBA, DISPLAY_MODES,
     _GAME_PALETTE_565, _rgb565_to_hex, GAME_COLORS, DEFAULT_TKT_FCOLOR,
     _CONTROL_TAGS, _LINE_SEP,
     BASIC_FIELDS, FLAG_FIELDS, POS_FIELDS, ANIM_FIELDS,
@@ -129,6 +129,9 @@ from mat_threads import DataLoaderThread, JvgLoaderThread
 
 # [28] 对话颜色字段的 dword 索引 (IDX_DIALOG_COLOR='d28' → 28), 供新增实体默认值判断 (§需求4)
 _DIALOG_COLOR_IDX = int(IDX_DIALOG_COLOR[1:])
+_FIELD_LABEL_MAX_WIDTH = 100
+_TYPE_COMBO_MAX_WIDTH = 140
+_COMBO_MAX_WIDTH = 120
 
 class MapDataManager:
     """地图数据状态与装配层 (§5) — 从 MatEditorApp 拆出的纯数据职责。
@@ -885,8 +888,11 @@ class InspectorPanelBuilder:
         lbl = QLabel("[00] 实体类型")
         lbl.setToolTip("[00] 实体类型: 5=脚本 10=出入传送 15=触发区 16=战斗区 20=事件 110=机关 200=NPC。源码: sub_405CBC")
         lbl.setProperty("class", "PropLabel")
+        lbl.setWordWrap(True)
+        lbl.setMaximumWidth(_FIELD_LABEL_MAX_WIDTH)
         cb = EditorComboBox()
         cb.addItems([f"{k}-{v}" for k, v in sorted(ENTITY_TYPES.items())])
+        cb.setMaximumWidth(_TYPE_COMBO_MAX_WIDTH)
         tvars['type'] = cb
         wrapper = QFrame()
         wrapper.setObjectName("FakeInputBox")
@@ -899,6 +905,8 @@ class InspectorPanelBuilder:
         lbl2 = QLabel("[01] 场景ID")
         lbl2.setToolTip("[01] 所属场景 (-1=全局)。TKT_ID = scene_id + 300。源码: sub_405CBC")
         lbl2.setProperty("class", "PropLabel")
+        lbl2.setWordWrap(True)
+        lbl2.setMaximumWidth(_FIELD_LABEL_MAX_WIDTH)
         ev = self.make_raw_edit(1)
         tvars['scene_id'] = ev
         wrapper2 = QFrame()
@@ -916,6 +924,8 @@ class InspectorPanelBuilder:
         lbl3 = QLabel("[02] 标志位")
         lbl3.setToolTip("[02] 位域。bit0=启用 bit1=可见 bit2=可交互 bit3=提示 bit4=忙碌 bit5=恢复 bit8=已拾取 bit16=动画循环")
         lbl3.setProperty("class", "PropLabel")
+        lbl3.setWordWrap(True)
+        lbl3.setMaximumWidth(_FIELD_LABEL_MAX_WIDTH)
         ev2 = self.make_raw_edit(2)
         tvars['flags'] = ev2
         wrapper3 = QFrame()
@@ -1013,6 +1023,8 @@ class InspectorPanelBuilder:
             if tip:
                 lbl.setToolTip(tip)
             lbl.setProperty("class", "PropLabel")
+            lbl.setWordWrap(True)
+            lbl.setMaximumWidth(_FIELD_LABEL_MAX_WIDTH)
             if di in type_labels:
                 lbl.setProperty("class", "TypeFieldLabel")
 
@@ -1023,7 +1035,13 @@ class InspectorPanelBuilder:
             # Check if this needs a combobox
             if key == 'anim_set':
                 cb = EditorComboBox()
-                cb.addItems([f"{k}-{v}" for k, v in ANIM_SETS.items()])
+                cb.addItems([
+                    "0-无动画",
+                    "1-Cha(角色)",
+                    "4-Ani(动画)",
+                    "5-Cur(光标)",
+                ])
+                cb.setMaximumWidth(_COMBO_MAX_WIDTH)
                 tvars[key] = cb
                 wrapper = QFrame()
                 wrapper.setObjectName("FakeInputBox")
@@ -1035,6 +1053,7 @@ class InspectorPanelBuilder:
             elif key == 'blend_mode':
                 cb = EditorComboBox()
                 cb.addItems(["0-正常", "1-染色", "2-加法发光", "3-减法压暗", "4-亮度alpha", "5-水平翻转"])
+                cb.setMaximumWidth(_COMBO_MAX_WIDTH)
                 tvars[key] = cb
                 wrapper = QFrame()
                 wrapper.setObjectName("FakeInputBox")
@@ -1045,6 +1064,7 @@ class InspectorPanelBuilder:
             elif key == 'shadow_frame':
                 cb = EditorComboBox()
                 cb.addItems(["0-无阴影", "1-小阴影(39×23)", "2-大阴影(65×33)"])
+                cb.setMaximumWidth(_COMBO_MAX_WIDTH)
                 tvars[key] = cb
                 wrapper = QFrame()
                 wrapper.setObjectName("FakeInputBox")
@@ -1055,6 +1075,7 @@ class InspectorPanelBuilder:
             elif key == 'cursor_id':
                 cb = EditorComboBox()
                 cb.addItems([f"{k}-{v}" for k, v in sorted(_CURSOR_BLOCKS.items())])
+                cb.setMaximumWidth(_COMBO_MAX_WIDTH)
                 tvars[key] = cb
                 wrapper = QFrame()
                 wrapper.setObjectName("FakeInputBox")
@@ -1436,13 +1457,14 @@ class MatEditorApp(QMainWindow):
         # Entity list: 按钮在 body 内, 不在 DockHeader
         self.entity_tree = QTreeWidget()
         self.entity_tree.setHeaderLabels(["索引", "类型", "场景", "X", "Y", "脚本", "Tick"])
-        self.entity_tree.setColumnWidth(0, 50)   # 索引
-        self.entity_tree.setColumnWidth(1, 85)   # 类型
-        self.entity_tree.setColumnWidth(3, 45)   # X
-        self.entity_tree.setColumnWidth(4, 45)   # Y
-        self.entity_tree.setColumnWidth(5, 70)   # 脚本
-        self.entity_tree.setColumnWidth(6, 40)   # Tick
+        self.entity_tree.setColumnWidth(0, 44)   # 索引
+        self.entity_tree.setColumnWidth(1, 80)   # 类型
+        self.entity_tree.setColumnWidth(3, 40)   # X
+        self.entity_tree.setColumnWidth(4, 40)   # Y
+        self.entity_tree.setColumnWidth(5, 62)   # 脚本
+        self.entity_tree.setColumnWidth(6, 36)   # Tick
         self.entity_tree.header().setSectionResizeMode(2, QHeaderView.Stretch)  # 场景列自动拉伸
+        self.entity_tree.header().setMinimumSectionSize(18)
         self.entity_tree.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.entity_tree.setSelectionMode(QAbstractItemView.SingleSelection)
         self.entity_tree.setEditTriggers(QAbstractItemView.NoEditTriggers)
@@ -1531,7 +1553,7 @@ class MatEditorApp(QMainWindow):
         left_splitter.setSizes([300, 400])
 
         left_layout.addWidget(left_splitter)
-        left_widget.setMinimumWidth(460)
+        left_widget.setMinimumWidth(340)
         self.splitter.addWidget(left_widget)
 
     # =========== 中间面板: 地图预览 ===========
@@ -1867,6 +1889,8 @@ class MatEditorApp(QMainWindow):
 
             lbl = QLabel(lbl_text)
             lbl.setProperty("class", "PropLabel")
+            lbl.setWordWrap(True)
+            lbl.setMaximumWidth(_FIELD_LABEL_MAX_WIDTH)
             if cmt:
                 lbl.setToolTip(f"[{di:02d}] {cmt}")
 
