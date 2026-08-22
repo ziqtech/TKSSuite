@@ -1132,6 +1132,32 @@ QLabel[class="SaveStatusLabel"] {
     border-radius: 8px;
     padding: 4px 10px;
 }
+/* ── 当前队伍成员卡片 (save_editor 总览) ── */
+QWidget[class="TeamMemberCard"] {
+    background-color: #2f2f2f;
+    border: 1px solid #444444;
+    border-radius: 10px;
+}
+QLabel[class="TeamMemberIndex"] {
+    color: #8e8e8e;
+    font-size: 11px;
+}
+QLabel[class="TeamMemberName"] {
+    color: #ececec;
+    font-size: 13px;
+    font-weight: 600;
+    padding-top: 2px;
+}
+QLabel[class="TeamMemberLevel"] {
+    color: #45c49a;
+    font-size: 12px;
+    padding-top: 2px;
+}
+QLabel[class="TeamMemberAvatar"] {
+    background-color: #262626;
+    border: 1px solid #3a3a3a;
+    border-radius: 8px;
+}
 QTableWidget#SaveInventoryTable,
 QTableWidget#SaveWarpcTable {
     border-radius: 10px;

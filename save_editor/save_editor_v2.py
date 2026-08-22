@@ -33,10 +33,23 @@ from PySide6.QtWidgets import (
     QPushButton, QScrollArea, QSplitter, QTableWidget,
     QTableWidgetItem, QTextEdit, QVBoxLayout, QWidget,
 )
-from PySide6.QtGui import QColor, QFont, QIcon, QKeySequence
+from PySide6.QtGui import (
+    QColor, QFont, QIcon, QImage, QKeySequence, QPixmap,
+)
 from PySide6.QtCore import QSize, Qt
+try:
+    from PIL import Image
+except Exception:
+    Image = None
+try:
+    import zhconv
+except Exception:
+    zhconv = None
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+from editor_utils.app_init import (
+    ensure_single_instance, install_translator, setup_app_icon,
+)
 from editor_utils.dock_components import DockHeader
 from editor_utils.jvg_loader import get_sprite_pixmap, load_mu_sprites
 from editor_utils.kon_name_resolver import KonNameResolver
@@ -47,7 +60,8 @@ from editor_utils.picker_dialogs import ItemPickerDialog
 from editor_utils.theme_manager import ThemeManager
 from editor_utils.tkt_loader import load_tkt_simple
 from editor_utils.ui_helpers import (
-    confirm_close, make_fake_input, update_path_labels, EditorComboBox,
+    confirm_close, install_dialog_theme_filter, make_fake_input,
+    update_path_labels, EditorComboBox,
 )
 from editor_utils.version import format_title, format_about_header
 from editor_utils.window_theme import apply_godot_theme
@@ -735,19 +749,41 @@ class SaveEditorApp(QMainWindow):
         # 队伍预览
         team_grp = QGroupBox("当前队伍")
         tl = QHBoxLayout(team_grp)
+        tl.setSpacing(8)
         self._ov_team = []
         for i in range(6):
             col_w = QWidget()
+            col_w.setProperty("class", "TeamMemberCard")
+            col_w.setMinimumHeight(88)
             cl = QVBoxLayout(col_w)
-            cl.setContentsMargins(4, 4, 4, 4)
-            cl.addWidget(QLabel(f"成员{i+1}"))
+            cl.setContentsMargins(12, 10, 12, 10)
+            cl.setSpacing(4)
+            card_row = QHBoxLayout()
+            card_row.setSpacing(8)
+            avatar_lbl = QLabel()
+            avatar_lbl.setProperty("class", "TeamMemberAvatar")
+            avatar_lbl.setFixedSize(48, 48)
+            avatar_lbl.setAlignment(Qt.AlignCenter)
+            card_row.addWidget(avatar_lbl, 0, Qt.AlignVCenter)
+            text_col = QVBoxLayout()
+            text_col.setSpacing(2)
+            idx_lbl = QLabel(f"成员{i + 1}")
+            idx_lbl.setProperty("class", "TeamMemberIndex")
+            idx_lbl.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+            text_col.addWidget(idx_lbl)
             name_lbl = QLabel("—")
-            name_lbl.setProperty("class", "PreviewDesc")
-            cl.addWidget(name_lbl)
+            name_lbl.setProperty("class", "TeamMemberName")
+            name_lbl.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+            name_lbl.setWordWrap(True)
+            text_col.addWidget(name_lbl)
             lv_lbl = QLabel("")
-            cl.addWidget(lv_lbl)
+            lv_lbl.setProperty("class", "TeamMemberLevel")
+            lv_lbl.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+            text_col.addWidget(lv_lbl)
+            card_row.addLayout(text_col, 1)
+            cl.addLayout(card_row)
             tl.addWidget(col_w)
-            self._ov_team.append((name_lbl, lv_lbl))
+            self._ov_team.append((avatar_lbl, name_lbl, lv_lbl))
         layout.addWidget(team_grp)
 
         # 摘要
@@ -1331,12 +1367,15 @@ class SaveEditorApp(QMainWindow):
                     name = self._get_player_name()
                 else:
                     name = self._get_char_name(tid) if tid >= 0 else "(空)"
-                self._ov_team[i][0].setText(name)
-                self._ov_team[i][1].setText(f"Lv.{lv}" if tid >= 0 else "")
+                avatar_lbl, name_lbl, lv_lbl = self._ov_team[i]
+                name_lbl.setText(name)
+                lv_lbl.setText(f"Lv.{lv}" if tid >= 0 else "")
+                self._set_team_avatar(tid, avatar_lbl)
         else:
             for lbl in self._ov_labels.values():
                 lbl.setText("—")
-            for n, l in self._ov_team:
+            for avatar_lbl, n, l in self._ov_team:
+                avatar_lbl.clear()
                 n.setText("—")
                 l.setText("")
 
@@ -1419,6 +1458,45 @@ class SaveEditorApp(QMainWindow):
     # ── 图标 ──
     def _get_icon_pixmap(self, icon_val, size=(24, 24)):
         return get_sprite_pixmap(self._mu_sprites, icon_val, size, self._icon_pixmaps)
+
+    def _get_team_mu_sprite_idx(self, char_idx):
+        """队伍菜单头像在 Mu.JVG 中的帧号: 自定义字段优先, 否则 portrait+211"""
+        if self.seg3 is None or char_idx < 0 or char_idx >= self.warpc_count:
+            return None
+        portrait = warpc_get(self.seg3, char_idx, 2)
+        custom = warpc_get(self.seg3, char_idx, 522)
+        if custom != 0:
+            return custom
+        return portrait + 211 if portrait != 0 else 211
+
+    def _get_mu_sprite(self, sprite_idx, size=(48, 48)):
+        if Image is None or not self._mu_sprites:
+            return None
+        if sprite_idx < 0 or sprite_idx >= len(self._mu_sprites):
+            return None
+        sprite = self._mu_sprites[sprite_idx]
+        if sprite is None:
+            return None
+        cache_key = ('mu', sprite_idx, size)
+        if cache_key in self._icon_pixmaps:
+            return self._icon_pixmaps[cache_key]
+        try:
+            img = sprite.resize(size, Image.NEAREST).convert('RGBA')
+            data = img.tobytes('raw', 'RGBA')
+            qimg = QImage(data, img.width, img.height, QImage.Format_RGBA8888)
+            pix = QPixmap.fromImage(qimg)
+            self._icon_pixmaps[cache_key] = pix
+            return pix
+        except Exception:
+            return None
+
+    def _set_team_avatar(self, char_idx, label):
+        sprite_idx = self._get_team_mu_sprite_idx(char_idx)
+        pix = self._get_mu_sprite(sprite_idx, (48, 48)) if sprite_idx is not None else None
+        if pix:
+            label.setPixmap(pix)
+        else:
+            label.clear()
 
     # ================================================================
     # 刷新: 物品
@@ -1622,6 +1700,7 @@ class SaveEditorApp(QMainWindow):
                 struct.pack_into('<' + 'h' * WARPC_FIELD_COUNT, self.seg3, off, *rec['fields'])
                 self._dirty = True
                 self._refresh_warpc_list()
+                self._refresh_overview()
                 self._status_label.setText(f"角色 #{idx} 已修改 (未保存)")
 
 
@@ -1927,12 +2006,12 @@ class SaveEditorApp(QMainWindow):
         text = text.strip()
         if not text:
             return b'\x00' * size
-        try:
-            import zhconv
-            text = zhconv.convert(text, 'zh-hant')
-        except Exception:
-            # zhconv 不可用或数据文件缺失 (如打包时遗漏 zhcdict.json) — 跳过繁简转换
-            pass
+        if zhconv is not None:
+            try:
+                text = zhconv.convert(text, 'zh-hant')
+            except Exception:
+                # zhconv 数据文件缺失 (如打包时遗漏 zhcdict.json) — 跳过繁简转换
+                pass
         try:
             b = text.encode('big5')
         except UnicodeEncodeError:
@@ -1970,10 +2049,7 @@ class SaveEditorApp(QMainWindow):
 # ============================================================
 
 def main():
-    from editor_utils.app_init import ensure_single_instance
     ensure_single_instance()
-    from editor_utils.app_init import install_translator, setup_app_icon
-    from editor_utils.ui_helpers import install_dialog_theme_filter
     app = QApplication(sys.argv)
     install_dialog_theme_filter(app)
     app.setStyle("Fusion")
