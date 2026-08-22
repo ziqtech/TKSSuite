@@ -75,7 +75,8 @@ class TksBookViewer(QMainWindow):
         """角落按钮高度对齐标签栏 (QSS 生效后计算, 避免顶部被裁剪)"""
         h = self.tabs.tabBar().sizeHint().height()
         if h > 0:
-            bh = max(22, h - 2)
+            # Tab 线实际位于 TabBar 底部内侧，再留 1px 避免角落按钮覆盖它。
+            bh = max(20, h - 3)
             self._btn_theme.setFixedHeight(bh)
             for btn in self._scale_buttons:
                 btn.setFixedHeight(bh)

@@ -56,7 +56,7 @@ class MapTab(BookTabBase):
         self._overlay_cache.clear()
         self._build_item_colors()
         self.set_table_items(["#", "场景", "特殊物品"], [],
-                             widths={0: 45, 2: 60}, stretch_col=1)
+                             widths={0: 50, 2: 80}, stretch_col=1)
         self._preview_lbl.setText("请从左侧选择地图")
         self._preview_lbl.adjustSize()
         self._legend_lbl.setText("")
@@ -99,7 +99,7 @@ class MapTab(BookTabBase):
                 rows.append((sid, [str(sid), self.data.scene_name(sid),
                                    str(spec_tot.get(sid, 0))]))
         self.set_table_items(["#", "场景", "特殊物品"], rows,
-                             widths={0: 45, 2: 60}, stretch_col=1)
+                             widths={0: 50, 2: 80}, stretch_col=1)
         if rows:
             self._preview_lbl.setText("请从左侧选择地图")
         else:

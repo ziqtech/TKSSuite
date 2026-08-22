@@ -59,7 +59,7 @@ class CharTab(BookTabBase):
             ]))
         self.set_table_items(
             ["", "#", "角色名称", "等级", "状态", "HP", "MP"], rows,
-            widths={0: 40, 1: 40, 3: 45, 4: 55, 5: 70, 6: 70},
+            widths={0: 50, 1: 44, 3: 58, 4: 70, 5: 78, 6: 78},
             stretch_col=2)
         self.clear_detail()
         self.finish_detail()
@@ -328,8 +328,10 @@ class CharTab(BookTabBase):
         tabs.setCornerWidget(box, Qt.TopRightCorner)
         th = tabs.tabBar().sizeHint().height()
         if th > 0:
-            chk.setFixedHeight(max(20, th - 2))
-            combo.setFixedHeight(max(20, th - 2))
+            # 角落控件底部避开 Tab 线，保持附加内容略微上移。
+            corner_h = max(20, th - 3)
+            chk.setFixedHeight(corner_h)
+            combo.setFixedHeight(corner_h)
 
     def _on_graph_toggled(self, checked):
         self._graph_mode = checked

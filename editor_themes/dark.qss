@@ -544,6 +544,11 @@ QTabWidget[tabStyle="flat"] QTabBar::tab:selected {
 QTabWidget[tabStyle="flat"] QTabBar::tab:disabled {
     color: #666666;
 }
+QWidget#EditorTabCorner {
+    background-color: #212121;
+    border: none;
+    border-bottom: 1px solid #444444;
+}
 
 /* ── 编辑器面板、图形视图与滚动区域 ── */
 QWidget#DockPanel {

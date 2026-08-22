@@ -25,7 +25,7 @@ class ItemTab(BookTabBase):
     """物品查看页: 全部物品列表 + 名称/说明/非零属性"""
 
     _HEADERS = ["图标", "#", "ID", "分类", "物品名称", "权限", "价格"]
-    _WIDTHS = {0: 40, 1: 40, 2: 50, 3: 50, 5: 80, 6: 50}
+    _WIDTHS = {0: 50, 1: 44, 2: 60, 3: 60, 5: 100, 6: 72}
 
     def __init__(self, data, parent=None):
         super().__init__(data, parent)

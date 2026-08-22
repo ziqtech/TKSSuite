@@ -136,6 +136,28 @@ class EditorTabWidget(QTabWidget):
             self._tab_pane.show()
             self._tab_pane.raise_()
 
+    def setCornerWidget(self, widget, corner=Qt.TopRightCorner):
+        """统一处理 Tab 右侧附加区域，避免覆盖标签栏底部边线。
+
+        QTabWidget 的 corner widget 会覆盖 TabBar 右侧区域，透明控件即使
+        写了 ``border-bottom`` 也不会实际绘制边线。交给主题 QSS 绘制实心
+        背景和底线，并将内部内容顶部对齐，让附加控件略微上移且线保持连续。
+        """
+        if widget is not None:
+            widget.setObjectName("EditorTabCorner")
+            # 透明背景会让 Qt Style Sheet 跳过 QWidget 的 border 绘制，
+            # 从而把 TabBar 右侧底线变成透明区域；由主题 QSS 提供实心底色。
+            widget.setAttribute(Qt.WA_TranslucentBackground, False)
+            layout = widget.layout()
+            if layout is not None:
+                margins = layout.contentsMargins()
+                layout.setContentsMargins(
+                    margins.left(), margins.top(), margins.right(),
+                    max(2, margins.bottom()),
+                )
+                layout.setAlignment(Qt.AlignTop)
+        super().setCornerWidget(widget, corner)
+
     @property
     def tab_pane(self) -> EditorTabPane | None:
         """返回 flat 模式的 pane 覆盖层，普通模式返回 ``None``。"""

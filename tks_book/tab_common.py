@@ -65,6 +65,9 @@ class BookTabBase(QWidget):
         self.list_widget.setSelectionMode(QAbstractItemView.SingleSelection)
         self.list_widget.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.list_widget.verticalHeader().setVisible(False)
+        self.list_widget.setWordWrap(False)
+        self.list_widget.setTextElideMode(Qt.ElideRight)
+        self.list_widget.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.list_widget.horizontalHeader().setStretchLastSection(True)
         self.list_widget.currentItemChanged.connect(self._on_select)
         ll.addWidget(self.list_widget, 1)
@@ -80,7 +83,8 @@ class BookTabBase(QWidget):
         self.detail_layout.addStretch()
         self.detail_scroll.setWidget(self._detail_container)
         splitter.addWidget(self.detail_scroll)
-        splitter.setSizes([420, 780])
+        # 默认给列表足够空间，避免多列表格在初始宽度下挤压标题和数值。
+        splitter.setSizes([520, 780])
         self._splitter = splitter
 
     # ── 表格管理 ──

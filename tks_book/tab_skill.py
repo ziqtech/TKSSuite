@@ -24,7 +24,7 @@ class SkillTab(BookTabBase):
     """技能查看页: 全部技能列表 + 名称/说明/非零属性"""
 
     _HEADERS = ["技能ID", "文本ID", "类型", "技能名称", "技能点数", "耗费内力"]
-    _WIDTHS = {0: 60, 1: 60, 2: 80, 4: 70, 5: 70}
+    _WIDTHS = {0: 66, 1: 72, 2: 88, 4: 82, 5: 84}
 
     def __init__(self, data, parent=None):
         super().__init__(data, parent)
