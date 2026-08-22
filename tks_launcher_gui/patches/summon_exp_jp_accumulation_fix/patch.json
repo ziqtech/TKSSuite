@@ -1,0 +1,19 @@
+{
+  "_format": 1,
+  "_group": "── 战斗经验与JP ──",
+  "_comment": "原版 sub_4400DC @0x441832 在进入战斗奖励累加块前仅接受 byte_9DF761[arg_0]==100；sub_431094 明确将召唤物设为 20，因此召唤物攻击会跳过 dword_9D6F14 与 dword_9D6F18 的原版累加。hook 重放原始读取，仅将恰好为 20 的召唤物状态映射为 100，保留后续原版 EXP/JP 公式与队伍结算。",
+  "type": "cave_hook",
+  "id": "summon_exp_jp_accumulation_fix",
+  "name": "召唤物经验JP累加修复",
+  "desc": "让召唤物攻击沿用原版战斗经验与JP累加路径，使队伍结算阶段获得对应奖励",
+  "optional": true,
+  "default_checked": true,
+  "hook_pattern": "0F BE 81 61 F7 9D 00 83 F8 64 0F 85 AE 02 00 00",
+  "hook_size": 7,
+  "hook_expect_count": 1,
+  "fallback_rva": "0x41832",
+  "cave_template": "summon_exp_jp_accumulation_fix",
+  "cave_code": "0F BE 81 61 F7 9D 00 83 F8 14 75 05 B8 64 00 00 00 C3",
+  "format": "TKSPATCH",
+  "format_version": 1
+}
