@@ -656,15 +656,17 @@ class WarDataEditorV2(QMainWindow):
         # 左侧：战斗列表
         self.table = QTableWidget(0, 8)
         self.table.setHorizontalHeaderLabels(["序号", "地图", "敌军数", "宝物数", "陷阱数", "固定/随机", "参战人物", "参数"])
-        self.table.setColumnWidth(0, 45)
-        self.table.setColumnWidth(1, 90)
-        self.table.setColumnWidth(2, 50)
-        self.table.setColumnWidth(3, 50)
-        self.table.setColumnWidth(4, 50)
-        self.table.setColumnWidth(5, 70)
-        self.table.setColumnWidth(6, 180)  # 参战人物列加宽
+        # 左侧列表在默认 1400px 窗口中约占 700px。固定列按表头和实际值
+        # 预留宽度，把可变空间留给最长、最容易被截断的“参战人物”列。
+        self.table.setColumnWidth(0, 45)   # 序号
+        self.table.setColumnWidth(1, 105)  # 地图，如 100 (640x480)
+        self.table.setColumnWidth(2, 50)   # 敌军数
+        self.table.setColumnWidth(3, 50)   # 宝物数
+        self.table.setColumnWidth(4, 50)   # 陷阱数
+        self.table.setColumnWidth(5, 75)   # 固定/随机
+        self.table.setColumnWidth(6, 245)  # 参战人物（最多显示 3 个角色名）
         self.table.horizontalHeader().setSectionResizeMode(6, QHeaderView.Stretch)
-        self.table.setColumnWidth(7, 70)
+        self.table.setColumnWidth(7, 60)   # 参数
         self.table.setMinimumWidth(540)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SingleSelection)
@@ -675,6 +677,10 @@ class WarDataEditorV2(QMainWindow):
 
         # 右侧：编辑面板
         right = QWidget()
+        # 右侧标签页中的明细表有较大的 sizeHint，若沿用该建议尺寸，QSplitter
+        # 会把初始空间优先分给右侧，导致左侧退回最小宽度。让分隔条按设定的
+        # 初始比例分配空间，明细内容不足时由各自表格处理横向滚动。
+        right.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Expanding)
         rl = QVBoxLayout(right)
         rl.setContentsMargins(4, 4, 4, 4)
         rl.setSpacing(4)
@@ -691,7 +697,9 @@ class WarDataEditorV2(QMainWindow):
         self._link_params_tabs()  # 双向同步 pvars/apvars 重叠字段, 防止 apply 时互相覆盖
         rl.addWidget(self.tabs, 1)
         splitter.addWidget(right)
-        splitter.setSizes([540, 860])
+        # 给左侧列表足够的初始空间，使上面的列宽在默认窗口尺寸下基本完整显示。
+        # 参战人物列仍使用 Stretch，因此用户拖动分隔条后会自动适配剩余宽度。
+        splitter.setSizes([700, 700])
         # 切换到场景标签页时自动刷新
         self.tabs.currentChanged.connect(self._on_tab_changed)
 
