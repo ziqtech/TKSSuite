@@ -140,6 +140,102 @@ def skill_name(rec, tkt):
     if sid and -sid in tkt: return tkt[-sid].split('\n')[0].strip()
     return f"Skill#{sid}" if sid else f"(空-#{rec['index']})"
 
+
+# ============================================================
+# 左侧技能列表：默认列宽可读，窗口变大时按权重小幅自适应
+# ============================================================
+
+class SkillListTable(QTableWidget):
+    """技能列表表格：固定列保持可读，技能名称列吸收额外宽度。"""
+
+    _BASE_WIDTHS = (62, 72, 90, 160, 82, 84)
+    _MIN_WIDTHS = (52, 60, 76, 112, 72, 72)
+    _GROWTH_WEIGHTS = (0.04, 0.06, 0.10, 0.62, 0.09, 0.09)
+    _SHRINK_WEIGHTS = (0.04, 0.06, 0.10, 0.50, 0.14, 0.16)
+    _NAME_COLUMN = 3
+
+    def __init__(self, rows, columns, parent=None):
+        super().__init__(rows, columns, parent)
+        self._applying_columns = False
+        header = self.horizontalHeader()
+        header.setSectionResizeMode(QHeaderView.Interactive)
+        header.setStretchLastSection(False)
+        header.setMinimumSectionSize(min(self._MIN_WIDTHS))
+        self.setWordWrap(False)
+        self.setTextElideMode(Qt.ElideRight)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.apply_responsive_widths()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self.apply_responsive_widths()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.apply_responsive_widths()
+
+    def apply_responsive_widths(self):
+        if self._applying_columns or self.columnCount() != len(self._BASE_WIDTHS):
+            return
+
+        self._applying_columns = True
+        try:
+            available = max(self.viewport().width(), sum(self._MIN_WIDTHS))
+            base_total = sum(self._BASE_WIDTHS)
+            min_total = sum(self._MIN_WIDTHS)
+            name_col = self._NAME_COLUMN
+
+            if available >= base_total:
+                extra = available - base_total
+                widths = [
+                    base + extra * weight
+                    for base, weight in zip(self._BASE_WIDTHS, self._GROWTH_WEIGHTS)
+                ]
+            else:
+                deficit = base_total - available
+                name_width = max(
+                    self._MIN_WIDTHS[name_col],
+                    self._BASE_WIDTHS[name_col]
+                    - deficit * self._SHRINK_WEIGHTS[name_col],
+                )
+                nonname_indices = [
+                    i for i in range(len(self._BASE_WIDTHS)) if i != name_col
+                ]
+                nonname_budget = available - name_width
+                nonname_base_total = base_total - self._BASE_WIDTHS[name_col]
+                nonname_min_total = min_total - self._MIN_WIDTHS[name_col]
+                if nonname_budget >= nonname_min_total:
+                    nonname_deficit = nonname_base_total - nonname_budget
+                    nonname_weights = [
+                        self._SHRINK_WEIGHTS[i] for i in nonname_indices
+                    ]
+                    weight_total = sum(nonname_weights)
+                    nonname_widths = [
+                        max(
+                            self._MIN_WIDTHS[i],
+                            self._BASE_WIDTHS[i]
+                            - nonname_deficit * self._SHRINK_WEIGHTS[i] / weight_total,
+                        )
+                        for i in nonname_indices
+                    ]
+                else:
+                    nonname_widths = [
+                        self._MIN_WIDTHS[i] for i in nonname_indices
+                    ]
+                    name_width = available - sum(nonname_widths)
+
+                widths = [0] * len(self._BASE_WIDTHS)
+                for i, width in zip(nonname_indices, nonname_widths):
+                    widths[i] = width
+                widths[name_col] = name_width
+
+            widths[name_col] += available - sum(widths)
+            for column, width in enumerate(widths):
+                self.setColumnWidth(column, max(1, round(width)))
+        finally:
+            self._applying_columns = False
+
+
 def load_skills(fp):
     with open(fp, 'rb') as f:
         raw = f.read()
@@ -201,10 +297,16 @@ class SkillPickerDialog(QDialog):
 
         self.table = QTableWidget(0, 4)
         self.table.setHorizontalHeaderLabels(['技能ID', '文本ID', '类型', '技能名称'])
-        self.table.setColumnWidth(0, 60)
-        self.table.setColumnWidth(1, 60)
-        self.table.setColumnWidth(2, 80)
-        self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.Stretch)
+        picker_header = self.table.horizontalHeader()
+        picker_header.setSectionResizeMode(QHeaderView.Interactive)
+        picker_header.setStretchLastSection(False)
+        picker_header.setMinimumSectionSize(60)
+        self.table.setColumnWidth(0, 68)
+        self.table.setColumnWidth(1, 72)
+        self.table.setColumnWidth(2, 92)
+        picker_header.setSectionResizeMode(3, QHeaderView.Stretch)
+        self.table.setWordWrap(False)
+        self.table.setTextElideMode(Qt.ElideRight)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SingleSelection)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
@@ -798,8 +900,8 @@ class SkillEditorApp(QMainWindow):
         super().__init__()
         self.setObjectName("EditorWindow")
         self.setWindowTitle(format_title("skill_editor"))
-        self.resize(1260, 820)
-        self.setMinimumSize(1000, 650)
+        self.resize(1360, 820)
+        self.setMinimumSize(1100, 650)
 
         # 补全：精准加载原版要求的图标文件 TKS.ico
         ico_path = os.path.join(os.path.dirname(__file__), 'TKS.ico')
@@ -834,6 +936,28 @@ class SkillEditorApp(QMainWindow):
     def _create_dock(self, title, widget_content, header_layout=None):
         """Dock 面板包裹 — 委托给 editor_utils.dock_components"""
         return create_dock(title, widget_content, header_layout)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._sync_splitter_width()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._sync_splitter_width()
+
+    def _sync_splitter_width(self):
+        """保持列表在窄窗口下仍能显示完整表头，放大时仅小幅增加列表占比。"""
+        splitter = getattr(self, "splitter", None)
+        if splitter is None:
+            return
+        total = splitter.width()
+        if total <= 0:
+            return
+        if total < 1296:
+            left = max(480, int(total * 0.45))
+        else:
+            left = min(680, 540 + int((total - 1296) * 0.25))
+        splitter.setSizes([left, max(1, total - left)])
 
     def _build_ui(self):
         central_widget = QWidget()
@@ -908,14 +1032,8 @@ class SkillEditorApp(QMainWindow):
         main_layout.addWidget(self.splitter, 1)
 
         # --- Left Pane (Table) ---
-        self.table = QTableWidget(0, 6)
+        self.table = SkillListTable(0, 6)
         self.table.setHorizontalHeaderLabels(['技能ID', '文本ID', '类型', '技能名称', '技能点数', '耗费内力'])
-        self.table.setColumnWidth(0, 60)
-        self.table.setColumnWidth(1, 60)
-        self.table.setColumnWidth(2, 80)
-        self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.Stretch)
-        self.table.setColumnWidth(4, 70)
-        self.table.setColumnWidth(5, 70)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SingleSelection)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
@@ -923,6 +1041,7 @@ class SkillEditorApp(QMainWindow):
         self.table.itemSelectionChanged.connect(self._on_table_select)
         self.table.setContextMenuPolicy(Qt.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self._show_table_context_menu)
+        self.splitter.setChildrenCollapsible(False)
         self.splitter.addWidget(self._create_dock("技能列表", self.table))
 
         # --- Right Pane (Inspector) ---
@@ -999,7 +1118,9 @@ class SkillEditorApp(QMainWindow):
         right_layout.addWidget(scroll, 1)
 
         self.splitter.addWidget(self._create_dock("检查器 (属性编辑)", right_widget))
-        self.splitter.setSizes([440, 820])
+        self.splitter.setStretchFactor(0, 1)
+        self.splitter.setStretchFactor(1, 1)
+        self.splitter.setSizes([540, 796])
 
         # Bottom Path
         path_layout = QHBoxLayout()
@@ -1059,6 +1180,7 @@ class SkillEditorApp(QMainWindow):
             inp = QLineEdit()
             inp.setMaximumWidth(50)
             btn = QPushButton("...")
+            btn.setObjectName("FakeInputRightButton")
             btn.setFixedWidth(28)
             btn.setCursor(Qt.PointingHandCursor)
 
@@ -1089,6 +1211,8 @@ class SkillEditorApp(QMainWindow):
             inp.setVisible(False)
 
             btn = QPushButton("配置免疫状态…" if ft == 'mask' else "配置特殊标志…")
+            if ft == 'mask':
+                btn.setObjectName("StatusPickerButton")
             btn.setCursor(Qt.PointingHandCursor)
 
             box = QFrame()
@@ -1236,6 +1360,7 @@ class SkillEditorApp(QMainWindow):
                 self.table.item(row, c).setForeground(color)
 
         self.table.blockSignals(False)
+        self.table.apply_responsive_widths()
 
     def _on_table_select(self):
         sel = self.table.selectedItems()
