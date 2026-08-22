@@ -213,6 +213,92 @@ class NumericTableItem(QTableWidgetItem):
         return super().__lt__(other)
 
 # ============================================================
+# 左侧列表表格: 默认列宽可读, 窗口变大时按权重小幅自适应
+# ============================================================
+class KonListTable(QTableWidget):
+    """TKKon 列表表格：默认宽度保证各列可读，窗口变大时按权重小幅自适应。"""
+
+    _BASE_WIDTHS = (46, 52, 52, 130, 72, 70, 72, 54)
+    _MIN_WIDTHS = (42, 46, 46, 96, 58, 58, 58, 48)
+    _GROWTH_WEIGHTS = (0.02, 0.02, 0.03, 0.70, 0.06, 0.05, 0.06, 0.06)
+    _SHRINK_WEIGHTS = (0.03, 0.03, 0.03, 0.70, 0.05, 0.04, 0.05, 0.07)
+    _NAME_COLUMN = 3
+
+    def __init__(self, rows, columns, parent=None):
+        super().__init__(rows, columns, parent)
+        self._applying_columns = False
+        header = self.horizontalHeader()
+        header.setSectionResizeMode(QHeaderView.Interactive)
+        header.setStretchLastSection(False)
+        header.setMinimumSectionSize(min(self._MIN_WIDTHS))
+        self.apply_responsive_widths()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self.apply_responsive_widths()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.apply_responsive_widths()
+
+    def apply_responsive_widths(self):
+        if self._applying_columns or self.columnCount() != len(self._BASE_WIDTHS):
+            return
+        self._applying_columns = True
+        try:
+            available = max(self.viewport().width(), sum(self._MIN_WIDTHS))
+            base_total = sum(self._BASE_WIDTHS)
+            min_total = sum(self._MIN_WIDTHS)
+            name_col = self._NAME_COLUMN
+
+            if available >= base_total:
+                extra = available - base_total
+                widths = [
+                    base + extra * weight
+                    for base, weight in zip(self._BASE_WIDTHS, self._GROWTH_WEIGHTS)
+                ]
+            else:
+                deficit = base_total - available
+                name_width = max(
+                    self._MIN_WIDTHS[name_col],
+                    self._BASE_WIDTHS[name_col] - deficit * self._SHRINK_WEIGHTS[name_col],
+                )
+                nonname_indices = [
+                    i for i in range(len(self._BASE_WIDTHS)) if i != name_col
+                ]
+                nonname_budget = available - name_width
+                nonname_base_total = base_total - self._BASE_WIDTHS[name_col]
+                nonname_min_total = min_total - self._MIN_WIDTHS[name_col]
+                if nonname_budget >= nonname_min_total:
+                    nonname_deficit = nonname_base_total - nonname_budget
+                    nonname_weights = [
+                        self._SHRINK_WEIGHTS[i] for i in nonname_indices
+                    ]
+                    weight_total = sum(nonname_weights)
+                    nonname_widths = [
+                        max(
+                            self._MIN_WIDTHS[i],
+                            self._BASE_WIDTHS[i]
+                            - nonname_deficit * self._SHRINK_WEIGHTS[i] / weight_total,
+                        )
+                        for i in nonname_indices
+                    ]
+                else:
+                    nonname_widths = [self._MIN_WIDTHS[i] for i in nonname_indices]
+                    name_width = available - sum(nonname_widths)
+
+                widths = [0] * len(self._BASE_WIDTHS)
+                for i, width in zip(nonname_indices, nonname_widths):
+                    widths[i] = width
+                widths[name_col] = name_width
+
+            widths[name_col] += available - sum(widths)
+            for column, width in enumerate(widths):
+                self.setColumnWidth(column, max(1, round(width)))
+        finally:
+            self._applying_columns = False
+
+# ============================================================
 # 对话框: 状态掩码多选 — 复用 editor_utils.picker_dialogs.StatusPickerDialog
 # ============================================================
 
@@ -415,7 +501,8 @@ class KonEditor(QMainWindow):
 
         self._build_table(splitter)
         self._build_edit_panel(splitter)
-        splitter.setSizes([480, 820])
+        splitter.setSizes([540, 756])
+        self.splitter = splitter
 
         # 底部路径栏
         # 路径标签不设 objectName: 让 update_path_labels 写入的 [status] 属性生效着色
@@ -441,17 +528,13 @@ class KonEditor(QMainWindow):
     # ----------- 左侧表格 -----------
 
     def _build_table(self, parent):
-        self.table = QTableWidget(0, 8)
+        self.table = KonListTable(0, 8)
         self.table.setHorizontalHeaderLabels(["序号", "动画", "距离", "名称", "范围", "伤害", "目标", "类型"])
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SingleSelection)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.verticalHeader().setVisible(False)
 
-        col_widths = [38, 42, 42, 95, 52, 55, 55, 50]
-        for i, w in enumerate(col_widths):
-            self.table.setColumnWidth(i, w)
-        self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.Stretch)
         self.table.itemSelectionChanged.connect(self._on_table_select)
         self.table.setContextMenuPolicy(Qt.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self._on_table_context_menu)
@@ -682,6 +765,27 @@ class KonEditor(QMainWindow):
         grid.addLayout(cell, row, col, 1, span)
 
     # ----------- 窗口控制 -----------
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._sync_splitter_width()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._sync_splitter_width()
+
+    def _sync_splitter_width(self):
+        splitter = getattr(self, 'splitter', None)
+        if splitter is None:
+            return
+        total = splitter.width()
+        if total <= 0:
+            return
+        if total < 1296:
+            left = max(420, int(total * 0.42))
+        else:
+            left = min(680, 540 + int((total - 1296) * 0.25))
+        splitter.setSizes([left, max(1, total - left)])
 
     def _center_window(self):
         screen = QApplication.primaryScreen().availableGeometry()
