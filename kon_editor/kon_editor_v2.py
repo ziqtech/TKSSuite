@@ -731,6 +731,7 @@ class KonEditor(QMainWindow):
         elif is_mask:
             inf = fn.startswith('inflict')
             btn = QPushButton("选择导致状态…" if inf else "选择解除状态…")
+            btn.setObjectName("StatusPickerButton")
             hidden = QLineEdit()
             hidden.hide()
             box = QFrame()
