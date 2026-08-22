@@ -1277,6 +1277,14 @@ QFrame[class="SepLine"] {
     border: none;
     max-height: 1px;
 }
+QFrame[class="VSepLine"] {
+    color: #444444;
+    background-color: #444444;
+    border: none;
+    min-width: 1px;
+    max-width: 1px;
+    min-height: 1px;
+}
 
 /* ── 游戏预览区 (tkt_editor 模拟游戏文本渲染背景) ── */
 QScrollArea#GamePreview, QTextEdit#GamePreview {

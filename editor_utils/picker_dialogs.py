@@ -265,8 +265,9 @@ class ItemPickerDialog(QDialog):
             (默认 ``'item_id'``; 可选 ``'index'``)
     """
 
-    # 完整模式表格列宽: 图标(0) #(1) ID(2) 页面(3) 物品名称(4) 权限(5) 价格(6)
-    _COLUMN_WIDTHS = {0: 50, 1: 40, 2: 50, 3: 50, 5: 100, 6: 60}
+    # 完整模式固定列宽; 页面(3) 与权限(5) 按内容自适应
+    _COLUMN_WIDTHS = {0: 56, 1: 56, 2: 80, 6: 80}
+    _RESIZE_TO_CONTENT_COLUMNS = (3, 5)
 
     def __init__(self, parent, items, *, use_right_options=None,
                  icon_pixmap_fn=None, current_value=None,
@@ -274,8 +275,8 @@ class ItemPickerDialog(QDialog):
                  return_key='item_id'):
         super().__init__(parent)
         self.setWindowTitle(title)
-        self.resize(640, 560)
-        self.setMinimumSize(480, 360)
+        self.resize(920, 560)
+        self.setMinimumSize(760, 360)
         self.selected_value = None
         self._icon_pixmap_fn = icon_pixmap_fn
         self._clear_text = clear_text
@@ -367,7 +368,10 @@ class ItemPickerDialog(QDialog):
             for col, width in self._COLUMN_WIDTHS.items():
                 self._table.setColumnWidth(col, width)
             self._table.verticalHeader().setDefaultSectionSize(44)
-            self._table.horizontalHeader().setSectionResizeMode(4, QHeaderView.Stretch)
+            header = self._table.horizontalHeader()
+            for col in self._RESIZE_TO_CONTENT_COLUMNS:
+                header.setSectionResizeMode(col, QHeaderView.ResizeToContents)
+            header.setSectionResizeMode(4, QHeaderView.Stretch)
             self._table.setIconSize(QSize(36, 36))
         self._table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self._table.setSelectionMode(QAbstractItemView.SingleSelection)

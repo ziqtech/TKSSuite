@@ -359,11 +359,7 @@ class ShopEditorWindow(QMainWindow):
         btn_clear.clicked.connect(self._clear_filter)
         toolbar_layout.addWidget(btn_clear)
 
-        # 分隔线
-        vline1 = QFrame()
-        vline1.setFrameShape(QFrame.VLine)
-        vline1.setFrameShadow(QFrame.Sunken)
-        toolbar_layout.addWidget(vline1)
+        toolbar_layout.addWidget(self._make_v_sep())
 
         btn_add = QPushButton("➕ 新增记录")
         btn_add.clicked.connect(self._add_record)
@@ -373,10 +369,7 @@ class ShopEditorWindow(QMainWindow):
         btn_reload.clicked.connect(self._reload)
         toolbar_layout.addWidget(btn_reload)
 
-        vline2 = QFrame()
-        vline2.setFrameShape(QFrame.VLine)
-        vline2.setFrameShadow(QFrame.Sunken)
-        toolbar_layout.addWidget(vline2)
+        toolbar_layout.addWidget(self._make_v_sep())
 
         btn_theme = QPushButton("🌓 切换主题")
         btn_theme.clicked.connect(self._toggle_theme)
@@ -540,7 +533,7 @@ class ShopEditorWindow(QMainWindow):
         sep = QFrame()
         sep.setFrameShape(QFrame.VLine)
         sep.setFrameShadow(QFrame.Sunken)
-        sep.setProperty("class", "SepLine")
+        sep.setProperty("class", "VSepLine")
         return sep
 
     def _update_path_labels(self):
