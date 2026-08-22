@@ -42,6 +42,7 @@ Tab 分区 (按字段索引顺序排列):
   [88]-[259] 技能学习 — 344技能×1byte
   [260]-[263] 补丁字段 — awk_sprite/portrait_menu/history_text/entity_link
   [264]-[266] 成长率   — 初期/中期/后期
+  [267]       物理抵抗
   [268]-[269] 战后奖励 — JP/金
   [270]-[272] 掉落物品 — 3个物品ID
   [273]+     技能效果  — TKKon ID 映射表
@@ -525,7 +526,7 @@ class FieldRefDialog(QDialog):
             ("使用/装备权限 [77]-[81]", CHAR_USE_RIGHT_FIELDS),
             ("装备技能 [82]-[87] (已验证: 周倉)", EQUIP_SKILL_FIELDS),
             ("补丁专用字段 [260]-[263]", PATCH_FIELDS),
-            ("成长率 [264]-[266]", GROWTH_FIELDS),
+            ("成长率/物理抵抗 [264]-[267]", GROWTH_FIELDS),
             ("战后奖励 [268]-[269]", BATTLE_REWARD_FIELDS),
             ("可掉落物品 [270]-[272]", DROP_ITEM_FIELDS),
         ]:
@@ -1392,6 +1393,7 @@ class WarpcEditorV2(QMainWindow):
             ev_hidden.hide()
             self._edit_vars[fn] = ev_hidden
             btn = QPushButton("配置…")
+            btn.setObjectName("StatusPickerButton")
             btn.clicked.connect(lambda _, f=fn: self._pick_flags(f))
             bh.addWidget(btn, 1)
             cell.addWidget(box)
@@ -1410,6 +1412,7 @@ class WarpcEditorV2(QMainWindow):
             ev_hidden.hide()
             self._edit_vars[fn] = ev_hidden
             btn = QPushButton("配置权限…")
+            btn.setObjectName("StatusPickerButton")
             btn.clicked.connect(lambda _, f=fn: self._pick_use_right(f))
             bh.addWidget(btn, 1)
             cell.addWidget(box)
@@ -1429,6 +1432,7 @@ class WarpcEditorV2(QMainWindow):
             self._edit_vars[fn] = ev_hidden
             is_cause = fn.startswith('cause_')
             btn = QPushButton("选择导致状态…" if is_cause else "选择解除状态…")
+            btn.setObjectName("StatusPickerButton")
             btn.clicked.connect(lambda _, f=fn: self._pick_status_mask(f))
             bh.addWidget(btn, 1)
             cell.addWidget(box)
@@ -1446,6 +1450,7 @@ class WarpcEditorV2(QMainWindow):
             ev.setMinimumWidth(50)
             bh.addWidget(ev, 1)
             btn = QPushButton("…")
+            btn.setObjectName("FakeInputRightButton")
             btn.setFixedWidth(28)
             btn.clicked.connect(lambda _, f=fn: self._pick_skill(f))
             bh.addWidget(btn)
@@ -1464,6 +1469,7 @@ class WarpcEditorV2(QMainWindow):
             ev.setMinimumWidth(50)
             bh.addWidget(ev, 1)
             btn = QPushButton("…")
+            btn.setObjectName("FakeInputRightButton")
             btn.setFixedWidth(28)
             btn.clicked.connect(lambda _, f=fn: self._pick_item(f))
             bh.addWidget(btn)
@@ -1482,6 +1488,7 @@ class WarpcEditorV2(QMainWindow):
             ev.setMinimumWidth(50)
             bh.addWidget(ev, 1)
             btn = QPushButton("…")
+            btn.setObjectName("FakeInputRightButton")
             btn.setFixedWidth(28)
             btn.clicked.connect(partial(self._pick_portrait))
             bh.addWidget(btn)
@@ -1605,7 +1612,7 @@ class WarpcEditorV2(QMainWindow):
         self._build_section(p, "使用/装备权限 [154]-[162]", CHAR_USE_RIGHT_FIELDS, 6)
         self._build_section(p, "装备技能 [164]-[174] (6字段)", EQUIP_SKILL_FIELDS, 6, 'skill_pick')
         self._build_section(p, "补丁字段 [520]-[526]", PATCH_FIELDS, 6)
-        self._build_section(p, "成长率 [528]-[532]", GROWTH_FIELDS, 6)
+        self._build_section(p, "成长率/物理抵抗 [528]-[534]", GROWTH_FIELDS, 6)
         self._build_section(p, "战后奖励 [536]-[538]", BATTLE_REWARD_FIELDS, 6)
         self._build_section(p, "可掉落物品 [540]-[544]", DROP_ITEM_FIELDS, 6, 'item_pick')
 
@@ -1758,6 +1765,7 @@ class WarpcEditorV2(QMainWindow):
             bh.addWidget(ev)
             bh.addStretch()
             btn = QPushButton("…")
+            btn.setObjectName("FakeInputRightButton")
             btn.setFixedWidth(26)
             btn.clicked.connect(lambda _, idx=i, sv=ev: self._pick_tkkon(idx, sv))
             bh.addWidget(btn)
