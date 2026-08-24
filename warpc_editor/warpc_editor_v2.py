@@ -542,7 +542,7 @@ class FieldRefDialog(QDialog):
         lines.append("")
         lines.append("【技能效果判定】")
         lines.append(f"  [273]-[273+count-1] 技能与动画对应: 技能→TKKon动画映射表")
-        lines.append(f"  全部type=0指令技能(末尾为普通攻击); 每字段=int16 TKKon ID (0~649)")
+        lines.append(f"  全部type=0指令技能(末尾为普通攻击); 每字段=int16 TKKon ID (原版0~649, 补丁扩容后无上限)")
         lines.append("")
         lines.append("【功能说明】")
         lines.append("  Tab 1: 核心属性 (生命/攻防/速度等)")

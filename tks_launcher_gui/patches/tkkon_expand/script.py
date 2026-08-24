@@ -6,14 +6,26 @@ a larger buffer, writes the full decompressed TKKon data into it, then
 redirects all 0x9D0698 references and the 26000 load-size constant to the
 new buffer.
 
+Besides the base address, some code references addresses DERIVED from the
+buffer base (base + field offset). Example: 4434BC.c uses
+``word_9D069E[20 * i]`` (= TKKon[i].tkact_id, base 0x9D0698 + 6) in the
+tkact_id == -1 fallback animation path. Such references do not match a plain
+base-address value scan and would read the stale (zero) old buffer after
+redirection, so they are remapped to new_buf + offset as well. Candidates are
+found by scanning the code buffer for any 4-byte value inside the old buffer
+range; spurious matches whose first byte is an E8/E9 opcode with a
+segment-local rel32 target (call/jmp instructions) are excluded.
+
 Reverse evidence:
   - 4173F8.c:22  sub_45343C(aTkkonDat, &unk_9D0698, 26000)
   - 45343C.c     rejects decompressed size > a3
   - 452B14.c     writes decompressed data directly into a2
+  - 4434BC.c:67  fallback reads TKKon[i].tkact_id via 0x9D069E
 """
 
 import ctypes
 import os
+import struct
 
 from core.lzss import lzss_decompress
 from core.memory import (
@@ -107,6 +119,8 @@ def apply(ctx):
 
         code = ctx.code_buf
         start = ctx.code_start_addr
+        # 原始代码快照 — 派生引用扫描基于补丁前的字节, 避免误读已改写的立即数
+        orig_code = bytes(code)
 
         base_hits = []
         for off in value_scan(bytes(code), old_base):
@@ -157,12 +171,54 @@ def apply(ctx):
             log(f"  [WARN] no TKKon size ref found ({orig_size}); "
                 "assuming loader already accepts expanded size")
 
+        # ── 派生引用: 缓冲区内部地址 (base + 字段偏移) ──
+        # 例: 4434BC.c 的 word_9D069E[20*i] (= 0x9D0698+6, 直接按列读取
+        # TKKon[i].tkact_id, tkact==-1 回退动画路径)。这类引用不匹配基址
+        # value_scan, 重定向后会读到空置的老缓冲区, 必须一并重定位到
+        # new_buf + offset。排除 call/jmp rel32 位移的巧合匹配 (值的首字节
+        # 恰为 E8/E9 操作码且目标落在代码段内)。
+        patched_derived = 0
+        derived_fail = 0
+        buf_end = old_base + orig_size
+        code_len = len(orig_code)
+        for off in range(0, code_len - 5):
+            v = struct.unpack_from('<I', orig_code, off)[0]
+            if v <= old_base or v >= buf_end:
+                continue
+            if orig_code[off] in (0xE8, 0xE9):
+                # call/jmp rel32: 目标 = 指令末尾 + rel32, 落在段内即判定为
+                # 巧合匹配而非地址引用
+                rel = struct.unpack_from('<i', orig_code, off + 1)[0]
+                tgt = start + off + 5 + rel
+                if start <= tgt < start + code_len:
+                    continue
+            abs_addr = start + off
+            if _in_extra(ctx, abs_addr):
+                continue
+            new_v = new_buf + (v - old_base)
+            op = vp_ex(hp, abs_addr, 4, PAGE_EXECUTE_READWRITE)
+            w = write_pm(hp, abs_addr, i32b(new_v))
+            vp_ex(hp, abs_addr, 4, op)
+            if w == 4:
+                code[off:off + 4] = i32b(new_v)
+                patched_derived += 1
+                log(f"  [OK] derived ref @0x{abs_addr:08X} "
+                    f"(0x{v:08X} -> 0x{new_v:08X})")
+            else:
+                derived_fail += 1
+                log(f"  [FAIL] derived ref @0x{abs_addr:08X} (0x{v:08X})")
+        log(f"  [OK] patched {patched_derived} derived refs "
+            f"(buffer-internal addresses)")
+
         if not base_hits or not size_hits:
             log("  [ERROR] some expected TKKon references were not found; "
                 "expanded data is not safe to use")
             return False
         if patched_base != len(base_hits) or patched_size != len(size_hits):
             log("  [ERROR] some TKKon references failed to patch")
+            return False
+        if derived_fail:
+            log("  [ERROR] some TKKon derived references failed to patch")
             return False
         return True
     finally:

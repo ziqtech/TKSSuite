@@ -36,7 +36,7 @@ ITEM_REC = 64            # TKItem.dat 每条记录字节数
 ITEM_CNT = 600           # TKItem 最大记录数
 
 KON_REC = 40             # TKKon.dat 每条记录字节数
-KON_CNT = 650            # TKKon 最大记录数
+KON_CNT = 650            # TKKon 原版记录数 (tkkon_expand 补丁可扩容, 实际条数按文件大小动态推导)
 
 # ── 硬编码陷阱映射 (sub_434C0C: word_9D6C7A = byte_9DFA92[5*a3] + 551) ──
 # 陷阱类型 1-6 + 551 = TKKon 552-557, 名称来自 wardata_editor_v2 注释
@@ -95,6 +95,7 @@ class KonNameResolver:
             tks_dir: TKS 游戏根目录 (包含 WarPC.dat, TKSkill.dat, TKT.dat 等)
         """
         self._names: dict[int, str] = {}       # 完整名称
+        self._kon_cnt = KON_CNT                # TKKon 实际条数 (按 TKKon.dat 大小动态推导)
         self._tks_dir = tks_dir
         self._build(tks_dir)
 
@@ -104,7 +105,7 @@ class KonNameResolver:
         """获取指定 TKKon 索引的显示名称。
 
         Args:
-            kon_index: TKKon 条目索引 (0-649)
+            kon_index: TKKon 条目索引 (原版 0-649, 补丁扩容后随文件条数扩展)
             compact_threshold: 精简阈值。当名称中角色引用数超过此值时，
                               仅返回技能名（如 "《集中》"）。0 表示不精简。
         """
@@ -232,7 +233,9 @@ class KonNameResolver:
 
         Returns: [{index, tkact_id, exec_flags, ...}, ...]
 
-        与 kon_editor_v2.py 的 load_kon 保持一致。
+        与 kon_editor_v2.py 的 load_kon 保持一致: 条数按解压后大小动态推导
+        (tkkon_expand 补丁可将 TKKon.dat 扩容到 650 条以上), 不足原版
+        650 条时补空槽位。
         """
         path = os.path.join(tks_dir, 'TKKon.dat')
         if not os.path.exists(path):
@@ -247,8 +250,11 @@ class KonNameResolver:
         except Exception:
             return []
 
+        # 动态条数: 扩容文件取实际条数, 截断文件至少补齐原版 650 条
+        self._kon_cnt = max(len(dec) // KON_REC, KON_CNT)
+
         entries = []
-        for i in range(KON_CNT):
+        for i in range(self._kon_cnt):
             off = i * KON_REC
             if off + KON_REC > len(dec):
                 # 部分条目缺失 — 补空
@@ -350,7 +356,7 @@ class KonNameResolver:
                     break
                 kon_id = struct.unpack_from('<h', dec, field_off)[0]
 
-                if kon_id < 0 or kon_id >= KON_CNT:
+                if kon_id < 0 or kon_id >= self._kon_cnt:
                     continue
 
                 skill_idx = active_indices[ei]
@@ -428,7 +434,7 @@ class KonNameResolver:
                 continue
             name_id = struct.unpack_from('<h', dec, off + 4)[0]
             tkkon_index = struct.unpack_from('<h', dec, off + 12)[0]
-            if tkkon_index < 0 or tkkon_index >= KON_CNT:
+            if tkkon_index < 0 or tkkon_index >= self._kon_cnt:
                 continue
 
             item_name = self._resolve_tkt_name(name_id, tkt, "")
