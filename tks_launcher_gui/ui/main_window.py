@@ -631,6 +631,8 @@ class MainWindow(QMainWindow):
         (self._compatible_mode if state.mode == "compatible" else self._standard_mode).setChecked(True)
         self._mode_group.blockSignals(False)
         self._update_summary()
+        if hasattr(self, "_game_dir_label"):
+            self._update_game_dir_label()
 
     def _get_mode(self) -> str:
         button = self._mode_group.checkedButton()
@@ -675,7 +677,10 @@ class MainWindow(QMainWindow):
         # 对齐 ChatGPT 桌面端风格: 无可视操作柄, 窗口仍可通过原生边框缩放
         self.status_bar.setSizeGripEnabled(False)
         self.setStatusBar(self.status_bar)
-        # 已启用 MOD 计数 (原模式行右侧, 现改为底部状态栏常驻显示)
+        # 游戏目录全路径 + 已启用 MOD 计数 (原模式行右侧, 现改为底部状态栏常驻显示)
+        self._game_dir_label = QLabel()
+        self._game_dir_label.setObjectName("gameDirSummary")
+        self.status_bar.addPermanentWidget(self._game_dir_label)
         self._enabled_mod_summary = QLabel()
         self._enabled_mod_summary.setObjectName("enabledModSummary")
         self.status_bar.addPermanentWidget(self._enabled_mod_summary)
@@ -683,6 +688,18 @@ class MainWindow(QMainWindow):
         self.status_bar.showMessage("就绪 — 请点击「启动游戏」")
         # MOD 计数标签在此创建, 补一次刷新使初始计数生效
         self._update_mode_header()
+        self._update_game_dir_label()
+
+    def _update_game_dir_label(self):
+        """刷新状态栏的游戏目录全路径标签 (来源为当前记录的启动游戏程序)。"""
+        game_path = self._gui_state.last_game_path
+        if game_path:
+            game_dir = os.path.dirname(os.path.abspath(game_path))
+            self._game_dir_label.setText(f"游戏目录：{game_dir}")
+            self._game_dir_label.setToolTip(game_dir)
+        else:
+            self._game_dir_label.setText("游戏目录：未选择")
+            self._game_dir_label.setToolTip("点击「启动游戏」旁的齿轮按钮选择游戏程序")
 
     def _toggle_theme(self):
         self._dark_mode = not self._dark_mode
@@ -1007,6 +1024,8 @@ class MainWindow(QMainWindow):
         # 持久化已恢复的状态
         self._save_state()
         self._update_summary()
+        if hasattr(self, "_game_dir_label"):
+            self._update_game_dir_label()
 
     def _is_game_running(self) -> bool:
         """检查游戏是否正在运行 (PatcherWorker 仍在执行)"""

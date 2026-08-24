@@ -1822,7 +1822,8 @@ QStatusBar#LauncherStatusBar {
     border-top: 1px solid #ececf1;
     padding: 3px 10px;
 }
-QLabel#enabledModSummary {
+QLabel#enabledModSummary,
+QLabel#gameDirSummary {
     color: #8e8ea0;
     padding: 4px 10px;
 }
