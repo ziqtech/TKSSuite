@@ -119,10 +119,12 @@ ENEMY_MAX = 8 - N
 # === Cave 内存布局 ===
 # 槽数组必须与机器码分离。旧版本把两者都放在 cave_addr+0，随后
 # 的初始化写入会覆盖 cave_1，第一次召唤后控制流即可能跳入被破坏的代码。
-# 当前标准 cave 模板的已核验占用范围结束于 0x5F6；从 0x600 开始留出
-# 本扩展的代码和槽位，避免与其它 cave_hook 互相覆盖。
-SLOTS_OFFSET = 0x720       # cave_1..cave_4 位于 [0x600, 0x720)
-CAVE_BASE_OFFSET = 0x600
+# V17: 区域从 [0x600,0x780) 上移到 [0x680,0x800)。原因: 0x600 以下由
+# CaveLayout 自动布局分配, 大体积补丁 (如 war_hp_mp_bars 421B) 会把后续
+# 自动布局补丁 (weapon_cause_mask_hook) 顶到 0x600, 与本扩展硬编码区互相
+# 覆盖导致白屏。当前全部补丁自动布局最高水位 0x662 < 0x680, 上移后两不相犯。
+SLOTS_OFFSET = 0x7A0       # cave_1..cave_4 位于 [0x680, 0x7A0)
+CAVE_BASE_OFFSET = 0x680
 CAVE_1_OFFSET = CAVE_BASE_OFFSET          # 32 bytes (init)
 CAVE_2_OFFSET = CAVE_BASE_OFFSET + 32     # 48 bytes (full_check)
 CAVE_3_OFFSET = CAVE_BASE_OFFSET + 80     # 144 bytes (alloc + sync)
@@ -161,7 +163,7 @@ PATCH_7_NEW = bytes.fromhex("90 90 90 90 90 90")  # 6 NOPs
 CAPACITY_HOOK_ADDR = 0x445582
 CAPACITY_HOOK_SIZE = 7
 CAPACITY_HOOK_PATTERN = "83 FA 06 7C 07 33 C0"
-CAPACITY_CAVE_OFFSET = 0x730
+CAPACITY_CAVE_OFFSET = 0x7B0   # V17: 随硬编码区上移 (0x7B0+~52 <= 0x800)
 CAPACITY_FAIL_ADDR = 0x445589  # 原版失败 E9 指令起点
 CAPACITY_SUCCESS_ADDR = 0x44558E  # 原版 E9 之后的成功路径
 
