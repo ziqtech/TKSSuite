@@ -11,7 +11,7 @@
   "cave_template": "awk_sprite",
   "cave_offset": 0,
   "hook_conflict_action": "override",
-  "fallback_rva": "0x43CA72",
+  "fallback_rva": "0x309A6",
   "cave_code": "50 51 0F BF 45 FA 66 85 C0 7E 2C 3D C8 00 00 00 77 25 69 C0 1E 04 00 00 05 08 7F 75 00 0F B7 88 08 02 00 00 66 85 C9 75 04 85 C0 EB 0A 83 E9 06 66 89 4D FA 66 85 C9 59 58 C3",
   "format": "TKSPATCH",
   "format_version": 1

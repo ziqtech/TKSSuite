@@ -298,6 +298,8 @@ def parse_patch_dict(raw: dict, source_path: str,
                 entry["value_offset"] = int(pe["value_offset"])
             if "expect_value" in pe:
                 entry["expect_value"] = _parse_maybe_hex(pe["expect_value"])
+            if "value_size" in pe:
+                entry["value_size"] = int(pe["value_size"])
             d.patterns.append(entry)
 
     # patch_imm32
@@ -305,6 +307,7 @@ def parse_patch_dict(raw: dict, source_path: str,
     d.expect_value = _parse_maybe_hex(raw.get("expect_value", 0))
     d.new_value_expr = str(raw.get("new_value", ""))
     d.value_offset = raw.get("value_offset", 0)
+    d.value_size = int(raw.get("value_size", 4))
 
     # cave_hook
     d.hook_pattern = raw.get("hook_pattern", "")
@@ -354,7 +357,7 @@ def parse_patch_dict(raw: dict, source_path: str,
 
     # 额外字段 (类型特定, 原样保存)
     d._extra = {}  # type: ignore
-    for key in ("_group", "_comment", "_说明", "_mod_note",
+    for key in ("_group", "_comment", "_说明", "_mod_note", "_note",
                 "original", "field_range", "new_base",
                 "cave_mask_offset", "summon_cave_code", "summon_cave2_code"):
         if key in raw:

@@ -11,7 +11,7 @@
   "cave_template": "war_mustchar_fallback",
   "cave_offset": 1472,
   "hook_conflict_action": "override",
-  "fallback_rva": "0x430895",
+  "fallback_rva": "0x30895",
   "cave_code": "58 0F BE 01 48 66 83 F8 00 75 21 51 52 B9 06 00 00 00 BA 8C 68 75 00 66 83 3A 00 74 0D 83 C2 02 49 75 F4 0F BF 05 8C 68 75 00 5A 59 66 89 45 FA 68 9D 08 43 00 C3",
   "format": "TKSPATCH",
   "format_version": 1

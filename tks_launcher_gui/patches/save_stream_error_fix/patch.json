@@ -1,12 +1,13 @@
 {
   "_format": 1,
   "_group": "── 存档兼容修复 ──",
-  "_comment": "sub_41C120 stream error 检查: 将 mov edx,[ecx+8]; test ecx,ecx; sete... 链改写为直接清零 + 返回成功, 修复 7~9 号槽位读取异常。",
+  "_comment": "存档流状态检查修复: 特征码命中 2 处——读档侧 sub_41C120 (调用方 sub_41BF48/sub_41C2B8 ← sub_41B1A8) 与存档侧 sub_41D9AC (调用方 sub_41D750/sub_41DAC4 ← sub_41CE10; sub_41CE10 与存档列表 sub_41AB94 共享调用方 0x42131C/0x426164, 为存/读档一对)。两处均改写为直接清零 iostate + 返回成功, 修复 7~9 号槽位读取异常, 并避免空槽读错状态向存档侧传播。",
   "type": "patch_bytes",
   "id": "save_stream_error_fix",
   "name": "存档空槽读取错误修复",
-  "desc": "sub_41C120 stream error 检查修补 (patch_bytes)",
+  "desc": "sub_41C120(读档侧) + sub_41D9AC(存档侧) stream error 检查修补 (patch_bytes)",
   "pattern": "8B 4A 08 85 C9 0F 94 C0 83 E0 01 84 C0",
+  "expect_count": 2,
   "replace": {
     "0": "C7",
     "1": "42",

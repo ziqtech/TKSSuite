@@ -7,6 +7,7 @@
   "name": "存档界面金钱显示修复",
   "desc": "存档界面金钱显示 signed->unsigned (patch_bytes)",
   "pattern": "0F BF 84 41 D4 02 00 00",
+  "expect_count": 1,
   "replace": {
     "0": "0F",
     "1": "B7"

@@ -57,6 +57,7 @@ class PatchDef:
     hook_pattern: str = ""
     hook_expect_count: int = 0
     value_scan: bool = False
+    value_size: int = 4  # patch_imm32 立即数宽度 (字节): 4=imm32(默认), 2=imm16
     optional: bool = False
     default_checked: bool = True  # 可选补丁默认是否勾选 (仅 optional=True 时有效, 默认 True)
     # 第三方 MOD 兼容字段

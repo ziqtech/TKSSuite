@@ -1102,9 +1102,15 @@ CAVE_WAR_MUSTCHAR_FALLBACK = bytes([
 # 扩容 WarPC.dat 后需按实际记录数动态上调, 否则新角色 WORD[260] 不生效
 _AWK_CAP_OLD = bytes([0x3D, 0xC8, 0x00, 0x00, 0x00])  # cmp eax, 200
 
+# weapon_cause_mask cave 中 WarPC 索引检查指令 `cmp eax, 0x8F; jae 跳过` 的原始字节
+# 0x8F=143 = 原版记录数 (150722/1054), 为排他上限 (索引 0..142 有效);
+# 扩容后不上调则新角色 (>142) 的武器附加状态永不生效 (安全降级但功能丢失)
+_WEAPON_CAP_OLD = bytes([0x3D, 0x8F, 0x00, 0x00, 0x00])  # cmp eax, 143
+
 def build_cave_template(name: str, warpc_base: int, log_func=None,
                         idx_cap: Optional[int] = None,
-                        external_code: Optional[bytes] = None) -> Optional[bytes]:
+                        external_code: Optional[bytes] = None,
+                        rec_count: Optional[int] = None) -> Optional[bytes]:
     log = log_func or (lambda x: None)
 
     # 外置 cave 代码优先 (.tkspatch 文件提供)
@@ -1116,6 +1122,11 @@ def build_cave_template(name: str, warpc_base: int, log_func=None,
             pos = c.find(_AWK_CAP_OLD)
             if pos >= 0:
                 c[pos:pos + 5] = bytes([0x3D]) + struct.pack('<I', idx_cap & 0xFFFFFFFF)
+        # 动态调整武器 cause_mask cave 的 WarPC 索引排他上限 (=记录数, 同长 5 字节)
+        if name == "weapon_cause_mask" and rec_count is not None:
+            pos = c.find(_WEAPON_CAP_OLD)
+            if pos >= 0:
+                c[pos:pos + 5] = bytes([0x3D]) + struct.pack('<I', rec_count & 0xFFFFFFFF)
         log(f"    Cave 来源: 外置 .tkspatch ({len(c)} bytes)")
         return bytes(c)
 
@@ -1149,6 +1160,13 @@ def build_cave_template(name: str, warpc_base: int, log_func=None,
             c[pos:pos + 5] = bytes([0x3D]) + struct.pack('<I', idx_cap & 0xFFFFFFFF)
         else:
             log("    [WARN] awk cave 索引上限指令未找到, 保持默认 200")
+    # 动态调整武器 cause_mask cave 的 WarPC 索引排他上限 (=记录数, 长度不变)
+    if name == "weapon_cause_mask" and rec_count is not None:
+        pos = c.find(_WEAPON_CAP_OLD)
+        if pos >= 0:
+            c[pos:pos + 5] = bytes([0x3D]) + struct.pack('<I', rec_count & 0xFFFFFFFF)
+        else:
+            log("    [WARN] weapon_cause_mask cave 索引上限指令未找到, 保持默认 143")
     return bytes(c)
 
 # ============================================================
@@ -1324,7 +1342,6 @@ def apply_patch_imm32_by_pattern(defn: PatchDef, code_buf: bytearray, code_start
     if nv is None:
         log(f"    -> 变量未定义, 跳过")
         return True
-    nle = i32b(nv)
     if defn.patterns:
         entries = defn.patterns
     else:
@@ -1341,6 +1358,18 @@ def apply_patch_imm32_by_pattern(defn: PatchDef, code_buf: bytearray, code_start
         vo = int(entry.get("value_offset", defn.value_offset))
         exp = int(entry.get("expect_count", defn.expect_count))
         ov = int(entry.get("expect_value", defn.expect_value))
+        # 立即数宽度: 默认 4 (imm32); imm16 指令 (如 66 C7 mov word) 必须只写 2 字节,
+        # 否则会踩坏紧邻的后缀指令 (例: gold_limit 锚定模式后的 EB 跳转)
+        vs = int(entry.get("value_size", getattr(defn, "value_size", 4)))
+        if vs not in (2, 4):
+            log(f"  [FAIL] 非法 value_size={vs}, 跳过")
+            all_ok = False
+            continue
+        if vs == 2 and not (0 <= nv <= 0xFFFF):
+            log(f"  [FAIL] 新值 0x{nv:X} 超出 imm16 范围, 跳过")
+            all_ok = False
+            continue
+        nle = struct.pack('<H', nv & 0xFFFF) if vs == 2 else i32b(nv)
         log(f"    模式: [{entry.get('pattern')}] -> 匹配 {len(hits)} 处 (预期 {exp})")
         if exp > 0 and len(hits) != exp:
             log(f"  [FAIL] 匹配数 {len(hits)} != 预期 {exp}, 跳过")
@@ -1349,22 +1378,23 @@ def apply_patch_imm32_by_pattern(defn: PatchDef, code_buf: bytearray, code_start
         ptd = 0
         for off in hits:
             io = off + vo
-            if io + 4 <= len(code_buf):
-                act = b2i32(bytes(code_buf), io)
+            if io + vs <= len(code_buf):
+                act = (b2u16(bytes(code_buf), io) if vs == 2
+                       else b2i32(bytes(code_buf), io))
                 if ov != 0 and act != ov:
                     log(f"    [SKIP] RVA 0x{off:X}: 原值 0x{act:08X} != 预期 0x{ov:08X}")
                     continue
             aa = code_start_addr + io
-            op = vp_ex(h_proc, aa, 4, PAGE_EXECUTE_READWRITE)
+            op = vp_ex(h_proc, aa, vs, PAGE_EXECUTE_READWRITE)
             nw = write_pm(h_proc, aa, nle)
-            vp_ex(h_proc, aa, 4, op)
-            if nw != 4:
+            vp_ex(h_proc, aa, vs, op)
+            if nw != vs:
                 log(f"    [FAIL] WriteProcessMemory 失败 @0x{aa:08X}")
                 all_ok = False
                 continue
-            if io + 4 <= len(code_buf):
-                code_buf[io:io+4] = nle
-            log(f"    [OK] RVA 0x{off:X} (abs 0x{aa:08X})")
+            if io + vs <= len(code_buf):
+                code_buf[io:io+vs] = nle
+            log(f"    [OK] RVA 0x{off:X} (abs 0x{aa:08X}, {vs}B)")
             ptd += 1
         if ptd == 0 and exp > 0:
             all_ok = False
@@ -1387,14 +1417,19 @@ def apply_cave_hook(defn: PatchDef, hits: List[int], code_buf: bytearray,
     # 索引 >200 的新角色会导致 WORD[260] 自定义形象不生效)
     rec_size = settings.warpc_rec_size
     new_size = runtime.warpc_new_size or 150722
-    idx_cap = (new_size // rec_size - 1) if rec_size > 0 else 142
+    rec_count = (new_size // rec_size) if rec_size > 0 else 143
+    idx_cap = rec_count - 1
     if idx_cap < 200:
         idx_cap = 200
+    # weapon_cause_mask 的排他上限保持原版语义: 未扩容时 =143 (与原指令 0x8F 一致)
+    if rec_count < 143:
+        rec_count = 143
 
     # 外置 cave 代码优先 (.tkspatch 提供), 回退到内置模板
     ext_cave = getattr(defn, '_cave_code_bytes', None)
     cd = build_cave_template(defn.cave_template, warpc_base, log_func=log,
-                             idx_cap=idx_cap, external_code=ext_cave)
+                             idx_cap=idx_cap, external_code=ext_cave,
+                             rec_count=rec_count)
     if cd is None:
         return False
 
