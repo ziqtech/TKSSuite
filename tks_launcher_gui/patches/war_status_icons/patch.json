@@ -1,0 +1,19 @@
+{
+  "_format": 1,
+  "_group": "── 战场信息显示 ──",
+  "_comment": "战场单位头顶异常状态图标 v3 (cave_hook)。Hook 点: sub_43A050 @0x43A8BD — cmp word ptr [9D6C88],0 (8 字节, 面板 switch 之后、回合表 sub_439D34 之前), 每帧必经; 尾部逐字节重放同 8 字节后 ret。跳转落点已穷尾校验: sub_43A050 内两张 switch 跳转表 (jmptbl1@0x43A09F = 43A5B8/43A3A9/43A118/43A17C/43A0B3, jmptbl2@0x43A7E5 = 43A8BD/43A849/43A89F/43A829/43A7F9) 与 6 条直接跳转 (0x43A7A6 ja, 43A816/43A824/43A847/43A87D/43A89D jmp) 全部指向 0x43A8BD 本身 (= call 首字节) 或函数别处, 被覆盖的 0x43A8BE..0x43A8C4 内无任何落点。逆向依据: 43A050.c + 反汇编 0x43A050 push ebp/mov ebp,esp/add esp,-0x30 且 0x43A8B3 mov eax,[ebp+8]/push/call → [ebp+8]=画布; 4544EC.c:45 dword_A5AEB4 = a6+2*((y<<9)+x+(y<<7)) 且 :49-50 边界 640/480 → RGB565 pitch=640px 640x480; 44F77C.c → Lock 后 *(0xA2ACC8+820*4)=ddsd.lpSurface 即 dword_A2B998, 四个调用点全传它; 4307CC.c:40 memset(word_9D707A,0,0x83C0)=32*0x41E 且 :312-317 byte_9DF882=v27, byte_9D705A[i]=i → 出战索引表为恒等映射; 4326CC.c:19 v4=1054*a1+10318032(=0x9D70D0=记录+0x56) 循环 8 次步进 2 → 8 个状态槽, 低字节=statusID 高字节=剩余回合; 4327A0.c:25 (0x9E048E)[statusID-1] → statusID∈[1,32]; PE 节表确认上述全部地址落在 .data 已提交范围内。逻辑: 遍历 byte_9D705A[0..byte_9DF882) 全阵营, HP<=0 跳过; 先统计 8 个槽中的 活动状态数 n, n=0 则整单位不绘制; n>0 时把 n 个 10x10 RGB565 实心矩形紧凑排成一行 (间隔 1px, 步进 11px, 不换行) 并居中于 50px 血条。颜色由 statusID 纯算术推导 (k=(statusID-1)&31; R5=(k&3)*8+7, G6=((k>>2)&3)*18+9, B5=((k>>4)&1)*23+7), 32 色互异、无纯白。几何: icon_y0 = sy-143 (HP 条顶 sy-132, 留 1px 间隙), icon_x0 = (screenx-[0x8242A8]+6) - (n*11-1)/2 (血条中心 = bar_left+25); 钳位 y0∈[0,470] (无符号 cmp/ja 同时挡住负值) 且逐图标裁剪 x∈[0,630] → 最大线性偏移 479*640+639 = 307199 < 307200, 写入恒在画布内。cld+rep stosw 写 [ebp+8] 画布; pushad/popad 保寄存器, 全程不触碰 ebp。本 cave 为纯代码: 无 call、无自引用、无内嵌数据表, 不依赖装载地址, 与同点每帧运行的『战场头顶血条内力条』完全同构 (v1/v2 用 call/pop 取 EIP 定位尾随调色板, 已删除)。注: 本补丁故意不提供 fallback_rva — core/patch_engine.py 的 fallback 分支只做 越界检查、不校验目标处原始字节 (PatchDef.hook_verify_pattern 在 patch_engine.py 中从未被引用, 是死字段), 一旦玩家的 exe 不是原版 (如改了 exe 的整合包), 硬写 0x3A8BD 会落在别的指令中间并重放一条不存在的 指令 → 战斗代码被破坏。无 fallback 时模式失配即跳过, 最坏只是功能不生效。与『战场头顶血条内力条』可同时启用 (几何锚点相同但 hook 点不同, 无冲突)。局限: 本 hook 在面板 switch 之后, 故图标绘制在信息面板/指令菜单之上; 行走动画期 sub_43DE90 独立路径不显示。",
+  "type": "cave_hook",
+  "id": "war_status_icons",
+  "name": "战场头顶状态图标",
+  "desc": "战场头顶状态图标：存活单位血条上方一行显示其异常状态色块(各 10x10px, 间隔 1px, 最多 8 个, 不换行), 颜色对应状态类型, 无状态的单位不绘制",
+  "hook_pattern": "66 83 3D 88 6C 9D 00 00 7C 0A",
+  "hook_offset": 0,
+  "hook_size": 8,
+  "hook_expect_count": 1,
+  "hook_conflict_action": "skip",
+  "optional": true,
+  "default_checked": false,
+  "cave_code": "60 83 EC 20 8B 75 08 FC 0F B6 1D 82 F8 9D 00 83 FB 20 76 02 B3 20 4B 0F 88 31 01 00 00 0F B6 BB 5A 70 9D 00 83 FF 20 0F 83 1C 01 00 00 89 F8 69 C0 1E 04 00 00 05 7A 70 9D 00 89 44 24 0C 0F BF 48 0A 85 C9 0F 8E FF 00 00 00 31 C9 31 D2 80 7C 48 56 00 74 01 42 41 83 F9 08 7C F2 85 D2 0F 84 E5 00 00 00 0F BF 04 BD 04 F8 9D 00 2B 05 AC 42 82 00 2D 8F 00 00 00 3D D6 01 00 00 0F 87 C7 00 00 00 89 04 24 0F BF 04 BD 02 F8 9D 00 2B 05 A8 42 82 00 83 C0 06 6B D2 0B 4A D1 EA 29 D0 89 44 24 04 31 C0 89 44 24 14 89 44 24 18 8B 4C 24 18 83 F9 08 0F 8D 90 00 00 00 8B 44 24 0C 0F B6 44 48 56 85 C0 74 7A 48 83 E0 1F 89 C1 83 E1 03 C1 E1 03 83 C1 07 C1 E1 0B 89 C2 C1 EA 02 83 E2 03 6B D2 12 83 C2 09 C1 E2 05 09 D1 C1 E8 04 83 E0 01 6B C0 17 83 C0 07 09 C8 89 44 24 1C 8B 4C 24 14 6B C9 0B 03 4C 24 04 81 F9 76 02 00 00 77 2C 89 CA 31 C9 8B 04 24 01 C8 89 C7 C1 E7 09 C1 E0 07 01 C7 01 D7 8D 3C 7E 51 B9 0A 00 00 00 8B 44 24 20 F3 66 AB 59 41 83 F9 0A 7C D8 FF 44 24 14 FF 44 24 18 E9 63 FF FF FF E9 C8 FE FF FF 83 C4 20 61 66 83 3D 88 6C 9D 00 00 C3",
+  "format": "TKSPATCH",
+  "format_version": 1
+}
