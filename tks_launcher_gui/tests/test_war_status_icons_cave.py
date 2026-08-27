@@ -1,16 +1,26 @@
 # -*- coding: utf-8 -*-
-"""war_status_icons v7.6 cave 构建与校验。
+"""war_status_icons v7.7 cave 构建与校验。
 
-v7.6 = v7.5 + 图标尺寸 10x10 → 20x20 (用户反馈 10x10 太小看不清)。
+v7.7 = v7.6 + 面板原尺寸 30x30 图标 + 两行布局 (用户需求)。
 
-【v7.6 尺寸/几何联动调整】
-- 采样: floor(W*tx/20) / floor(H*ty/20), tx 19→0, ty 0..19 (除数 10→20)
-- 槽步进: 11px → 21px (图标 20px + 间隔 1px), 行宽 8*21-1=167px
-- y0 = sy-153 (原 143): 图标底边保持 HP 条顶 sy-132 上方 1px
-- x0 = sx-77 (原 37): 行中心保持 sx+6.5 与旧版一致 (167/2-83.5)
-- 钳位: y0∈[0,460] (原 470, y0+20 ≤ 480), xx≤620 (原 630, xx+20 ≤ 640)
-- 空槽色块: 10x10 → 20x20
-- ⚠153=0x99 > 127 必须保持 imm32 (81 EA 99 00 00 00)
+【v7.7 布局变更—30x30 原尺寸 + 2 行 × 4 槽 (从下往上)】
+- 图标尺寸: 与战斗面板一致的原尺寸 30x30 (sub_437664 面板绘制为
+  sub_4544EC 直绘 30x30, 步进 37px; 头顶版采用 1px 间隙 → 步进 31px)
+- 两行布局: 行1 (槽 0-3, 底行) 紧贴血条上方; 行2 (槽 4-7, 顶行) 在
+  行1 上方。col = slot&3, row = slot>>2:
+    xx = x0 + col*31          (行宽 4*31-1 = 123px)
+    yy = ytop + 31 - row*31   (行1: ytop+31; 行2: ytop)
+- ytop = sy-194 (行2 顶): 行1 底边 = sy-163+30 = sy-133 距 HP 条顶
+  sy-132 上方 1px; 总高 61px (30+1+30)
+- x0 = sx-55: 行中心保持 sx+6.5 与历代一致 (123/2=61.5)
+- 钳位: ytop∈[0,419] (ytop+61≤480), xx≤610 (xx+30≤640)
+- 采样: floor(W*tx/30)/floor(H*ty/30), tx 29→0, ty 0..29
+  (源图标即 30x30 → 采样为恒等映射, 无缩放损失)
+- 空槽色块: 30x30
+- ⚠194=0xC2 > 127 必须 imm32
+- 栈布局: V_YY (每槽 y) 复用旧 V_F 槽 0x1C (F 仅寄存器内使用从不回读)
+
+v7.6 = v7.5 + 图标尺寸 10x10 → 20x20 → v7.7 30x30。
 
 v7.5 = JVG 对象指针解引用修复 (图标不显示的最终根因, 由
 unicorn 执行级验证定位 —— 见 test_war_status_icons_emu.py)。
@@ -60,10 +70,11 @@ a2[2]/a2[3] 均为指针解引用。v7.4 误写 movzx esi,word[edx+ebx+8] 把
   p640=(H-1-row)*640+(W-1-col); 缩放采样列 floor(W*tx/10)/行
   floor(H*ty/10); 游标每行复位, transparent 不写不推进。
 
-几何 (v7.6: 20x20 图标): y0=sy_cam-153 (imm32!, 底边距 HP 条顶 sy-132
-留 1px), y0∈[0,460] 无符号钳位 (y0+20 ≤ 480); x0=sx_cam-77 (行宽
-8*21-1=167px, 中心保持 sx+6.5 与旧版一致), 步进 21px (图标 20px+间隔
-1px); 空槽 0x2104 占位色块; 逐槽 xx≤620 (xx+20 ≤ 640)。
+几何 (v7.7: 30x30 原尺寸图标, 2 行 × 4 槽): ytop=sy_cam-194 (imm32!,
+行2/顶行顶; 行1 = ytop+31, 底边距 HP 条顶 sy-132 留 1px), ytop∈[0,419]
+无符号钳位 (总高 61px); x0=sx_cam-55 (行宽 4*31-1=123px, 中心 sx+6.5),
+步进 31px (图标 30px + 间隔 1px); 空槽 0x2104 占位色块 30x30;
+逐槽 xx≤610 (xx+30 ≤ 640)。
 """
 
 from __future__ import annotations
@@ -83,7 +94,9 @@ except ImportError:  # 允许无 capstone 环境下直接 python 运行打印 he
 (V_POSCNT, V_RUNLEFT, V_RUNBASE, V_RUNSRC) = 0x40, 0x44, 0x48, 0x4C
 (V_CANVAS, V_HDR, V_DYBYTES, V_TY) = 0x50, 0x54, 0x58, 0x5C
 (V_I, V_BLOB, V_REC, V_UIDX) = 0x60, 0x64, 0x68, 0x6C
-(V_TARGET, V_SF, V_TX, V_PBASE) = 0x70, 0x74, 0x78, 0x7C  # V_SF 复用旧 V_COUNT 槽
+(V_TARGET, V_SF, V_TX, V_PBASE) = 0x70, 0x74, 0x78, 0x7C
+# v7.7: V_YY 复用旧 V_F 槽 (0x1C, F 仅在寄存器内使用, 从不回读)
+V_YY = 0x1C
 
 # 寄存器编号
 RAX, RCX, RDX, RBX, RSI, RDI = 0, 1, 2, 3, 6, 7
@@ -222,24 +235,24 @@ def build() -> bytearray:
     r(0x85, 0xC9)                              # test ecx,ecx
     a.jcc("jle", "L_unit")                     # 死亡单位跳过
 
-    # y0 = sy - camY - 153 (v7.6: 20x20 图标, 底边保持 HP 条顶 sy-132
-    # 上方 1px: y0+20 = sy-133)
-    # ⚠v7.1 修复 imm8 符号扩展 bug: 153=0x99 > 127, 必须 imm32
-    # (81 EA 99 00 00 00); 误用 83 EA 99 会符号扩展为 -103。
-    # 钳位 y0∈[0,460] (y0+20 ≤ 480, 无符号比较同时挡负值)。
+    # ytop = sy - camY - 194 (v7.7: 30x30 图标 2 行 × 4 槽布局)
+    # 行1 (槽 0-3) y = ytop+31 = sy-163, 底边 sy-133 距 HP 条顶 sy-132
+    # 上方 1px; 行2 (槽 4-7) y = ytop = sy-194。总高 61px。
+    # ⚠194=0xC2 > 127 必须 imm32 (81 EA C2 00 00 00)。
+    # 钳位 ytop∈[0,419] (ytop+61 ≤ 480, 无符号比较同时挡负值)。
     a.mov_r_m(RCX, V_UIDX)                     # ecx = u
     r(0x0F, 0xBF, 0x14, 0x8D); a.imm32(ADDR_POS_Y)  # movsx edx,word[ecx*4+Y]
     r(0x2B, 0x15); a.imm32(ADDR_CAMY)               # sub edx,[camY]
-    r(0x81, 0xEA); a.imm32(153)                # sub edx,153 (imm32!)
-    r(0x81, 0xFA); a.imm32(460)                # cmp edx,460
-    a.jcc("ja", "L_unit")                      # y0∉[0,460] 跳过
-    a.mov_m_r(V_Y0, RDX)
+    r(0x81, 0xEA); a.imm32(194)                # sub edx,194 (imm32!)
+    r(0x81, 0xFA); a.imm32(419)                # cmp edx,419
+    a.jcc("ja", "L_unit")                      # ytop∉[0,419] 跳过
+    a.mov_m_r(V_Y0, RDX)                       # V_Y0 = ytop (单位级, 不变)
 
-    # x0 = sx - camX - 77 (v7.6: 行宽 8*21-1=167px, 保持旧中心 sx+6.5:
-    # x0 = sx+6.5-83.5 = sx-77; ecx = u 仍存活)
+    # x0 = sx - camX - 55 (v7.7: 行宽 4*31-1=123px, 中心保持 sx+6.5:
+    # x0 = sx+6.5-61.5 = sx-55; ecx = u 仍存活)
     r(0x0F, 0xBF, 0x14, 0x8D); a.imm32(ADDR_POS_X)
     r(0x2B, 0x15); a.imm32(ADDR_CAMX)
-    r(0x81, 0xEA); a.imm32(77)                 # sub edx,77 (imm32)
+    r(0x81, 0xEA); a.imm32(55)                 # sub edx,55 (imm32)
     a.mov_m_r(V_X0, RDX)
 
     # Mu2.jvg 对象与状态图标基准帧 (战斗初始化 sub_42FEE0 已加载)
@@ -251,29 +264,39 @@ def build() -> bytearray:
     a.mov_m_r(V_FBASE, RAX)
     a.mov_m_imm(V_SLOT, 0)
 
-    # ── 8 个状态槽循环 ────────────────────────────────────────
+    # ── 8 个状态槽循环 (v7.7: 2 行 × 4 槽, 30x30 图标) ──────────
+    # 行1 (槽 0-3, 底行): col = slot&3, row = slot>>2 = 0
+    # 行2 (槽 4-7, 顶行): row = 1
+    #   xx = x0 + col*31
+    #   yy = ytop + 31 - row*31   (行1: ytop+31; 行2: ytop)
     a.label("L_slot")
     a.mov_r_m(RAX, V_SLOT)
     r(0x83, 0xF8, 0x08)                        # cmp eax,8
     a.jcc("jge", "L_unit")                     # 本单位完成 → 下一格
-    # xx = slot*21 + x0 —— v7 关键修复: 提前计算, 空槽/图标两路径共用
-    # (v7.6: 步进 21px = 图标 20px + 间隔 1px)
-    r(0x6B, 0xD0, 0x15)                        # imul edx,eax,21
+    r(0x89, 0xC2)                              # mov edx,eax (col 计算)
+    r(0x83, 0xE2, 0x03)                        # and edx,3
+    r(0x6B, 0xD2, 0x1F)                        # imul edx,edx,31
     r(0x03, 0x54, 0x24, V_X0)                  # add edx,[x0]
     a.mov_m_r(V_XX, RDX)
-    r(0x81, 0xFA); a.imm32(620)                # cmp edx,620 (xx+20 ≤ 640)
+    r(0x81, 0xFA); a.imm32(610)                # cmp edx,610 (xx+30≤640)
     a.jcc("ja", "L_slot_inc")                  # 无符号比较同时挡负值
-    # st = 状态槽低字节
+    r(0x89, 0xC1)                              # mov ecx,eax (row 计算)
+    r(0xC1, 0xE9, 0x02)                        # shr ecx,2
+    r(0x6B, 0xC9, 0x1F)                        # imul ecx,ecx,31
+    a.mov_r_m(RDX, V_Y0)                       # edx = ytop
+    r(0x83, 0xC2, 0x1F)                        # add edx,31
+    r(0x29, 0xCA)                              # sub edx,ecx → yy
+    a.mov_m_r(V_YY, RDX)                       # [esp+V_YY] = yy (每槽)
+    # st = 状态槽低字节 (eax = slot 仍存活)
     a.mov_r_m(RCX, V_RECBASE)
     r(0x0F, 0xB6, 0x4C, 0x41, 0x56)            # movzx ecx,byte[rec+slot*2+0x56]
     r(0x85, 0xC9)                              # test st,st
     a.mov_m_r(V_ST, RCX)
-    a.jcc("jz", "L_empty")                     # 空槽占位色块 (v7 起画在 xx)
-    # F = fbase + st - 1; < 总帧数检查 (对照 458020/[obj+24])
+    a.jcc("jz", "L_empty")                     # 空槽占位色块 (在 xx,yy)
+    # F = fbase + st - 1 (仅寄存器内使用; V_F 槽已复用为 V_YY)
     a.mov_r_m(RAX, V_ST)
     r(0x48)                                    # dec eax
     r(0x03, 0x44, 0x24, V_FBASE)
-    a.mov_m_r(V_F, RAX)
     a.mov_r_m(RDX, V_OBJ)
     # ⚠v7.5 修复②: 总帧数在 obj+0x18! sub_4544EC 的 a2 是 _DWORD*,
     # a2[6] = 字节偏移 6*4=24=0x18 (IDR 下标语义)。旧代码误用 0x24
@@ -357,11 +380,11 @@ def build() -> bytearray:
     a.mov_m_imm(V_POSCNT, 0)
     a.mov_m_imm(V_RUNLEFT, 0)
 
-    # SRCROW=(H*ty)/20 (v7.6: 20x20 缩放, 寄存器临时)
+    # SRCROW=(H*ty)/30 (v7.7: 30x30 原尺寸直采, 寄存器临时)
     a.mov_r_m(RAX, V_TY)
     r(0x0F, 0xAF, 0x44, 0x24, V_H)             # imul eax,[esp+V_H]
     r(0x31, 0xD2)                              # xor edx,edx
-    r(0xB9, 0x14, 0x00, 0x00, 0x00)            # mov ecx,20
+    r(0xB9, 0x1E, 0x00, 0x00, 0x00)            # mov ecx,30
     r(0xF7, 0xF1)                              # div ecx
     # PBASE = (H-1-SRCROW)*640 + (W-1)  (v7.3 恢复 v7.1 公式 —— 它本来就对)
     a.mov_r_m(RCX, V_H)
@@ -372,24 +395,24 @@ def build() -> bytearray:
     r(0x48)                                    # dec eax
     r(0x01, 0xC1)                              # add ecx,eax
     a.mov_m_r(V_PBASE, RCX)
-    # dyBytes = 1280*(y0+ty)
-    a.mov_r_m(RAX, V_Y0)
+    # dyBytes = 1280*(yy+ty)  (v7.7: yy 为每槽 y, V_YY)
+    a.mov_r_m(RAX, V_YY)
     r(0x03, 0x44, 0x24, V_TY)
     r(0x69, 0xC0); a.imm32(1280)
     a.mov_m_r(V_DYBYTES, RAX)
-    a.mov_m_imm(V_TX, 19)
+    a.mov_m_imm(V_TX, 29)
 
     a.label("L_tx")
     # 采样语义 (sub_4544EC 反向扫描): 源单元格 (bufRow,bufCol) 的线性位置
     #   p640 = (H-1-bufRow)*640 + (W-1-bufCol)
-    # 采样 bufCol=floor(W*tx/20) (v7.6: tx 从左数, 0..19) →
-    #   target = (H-1-bufRow)*640 + (W-1) - floor(W*tx/20) = PBASE - col
-    # tx 19→0 迭代使 target 行内单调递增 (col640 递减), 与 RLE 记录流
+    # 采样 bufCol=floor(W*tx/30) (v7.7: tx 从左数, 0..29) →
+    #   target = (H-1-bufRow)*640 + (W-1) - floor(W*tx/30) = PBASE - col
+    # tx 29→0 迭代使 target 行内单调递增 (col640 递减), 与 RLE 记录流
     # (p640 递增) 方向一致, 单游标前向推进成立。
     a.mov_r_m(RAX, V_TX)
     r(0x0F, 0xAF, 0x44, 0x24, V_W)
     r(0x31, 0xD2)
-    r(0xB9, 0x14, 0x00, 0x00, 0x00)            # mov ecx,20
+    r(0xB9, 0x1E, 0x00, 0x00, 0x00)            # mov ecx,30
     r(0xF7, 0xF1)
     a.mov_r_m(RDX, V_PBASE)
     r(0x29, 0xC2)                              # sub edx,eax → target
@@ -458,20 +481,21 @@ def build() -> bytearray:
     a.label("tx_next")
     a.dec_m(V_TX)
     a.cmp_m_imm8(V_TX, 0)
-    a.jcc("jns", "L_tx")                       # tx: 19..0 (target 单调递增)
+    a.jcc("jns", "L_tx")                       # tx: 29..0 (target 单调递增)
 
     a.inc_m(V_TY)
-    a.cmp_m_imm8(V_TY, 20)
+    a.cmp_m_imm8(V_TY, 30)
     a.jcc("jl", "L_row")
     a.jmp("L_slot_inc")
 
-    # ── 空槽: 0x2104 20x20 占位色块 at (xx, y0) ─────────────────
+    # ── 空槽: 0x2104 30x30 占位色块 at (xx, yy) ─────────────────
     # v7 关键修复: 原路径 lea edi,[canvas+y*1280] 缺 x 偏移 →
     # 所有空槽画在屏幕左边缘 x=0 (v4-v6.3 均如此, 即历代『边缘黑块』根因)
+    # v7.7: y 改用每槽 V_YY (两行布局)
     a.label("L_empty")
-    r(0xBB, 0x14, 0x00, 0x00, 0x00)            # mov ebx,20 (行计数)
+    r(0xBB, 0x1E, 0x00, 0x00, 0x00)            # mov ebx,30 (行计数)
     r(0xB8, 0x04, 0x21, 0x00, 0x00)            # mov eax,0x2104
-    a.mov_r_m(RDX, V_Y0)
+    a.mov_r_m(RDX, V_YY)
     a.label("L_emp_row")
     r(0x69, 0xFA); a.imm32(1280)               # imul edi,edx,1280
     a.mov_r_m(RSI, V_CANVAS)
@@ -479,7 +503,7 @@ def build() -> bytearray:
     a.mov_r_m(RCX, V_XX)
     r(0xD1, 0xE1)                              # shl ecx,1 (xx*2 字节)
     r(0x03, 0xF9)                              # add edi,ecx (+x 偏移)
-    r(0xB9, 0x14, 0x00, 0x00, 0x00)            # mov ecx,20 (宽 20px)
+    r(0xB9, 0x1E, 0x00, 0x00, 0x00)            # mov ecx,30 (宽 30px)
     r(0xF3, 0x66, 0xAB)                        # rep stosw
     r(0x42)                                    # inc edx
     r(0x4B)                                    # dec ebx
@@ -548,8 +572,11 @@ def test_key_semantics_present() -> None:
         "[0x9d6f76]",                         # 状态图标基准帧
         "[0x8242a8]", "[0x8242ac]",           # 相机 X/Y
         "[ecx*4 + 0x9df802]", "[ecx*4 + 0x9df804]",  # ×4 坐标寻址
-        "sub edx, 0x99",                       # v7.6: y0 -= 153 (imm32 形式)
-        "cmp edx, 0x1cc",                      # v7.6: y0 <= 460 钳位 (20px 高)
+        "sub edx, 0xc2",                       # v7.7: ytop -= 194 (imm32)
+        "cmp edx, 0x1a3",                      # v7.7: ytop <= 419 (2行61px)
+        "and edx, 3",                          # v7.7: col = slot&3 (两行布局)
+        "shr ecx, 2",                          # v7.7: row = slot>>2
+        "imul edx, edx, 0x1f",                 # v7.7: col*31 步进
         "shl ecx, 1",                         # v7: 空槽 x 偏移 (xx*2)
         "mov ebx, esi",                       # v7.4: block→ebx (修记录寻址)
         "cmp ecx, dword ptr [edi]",           # v7.4: sf vs 块帧数
@@ -661,16 +688,16 @@ def test_icon_decode_matches_truth() -> None:
                     gt[H - 1 - r640][W - 1 - c640] = pal[d[src + k]]
                 p += 1
             src += run
-        expect = [[gt[H * ty // 20][W * tx // 20] for tx in range(20)]
-                  for ty in range(20)]
-        # cave 算法模拟 (v7.3 游标控制流: transparent 不写不推进; v7.6 20x20)
-        out = [[None] * 20 for _ in range(20)]
-        for ty in range(20):
+        expect = [[gt[H * ty // 30][W * tx // 30] for tx in range(30)]
+                  for ty in range(30)]
+        # cave 算法模拟 (v7.3 游标控制流: transparent 不写不推进; v7.7 30x30)
+        out = [[None] * 30 for _ in range(30)]
+        for ty in range(30):
             wsrc, recleft, poscnt = fo + 16, rcnt, 0
             runleft = runbase = runsrc = 0
-            for tx in range(19, -1, -1):
-                target = (H - 1 - (H * ty // 20)) * 640 \
-                    + (W - 1) - (W * tx // 20)
+            for tx in range(29, -1, -1):
+                target = (H - 1 - (H * ty // 30)) * 640 \
+                    + (W - 1) - (W * tx // 30)
                 while True:
                     if runleft:
                         if target >= runbase + runleft:

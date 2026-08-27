@@ -21,8 +21,8 @@ A_MU2, A_FBASE = 0x755AF4, 0x9D6F76
 A_GRID = 0x951D42
 
 
-def run_frame(frame_idx: int) -> tuple:
-    """构造环境: 单位0 带状态ID=frame_idx-75, 返回 (expect, canvas)。"""
+def run_frame(frame_idx: int, slot: int = 0) -> tuple:
+    """构造环境: 单位0 在指定 slot 带状态ID, 返回 (expect, canvas)。"""
     uc = Uc(UC_ARCH_X86, UC_MODE_32)
     uc.mem_map(CAVE, 0x2000)
     uc.mem_map(CANVAS, 0x100000)
@@ -91,7 +91,7 @@ def run_frame(frame_idx: int) -> tuple:
     uc.mem_write(A_POSX, struct.pack("<h", 320))
     uc.mem_write(A_POSY, struct.pack("<h", 240))
     uc.mem_write(0x9D707A + 0x0A, struct.pack("<h", 100))
-    uc.mem_write(0x9D707A + 0x56, struct.pack("<H", frame_idx - 75))
+    uc.mem_write(0x9D707A + 0x56 + slot * 2, struct.pack("<H", frame_idx - 75))
 
     ebp = STACK - 0x1000
     esp = STACK - 0x2000
@@ -124,31 +124,53 @@ def run_frame(frame_idx: int) -> tuple:
                 gt[H - 1 - r640][W - 1 - c640] = pal[d[src + k]]
             p += 1
         src += run
-    expect = [[gt[H * ty // 20][W * tx // 20] for tx in range(20)]
-              for ty in range(20)]
+    expect = [[gt[H * ty // 30][W * tx // 30] for tx in range(30)]
+              for ty in range(30)]
     return expect, bytes(uc.mem_read(CANVAS, 640 * 480 * 2)), W, H
 
 
 def main() -> bool:
     ok = True
-    for fi in (76, 80, 90, 100, 106):        # 跨块抽查 5 帧
-        expect, canvas, W, H = run_frame(fi)
-        # v7.6 几何: y0=sy-153 (20px 高, 底边距 HP 条顶 1px);
-        # x0=sx-77 (行宽 8*21-1=167px, 中心保持 sx+6.5)
-        x0, y0 = 320 - 77, 240 - 153
+    # v7.7 几何: 30x30 图标, 2 行 × 4 槽 (从下往上):
+    # ytop = sy-194 (行2/顶行), 行1(底行) y = ytop+31 = sy-163
+    # x0 = sx-55 (行宽 4*31-1=123px, 中心 sx+6.5)
+    # col = slot&3, row = slot>>2: xx = x0+col*31, yy = ytop+31-row*31
+    x0, ytop = 320 - 55, 240 - 194
+
+    def check(fi: int, slot: int) -> bool:
+        expect, canvas, W, H = run_frame(fi, slot)
+        col, row = slot & 3, slot >> 2
+        xx, yy = x0 + col * 31, ytop + 31 - row * 31
         bad = 0
-        for ty in range(20):
-            for tx in range(20):
+        for ty in range(30):
+            for tx in range(30):
                 exp = expect[ty][tx]
-                got = struct.unpack_from("<H", canvas, ((y0 + ty) * 640 + x0 + tx) * 2)[0]
+                got = struct.unpack_from(
+                    "<H", canvas, ((yy + ty) * 640 + xx + tx) * 2)[0]
                 if exp is not None and got != exp:
                     bad += 1
                 if exp is None and got != 0:
                     bad += 1
+        # 邻格 (同行右一列, 若为空槽) 应画满 0x2104 灰块 —— 验证
+        # 步进与空槽绘制; 最后一列无右邻跳过
+        if col < 3:
+            ncol = col + 1
+            nxx = x0 + ncol * 31
+            for ty in range(30):
+                v = struct.unpack_from(
+                    "<H", canvas, ((yy + ty) * 640 + nxx) * 2)[0]
+                if v != 0x2104:
+                    bad += 1
         status = "[OK]" if bad == 0 else f"[FAIL] {bad} 像素不符"
-        print(f"  frame{fi}: {status}")
-        ok &= bad == 0
-    print("[OK] unicorn 执行级验证全部通过" if ok else "[FAIL] 存在差异")
+        print(f"  frame{fi} slot{slot} (行{row+1}列{col+1}): {status}")
+        return bad == 0
+
+    for fi in (76, 90):                     # 图标帧抽查
+        ok &= check(fi, 0)                  # 行1 列1 (底行)
+        ok &= check(fi, 3)                  # 行1 列4 (行1 末格)
+        ok &= check(fi, 4)                  # 行2 列1 (顶行首格)
+        ok &= check(fi, 7)                  # 行2 列4 (顶行末格)
+    print("[OK] unicorn 执行级验证全部通过 (含两行布局)" if ok else "[FAIL] 存在差异")
     return ok
 
 
