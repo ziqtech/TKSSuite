@@ -4,6 +4,12 @@
 定位过 v7.5 双 bug: ①obj+8/obj+12 是指针非内联数组; ②总帧数在
 obj+0x18 (a2[6] 下标语义) 而非 0x24。
 
+v7.10 新增验证 (用户实测反馈: 状态失效后剩余状态未重新居中):
+- 失效残留槽 (st 非零但帧号无效, 如 0xFF 或 ≥32 的值) 必须
+  【不占位】: 槽表 = {slot: statusID} 支持任意字节值;
+- 用例: slot0=无效值 + slot1=有效 → 剩余图标居中 (n1=1);
+  失效值散布 → 全部忽略; 0xFF 十六进制边界。
+
 v7.9 新增验证:
 - 行1 居中布局: 图标位置由行内激活序号 k 决定 (空槽不占位),
   xx = x0 + offset1 + k*31, offset1 = (124-31*n1)>>1 (n1=1..4
@@ -36,10 +42,16 @@ A_CAMX, A_CAMY = 0x8242A8, 0x8242AC
 A_POSX, A_POSY = 0x9DF802, 0x9DF804
 A_MU2, A_FBASE = 0x755AF4, 0x9D6F76
 A_GRID = 0x951D42
+TOTAL_FRAMES = 107   # Mu2.JVG 总帧数 (obj+0x18)
 
 
-def run_frame(frame_idx: int, active: tuple = (0,)) -> tuple:
-    """构造环境: 单位0 在指定 slot 集合带状态ID, 返回 (expect, canvas)。"""
+def run_frame(frame_idx: int, slots: dict | tuple = (0,)) -> tuple:
+    """构造环境: 单位0 的状态槽表, 返回 (expect, canvas)。
+
+    slots: dict {slot: statusID} 任意字节值 (含失效残留如 0xFF);
+           tuple (slot,..) 时 statusID = frame_idx - 75 (有效)。"""
+    if isinstance(slots, tuple):
+        slots = {s: frame_idx - 75 for s in slots}
     uc = Uc(UC_ARCH_X86, UC_MODE_32)
     uc.mem_map(CAVE, 0x2000)
     uc.mem_map(CANVAS, 0x100000)
@@ -108,9 +120,9 @@ def run_frame(frame_idx: int, active: tuple = (0,)) -> tuple:
     uc.mem_write(A_POSX, struct.pack("<h", 320))
     uc.mem_write(A_POSY, struct.pack("<h", 240))
     uc.mem_write(0x9D707A + 0x0A, struct.pack("<h", 100))
-    for s in active:
-        uc.mem_write(0x9D707A + 0x56 + s * 2,
-                     struct.pack("<H", frame_idx - 75))
+    for s, st in slots.items():
+        # 低字节 statusID + 高字节剩余回合 (回合数不参与显示判定)
+        uc.mem_write(0x9D707A + 0x56 + s * 2, struct.pack("<BB", st & 0xFF, 3))
 
     ebp = STACK - 0x1000
     esp = STACK - 0x2000
@@ -186,11 +198,18 @@ def main() -> bool:
     #   行2: xx = x0 + k*31 (从左到右)
     #   yy = ytop+31-row*31 (row = slot>>2) 不变
     x0, ytop = 320 - 55, 240 - 194
+    # v7.10: 有效 statusID 上限 (maxst = total - fbase + 1 = 32)
+    maxst = TOTAL_FRAMES - 76 + 1
 
-    def check_set(fi: int, slots: tuple) -> bool:
+    def check_set(fi: int, slots) -> bool:
+        """slots: tuple (有效槽号..) 或 dict {slot: statusID 任意字节}。"""
         expect, canvas, W, H = run_frame(fi, slots)
-        row1 = sorted(s for s in slots if s < 4)
-        row2 = sorted(s for s in slots if s >= 4)
+        table = ({s: fi - 75 for s in slots} if isinstance(slots, tuple)
+                 else slots)
+        # v7.10: 有效性 = st≠0 且 st<maxst (与 cave 判定同源)
+        valid = lambda st: st != 0 and st < maxst
+        row1 = sorted(s for s in table if s < 4 and valid(table[s]))
+        row2 = sorted(s for s in table if s >= 4 and valid(table[s]))
         n1 = len(row1)
         off1 = (124 - 31 * n1) >> 1
         # 期望图标矩形: (slot, xx, yy)
@@ -212,7 +231,7 @@ def main() -> bool:
                         bad += 1
                     covered.add((xx + tx, yy + ty))
         # 2) 全行区域 (123x30 × 两行) 除图标矩形外全零
-        #    (空槽透明 + 无幽灵块 + 步进/居中偏移正确 三合一)
+        #    (空槽/失效槽透明 + 无幽灵块 + 步进/居中偏移正确 三合一)
         for row in (0, 1):
             ys = ytop + 31 - row * 31
             for ty in range(30):
@@ -223,12 +242,23 @@ def main() -> bool:
                         "<H", canvas, ((ys + ty) * 640 + x0 + tx) * 2)[0]
                     if v != 0:
                         bad += 1
-        desc = ",".join(str(s) for s in slots)
+        desc = ",".join(f"{s}={table[s]}" if isinstance(slots, dict)
+                        else str(s) for s in table)
         status = "[OK]" if bad == 0 else f"[FAIL] {bad} 像素不符"
         print(f"  frame{fi} slots({desc}) n1={n1} off1={off1}: {status}")
         return bad == 0
 
-    # ── v7.9 居中布局用例 ──────────────────────────────────────
+    # ── v7.10 失效残留用例 (用户实测场景) ──────────────────────
+    # 场景复现: 先后中两个状态, 第一个到期失效 (st 残留非零但帧号
+    # 无效) → 图标消失, 剩余状态必须重新居中
+    # dict 用法的 statusID 必须与 frame_idx 对应 (statusID=fi-75)
+    ok &= check_set(76, {0: 0xFF, 1: 1})    # 失效残留 0xFF + 有效 → 居中
+    ok &= check_set(76, {0: 40, 1: 1})      # 超界 statusID + 有效 → 居中
+    ok &= check_set(76, {0: 32, 1: 1, 2: 32})   # 边界值 32 无效 ×2 + 有效
+    ok &= check_set(76, {0: 0xFF, 2: 0xFF, 1: 1, 3: 1})  # 失效散布, 两有效居中
+    ok &= check_set(90, {4: 0xFF, 5: 15})   # 行2 失效残留 + 有效 → 左起
+
+    # ── v7.9 居中布局用例 (回归) ───────────────────────────────
     ok &= check_set(76, (0,))            # 行1 单状态 → 居中 (x0+46)
     ok &= check_set(76, (2,))            # 行1 单状态 (非首槽) → 仍居中
     ok &= check_set(76, (0, 1))          # 两状态 → 中两格 (31/62)
@@ -258,7 +288,7 @@ def main() -> bool:
           f"{'[OK]' if p2 else '[FAIL] esp=' + hex(esp_after)}")
     ok &= p2
 
-    print("[OK] unicorn 执行级验证全部通过 (行1 居中布局 + 空槽透明 + 尾声双路径)"
+    print("[OK] unicorn 执行级验证全部通过 (失效不占位 + 行1 居中布局 + 空槽透明 + 尾声双路径)"
           if ok else "[FAIL] 存在差异")
     return ok
 

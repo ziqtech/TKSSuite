@@ -1,7 +1,22 @@
 # -*- coding: utf-8 -*-
-"""war_status_icons v7.9 cave 构建与校验。
+"""war_status_icons v7.10 cave 构建与校验。
 
-v7.9 = v7.8 + 行1 居中布局 (用户需求)。
+v7.10 = v7.9 + 占位判定与绘制判定同源 (用户实测反馈修复)。
+
+【v7.10 修复—失效状态不占位 (位置与显示严格对齐)】
+- 用户实测: 两个状态中一个到期失效后, 剩余状态未重新居中。
+  根因: 位置计数 (n1/k) 只判 st≠0, 而图标绘制还需通过帧号
+  越界检查 (F=fbase+st-1 ≥ 总帧数 → 跳过)。任何『st 残留非零
+  但帧号无效』的数据状态 (到期残留值/异常 statusID/MOD 改数据)
+  都会造成 图标消失但位置占位 的不一致。
+- 修复: 单位级计算 maxst = [obj+0x18]总帧数 - fbase + 1 (即
+  statusID 有效上限, Mu2 实际 = 107-76+1 = 32), 有效性判定统一为
+    valid(st) = st != 0 && (unsigned)st < maxst
+  n1 预扫描/k 前缀计数/绘制跳过 三处同用 —— 画不画与占不占位
+  永远一致。对正常数据 (0=空, 1..31=有效状态) 行为不变。
+- maxst 存 V_BLOB 槽 (0x64, 单位级临时; 槽内 JVG 导航后被 blob
+  覆写, 计数发生在导航之前, 无冲突)。
+- cmp r32,[esp+disp8]: 3B 54 24 64 / 3B 7C 24 64 (modrm mod=01)。
 
 【v7.9 布局变更—行1 图标按激活数紧凑居中, 行2 从左到右】
 - 旧布局固定 col = slot&3 → 单个状态偏在行1 最左格, 视觉不居中。
@@ -310,9 +325,21 @@ def build() -> bytearray:
     r(0x0F, 0xB7, 0x05); a.imm32(ADDR_ICON_BASE_FRAME)  # movzx eax,word[fbase]
     a.mov_m_r(V_FBASE, RAX)
 
-    # ── v7.9 单位级预扫描: n1 = 行1 (slot 0..3) 激活状态数 ──────
+    # ── v7.10: 有效性 = st≠0 且 st<maxst, 占位与绘制判定同源 ──
+    # maxst = [obj+0x18]总帧数 - fbase + 1 (statusID 有效上限,
+    # Mu2 实际 = 107-76+1 = 32; 与绘制路径 F=fbase+st-1<total 严格等价)。
+    # ⚠maxst 一律用【寄存器】持有 (n1 预扫描=esi, k 计数=ebx):
+    # 首版存 V_BLOB 栈槽被首个有效槽的 JVG 导航覆写为 blob 指针
+    # (无符号巨大) → 后续槽 k 计数把失效槽 0xFF 全判有效 —— 被
+    # unicorn 用例 4/5 (多槽+失效残留) 当场抓获, 单槽用例测不出。
+
+    # ── v7.9 单位级预扫描: n1 = 行1 (slot 0..3) 有效状态数 ──────
     # offset1 = (124 - 31*n1) >> 1:  n1=1..4 → 46/31/15/0
     # (组宽 31n-1, 行宽 123, 居中; n1=0 → 62 无图标绘制不受影响)
+    r(0x8B, 0x74, 0x24, V_OBJ)                 # mov esi,[esp+V_OBJ]
+    r(0x8B, 0x76, 0x18)                        # mov esi,[esi+0x18] 总帧数
+    r(0x2B, 0x74, 0x24, V_FBASE)               # sub esi,[esp+V_FBASE]
+    r(0x46)                                    # inc esi → maxst
     a.mov_r_m(RCX, V_RECBASE)                  # ecx = recbase
     r(0x31, 0xC0)                              # xor eax,eax (n1 = 0)
     r(0x31, 0xDB)                              # xor ebx,ebx (i = 0)
@@ -321,7 +348,9 @@ def build() -> bytearray:
     a.jcc("jae", "L_n1_done")
     r(0x0F, 0xB6, 0x54, 0x59, 0x56)            # movzx edx,byte[ecx+ebx*2+0x56]
     r(0x85, 0xD2)                              # test edx,edx
-    a.jcc("jz", "L_n1_zero")
+    a.jcc("jz", "L_n1_zero")                   # st==0 → 空槽不占位
+    r(0x3B, 0xD6)                              # cmp edx,esi (st vs maxst)
+    a.jcc("jae", "L_n1_zero")                  # st≥maxst → 帧号无效不占位
     r(0x40)                                    # inc eax (n1++)
     a.label("L_n1_zero")
     r(0x43)                                    # inc ebx (i++)
@@ -351,22 +380,31 @@ def build() -> bytearray:
     r(0x85, 0xD2)                              # test st,st
     a.mov_m_r(V_ST, RDX)
     a.jcc("jz", "L_slot_inc")                  # v7.8: 空槽透明 → 不占位
-    # ── v7.9: 行内激活序号 k = Σ_{i<slot, 同行} (st[i]!=0) ──────
-    r(0x89, 0xC3)                              # mov ebx,eax (slot)
-    r(0x83, 0xE3, 0x04)                        # and ebx,4  行基 (0=行1, 4=行2)
-    r(0x89, 0xDE)                              # mov esi,ebx (i = 行基)
+    # ── v7.9: 行内有效序号 k = Σ_{i<slot, 同行} valid(st[i]) ──
+    # v7.10: valid = st≠0 且 st<maxst (与 n1/绘制判定同源);
+    # maxst 由 ebx 持有 (行基改在 k 完成后从 slot 重算)
+    r(0x89, 0xC6)                              # mov esi,eax (slot)
+    r(0x83, 0xE6, 0x04)                        # and esi,4  i = 行基 (0/4)
     r(0x31, 0xD2)                              # xor edx,edx (k = 0)
+    r(0x8B, 0x5C, 0x24, V_OBJ)                 # mov ebx,[esp+V_OBJ]
+    r(0x8B, 0x5B, 0x18)                        # mov ebx,[ebx+0x18] 总帧数
+    r(0x2B, 0x5C, 0x24, V_FBASE)               # sub ebx,[esp+V_FBASE]
+    r(0x43)                                    # inc ebx → maxst
     a.label("L_cnt")
     r(0x39, 0xF0)                              # cmp eax,esi (slot vs i)
     a.jcc("jbe", "L_cnt_done")                 # i ≥ slot → 计数完成
     r(0x0F, 0xB6, 0x7C, 0x71, 0x56)            # movzx edi,byte[ecx+esi*2+0x56]
     r(0x85, 0xFF)                              # test edi,edi (st[i])
     a.jcc("jz", "L_cnt_zero")
+    r(0x3B, 0xFB)                              # cmp edi,ebx (st[i] vs maxst)
+    a.jcc("jae", "L_cnt_zero")                 # st[i]≥maxst → 不占位
     r(0x42)                                    # inc edx (k++)
     a.label("L_cnt_zero")
     r(0x46)                                    # inc esi (i++)
     a.jmp("L_cnt")
     a.label("L_cnt_done")
+    r(0x89, 0xC3)                              # mov ebx,eax (slot)
+    r(0x83, 0xE3, 0x04)                        # and ebx,4  行基重算 (0=行1, 4=行2)
     # ── v7.9: xx = x0 + k*31 + (行1 ? offset1 : 0) ─────────────
     r(0x6B, 0xD2, 0x1F)                        # imul edx,edx,31 (k*31)
     r(0x03, 0x54, 0x24, V_X0)                  # add edx,[x0]
@@ -670,10 +708,24 @@ def test_key_semantics_present() -> None:
         "imul ecx, eax, 0x1f",                 # offset1 = (124-31*n1)>>1
         "shr eax, 1",                          # offset1 半宽
         "mov ebx, dword ptr [esp + 0x6c]",     # V_OFF1 (复用旧 V_UIDX 槽)
+        # v7.10: 占位与绘制判定同源 (maxst 寄存器持有)
+        "mov esi, dword ptr [esp + 0x10]",     # n1: obj → esi
+        "mov esi, dword ptr [esi + 0x18]",     # n1: esi = total
+        "sub esi, dword ptr [esp + 0x14]",     # n1: esi = maxst
+        "cmp edx, esi",                        # n1 预扫描: st < maxst
+        "mov ebx, dword ptr [esp + 0x10]",     # k: obj → ebx (槽级)
+        "sub ebx, dword ptr [esp + 0x14]",     # k: ebx = maxst
+        "cmp edi, ebx",                        # k 计数: st[i] < maxst
+        "and esi, 4",                          # k: i = 行基 (slot&4)
+        "mov ebx, eax",                        # k 后: 行基重算
         "mov ebx, esi",                       # v7.4: block→ebx (修记录寻址)
         "cmp ecx, dword ptr [edi]",           # v7.4: sf vs 块帧数
     ):
         assert needle in text, needle
+    # v7.10 首版教训: maxst 不得存 V_BLOB 槽 (JVG 导航覆写为 blob
+    # 指针 → 后续槽 k 计数失效槽全判有效), 必须寄存器持有
+    assert "cmp edx, dword ptr [esp + 0x64]" not in text, \
+        "v7.10: maxst 禁用 V_BLOB 栈槽 (会被 blob 指针覆写)"
     # v7.9: 旧 col=slot&3 固定布局必须消失 (位置改由行内序号 k 决定)
     assert "and edx, 3" not in text, "v7.9: 不应再有 col=slot&3 固定布局"
     # v7.4 记录寻址 bug 特征: shl ebx,6 紧跟 add ebx,ebx (用 2F 而非 block)
