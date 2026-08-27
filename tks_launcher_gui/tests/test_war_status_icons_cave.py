@@ -1,7 +1,27 @@
 # -*- coding: utf-8 -*-
-"""war_status_icons v7.8 cave 构建与校验。
+"""war_status_icons v7.9 cave 构建与校验。
 
-v7.8 = v7.7 + 绘制层级修复 (低于战斗菜单/高于角色) + 空槽透明。
+v7.9 = v7.8 + 行1 居中布局 (用户需求)。
+
+【v7.9 布局变更—行1 图标按激活数紧凑居中, 行2 从左到右】
+- 旧布局固定 col = slot&3 → 单个状态偏在行1 最左格, 视觉不居中。
+- 新布局: 图标位置由【行内第 k 个激活状态】决定 (紧凑排列),
+  空槽不占位 (v7.8 空槽透明的自然延伸):
+    行1 (槽 0-3): xx = x0 + offset1 + k*31
+        offset1 = (124 - 31*n1) >> 1   (n1 = 行1 激活数, 单位级预扫描)
+        n1=1 → 46 (图标 [46,76], 中心 61, 行中心 61.5, 偏左 0.5px)
+        n1=2 → 31 (组 [31,92], 中心 61.5 精确居中)
+        n1=3 → 15 (组 [15,107], 中心 61, 偏左 0.5px)
+        n1=4 → 0  (满行 = 原布局 [0,123])
+      组宽 = 31n-1 (n 个 30px 图标 + n-1 个 1px 间隙), 行宽 123 = 4*31-1,
+      居中 offset = (123-(31n-1))/2 = (124-31n)/2, floor 取整。
+    行2 (槽 4-7): xx = x0 + k*31 (超出 4 个后从左到右, 不居中)
+    yy 不变: ytop+31-row*31 (row = slot>>2)
+- k = 行内前缀计数: Σ_{i<slot, 同行} (st[i] != 0), 槽级小循环 (≤3 次)。
+- 状态分散 (如 slot 1+3) 也紧凑排到中两格 —— 视觉始终居中。
+- 栈槽: V_OFF1 复用旧 V_UIDX 槽 0x6C (u 在 ytop/x0 计算后死亡,
+  绘制路径不再读; 复用前已核对 RLE 像素循环不触及 0x6C)。
+- 钳位不变: 逐槽 xx≤610 无符号比较 (最大 xx = x0+93 与旧一致)。
 
 【v7.8 层级变更—hook 从面板尾部移到面板 switch 的 bounds-ja】
 - 旧 hook 0x43A8BD (if word_9D6C88>=0 之前) 位于所有面板/菜单绘制
@@ -123,6 +143,9 @@ except ImportError:  # 允许无 capstone 环境下直接 python 运行打印 he
 (V_TARGET, V_SF, V_TX, V_PBASE) = 0x70, 0x74, 0x78, 0x7C
 # v7.7: V_YY 复用旧 V_F 槽 (0x1C, F 仅在寄存器内使用, 从不回读)
 V_YY = 0x1C
+# v7.9: V_OFF1 复用旧 V_UIDX 槽 (0x6C, u 在 ytop/x0 计算后死亡;
+# RLE 像素循环不触及 0x6C, 绘制路径无冲突)
+V_OFF1 = 0x6C
 
 # 寄存器编号
 RAX, RCX, RDX, RBX, RSI, RDI = 0, 1, 2, 3, 6, 7
@@ -286,37 +309,83 @@ def build() -> bytearray:
     a.jcc("jz", "L_unit")                      # 未载入保护
     r(0x0F, 0xB7, 0x05); a.imm32(ADDR_ICON_BASE_FRAME)  # movzx eax,word[fbase]
     a.mov_m_r(V_FBASE, RAX)
+
+    # ── v7.9 单位级预扫描: n1 = 行1 (slot 0..3) 激活状态数 ──────
+    # offset1 = (124 - 31*n1) >> 1:  n1=1..4 → 46/31/15/0
+    # (组宽 31n-1, 行宽 123, 居中; n1=0 → 62 无图标绘制不受影响)
+    a.mov_r_m(RCX, V_RECBASE)                  # ecx = recbase
+    r(0x31, 0xC0)                              # xor eax,eax (n1 = 0)
+    r(0x31, 0xDB)                              # xor ebx,ebx (i = 0)
+    a.label("L_n1")
+    r(0x83, 0xFB, 0x04)                        # cmp ebx,4
+    a.jcc("jae", "L_n1_done")
+    r(0x0F, 0xB6, 0x54, 0x59, 0x56)            # movzx edx,byte[ecx+ebx*2+0x56]
+    r(0x85, 0xD2)                              # test edx,edx
+    a.jcc("jz", "L_n1_zero")
+    r(0x40)                                    # inc eax (n1++)
+    a.label("L_n1_zero")
+    r(0x43)                                    # inc ebx (i++)
+    a.jmp("L_n1")
+    a.label("L_n1_done")
+    r(0x6B, 0xC8, 0x1F)                        # imul ecx,eax,31
+    r(0xB8); a.imm32(124)                      # mov eax,124
+    r(0x29, 0xC8)                              # sub eax,ecx (124 - 31*n1)
+    r(0xD1, 0xE8)                              # shr eax,1
+    a.mov_m_r(V_OFF1, RAX)                     # V_OFF1 = 居中偏移
+
     a.mov_m_imm(V_SLOT, 0)
 
-    # ── 8 个状态槽循环 (v7.7: 2 行 × 4 槽, 30x30 图标) ──────────
-    # 行1 (槽 0-3, 底行): col = slot&3, row = slot>>2 = 0
-    # 行2 (槽 4-7, 顶行): row = 1
-    #   xx = x0 + col*31
-    #   yy = ytop + 31 - row*31   (行1: ytop+31; 行2: ytop)
+    # ── 8 个状态槽循环 (v7.9: 行1 居中 / 行2 从左到右) ──────────
+    # 行1 (槽 0-3): xx = x0 + offset1 + k*31  (k = 行内激活序号)
+    # 行2 (槽 4-7): xx = x0 + k*31            (从左到右, 不居中)
+    #   yy = ytop + 31 - row*31   (row = slot>>2; 行1: ytop+31; 行2: ytop)
     a.label("L_slot")
     a.mov_r_m(RAX, V_SLOT)
     r(0x83, 0xF8, 0x08)                        # cmp eax,8
     a.jcc("jge", "L_unit")                     # 本单位完成 → 下一格
-    r(0x89, 0xC2)                              # mov edx,eax (col 计算)
-    r(0x83, 0xE2, 0x03)                        # and edx,3
-    r(0x6B, 0xD2, 0x1F)                        # imul edx,edx,31
+    # st 提前读取 (v7.9: 空槽不占位, k 计数也依赖 st)
+    a.mov_r_m(RCX, V_RECBASE)                  # ecx = recbase
+    # ⚠modrm 0x54 = mod01|reg(edx)|SIB: 误写 0x14 (mod00 无位移) 会被
+    # capstone 解出 movzx edx,[ecx+eax*2] + push esi (0x56 沦为独立指令)
+    r(0x0F, 0xB6, 0x54, 0x41, 0x56)            # movzx edx,byte[ecx+slot*2+0x56]
+    r(0x85, 0xD2)                              # test st,st
+    a.mov_m_r(V_ST, RDX)
+    a.jcc("jz", "L_slot_inc")                  # v7.8: 空槽透明 → 不占位
+    # ── v7.9: 行内激活序号 k = Σ_{i<slot, 同行} (st[i]!=0) ──────
+    r(0x89, 0xC3)                              # mov ebx,eax (slot)
+    r(0x83, 0xE3, 0x04)                        # and ebx,4  行基 (0=行1, 4=行2)
+    r(0x89, 0xDE)                              # mov esi,ebx (i = 行基)
+    r(0x31, 0xD2)                              # xor edx,edx (k = 0)
+    a.label("L_cnt")
+    r(0x39, 0xF0)                              # cmp eax,esi (slot vs i)
+    a.jcc("jbe", "L_cnt_done")                 # i ≥ slot → 计数完成
+    r(0x0F, 0xB6, 0x7C, 0x71, 0x56)            # movzx edi,byte[ecx+esi*2+0x56]
+    r(0x85, 0xFF)                              # test edi,edi (st[i])
+    a.jcc("jz", "L_cnt_zero")
+    r(0x42)                                    # inc edx (k++)
+    a.label("L_cnt_zero")
+    r(0x46)                                    # inc esi (i++)
+    a.jmp("L_cnt")
+    a.label("L_cnt_done")
+    # ── v7.9: xx = x0 + k*31 + (行1 ? offset1 : 0) ─────────────
+    r(0x6B, 0xD2, 0x1F)                        # imul edx,edx,31 (k*31)
     r(0x03, 0x54, 0x24, V_X0)                  # add edx,[x0]
+    r(0x85, 0xDB)                              # test ebx,ebx (行基)
+    a.jcc("jnz", "L_xx_done")                  # 行2: 从左到右, 无居中偏移
+    a.mov_r_m(RBX, V_OFF1)                     # ebx = offset1 (行1 居中)
+    r(0x01, 0xDA)                              # add edx,ebx
+    a.label("L_xx_done")
     a.mov_m_r(V_XX, RDX)
     r(0x81, 0xFA); a.imm32(610)                # cmp edx,610 (xx+30≤640)
     a.jcc("ja", "L_slot_inc")                  # 无符号比较同时挡负值
-    r(0x89, 0xC1)                              # mov ecx,eax (row 计算)
+    # yy 不变 (row = slot>>2; eax = slot 仍存活)
+    r(0x89, 0xC1)                              # mov ecx,eax
     r(0xC1, 0xE9, 0x02)                        # shr ecx,2
     r(0x6B, 0xC9, 0x1F)                        # imul ecx,ecx,31
     a.mov_r_m(RDX, V_Y0)                       # edx = ytop
     r(0x83, 0xC2, 0x1F)                        # add edx,31
     r(0x29, 0xCA)                              # sub edx,ecx → yy
     a.mov_m_r(V_YY, RDX)                       # [esp+V_YY] = yy (每槽)
-    # st = 状态槽低字节 (eax = slot 仍存活)
-    a.mov_r_m(RCX, V_RECBASE)
-    r(0x0F, 0xB6, 0x4C, 0x41, 0x56)            # movzx ecx,byte[rec+slot*2+0x56]
-    r(0x85, 0xC9)                              # test st,st
-    a.mov_m_r(V_ST, RCX)
-    a.jcc("jz", "L_slot_inc")                  # v7.8: 空槽透明 (不绘制)
     # F = fbase + st - 1 (仅寄存器内使用; V_F 槽已复用为 V_YY)
     a.mov_r_m(RAX, V_ST)
     r(0x48)                                    # dec eax
@@ -591,13 +660,22 @@ def test_key_semantics_present() -> None:
         "[ecx*4 + 0x9df802]", "[ecx*4 + 0x9df804]",  # ×4 坐标寻址
         "sub edx, 0xc2",                       # v7.7: ytop -= 194 (imm32)
         "cmp edx, 0x1a3",                      # v7.7: ytop <= 419 (2行61px)
-        "and edx, 3",                          # v7.7: col = slot&3 (两行布局)
         "shr ecx, 2",                          # v7.7: row = slot>>2
-        "imul edx, edx, 0x1f",                 # v7.7: col*31 步进
+        "imul edx, edx, 0x1f",                 # v7.9: k*31 步进 (行内序号)
+        # v7.9: 行1 居中布局特征
+        "and ebx, 4",                          # 行基 (0=行1, 4=行2)
+        "movzx edx, byte ptr [ecx + eax*2 + 0x56]",  # st 提前读取
+        "movzx edx, byte ptr [ecx + ebx*2 + 0x56]",  # 预扫描读 st[i] (n1)
+        "movzx edi, byte ptr [ecx + esi*2 + 0x56]",  # k 前缀计数读 st[i]
+        "imul ecx, eax, 0x1f",                 # offset1 = (124-31*n1)>>1
+        "shr eax, 1",                          # offset1 半宽
+        "mov ebx, dword ptr [esp + 0x6c]",     # V_OFF1 (复用旧 V_UIDX 槽)
         "mov ebx, esi",                       # v7.4: block→ebx (修记录寻址)
         "cmp ecx, dword ptr [edi]",           # v7.4: sf vs 块帧数
     ):
         assert needle in text, needle
+    # v7.9: 旧 col=slot&3 固定布局必须消失 (位置改由行内序号 k 决定)
+    assert "and edx, 3" not in text, "v7.9: 不应再有 col=slot&3 固定布局"
     # v7.4 记录寻址 bug 特征: shl ebx,6 紧跟 add ebx,ebx (用 2F 而非 block)
     lines = text.splitlines()
     for i, ln in enumerate(lines):

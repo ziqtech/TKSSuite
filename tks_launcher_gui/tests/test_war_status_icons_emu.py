@@ -4,11 +4,18 @@
 定位过 v7.5 双 bug: ①obj+8/obj+12 是指针非内联数组; ②总帧数在
 obj+0x18 (a2[6] 下标语义) 而非 0x24。
 
+v7.9 新增验证:
+- 行1 居中布局: 图标位置由行内激活序号 k 决定 (空槽不占位),
+  xx = x0 + offset1 + k*31, offset1 = (124-31*n1)>>1 (n1=1..4
+  → 46/31/15/0); 行2 从左到右 xx = x0 + k*31。多状态集合用例:
+  单状态居中 / 两状态占中两格 / 分散槽紧凑排列 / 三状态 / 满行 /
+  行2 溢出 / 行1+行2 混合;
+- 全行区域断言: 除图标矩形外整行 123px × 30px 全零
+  (空槽透明 + 无幽灵块 + 步进正确三合一)。
+
 v7.8 新增验证:
 - 入口 edx = movsx word[9D6C88] 的值 (hook 点 0x43A7A6 位于该 movsx
   之后, popad 恢复后尾声用重放 cmp edx,0x2b 重新求值 bounds 分支);
-- 邻格空槽必须全零 (空槽透明: st==0 不写任何像素, v7.7 及以前画
-  0x2104 灰块);
 - 尾部双路径: edx=0 (有效面板状态) → ret 落回 E8 返回地址原值;
   edx=0xFFFFFFFF (word_9D6C88=-1, 无菜单的 default 路径) → ret 落回
   返回地址+0x112 (0x43A7AB→0x43A8BD), 且两路径栈均平衡 (esp 恢复)。"""
@@ -31,8 +38,8 @@ A_MU2, A_FBASE = 0x755AF4, 0x9D6F76
 A_GRID = 0x951D42
 
 
-def run_frame(frame_idx: int, slot: int = 0) -> tuple:
-    """构造环境: 单位0 在指定 slot 带状态ID, 返回 (expect, canvas)。"""
+def run_frame(frame_idx: int, active: tuple = (0,)) -> tuple:
+    """构造环境: 单位0 在指定 slot 集合带状态ID, 返回 (expect, canvas)。"""
     uc = Uc(UC_ARCH_X86, UC_MODE_32)
     uc.mem_map(CAVE, 0x2000)
     uc.mem_map(CANVAS, 0x100000)
@@ -101,7 +108,9 @@ def run_frame(frame_idx: int, slot: int = 0) -> tuple:
     uc.mem_write(A_POSX, struct.pack("<h", 320))
     uc.mem_write(A_POSY, struct.pack("<h", 240))
     uc.mem_write(0x9D707A + 0x0A, struct.pack("<h", 100))
-    uc.mem_write(0x9D707A + 0x56 + slot * 2, struct.pack("<H", frame_idx - 75))
+    for s in active:
+        uc.mem_write(0x9D707A + 0x56 + s * 2,
+                     struct.pack("<H", frame_idx - 75))
 
     ebp = STACK - 0x1000
     esp = STACK - 0x2000
@@ -169,47 +178,67 @@ def run_tail(edx_val: int, ret_addr: int, stop_addr: int) -> int:
 
 def main() -> bool:
     ok = True
-    # v7.7 几何: 30x30 图标, 2 行 × 4 槽 (从下往上):
-    # ytop = sy-194 (行2/顶行), 行1(底行) y = ytop+31 = sy-163
-    # x0 = sx-55 (行宽 4*31-1=123px, 中心 sx+6.5)
-    # col = slot&3, row = slot>>2: xx = x0+col*31, yy = ytop+31-row*31
+    # v7.9 几何: 30x30 图标, 2 行 × 4 槽 (从下往上):
+    #   ytop = sy-194 (行2/顶行), 行1(底行) y = ytop+31 = sy-163
+    #   x0 = sx-55 (行宽 4*31-1=123px, 行中心 sx+6.5)
+    #   行1: xx = x0 + offset1 + k*31, offset1 = (124-31*n1)>>1
+    #        (n1=1..4 → 46/31/15/0; k = 行内激活序号, 空槽不占位)
+    #   行2: xx = x0 + k*31 (从左到右)
+    #   yy = ytop+31-row*31 (row = slot>>2) 不变
     x0, ytop = 320 - 55, 240 - 194
 
-    def check(fi: int, slot: int) -> bool:
-        expect, canvas, W, H = run_frame(fi, slot)
-        col, row = slot & 3, slot >> 2
-        xx, yy = x0 + col * 31, ytop + 31 - row * 31
+    def check_set(fi: int, slots: tuple) -> bool:
+        expect, canvas, W, H = run_frame(fi, slots)
+        row1 = sorted(s for s in slots if s < 4)
+        row2 = sorted(s for s in slots if s >= 4)
+        n1 = len(row1)
+        off1 = (124 - 31 * n1) >> 1
+        # 期望图标矩形: (slot, xx, yy)
+        boxes = [(s, x0 + off1 + k * 31, ytop + 31)
+                 for k, s in enumerate(row1)]
+        boxes += [(s, x0 + k * 31, ytop) for k, s in enumerate(row2)]
         bad = 0
-        for ty in range(30):
-            for tx in range(30):
-                exp = expect[ty][tx]
-                got = struct.unpack_from(
-                    "<H", canvas, ((yy + ty) * 640 + xx + tx) * 2)[0]
-                if exp is not None and got != exp:
-                    bad += 1
-                if exp is None and got != 0:
-                    bad += 1
-        # v7.8: 邻格空槽必须【全零透明】(v7.7 及以前画 0x2104 灰块,
-        # 用户需求改为不绘制) —— 验证空槽路径零像素写入; 整个 30x30
-        # 区域逐一检查 (含步进 31px 间隙正确性); 最后一列无右邻跳过
-        if col < 3:
-            ncol = col + 1
-            nxx = x0 + ncol * 31
+        covered = set()
+        # 1) 图标矩形逐像素对照 ground truth
+        for s, xx, yy in boxes:
             for ty in range(30):
                 for tx in range(30):
+                    exp = expect[ty][tx]
+                    got = struct.unpack_from(
+                        "<H", canvas, ((yy + ty) * 640 + xx + tx) * 2)[0]
+                    if exp is not None and got != exp:
+                        bad += 1
+                    if exp is None and got != 0:
+                        bad += 1
+                    covered.add((xx + tx, yy + ty))
+        # 2) 全行区域 (123x30 × 两行) 除图标矩形外全零
+        #    (空槽透明 + 无幽灵块 + 步进/居中偏移正确 三合一)
+        for row in (0, 1):
+            ys = ytop + 31 - row * 31
+            for ty in range(30):
+                for tx in range(123):
+                    if (x0 + tx, ys + ty) in covered:
+                        continue
                     v = struct.unpack_from(
-                        "<H", canvas, ((yy + ty) * 640 + nxx + tx) * 2)[0]
+                        "<H", canvas, ((ys + ty) * 640 + x0 + tx) * 2)[0]
                     if v != 0:
                         bad += 1
+        desc = ",".join(str(s) for s in slots)
         status = "[OK]" if bad == 0 else f"[FAIL] {bad} 像素不符"
-        print(f"  frame{fi} slot{slot} (行{row+1}列{col+1}): {status}")
+        print(f"  frame{fi} slots({desc}) n1={n1} off1={off1}: {status}")
         return bad == 0
 
-    for fi in (76, 90):                     # 图标帧抽查
-        ok &= check(fi, 0)                  # 行1 列1 (底行)
-        ok &= check(fi, 3)                  # 行1 列4 (行1 末格)
-        ok &= check(fi, 4)                  # 行2 列1 (顶行首格)
-        ok &= check(fi, 7)                  # 行2 列4 (顶行末格)
+    # ── v7.9 居中布局用例 ──────────────────────────────────────
+    ok &= check_set(76, (0,))            # 行1 单状态 → 居中 (x0+46)
+    ok &= check_set(76, (2,))            # 行1 单状态 (非首槽) → 仍居中
+    ok &= check_set(76, (0, 1))          # 两状态 → 中两格 (31/62)
+    ok &= check_set(76, (1, 3))          # 两状态分散 → 紧凑排到中两格
+    ok &= check_set(76, (0, 1, 2))       # 三状态 → 居中 (15/46/77)
+    ok &= check_set(76, (0, 1, 2, 3))    # 四状态 → 满行 (0/31/62/93)
+    ok &= check_set(90, (4,))            # 行2 单状态 → 左起 (x0+0)
+    ok &= check_set(90, (4, 6))          # 行2 两状态分散 → 紧凑左起
+    ok &= check_set(90, (0, 4, 5))       # 混合: 行1 居中 + 行2 左起
+    ok &= check_set(90, (0, 1, 2, 3, 4, 5, 6, 7))  # 满两行
 
     # ── v7.8 尾声双路径 (hook 0x43A7A6 = 面板 switch bounds-ja) ──
     # STOP 映射在 CANVAS 区 (已映射, 全零), 执行到即停。
@@ -229,7 +258,7 @@ def main() -> bool:
           f"{'[OK]' if p2 else '[FAIL] esp=' + hex(esp_after)}")
     ok &= p2
 
-    print("[OK] unicorn 执行级验证全部通过 (两行布局 + 空槽透明 + 尾声双路径)"
+    print("[OK] unicorn 执行级验证全部通过 (行1 居中布局 + 空槽透明 + 尾声双路径)"
           if ok else "[FAIL] 存在差异")
     return ok
 
