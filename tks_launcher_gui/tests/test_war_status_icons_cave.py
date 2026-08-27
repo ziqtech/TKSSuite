@@ -1,7 +1,18 @@
 # -*- coding: utf-8 -*-
-"""war_status_icons v7.5 cave 构建与校验。
+"""war_status_icons v7.6 cave 构建与校验。
 
-v7.5 = v7.4 + JVG 对象指针解引用修复 (图标不显示的最终根因, 由
+v7.6 = v7.5 + 图标尺寸 10x10 → 20x20 (用户反馈 10x10 太小看不清)。
+
+【v7.6 尺寸/几何联动调整】
+- 采样: floor(W*tx/20) / floor(H*ty/20), tx 19→0, ty 0..19 (除数 10→20)
+- 槽步进: 11px → 21px (图标 20px + 间隔 1px), 行宽 8*21-1=167px
+- y0 = sy-153 (原 143): 图标底边保持 HP 条顶 sy-132 上方 1px
+- x0 = sx-77 (原 37): 行中心保持 sx+6.5 与旧版一致 (167/2-83.5)
+- 钳位: y0∈[0,460] (原 470, y0+20 ≤ 480), xx≤620 (原 630, xx+20 ≤ 640)
+- 空槽色块: 10x10 → 20x20
+- ⚠153=0x99 > 127 必须保持 imm32 (81 EA 99 00 00 00)
+
+v7.5 = JVG 对象指针解引用修复 (图标不显示的最终根因, 由
 unicorn 执行级验证定位 —— 见 test_war_status_icons_emu.py)。
 
 【v7.5 修复①—总帧数偏移】sub_4544EC 的 a2 是 _DWORD*, a2[6] = 字节
@@ -49,8 +60,10 @@ a2[2]/a2[3] 均为指针解引用。v7.4 误写 movzx esi,word[edx+ebx+8] 把
   p640=(H-1-row)*640+(W-1-col); 缩放采样列 floor(W*tx/10)/行
   floor(H*ty/10); 游标每行复位, transparent 不写不推进。
 
-几何: y0=sy_cam-143 (imm32!), y0∈[0,470] 无符号钳位; x0=sx_cam-37,
-步进 11px; 空槽 0x2104 占位色块; 逐槽 xx≤630。
+几何 (v7.6: 20x20 图标): y0=sy_cam-153 (imm32!, 底边距 HP 条顶 sy-132
+留 1px), y0∈[0,460] 无符号钳位 (y0+20 ≤ 480); x0=sx_cam-77 (行宽
+8*21-1=167px, 中心保持 sx+6.5 与旧版一致), 步进 21px (图标 20px+间隔
+1px); 空槽 0x2104 占位色块; 逐槽 xx≤620 (xx+20 ≤ 640)。
 """
 
 from __future__ import annotations
@@ -209,25 +222,24 @@ def build() -> bytearray:
     r(0x85, 0xC9)                              # test ecx,ecx
     a.jcc("jle", "L_unit")                     # 死亡单位跳过
 
-    # y0 = sy - camY - 143 (v4 语义, 逐字节对齐)
-    # ⚠v7.1 修复 imm8 符号扩展 bug: 143=0x8F > 127, 之前误用 83 EA 8F,
-    # 0x8F 符号扩展为 -113 → sub edx,-113 = +113 → y0=sy+113 (脚下 140px,
-    # 即用户所报 y 错位根因; v4 原版用 2D 8F 00 00 00 imm32 形式正确)。
-    # 必须 imm32: 81 EA 8F 00 00 00。
-    # 同时移除 v5.4 加的锚点屏内守卫 (v4 没有; 幽灵块真因 = 空槽缺 x
-    # 偏移 + 本 y 反向 bug, 均已修复; 守卫反而漏掉 sy∈[480,613] 半可见单位)。
+    # y0 = sy - camY - 153 (v7.6: 20x20 图标, 底边保持 HP 条顶 sy-132
+    # 上方 1px: y0+20 = sy-133)
+    # ⚠v7.1 修复 imm8 符号扩展 bug: 153=0x99 > 127, 必须 imm32
+    # (81 EA 99 00 00 00); 误用 83 EA 99 会符号扩展为 -103。
+    # 钳位 y0∈[0,460] (y0+20 ≤ 480, 无符号比较同时挡负值)。
     a.mov_r_m(RCX, V_UIDX)                     # ecx = u
     r(0x0F, 0xBF, 0x14, 0x8D); a.imm32(ADDR_POS_Y)  # movsx edx,word[ecx*4+Y]
     r(0x2B, 0x15); a.imm32(ADDR_CAMY)               # sub edx,[camY]
-    r(0x81, 0xEA); a.imm32(143)                # sub edx,143 (imm32!)
-    r(0x81, 0xFA); a.imm32(470)                # cmp edx,470
-    a.jcc("ja", "L_unit")                      # y0∉[0,470] (无符号, 含负值) 跳过
+    r(0x81, 0xEA); a.imm32(153)                # sub edx,153 (imm32!)
+    r(0x81, 0xFA); a.imm32(460)                # cmp edx,460
+    a.jcc("ja", "L_unit")                      # y0∉[0,460] 跳过
     a.mov_m_r(V_Y0, RDX)
 
-    # x0 = sx - camX - 37 (ecx = u 仍存活)
+    # x0 = sx - camX - 77 (v7.6: 行宽 8*21-1=167px, 保持旧中心 sx+6.5:
+    # x0 = sx+6.5-83.5 = sx-77; ecx = u 仍存活)
     r(0x0F, 0xBF, 0x14, 0x8D); a.imm32(ADDR_POS_X)
     r(0x2B, 0x15); a.imm32(ADDR_CAMX)
-    r(0x83, 0xEA, 37)                          # -19-18
+    r(0x81, 0xEA); a.imm32(77)                 # sub edx,77 (imm32)
     a.mov_m_r(V_X0, RDX)
 
     # Mu2.jvg 对象与状态图标基准帧 (战斗初始化 sub_42FEE0 已加载)
@@ -244,11 +256,12 @@ def build() -> bytearray:
     a.mov_r_m(RAX, V_SLOT)
     r(0x83, 0xF8, 0x08)                        # cmp eax,8
     a.jcc("jge", "L_unit")                     # 本单位完成 → 下一格
-    # xx = slot*11 + x0 —— v7 关键修复: 提前计算, 空槽/图标两路径共用
-    r(0x6B, 0xD0, 0x0B)                        # imul edx,eax,11
+    # xx = slot*21 + x0 —— v7 关键修复: 提前计算, 空槽/图标两路径共用
+    # (v7.6: 步进 21px = 图标 20px + 间隔 1px)
+    r(0x6B, 0xD0, 0x15)                        # imul edx,eax,21
     r(0x03, 0x54, 0x24, V_X0)                  # add edx,[x0]
     a.mov_m_r(V_XX, RDX)
-    r(0x81, 0xFA); a.imm32(630)                # cmp edx,630
+    r(0x81, 0xFA); a.imm32(620)                # cmp edx,620 (xx+20 ≤ 640)
     a.jcc("ja", "L_slot_inc")                  # 无符号比较同时挡负值
     # st = 状态槽低字节
     a.mov_r_m(RCX, V_RECBASE)
@@ -344,11 +357,11 @@ def build() -> bytearray:
     a.mov_m_imm(V_POSCNT, 0)
     a.mov_m_imm(V_RUNLEFT, 0)
 
-    # SRCROW=(H*ty)/10 (寄存器临时)
+    # SRCROW=(H*ty)/20 (v7.6: 20x20 缩放, 寄存器临时)
     a.mov_r_m(RAX, V_TY)
     r(0x0F, 0xAF, 0x44, 0x24, V_H)             # imul eax,[esp+V_H]
     r(0x31, 0xD2)                              # xor edx,edx
-    r(0xB9, 0x0A, 0x00, 0x00, 0x00)            # mov ecx,10
+    r(0xB9, 0x14, 0x00, 0x00, 0x00)            # mov ecx,20
     r(0xF7, 0xF1)                              # div ecx
     # PBASE = (H-1-SRCROW)*640 + (W-1)  (v7.3 恢复 v7.1 公式 —— 它本来就对)
     a.mov_r_m(RCX, V_H)
@@ -364,19 +377,19 @@ def build() -> bytearray:
     r(0x03, 0x44, 0x24, V_TY)
     r(0x69, 0xC0); a.imm32(1280)
     a.mov_m_r(V_DYBYTES, RAX)
-    a.mov_m_imm(V_TX, 9)
+    a.mov_m_imm(V_TX, 19)
 
     a.label("L_tx")
     # 采样语义 (sub_4544EC 反向扫描): 源单元格 (bufRow,bufCol) 的线性位置
     #   p640 = (H-1-bufRow)*640 + (W-1-bufCol)
-    # 采样 bufCol=floor(W*tx/10) (tx 从左数) →
-    #   target = (H-1-bufRow)*640 + (W-1) - floor(W*tx/10) = PBASE - col
-    # tx 9→0 迭代使 target 行内单调递增 (col640 递减), 与 RLE 记录流
+    # 采样 bufCol=floor(W*tx/20) (v7.6: tx 从左数, 0..19) →
+    #   target = (H-1-bufRow)*640 + (W-1) - floor(W*tx/20) = PBASE - col
+    # tx 19→0 迭代使 target 行内单调递增 (col640 递减), 与 RLE 记录流
     # (p640 递增) 方向一致, 单游标前向推进成立。
     a.mov_r_m(RAX, V_TX)
     r(0x0F, 0xAF, 0x44, 0x24, V_W)
     r(0x31, 0xD2)
-    r(0xB9, 0x0A, 0x00, 0x00, 0x00)
+    r(0xB9, 0x14, 0x00, 0x00, 0x00)            # mov ecx,20
     r(0xF7, 0xF1)
     a.mov_r_m(RDX, V_PBASE)
     r(0x29, 0xC2)                              # sub edx,eax → target
@@ -445,18 +458,18 @@ def build() -> bytearray:
     a.label("tx_next")
     a.dec_m(V_TX)
     a.cmp_m_imm8(V_TX, 0)
-    a.jcc("jns", "L_tx")                       # tx: 9..0 (target 单调递增)
+    a.jcc("jns", "L_tx")                       # tx: 19..0 (target 单调递增)
 
     a.inc_m(V_TY)
-    a.cmp_m_imm8(V_TY, 10)
+    a.cmp_m_imm8(V_TY, 20)
     a.jcc("jl", "L_row")
     a.jmp("L_slot_inc")
 
-    # ── 空槽: 0x2104 10x10 占位色块 at (xx, y0) ─────────────────
+    # ── 空槽: 0x2104 20x20 占位色块 at (xx, y0) ─────────────────
     # v7 关键修复: 原路径 lea edi,[canvas+y*1280] 缺 x 偏移 →
     # 所有空槽画在屏幕左边缘 x=0 (v4-v6.3 均如此, 即历代『边缘黑块』根因)
     a.label("L_empty")
-    r(0xBB, 0x0A, 0x00, 0x00, 0x00)            # mov ebx,10 (行计数)
+    r(0xBB, 0x14, 0x00, 0x00, 0x00)            # mov ebx,20 (行计数)
     r(0xB8, 0x04, 0x21, 0x00, 0x00)            # mov eax,0x2104
     a.mov_r_m(RDX, V_Y0)
     a.label("L_emp_row")
@@ -466,7 +479,7 @@ def build() -> bytearray:
     a.mov_r_m(RCX, V_XX)
     r(0xD1, 0xE1)                              # shl ecx,1 (xx*2 字节)
     r(0x03, 0xF9)                              # add edi,ecx (+x 偏移)
-    r(0xB9, 0x0A, 0x00, 0x00, 0x00)            # mov ecx,10
+    r(0xB9, 0x14, 0x00, 0x00, 0x00)            # mov ecx,20 (宽 20px)
     r(0xF3, 0x66, 0xAB)                        # rep stosw
     r(0x42)                                    # inc edx
     r(0x4B)                                    # dec ebx
@@ -535,8 +548,8 @@ def test_key_semantics_present() -> None:
         "[0x9d6f76]",                         # 状态图标基准帧
         "[0x8242a8]", "[0x8242ac]",           # 相机 X/Y
         "[ecx*4 + 0x9df802]", "[ecx*4 + 0x9df804]",  # ×4 坐标寻址
-        "sub edx, 0x8f",                       # v7.1: y0 -= 143 (imm32 形式)
-        "cmp edx, 0x1d6",                      # y0 <= 470 钳位
+        "sub edx, 0x99",                       # v7.6: y0 -= 153 (imm32 形式)
+        "cmp edx, 0x1cc",                      # v7.6: y0 <= 460 钳位 (20px 高)
         "shl ecx, 1",                         # v7: 空槽 x 偏移 (xx*2)
         "mov ebx, esi",                       # v7.4: block→ebx (修记录寻址)
         "cmp ecx, dword ptr [edi]",           # v7.4: sf vs 块帧数
@@ -548,8 +561,8 @@ def test_key_semantics_present() -> None:
         if "shl ebx, 6" in ln:
             assert "mov ebx, esi" in lines[max(0, i - 1)], \
                 f"shl ebx,6 前必须是 mov ebx,esi (v7.4): {lines[max(0,i-2):i+1]}"
-    # v7.0 的 imm8 符号扩展 bug 特征 (0x8F 被扩展为 -113 → y0=sy+113):
-    assert "sub edx, -0x71" not in text
+    # v7.0 的 imm8 符号扩展 bug 特征 (负立即数 = 符号扩展错误):
+    assert "sub edx, -" not in text
     # v6 挂车架构残留必须全部清除
     assert "0x43a6c9" not in text             # 无 push 返回地址
     assert "[ebp - 6]" not in text            # 无挂车单位号读取
@@ -648,16 +661,16 @@ def test_icon_decode_matches_truth() -> None:
                     gt[H - 1 - r640][W - 1 - c640] = pal[d[src + k]]
                 p += 1
             src += run
-        expect = [[gt[H * ty // 10][W * tx // 10] for tx in range(10)]
-                  for ty in range(10)]
-        # cave 算法模拟 (v7.3 游标控制流: transparent 不写不推进)
-        out = [[None] * 10 for _ in range(10)]
-        for ty in range(10):
+        expect = [[gt[H * ty // 20][W * tx // 20] for tx in range(20)]
+                  for ty in range(20)]
+        # cave 算法模拟 (v7.3 游标控制流: transparent 不写不推进; v7.6 20x20)
+        out = [[None] * 20 for _ in range(20)]
+        for ty in range(20):
             wsrc, recleft, poscnt = fo + 16, rcnt, 0
             runleft = runbase = runsrc = 0
-            for tx in range(9, -1, -1):
-                target = (H - 1 - (H * ty // 10)) * 640 \
-                    + (W - 1) - (W * tx // 10)
+            for tx in range(19, -1, -1):
+                target = (H - 1 - (H * ty // 20)) * 640 \
+                    + (W - 1) - (W * tx // 20)
                 while True:
                     if runleft:
                         if target >= runbase + runleft:

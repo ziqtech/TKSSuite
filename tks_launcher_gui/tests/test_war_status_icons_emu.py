@@ -124,8 +124,8 @@ def run_frame(frame_idx: int) -> tuple:
                 gt[H - 1 - r640][W - 1 - c640] = pal[d[src + k]]
             p += 1
         src += run
-    expect = [[gt[H * ty // 10][W * tx // 10] for tx in range(10)]
-              for ty in range(10)]
+    expect = [[gt[H * ty // 20][W * tx // 20] for tx in range(20)]
+              for ty in range(20)]
     return expect, bytes(uc.mem_read(CANVAS, 640 * 480 * 2)), W, H
 
 
@@ -133,10 +133,12 @@ def main() -> bool:
     ok = True
     for fi in (76, 80, 90, 100, 106):        # 跨块抽查 5 帧
         expect, canvas, W, H = run_frame(fi)
-        x0, y0 = 320 - 37, 240 - 143
+        # v7.6 几何: y0=sy-153 (20px 高, 底边距 HP 条顶 1px);
+        # x0=sx-77 (行宽 8*21-1=167px, 中心保持 sx+6.5)
+        x0, y0 = 320 - 77, 240 - 153
         bad = 0
-        for ty in range(10):
-            for tx in range(10):
+        for ty in range(20):
+            for tx in range(20):
                 exp = expect[ty][tx]
                 got = struct.unpack_from("<H", canvas, ((y0 + ty) * 640 + x0 + tx) * 2)[0]
                 if exp is not None and got != exp:
