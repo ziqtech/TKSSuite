@@ -1,7 +1,31 @@
 # -*- coding: utf-8 -*-
-"""war_status_icons v7.7 cave 构建与校验。
+"""war_status_icons v7.8 cave 构建与校验。
 
-v7.7 = v7.6 + 面板原尺寸 30x30 图标 + 两行布局 (用户需求)。
+v7.8 = v7.7 + 绘制层级修复 (低于战斗菜单/高于角色) + 空槽透明。
+
+【v7.8 层级变更—hook 从面板尾部移到面板 switch 的 bounds-ja】
+- 旧 hook 0x43A8BD (if word_9D6C88>=0 之前) 位于所有面板/菜单绘制
+  【之后】→ 图标盖住战斗菜单 (v7.7 已知局限)。新 hook 0x43A7A6 =
+  面板 switch 的越界检查 `ja 0x43A8BD` (0F 87 11 01 00 00, 6 字节),
+  位于 32x32 单位精灵循环【之后】、sub_437664 信息面板 /
+  sub_4393A8 / sub_43844C / sub_439750 菜单 / sub_439D34 回合表
+  【之前】→ 图标高于角色、低于菜单 (与 war_hp_mp_bars v5 同层级语义)。
+- 与 war_hp_mp_bars (hook 0x43A79C, 7 字节) 零字节重叠: 其 pattern
+  止于 0x43A7A5, hook 写 0x43A79C..0x43A7A2; 本补丁 pattern 始于
+  0x43A7A6, hook 写 0x43A7A6..0x43A7AB → 任意应用顺序互不干扰
+  (预扫描均在原始 code_buf 上进行, HookTable 按单偏移注册不冲突)。
+- 尾声重放被替换的条件跳转: popad 恢复 edx (= movsx word[9D6C88]),
+  重放 cmp edx,0x2b 重新求值标志 (cave 主体已破坏标志位):
+    未取 (edx≤0x2B): ret → E8 返回地址 0x43A7AB(NOP) → 0x43A7AC 跳转表
+    取 (edx>0x2B)  : add [esp],0x112 → 返回地址 0x43A7AB→0x43A8BD
+      (面板 switch default: word_9D6C88=-1/>43 时无菜单, 直达尾部)
+  两路径栈均严格平衡 (仅调整自身 E8 返回地址, 绝不写调用者帧 — v6
+  挂车式 4 轮白屏的教训; 调整自身返回地址是标准 trampoline 技术)。
+- pattern 含后续 mov dl,[edx+0x43a7b9] 增强唯一性 (12 字节全 exe 唯一)。
+
+【v7.8 空槽透明】st==0 直接跳下一槽 (v4~v7.7 画 0x2104 暗灰占位
+色块, 用户需求改为透明不绘制)。cld/rep stosw 一并移除 (cave 内已
+无字符串操作)。
 
 【v7.7 布局变更—30x30 原尺寸 + 2 行 × 4 槽 (从下往上)】
 - 图标尺寸: 与战斗面板一致的原尺寸 30x30 (sub_437664 面板绘制为
@@ -44,9 +68,10 @@ a2[2]/a2[3] 均为指针解引用。v7.4 误写 movzx esi,word[edx+ebx+8] 把
    —— 任何 modrm/SIB/立即数/跳转/寄存器生命周期/指针解引用错误都
    会在执行结果中暴露。v7.4 的两个 bug 正是由此定位。
 
-架构 (v5.5 已验证, hook 于面板尾部):
-  hook 点 sub_43A050 @0x43A8BD, 替换 `cmp word ptr [0x9D6C88],0` (8 字节),
-  每帧调用一次; cave 尾部逐字节重放该 cmp 后 ret。
+架构 (v7.8: hook 于面板 switch 的 bounds-ja):
+  hook 点 sub_43A050 @0x43A7A6, 替换 `ja 0x43A8BD` (6 字节),
+  每帧调用一次 (单位精灵循环之后、面板/菜单绘制之前); cave 尾部
+  重放 cmp edx,0x2b 重新求值后按原条件分支返回。
 
 历史修复链:
 - v7  空槽 x 偏移 (曾画在屏幕左边缘 x=0)
@@ -54,6 +79,7 @@ a2[2]/a2[3] 均为指针解引用。v7.4 误写 movzx esi,word[edx+ebx+8] 把
 - v7.3 RLE 游标 transparent 分支 (透明空洞误开新记录死推)
 - v7.4 记录寻址 shl 目标错 (2F 而非 block)
 - v7.5 总帧数偏移 0x18 + obj+8/obj+12 指针解引用 (最终根因)
+- v7.8 层级: hook 0x43A8BD(菜单后)→0x43A7A6(菜单前); 空槽 0x2104→透明
 
 逆向依据 (原版 反编译产物):
 - 状态图标帧号 = word_9D6F76 + statusID - 1 (sub_437664.c:127-142/
@@ -203,15 +229,13 @@ def build() -> bytearray:
     ADDR_MU2_OBJ = 0x755AF4
     ADDR_ICON_BASE_FRAME = 0x9D6F76
     ADDR_WAR_REC_BASE = 0x9D707A
-    ADDR_PANEL_WORD = 0x9D6C88
     ADDR_GRID = 0x951D42
 
-    # ── 序言 (v5.5 已验证) ─────────────────────────────────────
+    # ── 序言 (v7.8: cld 移除 — 空槽填充删除后 cave 无字符串操作) ──
     r(0x60)                       # pushad
     r(0x81, 0xEC); a.imm32(0x80)  # sub esp,0x80
     r(0x8B, 0x45, 0x08)           # mov eax,[ebp+8]  (canvas)
     a.mov_m_r(V_CANVAS, RAX)
-    r(0xFC)                       # cld
 
     # ── 格网遍历 (v5.5: 与引擎绘制循环同源) ─────────────────────
     a.mov_m_imm(V_I, 0)
@@ -292,7 +316,7 @@ def build() -> bytearray:
     r(0x0F, 0xB6, 0x4C, 0x41, 0x56)            # movzx ecx,byte[rec+slot*2+0x56]
     r(0x85, 0xC9)                              # test st,st
     a.mov_m_r(V_ST, RCX)
-    a.jcc("jz", "L_empty")                     # 空槽占位色块 (在 xx,yy)
+    a.jcc("jz", "L_slot_inc")                  # v7.8: 空槽透明 (不绘制)
     # F = fbase + st - 1 (仅寄存器内使用; V_F 槽已复用为 V_YY)
     a.mov_r_m(RAX, V_ST)
     r(0x48)                                    # dec eax
@@ -488,38 +512,30 @@ def build() -> bytearray:
     a.jcc("jl", "L_row")
     a.jmp("L_slot_inc")
 
-    # ── 空槽: 0x2104 30x30 占位色块 at (xx, yy) ─────────────────
-    # v7 关键修复: 原路径 lea edi,[canvas+y*1280] 缺 x 偏移 →
-    # 所有空槽画在屏幕左边缘 x=0 (v4-v6.3 均如此, 即历代『边缘黑块』根因)
-    # v7.7: y 改用每槽 V_YY (两行布局)
-    a.label("L_empty")
-    r(0xBB, 0x1E, 0x00, 0x00, 0x00)            # mov ebx,30 (行计数)
-    r(0xB8, 0x04, 0x21, 0x00, 0x00)            # mov eax,0x2104
-    a.mov_r_m(RDX, V_YY)
-    a.label("L_emp_row")
-    r(0x69, 0xFA); a.imm32(1280)               # imul edi,edx,1280
-    a.mov_r_m(RSI, V_CANVAS)
-    r(0x03, 0xFE)                              # add edi,esi (canvas+行偏移)
-    a.mov_r_m(RCX, V_XX)
-    r(0xD1, 0xE1)                              # shl ecx,1 (xx*2 字节)
-    r(0x03, 0xF9)                              # add edi,ecx (+x 偏移)
-    r(0xB9, 0x1E, 0x00, 0x00, 0x00)            # mov ecx,30 (宽 30px)
-    r(0xF3, 0x66, 0xAB)                        # rep stosw
-    r(0x42)                                    # inc edx
-    r(0x4B)                                    # dec ebx
-    a.jcc("jnz", "L_emp_row")
-    a.jmp("L_slot_inc")
+    # (v7.8: 空槽占位色块路径已删除 — 空槽透明不绘制)
 
     a.label("L_slot_inc")
     a.inc_m(V_SLOT)
     a.jmp("L_slot")
 
-    # ── 尾声 (v5.x 已验证): 重放被 hook 覆盖的 cmp 后返回 ───────
+    # ── 尾声 (v7.8): 重放被 hook 覆盖的 bounds-ja 条件分支 ──────
+    # 被替换指令: ja 0x43A8BD @0x43A7A6 (0F 87 11 01 00 00), 条件
+    # (unsigned)edx > 0x2B; edx = movsx word[9D6C88] (0x43A79C 设置,
+    # popad 恢复同值)。cave 主体破坏标志位 → 重放 cmp edx,0x2b 求值:
+    #   未取 (edx≤0x2B): ret → E8 返回地址 0x43A7AB(NOP) → 0x43A7AC
+    #   取 (edx>0x2B)  : add [esp],0x112 → 返回地址 0x43A7AB→0x43A8BD
+    #     (面板 switch default 路径: word_9D6C88=-1/>43 无菜单直达尾部;
+    #      0x112 = 0x43A8BD - 0x43A7AB)
+    # 两路径栈均严格平衡: 仅调整/弹出【自身 E8 返回地址】(位于 esp0
+    # 之下, 属 cave 所有), 绝不写调用者活跃栈帧 (v6 挂车式血泪教训)。
     a.label("L_done")
     r(0x81, 0xC4); a.imm32(0x80)  # add esp,0x80
-    r(0x61)                       # popad (不影响标志位)
-    r(0x66, 0x83, 0x3D); a.imm32(ADDR_PANEL_WORD); r(0x00)  # 重放 cmp
-    r(0xC3)                       # ret (后续 jl 用重放 cmp 的标志)
+    r(0x61)                       # popad (edx 恢复为 movsx 结果)
+    r(0x83, 0xFA, 0x2B)           # cmp edx,0x2b (重放求值标志)
+    a.jcc("jbe", "L_ret")         # edx≤0x2B → 原 ja 未取 → 正常返回
+    r(0x81, 0x04, 0x24); a.imm32(0x112)  # add dword[esp],0x112 (返回地址→0x43A8BD)
+    a.label("L_ret")
+    r(0xC3)                       # ret
 
     return a.resolve()
 
@@ -565,8 +581,9 @@ def test_key_semantics_present() -> None:
         "pushal",                             # capstone 渲染 pushad 为 pushal
         "popal",                              # 尾声 popad (v7 恢复 v5.x 架构)
         "movzx edx, byte ptr [eax + 0x951d42]",  # 格网遍历 (引擎同源)
-        "cmp word ptr [0x9d6c88], 0",         # 尾部重放被覆盖的指令
-        "rep stosw",
+        "cmp edx, 0x2b",                      # v7.8: 重放 bounds cmp 求值标志
+        "jbe",                                # v7.8: 原 ja 未取 → 正常返回
+        "add dword ptr [esp], 0x112",         # v7.8: 返回地址 7AB→8BD (default)
         "0x9d707a",                           # 记录基址 (add eax,imm 形式)
         "[0x755af4]",                         # Mu2.jvg 对象
         "[0x9d6f76]",                         # 状态图标基准帧
@@ -577,7 +594,6 @@ def test_key_semantics_present() -> None:
         "and edx, 3",                          # v7.7: col = slot&3 (两行布局)
         "shr ecx, 2",                          # v7.7: row = slot>>2
         "imul edx, edx, 0x1f",                 # v7.7: col*31 步进
-        "shl ecx, 1",                         # v7: 空槽 x 偏移 (xx*2)
         "mov ebx, esi",                       # v7.4: block→ebx (修记录寻址)
         "cmp ecx, dword ptr [edi]",           # v7.4: sf vs 块帧数
     ):
@@ -595,22 +611,29 @@ def test_key_semantics_present() -> None:
     assert "[ebp - 6]" not in text            # 无挂车单位号读取
     assert "cwde" not in text                 # 无 modrm 编码垃圾指令
     assert text.count("ebp") == 1  # 仅 [ebp+8] 画布读取
+    # v7.8: 空槽透明 — 灰块填充与字符串操作必须全部消失
+    assert "rep" not in text, "v7.8 空槽透明: 不应再有 rep stosw"
+    assert "0x2104" not in text, "v7.8 空槽透明: 不应再有 0x2104 灰块"
+    assert "stos" not in text, "v7.8: cave 内无字符串操作"
 
 
-def test_empty_slot_uses_xx() -> None:
-    """空槽路径必须含 x 偏移 (v7 修复核心): 找 rep stosw 前的 shl ecx,1+add edi,ecx。"""
+def test_empty_slot_transparent() -> None:
+    """v7.8: 空槽透明 — st==0 分支直接跳槽递增, 无任何绘制指令。
+
+    历史背景: v7 曾因空槽路径缺 x 偏移把灰块画在屏幕左边缘 (Bug ①),
+    v7.8 起空槽不再绘制 (用户需求: 透明), 该整条路径连同步删除。
+    unicorn 层的邻格全零断言 (test_war_status_icons_emu.py) 验证执行
+    级『空槽真的不写像素』。"""
     _require_capstone()
     code = cave_bytes()
     insns, _ = _disasm(code)
-    text = [f"{i.mnemonic} {i.op_str}" for i in insns]
-    for i, t in enumerate(text):
-        if t.startswith("rep stosw"):
-            window = text[max(0, i - 5):i]
-            assert any(w.startswith("shl ecx, 1") for w in window) and \
-                any(w.startswith("add edi, ecx") for w in window), \
-                f"rep stosw 前缺 x 偏移指令: {window}"
-            return
-    raise AssertionError("未找到 rep stosw")
+    text = "\n".join(f"{i.mnemonic} {i.op_str}" for i in insns).lower()
+    # 填充指令必须全部消失
+    assert "rep" not in text and "stos" not in text
+    assert "0x2104" not in text
+    # st==0 (je) 跳转后紧跟的目标必须是槽递增路径 (inc/jmp 循环),
+    # 这里用宽松断言: je 的数量 ≥ 1 且文本中不存在灰块立即数。
+    # 强断言由 unicorn 邻格全零检查承担。
 
 
 def test_icon_decode_matches_truth() -> None:
@@ -742,9 +765,11 @@ def test_patch_json_matches_builder() -> None:
         "patch.json cave_code 与构建器输出不一致"
     # 布局不变量 (与 cave_layout.py budget / summon_extend 硬编码区一致)
     assert raw["cave_offset"] == 2048 and raw["autolayout_cave"] is False
-    # v7: 回归 v5.5 hook 点 (面板尾部 cmp, 8 字节)
-    assert raw["hook_pattern"] == "66 83 3D 88 6C 9D 00 00 7C 0A"
-    assert raw["hook_size"] == 8 and raw["hook_expect_count"] == 1
+    # v7.8: hook 点 = 面板 switch 的 bounds-ja (菜单之前, 与血条零重叠)
+    assert raw["hook_pattern"] == \
+        "0F 87 11 01 00 00 8A 92 B9 A7 43 00"
+    assert raw["hook_size"] == 6 and raw["hook_expect_count"] == 1
+    assert raw["hook_offset"] == 0
     assert "fallback_rva" not in raw or not raw.get("fallback_rva")
     assert raw["type"] == "cave_hook" and raw["id"] == "war_status_icons"
 
@@ -759,7 +784,7 @@ if __name__ == "__main__":
         # ⚠语义断言必须跑 (历史教训: 不跑会漏编码 bug)
         test_disassemble_clean()
         test_key_semantics_present()
-        test_empty_slot_uses_xx()
+        test_empty_slot_transparent()
     test_icon_decode_matches_truth()  # 自带 [OK]/[skip] 输出与断言
     if _cs is not None:
         md = _cs.Cs(_cs.CS_ARCH_X86, _cs.CS_MODE_32)

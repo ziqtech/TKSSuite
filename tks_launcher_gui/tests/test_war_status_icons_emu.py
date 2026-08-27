@@ -2,7 +2,16 @@
 """unicorn 执行级验证: 构造完整内存环境执行真实 cave 字节码。
 这是对 cave 的最终审判 —— 任何编码错误都会在执行结果中暴露。
 定位过 v7.5 双 bug: ①obj+8/obj+12 是指针非内联数组; ②总帧数在
-obj+0x18 (a2[6] 下标语义) 而非 obj+0x24。"""
+obj+0x18 (a2[6] 下标语义) 而非 0x24。
+
+v7.8 新增验证:
+- 入口 edx = movsx word[9D6C88] 的值 (hook 点 0x43A7A6 位于该 movsx
+  之后, popad 恢复后尾声用重放 cmp edx,0x2b 重新求值 bounds 分支);
+- 邻格空槽必须全零 (空槽透明: st==0 不写任何像素, v7.7 及以前画
+  0x2104 灰块);
+- 尾部双路径: edx=0 (有效面板状态) → ret 落回 E8 返回地址原值;
+  edx=0xFFFFFFFF (word_9D6C88=-1, 无菜单的 default 路径) → ret 落回
+  返回地址+0x112 (0x43A7AB→0x43A8BD), 且两路径栈均平衡 (esp 恢复)。"""
 import struct
 import sys
 
@@ -11,7 +20,8 @@ sys.stdout.reconfigure(encoding="utf-8")
 
 from test_war_status_icons_cave import cave_bytes
 from unicorn import Uc, UC_ARCH_X86, UC_MODE_32
-from unicorn.x86_const import (UC_X86_REG_EBP, UC_X86_REG_ESP)
+from unicorn.x86_const import (UC_X86_REG_EBP, UC_X86_REG_ESP,
+                               UC_X86_REG_EDX)
 
 CAVE, CANVAS, SCRATCH = 0x00400000, 0x01000000, 0x02000000
 STACK = 0x7FF00000
@@ -98,6 +108,9 @@ def run_frame(frame_idx: int, slot: int = 0) -> tuple:
     uc.mem_write(ebp + 8, struct.pack("<I", CANVAS))
     uc.reg_write(UC_X86_REG_EBP, ebp)
     uc.reg_write(UC_X86_REG_ESP, esp)
+    # v7.8: hook 点 0x43A7A6 的入口 edx = movsx word[9D6C88] 结果。
+    # 面板状态 0 (有效) → 尾声 jbe → 正常 ret 路径。
+    uc.reg_write(UC_X86_REG_EDX, 0)
     uc.mem_write(esp, struct.pack("<I", CAVE + len(code)))
     uc.emu_start(CAVE, CAVE + len(code))
 
@@ -129,6 +142,31 @@ def run_frame(frame_idx: int, slot: int = 0) -> tuple:
     return expect, bytes(uc.mem_read(CANVAS, 640 * 480 * 2)), W, H
 
 
+def run_tail(edx_val: int, ret_addr: int, stop_addr: int) -> int:
+    """最小环境 (无存活单位: HP=0) 执行 cave, 验证尾声分支与栈平衡。
+
+    返回停止时的 esp (入口 esp + 4 = ret 弹出返回地址后严格平衡)。"""
+    uc = Uc(UC_ARCH_X86, UC_MODE_32)
+    uc.mem_map(CAVE, 0x2000)
+    uc.mem_map(CANVAS, 0x100000)
+    uc.mem_map(SCRATCH, 0x500000)
+    uc.mem_map(0x700000, 0x400000)
+    uc.mem_map(STACK - 0x100000, 0x200000)
+    code = bytes(cave_bytes())
+    uc.mem_write(CAVE, code)
+    # 全局区默认全零: Mu2 obj=0 (未加载跳过); 格网格值 0 = 单位 0,
+    # 但记录 HP=0 → jle 跳过 → 无绘制, 直达尾声。
+    ebp = STACK - 0x1000
+    esp = STACK - 0x2000
+    uc.mem_write(ebp + 8, struct.pack("<I", CANVAS))
+    uc.reg_write(UC_X86_REG_EBP, ebp)
+    uc.reg_write(UC_X86_REG_ESP, esp)
+    uc.reg_write(UC_X86_REG_EDX, edx_val)
+    uc.mem_write(esp, struct.pack("<I", ret_addr))
+    uc.emu_start(CAVE, stop_addr)
+    return uc.reg_read(UC_X86_REG_ESP)
+
+
 def main() -> bool:
     ok = True
     # v7.7 几何: 30x30 图标, 2 行 × 4 槽 (从下往上):
@@ -151,16 +189,18 @@ def main() -> bool:
                     bad += 1
                 if exp is None and got != 0:
                     bad += 1
-        # 邻格 (同行右一列, 若为空槽) 应画满 0x2104 灰块 —— 验证
-        # 步进与空槽绘制; 最后一列无右邻跳过
+        # v7.8: 邻格空槽必须【全零透明】(v7.7 及以前画 0x2104 灰块,
+        # 用户需求改为不绘制) —— 验证空槽路径零像素写入; 整个 30x30
+        # 区域逐一检查 (含步进 31px 间隙正确性); 最后一列无右邻跳过
         if col < 3:
             ncol = col + 1
             nxx = x0 + ncol * 31
             for ty in range(30):
-                v = struct.unpack_from(
-                    "<H", canvas, ((yy + ty) * 640 + nxx) * 2)[0]
-                if v != 0x2104:
-                    bad += 1
+                for tx in range(30):
+                    v = struct.unpack_from(
+                        "<H", canvas, ((yy + ty) * 640 + nxx + tx) * 2)[0]
+                    if v != 0:
+                        bad += 1
         status = "[OK]" if bad == 0 else f"[FAIL] {bad} 像素不符"
         print(f"  frame{fi} slot{slot} (行{row+1}列{col+1}): {status}")
         return bad == 0
@@ -170,7 +210,27 @@ def main() -> bool:
         ok &= check(fi, 3)                  # 行1 列4 (行1 末格)
         ok &= check(fi, 4)                  # 行2 列1 (顶行首格)
         ok &= check(fi, 7)                  # 行2 列4 (顶行末格)
-    print("[OK] unicorn 执行级验证全部通过 (含两行布局)" if ok else "[FAIL] 存在差异")
+
+    # ── v7.8 尾声双路径 (hook 0x43A7A6 = 面板 switch bounds-ja) ──
+    # STOP 映射在 CANVAS 区 (已映射, 全零), 执行到即停。
+    STOP = CANVAS + 0x1000
+    entry_esp = STACK - 0x2000
+    # 路径1: edx=0 (有效面板状态) → 原 ja 未取 → ret 落回返回地址原值
+    esp_after = run_tail(0, STOP, STOP)
+    p1 = esp_after == entry_esp + 4
+    print(f"  尾声路径1 (edx=0, 正常返回): "
+          f"{'[OK]' if p1 else '[FAIL] esp=' + hex(esp_after)}")
+    ok &= p1
+    # 路径2: edx=0xFFFFFFFF (word_9D6C88=-1) → 原 ja 取 → 返回地址
+    # 被 add [esp],0x112 调整 → ret 落回 STOP (= 返回地址+0x112)
+    esp_after = run_tail(0xFFFFFFFF, STOP - 0x112, STOP)
+    p2 = esp_after == entry_esp + 4
+    print(f"  尾声路径2 (edx=-1, default 路径 +0x112): "
+          f"{'[OK]' if p2 else '[FAIL] esp=' + hex(esp_after)}")
+    ok &= p2
+
+    print("[OK] unicorn 执行级验证全部通过 (两行布局 + 空槽透明 + 尾声双路径)"
+          if ok else "[FAIL] 存在差异")
     return ok
 
 
