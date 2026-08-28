@@ -2641,16 +2641,28 @@ def apply_config_patches(config: PatchConfig, code_buf: bytearray, code_start_ad
     # ── Phase 7: Hook 占用跟踪表 (启动器内部多个 cave_hook 之间) ──
     hook_table = HookTable()
 
+    def _verdict(defn, ok: bool) -> bool:
+        """统一结果判定: 每个补丁必输出一行结果, 并置位 _applied 供统计。
+
+        此前部分补丁 (尤其外置 cave_hook) 仅有描述行, 成败无法从日志确认。
+        """
+        defn._applied = bool(ok)
+        if ok:
+            log(f"    [OK] {defn.id}: 补丁已应用")
+        else:
+            log(f"    [ERROR] {defn.id}: 补丁应用失败")
+        return bool(ok)
+
     for defn in config.patches:
         tag = f"[{defn.id}]"
         log(f"\n  {tag}: {defn.desc}")
 
         if selected_patches is not None and defn.optional and defn.id not in selected_patches:
-            log(f"    -> 用户取消勾选, 跳过")
+            log(f"    -> [跳过] 用户取消勾选")
             continue
 
         if defn.id in disabled_patches:
-            log(f"    -> 诊断/兼容模式强制跳过")
+            log(f"    -> [跳过] 诊断/兼容模式强制禁用")
             continue
 
         # 第三方 MOD 兼容: profile_rules 检查
@@ -2658,12 +2670,12 @@ def apply_config_patches(config: PatchConfig, code_buf: bytearray, code_start_ad
             rule = defn.profile_rules.get(_profile_name,
                                          defn.profile_rules.get("_default", "apply"))
             if rule == "skip":
-                log(f"    -> profile '{_profile_name}' 规则: 跳过")
+                log(f"    -> [跳过] profile '{_profile_name}' 规则禁用")
                 continue
 
         # 第三方 MOD 兼容: profile skip_patches 检查
         if defn.id in _profile_skip:
-            log(f"    -> 第三方 MOD 版本自动跳过")
+            log(f"    -> [跳过] 第三方 MOD 版本自动禁用")
             continue
 
         if defn.type == "cave_hook":
@@ -2681,13 +2693,13 @@ def apply_config_patches(config: PatchConfig, code_buf: bytearray, code_start_ad
                         hh = [fb_off]
                         log(f"  {tag}: 模式无匹配, 使用 fallback_rva 0x{defn.fallback_rva:X} (offset 0x{fb_hook:X})")
                     else:
-                        log(f"  {tag}: fallback_rva 0x{defn.fallback_rva:X} 越界, 跳过")
+                        log(f"    [WARN] {tag}: fallback_rva 0x{defn.fallback_rva:X} 越界, 补丁未应用")
                         continue
                 elif len(hh) == 0 and exe_profile and exe_profile.has_extra_sections:
-                    log(f"  {tag}: Hook 模式无匹配 (MOD 已修改, 无 fallback), 跳过")
+                    log(f"    [WARN] {tag}: Hook 模式无匹配 (目标代码已被第三方 MOD 修改, 无 fallback), 补丁未应用")
                     continue
                 else:
-                    log(f"  {tag}: Hook 模式匹配 {len(hh)} 处 (预期 {defn.hook_expect_count}), 跳过")
+                    log(f"    [WARN] {tag}: Hook 模式匹配 {len(hh)} 处 (预期 {defn.hook_expect_count}), 补丁未应用")
                     continue
             # Hook 冲突检测 (Phase 7 v2): 同时检查启动器内部 + 外部 MOD
             hook_off_abs = hh[0] + defn.hook_offset
@@ -2702,7 +2714,7 @@ def apply_config_patches(config: PatchConfig, code_buf: bytearray, code_start_ad
                 if action == "override":
                     log(f"  {tag}: 启动器优先级最高 → 覆盖")
                 elif action == "skip":
-                    log(f"  {tag}: 配置跳过此 hook")
+                    log(f"    -> [跳过] 配置声明冲突时跳过此 hook")
                     continue
                 else:
                     log(f"  {tag}: [WARN] 未知 action={action}, 仍尝试应用")
@@ -2710,6 +2722,7 @@ def apply_config_patches(config: PatchConfig, code_buf: bytearray, code_start_ad
             hook_table.register(hook_off_abs, defn.id)
             defn._pre_scanned_hits = hh
             pch.append(defn)
+            log(f"    预扫描命中 {len(hh)} 处 (RVA 0x{hh[0] + defn.hook_offset:X}), 等待应用阶段写入")
             continue
 
         # 构建统一 ctx, 委托给注册表 handler
@@ -2722,20 +2735,21 @@ def apply_config_patches(config: PatchConfig, code_buf: bytearray, code_start_ad
 
         if defn.type == "script":
             # 脚本类型通过 run_script_patch 加载外部 apply(ctx)
-            all_ok &= run_script_patch(defn, ctx)
+            all_ok &= _verdict(defn, run_script_patch(defn, ctx))
             continue
 
         if defn.type == "patch_warpc_addr":
             # WarPC 地址由 WarPC 扩展流程统一处理, 此处仅日志
             log(f"    -> 由 WarPC 扩展流程处理 (base=0x{warpc_base:08X})")
+            defn._applied = True
             continue
 
         # 注册表查找: 普通 patch_type
         handler = _PATCH_TYPE_HANDLERS.get(defn.type)
         if handler is None:
-            log(f"  [WARN] 未知补丁类型: {defn.type}")
+            log(f"    [ERROR] {tag}: 未知补丁类型 '{defn.type}', 补丁未应用")
             continue
-        all_ok &= handler(ctx)
+        all_ok &= _verdict(defn, handler(ctx))
 
     if pch and not minimal_mode and not no_cave_mode:
         hta = pch
@@ -2743,9 +2757,22 @@ def apply_config_patches(config: PatchConfig, code_buf: bytearray, code_start_ad
             hta = [h for h in pch if h.id in ("portrait_cave1", "portrait_cave2")]
         elif only_awk:
             hta = [h for h in pch if h.id == "awk_sprite_cave"]
+        if len(hta) != len(pch):
+            for skipped in pch:
+                if skipped not in hta:
+                    log(f"    [WARN] {skipped.id}: cave hook 被当前启动模式过滤, 未应用")
         log(f"\n  应用 {len(hta)} 个 cave hooks...")
         for defn in hta:
-            all_ok &= apply_cave_hook(defn, defn._pre_scanned_hits, code_buf,
+            hook_ok = apply_cave_hook(defn, defn._pre_scanned_hits, code_buf,
                                        code_start_addr, h_proc, cave_addr,
                                        warpc_base, settings, runtime, log_func=log)
+            all_ok &= _verdict(defn, hook_ok)
+    elif pch:
+        # minimal/no_cave 模式下预扫描通过但不写入
+        for defn in pch:
+            log(f"    [WARN] {defn.id}: cave hook 被当前启动模式禁用, 未应用")
+
+    # 汇总: 成功数仅统计真正走过应用路径的补丁 (跳过的不计为失败)
+    applied = sum(1 for p in config.patches if getattr(p, "_applied", False))
+    log(f"\n  补丁应用汇总: {applied} 个成功 / 共 {len(config.patches)} 个补丁")
     return all_ok

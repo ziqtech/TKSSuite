@@ -413,6 +413,11 @@ class MainWindow(QMainWindow):
 
         # 右侧: 模组信息 (上) + 启动状态 (中) + 画面兼容工具 (下)
         self.log_console = LogConsole()
+        # 注入启动期日志 (会话头等), 保证「查看详细日志」与日志文件一致;
+        # 每次启动清空控制台后需重放 (见 _replay_startup_log)
+        from core.log_setup import take_startup_lines
+        self._startup_log_lines = take_startup_lines()
+        self._replay_startup_log()
         self._tools_panel = self._build_tools_panel()
         self._status_panel = self._build_status_panel()
         right = QSplitter(Qt.Vertical)
@@ -723,6 +728,15 @@ class MainWindow(QMainWindow):
         # 更新日志控制台深色状态
         self.log_console.set_dark_mode(self._dark_mode)
 
+    def _replay_startup_log(self):
+        """将启动期日志 (会话头等) 重新追加到日志控制台。
+
+        这些行与本次会话日志文件的开头完全一致; 启动游戏前控制台会被清空,
+        故需重放以保持「查看详细日志」弹窗内容与日志文件一致。
+        """
+        for line in getattr(self, "_startup_log_lines", []):
+            self.log_console.append_log(line)
+
     def _on_start(self):
         remembered = self._gui_state.last_game_path
         if remembered and os.path.isfile(remembered):
@@ -750,6 +764,8 @@ class MainWindow(QMainWindow):
         self.status_bar.showMessage(
             f"正在准备游戏：{mode_label}，将加载 {enabled_mod_count} 个 MOD")
         self.log_console.clear_log()
+        # 清空后重放会话头, 保持弹窗内容与日志文件一致
+        self._replay_startup_log()
 
         context = LaunchContext(
             exe_path=exe_path,

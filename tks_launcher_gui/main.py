@@ -54,7 +54,26 @@ def _verify_patches() -> int:
     return 0 if ok else 1
 
 
+def _init_logging() -> None:
+    """初始化文件日志 (写入 <启动器目录>/logs/, 打包后无控制台尤其依赖它)"""
+    from core.log_setup import (
+        install_excepthook, log_line, log_session_header, setup_logging,
+    )
+    log_path = setup_logging(prefix="launcher_gui")
+    install_excepthook()
+    log_session_header("TKS Launcher GUI")
+    if log_path:
+        # 经 log_line 写入文件并进入 UI 缓冲, 保证弹窗与文件内容一致
+        log_line(f"[日志] 日志文件: {log_path}")
+        try:
+            print(f"[日志] 日志文件: {log_path}")
+        except Exception:
+            pass  # 打包后无控制台时 sys.stdout 可能不可写, 忽略
+
+
 def main():
+    _init_logging()
+
     if "--verify-patches" in sys.argv:
         sys.exit(_verify_patches())
 

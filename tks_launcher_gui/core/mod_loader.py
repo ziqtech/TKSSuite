@@ -319,6 +319,10 @@ def _load_single_mod(mod_path: str, log_func=None) -> Optional[ModInfo]:
             if internal_path in zf.namelist():
                 content = zf.read(internal_path).decode('utf-8')
                 mod.data_files[internal_path] = json.loads(content)
+            elif internal_path:
+                # 组件数据缺失 = MOD 内容不会生效, 必须显式告警
+                log(f"    [WARN] MOD '{mod.name}' 组件数据文件缺失: {internal_path} "
+                    f"(target={comp.get('target', '?')}), 该组件不会被应用")
 
         # 预加载白名单内的启动器配置文件
         mod.config_files = _load_mod_config_files(zf, log_func=log)
@@ -389,52 +393,61 @@ def expand_pak_mods(pak_path: str, log_func=None) -> List[ModInfo]:
             if n.lower().endswith(".tksmod") and not n.endswith("/")
         )
         for entry in mod_entries:
-            raw_data = zf.read(entry)
-            with zipfile.ZipFile(io.BytesIO(raw_data), 'r') as izf:
-                if "mod.json" not in izf.namelist():
-                    continue
-                mj = json.loads(izf.read("mod.json").decode('utf-8'))
-                if mj.get("format") != "TKSMOD":
-                    continue
+            try:
+                raw_data = zf.read(entry)
+                with zipfile.ZipFile(io.BytesIO(raw_data), 'r') as izf:
+                    if "mod.json" not in izf.namelist():
+                        log(f"  [WARN] 合集内 {entry} 缺少 mod.json, 跳过")
+                        continue
+                    mj = json.loads(izf.read("mod.json").decode('utf-8'))
+                    if mj.get("format") != "TKSMOD":
+                        log(f"  [WARN] 合集内 {entry} 格式无效 (format={mj.get('format')}), 跳过")
+                        continue
 
-                mod = ModInfo(
-                    path=pak_path,
-                    mod_id=mj.get("id", ""),
-                    name=mj.get("name", ""),
-                    version=mj.get("version", "1.0.0"),
-                    author=mj.get("author", ""),
-                    description=mj.get("description", ""),
-                    load_order=mj.get("load_order", 100),
-                    dependencies=mj.get("dependencies", []),
-                    conflicts=mj.get("conflicts", []),
-                    id_ranges=mj.get("id_ranges", {}),
-                    warpc_expand=mj.get("warpc_expand", 0),
-                    components=mj.get("components", []),
-                    resources=mj.get("resources", []),
-                    _data_raw=raw_data,
-                    **_metadata_fields(mj, fallback=pak_metadata),
-                )
-                _infer_metadata(
-                    mod, izf.namelist(),
-                    any(key in mj for key in ("category", "tags")) or
-                    any(key in pak_root_json for key in ("category", "tags")),
-                )
+                    mod = ModInfo(
+                        path=pak_path,
+                        mod_id=mj.get("id", ""),
+                        name=mj.get("name", ""),
+                        version=mj.get("version", "1.0.0"),
+                        author=mj.get("author", ""),
+                        description=mj.get("description", ""),
+                        load_order=mj.get("load_order", 100),
+                        dependencies=mj.get("dependencies", []),
+                        conflicts=mj.get("conflicts", []),
+                        id_ranges=mj.get("id_ranges", {}),
+                        warpc_expand=mj.get("warpc_expand", 0),
+                        components=mj.get("components", []),
+                        resources=mj.get("resources", []),
+                        _data_raw=raw_data,
+                        **_metadata_fields(mj, fallback=pak_metadata),
+                    )
+                    _infer_metadata(
+                        mod, izf.namelist(),
+                        any(key in mj for key in ("category", "tags")) or
+                        any(key in pak_root_json for key in ("category", "tags")),
+                    )
 
-                # 预加载数据文件（内存中）
-                for comp in mod.components:
-                    internal_path = comp.get("file", "")
-                    if internal_path in izf.namelist():
-                        mod.data_files[internal_path] = json.loads(
-                            izf.read(internal_path).decode('utf-8'))
+                    # 预加载数据文件（内存中）
+                    for comp in mod.components:
+                        internal_path = comp.get("file", "")
+                        if internal_path in izf.namelist():
+                            mod.data_files[internal_path] = json.loads(
+                                izf.read(internal_path).decode('utf-8'))
+                        elif internal_path:
+                            log(f"  [WARN] 合集内 '{mod.name}' 组件数据文件缺失: "
+                                f"{internal_path} (target={comp.get('target', '?')}), "
+                                f"该组件不会被应用")
 
-                # 预加载白名单内的启动器配置文件 (子 MOD 内部的)
-                mod.config_files = _load_mod_config_files(izf, log_func=log)
-                # 合并 pak 根目录的合集级配置 (子 MOD 内部配置优先，pak 根目录补充)
-                for cfg_name, cfg_data in pak_config_files.items():
-                    if cfg_name not in mod.config_files:
-                        mod.config_files[cfg_name] = cfg_data
+                    # 预加载白名单内的启动器配置文件 (子 MOD 内部的)
+                    mod.config_files = _load_mod_config_files(izf, log_func=log)
+                    # 合并 pak 根目录的合集级配置 (子 MOD 内部配置优先，pak 根目录补充)
+                    for cfg_name, cfg_data in pak_config_files.items():
+                        if cfg_name not in mod.config_files:
+                            mod.config_files[cfg_name] = cfg_data
 
-                result.append(mod)
+                    result.append(mod)
+            except Exception as e:
+                log(f"  [WARN] 合集内 {entry} 加载失败: {e}")
 
     return result
 
@@ -802,6 +815,10 @@ def merge_mods(mods: List[ModInfo], game_dir: str, log_func=None) -> MergedData:
                 if target not in targets:
                     targets[target] = []
                 targets[target].append((mod, mod.data_files[internal]))
+            elif target:
+                # 声明了 target 但数据未加载 (ZIP 内缺失/解析失败), 不告警则无迹可查
+                log(f"  [WARN] MOD '{mod.name}' 组件数据未加载: {internal} "
+                    f"(target={target}), 跳过该组件")
 
         # 资源替换
         for res in mod.resources:
@@ -929,24 +946,35 @@ def _merge_dat_file(file_path: str, target_name: str, info: dict,
 
     # 按顺序应用每个 MOD 的差异
     for mod, diff_data in mod_diffs:
+        n_skipped = 0
+        n_bad_index = 0
         # 应用修改
         for entry in diff_data.get("modified", []):
             idx = entry.get("index", -1)
             if idx < 0 or idx >= max_count:
+                n_bad_index += 1
                 continue
             fields = entry.get("fields", {})
-            _apply_fields_to_record(records, idx, rec_size, field_type, field_count, fields)
+            n_skipped += _apply_fields_to_record(
+                records, idx, rec_size, field_type, field_count, fields)
 
         # 应用追加
         for entry in diff_data.get("appended", []):
             idx = entry.get("index", -1)
             if idx < 0 or idx >= max_count:
+                n_bad_index += 1
                 continue
             fields = entry.get("fields", {})
-            _apply_fields_to_record(records, idx, rec_size, field_type, field_count, fields)
+            n_skipped += _apply_fields_to_record(
+                records, idx, rec_size, field_type, field_count, fields)
 
         log(f"    应用 MOD '{mod.name}': {len(diff_data.get('modified', []))} 修改, "
             f"{len(diff_data.get('appended', []))} 追加")
+        if n_bad_index:
+            log(f"    [WARN] MOD '{mod.name}': {n_bad_index} 条记录索引越界, 未应用")
+        if n_skipped:
+            log(f"    [WARN] MOD '{mod.name}': {n_skipped} 个字段写入失败 "
+                f"(字段名/值类型/范围错误), 未应用")
 
     result = bytes(records[:max_count * rec_size])
 
@@ -958,37 +986,56 @@ def _merge_dat_file(file_path: str, target_name: str, info: dict,
 
 
 def _apply_fields_to_record(buf: bytearray, index: int, rec_size: int,
-                            field_type: str, field_count: int, fields: dict):
-    """将字段差异应用到记录缓冲区"""
+                            field_type: str, field_count: int, fields: dict) -> int:
+    """将字段差异应用到记录缓冲区。返回写入失败的字段数 (供调用方汇总告警)"""
     base_off = index * rec_size
+    skipped = 0
 
     for field_key, value in fields.items():
         # 解析字段索引: "f0", "f1", ...
         if not field_key.startswith('f'):
+            skipped += 1
             continue
         try:
             fi = int(field_key[1:])
         except ValueError:
+            skipped += 1
             continue
         if fi < 0 or fi >= field_count:
+            skipped += 1
             continue
 
-        if field_type == "int16":
-            off = base_off + fi * 2
-            if off + 2 <= len(buf):
-                struct.pack_into('<h', buf, off, int(value))
-        elif field_type == "uint16":
-            off = base_off + fi * 2
-            if off + 2 <= len(buf):
-                struct.pack_into('<H', buf, off, int(value) & 0xFFFF)
-        elif field_type == "int32":
-            off = base_off + fi * 4
-            if off + 4 <= len(buf):
-                struct.pack_into('<i', buf, off, int(value))
-        elif field_type == "int8":
-            # WarWay.dat 逐格 int8: f0..f1023 直接映射到 32x32 网格的每个字节
-            if base_off + fi < len(buf):
-                struct.pack_into('<b', buf, base_off + fi, int(value))
+        try:
+            if field_type == "int16":
+                off = base_off + fi * 2
+                if off + 2 <= len(buf):
+                    struct.pack_into('<h', buf, off, int(value))
+                else:
+                    skipped += 1
+            elif field_type == "uint16":
+                off = base_off + fi * 2
+                if off + 2 <= len(buf):
+                    struct.pack_into('<H', buf, off, int(value) & 0xFFFF)
+                else:
+                    skipped += 1
+            elif field_type == "int32":
+                off = base_off + fi * 4
+                if off + 4 <= len(buf):
+                    struct.pack_into('<i', buf, off, int(value))
+                else:
+                    skipped += 1
+            elif field_type == "int8":
+                # WarWay.dat 逐格 int8: f0..f1023 直接映射到 32x32 网格的每个字节
+                if base_off + fi < len(buf):
+                    struct.pack_into('<b', buf, base_off + fi, int(value))
+                else:
+                    skipped += 1
+            else:
+                skipped += 1
+        except (struct.error, ValueError, TypeError):
+            # 值类型/范围错误: 该字段未写入, 必须计入失败数
+            skipped += 1
+    return skipped
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -1024,12 +1071,15 @@ def _merge_structured_file(file_path: str, target_name: str, info: dict,
     records = bytearray(dec)
 
     # 确定最大记录数 (可能因追加而增加)
+    # 与 _merge_dat_file 保持一致: modified 也可能携带超出当前文件的新记录索引
+    # (编辑器按满额导出时会把新记录归入 modified), 故一并参与扩展计算。
     max_count = actual_count
     for mod, diff_data in mod_diffs:
-        for app in diff_data.get("appended", []):
-            idx = app.get("index", 0)
-            if idx >= max_count:
-                max_count = idx + 1
+        for _key in ("appended", "modified"):
+            for app in diff_data.get(_key, []):
+                idx = app.get("index", 0)
+                if idx >= max_count:
+                    max_count = idx + 1
 
     # 需要扩展时填充零字节
     if max_count > actual_count:
@@ -1037,22 +1087,33 @@ def _merge_structured_file(file_path: str, target_name: str, info: dict,
 
     # 按顺序应用每个 MOD 的差异
     for mod, diff_data in mod_diffs:
+        n_skipped = 0
+        n_bad_index = 0
         for entry in diff_data.get("modified", []):
             idx = entry.get("index", -1)
             if idx < 0 or idx >= max_count:
+                n_bad_index += 1
                 continue
             fields = entry.get("fields", {})
-            _apply_structured_fields(records, idx, rec_size, field_layout, fields)
+            n_skipped += _apply_structured_fields(
+                records, idx, rec_size, field_layout, fields)
 
         for entry in diff_data.get("appended", []):
             idx = entry.get("index", -1)
             if idx < 0 or idx >= max_count:
+                n_bad_index += 1
                 continue
             fields = entry.get("fields", {})
-            _apply_structured_fields(records, idx, rec_size, field_layout, fields)
+            n_skipped += _apply_structured_fields(
+                records, idx, rec_size, field_layout, fields)
 
         log(f"    应用 MOD '{mod.name}': {len(diff_data.get('modified', []))} 修改, "
             f"{len(diff_data.get('appended', []))} 追加")
+        if n_bad_index:
+            log(f"    [WARN] MOD '{mod.name}': {n_bad_index} 条记录索引越界, 未应用")
+        if n_skipped:
+            log(f"    [WARN] MOD '{mod.name}': {n_skipped} 个字段写入失败 "
+                f"(字段名不在布局表/值类型错误), 未应用")
 
     result = bytes(records[:max_count * rec_size])
 
@@ -1063,8 +1124,8 @@ def _merge_structured_file(file_path: str, target_name: str, info: dict,
 
 
 def _apply_structured_fields(buf: bytearray, index: int, rec_size: int,
-                             field_layout: dict, fields: dict):
-    """将结构化字段差异应用到记录缓冲区。
+                             field_layout: dict, fields: dict) -> int:
+    """将结构化字段差异应用到记录缓冲区。返回写入失败的字段数。
 
     field_layout: {field_name: (offset, item_size, struct_fmt, item_count)}
     fields: {field_name: scalar_or_list}
@@ -1072,6 +1133,7 @@ def _apply_structured_fields(buf: bytearray, index: int, rec_size: int,
       - 数组字段 (item_count > 1): 接受 list, 逐元素 pack
     """
     base_off = index * rec_size
+    skipped = 0
     # struct_fmt -> (元素字节数, 无符号掩码)
     # 无符号类型用掩码截断, 有符号类型由 struct 自行检查范围
     _FMT_INFO = {'<B': (1, 0xFF), '<b': (1, None),
@@ -1081,6 +1143,8 @@ def _apply_structured_fields(buf: bytearray, index: int, rec_size: int,
     for field_name, value in fields.items():
         layout = field_layout.get(field_name)
         if layout is None:
+            # diff 引用的字段不在布局表中 (拼写错误或版本不匹配)
+            skipped += 1
             continue
         offset, _item_size, pack_fmt, item_count = layout
         abs_off = base_off + offset
@@ -1092,6 +1156,7 @@ def _apply_structured_fields(buf: bytearray, index: int, rec_size: int,
                 break
             elem_off = abs_off + i * elem_size
             if elem_off + elem_size > len(buf):
+                skipped += 1
                 break
             try:
                 iv = int(v)
@@ -1099,7 +1164,8 @@ def _apply_structured_fields(buf: bytearray, index: int, rec_size: int,
                     iv &= mask
                 struct.pack_into(pack_fmt, buf, elem_off, iv)
             except (struct.error, ValueError, TypeError):
-                pass
+                skipped += 1
+    return skipped
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -1439,8 +1505,9 @@ def _merge_tkt_file(file_path: str, target_name: str,
                 if eid not in entry_order:
                     entry_order.append(eid)
         elif isinstance(appended, list):
-            for text in appended:
-                pass  # TKT 不应有 list 类型追加
+            if appended:
+                log(f"    [WARN] MOD '{mod.name}': TKT 不支持 list 型追加, "
+                    f"{len(appended)} 条被忽略")
 
         # 应用删除
         for id_str in deleted:
@@ -1697,6 +1764,8 @@ def _merge_block_file(file_path: str, target_name: str,
         modified_blocks = diff_data.get("modified", [])
         appended_blocks = diff_data.get("appended", [])
         deleted_indices = diff_data.get("deleted_indices", [])
+        n_bad_modified = 0
+        n_bad_appended = 0
 
         # 应用修改
         for entry in modified_blocks:
@@ -1704,17 +1773,21 @@ def _merge_block_file(file_path: str, target_name: str,
             data_b64 = entry.get("data_b64", "")
             if 0 <= idx < len(sections) and data_b64:
                 sections[idx] = base64.b64decode(data_b64)
+            else:
+                n_bad_modified += 1
 
         # 应用追加
         for entry in appended_blocks:
             idx = entry.get("index", -1)
             data_b64 = entry.get("data_b64", "")
-            if data_b64:
+            if data_b64 and idx >= 0:
                 block_data = base64.b64decode(data_b64)
                 # 扩展到指定索引
                 while len(sections) <= idx:
                     sections.append(b'')
                 sections[idx] = block_data
+            else:
+                n_bad_appended += 1
 
         # 处理删除 (将删除的区段置为空, 保持索引对齐)
         for idx in sorted(deleted_indices, reverse=True):
@@ -1723,6 +1796,12 @@ def _merge_block_file(file_path: str, target_name: str,
 
         log(f"    应用 MOD '{mod.name}': {len(modified_blocks)} 修改, "
             f"{len(appended_blocks)} 追加, {len(deleted_indices)} 删除")
+        if n_bad_modified:
+            log(f"    [WARN] MOD '{mod.name}': {n_bad_modified} 个块修改未应用 "
+                f"(区段索引越界或缺少 data_b64)")
+        if n_bad_appended:
+            log(f"    [WARN] MOD '{mod.name}': {n_bad_appended} 个块追加未应用 "
+                f"(索引无效或缺少 data_b64)")
 
     # 写入文件
     if block_type == "jvm_block":
@@ -1831,6 +1910,8 @@ def _merge_grp_layer_diff(file_path: str, target_name: str,
                     continue
                 if 'planes' in entry:
                     if not (0 <= sidx < len(base_sections)):
+                        log(f"    [WARN] MOD '{mod.name}': 区段 #{sidx} 越界 "
+                            f"(共 {len(base_sections)} 个), 跳过")
                         continue
                     if sidx not in decoded:
                         need_a = 'A' in section_planes.get(sidx, ())
@@ -1851,6 +1932,8 @@ def _merge_grp_layer_diff(file_path: str, target_name: str,
                             d['meta']['has_layer2'] = True
                         buf = d.get(plane)
                         if buf is None:
+                            log(f"    [WARN] MOD '{mod.name}': 区段 #{sidx} 无 {plane} 平面, "
+                                f"该平面差分被跳过")
                             continue
                         for start, vals in spans:
                             for j, v in enumerate(vals):
@@ -1970,6 +2053,10 @@ def apply_mod_data(merged: MergedData, game_dir: str, log_func=None):
                         with open(target_path, 'wb') as dst:
                             dst.write(src.read())
                     log(f"  替换资源: {target_name}")
+                else:
+                    # 资源文件在 MOD 包内缺失 — 不告警则玩家无从得知替换未生效
+                    log(f"  [ERROR] 资源替换跳过: {target_name} "
+                        f"(MOD 包内缺少 {internal_path})")
         except Exception as e:
             log(f"  [ERROR] 替换资源 {target_name} 失败: {e}")
 

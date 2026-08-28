@@ -108,6 +108,51 @@ def _get_exe_dir():
         return os.path.dirname(os.path.abspath(__file__))
 
 
+class _StdoutTee:
+    """CLI 模式下将 stdout 同步镜像到会话日志文件。
+
+    CLI 全部输出为行式日志型文本 (无 input/进度条), 通过包装
+    sys.stdout 可捕获所有 print (含配置解析、补丁验证), 无需改动各调用点。
+    """
+
+    def __init__(self, stream):
+        self._stream = stream
+        self._buffer = ""
+
+    def write(self, text):
+        self._stream.write(text)
+        try:
+            from core.log_setup import log_line
+            self._buffer += text
+            while "\n" in self._buffer:
+                line, self._buffer = self._buffer.split("\n", 1)
+                line = line.rstrip("\r")
+                if line:
+                    log_line(line)
+        except Exception:
+            pass  # 日志失败绝不影响控制台输出
+
+    def flush(self):
+        self._stream.flush()
+
+    def __getattr__(self, name):
+        # isatty/encoding 等属性透传给真实流
+        return getattr(self._stream, name)
+
+
+def _init_cli_logging() -> None:
+    """初始化 CLI 会话日志 (<启动器目录>/logs/), 并镜像 stdout"""
+    from core.log_setup import (
+        install_excepthook, log_session_header, setup_logging,
+    )
+    log_path = setup_logging(prefix="launcher_cli")
+    install_excepthook()
+    log_session_header("TKS Launcher CLI")
+    if log_path:
+        sys.stdout = _StdoutTee(sys.stdout)
+        print(f"[日志] 日志文件: {log_path}")
+
+
 def _load_launcher_config(exe_dir: str, args) -> dict:
     """加载 launcher_config.json (可选)"""
     config_path = args.config
@@ -225,7 +270,8 @@ class CliLauncher:
             return self._do_run()
         except Exception as e:
             self._log(f"[FATAL] 未捕获异常: {e}")
-            traceback.print_exc()
+            # traceback 经 _log 输出 (stdout), 确保同时进入会话日志文件
+            self._log(traceback.format_exc().rstrip())
             return False, {"error": str(e)}
         finally:
             signal.signal(signal.SIGINT, self._orig_sigint)
@@ -576,6 +622,8 @@ class CliLauncher:
 # ═══════════════════════════════════════════════════════════════
 
 def main():
+    _init_cli_logging()
+
     parser = argparse.ArgumentParser(
         description="TKS Launcher CLI — Headless 启动器 (Winlator 兼容)",
         formatter_class=argparse.RawDescriptionHelpFormatter,

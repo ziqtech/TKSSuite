@@ -82,6 +82,9 @@ class PatcherWorker(QThread):
 
     def _log(self, msg: str):
         self.log_emitted.emit(msg)
+        # 同步写入会话日志文件 (core.log_setup, 未初始化时为空操作)
+        from core.log_setup import log_line
+        log_line(msg)
 
     def _status(self, text: str, is_ok: bool):
         self.status_changed.emit(text, is_ok)

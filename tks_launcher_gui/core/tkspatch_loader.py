@@ -521,7 +521,9 @@ def load_tkspatch_dir(patches_dir: str, log_func=None) -> List[PatchDef]:
             defn = load_tkspatch_file(fpath, log_func=log)
             if defn is not None and defn.id:
                 results.append(defn)
-            elif defn is None:
+            elif defn is not None:
+                log(f"  [WARN] 跳过无效文件: {fname} (补丁 id 为空)")
+            else:
                 log(f"  [WARN] 跳过无效文件: {fname}")
 
     if results:
