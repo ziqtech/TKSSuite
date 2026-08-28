@@ -10,6 +10,7 @@ MOD 加载器 — 扫描 mods/ 目录、解析 .tksmod、依赖排序、冲突�
   6. restore_originals(game_dir)                   恢复原始文件
 """
 import base64
+import io
 import json
 import os
 import re as _re
@@ -380,7 +381,6 @@ def expand_pak_mods(pak_path: str, log_func=None) -> List[ModInfo]:
     pak 根目录下的 configs/*.json (白名单内) 会被读取并注入到所有子 MOD 的
     config_files 中，作为合集级配置覆盖。
     """
-    import io
     log = log_func or (lambda x: None)
     result = []
 
@@ -461,7 +461,6 @@ def collect_pak_changed_targets(pak_path: str, log_func=None) -> List[str]:
     components/resources 的 target 字段，去重保序后返回。用于模组信息
     面板展示合集会改动哪些游戏文件。
     """
-    import io
     log = log_func or (lambda x: None)
     targets: List[str] = []
     seen: set = set()
@@ -539,7 +538,7 @@ def resolve_dependencies(mods: List[ModInfo], log_func=None) -> List[ModInfo]:
 
 def _collect_grp_layer_offsets(mod: 'ModInfo') -> dict:
     """收集某 MOD 的 GRP 图层差分改动位置: {(target_lower, section, plane): set(offsets)}。"""
-    result = {}
+    result = defaultdict(set)
     for comp in mod.components:
         internal = comp.get("file", "")
         target = comp.get("target", "")
@@ -554,10 +553,9 @@ def _collect_grp_layer_offsets(mod: 'ModInfo') -> dict:
             if not planes:
                 continue
             for plane, spans in planes.items():
-                offs = result.setdefault((target.lower(), str(sidx), plane), set())
+                offs = result[(target.lower(), str(sidx), plane)]
                 for start, vals in spans:
-                    for j in range(len(vals)):
-                        offs.add(start + j)
+                    offs.update(range(start, start + len(vals)))
     return result
 
 
@@ -568,7 +566,7 @@ def _collect_record_indices(mod: 'ModInfo') -> dict:
     (TKMat/TKDefUnit/WarPC/TKItem/TKSkill/TKKon/TKShop/WarWay/WarData 等)。
     不含块级(block_diff/grp_layer_diff)与文本(TKD/TKT)差异——它们各有专门检测。
     """
-    result: dict = {}
+    result: dict = defaultdict(lambda: defaultdict(set))
     for comp in mod.components:
         internal = comp.get("file", "")
         target = comp.get("target", "")
@@ -580,7 +578,7 @@ def _collect_record_indices(mod: 'ModInfo') -> dict:
         # 定长记录差异的 modified 为 list; 文本差异为 dict, 在此排除
         if not isinstance(d.get("modified"), list):
             continue
-        idx_map = result.setdefault(target.lower(), {})
+        idx_map = result[target.lower()]
         for group in ("modified", "appended"):
             for entry in d.get(group, []):
                 if not isinstance(entry, dict):
@@ -590,7 +588,7 @@ def _collect_record_indices(mod: 'ModInfo') -> dict:
                     continue
                 fields = entry.get("fields", {})
                 keys = set(fields.keys()) if isinstance(fields, dict) else set()
-                idx_map.setdefault(idx, set()).update(keys)
+                idx_map[idx].update(keys)
     return result
 
 
@@ -600,7 +598,7 @@ def _collect_text_entry_ids(mod: 'ModInfo') -> dict:
     TKD.dat: DEFINE 块 id; TKT.dat: 文本条目 id。
     modified 为 dict 视为文本差异; appended 兼容 dict(TKT) 与 DEFINE 全文 list(TKD)。
     """
-    result: dict = {}
+    result: dict = defaultdict(set)
     for comp in mod.components:
         internal = comp.get("file", "")
         target = comp.get("target", "")
@@ -624,7 +622,7 @@ def _collect_text_entry_ids(mod: 'ModInfo') -> dict:
                             ids.add(parts[1])
                         break
         if ids:
-            result.setdefault(target.lower(), set()).update(ids)
+            result[target.lower()].update(ids)
     return result
 
 
@@ -1580,17 +1578,9 @@ def _load_grp_sections(file_path: str) -> Optional[tuple]:
     if len(idx_data) < 8 or len(idx_data) % 4 != 0:
         return None
 
-    offsets = [struct.unpack_from('<I', idx_data, i)[0]
-               for i in range(0, len(idx_data), 4)]
-
-    sections = []
-    for i in range(len(offsets) - 1):
-        start = offsets[i]
-        end = offsets[i + 1]
-        if start <= end <= len(data):
-            sections.append(data[start:end])
-        else:
-            sections.append(b'')
+    offsets = struct.unpack(f'<{len(idx_data) // 4}I', idx_data)
+    sections = [data[start:end] if start <= end <= len(data) else b''
+                for start, end in zip(offsets, offsets[1:])]
 
     return sections, idx_path
 
@@ -1819,12 +1809,9 @@ def _read_sections_with_idx(grp_path: str, idx_path: str) -> Optional[list]:
         idx_data = f.read()
     if len(idx_data) < 8 or len(idx_data) % 4 != 0:
         return None
-    offsets = [struct.unpack_from('<I', idx_data, i)[0]
-               for i in range(0, len(idx_data), 4)]
-    sections = []
-    for i in range(len(offsets) - 1):
-        start, end = offsets[i], offsets[i + 1]
-        sections.append(data[start:end] if start <= end <= len(data) else b'')
+    offsets = struct.unpack(f'<{len(idx_data) // 4}I', idx_data)
+    sections = [data[start:end] if start <= end <= len(data) else b''
+                for start, end in zip(offsets, offsets[1:])]
     return sections
 
 
@@ -1874,7 +1861,7 @@ def _merge_grp_layer_diff(file_path: str, target_name: str,
     n_conflict = 0
 
     # 预扫描: 统计每个区段被改动的平面, 用于跳过不必要的主图 LZSS 解压
-    section_planes = {}
+    section_planes = defaultdict(set)
     for _mod, _diff in mod_diffs:
         _m = _diff.get("modified", {})
         if not isinstance(_m, dict):
@@ -1887,7 +1874,7 @@ def _merge_grp_layer_diff(file_path: str, target_name: str,
                 _si = int(_sidx_str)
             except (ValueError, TypeError):
                 continue
-            section_planes.setdefault(_si, set()).update(_pl.keys())
+            section_planes[_si].update(_pl.keys())
 
     for mod, diff in mod_diffs:
         modified = diff.get("modified", {})
@@ -2013,7 +2000,6 @@ def apply_mod_data(merged: MergedData, game_dir: str, log_func=None):
         log(f"  写入: {target_name} ({len(data)} 字节)")
 
     # 处理资源文件替换
-    import io as _io
     for target_name, (mod_path, internal_path, raw_data) in merged.resource_replacements.items():
         target_path = os.path.join(game_dir, target_name)
         orig_path = target_path + ".mod_orig"
@@ -2040,7 +2026,7 @@ def apply_mod_data(merged: MergedData, game_dir: str, log_func=None):
         # 从 ZIP 中提取资源文件（支持内存数据或磁盘文件）
         try:
             if raw_data:
-                zf = zipfile.ZipFile(_io.BytesIO(raw_data), 'r')
+                zf = zipfile.ZipFile(io.BytesIO(raw_data), 'r')
             else:
                 zf = zipfile.ZipFile(mod_path, 'r')
             with zf:

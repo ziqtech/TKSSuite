@@ -1891,8 +1891,7 @@ def apply_drop_probability(defn: PatchDef, code_buf: bytearray, code_start_addr:
         if nw == len(new_bytes):
             log(f"    [OK] 0x{rva:X}: {expected.hex()} → {new_bytes.hex()} "
                 f"(threshold={int.from_bytes(new_bytes[2:4],'little')})")
-            for i in range(len(new_bytes)):
-                code_buf[hook_off + i] = new_bytes[i]
+            code_buf[hook_off:hook_off + len(new_bytes)] = new_bytes
         else:
             log(f"  [FAIL] 写入失败 @ 0x{ha:08X}")
             all_ok = False
