@@ -31,6 +31,7 @@ if _THIS_DIR not in sys.path:
     sys.path.insert(0, _THIS_DIR)
 
 from core.launcher_pipeline import PatcherPipeline, PipelineConfig
+from core.log_setup import log_line
 from core.memory import (
     find_window, get_child_processes, get_module_base, get_module_size,
     read_pm, resume_process, suspend_process,
@@ -122,7 +123,6 @@ class _StdoutTee:
     def write(self, text):
         self._stream.write(text)
         try:
-            from core.log_setup import log_line
             self._buffer += text
             while "\n" in self._buffer:
                 line, self._buffer = self._buffer.split("\n", 1)

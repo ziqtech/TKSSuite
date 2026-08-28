@@ -75,17 +75,7 @@ class LogHighlighter(QSyntaxHighlighter):
         colors = self._LEVEL_COLORS_DARK if self._dark else self._LEVEL_COLORS_LIGHT
         default_fg = self._DEFAULT_FG_DARK if self._dark else self._DEFAULT_FG_LIGHT
 
-        self._fmt_error = self._make_fmt(colors['error'])
-        self._fmt_warn = self._make_fmt(colors['warn'])
-        self._fmt_ok = self._make_fmt(colors['ok'])
-        self._fmt_info = self._make_fmt(colors['info'])
         self._fmt_default = self._make_fmt(default_fg)
-
-        # 级别标记本体加粗 (与整行同色, 仅增字重)
-        self._fmt_error_bold = self._make_fmt(colors['error'], bold=True)
-        self._fmt_warn_bold = self._make_fmt(colors['warn'], bold=True)
-        self._fmt_ok_bold = self._make_fmt(colors['ok'], bold=True)
-        self._fmt_info_bold = self._make_fmt(colors['info'], bold=True)
 
         # 段级: 补丁 ID 蓝 / 地址青
         id_color = self._ID_COLOR_DARK if self._dark else self._ID_COLOR_LIGHT
@@ -93,20 +83,26 @@ class LogHighlighter(QSyntaxHighlighter):
         self._fmt_patch_id = self._make_fmt(id_color)
         self._fmt_hex = self._make_fmt(hex_color)
 
+        # 级别标记 → (整行格式, 标记加粗格式) 查找表, 按检测优先级排列
+        def pair(key: str):
+            color = colors[key]
+            return self._make_fmt(color), self._make_fmt(color, bold=True)
+
+        self._level_fmts = {
+            '[ERROR]': pair('error'),
+            '[FATAL]': pair('error'),
+            '[WARN]':  pair('warn'),
+            '[OK]':    pair('ok'),
+            '[INFO]':  pair('info'),
+        }
+
     def highlightBlock(self, text: str):
         """对每个文本块 (行) 应用颜色: 先行级基调, 再段级覆盖"""
-        if "[ERROR]" in text or "[FATAL]" in text:
-            fmt, bold_fmt = self._fmt_error, self._fmt_error_bold
-        elif "[WARN]" in text:
-            fmt, bold_fmt = self._fmt_warn, self._fmt_warn_bold
-        elif "[OK]" in text:
-            fmt, bold_fmt = self._fmt_ok, self._fmt_ok_bold
-        elif "[INFO]" in text:
-            fmt, bold_fmt = self._fmt_info, self._fmt_info_bold
-        else:
-            fmt, bold_fmt = self._fmt_default, None
-
-        # 1. 行级基调
+        # 1. 行级基调: 查找表按序取首个命中的标记
+        fmt, bold_fmt = next(
+            (self._level_fmts[m] for m in self._level_fmts if m in text),
+            (self._fmt_default, None),
+        )
         self.setFormat(0, len(text), fmt)
 
         # 2. 段级覆盖 (后设置的生效, 按覆盖优先级从低到高)

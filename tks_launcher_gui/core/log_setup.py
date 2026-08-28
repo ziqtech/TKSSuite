@@ -65,11 +65,8 @@ def setup_logging(prefix: str = "launcher") -> str:
     global _setup_done
     logger = logging.getLogger(_LOGGER_NAME)
     if _setup_done:
-        for h in logger.handlers:
-            path = getattr(h, "baseFilename", "")
-            if path:
-                return path
-        return ""
+        return next((h.baseFilename for h in logger.handlers
+                     if getattr(h, "baseFilename", "")), "")
 
     _setup_done = True
     logger.setLevel(logging.DEBUG)
@@ -137,9 +134,10 @@ _TB_EXC_LINE = re.compile(r"^[A-Z][A-Za-z0-9_]*(?:Error|Exception|Interrupt)(?::
 
 def _detect_level(msg: str) -> int:
     """按行内标记推断日志级别, 无标记的续行 (如 traceback) 继承上一条高级别"""
-    for marker, level in _LEVEL_MARKERS:
-        if marker in msg:
-            return level
+    marked = next((level for marker, level in _LEVEL_MARKERS if marker in msg),
+                  None)
+    if marked is not None:
+        return marked
     # traceback 续行 (帧列表/异常类型行) 与前面的 FATAL/ERROR 同级
     if any(m in msg for m in _TB_CONT_MARKERS) or _TB_EXC_LINE.match(msg):
         return logging.CRITICAL

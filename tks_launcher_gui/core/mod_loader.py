@@ -16,7 +16,9 @@ import re as _re
 import shutil
 import struct
 import zipfile
+from collections import defaultdict
 from dataclasses import dataclass, field
+from itertools import combinations
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -638,84 +640,80 @@ def detect_conflicts(mods: List[ModInfo], log_func=None) -> List[Conflict]:
     record_maps = [_collect_record_indices(m) for m in mods]
     text_maps = [_collect_text_entry_ids(m) for m in mods]
 
-    for i in range(len(mods)):
-        for j in range(i + 1, len(mods)):
-            m1, m2 = mods[i], mods[j]
+    # zip 将 MOD 与其预计算的改动位置图绑定, combinations 生成两两配对,
+    # 避免手工索引双重循环
+    for (m1, lm1, rm1, tm1), (m2, lm2, rm2, tm2) in combinations(
+            zip(mods, layer_maps, record_maps, text_maps), 2):
+        # 显式冲突声明
+        if m2.mod_id in m1.conflicts or m1.mod_id in m2.conflicts:
+            conflicts.append(Conflict(
+                mod1_id=m1.mod_id, mod2_id=m2.mod_id,
+                conflict_type="explicit",
+                detail=f"'{m1.name}' 与 '{m2.name}' 显式声明冲突"))
 
-            # 显式冲突声明
-            if m2.mod_id in m1.conflicts or m1.mod_id in m2.conflicts:
+        # ID 范围冲突
+        for key in m1.id_ranges.keys() & m2.id_ranges.keys():
+            r1 = m1.id_ranges[key]
+            r2 = m2.id_ranges[key]
+            if r1.get("start", 0) <= r2.get("end", 0) and \
+               r2.get("start", 0) <= r1.get("end", 0):
                 conflicts.append(Conflict(
                     mod1_id=m1.mod_id, mod2_id=m2.mod_id,
-                    conflict_type="explicit",
-                    detail=f"'{m1.name}' 与 '{m2.name}' 显式声明冲突"))
+                    conflict_type="id_range", target=key,
+                    detail=f"{key} ID 范围重叠: "
+                           f"{m1.name}[{r1.get('start')}-{r1.get('end')}] "
+                           f"vs {m2.name}[{r2.get('start')}-{r2.get('end')}]"))
 
-            # ID 范围冲突
-            for key in m1.id_ranges:
-                if key in m2.id_ranges:
-                    r1 = m1.id_ranges[key]
-                    r2 = m2.id_ranges[key]
-                    if r1.get("start", 0) <= r2.get("end", 0) and \
-                       r2.get("start", 0) <= r1.get("end", 0):
-                        conflicts.append(Conflict(
-                            mod1_id=m1.mod_id, mod2_id=m2.mod_id,
-                            conflict_type="id_range", target=key,
-                            detail=f"{key} ID 范围重叠: "
-                                   f"{m1.name}[{r1.get('start')}-{r1.get('end')}] "
-                                   f"vs {m2.name}[{r2.get('start')}-{r2.get('end')}]"))
+        # 资源文件冲突
+        targets1 = set(r.get("target", "") for r in m1.resources)
+        targets2 = set(r.get("target", "") for r in m2.resources)
+        overlap = targets1 & targets2
+        for t in overlap:
+            conflicts.append(Conflict(
+                mod1_id=m1.mod_id, mod2_id=m2.mod_id,
+                conflict_type="resource", target=t,
+                detail=f"资源文件 '{t}' 被多个 MOD 替换"))
 
-            # 资源文件冲突
-            targets1 = set(r.get("target", "") for r in m1.resources)
-            targets2 = set(r.get("target", "") for r in m2.resources)
-            overlap = targets1 & targets2
-            for t in overlap:
+        # GRP 图层差分: 同区段同平面同像素重叠 → 冲突 (不同像素自动共存)
+        for key in lm1.keys() & lm2.keys():
+            inter = lm1[key] & lm2[key]
+            if inter:
+                tgt, sidx, plane = key
                 conflicts.append(Conflict(
                     mod1_id=m1.mod_id, mod2_id=m2.mod_id,
-                    conflict_type="resource", target=t,
-                    detail=f"资源文件 '{t}' 被多个 MOD 替换"))
+                    conflict_type="grp_layer_overlap", target=tgt,
+                    detail=f"{tgt} 区段#{sidx} {plane}层 {len(inter)} 个像素被 "
+                           f"'{m1.name}' 与 '{m2.name}' 同时修改"))
 
-            # GRP 图层差分: 同区段同平面同像素重叠 → 冲突 (不同像素自动共存)
-            lm1, lm2 = layer_maps[i], layer_maps[j]
-            for key in set(lm1) & set(lm2):
-                inter = lm1[key] & lm2[key]
-                if inter:
-                    tgt, sidx, plane = key
-                    conflicts.append(Conflict(
-                        mod1_id=m1.mod_id, mod2_id=m2.mod_id,
-                        conflict_type="grp_layer_overlap", target=tgt,
-                        detail=f"{tgt} 区段#{sidx} {plane}层 {len(inter)} 个像素被 "
-                               f"'{m1.name}' 与 '{m2.name}' 同时修改"))
+        # 定长记录槽位重复: 两 MOD 改同一文件的同一记录索引 (如 TKMat 实体槽/TKDefUnit 槽位)
+        for tgt in rm1.keys() & rm2.keys():
+            shared_idx = set(rm1[tgt]) & set(rm2[tgt])
+            if not shared_idx:
+                continue
+            field_overlap = [ix for ix in shared_idx if rm1[tgt][ix] & rm2[tgt][ix]]
+            sample = sorted(shared_idx)[:12]
+            detail = (f"{tgt} 记录槽位 {sample}"
+                      f"{' …等' if len(shared_idx) > 12 else ''} 被 "
+                      f"'{m1.name}' 与 '{m2.name}' 同时写入 (共 {len(shared_idx)} 处)")
+            if field_overlap:
+                detail += f"; 其中 {len(field_overlap)} 处字段直接覆盖, 后加载者生效"
+            conflicts.append(Conflict(
+                mod1_id=m1.mod_id, mod2_id=m2.mod_id,
+                conflict_type="record_overlap", target=tgt,
+                detail=detail))
 
-            # 定长记录槽位重复: 两 MOD 改同一文件的同一记录索引 (如 TKMat 实体槽/TKDefUnit 槽位)
-            rm1, rm2 = record_maps[i], record_maps[j]
-            for tgt in set(rm1) & set(rm2):
-                shared_idx = set(rm1[tgt]) & set(rm2[tgt])
-                if not shared_idx:
-                    continue
-                field_overlap = [ix for ix in shared_idx if rm1[tgt][ix] & rm2[tgt][ix]]
-                sample = sorted(shared_idx)[:12]
-                detail = (f"{tgt} 记录槽位 {sample}"
-                          f"{' …等' if len(shared_idx) > 12 else ''} 被 "
-                          f"'{m1.name}' 与 '{m2.name}' 同时写入 (共 {len(shared_idx)} 处)")
-                if field_overlap:
-                    detail += f"; 其中 {len(field_overlap)} 处字段直接覆盖, 后加载者生效"
-                conflicts.append(Conflict(
-                    mod1_id=m1.mod_id, mod2_id=m2.mod_id,
-                    conflict_type="record_overlap", target=tgt,
-                    detail=detail))
-
-            # 文本条目重复: 两 MOD 改同一 TKD DEFINE 块 / TKT 文本条目
-            tm1, tm2 = text_maps[i], text_maps[j]
-            for tgt in set(tm1) & set(tm2):
-                shared_ids = tm1[tgt] & tm2[tgt]
-                if not shared_ids:
-                    continue
-                sample = sorted(shared_ids, key=lambda s: (len(s), s))[:12]
-                conflicts.append(Conflict(
-                    mod1_id=m1.mod_id, mod2_id=m2.mod_id,
-                    conflict_type="text_overlap", target=tgt,
-                    detail=f"{tgt} 条目/DEFINE {sample}"
-                           f"{' …等' if len(shared_ids) > 12 else ''} 被 "
-                           f"'{m1.name}' 与 '{m2.name}' 同时修改 (共 {len(shared_ids)} 处)"))
+        # 文本条目重复: 两 MOD 改同一 TKD DEFINE 块 / TKT 文本条目
+        for tgt in tm1.keys() & tm2.keys():
+            shared_ids = tm1[tgt] & tm2[tgt]
+            if not shared_ids:
+                continue
+            sample = sorted(shared_ids, key=lambda s: (len(s), s))[:12]
+            conflicts.append(Conflict(
+                mod1_id=m1.mod_id, mod2_id=m2.mod_id,
+                conflict_type="text_overlap", target=tgt,
+                detail=f"{tgt} 条目/DEFINE {sample}"
+                       f"{' …等' if len(shared_ids) > 12 else ''} 被 "
+                       f"'{m1.name}' 与 '{m2.name}' 同时修改 (共 {len(shared_ids)} 处)"))
 
     if conflicts:
         log(f"  检测到 {len(conflicts)} 个冲突")
@@ -806,14 +804,12 @@ def merge_mods(mods: List[ModInfo], game_dir: str, log_func=None) -> MergedData:
     merged = MergedData()
 
     # 收集需要处理的目标文件
-    targets: Dict[str, List[Tuple[ModInfo, dict]]] = {}
+    targets: Dict[str, List[Tuple[ModInfo, dict]]] = defaultdict(list)
     for mod in mods:
         for comp in mod.components:
             target = comp.get("target", "")
             internal = comp.get("file", "")
             if target and internal in mod.data_files:
-                if target not in targets:
-                    targets[target] = []
                 targets[target].append((mod, mod.data_files[internal]))
             elif target:
                 # 声明了 target 但数据未加载 (ZIP 内缺失/解析失败), 不告警则无迹可查

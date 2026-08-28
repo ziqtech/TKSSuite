@@ -14,6 +14,7 @@ from PySide6.QtCore import QThread, Signal
 
 from core.launcher_pipeline import PatcherPipeline, PipelineConfig
 from core.launch_context import LaunchContext
+from core.log_setup import log_line
 from core.recovery_snapshot import begin_snapshot, finish_snapshot
 from core.memory import (
     find_window, get_child_processes, get_module_base, get_module_size,
@@ -82,8 +83,7 @@ class PatcherWorker(QThread):
 
     def _log(self, msg: str):
         self.log_emitted.emit(msg)
-        # 同步写入会话日志文件 (core.log_setup, 未初始化时为空操作)
-        from core.log_setup import log_line
+        # 同步写入会话日志文件 (未初始化时为空操作)
         log_line(msg)
 
     def _status(self, text: str, is_ok: bool):
