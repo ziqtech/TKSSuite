@@ -94,6 +94,8 @@ _TKSPATCH_SCHEMA = {
         "random2_cave_offset", "random2_hooks",
         # Phase 6
         "autolayout_cave",
+        # 声明式 cave 变换 (不依赖引擎模板名白名单, 新增补丁零引擎改动)
+        "warpc_cap_adjust", "weapon_cap_adjust",
         # cave_code
         "cave_code",
         # _extra
@@ -145,6 +147,8 @@ _TKSPATCH_SCHEMA = {
         "random2_cave_offset": int,
         "random2_hooks": list,
         "autolayout_cave": bool,
+        "warpc_cap_adjust": bool,
+        "weapon_cap_adjust": bool,
         "cave_code": str,
         "_format": int,
         "format": str,
@@ -349,6 +353,10 @@ def parse_patch_dict(raw: dict, source_path: str,
 
     # Phase 6: autolayout_cave (默认 True, 新模式; False = 沿用硬编码)
     d.autolayout_cave = raw.get("autolayout_cave", True)
+
+    # 声明式 cave 变换 (默认 False; 旧白名单在 build_cave_template 内保留兼容)
+    d.warpc_cap_adjust = bool(raw.get("warpc_cap_adjust", False))
+    d.weapon_cap_adjust = bool(raw.get("weapon_cap_adjust", False))
 
     # ── 外置 cave 机器码 (核心新特性) ──
     cave_code_hex = raw.get("cave_code", "")

@@ -95,6 +95,14 @@ class PatchDef:
     # False:        沿用 .tkspatch 硬编码的 cave_offset / random_*_offset (旧模式)
     autolayout_cave: bool = True
 
+    # 声明式 cave 变换 (由补丁自己在 patch.json 中声明, 不依赖引擎模板名白名单)
+    # True 时 build_cave_template 按扩容后的记录数动态调整对应上限指令:
+    #   warpc_cap_adjust:  cmp eax, 200  (_AWK_CAP_OLD)  → idx_cap = 记录数-1 (下限 200)
+    #   weapon_cap_adjust: cmp eax, 143  (_WEAPON_CAP_OLD) → rec_count (下限 143)
+    # 旧白名单 (awk_sprite/awk_sprite2/weapon_cause_mask) 保留, 存量补丁无需改动。
+    warpc_cap_adjust: bool = False
+    weapon_cap_adjust: bool = False
+
 @dataclass
 class PatchConfig:
     patches: List[PatchDef] = field(default_factory=list)

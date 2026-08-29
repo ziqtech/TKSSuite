@@ -1,7 +1,7 @@
 {
   "_format": 1,
   "_group": "── 战场形象 ──",
-  "_comment": "战场形象 PATH4 — sub_444FD4 敌方增援 @0x44513D: 战斗中途敌方增援 (随机抽自 word_9537FA) 形象块原为硬编码 记录号+12。hook 时 [ebp-6]=WarPC 记录号(角色ID+35), 查 WORD[260] 自定义形象; 为 0 则保持原版 +12。主角特判 ==36 分支位于 hook 之前不受影响。",
+  "_comment": "战场形象 PATH4 — sub_444FD4 敌方增援 @0x44513D: 战斗中途敌方增援 (随机抽自 word_9537FA) 形象块原为硬编码 记录号+12。hook 时 [ebp-6]=WarPC 记录号(角色ID+35), 查 WORD[260] 自定义形象; 为 0 则保持原版 +12。主角特判 ==36 分支位于 hook 之前不受影响。cave_template 仅作描述性标签, 上限动态调整由 warpc_cap_adjust 声明, 不依赖引擎内置模板。",
   "type": "cave_hook",
   "id": "awk_sprite_cave4",
   "name": "自定义战场形象（敌方增援）",
@@ -12,6 +12,7 @@
   "hook_expect_count": 1,
   "cave_template": "awk_sprite_enemy",
   "cave_offset": 750,
+  "warpc_cap_adjust": true,
   "hook_conflict_action": "override",
   "fallback_rva": "0x4513D",
   "cave_code": "50 51 0F BF 45 FA 66 85 C0 7E 1E 3D C8 00 00 00 77 17 69 C0 1E 04 00 00 05 08 7F 75 00 0F B7 88 08 02 00 00 66 85 C9 75 07 66 83 45 FA 0C EB 04 66 89 4D FA 59 58 C3",
