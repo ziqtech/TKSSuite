@@ -96,6 +96,8 @@ _TKSPATCH_SCHEMA = {
         "autolayout_cave",
         # 声明式 cave 变换 (不依赖引擎模板名白名单, 新增补丁零引擎改动)
         "warpc_cap_adjust", "weapon_cap_adjust",
+        # MOD 配置覆盖声明 (白名单动态推导)
+        "mod_config_overridable",
         # cave_code
         "cave_code",
         # _extra
@@ -149,6 +151,7 @@ _TKSPATCH_SCHEMA = {
         "autolayout_cave": bool,
         "warpc_cap_adjust": bool,
         "weapon_cap_adjust": bool,
+        "mod_config_overridable": bool,
         "cave_code": str,
         "_format": int,
         "format": str,
@@ -357,6 +360,7 @@ def parse_patch_dict(raw: dict, source_path: str,
     # 声明式 cave 变换 (默认 False; 旧白名单在 build_cave_template 内保留兼容)
     d.warpc_cap_adjust = bool(raw.get("warpc_cap_adjust", False))
     d.weapon_cap_adjust = bool(raw.get("weapon_cap_adjust", False))
+    d.mod_config_overridable = bool(raw.get("mod_config_overridable", False))
 
     # ── 外置 cave 机器码 (核心新特性) ──
     cave_code_hex = raw.get("cave_code", "")

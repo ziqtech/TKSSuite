@@ -10,7 +10,8 @@ from PySide6.QtWidgets import (
     QTableWidget, QTableWidgetItem, QVBoxLayout,
 )
 
-# 允许通过 MOD 包携带的启动器配置文件白名单 (与 mod_loader.MOD_ALLOWED_CONFIGS 一致)
+# MOD 可覆盖配置白名单回退默认 (正式白名单由补丁声明动态推导,
+# 经构造参数 allowed_configs 传入; 与 core.mod_loader.allowed_mod_configs 一致)
 _ALLOWED_CONFIGS = {"summon_table", "drop_probability"}
 
 
@@ -23,11 +24,15 @@ class ModEditorDialog(QDialog):
     """
 
     def __init__(self, mods_dir: str = "mods", parent=None,
-                 initial_path: str | None = None):
+                 initial_path: str | None = None,
+                 allowed_configs: set | None = None):
         super().__init__(parent)
         self.setWindowTitle("模组编辑")
         self.resize(720, 520)
         self._mods_dir = mods_dir
+        # MOD 可覆盖配置白名单 (动态推导自补丁声明; None = 回退默认集)
+        self._allowed_configs = (allowed_configs if allowed_configs is not None
+                                 else set(_ALLOWED_CONFIGS))
         self._mod_path: str = ""
         self._is_pak: bool = False
         # 内存中的文件集: {internal_path: bytes}
@@ -246,7 +251,7 @@ class ModEditorDialog(QDialog):
             stem = os.path.splitext(fname)[0]
             # 自动分类建议路径
             if ext == ".json":
-                if stem in _ALLOWED_CONFIGS:
+                if stem in self._allowed_configs:
                     suggested = f"configs/{fname}"
                 else:
                     suggested = f"data/{fname}"

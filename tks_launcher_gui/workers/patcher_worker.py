@@ -43,8 +43,7 @@ class PatcherWorker(QThread):
 
     def __init__(self, exe_path: str, game_dir: str | None = None,
                  wait_timeout: int = 30, minimal_mode: bool = False,
-                 no_cave_mode: bool = False, only_portrait: bool = False,
-                 only_awk: bool = False, selected_patches: set = None,
+                 no_cave_mode: bool = False, selected_patches: set = None,
                  enabled_mod_ids: set = None, selected_tool: str = "",
                  mode: str = "standard"):
         super().__init__()
@@ -53,8 +52,6 @@ class PatcherWorker(QThread):
         self.wait_timeout = wait_timeout
         self.minimal_mode = minimal_mode
         self.no_cave_mode = no_cave_mode
-        self.only_portrait = only_portrait
-        self.only_awk = only_awk
         self.selected_patches = selected_patches
         self.enabled_mod_ids = enabled_mod_ids
         self.selected_tool = selected_tool

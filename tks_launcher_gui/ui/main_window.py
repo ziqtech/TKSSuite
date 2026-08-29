@@ -957,7 +957,14 @@ class MainWindow(QMainWindow):
         mods_dir = os.path.join(_LAUNCHER_DIR, "mods")
         selected = self.mod_list.get_selected_mod()
         initial_path = selected.path if selected else None
-        dialog = ModEditorDialog(mods_dir=mods_dir, parent=self, initial_path=initial_path)
+        # MOD 可覆盖配置白名单: 从补丁声明 (mod_config_overridable) 动态推导
+        from core.mod_loader import allowed_mod_configs
+        from core.tkspatch_loader import load_patch_directory
+        _patches_dir = os.path.join(_LAUNCHER_DIR, "patches")
+        _pcfg = load_patch_directory(_patches_dir, log_func=lambda s: None)
+        dialog = ModEditorDialog(mods_dir=mods_dir, parent=self,
+                                 initial_path=initial_path,
+                                 allowed_configs=allowed_mod_configs(_pcfg))
         dialog.exec()
         # 保存后刷新模组列表（内容可能已变更）
         self.mod_list.refresh_mods()

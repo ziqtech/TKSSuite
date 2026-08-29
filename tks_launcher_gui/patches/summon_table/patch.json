@@ -6,6 +6,7 @@
   "desc": "召唤表自定义 (222/224~231/251 召唤角色, 支持多随机)",
   "optional": true,
   "json_file": "configs/summon_table.json",
+  "mod_config_overridable": true,
   "data_rva": "0xEB7D0",
   "data_keys": [
     "skill_224",

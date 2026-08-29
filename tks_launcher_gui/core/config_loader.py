@@ -103,6 +103,10 @@ class PatchDef:
     warpc_cap_adjust: bool = False
     weapon_cap_adjust: bool = False
 
+    # MOD 配置覆盖声明: True 表示允许 MOD 包携带同名配置 (按 json_file 文件名) 覆盖 configs/ 目录。
+    # 白名单由各补丁自己声明, 引擎动态推导 (新增数据类配置无需改引擎)。
+    mod_config_overridable: bool = False
+
 @dataclass
 class PatchConfig:
     patches: List[PatchDef] = field(default_factory=list)

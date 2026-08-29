@@ -7,6 +7,7 @@
   "desc": "物品掉落概率自定义 (sub_4400DC: 修改普通槽/稀有槽随机阈值; 常规槽100%不可降; 需配置 configs/drop_probability.json)",
   "optional": true,
   "json_file": "configs/drop_probability.json",
+    "mod_config_overridable": true,
   "profile_rules": {
     "original": "apply"
   },

@@ -28,7 +28,7 @@ from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
 from .config_loader import PatchConfig, PatchRuntimeState, PatchSettings
 from .mod_loader import (
-    apply_mod_data, detect_conflicts, expand_pak_mods,
+    allowed_mod_configs, apply_mod_data, detect_conflicts, expand_pak_mods,
     merge_mods, resolve_dependencies, restore_originals, scan_mods,
 )
 from .patch_engine import apply_config_patches
@@ -409,7 +409,11 @@ class PatcherPipeline:
     def _load_mods(self, mods_dir: str) -> None:
         """加载并应用 MOD 数据。"""
         self.log(f"\n=== MOD 加载 ({mods_dir}) ===")
-        self.loaded_mods = scan_mods(mods_dir, log_func=self.log)
+        # MOD 可覆盖配置白名单: 从补丁声明 (mod_config_overridable) 动态推导,
+        # 补丁配置不可用 (如兼容模式) 时自动回退默认集。
+        _allowed = allowed_mod_configs(self.config)
+        self.loaded_mods = scan_mods(mods_dir, log_func=self.log,
+                                     allowed_configs=_allowed)
         self._mod_config_overrides = None
         if not self.loaded_mods:
             self.log(f"  未发现 MOD 文件")
@@ -435,7 +439,8 @@ class PatcherPipeline:
         for m in self.loaded_mods:
             if m.enabled and m.pak_contents:
                 self.log(f"  展开合集: {m.name} ({len(m.pak_contents)} 个模组)")
-                pak_mods = expand_pak_mods(m.path, log_func=self.log)
+                pak_mods = expand_pak_mods(m.path, log_func=self.log,
+                                           allowed_configs=_allowed)
                 for pm in pak_mods:
                     pm.enabled = True
                 expanded.extend(pak_mods)

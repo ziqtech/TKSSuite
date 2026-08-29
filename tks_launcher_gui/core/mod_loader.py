@@ -40,11 +40,29 @@ except ImportError:  # 兼容 cli_launcher 只把自身目录加入 sys.path 的
 
 
 # ═══════════════════════════════════════════════════════════════
-# 允许通过 MOD 包携带的启动器配置文件白名单
-# 其它配置文件 (如 font_config.json) 只从 configs/ 目录读取
-# MOD 包中携带的配置文件优先级最高，覆盖 configs/ 目录同名文件
+# 允许通过 MOD 包携带的启动器配置白名单 (动态推导)
+# 正式白名单 = 所有声明了 "mod_config_overridable": true 的补丁的 json_file 文件名,
+# 由 allowed_mod_configs() 从已加载补丁配置推导 — 新增数据类配置只需在 patch.json
+# 声明, 无需修改引擎。下方静态集仅为回退默认 (补丁配置不可用时, 如兼容模式)。
+# MOD 包中携带的配置文件优先级最高，覆盖 configs/ 目录同名文件。
 # ═══════════════════════════════════════════════════════════════
 MOD_ALLOWED_CONFIGS = {"summon_table", "drop_probability"}
+
+
+def allowed_mod_configs(patch_config) -> set:
+    """从已加载补丁配置动态推导 MOD 可覆盖的配置白名单。
+
+    规则: 补丁在 patch.json 声明 "mod_config_overridable": true 时,
+    其 json_file 的文件名 (不含扩展名) 进入白名单。
+    patch_config 为 None/空 (如兼容模式) 时回退到 MOD_ALLOWED_CONFIGS。
+    """
+    allowed = set()
+    for p in getattr(patch_config, "patches", None) or []:
+        if getattr(p, "mod_config_overridable", False):
+            jf = getattr(p, "json_file", "") or ""
+            if jf:
+                allowed.add(os.path.splitext(os.path.basename(jf))[0])
+    return allowed if allowed else set(MOD_ALLOWED_CONFIGS)
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -209,8 +227,9 @@ def _infer_metadata(mod: ModInfo, names: list[str], explicit_metadata: bool) -> 
 # 1. 扫描 MOD 目录
 # ═══════════════════════════════════════════════════════════════
 
-def scan_mods(mods_dir: str, log_func=None) -> List[ModInfo]:
-    """扫描 mods/ 目录中所有 .tksmod 文件，返回 ModInfo 列表"""
+def scan_mods(mods_dir: str, log_func=None, allowed_configs=None) -> List[ModInfo]:
+    """扫描 mods/ 目录中所有 .tksmod 文件，返回 ModInfo 列表。
+    allowed_configs: MOD 可覆盖配置白名单 (None = 回退默认集)。"""
     log = log_func or (lambda x: None)
     mods = []
 
@@ -223,7 +242,7 @@ def scan_mods(mods_dir: str, log_func=None) -> List[ModInfo]:
         fpath = os.path.join(mods_dir, fname)
         if ext == '.tksmod':
             try:
-                mod = _load_single_mod(fpath, log)
+                mod = _load_single_mod(fpath, log, allowed_configs=allowed_configs)
                 if mod:
                     mods.append(mod)
                     log(f"  [OK] 加载 MOD: {mod.name} v{mod.version} ({fname})")
@@ -242,17 +261,19 @@ def scan_mods(mods_dir: str, log_func=None) -> List[ModInfo]:
     return mods
 
 
-def _load_mod_config_files(zf: zipfile.ZipFile, log_func=None) -> Dict[str, Any]:
+def _load_mod_config_files(zf: zipfile.ZipFile, allowed_configs=None,
+                           log_func=None) -> Dict[str, Any]:
     """从 ZIP 中加载白名单内的启动器配置文件。
 
-    扫描 ZIP 内 configs/*.json 路径，仅加载名称在 MOD_ALLOWED_CONFIGS 白名单内
-    的配置文件 (summon_table, drop_probability)。其余配置文件忽略，以 configs/
-    目录中的为准。
+    扫描 ZIP 内 configs/*.json 路径，仅加载名称在白名单内的配置文件；
+    其余配置文件忽略，以 configs/ 目录中的为准。
+    白名单由调用方传入 (动态推导自补丁声明), None 时回退 MOD_ALLOWED_CONFIGS。
 
     Returns:
         {config_name: parsed_dict} 如 {"summon_table": {...}}
     """
     log = log_func or (lambda x: None)
+    allowed = allowed_configs if allowed_configs is not None else set(MOD_ALLOWED_CONFIGS)
     result: Dict[str, Any] = {}
     for name in zf.namelist():
         # 匹配 configs/xxx.json (不匹配目录条目)
@@ -263,8 +284,8 @@ def _load_mod_config_files(zf: zipfile.ZipFile, log_func=None) -> Dict[str, Any]
         # 提取配置名 (不含扩展名)
         basename = os.path.basename(name)
         config_name = os.path.splitext(basename)[0]
-        if config_name not in MOD_ALLOWED_CONFIGS:
-            log(f"    跳过非白名单配置: {name} (仅 {sorted(MOD_ALLOWED_CONFIGS)} 允许)")
+        if config_name not in allowed:
+            log(f"    跳过非白名单配置: {name} (仅 {sorted(allowed)} 允许)")
             continue
         try:
             content = zf.read(name).decode('utf-8')
@@ -275,7 +296,8 @@ def _load_mod_config_files(zf: zipfile.ZipFile, log_func=None) -> Dict[str, Any]
     return result
 
 
-def _load_single_mod(mod_path: str, log_func=None) -> Optional[ModInfo]:
+def _load_single_mod(mod_path: str, log_func=None,
+                     allowed_configs=None) -> Optional[ModInfo]:
     """从 .tksmod (ZIP) 文件中解析 ModInfo"""
     log = log_func or (lambda x: None)
 
@@ -327,8 +349,8 @@ def _load_single_mod(mod_path: str, log_func=None) -> Optional[ModInfo]:
                 log(f"    [WARN] MOD '{mod.name}' 组件数据文件缺失: {internal_path} "
                     f"(target={comp.get('target', '?')}), 该组件不会被应用")
 
-        # 预加载白名单内的启动器配置文件
-        mod.config_files = _load_mod_config_files(zf, log_func=log)
+        # 预加载白名单内的启动器配置文件 (白名单动态推导自补丁声明)
+        mod.config_files = _load_mod_config_files(zf, allowed_configs, log_func=log)
 
         return mod
 
@@ -372,11 +394,13 @@ def _load_pak_mod_info(pak_path: str, log_func=None) -> Optional[ModInfo]:
         return mod
 
 
-def expand_pak_mods(pak_path: str, log_func=None) -> List[ModInfo]:
+def expand_pak_mods(pak_path: str, log_func=None,
+                    allowed_configs=None) -> List[ModInfo]:
     """展开 .tksmodpak 合集，将内含的每个 .tksmod 在内存中解析为独立 ModInfo。
 
     不落盘，与普通 .tksmod 加载方式一致。原始 ZIP 数据保存在 _data_raw 中，
     供 apply_mod_data 提取资源时使用。
+    allowed_configs: MOD 可覆盖配置白名单 (None = 回退默认集)。
 
     pak 根目录下的 configs/*.json (白名单内) 会被读取并注入到所有子 MOD 的
     config_files 中，作为合集级配置覆盖。
@@ -386,7 +410,7 @@ def expand_pak_mods(pak_path: str, log_func=None) -> List[ModInfo]:
 
     with zipfile.ZipFile(pak_path, 'r') as zf:
         # 读取 pak 根目录下的白名单配置文件 (合集级配置覆盖)
-        pak_config_files = _load_mod_config_files(zf, log_func=log)
+        pak_config_files = _load_mod_config_files(zf, allowed_configs, log_func=log)
         pak_root_json = json.loads(zf.read("mod.json").decode("utf-8")) if "mod.json" in zf.namelist() else {}
         pak_metadata = _metadata_fields(pak_root_json)
 
@@ -440,8 +464,8 @@ def expand_pak_mods(pak_path: str, log_func=None) -> List[ModInfo]:
                                 f"{internal_path} (target={comp.get('target', '?')}), "
                                 f"该组件不会被应用")
 
-                    # 预加载白名单内的启动器配置文件 (子 MOD 内部的)
-                    mod.config_files = _load_mod_config_files(izf, log_func=log)
+                    # 预加载白名单内的启动器配置文件 (子 MOD 内部的; 白名单动态推导)
+                    mod.config_files = _load_mod_config_files(izf, allowed_configs, log_func=log)
                     # 合并 pak 根目录的合集级配置 (子 MOD 内部配置优先，pak 根目录补充)
                     for cfg_name, cfg_data in pak_config_files.items():
                         if cfg_name not in mod.config_files:

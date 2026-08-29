@@ -221,11 +221,21 @@ def _handle_patch_imm32(ctx: PatchContext) -> bool:
     )
 
 
+def _config_override_key(defn: PatchDef, default: str) -> str:
+    """从补丁声明的 json_file 推导配置覆盖键 (不含扩展名的文件名),
+    避免在 handler 里按具体补丁硬编码配置名。"""
+    jf = getattr(defn, "json_file", "") or ""
+    if jf:
+        return os.path.splitext(os.path.basename(jf))[0]
+    return default
+
+
 @register_patch_type("patch_summon_table")
 def _handle_patch_summon_table(ctx: PatchContext) -> bool:
     _summon_override = None
     if ctx.config_overrides:
-        _summon_override = ctx.config_overrides.get("summon_table")
+        _summon_override = ctx.config_overrides.get(
+            _config_override_key(ctx.defn, "summon_table"))
     return apply_summon_table(
         ctx.defn, ctx.code_buf, ctx.code_start_addr, ctx.base_addr,
         ctx.h_proc, ctx.settings, ctx.runtime, log_func=ctx.log,
@@ -238,7 +248,8 @@ def _handle_patch_summon_table(ctx: PatchContext) -> bool:
 def _handle_patch_drop_probability(ctx: PatchContext) -> bool:
     _drop_override = None
     if ctx.config_overrides:
-        _drop_override = ctx.config_overrides.get("drop_probability")
+        _drop_override = ctx.config_overrides.get(
+            _config_override_key(ctx.defn, "drop_probability"))
     return apply_drop_probability(
         ctx.defn, ctx.code_buf, ctx.code_start_addr,
         ctx.h_proc, log_func=ctx.log,
@@ -250,7 +261,8 @@ def _handle_patch_drop_probability(ctx: PatchContext) -> bool:
 def _handle_patch_exp_lock(ctx: PatchContext) -> bool:
     _explock_override = None
     if ctx.config_overrides:
-        _explock_override = ctx.config_overrides.get("exp_lock")
+        _explock_override = ctx.config_overrides.get(
+            _config_override_key(ctx.defn, "exp_lock"))
     return apply_exp_lock(
         ctx.defn, ctx.code_buf, ctx.code_start_addr,
         ctx.h_proc, ctx.cave_addr, log_func=ctx.log,
@@ -1992,7 +2004,6 @@ def apply_config_patches(config: PatchConfig, code_buf: bytearray, code_start_ad
                           settings: PatchSettings, runtime: PatchRuntimeState,
                           log_func=None,
                           minimal_mode=False, no_cave_mode=False,
-                          only_portrait=False, only_awk=False,
                           selected_patches: set = None,
                           exe_profile=None,
                           disabled_patches: set = None,
@@ -2136,17 +2147,10 @@ def apply_config_patches(config: PatchConfig, code_buf: bytearray, code_start_ad
         all_ok &= _verdict(defn, handler(ctx))
 
     if pch and not minimal_mode and not no_cave_mode:
-        hta = pch
-        if only_portrait:
-            hta = [h for h in pch if h.id in ("portrait_cave1", "portrait_cave2")]
-        elif only_awk:
-            hta = [h for h in pch if h.id == "awk_sprite_cave"]
-        if len(hta) != len(pch):
-            for skipped in pch:
-                if skipped not in hta:
-                    log(f"    [WARN] {skipped.id}: cave hook 被当前启动模式过滤, 未应用")
-        log(f"\n  应用 {len(hta)} 个 cave hooks...")
-        for defn in hta:
+        # 补丁筛选由通用机制 (selected_patches / disabled_patches) 完成,
+        # 此处不按补丁 ID 硬编码过滤 (新增补丁无需改引擎)。
+        log(f"\n  应用 {len(pch)} 个 cave hooks...")
+        for defn in pch:
             hook_ok = apply_cave_hook(defn, defn._pre_scanned_hits, code_buf,
                                        code_start_addr, h_proc, cave_addr,
                                        warpc_base, settings, runtime, log_func=log)
