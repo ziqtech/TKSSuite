@@ -5,10 +5,6 @@
   "id": "shanhai_map_unlock",
   "name": "山川社稷图使用限制解除",
   "desc": "山川社稷图解除使用地点限制（对比源改为事件场景ID）",
-  "_mod_note": "孝谈三国3终极版: 物品使用判定代码已被 MOD 改写, 原版特征码不存在, skip",
-  "profile_rules": {
-    "xiaotansanguo3": "skip"
-  },
   "pattern": "8B 0D 58 5B 75 00 85 C9",
   "expect_count": 1,
   "replace": {

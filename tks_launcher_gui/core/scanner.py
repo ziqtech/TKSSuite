@@ -129,15 +129,15 @@ def parse_pe_sections_from_memory(h_proc: int, base_addr: int, log_func=None) ->
 
 # 已知第三方 MOD 版本的非标准节名
 _KNOWN_MOD_SECTIONS = {
-    ".test",      # 孝谈三国3终极版
-    ".Silvana",   # 孝谈三国3终极版
+    ".test",
+    ".Silvana",
 }
 
 
 @dataclass
 class ExeProfile:
     """EXE 版本识别结果"""
-    name: str = "original"                        # "original" | "xiaotansanguo3" | ...
+    name: str = "original"                        # "original" | "unknown_mod"
     display_name: str = "原版"                    # 用于 UI 显示
     has_extra_sections: bool = False              # 是否有额外代码段
     extra_section_ranges: List[Tuple[int, int]] = field(default_factory=list)
@@ -301,19 +301,8 @@ def detect_exe_profile(exe_path: str, base_addr: int = 0x400000,
                 profile.extra_section_ranges.append((abs_start, abs_end))
                 log(f"  发现 MOD 段: {sec.name} @ 0x{abs_start:08X}-0x{abs_end:08X}")
 
-    # 根据节特征匹配已知 MOD 版本
-    if '.test' in sec_names and '.Silvana' in sec_names:
-        profile.name = "xiaotansanguo3"
-        profile.display_name = "孝谈三国3终极版"
-        # 启动器优先级最高: 不跳过任何补丁, 而是通过 fallback_rva + override 机制覆盖 MOD 已有 hook
-        profile.skip_patches = set()  # 不跳过任何补丁
-        profile.warnings.append(
-            "检测到第三方 MOD 版本 (孝谈三国3终极版)，"
-            "启动器补丁将以最高优先级覆盖 MOD 已有修改"
-        )
-        log(f"  识别为: {profile.display_name}")
-        log(f"  策略: 启动器补丁优先级最高, 使用 fallback_rva + override")
-    elif extra_secs:
+    # 根据节特征识别第三方 MOD 版本
+    if extra_secs:
         # 未知的 MOD 版本，但有额外段
         profile.name = "unknown_mod"
         profile.display_name = f"未知MOD版 (含段: {', '.join(extra_secs)})"
@@ -365,15 +354,7 @@ def detect_exe_profile_runtime(h_proc: int, base_addr: int, module_size: int,
                 abs_end = abs_start + sec.virtual_size
                 profile.extra_section_ranges.append((abs_start, abs_end))
 
-    if '.test' in sec_names and '.Silvana' in sec_names:
-        profile.name = "xiaotansanguo3"
-        profile.display_name = "孝谈三国3终极版"
-        profile.skip_patches = set()  # 启动器优先级最高, 不跳过任何补丁
-        profile.warnings.append(
-            "检测到第三方 MOD 版本 (孝谈三国3终极版)，启动器补丁将以最高优先级覆盖"
-        )
-        log(f"  识别为: {profile.display_name}")
-    elif extra_secs:
+    if extra_secs:
         profile.name = "unknown_mod"
         profile.display_name = f"未知MOD版 (含段: {', '.join(extra_secs)})"
         profile.warnings.append(

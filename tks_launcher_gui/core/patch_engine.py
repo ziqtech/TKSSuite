@@ -615,7 +615,7 @@ def apply_patch_extra_section(defn: PatchDef, h_proc: int, exe_profile, log_func
     """在 MOD 额外 PE 段 (.test/.Newdata/.Silvana) 内扫描并应用字节补丁。
 
     启动器常规补丁的扫描窗口为 code_buf (base+0x1000, 3MB), 第三方 MOD
-    注入的新 PE 段 (如孝谈三国3终极版 .test 节 cave) 落在此窗口之外,
+    注入的新 PE 段 (如 .test 节 cave) 落在此窗口之外,
     无法被 patch_bytes 命中。本函数直接读取进程内存中 exe_profile 的
     extra_section_ranges, 在该范围内做 pattern 扫描 + 逐字节替换,
     流程与 apply_patch_bytes 一致 (vp_ex 切换页属性 + 写入 + 还原)。
@@ -967,7 +967,7 @@ def apply_summon_table(defn: PatchDef, code_buf: bytearray, code_start_addr: int
         if key not in summon:
             continue
         # 安全校验: code_addrs 指向 `mov word[ebp-2], imm16` (66 C7 45 FE ..) 的 imm16 操作数。
-        # 第三方 MOD (如孝谈三国3终极版) 可能已把该指令整条替换为 JMP cave (E9 rel32),
+        # 第三方 MOD 可能已把该指令整条替换为 JMP cave (E9 rel32),
         # 此时盲写 imm16 会覆盖 JMP 的相对偏移, 破坏 MOD 跳转目标导致崩溃。
         # 仅当目标前导字节确为该 mov 指令时才写入, 否则跳过 (版本无关, 对原版无副作用)。
         _goff = abs_addr - code_start_addr

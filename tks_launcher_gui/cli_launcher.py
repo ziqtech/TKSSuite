@@ -253,7 +253,6 @@ def _build_disabled_patches(args, cfg: dict) -> set:
         disabled.update({
             "save_entry_check_fix", "save_stream_error_fix",
             "archive_portrait", "gold_display",
-            "xiaotan_defend_glow", "xiaotan_disable_companion",
         })
     if _on("no_save_entry_stream_fixes"):
         disabled.update({"save_entry_check_fix", "save_stream_error_fix"})

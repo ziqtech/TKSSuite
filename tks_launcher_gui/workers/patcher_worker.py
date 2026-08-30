@@ -134,8 +134,6 @@ class PatcherWorker(QThread):
                 "save_stream_error_fix",
                 "archive_portrait",
                 "gold_display",
-                "xiaotan_defend_glow",
-                "xiaotan_disable_companion",
             } if self.minimal_mode else None,
         )
         pipeline = PatcherPipeline(

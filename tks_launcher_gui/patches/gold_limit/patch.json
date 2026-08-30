@@ -4,10 +4,6 @@
   "id": "gold_limit",
   "name": "金钱上限提升",
   "desc": "金钱上限 30000→65535（锚定三处: 两处金钱判定 + sub_40CE30 溢出回退钳制; 不盲扫经验上限 0x7530）",
-  "_mod_note": "孝谈三国3终极版: MOD 已自行解除金钱上限并改写金钱地址引用(见逆向文档§4.1), 盲扫替换残留 0x7530 有误伤风险, skip",
-  "profile_rules": {
-    "xiaotansanguo3": "skip"
-  },
   "new_value": "0xFFFF",
   "optional": true,
   "patterns": [
