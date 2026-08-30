@@ -23,6 +23,7 @@ import os
 import shutil
 import struct
 import time
+import traceback
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
@@ -613,7 +614,6 @@ class PatcherPipeline:
             return bool(ok)
         except Exception as ex:
             self.log(f"[ERROR] ApplyConfigPatches 异常: {ex}")
-            import traceback
             self.log(traceback.format_exc())
             return False
         finally:

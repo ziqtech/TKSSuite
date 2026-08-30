@@ -632,10 +632,10 @@ def _collect_text_entry_ids(mod: 'ModInfo') -> dict:
         modified = d.get("modified")
         if not isinstance(modified, dict):
             continue
-        ids = {str(k) for k in modified.keys()}
+        ids = {str(k) for k in modified}
         appended = d.get("appended")
         if isinstance(appended, dict):
-            ids.update(str(k) for k in appended.keys())
+            ids.update(str(k) for k in appended)
         elif isinstance(appended, list):
             for content in appended:
                 for line in str(content).split('\n'):

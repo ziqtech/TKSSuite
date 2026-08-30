@@ -14,6 +14,7 @@ import json
 import os
 import re
 import zipfile
+from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
@@ -138,6 +139,18 @@ def list_tksmod_contents(mod_path: str) -> Dict[str, Any]:
     }
 
 
+def _collect_target_sources(contents: List[TksmodContent], section: str
+                            ) -> Dict[str, List[str]]:
+    """收集 components/resources 段中 target -> [来源文件名] 的映射。"""
+    sources: Dict[str, List[str]] = defaultdict(list)
+    for c in contents:
+        for entry in c.mod_json.get(section, []):
+            target = entry.get("target", "")
+            if target:
+                sources[target].append(c.filename)
+    return sources
+
+
 def validate_merge(mod_paths: List[str]) -> Tuple[bool, List[str]]:
     """合并前验证: 检查所有文件是否兼容。
 
@@ -159,39 +172,15 @@ def validate_merge(mod_paths: List[str]) -> Tuple[bool, List[str]]:
             return False, warnings
         contents.append(c)
 
-    # 检查组件 target 冲突
-    target_map: Dict[str, List[str]] = {}  # target -> [filenames]
-    for c in contents:
-        for comp in c.mod_json.get("components", []):
-            target = comp.get("target", "")
-            if target:
-                if target not in target_map:
-                    target_map[target] = []
-                target_map[target].append(c.filename)
-
-    for target, sources in target_map.items():
-        if len(sources) > 1:
-            warnings.append(
-                f"[WARN] 组件冲突: {target} 被多个文件修改 ({', '.join(sources)})，"
-                f"后者将覆盖前者"
-            )
-
-    # 检查资源 target 冲突
-    res_map: Dict[str, List[str]] = {}
-    for c in contents:
-        for res in c.mod_json.get("resources", []):
-            target = res.get("target", "")
-            if target:
-                if target not in res_map:
-                    res_map[target] = []
-                res_map[target].append(c.filename)
-
-    for target, sources in res_map.items():
-        if len(sources) > 1:
-            warnings.append(
-                f"[WARN] 资源冲突: {target} 被多个文件替换 ({', '.join(sources)})，"
-                f"后者将覆盖前者"
-            )
+    # 检查组件/资源 target 冲突: 同一 target 被多个文件修改时警告
+    for section, label, verb in (("components", "组件", "修改"),
+                                 ("resources", "资源", "替换")):
+        for target, sources in _collect_target_sources(contents, section).items():
+            if len(sources) > 1:
+                warnings.append(
+                    f"[WARN] {label}冲突: {target} 被多个文件{verb} "
+                    f"({', '.join(sources)})，后者将覆盖前者"
+                )
 
     return True, warnings
 

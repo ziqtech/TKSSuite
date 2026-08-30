@@ -3,6 +3,7 @@ import json
 import importlib.util
 import os
 import struct
+import traceback
 import types
 from typing import Any, Dict, List, Optional, Tuple
 from .memory import (
@@ -128,7 +129,6 @@ def run_script_patch(defn: PatchDef, ctx: PatchContext) -> bool:
         return bool(fn(ctx))
     except Exception as e:
         ctx.log(f"  [ERROR] 外部补丁脚本执行失败: {e}")
-        import traceback
         ctx.log(traceback.format_exc())
         return False
 

@@ -61,13 +61,9 @@ def _is_wine() -> bool:
     """
     try:
         ntdll = ctypes.windll.ntdll
-        if hasattr(ntdll, 'wine_get_version'):
-            return True
-    except Exception:
-        pass
-    try:
-        ntdll = ctypes.windll.ntdll
-        if hasattr(ntdll, 'wine_get_build_id'):
+        # Wine ntdll.dll 特有导出函数, 任一存在即为 Wine 环境
+        wine_exports = ("wine_get_version", "wine_get_build_id")
+        if any(hasattr(ntdll, name) for name in wine_exports):
             return True
     except Exception:
         pass

@@ -5,10 +5,13 @@ Phase 4: 改写为 PatcherPipeline 共享类的薄包装。
 - 共享补丁流水线 (config/MOD/WarPC/Cave/apply/恢复) 委托给 core.launcher_pipeline.PatcherPipeline
 """
 import filecmp
+import io
 import os
 import shutil
 import subprocess
 import time
+import traceback
+import zipfile
 
 from PySide6.QtCore import QThread, Signal
 
@@ -94,7 +97,6 @@ class PatcherWorker(QThread):
             self._do_run()
         except Exception as e:
             self._log(f"[FATAL] 未捕获异常: {e}")
-            import traceback
             self._log(traceback.format_exc())
             # 异常路径不在未知游戏进程状态下强行恢复；保留 active 快照交给下次启动确认。
             self.finished.emit(False, {"error": str(e)})
@@ -451,7 +453,6 @@ class PatcherWorker(QThread):
         if not tks_exe_mod:
             return False
         try:
-            import zipfile as _zf
             self._log(f"\n--- TKS.exe 替换 ({tks_exe_mod.name}) ---")
             tks_target = os.path.join(game_dir, "TKS.exe")
             tks_orig = tks_target + ".mod_orig"
@@ -459,11 +460,10 @@ class PatcherWorker(QThread):
                 shutil.copy2(tks_target, tks_orig)
                 self._log(f"  备份: TKS.exe → TKS.exe.mod_orig")
             if getattr(tks_exe_mod, "_data_raw", None):
-                import io
-                with _zf.ZipFile(io.BytesIO(tks_exe_mod._data_raw), 'r') as zf:
+                with zipfile.ZipFile(io.BytesIO(tks_exe_mod._data_raw), 'r') as zf:
                     tks_exe_payload = zf.read("resources/TKS.exe") if "resources/TKS.exe" in zf.namelist() else None
             else:
-                with _zf.ZipFile(tks_exe_mod.path, 'r') as zf:
+                with zipfile.ZipFile(tks_exe_mod.path, 'r') as zf:
                     tks_exe_payload = zf.read("resources/TKS.exe") if "resources/TKS.exe" in zf.namelist() else None
             if tks_exe_payload is not None:
                     exe_data = tks_exe_payload
