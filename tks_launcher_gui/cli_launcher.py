@@ -11,7 +11,8 @@ Phase 4: 改写为 PatcherPipeline 共享类的薄包装。
   TKSLauncherCLI.exe                              # Nuitka 编译后
 
 配置文件 (可选, 放在 exe 同目录):
-  launcher_config.json
+  launcher_config.json — 与 PC 版 TKSLauncher (GUI) 共用同一配置文件。
+  在 PC 上用 GUI 配置完成后, 直接复制该文件到 Winlator 游戏目录即可。
 """
 import argparse
 import ctypes
@@ -170,10 +171,52 @@ def _load_launcher_config(exe_dir: str, args) -> dict:
         cfg.setdefault("tks_exe", {})["path"] = args.tks_exe
     if args.game_dir:
         cfg.setdefault("game", {})["dir"] = args.game_dir
-    if args.no_mods:
-        cfg.setdefault("mods", {})["enabled_ids"] = "__NONE__"
 
     return cfg
+
+
+def parse_patch_selection(cfg: dict):
+    """解析配置中启用的可选补丁。
+
+    返回 None = 使用 default_checked 默认勾选 (字段缺失或为空/仅说明字段);
+    返回 set = 显式指定的勾选集合 (可能为空集, 表示全部禁用)。
+
+    格式 (与 GUI 共用): "patches": {patch_id: true/false}
+    下划线开头的键为说明字段, 一律跳过。
+    """
+    patches_cfg = cfg.get("patches", {})
+    if not isinstance(patches_cfg, dict):
+        return None
+    entries = {str(k): v for k, v in patches_cfg.items()
+               if not str(k).startswith("_")}
+    if not entries:
+        return None
+    return {pid for pid, v in entries.items() if bool(v)}
+
+
+def parse_mod_selection(cfg: dict):
+    """解析配置中启用的 MOD。
+
+    返回 None = 全部启用 (字段缺失或为空/仅说明字段);
+    返回 set = 显式指定的启用集合 (可能为空集, 表示全部禁用)。
+
+    格式 (与 GUI 共用): "mods": {mod_id: true/false}
+    下划线开头的键为说明字段, 一律跳过。
+    """
+    mods_cfg = cfg.get("mods", {})
+    if not isinstance(mods_cfg, dict):
+        return None
+    entries = {str(k): v for k, v in mods_cfg.items()
+               if not str(k).startswith("_")}
+    if not entries:
+        return None
+    return {mid for mid, v in entries.items() if bool(v)}
+
+
+def parse_mode(cfg: dict) -> str:
+    """解析启动模式 (standard=标准 / compatible=兼容), 非法值回退 standard。"""
+    mode = cfg.get("mode", "standard")
+    return mode if mode in {"standard", "compatible"} else "standard"
 
 
 def _resolve_tks_exe(cfg: dict, exe_dir: str) -> str:
@@ -234,7 +277,8 @@ class CliLauncher:
                  enabled_mod_ids=None,
                  disabled_patches: set = None,
                  no_inject_warpc: bool = False,
-                 no_suspend: bool = False):
+                 no_suspend: bool = False,
+                 mode: str = "standard"):
         self.tks_path = os.path.abspath(tks_path)
         self.game_dir = game_dir
         self.wait_timeout = wait_timeout
@@ -243,6 +287,7 @@ class CliLauncher:
         self.disabled_patches = disabled_patches or set()
         self.no_inject_warpc = no_inject_warpc
         self.no_suspend = no_suspend
+        self.mode = mode if mode in {"standard", "compatible"} else "standard"
         self._is_running = True
 
         self._orig_sigint = signal.getsignal(signal.SIGINT)
@@ -283,8 +328,8 @@ class CliLauncher:
         self._log("=" * 40)
 
         # ── 构造共享流水线 ──
-        # 默认勾选可选补丁 (匹配 GUI 行为)
-        if self.selected_patches is None:
+        # 默认勾选可选补丁 (匹配 GUI 行为); 兼容模式不启用启动器游戏功能, 无需选择
+        if self.selected_patches is None and self.mode == "standard":
             self.selected_patches = self._build_default_selection(exe_dir)
             if self.selected_patches:
                 _names = ", ".join(sorted(self.selected_patches))
@@ -297,6 +342,7 @@ class CliLauncher:
             selected_patches=self.selected_patches,
             enabled_mod_ids=self.enabled_mod_ids,
             disabled_patches=self.disabled_patches or None,
+            mode=self.mode,
         )
         pipeline = PatcherPipeline(cfg=pipeline_cfg, log=self._log)
 
@@ -331,6 +377,21 @@ class CliLauncher:
 
         self._log(f"  TKS.exe PID = {tks_proc.pid}" +
                   (" (CREATE_SUSPENDED)" if not is_wine else ""))
+
+        # ── 兼容模式: 不读取或修改目标进程内存 (与 GUI 行为一致) ──
+        if self.mode == "compatible":
+            if not is_wine:
+                resume_process(tks_proc.pid)
+                self._log("  兼容模式: 已恢复挂起的主进程")
+            result = pipeline.run_post_launch(
+                target_pid=0, code_buf=bytearray(), code_start=0,
+                base_addr=0, mod_size=0,
+            )
+            self._log("\n等待游戏退出...")
+            pipeline.wait_game_exit(tks_proc, 0)
+            pipeline.cleanup()
+            self._log("启动器退出。")
+            return result.success, result.as_dict()
 
         # ── 进程检测 (Wine 路径 vs 原生路径) ──
         target_pid, direct_mode, version_label, _need_resume_pid, \
@@ -670,31 +731,32 @@ def main():
     game_dir = _resolve_game_dir(cfg, tks_path)
     timeout = args.timeout or cfg.get("advanced", {}).get("wait_timeout", 30)
 
-    # 解析启用的可选补丁
-    selected_patches = None
-    patches_cfg = cfg.get("patches", {})
-    enabled_list = patches_cfg.get("enabled", None)
-    if enabled_list is not None:
-        selected_patches = set(enabled_list)
-        if selected_patches:
-            print(f"[配置] 显式启用可选补丁: {', '.join(sorted(selected_patches))}")
-        else:
-            print("[配置] 可选补丁: 全部禁用 (enabled=[])")
-    else:
-        print("[配置] 可选补丁: 使用默认勾选 (default_checked)")
+    # 启动模式 (GUI 共享配置 / 手写配置均可, 非法值回退标准模式)
+    mode = parse_mode(cfg)
+    if mode == "compatible":
+        print("[配置] 模式: 兼容模式 (仅加载 MOD, 跳过启动器游戏功能)")
 
-    # 解析启用的 MOD
-    enabled_mod_ids = None
-    mods_cfg = cfg.get("mods", {})
-    mod_ids_list = mods_cfg.get("enabled_ids", [])
+    # 解析启用的可选补丁 (与 GUI 共用的字典格式)
+    selected_patches = parse_patch_selection(cfg)
+    if selected_patches is None:
+        print("[配置] 可选补丁: 使用默认勾选 (default_checked)")
+    elif selected_patches:
+        print(f"[配置] 显式启用可选补丁: {', '.join(sorted(selected_patches))}")
+    else:
+        print("[配置] 可选补丁: 全部禁用")
+
+    # 解析启用的 MOD (与 GUI 共用的字典格式)
     if args.no_mods:
         enabled_mod_ids = "__NONE__"
         print("[配置] MOD: 全部禁用 (--no-mods)")
-    elif mod_ids_list:
-        enabled_mod_ids = set(mod_ids_list)
-        print(f"[配置] 启用 MOD: {', '.join(sorted(enabled_mod_ids))}")
     else:
-        print("[配置] MOD: 全部启用 (默认)")
+        enabled_mod_ids = parse_mod_selection(cfg)
+        if enabled_mod_ids is None:
+            print("[配置] MOD: 全部启用 (默认)")
+        elif enabled_mod_ids:
+            print(f"[配置] 启用 MOD: {', '.join(sorted(enabled_mod_ids))}")
+        else:
+            print("[配置] MOD: 全部禁用")
 
     if args.no_runtime_hooks:
         print("[诊断] --no-runtime-hooks: 跳过所有运行时补丁")
@@ -735,6 +797,7 @@ def main():
         disabled_patches=disabled_patches,
         no_inject_warpc=no_inject_warpc,
         no_suspend=no_suspend,
+        mode=mode,
     )
     ok, diag = launcher.run()
     if ok:

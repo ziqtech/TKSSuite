@@ -27,25 +27,25 @@ build_all.py — TKS Editors 一键构建脚本 (Nuitka)
 输出目录:
     dist/TKSEditors/
     ├── TKSItemEditor.exe     (~5-8MB 薄 / ~40-80MB 完整)
-    ├── ...
+    ├── ...                   (不含 TKSLauncherCLI, 该 exe 仅输出到 Winlator 包)
     ├── libs/                 [薄模式] PySide6.lib, QtCore.lib, ...
     ├── configs/
     └── mods/
 
-    dist/Winlator/            [Winlator 专用, 手机玩家部署包]
+    dist/Winlator/            [Winlator 专用, 手机玩家部署包; TKSLauncherCLI 唯一发行位置]
     ├── TKSLauncherCLI.exe    CLI 启动器 (~5-10MB)
-    ├── launcher_config.json  配置模板
+    ├── launcher_config.json  共享配置模板 (与 GUI 启动器同一文件)
     ├── patches/              补丁定义
     ├── configs/              基线配置 (font_config/summon_table 等)
     └── mods/                 空目录 (用户放置 MOD)
 
     dist/TKSLauncher/         [玩家精简包, 供不编辑 MOD 的普通玩家使用]
-    ├── TKSLauncher.exe       GUI 启动器
+    ├── TKSLauncher.exe       GUI 启动器 (不含 TKSLauncherCLI, 防止启动错)
     ├── TKSConfigsEditor.exe  配置编辑器
     ├── TKSSaveEditor.exe     存档编辑器
     ├── libs/                 运行时归档 (薄 exe 依赖)
     ├── configs/  mods/  tools/
-    ├── launcher_config.json  启动器配置模板
+    ├── launcher_config.json  共享配置模板 (GUI 配置后可直接复制到 Winlator)
 """
 import argparse
 import hashlib
@@ -127,6 +127,9 @@ WINLATOR_DIR = DIST_DIR / "Winlator"
 LAUNCHER_DIR = DIST_DIR / "TKSLauncher"
 # 玩家精简包包含的 exe (必须是 EDITORS 中的打包名)
 LAUNCHER_PACKAGE_EXES = ["TKSLauncher", "TKSConfigsEditor", "TKSSaveEditor", "TKSBook"]
+# Winlator 专属 exe: 只输出到 dist/Winlator/, 不进入 TKSEditors 完整包与
+# TKSLauncher 精简包, 防止 PC 用户误启动 CLI 版本。
+WINLATOR_ONLY_EXES = {"TKSLauncherCLI"}
 # .lib 归档统一存放于 libs/ 子目录, 与 exe 分离
 LIBS_DIR = RELEASE_DIR / "libs"
 # Nuitka C 编译缓存 (其下含 clcache); 固定到仓库内, 避免依赖外部环境变量丢失缓存
@@ -492,6 +495,10 @@ def _validate_editor_registry() -> None:
     unknown_zhconv = NEEDS_ZHCONV.difference(names)
     if unknown_zhconv:
         missing.append(f"NEEDS_ZHCONV 包含未注册编辑器: {sorted(unknown_zhconv)}")
+    cli_in_launcher = WINLATOR_ONLY_EXES.intersection(LAUNCHER_PACKAGE_EXES)
+    if cli_in_launcher:
+        missing.append(
+            f"LAUNCHER_PACKAGE_EXES 不应包含 Winlator 专属 exe: {sorted(cli_in_launcher)}")
     if missing:
         raise RuntimeError("构建注册表校验失败:\n  " + "\n  ".join(missing))
 
@@ -717,8 +724,10 @@ def _should_skip_build(name: str, source_files: list) -> bool:
 
     以发行目录 (RELEASE_DIR) 的 exe 作为增量标记 — 构建产物在 assemble
     阶段会从 dist/ 根目录移入发行目录, dist/ 根目录不再保留中间 exe。
+    Winlator 专属 exe 的最终位置在 WINLATOR_DIR, 以其作为增量标记。
     """
-    exe_path = RELEASE_DIR / f"{name}.exe"
+    marker_dir = WINLATOR_DIR if name in WINLATOR_ONLY_EXES else RELEASE_DIR
+    exe_path = marker_dir / f"{name}.exe"
     if not exe_path.exists():
         return False
     exe_mtime = exe_path.stat().st_mtime
@@ -929,8 +938,19 @@ def assemble_release(onefile: bool = False, release: bool = False,
 
     RELEASE_DIR.mkdir(parents=True, exist_ok=True)
 
+    # Winlator 专属 exe 不进入 TKSEditors 完整包; 清理旧版本遗留
+    for name in sorted(WINLATOR_ONLY_EXES):
+        stale = RELEASE_DIR / f"{name}.exe"
+        if stale.exists():
+            stale.unlink()
+            print(f"  [清理] 移除旧版 {name}.exe (Winlator 专属, 仅输出到 dist/Winlator)")
+
     assembled = 0
     for name, _, _ in EDITORS:
+        if name in WINLATOR_ONLY_EXES:
+            # CLI 启动器由 assemble_winlator() 单独组装, 不出现在 TKSEditors
+            print(f"  [WINLATOR] {name}.exe 仅输出到 Winlator 部署包")
+            continue
         exe_src = DIST_DIR / f"{name}.exe"
         exe_dst = RELEASE_DIR / f"{name}.exe"
         if exe_src.exists():
@@ -969,7 +989,7 @@ def assemble_release(onefile: bool = False, release: bool = False,
     else:
         print("  [WARN] 补丁构建失败，但不影响启动器运行")
 
-    # 复制 launcher_config.json (CLI 启动器配置模板)
+    # 复制 launcher_config.json (GUI/CLI 共享配置模板)
     launcher_cfg_src = 仓库根目录 / "tks_launcher_gui" / "launcher_config.json"
     if launcher_cfg_src.exists():
         shutil.copy2(str(launcher_cfg_src), str(RELEASE_DIR / "launcher_config.json"))
@@ -1010,8 +1030,8 @@ def assemble_winlator():
     """组装 Winlator 发行目录 (CLI 启动器 + 必要配置)
 
     此目录专为 Winlator (Wine on Android) 用户设计，包含:
-    - TKSLauncherCLI.exe    无 GUI 的命令行启动器
-    - launcher_config.json  启动器配置模板
+    - TKSLauncherCLI.exe    无 GUI 的命令行启动器 (唯一发行位置)
+    - launcher_config.json  共享配置模板 (与 PC 版 GUI 启动器同一文件)
     - patches/              补丁定义
     - configs/summon_table.json  召唤表
     - mods/                 MOD 目录 (空, 供用户放置)
@@ -1019,6 +1039,14 @@ def assemble_winlator():
     print(f"\n{'='*60}")
     print(f"  组装 Winlator 发行目录: {WINLATOR_DIR}")
     print(f"{'='*60}")
+
+    # CLI exe 来源: 本次构建产物 (dist/ 根目录); 增量跳过时沿用
+    # Winlator 目录中的现有副本 (须在清空目录前抢救出来)
+    cli_src = DIST_DIR / "TKSLauncherCLI.exe"
+    if not cli_src.exists():
+        old_cli = WINLATOR_DIR / "TKSLauncherCLI.exe"
+        if old_cli.exists():
+            shutil.copy2(str(old_cli), str(cli_src))
 
     # 清空并重建 Winlator 目录 (确保干净)
     if WINLATOR_DIR.exists():
@@ -1028,12 +1056,15 @@ def assemble_winlator():
     assembled = []
 
     # 1. 复制 TKSLauncherCLI.exe
-    cli_exe = RELEASE_DIR / "TKSLauncherCLI.exe"
-    if cli_exe.exists():
-        shutil.copy2(str(cli_exe), str(WINLATOR_DIR / "TKSLauncherCLI.exe"))
-        size_mb = cli_exe.stat().st_size / (1024 * 1024)
+    if cli_src.exists():
+        shutil.copy2(str(cli_src), str(WINLATOR_DIR / "TKSLauncherCLI.exe"))
+        size_mb = cli_src.stat().st_size / (1024 * 1024)
         print(f"  [OK] TKSLauncherCLI.exe ({size_mb:.1f} MB)")
         assembled.append("TKSLauncherCLI.exe")
+        # 最终产物已在 Winlator 目录; 清理 dist 根目录中间副本 (增量标记
+        # 以 WINLATOR_DIR 为准, 无需保留)
+        if cli_src != WINLATOR_DIR / "TKSLauncherCLI.exe":
+            cli_src.unlink()
     else:
         print(f"  [WARN] TKSLauncherCLI.exe 不存在 (未构建或构建失败)")
 
@@ -1146,7 +1177,8 @@ def assemble_launcher():
         print("  [OK] 更新记录.txt")
         assembled.append("更新记录.txt")
 
-    # 5. 复制启动器配置模板
+    # 5. 复制启动器共享配置模板 (与 CLI/Winlator 包同一文件,
+    #    玩家配置完成后可直接复制到 Winlator 游戏目录)
     for fname in ("launcher_config.json",):
         src = 仓库根目录 / "tks_launcher_gui" / fname
         if src.exists():
@@ -1259,7 +1291,7 @@ def main():
     if args.list:
         print("可构建编辑器:")
         for name, entry, _ in EDITORS:
-            tag = " [CLI]" if name == "TKSLauncherCLI" else ""
+            tag = " [CLI, 仅 Winlator 包]" if name in WINLATOR_ONLY_EXES else ""
             print(f"  {name:<24} {entry}{tag}")
         return
 

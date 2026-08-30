@@ -1,7 +1,9 @@
 """GUI 勾选状态持久化 — 保存/加载启动器各列表的勾选结果
 
-状态文件 (launcher_setting.json) 独立于 CLI 用的 launcher_config.json,
-仅记录 GUI 中各列表的勾选情况, 每次勾选变化时自动更新, 下次启动时恢复。
+状态文件与 CLI (Winlator 版 TKSLauncherCLI) 共用 launcher_config.json:
+GUI 每次勾选变化时自动更新其中的勾选状态字段, 下次启动时恢复;
+文件中的 tks_exe / game / advanced 等字段供 CLI 使用, GUI 读写时原样保留。
+用户在 PC 上用 GUI 配置完成后, 直接把该文件复制到 Winlator 游戏目录即可。
 """
 import json
 import os
@@ -34,6 +36,12 @@ def state_profile_key(game_path: str) -> str:
     return hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:32]
 
 
+def _clean_id_states(section: dict) -> Dict[str, bool]:
+    """解析 {id: bool} 勾选状态, 下划线开头键为说明字段, 一律跳过。"""
+    return {str(k): bool(v) for k, v in section.items()
+            if not str(k).startswith("_")}
+
+
 def _state_from_raw(raw: dict) -> GuiState:
     state = GuiState()
     known = {"_说明", "schema_version", "last_game_path", "mode",
@@ -49,10 +57,10 @@ def _state_from_raw(raw: dict) -> GuiState:
     state.mode = mode if mode in {"standard", "compatible"} else "standard"
     patches = raw.get("patches", {})
     if isinstance(patches, dict):
-        state.patches = {str(k): bool(v) for k, v in patches.items()}
+        state.patches = _clean_id_states(patches)
     mods = raw.get("mods", {})
     if isinstance(mods, dict):
-        state.mods = {str(k): bool(v) for k, v in mods.items()}
+        state.mods = _clean_id_states(mods)
     tool = raw.get("tool", "")
     if isinstance(tool, str):
         state.tool = tool
@@ -87,7 +95,8 @@ def save_gui_state(path: str, state: GuiState, game_path: str | None = None) -> 
     返回 True 表示保存成功, False 表示失败。
     """
     data = {
-        "_说明": "TKS Launcher GUI 勾选状态 — 自动生成, 每次勾选变化时更新",
+        "_说明": "TKS Launcher 共享配置文件 — GUI 自动生成并更新勾选状态, "
+                 "复制到 Winlator 游戏目录即可供 TKSLauncherCLI 使用",
         "schema_version": 2,
         "last_game_path": state.last_game_path,
         "mode": state.mode if state.mode in {"standard", "compatible"} else "standard",
@@ -100,13 +109,17 @@ def save_gui_state(path: str, state: GuiState, game_path: str | None = None) -> 
             data[key] = value
     # 保留已有 profiles；指定游戏路径时只更新该游戏的配置。
     try:
-        had_profiles = False
         if os.path.isfile(path):
             with open(path, "r", encoding="utf-8") as f:
                 existing = json.load(f)
-            if isinstance(existing, dict) and isinstance(existing.get("profiles"), dict):
-                data["profiles"] = existing["profiles"]
-                had_profiles = True
+            if isinstance(existing, dict):
+                if isinstance(existing.get("profiles"), dict):
+                    data["profiles"] = existing["profiles"]
+                # 共享配置: 保留已有文件中的 CLI/外部字段
+                # (tks_exe/game/advanced/下划线说明字段等), GUI 只更新自身字段
+                for key, value in existing.items():
+                    if key not in data:
+                        data[key] = value
         selected_path = game_path or state.last_game_path
         if selected_path:
             data.setdefault("profiles", {})[state_profile_key(selected_path)] = {
@@ -116,15 +129,6 @@ def save_gui_state(path: str, state: GuiState, game_path: str | None = None) -> 
                 "mods": data["mods"],
                 "tool": data["tool"],
             }
-            if not had_profiles and os.path.isfile(path):
-                # 首次从旧平面格式迁移时保留一份原文件。
-                backup = path + ".legacy.bak"
-                if not os.path.isfile(backup):
-                    try:
-                        import shutil
-                        shutil.copy2(path, backup)
-                    except OSError:
-                        pass
     except Exception:
         pass
     tmp_path = path + ".tmp"

@@ -192,7 +192,7 @@ class LauncherModeTests(unittest.TestCase):
             self.assertEqual(state_b.mods, {"b": True})
             self.assertNotEqual(state_profile_key(game_a), state_profile_key(game_b))
 
-    def test_state_preserves_unknown_fields_and_creates_legacy_backup(self):
+    def test_state_preserves_unknown_fields(self):
         with tempfile.TemporaryDirectory() as td:
             path = os.path.join(td, "launcher_setting.json")
             with open(path, "w", encoding="utf-8") as handle:
@@ -210,7 +210,6 @@ class LauncherModeTests(unittest.TestCase):
             with open(path, "r", encoding="utf-8") as handle:
                 saved = json.load(handle)
             self.assertEqual(saved["future_setting"], {"enabled": True})
-            self.assertTrue(os.path.isfile(path + ".legacy.bak"))
 
     def test_corrupt_state_fields_are_downgraded_individually(self):
         with tempfile.TemporaryDirectory() as td:
@@ -332,6 +331,104 @@ class LauncherModeTests(unittest.TestCase):
             self.assertEqual(backups[0].mode, "compatible")
             self.assertTrue(backups[0].game_path.endswith("TKS.exe"))
             self.assertEqual(backups[0].state_schema_version, 2)
+
+
+class SharedConfigTests(unittest.TestCase):
+    """GUI 与 Winlator CLI 共用 launcher_config.json 的读写语义。"""
+
+    def test_save_preserves_cli_sections_in_shared_config(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = os.path.join(td, "launcher_config.json")
+            with open(path, "w", encoding="utf-8") as handle:
+                json.dump({
+                    "_说明": "模板",
+                    "_说明_mode": "模式说明",
+                    "tks_exe": {"path": "TKS.exe"},
+                    "game": {"dir": ""},
+                    "advanced": {"wait_timeout": 30, "no_suspend": True},
+                    "patches": {"summon_table": True},
+                    "mods": {},
+                }, handle, ensure_ascii=False)
+
+            state = GuiState(
+                patches={"summon_table": False, "gold_limit": True},
+                mods={"beauty_pack": True},
+                mode="compatible",
+                last_game_path=os.path.join(td, "TKS.exe"),
+                tool="cnc-ddraw",
+            )
+            self.assertTrue(save_gui_state(path, state, state.last_game_path))
+
+            with open(path, "r", encoding="utf-8") as handle:
+                saved = json.load(handle)
+            self.assertEqual(saved["tks_exe"], {"path": "TKS.exe"})
+            self.assertEqual(saved["game"], {"dir": ""})
+            self.assertIs(saved["advanced"]["no_suspend"], True)
+            self.assertEqual(saved["_说明_mode"], "模式说明")
+            self.assertEqual(saved["patches"],
+                             {"summon_table": False, "gold_limit": True})
+            self.assertEqual(saved["mods"], {"beauty_pack": True})
+            self.assertEqual(saved["mode"], "compatible")
+
+    def test_load_shared_dict_form_ignores_annotation_keys(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = os.path.join(td, "launcher_config.json")
+            with open(path, "w", encoding="utf-8") as handle:
+                json.dump({
+                    "mode": "compatible",
+                    "patches": {"_说明": "说明", "a": True, "b": False},
+                    "mods": {"_默认行为": "说明", "m1": False},
+                }, handle, ensure_ascii=False)
+
+            state = load_gui_state(path)
+
+            self.assertEqual(state.mode, "compatible")
+            self.assertEqual(state.patches, {"a": True, "b": False})
+            self.assertEqual(state.mods, {"m1": False})
+
+    def test_gui_saved_config_is_readable_by_cli_parsers(self):
+        from cli_launcher import (
+            parse_mod_selection, parse_mode, parse_patch_selection,
+        )
+        with tempfile.TemporaryDirectory() as td:
+            path = os.path.join(td, "launcher_config.json")
+            state = GuiState(
+                patches={"summon_table": True, "no_enemy": False},
+                mods={"beauty_pack": True, "map_mod": False},
+                mode="compatible",
+                last_game_path=os.path.join(td, "TKS.exe"),
+            )
+            self.assertTrue(save_gui_state(path, state, state.last_game_path))
+            with open(path, "r", encoding="utf-8") as handle:
+                cfg = json.load(handle)
+
+            self.assertEqual(parse_patch_selection(cfg), {"summon_table"})
+            self.assertEqual(parse_mod_selection(cfg), {"beauty_pack"})
+            self.assertEqual(parse_mode(cfg), "compatible")
+
+    def test_cli_parser_defaults_and_selection_semantics(self):
+        from cli_launcher import (
+            parse_mod_selection, parse_mode, parse_patch_selection,
+        )
+
+        # 字段缺失/为空/仅说明字段 → 默认行为 (补丁默认勾选 / MOD 全部启用)
+        self.assertIsNone(parse_patch_selection({}))
+        self.assertIsNone(parse_mod_selection({}))
+        self.assertIsNone(parse_patch_selection({"patches": {"_说明": "x"}}))
+        self.assertIsNone(parse_mod_selection({"mods": {}}))
+        self.assertEqual(parse_mode({}), "standard")
+        self.assertEqual(parse_mode({"mode": "invalid"}), "standard")
+
+        # 字典格式: true 项启用, 全 false → 显式全部禁用
+        cfg = {"patches": {"a": True, "b": False},
+               "mods": {"m1": True, "m2": False},
+               "mode": "compatible"}
+        self.assertEqual(parse_patch_selection(cfg), {"a"})
+        self.assertEqual(parse_mod_selection(cfg), {"m1"})
+        self.assertEqual(parse_mode(cfg), "compatible")
+        self.assertEqual(
+            parse_patch_selection({"patches": {"a": False}}), set())
+        self.assertEqual(parse_mod_selection({"mods": {"m": False}}), set())
 
 
 if __name__ == "__main__":
