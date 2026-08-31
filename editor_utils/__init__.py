@@ -1,9 +1,10 @@
 """
-editor_utils — 编辑器公共模块 (12 个模块)
+editor_utils — 编辑器公共模块 (14 个模块)
 
 UI 层:
-  - theme_manager:    QSS 主题加载/切换 (ThemeManager)
-  - window_theme:     Windows DWM 标题栏颜色 (apply_godot_theme)
+  - theme_manager:    四主题注册表 / QSS 加载 / 调色板 / 选择持久化
+  - theme_switcher:   统一主题切换组件 (主题菜单 / 族内切换 / 窗口应用)
+  - window_theme:     Windows DWM 标题栏颜色 (apply_titlebar_theme)
   - combo_box:        统一下拉框弹层 (EditorComboBox)
   - tab_widget:       统一标签页/内容面板 (EditorTabWidget)
   - dock_components:  Godot 风格 Dock 面板 (DockHeader, create_dock)

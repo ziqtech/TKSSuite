@@ -47,18 +47,29 @@ class EditorTabPane(QWidget):
 
     RADIUS = 8.0
 
+    # 自绘边框色按主题族区分：modern 为中性灰，classic 为 Godot 蓝灰。
+    _BORDER_COLORS = {
+        ("modern", True): "#444444",
+        ("modern", False): "#d9d9e3",
+        ("classic", True): "#14171f",
+        ("classic", False): "#b0b5bd",
+    }
+
     def __init__(self, parent: QTabWidget):
         super().__init__(parent)
         self.setAttribute(Qt.WA_TransparentForMouseEvents)
         self.setAttribute(Qt.WA_NoSystemBackground, True)
         self.setFocusPolicy(Qt.NoFocus)
         self._dark = True
+        self._family = "modern"
 
-    def set_theme(self, dark: bool):
+    def set_theme(self, dark: bool, family: str = "modern"):
         """设置边框颜色主题；面板背景和标签颜色由 QSS 处理。"""
         dark = bool(dark)
-        if self._dark != dark:
+        family = family if family in ("modern", "classic") else "modern"
+        if self._dark != dark or self._family != family:
             self._dark = dark
+            self._family = family
             self.update()
 
     def paintEvent(self, event):
@@ -76,7 +87,8 @@ class EditorTabPane(QWidget):
 
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing, False)
-        painter.setPen(QPen(QColor("#444444" if self._dark else "#d9d9e3"), 1))
+        border_color = self._BORDER_COLORS[(self._family, self._dark)]
+        painter.setPen(QPen(QColor(border_color), 1))
         painter.setBrush(Qt.NoBrush)
 
         width = float(max(self.width() - 1, 1))
@@ -163,19 +175,26 @@ class EditorTabWidget(QTabWidget):
         """返回 flat 模式的 pane 覆盖层，普通模式返回 ``None``。"""
         return self._tab_pane
 
-    def set_theme(self, dark: bool):
+    def set_theme(self, dark: bool, family: str = "modern"):
         """同步 pane 边框主题；普通模式无需额外绘制。"""
         if self._tab_pane is not None:
-            self._tab_pane.set_theme(dark)
+            self._tab_pane.set_theme(dark, family)
         # TKSBook 等页面会动态创建内嵌 Tab，统一向下同步主题，避免
         # 内嵌 Pane 在浅色主题下仍保留默认深色边框。
         for child in self.findChildren(EditorTabWidget):
-            child.set_theme(dark)
+            child.set_theme(dark, family)
 
     def _sync_theme_from_ancestors(self):
         """动态创建的 Tab 首次显示时，从宿主编辑器读取当前主题。"""
+        from editor_utils import theme_manager
+
         parent = self.parentWidget()
         while parent is not None:
+            theme_id = getattr(parent, "_theme_id", None)
+            if theme_id is not None and str(theme_id) in theme_manager.THEMES:
+                spec = theme_manager.THEMES[str(theme_id)]
+                self.set_theme(spec.is_dark, spec.family)
+                return
             for attr in ("_is_dark", "is_dark_theme", "_dark_mode"):
                 value = getattr(parent, attr, None)
                 if value is not None:

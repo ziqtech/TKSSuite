@@ -23,7 +23,10 @@ from PySide6.QtGui import QIntValidator, QColor, QFont, QIcon, QShortcut, QKeySe
 from PySide6.QtCore import Qt, QTranslator
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-from editor_utils.theme_manager import ThemeManager
+from editor_utils import theme_manager
+from editor_utils.theme_switcher import (
+    apply_theme_to_window, create_theme_menu, toggle_theme_in_family,
+)
 from editor_utils.dock_components import DockHeader
 from editor_utils.ui_helpers import make_fake_input, update_path_labels, confirm_close, themed_messagebox, EditorComboBox
 from editor_utils.lzss import lzss_decompress_dat, lzss_compress_dat
@@ -38,7 +41,7 @@ from editor_utils.mod_exporter import (
     get_tksmod_info, import_tksmod_records, ModImportPreviewDialog, ModExportPreviewDialog,
 )
 from editor_utils.version import format_title, format_about_header
-from editor_utils.window_theme import apply_godot_theme
+from editor_utils.window_theme import apply_titlebar_theme
 from editor_utils.search_utils import search_match
 from editor_utils.kon_name_resolver import KonNameResolver
 
@@ -365,10 +368,10 @@ class KonEditor(QMainWindow):
         ico = os.path.join(os.path.dirname(__file__), 'TKS.ico')
         if os.path.exists(ico): self.setWindowIcon(QIcon(ico))
 
-        app_inst = QApplication.instance()
-        self.is_dark_theme = app_inst.styleHints().colorScheme() == Qt.ColorScheme.Dark if app_inst else True
-
-        apply_godot_theme(self, self.is_dark_theme)
+        # 主题初始化：跟随持久化选择，无存档时按系统深浅色取现代主题
+        self._theme_id = theme_manager.load_initial_theme()
+        self.is_dark_theme = theme_manager.is_dark(self._theme_id)
+        apply_titlebar_theme(self, self._theme_id)
         self.kon_path = None
         self.tkt_path = None
         self.records = []
@@ -398,13 +401,14 @@ class KonEditor(QMainWindow):
     # ============================================================
 
     def _apply_theme(self):
-        ThemeManager.apply_theme(QApplication.instance(), "dark" if self.is_dark_theme else "light")
+        apply_theme_to_window(self, self._theme_id, persist=False)
+        # kon 采用 QApplication 级样式表，让无父窗口的弹窗也继承主题
+        theme_manager.apply_theme(QApplication.instance(), self._theme_id)
 
     def _toggle_theme(self):
-        self.is_dark_theme = not self.is_dark_theme
-        self._apply_theme()
+        toggle_theme_in_family(self)
+        theme_manager.apply_theme(QApplication.instance(), self._theme_id)
         self._refresh_table()
-        apply_godot_theme(self, self.is_dark_theme)
 
     # ============================================================
     # UI 构建
@@ -432,7 +436,8 @@ class KonEditor(QMainWindow):
         em.addAction("删除当前记录", self._delete_current)
 
         vm = mb.addMenu("视图(&V)")
-        vm.addAction("切换 Godot 主题 (Dark/Light)\tF5", self._toggle_theme)
+        vm.addMenu(create_theme_menu(self))
+        vm.addAction("快速切换主题(&T)\tF5", self._toggle_theme)
 
         hm = mb.addMenu("帮助(&H)")
         hm.addAction("字段参考", self._show_field_ref)
@@ -1539,13 +1544,6 @@ def main():
     app.setApplicationName("TKKon Editor")
     _t = install_translator(app)
     setup_app_icon(app, os.path.dirname(__file__))
-
-    # 根据系统主题设置初始主题
-    is_dark = app.styleHints().colorScheme() == Qt.ColorScheme.Dark
-    if is_dark:
-        ThemeManager.apply_dark_theme(app)
-    else:
-        ThemeManager.apply_light_theme(app)
 
     editor = KonEditor()
     editor.show()

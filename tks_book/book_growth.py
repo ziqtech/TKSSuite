@@ -20,8 +20,9 @@ from PySide6.QtWidgets import (
     QPushButton,
 )
 
-from editor_utils.theme_manager import ThemeManager
-from editor_utils.window_theme import apply_godot_theme
+from editor_utils import theme_manager
+from editor_utils.theme_switcher import apply_theme_to_window
+from editor_utils.window_theme import apply_titlebar_theme
 
 
 class GrowthTableDialog(QDialog):
@@ -43,7 +44,7 @@ class GrowthTableDialog(QDialog):
 
     STAT_LABELS = ["HP", "MP", "攻击", "防御", "命中", "闪避", "速度"]
 
-    def __init__(self, parent, rec, char_name, is_dark=True):
+    def __init__(self, parent, rec, char_name, theme_id="gpt-dark"):
         super().__init__(parent)
         self.setWindowTitle(f"成长数据表 — {char_name}")
         self.resize(900, 650)
@@ -51,8 +52,8 @@ class GrowthTableDialog(QDialog):
         self._char_name = char_name
         self._rec_idx = rec['index']
 
-        ThemeManager.apply_theme(self, 'dark' if is_dark else 'light')
-        self._is_dark_init = is_dark
+        apply_theme_to_window(self, theme_id, persist=False)
+        is_dark = theme_manager.is_dark(theme_id)
 
         if is_dark:
             self._CLR_DELTA = QColor("#55b572")
@@ -77,7 +78,7 @@ class GrowthTableDialog(QDialog):
 
     def showEvent(self, event):
         super().showEvent(event)
-        apply_godot_theme(self, self._is_dark_init)
+        apply_titlebar_theme(self, self._theme_id)
 
     def _get_divisor(self, level):
         if level >= 41:

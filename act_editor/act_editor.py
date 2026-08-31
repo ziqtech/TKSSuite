@@ -65,9 +65,11 @@ from PySide6.QtCore import (
 
 # ── editor_utils 公共模块 ──
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-from editor_utils.theme_manager import ThemeManager
+from editor_utils import theme_manager
 from editor_utils.version import format_title, format_about_header
-from editor_utils.window_theme import apply_godot_theme
+from editor_utils.theme_switcher import (
+    apply_theme_to_window, create_theme_menu, toggle_theme_in_family,
+)
 from editor_utils.search_utils import search_match
 from editor_utils.kon_name_resolver import KonNameResolver
 from editor_utils.lzss import lzss_decompress_dat
@@ -1642,11 +1644,8 @@ class ActEditorV2(QMainWindow):
         if os.path.exists(ico):
             self.setWindowIcon(QIcon(ico))
 
-        # 主题检测
-        app_inst = QApplication.instance()
-        self._is_dark = app_inst.styleHints().colorScheme() == Qt.ColorScheme.Dark if app_inst else True
-
-        apply_godot_theme(self, self._is_dark)
+        # 主题初始化：跟随持久化选择，无存档时按系统深浅色取现代主题
+        apply_theme_to_window(self, theme_manager.load_initial_theme(), persist=False)
 
         # 数据状态
         self.act_path = None
@@ -1705,14 +1704,12 @@ class ActEditorV2(QMainWindow):
     # ── 主题 ──
 
     def _apply_theme(self):
-        self.setStyleSheet(ThemeManager.dark_qss() if self._is_dark else ThemeManager.light_qss())
-        self.tabs.set_theme(self._is_dark)
+        apply_theme_to_window(self, self._theme_id, persist=False)
         self._update_paths()
 
     def _toggle_theme(self):
-        self._is_dark = not self._is_dark
-        self._apply_theme()
-        apply_godot_theme(self, self._is_dark)
+        toggle_theme_in_family(self)
+        self._update_paths()
 
     def _compact_threshold(self):
         return 3 if self.compact_cb.isChecked() else 0
@@ -1759,6 +1756,8 @@ class ActEditorV2(QMainWindow):
         em.addAction("粘贴到当前条目", self._paste_current)
         em.addAction("清除当前条目", self._clear_entry)
         em.addAction("删除当前条目", self._delete_entry)
+
+        mb.addMenu(create_theme_menu(self))
 
         hm = mb.addMenu("帮助(&H)")
         hm.addAction("字段参考", self._show_field_ref)

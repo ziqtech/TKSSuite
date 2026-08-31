@@ -1,16 +1,27 @@
 """
-ChatGPT 风格主题管理器。
+统一主题管理器（四主题）。
 
-QSS 放在 ``editor_themes/`` 中，主题管理器只负责资源定位、缓存、应用和
-Qt 原生调色板兜底。保留原有的实例模式与静态方法，旧编辑器无需改动即可
-获得新的视觉主题。
+主题 QSS 放在 ``editor_themes/`` 中，本模块负责主题注册表、资源定位、
+QSS 加载缓存、QPalette 生成，以及主题选择的跨编辑器持久化
+（QSettings，Windows 下写入注册表，所有编辑器共享同一键位）。
+
+主题清单（THEME_ORDER 即菜单展示顺序）::
+
+    gpt-dark       现代深色 (ChatGPT 风格)   modern 族
+    gpt-light      现代浅色 (ChatGPT 风格)   modern 族
+    classic-dark   经典深色 (Godot 风格)     classic 族
+    classic-light  经典浅色 (Godot 风格)     classic 族
+
+同族主题共享"深/浅快速切换"语义，跨族选择经由主题菜单完成。
 """
 from __future__ import annotations
 
 import re
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
+from PySide6.QtCore import QSettings, Qt
 from PySide6.QtGui import QColor, QIcon, QPalette
 
 
@@ -22,12 +33,46 @@ def _themes_dir() -> Path:
 
 
 _THEMES_DIR = _themes_dir()
-_VALID_THEMES = frozenset(("dark", "light"))
 
 
-def _load_qss(theme: str) -> str:
+@dataclass(frozen=True)
+class ThemeSpec:
+    id: str
+    display_name: str
+    qss_file: str
+    is_dark: bool
+    family: str
+
+
+THEME_ORDER: tuple[str, ...] = ("gpt-dark", "gpt-light", "classic-dark", "classic-light")
+
+THEMES: dict[str, ThemeSpec] = {
+    "gpt-dark": ThemeSpec("gpt-dark", "现代深色", "gpt-dark.qss", True, "modern"),
+    "gpt-light": ThemeSpec("gpt-light", "现代浅色", "gpt-light.qss", False, "modern"),
+    "classic-dark": ThemeSpec("classic-dark", "经典深色", "classic-dark.qss", True, "classic"),
+    "classic-light": ThemeSpec("classic-light", "经典浅色", "classic-light.qss", False, "classic"),
+}
+
+_FAMILIES: dict[str, tuple[str, str]] = {
+    "modern": ("gpt-dark", "gpt-light"),
+    "classic": ("classic-dark", "classic-light"),
+}
+
+_SETTING_ORG = "TKSSuite"
+_SETTING_APP = "TKSSuite"
+_SETTING_KEY = "theme"
+
+
+def normalize_theme(theme_id: str) -> str:
+    value = str(theme_id).strip().lower()
+    if value not in THEMES:
+        raise ValueError(f"不支持的主题 {theme_id!r}，可选值为: {'、'.join(THEME_ORDER)}")
+    return value
+
+
+def _load_qss(qss_file: str) -> str:
     """加载主题 QSS，并把相对资源路径转换为跨打包环境的绝对路径。"""
-    qss_path = _THEMES_DIR / f"{theme}.qss"
+    qss_path = _THEMES_DIR / qss_file
     if not qss_path.is_file():
         return ""
 
@@ -45,6 +90,17 @@ def _load_qss(theme: str) -> str:
     return re.sub(r"url\(([^)]+)\)", replace_url, qss)
 
 
+_qss_cache: dict[str, str] = {}
+
+
+def stylesheet(theme_id: str) -> str:
+    """返回指定主题的 QSS（懒加载并缓存）。"""
+    value = normalize_theme(theme_id)
+    if value not in _qss_cache:
+        _qss_cache[value] = _load_qss(THEMES[value].qss_file)
+    return _qss_cache[value]
+
+
 def svg_path(name: str) -> str:
     """返回 ``editor_themes/svg`` 中图标的绝对路径。"""
     if not name.endswith(".svg"):
@@ -57,113 +113,134 @@ def svg_icon(name: str) -> QIcon:
     return QIcon(svg_path(name))
 
 
-def _make_palette(dark: bool) -> QPalette:
-    """生成 Qt 原生控件使用的 ChatGPT 风格调色板。"""
-    if dark:
-        colors = {
-            QPalette.Window: "#212121",
-            QPalette.WindowText: "#ECECEC",
-            QPalette.Base: "#2F2F2F",
-            QPalette.AlternateBase: "#262626",
-            QPalette.Text: "#ECECEC",
-            QPalette.Button: "#343434",
-            QPalette.ButtonText: "#ECECEC",
-            QPalette.Highlight: "#10A37F",
-            QPalette.HighlightedText: "#FFFFFF",
-            QPalette.PlaceholderText: "#8E8E8E",
-            QPalette.ToolTipBase: "#2F2F2F",
-            QPalette.ToolTipText: "#ECECEC",
-        }
-    else:
-        colors = {
-            QPalette.Window: "#FFFFFF",
-            QPalette.WindowText: "#2D2D2D",
-            QPalette.Base: "#FFFFFF",
-            QPalette.AlternateBase: "#F7F7F8",
-            QPalette.Text: "#2D2D2D",
-            QPalette.Button: "#FFFFFF",
-            QPalette.ButtonText: "#2D2D2D",
-            QPalette.Highlight: "#10A37F",
-            QPalette.HighlightedText: "#FFFFFF",
-            QPalette.PlaceholderText: "#8E8EA0",
-            QPalette.ToolTipBase: "#2D2D2D",
-            QPalette.ToolTipText: "#FFFFFF",
-        }
+# Qt 原生控件（QSS 不覆盖的弹窗、滚动区域等）使用的调色板。
+_PALETTE_COLORS: dict[str, dict] = {
+    "gpt-dark": {
+        QPalette.Window: "#212121",
+        QPalette.WindowText: "#ECECEC",
+        QPalette.Base: "#2F2F2F",
+        QPalette.AlternateBase: "#262626",
+        QPalette.Text: "#ECECEC",
+        QPalette.Button: "#343434",
+        QPalette.ButtonText: "#ECECEC",
+        QPalette.Highlight: "#10A37F",
+        QPalette.HighlightedText: "#FFFFFF",
+        QPalette.PlaceholderText: "#8E8E8E",
+        QPalette.ToolTipBase: "#2F2F2F",
+        QPalette.ToolTipText: "#ECECEC",
+    },
+    "gpt-light": {
+        QPalette.Window: "#FFFFFF",
+        QPalette.WindowText: "#2D2D2D",
+        QPalette.Base: "#FFFFFF",
+        QPalette.AlternateBase: "#F7F7F8",
+        QPalette.Text: "#2D2D2D",
+        QPalette.Button: "#FFFFFF",
+        QPalette.ButtonText: "#2D2D2D",
+        QPalette.Highlight: "#10A37F",
+        QPalette.HighlightedText: "#FFFFFF",
+        QPalette.PlaceholderText: "#8E8EA0",
+        QPalette.ToolTipBase: "#2D2D2D",
+        QPalette.ToolTipText: "#FFFFFF",
+    },
+    "classic-dark": {
+        QPalette.Window: "#202531",
+        QPalette.WindowText: "#DCDCDC",
+        QPalette.Base: "#1A1E27",
+        QPalette.AlternateBase: "#252A35",
+        QPalette.Text: "#DCDCDC",
+        QPalette.Button: "#2E3548",
+        QPalette.ButtonText: "#DCDCDC",
+        QPalette.Highlight: "#478CBF",
+        QPalette.HighlightedText: "#FFFFFF",
+        QPalette.PlaceholderText: "#8A96B3",
+        QPalette.ToolTipBase: "#1A1E27",
+        QPalette.ToolTipText: "#DCDCDC",
+    },
+    "classic-light": {
+        QPalette.Window: "#E0E4E8",
+        QPalette.WindowText: "#222222",
+        QPalette.Base: "#FFFFFF",
+        QPalette.AlternateBase: "#F2F5F7",
+        QPalette.Text: "#222222",
+        QPalette.Button: "#CDD3D9",
+        QPalette.ButtonText: "#111111",
+        QPalette.Highlight: "#478CBF",
+        QPalette.HighlightedText: "#FFFFFF",
+        QPalette.PlaceholderText: "#888888",
+        QPalette.ToolTipBase: "#222222",
+        QPalette.ToolTipText: "#FFFFFF",
+    },
+}
 
-    palette = QPalette()
-    for role, color in colors.items():
-        palette.setColor(role, QColor(color))
-    return palette
+_palettes: dict[str, QPalette] = {}
 
 
-# 预加载 QSS，避免每次打开子窗口重复读盘。
-_DARK_QSS = _load_qss("dark")
-_LIGHT_QSS = _load_qss("light")
+def palette(theme_id: str) -> QPalette:
+    """返回指定主题的 QPalette（懒加载并缓存）。"""
+    value = normalize_theme(theme_id)
+    if value not in _palettes:
+        pal = QPalette()
+        for role, color in _PALETTE_COLORS[value].items():
+            pal.setColor(role, QColor(color))
+        _palettes[value] = pal
+    return _palettes[value]
 
 
-def _normalize_theme(theme: str) -> str:
-    value = str(theme).strip().lower()
-    if value not in _VALID_THEMES:
-        raise ValueError(f"不支持的主题 {theme!r}，可选值为: dark、light")
+def is_dark(theme_id: str) -> bool:
+    return THEMES[normalize_theme(theme_id)].is_dark
+
+
+def family_of(theme_id: str) -> str:
+    return THEMES[normalize_theme(theme_id)].family
+
+
+def display_name(theme_id: str) -> str:
+    return THEMES[normalize_theme(theme_id)].display_name
+
+
+def family_toggle(theme_id: str) -> str:
+    """返回同族内深/浅互换后的主题（族内快速切换）。"""
+    value = normalize_theme(theme_id)
+    deep, light = _FAMILIES[THEMES[value].family]
+    return light if value == deep else deep
+
+
+def saved_theme() -> str | None:
+    """读取跨编辑器持久化的主题选择；无合法存档返回 None。"""
+    raw = QSettings(_SETTING_ORG, _SETTING_APP).value(_SETTING_KEY, "")
+    value = str(raw).strip().lower()
+    return value if value in THEMES else None
+
+
+def set_current_theme(theme_id: str) -> str:
+    """校验并持久化当前主题选择，返回规范化后的主题 id。"""
+    value = normalize_theme(theme_id)
+    QSettings(_SETTING_ORG, _SETTING_APP).setValue(_SETTING_KEY, value)
     return value
 
 
-class ThemeManager:
-    """统一管理深色/浅色主题，兼容现有编辑器的调用方式。"""
+def system_default_theme() -> str:
+    """按系统深浅色给出默认主题（沿用原行为：无应用实例时默认深色）。"""
+    from PySide6.QtWidgets import QApplication
 
-    def __init__(self, theme: str = "dark"):
-        self.current_theme = _normalize_theme(theme)
+    app = QApplication.instance()
+    if app is not None and app.styleHints().colorScheme() == Qt.ColorScheme.Light:
+        return "gpt-light"
+    return "gpt-dark"
 
-    @staticmethod
-    def stylesheet(theme: str) -> str:
-        """返回指定主题的 QSS。"""
-        theme = _normalize_theme(theme)
-        return _DARK_QSS if theme == "dark" else _LIGHT_QSS
 
-    def get_stylesheet(self) -> str:
-        return self.stylesheet(self.current_theme)
+def load_initial_theme() -> str:
+    """启动时调用：优先取持久化选择，否则跟随系统深浅色。"""
+    return saved_theme() or system_default_theme()
 
-    def toggle_theme(self) -> str:
-        self.current_theme = "light" if self.current_theme == "dark" else "dark"
-        return self.current_theme
 
-    def set_theme(self, theme: str) -> str:
-        self.current_theme = _normalize_theme(theme)
-        return self.current_theme
-
-    @staticmethod
-    def apply_theme(widget, theme: str):
-        """将主题应用到 QApplication、QMainWindow 或任意 QWidget。"""
-        theme = _normalize_theme(theme)
-        is_dark = theme == "dark"
-
-        # QSS 不覆盖的原生弹窗/控件仍能保持同一套底色和选中态。
-        widget.setPalette(_make_palette(is_dark))
-        qss = ThemeManager.stylesheet(theme)
-        if qss:
-            widget.setStyleSheet(qss)
-        return widget
-
-    @staticmethod
-    def apply_dark_theme(widget):
-        return ThemeManager.apply_theme(widget, "dark")
-
-    @staticmethod
-    def apply_light_theme(widget):
-        return ThemeManager.apply_theme(widget, "light")
-
-    @staticmethod
-    def dark_qss() -> str:
-        return _DARK_QSS
-
-    @staticmethod
-    def light_qss() -> str:
-        return _LIGHT_QSS
-
-    @staticmethod
-    def dark_palette() -> QPalette:
-        return _make_palette(True)
-
-    @staticmethod
-    def light_palette() -> QPalette:
-        return _make_palette(False)
+def apply_theme(widget, theme_id: str):
+    """将主题（QPalette + QSS）应用到 QApplication、QMainWindow 或任意 QWidget。"""
+    value = normalize_theme(theme_id)
+    # QSS 不覆盖的原生弹窗/控件仍能保持同一套底色和选中态。
+    widget.setPalette(palette(value))
+    qss = stylesheet(value)
+    if qss:
+        widget.setStyleSheet(qss)
+    return widget

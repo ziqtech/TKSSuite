@@ -51,9 +51,11 @@ except ImportError:
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from editor_utils.dock_components import create_dock
-from editor_utils.theme_manager import ThemeManager
+from editor_utils import theme_manager
+from editor_utils.theme_switcher import (
+    apply_theme_to_window, create_theme_menu, toggle_theme_in_family,
+)
 from editor_utils.version import format_title, format_about_header
-from editor_utils.window_theme import apply_godot_theme
 from editor_utils.ui_helpers import EditorComboBox
 
 # ── 像素格式定义 ──────────────────────────────────────────────
@@ -2894,7 +2896,7 @@ class SplitDialog(QDialog):
 class SpriteSheetEditorWindow(QMainWindow):
     """Spritesheet 编辑器主窗口 (PySide6)"""
 
-    def __init__(self, filepath: Optional[str] = None, is_dark: bool = True):
+    def __init__(self, filepath: Optional[str] = None):
         super().__init__()
         self.setObjectName("EditorWindow")
         self.setWindowTitle(format_title("spritesheet_editor"))
@@ -2902,11 +2904,15 @@ class SpriteSheetEditorWindow(QMainWindow):
         if os.path.exists(ico):
             self.setWindowIcon(QIcon(ico))
 
-        apply_godot_theme(self, is_dark)
+        # 主题初始化：跟随持久化选择，无存档时按系统深浅色取现代主题
+        self._theme_id = theme_manager.load_initial_theme()
+        self._is_dark: bool = theme_manager.is_dark(self._theme_id)
+        apply_theme_to_window(self, self._theme_id, persist=False)
+        # 采用 QApplication 级样式表，让无父窗口的弹窗也继承主题
+        theme_manager.apply_theme(QApplication.instance(), self._theme_id)
 
         self._set_model(SpriteSheetModel())
         self._source_sheet: Optional[Image.Image] = None
-        self._is_dark: bool = is_dark
         self._preview_mode: str = "grid"
         self._suppress_mode_change: bool = False
 
@@ -3265,6 +3271,8 @@ class SpriteSheetEditorWindow(QMainWindow):
         view_menu = menubar.addMenu("预览")
         view_menu.addAction("预览选中帧", self._preview_selected)
         view_menu.addAction("预览全部", self._preview_all)
+
+        menubar.addMenu(create_theme_menu(self))
 
         # 帮助菜单
         hm = menubar.addMenu("帮助")
@@ -3871,12 +3879,8 @@ class SpriteSheetEditorWindow(QMainWindow):
 
     # ── 主题切换 ───────────────────────
     def _toggle_theme(self):
-        self._is_dark = not self._is_dark
-        app = QApplication.instance()
-        if self._is_dark:
-            ThemeManager.apply_dark_theme(app)
-        else:
-            ThemeManager.apply_light_theme(app)
+        toggle_theme_in_family(self)
+        theme_manager.apply_theme(QApplication.instance(), self._theme_id)
 
         # 强制同步视口背景 (QSS 无法穿透 QGraphicsScene 底层)
         bg_color = QColor("#1a1d24") if self._is_dark else QColor("#313c52")
@@ -3885,7 +3889,6 @@ class SpriteSheetEditorWindow(QMainWindow):
         self.preview_view._disp.style().unpolish(self.preview_view._disp)
         self.preview_view._disp.style().polish(self.preview_view._disp)
         self.canvas.redraw()
-        apply_godot_theme(self, self._is_dark)
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -3915,15 +3918,8 @@ def main():
     font.setPointSize(9)
     app.setFont(font)
 
-    # 根据操作系统主题设定初始风格 (Qt6 原生检测)
-    is_dark = app.styleHints().colorScheme() == Qt.ColorScheme.Dark
-    if is_dark:
-        ThemeManager.apply_dark_theme(app)
-    else:
-        ThemeManager.apply_light_theme(app)
-
     filepath = sys.argv[1] if len(sys.argv) > 1 else None
-    window = SpriteSheetEditorWindow(filepath, is_dark=is_dark)
+    window = SpriteSheetEditorWindow(filepath)
     window.show()
 
     sys.exit(app.exec())

@@ -72,10 +72,12 @@ from editor_utils.mod_exporter import (
     load_grp_raw_sections, pack_tksmod, read_tksmod, safe_mod_filename,
 )
 from editor_utils.rgb565 import rgb565_to_rgba, rgba_to_rgb565
-from editor_utils.theme_manager import ThemeManager
+from editor_utils import theme_manager
+from editor_utils.theme_switcher import (
+    apply_theme_to_window, create_theme_menu, toggle_theme_in_family,
+)
 from editor_utils.ui_helpers import themed_messagebox
 from editor_utils.version import format_title, format_about_header
-from editor_utils.window_theme import apply_godot_theme
 
 # ── 本地别名: 保持向后兼容 ──
 def lzss_decompress(data, target_size):
@@ -515,16 +517,8 @@ class GRPEditor(QMainWindow):
         if os.path.exists(ico_path):
             self.setWindowIcon(QIcon(ico_path))
 
-        # 主题
-        self.theme_manager = ThemeManager()
-        app_inst = QApplication.instance()
-        if app_inst:
-            is_dark = app_inst.styleHints().colorScheme() == Qt.ColorScheme.Dark
-            self.theme_manager.current_theme = 'dark' if is_dark else 'light'
-        self._is_dark = is_dark
-
-        apply_godot_theme(self, is_dark)
-        self._apply_theme()
+        # 主题初始化：跟随持久化选择，无存档时按系统深浅色取现代主题
+        apply_theme_to_window(self, theme_manager.load_initial_theme(), persist=False)
 
         # 状态
         self.grp: Optional[GRPFile] = None
@@ -550,7 +544,7 @@ class GRPEditor(QMainWindow):
             self._new_empty()
 
     def _apply_theme(self):
-        self.setStyleSheet(self.theme_manager.get_stylesheet())
+        apply_theme_to_window(self, self._theme_id, persist=False)
 
     # ── Menu ──────────────────────────────────────────────
     def _setup_menu(self):
@@ -579,8 +573,7 @@ class GRPEditor(QMainWindow):
         vm.addAction("放大 (+50%)", lambda: self._zoom_step(1))
         vm.addAction("缩小 (-50%)", lambda: self._zoom_step(-1))
 
-        tm = mb.addMenu("主题(&T)")
-        tm.addAction("切换深色/浅色", self._toggle_theme)
+        mb.addMenu(create_theme_menu(self))
 
         hm = mb.addMenu("帮助(&H)")
         hm.addAction("伪彩工作流说明", self._show_pseudo_help)
@@ -588,10 +581,7 @@ class GRPEditor(QMainWindow):
         hm.addAction("关于编辑器", self._show_about)
 
     def _toggle_theme(self):
-        self.theme_manager.toggle_theme()
-        self._apply_theme()
-        self._is_dark = self.theme_manager.current_theme == 'dark'
-        apply_godot_theme(self, self._is_dark)
+        toggle_theme_in_family(self)
 
     # ── Toolbar ───────────────────────────────────────────
     def _setup_toolbar(self):

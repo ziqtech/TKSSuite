@@ -15,12 +15,14 @@ from core.save_manager import set_last_game_dir
 from core.state_persistence import GuiState, load_gui_state, save_gui_state
 from core.launch_context import LaunchContext
 from core.recovery_snapshot import load_snapshot, recover_game_directory, manifest_changed
+from editor_utils import theme_manager
 from editor_utils.dock_components import create_dock
 from editor_utils.flow_layout import FlowLayout
-from editor_utils.theme_manager import ThemeManager
+from editor_utils.theme_switcher import (
+    apply_theme_to_window, create_theme_menu, toggle_theme_in_family,
+)
 from editor_utils.ui_helpers import themed_messagebox
 from editor_utils.version import format_title, format_about_header
-from editor_utils.window_theme import apply_godot_theme
 from ui.custom_avatar_dialog import CustomAvatarDialog
 from ui.custom_music_dialog import CustomMusicDialog
 from ui.game_overlay import GameOverlay
@@ -70,13 +72,6 @@ class MainWindow(QMainWindow):
         self._worker: PatcherWorker | None = None
         self._log_dialog: QDialog | None = None
 
-        # 主题管理器（使用 editor_utils 的缓存式管理器）
-        self._theme_mgr = ThemeManager()
-
-        # 检测系统主题
-        app_inst = QApplication.instance()
-        self._dark_mode = app_inst.styleHints().colorScheme() == Qt.ColorScheme.Dark if app_inst else True
-
         # 加载配置用于补丁列表 (外置 .tkspatch 为唯一来源)
         patches_dir = os.path.join(_LAUNCHER_DIR, "patches")
         config = load_patch_directory(patches_dir)
@@ -93,7 +88,7 @@ class MainWindow(QMainWindow):
         self._setup_toolbar()
         self._setup_central()
         self._setup_statusbar()
-        self.set_theme("dark" if self._dark_mode else "light")
+        apply_theme_to_window(self, theme_manager.load_initial_theme(), persist=False)
         self._check_recovery_snapshot()
 
         # 组件创建完成后, 连接状态变化信号实现自动保存
@@ -199,6 +194,10 @@ class MainWindow(QMainWindow):
         mm.addAction("制作头像 MOD…", self._on_custom_avatar)
         mm.addAction("制作音乐 MOD…", self._on_custom_music)
 
+        # 主题菜单: 现代深色/现代浅色/经典深色/经典浅色 任选
+        # (工具栏按钮为族内深/浅快速切换)
+        menu_bar.addMenu(create_theme_menu(self))
+
         # 帮助菜单: 使用说明 + 关于编辑器 (设置菜单已移除: 切换主题移至工具栏, 详细日志在启动状态面板行内按钮)
         hm = menu_bar.addMenu("帮助(H)")
         hm.addAction("使用说明", self._show_help)
@@ -232,7 +231,7 @@ class MainWindow(QMainWindow):
             "10. 自定义头像: 上传图片并裁剪, 生成自定义头像 MOD\n"
             "11. 自定义音乐: 覆盖/新增 Sound 目录 BGM, 生成音乐 MOD\n"
             "12. 存档管理: 备份/恢复游戏存档及补丁状态快照\n"
-            "13. 设置 → 切换主题 (Ctrl+T): 在深色/浅色主题间切换\n\n"
+            "13. 主题：菜单栏「主题」任选 4 种主题；工具栏「切换主题」(Ctrl+T) 在当前主题族内快速深/浅切换\n\n"
             "勾选状态会自动保存到 launcher_config.json, 下次启动时自动恢复;\n"
             "该文件与 Winlator 版 TKSLauncherCLI 共用, 复制到手机游戏目录即可直接使用\n\n"
             "运行时基于内存补丁引擎 (runtime_patcher) 实现\n"
@@ -336,11 +335,12 @@ class MainWindow(QMainWindow):
         toolbar.addWidget(spacer)
         self.btn_theme = QPushButton("🌓 切换主题")
         self.btn_theme.setObjectName("toolbarSecondary")
-        self.btn_theme.setToolTip("深色/浅色主题切换 (Ctrl+T)")
-        self.btn_theme.clicked.connect(self._toggle_theme)
+        self.btn_theme.setToolTip("在当前主题族内快速切换深色/浅色 (Ctrl+T)")
+        self.btn_theme.clicked.connect(lambda: toggle_theme_in_family(self))
         toolbar.addWidget(self.btn_theme)
         # 设置菜单移除后保留 Ctrl+T 快捷键
-        QShortcut(QKeySequence("Ctrl+T"), self, activated=self._toggle_theme)
+        QShortcut(QKeySequence("Ctrl+T"), self,
+                  activated=lambda: toggle_theme_in_family(self))
 
         # 模式卡片按钮 (创建于此, 放置于顶部模式行; 样式走主题 #modeCard 规范)
         # 仍由 QButtonGroup 互斥管理, property("mode") 语义与原单选按钮一致
@@ -712,27 +712,16 @@ class MainWindow(QMainWindow):
             self._game_dir_label.setText("游戏目录：未选择")
             self._game_dir_label.setToolTip("点击「启动游戏」旁的齿轮按钮选择游戏程序")
 
-    def _toggle_theme(self):
-        self._dark_mode = not self._dark_mode
-        self.set_theme("dark" if self._dark_mode else "light")
+    def _on_theme_applied(self, theme_id: str):
+        """apply_theme_to_window 完成后的回调: 同步自绘组件的主题色表。
 
-    def set_theme(self, theme: str):
-        """应用主题：QSS 样式 + Windows 窗口框架主题"""
-        self._dark_mode = (theme == "dark")
-        self._theme_mgr.set_theme(theme)
-
-        # 应用 QSS 样式表（从 ThemeManager 缓存中获取, 编辑器主题规范唯一来源）
-        ThemeManager.apply_theme(self, theme)
-
-        # 应用 Windows 标题栏/边框主题
-        apply_godot_theme(self, is_dark=self._dark_mode)
-
-        # 模式卡片为自绘组件, 主题色表需随主题同步
+        模式卡片为自绘组件 (QSS 伪态不生效), 需按主题取色;
+        日志控制台的级别色只区分深浅。
+        """
+        dark = theme_manager.is_dark(theme_id)
         for card in (self._standard_mode, self._compatible_mode):
-            card.set_dark_mode(self._dark_mode)
-
-        # 更新日志控制台深色状态
-        self.log_console.set_dark_mode(self._dark_mode)
+            card.set_theme(theme_id)
+        self.log_console.set_dark_mode(dark)
 
     def _replay_startup_log(self):
         """将启动期日志 (会话头等) 重新追加到日志控制台。

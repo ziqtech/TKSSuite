@@ -15,6 +15,7 @@ from PySide6.QtWidgets import QApplication
 
 app = QApplication(sys.argv)
 
+from editor_utils.theme_switcher import apply_theme_to_window
 from ui.main_window import MainWindow
 
 w = MainWindow()
@@ -29,7 +30,7 @@ def _set_mode(mode: str):
 
 
 def step1_compat_light():
-    w.set_theme("light")
+    apply_theme_to_window(w, "gpt-light", persist=False)
     _set_mode("compatible")
     QTimer.singleShot(300, step2)
 
@@ -42,7 +43,7 @@ def step2():
 
 def step3():
     w.grab().save(os.path.join(_HERE, "_shot_light.png"))
-    w.set_theme("dark")
+    apply_theme_to_window(w, "gpt-dark", persist=False)
     QTimer.singleShot(300, step4)
 
 

@@ -69,7 +69,10 @@ from PySide6.QtGui import (
 )
 from PySide6.QtCore import Qt, QTranslator, Signal, QTimer, QSize
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-from editor_utils.theme_manager import ThemeManager
+from editor_utils import theme_manager
+from editor_utils.theme_switcher import (
+    apply_theme_to_window, create_theme_menu, toggle_theme_in_family,
+)
 from editor_utils.dock_components import DockHeader
 from editor_utils.picker_dialogs import TktPickerDialog, StatusPickerDialog, STATUS_NAMES, ItemPickerDialog
 from editor_utils.jvg_loader import load_mu_sprites, get_sprite_pixmap
@@ -84,7 +87,7 @@ from editor_utils.mod_exporter import (
     load_reference_dat_fields,
     get_tksmod_info, import_tksmod_records, ModImportPreviewDialog, ModExportPreviewDialog,
 )
-from editor_utils.window_theme import apply_godot_theme
+from editor_utils.window_theme import apply_titlebar_theme
 from editor_utils.tab_widget import EditorTabWidget
 from editor_utils.search_utils import search_match
 from editor_utils.kon_name_resolver import KonNameResolver
@@ -603,7 +606,7 @@ class GrowthTableDialog(QDialog):
 
     STAT_LABELS = ["HP", "MP", "攻击", "防御", "命中", "闪避", "速度"]
 
-    def __init__(self, parent, rec, char_name, tkt_names=None, grp=0, is_dark=True):
+    def __init__(self, parent, rec, char_name, tkt_names=None, grp=0, theme_id="gpt-dark"):
         super().__init__(parent)
         self.setWindowTitle(f"成长数据表 — {char_name}")
         self.resize(1100, 800)
@@ -614,15 +617,15 @@ class GrowthTableDialog(QDialog):
         self._grp = grp
 
         # 应用主题样式表
-        ThemeManager.apply_theme(self, 'dark' if is_dark else 'light')
-        self._is_dark_init = is_dark
+        apply_theme_to_window(self, theme_id, persist=False)
+        is_dark = theme_manager.is_dark(theme_id)
 
         # 主题颜色 (与 editor_themes 色板对齐)
         # 注: 当前等级行不再用白色文字+蓝底高亮 — QSS 的 ::item background-color
         # 会覆盖 item.setBackground(), 导致蓝底丢失、白字残留在浅色背景上不可读。
         # 改为仅用粗体字标记当前等级行。
         if is_dark:
-            self._CLR_DELTA    = QColor("#55b572")   # Δ增量 (取自 dark.qss PreviewDesc)
+            self._CLR_DELTA    = QColor("#55b572")   # Δ增量 (取自 gpt-dark.qss PreviewDesc)
             self._CLR_GRP      = QColor("#e8a040")   # grp最终属性
         else:
             self._CLR_DELTA    = QColor("#2d7a2d")   # Δ增量 (深绿)
@@ -651,7 +654,7 @@ class GrowthTableDialog(QDialog):
 
     def showEvent(self, event):
         super().showEvent(event)
-        apply_godot_theme(self, self._is_dark_init)
+        apply_titlebar_theme(self, self._theme_id)
 
     # ── 成长模拟 (对应 sub_410674 循环体) ──
 
@@ -910,9 +913,8 @@ class WarpcEditorV2(QMainWindow):
         if os.path.exists(ico):
             self.setWindowIcon(QIcon(ico))
 
-        app_inst = QApplication.instance()
-        self._is_dark = app_inst.styleHints().colorScheme() == Qt.ColorScheme.Dark if app_inst else True
-        apply_godot_theme(self, self._is_dark)
+        # 主题初始化：跟随持久化选择，无存档时按系统深浅色取现代主题
+        apply_theme_to_window(self, theme_manager.load_initial_theme(), persist=False)
 
         self.warpc_path = self.tkt_path = None
         self.records = []
@@ -982,15 +984,13 @@ class WarpcEditorV2(QMainWindow):
 
     # ── 主题 ──
     def _apply_theme(self):
-        self.setStyleSheet(ThemeManager.dark_qss() if self._is_dark else ThemeManager.light_qss())
-        self.tabs.set_theme(self._is_dark)
+        apply_theme_to_window(self, self._theme_id, persist=False)
         self._update_paths()
 
     def _toggle_theme(self):
-        self._is_dark = not self._is_dark
-        self._apply_theme()
+        toggle_theme_in_family(self)
+        self._update_paths()
         self._refresh_table()
-        apply_godot_theme(self, self._is_dark)
         if self._table_panel is not None:
             self._table_panel.apply_theme(self._is_dark)
 
@@ -1138,6 +1138,8 @@ class WarpcEditorV2(QMainWindow):
 
         am = mb.addMenu("分析(&S)")
         am.addAction("成长数据表 (1-60级)", self._show_growth_table)
+
+        mb.addMenu(create_theme_menu(self))
 
         hm = mb.addMenu("帮助(&H)")
         hm.addAction("帮助说明", self._show_help)
@@ -3818,7 +3820,7 @@ class WarpcEditorV2(QMainWindow):
         rec = self.records[self._editing_idx]
         char_name = self._char_name(rec)
         dlg = GrowthTableDialog(self, rec, char_name, self.tkt,
-                                 is_dark=self._is_dark)
+                                 theme_id=self._theme_id)
         dlg.exec()
 
     # ── 帮助 ──

@@ -40,7 +40,10 @@ except ImportError:
 
 # ----------------- editor_utils Imports -----------------
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-from editor_utils.theme_manager import ThemeManager
+from editor_utils import theme_manager
+from editor_utils.theme_switcher import (
+    apply_theme_to_window, create_theme_menu, toggle_theme_in_family,
+)
 from editor_utils.dock_components import DockHeader, create_dock
 from editor_utils.ui_helpers import update_path_labels, confirm_close, themed_messagebox, EditorComboBox
 from editor_utils.tkt_loader import load_tkt_full as _load_tkt_full
@@ -52,7 +55,6 @@ from editor_utils.mod_exporter import (
     get_tksmod_info, import_tksmod_text_entries, ModImportPreviewDialog, ModExportPreviewDialog,
 )
 from editor_utils.version import format_title, format_about_header
-from editor_utils.window_theme import apply_godot_theme
 from editor_utils.tab_widget import EditorTabWidget
 from editor_utils.search_utils import search_match
 
@@ -884,12 +886,10 @@ class TktEditor(QMainWindow):
         self._sort_state = 0
         self._last_focused_input = None
 
+        # 主题初始化：跟随持久化选择，无存档时按系统深浅色取现代主题
+        apply_theme_to_window(self, theme_manager.load_initial_theme(), persist=False)
+
         app_inst = QApplication.instance()
-        self._is_dark = app_inst.styleHints().colorScheme() == Qt.ColorScheme.Dark if app_inst else True
-
-        # 应用 Godot 风格窗口标题栏 (与 editor_themes 主题一致)
-        apply_godot_theme(self, self._is_dark)
-
         if app_inst:
             app_inst.focusChanged.connect(self._on_focus_changed)
 
@@ -936,6 +936,8 @@ class TktEditor(QMainWindow):
         edit_menu.addAction("删除当前条目", QKeySequence("Delete"), self._delete_entry)
         edit_menu.addSeparator()
         edit_menu.addAction("查找…", QKeySequence("Ctrl+F"), self._focus_search)
+
+        menu_bar.addMenu(create_theme_menu(self))
 
         help_menu = menu_bar.addMenu("帮助(H)")
         help_menu.addAction("帮助说明", self._show_help)
@@ -1250,17 +1252,13 @@ class TktEditor(QMainWindow):
         return sep
 
     def _toggle_theme(self):
-        self._is_dark = not self._is_dark
-        self._apply_theme()
+        toggle_theme_in_family(self)
         self._render_preview()
         self._render_comp_previews()
-        # 更新窗口标题栏颜色
-        apply_godot_theme(self, self._is_dark)
+        self._update_paths()
 
     def _apply_theme(self):
-        qss = ThemeManager.dark_qss() if self._is_dark else ThemeManager.light_qss()
-        self.setStyleSheet(qss)
-        self.main_tabs.set_theme(self._is_dark)
+        apply_theme_to_window(self, self._theme_id, persist=False)
         if hasattr(self, 'preview_scroll_area'):
             self.preview_scroll_area.setObjectName("GamePreview")
         if hasattr(self, 'preview_text'):

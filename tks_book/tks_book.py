@@ -22,11 +22,14 @@ from PySide6.QtCore import Qt
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 sys.path.insert(0, os.path.dirname(__file__))
 
-from editor_utils.theme_manager import ThemeManager
+from editor_utils import theme_manager
+from editor_utils.theme_switcher import (
+    apply_theme_to_window, create_theme_menu, toggle_theme_in_family,
+)
 from editor_utils.tab_widget import EditorTabWidget
 from editor_utils.ui_helpers import themed_messagebox, update_path_labels
 from editor_utils.version import format_title, format_about_header
-from editor_utils.window_theme import apply_godot_theme
+from editor_utils.window_theme import apply_titlebar_theme
 from editor_utils.shared_state import pick_tks_directory
 
 from book_loader import GameData
@@ -51,10 +54,10 @@ class TksBookViewer(QMainWindow):
         if os.path.exists(ico):
             self.setWindowIcon(QIcon(ico))
 
-        app_inst = QApplication.instance()
-        self.is_dark_theme = (app_inst.styleHints().colorScheme() == Qt.ColorScheme.Dark
-                              if app_inst else True)
-        apply_godot_theme(self, self.is_dark_theme)
+        # 主题初始化：跟随持久化选择，无存档时按系统深浅色取现代主题
+        self._theme_id = theme_manager.load_initial_theme()
+        self.is_dark_theme = theme_manager.is_dark(self._theme_id)
+        apply_titlebar_theme(self, self._theme_id)
 
         self.data = GameData()
         self._loaded = False
@@ -67,9 +70,9 @@ class TksBookViewer(QMainWindow):
     # ── 主题 ──
 
     def _apply_theme(self):
-        ThemeManager.apply_theme(QApplication.instance(),
-                                 "dark" if self.is_dark_theme else "light")
-        self.tabs.set_theme(self.is_dark_theme)
+        apply_theme_to_window(self, self._theme_id, persist=False)
+        # tks_book 采用 QApplication 级样式表，让无父窗口的弹窗也继承主题
+        theme_manager.apply_theme(QApplication.instance(), self._theme_id)
 
     def _sync_corner_height(self):
         """角落按钮高度对齐标签栏 (QSS 生效后计算, 避免顶部被裁剪)"""
@@ -82,9 +85,8 @@ class TksBookViewer(QMainWindow):
                 btn.setFixedHeight(bh)
 
     def _toggle_theme(self):
-        self.is_dark_theme = not self.is_dark_theme
-        self._apply_theme()
-        apply_godot_theme(self, self.is_dark_theme)
+        toggle_theme_in_family(self)
+        theme_manager.apply_theme(QApplication.instance(), self._theme_id)
         self._sync_corner_height()
         self._update_paths()
         # 技能树拓扑图配色随主题重绘 (重选当前角色即按新主题重建)
@@ -102,7 +104,8 @@ class TksBookViewer(QMainWindow):
         fm.addAction("退出", self.close)
 
         vm = mb.addMenu("视图(&V)")
-        vm.addAction("切换主题\tF5", self._toggle_theme)
+        vm.addMenu(create_theme_menu(self))
+        vm.addAction("快速切换主题(&T)\tF5", self._toggle_theme)
 
         hm = mb.addMenu("帮助(&H)")
         hm.addAction("帮助说明", self._show_help)
@@ -147,7 +150,7 @@ class TksBookViewer(QMainWindow):
             btn.setParent(corner)
             cl.addWidget(btn)
         self._btn_theme = QPushButton("🌗 切换主题")
-        self._btn_theme.setToolTip("切换深色/浅色主题 (F5)")
+        self._btn_theme.setToolTip("在当前主题族内快速切换深色/浅色 (F5)")
         self._btn_theme.clicked.connect(self._toggle_theme)
         cl.addWidget(self._btn_theme)
         self.tabs.setCornerWidget(corner, Qt.TopRightCorner)
@@ -265,7 +268,7 @@ class TksBookViewer(QMainWindow):
             "   · 地图 — 场景列表 + 背景预览 (首次切换时加载 SC.GRP)\n"
             "   · 特殊物品 — TKD 脚本 Attribute(-1,11,N) 收集度来源统计\n"
             "3. 左侧列表上方输入关键字可即时过滤\n"
-            "4. F5 切换深色/浅色主题")
+            "4. F5 在当前主题族内快速切换深色/浅色")
 
     def _show_about(self):
         themed_messagebox(self, QMessageBox.Information, "关于查看器",

@@ -4,7 +4,7 @@
 """
 import os
 import sys
-from PySide6.QtCore import Qt, QObject, QEvent
+from PySide6.QtCore import QObject, QEvent
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (QFileDialog, QFrame, QHBoxLayout, QLabel,
                                QLineEdit, QMenu, QMessageBox,
@@ -114,32 +114,36 @@ class _DialogThemeFilter(QObject):
 
     由 install_dialog_theme_filter(app) 安装到 QApplication 上,
     捕获所有 QWidget 的 Show 事件, 对顶层窗口 (QDialog/QMessageBox/
-    QInputDialog/QFileDialog/QColorDialog) 调用 apply_godot_theme,
-    使其标题栏跟随编辑器主题 (深色/浅色), 无需在每个弹窗处手动调用。
+    QInputDialog/QFileDialog/QColorDialog) 调用 apply_titlebar_theme,
+    使其标题栏跟随编辑器当前主题 (4 主题), 无需在每个弹窗处手动调用。
     """
 
     def __init__(self, app, parent=None):
         super().__init__(parent)
         self._app = app
 
-    def _resolve_is_dark(self, widget):
-        """从父窗口链查找 _is_dark / is_dark_theme, 回退到系统主题。"""
-        # 1. 沿父窗口链查找 (主窗口/QMainWindow 通常带 _is_dark)
+    def _resolve_theme(self, widget):
+        """解析弹窗应跟随的主题: 窗口链 → 顶层窗口 → 持久化存档/系统默认。"""
+        from editor_utils import theme_manager
+
+        candidates = []
         p = widget.parentWidget() or widget.parent()
         while p is not None:
-            for attr in ('_is_dark', 'is_dark_theme', '_dark_mode'):
-                v = getattr(p, attr, None)
-                if v is not None:
-                    return bool(v)
+            candidates.append(p)
             p = getattr(p, 'parentWidget', lambda: None)() or getattr(p, 'parent', lambda: None)()
-        # 2. 扫描所有顶层窗口 (找任意一个带 _is_dark 的主窗口)
-        for w in self._app.topLevelWidgets():
+        candidates.extend(self._app.topLevelWidgets())
+
+        for w in candidates:
+            theme_id = getattr(w, '_theme_id', None)
+            if theme_id is not None and str(theme_id) in theme_manager.THEMES:
+                return str(theme_id)
+        # 过渡回退: 仅带深浅布尔属性的旧式窗口
+        for w in candidates:
             for attr in ('_is_dark', 'is_dark_theme', '_dark_mode'):
                 v = getattr(w, attr, None)
                 if v is not None:
-                    return bool(v)
-        # 3. 回退到系统颜色方案
-        return self._app.styleHints().colorScheme() == Qt.ColorScheme.Dark
+                    return 'gpt-dark' if bool(v) else 'gpt-light'
+        return theme_manager.load_initial_theme()
 
     def eventFilter(self, obj, event):
         if (event.type() == QEvent.Show
@@ -148,8 +152,8 @@ class _DialogThemeFilter(QObject):
             # 跳过无标题栏的弹出控件 (QMenu/QToolTip 由 QSS 处理外观)
             if not isinstance(obj, (QMenu,)):
                 try:
-                    from editor_utils.window_theme import apply_godot_theme
-                    apply_godot_theme(obj, self._resolve_is_dark(obj))
+                    from editor_utils.window_theme import apply_titlebar_theme
+                    apply_titlebar_theme(obj, self._resolve_theme(obj))
                 except Exception:
                     pass  # 非 win32 或 winId 不可用, 静默跳过
         return False

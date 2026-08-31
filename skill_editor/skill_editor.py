@@ -36,14 +36,16 @@ from editor_utils.mod_exporter import (
 from editor_utils.picker_dialogs import (
     STATUS_ICON_BASE, STATUS_NAMES, StatusPickerDialog, TktPickerDialog
 )
-from editor_utils.theme_manager import ThemeManager
+from editor_utils import theme_manager
+from editor_utils.theme_switcher import (
+    apply_theme_to_window, create_theme_menu, toggle_theme_in_family,
+)
 from editor_utils.tkt_loader import load_tkt_simple
 from editor_utils.ui_helpers import (
     confirm_close, make_fake_input, themed_messagebox,
     update_path_labels, EditorComboBox,
 )
 from editor_utils.version import format_title, format_about_header
-from editor_utils.window_theme import apply_godot_theme
 from editor_utils.search_utils import search_match
 
 # ── 本地别名: 保持向后兼容 ──
@@ -908,10 +910,8 @@ class SkillEditorApp(QMainWindow):
         if os.path.exists(ico_path):
             self.setWindowIcon(QIcon(ico_path))
 
-        app_inst = QApplication.instance()
-        self._is_dark = app_inst.styleHints().colorScheme() == Qt.ColorScheme.Dark if app_inst else True
-
-        apply_godot_theme(self, self._is_dark)
+        # 主题初始化：跟随持久化选择，无存档时按系统深浅色取现代主题
+        apply_theme_to_window(self, theme_manager.load_initial_theme(), persist=False)
 
         self.skill_path = self.tkt_path = None
         self.records = []
@@ -983,6 +983,8 @@ class SkillEditorApp(QMainWindow):
         em.addAction("新建技能", QKeySequence("Ctrl+N"), self._new_skill)
         em.addAction("复制当前记录", self._copy_record)
         em.addAction("清空当前记录", self._clear_current)
+
+        menu_bar.addMenu(create_theme_menu(self))
 
         hm = menu_bar.addMenu("帮助(H)")
         hm.addAction("帮助说明", self._show_help)
@@ -1242,13 +1244,11 @@ class SkillEditorApp(QMainWindow):
         grid.addLayout(cell, row, col, Qt.AlignTop)
 
     def _toggle_theme(self):
-        self._is_dark = not self._is_dark
-        self._apply_theme()
-        apply_godot_theme(self, self._is_dark)
+        toggle_theme_in_family(self)
+        self._update_paths()
 
     def _apply_theme(self):
-        qss = ThemeManager.dark_qss() if self._is_dark else ThemeManager.light_qss()
-        self.setStyleSheet(qss)
+        apply_theme_to_window(self, self._theme_id, persist=False)
         self._update_paths()
 
     def _update_paths(self):

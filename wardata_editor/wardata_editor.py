@@ -86,7 +86,10 @@ from PySide6.QtGui import (
 from PySide6.QtCore import Qt, QPointF, QRectF, QTranslator
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-from editor_utils.theme_manager import ThemeManager
+from editor_utils import theme_manager
+from editor_utils.theme_switcher import (
+    apply_theme_to_window, create_theme_menu, toggle_theme_in_family,
+)
 from editor_utils.dock_components import DockHeader
 from editor_utils.ui_helpers import make_fake_input, update_path_labels, confirm_close, themed_messagebox, EditorComboBox
 from editor_utils.lzss import lzss_decompress_stream as lzss_decompress
@@ -100,7 +103,6 @@ from editor_utils.mod_exporter import (
     get_tksmod_info, read_tksmod, ModImportPreviewDialog, ModExportPreviewDialog,
 )
 from editor_utils.version import format_title, format_about_header
-from editor_utils.window_theme import apply_godot_theme
 from editor_utils.tab_widget import EditorTabWidget
 from editor_utils.search_utils import search_match
 from editor_utils.picker_dialogs import WarpcPickerDialog, ItemPickerDialog
@@ -510,9 +512,8 @@ class WarDataEditorV2(QMainWindow):
         if os.path.exists(ico):
             self.setWindowIcon(QIcon(ico))
 
-        app_inst = QApplication.instance()
-        self._is_dark = app_inst.styleHints().colorScheme() == Qt.ColorScheme.Dark if app_inst else True
-        apply_godot_theme(self, self._is_dark)
+        # 主题初始化：跟随持久化选择，无存档时按系统深浅色取现代主题
+        apply_theme_to_window(self, theme_manager.load_initial_theme(), persist=False)
 
         # 数据状态
         self.wardata_path = None
@@ -564,14 +565,12 @@ class WarDataEditorV2(QMainWindow):
 
     # ── 主题 ──
     def _apply_theme(self):
-        self.setStyleSheet(ThemeManager.dark_qss() if self._is_dark else ThemeManager.light_qss())
-        self.tabs.set_theme(self._is_dark)
+        apply_theme_to_window(self, self._theme_id, persist=False)
         self._update_paths()
 
     def _toggle_theme(self):
-        self._is_dark = not self._is_dark
-        self._apply_theme()
-        apply_godot_theme(self, self._is_dark)
+        toggle_theme_in_family(self)
+        self._update_paths()
 
     def _update_paths(self):
         update_path_labels([
@@ -622,6 +621,8 @@ class WarDataEditorV2(QMainWindow):
         em.addAction("新增战场", QKeySequence("Ctrl+N"), self._new_battle)
         em.addAction("复制当前记录", self._copy_record)
         em.addAction("删除当前记录", self._delete_record)
+
+        mb.addMenu(create_theme_menu(self))
 
         hm = mb.addMenu("帮助(&H)")
         hm.addAction("字段参考", self._show_field_ref)

@@ -2,7 +2,7 @@
 """
 GXP 图像编辑器 — 外部独立主题版 (PySide6)
 ===========================================
-全面适配外部独立 themes/dark.qss 与 themes/light.qss
+全面适配 editor_themes 四主题 QSS（gpt-dark/gpt-light/classic-dark/classic-light）
 强制剥离透明通道导出 24-bit RGB (符合游戏引擎要求)
 """
 
@@ -45,9 +45,11 @@ from editor_utils.mod_exporter import (
     safe_mod_filename,
 )
 from editor_utils.rgb565 import rgb565_to_rgba, rgba_to_rgb565
-from editor_utils.theme_manager import ThemeManager
+from editor_utils import theme_manager
+from editor_utils.theme_switcher import (
+    apply_theme_to_window, create_theme_menu, toggle_theme_in_family,
+)
 from editor_utils.version import format_title, format_about_header
-from editor_utils.window_theme import apply_godot_theme
 
 # ── GXP 格式常量 ──────────────────────────────────────────
 GXP_MAGIC = b"JGXP"
@@ -211,17 +213,8 @@ class GXPEditor(QMainWindow):
         if os.path.exists(ico_path):
             self.setWindowIcon(QIcon(ico_path))
 
-        self.theme_manager = ThemeManager()
-        app_inst = QApplication.instance()
-        if app_inst:
-            is_dark = app_inst.styleHints().colorScheme() == Qt.ColorScheme.Dark
-            self.theme_manager.set_theme('dark' if is_dark else 'light')
-        else:
-            is_dark = True
-            self.theme_manager.set_theme('dark')
-
-        self._is_dark = is_dark
-        apply_godot_theme(self, is_dark)
+        # 主题初始化：跟随持久化选择，无存档时按系统深浅色取现代主题
+        apply_theme_to_window(self, theme_manager.load_initial_theme(), persist=False)
 
         self.img: Optional[GXPImage] = None
         self._pixmap_item = None
@@ -241,30 +234,32 @@ class GXPEditor(QMainWindow):
         return create_dock(title, widget_content, header_layout)
 
     def _apply_theme(self):
-        stylesheet = self.theme_manager.get_stylesheet()
-        if stylesheet:
-            self.setStyleSheet(stylesheet)
+        apply_theme_to_window(self, self._theme_id, persist=False)
 
-        scene_bg = QColor(32, 37, 49) if self.theme_manager.current_theme == 'dark' else QColor(224, 228, 232)
-        self._scene.setBackgroundBrush(scene_bg)
+    def _on_theme_applied(self, theme_id):
+        spec = theme_manager.THEMES[theme_id]
+        if spec.family == 'classic':
+            scene_bg = QColor(32, 37, 49) if spec.is_dark else QColor(224, 228, 232)
+        else:
+            scene_bg = QColor("#212121") if spec.is_dark else QColor("#f7f7f8")
+        if hasattr(self, '_scene') and self._scene is not None:
+            self._scene.setBackgroundBrush(scene_bg)
 
         # 强制刷新状态栏以更新 QSS 样式 (依据 tkt_editor 经验)
         status_bar = self.statusBar()
         if status_bar:
             status_bar.style().unpolish(status_bar)
             status_bar.style().polish(status_bar)
-        for label in [self._status_left, self._status_size, self._status_pixel, self._status_sep]:
+        for label in [getattr(self, a, None)
+                      for a in ('_status_left', '_status_size', '_status_pixel', '_status_sep')]:
             if label:
                 label.style().unpolish(label)
                 label.style().polish(label)
 
     def _toggle_theme(self):
-        self.theme_manager.toggle_theme()
-        self._apply_theme()
-        self._is_dark = self.theme_manager.current_theme == 'dark'
-        theme_name = '深色' if self._is_dark else '浅色'
-        self.statusBar().showMessage(f"已切换到{theme_name}主题", 2000)
-        apply_godot_theme(self, self._is_dark)
+        toggle_theme_in_family(self)
+        self.statusBar().showMessage(
+            f"已切换到{theme_manager.display_name(self._theme_id)}主题", 2000)
 
     def _setup_menu(self):
         mb = self.menuBar()
@@ -286,7 +281,8 @@ class GXPEditor(QMainWindow):
         vm.addAction("原始大小 100%(&1)", QKeySequence("Ctrl+0"), lambda: self._set_zoom(1.0))
         vm.addAction("适合窗口(&F)", self._fit_to_window)
         vm.addSeparator()
-        vm.addAction("切换主题(&T)", QKeySequence("Ctrl+T"), self._toggle_theme)
+        vm.addMenu(create_theme_menu(self))
+        vm.addAction("快速切换主题(&T)", QKeySequence("Ctrl+T"), self._toggle_theme)
 
         # 帮助菜单
         hm = mb.addMenu("帮助(&H)")

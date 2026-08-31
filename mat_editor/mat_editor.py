@@ -53,7 +53,10 @@ from PySide6.QtGui import (
 from PySide6.QtCore import Qt, QTimer, QRect, QPoint, QSize, QThread, Signal, QTranslator
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-from editor_utils.theme_manager import ThemeManager
+from editor_utils import theme_manager
+from editor_utils.theme_switcher import (
+    apply_theme_to_window, create_theme_menu, toggle_theme_in_family,
+)
 from editor_utils.dock_components import DockHeader, create_dock
 from editor_utils.lzss import lzss_decompress_dat as lzss_decompress, lzss_decompress_save, lzss_compress_save
 from editor_utils.ui_helpers import confirm_close, themed_messagebox, EditorComboBox
@@ -70,7 +73,6 @@ from editor_utils.mod_exporter import (
     diff_binary_blocks, build_block_diff_json, load_grp_raw_sections,
     safe_mod_filename,
 )
-from editor_utils.window_theme import apply_godot_theme
 
 from mat_constants import (
     REC_SIZE, REC_COUNT, FILE_SIZE, DWORD_COUNT, SCENE_NAME_TKT_BASE,
@@ -1248,15 +1250,8 @@ class MatEditorApp(QMainWindow):
         if os.path.exists(ico_path):
             self.setWindowIcon(QIcon(ico_path))
 
-        # 主题状态: 根据操作系统自动判断
-        app_inst = QApplication.instance()
-        self._is_dark = (
-            app_inst.styleHints().colorScheme() == Qt.ColorScheme.Dark
-            if app_inst else True
-        )
-
-        # 应用 Godot 风格窗口标题栏 (与 editor_themes 主题一致)
-        apply_godot_theme(self, self._is_dark)
+        # 主题初始化：跟随持久化选择，无存档时按系统深浅色取现代主题
+        apply_theme_to_window(self, theme_manager.load_initial_theme(), persist=False)
 
         # 数据状态 (§5 — 已迁入 MapDataManager)
         self._data = MapDataManager()
@@ -1299,15 +1294,11 @@ class MatEditorApp(QMainWindow):
 
     # =========== QSS 主题 ===========
     def _toggle_theme(self):
-        self._is_dark = not self._is_dark
+        toggle_theme_in_family(self)
         self._apply_theme()
-        # 更新窗口标题栏颜色
-        apply_godot_theme(self, self._is_dark)
 
     def _apply_theme(self):
-        qss = ThemeManager.dark_qss() if self._is_dark else ThemeManager.light_qss()
-        self.setStyleSheet(qss)
-        self.notebook.set_theme(self._is_dark)
+        apply_theme_to_window(self, self._theme_id, persist=False)
         self._update_path()
         self._update_entity_type_colors()
         self._canvas.update_vis_background()
@@ -1377,6 +1368,7 @@ class MatEditorApp(QMainWindow):
 
         vm = menu_bar.addMenu("查看(V)")
         vm.addAction("统计信息", self._show_stats)
+        vm.addMenu(create_theme_menu(self))
 
         hm = menu_bar.addMenu("帮助(H)")
         hm.addAction("帮助说明", self._show_help)

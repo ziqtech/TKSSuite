@@ -40,7 +40,10 @@ from PySide6.QtWidgets import (
     QTextEdit,
 )
 
-from editor_utils.theme_manager import ThemeManager
+from editor_utils import theme_manager
+from editor_utils.theme_switcher import (
+    apply_theme_to_window, create_theme_menu, toggle_theme_in_family,
+)
 from editor_utils.tab_widget import EditorTabWidget
 from editor_utils.ui_helpers import install_dialog_theme_filter, themed_messagebox, EditorComboBox
 from editor_utils.dock_components import create_dock
@@ -121,10 +124,8 @@ class FontEditorWindow(QMainWindow):
         self.resize(960, 580)
         self.setMinimumSize(820, 520)
 
-        # 主题状态 (install_dialog_theme_filter 沿父链查找 _is_dark)
-        app = QApplication.instance()
-        self._is_dark = (app.styleHints().colorScheme() == Qt.ColorScheme.Dark
-                         if app else False)
+        # 主题初始化：跟随持久化选择，无存档时按系统深浅色取现代主题
+        apply_theme_to_window(self, theme_manager.load_initial_theme(), persist=False)
 
         # 当前打开的 FONT9696 文件
         self._font_path: str | None = None
@@ -416,6 +417,9 @@ class FontEditorWindow(QMainWindow):
         exit_act.triggered.connect(self.close)
         file_menu.addAction(exit_act)
 
+        # ── 主题 ──
+        menubar.addMenu(create_theme_menu(self))
+
         # ── 帮助(H) ──
         help_menu = menubar.addMenu("帮助(H)")
         help_menu.addAction("帮助说明", self._show_help)
@@ -429,22 +433,23 @@ class FontEditorWindow(QMainWindow):
     # ── 主题 ──
 
     def _apply_theme(self):
-        """应用主题: QSS 客户区 + DWM 标题栏 (双机制)。"""
-        ThemeManager.apply_theme(self, 'dark' if self._is_dark else 'light')
-        self.tabs.set_theme(self._is_dark)
-        from editor_utils.window_theme import apply_godot_theme
-        apply_godot_theme(self, self._is_dark)
-        # 切换主题后刷新预览 (颜色变化)
-        if self._font_path:
+        """应用主题: QSS 客户区 + DWM 标题栏 (统一组件一次完成)。"""
+        apply_theme_to_window(self, self._theme_id, persist=False)
+
+    def _on_theme_applied(self, theme_id):
+        # 切换主题后刷新预览 (颜色变化); 初始化回调时 _font_path 尚未创建
+        if getattr(self, "_font_path", None):
             self._refresh_preview()
 
     def _toggle_theme(self):
-        self._is_dark = not self._is_dark
-        self._apply_theme()
+        toggle_theme_in_family(self)
 
     def _glyph_fg_color(self) -> str:
         """返回当前主题下字形笔画颜色 (渲染进位图像素), 与 editor_themes 文字色一致。"""
-        return "#dcdcdc" if self._is_dark else "#222222"
+        spec = theme_manager.THEMES[self._theme_id]
+        if spec.family == 'classic':
+            return "#dcdcdc" if spec.is_dark else "#222222"
+        return "#ececec" if spec.is_dark else "#2d2d2d"
 
     # ── 窗口标题 ──
 
@@ -1135,12 +1140,6 @@ def main():
     setup_app_icon(app, os.path.dirname(__file__))
 
     window = FontEditorWindow()
-
-    # 检测系统主题
-    is_dark = app.styleHints().colorScheme() == Qt.ColorScheme.Dark
-    window._is_dark = is_dark
-    window._apply_theme()
-
     window.show()
     sys.exit(app.exec())
 

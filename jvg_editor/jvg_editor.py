@@ -53,9 +53,11 @@ from editor_utils.mod_exporter import (
     get_tksmod_info, import_tksmod_blocks, ModImportPreviewDialog, ModExportPreviewDialog,
     safe_mod_filename,
 )
-from editor_utils.theme_manager import ThemeManager
+from editor_utils import theme_manager
+from editor_utils.theme_switcher import (
+    apply_theme_to_window, create_theme_menu, toggle_theme_in_family,
+)
 from editor_utils.version import format_title, format_about_header
-from editor_utils.window_theme import apply_godot_theme
 
 JVG_MAGIC = b"@JVG"
 JVM_MAGIC = b"@JVM"
@@ -889,16 +891,8 @@ class JVGEditor(QMainWindow):
         if os.path.exists(ico_path):
             self.setWindowIcon(QIcon(ico_path))
 
-        # 主题管理 - 参考tkt_editor_v5.py，根据系统主题自动检测
-        self.theme_manager = ThemeManager()
-        app_inst = QApplication.instance()
-        if app_inst:
-            self._is_dark = app_inst.styleHints().colorScheme() == Qt.ColorScheme.Dark
-            self.theme_manager.set_theme('dark' if self._is_dark else 'light')
-        else:
-            self._is_dark = True
-
-        apply_godot_theme(self, self._is_dark)
+        # 主题初始化：跟随持久化选择，无存档时按系统深浅色取现代主题
+        apply_theme_to_window(self, theme_manager.load_initial_theme(), persist=False)
 
         # 数据模型
         self.jvg: Optional[JVGFile] = None
@@ -936,8 +930,7 @@ class JVGEditor(QMainWindow):
         return create_dock(title, widget_content, header_layout, body_margins)
 
     def _apply_theme(self):
-        stylesheet = self.theme_manager.get_stylesheet()
-        self.setStyleSheet(stylesheet)
+        apply_theme_to_window(self, self._theme_id, persist=False)
         # 更新画布背景色
         scene_bg = QColor(30, 30, 30) if self._is_dark else QColor(200, 204, 208)
         if hasattr(self, '_canvas'):
@@ -1051,20 +1044,12 @@ class JVGEditor(QMainWindow):
         view_menu.addSeparator()
 
         # 主题切换
-        theme_menu = view_menu.addMenu("主题(&H)")
-
-        dark_theme_action = QAction("深色主题", self)
-        dark_theme_action.triggered.connect(partial(self._switch_theme, 'dark'))
-        theme_menu.addAction(dark_theme_action)
-
-        light_theme_action = QAction("浅色主题", self)
-        light_theme_action.triggered.connect(partial(self._switch_theme, 'light'))
-        theme_menu.addAction(light_theme_action)
+        view_menu.addMenu(create_theme_menu(self))
 
         toggle_theme_action = QAction("切换主题", self)
         toggle_theme_action.setShortcut("Ctrl+T")
         toggle_theme_action.triggered.connect(self._toggle_theme)
-        theme_menu.addAction(toggle_theme_action)
+        view_menu.addAction(toggle_theme_action)
 
         # 帮助菜单
         hm = menubar.addMenu("帮助(&H)")
@@ -1429,19 +1414,11 @@ class JVGEditor(QMainWindow):
         self._grp_preview = self._create_dock("游戏渲染预览", w)
         return self._grp_preview
 
-    def _switch_theme(self, theme: str):
-        self._is_dark = (theme == 'dark')
-        self.theme_manager.set_theme(theme)
-        self._apply_theme()
-        self.statusBar().showMessage(f"已切换到{'深色' if theme == 'dark' else '浅色'}主题", 2000)
-
     def _toggle_theme(self):
-        self.theme_manager.toggle_theme()
-        self._is_dark = (self.theme_manager.current_theme == 'dark')
+        toggle_theme_in_family(self)
         self._apply_theme()
-        theme_name = '深色' if self._is_dark else '浅色'
-        self.statusBar().showMessage(f"已切换到{theme_name}主题", 2000)
-        apply_godot_theme(self, self._is_dark)
+        self.statusBar().showMessage(
+            f"已切换到{theme_manager.display_name(self._theme_id)}主题", 2000)
 
     # ── 未保存确认 ──────────────────────────────────────
 

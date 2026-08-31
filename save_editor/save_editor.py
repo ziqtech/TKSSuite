@@ -57,14 +57,16 @@ from editor_utils.lzss import (
     lzss_compress_save, lzss_decompress_dat, lzss_decompress_save,
 )
 from editor_utils.picker_dialogs import ItemPickerDialog
-from editor_utils.theme_manager import ThemeManager
+from editor_utils import theme_manager
+from editor_utils.theme_switcher import (
+    apply_theme_to_window, create_theme_menu, toggle_theme_in_family,
+)
 from editor_utils.tkt_loader import load_tkt_simple
 from editor_utils.ui_helpers import (
     confirm_close, install_dialog_theme_filter, make_fake_input,
     update_path_labels, EditorComboBox,
 )
 from editor_utils.version import format_title, format_about_header
-from editor_utils.window_theme import apply_godot_theme
 from editor_utils.tab_widget import EditorTabWidget
 
 
@@ -605,9 +607,8 @@ class SaveEditorApp(QMainWindow):
         if os.path.exists(ico_path):
             self.setWindowIcon(QIcon(ico_path))
 
-        app_inst = QApplication.instance()
-        self._is_dark = app_inst.styleHints().colorScheme() == Qt.ColorScheme.Dark if app_inst else True
-        apply_godot_theme(self, self._is_dark)
+        # 主题初始化：跟随持久化选择，无存档时按系统深浅色取现代主题
+        apply_theme_to_window(self, theme_manager.load_initial_theme(), persist=False)
 
         # 数据状态
         self.save_dir = None
@@ -633,16 +634,12 @@ class SaveEditorApp(QMainWindow):
 
     # ── 主题 ──
     def _apply_theme(self):
-        self.setStyleSheet(ThemeManager.dark_qss() if self._is_dark else ThemeManager.light_qss())
-        self.tabs.set_theme(self._is_dark)
-        if hasattr(self, "_event_tabs"):
-            self._event_tabs.set_theme(self._is_dark)
+        apply_theme_to_window(self, self._theme_id, persist=False)
         self._update_paths()
 
     def _toggle_theme(self):
-        self._is_dark = not self._is_dark
-        self._apply_theme()
-        apply_godot_theme(self, self._is_dark)
+        toggle_theme_in_family(self)
+        self._update_paths()
 
     # ── UI 构建 ──
     def _build_ui(self):
@@ -661,6 +658,7 @@ class SaveEditorApp(QMainWindow):
         fm.addAction("🚪 退出", self.close)
         tm = mb.addMenu("工具(&T)")
         tm.addAction("🔄 刷新数据显示", self._refresh_all)
+        mb.addMenu(create_theme_menu(self, "主题(&M)"))
         hm = mb.addMenu("帮助(&H)")
         hm.addAction("帮助说明", self._show_help)
         hm.addAction("关于编辑器", self._show_about)

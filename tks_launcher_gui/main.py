@@ -89,7 +89,7 @@ def main():
     if os.path.isfile(_ICON_PATH):
         app.setWindowIcon(QIcon(_ICON_PATH))
 
-    # 创建主窗口 (自动检测系统主题)
+    # 创建主窗口 (初始主题: 持久化存档优先, 否则跟随系统深浅色)
     window = MainWindow()
 
     window.show()

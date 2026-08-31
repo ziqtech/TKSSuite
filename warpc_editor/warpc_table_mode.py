@@ -790,7 +790,7 @@ class WarpcTablePanel(QWidget):
         self.proxy.setSortRole(Qt.EditRole)
 
         self.view = FillHandleTableView()
-        # 主题适配: dark/light.qss 中 QTableView[class="WarpcGrid"] 提供交替行/网格线配色
+        # 主题适配: editor_themes 主题 QSS 中 QTableView[class="WarpcGrid"] 提供交替行/网格线配色
         self.view.setProperty("class", "WarpcGrid")
         self.view.fill_requested = self._drag_fill  # Excel 风格填充柄回调
         self.view.digit_edit_allowed = self._digit_edit_allowed  # 数字直接输入

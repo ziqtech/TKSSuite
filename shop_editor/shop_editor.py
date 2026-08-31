@@ -54,10 +54,12 @@ from editor_utils.mod_exporter import (
     get_tksmod_info, import_tksmod_records, ModImportPreviewDialog, ModExportPreviewDialog,
 )
 from editor_utils.picker_dialogs import ItemPickerDialog
-from editor_utils.theme_manager import ThemeManager
+from editor_utils import theme_manager
+from editor_utils.theme_switcher import (
+    apply_theme_to_window, create_theme_menu, toggle_theme_in_family,
+)
 from editor_utils.ui_helpers import themed_messagebox, update_path_labels, EditorComboBox
 from editor_utils.version import format_title, format_about_header
-from editor_utils.window_theme import apply_godot_theme
 from editor_utils.search_utils import search_match
 
 # ── 本地别名: 保持向后兼容 ──
@@ -263,10 +265,8 @@ class ShopEditorWindow(QMainWindow):
         self._dirty = False
         self._editing_idx = -1
 
-        app_inst = QApplication.instance()
-        self._is_dark = app_inst.styleHints().colorScheme() == Qt.ColorScheme.Dark if app_inst else True
-
-        apply_godot_theme(self, self._is_dark)
+        # 主题初始化：跟随持久化选择，无存档时按系统深浅色取现代主题
+        apply_theme_to_window(self, theme_manager.load_initial_theme(), persist=False)
 
         self._build_ui()
         self._update_path_labels()
@@ -317,6 +317,8 @@ class ShopEditorWindow(QMainWindow):
         action_exit = QAction("退出", self)
         action_exit.triggered.connect(self.close)
         file_menu.addAction(action_exit)
+
+        menubar.addMenu(create_theme_menu(self))
 
         help_menu = menubar.addMenu("帮助")
         action_help = QAction("帮助说明", self)
@@ -545,14 +547,12 @@ class ShopEditorWindow(QMainWindow):
         ], self._is_dark)
 
     def _apply_theme(self):
-        ThemeManager.apply_theme(self, "dark" if self._is_dark else "light")
+        apply_theme_to_window(self, self._theme_id, persist=False)
 
     def _toggle_theme(self):
-        self._is_dark = not self._is_dark
-        self._apply_theme()
+        toggle_theme_in_family(self)
         self._update_path_labels()
         self._refresh_table()
-        apply_godot_theme(self, self._is_dark)
 
     # ================================================================
     # 数据加载
@@ -1141,13 +1141,6 @@ def main():
     app.setApplicationName("TKShop Editor")
     _t = install_translator(app)
     setup_app_icon(app, os.path.dirname(__file__))
-
-    # 根据系统主题设置初始主题
-    is_dark = app.styleHints().colorScheme() == Qt.ColorScheme.Dark
-    if is_dark:
-        ThemeManager.apply_dark_theme(app)
-    else:
-        ThemeManager.apply_light_theme(app)
 
     window = ShopEditorWindow()
     window.show()

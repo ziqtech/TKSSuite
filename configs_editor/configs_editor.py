@@ -24,7 +24,10 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QAction, QIcon
 
-from editor_utils.theme_manager import ThemeManager
+from editor_utils import theme_manager
+from editor_utils.theme_switcher import (
+    apply_theme_to_window, create_theme_menu, toggle_theme_in_family,
+)
 from editor_utils.tab_widget import EditorTabWidget
 from editor_utils.ui_helpers import confirm_close, update_path_labels
 from editor_utils.app_init import install_translator, setup_app_icon
@@ -124,10 +127,8 @@ class ConfigsEditorWindow(QMainWindow):
         self._game_data_loaded = False
         self._tks_dir = None
 
-        # 主题
-        app_inst = QApplication.instance()
-        self._is_dark = (app_inst.styleHints().colorScheme() == Qt.ColorScheme.Dark
-                         if app_inst else True)
+        # 主题初始化：跟随持久化选择，无存档时按系统深浅色取现代主题
+        apply_theme_to_window(self, theme_manager.load_initial_theme(), persist=False)
 
         # 面板列表
         self._panels = []
@@ -171,6 +172,8 @@ class ConfigsEditorWindow(QMainWindow):
         act_quit = QAction("退出", self)
         act_quit.triggered.connect(self.close)
         file_menu.addAction(act_quit)
+
+        menubar.addMenu(create_theme_menu(self))
 
         help_menu = menubar.addMenu("帮助(&H)")
         act_help = QAction("帮助说明", self)
@@ -495,14 +498,10 @@ class ConfigsEditorWindow(QMainWindow):
     # ── 主题 ──
 
     def _apply_theme(self):
-        ThemeManager.apply_theme(self, 'dark' if self._is_dark else 'light')
-        self._tab_widget.set_theme(self._is_dark)
-        from editor_utils.window_theme import apply_godot_theme
-        apply_godot_theme(self, self._is_dark)
+        apply_theme_to_window(self, self._theme_id, persist=False)
 
     def _toggle_theme(self):
-        self._is_dark = not self._is_dark
-        self._apply_theme()
+        toggle_theme_in_family(self)
         # 重新加载面板（刷新表格颜色等）
         for panel in self._panels:
             if hasattr(panel, '_refresh_table'):
@@ -550,11 +549,6 @@ def main():
     setup_app_icon(app, os.path.dirname(__file__))
 
     window = ConfigsEditorWindow()
-
-    # 检测系统主题并应用
-    is_dark = app.styleHints().colorScheme() == Qt.ColorScheme.Dark
-    ThemeManager.apply_theme(window, 'dark' if is_dark else 'light')
-
     window.show()
     sys.exit(app.exec())
 

@@ -395,6 +395,10 @@ class CharTab(BookTabBase):
         w = self.window()
         return bool(getattr(w, 'is_dark_theme', True))
 
+    def _theme_id(self):
+        w = self.window()
+        return str(getattr(w, '_theme_id', 'gpt-dark'))
+
     def _val_label(self, text, equipped=True):
         """创建装备/技能值标签: 无padding, 颜色适配主题"""
         lbl = QLabel(text)
@@ -492,7 +496,7 @@ class CharTab(BookTabBase):
     def _show_growth_dialog(self, rec):
         """打开成长数据表弹窗"""
         char_name = self.data.char_name(rec)
-        dlg = GrowthTableDialog(self, rec, char_name, is_dark=self._is_dark_theme())
+        dlg = GrowthTableDialog(self, rec, char_name, theme_id=self._theme_id())
         dlg.exec()
 
     def _build_battle_rewards(self, body, rec):

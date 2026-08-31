@@ -1,9 +1,8 @@
 """
 Windows 窗口标题栏主题工具。
 
-QSS 负责应用内部控件，Windows DWM 负责原生标题栏；两者使用同一套
-ChatGPT 风格的中性灰色与绿色强调色。保留 ``apply_godot_theme`` 作为
-兼容别名，避免旧版编辑器启动时报导入错误。
+QSS 负责应用内部控件，Windows DWM 负责原生标题栏；两者按同一主题的
+色板对齐。四个主题各自拥有一套标题栏配色（见 ``TITLEBAR_COLORS``）。
 """
 import ctypes
 import sys
@@ -23,19 +22,32 @@ def _hex_to_bgr(value: str) -> int:
     return (blue << 16) | (green << 8) | red
 
 
-# 与 editor_themes/dark.qss、light.qss 对齐的标题栏色板。
-DARK_COLORS = {
-    "caption": _hex_to_bgr("#212121"),
-    "border": _hex_to_bgr("#444444"),
-    "text": _hex_to_bgr("#ECECEC"),
-    "dark_mode": 1,
-}
-
-LIGHT_COLORS = {
-    "caption": _hex_to_bgr("#FFFFFF"),
-    "border": _hex_to_bgr("#D9D9E3"),
-    "text": _hex_to_bgr("#2D2D2D"),
-    "dark_mode": 0,
+# 与 editor_themes/*.qss 对齐的标题栏色板。
+TITLEBAR_COLORS = {
+    "gpt-dark": {
+        "caption": _hex_to_bgr("#212121"),
+        "border": _hex_to_bgr("#444444"),
+        "text": _hex_to_bgr("#ECECEC"),
+        "dark_mode": 1,
+    },
+    "gpt-light": {
+        "caption": _hex_to_bgr("#FFFFFF"),
+        "border": _hex_to_bgr("#D9D9E3"),
+        "text": _hex_to_bgr("#2D2D2D"),
+        "dark_mode": 0,
+    },
+    "classic-dark": {
+        "caption": _hex_to_bgr("#202531"),
+        "border": _hex_to_bgr("#14171F"),
+        "text": _hex_to_bgr("#DCDCDC"),
+        "dark_mode": 1,
+    },
+    "classic-light": {
+        "caption": _hex_to_bgr("#E0E4E8"),
+        "border": _hex_to_bgr("#B0B5BD"),
+        "text": _hex_to_bgr("#222222"),
+        "dark_mode": 0,
+    },
 }
 
 
@@ -53,22 +65,19 @@ def _set_attr(hwnd, attr, value):
         pass
 
 
-def apply_chatgpt_theme(widget, is_dark: bool = True):
-    """为 QWidget 应用 ChatGPT 风格的 Windows 原生标题栏主题。"""
+def apply_titlebar_theme(widget, theme_id: str):
+    """为 QWidget 应用与主题一致的 Windows 原生标题栏/边框配色。"""
     if sys.platform != "win32":
+        return
+    colors = TITLEBAR_COLORS.get(str(theme_id).strip().lower())
+    if colors is None:
         return
     try:
         hwnd = int(widget.winId())
     except (AttributeError, TypeError, ValueError, OSError):
         return
 
-    colors = DARK_COLORS if is_dark else LIGHT_COLORS
     _set_attr(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, colors["dark_mode"])
     _set_attr(hwnd, DWMWA_CAPTION_COLOR, colors["caption"])
     _set_attr(hwnd, DWMWA_BORDER_COLOR, colors["border"])
     _set_attr(hwnd, DWMWA_TEXT_COLOR, colors["text"])
-
-
-def apply_godot_theme(widget, is_dark: bool = True):
-    """兼容旧版调用方；新代码请使用 :func:`apply_chatgpt_theme`。"""
-    apply_chatgpt_theme(widget, is_dark)

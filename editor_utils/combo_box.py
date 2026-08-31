@@ -7,8 +7,8 @@
   下出现额外矩形边框、错位或顶层窗口生命周期问题；
 * 菜单始终从控件下沿弹出，并自动限制在当前屏幕可用区域内。
 
-菜单的具体颜色由 editor_themes/dark.qss 和 light.qss 中的
-``QMenu#EditorComboMenu`` 统一控制。
+菜单的具体颜色由 editor_themes 下四个主题 QSS（gpt-dark/gpt-light/
+classic-dark/classic-light）中的 ``QMenu#EditorComboMenu`` 统一控制。
 """
 
 import sys
