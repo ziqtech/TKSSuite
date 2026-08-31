@@ -10,7 +10,7 @@ QToolTip {background-color: #2d2d2d; color: #e0e4e8; border: 1px solid #9a9b9d; 
 QAbstractItemView {background-color: #ffffff; color: #2d2d2d; selection-background-color: rgba(71, 140, 191, 0.14); selection-color: #2d2d2d; outline: none;}
 QTableWidget, QTreeWidget, QTableView, QTreeView {background-color: #ffffff; color: #222222; border: 1px solid #b0b5bd; border-radius: 8px; gridline-color: #e9edf1; selection-background-color: #478cbf; selection-color: #fff; alternate-background-color: #f6f7f8; outline: none;}
 QTableWidget::item, QTreeWidget::item,
-QTableView::item, QTreeView::item {padding: 5px 8px; border: none;}
+QTableView::item, QTreeView::item {min-height: 28px; padding: 6px 10px; border: none;}
 QTableWidget::item:selected, QTreeWidget::item:selected,
 QTableView::item:selected, QTreeView::item:selected {background-color: rgba(71, 140, 191, 0.14); color: #2d2d2d;}
 QListWidget::item:hover, QTreeWidget::item:hover {background-color: #eff1f4;}

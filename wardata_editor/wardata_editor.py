@@ -1790,7 +1790,7 @@ class WarDataEditorV2(QMainWindow):
         tbl.setColumnWidth(6,35)
         tbl.setColumnWidth(7,65)
         tbl.setColumnWidth(8,55)
-        tbl.verticalHeader().setDefaultSectionSize(24)
+        tbl.verticalHeader().setDefaultSectionSize(44)
         tbl.horizontalHeader().setStretchLastSection(True)
         self.ap_enemy_table = tbl
         bl_enemy.addWidget(tbl)
@@ -1813,7 +1813,7 @@ class WarDataEditorV2(QMainWindow):
         atbl.setColumnWidth(0,35)
         atbl.setColumnWidth(1,35)
         atbl.setColumnWidth(2,65)
-        atbl.verticalHeader().setDefaultSectionSize(24)
+        atbl.verticalHeader().setDefaultSectionSize(44)
         atbl.horizontalHeader().setStretchLastSection(True)
         self.ap_ally_table = atbl
         bl_ally.addWidget(atbl)
@@ -1841,7 +1841,7 @@ class WarDataEditorV2(QMainWindow):
         ttbl.setColumnWidth(5,45)
         ttbl.setColumnWidth(6,55)
         ttbl.setColumnWidth(7,55)
-        ttbl.verticalHeader().setDefaultSectionSize(24)
+        ttbl.verticalHeader().setDefaultSectionSize(44)
         ttbl.horizontalHeader().setStretchLastSection(True)
         self.ap_trea_table = ttbl
         bl_trea.addWidget(ttbl)
@@ -2114,7 +2114,7 @@ class WarDataEditorV2(QMainWindow):
         tbl.setColumnWidth(8,45)
         tbl.setColumnWidth(9,45)
         tbl.setColumnWidth(10, 90)
-        tbl.verticalHeader().setDefaultSectionSize(24)
+        tbl.verticalHeader().setDefaultSectionSize(44)
         tbl.horizontalHeader().setStretchLastSection(True)
         self.enemy_table = tbl
         self.enemy_name_labels = []
@@ -2361,7 +2361,7 @@ class WarDataEditorV2(QMainWindow):
         tbl.setColumnWidth(1,55)
         tbl.setColumnWidth(2,55)
         tbl.setColumnWidth(3,55)
-        tbl.verticalHeader().setDefaultSectionSize(24)
+        tbl.verticalHeader().setDefaultSectionSize(44)
         tbl.horizontalHeader().setStretchLastSection(True)
         self.ally_table = tbl
         for i in range(6):
@@ -2419,7 +2419,7 @@ class WarDataEditorV2(QMainWindow):
         tbl.setColumnWidth(7,90)
         tbl.setColumnWidth(8,50)
         tbl.setColumnWidth(9,50)
-        tbl.verticalHeader().setDefaultSectionSize(24)
+        tbl.verticalHeader().setDefaultSectionSize(44)
         tbl.horizontalHeader().setStretchLastSection(True)
         self.dt_table = tbl
         self.dt_name_labels = []

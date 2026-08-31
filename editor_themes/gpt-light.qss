@@ -42,7 +42,9 @@ QTableWidget, QTreeWidget, QTableView, QTreeView {
 }
 QTableWidget::item, QTreeWidget::item,
 QTableView::item, QTreeView::item {
-    padding: 5px 8px;
+    /* 统一编辑器表格单元格的可读空间，避免文字贴边或被裁切。 */
+    min-height: 28px;
+    padding: 6px 10px;
     border: none;
 }
 QTableWidget::item:selected, QTreeWidget::item:selected,
