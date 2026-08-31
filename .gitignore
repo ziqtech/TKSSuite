@@ -149,6 +149,7 @@ tks_launcher_gui/tools/
 tks_launcher_gui/backups/
 tks_launcher_gui/mods/
 tks_launcher_gui/logs/
+tks_launcher_gui/launcher_config.json
 tks_launcher_gui/launcher_setting.json
 tks_launcher_gui/save_manager_state.json
 .tks_editors_state.json
