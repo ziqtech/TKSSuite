@@ -92,6 +92,7 @@ from editor_utils.theme_switcher import (
 )
 from editor_utils.dock_components import DockHeader
 from editor_utils.ui_helpers import make_fake_input, update_path_labels, confirm_close, themed_messagebox, EditorComboBox
+from editor_utils.adaptive_table import AdaptiveTableWidget
 from editor_utils.lzss import lzss_decompress_stream as lzss_decompress
 from editor_utils.lzss import lzss_decompress_dat
 from editor_utils.jvg_loader import load_mu_sprites, get_sprite_pixmap
@@ -655,19 +656,15 @@ class WarDataEditorV2(QMainWindow):
         main_layout.addWidget(splitter, 1)
 
         # 左侧：战斗列表
-        self.table = QTableWidget(0, 8)
+        self.table = AdaptiveTableWidget(
+            0, 8,
+            stretch_columns={6},
+            minimum_widths=[45, 105, 50, 50, 50, 75, 180, 60],
+            row_height=40,
+        )
         self.table.setHorizontalHeaderLabels(["序号", "地图", "敌军数", "宝物数", "陷阱数", "固定/随机", "参战人物", "参数"])
         # 左侧列表在默认 1400px 窗口中约占 700px。固定列按表头和实际值
         # 预留宽度，把可变空间留给最长、最容易被截断的“参战人物”列。
-        self.table.setColumnWidth(0, 45)   # 序号
-        self.table.setColumnWidth(1, 105)  # 地图，如 100 (640x480)
-        self.table.setColumnWidth(2, 50)   # 敌军数
-        self.table.setColumnWidth(3, 50)   # 宝物数
-        self.table.setColumnWidth(4, 50)   # 陷阱数
-        self.table.setColumnWidth(5, 75)   # 固定/随机
-        self.table.setColumnWidth(6, 245)  # 参战人物（最多显示 3 个角色名）
-        self.table.horizontalHeader().setSectionResizeMode(6, QHeaderView.Stretch)
-        self.table.setColumnWidth(7, 60)   # 参数
         self.table.setMinimumWidth(540)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SingleSelection)
@@ -1779,20 +1776,13 @@ class WarDataEditorV2(QMainWindow):
         body_enemy.setObjectName("DockBody")
         bl_enemy = QVBoxLayout(body_enemy)
         bl_enemy.setContentsMargins(8,8,8,8)
-        tbl = QTableWidget(18, 9)
+        tbl = AdaptiveTableWidget(
+            18, 9,
+            stretch_columns=set(range(9)),
+            minimum_widths=[64, 64, 64, 64, 64, 64, 64, 75, 64],
+        )
         tbl.setMinimumHeight(350)
         tbl.setHorizontalHeaderLabels(["ID\nu16\n034-069","Lv\nu8\n070-087","加成\nu8\n088-105","LvP1\ni8\n106-141","LvP2\ni8\n106-141","X\ni8\n142-177","Y\ni8\n142-177","时序Delay\nu8\n190-207","标志\nu16\n442-477"])
-        tbl.setColumnWidth(0,64)
-        tbl.setColumnWidth(1,64)
-        tbl.setColumnWidth(2,64)
-        tbl.setColumnWidth(3,64)
-        tbl.setColumnWidth(4,64)
-        tbl.setColumnWidth(5,64)
-        tbl.setColumnWidth(6,64)
-        tbl.setColumnWidth(7,75)
-        tbl.setColumnWidth(8,64)
-        tbl.verticalHeader().setDefaultSectionSize(44)
-        tbl.horizontalHeader().setStretchLastSection(True)
         self.ap_enemy_table = tbl
         bl_enemy.addWidget(tbl)
         gl_enemy.addWidget(body_enemy)
@@ -1808,14 +1798,13 @@ class WarDataEditorV2(QMainWindow):
         body_ally.setObjectName("DockBody")
         bl_ally = QVBoxLayout(body_ally)
         bl_ally.setContentsMargins(8,8,8,8)
-        atbl = QTableWidget(6, 3)
+        atbl = AdaptiveTableWidget(
+            6, 3,
+            stretch_columns=set(range(3)),
+            minimum_widths=[65, 65, 70],
+        )
         atbl.setMinimumHeight(160)
         atbl.setHorizontalHeaderLabels(["X\ni8\n178-189","Y\ni8\n178-189","朝向\nu8\n208-213"])
-        atbl.setColumnWidth(0,65)
-        atbl.setColumnWidth(1,65)
-        atbl.setColumnWidth(2,70)
-        atbl.verticalHeader().setDefaultSectionSize(44)
-        atbl.horizontalHeader().setStretchLastSection(True)
         self.ap_ally_table = atbl
         bl_ally.addWidget(atbl)
         gl_ally.addWidget(body_ally)
@@ -1831,19 +1820,13 @@ class WarDataEditorV2(QMainWindow):
         body_trea.setObjectName("DockBody")
         bl_trea = QVBoxLayout(body_trea)
         bl_trea.setContentsMargins(8,8,8,8)
-        ttbl = QTableWidget(28, 8)
+        ttbl = AdaptiveTableWidget(
+            28, 8,
+            stretch_columns=set(range(8)),
+            minimum_widths=[70, 70, 65, 65, 65, 65, 70, 70],
+        )
         ttbl.setMinimumHeight(500)
         ttbl.setHorizontalHeaderLabels(["陷阱类型\nu16\n386-441","副物品\nu16\n326-345","X\ni8\n214-269","Y\ni8\n214-269","威Min\nu8\n270-325","威Max\nu8\n270-325","QtMin\nu16\n346-385","QtMax\nu16\n346-385"])
-        ttbl.setColumnWidth(0,70)
-        ttbl.setColumnWidth(1,70)
-        ttbl.setColumnWidth(2,65)
-        ttbl.setColumnWidth(3,65)
-        ttbl.setColumnWidth(4,65)
-        ttbl.setColumnWidth(5,65)
-        ttbl.setColumnWidth(6,70)
-        ttbl.setColumnWidth(7,70)
-        ttbl.verticalHeader().setDefaultSectionSize(44)
-        ttbl.horizontalHeader().setStretchLastSection(True)
         self.ap_trea_table = ttbl
         bl_trea.addWidget(ttbl)
         gl_trea.addWidget(body_trea)
@@ -2102,21 +2085,12 @@ class WarDataEditorV2(QMainWindow):
         layout = QVBoxLayout(inner)
         layout.setContentsMargins(8,8,8,8)
         layout.setSpacing(4)
-        tbl = QTableWidget(18, 11)
+        tbl = AdaptiveTableWidget(
+            18, 11,
+            stretch_columns={2, 10},
+            minimum_widths=[30, 60, 180, 45, 70, 45, 45, 35, 35, 55, 70],
+        )
         tbl.setHorizontalHeaderLabels(["槽","角色ID","角色名","等级","加成倍率","LvP1","LvP2","X","Y","Delay","特殊设定"])
-        tbl.setColumnWidth(0,30)
-        tbl.setColumnWidth(1,60)
-        tbl.setColumnWidth(2,180)
-        tbl.setColumnWidth(3,45)
-        tbl.setColumnWidth(4,70)
-        tbl.setColumnWidth(5,45)
-        tbl.setColumnWidth(6,45)
-        tbl.setColumnWidth(7,35)
-        tbl.setColumnWidth(8,35)
-        tbl.setColumnWidth(9,55)
-        tbl.setColumnWidth(10, 70)
-        tbl.verticalHeader().setDefaultSectionSize(44)
-        tbl.horizontalHeader().setStretchLastSection(True)
         self.enemy_table = tbl
         self.enemy_name_labels = []
         for i in range(18):
@@ -2356,14 +2330,12 @@ class WarDataEditorV2(QMainWindow):
         layout.setContentsMargins(8,8,8,8)
         layout.setSpacing(4)
         layout.addWidget(QLabel("友军坐标+朝向 (sub_431428:74 — int8字节对):"))
-        tbl = QTableWidget(6, 4)
+        tbl = AdaptiveTableWidget(
+            6, 4,
+            stretch_columns={3},
+            minimum_widths=[35, 55, 55, 60],
+        )
         tbl.setHorizontalHeaderLabels(["槽","X","Y","朝向"])
-        tbl.setColumnWidth(0,35)
-        tbl.setColumnWidth(1,55)
-        tbl.setColumnWidth(2,55)
-        tbl.setColumnWidth(3,60)
-        tbl.verticalHeader().setDefaultSectionSize(44)
-        tbl.horizontalHeader().setStretchLastSection(True)
         self.ally_table = tbl
         for i in range(6):
             item = QTableWidgetItem(str(i))
@@ -2408,20 +2380,12 @@ class WarDataEditorV2(QMainWindow):
         layout.setContentsMargins(8,8,8,8)
         layout.setSpacing(4)
         layout.addWidget(QLabel("宝物和陷阱 (sub_431428:198-323) — 28槽位, 共享X/Y"))
-        tbl = QTableWidget(28, 10)
+        tbl = AdaptiveTableWidget(
+            28, 10,
+            stretch_columns={4, 7},
+            minimum_widths=[30, 40, 40, 65, 80, 55, 55, 160, 55, 55],
+        )
         tbl.setHorizontalHeaderLabels(["槽","X","Y","宝物ID","宝物名","数Min","数Max","陷阱类型","威Min","威Max"])
-        tbl.setColumnWidth(0,30)
-        tbl.setColumnWidth(1,40)
-        tbl.setColumnWidth(2,40)
-        tbl.setColumnWidth(3,65)
-        tbl.setColumnWidth(4,80)
-        tbl.setColumnWidth(5,55)
-        tbl.setColumnWidth(6,55)
-        tbl.setColumnWidth(7,160)
-        tbl.setColumnWidth(8,55)
-        tbl.setColumnWidth(9,55)
-        tbl.verticalHeader().setDefaultSectionSize(44)
-        tbl.horizontalHeader().setStretchLastSection(True)
         self.dt_table = tbl
         self.dt_name_labels = []
         trap_items = list(TRAP_NAMES_MAP.values())
