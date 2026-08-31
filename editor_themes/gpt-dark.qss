@@ -52,6 +52,16 @@ QTableView::item:selected, QTreeView::item:selected {
     background-color: rgba(16, 163, 127, 0.24);
     color: #ececec;
 }
+QWidget#WarDataEditorRightPanel QTableWidget,
+QWidget#WarDataEditorRightPanel QTableView {
+    selection-background-color: transparent;
+    selection-color: #ececec;
+}
+QWidget#WarDataEditorRightPanel QTableWidget::item:selected,
+QWidget#WarDataEditorRightPanel QTableView::item:selected {
+    background-color: transparent;
+    color: #ececec;
+}
 QListWidget::item:hover, QTreeWidget::item:hover {
     background-color: #3a3a3a;
 }

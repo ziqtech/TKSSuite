@@ -13,6 +13,10 @@ QTableWidget::item, QTreeWidget::item,
 QTableView::item, QTreeView::item {min-height: 28px; padding: 6px 10px; border: none;}
 QTableWidget::item:selected, QTreeWidget::item:selected,
 QTableView::item:selected, QTreeView::item:selected {background-color: rgba(71, 140, 191, 0.24); color: #e0e4eb;}
+QWidget#WarDataEditorRightPanel QTableWidget,
+QWidget#WarDataEditorRightPanel QTableView {selection-background-color: transparent; selection-color: #e0e4eb;}
+QWidget#WarDataEditorRightPanel QTableWidget::item:selected,
+QWidget#WarDataEditorRightPanel QTableView::item:selected {background-color: transparent; color: #e0e4eb;}
 QListWidget::item:hover, QTreeWidget::item:hover {background-color: #323a4f;}
 QHeaderView {background-color: #1d212d;}
 QHeaderView::section {background-color: #202531; color: #aab4cd; border: none; border-bottom: 1px solid #14171f; padding: 7px 8px;}
