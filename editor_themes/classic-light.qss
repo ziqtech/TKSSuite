@@ -234,8 +234,8 @@ QScrollBar::handle:horizontal:hover {background-color: #8da4b8;}
 
 /* ── 状态栏标签 (tks_launcher_gui) ── */
 QLabel#statusLabel {color: #222222; font-weight: bold; padding: 4px 8px;}
-QLabel#statusLabelOk {color: #2E7D32; font-weight: bold; padding: 4px 8px;}
-QLabel#statusLabelError {color: #C62828; font-weight: bold; padding: 4px 8px;}
+QLabel#statusLabelOk {color: #178a39; font-weight: bold; padding: 4px 8px;}
+QLabel#statusLabelError {color: #c93b16; font-weight: bold; padding: 4px 8px;}
 
 /* ── DockHeader 内紧凑工具按钮 (tks_launcher_gui) ── */
 QToolButton#dockToolButton {background-color: transparent; color: #222222; border: none; border-radius: 3px; padding: 0px 6px; max-height: 16px;}
@@ -248,7 +248,7 @@ QToolButton#dockToolButton:checked:hover {background-color: #5a9ccc; color: #fff
 QPushButton#btnStart {background-color: #3a8c52; color: #ffffff; border: 1px solid #2e7041; font-weight: bold;}
 QPushButton#btnStart:hover {background-color: #45a362;}
 QPushButton#btnStart:pressed {background-color: #2e7041; color: #ffffff;}
-QPushButton#btnStart:disabled {background-color: #d5d9dd; color: #999; border-color: #b0b5bd;}
+QPushButton#btnStart:disabled {background-color: #f6f7f8; color: #6e6e80; border-color: #d6dadf;}
 
 /* ── 记录标题标签 (item/skill/mat/warpc 编辑器) ── */
 QLabel[class="RecordHeader"] {font-size: 14px; font-weight: bold; color: #2d2d2d; background-color: #f6f7f8; border: 1px solid #d6dadf; border-radius: 8px; padding: 5px 10px;}
@@ -453,7 +453,7 @@ QLabel[class="GlyphCell"] {background-color: #ffffff; border: 1px solid #b0b5bd;
 /* ══ 功能补充规则 (bab68ba 提交后新增组件所需, 配色沿用本主题色板) ══ */
 
 /* ── 启动状态警告标签 (tks_launcher_gui): 半成功/部分未应用 ── */
-QLabel#statusLabelWarn {color: #CC6600; font-weight: bold; padding: 4px 8px;}
+QLabel#statusLabelWarn {color: #B85C00; font-weight: bold; padding: 4px 8px;}
 
 /* ── 兼容模式启动按钮 (tks_launcher_gui): 蓝色区分标准模式绿 ── */
 QPushButton#btnStartCompat {background-color: #eef2ff; color: #4f5bb5; border: 1px solid #7c83fd; font-weight: bold;}
@@ -464,9 +464,9 @@ QPushButton#btnStartCompat:disabled {background-color: #f6f7f8; color: #6e6e80; 
 /* ── 启动游戏分割按钮: 主按钮圆左角, 齿轮按钮圆右角, 拼接处共享分隔线 ── */
 QPushButton#btnStart,
 QPushButton#btnStartCompat {border-top-right-radius: 0px; border-bottom-right-radius: 0px;}
-QPushButton#btnStartGear {background-color: #478cbf; color: #e0e4e8; border: 1px solid #366a91; border-left: none; border-top-left-radius: 0px; border-bottom-left-radius: 0px; padding: 6px 9px;}
-QPushButton#btnStartGear:hover {background-color: #5aa1d5;}
-QPushButton#btnStartGear:pressed {background-color: #366a91; color: #e0e4e8;}
+QPushButton#btnStartGear {background-color: #3a8c52; color: #ffffff; border: 1px solid #2e7041; border-left: none; border-top-left-radius: 0px; border-bottom-left-radius: 0px; padding: 6px 9px;}
+QPushButton#btnStartGear:hover {background-color: #45a362;}
+QPushButton#btnStartGear:pressed {background-color: #2e7041; color: #ffffff;}
 QPushButton#btnStartGear:disabled {background-color: #f6f7f8; color: #6e6e80; border-color: #d6dadf;}
 QPushButton#btnStartGearCompat {background-color: #eef2ff; color: #4f5bb5; border: 1px solid #7c83fd; border-left: none; border-top-left-radius: 0px; border-bottom-left-radius: 0px; padding: 6px 9px;}
 QPushButton#btnStartGearCompat:hover {background-color: #e3e8ff;}
