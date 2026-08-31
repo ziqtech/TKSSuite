@@ -1095,7 +1095,7 @@ class WarpcTablePanel(QWidget):
             # 与表单 Tab4 一致: TKKon 动画选择器
             if not ed.tkkon_names:
                 return
-            from warpc_editor_v2 import TkkonPickerDialog
+            from warpc_editor import TkkonPickerDialog
             cur = self.model.get_value(src.row(), src.column())
             dlg = TkkonPickerDialog(self, ed.tkkon_names, cur)
             if dlg.exec() == QDialog.Accepted and dlg.selected_id is not None:
@@ -1109,7 +1109,7 @@ class WarpcTablePanel(QWidget):
         if fd.ftype == 'skill_ref':
             if not ed.skill_names:
                 return
-            from warpc_editor_v2 import SkillPickerDialog
+            from warpc_editor import SkillPickerDialog
             dlg = SkillPickerDialog(self, ed.skill_names, ed._skill_types, cur)
             if dlg.exec() == QDialog.Accepted and dlg.selected_index is not None:
                 new_val = dlg.selected_index
@@ -1135,13 +1135,13 @@ class WarpcTablePanel(QWidget):
             if dlg.exec() == QDialog.Accepted and dlg.selected_value is not None:
                 new_val = dlg.selected_value
         elif fd.ftype == 'flags':
-            from warpc_editor_v2 import FlagsDialog
+            from warpc_editor import FlagsDialog
             title, bits = FLAG_DEFS[fd.key]
             dlg = FlagsDialog(self, title, bits, cur & 0xFFFF)
             if dlg.exec() == QDialog.Accepted:
                 new_val = dlg.get_value()
         elif fd.ftype == 'use_right':
-            from warpc_editor_v2 import UseRightDialog
+            from warpc_editor import UseRightDialog
             if fd.key not in ed._use_right_defs:
                 return
             title, opts = ed._use_right_defs[fd.key]

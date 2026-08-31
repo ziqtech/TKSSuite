@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
-"""mat_editor_v2 的纯数据常量集中处。
+"""mat_editor 的纯数据常量集中处。
 字段定义、调色板、控制字节、类型标签等逆向得到的静态数据, 以及 dword 索引的语义别名。
-所有内容从 mat_editor_v2.py 原样迁入, 不含任何业务逻辑。"""
+所有内容从 mat_editor.py 原样迁入, 不含任何业务逻辑。"""
 
 REC_SIZE = 384
 REC_COUNT = 6000

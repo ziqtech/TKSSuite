@@ -233,7 +233,7 @@ class SkillTab(BookTabBase):
     # ── 技能树弹窗 ──
 
     def _skill_graph_adj(self):
-        """构建有向引用图 (同 skill_editor_v2.SkillTreeDialog._build_graph):
+        """构建有向引用图 (同 skill_editor.SkillTreeDialog._build_graph):
         children: a→[(b,w)] 学会a后为b贡献w进度; parents: 反向。
         语义 (逆向 sub_41E248): A→B 表示 A 是 B 的前置, 箭头由前置指向解锁。
         """
@@ -266,7 +266,7 @@ class SkillTab(BookTabBase):
 
     def _collect_tree_nodes(self, idx):
         """此技能的技能链节点集 = 向上全部前置 + 向下全部解锁 + 自身
-        (同 skill_editor_v2 拓扑图语义, 不含仅共享前置的兄弟分支)"""
+        (同 skill_editor 拓扑图语义, 不含仅共享前置的兄弟分支)"""
         children, parents = self._skill_graph_adj()
         anc = self._reach_chain(idx, parents)
         desc = self._reach_chain(idx, children)

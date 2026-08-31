@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-"""mat_editor_v2 数据文件 IO 层 — TKMat/TKDefUnit/存档读写, 记录空判定与脚本信息。
-从 mat_editor_v2.py 原样迁出, 无 UI 逻辑 (§工程化拆分)。"""
+"""mat_editor 数据文件 IO 层 — TKMat/TKDefUnit/存档读写, 记录空判定与脚本信息。
+从 mat_editor.py 原样迁出, 无 UI 逻辑 (§工程化拆分)。"""
 import os
 import struct
 import sys

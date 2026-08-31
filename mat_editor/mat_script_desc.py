@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-"""mat_editor_v2 脚本命令描述系统 — 命令列表/描述模板与人类可读描述辅助函数。
-从 mat_editor_v2.py 原样迁出, 无 UI 逻辑 (§工程化拆分)。"""
+"""mat_editor 脚本命令描述系统 — 命令列表/描述模板与人类可读描述辅助函数。
+从 mat_editor.py 原样迁出, 无 UI 逻辑 (§工程化拆分)。"""
 import os
 import re
 import struct

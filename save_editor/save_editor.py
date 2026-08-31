@@ -17,7 +17,7 @@ TKS Save Editor (PySide6 — Godot 4.6 风格)
   [6×1B team_ids][2B gold][4B unix_timestamp][6×2B team_levels][4B scene_id]
 
 用法:
-  python save_editor_v2.py
+  python save_editor.py
 """
 
 import datetime
@@ -1168,7 +1168,7 @@ class SaveEditorApp(QMainWindow):
         self._warpc_table.itemSelectionChanged.connect(self._on_warpc_select)
         left_layout.addWidget(self._warpc_table)
 
-        # 右侧: 复用 warpc_editor_v2 的独立编辑面板
+        # 右侧: 复用 warpc_editor 的独立编辑面板
         self._warpc_panel = WarpcEditPanel()
 
         splitter = QSplitter(Qt.Horizontal)
@@ -1983,7 +1983,7 @@ class SaveEditorApp(QMainWindow):
 
     def _scene_name(self, scene_id):
         """从TKT获取场景名称 (TKT_ID = scene_id + 300).
-        与mat_editor_v2的scene_name()一致。"""
+        与mat_editor的scene_name()一致。"""
         if scene_id < 0:
             return "全局"
         tkt_id = 300 + scene_id

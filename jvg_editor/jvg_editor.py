@@ -3,7 +3,7 @@
 JVG 图集编辑器 — PySide6 版本，支持深色/浅色主题切换
 ========================================================
 格式依据: sub_453BD0 (JVG加载), sub_4544EC (RLE渲染)
-用法: python jvg_editor_v2.py [file.jvg]
+用法: python jvg_editor.py [file.jvg]
 """
 
 from __future__ import annotations

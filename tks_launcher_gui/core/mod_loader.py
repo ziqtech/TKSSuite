@@ -773,7 +773,7 @@ DAT_FILE_INFO = {
 # field_layout: {field_name: (offset, item_size, struct_fmt, item_count)}
 #   - item_size 仅用于校验
 #   - struct_fmt: struct 单元素格式 ('<B' uint8, '<b' int8, '<H' uint16)
-# 字段布局严格依据 wardata_editor_v2.py 中 sub_42FDF8 的逆向结果
+# 字段布局严格依据 wardata_editor.py 中 sub_42FDF8 的逆向结果
 # (WarData.dat: 498 字节/条, 219 条, flat binary, 无 LZSS)
 WARDATA_FIELD_LAYOUT = {
     "flags":             (0,   1,  '<B', 1),    # byte: sub_4307CC:200 &4=随机敌军; &2=失败条件

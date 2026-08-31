@@ -15,5 +15,5 @@ from editor_utils.runtime_bootstrap import bootstrap
 bootstrap()
 
 # ── 导入并运行编辑器 ──
-from tks_book_v2 import main
+from tks_book import main
 main()

@@ -31,12 +31,12 @@ SCREEN_W = 640
 
 
 # ═══════════════════════════════════════════════════════════════
-# JVG 编码辅助（复用 jvg_editor_v2.py 逻辑）
+# JVG 编码辅助（复用 jvg_editor.py 逻辑）
 # ═══════════════════════════════════════════════════════════════
 
 def _encode_rle_game(pixels: bytes, alpha: bytes, w: int, h: int,
                      screen_w: int = SCREEN_W):
-    """JVG RLE 编码 — 与 jvg_editor_v2._encode_rle_game 相同"""
+    """JVG RLE 编码 — 与 jvg_editor._encode_rle_game 相同"""
     buf = bytearray()
     pair_count = 0
     pending = 0

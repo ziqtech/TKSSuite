@@ -35,7 +35,7 @@ def ensure_single_instance(app_name: str | None = None):
 
     互斥量名默认取自 sys.argv[0] 文件名 (不含扩展名):
       - 编译模式: exe 名 (如 TKSItemEditor)
-      - 开发模式: 脚本名 (如 item_editor_v2)
+      - 开发模式: 脚本名 (如 item_editor)
 
     应在 main() 入口处尽早调用。检测到重复实例时创建临时 QApplication
     弹出提示框后 sys.exit(1)。

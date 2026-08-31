@@ -11,7 +11,7 @@ GRP 资源包编辑器 — PySide6 外部主题版
   - 音频区段: WAV 原始数据 (SSF/SWS/SMG.grp)
   - 数据区段: 索引/元数据 (SC.grp 内嵌导航表等)
 
-用法: python grp_editor_v2.py [file.grp]
+用法: python grp_editor.py [file.grp]
 """
 
 from __future__ import annotations

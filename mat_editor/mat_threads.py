@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-"""mat_editor_v2 后台加载线程 — TKMat/TKT/TKDefUnit 主加载与 JVG 贴图/脚本专线。
-从 mat_editor_v2.py 原样迁出 (§工程化拆分)。"""
+"""mat_editor 后台加载线程 — TKMat/TKT/TKDefUnit 主加载与 JVG 贴图/脚本专线。
+从 mat_editor.py 原样迁出 (§工程化拆分)。"""
 import os
 import struct
 import time

@@ -15,5 +15,5 @@ from editor_utils.runtime_bootstrap import bootstrap
 bootstrap()
 
 # ── 导入并运行编辑器 ──
-from gxp_editor_v2 import main
+from gxp_editor import main
 main()

@@ -1,7 +1,7 @@
 """
 jvg_data — JVG 图集数据加载共享模块
 ====================================
-从 jvg_editor_v2.py 提取的纯数据逻辑 (无 UI 依赖)。
+从 jvg_editor.py 提取的纯数据逻辑 (无 UI 依赖)。
 供 mat_editor / item_editor 等编辑器共享使用。
 
 依赖: editor_utils.lzss (通过延迟导入避免循环)

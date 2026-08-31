@@ -6,7 +6,7 @@ WarPC.dat 批处理工具：技能效果判定 → 技能学习「可以学」
 将指定角色记录区间内，「技能效果判定」标签中所有"有效果"(默认非零)的字段，
 在「技能学习」标签中对应技能批量设为指定学习状态(默认 10-可以学)。
 
-复用 warpc_editor_v2.py 的 load_warpc/save_warpc(LZSS 压缩 + 回写校验)，
+复用 warpc_editor.py 的 load_warpc/save_warpc(LZSS 压缩 + 回写校验)，
 严格按编辑器一致的映射规则执行:
   - 技能效果判定 槽位 i  → 记录字段 [273+i]，对应技能 = active_indices[i]
       active_indices = TKSkill.dat 中 type==0(指令技能) 的索引升序列表
@@ -51,13 +51,13 @@ except Exception:
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(_HERE, '..'))   # editor_utils
-sys.path.insert(0, _HERE)                        # warpc_editor_v2
-from warpc_editor_v2 import (                     # noqa: E402
+sys.path.insert(0, _HERE)                        # warpc_editor
+from warpc_editor import (                        # noqa: E402
     load_warpc, save_warpc, WARPC_FIELD_COUNT, SKILL_LEARN_COUNT,
 )
 from editor_utils.lzss import lzss_decompress_dat  # noqa: E402
 
-# ── 常量 (与 warpc_editor_v2._populate_edit/_apply_edit 保持一致) ──
+# ── 常量 (与 warpc_editor._populate_edit/_apply_edit 保持一致) ──
 EFFECT_BASE = 273      # 技能效果判定 起始 int16 字段索引
 LEARN_BASE = 88        # 技能学习 起始 int16 字段索引
 LEARN_END = 259        # 技能学习 结束 int16 字段索引 (含)

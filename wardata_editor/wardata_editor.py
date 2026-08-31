@@ -60,7 +60,7 @@ WarWay.dat 格式 (每条1024字节, 共100条, 32x32有符号字节网格):
      0 (0x00): 普通可通行地面 — 默认值, 不触发特效
      1-5:      特殊区域/放置区 — sub_431428:106取值分组, sub_434D7C:60触发地格特效
 
-用法: python wardata_editor_v2.py
+用法: python wardata_editor.py
 """
 
 import os

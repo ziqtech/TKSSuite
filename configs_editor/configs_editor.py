@@ -76,7 +76,7 @@ SKILL_REC = 94  # TKSkill.dat 每条记录 94 字节 (47 × int16)
 
 def load_skill_names(skill_path: str, tkt_names: dict) -> dict:
     """加载 TKSkill.dat，返回 {skill_num: skill_name}。
-    参照 skill_editor_v2.py 的 SKILL_REC=94, SKILL_CNT=350 格式。
+    参照 skill_editor.py 的 SKILL_REC=94, SKILL_CNT=350 格式。
     """
     with open(skill_path, 'rb') as f:
         raw = f.read()

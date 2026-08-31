@@ -2,7 +2,7 @@
 """
 TKKon.dat 可视化编辑器 (PySide6 — Godot 4.6 风格)
 =============================================================
-UI 样式完全对齐 skill_editor_v2.py / shop_editor_v2.py 的
+UI 样式完全对齐 skill_editor.py / shop_editor.py 的
 FakeInputBox / InspectorTitle / PreviewFrame / DockHeader 体系。
 主题从 themes/ 目录加载 QSS, 缺失时回退 QPalette。
 底层 LZSS 引擎与 TKKon/TKT 二进制解析逻辑 100% 保留。
@@ -556,7 +556,7 @@ class KonEditor(QMainWindow):
         self.edit_layout.setContentsMargins(4, 0, 4, 4)
         self.edit_layout.setSpacing(4)
 
-        # 预览面板 (PreviewFrame — 对齐 skill_editor_v2)
+        # 预览面板 (PreviewFrame — 对齐 skill_editor)
         preview = QFrame()
         preview.setObjectName("PreviewFrame")
         pl = QVBoxLayout(preview)

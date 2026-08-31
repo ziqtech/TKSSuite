@@ -21,7 +21,7 @@ from editor_utils.lzss import lzss_decompress_dat
 MAT_REC_SIZE = 384
 MAT_REC_COUNT = 6000
 
-# ── WarData 常量 (同 wardata_editor_v2) ──
+# ── WarData 常量 (同 wardata_editor) ──
 WAR_REC_SIZE = 498
 
 SHOP_AREA_NAMES = {0: "药店", 1: "道具店", 2: "武器防具店", 3: "杂货店", 4: "饰品店"}
@@ -132,7 +132,7 @@ def load_mat_lite(fp):
 
 
 def load_shops(fp):
-    """TKShop.dat → [{'area_id','item_ref','condition'}] (同 shop_editor_v2)"""
+    """TKShop.dat → [{'area_id','item_ref','condition'}] (同 shop_editor)"""
     with open(fp, 'rb') as f:
         raw = f.read()
     dec = lzss_decompress_dat(raw)
@@ -147,7 +147,7 @@ def load_shops(fp):
 
 
 def load_wardata_lite(fp):
-    """WarData.dat → 战斗列表 (名称/地图/敌人编队/战场宝物, 同 wardata_editor_v2)"""
+    """WarData.dat → 战斗列表 (名称/地图/敌人编队/战场宝物, 同 wardata_editor)"""
     with open(fp, 'rb') as f:
         raw = f.read()
     recs = []

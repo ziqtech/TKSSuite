@@ -163,7 +163,7 @@ class MapTab(BookTabBase):
 
         数量文字钳制在地图范围内 (不出界); type15 按碰撞盒
         d18/d19 左上角 + d20/d21 宽高 画实际有效范围矩形
-        (同 mat_editor_v2 可视化渲染)。
+        (同 mat_editor 可视化渲染)。
         """
         if not self._item_colors:
             self._build_item_colors()

@@ -234,7 +234,7 @@ def _use_right_label(val, page, opts=None):
 class ItemPickerDialog(QDialog):
     """统一物品选择对话框 — 完整物品列表表格 + 页面号/权限/仅非空 筛选。
 
-    表格列与 item_editor_v2 完全一致: 图标 | # | ID | 页面 | 物品名称 | 权限 | 价格
+    表格列与 item_editor 完全一致: 图标 | # | ID | 页面 | 物品名称 | 权限 | 价格
 
     支持两种数据模式:
 
@@ -395,7 +395,7 @@ class ItemPickerDialog(QDialog):
 
     # ── 权限联动 ──
     def _update_perm_options(self, page_text):
-        """根据页面筛选值动态填充权限下拉框选项 (与 item_editor_v2 一致)"""
+        """根据页面筛选值动态填充权限下拉框选项 (与 item_editor 一致)"""
         if page_text.startswith("全部"):
             seen = set()
             all_opts = []
@@ -451,7 +451,7 @@ class ItemPickerDialog(QDialog):
             if pg and not pg.startswith("全部"):
                 if rec.get('tab_code', 0) != int(pg.split('-')[0]):
                     return False
-            # 权限筛选 (与 item_editor_v2._apply_filter 一致)
+            # 权限筛选 (与 item_editor._apply_filter 一致)
             if frg and not frg.startswith("全部"):
                 bit = int(frg.split('-')[0])
                 eq = rec.get('equip_type', 0)

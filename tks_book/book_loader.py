@@ -3,9 +3,9 @@
 
 解析逻辑与各编辑器保持一致 (LZSS 解压 + 未压缩兜底 + int16 小端解包):
   TKT.dat     → editor_utils.tkt_loader.load_tkt_simple (Big5, XOR 0xFF)
-  WarPC.dat   → warpc_editor_v2.load_warpc 同款 (1054B/条 = 527 int16)
-  TKSkill.dat → skill_editor_v2.load_skills 同款 (94B/条 × 350)
-  TKItem.dat  → item_editor_v2.load_items 同款 (64B/条 × 600)
+  WarPC.dat   → warpc_editor.load_warpc 同款 (1054B/条 = 527 int16)
+  TKSkill.dat → skill_editor.load_skills 同款 (94B/条 × 350)
+  TKItem.dat  → item_editor.load_items 同款 (64B/条 × 600)
   Fa.JVG / Mu.JVG → editor_utils.jvg_loader.load_mu_sprites (@JVG 通用)
   SC.GRP + SC.IDX → editor_utils.grp_data (地图背景, 仅 Frame A)
 

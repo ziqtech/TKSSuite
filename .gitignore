@@ -1,0 +1,154 @@
+# ═══════════════════════════════════════════════════════════
+# Python 通用
+# ═══════════════════════════════════════════════════════════
+
+# 字节码缓存
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C 扩展编译产物
+*.so
+
+# 打包/发行元数据
+*.egg
+*.egg-info/
+.eggs/
+eggs/
+develop-eggs/
+sdist/
+wheels/
+pip-wheel-metadata/
+MANIFEST
+
+# PyInstaller / Nuitka 构建中间产物
+# 注意: 本仓库的 build/ 目录存放构建脚本且已被跟踪, 不可整体忽略,
+# 仅忽略其下的产物子目录 (见下方项目专属规则)
+*.manifest
+*.spec
+*.build/
+*.dist/
+*.onefile-build/
+*.const
+
+# 虚拟环境
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# 测试 / 覆盖率
+.pytest_cache/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+
+# 静态检查 / 格式化缓存
+.mypy_cache/
+.pytype/
+.ruff_cache/
+.dmypy.json
+dmypy.json
+
+# Jupyter
+.ipynb_checkpoints/
+
+# IDE / 编辑器
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# 系统文件
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ═══════════════════════════════════════════════════════════
+# 三国群侠传游戏文件 (参考: 游戏目录（原版）, 误拷入仓库时不得提交)
+# 大小写成对书写以兼容 Linux 上 git 模式的大小写敏感;
+# Windows 下文件系统不区分大小写, 亦可覆盖 TKMat.Dat 之类混合大小写
+# ═══════════════════════════════════════════════════════════
+
+# 数据表 — TKItem/TKSkill/WarPC/TKMat/WarData/TKT/TKD 等
+# (item/skill/warpc/mat/wardata/save/kon/act 等各编辑器读取)
+*.dat
+*.DAT
+
+# 精灵图集 — Aa/Ani/Awk/Cha/Fa/Mu/wm 等 (jvg_editor)
+*.jvg
+*.JVG
+
+# 图像/音频捆绑包 — SC/SSF/SWS/SMG/WSC 等 (grp_editor)
+*.grp
+*.GRP
+
+# 捆绑包索引 — SC.IDX/SSF.IDX/SWS.IDX 等
+*.idx
+*.IDX
+
+# 场景/界面资源 — 00-07/MG_*/TitleMenu/save 等 (gxp_editor)
+*.gxp
+*.GXP
+
+# 脚本资源
+*.srp
+*.SRP
+
+# 命令列表 — DEFCMD.LST (mat_editor 脚本命令语义参考)
+*.lst
+*.LST
+
+# 过场视频 — Logo/Title/TKObj
+*.avi
+*.AVI
+
+# 图片 — pic_h01/pic_h02
+*.pcx
+*.PCX
+
+# 字库 (无扩展名, 96×96 点阵)
+FONT9696
+
+# 存档 — Save/1.sav、sav.1~sav.4 等 (save_editor)
+*.sav
+*.SAV
+sav.*
+
+# 背景音乐 — Sound/0000.mp3 等
+*.mp3
+*.MP3
+
+# ═══════════════════════════════════════════════════════════
+# 项目专属
+# ═══════════════════════════════════════════════════════════
+
+.qoder
+output
+*_output
+test
+raw
+dist
+mods/
+tools/
+build/work/
+build/specs/
+build/nuitka_cache/
+tks_launcher_gui/tools/
+tks_launcher_gui/backups/
+tks_launcher_gui/mods/
+tks_launcher_gui/logs/
+tks_launcher_gui/launcher_setting.json
+tks_launcher_gui/save_manager_state.json
+.tks_editors_state.json

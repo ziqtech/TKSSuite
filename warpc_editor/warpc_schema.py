@@ -2,7 +2,7 @@
 """
 WarPC.dat 字段 Schema (唯一字段定义源)
 ===========================================================
-由 warpc_editor_v2.py 抽取的字段元数据统一定义:
+由 warpc_editor.py 抽取的字段元数据统一定义:
   - 记录布局常量 (WARPC_REC / WARPC_FIELD_COUNT / ...)
   - 各分区字段元组列表 (IDENTITY_FIELDS / HPMP_FIELDS / ... 保持原格式,
     供表单模式既有代码零改动使用)
@@ -12,7 +12,7 @@ WarPC.dat 字段 Schema (唯一字段定义源)
     "2字节装1对byte" 的高低字节读写)
 
 本模块无 Qt 依赖, 可被 CLI 工具安全导入。
-字段布局逆向依据见 warpc_editor_v2.py 模块头注释。
+字段布局逆向依据见 warpc_editor.py 模块头注释。
 """
 
 from dataclasses import dataclass, field

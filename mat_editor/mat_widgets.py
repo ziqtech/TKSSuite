@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-"""mat_editor_v2 UI 组件 — 代码编辑器与脚本语法高亮。
-从 mat_editor_v2.py 原样迁出 (§工程化拆分)。"""
+"""mat_editor UI 组件 — 代码编辑器与脚本语法高亮。
+从 mat_editor.py 原样迁出 (§工程化拆分)。"""
 import re
 
 from PySide6.QtWidgets import QPlainTextEdit

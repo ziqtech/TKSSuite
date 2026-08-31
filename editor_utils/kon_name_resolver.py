@@ -39,7 +39,7 @@ KON_REC = 40             # TKKon.dat 每条记录字节数
 KON_CNT = 650            # TKKon 原版记录数 (tkkon_expand 补丁可扩容, 实际条数按文件大小动态推导)
 
 # ── 硬编码陷阱映射 (sub_434C0C: word_9D6C7A = byte_9DFA92[5*a3] + 551) ──
-# 陷阱类型 1-6 + 551 = TKKon 552-557, 名称来自 wardata_editor_v2 注释
+# 陷阱类型 1-6 + 551 = TKKon 552-557, 名称来自 wardata_editor 注释
 TRAP_NAMES: dict[int, str] = {
     552: "山崩陷阱",
     553: "泥沼陷阱",
@@ -194,7 +194,7 @@ class KonNameResolver:
           names: {skill_index: skill_name}
           types: {skill_index: type_value}   (0=指令, 1=主动, 2=被动, 3=移动)
 
-        与 skill_editor_v2.py load_skills() + warpc_editor_v2.py
+        与 skill_editor.py load_skills() + warpc_editor.py
         _load_skill_names() 保持一致。
         """
         path = os.path.join(tks_dir, 'TKSkill.dat')
@@ -233,7 +233,7 @@ class KonNameResolver:
 
         Returns: [{index, tkact_id, exec_flags, ...}, ...]
 
-        与 kon_editor_v2.py 的 load_kon 保持一致: 条数按解压后大小动态推导
+        与 kon_editor.py 的 load_kon 保持一致: 条数按解压后大小动态推导
         (tkkon_expand 补丁可将 TKKon.dat 扩容到 650 条以上), 不足原版
         650 条时补空槽位。
         """
@@ -302,7 +302,7 @@ class KonNameResolver:
         散箭射击都指向同一个 TKKon）。此方法会收集所有技能名，
         用顿号连接："张辽《攻击、引导射击、散箭射击》"。
 
-        与 warpc_editor_v2.py load_warpc() +
+        与 warpc_editor.py load_warpc() +
         _build_skill_effect_section 保持一致。
         """
         path = os.path.join(tks_dir, 'WarPC.dat')
@@ -322,7 +322,7 @@ class KonNameResolver:
             return
 
         # 获取所有 type=0 指令技能的索引列表 (按索引升序)
-        # 与 warpc_editor_v2.py _build_skill_effect_section L1457 一致:
+        # 与 warpc_editor.py _build_skill_effect_section L1457 一致:
         #   active_indices = [i for i in range(350) if skill_types.get(i)==0]
         active_indices = sorted(
             i for i, t in skill_types.items() if t == 0
@@ -360,7 +360,7 @@ class KonNameResolver:
                     continue
 
                 skill_idx = active_indices[ei]
-                # 与 warpc_editor_v2.py L1473 一致，但使用游戏内实际名称
+                # 与 warpc_editor.py L1473 一致，但使用游戏内实际名称
                 if skill_idx == 344:
                     skill_name = "攻擊"
                 else:

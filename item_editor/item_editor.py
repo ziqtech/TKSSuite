@@ -32,7 +32,7 @@ TKItem.dat 可视化编辑器 (PySide6 — Godot 4.6 风格)
  11. 空槽 (40 条可新增物品): #560-#599, item_id=0 & name_id=0 & desc_id=600
 
 用法:
-  python item_editor_v2.py
+  python item_editor.py
 """
 
 import csv

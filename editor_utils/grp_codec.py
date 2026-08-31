@@ -7,7 +7,7 @@ grp_codec — GRP 区段编解码 + 图层差分公共模块
 只依赖 struct / base64 / editor_utils.lzss (stream 变体)，不引入任何 GUI 依赖，
 因此可被 tks_launcher_gui 的合并流程直接复用。
 
-GRP 图像区段布局 (与 grp_editor_v2.py 一致):
+GRP 图像区段布局 (与 grp_editor.py 一致):
   [12B 头: <HHII> = width, height, comp_a, comp_b]
   [FrameA: <I 原始长度> + LZSS(stream) 主图, RGB565 每像素 2 字节]
   [FrameB: <I 声明长度> + RLE字节对(L1[+L2]) 或 LZSS 回退]
@@ -142,7 +142,7 @@ def decode_section(section_bytes: bytes, need_a: bool = True):
 
 def encode_section(width: int, height: int, A, L1, L2, has_layer2: bool,
                    reuse_fa=None, reuse_fb=None) -> bytes:
-    """将平面重新编码为 GRP 图像区段字节 (对齐 grp_editor_v2.save_grp)。
+    """将平面重新编码为 GRP 图像区段字节 (对齐 grp_editor.save_grp)。
 
     只重压缩发生变化的平面组：
       - reuse_fa 提供 → 主图未变，原样复用 FrameA 压缩块；否则 LZSS(A)。

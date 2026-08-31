@@ -48,7 +48,7 @@ Tab 分区 (按字段索引顺序排列):
   [273]+     技能效果  — TKKon ID 映射表
 
 用法:
-  python warpc_editor_v2.py
+  python warpc_editor.py
 """
 
 import json

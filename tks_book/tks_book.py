@@ -5,7 +5,7 @@ TKS 游戏图鉴查看器 (PySide6 — Godot 风格)
 =============================================================
 只读查看器 (非编辑器): 加载 TKS 游戏目录后, 通过标签页浏览
 图鉴 / 人物 / 技能 / 物品 / 地图 数据。
-UI 样式对齐 kon_editor_v2 / skill_editor_v2 的
+UI 样式对齐 kon_editor / skill_editor 的
 PreviewFrame / DockHeader / DockBody 体系, 主题从 editor_themes/ 加载。
 数据解析逻辑与各编辑器一致 (见 book_loader.py)。
 """

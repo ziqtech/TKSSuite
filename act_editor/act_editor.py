@@ -34,7 +34,7 @@ TKAct.dat 多图层 2D 精灵动画编辑器 (PySide6 — Godot 4.6 风格)
   [720-783] 尾部 = 音效触发表 16 对 × (sound_id, trigger_tick) × int16
 
 用法:
-  python act_editor_v2.py
+  python act_editor.py
 """
 
 import collections

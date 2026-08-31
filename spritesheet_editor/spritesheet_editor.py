@@ -10,7 +10,7 @@ Spritesheet Editor - 精灵表编辑器 (PySide6)
   5. 导出时选择 PNG 像素格式: RGBA8888 / RGB888 / RGB565 / RGBA4444 / RGBA5551
   6. 深浅色主题切换
 
-用法: python spritesheet_editor_v2.py [spritesheet.png]
+用法: python spritesheet_editor.py [spritesheet.png]
 """
 
 from __future__ import annotations

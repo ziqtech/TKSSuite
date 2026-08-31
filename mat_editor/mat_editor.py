@@ -22,7 +22,7 @@ TKMat.Dat 地图实体编辑器 — PySide6 Godot 风格版
   验证方法: 反编译 .c 文件中 entity 指针偏移量 ÷ 4 = dword 索引, 与编辑器字段索引对照确认
 
 用法:
-  python mat_editor_v2.py
+  python mat_editor.py
 """
 
 import base64

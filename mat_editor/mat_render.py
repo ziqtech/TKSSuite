@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-"""mat_editor_v2 渲染层 — JVG 精灵帧提取、PIL 图像混合合成、SC.GRP 背景加载。
-从 mat_editor_v2.py 原样迁出 (含各帧缓存), 无业务逻辑 (§工程化拆分)。"""
+"""mat_editor 渲染层 — JVG 精灵帧提取、PIL 图像混合合成、SC.GRP 背景加载。
+从 mat_editor.py 原样迁出 (含各帧缓存), 无业务逻辑 (§工程化拆分)。"""
 import os
 import struct
 import sys

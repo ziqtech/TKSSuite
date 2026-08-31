@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-"""mat_editor_v2 文本编解码层 — TKT 字节流解码 / TKD 脚本读写与 DEFINE 解析。
-从 mat_editor_v2.py 原样迁出, 无业务逻辑 (§工程化拆分)。"""
+"""mat_editor 文本编解码层 — TKT 字节流解码 / TKD 脚本读写与 DEFINE 解析。
+从 mat_editor.py 原样迁出, 无业务逻辑 (§工程化拆分)。"""
 import os
 import sys
 import re

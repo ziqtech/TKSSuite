@@ -31,7 +31,7 @@ class ItemTab(BookTabBase):
         super().__init__(data, parent)
         self._icon_cache = {}
         self._all_rows = []   # [(rec_index, cells, page), ...] 未筛选全量
-        # 分类筛选 (参考 item_editor_v2 页面号筛选; 查看器无空槽无需仅非空)
+        # 分类筛选 (参考 item_editor 页面号筛选; 查看器无空槽无需仅非空)
         self._filter_lbl = QLabel("分类")
         self._filter_lbl.setProperty("class", "PropLabel")
         self._filter_page = EditorComboBox()

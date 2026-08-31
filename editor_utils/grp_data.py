@@ -1,7 +1,7 @@
 """
 grp_data — GRP 图集数据加载共享模块
 ====================================
-从 grp_editor_v2.py 提取的纯数据逻辑 (无 UI 依赖)。
+从 grp_editor.py 提取的纯数据逻辑 (无 UI 依赖)。
 供 mat_editor / item_editor 等编辑器共享使用。
 
 依赖: editor_utils.lzss (LZSS 解压缩)
@@ -16,7 +16,7 @@ from typing import List, Optional
 from editor_utils.lzss import lzss_decompress_stream
 
 
-# ── LZSS 本地别名 (保持与 grp_editor_v2 接口一致) ──
+# ── LZSS 本地别名 (保持与 grp_editor 接口一致) ──
 def lzss_decompress(data, target_size):
     return lzss_decompress_stream(data, target_size)
 

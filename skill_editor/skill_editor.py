@@ -1136,7 +1136,7 @@ class SkillEditorApp(QMainWindow):
         main_layout.addLayout(path_layout)
 
     def _build_field_group(self, title, fields, cols):
-        """字段分组：标签在上、输入框在下 (对齐 warpc_editor_v2 布局)"""
+        """字段分组：标签在上、输入框在下 (对齐 warpc_editor 布局)"""
         group_widget = QWidget()
         v_layout = QVBoxLayout(group_widget)
         v_layout.setContentsMargins(0, 4, 0, 4)
