@@ -10,7 +10,7 @@
 """
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
-    QAbstractItemView, QButtonGroup, QCheckBox, QHeaderView, QLabel, QToolButton,
+    QAbstractItemView, QButtonGroup, QCheckBox, QLabel, QToolButton,
     QTableWidget, QTableWidgetItem, QTextBrowser, QVBoxLayout, QWidget,
     QHBoxLayout,
 )
@@ -19,6 +19,7 @@ from ui.centered_checkbox_delegate import (
     CenteredCheckBoxDelegate, position_checkbox_indicator,
 )
 from editor_utils.dock_components import create_dock
+from editor_utils.adaptive_table import AdaptiveTableWidget
 
 # 可选补丁区固定默认高度（供 MOD 详情预览区同步高度参照）
 OPTIONAL_PATCH_DEFAULT_HEIGHT = 320
@@ -163,7 +164,12 @@ class PatchListWidget(QWidget):
     # ── 表格构建 ──
 
     def _make_table(self) -> QTableWidget:
-        table = QTableWidget(0, len(_COLUMNS))
+        table = AdaptiveTableWidget(
+            0, len(_COLUMNS),
+            stretch_columns={_COL_NAME},
+            minimum_widths=[40, 140, 60],
+            row_height=30,
+        )
         table.setObjectName("LauncherPatchTable")
         table.setHorizontalHeaderLabels(_COLUMNS)
         table.setProperty("class", "GrowthTable")  # 复用主题的表格选中/行背景样式
@@ -174,15 +180,10 @@ class PatchListWidget(QWidget):
         table.setWordWrap(False)
         table.setTextElideMode(Qt.ElideRight)
         table.verticalHeader().setVisible(False)
-        table.verticalHeader().setDefaultSectionSize(30)
 
         h = table.horizontalHeader()
         h.setHighlightSections(False)
-        # 启用列保留足够左右留白，复选框由专用委托严格居中绘制。
-        h.setSectionResizeMode(_COL_ENABLE, QHeaderView.Fixed)
-        table.setColumnWidth(_COL_ENABLE, 40)
-        h.setSectionResizeMode(_COL_NAME, QHeaderView.Stretch)
-        h.setSectionResizeMode(_COL_TYPE, QHeaderView.ResizeToContents)
+        # 启用列复选框由专用委托严格居中绘制。
         table.setItemDelegateForColumn(
             _COL_ENABLE, CenteredCheckBoxDelegate(table))
 

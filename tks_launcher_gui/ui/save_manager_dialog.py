@@ -14,9 +14,11 @@ from datetime import datetime
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QAbstractItemView, QDialog, QFileDialog, QGroupBox, QHBoxLayout,
-    QHeaderView, QLabel, QLineEdit, QMessageBox, QPushButton,
-    QTableWidget, QTableWidgetItem, QTextEdit, QVBoxLayout,
+    QLabel, QLineEdit, QMessageBox, QPushButton,
+    QTableWidgetItem, QTextEdit, QVBoxLayout,
 )
+
+from editor_utils.adaptive_table import AdaptiveTableWidget
 
 from core.save_manager import (
     BackupInfo, create_backup, delete_backup, get_last_game_dir,
@@ -83,19 +85,16 @@ class SaveManagerDialog(QDialog):
         list_group = QGroupBox("备份列表")
         list_lay = QVBoxLayout(list_group)
 
-        self._table = QTableWidget(0, len(_COLUMNS))
+        self._table = AdaptiveTableWidget(
+            0, len(_COLUMNS),
+            stretch_columns={_COL_NAME},
+            minimum_widths=[140, 130, 80, 60, 60, 70],
+        )
         self._table.setHorizontalHeaderLabels(_COLUMNS)
         self._table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self._table.setSelectionMode(QAbstractItemView.SingleSelection)
         self._table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self._table.verticalHeader().setVisible(False)
-        h = self._table.horizontalHeader()
-        h.setSectionResizeMode(_COL_NAME, QHeaderView.Stretch)
-        h.setSectionResizeMode(_COL_TIME, QHeaderView.ResizeToContents)
-        h.setSectionResizeMode(_COL_FILES, QHeaderView.ResizeToContents)
-        h.setSectionResizeMode(_COL_PATCHES, QHeaderView.ResizeToContents)
-        h.setSectionResizeMode(_COL_MODS, QHeaderView.ResizeToContents)
-        h.setSectionResizeMode(_COL_TOOL, QHeaderView.ResizeToContents)
         self._table.doubleClicked.connect(self._on_restore)
         list_lay.addWidget(self._table)
 

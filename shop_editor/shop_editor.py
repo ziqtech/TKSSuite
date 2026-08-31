@@ -44,6 +44,7 @@ from PySide6.QtWidgets import (
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from editor_utils.dock_components import create_dock
+from editor_utils.adaptive_table import AdaptiveTableWidget
 from editor_utils.jvg_loader import load_mu_sprites, get_sprite_pixmap
 from editor_utils.lzss import lzss_decompress_dat, lzss_compress_dat
 from editor_utils.shared_state import pick_tks_directory
@@ -392,21 +393,17 @@ class ShopEditorWindow(QMainWindow):
         main_layout.addWidget(splitter, 1)
 
         # 左侧: 表格
-        self.table = QTableWidget(0, 7)
+        self.table = AdaptiveTableWidget(
+            0, 7,
+            stretch_columns={5},
+            minimum_widths=[50, 50, 60, 80, 70, 90, 100],
+            row_height=44,
+        )
         self.table.setHorizontalHeaderLabels(["图标", "索引", "区域ID", "区域名称", "物品索引", "物品名称", "出现条件"])
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SingleSelection)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.verticalHeader().setVisible(False)
-        self.table.verticalHeader().setDefaultSectionSize(44)
-
-        self.table.setColumnWidth(0, 50)
-        self.table.setColumnWidth(1, 50)
-        self.table.setColumnWidth(2, 60)
-        self.table.setColumnWidth(3, 80)
-        self.table.setColumnWidth(4, 70)
-        self.table.horizontalHeader().setSectionResizeMode(5, QHeaderView.Stretch)
-        self.table.setColumnWidth(6, 100)
         self.table.setIconSize(QSize(36, 36))
 
         self.table.itemSelectionChanged.connect(self._on_table_select)

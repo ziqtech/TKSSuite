@@ -61,6 +61,7 @@ from editor_utils.dock_components import DockHeader, create_dock
 from editor_utils.lzss import lzss_decompress_dat as lzss_decompress, lzss_decompress_save, lzss_compress_save
 from editor_utils.ui_helpers import confirm_close, themed_messagebox, EditorComboBox
 from editor_utils.tab_widget import EditorTabWidget
+from editor_utils.adaptive_table import AdaptiveTableWidget
 from editor_utils.version import format_title, format_about_header
 from editor_utils.shared_state import pick_tks_directory
 from editor_utils.mod_exporter import (
@@ -2929,11 +2930,12 @@ class MatEditorApp(QMainWindow):
         dlg.resize(450, 380)
         layout = QVBoxLayout(dlg)
         layout.addWidget(QLabel(f"存档目录: {save_dir}"))
-        table = QTableWidget(len(slots), 3)
+        table = AdaptiveTableWidget(
+            len(slots), 3,
+            stretch_columns={2},
+            minimum_widths=[50, 150, 90],
+        )
         table.setHorizontalHeaderLabels(['槽位', '文件', '摘要'])
-        table.setColumnWidth(0, 50)
-        table.setColumnWidth(1, 150)
-        table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
         table.setSelectionBehavior(QAbstractItemView.SelectRows)
         table.setSelectionMode(QAbstractItemView.SingleSelection)
         table.setEditTriggers(QAbstractItemView.NoEditTriggers)

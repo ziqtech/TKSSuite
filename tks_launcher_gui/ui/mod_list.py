@@ -9,8 +9,8 @@
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
-    QAbstractItemView, QCheckBox, QHBoxLayout, QHeaderView, QLabel,
-    QTableWidget, QTableWidgetItem, QToolButton, QVBoxLayout, QWidget,
+    QAbstractItemView, QCheckBox, QHBoxLayout, QLabel,
+    QTableWidgetItem, QToolButton, QVBoxLayout, QWidget,
 )
 
 from core.mod_loader import ModInfo, scan_mods
@@ -18,6 +18,7 @@ from ui.centered_checkbox_delegate import (
     CenteredCheckBoxDelegate, position_checkbox_indicator,
 )
 from editor_utils.dock_components import create_dock
+from editor_utils.adaptive_table import AdaptiveTableWidget
 
 # 行布局: 名称 + 分类 + 作者; ID/加载顺序/描述进悬浮提示与详情面板
 _COLUMNS = ["启用", "模组名称", "分类", "作者"]
@@ -107,7 +108,12 @@ class ModListWidget(QWidget):
         body.setSpacing(4)
 
         # 表格
-        self._table = QTableWidget(0, len(_COLUMNS))
+        self._table = AdaptiveTableWidget(
+            0, len(_COLUMNS),
+            stretch_columns={_COL_NAME},
+            minimum_widths=[40, 140, 120, 96],
+            row_height=44,
+        )
         self._table.setObjectName("LauncherModTable")
         self._table.setHorizontalHeaderLabels(_COLUMNS)
         self._table.setProperty("class", "GrowthTable")  # 复用主题的表格选中/行背景样式
@@ -118,20 +124,11 @@ class ModListWidget(QWidget):
         self._table.setWordWrap(False)
         self._table.setTextElideMode(Qt.ElideRight)
         self._table.verticalHeader().setVisible(False)
-        # 分类列嵌入带 QSS padding 的 Tag 控件，使用统一的可读行高。
-        self._table.verticalHeader().setDefaultSectionSize(44)
         self._table.currentItemChanged.connect(self._on_current_changed)
 
         h = self._table.horizontalHeader()
         h.setHighlightSections(False)
-        h.setSectionResizeMode(_COL_ENABLE, QHeaderView.Fixed)
-        self._table.setColumnWidth(_COL_ENABLE, 40)
-        h.setSectionResizeMode(_COL_NAME, QHeaderView.Stretch)
-        # 分类使用彩色 Tag，给它稳定的呼吸空间，避免长分类被压成色块。
-        h.setSectionResizeMode(_COL_CATEGORY, QHeaderView.Fixed)
-        self._table.setColumnWidth(_COL_CATEGORY, 120)
-        h.setSectionResizeMode(_COL_AUTHOR, QHeaderView.Interactive)
-        self._table.setColumnWidth(_COL_AUTHOR, 96)
+        # 分类列嵌入彩色 Tag 控件，单元格控件提示会保证其完整显示。
         self._table.setItemDelegateForColumn(
             _COL_ENABLE, CenteredCheckBoxDelegate(self._table))
 

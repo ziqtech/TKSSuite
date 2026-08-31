@@ -1,15 +1,15 @@
 # -*- coding: utf-8 -*-
 """tks_book 标签页公共组件 — 左侧搜索表格 + 右侧详情滚动区 (Dock 风格)"""
-from PySide6.QtCore import Qt, QSize, QTimer
-from PySide6.QtGui import QFontMetrics
+from PySide6.QtCore import Qt, QSize
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QSplitter, QLineEdit, QTableWidget,
-    QTableWidgetItem, QHeaderView, QAbstractItemView,
+    QWidget, QVBoxLayout, QHBoxLayout, QSplitter, QLineEdit,
+    QTableWidgetItem, QAbstractItemView,
     QScrollArea, QLabel, QGridLayout, QPushButton,
 )
 
 from editor_utils.dock_components import DockHeader
 from editor_utils.search_utils import search_match
+from editor_utils.adaptive_table import AdaptiveTableWidget
 
 
 class BookTabBase(QWidget):
@@ -27,7 +27,6 @@ class BookTabBase(QWidget):
         self._rows = []           # [(key, [cell, ...]), ...] 全量
         self._widths = None       # {col: pixel_width} 非拉伸列像素宽
         self._stretch_col = None  # 拉伸列索引 (占用剩余空间)
-        self._fit_stretch_pending = False
         self._build_ui()
 
     # ── UI 骨架 ──
@@ -61,7 +60,7 @@ class BookTabBase(QWidget):
         ll.addLayout(search_row)
         # 供子类向搜索行追加筛选控件 (如物品页分类下拉)
         self._search_row_layout = search_row
-        self.list_widget = QTableWidget()
+        self.list_widget = AdaptiveTableWidget(0, 0)
         self.list_widget.setIconSize(QSize(24, 24))
         self.list_widget.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.list_widget.setSelectionMode(QAbstractItemView.SingleSelection)
@@ -70,7 +69,6 @@ class BookTabBase(QWidget):
         self.list_widget.setWordWrap(False)
         self.list_widget.setTextElideMode(Qt.ElideRight)
         self.list_widget.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        self.list_widget.horizontalHeader().setStretchLastSection(True)
         self.list_widget.currentItemChanged.connect(self._on_select)
         ll.addWidget(self.list_widget, 1)
         splitter.addWidget(left)
@@ -139,70 +137,17 @@ class BookTabBase(QWidget):
                     # 纯数字列右对齐 (# / ID 等)
                     item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
                 tw.setItem(row, col, item)
-        # 列宽 / 拉伸模式
-        header = tw.horizontalHeader()
-        # 不把“占满剩余空间”的列保持为 QHeaderView.Stretch。Stretch
-        # 会在用户拖动相邻列时反向收缩该列，导致相邻列的边界向左移动，
-        # 看起来像是拖动方向反了。这里仅用它计算初始宽度，之后所有
-        # 列都保持 Interactive，用户拖动哪一列就只改变哪一列。
-        header.setSectionResizeMode(QHeaderView.Interactive)
-        header.setMinimumSectionSize(40)
+        # 列宽 / 拉伸模式交给 AdaptiveTableWidget 统一处理:
+        # 非拉伸列以 widths 为下限、按内容自适应; 拉伸列在剩余空间内受控增长。
         if self._stretch_col is None or self._stretch_col >= ncol:
-            header.setStretchLastSection(True)
+            stretch = {ncol - 1} if ncol else set()
         else:
-            header.setStretchLastSection(False)
-        if self._widths:
-            # 固定列不能小于表头本身的显示宽度。主题 QSS 的表头左右
-            # padding 为 8px，这里额外预留 4px 安全边距，避免不同字体
-            # 或四套主题切换后出现标题被截断。
-            fm = QFontMetrics(header.font())
-            for col, w in self._widths.items():
-                if col < ncol:
-                    header_text = str(self._headers[col])
-                    text_width = max(
-                        (fm.horizontalAdvance(line)
-                         for line in header_text.splitlines()),
-                        default=0,
-                    )
-                    tw.setColumnWidth(col, max(w, text_width + 20))
-        if self._stretch_col is not None and self._stretch_col < ncol:
-            self._fit_stretch_column()
-        tw.blockSignals(False)
-
-    def _fit_stretch_column(self):
-        """仅在重建/窗口布局后让逻辑上的拉伸列填满剩余宽度。
-
-        该列本身保持 Interactive，避免 Qt 的 Stretch 联动破坏用户拖动
-        相邻列时的边界方向。若表格尚未完成布局，下一轮事件循环再重试。
-        """
-        col = self._stretch_col
-        tw = self.list_widget
-        if col is None or col >= tw.columnCount():
-            return
-        available = tw.viewport().width()
-        if available <= 0:
-            if not self._fit_stretch_pending:
-                self._fit_stretch_pending = True
-                QTimer.singleShot(0, self._fit_stretch_after_layout)
-            return
-        self._fit_stretch_pending = False
-        fixed_total = sum(
-            tw.columnWidth(i) for i in range(tw.columnCount()) if i != col
+            stretch = {self._stretch_col}
+        tw.reset_column_layout(
+            stretch_columns=stretch,
+            minimum_widths=self._widths or {},
         )
-        target = max(40, available - fixed_total)
-        if tw.columnWidth(col) != target:
-            tw.setColumnWidth(col, target)
-
-    def _fit_stretch_after_layout(self):
-        self._fit_stretch_pending = False
-        self._fit_stretch_column()
-
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        if self._stretch_col is not None:
-            # 布局完成后重新填充逻辑上的名称列；用户拖列本身不会触发
-            # BookTabBase.resizeEvent，因此不会被这里覆盖。
-            QTimer.singleShot(0, self._fit_stretch_column)
+        tw.blockSignals(False)
 
     def _on_select(self, current, _previous=None):
         if current is None:

@@ -74,6 +74,7 @@ from editor_utils.theme_switcher import (
     apply_theme_to_window, create_theme_menu, toggle_theme_in_family,
 )
 from editor_utils.dock_components import DockHeader
+from editor_utils.adaptive_table import AdaptiveTableWidget
 from editor_utils.picker_dialogs import TktPickerDialog, StatusPickerDialog, STATUS_NAMES, ItemPickerDialog
 from editor_utils.jvg_loader import load_mu_sprites, get_sprite_pixmap
 from editor_utils.ui_helpers import make_fake_input, update_path_labels, confirm_close, resolve_config_path, themed_messagebox, EditorComboBox, NoWheelSpinBox
@@ -331,11 +332,12 @@ class SkillPickerDialog(QDialog):
         sf.addWidget(self.search_box)
         layout.addLayout(sf)
 
-        self.table = QTableWidget(0, 3)
+        self.table = AdaptiveTableWidget(
+            0, 3,
+            stretch_columns={2},
+            minimum_widths=[55, 55, 90],
+        )
         self.table.setHorizontalHeaderLabels(["技能#","类型","名称"])
-        self.table.setColumnWidth(0, 55)
-        self.table.setColumnWidth(1, 55)
-        self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SingleSelection)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
@@ -460,10 +462,12 @@ class TkkonPickerDialog(QDialog):
         self.search_box.textChanged.connect(self._refresh)
         sf.addWidget(self.search_box)
         layout.addLayout(sf)
-        self.table = QTableWidget(0, 2)
+        self.table = AdaptiveTableWidget(
+            0, 2,
+            stretch_columns={1},
+            minimum_widths=[70, 90],
+        )
         self.table.setHorizontalHeaderLabels(["TKKon#","名称"])
-        self.table.setColumnWidth(0, 70)
-        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SingleSelection)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
@@ -798,7 +802,11 @@ class GrowthTableDialog(QDialog):
         self._GRP_COLS = ["HP★", "MP★", "攻击★", "防御★",
                            "命中★", "闪避★", "速度★"]
         all_cols = self._BASE_COLS + self._GRP_COLS
-        self._growth_table = QTableWidget(len(self._table_data), len(all_cols))
+        self._growth_table = AdaptiveTableWidget(
+            len(self._table_data), len(all_cols),
+            stretch_columns=set(range(len(all_cols))),
+            minimum_widths=[45] + [52] * 15 + [58] * 7,
+        )
         self._growth_table.setHorizontalHeaderLabels(all_cols)
         self._growth_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self._growth_table.setSelectionBehavior(QAbstractItemView.SelectRows)
@@ -807,14 +815,9 @@ class GrowthTableDialog(QDialog):
         # 修复深色模式下交替行背景色 (QSS 不覆盖 palette 的 AlternateBase)
         self._growth_table.setProperty("class", "GrowthTable")
         self._growth_table.setFont(QFont("Consolas", 9))
-        # 列宽
-        for ci in range(len(all_cols)):
-            self._growth_table.setColumnWidth(ci, 58 if ci >= 16 else (52 if ci > 0 else 45))
-        # 初始隐藏 grp 列
+        # 初始隐藏 grp 列 (setColumnHidden 会触发自适应重排)
         for ci in range(16, 23):
             self._growth_table.setColumnHidden(ci, True)
-        # 保留默认列宽，同时让最后一个可见成长列在窗口变宽时填充余量。
-        self._growth_table.horizontalHeader().setStretchLastSection(True)
         self._populate_table()
         layout.addWidget(self._growth_table, 1)
 
@@ -1196,23 +1199,18 @@ class WarpcEditorV2(QMainWindow):
         main_layout.addWidget(self._mode_stack, 1)
 
         # 左侧：角色列表
-        self.table = QTableWidget(0, 6)
+        self.table = AdaptiveTableWidget(
+            0, 6,
+            stretch_columns={1, 4, 5},
+            minimum_widths=[44, 90, 44, 60, 55, 55],
+            row_height=44,
+        )
         self.table.setObjectName("WarpcCharacterTable")
         self.table.setHorizontalHeaderLabels(["#","角色名称","等级","身份","HP","MP"])
         self.table.setWordWrap(False)
         self.table.setTextElideMode(Qt.ElideRight)
         self.table.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        table_header = self.table.horizontalHeader()
-        # 识别类字段按内容占宽，名称与数值列随左侧面板一起伸缩。
-        # 这样窗口最大化后，HP/MP 不会继续挤压角色名称列。
-        table_header.setStretchLastSection(False)
-        table_header.setMinimumSectionSize(44)
-        table_header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
-        table_header.setSectionResizeMode(1, QHeaderView.Stretch)
-        table_header.setSectionResizeMode(2, QHeaderView.ResizeToContents)
-        table_header.setSectionResizeMode(3, QHeaderView.ResizeToContents)
-        table_header.setSectionResizeMode(4, QHeaderView.Stretch)
-        table_header.setSectionResizeMode(5, QHeaderView.Stretch)
+        # 识别类字段按内容占宽，名称与数值列在剩余空间内受控拉伸。
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SingleSelection)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
@@ -2018,11 +2016,12 @@ class WarpcEditorV2(QMainWindow):
         dlg.resize(450, 380)
         layout = QVBoxLayout(dlg)
         layout.addWidget(QLabel(f"存档目录: {save_dir}"))
-        table = QTableWidget(len(slots), 3)
+        table = AdaptiveTableWidget(
+            len(slots), 3,
+            stretch_columns={2},
+            minimum_widths=[50, 150, 90],
+        )
         table.setHorizontalHeaderLabels(['槽位', '文件', '摘要'])
-        table.setColumnWidth(0, 50)
-        table.setColumnWidth(1, 150)
-        table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
         table.setSelectionBehavior(QAbstractItemView.SelectRows)
         table.setSelectionMode(QAbstractItemView.SingleSelection)
         table.setEditTriggers(QAbstractItemView.NoEditTriggers)

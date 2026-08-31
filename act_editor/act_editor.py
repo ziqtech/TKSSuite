@@ -80,6 +80,7 @@ from editor_utils.ui_helpers import (
     themed_messagebox, EditorComboBox,
 )
 from editor_utils.tab_widget import EditorTabWidget
+from editor_utils.adaptive_table import AdaptiveTableWidget
 from editor_utils.mod_exporter import (
     compute_crc32, generate_mod_json, pack_tksmod, ModMetadataDialog, safe_mod_filename,
     diff_binary_blocks, build_block_diff_json,
@@ -1818,12 +1819,13 @@ class ActEditorV2(QMainWindow):
         main_layout.addWidget(splitter, 1)
 
         # 左栏: 条目列表
-        self.table = QTableWidget(0, 4)
+        self.table = AdaptiveTableWidget(
+            0, 4,
+            stretch_columns={1, 2},
+            minimum_widths=[45, 90, 90, 45],
+            row_height=44,
+        )
         self.table.setHorizontalHeaderLabels(["序号", "名称", "图层组成", "层数"])
-        self.table.setColumnWidth(0, 45)
-        self.table.setColumnWidth(3, 45)
-        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
-        self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SingleSelection)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)

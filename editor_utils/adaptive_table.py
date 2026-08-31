@@ -10,6 +10,8 @@ QTableWidget 的两个常见坑在这里统一处理：
   的倍数，或通过 maximum_widths 显式指定像素值），触顶即停止增长；
 - 尾部留白：所有拉伸列触顶后，多余空间保留在最后一列右侧，不再强行摊进
   列里——高分辨率宽屏下数值列不会被撑得稀疏难看；
+- 防滚动条：内容基准超出视口时按比例回缩各列（不低于配置下限和用户拖过
+  的宽度），只有下限总和都放不下时才出现横向滚动条；
 - 用户优先：手动拖过的列宽始终优先于自动计算，拉伸上限不会收缩用户拖宽。
 """
 
@@ -20,6 +22,15 @@ from PySide6.QtWidgets import QHeaderView, QTableWidget
 # 数值列基准小 → 封顶紧；长文本列基准大 → 封顶随内容放大，比例观感稳定。
 DEFAULT_STRETCH_CAP_FACTOR = 1.5
 DEFAULT_STRETCH_CAP_MARGIN = 64
+
+
+def _normalize_widths(value):
+    """宽度配置归一化: list/tuple 按下标成列, dict 键即列号; None 项跳过。"""
+    if value is None:
+        return {}
+    if isinstance(value, dict):
+        return {int(c): max(1, int(w)) for c, w in value.items() if w is not None}
+    return {c: max(1, int(w)) for c, w in enumerate(value) if w is not None}
 
 
 class AdaptiveTableWidget(QTableWidget):
@@ -45,13 +56,9 @@ class AdaptiveTableWidget(QTableWidget):
         self._stretch_cap_margin = max(0, int(stretch_cap_margin))
 
         if minimum_widths:
-            for column, width in enumerate(minimum_widths):
-                if width is not None:
-                    self._minimum_widths[column] = max(1, int(width))
+            self._minimum_widths.update(_normalize_widths(minimum_widths))
         if maximum_widths:
-            for column, width in enumerate(maximum_widths):
-                if width is not None:
-                    self._maximum_widths[column] = max(1, int(width))
+            self._maximum_widths.update(_normalize_widths(maximum_widths))
 
         header = self.horizontalHeader()
         header.setSectionResizeMode(QHeaderView.Interactive)
@@ -69,14 +76,21 @@ class AdaptiveTableWidget(QTableWidget):
                              maximum_widths=None):
         if stretch_columns is not None:
             self._configured_stretch_columns = set(stretch_columns)
-        if minimum_widths:
-            for column, width in enumerate(minimum_widths):
-                if width is not None:
-                    self._minimum_widths[column] = max(1, int(width))
-        if maximum_widths:
-            for column, width in enumerate(maximum_widths):
-                if width is not None:
-                    self._maximum_widths[column] = max(1, int(width))
+        if minimum_widths is not None:
+            self._minimum_widths.update(_normalize_widths(minimum_widths))
+        if maximum_widths is not None:
+            self._maximum_widths.update(_normalize_widths(maximum_widths))
+        self._schedule_fit()
+
+    def reset_column_layout(self, stretch_columns=None, minimum_widths=None,
+                            maximum_widths=None):
+        """整体重置列布局 (动态换列场景): 清除手动拖宽后应用新配置。"""
+        self._user_widths.clear()
+        self._configured_stretch_columns = (
+            set(stretch_columns) if stretch_columns is not None else None
+        )
+        self._minimum_widths = _normalize_widths(minimum_widths)
+        self._maximum_widths = _normalize_widths(maximum_widths)
         self._schedule_fit()
 
     def setColumnWidth(self, column, width):
@@ -145,6 +159,8 @@ class AdaptiveTableWidget(QTableWidget):
                     for column in stretch_columns
                 }
                 widths = self._distribute_extra(widths, stretch_columns, caps, extra)
+            elif extra < 0:
+                widths = self._shrink_to_fit(widths, visible_columns, -extra)
 
             for column, width in widths.items():
                 super().setColumnWidth(column, max(1, round(width)))
@@ -172,6 +188,40 @@ class AdaptiveTableWidget(QTableWidget):
         return max(base,
                    base * self._stretch_cap_factor,
                    base + self._stretch_cap_margin)
+
+    def _column_floor_width(self, column):
+        """回缩阶段的下限：配置下限与用户拖过的宽度取最大，保证不截断用户意图。"""
+        return max(self._minimum_widths.get(column, 0),
+                   self._user_widths.get(column, 0), 36)
+
+    def _shrink_to_fit(self, widths, visible_columns, deficit):
+        """反向水位填充：视口装不下时按“可压缩余量”比例回缩各列到下限，
+        下限总和仍超出时才保留溢出（此时横向滚动条不可避免）。"""
+        floors = {c: self._column_floor_width(c) for c in visible_columns}
+        eligible = [c for c in visible_columns if widths[c] > floors[c]]
+        while deficit >= 1 and eligible:
+            total_slack = sum(widths[c] - floors[c] for c in eligible)
+            if total_slack <= deficit:
+                for c in eligible:
+                    widths[c] = floors[c]
+                break
+            clamped = False
+            remaining = []
+            for c in eligible:
+                slack = widths[c] - floors[c]
+                target = widths[c] - deficit * slack / total_slack
+                if target <= floors[c]:
+                    deficit -= slack
+                    widths[c] = floors[c]
+                    clamped = True
+                else:
+                    remaining.append(c)
+            if not clamped:
+                for c in eligible:
+                    widths[c] -= deficit * (widths[c] - floors[c]) / total_slack
+                break
+            eligible = remaining
+        return widths
 
     @staticmethod
     def _distribute_extra(widths, stretch_columns, caps, extra):

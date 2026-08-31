@@ -15,6 +15,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QPixmap, QImage, QIcon
 
 from editor_utils.picker_dialogs import WarpcPickerDialog
+from editor_utils.adaptive_table import AdaptiveTableWidget
 
 from .base_panel import ConfigPanelBase
 
@@ -422,17 +423,14 @@ class SummonTablePanel(ConfigPanelBase):
         layout.addLayout(search_row)
 
         # ── 表格 ──
-        self._table = QTableWidget()
+        self._table = AdaptiveTableWidget(
+            0, 5,
+            stretch_columns={1, 2, 3},
+            minimum_widths=[50, 80, 80, 90, 100],
+            row_height=44,
+        )
         self._table.setColumnCount(5)
         self._table.setHorizontalHeaderLabels(["技能", "技能名称", "主目标", "多随机池(优先)", "操作"])
-        hdr = self._table.horizontalHeader()
-        hdr.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
-        hdr.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        hdr.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
-        hdr.setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
-        hdr.setSectionResizeMode(4, QHeaderView.ResizeMode.Fixed)
-        self._table.setColumnWidth(4, 100)
-        self._table.verticalHeader().setDefaultSectionSize(44)
         self._table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self._table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self._table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)

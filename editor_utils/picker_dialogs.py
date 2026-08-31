@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
 )
 
 from editor_utils.ui_helpers import resolve_config_path, EditorComboBox
+from editor_utils.adaptive_table import AdaptiveTableWidget
 
 
 # 31 种状态名称 (Maker UI 状态列表; bit 0..30) — 供状态弹窗/标签渲染共用
@@ -46,10 +47,12 @@ class TktPickerDialog(QDialog):
         layout.addWidget(self.search)
 
         # 表格
-        self.table = QTableWidget()
-        self.table.setColumnCount(2)
+        self.table = AdaptiveTableWidget(
+            0, 2,
+            stretch_columns={1},
+            minimum_widths=[60, 90],
+        )
         self.table.setHorizontalHeaderLabels(["ID", "文本"])
-        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SingleSelection)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
@@ -266,9 +269,6 @@ class ItemPickerDialog(QDialog):
     """
 
     # 完整模式固定列宽; 页面(3) 与权限(5) 按内容自适应
-    _COLUMN_WIDTHS = {0: 56, 1: 56, 2: 80, 6: 80}
-    _RESIZE_TO_CONTENT_COLUMNS = (3, 5)
-
     def __init__(self, parent, items, *, use_right_options=None,
                  icon_pixmap_fn=None, current_value=None,
                  title="选择物品", clear_text=None,
@@ -357,21 +357,21 @@ class ItemPickerDialog(QDialog):
 
         # 表格
         if self._simple_mode:
-            self._table = QTableWidget(0, 2)
+            self._table = AdaptiveTableWidget(
+                0, 2,
+                stretch_columns={1},
+                minimum_widths=[80, 90],
+            )
             self._table.setHorizontalHeaderLabels(["ID", "名称"])
-            self._table.setColumnWidth(0, 80)
-            self._table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
         else:
-            self._table = QTableWidget(0, 7)
+            self._table = AdaptiveTableWidget(
+                0, 7,
+                stretch_columns={4},
+                minimum_widths=[56, 56, 80, 50, 96, 50, 80],
+                row_height=44,
+            )
             self._table.setHorizontalHeaderLabels(
                 ['图标', '#', 'ID', '页面', '物品名称', '权限', '价格'])
-            for col, width in self._COLUMN_WIDTHS.items():
-                self._table.setColumnWidth(col, width)
-            self._table.verticalHeader().setDefaultSectionSize(44)
-            header = self._table.horizontalHeader()
-            for col in self._RESIZE_TO_CONTENT_COLUMNS:
-                header.setSectionResizeMode(col, QHeaderView.ResizeToContents)
-            header.setSectionResizeMode(4, QHeaderView.Stretch)
             self._table.setIconSize(QSize(36, 36))
         self._table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self._table.setSelectionMode(QAbstractItemView.SingleSelection)
@@ -580,16 +580,13 @@ class WarpcPickerDialog(QDialog):
         layout.addLayout(search_row)
 
         # 表格
-        self._table = QTableWidget()
-        self._table.setColumnCount(3)
+        self._table = AdaptiveTableWidget(
+            0, 3,
+            stretch_columns={2},
+            minimum_widths=[40, 40, 80],
+            row_height=44,
+        )
         self._table.setHorizontalHeaderLabels(["头像", "索引", "名称"])
-        hdr = self._table.horizontalHeader()
-        hdr.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
-        self._table.setColumnWidth(0, 40)
-        hdr.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
-        hdr.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
-        # 头像单元格里放 32px QLabel；默认 30px 行高会裁掉图片边缘。
-        self._table.verticalHeader().setDefaultSectionSize(44)
         self._table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self._table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         if multi_select:

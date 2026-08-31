@@ -51,6 +51,7 @@ from editor_utils.app_init import (
     ensure_single_instance, install_translator, setup_app_icon,
 )
 from editor_utils.dock_components import DockHeader
+from editor_utils.adaptive_table import AdaptiveTableWidget
 from editor_utils.jvg_loader import get_sprite_pixmap, load_mu_sprites
 from editor_utils.kon_name_resolver import KonNameResolver
 from editor_utils.lzss import (
@@ -503,92 +504,8 @@ def warpc_get(seg3, char_idx, byte_offset):
     return struct.unpack_from('<h', seg3, off)[0]
 
 
-# ============================================================
-# 物品列表表格: 默认列宽可读, 最大化时按权重小幅自适应
-# ============================================================
-class SaveInventoryTable(QTableWidget):
-    """存档物品表格：固定列保持可读，物品名称列弹性吸收额外宽度。"""
 
-    _BASE_WIDTHS = (58, 42, 64, 56, 400, 64)
-    _MIN_WIDTHS = (48, 36, 52, 48, 220, 54)
-    _GROWTH_WEIGHTS = (0.05, 0.04, 0.12, 0.18, 0.35, 0.26)
-    _SHRINK_WEIGHTS = (0.05, 0.04, 0.12, 0.18, 0.45, 0.16)
-    _NAME_COLUMN = 4
 
-    def __init__(self, rows, columns, parent=None):
-        super().__init__(rows, columns, parent)
-        self._applying_columns = False
-        header = self.horizontalHeader()
-        header.setSectionResizeMode(QHeaderView.Interactive)
-        header.setStretchLastSection(False)
-        header.setMinimumSectionSize(min(self._MIN_WIDTHS))
-        self.apply_responsive_widths()
-
-    def showEvent(self, event):
-        super().showEvent(event)
-        self.apply_responsive_widths()
-
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        self.apply_responsive_widths()
-
-    def apply_responsive_widths(self):
-        if self._applying_columns or self.columnCount() != len(self._BASE_WIDTHS):
-            return
-        self._applying_columns = True
-        try:
-            available = max(self.viewport().width(), sum(self._MIN_WIDTHS))
-            base_total = sum(self._BASE_WIDTHS)
-            min_total = sum(self._MIN_WIDTHS)
-            name_col = self._NAME_COLUMN
-
-            if available >= base_total:
-                extra = available - base_total
-                widths = [
-                    base + extra * weight
-                    for base, weight in zip(self._BASE_WIDTHS, self._GROWTH_WEIGHTS)
-                ]
-            else:
-                deficit = base_total - available
-                name_width = max(
-                    self._MIN_WIDTHS[name_col],
-                    self._BASE_WIDTHS[name_col] - deficit * self._SHRINK_WEIGHTS[name_col],
-                )
-                nonname_indices = [
-                    i for i in range(len(self._BASE_WIDTHS)) if i != name_col
-                ]
-                nonname_budget = available - name_width
-                nonname_base_total = base_total - self._BASE_WIDTHS[name_col]
-                nonname_min_total = min_total - self._MIN_WIDTHS[name_col]
-                if nonname_budget >= nonname_min_total:
-                    nonname_deficit = nonname_base_total - nonname_budget
-                    nonname_weights = [
-                        self._SHRINK_WEIGHTS[i] for i in nonname_indices
-                    ]
-                    weight_total = sum(nonname_weights)
-                    nonname_widths = [
-                        max(
-                            self._MIN_WIDTHS[i],
-                            self._BASE_WIDTHS[i]
-                            - nonname_deficit * self._SHRINK_WEIGHTS[i] / weight_total,
-                        )
-                        for i in nonname_indices
-                    ]
-                else:
-                    nonname_widths = [self._MIN_WIDTHS[i] for i in nonname_indices]
-                    name_width = available - sum(nonname_widths)
-
-                widths = [0] * len(self._BASE_WIDTHS)
-                for i, width in zip(nonname_indices, nonname_widths):
-                    widths[i] = width
-                widths[name_col] = name_width
-
-            rounded = [max(1, round(width)) for width in widths]
-            rounded[name_col] += available - sum(rounded)
-            for column, width in enumerate(rounded):
-                self.setColumnWidth(column, max(1, width))
-        finally:
-            self._applying_columns = False
 
 
 # ============================================================
@@ -937,7 +854,12 @@ class SaveEditorApp(QMainWindow):
         layout.addLayout(ctrl)
 
         # 物品表格
-        self._inv_table = SaveInventoryTable(0, 6)
+        self._inv_table = AdaptiveTableWidget(
+            0, 6,
+            stretch_columns={4},
+            minimum_widths=[58, 42, 64, 56, 220, 64],
+            row_height=44,
+        )
         self._inv_table.setObjectName("SaveInventoryTable")
         self._inv_table.setHorizontalHeaderLabels(['图标', '#', 'ID', '页面', '物品名称', '数量'])
         self._inv_table.verticalHeader().setDefaultSectionSize(44)
@@ -1016,19 +938,13 @@ class SaveEditorApp(QMainWindow):
         layout.setContentsMargins(4, 4, 4, 4)
         layout.addWidget(QLabel(f"来源: {source_note}  |  共 {count} 项"))
 
-        table = QTableWidget(count, 4)
+        table = AdaptiveTableWidget(
+            count, 4,
+            stretch_columns={2},
+            minimum_widths=[50, 60, 60, 70],
+        )
         table.setHorizontalHeaderLabels(['索引', '值', '语义标注', '十六进制'])
         table.verticalHeader().setVisible(False)
-        # 列宽策略: 索引/值/十六进制适应内容, 语义标注列自适应填充剩余宽度
-        hh = table.horizontalHeader()
-        hh.setSectionResizeMode(0, QHeaderView.ResizeToContents)
-        hh.setSectionResizeMode(1, QHeaderView.ResizeToContents)
-        hh.setSectionResizeMode(2, QHeaderView.Stretch)
-        hh.setSectionResizeMode(3, QHeaderView.ResizeToContents)
-        # 设置最小宽度防止过度压缩
-        table.setColumnWidth(0, 50)
-        table.setColumnWidth(1, 60)
-        table.setColumnWidth(3, 70)
         table.setSelectionBehavior(QAbstractItemView.SelectRows)
 
         for i in range(count):
@@ -1148,17 +1064,13 @@ class SaveEditorApp(QMainWindow):
         sf.addWidget(self._warpc_filter)
         left_layout.addLayout(sf)
 
-        self._warpc_table = QTableWidget(0, 6)
+        self._warpc_table = AdaptiveTableWidget(
+            0, 6,
+            stretch_columns={1},
+            minimum_widths=[35, 110, 35, 50, 55, 55],
+        )
         self._warpc_table.setObjectName("SaveWarpcTable")
         self._warpc_table.setHorizontalHeaderLabels(['#', '名称', 'LV', '身份', 'HP', 'MP'])
-        self._warpc_table.setColumnWidth(0, 35)
-        self._warpc_table.setColumnWidth(1, 110)
-        self._warpc_table.setColumnWidth(2, 35)
-        self._warpc_table.setColumnWidth(3, 50)
-        self._warpc_table.setColumnWidth(4, 55)
-        self._warpc_table.setColumnWidth(5, 55)
-        # 角色名称列随存档编辑器宽度伸缩，其余数值列保留默认宽度。
-        self._warpc_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
         self._warpc_table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self._warpc_table.setSelectionMode(QAbstractItemView.SingleSelection)
         self._warpc_table.setEditTriggers(QAbstractItemView.NoEditTriggers)

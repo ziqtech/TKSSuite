@@ -6,9 +6,11 @@ import zipfile
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QAbstractItemView, QDialog, QDialogButtonBox, QFileDialog, QHBoxLayout,
-    QHeaderView, QInputDialog, QLabel, QLineEdit, QMessageBox, QPushButton,
-    QTableWidget, QTableWidgetItem, QVBoxLayout,
+    QInputDialog, QLabel, QLineEdit, QMessageBox, QPushButton,
+    QTableWidgetItem, QVBoxLayout,
 )
+
+from editor_utils.adaptive_table import AdaptiveTableWidget
 
 # MOD 可覆盖配置白名单回退默认 (正式白名单由补丁声明动态推导,
 # 经构造参数 allowed_configs 传入; 与 core.mod_loader.allowed_mod_configs 一致)
@@ -66,16 +68,16 @@ class ModEditorDialog(QDialog):
 
         # 文件列表
         layout.addWidget(QLabel("文件列表:"))
-        self._table = QTableWidget(0, 3)
+        self._table = AdaptiveTableWidget(
+            0, 3,
+            stretch_columns={0},
+            minimum_widths=[160, 60, 70],
+        )
         self._table.setHorizontalHeaderLabels(["文件路径", "类型", "大小"])
         self._table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self._table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self._table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self._table.verticalHeader().setVisible(False)
-        h = self._table.horizontalHeader()
-        h.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        h.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
-        h.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
         self._table.itemSelectionChanged.connect(self._on_selection_changed)
         layout.addWidget(self._table, 1)
 

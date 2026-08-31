@@ -659,7 +659,7 @@ class WarDataEditorV2(QMainWindow):
         self.table = AdaptiveTableWidget(
             0, 8,
             stretch_columns={6},
-            minimum_widths=[45, 105, 50, 50, 50, 75, 180, 60],
+            minimum_widths=[45, 105, 62, 62, 62, 80, 180, 60],
             row_height=40,
         )
         self.table.setHorizontalHeaderLabels(["序号", "地图", "敌军数", "宝物数", "陷阱数", "固定/随机", "参战人物", "参数"])

@@ -20,6 +20,7 @@ from editor_utils.tab_widget import EditorTabWidget
 from editor_utils.jvg_loader import get_sprite_pixmap
 from editor_utils.flow_layout import FlowLayout
 from editor_utils.picker_dialogs import STATUS_NAMES, STATUS_ICON_BASE
+from editor_utils.adaptive_table import AdaptiveTableWidget
 from book_skill_graph import CharSkillGraph
 from book_growth import GrowthTableDialog
 from tab_common import BookTabBase
@@ -713,19 +714,16 @@ class CharTab(BookTabBase):
         items = [(si, skill_by_idx.get(si)) for si in sorted(states)]
         n = len(items)
 
-        table = QTableWidget(n, 4)
+        table = AdaptiveTableWidget(
+            n, 4,
+            stretch_columns={0, 1},
+            minimum_widths=[80, 100, 90, 60],
+        )
         table.setHorizontalHeaderLabels(["技能", "效果判定", "类型", "状态"])
         table.verticalHeader().setVisible(False)
         table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         table.setSelectionBehavior(QAbstractItemView.SelectRows)
         table.setSelectionMode(QAbstractItemView.SingleSelection)
-
-        header = table.horizontalHeader()
-        header.setSectionResizeMode(0, QHeaderView.Stretch)
-        header.setSectionResizeMode(1, QHeaderView.Stretch)
-        header.setSectionResizeMode(2, QHeaderView.Fixed)
-        header.setSectionResizeMode(3, QHeaderView.ResizeToContents)
-        table.setColumnWidth(2, 90)
 
         # 获取当前角色记录 (用于效果判定查询)
         rec = getattr(self, '_cur_detail_rec', None)

@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
 )
 
 from editor_utils import theme_manager
+from editor_utils.adaptive_table import AdaptiveTableWidget
 from editor_utils.theme_switcher import apply_theme_to_window
 from editor_utils.window_theme import apply_titlebar_theme
 
@@ -169,7 +170,11 @@ class GrowthTableDialog(QDialog):
         cols = ["等级", "除数"]
         for s in self.STAT_LABELS:
             cols += [s, "Δ"]
-        self._table = QTableWidget(len(self._table_data), len(cols))
+        self._table = AdaptiveTableWidget(
+            len(self._table_data), len(cols),
+            stretch_columns=set(range(len(cols))),
+            minimum_widths=[48, 48] + [55] * (len(cols) - 2),
+        )
         self._table.setHorizontalHeaderLabels(cols)
         self._table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self._table.setSelectionBehavior(QAbstractItemView.SelectRows)
@@ -195,17 +200,6 @@ class GrowthTableDialog(QDialog):
                 if ci in delta_cols and d['level'] > 1:
                     item.setForeground(self._CLR_DELTA)
                 self._table.setItem(row, ci, item)
-
-        hh = self._table.horizontalHeader()
-        hh.setSectionResizeMode(0, QHeaderView.Fixed)
-        hh.setSectionResizeMode(1, QHeaderView.Fixed)
-        self._table.setColumnWidth(0, 48)
-        self._table.setColumnWidth(1, 48)
-        for ci in range(2, len(cols)):
-            hh.setSectionResizeMode(ci, QHeaderView.Fixed)
-            self._table.setColumnWidth(ci, 55)
-        # 保留密集成长列的默认宽度，最大化时由最后一个可见列填充额外空间。
-        hh.setStretchLastSection(True)
 
         for row, d in enumerate(self._table_data):
             if d['is_current']:

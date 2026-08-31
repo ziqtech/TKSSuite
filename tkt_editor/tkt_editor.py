@@ -45,6 +45,7 @@ from editor_utils.theme_switcher import (
     apply_theme_to_window, create_theme_menu, toggle_theme_in_family,
 )
 from editor_utils.dock_components import DockHeader, create_dock
+from editor_utils.adaptive_table import AdaptiveTableWidget
 from editor_utils.ui_helpers import update_path_labels, confirm_close, themed_messagebox, EditorComboBox
 from editor_utils.tkt_loader import load_tkt_full as _load_tkt_full
 from editor_utils.shared_state import pick_tks_directory
@@ -1015,15 +1016,17 @@ class TktEditor(QMainWindow):
         w1_splitter.setHandleWidth(6)
         w1_layout.addWidget(w1_splitter, 1)
 
-        self.table = QTableWidget(0, 3)
+        self.table = AdaptiveTableWidget(
+            0, 3,
+            stretch_columns={2},
+            minimum_widths=[50, 70, 120],
+            row_height=44,
+        )
         self.table.setHorizontalHeaderLabels(['#', 'ID', '文本内容 Preview'])
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SingleSelection)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.verticalHeader().setVisible(False)
-        self.table.setColumnWidth(0, 50)
-        self.table.setColumnWidth(1, 70)
-        self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
         self.table.itemSelectionChanged.connect(self._on_table_select)
         self.table.horizontalHeader().sectionClicked.connect(self._on_header_clicked)
         w1_splitter.addWidget(self._create_dock("低级全局数据表", self.table))
@@ -1123,7 +1126,12 @@ class TktEditor(QMainWindow):
         comp_mid_layout = QVBoxLayout(comp_mid_widget)
         comp_mid_layout.setContentsMargins(0, 0, 0, 0)
 
-        self.comp_table = QTableWidget(0, 4)
+        self.comp_table = AdaptiveTableWidget(
+            0, 4,
+            stretch_columns={1, 3},
+            minimum_widths=[70, 90, 70, 120],
+            row_height=44,
+        )
         self.comp_table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.comp_table.setSelectionMode(QAbstractItemView.SingleSelection)
         self.comp_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
@@ -1527,7 +1535,6 @@ class TktEditor(QMainWindow):
             self.comp_table.setColumnCount(2)
             self.comp_table.setHorizontalHeaderLabels(['条目 ID', '核心文本内容 Preview'])
             self.comp_table.setColumnWidth(0, 80)
-            self.comp_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
 
             row = 0
             for rs, re in cat['ranges']:
@@ -1549,8 +1556,6 @@ class TktEditor(QMainWindow):
             self.comp_table.setHorizontalHeaderLabels(['名称 ID', '当前名称', '说明 ID', '当前说明预览'])
             self.comp_table.setColumnWidth(0, 70)
             self.comp_table.setColumnWidth(2, 70)
-            self.comp_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Interactive)
-            self.comp_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.Stretch)
 
             name_safe = self._get_safe_upper_bound(cat['name_end'], all_starts)
             desc_safe = self._get_safe_upper_bound(cat['desc_end'], all_starts)
@@ -1594,14 +1599,8 @@ class TktEditor(QMainWindow):
         self.comp_preview_img.clear()
 
     def _adjust_comp_columns(self):
-        """调整分类表格列宽：当前名称:当前说明预览 = 1:4"""
-        if self.comp_table.columnCount() != 4:
-            return
-        total_w = self.comp_table.viewport().width()
-        fixed_w = 70 + 70  # 名称ID + 说明ID 固定宽度
-        if total_w > fixed_w:
-            remaining = total_w - fixed_w
-            self.comp_table.setColumnWidth(1, remaining // 5)
+        """刷新分类表格列宽 — 交给 AdaptiveTableWidget 统一自适应。"""
+        self.comp_table.fit_columns_to_viewport()
 
     def _on_comp_table_select(self):
         selected = self.comp_table.selectedItems()

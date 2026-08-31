@@ -24,8 +24,8 @@ import zipfile
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
-    QAbstractItemView, QDialog, QFileDialog, QHBoxLayout, QHeaderView,
-    QLabel, QLineEdit, QMessageBox, QPushButton, QTableWidget,
+    QAbstractItemView, QDialog, QFileDialog, QHBoxLayout,
+    QLabel, QLineEdit, QMessageBox, QPushButton,
     QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
@@ -34,6 +34,7 @@ from editor_utils.mod_exporter import (
     pack_tksmod, safe_mod_filename,
 )
 from editor_utils.ui_helpers import themed_messagebox
+from editor_utils.adaptive_table import AdaptiveTableWidget
 
 # ── 常量 ──
 # 游戏内置 (默认) BGM 编号: 0000~0028 与 0100, 均不可删除, 只能修改覆盖
@@ -237,19 +238,17 @@ class CustomMusicDialog(QDialog):
         layout.addLayout(dir_row)
 
         # ── 表格 ──
-        self._table = QTableWidget(0, len(_COLUMNS))
+        self._table = AdaptiveTableWidget(
+            0, len(_COLUMNS),
+            stretch_columns={_COL_NAME},
+            minimum_widths=[120, 60, 90],
+            row_height=44,
+        )
         self._table.setHorizontalHeaderLabels(_COLUMNS)
         self._table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self._table.setSelectionMode(QAbstractItemView.SingleSelection)
         self._table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self._table.verticalHeader().setVisible(False)
-        # 操作列嵌入多个按钮；统一留出足够的上下边距，避免主题切换后
-        # 按钮或其焦点边框贴住/超出单元格边界。
-        self._table.verticalHeader().setDefaultSectionSize(44)
-        h = self._table.horizontalHeader()
-        h.setSectionResizeMode(_COL_NAME, QHeaderView.Stretch)
-        h.setSectionResizeMode(_COL_STATUS, QHeaderView.ResizeToContents)
-        h.setSectionResizeMode(_COL_OPS, QHeaderView.ResizeToContents)
         layout.addWidget(self._table, 1)
 
         # ── 底部操作 ──

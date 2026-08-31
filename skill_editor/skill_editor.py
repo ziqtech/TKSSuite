@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from editor_utils.dock_components import DockHeader, create_dock
+from editor_utils.adaptive_table import AdaptiveTableWidget
 from editor_utils.jvg_loader import get_sprite_pixmap, load_mu_sprites
 from editor_utils.lzss import lzss_compress_dat, lzss_decompress_dat
 from editor_utils.shared_state import pick_tks_directory
@@ -143,99 +144,8 @@ def skill_name(rec, tkt):
     return f"Skill#{sid}" if sid else f"(空-#{rec['index']})"
 
 
-# ============================================================
-# 左侧技能列表：默认列宽可读，窗口变大时按权重小幅自适应
-# ============================================================
 
-class SkillListTable(QTableWidget):
-    """技能列表表格：固定列保持可读，技能名称列吸收额外宽度。"""
 
-    _BASE_WIDTHS = (62, 72, 90, 160, 82, 84)
-    _MIN_WIDTHS = (52, 60, 76, 112, 72, 72)
-    _GROWTH_WEIGHTS = (0.04, 0.06, 0.10, 0.62, 0.09, 0.09)
-    _SHRINK_WEIGHTS = (0.04, 0.06, 0.10, 0.50, 0.14, 0.16)
-    _NAME_COLUMN = 3
-
-    def __init__(self, rows, columns, parent=None):
-        super().__init__(rows, columns, parent)
-        self._applying_columns = False
-        header = self.horizontalHeader()
-        header.setSectionResizeMode(QHeaderView.Interactive)
-        header.setStretchLastSection(False)
-        header.setMinimumSectionSize(min(self._MIN_WIDTHS))
-        self.setWordWrap(False)
-        self.setTextElideMode(Qt.ElideRight)
-        self.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        self.apply_responsive_widths()
-
-    def showEvent(self, event):
-        super().showEvent(event)
-        self.apply_responsive_widths()
-
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        self.apply_responsive_widths()
-
-    def apply_responsive_widths(self):
-        if self._applying_columns or self.columnCount() != len(self._BASE_WIDTHS):
-            return
-
-        self._applying_columns = True
-        try:
-            available = max(self.viewport().width(), sum(self._MIN_WIDTHS))
-            base_total = sum(self._BASE_WIDTHS)
-            min_total = sum(self._MIN_WIDTHS)
-            name_col = self._NAME_COLUMN
-
-            if available >= base_total:
-                extra = available - base_total
-                widths = [
-                    base + extra * weight
-                    for base, weight in zip(self._BASE_WIDTHS, self._GROWTH_WEIGHTS)
-                ]
-            else:
-                deficit = base_total - available
-                name_width = max(
-                    self._MIN_WIDTHS[name_col],
-                    self._BASE_WIDTHS[name_col]
-                    - deficit * self._SHRINK_WEIGHTS[name_col],
-                )
-                nonname_indices = [
-                    i for i in range(len(self._BASE_WIDTHS)) if i != name_col
-                ]
-                nonname_budget = available - name_width
-                nonname_base_total = base_total - self._BASE_WIDTHS[name_col]
-                nonname_min_total = min_total - self._MIN_WIDTHS[name_col]
-                if nonname_budget >= nonname_min_total:
-                    nonname_deficit = nonname_base_total - nonname_budget
-                    nonname_weights = [
-                        self._SHRINK_WEIGHTS[i] for i in nonname_indices
-                    ]
-                    weight_total = sum(nonname_weights)
-                    nonname_widths = [
-                        max(
-                            self._MIN_WIDTHS[i],
-                            self._BASE_WIDTHS[i]
-                            - nonname_deficit * self._SHRINK_WEIGHTS[i] / weight_total,
-                        )
-                        for i in nonname_indices
-                    ]
-                else:
-                    nonname_widths = [
-                        self._MIN_WIDTHS[i] for i in nonname_indices
-                    ]
-                    name_width = available - sum(nonname_widths)
-
-                widths = [0] * len(self._BASE_WIDTHS)
-                for i, width in zip(nonname_indices, nonname_widths):
-                    widths[i] = width
-                widths[name_col] = name_width
-
-            widths[name_col] += available - sum(widths)
-            for column, width in enumerate(widths):
-                self.setColumnWidth(column, max(1, round(width)))
-        finally:
-            self._applying_columns = False
 
 
 def load_skills(fp):
@@ -297,16 +207,13 @@ class SkillPickerDialog(QDialog):
         search_layout.addWidget(self.type_box)
         layout.addLayout(search_layout)
 
-        self.table = QTableWidget(0, 4)
+        self.table = AdaptiveTableWidget(
+            0, 4,
+            stretch_columns={3},
+            minimum_widths=[68, 72, 92, 60],
+            row_height=44,
+        )
         self.table.setHorizontalHeaderLabels(['技能ID', '文本ID', '类型', '技能名称'])
-        picker_header = self.table.horizontalHeader()
-        picker_header.setSectionResizeMode(QHeaderView.Interactive)
-        picker_header.setStretchLastSection(False)
-        picker_header.setMinimumSectionSize(60)
-        self.table.setColumnWidth(0, 68)
-        self.table.setColumnWidth(1, 72)
-        self.table.setColumnWidth(2, 92)
-        picker_header.setSectionResizeMode(3, QHeaderView.Stretch)
         self.table.setWordWrap(False)
         self.table.setTextElideMode(Qt.ElideRight)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
@@ -1034,8 +941,15 @@ class SkillEditorApp(QMainWindow):
         main_layout.addWidget(self.splitter, 1)
 
         # --- Left Pane (Table) ---
-        self.table = SkillListTable(0, 6)
+        self.table = AdaptiveTableWidget(
+            0, 6,
+            stretch_columns={3},
+            minimum_widths=[62, 72, 90, 112, 82, 84],
+            row_height=44,
+        )
         self.table.setHorizontalHeaderLabels(['技能ID', '文本ID', '类型', '技能名称', '技能点数', '耗费内力'])
+        self.table.setWordWrap(False)
+        self.table.setTextElideMode(Qt.ElideRight)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SingleSelection)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
@@ -1360,7 +1274,7 @@ class SkillEditorApp(QMainWindow):
                 self.table.item(row, c).setForeground(color)
 
         self.table.blockSignals(False)
-        self.table.apply_responsive_widths()
+        self.table.fit_columns_to_viewport()
 
     def _on_table_select(self):
         sel = self.table.selectedItems()

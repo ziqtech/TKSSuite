@@ -53,6 +53,7 @@ from PySide6.QtWidgets import (
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from editor_utils.dock_components import DockHeader, create_dock
+from editor_utils.adaptive_table import AdaptiveTableWidget
 from editor_utils.flow_layout import FlowLayout
 from editor_utils.jvg_loader import get_sprite_pixmap, load_mu_sprites
 from editor_utils.lzss import lzss_compress_dat, lzss_decompress_dat
@@ -295,10 +296,13 @@ class SkillPickerDialog(QDialog):
         self.search_box.textChanged.connect(self._refresh)
         sf.addWidget(self.search_box)
         layout.addLayout(sf)
-        self.table = QTableWidget(0, 2)
+        self.table = AdaptiveTableWidget(
+            0, 2,
+            stretch_columns={1},
+            minimum_widths=[50, 90],
+            row_height=44,
+        )
         self.table.setHorizontalHeaderLabels(['索引', '技能名称'])
-        self.table.setColumnWidth(0, 50)
-        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SingleSelection)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
@@ -500,94 +504,8 @@ class UseRightPickerDialog(QDialog):
 # ============================================================
 # GUI 核心编辑器
 # ============================================================
-class ItemListTable(QTableWidget):
-    """物品列表表格：默认宽度保证各列可读，窗口变大时按权重小幅自适应。"""
 
-    _BASE_WIDTHS = (56, 44, 60, 50, 170, 86, 66)
-    _MIN_WIDTHS = (48, 36, 52, 44, 96, 72, 54)
-    _GROWTH_WEIGHTS = (0.02, 0.01, 0.03, 0.03, 0.78, 0.08, 0.05)
-    _SHRINK_WEIGHTS = (0.03, 0.02, 0.03, 0.03, 0.77, 0.07, 0.05)
 
-    def __init__(self, rows, columns, parent=None):
-        super().__init__(rows, columns, parent)
-        self._applying_columns = False
-        header = self.horizontalHeader()
-        header.setSectionResizeMode(QHeaderView.Interactive)
-        header.setStretchLastSection(False)
-        header.setMinimumSectionSize(min(self._MIN_WIDTHS))
-        self.apply_responsive_widths()
-
-    def showEvent(self, event):
-        super().showEvent(event)
-        self.apply_responsive_widths()
-
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        self.apply_responsive_widths()
-
-    def apply_responsive_widths(self):
-        if self._applying_columns or self.columnCount() != 7:
-            return
-        self._applying_columns = True
-        try:
-            available = max(self.viewport().width(), sum(self._MIN_WIDTHS))
-            base_total = sum(self._BASE_WIDTHS)
-            min_total = sum(self._MIN_WIDTHS)
-            if available >= base_total:
-                extra = available - base_total
-                widths = [
-                    base + extra * weight
-                    for base, weight in zip(self._BASE_WIDTHS, self._GROWTH_WEIGHTS)
-                ]
-            else:
-                deficit = base_total - available
-                name_width = max(
-                    self._MIN_WIDTHS[4],
-                    self._BASE_WIDTHS[4] - deficit * self._SHRINK_WEIGHTS[4],
-                )
-                nonname_budget = available - name_width
-                nonname_base_total = base_total - self._BASE_WIDTHS[4]
-                nonname_min_total = min_total - self._MIN_WIDTHS[4]
-                if nonname_budget >= nonname_min_total:
-                    nonname_deficit = nonname_base_total - nonname_budget
-                    nonname_weights = [
-                        weight
-                        for index, weight in enumerate(self._SHRINK_WEIGHTS)
-                        if index != 4
-                    ]
-                    weight_total = sum(nonname_weights)
-                    nonname_widths = [
-                        max(
-                            min_w,
-                            base - nonname_deficit * weight / weight_total,
-                        )
-                        for min_w, base, weight in zip(
-                            (
-                                self._MIN_WIDTHS[0:4]
-                                + self._MIN_WIDTHS[5:7]
-                            ),
-                            (
-                                self._BASE_WIDTHS[0:4]
-                                + self._BASE_WIDTHS[5:7]
-                            ),
-                            nonname_weights,
-                        )
-                    ]
-                else:
-                    nonname_widths = list(
-                        self._MIN_WIDTHS[0:4] + self._MIN_WIDTHS[5:7]
-                    )
-                    name_width = available - sum(nonname_widths)
-                widths = (
-                    nonname_widths[0:4]
-                    + [name_width]
-                    + nonname_widths[4:6]
-                )
-            widths[4] += available - sum(widths)
-            for column, width in enumerate(widths):
-                self.setColumnWidth(column, max(1, round(width)))
-        finally:
-            self._applying_columns = False
 
 
 class ItemEditorApp(QMainWindow):
@@ -714,7 +632,12 @@ class ItemEditorApp(QMainWindow):
         main_layout.addWidget(self.splitter, 1)
 
         # 左侧: 物品列表 (列顺序与原版一致: 图标在最前)
-        self.table = ItemListTable(0, 7)
+        self.table = AdaptiveTableWidget(
+            0, 7,
+            stretch_columns={4},
+            minimum_widths=[56, 44, 60, 50, 96, 86, 66],
+            row_height=44,
+        )
         self.table.setHorizontalHeaderLabels(['图标', '#', 'ID', '页面', '物品名称', '权限', '价格'])
         self.table.verticalHeader().setDefaultSectionSize(44)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
@@ -1108,7 +1031,7 @@ class ItemEditorApp(QMainWindow):
             self.table.setItem(row, 5, QTableWidgetItem(rt))
             self.table.setItem(row, 6, QTableWidgetItem(str(r['price'])))
         self.table.blockSignals(False)
-        self.table.apply_responsive_widths()
+        self.table.fit_columns_to_viewport()
 
     def _sort_by(self, col):
         """按列排序"""

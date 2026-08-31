@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt
 
 from editor_utils.ui_helpers import EditorComboBox
+from editor_utils.adaptive_table import AdaptiveTableWidget
 from .base_panel import ConfigPanelBase
 
 # 页面定义: (JSON键, 显示名)
@@ -71,16 +72,14 @@ class EquipTypeLabelsPanel(ConfigPanelBase):
         layout.addLayout(page_row)
 
         # ── 表格 ──
-        self._table = QTableWidget()
+        self._table = AdaptiveTableWidget(
+            0, 3,
+            stretch_columns={1},
+            minimum_widths=[70, 80, 100],
+            row_height=44,
+        )
         self._table.setColumnCount(3)
         self._table.setHorizontalHeaderLabels(["位值", "名称", "操作"])
-        header = self._table.horizontalHeader()
-        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
-        self._table.setColumnWidth(0, 70)
-        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
-        self._table.setColumnWidth(2, 100)
-        self._table.verticalHeader().setDefaultSectionSize(44)
         self._table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self._table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self._table.setItemDelegateForColumn(0, BitValueComboDelegate(self._table))

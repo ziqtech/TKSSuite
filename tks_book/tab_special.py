@@ -12,11 +12,12 @@
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
-    QLabel, QFrame, QVBoxLayout, QTableWidget, QTableWidgetItem,
-    QHeaderView, QAbstractItemView, QPushButton,
+    QLabel, QFrame, QVBoxLayout, QTableWidgetItem,
+    QAbstractItemView, QPushButton,
 )
 
 from editor_utils.jvg_loader import get_sprite_pixmap
+from editor_utils.adaptive_table import AdaptiveTableWidget
 
 from book_loader import tkt_first_line
 from tab_item import ItemTab, render_item_header
@@ -128,15 +129,15 @@ class SpecialItemTab(ItemTab):
 
         # ── 获取地点表格 (地图/实体/增量/来源/操作) ──
         body = self.add_group("获取地点")
-        tw = QTableWidget()
         headers = ["地图", "实体", "增量", "来源", "操作"]
-        tw.setColumnCount(len(headers))
+        tw = AdaptiveTableWidget(
+            0, len(headers),
+            stretch_columns={0},
+            minimum_widths=[60, 150, 60, 190, 64],
+            row_height=44,
+        )
         tw.setHorizontalHeaderLabels(headers)
         tw.verticalHeader().setVisible(False)
-        # QTableWidget 的 QSS item min-height 不会改变默认行高；操作列
-        # 放的是实际 QPushButton，必须显式给出足够的行高，否则按钮会
-        # 被表格视口上下边界裁掉。
-        tw.verticalHeader().setDefaultSectionSize(44)
         tw.setEditTriggers(QAbstractItemView.NoEditTriggers)
         tw.setSelectionMode(QAbstractItemView.NoSelection)
         tw.setRowCount(len(g['entries']))
@@ -170,14 +171,6 @@ class SpecialItemTab(ItemTab):
             else:
                 btn.clicked.connect(lambda _=False, s=sid: self._goto_map(s))
             tw.setCellWidget(r, 4, btn)
-        header = tw.horizontalHeader()
-        header.setSectionResizeMode(QHeaderView.Interactive)
-        header.setSectionResizeMode(0, QHeaderView.Stretch)
-        header.setStretchLastSection(False)
-        tw.setColumnWidth(1, 150)
-        tw.setColumnWidth(2, 60)
-        tw.setColumnWidth(3, 190)
-        tw.setColumnWidth(4, 64)
         # 高度自适应行数, 避免表格内部滚动 (外层已是滚动区)
         row_h = tw.verticalHeader().defaultSectionSize()
         tw.setFixedHeight(tw.horizontalHeader().height() +
