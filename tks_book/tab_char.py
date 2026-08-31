@@ -725,7 +725,7 @@ class CharTab(BookTabBase):
         header.setSectionResizeMode(1, QHeaderView.Stretch)
         header.setSectionResizeMode(2, QHeaderView.Fixed)
         header.setSectionResizeMode(3, QHeaderView.ResizeToContents)
-        table.setColumnWidth(2, 80)
+        table.setColumnWidth(2, 90)
 
         # 获取当前角色记录 (用于效果判定查询)
         rec = getattr(self, '_cur_detail_rec', None)

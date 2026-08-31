@@ -199,8 +199,8 @@ class GrowthTableDialog(QDialog):
         hh = self._table.horizontalHeader()
         hh.setSectionResizeMode(0, QHeaderView.Fixed)
         hh.setSectionResizeMode(1, QHeaderView.Fixed)
-        self._table.setColumnWidth(0, 45)
-        self._table.setColumnWidth(1, 52)
+        self._table.setColumnWidth(0, 48)
+        self._table.setColumnWidth(1, 48)
         for ci in range(2, len(cols)):
             hh.setSectionResizeMode(ci, QHeaderView.Fixed)
             self._table.setColumnWidth(ci, 55)

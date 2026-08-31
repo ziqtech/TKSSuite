@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """tks_book 标签页公共组件 — 左侧搜索表格 + 右侧详情滚动区 (Dock 风格)"""
-from PySide6.QtCore import Qt, QSize
+from PySide6.QtCore import Qt, QSize, QTimer
+from PySide6.QtGui import QFontMetrics
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QSplitter, QLineEdit, QTableWidget,
     QTableWidgetItem, QHeaderView, QAbstractItemView,
@@ -26,6 +27,7 @@ class BookTabBase(QWidget):
         self._rows = []           # [(key, [cell, ...]), ...] 全量
         self._widths = None       # {col: pixel_width} 非拉伸列像素宽
         self._stretch_col = None  # 拉伸列索引 (占用剩余空间)
+        self._fit_stretch_pending = False
         self._build_ui()
 
     # ── UI 骨架 ──
@@ -96,7 +98,7 @@ class BookTabBase(QWidget):
         rows:       [(key, [cell, ...]), ...] 每行单元格;
                     cell 为 str (纯文本) 或 (text, icon_or_None) (带图标)
         widths:     可选 {col: pixel_width} 非拉伸列像素宽
-        stretch_col: 可选列索引, 该列占用剩余空间 (Stretch 模式);
+        stretch_col: 可选列索引, 该列初始占用剩余空间，之后仍可独立拖动;
                      未指定时由末列撑满 (StretchLastSection)
         """
         self._headers = list(headers)
@@ -139,17 +141,68 @@ class BookTabBase(QWidget):
                 tw.setItem(row, col, item)
         # 列宽 / 拉伸模式
         header = tw.horizontalHeader()
+        # 不把“占满剩余空间”的列保持为 QHeaderView.Stretch。Stretch
+        # 会在用户拖动相邻列时反向收缩该列，导致相邻列的边界向左移动，
+        # 看起来像是拖动方向反了。这里仅用它计算初始宽度，之后所有
+        # 列都保持 Interactive，用户拖动哪一列就只改变哪一列。
         header.setSectionResizeMode(QHeaderView.Interactive)
-        if self._stretch_col is not None and self._stretch_col < ncol:
-            header.setSectionResizeMode(self._stretch_col, QHeaderView.Stretch)
-            header.setStretchLastSection(False)
-        else:
+        header.setMinimumSectionSize(40)
+        if self._stretch_col is None or self._stretch_col >= ncol:
             header.setStretchLastSection(True)
+        else:
+            header.setStretchLastSection(False)
         if self._widths:
+            # 固定列不能小于表头本身的显示宽度。主题 QSS 的表头左右
+            # padding 为 8px，这里额外预留 4px 安全边距，避免不同字体
+            # 或四套主题切换后出现标题被截断。
+            fm = QFontMetrics(header.font())
             for col, w in self._widths.items():
                 if col < ncol:
-                    tw.setColumnWidth(col, w)
+                    header_text = str(self._headers[col])
+                    text_width = max(
+                        (fm.horizontalAdvance(line)
+                         for line in header_text.splitlines()),
+                        default=0,
+                    )
+                    tw.setColumnWidth(col, max(w, text_width + 20))
+        if self._stretch_col is not None and self._stretch_col < ncol:
+            self._fit_stretch_column()
         tw.blockSignals(False)
+
+    def _fit_stretch_column(self):
+        """仅在重建/窗口布局后让逻辑上的拉伸列填满剩余宽度。
+
+        该列本身保持 Interactive，避免 Qt 的 Stretch 联动破坏用户拖动
+        相邻列时的边界方向。若表格尚未完成布局，下一轮事件循环再重试。
+        """
+        col = self._stretch_col
+        tw = self.list_widget
+        if col is None or col >= tw.columnCount():
+            return
+        available = tw.viewport().width()
+        if available <= 0:
+            if not self._fit_stretch_pending:
+                self._fit_stretch_pending = True
+                QTimer.singleShot(0, self._fit_stretch_after_layout)
+            return
+        self._fit_stretch_pending = False
+        fixed_total = sum(
+            tw.columnWidth(i) for i in range(tw.columnCount()) if i != col
+        )
+        target = max(40, available - fixed_total)
+        if tw.columnWidth(col) != target:
+            tw.setColumnWidth(col, target)
+
+    def _fit_stretch_after_layout(self):
+        self._fit_stretch_pending = False
+        self._fit_stretch_column()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if self._stretch_col is not None:
+            # 布局完成后重新填充逻辑上的名称列；用户拖列本身不会触发
+            # BookTabBase.resizeEvent，因此不会被这里覆盖。
+            QTimer.singleShot(0, self._fit_stretch_column)
 
     def _on_select(self, current, _previous=None):
         if current is None:

@@ -133,6 +133,10 @@ class SpecialItemTab(ItemTab):
         tw.setColumnCount(len(headers))
         tw.setHorizontalHeaderLabels(headers)
         tw.verticalHeader().setVisible(False)
+        # QTableWidget 的 QSS item min-height 不会改变默认行高；操作列
+        # 放的是实际 QPushButton，必须显式给出足够的行高，否则按钮会
+        # 被表格视口上下边界裁掉。
+        tw.verticalHeader().setDefaultSectionSize(44)
         tw.setEditTriggers(QAbstractItemView.NoEditTriggers)
         tw.setSelectionMode(QAbstractItemView.NoSelection)
         tw.setRowCount(len(g['entries']))
@@ -170,10 +174,10 @@ class SpecialItemTab(ItemTab):
         header.setSectionResizeMode(QHeaderView.Interactive)
         header.setSectionResizeMode(0, QHeaderView.Stretch)
         header.setStretchLastSection(False)
-        tw.setColumnWidth(1, 130)
-        tw.setColumnWidth(2, 46)
-        tw.setColumnWidth(3, 120)
-        tw.setColumnWidth(4, 52)
+        tw.setColumnWidth(1, 150)
+        tw.setColumnWidth(2, 60)
+        tw.setColumnWidth(3, 190)
+        tw.setColumnWidth(4, 64)
         # 高度自适应行数, 避免表格内部滚动 (外层已是滚动区)
         row_h = tw.verticalHeader().defaultSectionSize()
         tw.setFixedHeight(tw.horizontalHeader().height() +

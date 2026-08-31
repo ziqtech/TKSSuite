@@ -588,6 +588,8 @@ class WarpcPickerDialog(QDialog):
         self._table.setColumnWidth(0, 40)
         hdr.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
         hdr.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        # 头像单元格里放 32px QLabel；默认 30px 行高会裁掉图片边缘。
+        self._table.verticalHeader().setDefaultSectionSize(44)
         self._table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self._table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         if multi_select:

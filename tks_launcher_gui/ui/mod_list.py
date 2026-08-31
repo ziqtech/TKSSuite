@@ -118,7 +118,8 @@ class ModListWidget(QWidget):
         self._table.setWordWrap(False)
         self._table.setTextElideMode(Qt.ElideRight)
         self._table.verticalHeader().setVisible(False)
-        self._table.verticalHeader().setDefaultSectionSize(32)
+        # 分类列嵌入带 QSS padding 的 Tag 控件，使用统一的可读行高。
+        self._table.verticalHeader().setDefaultSectionSize(44)
         self._table.currentItemChanged.connect(self._on_current_changed)
 
         h = self._table.horizontalHeader()

@@ -243,7 +243,9 @@ class CustomMusicDialog(QDialog):
         self._table.setSelectionMode(QAbstractItemView.SingleSelection)
         self._table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self._table.verticalHeader().setVisible(False)
-        self._table.verticalHeader().setDefaultSectionSize(38)
+        # 操作列嵌入多个按钮；统一留出足够的上下边距，避免主题切换后
+        # 按钮或其焦点边框贴住/超出单元格边界。
+        self._table.verticalHeader().setDefaultSectionSize(44)
         h = self._table.horizontalHeader()
         h.setSectionResizeMode(_COL_NAME, QHeaderView.Stretch)
         h.setSectionResizeMode(_COL_STATUS, QHeaderView.ResizeToContents)

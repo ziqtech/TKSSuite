@@ -113,7 +113,7 @@ class StatusTab(BookTabBase):
             ]))
         self.set_table_items(
             ["图标", "#", "状态名称", "类型", "回合"], rows,
-            widths={0: 40, 1: 36, 3: 50, 4: 50}, stretch_col=2)
+            widths={0: 40, 1: 40, 3: 80, 4: 56}, stretch_col=2)
         self.clear_detail()
         self.finish_detail()
 

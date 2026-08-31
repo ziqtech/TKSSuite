@@ -808,6 +808,9 @@ class WarpcTablePanel(QWidget):
         # 初始按 # 升序 (setSortingEnabled 默认指示器为降序, 会导致首屏倒序显示)
         self.view.sortByColumn(0, Qt.AscendingOrder)
         self.view.horizontalHeader().setDefaultSectionSize(96)
+        # 主题中的 QComboBox/QSpinBox 高度来自 QSS，默认 30px 行会在编辑
+        # 时裁掉上下边缘；主视图和冻结视图必须使用相同的行高。
+        self.view.verticalHeader().setDefaultSectionSize(44)
         self.view.verticalHeader().setVisible(False)
         self.view.setAlternatingRowColors(True)
         self.view.doubleClicked.connect(self._on_double_click)
@@ -843,6 +846,7 @@ class WarpcTablePanel(QWidget):
         fz.setEditTriggers(QAbstractItemView.NoEditTriggers)  # 两列均只读
         fz.setFocusPolicy(Qt.NoFocus)
         fz.verticalHeader().setVisible(False)
+        fz.verticalHeader().setDefaultSectionSize(44)
         fz.setAlternatingRowColors(True)
         fz.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         fz.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
