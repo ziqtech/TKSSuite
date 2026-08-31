@@ -506,7 +506,7 @@ class WarDataEditorV2(QMainWindow):
         super().__init__()
         self.setObjectName("EditorWindow")
         self.setWindowTitle(format_title("wardata_editor"))
-        self.resize(1400, 860)
+        self.resize(1600, 900)
         self.setMinimumSize(1100, 700)
 
         ico = os.path.join(os.path.dirname(__file__), 'TKS.ico')
@@ -663,7 +663,7 @@ class WarDataEditorV2(QMainWindow):
             row_height=40,
         )
         self.table.setHorizontalHeaderLabels(["序号", "地图", "敌军数", "宝物数", "陷阱数", "固定/随机", "参战人物", "参数"])
-        # 左侧列表在默认 1400px 窗口中约占 700px。固定列按表头和实际值
+        # 左侧列表在默认 1600px 窗口中约占 700px。固定列按表头和实际值
         # 预留宽度，把可变空间留给最长、最容易被截断的“参战人物”列。
         self.table.setMinimumWidth(540)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
@@ -696,9 +696,10 @@ class WarDataEditorV2(QMainWindow):
         self._link_params_tabs()  # 双向同步 pvars/apvars 重叠字段, 防止 apply 时互相覆盖
         rl.addWidget(self.tabs, 1)
         splitter.addWidget(right)
-        # 给左侧列表足够的初始空间，使上面的列宽在默认窗口尺寸下基本完整显示。
-        # 参战人物列仍使用 Stretch，因此用户拖动分隔条后会自动适配剩余宽度。
-        splitter.setSizes([700, 700])
+        # 默认 1600x900 窗口（扣除边距与分隔条后内容区约 1570px）下，
+        # 左侧列表保持 ~700px 初始宽度不变，新增空间全部给右侧编辑面板。
+        # 参战人物列拉伸受上限钳制，用户拖大分隔条后超出部分尾部留白。
+        splitter.setSizes([700, 870])
         # 切换到场景标签页时自动刷新
         self.tabs.currentChanged.connect(self._on_tab_changed)
 

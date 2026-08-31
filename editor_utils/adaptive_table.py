@@ -3,21 +3,37 @@
 QTableWidget 的两个常见坑在这里统一处理：
 1. QSS 的 item min-height 不会改变默认行高；
 2. 固定列宽 + Stretch 只能让个别列吃剩余空间，窗口放大后整体观感不稳定。
+
+列宽策略（对齐桌面专业软件的通行做法：Excel / DataGrip / Qt Creator）：
+- 内容基准：每列取表头提示、内容提示、单元格控件提示、配置下限中的最大值；
+- 受控拉伸：视口剩余宽度按比例分配给拉伸列，但每列有拉伸上限（内容基准
+  的倍数，或通过 maximum_widths 显式指定像素值），触顶即停止增长；
+- 尾部留白：所有拉伸列触顶后，多余空间保留在最后一列右侧，不再强行摊进
+  列里——高分辨率宽屏下数值列不会被撑得稀疏难看；
+- 用户优先：手动拖过的列宽始终优先于自动计算，拉伸上限不会收缩用户拖宽。
 """
 
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import QHeaderView, QTableWidget
 
+# 拉伸列的默认封顶策略：列宽最多增长到 max(基准×factor, 基准+margin)。
+# 数值列基准小 → 封顶紧；长文本列基准大 → 封顶随内容放大，比例观感稳定。
+DEFAULT_STRETCH_CAP_FACTOR = 1.5
+DEFAULT_STRETCH_CAP_MARGIN = 64
+
 
 class AdaptiveTableWidget(QTableWidget):
-    """按“内容基准宽 + 剩余宽度分配”自适应的 QTableWidget。"""
+    """按“内容基准宽 + 受控拉伸 + 尾部留白”自适应的 QTableWidget。"""
 
     def __init__(self, rows=0, columns=0, parent=None,
-                 stretch_columns=None, minimum_widths=None,
-                 row_height=44, content_padding=14):
+                 stretch_columns=None, minimum_widths=None, maximum_widths=None,
+                 row_height=44, content_padding=14,
+                 stretch_cap_factor=DEFAULT_STRETCH_CAP_FACTOR,
+                 stretch_cap_margin=DEFAULT_STRETCH_CAP_MARGIN):
         super().__init__(rows, columns, parent)
         self._content_padding = content_padding
         self._minimum_widths = {}
+        self._maximum_widths = {}
         self._user_widths = {}
         self._configured_stretch_columns = (
             set(stretch_columns) if stretch_columns is not None else None
@@ -25,11 +41,17 @@ class AdaptiveTableWidget(QTableWidget):
         self._inferred_stretch_columns = None
         self._applying_widths = False
         self._fit_scheduled = False
+        self._stretch_cap_factor = max(1.0, float(stretch_cap_factor))
+        self._stretch_cap_margin = max(0, int(stretch_cap_margin))
 
         if minimum_widths:
             for column, width in enumerate(minimum_widths):
                 if width is not None:
                     self._minimum_widths[column] = max(1, int(width))
+        if maximum_widths:
+            for column, width in enumerate(maximum_widths):
+                if width is not None:
+                    self._maximum_widths[column] = max(1, int(width))
 
         header = self.horizontalHeader()
         header.setSectionResizeMode(QHeaderView.Interactive)
@@ -43,13 +65,18 @@ class AdaptiveTableWidget(QTableWidget):
     def set_adaptive_row_height(self, height):
         self.verticalHeader().setDefaultSectionSize(max(30, int(height)))
 
-    def set_adaptive_columns(self, stretch_columns=None, minimum_widths=None):
+    def set_adaptive_columns(self, stretch_columns=None, minimum_widths=None,
+                             maximum_widths=None):
         if stretch_columns is not None:
             self._configured_stretch_columns = set(stretch_columns)
         if minimum_widths:
             for column, width in enumerate(minimum_widths):
                 if width is not None:
                     self._minimum_widths[column] = max(1, int(width))
+        if maximum_widths:
+            for column, width in enumerate(maximum_widths):
+                if width is not None:
+                    self._maximum_widths[column] = max(1, int(width))
         self._schedule_fit()
 
     def setColumnWidth(self, column, width):
@@ -111,16 +138,13 @@ class AdaptiveTableWidget(QTableWidget):
             available = self.viewport().width()
 
             widths = dict(base_widths)
-            if stretch_columns and available > sum(base_widths.values()):
-                extra = available - sum(base_widths.values())
-                stretch_total = sum(base_widths[column] for column in stretch_columns)
-                if stretch_total <= 0:
-                    share = extra / len(stretch_columns)
-                    for column in stretch_columns:
-                        widths[column] += share
-                else:
-                    for column in stretch_columns:
-                        widths[column] += extra * base_widths[column] / stretch_total
+            extra = available - sum(widths.values())
+            if extra > 0 and stretch_columns:
+                caps = {
+                    column: self._column_stretch_cap(column, widths[column])
+                    for column in stretch_columns
+                }
+                widths = self._distribute_extra(widths, stretch_columns, caps, extra)
 
             for column, width in widths.items():
                 super().setColumnWidth(column, max(1, round(width)))
@@ -139,6 +163,43 @@ class AdaptiveTableWidget(QTableWidget):
         if user_width is not None:
             base = max(user_width, configured)
         return max(1, base)
+
+    def _column_stretch_cap(self, column, base):
+        """拉伸列的宽度封顶值；显式 maximum_widths 优先于默认倍数策略。"""
+        explicit = self._maximum_widths.get(column)
+        if explicit is not None:
+            return max(base, explicit)
+        return max(base,
+                   base * self._stretch_cap_factor,
+                   base + self._stretch_cap_margin)
+
+    @staticmethod
+    def _distribute_extra(widths, stretch_columns, caps, extra):
+        """水位填充：按基准比例向拉伸列分配剩余宽度，单列触顶即固定，
+        余量继续分给未触顶的列；全部触顶后剩余空间留在表格尾部。"""
+        eligible = [c for c in stretch_columns if caps[c] > widths[c]]
+        while extra >= 1 and eligible:
+            total = sum(widths[c] for c in eligible)
+            if total <= 0:
+                shares = {c: extra / len(eligible) for c in eligible}
+            else:
+                shares = {c: extra * widths[c] / total for c in eligible}
+            clamped = False
+            remaining = []
+            for column in eligible:
+                target = widths[column] + shares[column]
+                if target >= caps[column]:
+                    extra -= caps[column] - widths[column]
+                    widths[column] = caps[column]
+                    clamped = True
+                else:
+                    remaining.append(column)
+            if not clamped:
+                for column in eligible:
+                    widths[column] += shares[column]
+                break
+            eligible = remaining
+        return widths
 
     def _cell_widget_width_hint(self, column):
         best = 0
@@ -199,7 +260,7 @@ class AdaptiveTableWidget(QTableWidget):
         self.fit_columns_to_viewport()
 
     def _shift_width_maps(self, start, delta):
-        for mapping in (self._minimum_widths, self._user_widths):
+        for mapping in (self._minimum_widths, self._maximum_widths, self._user_widths):
             new_mapping = {}
             for column, value in mapping.items():
                 if column >= start:
