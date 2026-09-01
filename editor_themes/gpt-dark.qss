@@ -838,7 +838,7 @@ QFrame[class="FakeInputSep"] {
 QLabel[class="ExtraPreviewText"] {
     padding: 4px 8px;
     color: #45c49a;
-    font-size: 11px;
+    font-size: 13px;
 }
 
 /* ── 拆分字段内部标签 ── */

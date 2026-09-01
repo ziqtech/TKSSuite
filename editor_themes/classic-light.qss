@@ -209,7 +209,7 @@ QFrame#FakeInputBox > QComboBox::drop-down {border: none;}
 QFrame[class="FakeInputSep"] {background-color: #d8dce3; border: none;}
 
 /* ── 额外预览文本 ── */
-QLabel[class="ExtraPreviewText"] {padding: 4px 8px; color: #178a39; font-size: 11px;}
+QLabel[class="ExtraPreviewText"] {padding: 4px 8px; color: #178a39; font-size: 13px;}
 
 /* ── 拆分字段内部标签 ── */
 QLabel[class="SplitFieldLabel"] {color: #666; font-size: 11px; padding: 0 2px;}
