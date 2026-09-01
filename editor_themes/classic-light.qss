@@ -45,7 +45,7 @@ QToolButton:hover {background-color: #eff1f4; color: #2d2d2d; border-color: #d6d
 QToolButton:pressed, QToolButton:checked {background-color: rgba(71, 140, 191, 0.14); color: #366a91; border-color: #478cbf;}
 
 /* ── 下拉框与数值输入 ── */
-QComboBox, QSpinBox, QDoubleSpinBox, QDateEdit, QTimeEdit, QDateTimeEdit {background-color: #ffffff; color: #2d2d2d; border: 1px solid #d6dadf; border-radius: 8px; padding: 6px 9px; min-height: 18px;}
+QComboBox, QSpinBox, QDoubleSpinBox, QDateEdit, QTimeEdit, QDateTimeEdit {background-color: #ffffff; color: #2d2d2d; border: 1px solid #b0b5bd; border-radius: 8px; padding: 6px 9px; min-height: 18px;}
 QComboBox:hover, QSpinBox:hover, QDoubleSpinBox:hover,
 QDateEdit:hover, QTimeEdit:hover, QDateTimeEdit:hover {border-color: #b6b6c4;}
 QComboBox:focus, QSpinBox:focus, QDoubleSpinBox:focus,
@@ -118,13 +118,13 @@ QMenu::icon {padding-left: 4px;}
 QMenu::separator {height: 1px; background-color: #b0b5bd; margin: 5px 7px;}
 
 /* 所有编辑器下拉菜单共用原生 QMenu，保持单层圆角边框。 */
-QMenu#EditorComboMenu {background-color: #ffffff; color: #2d2d2d; border: 1px solid #d6dadf; border-radius: 8px; padding: 4px;}
+QMenu#EditorComboMenu {background-color: #ffffff; color: #2d2d2d; border: 1px solid #b0b5bd; border-radius: 8px; padding: 4px;}
 QMenu#EditorComboMenu::item {padding: 6px 28px 6px 10px; border-radius: 5px;}
 QMenu#EditorComboMenu::item:selected {background-color: #eff1f4; color: #2d2d2d;}
 QMenu#EditorComboMenu::item:checked {background-color: #478cbf; color: #ffffff; font-weight: 600;}
 
 /* ── 下拉框可滚动弹层 (条目 >10 时替代 QMenu) ── */
-QWidget#EditorComboPopup {background-color: #ffffff; border: 1px solid #d6dadf; border-radius: 8px;}
+QWidget#EditorComboPopup {background-color: #ffffff; border: 1px solid #b0b5bd; border-radius: 8px;}
 /* padding:0 抵消 QComboBox QAbstractItemView{padding:4px} 泄漏, 否则视口矮 8px 显示不足行 */
 QListWidget#EditorComboList {background-color: transparent; border: none; color: #2d2d2d; outline: none; padding: 0;}
 QListWidget#EditorComboList::item {padding: 6px 10px; border-radius: 5px;}
@@ -142,13 +142,13 @@ QTabBar QToolButton {background-color: #f6f7f8; border: 1px solid #d6dadf; borde
 
 /* ── 连续内容面板页签: 平面导航 + 统一 TabPane ── */
 QTabWidget[tabStyle="flat"] {background-color: transparent; border: none;}
-QTabWidget[tabStyle="flat"]::pane {border: 1px solid #d6dadf; border-top: none; border-radius: 0px 0px 8px 8px; background-color: #e0e4e8; padding: 0px; top: 0px;}
-QTabWidget[tabStyle="flat"] QTabBar {background-color: #e0e4e8; border: none; border-bottom: 1px solid #d6dadf;}
-QTabWidget[tabStyle="flat"] QTabBar::tab {background-color: transparent; color: #6e6e80; border: none; border-bottom: 1px solid #d6dadf; border-radius: 0px; padding: 8px 13px; margin: 0px; min-height: 20px;}
+QTabWidget[tabStyle="flat"]::pane {border: 1px solid #b0b5bd; border-top: none; border-radius: 0px 0px 8px 8px; background-color: #e0e4e8; padding: 0px; top: 0px;}
+QTabWidget[tabStyle="flat"] QTabBar {background-color: #e0e4e8; border: none; border-bottom: 1px solid #b0b5bd;}
+QTabWidget[tabStyle="flat"] QTabBar::tab {background-color: transparent; color: #6e6e80; border: none; border-bottom: 1px solid #b0b5bd; border-radius: 0px; padding: 8px 13px; margin: 0px; min-height: 20px;}
 QTabWidget[tabStyle="flat"] QTabBar::tab:hover:!selected {background-color: #eff1f4; color: #2d2d2d; border-top-left-radius: 8px; border-top-right-radius: 8px;}
-QTabWidget[tabStyle="flat"] QTabBar::tab:selected {background-color: #e0e4e8; color: #2d2d2d; font-weight: 600; border: 1px solid #d6dadf; border-top: 2px solid #478cbf; border-bottom: 1px solid #e0e4e8; border-top-left-radius: 8px; border-top-right-radius: 8px; margin-bottom: -1px;}
+QTabWidget[tabStyle="flat"] QTabBar::tab:selected {background-color: #e0e4e8; color: #2d2d2d; font-weight: 600; border: 1px solid #b0b5bd; border-top: 2px solid #478cbf; border-bottom: 1px solid #e0e4e8; border-top-left-radius: 8px; border-top-right-radius: 8px; margin-bottom: -1px;}
 QTabWidget[tabStyle="flat"] QTabBar::tab:disabled {color: #9a9b9d;}
-QWidget#EditorTabCorner {background-color: #e0e4e8; border: none; border-bottom: 1px solid #d6dadf;}
+QWidget#EditorTabCorner {background-color: #e0e4e8; border: none; border-bottom: 1px solid #b0b5bd;}
 
 /* ── 编辑器面板、图形视图与滚动区域 ── */
 QWidget#DockPanel {background-color: transparent; border: none;}
