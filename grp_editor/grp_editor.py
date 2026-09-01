@@ -36,7 +36,7 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QPushButton, QFileDialog, QMessageBox, QFrame, QSplitter,
     QGraphicsView, QGraphicsScene, QGraphicsPixmapItem, QListWidget,
-    QListWidgetItem, QTextEdit, QToolBar, QStatusBar, QMenu, QMenuBar,
+    QListWidgetItem, QTextEdit, QStatusBar, QMenu, QMenuBar,
     QDialog, QSpinBox, QGridLayout, QSizePolicy, QGraphicsTextItem,
     QScrollArea
 )
@@ -55,6 +55,7 @@ except ImportError:
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from editor_utils.dock_components import DockHeader
+from editor_utils.flow_layout import FlowLayout
 from editor_utils.lzss import (
     MAX_MATCH as MAX_MATCH_LZ,
     MIN_MATCH as MIN_MATCH_LZ,
@@ -511,7 +512,7 @@ class GRPEditor(QMainWindow):
         super().__init__()
         self.setObjectName("EditorWindow")
         self.setWindowTitle(format_title("grp_editor"))
-        self.resize(1360, 900)
+        self.resize(1600, 900)
 
         ico_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'TKS.ico')
         if os.path.exists(ico_path):
@@ -532,9 +533,8 @@ class GRPEditor(QMainWindow):
         self._wave_start_time = 0.0
         self._wave_timer: Optional[QTimer] = None
 
-        # 构建 UI
+        # 构建 UI (工具栏由 _setup_ui 置入中央部件)
         self._setup_menu()
-        self._setup_toolbar()
         self._setup_ui()
         self._setup_statusbar()
 
@@ -584,46 +584,96 @@ class GRPEditor(QMainWindow):
         toggle_theme_in_family(self)
 
     # ── Toolbar ───────────────────────────────────────────
-    def _setup_toolbar(self):
-        tb = QToolBar("主工具栏")
-        self.addToolBar(tb)
-        tb.addAction("📂 打开 GRP", self._open_dlg)
-        tb.addAction("💾 保存", self._save)
-        tb.addSeparator()
+    @staticmethod
+    def _vsep() -> QFrame:
+        """工具栏竖直分隔线 (主题中 QFrame[class="VSepLine"] 已定义配色)。"""
+        sep = QFrame()
+        sep.setFrameShape(QFrame.Shape.VLine)
+        sep.setFrameShadow(QFrame.Shadow.Sunken)
+        sep.setProperty("class", "VSepLine")
+        sep.setFixedHeight(20)
+        return sep
 
-        self._btn_a = tb.addAction("主图", lambda: self._switch_layer("A"))
-        self._btn_l1 = tb.addAction("前景层", lambda: self._switch_layer("L1"))
-        self._btn_l2 = tb.addAction("碰撞层", lambda: self._switch_layer("L2"))
-        tb.addSeparator()
+    def _tool_btn(self, text: str, slot, tooltip: str = "") -> QPushButton:
+        """创建工具栏按钮。
 
-        tb.addAction("🔄 替换当前层", self._replace_layer)
-        tb.addAction("📤 导出当前层", self._export_layer)
-        self._btn_play_act = tb.addAction("▶️ 播放", self._toggle_audio)
-        tb.addAction("🔊 替换音频", self._replace_audio)
-        tb.addSeparator()
+        统一用 QPushButton + CompactBtn, 与其余编辑器保持一致:
+        主题中 QPushButton 的文字色是 #ececec (浅色主题为深色文字);
+        若改用 QToolBar.addAction() 会渲染成 QToolButton, 套用的是
+        QToolButton 规则, 文字色偏暗 (#b4b4b4), 观感与其它编辑器不统一。
+        """
+        btn = QPushButton(text, clicked=slot)
+        btn.setProperty("class", "CompactBtn")
+        if tooltip:
+            btn.setToolTip(tooltip)
+        return btn
 
-        tb.addAction("🎨 伪彩导出", self._export_pseudo)
-        tb.addAction("🎨 伪彩导入", self._import_pseudo)
-        tb.addSeparator()
+    def _setup_toolbar(self) -> QFrame:
+        """构建主工具栏并返回, 由 _setup_ui() 放入中央部件。
 
-        tb.addAction("➕ 区段", self._add_section_menu)
-        tb.addAction("➖ 区段", self._delete_section)
-        tb.addSeparator()
+        用 FlowLayout 而非 QHBoxLayout: 按钮较多, 单行排不下时自动换行。
+        若用 QHBoxLayout, 整行按钮的最小宽度会顶成窗口最小宽度 (实测约 1450px),
+        导致窗口无法缩小、在 1366 宽的屏幕上都放不下; 换行后窗口最小宽度
+        只取决于最宽的那个按钮。
+        """
+        toolbar = QFrame()
+        # 不设 objectName="Toolbar": 该主题规则限高 36px, 换行后会被裁切
+        tb = FlowLayout(toolbar, margin=0, spacing=6)
+        tb.setContentsMargins(8, 4, 8, 4)
 
-        tb.addAction("🔍−", lambda: self._zoom_step(-1))
+        tb.addWidget(self._tool_btn("📂 打开 GRP", self._open_dlg))
+        tb.addWidget(self._tool_btn("💾 保存", self._save))
+        tb.addWidget(self._vsep())
+
+        self._btn_a = self._tool_btn("主图", lambda: self._switch_layer("A"))
+        self._btn_l1 = self._tool_btn("前景层", lambda: self._switch_layer("L1"))
+        self._btn_l2 = self._tool_btn("碰撞层", lambda: self._switch_layer("L2"))
+        tb.addWidget(self._btn_a)
+        tb.addWidget(self._btn_l1)
+        tb.addWidget(self._btn_l2)
+        tb.addWidget(self._vsep())
+
+        tb.addWidget(self._tool_btn("🔄 替换当前层", self._replace_layer))
+        tb.addWidget(self._tool_btn("📤 导出当前层", self._export_layer))
+        self._btn_play_act = self._tool_btn("▶️ 播放", self._toggle_audio)
+        tb.addWidget(self._btn_play_act)
+        tb.addWidget(self._tool_btn("🔊 替换音频", self._replace_audio))
+        tb.addWidget(self._vsep())
+
+        tb.addWidget(self._tool_btn("🎨 伪彩导出", self._export_pseudo))
+        tb.addWidget(self._tool_btn("🎨 伪彩导入", self._import_pseudo))
+        tb.addWidget(self._vsep())
+
+        tb.addWidget(self._tool_btn("➕ 区段", self._add_section_menu))
+        tb.addWidget(self._tool_btn("➖ 区段", self._delete_section))
+        tb.addWidget(self._vsep())
+
+        tb.addWidget(self._tool_btn("🔍−", lambda: self._zoom_step(-1)))
         self._zoom_lbl = QLabel(" 100% ")
         tb.addWidget(self._zoom_lbl)
-        tb.addAction("🔍+", lambda: self._zoom_step(1))
-        tb.addAction("🔲 适应", self._fit_to_window)
-        tb.addSeparator()
-        tb.addAction("🌗 切换主题", self._toggle_theme)
+        tb.addWidget(self._tool_btn("🔍+", lambda: self._zoom_step(1)))
+        tb.addWidget(self._tool_btn("🔲 适应", self._fit_to_window))
+        tb.addWidget(self._vsep())
+
+        tb.addWidget(self._tool_btn("🌗 切换主题", self._toggle_theme))
+        return toolbar
 
     # ── Main UI Layout ────────────────────────────────────
     def _setup_ui(self):
+        central = QWidget()
+        main_layout = QVBoxLayout(central)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
+        self.setCentralWidget(central)
+
+        main_layout.addWidget(self._setup_toolbar())
+
         splitter = QSplitter(Qt.Horizontal)
-        splitter.setContentsMargins(12, 10, 12, 10)
+        # 上边距取 0: 工具栏自身已有 4px 下边距, 这里再留 10px 会使
+        # 按钮下方留白 (14px) 明显大于上方 (4px)。
+        splitter.setContentsMargins(12, 0, 12, 10)
         splitter.setHandleWidth(6)
-        self.setCentralWidget(splitter)
+        main_layout.addWidget(splitter, 1)
 
         # LEFT: 区段列表 + 详情
         left_w = QWidget()
