@@ -240,9 +240,9 @@ class SceneCanvasView(QGraphicsView):
     def update_vis_background(self):
         """设置中间预览区 QGraphicsView 的背景色, 使深色区域填满整个预览区
         (对应 v1 tk.Canvas 的 bg)。场景矩形外的空白也以此色填充。"""
-        # 与 editor_themes/*.qss 的 QGraphicsView background-color 一致
-        bg = QColor('#1a1e27') if self._editor._is_dark else QColor('#ffffff')
-        self.setBackgroundBrush(bg)
+        # 取当前主题的画布背景色, 与 editor_themes/*.qss 的 QGraphicsView
+        # background-color 严格一致 (深浅两族四个主题各不相同)
+        self.setBackgroundBrush(QColor(self._editor.canvas_bg_color()))
 
 
     @staticmethod
@@ -268,9 +268,8 @@ class SceneCanvasView(QGraphicsView):
 
         mode = DISPLAY_MODES.get(self._vis_display_mode, 'auto')
 
-        # Background — 匹配 QGraphicsView 的 QSS 主题背景色
-        # 深色主题 #1a1e27 → (26, 30, 39), 浅色主题 #ffffff → (255, 255, 255)
-        bg_color = (26, 30, 39) if self._editor._is_dark else (255, 255, 255)
+        # Background — 匹配 QGraphicsView 的 QSS 主题背景色 (按具体主题取值)
+        bg_color = self._editor.canvas_bg_rgb()
         if self._vis_bg_pil:
             composite = self._vis_bg_pil.copy()
             if composite.width < w or composite.height < h:
@@ -1300,12 +1299,29 @@ class MatEditorApp(QMainWindow):
         self._apply_theme()
 
     # =========== QSS 主题 ===========
+    def canvas_bg_color(self):
+        """当前主题的画布背景色（从主题 QSS 的 QGraphicsView 规则解析, 单一来源）。"""
+        return theme_manager.canvas_background(
+            getattr(self, '_theme_id', None) or 'classic-light')
+
+    def canvas_bg_rgb(self):
+        """当前主题画布背景色的 (r, g, b) 元组 — 供 PIL 合成底色。"""
+        c = QColor(self.canvas_bg_color())
+        return (c.red(), c.green(), c.blue())
+
     def _toggle_theme(self):
+        # apply_theme_to_window 内部触发 _on_theme_applied 钩子完成派生同步
         toggle_theme_in_family(self)
-        self._apply_theme()
+
+    def _on_theme_applied(self, theme_id):
+        """theme_switcher 统一钩子 — 菜单栏选主题/工具栏切换按钮/初始化均经此同步派生配色。"""
+        # 初始化阶段 (apply_theme_to_window 早于 _build_ui) 画布等尚未创建,
+        # 跳过; __init__ 末尾会手动调用 _apply_theme() 完成首次同步。
+        if hasattr(self, '_canvas'):
+            self._apply_theme()
 
     def _apply_theme(self):
-        apply_theme_to_window(self, self._theme_id, persist=False)
+        """同步当前主题的派生配色 (QSS 本身由 apply_theme_to_window 应用)。"""
         self._update_path()
         self._update_entity_type_colors()
         self._canvas.update_vis_background()

@@ -101,6 +101,24 @@ def stylesheet(theme_id: str) -> str:
     return _qss_cache[value]
 
 
+# 各主题画布（QGraphicsView）背景色，与主题 QSS 中 QGraphicsView 的
+# background-color 保持一致，供 mat_editor 等编辑器的画布背景刷与
+# PIL 合成底色取用（QSS 加载失败时按深浅回退通用底色）。
+_CANVAS_BG: dict[str, str] = {
+    "gpt-dark": "#1f1f1f",
+    "gpt-light": "#f7f7f8",
+    "classic-dark": "#1a1e27",
+    "classic-light": "#ffffff",
+}
+
+
+def canvas_background(theme_id: str) -> str:
+    """返回指定主题的画布背景色（见 _CANVAS_BG）。"""
+    value = normalize_theme(theme_id)
+    return _CANVAS_BG.get(value) or (
+        "#1a1e27" if THEMES[value].is_dark else "#ffffff")
+
+
 def svg_path(name: str) -> str:
     """返回 ``editor_themes/svg`` 中图标的绝对路径。"""
     if not name.endswith(".svg"):
