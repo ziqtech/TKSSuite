@@ -59,7 +59,7 @@ from editor_utils.theme_switcher import (
 )
 from editor_utils.dock_components import DockHeader, create_dock
 from editor_utils.lzss import lzss_decompress_dat as lzss_decompress, lzss_decompress_save, lzss_compress_save
-from editor_utils.ui_helpers import confirm_close, themed_messagebox, EditorComboBox, EditorComboListPopup
+from editor_utils.ui_helpers import confirm_close, themed_messagebox, EditorComboBox
 from editor_utils.tab_widget import EditorTabWidget
 from editor_utils.flow_layout import FlowLayout
 from editor_utils.adaptive_table import AdaptiveTableWidget
@@ -1106,28 +1106,22 @@ class InspectorPanelBuilder:
                 wl.addWidget(cb, 1)
                 cb.currentIndexChanged.connect(partial(self._sync_type_cb_to_raw, tvars, di, cb))
             elif key == 'dialog_color':
-                # 对话颜色选择器: FCOLOR 1-32 调色板
-                dc_ev = self.make_raw_edit(di)
-                tvars[key] = dc_ev
+                # 对话颜色选择器: FCOLOR 1-32 调色板 (下拉框, 与 anim_set 同形)
+                dc_items = [f"{i}-FCOLOR({i + 1:2d})" for i in range(32)]
+                cb = self._make_combo(dc_items)
+                # 每项附加色块图标, 弹层与本体均可见当前色
+                for i in range(32):
+                    px = QPixmap(16, 16)
+                    px.fill(QColor(GAME_COLORS.get(i + 1, '#000')))
+                    cb.setItemIcon(i, QIcon(px))
+                tvars[key] = cb
                 wrapper = QFrame()
                 wrapper.setObjectName("FakeInputBox")
                 wl = QHBoxLayout(wrapper)
                 wl.setContentsMargins(0, 0, 0, 0)
-                wl.setSpacing(2)
-                wl.addWidget(dc_ev, 1)
-                # Color swatch
-                dc_swatch = QFrame()
-                dc_swatch.setFixedSize(20, 20)
-                dc_swatch.setProperty("class", "ColorSwatch")
-                wl.addWidget(dc_swatch)
-                tvars['_dialog_color_swatch'] = dc_swatch
-                # Picker button
-                dc_btn = QPushButton("选色")
-                dc_btn.setFixedWidth(40)
-                dc_btn.setCursor(Qt.PointingHandCursor)
-                dc_btn.clicked.connect(partial(self._pick_dialog_color, dc_swatch, dc_ev, dc_btn))
-                wl.addWidget(dc_btn)
-                tvars['_dialog_color_btn'] = dc_btn
+                wl.addWidget(cb, 1)
+                # 同步下拉框值到 raw_N
+                cb.currentIndexChanged.connect(partial(self._sync_type_cb_to_raw, tvars, di, cb))
             elif key == 'dir_mask' and tval in (10, 15):
                 # 方向掩码 checkbox 网格 (8个朝向) — 垂直布局: 数值输入在上, checkbox 在下
                 dm_ev = self.make_raw_edit(di)
@@ -1230,26 +1224,6 @@ class InspectorPanelBuilder:
             ed.blockSignals(True)
             ed.setText(txt)
             ed.blockSignals(False)
-
-    def _pick_dialog_color(self, swatch, ev, btn, *_args):
-        """对话颜色选色弹窗 — 复用 EditorComboListPopup, 与编辑器下拉弹层形式一致"""
-        items = []
-        cur_text = ev.text().strip()
-        cur = int(cur_text) if cur_text.isdigit() else -1
-        for i in range(32):
-            hc = GAME_COLORS.get(i + 1, '#000')
-            px = QPixmap(16, 16)
-            px.fill(QColor(hc))
-            items.append((QIcon(px), f"  {i:2d}  FCOLOR({i + 1:2d})", i, True))
-
-        def _apply(index):
-            ev.setText(str(index))
-            swatch.setStyleSheet(f"background-color: {GAME_COLORS.get(index + 1, '#000')};")
-
-        popup = EditorComboListPopup(btn, max_visible=10)
-        popup.set_items(items, current=cur if 0 <= cur < 32 else None)
-        popup.selected.connect(_apply)
-        popup.popup_below(btn, btn.fontMetrics().horizontalAdvance("  00  FCOLOR(32)") + 72)
 
     def _sync_dir_mask(self, ev, dir_bv, *_args):
         """方向掩码 checkbox 网格同步到数值输入 (stateChanged 信号会传入 int, *_args 吸收)"""
@@ -1558,22 +1532,16 @@ class MatEditorApp(QMainWindow):
         btn_del = QPushButton("🗑️ 删除")
         btn_del.clicked.connect(self._clear_current)
         filter_row.addWidget(btn_del)
-        # 分隔线
-        sep0 = QFrame()
-        sep0.setFrameShape(QFrame.VLine)
-        sep0.setFrameShadow(QFrame.Sunken)
-        filter_row.addWidget(sep0)
+        # 分隔线 (主题化 VSepLine, 配色随 4 主题)
+        filter_row.addWidget(self._vsep())
         filter_row.addWidget(QLabel("类型:"))
         self.filter_type = EditorComboBox()
         self.filter_type.addItems(["全部"] + [f"{k}-{v}" for k, v in sorted(ENTITY_TYPES.items()) if k != 0])
         self.filter_type.currentIndexChanged.connect(self._apply_filter)
         self.filter_type.setFixedWidth(120)
         filter_row.addWidget(self.filter_type)
-        # 分隔线
-        sep3 = QFrame()
-        sep3.setFrameShape(QFrame.VLine)
-        sep3.setFrameShadow(QFrame.Sunken)
-        filter_row.addWidget(sep3)
+        # 分隔线 (主题化 VSepLine, 配色随 4 主题)
+        filter_row.addWidget(self._vsep())
         self.show_empty_cb = QCheckBox("空槽")
         self.show_empty_cb.stateChanged.connect(self._apply_filter)
         filter_row.addWidget(self.show_empty_cb)
@@ -2400,6 +2368,11 @@ class MatEditorApp(QMainWindow):
                             if w.itemText(i).startswith(f"{val}-"):
                                 w.setCurrentIndex(i)
                                 break
+                    elif key == 'dialog_color':
+                        for i in range(w.count()):
+                            if w.itemText(i).startswith(f"{val}-"):
+                                w.setCurrentIndex(i)
+                                break
                     elif key == 'blend_mode':
                         bm = BLEND_MODES.get(val, '未知')
                         for i in range(w.count()):
@@ -2458,13 +2431,6 @@ class MatEditorApp(QMainWindow):
                         cb.blockSignals(True)
                         cb.setChecked((flags & mask) != 0)
                         cb.blockSignals(False)
-
-            # Dialog color swatch update
-            dc_swatch = tvars.get('_dialog_color_swatch')
-            if dc_swatch and isinstance(dc_swatch, QFrame):
-                dc_val = rec['d28']
-                dc_swatch.setStyleSheet(
-                    f"background-color: {GAME_COLORS.get(dc_val + 1, '#000')};")
 
             # Direction mask checkboxes update
             dir_bv = tvars.get('_dir_bv')

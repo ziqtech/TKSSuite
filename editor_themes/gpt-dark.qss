@@ -481,6 +481,9 @@ QListWidget#EditorComboList {
     border: none;
     color: #ececec;
     outline: none;
+    /* 抵消 QComboBox QAbstractItemView{padding:4px} 泄漏到本列表, 否则
+       视口比控件矮 8px, 弹层显示不足 max_visible 行而出现空隙 */
+    padding: 0;
 }
 QListWidget#EditorComboList::item {
     padding: 6px 10px;

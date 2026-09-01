@@ -24,6 +24,53 @@ from PySide6.QtWidgets import (
 )
 
 
+def _apply_rounded_window_region(widget, radius=8):
+    """将顶层弹出窗口裁剪为圆角矩形。
+
+    Windows 上 QWidget 弹层的 QSS ``border-radius`` 只圆角化边框, 不会裁剪
+    不透明背景填充, 四角会露出矩形背景形成锐角; 此处用原生窗口区域 API
+    裁剪整个窗口 (与 :class:`RoundedComboMenu` 行为一致), 其他平台回退到
+    QBitmap mask。供 QMenu 弹层与可滚动列表弹层共用。
+    """
+    if sys.platform == "win32":
+        try:
+            import ctypes
+
+            width = max(1, widget.width())
+            height = max(1, widget.height())
+            diameter = radius * 2
+            gdi32 = ctypes.windll.gdi32
+            user32 = ctypes.windll.user32
+            gdi32.CreateRoundRectRgn.restype = ctypes.c_void_p
+            gdi32.CreateRoundRectRgn.argtypes = [
+                ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int,
+                ctypes.c_int, ctypes.c_int,
+            ]
+            user32.SetWindowRgn.argtypes = [
+                ctypes.c_void_p, ctypes.c_void_p, ctypes.c_bool,
+            ]
+            region = gdi32.CreateRoundRectRgn(
+                0, 0, width + 1, height + 1, diameter, diameter,
+            )
+            if region:
+                hwnd = int(widget.winId())
+                user32.SetWindowRgn(ctypes.c_void_p(hwnd), region, True)
+            return
+        except Exception:
+            pass
+
+    bitmap = QBitmap(widget.size())
+    bitmap.fill(Qt.color0)
+    painter = QPainter(bitmap)
+    painter.setRenderHint(QPainter.Antialiasing)
+    painter.setPen(Qt.NoPen)
+    painter.setBrush(Qt.color1)
+    painter.drawRoundedRect(
+        QRectF(0, 0, widget.width(), widget.height()), radius, radius)
+    painter.end()
+    widget.setMask(bitmap)
+
+
 class RoundedComboMenu(QMenu):
     """带统一圆角裁剪的下拉菜单。
 
@@ -35,57 +82,7 @@ class RoundedComboMenu(QMenu):
     RADIUS = 8
 
     def _apply_window_region(self):
-        if sys.platform == "win32":
-            try:
-                import ctypes
-
-                width = max(1, self.width())
-                height = max(1, self.height())
-                diameter = self.RADIUS * 2
-                gdi32 = ctypes.windll.gdi32
-                user32 = ctypes.windll.user32
-                gdi32.CreateRoundRectRgn.restype = ctypes.c_void_p
-                gdi32.CreateRoundRectRgn.argtypes = [
-                    ctypes.c_int,
-                    ctypes.c_int,
-                    ctypes.c_int,
-                    ctypes.c_int,
-                    ctypes.c_int,
-                    ctypes.c_int,
-                ]
-                user32.SetWindowRgn.argtypes = [
-                    ctypes.c_void_p,
-                    ctypes.c_void_p,
-                    ctypes.c_bool,
-                ]
-                region = gdi32.CreateRoundRectRgn(
-                    0,
-                    0,
-                    width + 1,
-                    height + 1,
-                    diameter,
-                    diameter,
-                )
-                if region:
-                    hwnd = int(self.winId())
-                    user32.SetWindowRgn(ctypes.c_void_p(hwnd), region, True)
-                return
-            except Exception:
-                pass
-
-        bitmap = QBitmap(self.size())
-        bitmap.fill(Qt.color0)
-        painter = QPainter(bitmap)
-        painter.setRenderHint(QPainter.Antialiasing)
-        painter.setPen(Qt.NoPen)
-        painter.setBrush(Qt.color1)
-        painter.drawRoundedRect(
-            QRectF(0, 0, self.width(), self.height()),
-            self.RADIUS,
-            self.RADIUS,
-        )
-        painter.end()
-        self.setMask(bitmap)
+        _apply_rounded_window_region(self, self.RADIUS)
 
     def showEvent(self, event):
         super().showEvent(event)
@@ -112,6 +109,7 @@ class EditorComboListPopup(QWidget):
 
     OBJECT_NAME = "EditorComboPopup"
     LIST_OBJECT_NAME = "EditorComboList"
+    RADIUS = 8
 
     def __init__(self, parent=None, max_visible=10):
         super().__init__(parent, Qt.Popup)
@@ -131,6 +129,17 @@ class EditorComboListPopup(QWidget):
         self.list.itemClicked.connect(self._choose)
         self.list.itemActivated.connect(self._choose)
         lay.addWidget(self.list)
+
+    def _apply_window_region(self):
+        _apply_rounded_window_region(self, self.RADIUS)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._apply_window_region()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._apply_window_region()
 
     def set_items(self, items, current=None):
         """填充条目。

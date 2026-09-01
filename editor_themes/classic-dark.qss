@@ -125,7 +125,8 @@ QMenu#EditorComboMenu::item:checked {background-color: #478cbf; color: #ffffff; 
 
 /* ── 下拉框可滚动弹层 (条目 >10 时替代 QMenu) ── */
 QWidget#EditorComboPopup {background-color: #292f3c; border: 1px solid #3b445c; border-radius: 8px;}
-QListWidget#EditorComboList {background-color: transparent; border: none; color: #e0e4eb; outline: none;}
+/* padding:0 抵消 QComboBox QAbstractItemView{padding:4px} 泄漏, 否则视口矮 8px 显示不足行 */
+QListWidget#EditorComboList {background-color: transparent; border: none; color: #e0e4eb; outline: none; padding: 0;}
 QListWidget#EditorComboList::item {padding: 6px 10px; border-radius: 5px;}
 QListWidget#EditorComboList::item:hover {background-color: #323a4f; color: #e0e4eb;}
 QListWidget#EditorComboList::item:selected {background-color: #478cbf; color: #ffffff; font-weight: 600;}
