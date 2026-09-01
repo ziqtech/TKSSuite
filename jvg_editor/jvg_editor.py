@@ -30,7 +30,7 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
     QLabel, QPushButton, QSpinBox, QCheckBox, QFileDialog,
     QMessageBox, QInputDialog, QScrollArea, QFrame, QSplitter,
-    QMenuBar, QMenu, QStatusBar, QToolBar, QGroupBox, QSizePolicy,
+    QMenuBar, QMenu, QStatusBar, QGroupBox, QSizePolicy,
     QListWidget, QListWidgetItem, QAbstractItemView, QDialog,
     QDialogButtonBox, QFormLayout, QLineEdit, QTextEdit,
     QGraphicsView, QGraphicsScene, QGraphicsPixmapItem, QGraphicsTextItem, QGraphicsRectItem,
@@ -931,9 +931,13 @@ class JVGEditor(QMainWindow):
 
     def _apply_theme(self):
         apply_theme_to_window(self, self._theme_id, persist=False)
-        # 更新画布背景色
-        scene_bg = QColor(30, 30, 30) if self._is_dark else QColor(200, 204, 208)
+
+    def _on_theme_applied(self, theme_id: str):
+        """主题应用后同步画布背景色。
+        该钩子由 apply_theme_to_window 调用，覆盖菜单选择 / 快捷切换两条路径，
+        避免深色模式下 2D 视口仍残留浅色背景。"""
         if hasattr(self, '_canvas'):
+            scene_bg = QColor(30, 30, 30) if self._is_dark else QColor(200, 204, 208)
             self._canvas.setBackgroundBrush(scene_bg)
 
     def _setup_menu(self):
@@ -1075,97 +1079,94 @@ class JVGEditor(QMainWindow):
         QMessageBox.information(self, "关于编辑器",
             format_about_header('jvg_editor'))
 
-    def _create_operations_toolbar(self, title):
-        toolbar = QToolBar(title, self)
-        toolbar.setObjectName("EditorToolbar")
-        toolbar.setMovable(False)
-        toolbar.setFloatable(False)
-        toolbar.setToolButtonStyle(Qt.ToolButtonTextOnly)
-        self.addToolBar(Qt.TopToolBarArea, toolbar)
-        return toolbar
-
-    def _setup_operations_toolbar(self):
-        """在菜单栏下方创建帧、导出和头像操作工具栏。"""
-        frame_toolbar = self._create_operations_toolbar("帧导入与替换")
-
-        # 帧导入与替换
-        frame_toolbar.addWidget(QLabel("帧导入与替换"))
+    def _setup_operations_toolbar(self, main_layout):
+        """在菜单栏下方创建帧、导出和头像操作按钮行。
+        与其它编辑器一致：主布局内 QHBoxLayout + QPushButton（样式由主题 QSS 统一），
+        左右边距随主布局 (12px) 对齐，不再使用 QToolBar。"""
+        # 第一行：帧导入与替换
+        frame_row = QHBoxLayout()
+        frame_row.setSpacing(6)
+        frame_row.addWidget(QLabel("帧导入与替换:"))
 
         self._chk_bbox = QCheckBox("BBOX裁剪")
         self._chk_bbox.setToolTip("新增图片时按 alpha 非透明区域裁剪并计算偏移（图片水平中心对齐 0）")
         self._chk_rebuild = QCheckBox("自动重算色板")
         self._chk_rebuild.setToolTip("新增图片时新旧图片一起重新计算色板（新图精确，旧帧可能轻微调整）")
-        frame_toolbar.addWidget(self._chk_bbox)
-        frame_toolbar.addWidget(self._chk_rebuild)
-        frame_toolbar.addSeparator()
+        frame_row.addWidget(self._chk_bbox)
+        frame_row.addWidget(self._chk_rebuild)
+        frame_row.addSpacing(10)
 
-        add_images_action = QAction("➕ 添加图片", self)
-        add_images_action.triggered.connect(self._add_images)
-        frame_toolbar.addAction(add_images_action)
+        btn_add_images = QPushButton("➕ 添加图片")
+        btn_add_images.clicked.connect(self._add_images)
+        frame_row.addWidget(btn_add_images)
 
-        replace_frame_action = QAction("🔄 替换选中", self)
-        replace_frame_action.triggered.connect(self._replace_frame)
-        frame_toolbar.addAction(replace_frame_action)
+        btn_replace_frame = QPushButton("🔄 替换选中")
+        btn_replace_frame.clicked.connect(self._replace_frame)
+        frame_row.addWidget(btn_replace_frame)
 
-        batch_images_action = QAction("📦 导入图集", self)
-        batch_images_action.triggered.connect(self._batch_replace_gridsheet)
-        frame_toolbar.addAction(batch_images_action)
+        btn_batch_images = QPushButton("📦 导入图集")
+        btn_batch_images.clicked.connect(self._batch_replace_gridsheet)
+        frame_row.addWidget(btn_batch_images)
 
-        delete_frame_action = QAction("❌ 删除选中", self)
-        delete_frame_action.triggered.connect(self._del_frame)
-        frame_toolbar.addAction(delete_frame_action)
+        btn_delete_frame = QPushButton("❌ 删除选中")
+        btn_delete_frame.clicked.connect(self._del_frame)
+        frame_row.addWidget(btn_delete_frame)
 
-        help_action = QAction("?", self)
-        help_action.setToolTip(
+        btn_help = QPushButton("?")
+        btn_help.setFixedWidth(32)
+        btn_help.setToolTip(
             "BBOX裁剪：按 alpha 非透明区域裁剪并计算偏移（图中心对齐 0）\n"
             "　添加图片：裁剪透明边缘并计算偏移\n"
             "　导入图集：bbox 模式（不勾选=精确匹配，按旧帧 offset 提取）\n\n"
             "自动重算色板：勾选后新增图片时新旧图片一起重新计算色板（新图精确，旧帧可能轻微调整）\n"
             "未勾选时，色板槽位不足则自动靠色（旧图不变，新图用旧图色板），不再弹窗\n\n"
             "槽位充足时始终自动增量分配颜色，无需处理")
-        frame_toolbar.addAction(help_action)
+        frame_row.addWidget(btn_help)
+        frame_row.addStretch()
+        main_layout.addLayout(frame_row)
 
-        # 导出
-        export_toolbar = self._create_operations_toolbar("导出")
-        export_toolbar.addWidget(QLabel("导出"))
+        # 第二行：导出 + 头像操作
+        export_row = QHBoxLayout()
+        export_row.setSpacing(6)
+        export_row.addWidget(QLabel("导出:"))
 
-        export_single_action = QAction("📤 导出选中帧", self)
-        export_single_action.triggered.connect(partial(self._export, "single"))
-        export_toolbar.addAction(export_single_action)
+        btn_export_single = QPushButton("📤 导出选中帧")
+        btn_export_single.clicked.connect(partial(self._export, "single"))
+        export_row.addWidget(btn_export_single)
 
-        export_group_action = QAction("📁 导出当前分组", self)
-        export_group_action.triggered.connect(partial(self._export, "group"))
-        export_toolbar.addAction(export_group_action)
+        btn_export_group = QPushButton("📁 导出当前分组")
+        btn_export_group.clicked.connect(partial(self._export, "group"))
+        export_row.addWidget(btn_export_group)
 
-        export_grid_action = QAction("🗺️ 导出网格图集", self)
-        export_grid_action.triggered.connect(partial(self._export, "grid"))
-        export_toolbar.addAction(export_grid_action)
+        btn_export_grid = QPushButton("🗺️ 导出网格图集")
+        btn_export_grid.clicked.connect(partial(self._export, "grid"))
+        export_row.addWidget(btn_export_grid)
 
-        # 头像操作
-        self.addToolBarBreak(Qt.TopToolBarArea)
-        avatar_toolbar = self._create_operations_toolbar("头像操作")
-        avatar_toolbar.addWidget(QLabel("头像操作"))
+        export_row.addSpacing(20)
+        export_row.addWidget(QLabel("头像操作:"))
 
-        self._act_toolbar_export_avatars = QAction("📤 导出全部头像", self)
-        self._act_toolbar_export_avatars.triggered.connect(self._export_all_avatars)
-        avatar_toolbar.addAction(self._act_toolbar_export_avatars)
+        self._act_toolbar_export_avatars = QPushButton("📤 导出全部头像")
+        self._act_toolbar_export_avatars.clicked.connect(self._export_all_avatars)
+        export_row.addWidget(self._act_toolbar_export_avatars)
 
-        self._act_toolbar_export_avatars_split = QAction("📤 导出每帧头像", self)
-        self._act_toolbar_export_avatars_split.triggered.connect(self._export_all_avatars_split)
-        avatar_toolbar.addAction(self._act_toolbar_export_avatars_split)
+        self._act_toolbar_export_avatars_split = QPushButton("📤 导出每帧头像")
+        self._act_toolbar_export_avatars_split.clicked.connect(self._export_all_avatars_split)
+        export_row.addWidget(self._act_toolbar_export_avatars_split)
 
-        self._act_toolbar_import_avatars = QAction("📥 导入全部头像", self)
-        self._act_toolbar_import_avatars.triggered.connect(self._import_all_avatars)
-        avatar_toolbar.addAction(self._act_toolbar_import_avatars)
+        self._act_toolbar_import_avatars = QPushButton("📥 导入全部头像")
+        self._act_toolbar_import_avatars.clicked.connect(self._import_all_avatars)
+        export_row.addWidget(self._act_toolbar_import_avatars)
+        export_row.addStretch()
+        main_layout.addLayout(export_row)
 
     def _setup_ui(self):
-        self._setup_operations_toolbar()
-
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
         main_layout = QVBoxLayout(central_widget)
         main_layout.setContentsMargins(12, 10, 12, 10)
         main_layout.setSpacing(8)
+
+        self._setup_operations_toolbar(main_layout)
 
         # 主水平分割器：左-中-右三栏布局
         splitter = QSplitter(Qt.Horizontal)
@@ -1233,7 +1234,7 @@ class JVGEditor(QMainWindow):
         self._speed.setRange(10, 2000)
         self._speed.setValue(120)
         self._speed.setSingleStep(10)
-        self._speed.setFixedWidth(56)
+        self._speed.setFixedWidth(80)
         tb_layout.addWidget(self._speed)
         tb_layout.addWidget(QLabel("ms"))
         tb_layout.addSpacing(10)
@@ -2292,7 +2293,7 @@ class JVGEditor(QMainWindow):
         cw, ch = self._preview_dims
         avail_w = max(32, self._preview_label.width() - 8)
         avail_h = max(32, self._preview_label.height() - 8)
-        scale = min(avail_w / cw, avail_h / ch, 6.0)
+        scale = min(avail_w / cw, avail_h / ch, 1.0)  # 上限 1.0：只缩小适配，不放大，保持原始分辨率
         tw, th = max(1, int(cw * scale)), max(1, int(ch * scale))
         self._preview_label.setPixmap(
             full.scaled(tw, th, Qt.KeepAspectRatio, Qt.SmoothTransformation))
