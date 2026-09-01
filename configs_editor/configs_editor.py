@@ -45,6 +45,14 @@ from panels import PANEL_REGISTRY
 # 允许通过 MOD 包携带的启动器配置文件白名单 (与 mod_loader.MOD_ALLOWED_CONFIGS 一致)
 _CONFIGS_ALLOWED_IN_MOD = {"summon_table", "drop_probability"}
 
+# 主窗口默认尺寸。
+# 高度需容纳最高的「动画速度」面板全部分组: 内容 744px + 窗口装饰
+# (菜单栏 29 + 工具栏 + 标签栏 38 + 状态栏 22 + 各处边距) 154px ≈ 898px,
+# 再留 22px 余量以应对字体/DPI 差异。宽度不影响内容高度 (面板为纵向布局),
+# 取 960 已远超内容所需的最小宽度 (约 500px)。
+DEFAULT_WINDOW_WIDTH = 960
+DEFAULT_WINDOW_HEIGHT = 920
+
 
 # ── WarPC 数据加载 ──
 
@@ -109,7 +117,7 @@ class ConfigsEditorWindow(QMainWindow):
         super().__init__()
         self.setObjectName("EditorWindow")
         self.setWindowTitle(format_title("configs_editor"))
-        self.resize(960, 720)
+        self.resize(DEFAULT_WINDOW_WIDTH, DEFAULT_WINDOW_HEIGHT)
         self.setMinimumSize(700, 500)
 
         # 配置目录 — Nuitka onefile 下 __file__ 指向临时目录, 需用 exe 所在目录
@@ -139,6 +147,23 @@ class ConfigsEditorWindow(QMainWindow):
 
         # 应用主题
         self._apply_theme()
+
+        # 居中须在 UI 构建完成后调用: 此时平台窗口已创建,
+        # frameGeometry() 才能拿到真实的标题栏+边框高度, 否则会偏低半个标题栏 (约 16px)。
+        self._center_window()
+
+    def _center_window(self):
+        """将窗口居中到主屏幕可用区域 (排除任务栏)。
+
+        用 frameGeometry() 而非 geometry(), 使含标题栏与边框的整个窗口居中;
+        availableGeometry().center() 自带屏幕原点偏移, 多屏且主屏不在 (0,0) 时同样正确。
+        """
+        screen = QApplication.primaryScreen()
+        if screen is None:
+            return
+        geo = self.frameGeometry()
+        geo.moveCenter(screen.availableGeometry().center())
+        self.move(geo.topLeft())
 
     # ── UI 构建 ──
 
