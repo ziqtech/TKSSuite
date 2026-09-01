@@ -72,6 +72,7 @@ class ModEditorDialog(QDialog):
             0, 3,
             stretch_columns={0},
             minimum_widths=[160, 60, 70],
+            fill_viewport=True,
         )
         self._table.setHorizontalHeaderLabels(["文件路径", "类型", "大小"])
         self._table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)

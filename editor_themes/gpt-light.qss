@@ -947,9 +947,9 @@ QPushButton#btnStart:pressed {
     color: #ffffff;
 }
 QPushButton#btnStart:disabled {
-    background-color: #f7f7f8;
-    color: #6e6e80;
-    border-color: #d9d9e3;
+    background-color: #b7e2d6;
+    color: #6b9687;
+    border-color: #a3d5c5;
 }
 
 /* ── 记录标题标签 (item/skill/mat/warpc 编辑器) ── */
@@ -1474,9 +1474,9 @@ QPushButton#btnStartCompat:pressed {
     color: #ffffff;
 }
 QPushButton#btnStartCompat:disabled {
-    background-color: #f7f7f8;
-    color: #6e6e80;
-    border-color: #d9d9e3;
+    background-color: #e8e8ec;
+    color: #9a9aa8;
+    border-color: #d5d5dd;
 }
 
 /* ── 启动游戏分割按钮: 主按钮圆左角, 齿轮按钮圆右角, 拼接处共享分隔线 ── */
@@ -1502,9 +1502,9 @@ QPushButton#btnStartGear:pressed {
     color: #ffffff;
 }
 QPushButton#btnStartGear:disabled {
-    background-color: #f7f7f8;
-    color: #6e6e80;
-    border-color: #d9d9e3;
+    background-color: #b7e2d6;
+    color: #6b9687;
+    border-color: #a3d5c5;
 }
 QPushButton#btnStartGearCompat {
     background-color: #eef2ff;
@@ -1523,9 +1523,9 @@ QPushButton#btnStartGearCompat:pressed {
     color: #ffffff;
 }
 QPushButton#btnStartGearCompat:disabled {
-    background-color: #f7f7f8;
-    color: #6e6e80;
-    border-color: #d9d9e3;
+    background-color: #e8e8ec;
+    color: #9a9aa8;
+    border-color: #d5d5dd;
 }
 
 /* ── 兼容模式蒙板 (补丁列表): 圆角与 DockHeader/DockBody 一致 ── */

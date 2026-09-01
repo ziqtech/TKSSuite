@@ -13,6 +13,10 @@ QTableWidget 的两个常见坑在这里统一处理：
 - 防滚动条：内容基准超出视口时按比例回缩各列（不低于配置下限和用户拖过
   的宽度），只有下限总和都放不下时才出现横向滚动条；
 - 用户优先：手动拖过的列宽始终优先于自动计算，拉伸上限不会收缩用户拖宽。
+
+fill_viewport=True 时切换为“完全撑满”模式：拉伸列不再封顶，视口剩余宽度
+全部由拉伸列吃掉，表格右侧不留学生白（Excel / 文件管理器风格）。适用于
+嵌入窗口固定区域、希望始终铺满的表格（如 tks_launcher_gui）。
 """
 
 from PySide6.QtCore import Qt, QTimer
@@ -40,12 +44,14 @@ class AdaptiveTableWidget(QTableWidget):
                  stretch_columns=None, minimum_widths=None, maximum_widths=None,
                  row_height=44, content_padding=14,
                  stretch_cap_factor=DEFAULT_STRETCH_CAP_FACTOR,
-                 stretch_cap_margin=DEFAULT_STRETCH_CAP_MARGIN):
+                 stretch_cap_margin=DEFAULT_STRETCH_CAP_MARGIN,
+                 fill_viewport=False):
         super().__init__(rows, columns, parent)
         self._content_padding = content_padding
         self._minimum_widths = {}
         self._maximum_widths = {}
         self._user_widths = {}
+        self._fill_viewport = bool(fill_viewport)
         self._configured_stretch_columns = (
             set(stretch_columns) if stretch_columns is not None else None
         )
@@ -182,6 +188,9 @@ class AdaptiveTableWidget(QTableWidget):
 
     def _column_stretch_cap(self, column, base):
         """拉伸列的宽度封顶值；显式 maximum_widths 优先于默认倍数策略。"""
+        if self._fill_viewport:
+            # 完全撑满模式: 拉伸列不封顶, 剩余宽度全部摊给拉伸列
+            return float("inf")
         explicit = self._maximum_widths.get(column)
         if explicit is not None:
             return max(base, explicit)

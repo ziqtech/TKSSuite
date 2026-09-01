@@ -169,6 +169,7 @@ class PatchListWidget(QWidget):
             stretch_columns={_COL_NAME},
             minimum_widths=[40, 140, 60],
             row_height=30,
+            fill_viewport=True,
         )
         table.setObjectName("LauncherPatchTable")
         table.setHorizontalHeaderLabels(_COLUMNS)

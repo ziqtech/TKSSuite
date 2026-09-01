@@ -89,6 +89,7 @@ class SaveManagerDialog(QDialog):
             0, len(_COLUMNS),
             stretch_columns={_COL_NAME},
             minimum_widths=[140, 130, 80, 60, 60, 70],
+            fill_viewport=True,
         )
         self._table.setHorizontalHeaderLabels(_COLUMNS)
         self._table.setSelectionBehavior(QAbstractItemView.SelectRows)

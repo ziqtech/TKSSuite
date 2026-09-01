@@ -243,6 +243,7 @@ class CustomMusicDialog(QDialog):
             stretch_columns={_COL_NAME},
             minimum_widths=[120, 60, 90],
             row_height=44,
+            fill_viewport=True,
         )
         self._table.setHorizontalHeaderLabels(_COLUMNS)
         self._table.setSelectionBehavior(QAbstractItemView.SelectRows)

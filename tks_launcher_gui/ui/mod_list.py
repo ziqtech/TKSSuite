@@ -2,7 +2,7 @@
 
 结构:
     兼容模式说明条 (仅兼容模式显示)
-    可滚动表格: 启用 / 模组名称 / 分类 / 作者 (其余字段进悬浮提示与详情面板)
+    可滚动表格: 启用 / 模组名称 / 版本号 / 分类 / 作者 / ID (其余字段进悬浮提示与详情面板)
 兼容模式下标题区显示"兼容模式下仍可加载已勾选的 MOD。"。
 """
 
@@ -20,12 +20,14 @@ from ui.centered_checkbox_delegate import (
 from editor_utils.dock_components import create_dock
 from editor_utils.adaptive_table import AdaptiveTableWidget
 
-# 行布局: 名称 + 分类 + 作者; ID/加载顺序/描述进悬浮提示与详情面板
-_COLUMNS = ["启用", "模组名称", "分类", "作者"]
+# 行布局: 名称 + 版本号 + 分类 + 作者 + ID; 加载顺序/描述进悬浮提示与详情面板
+_COLUMNS = ["启用", "模组名称", "版本号", "分类", "作者", "ID"]
 _COL_ENABLE = 0
 _COL_NAME = 1
-_COL_CATEGORY = 2
-_COL_AUTHOR = 3
+_COL_VERSION = 2
+_COL_CATEGORY = 3
+_COL_AUTHOR = 4
+_COL_ID = 5
 
 _CATEGORY_LABELS = {
     "visual": "美化", "avatar": "头像", "music": "音乐",
@@ -111,8 +113,9 @@ class ModListWidget(QWidget):
         self._table = AdaptiveTableWidget(
             0, len(_COLUMNS),
             stretch_columns={_COL_NAME},
-            minimum_widths=[40, 140, 120, 96],
+            minimum_widths=[40, 140, 70, 120, 96, 90],
             row_height=44,
+            fill_viewport=True,
         )
         self._table.setObjectName("LauncherModTable")
         self._table.setHorizontalHeaderLabels(_COLUMNS)
@@ -237,11 +240,19 @@ class ModListWidget(QWidget):
                 font = name_item.font()
                 font.setBold(True)
                 name_item.setFont(font)
+            self._set_text(row, _COL_VERSION, mod.version or "未知")
             # 分类列: 彩色 Tag 标签 (列表不显示"自动识别"字样, 仅保留在悬浮提示)
             inferred = "（自动识别）" if mod.inferred_metadata else ""
             tag = _CategoryTag(mod.category or "other")
             self._table.setCellWidget(row, _COL_CATEGORY, tag)
             self._set_text(row, _COL_AUTHOR, mod.author or "未知")
+            id_item = self._set_text(row, _COL_ID, mod.mod_id)
+            if is_dup:
+                # 重复 ID 的来源列同样高亮, 与模组名称列形成整行呼应
+                id_item.setForeground(QColor(220, 50, 50))
+                font = id_item.font()
+                font.setBold(True)
+                id_item.setFont(font)
 
             # 整行 tooltip: 高级信息 (ID/加载顺序/标签/兼容声明) 不进列
             compatibility = mod.compatibility.get("compatible")

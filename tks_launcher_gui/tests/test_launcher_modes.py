@@ -259,7 +259,7 @@ class LauncherModeTests(unittest.TestCase):
 
     def test_mod_list_renders_category_column(self):
         from PySide6.QtWidgets import QApplication
-        from ui.mod_list import ModListWidget
+        from ui.mod_list import ModListWidget, _COL_NAME, _COL_CATEGORY
 
         app = QApplication.instance() or QApplication([])
         with tempfile.TemporaryDirectory() as td:
@@ -271,11 +271,11 @@ class LauncherModeTests(unittest.TestCase):
                 }))
             widget = ModListWidget(td)
             category_cells = [
-                widget._table.cellWidget(row, 2).text()
+                widget._table.cellWidget(row, _COL_CATEGORY).text()
                 for row in range(widget._table.rowCount())
-                if widget._table.item(row, 1) is not None
-                and widget._table.item(row, 1).text() == "Visual"
-                and widget._table.cellWidget(row, 2) is not None
+                if widget._table.item(row, _COL_NAME) is not None
+                and widget._table.item(row, _COL_NAME).text() == "Visual"
+                and widget._table.cellWidget(row, _COL_CATEGORY) is not None
             ]
             self.assertEqual(category_cells, ["头像"])
             widget.close()

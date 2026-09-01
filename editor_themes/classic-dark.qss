@@ -248,7 +248,11 @@ QToolButton#dockToolButton:checked:hover {background-color: #5a9ccc; color: #fff
 QPushButton#btnStart {background-color: #2b5f3a; color: #e0f5e5; border: 1px solid #1e4a2c; font-weight: bold;}
 QPushButton#btnStart:hover {background-color: #367a4a;}
 QPushButton#btnStart:pressed {background-color: #1e4a2c; color: #ffffff;}
-QPushButton#btnStart:disabled {background-color: #252a35; color: #68738e; border-color: #3b445c;}
+QPushButton#btnStart:disabled {
+    background-color: #31463a;
+    color: #75887c;
+    border-color: #3e5a4a;
+}
 
 /* ── 记录标题标签 (item/skill/mat/warpc 编辑器) ── */
 QLabel[class="RecordHeader"] {font-size: 14px; font-weight: bold; color: #e0e4eb; background-color: #292f3c; border: 1px solid #3b445c; border-radius: 8px; padding: 5px 10px;}
@@ -459,7 +463,11 @@ QLabel#statusLabelWarn {color: #e8a040; font-weight: bold; padding: 4px 8px;}
 QPushButton#btnStartCompat {background-color: #303b52; color: #e5edff; border: 1px solid #7aa2f7; font-weight: bold;}
 QPushButton#btnStartCompat:hover {background-color: #384967;}
 QPushButton#btnStartCompat:pressed {background-color: #26344a; color: #ffffff;}
-QPushButton#btnStartCompat:disabled {background-color: #252a35; color: #68738e; border-color: #3b445c;}
+QPushButton#btnStartCompat:disabled {
+    background-color: #333b48;
+    color: #7d8798;
+    border-color: #3f4a5c;
+}
 
 /* ── 启动游戏分割按钮: 主按钮圆左角, 齿轮按钮圆右角, 拼接处共享分隔线 ── */
 QPushButton#btnStart,
@@ -467,11 +475,19 @@ QPushButton#btnStartCompat {border-top-right-radius: 0px; border-bottom-right-ra
 QPushButton#btnStartGear {background-color: #2b5f3a; color: #e0f5e5; border: 1px solid #1e4a2c; border-left: none; border-top-left-radius: 0px; border-bottom-left-radius: 0px; padding: 6px 9px;}
 QPushButton#btnStartGear:hover {background-color: #367a4a;}
 QPushButton#btnStartGear:pressed {background-color: #1e4a2c; color: #ffffff;}
-QPushButton#btnStartGear:disabled {background-color: #252a35; color: #68738e; border-color: #3b445c;}
+QPushButton#btnStartGear:disabled {
+    background-color: #31463a;
+    color: #75887c;
+    border-color: #3e5a4a;
+}
 QPushButton#btnStartGearCompat {background-color: #303b52; color: #e5edff; border: 1px solid #7aa2f7; border-left: none; border-top-left-radius: 0px; border-bottom-left-radius: 0px; padding: 6px 9px;}
 QPushButton#btnStartGearCompat:hover {background-color: #384967;}
 QPushButton#btnStartGearCompat:pressed {background-color: #26344a; color: #ffffff;}
-QPushButton#btnStartGearCompat:disabled {background-color: #252a35; color: #68738e; border-color: #3b445c;}
+QPushButton#btnStartGearCompat:disabled {
+    background-color: #333b48;
+    color: #7d8798;
+    border-color: #3f4a5c;
+}
 
 /* ── 兼容模式蒙板 (补丁列表): 圆角与 DockHeader/DockBody 一致 ── */
 QWidget#compatOverlay {background-color: rgba(0, 0, 0, 0.45); border-radius: 10px;}
