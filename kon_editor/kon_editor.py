@@ -280,7 +280,7 @@ class KonEditor(QMainWindow):
         super().__init__()
         self.setObjectName("EditorWindow")
         self.setWindowTitle(format_title("kon_editor"))
-        self.resize(1320, 820)
+        self.resize(1600, 900)
         self.setMinimumSize(1050, 650)
 
         ico = os.path.join(os.path.dirname(__file__), 'TKS.ico')
@@ -646,7 +646,6 @@ class KonEditor(QMainWindow):
             sep_lbl = QLabel("阵营")
             sep_lbl.setProperty("class", "SplitFieldLabel")
             bh.addWidget(sep_lbl)
-            bh.addWidget(lo_w, 1)
             bh.addWidget(lo_w, 1)
             self.split_map[fn] = (hi_w, lo_w)
             extra = QLabel("")
