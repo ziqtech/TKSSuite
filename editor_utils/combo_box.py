@@ -215,14 +215,8 @@ class EditorComboBox(QComboBox):
         event.ignore()
 
     def _menu_width(self):
-        """返回适合当前选项文本的菜单宽度。"""
-        text_width = max(
-            (self.fontMetrics().horizontalAdvance(self.itemText(i))
-             for i in range(self.count())),
-            default=0,
-        )
-        # 预留菜单左右 padding、选中标记、图标槽和少量呼吸空间。
-        return max(self.width(), text_width + 42)
+        """返回弹出弹层的宽度 — 默认与下拉框本身同宽。"""
+        return self.width()
 
     def _item_enabled(self, index):
         """读取模型项的启用状态，兼容自定义 model 的下拉框。"""

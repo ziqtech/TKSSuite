@@ -133,9 +133,6 @@ from mat_threads import DataLoaderThread, JvgLoaderThread
 
 # [28] 对话颜色字段的 dword 索引 (IDX_DIALOG_COLOR='d28' → 28), 供新增实体默认值判断 (§需求4)
 _DIALOG_COLOR_IDX = int(IDX_DIALOG_COLOR[1:])
-_FIELD_LABEL_MAX_WIDTH = 100
-_TYPE_COMBO_MAX_WIDTH = 140
-_COMBO_MAX_WIDTH = 120
 
 class MapDataManager:
     """地图数据状态与装配层 (§5) — 从 MatEditorApp 拆出的纯数据职责。
@@ -829,8 +826,22 @@ class InspectorPanelBuilder:
 
             inner_layout.addStretch()
             scroll.setWidget(inner)
+            # 统一本页 FakeInputBox 内输入框/下拉框/按钮高度 — 各主题 QSS 的
+            # padding 不同, 自然高度相差 2~7px, 同一 FakeInputBox 行内不齐
+            self._normalize_inner_heights(inner)
             self._type_frames[tval] = scroll
             self._type_vars[tval] = tvars
+
+    @staticmethod
+    def _normalize_inner_heights(inner):
+        """统一 inner 子树中 FakeInputBox 内输入框/下拉框/按钮的固定高度。"""
+        for box in inner.findChildren(QFrame, "FakeInputBox"):
+            for child in box.findChildren(QLineEdit):
+                child.setFixedHeight(30)
+            for child in box.findChildren(EditorComboBox):
+                child.setFixedHeight(30)
+            for child in box.findChildren(QPushButton):
+                child.setFixedHeight(30)
 
     def make_raw_edit(self, di):
         """为 dword di 创建一个独立的 QLineEdit 并登记到镜像表。
@@ -838,6 +849,11 @@ class InspectorPanelBuilder:
         后续 addWidget re-parent 走, 导致其余页变空壳); 改为每页各建一个,
         构建完成后用 _wire_raw_mirrors 双向同步, 等价于 v1 的 StringVar 互通。"""
         ev = QLineEdit()
+        # 水平 Ignored: 布局忽略 sizeHint, 输入框跟随所在网格列宽自适应
+        # (否则 QLineEdit 的固有 sizeHint 使各字段组网格内容恒超视口,
+        # 面板拖宽时富余永远无法分配到输入框)
+        ev.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
+        ev.setMinimumWidth(60)
         self._raw_mirrors.setdefault(di, []).append(ev)
         return ev
 
@@ -860,6 +876,21 @@ class InspectorPanelBuilder:
             # 为每个控件分别创建 handler, 用 partial 预填 src 避免闭包捕获
             for src_ed in alive:
                 src_ed.textChanged.connect(partial(self._on_mirror_changed, src_ed, alive))
+
+    def _make_combo(self, items):
+        """类型页下拉框 — 最小宽度按最宽条目自适应 (含下拉箭头区)。
+
+        不设上限并让其在 FakeInputBox 内横向铺满 (addWidget stretch=1),
+        保证弹出层宽度 (取本体实际宽度) 与可见输入框宽度严格一致。
+        """
+        cb = EditorComboBox()
+        cb.addItems(items)
+        fm = cb.fontMetrics()
+        cb.setMinimumWidth(max(
+            (fm.horizontalAdvance(cb.itemText(i)) for i in range(cb.count())),
+            default=0,
+        ) + 46)
+        return cb
 
     def _build_type_basic_group(self, parent_layout, tvars, tval, type_labels):
         """构建类型页面的基础属性组 (DockHeader + DockBody, 垂直单元格, 等宽列)"""
@@ -892,16 +923,13 @@ class InspectorPanelBuilder:
         lbl.setToolTip("[00] 实体类型: 5=脚本 10=出入传送 15=触发区 16=战斗区 20=事件 110=机关 200=NPC。源码: sub_405CBC")
         lbl.setProperty("class", "PropLabel")
         lbl.setWordWrap(True)
-        lbl.setMaximumWidth(_FIELD_LABEL_MAX_WIDTH)
-        cb = EditorComboBox()
-        cb.addItems([f"{k}-{v}" for k, v in sorted(ENTITY_TYPES.items())])
-        cb.setMaximumWidth(_TYPE_COMBO_MAX_WIDTH)
+        cb = self._make_combo([f"{k}-{v}" for k, v in sorted(ENTITY_TYPES.items())])
         tvars['type'] = cb
         wrapper = QFrame()
         wrapper.setObjectName("FakeInputBox")
         wl = QHBoxLayout(wrapper)
         wl.setContentsMargins(0, 0, 0, 0)
-        wl.addWidget(cb)
+        wl.addWidget(cb, 1)
         grid.addWidget(_cell(lbl, wrapper), 0, 0, Qt.AlignTop)
 
         # Scene ID
@@ -909,7 +937,6 @@ class InspectorPanelBuilder:
         lbl2.setToolTip("[01] 所属场景 (-1=全局)。TKT_ID = scene_id + 300。源码: sub_405CBC")
         lbl2.setProperty("class", "PropLabel")
         lbl2.setWordWrap(True)
-        lbl2.setMaximumWidth(_FIELD_LABEL_MAX_WIDTH)
         ev = self.make_raw_edit(1)
         tvars['scene_id'] = ev
         wrapper2 = QFrame()
@@ -928,7 +955,6 @@ class InspectorPanelBuilder:
         lbl3.setToolTip("[02] 位域。bit0=启用 bit1=可见 bit2=可交互 bit3=提示 bit4=忙碌 bit5=恢复 bit8=已拾取 bit16=动画循环")
         lbl3.setProperty("class", "PropLabel")
         lbl3.setWordWrap(True)
-        lbl3.setMaximumWidth(_FIELD_LABEL_MAX_WIDTH)
         ev2 = self.make_raw_edit(2)
         tvars['flags'] = ev2
         wrapper3 = QFrame()
@@ -1027,7 +1053,8 @@ class InspectorPanelBuilder:
                 lbl.setToolTip(tip)
             lbl.setProperty("class", "PropLabel")
             lbl.setWordWrap(True)
-            lbl.setMaximumWidth(_FIELD_LABEL_MAX_WIDTH)
+            # 水平 Ignored + wordWrap: 标签列不以其自然宽度撑爆字段组网格
+            lbl.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
             if di in type_labels:
                 lbl.setProperty("class", "TypeFieldLabel")
 
@@ -1037,54 +1064,46 @@ class InspectorPanelBuilder:
 
             # Check if this needs a combobox
             if key == 'anim_set':
-                cb = EditorComboBox()
-                cb.addItems([
+                cb = self._make_combo([
                     "0-无动画",
                     "1-Cha(角色)",
                     "4-Ani(动画)",
                     "5-Cur(光标)",
                 ])
-                cb.setMaximumWidth(_COMBO_MAX_WIDTH)
                 tvars[key] = cb
                 wrapper = QFrame()
                 wrapper.setObjectName("FakeInputBox")
                 wl = QHBoxLayout(wrapper)
                 wl.setContentsMargins(0, 0, 0, 0)
-                wl.addWidget(cb)
+                wl.addWidget(cb, 1)
                 # Sync combobox to raw entry
                 cb.currentIndexChanged.connect(partial(self._sync_type_cb_to_raw, tvars, di, cb))
             elif key == 'blend_mode':
-                cb = EditorComboBox()
-                cb.addItems(["0-正常", "1-染色", "2-加法发光", "3-减法压暗", "4-亮度alpha", "5-水平翻转"])
-                cb.setMaximumWidth(_COMBO_MAX_WIDTH)
+                cb = self._make_combo(["0-正常", "1-染色", "2-加法发光", "3-减法压暗", "4-亮度alpha", "5-水平翻转"])
                 tvars[key] = cb
                 wrapper = QFrame()
                 wrapper.setObjectName("FakeInputBox")
                 wl = QHBoxLayout(wrapper)
                 wl.setContentsMargins(0, 0, 0, 0)
-                wl.addWidget(cb)
+                wl.addWidget(cb, 1)
                 cb.currentIndexChanged.connect(partial(self._sync_type_cb_to_raw, tvars, di, cb))
             elif key == 'shadow_frame':
-                cb = EditorComboBox()
-                cb.addItems(["0-无阴影", "1-小阴影(39×23)", "2-大阴影(65×33)"])
-                cb.setMaximumWidth(_COMBO_MAX_WIDTH)
+                cb = self._make_combo(["0-无阴影", "1-小阴影(39×23)", "2-大阴影(65×33)"])
                 tvars[key] = cb
                 wrapper = QFrame()
                 wrapper.setObjectName("FakeInputBox")
                 wl = QHBoxLayout(wrapper)
                 wl.setContentsMargins(0, 0, 0, 0)
-                wl.addWidget(cb)
+                wl.addWidget(cb, 1)
                 cb.currentIndexChanged.connect(partial(self._sync_type_cb_to_raw, tvars, di, cb))
             elif key == 'cursor_id':
-                cb = EditorComboBox()
-                cb.addItems([f"{k}-{v}" for k, v in sorted(_CURSOR_BLOCKS.items())])
-                cb.setMaximumWidth(_COMBO_MAX_WIDTH)
+                cb = self._make_combo([f"{k}-{v}" for k, v in sorted(_CURSOR_BLOCKS.items())])
                 tvars[key] = cb
                 wrapper = QFrame()
                 wrapper.setObjectName("FakeInputBox")
                 wl = QHBoxLayout(wrapper)
                 wl.setContentsMargins(0, 0, 0, 0)
-                wl.addWidget(cb)
+                wl.addWidget(cb, 1)
                 cb.currentIndexChanged.connect(partial(self._sync_type_cb_to_raw, tvars, di, cb))
             elif key == 'dialog_color':
                 # 对话颜色选择器: FCOLOR 1-32 调色板
@@ -1112,7 +1131,6 @@ class InspectorPanelBuilder:
             elif key == 'dir_mask' and tval in (10, 15):
                 # 方向掩码 checkbox 网格 (8个朝向) — 垂直布局: 数值输入在上, checkbox 在下
                 dm_ev = self.make_raw_edit(di)
-                dm_ev.setMaximumWidth(80)
                 tvars[key] = dm_ev
                 wrapper = QFrame()
                 wrapper.setObjectName("FakeInputBox")
@@ -1320,6 +1338,21 @@ class MatEditorApp(QMainWindow):
         if hasattr(self, '_canvas'):
             self._apply_theme()
 
+    def _refresh_param_heights(self):
+        """重申右侧面板输入控件统一高度 (30px)。
+
+        QComboBox 首次显示时按内容自适应机制重设最小高度 (C++ 层, 约 26px),
+        覆盖构建时 setFixedHeight(30) 的下限 — 参数页挂载/notebook 切 tab/
+        主题切换 (QSS repolish) 后调用本方法恢复。
+        """
+        if not hasattr(self, '_inspector'):
+            return
+        if self._active_type and self._active_type in self._type_frames:
+            self._inspector._normalize_inner_heights(
+                self._type_frames[self._active_type].widget())
+        for ev in self.tab_all.findChildren(QLineEdit):
+            ev.setFixedHeight(30)
+
     def _apply_theme(self):
         """同步当前主题的派生配色 (QSS 本身由 apply_theme_to_window 应用)。"""
         self._update_path()
@@ -1340,7 +1373,9 @@ class MatEditorApp(QMainWindow):
             self._update_line_preview()
         self._refresh_table()
         # 主题 QSS 重新 polish 后, 下拉框高度可能变化, 延迟同步工具栏按钮高度
+        # 与右侧面板输入控件统一高度
         QTimer.singleShot(0, self._sync_toolbar_heights)
+        QTimer.singleShot(0, self._refresh_param_heights)
 
     def _update_entity_type_colors(self):
         """根据当前主题更新实体列表的类型颜色"""
@@ -1417,10 +1452,11 @@ class MatEditorApp(QMainWindow):
         main_layout.insertWidget(0, self._build_preview_toolbar())
 
         self.splitter.setSizes([460, 640, 550])
-        # 左右面板拉伸因子=0, 中间=1: 窗口放大时多余空间全归中间, 左右保持初始宽度
+        # 拉伸因子 中:右 = 3:2 — 最大化时预览区仍优先获得富余, 右侧编辑面板
+        # 同步明显变宽以容纳自适应表单; 左侧列表保持初始宽度
         self.splitter.setStretchFactor(0, 0)
-        self.splitter.setStretchFactor(1, 1)
-        self.splitter.setStretchFactor(2, 0)
+        self.splitter.setStretchFactor(1, 3)
+        self.splitter.setStretchFactor(2, 2)
 
         # Bottom path bar
         path_layout = QHBoxLayout()
@@ -1755,6 +1791,14 @@ class MatEditorApp(QMainWindow):
         # 参数页 / 全部页的镜像 QLineEdit 双向同步 (等价 v1 StringVar 互通)
         self._inspector.wire_raw_mirrors()
 
+        # 统一"全部"页输入控件高度 (FakeInputBox 内控件在类型页构建时处理,
+        # 因类型页 scroll 此时未挂入布局, findChildren 查不到)
+        for ev in self.tab_all.findChildren(QLineEdit):
+            ev.setFixedHeight(30)
+        # 页面首次显示/QSS repolish 会重设 QComboBox 的最小高度 (内容自适应
+        # 机制), 覆盖构建时的统一值 — 切页/切 tab/切主题后需重申
+        self.notebook.currentChanged.connect(lambda *_: self._refresh_param_heights())
+
         # Bottom buttons
         bf = QHBoxLayout()
         btn_apply = QPushButton("应用修改")
@@ -1963,7 +2007,10 @@ class MatEditorApp(QMainWindow):
             lbl = QLabel(lbl_text)
             lbl.setProperty("class", "PropLabel")
             lbl.setWordWrap(True)
-            lbl.setMaximumWidth(_FIELD_LABEL_MAX_WIDTH)
+            # 水平 Ignored: 布局忽略标签 sizeHint, 否则 4 个标签列的自然宽度
+            # 令 grid 内容恒超视口 (处于溢出滚动状态), 输入列永远分不到富余;
+            # 标签宽度改由 stretch (1:2) 与 wordWrap 换行决定。
+            lbl.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
             if cmt:
                 lbl.setToolTip(f"[{di:02d}] {cmt}")
 
@@ -1971,12 +2018,24 @@ class MatEditorApp(QMainWindow):
             # canonical _edit_vars[key] 指向"全部"页控件; 参数页镜像双向同步。
             ev = self._inspector.make_raw_edit(di)
             self._edit_vars[key] = ev
-            ev.setMaximumWidth(80)
+            # 自适应宽度: 水平 Ignored 让布局忽略其 sizeHint (标签列的
+            # sizeHint 否则把 grid 总需求撑到远超视口, 输入列永远处于
+            # 被压缩状态无法分享富余); 列宽只由 minimumWidth(80) 与
+            # 拉伸分配决定 — 面板拖宽时输入框随之变宽, 过窄时出滚动条。
+            ev.setMinimumWidth(80)
+            ev.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
 
             inner_layout.addWidget(lbl, r, c * 2, Qt.AlignRight | Qt.AlignVCenter)
             inner_layout.addWidget(ev, r, c * 2 + 1)
             self._all_labels[di] = lbl
 
+        # 标签列/输入列均参与拉伸 (1:2): 富余空间 2/3 归输入列 — 拖宽面板时
+        # 输入框明显变宽; 空间不足时输入列先压缩到 minimumWidth(80),
+        # 标签列随之换行 (全部列 stretch>0 是必须的, 否则 Qt 压缩时
+        # 只压 stretch 列, 输入框死在最小宽度无法自适应)。
+        for c in range(4):
+            inner_layout.setColumnStretch(c * 2, 1)
+            inner_layout.setColumnStretch(c * 2 + 1, 2)
         scroll.setWidget(inner)
         layout = QVBoxLayout(self.tab_all)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -2438,6 +2497,8 @@ class MatEditorApp(QMainWindow):
             self.tab_param_layout.addWidget(self._type_frames[tval])
             self._type_frames[tval].setVisible(True)
             self._active_type = tval
+            # 页面挂载显示后 QComboBox 内容自适应会重设最小高度, 重申统一高度
+            self._refresh_param_heights()
 
     def _update_all_tab_labels(self, tval):
         """Update '全部' tab labels based on entity type"""
