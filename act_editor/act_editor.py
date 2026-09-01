@@ -534,6 +534,9 @@ FIELD_GROUPS = [
     ]),
 ]
 
+# 条目级参数区在 UI 上的网格列数（共 24 项，4 列 → 6 行）
+PARAM_GRID_COLUMNS = 4
+
 # 条目级参数字段说明 (entry bytes 32-79, int16[16..39])。
 # 这里只保存显示名称和提示，不参与二进制编解码；索引与原版寻址保持不变。
 PARAM_FIELD_INFO = {
@@ -2325,7 +2328,7 @@ class ActEditorV2(QMainWindow):
         self._param_vars = []
 
         for k, idx in enumerate(range(16, 40)):
-            r, c = divmod(k, 6)
+            r, c = divmod(k, PARAM_GRID_COLUMNS)
             cell = QVBoxLayout()
             cell.setSpacing(2)
 
@@ -2333,16 +2336,17 @@ class ActEditorV2(QMainWindow):
             lbl_f = QLabel(f"[{idx}] {label}")
             lbl_f.setProperty("class", "PropLabel")
             lbl_f.setToolTip(comment)
+            lbl_f.setWordWrap(True)
             cell.addWidget(lbl_f)
 
             le = QLineEdit("0")
-            le.setMinimumWidth(60)
+            le.setMinimumWidth(70)
             le.setToolTip(comment)
             self._param_vars.append(le)
             cell.addWidget(le)
             grid.addLayout(cell, r, c)
 
-        for c in range(6):
+        for c in range(PARAM_GRID_COLUMNS):
             grid.setColumnStretch(c, 1)
 
         inner.layout().addLayout(grid)
