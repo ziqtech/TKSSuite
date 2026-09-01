@@ -459,14 +459,18 @@ QLabel[class="GlyphCell"] {background-color: #1a1e27; border: 1px solid #14171f;
 /* ── 启动状态警告标签 (tks_launcher_gui): 半成功/部分未应用 ── */
 QLabel#statusLabelWarn {color: #e8a040; font-weight: bold; padding: 4px 8px;}
 
+/* ── 启动游戏分割按钮容器 (tks_launcher_gui): 透明背景避免圆角外侧出现锐角阴影 ── */
+QWidget#startSplitButton {background-color: transparent; border: none; padding: 0px;}
+
 /* ── 兼容模式启动按钮 (tks_launcher_gui): 蓝色区分标准模式绿 ── */
 QPushButton#btnStartCompat {background-color: #303b52; color: #e5edff; border: 1px solid #7aa2f7; font-weight: bold;}
 QPushButton#btnStartCompat:hover {background-color: #384967;}
 QPushButton#btnStartCompat:pressed {background-color: #26344a; color: #ffffff;}
+/* 兼容模式禁用: 边框色与启用态完全一致 (与齿轮按钮边框色一体化), 仅背景与文字变浅表示禁用 */
 QPushButton#btnStartCompat:disabled {
-    background-color: #333b48;
-    color: #7d8798;
-    border-color: #3f4a5c;
+    background-color: #2a3148;
+    color: #8a99c2;
+    border-color: #7aa2f7;
 }
 
 /* ── 启动游戏分割按钮: 主按钮圆左角, 齿轮按钮圆右角, 拼接处共享分隔线 ── */
@@ -475,18 +479,20 @@ QPushButton#btnStartCompat {border-top-right-radius: 0px; border-bottom-right-ra
 QPushButton#btnStartGear {background-color: #2b5f3a; color: #e0f5e5; border: 1px solid #1e4a2c; border-left: none; border-top-left-radius: 0px; border-bottom-left-radius: 0px; padding: 6px 9px;}
 QPushButton#btnStartGear:hover {background-color: #367a4a;}
 QPushButton#btnStartGear:pressed {background-color: #1e4a2c; color: #ffffff;}
+/* 齿轮按钮永远不允许禁用 — :disabled 样式与默认完全相同, 杜绝视觉差异 */
 QPushButton#btnStartGear:disabled {
-    background-color: #31463a;
-    color: #75887c;
-    border-color: #3e5a4a;
+    background-color: #2b5f3a;
+    color: #e0f5e5;
+    border-color: #1e4a2c;
 }
 QPushButton#btnStartGearCompat {background-color: #303b52; color: #e5edff; border: 1px solid #7aa2f7; border-left: none; border-top-left-radius: 0px; border-bottom-left-radius: 0px; padding: 6px 9px;}
 QPushButton#btnStartGearCompat:hover {background-color: #384967;}
 QPushButton#btnStartGearCompat:pressed {background-color: #26344a; color: #ffffff;}
+/* 兼容模式齿轮按钮 — :disabled 与启用态完全相同, 始终保持可点击视觉 */
 QPushButton#btnStartGearCompat:disabled {
-    background-color: #333b48;
-    color: #7d8798;
-    border-color: #3f4a5c;
+    background-color: #303b52;
+    color: #e5edff;
+    border-color: #7aa2f7;
 }
 
 /* ── 兼容模式蒙板 (补丁列表): 圆角与 DockHeader/DockBody 一致 ── */

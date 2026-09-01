@@ -669,11 +669,16 @@ class MainWindow(QMainWindow):
             self.status_bar.showMessage(f"已选择游戏程序: {os.path.basename(path)}")
 
     def _set_running_state(self, running: bool):
-        """锁定会影响本次启动快照的控件，避免运行中状态漂移。"""
+        """锁定会影响本次启动快照的控件，避免运行中状态漂移。
+
+        非游戏运行状态下所有控件默认启用 (含齿轮按钮 — 用于切换游戏目录);
+        游戏运行时统一锁定会改变本次启动快照的控件 (含齿轮按钮 — 防止运行中切换)。
+        """
         for widget in (
             self._standard_mode, self._compatible_mode,
             self.patch_list, self.mod_list, self._tools_panel,
-            self.btn_refresh_mods, self.btn_save_mgr, self.btn_start_gear,
+            self.btn_refresh_mods, self.btn_save_mgr,
+            self.btn_start, self.btn_start_gear,
         ):
             widget.setEnabled(not running)
         self._action_start.setEnabled(not running)
