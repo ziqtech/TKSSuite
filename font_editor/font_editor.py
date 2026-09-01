@@ -121,7 +121,7 @@ class FontEditorWindow(QMainWindow):
         super().__init__()
         self.setObjectName("EditorWindow")
         self.setWindowTitle(format_title("font_editor"))
-        self.resize(960, 580)
+        self.resize(1280, 720)
         self.setMinimumSize(820, 520)
 
         # 主题初始化：跟随持久化选择，无存档时按系统深浅色取现代主题
