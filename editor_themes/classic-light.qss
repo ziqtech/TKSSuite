@@ -123,6 +123,14 @@ QMenu#EditorComboMenu::item {padding: 6px 28px 6px 10px; border-radius: 5px;}
 QMenu#EditorComboMenu::item:selected {background-color: #eff1f4; color: #2d2d2d;}
 QMenu#EditorComboMenu::item:checked {background-color: #478cbf; color: #ffffff; font-weight: 600;}
 
+/* ── 下拉框可滚动弹层 (条目 >10 时替代 QMenu) ── */
+QWidget#EditorComboPopup {background-color: #ffffff; border: 1px solid #d6dadf; border-radius: 8px;}
+QListWidget#EditorComboList {background-color: transparent; border: none; color: #2d2d2d; outline: none;}
+QListWidget#EditorComboList::item {padding: 6px 10px; border-radius: 5px;}
+QListWidget#EditorComboList::item:hover {background-color: #eff1f4; color: #2d2d2d;}
+QListWidget#EditorComboList::item:selected {background-color: #478cbf; color: #ffffff; font-weight: 600;}
+QListWidget#EditorComboList::item:disabled {color: #b6b6c4;}
+
 /* ── Tab 页 ── */
 QTabWidget::pane {border: 1px solid #b0b5bd; background-color: #e0e4e8; top: -1px; border-radius: 10px; padding: 4px;}
 QTabBar::tab {background: #e0e4e8; color: #222; border: 1px solid #b0b5bd; padding: 7px 13px; margin: 2px 2px 0 0; border-radius: 8px; min-height: 18px;}

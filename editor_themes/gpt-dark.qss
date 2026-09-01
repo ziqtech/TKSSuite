@@ -470,6 +470,35 @@ QMenu#EditorComboMenu::item:checked {
     font-weight: 600;
 }
 
+/* ── 下拉框可滚动弹层 (条目 >10 时替代 QMenu) ── */
+QWidget#EditorComboPopup {
+    background-color: #2f2f2f;
+    border: 1px solid #444444;
+    border-radius: 8px;
+}
+QListWidget#EditorComboList {
+    background-color: transparent;
+    border: none;
+    color: #ececec;
+    outline: none;
+}
+QListWidget#EditorComboList::item {
+    padding: 6px 10px;
+    border-radius: 5px;
+}
+QListWidget#EditorComboList::item:hover {
+    background-color: #3a3a3a;
+    color: #ececec;
+}
+QListWidget#EditorComboList::item:selected {
+    background-color: #10a37f;
+    color: #ffffff;
+    font-weight: 600;
+}
+QListWidget#EditorComboList::item:disabled {
+    color: #6a6a6a;
+}
+
 /* ── Tab 页 ── */
 QTabWidget::pane {
     border: 1px solid #444444;

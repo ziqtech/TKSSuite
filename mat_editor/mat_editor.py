@@ -59,8 +59,9 @@ from editor_utils.theme_switcher import (
 )
 from editor_utils.dock_components import DockHeader, create_dock
 from editor_utils.lzss import lzss_decompress_dat as lzss_decompress, lzss_decompress_save, lzss_compress_save
-from editor_utils.ui_helpers import confirm_close, themed_messagebox, EditorComboBox
+from editor_utils.ui_helpers import confirm_close, themed_messagebox, EditorComboBox, EditorComboListPopup
 from editor_utils.tab_widget import EditorTabWidget
+from editor_utils.flow_layout import FlowLayout
 from editor_utils.adaptive_table import AdaptiveTableWidget
 from editor_utils.version import format_title, format_about_header
 from editor_utils.shared_state import pick_tks_directory
@@ -1214,19 +1215,24 @@ class InspectorPanelBuilder:
             ed.blockSignals(False)
 
     def _pick_dialog_color(self, swatch, ev, btn, *_args):
-        """对话颜色选色弹窗 (clicked 信号会传入 bool, *_args 吸收)"""
-        menu = QMenu(self._editor)
+        """对话颜色选色弹窗 — 复用 EditorComboListPopup, 与编辑器下拉弹层形式一致"""
+        items = []
+        cur_text = ev.text().strip()
+        cur = int(cur_text) if cur_text.isdigit() else -1
         for i in range(32):
             hc = GAME_COLORS.get(i + 1, '#000')
             px = QPixmap(16, 16)
             px.fill(QColor(hc))
-            act = menu.addAction(QIcon(px), f"  {i:2d}  FCOLOR({i+1:2d})")
-            act.setData(i)
-        chosen = menu.exec(btn.mapToGlobal(QPoint(0, btn.height())))
-        if chosen:
-            val = chosen.data()
-            ev.setText(str(val))
-            swatch.setStyleSheet(f"background-color: {GAME_COLORS.get(val+1,'#000')};")
+            items.append((QIcon(px), f"  {i:2d}  FCOLOR({i + 1:2d})", i, True))
+
+        def _apply(index):
+            ev.setText(str(index))
+            swatch.setStyleSheet(f"background-color: {GAME_COLORS.get(index + 1, '#000')};")
+
+        popup = EditorComboListPopup(btn, max_visible=10)
+        popup.set_items(items, current=cur if 0 <= cur < 32 else None)
+        popup.selected.connect(_apply)
+        popup.popup_below(btn, btn.fontMetrics().horizontalAdvance("  00  FCOLOR(32)") + 72)
 
     def _sync_dir_mask(self, ev, dir_bv, *_args):
         """方向掩码 checkbox 网格同步到数值输入 (stateChanged 信号会传入 int, *_args 吸收)"""
@@ -1243,7 +1249,7 @@ class MatEditorApp(QMainWindow):
         super().__init__()
         self.setObjectName("EditorWindow")
         self.setWindowTitle(format_title("mat_editor"))
-        self.resize(1560, 860)
+        self.resize(1600, 900)
         self.setMinimumSize(1340, 640)
 
         # 加载图标
@@ -1317,6 +1323,8 @@ class MatEditorApp(QMainWindow):
         if hasattr(self, 'script_preview') and self._current_edit_define_id is not None:
             self._update_line_preview()
         self._refresh_table()
+        # 主题 QSS 重新 polish 后, 下拉框高度可能变化, 延迟同步工具栏按钮高度
+        QTimer.singleShot(0, self._sync_toolbar_heights)
 
     def _update_entity_type_colors(self):
         """根据当前主题更新实体列表的类型颜色"""
@@ -1387,6 +1395,10 @@ class MatEditorApp(QMainWindow):
         self._build_center_panel()
         # Right pane
         self._build_right_panel()
+
+        # 预览工具栏 — 左右通栏, 置于三栏 splitter 上方 (§需求3)
+        # (需在三栏构建完成后创建: 工具栏控件要连接 self._canvas 上的方法)
+        main_layout.insertWidget(0, self._build_preview_toolbar())
 
         self.splitter.setSizes([460, 640, 550])
         # 左右面板拉伸因子=0, 中间=1: 窗口放大时多余空间全归中间, 左右保持初始宽度
@@ -1549,75 +1561,100 @@ class MatEditorApp(QMainWindow):
         left_widget.setMinimumWidth(340)
         self.splitter.addWidget(left_widget)
 
-    # =========== 中间面板: 地图预览 ===========
-    def _build_center_panel(self):
-        center_widget = QWidget()
-        center_layout = QVBoxLayout(center_widget)
-        center_layout.setContentsMargins(0, 0, 0, 0)
-        center_layout.setSpacing(2)
+    # =========== 预览工具栏 (左右通栏, §需求3) ===========
+    @staticmethod
+    def _vsep() -> QFrame:
+        """工具栏竖直分隔线 (主题中 QFrame[class="VSepLine"] 已定义配色)。"""
+        sep = QFrame()
+        sep.setFrameShape(QFrame.Shape.VLine)
+        sep.setFrameShadow(QFrame.Shadow.Sunken)
+        sep.setProperty("class", "VSepLine")
+        sep.setFixedHeight(20)
+        return sep
 
-        # 先创建画布: 工具栏的信号槽连接需要引用 self._canvas 上的方法 (§4)
-        self._canvas = SceneCanvasView(self)
+    def _tool_btn(self, text, slot, tooltip="", height=None):
+        """工具栏按钮 — 统一 QPushButton + CompactBtn, 与其它编辑器观感一致。
 
-        # Top toolbar row 1
-        top = QHBoxLayout()
-        top.addWidget(QLabel("场景:"))
+        height: 指定时固定按钮高度, 使其与下拉框等控件视觉上等高
+        (CompactBtn 的 min-height 偏小, 单用会呈"小按钮")。
+        """
+        btn = QPushButton(text, clicked=slot)
+        btn.setProperty("class", "CompactBtn")
+        if height:
+            btn.setFixedHeight(int(height))
+        if tooltip:
+            btn.setToolTip(tooltip)
+        return btn
+
+    def _build_preview_toolbar(self) -> QFrame:
+        """构建预览工具栏并返回, 由 _build_ui() 插入主布局顶部。
+
+        左右通栏而非局限在中间预览区内; 分两行:
+        第一行 场景/显示/播放/刷新/拖动/撤销/主题, 第二行 类型过滤+前景遮挡。
+        每行用 FlowLayout 而非 QHBoxLayout: 单行排不下时自动换行,
+        避免整行最小宽度顶成窗口最小宽度 (与 grp_editor 主工具栏做法一致)。
+        """
+        toolbar = QFrame()
+        # 不设 objectName="Toolbar": 该主题规则限高 36px, 换行后会被裁切
+        outer = QVBoxLayout(toolbar)
+        outer.setContentsMargins(4, 4, 4, 4)
+        outer.setSpacing(4)
+
+        # 先创建两个下拉框: 以其高度作为行高基准, 按钮与其视觉等高
         self._vis_scene_combo = EditorComboBox()
         self._vis_scene_combo.setMinimumWidth(200)
         self._vis_scene_combo.currentIndexChanged.connect(self._on_vis_combo_select)
-        top.addWidget(self._vis_scene_combo)
-        top.addSpacing(10)
-        top.addWidget(QLabel("显示:"))
         self._display_mode_combo = EditorComboBox()
         self._display_mode_combo.addItems(list(DISPLAY_MODES.keys()))
         self._display_mode_combo.currentIndexChanged.connect(self._canvas._on_display_mode_change)
-        top.addWidget(self._display_mode_combo)
-        top.addSpacing(10)
-        self._vis_play_btn = QPushButton("▶️ 播放全部")
-        self._vis_play_btn.setFixedWidth(80)
-        self._vis_play_btn.setProperty("class", "CompactBtn")
-        self._vis_play_btn.setToolTip("播放/暂停精灵动画")
-        self._vis_play_btn.clicked.connect(self._canvas._vis_toggle_anim)
-        top.addWidget(self._vis_play_btn)
-        self._vis_sel_anim_btn = QPushButton("⏯️ 播放选中")
-        self._vis_sel_anim_btn.setFixedWidth(80)
-        self._vis_sel_anim_btn.setProperty("class", "CompactBtn")
-        self._vis_sel_anim_btn.setToolTip("播放/暂停当前选中实体的动画")
-        self._vis_sel_anim_btn.clicked.connect(self._canvas._vis_toggle_sel_anim)
-        top.addWidget(self._vis_sel_anim_btn)
-        top.addSpacing(10)
-        btn_refresh = QPushButton("🔄 刷新")
-        btn_refresh.setFixedWidth(60)
-        btn_refresh.setProperty("class", "CompactBtn")
-        btn_refresh.clicked.connect(self._vis_load_scene)
-        top.addWidget(btn_refresh)
-        top.addSpacing(10)
+        ref_h = max(self._vis_scene_combo.sizeHint().height(),
+                    self._display_mode_combo.sizeHint().height())
+
+        # 工具栏所有按钮 — QSS polish 后按下拉框实际高度统一同步等高
+        self._preview_tb_btns = []
+
+        def _btn(text, slot, tooltip=""):
+            b = self._tool_btn(text, slot, tooltip, height=ref_h)
+            self._preview_tb_btns.append(b)
+            return b
+
+        # ── 第一行: 场景 / 显示 / 播放 / 刷新 / 拖动 / 撤销 / 主题 ──
+        row1 = QFrame()
+        tb = FlowLayout(row1, margin=0, spacing=6)
+        tb.addWidget(QLabel("场景:"))
+        tb.addWidget(self._vis_scene_combo)
+        tb.addWidget(self._vsep())
+        tb.addWidget(QLabel("显示:"))
+        tb.addWidget(self._display_mode_combo)
+        tb.addWidget(self._vsep())
+        self._vis_play_btn = _btn("▶️ 播放全部", self._canvas._vis_toggle_anim,
+                                  "播放/暂停精灵动画")
+        tb.addWidget(self._vis_play_btn)
+        self._vis_sel_anim_btn = _btn("⏯️ 播放选中", self._canvas._vis_toggle_sel_anim,
+                                      "播放/暂停当前选中实体的动画")
+        tb.addWidget(self._vis_sel_anim_btn)
+        tb.addWidget(_btn("🔄 刷新", self._vis_load_scene))
+        tb.addWidget(self._vsep())
         self._vis_edit_cb = QCheckBox("允许拖动")
         self._vis_edit_cb.stateChanged.connect(self._canvas._on_edit_mode_change)
-        top.addWidget(self._vis_edit_cb)
-        btn_undo = QPushButton("↩️ 撤销")
-        btn_undo.setFixedWidth(72)
-        btn_undo.setProperty("class", "CompactBtn")
-        btn_undo.setToolTip("撤销上一步操作 (Ctrl+Z): 移动 / 新增 / 复制 / 删除")
-        btn_undo.clicked.connect(self._undo)
-        top.addWidget(btn_undo)
-        top.addStretch()
-        btn_theme = QPushButton("🌓 切换主题")
-        btn_theme.clicked.connect(self._toggle_theme)
-        top.addWidget(btn_theme)
-        center_layout.addLayout(top)
+        tb.addWidget(self._vis_edit_cb)
+        tb.addWidget(_btn("↩️ 撤销", self._undo,
+                          "撤销上一步操作 (Ctrl+Z): 移动 / 新增 / 复制 / 删除"))
+        tb.addWidget(self._vsep())
+        tb.addWidget(_btn("🌓 切换主题", self._toggle_theme))
+        outer.addWidget(row1)
 
-        # Top toolbar row 2: type filters
-        top2 = QHBoxLayout()
-        top2.addWidget(QLabel("类型:"))
+        # ── 第二行: 类型过滤 + 前景遮挡 ──
+        row2 = QFrame()
+        tb2 = FlowLayout(row2, margin=0, spacing=6)
+        tb2.addWidget(QLabel("类型:"))
         self._type_filter_cbs = {}
         for tval in [5, 10, 15, 16, 20, 110, 200]:
             cb = QCheckBox(ENTITY_TYPES.get(tval, f"T{tval}"))
             cb.setChecked(True)
             cb.stateChanged.connect(self._canvas._vis_redraw)
             self._type_filter_cbs[tval] = cb
-            top2.addWidget(cb)
-        top2.addSpacing(12)
+            tb2.addWidget(cb)
         # 前景遮挡开关: L1 前景遮挡深度逐像素遮挡精灵 (游戏真实"前景层"渲染, 默认开)
         self._vis_occlusion_cb = QCheckBox("前景遮挡")
         self._vis_occlusion_cb.setChecked(True)
@@ -1625,11 +1662,38 @@ class MatEditorApp(QMainWindow):
             "按 GRP 场景 Frame B Layer1 前景遮挡深度逐像素遮挡实体精灵\n"
             "(逆向 sub_406E50/sub_459F78: 精灵在前景景物如树冠/屋檐后被遮挡)")
         self._vis_occlusion_cb.stateChanged.connect(self._canvas._vis_redraw)
-        top2.addWidget(self._vis_occlusion_cb)
-        top2.addStretch()
-        center_layout.addLayout(top2)
+        tb2.addWidget(self._vis_occlusion_cb)
+        tb2.addWidget(self._vsep())
+        outer.addWidget(row2)
+        return toolbar
 
-        # Map canvas — SceneCanvasView 已在方法顶部创建 (§4), 此处仅设置背景并加入布局
+    def _sync_toolbar_heights(self):
+        """预览工具栏按钮与下拉框视觉等高同步。
+
+        构建时 QSS 尚未 polish, sizeHint 偏小; 需在控件可见 (或主题切换)
+        之后按下拉框实际高度统一设定按钮高度。
+        """
+        if not hasattr(self, '_preview_tb_btns'):
+            return
+        h = max(self._vis_scene_combo.sizeHint().height(),
+                self._display_mode_combo.sizeHint().height())
+        for btn in self._preview_tb_btns:
+            btn.setFixedHeight(h)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        # 首次显示后 QSS 已 polish, 延迟到事件循环再同步高度
+        QTimer.singleShot(0, self._sync_toolbar_heights)
+
+    # =========== 中间面板: 地图预览 ===========
+    def _build_center_panel(self):
+        center_widget = QWidget()
+        center_layout = QVBoxLayout(center_widget)
+        center_layout.setContentsMargins(0, 0, 0, 0)
+        center_layout.setSpacing(2)
+
+        # 画布 (原预览工具栏已上移为左右通栏, §需求3)
+        self._canvas = SceneCanvasView(self)
         self._canvas.update_vis_background()
         center_layout.addWidget(self._canvas, 1)
         center_widget.setMinimumWidth(400)

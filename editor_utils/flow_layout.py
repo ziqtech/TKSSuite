@@ -61,18 +61,30 @@ class FlowLayout(QLayout):
         m = self.contentsMargins()
         effective = rect.adjusted(m.left(), m.top(), -m.right(), 0)
         x = effective.x()
-        y = effective.y()
+        row_top = effective.y()
         row_h = 0
+        rows = []   # [(row_top, row_h, [(item, size, x), ...])]
+        row = []
         for item in self._items:
             sz = item.sizeHint()
             nx = x + sz.width()
             if nx - effective.x() > effective.width() and row_h > 0:
+                rows.append((row_top, row_h, row))
                 x = effective.x()
-                y += row_h + self.spacing()
+                row_top += row_h + self.spacing()
                 row_h = 0
+                row = []
                 nx = x + sz.width()
-            if not test_only:
-                item.setGeometry(QRect(QPoint(x, y), sz))
+            row.append((item, sz, x))
             x = nx + self.spacing()
             row_h = max(row_h, sz.height())
-        return y + row_h - rect.y() + m.bottom()
+        if row:
+            rows.append((row_top, row_h, row))
+        if not test_only:
+            # 行内垂直居中: QLabel/QCheckBox 等矮控件与按钮/下拉框同行时
+            # 不再顶对齐 (否则文字视觉偏上)。
+            for top, height, row_items in rows:
+                for item, sz, ix in row_items:
+                    iy = top + (height - sz.height()) // 2
+                    item.setGeometry(QRect(QPoint(ix, iy), sz))
+        return row_top + row_h - rect.y() + m.bottom()

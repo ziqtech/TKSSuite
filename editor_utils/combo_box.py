@@ -5,17 +5,23 @@
 * 在滚动面板中悬停滚轮不会误切换选项；
 * 使用 Qt 原生 ``QMenu`` 弹层，避免 ``QComboBox`` 默认视图在不同平台
   下出现额外矩形边框、错位或顶层窗口生命周期问题；
-* 菜单始终从控件下沿弹出，并自动限制在当前屏幕可用区域内。
+* 菜单始终从控件下沿弹出，并自动限制在当前屏幕可用区域内；
+* 条目超过上限时改用 :class:`EditorComboListPopup` 可滚动列表弹层
+  (真实滚动条), 而非无限增高的菜单。
 
-菜单的具体颜色由 editor_themes 下四个主题 QSS（gpt-dark/gpt-light/
-classic-dark/classic-light）中的 ``QMenu#EditorComboMenu`` 统一控制。
+弹层的具体颜色由 editor_themes 下四个主题 QSS（gpt-dark/gpt-light/
+classic-dark/classic-light）中的 ``QMenu#EditorComboMenu`` /
+``QWidget#EditorComboPopup`` / ``QListWidget#EditorComboList`` 统一控制。
 """
 
 import sys
 
-from PySide6.QtCore import QPoint, QRectF, Qt
+from PySide6.QtCore import QPoint, QRectF, Qt, Signal
 from PySide6.QtGui import QAction, QBitmap, QPainter
-from PySide6.QtWidgets import QApplication, QComboBox, QMenu
+from PySide6.QtWidgets import (
+    QAbstractItemView, QApplication, QComboBox, QFrame, QListWidget,
+    QListWidgetItem, QMenu, QVBoxLayout, QWidget,
+)
 
 
 class RoundedComboMenu(QMenu):
@@ -90,14 +96,119 @@ class RoundedComboMenu(QMenu):
         self._apply_window_region()
 
 
+class EditorComboListPopup(QWidget):
+    """可滚动下拉弹层 — 条目超过上限时的列表弹窗, 带真实垂直滚动条。
+
+    QMenu 的 ``setMaximumHeight`` 并不会启用其内部滚动, 超出条目会被
+    直接裁掉且不可达; 且条目极多时 QMenu 内部按屏幕高度截断的 sizeHint
+    会干扰弹出位置 (菜单被翻到屏幕顶部)。因此条目较多时改用本组件:
+    ``Qt.Popup`` 顶层窗口 (点击外部/Escape 自动关闭) + QListWidget 滚动。
+    观感由主题 QSS 的 ``QWidget#EditorComboPopup`` / ``QListWidget#EditorComboList``
+    控制, 与 ``QMenu#EditorComboMenu`` 弹层配色一致。
+    """
+
+    #: 选中某条目时发出 (参数为该条目的 data)
+    selected = Signal(int)
+
+    OBJECT_NAME = "EditorComboPopup"
+    LIST_OBJECT_NAME = "EditorComboList"
+
+    def __init__(self, parent=None, max_visible=10):
+        super().__init__(parent, Qt.Popup)
+        self.setAttribute(Qt.WA_StyledBackground, True)
+        self.setAttribute(Qt.WA_DeleteOnClose, True)
+        self.setObjectName(self.OBJECT_NAME)
+        self._max_visible = max(1, int(max_visible))
+
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(4, 4, 4, 4)
+        lay.setSpacing(0)
+        self.list = QListWidget(self)
+        self.list.setObjectName(self.LIST_OBJECT_NAME)
+        self.list.setFrameShape(QFrame.NoFrame)
+        self.list.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.list.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.list.itemClicked.connect(self._choose)
+        self.list.itemActivated.connect(self._choose)
+        lay.addWidget(self.list)
+
+    def set_items(self, items, current=None):
+        """填充条目。
+
+        items: [(icon, text, data, enabled), ...] 的可迭代对象;
+        current: 初始选中条目的 data (无则不选中)。
+        """
+        self.list.clear()
+        cur_row = -1
+        for row, (icon, text, data, enabled) in enumerate(items):
+            item = QListWidgetItem(icon, text)
+            item.setData(Qt.UserRole, data)
+            if not enabled:
+                item.setFlags(Qt.NoItemFlags)
+            self.list.addItem(item)
+            if current is not None and data == current:
+                cur_row = row
+        if cur_row >= 0:
+            self.list.setCurrentRow(cur_row)
+            # 当前项若在可见区之外, 打开时滚动到可见
+            self.list.scrollToItem(
+                self.list.item(cur_row), QAbstractItemView.EnsureVisible)
+
+    def _choose(self, item):
+        self.selected.emit(int(item.data(Qt.UserRole)))
+        self.close()
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key_Escape:
+            self.close()
+            return
+        super().keyPressEvent(event)
+
+    def popup_below(self, anchor, width):
+        """在 anchor 控件正下方弹出; 下方空间不足时翻到上方, 并钳制在屏幕内。"""
+        row_h = self.list.sizeHintForRow(0)
+        if row_h <= 0:
+            row_h = 24
+        rows = min(self.list.count(), self._max_visible)
+        self.list.setFixedHeight(row_h * rows)
+        # 总高 = 列表高 + 上下 margins (4×2) + QSS 边框 (1×2)
+        height = row_h * rows + 10
+
+        below = anchor.mapToGlobal(QPoint(0, anchor.height()))
+        screen = QApplication.screenAt(below) or QApplication.primaryScreen()
+        x, y = below.x(), below.y()
+        if screen is not None:
+            available = screen.availableGeometry()
+            width = min(width, max(1, available.width()))
+            x = max(available.left(), min(x, available.right() - width + 1))
+            if y + height > available.bottom() + 1:
+                y = anchor.mapToGlobal(QPoint(0, 0)).y() - height
+            y = max(available.top(), y)
+        else:
+            width = max(1, width)
+
+        self.setFixedSize(width, height)
+        self.move(x, y)
+        self.show()
+        # Qt.Popup 抓取键盘后把焦点交给列表, 支持方向键导航与 Enter 选择
+        self.list.setFocus()
+
+
 class EditorComboBox(QComboBox):
     """编辑器通用下拉框。
 
     组件保留 ``QComboBox`` 的数据模型、信号和编辑接口，仅替换弹出层；
     因此可直接用于普通表单、滚动页、QDialog 以及 item delegate。
+
+    条目数不超过 :attr:`MAX_VISIBLE_ITEMS` 时使用 ``QMenu`` 弹层
+    (带选中勾选标记); 超过时改用 :class:`EditorComboListPopup`
+    可滚动列表弹层 (真实滚动条, 最多直接显示 MAX_VISIBLE_ITEMS 条)。
     """
 
     MENU_OBJECT_NAME = "EditorComboMenu"
+
+    #: 弹出弹层最多直接可见的条目数, 超出后出现滚动条
+    MAX_VISIBLE_ITEMS = 10
 
     def wheelEvent(self, event):
         """将滚轮交给外层滚动容器，避免悬停时误修改当前值。"""
@@ -122,7 +233,26 @@ class EditorComboBox(QComboBox):
     def showPopup(self):
         if self.count() == 0:
             return
+        if self.count() > self.MAX_VISIBLE_ITEMS:
+            self._show_scrollable_popup()
+            return
+        self._show_menu_popup()
 
+    def _show_scrollable_popup(self):
+        """条目较多时弹出可滚动列表 (真实滚动条)。"""
+        popup = EditorComboListPopup(self, self.MAX_VISIBLE_ITEMS)
+        items = [
+            (self.itemIcon(i), self.itemText(i), i, self._item_enabled(i))
+            for i in range(self.count())
+        ]
+        popup.set_items(items, current=self.currentIndex())
+        popup.selected.connect(self.setCurrentIndex)
+        # 持有引用防止 Python 侧被回收 (关闭后由 WA_DeleteOnClose 释放)
+        self._scroll_popup = popup
+        popup.popup_below(self, self._menu_width())
+
+    def _show_menu_popup(self):
+        """条目较少时弹出 QMenu (带勾选标记, 同最初形态)。"""
         menu = RoundedComboMenu(self)
         menu.setObjectName(self.MENU_OBJECT_NAME)
         menu.setToolTipsVisible(False)

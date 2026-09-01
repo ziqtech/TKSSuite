@@ -9,7 +9,7 @@ from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (QFileDialog, QFrame, QHBoxLayout, QLabel,
                                QLineEdit, QMenu, QMessageBox,
                                QPushButton, QWidget, QSpinBox)
-from editor_utils.combo_box import EditorComboBox
+from editor_utils.combo_box import EditorComboBox, EditorComboListPopup
 
 
 # ── 颜色常量 (与 editor_themes 一致) ──
