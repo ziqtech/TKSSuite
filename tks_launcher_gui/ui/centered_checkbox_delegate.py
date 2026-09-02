@@ -37,17 +37,25 @@ class CenteredCheckBoxDelegate(QStyledItemDelegate):
         view_option = QStyleOptionViewItem(option)
         self.initStyleOption(view_option, index)
 
-        # 先让标准委托绘制单元格背景、选中态和焦点态，但不绘制默认的
-        # 左对齐复选框；指示器稍后用表格样式手动居中绘制。
+        # 绘制单元格背景、选中态和焦点态。注意不能用 super().paint():
+        # QStyledItemDelegate::paint 会在 C++ 内部重新 initStyleOption, 把已移除的
+        # HasCheckIndicator 加回去, 默认复选框照样被绘制 (QSS 下还会叠出双框),
+        # 与下方手动居中绘制的指示器形成叠加。这里直接让样式绘制已清除
+        # 复选框标志的单元格选项, 指示器稍后手动居中绘制。
         state = index.data(Qt.ItemDataRole.CheckStateRole)
         view_option.text = ""
         view_option.features &= ~QStyleOptionViewItem.ViewItemFeature.HasCheckIndicator
-        super().paint(painter, view_option, index)
+        style = view_option.widget.style() if view_option.widget else QApplication.style()
+        style.drawControl(
+            QStyle.ControlElement.CE_ItemViewItem,
+            view_option,
+            painter,
+            view_option.widget,
+        )
 
         if state is None:
             return
 
-        style = view_option.widget.style() if view_option.widget else QApplication.style()
         check_option = QStyleOptionButton()
         check_option.palette = view_option.palette
         check_option.rect = self._indicator_rect(style, option.rect, check_option,
