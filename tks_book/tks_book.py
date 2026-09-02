@@ -13,10 +13,10 @@ import os
 import sys
 
 from PySide6.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
+    QApplication, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QFileDialog, QMessageBox, QPushButton,
 )
-from PySide6.QtGui import QIcon, QShortcut, QKeySequence
+from PySide6.QtGui import QShortcut, QKeySequence
 from PySide6.QtCore import Qt
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
@@ -24,12 +24,12 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 from editor_utils import theme_manager
 from editor_utils.theme_switcher import (
-    apply_theme_to_window, create_theme_menu, toggle_theme_in_family,
+    apply_theme_to_window, toggle_theme_in_family,
 )
+from editor_utils.app_shell import EditorMainWindow, run_editor
 from editor_utils.tab_widget import EditorTabWidget
-from editor_utils.ui_helpers import themed_messagebox, update_path_labels
-from editor_utils.version import format_title, format_about_header
-from editor_utils.window_theme import apply_titlebar_theme
+from editor_utils.ui_helpers import update_path_labels
+from editor_utils.version import format_title
 from editor_utils.shared_state import pick_tks_directory
 
 from book_loader import GameData
@@ -42,27 +42,32 @@ from tab_map import MapTab
 from tab_special import SpecialItemTab
 
 
-class TksBookViewer(QMainWindow):
-    def __init__(self):
-        super().__init__()
-        self.setObjectName("EditorWindow")
-        self.setWindowTitle(format_title("tks_book"))
-        self.resize(1320, 820)
-        self.setMinimumSize(1000, 640)
+class TksBookViewer(EditorMainWindow):
+    EDITOR_KEY = "tks_book"
+    DEFAULT_SIZE = (1320, 820)
+    MIN_SIZE = (1000, 640)
+    ABOUT_TITLE = "关于查看器"
 
-        ico = os.path.join(os.path.dirname(__file__), 'TKS.ico')
-        if os.path.exists(ico):
-            self.setWindowIcon(QIcon(ico))
+    HELP_TEXT = (
+        "TKS 游戏图鉴查看器 (只读, 不修改任何游戏文件)\n"
+        "只读浏览 WarPC/TKSkill/TKItem/TKT/SC.GRP 数据, 不写入任何文件。\n\n"
+        "1. 文件 → 加载 TKS 目录 (Ctrl+O), 选择游戏根目录\n"
+        "2. 通过顶部标签页切换查看内容:\n"
+        "   · 图鉴 — 游戏界面 1:1 复刻 (状态/技能/物品/装备/队伍/系统页)\n"
+        "   · 人物 — 头像/核心属性/装备/技能/可学习技能树/历史\n"
+        "   · 技能 — 名称/说明文本/有值属性/可学习角色\n"
+        "   · 物品 — 图标/说明文本/有值属性/获得途径\n"
+        "   · 状态 — 异常状态图标/名称/功能描述/来源与解除途径\n"
+        "   · 地图 — 场景列表 + 背景预览 (首次切换时加载 SC.GRP)\n"
+        "   · 特殊物品 — TKD 脚本 Attribute(-1,11,N) 收集度来源统计\n"
+        "3. 左侧列表上方输入关键字可即时过滤\n"
+        "4. F5 在当前主题族内快速切换深色/浅色")
 
-        # 主题初始化：跟随持久化选择，无存档时按系统深浅色取现代主题
-        self._theme_id = theme_manager.load_initial_theme()
-        self.is_dark_theme = theme_manager.is_dark(self._theme_id)
-        apply_titlebar_theme(self, self._theme_id)
-
+    def _init_data(self):
         self.data = GameData()
         self._loaded = False
 
-        self._build_ui()
+    def _after_build(self):
         self._apply_theme()
         self._sync_corner_height()
         self._center_window()
@@ -104,7 +109,7 @@ class TksBookViewer(QMainWindow):
         fm.addAction("退出", self.close)
 
         vm = mb.addMenu("视图(&V)")
-        vm.addMenu(create_theme_menu(self))
+        self.add_theme_submenu(vm)
         vm.addAction("快速切换主题(&T)\tF5", self._toggle_theme)
 
         hm = mb.addMenu("帮助(&H)")
@@ -254,41 +259,9 @@ class TksBookViewer(QMainWindow):
 
     # ── 帮助 ──
 
-    def _show_help(self):
-        themed_messagebox(self, QMessageBox.Information, "帮助说明",
-            "TKS 游戏图鉴查看器 (只读, 不修改任何游戏文件)\n"
-            "只读浏览 WarPC/TKSkill/TKItem/TKT/SC.GRP 数据, 不写入任何文件。\n\n"
-            "1. 文件 → 加载 TKS 目录 (Ctrl+O), 选择游戏根目录\n"
-            "2. 通过顶部标签页切换查看内容:\n"
-            "   · 图鉴 — 游戏界面 1:1 复刻 (状态/技能/物品/装备/队伍/系统页)\n"
-            "   · 人物 — 头像/核心属性/装备/技能/可学习技能树/历史\n"
-            "   · 技能 — 名称/说明文本/有值属性/可学习角色\n"
-            "   · 物品 — 图标/说明文本/有值属性/获得途径\n"
-            "   · 状态 — 异常状态图标/名称/功能描述/来源与解除途径\n"
-            "   · 地图 — 场景列表 + 背景预览 (首次切换时加载 SC.GRP)\n"
-            "   · 特殊物品 — TKD 脚本 Attribute(-1,11,N) 收集度来源统计\n"
-            "3. 左侧列表上方输入关键字可即时过滤\n"
-            "4. F5 在当前主题族内快速切换深色/浅色")
-
-    def _show_about(self):
-        themed_messagebox(self, QMessageBox.Information, "关于查看器",
-            format_about_header("tks_book"))
-
 
 def main():
-    from editor_utils.app_init import ensure_single_instance
-    ensure_single_instance()
-    from editor_utils.app_init import install_translator, setup_app_icon
-    from editor_utils.ui_helpers import install_dialog_theme_filter
-    app = QApplication(sys.argv)
-    install_dialog_theme_filter(app)
-    app.setStyle("Fusion")
-    app.setApplicationName("TKS Book")
-    _t = install_translator(app)
-    setup_app_icon(app, os.path.dirname(__file__))
-    viewer = TksBookViewer()
-    viewer.show()
-    sys.exit(app.exec())
+    run_editor(TksBookViewer, "TKS Book")
 
 
 if __name__ == '__main__':

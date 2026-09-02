@@ -29,7 +29,7 @@ import time
 from PySide6.QtWidgets import (
     QAbstractItemView, QApplication, QCheckBox, QDialog,
     QFileDialog, QGridLayout, QGroupBox, QHBoxLayout, QHeaderView,
-    QInputDialog, QLabel, QLineEdit, QMainWindow, QMessageBox,
+    QInputDialog, QLabel, QLineEdit, QMessageBox,
     QPushButton, QScrollArea, QSplitter, QTableWidget,
     QTableWidgetItem, QTextEdit, QVBoxLayout, QWidget,
 )
@@ -47,9 +47,7 @@ except Exception:
     zhconv = None
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-from editor_utils.app_init import (
-    ensure_single_instance, install_translator, setup_app_icon,
-)
+from editor_utils.app_shell import EditorMainWindow, run_editor
 from editor_utils.dock_components import DockHeader
 from editor_utils.adaptive_table import AdaptiveTableWidget
 from editor_utils.jvg_loader import get_sprite_pixmap, load_mu_sprites
@@ -58,16 +56,13 @@ from editor_utils.lzss import (
     lzss_compress_save, lzss_decompress_dat, lzss_decompress_save,
 )
 from editor_utils.picker_dialogs import ItemPickerDialog
-from editor_utils import theme_manager
 from editor_utils.theme_switcher import (
-    apply_theme_to_window, create_theme_menu, toggle_theme_in_family,
+    apply_theme_to_window, toggle_theme_in_family,
 )
 from editor_utils.tkt_loader import load_tkt_simple
 from editor_utils.ui_helpers import (
-    confirm_close, install_dialog_theme_filter, make_fake_input,
-    update_path_labels, EditorComboBox,
+    confirm_close, make_fake_input, update_path_labels, EditorComboBox,
 )
-from editor_utils.version import format_title, format_about_header
 from editor_utils.tab_widget import EditorTabWidget
 
 
@@ -512,21 +507,25 @@ def warpc_get(seg3, char_idx, byte_offset):
 # GUI 主窗口
 # ============================================================
 
-class SaveEditorApp(QMainWindow):
-    def __init__(self):
-        super().__init__()
-        self.setObjectName("EditorWindow")
-        self.setWindowTitle(format_title("save_editor"))
-        self.resize(1400, 880)
-        self.setMinimumSize(1100, 700)
+class SaveEditorApp(EditorMainWindow):
+    EDITOR_KEY = "save_editor"
+    DEFAULT_SIZE = (1400, 880)
+    MIN_SIZE = (1100, 700)
+    THEME_MENU_TITLE = "主题(&M)"  # 键位 &T 被工具菜单占用
 
-        ico_path = os.path.join(os.path.dirname(__file__), 'TKS.ico')
-        if os.path.exists(ico_path):
-            self.setWindowIcon(QIcon(ico_path))
+    HELP_TEXT = (
+        "功能: 编辑《三国群侠传》游戏存档\n"
+        "存档采用 LZSS 压缩格式, 包含以下数据:\n"
+        "  · 场景实体表 (TKMat)\n"
+        "  · 全局游戏变量\n"
+        "  · 背包物品数据\n"
+        "  · 战斗角色信息\n\n"
+        "特性:\n"
+        "  · 自动解压/压缩存档\n"
+        "  · 可视化编辑存档数据\n"
+        "  · 深色/浅色主题切换")
 
-        # 主题初始化：跟随持久化选择，无存档时按系统深浅色取现代主题
-        apply_theme_to_window(self, theme_manager.load_initial_theme(), persist=False)
-
+    def _init_data(self):
         # 数据状态
         self.save_dir = None
         self.slot = 1
@@ -546,8 +545,8 @@ class SaveEditorApp(QMainWindow):
         self._mu_sprites = []
         self._icon_pixmaps = {}
 
-        self._build_ui()
-        self._apply_theme()
+    def _after_build(self):
+        self._update_paths()
 
     # ── 主题 ──
     def _apply_theme(self):
@@ -575,10 +574,7 @@ class SaveEditorApp(QMainWindow):
         fm.addAction("🚪 退出", self.close)
         tm = mb.addMenu("工具(&T)")
         tm.addAction("🔄 刷新数据显示", self._refresh_all)
-        mb.addMenu(create_theme_menu(self, "主题(&M)"))
-        hm = mb.addMenu("帮助(&H)")
-        hm.addAction("帮助说明", self._show_help)
-        hm.addAction("关于编辑器", self._show_about)
+        self.add_standard_menus(mb)
 
         # 工具栏
         toolbar = QHBoxLayout()
@@ -1928,25 +1924,6 @@ class SaveEditorApp(QMainWindow):
             b = text.encode('big5', errors='replace')
         return b[:size - 1].ljust(size, b'\x00')[:size]
 
-    # 逆向参考: sub_410ED4(SaveTKMat), sub_41103C(LoadTKMat), sub_41CE10(SaveIndexWrite),
-    # sub_40EBD4(事件脚本处理器), sub_40CB08/40CB4C(标志设置/累加)
-    def _show_about(self):
-        QMessageBox.about(self, "关于编辑器",
-            format_about_header('save_editor'))
-
-    def _show_help(self):
-        QMessageBox.about(self, "帮助说明",
-            "功能: 编辑《三国群侠传》游戏存档\n"
-            "存档采用 LZSS 压缩格式, 包含以下数据:\n"
-            "  · 场景实体表 (TKMat)\n"
-            "  · 全局游戏变量\n"
-            "  · 背包物品数据\n"
-            "  · 战斗角色信息\n\n"
-            "特性:\n"
-            "  · 自动解压/压缩存档\n"
-            "  · 可视化编辑存档数据\n"
-            "  · 深色/浅色主题切换")
-
     def closeEvent(self, event):
         if not confirm_close(self, self._dirty):
             event.ignore()
@@ -1959,15 +1936,7 @@ class SaveEditorApp(QMainWindow):
 # ============================================================
 
 def main():
-    ensure_single_instance()
-    app = QApplication(sys.argv)
-    install_dialog_theme_filter(app)
-    app.setStyle("Fusion")
-    _t = install_translator(app)
-    setup_app_icon(app, os.path.dirname(__file__))
-    editor = SaveEditorApp()
-    editor.show()
-    sys.exit(app.exec())
+    run_editor(SaveEditorApp)
 
 
 if __name__ == '__main__':

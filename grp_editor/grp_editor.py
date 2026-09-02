@@ -33,7 +33,7 @@ from pathlib import Path
 from typing import List, Optional, Tuple
 
 from PySide6.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
+    QApplication, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QPushButton, QFileDialog, QMessageBox, QFrame, QSplitter,
     QGraphicsView, QGraphicsScene, QGraphicsPixmapItem, QListWidget,
     QListWidgetItem, QTextEdit, QStatusBar, QMenu, QMenuBar,
@@ -42,7 +42,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt, QTimer, QPointF, QRectF, Signal, QTranslator
 from PySide6.QtGui import (
-    QPixmap, QImage, QColor, QIcon, QPainter, QWheelEvent, QPen,
+    QPixmap, QImage, QColor, QPainter, QWheelEvent, QPen,
     QBrush, QKeySequence, QAction, QFont
 )
 
@@ -73,12 +73,9 @@ from editor_utils.mod_exporter import (
     load_grp_raw_sections, pack_tksmod, read_tksmod, safe_mod_filename,
 )
 from editor_utils.rgb565 import rgb565_to_rgba, rgba_to_rgb565
-from editor_utils import theme_manager
-from editor_utils.theme_switcher import (
-    apply_theme_to_window, create_theme_menu, toggle_theme_in_family,
-)
+from editor_utils.app_shell import EditorMainWindow, run_editor
 from editor_utils.ui_helpers import themed_messagebox
-from editor_utils.version import format_title, format_about_header
+from editor_utils.version import format_title
 
 # ── 本地别名: 保持向后兼容 ──
 def lzss_decompress(data, target_size):
@@ -507,20 +504,28 @@ class GRPGraphicsView(QGraphicsView):
 # 主窗口
 # ═══════════════════════════════════════════════════════════
 
-class GRPEditor(QMainWindow):
+class GRPEditor(EditorMainWindow):
+    EDITOR_KEY = "grp_editor"
+    DEFAULT_SIZE = (1600, 900)
+
+    HELP_TEXT = (
+        "功能: 浏览和编辑游戏资源文件\n\n"
+        "资源类型:\n"
+        "  · 图像资源 - 支持前景层和地形层编辑\n"
+        "    前景层: 遮挡深度 (值越大遮挡越高)\n"
+        "    地形层: 碰撞类型 (0=通行, 1以上=不同障碍类型)\n"
+        "  · 音频资源 - WAV 格式音效 (SSF/SWS/SMG)\n"
+        "  · 数据资源 - 索引和元数据 (只读)\n\n"
+        "伪彩编辑功能:\n"
+        "  · 导出伪彩 PNG 进行图像编辑\n"
+        "  · 支持图层色板导出\n"
+        "  · 导入时自动校正颜色匹配")
+
     def __init__(self, filepath: Optional[str] = None):
+        self._initial_path = filepath
         super().__init__()
-        self.setObjectName("EditorWindow")
-        self.setWindowTitle(format_title("grp_editor"))
-        self.resize(1600, 900)
 
-        ico_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'TKS.ico')
-        if os.path.exists(ico_path):
-            self.setWindowIcon(QIcon(ico_path))
-
-        # 主题初始化：跟随持久化选择，无存档时按系统深浅色取现代主题
-        apply_theme_to_window(self, theme_manager.load_initial_theme(), persist=False)
-
+    def _init_data(self):
         # 状态
         self.grp: Optional[GRPFile] = None
         self._sel_idx = -1
@@ -533,18 +538,17 @@ class GRPEditor(QMainWindow):
         self._wave_start_time = 0.0
         self._wave_timer: Optional[QTimer] = None
 
+    def _build_ui(self):
         # 构建 UI (工具栏由 _setup_ui 置入中央部件)
         self._setup_menu()
         self._setup_ui()
         self._setup_statusbar()
 
-        if filepath and os.path.exists(filepath):
-            self._open(filepath)
+    def _after_build(self):
+        if self._initial_path and os.path.exists(self._initial_path):
+            self._open(self._initial_path)
         else:
             self._new_empty()
-
-    def _apply_theme(self):
-        apply_theme_to_window(self, self._theme_id, persist=False)
 
     # ── Menu ──────────────────────────────────────────────
     def _setup_menu(self):
@@ -573,15 +577,12 @@ class GRPEditor(QMainWindow):
         vm.addAction("放大 (+50%)", lambda: self._zoom_step(1))
         vm.addAction("缩小 (-50%)", lambda: self._zoom_step(-1))
 
-        mb.addMenu(create_theme_menu(self))
+        self.add_theme_submenu(mb)
 
         hm = mb.addMenu("帮助(&H)")
         hm.addAction("伪彩工作流说明", self._show_pseudo_help)
         hm.addAction("帮助说明", self._show_help)
         hm.addAction("关于编辑器", self._show_about)
-
-    def _toggle_theme(self):
-        toggle_theme_in_family(self)
 
     # ── Toolbar ───────────────────────────────────────────
     @staticmethod
@@ -2191,41 +2192,12 @@ class GRPEditor(QMainWindow):
             "  0 = 类型0, 1~N = 各类地形障碍")
 
     # 逆向参考: sub_451600, sub_411308, sub_410E18, sub_452B14
-    def _show_help(self):
-        themed_messagebox(self, QMessageBox.Information, "帮助说明",
-            "功能: 浏览和编辑游戏资源文件\n\n"
-            "资源类型:\n"
-            "  · 图像资源 - 支持前景层和地形层编辑\n"
-            "    前景层: 遮挡深度 (值越大遮挡越高)\n"
-            "    地形层: 碰撞类型 (0=通行, 1以上=不同障碍类型)\n"
-            "  · 音频资源 - WAV 格式音效 (SSF/SWS/SMG)\n"
-            "  · 数据资源 - 索引和元数据 (只读)\n\n"
-            "伪彩编辑功能:\n"
-            "  · 导出伪彩 PNG 进行图像编辑\n"
-            "  · 支持图层色板导出\n"
-            "  · 导入时自动校正颜色匹配")
-
-    def _show_about(self):
-        themed_messagebox(self, QMessageBox.Information, "关于编辑器",
-            format_about_header('grp_editor'))
 
 
 # ═══════════════════════════════════════════════════════════
 
 def main():
-    from editor_utils.app_init import ensure_single_instance
-    ensure_single_instance()
-    from editor_utils.app_init import install_translator, setup_app_icon
-    from editor_utils.ui_helpers import install_dialog_theme_filter
-    app = QApplication(sys.argv)
-    install_dialog_theme_filter(app)
-    app.setStyle("Fusion")  # 使用 Fusion 样式，避免 Windows 原生样式覆盖 QSS
-    _t = install_translator(app)
-    setup_app_icon(app, os.path.dirname(__file__))
-    fp = sys.argv[1] if len(sys.argv) > 1 else None
-    editor = GRPEditor(fp)
-    editor.show()
-    sys.exit(app.exec())
+    run_editor(GRPEditor, filepath=sys.argv[1] if len(sys.argv) > 1 else None)
 
 if __name__ == "__main__":
     if not HAS_PIL:

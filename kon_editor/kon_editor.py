@@ -12,7 +12,7 @@ import os
 import struct
 import sys
 from PySide6.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
+    QApplication, QWidget, QVBoxLayout, QHBoxLayout,
     QSplitter, QTableWidget, QTableWidgetItem, QHeaderView,
     QLineEdit, QCheckBox, QPushButton, QLabel,
     QScrollArea, QGroupBox, QDialog, QFileDialog, QMessageBox, QTextEdit,
@@ -25,10 +25,11 @@ from PySide6.QtCore import Qt, QTranslator
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from editor_utils import theme_manager
 from editor_utils.theme_switcher import (
-    apply_theme_to_window, create_theme_menu, toggle_theme_in_family,
+    apply_theme_to_window, toggle_theme_in_family,
 )
+from editor_utils.app_shell import EditorMainWindow, run_editor
 from editor_utils.dock_components import DockHeader
-from editor_utils.ui_helpers import make_fake_input, update_path_labels, confirm_close, themed_messagebox, EditorComboBox
+from editor_utils.ui_helpers import make_fake_input, update_path_labels, confirm_close, EditorComboBox
 from editor_utils.lzss import lzss_decompress_dat, lzss_compress_dat
 from editor_utils.shared_state import pick_tks_directory
 from editor_utils.tkt_loader import load_tkt_simple
@@ -40,8 +41,6 @@ from editor_utils.mod_exporter import (
     load_reference_dat_fields,
     get_tksmod_info, import_tksmod_records, ModImportPreviewDialog, ModExportPreviewDialog,
 )
-from editor_utils.version import format_title, format_about_header
-from editor_utils.window_theme import apply_titlebar_theme
 from editor_utils.search_utils import search_match
 from editor_utils.kon_name_resolver import KonNameResolver
 from editor_utils.adaptive_table import AdaptiveTableWidget
@@ -275,21 +274,24 @@ class FieldRefDialog(QDialog):
 # 主编辑器窗口
 # ============================================================
 
-class KonEditor(QMainWindow):
-    def __init__(self):
-        super().__init__()
-        self.setObjectName("EditorWindow")
-        self.setWindowTitle(format_title("kon_editor"))
-        self.resize(1600, 900)
-        self.setMinimumSize(1050, 650)
+class KonEditor(EditorMainWindow):
+    EDITOR_KEY = "kon_editor"
+    DEFAULT_SIZE = (1600, 900)
+    MIN_SIZE = (1050, 650)
 
-        ico = os.path.join(os.path.dirname(__file__), 'TKS.ico')
-        if os.path.exists(ico): self.setWindowIcon(QIcon(ico))
+    HELP_TEXT = (
+        "功能: 编辑《三国群侠传》技能动画数据\n"
+        "数据: 每条 20 个字段 × 16位整数\n"
+        "      原版 650 条 × 40 字节 = 26,000 字节\n"
+        "      新建条目在列表末尾新增空记录；>650 为扩展记录，需扩容补丁\n\n"
+        "特性:\n"
+        "  · Godot 风格深/浅色主题切换\n"
+        "  · 技能动画参数可视化编辑\n"
+        "  · 伤害字段编码规则说明\n"
+        "  · 每行右键: 复制 / 粘贴 / 清除；扩展记录另有删除\n"
+        "  · 原版记录只能清除；扩展记录可清除或删除")
 
-        # 主题初始化：跟随持久化选择，无存档时按系统深浅色取现代主题
-        self._theme_id = theme_manager.load_initial_theme()
-        self.is_dark_theme = theme_manager.is_dark(self._theme_id)
-        apply_titlebar_theme(self, self._theme_id)
+    def _init_data(self):
         self.kon_path = None
         self.tkt_path = None
         self.records = []
@@ -309,8 +311,7 @@ class KonEditor(QMainWindow):
         self.split_map = {}       # (hi_w, lo_w) for split fields
         self.compact_names = True # 精简显示: >3角色时仅显示技能名
 
-        self._build_ui()
-        self._apply_theme()
+    def _after_build(self):
         self._set_edit_enabled(False)
         self._center_window()
 
@@ -354,7 +355,7 @@ class KonEditor(QMainWindow):
         em.addAction("删除当前记录", self._delete_current)
 
         vm = mb.addMenu("视图(&V)")
-        vm.addMenu(create_theme_menu(self))
+        self.add_theme_submenu(vm)
         vm.addAction("快速切换主题(&T)\tF5", self._toggle_theme)
 
         hm = mb.addMenu("帮助(&H)")
@@ -1433,43 +1434,13 @@ class KonEditor(QMainWindow):
         FieldRefDialog(self).exec()
 
     # 逆向参考: sub_43D53C, sub_43D8B0, sub_43E980, sub_4458B0, sub_4434BC, sub_4173F8
-    def _show_help(self):
-        themed_messagebox(self, QMessageBox.Information, "帮助说明",
-            "功能: 编辑《三国群侠传》技能动画数据\n"
-            "数据: 每条 20 个字段 × 16位整数\n"
-            "      原版 650 条 × 40 字节 = 26,000 字节\n"
-            "      新建条目在列表末尾新增空记录；>650 为扩展记录，需扩容补丁\n\n"
-            "特性:\n"
-            "  · Godot 风格深/浅色主题切换\n"
-            "  · 技能动画参数可视化编辑\n"
-            "  · 伤害字段编码规则说明\n"
-            "  · 每行右键: 复制 / 粘贴 / 清除；扩展记录另有删除\n"
-            "  · 原版记录只能清除；扩展记录可清除或删除"
-        )
-
-    def _show_about(self):
-        themed_messagebox(self, QMessageBox.Information, "关于编辑器",
-            format_about_header('kon_editor'))
 
 # ============================================================
 # 入口
 # ============================================================
 
 def main():
-    from editor_utils.app_init import ensure_single_instance
-    ensure_single_instance()
-    from editor_utils.app_init import install_translator, setup_app_icon
-    from editor_utils.ui_helpers import install_dialog_theme_filter
-    app = QApplication(sys.argv)
-    install_dialog_theme_filter(app)
-    app.setStyle("Fusion")
-    app.setApplicationName("TKKon Editor")
-    _t = install_translator(app)
-    setup_app_icon(app, os.path.dirname(__file__))
-
-    editor = KonEditor()
-    editor.show()
-    sys.exit(app.exec())
+    run_editor(KonEditor, "TKKon Editor")
 
 if __name__ == '__main__':
     main()

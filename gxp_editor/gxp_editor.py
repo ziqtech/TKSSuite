@@ -18,11 +18,11 @@ from typing import Optional
 
 from PySide6.QtCore import Qt, QTranslator
 from PySide6.QtGui import (
-    QColor, QIcon, QImage, QKeySequence, QPainter, QPixmap, QWheelEvent,
+    QColor, QImage, QKeySequence, QPainter, QPixmap, QWheelEvent,
 )
 from PySide6.QtWidgets import (
     QApplication, QDialog, QFileDialog, QFrame, QGraphicsPixmapItem, QGraphicsScene,
-    QGraphicsView, QHBoxLayout, QLabel, QMainWindow, QMessageBox, QPushButton,
+    QGraphicsView, QHBoxLayout, QLabel, QMessageBox, QPushButton,
     QSplitter, QVBoxLayout, QWidget,
 )
 
@@ -46,10 +46,9 @@ from editor_utils.mod_exporter import (
 )
 from editor_utils.rgb565 import rgb565_to_rgba, rgba_to_rgb565
 from editor_utils import theme_manager
-from editor_utils.theme_switcher import (
-    apply_theme_to_window, create_theme_menu, toggle_theme_in_family,
-)
-from editor_utils.version import format_title, format_about_header
+from editor_utils.theme_switcher import toggle_theme_in_family
+from editor_utils.app_shell import EditorMainWindow, run_editor
+from editor_utils.version import format_title
 
 # ── GXP 格式常量 ──────────────────────────────────────────
 GXP_MAGIC = b"JGXP"
@@ -202,39 +201,45 @@ class EnhancedGraphicsView(QGraphicsView):
 # 主程序窗口
 # ═══════════════════════════════════════════════════════════
 
-class GXPEditor(QMainWindow):
+class GXPEditor(EditorMainWindow):
+    EDITOR_KEY = "gxp_editor"
+    DEFAULT_SIZE = (1200, 800)
+
+    HELP_TEXT = (
+        "功能: 编辑《三国群侠传》GXP 格式图像资源\n\n"
+        "特性:\n"
+        "  · 导入外部图片替换游戏图像\n"
+        "  · 导出为 24 位 PNG (符合游戏引擎要求)\n"
+        "  · 支持 MOD 格式导入导出 (.tksmod)\n"
+        "  · 深色/浅色主题切换\n\n"
+        "快捷键:\n"
+        "  Ctrl+I = 导入图片   Ctrl+E = 导出 PNG\n"
+        "  Ctrl+0 = 原始大小   Ctrl+T = 切换主题")
+
     def __init__(self, filepath: Optional[str] = None):
+        self._initial_path = filepath
         super().__init__()
-        self.setObjectName("EditorWindow")
-        self.setWindowTitle(format_title("gxp_editor"))
-        self.resize(1200, 800)
 
-        ico_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'TKS.ico')
-        if os.path.exists(ico_path):
-            self.setWindowIcon(QIcon(ico_path))
-
-        # 主题初始化：跟随持久化选择，无存档时按系统深浅色取现代主题
-        apply_theme_to_window(self, theme_manager.load_initial_theme(), persist=False)
-
+    def _init_data(self):
         self.img: Optional[GXPImage] = None
         self._pixmap_item = None
         self._zoom = 1.0
 
+    def _build_ui(self):
         self._setup_menu()
         self._setup_ui()
+
+    def _after_build(self):
         self._apply_theme()
 
-        if filepath and os.path.exists(filepath):
-            self._open(filepath)
+        if self._initial_path and os.path.exists(self._initial_path):
+            self._open(self._initial_path)
         else:
             self._new_empty()
 
     def _create_dock(self, title, widget_content, header_layout=None):
         """Dock 面板包裹 — 委托给 editor_utils.dock_components"""
         return create_dock(title, widget_content, header_layout)
-
-    def _apply_theme(self):
-        apply_theme_to_window(self, self._theme_id, persist=False)
 
     def _on_theme_applied(self, theme_id):
         spec = theme_manager.THEMES[theme_id]
@@ -281,29 +286,11 @@ class GXPEditor(QMainWindow):
         vm.addAction("原始大小 100%(&1)", QKeySequence("Ctrl+0"), lambda: self._set_zoom(1.0))
         vm.addAction("适合窗口(&F)", self._fit_to_window)
         vm.addSeparator()
-        vm.addMenu(create_theme_menu(self))
+        self.add_theme_submenu(vm)
         vm.addAction("快速切换主题(&T)", QKeySequence("Ctrl+T"), self._toggle_theme)
 
         # 帮助菜单
-        hm = mb.addMenu("帮助(&H)")
-        hm.addAction("帮助说明", self._show_help)
-        hm.addAction("关于编辑器", self._show_about)
-
-    def _show_help(self):
-        QMessageBox.information(self, "帮助说明",
-            "功能: 编辑《三国群侠传》GXP 格式图像资源\n\n"
-            "特性:\n"
-            "  · 导入外部图片替换游戏图像\n"
-            "  · 导出为 24 位 PNG (符合游戏引擎要求)\n"
-            "  · 支持 MOD 格式导入导出 (.tksmod)\n"
-            "  · 深色/浅色主题切换\n\n"
-            "快捷键:\n"
-            "  Ctrl+I = 导入图片   Ctrl+E = 导出 PNG\n"
-            "  Ctrl+0 = 原始大小   Ctrl+T = 切换主题")
-
-    def _show_about(self):
-        QMessageBox.information(self, "关于编辑器",
-            format_about_header('gxp_editor'))
+        self.add_help_menu(mb)
 
     def _setup_ui(self):
         cw = QWidget()
@@ -647,19 +634,7 @@ class GXPEditor(QMainWindow):
 
 
 def main():
-    from editor_utils.app_init import ensure_single_instance
-    ensure_single_instance()
-    from editor_utils.app_init import install_translator, setup_app_icon
-    from editor_utils.ui_helpers import install_dialog_theme_filter
-    app = QApplication(sys.argv)
-    install_dialog_theme_filter(app)
-    app.setStyle("Fusion")
-    _t = install_translator(app)
-    setup_app_icon(app, os.path.dirname(__file__))
-    fp = sys.argv[1] if len(sys.argv) > 1 else None
-    editor = GXPEditor(fp)
-    editor.show()
-    sys.exit(app.exec())
+    run_editor(GXPEditor, filepath=sys.argv[1] if len(sys.argv) > 1 else None)
 
 
 if __name__ == "__main__":

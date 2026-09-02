@@ -23,11 +23,11 @@ from typing import List, Optional, Tuple
 
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import (
-    QAction, QActionGroup, QCloseEvent, QColor, QFont, QIcon, QImage,
+    QAction, QActionGroup, QCloseEvent, QColor, QFont, QImage,
     QMouseEvent, QPainter, QPixmap,
 )
 from PySide6.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
+    QApplication, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
     QLabel, QPushButton, QSpinBox, QCheckBox, QFileDialog,
     QMessageBox, QInputDialog, QScrollArea, QFrame, QSplitter,
     QMenuBar, QMenu, QStatusBar, QGroupBox, QSizePolicy,
@@ -54,10 +54,9 @@ from editor_utils.mod_exporter import (
     safe_mod_filename,
 )
 from editor_utils import theme_manager
-from editor_utils.theme_switcher import (
-    apply_theme_to_window, create_theme_menu, toggle_theme_in_family,
-)
-from editor_utils.version import format_title, format_about_header
+from editor_utils.theme_switcher import toggle_theme_in_family
+from editor_utils.app_shell import EditorMainWindow, run_editor
+from editor_utils.version import format_title
 
 JVG_MAGIC = b"@JVG"
 JVM_MAGIC = b"@JVM"
@@ -871,29 +870,29 @@ class CanvasView(QGraphicsView):
             super().wheelEvent(event)
 
 # ── GUI 编辑器 ──────────────────────────────────────────
-class JVGEditor(QMainWindow):
+class JVGEditor(EditorMainWindow):
+    EDITOR_KEY = "jvg_editor"
+    DEFAULT_SIZE = (1600, 900)
+
+    HELP_TEXT = (
+        "功能: 浏览和编辑《三国群侠传》JVG 图像帧资源\n\n"
+        "特性:\n"
+        "  · 三种视图模式: 平铺 / 逐帧 / 动画播放\n"
+        "  · 游戏渲染预览: 预览选中帧的实际渲染效果并编辑物理偏移\n"
+        "    (打开 Cha.JVG 时自动叠加阴影帧, 阴影默认取图集第 1 帧)\n"
+        "  · 导出单帧、分组或完整图集为 PNG\n"
+        "  · 头像资源批量导入/导出 (Fa.JVG)\n"
+        "  · 支持 MOD 格式导入导出 (.tksmod)\n"
+        "  · 深色/浅色主题切换\n\n"
+        "快捷键:\n"
+        "  1 = 平铺视图   2 = 逐帧视图   3 = 动画视图\n"
+        "  Ctrl+T = 切换主题")
+
     def __init__(self, filepath: Optional[str] = None):
+        self._initial_path = filepath
         super().__init__()
-        self.setObjectName("EditorWindow")
-        self.setWindowTitle(format_title("jvg_editor"))
-        self.resize(1600, 900)
 
-        # 窗口居中显示
-        screen = QApplication.primaryScreen()
-        if screen:
-            geo = self.frameGeometry()
-            center = screen.availableGeometry().center()
-            geo.moveCenter(center)
-            self.move(geo.topLeft())
-
-        # 加载图标
-        ico_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'TKS.ico')
-        if os.path.exists(ico_path):
-            self.setWindowIcon(QIcon(ico_path))
-
-        # 主题初始化：跟随持久化选择，无存档时按系统深浅色取现代主题
-        apply_theme_to_window(self, theme_manager.load_initial_theme(), persist=False)
-
+    def _init_data(self):
         # 数据模型
         self.jvg: Optional[JVGFile] = None
         self._bi = -1
@@ -911,16 +910,23 @@ class JVGEditor(QMainWindow):
         self._preview_dims = (1, 1)
         self._preview_key = None
 
+    def _build_ui(self):
         # 创建UI
         self._setup_menu()
         self._setup_ui()
 
-        # 应用主题
-        self._apply_theme()
+    def _after_build(self):
+        # 窗口居中显示
+        screen = QApplication.primaryScreen()
+        if screen:
+            geo = self.frameGeometry()
+            center = screen.availableGeometry().center()
+            geo.moveCenter(center)
+            self.move(geo.topLeft())
 
         # 打开文件
-        if filepath and os.path.exists(filepath):
-            self._open(filepath)
+        if self._initial_path and os.path.exists(self._initial_path):
+            self._open(self._initial_path)
         else:
             self._new()
 
@@ -928,9 +934,6 @@ class JVGEditor(QMainWindow):
                      body_margins=(8, 8, 8, 8)):
         """创建统一的 dock 面板 — 委托给 editor_utils.dock_components"""
         return create_dock(title, widget_content, header_layout, body_margins)
-
-    def _apply_theme(self):
-        apply_theme_to_window(self, self._theme_id, persist=False)
 
     def _on_theme_applied(self, theme_id: str):
         """主题应用后同步画布背景色。
@@ -1048,7 +1051,7 @@ class JVGEditor(QMainWindow):
         view_menu.addSeparator()
 
         # 主题切换
-        view_menu.addMenu(create_theme_menu(self))
+        self.add_theme_submenu(view_menu)
 
         toggle_theme_action = QAction("切换主题", self)
         toggle_theme_action.setShortcut("Ctrl+T")
@@ -1056,28 +1059,7 @@ class JVGEditor(QMainWindow):
         view_menu.addAction(toggle_theme_action)
 
         # 帮助菜单
-        hm = menubar.addMenu("帮助(&H)")
-        hm.addAction("帮助说明", self._show_help)
-        hm.addAction("关于编辑器", self._show_about)
-
-    def _show_help(self):
-        QMessageBox.information(self, "帮助说明",
-            "功能: 浏览和编辑《三国群侠传》JVG 图像帧资源\n\n"
-            "特性:\n"
-            "  · 三种视图模式: 平铺 / 逐帧 / 动画播放\n"
-            "  · 游戏渲染预览: 预览选中帧的实际渲染效果并编辑物理偏移\n"
-            "    (打开 Cha.JVG 时自动叠加阴影帧, 阴影默认取图集第 1 帧)\n"
-            "  · 导出单帧、分组或完整图集为 PNG\n"
-            "  · 头像资源批量导入/导出 (Fa.JVG)\n"
-            "  · 支持 MOD 格式导入导出 (.tksmod)\n"
-            "  · 深色/浅色主题切换\n\n"
-            "快捷键:\n"
-            "  1 = 平铺视图   2 = 逐帧视图   3 = 动画视图\n"
-            "  Ctrl+T = 切换主题")
-
-    def _show_about(self):
-        QMessageBox.information(self, "关于编辑器",
-            format_about_header('jvg_editor'))
+        self.add_help_menu(menubar)
 
     def _setup_operations_toolbar(self, main_layout):
         """在菜单栏下方创建帧、导出和头像操作按钮行。
@@ -1417,7 +1399,6 @@ class JVGEditor(QMainWindow):
 
     def _toggle_theme(self):
         toggle_theme_in_family(self)
-        self._apply_theme()
         self.statusBar().showMessage(
             f"已切换到{theme_manager.display_name(self._theme_id)}主题", 2000)
 
@@ -2981,20 +2962,7 @@ class JVGEditor(QMainWindow):
 
 # ── Entry ──────────────────────────────────────────
 def main():
-    from editor_utils.app_init import ensure_single_instance
-    ensure_single_instance()
-    from editor_utils.app_init import install_translator, setup_app_icon
-    from editor_utils.ui_helpers import install_dialog_theme_filter
-    app = QApplication(sys.argv)
-    install_dialog_theme_filter(app)
-    app.setStyle("Fusion")  # 使用 Fusion 样式，避免 Windows 原生样式覆盖 QSS
-    _t = install_translator(app)
-    setup_app_icon(app, os.path.dirname(os.path.abspath(__file__)))
-
-    fp = sys.argv[1] if len(sys.argv) > 1 else None
-    editor = JVGEditor(fp)
-    editor.show()
-    sys.exit(app.exec())
+    run_editor(JVGEditor, filepath=sys.argv[1] if len(sys.argv) > 1 else None)
 
 if __name__ == "__main__":
     if not HAS_PIL:

@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import List, Optional, Set, Tuple
 
 from PySide6.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QListWidget, QListWidgetItem,
+    QApplication, QWidget, QListWidget, QListWidgetItem,
     QGraphicsView, QGraphicsScene, QGraphicsPixmapItem, QGraphicsRectItem,
     QGraphicsTextItem,
     QVBoxLayout, QHBoxLayout, QGridLayout,
@@ -53,10 +53,9 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from editor_utils.dock_components import create_dock
 from editor_utils import theme_manager
 from editor_utils.theme_manager import business_colors
-from editor_utils.theme_switcher import (
-    apply_theme_to_window, create_theme_menu, toggle_theme_in_family,
-)
-from editor_utils.version import format_title, format_about_header
+from editor_utils.theme_switcher import toggle_theme_in_family
+from editor_utils.app_shell import EditorMainWindow, run_editor
+from editor_utils.version import format_title
 from editor_utils.ui_helpers import EditorComboBox
 
 # ── 像素格式定义 ──────────────────────────────────────────────
@@ -2913,32 +2912,55 @@ class SplitDialog(QDialog):
 # 主编辑器窗口 (QMainWindow)
 # ═══════════════════════════════════════════════════════════════
 
-class SpriteSheetEditorWindow(QMainWindow):
+class SpriteSheetEditorWindow(EditorMainWindow):
     """Spritesheet 编辑器主窗口 (PySide6)"""
 
-    def __init__(self, filepath: Optional[str] = None):
-        super().__init__()
-        self.setObjectName("EditorWindow")
-        self.setWindowTitle(format_title("spritesheet_editor"))
-        ico = os.path.join(os.path.dirname(__file__), 'TKS.ico')
-        if os.path.exists(ico):
-            self.setWindowIcon(QIcon(ico))
+    EDITOR_KEY = "spritesheet_editor"
+    DEFAULT_SIZE = (1200, 800)  # 实际尺寸由 _after_build 的 _fit_to_screen 决定
+    MIN_SIZE = (1200, 800)
 
-        # 主题初始化：跟随持久化选择，无存档时按系统深浅色取现代主题
-        self._theme_id = theme_manager.load_initial_theme()
-        self._is_dark: bool = theme_manager.is_dark(self._theme_id)
-        apply_theme_to_window(self, self._theme_id, persist=False)
-        # 采用 QApplication 级样式表，让无父窗口的弹窗也继承主题
-        theme_manager.apply_theme(QApplication.instance(), self._theme_id)
+    HELP_TEXT = (
+        "功能: 制作和编辑游戏精灵表 (Spritesheet)\n\n"
+        "特性:\n"
+        "  · 导入多张图片拼合为精灵表\n"
+        "  · 按列数/行数/间距拆分已有精灵表\n"
+        "  · 拖拽调整帧顺序, 支持整行/整列移动\n"
+        "  · 选中多帧后可预览动画播放\n"
+        "  · 多种像素格式导出 (RGBA8888 / RGB888 / RGB565 等)\n"
+        "  · 深色/浅色主题切换\n\n"
+        "快捷键:\n"
+        "  Ctrl+A = 全选   Ctrl+C/V = 复制/粘贴   Delete = 删除选中帧\n"
+        "  Ctrl+方向键 = 移动选中帧\n"
+        "  Shift+方向键 = 移动整行/整列")
+
+    def __init__(self, filepath: Optional[str] = None):
+        self._initial_path = filepath
+        super().__init__()
+
+    def _init_data(self):
+        # 应用默认字体 (用 pointSize 而非 pixelSize:
+        #   pixelSize 会使 font.pointSize() 返回 -1, 点击 EditorComboBox 弹出菜单时
+        #   Qt 内部以 font.pointSize() 调 setPointSize 触发 "Point size <= 0 (-1)" 警告;
+        #   实际显示由 QSS 的 px 字号覆盖)
+        app = QApplication.instance()
+        if app:
+            font = QFont()
+            font.setPointSize(9)
+            app.setFont(font)
 
         self._set_model(SpriteSheetModel())
         self._source_sheet: Optional[Image.Image] = None
         self._preview_mode: str = "grid"
         self._suppress_mode_change: bool = False
 
+    def _build_ui(self):
         self._build_layout()
         self._build_menu()
         self._build_shortcuts()
+
+    def _after_build(self):
+        # 采用 QApplication 级样式表，让无父窗口的弹窗也继承主题
+        theme_manager.apply_theme(QApplication.instance(), self._theme_id)
 
         # 初始画布背景色同步 (跟随 OS 主题)
         bg_color = QColor(business_colors("spritesheet", self._theme_id)["canvas_bg"])
@@ -2947,8 +2969,8 @@ class SpriteSheetEditorWindow(QMainWindow):
         self.preview_view._disp.style().unpolish(self.preview_view._disp)
         self.preview_view._disp.style().polish(self.preview_view._disp)
 
-        if filepath:
-            self._load_spritesheet(Path(filepath))
+        if self._initial_path:
+            self._load_spritesheet(Path(self._initial_path))
 
         self._fit_to_screen()
 
@@ -3292,31 +3314,7 @@ class SpriteSheetEditorWindow(QMainWindow):
         view_menu.addAction("预览选中帧", self._preview_selected)
         view_menu.addAction("预览全部", self._preview_all)
 
-        menubar.addMenu(create_theme_menu(self))
-
-        # 帮助菜单
-        hm = menubar.addMenu("帮助")
-        hm.addAction("帮助说明", self._show_help)
-        hm.addAction("关于编辑器", self._show_about)
-
-    def _show_about(self):
-        QMessageBox.information(self, "关于编辑器",
-            format_about_header('spritesheet_editor'))
-
-    def _show_help(self):
-        QMessageBox.information(self, "帮助说明",
-            "功能: 制作和编辑游戏精灵表 (Spritesheet)\n\n"
-            "特性:\n"
-            "  · 导入多张图片拼合为精灵表\n"
-            "  · 按列数/行数/间距拆分已有精灵表\n"
-            "  · 拖拽调整帧顺序, 支持整行/整列移动\n"
-            "  · 选中多帧后可预览动画播放\n"
-            "  · 多种像素格式导出 (RGBA8888 / RGB888 / RGB565 等)\n"
-            "  · 深色/浅色主题切换\n\n"
-            "快捷键:\n"
-            "  Ctrl+A = 全选   Ctrl+C/V = 复制/粘贴   Delete = 删除选中帧\n"
-            "  Ctrl+方向键 = 移动选中帧\n"
-            "  Shift+方向键 = 移动整行/整列")
+        self.add_standard_menus(menubar)
 
     def _build_shortcuts(self):
         """统一快捷键注册 — 仅 QShortcut (避免与 QAction 双重注册冲突)"""
@@ -3916,33 +3914,12 @@ class SpriteSheetEditorWindow(QMainWindow):
 # ═══════════════════════════════════════════════════════════════
 
 def main():
-    from editor_utils.app_init import ensure_single_instance
-    ensure_single_instance()
     if not HAS_PIL:
         print("错误: 需要安装 Pillow 库")
         print("  pip install Pillow")
         sys.exit(1)
-
-    from editor_utils.app_init import install_translator, setup_app_icon
-    from editor_utils.ui_helpers import install_dialog_theme_filter
-    app = QApplication(sys.argv)
-    install_dialog_theme_filter(app)
-    app.setApplicationName("Spritesheet Editor")
-    _t = install_translator(app)
-    setup_app_icon(app, os.path.dirname(__file__))
-    # 设置应用默认字体 (用 pointSize 而非 pixelSize:
-        # pixelSize 会使 font.pointSize() 返回 -1, 点击 EditorComboBox 弹出菜单时
-    # Qt 内部以 font.pointSize() 调 setPointSize 触发 "Point size <= 0 (-1)" 警告;
-    # 实际显示由 QSS 的 px 字号覆盖)
-    font = QFont()
-    font.setPointSize(9)
-    app.setFont(font)
-
-    filepath = sys.argv[1] if len(sys.argv) > 1 else None
-    window = SpriteSheetEditorWindow(filepath)
-    window.show()
-
-    sys.exit(app.exec())
+    run_editor(SpriteSheetEditorWindow, "Spritesheet Editor",
+               filepath=sys.argv[1] if len(sys.argv) > 1 else None)
 
 
 if __name__ == "__main__":

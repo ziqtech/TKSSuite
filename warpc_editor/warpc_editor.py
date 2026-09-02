@@ -57,7 +57,7 @@ import struct
 import sys
 from functools import partial
 from PySide6.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
+    QApplication, QWidget, QVBoxLayout, QHBoxLayout,
     QSplitter, QTableWidget, QTableWidgetItem, QHeaderView,
     QLineEdit, QCheckBox, QPushButton, QLabel,
     QScrollArea, QDialog, QFileDialog, QMessageBox, QTextEdit,
@@ -72,14 +72,15 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from editor_utils import theme_manager
 from editor_utils.theme_manager import business_colors
 from editor_utils.theme_switcher import (
-    apply_theme_to_window, create_theme_menu, toggle_theme_in_family,
+    apply_theme_to_window, toggle_theme_in_family,
 )
+from editor_utils.app_shell import EditorMainWindow, run_editor
 from editor_utils.dock_components import DockHeader
 from editor_utils.adaptive_table import AdaptiveTableWidget
 from editor_utils.picker_dialogs import TktPickerDialog, StatusPickerDialog, STATUS_NAMES, ItemPickerDialog
 from editor_utils.jvg_loader import load_mu_sprites, get_sprite_pixmap
 from editor_utils.ui_helpers import make_fake_input, update_path_labels, confirm_close, resolve_config_path, themed_messagebox, EditorComboBox, NoWheelSpinBox
-from editor_utils.version import format_title, format_about_header
+from editor_utils.version import format_title
 from editor_utils.lzss import lzss_decompress_dat, lzss_compress_dat, lzss_decompress_save, lzss_compress_save
 from editor_utils.tkt_loader import load_tkt_simple
 from editor_utils.shared_state import pick_tks_directory
@@ -899,24 +900,15 @@ class GrowthTableDialog(QDialog):
 # ═══════════════════════════════════════════════════════════════
 
 
-class WarpcEditorV2(QMainWindow):
+class WarpcEditorV2(EditorMainWindow):
     # 信号: 角色编辑已应用 (参数: 角色索引)
     record_applied = Signal(int)
 
-    def __init__(self):
-        super().__init__()
-        self.setObjectName("EditorWindow")
-        self.setWindowTitle(format_title("warpc_editor"))
-        self.resize(1400, 850)
-        self.setMinimumSize(1100, 680)
+    EDITOR_KEY = "warpc_editor"
+    DEFAULT_SIZE = (1400, 850)
+    MIN_SIZE = (1100, 680)
 
-        ico = os.path.join(os.path.dirname(__file__), 'TKS.ico')
-        if os.path.exists(ico):
-            self.setWindowIcon(QIcon(ico))
-
-        # 主题初始化：跟随持久化选择，无存档时按系统深浅色取现代主题
-        apply_theme_to_window(self, theme_manager.load_initial_theme(), persist=False)
-
+    def _init_data(self):
         self.warpc_path = self.tkt_path = None
         self.records = []
         self._draft_records = []   # 共享草稿层: 表单/表格模式均编辑草稿, 「应用」才提交到 records
@@ -979,9 +971,12 @@ class WarpcEditorV2(QMainWindow):
         # 启动时自动从 configs/ 加载 equip_type_labels.json
         self._auto_load_use_right_defs()
 
-        self._build_ui()
+    def _after_build(self):
         self._set_edit_enabled(False)
         self._apply_theme()
+
+    def _extra_help_actions(self):
+        return [("字段参考", self._show_field_ref)]
 
     # ── 主题 ──
     def _apply_theme(self):
@@ -1140,12 +1135,7 @@ class WarpcEditorV2(QMainWindow):
         am = mb.addMenu("分析(&S)")
         am.addAction("成长数据表 (1-60级)", self._show_growth_table)
 
-        mb.addMenu(create_theme_menu(self))
-
-        hm = mb.addMenu("帮助(&H)")
-        hm.addAction("帮助说明", self._show_help)
-        hm.addAction("字段参考", self._show_field_ref)
-        hm.addAction("关于编辑器", self._show_about)
+        self.add_standard_menus(mb)
 
         # 工具栏
         toolbar = QHBoxLayout()
@@ -3825,6 +3815,7 @@ class WarpcEditorV2(QMainWindow):
         FieldRefDialog(self).exec()
 
     # 逆向参考: sub_42234C, sub_41E40C, sub_422BBC, sub_4173F8, sub_45343C, sub_452B14
+    # _show_help 为动态内容 (含当前记录数), 覆盖基类静态 HELP_TEXT 版本
     def _show_help(self):
         cnt = len(self.records) if self.records else WARPC_ORIG_COUNT
         themed_messagebox(self, QMessageBox.Information, "帮助说明",
@@ -3834,10 +3825,6 @@ class WarpcEditorV2(QMainWindow):
             f"  · Godot 风格深/浅色主题切换\n"
             f"  · 分页编辑: 核心属性 / 装备技能 / 技能学习 / 效果判定 / 全部字段\n"
             f"  · 自动关联 TKItem.dat 显示物品名称")
-
-    def _show_about(self):
-        themed_messagebox(self, QMessageBox.Information, "关于编辑器",
-            format_about_header('warpc_editor'))
 
     def closeEvent(self, event):
         # 待应用草稿守卫 (含表单控件未暂存的修改)
@@ -3860,19 +3847,7 @@ class WarpcEditorV2(QMainWindow):
             event.accept()
 
 def main():
-    from editor_utils.app_init import ensure_single_instance
-    ensure_single_instance()
-    from editor_utils.app_init import install_translator, setup_app_icon
-    from editor_utils.ui_helpers import install_dialog_theme_filter
-    app = QApplication(sys.argv)
-    install_dialog_theme_filter(app)
-    app.setStyle("Fusion")
-    _t = install_translator(app)
-    setup_app_icon(app, os.path.dirname(__file__))
-    app.setApplicationName("WarPC Editor")
-    editor = WarpcEditorV2()
-    editor.show()
-    sys.exit(app.exec())
+    run_editor(WarpcEditorV2, "WarPC Editor")
 
 if __name__ == '__main__':
     main()

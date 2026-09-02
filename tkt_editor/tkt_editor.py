@@ -17,7 +17,7 @@ from functools import partial
 
 # ----------------- PySide6 Imports -----------------
 from PySide6.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
+    QApplication, QWidget, QVBoxLayout, QHBoxLayout,
     QMenuBar, QMenu, QSplitter, QTableWidget, QTableWidgetItem,
     QAbstractItemView, QHeaderView, QLabel, QLineEdit, QPushButton,
     QCheckBox, QPlainTextEdit, QTextEdit,
@@ -26,7 +26,7 @@ from PySide6.QtWidgets import (
     QInputDialog, QToolButton
 )
 from PySide6.QtGui import (
-    QAction, QKeySequence, QColor, QFont, QPixmap, QImage, QIcon,
+    QAction, QKeySequence, QColor, QFont, QPixmap, QImage,
     QTextCursor, QTextDocument, QSyntaxHighlighter, QTextCharFormat
 )
 from PySide6.QtCore import Qt, QTimer, QUrl, QSize, QTranslator
@@ -42,11 +42,12 @@ except ImportError:
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from editor_utils import theme_manager
 from editor_utils.theme_switcher import (
-    apply_theme_to_window, create_theme_menu, toggle_theme_in_family,
+    apply_theme_to_window, toggle_theme_in_family,
 )
+from editor_utils.app_shell import EditorMainWindow, run_editor
 from editor_utils.dock_components import DockHeader, create_dock
 from editor_utils.adaptive_table import AdaptiveTableWidget
-from editor_utils.ui_helpers import update_path_labels, confirm_close, themed_messagebox, EditorComboBox
+from editor_utils.ui_helpers import update_path_labels, confirm_close, EditorComboBox
 from editor_utils.tkt_loader import load_tkt_full as _load_tkt_full
 from editor_utils.shared_state import pick_tks_directory
 from editor_utils.mod_exporter import (
@@ -55,7 +56,7 @@ from editor_utils.mod_exporter import (
     load_reference_tkt_entries,
     get_tksmod_info, import_tksmod_text_entries, ModImportPreviewDialog, ModExportPreviewDialog,
 )
-from editor_utils.version import format_title, format_about_header
+from editor_utils.version import format_title
 from editor_utils.tab_widget import EditorTabWidget
 from editor_utils.search_utils import search_match
 
@@ -855,18 +856,28 @@ def pil_to_qimage(pil_image):
     data = pil_image.tobytes("raw", "RGBA")
     return QImage(data, pil_image.width, pil_image.height, QImage.Format_RGBA8888).copy()
 
-class TktEditor(QMainWindow):
+class TktEditor(EditorMainWindow):
+    EDITOR_KEY = "tkt_editor"
+    DEFAULT_SIZE = (1350, 850)
+
+    HELP_TEXT = (
+        "功能: 编辑《三国群侠传》游戏文本数据\n"
+        "支持加载、编辑、保存、新增文本条目\n\n"
+        "文本控制码 (特殊格式标记):\n"
+        "  <FRESET,n>  重置字体, n 取值 1~4\n"
+        "  <FCOLOR,n>  设置颜色, n 取值 1~32\n"
+        "  <FSIZE,n>   设置字号, n 取值 12~48\n"
+        "  <FTYPE,n>    设置字体, n 取值 1~8\n"
+        "  <TEXT,n>     引用文本, n 取值 1~32767\n"
+        "  <VARNUM,n>  显示数字变量, n 取值 1~255\n"
+        "  <VARTXT,n>  显示文本变量, n 取值 1~255\n"
+        "  <NAME,n>    显示角色名, n 取值 1~2")
+
     def __init__(self, initial_path=None):
+        self._initial_path = initial_path
         super().__init__()
-        self.setObjectName("EditorWindow")
-        self.setWindowTitle(format_title("tkt_editor"))
-        self.resize(1350, 850)
 
-        # --- 还原图标加载 ---
-        ico_path = os.path.join(os.path.dirname(__file__), 'TKS.ico')
-        if os.path.exists(ico_path):
-            self.setWindowIcon(QIcon(ico_path))
-
+    def _init_data(self):
         self.font_mono = QFont('Consolas', 10)
         self.tkt_path = None
         self.entries = []
@@ -887,19 +898,16 @@ class TktEditor(QMainWindow):
         self._sort_state = 0
         self._last_focused_input = None
 
-        # 主题初始化：跟随持久化选择，无存档时按系统深浅色取现代主题
-        apply_theme_to_window(self, theme_manager.load_initial_theme(), persist=False)
-
         app_inst = QApplication.instance()
         if app_inst:
             app_inst.focusChanged.connect(self._on_focus_changed)
 
-        self._build_ui()
+    def _after_build(self):
         self._set_edit_enabled(False)
         self._apply_theme()
 
-        if initial_path and os.path.exists(initial_path):
-            self._load_file(initial_path)
+        if self._initial_path and os.path.exists(self._initial_path):
+            self._load_file(self._initial_path)
 
     def _create_dock(self, title, widget_content, header_layout=None):
         """Dock 面板包裹 — 委托给 editor_utils.dock_components"""
@@ -938,11 +946,7 @@ class TktEditor(QMainWindow):
         edit_menu.addSeparator()
         edit_menu.addAction("查找…", QKeySequence("Ctrl+F"), self._focus_search)
 
-        menu_bar.addMenu(create_theme_menu(self))
-
-        help_menu = menu_bar.addMenu("帮助(H)")
-        help_menu.addAction("帮助说明", self._show_help)
-        help_menu.addAction("关于编辑器", self._show_about)
+        self.add_standard_menus(menu_bar)
 
         self.main_tabs = EditorTabWidget(
             flat=True,
@@ -2092,27 +2096,6 @@ class TktEditor(QMainWindow):
         cb.setCurrentIndex(0)
 
     # 逆向参考: sub_401E88, sub_4067E8, sub_4019D0
-    def _show_help(self):
-        themed_messagebox(
-            self, QMessageBox.Information, "帮助说明",
-            "功能: 编辑《三国群侠传》游戏文本数据\n"
-            "支持加载、编辑、保存、新增文本条目\n\n"
-            "文本控制码 (特殊格式标记):\n"
-            "  <FRESET,n>  重置字体, n 取值 1~4\n"
-            "  <FCOLOR,n>  设置颜色, n 取值 1~32\n"
-            "  <FSIZE,n>   设置字号, n 取值 12~48\n"
-            "  <FTYPE,n>    设置字体, n 取值 1~8\n"
-            "  <TEXT,n>     引用文本, n 取值 1~32767\n"
-            "  <VARNUM,n>  显示数字变量, n 取值 1~255\n"
-            "  <VARTXT,n>  显示文本变量, n 取值 1~255\n"
-            "  <NAME,n>    显示角色名, n 取值 1~2"
-        )
-
-    def _show_about(self):
-        themed_messagebox(
-            self, QMessageBox.Information, "关于编辑器",
-            format_about_header('tkt_editor')
-        )
 
     def closeEvent(self, event):
         if not confirm_close(self, self._dirty, text="直接退出？"):
@@ -2244,20 +2227,7 @@ def main():
     if args.cli:
         run_cli(args)
     else:
-        from editor_utils.app_init import ensure_single_instance
-        ensure_single_instance()
-        from editor_utils.app_init import install_translator, setup_app_icon
-        from editor_utils.ui_helpers import install_dialog_theme_filter
-        app = QApplication(sys.argv)
-        install_dialog_theme_filter(app)
-        app.setStyle("Fusion")
-        _t = install_translator(app)
-        setup_app_icon(app, os.path.dirname(__file__))
-
-        initial_file = args.gui_file if args.gui_file else None
-        editor = TktEditor(initial_file)
-        editor.show()
-        sys.exit(app.exec())
+        run_editor(TktEditor, initial_path=args.gui_file or None)
 
 if __name__ == "__main__":
     main()

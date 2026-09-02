@@ -46,13 +46,13 @@ from PySide6.QtGui import QAction, QIcon, QKeySequence, QPainter
 from PySide6.QtWidgets import (
     QAbstractItemView, QApplication, QCheckBox, QDialog,
     QFileDialog, QFrame, QGridLayout, QHBoxLayout, QHeaderView, QLabel,
-    QLineEdit, QMainWindow, QMenu, QMenuBar, QMessageBox,
+    QLineEdit, QMenu, QMenuBar, QMessageBox,
     QPushButton, QScrollArea, QSizePolicy, QSplitter, QTableWidget,
     QTableWidgetItem, QToolButton, QVBoxLayout, QWidget
 )
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-from editor_utils.dock_components import DockHeader, create_dock
+from editor_utils.dock_components import DockHeader
 from editor_utils.adaptive_table import AdaptiveTableWidget
 from editor_utils.flow_layout import FlowLayout
 from editor_utils.jvg_loader import get_sprite_pixmap, load_mu_sprites
@@ -68,15 +68,14 @@ from editor_utils.picker_dialogs import (
     STATUS_ICON_BASE, STATUS_NAMES, StatusPickerDialog, TktPickerDialog
 )
 from editor_utils.tkt_loader import load_tkt_simple
-from editor_utils import theme_manager
 from editor_utils.theme_switcher import (
-    apply_theme_to_window, create_theme_menu, toggle_theme_in_family,
+    apply_theme_to_window, toggle_theme_in_family,
 )
+from editor_utils.app_shell import EditorMainWindow, run_editor
 from editor_utils.ui_helpers import (
     confirm_close, make_fake_input, resolve_config_path,
-    themed_messagebox, update_path_labels, EditorComboBox,
+    update_path_labels, EditorComboBox,
 )
-from editor_utils.version import format_title, format_about_header
 from editor_utils.search_utils import search_match
 
 # ── 本地别名: 保持向后兼容 ──
@@ -508,21 +507,21 @@ class UseRightPickerDialog(QDialog):
 
 
 
-class ItemEditorApp(QMainWindow):
-    def __init__(self):
-        super().__init__()
-        self.setObjectName("EditorWindow")
-        self.setWindowTitle(format_title("item_editor"))
-        self.resize(1360, 860)
-        self.setMinimumSize(1120, 700)
+class ItemEditorApp(EditorMainWindow):
+    EDITOR_KEY = "item_editor"
+    DEFAULT_SIZE = (1360, 860)
+    MIN_SIZE = (1120, 700)
 
-        ico_path = os.path.join(os.path.dirname(__file__), 'TKS.ico')
-        if os.path.exists(ico_path):
-            self.setWindowIcon(QIcon(ico_path))
+    HELP_TEXT = (
+        "功能: 编辑《三国群侠传》物品数据\n"
+        "数据: 600 条记录 × 32 个字段 = 64 字节/条\n\n"
+        "特性:\n"
+        "  · 可视化编辑物品属性 (名称/价格/效果等)\n"
+        "  · 自动关联 TKT.dat 显示物品名称\n"
+        "  · 支持物品分类筛选和搜索\n"
+        "  · 深色/浅色主题切换")
 
-        # 主题初始化：跟随持久化选择，无存档时按系统深浅色取现代主题
-        apply_theme_to_window(self, theme_manager.load_initial_theme(), persist=False)
-
+    def _init_data(self):
         self.item_path = self.tkt_path = self.skill_path = self.mu_path = None
         self.records = []
         self.tkt = {}
@@ -544,7 +543,7 @@ class ItemEditorApp(QMainWindow):
         self.widget_map = {}
         self.extra_map = {}
 
-        self._build_ui()
+    def _after_build(self):
         self._set_edit_enabled(False)
         self._apply_theme()
 
@@ -558,9 +557,9 @@ class ItemEditorApp(QMainWindow):
         self._update_paths()
         self._refresh_table()
 
-    def _create_dock(self, title, widget_content):
-        """Dock 面板包裹 — 委托给 editor_utils.dock_components"""
-        return create_dock(title, widget_content)
+    # ── 帮助菜单专属项 ──
+    def _extra_help_actions(self):
+        return [("字段来源 (逆向+Maker)", self._show_field_ref)]
 
     # ── UI 构建 ──
     def _build_ui(self):
@@ -586,11 +585,7 @@ class ItemEditorApp(QMainWindow):
         em.addAction("新建物品 (填充空槽)\tCtrl+N", self._new_item)
         em.addAction("复制当前到空槽", self._copy_record)
         em.addAction("清空当前记录", self._clear_current)
-        mb.addMenu(create_theme_menu(self))
-        hm = mb.addMenu("帮助(&H)")
-        hm.addAction("帮助说明", self._show_help)
-        hm.addAction("字段来源 (逆向+Maker)", self._show_field_ref)
-        hm.addAction("关于编辑器", self._show_about)
+        self.add_standard_menus(mb)
 
         # 工具栏
         toolbar = QHBoxLayout()
@@ -1688,22 +1683,6 @@ class ItemEditorApp(QMainWindow):
         layout.addWidget(tx)
         dlg.exec()
 
-    # 逆向参考: sub_45343C(数据载入), sub_41E40C(物品使用), sub_42234C(装备应用),
-    # sub_422BBC(附加技能效果), sub_42F8D4(物品查找), sub_424A2C(背包/商店显示)
-    def _show_help(self):
-        themed_messagebox(self, QMessageBox.Information, "帮助说明",
-            "功能: 编辑《三国群侠传》物品数据\n"
-            "数据: 600 条记录 × 32 个字段 = 64 字节/条\n\n"
-            "特性:\n"
-            "  · 可视化编辑物品属性 (名称/价格/效果等)\n"
-            "  · 自动关联 TKT.dat 显示物品名称\n"
-            "  · 支持物品分类筛选和搜索\n"
-            "  · 深色/浅色主题切换")
-
-    def _show_about(self):
-        themed_messagebox(self, QMessageBox.Information, "关于编辑器",
-            format_about_header('item_editor'))
-
     def closeEvent(self, event):
         if not confirm_close(self, self._dirty):
             event.ignore()
@@ -1712,18 +1691,7 @@ class ItemEditorApp(QMainWindow):
 
 
 def main():
-    from editor_utils.app_init import ensure_single_instance
-    ensure_single_instance()
-    from editor_utils.app_init import install_translator, setup_app_icon
-    from editor_utils.ui_helpers import install_dialog_theme_filter
-    app = QApplication(sys.argv)
-    install_dialog_theme_filter(app)
-    app.setStyle("Fusion")
-    _t = install_translator(app)
-    setup_app_icon(app, os.path.dirname(__file__))
-    editor = ItemEditorApp()
-    editor.show()
-    sys.exit(app.exec())
+    run_editor(ItemEditorApp)
 
 
 if __name__ == '__main__':

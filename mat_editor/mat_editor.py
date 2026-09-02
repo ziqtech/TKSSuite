@@ -38,7 +38,7 @@ from collections import Counter, OrderedDict, defaultdict
 from functools import partial
 
 from PySide6.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
+    QApplication, QWidget, QVBoxLayout, QHBoxLayout,
     QMenuBar, QMenu, QSplitter, QTableWidget, QTableWidgetItem,
     QTreeWidget, QTreeWidgetItem,
     QAbstractItemView, QHeaderView, QLabel, QLineEdit, QPushButton,
@@ -55,15 +55,16 @@ from PySide6.QtCore import Qt, QTimer, QRect, QPoint, QSize, QThread, Signal, QT
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from editor_utils import theme_manager
 from editor_utils.theme_switcher import (
-    apply_theme_to_window, create_theme_menu, toggle_theme_in_family,
+    apply_theme_to_window, toggle_theme_in_family,
 )
+from editor_utils.app_shell import EditorMainWindow, run_editor
 from editor_utils.dock_components import DockHeader, create_dock
 from editor_utils.lzss import lzss_decompress_dat as lzss_decompress, lzss_decompress_save, lzss_compress_save
 from editor_utils.ui_helpers import confirm_close, themed_messagebox, EditorComboBox
 from editor_utils.tab_widget import EditorTabWidget
 from editor_utils.flow_layout import FlowLayout
 from editor_utils.adaptive_table import AdaptiveTableWidget
-from editor_utils.version import format_title, format_about_header
+from editor_utils.version import format_title
 from editor_utils.shared_state import pick_tks_directory
 from editor_utils.mod_exporter import (
     diff_records, diff_text_defines, compute_crc32, generate_mod_json,
@@ -1241,24 +1242,31 @@ class InspectorPanelBuilder:
         ev.blockSignals(False)
 
 
-class MatEditorApp(QMainWindow):
+class MatEditorApp(EditorMainWindow):
     """TKMat.Dat 地图实体编辑器 PySide6 版"""
 
-    def __init__(self):
-        super().__init__()
-        self.setObjectName("EditorWindow")
-        self.setWindowTitle(format_title("mat_editor"))
-        self.resize(1600, 900)
-        self.setMinimumSize(1340, 640)
+    EDITOR_KEY = "mat_editor"
+    DEFAULT_SIZE = (1600, 900)
+    MIN_SIZE = (1340, 640)
 
-        # 加载图标
-        ico_path = os.path.join(os.path.dirname(__file__), 'TKS.ico')
-        if os.path.exists(ico_path):
-            self.setWindowIcon(QIcon(ico_path))
+    HELP_TEXT = (
+        "功能: 编辑《三国群侠传》地图实体数据\n\n"
+        "编辑模式:\n"
+        "  · 参数编辑 - 修改实体属性\n"
+        "  · 可视化预览 - 地图场景展示\n"
+        "  · 脚本编辑 - 编辑事件脚本\n"
+        "  · 脚本调度 - 管理脚本执行顺序\n\n"
+        "数据文件:\n"
+        "  · TKMat.dat - 实体表 (6000 条 × 384 字节)\n"
+        "  · TKDefUnit.dat - 定义单位 (原版 5000 条, 已扩展至 10000 条 × 16 字节)\n"
+        "  · TKD.dat - 脚本数据\n"
+        "  保存时一次性写入以上三个文件\n\n"
+        "脚本链类型:\n"
+        "  · A链 - 自动执行 (按周期触发)\n"
+        "  · B链 - 交互触发 (玩家操作时)\n"
+        "  · C链 - 其他类型")
 
-        # 主题初始化：跟随持久化选择，无存档时按系统深浅色取现代主题
-        apply_theme_to_window(self, theme_manager.load_initial_theme(), persist=False)
-
+    def _init_data(self):
         # 数据状态 (§5 — 已迁入 MapDataManager)
         self._data = MapDataManager()
 
@@ -1293,10 +1301,12 @@ class MatEditorApp(QMainWindow):
         self._all_labels = {}
         self._sched_labels = {}
 
-        # 构建 UI
-        self._build_ui()
+    def _after_build(self):
         self._set_edit_enabled(False)
         self._apply_theme()
+
+    def _extra_help_actions(self):
+        return [("字段说明", self._show_field_ref)]
 
     # =========== QSS 主题 ===========
     def canvas_bg_color(self):
@@ -1403,12 +1413,9 @@ class MatEditorApp(QMainWindow):
 
         vm = menu_bar.addMenu("查看(V)")
         vm.addAction("统计信息", self._show_stats)
-        vm.addMenu(create_theme_menu(self))
+        self.add_theme_submenu(vm)
 
-        hm = menu_bar.addMenu("帮助(H)")
-        hm.addAction("帮助说明", self._show_help)
-        hm.addAction("字段说明", self._show_field_ref)
-        hm.addAction("关于编辑器", self._show_about)
+        self.add_help_menu(menu_bar)
 
         # --- Main Splitter (三栏) ---
         self.splitter = QSplitter(Qt.Horizontal)
@@ -5202,27 +5209,6 @@ class MatEditorApp(QMainWindow):
         themed_messagebox(self, QMessageBox.Information, "字段说明", msg)
 
     # 逆向参考: sub_412688, sub_405CBC, sub_4066F0, sub_40EBD4, sub_409618
-    def _show_help(self):
-        themed_messagebox(self, QMessageBox.Information, "帮助说明",
-                                "功能: 编辑《三国群侠传》地图实体数据\n\n"
-                                "编辑模式:\n"
-                                "  · 参数编辑 - 修改实体属性\n"
-                                "  · 可视化预览 - 地图场景展示\n"
-                                "  · 脚本编辑 - 编辑事件脚本\n"
-                                "  · 脚本调度 - 管理脚本执行顺序\n\n"
-                                "数据文件:\n"
-                                "  · TKMat.dat - 实体表 (6000 条 × 384 字节)\n"
-                                "  · TKDefUnit.dat - 定义单位 (原版 5000 条, 已扩展至 10000 条 × 16 字节)\n"
-                                "  · TKD.dat - 脚本数据\n"
-                                "  保存时一次性写入以上三个文件\n\n"
-                                "脚本链类型:\n"
-                                "  · A链 - 自动执行 (按周期触发)\n"
-                                "  · B链 - 交互触发 (玩家操作时)\n"
-                                "  · C链 - 其他类型")
-
-    def _show_about(self):
-        themed_messagebox(self, QMessageBox.Information, "关于编辑器",
-                                format_about_header('mat_editor'))
 
     def _export_scene(self):
         """导出当前场景: TKMat实体 + DefUnit链 + TKD脚本 → .tkmat JSON"""
@@ -5538,18 +5524,7 @@ class MatEditorApp(QMainWindow):
 # 入口
 # ============================================================
 def main():
-    from editor_utils.app_init import ensure_single_instance
-    ensure_single_instance()
-    from editor_utils.app_init import install_translator, setup_app_icon
-    from editor_utils.ui_helpers import install_dialog_theme_filter
-    app = QApplication(sys.argv)
-    install_dialog_theme_filter(app)
-    app.setStyle("Fusion")
-    _t = install_translator(app)
-    setup_app_icon(app, os.path.dirname(__file__))
-    editor = MatEditorApp()
-    editor.show()
-    sys.exit(app.exec())
+    run_editor(MatEditorApp)
 
 
 if __name__ == '__main__':

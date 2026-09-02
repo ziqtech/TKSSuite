@@ -17,23 +17,20 @@ from editor_utils.runtime_bootstrap import bootstrap
 bootstrap()
 
 from PySide6.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
+    QApplication, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QPushButton, QFileDialog, QMessageBox,
     QStatusBar, QFrame
 )
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QAction, QIcon
+from PySide6.QtGui import QAction
 
-from editor_utils import theme_manager
-from editor_utils.theme_switcher import (
-    apply_theme_to_window, create_theme_menu, toggle_theme_in_family,
-)
+from editor_utils.theme_switcher import toggle_theme_in_family
+from editor_utils.app_shell import EditorMainWindow, run_editor
 from editor_utils.tab_widget import EditorTabWidget
 from editor_utils.ui_helpers import confirm_close, update_path_labels
-from editor_utils.app_init import install_translator, setup_app_icon
 from editor_utils.lzss import lzss_decompress_dat
 from editor_utils.tkt_loader import load_tkt_simple
-from editor_utils.version import format_title, format_about_header
+from editor_utils.version import format_title
 from editor_utils.shared_state import pick_tks_directory
 from editor_utils.jvg_loader import load_mu_sprites
 from editor_utils.mod_exporter import (
@@ -110,16 +107,18 @@ def load_skill_names(skill_path: str, tkt_names: dict) -> dict:
     return result
 
 
-class ConfigsEditorWindow(QMainWindow):
+class ConfigsEditorWindow(EditorMainWindow):
     """主窗口 — 菜单栏 + 工具栏 + EditorTabWidget + 状态栏"""
 
-    def __init__(self):
-        super().__init__()
-        self.setObjectName("EditorWindow")
-        self.setWindowTitle(format_title("configs_editor"))
-        self.resize(DEFAULT_WINDOW_WIDTH, DEFAULT_WINDOW_HEIGHT)
-        self.setMinimumSize(700, 500)
+    EDITOR_KEY = "configs_editor"
+    DEFAULT_SIZE = (DEFAULT_WINDOW_WIDTH, DEFAULT_WINDOW_HEIGHT)
+    MIN_SIZE = (700, 500)
 
+    HELP_TEXT = (
+        "为 TKS 游戏配置文件提供可视化编辑工具。\n"
+        "支持: 掉落概率、装备类型标签、召唤表")
+
+    def _init_data(self):
         # 配置目录 — Nuitka onefile 下 __file__ 指向临时目录, 需用 exe 所在目录
         if getattr(sys, 'frozen', False) or "__compiled__" in globals():
             from editor_utils.runtime_bootstrap import get_app_dir
@@ -135,13 +134,10 @@ class ConfigsEditorWindow(QMainWindow):
         self._game_data_loaded = False
         self._tks_dir = None
 
-        # 主题初始化：跟随持久化选择，无存档时按系统深浅色取现代主题
-        apply_theme_to_window(self, theme_manager.load_initial_theme(), persist=False)
-
         # 面板列表
         self._panels = []
 
-        self._build_ui()
+    def _after_build(self):
         self._load_panels()
         self._update_window_title()
 
@@ -198,15 +194,7 @@ class ConfigsEditorWindow(QMainWindow):
         act_quit.triggered.connect(self.close)
         file_menu.addAction(act_quit)
 
-        menubar.addMenu(create_theme_menu(self))
-
-        help_menu = menubar.addMenu("帮助(&H)")
-        act_help = QAction("帮助说明", self)
-        act_help.triggered.connect(self._show_help)
-        help_menu.addAction(act_help)
-        act_about = QAction("关于编辑器", self)
-        act_about.triggered.connect(self._show_about)
-        help_menu.addAction(act_about)
+        self.add_standard_menus(menubar)
 
         # ── 工具栏 ──
         toolbar = QFrame()
@@ -522,9 +510,6 @@ class ConfigsEditorWindow(QMainWindow):
 
     # ── 主题 ──
 
-    def _apply_theme(self):
-        apply_theme_to_window(self, self._theme_id, persist=False)
-
     def _toggle_theme(self):
         toggle_theme_in_family(self)
         # 重新加载面板（刷新表格颜色等）
@@ -550,32 +535,9 @@ class ConfigsEditorWindow(QMainWindow):
 
     # ── 关于 ──
 
-    def _show_about(self):
-        QMessageBox.about(self, "关于编辑器",
-            format_about_header('configs_editor'))
-
-    def _show_help(self):
-        QMessageBox.about(self, "帮助说明",
-            "为 TKS 游戏配置文件提供可视化编辑工具。\n"
-            "支持: 掉落概率、装备类型标签、召唤表")
-
 
 def main():
-    from editor_utils.app_init import ensure_single_instance
-    ensure_single_instance()
-    from editor_utils.app_init import install_translator, setup_app_icon
-    from editor_utils.ui_helpers import install_dialog_theme_filter
-
-    app = QApplication(sys.argv)
-    install_dialog_theme_filter(app)
-    app.setStyle("Fusion")
-    app.setApplicationName("TKS Configs Editor")
-    _t = install_translator(app)
-    setup_app_icon(app, os.path.dirname(__file__))
-
-    window = ConfigsEditorWindow()
-    window.show()
-    sys.exit(app.exec())
+    run_editor(ConfigsEditorWindow, "TKS Configs Editor")
 
 
 if __name__ == "__main__":

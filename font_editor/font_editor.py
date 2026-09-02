@@ -8,9 +8,7 @@ font_editor.py — FONT9696 字体编辑器主入口
   4. 导入 MOD: 从 .tksmod 提取 FONT9696 字体文件
 
 工程约定遵循 project_memory.md:
-  - '关于(&A)' 菜单独立
-  - '切换 Godot 主题' action 放在 '视图(&V)' 菜单
-  - install_dialog_theme_filter 紧跟 QApplication 后调用
+  - 启动/主题/帮助样板由 editor_utils/app_shell.py 统一提供
   - 主窗口暴露 _is_dark 属性供弹窗继承主题
   - functools.partial 替代 lambda
   - 版本号通过 editor_utils/version.py 统一管理
@@ -33,7 +31,7 @@ bootstrap()
 from PySide6.QtCore import Qt, QThread, Signal, QObject, QSize
 from PySide6.QtGui import QAction, QIcon, QImage, QPixmap, QFont, QColor
 from PySide6.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
+    QApplication, QWidget, QVBoxLayout, QHBoxLayout,
     QFormLayout, QGridLayout, QPushButton, QLabel, QLineEdit,
     QCheckBox, QFileDialog, QMessageBox, QGroupBox, QSpinBox, QProgressBar,
     QScrollArea, QFrame, QSplitter, QStatusBar, QListWidget, QListWidgetItem,
@@ -41,14 +39,11 @@ from PySide6.QtWidgets import (
 )
 
 from editor_utils import theme_manager
-from editor_utils.theme_switcher import (
-    apply_theme_to_window, create_theme_menu, toggle_theme_in_family,
-)
+from editor_utils.app_shell import EditorMainWindow, run_editor
 from editor_utils.tab_widget import EditorTabWidget
-from editor_utils.ui_helpers import install_dialog_theme_filter, themed_messagebox, EditorComboBox
+from editor_utils.ui_helpers import EditorComboBox
 from editor_utils.dock_components import create_dock
-from editor_utils.app_init import install_translator, setup_app_icon
-from editor_utils.version import format_title, format_about_header
+from editor_utils.version import format_title
 from editor_utils.mod_exporter import (
     generate_mod_json, pack_tksmod, ModMetadataDialog, safe_mod_filename,
     read_tksmod,
@@ -114,19 +109,36 @@ class _ConvertWorker(QObject):
 # 主窗口
 # ═══════════════════════════════════════════════════════════════
 
-class FontEditorWindow(QMainWindow):
+class FontEditorWindow(EditorMainWindow):
     """FONT9696 字体编辑器主窗口。"""
 
-    def __init__(self):
-        super().__init__()
-        self.setObjectName("EditorWindow")
-        self.setWindowTitle(format_title("font_editor"))
-        self.resize(1280, 720)
-        self.setMinimumSize(820, 520)
+    EDITOR_KEY = "font_editor"
+    DEFAULT_SIZE = (1280, 720)
+    MIN_SIZE = (820, 520)
 
-        # 主题初始化：跟随持久化选择，无存档时按系统深浅色取现代主题
-        apply_theme_to_window(self, theme_manager.load_initial_theme(), persist=False)
+    HELP_TEXT = (
+        "功能: 生成与预览《三国群侠传》FONT9696 位图字体\n\n"
+        "创建字体:\n"
+        "  1. 添加 TTF/OTF 字体文件\n"
+        "  2. 勾选要生成的 FTYPE 区段 (默认全选)\n"
+        "  3. 选择简体/繁体字形, 调整渲染像素大小 (建议 70-85)\n"
+        "  4. 为每个 FTYPE 区段独立选择 TTF\n"
+        "  5. 点击「开始生成」并选择输出路径\n\n"
+        "字体预览:\n"
+        "  加载 FONT9696 后可查看 8 个 FTYPE 区段的字形\n"
+        "  预览包含示例文本和前 64 个 BIG5 字符网格\n"
+        "  ASCII 字符通过 word_4EC810 重映射为 BIG5 全角码显示\n\n"
+        "MOD 导出/导入:\n"
+        "  通过「文件」菜单将 FONT9696 打包为 .tksmod 或从 .tksmod 导入\n"
+        "  MOD 采用 resources 整体替换机制\n\n"
+        "格式说明:\n"
+        "  8 FTYPE × 14915 字形 × uint32 偏移索引 + RLE 压缩 96×96 1bpp 位图\n"
+        "  BIG5 编码索引, bit=1 为背景, bit=0 为笔画\n\n"
+        "逆向依据:\n"
+        "  sub_44ADB0 (字体构造), sub_44B384 (BIG5 索引), sub_44B208 (RLE 编解码)"
+    )
 
+    def _init_data(self):
         # 当前打开的 FONT9696 文件
         self._font_path: str | None = None
         self._font_index: list[int] = []
@@ -150,11 +162,9 @@ class FontEditorWindow(QMainWindow):
         self._preview_path_label: QLabel | None = None
         self._preview_container: QWidget | None = None
 
-        # 构建 UI
-        self._build_ui()
+    def _after_build(self):
         self._build_menu()
         self._build_statusbar()
-        self._apply_theme()
         self._update_window_title()
 
     # ── UI 构建 ──
@@ -417,32 +427,18 @@ class FontEditorWindow(QMainWindow):
         exit_act.triggered.connect(self.close)
         file_menu.addAction(exit_act)
 
-        # ── 主题 ──
-        menubar.addMenu(create_theme_menu(self))
-
-        # ── 帮助(H) ──
-        help_menu = menubar.addMenu("帮助(H)")
-        help_menu.addAction("帮助说明", self._show_help)
-        help_menu.addAction("关于编辑器", self._show_about)
+        # ── 主题 + 帮助 ──
+        self.add_standard_menus(menubar)
 
     def _build_statusbar(self):
         """构建状态栏。"""
         self._status_label = QLabel("就绪")
         self.statusBar().addWidget(self._status_label)
 
-    # ── 主题 ──
-
-    def _apply_theme(self):
-        """应用主题: QSS 客户区 + DWM 标题栏 (统一组件一次完成)。"""
-        apply_theme_to_window(self, self._theme_id, persist=False)
-
     def _on_theme_applied(self, theme_id):
         # 切换主题后刷新预览 (颜色变化); 初始化回调时 _font_path 尚未创建
         if getattr(self, "_font_path", None):
             self._refresh_preview()
-
-    def _toggle_theme(self):
-        toggle_theme_in_family(self)
 
     def _glyph_fg_color(self) -> str:
         """返回当前主题下字形笔画颜色 (渲染进位图像素), 与 editor_themes 文字色一致。"""
@@ -1073,40 +1069,6 @@ class FontEditorWindow(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "导入失败", f"导入 MOD 失败:\n{e}")
 
-    # ── 帮助/关于 ──
-
-    def _show_help(self):
-        """显示帮助说明。"""
-        themed_messagebox(
-            self, QMessageBox.Information, "帮助说明",
-            "功能: 生成与预览《三国群侠传》FONT9696 位图字体\n\n"
-            "创建字体:\n"
-            "  1. 添加 TTF/OTF 字体文件\n"
-            "  2. 勾选要生成的 FTYPE 区段 (默认全选)\n"
-            "  3. 选择简体/繁体字形, 调整渲染像素大小 (建议 70-85)\n"
-            "  4. 为每个 FTYPE 区段独立选择 TTF\n"
-            "  5. 点击「开始生成」并选择输出路径\n\n"
-            "字体预览:\n"
-            "  加载 FONT9696 后可查看 8 个 FTYPE 区段的字形\n"
-            "  预览包含示例文本和前 64 个 BIG5 字符网格\n"
-            "  ASCII 字符通过 word_4EC810 重映射为 BIG5 全角码显示\n\n"
-            "MOD 导出/导入:\n"
-            "  通过「文件」菜单将 FONT9696 打包为 .tksmod 或从 .tksmod 导入\n"
-            "  MOD 采用 resources 整体替换机制\n\n"
-            "格式说明:\n"
-            "  8 FTYPE × 14915 字形 × uint32 偏移索引 + RLE 压缩 96×96 1bpp 位图\n"
-            "  BIG5 编码索引, bit=1 为背景, bit=0 为笔画\n\n"
-            "逆向依据:\n"
-            "  sub_44ADB0 (字体构造), sub_44B384 (BIG5 索引), sub_44B208 (RLE 编解码)"
-        )
-
-    def _show_about(self):
-        """显示关于对话框。"""
-        themed_messagebox(
-            self, QMessageBox.Information, "关于编辑器",
-            format_about_header('font_editor')
-        )
-
     # ── 关闭事件 ──
 
     def closeEvent(self, event):
@@ -1130,18 +1092,7 @@ class FontEditorWindow(QMainWindow):
 # ═══════════════════════════════════════════════════════════════
 
 def main():
-    from editor_utils.app_init import ensure_single_instance
-    ensure_single_instance()
-    app = QApplication(sys.argv)
-    install_dialog_theme_filter(app)              # 必须紧跟 QApplication 后调用
-    app.setStyle("Fusion")
-    app.setApplicationName("TKS Font Editor")
-    _t = install_translator(app)                  # 保持引用防 GC
-    setup_app_icon(app, os.path.dirname(__file__))
-
-    window = FontEditorWindow()
-    window.show()
-    sys.exit(app.exec())
+    run_editor(FontEditorWindow, "TKS Font Editor")
 
 
 if __name__ == '__main__':

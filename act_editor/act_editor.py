@@ -45,7 +45,7 @@ import time
 
 # ── PySide6 imports ──
 from PySide6.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
+    QApplication, QWidget, QVBoxLayout, QHBoxLayout,
     QSplitter, QTableWidget, QTableWidgetItem, QHeaderView,
     QLineEdit, QCheckBox, QPushButton, QLabel,
     QScrollArea, QDialog, QFileDialog, QMessageBox, QTextEdit,
@@ -55,7 +55,7 @@ from PySide6.QtWidgets import (
     QToolTip,
 )
 from PySide6.QtGui import (
-    QColor, QFont, QIcon, QIntValidator, QPainter, QPen, QBrush,
+    QColor, QFont, QIntValidator, QPainter, QPen, QBrush,
     QPixmap, QImage, QAction, QPalette, QFontMetrics, QMouseEvent,
     QWheelEvent, QKeyEvent, QShortcut, QKeySequence, QCursor,
 )
@@ -65,7 +65,6 @@ from PySide6.QtCore import (
 
 # ── editor_utils 公共模块 ──
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-from editor_utils import theme_manager
 from editor_utils.theme_manager import business_colors
 
 # 预览/时间轴固定色 — 画布恒为深色系 (图像编辑器惯例) + 领域语义色
@@ -84,18 +83,18 @@ STMT_NO_DATA_COLOR = "#AAAAAA"      # 语句表: 无数据 (灰)
 # 图层槽位分类色 (预览外框与图层列表共用)
 SLOT_COLORS = ["#4488ff", "#ff8844", "#44ff88", "#ff44ff",
                "#ffff44", "#44ffff", "#ff8888", "#88ff88"]
-from editor_utils.version import format_title, format_about_header
 from editor_utils.theme_switcher import (
-    apply_theme_to_window, create_theme_menu, toggle_theme_in_family,
+    apply_theme_to_window, toggle_theme_in_family,
 )
+from editor_utils.app_shell import EditorMainWindow, run_editor
+from editor_utils.version import format_title
 from editor_utils.search_utils import search_match
 from editor_utils.kon_name_resolver import KonNameResolver
 from editor_utils.lzss import lzss_decompress_dat
 from editor_utils.shared_state import pick_tks_directory
 from editor_utils.dock_components import DockHeader
 from editor_utils.ui_helpers import (
-    make_fake_input, update_path_labels, confirm_close,
-    themed_messagebox, EditorComboBox,
+    make_fake_input, update_path_labels, confirm_close, EditorComboBox,
 )
 from editor_utils.tab_widget import EditorTabWidget
 from editor_utils.adaptive_table import AdaptiveTableWidget
@@ -1648,23 +1647,27 @@ class ThumbnailStrip(QWidget):
 # 主编辑器窗口
 # ============================================================
 
-class ActEditorV2(QMainWindow):
-    def __init__(self):
-        super().__init__()
-        self.setObjectName("EditorWindow")
-        self.setWindowTitle(format_title("act_editor"))
-        # 右侧图层卡片需要约 520px，左侧列表需要约 280px；控制栏拆行后，
-        # 1680×960 可以在默认布局下同时保留两侧面板和足够的预览空间。
-        self.resize(1680, 960)
-        self.setMinimumSize(1420, 800)
+class ActEditorV2(EditorMainWindow):
+    # 右侧图层卡片需要约 520px，左侧列表需要约 280px；控制栏拆行后，
+    # 1680×960 可以在默认布局下同时保留两侧面板和足够的预览空间。
+    EDITOR_KEY = "act_editor"
+    DEFAULT_SIZE = (1680, 960)
+    MIN_SIZE = (1420, 800)
 
-        ico = os.path.join(os.path.dirname(__file__), 'TKS.ico')
-        if os.path.exists(ico):
-            self.setWindowIcon(QIcon(ico))
+    HELP_TEXT = (
+        "功能: 编辑《三国群侠传》角色动画数据\n"
+        "数据: 原版 650 条 × 784 字节 = 509,600 字节\n"
+        "      新建条目在列表末尾新增空条目；>650 为扩展条目，需扩容补丁\n\n"
+        "特性:\n"
+        "  · 多图层 2D 精灵动画编辑\n"
+        "  · 6 种图像混合模式\n"
+        "  · 实时动画预览\n"
+        "  · 音效触发表编辑\n"
+        "  · 每行右键: 复制 / 粘贴 / 清除；扩展条目另有删除\n"
+        "  · 原版条目只能清除；扩展条目可清除或删除\n"
+        "  · 深色/浅色主题切换")
 
-        # 主题初始化：跟随持久化选择，无存档时按系统深浅色取现代主题
-        apply_theme_to_window(self, theme_manager.load_initial_theme(), persist=False)
-
+    def _init_data(self):
         # 数据状态
         self.act_path = None
         self.aa_path = None
@@ -1714,7 +1717,7 @@ class ActEditorV2(QMainWindow):
         self._auto_fill_enabled = True
         self._greenscreen_remove = True
 
-        self._build_ui()
+    def _after_build(self):
         self._apply_theme()
         self._set_edit_enabled(False)
         self._install_nle_shortcuts()
@@ -1775,7 +1778,7 @@ class ActEditorV2(QMainWindow):
         em.addAction("清除当前条目", self._clear_entry)
         em.addAction("删除当前条目", self._delete_entry)
 
-        mb.addMenu(create_theme_menu(self))
+        self.add_theme_submenu(mb)
 
         hm = mb.addMenu("帮助(&H)")
         hm.addAction("字段参考", self._show_field_ref)
@@ -4459,23 +4462,6 @@ class ActEditorV2(QMainWindow):
         dlg.exec()
 
     # 逆向参考: sub_4434BC, sub_42FEE0, sub_451780, sub_458D08
-    def _show_help(self):
-        themed_messagebox(self, QMessageBox.Information, "帮助说明",
-            "功能: 编辑《三国群侠传》角色动画数据\n"
-            "数据: 原版 650 条 × 784 字节 = 509,600 字节\n"
-            "      新建条目在列表末尾新增空条目；>650 为扩展条目，需扩容补丁\n\n"
-            "特性:\n"
-            "  · 多图层 2D 精灵动画编辑\n"
-            "  · 6 种图像混合模式\n"
-            "  · 实时动画预览\n"
-            "  · 音效触发表编辑\n"
-            "  · 每行右键: 复制 / 粘贴 / 清除；扩展条目另有删除\n"
-            "  · 原版条目只能清除；扩展条目可清除或删除\n"
-            "  · 深色/浅色主题切换")
-
-    def _show_about(self):
-        themed_messagebox(self, QMessageBox.Information, "关于编辑器",
-            format_about_header('act_editor'))
 
     # ── 窗口关闭 ──
 
@@ -4493,20 +4479,7 @@ class ActEditorV2(QMainWindow):
 # ============================================================
 
 def main():
-    from editor_utils.app_init import ensure_single_instance
-    ensure_single_instance()
-    from editor_utils.app_init import install_translator, setup_app_icon
-    from editor_utils.ui_helpers import install_dialog_theme_filter
-    app = QApplication(sys.argv)
-    install_dialog_theme_filter(app)
-    app.setStyle("Fusion")
-    _t = install_translator(app)
-    setup_app_icon(app, os.path.dirname(__file__))
-
-    app.setApplicationName("TKAct Editor")
-    editor = ActEditorV2()
-    editor.show()
-    sys.exit(app.exec())
+    run_editor(ActEditorV2, "TKAct Editor")
 
 
 if __name__ == '__main__':

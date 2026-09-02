@@ -12,12 +12,12 @@ import sys
 
 from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import (
-    QBrush, QColor, QIcon, QKeySequence, QPainter, QPainterPath, QPen, QPolygonF
+    QBrush, QColor, QKeySequence, QPainter, QPainterPath, QPen, QPolygonF
 )
 from PySide6.QtWidgets import (
     QAbstractItemView, QApplication, QCheckBox, QDialog,
     QFileDialog, QFrame, QGraphicsDropShadowEffect, QGridLayout, QHBoxLayout,
-    QHeaderView, QLabel, QLineEdit, QMainWindow, QMenu, QMenuBar, QMessageBox,
+    QHeaderView, QLabel, QLineEdit, QMenu, QMenuBar, QMessageBox,
     QPushButton, QGraphicsScene, QGraphicsView, QScrollArea, QSplitter,
     QTableWidget, QTableWidgetItem, QTextEdit, QVBoxLayout, QWidget
 )
@@ -45,16 +45,15 @@ from editor_utils.mod_exporter import (
 from editor_utils.picker_dialogs import (
     STATUS_ICON_BASE, STATUS_NAMES, StatusPickerDialog, TktPickerDialog
 )
-from editor_utils import theme_manager
 from editor_utils.theme_switcher import (
-    apply_theme_to_window, create_theme_menu, toggle_theme_in_family,
+    apply_theme_to_window, toggle_theme_in_family,
 )
+from editor_utils.app_shell import EditorMainWindow, run_editor
 from editor_utils.tkt_loader import load_tkt_simple
 from editor_utils.ui_helpers import (
-    confirm_close, make_fake_input, themed_messagebox,
+    confirm_close, make_fake_input,
     update_path_labels, EditorComboBox,
 )
-from editor_utils.version import format_title, format_about_header
 from editor_utils.search_utils import search_match
 
 # ── 本地别名: 保持向后兼容 ──
@@ -805,22 +804,20 @@ class SkillTreeDialog(QDialog):
 # GUI 核心编辑器
 # ============================================================
 
-class SkillEditorApp(QMainWindow):
-    def __init__(self):
-        super().__init__()
-        self.setObjectName("EditorWindow")
-        self.setWindowTitle(format_title("skill_editor"))
-        self.resize(1360, 820)
-        self.setMinimumSize(1100, 650)
+class SkillEditorApp(EditorMainWindow):
+    EDITOR_KEY = "skill_editor"
+    DEFAULT_SIZE = (1360, 820)
+    MIN_SIZE = (1100, 650)
 
-        # 补全：精准加载原版要求的图标文件 TKS.ico
-        ico_path = os.path.join(os.path.dirname(__file__), 'TKS.ico')
-        if os.path.exists(ico_path):
-            self.setWindowIcon(QIcon(ico_path))
+    HELP_TEXT = (
+        "功能: 编辑《三国群侠传》技能数据\n"
+        "数据: 350 条 × 94 字节 = 32,900 字节\n\n"
+        "特性:\n"
+        "  · Godot 4.6 级别布局与纯净控件约束\n"
+        "  · 分页编辑: 基础/效果/免疫/进阶/技能树\n"
+        "  · 自动关联 TKT.dat 显示技能名称")
 
-        # 主题初始化：跟随持久化选择，无存档时按系统深浅色取现代主题
-        apply_theme_to_window(self, theme_manager.load_initial_theme(), persist=False)
-
+    def _init_data(self):
         self.skill_path = self.tkt_path = None
         self.records = []
         self.tkt = {}
@@ -837,7 +834,7 @@ class SkillEditorApp(QMainWindow):
         self.widget_map = {}
         self.extra_map = {}
 
-        self._build_ui()
+    def _after_build(self):
         self._set_edit_enabled(False)
         self._apply_theme()
 
@@ -892,11 +889,7 @@ class SkillEditorApp(QMainWindow):
         em.addAction("复制当前记录", self._copy_record)
         em.addAction("清空当前记录", self._clear_current)
 
-        menu_bar.addMenu(create_theme_menu(self))
-
-        hm = menu_bar.addMenu("帮助(H)")
-        hm.addAction("帮助说明", self._show_help)
-        hm.addAction("关于编辑器", self._show_about)
+        self.add_standard_menus(menu_bar)
 
         # --- Toolbar ---
         toolbar = QHBoxLayout()
@@ -1711,19 +1704,6 @@ class SkillEditorApp(QMainWindow):
             f"共加载 {len(records)} 条记录。\n"
             f"您现在可以继续编辑并重新导出。")
 
-    def _show_help(self):
-        themed_messagebox(self, QMessageBox.Information, "帮助说明",
-            "功能: 编辑《三国群侠传》技能数据\n"
-            "数据: 350 条 × 94 字节 = 32,900 字节\n\n"
-            "特性:\n"
-            "  · Godot 4.6 级别布局与纯净控件约束\n"
-            "  · 分页编辑: 基础/效果/免疫/进阶/技能树\n"
-            "  · 自动关联 TKT.dat 显示技能名称")
-
-    def _show_about(self):
-        themed_messagebox(self, QMessageBox.Information, "关于编辑器",
-            format_about_header('skill_editor'))
-
     def closeEvent(self, event):
         if not confirm_close(self, self._dirty):
             event.ignore()
@@ -1731,18 +1711,7 @@ class SkillEditorApp(QMainWindow):
             event.accept()
 
 def main():
-    from editor_utils.app_init import ensure_single_instance
-    ensure_single_instance()
-    from editor_utils.app_init import install_translator, setup_app_icon
-    from editor_utils.ui_helpers import install_dialog_theme_filter
-    app = QApplication(sys.argv)
-    install_dialog_theme_filter(app)
-    app.setStyle("Fusion")
-    _t = install_translator(app)
-    setup_app_icon(app, os.path.dirname(__file__))
-    editor = SkillEditorApp()
-    editor.show()
-    sys.exit(app.exec())
+    run_editor(SkillEditorApp)
 
 
 if __name__ == '__main__':

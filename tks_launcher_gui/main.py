@@ -9,13 +9,8 @@ sys.path.insert(0, _THIS_DIR)
 # 将 仓库根目录 目录加入搜索路径，使 editor_utils 可导入
 sys.path.insert(0, os.path.dirname(_THIS_DIR))
 
-from PySide6.QtGui import QIcon
-from PySide6.QtWidgets import QApplication
-
+from editor_utils.app_shell import run_editor
 from ui.main_window import MainWindow
-
-# 图标路径
-_ICON_PATH = os.path.join(_THIS_DIR, "TKS.ico")
 
 
 def _launcher_dir() -> str:
@@ -75,26 +70,9 @@ def main():
     if "--verify-patches" in sys.argv:
         sys.exit(_verify_patches())
 
-    from editor_utils.app_init import ensure_single_instance
-    ensure_single_instance()
-    from editor_utils.ui_helpers import install_dialog_theme_filter
-    app = QApplication(sys.argv)
-    install_dialog_theme_filter(app)
-    app.setStyle("Fusion")  # 使用 Fusion 样式，避免 Windows 原生样式覆盖 QSS
-    app.setApplicationName("TKS Mod Launcher")
-    app.setApplicationVersion("2.0.0")
-    app.setOrganizationName("TKSMod")
-
-    # 设置应用图标
-    if os.path.isfile(_ICON_PATH):
-        app.setWindowIcon(QIcon(_ICON_PATH))
-
     # 创建主窗口 (初始主题: 持久化存档优先, 否则跟随系统深浅色)
-    window = MainWindow()
-
-    window.show()
-
-    sys.exit(app.exec())
+    run_editor(MainWindow, "TKS Mod Launcher", app_version="2.0.0",
+               org_name="TKSMod", icon_dir=_THIS_DIR, translator=False)
 
 
 if __name__ == "__main__":

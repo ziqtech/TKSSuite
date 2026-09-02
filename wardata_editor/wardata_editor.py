@@ -70,7 +70,7 @@ import sys
 from functools import partial
 from pathlib import Path
 from PySide6.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
+    QApplication, QWidget, QVBoxLayout, QHBoxLayout,
     QSplitter, QTableWidget, QTableWidgetItem, QHeaderView,
     QLineEdit, QCheckBox, QPushButton, QLabel,
     QScrollArea, QDialog, QFileDialog, QMessageBox, QTextEdit,
@@ -80,16 +80,16 @@ from PySide6.QtWidgets import (
     QSizePolicy,
 )
 from PySide6.QtGui import (
-    QColor, QFont, QIcon, QIntValidator, QBrush, QPen, QPolygonF,
+    QColor, QFont, QIntValidator, QBrush, QPen, QPolygonF,
     QPainter, QPixmap, QImage, QAction, QKeySequence,
 )
 from PySide6.QtCore import Qt, QPointF, QRectF, QTranslator
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-from editor_utils import theme_manager
 from editor_utils.theme_switcher import (
-    apply_theme_to_window, create_theme_menu, toggle_theme_in_family,
+    apply_theme_to_window, toggle_theme_in_family,
 )
+from editor_utils.app_shell import EditorMainWindow, run_editor
 from editor_utils.dock_components import DockHeader
 from editor_utils.ui_helpers import make_fake_input, update_path_labels, confirm_close, themed_messagebox, EditorComboBox
 from editor_utils.adaptive_table import AdaptiveTableWidget
@@ -103,7 +103,7 @@ from editor_utils.mod_exporter import (
     compute_crc32, generate_mod_json, pack_tksmod, ModMetadataDialog, safe_mod_filename,
     get_tksmod_info, read_tksmod, ModImportPreviewDialog, ModExportPreviewDialog,
 )
-from editor_utils.version import format_title, format_about_header
+from editor_utils.version import format_title
 from editor_utils.tab_widget import EditorTabWidget
 from editor_utils.search_utils import search_match
 from editor_utils.picker_dialogs import WarpcPickerDialog, ItemPickerDialog
@@ -528,21 +528,24 @@ SELECT_OUTLINE = '#FFFF00'    # 选中多边形高亮: 黄
 SCENE_BG = '#333333'          # 战场场景底色
 
 
-class WarDataEditorV2(QMainWindow):
-    def __init__(self):
-        super().__init__()
-        self.setObjectName("EditorWindow")
-        self.setWindowTitle(format_title("wardata_editor"))
-        self.resize(1600, 900)
-        self.setMinimumSize(1100, 700)
+class WarDataEditorV2(EditorMainWindow):
+    EDITOR_KEY = "wardata_editor"
+    DEFAULT_SIZE = (1600, 900)
+    MIN_SIZE = (1100, 700)
 
-        ico = os.path.join(os.path.dirname(__file__), 'TKS.ico')
-        if os.path.exists(ico):
-            self.setWindowIcon(QIcon(ico))
+    HELP_TEXT = (
+        "功能: 编辑《三国群侠传》战场数据\n\n"
+        "编辑内容:\n"
+        "  · 敌方角色配置 (角色/等级/强化值/坐标)\n"
+        "  · 我方出场配置 (坐标/朝向)\n"
+        "  · 陷阱与宝箱设置\n"
+        "  · 寻路网格数据 (WarWay.dat)\n"
+        "  · 地图可视化预览\n\n"
+        "特性:\n"
+        "  · 32×32 网格地图可视化\n"
+        "  · 深色/浅色主题切换")
 
-        # 主题初始化：跟随持久化选择，无存档时按系统深浅色取现代主题
-        apply_theme_to_window(self, theme_manager.load_initial_theme(), persist=False)
-
+    def _init_data(self):
         # 数据状态
         self.wardata_path = None
         self.warway_path = None
@@ -587,7 +590,7 @@ class WarDataEditorV2(QMainWindow):
         self._last_trea_zone_reqs = []
         self._last_trap_zone_reqs = []
 
-        self._build_ui()
+    def _after_build(self):
         self._set_edit_enabled(False)
         self._apply_theme()
 
@@ -650,7 +653,7 @@ class WarDataEditorV2(QMainWindow):
         em.addAction("复制当前记录", self._copy_record)
         em.addAction("删除当前记录", self._delete_record)
 
-        mb.addMenu(create_theme_menu(self))
+        self.add_theme_submenu(mb)
 
         hm = mb.addMenu("帮助(&H)")
         hm.addAction("字段参考", self._show_field_ref)
@@ -1129,22 +1132,6 @@ class WarDataEditorV2(QMainWindow):
             "  1~5 = 不同区域编号")
 
     # 关于信息: 编辑器基于 TKS.exe 反编译/逆向工程分析 (原始依据已从用户可见文本中移除)
-    def _show_help(self):
-        themed_messagebox(self, QMessageBox.Information, "帮助说明",
-            "功能: 编辑《三国群侠传》战场数据\n\n"
-            "编辑内容:\n"
-            "  · 敌方角色配置 (角色/等级/强化值/坐标)\n"
-            "  · 我方出场配置 (坐标/朝向)\n"
-            "  · 陷阱与宝箱设置\n"
-            "  · 寻路网格数据 (WarWay.dat)\n"
-            "  · 地图可视化预览\n\n"
-            "特性:\n"
-            "  · 32×32 网格地图可视化\n"
-            "  · 深色/浅色主题切换")
-
-    def _show_about(self):
-        themed_messagebox(self, QMessageBox.Information, "关于编辑器",
-            format_about_header('wardata_editor'))
 
     def _build_warway_diff_json(self, ref_dir):
         """构建 WarWay.dat 差异 JSON (与 ref_dir/WarWay.dat 比对)。
@@ -3495,18 +3482,7 @@ class SceneGraphicsView(QGraphicsView):
 # ═══════════════════════════════════════════════════════════
 
 def main():
-    from editor_utils.app_init import ensure_single_instance
-    ensure_single_instance()
-    from editor_utils.app_init import install_translator, setup_app_icon
-    from editor_utils.ui_helpers import install_dialog_theme_filter
-    app = QApplication(sys.argv)
-    install_dialog_theme_filter(app)
-    app.setStyle('Fusion')
-    _t = install_translator(app)
-    setup_app_icon(app, os.path.dirname(__file__))
-    editor = WarDataEditorV2()
-    editor.show()
-    sys.exit(app.exec())
+    run_editor(WarDataEditorV2)
 
 
 if __name__ == '__main__':

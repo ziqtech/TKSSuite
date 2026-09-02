@@ -36,14 +36,13 @@ from PySide6.QtGui import (
     QColor, QFont, QAction, QKeySequence, QIcon
 )
 from PySide6.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QSplitter,
+    QApplication, QWidget, QVBoxLayout, QHBoxLayout, QSplitter,
     QTableWidget, QTableWidgetItem, QHeaderView, QPushButton, QLabel,
     QLineEdit, QSpinBox, QRadioButton, QButtonGroup, QTextEdit,
     QFileDialog, QMessageBox, QDialog, QFrame, QAbstractItemView
 )
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-from editor_utils.dock_components import create_dock
 from editor_utils.adaptive_table import AdaptiveTableWidget
 from editor_utils.jvg_loader import load_mu_sprites, get_sprite_pixmap
 from editor_utils.lzss import lzss_decompress_dat, lzss_compress_dat
@@ -55,12 +54,11 @@ from editor_utils.mod_exporter import (
     get_tksmod_info, import_tksmod_records, ModImportPreviewDialog, ModExportPreviewDialog,
 )
 from editor_utils.picker_dialogs import ItemPickerDialog
-from editor_utils import theme_manager
 from editor_utils.theme_switcher import (
-    apply_theme_to_window, create_theme_menu, toggle_theme_in_family,
+    apply_theme_to_window, toggle_theme_in_family,
 )
-from editor_utils.ui_helpers import themed_messagebox, update_path_labels, EditorComboBox
-from editor_utils.version import format_title, format_about_header
+from editor_utils.app_shell import EditorMainWindow, run_editor
+from editor_utils.ui_helpers import update_path_labels, EditorComboBox
 from editor_utils.search_utils import search_match
 
 # ── 本地别名: 保持向后兼容 ──
@@ -236,19 +234,30 @@ TAB_TO_SHOP = {
 # GUI 编辑器 (PySide6)
 # ============================================================
 
-class ShopEditorWindow(QMainWindow):
-    def __init__(self):
-        super().__init__()
-        self.setObjectName("EditorWindow")
-        self.setWindowTitle(format_title("shop_editor"))
-        self.resize(1100, 680)
-        self.setMinimumSize(950, 550)
+class ShopEditorWindow(EditorMainWindow):
+    EDITOR_KEY = "shop_editor"
+    DEFAULT_SIZE = (1100, 680)
+    MIN_SIZE = (950, 550)
 
-        # 窗口图标
-        ico_path = os.path.join(os.path.dirname(__file__), 'TKS.ico')
-        if os.path.exists(ico_path):
-            self.setWindowIcon(QIcon(ico_path))
+    HELP_TEXT = (
+        "TKShop.dat 可视化编辑器\n\n"
+        "1. 文件 → 加载 TKS 目录: 选择包含 TKShop.dat / TKItem.dat / TKT.dat 的目录\n"
+        "2. 左侧表格: 单击行查看/编辑, 支持区域过滤和关键词搜索, 点击表头可排序\n"
+        "3. 右侧面板: 修改区域/物品/出现条件/显示标志, 点「应用修改」保存到内存\n"
+        "4. 文件 → 保存 (Ctrl+S): 将内存中的修改写入 TKShop.dat\n"
+        "5. + 新增记录: 在240条中查找空槽位复用\n"
+        "6. 出现条件 (基于队伍最高幸运 LUK):\n"
+        "   - 随机: 每次进入商店时随机抽选 (最多5件)\n"
+        "   - 始终: 设为-100, 任意幸运值都100%出现\n"
+        "   - 幸运: 出现概率 = clamp(幸运 - 条件值, 0, 100)%\n"
+        "7. 物品与区域有兼容性限制 (由游戏代码决定):\n"
+        "   选择物品后区域下方会显示是否兼容及建议放置的商店\n\n"
+        "功能: 编辑《三国群侠传》商店数据\n\n"
+        "特性:\n"
+        "  · 自动关联物品数据库显示物品名称\n"
+        "  · 深色/浅色主题切换")
 
+    def _init_data(self):
         self.shop_path = None
         self.item_path = None
         self.tkt_path = None
@@ -265,24 +274,16 @@ class ShopEditorWindow(QMainWindow):
 
         self._dirty = False
         self._editing_idx = -1
-
-        # 主题初始化：跟随持久化选择，无存档时按系统深浅色取现代主题
-        apply_theme_to_window(self, theme_manager.load_initial_theme(), persist=False)
-
-        self._build_ui()
-        self._update_path_labels()
-        self._set_edit_enabled(False)
-
         self.sort_col = 0
         self.sort_reverse = False
+
+    def _after_build(self):
+        self._update_path_labels()
+        self._set_edit_enabled(False)
 
     # ================================================================
     # UI 构建
     # ================================================================
-
-    def _create_dock(self, title, widget_content):
-        """Dock 面板包裹 — 委托给 editor_utils.dock_components"""
-        return create_dock(title, widget_content)
 
     def _build_ui(self):
         # ---- 菜单栏 ----
@@ -319,15 +320,7 @@ class ShopEditorWindow(QMainWindow):
         action_exit.triggered.connect(self.close)
         file_menu.addAction(action_exit)
 
-        menubar.addMenu(create_theme_menu(self))
-
-        help_menu = menubar.addMenu("帮助")
-        action_help = QAction("帮助说明", self)
-        action_help.triggered.connect(self._show_help)
-        help_menu.addAction(action_help)
-        action_about = QAction("关于编辑器", self)
-        action_about.triggered.connect(self._show_about)
-        help_menu.addAction(action_about)
+        self.add_standard_menus(menubar)
 
         # ---- 中心部件 ----
         central_widget = QWidget()
@@ -1099,50 +1092,13 @@ class ShopEditorWindow(QMainWindow):
             f"共加载 {len(records)} 条记录。\n"
             f"您现在可以继续编辑并重新导出。")
 
-    def _show_help(self):
-        themed_messagebox(self, QMessageBox.Information, "使用说明",
-            "TKShop.dat 可视化编辑器\n\n"
-            "1. 文件 → 加载 TKS 目录: 选择包含 TKShop.dat / TKItem.dat / TKT.dat 的目录\n"
-            "2. 左侧表格: 单击行查看/编辑, 支持区域过滤和关键词搜索, 点击表头可排序\n"
-            "3. 右侧面板: 修改区域/物品/出现条件/显示标志, 点「应用修改」保存到内存\n"
-            "4. 文件 → 保存 (Ctrl+S): 将内存中的修改写入 TKShop.dat\n"
-            "5. + 新增记录: 在240条中查找空槽位复用\n"
-            "6. 出现条件 (基于队伍最高幸运 LUK):\n"
-            "   - 随机: 每次进入商店时随机抽选 (最多5件)\n"
-            "   - 始终: 设为-100, 任意幸运值都100%出现\n"
-            "   - 幸运: 出现概率 = clamp(幸运 - 条件值, 0, 100)%\n"
-            "7. 物品与区域有兼容性限制 (由游戏代码决定):\n"
-            "   选择物品后区域下方会显示是否兼容及建议放置的商店\n\n"
-            "功能: 编辑《三国群侠传》商店数据\n\n"
-            "特性:\n"
-            "  · 自动关联物品数据库显示物品名称\n"
-            "  · 深色/浅色主题切换")
-
-    # 关于信息: 编辑器基于《三国群侠传》(TKS) 逆向工程分析 (原始依据已从用户可见文本中移除)
-    def _show_about(self):
-        themed_messagebox(self, QMessageBox.Information, "关于编辑器",
-            format_about_header('shop_editor'))
 
 # ============================================================
 # 入口
 # ============================================================
 
 def main():
-    from editor_utils.app_init import ensure_single_instance
-    ensure_single_instance()
-    from editor_utils.app_init import install_translator, setup_app_icon
-    from editor_utils.ui_helpers import install_dialog_theme_filter
-    app = QApplication(sys.argv)
-    install_dialog_theme_filter(app)
-    app.setStyle("Fusion")
-    app.setApplicationName("TKShop Editor")
-    _t = install_translator(app)
-    setup_app_icon(app, os.path.dirname(__file__))
-
-    window = ShopEditorWindow()
-    window.show()
-
-    sys.exit(app.exec())
+    run_editor(ShopEditorWindow, "TKShop Editor")
 
 if __name__ == '__main__':
     main()
