@@ -5,10 +5,10 @@
 import os
 import sys
 from PySide6.QtCore import QObject, QEvent
-from PySide6.QtGui import QIcon
-from PySide6.QtWidgets import (QFileDialog, QFrame, QHBoxLayout, QLabel,
+from PySide6.QtGui import QIcon, QFont
+from PySide6.QtWidgets import (QDialog, QFileDialog, QFrame, QHBoxLayout, QLabel,
                                QLineEdit, QMenu, QMessageBox,
-                               QPushButton, QWidget, QSpinBox)
+                               QPushButton, QTextEdit, QVBoxLayout, QWidget, QSpinBox)
 from editor_utils.combo_box import EditorComboBox, EditorComboListPopup
 
 
@@ -108,6 +108,27 @@ def themed_messagebox(parent, icon, title, text):
     """信息弹窗 (标题栏主题由全局过滤器自动处理)。"""
     msg = QMessageBox(icon, title, text, QMessageBox.StandardButton.Ok, parent)
     return msg.exec()
+
+
+def show_field_ref(parent, text, size=(700, 580)):
+    """只读文本参考弹窗 (字段映射/说明类) — 阶段 4 合并 kon/warpc 两份 FieldRefDialog。
+
+    内容由调用方构建; 等宽 Consolas 9 字体呈现字段表。
+    """
+    dlg = QDialog(parent)
+    dlg.setWindowTitle("字段参考")
+    dlg.resize(*size)
+    layout = QVBoxLayout(dlg)
+    viewer = QTextEdit()
+    viewer.setReadOnly(True)
+    viewer.setFont(QFont("Consolas", 9))
+    viewer.setPlainText(text)
+    layout.addWidget(viewer)
+    bl = QHBoxLayout()
+    bl.addStretch()
+    bl.addWidget(QPushButton("关闭", clicked=dlg.close))
+    layout.addLayout(bl)
+    dlg.exec()
 
 
 class _DialogThemeFilter(QObject):

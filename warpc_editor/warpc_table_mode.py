@@ -1114,8 +1114,7 @@ class WarpcTablePanel(QWidget):
         if fd.ftype == 'skill_ref':
             if not ed.skill_names:
                 return
-            from warpc_editor import SkillPickerDialog
-            dlg = SkillPickerDialog(self, ed.skill_names, ed._skill_types, cur)
+            dlg = ed._make_skill_picker(self)
             if dlg.exec() == QDialog.Accepted and dlg.selected_index is not None:
                 new_val = dlg.selected_index
         elif fd.ftype in ('item_idx_ref', 'item_id_ref'):

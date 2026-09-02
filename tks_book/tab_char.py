@@ -19,10 +19,9 @@ from editor_utils.ui_helpers import EditorComboBox
 from editor_utils.tab_widget import EditorTabWidget
 from editor_utils.jvg_loader import get_sprite_pixmap
 from editor_utils.flow_layout import FlowLayout
-from editor_utils.picker_dialogs import STATUS_NAMES, STATUS_ICON_BASE
+from editor_utils.picker_dialogs import STATUS_NAMES, STATUS_ICON_BASE, GrowthTableDialog
 from editor_utils.adaptive_table import AdaptiveTableWidget
 from book_skill_graph import CharSkillGraph
-from book_growth import GrowthTableDialog
 from tab_common import BookTabBase
 
 

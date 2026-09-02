@@ -678,7 +678,7 @@ ACT: dict[str, tuple[str, str, str, str]] = {
     "stmt_muted": ("#888888", "#AAAAAA", "#888888", "#AAAAAA"),
 }
 
-# 成长率面板 (warpc_editor / tks_book.book_growth 共用 — 原两处重复定义)。
+# 成长率面板 (picker_dialogs.GrowthTableDialog — warpc 编辑器 / tks_book 查看器共用)。
 GROWTH: dict[str, tuple[str, str, str, str]] = {
     "delta": ("#55b572", "#2d7a2d", "#55b572", "#2d7a2d"),  # Δ增量
     "grp": ("#e8a040", "#cc7a20", "#e8a040", "#cc7a20"),   # grp 最终属性

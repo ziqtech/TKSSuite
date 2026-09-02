@@ -15,11 +15,11 @@ from PySide6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout,
     QSplitter, QTableWidget, QTableWidgetItem, QHeaderView,
     QLineEdit, QCheckBox, QPushButton, QLabel,
-    QScrollArea, QGroupBox, QDialog, QFileDialog, QMessageBox, QTextEdit,
+    QScrollArea, QGroupBox, QDialog, QFileDialog, QMessageBox,
     QFrame, QGridLayout, QAbstractItemView, QMenuBar, QSizePolicy,
     QMenu,
 )
-from PySide6.QtGui import QIntValidator, QColor, QFont, QIcon, QShortcut, QKeySequence
+from PySide6.QtGui import QIntValidator, QColor, QIcon, QShortcut, QKeySequence
 from PySide6.QtCore import Qt, QTranslator
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
@@ -29,7 +29,7 @@ from editor_utils.theme_switcher import (
 )
 from editor_utils.app_shell import EditorMainWindow, run_editor
 from editor_utils.dock_components import DockHeader
-from editor_utils.ui_helpers import make_fake_input, update_path_labels, confirm_close, EditorComboBox
+from editor_utils.ui_helpers import make_fake_input, update_path_labels, confirm_close, show_field_ref, EditorComboBox
 from editor_utils.lzss import lzss_decompress_dat, lzss_compress_dat
 from editor_utils.shared_state import pick_tks_directory
 from editor_utils.tkt_loader import load_tkt_simple
@@ -228,47 +228,33 @@ class NumericTableItem(QTableWidgetItem):
 
 # 逆向参考: sub_43D53C(目标区域), sub_43D8B0(目标验证), sub_43E980(伤害计算),
 # sub_4458B0(技能执行), sub_4434BC(动画运行时), sub_4173F8(TKKon加载)
-class FieldRefDialog(QDialog):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("字段参考")
-        self.resize(700, 580)
-        layout = QVBoxLayout(self)
-        text = QTextEdit()
-        text.setReadOnly(True)
-        text.setFont(QFont("Consolas", 9))
-        lines = ["TKKon.dat 字段映射", ""]
-        lines.append(
-            f"【记录布局】原版 {KON_CNT} 条 × {KON_REC} 字节 = "
-            f"{KON_DECOMPRESSED} 字节；编辑器支持 650 条以上的扩展记录")
-        lines.append(f"  每条 20 个字段 × 16位整数 = {KON_REC} 字节")
-        lines.append("")
-        lines.append("【字段语义说明】")
-        lines.append("  field[0-2] 是战斗引擎操作参数，非TKT文本引用")
-        lines.append("【字段详情】")
-        for fn, fo, fl, cmt in KON_FIELDS:
-            marker = " ● 未使用" if fn.startswith('unused') else ""
-            lines.append(f"  [{fo:02d}] {fl:<10s}{marker}")
-            lines.append(f"       {cmt}")
-        lines.append("")
-        lines.append("【字段功能说明】")
-        lines.append("  [0-2]: 战斗操作参数 (目标区域/验证/伤害)")
-        lines.append("  [3-5]: 动画播放参数")
-        lines.append("  [6-9]: 显示效果 (特效/音效/画面)")
-        lines.append("  [10-19]: 伤害与状态参数")
-        lines.append("")
-        lines.append("【伤害字段编码规则】")
-        for s in ["0→无效果","1~999→固定值","1001~1999→最大值%(val-1000)",
-                   "-1→ATK","2001~2999→ATK+(val-2000)","3001+→ATK×(1+(val-3000)/100)"]:
-            lines.append(f"  {s}")
-        text.setPlainText('\n'.join(lines))
-        layout.addWidget(text)
-        btn_close = QPushButton("关闭")
-        btn_close.clicked.connect(self.close)
-        bl = QHBoxLayout()
-        bl.addStretch()
-        bl.addWidget(btn_close)
-        layout.addLayout(bl)
+def _build_field_ref_text():
+    """TKKon 字段参考文本 (经 ui_helpers.show_field_ref 显示)。"""
+    lines = ["TKKon.dat 字段映射", ""]
+    lines.append(
+        f"【记录布局】原版 {KON_CNT} 条 × {KON_REC} 字节 = "
+        f"{KON_DECOMPRESSED} 字节；编辑器支持 650 条以上的扩展记录")
+    lines.append(f"  每条 20 个字段 × 16位整数 = {KON_REC} 字节")
+    lines.append("")
+    lines.append("【字段语义说明】")
+    lines.append("  field[0-2] 是战斗引擎操作参数，非TKT文本引用")
+    lines.append("【字段详情】")
+    for fn, fo, fl, cmt in KON_FIELDS:
+        marker = " ● 未使用" if fn.startswith('unused') else ""
+        lines.append(f"  [{fo:02d}] {fl:<10s}{marker}")
+        lines.append(f"       {cmt}")
+    lines.append("")
+    lines.append("【字段功能说明】")
+    lines.append("  [0-2]: 战斗操作参数 (目标区域/验证/伤害)")
+    lines.append("  [3-5]: 动画播放参数")
+    lines.append("  [6-9]: 显示效果 (特效/音效/画面)")
+    lines.append("  [10-19]: 伤害与状态参数")
+    lines.append("")
+    lines.append("【伤害字段编码规则】")
+    for s in ["0→无效果","1~999→固定值","1001~1999→最大值%(val-1000)",
+               "-1→ATK","2001~2999→ATK+(val-2000)","3001+→ATK×(1+(val-3000)/100)"]:
+        lines.append(f"  {s}")
+    return '\n'.join(lines)
 
 # ============================================================
 # 主编辑器窗口
@@ -1431,7 +1417,7 @@ class KonEditor(EditorMainWindow):
     # ----------- 帮助 -----------
 
     def _show_field_ref(self):
-        FieldRefDialog(self).exec()
+        show_field_ref(self, _build_field_ref_text())
 
     # 逆向参考: sub_43D53C, sub_43D8B0, sub_43E980, sub_4458B0, sub_4434BC, sub_4173F8
 

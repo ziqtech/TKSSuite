@@ -77,9 +77,12 @@ from editor_utils.theme_switcher import (
 from editor_utils.app_shell import EditorMainWindow, run_editor
 from editor_utils.dock_components import DockHeader
 from editor_utils.adaptive_table import AdaptiveTableWidget
-from editor_utils.picker_dialogs import TktPickerDialog, StatusPickerDialog, STATUS_NAMES, ItemPickerDialog
+from editor_utils.picker_dialogs import (
+    TktPickerDialog, StatusPickerDialog, STATUS_NAMES, ItemPickerDialog,
+    SkillPickerDialog, GrowthTableDialog,
+)
 from editor_utils.jvg_loader import load_mu_sprites, get_sprite_pixmap
-from editor_utils.ui_helpers import make_fake_input, update_path_labels, confirm_close, resolve_config_path, themed_messagebox, EditorComboBox, NoWheelSpinBox
+from editor_utils.ui_helpers import make_fake_input, update_path_labels, confirm_close, resolve_config_path, show_field_ref, themed_messagebox, EditorComboBox, NoWheelSpinBox
 from editor_utils.version import format_title
 from editor_utils.lzss import lzss_decompress_dat, lzss_compress_dat, lzss_decompress_save, lzss_compress_save
 from editor_utils.tkt_loader import load_tkt_simple
@@ -90,7 +93,6 @@ from editor_utils.mod_exporter import (
     load_reference_dat_fields,
     get_tksmod_info, import_tksmod_records, ModImportPreviewDialog, ModExportPreviewDialog,
 )
-from editor_utils.window_theme import apply_titlebar_theme
 from editor_utils.tab_widget import EditorTabWidget
 from editor_utils.search_utils import search_match
 from editor_utils.kon_name_resolver import KonNameResolver
@@ -317,73 +319,6 @@ def set_field(rec, byte_off, val):
 # 弹窗选择器
 # ═══════════════════════════════════════════════════════════════
 
-class SkillPickerDialog(QDialog):
-    def __init__(self, parent, skill_names, skill_types, cur_val):
-        super().__init__(parent)
-        self.setWindowTitle("选择技能")
-        self.resize(550, 520)
-        self.selected_index = None
-        self.skill_names = skill_names
-        self.skill_types = skill_types
-
-        layout = QVBoxLayout(self)
-        sf = QHBoxLayout()
-        sf.addWidget(QLabel("搜索:"))
-        self.search_box = QLineEdit()
-        self.search_box.textChanged.connect(self._refresh)
-        sf.addWidget(self.search_box)
-        layout.addLayout(sf)
-
-        self.table = AdaptiveTableWidget(
-            0, 3,
-            stretch_columns={2},
-            minimum_widths=[55, 55, 90],
-        )
-        self.table.setHorizontalHeaderLabels(["技能#","类型","名称"])
-        self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
-        self.table.setSelectionMode(QAbstractItemView.SingleSelection)
-        self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
-        self.table.verticalHeader().setVisible(False)
-        self.table.doubleClicked.connect(self._accept)
-        layout.addWidget(self.table)
-
-        bl = QHBoxLayout()
-        btn_clr = QPushButton("清空(-1)")
-        btn_clr.clicked.connect(partial(self._clear))
-        bl.addWidget(btn_clr)
-        bl.addStretch()
-        bl.addWidget(QPushButton("取消", clicked=self.reject))
-        bl.addWidget(QPushButton("确定", clicked=self._accept))
-        layout.addLayout(bl)
-
-        self._refresh()
-
-    def _refresh(self):
-        q = self.search_box.text()
-        self.table.setRowCount(0)
-        row = 0
-        type_names = {0:"指令",1:"主动",2:"被动",3:"移动"}
-        for idx in sorted(self.skill_names.keys()):
-            nm = self.skill_names[idx]
-            tp = type_names.get(self.skill_types.get(idx,-1),"?")
-            if not search_match(q, idx, tp, nm):
-                continue
-            self.table.insertRow(row)
-            self.table.setItem(row, 0, QTableWidgetItem(str(idx)))
-            self.table.setItem(row, 1, QTableWidgetItem(tp))
-            self.table.setItem(row, 2, QTableWidgetItem(nm))
-            row += 1
-
-    def _accept(self):
-        sel = self.table.selectedItems()
-        if sel:
-            self.selected_index = int(self.table.item(sel[0].row(), 0).text())
-            self.accept()
-
-    def _clear(self):
-        self.selected_index = -1
-        self.accept()
-
 class FlagsDialog(QDialog):
     def __init__(self, parent, title, bits, current_val):
         super().__init__(parent)
@@ -506,394 +441,53 @@ class TkkonPickerDialog(QDialog):
 # 逆向参考函数: sub_42234C(装备/技能/属性应用), sub_41E40C(物品使用效果),
 # sub_422BBC(被动技能效果), sub_4173F8(装备索引匹配), sub_45343C(DAT加载),
 # sub_452B14(LZSS解压), sub_4307CC/sub_435D68(技能动画映射)
-class FieldRefDialog(QDialog):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("字段参考")
-        self.resize(700, 600)
-        layout = QVBoxLayout(self)
-        text = QTextEdit()
-        text.setReadOnly(True)
-        text.setFont(QFont("Consolas", 9))
-        lines = ["WarPC.dat 字段说明:", ""]
-        cnt = WARPC_ORIG_COUNT
-        lines.append(f"【记录布局】{cnt} 角色 × {WARPC_REC} 字节 = {cnt*WARPC_REC} 字节")
-        lines.append(f"  原游戏 143 角色 ({WARPC_ORIG_SIZE} 字节), 编辑器支持动态扩展")
-        lines.append(f"  每条记录 {WARPC_FIELD_COUNT} 个字段 × 16位整数 = {WARPC_REC} 字节")
-        lines.append("")
-        lines.append("【已验证字段】")
-        for title, fields in [
-            ("基本信息 [0]-[4]", IDENTITY_FIELDS), ("HP/MP [5]-[10]", HPMP_FIELDS),
-            ("八属性 [11]-[26] (攻击/防御/命中/闪避/速度/幸运/悟性/移动)", STAT_FIELDS),
-            ("角色五维 [27]-[31]", CHAR_ATTR_FIELDS),
-            ("技能加成 [32]-[40] (技能效果验证)", SKILL_BONUS_FIELDS),
-            ("反应组 [41]-[42]", REACTION_FIELDS),
-            ("身上状态 [43]-[50]", STATUS_SLOT_FIELDS),
-            ("状态抵抗 [51]-[66] (32状态×1byte)", []),
-            ("攻击导致状态 [67]-[68] (来自装备)", STATUS_FIELDS_CAUSE),
-            ("装备索引 [69]-[72]", EQUIP_FIELDS[:4]), ("装备ID [73]-[76]", EQUIP_FIELDS[4:]),
-            ("使用/装备权限 [77]-[81]", CHAR_USE_RIGHT_FIELDS),
-            ("装备技能 [82]-[87] (已验证: 周倉)", EQUIP_SKILL_FIELDS),
-            ("补丁专用字段 [260]-[263]", PATCH_FIELDS),
-            ("成长率/物理抵抗 [264]-[267]", GROWTH_FIELDS),
-            ("战后奖励 [268]-[269]", BATTLE_REWARD_FIELDS),
-            ("可掉落物品 [270]-[272]", DROP_ITEM_FIELDS),
-        ]:
-            lines.append(f"【{title}】")
-            for field_tuple in fields:
-                fn, fo, fl = field_tuple[0], field_tuple[1], field_tuple[2]
-                cmt = field_tuple[3] if len(field_tuple) > 3 else ''
-                lines.append(f"  [{fo//2:3d}] bo={fo:4d} {fl:<14s} {cmt}")
-        lines.append("")
-        lines.append("【技能学习状态】")
-        lines.append(f"  [88-259] 技能学习状态说明: 不会/等待学(1~9进展累积)/可以学(≥10)/父技学会(20)/独立技学会(30)")
-        lines.append(f"  344技能×1byte (TKSkill #0-#343), 存储在172个int16的高低字节中")
-        lines.append("")
-        lines.append("【技能效果判定】")
-        lines.append(f"  [273]-[273+count-1] 技能与动画对应: 技能→TKKon动画映射表")
-        lines.append(f"  全部type=0指令技能(末尾为普通攻击); 每字段=int16 TKKon ID (原版0~649, 补丁扩容后无上限)")
-        lines.append("")
-        lines.append("【功能说明】")
-        lines.append("  Tab 1: 核心属性 (生命/攻防/速度等)")
-        lines.append("  Tab 2: 装备与技能配置")
-        lines.append("  Tab 3: 技能学习进度 (0=未学, 1~9=学习中, ≥10=已学会)")
-        lines.append("  Tab 4: 技能效果判定")
-        lines.append("  Tab 5: 全部字段总览")
-        text.setPlainText('\n'.join(lines))
-        layout.addWidget(text)
-        bl = QHBoxLayout()
-        bl.addStretch()
-        bl.addWidget(QPushButton("关闭", clicked=self.close))
-        layout.addLayout(bl)
-
-# ═══════════════════════════════════════════════════════════════
-# 成长数据表弹窗 (逆向来源: sub_410674 / sub_43066C / sub_4302D8)
-# ═══════════════════════════════════════════════════════════════
-
-class GrowthTableDialog(QDialog):
-    """角色逐级成长数据表 — 基于反编译公式 (sub_410674/sub_43066C)
-
-    成长公式 (每升一级):
-      选择成长率除数:
-        level < 21       → growth_early  (field[264], byte 528)
-        21 ≤ level < 41  → growth_mid    (field[265], byte 530)
-        level ≥ 41       → growth_late   (field[266], byte 532)
-      stat += stat // divisor + 1   (hp/mp/atk/def/hit/eva)
-      spd  += 1                     (固定)
-      hp = min(hp, 9999);  mp = min(mp, 9999)
-
-    等级上限: 60 (sub_43066C L13: if level < 60)
-
-    敌方属性加成 (sub_4302D8:53-62, enemy_grp/enemy_power):
-      HP  += grp × HP          (×(grp+1), cap 20000)
-      MP  += grp × MP / 4      (cap 20000)
-      ATK += grp × ATK / 8
-      DEF += grp × DEF / 8
-      HIT += grp × HIT / 12
-      EVA += grp × EVA / 12
-      SPD += grp × level / 10
-    """
-
-    STAT_CAP_HPMP = 9999
-    STAT_CAP_HPMP_ENEMY = 20000
-    MAX_LEVEL = 60
-
-    # WarPC int16 字段索引 (byte_offset // 2)
-    _IDX_HP   = 7    # hp_base
-    _IDX_MP   = 9    # mp_base
-    _IDX_ATK  = 11   # atk_base
-    _IDX_DEF  = 13   # def_base
-    _IDX_HIT  = 15   # hit_base
-    _IDX_EVA  = 17   # eva_base
-    _IDX_SPD  = 19   # spd_base (field[38//2])
-    _IDX_GE   = 264  # growth_early
-    _IDX_GM   = 265  # growth_mid
-    _IDX_GL   = 266  # growth_late
-
-    STAT_LABELS = ["HP", "MP", "攻击", "防御", "命中", "闪避", "速度"]
-
-    def __init__(self, parent, rec, char_name, tkt_names=None, grp=0, theme_id="gpt-dark"):
-        super().__init__(parent)
-        self.setWindowTitle(f"成长数据表 — {char_name}")
-        self.resize(1100, 800)
-        self._rec = rec
-        self._char_name = char_name
-        self._f = rec['fields']
-        self._tkt = tkt_names or {}
-        self._grp = grp
-
-        # 应用主题样式表
-        apply_theme_to_window(self, theme_id, persist=False)
-        is_dark = theme_manager.is_dark(theme_id)
-
-        # 主题颜色 (与 editor_themes 色板对齐)
-        # 注: 当前等级行不再用白色文字+蓝底高亮 — QSS 的 ::item background-color
-        # 会覆盖 item.setBackground(), 导致蓝底丢失、白字残留在浅色背景上不可读。
-        # 改为仅用粗体字标记当前等级行。
-        pal = business_colors("growth", theme_id)
-        self._CLR_DELTA = QColor(pal["delta"])   # Δ增量
-        self._CLR_GRP = QColor(pal["grp"])       # grp 最终属性
-
-        # 读取当前数据
-        self._cur_level = max(1, self._f[2])
-        self._cur_stats = [
-            self._f[self._IDX_HP], self._f[self._IDX_MP],
-            self._f[self._IDX_ATK], self._f[self._IDX_DEF],
-            self._f[self._IDX_HIT], self._f[self._IDX_EVA],
-            self._f[self._IDX_SPD],
-        ]
-        self._ge = self._f[self._IDX_GE]
-        self._gm = self._f[self._IDX_GM]
-        self._gl = self._f[self._IDX_GL]
-
-        # 估算 1 级基础值 (二分搜索)
-        self._base_stats = [self._estimate_base(cur, self._cur_level)
-                            for cur in self._cur_stats]
-
-        # 计算完整成长表 (1-60级)
-        self._table_data = self._build_table()
-        self._build_ui()
-        self._update_grp_summary()
-
-    def showEvent(self, event):
-        super().showEvent(event)
-        apply_titlebar_theme(self, self._theme_id)
-
-    # ── 成长模拟 (对应 sub_410674 循环体) ──
-
-    def _get_divisor(self, level):
-        """获取指定等级段的成长率除数"""
-        if level >= 41: return self._gl
-        if level >= 21: return self._gm
-        return self._ge
-
-    def _simulate_stat(self, base, from_level, to_level):
-        """模拟单项属性从 from_level 升至 to_level (sub_410674 循环体)"""
-        val = base
-        for lvl in range(from_level, to_level):
-            d = self._get_divisor(lvl)
-            if d > 0:
-                val += val // d + 1
-            else:
-                val += 1
-        return val
-
-    def _simulate_spd(self, base_spd, from_level, to_level):
-        """速度: 每级固定 +1 (sub_410674 L33: ++a1[19])"""
-        return base_spd + (to_level - from_level)
-
-    def _estimate_base(self, current_stat, current_level):
-        """二分搜索估算 1 级时的属性基础值 (取最接近当前值的基点)"""
-        if current_level <= 1:
-            return current_stat
-        # 对速度特殊处理 (固定+1/级)
-        # 注意: 此函数不区分 stat 类型, 速度单独在 _build_table 处理
-        lo, hi = 1, max(current_stat, 1)
-        while lo < hi:
-            mid = (lo + hi) // 2
-            sim = self._simulate_stat(mid, 1, current_level)
-            if sim < current_stat:
-                lo = mid + 1
-            else:
-                hi = mid
-        # lo = 最小 sim >= current 的 base; 检查 lo-1 是否更接近
-        if lo > 1:
-            sim_lo  = self._simulate_stat(lo, 1, current_level)
-            sim_lo1 = self._simulate_stat(lo - 1, 1, current_level)
-            if abs(sim_lo1 - current_stat) <= abs(sim_lo - current_stat):
-                return lo - 1
-        return lo
-
-    def _build_table(self):
-        """构建 1 至 MAX_LEVEL 级完整数据表"""
-        data = []
-        # 速度基础: spd_base 是当前的速度值 (含 +1/级), 1级基础 = cur - (level-1)
-        spd_base = max(0, self._cur_stats[6] - (self._cur_level - 1))
-        base = list(self._base_stats[:6]) + [spd_base]
-
-        prev = list(base)
-        for lvl in range(1, self.MAX_LEVEL + 1):
-            if lvl == 1:
-                stats = list(base)
-            else:
-                d = self._get_divisor(lvl - 1)
-                stats = []
-                for i in range(6):
-                    v = prev[i]
-                    stats.append(v + (v // d + 1) if d > 0 else v + 1)
-                stats.append(prev[6] + 1)  # spd 固定 +1
-
-            # HP/MP 上限 cap (sub_410674 L35-38 / sub_43066C L37-40)
-            capped = list(stats)
-            capped[0] = min(capped[0], self.STAT_CAP_HPMP)
-            capped[1] = min(capped[1], self.STAT_CAP_HPMP)
-
-            deltas = [capped[i] - prev[i] for i in range(7)] if lvl > 1 else [0] * 7
-            divisor = self._get_divisor(lvl)
-
-            data.append({
-                'level': lvl, 'divisor': divisor, 'stats': capped,
-                'deltas': deltas, 'is_current': (lvl == self._cur_level),
-            })
-            prev = capped
-        return data
-
-    # ── UI 构建 ──
-
-    def _build_ui(self):
-        layout = QVBoxLayout(self)
-
-        # 顶部: 公式说明 + 1级基础值
-        info_frame = QFrame()
-        info_layout = QVBoxLayout(info_frame)
-        info_layout.setContentsMargins(8, 4, 8, 4)
-        info_layout.setSpacing(2)
-        info_layout.addWidget(QLabel(
-            f"<b>{self._char_name}</b>  (编号 #{self._rec['index']},  "
-            f"当前等级 {self._cur_level})"))
-        info_layout.addWidget(QLabel(
-            f"成长率: 初期={self._ge} (Lv1-20) | "
-            f"中期={self._gm} (Lv21-40) | "
-            f"后期={self._gl} (Lv41-60)"))
-        info_layout.addWidget(QLabel(
-            f"公式: stat += stat // divisor + 1 "
-            f"(来源 sub_410674/sub_43066C) | "
-            f"速度: 每级固定+1 | HP/MP上限={self.STAT_CAP_HPMP}"))
-
-        # 速度基础: 固定+1/级, 1级值 = 当前值 - (等级-1)
-        spd_base = max(0, self._cur_stats[6] - (self._cur_level - 1))
-        base_parts = [f"{l}={b}" for l, b in zip(self.STAT_LABELS[:6], self._base_stats[:6])]
-        base_parts.append(f"速度={spd_base} (固定+1/级)")
-        base_str = "  |  ".join(base_parts)
-        base_lbl = QLabel(f"<b>估算 1 级基础值</b>: {base_str}")
-        base_lbl.setWordWrap(True)
-        info_layout.addWidget(base_lbl)
-        layout.addWidget(info_frame)
-
-        # ── grp 加成控制行 ──
-        grp_frame = QFrame()
-        grp_frame.setObjectName("DockBody")
-        grp_row = QHBoxLayout(grp_frame)
-        grp_row.setContentsMargins(8, 4, 8, 4)
-        grp_row.addWidget(QLabel("属性加成倍率 (grp):"))
-        self._grp_spin = QSpinBox()
-        self._grp_spin.setRange(0, 10)
-        self._grp_spin.setValue(self._grp)
-        self._grp_spin.setToolTip(
-            "敌方属性加成倍率 (sub_4302D8:53-62)\n"
-            "0=普通士兵  1+=将领/Boss\n"
-            "HP += grp×HP  MP += grp×MP/4\n"
-            "ATK/DEF += grp×stat/8  HIT/EVA += grp×stat/12\n"
-            "SPD += grp×level/10")
-        self._grp_spin.valueChanged.connect(self._update_grp_summary)
-        grp_row.addWidget(self._grp_spin)
-        grp_row.addSpacing(20)
-        self._grp_formula_lbl = QLabel(
-            "<i>grp=0: 仅显示等级成长数据; 设为 1+ 可查看敌方加成后的最终属性</i>")
-        self._grp_formula_lbl.setWordWrap(True)
-        grp_row.addWidget(self._grp_formula_lbl, 1)
-        layout.addWidget(grp_frame)
-
-        # 表格 (16 基础列 + 7 grp 最终列)
-        self._BASE_COLS = ["等级", "成长率", "HP", "Δ", "MP", "Δ",
-                            "攻击", "Δ", "防御", "Δ", "命中", "Δ",
-                            "闪避", "Δ", "速度", "Δ"]
-        self._GRP_COLS = ["HP★", "MP★", "攻击★", "防御★",
-                           "命中★", "闪避★", "速度★"]
-        all_cols = self._BASE_COLS + self._GRP_COLS
-        self._growth_table = AdaptiveTableWidget(
-            len(self._table_data), len(all_cols),
-            stretch_columns=set(range(len(all_cols))),
-            minimum_widths=[45] + [52] * 15 + [58] * 7,
-        )
-        self._growth_table.setHorizontalHeaderLabels(all_cols)
-        self._growth_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
-        self._growth_table.setSelectionBehavior(QAbstractItemView.SelectRows)
-        self._growth_table.verticalHeader().setVisible(False)
-        self._growth_table.setAlternatingRowColors(True)
-        # 修复深色模式下交替行背景色 (QSS 不覆盖 palette 的 AlternateBase)
-        self._growth_table.setProperty("class", "GrowthTable")
-        self._growth_table.setFont(QFont("Consolas", 9))
-        # 初始隐藏 grp 列 (setColumnHidden 会触发自适应重排)
-        for ci in range(16, 23):
-            self._growth_table.setColumnHidden(ci, True)
-        self._populate_table()
-        layout.addWidget(self._growth_table, 1)
-
-        # 底部按钮
-        bl = QHBoxLayout()
-        bl.addStretch()
-        bl.addWidget(QPushButton("关闭", clicked=self.close))
-        layout.addLayout(bl)
-
-    def _populate_table(self):
-        font_bold = QFont("Consolas", 9, QFont.Bold)
-        for row, d in enumerate(self._table_data):
-            is_cur = d['is_current']
-            items = [str(d['level']), str(d['divisor'])]
-            for si in range(7):
-                items.append(str(d['stats'][si]))
-                delta = d['deltas'][si]
-                items.append(f"+{delta}" if delta > 0 else str(delta))
-            for ci, txt in enumerate(items):
-                item = QTableWidgetItem(txt)
-                item.setTextAlignment(Qt.AlignCenter)
-                if is_cur:
-                    item.setFont(font_bold)
-                if ci in (3, 5, 7, 9, 11, 13, 15) and d['level'] > 1:
-                    item.setForeground(self._CLR_DELTA)
-                self._growth_table.setItem(row, ci, item)
-        # 滚动到当前等级
-        for row, d in enumerate(self._table_data):
-            if d['is_current']:
-                self._growth_table.scrollToItem(
-                    self._growth_table.item(row, 0))
-                break
-
-    # ── grp 加成计算 (sub_4302D8:53-62) ──
-
-    def _update_grp_summary(self):
-        """根据 grp 值切换成长表中的 grp 列并填充各级最终属性"""
-        grp = self._grp_spin.value()
-
-        # 显示/隐藏 grp 列 (col 16-22)
-        for ci in range(16, 23):
-            self._growth_table.setColumnHidden(ci, grp == 0)
-
-        # 更新公式标签
-        if grp > 0:
-            cap = self.STAT_CAP_HPMP_ENEMY
-            self._grp_formula_lbl.setText(
-                f"<b>grp={grp}</b>: "
-                f"★列 = 成长值 + grp加成  "
-                f"HP×{grp+1}(cap {cap})  MP+{grp}×MP/4  "
-                f"ATK/DEF+{grp}/8  HIT/EVA+{grp}/12  SPD+{grp}×Lv/10")
-        else:
-            self._grp_formula_lbl.setText(
-                "<i>grp=0: 仅显示等级成长数据; "
-                "设为 1+ 可查看敌方加成后的最终属性</i>")
-            return  # grp=0 时不需要填充
-
-        # 填充各级 grp 最终属性 (每行用该级自己的成长值 + 该级自己的 level)
-        grp_divs = [1, 4, 8, 8, 12, 12, 0]
-        cap = self.STAT_CAP_HPMP_ENEMY
-        font_bold = QFont("Consolas", 9, QFont.Bold)
-
-        for row, d in enumerate(self._table_data):
-            lv = d['level']
-            base = d['stats']
-            for si in range(7):
-                bonus = (grp * base[si] // grp_divs[si]
-                         if grp_divs[si] > 0
-                         else grp * lv // 10)
-                final = base[si] + bonus
-                if si < 2:
-                    final = min(final, cap)
-                item = QTableWidgetItem(str(final))
-                item.setTextAlignment(Qt.AlignCenter)
-                item.setForeground(self._CLR_GRP)
-                item.setFont(font_bold)
-                self._growth_table.setItem(row, 16 + si, item)
+def _build_field_ref_text():
+    """WarPC 字段参考文本 (经 ui_helpers.show_field_ref 显示)。"""
+    lines = ["WarPC.dat 字段说明:", ""]
+    cnt = WARPC_ORIG_COUNT
+    lines.append(f"【记录布局】{cnt} 角色 × {WARPC_REC} 字节 = {cnt*WARPC_REC} 字节")
+    lines.append(f"  原游戏 143 角色 ({WARPC_ORIG_SIZE} 字节), 编辑器支持动态扩展")
+    lines.append(f"  每条记录 {WARPC_FIELD_COUNT} 个字段 × 16位整数 = {WARPC_REC} 字节")
+    lines.append("")
+    lines.append("【已验证字段】")
+    for title, fields in [
+        ("基本信息 [0]-[4]", IDENTITY_FIELDS), ("HP/MP [5]-[10]", HPMP_FIELDS),
+        ("八属性 [11]-[26] (攻击/防御/命中/闪避/速度/幸运/悟性/移动)", STAT_FIELDS),
+        ("角色五维 [27]-[31]", CHAR_ATTR_FIELDS),
+        ("技能加成 [32]-[40] (技能效果验证)", SKILL_BONUS_FIELDS),
+        ("反应组 [41]-[42]", REACTION_FIELDS),
+        ("身上状态 [43]-[50]", STATUS_SLOT_FIELDS),
+        ("状态抵抗 [51]-[66] (32状态×1byte)", []),
+        ("攻击导致状态 [67]-[68] (来自装备)", STATUS_FIELDS_CAUSE),
+        ("装备索引 [69]-[72]", EQUIP_FIELDS[:4]), ("装备ID [73]-[76]", EQUIP_FIELDS[4:]),
+        ("使用/装备权限 [77]-[81]", CHAR_USE_RIGHT_FIELDS),
+        ("装备技能 [82]-[87] (已验证: 周倉)", EQUIP_SKILL_FIELDS),
+        ("补丁专用字段 [260]-[263]", PATCH_FIELDS),
+        ("成长率/物理抵抗 [264]-[267]", GROWTH_FIELDS),
+        ("战后奖励 [268]-[269]", BATTLE_REWARD_FIELDS),
+        ("可掉落物品 [270]-[272]", DROP_ITEM_FIELDS),
+    ]:
+        lines.append(f"【{title}】")
+        for field_tuple in fields:
+            fn, fo, fl = field_tuple[0], field_tuple[1], field_tuple[2]
+            cmt = field_tuple[3] if len(field_tuple) > 3 else ''
+            lines.append(f"  [{fo//2:3d}] bo={fo:4d} {fl:<14s} {cmt}")
+    lines.append("")
+    lines.append("【技能学习状态】")
+    lines.append(f"  [88-259] 技能学习状态说明: 不会/等待学(1~9进展累积)/可以学(≥10)/父技学会(20)/独立技学会(30)")
+    lines.append(f"  344技能×1byte (TKSkill #0-#343), 存储在172个int16的高低字节中")
+    lines.append("")
+    lines.append("【技能效果判定】")
+    lines.append(f"  [273]-[273+count-1] 技能与动画对应: 技能→TKKon动画映射表")
+    lines.append(f"  全部type=0指令技能(末尾为普通攻击); 每字段=int16 TKKon ID (原版0~649, 补丁扩容后无上限)")
+    lines.append("")
+    lines.append("【功能说明】")
+    lines.append("  Tab 1: 核心属性 (生命/攻防/速度等)")
+    lines.append("  Tab 2: 装备与技能配置")
+    lines.append("  Tab 3: 技能学习进度 (0=未学, 1~9=学习中, ≥10=已学会)")
+    lines.append("  Tab 4: 技能效果判定")
+    lines.append("  Tab 5: 全部字段总览")
+    return '\n'.join(lines)
 
 # ═══════════════════════════════════════════════════════════════
 # 主编辑器窗口
@@ -3038,13 +2632,21 @@ class WarpcEditorV2(EditorMainWindow):
         self._edit_snapshot = self._capture_snapshot()
 
     # ── 弹窗 ──
+    def _make_skill_picker(self, parent):
+        """构建技能选择弹窗 (表单模式/表格编辑模式共用)。"""
+        type_names = {0: "指令", 1: "主动", 2: "被动", 3: "移动"}
+        rows = []
+        for idx in sorted(self.skill_names.keys()):
+            tid = self._skill_types.get(idx, -1)
+            rows.append((idx, (str(idx), type_names.get(tid, "?"), self.skill_names[idx]), tid))
+        return SkillPickerDialog(
+            parent, rows, ("技能#", "类型", "名称"),
+            stretch_columns={2}, minimum_widths=[55, 55, 90],
+            clear_value=-1, clear_label="清空(-1)", size=(550, 520))
+
     def _pick_skill(self, fn):
         if not self.skill_names: return
-        try:
-            cur = int(self._edit_vars[fn].text() or 0)
-        except:
-            cur = 0
-        dlg = SkillPickerDialog(self, self.skill_names, self._skill_types, cur)
+        dlg = self._make_skill_picker(self)
         if dlg.exec() == QDialog.Accepted and dlg.selected_index is not None:
             self._edit_vars[fn].setText(str(dlg.selected_index))
             if fn in self._edit_extras:
@@ -3806,13 +3408,13 @@ class WarpcEditorV2(EditorMainWindow):
             return
         rec = self.records[self._editing_idx]
         char_name = self._char_name(rec)
-        dlg = GrowthTableDialog(self, rec, char_name, self.tkt,
+        dlg = GrowthTableDialog(self, rec, char_name,
                                  theme_id=self._theme_id)
         dlg.exec()
 
     # ── 帮助 ──
     def _show_field_ref(self):
-        FieldRefDialog(self).exec()
+        show_field_ref(self, _build_field_ref_text(), size=(700, 600))
 
     # 逆向参考: sub_42234C, sub_41E40C, sub_422BBC, sub_4173F8, sub_45343C, sub_452B14
     # _show_help 为动态内容 (含当前记录数), 覆盖基类静态 HELP_TEXT 版本

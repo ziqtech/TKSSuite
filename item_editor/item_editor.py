@@ -65,7 +65,8 @@ from editor_utils.mod_exporter import (
     pack_tksmod, safe_mod_filename,
 )
 from editor_utils.picker_dialogs import (
-    STATUS_ICON_BASE, STATUS_NAMES, StatusPickerDialog, TktPickerDialog
+    STATUS_ICON_BASE, STATUS_NAMES, SkillPickerDialog, StatusPickerDialog,
+    TktPickerDialog,
 )
 from editor_utils.tkt_loader import load_tkt_simple
 from editor_utils.theme_switcher import (
@@ -280,63 +281,6 @@ def save_items(fp, recs):
     with open(fp, 'wb') as f:
         f.write(compressed)
     return True
-
-class SkillPickerDialog(QDialog):
-    def __init__(self, parent, skill_names, cur_val):
-        super().__init__(parent)
-        self.setWindowTitle("选择技能")
-        self.resize(460, 550)
-        self.selected_index = None
-        self.skill_names = skill_names
-        layout = QVBoxLayout(self)
-        sf = QHBoxLayout()
-        sf.addWidget(QLabel("搜索:"))
-        self.search_box = QLineEdit()
-        self.search_box.textChanged.connect(self._refresh)
-        sf.addWidget(self.search_box)
-        layout.addLayout(sf)
-        self.table = AdaptiveTableWidget(
-            0, 2,
-            stretch_columns={1},
-            minimum_widths=[50, 90],
-            row_height=44,
-        )
-        self.table.setHorizontalHeaderLabels(['索引', '技能名称'])
-        self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
-        self.table.setSelectionMode(QAbstractItemView.SingleSelection)
-        self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
-        self.table.verticalHeader().setVisible(False)
-        self.table.doubleClicked.connect(self._accept_selection)
-        layout.addWidget(self.table)
-        bl = QHBoxLayout()
-        bl.addWidget(QPushButton("清空选择", clicked=self._clear))
-        bl.addStretch()
-        bl.addWidget(QPushButton("取消", clicked=self.reject))
-        bl.addWidget(QPushButton("确定", clicked=self._accept_selection))
-        layout.addLayout(bl)
-        self._refresh()
-
-    def _refresh(self):
-        q = self.search_box.text()
-        self.table.setRowCount(0)
-        row = 0
-        for idx in sorted(self.skill_names.keys()):
-            nm = self.skill_names[idx]
-            if not search_match(q, idx, nm): continue
-            self.table.insertRow(row)
-            self.table.setItem(row, 0, QTableWidgetItem(str(idx)))
-            self.table.setItem(row, 1, QTableWidgetItem(nm[:60]))
-            row += 1
-
-    def _accept_selection(self):
-        sel = self.table.selectedItems()
-        if sel:
-            self.selected_index = int(self.table.item(sel[0].row(), 0).text())
-            self.accept()
-
-    def _clear(self):
-        self.selected_index = 0
-        self.accept()
 
 class IconPickerDialog(QDialog):
     @staticmethod
@@ -1225,8 +1169,10 @@ class ItemEditorApp(EditorMainWindow):
     def _pick_skill(self, fn):
         """弹窗选择技能"""
         if not self.skill_names: return
-        cur_val = int(self.widget_map[fn].text() or 0)
-        dlg = SkillPickerDialog(self, self.skill_names, cur_val)
+        rows = [(idx, (str(idx), nm[:60]), None)
+                for idx, nm in sorted(self.skill_names.items())]
+        dlg = SkillPickerDialog(self, rows, ("索引", "技能名称"),
+                                stretch_columns={1}, minimum_widths=[50, 90])
         if dlg.exec() == QDialog.Accepted and dlg.selected_index is not None:
             self.widget_map[fn].setText(str(dlg.selected_index))
             nm = self.skill_names.get(dlg.selected_index, "") if dlg.selected_index > 0 else ""
