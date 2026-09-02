@@ -241,7 +241,7 @@ class GXPEditor(QMainWindow):
         if spec.family == 'classic':
             scene_bg = QColor(32, 37, 49) if spec.is_dark else QColor(224, 228, 232)
         else:
-            scene_bg = QColor("#212121") if spec.is_dark else QColor("#f7f7f8")
+            scene_bg = QColor("#212121") if spec.is_dark else QColor("#f7f7f8")  # 主题感知: 深浅两档 (与 QSS 底色同值)
         if hasattr(self, '_scene') and self._scene is not None:
             self._scene.setBackgroundBrush(scene_bg)
 

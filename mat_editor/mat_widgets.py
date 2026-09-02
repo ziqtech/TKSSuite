@@ -6,6 +6,7 @@ import re
 from PySide6.QtWidgets import QPlainTextEdit
 from PySide6.QtGui import QSyntaxHighlighter, QTextCharFormat, QColor, QTextCursor
 from PySide6.QtCore import Qt
+from editor_utils.theme_manager import business_colors
 
 from mat_script_desc import SCRIPT_COMMANDS
 
@@ -103,24 +104,18 @@ class ScriptSyntaxHighlighter(QSyntaxHighlighter):
     """脚本编辑器语法高亮 — 配色方案与 Godot 4.6 代码编辑器保持一致。
     优先级 (高→低): block > command > number > comment > keyword,
     按升序 setFormat 使高优先级后涂覆盖低优先级。"""
-    # (浅色, 深色) 配色对 — 参考 Godot 4.6 编辑器主题
-    _PALETTE = {
-        'keyword': ('#d63547', '#ff7085'),    # 关键字: 红色/粉色
-        'comment': ('#6a737d', '#6a737d'),    # 注释: 灰色
-        'number':  ('#2e9c6e', '#a1ffe0'),    # 数字: 绿色/青绿色
-        'command': ('#6b89ff', '#a1bfff'),    # 命令: 蓝色/浅蓝色
-        'block':   ('#c75000', '#ffce7b'),    # 块符号: 橙色/暖黄色
-    }
-
-    def __init__(self, document, is_dark=False):
+    # 配色取自 theme_tokens.MAT.editor_syntax (参考 Godot 4.6 编辑器主题)
+    def __init__(self, document, theme_id="gpt-dark"):
         super().__init__(document)
-        self._is_dark = is_dark
+        self.theme_id = theme_id
+        self._is_dark = theme_id.endswith("dark")
+        self._palette = business_colors("mat", theme_id)["editor_syntax"]
         self._build_formats()
 
     def _build_formats(self):
         def _fmt(key):
             f = QTextCharFormat()
-            f.setForeground(QColor(self._PALETTE[key][1 if self._is_dark else 0]))
+            f.setForeground(QColor(self._palette[key]))
             return f
         self.fmt_keyword = _fmt('keyword')  # DEFINE
         self.fmt_comment = _fmt('comment')  # // 注释
@@ -128,11 +123,13 @@ class ScriptSyntaxHighlighter(QSyntaxHighlighter):
         self.fmt_command = _fmt('command')  # 命令名
         self.fmt_block   = _fmt('block')    # { } 块
 
-    def set_dark(self, is_dark):
+    def set_theme(self, theme_id):
         """切换主题后重建格式并重涂"""
-        if self._is_dark == is_dark:
+        if self.theme_id == theme_id:
             return
-        self._is_dark = is_dark
+        self.theme_id = theme_id
+        self._is_dark = theme_id.endswith("dark")
+        self._palette = business_colors("mat", theme_id)["editor_syntax"]
         self._build_formats()
         self.rehighlight()
 

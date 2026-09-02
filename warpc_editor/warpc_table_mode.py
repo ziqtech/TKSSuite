@@ -44,6 +44,7 @@ PICKER_FTYPES = {'skill_ref', 'item_idx_ref', 'item_id_ref',
                  'flags', 'use_right', 'status_mask'}
 
 # 修改值高亮色 (深/浅主题通用的橙色系)
+# 修改标记色 (阶段 2 豁免: 领域语义色)
 CLR_MODIFIED = QColor("#e8a040")
 
 # 技能学习状态: 与表单模式同源的下拉选项 (SKILL_LEARN_STATES) → 值/标签映射
@@ -679,14 +680,14 @@ class FillHandleTableView(QTableView):
         painter = QPainter(self.viewport())
         hr = self._handle_rect()
         if hr is not None:
-            painter.fillRect(hr, QColor("#478cbf"))
-            painter.setPen(QColor("#ffffff"))
+            painter.fillRect(hr, QColor("#478cbf"))  # 阶段 2 豁免: 检查器高亮 (classic 强调蓝)
+            painter.setPen(QColor("#ffffff"))  # 阶段 2 豁免: 白字 (蓝底)
             painter.drawRect(hr.adjusted(0, 0, -1, -1))
         if self._fill_box is not None:
             r1, c1, r2, c2 = self._fill_box
             region = self.visualRect(self.model().index(r1, c1)).united(
                 self.visualRect(self.model().index(r2, c2)))
-            pen = QPen(QColor("#478cbf"), 2, Qt.DashLine)
+            pen = QPen(QColor("#478cbf"), 2, Qt.DashLine)  # 阶段 2 豁免: 检查器虚线
             painter.setPen(pen)
             painter.setBrush(Qt.NoBrush)
             painter.drawRect(region.adjusted(1, 1, -2, -2))

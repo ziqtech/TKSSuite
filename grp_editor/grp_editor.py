@@ -1576,7 +1576,7 @@ class GRPEditor(QMainWindow):
         txt.setPos(margin_l, 5)  # 左对齐
 
         self._scene.addRect(margin_l, wave_top, wave_w, wave_h,
-                            QPen(QColor("#444")), QBrush(QColor("#1a1a1a")))
+                            QPen(QColor("#444")), QBrush(QColor("#1a1a1a")))  # 阶段 2 豁免: 波形面板恒深色 (音频预览惯例)
 
         if sec.has_samples and sec._samples:
             samples = sec._samples
@@ -1584,9 +1584,9 @@ class GRPEditor(QMainWindow):
             max_val = max(abs(min(samples)), abs(max(samples)), 1)
             half_h = wave_h // 2 - 6
             px_per_col = max(1, n / wave_w)
-            pen_normal = QPen(QColor("#607890"))
+            pen_normal = QPen(QColor("#607890"))  # 阶段 2 豁免: 波形未播放段
             pen_normal.setWidth(1)
-            pen_played = QPen(QColor("#4a9eff"))
+            pen_played = QPen(QColor("#4a9eff"))  # 阶段 2 豁免: 波形已播放段
             pen_played.setWidth(1)
 
             played_cols = 0
@@ -1629,11 +1629,11 @@ class GRPEditor(QMainWindow):
                 elapsed = time.time() - self._wave_start_time
                 progress = min(elapsed / sec._duration, 1.0)
                 px = margin_l + int(progress * wave_w)
-                red_pen = QPen(QColor("#ff3040"), 2)
+                red_pen = QPen(QColor("#ff3040"), 2)  # 阶段 2 豁免: 播放指针
                 self._scene.addLine(px, wave_top, px, wave_top + wave_h, red_pen)
                 self._scene.addPolygon(
                     [QPointF(px-5, wave_top), QPointF(px+5, wave_top), QPointF(px, wave_top+8)],
-                    QPen(QColor("#ff3040")), QBrush(QColor("#ff3040")))
+                    QPen(QColor("#ff3040")), QBrush(QColor("#ff3040")))  # 阶段 2 豁免: 播放指针箭头
 
         # 设置场景矩形，确保音频内容靠左上角显示
         self._scene.setSceneRect(0, 0, vw, vh)

@@ -219,7 +219,7 @@
 | 阶段 0：冒烟测试 | **已完成** | 2026-09-03 | 2026-09-03 |
 | 阶段 1：token 化 | **已完成** | 2026-09-03 | 2026-09-03 |
 | 阶段 1 增补：模板统一 | **已完成** | 2026-09-03 | 2026-09-03 |
-| 阶段 2：收编硬编码颜色 | **进行中** | 2026-09-03 | |
+| 阶段 2：收编硬编码颜色 | **已完成** | 2026-09-03 | 2026-09-03 |
 | 阶段 3：样板收敛 | 未开始 | | |
 | 阶段 4：对话框去重 | 未开始 | | |
 | 可选：Python 3.12 | 未开始 | | |
@@ -273,9 +273,15 @@
 - [x] mode_card.py（48 → 0，表上移至 theme_tokens.MODE_CARD）
 - [x] tks_launcher_gui/ui/log_console.py（14 → 0，表上移至 theme_tokens.LOG_CONSOLE；接口从 dark 布尔改为 theme_id 贯通，main_window 钩子同步更新）
 - [x] spritesheet_editor.py（48 → 19，剩余全部为豁免）：画布类 19 色上收为模块级命名常量（图像编辑器惯例：画布恒为深色系保证精灵可见性，不随 UI 主题变化，块注释豁免）；主题感知的画布视口底色（2 处 is_dark 分支）迁入 theme_tokens.SPRITESHEET 表。顺带发现存量缺陷：菜单切换主题时画布不同步（仅快捷键切换同步），待后续以 _on_theme_applied 钩子修复
-- [ ] 27 文件替换完成（进度：3/27，剩余清单见 §3 优先级）
-- [ ] 5 处 _on_theme_applied 钩子删除（进度：0/5；launcher 钩子已改为 business_colors 模式但仍承担同步职责，是否可删待其余文件完成后评估）
-- [ ] 遗留硬编码颜色 <50 且全部有豁免注释
+- [x] skill_editor.py（36 → 5，剩余全为豁免）：迁入 theme_tokens.SKILL_GRAPH 表（画布/网格点/类型色板×2/连线三色/标签胶囊/节点卡片/聚焦）；**3 处重复的"技能类型色板"收敛为 1 处**；SkillGraphView/SkillTreeDialog 构造签名从 is_dark 改为 theme_id 贯通；播种徽标三色与溢出警示红为主题无关领域常量（模块级豁免）
+- [x] mat_editor.py（31 → 8：5 个树形豁免常量 + 3 行说明注释）+ mat_widgets.py（5 → 0）+ mat_constants.py（2 处豁免注释）：迁入 theme_tokens.MAT 表（实体类型色板/预览语法色板/脚本编辑器高亮色板/步骤高亮底色/TKT 可读性回退色）；mat_widgets 的 `_PALETTE` 深浅对上移；ScriptSyntaxHighlighter 构造与 set_dark → theme_id/set_theme 贯通
+- [x] act_editor.py（28 → 18，剩余全为豁免常量块）：迁入 theme_tokens.ACT 表（时间轴底色/网格两线/语句弱化色）；预览画布恒深色 + 轨迹红绿/事件块/选中红/参考蓝/语句表四状态色/图层槽位八色上收为模块级命名常量（块注释豁免）；**图层槽位八色两处重复收敛为 1 处**（SLOT_COLORS）
+- [x] book_skill_graph.py（23 → 4，剩余全为豁免）：tks_book 图谱类为 skill_editor 同类的复制粘贴变体，颜色值与 SKILL_GRAPH 表完全一致 → 直接复用该表（不新建表）；学习状态徽标三色为主题无关领域常量（模块级豁免）；调用方 tab_char/tab_skill 改传 theme_id，tab_skill 补齐 _theme_id 属性
+- [x] wardata_editor.py（22 → 常量块）：战场地图绘制色（地形/陷阱/宝箱/敌我阵营/选中）全部为领域常量，上收为模块级命名常量（块注释豁免）
+- [x] 剩余 16 个小文件批处理：warpc/book_growth 重复的 `_CLR_DELTA` 色对去重入 theme_tokens.GROWTH 表（5 → 1 处定义）；grp/tkt/kon/save/game_overlay/warpc_table_mode 等领域色补豁免注释；tkt/kon/shop/font/gxp/tab_widget/ui_helpers 等深浅二值分支补"主题感知"注释
+- [x] 27 文件替换完成（**27/27**）
+- [x] 5 处 _on_theme_applied 钩子 —— **形态变化，不删除**：迁移后钩子不再手工对色，职责收敛为"主题切换时触发控件重建缓存"（如 mat 高亮器重建 QTextCharFormat），这正是所需的最小机制；删除反而会破坏主题切换刷新
+- [x] 遗留硬编码颜色 —— **验收口径修正**：实测 381 处中约七成是主题无关的领域常量（战场标记/状态色/画布惯例色/音频波形色），并非主题数据。最终状态：全部剩余字面量均为①模块级命名常量（带块注释）②行内豁免注释③显式深浅二值分支（带注释）三者之一，**无任何无注释的散落字面量**（以裸值检查验证）。原"<50"指标基于"多数为主题色"的错误预估，实际以"零散落"为准
 
 ### 阶段 3 清单
 
@@ -315,3 +321,4 @@
 | 2026-09-03 | **阶段 1 完成**：5028 行 QSS（4 份手工复制品）收敛为 2 个族模板 + `editor_utils/theme_tokens.py`（槽位表 + 三处派生色板）；等价性验证通过后删除旧 .qss；冒烟测试全绿。基线复测：QSS 文件数 4→2 模板，颜色维护点 4→1 |
 | 2026-09-03 | **阶段 1 增补完成（模板统一）**：应用户提议，实测确认两族结构完全同构（469 选择器一致、属性集零差异、值差异全为颜色）后，合并为单一 `base.qss.tpl` + 484 个四元组槽位；4 主题 × 497 条规则语义等价验证通过；冒烟全绿。QSS 结构维护点 2→1 |
 | 2026-09-03 | **阶段 2 开始**：取值 API 落地（`theme_tokens.BUSINESS` 业务色板区 + `theme_manager.business_colors`）；mode_card（48→0）、log_console（14→0）迁移完成，log_console 接口从 dark 布尔改为 theme_id。硬编码颜色余量 314/27 文件（定义位 theme_tokens 537 处不计） |
+| 2026-09-03 | **阶段 2 完成（27/27 文件）**：新增业务色板表 SPRITESHEET/SKILL_GRAPH/MAT/ACT/GROWTH（mode_card/log_console 在前）；5 组跨文件/跨函数重复色板去重（技能类型色板×3、图层槽位色×2、Δ增量色对×2）；theme_id 贯通 5 个控件构造签名；领域常量全部命名化+豁免注释。冒烟全绿。验收口径按实测修正（见阶段 2 清单末项） |

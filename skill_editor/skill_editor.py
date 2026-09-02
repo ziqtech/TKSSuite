@@ -28,6 +28,14 @@ from editor_utils.adaptive_table import AdaptiveTableWidget
 from editor_utils.jvg_loader import get_sprite_pixmap, load_mu_sprites
 from editor_utils.lzss import lzss_compress_dat, lzss_decompress_dat
 from editor_utils.shared_state import pick_tks_directory
+from editor_utils.theme_manager import business_colors
+
+# 播种徽标底色 — 深饱和色配白字保证对比, 深浅主题一致 (阶段 2 豁免: 主题无关领域色)
+SEED_GROUP_COLOR = "#7a4fc0"   # 组头: 紫
+SEED_ENTRY_COLOR = "#1f9d55"   # 入口: 绿
+SEED_DOWN_COLOR = "#526073"    # 下游: 灰蓝
+# 子技能溢出警示红 — 领域警示色 (阶段 2 豁免: 主题无关)
+SUB_OVERFLOW_COLOR = "#e0533d"
 from editor_utils.mod_exporter import (
     ModExportPreviewDialog, ModImportPreviewDialog, ModMetadataDialog,
     build_data_diff_json, compute_crc32, diff_records, generate_mod_json,
@@ -296,7 +304,7 @@ class SkillGraphView(QGraphicsView):
         # 缩得太小时不绘点阵, 避免大量绘制卡顿
         if rect.width() / grid * (rect.height() / grid) > 8000:
             return
-        dot = QColor("#28303f") if self.is_dark else QColor("#dde3ee")
+        dot = QColor(self._pal["grid_dot"])
         painter.setPen(Qt.NoPen)
         painter.setBrush(QBrush(dot))
         left = int(rect.left()) - (int(rect.left()) % grid)
@@ -492,10 +500,10 @@ class SkillTreeDialog(QDialog):
         layout.addLayout(mode_row)
 
         self.scene = QGraphicsScene(self)
-        self.view = SkillGraphView(self._on_node_double_clicked, self.is_dark)
+        self.view = SkillGraphView(self._on_node_double_clicked, self.theme_id)
         self.view.setScene(self.scene)
         self.view.setBackgroundBrush(
-            QBrush(QColor("#12151d") if self.is_dark else QColor("#f4f6fa")))
+            QBrush(QColor(business_colors("skill_graph", self.theme_id)["canvas_bg"])))
         layout.addWidget(self.view, 1)
 
         btn_row = QHBoxLayout()
@@ -514,9 +522,8 @@ class SkillTreeDialog(QDialog):
         layout.addLayout(btn_row)
 
     def _type_color(self, tv):
-        if self.is_dark:
-            return QColor({0: "#4d90d0", 1: "#e8815f", 2: "#5cbf82", 3: "#b98adb"}.get(tv, "#9aa4b8"))
-        return QColor({0: "#2f74b0", 1: "#cf6a49", 2: "#2f9457", 3: "#8a5bb8"}.get(tv, "#5a6472"))
+        types = self._pal["type_graph"]
+        return QColor(types.get(tv, types["_"]))
 
     @staticmethod
     def _rounded_path(x, y, w, h, r, tl=True, tr=True, br=True, bl=True):
@@ -566,11 +573,11 @@ class SkillTreeDialog(QDialog):
         is_group = (w == 20)
         is_focus_edge = (a == self.focus_idx or b == self.focus_idx)
         if is_group:
-            color = QColor("#c58af0") if self.is_dark else QColor("#8e44ad")   # 归组: 紫色
+            color = QColor(self._pal["edge_regroup"])   # 归组: 紫色
         elif is_focus_edge:
-            color = QColor("#ffc85a") if self.is_dark else QColor("#e0930f")   # 与聚焦相连: 琥珀
+            color = QColor(self._pal["edge_focus"])     # 与聚焦相连: 琥珀
         else:
-            color = QColor("#586274") if self.is_dark else QColor("#a9b2c2")
+            color = QColor(self._pal["edge_normal"])
         pen = QPen(color, 2.4 if is_focus_edge else 1.8)
         pen.setCapStyle(Qt.RoundCap)
         pen.setJoinStyle(Qt.RoundJoin)
@@ -601,16 +608,13 @@ class SkillTreeDialog(QDialog):
     def _draw_edge_label(self, mid, w):
         if w == 20:
             txt = "归组"
-            fg = QColor("#e6d2ff") if self.is_dark else QColor("#6a3d99")
-            bg = QColor("#392c4e") if self.is_dark else QColor("#efe4fb")
+            fg, bg = (QColor(c) for c in self._pal["edge_label_regroup"])
         elif w >= 10:
             txt = "自足"
-            fg = QColor("#bff0cd") if self.is_dark else QColor("#1f6b3a")
-            bg = QColor("#25402f") if self.is_dark else QColor("#e2f5e8")
+            fg, bg = (QColor(c) for c in self._pal["edge_label_self"])
         else:
             txt = f"+{w}"
-            fg = QColor("#f0d9a8") if self.is_dark else QColor("#8a5a00")
-            bg = QColor("#322f28") if self.is_dark else QColor("#f2ecdf")
+            fg, bg = (QColor(c) for c in self._pal["edge_label_plus"])
         label = self.scene.addSimpleText(txt)
         f = label.font()
         f.setPointSize(8)
@@ -635,10 +639,10 @@ class SkillTreeDialog(QDialog):
         徽标底色为深饱和色 (配白字保证明暗对比), 三色区分明显; 深浅主题一致。"""
         rec = self.records[idx]
         if rec.get('type', 0) == 0 and rec.get('sub_count', -1) > 0:
-            return ("组头", "等待学(1)", QColor("#7a4fc0"))   # 紫
+            return ("组头", "等待学(1)", QColor(SEED_GROUP_COLOR))   # 紫
         if self.total_in.get(idx, 0) == 0:
-            return ("入口", "可以学(10)", QColor("#1f9d55"))  # 绿
-        return ("下游", "等待学(1)", QColor("#526073"))       # 灰蓝
+            return ("入口", "可以学(10)", QColor(SEED_ENTRY_COLOR))  # 绿
+        return ("下游", "等待学(1)", QColor(SEED_DOWN_COLOR))       # 灰蓝
 
     def _draw_seed_badge(self, idx, x, y):
         """在节点右上角骑顶边绘制建议初始状态徽标药丸 (入口/下游/组头)。"""
@@ -658,7 +662,7 @@ class SkillTreeDialog(QDialog):
         chip.setPos(cx, cy)
         chip.setZValue(7)
         chip.setData(0, idx)
-        txt.setBrush(QBrush(QColor("#ffffff")))
+        txt.setBrush(QBrush(QColor("#ffffff")))  # 白字 (深饱和底), 主题无关
         txt.setPos(cx + (cw - br.width()) / 2.0, cy + (ch - br.height()) / 2.0)
         txt.setZValue(8)
         txt.setData(0, idx)
@@ -672,16 +676,13 @@ class SkillTreeDialog(QDialog):
         is_focus = (idx == self.focus_idx)
         W, H, R, AW = self.NODE_W, self.NODE_H, self.RADIUS, self.ACCENT_W
 
-        if self.is_dark:
-            fill_col = QColor("#312b1b") if is_focus else QColor("#282f3e")
-            border_col, name_col, sub_col = QColor("#3b4453"), QColor("#eef1f6"), QColor("#8b93a7")
-            shadow_col = QColor(0, 0, 0, 90)
-            focus_border, focus_glow = QColor("#ffc85a"), QColor(255, 200, 90, 130)
-        else:
-            fill_col = QColor("#fff7e3") if is_focus else QColor("#ffffff")
-            border_col, name_col, sub_col = QColor("#d9dfe8"), QColor("#1f2633"), QColor("#6b7385")
-            shadow_col = QColor(70, 84, 110, 40)
-            focus_border, focus_glow = QColor("#e0930f"), QColor(224, 147, 15, 95)
+        fill_col = QColor(self._pal["node_fill_focus"] if is_focus
+                          else self._pal["node_fill"])
+        border_col, name_col, sub_col = (
+            QColor(self._pal[k]) for k in ("node_border", "node_name", "node_sub"))
+        shadow_col = QColor(*self._pal["node_shadow"])
+        focus_border = QColor(self._pal["focus_border"])
+        focus_glow = QColor(*self._pal["focus_glow"])
 
         # 底层: 类型强调色 (完整圆角矩形, 承载卡片轻投影; 左侧 AW=R 宽度露出, 完美贴合左圆角)
         accent = self.scene.addPath(self._rounded_path(0, 0, W, H, R), QPen(Qt.NoPen), QBrush(tcol))
@@ -1255,20 +1256,9 @@ class SkillEditorApp(QMainWindow):
             self.table.setItem(row, 5, QTableWidgetItem(str(r['mp_cost'])))
 
             # ==== 核心改造：为所有 4 种技能类型分配高辨识度专属颜色 ====
-            if self._is_dark:
-                # 深色模式高亮配色
-                if r['type'] == 0:   color = QColor("#478cbf") # 指令: 引擎蓝
-                elif r['type'] == 1: color = QColor("#e27d60") # 主动: 珊瑚橙 (极高辨识度)
-                elif r['type'] == 2: color = QColor("#55b572") # 被动: 翠绿
-                elif r['type'] == 3: color = QColor("#b988db") # 移动: 柔和紫
-                else:                color = QColor("#dcdcdc") # 未知: 默认白灰
-            else:
-                # 浅色模式需要更深的颜色才能在白底上压住视觉
-                if r['type'] == 0:   color = QColor("#28638f") # 深蓝
-                elif r['type'] == 1: color = QColor("#bd5739") # 深橙红
-                elif r['type'] == 2: color = QColor("#2d8046") # 深绿
-                elif r['type'] == 3: color = QColor("#8a5bb8") # 深紫
-                else:                color = QColor("#222222") # 未知: 默认黑
+            # 技能类型高亮配色 (语义表: theme_tokens.SKILL_GRAPH.type_detail)
+            types = business_colors("skill_graph", self._theme_id)["type_detail"]
+            color = QColor(types.get(r['type'], types["_"]))
 
             for c in range(6):
                 self.table.item(row, c).setForeground(color)
@@ -1303,7 +1293,7 @@ class SkillEditorApp(QMainWindow):
         """弹出技能树窗口: 以该技能为中心双向关联展开。"""
         if not self.records or idx < 0 or idx >= len(self.records):
             return
-        dlg = SkillTreeDialog(self, self.records, self.tkt, idx, self._is_dark)
+        dlg = SkillTreeDialog(self, self.records, self.tkt, idx, self._theme_id)
         dlg.exec()
 
     def _populate_edit(self, rec):
@@ -1324,10 +1314,8 @@ class SkillEditorApp(QMainWindow):
         hint = TYPE_HINT_LABELS.get(rec['type'], "")
 
         # ==== 检查器预览区类型同步高亮 ====
-        if self._is_dark:
-            type_color = {0: "#478cbf", 1: "#e27d60", 2: "#55b572", 3: "#b988db"}.get(rec['type'], "#dcdcdc")
-        else:
-            type_color = {0: "#28638f", 1: "#bd5739", 2: "#2d8046", 3: "#8a5bb8"}.get(rec['type'], "#222222")
+        types = business_colors("skill_graph", self._theme_id)["type_detail"]
+        type_color = types.get(rec['type'], types["_"])
 
         # 使用 HTML 富文本进行局部着色，完美保留 QSS 的边框与排版
         self.preview_type.setText(
@@ -1340,7 +1328,7 @@ class SkillEditorApp(QMainWindow):
             if sc > 12:
                 # 战斗技能菜单共享 12 格固定数组 (word_9D6D1A, memset 0x18=24B=12项),
                 # sub_438F28 列出本组已学子技能时无越界检查 → 超过12个即溢出相邻数据。
-                sub_txt += ('<br><span style="color:#e0533d; font-weight:bold;">'
+                sub_txt += (f'<br><span style="color:{SUB_OVERFLOW_COLOR}; font-weight:bold;">'
                             '⚠ 当前技能组的子技能数超过12个，请注意在编辑角色时设置当前技能组的'
                             '可学习技能不要超过12个，否则战斗页面数据会溢出</span>')
             self.preview_sub.setText(sub_txt)

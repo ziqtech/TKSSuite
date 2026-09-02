@@ -657,7 +657,7 @@ class ShopEditorWindow(QMainWindow):
         self.table.setRowCount(0)
         self.table.setRowCount(len(self.filtered_indices))
 
-        color_random = QColor("#D4883A") if self._is_dark else QColor("#CC6600")
+        color_random = QColor("#D4883A") if self._is_dark else QColor("#CC6600")  # 主题感知: 深浅两档
 
         for r, idx in enumerate(self.filtered_indices):
             rec = self.records[idx]
@@ -768,8 +768,8 @@ class ShopEditorWindow(QMainWindow):
         item_tab = self._get_item_tab(item_ref)
         allowed = TAB_TO_SHOP.get(item_tab, [])
 
-        color_ok = "#4CAF50" if self._is_dark else "#228B22"
-        color_err = "#E57373" if self._is_dark else "#CC3333"
+        color_ok = "#4CAF50" if self._is_dark else "#228B22"  # 主题感知: 深浅两档
+        color_err = "#E57373" if self._is_dark else "#CC3333"  # 主题感知: 深浅两档
 
         if area_id in allowed:
             self.lbl_compat.setText("✓ 该物品可在此商店出现")

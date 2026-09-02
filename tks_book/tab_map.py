@@ -16,6 +16,7 @@ from book_loader import pil_to_qpixmap
 from tab_common import BookTabBase
 
 # 特殊物品颜色: 已知物品名固定配色, 其它物品从调色板按出现顺序分配
+# 地图标记色 — 领域常量 (阶段 2 豁免: 主题无关)
 _KNOWN_ITEM_COLORS = {'文王卦籤': '#e53935',   # 红
                       '晶礦':     '#1e88e5',   # 蓝
                       '機關圖':   '#43a047'}   # 绿

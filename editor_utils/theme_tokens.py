@@ -590,10 +590,108 @@ SPRITESHEET: dict[str, tuple[str, str, str, str]] = {
     "canvas_bg": ("#1a1d24", "#313c52", "#1a1d24", "#313c52"),
 }
 
+# 技能图谱 (skill_editor.py: SkillGraphView / SkillTreeDialog / 详情面板)。
+# type_* 为技能类型色板 dict ({0=指令 1=主动 2=被动 3=移动, "_"=未知兜底})。
+SKILL_GRAPH: dict[str, tuple] = {
+    "canvas_bg": ("#12151d", "#f4f6fa", "#12151d", "#f4f6fa"),
+    "grid_dot": ("#28303f", "#dde3ee", "#28303f", "#dde3ee"),
+    "type_graph": (
+        {0: "#4d90d0", 1: "#e8815f", 2: "#5cbf82", 3: "#b98adb", "_": "#9aa4b8"},
+        {0: "#2f74b0", 1: "#cf6a49", 2: "#2f9457", 3: "#8a5bb8", "_": "#5a6472"},
+        {0: "#4d90d0", 1: "#e8815f", 2: "#5cbf82", 3: "#b98adb", "_": "#9aa4b8"},
+        {0: "#2f74b0", 1: "#cf6a49", 2: "#2f9457", 3: "#8a5bb8", "_": "#5a6472"},
+    ),
+    "type_detail": (
+        {0: "#478cbf", 1: "#e27d60", 2: "#55b572", 3: "#b988db", "_": "#dcdcdc"},
+        {0: "#28638f", 1: "#bd5739", 2: "#2d8046", 3: "#8a5bb8", "_": "#222222"},
+        {0: "#478cbf", 1: "#e27d60", 2: "#55b572", 3: "#b988db", "_": "#dcdcdc"},
+        {0: "#28638f", 1: "#bd5739", 2: "#2d8046", 3: "#8a5bb8", "_": "#222222"},
+    ),
+    "edge_regroup": ("#c58af0", "#8e44ad", "#c58af0", "#8e44ad"),
+    "edge_focus": ("#ffc85a", "#e0930f", "#ffc85a", "#e0930f"),
+    "edge_normal": ("#586274", "#a9b2c2", "#586274", "#a9b2c2"),
+    "edge_label_regroup": (("#e6d2ff", "#392c4e"), ("#6a3d99", "#efe4fb"),
+                           ("#e6d2ff", "#392c4e"), ("#6a3d99", "#efe4fb")),
+    "edge_label_self": (("#bff0cd", "#25402f"), ("#1f6b3a", "#e2f5e8"),
+                        ("#bff0cd", "#25402f"), ("#1f6b3a", "#e2f5e8")),
+    "edge_label_plus": (("#f0d9a8", "#322f28"), ("#8a5a00", "#f2ecdf"),
+                        ("#f0d9a8", "#322f28"), ("#8a5a00", "#f2ecdf")),
+    "node_fill": ("#282f3e", "#ffffff", "#282f3e", "#ffffff"),
+    "node_fill_focus": ("#312b1b", "#fff7e3", "#312b1b", "#fff7e3"),
+    "node_border": ("#3b4453", "#d9dfe8", "#3b4453", "#d9dfe8"),
+    "node_name": ("#eef1f6", "#1f2633", "#eef1f6", "#1f2633"),
+    "node_sub": ("#8b93a7", "#6b7385", "#8b93a7", "#6b7385"),
+    "node_shadow": ((0, 0, 0, 90), (70, 84, 110, 40),
+                    (0, 0, 0, 90), (70, 84, 110, 40)),
+    "focus_border": ("#ffc85a", "#e0930f", "#ffc85a", "#e0930f"),
+    "focus_glow": ((255, 200, 90, 130), (224, 147, 15, 95),
+                   (255, 200, 90, 130), (224, 147, 15, 95)),
+}
+
+# 剧本编辑器 (mat_editor.py / mat_widgets.py)。
+# entity_type_colors: 实体类型色板 dict; syntax: 预览语法色板 dict;
+# editor_syntax: 脚本编辑器高亮色板 dict (原 _PALETTE 深浅对)。
+MAT: dict[str, tuple] = {
+    "entity_type_colors": (
+        {0: "#AAAAAA", 5: "#2196F3", 10: "#4CAF50", 15: "#FF9800",
+                  16: "#795548", 20: "#9C27B0", 110: "#E91E63", 200: "#F44336"},
+        {0: "#777777", 5: "#1565C0", 10: "#2E7D32", 15: "#E65100",
+                  16: "#5D4037", 20: "#6A1B9A", 110: "#AD1457", 200: "#C62828"},
+        {0: "#AAAAAA", 5: "#2196F3", 10: "#4CAF50", 15: "#FF9800",
+                  16: "#795548", 20: "#9C27B0", 110: "#E91E63", 200: "#F44336"},
+        {0: "#777777", 5: "#1565C0", 10: "#2E7D32", 15: "#E65100",
+                  16: "#5D4037", 20: "#6A1B9A", 110: "#AD1457", 200: "#C62828"},
+    ),
+    "syntax": (
+        {"cmd": "#dcdcdc", "talk": "#b884ff", "flow": "#5b8aff",
+                 "branch": "#e0a040", "getitem": "#ff7b7b", "scene": "#6ab04c",
+                 "comment": "#6a7590", "block": "#7a86a8", "raw": "#5a6480"},
+        {"cmd": "#333333", "talk": "#7B30D0", "flow": "#0066CC",
+                 "branch": "#CC6600", "getitem": "#CC0000", "scene": "#008800",
+                 "comment": "#AAA", "block": "#BBB", "raw": "#999"},
+        {"cmd": "#dcdcdc", "talk": "#b884ff", "flow": "#5b8aff",
+                 "branch": "#e0a040", "getitem": "#ff7b7b", "scene": "#6ab04c",
+                 "comment": "#6a7590", "block": "#7a86a8", "raw": "#5a6480"},
+        {"cmd": "#333333", "talk": "#7B30D0", "flow": "#0066CC",
+                 "branch": "#CC6600", "getitem": "#CC0000", "scene": "#008800",
+                 "comment": "#AAA", "block": "#BBB", "raw": "#999"},
+    ),
+    "editor_syntax": (
+        {"keyword": "#ff7085", "comment": "#6a737d", "number": "#a1ffe0",
+                "command": "#a1bfff", "block": "#ffce7b"},
+        {"keyword": "#d63547", "comment": "#6a737d", "number": "#2e9c6e",
+                "command": "#6b89ff", "block": "#c75000"},
+        {"keyword": "#ff7085", "comment": "#6a737d", "number": "#a1ffe0",
+                "command": "#a1bfff", "block": "#ffce7b"},
+        {"keyword": "#d63547", "comment": "#6a737d", "number": "#2e9c6e",
+                "command": "#6b89ff", "block": "#c75000"},
+    ),
+    "pv_step_bg": ("#5a5520", "#FFEE88", "#5a5520", "#FFEE88"),
+    "tkt_fallback": ("#c8c8c8", "#333333", "#c8c8c8", "#333333"),
+}
+
+# 动画编辑器 (act_editor.py) 时间轴/网格 —— 主题感知部分。
+ACT: dict[str, tuple[str, str, str, str]] = {
+    "timeline_bg": ("#1a1e27", "#f5f5f5", "#1a1e27", "#f5f5f5"),
+    "grid_major": ("#2e3548", "#ddd", "#2e3548", "#ddd"),
+    "grid_minor": ("#3b445c", "#ccc", "#3b445c", "#ccc"),
+    "stmt_muted": ("#888888", "#AAAAAA", "#888888", "#AAAAAA"),
+}
+
+# 成长率面板 (warpc_editor / tks_book.book_growth 共用 — 原两处重复定义)。
+GROWTH: dict[str, tuple[str, str, str, str]] = {
+    "delta": ("#55b572", "#2d7a2d", "#55b572", "#2d7a2d"),  # Δ增量
+    "grp": ("#e8a040", "#cc7a20", "#e8a040", "#cc7a20"),   # grp 最终属性
+}
+
 _BUSINESS: dict[str, dict[str, tuple]] = {
     "mode_card": MODE_CARD,
     "log_console": LOG_CONSOLE,
     "spritesheet": SPRITESHEET,
+    "skill_graph": SKILL_GRAPH,
+    "mat": MAT,
+    "act": ACT,
+    "growth": GROWTH,
 }
 
 

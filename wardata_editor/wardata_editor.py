@@ -501,6 +501,33 @@ TRAP_NAMES_SHORT = {1: '山崩', 2: '泥沼', 3: '漩渦', 4: '火焰', 5: '滾�
 # 主编辑器窗口
 # ═══════════════════════════════════════════════════════════
 
+
+# ── 战场地图绘制色 ──────────────────────────────────────────────────
+# 领域语义色: 战场标记恒定配色, 不随 UI 主题变化 (阶段 2 豁免,
+# 见 docs/PySide6样式体系整改方案.md)
+TERRAIN_COLORS = [('障碍', '#553322'), ('临时障碍', '#665544'), ('区域1', '#aa6633'),
+                  ('区域2', '#3366aa'), ('区域3', '#aa44aa'), ('区域4', '#33aa66'),
+                  ('区域5', '#aaaa33')]
+GRID_PEN = '#334422'          # 地形网格线 (普通)
+OBSTACLE_PEN = '#332211'      # 永久障碍网格线
+TEMP_OBSTACLE_PEN = '#443322' # 临时障碍网格线
+TREASURE_FIXED = '#FF8C00'    # 固定宝箱: 橙
+TREASURE_RANDOM = '#FFD700'   # 随机宝箱: 金
+TRAP_COLORS = {1: '#FFD700', 2: '#8B4513', 3: '#4488FF',
+               4: '#FF4444', 5: '#228B22', 6: '#FF69B4'}   # 陷阱类型色
+TRAP_FALLBACK = '#FF0000'     # 未知陷阱类型
+TRAP_TEXT_COLOR = '#FF4444'   # 陷阱标记文字
+ENEMY_FIXED = '#9932CC'       # 固定敌人: 紫
+ENEMY_RANDOM = '#cc3333'      # 随机敌人: 红
+ENEMY_NAME_FIXED = '#BA55D3'  # 固定敌人名: 亮紫
+ENEMY_NAME_RANDOM = '#ff6666' # 随机敌人名: 亮红
+ALLY_FILL = '#3366cc'         # 我方已部署: 蓝
+ALLY_FILL_ALT = '#228B22'     # 我方区域部署: 绿
+ALLY_TEXT = '#66ccff'         # 我方名文字: 浅蓝
+SELECT_OUTLINE = '#FFFF00'    # 选中多边形高亮: 黄
+SCENE_BG = '#333333'          # 战场场景底色
+
+
 class WarDataEditorV2(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -2628,8 +2655,7 @@ class WarDataEditorV2(QMainWindow):
         # 图例
         legend = QHBoxLayout()
         legend.setSpacing(6)
-        terrain_colors = [('障碍','#553322'),('临时障碍','#665544'),('区域1','#aa6633'),
-                          ('区域2','#3366aa'),('区域3','#aa44aa'),('区域4','#33aa66'),('区域5','#aaaa33')]
+        terrain_colors = TERRAIN_COLORS
         for label, color in terrain_colors:
             f = QWidget()
             fl = QHBoxLayout(f)
@@ -2883,15 +2909,15 @@ class WarDataEditorV2(QMainWindow):
                     pts = [QPointF(sx, sy-tile_h), QPointF(sx+tile_w, sy),
                            QPointF(sx, sy+tile_h), QPointF(sx-tile_w, sy)]
                     poly = QPolygonF(pts)
-                    pen = QPen(QColor('#334422'), 1)
+                    pen = QPen(QColor(GRID_PEN), 1)
                     brush = QBrush(Qt.NoBrush)
                     if val == -1:  # WarWay -1 (0xFF) = 永久障碍
                         if not self.show_obstacle.isChecked(): continue
-                        pen = QPen(QColor('#332211'), 1)
+                        pen = QPen(QColor(OBSTACLE_PEN), 1)
                         brush = QBrush(QColor(85,51,34,alpha_val))
                     elif val < -1:  # WarWay < -1 = 临时障碍(sub_4355C4每回合+1直到0)
                         if not self.show_temp_obstacle.isChecked(): continue
-                        pen = QPen(QColor('#443322'), 1)
+                        pen = QPen(QColor(TEMP_OBSTACLE_PEN), 1)
                         brush = QBrush(QColor(102,85,68,alpha_val))
                     elif val == 0:  # WarWay 0 = 普通地面
                         brush = QBrush(Qt.NoBrush)
@@ -2911,7 +2937,7 @@ class WarDataEditorV2(QMainWindow):
             for i, (gx, gy) in resolved_treas.items():
                 sx, sy = self._grid_to_screen(gx, gy)
                 r = max(3, tile_h // 2)
-                fill_c = QColor('#FF8C00') if i in fixed_trea_indices else QColor('#FFD700')
+                fill_c = QColor(TREASURE_FIXED if i in fixed_trea_indices else TREASURE_RANDOM)
                 rect = QRectF(sx-r, sy-r, r*2, r*2)
                 scene.addRect(rect, QPen(QColor('white'),1), QBrush(fill_c))
                 tag = "固" if i in fixed_trea_indices else "随"
@@ -2934,19 +2960,18 @@ class WarDataEditorV2(QMainWindow):
                 for zone, labels in sorted(by_zone.items()):
                     txt = f"Z{zone}:" + ",".join(labels)
                     t = scene.addText(txt)
-                    t.setDefaultTextColor(QColor('#FFD700'))
+                    t.setDefaultTextColor(QColor(TREASURE_RANDOM))
                     t.setFont(QFont('', max(9, int(11*zoom))))
                     t.setPos(zr_x, bg_h - 15)
                     zr_x += t.boundingRect().width() + 10
 
         # ── 图层3b: 陷阱 (sub_431428:283-323) ──
         if self.show_trap.isChecked():
-            TRAP_COLORS = {1:'#FFD700',2:'#8B4513',3:'#4488FF',4:'#FF4444',5:'#228B22',6:'#FF69B4'}
             for i, (gx, gy) in resolved_traps.items():
                 ttype = self._trap_type_at(rec, i)
                 sx, sy = self._grid_to_screen(gx, gy)
                 r = max(3, tile_h // 2)
-                fc = QColor(TRAP_COLORS.get(ttype, '#FF0000'))
+                fc = QColor(TRAP_COLORS.get(ttype, TRAP_FALLBACK))
                 outline_c = QColor('white') if i in fixed_trap_indices else QColor('#888')
                 pts = [QPointF(sx, sy-r), QPointF(sx-r, sy+r), QPointF(sx+r, sy+r)]
                 scene.addPolygon(QPolygonF(pts), QPen(outline_c,1), QBrush(fc))
@@ -2969,7 +2994,7 @@ class WarDataEditorV2(QMainWindow):
                 for zone, labels in sorted(by_zone.items()):
                     txt = f'⚠Z{zone}陷阱:' + ','.join(labels)
                     t = scene.addText(txt)
-                    t.setDefaultTextColor(QColor('#FF4444'))
+                    t.setDefaultTextColor(QColor(TRAP_TEXT_COLOR))
                     t.setFont(QFont('', max(9, int(11*zoom))))
                     t.setPos(zr_x, bg_h - 35)
                     zr_x += t.boundingRect().width() + 10
@@ -2982,8 +3007,8 @@ class WarDataEditorV2(QMainWindow):
                 eid = rec['enemy_ids'][i]
                 sx, sy = self._grid_to_screen(gx, gy)
                 r = max(5, tile_h // 2)
-                if i in fixed_enemy_slots: fill_c = QColor('#9932CC')
-                else: fill_c = QColor('#cc3333')
+                if i in fixed_enemy_slots: fill_c = QColor(ENEMY_FIXED)
+                else: fill_c = QColor(ENEMY_RANDOM)
                 rect = QRectF(sx-r, sy-r, r*2, r*2)
                 scene.addEllipse(rect, QPen(QColor('white'),1), QBrush(fill_c))
                 tag = "固" if i in fixed_enemy_slots else "随"
@@ -2993,21 +3018,21 @@ class WarDataEditorV2(QMainWindow):
                 t.setPos(sx - t.boundingRect().width()/2, sy - t.boundingRect().height()/2)
                 name = self._enemy_name(eid)
                 nt = scene.addText(name)
-                nt.setDefaultTextColor(QColor('#BA55D3' if i in fixed_enemy_slots else '#ff6666'))
+                nt.setDefaultTextColor(QColor(ENEMY_NAME_FIXED if i in fixed_enemy_slots else ENEMY_NAME_RANDOM))
                 nt.setFont(QFont('', max(8, int(10*zoom))))
                 nt.setPos(sx - nt.boundingRect().width()/2, sy + r + 2)
             # 友军 — ally_xy [178-189] + 区域放置解析
             for i in range(6):
                 if i in resolved_allies:
                     gx, gy = resolved_allies[i]
-                    fill_c = QColor('#3366cc')
+                    fill_c = QColor(ALLY_FILL)
                 else:
                     ax = rec['ally_xy'][i*2]
                     ay = rec['ally_xy'][i*2+1]
                     if ax == 0 and ay == 0: continue
                     if ax < 0 or ay < 0 or ax >= 32 or ay >= 32: continue
                     gx, gy = ax, ay
-                    fill_c = QColor('#228B22')
+                    fill_c = QColor(ALLY_FILL_ALT)
                 sx, sy = self._grid_to_screen(gx, gy)
                 r = max(5, tile_h // 2)
                 rect = QRectF(sx-r, sy-r, r*2, r*2)
@@ -3042,7 +3067,7 @@ class WarDataEditorV2(QMainWindow):
                 if cv <= 0: continue
                 name = self._char_name(cv-1)[:4]
                 t = scene.addText(f"[{name}]")
-                t.setDefaultTextColor(QColor('#66ccff'))
+                t.setDefaultTextColor(QColor(ALLY_TEXT))
                 t.setFont(QFont('Microsoft YaHei UI', 9))
                 t.setPos(10 + i*60, 5)
 
@@ -3137,7 +3162,7 @@ class SceneGraphicsView(QGraphicsView):
         self.setScene(QGraphicsScene(self))
         self.setRenderHint(QPainter.Antialiasing, False)
         self.setDragMode(QGraphicsView.NoDrag)
-        self.setBackgroundBrush(QBrush(QColor('#333333')))
+        self.setBackgroundBrush(QBrush(QColor(SCENE_BG)))
         self.setMouseTracking(True)
         self._drag_target = None
         self._pan_start = None
@@ -3216,12 +3241,12 @@ class SceneGraphicsView(QGraphicsView):
         else:
             r, g, b = self._brush_fill_rgb(bval)
             fill = QBrush(QColor(r, g, b, 160))
-        item = self.scene().addPolygon(QPolygonF(pts), QPen(QColor('#FFFF00'), 2), fill)
+        item = self.scene().addPolygon(QPolygonF(pts), QPen(QColor(SELECT_OUTLINE), 2), fill)
         item.setZValue(1000)
         self._hover_item = item
         name = self._terrain_tag(bval)
         label = self.scene().addText(f"▸{name}")
-        label.setDefaultTextColor(QColor('#FFFF00'))
+        label.setDefaultTextColor(QColor(SELECT_OUTLINE))
         label.setFont(QFont('', max(8, int(10 * zoom)), QFont.Bold))
         label.setZValue(1001)
         lw = label.boundingRect().width()
@@ -3259,7 +3284,7 @@ class SceneGraphicsView(QGraphicsView):
         bval = self._brush_value()
         r, g, b = self._brush_fill_rgb(bval)
         fill = QBrush(QColor(r, g, b, 70))
-        item = self.scene().addPolygon(QPolygonF(pts), QPen(QColor('#FFFF00'), 2, Qt.DashLine), fill)
+        item = self.scene().addPolygon(QPolygonF(pts), QPen(QColor(SELECT_OUTLINE), 2, Qt.DashLine), fill)
         item.setZValue(999)
         self._rect_item = item
 

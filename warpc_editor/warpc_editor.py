@@ -70,6 +70,7 @@ from PySide6.QtGui import (
 from PySide6.QtCore import Qt, QTranslator, Signal, QTimer, QSize
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from editor_utils import theme_manager
+from editor_utils.theme_manager import business_colors
 from editor_utils.theme_switcher import (
     apply_theme_to_window, create_theme_menu, toggle_theme_in_family,
 )
@@ -628,12 +629,9 @@ class GrowthTableDialog(QDialog):
         # 注: 当前等级行不再用白色文字+蓝底高亮 — QSS 的 ::item background-color
         # 会覆盖 item.setBackground(), 导致蓝底丢失、白字残留在浅色背景上不可读。
         # 改为仅用粗体字标记当前等级行。
-        if is_dark:
-            self._CLR_DELTA    = QColor("#55b572")   # Δ增量 (取自 gpt-dark.qss PreviewDesc)
-            self._CLR_GRP      = QColor("#e8a040")   # grp最终属性
-        else:
-            self._CLR_DELTA    = QColor("#2d7a2d")   # Δ增量 (深绿)
-            self._CLR_GRP      = QColor("#cc7a20")   # grp最终属性 (深橙)
+        pal = business_colors("growth", theme_id)
+        self._CLR_DELTA = QColor(pal["delta"])   # Δ增量
+        self._CLR_GRP = QColor(pal["grp"])       # grp 最终属性
 
         # 读取当前数据
         self._cur_level = max(1, self._f[2])
@@ -2674,7 +2672,7 @@ class WarpcEditorV2(QMainWindow):
             mp_str = f"{f[6]}/{f[10]}" if f[6] or f[10] else ""
             role_val = f[3]
             role_str = '未激活' if role_val==-1 else ('已激活' if role_val==0 else str(role_val))
-            tag_color = QColor("#2266CC") if role_val==-1 else QColor("#CC3333") if role_val==0 else QColor("#dcdcdc")
+            tag_color = QColor("#2266CC") if role_val==-1 else QColor("#CC3333") if role_val==0 else QColor("#dcdcdc")  # 阶段 2 豁免: 角色标记领域色
             self.table.insertRow(row)
             for ci, v in enumerate([str(r['index']), nm, str(f[2]), role_str, hp_str, mp_str]):
                 item = QTableWidgetItem(v)

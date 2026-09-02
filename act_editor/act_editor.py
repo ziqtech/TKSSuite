@@ -66,6 +66,24 @@ from PySide6.QtCore import (
 # ── editor_utils 公共模块 ──
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from editor_utils import theme_manager
+from editor_utils.theme_manager import business_colors
+
+# 预览/时间轴固定色 — 画布恒为深色系 (图像编辑器惯例) + 领域语义色
+# (阶段 2 豁免: 主题无关领域色, 见 docs/PySide6样式体系整改方案.md)
+PREVIEW_CANVAS_BG = "#1a1e27"        # 精灵预览画布底 (恒深色)
+PEN_TRAJECTORY_GREEN = "#00ff00"    # 弹道轨迹绿
+PEN_TRAJECTORY_RED = "#ff4444"      # 事件块红 (轨迹/命中)
+BLOCK_SHADOW_BG = "#442222"         # 事件块阴影底
+BLOCK_SHADOW_BORDER = "#884444"     # 事件块阴影边
+SELECT_RED = "#e74c3c"              # 选中框/时间指针红
+GUIDE_BLUE = "#3498db"              # 对齐参考虚线蓝
+STMT_INCOMPLETE_COLOR = "#CC3333"   # 语句表: 原版未完成 (红)
+STMT_UNKNOWN_COLOR = "#CC8800"      # 语句表: 未知 (橙)
+STMT_HAS_DATA_COLOR = "#228B22"     # 语句表: 有数据 (绿)
+STMT_NO_DATA_COLOR = "#AAAAAA"      # 语句表: 无数据 (灰)
+# 图层槽位分类色 (预览外框与图层列表共用)
+SLOT_COLORS = ["#4488ff", "#ff8844", "#44ff88", "#ff44ff",
+               "#ffff44", "#44ffff", "#ff8888", "#88ff88"]
 from editor_utils.version import format_title, format_about_header
 from editor_utils.theme_switcher import (
     apply_theme_to_window, create_theme_menu, toggle_theme_in_family,
@@ -980,18 +998,14 @@ class PreviewCanvas(QWidget):
 
         w, h = self.width(), self.height()
         # 背景
-        painter.fillRect(0, 0, w, h, QColor('#1a1e27'))
+        painter.fillRect(0, 0, w, h, QColor(PREVIEW_CANVAS_BG))
 
         if self._composite_pixmap and not self._composite_pixmap.isNull():
             painter.drawPixmap(int(self._comp_ox), int(self._comp_oy),
                              self._composite_pixmap)
 
         # Sprite 外框
-        slot_colors = [
-            QColor('#4488ff'), QColor('#ff8844'), QColor('#44ff88'),
-            QColor('#ff44ff'), QColor('#ffff44'), QColor('#44ffff'),
-            QColor('#ff8888'), QColor('#88ff88'),
-        ]
+        slot_colors = [QColor(c) for c in SLOT_COLORS]
         for (slot, eff_dir, cx, cy, ex, ey, ox, oy) in self._sprite_boxes:
             color = slot_colors[(slot - 1) % len(slot_colors)]
             pen = QPen(color, 1)
@@ -1002,7 +1016,7 @@ class PreviewCanvas(QWidget):
 
         # 原点十字 (攻击方)
         ox_c, oy_c = self._origin_cv
-        pen_green = QPen(QColor('#00ff00'), 2)
+        pen_green = QPen(QColor(PEN_TRAJECTORY_GREEN), 2)
         painter.setPen(pen_green)
         painter.drawLine(int(ox_c - 16), int(oy_c), int(ox_c + 16), int(oy_c))
         painter.drawLine(int(ox_c), int(oy_c - 16), int(ox_c), int(oy_c + 16))
@@ -1011,14 +1025,14 @@ class PreviewCanvas(QWidget):
 
         # 假想敌位置 (受击方)
         ex_c, ey_c = self._enemy_cv
-        pen_red = QPen(QColor('#ff4444'), 2)
+        pen_red = QPen(QColor(PEN_TRAJECTORY_RED), 2)
         painter.setPen(pen_red)
         painter.drawLine(int(ex_c - 16), int(ey_c), int(ex_c + 16), int(ey_c))
         painter.drawLine(int(ex_c), int(ey_c - 16), int(ex_c), int(ey_c + 16))
         painter.drawText(int(ex_c + 18), int(ey_c + 4), "受击方")
         # 假想敌人形
-        painter.fillRect(QRect(int(ex_c - 15), int(ey_c - 40), 30, 40), QColor('#442222'))
-        painter.setPen(QColor('#884444'))
+        painter.fillRect(QRect(int(ex_c - 15), int(ey_c - 40), 30, 40), QColor(BLOCK_SHADOW_BG))
+        painter.setPen(QColor(BLOCK_SHADOW_BORDER))
         painter.drawRect(QRect(int(ex_c - 15), int(ey_c - 40), 30, 40))
         painter.setPen(QColor('#f44'))
         painter.drawText(int(ex_c - 4), int(ey_c - 22), "敌")
@@ -1187,7 +1201,7 @@ class TimelineWidget(QWidget):
         ruler_h = self._ruler_h
 
         is_dark = self.editor._is_dark
-        bg = QColor('#1a1e27') if is_dark else QColor('#f5f5f5')
+        bg = QColor(business_colors("act", self.editor._theme_id)["timeline_bg"])
         painter.fillRect(0, 0, w, h, bg)
 
         if not self._layers_info:
@@ -1239,8 +1253,8 @@ class TimelineWidget(QWidget):
             if delay > 0:
                 dw = int(delay * zoom)
                 painter.fillRect(QRect(int(dx), int(y), int(dw), track_h),
-                               QColor('#2e3548') if is_dark else QColor('#ddd'))
-                painter.setPen(QColor('#3b445c') if is_dark else QColor('#ccc'))
+                               QColor(business_colors("act", self.editor._theme_id)["grid_major"]))
+                painter.setPen(QColor(business_colors("act", self.editor._theme_id)["grid_minor"]))
                 painter.drawRect(QRect(int(dx), int(y), int(dw), track_h))
 
             # 播放区
@@ -1280,9 +1294,9 @@ class TimelineWidget(QWidget):
         ph_x = self._content_x(self._playhead)
         content_h = ruler_h + len(self._layers_info) * (track_h + track_gap) + 10
         self._ph_bottom = content_h
-        painter.setPen(QPen(QColor('#e74c3c'), 2))
+        painter.setPen(QPen(QColor(SELECT_RED), 2))
         painter.drawLine(int(ph_x), 0, int(ph_x), content_h)
-        painter.setBrush(QColor('#e74c3c'))
+        painter.setBrush(QColor(SELECT_RED))
         painter.drawPolygon([
             QPoint(int(ph_x - 5), 0),
             QPoint(int(ph_x + 5), 0),
@@ -1322,7 +1336,7 @@ class TimelineWidget(QWidget):
             x0, y0 = self._marquee_start
             pos = self.mapFromGlobal(QCursor.pos())
             x1, y1 = pos.x(), pos.y()
-            painter.setPen(QPen(QColor('#3498db'), 1, Qt.DashLine))
+            painter.setPen(QPen(QColor(GUIDE_BLUE), 1, Qt.DashLine))
             painter.setBrush(Qt.NoBrush)
             painter.drawRect(QRect(min(x0, x1), min(y0, y1),
                                    abs(x1 - x0), abs(y1 - y0)))
@@ -1592,7 +1606,7 @@ class ThumbnailStrip(QWidget):
 
         # DFO 标记
         if self._dfo > 0:
-            pen_dfo = QPen(QColor('#3498db'), 1)
+            pen_dfo = QPen(QColor(GUIDE_BLUE), 1)
             painter.setPen(pen_dfo)
             painter.setFont(QFont(FONT_FAMILY, 6))
             for di in range(0, self._total_frames, self._dfo):
@@ -1603,7 +1617,7 @@ class ThumbnailStrip(QWidget):
         # 选中范围
         fx = margin + self._first * (thumb_h + spacing) - 1
         lx = margin + self._last * (thumb_h + spacing) + thumb_h + 1
-        pen_sel = QPen(QColor('#e74c3c'), 2)
+        pen_sel = QPen(QColor(SELECT_RED), 2)
         painter.setPen(pen_sel)
         painter.drawRect(QRect(int(fx), 6, int(lx - fx), thumb_h + 4))
         painter.setFont(QFont(FONT_FAMILY, 7, QFont.Bold))
@@ -2633,15 +2647,15 @@ class ActEditorV2(QMainWindow):
             self.table.setItem(row, 3, QTableWidgetItem(str(n_layer)))
             # 颜色标记 (名称语义优先)
             if "原版未完成" in nm:
-                color = QColor("#CC3333")
+                color = QColor(STMT_INCOMPLETE_COLOR)
             elif "未知" in nm:
-                color = QColor("#CC8800")
+                color = QColor(STMT_UNKNOWN_COLOR)
             elif "空槽" in nm:
-                color = QColor("#888888") if self._is_dark else QColor("#AAAAAA")
+                color = QColor(business_colors("act", self._theme_id)["stmt_muted"])
             elif has_data:
-                color = QColor('#228B22')
+                color = QColor(STMT_HAS_DATA_COLOR)
             else:
-                color = QColor('#AAAAAA')
+                color = QColor(STMT_NO_DATA_COLOR)
             for ci in range(4):
                 self.table.item(row, ci).setForeground(color)
         self.table.blockSignals(False)
@@ -3869,8 +3883,7 @@ class ActEditorV2(QMainWindow):
         comp_ox, comp_oy = to_cv(bbox_l, bbox_t)
 
         sprite_boxes = []
-        slot_colors = ['#4488ff', '#ff8844', '#44ff88', '#ff44ff',
-                      '#ffff44', '#44ffff', '#ff8888', '#88ff88']
+        slot_colors = SLOT_COLORS
         info = [f"方向{direction} | 可见{len(sprites)}图层 | Tick:{tick}"]
 
         for sp in sprites:

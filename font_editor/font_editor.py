@@ -448,8 +448,8 @@ class FontEditorWindow(QMainWindow):
         """返回当前主题下字形笔画颜色 (渲染进位图像素), 与 editor_themes 文字色一致。"""
         spec = theme_manager.THEMES[self._theme_id]
         if spec.family == 'classic':
-            return "#dcdcdc" if spec.is_dark else "#222222"
-        return "#ececec" if spec.is_dark else "#2d2d2d"
+            return "#dcdcdc" if spec.is_dark else "#222222"  # 主题感知: 深浅两档
+        return "#ececec" if spec.is_dark else "#2d2d2d"  # 主题感知: 深浅两档
 
     # ── 窗口标题 ──
 

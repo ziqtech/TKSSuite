@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
 )
 
 from editor_utils import theme_manager
+from editor_utils.theme_manager import business_colors
 from editor_utils.adaptive_table import AdaptiveTableWidget
 from editor_utils.theme_switcher import apply_theme_to_window
 from editor_utils.window_theme import apply_titlebar_theme
@@ -54,12 +55,8 @@ class GrowthTableDialog(QDialog):
         self._rec_idx = rec['index']
 
         apply_theme_to_window(self, theme_id, persist=False)
-        is_dark = theme_manager.is_dark(theme_id)
-
-        if is_dark:
-            self._CLR_DELTA = QColor("#55b572")
-        else:
-            self._CLR_DELTA = QColor("#2d7a2d")
+        self._CLR_DELTA = QColor(
+            business_colors("growth", theme_id)["delta"])
 
         self._cur_level = max(1, self._f[2])
         self._cur_stats = [

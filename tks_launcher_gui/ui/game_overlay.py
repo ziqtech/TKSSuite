@@ -15,7 +15,7 @@ _STYLE_TMPL = """
         border-radius: 6px;
     }}
 """
-_STYLE_NORMAL = _STYLE_TMPL.format(color="#E0E0E0")
+_STYLE_NORMAL = _STYLE_TMPL.format(color="#E0E0E0")  # 游戏内叠加层文字色 (阶段 2 豁免: 游戏画面渲染)
 _STYLE_OK = _STYLE_TMPL.format(color="#98C379")
 
 

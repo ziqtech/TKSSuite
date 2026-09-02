@@ -281,7 +281,7 @@ class SkillTab(BookTabBase):
         dlg.resize(980, 660)
         lay = QVBoxLayout(dlg)
         lay.setContentsMargins(8, 8, 8, 8)
-        graph = CharSkillGraph(self.data, is_dark=self._is_dark_theme(),
+        graph = CharSkillGraph(self.data, theme_id=self._theme_id(),
                                parent=dlg)
         # 无角色上下文: 学习状态统一置 0 (徽标显示为待学)
         graph.set_skills({n: 0 for n in nodes})
@@ -334,6 +334,10 @@ class SkillTab(BookTabBase):
     def _is_dark_theme(self):
         w = self.window()
         return bool(getattr(w, 'is_dark_theme', True))
+
+    def _theme_id(self):
+        w = self.window()
+        return str(getattr(w, '_theme_id', 'gpt-dark'))
 
     def _val_label(self, text, equipped=True):
         """创建属性值标签: 无padding, 颜色适配主题"""

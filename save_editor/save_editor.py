@@ -1562,11 +1562,11 @@ class SaveEditorApp(QMainWindow):
             self._warpc_table.setItem(row, 0, QTableWidgetItem(str(i)))
             ni = QTableWidgetItem(name)
             if in_team:
-                ni.setForeground(QColor("#228B22"))
+                ni.setForeground(QColor("#228B22"))  # 阶段 2 豁免: 状态领域色 (绿)
             elif role == -1:
-                ni.setForeground(QColor("#2266CC"))
+                ni.setForeground(QColor("#2266CC"))  # 阶段 2 豁免: 状态领域色 (蓝)
             else:
-                ni.setForeground(QColor("#CC3333"))
+                ni.setForeground(QColor("#CC3333"))  # 阶段 2 豁免: 状态领域色 (红)
             self._warpc_table.setItem(row, 1, ni)
             self._warpc_table.setItem(row, 2, QTableWidgetItem(str(lv)))
             self._warpc_table.setItem(row, 3, QTableWidgetItem(role_str))

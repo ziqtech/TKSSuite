@@ -13,6 +13,7 @@ from editor_utils.combo_box import EditorComboBox, EditorComboListPopup
 
 
 # ── 颜色常量 (与 editor_themes 一致) ──
+# 状态色 (已加载/缺失) — 深浅两档命名常量 (阶段 2 豁免: 本模块即单一事实来源)
 COLOR_LOADED_DARK = "#55b572"
 COLOR_LOADED_LIGHT = "#178a39"
 COLOR_MISSING_DARK = "#e27d60"

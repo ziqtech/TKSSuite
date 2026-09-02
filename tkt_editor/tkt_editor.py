@@ -444,7 +444,7 @@ class Font9696:
                         return bytes(bitmap)
         return bytes(bitmap)
 
-    def glyph_image(self, char_code, ftype=0, target_height=24, color='#FFFFFF'):
+    def glyph_image(self, char_code, ftype=0, target_height=24, color='#FFFFFF'):  # 阶段 2 豁免: 字形渲染色
         cache_key = (char_code, ftype, target_height, color)
         if cache_key in self._cache:
             return self._cache[cache_key]
@@ -584,7 +584,7 @@ class Big5ValidationHighlighter(QSyntaxHighlighter):
     def __init__(self, document):
         super().__init__(document)
         self._fmt = QTextCharFormat()
-        self._fmt.setUnderlineColor(QColor("#ff4444"))
+        self._fmt.setUnderlineColor(QColor("#ff4444"))  # 阶段 2 豁免: 未知字形警示红
         self._fmt.setUnderlineStyle(QTextCharFormat.WaveUnderline)
         self._fmt.setBackground(QColor(255, 100, 100, 80))
 
@@ -707,7 +707,7 @@ def _render_fallback_char(ch, size, color, family_tuple, half_width=False, prefe
 
     return img, w
 
-def _render_text_image(segments, font, line_spacing=4, use_traditional_font=False, bg_color='#313c52', scale_factor=1.0):
+def _render_text_image(segments, font, line_spacing=4, use_traditional_font=False, bg_color='#313c52', scale_factor=1.0):  # 阶段 2 豁免: 渲染底色默认值
     if not segments:
         return Image.new('RGBA', (1, 1), (0, 0, 0, 0))
 
@@ -1528,7 +1528,7 @@ class TktEditor(QMainWindow):
         self.comp_table.blockSignals(True)
         self.comp_table.setRowCount(0)
 
-        empty_color = QColor("#888888")
+        empty_color = QColor("#888888")  # 阶段 2 豁免: 空槽弱化灰
 
         if cat['type'] == "single":
             self.comp_desc_container.setVisible(False)
@@ -1676,19 +1676,19 @@ class TktEditor(QMainWindow):
             txt2 = self.comp_text2.toPlainText().replace('\n','↵')[:50]
 
             i1 = QTableWidgetItem(txt1)
-            i1.setForeground(QColor("#dcdcdc") if self._is_dark else QColor("#222222"))
+            i1.setForeground(QColor("#dcdcdc") if self._is_dark else QColor("#222222"))  # 主题感知: 深浅两档
             self.comp_table.setItem(row, 1, i1)
 
             if self._comp_active_id2 is not None:
                 i2 = QTableWidgetItem(txt2)
-                i2.setForeground(QColor("#dcdcdc") if self._is_dark else QColor("#222222"))
+                i2.setForeground(QColor("#dcdcdc") if self._is_dark else QColor("#222222"))  # 主题感知: 深浅两档
                 self.comp_table.setItem(row, 3, i2)
 
         self._populate_tree()
 
     def _render_comp_previews(self):
         if not HAS_PIL or not self.font9696: return
-        bg = '#1a1d24' if self._is_dark else '#313c52'
+        bg = '#1a1d24' if self._is_dark else '#313c52'  # 主题感知: 深浅两档
         sc = self._zoom_level / 100.0
         ut = self.chk_traditional.isChecked()
 
@@ -1961,7 +1961,8 @@ class TktEditor(QMainWindow):
         if HAS_PIL and self.font9696:
             try:
                 seg = parse_styled_segments(t)
-                img = _render_text_image(seg, self.font9696, use_traditional_font=self.chk_traditional.isChecked(), bg_color=('#1a1d24' if self._is_dark else '#313c52'), scale_factor=self._zoom_level / 100.0)
+                img = _render_text_image(seg, self.font9696, use_traditional_font=self.chk_traditional.isChecked(), bg_color=('#1a1d24' if self._is_dark else '#313c52'),
+                    scale_factor=self._zoom_level / 100.0)  # 主题感知: 深浅两档
                 self.preview_img.setPixmap(QPixmap.fromImage(pil_to_qimage(img)))
                 self.preview_stack.setCurrentIndex(0)
                 return

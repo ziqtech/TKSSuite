@@ -18,14 +18,22 @@ from PySide6.QtWidgets import (
 )
 
 from book_loader import SKILL_TYPES
+from editor_utils.theme_manager import business_colors
+
+# 学习状态徽标底色 — 深饱和色 (阶段 2 豁免: 主题无关领域色)
+STATE_LEARNED_COLOR = "#2f74b0"   # 已会: 蓝
+STATE_CANLEARN_COLOR = "#1f9d55"  # 可学: 绿
+STATE_PENDING_COLOR = "#7a4fc0"   # 待学: 紫
 
 
 class SkillGraphView(QGraphicsView):
     """可缩放 / 拖拽平移的技能拓扑图视图 (滚轮缩放, 点阵网格背景)。"""
 
-    def __init__(self, is_dark=True):
+    def __init__(self, theme_id="gpt-dark"):
         super().__init__()
-        self.is_dark = is_dark
+        self.theme_id = theme_id
+        self.is_dark = theme_id.endswith("dark")
+        self._pal = business_colors("skill_graph", theme_id)
         self.setRenderHints(QPainter.Antialiasing | QPainter.TextAntialiasing
                             | QPainter.SmoothPixmapTransform)
         self.setDragMode(QGraphicsView.ScrollHandDrag)
@@ -37,7 +45,7 @@ class SkillGraphView(QGraphicsView):
         grid = 28
         if rect.width() / grid * (rect.height() / grid) > 8000:
             return
-        dot = QColor("#28303f") if self.is_dark else QColor("#dde3ee")
+        dot = QColor(self._pal["grid_dot"])
         painter.setPen(Qt.NoPen)
         painter.setBrush(QBrush(dot))
         left = int(rect.left()) - (int(rect.left()) % grid)
@@ -65,10 +73,12 @@ class CharSkillGraph(QWidget):
     RADIUS = 11
     ACCENT_W = 11
 
-    def __init__(self, data, is_dark=True, parent=None):
+    def __init__(self, data, theme_id="gpt-dark", parent=None):
         super().__init__(parent)
         self.data = data
-        self.is_dark = is_dark
+        self.theme_id = theme_id
+        self.is_dark = theme_id.endswith("dark")
+        self._pal = business_colors("skill_graph", theme_id)
         self._states = {}
         self._fitted = False
         self._build_ui()
@@ -87,10 +97,10 @@ class CharSkillGraph(QWidget):
         lay.addWidget(legend)
 
         self.scene = QGraphicsScene(self)
-        self.view = SkillGraphView(self.is_dark)
+        self.view = SkillGraphView(self.theme_id)
         self.view.setScene(self.scene)
         self.view.setBackgroundBrush(
-            QBrush(QColor("#12151d") if self.is_dark else QColor("#f4f6fa")))
+            QBrush(QColor(self._pal["canvas_bg"])))
         lay.addWidget(self.view, 1)
 
         row = QHBoxLayout()
@@ -170,20 +180,17 @@ class CharSkillGraph(QWidget):
     # ── 绘制辅助 ──
 
     def _type_color(self, tv):
-        if self.is_dark:
-            return QColor({0: "#4d90d0", 1: "#e8815f", 2: "#5cbf82",
-                           3: "#b98adb"}.get(tv, "#9aa4b8"))
-        return QColor({0: "#2f74b0", 1: "#cf6a49", 2: "#2f9457",
-                       3: "#8a5bb8"}.get(tv, "#5a6472"))
+        types = self._pal["type_graph"]
+        return QColor(types.get(tv, types["_"]))
 
     @staticmethod
     def _state_badge(state):
         """学习状态 → (短标签, 底色)"""
         if state >= 20:
-            return "已会", QColor("#2f74b0")
+            return "已会", QColor(STATE_LEARNED_COLOR)
         if state >= 10:
-            return "可学", QColor("#1f9d55")
-        return "待学", QColor("#7a4fc0")
+            return "可学", QColor(STATE_CANLEARN_COLOR)
+        return "待学", QColor(STATE_PENDING_COLOR)
 
     @staticmethod
     def _rounded_path(x, y, w, h, r, tl=True, tr=True, br=True, bl=True):
@@ -211,9 +218,9 @@ class CharSkillGraph(QWidget):
         p2 = QPointF(bx + self.NODE_W / 2, by)
         is_group = (w == 20)
         if is_group:
-            color = QColor("#c58af0") if self.is_dark else QColor("#8e44ad")
+            color = QColor(self._pal["edge_regroup"])
         else:
-            color = QColor("#586274") if self.is_dark else QColor("#a9b2c2")
+            color = QColor(self._pal["edge_normal"])
         pen = QPen(color, 1.8)
         pen.setCapStyle(Qt.RoundCap)
         pen.setJoinStyle(Qt.RoundJoin)
@@ -239,16 +246,14 @@ class CharSkillGraph(QWidget):
 
     def _draw_edge_label(self, mid, w):
         if w == 20:
-            txt, fg, bg = "归组", QColor("#e6d2ff"), QColor("#392c4e")
+            txt = "归组"
+            fg, bg = (QColor(c) for c in self._pal["edge_label_regroup"])
         elif w >= 10:
-            txt, fg, bg = "自足", QColor("#bff0cd"), QColor("#25402f")
+            txt = "自足"
+            fg, bg = (QColor(c) for c in self._pal["edge_label_self"])
         else:
-            txt, fg, bg = f"+{w}", QColor("#f0d9a8"), QColor("#322f28")
-        if not self.is_dark:
-            fg = {"归组": QColor("#6a3d99"), "自足": QColor("#1f6b3a")}.get(
-                txt, QColor("#8a5a00"))
-            bg = {"归组": QColor("#efe4fb"), "自足": QColor("#e2f5e8")}.get(
-                txt, QColor("#f2ecdf"))
+            txt = f"+{w}"
+            fg, bg = (QColor(c) for c in self._pal["edge_label_plus"])
         label = self.scene.addSimpleText(txt)
         f = label.font()
         f.setPointSize(8)
@@ -274,12 +279,16 @@ class CharSkillGraph(QWidget):
         W, H, R, AW = self.NODE_W, self.NODE_H, self.RADIUS, self.ACCENT_W
 
         if self.is_dark:
-            fill_col, border_col = QColor("#282f3e"), QColor("#3b4453")
-            name_col, sub_col = QColor("#eef1f6"), QColor("#8b93a7")
+            fill_col, border_col = (QColor(self._pal[k]) for k in
+                                    ("node_fill", "node_border"))
+            name_col, sub_col = (QColor(self._pal[k]) for k in
+                                 ("node_name", "node_sub"))
             shadow_col = QColor(0, 0, 0, 90)
         else:
-            fill_col, border_col = QColor("#ffffff"), QColor("#d9dfe8")
-            name_col, sub_col = QColor("#1f2633"), QColor("#6b7385")
+            fill_col, border_col = (QColor(self._pal[k]) for k in
+                                    ("node_fill", "node_border"))
+            name_col, sub_col = (QColor(self._pal[k]) for k in
+                                 ("node_name", "node_sub"))
             shadow_col = QColor(70, 84, 110, 40)
 
         accent = self.scene.addPath(self._rounded_path(0, 0, W, H, R),
@@ -341,7 +350,7 @@ class CharSkillGraph(QWidget):
                                   QPen(col.darker(125), 1.1), QBrush(col))
         chip.setPos(cx, cy)
         chip.setZValue(7)
-        txt.setBrush(QBrush(QColor("#ffffff")))
+        txt.setBrush(QBrush(QColor("#ffffff")))  # 白字 (深饱和底), 主题无关
         txt.setPos(cx + (cw - br.width()) / 2.0, cy + (ch - br.height()) / 2.0)
         txt.setZValue(8)
 

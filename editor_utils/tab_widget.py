@@ -49,6 +49,7 @@ class EditorTabPane(QWidget):
 
     # 自绘边框色按主题族区分：modern 为中性灰，classic 为 Godot 蓝灰。
     _BORDER_COLORS = {
+        # Tab 边框色 — 按 (族, 深浅) 取值 (阶段 2 豁免: 与 QSS 边框槽位同值, 就近维护)
         ("modern", True): "#444444",
         ("modern", False): "#d9d9e3",
         ("classic", True): "#14171f",

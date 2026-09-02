@@ -48,6 +48,7 @@ MOD_DESC_DEFAULT = "TKS子青启动器制作的自定义 BGM"
 MOD_LOAD_ORDER_DEFAULT = 900
 
 # 状态颜色
+# 修改状态色 (阶段 2 豁免: 主题无关领域色)
 COLOR_MODIFIED = "#2f80ed"    # 蓝色 — 已修改
 COLOR_UNMODIFIED = "#888888"  # 灰色 — 未修改
 

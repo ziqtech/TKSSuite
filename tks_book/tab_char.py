@@ -387,7 +387,7 @@ class CharTab(BookTabBase):
         """单类型技能树拓扑图 (只读)。states 为空返回 None"""
         if not states:
             return None
-        graph = CharSkillGraph(self.data, self._is_dark_theme())
+        graph = CharSkillGraph(self.data, theme_id=self._theme_id())
         graph.setMinimumHeight(360)
         graph.set_skills(states)
         return graph

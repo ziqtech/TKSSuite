@@ -818,17 +818,17 @@ class KonEditor(QMainWindow):
 
             # 颜色标记 (名称语义优先)
             if "原版未完成" in nm:
-                color = QColor("#CC3333")
+                color = QColor("#CC3333")  # 阶段 2 豁免: 状态领域色 (红)
             elif "未知" in nm:
-                color = QColor("#CC8800")
+                color = QColor("#CC8800")  # 阶段 2 豁免: 状态领域色 (橙)
             elif "空槽" in nm:
-                color = QColor("#888888") if self.is_dark_theme else QColor("#AAAAAA")
+                color = QColor("#888888") if self.is_dark_theme else QColor("#AAAAAA")  # 主题感知: 深浅两档
             elif r['tkact_id'] == -1:
-                color = QColor("#2266CC")
+                color = QColor("#2266CC")  # 阶段 2 豁免: 状态领域色 (蓝)
             elif has_data:
-                color = QColor("#228B22") if self.is_dark_theme else QColor("#1a7a1a")
+                color = QColor("#228B22") if self.is_dark_theme else QColor("#1a7a1a")  # 主题感知: 深浅两档
             else:
-                color = QColor("#AAAAAA") if self.is_dark_theme else QColor("#999999")
+                color = QColor("#AAAAAA") if self.is_dark_theme else QColor("#999999")  # 主题感知: 深浅两档
 
             em = r['exec_mode'] & 0xFFFF
             em_hi = (em >> 8) & 0xFF

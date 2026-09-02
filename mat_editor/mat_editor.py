@@ -128,6 +128,14 @@ from mat_render import (
     make_layer_image, entity_occlusion_depth, composite_occluded,
 )
 from mat_widgets import CodeEditor, ScriptSyntaxHighlighter
+from editor_utils.theme_manager import business_colors
+
+# 树形面板固定色 — 深浅主题一致 (阶段 2 豁免: 主题无关领域色, 取浅色基准)
+TREE_VIRTUAL_COLOR = "#3366cc"   # 虚拟场景/子项: 蓝
+TREE_SHARED_COLOR = "#CC6600"    # 共享头/空槽: 橙
+TREE_LOOP_COLOR = "#CC0000"      # 循环: 红
+TREE_FLAG_COLOR = "#2E9B57"      # 标志: 绿
+PV_ITEM_RED = "#FF4444"          # 预览物品名红 (粗体)
 from mat_script_templates import SCRIPT_TEMPLATES
 from mat_threads import DataLoaderThread, JvgLoaderThread
 
@@ -1339,7 +1347,7 @@ class MatEditorApp(QMainWindow):
         if hasattr(self, '_script_highlighter') and self._script_highlighter:
             # set_dark() 内部会 rehighlight() 触发 textChanged, 同样需屏蔽信号避免误标脏 (§修复)
             self.script_text.blockSignals(True)
-            self._script_highlighter.set_dark(self._is_dark)
+            self._script_highlighter.set_theme(self._theme_id)
             self.script_text.blockSignals(False)
         # 同步行预览面板配色至当前主题 (行预览仅在加载 DEFINE 时渲染一次,
         # 切换主题后须重渲染, 否则保留旧主题配色 — 旧浅色 #333 落在深色背景上呈暗灰)
@@ -1353,14 +1361,7 @@ class MatEditorApp(QMainWindow):
 
     def _update_entity_type_colors(self):
         """根据当前主题更新实体列表的类型颜色"""
-        if self._is_dark:
-            # 深色背景: 使用明亮色彩
-            colors = {0: "#AAAAAA", 5: "#2196F3", 10: "#4CAF50", 15: "#FF9800",
-                      16: "#795548", 20: "#9C27B0", 110: "#E91E63", 200: "#F44336"}
-        else:
-            # 白色背景: 使用深色彩以保证可读性
-            colors = {0: "#777777", 5: "#1565C0", 10: "#2E7D32", 15: "#E65100",
-                      16: "#5D4037", 20: "#6A1B9A", 110: "#AD1457", 200: "#C62828"}
+        colors = business_colors("mat", self._theme_id)["entity_type_colors"]
         self._entity_type_colors = {tv: QColor(cl) for tv, cl in colors.items()}
 
     # =========== UI 构建 ===========
@@ -1906,7 +1907,7 @@ class MatEditorApp(QMainWindow):
         self.script_text.setLineWrapMode(QPlainTextEdit.NoWrap)
         self.script_text.textChanged.connect(self._on_script_edit)
         # 语法高亮器 (逻辑对应 mat_editor.py _apply_syntax_highlight)
-        self._script_highlighter = ScriptSyntaxHighlighter(self.script_text.document(), self._is_dark)
+        self._script_highlighter = ScriptSyntaxHighlighter(self.script_text.document(), self._theme_id)
         editor_splitter.addWidget(self.script_text)
 
         # Right: Line preview
@@ -3217,7 +3218,7 @@ class MatEditorApp(QMainWindow):
             item = QTreeWidgetItem([str(sid), display_name, str(cnt)])
             if is_virtual:
                 for c in range(3):
-                    item.setForeground(c, QColor("#3366cc"))
+                    item.setForeground(c, QColor(TREE_VIRTUAL_COLOR))
             scene_items.append(item)
             combo_vals.append(f"{sid}: {sname} ({cnt}实体)")
         self.scene_tree.addTopLevelItems(scene_items)
@@ -4165,19 +4166,19 @@ class MatEditorApp(QMainWindow):
             f = QTextCharFormat()
             f.setForeground(QColor(color))
             return f
-        dark = self._is_dark
+        syntax = business_colors("mat", self._theme_id)["syntax"]
         # 深色配色优化: 背景 #1a1e27 上彩色类提亮至对比度>=4.5:1 且与左侧高亮器色板语义一致
         # (白=普通命令, 紫=对话, 蓝=流程, 橙=分支, 红=道具, 绿=场景/队员); 灰阶类按
         # comment>block>raw 分层, 注释/未识别弱化以突出命令行
-        fmt_cmd     = mkfmt('#333333' if not dark else '#dcdcdc')  # pv_cmd   普通命令(深色=白色)
-        fmt_talk    = mkfmt('#7B30D0' if not dark else '#b884ff')  # pv_talk  对话
-        fmt_flow    = mkfmt('#0066CC' if not dark else '#5b8aff')  # pv_flow  流程
-        fmt_branch  = mkfmt('#CC6600' if not dark else '#e0a040')  # pv_branch 分支
-        fmt_getitem = mkfmt('#CC0000' if not dark else '#ff7b7b')  # pv_getitem 道具
-        fmt_scene   = mkfmt('#008800' if not dark else '#6ab04c')  # pv_scene  场景/队员
-        fmt_comment = mkfmt('#AAA'    if not dark else '#6a7590')  # pv_comment 注释(弱化)
-        fmt_block   = mkfmt('#BBB'    if not dark else '#7a86a8')  # pv_block  块/DEFINE
-        fmt_raw     = mkfmt('#999'    if not dark else '#5a6480')  # pv_raw   未识别(最弱)
+        fmt_cmd     = mkfmt(syntax['cmd'])     # pv_cmd   普通命令(深色=白色)
+        fmt_talk    = mkfmt(syntax['talk'])    # pv_talk  对话
+        fmt_flow    = mkfmt(syntax['flow'])    # pv_flow  流程
+        fmt_branch  = mkfmt(syntax['branch'])  # pv_branch 分支
+        fmt_getitem = mkfmt(syntax['getitem']) # pv_getitem 道具
+        fmt_scene   = mkfmt(syntax['scene'])   # pv_scene  场景/队员
+        fmt_comment = mkfmt(syntax['comment']) # pv_comment 注释(弱化)
+        fmt_block   = mkfmt(syntax['block'])   # pv_block  块/DEFINE
+        fmt_raw     = mkfmt(syntax['raw'])     # pv_raw   未识别(最弱)
 
         def trunc(s, max_len=28):
             s = s.replace('\n', ' ').replace('\r', '')
@@ -4326,7 +4327,7 @@ class MatEditorApp(QMainWindow):
                 _others = '/'.join(x for x in _shared_heads[h] if x != sub_name)
                 _warn = f'  ⚠共享头(与{_others}链共用#{h})'
             group_item = QTreeWidgetItem([f'{sub_name}链', '', '', '', '', f'head=#{h} max={mx} {cur_str}{_warn}'])
-            group_item.setForeground(0, QColor("#CC6600") if h in _shared_heads else QColor("#3366cc"))
+            group_item.setForeground(0, QColor(TREE_SHARED_COLOR) if h in _shared_heads else QColor(TREE_VIRTUAL_COLOR))
             self.chain_tree.addTopLevelItem(group_item)
             # Traverse chain (with loop detection)
             idx = h
@@ -4335,7 +4336,7 @@ class MatEditorApp(QMainWindow):
                 if idx in visited_chain:
                     # 循环检测: 标记循环节点
                     loop_item = QTreeWidgetItem([f'  {sub_name}', str(step + 1), f'(循环→{idx})', '', '', '⚠循环'])
-                    loop_item.setForeground(0, QColor("#CC0000"))
+                    loop_item.setForeground(0, QColor(TREE_LOOP_COLOR))
                     self.chain_tree.addTopLevelItem(loop_item)
                     break
                 visited_chain.add(idx)
@@ -4343,7 +4344,7 @@ class MatEditorApp(QMainWindow):
                 if du_rec is None:
                     # 空槽检测
                     empty_item = QTreeWidgetItem([f'  {sub_name}', str(step + 1), f'#{idx}(空槽)', '', '', '⚠断开'])
-                    empty_item.setForeground(0, QColor("#CC6600"))
+                    empty_item.setForeground(0, QColor(TREE_SHARED_COLOR))
                     self.chain_tree.addTopLevelItem(empty_item)
                     break
                 define_id = (du_rec['f1'] << 16) | du_rec['f0']
@@ -4664,7 +4665,7 @@ class MatEditorApp(QMainWindow):
         preview.setReadOnly(True)
         preview.setLineWrapMode(QPlainTextEdit.NoWrap)
         preview.setPlaceholderText("← 选择左侧模板查看内容")
-        self._tpl_preview_hl = ScriptSyntaxHighlighter(preview.document(), self._is_dark)
+        self._tpl_preview_hl = ScriptSyntaxHighlighter(preview.document(), self._theme_id)
         splitter.addWidget(preview)
         splitter.setSizes([300, 440])
         dlg_layout.addWidget(splitter, 1)
@@ -4816,8 +4817,8 @@ class MatEditorApp(QMainWindow):
             it = QTreeWidgetItem(["", str(i + 1), cur_stmt, new_stmt])
             it.setFlags(it.flags() | Qt.ItemIsUserCheckable)
             it.setCheckState(0, Qt.Checked)
-            it.setForeground(2, QColor("#CC0000"))
-            it.setForeground(3, QColor("#2E9B57"))
+            it.setForeground(2, QColor(TREE_LOOP_COLOR))
+            it.setForeground(3, QColor(TREE_FLAG_COLOR))
             tree.addTopLevelItem(it)
             item_map.append((it, i, indent, trailing, new_stmt))
         dlg_layout.addWidget(tree, 1)
@@ -4926,12 +4927,12 @@ class MatEditorApp(QMainWindow):
         branch_cmds = {'CheckFlag', 'CheckResult', 'CheckItem', 'CheckTeam',
                        'CheckMember', 'Switch', 'Random'}
         # 配色与右侧行预览 (_update_line_preview) 统一, 按主题切换深/浅色板
-        dark = self._is_dark
-        c_talk    = QColor('#7B30D0' if not dark else '#b884ff')   # 紫=对话
-        c_flow    = QColor('#0066CC' if not dark else '#5b8aff')   # 蓝=流程
-        c_branch  = QColor('#CC6600' if not dark else '#e0a040')   # 橙=分支
-        c_getitem = QColor('#CC0000' if not dark else '#ff7b7b')   # 红=道具
-        c_default = QColor('#333333' if not dark else '#dcdcdc')   # 普通命令(深色=白色)
+        syntax = business_colors("mat", self._theme_id)["syntax"]
+        c_talk    = QColor(syntax['talk'])    # 紫=对话
+        c_flow    = QColor(syntax['flow'])    # 蓝=流程
+        c_branch  = QColor(syntax['branch'])  # 橙=分支
+        c_getitem = QColor(syntax['getitem']) # 红=道具
+        c_default = QColor(syntax['cmd'])      # 普通命令(深色=白色)
         for si, (cmd_name, args, line_text, line_idx) in enumerate(commands):
             desc = self._format_cmd_desc(cmd_name, args)
             # CheckResult: 回溯配套 MenuTalk, 在描述后追加被判定的选项文本
@@ -4970,7 +4971,7 @@ class MatEditorApp(QMainWindow):
             self._pv_color_formats[f'tkt_c{ci}'] = fmt
         # 物品名红色格式
         self._pv_item_red_fmt = QTextCharFormat()
-        self._pv_item_red_fmt.setForeground(QColor("#FF4444"))
+        self._pv_item_red_fmt.setForeground(QColor(PV_ITEM_RED))
         self._pv_item_red_fmt.setFontWeight(QFont.Bold)
         # 动态 FCOLORD 格式缓存
         self._pv_dynamic_color_tags = {}
@@ -5055,7 +5056,7 @@ class MatEditorApp(QMainWindow):
             si = item.data(0, Qt.UserRole)
             if si == step:
                 for c in range(3):
-                    item.setBackground(c, QColor("#FFEE88") if not self._is_dark else QColor("#5a5520"))
+                    item.setBackground(c, QColor(business_colors("mat", self._theme_id)["pv_step_bg"]))
             else:
                 for c in range(3):
                     item.setBackground(c, QColor("transparent"))
@@ -5076,12 +5077,12 @@ class MatEditorApp(QMainWindow):
         lum = 0.299 * c.red() + 0.587 * c.green() + 0.114 * c.blue()
         if self._is_dark:
             if lum <= 30:            # 近黑, 深底不可见 → 浅灰
-                return QColor('#c8c8c8')
+                return QColor(business_colors("mat", self._theme_id)["tkt_fallback"])
             if lum < 70:
                 return c.lighter(180)
             return c
         if lum >= 235:               # 近白/纯白(默认色), 浅底不可见 → 深灰
-            return QColor('#333333')
+            return QColor(business_colors("mat", self._theme_id)["tkt_fallback"])
         if lum > 180:                # 偏亮 → 压暗保留色相
             return c.darker(190)
         return c
