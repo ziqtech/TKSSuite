@@ -1,10 +1,9 @@
 """
 统一主题管理器（四主题）。
 
-主题结构模板放在 ``editor_themes/templates/`` 中（每族一份，
-``modern.qss.tpl`` / ``classic.qss.tpl``），槽位颜色值集中在
-``editor_utils/theme_tokens.py``；本模块负责主题注册表、资源定位、
-模板渲染（QSS 生成）、QPalette 生成，以及主题选择的跨编辑器持久化
+主题结构模板放在 ``editor_themes/templates/base.qss.tpl``（全套件唯一一份），
+槽位颜色值集中在 ``editor_utils/theme_tokens.py``；本模块负责主题注册表、
+资源定位、模板渲染（QSS 生成）、QPalette 生成，以及主题选择的跨编辑器持久化
 （QSettings，Windows 下写入注册表，所有编辑器共享同一键位）。
 
 主题清单（THEME_ORDER 即菜单展示顺序）::
@@ -97,14 +96,12 @@ def _render_template(template: str, tokens: dict[str, str]) -> str:
 
 
 def _load_qss(theme_id: str) -> str:
-    """渲染指定主题的 QSS：族模板 + theme_tokens 槽位值。"""
-    spec = THEMES[theme_id]
-    tpl_path = _THEMES_DIR / "templates" / f"{spec.family}.qss.tpl"
+    """渲染指定主题的 QSS：单一结构模板 + theme_tokens 槽位值。"""
+    tpl_path = _THEMES_DIR / "templates" / "base.qss.tpl"
     if not tpl_path.is_file():
         return ""
     template = tpl_path.read_text(encoding="utf-8")
-    qss = _render_template(
-        template, theme_tokens.tokens_for(spec.family, spec.is_dark))
+    qss = _render_template(template, theme_tokens.tokens_for(theme_id))
 
     # 把相对资源路径转换为跨打包环境的绝对路径
     resource_dir = _THEMES_DIR.resolve().as_posix()
