@@ -7,6 +7,8 @@ QSS 负责应用内部控件，Windows DWM 负责原生标题栏；两者按同�
 import ctypes
 import sys
 
+from editor_utils import theme_tokens
+
 
 # Windows 10 1809+ / Windows 11 DWM 属性
 DWMWA_USE_IMMERSIVE_DARK_MODE = 20
@@ -22,33 +24,21 @@ def _hex_to_bgr(value: str) -> int:
     return (blue << 16) | (green << 8) | red
 
 
-# 与 editor_themes/*.qss 对齐的标题栏色板。
-TITLEBAR_COLORS = {
-    "gpt-dark": {
-        "caption": _hex_to_bgr("#212121"),
-        "border": _hex_to_bgr("#444444"),
-        "text": _hex_to_bgr("#ECECEC"),
-        "dark_mode": 1,
-    },
-    "gpt-light": {
-        "caption": _hex_to_bgr("#FFFFFF"),
-        "border": _hex_to_bgr("#D9D9E3"),
-        "text": _hex_to_bgr("#2D2D2D"),
-        "dark_mode": 0,
-    },
-    "classic-dark": {
-        "caption": _hex_to_bgr("#202531"),
-        "border": _hex_to_bgr("#14171F"),
-        "text": _hex_to_bgr("#DCDCDC"),
-        "dark_mode": 1,
-    },
-    "classic-light": {
-        "caption": _hex_to_bgr("#E0E4E8"),
-        "border": _hex_to_bgr("#B0B5BD"),
-        "text": _hex_to_bgr("#222222"),
-        "dark_mode": 0,
-    },
-}
+# 标题栏色板值统一维护在 theme_tokens.TITLEBAR（单一事实来源），
+# 此处转换为 DWM 使用的 0x00BBGGRR 整数。
+def _build_titlebar_colors() -> dict:
+    colors: dict = {}
+    for tid, spec in theme_tokens.TITLEBAR.items():
+        colors[tid] = {
+            "caption": _hex_to_bgr(spec["caption"]),
+            "border": _hex_to_bgr(spec["border"]),
+            "text": _hex_to_bgr(spec["text"]),
+            "dark_mode": spec["dark_mode"],
+        }
+    return colors
+
+
+TITLEBAR_COLORS = _build_titlebar_colors()
 
 
 def _set_attr(hwnd, attr, value):

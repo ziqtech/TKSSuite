@@ -1,8 +1,10 @@
 """
 统一主题管理器（四主题）。
 
-主题 QSS 放在 ``editor_themes/`` 中，本模块负责主题注册表、资源定位、
-QSS 加载缓存、QPalette 生成，以及主题选择的跨编辑器持久化
+主题结构模板放在 ``editor_themes/templates/`` 中（每族一份，
+``modern.qss.tpl`` / ``classic.qss.tpl``），槽位颜色值集中在
+``editor_utils/theme_tokens.py``；本模块负责主题注册表、资源定位、
+模板渲染（QSS 生成）、QPalette 生成，以及主题选择的跨编辑器持久化
 （QSettings，Windows 下写入注册表，所有编辑器共享同一键位）。
 
 主题清单（THEME_ORDER 即菜单展示顺序）::
@@ -24,6 +26,8 @@ from pathlib import Path
 from PySide6.QtCore import QSettings, Qt
 from PySide6.QtGui import QColor, QIcon, QPalette
 
+from editor_utils import theme_tokens
+
 
 def _themes_dir() -> Path:
     """返回开发环境或 PyInstaller 环境下的主题资源目录。"""
@@ -39,7 +43,6 @@ _THEMES_DIR = _themes_dir()
 class ThemeSpec:
     id: str
     display_name: str
-    qss_file: str
     is_dark: bool
     family: str
 
@@ -47,10 +50,10 @@ class ThemeSpec:
 THEME_ORDER: tuple[str, ...] = ("gpt-dark", "gpt-light", "classic-dark", "classic-light")
 
 THEMES: dict[str, ThemeSpec] = {
-    "gpt-dark": ThemeSpec("gpt-dark", "现代深色", "gpt-dark.qss", True, "modern"),
-    "gpt-light": ThemeSpec("gpt-light", "现代浅色", "gpt-light.qss", False, "modern"),
-    "classic-dark": ThemeSpec("classic-dark", "经典深色", "classic-dark.qss", True, "classic"),
-    "classic-light": ThemeSpec("classic-light", "经典浅色", "classic-light.qss", False, "classic"),
+    "gpt-dark": ThemeSpec("gpt-dark", "现代深色", True, "modern"),
+    "gpt-light": ThemeSpec("gpt-light", "现代浅色", False, "modern"),
+    "classic-dark": ThemeSpec("classic-dark", "经典深色", True, "classic"),
+    "classic-light": ThemeSpec("classic-light", "经典浅色", False, "classic"),
 }
 
 _FAMILIES: dict[str, tuple[str, str]] = {
@@ -70,13 +73,40 @@ def normalize_theme(theme_id: str) -> str:
     return value
 
 
-def _load_qss(qss_file: str) -> str:
-    """加载主题 QSS，并把相对资源路径转换为跨打包环境的绝对路径。"""
-    qss_path = _THEMES_DIR / qss_file
-    if not qss_path.is_file():
-        return ""
+_OPT_LINE = re.compile(r"^\{\{\?(\w+)\}\}$")
+_INLINE = re.compile(r"\{\{(\w+)\}\}")
 
-    qss = qss_path.read_text(encoding="utf-8")
+
+def _render_template(template: str, tokens: dict[str, str]) -> str:
+    """把槽位值注入族模板生成 QSS。
+
+    ``{{name}}`` 行内替换；独占一行的 ``{{?name}}`` 为可选行——
+    槽位值为空时整行从结果中删除（用于两主题结构有差异的行）。
+    """
+    lines: list[str] = []
+    for line in template.split("\n"):
+        m = _OPT_LINE.fullmatch(line.strip())
+        if m:
+            value = tokens.get(m.group(1), "")
+            if value:
+                lines.append(value)
+            continue
+        lines.append(
+            _INLINE.sub(lambda mo: tokens.get(mo.group(1), mo.group(0)), line))
+    return "\n".join(lines)
+
+
+def _load_qss(theme_id: str) -> str:
+    """渲染指定主题的 QSS：族模板 + theme_tokens 槽位值。"""
+    spec = THEMES[theme_id]
+    tpl_path = _THEMES_DIR / "templates" / f"{spec.family}.qss.tpl"
+    if not tpl_path.is_file():
+        return ""
+    template = tpl_path.read_text(encoding="utf-8")
+    qss = _render_template(
+        template, theme_tokens.tokens_for(spec.family, spec.is_dark))
+
+    # 把相对资源路径转换为跨打包环境的绝对路径
     resource_dir = _THEMES_DIR.resolve().as_posix()
 
     def replace_url(match: re.Match[str]) -> str:
@@ -97,25 +127,19 @@ def stylesheet(theme_id: str) -> str:
     """返回指定主题的 QSS（懒加载并缓存）。"""
     value = normalize_theme(theme_id)
     if value not in _qss_cache:
-        _qss_cache[value] = _load_qss(THEMES[value].qss_file)
+        _qss_cache[value] = _load_qss(value)
     return _qss_cache[value]
 
 
-# 各主题画布（QGraphicsView）背景色，与主题 QSS 中 QGraphicsView 的
+# 各主题画布（QGraphicsView）背景色，与主题模板中 QGraphicsView 的
 # background-color 保持一致，供 mat_editor 等编辑器的画布背景刷与
 # PIL 合成底色取用（QSS 加载失败时按深浅回退通用底色）。
-_CANVAS_BG: dict[str, str] = {
-    "gpt-dark": "#1f1f1f",
-    "gpt-light": "#f7f7f8",
-    "classic-dark": "#1a1e27",
-    "classic-light": "#ffffff",
-}
 
 
 def canvas_background(theme_id: str) -> str:
-    """返回指定主题的画布背景色（见 _CANVAS_BG）。"""
+    """返回指定主题的画布背景色（值见 theme_tokens.CANVAS_BG）。"""
     value = normalize_theme(theme_id)
-    return _CANVAS_BG.get(value) or (
+    return theme_tokens.CANVAS_BG.get(value) or (
         "#1a1e27" if THEMES[value].is_dark else "#ffffff")
 
 
@@ -132,64 +156,22 @@ def svg_icon(name: str) -> QIcon:
 
 
 # Qt 原生控件（QSS 不覆盖的弹窗、滚动区域等）使用的调色板。
-_PALETTE_COLORS: dict[str, dict] = {
-    "gpt-dark": {
-        QPalette.Window: "#212121",
-        QPalette.WindowText: "#ECECEC",
-        QPalette.Base: "#2F2F2F",
-        QPalette.AlternateBase: "#262626",
-        QPalette.Text: "#ECECEC",
-        QPalette.Button: "#343434",
-        QPalette.ButtonText: "#ECECEC",
-        QPalette.Highlight: "#10A37F",
-        QPalette.HighlightedText: "#FFFFFF",
-        QPalette.PlaceholderText: "#8E8E8E",
-        QPalette.ToolTipBase: "#2F2F2F",
-        QPalette.ToolTipText: "#ECECEC",
-    },
-    "gpt-light": {
-        QPalette.Window: "#FFFFFF",
-        QPalette.WindowText: "#2D2D2D",
-        QPalette.Base: "#FFFFFF",
-        QPalette.AlternateBase: "#F7F7F8",
-        QPalette.Text: "#2D2D2D",
-        QPalette.Button: "#FFFFFF",
-        QPalette.ButtonText: "#2D2D2D",
-        QPalette.Highlight: "#10A37F",
-        QPalette.HighlightedText: "#FFFFFF",
-        QPalette.PlaceholderText: "#8E8EA0",
-        QPalette.ToolTipBase: "#2D2D2D",
-        QPalette.ToolTipText: "#FFFFFF",
-    },
-    "classic-dark": {
-        QPalette.Window: "#202531",
-        QPalette.WindowText: "#DCDCDC",
-        QPalette.Base: "#1A1E27",
-        QPalette.AlternateBase: "#252A35",
-        QPalette.Text: "#DCDCDC",
-        QPalette.Button: "#2E3548",
-        QPalette.ButtonText: "#DCDCDC",
-        QPalette.Highlight: "#478CBF",
-        QPalette.HighlightedText: "#FFFFFF",
-        QPalette.PlaceholderText: "#8A96B3",
-        QPalette.ToolTipBase: "#1A1E27",
-        QPalette.ToolTipText: "#DCDCDC",
-    },
-    "classic-light": {
-        QPalette.Window: "#E0E4E8",
-        QPalette.WindowText: "#222222",
-        QPalette.Base: "#FFFFFF",
-        QPalette.AlternateBase: "#F2F5F7",
-        QPalette.Text: "#222222",
-        QPalette.Button: "#CDD3D9",
-        QPalette.ButtonText: "#111111",
-        QPalette.Highlight: "#478CBF",
-        QPalette.HighlightedText: "#FFFFFF",
-        QPalette.PlaceholderText: "#888888",
-        QPalette.ToolTipBase: "#222222",
-        QPalette.ToolTipText: "#FFFFFF",
-    },
+# 颜色值集中在 theme_tokens.PALETTE，此处只做角色名 → QPalette 角色的映射。
+_PALETTE_ROLE_MAP: dict[str, QPalette.ColorRole] = {
+    "window": QPalette.ColorRole.Window,
+    "window_text": QPalette.ColorRole.WindowText,
+    "base": QPalette.ColorRole.Base,
+    "alternate_base": QPalette.ColorRole.AlternateBase,
+    "text": QPalette.ColorRole.Text,
+    "button": QPalette.ColorRole.Button,
+    "button_text": QPalette.ColorRole.ButtonText,
+    "highlight": QPalette.ColorRole.Highlight,
+    "highlighted_text": QPalette.ColorRole.HighlightedText,
+    "placeholder_text": QPalette.ColorRole.PlaceholderText,
+    "tooltip_base": QPalette.ColorRole.ToolTipBase,
+    "tooltip_text": QPalette.ColorRole.ToolTipText,
 }
+
 
 _palettes: dict[str, QPalette] = {}
 
@@ -199,8 +181,8 @@ def palette(theme_id: str) -> QPalette:
     value = normalize_theme(theme_id)
     if value not in _palettes:
         pal = QPalette()
-        for role, color in _PALETTE_COLORS[value].items():
-            pal.setColor(role, QColor(color))
+        for role_name, color in theme_tokens.PALETTE[value].items():
+            pal.setColor(_PALETTE_ROLE_MAP[role_name], QColor(color))
         _palettes[value] = pal
     return _palettes[value]
 
