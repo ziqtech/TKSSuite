@@ -633,6 +633,88 @@ class ItemPickerDialog(QDialog):
 
 
 # ═══════════════════════════════════════════════════════════════
+# 位标志多选器 (item/warpc 旗标与使用权限弹窗共用)
+# ═══════════════════════════════════════════════════════════════
+
+class BitmaskPickerDialog(QDialog):
+    """位标志多选对话框 — 合并 item/warpc 四份同构实现 (旗标 ×2 + 使用权限 ×2)。
+
+    bits 每项 ``(bit, name)`` 或 ``(bit, name, desc)``:
+      bit: use_bit_shift=True 时为位序号, 掩码 = 1<<bit (warpc 旗标/item extra_flags);
+           否则 bit 直接即掩码值 (item combat_flag/双方 use_right)
+      desc: 非空时内联为 "name (desc)" 复选框文案; 2 元组或空 desc 仅显示 name
+    manual=True 时附加手动输入框 — MOD 可能使用超出内置预定义的位掩码,
+    允许直接输入任意数值; 勾选框变动实时同步到输入框。
+
+    结果双轨兼容: ``selected_mask`` (确定后为 int, 取消为 None) 与 ``get_value()``。
+    """
+
+    def __init__(self, parent, title, bits, current_val, use_bit_shift=False, manual=False):
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        n = max(len(bits), 2)
+        self.resize(*(360, 90 + n * 32) if manual else (420, 110 + n * 34))
+        self.selected_mask = None
+        self.manual = manual
+        layout = QVBoxLayout(self)
+        if manual:
+            manual_row = QHBoxLayout()
+            manual_row.addWidget(QLabel("当前值:"))
+            self.manual_edit = QLineEdit(str(current_val & 0xFFFF))
+            self.manual_edit.setPlaceholderText("可直接输入任意数值 (含 MOD 扩展位)")
+            manual_row.addWidget(self.manual_edit, 1)
+            layout.addLayout(manual_row)
+        self.checkboxes = []
+        for entry in bits:
+            bit, name = entry[0], entry[1]
+            desc = entry[2] if len(entry) > 2 else ""
+            mask = (1 << bit) if use_bit_shift else bit
+            cb = QCheckBox(f"{name} ({desc})" if desc else name)
+            cb.setChecked(bool(current_val & mask))
+            if manual:
+                cb.toggled.connect(self._sync_from_boxes)
+            self.checkboxes.append((mask, cb))
+            layout.addWidget(cb)
+        layout.addStretch()
+        bl = QHBoxLayout()
+        bl.addWidget(QPushButton("全选", clicked=lambda: [cb.setChecked(True) for _, cb in self.checkboxes]))
+        bl.addWidget(QPushButton("全清", clicked=lambda: [cb.setChecked(False) for _, cb in self.checkboxes]))
+        bl.addStretch()
+        bl.addWidget(QPushButton("取消", clicked=self.reject))
+        btn_ok = QPushButton("确定")
+        btn_ok.clicked.connect(self._ok)
+        bl.addWidget(btn_ok)
+        layout.addLayout(bl)
+
+    def _sync_from_boxes(self):
+        """勾选框变动时同步到手动输入框"""
+        self.manual_edit.setText(str(self._mask_from_boxes()))
+
+    def _mask_from_boxes(self):
+        m = 0
+        for mask, cb in self.checkboxes:
+            if cb.isChecked():
+                m |= mask
+        return m
+
+    def _ok(self):
+        if self.manual:
+            try:
+                m = int(self.manual_edit.text().strip() or 0)
+            except ValueError:
+                m = self._mask_from_boxes()
+            m &= 0xFFFF                      # 16 位字段
+        else:
+            m = self._mask_from_boxes()
+        self.selected_mask = m if m < 0x8000 else m - 0x10000  # 转有符号
+        self.accept()
+
+    def get_value(self):
+        """返回确定时计算的位掩码 (取消时为 None)"""
+        return self.selected_mask
+
+
+# ═══════════════════════════════════════════════════════════════
 # WarPC 角色选择器
 # ═══════════════════════════════════════════════════════════════
 

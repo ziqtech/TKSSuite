@@ -59,7 +59,7 @@ from functools import partial
 from PySide6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout,
     QSplitter, QTableWidget, QTableWidgetItem, QHeaderView,
-    QLineEdit, QCheckBox, QPushButton, QLabel,
+    QLineEdit, QPushButton, QLabel,
     QScrollArea, QDialog, QFileDialog, QMessageBox, QTextEdit,
     QFrame, QGridLayout, QAbstractItemView, QMenuBar,
     QSpinBox, QSizePolicy, QMenu, QCompleter, QStackedWidget,
@@ -79,7 +79,7 @@ from editor_utils.dock_components import DockHeader
 from editor_utils.adaptive_table import AdaptiveTableWidget
 from editor_utils.picker_dialogs import (
     TktPickerDialog, StatusPickerDialog, STATUS_NAMES, ItemPickerDialog,
-    SkillPickerDialog, GrowthTableDialog,
+    SkillPickerDialog, GrowthTableDialog, BitmaskPickerDialog,
 )
 from editor_utils.jvg_loader import load_mu_sprites, get_sprite_pixmap
 from editor_utils.ui_helpers import make_fake_input, update_path_labels, confirm_close, resolve_config_path, show_field_ref, themed_messagebox, EditorComboBox, NoWheelSpinBox
@@ -318,73 +318,6 @@ def set_field(rec, byte_off, val):
 # ═══════════════════════════════════════════════════════════════
 # 弹窗选择器
 # ═══════════════════════════════════════════════════════════════
-
-class FlagsDialog(QDialog):
-    def __init__(self, parent, title, bits, current_val):
-        super().__init__(parent)
-        self.setWindowTitle(title)
-        self.resize(400, 250)
-        self.bits = bits
-        self.vars = []
-        layout = QVBoxLayout(self)
-        for bit, name, desc in bits:
-            cb = QCheckBox(f"bit{bit} {name}" if not desc else f"{name} ({desc})")
-            cb.setChecked(bool(current_val & (1<<bit)))
-            self.vars.append((bit, cb))
-            layout.addWidget(cb)
-        bl = QHBoxLayout()
-        bl.addWidget(QPushButton("全选", clicked=lambda: [v.setChecked(True) for _,v in self.vars]))
-        bl.addWidget(QPushButton("全清", clicked=lambda: [v.setChecked(False) for _,v in self.vars]))
-        bl.addStretch()
-        bl.addWidget(QPushButton("取消", clicked=self.reject))
-        bl.addWidget(QPushButton("确定", clicked=self.accept))
-        layout.addLayout(bl)
-
-    def get_value(self):
-        m = sum((1<<bit) for bit, cb in self.vars if cb.isChecked())
-        return m if m < 0x8000 else m - 0x10000
-
-class UseRightDialog(QDialog):
-    def __init__(self, parent, title, opts, current_val):
-        super().__init__(parent)
-        self.setWindowTitle(title)
-        self.resize(360, 90+max(len(opts),2)*32)
-        self.opts = opts
-        self.vars = []
-        layout = QVBoxLayout(self)
-        # 手动输入框: MOD 可能使用超出内置预定义的位掩码，允许直接输入任意数值
-        manual_row = QHBoxLayout()
-        manual_row.addWidget(QLabel("当前值:"))
-        self.manual_edit = QLineEdit(str(current_val & 0xFFFF))
-        self.manual_edit.setPlaceholderText("可直接输入任意数值 (含 MOD 扩展位)")
-        manual_row.addWidget(self.manual_edit, 1)
-        layout.addLayout(manual_row)
-        for bit, name in opts:
-            cb = QCheckBox(f"{name}")
-            cb.setChecked(bool(current_val & bit))
-            cb.toggled.connect(self._sync_from_boxes)
-            self.vars.append((bit, cb))
-            layout.addWidget(cb)
-        bl = QHBoxLayout()
-        bl.addWidget(QPushButton("全选", clicked=lambda: [v.setChecked(True) for _,v in self.vars]))
-        bl.addWidget(QPushButton("全清", clicked=lambda: [v.setChecked(False) for _,v in self.vars]))
-        bl.addStretch()
-        bl.addWidget(QPushButton("取消", clicked=self.reject))
-        bl.addWidget(QPushButton("确定", clicked=self.accept))
-        layout.addLayout(bl)
-
-    def _sync_from_boxes(self):
-        """勾选框变动时同步到手动输入框"""
-        m = sum(bit for bit, cb in self.vars if cb.isChecked())
-        self.manual_edit.setText(str(m))
-
-    def get_value(self):
-        try:
-            m = int(self.manual_edit.text().strip() or 0)
-        except ValueError:
-            m = sum(bit for bit, cb in self.vars if cb.isChecked())
-        m &= 0xFFFF
-        return m if m < 0x8000 else m - 0x10000
 
 class TkkonPickerDialog(QDialog):
     def __init__(self, parent, tkkon_names, cur_val):
@@ -2717,7 +2650,7 @@ class WarpcEditorV2(EditorMainWindow):
             cur = int(self._edit_vars[fn].text() or 0)
         except:
             cur = 0
-        dlg = FlagsDialog(self, title, bits, cur & 0xFFFF)
+        dlg = BitmaskPickerDialog(self, title, bits, cur & 0xFFFF, use_bit_shift=True)
         if dlg.exec() == QDialog.Accepted:
             val = dlg.get_value()
             self._edit_vars[fn].setText(str(val))
@@ -2733,7 +2666,7 @@ class WarpcEditorV2(EditorMainWindow):
             cur = int(self._edit_vars[fn].text() or 0)
         except:
             cur = 0
-        dlg = UseRightDialog(self, title, opts, cur & 0xFFFF)
+        dlg = BitmaskPickerDialog(self, title, opts, cur & 0xFFFF, manual=True)
         if dlg.exec() == QDialog.Accepted:
             val = dlg.get_value()
             self._edit_vars[fn].setText(str(val))

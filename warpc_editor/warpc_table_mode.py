@@ -1139,17 +1139,17 @@ class WarpcTablePanel(QWidget):
             if dlg.exec() == QDialog.Accepted and dlg.selected_value is not None:
                 new_val = dlg.selected_value
         elif fd.ftype == 'flags':
-            from warpc_editor import FlagsDialog
+            from editor_utils.picker_dialogs import BitmaskPickerDialog
             title, bits = FLAG_DEFS[fd.key]
-            dlg = FlagsDialog(self, title, bits, cur & 0xFFFF)
+            dlg = BitmaskPickerDialog(self, title, bits, cur & 0xFFFF, use_bit_shift=True)
             if dlg.exec() == QDialog.Accepted:
                 new_val = dlg.get_value()
         elif fd.ftype == 'use_right':
-            from warpc_editor import UseRightDialog
+            from editor_utils.picker_dialogs import BitmaskPickerDialog
             if fd.key not in ed._use_right_defs:
                 return
             title, opts = ed._use_right_defs[fd.key]
-            dlg = UseRightDialog(self, title, opts, cur & 0xFFFF)
+            dlg = BitmaskPickerDialog(self, title, opts, cur & 0xFFFF, manual=True)
             if dlg.exec() == QDialog.Accepted:
                 new_val = dlg.get_value()
         elif fd.ftype == 'status_mask':

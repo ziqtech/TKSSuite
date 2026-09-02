@@ -65,8 +65,8 @@ from editor_utils.mod_exporter import (
     pack_tksmod, safe_mod_filename,
 )
 from editor_utils.picker_dialogs import (
-    STATUS_ICON_BASE, STATUS_NAMES, SkillPickerDialog, StatusPickerDialog,
-    TktPickerDialog,
+    STATUS_ICON_BASE, STATUS_NAMES, BitmaskPickerDialog, SkillPickerDialog,
+    StatusPickerDialog, TktPickerDialog,
 )
 from editor_utils.tkt_loader import load_tkt_simple
 from editor_utils.theme_switcher import (
@@ -351,97 +351,6 @@ class IconPickerDialog(QDialog):
 
     def _select(self, v):
         self.selected_value = v
-        self.accept()
-
-class FlagPickerDialog(QDialog):
-    """通用位标志选择弹窗 (combat_flag / extra_flags)"""
-    def __init__(self, parent, title, flag_bits, cur_val, use_bit_shift=False):
-        super().__init__(parent)
-        self.setWindowTitle(title)
-        self.resize(420, 280)
-        self.selected_mask = None
-        self.use_bit_shift = use_bit_shift
-        layout = QVBoxLayout(self)
-        self.checkboxes = []
-        for bit, name, desc in flag_bits:
-            row = QHBoxLayout()
-            mask = (1 << bit) if use_bit_shift else bit
-            cb = QCheckBox(f"{name}" + (f" (bit{bit})" if use_bit_shift else ""))
-            cb.setChecked(bool(cur_val & mask))
-            self.checkboxes.append((mask, cb))
-            row.addWidget(cb)
-            row.addWidget(QLabel(desc), 1)
-            layout.addLayout(row)
-        layout.addStretch()
-        bl = QHBoxLayout()
-        bl.addWidget(QPushButton("全选", clicked=lambda: [cb.setChecked(True) for _, cb in self.checkboxes]))
-        bl.addWidget(QPushButton("全清", clicked=lambda: [cb.setChecked(False) for _, cb in self.checkboxes]))
-        bl.addStretch()
-        bl.addWidget(QPushButton("取消", clicked=self.reject))
-        btn_ok = QPushButton("确定")
-        btn_ok.clicked.connect(self._ok)
-        bl.addWidget(btn_ok)
-        layout.addLayout(bl)
-
-    def _ok(self):
-        m = 0
-        for mask, cb in self.checkboxes:
-            if cb.isChecked():
-                m |= mask
-        if m >= 0x8000:
-            m -= 0x10000
-        self.selected_mask = m
-        self.accept()
-
-class UseRightPickerDialog(QDialog):
-    def __init__(self, parent, opts, cur_val):
-        super().__init__(parent)
-        self.setWindowTitle("选择使用权限 (多选位掩码)")
-        self.resize(320, 90 + max(len(opts), 2) * 28)
-        self.selected_mask = None
-        layout = QVBoxLayout(self)
-        # 手动输入框: MOD 可能使用超出内置预定义的位掩码，允许直接输入任意数值
-        manual_row = QHBoxLayout()
-        manual_row.addWidget(QLabel("当前值:"))
-        self.manual_edit = QLineEdit(str(cur_val))
-        self.manual_edit.setPlaceholderText("可直接输入任意数值 (含 MOD 扩展位)")
-        manual_row.addWidget(self.manual_edit, 1)
-        layout.addLayout(manual_row)
-        self.checkboxes = []
-        for bit, name in opts:
-            cb = QCheckBox(f"{bit}-{name}" if bit != 0 else name)
-            cb.setChecked(bool(cur_val & bit) if bit != 0 else False)
-            cb.toggled.connect(self._sync_from_boxes)
-            self.checkboxes.append((bit, cb))
-            layout.addWidget(cb)
-        layout.addStretch()
-        bl = QHBoxLayout()
-        bl.addWidget(QPushButton("全选", clicked=lambda: [cb.setChecked(True) for _, cb in self.checkboxes]))
-        bl.addWidget(QPushButton("全清", clicked=lambda: [cb.setChecked(False) for _, cb in self.checkboxes]))
-        bl.addStretch()
-        bl.addWidget(QPushButton("取消", clicked=self.reject))
-        btn_ok = QPushButton("确定")
-        btn_ok.clicked.connect(self._ok)
-        bl.addWidget(btn_ok)
-        layout.addLayout(bl)
-
-    def _sync_from_boxes(self):
-        """勾选框变动时同步到手动输入框"""
-        m = 0
-        for bit, cb in self.checkboxes:
-            if cb.isChecked():
-                m |= bit
-        self.manual_edit.setText(str(m))
-
-    def _ok(self):
-        try:
-            m = int(self.manual_edit.text().strip() or 0)
-        except ValueError:
-            m = 0
-        m &= 0xFFFF                      # equip_type 为 16 位字段
-        if m >= 0x8000:
-            m -= 0x10000      # 转有符号
-        self.selected_mask = m
         self.accept()
 
 # ============================================================
@@ -1219,7 +1128,7 @@ class ItemEditorApp(EditorMainWindow):
     def _pick_combat_flags(self, fn):
         """弹窗选择战斗结算效果 (位掩码多选)"""
         cur_val = int(self.widget_map[fn].text() or 0) & 0xFFFF
-        dlg = FlagPickerDialog(self, "选择战斗结算效果 (位掩码)", COMBAT_FLAG_BITS, cur_val, use_bit_shift=False)
+        dlg = BitmaskPickerDialog(self, "选择战斗结算效果 (位掩码)", COMBAT_FLAG_BITS, cur_val)
         if dlg.exec() == QDialog.Accepted and dlg.selected_mask is not None:
             self.widget_map[fn].setText(str(dlg.selected_mask))
             self._update_flag_label(fn, dlg.selected_mask, COMBAT_FLAG_BITS)
@@ -1228,7 +1137,7 @@ class ItemEditorApp(EditorMainWindow):
     def _pick_extra_flags(self, fn):
         """弹窗选择额外标志位"""
         cur_val = int(self.widget_map[fn].text() or 0) & 0xFFFF
-        dlg = FlagPickerDialog(self, "选择额外标志 (位掩码)", EXTRA_FLAG_BITS, cur_val, use_bit_shift=True)
+        dlg = BitmaskPickerDialog(self, "选择额外标志 (位掩码)", EXTRA_FLAG_BITS, cur_val, use_bit_shift=True)
         if dlg.exec() == QDialog.Accepted and dlg.selected_mask is not None:
             self.widget_map[fn].setText(str(dlg.selected_mask))
             self._update_flag_label(fn, dlg.selected_mask, EXTRA_FLAG_BITS, use_bit_shift=True)
@@ -1245,7 +1154,7 @@ class ItemEditorApp(EditorMainWindow):
             self.extra_map[fn].setText(_use_right_label(0, page, opts))
             return
         cur_val = int(self.widget_map[fn].text() or 0) & 0xFFFF
-        dlg = UseRightPickerDialog(self, opts, cur_val)
+        dlg = BitmaskPickerDialog(self, "选择使用权限 (多选位掩码)", opts, cur_val, manual=True)
         if dlg.exec() == QDialog.Accepted and dlg.selected_mask is not None:
             self.widget_map[fn].setText(str(dlg.selected_mask))
             self.extra_map[fn].setText(_use_right_label(dlg.selected_mask, page, opts))

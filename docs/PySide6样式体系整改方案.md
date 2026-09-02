@@ -1,7 +1,7 @@
 # PySide6 样式体系整改方案
 
 > 创建日期：2026-09-03
-> 状态：**方案定稿，待实施**
+> 状态：**四阶段全部完成（2026-09-03）**，余量为各阶段清单内遗留增量项与可选附加项
 > 结论：留在 PySide6 维护现有项目，聚焦根治"样式难维护、经常出错"。
 > 本文档是唯一进度事实来源，每完成一项须同步更新"执行进度"章节。
 
@@ -250,7 +250,7 @@
 | 阶段 1 增补：模板统一   | **已完成** | 2026-09-03 | 2026-09-03 |
 | 阶段 2：收编硬编码颜色   | **已完成** | 2026-09-03 | 2026-09-03 |
 | 阶段 3：样板收敛      | **已完成** | 2026-09-03 | 2026-09-03 |
-| 阶段 4：对话框去重     | 未开始     | <br />     | <br />     |
+| 阶段 4：对话框去重     | **已完成** | 2026-09-03 | 2026-09-03 |
 | 可选：Python 3.12 | 未开始     | <br />     | <br />     |
 
 ### 阶段 0 清单
@@ -374,13 +374,23 @@
 
 ### 阶段 4 清单
 
-- [ ] SkillPickerDialog 合并（3→1）
+- [x] SkillPickerDialog 合并（3→1）—— 参数化数据源形态：调用方预构建 `rows`（每项 `(key, cells, type_id)`）传入，弹窗与数据解耦；item / skill / warpc（经 `_make_skill_picker`）三消费方全部切换
 
-- [ ] FieldRefDialog 合并（2→1）
+- [x] FieldRefDialog 合并（2→1）—— **形态调整**：两份实现重复的只是"只读等宽文本弹窗"外壳，内容本就完全不同（TKKon vs WarPC 字段映射）→ 外壳收敛为 `ui_helpers.show_field_ref(parent, text, size)` 单实现，各编辑器仅保留 `_build_field_ref_text()` 数据函数
 
-- [ ] GrowthTableDialog 合并（2→1）
+- [x] GrowthTableDialog 合并（2→1）—— 统一类落 picker_dialogs（theme_id 参数化）；tks_book/book_growth.py 整文件删除（-211 行），tab_char 直用统一类
 
-- [ ] Icon/Flag/UseRight picker 评估
+- [x] Icon/Flag/UseRight picker 评估 —— **结论与实施**：IconPickerDialog 单消费者（仅 item）无重复，留置原处跳过；Flag×2（item FlagPickerDialog + warpc FlagsDialog）与 UseRight×2（item UseRightPickerDialog + warpc UseRightDialog）核心行为一致（位掩码语义、MOD 手动输入、有符号回绕），合并为 `picker_dialogs.BitmaskPickerDialog`
+
+**BitmaskPickerDialog 合并要点**：
+
+1. 语义双轨：`use_bit_shift=True` 时 bits 首元素为位序号（掩码 = 1<<bit，warpc FLAG_DEFS 与 item EXTRA_FLAG_BITS），否则首元素直接即掩码值（item COMBAT_FLAG_BITS 与双方 use_right）—— 这是原四份实现的最大差异点；warpc 两处旗标调用点必须显式传 `use_bit_shift=True`（其数据是位序号，漏传则 bit0 掩码为 0 永不可勾选）
+2. desc 统一内联为 "name (desc)" 复选框文案；use_right 的 "bit-" 前缀与额外标志的 "(bitN)" 后缀随合并取消（desc 已含语义说明，视觉变化已确认接受）
+3. `manual=True` 保留 MOD 扩展位手动输入框（勾选实时同步、16 位回绕、解析失败回退勾选值）
+4. 结果 API 双轨兼容：`selected_mask`（item 风格判非 None）与 `get_value()`（warpc 风格）等价
+5. warpc_table_mode 改从 editor_utils.picker_dialogs 导入，解除对 warpc_editor 的依赖；顺带清理 warpc_editor 孤儿 QCheckBox 导入
+
+**口径复测（2026-09-03）**：四组对话框各只剩一份实现；14 处消费方调用点全部切换（Skill 3 / FieldRef 2 / Growth 2 / Bitmask 7）；两批次合计净减约 380 行（三组合并 -305、Bitmask 合并 -76）；冒烟测试 4/4 全绿，Bitmask 四种调用形态另做离屏功能冒烟（初始勾选态 / 全选掩码 / 手动框同步与回绕 / 取消返回 None / bit0 零掩码无副作用）全过。对话框交互无既有自动断言覆盖，4 主题下视觉一致性随日常使用人工复核。
 
 ***
 
@@ -411,4 +421,6 @@
 | 2026-09-03 | **阶段 2 开始**：取值 API 落地（`theme_tokens.BUSINESS` 业务色板区 + `theme_manager.business_colors`）；mode\_card（48→0）、log\_console（14→0）迁移完成，log\_console 接口从 dark 布尔改为 theme\_id。硬编码颜色余量 314/27 文件（定义位 theme\_tokens 537 处不计）                          |
 | 2026-09-03 | **阶段 2 完成（27/27 文件）**：新增业务色板表 SPRITESHEET/SKILL\_GRAPH/MAT/ACT/GROWTH（mode\_card/log\_console 在前）；5 组跨文件/跨函数重复色板去重（技能类型色板×3、图层槽位色×2、Δ增量色对×2）；theme\_id 贯通 5 个控件构造签名；领域常量全部命名化+豁免注释。冒烟全绿。验收口径按实测修正（见阶段 2 清单末项）                             |
 | 2026-09-03 | **阶段 3 完成（18/18 入口）**：app\_shell.py（EditorMainWindow 模板方法基类 + run\_editor 统一入口）；迁移按 shop→小→中→大→tks\_book→launcher 批次推进，每入口迁移后跑冒烟测试全绿；\_show\_help/\_show\_about 18→3 处、main() 样板全部 1 行；净减约 540 行；app\_init 保留为原子工具库（非双头）；build entry 无需变更 |
+| 2026-09-03 | **阶段 4：前三组合并**：SkillPickerDialog 3→1（参数化 rows 数据源，三消费方切换）；FieldRefDialog 2→1（弹窗壳收敛为 ui\_helpers.show\_field\_ref，内容留作各编辑器 \_build\_field\_ref\_text 数据函数）；GrowthTableDialog 2→1（tks\_book/book\_growth.py 整文件删除，tab\_char 直用统一类）；批次净减约 305 行 |
+| 2026-09-03 | **阶段 4 完成**：Flag×2 + UseRight×2 四份位掩码弹窗合并为 picker\_dialogs.BitmaskPickerDialog（use\_bit\_shift 语义双轨 / manual MOD 手动输入 / selected\_mask+get\_value 双轨结果 API）；IconPicker 单消费者跳过；7 处调用点切换，warpc\_table\_mode 解除对 warpc\_editor 依赖；净减 76 行，冒烟测试 4/4 全绿 |
 
