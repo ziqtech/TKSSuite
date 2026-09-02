@@ -219,7 +219,7 @@
 | 阶段 0：冒烟测试 | **已完成** | 2026-09-03 | 2026-09-03 |
 | 阶段 1：token 化 | **已完成** | 2026-09-03 | 2026-09-03 |
 | 阶段 1 增补：模板统一 | **已完成** | 2026-09-03 | 2026-09-03 |
-| 阶段 2：收编硬编码颜色 | 未开始 | | |
+| 阶段 2：收编硬编码颜色 | **进行中** | 2026-09-03 | |
 | 阶段 3：样板收敛 | 未开始 | | |
 | 阶段 4：对话框去重 | 未开始 | | |
 | 可选：Python 3.12 | 未开始 | | |
@@ -269,9 +269,11 @@
 
 ### 阶段 2 清单（按 §3 阶段 2 的文件顺序逐项勾选，此处不重复罗列）
 
-- [ ] 取色 API（color/color_str/current）
-- [ ] 27 文件替换完成（进度：0/27）
-- [ ] 5 处 _on_theme_applied 钩子删除（进度：0/5）
+- [x] 取色 API —— **实现形态调整**：摸底发现业务文件普遍已有"按主题的语义色字典"（如 mode_card 的 `_CARD_COLORS`），因此实际采用**业务色板整表上移**模式：`theme_tokens.BUSINESS`（MODE_CARD / LOG_CONSOLE…，每键 4 元组）+ `theme_manager.business_colors(table, theme_id)`；`color_str/current` 全局语义键 API 待出现首个全局键消费者时再补（避免臆造键名）
+- [x] mode_card.py（48 → 0，表上移至 theme_tokens.MODE_CARD）
+- [x] tks_launcher_gui/ui/log_console.py（14 → 0，表上移至 theme_tokens.LOG_CONSOLE；接口从 dark 布尔改为 theme_id 贯通，main_window 钩子同步更新）
+- [ ] 27 文件替换完成（进度：2/27，剩余清单见 §3 优先级）
+- [ ] 5 处 _on_theme_applied 钩子删除（进度：0/5；launcher 钩子已改为 business_colors 模式但仍承担同步职责，是否可删待其余文件完成后评估）
 - [ ] 遗留硬编码颜色 <50 且全部有豁免注释
 
 ### 阶段 3 清单
@@ -311,3 +313,4 @@
 | 2026-09-03 | **阶段 0 完成**：`tests/test_editor_smoke.py` 建立并首跑全绿（18 入口 × 4 主题 + 一致性断言）；发现 TITLEBAR_COLORS 为第四处颜色维护点，并入阶段 1 |
 | 2026-09-03 | **阶段 1 完成**：5028 行 QSS（4 份手工复制品）收敛为 2 个族模板 + `editor_utils/theme_tokens.py`（槽位表 + 三处派生色板）；等价性验证通过后删除旧 .qss；冒烟测试全绿。基线复测：QSS 文件数 4→2 模板，颜色维护点 4→1 |
 | 2026-09-03 | **阶段 1 增补完成（模板统一）**：应用户提议，实测确认两族结构完全同构（469 选择器一致、属性集零差异、值差异全为颜色）后，合并为单一 `base.qss.tpl` + 484 个四元组槽位；4 主题 × 497 条规则语义等价验证通过；冒烟全绿。QSS 结构维护点 2→1 |
+| 2026-09-03 | **阶段 2 开始**：取值 API 落地（`theme_tokens.BUSINESS` 业务色板区 + `theme_manager.business_colors`）；mode_card（48→0）、log_console（14→0）迁移完成，log_console 接口从 dark 布尔改为 theme_id。硬编码颜色余量 314/27 文件（定义位 theme_tokens 537 处不计） |

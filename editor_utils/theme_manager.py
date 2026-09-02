@@ -140,6 +140,15 @@ def canvas_background(theme_id: str) -> str:
         "#1a1e27" if THEMES[value].is_dark else "#ffffff")
 
 
+def business_colors(table: str, theme_id: str) -> dict:
+    """返回业务控件族语义色板（按主题取值后的字典）。
+
+    表名与键见 theme_tokens._BUSINESS（mode_card / log_console，随业务
+    控件扩充）。自绘控件不得再内置主题色值。
+    """
+    return theme_tokens.business_colors(table, normalize_theme(theme_id))
+
+
 def svg_path(name: str) -> str:
     """返回 ``editor_themes/svg`` 中图标的绝对路径。"""
     if not name.endswith(".svg"):

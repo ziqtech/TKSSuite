@@ -2,8 +2,8 @@
 
 背景/边框/文本全部在 paintEvent 中绘制, 不依赖 QSS 伪态:
 QSS 的 :checked 伪状态对自定义 QAbstractButton 子类不生效
-(仅对 QPushButton 等内置按钮生效), 故颜色改由内置主题色表驱动,
-色值与 editor_themes 的深/浅主题保持一致 (标准=绿色主操作, 兼容=蓝色辅助操作)。
+(仅对 QPushButton 等内置按钮生效), 故颜色取自 theme_tokens.MODE_CARD
+语义色表 (标准=绿色主操作, 兼容=蓝色辅助操作)。
 """
 from PySide6.QtCore import QPointF, Qt, QRect, QRectF
 from PySide6.QtGui import (
@@ -12,74 +12,20 @@ from PySide6.QtGui import (
 )
 from PySide6.QtWidgets import QAbstractButton, QSizePolicy
 
-from editor_utils.theme_manager import svg_path
-
-# (背景, 边框, 标题文字) — 与 editor_themes/*.qss 同步维护
-# 两族语义一致: 标准=绿色主操作、兼容=蓝色辅助; 经典族色值取自早期参考样式。
-_CARD_COLORS = {
-    "gpt-dark": {
-        "base": ("#2f2f2f", "#444444", (236, 236, 236, 220)),
-        "base_hover": ("#383838", "#5a5a5a", (236, 236, 236, 235)),
-        "std": ("#0f5f4c", "#10a37f", (230, 255, 247, 255)),
-        "std_hover": ("#126e59", "#1aaf89", (240, 255, 250, 255)),
-        "compat": ("#303b52", "#7aa2f7", (229, 237, 255, 255)),
-        "compat_hover": ("#384967", "#91b2ff", (240, 245, 255, 255)),
-        "disabled": ("#2a2a2a", "#333333", (236, 236, 236, 75)),
-        "checked_disabled": ("#2a2f2e", "#3d5c56", (236, 236, 236, 90)),
-        "std_glow": "#10a37f",
-        "compat_glow": "#7aa2f7",
-        "badge_std": ("#D9FFF1", "#075C47", "#76E9C1"),
-        "badge_compat": ("#DDE8FF", "#1E3977", "#9DBDFF"),
-    },
-    "gpt-light": {
-        "base": ("#f7f7f8", "#d9d9e3", (45, 45, 45, 220)),
-        "base_hover": ("#f1f1f1", "#b6b6c4", (45, 45, 45, 235)),
-        "std": ("#e8f7f2", "#10a37f", (8, 127, 99, 255)),
-        "std_hover": ("#d9f1e9", "#0d8c6d", (8, 111, 88, 255)),
-        "compat": ("#eef2ff", "#7c83fd", (63, 74, 154, 255)),
-        "compat_hover": ("#e3e8ff", "#6570d9", (52, 63, 138, 255)),
-        "disabled": ("#f7f7f8", "#ececf1", (45, 45, 45, 80)),
-        "checked_disabled": ("#edf5f2", "#9acfc0", (45, 45, 45, 105)),
-        "std_glow": "#10a37f",
-        "compat_glow": "#7c83fd",
-        "badge_std": ("#087F63", "#FFFFFF", "#087F63"),
-        "badge_compat": ("#4F5BB5", "#FFFFFF", "#4F5BB5"),
-    },
-    "classic-dark": {
-        "base": ("#1a1e27", "#14171f", (220, 220, 220, 220)),
-        "base_hover": ("#252a35", "#2a303d", (220, 220, 220, 235)),
-        "std": ("#2b5f3a", "#1e4a2c", (224, 245, 229, 255)),
-        "std_hover": ("#367a4a", "#55b572", (235, 250, 240, 255)),
-        "compat": ("#303b52", "#7aa2f7", (229, 237, 255, 255)),
-        "compat_hover": ("#384967", "#91b2ff", (240, 245, 255, 255)),
-        "disabled": ("#252a35", "#14171f", (220, 220, 220, 75)),
-        "checked_disabled": ("#2a303d", "#2b5f3a", (220, 220, 220, 90)),
-        "std_glow": "#55b572",
-        "compat_glow": "#7aa2f7",
-        "badge_std": ("#DFF2E4", "#1E5A34", "#76C893"),
-        "badge_compat": ("#DDE8FF", "#1E3977", "#9DBDFF"),
-    },
-    "classic-light": {
-        "base": ("#ffffff", "#b0b5bd", (34, 34, 34, 220)),
-        "base_hover": ("#f2f5f7", "#a6abb2", (34, 34, 34, 235)),
-        "std": ("#3a8c52", "#2e7041", (255, 255, 255, 255)),
-        "std_hover": ("#45a362", "#3a8c52", (255, 255, 255, 255)),
-        "compat": ("#eef2ff", "#7c83fd", (63, 74, 154, 255)),
-        "compat_hover": ("#e3e8ff", "#6570d9", (52, 63, 138, 255)),
-        "disabled": ("#ffffff", "#b0b5bd", (34, 34, 34, 80)),
-        "checked_disabled": ("#eaf3ea", "#9ac0a8", (34, 34, 34, 105)),
-        "std_glow": "#3a8c52",
-        "compat_glow": "#7c83fd",
-        "badge_std": ("#2F855A", "#FFFFFF", "#2F855A"),
-        "badge_compat": ("#4F5BB5", "#FFFFFF", "#4F5BB5"),
-    },
-}
+from editor_utils.theme_manager import business_colors, svg_path, THEMES
 
 _ICON_PATHS = {
     "standard": svg_path("mode-standard.svg"),
     "compatible": svg_path("mode-compatible.svg"),
 }
 _ICON_CACHE: dict[str, QIcon] = {}
+
+
+def _card_palette(theme_id: str) -> dict:
+    """返回指定主题的模式卡片语义色板 (键见 theme_tokens.MODE_CARD)。"""
+    if theme_id not in THEMES:
+        theme_id = "gpt-dark"
+    return business_colors("mode_card", theme_id)
 
 
 def _rgba(value) -> QColor:
@@ -107,8 +53,6 @@ class ModeCardButton(QAbstractButton):
     # ── 主题 ──
     def set_theme(self, theme_id: str) -> None:
         theme_id = str(theme_id)
-        if theme_id not in _CARD_COLORS:
-            theme_id = "gpt-dark"
         if self._theme_id != theme_id:
             self._theme_id = theme_id
             self._dark = theme_id.endswith("dark")
@@ -126,7 +70,7 @@ class ModeCardButton(QAbstractButton):
         super().leaveEvent(event)
 
     def _colors(self):
-        pal = _CARD_COLORS[self._theme_id]
+        pal = _card_palette(self._theme_id)
         if not self.isEnabled():
             return pal["checked_disabled"] if self.isChecked() else pal["disabled"]
         if self.isChecked():
@@ -144,7 +88,7 @@ class ModeCardButton(QAbstractButton):
         return _ICON_CACHE[mode]
 
     def _glow_color(self) -> QColor:
-        pal = _CARD_COLORS[self._theme_id]
+        pal = _card_palette(self._theme_id)
         key = "compat_glow" if self.property("mode") == "compatible" else "std_glow"
         color = QColor(pal[key])
         if not self.isEnabled():
@@ -155,7 +99,7 @@ class ModeCardButton(QAbstractButton):
 
     def _badge_colors(self) -> tuple[QColor, QColor, QColor]:
         """返回当前标签的高对比背景、文字和边框颜色。"""
-        pal = _CARD_COLORS[self._theme_id]
+        pal = _card_palette(self._theme_id)
         key = "badge_compat" if self.property("mode") == "compatible" else "badge_std"
         bg, text, border = pal[key]
         return QColor(bg), QColor(text), QColor(border)

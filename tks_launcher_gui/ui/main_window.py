@@ -721,12 +721,11 @@ class MainWindow(QMainWindow):
         """apply_theme_to_window 完成后的回调: 同步自绘组件的主题色表。
 
         模式卡片为自绘组件 (QSS 伪态不生效), 需按主题取色;
-        日志控制台的级别色只区分深浅。
+        日志控制台的级别色同样来自 theme_tokens 语义色表。
         """
-        dark = theme_manager.is_dark(theme_id)
         for card in (self._standard_mode, self._compatible_mode):
             card.set_theme(theme_id)
-        self.log_console.set_dark_mode(dark)
+        self.log_console.set_theme(theme_id)
 
     def _replay_startup_log(self):
         """将启动期日志 (会话头等) 重新追加到日志控制台。

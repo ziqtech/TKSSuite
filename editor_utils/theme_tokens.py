@@ -519,6 +519,83 @@ SLOTS: dict[str, tuple[str, str, str, str]] = {
     'fg_166': ('#a0a0a0', '#8e8ea0', '#95a0bd', '#8e8ea0'),
 }
 
+# ── 业务自绘控件语义色板 ──────────────────────────────────────────────
+# 每张表 = 一个业务控件族的颜色键集；值顺序与 THEMES 一致:
+# (gpt-dark, gpt-light, classic-dark, classic-light)。
+# 业务代码经 theme_manager.business_colors(table, theme_id) 按主题取值。
+
+# 启动模式卡片 (mode_card.py, 自绘 QAbstractButton)。
+# base/base_hover 为 (背景, 边框, 标题文字RGBA)；badge_* 为 (背景, 文字, 边框)。
+# 两族语义一致: 标准=绿色主操作、兼容=蓝色辅助。
+MODE_CARD: dict[str, tuple] = {
+    "base": (("#2f2f2f", "#444444", (236, 236, 236, 220)),
+             ("#f7f7f8", "#d9d9e3", (45, 45, 45, 220)),
+             ("#1a1e27", "#14171f", (220, 220, 220, 220)),
+             ("#ffffff", "#b0b5bd", (34, 34, 34, 220))),
+    "base_hover": (("#383838", "#5a5a5a", (236, 236, 236, 235)),
+                   ("#f1f1f1", "#b6b6c4", (45, 45, 45, 235)),
+                   ("#252a35", "#2a303d", (220, 220, 220, 235)),
+                   ("#f2f5f7", "#a6abb2", (34, 34, 34, 235))),
+    "std": (("#0f5f4c", "#10a37f", (230, 255, 247, 255)),
+            ("#e8f7f2", "#10a37f", (8, 127, 99, 255)),
+            ("#2b5f3a", "#1e4a2c", (224, 245, 229, 255)),
+            ("#3a8c52", "#2e7041", (255, 255, 255, 255))),
+    "std_hover": (("#126e59", "#1aaf89", (240, 255, 250, 255)),
+                  ("#d9f1e9", "#0d8c6d", (8, 111, 88, 255)),
+                  ("#367a4a", "#55b572", (235, 250, 240, 255)),
+                  ("#45a362", "#3a8c52", (255, 255, 255, 255))),
+    "compat": (("#303b52", "#7aa2f7", (229, 237, 255, 255)),
+               ("#eef2ff", "#7c83fd", (63, 74, 154, 255)),
+               ("#303b52", "#7aa2f7", (229, 237, 255, 255)),
+               ("#eef2ff", "#7c83fd", (63, 74, 154, 255))),
+    "compat_hover": (("#384967", "#91b2ff", (240, 245, 255, 255)),
+                     ("#e3e8ff", "#6570d9", (52, 63, 138, 255)),
+                     ("#384967", "#91b2ff", (240, 245, 255, 255)),
+                     ("#e3e8ff", "#6570d9", (52, 63, 138, 255))),
+    "disabled": (("#2a2a2a", "#333333", (236, 236, 236, 75)),
+                 ("#f7f7f8", "#ececf1", (45, 45, 45, 80)),
+                 ("#252a35", "#14171f", (220, 220, 220, 75)),
+                 ("#ffffff", "#b0b5bd", (34, 34, 34, 80))),
+    "checked_disabled": (("#2a2f2e", "#3d5c56", (236, 236, 236, 90)),
+                         ("#edf5f2", "#9acfc0", (45, 45, 45, 105)),
+                         ("#2a303d", "#2b5f3a", (220, 220, 220, 90)),
+                         ("#eaf3ea", "#9ac0a8", (34, 34, 34, 105))),
+    "std_glow": ("#10a37f", "#10a37f", "#55b572", "#3a8c52"),
+    "compat_glow": ("#7aa2f7", "#7c83fd", "#7aa2f7", "#7c83fd"),
+    "badge_std": (("#D9FFF1", "#075C47", "#76E9C1"),
+                  ("#087F63", "#FFFFFF", "#087F63"),
+                  ("#DFF2E4", "#1E5A34", "#76C893"),
+                  ("#2F855A", "#FFFFFF", "#2F855A")),
+    "badge_compat": (("#DDE8FF", "#1E3977", "#9DBDFF"),
+                     ("#4F5BB5", "#FFFFFF", "#4F5BB5"),
+                     ("#DDE8FF", "#1E3977", "#9DBDFF"),
+                     ("#4F5BB5", "#FFFFFF", "#4F5BB5")),
+}
+
+# 日志控制台 (log_console.py, QSyntaxHighlighter 级别/段级着色)。
+# 级别色只区分深浅，经典族沿用现代族取值（与迁移前行为一致）。
+LOG_CONSOLE: dict[str, tuple[str, str, str, str]] = {
+    "error": ("#F87171", "#C62828", "#F87171", "#C62828"),
+    "warn": ("#F6C56B", "#9A6A00", "#F6C56B", "#9A6A00"),
+    "ok": ("#4ADE80", "#2E7D32", "#4ADE80", "#2E7D32"),
+    "info": ("#7AA2F7", "#4F6FD6", "#7AA2F7", "#4F6FD6"),
+    "default_fg": ("#ececec", "#2d2d2d", "#ececec", "#2d2d2d"),
+    "id_color": ("#82AAFF", "#1D4ED8", "#82AAFF", "#1D4ED8"),
+    "hex_color": ("#2DD4BF", "#0D9488", "#2DD4BF", "#0D9488"),
+}
+
+_BUSINESS: dict[str, dict[str, tuple]] = {
+    "mode_card": MODE_CARD,
+    "log_console": LOG_CONSOLE,
+}
+
+
+def business_colors(table: str, theme_id: str) -> dict:
+    """返回业务控件族语义色板按主题取值后的字典。表名见 _BUSINESS。"""
+    idx = THEMES.index(theme_id)
+    return {key: values[idx] for key, values in _BUSINESS[table].items()}
+
+
 # 各主题画布（QGraphicsView）背景色 —— 与模板中 QGraphicsView 的
 # background-color 槽位语义对应（冒烟测试有一致性断言兜底）。
 CANVAS_BG: dict[str, str] = {

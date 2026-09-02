@@ -17,6 +17,8 @@ from PySide6.QtGui import (
 )
 from PySide6.QtWidgets import QTextEdit
 
+from editor_utils.theme_manager import business_colors
+
 # 补丁 ID 标记: [字母开头, 字母/数字/下划线/连字符]: — 如 "[war_status_icons]:"。
 # 级别标记 ([ERROR] 等) 后不带冒号, 中文标记 ([跳过]) 首字符非字母, 均不会误匹配。
 _ID_TAG_RE = re.compile(r"\[[A-Za-z][A-Za-z0-9_-]*\]:")
@@ -27,38 +29,20 @@ _LEVEL_TAG_RE = re.compile(r"\[(?:ERROR|FATAL|WARN|OK|INFO)\]")
 
 
 class LogHighlighter(QSyntaxHighlighter):
-    """日志着色器 — 行级基调 + 段级覆盖 (补丁 ID / 级别标记 / 地址)"""
+    """日志着色器 — 行级基调 + 段级覆盖 (补丁 ID / 级别标记 / 地址)
 
-    _LEVEL_COLORS_DARK = {
-        'error': '#F87171',
-        'warn':  '#F6C56B',
-        'ok':    '#4ADE80',
-        'info':  '#7AA2F7',
-    }
-    _LEVEL_COLORS_LIGHT = {
-        'error': '#C62828',
-        'warn':  '#9A6A00',
-        'ok':    '#2E7D32',
-        'info':  '#4F6FD6',
-    }
-    _DEFAULT_FG_DARK = '#ececec'
-    _DEFAULT_FG_LIGHT = '#2d2d2d'
-    # 补丁 ID 蓝 (区别于 info 蓝, 略亮以便在深色底上更清晰)
-    _ID_COLOR_DARK = '#82AAFF'
-    _ID_COLOR_LIGHT = '#1D4ED8'
-    # 十六进制地址青
-    _HEX_COLOR_DARK = '#2DD4BF'
-    _HEX_COLOR_LIGHT = '#0D9488'
+    颜色取自 theme_tokens.LOG_CONSOLE 语义色表, 随主题切换重建。
+    """
 
-    def __init__(self, document: QTextDocument, dark: bool = True):
+    def __init__(self, document: QTextDocument, theme_id: str = "gpt-dark"):
         super().__init__(document)
-        self._dark = dark
+        self._theme_id = theme_id
         self._build_formats()
 
-    def set_dark_mode(self, dark: bool):
-        if dark == self._dark:
+    def set_theme(self, theme_id: str):
+        if theme_id == self._theme_id:
             return
-        self._dark = dark
+        self._theme_id = theme_id
         self._build_formats()
         self.rehighlight()
 
@@ -72,20 +56,17 @@ class LogHighlighter(QSyntaxHighlighter):
 
     def _build_formats(self):
         """构建 / 更新各级别与段级高亮的 QTextCharFormat"""
-        colors = self._LEVEL_COLORS_DARK if self._dark else self._LEVEL_COLORS_LIGHT
-        default_fg = self._DEFAULT_FG_DARK if self._dark else self._DEFAULT_FG_LIGHT
+        pal = business_colors("log_console", self._theme_id)
 
-        self._fmt_default = self._make_fmt(default_fg)
+        self._fmt_default = self._make_fmt(pal["default_fg"])
 
         # 段级: 补丁 ID 蓝 / 地址青
-        id_color = self._ID_COLOR_DARK if self._dark else self._ID_COLOR_LIGHT
-        hex_color = self._HEX_COLOR_DARK if self._dark else self._HEX_COLOR_LIGHT
-        self._fmt_patch_id = self._make_fmt(id_color)
-        self._fmt_hex = self._make_fmt(hex_color)
+        self._fmt_patch_id = self._make_fmt(pal["id_color"])
+        self._fmt_hex = self._make_fmt(pal["hex_color"])
 
         # 级别标记 → (整行格式, 标记加粗格式) 查找表, 按检测优先级排列
         def pair(key: str):
-            color = colors[key]
+            color = pal[key]
             return self._make_fmt(color), self._make_fmt(color, bold=True)
 
         self._level_fmts = {
@@ -123,13 +104,13 @@ class LogConsole(QTextEdit):
         # 按需显示滚动条: 空日志时不占轨道, 追加日志时 ensureCursorVisible 自动滚到底
         self.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         # 创建高亮器 (绑定到 document)
-        self._highlighter = LogHighlighter(self.document(), dark=True)
+        self._highlighter = LogHighlighter(self.document(), theme_id="gpt-dark")
 
-    def set_dark_mode(self, dark: bool):
+    def set_theme(self, theme_id: str):
         # 保存滚动条位置，防止 rehighlight() 导致滚动跳动
         vbar = self.verticalScrollBar()
         pos = vbar.value()
-        self._highlighter.set_dark_mode(dark)
+        self._highlighter.set_theme(theme_id)
         vbar.setValue(pos)
 
     def append_log(self, text: str):
