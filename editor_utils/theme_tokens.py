@@ -584,9 +584,16 @@ LOG_CONSOLE: dict[str, tuple[str, str, str, str]] = {
     "hex_color": ("#2DD4BF", "#0D9488", "#2DD4BF", "#0D9488"),
 }
 
+# 精灵表编辑器 (spritesheet_editor.py) 画布视口底色 —— 图像编辑器惯例,
+# 恒为深色系 (不随主题明暗变化, 仅深浅两档微调; classic 沿用 modern 取值)。
+SPRITESHEET: dict[str, tuple[str, str, str, str]] = {
+    "canvas_bg": ("#1a1d24", "#313c52", "#1a1d24", "#313c52"),
+}
+
 _BUSINESS: dict[str, dict[str, tuple]] = {
     "mode_card": MODE_CARD,
     "log_console": LOG_CONSOLE,
+    "spritesheet": SPRITESHEET,
 }
 
 

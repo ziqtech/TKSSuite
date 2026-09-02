@@ -52,6 +52,7 @@ except ImportError:
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from editor_utils.dock_components import create_dock
 from editor_utils import theme_manager
+from editor_utils.theme_manager import business_colors
 from editor_utils.theme_switcher import (
     apply_theme_to_window, create_theme_menu, toggle_theme_in_family,
 )
@@ -100,6 +101,24 @@ SELECTION_BOX_FILL = QColor(74, 158, 255, 40)
 SELECTION_BORDER_COLOR = "#80c0ff"
 LONG_PRESS_PENDING_COLOR = "#ffb347"
 LONG_PRESS_ACTIVE_COLOR = "#39e58c"
+
+# 画布固定色 — 图像编辑器惯例: 画布恒为深色系以保证精灵/透明区可见性,
+# 不随 UI 主题变化 (阶段 2 豁免项, 见 docs/PySide6样式体系整改方案.md)。
+CANVAS_SCENE_BG = "#3a3a3a"      # 场景底色
+CELL_EVEN = "#4a4a4a"            # 透明棋盘格 (偶)
+CELL_ODD = "#444444"             # 透明棋盘格 (奇)
+CELL_SELECTED = "#5a6a8a"        # 选中单元格填充
+GRID_LINE = "#555555"            # 单元格网格线 / 预览面板边框
+CANVAS_TEXT = "#cccccc"          # 画布尺寸标注文字
+HIGHLIGHT_DASH = "#a0d0ff"       # 行/列高亮虚线
+HEADER_BG = "#404040"            # 行/列表头底色
+HEADER_BG_DRAG = "#505050"       # 行/列表头拖拽中底色
+HEADER_BORDER = "#606060"        # 行/列表头边框
+HEADER_TEXT = "#aaaaaa"          # 行/列表头文字
+HEADER_HOVER_FILL = "#607080"    # 行/列悬停高亮填充
+CORNER_BG = "#303030"            # 左上角块底色
+PREVIEW_PANEL_BG = "#2a2a2a"     # 预览面板底色
+DRAG_INDICATOR = "#ffcc00"       # 拖拽落点指示虚线
 DEFAULT_FPS = 12
 
 
@@ -798,7 +817,7 @@ class SpriteGraphicsView(QGraphicsView):
         self.editor = editor
         self.scene = QGraphicsScene(self)
         self.setScene(self.scene)
-        self.setBackgroundBrush(QBrush(QColor("#3a3a3a")))
+        self.setBackgroundBrush(QBrush(QColor(CANVAS_SCENE_BG)))
         self.setRenderHint(QPainter.Antialiasing, False)
         self.setRenderHint(QPainter.SmoothPixmapTransform, False)
         self.setTransformationAnchor(QGraphicsView.AnchorUnderMouse)
@@ -917,7 +936,7 @@ class SpriteGraphicsView(QGraphicsView):
 
         # 背景
         bg = QGraphicsRectItem(0, 0, tw, th)
-        bg.setBrush(QBrush(QColor("#3a3a3a")))
+        bg.setBrush(QBrush(QColor(CANVAS_SCENE_BG)))
         bg.setPen(QPen(Qt.NoPen))
         self.scene.addItem(bg)
 
@@ -927,12 +946,12 @@ class SpriteGraphicsView(QGraphicsView):
             x, y, x2, y2 = self._cell_bbox(r, c)
 
             # 单元格背景
-            fill = QColor("#4a4a4a") if i % 2 == 0 else QColor("#444444")
+            fill = QColor(CELL_EVEN) if i % 2 == 0 else QColor(CELL_ODD)
             if i in self.selection:
-                fill = QColor("#5a6a8a")
+                fill = QColor(CELL_SELECTED)
             cell_bg = QGraphicsRectItem(x, y, cw, ch)
             cell_bg.setBrush(QBrush(fill))
-            cell_bg.setPen(QPen(QColor("#555555")))
+            cell_bg.setPen(QPen(QColor(GRID_LINE)))
             cell_bg.setData(0, i)  # 存储帧索引
             self.scene.addItem(cell_bg)
 
@@ -956,15 +975,15 @@ class SpriteGraphicsView(QGraphicsView):
                     pass
             else:
                 # 空帧 X 标记
-                line1 = self.scene.addLine(x, y, x2, y2, QPen(QColor("#555555")))
-                line2 = self.scene.addLine(x2, y, x, y2, QPen(QColor("#555555")))
+                line1 = self.scene.addLine(x, y, x2, y2, QPen(QColor(GRID_LINE)))
+                line2 = self.scene.addLine(x2, y, x, y2, QPen(QColor(GRID_LINE)))
                 line1.setData(0, i)
                 line2.setData(0, i)
 
             # 序号
             txt = QGraphicsTextItem(str(i))
             txt.setPos(x + 2, y + 1)
-            txt.setDefaultTextColor(QColor("#cccccc"))
+            txt.setDefaultTextColor(QColor(CANVAS_TEXT))
             font = QFont()
             font.setPixelSize(9)
             txt.setFont(font)
@@ -993,43 +1012,43 @@ class SpriteGraphicsView(QGraphicsView):
             # 行高亮
             ry = HEADER_ROW_H + sr * (ch + pad)
             rh = QGraphicsRectItem(HEADER_COL_W, ry, tw2 - HEADER_COL_W, ch)
-            rh.setPen(QPen(QColor("#a0d0ff"), 1, Qt.DashLine))
+            rh.setPen(QPen(QColor(HIGHLIGHT_DASH), 1, Qt.DashLine))
             rh.setBrush(QBrush(Qt.NoBrush))
             self.scene.addItem(rh)
 
             # 列高亮
             cx = HEADER_COL_W + sc * (cw + pad)
             chl = QGraphicsRectItem(cx, HEADER_ROW_H, cw, th2 - HEADER_ROW_H)
-            chl.setPen(QPen(QColor("#a0d0ff"), 1, Qt.DashLine))
+            chl.setPen(QPen(QColor(HIGHLIGHT_DASH), 1, Qt.DashLine))
             chl.setBrush(QBrush(Qt.NoBrush))
             self.scene.addItem(chl)
 
             # 行头高亮
             rhx, rhy, rhx2, rhy2 = self._row_header_bbox(sr)
             rhh = QGraphicsRectItem(rhx, rhy, rhx2 - rhx, rhy2 - rhy)
-            rhh.setBrush(QBrush(QColor("#607080")))
-            rhh.setPen(QPen(QColor("#80c0ff")))
+            rhh.setBrush(QBrush(QColor(HEADER_HOVER_FILL)))
+            rhh.setPen(QPen(QColor(SELECTION_BORDER_COLOR)))
             self.scene.addItem(rhh)
 
             # 列头高亮
             chx, chy, chx2, chy2 = self._col_header_bbox(sc)
             chh = QGraphicsRectItem(chx, chy, chx2 - chx, chy2 - chy)
-            chh.setBrush(QBrush(QColor("#607080")))
-            chh.setPen(QPen(QColor("#80c0ff")))
+            chh.setBrush(QBrush(QColor(HEADER_HOVER_FILL)))
+            chh.setPen(QPen(QColor(SELECTION_BORDER_COLOR)))
             self.scene.addItem(chh)
 
         # 行头
         for r in range(rows):
             x, y, x2, y2 = self._row_header_bbox(r)
-            hdr_fill = QColor("#505050") if (self._header_drag and self._header_drag[0] == "row"
-                        and self._header_drag[1] == r) else QColor("#404040")
+            hdr_fill = QColor(HEADER_BG_DRAG) if (self._header_drag and self._header_drag[0] == "row"
+                        and self._header_drag[1] == r) else QColor(HEADER_BG)
             hdr = QGraphicsRectItem(x, y, x2 - x, y2 - y)
             hdr.setBrush(QBrush(hdr_fill))
-            hdr.setPen(QPen(QColor("#606060")))
+            hdr.setPen(QPen(QColor(HEADER_BORDER)))
             self.scene.addItem(hdr)
             txt = QGraphicsTextItem(f"R{r}")
             txt.setPos(x + HEADER_COL_W // 2 - 10, y + (ch) // 2 - 8)
-            txt.setDefaultTextColor(QColor("#aaaaaa"))
+            txt.setDefaultTextColor(QColor(HEADER_TEXT))
             font = QFont()
             font.setPixelSize(10)
             txt.setFont(font)
@@ -1038,15 +1057,15 @@ class SpriteGraphicsView(QGraphicsView):
         # 列头
         for c in range(cols):
             x, y, x2, y2 = self._col_header_bbox(c)
-            hdr_fill = QColor("#505050") if (self._header_drag and self._header_drag[0] == "col"
-                        and self._header_drag[1] == c) else QColor("#404040")
+            hdr_fill = QColor(HEADER_BG_DRAG) if (self._header_drag and self._header_drag[0] == "col"
+                        and self._header_drag[1] == c) else QColor(HEADER_BG)
             hdr = QGraphicsRectItem(x, y, x2 - x, y2 - y)
             hdr.setBrush(QBrush(hdr_fill))
-            hdr.setPen(QPen(QColor("#606060")))
+            hdr.setPen(QPen(QColor(HEADER_BORDER)))
             self.scene.addItem(hdr)
             txt = QGraphicsTextItem(f"C{c}")
             txt.setPos(x + cw // 2 - 10, y + HEADER_ROW_H // 2 - 8)
-            txt.setDefaultTextColor(QColor("#aaaaaa"))
+            txt.setDefaultTextColor(QColor(HEADER_TEXT))
             font = QFont()
             font.setPixelSize(10)
             txt.setFont(font)
@@ -1054,8 +1073,8 @@ class SpriteGraphicsView(QGraphicsView):
 
         # 左上角
         corner = QGraphicsRectItem(0, 0, HEADER_COL_W, HEADER_ROW_H)
-        corner.setBrush(QBrush(QColor("#303030")))
-        corner.setPen(QPen(QColor("#606060")))
+        corner.setBrush(QBrush(QColor(CORNER_BG)))
+        corner.setPen(QPen(QColor(HEADER_BORDER)))
         self.scene.addItem(corner)
 
     # ── 鼠标事件 ───────────────────────
@@ -1264,7 +1283,7 @@ class SpriteGraphicsView(QGraphicsView):
             if (fx < sel_rect.right() and fx2 > sel_rect.left() and
                 fy < sel_rect.bottom() and fy2 > sel_rect.top()):
                 rect_item = QGraphicsRectItem(fx, fy, fx2 - fx, fy2 - fy)
-                rect_item.setPen(QPen(QColor("#4a9eff"), 2))
+                rect_item.setPen(QPen(QColor(SELECTION_BOX_COLOR), 2))
                 rect_item.setBrush(QBrush(QColor(74, 158, 255, 60)))
                 rect_item.setZValue(998)
                 rect_item.setData(0, "sel_preview")
@@ -1445,7 +1464,7 @@ class SpriteGraphicsView(QGraphicsView):
         if to_idx >= 0:
             r, c = divmod(to_idx, self.model.columns)
             x, y, x2, y2 = self._cell_bbox(r, c)
-            pen = QPen(QColor("#ffcc00"), 2, Qt.DashLine)
+            pen = QPen(QColor(DRAG_INDICATOR), 2, Qt.DashLine)
             rect = QGraphicsRectItem(x, y, x2 - x, y2 - y)
             rect.setPen(pen)
             rect.setBrush(QBrush(Qt.NoBrush))
@@ -1460,7 +1479,7 @@ class SpriteGraphicsView(QGraphicsView):
             if target >= 0 and target != hdr_idx:
                 _, y, _, y2 = self._row_header_bbox(target)
                 tw = self._total_size()[0]
-                pen = QPen(QColor("#ffcc00"), 2, Qt.DashLine)
+                pen = QPen(QColor(DRAG_INDICATOR), 2, Qt.DashLine)
                 rect = QGraphicsRectItem(0, y, tw, y2 - y)
                 rect.setPen(pen)
                 rect.setBrush(QBrush(Qt.NoBrush))
@@ -1471,7 +1490,7 @@ class SpriteGraphicsView(QGraphicsView):
             if target >= 0 and target != hdr_idx:
                 x, _, x2, _ = self._col_header_bbox(target)
                 th = self._total_size()[1]
-                pen = QPen(QColor("#ffcc00"), 2, Qt.DashLine)
+                pen = QPen(QColor(DRAG_INDICATOR), 2, Qt.DashLine)
                 rect = QGraphicsRectItem(x, 0, x2 - x, th)
                 rect.setPen(pen)
                 rect.setBrush(QBrush(Qt.NoBrush))
@@ -1496,19 +1515,20 @@ class SpriteGraphicsView(QGraphicsView):
             if not isinstance(data, int):
                 continue
             idx = data
-            # 单元格背景: QGraphicsRectItem, 无边框或边框色 #555555
+            # 单元格背景: QGraphicsRectItem, 无边框或边框色 GRID_LINE
             if isinstance(item, QGraphicsRectItem):
                 pen_color = item.pen().color().name()
-                # 跳过选中边框 (#80c0ff) / 行高亮 / 列高亮 / header 等
+                # 跳过选中边框 (SELECTION_BORDER_COLOR) / 行高亮 (HIGHLIGHT_DASH) / 列高亮 / header 等
                 if pen_color in (SELECTION_BORDER_COLOR.lower(),
                                  LONG_PRESS_PENDING_COLOR.lower(),
                                  LONG_PRESS_ACTIVE_COLOR.lower(),
-                                 "#a0d0ff", "#606060", "#ffcc00"):
+                                 HIGHLIGHT_DASH.lower(), HEADER_BORDER.lower(),
+                                 DRAG_INDICATOR.lower()):
                     continue
-                if pen_color == "#555555" or item.pen().style() == Qt.NoPen:
+                if pen_color == GRID_LINE.lower() or item.pen().style() == Qt.NoPen:
                     r, c = divmod(idx, cols)
-                    fill = QColor("#5a6a8a") if idx in self.selection else (
-                        QColor("#4a4a4a") if idx % 2 == 0 else QColor("#444444"))
+                    fill = QColor(CELL_SELECTED) if idx in self.selection else (
+                        QColor(CELL_EVEN) if idx % 2 == 0 else QColor(CELL_ODD))
                     item.setBrush(QBrush(fill))
 
         # 选中边框 → 删除旧的, 按需重建 (轻量)
@@ -1522,7 +1542,7 @@ class SpriteGraphicsView(QGraphicsView):
                 self.scene.removeItem(item)
         # 行/列高亮 → 删除旧的
         for item in list(self.scene.items()):
-            if isinstance(item, QGraphicsRectItem) and item.pen().color().name() == "#a0d0ff":
+            if isinstance(item, QGraphicsRectItem) and item.pen().color().name() == HIGHLIGHT_DASH.lower():
                 self.scene.removeItem(item)
 
         # 重建选中边框
@@ -1550,13 +1570,13 @@ class SpriteGraphicsView(QGraphicsView):
 
             ry = HEADER_ROW_H + sr * (ch + m.padding)
             rh = QGraphicsRectItem(HEADER_COL_W, ry, tw - HEADER_COL_W, ch)
-            rh.setPen(QPen(QColor("#a0d0ff"), 1, Qt.DashLine))
+            rh.setPen(QPen(QColor(HIGHLIGHT_DASH), 1, Qt.DashLine))
             rh.setBrush(QBrush(Qt.NoBrush))
             self.scene.addItem(rh)
 
             cx = HEADER_COL_W + sc * (cw + m.padding)
             chl = QGraphicsRectItem(cx, HEADER_ROW_H, cw, th - HEADER_ROW_H)
-            chl.setPen(QPen(QColor("#a0d0ff"), 1, Qt.DashLine))
+            chl.setPen(QPen(QColor(HIGHLIGHT_DASH), 1, Qt.DashLine))
             chl.setBrush(QBrush(Qt.NoBrush))
             self.scene.addItem(chl)
 
@@ -1841,12 +1861,12 @@ class TimelineWidget(QWidget):
 
             # 背景
             if i == self._current:
-                painter.setPen(QPen(QColor("#ffcc00"), 2))
-                painter.setBrush(QBrush(QColor("#3a3a3a")))
+                painter.setPen(QPen(QColor(DRAG_INDICATOR), 2))
+                painter.setBrush(QBrush(QColor(CANVAS_SCENE_BG)))
                 painter.drawRect(x0 - 1, y0 - 1, sz + 2, sz + 2)
             else:
-                painter.setPen(QPen(QColor("#555555")))
-                painter.setBrush(QBrush(QColor("#2a2a2a")))
+                painter.setPen(QPen(QColor(GRID_LINE)))
+                painter.setBrush(QBrush(QColor(PREVIEW_PANEL_BG)))
                 painter.drawRect(x0, y0, sz, sz)
 
             # 缩略图
@@ -1857,7 +1877,7 @@ class TimelineWidget(QWidget):
                 painter.drawPixmap(px, py, pm)
 
             # 序号
-            painter.setPen(QColor("#cccccc"))
+            painter.setPen(QColor(CANVAS_TEXT))
             font = QFont()
             font.setPixelSize(9)
             painter.setFont(font)
@@ -2921,7 +2941,7 @@ class SpriteSheetEditorWindow(QMainWindow):
         self._build_shortcuts()
 
         # 初始画布背景色同步 (跟随 OS 主题)
-        bg_color = QColor("#1a1d24") if self._is_dark else QColor("#313c52")
+        bg_color = QColor(business_colors("spritesheet", self._theme_id)["canvas_bg"])
         self.canvas.setBackgroundBrush(QBrush(bg_color))
         self.preview_view._disp.setObjectName("GamePreview")
         self.preview_view._disp.style().unpolish(self.preview_view._disp)
@@ -3883,7 +3903,7 @@ class SpriteSheetEditorWindow(QMainWindow):
         theme_manager.apply_theme(QApplication.instance(), self._theme_id)
 
         # 强制同步视口背景 (QSS 无法穿透 QGraphicsScene 底层)
-        bg_color = QColor("#1a1d24") if self._is_dark else QColor("#313c52")
+        bg_color = QColor(business_colors("spritesheet", self._theme_id)["canvas_bg"])
         self.canvas.setBackgroundBrush(QBrush(bg_color))
         self.preview_view._disp.setObjectName("GamePreview")
         self.preview_view._disp.style().unpolish(self.preview_view._disp)

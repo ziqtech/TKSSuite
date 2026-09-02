@@ -272,7 +272,8 @@
 - [x] 取色 API —— **实现形态调整**：摸底发现业务文件普遍已有"按主题的语义色字典"（如 mode_card 的 `_CARD_COLORS`），因此实际采用**业务色板整表上移**模式：`theme_tokens.BUSINESS`（MODE_CARD / LOG_CONSOLE…，每键 4 元组）+ `theme_manager.business_colors(table, theme_id)`；`color_str/current` 全局语义键 API 待出现首个全局键消费者时再补（避免臆造键名）
 - [x] mode_card.py（48 → 0，表上移至 theme_tokens.MODE_CARD）
 - [x] tks_launcher_gui/ui/log_console.py（14 → 0，表上移至 theme_tokens.LOG_CONSOLE；接口从 dark 布尔改为 theme_id 贯通，main_window 钩子同步更新）
-- [ ] 27 文件替换完成（进度：2/27，剩余清单见 §3 优先级）
+- [x] spritesheet_editor.py（48 → 19，剩余全部为豁免）：画布类 19 色上收为模块级命名常量（图像编辑器惯例：画布恒为深色系保证精灵可见性，不随 UI 主题变化，块注释豁免）；主题感知的画布视口底色（2 处 is_dark 分支）迁入 theme_tokens.SPRITESHEET 表。顺带发现存量缺陷：菜单切换主题时画布不同步（仅快捷键切换同步），待后续以 _on_theme_applied 钩子修复
+- [ ] 27 文件替换完成（进度：3/27，剩余清单见 §3 优先级）
 - [ ] 5 处 _on_theme_applied 钩子删除（进度：0/5；launcher 钩子已改为 business_colors 模式但仍承担同步职责，是否可删待其余文件完成后评估）
 - [ ] 遗留硬编码颜色 <50 且全部有豁免注释
 
