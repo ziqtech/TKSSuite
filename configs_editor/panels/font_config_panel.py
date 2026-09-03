@@ -87,7 +87,7 @@ class FontConfigPanel(ConfigPanelBase):
         btn_row = QWidget()
         btn_layout = QHBoxLayout(btn_row)
         btn_layout.setContentsMargins(0, 0, 0, 0)
-        btn_reset = QPushButton("🔄 重置默认")
+        btn_reset = QPushButton("重置默认")
         btn_reset.setToolTip("恢复到本次加载时的原始值。")
         btn_reset.clicked.connect(self.reset)
         btn_layout.addWidget(btn_reset)

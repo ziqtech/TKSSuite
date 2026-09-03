@@ -219,19 +219,19 @@ class ConfigsEditorWindow(EditorMainWindow):
         tb_layout.addSpacing(12)
 
         # 保存按钮
-        self._btn_save = QPushButton("💾 保存")
+        self._btn_save = QPushButton("保存")
         self._btn_save.clicked.connect(self.save_all)
         tb_layout.addWidget(self._btn_save)
 
         # 加载 TKS 目录按钮
-        self._btn_load_tks = QPushButton("📂 加载TKS目录")
+        self._btn_load_tks = QPushButton("加载TKS目录")
         self._btn_load_tks.clicked.connect(self.load_tks_directory)
         tb_layout.addWidget(self._btn_load_tks)
 
         tb_layout.addStretch()
 
         # 主题切换按钮
-        self._btn_theme = QPushButton("🌗 切换主题")
+        self._btn_theme = QPushButton("切换主题")
         self._btn_theme.clicked.connect(self._toggle_theme)
         tb_layout.addWidget(self._btn_theme)
 
@@ -505,10 +505,10 @@ class ConfigsEditorWindow(EditorMainWindow):
     def _update_config_dir_label(self):
         """更新配置目录路径标签。"""
         if self._configs_dir.exists():
-            self._config_dir_label.setText(f"📁 配置目录: {self._configs_dir}")
+            self._config_dir_label.setText(f"配置目录: {self._configs_dir}")
             self._apply_label_status(self._config_dir_label, "loaded")
         else:
-            self._config_dir_label.setText(f"📁 配置目录: (不存在) {self._configs_dir}")
+            self._config_dir_label.setText(f"配置目录: (不存在) {self._configs_dir}")
             self._apply_label_status(self._config_dir_label, "missing")
 
     def _update_window_title(self):

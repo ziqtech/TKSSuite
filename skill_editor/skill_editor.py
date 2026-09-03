@@ -835,7 +835,7 @@ class SkillEditorApp(EditorMainWindow):
 
         toolbar.addStretch()
 
-        btn_theme = QPushButton("🌓 切换主题")
+        btn_theme = QPushButton("切换主题")
         btn_theme.clicked.connect(self._toggle_theme)
         toolbar.addWidget(btn_theme)
 
@@ -879,9 +879,9 @@ class SkillEditorApp(EditorMainWindow):
         self.lbl_rec_idx.setProperty("class", "RecordHeader")
         header_row.addWidget(self.lbl_rec_idx)
         header_row.addStretch()
-        btn_apply = QPushButton("✅ 应用")
+        btn_apply = QPushButton("应用")
         btn_apply.clicked.connect(self._apply_edit)
-        btn_reset = QPushButton("🔄 重置")
+        btn_reset = QPushButton("重置")
         btn_reset.clicked.connect(self._reset_edit)
         header_row.addWidget(btn_apply)
         header_row.addWidget(btn_reset)
@@ -1225,7 +1225,7 @@ class SkillEditorApp(EditorMainWindow):
         except ValueError:
             return
         menu = QMenu(self)
-        act_tree = menu.addAction("🌳 查看技能树")
+        act_tree = menu.addAction("查看技能树")
         act_tree.triggered.connect(lambda: self._show_skill_tree(idx))
         menu.exec(self.table.viewport().mapToGlobal(pos))
 

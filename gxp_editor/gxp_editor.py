@@ -50,6 +50,7 @@ from editor_utils.theme_switcher import toggle_theme_in_family
 from editor_utils.app_shell import EditorMainWindow, run_editor
 from editor_utils.version import format_title
 from editor_utils.ui_helpers import confirm_close
+from editor_utils.ui_helpers import set_themed_icon
 
 # ── GXP 格式常量 ──────────────────────────────────────────
 GXP_MAGIC = b"JGXP"
@@ -327,10 +328,10 @@ class GXPEditor(EditorMainWindow):
         ops_w = QWidget()
         ops_l = QVBoxLayout(ops_w)
 
-        b1 = QPushButton("📂 打开 GXP")
+        b1 = QPushButton("打开 GXP")
         b1.clicked.connect(self._open_dlg)
         ops_l.addWidget(b1)
-        b2 = QPushButton("💾 保存 / 另存为")
+        b2 = QPushButton("保存 / 另存为")
         b2.clicked.connect(self._save)
         ops_l.addWidget(b2)
 
@@ -339,10 +340,10 @@ class GXPEditor(EditorMainWindow):
         fline.setProperty("class", "SepLine")
         ops_l.addWidget(fline)
 
-        b3 = QPushButton("📥 导入外部图片")
+        b3 = QPushButton("导入外部图片")
         b3.clicked.connect(self._import_dlg)
         ops_l.addWidget(b3)
-        b4 = QPushButton("📤 导出 24位 PNG")
+        b4 = QPushButton("导出 24位 PNG")
         b4.clicked.connect(self._export_dlg)
         ops_l.addWidget(b4)
 
@@ -358,19 +359,20 @@ class GXPEditor(EditorMainWindow):
         tb_layout = QHBoxLayout()
         tb_layout.setContentsMargins(6, 2, 6, 2)
         tb_layout.setSpacing(6)
-        btn_zout = QPushButton("➖")
+        btn_zout = QPushButton("")
+        set_themed_icon(btn_zout, "minus")
         btn_zout.setProperty("class", "CompactBtn")
         btn_zout.clicked.connect(partial(self._zoom_step, -0.25))
         self._zoom_label = QLabel("100%")
         self._zoom_label.setAlignment(Qt.AlignCenter)
         self._zoom_label.setFixedWidth(50)
-        btn_zin = QPushButton("➕")
+        btn_zin = QPushButton("新增")
         btn_zin.setProperty("class", "CompactBtn")
         btn_zin.clicked.connect(partial(self._zoom_step, 0.25))
-        btn_fit = QPushButton("📐 适应窗口")
+        btn_fit = QPushButton("适应窗口")
         btn_fit.setProperty("class", "CompactBtn")
         btn_fit.clicked.connect(self._fit_to_window)
-        btn_theme = QPushButton("🌗 切换主题")
+        btn_theme = QPushButton("切换主题")
         btn_theme.setProperty("class", "CompactBtn")
         btn_theme.clicked.connect(self._toggle_theme)
         tb_layout.addWidget(btn_zout)

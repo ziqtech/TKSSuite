@@ -356,27 +356,27 @@ class ShopEditorWindow(EditorMainWindow):
         self.search_input.returnPressed.connect(self._apply_filter)
         toolbar_layout.addWidget(self.search_input)
 
-        btn_search = QPushButton("🔍 搜索")
+        btn_search = QPushButton("搜索")
         btn_search.clicked.connect(self._apply_filter)
         toolbar_layout.addWidget(btn_search)
 
-        btn_clear = QPushButton("🧹 清除")
+        btn_clear = QPushButton("清除")
         btn_clear.clicked.connect(self._clear_filter)
         toolbar_layout.addWidget(btn_clear)
 
         toolbar_layout.addWidget(self._make_v_sep())
 
-        btn_add = QPushButton("➕ 新增记录")
+        btn_add = QPushButton("新增记录")
         btn_add.clicked.connect(self._add_record)
         toolbar_layout.addWidget(btn_add)
 
-        btn_reload = QPushButton("🔄 重新加载")
+        btn_reload = QPushButton("重新加载")
         btn_reload.clicked.connect(self._reload)
         toolbar_layout.addWidget(btn_reload)
 
         toolbar_layout.addWidget(self._make_v_sep())
 
-        btn_theme = QPushButton("🌓 切换主题")
+        btn_theme = QPushButton("切换主题")
         btn_theme.clicked.connect(self._toggle_theme)
         toolbar_layout.addWidget(btn_theme)
 
@@ -448,7 +448,7 @@ class ShopEditorWindow(EditorMainWindow):
         self.lbl_item_name.setProperty("class", "PrimaryTitle")
         item_row.addWidget(self.lbl_item_name, 1)
 
-        btn_pick_item = QPushButton("📦 选择物品…")
+        btn_pick_item = QPushButton("选择物品…")
         btn_pick_item.clicked.connect(self._pick_item)
         item_row.addWidget(btn_pick_item)
         edit_layout.addLayout(item_row)
@@ -490,11 +490,11 @@ class ShopEditorWindow(EditorMainWindow):
 
         # Action Buttons
         btn_action_row = QHBoxLayout()
-        btn_apply = QPushButton("✅ 应用修改")
+        btn_apply = QPushButton("应用修改")
         btn_apply.clicked.connect(self._apply_edit)
         btn_action_row.addWidget(btn_apply, 1)
 
-        btn_delete = QPushButton("❌ 删除")
+        btn_delete = QPushButton("删除")
         btn_delete.clicked.connect(self._delete_record)
         btn_action_row.addWidget(btn_delete)
         edit_layout.addLayout(btn_action_row)

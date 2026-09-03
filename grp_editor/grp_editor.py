@@ -623,8 +623,8 @@ class GRPEditor(EditorMainWindow):
         tb = FlowLayout(toolbar, margin=0, spacing=6)
         tb.setContentsMargins(8, 4, 8, 4)
 
-        tb.addWidget(self._tool_btn("📂 打开 GRP", self._open_dlg))
-        tb.addWidget(self._tool_btn("💾 保存", self._save))
+        tb.addWidget(self._tool_btn("打开 GRP", self._open_dlg))
+        tb.addWidget(self._tool_btn("保存", self._save))
         tb.addWidget(self._vsep())
 
         self._btn_a = self._tool_btn("主图", lambda: self._switch_layer("A"))
@@ -635,29 +635,29 @@ class GRPEditor(EditorMainWindow):
         tb.addWidget(self._btn_l2)
         tb.addWidget(self._vsep())
 
-        tb.addWidget(self._tool_btn("🔄 替换当前层", self._replace_layer))
-        tb.addWidget(self._tool_btn("📤 导出当前层", self._export_layer))
-        self._btn_play_act = self._tool_btn("▶️ 播放", self._toggle_audio)
+        tb.addWidget(self._tool_btn("替换当前层", self._replace_layer))
+        tb.addWidget(self._tool_btn("导出当前层", self._export_layer))
+        self._btn_play_act = self._tool_btn("播放", self._toggle_audio)
         tb.addWidget(self._btn_play_act)
-        tb.addWidget(self._tool_btn("🔊 替换音频", self._replace_audio))
+        tb.addWidget(self._tool_btn("替换音频", self._replace_audio))
         tb.addWidget(self._vsep())
 
-        tb.addWidget(self._tool_btn("🎨 伪彩导出", self._export_pseudo))
-        tb.addWidget(self._tool_btn("🎨 伪彩导入", self._import_pseudo))
+        tb.addWidget(self._tool_btn("伪彩导出", self._export_pseudo))
+        tb.addWidget(self._tool_btn("伪彩导入", self._import_pseudo))
         tb.addWidget(self._vsep())
 
-        tb.addWidget(self._tool_btn("➕ 区段", self._add_section_menu))
-        tb.addWidget(self._tool_btn("➖ 区段", self._delete_section))
+        tb.addWidget(self._tool_btn("区段", self._add_section_menu))
+        tb.addWidget(self._tool_btn("区段", self._delete_section))
         tb.addWidget(self._vsep())
 
-        tb.addWidget(self._tool_btn("🔍−", lambda: self._zoom_step(-1)))
+        tb.addWidget(self._tool_btn("−", lambda: self._zoom_step(-1)))
         self._zoom_lbl = QLabel(" 100% ")
         tb.addWidget(self._zoom_lbl)
-        tb.addWidget(self._tool_btn("🔍+", lambda: self._zoom_step(1)))
-        tb.addWidget(self._tool_btn("🔲 适应", self._fit_to_window))
+        tb.addWidget(self._tool_btn("+", lambda: self._zoom_step(1)))
+        tb.addWidget(self._tool_btn("适应", self._fit_to_window))
         tb.addWidget(self._vsep())
 
-        tb.addWidget(self._tool_btn("🌗 切换主题", self._toggle_theme))
+        tb.addWidget(self._tool_btn("切换主题", self._toggle_theme))
         return toolbar
 
     # ── Main UI Layout ────────────────────────────────────
@@ -766,6 +766,7 @@ class GRPEditor(EditorMainWindow):
         self._btn_play_act.setEnabled(is_aud)
         names = {"A": "主图", "L1": "前景层", "L2": "碰撞层"}
         for act, key in [(self._btn_a, "A"), (self._btn_l1, "L1"), (self._btn_l2, "L2")]:
+            # 状态圆点豁免 (🟢=当前层/⚪=其他层): 运行时激活态语义, 非装饰 emoji (P4-1 核对)
             if is_img and self._sel_layer == key:
                 act.setText(f"🟢 {names[key]}")
             elif is_img:
@@ -1721,7 +1722,7 @@ class GRPEditor(EditorMainWindow):
                 self._audio_proc = subprocess.Popen([player, tmp.name],
                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             self._audio_playing = True
-            self._btn_play_act.setText("⏹ 停止")
+            self._btn_play_act.setText("停止")
             self._draw_audio_view(sec)
             self._start_wave_timer(sec)
         except Exception as e:
@@ -1757,7 +1758,7 @@ class GRPEditor(EditorMainWindow):
                 self._audio_proc = None
         except: pass
         self._audio_playing = False
-        self._btn_play_act.setText("▶️ 播放")
+        self._btn_play_act.setText("播放")
         if self._wave_timer:
             self._wave_timer.stop()
             self._wave_timer = None

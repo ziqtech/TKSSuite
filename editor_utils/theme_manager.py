@@ -161,6 +161,27 @@ def svg_icon(name: str) -> QIcon:
     return QIcon(svg_path(name))
 
 
+_icon_cache: dict[tuple[str, str], QIcon] = {}
+
+
+def themed_icon(name: str, theme_id: str) -> QIcon:
+    """返回主题感知 SVG 图标 (P4-1 图标库)。
+
+    命名沿用 down-arrow / down-arrow-light 成对约定: 深色主题取
+    <name>.svg, 浅色主题优先取 <name>-light.svg; 无浅色专用文件的
+    多色图标 (Fluent Emoji 库, 深浅底色均可读) 回退共用基础文件。
+    结果按 (名称, 主题) 缓存; 图标清单见 editor_themes/svg/。
+    """
+    value = normalize_theme(theme_id)
+    key = (name, value)
+    if key not in _icon_cache:
+        suffix = "" if THEMES[value].is_dark else "-light"
+        if suffix and not (_THEMES_DIR / "svg" / f"{name}{suffix}.svg").is_file():
+            suffix = ""
+        _icon_cache[key] = svg_icon(name + suffix)
+    return _icon_cache[key]
+
+
 # Qt 原生控件（QSS 不覆盖的弹窗、滚动区域等）使用的调色板。
 # 颜色值集中在 theme_tokens.PALETTE，此处只做角色名 → QPalette 角色的映射。
 _PALETTE_ROLE_MAP: dict[str, QPalette.ColorRole] = {

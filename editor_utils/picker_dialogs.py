@@ -69,10 +69,10 @@ class TktPickerDialog(QDialog):
         # 按钮
         btn_layout = QHBoxLayout()
         btn_layout.addStretch()
-        btn_ok = QPushButton("✅ 确定")
+        btn_ok = QPushButton("确定")
         btn_ok.clicked.connect(self._accept)
         btn_layout.addWidget(btn_ok)
-        btn_cancel = QPushButton("❌ 取消")
+        btn_cancel = QPushButton("取消")
         btn_cancel.clicked.connect(self.reject)
         btn_layout.addWidget(btn_cancel)
         layout.addLayout(btn_layout)
@@ -261,8 +261,8 @@ class StatusPickerDialog(QDialog):
         bl.addWidget(QPushButton("全选", clicked=lambda: self._set_all_checked(True)))
         bl.addWidget(QPushButton("全清", clicked=lambda: self._set_all_checked(False)))
         bl.addStretch()
-        bl.addWidget(QPushButton("✅ 确定", clicked=self._ok))
-        bl.addWidget(QPushButton("❌ 取消", clicked=self.reject))
+        bl.addWidget(QPushButton("确定", clicked=self._ok))
+        bl.addWidget(QPushButton("取消", clicked=self.reject))
         layout.addLayout(bl)
 
     def _set_all_checked(self, state):
@@ -493,8 +493,8 @@ class ItemPickerDialog(QDialog):
             btn_clr.clicked.connect(self._do_clear)
             bl.addWidget(btn_clr)
         bl.addStretch()
-        bl.addWidget(QPushButton("❌ 取消", clicked=self.reject))
-        btn_ok = QPushButton("✅ 确定")
+        bl.addWidget(QPushButton("取消", clicked=self.reject))
+        btn_ok = QPushButton("确定")
         btn_ok.clicked.connect(self._accept)
         bl.addWidget(btn_ok)
         layout.addLayout(bl)
@@ -760,7 +760,6 @@ class WarpcPickerDialog(QDialog):
         layout = QVBoxLayout(self)
         # 搜索框
         search_row = QHBoxLayout()
-        search_row.addWidget(QLabel("🔍"))
         self._search = QLineEdit()
         self._search.setPlaceholderText("按名称或索引搜索...")
         self._search.textChanged.connect(self._populate)
@@ -852,7 +851,7 @@ class WarpcPickerDialog(QDialog):
             if pix:
                 lbl.setPixmap(pix)
             else:
-                lbl.setText("👤")
+                lbl.setText("👤")  # 无头像占位符 (功能豁免)
             lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
             self._table.setCellWidget(row, 0, lbl)
 

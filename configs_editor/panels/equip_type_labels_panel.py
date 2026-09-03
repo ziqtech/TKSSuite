@@ -87,7 +87,7 @@ class EquipTypeLabelsPanel(ConfigPanelBase):
 
         # ── 按钮 ──
         btn_row = QHBoxLayout()
-        btn_add = QPushButton("➕ 添加条目")
+        btn_add = QPushButton("添加条目")
         btn_add.clicked.connect(self._on_add)
         btn_row.addWidget(btn_add)
 
@@ -121,7 +121,7 @@ class EquipTypeLabelsPanel(ConfigPanelBase):
 
             # 操作列 (删除按钮)
             del_btn = QToolButton()
-            del_btn.setText("🗑 删除")
+            del_btn.setText("删除")
             del_btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
             del_btn.setAutoRaise(True)
             del_btn.clicked.connect(lambda checked, row=i: self._on_delete(row))

@@ -209,7 +209,7 @@ class ModMergerDialog(QDialog):
         # ---- 底部按钮 ----
         bottom_row = QHBoxLayout()
         bottom_row.addStretch()
-        btn_merge = QPushButton("🔗 执行合并")
+        btn_merge = QPushButton("执行合并")
         btn_merge.setObjectName("btnPack")
         btn_merge.clicked.connect(self._on_merge)
         bottom_row.addWidget(btn_merge)
@@ -294,7 +294,7 @@ class ModMergerDialog(QDialog):
 
         info = analyze_merge(self._file_paths)
         if not info.get("valid"):
-            self._lbl_summary.setText(f"❌ 无法分析: {info.get('error', '')}")
+            self._lbl_summary.setText(f"无法分析: {info.get('error', '')}")
             return
 
         targets = info.get("targets", [])

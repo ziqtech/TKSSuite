@@ -42,7 +42,7 @@ from editor_utils import theme_manager
 from editor_utils.dock_components import create_dock
 from editor_utils.theme_switcher import (
     apply_theme_to_window, create_theme_menu, current_window_theme,
-    toggle_theme_in_family,
+    sync_themed_icons, toggle_theme_in_family,
 )
 from editor_utils.ui_helpers import themed_messagebox
 from editor_utils.version import format_about_header, format_title
@@ -74,6 +74,8 @@ class EditorMainWindow(QMainWindow):
                               persist=False)
         self._build_ui()
         self._after_build()
+        # 主题应用先于 UI 构建, 控件此时才存在 → 补一次图标同步 (P4-1)
+        sync_themed_icons(self, self._theme_id)
         # Ctrl+F 聚焦搜索框 — 经 _focus_search 按常见属性名发现;
         # 子类已覆盖 _focus_search 的 (如自带菜单绑定) 不重复安装
         from PySide6.QtGui import QKeySequence, QShortcut

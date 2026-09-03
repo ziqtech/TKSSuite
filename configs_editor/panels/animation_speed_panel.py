@@ -136,22 +136,22 @@ class AnimationSpeedPanel(ConfigPanelBase):
         btn_layout = QHBoxLayout(btn_row)
         btn_layout.setContentsMargins(0, 0, 0, 0)
 
-        btn_2x = QPushButton("⚡ 全部 2 倍速")
+        btn_2x = QPushButton("全部 2 倍速")
         btn_2x.setToolTip("将所有动画参数设置为 2 倍速 (延迟减半)")
         btn_2x.clicked.connect(self._apply_2x_speed)
         btn_layout.addWidget(btn_2x)
 
-        btn_3x = QPushButton("⚡⚡ 全部 3 倍速")
+        btn_3x = QPushButton("全部 3 倍速")
         btn_3x.setToolTip("将所有动画参数设置为 3 倍速 (延迟除以 3)")
         btn_3x.clicked.connect(self._apply_3x_speed)
         btn_layout.addWidget(btn_3x)
 
-        btn_max = QPushButton("💥 全部极速")
+        btn_max = QPushButton("全部极速")
         btn_max.setToolTip("将所有动画参数设置为 10ms (极速)")
         btn_max.clicked.connect(self._apply_max_speed)
         btn_layout.addWidget(btn_max)
 
-        btn_reset = QPushButton("🔄 重置默认")
+        btn_reset = QPushButton("重置默认")
         btn_reset.setToolTip("恢复到游戏原始值")
         btn_reset.clicked.connect(self._reset_to_default)
         btn_layout.addWidget(btn_reset)

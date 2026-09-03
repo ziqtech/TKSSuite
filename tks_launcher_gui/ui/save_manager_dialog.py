@@ -102,17 +102,17 @@ class SaveManagerDialog(QDialog):
 
         # 列表操作按钮
         btn_row = QHBoxLayout()
-        self._btn_restore = QPushButton("📦 恢复选中备份")
+        self._btn_restore = QPushButton("恢复选中备份")
         self._btn_restore.setObjectName("btnPack")
         self._btn_restore.clicked.connect(self._on_restore)
         btn_row.addWidget(self._btn_restore)
 
-        self._btn_delete = QPushButton("🗑️ 删除选中备份")
+        self._btn_delete = QPushButton("删除选中备份")
         self._btn_delete.clicked.connect(self._on_delete)
         btn_row.addWidget(self._btn_delete)
 
         btn_row.addStretch()
-        btn_refresh = QPushButton("🔄 刷新列表")
+        btn_refresh = QPushButton("刷新列表")
         btn_refresh.clicked.connect(self._refresh_list)
         btn_row.addWidget(btn_refresh)
         list_lay.addLayout(btn_row)
@@ -128,7 +128,7 @@ class SaveManagerDialog(QDialog):
         self._edit_name = QLineEdit()
         self._edit_name.setPlaceholderText("输入备份名称 (留空则用日期时间)")
         name_row.addWidget(self._edit_name, 1)
-        self._btn_create = QPushButton("💾 创建备份")
+        self._btn_create = QPushButton("创建备份")
         self._btn_create.setObjectName("btnPack")
         self._btn_create.clicked.connect(self._on_create)
         name_row.addWidget(self._btn_create)
@@ -317,7 +317,7 @@ class SaveManagerDialog(QDialog):
                     cur_state.schema_version if cur_state else 2)
                 self._log_msg(f"恢复前已自动备份当前存档: {auto_name}")
             except Exception as e:
-                self._log_msg(f"⚠ 自动备份失败 (继续恢复): {e}")
+                self._log_msg(f"自动备份失败 (继续恢复): {e}")
 
         # 恢复存档文件
         try:

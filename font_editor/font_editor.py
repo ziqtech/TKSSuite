@@ -191,7 +191,7 @@ class FontEditorWindow(EditorMainWindow):
         corner_widget = QWidget()
         corner_layout = QHBoxLayout(corner_widget)
         corner_layout.setContentsMargins(0, 0, 4, 0)
-        btn_theme = QPushButton("🌓 切换主题")
+        btn_theme = QPushButton("切换主题")
         btn_theme.clicked.connect(self._toggle_theme)
         btn_theme.setProperty("class", "CompactBtn")
         corner_layout.addWidget(btn_theme)

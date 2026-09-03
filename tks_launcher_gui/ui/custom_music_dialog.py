@@ -257,7 +257,7 @@ class CustomMusicDialog(QDialog):
         # ── 底部操作 ──
         bottom = QHBoxLayout()
         bottom.setSpacing(8)
-        btn_add = QPushButton("➕ 新增音效")
+        btn_add = QPushButton("新增音效")
         btn_add.setToolTip(f"添加 .mp3 作为新曲目 (文件名为数字时保留原编号，否则从 {ADDED_SLOT_START:04d}.mp3 开始编号)")
         btn_add.clicked.connect(self._on_add)
         bottom.addWidget(btn_add)
@@ -268,10 +268,10 @@ class CustomMusicDialog(QDialog):
 
         bottom.addStretch()
 
-        btn_import = QPushButton("📥 导入 .tksmod")
+        btn_import = QPushButton("导入 .tksmod")
         btn_import.clicked.connect(self._on_import)
         bottom.addWidget(btn_import)
-        btn_export = QPushButton("📤 导出为 .tksmod")
+        btn_export = QPushButton("导出为 .tksmod")
         btn_export.setObjectName("btnPack")
         btn_export.clicked.connect(self._on_export)
         bottom.addWidget(btn_export)

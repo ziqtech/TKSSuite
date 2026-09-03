@@ -85,12 +85,12 @@ class ModEditorDialog(QDialog):
 
         # 操作按钮
         btn_row = QHBoxLayout()
-        self.btn_add = QPushButton("➕ 添加文件…")
+        self.btn_add = QPushButton("添加文件…")
         self.btn_add.clicked.connect(self._on_add)
         self.btn_add.setEnabled(False)
         btn_row.addWidget(self.btn_add)
 
-        self.btn_delete = QPushButton("🗑 删除选中")
+        self.btn_delete = QPushButton("删除选中")
         self.btn_delete.clicked.connect(self._on_delete)
         self.btn_delete.setEnabled(False)
         btn_row.addWidget(self.btn_delete)
@@ -107,7 +107,7 @@ class ModEditorDialog(QDialog):
         # 底部按钮
         bottom_row = QHBoxLayout()
         bottom_row.addStretch()
-        self.btn_save = QPushButton("💾 保存")
+        self.btn_save = QPushButton("保存")
         self.btn_save.setObjectName("btnPack")
         self.btn_save.clicked.connect(self._on_save)
         self.btn_save.setEnabled(False)

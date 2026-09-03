@@ -8,6 +8,7 @@ from PySide6.QtWidgets import (
 )
 
 from editor_utils.dock_components import DockHeader
+from editor_utils.ui_helpers import set_themed_icon
 from editor_utils.search_utils import search_match
 from editor_utils.adaptive_table import AdaptiveTableWidget
 
@@ -51,7 +52,8 @@ class BookTabBase(QWidget):
         self.search_input.setPlaceholderText("搜索…")
         self.search_input.textChanged.connect(self._apply_filter)
         search_row.addWidget(self.search_input, 1)
-        btn_clear = QPushButton("✕")
+        btn_clear = QPushButton("")
+        set_themed_icon(btn_clear, "close")
         btn_clear.setProperty("class", "CompactBtn")  # 紧凑内边距, 避免 ✕ 被裁剪
         btn_clear.setToolTip("清除搜索")
         btn_clear.setFixedWidth(28)

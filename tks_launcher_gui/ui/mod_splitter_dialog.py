@@ -68,7 +68,7 @@ class ModSplitterDialog(QDialog):
         btn_row = QHBoxLayout()
         btn_row.addStretch()
 
-        self._btn_split = QPushButton("📂 执行拆分")
+        self._btn_split = QPushButton("执行拆分")
         self._btn_split.setObjectName("btnPack")
         self._btn_split.setEnabled(False)
         self._btn_split.clicked.connect(self._on_split)

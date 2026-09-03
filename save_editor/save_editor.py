@@ -571,15 +571,15 @@ class SaveEditorApp(EditorMainWindow):
         fm.addAction("打开存档目录…", QKeySequence("Ctrl+O"), self._cmd_open)
         fm.addAction("保存当前槽位", QKeySequence("Ctrl+S"), self._cmd_save)
         fm.addSeparator()
-        fm.addAction("🚪 退出", self.close)
+        fm.addAction("退出", self.close)
         tm = mb.addMenu("工具(&T)")
         tm.addAction("刷新数据显示", self._refresh_all)
         self.add_standard_menus(mb)
 
         # 工具栏
         toolbar = QHBoxLayout()
-        toolbar.addWidget(QPushButton("📂 打开目录", clicked=self._cmd_open))
-        toolbar.addWidget(QPushButton("💾 保存", clicked=self._cmd_save))
+        toolbar.addWidget(QPushButton("打开目录", clicked=self._cmd_open))
+        toolbar.addWidget(QPushButton("保存", clicked=self._cmd_save))
         toolbar.addSpacing(12)
         toolbar.addWidget(QLabel("槽位:"))
         self._slot_btns = []
@@ -592,7 +592,7 @@ class SaveEditorApp(EditorMainWindow):
             toolbar.addWidget(btn)
             self._slot_btns.append(btn)
         toolbar.addStretch()
-        toolbar.addWidget(QPushButton("🌗 切换主题", clicked=self._toggle_theme))
+        toolbar.addWidget(QPushButton("切换主题", clicked=self._toggle_theme))
         self._status_label = QLabel("请打开存档目录")
         self._status_label.setProperty("class", "SaveStatusLabel")
         toolbar.addWidget(self._status_label)
@@ -703,7 +703,7 @@ class SaveEditorApp(EditorMainWindow):
         self._summary_text.setFont(QFont("Consolas", 9))
         layout.addWidget(self._summary_text, 1)
 
-        self.tabs.addTab(w, "📊 总览")
+        self.tabs.addTab(w, "总览")
 
     # ================================================================
     # Tab 1: 队伍与经济
@@ -822,13 +822,13 @@ class SaveEditorApp(EditorMainWindow):
 
         # 应用按钮
         btn_row = QHBoxLayout()
-        btn_row.addWidget(QPushButton("✅ 应用队伍修改", clicked=self._apply_team))
+        btn_row.addWidget(QPushButton("应用队伍修改", clicked=self._apply_team))
         btn_row.addWidget(QLabel("(修改后需保存到文件)"))
         btn_row.addStretch()
         layout.addLayout(btn_row)
         layout.addStretch()
 
-        self.tabs.addTab(w, "👥 队伍")
+        self.tabs.addTab(w, "队伍")
 
     # ================================================================
     # Tab 2: 物品
@@ -843,9 +843,9 @@ class SaveEditorApp(EditorMainWindow):
         self._inv_count_edit = QLineEdit("0")
         self._inv_count_edit.setFixedWidth(60)
         ctrl.addWidget(self._inv_count_edit)
-        ctrl.addWidget(QPushButton("🔄 刷新", clicked=self._refresh_inventory))
-        ctrl.addWidget(QPushButton("✅ 应用修改", clicked=self._apply_inventory))
-        ctrl.addWidget(QPushButton("➕ 新增物品", clicked=self._add_inv_item_dialog))
+        ctrl.addWidget(QPushButton("刷新", clicked=self._refresh_inventory))
+        ctrl.addWidget(QPushButton("应用修改", clicked=self._apply_inventory))
+        ctrl.addWidget(QPushButton("新增物品", clicked=self._add_inv_item_dialog))
         ctrl.addStretch()
         layout.addLayout(ctrl)
 
@@ -877,13 +877,13 @@ class SaveEditorApp(EditorMainWindow):
         self._inv_edit_qty = QLineEdit()
         self._inv_edit_qty.setFixedWidth(60)
         edit_row.addWidget(self._inv_edit_qty)
-        edit_row.addWidget(QPushButton("✅ 修改选中", clicked=self._apply_inv_edit))
-        edit_row.addWidget(QPushButton("🗑 删除选中", clicked=self._delete_inv_item))
+        edit_row.addWidget(QPushButton("修改选中", clicked=self._apply_inv_edit))
+        edit_row.addWidget(QPushButton("删除选中", clicked=self._delete_inv_item))
         edit_row.addStretch()
         layout.addLayout(edit_row)
 
         self._inv_table.itemSelectionChanged.connect(self._on_inv_select)
-        self.tabs.addTab(w, "🎒 物品")
+        self.tabs.addTab(w, "物品")
 
     # ================================================================
     # Tab 3: 事件系统 (核心改进)
@@ -902,16 +902,16 @@ class SaveEditorApp(EditorMainWindow):
 
         # 子Tab: 开关
         self._switch_table = self._build_event_subtab(
-            "🔘 事件开关", 32, SWITCH_SEMANTICS, "word_755E10, case49 设置")
+            "事件开关", 32, SWITCH_SEMANTICS, "word_755E10, case49 设置")
         # 子Tab: 变量
         self._var_table = self._build_event_subtab(
-            "🔢 事件变量", 250, VARIABLE_SEMANTICS, "word_755E80, case36/37 设置")
+            "事件变量", 250, VARIABLE_SEMANTICS, "word_755E80, case36/37 设置")
         # 子Tab: 标志
         self._flag_table = self._build_event_subtab(
-            "🚩 事件标志", 1024, FLAG_SEMANTICS, "word_756080, sub_40CB08 设置")
+            "事件标志", 1024, FLAG_SEMANTICS, "word_756080, sub_40CB08 设置")
         # 子Tab: 结果
         self._result_table = self._build_event_subtab(
-            "🎯 事件结果", 24, RESULT_SEMANTICS, "word_755E50, case60 检查")
+            "事件结果", 24, RESULT_SEMANTICS, "word_755E50, case60 检查")
 
         # 控制栏
         ctrl = QHBoxLayout()
@@ -922,10 +922,10 @@ class SaveEditorApp(EditorMainWindow):
         self._event_hex_cb.stateChanged.connect(self._refresh_event_display)
         ctrl.addWidget(self._event_hex_cb)
         ctrl.addStretch()
-        ctrl.addWidget(QPushButton("✅ 应用事件修改", clicked=self._apply_events))
+        ctrl.addWidget(QPushButton("应用事件修改", clicked=self._apply_events))
         layout.addLayout(ctrl)
 
-        self.tabs.addTab(w, "📋 事件系统")
+        self.tabs.addTab(w, "事件系统")
 
     def _build_event_subtab(self, title, count, semantics, source_note):
         """构建事件子Tab: 返回 QTableWidget"""
@@ -986,14 +986,14 @@ class SaveEditorApp(EditorMainWindow):
 
         # 应用按钮
         btn_row = QHBoxLayout()
-        btn_row.addWidget(QPushButton("✅ 应用全局修改", clicked=self._apply_global))
+        btn_row.addWidget(QPushButton("应用全局修改", clicked=self._apply_global))
         btn_row.addStretch()
         inner_layout.addLayout(btn_row)
         inner_layout.addStretch()
 
         scroll.setWidget(inner)
         layout.addWidget(scroll)
-        self.tabs.addTab(w, "🌍 全局状态")
+        self.tabs.addTab(w, "全局状态")
 
     def _build_global_section(self, parent_layout, title, fields, seg):
         grp = QWidget()
@@ -1051,11 +1051,11 @@ class SaveEditorApp(EditorMainWindow):
         # 搜索
         sf = QHBoxLayout()
         self._warpc_search = QLineEdit()
-        self._warpc_search.setPlaceholderText("🔍 搜索角色...")
+        self._warpc_search.setPlaceholderText("搜索角色...")
         self._warpc_search.textChanged.connect(self._refresh_warpc_list)
         sf.addWidget(self._warpc_search)
         self._warpc_filter = EditorComboBox()
-        self._warpc_filter.addItems(["全部", "✅ 已激活", "❌ 未激活", "👥 队伍中"])
+        self._warpc_filter.addItems(["全部", "已激活", "未激活", "队伍中"])
         self._warpc_filter.currentIndexChanged.connect(self._refresh_warpc_list)
         sf.addWidget(self._warpc_filter)
         left_layout.addLayout(sf)
@@ -1085,7 +1085,7 @@ class SaveEditorApp(EditorMainWindow):
 
         self._warpc_cur_idx = -1
         self._warpc_panel.record_applied.connect(self._on_warpc_record_applied)
-        self.tabs.addTab(w, "👤 角色")
+        self.tabs.addTab(w, "角色")
 
     # ================================================================
     # 数据加载
@@ -1543,11 +1543,11 @@ class SaveEditorApp(EditorMainWindow):
             name = self.tkt.get(name_id, f"ID:{name_id}") if name_id else ""
             in_team = i in team_set
 
-            if filt == "❌ 未激活" and role != -1:
+            if filt == "未激活" and role != -1:
                 continue
-            if filt == "✅ 已激活" and role != 0:
+            if filt == "已激活" and role != 0:
                 continue
-            if filt == "👥 队伍中" and not in_team:
+            if filt == "队伍中" and not in_team:
                 continue
             if search and search not in str(i) and search not in name.lower():
                 continue
@@ -1778,7 +1778,7 @@ class SaveEditorApp(EditorMainWindow):
         dlg = ItemPickerDialog(
             self, item_list,
             icon_pixmap_fn=self._get_icon_pixmap,
-            title="➕ 新增物品 — 选择物品",
+            title="新增物品 — 选择物品",
             return_key='index',
         )
         if dlg.exec() != QDialog.Accepted or dlg.selected_value is None:

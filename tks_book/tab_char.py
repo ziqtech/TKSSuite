@@ -419,7 +419,7 @@ class CharTab(BookTabBase):
         lines = []
         joins = self.data.char_joins.get(idx, [])
         for ev in joins:
-            parts = [f"📍 {ev['scene_text']}"]
+            parts = [ev['scene_text']]
             if ev['comment']:
                 parts.append(f"「{ev['comment']}」")
             lines.append("  ".join(parts))

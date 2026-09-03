@@ -94,7 +94,7 @@ from editor_utils.lzss import lzss_decompress_dat
 from editor_utils.shared_state import pick_tks_directory
 from editor_utils.dock_components import DockHeader
 from editor_utils.ui_helpers import (
-    make_fake_input, update_path_labels, confirm_close, EditorComboBox,
+    make_fake_input, update_path_labels, confirm_close, EditorComboBox, set_themed_icon,
 )
 from editor_utils.tab_widget import EditorTabWidget
 from editor_utils.adaptive_table import AdaptiveTableWidget
@@ -1805,8 +1805,8 @@ class ActEditorV2(EditorMainWindow):
         self.search_entry.setClearButtonEnabled(True)
         self.search_entry.textChanged.connect(self._apply_filter)
         toolbar.addWidget(self.search_entry)
-        toolbar.addWidget(QPushButton("🔍 搜索", clicked=self._apply_filter))
-        toolbar.addWidget(QPushButton("✕ 清除", clicked=self._clear_filter))
+        toolbar.addWidget(QPushButton("搜索", clicked=self._apply_filter))
+        toolbar.addWidget(QPushButton("清除", clicked=self._clear_filter))
         toolbar.addSpacing(8)
 
         self.show_empty_cb = QCheckBox("显示空条目")
@@ -1826,8 +1826,8 @@ class ActEditorV2(EditorMainWindow):
         toolbar.addWidget(self.greenscreen_cb)
 
         toolbar.addSpacing(8)
-        toolbar.addWidget(QPushButton("🔄 重新加载", clicked=self._reload))
-        toolbar.addWidget(QPushButton("🌗 切换主题", clicked=self._toggle_theme))
+        toolbar.addWidget(QPushButton("重新加载", clicked=self._reload))
+        toolbar.addWidget(QPushButton("切换主题", clicked=self._toggle_theme))
         toolbar.addStretch()
 
         self.status_var = QLabel("请通过 文件 → 加载 TKS 目录 打开数据")
@@ -1979,23 +1979,28 @@ class ActEditorV2(EditorMainWindow):
         playback_ctrl = QHBoxLayout()
         playback_ctrl.setSpacing(4)
 
-        btn_first = QPushButton("⏮️", clicked=self._tl_goto_first)
+        btn_first = QPushButton("", clicked=self._tl_goto_first)
+        set_themed_icon(btn_first, "first")
         btn_first.setToolTip("跳至首帧 (Ctrl+◀◀)")
         playback_ctrl.addWidget(btn_first)
 
-        btn_prev = QPushButton("◀️", clicked=self._tl_step_prev)
+        btn_prev = QPushButton("", clicked=self._tl_step_prev)
+        set_themed_icon(btn_prev, "prev")
         btn_prev.setToolTip("后退一帧 (J / ←)")
         playback_ctrl.addWidget(btn_prev)
 
-        btn_play = QPushButton("▶️", clicked=self._preview_play)
+        btn_play = QPushButton("", clicked=self._preview_play)
+        set_themed_icon(btn_play, "play")
         btn_play.setToolTip("播放动画 (L)")
         playback_ctrl.addWidget(btn_play)
 
-        btn_stop = QPushButton("⏹️", clicked=self._preview_stop)
+        btn_stop = QPushButton("", clicked=self._preview_stop)
+        set_themed_icon(btn_stop, "stop")
         btn_stop.setToolTip("停止播放 (K)")
         playback_ctrl.addWidget(btn_stop)
 
-        btn_last = QPushButton("⏭️", clicked=self._tl_goto_last)
+        btn_last = QPushButton("", clicked=self._tl_goto_last)
+        set_themed_icon(btn_last, "next")
         btn_last.setToolTip("跳至末帧 (Ctrl+▶▶)")
         playback_ctrl.addWidget(btn_last)
 
@@ -2026,7 +2031,7 @@ class ActEditorV2(EditorMainWindow):
 
         edit_ctrl = QHBoxLayout()
         edit_ctrl.setSpacing(4)
-        btn_zero = QPushButton("↩️ 归零", clicked=self._tl_reset_playhead)
+        btn_zero = QPushButton("归零", clicked=self._tl_reset_playhead)
         btn_zero.setToolTip("播放头归零")
         edit_ctrl.addWidget(btn_zero)
         self._tl_tick_lbl = QLabel("tick: 0")
@@ -2038,8 +2043,8 @@ class ActEditorV2(EditorMainWindow):
         edit_ctrl.addWidget(self._edit_mode_cb)
 
         edit_ctrl.addStretch()
-        edit_ctrl.addWidget(QPushButton("✅ 应用修改", clicked=self._apply_edit))
-        edit_ctrl.addWidget(QPushButton("🔄 重置", clicked=self._reset_edit))
+        edit_ctrl.addWidget(QPushButton("应用修改", clicked=self._apply_edit))
+        edit_ctrl.addWidget(QPushButton("重置", clicked=self._reset_edit))
         ctrl.addLayout(edit_ctrl)
         inner.layout().addLayout(ctrl)
 
@@ -2304,7 +2309,7 @@ class ActEditorV2(EditorMainWindow):
         vars_row['_detail'] = detail
 
         # ── 展开/折叠 ──
-        toggle_btn = QPushButton("🔽 展开详情")
+        toggle_btn = QPushButton("展开详情")
         toggle_btn.setFixedWidth(100)
         toggle_btn.clicked.connect(lambda checked, li=layer_idx: self._toggle_card_detail(li))
         cl.addWidget(toggle_btn)
@@ -2319,11 +2324,11 @@ class ActEditorV2(EditorMainWindow):
         btn = vr.get('_toggle_btn')
         if vr.get('_detail_expanded', False):
             detail.setVisible(False)
-            btn.setText("🔽 展开详情")
+            btn.setText("展开详情")
             vr['_detail_expanded'] = False
         else:
             detail.setVisible(True)
-            btn.setText("🔼 收起详情")
+            btn.setText("收起详情")
             vr['_detail_expanded'] = True
 
     # ── Tab 3: 条目级参数 ──
@@ -2411,7 +2416,7 @@ class ActEditorV2(EditorMainWindow):
             grid.addWidget(le_tick, r, 2)
             self._tail_vars.append(le_tick)
 
-            btn = QPushButton("▶️")
+            btn = QPushButton("播放")
             btn.setFixedWidth(40)
             btn.setToolTip("试听此 sound_id 对应的音效文件")
             btn.clicked.connect(lambda checked, idx=pair: self._on_tail_preview(idx))
@@ -4460,7 +4465,7 @@ class ActEditorV2(EditorMainWindow):
 
         bl = QHBoxLayout()
         bl.addStretch()
-        bl.addWidget(QPushButton("✕ 关闭", clicked=dlg.close))
+        bl.addWidget(QPushButton("关闭", clicked=dlg.close))
         layout.addLayout(bl)
         dlg.exec()
 

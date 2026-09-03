@@ -16,7 +16,7 @@ from core.state_persistence import GuiState, load_gui_state, save_gui_state
 from core.launch_context import LaunchContext
 from core.recovery_snapshot import load_snapshot, recover_game_directory, manifest_changed
 from editor_utils import theme_manager
-from editor_utils.ui_helpers import themed_question
+from editor_utils.ui_helpers import set_themed_icon, themed_question
 from editor_utils.dock_components import create_dock
 from editor_utils.flow_layout import FlowLayout
 from editor_utils.theme_switcher import (
@@ -343,11 +343,13 @@ class MainWindow(QMainWindow):
         split_lay = QHBoxLayout(start_split)
         split_lay.setContentsMargins(0, 0, 0, 0)
         split_lay.setSpacing(0)
-        self.btn_start = QPushButton("🎮 启动游戏")
+        self.btn_start = QPushButton("启动游戏")
+        set_themed_icon(self.btn_start, "play")
         self.btn_start.setObjectName("btnStart")
         self.btn_start.setToolTip("按当前模式加载游戏功能与 MOD 并启动游戏 (Ctrl+Enter)")
         self.btn_start.clicked.connect(self._on_start)
-        self.btn_start_gear = QPushButton("⚙")
+        self.btn_start_gear = QPushButton("")
+        set_themed_icon(self.btn_start_gear, "gear")
         self.btn_start_gear.setObjectName("btnStartGear")
         self.btn_start_gear.setToolTip("选择游戏程序…")
         self.btn_start_gear.clicked.connect(self._choose_game_path)
@@ -356,13 +358,15 @@ class MainWindow(QMainWindow):
         toolbar.addWidget(start_split)
         toolbar.addSeparator()
 
-        self.btn_refresh_mods = QPushButton("🔄 刷新 MOD")
+        self.btn_refresh_mods = QPushButton("刷新 MOD")
+        set_themed_icon(self.btn_refresh_mods, "refresh")
         self.btn_refresh_mods.setObjectName("toolbarSecondary")
         self.btn_refresh_mods.setToolTip("重新扫描 mods 目录")
         self.btn_refresh_mods.clicked.connect(self._refresh_mods)
         toolbar.addWidget(self.btn_refresh_mods)
 
-        self.btn_save_mgr = QPushButton("💾 存档管理")
+        self.btn_save_mgr = QPushButton("存档管理")
+        set_themed_icon(self.btn_save_mgr, "save")
         self.btn_save_mgr.setObjectName("toolbarSecondary")
         self.btn_save_mgr.setToolTip("备份/恢复游戏存档及补丁状态")
         self.btn_save_mgr.clicked.connect(self._on_save_manager)
@@ -373,7 +377,8 @@ class MainWindow(QMainWindow):
         spacer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         spacer.setStyleSheet("background: transparent; border: none;")
         toolbar.addWidget(spacer)
-        self.btn_theme = QPushButton("🌓 切换主题")
+        self.btn_theme = QPushButton("切换主题")
+        set_themed_icon(self.btn_theme, "theme")
         self.btn_theme.setObjectName("toolbarSecondary")
         self.btn_theme.setToolTip("在当前主题族内快速切换深色/浅色 (Ctrl+T)")
         self.btn_theme.clicked.connect(lambda: toggle_theme_in_family(self))
@@ -491,7 +496,7 @@ class MainWindow(QMainWindow):
         # 启动按钮带当前模式后缀并随模式换色, 防止带错误模式误启动
         if hasattr(self, "btn_start"):
             self.btn_start.setText(
-                "🎮 启动游戏 · 兼容模式" if compatible else "🎮 启动游戏 · 标准模式")
+                "启动游戏 · 兼容模式" if compatible else "启动游戏 · 标准模式")
             self.btn_start.setObjectName("btnStartCompat" if compatible else "btnStart")
             self.btn_start.style().unpolish(self.btn_start)
             self.btn_start.style().polish(self.btn_start)
@@ -552,6 +557,7 @@ class MainWindow(QMainWindow):
         _row("画面兼容工具", self._summary_tool)
         # 「查看详细日志」改为启动状态值右侧的行内按钮 (靠右对齐)
         self._btn_show_log = QPushButton("查看详细日志")
+        set_themed_icon(self._btn_show_log, "log")
         self._btn_show_log.setObjectName("showLogInlineButton")
         self._btn_show_log.clicked.connect(self._show_log_dialog)
         _row("启动状态", self._summary_status, self._btn_show_log)
@@ -1106,7 +1112,7 @@ class MainWindow(QMainWindow):
     def _on_duplicate_ids(self, has_dup: bool):
         """模组列表刷新后根据重复 ID 情况更新状态标签和启动按钮"""
         if has_dup:
-            self.status_label.setText("❌ 存在重复ID")
+            self.status_label.setText("存在重复ID")
             self.status_label.setObjectName("statusLabelError")
             self.btn_start.setEnabled(False)
         else:

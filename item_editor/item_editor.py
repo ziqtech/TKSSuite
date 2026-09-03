@@ -473,7 +473,7 @@ class ItemEditorApp(EditorMainWindow):
         toolbar.addWidget(QPushButton("新建物品", clicked=self._new_item))
         toolbar.addWidget(QPushButton("重新加载", clicked=self._reload))
         toolbar.addStretch()
-        toolbar.addWidget(QPushButton("🌗 切换主题", clicked=self._toggle_theme))
+        toolbar.addWidget(QPushButton("切换主题", clicked=self._toggle_theme))
         self.status_var = QLabel("请通过 文件 → 加载 TKS 目录 打开数据")
         toolbar.addWidget(self.status_var)
         main_layout.addLayout(toolbar)
@@ -512,10 +512,10 @@ class ItemEditorApp(EditorMainWindow):
         self.lbl_rec_idx.setProperty("class", "RecordHeader")
         header_row.addWidget(self.lbl_rec_idx)
         header_row.addStretch()
-        header_row.addWidget(QPushButton("✅ 应用", clicked=self._apply_edit))
-        header_row.addWidget(QPushButton("📋 复制到空槽", clicked=self._copy_record))
-        header_row.addWidget(QPushButton("🔄 重置", clicked=self._reset_edit))
-        header_row.addWidget(QPushButton("🗑 清空", clicked=self._clear_current))
+        header_row.addWidget(QPushButton("应用", clicked=self._apply_edit))
+        header_row.addWidget(QPushButton("复制到空槽", clicked=self._copy_record))
+        header_row.addWidget(QPushButton("重置", clicked=self._reset_edit))
+        header_row.addWidget(QPushButton("清空", clicked=self._clear_current))
         right_layout.addLayout(header_row)
 
         # 滚动编辑区

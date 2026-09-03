@@ -70,6 +70,7 @@ from PySide6.QtGui import (
 from PySide6.QtCore import Qt, QTranslator, Signal, QTimer, QSize
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from editor_utils import theme_manager
+from editor_utils.ui_helpers import set_themed_icon
 from editor_utils.theme_manager import business_colors
 from editor_utils.theme_switcher import (
     apply_theme_to_window, toggle_theme_in_family,
@@ -571,10 +572,10 @@ class WarpcEditorV2(EditorMainWindow):
                 self._mode_stack.addWidget(self._table_panel)
             self._table_panel.refresh()
             self._mode_stack.setCurrentWidget(self._table_panel)
-            self.btn_mode_toggle.setText("📝 表单模式")
+            self.btn_mode_toggle.setText("表单模式")
         else:
             self._mode_stack.setCurrentIndex(0)
-            self.btn_mode_toggle.setText("📊 表格模式")
+            self.btn_mode_toggle.setText("表格模式")
             # 表格模式可能改动了草稿 → 从草稿刷新表单 (保持未应用状态同步)
             self._refresh_table()
             if 0 <= self._editing_idx < len(self._draft_records):
@@ -673,8 +674,8 @@ class WarpcEditorV2(EditorMainWindow):
         self.search_entry.textChanged.connect(self._apply_filter)
         self.search_entry.returnPressed.connect(self._apply_filter)
         toolbar.addWidget(self.search_entry)
-        toolbar.addWidget(QPushButton("🔍 搜索", clicked=self._apply_filter))
-        toolbar.addWidget(QPushButton("🗑 清除", clicked=self._clear_filter))
+        toolbar.addWidget(QPushButton("搜索", clicked=self._apply_filter))
+        toolbar.addWidget(QPushButton("清除", clicked=self._clear_filter))
         toolbar.addSpacing(10)
         # 字段定位: 输入字段名/标签后回车跳转到对应 Tab 并高亮
         toolbar.addWidget(QLabel("定位字段:"))
@@ -693,18 +694,18 @@ class WarpcEditorV2(EditorMainWindow):
         completer.activated.connect(lambda _t: QTimer.singleShot(0, self._locate_field))
         toolbar.addWidget(self.field_search)
         toolbar.addSpacing(10)
-        toolbar.addWidget(QPushButton("🔄 重新加载", clicked=self._reload))
-        toolbar.addWidget(QPushButton("🌗 切换主题", clicked=self._toggle_theme))
+        toolbar.addWidget(QPushButton("重新加载", clicked=self._reload))
+        toolbar.addWidget(QPushButton("切换主题", clicked=self._toggle_theme))
         toolbar.addStretch()
         # 编辑模式切换: 表单(单角色深度编辑) / 表格(跨角色批量编辑)
-        self.btn_mode_toggle = QPushButton("📊 表格模式")
+        self.btn_mode_toggle = QPushButton("表格模式")
         self.btn_mode_toggle.setCheckable(True)
         self.btn_mode_toggle.setToolTip("在表单编辑与表格批量编辑之间切换")
         self.btn_mode_toggle.toggled.connect(self._toggle_edit_mode)
         toolbar.addWidget(self.btn_mode_toggle)
         toolbar.addSpacing(10)
-        toolbar.addWidget(QPushButton("✅ 应用修改", clicked=self._apply_edit))
-        toolbar.addWidget(QPushButton("🔄 重置", clicked=self._reset_edit))
+        toolbar.addWidget(QPushButton("应用修改", clicked=self._apply_edit))
+        toolbar.addWidget(QPushButton("重置", clicked=self._reset_edit))
         main_layout.addLayout(toolbar)
 
         # 主 Splitter
@@ -746,10 +747,10 @@ class WarpcEditorV2(EditorMainWindow):
 
         order_bar = QHBoxLayout()
         order_bar.setContentsMargins(0, 0, 0, 0)
-        self.btn_move_up = QPushButton("⬆ 上移")
+        self.btn_move_up = QPushButton("上移")
         self.btn_move_up.setToolTip("将选中角色与上一条整体交换位置 (槽位号互换)")
         self.btn_move_up.clicked.connect(lambda: self._move_record(-1))
-        self.btn_move_down = QPushButton("⬇ 下移")
+        self.btn_move_down = QPushButton("下移")
         self.btn_move_down.setToolTip("将选中角色与下一条整体交换位置 (槽位号互换)")
         self.btn_move_down.clicked.connect(lambda: self._move_record(1))
         order_bar.addWidget(self.btn_move_up)
@@ -1219,15 +1220,16 @@ class WarpcEditorV2(EditorMainWindow):
         self._skill_group_combo.setMinimumWidth(200)
         self._skill_group_combo.addItem("(未加载 TKSkill.dat)", -1)
         row.addWidget(self._skill_group_combo)
-        btn_cancel = QPushButton("🚫 取消本组")
+        btn_cancel = QPushButton("取消本组")
         btn_cancel.setToolTip("将本组全部技能设为「不会(0)」; 组外技能保持不变。")
         btn_cancel.clicked.connect(self._cancel_group)
         row.addWidget(btn_cancel)
-        btn_cfg = QPushButton("🌱 智能配置本组")
+        btn_cfg = QPushButton("智能配置本组")
         btn_cfg.setToolTip("入口技能→可以学(10), 下游技能→等待学(1); 组外保持不变。\n进游戏后学会前置会自动解锁下游技能。")
         btn_cfg.clicked.connect(self._smart_config_group)
         row.addWidget(btn_cfg)
-        btn_simplify = QPushButton("🧹 精简当前配置")
+        btn_simplify = QPushButton("精简当前配置")
+        set_themed_icon(btn_simplify, "wand")
         btn_simplify.setToolTip("把当前角色冗余的「可以学」(实为下游)降为「等待学」, 修复列表臃肿。\n已学会与未拥有的技能保持不变。")
         btn_simplify.clicked.connect(self._simplify_current_config)
         row.addWidget(btn_simplify)
@@ -1953,12 +1955,12 @@ class WarpcEditorV2(EditorMainWindow):
             return self.skill_names.get(i, f"#{i}")
 
         lines = [f"技能组「{gname}」#{head} — 共 {len(members)} 个技能", "",
-                 f"● 设为「可以学(10)」入口技能 {len(entry)} 个:",
+                 f"设为「可以学(10)」入口技能 {len(entry)} 个:",
                  "   " + "、".join(nm(i) for i in entry[:20]) + ("…" if len(entry) > 20 else ""), "",
-                 f"● 设为「等待学(1)」下游技能 {len(waiting)} 个 (学会前置后自动解锁):",
+                 f"设为「等待学(1)」下游技能 {len(waiting)} 个 (学会前置后自动解锁):",
                  "   " + "、".join(nm(i) for i in waiting[:30]) + ("…" if len(waiting) > 30 else "")]
         if unreachable:
-            lines += ["", f"⚠ {len(unreachable)} 个技能无法仅靠组内前置解锁 → 保持原值不变 (仅提醒, 请手动确认):",
+            lines += ["", f"{len(unreachable)} 个技能无法仅靠组内前置解锁 → 保持原值不变 (仅提醒, 请手动确认):",
                       "   " + "、".join(nm(i) for i in sorted(unreachable)[:15]) + ("…" if len(unreachable) > 15 else "")]
         lines += ["", "组外技能保持不变。确定应用?"]
         if QMessageBox.question(self, "智能配置预览", "\n".join(lines),
@@ -1991,7 +1993,7 @@ class WarpcEditorV2(EditorMainWindow):
             return self.skill_names.get(i, f"#{i}")
 
         lines = [f"技能组「{gname}」#{head} — 共 {len(members)} 个技能", "",
-                 "● 全部设为「不会(0)」:",
+                 "全部设为「不会(0)」:",
                  "   " + "、".join(nm(i) for i in member_list[:30]) + ("…" if len(member_list) > 30 else ""),
                  "", "组外技能保持不变。确定应用?"]
         if QMessageBox.question(self, "取消本组预览", "\n".join(lines),
@@ -2035,13 +2037,13 @@ class WarpcEditorV2(EditorMainWindow):
             return self.skill_names.get(i, f"#{i}")
 
         lines = [f"分析当前角色 {len(tree)} 个在学技能:", "",
-                 f"● {len(demote)} 个「可以学」实为下游 → 降为「等待学(1)」:",
+                 f"{len(demote)} 个「可以学」实为下游 → 降为「等待学(1)」:",
                  "   " + "、".join(nm(i) for i in sorted(demote)[:20]) + ("…" if len(demote) > 20 else "")]
         if promote:
-            lines += ["", f"● {len(promote)} 个入口技能 → 提升为「可以学(10)」:",
+            lines += ["", f"{len(promote)} 个入口技能 → 提升为「可以学(10)」:",
                       "   " + "、".join(nm(i) for i in sorted(promote)[:15])]
         if unreachable:
-            lines += ["", f"⚠ {len(unreachable)} 个技能无法仅靠组内前置解锁 → 保持原值不变 (仅提醒):",
+            lines += ["", f"{len(unreachable)} 个技能无法仅靠组内前置解锁 → 保持原值不变 (仅提醒):",
                       "   " + "、".join(nm(i) for i in sorted(unreachable)[:15]) + ("…" if len(unreachable) > 15 else "")]
         lines += ["", f"共 {len(changed)} 处改动。已学会(20/30)与未拥有(0)的技能保持不变。", "确定应用?"]
         if QMessageBox.question(self, "精简配置预览", "\n".join(lines),
@@ -2082,7 +2084,7 @@ class WarpcEditorV2(EditorMainWindow):
                 gname = self.skill_names.get(head, f"#{head}")
                 offenders.append(f"「{gname}」#{head}: {cnt}个")
         if offenders:
-            lbl.setText("⚠ 以下技能组「待学习+可学习+已学习」已超过 12 个，"
+            lbl.setText("以下技能组「待学习+可学习+已学习」已超过 12 个，"
                         "进入战斗后该组技能菜单会数据溢出 (仅能容纳 12 项)，请将其控制在 12 个以内：\n"
                         + "；".join(offenders))
             lbl.setVisible(True)
@@ -2743,7 +2745,7 @@ class WarpcEditorV2(EditorMainWindow):
                 btn.setIcon(QIcon(pix))
                 btn.setIconSize(QSize(70, 70))
             else:
-                btn.setText("👤")
+                btn.setText("👤")  # 无头像占位符 (功能豁免)
             btn.clicked.connect(lambda checked, v=portrait_idx: (self._edit_vars[fn].setText(str(v)), dlg.accept()))
             tile_layout.addWidget(btn)
             index_label = QLabel(str(portrait_idx))

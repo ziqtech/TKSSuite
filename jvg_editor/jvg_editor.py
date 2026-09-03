@@ -46,6 +46,7 @@ except ImportError:
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from editor_utils.dock_components import DockHeader, create_dock
+from editor_utils.ui_helpers import set_themed_icon
 from editor_utils.mod_exporter import (
     compute_crc32, generate_mod_json, pack_tksmod, ModMetadataDialog,
     diff_binary_blocks, build_block_diff_json,
@@ -1077,19 +1078,19 @@ class JVGEditor(EditorMainWindow):
         frame_row.addWidget(self._chk_rebuild)
         frame_row.addSpacing(10)
 
-        btn_add_images = QPushButton("➕ 添加图片")
+        btn_add_images = QPushButton("添加图片")
         btn_add_images.clicked.connect(self._add_images)
         frame_row.addWidget(btn_add_images)
 
-        btn_replace_frame = QPushButton("🔄 替换选中")
+        btn_replace_frame = QPushButton("替换选中")
         btn_replace_frame.clicked.connect(self._replace_frame)
         frame_row.addWidget(btn_replace_frame)
 
-        btn_batch_images = QPushButton("📦 导入图集")
+        btn_batch_images = QPushButton("导入图集")
         btn_batch_images.clicked.connect(self._batch_replace_gridsheet)
         frame_row.addWidget(btn_batch_images)
 
-        btn_delete_frame = QPushButton("❌ 删除选中")
+        btn_delete_frame = QPushButton("删除选中")
         btn_delete_frame.clicked.connect(self._del_frame)
         frame_row.addWidget(btn_delete_frame)
 
@@ -1111,30 +1112,30 @@ class JVGEditor(EditorMainWindow):
         export_row.setSpacing(6)
         export_row.addWidget(QLabel("导出:"))
 
-        btn_export_single = QPushButton("📤 导出选中帧")
+        btn_export_single = QPushButton("导出选中帧")
         btn_export_single.clicked.connect(partial(self._export, "single"))
         export_row.addWidget(btn_export_single)
 
-        btn_export_group = QPushButton("📁 导出当前分组")
+        btn_export_group = QPushButton("导出当前分组")
         btn_export_group.clicked.connect(partial(self._export, "group"))
         export_row.addWidget(btn_export_group)
 
-        btn_export_grid = QPushButton("🗺️ 导出网格图集")
+        btn_export_grid = QPushButton("导出网格图集")
         btn_export_grid.clicked.connect(partial(self._export, "grid"))
         export_row.addWidget(btn_export_grid)
 
         export_row.addSpacing(20)
         export_row.addWidget(QLabel("头像操作:"))
 
-        self._act_toolbar_export_avatars = QPushButton("📤 导出全部头像")
+        self._act_toolbar_export_avatars = QPushButton("导出全部头像")
         self._act_toolbar_export_avatars.clicked.connect(self._export_all_avatars)
         export_row.addWidget(self._act_toolbar_export_avatars)
 
-        self._act_toolbar_export_avatars_split = QPushButton("📤 导出每帧头像")
+        self._act_toolbar_export_avatars_split = QPushButton("导出每帧头像")
         self._act_toolbar_export_avatars_split.clicked.connect(self._export_all_avatars_split)
         export_row.addWidget(self._act_toolbar_export_avatars_split)
 
-        self._act_toolbar_import_avatars = QPushButton("📥 导入全部头像")
+        self._act_toolbar_import_avatars = QPushButton("导入全部头像")
         self._act_toolbar_import_avatars.clicked.connect(self._import_all_avatars)
         export_row.addWidget(self._act_toolbar_import_avatars)
         export_row.addStretch()
@@ -1165,7 +1166,7 @@ class JVGEditor(EditorMainWindow):
         lc_layout.setContentsMargins(0, 0, 0, 0)
         list_header = QHBoxLayout()
         btn_add = QToolButton()
-        btn_add.setText("➕")
+        btn_add.setText("新增")
         btn_add.setAutoRaise(True)
         btn_add.setObjectName("dockToolButton")
         btn_add.clicked.connect(self._add_block)
@@ -1195,11 +1196,11 @@ class JVGEditor(EditorMainWindow):
         tb_layout = QHBoxLayout(tb_widget)
         tb_layout.setContentsMargins(4, 4, 4, 4)
         tb_layout.setSpacing(4)
-        self._btn_tile = QPushButton("🖼️ 平铺")
+        self._btn_tile = QPushButton("平铺")
         self._btn_tile.clicked.connect(partial(self._set_view, "tile"))
-        self._btn_single = QPushButton("📷 逐帧")
+        self._btn_single = QPushButton("逐帧")
         self._btn_single.clicked.connect(partial(self._set_view, "single"))
-        self._btn_anim = QPushButton("🎬 动画")
+        self._btn_anim = QPushButton("动画")
         self._btn_anim.clicked.connect(partial(self._set_view, "anim"))
         tb_layout.addWidget(self._btn_tile)
         tb_layout.addWidget(self._btn_single)
@@ -1219,17 +1220,18 @@ class JVGEditor(EditorMainWindow):
         tb_layout.addWidget(self._speed)
         tb_layout.addWidget(QLabel("ms"))
         tb_layout.addSpacing(10)
-        btn_prev = QPushButton("◀ 上一帧")
+        btn_prev = QPushButton("上一帧")
         btn_prev.clicked.connect(partial(self._nav, -1))
         btn_prev.setShortcut(Qt.Key_Left)
         tb_layout.addWidget(btn_prev)
-        btn_next = QPushButton("下一帧 ▶")
+        btn_next = QPushButton("下一帧")
         btn_next.clicked.connect(partial(self._nav, 1))
         btn_next.setShortcut(Qt.Key_Right)
         tb_layout.addWidget(btn_next)
         self._zoom = 1.0
         tb_layout.addStretch()
-        btn_zout = QPushButton("➖")
+        btn_zout = QPushButton("")
+        set_themed_icon(btn_zout, "minus")
         btn_zout.setFixedWidth(36)
         btn_zout.clicked.connect(partial(self._zoom_step, -0.5))
         tb_layout.addWidget(btn_zout)
@@ -1237,7 +1239,7 @@ class JVGEditor(EditorMainWindow):
         self._zoom_label.setAlignment(Qt.AlignCenter)
         self._zoom_label.setFixedWidth(40)
         tb_layout.addWidget(self._zoom_label)
-        btn_zin = QPushButton("➕")
+        btn_zin = QPushButton("新增")
         btn_zin.setFixedWidth(36)
         btn_zin.clicked.connect(partial(self._zoom_step, 0.5))
         tb_layout.addWidget(btn_zin)
@@ -1287,7 +1289,7 @@ class JVGEditor(EditorMainWindow):
         self._padding.setValue(1)
         self._padding.valueChanged.connect(self._refresh_view)
         layout_form.addRow("导出间距:", self._padding)
-        btn_theme = QPushButton("🌗 切换主题")
+        btn_theme = QPushButton("切换主题")
         btn_theme.clicked.connect(self._toggle_theme)
         layout_form.addRow(btn_theme)
         top_docks_layout.addWidget(self._create_dock("视图与布局", layout_widget))
@@ -2170,6 +2172,7 @@ class JVGEditor(EditorMainWindow):
             self._act_anim.setChecked(mode == "anim")
         if hasattr(self, '_btn_tile'):
             names = {"tile": "平铺", "single": "逐帧", "anim": "动画"}
+            # 状态圆点豁免 (🟢=当前模式/⚪=其他), 同 grp 层选择 (P4-1 核对)
             for btn, key in [(self._btn_tile, "tile"), (self._btn_single, "single"), (self._btn_anim, "anim")]:
                 btn.setText(f"🟢 {names[key]}" if mode == key else f"⚪ {names[key]}")
         self._kill_anim()

@@ -1,7 +1,7 @@
 # PySide6 界面体验优化方案
 
 > 创建日期：2026-09-04
-> 状态：**P0~P2 已完成；P3 进行中（6/8）；P4 进行中（5/6）；P3-3/P3-4/P4-1 延期专项**
+> 状态：**P0~P2、P4 已完成；P3 进行中（6/8，P3-3/P3-4 延期专项）**
 > 前置文档：《PySide6样式体系整改方案.md》（四阶段已完成）——本方案是其续篇
 > 结论：四阶段解决了"样式难维护"；本方案解决"体验不够好"——设计体系补全（排版令牌/图标/动效）、交互安全网（退出保护/脏标记/校验）、数据量增长后的列表能力。
 
@@ -143,7 +143,7 @@
 
 **目标**：摆脱 emoji 图标；两处关键动效；键盘焦点可见；对比度达标。
 
-1. [ ] SVG 图标库：补 ~20 个 16×16 线性图标（打开/保存/新建/撤销/搜索/刷新/启动/主题/导出/删除/新增/齿轮/日志/帮助…），深浅主题成对准备（沿用 down-arrow.svg / down-arrow-light.svg 先例）或用可着色方案；优先替换启动器工具栏与各编辑器工具行高频按钮 —— **延期专项**（见变更记录）
+1. [x] SVG 图标库：补 ~20 个 16×16 线性图标（打开/保存/新建/撤销/搜索/刷新/启动/主题/导出/删除/新增/齿轮/日志/帮助…），深浅主题成对准备（沿用 down-arrow.svg / down-arrow-light.svg 先例）或用可着色方案；优先替换启动器工具栏与各编辑器工具行高频按钮 —— **已完成（实现形态调整，见变更记录：改用 Fluent Emoji 多色图标库）**
 2. [x] GameOverlay 淡入淡出：QPropertyAnimation windowOpacity 0→1，250ms
 3. [x] ModeCard hover 光晕过渡：QVariantAnimation 插值 hover 强度（150ms），消除 24→68 alpha 突变
 4. [x] ModeCard 键盘焦点环：paintEvent 补 `hasFocus()` 时 2px accent 描边（StrongFocus 已设但视觉不可见）—— **已按用户反馈移除（2026-09-04）：视觉过重影响观感，键盘焦点改由 Qt 默认聚焦行为承载**
@@ -176,7 +176,7 @@
 | P1：设计体系 2.0 | **已完成** | 2026-09-04 | 2026-09-04 |
 | P2：列表操作能力 | **已完成** | 2026-09-04 | 2026-09-04 |
 | P3：反馈与一致性 | **进行中（6/8，2 项延期专项）** | 2026-09-04 |  |
-| P4：视觉打磨与可访问性 | **进行中（5/6，P4-1 延期专项）** | 2026-09-04 |  |
+| P4：视觉打磨与可访问性 | **已完成** | 2026-09-04 | 2026-09-04 |
 
 ### P0 清单
 
@@ -218,12 +218,14 @@
 - [x] 细节统一（帮助文案/省略号/对话框尺寸/emoji 口径）
 - [x] 主题切换按钮位置统一
 
+| P4：视觉打磨与可访问性 | **已完成** | 2026-09-04 | 2026-09-04 |
+
 ### P4 清单
 
-- [ ] SVG 图标库 ~20 个 + 高频按钮替换 —— 延期专项
+- [x] SVG 图标库 ~20 个 + 高频按钮替换（Fluent Emoji 多色图标库）
 - [x] GameOverlay 淡入淡出
 - [x] ModeCard 光晕过渡动画
-- [x] ModeCard 焦点环
+- [x] ModeCard 焦点环（后经用户反馈移除，见变更记录）
 - [x] avatar 裁剪对比度修复
 - [x] 主题菜单色块图标
 
@@ -255,4 +257,8 @@
 | 2026-09-04 | **P3 进行中（6/8）**：①`ui_helpers.themed_question` 统一确认弹窗（默认 Yes/No + 默认 No 防误回车，支持 buttons/default 双参数）；**confirm_close 从 Ok/Cancel 升级为 Yes/No 默认 No**（15 编辑器退出确认统一，回车不再意外放弃修改）；launcher 10 处裸调用全部替换（编辑器内 ~50 处随日常迭代迁移）。②基类状态栏：`_dirty` 置位时自动创建 QStatusBar + 永久 "● 有未保存修改" 指示标签（QSS `#statusDirty` accent 色），全编辑器覆盖；`status_message()` 助手；主题/帮助菜单动作补 statusTip（三段式中的"记录数/当前文件"保留各编辑器现有展示位，不强制迁移）。③**P3-5 表单防丢**：`ui_helpers.form_edits_pending`（控件值 vs 记录逐字段比对，combo "N-标签" 解析，不可解析字段跳过宁漏报不误报）+ item/skill 接入 `_unapplied_edits_guard`（切换记录有未应用修改 → 提示；取消时恢复选中且**不重填**——`idx == _editing_idx` 早退避免恢复选中触发重填误清）；kon/wardata/act 同模式待铺开。④**P3-6 色值收编**：theme_tokens 新增 LAUNCHER（dup_id/music_modified/music_unmodified/placeholder_gray）+ STATUS（loaded/missing）表；tab_widget `_BORDER_COLORS`/`RADIUS` 改由 SLOTS["bd_regular"]/["radius_md"] 派生（消除"就近维护"隐患）；ui_helpers 状态色、music 修改态、mod_list 重复 ID 红、4 文件 8 处 `#888` 占位全部改单一来源。⑤P3-7 细节：帮助文案"设置→画面兼容工具"改为指向右侧面板；省略号 7 处统一 `…`；merger 缩略图/按钮 96/96/56→120/100/60 与 packer/meta 统一；save_editor 菜单 emoji 移除（按钮 emoji 为全套件既定风格保留）。⑥**P3-8 形态调整**：放弃移动 mat/tks_book 的异位切换按钮（所在布局无顶栏，移动需新增工具栏行，收益/风险不划算），改为把"族内快速切换 (Ctrl+T)"做进 create_theme_menu 标准项——全编辑器统一 Ctrl+T 行为；gxp/jvg 自有 Ctrl+T 绑定移除防冲突；tks_book 保留 F5 不冲突。**P3-3（长任务 QThread 化）与 P3-4（QUndoStack mixin）延期专项**：两者均需逐编辑器/逐对话框深度集成与人工验证（涉及数据流与线程安全），不宜在本会话尾部赶工；实施入口已明确（mat_threads.py 范本 / warpc_table_mode.py:1000-1040 蓝本）。验证：编辑器冒烟 4/4 全绿（16.0s）、launcher 单测 27/27、launcher 主窗口离屏构建/关闭 OK、form_edits_pending 与状态栏/主题菜单机制离屏断言全过 |
 | 2026-09-04 | **P4 进行中（5/6）**：①GameOverlay 淡入：QPropertyAnimation windowOpacity 0→1（250ms），消除游戏加载场景悬浮窗突现感。②ModeCard 悬停光晕过渡：`_hover_progress` 经 QVariantAnimation 150ms 插值（enter/leave 触发 0↔1），未选中光晕 alpha 随进度淡入（24/18×p）、图标底座色 70→105 插值，消除 alpha 突变；选中态光晕保持常亮。③ModeCard 键盘焦点环：hasFocus() 时绘制内缩 3px 的模式色 2px 描边（圆角 7），Tab 键盘导航可见。④avatar 裁剪提示文字 (100,100,100)→(176,176,176)（对比度 ≈2.4:1→≈7.5:1，达标 WCAG 4.5:1；深色画布豁免注释保留）。⑤主题菜单色块图标：create_theme_menu 四主题条目各挂 12×12 accent 圆角色块（色取自 SLOTS["accent"]，accent 改色自动同步）。验证：编辑器冒烟 4/4 全绿（27.8s）、launcher 单测 27/27、ModeCard 动画/焦点环与 accent 图标离屏渲染断言全过 |
 | 2026-09-04 | **用户反馈调整**：移除 P4-4 ModeCard 键盘焦点环（用户确认绘制过重、难看，paintEvent 中 hasFocus 分支整段删除）；P4 批次其余内容不变。同会话累计：编辑器冒烟 4/4 全绿、launcher 单测 27/27 基线维持 |
-| 2026-09-04 | **延期专项汇总（3 项，实施入口已明确）**：①P3-3 长任务 QThread 化——编辑器侧以 mat_threads.py 的 DataLoaderThread/JvgLoaderThread 为范本推广 jvg/grp/tkt/wardata；启动器侧 packer/merger/splitter/save_manager 四对话框执行按钮移入 QThread（worker 模式参照 main_window 的 PatcherWorker），完成后清理 21 处 processEvents。②P3-4 QUndoStack 共享 mixin——以 warpc_table_mode.py:1000-1040 changeset 栈为蓝本抽 editor_utils 共享实现，先铺 item/skill/kon（form_edits_pending 的逐字段比对逻辑可复用于快照捕获）。③P4-1 SVG 图标库——约 20 枚 16×16 线性图标成批产出，深浅成对或可着色，替换后人工 4 主题视觉走查。三项共同点：需要成块的专注会话与人工交互/视觉验证，不适合零散赶工合入 |
+| 2026-09-04 | **P4-1 完成（图标库，实现形态按用户要求调整）**：初版自绘 1.75px 线性描边图标 42 文件经用户确认"难看"后**整体废弃**，改用 **Microsoft Fluent Emoji Flat**（MIT 协议）专业多色图标库——按语义映射下载 21 枚（open/save/new/add/delete/search/refresh/play/gear/theme(阴阳)/apply/import/export/undo/redo/log(scroll)/help/image/music/copy/close，另补 pause/pencil 共 23 枚），单套多色变体深浅底色均可读（`themed_icon` 增加无 `-light` 文件时回退基础文件的逻辑）；协议文本存 `editor_themes/svg/FLUENT-EMOJI-LICENSE.txt`。基础设施：`theme_manager.themed_icon(name, theme_id)`（按主题缓存）、`theme_switcher.sync_themed_icons`（**标签精确匹配自动挂图标**：`_LABEL_ICONS` 表覆盖 切换主题/应用系/搜索/刷新/保存/新增/删除/打开/重置/播放/暂停/伪彩导出导入 等 40+ 常用标签，新增同标签按钮零成本自动获得图标；未命中保持纯文本，不做运行时文本改写）+ `ui_helpers.set_themed_icon` 显式指定（themedIcon 动态属性优先级最高）；`apply_theme_to_window` 每次主题切换自动刷新全部按钮深浅变体；EditorMainWindow 构建后补一次同步（主题应用先于 UI 构建）。替换范围：启动器工具栏 6 按钮（刷新/存档管理/切换主题/齿轮/启动/查看日志，启动按钮去 🎮 emoji）；编辑器 **131 处** emoji 按钮标签两轮脚本清理（16 编辑器 + configs 面板），清空标签由标签表自动获得图标。验证：42/42 图标×主题加载渲染 OK、kon 编辑器自动图标命中断言 OK、编辑器冒烟 4/4 全绿（15.6s）、launcher 单测 27/27、launcher 工具栏 6 按钮 themedIcon 属性断言 OK |
+| 2026-09-04 | **P4-1 用户反馈核对面（第二轮）**：①theme 图标弃用阴阳图，改为 **First quarter moon 🌓**（用户点名 Win11 半月样式）；②delete 由垃圾桶改为 **红色叉 ❌**（Cross mark，用户指定“删除应为红色叉而非绿色系”）；③补 **Artist palette 🎨**（伪彩导出/导入按钮原语义）；④语义核对修正：重置/重置默认/恢复默认 🔄→refresh（原误映射 undo）。⑤**全面核对**（156 个按钮标签 × 映射表逐一对账）：新发现 9 个缺失图标并补齐（wand 🪄 / package 📦 / camera 📷 / clapper 🎬 / wrench 🔧 / first·prev·stop·next 播放控制组 / minus ➖）；**warpc_editor 此前漏出清扫清单**（21 处）连同 configs 面板、launcher 对话框、菜单残留共 47 处 emoji 全部清理；act_editor 播放控制行（⏮◀⏹⏭ + 空播放按钮）改为显式 first/prev/play/stop/next 图标；标签映射表扩至 **70+ 条**。修复两处自伤：strip 正则独立 emoji 规则误产生 `"""` 语法错误（4 处已修）、映射表 “✕” 键改用 `✕` 转义规避编码问题。最终：全项目 QPushButton emoji 残留 0、菜单残留 0；71 个标签自动获得语义图标，其余 85 个（取消/关闭/方向/专有操作）保持纯文本。验证：编译全过、launcher 单测 27/27、13 新图标 × 2 主题渲染 OK |
+| 2026-09-04 | **P4-1 第三轮（AST 级全量核对，响应用户指出的漏网）**：用户点名 grp "🔲 适应"、mat "↩️ 撤销"、save "👥 队伍中"、tkt_editor 大量遗漏——此前三轮清扫均用**手挑 emoji 字符集**，覆盖不足。改用 **ast 解析全项目字符串字面量 + 精确 emoji 判定**（SMP 区段 U+1F000-1FAFF 或含 FE0F 变体选择符；正文箭头 →/←/▶ 不误报），共扫出 41 处。处理：①tkt_editor SEMANTIC_CATEGORIES 13 个分类页签名、save_editor 8 个页签名 + 2 处"队伍中"筛选项、grp "🔲 适应"、mat "↩️ 撤销"（补映射 撤销→undo）、mod_list dockToolButton "🔄 刷新"、summon ℹ️ 提示条与 🎯🎯 HTML 标题、picker_dialogs 🔍 装饰 QLabel（整行移除）、tks_book 📍 行标记 —— 全部清理；②**豁免清单**（有意保留，均加注释）：grp/jvg 🟢⚪ 状态圆点（激活态语义）、summon/warpc/picker 👤 头像占位符（功能性）、mat 画布 ⚡👆 标注（PIL 绘制的领域标记）、mat_constants/mat_dat_io 文档串 ⚠️👆（逆向笔记）。复扫确认残留 10 处全为豁免项。验证：编译全过、冒烟 4/4 全绿（15.0s）、launcher 单测 27/27、mat 撤销按钮图标命中断言 OK |
+| 2026-09-04 | **P4-1 第四轮（空标签按钮修复，响应用户指出的 tkt 🎨 图标丢失）**：tkt_editor `btn_more_color`（🎨 更多颜色）被此前清扫清成空标签且未挂图标——已修复为 palette 图标 + tooltip。**全项目扫描器复查**：邻域分析所有 `QPushButton("")/QToolButton("")/_btn("")` 空标签构造，检查其后是否挂 `set_themed_icon`（兼容 self. 前缀），发现并修复 act_editor `btn_play`（播放控制行第 5 个按钮，首轮修复时遗漏）；复核确认其余空标签按钮（launcher 5 + act 4 + gxp/jvg 缩小 + tks_book 清除）全部已有图标。最终空标签无图标按钮 0 处。验证：编译全过、冒烟 4/4 全绿（15.4s）、launcher 单测 27/27 |
+| 2026-09-04 | **延期专项汇总（余 2 项，实施入口已明确）**：①P3-3 长任务 QThread 化——编辑器侧以 mat_threads.py 的 DataLoaderThread/JvgLoaderThread 为范本推广 jvg/grp/tkt/wardata；启动器侧 packer/merger/splitter/save_manager 四对话框执行按钮移入 QThread（worker 模式参照 main_window 的 PatcherWorker），完成后清理 21 处 processEvents。②P3-4 QUndoStack 共享 mixin——以 warpc_table_mode.py:1000-1040 changeset 栈为蓝本抽 editor_utils 共享实现，先铺 item/skill/kon（form_edits_pending 的逐字段比对逻辑可复用于快照捕获）。两项共同点：需要成块的专注会话与人工交互验证，不适合零散赶工合入 |

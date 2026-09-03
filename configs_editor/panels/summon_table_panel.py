@@ -138,7 +138,7 @@ class SummonEditDialog(QDialog):
         layout.setSpacing(8)
 
         # ── 主召唤目标 ──
-        layout.addWidget(QLabel("<b>🎯 主目标 (无多随机时使用)</b>"))
+        layout.addWidget(QLabel("<b>主目标 (无多随机时使用)</b>"))
 
         if self._is_dual:
             # 双值键: a/b 两个选择器
@@ -154,7 +154,7 @@ class SummonEditDialog(QDialog):
 
         # ── 随机候选列表 ──
         rand_header = QHBoxLayout()
-        rand_header.addWidget(QLabel("<b>🎲 多随机池 (优先，配置后覆盖主目标)</b>"))
+        rand_header.addWidget(QLabel("<b>多随机池 (优先，配置后覆盖主目标)</b>"))
         rand_header.addStretch()
         layout.addLayout(rand_header)
 
@@ -165,19 +165,19 @@ class SummonEditDialog(QDialog):
 
         # 随机候选操作按钮
         rand_btn_row = QHBoxLayout()
-        btn_add_rand = QPushButton("➕ 添加…")
+        btn_add_rand = QPushButton("添加…")
         btn_add_rand.clicked.connect(self._on_add_random)
         rand_btn_row.addWidget(btn_add_rand)
 
-        btn_del_rand = QPushButton("🗑 删除")
+        btn_del_rand = QPushButton("删除")
         btn_del_rand.clicked.connect(self._on_del_random)
         rand_btn_row.addWidget(btn_del_rand)
 
-        btn_up = QPushButton("🔼 上移")
+        btn_up = QPushButton("上移")
         btn_up.clicked.connect(partial(self._move_random, -1))
         rand_btn_row.addWidget(btn_up)
 
-        btn_down = QPushButton("🔽 下移")
+        btn_down = QPushButton("下移")
         btn_down.clicked.connect(partial(self._move_random, 1))
         rand_btn_row.addWidget(btn_down)
 
@@ -191,10 +191,10 @@ class SummonEditDialog(QDialog):
         # ── 按钮 ──
         btn_row = QHBoxLayout()
         btn_row.addStretch()
-        btn_cancel = QPushButton("❌ 取消")
+        btn_cancel = QPushButton("取消")
         btn_cancel.clicked.connect(self.reject)
         btn_row.addWidget(btn_cancel)
-        btn_ok = QPushButton("✅ 确定")
+        btn_ok = QPushButton("确定")
         btn_ok.clicked.connect(self._on_ok)
         btn_row.addWidget(btn_ok)
         layout.addLayout(btn_row)
@@ -227,7 +227,7 @@ class SummonEditDialog(QDialog):
         display_widget.setMinimumHeight(30)
         row.addWidget(display_widget, 1)
 
-        btn = QPushButton("🔍 选择…")
+        btn = QPushButton("选择…")
         row.addWidget(btn)
 
         container = QWidget()
@@ -273,7 +273,7 @@ class SummonEditDialog(QDialog):
         if pix:
             icon_label.setPixmap(pix)
         else:
-            icon_label.setText("👤")
+            icon_label.setText("👤")  # 无头像时的功能占位符 (非装饰 emoji, P4-1 核对豁免)
         name_label.setText(self._get_name(idx))
 
     def _update_main_display(self):
@@ -404,7 +404,7 @@ class SummonTablePanel(ConfigPanelBase):
         self._hint_bar.setObjectName("SummonHintBar")
         hint_layout = QHBoxLayout(self._hint_bar)
         hint_layout.setContentsMargins(8, 4, 8, 4)
-        hint_label = QLabel("ℹ️ 未加载 TKS 目录，当前显示原始索引。点击此处加载 TKS 目录以显示角色名称和头像。")
+        hint_label = QLabel("未加载 TKS 目录，当前显示原始索引。点击此处加载 TKS 目录以显示角色名称和头像。")
         hint_label.setObjectName("SummonHintLabel")
         hint_layout.addWidget(hint_label)
         hint_layout.addStretch()
@@ -439,7 +439,7 @@ class SummonTablePanel(ConfigPanelBase):
 
         # ── 按钮 ──
         btn_row = QHBoxLayout()
-        btn_reset = QPushButton("🔄 恢复默认")
+        btn_reset = QPushButton("恢复默认")
         btn_reset.clicked.connect(self.reset)
         btn_row.addWidget(btn_reset)
         btn_row.addStretch()
@@ -531,7 +531,7 @@ class SummonTablePanel(ConfigPanelBase):
 
             # 操作列 (编辑按钮)
             edit_btn = QToolButton()
-            edit_btn.setText("✏️ 编辑")
+            edit_btn.setText("编辑")
             edit_btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
             edit_btn.setAutoRaise(True)
             edit_btn.setToolTip("编辑此行")

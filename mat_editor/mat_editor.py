@@ -451,6 +451,7 @@ class SceneCanvasView(QGraphicsView):
             cur_a = r.get('d33', 0)
             cur_b = r.get('d34', 0)
             script_icon = ""
+            # 画布标注豁免 (⚡=有脚本/👆=有交互触发, PIL 绘制的领域语义标记, P4-1 核对)
             if cur_a > 0: script_icon += "⚡"
             if cur_b > 0: script_icon += "👆"
             if script_icon: label = f"{label} {script_icon}"
@@ -609,7 +610,7 @@ class SceneCanvasView(QGraphicsView):
                 return
             nx, ny = max(0, cx), max(0, cy)
             menu = QMenu(self)
-            act_new = menu.addAction(f"➕ 在此新增实体 ({nx},{ny})")
+            act_new = menu.addAction(f"在此新增实体 ({nx},{ny})")
             chosen = menu.exec(event.globalPos())
             if chosen == act_new:
                 self._editor._new_record(pos=(nx, ny))
@@ -622,8 +623,8 @@ class SceneCanvasView(QGraphicsView):
             self._editor._show_record(self._data.records[found])
             self._vis_redraw()
         menu = QMenu(self)
-        act_copy = menu.addAction("📋 复制实体 (到旁边)")
-        act_del = menu.addAction("🗑️ 删除实体")
+        act_copy = menu.addAction("复制实体 (到旁边)")
+        act_del = menu.addAction("删除实体")
         chosen = menu.exec(event.globalPos())
         if chosen == act_copy:
             self._editor._duplicate_entity(found, offset=True)
@@ -655,11 +656,11 @@ class SceneCanvasView(QGraphicsView):
         if self._vis_anim_playing:
             self._vis_stop_anim()
             self._vis_anim_playing = False
-            self._editor._vis_play_btn.setText("▶️ 播放全部")
+            self._editor._vis_play_btn.setText("播放全部")
         else:
             self._vis_anim_playing = True
             self._vis_start_anim()
-            self._editor._vis_play_btn.setText("⏸️ 暂停全部")
+            self._editor._vis_play_btn.setText("暂停全部")
 
     def _vis_start_anim(self):
         if self._vis_anim_timer:
@@ -712,7 +713,7 @@ class SceneCanvasView(QGraphicsView):
 
     def _vis_start_sel_anim(self, idx):
         self._vis_sel_anim_active = True
-        self._editor._vis_sel_anim_btn.setText("⏸️ 播放选中")
+        self._editor._vis_sel_anim_btn.setText("播放选中")
         self._vis_anim_frame[idx] = 0
         timer = QTimer(self)
         timer.timeout.connect(lambda: self._vis_sel_anim_tick(idx))
@@ -735,13 +736,13 @@ class SceneCanvasView(QGraphicsView):
         if self._vis_sel_anim_timer:
             self._vis_sel_anim_timer.stop()
             self._vis_sel_anim_timer = None
-        self._editor._vis_sel_anim_btn.setText("⏯️ 播放选中")
+        self._editor._vis_sel_anim_btn.setText("播放选中")
 
     def _on_display_mode_change(self):
         self._vis_stop_anim()
         self._vis_stop_sel_anim()
         self._vis_anim_playing = False
-        self._editor._vis_play_btn.setText("▶️ 播放全部")
+        self._editor._vis_play_btn.setText("播放全部")
         self._vis_display_mode = self._editor._display_mode_combo.currentText()
         self._editor._vis_load_scene()
 
@@ -1563,10 +1564,10 @@ class MatEditorApp(EditorMainWindow):
         # 新增/删除 + 筛选工具栏 (新增/删除置于原搜索位置)
         filter_row = QHBoxLayout()
         filter_row.setSpacing(2)
-        btn_new = QPushButton("➕ 新增")
+        btn_new = QPushButton("新增")
         btn_new.clicked.connect(self._new_record)
         filter_row.addWidget(btn_new)
-        btn_del = QPushButton("🗑️ 删除")
+        btn_del = QPushButton("删除")
         btn_del.clicked.connect(self._clear_current)
         filter_row.addWidget(btn_del)
         # 分隔线 (主题化 VSepLine, 配色随 4 主题)
@@ -1591,7 +1592,7 @@ class MatEditorApp(EditorMainWindow):
         # 实体搜索工具栏 — 按实体ID(索引)定位实体并查看其所属场景 (§实体搜索)
         search_row = QHBoxLayout()
         search_row.setSpacing(2)
-        search_row.addWidget(QLabel("🔍 搜索:"))
+        search_row.addWidget(QLabel("搜索:"))
         self.search_id_edit = QLineEdit()
         self.search_id_edit.setPlaceholderText("输入实体ID(索引), 回车定位并显示其所属场景")
         self.search_id_edit.setClearButtonEnabled(True)
@@ -1684,21 +1685,21 @@ class MatEditorApp(EditorMainWindow):
         tb.addWidget(QLabel("显示:"))
         tb.addWidget(self._display_mode_combo)
         tb.addWidget(self._vsep())
-        self._vis_play_btn = _btn("▶️ 播放全部", self._canvas._vis_toggle_anim,
+        self._vis_play_btn = _btn("播放全部", self._canvas._vis_toggle_anim,
                                   "播放/暂停精灵动画")
         tb.addWidget(self._vis_play_btn)
-        self._vis_sel_anim_btn = _btn("⏯️ 播放选中", self._canvas._vis_toggle_sel_anim,
+        self._vis_sel_anim_btn = _btn("播放选中", self._canvas._vis_toggle_sel_anim,
                                       "播放/暂停当前选中实体的动画")
         tb.addWidget(self._vis_sel_anim_btn)
-        tb.addWidget(_btn("🔄 刷新", self._vis_load_scene))
+        tb.addWidget(_btn("刷新", self._vis_load_scene))
         tb.addWidget(self._vsep())
         self._vis_edit_cb = QCheckBox("允许拖动")
         self._vis_edit_cb.stateChanged.connect(self._canvas._on_edit_mode_change)
         tb.addWidget(self._vis_edit_cb)
-        tb.addWidget(_btn("↩️ 撤销", self._undo,
+        tb.addWidget(_btn("撤销", self._undo,
                           "撤销上一步操作 (Ctrl+Z): 移动 / 新增 / 复制 / 删除"))
         tb.addWidget(self._vsep())
-        tb.addWidget(_btn("🌓 切换主题", self._toggle_theme))
+        tb.addWidget(_btn("切换主题", self._toggle_theme))
         outer.addWidget(row1)
 
         # ── 第二行: 类型过滤 + 前景遮挡 ──
@@ -1868,18 +1869,18 @@ class MatEditorApp(EditorMainWindow):
 
         # DefUnit chain list
         chain_toolbar = QHBoxLayout()
-        for text, chain in [("➕ A链", "A"), ("➕ B链", "B"), ("➕ C链", "C")]:
+        for text, chain in [("A链", "A"), ("B链", "B"), ("C链", "C")]:
             btn = QPushButton(text)
             btn.setFixedWidth(65)
             btn.setProperty("class", "CompactBtn")
             btn.clicked.connect(partial(self._add_chain_entry, chain))
             chain_toolbar.addWidget(btn)
-        btn_del_chain = QPushButton("🗑️ 删除")
+        btn_del_chain = QPushButton("删除")
         btn_del_chain.setFixedWidth(65)
         btn_del_chain.setProperty("class", "CompactBtn")
         btn_del_chain.clicked.connect(self._delete_chain_entry)
         chain_toolbar.addWidget(btn_del_chain)
-        btn_refr = QPushButton("🔄 刷新")
+        btn_refr = QPushButton("刷新")
         btn_refr.setFixedWidth(65)
         btn_refr.setProperty("class", "CompactBtn")
         btn_refr.clicked.connect(self._refresh_chain_list)
@@ -1915,17 +1916,17 @@ class MatEditorApp(EditorMainWindow):
         self.script_info_lbl = QLabel("(未选中 DEFINE)")
         self.script_info_lbl.setProperty("class", "PropLabel")
         stb.addWidget(self.script_info_lbl, 1)
-        self._btn_fix_validate = QPushButton("🔧 修复验证")
+        self._btn_fix_validate = QPushButton("修复验证")
         self._btn_fix_validate.setFixedWidth(104)
         self._btn_fix_validate.setToolTip("校验脚本中 SetPos 等语句的实体号/坐标/朝向是否与当前实体一致, 不一致可一键修复")
         self._btn_fix_validate.clicked.connect(self._show_fix_validate_menu)
         stb.addWidget(self._btn_fix_validate)
-        self._btn_script_tpl = QPushButton("📋 脚本模板")
+        self._btn_script_tpl = QPushButton("脚本模板")
         self._btn_script_tpl.setFixedWidth(104)
         self._btn_script_tpl.setToolTip("从原版高频脚本写法中挑选模板, 一键填入脚本编辑框光标处")
         self._btn_script_tpl.clicked.connect(self._show_script_template_dialog)
         stb.addWidget(self._btn_script_tpl)
-        btn_preview = QPushButton("▶ 预览")
+        btn_preview = QPushButton("预览")
         btn_preview.setFixedWidth(70)
         btn_preview.setToolTip("预览当前脚本执行流程")
         btn_preview.clicked.connect(self._preview_script)
@@ -4622,7 +4623,7 @@ class MatEditorApp(EditorMainWindow):
         head_a = rec.get('d39', 0)
         max_a = rec.get('d30', 0)
         if head_a > 0 and max_a > 0:
-            a_status = "⚡ 自动执行中" if cur_a > 0 else "已定义(未激活)"
+            a_status = "自动执行中" if cur_a > 0 else "已定义(未激活)"
             self._sched_labels['chain_a'].setText(f"✓ {a_status} [head=#{head_a},max={max_a},cur={cur_a}]")
         else:
             self._sched_labels['chain_a'].setText("— 无")

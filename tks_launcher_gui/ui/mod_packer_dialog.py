@@ -186,7 +186,7 @@ class ModPackerDialog(QDialog):
         bottom_row = QHBoxLayout()
         bottom_row.addStretch()
 
-        btn_pack = QPushButton("📦 执行打包")
+        btn_pack = QPushButton("执行打包")
         btn_pack.setObjectName("btnPack")
         btn_pack.clicked.connect(self._on_pack)
         bottom_row.addWidget(btn_pack)

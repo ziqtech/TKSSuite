@@ -62,7 +62,7 @@ class ExpLockPanel(ConfigPanelBase):
         btn_none.clicked.connect(lambda: self._set_all(False))
         btn_layout.addWidget(btn_none)
 
-        btn_reset = QPushButton("🔄 重置默认")
+        btn_reset = QPushButton("重置默认")
         btn_reset.setToolTip("恢复到本次加载时的原始值。若需恢复出厂默认，请删除 JSON 文件后重启编辑器。")
         btn_reset.clicked.connect(self.reset)
         btn_layout.addWidget(btn_reset)

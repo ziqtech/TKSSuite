@@ -460,14 +460,14 @@ class CustomAvatarDialog(QDialog):
 
         # 底部按钮
         btn_layout = QHBoxLayout()
-        btn_upload = QPushButton("📁 上传图片")
+        btn_upload = QPushButton("上传图片")
         btn_upload.clicked.connect(self._on_upload)
         btn_layout.addWidget(btn_upload)
         btn_layout.addStretch()
         btn_cancel = QPushButton("取消")
         btn_cancel.clicked.connect(self.reject)
         btn_layout.addWidget(btn_cancel)
-        btn_ok = QPushButton("✅ 确定生成")
+        btn_ok = QPushButton("确定生成")
         btn_ok.clicked.connect(self._on_confirm)
         btn_layout.addWidget(btn_ok)
         layout.addLayout(btn_layout)

@@ -1931,13 +1931,13 @@ class PreviewView(QWidget):
         # ── 控制栏 ──
         ctrl = QHBoxLayout()
 
-        self._btn_play = QPushButton("▶ 播放")
+        self._btn_play = QPushButton("播放")
         self._btn_play.setProperty("class", "CompactBtn")
         self._btn_play.clicked.connect(self._toggle_play)
         ctrl.addWidget(self._btn_play)
 
-        for text, slot in [("⏮", self._go_first), ("◀", self._prev_frame),
-                            ("▶", self._next_frame), ("⏭", self._go_last)]:
+        for text, slot in [(""", self._go_first), ("◀", self._prev_frame),
+                            ("", self._next_frame), (""", self._go_last)]:
             btn = QPushButton(text)
             btn.setProperty("class", "CompactBtn")
             btn.clicked.connect(slot)
@@ -2066,13 +2066,13 @@ class PreviewView(QWidget):
             if not self._frames:
                 return
             self._playing = True
-            self._btn_play.setText("⏸ 暂停")
+            self._btn_play.setText("暂停")
             self._schedule_next()
 
     def stop(self):
         self._playing = False
         self._timer.stop()
-        self._btn_play.setText("▶ 播放")
+        self._btn_play.setText("播放")
 
     def _schedule_next(self):
         if not self._playing:
@@ -3095,7 +3095,7 @@ class SpriteSheetEditorWindow(EditorMainWindow):
 
         # 深浅色切换
         toolbar.addWidget(self._v_sep())
-        btn_theme = QPushButton("🌓 切换主题")
+        btn_theme = QPushButton("切换主题")
         btn_theme.clicked.connect(self._toggle_theme)
         toolbar.addWidget(btn_theme)
 

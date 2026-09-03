@@ -120,6 +120,19 @@ def confirm_close(parent, dirty, title="未保存", text="有未保存的修改,
     return themed_question(parent, title, text) == QMessageBox.Yes
 
 
+def set_themed_icon(button, name: str) -> None:
+    """给按钮显式指定主题感知 SVG 图标 (P4-1 图标库)。
+
+    图标名对应 editor_themes/svg/<name>[-light].svg; 动态属性 themedIcon
+    使主题切换 (apply_theme_to_window) 时自动更换深浅变体, 文本保持不变。
+    """
+    from editor_utils import theme_manager, theme_switcher
+    button.setProperty("themedIcon", name)
+    button.setIcon(
+        theme_manager.themed_icon(name, theme_switcher.current_window_theme(
+            button.window())))
+
+
 def themed_question(parent, title, text,
                     buttons=QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                     default=QMessageBox.StandardButton.No):

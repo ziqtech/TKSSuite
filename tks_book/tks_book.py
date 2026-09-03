@@ -155,7 +155,7 @@ class TksBookViewer(EditorMainWindow):
         for btn in self._scale_buttons:
             btn.setParent(corner)
             cl.addWidget(btn)
-        self._btn_theme = QPushButton("🌗 切换主题")
+        self._btn_theme = QPushButton("切换主题")
         self._btn_theme.setToolTip("在当前主题族内快速切换深色/浅色 (F5)")
         self._btn_theme.clicked.connect(self._toggle_theme)
         cl.addWidget(self._btn_theme)

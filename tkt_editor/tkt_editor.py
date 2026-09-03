@@ -47,7 +47,7 @@ from editor_utils.theme_switcher import (
 from editor_utils.app_shell import EditorMainWindow, run_editor
 from editor_utils.dock_components import DockHeader, create_dock
 from editor_utils.adaptive_table import AdaptiveTableWidget
-from editor_utils.ui_helpers import update_path_labels, confirm_close, EditorComboBox
+from editor_utils.ui_helpers import update_path_labels, confirm_close, EditorComboBox, set_themed_icon
 from editor_utils.tkt_loader import load_tkt_full as _load_tkt_full
 from editor_utils.shared_state import pick_tks_directory
 from editor_utils.mod_exporter import (
@@ -135,22 +135,22 @@ WORD_4EC810 = {
 }
 
 SEMANTIC_CATEGORIES = [
-    {"name": "🌌 传送点文本", "type": "single", "ranges": [(100, 288)]},
-    {"name": "🗺️ 剧情地图名称", "type": "single", "ranges": [(300, 513)]},
-    {"name": "📜 剧情文本区块", "type": "single", "ranges": [(1000, 4509), (25000, 28849), (30000, 30000)]},
-    {"name": "👥 队伍角色名称", "type": "single", "ranges": [(9000, 9030)]},
-    {"name": "📚 历史文本", "type": "single", "ranges": [(9050, 9080)]},
-    {"name": "⚔️ 技能数据 (名称+说明)", "type": "paired", "name_start": 9101, "name_end": 9444, "desc_start": 9501, "desc_end": 9844},
-    {"name": "🧪 物品-药品 (名称+说明)", "type": "paired", "name_start": 10001, "name_end": 10025, "desc_start": 10601, "desc_end": 10625},
-    {"name": "🎒 物品-道具 (名称+说明)", "type": "paired", "name_start": 10051, "name_end": 10110, "desc_start": 10651, "desc_end": 10710},
-    {"name": "🗡️ 物品-武器 (名称+说明)", "type": "paired", "name_start": 10151, "name_end": 10242, "desc_start": 10751, "desc_end": 10842},
-    {"name": "🛡️ 物品-防具 (名称+说明)", "type": "paired", "name_start": 10301, "name_end": 10348, "desc_start": 10901, "desc_end": 10948},
-    {"name": "📿 物品-饰品 (名称+说明)", "type": "paired", "name_start": 10401, "name_end": 10458, "desc_start": 11001, "desc_end": 11058},
-    {"name": "🔮 物品-特殊 (名称+说明)", "type": "paired", "name_start": 10501, "name_end": 10551, "desc_start": 11101, "desc_end": 11151},
-    {"name": "📝 记事文本", "type": "single", "ranges": [(11201, 11260)]},
-    {"name": "🏆 功绩文本", "type": "single", "ranges": [(11401, 11467)]},
-    {"name": "🏟️ 战斗角色名称", "type": "single", "ranges": [(11601, 11800)]},
-    {"name": "📦 空余槽", "type": "single", "ranges": [(11801, 24999)]},
+    {"name": "传送点文本", "type": "single", "ranges": [(100, 288)]},
+    {"name": "剧情地图名称", "type": "single", "ranges": [(300, 513)]},
+    {"name": "剧情文本区块", "type": "single", "ranges": [(1000, 4509), (25000, 28849), (30000, 30000)]},
+    {"name": "队伍角色名称", "type": "single", "ranges": [(9000, 9030)]},
+    {"name": "历史文本", "type": "single", "ranges": [(9050, 9080)]},
+    {"name": "技能数据 (名称+说明)", "type": "paired", "name_start": 9101, "name_end": 9444, "desc_start": 9501, "desc_end": 9844},
+    {"name": "物品-药品 (名称+说明)", "type": "paired", "name_start": 10001, "name_end": 10025, "desc_start": 10601, "desc_end": 10625},
+    {"name": "物品-道具 (名称+说明)", "type": "paired", "name_start": 10051, "name_end": 10110, "desc_start": 10651, "desc_end": 10710},
+    {"name": "物品-武器 (名称+说明)", "type": "paired", "name_start": 10151, "name_end": 10242, "desc_start": 10751, "desc_end": 10842},
+    {"name": "物品-防具 (名称+说明)", "type": "paired", "name_start": 10301, "name_end": 10348, "desc_start": 10901, "desc_end": 10948},
+    {"name": "物品-饰品 (名称+说明)", "type": "paired", "name_start": 10401, "name_end": 10458, "desc_start": 11001, "desc_end": 11058},
+    {"name": "物品-特殊 (名称+说明)", "type": "paired", "name_start": 10501, "name_end": 10551, "desc_start": 11101, "desc_end": 11151},
+    {"name": "记事文本", "type": "single", "ranges": [(11201, 11260)]},
+    {"name": "功绩文本", "type": "single", "ranges": [(11401, 11467)]},
+    {"name": "战斗角色名称", "type": "single", "ranges": [(11601, 11800)]},
+    {"name": "空余槽", "type": "single", "ranges": [(11801, 24999)]},
 ]
 
 # ============================================================
@@ -969,7 +969,7 @@ class TktEditor(EditorMainWindow):
         corner_layout.addWidget(self.chk_traditional)
 
         corner_layout.addSpacing(10)
-        btn_theme = QPushButton("🌓 切换主题")
+        btn_theme = QPushButton("切换主题")
         btn_theme.clicked.connect(self._toggle_theme)
         btn_theme.setProperty("class", "CompactBtn")
         corner_layout.addWidget(btn_theme)
@@ -993,10 +993,10 @@ class TktEditor(EditorMainWindow):
         self.search_entry.returnPressed.connect(self._apply_filter)
         toolbar_layout.addWidget(self.search_entry)
 
-        btn_search = QPushButton("🔍 搜索")
+        btn_search = QPushButton("搜索")
         btn_search.clicked.connect(self._apply_filter)
         toolbar_layout.addWidget(btn_search)
-        btn_clear = QPushButton("🧹 清除")
+        btn_clear = QPushButton("清除")
         btn_clear.clicked.connect(self._clear_filter)
         toolbar_layout.addWidget(btn_clear)
 
@@ -1008,12 +1008,12 @@ class TktEditor(EditorMainWindow):
         self.filter_to = QLineEdit()
         self.filter_to.setFixedWidth(50)
         toolbar_layout.addWidget(self.filter_to)
-        btn_filter = QPushButton("🪄 过滤")
+        btn_filter = QPushButton("过滤")
         btn_filter.clicked.connect(self._apply_filter)
         toolbar_layout.addWidget(btn_filter)
 
         toolbar_layout.addSpacing(15)
-        btn_new_entry = QPushButton("➕ 新增条目")
+        btn_new_entry = QPushButton("新增条目")
         btn_new_entry.clicked.connect(self._new_entry)
         toolbar_layout.addWidget(btn_new_entry)
         toolbar_layout.addStretch()
@@ -1053,14 +1053,14 @@ class TktEditor(EditorMainWindow):
         ins_layout.addWidget(self.text_widget, 1)
 
         btn_layout = QHBoxLayout()
-        btn_apply = QPushButton("✅ 应用修改")
+        btn_apply = QPushButton("应用修改")
         btn_apply.clicked.connect(self._apply_edit)
         btn_layout.addWidget(btn_apply)
-        btn_reset = QPushButton("🔄 重置")
+        btn_reset = QPushButton("重置")
         btn_reset.clicked.connect(self._reset_edit)
         btn_layout.addWidget(btn_reset)
         btn_layout.addStretch()
-        btn_clear_this = QPushButton("🧹 清空")
+        btn_clear_this = QPushButton("清空")
         btn_clear_this.clicked.connect(self._clear_edit)
         btn_layout.addWidget(btn_clear_this)
         ins_layout.addLayout(btn_layout)
@@ -1082,7 +1082,7 @@ class TktEditor(EditorMainWindow):
         self.lbl_zoom.setFixedWidth(40)
         self.lbl_zoom.setProperty("class", "ZoomLabel")
         btn_zoom_in = QToolButton()
-        btn_zoom_in.setText("➕")
+        btn_zoom_in.setText("新增")
         btn_zoom_in.setAutoRaise(True)
         btn_zoom_in.setObjectName("dockToolButton")
         btn_zoom_in.clicked.connect(self._zoom_in)
@@ -1110,7 +1110,7 @@ class TktEditor(EditorMainWindow):
 
         w1_splitter.setSizes([350, 950])
         w1_right_splitter.setSizes([400, 400])
-        self.main_tabs.addTab(w1_widget, "🔍 全局文件系统 (线性模式)")
+        self.main_tabs.addTab(w1_widget, "全局文件系统 (线性模式)")
 
         # ==================== WORKSPACE 2: 游戏语义化模块分类编辑 ====================
         w2_widget = QWidget()
@@ -1179,7 +1179,7 @@ class TktEditor(EditorMainWindow):
         dc_layout.addWidget(self.comp_text2, 1)
         comp_right_layout.addWidget(self.comp_desc_container)
 
-        btn_comp_apply = QPushButton("✅ 保存本槽修改 (点击空槽直接输入即可扩展)")
+        btn_comp_apply = QPushButton("保存本槽修改 (点击空槽直接输入即可扩展)")
         btn_comp_apply.setProperty("class", "ConfirmBtn")
         btn_comp_apply.clicked.connect(self._apply_comp_edit)
         comp_right_layout.addWidget(btn_comp_apply)
@@ -1206,7 +1206,7 @@ class TktEditor(EditorMainWindow):
         self.lbl_comp_zoom.setFixedWidth(40)
         self.lbl_comp_zoom.setProperty("class", "ZoomLabel")
         btn_comp_zoom_in = QToolButton()
-        btn_comp_zoom_in.setText("➕")
+        btn_comp_zoom_in.setText("新增")
         btn_comp_zoom_in.setAutoRaise(True)
         btn_comp_zoom_in.setObjectName("dockToolButton")
         btn_comp_zoom_in.clicked.connect(self._zoom_in)
@@ -1231,7 +1231,7 @@ class TktEditor(EditorMainWindow):
 
         self.w2_splitter.setSizes([650, 450])
         w2_right_splitter.setSizes([400, 400])
-        self.main_tabs.addTab(w2_widget, "📦 游戏数据分类编辑 (智能分舱扩展模式)")
+        self.main_tabs.addTab(w2_widget, "游戏数据分类编辑 (智能分舱扩展模式)")
 
         # --- 底部统一路径状态栏 ---
         status_layout = QHBoxLayout()
@@ -2001,7 +2001,9 @@ class TktEditor(EditorMainWindow):
             btn.clicked.connect(lambda checked=False, c=ci: self._insert_fcolor(c))
             toolbar.addWidget(btn)
 
-        btn_more_color = QPushButton("🎨")
+        btn_more_color = QPushButton("")
+        set_themed_icon(btn_more_color, "palette")  # 🎨 更多颜色 (P4-1 图标化)
+        btn_more_color.setToolTip("更多颜色")
         btn_more_color.clicked.connect(self._show_color_palette)
         toolbar.addWidget(btn_more_color)
 
@@ -2017,7 +2019,7 @@ class TktEditor(EditorMainWindow):
         toolbar.addWidget(cb_ftype)
 
         toolbar.addSpacing(10)
-        btn_name = QPushButton("👤 姓名宏")
+        btn_name = QPushButton("姓名宏")
         btn_name.clicked.connect(partial(self._insert_tag, "<NAME,1><NAME,2>"))
         toolbar.addWidget(btn_name)
 

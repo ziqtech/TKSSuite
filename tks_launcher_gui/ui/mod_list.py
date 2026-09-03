@@ -182,7 +182,7 @@ class ModListWidget(QWidget):
         header_row.setSpacing(4)
         header_row.addStretch()
         self.btn_refresh = QToolButton()
-        self.btn_refresh.setText("🔄 刷新")
+        self.btn_refresh.setText("刷新")
         self.btn_refresh.setAutoRaise(True)
         self.btn_refresh.setObjectName("dockToolButton")
         self.btn_refresh.setCursor(Qt.PointingHandCursor)
