@@ -2,16 +2,16 @@
 /* 应用底色 #212121 / 侧栏与输入表面 #171717、#2f2f2f / 强调色 #10a37f */
 
 QWidget {
-    background-color: {{bg_01}};
-    color: {{fg_01}};
+    background-color: {{bg_root}};
+    color: {{text_base}};
     font-family: 'Segoe UI', 'Microsoft YaHei', sans-serif;
     font-size: 13px;
 }
 QMainWindow, QDialog {
-    background-color: {{bg_02}};
+    background-color: {{bg_window}};
 }
 QMainWindow#EditorWindow {
-    background-color: {{bg_03}};
+    background-color: {{bg_window}};
 }
 QToolTip {
     background-color: {{bg_04}};
@@ -24,15 +24,15 @@ QToolTip {
 /* ── 表格、树与通用项目视图 ── */
 QAbstractItemView {
     background-color: {{bg_05}};
-    color: {{fg_03}};
+    color: {{text_primary}};
     selection-background-color: {{sel_01}};
-    selection-color: {{fg_04}};
+    selection-color: {{text_primary}};
     outline: none;
 }
 QTableWidget, QTreeWidget, QTableView, QTreeView {
-    background-color: {{bg_06}};
-    color: {{fg_05}};
-    border: {{bd_02}};
+    background-color: {{bg_surface}};
+    color: {{text_base}};
+    border: {{bd_regular}};
     border-radius: 8px;
     gridline-color: {{gridline_color_01}};
     selection-background-color: {{sel_02}};
@@ -49,21 +49,21 @@ QTableView::item, QTreeView::item {
 }
 QTableWidget::item:selected, QTreeWidget::item:selected,
 QTableView::item:selected, QTreeView::item:selected {
-    background-color: {{bg_07}};
-    color: {{fg_07}};
+    background-color: {{sel_01}};
+    color: {{text_primary}};
 }
 QWidget#WarDataEditorRightPanel QTableWidget,
 QWidget#WarDataEditorRightPanel QTableView {
     selection-background-color: transparent;
-    selection-color: {{fg_08}};
+    selection-color: {{text_primary}};
 }
 QWidget#WarDataEditorRightPanel QTableWidget::item:selected,
 QWidget#WarDataEditorRightPanel QTableView::item:selected {
     background-color: transparent;
-    color: {{fg_09}};
+    color: {{text_primary}};
 }
 QListWidget::item:hover, QTreeWidget::item:hover {
-    background-color: {{bg_08}};
+    background-color: {{bg_hover}};
 }
 QHeaderView {
     background-color: {{bg_09}};
@@ -72,38 +72,42 @@ QHeaderView::section {
     background-color: {{bg_10}};
     color: {{fg_10}};
     border: none;
-    border-bottom: {{bd_03}};
+    border-bottom: {{bd_regular}};
     padding: 7px 8px;
 }
 QHeaderView::section:hover {
     background-color: {{bg_11}};
-    color: {{fg_11}};
+    color: {{text_primary}};
 }
 QHeaderView::section:pressed {
-    background-color: {{bg_12}};
+    background-color: {{accent_soft}};
     color: {{fg_12}};
 }
 QTableCornerButton::section {
-    background-color: {{bg_13}};
+    background-color: {{bg_09}};
     border: none;
-    border-bottom: {{bd_04}};
+    border-bottom: {{bd_inset}};
 }
 
 /* ── 文本输入 ── */
 QPlainTextEdit, QLineEdit, QTextEdit {
-    background-color: {{bg_14}};
-    color: {{fg_13}};
-    border: {{bd_05}};
+    background-color: {{bg_surface}};
+    color: {{text_primary}};
+    border: {{bd_regular}};
     padding: 7px 9px;
     border-radius: 8px;
-    selection-background-color: {{sel_03}};
+    selection-background-color: {{accent}};
     selection-color: #ffffff;
 }
 QLineEdit:hover, QPlainTextEdit:hover, QTextEdit:hover {
-    border-color: {{bd_06}};
+    border-color: {{bd_hover}};
 }
 QLineEdit:focus, QPlainTextEdit:focus, QTextEdit:focus {
-    border-color: {{bd_07}};
+    border-color: {{accent}};
+}
+/* 数值输入校验失败 (ui_helpers.mark_invalid 置 invalid 属性) */
+QLineEdit[invalid="true"] {
+    border: {{bd_error}};
 }
 QLineEdit:disabled, QPlainTextEdit:disabled, QTextEdit:disabled {
     background-color: {{bg_15}};
@@ -122,35 +126,35 @@ QPushButton {
 }
 QPushButton:hover {
     background-color: {{bg_17}};
-    border-color: {{bd_10}};
+    border-color: {{bd_hover}};
 }
 QPushButton:focus {
-    border-color: {{bd_11}};
+    border-color: {{accent}};
 }
 QPushButton:pressed {
     background-color: {{bg_18}};
-    border-color: {{bd_12}};
+    border-color: {{accent}};
 }
 QPushButton:checked {
-    background-color: {{bg_19}};
-    color: {{fg_16}};
-    border-color: {{bd_13}};
+    background-color: {{accent_soft}};
+    color: {{fg_12}};
+    border-color: {{accent}};
 }
 QPushButton:disabled {
     background-color: {{bg_20}};
     color: {{fg_17}};
-    border-color: {{bd_14}};
+    border-color: {{bd_08}};
 }
 QPushButton:flat {
     background-color: transparent;
     border-color: transparent;
 }
 QPushButton:flat:hover {
-    background-color: {{bg_21}};
+    background-color: {{bg_11}};
     border-color: transparent;
 }
 QPushButton:flat:pressed {
-    background-color: {{bg_22}};
+    background-color: {{accent_soft}};
 }
 QToolButton {
     background-color: transparent;
@@ -160,20 +164,20 @@ QToolButton {
     padding: 5px 8px;
 }
 QToolButton:hover {
-    background-color: {{bg_23}};
-    color: {{fg_19}};
-    border-color: {{bd_15}};
+    background-color: {{bg_11}};
+    color: {{text_primary}};
+    border-color: {{hairline}};
 }
 QToolButton:pressed, QToolButton:checked {
-    background-color: {{bg_24}};
-    color: {{fg_20}};
-    border-color: {{bd_16}};
+    background-color: {{accent_soft}};
+    color: {{fg_12}};
+    border-color: {{accent}};
 }
 
 /* ── 下拉框与数值输入 ── */
 QComboBox, QSpinBox, QDoubleSpinBox, QDateEdit, QTimeEdit, QDateTimeEdit {
-    background-color: {{bg_25}};
-    color: {{fg_21}};
+    background-color: {{bg_05}};
+    color: {{text_primary}};
     border: {{bd_17}};
     border-radius: 8px;
     padding: 6px 9px;
@@ -181,11 +185,11 @@ QComboBox, QSpinBox, QDoubleSpinBox, QDateEdit, QTimeEdit, QDateTimeEdit {
 }
 QComboBox:hover, QSpinBox:hover, QDoubleSpinBox:hover,
 QDateEdit:hover, QTimeEdit:hover, QDateTimeEdit:hover {
-    border-color: {{bd_18}};
+    border-color: {{bd_hover}};
 }
 QComboBox:focus, QSpinBox:focus, QDoubleSpinBox:focus,
 QDateEdit:focus, QTimeEdit:focus, QDateTimeEdit:focus {
-    border-color: {{bd_19}};
+    border-color: {{accent}};
 }
 QComboBox::drop-down {
     subcontrol-origin: padding;
@@ -205,8 +209,8 @@ QComboBox::down-arrow {
 QComboBox QAbstractItemView {
     background-color: {{bg_27}};
     color: {{fg_22}};
-    border: {{bd_20}};
-    selection-background-color: {{sel_04}};
+    border: {{bd_regular}};
+    selection-background-color: {{accent}};
     selection-color: #ffffff;
     outline: none;
     padding: 4px;
@@ -219,11 +223,11 @@ QComboBox QAbstractItemView::item {
     border-radius: 6px;
 }
 QComboBox QAbstractItemView::item:hover {
-    background-color: {{bg_28}};
-    color: {{fg_23}};
+    background-color: {{bg_hover}};
+    color: {{text_primary}};
 }
 QComboBox QAbstractItemView::item:selected {
-    background-color: {{bg_29}};
+    background-color: {{accent}};
     color: #ffffff;
 }
 QSpinBox, QDoubleSpinBox, QDateEdit, QTimeEdit, QDateTimeEdit {
@@ -235,8 +239,8 @@ QDateEdit::up-button, QTimeEdit::up-button, QDateTimeEdit::up-button {
     subcontrol-position: top right;
     background-color: {{bg_30}};
     width: 20px;
-    border-left: {{bd_21}};
-    border-bottom: {{bd_22}};
+    border-left: {{bd_inset}};
+    border-bottom: {{bd_inset}};
     border-top-right-radius: 7px;
 }
 QSpinBox::up-arrow, QDoubleSpinBox::up-arrow,
@@ -249,15 +253,15 @@ QSpinBox::down-button, QDoubleSpinBox::down-button,
 QDateEdit::down-button, QTimeEdit::down-button, QDateTimeEdit::down-button {
     subcontrol-origin: border;
     subcontrol-position: bottom right;
-    background-color: {{bg_31}};
+    background-color: {{bg_30}};
     width: 20px;
-    border-left: {{bd_23}};
-    border-top: {{bd_24}};
+    border-left: {{bd_inset}};
+    border-top: {{bd_inset}};
     border-bottom-right-radius: 7px;
 }
 QSpinBox::down-arrow, QDoubleSpinBox::down-arrow,
 QDateEdit::down-arrow, QTimeEdit::down-arrow, QDateTimeEdit::down-arrow {
-    image: {{image_03}};
+    image: {{image_01}};
     width: 10px;
     height: 10px;
 }
@@ -268,9 +272,9 @@ QDoubleSpinBox::up-button:hover, QDoubleSpinBox::down-button:hover {
 
 /* ── 列表与选择器 ── */
 QListWidget {
-    background-color: {{bg_33}};
-    color: {{fg_24}};
-    border: {{bd_25}};
+    background-color: {{bg_surface}};
+    color: {{text_primary}};
+    border: {{bd_regular}};
     border-radius: 8px;
     outline: none;
 }
@@ -280,8 +284,8 @@ QListWidget::item, QTreeWidget::item {
     padding: 5px 8px;
 }
 QListWidget::item:selected, QTreeWidget::item:selected {
-    background-color: {{bg_34}};
-    color: {{fg_25}};
+    background-color: {{sel_01}};
+    color: {{text_primary}};
 }
 QListWidget::item:focus, QTreeWidget::item:focus {
     outline: none;
@@ -289,13 +293,13 @@ QListWidget::item:focus, QTreeWidget::item:focus {
 QListWidget::indicator, QTableWidget::indicator {
     width: 16px;
     height: 16px;
-    background-color: {{bg_35}};
+    background-color: {{bg_surface}};
     border: {{bd_26}};
     border-radius: 5px;
 }
 QListWidget::indicator:checked, QTableWidget::indicator:checked {
-    background-color: {{bg_36}};
-    border-color: {{bd_27}};
+    background-color: {{accent}};
+    border-color: {{accent}};
     image: url(svg/checkmark.svg);
 }
 QListWidget::indicator:hover, QTableWidget::indicator:hover {
@@ -305,7 +309,7 @@ QListWidget::indicator:hover, QTableWidget::indicator:hover {
 /* ── 分组框、复选框与单选按钮 ── */
 QGroupBox {
     background-color: {{bg_37}};
-    border: {{bd_29}};
+    border: {{bd_regular}};
     border-radius: 10px;
     margin-top: 16px;
     padding: 14px 10px 10px 10px;
@@ -317,7 +321,7 @@ QGroupBox::title {
     color: {{fg_26}};
 }
 QCheckBox, QRadioButton {
-    color: {{fg_27}};
+    color: {{text_primary}};
     spacing: 7px;
     padding: 3px 0;
 }
@@ -334,15 +338,15 @@ QRadioButton::indicator {
     border-radius: 8px;
 }
 QCheckBox::indicator:checked, QRadioButton::indicator:checked {
-    background-color: {{bg_39}};
-    border-color: {{bd_31}};
+    background-color: {{accent}};
+    border-color: {{accent}};
     image: url(svg/checkmark.svg);
 }
 QCheckBox::indicator:hover, QRadioButton::indicator:hover {
-    border-color: {{bd_32}};
+    border-color: {{accent}};
 }
 QCheckBox:disabled, QRadioButton:disabled {
-    color: {{fg_28}};
+    color: {{fg_14}};
 }
 
 /* ── 分割线与滚动条 ── */
@@ -359,12 +363,12 @@ QSplitter::handle:horizontal {
     margin-right: 3px;
 }
 QSplitter::handle:vertical {
-    border-top: {{bd_34}};
+    border-top: {{bd_33}};
     margin-top: 3px;
     margin-bottom: 3px;
 }
 QSplitter::handle:horizontal:hover, QSplitter::handle:vertical:hover {
-    border-color: {{bd_35}};
+    border-color: {{accent}};
 }
 QScrollBar:vertical {
     background: {{bg_40}};
@@ -378,7 +382,7 @@ QScrollBar::handle:vertical {
     margin: 2px 1px;
 }
 QScrollBar::handle:vertical:hover {
-    background: {{bg_42}};
+    background: {{accent}};
 }
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
     height: 0;
@@ -388,18 +392,18 @@ QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {
     background: transparent;
 }
 QScrollBar:horizontal {
-    background: {{bg_43}};
+    background: {{bg_40}};
     height: 10px;
     margin: 2px;
 }
 QScrollBar::handle:horizontal {
-    background: {{bg_44}};
+    background: {{bg_41}};
     border-radius: 4px;
     min-width: 28px;
     margin: 1px 2px;
 }
 QScrollBar::handle:horizontal:hover {
-    background: {{bg_45}};
+    background: {{accent}};
 }
 QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {
     width: 0;
@@ -407,7 +411,7 @@ QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {
 
 /* ── 菜单栏与菜单 ── */
 QMenuBar {
-    background-color: {{bg_46}};
+    background-color: {{bg_root}};
     color: {{fg_29}};
     border-bottom: {{bd_36}};
 }
@@ -418,16 +422,16 @@ QMenuBar::item {
 }
 QMenuBar::item:selected {
     background-color: {{bg_47}};
-    color: {{fg_30}};
+    color: {{text_primary}};
 }
 QMenuBar::item:pressed {
     background-color: {{bg_48}};
     color: {{fg_31}};
 }
 QMenu {
-    background-color: {{bg_49}};
-    color: {{fg_32}};
-    border: {{bd_37}};
+    background-color: {{bg_27}};
+    color: {{text_primary}};
+    border: {{bd_regular}};
     border-radius: 8px;
     padding: 5px;
 }
@@ -450,9 +454,9 @@ QMenu::separator {
 
 /* 所有编辑器下拉菜单共用原生 QMenu，保持单层圆角边框。 */
 QMenu#EditorComboMenu {
-    background-color: {{bg_52}};
-    color: {{fg_34}};
-    border: {{bd_38}};
+    background-color: {{bg_05}};
+    color: {{text_primary}};
+    border: {{bd_17}};
     border-radius: 8px;
     padding: 4px;
 }
@@ -461,25 +465,25 @@ QMenu#EditorComboMenu::item {
     border-radius: 5px;
 }
 QMenu#EditorComboMenu::item:selected {
-    background-color: {{bg_53}};
-    color: {{fg_35}};
+    background-color: {{bg_hover}};
+    color: {{text_primary}};
 }
 QMenu#EditorComboMenu::item:checked {
-    background-color: {{bg_54}};
+    background-color: {{accent}};
     color: #ffffff;
     font-weight: 600;
 }
 
 /* ── 下拉框可滚动弹层 (条目 >10 时替代 QMenu) ── */
 QWidget#EditorComboPopup {
-    background-color: {{bg_55}};
-    border: {{bd_39}};
+    background-color: {{bg_05}};
+    border: {{bd_17}};
     border-radius: 8px;
 }
 QListWidget#EditorComboList {
     background-color: transparent;
     border: none;
-    color: {{fg_36}};
+    color: {{text_primary}};
     outline: none;
     padding: 0;
     /* 抵消 QComboBox QAbstractItemView{padding:4px} 泄漏到本列表, 否则
@@ -490,11 +494,11 @@ QListWidget#EditorComboList::item {
     border-radius: 5px;
 }
 QListWidget#EditorComboList::item:hover {
-    background-color: {{bg_56}};
-    color: {{fg_37}};
+    background-color: {{bg_hover}};
+    color: {{text_primary}};
 }
 QListWidget#EditorComboList::item:selected {
-    background-color: {{bg_57}};
+    background-color: {{accent}};
     color: #ffffff;
     font-weight: 600;
 }
@@ -504,8 +508,8 @@ QListWidget#EditorComboList::item:disabled {
 
 /* ── Tab 页 ── */
 QTabWidget::pane {
-    border: {{bd_40}};
-    background-color: {{bg_58}};
+    border: {{bd_regular}};
+    background-color: {{bg_root}};
     top: -1px;
     border-radius: 10px;
     padding: 4px;
@@ -522,20 +526,20 @@ QTabBar::tab {
 QTabBar::tab:selected {
     background: {{bg_60}};
     color: {{fg_40}};
-    border: {{bd_42}};
-    border-bottom: {{bd_43}};
+    border: {{bd_inset}};
+    border-bottom: {{bd_accent2}};
 }
 QTabBar::tab:hover:!selected {
-    background: {{bg_61}};
-    color: {{fg_41}};
-    border-color: {{bd_44}};
+    background: {{bg_47}};
+    color: {{text_primary}};
+    border-color: {{gridline_color_01}};
 }
 QTabBar::tab:disabled {
     color: {{fg_42}};
 }
 QTabBar QToolButton {
     background-color: {{bg_62}};
-    border: {{bd_45}};
+    border: {{bd_inset}};
     border-radius: 6px;
     padding: 2px;
 }
@@ -546,23 +550,23 @@ QTabWidget[tabStyle="flat"] {
     border: none;
 }
 QTabWidget[tabStyle="flat"]::pane {
-    border: {{bd_46}};
+    border: {{bd_17}};
     border-top: none;
     border-radius: 0px 0px 8px 8px;
-    background-color: {{bg_63}};
+    background-color: {{bg_window}};
     padding: 0px;
     top: 0px;
 }
 QTabWidget[tabStyle="flat"] QTabBar {
-    background-color: {{bg_64}};
+    background-color: {{bg_window}};
     border: none;
-    border-bottom: {{bd_47}};
+    border-bottom: {{bd_17}};
 }
 QTabWidget[tabStyle="flat"] QTabBar::tab {
     background-color: transparent;
-    color: {{fg_43}};
+    color: {{text_muted}};
     border: none;
-    border-bottom: {{bd_48}};
+    border-bottom: {{bd_17}};
     border-radius: 0px;
     padding: 8px 13px;
     margin: 0px;
@@ -570,16 +574,16 @@ QTabWidget[tabStyle="flat"] QTabBar::tab {
 }
 QTabWidget[tabStyle="flat"] QTabBar::tab:hover:!selected {
     background-color: {{bg_65}};
-    color: {{fg_44}};
+    color: {{text_primary}};
     border-top-left-radius: 8px;
     border-top-right-radius: 8px;
 }
 QTabWidget[tabStyle="flat"] QTabBar::tab:selected {
-    background-color: {{bg_66}};
-    color: {{fg_45}};
+    background-color: {{bg_window}};
+    color: {{text_primary}};
     font-weight: 600;
-    border: {{bd_49}};
-    border-top: {{bd_50}};
+    border: {{bd_17}};
+    border-top: {{bd_accent2}};
     border-bottom: {{bd_51}};
     border-top-left-radius: 8px;
     border-top-right-radius: 8px;
@@ -589,9 +593,9 @@ QTabWidget[tabStyle="flat"] QTabBar::tab:disabled {
     color: {{fg_46}};
 }
 QWidget#EditorTabCorner {
-    background-color: {{bg_67}};
+    background-color: {{bg_window}};
     border: none;
-    border-bottom: {{bd_52}};
+    border-bottom: {{bd_17}};
 }
 
 /* ── 编辑器面板、图形视图与滚动区域 ── */
@@ -601,21 +605,21 @@ QWidget#DockPanel {
 }
 QFrame#DockHeader {
     background-color: {{bg_68}};
-    border: {{bd_53}};
+    border: {{bd_inset}};
     border-bottom: none;
     border-top-left-radius: 10px;
     border-top-right-radius: 10px;
 }
 QWidget#DockBody {
-    background-color: {{bg_69}};
-    border: {{bd_54}};
+    background-color: {{bg_root}};
+    border: {{bd_regular}};
     border-top: none;
     border-bottom-left-radius: 10px;
     border-bottom-right-radius: 10px;
 }
 QWidget#PalettePanel {
-    background-color: {{bg_70}};
-    border: {{bd_55}};
+    background-color: {{bg_15}};
+    border: {{bd_inset}};
     border-radius: 10px;
 }
 QLabel#DockTitle {
@@ -624,12 +628,12 @@ QLabel#DockTitle {
     font-weight: bold;
 }
 QGraphicsView {
-    border: {{bd_56}};
+    border: {{bd_regular}};
     border-radius: 8px;
     background-color: {{bg_71}};
 }
 QScrollArea {
-    background-color: {{bg_72}};
+    background-color: {{bg_root}};
     border: {{bd_57}};
     border-radius: 8px;
 }
@@ -656,7 +660,7 @@ QTableWidget#WarpcCharacterTable QTableCornerButton::section {
 }
 QSlider::groove:horizontal {
     background-color: {{bg_73}};
-    border: {{bd_58}};
+    border: {{bd_regular}};
     height: 6px;
     border-radius: 3px;
 }
@@ -667,32 +671,32 @@ QSlider::handle:horizontal {
     border-radius: 7px;
 }
 QSlider::handle:horizontal:hover {
-    background-color: {{bg_75}};
+    background-color: {{accent}};
 }
 QProgressBar {
-    background-color: {{bg_76}};
-    border: {{bd_59}};
+    background-color: {{bg_62}};
+    border: {{bd_inset}};
     border-radius: 6px;
     text-align: center;
-    color: {{fg_48}};
+    color: {{text_primary}};
 }
 QProgressBar::chunk {
-    background-color: {{bg_77}};
+    background-color: {{accent}};
     border-radius: 5px;
 }
 
 /* ── 状态栏与标签 ── */
 QStatusBar {
-    background-color: {{bg_78}};
+    background-color: {{bg_root}};
     color: {{fg_49}};
-    border-top: {{bd_60}};
+    border-top: {{bd_36}};
     padding: 2px 8px;
 }
 QStatusBar::item {
     border: none;
 }
 QLabel {
-    color: {{fg_50}};
+    color: {{fg_22}};
     background-color: transparent;
 }
 QLabel#StatusLabel {
@@ -724,7 +728,7 @@ QLabel#hintLabel {
 QLabel[class="InspectorTitle"] {
     font-weight: bold;
     color: {{fg_56}};
-    border-bottom: {{bd_61}};
+    border-bottom: {{bd_regular}};
     padding-bottom: 2px;
     margin-top: 8px;
 }
@@ -755,7 +759,7 @@ QLabel[class="PreviewMeta"] {
     margin-bottom: 4px;
 }
 QLabel[class="PreviewDesc"] {
-    color: {{fg_60}};
+    color: {{text_success}};
     font-size: 13px;
     padding-top: 4px;
 }
@@ -782,14 +786,14 @@ QFrame#FakeInputBox > QLineEdit {
     padding: 4px 8px;
     color: {{fg_62}};
     font-family: 'Consolas', 'Segoe UI';
-    selection-background-color: {{sel_05}};
+    selection-background-color: {{accent}};
 {{?fg_63}}
 }
 QFrame#FakeInputBox > QPushButton {
     background: transparent;
     border: none;
     border-left: {{bd_67}};
-    border-right: {{bd_68}};
+    border-right: {{bd_67}};
     border-radius: 0px;
     padding: 4px 8px;
     margin: 0px;
@@ -825,7 +829,7 @@ QFrame#FakeInputBox > QComboBox {
     border: none;
     background: transparent;
     padding: 4px 8px;
-    color: {{fg_67}};
+    color: {{fg_62}};
 }
 QFrame#FakeInputBox > QComboBox::drop-down {
     border: none;
@@ -838,7 +842,7 @@ QFrame[class="FakeInputSep"] {
 /* ── 额外预览文本 ── */
 QLabel[class="ExtraPreviewText"] {
     padding: 4px 8px;
-    color: {{fg_68}};
+    color: {{text_success}};
     font-size: 13px;
 }
 
@@ -861,7 +865,7 @@ QLabel[class="StatusRemove"] {
 
 /* ── 弹窗高亮主按钮 ── */
 QPushButton#PrimaryButton {
-    background-color: {{bg_85}};
+    background-color: {{accent}};
     color: #ffffff;
     border: {{bd_69}};
     font-weight: bold;
@@ -876,13 +880,13 @@ QPushButton#PrimaryButton:pressed {
 /* ── 工具栏 (tks_launcher_gui) ── */
 QToolBar {
     background-color: {{bg_88}};
-    border-bottom: {{bd_70}};
+    border-bottom: {{bd_regular}};
     padding: 4px 2px;
     spacing: 6px;
 }
 QToolBar::separator {
     width: 1px;
-    background-color: {{bg_89}};
+    background-color: {{hairline}};
     margin: 5px 4px;
 }
 
@@ -890,12 +894,12 @@ QToolBar::separator {
 /* 注意: 文字颜色由 log_console.py 通过 HTML 内联样式控制, 此处不设置 color */
 QTextEdit#LogConsole {
     background-color: {{bg_90}};
-    border: {{bd_71}};
+    border: {{bd_regular}};
     border-radius: 4px;
     padding: 8px;
     font-family: "Consolas", "Courier New", monospace;
     font-size: 12px;
-    selection-background-color: {{sel_06}};
+    selection-background-color: {{accent}};
     selection-color: #ffffff;
 }
 
@@ -906,12 +910,12 @@ QCheckBox::indicator:disabled {
 }
 QCheckBox::indicator:checked:disabled {
     background-color: {{bg_92}};
-    border-color: {{bd_73}};
+    border-color: {{bg_92}};
     image: url(svg/checkmark.svg);
 }
 /* 必选补丁复选框：禁用态文字保持正常颜色 */
 QCheckBox#requiredPatch:disabled {
-    color: {{fg_71}};
+    color: {{fg_22}};
 }
 
 /* ── 滚动条悬停 (tks_launcher_gui) ── */
@@ -919,12 +923,12 @@ QScrollBar::handle:vertical:hover {
     background-color: {{bg_93}};
 }
 QScrollBar::handle:horizontal:hover {
-    background-color: {{bg_94}};
+    background-color: {{bg_93}};
 }
 
 /* ── 状态栏标签 (tks_launcher_gui) ── */
 QLabel#statusLabel {
-    color: {{fg_72}};
+    color: {{text_base}};
     font-weight: bold;
     padding: 4px 8px;
 }
@@ -949,15 +953,15 @@ QToolButton#dockToolButton {
     max-height: 16px;
 }
 QToolButton#dockToolButton:hover {
-    background-color: {{bg_95}};
+    background-color: {{bg_16}};
 {{?fg_76}}
 }
 QToolButton#dockToolButton:pressed {
-    background-color: {{bg_96}};
+    background-color: {{accent}};
     color: #fff;
 }
 QToolButton#dockToolButton:checked {
-    background-color: {{bg_97}};
+    background-color: {{accent}};
     color: #ffffff;
 }
 QToolButton#dockToolButton:checked:hover {
@@ -989,9 +993,9 @@ QPushButton#btnStart:disabled {
 QLabel[class="RecordHeader"] {
     font-size: 14px;
     font-weight: bold;
-    color: {{fg_79}};
-    background-color: {{bg_103}};
-    border: {{bd_76}};
+    color: {{text_primary}};
+    background-color: {{bg_62}};
+    border: {{bd_inset}};
     border-radius: 8px;
     padding: 5px 10px;
 }
@@ -1018,7 +1022,7 @@ QPushButton#btnPack {
 /* ── 图标选择器按钮 (item/warpc 编辑器) ── */
 QPushButton[selected="true"] {
     background-color: {{bg_104}};
-    border: {{bd_77}};
+    border: {{bd_accent2}};
 }
 QPushButton[selected="false"] {
     background-color: transparent;
@@ -1029,15 +1033,15 @@ QToolButton#IconPickerButton {
     border: 1px solid transparent;
     border-radius: 8px;
     padding: 1px 2px 3px 2px;
-    color: {{fg_81}};
+    color: {{text_primary}};
 }
 QToolButton#IconPickerButton:hover {
-    background-color: {{bg_105}};
-    border-color: {{bd_78}};
+    background-color: {{bg_11}};
+    border-color: {{hairline}};
 }
 QToolButton#IconPickerButton[selected="true"] {
-    background-color: {{bg_106}};
-    border: {{bd_79}};
+    background-color: {{accent_soft}};
+    border: {{bd_accent2}};
     color: {{fg_82}};
 }
 QPushButton#PortraitTile {
@@ -1047,7 +1051,7 @@ QPushButton#PortraitTile {
     border-radius: 8px;
 }
 QLabel#PortraitIndex {
-    color: {{fg_83}};
+    color: {{text_muted}};
     font-size: 11px;
     padding: 0px;
 }
@@ -1055,11 +1059,11 @@ QLabel#PortraitIndex {
 /* ── 活动槽位按钮 (save_editor) ── */
 QPushButton[active="true"] {
     font-weight: bold;
-    color: {{fg_84}};
+    color: {{accent}};
 }
 QPushButton[active="false"] {
     font-weight: normal;
-    color: {{fg_85}};
+    color: {{fg_22}};
 }
 
 /* ── Chip 小标签 (item_editor) ── */
@@ -1088,27 +1092,27 @@ QTreeWidget[class="CompactTree"] QHeaderView::section {
 
 /* ── 成长率表格 (warpc_editor) ── */
 QTableWidget[class="GrowthTable"]::item {
-    background-color: {{bg_107}};
+    background-color: {{bg_surface}};
 }
 QTableWidget[class="GrowthTable"]::item:alternate {
     background-color: {{bg_108}};
 }
 QTableWidget[class="GrowthTable"]::item:selected {
-    background-color: {{bg_109}};
+    background-color: {{accent}};
     color: #ffffff;
 }
 
 /* ── 表格编辑模式 (warpc_editor) ── */
 QTableView[class="WarpcGrid"] {
-    alternate-background-color: {{altbg_02}};
+    alternate-background-color: {{bg_108}};
     gridline-color: {{gridline_color_02}};
 }
 QTableView[class="WarpcGrid"]::item:selected {
-    background-color: {{bg_110}};
+    background-color: {{accent}};
     color: #ffffff;
 }
 QTableView[class="WarpcGrid"] QTableCornerButton::section {
-    background-color: {{bg_111}};
+    background-color: {{bg_10}};
     border: none;
 }
 
@@ -1131,10 +1135,10 @@ QPushButton[class="ColorSwatchRound"] {
     padding: 0px;
 }
 QPushButton[class="ColorSwatchRound"]:hover {
-    border: {{bd_82}};
+    border: {{bd_accent2}};
 }
 QPushButton[class="ColorSwatchRound"]:focus {
-    border: {{bd_83}};
+    border: {{bd_accent2}};
 }
 QPushButton[class="ColorSwatchRound"]:pressed {
     border: {{bd_84}};
@@ -1147,13 +1151,13 @@ QPushButton[class="ColorSwatchBtn"] {
     padding: 0px;
 }
 QPushButton[class="ColorSwatchBtn"]:hover {
-    border: {{bd_86}};
+    border: {{bd_accent2}};
 }
 QPushButton[class="ColorSwatchBtn"]:focus {
-    border: {{bd_87}};
+    border: {{bd_accent2}};
 }
 QPushButton[class="ColorSwatchBtn"]:pressed {
-    border: {{bd_88}};
+    border: {{bd_84}};
 }
 
 /* ── 存档编辑器的槽位与表格状态 ── */
@@ -1170,22 +1174,22 @@ QPushButton[class="SaveSlotButton"]:hover {
     border-color: {{bd_89}};
 }
 QPushButton[class="SaveSlotButton"][active="true"] {
-    background-color: {{bg_113}};
-    color: {{fg_87}};
-    border-color: {{bd_90}};
+    background-color: {{accent_soft}};
+    color: {{fg_82}};
+    border-color: {{accent}};
     font-weight: bold;
 }
 QLabel[class="SaveStatusLabel"] {
-    color: {{fg_88}};
-    background-color: {{bg_114}};
-    border: {{bd_91}};
+    color: {{text_muted}};
+    background-color: {{bg_62}};
+    border: {{bd_inset}};
     border-radius: 8px;
     padding: 4px 10px;
 }
 /* ── 当前队伍成员卡片 (save_editor 总览) ── */
 QWidget[class="TeamMemberCard"] {
-    background-color: {{bg_115}};
-    border: {{bd_92}};
+    background-color: {{bg_38}};
+    border: {{bd_inset}};
     border-radius: 10px;
 }
 QLabel[class="TeamMemberIndex"] {
@@ -1193,7 +1197,7 @@ QLabel[class="TeamMemberIndex"] {
     font-size: 11px;
 }
 QLabel[class="TeamMemberName"] {
-    color: {{fg_90}};
+    color: {{text_primary}};
     font-size: 13px;
     font-weight: 600;
     padding-top: 2px;
@@ -1204,7 +1208,7 @@ QLabel[class="TeamMemberLevel"] {
     padding-top: 2px;
 }
 QLabel[class="TeamMemberAvatar"] {
-    background-color: {{bg_116}};
+    background-color: {{bg_15}};
     border: {{bd_93}};
     border-radius: 8px;
 }
@@ -1224,10 +1228,10 @@ QTabWidget#SaveEventTabs QTabBar::tab {
 
 /* ── 路径状态标签 (loaded/missing/unloaded) ── */
 QLabel[status="loaded"] {
-    color: {{fg_92}};
+    color: {{text_success}};
 }
 QLabel[status="missing"] {
-    color: {{fg_93}};
+    color: {{fg_61}};
 }
 QLabel[status="unloaded"] {
     color: {{fg_94}};
@@ -1242,7 +1246,7 @@ QCheckBox[class="DirCheckBox"] {
 QLabel[class="FieldHint"] {
     padding-left: 0px;
     font-size: 11px;
-    color: {{fg_95}};
+    color: {{text_success}};
 }
 
 /* ── 脏标记标签 (tkt_editor): 简体字警告, 色值取自原内嵌样式 #ff6b6b ── */
@@ -1259,7 +1263,7 @@ QLabel[class="DirtyUnsaved"] {
 
 /* ── 未知字段标签 (mat_editor “全部”页 d-index) ── */
 QLabel[class="UnknownFieldLabel"] {
-    color: {{fg_98}};
+    color: {{fg_94}};
 }
 
 /* ── 探针标签 (act_editor 层/音效状态) ── */
@@ -1302,13 +1306,13 @@ QWidget#TransparentBg {
 /* ── 主标题标签 (tkt_editor 蓝色强调) ── */
 QLabel[class="PrimaryTitle"] {
     font-weight: bold;
-    color: {{fg_103}};
+    color: {{accent}};
 }
 
 /* ── 副标题标签 (tkt_editor 绿色强调) ── */
 QLabel[class="SecondaryTitle"] {
     font-weight: bold;
-    color: {{fg_104}};
+    color: {{fg_99}};
     padding-top: 10px;
 }
 
@@ -1323,13 +1327,13 @@ QPushButton[class="ConfirmBtn"] {
 /* ── 分隔线框架 (QFrame separator) ── */
 QFrame[class="SepLine"] {
     color: {{fg_105}};
-    background-color: {{bg_117}};
+    background-color: {{hairline}};
     border: none;
     max-height: 1px;
 }
 QFrame[class="VSepLine"] {
-    color: {{fg_106}};
-    background-color: {{bg_118}};
+    color: {{hairline}};
+    background-color: {{hairline}};
     border: none;
     min-width: 1px;
     max-width: 1px;
@@ -1354,14 +1358,14 @@ QFrame#Toolbar {
 
 /* 召唤编辑对话框 — 目标选择器显示区 */
 QWidget[class="TargetDisplay"] {
-    border: {{bd_94}};
+    border: {{bd_regular}};
     border-radius: 3px;
-    background-color: {{bg_120}};
+    background-color: {{bg_surface}};
 }
 QLabel[class="TargetIcon"], QLabel[class="TargetName"] {
     border: none;
     background: transparent;
-    color: {{fg_107}};
+    color: {{text_base}};
 }
 QLabel[class="TargetName"] {
     padding: 2px 0px;
@@ -1380,7 +1384,7 @@ QLabel#SummonHintLabel {
 /* 掉落概率面板 — 常规槽标签 */
 QLabel#RegularPctLabel {
     font-weight: bold;
-    color: {{fg_109}};
+    color: {{text_success}};
 }
 
 /* Config editor controls share the surrounding group-box surface. */
@@ -1392,33 +1396,33 @@ QGroupBox[configEditorSurface="true"] QSlider {
 }
 QGroupBox[configEditorSurface="true"] QSlider::groove:horizontal {
     background-color: transparent;
-    border: {{bd_95}};
+    border: {{bd_inset}};
 }
 QGroupBox[configEditorSurface="true"] QSlider::sub-page:horizontal {
     background-color: {{bg_122}};
     border-radius: 3px;
 }
 QGroupBox[configEditorSurface="true"] QSlider::handle:horizontal {
-    background-color: {{bg_123}};
+    background-color: {{fg_14}};
 }
 QGroupBox[configEditorSurface="true"] QSlider::handle:horizontal:hover {
-    background-color: {{bg_124}};
+    background-color: {{accent}};
 }
 QGroupBox[configEditorSurface="true"] QSpinBox,
 QGroupBox[configEditorSurface="true"] QDoubleSpinBox,
 QGroupBox[configEditorSurface="true"] QComboBox {
     background-color: transparent;
-    border-color: {{bd_96}};
+    border-color: {{hairline}};
 }
 QGroupBox[configEditorSurface="true"] QSpinBox:hover,
 QGroupBox[configEditorSurface="true"] QDoubleSpinBox:hover,
 QGroupBox[configEditorSurface="true"] QComboBox:hover {
-    border-color: {{bd_97}};
+    border-color: {{bd_hover}};
 }
 QGroupBox[configEditorSurface="true"] QSpinBox:focus,
 QGroupBox[configEditorSurface="true"] QDoubleSpinBox:focus,
 QGroupBox[configEditorSurface="true"] QComboBox:focus {
-    border-color: {{bd_98}};
+    border-color: {{accent}};
 }
 QGroupBox[configEditorSurface="true"] QCheckBox,
 QGroupBox[configEditorSurface="true"] QRadioButton {
@@ -1427,16 +1431,16 @@ QGroupBox[configEditorSurface="true"] QRadioButton {
 QGroupBox[configEditorSurface="true"] QCheckBox::indicator,
 QGroupBox[configEditorSurface="true"] QRadioButton::indicator {
     background-color: transparent;
-    border-color: {{bd_99}};
+    border-color: {{bd_hover}};
 }
 QGroupBox[configEditorSurface="true"] QCheckBox::indicator:hover,
 QGroupBox[configEditorSurface="true"] QRadioButton::indicator:hover {
-    border-color: {{bd_100}};
+    border-color: {{accent}};
 }
 QGroupBox[configEditorSurface="true"] QCheckBox::indicator:checked,
 QGroupBox[configEditorSurface="true"] QRadioButton::indicator:checked {
-    background-color: {{bg_125}};
-    border-color: {{bd_101}};
+    background-color: {{accent}};
+    border-color: {{accent}};
 }
 
 /* 状态栏标签 — configs_editor */
@@ -1444,30 +1448,30 @@ QLabel#ConfigDirLabel[status="loaded"],
 QLabel#StatusWarpcLabel[status="loaded"],
 QLabel#StatusTktLabel[status="loaded"],
 QLabel#StatusFaLabel[status="loaded"] {
-    color: {{fg_110}};
+    color: {{text_success}};
     font-weight: bold;
 }
 QLabel#ConfigDirLabel[status="missing"],
 QLabel#StatusWarpcLabel[status="missing"],
 QLabel#StatusTktLabel[status="missing"],
 QLabel#StatusFaLabel[status="missing"] {
-    color: {{fg_111}};
+    color: {{fg_61}};
 }
 QLabel#ConfigDirLabel[status="unloaded"],
 QLabel#StatusWarpcLabel[status="unloaded"],
 QLabel#StatusTktLabel[status="unloaded"],
 QLabel#StatusFaLabel[status="unloaded"] {
-    color: {{fg_112}};
+    color: {{fg_55}};
 }
 QLabel#StatusSkillLabel[status="loaded"] {
-    color: {{fg_113}};
+    color: {{text_success}};
     font-weight: bold;
 }
 QLabel#StatusSkillLabel[status="missing"] {
-    color: {{fg_114}};
+    color: {{fg_61}};
 }
 QLabel#StatusSkillLabel[status="unloaded"] {
-    color: {{fg_115}};
+    color: {{fg_55}};
 }
 
 /* WarPC 选择器 — 已选提示栏 */
@@ -1479,8 +1483,8 @@ QLabel#WarpcSelectedLabel {
 
 /* ── 字形单元格 (font_editor) ── */
 QLabel[class="GlyphCell"] {
-    background-color: {{bg_127}};
-    border: {{bd_102}};
+    background-color: {{bg_surface}};
+    border: {{bd_regular}};
 }
 
 /* ══ 功能补充规则 (bab68ba 提交后新增组件所需, 配色沿用本主题色板) ══ */
@@ -1527,48 +1531,48 @@ QPushButton#btnStartCompat {
     border-bottom-right-radius: 0px;
 }
 QPushButton#btnStartGear {
-    background-color: {{bg_132}};
-    color: {{fg_120}};
-    border: {{bd_105}};
+    background-color: {{bg_99}};
+    color: {{fg_77}};
+    border: {{bd_74}};
     border-left: none;
     border-top-left-radius: 0px;
     border-bottom-left-radius: 0px;
     padding: 6px 9px;
 }
 QPushButton#btnStartGear:hover {
-    background-color: {{bg_133}};
+    background-color: {{bg_100}};
 }
 QPushButton#btnStartGear:pressed {
-    background-color: {{bg_134}};
+    background-color: {{bg_101}};
     color: #ffffff;
 }
 /* 齿轮按钮永远不允许禁用 — :disabled 样式与默认完全相同, 杜绝视觉差异 */
 QPushButton#btnStartGear:disabled {
-    background-color: {{bg_135}};
-    color: {{fg_121}};
-    border-color: {{bd_106}};
+    background-color: {{bg_99}};
+    color: {{fg_77}};
+    border-color: {{bg_101}};
 }
 QPushButton#btnStartGearCompat {
-    background-color: {{bg_136}};
-    color: {{fg_122}};
-    border: {{bd_107}};
+    background-color: {{bg_128}};
+    color: {{fg_117}};
+    border: {{bd_103}};
     border-left: none;
     border-top-left-radius: 0px;
     border-bottom-left-radius: 0px;
     padding: 6px 9px;
 }
 QPushButton#btnStartGearCompat:hover {
-    background-color: {{bg_137}};
+    background-color: {{bg_129}};
 }
 QPushButton#btnStartGearCompat:pressed {
-    background-color: {{bg_138}};
-    color: {{fg_123}};
+    background-color: {{bg_130}};
+    color: {{fg_118}};
 }
 /* 兼容模式齿轮按钮 — :disabled 与启用态完全相同, 始终保持可点击视觉 */
 QPushButton#btnStartGearCompat:disabled {
-    background-color: {{bg_139}};
-    color: {{fg_124}};
-    border-color: {{bd_108}};
+    background-color: {{bg_128}};
+    color: {{fg_117}};
+    border-color: {{bd_104}};
 }
 
 /* ── 兼容模式蒙板 (补丁列表): 圆角与 DockHeader/DockBody 一致 ── */
@@ -1578,7 +1582,7 @@ QWidget#compatOverlay {
 }
 QLabel#compatOverlayLabel {
     background: transparent;
-    color: {{fg_125}};
+    color: {{fg_118}};
     font-size: 14px;
     font-weight: bold;
 }
@@ -1602,7 +1606,7 @@ QCheckBox#headerCheck {
 QTextBrowser#detailBox {
     background-color: transparent;
     border: none;
-    color: {{fg_128}};
+    color: {{text_primary}};
 }
 QDialog {
     background-color: {{bg_140}};
@@ -1610,30 +1614,30 @@ QDialog {
 QLabel#previewThumb {
     border: {{bd_109}};
     border-radius: 6px;
-    background-color: {{bg_141}};
+    background-color: {{bg_62}};
     color: {{fg_129}};
 }
 QLabel#avatarPreview {
     border: {{bd_110}};
-    background-color: {{bg_142}};
+    background-color: {{bg_38}};
 }
 
 /* ── 播放状态标签 (custom_music_dialog) ── */
 QLabel#nowPlaying {
-    color: {{fg_130}};
+    color: {{fg_89}};
 }
 QLabel#nowPlaying[state="playing"] {
-    color: {{fg_131}};
+    color: {{accent}};
 }
 
 /* ── 学习模式提示 / 技能溢出警告 (warpc_editor) ── */
 QLabel#learnModeHint {
-    color: {{fg_132}};
+    color: {{accent}};
     font-size: 11px;
     padding: 2px 0 4px 0;
 }
 QLabel#overflowBanner {
-    color: {{fg_133}};
+    color: {{fg_118}};
     background-color: #c0392b;
     font-weight: bold;
     padding: 6px;
@@ -1650,7 +1654,7 @@ QLabel[class="FlashHint"] {
 
 /* ── 状态 chips (tks_book) ── */
 QWidget[class="Chip"] {
-    background-color: {{bg_143}};
+    background-color: {{bg_30}};
     border: {{bd_111}};
     border-radius: 6px;
 }
@@ -1745,7 +1749,7 @@ QLabel[class="BookInfo"] {
     color: {{fg_148}};
 }
 QLabel[class="BookOk"] {
-    color: {{fg_149}};
+    color: {{fg_91}};
 }
 QLabel[class="BookBad"] {
     color: {{fg_150}};
@@ -1760,13 +1764,13 @@ QLabel[class="BookMeta"] {
     color: {{fg_153}};
 }
 QLabel[class="BookMuted"] {
-    color: {{fg_154}};
+    color: {{fg_89}};
 }
 
 /* ══ TKS Launcher 视觉优化 ══ */
 QMainWindow#LauncherWindow,
 QWidget#LauncherRoot {
-    background-color: {{bg_157}};
+    background-color: {{bg_window}};
 }
 QToolBar#LauncherToolbar {
     background-color: {{bg_158}};
@@ -1777,24 +1781,24 @@ QToolBar#LauncherToolbar {
 }
 QToolBar#LauncherToolbar::separator {
     width: 1px;
-    background-color: {{bg_159}};
+    background-color: {{hairline}};
     margin: 7px 3px;
 }
 QToolBar#LauncherToolbar QPushButton#toolbarSecondary {
-    background-color: {{bg_160}};
-    color: {{fg_155}};
-    border: {{bd_113}};
+    background-color: {{bg_38}};
+    color: {{fg_18}};
+    border: {{bd_inset}};
     border-radius: 8px;
     padding: 7px 12px;
 }
 QToolBar#LauncherToolbar QPushButton#toolbarSecondary:hover {
-    background-color: {{bg_161}};
-    color: {{fg_156}};
-    border-color: {{bd_114}};
+    background-color: {{bg_hover}};
+    color: {{text_primary}};
+    border-color: {{bd_hover}};
 }
 QToolBar#LauncherToolbar QPushButton#toolbarSecondary:pressed {
     background-color: {{bg_162}};
-    border-color: {{bd_115}};
+    border-color: {{accent}};
 }
 QWidget#LauncherModeBar {
     background-color: transparent;
@@ -1802,11 +1806,11 @@ QWidget#LauncherModeBar {
     padding: 0px;
 }
 QSplitter#LauncherSplitter {
-    background-color: {{bg_163}};
+    background-color: {{bg_window}};
 }
 QSplitter#LauncherSplitter::handle:horizontal,
 QSplitter#LauncherRightSplitter::handle:vertical {
-    background-color: {{bg_164}};
+    background-color: {{bg_window}};
     border: none;
     margin: 0;
 }
@@ -1828,8 +1832,8 @@ QWidget#LauncherModPanel QWidget#DockBody,
 QWidget#LauncherPreviewPanel QWidget#DockBody,
 QWidget#LauncherStatusPanel QWidget#DockBody,
 QWidget#LauncherToolsPanel QWidget#DockBody {
-    background-color: {{bg_166}};
-    border: {{bd_117}};
+    background-color: {{bg_15}};
+    border: {{bd_116}};
     border-bottom-left-radius: 10px;
     border-bottom-right-radius: 10px;
 }
@@ -1847,10 +1851,10 @@ QWidget#LauncherModPanel QToolButton#dockToolButton {
 QTableWidget#LauncherPatchTable,
 QTableWidget#LauncherModTable {
     background-color: {{bg_167}};
-    border: {{bd_118}};
+    border: {{bd_116}};
     border-radius: 8px;
     gridline-color: {{gridline_color_03}};
-    alternate-background-color: {{altbg_03}};
+    alternate-background-color: {{bg_167}};
 }
 /* 行/列分隔线统一由 gridline-color 绘制 (1px), ::item 不再加 border-bottom 避免双线叠加 */
 QTableWidget#LauncherPatchTable::item,
@@ -1860,34 +1864,34 @@ QTableWidget#LauncherModTable::item {
 }
 QTableWidget#LauncherPatchTable::item:selected,
 QTableWidget#LauncherModTable::item:selected {
-    background-color: {{bg_168}};
-    color: {{fg_157}};
+    background-color: {{accent_soft}};
+    color: {{text_primary}};
 }
 /* 表头顶部圆角: 表头组件自身圆角背景, section 透明以避免直角盖住卡片圆角 */
 QTableWidget#LauncherPatchTable QHeaderView,
 QTableWidget#LauncherModTable QHeaderView {
-    background-color: {{bg_169}};
+    background-color: {{bg_167}};
     border-top-left-radius: 7px;
     border-top-right-radius: 7px;
 }
 QTableWidget#LauncherPatchTable QHeaderView::section,
 QTableWidget#LauncherModTable QHeaderView::section {
     background-color: transparent;
-    border-bottom: {{bd_119}};
+    border-bottom: {{bd_inset}};
     padding: 8px;
-    color: {{fg_158}};
+    color: {{text_muted}};
 }
 QTextBrowser#detailBox {
-    background-color: {{bg_170}};
-    border: {{bd_120}};
+    background-color: {{bg_140}};
+    border: {{bd_116}};
     border-radius: 10px;
-    color: {{fg_159}};
+    color: {{text_primary}};
     padding: 12px 14px;
 }
 /* 模组信息面板: 详情文档以圆角内嵌组件形式适配 DockBody 圆角 */
 QWidget#LauncherPreviewPanel QTextBrowser#detailBox {
     background-color: transparent;
-    border: {{bd_121}};
+    border: {{bd_116}};
     border-radius: 8px;
     padding: 8px 10px;
 }
@@ -1897,7 +1901,7 @@ QWidget#LauncherToolsContent {
     background-color: transparent;
 }
 QLabel[class="SummaryValue"] {
-    color: {{fg_160}};
+    color: {{text_primary}};
     font-weight: 600;
 }
 QLabel#modeValueStd,
@@ -1911,7 +1915,7 @@ QLabel#modeValueStd {
     background-color: {{bg_171}};
 }
 QLabel#modeValueCompat {
-    color: {{fg_162}};
+    color: {{fg_127}};
     background-color: {{bg_172}};
 }
 /* 启动状态值去除内边距, 与上方各行值左对齐 */
@@ -1924,36 +1928,36 @@ QWidget#LauncherSummaryContent QLabel#statusLabelError {
 /* 启动状态行内按钮 (启动状态值右侧, 靠右对齐) */
 QPushButton#showLogInlineButton {
     background-color: transparent;
-    color: {{fg_163}};
+    color: {{fg_161}};
     border: none;
     border-radius: 6px;
     padding: 3px 8px;
 }
 QPushButton#showLogInlineButton:hover {
-    background-color: {{bg_173}};
-    color: {{fg_164}};
+    background-color: {{bg_112}};
+    color: {{text_primary}};
 }
 QPushButton#showLogInlineButton:pressed {
-    background-color: {{bg_174}};
+    background-color: {{bg_162}};
 }
 QWidget#LauncherToolsContent QRadioButton {
-    background-color: {{bg_175}};
-    border: {{bd_122}};
+    background-color: {{bg_38}};
+    border: {{bd_inset}};
     border-radius: 7px;
     padding: 5px 9px;
 }
 QWidget#LauncherToolsContent QRadioButton:hover {
-    border-color: {{bd_123}};
-    background-color: {{bg_176}};
+    border-color: {{bd_hover}};
+    background-color: {{bg_hover}};
 }
 QWidget#LauncherToolsContent QRadioButton:checked {
-    color: {{fg_165}};
-    border-color: {{bd_124}};
-    background-color: {{bg_177}};
+    color: {{fg_161}};
+    border-color: {{accent}};
+    background-color: {{bg_171}};
 }
 QStatusBar#LauncherStatusBar {
-    background-color: {{bg_178}};
-    border-top: {{bd_125}};
+    background-color: {{bg_158}};
+    border-top: {{bd_112}};
     padding: 3px 10px;
 }
 QLabel#enabledModSummary,

@@ -61,6 +61,7 @@ class EditorMainWindow(QMainWindow):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName("EditorWindow")
+        self._dirty_flag = False  # _dirty property 的存储位
         self.setWindowTitle(format_title(self.EDITOR_KEY))
         self.resize(*self.DEFAULT_SIZE)
         if self.MIN_SIZE:
@@ -72,6 +73,27 @@ class EditorMainWindow(QMainWindow):
                               persist=False)
         self._build_ui()
         self._after_build()
+
+    # ── 脏状态 (统一标题栏 * 修改标记) ────────────────────────
+    # _dirty 以 property 承载: 子类既有的 self._dirty = True/False 赋值
+    # 自动同步标题栏修改标记, 无需逐编辑器改造。
+    @property
+    def _dirty(self) -> bool:
+        return self._dirty_flag
+
+    @_dirty.setter
+    def _dirty(self, value) -> None:
+        self._dirty_flag = bool(value)
+        self.setWindowModified(self._dirty_flag)
+
+    def set_dirty(self, dirty) -> None:
+        """统一脏状态入口: 置/清修改标记 (标题栏 * 号)。
+
+        子类在数据变更处调用 set_dirty(True), 保存/加载后调用
+        set_dirty(False); 需追加派生行为时覆盖并调用 super()。
+        直接给 self._dirty 赋值等效。
+        """
+        self._dirty = dirty
 
     # ── 子类钩子 ──────────────────────────────────────────────
     def _init_data(self):

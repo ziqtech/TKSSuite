@@ -57,6 +57,17 @@ def update_path_labels(labels_config, is_dark):
         label.style().polish(label)
 
 
+def mark_invalid(line_edit, invalid: bool) -> None:
+    """数值输入校验反馈: 置/清 QLineEdit 的 invalid 动态属性。
+
+    QSS 侧经 ``QLineEdit[invalid="true"]`` 渲染警示红边框
+    (槽位 bd_error, theme_tokens), 供表单应用时对非法/越界值即时提示。
+    """
+    line_edit.setProperty("invalid", bool(invalid))
+    line_edit.style().unpolish(line_edit)
+    line_edit.style().polish(line_edit)
+
+
 def make_fake_input(widget=None, line_edit=None, combo=None,
                     button=None, stretch=True, height=28):
     """创建 FakeInputBox 外壳 (内凹输入框风格)

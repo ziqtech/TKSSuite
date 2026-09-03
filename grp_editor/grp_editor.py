@@ -74,7 +74,7 @@ from editor_utils.mod_exporter import (
 )
 from editor_utils.rgb565 import rgb565_to_rgba, rgba_to_rgb565
 from editor_utils.app_shell import EditorMainWindow, run_editor
-from editor_utils.ui_helpers import themed_messagebox
+from editor_utils.ui_helpers import themed_messagebox, confirm_close
 from editor_utils.version import format_title
 
 # ── 本地别名: 保持向后兼容 ──
@@ -537,6 +537,7 @@ class GRPEditor(EditorMainWindow):
         self._audio_tmp = None
         self._wave_start_time = 0.0
         self._wave_timer: Optional[QTimer] = None
+        self._dirty = False  # 区段增删/替换后置位, 打开/新建/保存后复位 (closeEvent 退出确认)
 
     def _build_ui(self):
         # 构建 UI (工具栏由 _setup_ui 置入中央部件)
@@ -860,6 +861,7 @@ class GRPEditor(EditorMainWindow):
     # ── File ops ──────────────────────────────────────────
     def _new_empty(self):
         self.grp = GRPFile()
+        self._dirty = False
         self._sync_list()
         self._sel_idx = -1
         self._refresh_view()
@@ -878,6 +880,7 @@ class GRPEditor(EditorMainWindow):
             self.grp = load_grp(p)
             self._sel_idx = -1
             self._sel_layer = "A"
+            self._dirty = False
             self._sync_list()
             self._refresh_view()
             ni, na, nd = len(self.grp.sections), len(self.grp.audio_sections), len(self.grp.data_sections)
@@ -909,6 +912,7 @@ class GRPEditor(EditorMainWindow):
             save_grp(self.grp, grp_path, idx_path)
             self.grp.filepath = grp_path
             self.grp.idx_path = idx_path
+            self._dirty = False
             self._status_lbl.setText(f"已保存: {Path(grp_path).name} ({os.path.getsize(grp_path)/1024:.1f}KB)")
         except Exception as e:
             QMessageBox.critical(self, "保存失败", str(e))
@@ -1196,6 +1200,7 @@ class GRPEditor(EditorMainWindow):
         }
 
         self._sync_list()
+        self._dirty = True
         self._status_lbl.setText(
             f"已导入 MOD: {info.get('name', '')} v{info.get('version', '')} | "
             f"{target_name}: {len(blocks)} 个区段")
@@ -1288,6 +1293,7 @@ class GRPEditor(EditorMainWindow):
             QMessageBox.critical(self, "合并失败", f"重建 GRP 失败: {e}")
             return
         self._sync_list()
+        self._dirty = True
 
         n_add = sum(1 for r in remap if r['action'] == '追加')
         n_dup = sum(1 for r in remap if r['action'] == '去重复用')
@@ -1310,6 +1316,9 @@ class GRPEditor(EditorMainWindow):
             f"并确认 scene_id 与区段索引的映射关系。")
 
     def closeEvent(self, event):
+        if not confirm_close(self, self._dirty):
+            event.ignore()
+            return
         self._stop_audio()
         super().closeEvent(event)
 
@@ -1771,6 +1780,7 @@ class GRPEditor(EditorMainWindow):
             sec._raw = raw
             sec._samples = None
             sec.parse_wav()
+            self._dirty = True
             self._sync_list()
             self._update_detail()
             self._refresh_view()
@@ -1806,6 +1816,7 @@ class GRPEditor(EditorMainWindow):
             sec._pixels = rgba_to_rgb565(img.tobytes(), sec.width, sec.height)
             sec._decoded_a = True
             sec._modified_a = True
+            self._dirty = True
             self._pil_img = None
             self._pixmap_item = None
             self._refresh_view()
@@ -1837,6 +1848,7 @@ class GRPEditor(EditorMainWindow):
                 sec.has_layer2 = True
             sec._decoded_b = True
             sec._modified_b = True
+            self._dirty = True
             self._pil_img = None
             self._pixmap_item = None
             self._refresh_view()
@@ -1978,6 +1990,7 @@ class GRPEditor(EditorMainWindow):
                 sec.has_layer2 = True
             sec._decoded_b = True
             sec._modified_b = True
+            self._dirty = True
             self._pil_img = None
             self._pixmap_item = None
             self._refresh_view()
@@ -2116,6 +2129,7 @@ class GRPEditor(EditorMainWindow):
             sec._orig_frame_b = fb_data
             sec.comp_b = len(fb_data)
             self.grp.sections.append(sec)
+            self._dirty = True
             self._sync_list()
             self._status_lbl.setText(f"已新增图像区段 #{new_idx} ({w}x{h})")
             dlg.accept()
@@ -2135,6 +2149,7 @@ class GRPEditor(EditorMainWindow):
             sec = GRPAudioSection(new_idx, 0, len(raw), raw)
             sec.parse_wav()
             self.grp.audio_sections.append(sec)
+            self._dirty = True
             self._sync_list()
             self._status_lbl.setText(f"已新增音频区段 #{new_idx} ({len(raw)}B)")
         except Exception as e:
@@ -2147,6 +2162,7 @@ class GRPEditor(EditorMainWindow):
             raw = Path(p).read_bytes()
             new_idx = self._next_index()
             self.grp.data_sections.append(GRPDataSection(new_idx, 0, len(raw), raw))
+            self._dirty = True
             self._sync_list()
             self._status_lbl.setText(f"已新增数据区段 #{new_idx} ({len(raw)}B)")
         except Exception as e:
@@ -2169,6 +2185,7 @@ class GRPEditor(EditorMainWindow):
         self._sel_idx = -1
         self._pil_img = None
         self._pixmap_item = None
+        self._dirty = True
         self._sync_list()
         self._refresh_view()
         self._status_lbl.setText(f"已删除区段 #{idx:03d}")

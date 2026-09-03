@@ -49,6 +49,7 @@ from editor_utils import theme_manager
 from editor_utils.theme_switcher import toggle_theme_in_family
 from editor_utils.app_shell import EditorMainWindow, run_editor
 from editor_utils.version import format_title
+from editor_utils.ui_helpers import confirm_close
 
 # ── GXP 格式常量 ──────────────────────────────────────────
 GXP_MAGIC = b"JGXP"
@@ -224,6 +225,7 @@ class GXPEditor(EditorMainWindow):
         self.img: Optional[GXPImage] = None
         self._pixmap_item = None
         self._zoom = 1.0
+        self._dirty = False  # 导入置位, 打开/新建/保存后复位 (closeEvent 退出确认)
 
     def _build_ui(self):
         self._setup_menu()
@@ -240,6 +242,12 @@ class GXPEditor(EditorMainWindow):
     def _create_dock(self, title, widget_content, header_layout=None):
         """Dock 面板包裹 — 委托给 editor_utils.dock_components"""
         return create_dock(title, widget_content, header_layout)
+
+    def closeEvent(self, event):
+        if not confirm_close(self, self._dirty):
+            event.ignore()
+        else:
+            event.accept()
 
     def _on_theme_applied(self, theme_id):
         spec = theme_manager.THEMES[theme_id]
@@ -432,6 +440,7 @@ class GXPEditor(EditorMainWindow):
         self.img.width, self.img.height = 640, 480
         self.img.rgba = bytearray(640 * 480 * 4)
         self._zoom = 1.0
+        self._dirty = False
         self._refresh_view()
         self._status_left.setText(" 新建空白画布 640×480")
         self._info_label.setText("尺寸: 640×480\n格式: RGB565\n状态: 内存新建")
@@ -447,6 +456,7 @@ class GXPEditor(EditorMainWindow):
             self._status_left.setText(f" 加载中: {Path(p).name} ...")
             QApplication.processEvents()
             self.img = load_gxp(p)
+            self._dirty = False
             self._fit_to_window()
             self._refresh_view()
             self._status_left.setText(f" 已加载: {Path(p).name}  |  {os.path.getsize(p)/1024:.1f} KB")
@@ -474,6 +484,7 @@ class GXPEditor(EditorMainWindow):
             QApplication.processEvents()
             save_gxp(self.img, p)
             self.img.filepath = p
+            self._dirty = False
             size_kb = os.path.getsize(p) / 1024
             self._status_left.setText(f" 已保存: {Path(p).name}  |  {size_kb:.1f} KB")
             self.setWindowTitle(format_title("gxp_editor", os.path.basename(p)))
@@ -493,6 +504,7 @@ class GXPEditor(EditorMainWindow):
                                        self.img.height if self.img and self.img.height > 0 else 0)
             self._fit_to_window()
             self._refresh_view()
+            self._dirty = True
             self._status_left.setText(f" 已导入外部资产: {Path(p).name}")
             self._info_label.setText(f"尺寸: {self.img.size_str}\n格式: RGB{self.img.bpp}\n来源: 外部图片映射")
             self.setWindowTitle(format_title("gxp_editor", f"[资产导入] {os.path.basename(p)}"))
@@ -588,6 +600,7 @@ class GXPEditor(EditorMainWindow):
         }
 
         self._refresh_view()
+        self._dirty = True
         self._status_left.setText(
             f" 已导入 MOD: {info.get('name', '')} | {target_name}")
         QMessageBox.information(self, "导入成功",

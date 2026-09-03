@@ -1,7 +1,7 @@
 # PySide6 界面体验优化方案
 
 > 创建日期：2026-09-04
-> 状态：**五批次全部未开始**
+> 状态：**P0 已完成（2026-09-04）**，P1~P4 未开始
 > 前置文档：《PySide6样式体系整改方案.md》（四阶段已完成）——本方案是其续篇
 > 结论：四阶段解决了"样式难维护"；本方案解决"体验不够好"——设计体系补全（排版令牌/图标/动效）、交互安全网（退出保护/脏标记/校验）、数据量增长后的列表能力。
 
@@ -87,12 +87,12 @@
 
 **目标**：消除已知的误操作丢数据路径；脏状态全编辑器可见。
 
-1. [ ] spritesheet_editor 补 `_dirty` 跟踪 + closeEvent 未保存确认（全项目最大单点风险）
-2. [ ] shop_editor closeEvent 接入已有 `_dirty` 标志（dirty 在 275/597/862/883/896/931/1073 处置位但无人消费，`ui_helpers.confirm_close` 现成可用）
-3. [ ] gxp_editor 补 dirty 概念 + closeEvent（font_editor 为导出式模型风险低，可豁免并注释）
-4. [ ] grp_editor closeEvent 在停音频之外补 dirty 检查
-5. [ ] `EditorMainWindow` 基类统一脏标记：提供 `set_dirty(bool)` 钩子内部调 `setWindowModified`，标题模板加 `[*]` 占位；18 个子编辑器统一接入（替代 kon 的文本"[已修改]"方案）
-6. [ ] 数值输入校验：item_editor.py:1205-1212 / skill_editor.py:1361-1366 的 int() 手工转换换 QIntValidator + 越界即时反馈；QSS 模板加一条 `QLineEdit[invalid="true"] { border-color: 警示红 }`（槽位值入 theme_tokens）
+1. [x] spritesheet_editor 补 `_dirty` 跟踪 + closeEvent 未保存确认（全项目最大单点风险）
+2. [x] shop_editor closeEvent 接入已有 `_dirty` 标志（dirty 在 275/597/862/883/896/931/1073 处置位但无人消费，`ui_helpers.confirm_close` 现成可用）
+3. [x] gxp_editor 补 dirty 概念 + closeEvent（font_editor 为导出式模型风险低，可豁免并注释）
+4. [x] grp_editor closeEvent 在停音频之外补 dirty 检查
+5. [x] `EditorMainWindow` 基类统一脏标记：提供 `set_dirty(bool)` 钩子内部调 `setWindowModified`，标题模板加 `[*]` 占位；18 个子编辑器统一接入（替代 kon 的文本"[已修改]"方案）
+6. [x] 数值输入校验：item_editor.py:1205-1212 / skill_editor.py:1361-1366 的 int() 手工转换换 QIntValidator + 越界即时反馈；QSS 模板加一条 `QLineEdit[invalid="true"] { border-color: 警示红 }`（槽位值入 theme_tokens）
 
 **验收**：人工抽查 spritesheet/shop/gxp/grp 改动后关窗必弹确认；item 输入非法值有红框不再静默归零；冒烟测试全绿。
 
@@ -172,7 +172,7 @@
 
 | 批次 | 状态 | 开始日期 | 完成日期 |
 | --- | --- | --- | --- |
-| P0：交互安全网 | 未开始 |  |  |
+| P0：交互安全网 | **已完成** | 2026-09-04 | 2026-09-04 |
 | P1：设计体系 2.0 | 未开始 |  |  |
 | P2：列表操作能力 | 未开始 |  |  |
 | P3：反馈与一致性 | 未开始 |  |  |
@@ -180,12 +180,12 @@
 
 ### P0 清单
 
-- [ ] spritesheet 退出保护
-- [ ] shop closeEvent 接入 dirty
-- [ ] gxp dirty + closeEvent
-- [ ] grp closeEvent 补 dirty
-- [ ] 基类 setWindowModified + 标题 `[*]`
-- [ ] 数值校验 QIntValidator + invalid 红框
+- [x] spritesheet 退出保护
+- [x] shop closeEvent 接入 dirty
+- [x] gxp dirty + closeEvent
+- [x] grp closeEvent 补 dirty
+- [x] 基类 setWindowModified + 标题 `[*]`
+- [x] 数值校验 QIntValidator + invalid 红框
 
 ### P1 清单
 
@@ -249,3 +249,4 @@
 | 日期 | 内容 |
 | --- | --- |
 | 2026-09-04 | 方案定稿：全量 UI 体检完成（样式整改四阶段之后的增量分析），五批次任务清单建立；实测基线数据录入（槽位 484/222/54% 重复、字号 7 档、圆角 9 种、padding 45 种、setWindowModified 0 处、QUndoStack 0 处、Ctrl+F 1 家、最近文件 0 处、QSS 外色值孤岛 ~9 处、状态栏 6/18、processEvents 21 处） |
+| 2026-09-04 | **P0 完成（6/6）**：spritesheet/shop/gxp/grp 四编辑器补退出保护（confirm_close + 脏标志全点位接入）；基类 `_dirty` 以 **property** 承载（实现与原设计差异：既有 `self._dirty = …` 赋值自动同步 `setWindowModified`，13 个编辑器零逐个接入；mat 经 MapDataManager dirty property + `_script_dirty` property 双路联动，configs 因对比式脏检查用 1.5s 低频轮询）；`format_title` 加 `[*]` 占位（全编辑器标题自动获得修改标记位，kon 的状态文本"[已修改]"已移除）；item/skill 数值字段 QIntValidator(-32768,32767) + `ui_helpers.mark_invalid` 红框反馈（新槽位 `bd_error`，越界仍钳制保数据但不再静默）。冒烟测试 4/4 全绿（28.6s）；离屏验证：4 主题渲染无残留槽位、`_dirty`/`set_dirty`/标题`[*]`/mark_invalid 机制全过 |

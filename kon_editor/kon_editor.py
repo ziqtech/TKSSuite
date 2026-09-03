@@ -784,9 +784,9 @@ class KonEditor(EditorMainWindow):
             self.filtered_indices.append(rec['index'])
         self._refresh_table()
         nonempty = sum(1 for r in self.records if any(r[fn] != 0 for fn, _, _, _ in KON_FIELDS))
-        msg = f"显示 {len(self.filtered_indices)}/{len(self.records)} (有效 {nonempty}) | Ctrl+S 保存"
-        if self._dirty: msg += " [已修改]"
-        self.status_label.setText(msg)
+        # 修改态由标题栏 * 标记呈现 (基类 _dirty property 同步 setWindowModified)
+        self.status_label.setText(
+            f"显示 {len(self.filtered_indices)}/{len(self.records)} (有效 {nonempty}) | Ctrl+S 保存")
 
     def _clear_filter(self):
         self.search_input.clear()

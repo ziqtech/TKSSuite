@@ -12,7 +12,7 @@ import sys
 
 from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import (
-    QBrush, QColor, QKeySequence, QPainter, QPainterPath, QPen, QPolygonF
+    QBrush, QColor, QIntValidator, QKeySequence, QPainter, QPainterPath, QPen, QPolygonF
 )
 from PySide6.QtWidgets import (
     QAbstractItemView, QApplication, QCheckBox, QDialog,
@@ -52,7 +52,7 @@ from editor_utils.theme_switcher import (
 from editor_utils.app_shell import EditorMainWindow, run_editor
 from editor_utils.tkt_loader import load_tkt_simple
 from editor_utils.ui_helpers import (
-    confirm_close, make_fake_input,
+    confirm_close, make_fake_input, mark_invalid,
     update_path_labels, EditorComboBox,
 )
 from editor_utils.search_utils import search_match
@@ -1056,6 +1056,8 @@ class SkillEditorApp(EditorMainWindow):
                 btn.clicked.connect(lambda _, f=fn: self._pick_flags(f))
         else:
             inp = QLineEdit()
+            # 数值字段: 限制只能输入 int16 范围内整数 (防非法/越界输入静默归零)
+            inp.setValidator(QIntValidator(-32768, 32767, inp))
             cell.addWidget(make_fake_input(line_edit=inp))
             self.widget_map[fn] = inp
 
@@ -1354,16 +1356,26 @@ class SkillEditorApp(EditorMainWindow):
         for fn, fo, fl, ft, _ in ALL_FIELDS:
             w = self.widget_map.get(fn)
             if not w: continue
-            try:
-                if ft == 'type' or ft == 'atk_type':
-                    v = int(w.currentText().split('-')[0])
-                else:
+            if ft == 'type' or ft == 'atk_type':
+                v = int(w.currentText().split('-')[0])
+                continue
+            # 数值字段: 校验失败/越界即时红框反馈 (不再静默归零)
+            if isinstance(w, QLineEdit):
+                mark_invalid(w, False)
+                try:
                     v = int(w.text() or 0)
-                    if v > 32767: v = 32767
-                    if v < -32768: v = -32768
-                rec[fn] = v
-            except ValueError:
-                rec[fn] = 0
+                except ValueError:
+                    mark_invalid(w, True)
+                    v = 0
+                if v > 32767:
+                    mark_invalid(w, True)
+                    v = 32767
+                elif v < -32768:
+                    mark_invalid(w, True)
+                    v = -32768
+            else:
+                v = int(w.text() or 0)
+            rec[fn] = v
 
         self._dirty = True
         self._apply_filter()

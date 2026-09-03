@@ -149,6 +149,17 @@ class MapDataManager:
     MatEditorApp 通过 self._data 访问; SceneCanvasView 通过 self._data (editor._data
     的快捷引用) 访问, 同时保留 self._editor 反向引用编辑器回调。"""
 
+    # _dirty 以 property 承载: 赋值时回调 on_dirty_change, 由编辑器注入以同步标题栏
+    @property
+    def _dirty(self) -> bool:
+        return self._dirty_flag
+
+    @_dirty.setter
+    def _dirty(self, value) -> None:
+        self._dirty_flag = bool(value)
+        if self.on_dirty_change is not None:
+            self.on_dirty_change(self._dirty_flag)
+
     def __init__(self):
         # 文件路径
         self.dat_path = None
@@ -174,7 +185,8 @@ class MapDataManager:
         self._save_slot = 0
         self._game_dir = None
         # 脏标记
-        self._dirty = False
+        self._dirty_flag = False
+        self.on_dirty_change = None  # callable(bool): _dirty 变化时由编辑器注入 (同步标题栏)
 
     def load_from_result(self, result):
         """从 DataLoaderThread 返回的结果装配全部数据状态"""
@@ -1266,9 +1278,25 @@ class MatEditorApp(EditorMainWindow):
         "  · B链 - 交互触发 (玩家操作时)\n"
         "  · C链 - 其他类型")
 
+    # ── 脚本脏标记 (property: 赋值时联动标题栏修改标记) ──
+    @property
+    def _script_dirty(self) -> bool:
+        return self._script_dirty_flag
+
+    @_script_dirty.setter
+    def _script_dirty(self, value) -> None:
+        self._script_dirty_flag = bool(value)
+        self._sync_title_dirty()
+
+    def _sync_title_dirty(self) -> None:
+        """综合数据/脚本两路脏状态, 同步标题栏 * 修改标记。"""
+        self._dirty = self._data._dirty or self._script_dirty_flag
+
     def _init_data(self):
         # 数据状态 (§5 — 已迁入 MapDataManager)
         self._data = MapDataManager()
+        # 数据脏标记变化 → 联动标题栏修改标记 (综合数据/脚本两路脏状态)
+        self._data.on_dirty_change = lambda _d: self._sync_title_dirty()
 
         # 可视化模式状态 (画布自有状态已迁入 SceneCanvasView)
         self._vis_show_types = {t: True for t in [5, 10, 15, 16, 20, 110, 200]}
@@ -1280,7 +1308,7 @@ class MatEditorApp(EditorMainWindow):
         self._preview_cmds = []
         self._current_param_idx = None
         self._current_edit_define_id = None
-        self._script_dirty = False
+        self._script_dirty_flag = False
         self._script_baseline = {}  # {define_id_str: 去空白正文} 脚本删除检测基线 (载入/导入/保存后刷新)
         self._edit_debounce = None
 

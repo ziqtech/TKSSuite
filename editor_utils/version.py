@@ -131,16 +131,19 @@ def app_name(app_id: str) -> str:
 def format_title(app_id: str, subtitle: str | None = None) -> str:
     """格式化窗口标题
 
+    标题含 Qt 的 ``[*]`` 占位符: setWindowModified(True) 时标题栏自动显示
+    修改标记 ``*`` (未修改时 Qt 将 ``[*]`` 渲染为空, 标题外观不变)。
+
     Args:
         app_id: 编辑器唯一标识
         subtitle: 副标题 (如文件名), None 表示无副标题
 
     Returns:
-        无副标题: "{app_name} v{version} — {版权声明}"
-        有副标题: "{app_name} v{version} — {subtitle} — {版权声明}"
+        无副标题: "{app_name} v{version}[*] — {版权声明}"
+        有副标题: "{app_name} v{version}[*] — {subtitle} — {版权声明}"
     """
     v = get_version(app_id)
-    base = f"{v.app_name} v{v.version}"
+    base = f"{v.app_name} v{v.version}[*]"
     if subtitle:
         base = f"{base} — {subtitle}"
     return f"{base} — {_LICENSE_NOTICE}"

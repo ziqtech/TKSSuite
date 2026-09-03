@@ -58,7 +58,7 @@ from editor_utils.theme_switcher import (
     apply_theme_to_window, toggle_theme_in_family,
 )
 from editor_utils.app_shell import EditorMainWindow, run_editor
-from editor_utils.ui_helpers import update_path_labels, EditorComboBox
+from editor_utils.ui_helpers import update_path_labels, EditorComboBox, confirm_close
 from editor_utils.search_utils import search_match
 
 # ── 本地别名: 保持向后兼容 ──
@@ -280,6 +280,12 @@ class ShopEditorWindow(EditorMainWindow):
     def _after_build(self):
         self._update_path_labels()
         self._set_edit_enabled(False)
+
+    def closeEvent(self, event):
+        if not confirm_close(self, self._dirty):
+            event.ignore()
+        else:
+            event.accept()
 
     # ================================================================
     # UI 构建

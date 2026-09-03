@@ -1072,7 +1072,11 @@ class FontEditorWindow(EditorMainWindow):
     # ── 关闭事件 ──
 
     def closeEvent(self, event):
-        """关闭窗口时清理线程。"""
+        """关闭窗口时清理线程。
+
+        无数据脏检查豁免: 本编辑器为导出式模型 (生成字体文件写入磁盘,
+        不持有未落盘的编辑态), 退出无数据丢失风险, 故不接入 _dirty。
+        """
         if self._convert_thread and self._convert_thread.isRunning():
             reply = QMessageBox.question(
                 self, "转换进行中",

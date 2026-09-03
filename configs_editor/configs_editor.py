@@ -21,7 +21,7 @@ from PySide6.QtWidgets import (
     QLabel, QPushButton, QFileDialog, QMessageBox,
     QStatusBar, QFrame
 )
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QAction
 
 from editor_utils.theme_switcher import toggle_theme_in_family
@@ -140,6 +140,13 @@ class ConfigsEditorWindow(EditorMainWindow):
     def _after_build(self):
         self._load_panels()
         self._update_window_title()
+
+        # 面板为对比式脏检查 (UI vs baseline 快照, 无变更事件),
+        # 低频轮询驱动标题栏 * 修改标记
+        self._dirty_poll = QTimer(self)
+        self._dirty_poll.setInterval(1500)
+        self._dirty_poll.timeout.connect(self._poll_dirty)
+        self._dirty_poll.start()
 
         # 应用主题
         self._apply_theme()
@@ -518,6 +525,10 @@ class ConfigsEditorWindow(EditorMainWindow):
                 panel._refresh_table()
 
     # ── 关闭确认 ──
+
+    def _poll_dirty(self):
+        """轮询各面板修改态, 同步标题栏 * 修改标记。"""
+        self._dirty = any(p.is_loaded and p.is_modified() for p in self._panels)
 
     def closeEvent(self, event):
         any_modified = any(p.is_loaded and p.is_modified() for p in self._panels)

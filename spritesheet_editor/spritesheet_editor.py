@@ -56,7 +56,7 @@ from editor_utils.theme_manager import business_colors
 from editor_utils.theme_switcher import toggle_theme_in_family
 from editor_utils.app_shell import EditorMainWindow, run_editor
 from editor_utils.version import format_title
-from editor_utils.ui_helpers import EditorComboBox
+from editor_utils.ui_helpers import EditorComboBox, confirm_close
 
 # ── 像素格式定义 ──────────────────────────────────────────────
 PIXEL_FORMATS: dict[str, str] = {
@@ -2642,6 +2642,7 @@ class SettingsPanel(QWidget):
             "", "PNG 图片 (*.png)")
         if not fp: return
         converted.save(fp, "PNG")
+        self.editor._dirty = False
         self.editor._status_label.setText(
             f"已保存 ({self._tex_combo.currentText()} / {fmt} / {alpha_mode}): {Path(fp).name}")
         self._update_output_info()
@@ -2948,6 +2949,7 @@ class SpriteSheetEditorWindow(EditorMainWindow):
             font.setPointSize(9)
             app.setFont(font)
 
+        self._dirty = False  # 模型变更置位, 加载/新建/保存后复位 (closeEvent 退出确认)
         self._set_model(SpriteSheetModel())
         self._source_sheet: Optional[Image.Image] = None
         self._preview_mode: str = "grid"
@@ -2986,6 +2988,12 @@ class SpriteSheetEditorWindow(EditorMainWindow):
         fg = self.frameGeometry()
         fg.moveCenter(screen_geo.center())
         self.move(fg.topLeft())
+
+    def closeEvent(self, event):
+        if not confirm_close(self, self._dirty):
+            event.ignore()
+        else:
+            event.accept()
 
     def _build_layout(self):
         central = QWidget()
@@ -3348,6 +3356,7 @@ class SpriteSheetEditorWindow(EditorMainWindow):
 
     # ── 模型变更通知 ───────────────────
     def _on_model_changed(self):
+        self._dirty = True
         self.canvas.redraw()
         self.image_list.refresh_values()
         self._update_status()
@@ -3375,6 +3384,7 @@ class SpriteSheetEditorWindow(EditorMainWindow):
         self._replace_model()
         self.settings.refresh_values()
         self._on_model_changed()
+        self._dirty = False
         self._status_label.setText("新建空白 Spritesheet")
 
     # ── 导入 ───────────────────────────
@@ -3477,6 +3487,7 @@ class SpriteSheetEditorWindow(EditorMainWindow):
         self._reset_import_state()
         m.split_spritesheet(img)
         self.settings.refresh_values()
+        self._dirty = False
         self._status_label.setText(
             f"已拆分: {path.name} → {m.frame_count} 帧 "
             f"(cols={m.columns} rows={m.rows} "
@@ -3504,6 +3515,7 @@ class SpriteSheetEditorWindow(EditorMainWindow):
         self._reset_import_state()
         m.split_spritesheet(img)
         self.settings.refresh_values()
+        self._dirty = False
         self._status_label.setText(
             f"已重新拆分 → {m.frame_count} 帧 "
             f"(cols={m.columns} rows={m.rows} "
