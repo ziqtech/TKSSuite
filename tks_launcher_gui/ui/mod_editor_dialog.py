@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (
 )
 
 from editor_utils.adaptive_table import AdaptiveTableWidget
+from editor_utils.ui_helpers import themed_question
 
 # MOD 可覆盖配置白名单回退默认 (正式白名单由补丁声明动态推导,
 # 经构造参数 allowed_configs 传入; 与 core.mod_loader.allowed_mod_configs 一致)
@@ -328,7 +329,7 @@ class ModEditorDialog(QDialog):
                 return
             QMessageBox.information(self, "提示", "mod.json 不可删除，已跳过。")
 
-        reply = QMessageBox.question(self, "确认删除",
+        reply = themed_question(self, "确认删除",
             f"确定要删除以下 {len(names)} 个文件吗？\n\n" + "\n".join(names))
         if reply != QMessageBox.StandardButton.Yes:
             return
@@ -388,7 +389,7 @@ class ModEditorDialog(QDialog):
 
     def _close_check(self):
         if self._dirty:
-            reply = QMessageBox.question(self, "未保存的更改",
+            reply = themed_question(self, "未保存的更改",
                 "有未保存的更改，确定要关闭吗？")
             if reply != QMessageBox.StandardButton.Yes:
                 return

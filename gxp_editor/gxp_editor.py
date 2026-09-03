@@ -295,7 +295,7 @@ class GXPEditor(EditorMainWindow):
         vm.addAction("适合窗口(&F)", self._fit_to_window)
         vm.addSeparator()
         self.add_theme_submenu(vm)
-        vm.addAction("快速切换主题(&T)", QKeySequence("Ctrl+T"), self._toggle_theme)
+        vm.addAction("快速切换主题(&T)", self._toggle_theme)
 
         # 帮助菜单
         self.add_help_menu(mb)

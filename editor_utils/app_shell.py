@@ -62,6 +62,7 @@ class EditorMainWindow(QMainWindow):
         super().__init__(parent)
         self.setObjectName("EditorWindow")
         self._dirty_flag = False  # _dirty property 的存储位
+        self._status_dirty_label = None  # 状态栏永久脏状态标签 (懒创建)
         self.setWindowTitle(format_title(self.EDITOR_KEY))
         self.resize(*self.DEFAULT_SIZE)
         if self.MIN_SIZE:
@@ -104,6 +105,27 @@ class EditorMainWindow(QMainWindow):
     def _dirty(self, value) -> None:
         self._dirty_flag = bool(value)
         self.setWindowModified(self._dirty_flag)
+        if self._dirty_flag:
+            self._ensure_status_bar()  # 置脏时确保状态栏与指示标签存在
+        if self._status_dirty_label is not None:
+            self._status_dirty_label.setText(
+                "● 有未保存修改" if self._dirty_flag else "")
+
+    # ── 状态栏 (P3-2: 全编辑器统一底栏 + 修改指示) ────────────
+    def _ensure_status_bar(self):
+        """获取/创建状态栏并挂永久脏状态标签; 子类既有 statusBar()
+        用法 (showMessage/永久标签) 与之共存。"""
+        bar = self.statusBar()
+        if self._status_dirty_label is None:
+            from PySide6.QtWidgets import QLabel
+            self._status_dirty_label = QLabel("")
+            self._status_dirty_label.setObjectName("statusDirty")
+            bar.addPermanentWidget(self._status_dirty_label)
+        return bar
+
+    def status_message(self, text: str, timeout: int = 3000):
+        """状态栏临时消息 (默认 3s 自动恢复), 各子类可直接调用。"""
+        self._ensure_status_bar().showMessage(text, timeout)
 
     def set_dirty(self, dirty) -> None:
         """统一脏状态入口: 置/清修改标记 (标题栏 * 号)。
@@ -262,11 +284,13 @@ class EditorMainWindow(QMainWindow):
         """在菜单栏追加标准的"帮助"菜单 (含 _extra_help_actions 专属项)。"""
         help_menu = menubar.addMenu("帮助(&H)")
         action_help = QAction("帮助说明", self)
+        action_help.setStatusTip("查看本编辑器的使用说明")
         action_help.triggered.connect(self._show_help)
         help_menu.addAction(action_help)
         for label, slot in self._extra_help_actions():
             help_menu.addAction(label).triggered.connect(slot)
         action_about = QAction("关于编辑器", self)
+        action_about.setStatusTip("版本、作者与版权信息")
         action_about.triggered.connect(self._show_about)
         help_menu.addAction(action_about)
         return help_menu

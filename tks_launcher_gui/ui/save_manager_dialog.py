@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
 )
 
 from editor_utils.adaptive_table import AdaptiveTableWidget
+from editor_utils.ui_helpers import themed_question
 
 from core.save_manager import (
     BackupInfo, create_backup, delete_backup, get_last_game_dir,
@@ -235,7 +236,7 @@ class SaveManagerDialog(QDialog):
 
         save_dir = os.path.join(self._game_dir, "Save")
         if not os.path.isdir(save_dir):
-            ret = QMessageBox.question(self, "存档目录不存在",
+            ret = themed_question(self, "存档目录不存在",
                 f"游戏目录下未找到 Save\\ 存档目录:\n{save_dir}\n\n"
                 "是否仍要创建空存档备份?",
                 QMessageBox.Yes | QMessageBox.No)
@@ -333,7 +334,7 @@ class SaveManagerDialog(QDialog):
             # 检测是否有差异
             has_diff = self._has_state_diff(backup)
             if has_diff:
-                ret = QMessageBox.question(self, "恢复补丁状态",
+                ret = themed_question(self, "恢复补丁状态",
                     "备份中记录的补丁/模组状态与当前不同。\n\n"
                     "是否同时恢复补丁状态?\n"
                     "(恢复后下次启动游戏将使用备份时的补丁组合)",
@@ -381,7 +382,7 @@ class SaveManagerDialog(QDialog):
             QMessageBox.information(self, "提示", "请先在列表中选择一个备份")
             return
 
-        ret = QMessageBox.question(self, "确认删除",
+        ret = themed_question(self, "确认删除",
             f"确定要删除备份「{backup.name}」吗?\n"
             f"(备份时间: {backup.time})\n\n"
             "此操作不可撤销",

@@ -16,6 +16,7 @@ from core.state_persistence import GuiState, load_gui_state, save_gui_state
 from core.launch_context import LaunchContext
 from core.recovery_snapshot import load_snapshot, recover_game_directory, manifest_changed
 from editor_utils import theme_manager
+from editor_utils.ui_helpers import themed_question
 from editor_utils.dock_components import create_dock
 from editor_utils.flow_layout import FlowLayout
 from editor_utils.theme_switcher import (
@@ -261,7 +262,7 @@ class MainWindow(QMainWindow):
             "1. 启动游戏 (Ctrl+Enter): 选择 TKS.exe, 按当前模式加载游戏功能和 MOD\n"
             "2. 左侧「补丁列表」: 勾选需要应用的启动器游戏功能, 标题栏右侧可切换 可选/必选 补丁\n"
             "3. 中间「MOD列表」: 勾选要启用的 .tksmod 模组, 右上显示模组详情\n"
-            "4. 画面兼容工具: 设置 → 画面兼容工具, 选择需要注入的辅助工具 (如 cnc-ddraw)\n"
+            "4. 画面兼容工具: 在右侧「画面兼容工具」面板勾选需要注入的辅助工具 (如 cnc-ddraw)\n"
             "5. 模组打包: 将多个 .tksmod 文件打包为 .tksmodpak 合集\n"
             "6. 模组合并: 将多个 .tksmod 深度合并为一个 .tksmod (同一文件的不同帧/记录逐一合并)\n"
             "7. 模组拆分: 从 .tksmodpak 合集文件中提取原始模组\n"
@@ -297,7 +298,7 @@ class MainWindow(QMainWindow):
         snapshot = load_snapshot(_LAUNCHER_DIR)
         if snapshot is None:
             return
-        answer = QMessageBox.question(
+        answer = themed_question(
             self,
             "检测到未完成恢复",
             "检测到上次启动未完成恢复。\n\n"
@@ -314,7 +315,7 @@ class MainWindow(QMainWindow):
             if len(changed) > 12:
                 warning += f"\n…还有 {len(changed) - 12} 个文件"
             warning += "\n\n是否继续恢复？"
-            if QMessageBox.question(self, "检测到外部修改", warning,
+            if themed_question(self, "检测到外部修改", warning,
                                     QMessageBox.Cancel | QMessageBox.Yes,
                                     QMessageBox.Cancel) != QMessageBox.Yes:
                 return

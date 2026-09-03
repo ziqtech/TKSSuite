@@ -53,6 +53,7 @@ from editor_utils.app_shell import EditorMainWindow, run_editor
 from editor_utils.tkt_loader import load_tkt_simple
 from editor_utils.ui_helpers import (
     confirm_close, make_fake_input, mark_invalid,
+    form_edits_pending, themed_question,
     update_path_labels, EditorComboBox,
 )
 from editor_utils.search_utils import search_match
@@ -1181,7 +1182,35 @@ class SkillEditorApp(EditorMainWindow):
         sel = self.table.selectedItems()
         if not sel: return
         idx = int(self.table.item(sel[0].row(), 0).text())
+        if idx == self._editing_idx:
+            return  # 回到当前编辑记录 (含取消切换后的恢复), 不重填
+        if self._unapplied_edits_guard(idx):
+            return
         self._populate_edit(self.records[idx])
+
+    def _unapplied_edits_guard(self, new_idx):
+        """切换记录前检测未点「应用修改」的表单修改; 有则提示。
+
+        返回 True 表示用户取消切换 (选中已恢复到原记录)。
+        """
+        if self._editing_idx is None or self._editing_idx == new_idx:
+            return False
+        rec = self.records[self._editing_idx]
+        combo_keys = {'type', 'atk_type'}
+        if not form_edits_pending(self.widget_map, rec,
+                                  [f[0] for f in ALL_FIELDS], combo_keys):
+            return False
+        reply = themed_question(
+            self, "未应用的修改",
+            f"记录 #{rec['index']} 有未点「应用修改」的表单修改。\n\n"
+            "切换将丢弃这些修改，是否继续？")
+        if reply == QMessageBox.Yes:
+            return False
+        for r in range(self.table.rowCount()):  # 恢复选中到原记录
+            if int(self.table.item(r, 0).text()) == self._editing_idx:
+                self.table.selectRow(r)
+                break
+        return True
 
     def _show_table_context_menu(self, pos):
         """技能列表右键菜单: 任意技能均可查看其完整技能树。"""

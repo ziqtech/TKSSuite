@@ -12,6 +12,8 @@ from PySide6.QtWidgets import (
 
 from core.mod_loader import infer_category_from_names
 from core.mod_packer import read_tksmod_content, rewrite_mod_metadata
+from editor_utils import theme_tokens as _tt_tokens
+_PLACEHOLDER_GRAY = _tt_tokens.business_colors("launcher", _tt_tokens.THEMES[0])["placeholder_gray"]
 from editor_utils.combo_box import EditorComboBox
 from editor_utils.mod_exporter import extract_preview_image, generate_short_uuid
 
@@ -130,7 +132,7 @@ class ModMetaEditorDialog(QDialog):
         _preview_info = QVBoxLayout()
         _preview_info.setContentsMargins(0, 0, 0, 0)
         _preview_info.setSpacing(8)
-        self._lbl_preview_name = QLabel("<i style='color:#888'>未选择图片</i>")
+        self._lbl_preview_name = QLabel(f"<i style='color:{_PLACEHOLDER_GRAY}'>未选择图片</i>")
         self._lbl_preview_name.setWordWrap(True)
         _preview_info.addWidget(self._lbl_preview_name)
         _btn_row = QHBoxLayout()
@@ -500,7 +502,7 @@ class ModMetaEditorDialog(QDialog):
         self._orig_preview_name = ""
         self._lbl_preview_thumb.clear()
         self._lbl_preview_thumb.setText("无预览图")
-        self._lbl_preview_name.setText("<i style='color:#888'>未选择图片</i>")
+        self._lbl_preview_name.setText(f"<i style='color:{_PLACEHOLDER_GRAY}'>未选择图片</i>")
 
     def _on_id_text_changed(self, text: str):
         """实时移除模组 ID 中的所有空格（前后及中间），保持光标位置不跳变。"""

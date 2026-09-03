@@ -5,7 +5,7 @@ QSS 的 :checked 伪状态对自定义 QAbstractButton 子类不生效
 (仅对 QPushButton 等内置按钮生效), 故颜色取自 theme_tokens.MODE_CARD
 语义色表 (标准=主操作色: 现代族绿/经典族 Godot 蓝, 兼容=靛蓝辅助操作)。
 """
-from PySide6.QtCore import QPointF, Qt, QRect, QRectF
+from PySide6.QtCore import QPointF, Qt, QRect, QRectF, QVariantAnimation
 from PySide6.QtGui import (
     QBrush, QColor, QFontMetrics, QIcon, QLinearGradient, QPainter,
     QPainterPath, QPen, QRadialGradient,
@@ -52,6 +52,22 @@ class ModeCardButton(QAbstractButton):
         font.setPixelSize(13)
         self.setFont(font)
 
+        # 悬停光晕过渡 (P4-3): 0=静止 1=悬停, 150ms 插值消除 alpha 突变
+        self._hover_progress = 0.0
+        self._hover_anim = QVariantAnimation(self)
+        self._hover_anim.setDuration(150)
+        self._hover_anim.valueChanged.connect(self._on_hover_value)
+
+    def _on_hover_value(self, value):
+        self._hover_progress = float(value)
+        self.update()
+
+    def _animate_hover_to(self, target):
+        self._hover_anim.stop()
+        self._hover_anim.setStartValue(self._hover_progress)
+        self._hover_anim.setEndValue(target)
+        self._hover_anim.start()
+
     # ── 主题 ──
     def set_theme(self, theme_id: str) -> None:
         theme_id = str(theme_id)
@@ -60,15 +76,15 @@ class ModeCardButton(QAbstractButton):
             self._dark = theme_id.endswith("dark")
             self.update()
 
-    # ── 悬停态 (自绘需要手动跟踪) ──
+    # ── 悬停态 (自绘需要手动跟踪; 光晕经 _hover_progress 平滑过渡) ──
     def enterEvent(self, event):
         self._hover = True
-        self.update()
+        self._animate_hover_to(1.0)
         super().enterEvent(event)
 
     def leaveEvent(self, event):
         self._hover = False
-        self.update()
+        self._animate_hover_to(0.0)
         super().leaveEvent(event)
 
     def _colors(self):
@@ -98,7 +114,8 @@ class ModeCardButton(QAbstractButton):
         if not self.isEnabled():
             color.setAlpha(55)
         elif not self.isChecked():
-            color.setAlpha(105 if self._hover else 70)
+            # 悬停强度随过渡进度插值 (70→105), 避免图标底座色跳变
+            color.setAlpha(round(70 + 35 * self._hover_progress))
         return color
 
     def _badge_colors(self) -> tuple[QColor, QColor, QColor]:
@@ -111,15 +128,15 @@ class ModeCardButton(QAbstractButton):
     def _paint_soft_glow(self, painter: QPainter, clip_path: QPainterPath,
                          rect: QRectF) -> None:
         """绘制边缘透明的径向光晕，避免出现实心椭圆色块。"""
-        if not (self.isChecked() or self._hover):
+        if not (self.isChecked() or self._hover_progress > 0.0):
             return
 
         color = self._glow_color()
-        # 选中态有存在感，悬停态只做轻提示；两者都在边缘完全淡出。
+        # 选中态有存在感；悬停态光晕随过渡进度淡入 (24/18 → 0 平滑往返)。
         if self.isChecked():
             color.setAlpha(68 if self._dark else 42)
         else:
-            color.setAlpha(24 if self._dark else 18)
+            color.setAlpha(round((24 if self._dark else 18) * self._hover_progress))
 
         center = QPointF(rect.right() - 34, rect.top() + 18)
         radius = 126.0

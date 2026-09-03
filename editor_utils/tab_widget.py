@@ -16,6 +16,8 @@ from PySide6.QtCore import QRectF, Qt
 from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import QApplication, QTabBar, QTabWidget, QWidget
 
+from editor_utils import theme_tokens
+
 
 class EditorTabBar(QTabBar):
     """编辑器统一 TabBar。
@@ -45,15 +47,17 @@ class EditorTabPane(QWidget):
     内容区域的外框，并把鼠标事件继续交给真正的内容控件。
     """
 
-    RADIUS = 8.0
+    RADIUS = float(theme_tokens.SLOTS["radius_md"][0].rstrip("px"))
 
     # 自绘边框色按主题族区分：modern 为中性灰，classic 为 Godot 蓝灰。
+    # 值取自 theme_tokens 的 bd_regular 槽位原始颜色 (P3-6 收编:
+    # (gpt-dark, gpt-light, classic-dark, classic-light) 与 QSS 同源)。
+    _bd = theme_tokens.SLOTS["bd_regular"]
     _BORDER_COLORS = {
-        # Tab 边框色 — 按 (族, 深浅) 取值 (阶段 2 豁免: 与 QSS 边框槽位同值, 就近维护)
-        ("modern", True): "#444444",
-        ("modern", False): "#d9d9e3",
-        ("classic", True): "#14171f",
-        ("classic", False): "#b0b5bd",
+        ("modern", True): _bd[0],
+        ("modern", False): _bd[1],
+        ("classic", True): _bd[2],
+        ("classic", False): _bd[3],
     }
 
     def __init__(self, parent: QTabWidget):

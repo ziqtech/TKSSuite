@@ -21,6 +21,10 @@ from editor_utils.dock_components import create_dock
 from editor_utils.adaptive_table import AdaptiveTableWidget
 from editor_utils.combo_box import EditorComboBox
 from editor_utils.search_utils import search_match
+from editor_utils import theme_tokens
+
+# 重复 ID 警示红 (P3-6 收编: theme_tokens.LAUNCHER)
+_DUP_ID_COLOR = theme_tokens.business_colors("launcher", theme_tokens.THEMES[0])["dup_id"]
 
 # 行布局: 名称 + 版本号 + 分类 + 作者 + ID; 加载顺序/描述进悬浮提示与详情面板
 _COLUMNS = ["启用", "模组名称", "版本号", "分类", "作者", "ID"]
@@ -300,7 +304,7 @@ class ModListWidget(QWidget):
             is_dup = mod.mod_id in dup_ids
             if is_dup:
                 # 重复 ID 双重指示: 红色 + 加粗 (避免颜色作为唯一信号)
-                name_item.setForeground(QColor(220, 50, 50))
+                name_item.setForeground(QColor(_DUP_ID_COLOR))
                 font = name_item.font()
                 font.setBold(True)
                 name_item.setFont(font)
@@ -313,7 +317,7 @@ class ModListWidget(QWidget):
             id_item = self._set_text(row, _COL_ID, mod.mod_id)
             if is_dup:
                 # 重复 ID 的来源列同样高亮, 与模组名称列形成整行呼应
-                id_item.setForeground(QColor(220, 50, 50))
+                id_item.setForeground(QColor(_DUP_ID_COLOR))
                 font = id_item.font()
                 font.setBold(True)
                 id_item.setFont(font)

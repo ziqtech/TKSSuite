@@ -1054,7 +1054,6 @@ class JVGEditor(EditorMainWindow):
         self.add_theme_submenu(view_menu)
 
         toggle_theme_action = QAction("切换主题", self)
-        toggle_theme_action.setShortcut("Ctrl+T")
         toggle_theme_action.triggered.connect(self._toggle_theme)
         view_menu.addAction(toggle_theme_action)
 

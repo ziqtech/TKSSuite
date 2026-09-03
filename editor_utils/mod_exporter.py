@@ -31,6 +31,8 @@ from PySide6.QtWidgets import (
     QSpinBox, QTextEdit, QVBoxLayout,
 )
 
+from editor_utils import theme_tokens as _tt_tokens
+_PLACEHOLDER_GRAY = _tt_tokens.business_colors("launcher", _tt_tokens.THEMES[0])["placeholder_gray"]
 from editor_utils.combo_box import EditorComboBox
 from editor_utils.lzss import (
     MAX_MATCH as MAX_MATCH_LZ,
@@ -529,7 +531,7 @@ class ModMetadataDialog(QDialog):
         preview_info = QVBoxLayout()
         preview_info.setContentsMargins(0, 0, 0, 0)
         preview_info.setSpacing(8)
-        self._lbl_preview_name = QLabel("<i style='color:#888'>未选择图片</i>")
+        self._lbl_preview_name = QLabel(f"<i style='color:{_PLACEHOLDER_GRAY}'>未选择图片</i>")
         self._lbl_preview_name.setWordWrap(True)
         preview_info.addWidget(self._lbl_preview_name)
 
@@ -579,7 +581,7 @@ class ModMetadataDialog(QDialog):
         self._preview_path = ""
         self._lbl_preview_thumb.clear()
         self._lbl_preview_thumb.setText("无预览图")
-        self._lbl_preview_name.setText("<i style='color:#888'>未选择图片</i>")
+        self._lbl_preview_name.setText(f"<i style='color:{_PLACEHOLDER_GRAY}'>未选择图片</i>")
 
     def _set_preview_image(self, path: str):
         """加载并显示预览图缩略图。"""

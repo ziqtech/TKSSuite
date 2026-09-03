@@ -568,12 +568,12 @@ class SaveEditorApp(EditorMainWindow):
         # 菜单栏
         mb = self.menuBar()
         fm = mb.addMenu("文件(&F)")
-        fm.addAction("📂 打开存档目录…", QKeySequence("Ctrl+O"), self._cmd_open)
-        fm.addAction("💾 保存当前槽位", QKeySequence("Ctrl+S"), self._cmd_save)
+        fm.addAction("打开存档目录…", QKeySequence("Ctrl+O"), self._cmd_open)
+        fm.addAction("保存当前槽位", QKeySequence("Ctrl+S"), self._cmd_save)
         fm.addSeparator()
         fm.addAction("🚪 退出", self.close)
         tm = mb.addMenu("工具(&T)")
-        tm.addAction("🔄 刷新数据显示", self._refresh_all)
+        tm.addAction("刷新数据显示", self._refresh_all)
         self.add_standard_menus(mb)
 
         # 工具栏

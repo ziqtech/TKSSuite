@@ -14,14 +14,30 @@
 """
 from __future__ import annotations
 
-from PySide6.QtGui import QAction, QActionGroup
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QAction, QActionGroup, QColor, QKeySequence, QPainter, QPen, QPixmap, QIcon
 from PySide6.QtWidgets import QMenu
 
-from editor_utils import theme_manager
+from editor_utils import theme_manager, theme_tokens
 from editor_utils.window_theme import apply_titlebar_theme
 
 # 窗口上记录当前主题的权威属性，供 tab_widget 等组件读取。
 THEME_ATTR = "_theme_id"
+
+
+def _accent_swatch_icon(theme_id: str) -> QIcon:
+    """主题菜单条目的 accent 色块小图标 (P4-6), 让用户切换前有颜色预期。"""
+    pixmap = QPixmap(12, 12)
+    pixmap.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    color = QColor(theme_tokens.SLOTS["accent"][
+        theme_manager.THEME_ORDER.index(theme_id)])
+    painter.setBrush(color)
+    painter.setPen(QPen(QColor(128, 128, 128, 160), 1))
+    painter.drawRoundedRect(1, 1, 10, 10, 3, 3)
+    painter.end()
+    return QIcon(pixmap)
 
 
 def current_window_theme(window) -> str:
@@ -88,6 +104,8 @@ def create_theme_menu(window, title: str = "主题(&T)") -> QMenu:
     for theme_id in theme_manager.THEME_ORDER:
         spec = theme_manager.THEMES[theme_id]
         action = QAction(spec.display_name, window, checkable=True)
+        action.setStatusTip(f"切换到{spec.display_name}主题")
+        action.setIcon(_accent_swatch_icon(theme_id))
         group.addAction(action)
         menu.addAction(action)
         action.triggered.connect(
@@ -102,4 +120,13 @@ def create_theme_menu(window, title: str = "主题(&T)") -> QMenu:
             action.setChecked(theme_id == current)
 
     menu.aboutToShow.connect(_sync_checks)
+
+    # 族内快速切换作为标准项进入主题菜单 (Ctrl+T) — P3-8: 全编辑器统一
+    # "Ctrl+T 快速切深浅" 行为; 已自带 Ctrl+T 绑定的编辑器应移除自有绑定。
+    quick = QAction("族内快速切换 (深/浅)", window)
+    quick.setStatusTip("在当前主题族 (modern/classic) 内快速切换深色/浅色 (Ctrl+T)")
+    quick.setShortcut(QKeySequence("Ctrl+T"))
+    quick.triggered.connect(lambda: toggle_theme_in_family(window))
+    menu.addSeparator()
+    menu.addAction(quick)
     return menu

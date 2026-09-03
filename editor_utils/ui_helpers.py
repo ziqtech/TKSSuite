@@ -13,11 +13,14 @@ from editor_utils.combo_box import EditorComboBox, EditorComboListPopup
 
 
 # ── 颜色常量 (与 editor_themes 一致) ──
-# 状态色 (已加载/缺失) — 深浅两档命名常量 (阶段 2 豁免: 本模块即单一事实来源)
-COLOR_LOADED_DARK = "#55b572"
-COLOR_LOADED_LIGHT = "#178a39"
-COLOR_MISSING_DARK = "#e27d60"
-COLOR_MISSING_LIGHT = "#c93b16"
+# 状态色 (已加载/缺失) — 值源于 theme_tokens.STATUS (P3-6 收编, 单一事实来源)
+from editor_utils import theme_tokens as _theme_tokens
+
+_COLOR_STATUS = _theme_tokens.STATUS
+COLOR_LOADED_DARK = _COLOR_STATUS["loaded"][0]
+COLOR_LOADED_LIGHT = _COLOR_STATUS["loaded"][1]
+COLOR_MISSING_DARK = _COLOR_STATUS["missing"][0]
+COLOR_MISSING_LIGHT = _COLOR_STATUS["missing"][1]
 
 
 # 兼容旧导入；新代码统一从 editor_utils.ui_helpers 导入 EditorComboBox，
@@ -108,11 +111,51 @@ def load_window_icon(widget, editor_dir=None):
 
 
 def confirm_close(parent, dirty, title="未保存", text="有未保存的修改, 确定退出?"):
-    """未保存确认退出对话框，返回 True 表示可以关闭"""
+    """未保存确认退出对话框，返回 True 表示可以关闭。
+
+    按钮 Yes/No 且默认 No: 回车/关闭键不会意外放弃修改。
+    """
     if not dirty:
         return True
-    buttons = QMessageBox.Ok | QMessageBox.Cancel
-    return QMessageBox.question(parent, title, text, buttons) == QMessageBox.Ok
+    return themed_question(parent, title, text) == QMessageBox.Yes
+
+
+def themed_question(parent, title, text,
+                    buttons=QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                    default=QMessageBox.StandardButton.No):
+    """确认弹窗 (统一入口): 默认 Yes/No、默认按钮 No (防误回车)。
+
+    标题栏主题由全局过滤器 (install_dialog_theme_filter) 自动处理。
+    返回用户点击的标准按钮 (QMessageBox.Yes / No / Cancel / Ok)。
+    """
+    msg = QMessageBox(QMessageBox.Icon.Question, title, text, buttons, parent)
+    if default is not None:
+        msg.setDefaultButton(default)
+    return msg.exec()
+
+
+def form_edits_pending(widget_map, record, keys, combo_keys=()):
+    """检测表单控件当前值是否与记录不一致 (切换记录前提示用, P3-5)。
+
+    widget_map: 字段名 -> QLineEdit/EditorComboBox; keys: 参与比对的字段名;
+    combo_keys: 使用 currentText() 且形如 "N-标签" 的下拉字段。
+    比较口径与各编辑器 _apply_edit 一致 (int 数值); 控件缺失或内容不可
+    解析的字段跳过 (宁漏报不误报)。
+    """
+    for fn in keys:
+        widget = widget_map.get(fn)
+        if widget is None:
+            continue
+        try:
+            if fn in combo_keys:
+                value = int(widget.currentText().split('-', 1)[0])
+            else:
+                value = int(widget.text() or 0)
+        except (ValueError, AttributeError, TypeError):
+            continue
+        if value != int(record.get(fn, 0) or 0):
+            return True
+    return False
 
 
 def themed_messagebox(parent, icon, title, text):

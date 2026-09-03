@@ -33,7 +33,7 @@ from editor_utils.mod_exporter import (
     ModMetadataDialog, generate_mod_json, generate_short_uuid,
     pack_tksmod, safe_mod_filename,
 )
-from editor_utils.ui_helpers import themed_messagebox
+from editor_utils.ui_helpers import themed_messagebox, themed_question
 from editor_utils.adaptive_table import AdaptiveTableWidget
 
 # ── 常量 ──
@@ -47,10 +47,11 @@ MOD_AUTHOR_DEFAULT = "玩家自定义"
 MOD_DESC_DEFAULT = "TKS子青启动器制作的自定义 BGM"
 MOD_LOAD_ORDER_DEFAULT = 900
 
-# 状态颜色
-# 修改状态色 (阶段 2 豁免: 主题无关领域色)
-COLOR_MODIFIED = "#2f80ed"    # 蓝色 — 已修改
-COLOR_UNMODIFIED = "#888888"  # 灰色 — 未修改
+# 状态颜色 (P3-6 收编: 值源于 theme_tokens.LAUNCHER, 现为主题无关色)
+from editor_utils import theme_tokens as _tt
+_launcher_colors = _tt.business_colors("launcher", _tt.THEMES[0])
+COLOR_MODIFIED = _launcher_colors["music_modified"]    # 蓝色 — 已修改
+COLOR_UNMODIFIED = _launcher_colors["music_unmodified"]  # 灰色 — 未修改
 
 # 表格列
 _COL_NAME = 0
@@ -734,7 +735,7 @@ class CustomMusicDialog(QDialog):
 
         # 若已有修改, 确认覆盖
         if any(e.is_modified for e in self._entries):
-            ret = QMessageBox.question(
+            ret = themed_question(
                 self, "确认导入",
                 "导入将替换当前所有编辑内容，是否继续？",
                 QMessageBox.Yes | QMessageBox.No)

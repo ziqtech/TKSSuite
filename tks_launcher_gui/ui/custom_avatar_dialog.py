@@ -317,7 +317,8 @@ class CropWidget(QWidget):
         painter = QPainter(self)
         painter.fillRect(self.rect(), QColor(30, 30, 30))
         if not self._pixmap or self._pixmap.isNull():
-            painter.setPen(QColor(100, 100, 100))
+            # 深色画布类豁免 (裁剪场景恒深色); 提示文字提亮以满足对比度 >= 4.5:1 (P4-5)
+            painter.setPen(QColor(176, 176, 176))
             painter.setFont(QFont("Microsoft YaHei", 11))
             painter.drawText(self.rect(), Qt.AlignCenter, "请点击「上传图片」按钮选择图片")
             painter.end()

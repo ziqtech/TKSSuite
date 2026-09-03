@@ -695,6 +695,12 @@ QStatusBar {
 QStatusBar::item {
     border: none;
 }
+/* 永久脏状态指示 (EditorMainWindow 状态栏右侧) */
+QLabel#statusDirty {
+    color: {{accent}};
+    font-weight: bold;
+    padding: 0 4px;
+}
 QLabel {
     color: {{fg_22}};
     background-color: transparent;

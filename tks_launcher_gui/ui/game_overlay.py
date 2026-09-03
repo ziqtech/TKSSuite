@@ -1,5 +1,5 @@
 """游戏内悬浮窗 — PySide6 无边框透明 QLabel, 替代原 Tkinter OverlayForm"""
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt, QPropertyAnimation, QTimer
 from PySide6.QtWidgets import QLabel
 from core.memory import get_window_rect
 
@@ -37,7 +37,7 @@ class GameOverlay(QLabel):
 
         self.setStyleSheet(_STYLE_NORMAL)
 
-        self.setText("正在等待游戏加载...")
+        self.setText("正在等待游戏加载…")
         self.adjustSize()
         self.resize(max(self.width(), 240), self.height())
 
@@ -47,7 +47,15 @@ class GameOverlay(QLabel):
         self._tracker.timeout.connect(self._update_position)
         self._tracker.start(100)
 
+        # 淡入 (P4-2): 250ms 透明度过渡, 消除游戏加载场景中悬浮窗的突现感
+        self.setWindowOpacity(0.0)
+        self._fade_in = QPropertyAnimation(self, b"windowOpacity", self)
+        self._fade_in.setDuration(250)
+        self._fade_in.setStartValue(0.0)
+        self._fade_in.setEndValue(1.0)
+
         self.show()
+        self._fade_in.start()
         self.raise_()  # 确保在游戏窗口之上
 
     def _update_position(self):

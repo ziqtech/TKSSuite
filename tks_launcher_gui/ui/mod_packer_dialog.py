@@ -14,7 +14,10 @@ from core.mod_packer import (
     create_tksmodpak, list_tksmod_contents, read_tksmod_content,
     suggest_output_name,
 )
+from editor_utils import theme_tokens as _tt_tokens
+_PLACEHOLDER_GRAY = _tt_tokens.business_colors("launcher", _tt_tokens.THEMES[0])["placeholder_gray"]
 from editor_utils.mod_exporter import generate_short_uuid
+from editor_utils.ui_helpers import themed_question
 from editor_utils.ui_helpers import EditorComboBox
 
 
@@ -41,11 +44,11 @@ class ModPackerDialog(QDialog):
         file_layout.addWidget(self._file_list)
 
         btn_row = QHBoxLayout()
-        btn_add = QPushButton("添加文件...")
+        btn_add = QPushButton("添加文件…")
         btn_add.clicked.connect(self._on_add_files)
         btn_row.addWidget(btn_add)
 
-        btn_add_dir = QPushButton("从目录添加...")
+        btn_add_dir = QPushButton("从目录添加…")
         btn_add_dir.clicked.connect(self._on_add_from_dir)
         btn_row.addWidget(btn_add_dir)
 
@@ -136,7 +139,7 @@ class ModPackerDialog(QDialog):
         _preview_info = QVBoxLayout()
         _preview_info.setContentsMargins(0, 0, 0, 0)
         _preview_info.setSpacing(8)
-        self._lbl_preview_name = QLabel("<i style='color:#888'>未选择图片</i>")
+        self._lbl_preview_name = QLabel(f"<i style='color:{_PLACEHOLDER_GRAY}'>未选择图片</i>")
         self._lbl_preview_name.setWordWrap(True)
         _preview_info.addWidget(self._lbl_preview_name)
         _btn_row = QHBoxLayout()
@@ -163,7 +166,7 @@ class ModPackerDialog(QDialog):
         self.edit_output = QLineEdit()
         self.edit_output.setPlaceholderText("输出的 .tksmodpak 文件路径")
         out_row.addWidget(self.edit_output, 1)
-        btn_browse = QPushButton("浏览...")
+        btn_browse = QPushButton("浏览…")
         btn_browse.clicked.connect(self._on_browse_output)
         out_row.addWidget(btn_browse)
         layout.addLayout(out_row)
@@ -335,7 +338,7 @@ class ModPackerDialog(QDialog):
         self._preview_path = ""
         self._lbl_preview_thumb.clear()
         self._lbl_preview_thumb.setText("无预览图")
-        self._lbl_preview_name.setText("<i style='color:#888'>未选择图片</i>")
+        self._lbl_preview_name.setText(f"<i style='color:{_PLACEHOLDER_GRAY}'>未选择图片</i>")
 
     # ────────────────────────────────────────────────
     # 输出路径
@@ -395,7 +398,7 @@ class ModPackerDialog(QDialog):
 
         # 确认覆盖
         if os.path.isfile(output):
-            ret = QMessageBox.question(
+            ret = themed_question(
                 self, "确认覆盖",
                 f"文件已存在:\n{output}\n\n是否覆盖？",
                 QMessageBox.Yes | QMessageBox.No

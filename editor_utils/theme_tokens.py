@@ -431,6 +431,21 @@ GROWTH: dict[str, tuple[str, str, str, str]] = {
     "grp": ("#e8a040", "#cc7a20", "#e8a040", "#cc7a20"),   # grp 最终属性
 }
 
+# 启动器杂项语义色 (P3-6 收编: mod_list / 音乐弹窗 / 图片占位文案)。
+# 现值主题无关 (4 元组同值), 集中于此后改色只动本处; 后续可按主题分化。
+LAUNCHER: dict[str, tuple[str, str, str, str]] = {
+    "dup_id": ("#dc3232", "#dc3232", "#dc3232", "#dc3232"),          # 重复 ID 警示红
+    "music_modified": ("#2f80ed", "#2f80ed", "#2f80ed", "#2f80ed"),  # 音乐已修改
+    "music_unmodified": ("#888888", "#888888", "#888888", "#888888"),  # 音乐未修改
+    "placeholder_gray": ("#888888", "#888888", "#888888", "#888888"),  # "未选择图片"占位
+}
+
+# 路径状态色 (ui_helpers.update_path_labels): (深色主题值, 浅色主题值)。
+STATUS: dict[str, tuple[str, str]] = {
+    "loaded": ("#55b572", "#178a39"),
+    "missing": ("#e27d60", "#c93b16"),
+}
+
 _BUSINESS: dict[str, dict[str, tuple]] = {
     "mode_card": MODE_CARD,
     "log_console": LOG_CONSOLE,
@@ -439,6 +454,7 @@ _BUSINESS: dict[str, dict[str, tuple]] = {
     "mat": MAT,
     "act": ACT,
     "growth": GROWTH,
+    "launcher": LAUNCHER,
 }
 
 
