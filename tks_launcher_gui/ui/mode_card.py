@@ -3,7 +3,7 @@
 背景/边框/文本全部在 paintEvent 中绘制, 不依赖 QSS 伪态:
 QSS 的 :checked 伪状态对自定义 QAbstractButton 子类不生效
 (仅对 QPushButton 等内置按钮生效), 故颜色取自 theme_tokens.MODE_CARD
-语义色表 (标准=绿色主操作, 兼容=蓝色辅助操作)。
+语义色表 (标准=主操作色: 现代族绿/经典族 Godot 蓝, 兼容=靛蓝辅助操作)。
 """
 from PySide6.QtCore import QPointF, Qt, QRect, QRectF
 from PySide6.QtGui import (
@@ -16,6 +16,8 @@ from editor_utils.theme_manager import business_colors, svg_path, THEMES
 
 _ICON_PATHS = {
     "standard": svg_path("mode-standard.svg"),
+    # 经典族 (Godot 风格) 标准模式使用蓝色变体, 与 Godot 蓝选中卡片协调
+    "standard_classic": svg_path("mode-standard-classic.svg"),
     "compatible": svg_path("mode-compatible.svg"),
 }
 _ICON_CACHE: dict[str, QIcon] = {}
@@ -83,6 +85,8 @@ class ModeCardButton(QAbstractButton):
 
     def _icon(self) -> QIcon:
         mode = self.property("mode") or "standard"
+        if mode == "standard" and self._theme_id.startswith("classic"):
+            mode = "standard_classic"
         if mode not in _ICON_CACHE:
             _ICON_CACHE[mode] = QIcon(_ICON_PATHS[mode])
         return _ICON_CACHE[mode]

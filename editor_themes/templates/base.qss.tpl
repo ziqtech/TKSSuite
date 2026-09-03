@@ -1499,7 +1499,7 @@ QWidget#startSplitButton {
     padding: 0px;
 }
 
-/* ── 兼容模式启动按钮 (tks_launcher_gui): 蓝色区分标准模式绿 ── */
+/* ── 兼容模式启动按钮 (tks_launcher_gui): 靛蓝区分标准模式主色 (现代族绿/经典族 Godot 蓝) ── */
 QPushButton#btnStartCompat {
     background-color: {{bg_128}};
     color: {{fg_117}};
