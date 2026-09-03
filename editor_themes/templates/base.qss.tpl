@@ -5,7 +5,7 @@ QWidget {
     background-color: {{bg_root}};
     color: {{text_base}};
     font-family: 'Segoe UI', 'Microsoft YaHei', sans-serif;
-    font-size: 13px;
+    font-size: {{fs_body}};
 }
 QMainWindow, QDialog {
     background-color: {{bg_window}};
@@ -33,7 +33,7 @@ QTableWidget, QTreeWidget, QTableView, QTreeView {
     background-color: {{bg_surface}};
     color: {{text_base}};
     border: {{bd_regular}};
-    border-radius: 8px;
+    border-radius: {{radius_md}};
     gridline-color: {{gridline_color_01}};
     selection-background-color: {{sel_02}};
     selection-color: {{fg_06}};
@@ -95,7 +95,7 @@ QPlainTextEdit, QLineEdit, QTextEdit {
     color: {{text_primary}};
     border: {{bd_regular}};
     padding: 7px 9px;
-    border-radius: 8px;
+    border-radius: {{radius_md}};
     selection-background-color: {{accent}};
     selection-color: #ffffff;
 }
@@ -120,7 +120,7 @@ QPushButton {
     background-color: {{bg_16}};
     color: {{fg_15}};
     border: {{bd_09}};
-    border-radius: 8px;
+    border-radius: {{radius_md}};
     padding: 6px 12px;
     min-height: 18px;
 }
@@ -160,7 +160,7 @@ QToolButton {
     background-color: transparent;
     color: {{fg_18}};
     border: 1px solid transparent;
-    border-radius: 8px;
+    border-radius: {{radius_md}};
     padding: 5px 8px;
 }
 QToolButton:hover {
@@ -179,7 +179,7 @@ QComboBox, QSpinBox, QDoubleSpinBox, QDateEdit, QTimeEdit, QDateTimeEdit {
     background-color: {{bg_05}};
     color: {{text_primary}};
     border: {{bd_17}};
-    border-radius: 8px;
+    border-radius: {{radius_md}};
     padding: 6px 9px;
     min-height: 18px;
 }
@@ -214,7 +214,7 @@ QComboBox QAbstractItemView {
     selection-color: #ffffff;
     outline: none;
     padding: 4px;
-    border-radius: 8px;
+    border-radius: {{radius_md}};
     show-decoration-selected: 1;
 }
 QComboBox QAbstractItemView::item {
@@ -275,7 +275,7 @@ QListWidget {
     background-color: {{bg_surface}};
     color: {{text_primary}};
     border: {{bd_regular}};
-    border-radius: 8px;
+    border-radius: {{radius_md}};
     outline: none;
 }
 QListWidget::item, QTreeWidget::item {
@@ -335,7 +335,7 @@ QCheckBox::indicator {
     border-radius: 5px;
 }
 QRadioButton::indicator {
-    border-radius: 8px;
+    border-radius: {{radius_md}};
 }
 QCheckBox::indicator:checked, QRadioButton::indicator:checked {
     background-color: {{accent}};
@@ -432,7 +432,7 @@ QMenu {
     background-color: {{bg_27}};
     color: {{text_primary}};
     border: {{bd_regular}};
-    border-radius: 8px;
+    border-radius: {{radius_md}};
     padding: 5px;
 }
 QMenu::item {
@@ -457,7 +457,7 @@ QMenu#EditorComboMenu {
     background-color: {{bg_05}};
     color: {{text_primary}};
     border: {{bd_17}};
-    border-radius: 8px;
+    border-radius: {{radius_md}};
     padding: 4px;
 }
 QMenu#EditorComboMenu::item {
@@ -478,7 +478,7 @@ QMenu#EditorComboMenu::item:checked {
 QWidget#EditorComboPopup {
     background-color: {{bg_05}};
     border: {{bd_17}};
-    border-radius: 8px;
+    border-radius: {{radius_md}};
 }
 QListWidget#EditorComboList {
     background-color: transparent;
@@ -520,7 +520,7 @@ QTabBar::tab {
     border: {{bd_41}};
     padding: 7px 13px;
     margin: 2px 2px 0 0;
-    border-radius: 8px;
+    border-radius: {{radius_md}};
     min-height: 18px;
 }
 QTabBar::tab:selected {
@@ -629,13 +629,13 @@ QLabel#DockTitle {
 }
 QGraphicsView {
     border: {{bd_regular}};
-    border-radius: 8px;
+    border-radius: {{radius_md}};
     background-color: {{bg_71}};
 }
 QScrollArea {
     background-color: {{bg_root}};
     border: {{bd_57}};
-    border-radius: 8px;
+    border-radius: {{radius_md}};
 }
 
 /* 主编辑区滚动页不再叠加自己的矩形边框，边框只由 tab 外壳负责。 */
@@ -647,7 +647,7 @@ QTabWidget[tabStyle="flat"] QScrollArea {
 
 /* 左侧角色表由外框负责圆角，表头保持透明以免覆盖四角。 */
 QTableWidget#WarpcCharacterTable {
-    border-radius: 8px;
+    border-radius: {{radius_md}};
 }
 QTableWidget#WarpcCharacterTable QHeaderView {
     background-color: transparent;
@@ -749,7 +749,7 @@ QLabel[class="PreviewName"] {
     color: {{fg_58}};
     font-size: 18px;
     font-weight: bold;
-    font-family: 'Microsoft YaHei', 'Segoe UI';
+    font-family: 'Segoe UI', 'Microsoft YaHei', sans-serif;
 }
 QLabel[class="PreviewMeta"] {
     color: {{fg_59}};
@@ -760,7 +760,7 @@ QLabel[class="PreviewMeta"] {
 }
 QLabel[class="PreviewDesc"] {
     color: {{text_success}};
-    font-size: 13px;
+    font-size: {{fs_body}};
     padding-top: 4px;
 }
 QLabel[class="PreviewSubMeta"] {
@@ -774,7 +774,7 @@ QLabel[class="PreviewSubMeta"] {
 QFrame#FakeInputBox {
     background-color: {{bg_80}};
     border: {{bd_65}};
-    border-radius: 8px;
+    border-radius: {{radius_md}};
 }
 QFrame#FakeInputBox:hover, QFrame#FakeInputBox:focus-within {
     background-color: {{bg_81}};
@@ -785,7 +785,7 @@ QFrame#FakeInputBox > QLineEdit {
     border: none;
     padding: 4px 8px;
     color: {{fg_62}};
-    font-family: 'Consolas', 'Segoe UI';
+    font-family: 'Consolas', 'Courier New', monospace;
     selection-background-color: {{accent}};
 {{?fg_63}}
 }
@@ -843,7 +843,7 @@ QFrame[class="FakeInputSep"] {
 QLabel[class="ExtraPreviewText"] {
     padding: 4px 8px;
     color: {{text_success}};
-    font-size: 13px;
+    font-size: {{fs_body}};
 }
 
 /* ── 拆分字段内部标签 ── */
@@ -897,7 +897,7 @@ QTextEdit#LogConsole {
     border: {{bd_regular}};
     border-radius: 4px;
     padding: 8px;
-    font-family: "Consolas", "Courier New", monospace;
+    font-family: 'Consolas', 'Courier New', monospace;
     font-size: 12px;
     selection-background-color: {{accent}};
     selection-color: #ffffff;
@@ -996,7 +996,7 @@ QLabel[class="RecordHeader"] {
     color: {{text_primary}};
     background-color: {{bg_62}};
     border: {{bd_inset}};
-    border-radius: 8px;
+    border-radius: {{radius_md}};
     padding: 5px 10px;
 }
 
@@ -1031,7 +1031,7 @@ QPushButton[selected="false"] {
 QToolButton#IconPickerButton {
     background-color: transparent;
     border: 1px solid transparent;
-    border-radius: 8px;
+    border-radius: {{radius_md}};
     padding: 1px 2px 3px 2px;
     color: {{text_primary}};
 }
@@ -1048,7 +1048,7 @@ QPushButton#PortraitTile {
     padding: 0px;
     min-width: 74px;
     min-height: 74px;
-    border-radius: 8px;
+    border-radius: {{radius_md}};
 }
 QLabel#PortraitIndex {
     color: {{text_muted}};
@@ -1074,7 +1074,7 @@ QLabel[class="ChipLabel"] {
 /* ── 等宽文本区 (字段来源弹窗) ── */
 QTextEdit[class="MonoText"] {
     font-family: 'Consolas', 'Courier New', monospace;
-    font-size: 9pt;
+    font-size: 12px;
 }
 
 /* ── 紧凑树控件 (mat_editor 场景/实体列表) ── */
@@ -1167,7 +1167,7 @@ QPushButton[class="SaveSlotButton"] {
     padding: 4px 8px;
     background-color: transparent;
     border-color: transparent;
-    border-radius: 8px;
+    border-radius: {{radius_md}};
 }
 QPushButton[class="SaveSlotButton"]:hover {
     background-color: {{bg_112}};
@@ -1183,7 +1183,7 @@ QLabel[class="SaveStatusLabel"] {
     color: {{text_muted}};
     background-color: {{bg_62}};
     border: {{bd_inset}};
-    border-radius: 8px;
+    border-radius: {{radius_md}};
     padding: 4px 10px;
 }
 /* ── 当前队伍成员卡片 (save_editor 总览) ── */
@@ -1198,7 +1198,7 @@ QLabel[class="TeamMemberIndex"] {
 }
 QLabel[class="TeamMemberName"] {
     color: {{text_primary}};
-    font-size: 13px;
+    font-size: {{fs_body}};
     font-weight: 600;
     padding-top: 2px;
 }
@@ -1210,7 +1210,7 @@ QLabel[class="TeamMemberLevel"] {
 QLabel[class="TeamMemberAvatar"] {
     background-color: {{bg_15}};
     border: {{bd_93}};
-    border-radius: 8px;
+    border-radius: {{radius_md}};
 }
 QTableWidget#SaveInventoryTable,
 QTableWidget#SaveWarpcTable {
@@ -1282,7 +1282,7 @@ QLabel[probe="empty"] {
 
 /* ── 信息标题标签 (mat_editor 脚本预览) ── */
 QLabel[class="InfoTitle"] {
-    font-size: 13px;
+    font-size: {{fs_body}};
     font-weight: bold;
 }
 
@@ -1321,7 +1321,7 @@ QPushButton[class="ConfirmBtn"] {
     font-weight: bold;
     padding: 8px;
     margin-top: 10px;
-    border-radius: 8px;
+    border-radius: {{radius_md}};
 }
 
 /* ── 分隔线框架 (QFrame separator) ── */
@@ -1788,7 +1788,7 @@ QToolBar#LauncherToolbar QPushButton#toolbarSecondary {
     background-color: {{bg_38}};
     color: {{fg_18}};
     border: {{bd_inset}};
-    border-radius: 8px;
+    border-radius: {{radius_md}};
     padding: 7px 12px;
 }
 QToolBar#LauncherToolbar QPushButton#toolbarSecondary:hover {
@@ -1852,7 +1852,7 @@ QTableWidget#LauncherPatchTable,
 QTableWidget#LauncherModTable {
     background-color: {{bg_167}};
     border: {{bd_116}};
-    border-radius: 8px;
+    border-radius: {{radius_md}};
     gridline-color: {{gridline_color_03}};
     alternate-background-color: {{bg_167}};
 }
@@ -1892,7 +1892,7 @@ QTextBrowser#detailBox {
 QWidget#LauncherPreviewPanel QTextBrowser#detailBox {
     background-color: transparent;
     border: {{bd_116}};
-    border-radius: 8px;
+    border-radius: {{radius_md}};
     padding: 8px 10px;
 }
 /* 内容容器透明, 露出 DockBody 圆角表面 (不透明背景会盖住底部圆角) */

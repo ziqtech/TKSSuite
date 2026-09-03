@@ -1,7 +1,7 @@
 # PySide6 界面体验优化方案
 
 > 创建日期：2026-09-04
-> 状态：**P0 已完成（2026-09-04）**，P1~P4 未开始
+> 状态：**P0、P1 已完成（2026-09-04）**，P2~P4 未开始
 > 前置文档：《PySide6样式体系整改方案.md》（四阶段已完成）——本方案是其续篇
 > 结论：四阶段解决了"样式难维护"；本方案解决"体验不够好"——设计体系补全（排版令牌/图标/动效）、交互安全网（退出保护/脏标记/校验）、数据量增长后的列表能力。
 
@@ -100,12 +100,12 @@
 
 **目标**：484 槽位收敛为 ~222 语义槽位；改一个语义色只动一处；排版数值开始有令牌。
 
-1. [ ] 写一次性脚本对 `SLOTS` 按值分组，相同四元组值合并为单一槽位（484 → 222）；模板 base.qss.tpl 中同名槽位批量替换
-2. [ ] 高频组语义命名（accent / text_primary / border_regular / border_inset / border_hover / surface 系…），其余低频组暂保留编号名渐进改名
-3. [ ] 渲染等价验证：复用阶段 1 增补的解析级对比（4 主题 × 全规则：选择器→属性→值逐一相等），通过后合入
-4. [ ] font-family 统一：5 种写法 → 2 种（UI 体 `'Segoe UI','Microsoft YaHei',sans-serif` / 等宽体 `'Consolas','Courier New',monospace`）
-5. [ ] `QTextEdit[class="MonoText"]` 的 9pt 改 px（与全模板口径统一）
-6. [ ] （渐进项）字号/圆角引入排版槽位（`{{fs_body}}`/`{{radius_md}}`…），值集中到 theme_tokens 新增 TYPOGRAPHY/RADIUS 表；先做 13px 正文与 8px 主圆角两个高频值，其余随日常迭代迁入
+1. [x] 写一次性脚本对 `SLOTS` 按值分组，相同四元组值合并为单一槽位（484 → 222）；模板 base.qss.tpl 中同名槽位批量替换
+2. [x] 高频组语义命名（accent / text_primary / border_regular / border_inset / border_hover / surface 系…），其余低频组暂保留编号名渐进改名
+3. [x] 渲染等价验证：复用阶段 1 增补的解析级对比（4 主题 × 全规则：选择器→属性→值逐一相等），通过后合入
+4. [x] font-family 统一：5 种写法 → 2 种（UI 体 `'Segoe UI','Microsoft YaHei',sans-serif` / 等宽体 `'Consolas','Courier New',monospace`）
+5. [x] `QTextEdit[class="MonoText"]` 的 9pt 改 px（与全模板口径统一）
+6. [x] （渐进项）字号/圆角引入排版槽位（`{{fs_body}}`/`{{radius_md}}`…），值集中到 theme_tokens 新增 TYPOGRAPHY/RADIUS 表；先做 13px 正文与 8px 主圆角两个高频值，其余随日常迭代迁入
 
 **验收**：SLOTS 数量减半且高频组有语义名；渲染等价对比通过；冒烟测试全绿；改 accent 色验证只动 1 处槽位全项目生效。
 
@@ -173,7 +173,7 @@
 | 批次 | 状态 | 开始日期 | 完成日期 |
 | --- | --- | --- | --- |
 | P0：交互安全网 | **已完成** | 2026-09-04 | 2026-09-04 |
-| P1：设计体系 2.0 | 未开始 |  |  |
+| P1：设计体系 2.0 | **已完成** | 2026-09-04 | 2026-09-04 |
 | P2：列表操作能力 | 未开始 |  |  |
 | P3：反馈与一致性 | 未开始 |  |  |
 | P4：视觉打磨与可访问性 | 未开始 |  |  |
@@ -189,12 +189,12 @@
 
 ### P1 清单
 
-- [ ] 槽位值去重合并（484 → 222）
-- [ ] 高频组语义命名
-- [ ] 渲染等价验证
-- [ ] font-family 统一 2 种
-- [ ] 9pt → px
-- [ ] （渐进）排版槽位首批（fs_body / radius_md）
+- [x] 槽位值去重合并（484 → 222）
+- [x] 高频组语义命名
+- [x] 渲染等价验证
+- [x] font-family 统一 2 种
+- [x] 9pt → px
+- [x] （渐进）排版槽位首批（fs_body / radius_md）
 
 ### P2 清单
 
@@ -250,3 +250,4 @@
 | --- | --- |
 | 2026-09-04 | 方案定稿：全量 UI 体检完成（样式整改四阶段之后的增量分析），五批次任务清单建立；实测基线数据录入（槽位 484/222/54% 重复、字号 7 档、圆角 9 种、padding 45 种、setWindowModified 0 处、QUndoStack 0 处、Ctrl+F 1 家、最近文件 0 处、QSS 外色值孤岛 ~9 处、状态栏 6/18、processEvents 21 处） |
 | 2026-09-04 | **P0 完成（6/6）**：spritesheet/shop/gxp/grp 四编辑器补退出保护（confirm_close + 脏标志全点位接入）；基类 `_dirty` 以 **property** 承载（实现与原设计差异：既有 `self._dirty = …` 赋值自动同步 `setWindowModified`，13 个编辑器零逐个接入；mat 经 MapDataManager dirty property + `_script_dirty` property 双路联动，configs 因对比式脏检查用 1.5s 低频轮询）；`format_title` 加 `[*]` 占位（全编辑器标题自动获得修改标记位，kon 的状态文本"[已修改]"已移除）；item/skill 数值字段 QIntValidator(-32768,32767) + `ui_helpers.mark_invalid` 红框反馈（新槽位 `bd_error`，越界仍钳制保数据但不再静默）。冒烟测试 4/4 全绿（28.6s）；离屏验证：4 主题渲染无残留槽位、`_dirty`/`set_dirty`/标题`[*]`/mark_invalid 机制全过 |
+| 2026-09-04 | **P1 完成（6/6）**：槽位值去重合并 **485→223**（实测口径含 P0 新增的 bd_error；基线 484/222 为 P0 前测值），一次性迁移脚本验证后删除（同阶段 1 惯例）；高频组语义命名 15 组（accent / text_primary / text_base / text_muted / text_success / bd_regular / bd_inset / bd_hover / bd_accent2 / bg_root / bg_window / bg_surface / bg_hover / accent_soft / hairline），低频组保留首个成员编号名渐进改名；**验证方式两级**：①去重步 4 主题渲染逐字节一致（从被撤回 commit 提取合并前模板+槽位独立复核）②P1-4/5 步改为行级 diff 断言——4 主题共 16 行差异 = 4 处预期变更 × 4 主题，零意外差异；font-family 5 种写法收敛为 2 种（UI 体/等宽体），MonoText 9pt→12px（96DPI 下渲染等价）；排版槽位首批落地：`fs_body`（13px×5 处）+ `radius_md`（8px×26 处），theme_tokens 头文档同步更新命名约定。冒烟测试 4/4 全绿（34.5s）。改 accent 色从 40 处变 1 处 |

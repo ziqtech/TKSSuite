@@ -8,11 +8,16 @@
   theme_manager 加载时把槽位注入模板生成最终 QSS。
   维护规则：改结构改模板；改颜色改本文件；禁止再散落硬编码色值。
 
-命名约定（提取工具自动生成，可渐进语义化重命名，改名需同步模板）：
-  bg_*  background 系背景色          fg_*   文字/前景色
-  bd_*  border 系边框色              selbg_*  选中态背景
-  altbg_* 隔行底色                   sel_*  其他 selection 系
-  gridline_color_* 表格网格线        其他前缀取自属性名
+命名约定（P1 去重合并后：同值槽位已合并为单一槽位，485 -> 223）：
+  语义名  高频组已语义化: accent / text_primary / text_base / text_muted /
+          text_success / bd_regular / bd_inset / bd_hover / bd_accent2 /
+          bg_root / bg_window / bg_surface / bg_hover / accent_soft / hairline
+          —— 改一个语义槽位即全项目生效（如 accent 原 40 处重复值已归一）
+  编号名  低频组暂保留首个成员的提取名，渐进语义化，改名需同步模板:
+    bg_*  background 系背景色          fg_*   文字/前景色
+    bd_*  border 系边框色              selbg_*  选中态背景
+    altbg_* 隔行底色                   sel_*  其他 selection 系
+    gridline_color_* 表格网格线        其他前缀取自属性名
   {{?name}} 可选行：某主题值为空串时该行不渲染
   —— 用于属性在 4 主题间存在性不同的行，值含完整属性行文本
 
@@ -255,6 +260,10 @@ SLOTS: dict[str, tuple[str, str, str, str]] = {
     'bg_172': ('rgba(122, 162, 247, 0.16)', 'rgba(124, 131, 253, 0.14)', 'rgba(122, 162, 247, 0.16)', 'rgba(124, 131, 253, 0.14)'),
     'fg_166': ('#a0a0a0', '#8e8ea0', '#95a0bd', '#8e8ea0'),
     'bd_error': ('2px solid #ef4444', '2px solid #c62828', '2px solid #ef4444', '2px solid #c62828'),
+    # ── 排版槽位首批 (P1-6): 颜色槽位之外的排版令牌起步 ──
+    # fs_body 正文字号 (正文/预览描述/成员名等); radius_md 主圆角 (按钮/输入框/卡片)
+    'fs_body': ('13px', '13px', '13px', '13px'),
+    'radius_md': ('8px', '8px', '8px', '8px'),
 }
 
 # ── 业务自绘控件语义色板 ──────────────────────────────────────────────
