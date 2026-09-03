@@ -1414,6 +1414,7 @@ class MatEditorApp(EditorMainWindow):
         menu_bar = self.menuBar()
         fm = menu_bar.addMenu("文件(F)")
         fm.addAction("加载 TKS 目录…", QKeySequence("Ctrl+O"), self._load_dir)
+        self.attach_recent_dirs_menu(fm)
         fm.addAction("加载存档 (从游戏目录)…", QKeySequence("Ctrl+Shift+O"), self._load_save_dir)
         fm.addAction("重载", self._reload)
         fm.addSeparator()
@@ -3008,8 +3009,10 @@ class MatEditorApp(EditorMainWindow):
     # =========== 数据加载 ===========
     def _load_dir(self):
         d = pick_tks_directory(self)
-        if not d:
-            return
+        if d:
+            self.load_tks_dir(d)
+
+    def load_tks_dir(self, d):
         mat_p = os.path.join(d, "TKMat.Dat")
         tkt_p = os.path.join(d, "TKT.dat")
         if not os.path.exists(mat_p):

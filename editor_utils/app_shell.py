@@ -73,6 +73,25 @@ class EditorMainWindow(QMainWindow):
                               persist=False)
         self._build_ui()
         self._after_build()
+        # Ctrl+F 聚焦搜索框 — 经 _focus_search 按常见属性名发现;
+        # 子类已覆盖 _focus_search 的 (如自带菜单绑定) 不重复安装
+        from PySide6.QtGui import QKeySequence, QShortcut
+        if type(self)._focus_search is EditorMainWindow._focus_search:
+            QShortcut(QKeySequence("Ctrl+F"), self, self._focus_search)
+
+    def _focus_search(self):
+        """Ctrl+F 钩子: 聚焦本窗口的搜索框。
+
+        子类搜索框属性名为 _search_entry / _search_input / _filter_edit /
+        _search_id_edit 之一时自动生效; 命名不同或需特殊行为时覆盖本方法。
+        """
+        for name in ("_search_entry", "_search_input", "_filter_edit",
+                     "_search_id_edit"):
+            widget = getattr(self, name, None)
+            if widget is not None:
+                widget.setFocus()
+                widget.selectAll()
+                return
 
     # ── 脏状态 (统一标题栏 * 修改标记) ────────────────────────
     # _dirty 以 property 承载: 子类既有的 self._dirty = True/False 赋值
@@ -94,6 +113,105 @@ class EditorMainWindow(QMainWindow):
         直接给 self._dirty 赋值等效。
         """
         self._dirty = dirty
+
+    # ── 窗口几何与分割器布局持久化 (P2) ───────────────────────
+    # 经 hideEvent 保存而非 closeEvent: 所有子类都覆盖 closeEvent
+    # (退出确认), 不会调 super(); 而"主窗口隐藏"必经 hideEvent
+    # (关闭会隐藏, 最小化不触发 hideEvent), 无需子类配合。
+
+    def _persist_settings_key(self) -> str:
+        return f"window_layout/{self.EDITOR_KEY or type(self).__name__}"
+
+    def _persist_splitters(self):
+        """收集全部 QSplitter (objectName 为空时按文档序生成稳定键)。"""
+        from PySide6.QtWidgets import QSplitter
+        named = []
+        for index, splitter in enumerate(self.findChildren(QSplitter)):
+            named.append((splitter.objectName() or f"splitter_{index}", splitter))
+        return named
+
+    def _save_window_layout(self):
+        from PySide6.QtCore import QSettings
+        settings = QSettings("TKSSuite", "TKSSuite")
+        key = self._persist_settings_key()
+        settings.setValue(f"{key}/geometry", self.saveGeometry())
+        for name, splitter in self._persist_splitters():
+            settings.setValue(f"{key}/splitter/{name}", splitter.saveState())
+
+    def _restore_window_layout(self):
+        from PySide6.QtCore import QSettings
+        settings = QSettings("TKSSuite", "TKSSuite")
+        key = self._persist_settings_key()
+        geometry = settings.value(f"{key}/geometry")
+        if geometry is not None:
+            self.restoreGeometry(geometry)  # 多屏/越界由 Qt 自行钳制
+        for name, splitter in self._persist_splitters():
+            state = settings.value(f"{key}/splitter/{name}")
+            if state is not None:
+                splitter.restoreState(state)
+
+    def hideEvent(self, event):
+        if not self.isVisible():
+            self._save_window_layout()
+        super().hideEvent(event)
+
+    def showEvent(self, event):
+        if not getattr(self, "_layout_restored", False):
+            self._layout_restored = True
+            self._restore_window_layout()
+        super().showEvent(event)
+
+    # ── 最近 TKS 目录菜单 (P2-7) ──────────────────────────────
+    def load_tks_dir(self, path: str):
+        """子类钩子: 加载指定 TKS 目录。
+
+        支持加载 TKS 目录的编辑器覆盖本方法 (把原 _load_tks_dir 的
+        加载部分搬进来); 未覆盖的编辑器 attach_recent_dirs_menu
+        不会创建子菜单。
+        """
+
+    def _load_tks_dir(self):
+        """默认"加载 TKS 目录"动作: 选目录后交给 load_tks_dir。
+
+        子类已有自己的 _load_tks_dir 的保持原样 (覆盖本方法);
+        新写法只需把加载体搬入 load_tks_dir。
+        """
+        from editor_utils.shared_state import pick_tks_directory
+        d = pick_tks_directory(self)
+        if d:
+            self.load_tks_dir(d)
+
+    def attach_recent_dirs_menu(self, parent_menu):
+        """向父菜单 (通常为"文件")追加"最近目录"子菜单。
+
+        仅当子类覆盖了 load_tks_dir 才实际创建; 条目在 aboutToShow
+        时动态重建 (跨编辑器共享, 打开菜单时永远是最新列表)。
+        """
+        if type(self).load_tks_dir is EditorMainWindow.load_tks_dir:
+            return None
+        from PySide6.QtWidgets import QMenu
+        from editor_utils.shared_state import get_recent_tks_dirs
+        # 显式构造并保引用: 避免 PySide6 对 addMenu(str) 返回值的
+        # 所有权歧义导致 C++ 对象被提前回收
+        menu = QMenu("最近目录", parent_menu)
+        self._recent_dirs_menu = menu
+        parent_menu.addMenu(menu)
+
+        def rebuild():
+            menu.clear()
+            dirs = get_recent_tks_dirs()
+            if not dirs:
+                empty = menu.addAction("(暂无最近目录)")
+                empty.setEnabled(False)
+                return
+            for d in dirs:
+                action = menu.addAction(d)
+                action.triggered.connect(
+                    lambda _checked=False, path=d: self.load_tks_dir(path))
+
+        menu.aboutToShow.connect(rebuild)
+        rebuild()
+        return menu
 
     # ── 子类钩子 ──────────────────────────────────────────────
     def _init_data(self):

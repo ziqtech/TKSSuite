@@ -1,7 +1,7 @@
 """主窗口 — Dock 风格三面板布局 + 主题切换 + 启动逻辑"""
 import os
 
-from PySide6.QtCore import Qt, QSize, QTimer
+from PySide6.QtCore import Qt, QSize, QSettings, QTimer
 from PySide6.QtGui import QIcon, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QApplication, QButtonGroup, QDialog, QFileDialog, QLabel, QMainWindow,
@@ -138,9 +138,48 @@ class MainWindow(QMainWindow):
         if getattr(self, "_geo_clamped", False):
             return
         self._geo_clamped = True
-        self._clamp_and_center()
+        # 有上次会话的窗口几何存档则直接恢复 (restoreGeometry 自带屏幕钳制),
+        # 无存档才走默认夹取居中
+        if not self._restore_window_geometry():
+            self._clamp_and_center()
         # 延迟到布局完成后执行, 保证读到最终的 splitter 高度
-        QTimer.singleShot(0, self._adjust_right_column_minimums)
+        QTimer.singleShot(0, self._after_first_show_layout)
+
+    def _after_first_show_layout(self):
+        """首次显示布局完成后的收尾: 恢复分割器位置 + 面板最小高度修正。"""
+        self._restore_splitter_states()
+        self._adjust_right_column_minimums()
+
+    # ── 窗口几何 / 分割器持久化 (P2-6) ──
+    _LAYOUT_KEY = "window_layout/launcher"
+    _SPLITTER_NAMES = ("LauncherSplitter", "LauncherRightSplitter")
+
+    def _restore_window_geometry(self) -> bool:
+        """恢复持久化的窗口几何; 有存档返回 True (跳过默认夹取居中)。"""
+        settings = QSettings("TKSSuite", "TKSSuite")
+        geometry = settings.value(f"{self._LAYOUT_KEY}/geometry")
+        if geometry is None:
+            return False
+        self.restoreGeometry(geometry)
+        return True
+
+    def _restore_splitter_states(self):
+        settings = QSettings("TKSSuite", "TKSSuite")
+        for name in self._SPLITTER_NAMES:
+            state = settings.value(f"{self._LAYOUT_KEY}/splitter/{name}")
+            if state is not None:
+                splitter = self.findChild(QSplitter, name)
+                if splitter is not None:
+                    splitter.restoreState(state)
+
+    def _save_window_layout(self):
+        settings = QSettings("TKSSuite", "TKSSuite")
+        settings.setValue(f"{self._LAYOUT_KEY}/geometry", self.saveGeometry())
+        for name in self._SPLITTER_NAMES:
+            splitter = self.findChild(QSplitter, name)
+            if splitter is not None:
+                settings.setValue(f"{self._LAYOUT_KEY}/splitter/{name}",
+                                  splitter.saveState())
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -549,12 +588,22 @@ class MainWindow(QMainWindow):
             self._log_dialog.resize(900, 600)
             layout = QVBoxLayout(self._log_dialog)
             layout.addWidget(self.log_console)
+            btn_row = QHBoxLayout()
+            btn_row.addStretch()
+            export_btn = QPushButton("导出日志…")
+            export_btn.clicked.connect(self._export_log)
+            btn_row.addWidget(export_btn)
             close_btn = QPushButton("关闭")
             close_btn.clicked.connect(self._log_dialog.close)
-            layout.addWidget(close_btn)
+            btn_row.addWidget(close_btn)
+            layout.addLayout(btn_row)
         self._log_dialog.show()
         self._log_dialog.raise_()
         self._log_dialog.activateWindow()
+
+    def _export_log(self):
+        if self.log_console.export_log(self):
+            self._set_summary_status("日志已导出", level="ok")
 
     def _build_tools_panel(self) -> QWidget:
         """构建辅助工具选择面板，根据 tools/ 子目录自动生成 RadioGroup。"""
@@ -1072,4 +1121,5 @@ class MainWindow(QMainWindow):
             self._worker.wait(3000)
         if self._overlay:
             self._overlay.close_overlay()
+        self._save_window_layout()
         super().closeEvent(event)

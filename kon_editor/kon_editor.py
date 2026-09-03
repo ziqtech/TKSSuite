@@ -324,6 +324,7 @@ class KonEditor(EditorMainWindow):
         mb = self.menuBar()
         fm = mb.addMenu("文件(&F)")
         fm.addAction("加载 TKS 目录...", QKeySequence("Ctrl+O"), self._load_tks_dir)
+        self.attach_recent_dirs_menu(fm)
         fm.addSeparator()
         fm.addAction("保存", QKeySequence("Ctrl+S"), self._save)
         fm.addAction("导出为 MOD (.tksmod)…", self._export_tksmod)
@@ -355,7 +356,8 @@ class KonEditor(EditorMainWindow):
         toolbar = QHBoxLayout()
         toolbar.addWidget(QLabel("搜索:"))
         self.search_input = QLineEdit()
-        self.search_input.setFixedWidth(160)
+        self.search_input.setMinimumWidth(160)
+        self.search_input.setClearButtonEnabled(True)
         self.search_input.textChanged.connect(self._apply_filter)
         toolbar.addWidget(self.search_input)
 
@@ -719,7 +721,10 @@ class KonEditor(EditorMainWindow):
 
     def _load_tks_dir(self):
         d = pick_tks_directory(self)
-        if not d: return
+        if d:
+            self.load_tks_dir(d)
+
+    def load_tks_dir(self, d):
         ko = os.path.join(d, "TKKon.dat")
         tk_ = os.path.join(d, "TKT.dat")
         if not os.path.exists(ko):

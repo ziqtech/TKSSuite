@@ -17,15 +17,59 @@ QTableWidget 的两个常见坑在这里统一处理：
 fill_viewport=True 时切换为“完全撑满”模式：拉伸列不再封顶，视口剩余宽度
 全部由拉伸列吃掉，表格右侧不留学生白（Excel / 文件管理器风格）。适用于
 嵌入窗口固定区域、希望始终铺满的表格（如 tks_launcher_gui）。
+
+增量能力（P2，均为选入式，不改变既有消费者行为）：
+- enable_header_sorting(): 点表头排序。基于 setSortingEnabled + 数值感知的
+  AdaptiveTableItem（数值列按 float 比较，其余列按忽略大小写的文本比较）。
+  含 setCellWidget 的表格拒绝启用——Qt 排序时 cell widget 不随行迁移，
+  会造成控件与数据错位；此类表格应由消费方做数据级排序后重建表格。
+- enable_copy_menu(): 右键菜单（复制单元格/所选行/整表 + 导出所选行为 CSV），
+  默认开启（copy_menu=False 可关）。
+- enable_column_persistence(key): 列宽持久化到 QSettings，恢复值喂给
+  _user_widths（与"用户优先"机制天然集成），reset_column_layout 一并清除。
 """
 
+import csv
+import json
+
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtWidgets import QHeaderView, QTableWidget
+from PySide6.QtWidgets import QFileDialog, QHeaderView, QMenu, QTableWidget, QTableWidgetItem
 
 # 拉伸列的默认封顶策略：列宽最多增长到 max(基准×factor, 基准+margin)。
 # 数值列基准小 → 封顶紧；长文本列基准大 → 封顶随内容放大，比例观感稳定。
 DEFAULT_STRETCH_CAP_FACTOR = 1.5
 DEFAULT_STRETCH_CAP_MARGIN = 64
+
+_SETTINGS_ORG = "TKSSuite"
+_SETTINGS_APP = "TKSSuite"
+
+
+def _settings():
+    from PySide6.QtCore import QSettings
+    return QSettings(_SETTINGS_ORG, _SETTINGS_APP)
+
+
+def _numeric_or_text_key(text: str, numeric: bool):
+    """排序键: 数值列尝试 float(失败回退文本), 文本列忽略大小写。"""
+    if numeric:
+        try:
+            return (0, float(text))
+        except (TypeError, ValueError):
+            pass
+    return (1, str(text).casefold())
+
+
+class _NumericSortItem(QTableWidgetItem):
+    """携带数值列标记的表格项 (enable_header_sorting 装配)。"""
+
+    def __init__(self, text: str, numeric: bool = False):
+        super().__init__(text)
+        self._numeric_sort = numeric
+
+    def __lt__(self, other):
+        mine = bool(getattr(self, '_numeric_sort', False))
+        theirs = bool(getattr(other, '_numeric_sort', False))
+        return _numeric_or_text_key(self.text(), mine) < _numeric_or_text_key(other.text(), theirs)
 
 
 def _normalize_widths(value):
@@ -45,7 +89,8 @@ class AdaptiveTableWidget(QTableWidget):
                  row_height=44, content_padding=14,
                  stretch_cap_factor=DEFAULT_STRETCH_CAP_FACTOR,
                  stretch_cap_margin=DEFAULT_STRETCH_CAP_MARGIN,
-                 fill_viewport=False):
+                 fill_viewport=False,
+                 copy_menu=True):
         super().__init__(rows, columns, parent)
         self._content_padding = content_padding
         self._minimum_widths = {}
@@ -60,6 +105,11 @@ class AdaptiveTableWidget(QTableWidget):
         self._fit_scheduled = False
         self._stretch_cap_factor = max(1.0, float(stretch_cap_factor))
         self._stretch_cap_margin = max(0, int(stretch_cap_margin))
+        self._numeric_sort_columns = set()
+        self._sorting_enabled = False
+        self._persistence_key = None
+        self._persistence_restored = False
+        self._persist_save_scheduled = False
 
         if minimum_widths:
             self._minimum_widths.update(_normalize_widths(minimum_widths))
@@ -74,6 +124,14 @@ class AdaptiveTableWidget(QTableWidget):
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
 
         self.itemChanged.connect(lambda _item: self._schedule_fit())
+
+        if copy_menu:
+            self.enable_copy_menu()
+
+        self._persist_timer = QTimer(self)
+        self._persist_timer.setSingleShot(True)
+        self._persist_timer.setInterval(400)
+        self._persist_timer.timeout.connect(self._save_column_widths)
 
     def set_adaptive_row_height(self, height):
         self.verticalHeader().setDefaultSectionSize(max(30, int(height)))
@@ -97,6 +155,8 @@ class AdaptiveTableWidget(QTableWidget):
         )
         self._minimum_widths = _normalize_widths(minimum_widths)
         self._maximum_widths = _normalize_widths(maximum_widths)
+        if self._persistence_key:
+            _settings().remove(f"table_columns/{self._persistence_key}")
         self._schedule_fit()
 
     def setColumnWidth(self, column, width):
@@ -135,7 +195,162 @@ class AdaptiveTableWidget(QTableWidget):
     def showEvent(self, event):
         super().showEvent(event)
         self._capture_header_stretch_modes()
+        self._restore_column_widths()
         self.fit_columns_to_viewport()
+
+    # ── P2 增量能力: 点表头排序 / 右键复制导出 / 列宽持久化 ──
+
+    def enable_header_sorting(self, numeric_columns=None):
+        """启用点表头排序 (需在表格填充完成后调用)。
+
+        numeric_columns: 数值列号集合, 按数值比较; 其余列按忽略大小写文本比较。
+        含 setCellWidget 的表格拒绝启用 (Qt 排序时 cell widget 不随行迁移,
+        会错位)——此类表格应由消费方做数据级排序后重建。
+        """
+        for row in range(self.rowCount()):
+            for column in range(self.columnCount()):
+                if self.cellWidget(row, column) is not None:
+                    raise RuntimeError(
+                        f"enable_header_sorting: 表格含 cellWidget (row={row}, col={column}), "
+                        "排序会导致控件错位; 请改为数据级排序后重建表格")
+        self._numeric_sort_columns = set(numeric_columns or ())
+        for row in range(self.rowCount()):
+            for column in range(self.columnCount()):
+                item = self.takeItem(row, column)
+                if item is None:
+                    continue
+                self._reinsert_sort_item(row, column, item)
+        self.setSortingEnabled(True)
+        self._sorting_enabled = True
+
+    def _reinsert_sort_item(self, row, column, item):
+        """把普通 QTableWidgetItem 的外观/数据搬到 _NumericSortItem 上。"""
+        converted = _NumericSortItem(item.text(),
+                                     column in self._numeric_sort_columns)
+        converted.setFlags(item.flags())
+        converted.setToolTip(item.toolTip())
+        converted.setFont(item.font())
+        converted.setForeground(item.foreground())
+        converted.setBackground(item.background())
+        converted.setTextAlignment(item.textAlignment())
+        for role in (Qt.ItemDataRole.UserRole, Qt.ItemDataRole.UserRole + 1,
+                     Qt.ItemDataRole.DecorationRole):
+            value = item.data(role)
+            if value is not None:
+                converted.setData(role, value)
+        self.setItem(row, column, converted)
+
+    def enable_copy_menu(self):
+        """启用右键菜单: 复制单元格/所选行/整表 + 导出所选行/整表为 CSV。"""
+        self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.customContextMenuRequested.connect(self._show_copy_menu)
+
+    def _show_copy_menu(self, pos):
+        if self.rowCount() == 0:
+            return
+        selection = self.selectedItems()
+        menu = QMenu(self)
+        if selection:
+            act_cell = menu.addAction("复制单元格")
+            act_rows = menu.addAction("复制所选行")
+            menu.addSeparator()
+            act_export = menu.addAction("导出所选行为 CSV…")
+        else:
+            act_cell = act_rows = act_export = None
+        act_all = menu.addAction("复制整表")
+        act_export_all = menu.addAction("导出整表为 CSV…")
+        chosen = menu.exec(self.viewport().mapToGlobal(pos))
+        if chosen is None:
+            return
+        if chosen is act_cell:
+            self._copy_texts([item.text() for item in selection])
+        elif chosen is act_rows:
+            self._copy_texts(self._rows_text(self._selected_row_set(), "\t"))
+        elif chosen is act_all:
+            self._copy_texts(self._rows_text(range(self.rowCount()), "\t"))
+        elif chosen is act_export:
+            self._export_csv(self._selected_row_set())
+        elif chosen is act_export_all:
+            self._export_csv(range(self.rowCount()))
+
+    def _selected_row_set(self):
+        return sorted({index.row() for index in self.selectedIndexes()})
+
+    @staticmethod
+    def _copy_texts(texts):
+        from PySide6.QtWidgets import QApplication
+        QApplication.clipboard().setText("\n".join(texts))
+
+    def _rows_text(self, rows, sep):
+        lines = []
+        for row in rows:
+            cells = [self.item(row, col).text() if self.item(row, col) else ""
+                     for col in range(self.columnCount())]
+            lines.append(sep.join(cells))
+        return lines
+
+    def _export_csv(self, rows):
+        rows = list(rows)
+        if not rows:
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self, "导出 CSV", "table_export.csv", "CSV (*.csv)")
+        if not path:
+            return
+        # utf-8-sig: 带 BOM, Excel 直接打开不乱码; 首行写表头
+        with open(path, "w", newline="", encoding="utf-8-sig") as f:
+            writer = csv.writer(f)
+            writer.writerow([self.horizontalHeaderItem(col).text()
+                             if self.horizontalHeaderItem(col) else ""
+                             for col in range(self.columnCount())])
+            for row in rows:
+                writer.writerow([self.item(row, col).text() if self.item(row, col) else ""
+                                 for col in range(self.columnCount())])
+
+    def enable_column_persistence(self, key):
+        """启用列宽持久化 (QSettings: table_columns/<key>)。
+
+        key 需在该表格所在窗口范围内唯一 (如 "launcher/mod_list")。
+        恢复值喂给 _user_widths, 与"用户优先"的自适应机制天然集成。
+        """
+        self._persistence_key = str(key)
+        self._persistence_restored = False
+        self._restore_column_widths()
+
+    def _restore_column_widths(self):
+        if (not self._persistence_key or self._persistence_restored
+                or self.columnCount() == 0):
+            return
+        raw = _settings().value(f"table_columns/{self._persistence_key}", "")
+        if not raw:
+            return
+        try:
+            saved = json.loads(str(raw))
+        except (TypeError, ValueError):
+            return
+        for key, width in saved.items():
+            column = int(key)
+            if 0 <= column < self.columnCount():
+                self._user_widths[column] = max(1, int(width))
+        self._persistence_restored = True
+        self._schedule_fit()
+
+    def _save_column_widths(self, force=False):
+        if not self._persistence_key:
+            return
+        if not force and not self.isVisible():
+            return
+        self._persist_save_scheduled = False
+        data = {str(c): w for c, w in self._user_widths.items()
+                if 0 <= c < self.columnCount()}
+        _settings().setValue(f"table_columns/{self._persistence_key}",
+                             json.dumps(data))
+
+    def hideEvent(self, event):
+        # 隐藏前 flush 未落盘的拖宽 (定时器 400ms 未到即关窗时避免丢最后一次调整)
+        if self._persist_save_scheduled:
+            self._save_column_widths(force=True)
+        super().hideEvent(event)
 
     def fit_columns_to_viewport(self):
         if self.columnCount() == 0 or not self.isVisible():
@@ -307,6 +522,9 @@ class AdaptiveTableWidget(QTableWidget):
             return
         if new_size > 0:
             self._user_widths[logical_index] = new_size
+            if self._persistence_key and not self._persist_save_scheduled:
+                self._persist_save_scheduled = True
+                self._persist_timer.start()
 
     def _schedule_fit(self):
         if self._fit_scheduled:

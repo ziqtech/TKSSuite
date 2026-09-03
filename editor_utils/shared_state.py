@@ -25,6 +25,9 @@ _STATE_FILENAME = ".tks_editors_state.json"
 # 状态键
 KEY_LAST_REF_DIR = "last_ref_dir"   # MOD 导出参考目录
 KEY_LAST_TKS_DIR = "last_tks_dir"   # 加载 TKS 游戏目录
+KEY_RECENT_TKS_DIRS = "recent_tks_dirs"  # 最近加载的 TKS 目录列表 (最新在前)
+
+RECENT_DIRS_MAX = 5
 
 
 def shared_state_path() -> Path:
@@ -96,14 +99,45 @@ def get_last_tks_dir() -> str:
 
 
 def save_last_tks_dir(d: str):
-    """保存最近一次「加载 TKS 目录」选择的游戏目录, 供其它编辑器默认加载。"""
+    """保存最近一次「加载 TKS 目录」选择的游戏目录, 供其它编辑器默认加载。
+
+    同时压入最近目录列表 (KEY_RECENT_TKS_DIRS, 供"最近目录"菜单)。
+    """
     _set_dir(KEY_LAST_TKS_DIR, d)
+    push_recent_tks_dir(d)
+
+
+def get_recent_tks_dirs() -> list[str]:
+    """最近加载的 TKS 目录列表 (最新在前; 仅保留仍存在的目录, 去重, 上限 5)。"""
+    raw = load_shared_state().get(KEY_RECENT_TKS_DIRS, [])
+    if not isinstance(raw, list):
+        return []
+    dirs: list[str] = []
+    for d in raw:
+        if isinstance(d, str) and d and os.path.isdir(d) and d not in dirs:
+            dirs.append(d)
+    return dirs[:RECENT_DIRS_MAX]
+
+
+def push_recent_tks_dir(d: str):
+    """把目录压入最近列表头部 (去重, 上限 RECENT_DIRS_MAX)。空目录忽略。"""
+    if not d:
+        return
+    state = load_shared_state()
+    raw = state.get(KEY_RECENT_TKS_DIRS, [])
+    if not isinstance(raw, list):
+        raw = []
+    dirs = [x for x in raw if x != d]
+    dirs.insert(0, d)
+    state[KEY_RECENT_TKS_DIRS] = dirs[:RECENT_DIRS_MAX]
+    save_shared_state(state)
 
 
 def pick_tks_directory(parent=None, title: str = "选择 TKS 游戏目录") -> str:
     """弹出带记忆的 TKS 游戏目录选择对话框 (跨编辑器共享记忆)。
 
-    对话框默认打开最近一次选择的游戏目录; 用户选定后立即写入共享状态。
+    对话框默认打开最近一次选择的游戏目录; 用户选定后立即写入共享状态
+    (含最近目录列表, 供各编辑器"最近目录"菜单使用)。
 
     Args:
         parent: 父窗口

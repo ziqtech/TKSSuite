@@ -300,6 +300,7 @@ class ShopEditorWindow(EditorMainWindow):
         action_load.setShortcut(QKeySequence("Ctrl+O"))
         action_load.triggered.connect(self._load_tks_dir)
         file_menu.addAction(action_load)
+        self.attach_recent_dirs_menu(file_menu)
 
         file_menu.addSeparator()
 
@@ -349,7 +350,9 @@ class ShopEditorWindow(EditorMainWindow):
         toolbar_layout.addSpacing(10)
         toolbar_layout.addWidget(QLabel("搜索:"))
         self.search_input = QLineEdit()
-        self.search_input.setFixedWidth(150)
+        self.search_input.setMinimumWidth(160)
+        self.search_input.setClearButtonEnabled(True)
+        self.search_input.textChanged.connect(self._apply_filter)
         self.search_input.returnPressed.connect(self._apply_filter)
         toolbar_layout.addWidget(self.search_input)
 
@@ -556,9 +559,10 @@ class ShopEditorWindow(EditorMainWindow):
 
     def _load_tks_dir(self):
         tks_dir = pick_tks_directory(self, "选择 TKS 游戏目录 (包含 TKShop.dat / TKItem.dat / TKT.dat)")
-        if not tks_dir:
-            return
+        if tks_dir:
+            self.load_tks_dir(tks_dir)
 
+    def load_tks_dir(self, tks_dir):
         shop = os.path.join(tks_dir, "TKShop.dat")
         item = os.path.join(tks_dir, "TKItem.dat")
         tkt  = os.path.join(tks_dir, "TKT.dat")

@@ -426,6 +426,7 @@ class ItemEditorApp(EditorMainWindow):
         mb = self.menuBar()
         fm = mb.addMenu("文件(&F)")
         fm.addAction("加载 TKS 目录…", QKeySequence("Ctrl+O"), self._load_tks_dir)
+        self.attach_recent_dirs_menu(fm)
         fm.addSeparator()
         fm.addAction("保存", QKeySequence("Ctrl+S"), self._save)
         fm.addAction("导出为 MOD (.tksmod)…", self._export_tksmod)
@@ -444,6 +445,8 @@ class ItemEditorApp(EditorMainWindow):
         toolbar = QHBoxLayout()
         toolbar.addWidget(QLabel("搜索:"))
         self.search_entry = QLineEdit()
+        self.search_entry.setClearButtonEnabled(True)
+        self.search_entry.textChanged.connect(self._apply_filter)
         self.search_entry.returnPressed.connect(self._apply_filter)
         toolbar.addWidget(self.search_entry)
         toolbar.addWidget(QPushButton("搜索", clicked=self._apply_filter))
@@ -751,7 +754,10 @@ class ItemEditorApp(EditorMainWindow):
     # ── 数据加载 ──
     def _load_tks_dir(self):
         d = pick_tks_directory(self)
-        if not d: return
+        if d:
+            self.load_tks_dir(d)
+
+    def load_tks_dir(self, d):
         it = os.path.join(d, "TKItem.dat")
         tk_ = os.path.join(d, "TKT.dat")
         sk = os.path.join(d, "TKSkill.dat")

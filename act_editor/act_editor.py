@@ -1764,6 +1764,7 @@ class ActEditorV2(EditorMainWindow):
         mb = self.menuBar()
         fm = mb.addMenu("文件(&F)")
         fm.addAction("加载 TKS 目录…\tCtrl+O", self._load_tks_dir)
+        self.attach_recent_dirs_menu(fm)
         fm.addSeparator()
         fm.addAction("保存\tCtrl+S", self._save)
         fm.addAction("导出为 MOD (.tksmod)…", self._export_tksmod)
@@ -1800,7 +1801,8 @@ class ActEditorV2(EditorMainWindow):
         toolbar = QHBoxLayout()
         toolbar.addWidget(QLabel("搜索:"))
         self.search_entry = QLineEdit()
-        self.search_entry.setFixedWidth(160)
+        self.search_entry.setMinimumWidth(160)
+        self.search_entry.setClearButtonEnabled(True)
         self.search_entry.textChanged.connect(self._apply_filter)
         toolbar.addWidget(self.search_entry)
         toolbar.addWidget(QPushButton("🔍 搜索", clicked=self._apply_filter))
@@ -2431,9 +2433,10 @@ class ActEditorV2(EditorMainWindow):
 
     def _load_tks_dir(self):
         d = pick_tks_directory(self)
-        if not d:
-            return
+        if d:
+            self.load_tks_dir(d)
 
+    def load_tks_dir(self, d):
         def _pick(*names):
             for n in names:
                 p = os.path.join(d, n)

@@ -1,7 +1,7 @@
 # PySide6 界面体验优化方案
 
 > 创建日期：2026-09-04
-> 状态：**P0、P1 已完成（2026-09-04）**，P2~P4 未开始
+> 状态：**P0~P2 已完成（2026-09-04）**，P3、P4 未开始
 > 前置文档：《PySide6样式体系整改方案.md》（四阶段已完成）——本方案是其续篇
 > 结论：四阶段解决了"样式难维护"；本方案解决"体验不够好"——设计体系补全（排版令牌/图标/动效）、交互安全网（退出保护/脏标记/校验）、数据量增长后的列表能力。
 
@@ -113,14 +113,14 @@
 
 **目标**：表格家族获得排序/过滤/复制/记忆四件套；主工作流列表可搜索；布局状态可持久化。
 
-1. [ ] AdaptiveTableWidget 内置点表头排序（`setSortingEnabled` + 数值列感知）
-2. [ ] AdaptiveTableWidget 内置右键菜单（`customContextMenuRequested`：复制单元格/整行/导出选中为 CSV）
-3. [ ] AdaptiveTableWidget 列宽持久化：按 `objectName+列号` 存 QSettings，`reset_column_layout` 清除
-4. [ ] mod_list.py 补搜索框 + 分类过滤（主工作流列表，模组量大后第一痛点）
-5. [ ] 搜索交互全量对齐：统一"textChanged 增量 + Ctrl+F 聚焦 + `setClearButtonEnabled(True)`"；`setFixedWidth(160)` 七处（skill:808/act:1803/warpc:671,680/tkt:989/wardata:667/kon:358/warpc_table_mode:766）改 `setMinimumWidth(160)`
-6. [ ] 窗口几何 + QSplitter 状态持久化：EditorMainWindow 基类 closeEvent 存 QSettings（launcher main_window 一并接入，其初始几何逻辑保留作首次默认值）
-7. [ ] 最近文件菜单：基于 shared_state.py 的 QSettings 基建加"最近 5 个 TKS 目录"子菜单（EditorMainWindow 基类内置，子类零成本继承）
-8. [ ] log_console.py：滚动条不在底部时暂停 autoscroll（现行 :124 无条件 `ensureCursorVisible` 会拽回底部）；加导出日志按钮与行数上限
+1. [x] AdaptiveTableWidget 内置点表头排序（`setSortingEnabled` + 数值列感知）
+2. [x] AdaptiveTableWidget 内置右键菜单（`customContextMenuRequested`：复制单元格/整行/导出选中为 CSV）
+3. [x] AdaptiveTableWidget 列宽持久化：按 `objectName+列号` 存 QSettings，`reset_column_layout` 清除
+4. [x] mod_list.py 补搜索框 + 分类过滤（主工作流列表，模组量大后第一痛点）
+5. [x] 搜索交互全量对齐：统一"textChanged 增量 + Ctrl+F 聚焦 + `setClearButtonEnabled(True)`"；`setFixedWidth(160)` 七处（skill:808/act:1803/warpc:671,680/tkt:989/wardata:667/kon:358/warpc_table_mode:766）改 `setMinimumWidth(160)`
+6. [x] 窗口几何 + QSplitter 状态持久化：EditorMainWindow 基类 closeEvent 存 QSettings（launcher main_window 一并接入，其初始几何逻辑保留作首次默认值）
+7. [x] 最近文件菜单：基于 shared_state.py 的 QSettings 基建加"最近 5 个 TKS 目录"子菜单（EditorMainWindow 基类内置，子类零成本继承）
+8. [x] log_console.py：滚动条不在底部时暂停 autoscroll（现行 :124 无条件 `ensureCursorVisible` 会拽回底部）；加导出日志按钮与行数上限
 
 **验收**：冒烟测试全绿；mod 列表可搜索过滤排序；重启后窗口几何/列宽保留；任一表格右键可复制整行。
 
@@ -174,7 +174,7 @@
 | --- | --- | --- | --- |
 | P0：交互安全网 | **已完成** | 2026-09-04 | 2026-09-04 |
 | P1：设计体系 2.0 | **已完成** | 2026-09-04 | 2026-09-04 |
-| P2：列表操作能力 | 未开始 |  |  |
+| P2：列表操作能力 | **已完成** | 2026-09-04 | 2026-09-04 |
 | P3：反馈与一致性 | 未开始 |  |  |
 | P4：视觉打磨与可访问性 | 未开始 |  |  |
 
@@ -198,14 +198,14 @@
 
 ### P2 清单
 
-- [ ] AdaptiveTable 排序
-- [ ] AdaptiveTable 右键菜单 + 复制/导出
-- [ ] AdaptiveTable 列宽持久化
-- [ ] mod_list 搜索 + 分类过滤
-- [ ] 搜索交互全量对齐（增量 + Ctrl+F + 清除按钮）
-- [ ] 窗口几何/Splitter 持久化
-- [ ] 最近文件菜单
-- [ ] 日志控制台 autoscroll 智能暂停 + 导出 + 行数上限
+- [x] AdaptiveTable 排序
+- [x] AdaptiveTable 右键菜单 + 复制/导出
+- [x] AdaptiveTable 列宽持久化
+- [x] mod_list 搜索 + 分类过滤
+- [x] 搜索交互全量对齐（增量 + Ctrl+F + 清除按钮）
+- [x] 窗口几何/Splitter 持久化
+- [x] 最近文件菜单
+- [x] 日志控制台 autoscroll 智能暂停 + 导出 + 行数上限
 
 ### P3 清单
 
@@ -251,3 +251,4 @@
 | 2026-09-04 | 方案定稿：全量 UI 体检完成（样式整改四阶段之后的增量分析），五批次任务清单建立；实测基线数据录入（槽位 484/222/54% 重复、字号 7 档、圆角 9 种、padding 45 种、setWindowModified 0 处、QUndoStack 0 处、Ctrl+F 1 家、最近文件 0 处、QSS 外色值孤岛 ~9 处、状态栏 6/18、processEvents 21 处） |
 | 2026-09-04 | **P0 完成（6/6）**：spritesheet/shop/gxp/grp 四编辑器补退出保护（confirm_close + 脏标志全点位接入）；基类 `_dirty` 以 **property** 承载（实现与原设计差异：既有 `self._dirty = …` 赋值自动同步 `setWindowModified`，13 个编辑器零逐个接入；mat 经 MapDataManager dirty property + `_script_dirty` property 双路联动，configs 因对比式脏检查用 1.5s 低频轮询）；`format_title` 加 `[*]` 占位（全编辑器标题自动获得修改标记位，kon 的状态文本"[已修改]"已移除）；item/skill 数值字段 QIntValidator(-32768,32767) + `ui_helpers.mark_invalid` 红框反馈（新槽位 `bd_error`，越界仍钳制保数据但不再静默）。冒烟测试 4/4 全绿（28.6s）；离屏验证：4 主题渲染无残留槽位、`_dirty`/`set_dirty`/标题`[*]`/mark_invalid 机制全过 |
 | 2026-09-04 | **P1 完成（6/6）**：槽位值去重合并 **485→223**（实测口径含 P0 新增的 bd_error；基线 484/222 为 P0 前测值），一次性迁移脚本验证后删除（同阶段 1 惯例）；高频组语义命名 15 组（accent / text_primary / text_base / text_muted / text_success / bd_regular / bd_inset / bd_hover / bd_accent2 / bg_root / bg_window / bg_surface / bg_hover / accent_soft / hairline），低频组保留首个成员编号名渐进改名；**验证方式两级**：①去重步 4 主题渲染逐字节一致（从被撤回 commit 提取合并前模板+槽位独立复核）②P1-4/5 步改为行级 diff 断言——4 主题共 16 行差异 = 4 处预期变更 × 4 主题，零意外差异；font-family 5 种写法收敛为 2 种（UI 体/等宽体），MonoText 9pt→12px（96DPI 下渲染等价）；排版槽位首批落地：`fs_body`（13px×5 处）+ `radius_md`（8px×26 处），theme_tokens 头文档同步更新命名约定。冒烟测试 4/4 全绿（34.5s）。改 accent 色从 40 处变 1 处 |
+| 2026-09-04 | **P2 完成（8/8）**：①adaptive_table 新增 `enable_header_sorting`（数值感知 `_NumericSortItem`，含 cellWidget 的表格拒绝启用——Qt 排序不迁移 cell widget，此类表格应数据级排序；mod_list 分类列含 widget 故其排序走数据级方案待后续）、`enable_copy_menu`（右键复制单元格/所选行/整表 + 导出 CSV，utf-8-sig 带 BOM 含表头，默认开启可关）、`enable_column_persistence`（QSettings 键 `table_columns/<key>`，恢复值喂 `_user_widths` 与"用户优先"机制集成，hideEvent flush，reset_column_layout 一并清除）②mod_list 补搜索（复用简繁 search_match，匹配名称/作者/ID/版本/说明）+ 分类下拉过滤（视图级 setRowHidden，勾选数据不动；表头全选改只作用于可见行）+ Ctrl+F + 计数标签③搜索对齐 9 处（8 文件）`setFixedWidth(160)`→`setMinimumWidth(160)`+清除按钮+textChanged 增量（原 7 处口径外含 shop 150→160）；Ctrl+F 由基类统一安装（`_focus_search` 按常见属性名自动发现，子类已覆盖的如 tkt 不重复安装）④窗口几何/Splitter 持久化：基类经 **hideEvent** 保存（避开 15 个子类 closeEvent 覆盖，最小化不触发 hide）、showEvent 首次恢复，`saveGeometry/restoreGeometry` 自带多屏钳制；启动器单独接入（有存档跳过夹取居中）⑤最近目录：shared_state 新增 `get/push_recent_tks_dirs`（上限 5，save_last_tks_dir 自动压入），基类 `attach_recent_dirs_menu`（仅覆盖了 `load_tks_dir` 的编辑器创建子菜单；**9 个编辑器** item/skill/kon/act/mat/shop/tkt/tks_book/configs 拆分 picker/load 并接线；子菜单经显式 `QMenu(title, parent)` 构造防 PySide6 提前回收）⑥log_console 智能自动滚动（滚动条离底 >2px 暂停跟随）+ 3000 行上限批量裁剪 + 导出按钮（日志弹窗）。「最近目录」菜单创建检测到 PySide6 对 `addMenu(str)` 返回值的 GC 回收问题，已用显式构造规避。验证：编辑器冒烟 4/4 全绿（18.3s）、launcher 单测 27/27（test_shot 为存量手工脚本，stash 对照确认其失败与本次无关）、launcher 主窗口离屏构建/关闭/持久化无异常 |

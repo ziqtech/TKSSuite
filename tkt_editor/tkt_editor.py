@@ -930,6 +930,7 @@ class TktEditor(EditorMainWindow):
         menu_bar = self.menuBar()
         file_menu = menu_bar.addMenu("文件(F)")
         file_menu.addAction("加载 TKS 目录…", QKeySequence("Ctrl+O"), self._load_tks_dir)
+        self.attach_recent_dirs_menu(file_menu)
         file_menu.addAction("保存", QKeySequence("Ctrl+S"), self._save)
         file_menu.addAction("另存为…", self._save_as)
         file_menu.addSeparator()
@@ -986,7 +987,9 @@ class TktEditor(EditorMainWindow):
         toolbar_layout = QHBoxLayout()
         self.search_entry = QLineEdit()
         self.search_entry.setPlaceholderText("关键词/ID搜索...")
-        self.search_entry.setFixedWidth(160)
+        self.search_entry.setMinimumWidth(160)
+        self.search_entry.setClearButtonEnabled(True)
+        self.search_entry.textChanged.connect(self._apply_filter)
         self.search_entry.returnPressed.connect(self._apply_filter)
         toolbar_layout.addWidget(self.search_entry)
 
@@ -1330,8 +1333,10 @@ class TktEditor(EditorMainWindow):
 
     def _load_tks_dir(self):
         d = pick_tks_directory(self, "挂载 TKS 游戏核心环境目录")
-        if not d:
-            return
+        if d:
+            self.load_tks_dir(d)
+
+    def load_tks_dir(self, d):
         tkt_path = os.path.join(d, "TKT.dat")
         if not os.path.exists(tkt_path):
             QMessageBox.critical(self, "寻路失败", "目录内未检测到 TKT.dat")

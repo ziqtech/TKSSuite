@@ -105,6 +105,7 @@ class TksBookViewer(EditorMainWindow):
         mb = self.menuBar()
         fm = mb.addMenu("文件(&F)")
         fm.addAction("加载 TKS 目录...", QKeySequence("Ctrl+O"), self._load_tks_dir)
+        self.attach_recent_dirs_menu(fm)
         fm.addSeparator()
         fm.addAction("退出", self.close)
 
@@ -200,8 +201,10 @@ class TksBookViewer(EditorMainWindow):
 
     def _load_tks_dir(self):
         d = pick_tks_directory(self)
-        if not d:
-            return
+        if d:
+            self.load_tks_dir(d)
+
+    def load_tks_dir(self, d):
         # 主文件校验: 查看器至少需要 TKT.dat (所有名称/文本的来源)
         if not os.path.exists(os.path.join(d, "TKT.dat")):
             themed_messagebox(self, QMessageBox.Warning, "文件缺失",

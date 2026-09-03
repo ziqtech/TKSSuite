@@ -185,6 +185,7 @@ class ConfigsEditorWindow(EditorMainWindow):
         act_load.setShortcut("Ctrl+O")
         act_load.triggered.connect(self.load_tks_directory)
         file_menu.addAction(act_load)
+        self.attach_recent_dirs_menu(file_menu)
 
         act_save = QAction("保存", self)
         act_save.setShortcut("Ctrl+S")
@@ -398,9 +399,10 @@ class ConfigsEditorWindow(EditorMainWindow):
     def load_tks_directory(self):
         """加载 TKS 游戏目录: WarPC.dat + TKT.dat + Fa.JVG。"""
         d = pick_tks_directory(self)
-        if not d:
-            return
+        if d:
+            self.load_tks_dir(d)
 
+    def load_tks_dir(self, d):
         warpc_path = os.path.join(d, "WarPC.dat")
         tkt_path = os.path.join(d, "TKT.dat")
         fa_path = os.path.join(d, "Fa.JVG")

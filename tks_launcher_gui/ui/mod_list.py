@@ -7,9 +7,9 @@
 """
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QColor
+from PySide6.QtGui import QColor, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
-    QAbstractItemView, QCheckBox, QHBoxLayout, QLabel,
+    QAbstractItemView, QCheckBox, QHBoxLayout, QLabel, QLineEdit,
     QTableWidgetItem, QToolButton, QVBoxLayout, QWidget,
 )
 
@@ -19,6 +19,8 @@ from ui.centered_checkbox_delegate import (
 )
 from editor_utils.dock_components import create_dock
 from editor_utils.adaptive_table import AdaptiveTableWidget
+from editor_utils.combo_box import EditorComboBox
+from editor_utils.search_utils import search_match
 
 # 行布局: 名称 + 版本号 + 分类 + 作者 + ID; 加载顺序/描述进悬浮提示与详情面板
 _COLUMNS = ["启用", "模组名称", "版本号", "分类", "作者", "ID"]
@@ -109,6 +111,24 @@ class ModListWidget(QWidget):
         body.setContentsMargins(0, 0, 0, 0)
         body.setSpacing(4)
 
+        # 过滤条: 搜索 + 分类 (视图级过滤, 隐藏行不影响勾选数据与状态持久化)
+        filter_row = QHBoxLayout()
+        filter_row.setContentsMargins(0, 0, 0, 0)
+        filter_row.setSpacing(4)
+        self._search_edit = QLineEdit()
+        self._search_edit.setPlaceholderText("搜索 名称/作者/ID/版本/说明")
+        self._search_edit.setClearButtonEnabled(True)
+        self._search_edit.textChanged.connect(self._apply_filter)
+        filter_row.addWidget(self._search_edit, 1)
+        self._category_combo = EditorComboBox()
+        self._category_combo.addItem("全部分类")
+        self._category_combo.currentTextChanged.connect(self._apply_filter)
+        filter_row.addWidget(self._category_combo)
+        self._count_label = QLabel("")
+        self._count_label.setProperty("class", "StatusHint")
+        filter_row.addWidget(self._count_label)
+        body.insertLayout(0, filter_row)
+
         # 表格
         self._table = AdaptiveTableWidget(
             0, len(_COLUMNS),
@@ -120,6 +140,8 @@ class ModListWidget(QWidget):
         self._table.setObjectName("LauncherModTable")
         self._table.setHorizontalHeaderLabels(_COLUMNS)
         self._table.setProperty("class", "GrowthTable")  # 复用主题的表格选中/行背景样式
+        self._table.enable_column_persistence("launcher/mod_list")
+        QShortcut(QKeySequence("Ctrl+F"), self, self._focus_search)
         self._table.setAlternatingRowColors(False)
         self._table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self._table.setSelectionMode(QAbstractItemView.SingleSelection)
@@ -187,9 +209,51 @@ class ModListWidget(QWidget):
         dup_ids = self._detect_dup_ids()
         self.duplicate_ids_detected.emit(len(dup_ids) > 0)
 
+        self._rebuild_category_items()
         self._populate_table(dup_ids)
+        self._apply_filter()
 
         self._loading = False
+        self._update_header_check_state()
+
+    # ── 搜索与分类过滤 (视图级) ──
+
+    def _focus_search(self):
+        self._search_edit.setFocus()
+        self._search_edit.selectAll()
+
+    def _rebuild_category_items(self):
+        """按当前 MOD 集合重建分类下拉项, 尽量保留原选择。"""
+        self._category_combo.blockSignals(True)
+        current = self._category_combo.currentText() or "全部分类"
+        self._category_combo.clear()
+        self._category_combo.addItem("全部分类")
+        categories = sorted({(mod.category or "other") for mod in self._mods},
+                            key=lambda c: _CATEGORY_LABELS.get(c, c))
+        for category in categories:
+            self._category_combo.addItem(_CATEGORY_LABELS.get(category, category))
+        index = self._category_combo.findText(current)
+        self._category_combo.setCurrentIndex(index if index >= 0 else 0)
+        self._category_combo.blockSignals(False)
+
+    def _apply_filter(self):
+        """按搜索词与分类隐藏/显示行 (数据与勾选状态不受影响)。"""
+        query = self._search_edit.text().strip()
+        category = self._category_combo.currentText()
+        shown = 0
+        for row in range(self._table.rowCount()):
+            mod = self._mods[self._row_mod_index[row]]
+            visible = search_match(query, mod.name, mod.author, mod.mod_id,
+                                   mod.version, mod.description)
+            if (visible and category != "全部分类"
+                    and _CATEGORY_LABELS.get(mod.category or "other", "其他") != category):
+                visible = False
+            self._table.setRowHidden(row, not visible)
+            if visible:
+                shown += 1
+        total = len(self._mods)
+        filtered = bool(query) or category != "全部分类"
+        self._count_label.setText(f"{shown}/{total}" if (filtered and total) else "")
         self._update_header_check_state()
 
     def _detect_dup_ids(self) -> set[str]:
@@ -291,8 +355,9 @@ class ModListWidget(QWidget):
         self._header_check.raise_()
 
     def _mod_rows(self) -> list[int]:
-        """全部模组行 (表头全选的作用范围)。"""
-        return list(self._row_mod_index)
+        """表头全选的作用范围: 仅可见行 (过滤隐藏的行不被批量勾选)。"""
+        return [row for row in self._row_mod_index
+                if not self._table.isRowHidden(row)]
 
     def _on_item_changed(self, item):
         """单行勾选状态变化时，同步表头复选框的三态"""

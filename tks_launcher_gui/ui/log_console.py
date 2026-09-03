@@ -97,14 +97,26 @@ class LogHighlighter(QSyntaxHighlighter):
 
 
 class LogConsole(QTextEdit):
+    # 文档行数上限: 超出后从头部裁剪 (防止长跑会话内存无限增长)。
+    # QTextEdit 无行数概念, 以块数近似 (每行一块)。
+    MAX_BLOCKS = 3000
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName("LogConsole")
         self.setReadOnly(True)
         # 按需显示滚动条: 空日志时不占轨道, 追加日志时 ensureCursorVisible 自动滚到底
         self.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        # 用户向上翻阅历史时暂停自动滚动, 拉回底部后恢复
+        self._autoscroll = True
+        self.verticalScrollBar().valueChanged.connect(self._on_scroll_moved)
         # 创建高亮器 (绑定到 document)
         self._highlighter = LogHighlighter(self.document(), theme_id="gpt-dark")
+
+    def _on_scroll_moved(self, value):
+        vbar = self.verticalScrollBar()
+        at_bottom = value >= vbar.maximum() - 2
+        self._autoscroll = at_bottom
 
     def set_theme(self, theme_id: str):
         # 保存滚动条位置，防止 rehighlight() 导致滚动跳动
@@ -114,14 +126,40 @@ class LogConsole(QTextEdit):
         vbar.setValue(pos)
 
     def append_log(self, text: str):
-        """追加一行纯文本日志并滚动到底部"""
+        """追加一行纯文本日志; 滚动条在底部时自动跟随, 否则保持当前位置"""
         cursor = self.textCursor()
         cursor.movePosition(QTextCursor.End)
         if cursor.position() > 0:
             cursor.insertBlock()
         cursor.insertText(text)
-        self.setTextCursor(cursor)
-        self.ensureCursorVisible()
+        self._trim_document()
+        if self._autoscroll:
+            self.setTextCursor(cursor)
+            self.ensureCursorVisible()
+
+    def _trim_document(self):
+        """行数超限时裁剪最旧的块 (按 MAX_BLOCKS 的 10% 批量裁, 避免逐行裁)。"""
+        doc = self.document()
+        limit = self.MAX_BLOCKS
+        if doc.blockCount() <= limit:
+            return
+        cursor = QTextCursor(doc)
+        cursor.movePosition(QTextCursor.Start)
+        excess = doc.blockCount() - limit + max(1, limit // 10)
+        for _ in range(excess):
+            cursor.movePosition(QTextCursor.NextBlock, QTextCursor.KeepAnchor)
+        cursor.removeSelectedText()
+
+    def export_log(self, parent=None) -> bool:
+        """导出日志到文本文件; 返回是否已保存。"""
+        from PySide6.QtWidgets import QFileDialog
+        path, _ = QFileDialog.getSaveFileName(
+            parent or self, "导出日志", "launcher_log.txt", "文本文件 (*.txt)")
+        if not path:
+            return False
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(self.toPlainText())
+        return True
 
     def clear_log(self):
         self.clear()

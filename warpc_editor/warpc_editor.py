@@ -668,7 +668,9 @@ class WarpcEditorV2(EditorMainWindow):
         toolbar = QHBoxLayout()
         toolbar.addWidget(QLabel("搜索:"))
         self.search_entry = QLineEdit()
-        self.search_entry.setFixedWidth(160)
+        self.search_entry.setMinimumWidth(160)
+        self.search_entry.setClearButtonEnabled(True)
+        self.search_entry.textChanged.connect(self._apply_filter)
         self.search_entry.returnPressed.connect(self._apply_filter)
         toolbar.addWidget(self.search_entry)
         toolbar.addWidget(QPushButton("🔍 搜索", clicked=self._apply_filter))
@@ -677,7 +679,8 @@ class WarpcEditorV2(EditorMainWindow):
         # 字段定位: 输入字段名/标签后回车跳转到对应 Tab 并高亮
         toolbar.addWidget(QLabel("定位字段:"))
         self.field_search = QLineEdit()
-        self.field_search.setFixedWidth(160)
+        self.field_search.setMinimumWidth(160)
+        self.field_search.setClearButtonEnabled(True)
         self.field_search.setPlaceholderText("字段名称…")
         self._field_search_map = {}
         for _fd in FIELD_SCHEMA.values():
