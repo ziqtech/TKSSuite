@@ -322,7 +322,7 @@
 
 - [x] tks\_launcher\_gui/ui/log\_console.py（14 → 0，表上移至 theme\_tokens.LOG\_CONSOLE；接口从 dark 布尔改为 theme\_id 贯通，main\_window 钩子同步更新）
 
-- [x] spritesheet\_editor.py（48 → 19，剩余全部为豁免）：画布类 19 色上收为模块级命名常量（图像编辑器惯例：画布恒为深色系保证精灵可见性，不随 UI 主题变化，块注释豁免）；主题感知的画布视口底色（2 处 is\_dark 分支）迁入 theme\_tokens.SPRITESHEET 表。顺带发现存量缺陷：菜单切换主题时画布不同步（仅快捷键切换同步），待后续以 \_on\_theme\_applied 钩子修复
+- [x] spritesheet\_editor.py（48 → 19，剩余全部为豁免）：画布类 19 色上收为模块级命名常量（图像编辑器惯例：画布恒为深色系保证精灵可见性，不随 UI 主题变化，块注释豁免）；主题感知的画布视口底色（2 处 is\_dark 分支）迁入 theme\_tokens.SPRITESHEET 表。~~顺带发现存量缺陷：菜单切换主题时画布不同步（仅快捷键切换同步）~~（**已解决**：主题入口现为工具栏按钮 → `_toggle_theme`，其内部已含画布背景刷同步逻辑）
 
 - [x] skill\_editor.py（36 → 5，剩余全为豁免）：迁入 theme\_tokens.SKILL\_GRAPH 表（画布/网格点/类型色板×2/连线三色/标签胶囊/节点卡片/聚焦）；**3 处重复的"技能类型色板"收敛为 1 处**；SkillGraphView/SkillTreeDialog 构造签名从 is\_dark 改为 theme\_id 贯通；播种徽标三色与溢出警示红为主题无关领域常量（模块级豁免）
 
@@ -370,7 +370,7 @@
 
 - `_apply_theme/_toggle_theme/_create_dock` 剩余定义全部为"真覆盖"（派生刷新/签名扩展），非逐字样板
 
-- 净减约 540 行样板（18 文件 diff 统计），app\_shell.py 新增 210 行为单点共享
+- 净减约 540 行样板（18 文件 diff 统计），app\_shell.py 新增 179 行（当前实测）为单点共享
 
 ### 阶段 4 清单
 
@@ -423,4 +423,5 @@
 | 2026-09-03 | **阶段 3 完成（18/18 入口）**：app\_shell.py（EditorMainWindow 模板方法基类 + run\_editor 统一入口）；迁移按 shop→小→中→大→tks\_book→launcher 批次推进，每入口迁移后跑冒烟测试全绿；\_show\_help/\_show\_about 18→3 处、main() 样板全部 1 行；净减约 540 行；app\_init 保留为原子工具库（非双头）；build entry 无需变更 |
 | 2026-09-03 | **阶段 4：前三组合并**：SkillPickerDialog 3→1（参数化 rows 数据源，三消费方切换）；FieldRefDialog 2→1（弹窗壳收敛为 ui\_helpers.show\_field\_ref，内容留作各编辑器 \_build\_field\_ref\_text 数据函数）；GrowthTableDialog 2→1（tks\_book/book\_growth.py 整文件删除，tab\_char 直用统一类）；批次净减约 305 行 |
 | 2026-09-03 | **阶段 4 完成**：Flag×2 + UseRight×2 四份位掩码弹窗合并为 picker\_dialogs.BitmaskPickerDialog（use\_bit\_shift 语义双轨 / manual MOD 手动输入 / selected\_mask+get\_value 双轨结果 API）；IconPicker 单消费者跳过；7 处调用点切换，warpc\_table\_mode 解除对 warpc\_editor 依赖；净减 76 行，冒烟测试 4/4 全绿 |
+| 2026-09-03 | **全量进度核对**：逐项复核四阶段交付物与仓库实际状态，全部相符；冒烟测试复跑 4/4 全绿（35.3s）。修正两处过时记录：app\_shell.py 行数 210→179（实测）；spritesheet"菜单切主题画布不同步"缺陷已解决（入口改为工具栏按钮 → \_toggle\_theme，内含画布同步） |
 
