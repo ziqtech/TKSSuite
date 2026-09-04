@@ -59,6 +59,7 @@ from editor_utils.theme_switcher import (
 )
 from editor_utils.app_shell import EditorMainWindow, run_editor
 from editor_utils.dock_components import DockHeader, create_dock
+from editor_utils.empty_state import EmptyStateOverlay
 from editor_utils.lzss import lzss_decompress_dat as lzss_decompress, lzss_decompress_save, lzss_compress_save
 from editor_utils.ui_helpers import confirm_close, themed_messagebox, EditorComboBox
 from editor_utils.tab_widget import EditorTabWidget
@@ -1334,6 +1335,11 @@ class MatEditorApp(EditorMainWindow):
         self._set_edit_enabled(False)
         self._apply_theme()
 
+    def _update_empty_state(self):
+        """Empty state 引导显隐: 左侧列表随数据有无切换 (可选附加项)。"""
+        if hasattr(self, '_empty_state'):
+            self._empty_state.set_empty(not self._data.records)
+
     def _extra_help_actions(self):
         return [("字段说明", self._show_field_ref)]
 
@@ -1379,6 +1385,9 @@ class MatEditorApp(EditorMainWindow):
         self._update_path()
         self._update_entity_type_colors()
         self._canvas.update_vis_background()
+        # Empty state 引导层图标深浅变体同步 (可选附加项)
+        if hasattr(self, '_empty_state'):
+            self._empty_state.refresh()
         # 主题切换时，强制重绘 PIL 底图以匹配新背景色
         if hasattr(self, '_data') and self._data.records:
             self._canvas._vis_redraw()
@@ -1618,6 +1627,14 @@ class MatEditorApp(EditorMainWindow):
         left_layout.addWidget(left_splitter)
         left_widget.setMinimumWidth(340)
         self.splitter.addWidget(left_widget)
+
+        # Empty state 引导层: 未加载数据时左侧"场景+实体"两个空列表
+        # 以居中引导替代 (可选附加项); 宿主为普通容器, 跟踪其内分割器几何
+        self._empty_state = EmptyStateOverlay(
+            left_widget, track=left_splitter,
+            title="尚未加载数据", hint="Ctrl+O 打开数据",
+            icon_name="open", activate=self._load_dir)
+        self._update_empty_state()
 
     # =========== 预览工具栏 (左右通栏, §需求3) ===========
     @staticmethod
@@ -3147,6 +3164,7 @@ class MatEditorApp(EditorMainWindow):
         self._data.records = []
         self._set_edit_enabled(True)
         self.status_var.setText("加载失败")
+        self._update_empty_state()
 
     def _on_load_success(self):
         """加载完毕回调：应用数据并刷新 UI"""
@@ -3169,6 +3187,7 @@ class MatEditorApp(EditorMainWindow):
         self._set_edit_enabled(True)
         self._apply_filter()
         self._vis_populate_scenes()
+        self._update_empty_state()
 
         # 延迟启动 JVG 贴图加载，让主线程先完成 UI 渲染，避免 GIL 锁竞争
         self.status_var.setText(

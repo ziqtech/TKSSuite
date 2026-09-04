@@ -4,7 +4,7 @@
 本对话框以三列表格管理这些曲目:
   1. 文件名     Sound/ 目录中的 .mp3 文件名
   2. 状态       蓝色「已修改」/ 灰色「未修改」
-  3. 操作       播放 / 暂停 / 重置 / 修改 / 删除
+  3. 操作       播放 + 更多 (暂停/重置/修改/重命名/删除 收纳为二级菜单)
 
 基础曲目 0000~0028 不可删除, 只能修改覆盖 (删除=清空修改, 变回未修改);
 新增曲目从 0101 开始编号, 可整条删除。
@@ -25,7 +25,7 @@ from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QAbstractItemView, QDialog, QFileDialog, QHBoxLayout,
-    QLabel, QLineEdit, QMessageBox, QPushButton,
+    QLabel, QLineEdit, QMenu, QMessageBox, QPushButton,
     QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
@@ -33,7 +33,9 @@ from editor_utils.mod_exporter import (
     ModMetadataDialog, generate_mod_json, generate_short_uuid,
     pack_tksmod, safe_mod_filename,
 )
-from editor_utils.ui_helpers import themed_messagebox, themed_question
+from editor_utils.ui_helpers import (
+    set_themed_icon, themed_messagebox, themed_question,
+)
 from editor_utils.adaptive_table import AdaptiveTableWidget
 
 # ── 常量 ──
@@ -243,7 +245,7 @@ class CustomMusicDialog(QDialog):
         self._table = AdaptiveTableWidget(
             0, len(_COLUMNS),
             stretch_columns={_COL_NAME},
-            minimum_widths=[120, 60, 90],
+            minimum_widths=[120, 60, 130],
             row_height=44,
             fill_viewport=True,
         )
@@ -378,34 +380,70 @@ class CustomMusicDialog(QDialog):
         return item
 
     def _make_ops_widget(self, entry: MusicEntry) -> QWidget:
+        """操作列: 主操作"播放"常驻, 其余收纳进"更多"菜单 (两级)。
+
+        原六按钮平铺在 90px 列宽下必然溢出, 收敛为 播放 + 更多 后
+        列宽可控; 菜单在打开时实时构建, 暂停/重置的可用态始终准确。
+        """
         w = QWidget()
         lay = QHBoxLayout(w)
         lay.setContentsMargins(4, 2, 4, 2)
         lay.setSpacing(4)
 
-        def add_btn(text, tip, slot, enabled=True):
-            b = QPushButton(text)
-            b.setToolTip(tip)
-            b.setFixedHeight(26)
-            b.setCursor(Qt.PointingHandCursor)
-            b.setEnabled(enabled)
-            b.clicked.connect(lambda _=False, e=entry: slot(e))
-            lay.addWidget(b)
-            return b
+        btn_play = QPushButton("播放")
+        btn_play.setToolTip("试听该曲目")
+        btn_play.setFixedHeight(26)
+        btn_play.setCursor(Qt.PointingHandCursor)
+        btn_play.clicked.connect(lambda _=False, e=entry: self._on_play(e))
+        set_themed_icon(btn_play, "play")
+        lay.addWidget(btn_play)
 
-        add_btn("播放", "试听该曲目", self._on_play)
-        add_btn("暂停", "暂停播放", self._on_pause)
-        add_btn("重置", "停止并回到开头", self._on_reset)
-        add_btn("修改", "选择 .mp3 覆盖此曲目", self._on_modify)
-        if not entry.is_base:
-            add_btn("重命名", "修改此曲目的文件编号", self._on_rename)
-        del_enabled = (not entry.is_base) or entry.is_modified
-        del_tip = ("移除该新增曲目" if not entry.is_base
-                   else "清空此曲目的修改 (变回未修改)")
-        add_btn("删除", del_tip, self._on_delete, enabled=del_enabled)
+        btn_more = QPushButton("更多")
+        btn_more.setToolTip("暂停 / 重置 / 修改 / 重命名 / 删除")
+        btn_more.setFixedHeight(26)
+        btn_more.setCursor(Qt.PointingHandCursor)
+        btn_more.clicked.connect(
+            lambda _=False, e=entry, b=btn_more: self._show_ops_menu(e, b))
+        lay.addWidget(btn_more)
 
         lay.addStretch()
         return w
+
+    def _show_ops_menu(self, entry: MusicEntry, button: QPushButton):
+        """弹出"更多"操作菜单 (每次打开实时构建, 可用态按当前播放状态计算)。"""
+        menu = QMenu(self)
+
+        is_current = self._current_entry is entry
+        playing = is_current and self._player.mode() == "playing"
+
+        act_pause = menu.addAction("暂停")
+        act_pause.setEnabled(playing)
+        act_pause.triggered.connect(lambda _=False, e=entry: self._on_pause(e))
+
+        act_reset = menu.addAction("重置")
+        act_reset.setToolTip("停止并回到开头")
+        act_reset.setEnabled(is_current)
+        act_reset.triggered.connect(lambda _=False, e=entry: self._on_reset(e))
+
+        act_modify = menu.addAction("修改")
+        act_modify.setToolTip("选择 .mp3 覆盖此曲目")
+        act_modify.triggered.connect(lambda _=False, e=entry: self._on_modify(e))
+
+        if not entry.is_base:
+            act_rename = menu.addAction("重命名")
+            act_rename.setToolTip("修改此曲目的文件编号")
+            act_rename.triggered.connect(
+                lambda _=False, e=entry: self._on_rename(e))
+
+        del_enabled = (not entry.is_base) or entry.is_modified
+        del_tip = ("移除该新增曲目" if not entry.is_base
+                   else "清空此曲目的修改 (变回未修改)")
+        act_del = menu.addAction("删除")
+        act_del.setToolTip(del_tip)
+        act_del.setEnabled(del_enabled)
+        act_del.triggered.connect(lambda _=False, e=entry: self._on_delete(e))
+
+        menu.exec(button.mapToGlobal(button.rect().bottomLeft()))
 
     def _find_row(self, entry: MusicEntry) -> int:
         try:

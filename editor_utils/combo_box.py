@@ -180,8 +180,9 @@ class EditorComboListPopup(QWidget):
             row_h = 24
         rows = min(self.list.count(), self._max_visible)
         self.list.setFixedHeight(row_h * rows)
-        # 总高 = 列表高 + 上下 margins (4×2) + QSS 边框 (1×2)
-        height = row_h * rows + 10
+        # 总高实测自布局 sizeHint (列表定高 + 上下 margins + QSS 盒模型
+        # 调整后的 contentsMargins), QSS 改边框/边距后自动跟随, 不再硬编码
+        height = max(self.sizeHint().height(), row_h * rows)
 
         below = anchor.mapToGlobal(QPoint(0, anchor.height()))
         screen = QApplication.screenAt(below) or QApplication.primaryScreen()

@@ -22,6 +22,13 @@ _ICON_PATHS = {
 }
 _ICON_CACHE: dict[str, QIcon] = {}
 
+# ── 像素字号集中管理 (卡片为自绘控件, 不走 QSS 排版槽位) ──
+# 全部派生自基准字号, 后续接入系统字体缩放只需在此乘系数。
+PX_BODY = 13    # 基准字号 (控件字体, 文本测量口径)
+PX_TITLE = 14   # 标题 (加粗)
+PX_SUB = 11     # 副标题 (小字)
+PX_BADGE = 10   # 右上角"当前"状态胶囊
+
 
 def _card_palette(theme_id: str) -> dict:
     """返回指定主题的模式卡片语义色板 (键见 theme_tokens.MODE_CARD)。"""
@@ -49,7 +56,7 @@ class ModeCardButton(QAbstractButton):
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.setMinimumHeight(78)
         font = self.font()
-        font.setPixelSize(13)
+        font.setPixelSize(PX_BODY)
         self.setFont(font)
 
         # 悬停光晕过渡 (P4-3): 0=静止 1=悬停, 150ms 插值消除 alpha 突变
@@ -198,9 +205,9 @@ class ModeCardButton(QAbstractButton):
 
         title_font = self.font()
         title_font.setBold(True)
-        title_font.setPixelSize(14)
+        title_font.setPixelSize(PX_TITLE)
         sub_font = self.font()
-        sub_font.setPixelSize(11)
+        sub_font.setPixelSize(PX_SUB)
 
         p.setFont(title_font)
         p.setPen(title)
@@ -220,7 +227,7 @@ class ModeCardButton(QAbstractButton):
             p.setBrush(badge_bg)
             p.drawRoundedRect(QRectF(badge), 7, 7)
             badge_font = self.font()
-            badge_font.setPixelSize(10)
+            badge_font.setPixelSize(PX_BADGE)
             badge_font.setBold(True)
             p.setFont(badge_font)
             p.setPen(badge_text)
