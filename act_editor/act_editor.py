@@ -2000,7 +2000,7 @@ class ActEditorV2(EditorMainWindow):
         playback_ctrl.addWidget(btn_stop)
 
         btn_last = QPushButton("", clicked=self._tl_goto_last)
-        set_themed_icon(btn_last, "next")
+        set_themed_icon(btn_last, "last")
         btn_last.setToolTip("跳至末帧 (Ctrl+▶▶)")
         playback_ctrl.addWidget(btn_last)
 

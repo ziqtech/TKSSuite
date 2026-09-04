@@ -646,8 +646,8 @@ class GRPEditor(EditorMainWindow):
         tb.addWidget(self._tool_btn("伪彩导入", self._import_pseudo))
         tb.addWidget(self._vsep())
 
-        tb.addWidget(self._tool_btn("区段", self._add_section_menu))
-        tb.addWidget(self._tool_btn("区段", self._delete_section))
+        tb.addWidget(self._tool_btn("新增区段", self._add_section_menu))
+        tb.addWidget(self._tool_btn("移除区段", self._delete_section))
         tb.addWidget(self._vsep())
 
         tb.addWidget(self._tool_btn("−", lambda: self._zoom_step(-1)))
