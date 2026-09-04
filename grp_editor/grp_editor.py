@@ -55,6 +55,7 @@ except ImportError:
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from editor_utils.dock_components import DockHeader
+from editor_utils.task_runner import run_background, is_running
 from editor_utils.flow_layout import FlowLayout
 from editor_utils.lzss import (
     MAX_MATCH as MAX_MATCH_LZ,
@@ -874,25 +875,36 @@ class GRPEditor(EditorMainWindow):
             self._open(p)
 
     def _open(self, p: str):
-        try:
-            self._status_lbl.setText(f"加载中: {Path(p).name}...")
-            QApplication.processEvents()
-            self._stop_audio()
-            self.grp = load_grp(p)
-            self._sel_idx = -1
-            self._sel_layer = "A"
-            self._dirty = False
-            self._sync_list()
-            self._refresh_view()
-            ni, na, nd = len(self.grp.sections), len(self.grp.audio_sections), len(self.grp.data_sections)
-            extra = f"  ({ni}IMG + {na}AUD" + (f" + {nd}DATA" if nd else "") + ")"
-            id_info = f"  |  IDX: {Path(self.grp.idx_path).name}" if self.grp.idx_path else ""
-            self._status_lbl.setText(f"已加载: {Path(p).name}  |  {self.grp.total_sections} sections{extra}{id_info}")
-            self.setWindowTitle(format_title("grp_editor", os.path.basename(p)))
-        except Exception as e:
-            QMessageBox.critical(self, "打开失败", str(e))
-            import traceback
-            traceback.print_exc()
+        if is_running(getattr(self, '_load_worker', None)):
+            return
+        self._stop_audio()
+        self._status_lbl.setText(f"加载中: {Path(p).name}...")
+
+        # 后台线程: GRP 解码 (P3-3), UI 刷新在 _on_open_success
+        def work(w):
+            return load_grp(p)
+
+        self._load_worker = run_background(
+            self, work,
+            on_success=self._on_open_success,
+            on_error=self._on_open_error)
+
+    def _on_open_success(self, grp):
+        p = grp.filepath
+        self.grp = grp
+        self._sel_idx = -1
+        self._sel_layer = "A"
+        self._dirty = False
+        self._sync_list()
+        self._refresh_view()
+        ni, na, nd = len(self.grp.sections), len(self.grp.audio_sections), len(self.grp.data_sections)
+        extra = f"  ({ni}IMG + {na}AUD" + (f" + {nd}DATA" if nd else "") + ")"
+        id_info = f"  |  IDX: {Path(self.grp.idx_path).name}" if self.grp.idx_path else ""
+        self._status_lbl.setText(f"已加载: {Path(p).name}  |  {self.grp.total_sections} sections{extra}{id_info}")
+        self.setWindowTitle(format_title("grp_editor", os.path.basename(p)))
+
+    def _on_open_error(self, err_msg):
+        QMessageBox.critical(self, "打开失败", err_msg)
 
     def _save(self):
         if not self.grp: return
@@ -907,16 +919,30 @@ class GRPEditor(EditorMainWindow):
             self._do_save(p, str(Path(p).with_suffix('.idx')))
 
     def _do_save(self, grp_path, idx_path=None):
-        try:
-            self._status_lbl.setText("压缩中...")
-            QApplication.processEvents()
-            save_grp(self.grp, grp_path, idx_path)
-            self.grp.filepath = grp_path
-            self.grp.idx_path = idx_path
-            self._dirty = False
-            self._status_lbl.setText(f"已保存: {Path(grp_path).name} ({os.path.getsize(grp_path)/1024:.1f}KB)")
-        except Exception as e:
-            QMessageBox.critical(self, "保存失败", str(e))
+        if is_running(getattr(self, '_save_worker', None)):
+            return
+        grp = self.grp
+
+        # 后台线程: LZSS 压缩写盘 (P3-3)
+        def work(w):
+            save_grp(grp, grp_path, idx_path)
+            return (grp_path, idx_path)
+
+        self._status_lbl.setText("压缩中...")
+        self._save_worker = run_background(
+            self, work,
+            on_success=self._on_save_success,
+            on_error=self._on_save_error)
+
+    def _on_save_success(self, result):
+        grp_path, idx_path = result
+        self.grp.filepath = grp_path
+        self.grp.idx_path = idx_path
+        self._dirty = False
+        self._status_lbl.setText(f"已保存: {Path(grp_path).name} ({os.path.getsize(grp_path)/1024:.1f}KB)")
+
+    def _on_save_error(self, err_msg):
+        QMessageBox.critical(self, "保存失败", err_msg)
 
     def _serialize_current_sections(self):
         """将当前 GRP 序列化为临时文件，返回区段原始字节列表。"""

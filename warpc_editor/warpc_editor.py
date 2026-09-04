@@ -96,6 +96,7 @@ from editor_utils.mod_exporter import (
 )
 from editor_utils.tab_widget import EditorTabWidget
 from editor_utils.search_utils import search_match
+from editor_utils.task_runner import run_background, is_running
 from editor_utils.kon_name_resolver import KonNameResolver
 # 字段 Schema (唯一字段定义源): 常量/字段列表/FieldDef/打包字节编解码
 # noqa: F401,F403 — 旧名称 (WARPC_REC/ALL_NAMED_FIELDS 等) 由 Schema 模块导出,
@@ -1578,78 +1579,107 @@ class WarpcEditorV2(EditorMainWindow):
     def _reload(self):
         if not self.warpc_path:
             return
+        if is_running(getattr(self, '_load_worker', None)):
+            return
+        # .orig 恢复询问含交互与快速文件操作, 在主线程完成后作为线程输入
+        if not self._save_mode:
+            orig_path = self.warpc_path + ".orig"
+            if os.path.exists(orig_path):
+                if QMessageBox.question(self, "检测到未恢复的备份",
+                    "发现 WarPC.dat.orig, 是否从备份恢复?",
+                    QMessageBox.Yes|QMessageBox.No) == QMessageBox.Yes:
+                    try:
+                        bak = orig_path + ".editor_bak"
+                        import shutil
+                        if not os.path.exists(bak):
+                            shutil.copy2(self.warpc_path, bak)
+                        os.replace(orig_path, self.warpc_path)
+                        self.status_var.setText("已从 .orig 备份恢复")
+                    except Exception as e:
+                        QMessageBox.critical(self, "恢复失败", str(e))
+
         self.status_var.setText("加载中…")
-        QApplication.processEvents()
-        if self.mu_path:
-            self._mu_sprites = load_mu_sprites(self.mu_path) or []
-            self._icon_pixmaps.clear()
-
-        if self.tkt_path:
-            self.tkt = load_tkt(self.tkt_path)
-
-        # 加载 Fa.JVG 头像
+        warpc_path, tkt_path, mu_path = self.warpc_path, self.tkt_path, self.mu_path
+        save_mode = self._save_mode
         tks_dir = self._get_tks_dir()
-        fa_path = os.path.join(tks_dir, 'Fa.JVG')
-        self._fa_sprites = load_jvg_sprites(fa_path) or []
-        self._fa_photos.clear()
 
-        try:
-            if self._save_mode:
-                # 存档模式: 从 sav.N 加载 WarPC
-                self.status_var.setText("从存档加载 WarPC 数据…")
-                QApplication.processEvents()
-                self._seg1, self._seg2, self.records = load_warpc_from_save(self.warpc_path)
+        # 后台线程: 全部数据文件 IO/解码 (P3-3), UI 重建在 _on_load_success
+        def work(w):
+            mu = load_mu_sprites(mu_path) if mu_path else []
+            tkt = load_tkt(tkt_path) if tkt_path else {}
+            fa = load_jvg_sprites(os.path.join(tks_dir, 'Fa.JVG')) or []
+            if save_mode:
+                seg1, seg2, records = load_warpc_from_save(warpc_path)
             else:
-                # 普通模式: 从 WarPC.dat 加载
-                orig_path = self.warpc_path + ".orig"
-                if os.path.exists(orig_path):
-                    if QMessageBox.question(self, "检测到未恢复的备份",
-                        "发现 WarPC.dat.orig, 是否从备份恢复?",
-                        QMessageBox.Yes|QMessageBox.No) == QMessageBox.Yes:
-                        try:
-                            bak = orig_path + ".editor_bak"
-                            import shutil
-                            if not os.path.exists(bak):
-                                shutil.copy2(self.warpc_path, bak)
-                            os.replace(orig_path, self.warpc_path)
-                            self.status_var.setText("已从 .orig 备份恢复")
-                        except Exception as e:
-                            QMessageBox.critical(self, "恢复失败", str(e))
-                self.records = load_warpc(self.warpc_path)
-            self._dirty = False
-            # 保存原始快照用于 MOD 导出差异比对
-            self._original_records = [list(r['fields']) for r in self.records]
-            # 重建共享草稿层 (与 records 一致, 无待应用修改)
-            self._sync_draft_from_records()
-            self.skill_names, self._skill_types = self._load_skill_names()
-            self._build_skill_graph()
-            self.tkkon_names = self._load_tkkon_names()
-            self.item_names, self.item_idx_names, self._idx_to_id, self._id_to_idx = self._load_item_names()
+                records = load_warpc(warpc_path)
+                seg1 = seg2 = None
+            skill_names, skill_types = self._load_skill_names()
+            tkkon_names = self._load_tkkon_names()
+            item_names, item_idx_names, idx_to_id, id_to_idx = self._load_item_names()
+            return (mu, tkt, fa, records, seg1, seg2,
+                    skill_names, skill_types, tkkon_names,
+                    item_names, item_idx_names, idx_to_id, id_to_idx)
 
-            # 更新技能学习标签
-            if hasattr(self, '_skill_learn_labels') and self._skill_learn_labels:
-                for i, lbl in enumerate(self._skill_learn_labels):
-                    if i < len(self._skill_learn_labels):
-                        sname = self.skill_names.get(i, f"技能#{i}") if self.skill_names else f"技能#{i}"
-                        lbl.setText(sname[:12])
+        self._load_worker = run_background(
+            self, work,
+            on_success=self._on_load_success,
+            on_error=self._on_load_error)
 
-            # 重建技能效果判定
-            if hasattr(self, '_effect_inner') and self._effect_inner:
-                self._clear_layout(self._effect_inner.layout())
-                self._build_skill_effect_section(self._effect_inner)
+    def _on_load_success(self, result):
+        (mu, tkt, fa, records, seg1, seg2,
+         skill_names, skill_types, tkkon_names,
+         item_names, item_idx_names, idx_to_id, id_to_idx) = result
+        self._mu_sprites = mu
+        self._icon_pixmaps.clear()
+        self.tkt = tkt
+        self._fa_sprites = fa
+        self._fa_photos.clear()
+        self.records = records
+        self._seg1 = seg1
+        self._seg2 = seg2
+        self._dirty = False
+        # 保存原始快照用于 MOD 导出差异比对
+        self._original_records = [list(r['fields']) for r in self.records]
+        # 重建共享草稿层 (与 records 一致, 无待应用修改)
+        self._sync_draft_from_records()
+        self.skill_names = skill_names
+        self._skill_types = skill_types
+        self._build_skill_graph()
+        self.tkkon_names = tkkon_names
+        self.item_names = item_names
+        self.item_idx_names = item_idx_names
+        self._idx_to_id = idx_to_id
+        self._id_to_idx = id_to_idx
 
-            # 重建全部字段
-            if hasattr(self, '_tab5_inner') and self._tab5_inner:
-                self._clear_layout(self._tab5_inner.layout())
-                self._build_raw_grid(self._tab5_inner)
+        # 更新技能学习标签
+        if hasattr(self, '_skill_learn_labels') and self._skill_learn_labels:
+            for i, lbl in enumerate(self._skill_learn_labels):
+                if i < len(self._skill_learn_labels):
+                    sname = self.skill_names.get(i, f"技能#{i}") if self.skill_names else f"技能#{i}"
+                    lbl.setText(sname[:12])
 
-            nonempty = sum(1 for r in self.records if any(v != 0 for v in r['fields']))
-            tkkon_count = len(self.tkkon_names)
-            self.status_var.setText(f"{len(self.records)} 角色 | 有效 {nonempty} | TKT {len(self.tkt)} 条 | 物品 {len(self.item_names)} 技能 {len(self.skill_names)} TKKon {tkkon_count}")
-        except Exception as e:
-            QMessageBox.critical(self, "加载失败", str(e))
-            self.records = []
-            self._draft_records = []
+        # 重建技能效果判定
+        if hasattr(self, '_effect_inner') and self._effect_inner:
+            self._clear_layout(self._effect_inner.layout())
+            self._build_skill_effect_section(self._effect_inner)
+
+        # 重建全部字段
+        if hasattr(self, '_tab5_inner') and self._tab5_inner:
+            self._clear_layout(self._tab5_inner.layout())
+            self._build_raw_grid(self._tab5_inner)
+
+        nonempty = sum(1 for r in self.records if any(v != 0 for v in r['fields']))
+        tkkon_count = len(self.tkkon_names)
+        self.status_var.setText(f"{len(self.records)} 角色 | 有效 {nonempty} | TKT {len(self.tkt)} 条 | 物品 {len(self.item_names)} 技能 {len(self.skill_names)} TKKon {tkkon_count}")
+        self._after_load_reset()
+
+    def _on_load_error(self, err_msg):
+        QMessageBox.critical(self, "加载失败", err_msg)
+        self.records = []
+        self._draft_records = []
+        self._after_load_reset()
+
+    def _after_load_reset(self):
         # 重载后旧的编辑上下文全部失效: 复位编辑状态。
         # 否则 _editing_idx 残留会让下次点选同一编号角色时跳过 populate,
         # 表单控件残留上一文件/槽位的值 (技能学习区为上一角色的值,
@@ -3082,21 +3112,26 @@ class WarpcEditorV2(EditorMainWindow):
         if QMessageBox.question(self, "确认保存",
             f"保存 {len(self.records)} 个角色到:\n{self.warpc_path}\n\n原文件将被覆盖 (生成 .bak).",
             QMessageBox.Yes|QMessageBox.No) != QMessageBox.Yes: return
-        try:
-            with open(self.warpc_path, 'rb') as s:
-                with open(self.warpc_path+".bak", 'wb') as d:
-                    d.write(s.read())
-        except:
-            pass
-        try:
-            self.status_var.setText("正在保存…")
-            QApplication.processEvents()
-            save_warpc(self.warpc_path, self.records)
-            self._dirty = False
-            self.status_var.setText(f"已保存 → {self.warpc_path}")
-            QMessageBox.information(self, "成功", f"已保存\n备份: {self.warpc_path}.bak")
-        except Exception as e:
-            QMessageBox.critical(self, "保存失败", str(e))
+        if is_running(getattr(self, '_save_worker', None)): return
+        warpc_path = self.warpc_path
+        records = self.records
+
+        # 后台线程: .bak 备份 + 压缩写盘 (P3-3)
+        def work(w):
+            try:
+                with open(warpc_path, 'rb') as s:
+                    with open(warpc_path+".bak", 'wb') as d:
+                        d.write(s.read())
+            except Exception:
+                pass
+            save_warpc(warpc_path, records)
+            return ("file", warpc_path)
+
+        self.status_var.setText("正在保存…")
+        self._save_worker = run_background(
+            self, work,
+            on_success=self._on_save_success,
+            on_error=self._on_save_error)
 
     def _save_to_save_file(self):
         """存档模式下保存 WarPC 数据回 sav.N"""
@@ -3106,15 +3141,33 @@ class WarpcEditorV2(EditorMainWindow):
         if QMessageBox.question(self, "确认保存",
             f"将 {len(self.records)} 个角色的 WarPC 数据写回存档:\n{self._save_path} (槽位 {self._save_slot})\n\n原存档将被备份为 .bak",
             QMessageBox.Yes|QMessageBox.No) != QMessageBox.Yes: return
-        try:
-            self.status_var.setText("正在保存到存档…")
-            QApplication.processEvents()
-            save_warpc_to_save(self._save_path, self._seg1, self._seg2, self.records)
-            self._dirty = False
-            self.status_var.setText(f"已保存到存档 → {self._save_path} 槽位{self._save_slot}")
-            QMessageBox.information(self, "成功", f"已保存到存档\n备份: {self._save_path}.bak")
-        except Exception as e:
-            QMessageBox.critical(self, "保存失败", str(e))
+        if is_running(getattr(self, '_save_worker', None)): return
+        save_path, seg1, seg2, records = (
+            self._save_path, self._seg1, self._seg2, self.records)
+
+        # 后台线程: 存档重写 (P3-3)
+        def work(w):
+            save_warpc_to_save(save_path, seg1, seg2, records)
+            return ("save", save_path)
+
+        self.status_var.setText("正在保存到存档…")
+        self._save_worker = run_background(
+            self, work,
+            on_success=self._on_save_success,
+            on_error=self._on_save_error)
+
+    def _on_save_success(self, result):
+        kind, path = result
+        self._dirty = False
+        if kind == "save":
+            self.status_var.setText(f"已保存到存档 → {path} 槽位{self._save_slot}")
+            QMessageBox.information(self, "成功", f"已保存到存档\n备份: {path}.bak")
+        else:
+            self.status_var.setText(f"已保存 → {path}")
+            QMessageBox.information(self, "成功", f"已保存\n备份: {path}.bak")
+
+    def _on_save_error(self, err_msg):
+        QMessageBox.critical(self, "保存失败", err_msg)
 
     def _export_tksmod(self):
         """导出当前修改为 .tksmod MOD 文件"""

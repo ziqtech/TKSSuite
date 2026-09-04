@@ -79,6 +79,7 @@ from editor_utils.ui_helpers import (
     update_path_labels, EditorComboBox,
 )
 from editor_utils.search_utils import search_match
+from editor_utils.undo_stack import FieldUndoMixin
 
 # ── 本地别名: 保持向后兼容 ──
 def lzss_decompress(data):
@@ -361,7 +362,7 @@ class IconPickerDialog(QDialog):
 
 
 
-class ItemEditorApp(EditorMainWindow):
+class ItemEditorApp(FieldUndoMixin, EditorMainWindow):
     EDITOR_KEY = "item_editor"
     DEFAULT_SIZE = (1360, 860)
     MIN_SIZE = (1120, 700)
@@ -396,6 +397,7 @@ class ItemEditorApp(EditorMainWindow):
 
         self.widget_map = {}
         self.extra_map = {}
+        self._init_undo()  # 撤销/重做 (P3-4)
 
     def _after_build(self):
         self._set_edit_enabled(False)
@@ -437,6 +439,9 @@ class ItemEditorApp(EditorMainWindow):
         fm.addSeparator()
         fm.addAction("退出", self.close)
         em = mb.addMenu("编辑(&E)")
+        em.addAction("撤销", QKeySequence("Ctrl+Z"), self.undo)
+        em.addAction("重做", QKeySequence("Ctrl+Y"), self.redo)
+        em.addSeparator()
         em.addAction("新建物品 (填充空槽)\tCtrl+N", self._new_item)
         em.addAction("复制当前到空槽", self._copy_record)
         em.addAction("清空当前记录", self._clear_current)
@@ -788,6 +793,7 @@ class ItemEditorApp(EditorMainWindow):
             self._icon_pixmaps.clear()
         try:
             self.records = load_items(self.item_path)
+            self.clear_undo()  # 数据整体重载, 旧变更集失效 (P3-4)
             self._dirty = False
             # MOD 导出使用原始字节序 (word index = byte_offset // 2)，与启动器 _apply_fields_to_record 一致
             self._original_records = []
@@ -1231,6 +1237,7 @@ class ItemEditorApp(EditorMainWindow):
         """应用编辑到记录"""
         if self._editing_idx is None: return
         rec = self.records[self._editing_idx]
+        undo_before = {fn: rec[fn] for fn, fo, fl, ft, fw, cmt in ALL_FIELDS}
         for fn, fo, fl, ft, fw, cmt in ALL_FIELDS:
             w = self.widget_map.get(fn)
             if not w: continue
@@ -1255,6 +1262,10 @@ class ItemEditorApp(EditorMainWindow):
             else:
                 v = int(w.text() or 0)
             rec[fn] = v
+        self.push_field_changes(
+            rec['index'],
+            self.field_diff(undo_before, rec, [fn for fn, fo, fl, ft, fw, cmt in ALL_FIELDS]),
+            f"修改记录 #{rec['index']}")
         self._dirty = True
         self._apply_filter()
         for r in range(self.table.rowCount()):
@@ -1277,9 +1288,14 @@ class ItemEditorApp(EditorMainWindow):
             f"将记录 #{self._editing_idx} 清为空槽模板 (item_id=0, name_id=0, desc_id=600).\n确定?")
         if reply != QMessageBox.Yes: return
         rec = self.records[self._editing_idx]
+        clear_before = {fn: rec[fn] for fn, _, _, _, _, _ in ALL_FIELDS}
         for fn, _, _, _, _, _ in ALL_FIELDS:
             rec[fn] = 0
         rec['desc_id'] = 600
+        self.push_field_changes(
+            rec['index'],
+            self.field_diff(clear_before, rec, [fn for fn, _, _, _, _, _ in ALL_FIELDS]),
+            f"清空记录 #{rec['index']}")
         self._dirty = True
         self._apply_filter()
         self._populate_edit(rec)
@@ -1515,6 +1531,7 @@ class ItemEditorApp(EditorMainWindow):
             new_records.append(rec)
 
         self.records = new_records
+        self.clear_undo()  # 导入整体替换, 旧变更集失效 (P3-4)
         self._original_records = [list(row) for row in records]
         self._dirty = False
 

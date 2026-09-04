@@ -25,12 +25,14 @@ class DataLoaderThread(QThread):
     finished_load = Signal()
     error_load = Signal(str)
 
-    def __init__(self, dat_path, tkt_path, game_dir=None, preloaded_records=None):
+    def __init__(self, dat_path, tkt_path, game_dir=None, preloaded_records=None,
+                 save_path=None):
         super().__init__()
         self.dat_path = dat_path
         self.tkt_path = tkt_path
         self.game_dir = game_dir or os.path.dirname(dat_path) if dat_path else ''
         self.preloaded_records = preloaded_records
+        self.save_path = save_path  # 存档模式: 后台线程内从 sav.N 预载 (P3-3)
 
     def run(self):
         try:
@@ -90,6 +92,10 @@ class DataLoaderThread(QThread):
             # 6. TKMat (JVG 贴图已剥离至独立线程 JvgLoaderThread)
             if self.preloaded_records is not None:
                 result['records'] = self.preloaded_records
+            elif self.save_path:
+                # 存档模式: 从 sav.N Frame1 解析 TKMat records (P3-3 移入后台)
+                from mat_dat_io import load_mat_from_save
+                result['records'] = load_mat_from_save(self.save_path)
             else:
                 result['records'] = load_mat(self.dat_path)
 

@@ -57,6 +57,7 @@ from editor_utils.ui_helpers import (
     update_path_labels, EditorComboBox,
 )
 from editor_utils.search_utils import search_match
+from editor_utils.undo_stack import FieldUndoMixin
 
 # ── 本地别名: 保持向后兼容 ──
 
@@ -715,7 +716,7 @@ class SkillTreeDialog(QDialog):
 # GUI 核心编辑器
 # ============================================================
 
-class SkillEditorApp(EditorMainWindow):
+class SkillEditorApp(FieldUndoMixin, EditorMainWindow):
     EDITOR_KEY = "skill_editor"
     DEFAULT_SIZE = (1360, 820)
     MIN_SIZE = (1100, 650)
@@ -744,6 +745,7 @@ class SkillEditorApp(EditorMainWindow):
 
         self.widget_map = {}
         self.extra_map = {}
+        self._init_undo()  # 撤销/重做 (P3-4)
 
     def _after_build(self):
         self._set_edit_enabled(False)
@@ -797,6 +799,9 @@ class SkillEditorApp(EditorMainWindow):
         fm.addAction("退出", self.close)
 
         em = menu_bar.addMenu("编辑(E)")
+        em.addAction("撤销", QKeySequence("Ctrl+Z"), self.undo)
+        em.addAction("重做", QKeySequence("Ctrl+Y"), self.redo)
+        em.addSeparator()
         em.addAction("新建技能", QKeySequence("Ctrl+N"), self._new_skill)
         em.addAction("复制当前记录", self._copy_record)
         em.addAction("清空当前记录", self._clear_current)
@@ -1109,6 +1114,7 @@ class SkillEditorApp(EditorMainWindow):
             self._icon_pixmaps.clear()
         try:
             self.records = load_skills(self.skill_path)
+            self.clear_undo()  # 数据整体重载, 旧变更集失效 (P3-4)
             self._dirty = False
             # MOD 导出使用原始字节序 (word index = byte_offset // 2)，与启动器 _apply_fields_to_record 一致
             self._original_records = []
@@ -1388,6 +1394,7 @@ class SkillEditorApp(EditorMainWindow):
     def _apply_edit(self):
         if self._editing_idx is None: return
         rec = self.records[self._editing_idx]
+        undo_before = {fn: rec[fn] for fn, fo, fl, ft, _ in ALL_FIELDS}
         for fn, fo, fl, ft, _ in ALL_FIELDS:
             w = self.widget_map.get(fn)
             if not w: continue
@@ -1412,6 +1419,10 @@ class SkillEditorApp(EditorMainWindow):
                 v = int(w.text() or 0)
             rec[fn] = v
 
+        self.push_field_changes(
+            rec['index'],
+            self.field_diff(undo_before, rec, [fn for fn, fo, fl, ft, _ in ALL_FIELDS]),
+            f"修改记录 #{rec['index']}")
         self._dirty = True
         self._apply_filter()
         for r in range(self.table.rowCount()):
@@ -1646,6 +1657,7 @@ class SkillEditorApp(EditorMainWindow):
             new_records.append(rec)
 
         self.records = new_records
+        self.clear_undo()  # 导入整体替换, 旧变更集失效 (P3-4)
         self._original_records = [list(row) for row in records]
         self._dirty = False
 

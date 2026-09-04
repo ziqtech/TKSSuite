@@ -60,6 +60,7 @@ from editor_utils.theme_switcher import (
 from editor_utils.app_shell import EditorMainWindow, run_editor
 from editor_utils.ui_helpers import update_path_labels, EditorComboBox, confirm_close
 from editor_utils.search_utils import search_match
+from editor_utils.task_runner import run_background, is_running
 
 # ── 本地别名: 保持向后兼容 ──
 def lzss_decompress(data):
@@ -586,30 +587,48 @@ class ShopEditorWindow(EditorMainWindow):
     def _reload(self):
         if not self.shop_path:
             return
+        if is_running(getattr(self, '_load_worker', None)):
+            return
 
         self.lbl_status.setText("加载中…")
-        QApplication.processEvents()
+        shop_path, item_path, tkt_path, mu_path = (
+            self.shop_path, self.item_path, self.tkt_path, self.mu_path)
 
-        if self.item_path and os.path.exists(self.item_path):
-            self.items = load_tkitem_with_tkt(self.item_path, self.tkt_path or "")
-            self.item_names = {it[0]: it[5] for it in self.items}
-            # 物品图标查找表 (数组索引 → icon 精灵值)
-            self._item_icons = {it[0]: it[6] for it in self.items}
+        # 后台线程: 纯文件 IO/解码 (P3-3), UI 刷新在 _on_load_success
+        def work(w):
+            items = []
+            if item_path and os.path.exists(item_path):
+                items = load_tkitem_with_tkt(item_path, tkt_path or "")
+            mu = []
+            if mu_path and os.path.exists(mu_path):
+                mu = load_mu_sprites(mu_path) or []
+            records = load_shop_data(shop_path)
+            return items, mu, records
 
-        # Mu.JVG 图标精灵
-        if self.mu_path and os.path.exists(self.mu_path):
-            self._mu_sprites = load_mu_sprites(self.mu_path) or []
-            self._icon_pixmaps.clear()
+        self._load_worker = run_background(
+            self, work,
+            on_success=self._on_load_success,
+            on_error=self._on_load_error)
 
-        try:
-            self.records = load_shop_data(self.shop_path)
-            self._original_records = [[r['area_id'], r['item_ref'], r['condition'], r['display']] for r in self.records]
-            self._dirty = False
-            self.lbl_status.setText(f"已加载 {len(self.records)} 条商店记录 + {len(self.items)} 个物品")
-        except Exception as e:
-            QMessageBox.critical(self, "加载失败", f"无法加载 TKShop.dat:\n{e}")
-            self.records = []
+    def _on_load_success(self, result):
+        items, mu, records = result
+        self.items = items
+        self.item_names = {it[0]: it[5] for it in self.items}
+        # 物品图标查找表 (数组索引 → icon 精灵值)
+        self._item_icons = {it[0]: it[6] for it in self.items}
+        self._mu_sprites = mu
+        self._icon_pixmaps.clear()
+        self.records = records
+        self._original_records = [[r['area_id'], r['item_ref'], r['condition'], r['display']] for r in self.records]
+        self._dirty = False
+        self.lbl_status.setText(f"已加载 {len(self.records)} 条商店记录 + {len(self.items)} 个物品")
+        self._update_path_labels()
+        self._set_edit_enabled(True)
+        self._apply_filter()
 
+    def _on_load_error(self, err_msg):
+        QMessageBox.critical(self, "加载失败", f"无法加载 TKShop.dat:\n{err_msg}")
+        self.records = []
         self._update_path_labels()
         self._set_edit_enabled(True)
         self._apply_filter()

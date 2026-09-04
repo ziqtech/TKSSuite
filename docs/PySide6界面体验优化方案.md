@@ -1,7 +1,7 @@
 # PySide6 界面体验优化方案
 
 > 创建日期：2026-09-04
-> 状态：**P0~P2、P4、可选附加项已完成；P3 进行中（6/8，P3-3/P3-4 延期专项）**
+> 状态：**P0~P2、P4、可选附加项、P3 已完成（8/8，延期专项已于 2026-09-05 补完）**
 > 前置文档：《PySide6样式体系整改方案.md》（四阶段已完成）——本方案是其续篇
 > 结论：四阶段解决了"样式难维护"；本方案解决"体验不够好"——设计体系补全（排版令牌/图标/动效）、交互安全网（退出保护/脏标记/校验）、数据量增长后的列表能力。
 
@@ -130,8 +130,8 @@
 
 1. [x] `themed_messagebox` 增加 `question()` 变体（Yes/No/Cancel），替换全部裸 QMessageBox.question 调用点（main_window:261、music:737、packer:398、save_mgr:384 等）
 2. [x] `EditorMainWindow` 基类内置状态栏（三段式：记录数 | 当前文件 | 修改状态），6/18 的 QStatusBar 覆盖率提升为全量；菜单动作补 statusTip
-3. [ ] 长任务线程化：mat_threads.py 的 QThread 模式推广到 jvg/grp/tkt/wardata 加载；启动器 packer/merger/splitter/save_manager 四对话框执行按钮移入 QThread（最低限度先加 QProgressDialog 模态+取消）；清理 21 处 processEvents 假异步 —— **延期专项**（见变更记录）
-4. [ ] QUndoStack 共享 mixin：以 warpc changeset 栈（warpc_table_mode.py:1000-1040）为蓝本抽共享实现，先铺 item/skill/kon 表单型编辑器 —— **延期专项**（见变更记录）
+3. [x] 长任务线程化：mat_threads.py 的 QThread 模式推广到 jvg/grp/tkt/wardata 加载；启动器 packer/merger/splitter/save_manager 四对话框执行按钮移入 QThread（最低限度先加 QProgressDialog 模态+取消）；清理 21 处 processEvents 假异步 —— **已完成（2026-09-05，见变更记录：实现形态为 task_runner 通用执行器 + 全部 24 处 processEvents 清零；取消按钮仅在实际支持协作取消的导入类任务提供）**
+4. [x] QUndoStack 共享 mixin：以 warpc changeset 栈（warpc_table_mode.py:1000-1040）为蓝本抽共享实现，先铺 item/skill/kon 表单型编辑器 —— **已完成（2026-09-05，见变更记录：editor_utils/undo_stack.py FieldUndoMixin，应用前字段快照 diff 捕获）**
 5. [x] 表单提交模型收敛（短期）："✅ 应用"模型补"切换记录时若有未应用改动则提示"（warpc 三选提示有现成逻辑）；长期向 warpc 草稿模型收敛
 6. [x] QSS 外色值孤岛收编（~9 处 → theme_tokens 业务色板）：tab_widget.py:53-56 `_BORDER_COLORS`（改为从 theme_tokens 派生或迁入槽位）、ui_helpers.py:17-20 状态色、custom_music_dialog.py:52-53、mod_list.py:239/252、packer/merger/meta 的 `#888` 占位；avatar 裁剪控件整块记为画布类豁免但修对比度（见 P4）
 7. [x] 细节统一：帮助文案与 UI 对齐（main_window.py:225 提到已删除的"设置"菜单）；省略号三种写法（`...`/`…`）统一为 `…`；packer/merger/meta 缩略图 120 vs 96、按钮 56 vs 60 统一；save_editor 菜单 emoji 与其他编辑器口径统一（若 P4 图标落地则一并替换）
@@ -175,7 +175,7 @@
 | P0：交互安全网 | **已完成** | 2026-09-04 | 2026-09-04 |
 | P1：设计体系 2.0 | **已完成** | 2026-09-04 | 2026-09-04 |
 | P2：列表操作能力 | **已完成** | 2026-09-04 | 2026-09-04 |
-| P3：反馈与一致性 | **进行中（6/8，2 项延期专项）** | 2026-09-04 |  |
+| P3：反馈与一致性 | **已完成（8/8）** | 2026-09-04 | 2026-09-05 |
 | P4：视觉打磨与可访问性 | **已完成** | 2026-09-04 | 2026-09-04 |
 | 可选附加项（6 项） | **已完成** | 2026-09-04 | 2026-09-04 |
 
@@ -212,8 +212,8 @@
 
 - [x] themed_messagebox.question 变体 + 替换裸调用
 - [x] 基类状态栏 + statusTip
-- [ ] 长任务 QThread 化（编辑器加载 + 四对话框）—— 延期专项
-- [ ] QUndoStack 共享 mixin —— 延期专项
+- [x] 长任务 QThread 化（编辑器加载 + 四对话框）—— 2026-09-05 补完
+- [x] QUndoStack 共享 mixin —— 2026-09-05 补完
 - [x] 表单提交模型短期收敛
 - [x] QSS 外色值孤岛收编（~9 处）
 - [x] 细节统一（帮助文案/省略号/对话框尺寸/emoji 口径）
@@ -266,3 +266,4 @@
 | 2026-09-04 | **P4-1 验收官（9 维度机器化全量验证，全绿）**：①语法编译 79 文件通过；②emoji 残留 AST 复扫 = 10 处豁免项；③空标签按钮无图标 = 0；④set_themed_icon 导入完整性（AST 感知多行导入，定义处 ui_helpers 除外）；⑤映射表 70+ 条引用的图标文件全部存在；⑥36 枚图标 × 4 主题渲染全过；⑦34 枚 Fluent 图标与本地官方库 **MD5 字节级一致**；⑧**运行时审计：复用冒烟测试加载器构造全部 18 个编辑器窗口，逐按钮断言 181 个自动图标按钮 icon 非空——全过**；⑨语义对账 236 条（见第五轮）。结论：emoji→SVG 图标体系可视为收敛，剩余豁免项均带注释说明理由 |
 | 2026-09-04 | **延期专项汇总（余 2 项，实施入口已明确）**：①P3-3 长任务 QThread 化——编辑器侧以 mat_threads.py 的 DataLoaderThread/JvgLoaderThread 为范本推广 jvg/grp/tkt/wardata；启动器侧 packer/merger/splitter/save_manager 四对话框执行按钮移入 QThread（worker 模式参照 main_window 的 PatcherWorker），完成后清理 21 处 processEvents。②P3-4 QUndoStack 共享 mixin——以 warpc_table_mode.py:1000-1040 changeset 栈为蓝本抽 editor_utils 共享实现，先铺 item/skill/kon（form_edits_pending 的逐字段比对逻辑可复用于快照捕获）。两项共同点：需要成块的专注会话与人工交互验证，不适合零散赶工合入 |
 | 2026-09-04 | **可选附加项完成（6/6）**：①**排版槽位全量化**——theme_tokens 新增排版令牌 19 个：字号 5 档 `fs_sm/md/body/lg/xl`（11/12/13/14/18px，原 10px 并入 fs_sm）、圆角 3 档 `radius_sm/md/lg`（4/8/10px，3/4/5→sm、6/7→md；0px 与复合值保持字面）、间距标尺 `sp_0/2/4/6/8/10/12/16/20/24/28`（奇数 padding 就近归并：1→2、3→4、5→4、7→8、9→8、13/14→12、15→16）；模板 **190 处声明**一次性脚本令牌化（字号 27 + 圆角 57 + padding 106），渲染前后 diff 断言仅含预期归并值（4 主题口径）、零意外差异；SLOTS 223→242（唯一值 238，排版令牌 4 主题同值）；字号档位 7→5、圆角档位 9→3、padding 分量值 18→11（全部落标尺）；QSS 新增 Empty state 引导层规则（emptyStateTitle/emptyStateHint）。②**Empty state 引导页**——新增可复用组件 `editor_utils/empty_state.py`（EmptyStateOverlay：图标+标题+快捷键提示芯片覆盖层，支持 activate 点击回调与 track 几何跟踪；注意宿主必须是普通容器，QSplitter 会把子控件误收为分割面板），接入 mat_editor 左侧"场景列表+实体列表"双空面板（未加载时居中引导"尚未加载数据 / Ctrl+O 打开数据"，点击引导=Ctrl+O，加载成功/失败/清空自动切换，4 主题图标深浅联动）。③**图像预览缩放工具条**——ImagePreviewDialog 底部新增 缩小/百分比/放大/1:1/适应窗口（zoomChanged 信号实时回显滚轮缩放，1:1 以视口为中心并滚到图片中心）。④**音乐操作列两级收敛**——custom_music_dialog 行内六按钮改"播放(挂 play 图标) + 更多"：菜单打开时实时构建并按当前播放状态计算 暂停/重置 可用态，操作列最小宽 90→130。⑤**mode_card 字号常量**——PX_BODY/PX_TITLE/PX_SUB/PX_BADGE 集中（自绘控件不走 QSS 排版槽位，后续接系统字体缩放只动一处）。⑥**combo_box 弹层高度**——`row_h*rows+10` 硬编码改实测 `sizeHint().height()`（含布局 margins 与 QSS 盒模型，QSS 改边框/边距自动跟随；离屏验证列表几何完整、视觉不变）。验证：渲染 diff（4 主题 × font-size/border-radius/padding 全量值统计）仅预期归并、编辑器冒烟 4/4 全绿（35.2s）、launcher 单测 27/27、mat 引导层生命周期/层叠/4 主题断言全过、launcher 主窗口与预览对话框离屏构建 OK |
+| 2026-09-05 | **延期专项完成（P3 收官 8/8）**：①**P3-3 长任务 QThread 化**——新增通用执行器 `editor_utils/task_runner.py`（FunctionWorker: `run_background` 无界面后台 + `run_with_progress` 模态 QProgressDialog busy 圈；进度经 progressed 信号排队回 UI 线程；worker 完成后 deleteLater，重入守卫统一 `is_running()`）；编辑器侧推广至 **12 处加载/保存路径**：kon/shop/act/warpc 加载与保存、warpc 存档模式、grp/gxp 打开与压缩保存、gxp 外部图像导入、tkt _load_file（TKT+FONT9696）、wardata _reload、tks_book data.load、tab_map SC.GRP 惰性加载与场景解码（新增无背景图负缓存防重复解码）、mat 存档预加载并入 DataLoaderThread（新增 save_path 参数，废弃 _preloaded_records 同步预载）、jvg 三大导入（多图/组图/全部头像）——jvg 以 `_BlkSnapshot` 线程安全快照落地（保留帧克隆 + palette 副本，rebuild 的像素重映射/调色板重写落在快照上，UI 回调 writeback 整体回写；离屏断言 auto/match/rebuild 三模式与原实现**逐字节等价**；图集解码惰性化随裁剪移入工作线程）。启动器侧四对话框执行按钮全部后台化：packer/merger/splitter 沿用对话框内 busy 进度条 + 日志区（log_func 经 worker.progress 排队，执行中禁用按钮），save_manager 创建/恢复走模态 QProgressDialog（**不含取消按钮**——create_backup/restore/extract 等底层循环无协作取消点，挂取消键是假承诺；jvg 导入类支持 is_cancelled 检查故提供真取消）。**业务代码 processEvents 24 处全部清零**（原基线 21 处 + 迁移期间行号漂移/新增口径）。②**P3-4 QUndoStack 共享 mixin**——新增 `editor_utils/undo_stack.py`：FieldUndoMixin（changeset 格式与 warpc 蓝本一致 `(label, rec_index, [(field, old, new)…])`，上限 100 步、超限截最旧、新变更清重做栈、数据整体重载清栈）；捕获采用**应用前字段快照 diff**（`field_diff(before, rec, keys)`，与 form_edits_pending 比对口径同源，捕获的是钳制后真实写入值，精确于控件值反推）；默认回放 `_undo_apply` 写回记录 → _apply_filter 刷新 → 被回放记录正是当前编辑对象时 _populate_edit 重填表单（跨记录撤销只改数据不重填表单）；接入 item/skill/kon 三编辑器（Ctrl+Z/Ctrl+Y 菜单+快捷键）：kon 的应用/粘贴、item 的应用/清空、skill 的应用均入栈，加载/导入整体替换时清栈。③顺手修复存量缺陷：kon `self.is_dark_theme` 全仓库无定义（P3-6 色值收编时引入），任何加载路径都会 AttributeError——改用 apply_theme_to_window 无条件维护的 `_is_dark` 约定属性。验证：编辑器冒烟 4/4 全绿（15.6s）、launcher 单测 27/27、task_runner 后台/错误/回收守卫/模态进度四路径断言、kon 加载×2+保存后台回路三连跑通过、item/skill 撤销链路（应用→撤销→重做→重填表单→重载清栈）离屏断言全过、四对话框离屏构建 OK |

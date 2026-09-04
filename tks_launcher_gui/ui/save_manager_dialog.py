@@ -25,6 +25,7 @@ from core.save_manager import (
     BackupInfo, create_backup, delete_backup, get_last_game_dir,
     list_backups, restore_save_files, set_last_game_dir, validate_backup,
 )
+from editor_utils.task_runner import run_with_progress, is_running
 
 # 备份列表各列索引
 _COL_NAME = 0
@@ -265,14 +266,21 @@ class SaveManagerDialog(QDialog):
             game_path = ""
             state_schema_version = 2
 
-        try:
-            zip_path = create_backup(
-                self._backups_dir, self._game_dir, name,
-                patch_state, mod_state, tool, mode, game_path, state_schema_version)
-        except Exception as e:
-            QMessageBox.critical(self, "备份失败", f"创建备份时出错:\n{e}")
-            return
+        # 后台线程执行备份打包 (P3-3); 底层无协作取消, 进度框不带取消按钮
+        backups_dir, game_dir = self._backups_dir, self._game_dir
 
+        def work(w):
+            return create_backup(
+                backups_dir, game_dir, name,
+                patch_state, mod_state, tool, mode, game_path, state_schema_version)
+
+        self._task_worker = run_with_progress(
+            self, "创建备份", work,
+            on_success=self._on_create_done,
+            on_error=lambda e: QMessageBox.critical(self, "备份失败", f"创建备份时出错:\n{e}"),
+            label="正在备份存档…")
+
+    def _on_create_done(self, zip_path):
         self._log_msg(f"备份已创建: {os.path.basename(zip_path)}")
         self._refresh_list()
 
@@ -294,39 +302,46 @@ class SaveManagerDialog(QDialog):
                 "游戏正在运行, 请先关闭游戏再恢复存档")
             return
 
-        # 校验备份完整性
-        ok, err = validate_backup(backup.path)
-        if not ok:
-            QMessageBox.critical(self, "备份损坏",
-                f"备份文件校验失败:\n{err}")
-            return
-
-        # 恢复前自动备份当前存档 (安全网)
+        # 恢复前自动备份当前存档的输入 (UI 侧收集, P3-3 后台执行 校验+自动备份+恢复)
+        cur_state = self._get_current_state() if self._get_current_state else None
         save_dir = os.path.join(self._game_dir, "Save")
         auto_name = f"_auto_pre_restore_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-        if os.path.isdir(save_dir) and os.listdir(save_dir):
-            try:
-                cur_state = self._get_current_state() if self._get_current_state else None
-                create_backup(
-                    self._backups_dir, self._game_dir, auto_name,
-                    cur_state.patches if cur_state else {},
-                    cur_state.mods if cur_state else {},
-                    cur_state.tool if cur_state else "",
-                    cur_state.mode if cur_state else "standard",
-                    cur_state.last_game_path if cur_state else "",
-                    cur_state.schema_version if cur_state else 2)
-                self._log_msg(f"恢复前已自动备份当前存档: {auto_name}")
-            except Exception as e:
-                self._log_msg(f"自动备份失败 (继续恢复): {e}")
+        need_auto = os.path.isdir(save_dir) and os.listdir(save_dir)
+        backups_dir, game_dir = self._backups_dir, self._game_dir
 
-        # 恢复存档文件
-        try:
-            count = restore_save_files(backup.path, self._game_dir)
-        except Exception as e:
-            QMessageBox.critical(self, "恢复失败",
-                f"恢复存档文件时出错:\n{e}")
-            return
+        def work(w):
+            ok, err = validate_backup(backup.path)
+            if not ok:
+                raise RuntimeError(f"备份文件校验失败:\n{err}")
+            auto_err = None
+            if need_auto:
+                try:
+                    create_backup(
+                        backups_dir, game_dir, auto_name,
+                        cur_state.patches if cur_state else {},
+                        cur_state.mods if cur_state else {},
+                        cur_state.tool if cur_state else "",
+                        cur_state.mode if cur_state else "standard",
+                        cur_state.last_game_path if cur_state else "",
+                        cur_state.schema_version if cur_state else 2)
+                except Exception as e:
+                    # 安全网备份失败不阻断恢复 (与原行为一致)
+                    auto_err = str(e)
+            count = restore_save_files(backup.path, game_dir)
+            return count, backup, (auto_name if need_auto else None), auto_err
 
+        self._task_worker = run_with_progress(
+            self, "恢复备份", work,
+            on_success=self._on_restore_done,
+            on_error=lambda e: QMessageBox.critical(self, "恢复失败", str(e)),
+            label="正在恢复存档…")
+
+    def _on_restore_done(self, result):
+        count, backup, auto_name, auto_err = result
+        if auto_name and not auto_err:
+            self._log_msg(f"恢复前已自动备份当前存档: {auto_name}")
+        elif auto_err:
+            self._log_msg(f"自动备份失败 (继续恢复): {auto_err}")
         self._log_msg(f"已恢复 {count} 个存档文件")
 
         # 询问是否恢复补丁状态

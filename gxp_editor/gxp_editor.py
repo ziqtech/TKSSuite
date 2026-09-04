@@ -51,6 +51,7 @@ from editor_utils.app_shell import EditorMainWindow, run_editor
 from editor_utils.version import format_title
 from editor_utils.ui_helpers import confirm_close
 from editor_utils.ui_helpers import set_themed_icon
+from editor_utils.task_runner import run_background, is_running
 
 # ── GXP 格式常量 ──────────────────────────────────────────
 GXP_MAGIC = b"JGXP"
@@ -455,19 +456,32 @@ class GXPEditor(EditorMainWindow):
             self._open(p)
 
     def _open(self, p: str):
-        try:
-            self._status_left.setText(f" 加载中: {Path(p).name} ...")
-            QApplication.processEvents()
-            self.img = load_gxp(p)
-            self._dirty = False
-            self._fit_to_window()
-            self._refresh_view()
-            self._status_left.setText(f" 已加载: {Path(p).name}  |  {os.path.getsize(p)/1024:.1f} KB")
-            self._info_label.setText(f"尺寸: {self.img.size_str}\n格式: RGB{self.img.bpp}\n文件: {os.path.getsize(p)/1024:.1f} KB")
-            self.setWindowTitle(format_title("gxp_editor", os.path.basename(p)))
-        except Exception as e:
-            QMessageBox.critical(self, "数据载入溃散", str(e))
-            self._status_left.setText(" 打开失败")
+        if is_running(getattr(self, '_load_worker', None)):
+            return
+        self._status_left.setText(f" 加载中: {Path(p).name} ...")
+
+        # 后台线程: GXP 解码 (P3-3), UI 刷新在 _on_open_success
+        def work(w):
+            return p, load_gxp(p)
+
+        self._load_worker = run_background(
+            self, work,
+            on_success=self._on_open_success,
+            on_error=self._on_open_error)
+
+    def _on_open_success(self, result):
+        p, img = result
+        self.img = img
+        self._dirty = False
+        self._fit_to_window()
+        self._refresh_view()
+        self._status_left.setText(f" 已加载: {Path(p).name}  |  {os.path.getsize(p)/1024:.1f} KB")
+        self._info_label.setText(f"尺寸: {self.img.size_str}\n格式: RGB{self.img.bpp}\n文件: {os.path.getsize(p)/1024:.1f} KB")
+        self.setWindowTitle(format_title("gxp_editor", os.path.basename(p)))
+
+    def _on_open_error(self, err_msg):
+        QMessageBox.critical(self, "数据载入溃散", err_msg)
+        self._status_left.setText(" 打开失败")
 
     def _save(self):
         if not self.img: return
@@ -482,17 +496,30 @@ class GXPEditor(EditorMainWindow):
             self._do_save(p)
 
     def _do_save(self, p: str):
-        try:
-            self._status_left.setText(" 数据流压缩中...")
-            QApplication.processEvents()
-            save_gxp(self.img, p)
-            self.img.filepath = p
-            self._dirty = False
-            size_kb = os.path.getsize(p) / 1024
-            self._status_left.setText(f" 已保存: {Path(p).name}  |  {size_kb:.1f} KB")
-            self.setWindowTitle(format_title("gxp_editor", os.path.basename(p)))
-        except Exception as e:
-            QMessageBox.critical(self, "构写失败", str(e))
+        if is_running(getattr(self, '_save_worker', None)):
+            return
+        img = self.img
+
+        # 后台线程: RGB565 数据流压缩写盘 (P3-3)
+        def work(w):
+            save_gxp(img, p)
+            return p
+
+        self._status_left.setText(" 数据流压缩中...")
+        self._save_worker = run_background(
+            self, work,
+            on_success=self._on_save_success,
+            on_error=self._on_save_error)
+
+    def _on_save_success(self, p):
+        self.img.filepath = p
+        self._dirty = False
+        size_kb = os.path.getsize(p) / 1024
+        self._status_left.setText(f" 已保存: {Path(p).name}  |  {size_kb:.1f} KB")
+        self.setWindowTitle(format_title("gxp_editor", os.path.basename(p)))
+
+    def _on_save_error(self, err_msg):
+        QMessageBox.critical(self, "构写失败", err_msg)
 
     def _import_dlg(self):
         if not HAS_PIL:
@@ -500,19 +527,33 @@ class GXPEditor(EditorMainWindow):
             return
         p, _ = QFileDialog.getOpenFileName(self, "导入参考底图", "", "图片 (*.png *.bmp *.jpg *.jpeg);;All (*.*)")
         if not p: return
-        try:
-            self._status_left.setText(" 图像映射导入中...")
-            QApplication.processEvents()
-            self.img = import_image(p, self.img.width if self.img and self.img.width > 0 else 0,
-                                       self.img.height if self.img and self.img.height > 0 else 0)
-            self._fit_to_window()
-            self._refresh_view()
-            self._dirty = True
-            self._status_left.setText(f" 已导入外部资产: {Path(p).name}")
-            self._info_label.setText(f"尺寸: {self.img.size_str}\n格式: RGB{self.img.bpp}\n来源: 外部图片映射")
-            self.setWindowTitle(format_title("gxp_editor", f"[资产导入] {os.path.basename(p)}"))
-        except Exception as e:
-            QMessageBox.critical(self, "导入失败", str(e))
+        if is_running(getattr(self, '_load_worker', None)):
+            return
+        self._status_left.setText(" 图像映射导入中...")
+        base_w = self.img.width if self.img and self.img.width > 0 else 0
+        base_h = self.img.height if self.img and self.img.height > 0 else 0
+
+        # 后台线程: 外部图像映射转换 (P3-3), UI 刷新在 _on_import_success
+        def work(w):
+            return p, import_image(p, base_w, base_h)
+
+        self._load_worker = run_background(
+            self, work,
+            on_success=self._on_import_success,
+            on_error=self._on_import_error)
+
+    def _on_import_success(self, result):
+        p, img = result
+        self.img = img
+        self._fit_to_window()
+        self._refresh_view()
+        self._dirty = True
+        self._status_left.setText(f" 已导入外部资产: {Path(p).name}")
+        self._info_label.setText(f"尺寸: {self.img.size_str}\n格式: RGB{self.img.bpp}\n来源: 外部图片映射")
+        self.setWindowTitle(format_title("gxp_editor", f"[资产导入] {os.path.basename(p)}"))
+
+    def _on_import_error(self, err_msg):
+        QMessageBox.critical(self, "导入失败", err_msg)
 
     def _export_dlg(self):
         if not self.img or self.img.width <= 0: return

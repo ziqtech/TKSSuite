@@ -17,6 +17,7 @@ from core.mod_packer import (
 from editor_utils import theme_tokens as _tt_tokens
 _PLACEHOLDER_GRAY = _tt_tokens.business_colors("launcher", _tt_tokens.THEMES[0])["placeholder_gray"]
 from editor_utils.mod_exporter import generate_short_uuid
+from editor_utils.task_runner import run_background, is_running
 from editor_utils.ui_helpers import themed_question
 from editor_utils.ui_helpers import EditorComboBox
 
@@ -186,7 +187,8 @@ class ModPackerDialog(QDialog):
         bottom_row = QHBoxLayout()
         bottom_row.addStretch()
 
-        btn_pack = QPushButton("执行打包")
+        self.btn_pack = QPushButton("执行打包")
+        btn_pack = self.btn_pack
         btn_pack.setObjectName("btnPack")
         btn_pack.clicked.connect(self._on_pack)
         bottom_row.addWidget(btn_pack)
@@ -410,6 +412,7 @@ class ModPackerDialog(QDialog):
         self._log_area.clear()
         self._progress.setVisible(True)
         self._progress.setRange(0, 0)
+        self.btn_pack.setEnabled(False)
 
         def log(msg):
             self._log_area.append(msg)
@@ -418,12 +421,28 @@ class ModPackerDialog(QDialog):
         log(f"输出: {output}")
         log("")
 
-        ok, msg = create_tksmodpak(
-            self._file_paths, output, metadata,
-            preview_image_path=self._preview_path,
-            log_func=log)
+        # 后台线程执行打包 (P3-3): 日志经信号排队回 UI 线程
+        file_paths, preview_path = list(self._file_paths), self._preview_path
 
+        def work(w):
+            return create_tksmodpak(
+                file_paths, output, metadata,
+                preview_image_path=preview_path,
+                log_func=w.progress)
+
+        self._pack_worker = run_background(
+            self, work,
+            on_success=self._on_pack_done,
+            on_progress=log)
+
+    def _on_pack_done(self, result):
+        ok, msg = result
         self._progress.setVisible(False)
+        self.btn_pack.setEnabled(True)
+        output = self.edit_output.text().strip()
+
+        def log(msg):
+            self._log_area.append(msg)
 
         if ok:
             log(f"\n✅ {msg}")

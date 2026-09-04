@@ -3127,15 +3127,8 @@ class MatEditorApp(EditorMainWindow):
         self._data.dat_path = save_path  # DataLoaderThread 从此路径加载附属文件 (TKD/TKDefUnit)
         tkt_p = os.path.join(game_dir, 'TKT.dat')
         self._data.tkt_path = tkt_p if os.path.exists(tkt_p) else None
-        # 预加载 TKMat records (从存档 Frame1)
+        # TKMat records 解析 (从存档 Frame1) 已并入 DataLoaderThread 后台执行 (P3-3)
         self.status_var.setText(f"从存档加载 TKMat 数据 (槽位{slot_num})…")
-        QApplication.processEvents()
-        try:
-            self._preloaded_records = load_mat_from_save(save_path)
-        except Exception as e:
-            QMessageBox.critical(self, "加载失败", f"无法从存档读取 TKMat 数据:\n{e}")
-            self._data._save_mode = False
-            return
         self._reload()
         self.setWindowTitle(f"{format_title('mat_editor')} [存档模式 槽位{slot_num}]")
 
@@ -3149,11 +3142,11 @@ class MatEditorApp(EditorMainWindow):
         self._cha_jvg = None
         self._cur_jvg = None
         self._update_path()
-        # 存档模式下使用 game_dir 加载附属文件，并传入预加载的 TKMat records
+        # 存档模式下使用 game_dir 加载附属文件, TKMat records 从存档后台解析
         game_dir = self._data._game_dir if self._data._save_mode else os.path.dirname(self._data.dat_path)
-        preloaded = getattr(self, '_preloaded_records', None) if self._data._save_mode else None
+        save_path = self._data._save_path if self._data._save_mode else None
         self._loader_thread = DataLoaderThread(self._data.dat_path, self._data.tkt_path,
-                                                game_dir=game_dir, preloaded_records=preloaded)
+                                                game_dir=game_dir, save_path=save_path)
         self._loader_thread.finished_load.connect(self._on_load_success)
         self._loader_thread.error_load.connect(self._on_load_error)
         self._loader_thread.start()

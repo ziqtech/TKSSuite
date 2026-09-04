@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (
 )
 
 from core.mod_packer import extract_tksmodpak
+from editor_utils.task_runner import run_background, is_running
 
 
 class ModSplitterDialog(QDialog):
@@ -156,6 +157,7 @@ class ModSplitterDialog(QDialog):
             self.edit_out_dir.setText(out_dir)
 
         self._log_area.clear()
+        self._btn_split.setEnabled(False)
 
         def log(msg):
             self._log_area.append(msg)
@@ -164,7 +166,23 @@ class ModSplitterDialog(QDialog):
         log(f"输出目录: {out_dir}")
         log("")
 
-        result = extract_tksmodpak(self._pack_path, out_dir, log_func=log)
+        # 后台线程执行拆分 (P3-3): 日志经信号排队回 UI 线程
+        pack_path = self._pack_path
+
+        def work(w):
+            return extract_tksmodpak(pack_path, out_dir, log_func=w.progress)
+
+        self._split_worker = run_background(
+            self, work,
+            on_success=self._on_split_done,
+            on_progress=log)
+
+    def _on_split_done(self, result):
+        self._btn_split.setEnabled(True)
+        out_dir = self.edit_out_dir.text().strip() or self._mods_dir
+
+        def log(msg):
+            self._log_area.append(msg)
 
         if result["success"]:
             n = len(result["extracted"])

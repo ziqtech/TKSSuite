@@ -59,6 +59,7 @@ from editor_utils.mod_exporter import (
 from editor_utils.version import format_title
 from editor_utils.tab_widget import EditorTabWidget
 from editor_utils.search_utils import search_match
+from editor_utils.task_runner import run_background, is_running
 
 # ============================================================
 # 常量 (来自反编译)
@@ -1304,18 +1305,35 @@ class TktEditor(EditorMainWindow):
         self.id_entry.setEnabled(enabled)
 
     def _load_file(self, path):
+        if is_running(getattr(self, '_load_worker', None)):
+            return
+        self._set_edit_enabled(False)
+
+        # 后台线程: TKT 全量解析 + FONT9696 加载 (P3-3), UI 刷新在回调
+        def work(w):
+            entries = load_tkt(path)
+            font_path = os.path.join(os.path.dirname(path), "FONT9696")
+            font = Font9696(font_path) if (HAS_PIL and os.path.exists(font_path)) else None
+            return path, entries, font
+
+        self._load_worker = run_background(
+            self, work,
+            on_success=self._on_load_success,
+            on_error=self._on_load_error)
+
+    def _on_load_success(self, result):
+        path, entries, font = result
         try:
-            self.entries = load_tkt(path)
+            self.entries = entries
             self.tkt_path = path
             self._rebuild_id_map()
 
             self.original_entry_snapshot = {entry['id']: entry['text'] for entry in self.entries}
 
-            font_path = os.path.join(os.path.dirname(path), "FONT9696")
-            if HAS_PIL and os.path.exists(font_path):
+            if font is not None:
                 if self.font9696:
                     self.font9696.close()
-                self.font9696, self.font_path = Font9696(font_path), font_path
+                self.font9696, self.font_path = font, os.path.join(os.path.dirname(path), "FONT9696")
 
             self._dirty = False
             self._current_idx = None
@@ -1330,6 +1348,10 @@ class TktEditor(EditorMainWindow):
             self._apply_theme()
         except Exception as e:
             QMessageBox.critical(self, "数据载入溃散", str(e))
+
+    def _on_load_error(self, err_msg):
+        QMessageBox.critical(self, "数据载入溃散", err_msg)
+        self._set_edit_enabled(True)
 
     def _load_tks_dir(self):
         d = pick_tks_directory(self, "挂载 TKS 游戏核心环境目录")

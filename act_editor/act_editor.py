@@ -89,6 +89,7 @@ from editor_utils.theme_switcher import (
 from editor_utils.app_shell import EditorMainWindow, run_editor
 from editor_utils.version import format_title
 from editor_utils.search_utils import search_match
+from editor_utils.task_runner import run_background, is_running
 from editor_utils.kon_name_resolver import KonNameResolver
 from editor_utils.lzss import lzss_decompress_dat
 from editor_utils.shared_state import pick_tks_directory
@@ -2474,28 +2475,44 @@ class ActEditorV2(EditorMainWindow):
     def _reload(self):
         if not self.act_path:
             return
+        if is_running(getattr(self, '_load_worker', None)):
+            return
         self._preview_stop()
         self._aa_data = None
         self._af_data = None
         self._jvg_cache.clear()
         self._pil_cache.clear()
         self.status_var.setText("加载中…")
-        QApplication.processEvents()
+        act_path = self.act_path
+        compact_threshold = self._compact_threshold()
 
-        try:
-            self.entries = load_act(self.act_path)
+        # 后台线程: 纯文件 IO/解码 (P3-3), UI 刷新在 _on_load_success
+        def work(w):
+            entries = load_act(act_path)
+            names = self._build_act_names(
+                os.path.dirname(act_path), compact_threshold)
+            return entries, names
 
-            tks_dir = os.path.dirname(self.act_path)
-            self.names = self._build_act_names(tks_dir, self._compact_threshold())
+        self._load_worker = run_background(
+            self, work,
+            on_success=self._on_load_success,
+            on_error=self._on_load_error)
 
-            self._dirty = False
-            nonempty = sum(1 for e in self.entries if not entry_is_empty(e))
-            self.status_var.setText(
-                f"{len(self.entries)} 条 (784 字节/条) | 非空 {nonempty}")
-        except Exception as e:
-            QMessageBox.critical(self, "加载失败", str(e))
-            self.entries = []
+    def _on_load_success(self, result):
+        entries, names = result
+        self.entries = entries
+        self.names = names
+        self._dirty = False
+        nonempty = sum(1 for e in self.entries if not entry_is_empty(e))
+        self.status_var.setText(
+            f"{len(self.entries)} 条 (784 字节/条) | 非空 {nonempty}")
+        self._set_edit_enabled(True)
+        self._update_paths()
+        self._apply_filter()
 
+    def _on_load_error(self, err_msg):
+        QMessageBox.critical(self, "加载失败", err_msg)
+        self.entries = []
         self._set_edit_enabled(True)
         self._update_paths()
         self._apply_filter()
@@ -3273,22 +3290,36 @@ class ActEditorV2(EditorMainWindow):
                 f"保存 {len(self.entries)} 条到:\n{self.act_path}\n\n原文件将被覆盖 (生成 .bak).",
                 QMessageBox.Yes | QMessageBox.No) != QMessageBox.Yes:
             return
-        try:
-            with open(self.act_path, 'rb') as s:
-                with open(self.act_path + ".bak", 'wb') as d:
-                    d.write(s.read())
-        except Exception:
-            pass
-        try:
-            self.status_var.setText("正在保存…")
-            QApplication.processEvents()
-            save_act(self.act_path, self.entries)
-            self._dirty = False
-            self.status_var.setText(f"已保存 → {self.act_path}")
-            QMessageBox.information(self, "保存成功",
-                                   f"已保存\n备份: {self.act_path}.bak")
-        except Exception as e:
-            QMessageBox.critical(self, "保存失败", str(e))
+        if is_running(getattr(self, '_save_worker', None)):
+            return
+        act_path = self.act_path
+        entries = self.entries
+
+        # 后台线程: .bak 备份 + 压缩写盘 (P3-3)
+        def work(w):
+            try:
+                with open(act_path, 'rb') as s:
+                    with open(act_path + ".bak", 'wb') as d:
+                        d.write(s.read())
+            except Exception:
+                pass
+            save_act(act_path, entries)
+            return act_path
+
+        self.status_var.setText("正在保存…")
+        self._save_worker = run_background(
+            self, work,
+            on_success=self._on_save_success,
+            on_error=self._on_save_error)
+
+    def _on_save_success(self, act_path):
+        self._dirty = False
+        self.status_var.setText(f"已保存 → {act_path}")
+        QMessageBox.information(self, "保存成功",
+                                f"已保存\n备份: {act_path}.bak")
+
+    def _on_save_error(self, err_msg):
+        QMessageBox.critical(self, "保存失败", err_msg)
 
     def _export_tksmod(self):
         """导出 TKAct.dat 为 .tksmod — 记录级增量（仅导出修改过的动画条目）"""

@@ -31,6 +31,7 @@ from editor_utils.tab_widget import EditorTabWidget
 from editor_utils.ui_helpers import update_path_labels
 from editor_utils.version import format_title
 from editor_utils.shared_state import pick_tks_directory
+from editor_utils.task_runner import run_background, is_running
 
 from book_loader import GameData
 from tab_gallery import GalleryTab
@@ -211,13 +212,21 @@ class TksBookViewer(EditorMainWindow):
                                 f"所选目录未找到 TKT.dat:\n{d}\n\n"
                                 f"请选择 TKS 游戏根目录。")
             return
-        self.status_label.setText("加载中…")
-        QApplication.processEvents()
-        try:
-            self.data.load(d)
-        except Exception as e:
-            themed_messagebox(self, QMessageBox.Critical, "加载失败", str(e))
+        if is_running(getattr(self, '_load_worker', None)):
             return
+        self.status_label.setText("加载中…")
+
+        # 后台线程: 全量数据文件 IO/解码 (P3-3), UI 填充在回调
+        def work(w):
+            self.data.load(d)
+            return d
+
+        self._load_worker = run_background(
+            self, work,
+            on_success=self._on_load_success,
+            on_error=self._on_load_error)
+
+    def _on_load_success(self, d):
         self._loaded = True
         self.tab_gallery.populate()
         self.tab_char.populate()
@@ -235,6 +244,9 @@ class TksBookViewer(EditorMainWindow):
             f"技能 {len(self.data.skill_names)} | "
             f"物品 {len(self.data.item_by_id)} | "
             f"TKT {len(self.data.tkt)} 条")
+
+    def _on_load_error(self, err_msg):
+        themed_messagebox(self, QMessageBox.Critical, "加载失败", err_msg)
 
     def _on_tab_changed(self, _index):
         # 缩放按钮仅在图鉴页显示

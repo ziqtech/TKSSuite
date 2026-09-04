@@ -44,6 +44,8 @@ from editor_utils.mod_exporter import (
 from editor_utils.search_utils import search_match
 from editor_utils.kon_name_resolver import KonNameResolver
 from editor_utils.adaptive_table import AdaptiveTableWidget
+from editor_utils.task_runner import run_background, is_running
+from editor_utils.undo_stack import FieldUndoMixin
 
 # ── 本地别名: 保持向后兼容 ──
 def lzss_decompress(data):
@@ -260,7 +262,7 @@ def _build_field_ref_text():
 # 主编辑器窗口
 # ============================================================
 
-class KonEditor(EditorMainWindow):
+class KonEditor(FieldUndoMixin, EditorMainWindow):
     EDITOR_KEY = "kon_editor"
     DEFAULT_SIZE = (1600, 900)
     MIN_SIZE = (1050, 650)
@@ -296,6 +298,7 @@ class KonEditor(EditorMainWindow):
         self.extra_map = {}       # QLabel for parsed description text
         self.split_map = {}       # (hi_w, lo_w) for split fields
         self.compact_names = True # 精简显示: >3角色时仅显示技能名
+        self._init_undo()  # 撤销/重做 (P3-4)
 
     def _after_build(self):
         self._set_edit_enabled(False)
@@ -335,6 +338,9 @@ class KonEditor(EditorMainWindow):
         fm.addAction("退出", self.close)
 
         em = mb.addMenu("编辑(&E)")
+        em.addAction("撤销", QKeySequence("Ctrl+Z"), self.undo)
+        em.addAction("重做", QKeySequence("Ctrl+Y"), self.redo)
+        em.addSeparator()
         em.addAction("新建条目", QKeySequence("Ctrl+N"), self._new_record)
         em.addAction("复制当前记录", self._copy_current)
         em.addAction("粘贴到当前记录", self._paste_current)
@@ -737,36 +743,58 @@ class KonEditor(EditorMainWindow):
 
     def _reload(self):
         if not self.kon_path: return
+        if is_running(getattr(self, '_load_worker', None)): return
         self.status_label.setText("加载中…")
-        QApplication.processEvents()
-        if self.tkt_path: self.tkt = load_tkt(self.tkt_path)
-        if self.mu_path:
-            self._mu_sprites = load_mu_sprites(self.mu_path) or []
-            self._icon_pixmaps.clear()
-        tks_dir = os.path.dirname(self.kon_path)
-        try:
-            self._resolver = KonNameResolver(tks_dir)
-        except Exception:
-            self._resolver = None
-        try:
-            self.records = load_kon(self.kon_path)
-            self._dirty = False
-            self._original_records = [[rec[fn] for fn, _, _, _ in KON_FIELDS] for rec in self.records]
-            nonempty = sum(1 for r in self.records if any(r[fn] != 0 for fn, _, _, _ in KON_FIELDS))
-            self.status_label.setText(f"{len(self.records)} 条 | 有效 {nonempty} | TKT {len(self.tkt)} 条")
-        except Exception as e:
-            QMessageBox.critical(self, "加载失败", str(e))
-            self.records = []
+        kon_path, tkt_path, mu_path = self.kon_path, self.tkt_path, self.mu_path
+
+        # 后台线程: 纯文件 IO/解码 (P3-3), UI 刷新在 _on_load_success
+        def work(w):
+            tkt = load_tkt(tkt_path) if tkt_path else {}
+            mu = load_mu_sprites(mu_path) if mu_path else []
+            try:
+                resolver = KonNameResolver(os.path.dirname(kon_path))
+            except Exception:
+                resolver = None
+            records = load_kon(kon_path)
+            return tkt, mu or [], resolver, records
+
+        self._load_worker = run_background(
+            self, work,
+            on_success=self._on_load_success,
+            on_error=self._on_load_error)
+
+    def _on_load_success(self, result):
+        tkt, mu, resolver, records = result
+        self.tkt = tkt
+        self._mu_sprites = mu
+        self._icon_pixmaps.clear()
+        self._resolver = resolver
+        self.records = records
+        self.clear_undo()  # 数据整体重载, 旧变更集失效 (P3-4)
+        self._dirty = False
+        self._original_records = [[rec[fn] for fn, _, _, _ in KON_FIELDS] for rec in self.records]
+        nonempty = sum(1 for r in self.records if any(r[fn] != 0 for fn, _, _, _ in KON_FIELDS))
+        self.status_label.setText(f"{len(self.records)} 条 | 有效 {nonempty} | TKT {len(self.tkt)} 条")
+        self._update_paths()
+        self._set_edit_enabled(True)
+        self._apply_filter()
+
+    def _on_load_error(self, err_msg):
+        QMessageBox.critical(self, "加载失败", err_msg)
+        self.records = []
         self._update_paths()
         self._set_edit_enabled(True)
         self._apply_filter()
 
     def _update_paths(self):
+        # 深浅取自 apply_theme_to_window 无条件维护的 _is_dark 兼容属性
+        # (原先引用的 self.is_dark_theme 全仓库无定义, 任何加载路径都会
+        # AttributeError — 顺手修复的存量缺陷)
         update_path_labels([
             (self.lbl_kon, self.kon_path, "TKKon.dat"),
             (self.lbl_tkt, self.tkt_path, "TKT.dat"),
             (self.lbl_mu, self.mu_path, "Mu.JVG"),
-        ], self.is_dark_theme)
+        ], getattr(self, '_is_dark', True))
 
     # ----------- 筛选/表格 -----------
 
@@ -814,13 +842,13 @@ class KonEditor(EditorMainWindow):
             elif "未知" in nm:
                 color = QColor("#CC8800")  # 阶段 2 豁免: 状态领域色 (橙)
             elif "空槽" in nm:
-                color = QColor("#888888") if self.is_dark_theme else QColor("#AAAAAA")  # 主题感知: 深浅两档
+                color = QColor("#888888") if getattr(self, '_is_dark', True) else QColor("#AAAAAA")  # 主题感知: 深浅两档
             elif r['tkact_id'] == -1:
                 color = QColor("#2266CC")  # 阶段 2 豁免: 状态领域色 (蓝)
             elif has_data:
-                color = QColor("#228B22") if self.is_dark_theme else QColor("#1a7a1a")  # 主题感知: 深浅两档
+                color = QColor("#228B22") if getattr(self, '_is_dark', True) else QColor("#1a7a1a")  # 主题感知: 深浅两档
             else:
-                color = QColor("#AAAAAA") if self.is_dark_theme else QColor("#999999")  # 主题感知: 深浅两档
+                color = QColor("#AAAAAA") if getattr(self, '_is_dark', True) else QColor("#999999")  # 主题感知: 深浅两档
 
             em = r['exec_mode'] & 0xFFFF
             em_hi = (em >> 8) & 0xFF
@@ -1037,6 +1065,7 @@ class KonEditor(EditorMainWindow):
     def _apply_edit(self):
         if self._editing_idx < 0: return
         rec = self.records[self._editing_idx]
+        undo_before = {fn: rec[fn] for fn, _, _, _ in KON_FIELDS}
 
         # 拆分字段
         for fn in ('exec_mode', 'target_param', 'target_filter'):
@@ -1073,6 +1102,9 @@ class KonEditor(EditorMainWindow):
             except ValueError:
                 rec[fn] = 0
 
+        self.push_field_changes(
+            rec['index'], self.field_diff(undo_before, rec, [fn for fn, _, _, _ in KON_FIELDS]),
+            f"修改记录 #{rec['index']}")
         self._dirty = True
         self._apply_filter()
         for row in range(self.table.rowCount()):
@@ -1184,8 +1216,12 @@ class KonEditor(EditorMainWindow):
                     f"粘贴将覆盖记录 #{idx} 的现有内容，是否继续？",
                     QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
                 return
+        paste_before = {fn: rec[fn] for fn, _, _, _ in KON_FIELDS}
         for fn, _, _, _ in KON_FIELDS:
             rec[fn] = self._clipboard[fn]
+        self.push_field_changes(
+            idx, self.field_diff(paste_before, rec, [fn for fn, _, _, _ in KON_FIELDS]),
+            f"粘贴到记录 #{idx}")
         self._dirty = True
         if self._record_is_empty(rec) and not self.chk_show_empty.isChecked():
             self.chk_show_empty.setChecked(True)
@@ -1250,21 +1286,34 @@ class KonEditor(EditorMainWindow):
         if QMessageBox.question(self, "确认保存",
             f"保存 {len(self.records)} 条到:\n{self.kon_path}\n\n原文件将被覆盖 (生成 .bak).",
             QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes: return
-        try:
-            with open(self.kon_path, 'rb') as s:
-                with open(self.kon_path + ".bak", 'wb') as d:
-                    d.write(s.read())
-        except:
-            pass
-        try:
-            self.status_label.setText("正在保存…")
-            QApplication.processEvents()
-            save_kon(self.kon_path, self.records)
-            self._dirty = False
-            self.status_label.setText(f"已保存 → {self.kon_path}")
-            QMessageBox.information(self, "保存成功", f"已保存\n备份: {self.kon_path}.bak")
-        except Exception as e:
-            QMessageBox.critical(self, "保存失败", str(e))
+        if is_running(getattr(self, '_save_worker', None)): return
+        kon_path = self.kon_path
+        records = self.records
+
+        # 后台线程: .bak 备份 + 压缩写盘 (P3-3)
+        def work(w):
+            try:
+                with open(kon_path, 'rb') as s:
+                    with open(kon_path + ".bak", 'wb') as d:
+                        d.write(s.read())
+            except Exception:
+                pass
+            save_kon(kon_path, records)
+            return kon_path
+
+        self.status_label.setText("正在保存…")
+        self._save_worker = run_background(
+            self, work,
+            on_success=self._on_save_success,
+            on_error=self._on_save_error)
+
+    def _on_save_success(self, kon_path):
+        self._dirty = False
+        self.status_label.setText(f"已保存 → {kon_path}")
+        QMessageBox.information(self, "保存成功", f"已保存\n备份: {kon_path}.bak")
+
+    def _on_save_error(self, err_msg):
+        QMessageBox.critical(self, "保存失败", err_msg)
 
     def _export_tksmod(self):
         """导出当前修改为 .tksmod MOD 文件"""

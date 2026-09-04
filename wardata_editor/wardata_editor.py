@@ -93,6 +93,7 @@ from editor_utils.app_shell import EditorMainWindow, run_editor
 from editor_utils.dock_components import DockHeader
 from editor_utils.ui_helpers import make_fake_input, update_path_labels, confirm_close, themed_messagebox, EditorComboBox
 from editor_utils.adaptive_table import AdaptiveTableWidget
+from editor_utils.task_runner import run_background, is_running
 from editor_utils.lzss import lzss_decompress_stream as lzss_decompress
 from editor_utils.lzss import lzss_decompress_dat
 from editor_utils.jvg_loader import load_mu_sprites, get_sprite_pixmap
@@ -1043,20 +1044,54 @@ class WarDataEditorV2(EditorMainWindow):
 
     def _reload(self):
         if not self.wardata_path: return
-        self.records = load_wardata(self.wardata_path)
-        self.warway_records = load_warway_all(self.warway_path) if self.warway_path else []
-        if self.tkt_path:
-            self.tkt = load_tkt(self.tkt_path)
-            self.warpc_names = load_warpc_names(self.warpc_path, self.tkt) if self.warpc_path else {}
-            self.warpc_records = load_warpc_records(self.warpc_path) if self.warpc_path else []
-            if self.tkitem_path:
-                self.tkitem_names, self.tkitem_names_by_id = load_tkitem_names(self.tkitem_path, self.tkt)
-                self.tkitem_records = load_tkitem_records(self.tkitem_path, self.tkt)
+        if is_running(getattr(self, '_load_worker', None)): return
+        wardata_path, warway_path = self.wardata_path, self.warway_path
+        tkt_path, warpc_path, tkitem_path = self.tkt_path, self.warpc_path, self.tkitem_path
+
+        # 后台线程: 全部数据文件 IO/解码 (P3-3), UI 刷新在 _on_load_success
+        def work(w):
+            records = load_wardata(wardata_path)
+            warway_records = load_warway_all(warway_path) if warway_path else []
+            tkt = {}
+            warpc_names, warpc_records = {}, []
+            tkitem_names, tkitem_names_by_id = {}, {}
+            tkitem_records = []
+            if tkt_path:
+                tkt = load_tkt(tkt_path)
+                if warpc_path:
+                    warpc_names = load_warpc_names(warpc_path, tkt)
+                    warpc_records = load_warpc_records(warpc_path)
+                if tkitem_path:
+                    tkitem_names, tkitem_names_by_id = load_tkitem_names(tkitem_path, tkt)
+                    tkitem_records = load_tkitem_records(tkitem_path, tkt)
+            return (records, warway_records, tkt, warpc_names, warpc_records,
+                    tkitem_names, tkitem_names_by_id, tkitem_records)
+
+        self._load_worker = run_background(
+            self, work,
+            on_success=self._on_load_success,
+            on_error=self._on_load_error)
+
+    def _on_load_success(self, result):
+        (records, warway_records, tkt, warpc_names, warpc_records,
+         tkitem_names, tkitem_names_by_id, tkitem_records) = result
+        self.records = records
+        self.warway_records = warway_records
+        self.tkt = tkt
+        self.warpc_names = warpc_names
+        self.warpc_records = warpc_records
+        self.tkitem_names = tkitem_names
+        self.tkitem_names_by_id = tkitem_names_by_id
+        self.tkitem_records = tkitem_records
         self._icon_pixmaps.clear()
         self._refresh_tree()
         self._dirty = False
         self._warway_dirty = False
         self.status_var.setText("已重新加载")
+
+    def _on_load_error(self, err_msg):
+        QMessageBox.critical(self, "加载失败", err_msg)
+        self.status_var.setText("加载失败")
 
     # ── 记录管理 ──
     def _new_battle(self):

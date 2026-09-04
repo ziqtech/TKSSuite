@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import base64
 import copy
+import types
 import json
 import math
 import os
@@ -58,6 +59,7 @@ from editor_utils import theme_manager
 from editor_utils.theme_switcher import toggle_theme_in_family
 from editor_utils.app_shell import EditorMainWindow, run_editor
 from editor_utils.version import format_title
+from editor_utils.task_runner import run_background, run_with_progress, is_running
 
 JVG_MAGIC = b"@JVG"
 JVM_MAGIC = b"@JVM"
@@ -432,6 +434,58 @@ def _block_avail_slots(blk:'JVMBlock',keep_frame_indices:List[int])->int:
             if kf.pixels:
                 for b in kf.pixels: used.add(b)
     return 256-len(used)
+
+
+# ── P3-3 后台量化: 线程安全快照 ──────────────────────────────────
+def _clone_frame(src:'JVGFrame')->'JVGFrame':
+    """帧头/像素状态克隆 — 像素惰性解码 (解码成本随访问落入工作线程),
+    rebuild 模式对保留帧的像素重映射落在克隆上, 不触碰真实数据。"""
+    g=JVGFrame()
+    g.x_max,g.y_max=src.x_max,src.y_max
+    g.width,g.height=src.width,src.height
+    g.row_count=src.row_count
+    g.encoded_data=src.encoded_data
+    g._pixels=src._pixels
+    g._alpha=src._alpha
+    g._palette=src._palette
+    g._hdr_unk4,g._hdr_unk5,g._hdr_unk6=src._hdr_unk4,src._hdr_unk5,src._hdr_unk6
+    return g
+
+
+class _BlkSnapshot:
+    """JVMBlock 快照 — duck-type _batch_quantize_subs_to_block 所需只读子集。
+
+    * frames: 保留索引处为帧克隆, 其余为空帧占位 (量化按 width>0 守卫跳过);
+    * palette: entries 列表副本 + to_rgb888 快照, 线程内的调色板写入
+      (auto 写槽位 / rebuild 整表替换) 全部落在副本上;
+    * 完成后 writeback() 整体回写真实块 (auto/match 为等值操作, 仅 rebuild
+      产生实际变化)。
+    """
+
+    def __init__(self, blk:'JVMBlock', keep_frame_indices=None):
+        pal=blk.palette
+        rgb888=list(pal.to_rgb888())
+        self.palette=types.SimpleNamespace(entries=list(pal.entries),
+                                           to_rgb888=lambda: rgb888)
+        if keep_frame_indices is None:
+            keep_frame_indices=range(len(blk.frames))
+        self._kept={}
+        frames=[JVGFrame() for _ in blk.frames]
+        for ki in keep_frame_indices:
+            if 0<=ki<len(frames):
+                frames[ki]=_clone_frame(blk.frames[ki])
+                self._kept[ki]=blk.frames[ki]
+        self.frames=frames
+
+    def writeback(self, blk:'JVMBlock'):
+        blk.palette.entries=list(self.palette.entries)
+        for ki,dst in self._kept.items():
+            clone=self.frames[ki]
+            dst._pixels=clone._pixels
+            dst._alpha=clone._alpha
+            dst.encoded_data=clone.encoded_data
+            dst.row_count=clone.row_count
+            dst._palette=clone._palette
 
 def _batch_quantize_subs_to_block(subs:List['Image.Image'],blk:'JVMBlock',
                                    keep_frame_indices:List[int],
@@ -1877,26 +1931,33 @@ class JVGEditor(EditorMainWindow):
         paths, _ = QFileDialog.getOpenFileNames(self, "选择图片", "", "图片 (*.png *.bmp *.jpg *.jpeg)")
         if not paths:
             return
-        self._info.setText("正在导入...")
-        QApplication.processEvents()
+        bi = self._bi
+        blk = self.jvg.blocks[bi]
+        use_bbox = self._chk_bbox.isChecked()
+        use_rebuild = self._chk_rebuild.isChecked()
         # 统一量化到分组调色板：一次性量化所有图片，避免空分组逐帧 remap
         # 时第 0 色丢失变黑、以及多帧相互覆盖调色板槽位导致色板错乱的问题。
-        subs = []
-        for p in sorted(paths, key=lambda pp: Path(pp).name.lower()):
-            try:
-                subs.append(Image.open(p).convert('RGBA'))
-            except Exception as e:
-                print(f"  skip {Path(p).name}: {e}")
-        if subs:
-            blk = self.jvg.blocks[self._bi]
-            use_bbox = self._chk_bbox.isChecked()
-            use_rebuild = self._chk_rebuild.isChecked()
-            # bbox 裁剪（可选）：按 alpha 非透明区域裁剪每张图并记录 bbox（参照导入图集逻辑）
+        # 保护分组内已有有效帧的颜色，新帧颜色写入剩余槽位
+        keep_indices = [i for i, f in enumerate(blk.frames) if f.width > 0 and f.height > 0]
+        n_avail = _block_avail_slots(blk, keep_indices)
+        snap = _BlkSnapshot(blk, keep_indices)
+        ordered = sorted(paths, key=lambda pp: Path(pp).name.lower())
+
+        # 后台线程: 打开图片 + bbox 裁剪 + 批量量化 (P3-3), 数据应用在回调
+        def work(w):
+            subs = []
+            for p in ordered:
+                if w.is_cancelled():
+                    return None
+                try:
+                    subs.append(Image.open(p).convert('RGBA'))
+                except Exception as e:
+                    print(f"  skip {Path(p).name}: {e}")
+            if not subs:
+                return (bi, snap, [], "auto", use_bbox)
+            w.progress(f"统一量化 {len(subs)} 帧...")
             crop_metas = [s.getchannel('A').getbbox() if use_bbox else None for s in subs]
             cropped = [s.crop(bb) if bb else s for s, bb in zip(subs, crop_metas)]
-            # 保护分组内已有有效帧的颜色，新帧颜色写入剩余槽位
-            keep_indices = [i for i, f in enumerate(blk.frames) if f.width > 0 and f.height > 0]
-            n_avail = _block_avail_slots(blk, keep_indices)
             n_needed = _subs_needed_colors(cropped)
             # 色板策略：勾选自动重算 → 全组重算；否则槽位不足自动靠色（不弹窗）
             if use_rebuild:
@@ -1905,7 +1966,9 @@ class JVGEditor(EditorMainWindow):
                 mode = "match"
             else:
                 mode = "auto"
-            new_frames = _batch_quantize_subs_to_block(cropped, blk, keep_indices, mode=mode)
+            if w.is_cancelled():
+                return None
+            new_frames = _batch_quantize_subs_to_block(cropped, snap, keep_indices, mode=mode)
             if use_bbox:
                 # 应用 bbox 偏移（参照导入图集：图水平中心对齐 0，y 按 bbox 底部基准映射）
                 max_b = max((bb[3] for bb in crop_metas if bb), default=0)
@@ -1918,14 +1981,33 @@ class JVGEditor(EditorMainWindow):
                     _, _, r, b = bb
                     nf.x_max = (auto_min_vl + r - 1) & 0xFFFF
                     nf.y_max = (auto_min_vt + b - 1) & 0xFFFF
-            blk.frames.extend(new_frames)
-            self._sync_list()
-            self._kill_anim()
-            self._refresh_view()
-            self._dirty = True
-            _note = {"rebuild": "（已重算全部色板）", "match": "（已靠色处理）"}.get(mode, "")
-            _bbox_note = "（已按 bbox 计算偏移）" if use_bbox else ""
-            self._info.setText(f"导入 {len(new_frames)} 帧" + _note + _bbox_note)
+            return (bi, snap, new_frames, mode, use_bbox)
+
+        self._info.setText("正在导入...")
+        self._import_worker = run_with_progress(
+            self, "导入图片", work,
+            on_success=self._on_add_images_done,
+            on_error=self._on_import_error, cancellable=True)
+
+    def _on_add_images_done(self, result):
+        if result is None:
+            self._info.setText("导入已取消")
+            return
+        bi, snap, new_frames, mode, use_bbox = result
+        blk = self.jvg.blocks[bi]
+        snap.writeback(blk)
+        blk.frames.extend(new_frames)
+        self._sync_list()
+        self._kill_anim()
+        self._refresh_view()
+        self._dirty = True
+        _note = {"rebuild": "（已重算全部色板）", "match": "（已靠色处理）"}.get(mode, "")
+        _bbox_note = "（已按 bbox 计算偏移）" if use_bbox else ""
+        self._info.setText(f"导入 {len(new_frames)} 帧" + _note + _bbox_note)
+
+    def _on_import_error(self, err_msg):
+        self._info.setText("导入失败")
+        QMessageBox.critical(self, "导入失败", err_msg)
 
     def _replace_frame(self):
         if not self.jvg or self._bi < 0 or self._sel_fi < 0:
@@ -1994,7 +2076,7 @@ class JVGEditor(EditorMainWindow):
         if not path:
             return
         try:
-            gs = Image.open(path).convert('RGBA')
+            gs = Image.open(path)  # 惰性打开, 解码随裁剪移入工作线程 (P3-3)
         except Exception as e:
             QMessageBox.critical(self, "打开失败", str(e))
             return
@@ -2042,102 +2124,128 @@ class JVGEditor(EditorMainWindow):
 
         auto_min_vl = -((cw - 1) // 2)
 
-        self._info.setText(f"导入组图: 裁剪 cell...")
-        QApplication.processEvents()
+        bi = self._bi
+        use_rebuild = self._chk_rebuild.isChecked()
+        # 全帧克隆快照 (replace 集合在工作线程内确定): rebuild 的像素重映射
+        # 与调色板重写落在快照上, UI 回调阶段经 writeback 整体回写 (P3-3)
+        snap = _BlkSnapshot(blk)
 
-        subs = []
-        metas = []
-        replace_set = set()
-        max_cells = cols * rows
-        skipped = 0
+        def work(w):
+            gs_rgba = gs.convert('RGBA')
+            w.progress("导入组图: 裁剪 cell...")
+            subs = []
+            metas = []
+            replace_set = set()
+            max_cells = cols * rows
+            skipped = 0
 
-        if is_new_block:
-            for cell_idx in range(max_cells):
-                ri = cell_idx // cols
-                ci = cell_idx % cols
-                cx = ci * (cw + pad)
-                cy = ri * (ch + pad)
-                if cx + cw > gs_w or cy + ch > gs_h:
-                    skipped += 1
-                    continue
-                cell = gs.crop((cx, cy, cx + cw, cy + ch))
-                bbox = cell.getchannel('A').getbbox()
-                if bbox is None:
-                    skipped += 1
-                    continue
-                l, t, r, b = bbox
-                sub = cell.crop((l, t, r, b))
-                new_x_max = (auto_min_vl + r - 1) & 0xFFFF
-                subs.append(sub)
-                metas.append((new_x_max, 0, b))
-        else:
-            # 预计算全局视口原点 (与 export_gridsheet 一致)
-            _vrs = []
-            for _, vf in valid_list:
-                _xm = _u16s(vf.x_max)
-                _ym = _u16s(vf.y_max)
-                _vl = _xm - vf.width + 1
-                _vt = _ym - vf.height + 1
-                _vrs.append((_vl, _vt, _xm, _ym))
-            _min_vl = min(r[0] for r in _vrs)
-            _min_vt = min(r[1] for r in _vrs)
-
-            for cell_idx, (blk_fi, old_f) in enumerate(valid_list):
-                if cell_idx >= max_cells:
-                    skipped += 1
-                    continue
-                ri = cell_idx // cols
-                ci = cell_idx % cols
-                cx = ci * (cw + pad)
-                cy = ri * (ch + pad)
-                if cx + cw > gs_w or cy + ch > gs_h:
-                    skipped += 1
-                    continue
-                cell = gs.crop((cx, cy, cx + cw, cy + ch))
-                bbox = cell.getchannel('A').getbbox()
-                if bbox is None:
-                    skipped += 1
-                    continue
-                if use_bbox_mode:
-                    # Bbox 自适应模式：用 alpha 通道检测精灵边界
+            if is_new_block:
+                for cell_idx in range(max_cells):
+                    if w.is_cancelled():
+                        return None
+                    ri = cell_idx // cols
+                    ci = cell_idx % cols
+                    cx = ci * (cw + pad)
+                    cy = ri * (ch + pad)
+                    if cx + cw > gs_w or cy + ch > gs_h:
+                        skipped += 1
+                        continue
+                    cell = gs_rgba.crop((cx, cy, cx + cw, cy + ch))
+                    bbox = cell.getchannel('A').getbbox()
+                    if bbox is None:
+                        skipped += 1
+                        continue
                     l, t, r, b = bbox
                     sub = cell.crop((l, t, r, b))
-                    # 用全局视口原点计算游戏世界坐标 (所有 cell 统一基准)
-                    new_x_max = (_min_vl + r - 1) & 0xFFFF
-                    new_y_max = (_min_vt + b - 1) & 0xFFFF
-                else:
-                    # 精确匹配模式：按旧帧 offset 提取，尺寸不变
-                    old_xm = _u16s(old_f.x_max)
-                    old_ym = _u16s(old_f.y_max)
-                    old_vl = old_xm - old_f.width + 1
-                    old_vt = old_ym - old_f.height + 1
-                    ox = old_vl - _min_vl
-                    oy = old_vt - _min_vt
-                    sub = cell.crop((ox, oy, ox + old_f.width, oy + old_f.height))
-                    new_x_max = old_f.x_max
-                    new_y_max = old_f.y_max
-                subs.append(sub)
-                metas.append((blk_fi, new_x_max, new_y_max))
-                replace_set.add(blk_fi)
+                    new_x_max = (auto_min_vl + r - 1) & 0xFFFF
+                    subs.append(sub)
+                    metas.append((new_x_max, 0, b))
+            else:
+                # 预计算全局视口原点 (与 export_gridsheet 一致)
+                _vrs = []
+                for _, vf in valid_list:
+                    _xm = _u16s(vf.x_max)
+                    _ym = _u16s(vf.y_max)
+                    _vl = _xm - vf.width + 1
+                    _vt = _ym - vf.height + 1
+                    _vrs.append((_vl, _vt, _xm, _ym))
+                _min_vl = min(r[0] for r in _vrs)
+                _min_vt = min(r[1] for r in _vrs)
 
-        if is_new_block and metas:
-            auto_min_vt = -max(m[2] for m in metas)
-            metas = [(m[0], (auto_min_vt + m[2] - 1) & 0xFFFF) for m in metas]
+                for cell_idx, (blk_fi, old_f) in enumerate(valid_list):
+                    if w.is_cancelled():
+                        return None
+                    if cell_idx >= max_cells:
+                        skipped += 1
+                        continue
+                    ri = cell_idx // cols
+                    ci = cell_idx % cols
+                    cx = ci * (cw + pad)
+                    cy = ri * (ch + pad)
+                    if cx + cw > gs_w or cy + ch > gs_h:
+                        skipped += 1
+                        continue
+                    cell = gs_rgba.crop((cx, cy, cx + cw, cy + ch))
+                    bbox = cell.getchannel('A').getbbox()
+                    if bbox is None:
+                        skipped += 1
+                        continue
+                    if use_bbox_mode:
+                        # Bbox 自适应模式：用 alpha 通道检测精灵边界
+                        l, t, r, b = bbox
+                        sub = cell.crop((l, t, r, b))
+                        # 用全局视口原点计算游戏世界坐标 (所有 cell 统一基准)
+                        new_x_max = (_min_vl + r - 1) & 0xFFFF
+                        new_y_max = (_min_vt + b - 1) & 0xFFFF
+                    else:
+                        # 精确匹配模式：按旧帧 offset 提取，尺寸不变
+                        old_xm = _u16s(old_f.x_max)
+                        old_ym = _u16s(old_f.y_max)
+                        old_vl = old_xm - old_f.width + 1
+                        old_vt = old_ym - old_f.height + 1
+                        ox = old_vl - _min_vl
+                        oy = old_vt - _min_vt
+                        sub = cell.crop((ox, oy, ox + old_f.width, oy + old_f.height))
+                        new_x_max = old_f.x_max
+                        new_y_max = old_f.y_max
+                    subs.append(sub)
+                    metas.append((blk_fi, new_x_max, new_y_max))
+                    replace_set.add(blk_fi)
 
-        self._info.setText(f"导入组图: 统一量化 {len(subs)} 帧...")
-        QApplication.processEvents()
+            if is_new_block and metas:
+                auto_min_vt = -max(m[2] for m in metas)
+                metas = [(m[0], (auto_min_vt + m[2] - 1) & 0xFFFF) for m in metas]
 
-        keep_indices = [i for i in range(len(blk.frames)) if i not in replace_set]
-        n_avail = _block_avail_slots(blk, keep_indices)
-        n_needed = _subs_needed_colors(subs)
-        # 色板策略：勾选自动重算 → 全组重算；否则槽位不足自动靠色（不弹窗）
-        if self._chk_rebuild.isChecked():
-            mode = "rebuild"
-        elif n_needed > n_avail:
-            mode = "match"
-        else:
-            mode = "auto"
-        new_frames = _batch_quantize_subs_to_block(subs, blk, keep_indices, mode=mode)
+            if w.is_cancelled():
+                return None
+            w.progress(f"导入组图: 统一量化 {len(subs)} 帧...")
+
+            keep_indices = [i for i in range(len(snap.frames)) if i not in replace_set]
+            n_avail = _block_avail_slots(snap, keep_indices)
+            n_needed = _subs_needed_colors(subs)
+            # 色板策略：勾选自动重算 → 全组重算；否则槽位不足自动靠色（不弹窗）
+            if use_rebuild:
+                mode = "rebuild"
+            elif n_needed > n_avail:
+                mode = "match"
+            else:
+                mode = "auto"
+            new_frames = _batch_quantize_subs_to_block(subs, snap, keep_indices, mode=mode)
+            return (bi, snap, new_frames, metas, is_new_block, use_bbox_mode,
+                    skipped, mode, cw, ch)
+
+        self._import_worker = run_with_progress(
+            self, "导入组图", work,
+            on_success=self._on_grid_replace_done,
+            on_error=self._on_import_error, cancellable=True)
+
+    def _on_grid_replace_done(self, result):
+        if result is None:
+            self._info.setText("导入已取消")
+            return
+        bi, snap, new_frames, metas, is_new_block, use_bbox_mode, skipped, mode, cw, ch = result
+        blk = self.jvg.blocks[bi]
+        snap.writeback(blk)
 
         if is_new_block:
             for (xm, ym), nf in zip(metas, new_frames):
@@ -2896,7 +3004,7 @@ class JVGEditor(EditorMainWindow):
             return
 
         try:
-            img = Image.open(fp).convert('RGBA')
+            img = Image.open(fp)  # 惰性打开, 解码随裁剪移入工作线程 (P3-3)
         except Exception as e:
             QMessageBox.critical(self, "打开失败", str(e))
             return
@@ -2906,30 +3014,63 @@ class JVGEditor(EditorMainWindow):
         stride = cell_size + padding
         total_cells = cols * rows
 
+        # 后台线程: 图集解码 + 逐格裁剪/缩放/量化 (P3-3), 数据应用在回调
+        def work(w):
+            w.progress(f"导入全部头像: 解析 {cols}×{rows} 图集...")
+            img_rgba = img.convert('RGBA')
+            results = []
+            for cell_idx in range(total_cells):
+                if w.is_cancelled():
+                    return None
+                ri = cell_idx // cols
+                ci = cell_idx % cols
+                cx = ci * stride
+                cy = ri * stride
+
+                # 裁剪 70×70 区域
+                cell_70 = img_rgba.crop((cx, cy, cx + cell_size, cy + cell_size))
+
+                # 跳过全透明 cell
+                bbox = cell_70.getchannel('A').getbbox()
+                if bbox is None:
+                    continue
+
+                # 缩放生成 35×35
+                cell_35 = cell_70.resize((35, 35), Image.LANCZOS)
+
+                even_bi = cell_idx * 2       # 70×70 头像 block
+                odd_bi = cell_idx * 2 + 1    # 35×35 头像 block
+
+                # --- 70×70 头像 (调色板转存为数据, 线程内不触碰真实块) ---
+                frame_70 = _pil_frame(cell_70)
+                pal70 = list(frame_70._palette.entries) if frame_70._palette else None
+                frame_70._palette = None
+                frame_70.x_max = (cell_size - 1) & 0xFFFF
+                frame_70.y_max = (cell_size - 1) & 0xFFFF
+
+                # --- 35×35 头像 ---
+                frame_35 = _pil_frame(cell_35)
+                pal35 = list(frame_35._palette.entries) if frame_35._palette else None
+                frame_35._palette = None
+                frame_35.x_max = (35 - 1) & 0xFFFF
+                frame_35.y_max = (35 - 1) & 0xFFFF
+
+                results.append((even_bi, pal70, frame_70, odd_bi, pal35, frame_35))
+            return results, cols, rows
+
         self._info.setText(f"导入全部头像: 解析 {cols}×{rows} 图集...")
-        QApplication.processEvents()
+        self._import_worker = run_with_progress(
+            self, "导入全部头像", work,
+            on_success=self._on_avatars_done,
+            on_error=self._on_import_error, cancellable=True)
 
+    def _on_avatars_done(self, result):
+        if result is None:
+            self._info.setText("导入已取消")
+            return
+        results, cols, rows = result
         imported = 0
-        for cell_idx in range(total_cells):
-            ri = cell_idx // cols
-            ci = cell_idx % cols
-            cx = ci * stride
-            cy = ri * stride
-
-            # 裁剪 70×70 区域
-            cell_70 = img.crop((cx, cy, cx + cell_size, cy + cell_size))
-
-            # 跳过全透明 cell
-            bbox = cell_70.getchannel('A').getbbox()
-            if bbox is None:
-                continue
-
-            # 缩放生成 35×35
-            cell_35 = cell_70.resize((35, 35), Image.LANCZOS)
-
-            even_bi = cell_idx * 2       # 70×70 头像 block
-            odd_bi = cell_idx * 2 + 1    # 35×35 头像 block
-
+        for even_bi, pal70, frame_70, odd_bi, pal35, frame_35 in results:
             # 确保 block 存在
             while even_bi >= len(self.jvg.blocks):
                 self.jvg.blocks.append(JVMBlock(f"block_{len(self.jvg.blocks):02d}"))
@@ -2939,24 +3080,12 @@ class JVGEditor(EditorMainWindow):
             blk_even = self.jvg.blocks[even_bi]
             blk_odd = self.jvg.blocks[odd_bi]
 
-            # --- 导入 70×70 头像 ---
-            frame_70 = _pil_frame(cell_70)
-            if frame_70._palette:
-                blk_even.palette.entries = list(frame_70._palette.entries)
-                frame_70._palette = None
-            frame_70.x_max = (cell_size - 1) & 0xFFFF
-            frame_70.y_max = (cell_size - 1) & 0xFFFF
+            if pal70 is not None:
+                blk_even.palette.entries = pal70
             blk_even.frames = [frame_70]
-
-            # --- 导入 35×35 头像 ---
-            frame_35 = _pil_frame(cell_35)
-            if frame_35._palette:
-                blk_odd.palette.entries = list(frame_35._palette.entries)
-                frame_35._palette = None
-            frame_35.x_max = (35 - 1) & 0xFFFF
-            frame_35.y_max = (35 - 1) & 0xFFFF
+            if pal35 is not None:
+                blk_odd.palette.entries = pal35
             blk_odd.frames = [frame_35]
-
             imported += 1
 
         self._sync_list()

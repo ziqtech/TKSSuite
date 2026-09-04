@@ -14,6 +14,7 @@ from PySide6.QtWidgets import QLabel, QApplication, QWidget, QVBoxLayout
 
 from book_loader import pil_to_qpixmap
 from tab_common import BookTabBase
+from editor_utils.task_runner import run_background, is_running
 
 # 特殊物品颜色: 已知物品名固定配色, 其它物品从调色板按出现顺序分配
 # 地图标记色 — 领域常量 (阶段 2 豁免: 主题无关)
@@ -84,21 +85,29 @@ class MapTab(BookTabBase):
         self._populated = True
         self._preview_lbl.setText("正在加载 SC.GRP…")
         self._preview_lbl.adjustSize()
-        QApplication.processEvents()
-        grp = self.data.sc_grp()
-        # 场景 → 特殊物品有效总数 (Attribute(-1,11,N) 启用来源增量合计)
-        spec_tot = {}
-        for e in getattr(self.data, 'special_items', None) or []:
-            if e.get('enabled', True):
-                spec_tot[e['scene']] = spec_tot.get(e['scene'], 0) + e['delta']
-        rows = []
-        if grp is not None:
-            for sec in grp.sections:
-                if sec.width <= 0 or sec.height <= 0:
-                    continue
-                sid = sec.index
-                rows.append((sid, [str(sid), self.data.scene_name(sid),
-                                   str(spec_tot.get(sid, 0))]))
+
+        # 后台线程: SC.GRP 惰性加载/解码 (P3-3), 表格填充在回调
+        def work(w):
+            grp = self.data.sc_grp()
+            # 场景 → 特殊物品有效总数 (Attribute(-1,11,N) 启用来源增量合计)
+            spec_tot = {}
+            for e in getattr(self.data, 'special_items', None) or []:
+                if e.get('enabled', True):
+                    spec_tot[e['scene']] = spec_tot.get(e['scene'], 0) + e['delta']
+            rows = []
+            if grp is not None:
+                for sec in grp.sections:
+                    if sec.width <= 0 or sec.height <= 0:
+                        continue
+                    sid = sec.index
+                    rows.append((sid, [str(sid), self.data.scene_name(sid),
+                                       str(spec_tot.get(sid, 0))]))
+            return rows
+
+        self._grp_worker = run_background(
+            self, work, on_success=self._on_grp_loaded)
+
+    def _on_grp_loaded(self, rows):
         self.set_table_items(["#", "场景", "特殊物品"], rows,
                              widths={0: 50, 2: 80}, stretch_col=1)
         if rows:
@@ -110,13 +119,19 @@ class MapTab(BookTabBase):
     def show_detail(self, sid):
         pix = self._pix_cache.get(sid)
         if pix is None:
+            if is_running(getattr(self, '_scene_worker', None)):
+                return
             self._preview_lbl.setText(f"正在解码场景 {sid}…")
             self._preview_lbl.adjustSize()
-            QApplication.processEvents()
-            img = self.data.scene_background(sid)
-            pix = pil_to_qpixmap(img)
-            if pix is not None:
-                self._pix_cache[sid] = pix
+
+            # 后台线程: 场景底图解码 (P3-3), 缓存与上屏在回调
+            def work(w):
+                return sid, pil_to_qpixmap(self.data.scene_background(sid))
+
+            self._scene_worker = run_background(
+                self, work,
+                on_success=self._on_scene_decoded)
+            return
         if pix is None:
             self._preview_lbl.setText(f"场景 {sid} 无背景图")
             self._legend_lbl.setText("")
@@ -129,6 +144,26 @@ class MapTab(BookTabBase):
             self._legend_lbl.setText(self._legend_html(sid))
             self._preview_lbl.setToolTip(
                 f"{self.data.scene_name(sid)}  ({pix.width()}×{pix.height()})")
+            self._preview_lbl.adjustSize()
+            self._detail_w.adjustSize()
+
+    def _on_scene_decoded(self, result):
+        sid, pix = result
+        if pix is None:
+            # 负缓存: 无背景图的场景不再反复解码
+            self._pix_cache[sid] = None
+            self._preview_lbl.setText(f"场景 {sid} 无背景图")
+            self._legend_lbl.setText("")
+            return
+        self._pix_cache[sid] = pix
+        full = self._overlay_cache.get(sid)
+        if full is None:
+            full = self._compose(sid, pix)
+            self._overlay_cache[sid] = full
+        self._preview_lbl.setPixmap(full)
+        self._legend_lbl.setText(self._legend_html(sid))
+        self._preview_lbl.setToolTip(
+            f"{self.data.scene_name(sid)}  ({pix.width()}×{pix.height()})")
         self._preview_lbl.adjustSize()
         self._detail_w.adjustSize()
 
