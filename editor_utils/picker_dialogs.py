@@ -27,15 +27,9 @@ from editor_utils.theme_switcher import apply_theme_to_window
 from editor_utils.window_theme import apply_titlebar_theme
 
 
-# 31 种状态名称 (Maker UI 状态列表; bit 0..30) — 供状态弹窗/标签渲染共用
-STATUS_NAMES = [
-    "破兵","碎甲","昏眩","封锁","羁绊","蓄力","刚体","集中",
-    "云身","神行","无视","伪装","御风","死战","连计","连计",
-    "误导","混乱","禁制","定身","诅咒","封印","燃烧","冰冻",
-    "虚弱","麻痹","沈睡","中毒","迷恋","明镜","针灸",
-]
-# Mu.JVG 中状态图标起始精灵索引 (对齐 item_editor); 用于状态弹窗/预览中的图标
-STATUS_ICON_BASE = 242
+# 状态常量已迁移至纯数据模块 game_defs (webui 无 Qt 环境亦需导入);
+# 此处 re-export 以兼容既有编辑器代码的 import 路径。
+from editor_utils.game_defs import STATUS_NAMES, STATUS_ICON_BASE  # noqa: F401
 
 
 class TktPickerDialog(QDialog):

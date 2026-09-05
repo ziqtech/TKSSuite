@@ -17,7 +17,7 @@ import struct
 from editor_utils.lzss import lzss_decompress_dat
 from editor_utils.tkt_loader import load_tkt_simple
 from editor_utils.jvg_loader import load_mu_sprites
-from editor_utils.picker_dialogs import STATUS_NAMES
+from editor_utils.game_defs import STATUS_NAMES
 
 # ═══════════════════════════════════════════════════════════════
 # 记录布局常量
