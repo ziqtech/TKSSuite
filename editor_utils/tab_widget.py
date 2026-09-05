@@ -50,9 +50,10 @@ class EditorTabPane(QWidget):
     RADIUS = float(theme_tokens.SLOTS["radius_md"][0].rstrip("px"))
 
     # 自绘边框色按主题族区分：modern 为中性灰，classic 为 Godot 蓝灰。
-    # 值取自 theme_tokens 的 bd_regular 槽位原始颜色 (P3-6 收编:
-    # (gpt-dark, gpt-light, classic-dark, classic-light) 与 QSS 同源)。
-    _bd = theme_tokens.SLOTS["bd_regular"]
+    # bd_regular 槽位 (P3-6 收编) 存的是完整 CSS 边框串 "1px solid #xxx"，
+    # QColor 解析不了整串会静默退成纯黑画笔（flat 标签页三边纯黑边框的
+    # 根因），故只取末段色值。
+    _bd = tuple(v.split()[-1] for v in theme_tokens.SLOTS["bd_regular"])
     _BORDER_COLORS = {
         ("modern", True): _bd[0],
         ("modern", False): _bd[1],

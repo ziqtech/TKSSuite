@@ -166,6 +166,22 @@ class ThemeConsistencyTests(unittest.TestCase):
                     theme_manager.canvas_background(tid).lower(),
                     f"{tid}: QSS 画布底色与 canvas_background() 不一致")
 
+    def test_tab_pane_border_colors_are_parseable(self):
+        """EditorTabPane 自绘边框色必须是 QColor 可解析的裸色值。
+
+        bd_regular 槽位存的是完整 CSS 边框串 ("1px solid #xxx")，直接整串
+        喂给 QColor 会静默退化成纯黑画笔 (2026-09-06 修复的 flat 标签页
+        三边纯黑边框根因)，此处防回归。
+        """
+        from PySide6.QtGui import QColor
+
+        from editor_utils.tab_widget import EditorTabPane
+        for key, value in EditorTabPane._BORDER_COLORS.items():
+            with self.subTest(border=key, value=value):
+                self.assertTrue(
+                    QColor(value).isValid(),
+                    f"{key}: {value!r} 不是 QColor 可解析的颜色值")
+
     def test_palette_matches_definitions(self):
         """theme_manager.palette() 必须逐角色还原 theme_tokens.PALETTE 定义。"""
         from PySide6.QtGui import QPalette
