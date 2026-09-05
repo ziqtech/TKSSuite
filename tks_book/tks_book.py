@@ -270,7 +270,7 @@ class TksBookViewer(EditorMainWindow):
             (self.lbl_skill, _p("TKSkill.dat"), "TKSkill.dat"),
             (self.lbl_item, _p("TKItem.dat"), "TKItem.dat"),
             (self.lbl_grp, _p("SC.GRP"), "SC.GRP"),
-        ], self.is_dark_theme)
+        ], self._is_dark)
 
     # ── 帮助 ──
 

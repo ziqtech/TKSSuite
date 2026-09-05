@@ -2,7 +2,7 @@
 import os
 
 from PySide6.QtCore import Qt, QSize, QSettings, QTimer
-from PySide6.QtGui import QIcon, QKeySequence, QShortcut
+from PySide6.QtGui import QIcon, QKeySequence
 from PySide6.QtWidgets import (
     QApplication, QButtonGroup, QDialog, QFileDialog, QLabel, QMainWindow,
     QMessageBox, QPushButton, QRadioButton, QSizePolicy, QSplitter, QStatusBar,
@@ -383,9 +383,8 @@ class MainWindow(QMainWindow):
         self.btn_theme.setToolTip("在深色/浅色主题间快速切换 (Ctrl+T)")
         self.btn_theme.clicked.connect(lambda: toggle_theme_in_family(self))
         toolbar.addWidget(self.btn_theme)
-        # 设置菜单移除后保留 Ctrl+T 快捷键
-        QShortcut(QKeySequence("Ctrl+T"), self,
-                  activated=lambda: toggle_theme_in_family(self))
+        # Ctrl+T 快捷键由「主题」菜单标准项 (create_theme_menu) 提供;
+        # 此处不得重复绑定 —— 同窗口两个相同按键会成为 Qt 歧义快捷键, 双双失效
 
         # 模式卡片按钮 (创建于此, 放置于顶部模式行; 样式走主题 #modeCard 规范)
         # 仍由 QButtonGroup 互斥管理, property("mode") 语义与原单选按钮一致
