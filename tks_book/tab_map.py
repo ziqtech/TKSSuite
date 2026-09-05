@@ -29,7 +29,7 @@ class MapTab(BookTabBase):
     """地图查看页: 左侧场景列表 (同 TKMat 编辑器场景列表), 右侧背景预览+标注"""
 
     def __init__(self, data, parent=None):
-        super().__init__(data, parent)
+        super().__init__(data, parent, placeholder="搜索场景名称")
         self._pix_cache = {}       # sid → 背景 QPixmap (无标注)
         self._overlay_cache = {}   # sid → 叠加标注后的 QPixmap
         self._populated = False

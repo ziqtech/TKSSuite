@@ -33,7 +33,7 @@ class ModSplitterDialog(QDialog):
         pkg_row.addWidget(QLabel("合集文件:"))
         self.edit_pkg_path = QLineEdit()
         self.edit_pkg_path.setReadOnly(True)
-        self.edit_pkg_path.setPlaceholderText("点击「打开…」选择 .tksmodpak 文件")
+        self.edit_pkg_path.setPlaceholderText("点击「打开」按钮选择 .tksmodpak 文件")
         pkg_row.addWidget(self.edit_pkg_path, 1)
         btn_open = QPushButton("打开…")
         btn_open.clicked.connect(self._on_open)

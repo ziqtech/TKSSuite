@@ -31,8 +31,8 @@ class ItemTab(BookTabBase):
     # 默认左栏视口 (~630), 数字列在任何主题字体下都不触发收缩截断。
     _WIDTHS = {0: 48, 1: 52, 2: 64, 3: 58, 4: 125, 5: 100, 6: 76}
 
-    def __init__(self, data, parent=None):
-        super().__init__(data, parent)
+    def __init__(self, data, parent=None, placeholder="搜索名称、ID或分类"):
+        super().__init__(data, parent, placeholder=placeholder)
         self._icon_cache = {}
         self._all_rows = []   # [(rec_index, cells, page), ...] 未筛选全量
         # 分类筛选 (参考 item_editor 页面号筛选; 查看器无空槽无需仅非空)

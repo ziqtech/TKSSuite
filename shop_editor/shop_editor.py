@@ -351,7 +351,7 @@ class ShopEditorWindow(EditorMainWindow):
 
         toolbar_layout.addSpacing(10)
         toolbar_layout.addWidget(QLabel("搜索:"))
-        self.search_input = SearchInput()
+        self.search_input = SearchInput("搜索区域或物品名称")
         self.search_input.setMinimumWidth(160)
         self.search_input.textChanged.connect(self._apply_filter)
         self.search_input.returnPressed.connect(self._apply_filter)

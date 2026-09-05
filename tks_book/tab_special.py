@@ -32,7 +32,7 @@ class SpecialItemTab(ItemTab):
     """特殊物品查看页: 按物品去重合并的收集度统计表格 + 物品详情"""
 
     def __init__(self, data, parent=None):
-        super().__init__(data, parent)
+        super().__init__(data, parent, placeholder="搜索物品名称")
         # 本页自有聚合逻辑, 隐藏 ItemTab 继承来的物品分类筛选
         self._filter_lbl.hide()
         self._filter_page.hide()

@@ -29,7 +29,7 @@ class CharTab(BookTabBase):
     """人物查看页: 左侧角色列表, 右侧详情"""
 
     def __init__(self, data, parent=None):
-        super().__init__(data, parent)
+        super().__init__(data, parent, placeholder="搜索角色名称或等级")
         self._fa_pix_cache = {}
         self._icon_cache = {}
         self._skill_filter = None   # 可学习技能的学习状态筛选 (None=全部)

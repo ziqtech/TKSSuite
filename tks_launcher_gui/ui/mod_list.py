@@ -120,7 +120,7 @@ class ModListWidget(QWidget):
         filter_row = QHBoxLayout()
         filter_row.setContentsMargins(0, 0, 0, 0)
         filter_row.setSpacing(4)
-        self._search_edit = SearchInput("搜索 名称/作者/ID/版本/说明")
+        self._search_edit = SearchInput("搜索名称、作者、ID、版本或说明")
         self._search_edit.textChanged.connect(self._apply_filter)
         filter_row.addWidget(self._search_edit, 1)
         self._category_combo = EditorComboBox()

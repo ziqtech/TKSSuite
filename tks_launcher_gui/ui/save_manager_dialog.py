@@ -76,7 +76,7 @@ class SaveManagerDialog(QDialog):
         game_lay = QHBoxLayout(game_group)
         self._edit_game_dir = QLineEdit()
         self._edit_game_dir.setReadOnly(True)
-        self._edit_game_dir.setPlaceholderText("点击「浏览…」选择 TKS.exe 所在目录")
+        self._edit_game_dir.setPlaceholderText("点击「浏览」按钮选择 TKS.exe 所在目录")
         game_lay.addWidget(self._edit_game_dir, 1)
         btn_browse = QPushButton("浏览…")
         btn_browse.clicked.connect(self._on_browse_game_dir)

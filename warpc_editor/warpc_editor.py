@@ -331,7 +331,7 @@ class TkkonPickerDialog(QDialog):
         layout = QVBoxLayout(self)
         sf = QHBoxLayout()
         sf.addWidget(QLabel("搜索:"))
-        self.search_box = SearchInput()
+        self.search_box = SearchInput("输入关键字过滤")
         self.search_box.textChanged.connect(self._refresh)
         sf.addWidget(self.search_box)
         layout.addLayout(sf)
@@ -670,7 +670,7 @@ class WarpcEditorV2(EditorMainWindow):
         # 工具栏
         toolbar = QHBoxLayout()
         toolbar.addWidget(QLabel("搜索:"))
-        self.search_entry = SearchInput()
+        self.search_entry = SearchInput("搜索名称或ID")
         self.search_entry.setMinimumWidth(160)
         self.search_entry.textChanged.connect(self._apply_filter)
         self.search_entry.returnPressed.connect(self._apply_filter)
@@ -680,7 +680,7 @@ class WarpcEditorV2(EditorMainWindow):
         toolbar.addSpacing(10)
         # 字段定位: 输入字段名/标签后回车跳转到对应 Tab 并高亮
         toolbar.addWidget(QLabel("定位字段:"))
-        self.field_search = SearchInput("字段名称…")
+        self.field_search = SearchInput("输入字段名称")
         self.field_search.setMinimumWidth(160)
         self._field_search_map = {}
         for _fd in FIELD_SCHEMA.values():

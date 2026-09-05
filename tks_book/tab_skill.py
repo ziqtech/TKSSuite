@@ -27,7 +27,7 @@ class SkillTab(BookTabBase):
     _WIDTHS = {0: 66, 1: 72, 2: 88, 4: 82, 5: 84}
 
     def __init__(self, data, parent=None):
-        super().__init__(data, parent)
+        super().__init__(data, parent, placeholder="搜索技能名称或ID")
         self._icon_cache = {}
         self._all_rows = []   # [(rec_index, cells, type), ...] 未筛选全量
         # 类型筛选 (同物品页分类筛选模式)

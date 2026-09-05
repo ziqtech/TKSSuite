@@ -7,7 +7,7 @@
 
 附加交互约定:
 * Esc 清空输入；已为空时移出焦点 (桌面搜索框的通行做法)；
-* 占位文案由调用方传入，默认 "搜索…"。
+* 占位文案由调用方传入，默认 "输入关键字过滤"。
 * 图标经 xmark / xmark-light 成对约定随主题切换 (PaletteChange 刷新)。
 """
 
@@ -27,7 +27,7 @@ class SearchInput(QLineEdit):
     _ICON_SIZE = 18  # ✕ 字形尺寸
     _RIGHT_PAD = 4   # 按钮距输入框右缘
 
-    def __init__(self, placeholder: str = "搜索…", parent=None):
+    def __init__(self, placeholder: str = "输入关键字过滤", parent=None):
         super().__init__(parent)
         self.setPlaceholderText(placeholder)
 

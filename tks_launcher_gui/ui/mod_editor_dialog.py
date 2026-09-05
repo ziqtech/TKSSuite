@@ -60,7 +60,7 @@ class ModEditorDialog(QDialog):
         file_row.addWidget(QLabel("模组文件:"))
         self.edit_path = QLineEdit()
         self.edit_path.setReadOnly(True)
-        self.edit_path.setPlaceholderText("点击「打开…」选择 .tksmod 或 .tksmodpak")
+        self.edit_path.setPlaceholderText("点击「打开」按钮选择 .tksmod 或 .tksmodpak 文件")
         file_row.addWidget(self.edit_path, 1)
         self.btn_open = QPushButton("打开…")
         self.btn_open.clicked.connect(self._on_open)

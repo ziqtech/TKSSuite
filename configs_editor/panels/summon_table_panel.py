@@ -417,7 +417,7 @@ class SummonTablePanel(ConfigPanelBase):
         search_row = QHBoxLayout()
         search_row.addWidget(QLabel("搜索:"))
         self._search = QLineEdit()
-        self._search.setPlaceholderText("按技能名称或编号搜索…")
+        self._search.setPlaceholderText("按技能名称或编号搜索")
         self._search.textChanged.connect(self._refresh_table)
         search_row.addWidget(self._search, 1)
         layout.addLayout(search_row)

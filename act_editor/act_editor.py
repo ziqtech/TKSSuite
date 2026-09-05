@@ -1804,7 +1804,7 @@ class ActEditorV2(EditorMainWindow):
         # 工具栏
         toolbar = QHBoxLayout()
         toolbar.addWidget(QLabel("搜索:"))
-        self.search_entry = SearchInput()
+        self.search_entry = SearchInput("搜索名称或编号")
         self.search_entry.setMinimumWidth(160)
         self.search_entry.textChanged.connect(self._apply_filter)
         toolbar.addWidget(self.search_entry)

@@ -91,7 +91,7 @@ class StatusTab(BookTabBase):
     """状态查看页: 31 种异常状态图标/名称/功能/来源"""
 
     def __init__(self, data, parent=None):
-        super().__init__(data, parent)
+        super().__init__(data, parent, placeholder="搜索状态名称或类型")
         self._icon_cache = {}
 
     def populate(self):

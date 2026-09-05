@@ -21,13 +21,14 @@ class BookTabBase(QWidget):
       show_detail(key)    — 选中表格行后渲染右侧详情
     """
 
-    def __init__(self, data, parent=None):
+    def __init__(self, data, parent=None, placeholder="输入关键字过滤"):
         super().__init__(parent)
         self.data = data          # GameData (共享引用, 由主窗口加载)
         self._headers = []        # 列标题
         self._rows = []           # [(key, [cell, ...]), ...] 全量
         self._widths = None       # {col: pixel_width} 非拉伸列像素宽
         self._stretch_col = None  # 拉伸列索引 (占用剩余空间)
+        self._placeholder = placeholder  # 供 _build_ui 使用
         self._build_ui()
 
     # ── UI 骨架 ──
@@ -48,7 +49,7 @@ class BookTabBase(QWidget):
         ll.setContentsMargins(0, 0, 0, 0)
         ll.setSpacing(4)
         search_row = QHBoxLayout()
-        self.search_input = SearchInput()
+        self.search_input = SearchInput(self._placeholder)
         self.search_input.textChanged.connect(self._apply_filter)
         search_row.addWidget(self.search_input, 1)
         ll.addLayout(search_row)
@@ -79,11 +80,23 @@ class BookTabBase(QWidget):
         self.detail_layout.addStretch()
         self.detail_scroll.setWidget(self._detail_container)
         splitter.addWidget(self.detail_scroll)
-        # 默认给列表足够空间，避免多列表格在初始宽度下挤压标题和数值。
-        splitter.setSizes([640, 660])
+        # 默认给列表足够空间: 左栏加宽保证最坏内容 (全旗权限组合等) 下
+        # 列宽总和仍低于视口, 不出现横向滚动条; 右侧详情相应缩窄。
+        # 构造期 setSizes 会在首次布局时被 Qt 覆盖, 故在 showEvent 里重设。
+        self._default_splitter_sizes = [700, 600]
+        self._splitter_sizes_applied = False
+        splitter.setSizes(self._default_splitter_sizes)
         self._splitter = splitter
 
     # ── 表格管理 ──
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        # 页签首次显示、布局几何已就绪后再应用默认分栏 (仅一次,
+        # 之后用户手动拖动的结果不被覆盖)
+        if not self._splitter_sizes_applied:
+            self._splitter_sizes_applied = True
+            self._splitter.setSizes(self._default_splitter_sizes)
 
     def set_table_items(self, headers, rows, widths=None, stretch_col=None):
         """重建左侧表格。

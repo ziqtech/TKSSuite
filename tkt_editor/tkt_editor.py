@@ -987,7 +987,7 @@ class TktEditor(EditorMainWindow):
 
         # 工具栏 (还原 Emoji)
         toolbar_layout = QHBoxLayout()
-        self.search_entry = SearchInput("关键词/ID搜索…")
+        self.search_entry = SearchInput("输入关键词或ID搜索")
         self.search_entry.setMinimumWidth(160)
         self.search_entry.setClearButtonEnabled(True)
         self.search_entry.textChanged.connect(self._apply_filter)

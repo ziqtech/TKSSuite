@@ -665,7 +665,7 @@ class WarDataEditorV2(EditorMainWindow):
         # 工具栏
         toolbar = QHBoxLayout()
         toolbar.addWidget(QLabel("搜索:"))
-        self.search_entry = SearchInput()
+        self.search_entry = SearchInput("输入关键字过滤")
         self.search_entry.setMinimumWidth(160)
         self.search_entry.textChanged.connect(self._apply_filter)
         self.search_entry.returnPressed.connect(self._apply_filter)

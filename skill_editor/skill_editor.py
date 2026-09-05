@@ -812,7 +812,7 @@ class SkillEditorApp(FieldUndoMixin, EditorMainWindow):
         # --- Toolbar ---
         toolbar = QHBoxLayout()
         toolbar.addWidget(QLabel("搜索:"))
-        self.search_entry = SearchInput()
+        self.search_entry = SearchInput("搜索技能名称或ID")
         self.search_entry.setMinimumWidth(160)
         self.search_entry.textChanged.connect(self._apply_filter)
         self.search_entry.returnPressed.connect(self._apply_filter)

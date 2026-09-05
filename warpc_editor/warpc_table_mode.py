@@ -763,7 +763,7 @@ class WarpcTablePanel(QWidget):
         bar.addWidget(self.preset_combo)
         bar.addSpacing(12)
         bar.addWidget(QLabel("筛选角色:"))
-        self.filter_edit = SearchInput("按名称/编号筛选行…")
+        self.filter_edit = SearchInput("按名称或编号筛选行")
         self.filter_edit.setMinimumWidth(160)
         self.filter_edit.textChanged.connect(self._apply_row_filter)
         bar.addWidget(self.filter_edit)

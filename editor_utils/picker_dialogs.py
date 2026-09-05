@@ -432,7 +432,7 @@ class ItemPickerDialog(QDialog):
         # 搜索栏
         sf = QHBoxLayout()
         sf.addWidget(QLabel("搜索:"))
-        self._search = SearchInput("按名称/ID/索引搜索…")
+        self._search = SearchInput("按名称、ID或索引搜索")
         self._search.textChanged.connect(self._refresh_table)
         sf.addWidget(self._search)
         sf.addWidget(QPushButton("清除", clicked=self._search.clear))
@@ -759,7 +759,7 @@ class WarpcPickerDialog(QDialog):
         layout = QVBoxLayout(self)
         # 搜索框
         search_row = QHBoxLayout()
-        self._search = SearchInput("按名称或索引搜索…")
+        self._search = SearchInput("按名称或索引搜索")
         self._search.textChanged.connect(self._populate)
         search_row.addWidget(self._search, 1)
         layout.addLayout(search_row)

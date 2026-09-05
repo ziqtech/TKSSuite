@@ -362,7 +362,7 @@ class KonEditor(FieldUndoMixin, EditorMainWindow):
         # -- 工具栏 --
         toolbar = QHBoxLayout()
         toolbar.addWidget(QLabel("搜索:"))
-        self.search_input = SearchInput()
+        self.search_input = SearchInput("搜索名称或ID")
         self.search_input.setMinimumWidth(160)
         self.search_input.textChanged.connect(self._apply_filter)
         toolbar.addWidget(self.search_input)
