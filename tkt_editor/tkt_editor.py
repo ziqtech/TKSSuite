@@ -59,6 +59,7 @@ from editor_utils.mod_exporter import (
 from editor_utils.version import format_title
 from editor_utils.tab_widget import EditorTabWidget
 from editor_utils.search_utils import search_match
+from editor_utils.search_input import SearchInput
 from editor_utils.task_runner import run_background, is_running
 
 # ============================================================
@@ -986,8 +987,7 @@ class TktEditor(EditorMainWindow):
 
         # 工具栏 (还原 Emoji)
         toolbar_layout = QHBoxLayout()
-        self.search_entry = QLineEdit()
-        self.search_entry.setPlaceholderText("关键词/ID搜索…")
+        self.search_entry = SearchInput("关键词/ID搜索…")
         self.search_entry.setMinimumWidth(160)
         self.search_entry.setClearButtonEnabled(True)
         self.search_entry.textChanged.connect(self._apply_filter)

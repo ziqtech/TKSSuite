@@ -9,7 +9,7 @@
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
-    QAbstractItemView, QCheckBox, QHBoxLayout, QLabel, QLineEdit,
+    QAbstractItemView, QCheckBox, QHBoxLayout, QLabel,
     QTableWidgetItem, QToolButton, QVBoxLayout, QWidget,
 )
 
@@ -21,6 +21,7 @@ from editor_utils.dock_components import create_dock
 from editor_utils.adaptive_table import AdaptiveTableWidget
 from editor_utils.combo_box import EditorComboBox
 from editor_utils.search_utils import search_match
+from editor_utils.search_input import SearchInput
 from editor_utils import theme_tokens
 
 # 重复 ID 警示红 (P3-6 收编: theme_tokens.LAUNCHER)
@@ -119,9 +120,7 @@ class ModListWidget(QWidget):
         filter_row = QHBoxLayout()
         filter_row.setContentsMargins(0, 0, 0, 0)
         filter_row.setSpacing(4)
-        self._search_edit = QLineEdit()
-        self._search_edit.setPlaceholderText("搜索 名称/作者/ID/版本/说明")
-        self._search_edit.setClearButtonEnabled(True)
+        self._search_edit = SearchInput("搜索 名称/作者/ID/版本/说明")
         self._search_edit.textChanged.connect(self._apply_filter)
         filter_row.addWidget(self._search_edit, 1)
         self._category_combo = EditorComboBox()

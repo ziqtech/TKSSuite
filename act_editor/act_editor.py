@@ -89,6 +89,7 @@ from editor_utils.theme_switcher import (
 from editor_utils.app_shell import EditorMainWindow, run_editor
 from editor_utils.version import format_title
 from editor_utils.search_utils import search_match
+from editor_utils.search_input import SearchInput
 from editor_utils.task_runner import run_background, is_running
 from editor_utils.kon_name_resolver import KonNameResolver
 from editor_utils.lzss import lzss_decompress_dat
@@ -1803,9 +1804,8 @@ class ActEditorV2(EditorMainWindow):
         # 工具栏
         toolbar = QHBoxLayout()
         toolbar.addWidget(QLabel("搜索:"))
-        self.search_entry = QLineEdit()
+        self.search_entry = SearchInput()
         self.search_entry.setMinimumWidth(160)
-        self.search_entry.setClearButtonEnabled(True)
         self.search_entry.textChanged.connect(self._apply_filter)
         toolbar.addWidget(self.search_entry)
         toolbar.addWidget(QPushButton("搜索", clicked=self._apply_filter))

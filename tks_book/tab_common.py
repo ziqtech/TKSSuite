@@ -2,13 +2,13 @@
 """tks_book 标签页公共组件 — 左侧搜索表格 + 右侧详情滚动区 (Dock 风格)"""
 from PySide6.QtCore import Qt, QSize
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QSplitter, QLineEdit,
+    QWidget, QVBoxLayout, QHBoxLayout, QSplitter,
     QTableWidgetItem, QAbstractItemView,
-    QScrollArea, QLabel, QGridLayout, QPushButton,
+    QScrollArea, QLabel, QGridLayout,
 )
 
 from editor_utils.dock_components import DockHeader
-from editor_utils.ui_helpers import set_themed_icon
+from editor_utils.search_input import SearchInput
 from editor_utils.search_utils import search_match
 from editor_utils.adaptive_table import AdaptiveTableWidget
 
@@ -48,21 +48,15 @@ class BookTabBase(QWidget):
         ll.setContentsMargins(0, 0, 0, 0)
         ll.setSpacing(4)
         search_row = QHBoxLayout()
-        self.search_input = QLineEdit()
-        self.search_input.setPlaceholderText("搜索…")
+        self.search_input = SearchInput()
         self.search_input.textChanged.connect(self._apply_filter)
         search_row.addWidget(self.search_input, 1)
-        btn_clear = QPushButton("")
-        set_themed_icon(btn_clear, "close")
-        btn_clear.setProperty("class", "CompactBtn")  # 紧凑内边距, 避免 ✕ 被裁剪
-        btn_clear.setToolTip("清除搜索")
-        btn_clear.setFixedWidth(28)
-        btn_clear.clicked.connect(self.search_input.clear)
-        search_row.addWidget(btn_clear)
         ll.addLayout(search_row)
         # 供子类向搜索行追加筛选控件 (如物品页分类下拉)
         self._search_row_layout = search_row
-        self.list_widget = AdaptiveTableWidget(0, 0)
+        # content_padding=0: 主题 QSS 已给单元格加横向内边距 (10px×2),
+        # 引擎默认的 14px 会与之双重计入、虚增内容基准导致误收缩。
+        self.list_widget = AdaptiveTableWidget(0, 0, content_padding=0)
         self.list_widget.setIconSize(QSize(24, 24))
         self.list_widget.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.list_widget.setSelectionMode(QAbstractItemView.SingleSelection)
@@ -86,7 +80,7 @@ class BookTabBase(QWidget):
         self.detail_scroll.setWidget(self._detail_container)
         splitter.addWidget(self.detail_scroll)
         # 默认给列表足够空间，避免多列表格在初始宽度下挤压标题和数值。
-        splitter.setSizes([520, 780])
+        splitter.setSizes([640, 660])
         self._splitter = splitter
 
     # ── 表格管理 ──

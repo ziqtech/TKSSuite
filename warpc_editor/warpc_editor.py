@@ -96,6 +96,7 @@ from editor_utils.mod_exporter import (
 )
 from editor_utils.tab_widget import EditorTabWidget
 from editor_utils.search_utils import search_match
+from editor_utils.search_input import SearchInput
 from editor_utils.task_runner import run_background, is_running
 from editor_utils.kon_name_resolver import KonNameResolver
 # 字段 Schema (唯一字段定义源): 常量/字段列表/FieldDef/打包字节编解码
@@ -330,7 +331,7 @@ class TkkonPickerDialog(QDialog):
         layout = QVBoxLayout(self)
         sf = QHBoxLayout()
         sf.addWidget(QLabel("搜索:"))
-        self.search_box = QLineEdit()
+        self.search_box = SearchInput()
         self.search_box.textChanged.connect(self._refresh)
         sf.addWidget(self.search_box)
         layout.addLayout(sf)
@@ -669,9 +670,8 @@ class WarpcEditorV2(EditorMainWindow):
         # 工具栏
         toolbar = QHBoxLayout()
         toolbar.addWidget(QLabel("搜索:"))
-        self.search_entry = QLineEdit()
+        self.search_entry = SearchInput()
         self.search_entry.setMinimumWidth(160)
-        self.search_entry.setClearButtonEnabled(True)
         self.search_entry.textChanged.connect(self._apply_filter)
         self.search_entry.returnPressed.connect(self._apply_filter)
         toolbar.addWidget(self.search_entry)
@@ -680,10 +680,8 @@ class WarpcEditorV2(EditorMainWindow):
         toolbar.addSpacing(10)
         # 字段定位: 输入字段名/标签后回车跳转到对应 Tab 并高亮
         toolbar.addWidget(QLabel("定位字段:"))
-        self.field_search = QLineEdit()
+        self.field_search = SearchInput("字段名称…")
         self.field_search.setMinimumWidth(160)
-        self.field_search.setClearButtonEnabled(True)
-        self.field_search.setPlaceholderText("字段名称…")
         self._field_search_map = {}
         for _fd in FIELD_SCHEMA.values():
             self._field_search_map[f"{_fd.label} [{_fd.index}]"] = _fd.key

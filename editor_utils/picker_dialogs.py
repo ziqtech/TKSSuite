@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
 from editor_utils.ui_helpers import resolve_config_path, EditorComboBox
 from editor_utils.adaptive_table import AdaptiveTableWidget
 from editor_utils.search_utils import search_match
+from editor_utils.search_input import SearchInput
 from editor_utils.theme_manager import business_colors
 from editor_utils.theme_switcher import apply_theme_to_window
 from editor_utils.window_theme import apply_titlebar_theme
@@ -48,8 +49,7 @@ class TktPickerDialog(QDialog):
         layout = QVBoxLayout(self)
 
         # 搜索框
-        self.search = QLineEdit()
-        self.search.setPlaceholderText("搜索…")
+        self.search = SearchInput()
         self.search.textChanged.connect(self._filter)
         layout.addWidget(self.search)
 
@@ -146,7 +146,7 @@ class SkillPickerDialog(QDialog):
         layout = QVBoxLayout(self)
         sf = QHBoxLayout()
         sf.addWidget(QLabel("搜索:"))
-        self.search_box = QLineEdit()
+        self.search_box = SearchInput()
         self.search_box.textChanged.connect(self._refresh)
         sf.addWidget(self.search_box)
         self.type_box = None
@@ -432,8 +432,7 @@ class ItemPickerDialog(QDialog):
         # 搜索栏
         sf = QHBoxLayout()
         sf.addWidget(QLabel("搜索:"))
-        self._search = QLineEdit()
-        self._search.setPlaceholderText("按名称/ID/索引搜索…")
+        self._search = SearchInput("按名称/ID/索引搜索…")
         self._search.textChanged.connect(self._refresh_table)
         sf.addWidget(self._search)
         sf.addWidget(QPushButton("清除", clicked=self._search.clear))
@@ -760,8 +759,7 @@ class WarpcPickerDialog(QDialog):
         layout = QVBoxLayout(self)
         # 搜索框
         search_row = QHBoxLayout()
-        self._search = QLineEdit()
-        self._search.setPlaceholderText("按名称或索引搜索…")
+        self._search = SearchInput("按名称或索引搜索…")
         self._search.textChanged.connect(self._populate)
         search_row.addWidget(self._search, 1)
         layout.addLayout(search_row)

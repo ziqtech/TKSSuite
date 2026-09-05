@@ -114,6 +114,18 @@ QLineEdit:disabled, QPlainTextEdit:disabled, QTextEdit:disabled {
     color: {{fg_14}};
     border-color: {{bd_08}};
 }
+/* 搜索框内清除按钮 (editor_utils/search_input.SearchInput) */
+QToolButton#SearchClearButton {
+    background-color: transparent;
+    border: none;
+    border-radius: {{radius_sm}};
+}
+QToolButton#SearchClearButton:hover {
+    background-color: {{bg_hover}};
+}
+QToolButton#SearchClearButton:pressed {
+    background-color: {{bg_32}};
+}
 
 /* ── 按钮与工具按钮 ── */
 QPushButton {

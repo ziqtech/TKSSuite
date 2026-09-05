@@ -57,6 +57,7 @@ from editor_utils.ui_helpers import (
     update_path_labels, EditorComboBox,
 )
 from editor_utils.search_utils import search_match
+from editor_utils.search_input import SearchInput
 from editor_utils.undo_stack import FieldUndoMixin
 
 # ── 本地别名: 保持向后兼容 ──
@@ -811,9 +812,8 @@ class SkillEditorApp(FieldUndoMixin, EditorMainWindow):
         # --- Toolbar ---
         toolbar = QHBoxLayout()
         toolbar.addWidget(QLabel("搜索:"))
-        self.search_entry = QLineEdit()
+        self.search_entry = SearchInput()
         self.search_entry.setMinimumWidth(160)
-        self.search_entry.setClearButtonEnabled(True)
         self.search_entry.textChanged.connect(self._apply_filter)
         self.search_entry.returnPressed.connect(self._apply_filter)
         toolbar.addWidget(self.search_entry)

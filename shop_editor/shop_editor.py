@@ -60,6 +60,7 @@ from editor_utils.theme_switcher import (
 from editor_utils.app_shell import EditorMainWindow, run_editor
 from editor_utils.ui_helpers import themed_question, update_path_labels, EditorComboBox, confirm_close
 from editor_utils.search_utils import search_match
+from editor_utils.search_input import SearchInput
 from editor_utils.task_runner import run_background, is_running
 
 # ── 本地别名: 保持向后兼容 ──
@@ -350,9 +351,8 @@ class ShopEditorWindow(EditorMainWindow):
 
         toolbar_layout.addSpacing(10)
         toolbar_layout.addWidget(QLabel("搜索:"))
-        self.search_input = QLineEdit()
+        self.search_input = SearchInput()
         self.search_input.setMinimumWidth(160)
-        self.search_input.setClearButtonEnabled(True)
         self.search_input.textChanged.connect(self._apply_filter)
         self.search_input.returnPressed.connect(self._apply_filter)
         toolbar_layout.addWidget(self.search_input)

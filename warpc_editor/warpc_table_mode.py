@@ -38,6 +38,7 @@ from warpc_schema import (
 from editor_utils.ui_helpers import EditorComboBox
 from editor_utils.picker_dialogs import STATUS_NAMES
 from editor_utils.search_utils import search_match
+from editor_utils.search_input import SearchInput
 
 # 双击弹出选择器的字段类型
 PICKER_FTYPES = {'skill_ref', 'item_idx_ref', 'item_id_ref',
@@ -762,10 +763,8 @@ class WarpcTablePanel(QWidget):
         bar.addWidget(self.preset_combo)
         bar.addSpacing(12)
         bar.addWidget(QLabel("筛选角色:"))
-        self.filter_edit = QLineEdit()
+        self.filter_edit = SearchInput("按名称/编号筛选行…")
         self.filter_edit.setMinimumWidth(160)
-        self.filter_edit.setClearButtonEnabled(True)
-        self.filter_edit.setPlaceholderText("按名称/编号筛选行…")
         self.filter_edit.textChanged.connect(self._apply_row_filter)
         bar.addWidget(self.filter_edit)
         bar.addSpacing(12)

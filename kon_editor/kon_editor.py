@@ -42,6 +42,7 @@ from editor_utils.mod_exporter import (
     get_tksmod_info, import_tksmod_records, ModImportPreviewDialog, ModExportPreviewDialog,
 )
 from editor_utils.search_utils import search_match
+from editor_utils.search_input import SearchInput
 from editor_utils.kon_name_resolver import KonNameResolver
 from editor_utils.adaptive_table import AdaptiveTableWidget
 from editor_utils.task_runner import run_background, is_running
@@ -361,9 +362,8 @@ class KonEditor(FieldUndoMixin, EditorMainWindow):
         # -- 工具栏 --
         toolbar = QHBoxLayout()
         toolbar.addWidget(QLabel("搜索:"))
-        self.search_input = QLineEdit()
+        self.search_input = SearchInput()
         self.search_input.setMinimumWidth(160)
-        self.search_input.setClearButtonEnabled(True)
         self.search_input.textChanged.connect(self._apply_filter)
         toolbar.addWidget(self.search_input)
 
