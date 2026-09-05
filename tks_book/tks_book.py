@@ -62,7 +62,7 @@ class TksBookViewer(EditorMainWindow):
         "   · 地图 — 场景列表 + 背景预览 (首次切换时加载 SC.GRP)\n"
         "   · 特殊物品 — TKD 脚本 Attribute(-1,11,N) 收集度来源统计\n"
         "3. 左侧列表上方输入关键字可即时过滤\n"
-        "4. F5 在当前主题族内快速切换深色/浅色")
+        "4. F5 在深色/浅色主题间快速切换")
 
     def _init_data(self):
         self.data = GameData()
@@ -157,7 +157,7 @@ class TksBookViewer(EditorMainWindow):
             btn.setParent(corner)
             cl.addWidget(btn)
         self._btn_theme = QPushButton("切换主题")
-        self._btn_theme.setToolTip("在当前主题族内快速切换深色/浅色 (F5)")
+        self._btn_theme.setToolTip("在深色/浅色主题间快速切换 (F5)")
         self._btn_theme.clicked.connect(self._toggle_theme)
         cl.addWidget(self._btn_theme)
         self.tabs.setCornerWidget(corner, Qt.TopRightCorner)

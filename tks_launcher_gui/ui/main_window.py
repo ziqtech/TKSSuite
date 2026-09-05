@@ -235,7 +235,7 @@ class MainWindow(QMainWindow):
         mm.addAction("制作音乐 MOD…", self._on_custom_music)
 
         # 主题菜单: 现代深色/现代浅色/经典深色/经典浅色 任选
-        # (工具栏按钮为族内深/浅快速切换)
+        # (工具栏按钮为深/浅快速切换)
         menu_bar.addMenu(create_theme_menu(self))
 
         # 帮助菜单: 使用说明 + 关于编辑器 (设置菜单已移除: 切换主题移至工具栏, 详细日志在启动状态面板行内按钮)
@@ -271,7 +271,7 @@ class MainWindow(QMainWindow):
             "10. 自定义头像: 上传图片并裁剪, 生成自定义头像 MOD\n"
             "11. 自定义音乐: 覆盖/新增 Sound 目录 BGM, 生成音乐 MOD\n"
             "12. 存档管理: 备份/恢复游戏存档及补丁状态快照\n"
-            "13. 主题：菜单栏「主题」任选 4 种主题；工具栏「切换主题」(Ctrl+T) 在当前主题族内快速深/浅切换\n\n"
+            "13. 主题：菜单栏「主题」任选 4 种主题；工具栏「切换主题」(Ctrl+T) 在深色/浅色主题间快速切换\n\n"
             "勾选状态会自动保存到 launcher_config.json, 下次启动时自动恢复;\n"
             "该文件与 Winlator 版 TKSLauncherCLI 共用, 复制到手机游戏目录即可直接使用\n\n"
             "运行时基于内存补丁引擎 (runtime_patcher) 实现\n"
@@ -380,7 +380,7 @@ class MainWindow(QMainWindow):
         self.btn_theme = QPushButton("切换主题")
         set_themed_icon(self.btn_theme, "theme")
         self.btn_theme.setObjectName("toolbarSecondary")
-        self.btn_theme.setToolTip("在当前主题族内快速切换深色/浅色 (Ctrl+T)")
+        self.btn_theme.setToolTip("在深色/浅色主题间快速切换 (Ctrl+T)")
         self.btn_theme.clicked.connect(lambda: toggle_theme_in_family(self))
         toolbar.addWidget(self.btn_theme)
         # 设置菜单移除后保留 Ctrl+T 快捷键

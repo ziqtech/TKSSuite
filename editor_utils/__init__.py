@@ -3,7 +3,7 @@ editor_utils — 编辑器公共模块 (14 个模块)
 
 UI 层:
   - theme_manager:    四主题注册表 / QSS 加载 / 调色板 / 选择持久化
-  - theme_switcher:   统一主题切换组件 (主题菜单 / 族内切换 / 窗口应用)
+  - theme_switcher:   统一主题切换组件 (主题菜单 / 深/浅快速切换 / 窗口应用)
   - window_theme:     Windows DWM 标题栏颜色 (apply_titlebar_theme)
   - combo_box:        统一下拉框弹层 (EditorComboBox)
   - tab_widget:       统一标签页/内容面板 (EditorTabWidget)

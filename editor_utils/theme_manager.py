@@ -227,7 +227,7 @@ def display_name(theme_id: str) -> str:
 
 
 def family_toggle(theme_id: str) -> str:
-    """返回同族内深/浅互换后的主题（族内快速切换）。"""
+    """返回同族深/浅互换后的主题（深浅快速切换）。"""
     value = normalize_theme(theme_id)
     deep, light = _FAMILIES[THEMES[value].family]
     return light if value == deep else deep

@@ -90,7 +90,7 @@ def _sync_tab_widgets(window, spec):
 
 
 def toggle_theme_in_family(window) -> str:
-    """族内深/浅快速切换（工具栏按钮与快捷键的统一槽函数）。"""
+    """同族深/浅快速切换（工具栏按钮与快捷键的统一槽函数）。"""
     current = current_window_theme(window)
     return apply_theme_to_window(window, theme_manager.family_toggle(current))
 
@@ -195,10 +195,10 @@ def create_theme_menu(window, title: str = "主题(&T)") -> QMenu:
 
     menu.aboutToShow.connect(_sync_checks)
 
-    # 族内快速切换作为标准项进入主题菜单 (Ctrl+T) — P3-8: 全编辑器统一
+    # 深浅快速切换作为标准项进入主题菜单 (Ctrl+T) — P3-8: 全编辑器统一
     # "Ctrl+T 快速切深浅" 行为; 已自带 Ctrl+T 绑定的编辑器应移除自有绑定。
-    quick = QAction("族内快速切换 (深/浅)", window)
-    quick.setStatusTip("在当前主题族 (modern/classic) 内快速切换深色/浅色 (Ctrl+T)")
+    quick = QAction("切换主题", window)
+    quick.setStatusTip("在深色/浅色主题间快速切换 (Ctrl+T)")
     quick.setShortcut(QKeySequence("Ctrl+T"))
     quick.triggered.connect(lambda: toggle_theme_in_family(window))
     menu.addSeparator()

@@ -258,7 +258,7 @@ class EditorMainWindow(QMainWindow):
         apply_theme_to_window(self, current_window_theme(self))
 
     def _toggle_theme(self):
-        """族内深浅快速切换 (子类可覆盖以追加刷新)。"""
+        """同族深/浅快速切换 (子类可覆盖以追加刷新)。"""
         toggle_theme_in_family(self)
 
     def _show_help(self):
