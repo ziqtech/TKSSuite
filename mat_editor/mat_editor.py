@@ -61,7 +61,7 @@ from editor_utils.app_shell import EditorMainWindow, run_editor
 from editor_utils.dock_components import DockHeader, create_dock
 from editor_utils.empty_state import EmptyStateOverlay
 from editor_utils.lzss import lzss_decompress_dat as lzss_decompress, lzss_decompress_save, lzss_compress_save
-from editor_utils.ui_helpers import confirm_close, themed_messagebox, EditorComboBox
+from editor_utils.ui_helpers import themed_question, confirm_close, themed_messagebox, EditorComboBox
 from editor_utils.tab_widget import EditorTabWidget
 from editor_utils.flow_layout import FlowLayout
 from editor_utils.adaptive_table import AdaptiveTableWidget
@@ -2876,8 +2876,9 @@ class MatEditorApp(EditorMainWindow):
         if not (0 <= idx < len(self._data.records)):
             return
         if confirm:
-            if QMessageBox.question(self, "确认", f"清空实体 #{idx}? (type 设为 0)",
-                                    QMessageBox.Ok | QMessageBox.Cancel) != QMessageBox.Ok:
+            if themed_question(self, "确认", f"清空实体 #{idx}? (type 设为 0)",
+                buttons=QMessageBox.Ok | QMessageBox.Cancel,
+                default=QMessageBox.Cancel) != QMessageBox.Ok:
                 return
         # 撤销: 记录删除前的完整数据
         self._canvas._push_undo(f"删除 #{idx}", [idx])
@@ -3361,8 +3362,9 @@ class MatEditorApp(EditorMainWindow):
         无脚本删除时行为等同普通 Ok/Cancel 确认框。"""
         deleted = self._detect_deleted_scripts()
         if not deleted:
-            return QMessageBox.question(self, title, base_msg,
-                                        QMessageBox.Ok | QMessageBox.Cancel) == QMessageBox.Ok
+            return themed_question(self, title, base_msg,
+                buttons=QMessageBox.Ok | QMessageBox.Cancel,
+                default=QMessageBox.Cancel) == QMessageBox.Ok
         warn = (f"⚠ 检测到 {len(deleted)} 个脚本相对上次保存/载入已被删除或清空:\n\n"
                 f"{self._format_deleted_scripts(deleted)}\n\n"
                 f"这可能是切换实体等操作导致的误删。若非本意, 请点「取消」返回检查;\n"
@@ -4536,9 +4538,10 @@ class MatEditorApp(EditorMainWindow):
         if du_rec is None:
             return
         entity_id = du_rec['f1']
-        if QMessageBox.question(self, "确认删除",
+        if themed_question(self, "确认删除",
                                 f"删除 DefUnit #{du_idx} → DEFINE {define_id}?\n此操作同时从 TKD.dat 删除对应 DEFINE 块。",
-                                QMessageBox.Ok | QMessageBox.Cancel) != QMessageBox.Ok:
+                                    buttons=QMessageBox.Ok | QMessageBox.Cancel,
+                                    default=QMessageBox.Cancel) != QMessageBox.Ok:
             return
 
         rec = self._data.records[self._current_param_idx]
@@ -5179,9 +5182,10 @@ class MatEditorApp(EditorMainWindow):
             QMessageBox.information(self, "空场景", f"场景 {sname} (ID={sid}) 无实体, 无需删除")
             return
         n = len(scene_entities)
-        if QMessageBox.question(self, "确认删除场景",
+        if themed_question(self, "确认删除场景",
                                 f"将删除场景 {sname} (ID={sid})\n\n  TKMat 实体: {n} 个\n\n此操作不可撤销!",
-                                QMessageBox.Ok | QMessageBox.Cancel) != QMessageBox.Ok:
+                                    buttons=QMessageBox.Ok | QMessageBox.Cancel,
+                                    default=QMessageBox.Cancel) != QMessageBox.Ok:
             return
         all_du_indices = set()
         all_define_ids = set()
@@ -5413,9 +5417,10 @@ class MatEditorApp(EditorMainWindow):
         n_entities = len(data.get('entities', []))
         n_defunits = len(data.get('defunits', []))
         n_defines = len(data.get('defines', []))
-        if QMessageBox.question(self, "确认导入",
+        if themed_question(self, "确认导入",
                                 f"将作为新场景导入:\n  实体: {n_entities} 个\n  DefUnit: {n_defunits} 条\n  DEFINE块: {n_defines} 个\n\n确定继续?",
-                                QMessageBox.Ok | QMessageBox.Cancel) != QMessageBox.Ok:
+                                    buttons=QMessageBox.Ok | QMessageBox.Cancel,
+                                    default=QMessageBox.Cancel) != QMessageBox.Ok:
             return
 
         empty_slots = sorted([i for i, r in enumerate(self._data.records) if r['d0'] == 0], reverse=True)

@@ -49,7 +49,7 @@ class TktPickerDialog(QDialog):
 
         # 搜索框
         self.search = QLineEdit()
-        self.search.setPlaceholderText("搜索...")
+        self.search.setPlaceholderText("搜索…")
         self.search.textChanged.connect(self._filter)
         layout.addWidget(self.search)
 
@@ -433,7 +433,7 @@ class ItemPickerDialog(QDialog):
         sf = QHBoxLayout()
         sf.addWidget(QLabel("搜索:"))
         self._search = QLineEdit()
-        self._search.setPlaceholderText("按名称/ID/索引搜索...")
+        self._search.setPlaceholderText("按名称/ID/索引搜索…")
         self._search.textChanged.connect(self._refresh_table)
         sf.addWidget(self._search)
         sf.addWidget(QPushButton("清除", clicked=self._search.clear))
@@ -761,7 +761,7 @@ class WarpcPickerDialog(QDialog):
         # 搜索框
         search_row = QHBoxLayout()
         self._search = QLineEdit()
-        self._search.setPlaceholderText("按名称或索引搜索...")
+        self._search.setPlaceholderText("按名称或索引搜索…")
         self._search.textChanged.connect(self._populate)
         search_row.addWidget(self._search, 1)
         layout.addLayout(search_row)

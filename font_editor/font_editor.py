@@ -41,7 +41,7 @@ from PySide6.QtWidgets import (
 from editor_utils import theme_manager
 from editor_utils.app_shell import EditorMainWindow, run_editor
 from editor_utils.tab_widget import EditorTabWidget
-from editor_utils.ui_helpers import EditorComboBox
+from editor_utils.ui_helpers import themed_question, EditorComboBox
 from editor_utils.dock_components import create_dock
 from editor_utils.version import format_title
 from editor_utils.mod_exporter import (
@@ -1078,11 +1078,9 @@ class FontEditorWindow(EditorMainWindow):
         不持有未落盘的编辑态), 退出无数据丢失风险, 故不接入 _dirty。
         """
         if self._convert_thread and self._convert_thread.isRunning():
-            reply = QMessageBox.question(
+            reply = themed_question(
                 self, "转换进行中",
-                "字体转换正在进行中, 确定退出?",
-                QMessageBox.Yes | QMessageBox.No,
-                QMessageBox.No)
+                "字体转换正在进行中, 确定退出?")
             if reply == QMessageBox.No:
                 event.ignore()
                 return

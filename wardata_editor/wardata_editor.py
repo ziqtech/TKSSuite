@@ -91,7 +91,7 @@ from editor_utils.theme_switcher import (
 )
 from editor_utils.app_shell import EditorMainWindow, run_editor
 from editor_utils.dock_components import DockHeader
-from editor_utils.ui_helpers import make_fake_input, update_path_labels, confirm_close, themed_messagebox, EditorComboBox
+from editor_utils.ui_helpers import themed_question, make_fake_input, update_path_labels, confirm_close, themed_messagebox, EditorComboBox
 from editor_utils.adaptive_table import AdaptiveTableWidget
 from editor_utils.task_runner import run_background, is_running
 from editor_utils.lzss import lzss_decompress_stream as lzss_decompress
@@ -975,8 +975,7 @@ class WarDataEditorV2(EditorMainWindow):
         msg = f"保存 {len(self.records)} 条到:\n{self.wardata_path}\n\n原文件将被覆盖(生成.bak)."
         if self._warway_dirty and self.warway_path and self.warway_records:
             msg += f"\n\n检测到 WarWay 网格修改, 将一并保存到:\n{self.warway_path}"
-        if QMessageBox.question(self, "确认保存", msg,
-            QMessageBox.Yes|QMessageBox.No) != QMessageBox.Yes: return
+        if themed_question(self, "确认保存", msg) != QMessageBox.Yes: return
         self._apply_current_edit()
         save_wardata(self.wardata_path, self.records)
         self._dirty = False
@@ -1128,8 +1127,7 @@ class WarDataEditorV2(EditorMainWindow):
 
     def _delete_record(self):
         if self._current_idx < 0: return
-        if QMessageBox.question(self,"确认删除",f"删除战场 #{self._current_idx}?",
-            QMessageBox.Yes|QMessageBox.No) != QMessageBox.Yes: return
+        if themed_question(self,"确认删除",f"删除战场 #{self._current_idx}?") != QMessageBox.Yes: return
         del self.records[self._current_idx]
         for i, rec in enumerate(self.records):
             rec['index'] = i
@@ -2996,6 +2994,7 @@ class WarDataEditorV2(EditorMainWindow):
                 sx, sy = self._grid_to_screen(gx, gy)
                 r = max(3, tile_h // 2)
                 fc = QColor(TRAP_COLORS.get(ttype, TRAP_FALLBACK))
+                # 画布陷阱轮廓绘制色豁免 (#888: 深色画布普通态描边, 非样式体系 UI 色, P3-6 核对)
                 outline_c = QColor('white') if i in fixed_trap_indices else QColor('#888')
                 pts = [QPointF(sx, sy-r), QPointF(sx-r, sy+r), QPointF(sx+r, sy+r)]
                 scene.addPolygon(QPolygonF(pts), QPen(outline_c,1), QBrush(fc))

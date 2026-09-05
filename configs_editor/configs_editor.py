@@ -27,7 +27,7 @@ from PySide6.QtGui import QAction
 from editor_utils.theme_switcher import toggle_theme_in_family
 from editor_utils.app_shell import EditorMainWindow, run_editor
 from editor_utils.tab_widget import EditorTabWidget
-from editor_utils.ui_helpers import confirm_close, update_path_labels
+from editor_utils.ui_helpers import themed_question, confirm_close, update_path_labels
 from editor_utils.lzss import lzss_decompress_dat
 from editor_utils.tkt_loader import load_tkt_simple
 from editor_utils.version import format_title
@@ -535,12 +535,9 @@ class ConfigsEditorWindow(EditorMainWindow):
     def closeEvent(self, event):
         any_modified = any(p.is_loaded and p.is_modified() for p in self._panels)
         if any_modified:
-            reply = QMessageBox.question(
+            reply = themed_question(
                 self, "未保存的修改",
-                "有未保存的修改，确定退出？",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                QMessageBox.StandardButton.No
-            )
+                "有未保存的修改，确定退出？")
             if reply != QMessageBox.StandardButton.Yes:
                 event.ignore()
                 return

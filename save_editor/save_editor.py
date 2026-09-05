@@ -61,6 +61,7 @@ from editor_utils.theme_switcher import (
 )
 from editor_utils.tkt_loader import load_tkt_simple
 from editor_utils.ui_helpers import (
+    themed_question,
     confirm_close, make_fake_input, update_path_labels, EditorComboBox,
 )
 from editor_utils.tab_widget import EditorTabWidget
@@ -1209,7 +1210,7 @@ class SaveEditorApp(EditorMainWindow):
 
     def _switch_slot(self, slot_num):
         if self._dirty:
-            if QMessageBox.question(self, "未保存", "有未保存修改，是否放弃?") != QMessageBox.Yes:
+            if themed_question(self, "未保存", "有未保存修改，是否放弃?") != QMessageBox.Yes:
                 return
         self.slot = slot_num
         self._load_current_slot()
@@ -1829,7 +1830,7 @@ class SaveEditorApp(EditorMainWindow):
         if self.game_state is None:
             QMessageBox.warning(self, "无数据", "请先加载存档")
             return
-        if QMessageBox.question(self, "确认保存",
+        if themed_question(self, "确认保存",
                 f"将覆盖 sav.{self.slot} 和 {self.slot}.sav, 继续?") != QMessageBox.Yes:
             return
         try:

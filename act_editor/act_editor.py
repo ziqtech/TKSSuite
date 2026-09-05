@@ -95,6 +95,7 @@ from editor_utils.lzss import lzss_decompress_dat
 from editor_utils.shared_state import pick_tks_directory
 from editor_utils.dock_components import DockHeader
 from editor_utils.ui_helpers import (
+    themed_question,
     make_fake_input, update_path_labels, confirm_close, EditorComboBox, set_themed_icon,
 )
 from editor_utils.tab_widget import EditorTabWidget
@@ -1215,6 +1216,7 @@ class TimelineWidget(QWidget):
 
         # 刻度尺
         tick_step = max(1, int(20 / zoom))
+        # 画布刻度尺绘制色豁免 (#888/#666: 深浅两档画布辅助色, 非样式体系 UI 色, P3-6 核对)
         ruler_color = QColor('#888') if is_dark else QColor('#666')
         painter.setPen(QPen(ruler_color, 1))
         painter.setFont(QFont(FONT_FAMILY, 8))
@@ -2766,10 +2768,9 @@ class ActEditorV2(EditorMainWindow):
             return
         entry = self.entries[idx]
         if not entry_is_empty(entry):
-            if QMessageBox.question(
+            if themed_question(
                     self, "确认覆盖",
-                    f"粘贴将覆盖条目 #{idx} 的现有内容，是否继续？",
-                    QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
+                    f"粘贴将覆盖条目 #{idx} 的现有内容，是否继续？") != QMessageBox.Yes:
                 return
         data = self._clone_entry(self._clipboard)
         data['index'] = idx
@@ -3211,11 +3212,10 @@ class ActEditorV2(EditorMainWindow):
     def _remove_extended_entry(self, idx):
         if idx < ACT_ENTRY_COUNT or idx >= len(self.entries):
             return
-        if QMessageBox.question(
+        if themed_question(
                 self, "确认移除",
                 f"确定移除扩展条目 #{idx} 吗？\n"
-                "扩展区条目移除后，后续条目序号会自动前移。",
-                QMessageBox.Yes | QMessageBox.No) != QMessageBox.Yes:
+                "扩展区条目移除后，后续条目序号会自动前移。") != QMessageBox.Yes:
             return
         self.entries.pop(idx)
         for i, entry in enumerate(self.entries):
@@ -3233,10 +3233,9 @@ class ActEditorV2(EditorMainWindow):
         entry = self.entries[idx]
         if entry_is_empty(entry):
             return False
-        if ask and QMessageBox.question(
+        if ask and themed_question(
                 self, title,
-                question_text or f"确定要清除条目 #{idx} 吗？\n此操作不可撤销。",
-                QMessageBox.Yes | QMessageBox.No) != QMessageBox.Yes:
+                question_text or f"确定要清除条目 #{idx} 吗？\n此操作不可撤销。") != QMessageBox.Yes:
             return False
         self.entries[idx] = self._make_empty_entry(idx)
         self._dirty = True
@@ -3286,9 +3285,8 @@ class ActEditorV2(EditorMainWindow):
         if not self.act_path or not self.entries:
             QMessageBox.information(self, "提示", "请先加载数据")
             return
-        if QMessageBox.question(self, "确认保存",
-                f"保存 {len(self.entries)} 条到:\n{self.act_path}\n\n原文件将被覆盖 (生成 .bak).",
-                QMessageBox.Yes | QMessageBox.No) != QMessageBox.Yes:
+        if themed_question(self, "确认保存",
+                f"保存 {len(self.entries)} 条到:\n{self.act_path}\n\n原文件将被覆盖 (生成 .bak).") != QMessageBox.Yes:
             return
         if is_running(getattr(self, '_save_worker', None)):
             return
@@ -4367,9 +4365,8 @@ class ActEditorV2(EditorMainWindow):
     def _quick_clear_layer(self, layer_idx):
         if self._editing_idx < 0:
             return
-        if QMessageBox.question(self, "确认",
-                f"确定清空图层 #{layer_idx + 1} 的所有数据?",
-                QMessageBox.Yes | QMessageBox.No) != QMessageBox.Yes:
+        if themed_question(self, "确认",
+                f"确定清空图层 #{layer_idx + 1} 的所有数据?") != QMessageBox.Yes:
             return
         L = self.entries[self._editing_idx]['layers'][layer_idx]
         for i in range(len(L)):

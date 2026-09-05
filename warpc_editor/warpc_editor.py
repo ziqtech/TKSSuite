@@ -70,7 +70,7 @@ from PySide6.QtGui import (
 from PySide6.QtCore import Qt, QTranslator, Signal, QTimer, QSize
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from editor_utils import theme_manager
-from editor_utils.ui_helpers import set_themed_icon
+from editor_utils.ui_helpers import themed_question, set_themed_icon
 from editor_utils.theme_manager import business_colors
 from editor_utils.theme_switcher import (
     apply_theme_to_window, toggle_theme_in_family,
@@ -1585,9 +1585,8 @@ class WarpcEditorV2(EditorMainWindow):
         if not self._save_mode:
             orig_path = self.warpc_path + ".orig"
             if os.path.exists(orig_path):
-                if QMessageBox.question(self, "检测到未恢复的备份",
-                    "发现 WarPC.dat.orig, 是否从备份恢复?",
-                    QMessageBox.Yes|QMessageBox.No) == QMessageBox.Yes:
+                if themed_question(self, "检测到未恢复的备份",
+                    "发现 WarPC.dat.orig, 是否从备份恢复?") == QMessageBox.Yes:
                     try:
                         bak = orig_path + ".editor_bak"
                         import shutil
@@ -1993,8 +1992,7 @@ class WarpcEditorV2(EditorMainWindow):
             lines += ["", f"{len(unreachable)} 个技能无法仅靠组内前置解锁 → 保持原值不变 (仅提醒, 请手动确认):",
                       "   " + "、".join(nm(i) for i in sorted(unreachable)[:15]) + ("…" if len(unreachable) > 15 else "")]
         lines += ["", "组外技能保持不变。确定应用?"]
-        if QMessageBox.question(self, "智能配置预览", "\n".join(lines),
-                                QMessageBox.Yes | QMessageBox.No) != QMessageBox.Yes:
+        if themed_question(self, "智能配置预览", "\n".join(lines)) != QMessageBox.Yes:
             return
         for m, st in seed.items():
             self._set_learn_combo(m, st)
@@ -2026,8 +2024,7 @@ class WarpcEditorV2(EditorMainWindow):
                  "全部设为「不会(0)」:",
                  "   " + "、".join(nm(i) for i in member_list[:30]) + ("…" if len(member_list) > 30 else ""),
                  "", "组外技能保持不变。确定应用?"]
-        if QMessageBox.question(self, "取消本组预览", "\n".join(lines),
-                                QMessageBox.Yes | QMessageBox.No) != QMessageBox.Yes:
+        if themed_question(self, "取消本组预览", "\n".join(lines)) != QMessageBox.Yes:
             return
         for m in members:
             self._set_learn_combo(m, 0)
@@ -2076,8 +2073,7 @@ class WarpcEditorV2(EditorMainWindow):
             lines += ["", f"{len(unreachable)} 个技能无法仅靠组内前置解锁 → 保持原值不变 (仅提醒):",
                       "   " + "、".join(nm(i) for i in sorted(unreachable)[:15]) + ("…" if len(unreachable) > 15 else "")]
         lines += ["", f"共 {len(changed)} 处改动。已学会(20/30)与未拥有(0)的技能保持不变。", "确定应用?"]
-        if QMessageBox.question(self, "精简配置预览", "\n".join(lines),
-                                QMessageBox.Yes | QMessageBox.No) != QMessageBox.Yes:
+        if themed_question(self, "精简配置预览", "\n".join(lines)) != QMessageBox.Yes:
             return
         for i in tree:
             if i in seed:
@@ -3109,9 +3105,8 @@ class WarpcEditorV2(EditorMainWindow):
         if not self.warpc_path or not self.records:
             QMessageBox.information(self, "提示", "请先加载数据")
             return
-        if QMessageBox.question(self, "确认保存",
-            f"保存 {len(self.records)} 个角色到:\n{self.warpc_path}\n\n原文件将被覆盖 (生成 .bak).",
-            QMessageBox.Yes|QMessageBox.No) != QMessageBox.Yes: return
+        if themed_question(self, "确认保存",
+            f"保存 {len(self.records)} 个角色到:\n{self.warpc_path}\n\n原文件将被覆盖 (生成 .bak).") != QMessageBox.Yes: return
         if is_running(getattr(self, '_save_worker', None)): return
         warpc_path = self.warpc_path
         records = self.records
@@ -3138,9 +3133,8 @@ class WarpcEditorV2(EditorMainWindow):
         if not self._save_path or not self.records or self._seg1 is None or self._seg2 is None:
             QMessageBox.information(self, "提示", "无存档数据")
             return
-        if QMessageBox.question(self, "确认保存",
-            f"将 {len(self.records)} 个角色的 WarPC 数据写回存档:\n{self._save_path} (槽位 {self._save_slot})\n\n原存档将被备份为 .bak",
-            QMessageBox.Yes|QMessageBox.No) != QMessageBox.Yes: return
+        if themed_question(self, "确认保存",
+            f"将 {len(self.records)} 个角色的 WarPC 数据写回存档:\n{self._save_path} (槽位 {self._save_slot})\n\n原存档将被备份为 .bak") != QMessageBox.Yes: return
         if is_running(getattr(self, '_save_worker', None)): return
         save_path, seg1, seg2, records = (
             self._save_path, self._seg1, self._seg2, self.records)

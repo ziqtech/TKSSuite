@@ -47,7 +47,7 @@ from editor_utils.theme_switcher import (
 from editor_utils.app_shell import EditorMainWindow, run_editor
 from editor_utils.dock_components import DockHeader, create_dock
 from editor_utils.adaptive_table import AdaptiveTableWidget
-from editor_utils.ui_helpers import update_path_labels, confirm_close, EditorComboBox, set_themed_icon
+from editor_utils.ui_helpers import themed_question, update_path_labels, confirm_close, EditorComboBox, set_themed_icon
 from editor_utils.tkt_loader import load_tkt_full as _load_tkt_full
 from editor_utils.shared_state import pick_tks_directory
 from editor_utils.mod_exporter import (
@@ -987,7 +987,7 @@ class TktEditor(EditorMainWindow):
         # 工具栏 (还原 Emoji)
         toolbar_layout = QHBoxLayout()
         self.search_entry = QLineEdit()
-        self.search_entry.setPlaceholderText("关键词/ID搜索...")
+        self.search_entry.setPlaceholderText("关键词/ID搜索…")
         self.search_entry.setMinimumWidth(160)
         self.search_entry.setClearButtonEnabled(True)
         self.search_entry.textChanged.connect(self._apply_filter)
@@ -1919,7 +1919,9 @@ class TktEditor(EditorMainWindow):
     def _delete_entry(self):
         if self._current_idx is None:
             return
-        if QMessageBox.question(self, "物理清空", "物理剥离该节点？", QMessageBox.Ok | QMessageBox.Cancel) == QMessageBox.Cancel:
+        if themed_question(self, "物理清空", "物理剥离该节点？",
+            buttons=QMessageBox.Ok | QMessageBox.Cancel,
+            default=QMessageBox.Cancel) == QMessageBox.Cancel:
             return
         self.entries.pop(self._current_idx)
         for i, entry in enumerate(self.entries):

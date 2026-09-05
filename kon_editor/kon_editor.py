@@ -29,7 +29,7 @@ from editor_utils.theme_switcher import (
 )
 from editor_utils.app_shell import EditorMainWindow, run_editor
 from editor_utils.dock_components import DockHeader
-from editor_utils.ui_helpers import make_fake_input, update_path_labels, confirm_close, show_field_ref, EditorComboBox
+from editor_utils.ui_helpers import themed_question, make_fake_input, update_path_labels, confirm_close, show_field_ref, EditorComboBox
 from editor_utils.lzss import lzss_decompress_dat, lzss_compress_dat
 from editor_utils.shared_state import pick_tks_directory
 from editor_utils.tkt_loader import load_tkt_simple
@@ -1156,11 +1156,10 @@ class KonEditor(FieldUndoMixin, EditorMainWindow):
     def _remove_record(self, idx):
         if idx < KON_CNT or idx >= len(self.records):
             return
-        if QMessageBox.question(
+        if themed_question(
                 self, "确认删除",
                 f"确定删除扩展记录 #{idx} 吗？\n"
-                "删除后后续记录序号会自动前移。",
-                QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
+                "删除后后续记录序号会自动前移。") != QMessageBox.Yes:
             return
         self.records.pop(idx)
         for i, rec in enumerate(self.records):
@@ -1211,10 +1210,9 @@ class KonEditor(FieldUndoMixin, EditorMainWindow):
             return
         rec = self.records[idx]
         if not self._record_is_empty(rec):
-            if QMessageBox.question(
+            if themed_question(
                     self, "确认覆盖",
-                    f"粘贴将覆盖记录 #{idx} 的现有内容，是否继续？",
-                    QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
+                    f"粘贴将覆盖记录 #{idx} 的现有内容，是否继续？") != QMessageBox.Yes:
                 return
         paste_before = {fn: rec[fn] for fn, _, _, _ in KON_FIELDS}
         for fn, _, _, _ in KON_FIELDS:
@@ -1255,11 +1253,10 @@ class KonEditor(FieldUndoMixin, EditorMainWindow):
         if self._record_is_empty(rec):
             QMessageBox.information(self, "提示", "当前记录已经为空")
             return
-        if QMessageBox.question(
+        if themed_question(
                 self, "确认清除",
                 f"确定清除记录 #{idx} 的全部字段吗？\n"
-                "是否继续？",
-                QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
+                "是否继续？") != QMessageBox.Yes:
             return
         for fn, _, _, _ in KON_FIELDS:
             rec[fn] = 0
@@ -1283,9 +1280,8 @@ class KonEditor(FieldUndoMixin, EditorMainWindow):
         if not self.kon_path or not self.records:
             QMessageBox.information(self, "提示", "请先加载数据")
             return
-        if QMessageBox.question(self, "确认保存",
-            f"保存 {len(self.records)} 条到:\n{self.kon_path}\n\n原文件将被覆盖 (生成 .bak).",
-            QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes: return
+        if themed_question(self, "确认保存",
+            f"保存 {len(self.records)} 条到:\n{self.kon_path}\n\n原文件将被覆盖 (生成 .bak).") != QMessageBox.Yes: return
         if is_running(getattr(self, '_save_worker', None)): return
         kon_path = self.kon_path
         records = self.records

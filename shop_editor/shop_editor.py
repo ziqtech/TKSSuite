@@ -58,7 +58,7 @@ from editor_utils.theme_switcher import (
     apply_theme_to_window, toggle_theme_in_family,
 )
 from editor_utils.app_shell import EditorMainWindow, run_editor
-from editor_utils.ui_helpers import update_path_labels, EditorComboBox, confirm_close
+from editor_utils.ui_helpers import themed_question, update_path_labels, EditorComboBox, confirm_close
 from editor_utils.search_utils import search_match
 from editor_utils.task_runner import run_background, is_running
 
@@ -902,7 +902,7 @@ class ShopEditorWindow(EditorMainWindow):
     def _delete_record(self):
         if self._editing_idx < 0:
             return
-        if QMessageBox.question(self, "确认删除", f"确定要清空记录 #{self._editing_idx} 吗?\n\n记录将被重置为零值, 而非物理删除。") != QMessageBox.Yes:
+        if themed_question(self, "确认删除", f"确定要清空记录 #{self._editing_idx} 吗?\n\n记录将被重置为零值, 而非物理删除。") != QMessageBox.Yes:
             return
 
         self.records[self._editing_idx] = {
@@ -945,7 +945,7 @@ class ShopEditorWindow(EditorMainWindow):
             QMessageBox.information(self, "提示", "请先通过 文件 → 加载 TKS 目录 打开数据")
             return
 
-        if QMessageBox.question(self, "确认保存", f"将保存 {len(self.records)} 条记录到:\n{self.shop_path}\n\n原文件将被覆盖。继续?") != QMessageBox.Yes:
+        if themed_question(self, "确认保存", f"将保存 {len(self.records)} 条记录到:\n{self.shop_path}\n\n原文件将被覆盖。继续?") != QMessageBox.Yes:
             return
 
         try:

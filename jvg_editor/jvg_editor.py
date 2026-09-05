@@ -47,7 +47,7 @@ except ImportError:
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from editor_utils.dock_components import DockHeader, create_dock
-from editor_utils.ui_helpers import set_themed_icon
+from editor_utils.ui_helpers import themed_question, set_themed_icon
 from editor_utils.mod_exporter import (
     compute_crc32, generate_mod_json, pack_tksmod, ModMetadataDialog,
     diff_binary_blocks, build_block_diff_json,
@@ -1471,10 +1471,11 @@ class JVGEditor(EditorMainWindow):
 
     def closeEvent(self, event: QCloseEvent):
         if self._dirty:
-            reply = QMessageBox.question(
+            reply = themed_question(
                 self, "未保存的修改",
                 "当前文件有未保存的修改，是否保存？",
-                QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel)
+                    buttons=QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel,
+                    default=QMessageBox.Cancel)
             if reply == QMessageBox.Save:
                 self._save()
                 event.accept()
@@ -1488,11 +1489,12 @@ class JVGEditor(EditorMainWindow):
     def _confirm_discard(self) -> bool:
         if not self._dirty:
             return True
-        reply = QMessageBox.question(
+        reply = themed_question(
             self, "未保存的修改",
             "当前文件有未保存的修改，是否继续？\n\n"
             "点击“保存”先保存再继续，\n点击“丢弃”放弃修改，\n点击“取消”返回。",
-            QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel)
+                buttons=QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel,
+                default=QMessageBox.Cancel)
         if reply == QMessageBox.Save:
             self._save()
             return not self._dirty
@@ -1915,8 +1917,7 @@ class JVGEditor(EditorMainWindow):
     def _del_block(self):
         if not self.jvg or self._bi < 0:
             return
-        reply = QMessageBox.question(self, "确认", f"删除 [{self._bi}]?",
-                                     QMessageBox.Yes | QMessageBox.No)
+        reply = themed_question(self, "确认", f"删除 [{self._bi}]?")
         if reply == QMessageBox.Yes:
             del self.jvg.blocks[self._bi]
             self._bi = min(self._bi, len(self.jvg.blocks) - 1)
@@ -2103,10 +2104,9 @@ class JVGEditor(EditorMainWindow):
         use_bbox_mode = self._chk_bbox.isChecked()
 
         if not is_new_block and cols * rows < n_valid:
-            reply = QMessageBox.question(self, "容量不足",
+            reply = themed_question(self, "容量不足",
                 f"cols×rows = {cols}×{rows} = {cols * rows} < 有效帧数 {n_valid}\n"
-                f"后 {n_valid - cols * rows} 帧将不会被替换。是否继续?",
-                QMessageBox.Yes | QMessageBox.No)
+                f"后 {n_valid - cols * rows} 帧将不会被替换。是否继续?")
             if reply != QMessageBox.Yes:
                 return
 

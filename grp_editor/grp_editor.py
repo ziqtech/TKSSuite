@@ -75,7 +75,7 @@ from editor_utils.mod_exporter import (
 )
 from editor_utils.rgb565 import rgb565_to_rgba, rgba_to_rgb565
 from editor_utils.app_shell import EditorMainWindow, run_editor
-from editor_utils.ui_helpers import themed_messagebox, confirm_close
+from editor_utils.ui_helpers import themed_question, themed_messagebox, confirm_close
 from editor_utils.version import format_title
 
 # ── 本地别名: 保持向后兼容 ──
@@ -1280,7 +1280,7 @@ class GRPEditor(EditorMainWindow):
 
         # 目标文件名与当前打开文件不一致时提醒
         if self.grp.filepath and os.path.basename(self.grp.filepath).lower() != target_name.lower():
-            r = QMessageBox.question(self, "目标不一致",
+            r = themed_question(self, "目标不一致",
                 f"该 MOD 目标为 {target_name}，当前打开的是 "
                 f"{os.path.basename(self.grp.filepath)}。\n仍要合并吗？")
             if r != QMessageBox.Yes: return
@@ -1657,6 +1657,7 @@ class GRPEditor(EditorMainWindow):
                 for tick_sec in range(0, int(sec._duration) + 2):
                     tx = margin_l + int((tick_sec / sec._duration) * wave_w)
                     if tx <= margin_l + wave_w:
+                        # 波形时间轴刻度绘制色豁免 (#888: 深色画布辅助标注, 非样式体系 UI 色, P3-6 核对)
                         self._scene.addLine(tx, tl_y, tx, tl_y + 6, QPen(QColor("#888")))
                         t = self._scene.addText(f"{tick_sec}s")
                         t.setDefaultTextColor(QColor("#888"))
@@ -1837,7 +1838,7 @@ class GRPEditor(EditorMainWindow):
         try:
             img = Image.open(p).convert("RGBA")
             if img.size != (sec.width, sec.height):
-                if QMessageBox.question(self, "尺寸不匹配",
+                if themed_question(self, "尺寸不匹配",
                     f"导入 {img.size[0]}×{img.size[1]} ≠ 原 {sec.width}×{sec.height}。缩放?") != QMessageBox.Yes: return
                 img = img.resize((sec.width, sec.height), Image.LANCZOS)
             sec._pixels = rgba_to_rgb565(img.tobytes(), sec.width, sec.height)
@@ -1863,7 +1864,7 @@ class GRPEditor(EditorMainWindow):
                 img = img.convert("L")
                 data = img.tobytes()
             if img.size != (sec.width, sec.height):
-                if QMessageBox.question(self, "尺寸不匹配",
+                if themed_question(self, "尺寸不匹配",
                     f"导入 {img.size[0]}×{img.size[1]} ≠ 原 {sec.width}×{sec.height}。缩放?") != QMessageBox.Yes: return
                 img2 = Image.frombytes("L", img.size, data) if img.mode != "P" else img
                 img2 = img2.resize((sec.width, sec.height), Image.NEAREST)
@@ -2005,7 +2006,7 @@ class GRPEditor(EditorMainWindow):
         try:
             img = Image.open(p).convert("RGB")
             if img.size != (sec.width, sec.height):
-                if QMessageBox.question(self, "尺寸不匹配", "尺寸不一致，强制缩放?") != QMessageBox.Yes: return
+                if themed_question(self, "尺寸不匹配", "尺寸不一致，强制缩放?") != QMessageBox.Yes: return
                 img = img.resize((sec.width, sec.height), Image.NEAREST)
             lut_rev = _L1_RGB2VAL if self._sel_layer == "L1" else _L2_RGB2VAL
             pixels = img.getdata()
@@ -2200,7 +2201,7 @@ class GRPEditor(EditorMainWindow):
         if sec is None: return
         idx = sec.index
         label = sec.type_label
-        if QMessageBox.question(self, "确认删除",
+        if themed_question(self, "确认删除",
             f"删除区段 #{idx:03d} — {label}\n此操作不可恢复!") != QMessageBox.Yes: return
         self._stop_audio()
         if isinstance(sec, GRPSection):

@@ -1284,7 +1284,7 @@ class ItemEditorApp(FieldUndoMixin, EditorMainWindow):
         if self._editing_idx is None:
             QMessageBox.information(self, "提示", "请先选择一条记录")
             return
-        reply = QMessageBox.question(self, "确认清空",
+        reply = themed_question(self, "确认清空",
             f"将记录 #{self._editing_idx} 清为空槽模板 (item_id=0, name_id=0, desc_id=600).\n确定?")
         if reply != QMessageBox.Yes: return
         rec = self.records[self._editing_idx]
@@ -1369,7 +1369,7 @@ class ItemEditorApp(FieldUndoMixin, EditorMainWindow):
         if not self.item_path or not self.records:
             QMessageBox.information(self, "提示", "请先加载数据")
             return
-        reply = QMessageBox.question(self, "确认保存",
+        reply = themed_question(self, "确认保存",
             f"保存 {len(self.records)} 条到:\n{self.item_path}\n\n原文件将被覆盖 (生成 .bak).")
         if reply != QMessageBox.Yes: return
         try:

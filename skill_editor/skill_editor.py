@@ -1477,7 +1477,7 @@ class SkillEditorApp(FieldUndoMixin, EditorMainWindow):
         if self._editing_idx is None: return
         rec = self.records[self._editing_idx]
         if rec['skill_text_id'] == 0: return
-        reply = QMessageBox.question(self, "确认", f"确定清空记录 #{rec['index']}?")
+        reply = themed_question(self, "确认", f"确定清空记录 #{rec['index']}?")
         if reply == QMessageBox.Yes:
             for k, fo, _, _, _ in ALL_FIELDS:
                 rec[k] = 0
@@ -1488,7 +1488,7 @@ class SkillEditorApp(FieldUndoMixin, EditorMainWindow):
 
     def _save(self):
         if not self.skill_path or not self.records: return
-        reply = QMessageBox.question(self, "确认保存", f"将覆盖保存并生成.bak:\n{self.skill_path}")
+        reply = themed_question(self, "确认保存", f"将覆盖保存并生成.bak:\n{self.skill_path}")
         if reply == QMessageBox.Yes:
             try:
                 with open(self.skill_path, 'rb') as s:

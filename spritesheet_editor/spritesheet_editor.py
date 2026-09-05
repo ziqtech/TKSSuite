@@ -56,7 +56,7 @@ from editor_utils.theme_manager import business_colors
 from editor_utils.theme_switcher import toggle_theme_in_family
 from editor_utils.app_shell import EditorMainWindow, run_editor
 from editor_utils.version import format_title
-from editor_utils.ui_helpers import EditorComboBox, confirm_close, set_themed_icon
+from editor_utils.ui_helpers import themed_question, EditorComboBox, confirm_close, set_themed_icon
 
 # ── 像素格式定义 ──────────────────────────────────────────────
 PIXEL_FORMATS: dict[str, str] = {
@@ -797,7 +797,7 @@ class ImageListWidget(QListWidget):
         return True
 
     def _ask_confirm(self, title: str, msg: str) -> bool:
-        return QMessageBox.question(self, title, msg) == QMessageBox.Yes
+        return themed_question(self, title, msg) == QMessageBox.Yes
 
 
 
@@ -3381,7 +3381,7 @@ class SpriteSheetEditorWindow(EditorMainWindow):
     # ── 新建 ───────────────────────────
     def _new(self):
         if self.model.frame_count > 0:
-            if QMessageBox.question(self, "确认", "当前内容将被清除，确定新建吗?") != QMessageBox.Yes:
+            if themed_question(self, "确认", "当前内容将被清除，确定新建吗?") != QMessageBox.Yes:
                 return
         self._replace_model()
         self.settings.refresh_values()
@@ -3501,7 +3501,7 @@ class SpriteSheetEditorWindow(EditorMainWindow):
             QMessageBox.information(self, "提示", "请先通过《导入拆分》加载一张 Spritesheet")
             return
         if self.model.frame_count > 0:
-            if QMessageBox.question(self, "确认",
+            if themed_question(self, "确认",
                     "重新拆分将丢弃当前排序和删除, 确定继续吗?") != QMessageBox.Yes:
                 return
 
@@ -3630,7 +3630,7 @@ class SpriteSheetEditorWindow(EditorMainWindow):
                 if self.model.frames[row * self.model.columns + c] is not None)
         row_str = ", ".join(f"R{r}" for r in sorted(rows_to_delete))
         if removed > 0:
-            if QMessageBox.question(
+            if themed_question(
                     self, "确认",
                     f"删除行 {row_str} 将一并移除其中 {removed} 个帧, "
                     f"后续行上移, 确定吗?") != QMessageBox.Yes:
@@ -3665,7 +3665,7 @@ class SpriteSheetEditorWindow(EditorMainWindow):
                 if self.model.frames[r * cols + col] is not None)
         col_str = ", ".join(f"C{c}" for c in sorted(cols_to_delete))
         if removed > 0:
-            if QMessageBox.question(
+            if themed_question(
                     self, "确认",
                     f"删除列 {col_str} 将一并移除其中 {removed} 个帧, "
                     f"后续列左移, 确定吗?") != QMessageBox.Yes:
@@ -3743,7 +3743,7 @@ class SpriteSheetEditorWindow(EditorMainWindow):
             return
         if self._mode_merge.isChecked():
             if self.model.frame_count > 0:
-                if QMessageBox.question(self, "确认",
+                if themed_question(self, "确认",
                         "切换模式将清空当前数据, 确定继续吗?") != QMessageBox.Yes:
                     self._suppress_mode_change = True
                     self._mode_split.setChecked(True)
@@ -3756,7 +3756,7 @@ class SpriteSheetEditorWindow(EditorMainWindow):
             self.settings._btn_resplit.setEnabled(False)
         else:
             if self.model.frame_count > 0:
-                if QMessageBox.question(self, "确认",
+                if themed_question(self, "确认",
                         "切换模式将清空当前数据, 确定继续吗?") != QMessageBox.Yes:
                     self._suppress_mode_change = True
                     self._mode_merge.setChecked(True)
