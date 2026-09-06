@@ -152,5 +152,7 @@ tks_launcher_gui/logs/
 tks_launcher_gui/launcher_config.json
 tks_launcher_gui/launcher_setting.json
 tks_launcher_gui/save_manager_state.json
+# main.py 运行时写出的补丁验证日志
+tks_launcher_gui/verify_patches_result.txt
 .tks_editors_state.json
 node_modules

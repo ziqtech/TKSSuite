@@ -95,7 +95,7 @@ python -m utils.cli hooks <base_exe> <ext_exe>
 ## 测试
 
 ```bash
-python utils/pe_analyzer/test_pe_analyzer.py
+python -m unittest utils.test_pe_analyzer
 ```
 
 ## 提炼来源

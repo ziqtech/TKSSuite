@@ -2,6 +2,7 @@
 # 用法: pip install -r build/requirements.txt
 
 nuitka
+# Nuitka 的传递依赖（standalone 构建需要），显式钉住，勿删
 ordered-set
 zstandard
 PySide6
