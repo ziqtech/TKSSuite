@@ -2555,12 +2555,6 @@ class MatEditorApp(EditorMainWindow):
             if i < len(bit_cbs):
                 bit_cbs[i].setVisible(show)
 
-    def _update_flags_visibility(self, tval):
-        """根据实体类型更新全局 flags 事件标志可见性"""
-        # For type pages
-        if tval in self._type_vars:
-            self._update_type_flags_visibility(self._type_vars[tval], tval)
-
     def _clear_form(self):
         for key, var in self._edit_vars.items():
             if isinstance(var, QLineEdit):
@@ -3303,11 +3297,6 @@ class MatEditorApp(EditorMainWindow):
                 break
         self._vis_scene_combo.blockSignals(False)
 
-    # =========== 场景列表/实体列表 ===========
-    def _vis_scene_tree_to_combo(self):
-        """Sync scene tree selection to combo"""
-        pass
-
     # =========== 脚本删除检测 (§防止切换实体误删脚本) ===========
     def _snapshot_script_baseline(self):
         """记录当前各 DEFINE 正文快照 (define_id_str → 去空白正文), 作为脚本删除检测基线。
@@ -3931,17 +3920,6 @@ class MatEditorApp(EditorMainWindow):
             QMessageBox.information(self, "导出成功", summary)
         except Exception as e:
             QMessageBox.critical(self, "导出失败", str(e))
-
-    @staticmethod
-    def _extract_define_id_from_text(text: str) -> str:
-        """从 DEFINE 块文本中提取 define_id 字符串"""
-        for line in text.split('\n'):
-            stripped = line.strip().rstrip('\r')
-            if stripped.startswith('DEFINE') and not stripped.startswith('//'):
-                parts = stripped.split(None, 2)
-                if len(parts) >= 2:
-                    return parts[1]
-        return ''
 
     def _import_tksmod(self):
         """从 .tksmod 导入 MOD 数据到编辑器 (TKMat + TKDefUnit + TKD 三文件联动)"""

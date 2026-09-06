@@ -773,18 +773,6 @@ class WarDataEditorV2(EditorMainWindow):
         """敌军角色ID → 角色名称 (enemy_id + 35 = WarPC索引)"""
         return self._char_name(enemy_id + 35)
 
-    def _battle_name(self, rec):
-        """生成战斗名称 — 使用 battle_id 或 must_chars 推断"""
-        bid = rec['battle_id']
-        chars = [c for c in rec['must_chars'] if c > 0 and c != 255]
-        if chars:
-            names = []
-            for c in chars[:3]:
-                cid = c - 1  # +1编码解码
-                names.append(self._char_name(cid))
-            return f"#{bid} " + ",".join(names) if names else f"战场#{bid}"
-        return f"战场#{bid}"
-
     def _trea_label(self, rec, i):
         """宝物槽的显示标签 (trea_sub TKItem ID)"""
         tid = rec['trea_sub'][i] if i < 10 else 0

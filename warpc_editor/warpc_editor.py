@@ -310,14 +310,6 @@ def save_warpc_to_save(save_path, seg1, seg2, records):
         f.write(comp2)
     return True
 
-def get_field(rec, byte_off):
-    """读取指定字节偏移处的 int16 字段值"""
-    return rec['fields'][byte_off // 2]
-
-def set_field(rec, byte_off, val):
-    """写入指定字节偏移处的 int16 字段值"""
-    rec['fields'][byte_off // 2] = val
-
 # ═══════════════════════════════════════════════════════════════
 # 弹窗选择器
 # ═══════════════════════════════════════════════════════════════

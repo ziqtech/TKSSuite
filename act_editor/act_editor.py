@@ -1059,12 +1059,6 @@ class PreviewCanvas(QWidget):
             painter.setFont(QFont("Consolas", 8))
             painter.drawText(8, h - 12, self._entry_title)
 
-    def _cv_to_game(self, cv_x, cv_y):
-        """画布坐标 → 游戏坐标"""
-        gx = (cv_x - self._off_x) / self._scale
-        gy = (cv_y - self._off_y) / self._scale
-        return gx, gy
-
     def _hit_test(self, cv_x, cv_y):
         for (slot, eff_dir, sx, sy, ex, ey, ox, oy) in self._sprite_boxes:
             if sx <= cv_x <= ex and sy <= cv_y <= ey:
@@ -1167,10 +1161,6 @@ class TimelineWidget(QWidget):
 
     def zoom(self):
         return self._zoom
-
-    def set_track_h(self, h):
-        self._track_h = h
-        self.update()
 
     def track_h(self):
         return self._track_h
@@ -4175,18 +4165,6 @@ class ActEditorV2(EditorMainWindow):
         self._tl_tick_lbl.setText(f"tick: {self._preview_tick_idx}")
         self.timeline_widget.set_playhead(self._preview_tick_idx)
         self._preview_redraw()
-
-    def _tl_zoom_in(self):
-        zoom = self.timeline_widget.zoom()
-        self.timeline_widget.set_zoom(min(40, zoom + 2))
-        self._tl_update_zoom_lbl()
-        self._tl_redraw()
-
-    def _tl_zoom_out(self):
-        zoom = self.timeline_widget.zoom()
-        self.timeline_widget.set_zoom(max(2, zoom - 2))
-        self._tl_update_zoom_lbl()
-        self._tl_redraw()
 
     def _tl_update_zoom_lbl(self):
         z = self.timeline_widget.zoom()

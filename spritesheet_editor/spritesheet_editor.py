@@ -635,14 +635,6 @@ class ImageListWidget(QListWidget):
         self.editor.canvas.selection.clear()
         self.editor._on_model_changed()
 
-    def set_images(self, images: List[Image.Image], paths: List[str]):
-        self._image_paths = list(paths)
-        self._path_by_id = {}
-        for img, p in zip(images, paths):
-            if img is not None:
-                self._path_by_id[id(img)] = p
-        self._rebuild(self.editor.model.frames)
-
     # ── 重建列表 ──────────────────────
     def _rebuild(self, frames: List[Optional[Image.Image]]):
         self._suppress_change = True
@@ -762,39 +754,6 @@ class ImageListWidget(QListWidget):
         self.editor.canvas.selection = {dst_adj}
         self.editor.canvas._last_click_idx = dst_adj
         # _on_model_changed 由 model_changed signal → editor 自动触发
-
-    # ── 公共 API ──────────────────────
-    def selected_image_idx(self) -> int:
-        return self._selected_idx
-
-    def remove_selected(self) -> bool:
-        if self._selected_idx < 0:
-            return False
-        frames = self.editor.model.frames
-        mi = self._selected_idx
-        if not (0 <= mi < len(frames)) or frames[mi] is None:
-            return False
-        removed = frames.pop(mi)
-        self._path_by_id.pop(id(removed), None)
-        self.editor.model.frames = frames
-
-        self._selected_idx = -1
-        for i in range(mi, len(frames)):
-            if frames[i] is not None:
-                self._selected_idx = i
-                break
-        if self._selected_idx < 0:
-            for i in range(min(mi - 1, len(frames) - 1), -1, -1):
-                if frames[i] is not None:
-                    self._selected_idx = i
-                    break
-        self._anchor_idx = self._selected_idx
-        if self._selected_idx >= 0:
-            self.editor.canvas.selection = {self._selected_idx}
-        else:
-            self.editor.canvas.selection.clear()
-        self.editor._on_model_changed()
-        return True
 
     def _ask_confirm(self, title: str, msg: str) -> bool:
         return themed_question(self, title, msg) == QMessageBox.Yes
@@ -1593,11 +1552,6 @@ class SpriteGraphicsView(QGraphicsView):
         else:
             super().wheelEvent(event)
 
-    # ── 公开方法 ───────────────────────
-    def update_model(self) -> None:
-        self.selection.clear()
-        self.redraw()
-
     def select_all(self) -> None:
         self.model.normalize()
         self.selection = set(range(len(self.model.frames)))
@@ -1788,17 +1742,6 @@ class SpriteGraphicsView(QGraphicsView):
             self.editor.image_list._selected_idx = max(pasted)
         self.editor._on_model_changed()
         return pasted
-
-    def flip_cell(self, idx: int) -> None:
-        frame = self.model.get_frame(idx)
-        if frame is None:
-            return
-        self.model.frames[idx] = frame.transpose(Image.FLIP_LEFT_RIGHT)
-        self.editor._on_model_changed()
-        try:
-            self.editor._status_label.setText(f"已水平翻转单元格 #{idx}")
-        except Exception:
-            pass
 
 
 # ═══════════════════════════════════════════════════════════════
