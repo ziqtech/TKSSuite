@@ -139,7 +139,8 @@ TREE_LOOP_COLOR = "#CC0000"      # 循环: 红
 TREE_FLAG_COLOR = "#2E9B57"      # 标志: 绿
 PV_ITEM_RED = "#FF4444"          # 预览物品名红 (粗体)
 from mat_script_templates import SCRIPT_TEMPLATES
-from mat_threads import DataLoaderThread, JvgLoaderThread
+from mat_threads import load_main_data, load_assets
+from editor_utils.task_runner import run_background
 
 # [28] 对话颜色字段的 dword 索引 (IDX_DIALOG_COLOR='d28' → 28), 供新增实体默认值判断 (§需求4)
 _DIALOG_COLOR_IDX = int(IDX_DIALOG_COLOR[1:])
@@ -190,7 +191,7 @@ class MapDataManager:
         self.on_dirty_change = None  # callable(bool): _dirty 变化时由编辑器注入 (同步标题栏)
 
     def load_from_result(self, result):
-        """从 DataLoaderThread 返回的结果装配全部数据状态"""
+        """从后台加载 (load_main_data) 返回的结果装配全部数据状态"""
         self.tkt_scenes = result.get('tkt_scenes', {})
         self.tkt_all = result.get('tkt_all', {})
         self.defunit_recs = result.get('defunit_recs', [])
@@ -3115,10 +3116,10 @@ class MatEditorApp(EditorMainWindow):
         self._data._save_path = save_path
         self._data._save_slot = slot_num
         self._data._game_dir = game_dir  # 直接存储游戏目录
-        self._data.dat_path = save_path  # DataLoaderThread 从此路径加载附属文件 (TKD/TKDefUnit)
+        self._data.dat_path = save_path  # 后台加载从此路径解析附属文件 (TKD/TKDefUnit)
         tkt_p = os.path.join(game_dir, 'TKT.dat')
         self._data.tkt_path = tkt_p if os.path.exists(tkt_p) else None
-        # TKMat records 解析 (从存档 Frame1) 已并入 DataLoaderThread 后台执行 (P3-3)
+        # TKMat records 解析 (从存档 Frame1) 已并入后台加载执行 (P3-3)
         self.status_var.setText(f"从存档加载 TKMat 数据 (槽位{slot_num})…")
         self._reload()
         self.setWindowTitle(f"{format_title('mat_editor')} [存档模式 槽位{slot_num}]")
@@ -3136,11 +3137,13 @@ class MatEditorApp(EditorMainWindow):
         # 存档模式下使用 game_dir 加载附属文件, TKMat records 从存档后台解析
         game_dir = self._data._game_dir if self._data._save_mode else os.path.dirname(self._data.dat_path)
         save_path = self._data._save_path if self._data._save_mode else None
-        self._loader_thread = DataLoaderThread(self._data.dat_path, self._data.tkt_path,
-                                                game_dir=game_dir, save_path=save_path)
-        self._loader_thread.finished_load.connect(self._on_load_success)
-        self._loader_thread.error_load.connect(self._on_load_error)
-        self._loader_thread.start()
+        dat_path, tkt_path = self._data.dat_path, self._data.tkt_path
+        self._loader_worker = run_background(
+            self,
+            lambda w: load_main_data(dat_path, tkt_path, game_dir=game_dir,
+                                     save_path=save_path),
+            on_success=self._on_load_success,
+            on_error=self._on_load_error)
 
     def _on_load_error(self, err_msg):
         """加载报错回调"""
@@ -3150,10 +3153,9 @@ class MatEditorApp(EditorMainWindow):
         self.status_var.setText("加载失败")
         self._update_empty_state()
 
-    def _on_load_success(self):
+    def _on_load_success(self, result):
         """加载完毕回调：应用数据并刷新 UI"""
         self.setUpdatesEnabled(False)
-        result = self._loader_thread.result_data
 
         self._data.load_from_result(result)
         self._canvas._undo_stack.clear()  # 载入新数据后旧撤销栈失效, 清空避免误恢复
@@ -3201,13 +3203,14 @@ class MatEditorApp(EditorMainWindow):
     def _start_jvg_thread(self):
         """延迟触发的后台资源加载线程 (贴图+TKD+物品)"""
         game_dir = self._data._game_dir if self._data._save_mode else None
-        self._jvg_thread = JvgLoaderThread(self._data.dat_path, self._data.tkt_all, game_dir=game_dir)
-        self._jvg_thread.finished_jvg.connect(self._on_jvg_success)
-        self._jvg_thread.start()
+        dat_path, tkt_all = self._data.dat_path, self._data.tkt_all
+        self._jvg_worker = run_background(
+            self,
+            lambda w: load_assets(dat_path, tkt_all, game_dir=game_dir),
+            on_success=self._on_jvg_success)
 
-    def _on_jvg_success(self):
+    def _on_jvg_success(self, result):
         """后台资源加载完毕回调 (贴图+TKD+物品)"""
-        result = self._jvg_thread.jvg_result
         # 接收贴图
         self._ani_jvg = result.get('ani_jvg')
         self._cha_jvg = result.get('cha_jvg')
@@ -3490,7 +3493,7 @@ class MatEditorApp(EditorMainWindow):
     def _du_recs_to_full_fields(self):
         """将 defunit_recs 转换为与文件位置对齐的完整字段列表。
 
-        DataLoaderThread 加载 TKDefUnit.Dat 时跳过了 f0==0 and f1==0 的空记录,
+        后台加载解析 TKDefUnit.Dat 时跳过了 f0==0 and f1==0 的空记录,
         导致 self._data.defunit_recs 是紧凑列表 (数组下标 ≠ 文件位置)。
         而 diff_records 按数组下标比较, 启动器 _merge_dat_file 又按下标 * rec_size
         写入文件。若直接用紧凑列表做 diff, 导出的 index 是数组下标而非文件位置,
