@@ -30,6 +30,9 @@ from datetime import datetime
 _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 if _THIS_DIR not in sys.path:
     sys.path.insert(0, _THIS_DIR)
+# 仓库根 (与 main.py 一致): 使 core 模块可直接 import editor_utils 共享组件
+if os.path.dirname(_THIS_DIR) not in sys.path:
+    sys.path.insert(0, os.path.dirname(_THIS_DIR))
 
 from core.launcher_pipeline import PatcherPipeline, PipelineConfig
 from core.log_setup import log_line

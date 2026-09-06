@@ -27,7 +27,7 @@ import ctypes
 import os
 import struct
 
-from core.lzss import lzss_decompress
+from editor_utils.lzss import lzss_decompress_dat as lzss_decompress
 from core.memory import (
     i32b,
     write_pm,

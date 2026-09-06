@@ -23,7 +23,11 @@ from itertools import combinations
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from .lzss import lzss_compress, lzss_decompress
+# LZSS (DAT 格式) 与编辑器共用同一实现 (T1 合并, 原 core/lzss.py 已删除)
+from editor_utils.lzss import (
+    lzss_compress_dat as lzss_compress,
+    lzss_decompress_dat as lzss_decompress,
+)
 
 # GRP 图层差分编解码 (与编辑器共用同一实现, 保证字节一致)
 try:
