@@ -29,7 +29,7 @@ from editor_utils.theme_switcher import (
 )
 from editor_utils.app_shell import EditorMainWindow, run_editor
 from editor_utils.dock_components import DockHeader
-from editor_utils.ui_helpers import themed_question, make_fake_input, update_path_labels, show_field_ref, EditorComboBox
+from editor_utils.ui_helpers import themed_question, make_fake_input, update_path_labels, show_field_ref, EditorComboBox, backup_existing_file
 from editor_utils.lzss import lzss_decompress_dat, lzss_compress_dat
 from editor_utils.tkt_loader import load_tkt_simple
 from editor_utils.picker_dialogs import StatusPickerDialog, STATUS_NAMES
@@ -1273,12 +1273,7 @@ class KonEditor(FieldUndoMixin, EditorMainWindow):
 
         # 后台线程: .bak 备份 + 压缩写盘 (P3-3)
         def work(w):
-            try:
-                with open(kon_path, 'rb') as s:
-                    with open(kon_path + ".bak", 'wb') as d:
-                        d.write(s.read())
-            except Exception:
-                pass
+            backup_existing_file(kon_path)
             save_kon(kon_path, records)
             return kon_path
 

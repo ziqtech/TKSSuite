@@ -73,7 +73,7 @@ from editor_utils.theme_switcher import (
 )
 from editor_utils.app_shell import EditorMainWindow, run_editor
 from editor_utils.ui_helpers import (
-    make_fake_input, mark_invalid, resolve_config_path,
+    make_fake_input, mark_invalid, resolve_config_path, backup_existing_file,
     form_edits_pending, themed_question,
     update_path_labels, EditorComboBox,
 )
@@ -1366,11 +1366,7 @@ class ItemEditorApp(FieldUndoMixin, EditorMainWindow):
         reply = themed_question(self, "确认保存",
             f"保存 {len(self.records)} 条到:\n{self.item_path}\n\n原文件将被覆盖 (生成 .bak).")
         if reply != QMessageBox.Yes: return
-        try:
-            with open(self.item_path, 'rb') as s:
-                with open(self.item_path + ".bak", 'wb') as d:
-                    d.write(s.read())
-        except: pass
+        backup_existing_file(self.item_path)
         try:
             self.status_var.setText("正在保存…")
             save_items(self.item_path, self.records)

@@ -83,7 +83,7 @@ from editor_utils.picker_dialogs import (
     SkillPickerDialog, GrowthTableDialog, BitmaskPickerDialog,
 )
 from editor_utils.jvg_loader import load_mu_sprites, get_sprite_pixmap
-from editor_utils.ui_helpers import make_fake_input, update_path_labels, confirm_close, resolve_config_path, show_field_ref, themed_messagebox, EditorComboBox, NoWheelSpinBox
+from editor_utils.ui_helpers import make_fake_input, update_path_labels, confirm_close, resolve_config_path, show_field_ref, themed_messagebox, EditorComboBox, NoWheelSpinBox, backup_existing_file
 from editor_utils.version import format_title
 from editor_utils.lzss import lzss_decompress_dat, lzss_compress_dat, lzss_decompress_save, lzss_compress_save
 from editor_utils.tkt_loader import load_tkt_simple
@@ -3103,12 +3103,7 @@ class WarpcEditorV2(EditorMainWindow):
 
         # 后台线程: .bak 备份 + 压缩写盘 (P3-3)
         def work(w):
-            try:
-                with open(warpc_path, 'rb') as s:
-                    with open(warpc_path+".bak", 'wb') as d:
-                        d.write(s.read())
-            except Exception:
-                pass
+            backup_existing_file(warpc_path)
             save_warpc(warpc_path, records)
             return ("file", warpc_path)
 

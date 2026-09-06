@@ -330,3 +330,17 @@ def pil_to_pixmap(img, size=(32, 32)):
         return QPixmap.fromImage(qimg)
     except Exception:
         return None
+
+
+def backup_existing_file(path) -> None:
+    """保存前把现有文件整块拷贝为 ``path + ".bak"`` (原文件不存在或
+    拷贝失败均静默跳过, 不阻断保存流程)。
+
+    供各编辑器写盘前调用 — 备份策略 (是否轮换/校验) 将来只需改这一处。
+    """
+    try:
+        with open(path, 'rb') as src:
+            with open(path + ".bak", 'wb') as dst:
+                dst.write(src.read())
+    except Exception:
+        pass

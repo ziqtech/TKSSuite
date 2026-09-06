@@ -97,6 +97,7 @@ from editor_utils.dock_components import DockHeader
 from editor_utils.ui_helpers import (
     themed_question,
     make_fake_input, update_path_labels, EditorComboBox, set_themed_icon,
+    backup_existing_file,
     show_field_ref,
 )
 from editor_utils.tab_widget import EditorTabWidget
@@ -3277,12 +3278,7 @@ class ActEditorV2(EditorMainWindow):
 
         # 后台线程: .bak 备份 + 压缩写盘 (P3-3)
         def work(w):
-            try:
-                with open(act_path, 'rb') as s:
-                    with open(act_path + ".bak", 'wb') as d:
-                        d.write(s.read())
-            except Exception:
-                pass
+            backup_existing_file(act_path)
             save_act(act_path, entries)
             return act_path
 

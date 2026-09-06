@@ -57,7 +57,7 @@ from editor_utils.theme_switcher import (
     apply_theme_to_window, toggle_theme_in_family,
 )
 from editor_utils.app_shell import EditorMainWindow, run_editor
-from editor_utils.ui_helpers import themed_question, update_path_labels, EditorComboBox
+from editor_utils.ui_helpers import themed_question, update_path_labels, EditorComboBox, backup_existing_file
 from editor_utils.search_utils import search_match
 from editor_utils.search_input import SearchInput
 from editor_utils.task_runner import run_background, is_running
@@ -937,12 +937,7 @@ class ShopEditorWindow(EditorMainWindow):
         if themed_question(self, "确认保存", f"将保存 {len(self.records)} 条记录到:\n{self.shop_path}\n\n原文件将被覆盖。继续?") != QMessageBox.Yes:
             return
 
-        try:
-            with open(self.shop_path, 'rb') as src:
-                with open(self.shop_path + ".bak", 'wb') as dst:
-                    dst.write(src.read())
-        except:
-            pass
+        backup_existing_file(self.shop_path)
 
         try:
             save_shop_data(self.shop_path, self.records)
