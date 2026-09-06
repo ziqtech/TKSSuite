@@ -111,11 +111,6 @@ def register_patch_type(type_name: str):
     return decorator
 
 
-def get_registered_handlers() -> Dict[str, Any]:
-    """返回当前已注册的 patch_type handler 字典 (测试用)。"""
-    return dict(_PATCH_TYPE_HANDLERS)
-
-
 def run_script_patch(defn: PatchDef, ctx: PatchContext) -> bool:
     """加载并执行 .tkspatch ZIP 内嵌或 patches/_scripts 下的脚本。"""
     try:
@@ -376,7 +371,6 @@ def _build_cave_layout(config: 'PatchConfig', cave_addr: int,
 # - detect_hook_type: 多模式识别 (call/jmp/jcc/push_imm32/jmp_indirect)
 # - HookTable: 跟踪启动器内部多个 cave_hook 之间的占用关系
 # - check_hook_conflict_v2: 联合识别 + 启动器内部 hook_table 查询
-# - 原 check_hook_conflict 保留, 仅作为简化版 fallback (返回 bool, 不带 owner 信息)
 
 # x86 Hook 类型识别 (基于首字节 + 必要的后续字节)
 # 参考 IA-32 手册 Vol.2B Table A-2 (One-byte Opcode Map)
@@ -481,18 +475,6 @@ def check_hook_conflict_v2(code_buf: bytearray, off: int,
     if ht == "oob":
         return (False, "oob")
     return (False, "none")
-
-
-# 向后兼容: 旧 API 返回 bool, 简化版 fallback
-def check_hook_conflict(code_buf: bytearray, off: int) -> bool:
-    """[旧 API] 检测 hook 点是否已被其他 MOD 占用 (call/jmp 首字节)。
-
-    Phase 7 保留此函数以兼容 Phase 6 之前的调用代码。
-    推荐使用 check_hook_conflict_v2 (返回 (conflict, owner))。
-    """
-    if off < 0 or off >= len(code_buf):
-        return False
-    return code_buf[off] in (0xE8, 0xE9)
 
 # ============================================================
 # Cave 机制公共常量 (全部 cave 机器码已外置至 patches/)
