@@ -24,7 +24,7 @@ fill_viewport=True 时切换为“完全撑满”模式：拉伸列不再封顶�
   含 setCellWidget 的表格拒绝启用——Qt 排序时 cell widget 不随行迁移，
   会造成控件与数据错位；此类表格应由消费方做数据级排序后重建表格。
 - enable_copy_menu(): 右键菜单（复制单元格/所选行/整表 + 导出所选行为 CSV），
-  默认开启（copy_menu=False 可关）。
+  构造时默认开启。
 - enable_column_persistence(key): 列宽持久化到 QSettings，恢复值喂给
   _user_widths（与"用户优先"机制天然集成），reset_column_layout 一并清除。
 """
@@ -87,10 +87,7 @@ class AdaptiveTableWidget(QTableWidget):
     def __init__(self, rows=0, columns=0, parent=None,
                  stretch_columns=None, minimum_widths=None, maximum_widths=None,
                  row_height=44, content_padding=14,
-                 stretch_cap_factor=DEFAULT_STRETCH_CAP_FACTOR,
-                 stretch_cap_margin=DEFAULT_STRETCH_CAP_MARGIN,
-                 fill_viewport=False,
-                 copy_menu=True):
+                 fill_viewport=False):
         super().__init__(rows, columns, parent)
         self._content_padding = content_padding
         self._minimum_widths = {}
@@ -103,8 +100,6 @@ class AdaptiveTableWidget(QTableWidget):
         self._inferred_stretch_columns = None
         self._applying_widths = False
         self._fit_scheduled = False
-        self._stretch_cap_factor = max(1.0, float(stretch_cap_factor))
-        self._stretch_cap_margin = max(0, int(stretch_cap_margin))
         self._numeric_sort_columns = set()
         self._sorting_enabled = False
         self._persistence_key = None
@@ -125,16 +120,12 @@ class AdaptiveTableWidget(QTableWidget):
 
         self.itemChanged.connect(lambda _item: self._schedule_fit())
 
-        if copy_menu:
-            self.enable_copy_menu()
+        self.enable_copy_menu()
 
         self._persist_timer = QTimer(self)
         self._persist_timer.setSingleShot(True)
         self._persist_timer.setInterval(400)
         self._persist_timer.timeout.connect(self._save_column_widths)
-
-    def set_adaptive_row_height(self, height):
-        self.verticalHeader().setDefaultSectionSize(max(30, int(height)))
 
     def set_adaptive_columns(self, stretch_columns=None, minimum_widths=None,
                              maximum_widths=None):
@@ -410,8 +401,8 @@ class AdaptiveTableWidget(QTableWidget):
         if explicit is not None:
             return max(base, explicit)
         return max(base,
-                   base * self._stretch_cap_factor,
-                   base + self._stretch_cap_margin)
+                   base * DEFAULT_STRETCH_CAP_FACTOR,
+                   base + DEFAULT_STRETCH_CAP_MARGIN)
 
     def _column_floor_width(self, column):
         """回缩阶段的下限：配置下限与用户拖过的宽度取最大，保证不截断用户意图。"""
