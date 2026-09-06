@@ -1328,12 +1328,9 @@ class GRPEditor(EditorMainWindow):
             f"提示: 若新地图被顺延到新号, 请在剧情脚本中把对应场景号改为\"实际\"号, "
             f"并确认 scene_id 与区段索引的映射关系。")
 
-    def closeEvent(self, event):
-        if not confirm_close(self, self._dirty):
-            event.ignore()
-            return
+    def _extra_close_guard(self):
+        """关闭前停止音频播放 (基类确认退出后调用)。"""
         self._stop_audio()
-        super().closeEvent(event)
 
     # ── Layer switching ───────────────────────────────────
     def _switch_layer(self, layer: str):

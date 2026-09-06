@@ -717,12 +717,6 @@ class KonEditor(FieldUndoMixin, EditorMainWindow):
     def _set_edit_enabled(self, en):
         self._edit_dock_body.setEnabled(en)
 
-    def closeEvent(self, event):
-        if not confirm_close(self, self._dirty):
-            event.ignore()
-        else:
-            event.accept()
-
     # ----------- 数据加载 -----------
 
     def _load_tks_dir(self):

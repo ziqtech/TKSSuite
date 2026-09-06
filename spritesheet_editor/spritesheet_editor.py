@@ -50,7 +50,6 @@ except ImportError:
     pass
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-from editor_utils.dock_components import create_dock
 from editor_utils import theme_manager
 from editor_utils.theme_manager import business_colors
 from editor_utils.theme_switcher import toggle_theme_in_family
@@ -2934,11 +2933,6 @@ class SpriteSheetEditorWindow(EditorMainWindow):
         fg.moveCenter(screen_geo.center())
         self.move(fg.topLeft())
 
-    def closeEvent(self, event):
-        if not confirm_close(self, self._dirty):
-            event.ignore()
-        else:
-            event.accept()
 
     def _build_layout(self):
         central = QWidget()
@@ -3182,10 +3176,6 @@ class SpriteSheetEditorWindow(EditorMainWindow):
 
         # 初始渲染空网格
         self.canvas.redraw()
-
-    def _create_dock(self, title, widget_content, header_layout=None):
-        """Dock 面板包裹 — 委托给 editor_utils.dock_components"""
-        return create_dock(title, widget_content, header_layout)
 
     def _set_model(self, model: SpriteSheetModel) -> None:
         """替换数据模型并保持所有视图订阅同一个变更信号。"""

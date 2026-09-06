@@ -44,7 +44,7 @@ from editor_utils.theme_switcher import (
     apply_theme_to_window, create_theme_menu, current_window_theme,
     sync_themed_icons, toggle_theme_in_family,
 )
-from editor_utils.ui_helpers import themed_messagebox
+from editor_utils.ui_helpers import confirm_close, themed_messagebox
 from editor_utils.version import format_about_header, format_title
 
 
@@ -128,6 +128,23 @@ class EditorMainWindow(QMainWindow):
     def status_message(self, text: str, timeout: int = 3000):
         """状态栏临时消息 (默认 3s 自动恢复), 各子类可直接调用。"""
         self._ensure_status_bar().showMessage(text, timeout)
+
+    # ── 关闭流程 (统一未保存确认 + 额外清理钩子) ──────────────
+    def closeEvent(self, event):
+        """默认关闭流程: 有未保存修改时弹确认 (confirm_close),
+        确认退出后调用 _extra_close_guard 供子类清理资源。"""
+        if not confirm_close(self, self._dirty):
+            event.ignore()
+            return
+        self._extra_close_guard()
+        event.accept()
+
+    def _extra_close_guard(self):
+        """子类钩子: 关闭前的额外清理 (停线程/动画/音频、删临时文件等)。
+
+        仅在用户确认退出后调用; 有复杂关闭逻辑 (自定义弹窗文案、
+        多重脏状态) 的子类保留自己的 closeEvent 覆盖即可。
+        """
 
     def set_dirty(self, dirty) -> None:
         """统一脏状态入口: 置/清修改标记 (标题栏 * 号)。
@@ -249,9 +266,10 @@ class EditorMainWindow(QMainWindow):
         """子类钩子: UI 构建完成后的收尾 (如路径标签刷新、初始状态)。"""
 
     # ── 样板五件套 (子类可覆盖) ────────────────────────────────
-    def _create_dock(self, title, widget_content):
+    def _create_dock(self, title, widget_content, header_layout=None,
+                     body_margins=(8, 8, 8, 8)):
         """Dock 面板包裹 — 委托给 editor_utils.dock_components。"""
-        return create_dock(title, widget_content)
+        return create_dock(title, widget_content, header_layout, body_margins)
 
     def _apply_theme(self):
         """重新应用当前主题 (子类可覆盖以追加派生同步)。"""

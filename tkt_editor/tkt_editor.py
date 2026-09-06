@@ -45,7 +45,7 @@ from editor_utils.theme_switcher import (
     apply_theme_to_window, toggle_theme_in_family,
 )
 from editor_utils.app_shell import EditorMainWindow, run_editor
-from editor_utils.dock_components import DockHeader, create_dock
+from editor_utils.dock_components import DockHeader
 from editor_utils.adaptive_table import AdaptiveTableWidget
 from editor_utils.ui_helpers import themed_question, update_path_labels, confirm_close, EditorComboBox, set_themed_icon
 from editor_utils.tkt_loader import load_tkt_full as _load_tkt_full
@@ -895,10 +895,6 @@ class TktEditor(EditorMainWindow):
 
         if self._initial_path and os.path.exists(self._initial_path):
             self._load_file(self._initial_path)
-
-    def _create_dock(self, title, widget_content, header_layout=None):
-        """Dock 面板包裹 — 委托给 editor_utils.dock_components"""
-        return create_dock(title, widget_content, header_layout)
 
     def resizeEvent(self, event):
         """窗口尺寸变化后同步关联表的文本列比例。"""

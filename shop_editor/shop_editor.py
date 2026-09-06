@@ -283,12 +283,6 @@ class ShopEditorWindow(EditorMainWindow):
         self._update_path_labels()
         self._set_edit_enabled(False)
 
-    def closeEvent(self, event):
-        if not confirm_close(self, self._dirty):
-            event.ignore()
-        else:
-            event.accept()
-
     # ================================================================
     # UI 构建
     # ================================================================

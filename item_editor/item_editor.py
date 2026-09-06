@@ -1600,12 +1600,6 @@ class ItemEditorApp(FieldUndoMixin, EditorMainWindow):
         layout.addWidget(tx)
         dlg.exec()
 
-    def closeEvent(self, event):
-        if not confirm_close(self, self._dirty):
-            event.ignore()
-        else:
-            event.accept()
-
 
 def main():
     run_editor(ItemEditorApp)

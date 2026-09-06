@@ -45,7 +45,7 @@ except ImportError:
     pass
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-from editor_utils.dock_components import DockHeader, create_dock
+from editor_utils.dock_components import DockHeader
 from editor_utils.ui_helpers import themed_question, set_themed_icon
 from editor_utils.image_io import encode_png_rgba
 from editor_utils.mod_exporter import (
@@ -972,11 +972,6 @@ class JVGEditor(EditorMainWindow):
             self._open(self._initial_path)
         else:
             self._new()
-
-    def _create_dock(self, title, widget_content, header_layout=None,
-                     body_margins=(8, 8, 8, 8)):
-        """创建统一的 dock 面板 — 委托给 editor_utils.dock_components"""
-        return create_dock(title, widget_content, header_layout, body_margins)
 
     def _on_theme_applied(self, theme_id: str):
         """主题应用后同步画布背景色。

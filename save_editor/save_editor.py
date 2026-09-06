@@ -1925,12 +1925,6 @@ class SaveEditorApp(EditorMainWindow):
             b = text.encode('big5', errors='replace')
         return b[:size - 1].ljust(size, b'\x00')[:size]
 
-    def closeEvent(self, event):
-        if not confirm_close(self, self._dirty):
-            event.ignore()
-        else:
-            event.accept()
-
 
 # ============================================================
 # 入口

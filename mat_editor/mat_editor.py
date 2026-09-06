@@ -58,7 +58,7 @@ from editor_utils.theme_switcher import (
     apply_theme_to_window, toggle_theme_in_family,
 )
 from editor_utils.app_shell import EditorMainWindow, run_editor
-from editor_utils.dock_components import DockHeader, create_dock
+from editor_utils.dock_components import DockHeader
 from editor_utils.empty_state import EmptyStateOverlay
 from editor_utils.lzss import lzss_decompress_dat as lzss_decompress, lzss_decompress_save, lzss_compress_save
 from editor_utils.ui_helpers import themed_question, confirm_close, themed_messagebox, EditorComboBox
@@ -1501,10 +1501,6 @@ class MatEditorApp(EditorMainWindow):
         sb.addWidget(self._vis_info_label, 1)
         sb.addPermanentWidget(self._vis_coord_label)
         self.setStatusBar(sb)
-
-    def _create_dock(self, title, widget_content, header_layout=None):
-        """Dock 面板包裹 — 委托给 editor_utils.dock_components"""
-        return create_dock(title, widget_content, header_layout)
 
     # =========== 左侧面板: 场景列表 + 实体列表 ===========
     def _build_left_panel(self):

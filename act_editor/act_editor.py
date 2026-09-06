@@ -4479,13 +4479,10 @@ class ActEditorV2(EditorMainWindow):
 
     # ── 窗口关闭 ──
 
-    def closeEvent(self, event):
+    def _extra_close_guard(self):
+        """关闭前清理: 停预览播放 + 删除 SWS 音效临时文件 (基类确认退出后调用)。"""
         self._preview_stop()
-        if not confirm_close(self, self._dirty):
-            event.ignore()
-        else:
-            _cleanup_sws_tempfiles()
-            event.accept()
+        _cleanup_sws_tempfiles()
 
 
 # ============================================================

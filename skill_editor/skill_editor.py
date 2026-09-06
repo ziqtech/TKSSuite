@@ -23,7 +23,7 @@ from PySide6.QtWidgets import (
 )
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-from editor_utils.dock_components import DockHeader, create_dock
+from editor_utils.dock_components import DockHeader
 from editor_utils.adaptive_table import AdaptiveTableWidget
 from editor_utils.jvg_loader import get_sprite_pixmap, load_mu_sprites
 from editor_utils.lzss import lzss_compress_dat, lzss_decompress_dat
@@ -751,10 +751,6 @@ class SkillEditorApp(FieldUndoMixin, EditorMainWindow):
     def _after_build(self):
         self._set_edit_enabled(False)
         self._apply_theme()
-
-    def _create_dock(self, title, widget_content, header_layout=None):
-        """Dock 面板包裹 — 委托给 editor_utils.dock_components"""
-        return create_dock(title, widget_content, header_layout)
 
     def showEvent(self, event):
         super().showEvent(event)
@@ -1680,12 +1676,6 @@ class SkillEditorApp(FieldUndoMixin, EditorMainWindow):
             f"作者: {info.get('author', '')}\n\n"
             f"共加载 {len(records)} 条记录。\n"
             f"您现在可以继续编辑并重新导出。")
-
-    def closeEvent(self, event):
-        if not confirm_close(self, self._dirty):
-            event.ignore()
-        else:
-            event.accept()
 
 def main():
     run_editor(SkillEditorApp)

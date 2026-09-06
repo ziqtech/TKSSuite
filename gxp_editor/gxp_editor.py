@@ -33,7 +33,7 @@ except ImportError:
     pass
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-from editor_utils.dock_components import DockHeader, create_dock
+from editor_utils.dock_components import DockHeader
 from editor_utils.image_io import encode_png_rgb
 from editor_utils.lzss import (
     lzss_compress_stream as _lzss_compress_stream,
@@ -217,16 +217,6 @@ class GXPEditor(EditorMainWindow):
             self._open(self._initial_path)
         else:
             self._new_empty()
-
-    def _create_dock(self, title, widget_content, header_layout=None):
-        """Dock 面板包裹 — 委托给 editor_utils.dock_components"""
-        return create_dock(title, widget_content, header_layout)
-
-    def closeEvent(self, event):
-        if not confirm_close(self, self._dirty):
-            event.ignore()
-        else:
-            event.accept()
 
     def _on_theme_applied(self, theme_id):
         spec = theme_manager.THEMES[theme_id]
