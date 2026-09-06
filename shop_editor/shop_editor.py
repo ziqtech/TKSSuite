@@ -58,7 +58,7 @@ from editor_utils.theme_switcher import (
     apply_theme_to_window, toggle_theme_in_family,
 )
 from editor_utils.app_shell import EditorMainWindow, run_editor
-from editor_utils.ui_helpers import themed_question, update_path_labels, EditorComboBox, confirm_close
+from editor_utils.ui_helpers import themed_question, update_path_labels, EditorComboBox
 from editor_utils.search_utils import search_match
 from editor_utils.search_input import SearchInput
 from editor_utils.task_runner import run_background, is_running

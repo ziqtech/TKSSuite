@@ -62,7 +62,7 @@ from editor_utils.theme_switcher import (
 from editor_utils.tkt_loader import load_tkt_simple
 from editor_utils.ui_helpers import (
     themed_question,
-    confirm_close, make_fake_input, update_path_labels, EditorComboBox,
+    make_fake_input, update_path_labels, EditorComboBox,
 )
 from editor_utils.tab_widget import EditorTabWidget
 

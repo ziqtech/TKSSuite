@@ -97,7 +97,7 @@ from editor_utils.shared_state import pick_tks_directory
 from editor_utils.dock_components import DockHeader
 from editor_utils.ui_helpers import (
     themed_question,
-    make_fake_input, update_path_labels, confirm_close, EditorComboBox, set_themed_icon,
+    make_fake_input, update_path_labels, EditorComboBox, set_themed_icon,
 )
 from editor_utils.tab_widget import EditorTabWidget
 from editor_utils.adaptive_table import AdaptiveTableWidget

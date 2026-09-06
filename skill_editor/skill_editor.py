@@ -52,7 +52,7 @@ from editor_utils.theme_switcher import (
 from editor_utils.app_shell import EditorMainWindow, run_editor
 from editor_utils.tkt_loader import load_tkt_simple
 from editor_utils.ui_helpers import (
-    confirm_close, make_fake_input, mark_invalid,
+    make_fake_input, mark_invalid,
     form_edits_pending, themed_question,
     update_path_labels, EditorComboBox,
 )

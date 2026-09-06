@@ -55,7 +55,7 @@ from editor_utils.theme_manager import business_colors
 from editor_utils.theme_switcher import toggle_theme_in_family
 from editor_utils.app_shell import EditorMainWindow, run_editor
 from editor_utils.version import format_title
-from editor_utils.ui_helpers import themed_question, EditorComboBox, confirm_close, set_themed_icon
+from editor_utils.ui_helpers import themed_question, EditorComboBox, set_themed_icon
 
 # ── 像素格式定义 ──────────────────────────────────────────────
 PIXEL_FORMATS: dict[str, str] = {

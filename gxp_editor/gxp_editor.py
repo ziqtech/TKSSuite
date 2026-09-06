@@ -49,7 +49,6 @@ from editor_utils import theme_manager
 from editor_utils.theme_switcher import toggle_theme_in_family
 from editor_utils.app_shell import EditorMainWindow, run_editor
 from editor_utils.version import format_title
-from editor_utils.ui_helpers import confirm_close
 from editor_utils.ui_helpers import set_themed_icon
 from editor_utils.task_runner import run_background, is_running
 

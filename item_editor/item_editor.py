@@ -74,7 +74,7 @@ from editor_utils.theme_switcher import (
 )
 from editor_utils.app_shell import EditorMainWindow, run_editor
 from editor_utils.ui_helpers import (
-    confirm_close, make_fake_input, mark_invalid, resolve_config_path,
+    make_fake_input, mark_invalid, resolve_config_path,
     form_edits_pending, themed_question,
     update_path_labels, EditorComboBox,
 )

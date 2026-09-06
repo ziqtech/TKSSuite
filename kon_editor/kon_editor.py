@@ -29,7 +29,7 @@ from editor_utils.theme_switcher import (
 )
 from editor_utils.app_shell import EditorMainWindow, run_editor
 from editor_utils.dock_components import DockHeader
-from editor_utils.ui_helpers import themed_question, make_fake_input, update_path_labels, confirm_close, show_field_ref, EditorComboBox
+from editor_utils.ui_helpers import themed_question, make_fake_input, update_path_labels, show_field_ref, EditorComboBox
 from editor_utils.lzss import lzss_decompress_dat, lzss_compress_dat
 from editor_utils.shared_state import pick_tks_directory
 from editor_utils.tkt_loader import load_tkt_simple

@@ -75,7 +75,7 @@ from editor_utils.mod_exporter import (
 from editor_utils.rgb565 import rgb565_to_rgba, rgba_to_rgb565
 from editor_utils.image_io import encode_png_rgba
 from editor_utils.app_shell import EditorMainWindow, run_editor
-from editor_utils.ui_helpers import themed_question, themed_messagebox, confirm_close
+from editor_utils.ui_helpers import themed_question, themed_messagebox
 from editor_utils.version import format_title
 
 # ── 本地别名: 保持向后兼容 ──
