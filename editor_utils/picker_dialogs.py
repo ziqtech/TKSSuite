@@ -11,14 +11,14 @@
 import json
 
 from PySide6.QtCore import Qt, QSize
-from PySide6.QtGui import QColor, QFont, QIcon, QImage, QPixmap
+from PySide6.QtGui import QColor, QFont, QIcon
 from PySide6.QtWidgets import (
     QAbstractItemView, QCheckBox, QDialog, QFrame, QHBoxLayout,
     QHeaderView, QLabel, QLineEdit, QPushButton, QScrollArea,
     QSpinBox, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
-from editor_utils.ui_helpers import resolve_config_path, EditorComboBox
+from editor_utils.ui_helpers import resolve_config_path, EditorComboBox, pil_to_pixmap
 from editor_utils.adaptive_table import AdaptiveTableWidget
 from editor_utils.search_utils import search_match
 from editor_utils.search_input import SearchInput
@@ -711,17 +711,6 @@ class BitmaskPickerDialog(QDialog):
 # WarPC 角色选择器
 # ═══════════════════════════════════════════════════════════════
 
-def _pil_to_pixmap(img, size=(32, 32)):
-    """将 PIL.Image 转为 QPixmap。img 为 None 时返回 None。"""
-    if img is None:
-        return None
-    img = img.resize(size, 1)  # Image.NEAREST = 1
-    img = img.convert('RGBA')
-    data = img.tobytes('raw', 'RGBA')
-    qimg = QImage(data, img.width, img.height, QImage.Format_RGBA8888)
-    return QPixmap.fromImage(qimg)
-
-
 class WarpcPickerDialog(QDialog):
     """WarPC 角色选择对话框 — 搜索过滤表格，支持单选/多选。
 
@@ -821,7 +810,7 @@ class WarpcPickerDialog(QDialog):
         sprite = self._fa_sprites[sprite_idx]
         if sprite is None:
             return None
-        pix = _pil_to_pixmap(sprite, size)
+        pix = pil_to_pixmap(sprite, size)
         self._pixmap_cache[cache_key] = pix
         return pix
 

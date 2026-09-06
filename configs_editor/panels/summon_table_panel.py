@@ -12,24 +12,13 @@ from PySide6.QtWidgets import (
     QToolButton
 )
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QPixmap, QImage, QIcon
+from PySide6.QtGui import QIcon
 
 from editor_utils.picker_dialogs import WarpcPickerDialog
 from editor_utils.adaptive_table import AdaptiveTableWidget
+from editor_utils.ui_helpers import pil_to_pixmap
 
 from .base_panel import ConfigPanelBase
-
-
-def _pil_to_pixmap(img, size=(32, 32)):
-    """将 PIL.Image 转为 QPixmap"""
-    try:
-        img = img.resize(size, 1)  # Image.NEAREST = 1
-        img = img.convert('RGBA')
-        data = img.tobytes('raw', 'RGBA')
-        qimg = QImage(data, img.width, img.height, QImage.Format_RGBA8888)
-        return QPixmap.fromImage(qimg)
-    except Exception:
-        return None
 
 
 # ── 召唤表键解析工具 ──
@@ -261,7 +250,7 @@ class SummonEditDialog(QDialog):
         sprite = self._fa_sprites[sprite_idx]
         if sprite is None:
             return None
-        pix = _pil_to_pixmap(sprite, (24, 24))
+        pix = pil_to_pixmap(sprite, (24, 24))
         self._pixmap_cache[cache_key] = pix
         return pix
 
@@ -469,7 +458,7 @@ class SummonTablePanel(ConfigPanelBase):
         sprite = self._fa_sprites[sprite_idx]
         if sprite is None:
             return None
-        return _pil_to_pixmap(sprite, size)
+        return pil_to_pixmap(sprite, size)
 
     def _refresh_table(self):
         """填充表格。"""

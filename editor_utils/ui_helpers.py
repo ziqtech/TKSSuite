@@ -5,7 +5,7 @@
 import os
 import sys
 from PySide6.QtCore import QObject, QEvent
-from PySide6.QtGui import QIcon, QFont
+from PySide6.QtGui import QIcon, QFont, QImage, QPixmap
 from PySide6.QtWidgets import (QDialog, QFileDialog, QFrame, QHBoxLayout, QLabel,
                                QLineEdit, QMenu, QMessageBox,
                                QPushButton, QTextEdit, QVBoxLayout, QWidget, QSpinBox)
@@ -312,3 +312,21 @@ def resolve_config_path(config_filename):
         return cwd_path
 
     return None
+
+
+def pil_to_pixmap(img, size=(32, 32)):
+    """将 PIL.Image 缩放后转为 QPixmap。img 为 None 或转换失败时返回 None。
+
+    合并自 picker_dialogs._pil_to_pixmap 与 summon_table_panel._pil_to_pixmap
+    (None 检查与异常兜底取两者并集, 对既有调用路径行为一致)。
+    """
+    if img is None:
+        return None
+    try:
+        img = img.resize(size, 1)  # Image.NEAREST = 1
+        img = img.convert('RGBA')
+        data = img.tobytes('raw', 'RGBA')
+        qimg = QImage(data, img.width, img.height, QImage.Format_RGBA8888)
+        return QPixmap.fromImage(qimg)
+    except Exception:
+        return None
