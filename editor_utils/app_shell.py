@@ -57,6 +57,7 @@ class EditorMainWindow(QMainWindow):
     HELP_TEXT: str = ""
     ABOUT_TITLE: str = "关于编辑器"  # 查看器类应用可覆盖 (如 tks_book 用"关于查看器")
     THEME_MENU_TITLE: str = "主题(&T)"  # 键位冲突的编辑器可覆盖 (如 save 用 &M)
+    TKS_DIR_PROMPT: str = "选择 TKS 游戏目录"  # "加载 TKS 目录"对话框标题
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -214,11 +215,11 @@ class EditorMainWindow(QMainWindow):
     def _load_tks_dir(self):
         """默认"加载 TKS 目录"动作: 选目录后交给 load_tks_dir。
 
-        子类已有自己的 _load_tks_dir 的保持原样 (覆盖本方法);
-        新写法只需把加载体搬入 load_tks_dir。
+        对话框标题经 TKS_DIR_PROMPT 类属性定制; 加载流程特殊的子类
+        保留自己的覆盖即可。
         """
         from editor_utils.shared_state import pick_tks_directory
-        d = pick_tks_directory(self)
+        d = pick_tks_directory(self, self.TKS_DIR_PROMPT)
         if d:
             self.load_tks_dir(d)
 

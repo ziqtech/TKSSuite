@@ -57,7 +57,6 @@ from editor_utils.adaptive_table import AdaptiveTableWidget
 from editor_utils.flow_layout import FlowLayout
 from editor_utils.jvg_loader import get_sprite_pixmap, load_mu_sprites
 from editor_utils.lzss import lzss_compress_dat, lzss_decompress_dat
-from editor_utils.shared_state import pick_tks_directory
 from editor_utils.mod_exporter import (
     ModExportPreviewDialog, ModImportPreviewDialog, ModMetadataDialog,
     build_data_diff_json, compute_crc32, diff_records, generate_mod_json,
@@ -758,11 +757,6 @@ class ItemEditorApp(FieldUndoMixin, EditorMainWindow):
         ], self._is_dark)
 
     # ── 数据加载 ──
-    def _load_tks_dir(self):
-        d = pick_tks_directory(self)
-        if d:
-            self.load_tks_dir(d)
-
     def load_tks_dir(self, d):
         it = os.path.join(d, "TKItem.dat")
         tk_ = os.path.join(d, "TKT.dat")

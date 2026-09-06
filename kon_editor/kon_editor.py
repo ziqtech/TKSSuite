@@ -31,7 +31,6 @@ from editor_utils.app_shell import EditorMainWindow, run_editor
 from editor_utils.dock_components import DockHeader
 from editor_utils.ui_helpers import themed_question, make_fake_input, update_path_labels, show_field_ref, EditorComboBox
 from editor_utils.lzss import lzss_decompress_dat, lzss_compress_dat
-from editor_utils.shared_state import pick_tks_directory
 from editor_utils.tkt_loader import load_tkt_simple
 from editor_utils.picker_dialogs import StatusPickerDialog, STATUS_NAMES
 from editor_utils.jvg_loader import load_mu_sprites, get_sprite_pixmap
@@ -718,11 +717,6 @@ class KonEditor(FieldUndoMixin, EditorMainWindow):
         self._edit_dock_body.setEnabled(en)
 
     # ----------- 数据加载 -----------
-
-    def _load_tks_dir(self):
-        d = pick_tks_directory(self)
-        if d:
-            self.load_tks_dir(d)
 
     def load_tks_dir(self, d):
         ko = os.path.join(d, "TKKon.dat")

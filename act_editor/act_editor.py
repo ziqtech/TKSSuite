@@ -93,7 +93,6 @@ from editor_utils.search_input import SearchInput
 from editor_utils.task_runner import run_background, is_running
 from editor_utils.kon_name_resolver import KonNameResolver
 from editor_utils.lzss import lzss_decompress_dat
-from editor_utils.shared_state import pick_tks_directory
 from editor_utils.dock_components import DockHeader
 from editor_utils.ui_helpers import (
     themed_question,
@@ -2428,11 +2427,6 @@ class ActEditorV2(EditorMainWindow):
         inner.layout().addStretch()
 
     # ── 数据加载 ──
-
-    def _load_tks_dir(self):
-        d = pick_tks_directory(self)
-        if d:
-            self.load_tks_dir(d)
 
     def load_tks_dir(self, d):
         def _pick(*names):

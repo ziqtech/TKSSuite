@@ -49,7 +49,6 @@ from editor_utils.dock_components import DockHeader
 from editor_utils.adaptive_table import AdaptiveTableWidget
 from editor_utils.ui_helpers import themed_question, update_path_labels, confirm_close, EditorComboBox, set_themed_icon
 from editor_utils.tkt_loader import load_tkt_full as _load_tkt_full
-from editor_utils.shared_state import pick_tks_directory
 from editor_utils.mod_exporter import (
     diff_text_entries, compute_crc32, generate_mod_json,
     pack_tksmod, build_text_diff_json, ModMetadataDialog, safe_mod_filename,
@@ -845,6 +844,7 @@ def pil_to_qimage(pil_image):
 
 class TktEditor(EditorMainWindow):
     EDITOR_KEY = "tkt_editor"
+    TKS_DIR_PROMPT = "挂载 TKS 游戏核心环境目录"
     DEFAULT_SIZE = (1350, 850)
 
     HELP_TEXT = (
@@ -1333,11 +1333,6 @@ class TktEditor(EditorMainWindow):
     def _on_load_error(self, err_msg):
         QMessageBox.critical(self, "数据载入溃散", err_msg)
         self._set_edit_enabled(True)
-
-    def _load_tks_dir(self):
-        d = pick_tks_directory(self, "挂载 TKS 游戏核心环境目录")
-        if d:
-            self.load_tks_dir(d)
 
     def load_tks_dir(self, d):
         tkt_path = os.path.join(d, "TKT.dat")

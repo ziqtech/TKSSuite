@@ -27,7 +27,6 @@ from editor_utils.dock_components import DockHeader
 from editor_utils.adaptive_table import AdaptiveTableWidget
 from editor_utils.jvg_loader import get_sprite_pixmap, load_mu_sprites
 from editor_utils.lzss import lzss_compress_dat, lzss_decompress_dat
-from editor_utils.shared_state import pick_tks_directory
 from editor_utils.theme_manager import business_colors
 
 # 播种徽标底色 — 深饱和色配白字保证对比, 深浅主题一致 (阶段 2 豁免: 主题无关领域色)
@@ -1082,11 +1081,6 @@ class SkillEditorApp(FieldUndoMixin, EditorMainWindow):
             (self.lbl_tkt_path, self.tkt_path, "TKT.dat"),
             (self.lbl_mu_path, self.mu_path, "Mu.JVG"),
         ], self._is_dark)
-
-    def _load_tks_dir(self):
-        d = pick_tks_directory(self)
-        if d:
-            self.load_tks_dir(d)
 
     def load_tks_dir(self, d):
         sk = os.path.join(d, "TKSkill.dat")
