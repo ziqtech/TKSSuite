@@ -65,6 +65,7 @@ from editor_utils.ui_helpers import (
     make_fake_input, update_path_labels, EditorComboBox,
 )
 from editor_utils.tab_widget import EditorTabWidget
+from editor_utils.search_input import SearchInput
 
 
 # ============================================================
@@ -1051,8 +1052,7 @@ class SaveEditorApp(EditorMainWindow):
 
         # 搜索
         sf = QHBoxLayout()
-        self._warpc_search = QLineEdit()
-        self._warpc_search.setPlaceholderText("搜索角色")
+        self._warpc_search = SearchInput("搜索角色")
         self._warpc_search.textChanged.connect(self._refresh_warpc_list)
         sf.addWidget(self._warpc_search)
         self._warpc_filter = EditorComboBox()
