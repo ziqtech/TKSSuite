@@ -212,9 +212,12 @@ def _version_flags(name: str, editor_dir: str) -> list:
     ]
 
 
-def _build_thin_cmd(name: str, entry: str, editor_dir: str,
-                    release: bool = False, jobs: int = 8) -> list:
-    """生成 Nuitka 薄 exe 构建命令 (PySide6/PIL 由 .lib 提供, 不编译进 exe)"""
+def _nuitka_common(name: str, entry: str, editor_dir: str,
+                   console_mode: str):
+    """三个构建目标共享的 Nuitka 命令头 (打包模式/输出/图标)。
+
+    返回 (命令头列表, entry_path, icon_path) — T15 抽取, 三个 _build_*_cmd 只留差异。
+    """
     entry_path = 仓库根目录 / entry
     icon_path = 仓库根目录 / editor_dir / "TKS.ico"
     if not icon_path.exists():
@@ -231,14 +234,35 @@ def _build_thin_cmd(name: str, entry: str, editor_dir: str,
         # ── 输出控制 ──
         f"--output-dir={DIST_DIR}",
         f"--output-filename={name}.exe",
-
-        # ── Windows 配置 ──
-        "--windows-console-mode=disable",
+        # thin/onefile 禁控制台; CLI (force) 需要控制台输出
+        f"--windows-console-mode={console_mode}",
         f"--windows-icon-from-ico={icon_path}",
+    ]
+    return cmd, entry_path, icon_path
 
-        # ── 不使用 PySide6 插件 (不打包 Qt!) ──
-        # PySide6/PIL/shiboken6 由外部 .lib 归档提供
 
+def _nuitka_optimize(release: bool, jobs: int) -> list:
+    """共享的编译优化旗标。"""
+    return [
+        f"--jobs={jobs}",
+        f"--lto={'yes' if release else 'no'}",
+        "--python-flag=no_docstrings",
+        "--python-flag=no_asserts",
+    ]
+
+
+#: thin/onefile 共享的无用模块排除清单 (cli 用其前 6 项)
+_NOFOLLOW_COMMON = ["tkinter", "matplotlib", "numpy",
+                    "scipy", "pytest", "IPython", "unittest"]
+
+
+def _build_thin_cmd(name: str, entry: str, editor_dir: str,
+                    release: bool = False, jobs: int = 8) -> list:
+    """生成 Nuitka 薄 exe 构建命令 (PySide6/PIL 由 .lib 提供, 不编译进 exe)"""
+    cmd, entry_path, icon_path = _nuitka_common(name, entry, editor_dir,
+                                                console_mode="disable")
+
+    cmd.extend([
         # ── 排除大型共享模块 (由 .lib 归档提供) ──
         "--nofollow-import-to=PySide6",
         "--nofollow-import-to=shiboken6",
@@ -252,7 +276,7 @@ def _build_thin_cmd(name: str, entry: str, editor_dir: str,
 
         # ── 包含 zstandard (用于 .lib 归档解压) ──
         "--include-package=zstandard",
-    ]
+    ])
 
     # ── 版本资源 (降低杀毒误报) ──
     cmd.extend(_version_flags(name, editor_dir))
@@ -268,20 +292,10 @@ def _build_thin_cmd(name: str, entry: str, editor_dir: str,
         f"--include-data-files={icon_path}=TKS.ico",
 
         # ── 排除其他无用模块 ──
-        "--nofollow-import-to=tkinter",
-        "--nofollow-import-to=matplotlib",
-        "--nofollow-import-to=numpy",
-        "--nofollow-import-to=scipy",
-        "--nofollow-import-to=pytest",
-        "--nofollow-import-to=IPython",
-        "--nofollow-import-to=unittest",
-
-        # ── 编译优化 ──
-        f"--jobs={jobs}",
-        f"--lto={'yes' if release else 'no'}",
-        "--python-flag=no_docstrings",
-        "--python-flag=no_asserts",
+        *[f"--nofollow-import-to={m}" for m in _NOFOLLOW_COMMON],
     ])
+
+    cmd.extend(_nuitka_optimize(release, jobs))
 
     # zhconv 数据文件 (zhcdict.json) — 运行时按需加载, Nuitka 不会自动打包
     if name in NEEDS_ZHCONV:
@@ -301,27 +315,10 @@ def _build_thin_cmd(name: str, entry: str, editor_dir: str,
 def _build_onefile_cmd(name: str, entry: str, editor_dir: str,
                        release: bool = False, jobs: int = 8) -> list:
     """生成 Nuitka 完整 onefile 构建命令 (PySide6/PIL 编译进 exe)"""
-    entry_path = 仓库根目录 / entry
-    icon_path = 仓库根目录 / editor_dir / "TKS.ico"
-    if not icon_path.exists():
-        icon_path = 仓库根目录 / "item_editor" / "TKS.ico"
+    cmd, entry_path, icon_path = _nuitka_common(name, entry, editor_dir,
+                                                console_mode="disable")
 
-    cmd = [
-        sys.executable, "-m", "nuitka",
-        # ── 打包模式 ──
-        "--onefile",
-        f"--onefile-tempdir-spec={ONEFILE_TEMP_DIR_SPEC}",
-        "--onefile-cache-mode=cached",
-        "--assume-yes-for-downloads",
-
-        # ── 输出控制 ──
-        f"--output-dir={DIST_DIR}",
-        f"--output-filename={name}.exe",
-
-        # ── Windows 配置 ──
-        "--windows-console-mode=disable",
-        f"--windows-icon-from-ico={icon_path}",
-
+    cmd.extend([
         # ── PySide6 插件 (完整编译 Qt) ──
         "--enable-plugin=pyside6",
 
@@ -331,31 +328,21 @@ def _build_onefile_cmd(name: str, entry: str, editor_dir: str,
         f"--include-data-files={icon_path}=TKS.ico",
 
         # ── 包含 editor_utils 包 ──
-        f"--include-package=editor_utils",
+        "--include-package=editor_utils",
 
         # ── 排除明确不使用的 Qt/Pillow 功能，降低 onefile 体积 ──
-        "--nofollow-import-to=tkinter",
-        "--nofollow-import-to=matplotlib",
-        "--nofollow-import-to=numpy",
-        "--nofollow-import-to=scipy",
-        "--nofollow-import-to=pytest",
-        "--nofollow-import-to=IPython",
-        "--nofollow-import-to=unittest",
+        *[f"--nofollow-import-to={m}" for m in _NOFOLLOW_COMMON],
         *[f"--nofollow-import-to={m}" for m in ONEFILE_UNUSED_QT_MODULES],
         *[f"--nofollow-import-to={m}" for m in ONEFILE_UNUSED_PIL_MODULES],
 
         # ── 允许运行时导入被排除模块 (意外导入链如 item_editor.py→tkinter 不会 crash) ──
         "--no-deployment-flag=excluded-module-usage",
+    ])
 
-        # ── 编译优化 ──
-        f"--jobs={jobs}",
-        f"--lto={'yes' if release else 'no'}",
-        "--python-flag=no_docstrings",
-        "--python-flag=no_asserts",
+    cmd.extend(_nuitka_optimize(release, jobs))
 
-        # ── 清理 ──
-        "--remove-output",
-    ]
+    # ── 清理 ──
+    cmd.append("--remove-output")
 
     # ── 版本资源 (降低杀毒误报) ──
     cmd.extend(_version_flags(name, editor_dir))
@@ -386,32 +373,17 @@ def _build_onefile_cmd(name: str, entry: str, editor_dir: str,
 def _build_cli_cmd(name: str, entry: str, editor_dir: str,
                    release: bool = False, jobs: int = 8) -> list:
     """生成 CLI 启动器 Nuitka 构建命令 (无 PySide6, 无 Qt, 极简 exe)"""
-    entry_path = 仓库根目录 / entry
-    icon_path = 仓库根目录 / editor_dir / "TKS.ico"
-    if not icon_path.exists():
-        icon_path = 仓库根目录 / "item_editor" / "TKS.ico"
+    cmd, entry_path, _icon_path = _nuitka_common(name, entry, editor_dir,
+                                                 console_mode="force")
 
     tks_launcher_dir = 仓库根目录 / "tks_launcher_gui"
 
-    cmd = [
-        sys.executable, "-m", "nuitka",
-        "--onefile",
-        f"--onefile-tempdir-spec={ONEFILE_TEMP_DIR_SPEC}",
-        "--onefile-cache-mode=cached",
-        "--assume-yes-for-downloads",
-        f"--output-dir={DIST_DIR}",
-        f"--output-filename={name}.exe",
-        # CLI 需要控制台输出
-        "--windows-console-mode=force",
-        f"--windows-icon-from-ico={icon_path}",
-
+    cmd.extend([
         # 排除所有 GUI 框架 (避免 Nuitka 追踪到 PySide6)
         "--nofollow-import-to=PySide6",
         "--nofollow-import-to=shiboken6",
         "--nofollow-import-to=PIL",
-        "--nofollow-import-to=tkinter",
-        "--nofollow-import-to=matplotlib",
-        "--nofollow-import-to=numpy",
+        *[f"--nofollow-import-to={m}" for m in _NOFOLLOW_COMMON[:3]],
 
         # 禁用排除模块的隐式导入检测
         "--no-deployment-flag=excluded-module-usage",
@@ -423,14 +395,11 @@ def _build_cli_cmd(name: str, entry: str, editor_dir: str,
 
         # 包含数据文件 (补丁配置; patches/ 目录由发行组装复制到 exe 同级)
         f"--include-data-files={仓库根目录 / 'configs' / 'summon_table.json'}=configs/summon_table.json",
+    ])
 
-        # 编译优化
-        f"--jobs={jobs}",
-        f"--lto={'yes' if release else 'no'}",
-        "--python-flag=no_docstrings",
-        "--python-flag=no_asserts",
-        "--remove-output",
-    ]
+    cmd.extend(_nuitka_optimize(release, jobs))
+
+    cmd.append("--remove-output")
 
     # ── 版本资源 (降低杀毒误报) ──
     cmd.extend(_version_flags(name, editor_dir))
