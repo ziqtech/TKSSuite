@@ -74,6 +74,7 @@ from editor_utils.mod_exporter import (
 )
 from editor_utils.rgb565 import rgb565_to_rgba, rgba_to_rgb565
 from editor_utils.image_io import encode_png_rgba
+from editor_utils.canvas_view import CtrlWheelZoomView
 from editor_utils.app_shell import EditorMainWindow, run_editor
 from editor_utils.ui_helpers import themed_question, themed_messagebox
 from editor_utils.version import format_title
@@ -460,31 +461,10 @@ def export_png_rgba(w, h, rgba, path):
 # GUI 组件
 # ═══════════════════════════════════════════════════════════
 
-class GRPGraphicsView(QGraphicsView):
-    """支持 Ctrl+滚轮缩放、拖拽平移、鼠标位置跟踪的图像视图"""
-    def __init__(self, scene, parent=None):
-        super().__init__(scene, parent)
-        self.setRenderHint(QPainter.Antialiasing, False)
-        self.setRenderHint(QPainter.SmoothPixmapTransform, False)
-        self.setDragMode(QGraphicsView.ScrollHandDrag)
-        self.setTransformationAnchor(QGraphicsView.AnchorUnderMouse)
-        self.setMouseTracking(True)
-        self.editor: Optional[GRPEditor] = None
+class GRPGraphicsView(CtrlWheelZoomView):
+    """GRP 画布: Ctrl+滚轮步长 1 (=±50%), 悬停像素信息 (共享基类, T12)"""
 
-    def wheelEvent(self, event: QWheelEvent):
-        if event.modifiers() & Qt.ControlModifier:
-            step = 1 if event.angleDelta().y() > 0 else -1
-            if self.editor:
-                self.editor._zoom_step(step)
-            event.accept()
-        else:
-            super().wheelEvent(event)
-
-    def mouseMoveEvent(self, event):
-        super().mouseMoveEvent(event)
-        if self.editor:
-            sp = self.mapToScene(event.position().toPoint())
-            self.editor._update_pixel_info(sp.x(), sp.y())
+    zoom_step_delta = 1
 
 
 # ═══════════════════════════════════════════════════════════

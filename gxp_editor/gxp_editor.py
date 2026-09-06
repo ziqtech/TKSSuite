@@ -35,6 +35,7 @@ except ImportError:
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from editor_utils.dock_components import DockHeader
 from editor_utils.image_io import encode_png_rgb
+from editor_utils.canvas_view import CtrlWheelZoomView
 from editor_utils.lzss import (
     lzss_compress_stream as _lzss_compress_stream,
     lzss_decompress_stream as _lzss_decompress_stream,
@@ -150,30 +151,10 @@ def export_png(img: GXPImage, filepath: str):
 # GUI 样式与组件
 # ═══════════════════════════════════════════════════════════
 
-class EnhancedGraphicsView(QGraphicsView):
-    def __init__(self, scene, parent=None):
-        super().__init__(scene, parent)
-        self.setRenderHint(QPainter.Antialiasing, False)
-        self.setRenderHint(QPainter.SmoothPixmapTransform, False)
-        self.setDragMode(QGraphicsView.ScrollHandDrag)
-        self.setTransformationAnchor(QGraphicsView.AnchorUnderMouse)
-        self.setMouseTracking(True)
-        self.editor = None
+class EnhancedGraphicsView(CtrlWheelZoomView):
+    """GXP 画布: Ctrl+滚轮步长 0.25, 悬停像素信息 (共享基类, T12)"""
 
-    def wheelEvent(self, event: QWheelEvent):
-        if event.modifiers() & Qt.ControlModifier:
-            delta = 0.25 if event.angleDelta().y() > 0 else -0.25
-            if self.editor:
-                self.editor._zoom_step(delta)
-            event.accept()
-        else:
-            super().wheelEvent(event)
-
-    def mouseMoveEvent(self, event):
-        super().mouseMoveEvent(event)
-        if self.editor:
-            scene_pos = self.mapToScene(event.position().toPoint())
-            self.editor._update_pixel_info(scene_pos.x(), scene_pos.y())
+    zoom_step_delta = 0.25
 
 
 # ═══════════════════════════════════════════════════════════
