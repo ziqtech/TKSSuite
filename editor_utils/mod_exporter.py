@@ -1514,3 +1514,200 @@ class ModExportPreviewDialog(QDialog):
 
     def get_ref_dir(self) -> str:
         return self._ref_dir
+
+
+# ═══════════════════════════════════════════════════════════════
+# 记录型编辑器统一的 .tksmod 导出/导入编排 (T10 收敛)
+# 收敛自 item/skill/kon/shop 四份逐字级克隆; 差异经 RecordModSpec 声明。
+# warpc (草稿守卫+id_ranges 扩展) 与 wardata (_raw 结构化+双文件) 有
+# 真实域差异, 保留各自实现。
+# ═══════════════════════════════════════════════════════════════
+
+class RecordModSpec:
+    """记录型编辑器导出/导入的数据差异描述。
+
+    Attributes:
+        dat_name:    目标文件名 (如 "TKItem.dat")
+        rec_size:    每条记录字节数
+        field_type:  build_data_diff_json 的 field_type ("int16"/"mixed")
+        field_count: 字段数
+        to_fields:   records -> list[list[int]] (与编辑器 _original_records 同布局)
+        from_fields: list[list[int]] -> records (导入后重建编辑器记录)
+        path_attr:   编辑器数据文件路径属性名 (如 "item_path")
+        status_attr: 状态栏文本控件属性名 (status_var/status_label/lbl_status)
+        refresh_attr: 导入后刷新列表的方法名 (_apply_filter/_refresh_table)
+        noun:        导入成功状态栏中的记录量词 (如 "条物品")
+    """
+
+    def __init__(self, *, dat_name, rec_size, field_type, field_count,
+                 to_fields, from_fields, path_attr, status_attr,
+                 refresh_attr, noun="条记录"):
+        self.dat_name = dat_name
+        self.rec_size = rec_size
+        self.field_type = field_type
+        self.field_count = field_count
+        self.to_fields = to_fields
+        self.from_fields = from_fields
+        self.path_attr = path_attr
+        self.status_attr = status_attr
+        self.refresh_attr = refresh_attr
+        self.noun = noun
+
+    def status(self, editor):
+        return getattr(editor, self.status_attr)
+
+
+def export_records_mod(editor, spec, ref_mode=False):
+    """统一导出编排 — 原 item/skill/kon/shop 的 _export_tksmod[_with_ref]。
+
+    ref_mode=False: 与加载基线 (editor._original_records) 比对;
+    ref_mode=True:  弹参考目录选择, 与参考目录中的原版文件比对。
+    """
+    if ref_mode:
+        if not editor.records:
+            QMessageBox.information(editor, "提示", "请先加载数据")
+            return
+    else:
+        if not editor.records or not editor._original_records:
+            QMessageBox.information(editor, "提示", "请先加载数据")
+            return
+
+    current_fields = spec.to_fields(editor.records)
+    ref_records = None
+
+    if ref_mode:
+        def _compute_stats(ref_dir):
+            ref = load_reference_dat_fields(ref_dir, spec.dat_name,
+                rec_size=spec.rec_size, field_count=spec.field_count,
+                field_fmt='h', use_lzss=True)
+            if ref is None:
+                return {"valid": False, "error": f"目录中未找到 {spec.dat_name}"}
+            diff = diff_records(ref, current_fields, spec.field_count, len(ref))
+            targets = []
+            if diff['modified'] or diff['appended']:
+                targets.append({"name": spec.dat_name,
+                    "modified": len(diff['modified']),
+                    "appended": len(diff['appended']),
+                    "deleted": 0})
+            return {"valid": True, "targets": targets}
+
+        base_dir = getattr(editor, spec.path_attr, None)
+        preview_dlg = ModExportPreviewDialog(editor,
+            default_dir=os.path.dirname(base_dir) if base_dir else "",
+            compute_stats=_compute_stats)
+        if preview_dlg.exec() != QDialog.Accepted: return
+        ref_dir = preview_dlg.get_ref_dir()
+
+        ref_records = load_reference_dat_fields(ref_dir, spec.dat_name,
+            rec_size=spec.rec_size, field_count=spec.field_count,
+            field_fmt='h', use_lzss=True)
+        if ref_records is None:
+            QMessageBox.warning(editor, "参考目录无效", f"在 {ref_dir} 中未找到 {spec.dat_name}")
+            return
+        diff_result = diff_records(ref_records, current_fields, spec.field_count, len(ref_records))
+        if not diff_result['modified'] and not diff_result['appended']:
+            QMessageBox.information(editor, "无差异", "当前数据与参考文件相同，无需导出。")
+            return
+    else:
+        diff_result = diff_records(editor._original_records, current_fields,
+                                   spec.field_count, len(editor._original_records))
+        if not diff_result['modified'] and not diff_result['appended']:
+            QMessageBox.information(editor, "无差异", "当前数据与原始文件相同，无需导出。")
+            return
+
+    dlg = ModMetadataDialog(editor, getattr(editor, '_last_mod_metadata', None))
+    if dlg.exec() != QDialog.Accepted: return
+    metadata = dlg.get_metadata()
+    editor._last_mod_metadata = metadata
+
+    if ref_mode:
+        src_path = os.path.join(ref_dir, spec.dat_name)
+        original_count = len(ref_records)
+    else:
+        src_path = getattr(editor, spec.path_attr, None)
+        original_count = len(editor._original_records)
+    crc = compute_crc32(src_path) if src_path else "0x00000000"
+    data_json = build_data_diff_json(target=spec.dat_name, record_size=spec.rec_size,
+        field_type=spec.field_type, field_count=spec.field_count,
+        original_count=original_count, original_crc32=crc, diff_result=diff_result)
+    mod_json = generate_mod_json(metadata,
+        [{"file": f"data/{spec.dat_name}.json", "target": spec.dat_name}])
+    fp, _ = QFileDialog.getSaveFileName(editor, "导出为 MOD",
+        f"{safe_mod_filename(metadata['name'], metadata['id'])}.tksmod", "TKS MOD (*.tksmod)")
+    if not fp: return
+    try:
+        pack_tksmod(fp, mod_json, {f"data/{spec.dat_name}.json": data_json})
+        n_mod = len(diff_result['modified'])
+        n_app = len(diff_result['appended'])
+        if ref_mode:
+            spec.status(editor).setText(f"已导出 MOD (参考目录): {os.path.basename(fp)}")
+            QMessageBox.information(editor, "导出成功",
+                f"已导出 (参考目录模式):\n{fp}\n\n参考: {ref_dir}\n修改: {n_mod} 条\n追加: {n_app} 条")
+        else:
+            spec.status(editor).setText(f"已导出 MOD: {os.path.basename(fp)} (修改{n_mod}条, 追加{n_app}条)")
+            QMessageBox.information(editor, "导出成功",
+                f"已导出:\n{fp}\n\n修改: {n_mod} 条\n追加: {n_app} 条")
+    except Exception as e:
+        QMessageBox.critical(editor, "导出失败", str(e))
+
+
+def import_records_mod(editor, spec):
+    """统一导入编排 — 原 item/skill/kon/shop 的 _import_tksmod。
+
+    整体替换 records 并重置 _original_records; 撤销栈清空
+    (kon 原实现漏调 clear_undo, 收敛后与其余三家对齐)。"""
+    fp, _ = QFileDialog.getOpenFileName(editor, "选择 MOD 文件", "", "TKS MOD (*.tksmod)")
+    if not fp: return
+
+    info = get_tksmod_info(fp)
+    if info is None:
+        QMessageBox.warning(editor, "无效文件", "无法解析此 .tksmod 文件")
+        return
+
+    if spec.dat_name not in info.get("targets", []):
+        QMessageBox.warning(editor, "不兼容", f"此 MOD 不包含 {spec.dat_name} 的数据\n\n"
+            f"包含的数据: {', '.join(info.get('targets', []))}")
+        return
+
+    base_dir = getattr(editor, spec.path_attr, None)
+    dlg = ModImportPreviewDialog(editor, info,
+        default_dir=os.path.dirname(base_dir) if base_dir else "")
+    if dlg.exec() != QDialog.Accepted: return
+    ref_dir = dlg.get_ref_dir()
+    if not ref_dir: return
+
+    mod_json, records = import_tksmod_records(
+        fp, ref_dir, spec.dat_name,
+        rec_size=spec.rec_size, field_count=spec.field_count,
+        field_fmt='h', use_lzss=True
+    )
+    if records is None:
+        QMessageBox.warning(editor, "导入失败",
+            f"无法导入 MOD 数据。\n请确认参考目录中包含有效的 {spec.dat_name}")
+        return
+
+    editor.records = spec.from_fields(records)
+    if hasattr(editor, 'clear_undo'):
+        editor.clear_undo()  # 导入整体替换, 旧变更集失效 (P3-4)
+    editor._original_records = [list(row) for row in records]
+    editor._dirty = False
+
+    editor._last_mod_metadata = {
+        "id": info.get("id", ""),
+        "name": info.get("name", ""),
+        "version": info.get("version", "1.0.0"),
+        "author": info.get("author", ""),
+        "description": info.get("description", ""),
+        "load_order": info.get("load_order", 100),
+    }
+
+    getattr(editor, spec.refresh_attr)()
+    spec.status(editor).setText(
+        f"已导入 MOD: {info.get('name', '')} v{info.get('version', '')} | "
+        f"{len(editor.records)} {spec.noun}")
+    QMessageBox.information(editor, "导入成功",
+        f"已导入 MOD: {info.get('name', '')}\n"
+        f"版本: {info.get('version', '')}\n"
+        f"作者: {info.get('author', '')}\n\n"
+        f"共加载 {len(records)} 条记录。\n"
+        f"您现在可以继续编辑并重新导出。")

@@ -47,10 +47,7 @@ from editor_utils.adaptive_table import AdaptiveTableWidget
 from editor_utils.jvg_loader import load_mu_sprites, get_sprite_pixmap
 from editor_utils.lzss import lzss_decompress_dat, lzss_compress_dat
 from editor_utils.mod_exporter import (
-    diff_records, compute_crc32, generate_mod_json,
-    pack_tksmod, build_data_diff_json, ModMetadataDialog, safe_mod_filename,
-    load_reference_dat_fields,
-    get_tksmod_info, import_tksmod_records, ModImportPreviewDialog, ModExportPreviewDialog,
+    RecordModSpec, export_records_mod, import_records_mod,
 )
 from editor_utils.picker_dialogs import ItemPickerDialog
 from editor_utils.theme_switcher import (
@@ -947,163 +944,34 @@ class ShopEditorWindow(EditorMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "保存失败", str(e))
 
+    # ── MOD 导出/导入编排 (T10 收敛: 编排在 mod_exporter, 此处仅声明数据差异) ──
+
+    _MOD_SPEC = RecordModSpec(
+        dat_name="TKShop.dat", rec_size=8, field_type="mixed", field_count=4,
+        to_fields=lambda records: [[r['area_id'], r['item_ref'], r['condition'], r['display']]
+                                   for r in records],
+        from_fields=lambda field_rows: [
+            {'index': i,
+             'area_id': fields[0] if len(fields) > 0 else 0,
+             'item_ref': fields[1] if len(fields) > 1 else 0,
+             'condition': fields[2] if len(fields) > 2 else 0,
+             'display': fields[3] if len(fields) > 3 else 0}
+            for i, fields in enumerate(field_rows)
+        ],
+        path_attr="shop_path", status_attr="lbl_status",
+        refresh_attr="_refresh_table", noun="条记录")
+
     def _export_tksmod(self):
         """导出当前修改为 .tksmod MOD 文件"""
-        if not self.records or not self._original_records:
-            QMessageBox.information(self, "提示", "请先加载数据")
-            return
-
-        dlg = ModMetadataDialog(self, getattr(self, '_last_mod_metadata', None))
-        if dlg.exec() != QDialog.Accepted: return
-        metadata = dlg.get_metadata()
-        self._last_mod_metadata = metadata
-
-        current_fields = [[r['area_id'], r['item_ref'], r['condition'], r['display']] for r in self.records]
-        field_count = 4
-        diff_result = diff_records(self._original_records, current_fields, field_count, len(self._original_records))
-        if not diff_result['modified'] and not diff_result['appended']:
-            QMessageBox.information(self, "无差异", "当前数据与原始文件相同，无需导出。")
-            return
-
-        crc = compute_crc32(self.shop_path) if self.shop_path else "0x00000000"
-        data_json = build_data_diff_json(target="TKShop.dat", record_size=8, field_type="mixed",
-            field_count=field_count, original_count=len(self._original_records), original_crc32=crc, diff_result=diff_result)
-        mod_json = generate_mod_json(metadata, [{"file": "data/TKShop.dat.json", "target": "TKShop.dat"}])
-        fp, _ = QFileDialog.getSaveFileName(self, "导出为 MOD", f"{safe_mod_filename(metadata['name'], metadata['id'])}.tksmod", "TKS MOD (*.tksmod)")
-        if not fp: return
-        try:
-            pack_tksmod(fp, mod_json, {"data/TKShop.dat.json": data_json})
-            n_mod = len(diff_result['modified'])
-            n_app = len(diff_result['appended'])
-            self.lbl_status.setText(f"已导出 MOD: {os.path.basename(fp)} (修改{n_mod}条, 追加{n_app}条)")
-            QMessageBox.information(self, "导出成功", f"已导出:\n{fp}\n\n修改: {n_mod} 条\n追加: {n_app} 条")
-        except Exception as e:
-            QMessageBox.critical(self, "导出失败", str(e))
+        export_records_mod(self, self._MOD_SPEC)
 
     def _export_tksmod_with_ref(self):
         """导出 MOD — 指定原始参考目录进行差异比对"""
-        if not self.records:
-            QMessageBox.information(self, "提示", "请先加载数据")
-            return
-
-        # 预构建当前字段
-        current_fields = [[r['area_id'], r['item_ref'], r['condition'], r['display']] for r in self.records]
-
-        def _compute_stats(ref_dir):
-            ref_records = load_reference_dat_fields(ref_dir, "TKShop.dat",
-                rec_size=8, field_count=4, field_fmt='h', use_lzss=True)
-            if ref_records is None:
-                return {"valid": False, "error": "目录中未找到 TKShop.dat"}
-            diff = diff_records(ref_records, current_fields, 4, len(ref_records))
-            targets = []
-            if diff['modified'] or diff['appended']:
-                targets.append({"name": "TKShop.dat",
-                    "modified": len(diff['modified']),
-                    "appended": len(diff['appended']),
-                    "deleted": 0})
-            return {"valid": True, "targets": targets}
-
-        preview_dlg = ModExportPreviewDialog(self,
-            default_dir=os.path.dirname(self.shop_path) if self.shop_path else "",
-            compute_stats=_compute_stats)
-        if preview_dlg.exec() != QDialog.Accepted: return
-        ref_dir = preview_dlg.get_ref_dir()
-
-        ref_records = load_reference_dat_fields(ref_dir, "TKShop.dat",
-            rec_size=8, field_count=4, field_fmt='h', use_lzss=True)
-        if ref_records is None:
-            QMessageBox.warning(self, "参考目录无效", f"在 {ref_dir} 中未找到 TKShop.dat")
-            return
-        diff_result = diff_records(ref_records, current_fields, 4, len(ref_records))
-        if not diff_result['modified'] and not diff_result['appended']:
-            QMessageBox.information(self, "无差异", "当前数据与参考文件相同，无需导出。")
-            return
-
-        dlg = ModMetadataDialog(self, getattr(self, '_last_mod_metadata', None))
-        if dlg.exec() != QDialog.Accepted: return
-        metadata = dlg.get_metadata()
-        self._last_mod_metadata = metadata
-
-        crc = compute_crc32(os.path.join(ref_dir, "TKShop.dat"))
-        data_json = build_data_diff_json(target="TKShop.dat", record_size=8, field_type="mixed",
-            field_count=4, original_count=len(ref_records), original_crc32=crc, diff_result=diff_result)
-        mod_json = generate_mod_json(metadata, [{"file": "data/TKShop.dat.json", "target": "TKShop.dat"}])
-        fp, _ = QFileDialog.getSaveFileName(self, "导出为 MOD", f"{safe_mod_filename(metadata['name'], metadata['id'])}.tksmod", "TKS MOD (*.tksmod)")
-        if not fp: return
-        try:
-            pack_tksmod(fp, mod_json, {"data/TKShop.dat.json": data_json})
-            n_mod = len(diff_result['modified'])
-            n_app = len(diff_result['appended'])
-            self.lbl_status.setText(f"已导出 MOD (参考目录): {os.path.basename(fp)}")
-            QMessageBox.information(self, "导出成功", f"已导出 (参考目录模式):\n{fp}\n\n参考: {ref_dir}\n修改: {n_mod} 条\n追加: {n_app} 条")
-        except Exception as e:
-            QMessageBox.critical(self, "导出失败", str(e))
+        export_records_mod(self, self._MOD_SPEC, ref_mode=True)
 
     def _import_tksmod(self):
         """从 .tksmod 导入 MOD 数据到编辑器"""
-        fp, _ = QFileDialog.getOpenFileName(self, "选择 MOD 文件", "", "TKS MOD (*.tksmod)")
-        if not fp: return
-
-        info = get_tksmod_info(fp)
-        if info is None:
-            QMessageBox.warning(self, "无效文件", "无法解析此 .tksmod 文件")
-            return
-
-        if "TKShop.dat" not in info.get("targets", []):
-            QMessageBox.warning(self, "不兼容", "此 MOD 不包含 TKShop.dat 的数据\n\n"
-                f"包含的数据: {', '.join(info.get('targets', []))}")
-            return
-
-
-        dlg = ModImportPreviewDialog(self, info, default_dir=os.path.dirname(self.shop_path) if self.shop_path else "")
-        if dlg.exec() != QDialog.Accepted: return
-        ref_dir = dlg.get_ref_dir()
-        if not ref_dir: return
-
-        mod_json, records = import_tksmod_records(
-            fp, ref_dir, "TKShop.dat",
-            rec_size=8, field_count=4,
-            field_fmt='h', use_lzss=True
-        )
-        if records is None:
-            QMessageBox.warning(self, "导入失败",
-                "无法导入 MOD 数据。\n请确认参考目录中包含有效的 TKShop.dat")
-            return
-
-        new_records = []
-        for i, fields in enumerate(records):
-            rec = {
-                'index': i,
-                'area_id': fields[0] if len(fields) > 0 else 0,
-                'item_ref': fields[1] if len(fields) > 1 else 0,
-                'condition': fields[2] if len(fields) > 2 else 0,
-                'display': fields[3] if len(fields) > 3 else 0,
-            }
-            new_records.append(rec)
-
-        self.records = new_records
-        self._original_records = [list(row) for row in records]
-        self._dirty = False
-
-        self._last_mod_metadata = {
-            "id": info.get("id", ""),
-            "name": info.get("name", ""),
-            "version": info.get("version", "1.0.0"),
-            "author": info.get("author", ""),
-            "description": info.get("description", ""),
-            "load_order": info.get("load_order", 100),
-        }
-
-        self._refresh_table()
-        self.lbl_status.setText(
-            f"已导入 MOD: {info.get('name', '')} v{info.get('version', '')} | "
-            f"{len(self.records)} 条记录")
-        QMessageBox.information(self, "导入成功",
-            f"已导入 MOD: {info.get('name', '')}\n"
-            f"版本: {info.get('version', '')}\n"
-            f"作者: {info.get('author', '')}\n\n"
-            f"共加载 {len(records)} 条记录。\n"
-            f"您现在可以继续编辑并重新导出。")
+        import_records_mod(self, self._MOD_SPEC)
 
 
 # ============================================================

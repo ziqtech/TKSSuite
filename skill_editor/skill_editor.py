@@ -36,10 +36,7 @@ SEED_DOWN_COLOR = "#526073"    # 下游: 灰蓝
 # 子技能溢出警示红 — 领域警示色 (阶段 2 豁免: 主题无关)
 SUB_OVERFLOW_COLOR = "#e0533d"
 from editor_utils.mod_exporter import (
-    ModExportPreviewDialog, ModImportPreviewDialog, ModMetadataDialog,
-    build_data_diff_json, compute_crc32, diff_records, generate_mod_json,
-    get_tksmod_info, import_tksmod_records, load_reference_dat_fields,
-    pack_tksmod, safe_mod_filename,
+    RecordModSpec, export_records_mod, import_records_mod,
 )
 from editor_utils.picker_dialogs import (
     STATUS_ICON_BASE, STATUS_NAMES, SkillPickerDialog, StatusPickerDialog,
@@ -1480,11 +1477,7 @@ class SkillEditorApp(FieldUndoMixin, EditorMainWindow):
         if not self.skill_path or not self.records: return
         reply = themed_question(self, "确认保存", f"将覆盖保存并生成.bak:\n{self.skill_path}")
         if reply == QMessageBox.Yes:
-            try:
-                with open(self.skill_path, 'rb') as s:
-                    with open(self.skill_path + ".bak", 'wb') as d:
-                        d.write(s.read())
-            except: pass
+            backup_existing_file(self.skill_path)
             try:
                 save_skills(self.skill_path, self.records)
                 self._dirty = False
@@ -1493,183 +1486,43 @@ class SkillEditorApp(FieldUndoMixin, EditorMainWindow):
             except Exception as e:
                 QMessageBox.critical(self, "保存失败", str(e))
 
-    def _export_tksmod(self):
-        """导出当前修改为 .tksmod MOD 文件"""
-        if not self.records or not self._original_records:
-            QMessageBox.information(self, "提示", "请先加载数据")
-            return
+    # ── MOD 导出/导入编排 (T10 收敛: 编排在 mod_exporter, 此处仅声明数据差异) ──
 
-        dlg = ModMetadataDialog(self, getattr(self, '_last_mod_metadata', None))
-        if dlg.exec() != QDialog.Accepted:
-            return
-        metadata = dlg.get_metadata()
-        self._last_mod_metadata = metadata
-
-        # 构建原始字节序字段数组 (word index = byte_offset // 2)，与启动器一致
-        current_fields = []
-        for rec in self.records:
+    @staticmethod
+    def _fields_from_records(records):
+        """构建原始字节序字段数组 (word index = byte_offset // 2)，与启动器一致"""
+        rows = []
+        for rec in records:
             row = [0] * (SKILL_REC // 2)
             for k, fo, _, _, _ in ALL_FIELDS:
                 row[fo // 2] = rec[k]
-            current_fields.append(row)
-        field_count = len(ALL_FIELDS)
-        diff_result = diff_records(
-            self._original_records, current_fields, field_count, len(self._original_records))
+            rows.append(row)
+        return rows
 
-        if not diff_result['modified'] and not diff_result['appended']:
-            QMessageBox.information(self, "无差异", "当前数据与原始文件相同，无需导出。")
-            return
+    _MOD_SPEC = RecordModSpec(
+        dat_name="TKSkill.dat", rec_size=SKILL_REC, field_type="int16",
+        field_count=len(ALL_FIELDS),
+        to_fields=lambda records: SkillEditorApp._fields_from_records(records),
+        from_fields=lambda field_rows: [
+            {**{'index': i},
+             **{k: (fields[fo // 2] if fo // 2 < len(fields) else 0)
+                for k, fo, _, _, _ in ALL_FIELDS}}
+            for i, fields in enumerate(field_rows)
+        ],
+        path_attr="skill_path", status_attr="status_var",
+        refresh_attr="_apply_filter", noun="条技能")
 
-        crc = compute_crc32(self.skill_path) if self.skill_path else "0x00000000"
-        data_json = build_data_diff_json(
-            target="TKSkill.dat", record_size=SKILL_REC, field_type="int16",
-            field_count=field_count, original_count=len(self._original_records),
-            original_crc32=crc, diff_result=diff_result)
-
-        components = [{"file": "data/TKSkill.dat.json", "target": "TKSkill.dat"}]
-        mod_json = generate_mod_json(metadata, components)
-
-        default_name = f"{safe_mod_filename(metadata['name'], metadata['id'])}.tksmod"
-        fp, _ = QFileDialog.getSaveFileName(self, "导出为 MOD", default_name, "TKS MOD (*.tksmod)")
-        if not fp: return
-
-        try:
-            pack_tksmod(fp, mod_json, {"data/TKSkill.dat.json": data_json})
-            n_mod = len(diff_result['modified'])
-            n_app = len(diff_result['appended'])
-            self.status_var.setText(f"已导出 MOD: {os.path.basename(fp)} (修改{n_mod}条, 追加{n_app}条)")
-            QMessageBox.information(self, "导出成功", f"已导出 MOD 文件:\n{fp}\n\n修改: {n_mod} 条\n追加: {n_app} 条")
-        except Exception as e:
-            QMessageBox.critical(self, "导出失败", str(e))
+    def _export_tksmod(self):
+        """导出当前修改为 .tksmod MOD 文件"""
+        export_records_mod(self, self._MOD_SPEC)
 
     def _export_tksmod_with_ref(self):
         """导出 MOD — 指定原始参考目录进行差异比对"""
-        if not self.records:
-            QMessageBox.information(self, "提示", "请先加载数据")
-            return
-
-        # 预构建当前字段
-        current_fields = []
-        for rec in self.records:
-            row = [0] * (SKILL_REC // 2)
-            for k, fo, _, _, _ in ALL_FIELDS:
-                row[fo // 2] = rec[k]
-            current_fields.append(row)
-        field_count = len(ALL_FIELDS)
-
-        def _compute_stats(ref_dir):
-            ref_records = load_reference_dat_fields(ref_dir, "TKSkill.dat",
-                rec_size=SKILL_REC, field_count=field_count, field_fmt='h', use_lzss=True)
-            if ref_records is None:
-                return {"valid": False, "error": "目录中未找到 TKSkill.dat"}
-            diff = diff_records(ref_records, current_fields, field_count, len(ref_records))
-            targets = []
-            if diff['modified'] or diff['appended']:
-                targets.append({"name": "TKSkill.dat",
-                    "modified": len(diff['modified']),
-                    "appended": len(diff['appended']),
-                    "deleted": 0})
-            return {"valid": True, "targets": targets}
-
-        preview_dlg = ModExportPreviewDialog(self,
-            default_dir=os.path.dirname(self.skill_path) if self.skill_path else "",
-            compute_stats=_compute_stats)
-        if preview_dlg.exec() != QDialog.Accepted: return
-        ref_dir = preview_dlg.get_ref_dir()
-
-        ref_records = load_reference_dat_fields(ref_dir, "TKSkill.dat",
-            rec_size=SKILL_REC, field_count=field_count, field_fmt='h', use_lzss=True)
-        if ref_records is None:
-            QMessageBox.warning(self, "参考目录无效", f"在 {ref_dir} 中未找到 TKSkill.dat")
-            return
-        diff_result = diff_records(ref_records, current_fields, field_count, len(ref_records))
-        if not diff_result['modified'] and not diff_result['appended']:
-            QMessageBox.information(self, "无差异", "当前数据与参考文件相同，无需导出。")
-            return
-
-        dlg = ModMetadataDialog(self, getattr(self, '_last_mod_metadata', None))
-        if dlg.exec() != QDialog.Accepted:
-            return
-        metadata = dlg.get_metadata()
-        self._last_mod_metadata = metadata
-
-        crc = compute_crc32(os.path.join(ref_dir, "TKSkill.dat"))
-        data_json = build_data_diff_json(target="TKSkill.dat", record_size=SKILL_REC, field_type="int16",
-            field_count=field_count, original_count=len(ref_records), original_crc32=crc, diff_result=diff_result)
-        mod_json = generate_mod_json(metadata, [{"file": "data/TKSkill.dat.json", "target": "TKSkill.dat"}])
-        fp, _ = QFileDialog.getSaveFileName(self, "导出为 MOD", f"{safe_mod_filename(metadata['name'], metadata['id'])}.tksmod", "TKS MOD (*.tksmod)")
-        if not fp: return
-        try:
-            pack_tksmod(fp, mod_json, {"data/TKSkill.dat.json": data_json})
-            n_mod = len(diff_result['modified'])
-            n_app = len(diff_result['appended'])
-            self.status_var.setText(f"已导出 MOD (参考目录): {os.path.basename(fp)}")
-            QMessageBox.information(self, "导出成功", f"已导出 (参考目录模式):\n{fp}\n\n参考: {ref_dir}\n修改: {n_mod} 条\n追加: {n_app} 条")
-        except Exception as e:
-            QMessageBox.critical(self, "导出失败", str(e))
+        export_records_mod(self, self._MOD_SPEC, ref_mode=True)
 
     def _import_tksmod(self):
         """从 .tksmod 导入 MOD 数据到编辑器"""
-        fp, _ = QFileDialog.getOpenFileName(self, "选择 MOD 文件", "", "TKS MOD (*.tksmod)")
-        if not fp: return
-
-        info = get_tksmod_info(fp)
-        if info is None:
-            QMessageBox.warning(self, "无效文件", "无法解析此 .tksmod 文件")
-            return
-
-        if "TKSkill.dat" not in info.get("targets", []):
-            QMessageBox.warning(self, "不兼容", "此 MOD 不包含 TKSkill.dat 的数据\n\n"
-                f"包含的数据: {', '.join(info.get('targets', []))}")
-            return
-
-        dlg = ModImportPreviewDialog(self, info, default_dir=os.path.dirname(self.skill_path) if self.skill_path else "")
-        if dlg.exec() != QDialog.Accepted: return
-        ref_dir = dlg.get_ref_dir()
-        if not ref_dir: return
-
-        mod_json, records = import_tksmod_records(
-            fp, ref_dir, "TKSkill.dat",
-            rec_size=SKILL_REC, field_count=len(ALL_FIELDS),
-            field_fmt='h', use_lzss=True
-        )
-        if records is None:
-            QMessageBox.warning(self, "导入失败",
-                "无法导入 MOD 数据。\n请确认参考目录中包含有效的 TKSkill.dat")
-            return
-
-        new_records = []
-        for i, fields in enumerate(records):
-            rec = {'index': i}
-            for k, fo, _, _, _ in ALL_FIELDS:
-                word_idx = fo // 2
-                rec[k] = fields[word_idx] if word_idx < len(fields) else 0
-            new_records.append(rec)
-
-        self.records = new_records
-        self.clear_undo()  # 导入整体替换, 旧变更集失效 (P3-4)
-        self._original_records = [list(row) for row in records]
-        self._dirty = False
-
-        self._last_mod_metadata = {
-            "id": info.get("id", ""),
-            "name": info.get("name", ""),
-            "version": info.get("version", "1.0.0"),
-            "author": info.get("author", ""),
-            "description": info.get("description", ""),
-            "load_order": info.get("load_order", 100),
-        }
-
-        self._apply_filter()
-        self.status_var.setText(
-            f"已导入 MOD: {info.get('name', '')} v{info.get('version', '')} | "
-            f"{len(self.records)} 条技能")
-        QMessageBox.information(self, "导入成功",
-            f"已导入 MOD: {info.get('name', '')}\n"
-            f"版本: {info.get('version', '')}\n"
-            f"作者: {info.get('author', '')}\n\n"
-            f"共加载 {len(records)} 条记录。\n"
-            f"您现在可以继续编辑并重新导出。")
+        import_records_mod(self, self._MOD_SPEC)
 
 def main():
     run_editor(SkillEditorApp)
