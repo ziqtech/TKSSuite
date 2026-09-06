@@ -351,10 +351,7 @@ class KonEditor(FieldUndoMixin, EditorMainWindow):
         self.add_theme_submenu(vm)
         vm.addAction("快速切换主题(&T)\tF5", self._toggle_theme)
 
-        hm = mb.addMenu("帮助(&H)")
-        hm.addAction("字段参考", self._show_field_ref)
-        hm.addAction("帮助说明", self._show_help)
-        hm.addAction("关于编辑器", self._show_about)
+        self.add_help_menu(mb)
 
         QShortcut("F5", self).activated.connect(self._toggle_theme)
 
@@ -1453,6 +1450,10 @@ class KonEditor(FieldUndoMixin, EditorMainWindow):
             f"您现在可以继续编辑并重新导出。")
 
     # ----------- 帮助 -----------
+
+    def _extra_help_actions(self):
+        """帮助菜单专属项: 字段参考 (挂在"帮助说明"之后)。"""
+        return [("字段参考", self._show_field_ref)]
 
     def _show_field_ref(self):
         show_field_ref(self, _build_field_ref_text())

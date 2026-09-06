@@ -657,10 +657,7 @@ class WarDataEditorV2(EditorMainWindow):
 
         self.add_theme_submenu(mb)
 
-        hm = mb.addMenu("帮助(&H)")
-        hm.addAction("字段参考", self._show_field_ref)
-        hm.addAction("帮助说明", self._show_help)
-        hm.addAction("关于编辑器", self._show_about)
+        self.add_help_menu(mb)
 
         # 工具栏
         toolbar = QHBoxLayout()
@@ -1128,6 +1125,10 @@ class WarDataEditorV2(EditorMainWindow):
             self.table.selectRow(0)
         else:
             self._set_edit_enabled(False)
+
+    def _extra_help_actions(self):
+        """帮助菜单专属项: 字段参考 (挂在"帮助说明"之后)。"""
+        return [("字段参考", self._show_field_ref)]
 
     def _show_field_ref(self):
         themed_messagebox(self, QMessageBox.Information, "字段参考",

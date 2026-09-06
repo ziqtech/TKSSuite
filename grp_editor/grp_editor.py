@@ -567,10 +567,11 @@ class GRPEditor(EditorMainWindow):
 
         self.add_theme_submenu(mb)
 
-        hm = mb.addMenu("帮助(&H)")
-        hm.addAction("伪彩工作流说明", self._show_pseudo_help)
-        hm.addAction("帮助说明", self._show_help)
-        hm.addAction("关于编辑器", self._show_about)
+        self.add_help_menu(mb)
+
+    def _extra_help_actions(self):
+        """帮助菜单专属项: 伪彩工作流说明 (挂在"帮助说明"之后)。"""
+        return [("伪彩工作流说明", self._show_pseudo_help)]
 
     # ── Toolbar ───────────────────────────────────────────
     @staticmethod

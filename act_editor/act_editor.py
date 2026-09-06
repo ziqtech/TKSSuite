@@ -97,6 +97,7 @@ from editor_utils.dock_components import DockHeader
 from editor_utils.ui_helpers import (
     themed_question,
     make_fake_input, update_path_labels, EditorComboBox, set_themed_icon,
+    show_field_ref,
 )
 from editor_utils.tab_widget import EditorTabWidget
 from editor_utils.adaptive_table import AdaptiveTableWidget
@@ -1774,10 +1775,7 @@ class ActEditorV2(EditorMainWindow):
 
         self.add_theme_submenu(mb)
 
-        hm = mb.addMenu("帮助(&H)")
-        hm.addAction("字段参考", self._show_field_ref)
-        hm.addAction("帮助说明", self._show_help)
-        hm.addAction("关于编辑器", self._show_about)
+        self.add_help_menu(mb)
 
         # 快捷键
         act_save = QAction(self)
@@ -4423,16 +4421,11 @@ class ActEditorV2(EditorMainWindow):
     # ── 帮助 ──
 
     # 逆向参考: sub_4434BC (动画运行时核心函数)
+    def _extra_help_actions(self):
+        """帮助菜单专属项: 字段参考 (挂在"帮助说明"之后)。"""
+        return [("字段参考", self._show_field_ref)]
+
     def _show_field_ref(self):
-        dlg = QDialog(self)
-        dlg.setWindowTitle("字段参考")
-        dlg.resize(760, 640)
-
-        layout = QVBoxLayout(dlg)
-        text = QTextEdit()
-        text.setReadOnly(True)
-        text.setFont(QFont("Consolas", 9))
-
         lines = [
             "TKAct.dat 字段说明",
             "",
@@ -4460,14 +4453,7 @@ class ActEditorV2(EditorMainWindow):
         lines.append("【尾部 (bytes 720-783)】")
         lines.append("  16 对 (sound_id, trigger_tick) = 音效触发表")
 
-        text.setPlainText('\n'.join(lines))
-        layout.addWidget(text)
-
-        bl = QHBoxLayout()
-        bl.addStretch()
-        bl.addWidget(QPushButton("关闭", clicked=dlg.close))
-        layout.addLayout(bl)
-        dlg.exec()
+        show_field_ref(self, '\n'.join(lines), size=(760, 640))
 
     # 逆向参考: sub_4434BC, sub_42FEE0, sub_451780, sub_458D08
 
