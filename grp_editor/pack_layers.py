@@ -15,10 +15,12 @@
 """
 
 import argparse
-import struct
+import os
 import sys
-import zlib
 from pathlib import Path
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+from editor_utils.image_io import encode_png_rgba
 
 HAS_PIL = False
 try:
@@ -89,10 +91,6 @@ def pseudo_to_bytes(img_path: str, lut: dict) -> bytes:
 
 # ── PNG 编码 ──────────────────────────────────────────────
 
-def _png_chunk(ct: bytes, d: bytes) -> bytes:
-    c = ct + d
-    return struct.pack(">I", len(d)) + c + struct.pack(">I", zlib.crc32(c) & 0xFFFFFFFF)
-
 def save_packed_rgba(w: int, h: int, l1: bytes, l2: bytes, path: str):
     """打包 R=L1, G=L2, B=0, A=(L2>0?255:0)"""
     total = w * h
@@ -107,17 +105,7 @@ def save_packed_rgba(w: int, h: int, l1: bytes, l2: bytes, path: str):
         rgba[i*4+2] = 0               # B: 保留
         rgba[i*4+3] = 255 if g > 0 else 0  # A: 可行走遮罩
 
-    png = b"\x89PNG\r\n\x1a\n"
-    png += _png_chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 6, 0, 0, 0))
-    stride = w * 4
-    raw = bytearray(h * (stride + 1))
-    for row in range(h):
-        out = row * (stride + 1)
-        raw[out] = 0
-        raw[out+1:out+1+stride] = rgba[row*stride:(row+1)*stride]
-    png += _png_chunk(b"IDAT", zlib.compress(bytes(raw), 9))
-    png += _png_chunk(b"IEND", b"")
-    Path(path).write_bytes(png)
+    Path(path).write_bytes(encode_png_rgba(w, h, rgba))
 
 
 # ── CLI ───────────────────────────────────────────────────

@@ -11,7 +11,6 @@ from __future__ import annotations
 import os
 import struct
 import sys
-import zlib
 from functools import partial
 from pathlib import Path
 from typing import Optional
@@ -35,6 +34,7 @@ except ImportError:
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from editor_utils.dock_components import DockHeader, create_dock
+from editor_utils.image_io import encode_png_rgb
 from editor_utils.lzss import (
     lzss_compress_stream as _lzss_compress_stream,
     lzss_decompress_stream as _lzss_decompress_stream,
@@ -143,32 +143,9 @@ def import_image(filepath: str, target_w: int = 0, target_h: int = 0) -> GXPImag
     img.rgba = bytearray(pil.tobytes())
     return img
 
-def _png_chunk(chunk_type: bytes, data: bytes) -> bytes:
-    chunk = chunk_type + data
-    return struct.pack(">I", len(data)) + chunk + struct.pack(">I", zlib.crc32(chunk) & 0xFFFFFFFF)
-
 def export_png(img: GXPImage, filepath: str):
     """导出 24-bit RGB PNG (剥离透明通道，符合游戏引擎无透明背景要求)"""
-    w, h = img.width, img.height
-    png = b"\x89PNG\r\n\x1a\n"
-    png += _png_chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0))
-
-    stride_in = w * 4
-    stride_out = w * 3
-    raw = bytearray(h * (stride_out + 1))
-    mv = memoryview(img.rgba)
-
-    for row in range(h):
-        out = row * (stride_out + 1)
-        raw[out] = 0
-        for col in range(w):
-            in_idx = row * stride_in + col * 4
-            out_idx = out + 1 + col * 3
-            raw[out_idx:out_idx+3] = mv[in_idx:in_idx+3]
-
-    png += _png_chunk(b"IDAT", zlib.compress(bytes(raw), 9))
-    png += _png_chunk(b"IEND", b"")
-    Path(filepath).write_bytes(png)
+    Path(filepath).write_bytes(encode_png_rgb(img.width, img.height, img.rgba))
 
 # ═══════════════════════════════════════════════════════════
 # GUI 样式与组件

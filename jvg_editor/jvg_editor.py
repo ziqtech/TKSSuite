@@ -17,7 +17,6 @@ import os
 import struct
 import sys
 import tempfile
-import zlib
 from functools import partial
 from pathlib import Path
 from typing import List, Optional, Tuple
@@ -48,6 +47,7 @@ except ImportError:
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from editor_utils.dock_components import DockHeader, create_dock
 from editor_utils.ui_helpers import themed_question, set_themed_icon
+from editor_utils.image_io import encode_png_rgba
 from editor_utils.mod_exporter import (
     compute_crc32, generate_mod_json, pack_tksmod, ModMetadataDialog,
     diff_binary_blocks, build_block_diff_json,
@@ -733,19 +733,7 @@ def import_images(paths:List[str])->List[JVGFrame]:
     return frames
 
 # ── 导出 ──────────────────────────────────────────────
-def _rgba_png(w:int,h:int,rgba:bytearray)->bytes:
-    def ch(ct,d):
-        c=ct+d
-        return struct.pack(">I",len(d))+c+struct.pack(">I",zlib.crc32(c)&0xFFFFFFFF)
-    png=b"\x89PNG\r\n\x1a\n"
-    png+=ch(b"IHDR",struct.pack(">IIBBBBB",w,h,8,6,0,0,0))
-    raw=bytearray()
-    for row in range(h):
-        raw.append(0)
-        raw.extend(rgba[row*w*4:(row+1)*w*4])
-    png+=ch(b"IDAT",zlib.compress(bytes(raw),9))
-    png+=ch(b"IEND",b"")
-    return png
+# PNG 编码使用 editor_utils.image_io.encode_png_rgba (T7 四合一)
 
 def frame_to_rgba(f:JVGFrame,pal:PaletteRGB565,greenscreen_set:Optional[set]=None)->bytearray:
     pr=pal.to_rgb888()
@@ -767,7 +755,7 @@ def frame_to_rgba(f:JVGFrame,pal:PaletteRGB565,greenscreen_set:Optional[set]=Non
 
 def export_single(f:JVGFrame,pal:PaletteRGB565,path:str,greenscreen_set:Optional[set]=None):
     rgba=frame_to_rgba(f,pal,greenscreen_set)
-    Path(path).write_bytes(_rgba_png(f.width,f.height,rgba))
+    Path(path).write_bytes(encode_png_rgba(f.width,f.height,rgba))
 
 def export_group(blk:JVMBlock,outdir:str,prefix:str="frame",greenscreen_set:Optional[set]=None):
     os.makedirs(outdir,exist_ok=True)
@@ -820,7 +808,7 @@ def export_gridsheet(blk:JVMBlock,outdir:str,padding:int=1,columns:int=0,greensc
                     atlas[off+3]=255
     os.makedirs(outdir,exist_ok=True)
     name=f"grid_b{blk.name.replace(' ','_')}.png" if blk.name else "gridsheet.png"
-    Path(os.path.join(outdir,name)).write_bytes(_rgba_png(aw,ah,atlas))
+    Path(os.path.join(outdir,name)).write_bytes(encode_png_rgba(aw,ah,atlas))
     print(f"  Gridsheet: {name} ({aw}x{ah}, {cols}x{rows}, cell {cw}x{ch})")
 
 # ── 游戏渲染预览合成 ─────────────────────
@@ -2944,7 +2932,7 @@ class JVGEditor(EditorMainWindow):
         if not fp:
             return
 
-        Path(fp).write_bytes(_rgba_png(aw, ah, atlas))
+        Path(fp).write_bytes(encode_png_rgba(aw, ah, atlas))
         self._info.setText(f"已导出 {n} 个头像到 {Path(fp).name} ({aw}×{ah}, {cols}×{rows})")
         self.statusBar().showMessage(f"已导出全部头像: {n}个角色 ({cols}×{rows})", 3000)
 

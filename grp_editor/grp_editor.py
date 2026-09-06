@@ -26,7 +26,6 @@ import tempfile
 import time
 import wave
 import winsound
-import zlib
 from collections import Counter
 from functools import partial
 from pathlib import Path
@@ -74,6 +73,7 @@ from editor_utils.mod_exporter import (
     load_grp_raw_sections, pack_tksmod, read_tksmod, safe_mod_filename,
 )
 from editor_utils.rgb565 import rgb565_to_rgba, rgba_to_rgb565
+from editor_utils.image_io import encode_png_rgba
 from editor_utils.app_shell import EditorMainWindow, run_editor
 from editor_utils.ui_helpers import themed_question, themed_messagebox, confirm_close
 from editor_utils.version import format_title
@@ -437,10 +437,6 @@ def save_grp(grp: GRPFile, filepath: str, idx_path: Optional[str] = None):
 # PNG 导出
 # ═══════════════════════════════════════════════════════════
 
-def _png_chunk(ct: bytes, d: bytes) -> bytes:
-    c = ct + d
-    return struct.pack(">I", len(d)) + c + struct.pack(">I", zlib.crc32(c) & 0xFFFFFFFF)
-
 def _summarize_layer_stats(stats) -> str:
     """将 grp_codec.build_layer_diff 的 stats 汇总为简短描述字符串。"""
     if not stats:
@@ -457,17 +453,7 @@ def _summarize_layer_stats(stats) -> str:
 
 
 def export_png_rgba(w, h, rgba, path):
-    png = b"\x89PNG\r\n\x1a\n"
-    png += _png_chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 6, 0, 0, 0))
-    stride = w * 4
-    raw = bytearray(h * (stride + 1))
-    for row in range(h):
-        out = row * (stride + 1)
-        raw[out] = 0
-        raw[out + 1:out + 1 + stride] = rgba[row * stride:(row + 1) * stride]
-    png += _png_chunk(b"IDAT", zlib.compress(bytes(raw), 9))
-    png += _png_chunk(b"IEND", b"")
-    Path(path).write_bytes(png)
+    Path(path).write_bytes(encode_png_rgba(w, h, rgba))
 
 
 # ═══════════════════════════════════════════════════════════
