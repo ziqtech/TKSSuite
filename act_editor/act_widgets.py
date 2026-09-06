@@ -20,7 +20,11 @@ from PySide6.QtCore import (
 
 from editor_utils.theme_manager import business_colors
 
-from act_codec import BLEND_MODE_LABELS, FONT_FAMILY
+from act_codec import (
+    BLEND_MODE_LABELS, BLOCK_SHADOW_BG, BLOCK_SHADOW_BORDER, FONT_FAMILY,
+    GUIDE_BLUE, PEN_TRAJECTORY_GREEN, PEN_TRAJECTORY_RED, PREVIEW_CANVAS_BG,
+    SELECT_RED, SLOT_COLORS,
+)
 
 # ============================================================
 

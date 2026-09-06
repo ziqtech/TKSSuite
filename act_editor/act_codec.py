@@ -1,6 +1,23 @@
 """act_editor 数据层 — 常量/字段表/JVG 布局推断/act 读写 (T16 自 act_editor.py 迁出)。"""
 import struct
 
+# 预览/时间轴固定色 — 画布恒为深色系 (图像编辑器惯例) + 领域语义色
+# (阶段 2 豁免: 主题无关领域色, 见 docs/PySide6样式体系整改方案.md)
+PREVIEW_CANVAS_BG = "#1a1e27"        # 精灵预览画布底 (恒深色)
+PEN_TRAJECTORY_GREEN = "#00ff00"    # 弹道轨迹绿
+PEN_TRAJECTORY_RED = "#ff4444"      # 事件块红 (轨迹/命中)
+BLOCK_SHADOW_BG = "#442222"         # 事件块阴影底
+BLOCK_SHADOW_BORDER = "#884444"     # 事件块阴影边
+SELECT_RED = "#e74c3c"              # 选中框/时间指针红
+GUIDE_BLUE = "#3498db"              # 对齐参考虚线蓝
+STMT_INCOMPLETE_COLOR = "#CC3333"   # 语句表: 原版未完成 (红)
+STMT_UNKNOWN_COLOR = "#CC8800"      # 语句表: 未知 (橙)
+STMT_HAS_DATA_COLOR = "#228B22"     # 语句表: 有数据 (绿)
+STMT_NO_DATA_COLOR = "#AAAAAA"      # 语句表: 无数据 (灰)
+# 图层槽位分类色 (预览外框与图层列表共用)
+SLOT_COLORS = ["#4488ff", "#ff8844", "#44ff88", "#ff44ff",
+               "#ffff44", "#44ffff", "#ff8888", "#88ff88"]
+
 # ============================================================
 # 常量
 # ============================================================
