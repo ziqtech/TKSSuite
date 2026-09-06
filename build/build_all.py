@@ -61,31 +61,16 @@ from pathlib import Path
 
 from markdown_it import MarkdownIt
 
+from editors_registry import EDITORS as _ALL_EDITORS
+
 # ═══════════════════════════════════════════════════════════════
-# 编辑器配置表
+# 编辑器配置表 — 单一事实来源见 editors_registry.py (T5 单源化)
 # ═══════════════════════════════════════════════════════════════
 
 # (打包名, 入口脚本, 编辑器目录)
 EDITORS = [
-    ("TKSItemEditor",        "build/entries/entry_item_editor.py",        "item_editor"),
-    ("TKSWarpcEditor",       "build/entries/entry_warpc_editor.py",       "warpc_editor"),
-    ("TKSSkillEditor",       "build/entries/entry_skill_editor.py",       "skill_editor"),
-    ("TKSShopEditor",        "build/entries/entry_shop_editor.py",        "shop_editor"),
-    ("TKSMatEditor",         "build/entries/entry_mat_editor.py",         "mat_editor"),
-    ("TKSJvgEditor",         "build/entries/entry_jvg_editor.py",         "jvg_editor"),
-    ("TKSGrpEditor",         "build/entries/entry_grp_editor.py",         "grp_editor"),
-    ("TKSTktEditor",         "build/entries/entry_tkt_editor.py",         "tkt_editor"),
-    ("TKSKonEditor",         "build/entries/entry_kon_editor.py",         "kon_editor"),
-    ("TKSActEditor",         "build/entries/entry_act_editor.py",         "act_editor"),
-    ("TKSWardataEditor",     "build/entries/entry_wardata_editor.py",     "wardata_editor"),
-    ("TKSGxpEditor",         "build/entries/entry_gxp_editor.py",         "gxp_editor"),
-    ("TKSSpritesheetEditor", "build/entries/entry_spritesheet_editor.py", "spritesheet_editor"),
-    ("TKSSaveEditor",        "build/entries/entry_save_editor.py",        "save_editor"),
-    ("TKSConfigsEditor",      "build/entries/entry_configs_editor.py",     "configs_editor"),
-    ("TKSFontEditor",         "build/entries/entry_font_editor.py",        "font_editor"),
-    ("TKSBook",              "build/entries/entry_tks_book.py",           "tks_book"),
-    ("TKSLauncher",          "build/entries/entry_launcher.py",           "tks_launcher_gui"),
-    ("TKSLauncherCLI",       "build/entries/entry_launcher_cli.py",      "tks_launcher_gui"),
+    (name, f"build/entries/{entry_file}", editor_dir)
+    for name, entry_file, _module, editor_dir, _needs_bootstrap in _ALL_EDITORS
 ]
 
 # 需要 zhconv 数据文件 (zhcdict.json) 的编辑器 — Nuitka 不会自动打包 .json 数据文件

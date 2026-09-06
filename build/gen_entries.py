@@ -10,39 +10,18 @@ gen_entries.py — 自动生成各编辑器的薄入口脚本
 (from item_editor.item_editor import main), 各编辑器目录无 __init__.py,
 项目根下的同名目录仅构成 namespace package 片段, 解析优先级低于
 编辑器目录内的同名 .py 主文件 (如 item_editor/item_editor.py)。
+
+编辑器清单的单一事实来源见 editors_registry.py (T5 单源化)。
+
+注: build/entries/ 下的生成产物刻意提交入库 (方案 A), 供查阅与增量构建
+    mtime 判断; build_all.py 每次构建仍会重新生成, 手改会被静默覆盖。
 """
 from pathlib import Path
 
+from editors_registry import EDITORS
+
 BUILD_DIR = Path(__file__).parent
 ENTRIES_DIR = BUILD_DIR / "entries"
-
-# (入口文件名, 导入路径, 编辑器目录, 是否需要 runtime bootstrap)
-# - 导入路径: 单层模块名 (from item_editor import main) 或点号路径 (from configs_editor.configs_editor import main)
-# - configs_editor 是正规包 (有 __init__.py + panels/ 子包), 必须用点号路径
-# - 其他编辑器目录无 __init__.py, 单层模块名 (item_editor) 优先解析到
-#   编辑器目录内的同名主文件, 根目录同名目录仅作 namespace package 片段兜底
-# - CLI 启动器无 PySide6/PIL 依赖, 关闭 bootstrap 避免解压无用归档
-EDITORS = [
-    ("entry_item_editor.py",        "item_editor",                "item_editor",       True),
-    ("entry_warpc_editor.py",       "warpc_editor",               "warpc_editor",      True),
-    ("entry_skill_editor.py",       "skill_editor",               "skill_editor",      True),
-    ("entry_shop_editor.py",        "shop_editor",                "shop_editor",       True),
-    ("entry_mat_editor.py",         "mat_editor",                 "mat_editor",        True),
-    ("entry_jvg_editor.py",         "jvg_editor",                 "jvg_editor",        True),
-    ("entry_grp_editor.py",         "grp_editor",                 "grp_editor",        True),
-    ("entry_tkt_editor.py",         "tkt_editor",                 "tkt_editor",        True),
-    ("entry_kon_editor.py",         "kon_editor",                 "kon_editor",        True),
-    ("entry_act_editor.py",         "act_editor",                 "act_editor",        True),
-    ("entry_wardata_editor.py",     "wardata_editor",             "wardata_editor",    True),
-    ("entry_gxp_editor.py",         "gxp_editor",                 "gxp_editor",        True),
-    ("entry_spritesheet_editor.py", "spritesheet_editor",         "spritesheet_editor",True),
-    ("entry_save_editor.py",        "save_editor",                "save_editor",       True),
-    ("entry_configs_editor.py",     "configs_editor.configs_editor", "configs_editor",  True),
-    ("entry_font_editor.py",        "font_editor.font_editor",   "font_editor",       True),
-    ("entry_tks_book.py",           "tks_book",                   "tks_book",          True),
-    ("entry_launcher.py",           "main",                       "tks_launcher_gui",  True),
-    ("entry_launcher_cli.py",       "cli_launcher",               "tks_launcher_gui",  False),
-]
 
 # 带 bootstrap 的模板 (依赖 PySide6/PIL 的编辑器)
 # sys.path 顺序: [仓库根目录, editor_dir, ...]
@@ -92,7 +71,7 @@ main()
 def main():
     ENTRIES_DIR.mkdir(exist_ok=True)
     written = 0
-    for filename, module, editor_dir, needs_bootstrap in EDITORS:
+    for _name, filename, module, editor_dir, needs_bootstrap in EDITORS:
         template = TEMPLATE_BOOTSTRAP if needs_bootstrap else TEMPLATE_PLAIN
         content = template.format(module=module, editor_dir=editor_dir)
         path = ENTRIES_DIR / filename
