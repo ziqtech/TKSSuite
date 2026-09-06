@@ -61,6 +61,8 @@ from editor_utils.tab_widget import EditorTabWidget
 from editor_utils.search_utils import search_match
 from editor_utils.search_input import SearchInput
 from editor_utils.task_runner import run_background, is_running
+# 调色板/颜色转换单一事实来源在 editor_utils.game_defs (T8 合并)
+from editor_utils.game_defs import GAME_COLORS
 
 # ============================================================
 # 常量 (来自反编译)
@@ -84,23 +86,6 @@ CONTROL_TAGS = {
 TAG_NAME_MAP = {v[0]: (code, v[1], v[2], v[3]) for code, v in CONTROL_TAGS.items()}
 TAG_PATTERN = re.compile(r'<([A-Z]+),(\d+(?:,\d+)*)>')
 
-_GAME_PALETTE_565 = [
-    0x0000, 0x0000, 0x8410, 0x8000, 0x8400, 0x0400, 0x0410, 0x0010, 0x8010,
-    0x8200, 0x8008, 0x4400, 0x0408, 0x4010, 0x0210, 0x0000, 0x0000,
-    0xF79B, 0xC618, 0xF800, 0xFFE0, 0x07E0, 0x07FF, 0x001F, 0xF81F,
-    0xFC08, 0xFA10, 0x87E8, 0x47F0, 0x821F, 0x441F, 0x31EA, 0xFFFF,
-]
-
-def _rgb565_to_hex(rgb565):
-    r5 = (rgb565 >> 11) & 0x1F
-    g6 = (rgb565 >> 5) & 0x3F
-    b5 = rgb565 & 0x1F
-    r8 = (r5 << 3) | (r5 >> 2)
-    g8 = (g6 << 2) | (g6 >> 4)
-    b8 = (b5 << 3) | (b5 >> 2)
-    return f'#{r8:02X}{g8:02X}{b8:02X}'
-
-GAME_COLORS = {i: _rgb565_to_hex(_GAME_PALETTE_565[i]) for i in range(1, 33)}
 GAME_FONT_SIZES = {12, 16, 24, 32, 48}
 DEFAULT_FONT_SIZE = 16
 # 预览位置标记：游戏文本框每行可容纳的完整（全角）字符数，一个图片字 = 一个完整字符
