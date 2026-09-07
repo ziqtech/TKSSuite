@@ -1002,7 +1002,7 @@ class JVGEditor(EditorMainWindow):
         save_action.triggered.connect(self._save)
         file_menu.addAction(save_action)
 
-        save_as_action = QAction("另存为(&A)...", self)
+        save_as_action = QAction("另存为(&A)", self)
         save_as_action.triggered.connect(self._save_as)
         file_menu.addAction(save_as_action)
 
@@ -1039,19 +1039,19 @@ class JVGEditor(EditorMainWindow):
 
         file_menu.addSeparator()
 
-        export_mod_action = QAction("导出为 MOD (.tksmod)…", self)
+        export_mod_action = QAction("导出为 MOD (.tksmod)", self)
         export_mod_action.triggered.connect(self._export_tksmod)
         file_menu.addAction(export_mod_action)
 
-        export_block_mod_action = QAction("导出当前分组为 MOD (.tksmod)…", self)
+        export_block_mod_action = QAction("导出当前分组为 MOD (.tksmod)", self)
         export_block_mod_action.triggered.connect(self._export_block_as_mod)
         file_menu.addAction(export_block_mod_action)
 
-        export_frame_mod_action = QAction("导出选中帧为 MOD (.tksmod)…", self)
+        export_frame_mod_action = QAction("导出选中帧为 MOD (.tksmod)", self)
         export_frame_mod_action.triggered.connect(self._export_frame_as_mod)
         file_menu.addAction(export_frame_mod_action)
 
-        import_mod_action = QAction("导入 MOD (.tksmod)…", self)
+        import_mod_action = QAction("导入 MOD (.tksmod)", self)
         import_mod_action.triggered.connect(self._import_tksmod)
         file_menu.addAction(import_mod_action)
 

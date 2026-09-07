@@ -323,14 +323,14 @@ class KonEditor(FieldUndoMixin, EditorMainWindow):
         # -- 菜单栏 --
         mb = self.menuBar()
         fm = mb.addMenu("文件(&F)")
-        fm.addAction("加载 TKS 目录...", QKeySequence("Ctrl+O"), self._load_tks_dir)
+        fm.addAction("加载 TKS 目录", QKeySequence("Ctrl+O"), self._load_tks_dir)
         self.attach_recent_dirs_menu(fm)
         fm.addSeparator()
         fm.addAction("保存", QKeySequence("Ctrl+S"), self._save)
-        fm.addAction("导出为 MOD (.tksmod)…", self._export_tksmod)
-        fm.addAction("导出为 MOD (指定参考目录)…", self._export_tksmod_with_ref)
+        fm.addAction("导出为 MOD (.tksmod)", self._export_tksmod)
+        fm.addAction("导出为 MOD (指定参考目录)", self._export_tksmod_with_ref)
         fm.addSeparator()
-        fm.addAction("导入 MOD (.tksmod)…", self._import_tksmod)
+        fm.addAction("导入 MOD (.tksmod)", self._import_tksmod)
         fm.addSeparator()
         fm.addAction("退出", self.close)
 
@@ -645,7 +645,7 @@ class KonEditor(FieldUndoMixin, EditorMainWindow):
 
         elif is_mask:
             inf = fn.startswith('inflict')
-            btn = QPushButton("选择导致状态…" if inf else "选择解除状态…")
+            btn = QPushButton("选择导致状态" if inf else "选择解除状态")
             btn.setObjectName("StatusPickerButton")
             hidden = QLineEdit()
             hidden.hide()

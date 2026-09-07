@@ -105,7 +105,7 @@ class TksBookViewer(EditorMainWindow):
     def _build_ui(self):
         mb = self.menuBar()
         fm = mb.addMenu("文件(&F)")
-        fm.addAction("加载 TKS 目录...", QKeySequence("Ctrl+O"), self._load_tks_dir)
+        fm.addAction("加载 TKS 目录", QKeySequence("Ctrl+O"), self._load_tks_dir)
         self.attach_recent_dirs_menu(fm)
         fm.addSeparator()
         fm.addAction("退出", self.close)

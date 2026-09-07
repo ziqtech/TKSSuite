@@ -526,15 +526,15 @@ class GRPEditor(EditorMainWindow):
         fm.addAction("保存 (Ctrl+S)", self._save, QKeySequence("Ctrl+S"))
         fm.addAction("另存为... (Ctrl+Shift+S)", self._save_as, QKeySequence("Ctrl+Shift+S"))
         fm.addSeparator()
-        fm.addAction("导出为 MOD (.tksmod)…", self._export_tksmod)
-        fm.addAction("导出选中区段为 MOD (.tksmod)…", self._export_selected_as_mod)
-        fm.addAction("导入 MOD (.tksmod)…", self._import_tksmod)
-        fm.addAction("合并 MOD (.tksmod)…", self._import_tksmod_merge)
+        fm.addAction("导出为 MOD (.tksmod)", self._export_tksmod)
+        fm.addAction("导出选中区段为 MOD (.tksmod)", self._export_selected_as_mod)
+        fm.addAction("导入 MOD (.tksmod)", self._import_tksmod)
+        fm.addAction("合并 MOD (.tksmod)", self._import_tksmod_merge)
         fm.addSeparator()
         fm.addAction("导出 L1 色板", lambda: self._export_color_swatch("L1"))
         fm.addAction("导出 L2 色板", lambda: self._export_color_swatch("L2"))
         fm.addSeparator()
-        fm.addAction("新增区段...", self._add_section_menu)
+        fm.addAction("新增区段", self._add_section_menu)
         fm.addAction("删除当前区段", self._delete_section)
         fm.addSeparator()
         fm.addAction("退出", self.close)
@@ -2037,9 +2037,9 @@ class GRPEditor(EditorMainWindow):
     def _add_section_menu(self):
         if not self.grp: return
         menu = QMenu(self)
-        menu.addAction("新增图像区段...", self._add_image_section)
-        menu.addAction("新增音频区段...", self._add_audio_section)
-        menu.addAction("新增数据区段...", self._add_data_section)
+        menu.addAction("新增图像区段", self._add_image_section)
+        menu.addAction("新增音频区段", self._add_audio_section)
+        menu.addAction("新增数据区段", self._add_data_section)
         menu.exec(self.mapToGlobal(self.rect().center()))
 
     def _next_index(self):
@@ -2078,7 +2078,7 @@ class GRPEditor(EditorMainWindow):
                         w_spin.setValue(img.width)
                         h_spin.setValue(img.height)
                     except: pass
-        btn_choose = QPushButton("选择PNG图片...")
+        btn_choose = QPushButton("选择PNG图片")
         btn_choose.clicked.connect(_choose)
         lay.addWidget(btn_choose, 2, 0, 1, 2)
         btn_row = QHBoxLayout()

@@ -71,7 +71,7 @@ from editor_utils.theme_switcher import (
 from editor_utils.app_shell import EditorMainWindow, run_editor
 from editor_utils.ui_helpers import (
     make_fake_input, mark_invalid, resolve_config_path, backup_existing_file,
-    form_edits_pending, themed_question,
+    form_edits_pending, themed_question, set_themed_icon,
     update_path_labels, EditorComboBox,
 )
 from editor_utils.search_utils import search_match
@@ -425,14 +425,14 @@ class ItemEditorApp(FieldUndoMixin, EditorMainWindow):
         # 菜单栏
         mb = self.menuBar()
         fm = mb.addMenu("文件(&F)")
-        fm.addAction("加载 TKS 目录…", QKeySequence("Ctrl+O"), self._load_tks_dir)
+        fm.addAction("加载 TKS 目录", QKeySequence("Ctrl+O"), self._load_tks_dir)
         self.attach_recent_dirs_menu(fm)
         fm.addSeparator()
         fm.addAction("保存", QKeySequence("Ctrl+S"), self._save)
-        fm.addAction("导出为 MOD (.tksmod)…", self._export_tksmod)
-        fm.addAction("导出为 MOD (指定参考目录)…", self._export_tksmod_with_ref)
+        fm.addAction("导出为 MOD (.tksmod)", self._export_tksmod)
+        fm.addAction("导出为 MOD (指定参考目录)", self._export_tksmod_with_ref)
         fm.addSeparator()
-        fm.addAction("导入 MOD (.tksmod)…", self._import_tksmod)
+        fm.addAction("导入 MOD (.tksmod)", self._import_tksmod)
         fm.addSeparator()
         fm.addAction("退出", self.close)
         em = mb.addMenu("编辑(&E)")
@@ -686,7 +686,8 @@ class ItemEditorApp(FieldUndoMixin, EditorMainWindow):
             self.extra_map[fn] = None
         elif ft in ('tkt', 'icon', 'use_right', 'combat_flag', 'extra_flags', 'skill'):
             inp = QLineEdit()
-            btn = QPushButton("...")
+            btn = QPushButton()
+            set_themed_icon(btn, "picker")
             btn.setObjectName("FakeInputRightButton")
             btn.setFixedWidth(28)
             btn.setCursor(Qt.PointingHandCursor)
@@ -712,7 +713,7 @@ class ItemEditorApp(FieldUndoMixin, EditorMainWindow):
                 btn.clicked.connect(lambda _, f=fn: self._pick_skill(f))
         elif ft == 'mask':
             is_cause = fn.startswith('cause_')
-            btn = QPushButton("选择导致状态…" if is_cause else "选择解除状态…")
+            btn = QPushButton("选择导致状态" if is_cause else "选择解除状态")
             btn.setObjectName("StatusPickerButton")
             hidden = QLineEdit()
             hidden.hide()

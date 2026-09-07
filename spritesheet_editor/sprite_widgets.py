@@ -1749,7 +1749,7 @@ class SettingsPanel(QWidget):
         self._fmt_preview.setProperty("class", "MonoText")
         export_layout.addWidget(self._fmt_preview)
 
-        btn_save = QPushButton("保存图集...")
+        btn_save = QPushButton("保存图集")
         btn_save.clicked.connect(self._save_current_fmt)
         export_layout.addWidget(btn_save)
 

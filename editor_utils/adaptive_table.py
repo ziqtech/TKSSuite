@@ -245,11 +245,11 @@ class AdaptiveTableWidget(QTableWidget):
             act_cell = menu.addAction("复制单元格")
             act_rows = menu.addAction("复制所选行")
             menu.addSeparator()
-            act_export = menu.addAction("导出所选行为 CSV…")
+            act_export = menu.addAction("导出所选行为 CSV")
         else:
             act_cell = act_rows = act_export = None
         act_all = menu.addAction("复制整表")
-        act_export_all = menu.addAction("导出整表为 CSV…")
+        act_export_all = menu.addAction("导出整表为 CSV")
         chosen = menu.exec(self.viewport().mapToGlobal(pos))
         if chosen is None:
             return

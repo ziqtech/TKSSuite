@@ -233,7 +233,7 @@ class CustomMusicDialog(QDialog):
         self._dir_edit.setPlaceholderText(
             "（可选）浏览到游戏 Sound 目录，仅用于试听原版 BGM")
         dir_row.addWidget(self._dir_edit, 1)
-        btn_browse = QPushButton("浏览…")
+        btn_browse = QPushButton("浏览")
         btn_browse.clicked.connect(self._on_browse_sound_dir)
         dir_row.addWidget(btn_browse)
         btn_rescan = QPushButton("重新扫描")

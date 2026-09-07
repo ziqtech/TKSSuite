@@ -378,12 +378,12 @@ class ActEditorV2(EditorMainWindow):
         # 菜单栏
         mb = self.menuBar()
         fm = mb.addMenu("文件(&F)")
-        fm.addAction("加载 TKS 目录…\tCtrl+O", self._load_tks_dir)
+        fm.addAction("加载 TKS 目录\tCtrl+O", self._load_tks_dir)
         self.attach_recent_dirs_menu(fm)
         fm.addSeparator()
         fm.addAction("保存\tCtrl+S", self._save)
-        fm.addAction("导出为 MOD (.tksmod)…", self._export_tksmod)
-        fm.addAction("导入 MOD (.tksmod)…", self._import_tksmod)
+        fm.addAction("导出为 MOD (.tksmod)", self._export_tksmod)
+        fm.addAction("导入 MOD (.tksmod)", self._import_tksmod)
         fm.addSeparator()
         fm.addAction("退出", self.close)
 

@@ -912,15 +912,15 @@ class TktEditor(EditorMainWindow):
         # --- 菜单栏 (还原全部项) ---
         menu_bar = self.menuBar()
         file_menu = menu_bar.addMenu("文件(F)")
-        file_menu.addAction("加载 TKS 目录…", QKeySequence("Ctrl+O"), self._load_tks_dir)
+        file_menu.addAction("加载 TKS 目录", QKeySequence("Ctrl+O"), self._load_tks_dir)
         self.attach_recent_dirs_menu(file_menu)
         file_menu.addAction("保存", QKeySequence("Ctrl+S"), self._save)
-        file_menu.addAction("另存为…", self._save_as)
+        file_menu.addAction("另存为", self._save_as)
         file_menu.addSeparator()
-        file_menu.addAction("导出为 MOD (.tksmod)…", QKeySequence("Ctrl+E"), self._export_tksmod)
-        file_menu.addAction("导出为 MOD (指定参考目录)…", self._export_tksmod_with_ref)
+        file_menu.addAction("导出为 MOD (.tksmod)", QKeySequence("Ctrl+E"), self._export_tksmod)
+        file_menu.addAction("导出为 MOD (指定参考目录)", self._export_tksmod_with_ref)
         file_menu.addSeparator()
-        file_menu.addAction("导入 MOD (.tksmod)…", QKeySequence("Ctrl+I"), self._import_tksmod)
+        file_menu.addAction("导入 MOD (.tksmod)", QKeySequence("Ctrl+I"), self._import_tksmod)
         file_menu.addSeparator()
         file_menu.addAction("退出", self.close)
 
@@ -928,7 +928,7 @@ class TktEditor(EditorMainWindow):
         edit_menu.addAction("新增条目", QKeySequence("Ctrl+N"), self._new_entry)
         edit_menu.addAction("删除当前条目", QKeySequence("Delete"), self._delete_entry)
         edit_menu.addSeparator()
-        edit_menu.addAction("查找…", QKeySequence("Ctrl+F"), self._focus_search)
+        edit_menu.addAction("查找", QKeySequence("Ctrl+F"), self._focus_search)
 
         self.add_standard_menus(menu_bar)
 

@@ -181,7 +181,7 @@ class ConfigsEditorWindow(EditorMainWindow):
         menubar = self.menuBar()
         file_menu = menubar.addMenu("文件(&F)")
 
-        act_load = QAction("加载 TKS 目录…", self)
+        act_load = QAction("加载 TKS 目录", self)
         act_load.setShortcut("Ctrl+O")
         act_load.triggered.connect(self.load_tks_directory)
         file_menu.addAction(act_load)
@@ -193,7 +193,7 @@ class ConfigsEditorWindow(EditorMainWindow):
         file_menu.addAction(act_save)
 
         file_menu.addSeparator()
-        act_export_mod = QAction("导出为 MOD (.tksmod)…", self)
+        act_export_mod = QAction("导出为 MOD (.tksmod)", self)
         act_export_mod.triggered.connect(self._export_tksmod)
         file_menu.addAction(act_export_mod)
 

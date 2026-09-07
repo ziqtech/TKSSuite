@@ -45,11 +45,11 @@ class ModPackerDialog(QDialog):
         file_layout.addWidget(self._file_list)
 
         btn_row = QHBoxLayout()
-        btn_add = QPushButton("添加文件…")
+        btn_add = QPushButton("添加文件")
         btn_add.clicked.connect(self._on_add_files)
         btn_row.addWidget(btn_add)
 
-        btn_add_dir = QPushButton("从目录添加…")
+        btn_add_dir = QPushButton("从目录添加")
         btn_add_dir.clicked.connect(self._on_add_from_dir)
         btn_row.addWidget(btn_add_dir)
 
@@ -145,7 +145,7 @@ class ModPackerDialog(QDialog):
         _preview_info.addWidget(self._lbl_preview_name)
         _btn_row = QHBoxLayout()
         _btn_row.setSpacing(8)
-        _btn_pick = QPushButton("选择图片…")
+        _btn_pick = QPushButton("选择图片")
         _btn_pick.setFixedWidth(100)
         _btn_pick.clicked.connect(self._on_pick_preview)
         _btn_row.addWidget(_btn_pick)
@@ -167,7 +167,7 @@ class ModPackerDialog(QDialog):
         self.edit_output = QLineEdit()
         self.edit_output.setPlaceholderText("输出的 .tksmodpak 文件路径")
         out_row.addWidget(self.edit_output, 1)
-        btn_browse = QPushButton("浏览…")
+        btn_browse = QPushButton("浏览")
         btn_browse.clicked.connect(self._on_browse_output)
         out_row.addWidget(btn_browse)
         layout.addLayout(out_row)

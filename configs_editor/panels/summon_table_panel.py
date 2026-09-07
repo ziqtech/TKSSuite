@@ -154,7 +154,7 @@ class SummonEditDialog(QDialog):
 
         # 随机候选操作按钮
         rand_btn_row = QHBoxLayout()
-        btn_add_rand = QPushButton("添加…")
+        btn_add_rand = QPushButton("添加")
         btn_add_rand.clicked.connect(self._on_add_random)
         rand_btn_row.addWidget(btn_add_rand)
 
@@ -216,7 +216,7 @@ class SummonEditDialog(QDialog):
         display_widget.setMinimumHeight(30)
         row.addWidget(display_widget, 1)
 
-        btn = QPushButton("选择…")
+        btn = QPushButton("选择")
         row.addWidget(btn)
 
         container = QWidget()

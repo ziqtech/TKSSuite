@@ -62,7 +62,7 @@ class ModEditorDialog(QDialog):
         self.edit_path.setReadOnly(True)
         self.edit_path.setPlaceholderText("点击「打开」按钮选择 .tksmod 或 .tksmodpak 文件")
         file_row.addWidget(self.edit_path, 1)
-        self.btn_open = QPushButton("打开…")
+        self.btn_open = QPushButton("打开")
         self.btn_open.clicked.connect(self._on_open)
         file_row.addWidget(self.btn_open)
         layout.addLayout(file_row)
@@ -85,7 +85,7 @@ class ModEditorDialog(QDialog):
 
         # 操作按钮
         btn_row = QHBoxLayout()
-        self.btn_add = QPushButton("添加文件…")
+        self.btn_add = QPushButton("添加文件")
         self.btn_add.clicked.connect(self._on_add)
         self.btn_add.setEnabled(False)
         btn_row.addWidget(self.btn_add)

@@ -49,7 +49,7 @@ from editor_utils.app_shell import EditorMainWindow, run_editor
 from editor_utils.tkt_loader import load_tkt_simple
 from editor_utils.ui_helpers import (
     make_fake_input, mark_invalid,
-    form_edits_pending, themed_question,
+    form_edits_pending, themed_question, set_themed_icon,
     update_path_labels, EditorComboBox,
 )
 from editor_utils.search_utils import search_match
@@ -780,14 +780,14 @@ class SkillEditorApp(FieldUndoMixin, EditorMainWindow):
         # --- Menu Bar ---
         menu_bar = self.menuBar()
         fm = menu_bar.addMenu("文件(F)")
-        fm.addAction("加载 TKS 目录…", QKeySequence("Ctrl+O"), self._load_tks_dir)
+        fm.addAction("加载 TKS 目录", QKeySequence("Ctrl+O"), self._load_tks_dir)
         self.attach_recent_dirs_menu(fm)
         fm.addSeparator()
         fm.addAction("保存", QKeySequence("Ctrl+S"), self._save)
-        fm.addAction("导出为 MOD (.tksmod)…", self._export_tksmod)
-        fm.addAction("导出为 MOD (指定参考目录)…", self._export_tksmod_with_ref)
+        fm.addAction("导出为 MOD (.tksmod)", self._export_tksmod)
+        fm.addAction("导出为 MOD (指定参考目录)", self._export_tksmod_with_ref)
         fm.addSeparator()
-        fm.addAction("导入 MOD (.tksmod)…", self._import_tksmod)
+        fm.addAction("导入 MOD (.tksmod)", self._import_tksmod)
         fm.addSeparator()
         fm.addAction("退出", self.close)
 
@@ -1000,7 +1000,8 @@ class SkillEditorApp(FieldUndoMixin, EditorMainWindow):
 
             inp = QLineEdit()
             inp.setMaximumWidth(50)
-            btn = QPushButton("...")
+            btn = QPushButton()
+            set_themed_icon(btn, "picker")
             btn.setObjectName("FakeInputRightButton")
             btn.setFixedWidth(28)
             btn.setCursor(Qt.PointingHandCursor)
@@ -1031,7 +1032,7 @@ class SkillEditorApp(FieldUndoMixin, EditorMainWindow):
             inp = QLineEdit()
             inp.setVisible(False)
 
-            btn = QPushButton("配置免疫状态…" if ft == 'mask' else "配置特殊标志…")
+            btn = QPushButton("配置免疫状态" if ft == 'mask' else "配置特殊标志")
             if ft == 'mask':
                 btn.setObjectName("StatusPickerButton")
             btn.setCursor(Qt.PointingHandCursor)

@@ -289,7 +289,7 @@ class ShopEditorWindow(EditorMainWindow):
         menubar = self.menuBar()
         file_menu = menubar.addMenu("文件")
 
-        action_load = QAction("加载 TKS 目录…", self)
+        action_load = QAction("加载 TKS 目录", self)
         action_load.setShortcut(QKeySequence("Ctrl+O"))
         action_load.triggered.connect(self._load_tks_dir)
         file_menu.addAction(action_load)
@@ -302,16 +302,16 @@ class ShopEditorWindow(EditorMainWindow):
         action_save.triggered.connect(self._save)
         file_menu.addAction(action_save)
 
-        action_export_mod = QAction("导出为 MOD (.tksmod)…", self)
+        action_export_mod = QAction("导出为 MOD (.tksmod)", self)
         action_export_mod.triggered.connect(self._export_tksmod)
         file_menu.addAction(action_export_mod)
 
-        action_export_mod_ref = QAction("导出为 MOD (指定参考目录)…", self)
+        action_export_mod_ref = QAction("导出为 MOD (指定参考目录)", self)
         action_export_mod_ref.triggered.connect(self._export_tksmod_with_ref)
         file_menu.addAction(action_export_mod_ref)
 
         file_menu.addSeparator()
-        action_import_mod = QAction("导入 MOD (.tksmod)…", self)
+        action_import_mod = QAction("导入 MOD (.tksmod)", self)
         action_import_mod.triggered.connect(self._import_tksmod)
         file_menu.addAction(action_import_mod)
 
@@ -440,7 +440,7 @@ class ShopEditorWindow(EditorMainWindow):
         self.lbl_item_name.setProperty("class", "PrimaryTitle")
         item_row.addWidget(self.lbl_item_name, 1)
 
-        btn_pick_item = QPushButton("选择物品…")
+        btn_pick_item = QPushButton("选择物品")
         btn_pick_item.clicked.connect(self._pick_item)
         item_row.addWidget(btn_pick_item)
         edit_layout.addLayout(item_row)

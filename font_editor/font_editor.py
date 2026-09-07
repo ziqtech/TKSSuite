@@ -220,7 +220,7 @@ class FontEditorWindow(EditorMainWindow):
         ttf_layout.setContentsMargins(0, 0, 0, 0)
 
         btn_row = QHBoxLayout()
-        add_btn = QPushButton("添加 TTF…")
+        add_btn = QPushButton("添加 TTF")
         add_btn.clicked.connect(self._on_add_ttf)
         remove_btn = QPushButton("移除选中")
         remove_btn.clicked.connect(self._on_remove_ttf)
@@ -370,7 +370,7 @@ class FontEditorWindow(EditorMainWindow):
         self._preview_path_label.setProperty("status", "unloaded")
         ctrl_row.addWidget(self._preview_path_label)
 
-        load_btn = QPushButton("打开 FONT9696…")
+        load_btn = QPushButton("打开 FONT9696")
         load_btn.clicked.connect(self._on_open_font)
         ctrl_row.addWidget(load_btn)
 
@@ -396,7 +396,7 @@ class FontEditorWindow(EditorMainWindow):
         # ── 文件(F) ──
         file_menu = menubar.addMenu("文件(F)")
 
-        open_act = QAction("打开 FONT9696…", self)
+        open_act = QAction("打开 FONT9696", self)
         open_act.setShortcut("Ctrl+O")
         open_act.triggered.connect(self._on_open_font)
         file_menu.addAction(open_act)
@@ -406,17 +406,17 @@ class FontEditorWindow(EditorMainWindow):
         save_act.triggered.connect(self._on_save_font)
         file_menu.addAction(save_act)
 
-        save_as_act = QAction("另存为…", self)
+        save_as_act = QAction("另存为", self)
         save_as_act.triggered.connect(self._on_save_as_font)
         file_menu.addAction(save_as_act)
 
         file_menu.addSeparator()
 
-        export_mod_act = QAction("导出为 MOD (.tksmod)…", self)
+        export_mod_act = QAction("导出为 MOD (.tksmod)", self)
         export_mod_act.triggered.connect(self._on_export_mod)
         file_menu.addAction(export_mod_act)
 
-        import_mod_act = QAction("从 MOD 导入…", self)
+        import_mod_act = QAction("从 MOD 导入", self)
         import_mod_act.triggered.connect(self._on_import_mod)
         file_menu.addAction(import_mod_act)
 

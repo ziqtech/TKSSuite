@@ -570,7 +570,7 @@ class SaveEditorApp(EditorMainWindow):
         # 菜单栏
         mb = self.menuBar()
         fm = mb.addMenu("文件(&F)")
-        fm.addAction("打开存档目录…", QKeySequence("Ctrl+O"), self._cmd_open)
+        fm.addAction("打开存档目录", QKeySequence("Ctrl+O"), self._cmd_open)
         fm.addAction("保存当前槽位", QKeySequence("Ctrl+S"), self._cmd_save)
         fm.addSeparator()
         fm.addAction("退出", self.close)
