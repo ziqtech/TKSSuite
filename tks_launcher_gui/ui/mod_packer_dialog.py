@@ -444,6 +444,7 @@ class ModPackerDialog(QDialog):
         self._pack_worker = run_background(
             self, work,
             on_success=self._on_pack_done,
+            on_error=self._on_pack_error,
             on_progress=log)
 
     def _on_pack_done(self, result):
@@ -466,3 +467,11 @@ class ModPackerDialog(QDialog):
         else:
             log(f"\n❌ {msg}")
             QMessageBox.critical(self, "打包失败", msg)
+
+    def _on_pack_error(self, err_msg):
+        """工作线程抛异常: 复位 UI 并提示 (否则进度条永挂 + 按钮永久禁用)"""
+        self._progress.setVisible(False)
+        self.btn_pack.setEnabled(True)
+        self._log_area.append(f"\n❌ 打包异常:\n{err_msg}")
+        tail = err_msg.splitlines()[-1] if err_msg else ""
+        QMessageBox.critical(self, "打包失败", f"打包过程中出现异常:\n{tail}")

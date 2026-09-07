@@ -531,6 +531,7 @@ class ModMergerDialog(QDialog):
         self._merge_worker = run_background(
             self, work,
             on_success=self._on_merge_done,
+            on_error=self._on_merge_error,
             on_progress=log)
 
     def _on_merge_done(self, result):
@@ -562,3 +563,11 @@ class ModMergerDialog(QDialog):
         else:
             log(f"\n❌ 合并失败: {result.error}")
             QMessageBox.critical(self, "合并失败", result.error)
+
+    def _on_merge_error(self, err_msg):
+        """工作线程抛异常: 复位 UI 并提示 (否则进度条永挂 + 按钮永久禁用)"""
+        self._progress.setVisible(False)
+        self.btn_merge.setEnabled(True)
+        self._log_area.append(f"\n❌ 合并异常:\n{err_msg}")
+        tail = err_msg.splitlines()[-1] if err_msg else ""
+        QMessageBox.critical(self, "合并失败", f"合并过程中出现异常:\n{tail}")

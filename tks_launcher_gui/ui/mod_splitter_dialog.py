@@ -175,6 +175,7 @@ class ModSplitterDialog(QDialog):
         self._split_worker = run_background(
             self, work,
             on_success=self._on_split_done,
+            on_error=self._on_split_error,
             on_progress=log)
 
     def _on_split_done(self, result):
@@ -194,3 +195,10 @@ class ModSplitterDialog(QDialog):
         else:
             log(f"\n❌ 拆分失败: {result['error']}")
             QMessageBox.critical(self, "拆分失败", result["error"])
+
+    def _on_split_error(self, err_msg):
+        """工作线程抛异常: 复位按钮并提示 (否则按钮永久禁用且无任何反馈)"""
+        self._btn_split.setEnabled(True)
+        self._log_area.append(f"\n❌ 拆分异常:\n{err_msg}")
+        tail = err_msg.splitlines()[-1] if err_msg else ""
+        QMessageBox.critical(self, "拆分失败", f"拆分过程中出现异常:\n{tail}")

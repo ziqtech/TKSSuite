@@ -7,7 +7,7 @@
              文王卦籤=红色 ● / 晶礦=蓝色 ● / 機關圖=绿色 ●, 带数量;
              未启用来源 (d2 bit0=0) 画虚线空心圆。
 """
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import (QPainter, QColor, QPen, QBrush, QFont, QPixmap,
                            QPainterPath)
 from PySide6.QtWidgets import QLabel, QApplication, QWidget, QVBoxLayout
@@ -82,9 +82,12 @@ class MapTab(BookTabBase):
     def ensure_populated(self):
         if self._populated:
             return
+        if is_running(getattr(self, '_grp_worker', None)):
+            return  # 上一轮解码仍在跑; 其回调检测到数据换代后会自动重试
         self._populated = True
         self._preview_lbl.setText("正在加载 SC.GRP…")
         self._preview_lbl.adjustSize()
+        loaded_dir = self.data.game_dir
 
         # 后台线程: SC.GRP 惰性加载/解码 (P3-3), 表格填充在回调
         def work(w):
@@ -102,18 +105,30 @@ class MapTab(BookTabBase):
                     sid = sec.index
                     rows.append((sid, [str(sid), self.data.scene_name(sid),
                                        str(spec_tot.get(sid, 0))]))
-            return rows
+            return rows, loaded_dir
 
         self._grp_worker = run_background(
-            self, work, on_success=self._on_grp_loaded)
+            self, work, on_success=self._on_grp_loaded,
+            on_error=self._on_grp_error)
 
-    def _on_grp_loaded(self, rows):
+    def _on_grp_loaded(self, result):
+        rows, loaded_dir = result
+        if loaded_dir != self.data.game_dir:
+            # 数据已重载 (换目录): 本轮结果作废, 用当前数据重新填充
+            self._populated = False
+            QTimer.singleShot(0, self.ensure_populated)
+            return
         self.set_table_items(["#", "场景", "特殊物品"], rows,
                              widths={0: 50, 2: 80}, stretch_col=1)
         if rows:
             self._preview_lbl.setText("请从左侧选择地图")
         else:
             self._preview_lbl.setText("未找到 SC.GRP / SC.IDX, 无法预览地图")
+        self._preview_lbl.adjustSize()
+
+    def _on_grp_error(self, err_msg):
+        self._populated = False
+        self._preview_lbl.setText("SC.GRP 加载失败")
         self._preview_lbl.adjustSize()
 
     def show_detail(self, sid):
@@ -123,14 +138,19 @@ class MapTab(BookTabBase):
                 return
             self._preview_lbl.setText(f"正在解码场景 {sid}…")
             self._preview_lbl.adjustSize()
+            loaded_dir = self.data.game_dir
 
             # 后台线程: 场景底图解码 (P3-3), 缓存与上屏在回调
             def work(w):
-                return sid, pil_to_qpixmap(self.data.scene_background(sid))
+                return loaded_dir, sid, pil_to_qpixmap(self.data.scene_background(sid))
+
+            def on_err(err_msg, _sid=sid):
+                self._preview_lbl.setText(f"场景 {_sid} 解码失败")
+                self._preview_lbl.adjustSize()
 
             self._scene_worker = run_background(
                 self, work,
-                on_success=self._on_scene_decoded)
+                on_success=self._on_scene_decoded, on_error=on_err)
             return
         if pix is None:
             self._preview_lbl.setText(f"场景 {sid} 无背景图")
@@ -148,7 +168,9 @@ class MapTab(BookTabBase):
             self._detail_w.adjustSize()
 
     def _on_scene_decoded(self, result):
-        sid, pix = result
+        loaded_dir, sid, pix = result
+        if loaded_dir != self.data.game_dir:
+            return  # 换目录前的过期解码结果: 丢弃, 不写缓存不上屏
         if pix is None:
             # 负缓存: 无背景图的场景不再反复解码
             self._pix_cache[sid] = None
