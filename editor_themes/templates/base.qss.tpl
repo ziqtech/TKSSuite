@@ -429,7 +429,12 @@ QMenuBar {
 }
 QMenuBar::item {
     background: transparent;
-    padding: {{sp_6}} {{sp_10}};
+    /* 下外边距 4px: hover 圆角高亮与菜单栏下边缘留出间隔, 不与下方内容融为一体
+       (QMenuBar 自身 padding/margin 不参与条目布局, min-height 会使条目拉伸, 均不可用) */
+    margin: 0 0 {{sp_4}} 0;
+    /* 上 6 / 下 2: 菜单字体墨迹在行盒内天然偏上约 4px, 下内边距相应减 4,
+       保证 hover 高亮块内文字上下视觉居中 */
+    padding: {{sp_6}} {{sp_10}} {{sp_6}};
     border-radius: {{radius_md}};
 }
 QMenuBar::item:selected {
@@ -1808,7 +1813,7 @@ QWidget#LauncherRoot {
     background-color: {{bg_window}};
 }
 QToolBar#LauncherToolbar {
-    background-color: {{bg_158}};
+    background-color: {{bg_165}};
     border-bottom: {{bd_112}};
     padding: {{sp_8}} {{sp_12}};
     spacing: 8px;

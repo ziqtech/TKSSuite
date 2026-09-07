@@ -167,7 +167,7 @@ class PatchListWidget(QWidget):
         table = AdaptiveTableWidget(
             0, len(_COLUMNS),
             stretch_columns={_COL_NAME},
-            minimum_widths=[40, 140, 60],
+            minimum_widths=[40, 140, 80],
             row_height=30,
             fill_viewport=True,
         )
