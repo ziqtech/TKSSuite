@@ -1606,9 +1606,10 @@ class WarpcEditorV2(EditorMainWindow):
             else:
                 records = load_warpc(warpc_path)
                 seg1 = seg2 = None
-            skill_names, skill_types = self._load_skill_names()
+            # 后台线程内 self.tkt 仍是上一次 (首次为空) 的值, 必须传入本次加载的 tkt
+            skill_names, skill_types = self._load_skill_names(tkt)
             tkkon_names = self._load_tkkon_names()
-            item_names, item_idx_names, idx_to_id, id_to_idx = self._load_item_names()
+            item_names, item_idx_names, idx_to_id, id_to_idx = self._load_item_names(tkt)
             return (mu, tkt, fa, records, seg1, seg2,
                     skill_names, skill_types, tkkon_names,
                     item_names, item_idx_names, idx_to_id, id_to_idx)
@@ -1705,7 +1706,7 @@ class WarpcEditorV2(EditorMainWindow):
             return self._game_dir
         return os.path.dirname(self.warpc_path) if self.warpc_path else ''
 
-    def _load_skill_names(self):
+    def _load_skill_names(self, tkt):
         tks_dir = self._get_tks_dir()
         sk_path = os.path.join(tks_dir, 'TKSkill.dat')
         if not os.path.exists(sk_path):
@@ -1724,8 +1725,8 @@ class WarpcEditorV2(EditorMainWindow):
                 name_id = struct.unpack_from('<h', dec, off)[0]
                 stype = struct.unpack_from('<h', dec, off + 4)[0]
                 types[i] = stype
-                if name_id > 0 and name_id in self.tkt:
-                    names[i] = self.tkt[name_id].split('\n')[0].strip()[:20]
+                if name_id > 0 and name_id in tkt:
+                    names[i] = tkt[name_id].split('\n')[0].strip()[:20]
                 elif name_id:
                     names[i] = f'#{name_id}'
             return names, types
@@ -2123,7 +2124,7 @@ class WarpcEditorV2(EditorMainWindow):
         except Exception:
             return {}
 
-    def _load_item_names(self):
+    def _load_item_names(self, tkt):
         tks_dir = self._get_tks_dir()
         it_path = os.path.join(tks_dir, 'TKItem.dat')
         if not os.path.exists(it_path):
@@ -2147,8 +2148,8 @@ class WarpcEditorV2(EditorMainWindow):
                 icon = struct.unpack_from('<h', dec, off + 8)[0]
                 equip_type = struct.unpack_from('<h', dec, off + 10)[0]
                 price = struct.unpack_from('<h', dec, off + 62)[0] if off + 64 <= len(dec) else 0
-                if name_id > 0 and name_id in self.tkt:
-                    nm = self.tkt[name_id].split('\n')[0].strip()[:25]
+                if name_id > 0 and name_id in tkt:
+                    nm = tkt[name_id].split('\n')[0].strip()[:25]
                 elif item_id > 0:
                     nm = f'物品#{item_id}'
                 else:
