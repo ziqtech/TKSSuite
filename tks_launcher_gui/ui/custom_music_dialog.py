@@ -245,7 +245,7 @@ class CustomMusicDialog(QDialog):
         self._table = AdaptiveTableWidget(
             0, len(_COLUMNS),
             stretch_columns={_COL_NAME},
-            minimum_widths=[120, 60, 130],
+            minimum_widths=[120, 60, 150],
             row_height=44,
             fill_viewport=True,
         )
@@ -387,12 +387,12 @@ class CustomMusicDialog(QDialog):
         """
         w = QWidget()
         lay = QHBoxLayout(w)
-        lay.setContentsMargins(4, 2, 4, 2)
+        # 边距归零: 单元格 item 自带 6/10 内边距, 容器不再叠加 (背景已透明)
+        lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(4)
 
         btn_play = QPushButton("播放")
         btn_play.setToolTip("试听该曲目")
-        btn_play.setFixedHeight(26)
         btn_play.setCursor(Qt.PointingHandCursor)
         btn_play.clicked.connect(lambda _=False, e=entry: self._on_play(e))
         set_themed_icon(btn_play, "play")
@@ -400,7 +400,6 @@ class CustomMusicDialog(QDialog):
 
         btn_more = QPushButton("更多")
         btn_more.setToolTip("暂停 / 重置 / 修改 / 重命名 / 删除")
-        btn_more.setFixedHeight(26)
         btn_more.setCursor(Qt.PointingHandCursor)
         btn_more.clicked.connect(
             lambda _=False, e=entry, b=btn_more: self._show_ops_menu(e, b))

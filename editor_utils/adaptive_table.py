@@ -27,18 +27,29 @@ fill_viewport=True 时切换为“完全撑满”模式：拉伸列不再封顶�
   构造时默认开启。
 - enable_column_persistence(key): 列宽持久化到 QSettings，恢复值喂给
   _user_widths（与"用户优先"机制天然集成），reset_column_layout 一并清除。
+- 行高自适应: setCellWidget 的内嵌控件以 sizeHint 高度 + 纵向内容边距
+  撑高所在行 (不低于默认行高); 显式 setRowHeight 视为用户固定该行,
+  不再被自动撑高覆盖。
 """
 
 import csv
 import json
 
-from PySide6.QtCore import Qt, QTimer
-from PySide6.QtWidgets import QFileDialog, QHeaderView, QMenu, QTableWidget, QTableWidgetItem
+from PySide6.QtCore import QEvent, Qt, QTimer
+from PySide6.QtWidgets import (
+    QFileDialog, QHBoxLayout, QHeaderView, QLabel, QMenu,
+    QTableWidget, QTableWidgetItem, QWidget,
+)
 
 # 拉伸列的默认封顶策略：列宽最多增长到 max(基准×factor, 基准+margin)。
 # 数值列基准小 → 封顶紧；长文本列基准大 → 封顶随内容放大，比例观感稳定。
 DEFAULT_STRETCH_CAP_FACTOR = 1.5
 DEFAULT_STRETCH_CAP_MARGIN = 64
+
+# 行高自适应的纵向内容边距：内嵌控件行高 = 控件 sizeHint 高 + 此值。
+# QSS QTableWidget::item 上下 padding 6+6 与边框约占 13-14 逻辑像素,
+# 另留少量余量抵消取整误差, 保证控件不贴内容盒边缘。
+DEFAULT_ROW_WIDGET_PADDING = 16
 
 _SETTINGS_ORG = "TKSSuite"
 _SETTINGS_APP = "TKSSuite"
@@ -87,9 +98,12 @@ class AdaptiveTableWidget(QTableWidget):
     def __init__(self, rows=0, columns=0, parent=None,
                  stretch_columns=None, minimum_widths=None, maximum_widths=None,
                  row_height=44, content_padding=14,
-                 fill_viewport=False):
+                 fill_viewport=False, row_widget_padding=DEFAULT_ROW_WIDGET_PADDING):
         super().__init__(rows, columns, parent)
         self._content_padding = content_padding
+        self._row_widget_padding = max(0, int(row_widget_padding))
+        self._user_row_heights = set()
+        self._row_fit_scheduled = False
         self._minimum_widths = {}
         self._maximum_widths = {}
         self._user_widths = {}
@@ -119,6 +133,12 @@ class AdaptiveTableWidget(QTableWidget):
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
 
         self.itemChanged.connect(lambda _item: self._schedule_fit())
+
+        # 行增删/整体重置后行号语义变化, 保守清除固定行高并重算行高
+        model = self.model()
+        model.rowsInserted.connect(self._on_rows_changed)
+        model.rowsRemoved.connect(self._on_rows_changed)
+        model.modelReset.connect(self._on_rows_changed)
 
         self.enable_copy_menu()
 
@@ -163,7 +183,70 @@ class AdaptiveTableWidget(QTableWidget):
 
     def setCellWidget(self, row, column, widget):
         super().setCellWidget(row, column, widget)
+        if widget is not None:
+            self._make_cell_widget_transparent(widget)
+            widget.installEventFilter(self)
         self._schedule_fit()
+        self._schedule_row_fit()
+
+    @staticmethod
+    def _make_cell_widget_transparent(widget):
+        """内嵌普通容器置透明: 全局 QSS 的 ``QWidget {background}`` 会让容器
+        画一层与行底色 (视口 base) 不同的色块, 并带来观感上的多余边距。
+
+        只处理无样式的普通 QWidget 容器与无定制样式的 QLabel;
+        自绘控件 (如分类徽标) 与按钮/复选框等自带外观的控件不受影响。
+        用 ID 选择器限定规则只命中容器自身 —— 无选择器的声明会级联到
+        子控件, 把按钮等内嵌控件的背景一并洗掉。
+        """
+        plain_container = type(widget) is QWidget
+        bare_label = (isinstance(widget, QLabel) and not widget.objectName()
+                      and not widget.property("class") and not widget.styleSheet())
+        if not (plain_container or bare_label):
+            return
+        widget.setObjectName("AdaptiveCellContainer")
+        widget.setStyleSheet(
+            "QWidget#AdaptiveCellContainer { background: transparent; }")
+
+    def setRowHeight(self, row, height):
+        """显式设行高视为用户固定, 该行不再被自动撑高覆盖。"""
+        self._user_row_heights.add(row)
+        super().setRowHeight(row, height)
+
+    def eventFilter(self, watched, event):
+        # 内嵌控件尺寸变化 (如主题换图标) 时跟随撑高所在行;
+        # 重算本身零变化时不再触发 Resize, 收敛无死循环。
+        if event.type() == QEvent.Resize:
+            self._schedule_row_fit()
+        return super().eventFilter(watched, event)
+
+    def _on_rows_changed(self, *_):
+        self._user_row_heights.clear()
+        self._schedule_row_fit()
+
+    def _schedule_row_fit(self):
+        if self._row_fit_scheduled:
+            return
+        self._row_fit_scheduled = True
+        QTimer.singleShot(0, self._fit_row_heights)
+
+    def _fit_row_heights(self):
+        """行高 = max(默认行高, 行内各内嵌控件 sizeHint/minimumSizeHint 高 + 纵向内容边距)。"""
+        self._row_fit_scheduled = False
+        default_height = self.verticalHeader().defaultSectionSize()
+        for row in range(self.rowCount()):
+            if row in self._user_row_heights:
+                continue
+            needed = default_height
+            for column in range(self.columnCount()):
+                widget = self.cellWidget(row, column)
+                if widget is not None:
+                    hint = max(widget.sizeHint().height(),
+                               widget.minimumSizeHint().height())
+                    needed = max(needed, hint + self._row_widget_padding)
+            if needed != self.rowHeight(row):
+                # 绕过本类覆写, 不把自动撑高记作用户固定
+                super().setRowHeight(row, needed)
 
     def setColumnHidden(self, column, hide):
         super().setColumnHidden(column, hide)
