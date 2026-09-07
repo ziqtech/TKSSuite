@@ -22,18 +22,26 @@ from core.mod_packer import list_tksmod_contents, read_tksmod_content
 from editor_utils import theme_tokens as _tt_tokens
 _PLACEHOLDER_GRAY = _tt_tokens.business_colors("launcher", _tt_tokens.THEMES[0])["placeholder_gray"]
 from editor_utils.mod_exporter import generate_short_uuid
-from editor_utils.ui_helpers import themed_question
+from editor_utils.ui_helpers import themed_question, clamp_dialog_size
 from editor_utils.task_runner import run_background, is_running
 from editor_utils.ui_helpers import EditorComboBox
 
-# 差异类别 -> 中文显示
+# 差异类别 -> 中文显示 / 悬停详情 (列宽有限, 长说明放 tooltip)
 _KIND_LABEL = {
-    "block": "帧/块 (JVG·动作·GRP整段)",
-    "grp_layer": "图层像素 (GRP)",
-    "record": "记录 (数值表)",
-    "text": "文本 (剧情·文本表)",
-    "resource": "资源 (整文件替换)",
+    "block": "帧/块",
+    "grp_layer": "图层",
+    "record": "记录",
+    "text": "文本",
+    "resource": "资源",
     "unknown": "未知",
+}
+_KIND_TIP = {
+    "block": "帧/块合并 (JVG·动作·GRP 整段)",
+    "grp_layer": "图层像素合并 (GRP)",
+    "record": "记录合并 (数值表)",
+    "text": "文本合并 (剧情·文本表)",
+    "resource": "资源整文件替换",
+    "unknown": "未知类型",
 }
 
 
@@ -43,7 +51,8 @@ class ModMergerDialog(QDialog):
     def __init__(self, mods_dir: str = "mods", parent=None):
         super().__init__(parent)
         self.setWindowTitle("模组合并 — 将多个 .tksmod 深度合并为一个")
-        self.resize(760, 720)
+        # 双栏布局内容最小高度 ~640 逻辑像素, 钳制到屏幕可用区域内
+        clamp_dialog_size(self, 950, 700)
         self._mods_dir = mods_dir
         self._file_paths: list[str] = []
         self._preview_path: str = ""
@@ -51,13 +60,18 @@ class ModMergerDialog(QDialog):
         layout = QVBoxLayout(self)
         layout.setSpacing(10)
 
-        # ---- 文件列表区 ----
+        # ---- 主体双栏: 左 = 文件列表 + 合并分析, 右 = 元数据 + 输出 + 日志 ----
+        # (单栏堆叠时最小高度 ~1140, 1080p 下超屏; 双栏后 ~640, 各缩放档位均可容纳)
+        body = QHBoxLayout()
+        body.setSpacing(10)
+
+        # ---- 左栏 · 文件列表区 ----
         file_group = QGroupBox("源文件列表 (将深度合并为一个 .tksmod)")
         file_layout = QVBoxLayout(file_group)
 
         self._file_list = QListWidget()
         self._file_list.setSelectionMode(QAbstractItemView.ExtendedSelection)
-        self._file_list.setMinimumHeight(110)
+        self._file_list.setMinimumHeight(90)
         file_layout.addWidget(self._file_list)
 
         btn_row = QHBoxLayout()
@@ -77,27 +91,36 @@ class ModMergerDialog(QDialog):
         self._lbl_count = QLabel("共 0 个文件")
         btn_row.addWidget(self._lbl_count)
         file_layout.addLayout(btn_row)
-        layout.addWidget(file_group)
 
-        # ---- 合并分析区 ----
+        # 左栏容器: 文件列表 + 合并分析 纵向堆叠
+        left_col = QVBoxLayout()
+        left_col.setSpacing(10)
+        left_col.addWidget(file_group, 2)
+
+        # ---- 左栏 · 合并分析区 ----
         analysis_group = QGroupBox("合并分析 (按目标游戏文件汇总)")
         analysis_layout = QVBoxLayout(analysis_group)
         self._tree = QTreeWidget()
         self._tree.setColumnCount(5)
         self._tree.setHeaderLabels(["目标文件", "合并方式", "来源数", "改动数", "重叠(后者生效)"])
         self._tree.setRootIsDecorated(False)
-        self._tree.setMinimumHeight(150)
+        self._tree.setMinimumHeight(110)
+        # 列宽用固定初值 + 首列拉伸 (ResizeToContents 会被长标签撑出横向滚动条)
         hdr = self._tree.header()
         hdr.setSectionResizeMode(0, QHeaderView.Stretch)
-        for col in range(1, 5):
-            hdr.setSectionResizeMode(col, QHeaderView.ResizeToContents)
+        for col, width in ((1, 96), (2, 56), (3, 56), (4, 100)):
+            hdr.setSectionResizeMode(col, QHeaderView.Interactive)
+            self._tree.setColumnWidth(col, width)
         analysis_layout.addWidget(self._tree)
         self._lbl_summary = QLabel("请添加要合并的 .tksmod 文件")
         self._lbl_summary.setWordWrap(True)
         analysis_layout.addWidget(self._lbl_summary)
-        layout.addWidget(analysis_group)
+        left_col.addWidget(analysis_group, 3)
+        body.addLayout(left_col, 3)
 
-        # ---- 元数据区 ----
+        # ---- 右栏 · 元数据区 ----
+        right_col = QVBoxLayout()
+        right_col.setSpacing(10)
         meta_group = QGroupBox("合并后模组元数据")
         grid = QGridLayout(meta_group)
         grid.setVerticalSpacing(6)
@@ -183,9 +206,9 @@ class ModMergerDialog(QDialog):
         _preview_info.addStretch()
         _preview_card.addLayout(_preview_info, 1)
         grid.addLayout(_preview_card, row, 1)
-        layout.addWidget(meta_group)
+        right_col.addWidget(meta_group)
 
-        # ---- 输出区 ----
+        # ---- 右栏 · 输出区 ----
         out_row = QHBoxLayout()
         out_row.addWidget(QLabel("输出文件:"))
         self.edit_output = QLineEdit()
@@ -194,18 +217,22 @@ class ModMergerDialog(QDialog):
         btn_browse = QPushButton("浏览")
         btn_browse.clicked.connect(self._on_browse_output)
         out_row.addWidget(btn_browse)
-        layout.addLayout(out_row)
+        right_col.addLayout(out_row)
 
-        # ---- 进度 + 日志 ----
+        # ---- 右栏 · 日志 ----
+        self._log_area = QTextEdit()
+        self._log_area.setReadOnly(True)
+        self._log_area.setMinimumHeight(54)
+        self._log_area.setPlaceholderText("合并日志将显示在这里...")
+        right_col.addWidget(self._log_area, 1)
+
+        body.addLayout(right_col, 2)
+        layout.addLayout(body, 1)
+
+        # ---- 进度 ----
         self._progress = QProgressBar()
         self._progress.setVisible(False)
         layout.addWidget(self._progress)
-
-        self._log_area = QTextEdit()
-        self._log_area.setReadOnly(True)
-        self._log_area.setMaximumHeight(90)
-        self._log_area.setPlaceholderText("合并日志将显示在这里...")
-        layout.addWidget(self._log_area)
 
         # ---- 底部按钮 ----
         bottom_row = QHBoxLayout()
@@ -320,6 +347,7 @@ class ModMergerDialog(QDialog):
             ])
             tip = "来源: " + "、".join(t["sources"])
             item.setToolTip(0, tip)
+            item.setToolTip(1, _KIND_TIP.get(t["kind"], ""))
             # 多来源合并的目标高亮; 有重叠的更醒目
             if overlap:
                 item.setForeground(4, Qt.red)

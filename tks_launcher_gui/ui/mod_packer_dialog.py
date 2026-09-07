@@ -18,7 +18,7 @@ from editor_utils import theme_tokens as _tt_tokens
 _PLACEHOLDER_GRAY = _tt_tokens.business_colors("launcher", _tt_tokens.THEMES[0])["placeholder_gray"]
 from editor_utils.mod_exporter import generate_short_uuid
 from editor_utils.task_runner import run_background, is_running
-from editor_utils.ui_helpers import themed_question
+from editor_utils.ui_helpers import themed_question, clamp_dialog_size
 from editor_utils.ui_helpers import EditorComboBox
 
 
@@ -28,20 +28,26 @@ class ModPackerDialog(QDialog):
     def __init__(self, mods_dir: str = "mods", parent=None):
         super().__init__(parent)
         self.setWindowTitle("模组打包 — 将多个 .tksmod 打包为合集文件")
-        self.resize(700, 620)
+        # 双栏布局内容最小高度 ~600 逻辑像素, 钳制到屏幕可用区域内
+        clamp_dialog_size(self, 940, 680)
         self._mods_dir = mods_dir
         self._file_paths: list[str] = []
 
         layout = QVBoxLayout(self)
         layout.setSpacing(12)
 
-        # ---- 文件列表区 ----
+        # ---- 主体双栏: 左 = 文件列表, 右 = 元数据 + 输出 + 日志 ----
+        # (单栏堆叠时最小高度 ~980, 高缩放屏幕下超屏; 双栏后 ~600)
+        body = QHBoxLayout()
+        body.setSpacing(12)
+
+        # ---- 左栏 · 文件列表区 ----
         file_group = QGroupBox("源文件列表 (将打包为一个 .tksmodpak)")
         file_layout = QVBoxLayout(file_group)
 
         self._file_list = QListWidget()
         self._file_list.setSelectionMode(QAbstractItemView.ExtendedSelection)
-        self._file_list.setMinimumHeight(160)
+        self._file_list.setMinimumHeight(120)
         file_layout.addWidget(self._file_list)
 
         btn_row = QHBoxLayout()
@@ -66,9 +72,11 @@ class ModPackerDialog(QDialog):
         btn_row.addWidget(self._lbl_count)
         file_layout.addLayout(btn_row)
 
-        layout.addWidget(file_group)
+        body.addWidget(file_group, 1)
 
-        # ---- 元数据区 ----
+        # ---- 右栏 · 元数据区 ----
+        right_col = QVBoxLayout()
+        right_col.setSpacing(12)
         meta_group = QGroupBox("合集元数据")
         grid = QGridLayout(meta_group)
         grid.setVerticalSpacing(8)
@@ -107,7 +115,7 @@ class ModPackerDialog(QDialog):
         row += 1
         grid.addWidget(QLabel("描述:"), row, 0)
         self.edit_desc = QTextEdit()
-        self.edit_desc.setMaximumHeight(60)
+        self.edit_desc.setMaximumHeight(52)
         self.edit_desc.setPlaceholderText("模组简介，描述修改内容")
         grid.addWidget(self.edit_desc, row, 1)
 
@@ -158,10 +166,9 @@ class ModPackerDialog(QDialog):
         _preview_info.addStretch()
         _preview_card.addLayout(_preview_info, 1)
         grid.addLayout(_preview_card, row, 1)
+        right_col.addWidget(meta_group)
 
-        layout.addWidget(meta_group)
-
-        # ---- 输出区 ----
+        # ---- 右栏 · 输出区 ----
         out_row = QHBoxLayout()
         out_row.addWidget(QLabel("输出文件:"))
         self.edit_output = QLineEdit()
@@ -170,18 +177,22 @@ class ModPackerDialog(QDialog):
         btn_browse = QPushButton("浏览")
         btn_browse.clicked.connect(self._on_browse_output)
         out_row.addWidget(btn_browse)
-        layout.addLayout(out_row)
+        right_col.addLayout(out_row)
 
-        # ---- 进度和日志 ----
+        # ---- 右栏 · 日志 ----
+        self._log_area = QTextEdit()
+        self._log_area.setReadOnly(True)
+        self._log_area.setMinimumHeight(54)
+        self._log_area.setPlaceholderText("合并日志将显示在这里...")
+        right_col.addWidget(self._log_area, 1)
+
+        body.addLayout(right_col, 1)
+        layout.addLayout(body, 1)
+
+        # ---- 进度 ----
         self._progress = QProgressBar()
         self._progress.setVisible(False)
         layout.addWidget(self._progress)
-
-        self._log_area = QTextEdit()
-        self._log_area.setReadOnly(True)
-        self._log_area.setMaximumHeight(100)
-        self._log_area.setPlaceholderText("合并日志将显示在这里...")
-        layout.addWidget(self._log_area)
 
         # ---- 底部按钮 ----
         bottom_row = QHBoxLayout()

@@ -120,6 +120,20 @@ def confirm_close(parent, dirty, title="未保存", text="有未保存的修改,
     return themed_question(parent, title, text) == QMessageBox.Yes
 
 
+def clamp_dialog_size(dialog, width: int, height: int, *, margin: int = 48) -> None:
+    """把对话框默认尺寸钳制到所在屏幕可用区域内 (逻辑像素, 含缩放折算)。
+
+    只约束"期望值": 布局最小尺寸必须由对话框自己控制在屏幕预算内
+    (Qt 会按 minimumSizeHint 撑大窗口, 钳制无法压到最小值以下)。
+    """
+    screen = dialog.screen()
+    avail = screen.availableGeometry() if screen is not None else None
+    if avail is not None and avail.isValid():
+        width = min(width, max(320, avail.width() - margin))
+        height = min(height, max(240, avail.height() - margin))
+    dialog.resize(width, height)
+
+
 def set_themed_icon(button, name: str) -> None:
     """给按钮显式指定主题感知 SVG 图标 (P4-1 图标库)。
 
