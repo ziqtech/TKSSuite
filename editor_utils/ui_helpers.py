@@ -198,14 +198,14 @@ def show_field_ref(parent, text, size=(700, 580)):
     dlg.exec()
 
 
-def _round_menu_win11_corners(menu) -> None:
-    """给弹出菜单窗口设置 Win11 DWM 系统圆角。
+def _round_popup_win11_corners(popup) -> None:
+    """给无边框弹出层窗口设置 Win11 DWM 系统圆角 (菜单/工具提示/下拉弹层)。
 
-    QSS 的 border-radius 只作用于边框/背景的绘制裁剪, QMenu 弹出窗口本身
-    仍是矩形, 视觉上菜单底部两角是直角并与圆角的最后一个菜单项错位。
-    DWMWA_WINDOW_CORNER_PREFERENCE(=33) + DWMWCP_ROUND(=2) 让系统对弹出
-    窗口做抗锯齿圆角裁剪, 且保留 DWM 原生投影; Win10 无此属性, 调用失败
-    静默保持现状 (直角, 与历史行为一致)。
+    QSS 的 border-radius 只作用于边框/背景的绘制裁剪, 这类弹出窗口本身
+    仍是矩形, 视觉上角部是直角并与 QSS 圆角错位。DWMWA_WINDOW_CORNER_
+    PREFERENCE(=33) + DWMWCP_ROUND(=2) 让系统对弹出窗口做抗锯齿圆角裁剪,
+    且保留 DWM 原生投影; Win10 无此属性, 调用失败静默保持现状 (直角,
+    与历史行为一致)。
     """
     if sys.platform != 'win32':
         return
@@ -215,7 +215,7 @@ def _round_menu_win11_corners(menu) -> None:
         DWMWCP_ROUND = 2
         pref = ctypes.c_int(DWMWCP_ROUND)
         ctypes.windll.dwmapi.DwmSetWindowAttribute(
-            int(menu.winId()), DWMWA_WINDOW_CORNER_PREFERENCE,
+            int(popup.winId()), DWMWA_WINDOW_CORNER_PREFERENCE,
             ctypes.byref(pref), ctypes.sizeof(pref))
     except Exception:
         pass  # 非 win32 / winId 不可用 / 旧系统不支持该属性, 静默跳过
@@ -261,10 +261,12 @@ class _DialogThemeFilter(QObject):
         if (event.type() == QEvent.Show
                 and isinstance(obj, QWidget)
                 and obj.isWindow()):
-            if isinstance(obj, QMenu):
-                # 弹出菜单: QSS border-radius 只裁剪边框/背景绘制, 菜单弹出
-                # 窗口本身仍是矩形, 角部露出直角缺口 — 由 DWM 设置系统圆角
-                _round_menu_win11_corners(obj)
+            # 无边框弹出层: QSS border-radius 只裁剪边框/背景绘制, 弹出
+            # 窗口本身仍是矩形, 角部露出直角缺口 — 由 DWM 设置系统圆角。
+            # QTipLabel 为 Qt 私有类 (工具提示), 无公开类型可用 isinstance。
+            if (isinstance(obj, (QMenu, EditorComboListPopup))
+                    or obj.metaObject().className() == 'QTipLabel'):
+                _round_popup_win11_corners(obj)
             else:
                 try:
                     from editor_utils.window_theme import apply_titlebar_theme
