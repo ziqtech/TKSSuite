@@ -71,7 +71,6 @@ class TksBookViewer(EditorMainWindow):
     def _after_build(self):
         self._apply_theme()
         self._sync_corner_height()
-        self._center_window()
 
     # ── 主题 ──
 
@@ -192,11 +191,6 @@ class TksBookViewer(EditorMainWindow):
         self.status_label.setObjectName("hintLabel")
         path_layout.addWidget(self.status_label)
         main_layout.addLayout(path_layout)
-
-    def _center_window(self):
-        screen = QApplication.primaryScreen().availableGeometry()
-        self.move((screen.width() - self.width()) // 2,
-                  (screen.height() - self.height()) // 2)
 
     # ── 数据加载 ──
 

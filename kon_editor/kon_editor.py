@@ -299,7 +299,6 @@ class KonEditor(FieldUndoMixin, EditorMainWindow):
 
     def _after_build(self):
         self._set_edit_enabled(False)
-        self._center_window()
 
     # ============================================================
     # 主题
@@ -702,10 +701,6 @@ class KonEditor(FieldUndoMixin, EditorMainWindow):
         else:
             left = min(680, 540 + int((total - 1296) * 0.25))
         splitter.setSizes([left, max(1, total - left)])
-
-    def _center_window(self):
-        screen = QApplication.primaryScreen().availableGeometry()
-        self.move((screen.width() - self.width()) // 2, (screen.height() - self.height()) // 2)
 
     def _set_edit_enabled(self, en):
         self._edit_dock_body.setEnabled(en)

@@ -17,7 +17,7 @@ from editor_utils.runtime_bootstrap import bootstrap
 bootstrap()
 
 from PySide6.QtWidgets import (
-    QApplication, QWidget, QVBoxLayout, QHBoxLayout,
+    QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QPushButton, QFileDialog, QMessageBox,
     QStatusBar, QFrame
 )
@@ -150,23 +150,6 @@ class ConfigsEditorWindow(EditorMainWindow):
 
         # 应用主题
         self._apply_theme()
-
-        # 居中须在 UI 构建完成后调用: 此时平台窗口已创建,
-        # frameGeometry() 才能拿到真实的标题栏+边框高度, 否则会偏低半个标题栏 (约 16px)。
-        self._center_window()
-
-    def _center_window(self):
-        """将窗口居中到主屏幕可用区域 (排除任务栏)。
-
-        用 frameGeometry() 而非 geometry(), 使含标题栏与边框的整个窗口居中;
-        availableGeometry().center() 自带屏幕原点偏移, 多屏且主屏不在 (0,0) 时同样正确。
-        """
-        screen = QApplication.primaryScreen()
-        if screen is None:
-            return
-        geo = self.frameGeometry()
-        geo.moveCenter(screen.availableGeometry().center())
-        self.move(geo.topLeft())
 
     # ── UI 构建 ──
 

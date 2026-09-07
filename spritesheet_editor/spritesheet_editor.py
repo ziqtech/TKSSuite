@@ -132,17 +132,13 @@ class SpriteSheetEditorWindow(EditorMainWindow):
         self._fit_to_screen()
 
     def _fit_to_screen(self):
-        """根据屏幕可用空间设定窗口尺寸并居中。"""
+        """根据屏幕可用空间设定窗口尺寸 (居中由基类统一处理)。"""
         screen_geo = QApplication.primaryScreen().availableGeometry()
         hint = self.sizeHint()
         w = min(hint.width(), int(screen_geo.width() * 0.92))
         h = min(hint.height(), int(screen_geo.height() * 0.88))
         self.resize(w, h)
         self.setMinimumSize(1200, 800)
-        # 用 frameGeometry 居中（含窗口边框/标题栏），避免客户区与框架尺寸不一致
-        fg = self.frameGeometry()
-        fg.moveCenter(screen_geo.center())
-        self.move(fg.topLeft())
 
 
     def _build_layout(self):

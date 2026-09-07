@@ -27,7 +27,7 @@ from PySide6.QtGui import (
     QMouseEvent, QPainter, QPixmap,
 )
 from PySide6.QtWidgets import (
-    QApplication, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
+    QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
     QLabel, QPushButton, QSpinBox, QCheckBox, QFileDialog,
     QMessageBox, QInputDialog, QScrollArea, QFrame, QSplitter,
     QMenuBar, QMenu, QStatusBar, QGroupBox, QSizePolicy,
@@ -959,14 +959,6 @@ class JVGEditor(EditorMainWindow):
         self._setup_ui()
 
     def _after_build(self):
-        # 窗口居中显示
-        screen = QApplication.primaryScreen()
-        if screen:
-            geo = self.frameGeometry()
-            center = screen.availableGeometry().center()
-            geo.moveCenter(center)
-            self.move(geo.topLeft())
-
         # 打开文件
         if self._initial_path and os.path.exists(self._initial_path):
             self._open(self._initial_path)
