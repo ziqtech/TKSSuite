@@ -5,19 +5,21 @@ import os
 import re
 from functools import partial
 
-from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QColor, QFont, QIcon, QTextCharFormat
+from PySide6.QtCore import Qt, QPoint, QTimer
+from PySide6.QtGui import QColor, QFont, QIcon, QTextCharFormat, QTextCursor
 from PySide6.QtWidgets import (
     QAbstractItemView, QDialog, QFrame, QGridLayout, QHBoxLayout,
-    QHeaderView, QLabel, QMessageBox, QPlainTextEdit, QPushButton,
-    QSplitter, QTextEdit, QTreeWidget, QTreeWidgetItem, QVBoxLayout,
-    QWidget,
+    QHeaderView, QLabel, QLineEdit, QMenu, QMessageBox, QPlainTextEdit,
+    QPushButton, QSplitter, QTextEdit, QTreeWidget, QTreeWidgetItem,
+    QVBoxLayout, QWidget,
 )
 
 from editor_utils.game_defs import GAME_COLORS
 from editor_utils.theme_manager import business_colors
-from mat_dat_io import has_data
-from mat_script_desc import _dir_name
+from editor_utils.ui_helpers import themed_question
+from mat_constants import ALL_EDIT_FIELDS, DEFUNIT_REC_COUNT, RUNTIME_FIELDS
+from mat_dat_io import has_data, is_empty
+from mat_script_desc import SCRIPT_CMD_DESC, _dir_name, _menu_options
 from mat_script_templates import SCRIPT_TEMPLATES
 from mat_widgets import CodeEditor, ScriptSyntaxHighlighter
 
@@ -103,10 +105,10 @@ class MatScriptPanelMixin:
         self.chain_tree = QTreeWidget()
         self.chain_tree.setHeaderLabels(["子场景", "序号", "DefUnit#", "DEFINE ID", "f0", "标记"])
         self.chain_tree.setColumnWidth(0, 60)
-        self.chain_tree.setColumnWidth(1, 35)
-        self.chain_tree.setColumnWidth(2, 55)
-        self.chain_tree.setColumnWidth(3, 70)
-        self.chain_tree.setColumnWidth(4, 35)
+        self.chain_tree.setColumnWidth(1, 60)
+        self.chain_tree.setColumnWidth(2, 80)
+        self.chain_tree.setColumnWidth(3, 100)
+        self.chain_tree.setColumnWidth(4, 50)
         self.chain_tree.header().setSectionResizeMode(5, QHeaderView.Stretch)
         self.chain_tree.setSelectionMode(QAbstractItemView.SingleSelection)
         self.chain_tree.setRootIsDecorated(False)

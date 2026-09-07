@@ -33,7 +33,7 @@ QTableWidget, QTreeWidget, QTableView, QTreeView {
     background-color: {{bg_surface}};
     color: {{text_base}};
     border: {{bd_regular}};
-    border-radius: {{radius_md}};
+    border-radius: {{radius_md}};   /* 容器外框圆角; 表头两端随之被裁出圆弧 */
     gridline-color: {{gridline_color_01}};
     selection-background-color: {{sel_02}};
     selection-color: {{fg_06}};
@@ -65,28 +65,38 @@ QWidget#WarDataEditorRightPanel QTableView::item:selected {
 QListWidget::item:hover, QTreeWidget::item:hover {
     background-color: {{bg_hover}};
 }
+/* 表头: 底色画在 QHeaderView 本体上并带顶部圆角 (本体的 QSS 圆角
+   生效; section 的 :first/:last 圆角在 PySide6 下不生效), section
+   透明露出本体背景 — 灰底表头 + 两端圆弧与容器外框吻合, 不再方角
+   挤出; section 若自设背景色会盖成矩形, 勿改回 */
 QHeaderView {
-    background-color: {{bg_09}};
+    background-color: {{bg_10}};
+    border-top-left-radius: {{radius_md}};
+    border-top-right-radius: {{radius_md}};
 }
 QHeaderView::section {
-    background-color: {{bg_10}};
+    background-color: transparent;
     color: {{fg_10}};
+    font-weight: bold;
     border: none;
     border-bottom: {{bd_regular}};
     padding: {{sp_8}} {{sp_8}};
 }
 QHeaderView::section:hover {
-    background-color: {{bg_11}};
     color: {{text_primary}};
 }
 QHeaderView::section:pressed {
-    background-color: {{accent_soft}};
-    color: {{fg_12}};
+    color: {{accent}};
 }
 QTableCornerButton::section {
-    background-color: {{bg_09}};
+    background-color: {{bg_10}};
     border: none;
     border-bottom: {{bd_inset}};
+    border-top-left-radius: {{radius_md}};
+}
+/* viewport 背景随容器外框圆角, 避免底部两角方角溢出 */
+QWidget#qt_scrollarea_viewport {
+    border-radius: {{radius_md}};
 }
 
 /* ── 文本输入 ── */
@@ -292,7 +302,8 @@ QListWidget {
 }
 QListWidget::item, QTreeWidget::item {
     border: none;
-    border-radius: {{radius_md}};
+    /* 单元格/列表项不做圆角: item radius 会让选中态渲染成一串
+       独立的圆角色块, 多列表格形态下尤其怪异 (用户观感反馈) */
     padding: {{sp_4}} {{sp_8}};
 }
 QListWidget::item:selected, QTreeWidget::item:selected {
@@ -383,9 +394,14 @@ QSplitter::handle:horizontal:hover, QSplitter::handle:vertical:hover {
     border-color: {{accent}};
 }
 QScrollBar:vertical {
-    background: {{bg_40}};
+    /* 槽与表头同色 (bg_10): 滚动条出现时表头颜色无缝延续到右缘,
+       不会在表头右端露出色断; 槽右缘上下端自带圆角, 不盖容器圆角。
+       勿改回浅色/透明槽 — 透明会让表头右端断出色差, 浅色槽端点是方角 */
+    background: {{bg_10}};
     width: 10px;
-    margin: 2px;
+    margin: 0px;
+    border-top-right-radius: {{radius_md}};
+    border-bottom-right-radius: {{radius_md}};
 }
 QScrollBar::handle:vertical {
     background: {{bg_41}};
@@ -404,9 +420,11 @@ QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {
     background: transparent;
 }
 QScrollBar:horizontal {
-    background: {{bg_40}};
+    background: {{bg_10}};
     height: 10px;
-    margin: 2px;
+    margin: 0px;
+    border-bottom-left-radius: {{radius_md}};
+    border-bottom-right-radius: {{radius_md}};
 }
 QScrollBar::handle:horizontal {
     background: {{bg_41}};

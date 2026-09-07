@@ -1246,8 +1246,8 @@ class MatEditorApp(MatModIOMixin, MatScriptPanelMixin, EditorMainWindow):
     """TKMat.Dat 地图实体编辑器 PySide6 版"""
 
     EDITOR_KEY = "mat_editor"
-    DEFAULT_SIZE = (1600, 900)
-    MIN_SIZE = (1340, 640)
+    DEFAULT_SIZE = (1800, 900)
+    MIN_SIZE = (1480, 640)  # 宽须容纳三栏最小宽之和 (340+640+460+分隔条)
 
     HELP_TEXT = (
         "功能: 编辑《三国群侠传》地图实体数据\n\n"
@@ -1458,7 +1458,8 @@ class MatEditorApp(MatModIOMixin, MatScriptPanelMixin, EditorMainWindow):
         # (需在三栏构建完成后创建: 工具栏控件要连接 self._canvas 上的方法)
         main_layout.insertWidget(0, self._build_preview_toolbar())
 
-        self.splitter.setSizes([460, 640, 550])
+        # setSizes 输入经校准: 实际渲染 左470 / 中~665 / 右630 (Qt 按比例分配有微调)
+        self.splitter.setSizes([470, 676, 642])
         # 拉伸因子 中:右 = 3:2 — 最大化时预览区仍优先获得富余, 右侧编辑面板
         # 同步明显变宽以容纳自适应表单; 左侧列表保持初始宽度
         self.splitter.setStretchFactor(0, 0)
@@ -1517,12 +1518,12 @@ class MatEditorApp(MatModIOMixin, MatScriptPanelMixin, EditorMainWindow):
         # Entity list: 按钮在 body 内, 不在 DockHeader
         self.entity_tree = QTreeWidget()
         self.entity_tree.setHeaderLabels(["索引", "类型", "场景", "X", "Y", "脚本", "Tick"])
-        self.entity_tree.setColumnWidth(0, 44)   # 索引
-        self.entity_tree.setColumnWidth(1, 80)   # 类型
+        self.entity_tree.setColumnWidth(0, 60)   # 索引
+        self.entity_tree.setColumnWidth(1, 90)   # 类型
         self.entity_tree.setColumnWidth(3, 40)   # X
         self.entity_tree.setColumnWidth(4, 40)   # Y
-        self.entity_tree.setColumnWidth(5, 62)   # 脚本
-        self.entity_tree.setColumnWidth(6, 36)   # Tick
+        self.entity_tree.setColumnWidth(5, 45)   # 脚本
+        self.entity_tree.setColumnWidth(6, 32)   # Tick
         self.entity_tree.header().setSectionResizeMode(2, QHeaderView.Stretch)  # 场景列自动拉伸
         self.entity_tree.header().setMinimumSectionSize(18)
         self.entity_tree.setSelectionBehavior(QAbstractItemView.SelectRows)
@@ -1590,7 +1591,7 @@ class MatEditorApp(MatModIOMixin, MatScriptPanelMixin, EditorMainWindow):
         self.search_id_edit.returnPressed.connect(self._search_entity_by_id)
         search_row.addWidget(self.search_id_edit, 1)
         btn_search = QPushButton("定位")
-        btn_search.setFixedWidth(48)
+        btn_search.setFixedWidth(80)
         btn_search.setToolTip("按实体ID(索引)搜索: 自动切换到该实体所属场景并在列表中选中")
         btn_search.clicked.connect(self._search_entity_by_id)
         search_row.addWidget(btn_search)
@@ -1611,11 +1612,12 @@ class MatEditorApp(MatModIOMixin, MatScriptPanelMixin, EditorMainWindow):
         self.splitter.addWidget(left_widget)
 
         # Empty state 引导层: 未加载数据时左侧"场景+实体"两个空列表
-        # 以居中引导替代 (可选附加项); 宿主为普通容器, 跟踪其内分割器几何
+        # 以居中引导替代 (可选附加项); 宿主为普通容器, 跟踪其内分割器几何。
+        # 分割器区域带常驻工具栏/搜索框, 需不透明遮罩避免引导与控件重叠
         self._empty_state = EmptyStateOverlay(
             left_widget, track=left_splitter,
             title="尚未加载数据", hint="Ctrl+O 打开数据",
-            icon_name="open", activate=self._load_dir)
+            icon_name="open", activate=self._load_dir, opaque=True)
         self._update_empty_state()
 
     # =========== 预览工具栏 (左右通栏, §需求3) ===========
@@ -1753,7 +1755,7 @@ class MatEditorApp(MatModIOMixin, MatScriptPanelMixin, EditorMainWindow):
         self._canvas = SceneCanvasView(self)
         self._canvas.update_vis_background()
         center_layout.addWidget(self._canvas, 1)
-        center_widget.setMinimumWidth(400)
+        center_widget.setMinimumWidth(640)
         self.splitter.addWidget(center_widget)
 
     # =========== 右侧面板: 编辑区 ===========

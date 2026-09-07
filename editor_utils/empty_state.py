@@ -18,7 +18,7 @@
 from PySide6.QtCore import QEvent, QObject, Qt
 from PySide6.QtWidgets import QLabel, QVBoxLayout, QWidget
 
-from editor_utils import theme_manager, theme_switcher
+from editor_utils import theme_manager, theme_switcher, theme_tokens
 
 _ICON_SIZE = 56
 
@@ -30,16 +30,25 @@ class EmptyStateOverlay(QWidget):
     QSplitter 上 (QSplitter 会把子控件误纳入分割面板管理)。
     需要只覆盖 host 内某个子区域时传 track (如 host 里的 QSplitter),
     几何随 track 同步; 默认铺满 host。
+
+    opaque=False (默认) 透明悬浮, 适合覆盖纯空白的数据区; track 区域
+    带常驻控件 (工具栏/搜索框等) 时传 opaque=True: 覆盖层填充面板底色
+    盖住下层控件, 避免引导图标/文字与控件重叠错乱, 加载后自动隐藏。
     """
 
     def __init__(self, host: QWidget, title: str, hint: str,
-                 icon_name: str = "open", activate=None, track: QWidget = None):
+                 icon_name: str = "open", activate=None, track: QWidget = None,
+                 opaque: bool = False):
         super().__init__(host)
         self._host = host
         self._track = track or host
         self._icon_name = icon_name
         self._activate = activate
+        self._opaque = opaque
         self.setObjectName("EmptyStateOverlay")
+        # 自定义 QWidget 子类须显式开启, 样式表 background-color 才会绘制
+        # (否则 opaque 模式的遮罩背景不渲染, 仍是透明层)
+        self.setAttribute(Qt.WA_StyledBackground, True)
         self.setAttribute(Qt.WA_TransparentForMouseEvents, activate is None)
         self.setCursor(Qt.PointingHandCursor if activate else Qt.ArrowCursor)
 
@@ -96,6 +105,12 @@ class EmptyStateOverlay(QWidget):
     # ── 内部 ──
     def _refresh_icon(self) -> None:
         theme_id = theme_switcher.current_window_theme(self.window())
+        if self._opaque:
+            # 实例级样式表覆盖全局 QSS 的 transparent 规则; 取 DockBody
+            # 同款 bg_root, 与周围面板底色无缝, 4 主题随 refresh() 联动
+            bg = theme_tokens.tokens_for(theme_id)["bg_root"]
+            self.setStyleSheet(
+                f"QWidget#EmptyStateOverlay {{ background-color: {bg}; }}")
         self._icon_label.setPixmap(
             theme_manager.themed_icon(self._icon_name, theme_id)
             .pixmap(_ICON_SIZE, _ICON_SIZE))
