@@ -691,7 +691,7 @@ class MatScriptPanelMixin:
 
         dlg = QDialog(self)
         dlg.setWindowTitle("脚本模板 — 常用脚本快速填充")
-        dlg.resize(760, 540)
+        dlg.resize(1000, 540)
         ico = os.path.join(os.path.dirname(__file__), 'TKS.ico')
         if os.path.exists(ico):
             dlg.setWindowIcon(QIcon(ico))
@@ -735,7 +735,7 @@ class MatScriptPanelMixin:
         preview.setPlaceholderText("← 选择左侧模板查看内容")
         self._tpl_preview_hl = ScriptSyntaxHighlighter(preview.document(), self._theme_id)
         splitter.addWidget(preview)
-        splitter.setSizes([300, 440])
+        splitter.setSizes([500, 500])
         dlg_layout.addWidget(splitter, 1)
 
         btn_row = QHBoxLayout()

@@ -1504,8 +1504,9 @@ class MatEditorApp(MatModIOMixin, MatScriptPanelMixin, EditorMainWindow):
         self.scene_tree = QTreeWidget()
         self.scene_tree.setHeaderLabels(["SC#", "场景名称", "实体"])
         self.scene_tree.setColumnWidth(0, 50)
-        self.scene_tree.setColumnWidth(2, 45)
+        self.scene_tree.setColumnWidth(2, 60)
         self.scene_tree.header().setSectionResizeMode(1, QHeaderView.Stretch)  # 场景名称列自动拉伸
+        self.scene_tree.header().setStretchLastSection(False)  # 同 entity_tree: 剩余空间全归场景名称列
         self.scene_tree.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.scene_tree.setSelectionMode(QAbstractItemView.SingleSelection)
         self.scene_tree.setEditTriggers(QAbstractItemView.NoEditTriggers)
@@ -1523,8 +1524,11 @@ class MatEditorApp(MatModIOMixin, MatScriptPanelMixin, EditorMainWindow):
         self.entity_tree.setColumnWidth(3, 40)   # X
         self.entity_tree.setColumnWidth(4, 40)   # Y
         self.entity_tree.setColumnWidth(5, 45)   # 脚本
-        self.entity_tree.setColumnWidth(6, 32)   # Tick
+        self.entity_tree.setColumnWidth(6, 50)   # Tick
         self.entity_tree.header().setSectionResizeMode(2, QHeaderView.Stretch)  # 场景列自动拉伸
+        # QTreeWidget 默认 stretchLastSection=True, 末列 (Tick) 会与场景列
+        # 平分剩余宽度; 关闭后剩余空间全部归场景列, Tick 保持固定窄列
+        self.entity_tree.header().setStretchLastSection(False)
         self.entity_tree.header().setMinimumSectionSize(18)
         self.entity_tree.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.entity_tree.setSelectionMode(QAbstractItemView.SingleSelection)
