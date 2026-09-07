@@ -845,7 +845,7 @@ def pil_to_qimage(pil_image):
 class TktEditor(EditorMainWindow):
     EDITOR_KEY = "tkt_editor"
     TKS_DIR_PROMPT = "挂载 TKS 游戏核心环境目录"
-    DEFAULT_SIZE = (1350, 850)
+    DEFAULT_SIZE = (1600, 850)
 
     HELP_TEXT = (
         "功能: 编辑《三国群侠传》游戏文本数据\n"
@@ -1018,7 +1018,7 @@ class TktEditor(EditorMainWindow):
         self.table.verticalHeader().setVisible(False)
         self.table.itemSelectionChanged.connect(self._on_table_select)
         self.table.horizontalHeader().sectionClicked.connect(self._on_header_clicked)
-        w1_splitter.addWidget(self._create_dock("低级全局数据表", self.table))
+        w1_splitter.addWidget(self._create_dock("全局数据表", self.table))
 
         w1_right_splitter = QSplitter(Qt.Vertical)
         w1_right_splitter.setHandleWidth(6)
@@ -1046,7 +1046,7 @@ class TktEditor(EditorMainWindow):
         btn_clear_this.clicked.connect(self._clear_edit)
         btn_layout.addWidget(btn_clear_this)
         ins_layout.addLayout(btn_layout)
-        w1_right_splitter.addWidget(self._create_dock("检查器 (属性/代码编辑)", inspector_widget))
+        w1_right_splitter.addWidget(self._create_dock("属性编辑", inspector_widget))
 
         # 视口
         viewport_widget = QWidget()
@@ -1088,11 +1088,11 @@ class TktEditor(EditorMainWindow):
         self.preview_text.setReadOnly(True)
         self.preview_stack.addWidget(self.preview_text)
         vp_layout.addWidget(self.preview_stack)
-        w1_right_splitter.addWidget(self._create_dock("2D 视口渲染器", viewport_widget, header_layout=zoom_layout))
+        w1_right_splitter.addWidget(self._create_dock("文本预览", viewport_widget, header_layout=zoom_layout))
 
         w1_splitter.setSizes([350, 950])
         w1_right_splitter.setSizes([400, 400])
-        self.main_tabs.addTab(w1_widget, "全局文件系统 (线性模式)")
+        self.main_tabs.addTab(w1_widget, "线性模式")
 
         # ==================== WORKSPACE 2: 游戏语义化模块分类编辑 ====================
         w2_widget = QWidget()
@@ -1161,7 +1161,7 @@ class TktEditor(EditorMainWindow):
         dc_layout.addWidget(self.comp_text2, 1)
         comp_right_layout.addWidget(self.comp_desc_container)
 
-        btn_comp_apply = QPushButton("保存本槽修改 (点击空槽直接输入即可扩展)")
+        btn_comp_apply = QPushButton("保存修改")
         btn_comp_apply.setProperty("class", "ConfirmBtn")
         btn_comp_apply.clicked.connect(self._apply_comp_edit)
         comp_right_layout.addWidget(btn_comp_apply)
@@ -1169,7 +1169,7 @@ class TktEditor(EditorMainWindow):
         # 底部弹簧：将上方控件推向顶部，避免居中分布
         comp_right_layout.addStretch()
 
-        w2_right_splitter.addWidget(self._create_dock("分类属性扩展区", comp_right_widget))
+        w2_right_splitter.addWidget(self._create_dock("属性编辑", comp_right_widget))
 
         # --- 将联合视口提取为独立分组 ---
         comp_preview_widget = QWidget()
@@ -1209,11 +1209,11 @@ class TktEditor(EditorMainWindow):
 
         comp_preview_layout.addWidget(self.comp_preview_scroll)
 
-        w2_right_splitter.addWidget(self._create_dock("2D 视口渲染器 (文本预览)", comp_preview_widget, header_layout=comp_preview_header))
+        w2_right_splitter.addWidget(self._create_dock("文本预览", comp_preview_widget, header_layout=comp_preview_header))
 
         self.w2_splitter.setSizes([650, 450])
         w2_right_splitter.setSizes([400, 400])
-        self.main_tabs.addTab(w2_widget, "游戏数据分类编辑 (智能分舱扩展模式)")
+        self.main_tabs.addTab(w2_widget, "分类模式")
 
         # --- 底部统一路径状态栏 ---
         status_layout = QHBoxLayout()
@@ -1540,7 +1540,7 @@ class TktEditor(EditorMainWindow):
         if cat['type'] == "single":
             self.comp_desc_container.setVisible(False)
             self.comp_table.setColumnCount(2)
-            self.comp_table.setHorizontalHeaderLabels(['条目 ID', '核心文本内容 Preview'])
+            self.comp_table.setHorizontalHeaderLabels(['条目 ID', '文本内容'])
             self.comp_table.setColumnWidth(0, 80)
 
             row = 0
@@ -1560,7 +1560,7 @@ class TktEditor(EditorMainWindow):
         else:
             self.comp_desc_container.setVisible(True)
             self.comp_table.setColumnCount(4)
-            self.comp_table.setHorizontalHeaderLabels(['名称 ID', '当前名称', '说明 ID', '当前说明预览'])
+            self.comp_table.setHorizontalHeaderLabels(['名称 ID', '名称', '说明 ID', '说明'])
             self.comp_table.setColumnWidth(0, 70)
             self.comp_table.setColumnWidth(2, 70)
 
@@ -1621,14 +1621,14 @@ class TktEditor(EditorMainWindow):
         if cat['type'] == "single":
             self._comp_active_id1 = int(self.comp_table.item(row, 0).text())
             self._comp_active_id2 = None
-            self.comp_box1_title.setText(f"文本内容字段 (ID: {self._comp_active_id1})")
+            self.comp_box1_title.setText(f"文本内容 (ID: {self._comp_active_id1})")
             self.comp_text1.setPlainText(self.entry_by_id.get(self._comp_active_id1, {}).get('text', ''))
             self.comp_text2.clear()
         else:
             self._comp_active_id1 = int(self.comp_table.item(row, 0).text())
             self._comp_active_id2 = int(self.comp_table.item(row, 2).text())
-            self.comp_box1_title.setText(f"关联名称字段 (ID: {self._comp_active_id1})")
-            self.comp_box2_title.setText(f"关联说明字段 (ID: {self._comp_active_id2})")
+            self.comp_box1_title.setText(f"名称 (ID: {self._comp_active_id1})")
+            self.comp_box2_title.setText(f"说明 (ID: {self._comp_active_id2})")
             self.comp_text1.setPlainText(self.entry_by_id.get(self._comp_active_id1, {}).get('text', ''))
             self.comp_text2.setPlainText(self.entry_by_id.get(self._comp_active_id2, {}).get('text', ''))
 
