@@ -187,10 +187,34 @@ class EditorMainWindow(QMainWindow):
         geometry = settings.value(f"{key}/geometry")
         if geometry is not None:
             self.restoreGeometry(geometry)  # 多屏/越界由 Qt 自行钳制
+        else:
+            # 首次启动无存档: 默认居中主屏幕 (有存档则尊重用户上次位置)
+            self._center_on_screen()
         for name, splitter in self._persist_splitters():
             state = settings.value(f"{key}/splitter/{name}")
             if state is not None:
                 splitter.restoreState(state)
+
+    def _center_on_screen(self):
+        """将窗口外框居中到主屏幕可用区域 (排除任务栏)。
+
+        须经 showEvent 调用: 此时平台窗口与 QWindow 均已创建,
+        frameGeometry() 含真实标题栏与边框高度; 构造期窗口未映射,
+        会少算半个标题栏。
+        走 QWindow.setFramePosition 显式定位外框, 不依赖 QWidget.move()
+        的平台语义差异 (Windows 定位客户区, offscreen/X11 定位外框)。
+        """
+        screen = QApplication.primaryScreen()
+        if screen is None:
+            return
+        frame = self.frameGeometry()
+        top_left = frame.topLeft() + (screen.availableGeometry().center()
+                                      - frame.center())
+        handle = self.windowHandle()
+        if handle is not None:
+            handle.setFramePosition(top_left)
+        else:
+            self.move(top_left)
 
     def hideEvent(self, event):
         if not self.isVisible():
