@@ -1,0 +1,20 @@
+{
+  "_format": 1,
+  "_group": "── 战斗经验与JP ──",
+  "_comment": "『陷阱击杀经验JP修复』(trap_exp_jp_kill_fix) 的配套必选保护, 必须与其同开才有行为差异。sub_4400DC 击杀奖励块内 arg_0 (攻击者单位号) 共两处使用: 0x441827 门槛读取 (由 trap_exp_jp_kill_fix 处理) 与 0x4418F8 movsx ecx,[ebp+8] / 0x4418FC mov eax,[ebp-0x48] / 0x4418FF add dword_9D6F20[ecx*4],eax — dword_9D6F20 为队伍成员个人经验数组 (0x9D6F20..0x9D6F37 共 6 槽, 对应 dword_9D6F38 个人JP数组, 由 43B2D4 结算界面显示、43B7FC 分配前调整)。队伍成员击杀时 arg_0=成员号 0..5, 落点正确; 陷阱路径 arg_0=-1 (sub_434C0C → sub_4434BC(-1), 无攻击者单位), ecx*4=-4 使写入落点 0x9D6F20-4=0x9D6F1C — 恰为金钱累计器 arglist (dword_9D6F1C, 4419A2 同块内正式金钱累加 add arglist,eax 也写它; 436BD4 战斗开始清零, 43B7FC 结算加钱, 43B2D4 显示), 个人经验值会错误并入金钱。hook 在 0x4418F8 (覆盖 14 字节原文 0F BF 4D 08 8B 45 B8 01 04 8D 20 6F 9D 00, 全 exe 唯一): cave 重放 movsx 后 cmp ecx,-1, 陷阱 (=-1) 直接 ret 跳过这条个人经验累加 (0x4418FF 的 add 不影响 [ebp-0x48], 后续 441906 shl [ebp-0x48],1 与 441919 共享经验池 dword_9D6F14 += 2x、441959 JP池 dword_9D6F18、4419A2 金钱 arglist 均按原版执行 — 陷阱击杀本就无『个人经验』归属者); 非陷阱 (arg_0>=0, 含原版队伍击杀与召唤补丁放行的召唤击杀) 重放 mov+add 与原版逐字节等价。未开启 trap_exp_jp_kill_fix 时本补丁为无副作用直通: arg_0=-1 的击杀在 0x44183C 门槛即被原版 jnz 拦截, 永远到不了 0x4418F8。hook 不与任何其他补丁重叠 (最近的是召唤补丁 @0x441832 与陷阱门槛 @0x44183C)。",
+  "type": "cave_hook",
+  "id": "trap_exp_jp_personal_fix",
+  "name": "陷阱击杀个人经验落点保护",
+  "desc": "陷阱击杀路径没有攻击者单位，跳过其个人经验累加，防止写入落点恰好覆盖金钱累计器 dword_9D6F1C；须与『陷阱击杀经验JP修复』同开，单独开启时无任何效果",
+  "optional": true,
+  "default_checked": true,
+  "hook_pattern": "0F BF 4D 08 8B 45 B8 01 04 8D 20 6F 9D 00",
+  "hook_offset": 0,
+  "hook_size": 14,
+  "hook_expect_count": 1,
+  "fallback_rva": "0x418F8",
+  "cave_template": "trap_exp_jp_personal_fix",
+  "cave_code": "0F BF 4D 08 83 F9 FF 75 01 C3 8B 45 B8 01 04 8D 20 6F 9D 00 C3",
+  "format": "TKSPATCH",
+  "format_version": 1
+}

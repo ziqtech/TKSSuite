@@ -1,0 +1,20 @@
+{
+  "_format": 1,
+  "_group": "── 战斗经验与JP ──",
+  "_comment": "原版陷阱（地图物件伤害）路径: 单位移动结束 sub_435240 → sub_434D7C 遍历走过的格子 (byte_953755 步点表, byte_9537D5 步数), 踩到物件层 byte_952142[y*32+x]>=0 且 != word_9DFC88 的格子时调 sub_434C0C(x, y, 物件号): 以物件表 byte_9DFA92[5*物件号]+551 取 40 字节攻击模板, 收集伤害范围目标后调 sub_4434BC(-1) → sub_4400DC(-1), 结算后 byte_952142[格]=-1 清除物件 (一次性触发)。攻击者参数 arg_0=-1 (无攻击者单位)。sub_4400DC 击杀结算门槛 @0x441832: movsx eax, byte_9DF761[ecx] (ecx=movsx arg_0) / 0x441839 cmp eax,0x64 / 0x44183C jnz 0x441AF0 — byte_9DF761 为单位阵营字节 (sub_4307CC 初始化: 队伍成员=100, 地图单位取自战斗数据且 <10 为敌方, sub_431094 召唤物=20), 陷阱 arg_0=-1 时读到 byte_9DF761[-1]=byte_9DF760 (单位列表滚动偏移, 4371DC 限定 0..93, 43292C 战斗开始置 0), 恒 !=100 → 永远跳到 0x441AF0 仅置 HP=0/死亡态, 不累加经验/JP/金钱/掉落。hook 重放 cmp eax,0x64: 恰为 100 (原版队伍/召唤击杀) 或 arg_0==-1 (陷阱) 则放行进入原版奖励块 (0x441842: 受害者 byte_9DF761<10 即敌方才累计 — 误伤友军/召唤物不结算, 与原版逐目标语义一致); 否则 add dword[esp],0x2AF 把 E8 返回地址 0x441841 调整为 0x441AF0 (0x441841+0x2AF) 后 ret, 与原版 jnz 等价。奖励块内 arg_0 的另一处使用 @0x4418F8 个人经验累加 (陷阱时 dword_9D6F20[-1]=dword_9D6F1C 恰为金钱累计器 arglist) 由 trap_exp_jp_personal_fix 单独跳过, 两补丁必须同开。与 summon_exp_jp_accumulation_fix 零字节重叠共存: 本补丁 hook @0x44183C (6B jnz), 召唤补丁 hook @0x441832 (7B movsx), pattern 仅含 0x441839 起的 cmp+jnz 9 字节 (全 exe 唯一), 不含召唤补丁替换的 movsx 字节, 任意应用顺序互不干扰; 若本补丁先应用导致召唤补丁 16B pattern 失配, 召唤补丁经 fallback_rva 0x41832 回退定位。非致命陷阱伤害的经验 (0x441B36 伤害经验路径) 与原版一致不给, 同召唤补丁只放行击杀门槛的口径。未击杀分支 0x441B1B 与本补丁无交集。",
+  "type": "cave_hook",
+  "id": "trap_exp_jp_kill_fix",
+  "name": "陷阱击杀经验JP修复",
+  "desc": "陷阱击杀敌方单位时，队伍按原版击杀结算获得经验与JP（金钱、物品掉落同原版击杀奖励）；陷阱方不进入经验/JP分配，未击杀的陷阱伤害不给经验（与原版一致）",
+  "optional": true,
+  "default_checked": true,
+  "hook_pattern": "83 F8 64 0F 85 AE 02 00 00",
+  "hook_offset": 3,
+  "hook_size": 6,
+  "hook_expect_count": 1,
+  "fallback_rva": "0x4183C",
+  "cave_template": "trap_exp_jp_kill_fix",
+  "cave_code": "83 F8 64 74 05 83 F9 FF 75 05 C3 90 90 90 90 81 04 24 AF 02 00 00 C3",
+  "format": "TKSPATCH",
+  "format_version": 1
+}
