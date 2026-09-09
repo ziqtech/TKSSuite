@@ -719,7 +719,7 @@ class ItemEditorApp(FieldUndoMixin, EditorMainWindow):
             hidden.hide()
             box = QFrame()
             box.setObjectName("FakeInputBox")
-            box.setFixedHeight(28)
+            box.setFixedHeight(32)
             bh = QHBoxLayout(box)
             bh.setContentsMargins(0,0,0,0)
             bh.setSpacing(0)

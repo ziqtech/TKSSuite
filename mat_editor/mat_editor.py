@@ -835,22 +835,10 @@ class InspectorPanelBuilder:
 
             inner_layout.addStretch()
             scroll.setWidget(inner)
-            # 统一本页 FakeInputBox 内输入框/下拉框/按钮高度 — 各主题 QSS 的
-            # padding 不同, 自然高度相差 2~7px, 同一 FakeInputBox 行内不齐
-            self._normalize_inner_heights(inner)
+            # FakeInputBox 内输入框/下拉框/按钮高度由主题 QSS 统一
+            # (QFrame#FakeInputBox > * 的 min-height 规则), 无需逐控件固定
             self._type_frames[tval] = scroll
             self._type_vars[tval] = tvars
-
-    @staticmethod
-    def _normalize_inner_heights(inner):
-        """统一 inner 子树中 FakeInputBox 内输入框/下拉框/按钮的固定高度。"""
-        for box in inner.findChildren(QFrame, "FakeInputBox"):
-            for child in box.findChildren(QLineEdit):
-                child.setFixedHeight(30)
-            for child in box.findChildren(EditorComboBox):
-                child.setFixedHeight(30)
-            for child in box.findChildren(QPushButton):
-                child.setFixedHeight(30)
 
     def make_raw_edit(self, di):
         """为 dword di 创建一个独立的 QLineEdit 并登记到镜像表。
@@ -923,7 +911,7 @@ class InspectorPanelBuilder:
             cell.setSpacing(2)
             cell.setContentsMargins(0, 0, 0, 0)
             cell.addWidget(lbl_widget)
-            input_widget.setMinimumHeight(24)
+            # 输入控件高度由主题 QSS 统一 (标准 32px)
             cell.addWidget(input_widget)
             return cw
 
@@ -1351,21 +1339,6 @@ class MatEditorApp(MatModIOMixin, MatScriptPanelMixin, EditorMainWindow):
         if hasattr(self, '_canvas'):
             self._apply_theme()
 
-    def _refresh_param_heights(self):
-        """重申右侧面板输入控件统一高度 (30px)。
-
-        QComboBox 首次显示时按内容自适应机制重设最小高度 (C++ 层, 约 26px),
-        覆盖构建时 setFixedHeight(30) 的下限 — 参数页挂载/notebook 切 tab/
-        主题切换 (QSS repolish) 后调用本方法恢复。
-        """
-        if not hasattr(self, '_inspector'):
-            return
-        if self._active_type and self._active_type in self._type_frames:
-            self._inspector._normalize_inner_heights(
-                self._type_frames[self._active_type].widget())
-        for ev in self.tab_all.findChildren(QLineEdit):
-            ev.setFixedHeight(30)
-
     def _apply_theme(self):
         """同步当前主题的派生配色 (QSS 本身由 apply_theme_to_window 应用)。"""
         self._update_path()
@@ -1388,10 +1361,6 @@ class MatEditorApp(MatModIOMixin, MatScriptPanelMixin, EditorMainWindow):
         if hasattr(self, 'script_preview') and self._current_edit_define_id is not None:
             self._update_line_preview()
         self._refresh_table()
-        # 主题 QSS 重新 polish 后, 下拉框高度可能变化, 延迟同步工具栏按钮高度
-        # 与右侧面板输入控件统一高度
-        QTimer.singleShot(0, self._sync_toolbar_heights)
-        QTimer.singleShot(0, self._refresh_param_heights)
 
     def _update_entity_type_colors(self):
         """根据当前主题更新实体列表的类型颜色"""
@@ -1730,24 +1699,6 @@ class MatEditorApp(MatModIOMixin, MatScriptPanelMixin, EditorMainWindow):
         outer.addWidget(row2)
         return toolbar
 
-    def _sync_toolbar_heights(self):
-        """预览工具栏按钮与下拉框视觉等高同步。
-
-        构建时 QSS 尚未 polish, sizeHint 偏小; 需在控件可见 (或主题切换)
-        之后按下拉框实际高度统一设定按钮高度。
-        """
-        if not hasattr(self, '_preview_tb_btns'):
-            return
-        h = max(self._vis_scene_combo.sizeHint().height(),
-                self._display_mode_combo.sizeHint().height())
-        for btn in self._preview_tb_btns:
-            btn.setFixedHeight(h)
-
-    def showEvent(self, event):
-        super().showEvent(event)
-        # 首次显示后 QSS 已 polish, 延迟到事件循环再同步高度
-        QTimer.singleShot(0, self._sync_toolbar_heights)
-
     # =========== 中间面板: 地图预览 ===========
     def _build_center_panel(self):
         center_widget = QWidget()
@@ -1802,13 +1753,7 @@ class MatEditorApp(MatModIOMixin, MatScriptPanelMixin, EditorMainWindow):
         # 参数页 / 全部页的镜像 QLineEdit 双向同步 (等价 v1 StringVar 互通)
         self._inspector.wire_raw_mirrors()
 
-        # 统一"全部"页输入控件高度 (FakeInputBox 内控件在类型页构建时处理,
-        # 因类型页 scroll 此时未挂入布局, findChildren 查不到)
-        for ev in self.tab_all.findChildren(QLineEdit):
-            ev.setFixedHeight(30)
-        # 页面首次显示/QSS repolish 会重设 QComboBox 的最小高度 (内容自适应
-        # 机制), 覆盖构建时的统一值 — 切页/切 tab/切主题后需重申
-        self.notebook.currentChanged.connect(lambda *_: self._refresh_param_heights())
+        # 输入控件高度由主题 QSS 统一 (标准 32px), 无需逐控件固定
 
         # Bottom buttons
         bf = QHBoxLayout()
@@ -2348,8 +2293,6 @@ class MatEditorApp(MatModIOMixin, MatScriptPanelMixin, EditorMainWindow):
             self.tab_param_layout.addWidget(self._type_frames[tval])
             self._type_frames[tval].setVisible(True)
             self._active_type = tval
-            # 页面挂载显示后 QComboBox 内容自适应会重设最小高度, 重申统一高度
-            self._refresh_param_heights()
 
     def _update_all_tab_labels(self, tval):
         """Update '全部' tab labels based on entity type"""

@@ -72,7 +72,7 @@ def mark_invalid(line_edit, invalid: bool) -> None:
 
 
 def make_fake_input(widget=None, line_edit=None, combo=None,
-                    button=None, stretch=True, height=28):
+                    button=None, stretch=True, height=32):
     """创建 FakeInputBox 外壳 (内凹输入框风格)
     用法1: make_fake_input(some_widget) — 单控件
     用法2: make_fake_input(line_edit=le, combo=cb, button=btn) — 多控件组合

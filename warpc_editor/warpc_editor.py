@@ -720,7 +720,6 @@ class WarpcEditorV2(EditorMainWindow):
         toolbar = QHBoxLayout()
         toolbar.addWidget(QLabel("搜索:"))
         self.search_entry = SearchInput("搜索名称或ID")
-        self.search_entry.setProperty("class", "FieldInput")
         self.search_entry.setMinimumWidth(160)
         self.search_entry.textChanged.connect(self._apply_filter)
         self.search_entry.returnPressed.connect(self._apply_filter)
@@ -731,7 +730,6 @@ class WarpcEditorV2(EditorMainWindow):
         # 字段定位: 输入字段名/标签后回车跳转到对应 Tab 并高亮
         toolbar.addWidget(QLabel("定位字段:"))
         self.field_search = SearchInput("输入字段名称")
-        self.field_search.setProperty("class", "FieldInput")
         self.field_search.setMinimumWidth(160)
         self._field_search_map = {}
         for _fd in FIELD_SCHEMA.values():
@@ -1188,7 +1186,6 @@ class WarpcEditorV2(EditorMainWindow):
             lbl.setToolTip(f"[51+{i//2}]")
             cell.addWidget(lbl)
             ev = QLineEdit("0")
-            ev.setProperty("class", "FieldInput")
             cell.addWidget(ev)
             self._status_resist_widgets.append((i, ev))
             grid.addLayout(cell, r, c, Qt.AlignTop)
@@ -1532,7 +1529,6 @@ class WarpcEditorV2(EditorMainWindow):
                 cell.addWidget(lbl)
                 fn = f"raw_{j}"
                 ev = QLineEdit()
-                ev.setProperty("class", "FieldInput")
                 self._edit_vars[fn] = ev
                 cell.addWidget(ev)
                 grid.addLayout(cell, r, c, Qt.AlignTop)

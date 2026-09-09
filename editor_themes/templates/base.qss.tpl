@@ -100,20 +100,18 @@ QWidget#qt_scrollarea_viewport {
 }
 
 /* ── 文本输入 ── */
+/* 标准控件高度: min-height 18 + 上下 sp_6 + 1px 边框×2 = 32px,
+   与 QPushButton (min-height 18 + padding sp_6) 完全一致 —
+   QLineEdit/QComboBox/QSpinBox 等输入类控件全局统一此尺寸 */
 QPlainTextEdit, QLineEdit, QTextEdit {
     background-color: {{bg_surface}};
     color: {{text_primary}};
     border: {{bd_regular}};
-    padding: {{sp_8}} {{sp_8}};
+    padding: {{sp_6}} {{sp_8}};
+    min-height: 18px;
     border-radius: {{radius_md}};
     selection-background-color: {{accent}};
     selection-color: #ffffff;
-}
-/* 与按钮同高的输入框 (搜索/定位字段/全部字段等, class="FieldInput"):
-   垂直度量复用 QPushButton 的 min-height + 上下 padding, 保证两者等高 */
-QLineEdit[class="FieldInput"] {
-    min-height: 18px;
-    padding: {{sp_6}} {{sp_8}};
 }
 QLineEdit:hover, QPlainTextEdit:hover, QTextEdit:hover {
     border-color: {{bd_hover}};
@@ -283,6 +281,9 @@ QListView#CompletionPopup::item:selected {
 }
 QSpinBox, QDoubleSpinBox, QDateEdit, QTimeEdit, QDateTimeEdit {
     padding-right: {{sp_24}};
+    /* Qt 内部行编辑器固有高度 (~21px) 不受 QSS 控制, 会使 SpinBox 比标准
+       高 3px; 与基础规则的 min-height: 18px 对钳, 强制为标准 32px */
+    max-height: 18px;
 }
 QSpinBox::up-button, QDoubleSpinBox::up-button,
 QDateEdit::up-button, QTimeEdit::up-button, QDateTimeEdit::up-button {
@@ -871,15 +872,28 @@ QFrame#FakeInputBox > QLineEdit {
     background: transparent;
     border: none;
     padding: {{sp_4}} {{sp_8}};
+    min-height: 22px;
     color: {{fg_62}};
     font-family: 'Consolas', 'Courier New', monospace;
     selection-background-color: {{accent}};
 {{?fg_63}}
 }
+QFrame#FakeInputBox > QComboBox {
+    border: none;
+    background: transparent;
+    padding: {{sp_4}} {{sp_8}};
+    min-height: 22px;
+    color: {{fg_62}};
+}
+QFrame#FakeInputBox > QComboBox::drop-down {
+    border: none;
+}
 QFrame#FakeInputBox > QPushButton {
     background: transparent;
     border: none;
     border-left: {{bd_67}};
+    padding: {{sp_4}} {{sp_12}};
+    min-height: 22px;
     border-right: {{bd_67}};
     border-radius: 0px;
     padding: {{sp_4}} {{sp_8}};
@@ -911,15 +925,6 @@ QFrame#FakeInputBox > QPushButton#StatusPickerButton {
 QFrame#FakeInputBox > QPushButton#StatusPickerButton:hover {
     background-color: {{bg_83}};
     color: {{fg_66}};
-}
-QFrame#FakeInputBox > QComboBox {
-    border: none;
-    background: transparent;
-    padding: {{sp_4}} {{sp_8}};
-    color: {{fg_62}};
-}
-QFrame#FakeInputBox > QComboBox::drop-down {
-    border: none;
 }
 QFrame[class="FakeInputSep"] {
     background-color: {{bg_84}};
