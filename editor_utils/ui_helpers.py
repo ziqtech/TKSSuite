@@ -4,12 +4,12 @@
 """
 import os
 import sys
-from PySide6.QtCore import QObject, QEvent
+from PySide6.QtCore import QObject, QEvent, Qt
 from PySide6.QtGui import QIcon, QFont, QImage, QPixmap
 from PySide6.QtWidgets import (QDialog, QFileDialog, QFrame, QHBoxLayout, QLabel,
-                               QLineEdit, QMenu, QMessageBox,
+                               QLineEdit, QMessageBox,
                                QPushButton, QTextEdit, QVBoxLayout, QWidget, QSpinBox)
-from editor_utils.combo_box import EditorComboBox, EditorComboListPopup
+from editor_utils.combo_box import EditorComboBox
 
 
 # ── 颜色常量 (与 editor_themes 一致) ──
@@ -275,11 +275,13 @@ class _DialogThemeFilter(QObject):
         if (event.type() == QEvent.Show
                 and isinstance(obj, QWidget)
                 and obj.isWindow()):
-            # 无边框弹出层: QSS border-radius 只裁剪边框/背景绘制, 弹出
-            # 窗口本身仍是矩形, 角部露出直角缺口 — 由 DWM 设置系统圆角。
-            # QTipLabel 为 Qt 私有类 (工具提示), 无公开类型可用 isinstance。
-            if (isinstance(obj, (QMenu, EditorComboListPopup))
-                    or obj.metaObject().className() == 'QTipLabel'):
+            # 所有 Qt.Popup 弹出层 (菜单/下拉弹层/补全弹层/工具提示/自绘
+            # 弹层): QSS border-radius 只裁剪边框/背景绘制, 弹出窗口本身
+            # 仍是矩形, 角部露出直角缺口。按窗口类型统一识别 (而非逐组件
+            # 白名单), 一律由 DWM 设置系统圆角 — 此后新增弹层组件无需再
+            # 单独接入。非 Popup 顶层窗口走原生标题栏主题。
+            if (obj.windowFlags() & Qt.WindowType.WindowType_Mask
+                    ) == Qt.WindowType.Popup:
                 _round_popup_win11_corners(obj)
             else:
                 try:
