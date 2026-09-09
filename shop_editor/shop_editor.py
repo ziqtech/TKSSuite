@@ -74,9 +74,9 @@ def lzss_compress(data):
 
 def load_tkitem_with_tkt(item_dat_path, tkt_dat_path):
     """
-    加载 TKItem 并关联 TKT 名称, 同时提取 equip_type / icon / price
-    field[0]=item_id, field[1]=tab_code, field[4]=icon, field[5]=equip_type, field[31]=price
-    返回: list[(idx, item_id, tab_code, name_id, equip_type, name, icon, price)]
+    加载 TKItem 并关联 TKT 名称, 同时提取 equip_type / icon / price / desc
+    field[0]=item_id, field[1]=tab_code, field[3]=desc_id, field[4]=icon, field[5]=equip_type, field[31]=price
+    返回: list[(idx, item_id, tab_code, name_id, equip_type, name, icon, price, desc)]
     """
     with open(item_dat_path, 'rb') as f:
         raw = f.read()
@@ -92,10 +92,11 @@ def load_tkitem_with_tkt(item_dat_path, tkt_dat_path):
         item_id = struct.unpack_from('<h', decompressed, off)[0]
         tab_code = struct.unpack_from('<h', decompressed, off + 2)[0]
         name_id = struct.unpack_from('<h', decompressed, off + 4)[0]
+        desc_id = struct.unpack_from('<h', decompressed, off + 6)[0] if off + 8 <= len(decompressed) else 0
         icon = struct.unpack_from('<h', decompressed, off + 8)[0]
         equip_type = struct.unpack_from('<h', decompressed, off + 10)[0]
         price = struct.unpack_from('<h', decompressed, off + 62)[0] if off + 64 <= len(decompressed) else 0
-        items_raw.append((i, item_id, tab_code, name_id, equip_type, icon, price))
+        items_raw.append((i, item_id, tab_code, name_id, equip_type, icon, price, desc_id))
 
     tkt_lookup = {}
     if tkt_dat_path and os.path.exists(tkt_dat_path):
@@ -129,7 +130,7 @@ def load_tkitem_with_tkt(item_dat_path, tkt_dat_path):
                     tkt_lookup[eid] = text.decode('gbk', errors='replace')
 
     result = []
-    for idx, item_id, tab_code, name_id, equip_type, icon, price in items_raw:
+    for idx, item_id, tab_code, name_id, equip_type, icon, price, desc_id in items_raw:
         if name_id > 0 and name_id in tkt_lookup:
             name = tkt_lookup[name_id]
             if name and name != '0':
@@ -140,7 +141,8 @@ def load_tkitem_with_tkt(item_dat_path, tkt_dat_path):
             name = ""
         if not name or name == "0":
             name = f"Item#{item_id}" if item_id else f"(空-{idx})"
-        result.append((idx, item_id, tab_code, name_id, equip_type, name, icon, price))
+        desc = tkt_lookup.get(desc_id, "") if desc_id > 0 else ""
+        result.append((idx, item_id, tab_code, name_id, equip_type, name, icon, price, desc))
 
     return result
 
@@ -847,10 +849,10 @@ class ShopEditorWindow(EditorMainWindow):
     def _pick_item(self):
         # 将 shop items tuple 列表转换为 ItemPickerDialog 所需的 dict 列表
         item_list = []
-        for idx, item_id, tab_code, name_id, equip_type, name, icon, price in self.items:
+        for idx, item_id, tab_code, name_id, equip_type, name, icon, price, desc in self.items:
             item_list.append({
                 'index': idx, 'item_id': item_id, 'tab_code': tab_code,
-                'name': name, 'equip_type': equip_type,
+                'name': name, 'desc': desc, 'equip_type': equip_type,
                 'icon': icon, 'price': price,
             })
         dialog = ItemPickerDialog(

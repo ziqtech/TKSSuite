@@ -111,7 +111,8 @@ class SkillPickerDialog(QDialog):
     阶段 4 去重: 合并 item / skill / warpc 三份同构实现, 数据源由调用方
     预构建为 ``rows``, 每项 ``(key, cells, type_id)``:
       key: 确定后写入 ``selected_index`` 的整数 (技能索引);
-      cells: 表格显示文本元组 (长度与 headers 一致);
+      cells: 表格显示文本元组 (长度与 headers 一致; 含换行的单元格
+          单行化显示, 完整文本放 tooltip);
       type_id: 类型筛选匹配值 (无类型维度的调用方恒传 None)。
 
     Args:
@@ -119,6 +120,7 @@ class SkillPickerDialog(QDialog):
         rows: 行数据 (见上)
         headers: 表头标签
         stretch_columns / minimum_widths: 透传 AdaptiveTableWidget
+        fill_viewport: 透传 AdaptiveTableWidget (拉伸列完全撑满视口)
         type_filter: ``[(匹配值, 显示名)]`` — 提供时显示"类型"下拉
             (type_id 为 None 的行仅在"全部"时可见)
         clear_value: "清空"按钮写入 selected_index 的值 (item/skill=0, warpc=-1)
@@ -128,6 +130,7 @@ class SkillPickerDialog(QDialog):
 
     def __init__(self, parent, rows, headers, *,
                  stretch_columns=None, minimum_widths=None,
+                 fill_viewport=False,
                  type_filter=None, clear_value=0,
                  clear_label="清空选择", size=(460, 550)):
         super().__init__(parent)
@@ -158,6 +161,7 @@ class SkillPickerDialog(QDialog):
             0, len(headers),
             stretch_columns=stretch_columns,
             minimum_widths=minimum_widths,
+            fill_viewport=fill_viewport,
         )
         self.table.setHorizontalHeaderLabels(headers)
         self.table.setWordWrap(False)
@@ -190,7 +194,11 @@ class SkillPickerDialog(QDialog):
             row = self.table.rowCount()
             self.table.insertRow(row)
             for col, text in enumerate(cells):
-                self.table.setItem(row, col, QTableWidgetItem(text))
+                full = str(text or '')
+                item = QTableWidgetItem(' '.join(full.split()))
+                if '\n' in full:
+                    item.setToolTip(full)  # 悬停查看多行完整文本
+                self.table.setItem(row, col, item)
             self._row_keys.append(key)
 
     def _accept(self):
@@ -337,7 +345,8 @@ def _use_right_label(val, page, opts=None):
 class ItemPickerDialog(QDialog):
     """统一物品选择对话框 — 完整物品列表表格 + 页面号/权限/仅非空 筛选。
 
-    表格列与 item_editor 完全一致: 图标 | # | ID | 页面 | 物品名称 | 权限 | 价格
+    表格列: 图标 | # | ID | 页面 | 物品名称 | 权限 | 价格 | 物品说明
+    (物品说明固定在最后一列, 拉伸占满剩余宽度; 其余列宽保持不变)
 
     支持两种数据模式:
 
@@ -351,6 +360,7 @@ class ItemPickerDialog(QDialog):
             'equip_type': int,   # 使用权限位掩码 (可选, 默认 0)
             'icon': int,         # 图标精灵索引 (可选, 默认 0)
             'price': int,        # 价格 (可选, 默认 0)
+            'desc': str,         # 物品说明文本 (可选; 多行文本单元格内单行化显示)
         }
 
     **简单模式** — *items* 为 ``dict[int, str]`` (键→名称), 仅显示两列。
@@ -368,7 +378,7 @@ class ItemPickerDialog(QDialog):
             (默认 ``'item_id'``; 可选 ``'index'``)
     """
 
-    # 完整模式固定列宽; 页面(3) 与权限(5) 按内容自适应
+    # 完整模式: 物品说明(7) 固定最后一列并拉伸占满剩余宽度, 其余列宽不变
     def __init__(self, parent, items, *, use_right_options=None,
                  icon_pixmap_fn=None, current_value=None,
                  title="选择物品", clear_text=None,
@@ -426,7 +436,7 @@ class ItemPickerDialog(QDialog):
         # 搜索栏
         sf = QHBoxLayout()
         sf.addWidget(QLabel("搜索:"))
-        self._search = SearchInput("按名称、ID或索引搜索")
+        self._search = SearchInput("按名称、说明、ID或索引搜索")
         self._search.textChanged.connect(self._refresh_table)
         sf.addWidget(self._search)
         sf.addWidget(QPushButton("清除", clicked=self._search.clear))
@@ -464,14 +474,18 @@ class ItemPickerDialog(QDialog):
             self._table.setHorizontalHeaderLabels(["ID", "名称"])
         else:
             self._table = AdaptiveTableWidget(
-                0, 7,
-                stretch_columns={4},
-                minimum_widths=[56, 56, 80, 50, 96, 50, 80],
+                0, 8,
+                stretch_columns={7},
+                minimum_widths=[56, 56, 80, 50, 96, 100, 80, 120],
                 row_height=44,
+                fill_viewport=True,
             )
             self._table.setHorizontalHeaderLabels(
-                ['图标', '#', 'ID', '页面', '物品名称', '权限', '价格'])
+                ['图标', '#', 'ID', '页面', '物品名称', '权限', '价格', '物品说明'])
             self._table.setIconSize(QSize(36, 36))
+            # 说明文本可能很长: 单行省略显示, 悬停查看完整内容
+            self._table.setWordWrap(False)
+            self._table.setTextElideMode(Qt.ElideRight)
         self._table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self._table.setSelectionMode(QAbstractItemView.SingleSelection)
         self._table.setEditTriggers(QAbstractItemView.NoEditTriggers)
@@ -529,6 +543,11 @@ class ItemPickerDialog(QDialog):
         self._refresh_table()
 
     # ── 表格刷新 ──
+    @staticmethod
+    def _desc_line(rec):
+        """物品说明单行化 (单元格显示/搜索用; 记录 'desc' 字段由调用方预解析)"""
+        return ' '.join(str(rec.get('desc', '') or '').split())
+
     def _refresh_table(self):
         self._table.setRowCount(0)
 
@@ -559,8 +578,8 @@ class ItemPickerDialog(QDialog):
                         return False
                 elif (eq & bit) == 0:
                     return False
-            # 搜索过滤
-            if q and q not in f"{rec.get('index', 0)} {rec.get('item_id', 0)} {rec.get('tab_code', 0)} {name}".lower():
+            # 搜索过滤 (含说明文本)
+            if q and q not in f"{rec.get('index', 0)} {rec.get('item_id', 0)} {rec.get('tab_code', 0)} {name} {self._desc_line(rec)}".lower():
                 return False
             return True
 
@@ -575,7 +594,7 @@ class ItemPickerDialog(QDialog):
             row = self._table.rowCount()
             self._table.insertRow(row)
 
-            # 列顺序: 图标(0) #(1) ID(2) 页面(3) 物品名称(4) 权限(5) 价格(6)
+            # 列顺序: 图标(0) #(1) ID(2) 页面(3) 物品名称(4) 权限(5) 价格(6) 物品说明(7)
             icon_item = QTableWidgetItem()
             if self._icon_pixmap_fn:
                 pix = self._icon_pixmap_fn(rec.get('icon', 0), (36, 36))
@@ -590,6 +609,11 @@ class ItemPickerDialog(QDialog):
                                   self._use_right_options.get(tab))
             self._table.setItem(row, 5, QTableWidgetItem(rt))
             self._table.setItem(row, 6, QTableWidgetItem(str(rec.get('price', 0))))
+            desc_full = str(rec.get('desc', '') or '')
+            desc_item = QTableWidgetItem(self._desc_line(rec))
+            if desc_full:
+                desc_item.setToolTip(desc_full)  # 悬停查看多行完整说明
+            self._table.setItem(row, 7, desc_item)
 
     def _refresh_simple(self):
         """简单模式: 仅两列 (ID + 名称)"""

@@ -109,6 +109,12 @@ QPlainTextEdit, QLineEdit, QTextEdit {
     selection-background-color: {{accent}};
     selection-color: #ffffff;
 }
+/* 与按钮同高的输入框 (搜索/定位字段/全部字段等, class="FieldInput"):
+   垂直度量复用 QPushButton 的 min-height + 上下 padding, 保证两者等高 */
+QLineEdit[class="FieldInput"] {
+    min-height: 18px;
+    padding: {{sp_6}} {{sp_8}};
+}
 QLineEdit:hover, QPlainTextEdit:hover, QTextEdit:hover {
     border-color: {{bd_hover}};
 }
@@ -249,6 +255,29 @@ QComboBox QAbstractItemView::item:hover {
     color: {{text_primary}};
 }
 QComboBox QAbstractItemView::item:selected {
+    background-color: {{accent}};
+    color: #ffffff;
+}
+/* ── QCompleter 补全弹窗 (无父级顶层视图, 使用方套用本主题 QSS 并设 objectName) ── */
+QListView#CompletionPopup {
+    background-color: {{bg_27}};
+    color: {{fg_22}};
+    border: {{bd_regular}};
+    border-radius: {{radius_md}};
+    padding: {{sp_4}};
+    outline: none;
+    show-decoration-selected: 1;
+}
+QListView#CompletionPopup::item {
+    min-height: 24px;
+    padding: {{sp_6}} {{sp_10}};
+    border-radius: {{radius_md}};
+}
+QListView#CompletionPopup::item:hover {
+    background-color: {{bg_hover}};
+    color: {{text_primary}};
+}
+QListView#CompletionPopup::item:selected {
     background-color: {{accent}};
     color: #ffffff;
 }

@@ -62,7 +62,7 @@ from PySide6.QtWidgets import (
     QLineEdit, QPushButton, QLabel,
     QScrollArea, QDialog, QFileDialog, QMessageBox, QTextEdit,
     QFrame, QGridLayout, QAbstractItemView, QMenuBar,
-    QSpinBox, QSizePolicy, QMenu, QCompleter, QStackedWidget,
+    QSpinBox, QSizePolicy, QMenu, QCompleter, QListView, QStackedWidget,
 )
 from PySide6.QtGui import (
     QColor, QFont, QIcon, QIntValidator, QKeySequence,
@@ -73,7 +73,7 @@ from editor_utils import theme_manager
 from editor_utils.ui_helpers import themed_question, set_themed_icon
 from editor_utils.theme_manager import business_colors
 from editor_utils.theme_switcher import (
-    apply_theme_to_window, toggle_theme_in_family,
+    apply_theme_to_window, toggle_theme_in_family, current_window_theme,
 )
 from editor_utils.app_shell import EditorMainWindow, run_editor
 from editor_utils.dock_components import DockHeader
@@ -417,6 +417,56 @@ def _build_field_ref_text():
     lines.append("  Tab 5: 全部字段总览")
     return '\n'.join(lines)
 
+
+class FieldLocatorPopup(QListView):
+    """定位字段补全弹窗: 修正 QCompleter 定高不含 QSS 边框/内边距的偏差。
+
+    QCompleterPrivate::showPopup 以 ``sizeHintForRow(0)*min(7,行数)+6`` 定高,
+    6px 是写死的框架假设; 主题 QSS 的真实 chrome (边框+内边距) 与之不符时,
+    视口与内容相差数像素 —— 末行被裁切/底部留白, 且滚动条常驻。
+    每次几何变化后按真实 chrome 与可见行数重算一次高度 (防重入守卫,
+    屏幕下方空间不足时按可用高度收敛)。
+    """
+
+    def __init__(self, completer, parent=None):
+        super().__init__(parent)
+        self._completer = completer
+        self._fitting = False
+        self.setObjectName("CompletionPopup")
+        self.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.setUniformItemSizes(True)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._fit_height()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._fit_height()
+
+    def _fit_height(self):
+        if self._fitting:
+            return
+        model = self.model()
+        if model is None:
+            return
+        row_h = self.sizeHintForRow(0)
+        rows = model.rowCount()
+        if row_h <= 0 or rows <= 0:
+            return
+        max_visible = self._completer.maxVisibleItems() if self._completer else 0
+        visible = min(max_visible, rows) if max_visible > 0 else rows
+        chrome = self.height() - self.viewport().height()
+        wanted = row_h * visible + chrome
+        # 顶层弹窗 pos 即全局坐标; 下方放不下时至少保留一行
+        bottom = self.screen().availableGeometry().bottom() + 1 - self.y()
+        wanted = min(wanted, max(bottom, row_h + chrome))
+        if wanted != self.height():
+            self._fitting = True
+            self.resize(self.width(), wanted)
+            self._fitting = False
+
+
 # ═══════════════════════════════════════════════════════════════
 # 主编辑器窗口
 # ═══════════════════════════════════════════════════════════════
@@ -441,6 +491,7 @@ class WarpcEditorV2(EditorMainWindow):
         self._icon_pixmaps = {}
         self.skill_names = {}
         self._skill_types = {}
+        self.skill_descs = {}
         # 技能树引用图 (从 TKSkill.dat 解析, 语义同 skill_editor):
         #   _skill_children[a]=[(b,w)] 学会a给b累加w进度; _skill_parents[b]=[(a,w)];
         #   _skill_total_in[b]=组外合计入权; _skill_sub_count[a]=子技能数;
@@ -511,6 +562,12 @@ class WarpcEditorV2(EditorMainWindow):
         self._refresh_table()
         if self._table_panel is not None:
             self._table_panel.apply_theme(self._is_dark)
+
+    def _on_theme_applied(self, theme_id):
+        """theme_switcher 统一钩子: 同步 QCompleter 顶层弹窗的主题样式。"""
+        popup = getattr(self, "_field_popup", None)
+        if popup is not None:
+            theme_manager.apply_theme(popup, theme_id)
 
     # ── 字段定位 / 编辑模式切换 ──
     def _locate_field(self):
@@ -663,6 +720,7 @@ class WarpcEditorV2(EditorMainWindow):
         toolbar = QHBoxLayout()
         toolbar.addWidget(QLabel("搜索:"))
         self.search_entry = SearchInput("搜索名称或ID")
+        self.search_entry.setProperty("class", "FieldInput")
         self.search_entry.setMinimumWidth(160)
         self.search_entry.textChanged.connect(self._apply_filter)
         self.search_entry.returnPressed.connect(self._apply_filter)
@@ -673,6 +731,7 @@ class WarpcEditorV2(EditorMainWindow):
         # 字段定位: 输入字段名/标签后回车跳转到对应 Tab 并高亮
         toolbar.addWidget(QLabel("定位字段:"))
         self.field_search = SearchInput("输入字段名称")
+        self.field_search.setProperty("class", "FieldInput")
         self.field_search.setMinimumWidth(160)
         self._field_search_map = {}
         for _fd in FIELD_SCHEMA.values():
@@ -680,6 +739,15 @@ class WarpcEditorV2(EditorMainWindow):
         completer = QCompleter(sorted(self._field_search_map.keys()))
         completer.setFilterMode(Qt.MatchContains)
         completer.setCaseSensitivity(Qt.CaseInsensitive)
+        # QCompleter 内置弹窗是无父级的顶层视图, 继承不到主窗口的主题样式,
+        # 且定高不含 QSS chrome 会产生底部空白/裁切与常驻滚动条。
+        # 自建弹窗: objectName 命中 base.qss.tpl 的 QListView#CompletionPopup
+        # 规则 (与 QComboBox 下拉同款观感), 显式套用当前主题 QSS;
+        # 主题切换时经 _on_theme_applied 重新套用, 高度由 FieldLocatorPopup 自修正
+        popup = FieldLocatorPopup(completer)
+        completer.setPopup(popup)
+        theme_manager.apply_theme(popup, current_window_theme(self))
+        self._field_popup = popup
         self.field_search.setCompleter(completer)
         self.field_search.returnPressed.connect(self._locate_field)
         completer.activated.connect(lambda _t: QTimer.singleShot(0, self._locate_field))
@@ -1110,6 +1178,7 @@ class WarpcEditorV2(EditorMainWindow):
             lbl.setToolTip(f"[51+{i//2}]")
             cell.addWidget(lbl)
             ev = QLineEdit("0")
+            ev.setProperty("class", "FieldInput")
             cell.addWidget(ev)
             self._status_resist_widgets.append((i, ev))
             grid.addLayout(cell, r, c, Qt.AlignTop)
@@ -1453,6 +1522,7 @@ class WarpcEditorV2(EditorMainWindow):
                 cell.addWidget(lbl)
                 fn = f"raw_{j}"
                 ev = QLineEdit()
+                ev.setProperty("class", "FieldInput")
                 self._edit_vars[fn] = ev
                 cell.addWidget(ev)
                 grid.addLayout(cell, r, c, Qt.AlignTop)
@@ -1607,11 +1677,11 @@ class WarpcEditorV2(EditorMainWindow):
                 records = load_warpc(warpc_path)
                 seg1 = seg2 = None
             # 后台线程内 self.tkt 仍是上一次 (首次为空) 的值, 必须传入本次加载的 tkt
-            skill_names, skill_types = self._load_skill_names(tkt)
+            skill_names, skill_types, skill_descs = self._load_skill_names(tkt)
             tkkon_names = self._load_tkkon_names()
             item_names, item_idx_names, idx_to_id, id_to_idx = self._load_item_names(tkt)
             return (mu, tkt, fa, records, seg1, seg2,
-                    skill_names, skill_types, tkkon_names,
+                    skill_names, skill_types, skill_descs, tkkon_names,
                     item_names, item_idx_names, idx_to_id, id_to_idx)
 
         self._load_worker = run_background(
@@ -1621,7 +1691,7 @@ class WarpcEditorV2(EditorMainWindow):
 
     def _on_load_success(self, result):
         (mu, tkt, fa, records, seg1, seg2,
-         skill_names, skill_types, tkkon_names,
+         skill_names, skill_types, skill_descs, tkkon_names,
          item_names, item_idx_names, idx_to_id, id_to_idx) = result
         self._mu_sprites = mu
         self._icon_pixmaps.clear()
@@ -1638,6 +1708,7 @@ class WarpcEditorV2(EditorMainWindow):
         self._sync_draft_from_records()
         self.skill_names = skill_names
         self._skill_types = skill_types
+        self.skill_descs = skill_descs
         self._build_skill_graph()
         self.tkkon_names = tkkon_names
         self.item_names = item_names
@@ -1710,14 +1781,14 @@ class WarpcEditorV2(EditorMainWindow):
         tks_dir = self._get_tks_dir()
         sk_path = os.path.join(tks_dir, 'TKSkill.dat')
         if not os.path.exists(sk_path):
-            return {}, {}
+            return {}, {}, {}
         try:
             with open(sk_path, 'rb') as f:
                 raw = f.read()
             dec = lzss_decompress(raw)
             if len(raw) % 94 == 0 and (len(dec) == 0 or len(dec) % 94 != 0):
                 dec = raw
-            names, types = {}, {}
+            names, types, descs = {}, {}, {}
             for i in range(350):
                 off = i * 94
                 if off + 6 > len(dec):
@@ -1729,9 +1800,13 @@ class WarpcEditorV2(EditorMainWindow):
                     names[i] = tkt[name_id].split('\n')[0].strip()[:20]
                 elif name_id:
                     names[i] = f'#{name_id}'
-            return names, types
+                # 技能说明 TKT 文本ID = 名称文本ID + 400 (语义同 skill_editor)
+                did = name_id + 400
+                if name_id > 0 and did in tkt:
+                    descs[i] = tkt[did]
+            return names, types, descs
         except:
-            return {}, {}
+            return {}, {}, {}
 
     def _build_skill_graph(self):
         """从 TKSkill.dat 解析技能树引用表, 构建进度图 (逆向依据 sub_41E248):
@@ -2145,6 +2220,7 @@ class WarpcEditorV2(EditorMainWindow):
                 item_id = struct.unpack_from('<h', dec, off)[0]
                 tab_code = struct.unpack_from('<h', dec, off + 2)[0]
                 name_id = struct.unpack_from('<h', dec, off + 4)[0]
+                desc_id = struct.unpack_from('<h', dec, off + 6)[0] if off + 8 <= len(dec) else 0
                 icon = struct.unpack_from('<h', dec, off + 8)[0]
                 equip_type = struct.unpack_from('<h', dec, off + 10)[0]
                 price = struct.unpack_from('<h', dec, off + 62)[0] if off + 64 <= len(dec) else 0
@@ -2154,6 +2230,7 @@ class WarpcEditorV2(EditorMainWindow):
                     nm = f'物品#{item_id}'
                 else:
                     nm = ''
+                d_txt = tkt.get(desc_id, '') if desc_id > 0 else ''
                 if nm:
                     if item_id > 0:
                         id_lookup[item_id] = nm
@@ -2162,7 +2239,7 @@ class WarpcEditorV2(EditorMainWindow):
                     idx_lookup[i] = nm
                 item_records.append({
                     'index': i, 'item_id': item_id, 'tab_code': tab_code,
-                    'name': nm, 'equip_type': equip_type,
+                    'name': nm, 'desc': d_txt, 'equip_type': equip_type,
                     'icon': icon, 'price': price,
                 })
             self._item_records = item_records
@@ -2597,11 +2674,14 @@ class WarpcEditorV2(EditorMainWindow):
         rows = []
         for idx in sorted(self.skill_names.keys()):
             tid = self._skill_types.get(idx, -1)
-            rows.append((idx, (str(idx), type_names.get(tid, "?"), self.skill_names[idx]), tid))
+            rows.append((idx, (str(idx), type_names.get(tid, "?"),
+                               self.skill_names[idx],
+                               self.skill_descs.get(idx, '')), tid))
         return SkillPickerDialog(
-            parent, rows, ("技能#", "类型", "名称"),
-            stretch_columns={2}, minimum_widths=[55, 55, 90],
-            clear_value=-1, clear_label="清空(-1)", size=(550, 520))
+            parent, rows, ("技能#", "类型", "名称", "技能说明"),
+            stretch_columns={3}, minimum_widths=[55, 55, 90, 160],
+            fill_viewport=True,
+            clear_value=-1, clear_label="清空(-1)", size=(760, 520))
 
     def _pick_skill(self, fn):
         if not self.skill_names: return

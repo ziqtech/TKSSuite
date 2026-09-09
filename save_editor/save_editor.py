@@ -34,7 +34,7 @@ from PySide6.QtWidgets import (
     QTableWidgetItem, QTextEdit, QVBoxLayout, QWidget,
 )
 from PySide6.QtGui import (
-    QColor, QFont, QIcon, QImage, QKeySequence, QPixmap,
+    QColor, QFont, QIcon, QImage, QKeySequence, QPainter, QPainterPath, QPixmap,
 )
 from PySide6.QtCore import QSize, Qt
 try:
@@ -853,13 +853,17 @@ class SaveEditorApp(EditorMainWindow):
 
         # 物品表格
         self._inv_table = AdaptiveTableWidget(
-            0, 6,
-            stretch_columns={4},
-            minimum_widths=[58, 42, 64, 56, 220, 64],
+            0, 7,
+            stretch_columns={6},
+            minimum_widths=[58, 42, 64, 56, 220, 64, 160],
             row_height=44,
+            fill_viewport=True,
         )
         self._inv_table.setObjectName("SaveInventoryTable")
-        self._inv_table.setHorizontalHeaderLabels(['图标', '#', 'ID', '页面', '物品名称', '数量'])
+        self._inv_table.setHorizontalHeaderLabels(['图标', '#', 'ID', '页面', '物品名称', '数量', '物品说明'])
+        # 说明文本可能很长: 单行省略显示, 悬停查看完整内容
+        self._inv_table.setWordWrap(False)
+        self._inv_table.setTextElideMode(Qt.ElideRight)
         self._inv_table.verticalHeader().setDefaultSectionSize(44)
         self._inv_table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self._inv_table.setSelectionMode(QAbstractItemView.SingleSelection)
@@ -1192,6 +1196,7 @@ class SaveEditorApp(EditorMainWindow):
                 break
             item_id = struct.unpack_from('<h', dec, off)[0]
             name_id = struct.unpack_from('<h', dec, off + 4)[0]
+            desc_id = struct.unpack_from('<h', dec, off + 6)[0]
             tab_code = struct.unpack_from('<h', dec, off + 2)[0]
             icon = struct.unpack_from('<h', dec, off + 8)[0]
             equip_type = struct.unpack_from('<h', dec, off + 10)[0]
@@ -1201,9 +1206,11 @@ class SaveEditorApp(EditorMainWindow):
                 nm = self.tkt[name_id].split('\n')[0].strip()[:25]
             elif item_id > 0:
                 nm = f'物品#{item_id}'
+            d_txt = self.tkt.get(desc_id, "") if desc_id > 0 else ""
             records[i] = {'item_id': item_id, 'name_id': name_id,
                           'tab_code': tab_code, 'icon': icon,
-                          'equip_type': equip_type, 'price': price, 'name': nm}
+                          'equip_type': equip_type, 'price': price, 'name': nm,
+                          'desc': d_txt}
             if item_id > 0:
                 names[item_id] = nm
         return records, names
@@ -1376,7 +1383,7 @@ class SaveEditorApp(EditorMainWindow):
             return custom
         return portrait + 211 if portrait != 0 else 211
 
-    def _get_mu_sprite(self, sprite_idx, size=(48, 48)):
+    def _get_mu_sprite(self, sprite_idx, size=(48, 48), rounded=False):
         if Image is None or not self._mu_sprites:
             return None
         if sprite_idx < 0 or sprite_idx >= len(self._mu_sprites):
@@ -1384,7 +1391,7 @@ class SaveEditorApp(EditorMainWindow):
         sprite = self._mu_sprites[sprite_idx]
         if sprite is None:
             return None
-        cache_key = ('mu', sprite_idx, size)
+        cache_key = ('mu', sprite_idx, size, rounded)
         if cache_key in self._icon_pixmaps:
             return self._icon_pixmaps[cache_key]
         try:
@@ -1392,14 +1399,31 @@ class SaveEditorApp(EditorMainWindow):
             data = img.tobytes('raw', 'RGBA')
             qimg = QImage(data, img.width, img.height, QImage.Format_RGBA8888)
             pix = QPixmap.fromImage(qimg)
+            if rounded:
+                pix = self._round_pixmap(pix)
             self._icon_pixmaps[cache_key] = pix
             return pix
         except Exception:
             return None
 
+    def _round_pixmap(self, pix, radius=8):
+        """按 radius 裁出圆角, 与 TeamMemberAvatar 空头像的 border-radius(radius_md=8px) 一致"""
+        if pix is None or pix.isNull():
+            return pix
+        out = QPixmap(pix.size())
+        out.fill(Qt.transparent)
+        p = QPainter(out)
+        p.setRenderHint(QPainter.Antialiasing)
+        path = QPainterPath()
+        path.addRoundedRect(0, 0, pix.width(), pix.height(), radius, radius)
+        p.setClipPath(path)
+        p.drawPixmap(0, 0, pix)
+        p.end()
+        return out
+
     def _set_team_avatar(self, char_idx, label):
         sprite_idx = self._get_team_mu_sprite_idx(char_idx)
-        pix = self._get_mu_sprite(sprite_idx, (48, 48)) if sprite_idx is not None else None
+        pix = self._get_mu_sprite(sprite_idx, (48, 48), rounded=True) if sprite_idx is not None else None
         if pix:
             label.setPixmap(pix)
         else:
@@ -1443,6 +1467,11 @@ class SaveEditorApp(EditorMainWindow):
             self._inv_table.setItem(row, 3, QTableWidgetItem(page))
             self._inv_table.setItem(row, 4, QTableWidgetItem(name))
             self._inv_table.setItem(row, 5, QTableWidgetItem(str(qty)))
+            desc_full = str(rec.get('desc', '') or '')
+            desc_item = QTableWidgetItem(' '.join(desc_full.split()))
+            if desc_full:
+                desc_item.setToolTip(desc_full)  # 悬停查看多行完整说明
+            self._inv_table.setItem(row, 6, desc_item)
 
     # ================================================================
     # 刷新: 事件系统
@@ -1772,6 +1801,7 @@ class SaveEditorApp(EditorMainWindow):
                 'item_id': rec.get('item_id', 0),
                 'tab_code': rec.get('tab_code', 0),
                 'name': rec.get('name', ''),
+                'desc': rec.get('desc', ''),
                 'equip_type': rec.get('equip_type', 0),
                 'icon': rec.get('icon', 0),
                 'price': rec.get('price', 0),

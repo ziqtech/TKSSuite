@@ -449,7 +449,7 @@ TKITEM_CNT = 600
 
 def load_tkitem_records(tkitem_path: str, tkt: dict):
     """加载 TKItem.dat 完整记录，返回 list[dict]。
-    每条: {'index', 'item_id', 'tab_code', 'name', 'equip_type', 'icon', 'price'}
+    每条: {'index', 'item_id', 'tab_code', 'name', 'desc', 'equip_type', 'icon', 'price'}
     """
     if not tkitem_path or not os.path.exists(tkitem_path):
         return []
@@ -468,6 +468,7 @@ def load_tkitem_records(tkitem_path: str, tkt: dict):
         item_id = fields[0]
         tab_code = fields[1]
         name_id = fields[2]
+        desc_id = fields[3]
         icon = fields[4]
         equip_type = fields[5]
         price = fields[31]
@@ -484,6 +485,7 @@ def load_tkitem_records(tkitem_path: str, tkt: dict):
             'item_id': item_id,
             'tab_code': tab_code,
             'name': name,
+            'desc': tkt.get(desc_id, "") if desc_id > 0 else "",
             'equip_type': equip_type,
             'icon': icon,
             'price': price,
