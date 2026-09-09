@@ -992,7 +992,9 @@ class KonEditor(FieldUndoMixin, EditorMainWindow):
         base = 0 if fn.endswith('_lo') else 16
         inf = fn.startswith('inflict')
         title = "选择导致状态 (位掩码)" if inf else "选择解除状态 (位掩码)"
-        dlg = StatusPickerDialog(self, title, STATUS_NAMES, cur, base, self._get_icon_pixmap, inf)
+        # 15=第二个"连计": 仅用于分隔数据的空值槽位, 弹窗内直接移除
+        dlg = StatusPickerDialog(self, title, STATUS_NAMES, cur, base,
+                                 self._get_icon_pixmap, inf, hidden_slots={15})
         if dlg.exec() == QDialog.Accepted and dlg.selected_mask is not None:
             new_mask = dlg.selected_mask
             self.widget_map[fn].setText(str(new_mask))

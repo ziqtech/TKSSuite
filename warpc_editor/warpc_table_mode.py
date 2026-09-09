@@ -88,9 +88,12 @@ def _status_slot_columns():
 
 
 def _status_resist_columns():
-    """状态抵抗 32 列: 每状态 1 字节 (0-100 抵抗百分比, 允许 0-255)"""
+    """状态抵抗列: 每状态 1 字节 (0-100 抵抗百分比, 允许 0-255)。
+    15/31=分隔数据的空值槽位 (第二个"连计"/第32位), 与表单模式一致不显示。"""
     cols = []
     for i in range(STATUS_RESIST_COUNT):
+        if i in (15, 31):
+            continue
         nm = STATUS_NAMES[i] if i < len(STATUS_NAMES) else f'状态{i+1}'
         cols.append(ColumnSpec('byte', f'抗:{nm}',
                                base_idx=STATUS_RESIST_BASE, byte_idx=i))
@@ -513,6 +516,8 @@ class TableFieldDelegate(QStyledItemDelegate):
                 cb = EditorComboBox(parent)
                 cb.addItem('0 (无)')
                 for i, nm in enumerate(STATUS_NAMES):
+                    if i == 15:   # 第二个"连计": 分隔数据的空值槽位, 不提供选择
+                        continue
                     cb.addItem(f'{i+1}-{nm}')
                 return cb
             sp = QSpinBox(parent)
@@ -1155,8 +1160,10 @@ class WarpcTablePanel(QWidget):
         elif fd.ftype == 'status_mask':
             from editor_utils.picker_dialogs import StatusPickerDialog, STATUS_NAMES
             base = 0 if fd.key.endswith('_mask1') else 16
+            # 15=第二个"连计": 仅用于分隔数据的空值槽位, 弹窗内直接移除
             dlg = StatusPickerDialog(self, "选择导致状态 (位掩码)", STATUS_NAMES,
-                                     cur & 0xFFFF, base, ed._get_icon_pixmap, True)
+                                     cur & 0xFFFF, base, ed._get_icon_pixmap, True,
+                                     hidden_slots={15})
             if dlg.exec() == QDialog.Accepted and dlg.selected_mask is not None:
                 new_val = dlg.selected_mask
         if new_val is not None:

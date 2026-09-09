@@ -1112,7 +1112,11 @@ class WarpcEditorV2(EditorMainWindow):
         grid = QGridLayout()
         grid.setVerticalSpacing(4)
         grid.setHorizontalSpacing(8)
-        status_options = ["(无)"] + [f"{i+1}-{STATUS_NAMES[i]}" for i in range(len(STATUS_NAMES))]
+        # 下拉 userData 直接携带 sid (状态ID); 15=第二个"连计", 分隔数据
+        # 的空值槽位, 不提供选择
+        status_options = [(0, "(无)")] + [
+            (i + 1, f"{i+1}-{STATUS_NAMES[i]}")
+            for i in range(len(STATUS_NAMES)) if i != 15]
         for si, field_tuple in enumerate(STATUS_SLOT_FIELDS):
             fn, fo, fl = field_tuple[0], field_tuple[1], field_tuple[2]
             cmt = field_tuple[3] if len(field_tuple) > 3 else fl
@@ -1125,7 +1129,8 @@ class WarpcEditorV2(EditorMainWindow):
             cell.addWidget(lbl)
             self._field_locator[fn] = (self._cur_tab_index, lbl)  # 字段搜索定位
             cb = EditorComboBox()
-            cb.addItems(status_options)
+            for _sid, _text in status_options:
+                cb.addItem(_text, _sid)
             dur = QLineEdit("0")
             dur.setMinimumWidth(40)
             box = QFrame()
@@ -1156,6 +1161,9 @@ class WarpcEditorV2(EditorMainWindow):
         parent.layout().addWidget(grp)
 
     def _build_status_resist(self, parent):
+        # 仅用于分隔数据的空值槽位: 15=第二个"连计" (回合数表占位), 31=第32位
+        # (超出 STATUS_NAMES), 均不显示; 对应字节不经编辑器改动, 保持原值
+        hidden_slots = {15, 31}
         grp = QWidget()
         gl = QVBoxLayout(grp)
         gl.setContentsMargins(0,0,0,0)
@@ -1169,6 +1177,8 @@ class WarpcEditorV2(EditorMainWindow):
         grid.setVerticalSpacing(2)
         grid.setHorizontalSpacing(4)
         for i in range(32):
+            if i in hidden_slots:
+                continue
             r, c = divmod(i, 16)
             sname = STATUS_NAMES[i] if i < len(STATUS_NAMES) else f"{i+1}"
             cell = QVBoxLayout()
@@ -2354,7 +2364,7 @@ class WarpcEditorV2(EditorMainWindow):
             if fn in self._edit_extras:
                 snap['combo_' + fn] = self._edit_extras[fn].currentIndex()
         for fs_fn, fo, cb, dur in self._status_widgets:
-            snap['slot_' + fs_fn] = (cb.currentIndex(), dur.text())
+            snap['slot_' + fs_fn] = (cb.currentData(), dur.text())
         for byte_idx, ev in self._status_resist_widgets:
             snap[f'resist_{byte_idx}'] = ev.text()
         for skill_idx, cb in self._skill_learn_widgets:
@@ -2521,9 +2531,9 @@ class WarpcEditorV2(EditorMainWindow):
                 sid = v & 0xFF
                 dur = (v>>8) & 0xFF
                 if sid == 0 or sid > len(STATUS_NAMES):
-                    cb.setCurrentIndex(0)
-                else:
-                    cb.setCurrentIndex(sid)
+                    sid = 0
+                pos = cb.findData(sid)
+                cb.setCurrentIndex(pos if pos >= 0 else 0)
                 ev_dur.setText(str(dur) if sid != 0 and dur != 0xFF else "0")
 
         # 状态抵抗
@@ -2792,7 +2802,9 @@ class WarpcEditorV2(EditorMainWindow):
         base = 0 if fn.endswith('_mask1') else 16
         is_cause = fn.startswith('cause_')
         title = "选择导致状态 (位掩码)" if is_cause else "选择解除状态 (位掩码)"
-        dlg = StatusPickerDialog(self, title, STATUS_NAMES, cur & 0xFFFF, base, self._get_icon_pixmap, is_cause)
+        # 15=第二个"连计": 仅用于分隔数据的空值槽位, 弹窗内直接移除
+        dlg = StatusPickerDialog(self, title, STATUS_NAMES, cur & 0xFFFF, base,
+                                 self._get_icon_pixmap, is_cause, hidden_slots={15})
         if dlg.exec() == QDialog.Accepted and dlg.selected_mask is not None:
             new_mask = dlg.selected_mask
             self._edit_vars[fn].setText(str(new_mask))
@@ -2935,8 +2947,8 @@ class WarpcEditorV2(EditorMainWindow):
         # 状态槽
         if hasattr(self, '_status_widgets'):
             for fs_fn, fo, cb, ev_dur in self._status_widgets:
-                sid = cb.currentIndex()
-                if sid == 0:
+                sid = cb.currentData()
+                if not sid:   # 0 = (无); None 兜底同无
                     v = -256
                 else:
                     try:

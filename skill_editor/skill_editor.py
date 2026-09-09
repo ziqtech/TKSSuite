@@ -1341,8 +1341,10 @@ class SkillEditorApp(FieldUndoMixin, EditorMainWindow):
     def _pick_status(self, fn):
         base = 0 if fn == 'immunity1' else 16
         cur = int(self.widget_map[fn].text() or 0) & 0xFFFF
+        # 15=第二个"连计": 仅用于分隔数据的空值槽位, 弹窗内直接移除
         dlg = StatusPickerDialog(self, "选择免疫状态 (位掩码)", STATUS_NAMES,
-                                 cur, base, self._get_icon_pixmap, False)
+                                 cur, base, self._get_icon_pixmap, False,
+                                 hidden_slots={15})
         if dlg.exec() == QDialog.Accepted and dlg.selected_mask is not None:
             self.widget_map[fn].setText(str(dlg.selected_mask))
             self._update_mask_label(fn, dlg.selected_mask & 0xFFFF)

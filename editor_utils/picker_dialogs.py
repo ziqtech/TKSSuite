@@ -227,13 +227,16 @@ class StatusPickerDialog(QDialog):
         get_pixmap_fn: 可选的图标获取回调 ``fn(icon_val, size) -> QPixmap``;
                        为 None 时不显示图标。
         is_cause: 是否为"导致状态"语义 (仅用于标题区分, 不影响渲染)。
+        hidden_slots: 不显示的绝对状态索引集合 (分隔用空值槽位, 直接移除
+            对应复选框, 确定时相应位恒为 0)。
     """
     def __init__(self, parent, title, status_names, cur_mask, base,
-                 get_pixmap_fn=None, is_cause=False):
+                 get_pixmap_fn=None, is_cause=False, hidden_slots=None):
         super().__init__(parent)
         self.setWindowTitle(title)
         self.resize(380, 520)
         self.selected_mask = None
+        hidden_slots = hidden_slots or set()
         layout = QVBoxLayout(self)
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -243,6 +246,7 @@ class StatusPickerDialog(QDialog):
         for i in range(16):
             idx = base + i
             if idx >= len(status_names): break
+            if idx in hidden_slots: continue
             row = QHBoxLayout()
             if get_pixmap_fn is not None:
                 pix = get_pixmap_fn(STATUS_ICON_BASE + idx - 130, (20, 20))

@@ -1149,7 +1149,9 @@ class ItemEditorApp(FieldUndoMixin, EditorMainWindow):
         title = "选择导致状态 (位掩码)" if is_cause else "选择解除状态 (位掩码)"
         base = 0 if fn.endswith('_mask1') else 16
         cur_mask = int(self.widget_map[fn].text() or 0) & 0xFFFF
-        dlg = StatusPickerDialog(self, title, STATUS_NAMES, cur_mask, base, self._get_icon_pixmap, is_cause)
+        # 15=第二个"连计": 仅用于分隔数据的空值槽位, 弹窗内直接移除
+        dlg = StatusPickerDialog(self, title, STATUS_NAMES, cur_mask, base,
+                                 self._get_icon_pixmap, is_cause, hidden_slots={15})
         if dlg.exec() == QDialog.Accepted and dlg.selected_mask is not None:
             self.widget_map[fn].setText(str(dlg.selected_mask))
             self._update_status_label(fn, dlg.selected_mask & 0xFFFF)
