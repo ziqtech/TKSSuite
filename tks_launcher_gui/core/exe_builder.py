@@ -700,21 +700,22 @@ class ExeBuilder:
             + max(pe.sections[-1].virtual_size, pe.sections[-1].raw_size),
             pe.section_align)
 
-        # ── 0. 数据段注入 ──
+        # ── 0. 数据段注入 (BSS 方式, 不占文件空间) ──
+        # 缓冲区以 VirtualSize 声明、SizeOfRawData=0: loader 分配内存并零填充,
+        # exe 文件体积零增长。注入内容副本是冗余的——游戏启动时无条件从部署
+        # 目录的 .dat 文件加载填充这些缓冲区 (FileRead/LZSS, 加载不出的文件本
+        # 就会报错), 副本永远不会被使用。与原版 .data 节 (VSize 0x57B000 /
+        # Raw 0x13A00) 同款 BSS 形态。
         data_section_results = []  # [(item, new_base_abs, raw_off, va)]
         if data_section_patches:
             log.append(f'── 应用数据段注入 ({len(data_section_patches)} 个) ──')
             for item in data_section_patches:
                 new_va = next_va
-                new_raw_off = align_up(len(data), pe.file_align)
                 new_abs = pe.image_base + new_va
                 log.append(f'  [{item.patch_id}] 注入 {item.section_name}: '
                            f'RVA=0x{new_va:X}, 绝对=0x{new_abs:X}, '
-                           f'数据={len(item.data)} 字节')
-                if len(data) < new_raw_off:
-                    data.extend(b'\x00' * (new_raw_off - len(data)))
-                data.extend(item.data)
-                data_section_results.append((item, new_abs, new_raw_off, new_va))
+                           f'缓冲={len(item.data)} 字节 (BSS, 不占文件空间)')
+                data_section_results.append((item, new_abs, 0, new_va))
                 next_va = align_up(new_va + max(len(item.data), 1), pe.section_align)
 
         # ── 1. patch_bytes ──
@@ -1055,7 +1056,7 @@ class ExeBuilder:
                     return result
                 name_b = item.section_name.encode('ascii')[:8].ljust(8, b'\x00')
                 entry = name_b + struct.pack('<IIIIIIHHI',
-                    len(item.data), va, len(item.data), raw_off,
+                    len(item.data), va, 0, 0,
                     0, 0, 0, 0, self.SECTION_CHARS_DATA)
                 data[sec_entry_off:sec_entry_off + 40] = entry
 
