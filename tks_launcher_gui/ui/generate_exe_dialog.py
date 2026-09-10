@@ -4,6 +4,8 @@
   - cave_hook / patch_exp_lock: 代码洞注入（.test 节 + jmp hook）
   - patch_bytes: 模式搜索 + 字节替换
   - patch_imm32: 立即数修改（静态值）
+  - 配置驱动型: drop_probability / font_config / animation_speed / summon_table
+  - 数据段注入: tkact_expand / tkkon_expand（需扩展数据文件）
 """
 import os
 from PySide6.QtCore import Qt, QThread, Signal
@@ -15,7 +17,7 @@ from PySide6.QtWidgets import (
 from core.config_loader import PatchDef
 from core.exe_builder import (
     ExeBuilder, CavePatchItem, BytesPatchItem, BytesPatchEntry,
-    Imm32PatchItem, Imm32PatchEntry, ConfigPatchItem,
+    Imm32PatchItem, Imm32PatchEntry, ConfigPatchItem, DataSectionPatchItem,
 )
 from core.tkspatch_loader import get_external_cave_code
 
@@ -26,13 +28,15 @@ class _BuildWorker(QThread):
 
     def __init__(self, builder: ExeBuilder, cave_patches: list,
                  bytes_patches: list, imm32_patches: list,
-                 config_patches: list, output_path: str):
+                 config_patches: list, data_section_patches: list,
+                 output_path: str):
         super().__init__()
         self._builder = builder
         self._cave_patches = cave_patches
         self._bytes_patches = bytes_patches
         self._imm32_patches = imm32_patches
         self._config_patches = config_patches
+        self._data_section_patches = data_section_patches
         self._output = output_path
 
     def run(self):
@@ -41,6 +45,7 @@ class _BuildWorker(QThread):
             bytes_patches=self._bytes_patches,
             imm32_patches=self._imm32_patches,
             config_patches=self._config_patches,
+            data_section_patches=self._data_section_patches,
         )
         self.finished.emit(result)
 
@@ -181,6 +186,11 @@ class GenerateExeDialog(QDialog):
                 if p.json_file:
                     self._add_patch_item(p, '配置驱动')
                     supported_count += 1
+                continue
+            # 数据段注入型（tkact_expand / tkkon_expand）
+            if p.type in ('tkact_expand', 'tkkon_expand'):
+                self._add_patch_item(p, '数据段注入')
+                supported_count += 1
                 continue
             # 不支持的类型
             unsupported.append(p)
@@ -396,7 +406,54 @@ class GenerateExeDialog(QDialog):
                     patch_type=p.type, config=cfg,
                 ))
 
-        return cave_patches, bytes_patches, imm32_patches, config_patches
+            # 数据段注入型（tkact_expand / tkkon_expand）
+            elif p.type in ('tkact_expand', 'tkkon_expand'):
+                # 查找扩展数据文件
+                src_dir = os.path.dirname(self._src_edit.text().strip())
+                if p.type == 'tkact_expand':
+                    data_file = os.path.join(src_dir, 'TKAct.dat')
+                    old_base = 0x9539CA
+                    old_size = 509600
+                    section_name = '.tkact'
+                else:  # tkkon_expand
+                    data_file = os.path.join(src_dir, 'TKKon.dat')
+                    old_base = 0x9D0698
+                    old_size = 26000
+                    section_name = '.tkkon'
+
+                if not os.path.isfile(data_file):
+                    self._log(f'[{p.id}] 数据文件不存在: {data_file}')
+                    continue
+
+                try:
+                    with open(data_file, 'rb') as f:
+                        data_content = f.read()
+                except Exception as e:
+                    self._log(f'[{p.id}] 读取数据文件失败: {e}')
+                    continue
+
+                # TKKon.dat 需要 LZSS 解压
+                if p.type == 'tkkon_expand':
+                    try:
+                        from editor_utils.lzss import lzss_decompress_dat
+                        data_content = lzss_decompress_dat(data_content)
+                    except Exception as e:
+                        self._log(f'[{p.id}] LZSS 解压失败: {e}')
+                        continue
+
+                if len(data_content) <= old_size:
+                    self._log(f'[{p.id}] 数据大小 {len(data_content)} <= 原始 {old_size}，跳过')
+                    continue
+
+                data_section_patches.append(DataSectionPatchItem(
+                    patch_id=p.id, name=p.name,
+                    data=data_content,
+                    old_base=old_base,
+                    old_size=old_size,
+                    section_name=section_name,
+                ))
+
+        return cave_patches, bytes_patches, imm32_patches, config_patches, data_section_patches
 
     def _resolve_imm32_value(self, p: PatchDef) -> int | None:
         """解析 patch_imm32 的 new_value_expr 为静态整数值。
@@ -495,8 +552,9 @@ class GenerateExeDialog(QDialog):
             QMessageBox.warning(self, '错误', '请指定输出路径')
             return
 
-        cave_patches, bytes_patches, imm32_patches, config_patches = self._get_selected_patches()
-        total = len(cave_patches) + len(bytes_patches) + len(imm32_patches) + len(config_patches)
+        cave_patches, bytes_patches, imm32_patches, config_patches, data_section_patches = self._get_selected_patches()
+        total = (len(cave_patches) + len(bytes_patches) + len(imm32_patches) +
+                 len(config_patches) + len(data_section_patches))
         if total == 0:
             QMessageBox.warning(self, '错误', '请至少勾选一个补丁')
             return
@@ -505,7 +563,8 @@ class GenerateExeDialog(QDialog):
         all_names = ([p.name for p in cave_patches] +
                      [p.name for p in bytes_patches] +
                      [p.name for p in imm32_patches] +
-                     [p.name for p in config_patches])
+                     [p.name for p in config_patches] +
+                     [p.name for p in data_section_patches])
         patch_names = ', '.join(all_names)
         ret = QMessageBox.question(
             self, '确认生成',
@@ -520,7 +579,8 @@ class GenerateExeDialog(QDialog):
         self._progress.setRange(0, 0)
         self._log_text.clear()
         self._log(f'开始构建… (cave={len(cave_patches)}, bytes={len(bytes_patches)}, '
-                  f'imm32={len(imm32_patches)}, config={len(config_patches)})')
+                  f'imm32={len(imm32_patches)}, config={len(config_patches)}, '
+                  f'data={len(data_section_patches)})')
 
         try:
             builder = ExeBuilder(src)
@@ -532,7 +592,8 @@ class GenerateExeDialog(QDialog):
             return
 
         self._worker = _BuildWorker(builder, cave_patches, bytes_patches,
-                                    imm32_patches, config_patches, out)
+                                    imm32_patches, config_patches,
+                                    data_section_patches, out)
         self._worker.finished.connect(self._on_build_finished)
         self._worker.start()
 

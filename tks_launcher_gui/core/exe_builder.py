@@ -251,6 +251,22 @@ class ConfigPatchItem:
 
 
 @dataclass
+class DataSectionPatchItem:
+    """数据段注入补丁：将扩展数据注入 exe，重定向代码引用。
+
+    用于 tkact_expand / tkkon_expand 等需要扩容数据缓冲区的补丁。
+    将扩展数据作为新 PE 节注入，然后用 patch_imm32 重定向基址和大小引用。
+    """
+    patch_id: str
+    name: str
+    data: bytes                  # 要注入的扩展数据
+    old_base: int                # 旧缓冲区基址 (如 0x9539CA)
+    old_size: int                # 旧缓冲区大小 (如 509600)
+    section_name: str = '.tks'   # 新节名称
+    data_offset: int = 0         # 数据在新节内的偏移
+
+
+@dataclass
 class CaveBuildResult:
     success: bool
     output_path: str = ''
@@ -568,12 +584,56 @@ class ExeBuilder:
 
         return True
 
+    def _add_pe_section(self, data: bytearray, section_name: str,
+                        vsize: int, raw_size: int, characteristics: int,
+                        log: List[str]) -> Tuple[bool, int, int]:
+        """向 PE 添加新节。Returns (success, new_va, new_abs)。"""
+        pe = self._pe
+
+        last_sec = pe.sections[-1]
+        new_va = align_up(
+            last_sec.virtual_addr + max(last_sec.virtual_size, last_sec.raw_size),
+            pe.section_align)
+        new_raw_off = align_up(len(data), pe.file_align)
+        new_abs = pe.image_base + new_va
+
+        # 填充到 new_raw_off
+        if len(data) < new_raw_off:
+            data.extend(b'\x00' * (new_raw_off - len(data)))
+
+        # 更新 PE 头
+        e_lfanew = pe.e_lfanew
+        opt_off = e_lfanew + 24
+        sec_table_off = e_lfanew + 24 + pe.opt_size
+
+        new_num_sections = pe.num_sections + 1
+        struct.pack_into('<H', data, e_lfanew + 6, new_num_sections)
+
+        new_size_of_image = align_up(new_va + vsize, pe.section_align)
+        struct.pack_into('<I', data, opt_off + 56, new_size_of_image)
+
+        new_sec_entry_off = sec_table_off + pe.num_sections * 40
+        if new_sec_entry_off + 40 > pe.size_of_headers:
+            log.append(f'  [ERROR] 节表空间不足')
+            return False, 0, 0
+
+        sec_name_bytes = section_name.encode('ascii')[:8].ljust(8, b'\x00')
+        sec_entry = sec_name_bytes + struct.pack('<IIIIIIHHI',
+            vsize, new_va, raw_size, new_raw_off,
+            0, 0, 0, 0, characteristics)
+        data[new_sec_entry_off:new_sec_entry_off + 40] = sec_entry
+
+        log.append(f'  [{section_name}] RVA=0x{new_va:X}, 绝对=0x{new_abs:X}, '
+                   f'大小=0x{raw_size:X}')
+        return True, new_va, new_abs
+
     def build(self, cave_patches: List[CavePatchItem],
               output_path: str,
               bytes_patches: Optional[List[BytesPatchItem]] = None,
               imm32_patches: Optional[List[Imm32PatchItem]] = None,
               config_patches: Optional[List[ConfigPatchItem]] = None,
               fixed_layout: Optional[FixedLayoutCave] = None,
+              data_section_patches: Optional[List[DataSectionPatchItem]] = None,
               section_name: str = '.test') -> CaveBuildResult:
         """构建修改版 exe。
 
@@ -584,6 +644,7 @@ class ExeBuilder:
             imm32_patches: patch_imm32 型补丁列表
             config_patches: 配置驱动型补丁列表
             fixed_layout: 固定布局 cave（如 summon_extend）
+            data_section_patches: 数据段注入补丁（如 tkact_expand）
             section_name: 新节名称（默认 .test）
 
         Returns:
@@ -595,14 +656,48 @@ class ExeBuilder:
         bytes_patches = bytes_patches or []
         imm32_patches = imm32_patches or []
         config_patches = config_patches or []
+        data_section_patches = data_section_patches or []
 
-        if not cave_patches and not bytes_patches and not imm32_patches and not config_patches and not fixed_layout:
+        if not (cave_patches or bytes_patches or imm32_patches or
+                config_patches or fixed_layout or data_section_patches):
             result.error = '未选择任何补丁'
             log.append(result.error)
             return result
 
         pe = self._pe
         data = bytearray(self._orig_data)
+
+        # ── 0. 应用数据段注入（tkact_expand / tkkon_expand） ──
+        # 数据段注入会改变 .test 节的起始地址，因此必须在 cave_patch 之前处理
+        data_section_results = []  # [(item, new_base_abs)]
+        if data_section_patches:
+            log.append(f'── 应用数据段注入 ({len(data_section_patches)} 个) ──')
+            for item in data_section_patches:
+                # 计算新节地址
+                last_sec = pe.sections[-1]
+                new_va = align_up(
+                    last_sec.virtual_addr + max(last_sec.virtual_size, last_sec.raw_size),
+                    pe.section_align)
+                new_raw_off = align_up(len(data), pe.file_align)
+                new_abs = pe.image_base + new_va
+
+                log.append(f'  [{item.patch_id}] 注入 {item.section_name}: '
+                           f'RVA=0x{new_va:X}, 绝对=0x{new_abs:X}, '
+                           f'数据={len(item.data)} 字节')
+
+                # 填充到 new_raw_off
+                if len(data) < new_raw_off:
+                    data.extend(b'\x00' * (new_raw_off - len(data)))
+
+                # 写入数据
+                data.extend(item.data)
+
+                # 记录新基址
+                data_section_results.append((item, new_abs))
+
+                # 更新 pe 信息（后续节会在新节之后）
+                # 注意：这里我们手动更新 pe 对象的最后一个节信息
+                # 实际的 PE 头更新在所有节添加完成后统一进行
 
         # ── 1. 应用 patch_bytes（直接修改现有节） ──
         if bytes_patches:
@@ -621,6 +716,39 @@ class ExeBuilder:
             log.append(f'── 应用 patch_imm32 ({len(imm32_patches)} 个) ──')
             for item in imm32_patches:
                 self._apply_imm32_patch(data, item, log)
+
+        # ── 2b. 数据段注入后，重定向基址和大小引用 ──
+        if data_section_results:
+            log.append(f'── 重定向数据段引用 ({len(data_section_results)} 个) ──')
+            for item, new_base_abs in data_section_results:
+                # 重定向基址引用：搜索 old_base 并替换为 new_base_abs
+                old_base_bytes = struct.pack('<I', item.old_base)
+                new_base_bytes = struct.pack('<I', new_base_abs)
+                hits = find_pattern(bytes(data), old_base_bytes)
+                log.append(f'  [{item.patch_id}] 基址引用: {len(hits)} 处 '
+                           f'(0x{item.old_base:X} → 0x{new_base_abs:X})')
+                for off in hits:
+                    # 检查是否在 .text 节内（避免误改数据）
+                    rva = offset_to_rva(pe, off) if any(
+                        s.raw_offset <= off < s.raw_offset + s.raw_size
+                        for s in pe.sections) else 0
+                    if rva and rva < 0x100000:  # .text 节范围
+                        data[off:off+4] = new_base_bytes
+                        log.append(f'    @ 0x{off:X} (RVA 0x{rva:X})')
+
+                # 重定向大小引用
+                old_size_bytes = struct.pack('<I', item.old_size)
+                new_size_bytes = struct.pack('<I', len(item.data))
+                size_hits = find_pattern(bytes(data), old_size_bytes)
+                log.append(f'  [{item.patch_id}] 大小引用: {len(size_hits)} 处 '
+                           f'({item.old_size} → {len(item.data)})')
+                for off in size_hits:
+                    rva = offset_to_rva(pe, off) if any(
+                        s.raw_offset <= off < s.raw_offset + s.raw_size
+                        for s in pe.sections) else 0
+                    if rva and rva < 0x100000:
+                        data[off:off+4] = new_size_bytes
+                        log.append(f'    @ 0x{off:X} (RVA 0x{rva:X})')
 
         # ── 3. 应用配置驱动型补丁 ──
         if config_patches:
@@ -716,29 +844,45 @@ class ExeBuilder:
                 log.append(f'[{item.patch_id}] hook 0x{hook_off:X}: '
                            f'jmp 0x{cave_target_rva:X} (rel32=0x{rel32 & 0xFFFFFFFF:X})')
 
-            # 3.6 更新 PE 头
+            # 3.6 更新 PE 头（包含数据段）
             e_lfanew = pe.e_lfanew
             opt_off = e_lfanew + 24
             sec_table_off = e_lfanew + 24 + pe.opt_size
 
-            new_num_sections = pe.num_sections + 1
+            # 计算总节节数
+            total_new_sections = len(data_section_results) + (1 if cave_patches else 0) + (1 if fixed_layout else 0)
+            new_num_sections = pe.num_sections + total_new_sections
             struct.pack_into('<H', data, e_lfanew + 6, new_num_sections)
 
+            # 计算 SizeOfImage
             new_size_of_image = align_up(new_va + test_vsize, pe.section_align)
             struct.pack_into('<I', data, opt_off + 56, new_size_of_image)
 
-            new_sec_entry_off = sec_table_off + pe.num_sections * 40
-            if new_sec_entry_off + 40 > pe.size_of_headers:
-                result.error = (f'节表空间不足: 需要 0x{new_sec_entry_off + 40:X}，'
-                                f'但 SizeOfHeaders=0x{pe.size_of_headers:X}')
+            # 写入数据段节表项
+            for i, (item, data_va) in enumerate(data_section_results):
+                sec_entry_off = sec_table_off + (pe.num_sections + i) * 40
+                if sec_entry_off + 40 > pe.size_of_headers:
+                    result.error = f'节表空间不足'
+                    log.append(result.error)
+                    return result
+                data_raw_off = align_up(len(data) - len(item.data), pe.file_align)
+                sec_name_bytes = item.section_name.encode('ascii')[:8].ljust(8, b'\x00')
+                sec_entry = sec_name_bytes + struct.pack('<IIIIIIHHI',
+                    len(item.data), data_va, len(item.data), data_raw_off,
+                    0, 0, 0, 0, self.SECTION_CHARS_DATA)
+                data[sec_entry_off:sec_entry_off + 40] = sec_entry
+
+            # 写入 .test 节表项
+            test_sec_entry_off = sec_table_off + (pe.num_sections + len(data_section_results)) * 40
+            if test_sec_entry_off + 40 > pe.size_of_headers:
+                result.error = f'节表空间不足'
                 log.append(result.error)
                 return result
-
             sec_name_bytes = section_name.encode('ascii')[:8].ljust(8, b'\x00')
             sec_entry = sec_name_bytes + struct.pack('<IIIIIIHHI',
                 test_vsize, new_va, test_raw_size, test_file_off,
                 0, 0, 0, 0, self.SECTION_CHARS_CODE)
-            data[new_sec_entry_off:new_sec_entry_off + 40] = sec_entry
+            data[test_sec_entry_off:test_sec_entry_off + 40] = sec_entry
 
             log.append(f'PE 头: NumberOfSections={new_num_sections}, '
                        f'SizeOfImage=0x{new_size_of_image:X}')
