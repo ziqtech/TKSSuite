@@ -231,6 +231,8 @@ class MainWindow(QMainWindow):
         mm.addAction("模组信息编辑", self._on_edit_mod_meta)
         mm.addAction("打包 TKS.exe 为 MOD", self._on_pack_tks_exe)
         mm.addSeparator()
+        mm.addAction("生成启动器", self._on_generate_exe)
+        mm.addSeparator()
         mm.addAction("制作头像 MOD", self._on_custom_avatar)
         mm.addAction("制作音乐 MOD", self._on_custom_music)
 
@@ -924,6 +926,16 @@ class MainWindow(QMainWindow):
         dialog.exec()
         # 打包完成后刷新模组列表
         self.mod_list.refresh_mods()
+
+    def _on_generate_exe(self):
+        """打开生成启动器对话框 — 将选中补丁烧录进原版 TKS.exe"""
+        from ui.generate_exe_dialog import GenerateExeDialog
+        dialog = GenerateExeDialog(
+            patches=self._patches,
+            launcher_dir=_LAUNCHER_DIR,
+            parent=self,
+        )
+        dialog.exec()
 
     def _on_pack_tks_exe(self):
         """将第三方 TKS.exe 打包为 .tksmod（复用 mod_exporter 框架）"""
