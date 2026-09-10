@@ -2115,8 +2115,26 @@ def apply_config_patches(config: PatchConfig, code_buf: bytearray, code_start_ad
             all_ok &= _verdict(defn, run_script_patch(defn, ctx))
             continue
 
+        if defn.type == "fixed_layout_cave":
+            # 运行时仍走 script.py (VirtualAllocEx + apply_cave_hook)
+            if defn.script_path or defn.script_source:
+                all_ok &= _verdict(defn, run_script_patch(defn, ctx))
+            else:
+                log(f"    [ERROR] {tag}: fixed_layout_cave 缺少 script_file")
+            continue
+
+        if defn.type == "patch_data_expand":
+            # 运行时: 有 script 则执行 (tkact/tkkon); 无 script 则由
+            # WarPC 扩展流程处理 (warpc_base_refs), 此处仅日志。
+            if defn.script_path or defn.script_source:
+                all_ok &= _verdict(defn, run_script_patch(defn, ctx))
+            else:
+                log(f"    -> 数据扩容由 WarPC/扩展流程处理 (base=0x{warpc_base:08X})")
+                defn._applied = True
+            continue
+
         if defn.type == "patch_warpc_addr":
-            # WarPC 地址由 WarPC 扩展流程统一处理, 此处仅日志
+            # 兼容旧类型: WarPC 地址由 WarPC 扩展流程统一处理
             log(f"    -> 由 WarPC 扩展流程处理 (base=0x{warpc_base:08X})")
             defn._applied = True
             continue

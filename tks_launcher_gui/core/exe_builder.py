@@ -211,13 +211,16 @@ class FixedLayoutCave:
     """固定布局的 cave 块（多个子 cave 按预定偏移排列）。
 
     用于 summon_extend 等需要多个 hook 点、且子 cave 之间有相对偏移关系的补丁。
-    整个 cave_block 会被放置在 .test 节的开头（偏移 0）。
+    cave_block 放置在 .test 节起始（偏移 0）；build_fn(cave_base) 可在
+    计算出 .test 绝对地址后动态生成，避免预先猜地址。
     """
     patch_id: str
     name: str
-    cave_block: bytes                    # 完整的 cave 布局（含所有子 cave 和数据区）
     hooks: List[Dict]                    # [{pattern, hook_size, cave_entry_offset, expect_count}]
-    bytes_patches: Optional[List['BytesPatchItem']] = None  # 附带的 patch_bytes
+    cave_block: Optional[bytes] = None   # 预生成的完整 cave 布局
+    build_fn: Optional[object] = None    # Callable[[int], bytes] — cave_base → cave_block
+    bytes_patches: Optional[List['BytesPatchItem']] = None
+    cave_layout_size: int = 0            # 预留布局大小 (build_fn 时用于节大小)
 
 
 @dataclass
@@ -632,7 +635,7 @@ class ExeBuilder:
               bytes_patches: Optional[List[BytesPatchItem]] = None,
               imm32_patches: Optional[List[Imm32PatchItem]] = None,
               config_patches: Optional[List[ConfigPatchItem]] = None,
-              fixed_layout: Optional[FixedLayoutCave] = None,
+              fixed_layouts: Optional[List[FixedLayoutCave]] = None,
               data_section_patches: Optional[List[DataSectionPatchItem]] = None,
               section_name: str = '.test') -> CaveBuildResult:
         """构建修改版 exe。
@@ -643,7 +646,7 @@ class ExeBuilder:
             bytes_patches: patch_bytes 型补丁列表
             imm32_patches: patch_imm32 型补丁列表
             config_patches: 配置驱动型补丁列表
-            fixed_layout: 固定布局 cave（如 summon_extend）
+            fixed_layouts: 固定布局 cave 列表（如 summon_extend）
             data_section_patches: 数据段注入补丁（如 tkact_expand）
             section_name: 新节名称（默认 .test）
 
@@ -657,9 +660,10 @@ class ExeBuilder:
         imm32_patches = imm32_patches or []
         config_patches = config_patches or []
         data_section_patches = data_section_patches or []
+        fixed_layouts = fixed_layouts or []
 
         if not (cave_patches or bytes_patches or imm32_patches or
-                config_patches or fixed_layout or data_section_patches):
+                config_patches or fixed_layouts or data_section_patches):
             result.error = '未选择任何补丁'
             log.append(result.error)
             return result
@@ -667,76 +671,65 @@ class ExeBuilder:
         pe = self._pe
         data = bytearray(self._orig_data)
 
-        # ── 0. 应用数据段注入（tkact_expand / tkkon_expand） ──
-        # 数据段注入会改变 .test 节的起始地址，因此必须在 cave_patch 之前处理
-        data_section_results = []  # [(item, new_base_abs)]
+        # 跟踪后续新节的虚拟地址游标 (数据段 + .test)
+        next_va = align_up(
+            pe.sections[-1].virtual_addr
+            + max(pe.sections[-1].virtual_size, pe.sections[-1].raw_size),
+            pe.section_align)
+
+        # ── 0. 数据段注入 ──
+        data_section_results = []  # [(item, new_base_abs, raw_off, va)]
         if data_section_patches:
             log.append(f'── 应用数据段注入 ({len(data_section_patches)} 个) ──')
             for item in data_section_patches:
-                # 计算新节地址
-                last_sec = pe.sections[-1]
-                new_va = align_up(
-                    last_sec.virtual_addr + max(last_sec.virtual_size, last_sec.raw_size),
-                    pe.section_align)
+                new_va = next_va
                 new_raw_off = align_up(len(data), pe.file_align)
                 new_abs = pe.image_base + new_va
-
                 log.append(f'  [{item.patch_id}] 注入 {item.section_name}: '
                            f'RVA=0x{new_va:X}, 绝对=0x{new_abs:X}, '
                            f'数据={len(item.data)} 字节')
-
-                # 填充到 new_raw_off
                 if len(data) < new_raw_off:
                     data.extend(b'\x00' * (new_raw_off - len(data)))
-
-                # 写入数据
                 data.extend(item.data)
+                data_section_results.append((item, new_abs, new_raw_off, new_va))
+                next_va = align_up(new_va + max(len(item.data), 1), pe.section_align)
 
-                # 记录新基址
-                data_section_results.append((item, new_abs))
-
-                # 更新 pe 信息（后续节会在新节之后）
-                # 注意：这里我们手动更新 pe 对象的最后一个节信息
-                # 实际的 PE 头更新在所有节添加完成后统一进行
-
-        # ── 1. 应用 patch_bytes（直接修改现有节） ──
+        # ── 1. patch_bytes ──
         if bytes_patches:
             log.append(f'── 应用 patch_bytes ({len(bytes_patches)} 个) ──')
             for item in bytes_patches:
                 self._apply_bytes_patch(data, item, log)
 
-        # ── 1b. 应用 fixed_layout 附带的 patch_bytes ──
-        if fixed_layout and fixed_layout.bytes_patches:
-            log.append(f'── 应用 fixed_layout 附带 patch_bytes ({len(fixed_layout.bytes_patches)} 个) ──')
-            for item in fixed_layout.bytes_patches:
-                self._apply_bytes_patch(data, item, log)
+        for fl in fixed_layouts:
+            if fl.bytes_patches:
+                log.append(f'── 应用 {fl.patch_id} 附带 patch_bytes '
+                           f'({len(fl.bytes_patches)} 个) ──')
+                for item in fl.bytes_patches:
+                    self._apply_bytes_patch(data, item, log)
 
-        # ── 2. 应用 patch_imm32（直接修改现有节） ──
+        # ── 2. patch_imm32 ──
         if imm32_patches:
             log.append(f'── 应用 patch_imm32 ({len(imm32_patches)} 个) ──')
             for item in imm32_patches:
                 self._apply_imm32_patch(data, item, log)
 
-        # ── 2b. 数据段注入后，重定向基址和大小引用 ──
+        # ── 2b. 数据段引用重定向 ──
         if data_section_results:
             log.append(f'── 重定向数据段引用 ({len(data_section_results)} 个) ──')
-            for item, new_base_abs in data_section_results:
-                # 重定向基址引用：搜索 old_base 并替换为 new_base_abs
+            for item, new_base_abs, _, _ in data_section_results:
                 old_base_bytes = struct.pack('<I', item.old_base)
                 new_base_bytes = struct.pack('<I', new_base_abs)
                 hits = find_pattern(bytes(data), old_base_bytes)
                 log.append(f'  [{item.patch_id}] 基址引用: {len(hits)} 处 '
                            f'(0x{item.old_base:X} → 0x{new_base_abs:X})')
                 for off in hits:
-                    # 检查是否在 .text 节内（避免误改数据）
                     rva = offset_to_rva(pe, off) if any(
                         s.raw_offset <= off < s.raw_offset + s.raw_size
                         for s in pe.sections) else 0
-                    if rva and rva < 0x100000:  # .text 节范围
-                        data[off:off+4] = new_base_bytes
+                    if rva and rva < 0x100000:
+                        data[off:off + 4] = new_base_bytes
                         log.append(f'    @ 0x{off:X} (RVA 0x{rva:X})')
 
-                # 重定向大小引用
                 old_size_bytes = struct.pack('<I', item.old_size)
                 new_size_bytes = struct.pack('<I', len(item.data))
                 size_hits = find_pattern(bytes(data), old_size_bytes)
@@ -747,10 +740,10 @@ class ExeBuilder:
                         s.raw_offset <= off < s.raw_offset + s.raw_size
                         for s in pe.sections) else 0
                     if rva and rva < 0x100000:
-                        data[off:off+4] = new_size_bytes
+                        data[off:off + 4] = new_size_bytes
                         log.append(f'    @ 0x{off:X} (RVA 0x{rva:X})')
 
-        # ── 3. 应用配置驱动型补丁 ──
+        # ── 3. 配置驱动 ──
         if config_patches:
             log.append(f'── 应用配置驱动型 ({len(config_patches)} 个) ──')
             for item in config_patches:
@@ -765,12 +758,45 @@ class ExeBuilder:
                 else:
                     log.append(f'  [{item.patch_id}] 未知配置类型: {item.patch_type}')
 
-        # ── 3. 处理 cave_hook 型补丁 ──
-        if cave_patches:
-            log.append(f'── 应用 cave_hook ({len(cave_patches)} 个) ──')
+        # ── 4. 定位所有 hook 点 ──
+        # cave_hook: (kind, item_or_fl, hook_off, hook_size, cave_entry_rel, name)
+        # fixed_layout 的 cave_entry_rel 相对 .test 起始; cave_hook 顺序分配
+        located = []  # (kind, owner, hook_off, hook_size, entry_rel, label)
+        need_test = bool(cave_patches or fixed_layouts)
 
-            # 3.1 定位所有 hook 点
-            hook_targets = []
+        if fixed_layouts:
+            log.append(f'── 定位 fixed_layout hook ({len(fixed_layouts)} 个) ──')
+            for fl in fixed_layouts:
+                for hook in fl.hooks:
+                    pattern = hook['pattern']
+                    if isinstance(pattern, str):
+                        pattern = bytes(int(t, 16) for t in pattern.split())
+                    expect = hook.get('expect_count', 1)
+                    offsets = find_pattern(bytes(data), pattern)
+                    if len(offsets) != expect:
+                        if hook.get('fallback_rva'):
+                            off = rva_to_offset(pe, _parse_int(hook['fallback_rva']))
+                        else:
+                            result.error = (f'[{fl.patch_id}] hook '
+                                            f'{hook.get("name", "?")} 匹配 '
+                                            f'{len(offsets)} 次，期望 {expect} 次')
+                            log.append(result.error)
+                            return result
+                    else:
+                        off = offsets[0]
+                    hsize = int(hook['hook_size'])
+                    if hsize < 5:
+                        result.error = (f'[{fl.patch_id}] hook_size={hsize} < 5')
+                        log.append(result.error)
+                        return result
+                    entry = int(hook['cave_entry_offset'])
+                    located.append(('fl', fl, off, hsize, entry,
+                                    hook.get('name', fl.patch_id)))
+                    log.append(f'  [{fl.patch_id}/{hook.get("name", "?")}] '
+                               f'@ 0x{off:X} → .test+0x{entry:X}')
+
+        if cave_patches:
+            log.append(f'── 定位 cave_hook ({len(cave_patches)} 个) ──')
             for item in cave_patches:
                 offsets = find_pattern(bytes(data), item.hook_pattern)
                 if len(offsets) != item.expect_count:
@@ -778,205 +804,153 @@ class ExeBuilder:
                         off = rva_to_offset(pe, item.fallback_rva)
                         log.append(f'[{item.patch_id}] 模式匹配 {len(offsets)} 次，'
                                    f'使用回退 RVA 0x{item.fallback_rva:X}')
-                        hook_targets.append((item, off))
                     else:
                         result.error = (f'[{item.patch_id}] hook_pattern 匹配 '
                                         f'{len(offsets)} 次，期望 {item.expect_count} 次')
                         log.append(result.error)
                         return result
                 else:
-                    hook_targets.append((item, offsets[0]))
-                    log.append(f'[{item.patch_id}] hook 点 @ 文件偏移 0x{offsets[0]:X} '
-                               f'(RVA 0x{offset_to_rva(pe, offsets[0]):X})')
-
-            # 3.2 计算 .test 节布局
-            cave_blobs = []
-            cave_total = 0
-            for item, _ in hook_targets:
-                aligned_off = align_up(cave_total, 16)
-                cave_blobs.append((item, aligned_off))
-                cave_total = aligned_off + len(item.cave_code)
-
-            for item, _ in hook_targets:
+                    off = offsets[0]
+                    log.append(f'[{item.patch_id}] hook 点 @ 0x{off:X} '
+                               f'(RVA 0x{offset_to_rva(pe, off):X})')
                 if item.hook_size < 5:
-                    result.error = (f'[{item.patch_id}] hook_size={item.hook_size} < 5，'
-                                    f'无法写入 jmp rel32')
+                    result.error = (f'[{item.patch_id}] hook_size={item.hook_size} < 5')
                     log.append(result.error)
                     return result
+                located.append(('cave', item, off, item.hook_size, -1, item.patch_id))
 
-            test_raw_size = align_up(cave_total, pe.file_align)
-            test_vsize = cave_total
+        # ── 5. 计算 .test 节布局 ──
+        test_rva = 0
+        test_file_off = 0
+        test_abs = 0
+        test_vsize = 0
+        test_raw_size = 0
+        cave_section = None
 
-            # 3.3 计算新节的 RVA / 文件偏移
-            last_sec = pe.sections[-1]
-            new_va = align_up(
-                last_sec.virtual_addr + max(last_sec.virtual_size, last_sec.raw_size),
-                pe.section_align)
-            new_raw_off = align_up(len(data), pe.file_align)
-
-            test_rva = new_va
-            test_file_off = new_raw_off
-
-            log.append(f'.test 节: RVA=0x{test_rva:X}, 文件偏移=0x{test_file_off:X}, '
-                       f'大小=0x{test_raw_size:X} ({test_raw_size} 字节)')
-
-            # 3.4 写入 cave 代码
-            if len(data) < new_raw_off:
-                data.extend(b'\x00' * (new_raw_off - len(data)))
-
-            cave_section = bytearray(test_raw_size)
-            for item, cave_off in cave_blobs:
-                cave_section[cave_off:cave_off + len(item.cave_code)] = item.cave_code
-                log.append(f'[{item.patch_id}] cave 代码写入 .test+0x{cave_off:X} '
-                           f'({len(item.cave_code)} 字节)')
-
-            data.extend(cave_section)
-
-            # 3.5 写入 jmp hook
-            for (item, hook_off), (_, cave_off) in zip(hook_targets, cave_blobs):
-                hook_rva = offset_to_rva(pe, hook_off)
-                cave_target_rva = test_rva + cave_off
-                rel32 = cave_target_rva - (hook_rva + 5)
-                jmp_bytes = b'\xE9' + struct.pack('<i', rel32)
-                nop_fill = b'\x90' * (item.hook_size - 5)
-                patch_bytes = jmp_bytes + nop_fill
-                data[hook_off:hook_off + item.hook_size] = patch_bytes
-                log.append(f'[{item.patch_id}] hook 0x{hook_off:X}: '
-                           f'jmp 0x{cave_target_rva:X} (rel32=0x{rel32 & 0xFFFFFFFF:X})')
-
-            # 3.6 更新 PE 头（包含数据段）
-            e_lfanew = pe.e_lfanew
-            opt_off = e_lfanew + 24
-            sec_table_off = e_lfanew + 24 + pe.opt_size
-
-            # 计算总节节数
-            total_new_sections = len(data_section_results) + (1 if cave_patches else 0) + (1 if fixed_layout else 0)
-            new_num_sections = pe.num_sections + total_new_sections
-            struct.pack_into('<H', data, e_lfanew + 6, new_num_sections)
-
-            # 计算 SizeOfImage
-            new_size_of_image = align_up(new_va + test_vsize, pe.section_align)
-            struct.pack_into('<I', data, opt_off + 56, new_size_of_image)
-
-            # 写入数据段节表项
-            for i, (item, data_va) in enumerate(data_section_results):
-                sec_entry_off = sec_table_off + (pe.num_sections + i) * 40
-                if sec_entry_off + 40 > pe.size_of_headers:
-                    result.error = f'节表空间不足'
+        if need_test:
+            # fixed_layout 块从偏移 0 开始; cave_hook 顺序排在其后
+            fl_blocks = []  # (fl, block_bytes)
+            cursor = 0
+            for fl in fixed_layouts:
+                size = fl.cave_layout_size or (
+                    len(fl.cave_block) if fl.cave_block else 0)
+                if size <= 0:
+                    result.error = f'[{fl.patch_id}] cave_layout_size 未声明'
                     log.append(result.error)
                     return result
-                data_raw_off = align_up(len(data) - len(item.data), pe.file_align)
-                sec_name_bytes = item.section_name.encode('ascii')[:8].ljust(8, b'\x00')
-                sec_entry = sec_name_bytes + struct.pack('<IIIIIIHHI',
-                    len(item.data), data_va, len(item.data), data_raw_off,
-                    0, 0, 0, 0, self.SECTION_CHARS_DATA)
-                data[sec_entry_off:sec_entry_off + 40] = sec_entry
+                fl_blocks.append((fl, cursor, size))
+                cursor = align_up(cursor + size, 16)
 
-            # 写入 .test 节表项
-            test_sec_entry_off = sec_table_off + (pe.num_sections + len(data_section_results)) * 40
-            if test_sec_entry_off + 40 > pe.size_of_headers:
-                result.error = f'节表空间不足'
-                log.append(result.error)
-                return result
-            sec_name_bytes = section_name.encode('ascii')[:8].ljust(8, b'\x00')
-            sec_entry = sec_name_bytes + struct.pack('<IIIIIIHHI',
-                test_vsize, new_va, test_raw_size, test_file_off,
-                0, 0, 0, 0, self.SECTION_CHARS_CODE)
-            data[test_sec_entry_off:test_sec_entry_off + 40] = sec_entry
+            cave_blobs = []  # (item, entry_rel)
+            for kind, owner, _, _, entry, _ in located:
+                if kind != 'cave':
+                    continue
+                aligned = align_up(cursor, 16)
+                cave_blobs.append((owner, aligned))
+                cursor = aligned + len(owner.cave_code)
 
-            log.append(f'PE 头: NumberOfSections={new_num_sections}, '
-                       f'SizeOfImage=0x{new_size_of_image:X}')
-
-        # ── 3b. 处理 fixed_layout 型补丁（如 summon_extend） ──
-        if fixed_layout:
-            log.append(f'── 应用 fixed_layout: {fixed_layout.name} ──')
-
-            # 定位所有 hook 点
-            fl_hooks = []
-            for hook in fixed_layout.hooks:
-                pattern = hook['pattern']
-                if isinstance(pattern, str):
-                    pattern = bytes(int(t, 16) for t in pattern.split())
-                offsets = find_pattern(bytes(data), pattern)
-                expect = hook.get('expect_count', 1)
-                if len(offsets) != expect:
-                    result.error = (f'[{fixed_layout.patch_id}] hook 匹配 '
-                                    f'{len(offsets)} 次，期望 {expect} 次')
-                    log.append(result.error)
-                    return result
-                fl_hooks.append((hook, offsets[0]))
-                log.append(f'[{fixed_layout.patch_id}] hook @ 0x{offsets[0]:X} '
-                           f'→ cave+0x{hook["cave_entry_offset"]:X}')
-
-            # 计算 .test 节
-            cave_block = fixed_layout.cave_block
-            cave_total = len(cave_block)
-            test_raw_size = align_up(cave_total, pe.file_align)
-            test_vsize = cave_total
-
-            last_sec = pe.sections[-1]
-            new_va = align_up(
-                last_sec.virtual_addr + max(last_sec.virtual_size, last_sec.raw_size),
-                pe.section_align)
-            new_raw_off = align_up(len(data), pe.file_align)
-
-            test_rva = new_va
-            test_file_off = new_raw_off
+            test_vsize = max(cursor, 1)
+            test_raw_size = align_up(test_vsize, pe.file_align)
+            test_rva = next_va
+            test_file_off = align_up(len(data), pe.file_align)
             test_abs = pe.image_base + test_rva
 
             log.append(f'.test 节: RVA=0x{test_rva:X}, 绝对=0x{test_abs:X}, '
                        f'大小=0x{test_raw_size:X}')
 
-            # 写入 cave 块
-            if len(data) < new_raw_off:
-                data.extend(b'\x00' * (new_raw_off - len(data)))
+            # 生成 fixed_layout 块 (build_fn 用最终 test_abs)
             cave_section = bytearray(test_raw_size)
-            cave_section[:cave_total] = cave_block
+            for fl, off, size in fl_blocks:
+                if fl.build_fn is not None:
+                    block = fl.build_fn(test_abs)
+                else:
+                    block = fl.cave_block or b''
+                if len(block) > size:
+                    result.error = (f'[{fl.patch_id}] cave 块 {len(block)} 字节 '
+                                    f'超出布局 {size}')
+                    log.append(result.error)
+                    return result
+                cave_section[off:off + len(block)] = block
+                log.append(f'[{fl.patch_id}] cave 块写入 .test+0x{off:X} '
+                           f'({len(block)}/{size} 字节)')
+
+            for item, off in cave_blobs:
+                cave_section[off:off + len(item.cave_code)] = item.cave_code
+                log.append(f'[{item.patch_id}] cave 代码写入 .test+0x{off:X} '
+                           f'({len(item.cave_code)} 字节)')
+
+            if len(data) < test_file_off:
+                data.extend(b'\x00' * (test_file_off - len(data)))
             data.extend(cave_section)
 
             # 写入 jmp hook
-            for hook, hook_off in fl_hooks:
+            for kind, owner, hook_off, hsize, entry, label in located:
+                if kind == 'fl':
+                    entry_rel = entry
+                else:
+                    entry_rel = next(e for i, e in cave_blobs if i is owner)
                 hook_rva = offset_to_rva(pe, hook_off)
-                cave_target_rva = test_rva + hook['cave_entry_offset']
+                cave_target_rva = test_rva + entry_rel
                 rel32 = cave_target_rva - (hook_rva + 5)
-                jmp_bytes = b'\xE9' + struct.pack('<i', rel32)
-                nop_fill = b'\x90' * (hook['hook_size'] - 5)
-                patch = jmp_bytes + nop_fill
-                data[hook_off:hook_off + hook['hook_size']] = patch
-                log.append(f'[{fixed_layout.patch_id}] hook 0x{hook_off:X}: '
+                jmp = b'\xE9' + struct.pack('<i', rel32)
+                patch = jmp + b'\x90' * (hsize - 5)
+                data[hook_off:hook_off + hsize] = patch
+                log.append(f'[{owner.patch_id}/{label}] hook 0x{hook_off:X}: '
                            f'jmp 0x{cave_target_rva:X}')
 
-            # 更新 PE 头
+            next_va = align_up(test_rva + test_vsize, pe.section_align)
+
+        # ── 6. 更新 PE 头 ──
+        total_new = len(data_section_results) + (1 if need_test else 0)
+        if total_new:
             e_lfanew = pe.e_lfanew
             opt_off = e_lfanew + 24
             sec_table_off = e_lfanew + 24 + pe.opt_size
-
-            new_num_sections = pe.num_sections + 1
+            new_num_sections = pe.num_sections + total_new
             struct.pack_into('<H', data, e_lfanew + 6, new_num_sections)
+            struct.pack_into('<I', data, opt_off + 56, next_va)
 
-            new_size_of_image = align_up(new_va + test_vsize, pe.section_align)
-            struct.pack_into('<I', data, opt_off + 56, new_size_of_image)
+            for i, (item, _, raw_off, va) in enumerate(data_section_results):
+                sec_entry_off = sec_table_off + (pe.num_sections + i) * 40
+                if sec_entry_off + 40 > pe.size_of_headers:
+                    result.error = '节表空间不足'
+                    log.append(result.error)
+                    return result
+                name_b = item.section_name.encode('ascii')[:8].ljust(8, b'\x00')
+                entry = name_b + struct.pack('<IIIIIIHHI',
+                    len(item.data), va, len(item.data), raw_off,
+                    0, 0, 0, 0, self.SECTION_CHARS_DATA)
+                data[sec_entry_off:sec_entry_off + 40] = entry
 
-            new_sec_entry_off = sec_table_off + pe.num_sections * 40
-            if new_sec_entry_off + 40 > pe.size_of_headers:
-                result.error = (f'节表空间不足: 需要 0x{new_sec_entry_off + 40:X}，'
-                                f'但 SizeOfHeaders=0x{pe.size_of_headers:X}')
-                log.append(result.error)
-                return result
-
-            sec_name_bytes = section_name.encode('ascii')[:8].ljust(8, b'\x00')
-            sec_entry = sec_name_bytes + struct.pack('<IIIIIIHHI',
-                test_vsize, new_va, test_raw_size, test_file_off,
-                0, 0, 0, 0, self.SECTION_CHARS_CODE)
-            data[new_sec_entry_off:new_sec_entry_off + 40] = sec_entry
+            if need_test:
+                sec_entry_off = (sec_table_off
+                                 + (pe.num_sections + len(data_section_results)) * 40)
+                if sec_entry_off + 40 > pe.size_of_headers:
+                    result.error = '节表空间不足'
+                    log.append(result.error)
+                    return result
+                name_b = section_name.encode('ascii')[:8].ljust(8, b'\x00')
+                entry = name_b + struct.pack('<IIIIIIHHI',
+                    test_vsize, test_rva, test_raw_size, test_file_off,
+                    0, 0, 0, 0, self.SECTION_CHARS_CODE)
+                data[sec_entry_off:sec_entry_off + 40] = entry
 
             log.append(f'PE 头: NumberOfSections={new_num_sections}, '
-                       f'SizeOfImage=0x{new_size_of_image:X}')
+                       f'SizeOfImage=0x{next_va:X}')
 
-        # ── 4. 写入输出文件 ──
+        # ── 7. 写入输出文件 ──
         with open(output_path, 'wb') as f:
             f.write(bytes(data))
 
         result.success = True
         log.append(f'输出: {output_path} ({len(data)} 字节)')
         return result
+
+
+def _parse_int(val) -> int:
+    if isinstance(val, int):
+        return val
+    s = str(val).strip()
+    if s.lower().startswith('0x'):
+        return int(s, 16)
+    return int(s)

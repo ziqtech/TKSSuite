@@ -2,11 +2,13 @@
 
 支持的补丁类型：
   - cave_hook / patch_exp_lock: 代码洞注入（.test 节 + jmp hook）
+  - fixed_layout_cave: 多 hook 固定布局 cave（cave_code.py build_cave_block）
   - patch_bytes: 模式搜索 + 字节替换
   - patch_imm32: 立即数修改（静态值）
   - 配置驱动型: drop_probability / font_config / animation_speed / summon_table
-  - 数据段注入: tkact_expand / tkkon_expand（需扩展数据文件）
+  - patch_data_expand: 数据段注入（参数声明在 patch.json）
 """
+import importlib.util
 import os
 from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtWidgets import (
@@ -18,6 +20,7 @@ from core.config_loader import PatchDef
 from core.exe_builder import (
     ExeBuilder, CavePatchItem, BytesPatchItem, BytesPatchEntry,
     Imm32PatchItem, Imm32PatchEntry, ConfigPatchItem, DataSectionPatchItem,
+    FixedLayoutCave,
 )
 from core.tkspatch_loader import get_external_cave_code
 
@@ -29,7 +32,7 @@ class _BuildWorker(QThread):
     def __init__(self, builder: ExeBuilder, cave_patches: list,
                  bytes_patches: list, imm32_patches: list,
                  config_patches: list, data_section_patches: list,
-                 output_path: str):
+                 fixed_layouts: list, output_path: str):
         super().__init__()
         self._builder = builder
         self._cave_patches = cave_patches
@@ -37,6 +40,7 @@ class _BuildWorker(QThread):
         self._imm32_patches = imm32_patches
         self._config_patches = config_patches
         self._data_section_patches = data_section_patches
+        self._fixed_layouts = fixed_layouts
         self._output = output_path
 
     def run(self):
@@ -46,6 +50,7 @@ class _BuildWorker(QThread):
             imm32_patches=self._imm32_patches,
             config_patches=self._config_patches,
             data_section_patches=self._data_section_patches,
+            fixed_layouts=self._fixed_layouts,
         )
         self.finished.emit(result)
 
@@ -163,6 +168,14 @@ class GenerateExeDialog(QDialog):
                     self._add_patch_item(p, '代码注入')
                     supported_count += 1
                 continue
+            # fixed_layout_cave: 多 hook 固定布局
+            if p.type == 'fixed_layout_cave':
+                if p.hooks and (p.cave_code_file or p.cave_layout_size):
+                    self._add_patch_item(p, '固定布局注入')
+                    supported_count += 1
+                else:
+                    unsupported.append(p)
+                continue
             # patch_bytes 型：需要 pattern 和 replace
             if p.type == 'patch_bytes':
                 if (p.pattern and p.replace) or p.patterns:
@@ -187,7 +200,15 @@ class GenerateExeDialog(QDialog):
                     self._add_patch_item(p, '配置驱动')
                     supported_count += 1
                 continue
-            # 数据段注入型（tkact_expand / tkkon_expand）
+            # 数据段注入型 (参数声明在 patch.json)
+            if p.type == 'patch_data_expand':
+                if p.data_file and p.old_base and p.old_size:
+                    self._add_patch_item(p, '数据段注入')
+                    supported_count += 1
+                else:
+                    unsupported.append(p)
+                continue
+            # 兼容旧类型名
             if p.type in ('tkact_expand', 'tkkon_expand'):
                 self._add_patch_item(p, '数据段注入')
                 supported_count += 1
@@ -203,16 +224,16 @@ class GenerateExeDialog(QDialog):
         unsupported_count = len(unsupported)
         self._summary_label.setText(
             f'可烧录: {supported_count}/{total} 个补丁'
-            + (f'（{unsupported_count} 个暂不支持：script 型需运行时内存操作）' if unsupported_count else '')
+            + (f'（{unsupported_count} 个暂不支持）' if unsupported_count else '')
         )
 
         # 在日志中记录不支持的补丁
         for p in unsupported:
             reason = {
-                'script': '需要运行时内存操作（VirtualAllocEx/WriteProcessMemory）',
+                'script': '需要运行时内存操作，请改写为 cave_hook / patch_data_expand',
                 'patch_warpc_addr': '由 WarPC 扩展流程处理',
-            }.get(p.type, '未知原因')
-            self._log(f'[{p.id}] 类型 {p.type} 暂不支持文件级烧录: {reason}')
+            }.get(p.type, f'类型 {p.type} 缺少文件级所需字段')
+            self._log(f'[{p.id}] {reason}')
 
     def _add_patch_item(self, p: PatchDef, type_label: str):
         """添加一个补丁到列表。"""
@@ -291,12 +312,15 @@ class GenerateExeDialog(QDialog):
         """收集勾选的补丁，按类型分组返回。
 
         Returns:
-            (cave_patches, bytes_patches, imm32_patches, config_patches)
+            (cave_patches, bytes_patches, imm32_patches, config_patches,
+             data_section_patches, fixed_layouts)
         """
         cave_patches = []
         bytes_patches = []
         imm32_patches = []
         config_patches = []
+        data_section_patches = []
+        fixed_layouts = []
 
         for i in range(self._patch_list.count()):
             list_item = self._patch_list.item(i)
@@ -325,6 +349,12 @@ class GenerateExeDialog(QDialog):
                     fallback_rva=p.fallback_rva,
                     expect_count=p.hook_expect_count or 1,
                 ))
+
+            # fixed_layout_cave
+            elif p.type == 'fixed_layout_cave':
+                fl = self._build_fixed_layout(p)
+                if fl is not None:
+                    fixed_layouts.append(fl)
 
             # patch_bytes
             elif p.type == 'patch_bytes':
@@ -370,14 +400,12 @@ class GenerateExeDialog(QDialog):
                         value_size=p.value_size or 4,
                     ))
                 elif p.value_scan and p.expect_value:
-                    # value_scan 模式：搜索 expect_value 的字节表示
-                    # 构造一个搜索模式
                     expect_bytes = p.expect_value.to_bytes(p.value_size or 4, 'little')
                     pattern_str = ' '.join(f'{b:02X}' for b in expect_bytes)
                     entries.append(Imm32PatchEntry(
                         pattern=pattern_str,
                         value_offset=0,
-                        expect_count=0,  # 不限制匹配数
+                        expect_count=0,
                         value_size=p.value_size or 4,
                     ))
                 if entries:
@@ -406,54 +434,140 @@ class GenerateExeDialog(QDialog):
                     patch_type=p.type, config=cfg,
                 ))
 
-            # 数据段注入型（tkact_expand / tkkon_expand）
-            elif p.type in ('tkact_expand', 'tkkon_expand'):
-                # 查找扩展数据文件
-                src_dir = os.path.dirname(self._src_edit.text().strip())
-                if p.type == 'tkact_expand':
-                    data_file = os.path.join(src_dir, 'TKAct.dat')
-                    old_base = 0x9539CA
-                    old_size = 509600
-                    section_name = '.tkact'
-                else:  # tkkon_expand
-                    data_file = os.path.join(src_dir, 'TKKon.dat')
-                    old_base = 0x9D0698
-                    old_size = 26000
-                    section_name = '.tkkon'
+            # 数据段注入型 (参数来自 patch.json)
+            elif p.type == 'patch_data_expand' or p.type in ('tkact_expand', 'tkkon_expand'):
+                item = self._build_data_section(p)
+                if item is not None:
+                    data_section_patches.append(item)
 
-                if not os.path.isfile(data_file):
-                    self._log(f'[{p.id}] 数据文件不存在: {data_file}')
-                    continue
+        return (cave_patches, bytes_patches, imm32_patches, config_patches,
+                data_section_patches, fixed_layouts)
 
-                try:
-                    with open(data_file, 'rb') as f:
-                        data_content = f.read()
-                except Exception as e:
-                    self._log(f'[{p.id}] 读取数据文件失败: {e}')
-                    continue
+    def _build_fixed_layout(self, p: PatchDef) -> FixedLayoutCave | None:
+        """从 fixed_layout_cave 补丁定义构建 FixedLayoutCave。"""
+        hooks = list(p.hooks or [])
+        if not hooks:
+            self._log(f'[{p.id}] 未声明 hooks')
+            return None
 
-                # TKKon.dat 需要 LZSS 解压
-                if p.type == 'tkkon_expand':
-                    try:
-                        from editor_utils.lzss import lzss_decompress_dat
-                        data_content = lzss_decompress_dat(data_content)
-                    except Exception as e:
-                        self._log(f'[{p.id}] LZSS 解压失败: {e}')
+        summon_limit = 4
+        extra = getattr(p, '_extra', {}) or {}
+        if 'summon_limit' in extra:
+            try:
+                summon_limit = int(extra['summon_limit'])
+            except (TypeError, ValueError):
+                pass
+
+        bytes_items = []
+        for bp in (p.bytes_patches or []):
+            replace = {}
+            for k, v in (bp.get('replace') or {}).items():
+                if isinstance(v, str) and v.startswith('$'):
+                    # 声明式变量: "$summon_limit" → patch.json 的 summon_limit
+                    var = v[1:]
+                    if var == 'summon_limit':
+                        iv = summon_limit
+                    else:
+                        self._log(f'[{p.id}] 未知替换变量: {v}')
                         continue
+                else:
+                    iv = int(v)
+                replace[int(k)] = iv
+            bytes_items.append(BytesPatchEntry(
+                pattern=bp.get('pattern', ''),
+                replace=replace,
+                expect_count=bp.get('expect_count', 0),
+            ))
 
-                if len(data_content) <= old_size:
-                    self._log(f'[{p.id}] 数据大小 {len(data_content)} <= 原始 {old_size}，跳过')
-                    continue
+        build_fn = None
+        cave_block = None
+        layout_size = p.cave_layout_size or 0
 
-                data_section_patches.append(DataSectionPatchItem(
-                    patch_id=p.id, name=p.name,
-                    data=data_content,
-                    old_base=old_base,
-                    old_size=old_size,
-                    section_name=section_name,
-                ))
+        if p.cave_code_file and os.path.isfile(p.cave_code_file):
+            try:
+                spec = importlib.util.spec_from_file_location(
+                    f'_cave_{p.id}', p.cave_code_file)
+                mod = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(mod)
+                raw_fn = getattr(mod, 'build_cave_block', None)
+                if raw_fn is None:
+                    self._log(f'[{p.id}] cave_code.py 缺少 build_cave_block')
+                    return None
+                n = summon_limit
+                build_fn = lambda base, _fn=raw_fn, _n=n: _fn(base, _n)
+                if not layout_size:
+                    # 用 image_base=0x400000 探测一次实际大小
+                    layout_size = max(len(raw_fn(0x400000, n)), 0x800)
+            except Exception as e:
+                self._log(f'[{p.id}] 加载 cave_code.py 失败: {e}')
+                return None
+        else:
+            self._log(f'[{p.id}] cave_code_file 不存在: {p.cave_code_file}')
+            return None
 
-        return cave_patches, bytes_patches, imm32_patches, config_patches, data_section_patches
+        return FixedLayoutCave(
+            patch_id=p.id, name=p.name,
+            hooks=hooks,
+            cave_block=cave_block,
+            build_fn=build_fn,
+            bytes_patches=[BytesPatchItem(
+                patch_id=p.id, name=p.name, entries=bytes_items)]
+            if bytes_items else None,
+            cave_layout_size=layout_size,
+        )
+
+    def _build_data_section(self, p: PatchDef) -> DataSectionPatchItem | None:
+        """从 patch_data_expand 补丁定义构建 DataSectionPatchItem。"""
+        # 兼容旧字段名 / 旧类型
+        data_file = p.data_file
+        old_base = p.old_base
+        old_size = p.old_size
+        section_name = p.section_name
+        needs_lzss = p.needs_lzss
+
+        if p.type == 'tkact_expand' and not data_file:
+            data_file, old_base, old_size = 'TKAct.dat', 0x9539CA, 509600
+            section_name, needs_lzss = '.tkact', False
+        elif p.type == 'tkkon_expand' and not data_file:
+            data_file, old_base, old_size = 'TKKon.dat', 0x9D0698, 26000
+            section_name, needs_lzss = '.tkkon', True
+
+        if not data_file or not old_base or not old_size:
+            self._log(f'[{p.id}] patch_data_expand 字段不完整')
+            return None
+
+        src_dir = os.path.dirname(self._src_edit.text().strip())
+        path = os.path.join(src_dir, data_file)
+        if not os.path.isfile(path):
+            self._log(f'[{p.id}] 数据文件不存在: {path}')
+            return None
+
+        try:
+            with open(path, 'rb') as f:
+                content = f.read()
+        except Exception as e:
+            self._log(f'[{p.id}] 读取数据文件失败: {e}')
+            return None
+
+        if needs_lzss:
+            try:
+                from editor_utils.lzss import lzss_decompress_dat
+                content = lzss_decompress_dat(content)
+            except Exception as e:
+                self._log(f'[{p.id}] LZSS 解压失败: {e}')
+                return None
+
+        if len(content) <= old_size:
+            self._log(f'[{p.id}] 数据大小 {len(content)} <= 原始 {old_size}，跳过')
+            return None
+
+        return DataSectionPatchItem(
+            patch_id=p.id, name=p.name,
+            data=content,
+            old_base=old_base,
+            old_size=old_size,
+            section_name=section_name or f'.{p.id[:6]}',
+        )
 
     def _resolve_imm32_value(self, p: PatchDef) -> int | None:
         """解析 patch_imm32 的 new_value_expr 为静态整数值。
@@ -552,9 +666,11 @@ class GenerateExeDialog(QDialog):
             QMessageBox.warning(self, '错误', '请指定输出路径')
             return
 
-        cave_patches, bytes_patches, imm32_patches, config_patches, data_section_patches = self._get_selected_patches()
+        (cave_patches, bytes_patches, imm32_patches, config_patches,
+         data_section_patches, fixed_layouts) = self._get_selected_patches()
         total = (len(cave_patches) + len(bytes_patches) + len(imm32_patches) +
-                 len(config_patches) + len(data_section_patches))
+                 len(config_patches) + len(data_section_patches) +
+                 len(fixed_layouts))
         if total == 0:
             QMessageBox.warning(self, '错误', '请至少勾选一个补丁')
             return
@@ -564,7 +680,8 @@ class GenerateExeDialog(QDialog):
                      [p.name for p in bytes_patches] +
                      [p.name for p in imm32_patches] +
                      [p.name for p in config_patches] +
-                     [p.name for p in data_section_patches])
+                     [p.name for p in data_section_patches] +
+                     [p.name for p in fixed_layouts])
         patch_names = ', '.join(all_names)
         ret = QMessageBox.question(
             self, '确认生成',
@@ -580,7 +697,7 @@ class GenerateExeDialog(QDialog):
         self._log_text.clear()
         self._log(f'开始构建… (cave={len(cave_patches)}, bytes={len(bytes_patches)}, '
                   f'imm32={len(imm32_patches)}, config={len(config_patches)}, '
-                  f'data={len(data_section_patches)})')
+                  f'data={len(data_section_patches)}, fixed={len(fixed_layouts)})')
 
         try:
             builder = ExeBuilder(src)
@@ -593,7 +710,7 @@ class GenerateExeDialog(QDialog):
 
         self._worker = _BuildWorker(builder, cave_patches, bytes_patches,
                                     imm32_patches, config_patches,
-                                    data_section_patches, out)
+                                    data_section_patches, fixed_layouts, out)
         self._worker.finished.connect(self._on_build_finished)
         self._worker.start()
 

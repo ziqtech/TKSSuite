@@ -100,6 +100,9 @@ _TKSPATCH_SCHEMA = {
         "mod_config_overridable",
         # cave_code
         "cave_code",
+        # 文件级补丁类型 (fixed_layout_cave / patch_data_expand)
+        "hooks", "bytes_patches", "cave_code_file", "cave_layout_size",
+        "data_file", "old_base", "old_size", "section_name", "needs_lzss",
         # _extra
         "_group", "_comment", "_说明", "_mod_note",
         "original", "field_range", "new_base",
@@ -153,6 +156,15 @@ _TKSPATCH_SCHEMA = {
         "weapon_cap_adjust": bool,
         "mod_config_overridable": bool,
         "cave_code": str,
+        "hooks": list,
+        "bytes_patches": list,
+        "cave_code_file": str,
+        "cave_layout_size": int,
+        "data_file": str,
+        "old_base": (int, str),
+        "old_size": (int, str),
+        "section_name": str,
+        "needs_lzss": bool,
         "_format": int,
         "format": str,
         "format_version": int,
@@ -361,6 +373,23 @@ def parse_patch_dict(raw: dict, source_path: str,
     d.warpc_cap_adjust = bool(raw.get("warpc_cap_adjust", False))
     d.weapon_cap_adjust = bool(raw.get("weapon_cap_adjust", False))
     d.mod_config_overridable = bool(raw.get("mod_config_overridable", False))
+
+    # ── 文件级补丁类型 ──
+    # fixed_layout_cave
+    d.hooks = list(raw.get("hooks", []))
+    d.bytes_patches = list(raw.get("bytes_patches", []))
+    ccf = raw.get("cave_code_file", "")
+    if ccf and not os.path.isabs(ccf):
+        ccf = os.path.normpath(os.path.join(
+            os.path.dirname(os.path.abspath(source_path)), ccf))
+    d.cave_code_file = ccf
+    d.cave_layout_size = int(raw.get("cave_layout_size", 0) or 0)
+    # patch_data_expand
+    d.data_file = raw.get("data_file", "")
+    d.old_base = _parse_maybe_hex(raw.get("old_base", 0))
+    d.old_size = _parse_maybe_hex(raw.get("old_size", 0))
+    d.section_name = raw.get("section_name", "")
+    d.needs_lzss = bool(raw.get("needs_lzss", False))
 
     # ── 外置 cave 机器码 (核心新特性) ──
     cave_code_hex = raw.get("cave_code", "")

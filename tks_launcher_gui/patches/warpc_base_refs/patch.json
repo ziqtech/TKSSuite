@@ -1,12 +1,18 @@
 {
   "_format": 1,
-  "type": "patch_warpc_addr",
+  "_group": "── WarPC 扩容 ──",
+  "_comment": "WarPC.dat 基址引用重定位. 文件级: type=patch_data_expand, 解压后数据作为新 PE 节并重定向 0x757F08 引用. 运行时: 由 warpc_expander 统一处理, 本补丁在运行时跳过. 仅当 WarPC.dat 实际大于原版时生效.",
+  "type": "patch_data_expand",
   "id": "warpc_base_refs",
   "name": "武将数据重定位",
-  "desc": "WarPC.dat 基址引用全部重定位",
-  "original": "{warpc_base}",
-  "field_range": 1054,
-  "new_base": "{warpc_new_base}",
+  "desc": "WarPC.dat 超过原版时注入扩展数据并重定位基址引用",
+  "data_file": "WarPC.dat",
+  "old_base": "0x757F08",
+  "old_size": 150722,
+  "section_name": ".warpc",
+  "needs_lzss": true,
+  "optional": true,
+  "default_checked": false,
   "format": "TKSPATCH",
   "format_version": 1
 }

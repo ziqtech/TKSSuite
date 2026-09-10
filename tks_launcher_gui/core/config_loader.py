@@ -17,7 +17,7 @@ class PatchSettings:
     tkact_rec_size: int = 784
     tkact_base: int = 0x9539CA
     tkdefunit_orig_count: int = 5000
-    # cave 区预算。注意: summon_extend (script 型) 在 CaveLayout 之外硬编码占用
+    # cave 区预算。注意: summon_extend (fixed_layout_cave) 在 CaveLayout 之外硬编码占用
     # [0x680,0x800) (CAVE_BASE_OFFSET=0x680, 含 capacity cave 到 ~0x7E4),
     # 自动分配器看不见这段; 需要把自动/硬编码槽位推到 0x800 之后才有安全余量,
     # 故预算取 4096。VirtualAllocEx 本来就按页(4096)提交, 2048 时同样占一整页,
@@ -106,6 +106,19 @@ class PatchDef:
     # MOD 配置覆盖声明: True 表示允许 MOD 包携带同名配置 (按 json_file 文件名) 覆盖 configs/ 目录。
     # 白名单由各补丁自己声明, 引擎动态推导 (新增数据类配置无需改引擎)。
     mod_config_overridable: bool = False
+
+    # ── 文件级补丁类型 (生成启动器用, 参数全部声明在 patch.json) ──
+    # type=fixed_layout_cave: 多 hook + 固定布局 cave, cave_code.py 提供 build_cave_block
+    hooks: List[Dict] = field(default_factory=list)  # [{name,pattern,hook_size,cave_entry_offset,expect_count}]
+    bytes_patches: List[Dict] = field(default_factory=list)  # 附带 patch_bytes
+    cave_code_file: str = ""                      # 外置 cave 生成器路径
+    cave_layout_size: int = 0                     # 固定布局总大小
+    # type=patch_data_expand: 数据段注入 + 基址/大小重定向
+    data_file: str = ""                           # 扩展数据文件名 (相对游戏目录)
+    old_base: int = 0                             # 原缓冲区基址
+    old_size: int = 0                             # 原缓冲区大小
+    section_name: str = ""                        # 新 PE 节名
+    needs_lzss: bool = False                      # 数据文件是否需 LZSS 解压
 
 @dataclass
 class PatchConfig:
