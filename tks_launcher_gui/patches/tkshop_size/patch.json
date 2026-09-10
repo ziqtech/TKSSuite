@@ -3,7 +3,7 @@
   "type": "patch_imm32",
   "id": "tkshop_size",
   "name": "商店数据扩容",
-  "desc": "TKShop.dat 大小常量 1920→实际大小（锚定唯一 push 引用，避开 VCL 类表数据 0x780）",
+  "desc": "TKShop.dat 大小常量 1920→实际大小（锚定唯一 push 引用，避开 VCL 类表数据 0x780）。⚠仅放行加载: 240 条上限 (4244CC/4246D8) 未改, 缓冲后仅 0x30 空隙, 完整扩容需 data_expand 级方案",
   "pattern": "68 80 07 00 00 68 A0 08 95 00",
   "value_offset": 1,
   "expect_value": "0x780",

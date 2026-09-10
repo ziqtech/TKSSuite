@@ -340,6 +340,7 @@ class GenerateExeDialog(QDialog):
                     cave_code=cave_code,
                     fallback_rva=p.fallback_rva,
                     expect_count=p.hook_expect_count or 1,
+                    hook_offset=p.hook_offset or 0,
                 ))
 
             # fixed_layout_cave
@@ -551,6 +552,8 @@ class GenerateExeDialog(QDialog):
             old_base=old_base,
             old_size=old_size,
             section_name=section_name or f'.{p.id[:6]}',
+            redirect_base_span=int((getattr(p, '_extra', {}) or {})
+                                   .get('redirect_base_span', 0) or 0),
         )
 
     def _resolve_imm32_value(self, p: PatchDef) -> int | None:

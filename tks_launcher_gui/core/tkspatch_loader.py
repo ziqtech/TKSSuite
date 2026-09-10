@@ -103,6 +103,7 @@ _TKSPATCH_SCHEMA = {
         # 文件级补丁类型 (fixed_layout_cave / patch_data_expand)
         "hooks", "bytes_patches", "cave_code_file", "cave_layout_size",
         "data_file", "old_base", "old_size", "section_name", "needs_lzss",
+        "redirect_base_span",
         # _extra
         "_group", "_comment", "_说明", "_mod_note",
         "original", "field_range", "new_base",
@@ -165,6 +166,7 @@ _TKSPATCH_SCHEMA = {
         "old_size": (int, str),
         "section_name": str,
         "needs_lzss": bool,
+        "redirect_base_span": int,
         "_format": int,
         "format": str,
         "format_version": int,
@@ -400,7 +402,8 @@ def parse_patch_dict(raw: dict, source_path: str,
     d._extra = {}  # type: ignore
     for key in ("_group", "_comment", "_说明", "_mod_note", "_note",
                 "original", "field_range", "new_base",
-                "cave_mask_offset", "summon_cave_code", "summon_cave2_code"):
+                "cave_mask_offset", "summon_cave_code", "summon_cave2_code",
+                "redirect_base_span"):
         if key in raw:
             d._extra[key] = raw[key]  # type: ignore
     if "summon_limit" in raw:

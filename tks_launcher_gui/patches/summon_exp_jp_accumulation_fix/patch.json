@@ -1,19 +1,33 @@
 {
   "_format": 1,
   "_group": "── 战斗经验与JP ──",
-  "_comment": "原版 sub_4400DC @0x441832 在进入战斗奖励累加块前仅接受 byte_9DF761[arg_0]==100；sub_431094 明确将召唤物设为 20，因此召唤物攻击会跳过 dword_9D6F14 与 dword_9D6F18 的原版累加。hook 重放原始读取，仅将恰好为 20 的召唤物状态映射为 100，保留后续原版 EXP/JP 公式与队伍共享结算；sub_43B7FC 只遍历 byte_9DF886 个队伍成员，召唤物不进入该结算循环，因此不会向召唤物自身发放经验或 JP。",
-  "type": "cave_hook",
+  "_comment": "原版 sub_4400DC @0x441832 在进入战斗奖励累加块前仅接受 byte_9DF761[arg_0]==100；sub_431094 明确将召唤物设为 20，因此召唤物攻击会跳过 dword_9D6F14 与 dword_9D6F18 的原版累加。gate hook 重放原始读取，仅将恰好为 20 的召唤物状态映射为 100，保留后续原版 EXP/JP 公式与队伍共享结算；sub_43B7FC 只遍历 byte_9DF886 个队伍成员，召唤物不进入该结算循环，因此不会向召唤物自身发放经验或 JP。⚠放行门槛会同时打开奖励块内的个人经验累加 0x4418FF (add dword_9D6F20[ecx*4],eax，ecx=movsx arg_0)：dword_9D6F20 仅队伍 6 槽，召唤槽 ≥6 会越界写入 dword_9D6F38 个人JP数组 / unk_9D6F50 升级旗标。故本补丁为 fixed_layout 双 hook：guard hook @0x4418F8 拦截 arg_0 ∉ [0,5] 的个人经验写入 (-1 陷阱落点 dword_9D6F1C 金钱累计器、≥6 召唤槽越界)，[0,5] 队伍击杀与原版逐字节等价；与 trap_exp_jp_personal_fix 语义相同，同开时后应用者经 fallback_rva (0x418F8) 重挂同语义 cave，行为一致。type=fixed_layout_cave，cave_code.py 的 build_cave_block(cave_base, n) 生成布局：gate @0x00 (18B)、guard @0x20 (21B)。逆向依据: 4400DC.asm 1633-1684、431094.c:53、43B7FC.c:105/134、4434BC.c:217。",
+  "type": "fixed_layout_cave",
   "id": "summon_exp_jp_accumulation_fix",
   "name": "召唤物经验JP累加修复",
-  "desc": "让召唤物击杀敌人时沿用原版共享经验与JP累加路径，由队伍成员获得奖励；召唤物自身不进入经验/JP结算",
+  "desc": "让召唤物击杀敌人时沿用原版共享经验与JP累加路径，由队伍成员获得奖励；召唤物自身不进入经验/JP结算，且保护个人经验落点 (陷阱 -1 / 召唤槽 ≥6 不越界写入)",
   "optional": true,
   "default_checked": true,
-  "hook_pattern": "0F BE 81 61 F7 9D 00 83 F8 64 0F 85 AE 02 00 00",
-  "hook_size": 7,
-  "hook_expect_count": 1,
-  "fallback_rva": "0x41832",
-  "cave_template": "summon_exp_jp_accumulation_fix",
-  "cave_code": "0F BE 81 61 F7 9D 00 83 F8 14 75 05 B8 64 00 00 00 C3",
+  "cave_code_file": "cave_code.py",
+  "cave_layout_size": 64,
+  "hooks": [
+    {
+      "name": "gate",
+      "pattern": "0F BE 81 61 F7 9D 00 83 F8 64 0F 85 AE 02 00 00",
+      "hook_size": 7,
+      "cave_entry_offset": 0,
+      "expect_count": 1,
+      "fallback_rva": "0x41832"
+    },
+    {
+      "name": "guard",
+      "pattern": "0F BF 4D 08 8B 45 B8 01 04 8D 20 6F 9D 00",
+      "hook_size": 14,
+      "cave_entry_offset": 32,
+      "expect_count": 1,
+      "fallback_rva": "0x418F8"
+    }
+  ],
   "format": "TKSPATCH",
   "format_version": 1
 }

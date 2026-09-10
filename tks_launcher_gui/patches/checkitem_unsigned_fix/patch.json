@@ -1,7 +1,7 @@
 {
   "_format": 1,
   "_group": "── CheckItem 金钱判定修复 ──",
-  "_comment": "sub_40E4E4 (CheckItem opcode 62) 的 6 个比较分支中 4 个为 16 位有符号跳转: case -2(<)@0x40E61D jge / case -1(<=)@0x40E60D jg / case 1(>=)@0x40E62D jl / case 2(>)@0x40E63D jle (==/!= 的 je/jne 与符号无关)。gold_limit 把金钱上限提到 65535 后, 金钱≥32768(0x8000) 时 v8 按有符号读为负数: 钱≥X/钱>X 恒判失败、钱≤X/钱<X 恒判成功、钱==X 恒失败——即 TKD 脚本遇 CheckItem 判定失效。本补丁将 4 处跳转改为无符号 (jg→ja, jge→jae, jl→jb, jle→jbe, 位移不变)。0x40E62D 的 jl 是第三方 MOD cave 的可能回跳点, MOD 版仅改写 0x40E625~0x40E62C, 该短特征码两版本通用。物品数量检查 (上限99) 走同一函数, 无符号化在 [0,32767] 语义不变, 无副作用。4 模式均经 .text 全段扫描验证唯一命中。",
+  "_comment": "sub_40E4E4 (CheckItem opcode 62) 的 6 个比较分支中 4 个为 16 位有符号跳转: case -2(<)@0x40E61D jge / case -1(<=)@0x40E60D jg / case 1(>=)@0x40E62D jl / case 2(>)@0x40E63D jle (==/!= 的 je/jne 与符号无关)。gold_limit 把金钱上限提到 65535 后, 金钱≥32768(0x8000) 时 v8 按有符号读为负数: 钱≥X/钱>X 恒判失败、钱≤X/钱<X 恒判成功 (钱==X 为 16 位按位比较, 不受符号影响)——金额类 TKD 脚本判定大面积失效。本补丁将 4 处跳转改为无符号 (jg→ja, jge→jae, jl→jb, jle→jbe, 位移不变)。0x40E62D 的 jl 是第三方 MOD cave 的可能回跳点, MOD 版仅改写 0x40E625~0x40E62C, 该短特征码两版本通用。物品数量检查 (上限99) 走同一函数, 无符号化在 [0,32767] 语义不变, 无副作用。4 模式均经 .text 全段扫描验证唯一命中。",
   "type": "patch_bytes",
   "id": "checkitem_unsigned_fix",
   "name": "CheckItem 金钱判定有符号修复",

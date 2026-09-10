@@ -3,7 +3,7 @@
   "type": "patch_bytes",
   "id": "skill_scan_bound",
   "name": "可装备技能列表修复",
-  "desc": "可装备技能列表扫描上限 350→344",
+  "desc": "可装备技能列表扫描上限 350→344 (排除末 6 个保留技能 ID; 344 非记录布局自然边界, 为人为选择)",
   "pattern": "66 81 ** FC 5E 01",
   "expect_count": 3,
   "replace": {

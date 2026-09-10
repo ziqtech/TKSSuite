@@ -4,7 +4,7 @@
   "type": "patch_bytes",
   "id": "lusu_intel_duration_x4_fix",
   "name": "鲁肃情报技能溢出修复",
-  "desc": "鲁肃商賈情报技能修复：等级×5→等级×4，防止Lv>51时byte/word溢出导致持续时间缩短",
+  "desc": "鲁肃商賈情报技能持续时间计算 ×5→×4: byte 位点(0x95294F..) 在属性>51 时 5×属性 环回溢出; word 位点(0x952952) 实为与 byte 位点保持一致的重平衡",
   "patterns": [
     {
       "pattern": "8D 04 89 88 82 65 28 95 00",

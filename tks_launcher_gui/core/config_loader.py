@@ -17,12 +17,11 @@ class PatchSettings:
     tkact_rec_size: int = 784
     tkact_base: int = 0x9539CA
     tkdefunit_orig_count: int = 5000
-    # cave 区预算。注意: summon_extend (fixed_layout_cave) 在 CaveLayout 之外硬编码占用
-    # [0x680,0x800) (CAVE_BASE_OFFSET=0x680, 含 capacity cave 到 ~0x7E4),
-    # 自动分配器看不见这段; 需要把自动/硬编码槽位推到 0x800 之后才有安全余量,
-    # 故预算取 4096。VirtualAllocEx 本来就按页(4096)提交, 2048 时同样占一整页,
-    # 所以实际内存占用不变。可用 TKS_CAVE_BUDGET 环境变量覆盖。
-    cave_total_size: int = 4096
+    # cave 区预算。2026-09-10 起 fixed_layout 块 (summon_extend/summon_exp) 由
+    # CaveLayout 按实际占用区间预留, 分配器对全部槽位可见; 全补丁启用约需 4.8KB,
+    # 预算取 8192 留足余量。VirtualAllocEx 按页(4096)提交, 8192 即两页。
+    # 可用 TKS_CAVE_BUDGET 环境变量覆盖。
+    cave_total_size: int = 8192
 
 
 @dataclass

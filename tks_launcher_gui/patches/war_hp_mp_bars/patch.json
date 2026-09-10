@@ -5,7 +5,7 @@
   "type": "cave_hook",
   "id": "war_hp_mp_bars",
   "name": "战场头顶血条内力条",
-  "desc": "战场头顶血条内力条：所有存活单位头顶居中显示 50x5 HP 条(绿) + MP 条(蓝), 按当前待机帧精灵几何精确锚定头顶",
+  "desc": "战场头顶血条内力条：所有存活单位头顶居中显示 50x5 HP 条(红 0xF800) + MP 条(蓝 0x001F), 按当前待机帧精灵几何精确锚定头顶",
   "hook_pattern": "0F BF 15 88 6C 9D 00 83 FA 2B",
   "hook_offset": 0,
   "hook_size": 7,

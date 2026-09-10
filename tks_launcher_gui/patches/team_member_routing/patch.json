@@ -3,7 +3,7 @@
   "type": "cave_hook",
   "id": "team_member_routing",
   "name": "主角离队脚本路由",
-  "desc": "TeamMember 脚本路由: TeamMember(0,0)→清空全队(原版语义), TeamMember(0,-1)→主角离队, TeamMember(N,*)→不变",
+  "desc": "TeamMember 脚本路由: TeamMember(0,0)→强制主角入队槽0, TeamMember(0,1)→强制主角入队槽0 (原版该调用为清空队伍), TeamMember(0,-1)→主角离队, TeamMember(N,*)→不变。⚠主角离队路径按 ID 在全队(含槽0)搜索, 依赖 team_leave_slot0 修改的扫描起点; 单独开启时离队路径静默无效",
   "hook_pattern": "66 83 7D 08 00 75 6A",
   "hook_size": 7,
   "hook_expect_count": 1,

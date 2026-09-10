@@ -10,6 +10,7 @@
   "old_base": "0x9D0698",
   "old_size": 26000,
   "section_name": ".tkkon",
+  "redirect_base_span": 40,
   "needs_lzss": true,
   "optional": false,
   "default_checked": true,

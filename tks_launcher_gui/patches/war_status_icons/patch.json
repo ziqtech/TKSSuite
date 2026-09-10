@@ -11,7 +11,6 @@
   "hook_size": 6,
   "hook_expect_count": 1,
   "hook_conflict_action": "skip",
-  "autolayout_cave": false,
   "cave_offset": 2048,
   "optional": true,
   "default_checked": false,

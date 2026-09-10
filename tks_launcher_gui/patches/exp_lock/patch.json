@@ -12,7 +12,7 @@
   "hook_pattern": "8B 44 24 1C 66 8B 10 66 89 54 24 06",
   "hook_size": 7,
   "hook_expect_count": 1,
-  "fallback_rva": "0x43BAF3",
+  "fallback_rva": "0x3BAF3",
   "cave_offset": 1344,
   "cave_code": "8B 44 24 20 0F B7 4C 24 04 B2 00 D2 EA F6 C2 01 74 06 C7 00 00 00 00 00 66 8B 10 C3",
   "cave_mask_offset": 10,

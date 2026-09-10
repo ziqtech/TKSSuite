@@ -4,14 +4,24 @@
 文件级: build_cave_block(cave_base, n) → 完整 cave 块字节。
 运行时: 同一函数以 ctx.cave_addr 为 cave_base 调用。
 
-布局 (n=默认 4):
+布局 (n=默认 4, 与 patch.json 的 cave_entry_offset 一一对应):
   [0x000, 0x680)  预留 (自动布局补丁可能占用)
   [0x680, 0x6A0)  cave1  init          32B
   [0x6A0, 0x6D0)  cave2  full_check    48B
-  [0x6D0, 0x770)  cave3  alloc        144B
-  [0x770, 0x7B0)  cave4  clear         64B
+  [0x6D0, 0x760)  cave3  alloc        144B
+  [0x760, 0x7A0)  cave4  clear         64B
   [0x7A0, 0x7A0+n) slots  N 槽数组
   [0x7B0, ...)    capacity cave
+
+栈约定: 引擎在 hook 点写 E8 call (patch_engine/exe_builder 一致),
+进入 cave 时 [esp] = 返回地址 (hook+5)。
+- cave3 (alloc) 以 `mov [esp],esi` 复用返回地址槽复刻原 push esi/edi 布局;
+- capacity 两个出口显式 `add esp,4` 丢弃返回地址 (宿主 sub_445564 为 esp 帧,
+  续接点 lea edx,[esp+4] 是 esp 相对寻址, 漂移会传错指针);
+- cave1/2/4 结尾 popad 后直接 E9 跳回, 留下的 4 字节返回地址在其续接点
+  (0x436C7B push×3+call+add esp、0x444C1B、0x43C768 mov [ebp-2]) 处无副作用:
+  皆为 push/pop 对称或 ebp 相对寻址, 且宿主函数 436BD4/444BB0/43C734 均为
+  ebp 帧 (55 8B EC), 尾部 mov esp,ebp 会复位 esp。勿改动其续接点语义。
 """
 from __future__ import annotations
 
@@ -219,7 +229,13 @@ def _build_cave_clear(cave_base: int, n: int) -> bytes:
 
 
 def _build_capacity_cave(cave_base: int, n: int) -> bytes:
-    """鲁肃路径容量检查: ordinary occupied + lusu >= N 时拒绝召唤."""
+    """鲁肃路径容量检查: ordinary occupied + lusu >= N 时拒绝召唤.
+
+    两个出口都先 `add esp,4` 丢弃 E8 压入的返回地址, 使回到
+    sub_445564 时 esp 与原版一致 (该函数无 ebp 帧, 续接点
+    lea edx,[esp+4] 为 esp 相对寻址, 漂移会传错缓冲区指针)。
+    add 位于 jcc 之后, 不破坏 cmp eax,n 的标志位。
+    """
     base = cave_base + CAPACITY_CAVE_OFFSET
     code = bytearray()
     code += b'\x60'
@@ -237,10 +253,15 @@ def _build_capacity_cave(cave_base: int, n: int) -> bytes:
     code += b'\x61'
     code += b'\x0F\x83\x00\x00\x00\x00'
     jae_full = len(code) - 4
+    # 成功路径: 丢弃返回地址后跳回 0x44558E
+    code += b'\x83\xC4\x04'
     code += b'\xE9\x00\x00\x00\x00'
     success_jmp = len(code) - 5
     fail_jmp = len(code)
-    code += b'\x33\xC0\xE9\x00\x00\x00\x00'
+    # 失败路径: 丢弃返回地址, 重放 xor eax,eax, 跳回 0x445589
+    code += b'\x83\xC4\x04'
+    code += b'\x33\xC0'
+    code += b'\xE9\x00\x00\x00\x00'
     fail_jmp_pos = len(code) - 5
     code[jae_full:jae_full + 4] = struct.pack(
         '<i', (base + fail_jmp) - (base + jae_full + 4))

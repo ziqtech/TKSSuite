@@ -10,6 +10,7 @@
   "old_base": "0x757F08",
   "old_size": 150722,
   "section_name": ".warpc",
+  "redirect_base_span": 1054,
   "needs_lzss": true,
   "optional": true,
   "default_checked": false,

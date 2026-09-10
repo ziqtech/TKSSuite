@@ -1,7 +1,7 @@
 {
   "_format": 1,
   "_group": "战斗 - 召唤数量扩展补丁",
-  "_comment": "原版游戏召唤系统只支持 2 个玩家召唤物, 安全战场实体硬上限 32. 本补丁把玩家召唤物扩展到 N 个 (默认 4). type=fixed_layout_cave, cave_code.py 的 build_cave_block(cave_base, n) 生成完整布局. 逆向依据: sub_436BD4 / sub_444BB0 / sub_431094 / sub_43C734 / sub_444FD4 / sub_445564.",
+  "_comment": "原版游戏召唤系统只支持 2 个玩家召唤物, 安全战场实体硬上限 32. 本补丁把玩家召唤物扩展到 N 个 (默认 4). type=fixed_layout_cave, cave_code.py 的 build_cave_block(cave_base, n) 生成完整布局. 逆向依据: sub_436BD4 / sub_444BB0 / sub_431094 / sub_43C734 / sub_444FD4 / sub_445564. 布局: cave1 init @0x680(32B) / cave2 full_check @0x6A0(48B) / cave3 alloc @0x6D0(144B) / cave4 clear @0x760(64B) / slots @0x7A0 / capacity @0x7B0, cave_entry_offset 必须与之一致. ⚠N=4 时我方召唤 24..27 + 魔将系 28..31 恰好占满 32 实体上限, N≥5 且初始实体多时魔将系召唤 ID (base+N+count, 444FD4.c) 会越过 31 造成状态数组 byte_9E048E 越界别名, 勿配 N>4.",
   "type": "fixed_layout_cave",
   "id": "summon_extend",
   "name": "召唤数量扩展",
@@ -37,7 +37,7 @@
       "name": "clear",
       "pattern": "0F BE 15 8E F8 9D 00 3B C2 75 09 C6 05 8E F8 9D 00 FF EB 16 0F BF 4D 08 0F BE 05 8F F8 9D 00 3B C8 75 07 C6 05 8F F8 9D 00 FF",
       "hook_size": 42,
-      "cave_entry_offset": 1904,
+      "cave_entry_offset": 1888,
       "expect_count": 1
     },
     {

@@ -189,10 +189,11 @@ class CavePatchItem:
     patch_id: str
     name: str
     hook_pattern: str             # 模式串 (空格分隔十六进制, 支持 ??/** 通配)
-    hook_size: int                # 被覆盖的原始指令长度（jmp rel32 = 5，需 hook_size >= 5）
+    hook_size: int                # 被覆盖的原始指令长度（call rel32 = 5，需 hook_size >= 5）
     cave_code: bytes              # cave 机器码
     fallback_rva: int = 0         # 模式匹配失败时的回退 RVA
     expect_count: int = 1
+    hook_offset: int = 0          # hook 写入点相对模式起点的字节偏移
     cave_offset: int = -1         # cave 在 .test 节内的固定偏移（-1=顺序放置）
 
 
@@ -273,6 +274,9 @@ class DataSectionPatchItem:
     old_size: int                # 旧缓冲区大小 (如 509600)
     section_name: str = '.tks'   # 新节名称
     data_offset: int = 0         # 数据在新节内的偏移
+    redirect_base_span: int = 0  # 基址后的字段锚定引用扫描跨度（字节），
+                                 # 0=仅精确重定向基址本身（如 WarPC 记录内
+                                 # word_757F0C 等字段锚定立即数需设为记录大小）
 
 
 @dataclass
@@ -749,6 +753,34 @@ class ExeBuilder:
                         data[off:off + 4] = new_size_bytes
                         log.append(f'    @ 0x{off:X} (RVA 0x{rva:X})')
 
+                # 字段锚定引用: [old_base+1, old_base+span) 内的立即数
+                # (如 WarPC word_757F0C[527*i]、TKKon 0x9D069E = 基址+6)，
+                # 精确基址替换覆盖不到，按 (old_base, old_base+span) 开区间扫描。
+                span = int(getattr(item, 'redirect_base_span', 0) or 0)
+                if span > 0:
+                    span_hits = 0
+                    text_secs = [s for s in pe.sections
+                                 if s.raw_size > 0 and (s.characteristics & 0x20000000)]
+                    for sec in text_secs:
+                        lo = sec.raw_offset
+                        hi = sec.raw_offset + sec.raw_size
+                        pos = lo
+                        while pos + 4 <= hi:
+                            val = int.from_bytes(data[pos:pos + 4], 'little')
+                            if item.old_base < val < item.old_base + span:
+                                delta = val - item.old_base
+                                new_val = new_base_abs + delta
+                                log.append(f'    字段锚定 @ 0x{pos:X} '
+                                           f'(RVA 0x{offset_to_rva(pe, pos):X}): '
+                                           f'0x{val:X} → 0x{new_val:X} (基址+{delta})')
+                                data[pos:pos + 4] = struct.pack('<I', new_val)
+                                span_hits += 1
+                                pos += 4
+                                continue
+                            pos += 1
+                    log.append(f'  [{item.patch_id}] 字段锚定引用 (span={span}): '
+                               f'{span_hits} 处')
+
         # ── 3. 配置驱动 ──
         if config_patches:
             log.append(f'── 应用配置驱动型 ({len(config_patches)} 个) ──')
@@ -808,7 +840,10 @@ class ExeBuilder:
                 offsets = scan_pattern_str(bytes(data), pat_str)
                 if len(offsets) != item.expect_count:
                     if item.fallback_rva:
-                        offsets = [rva_to_offset(pe, item.fallback_rva)]
+                        # fallback_rva 口径与 patch_engine 一致：指向 hook 写入点，
+                        # 需回退 hook_offset 得到模式起点
+                        offsets = [rva_to_offset(pe, item.fallback_rva)
+                                   - item.hook_offset]
                         log.append(f'[{item.patch_id}] 模式匹配失败，'
                                    f'使用回退 RVA 0x{item.fallback_rva:X}')
                     else:
@@ -821,10 +856,18 @@ class ExeBuilder:
                     log.append(result.error)
                     return result
                 # 同一 cave 代码可被多个 hook 点 call (expect_count>1)
+                # hook 写入点 = 模式起点 + hook_offset（如 awk_sprite_cave3/4 的
+                # 模式含前一条 jmp 的 2 字节，真正被覆盖指令在其后）
                 for off in offsets:
-                    log.append(f'[{item.patch_id}] hook 点 @ 0x{off:X} '
-                               f'(RVA 0x{offset_to_rva(pe, off):X})')
-                    located.append(('cave', item, off, item.hook_size, -1,
+                    hook_off = off + item.hook_offset
+                    if (hook_off < 0 or hook_off + item.hook_size > len(data)):
+                        result.error = (f'[{item.patch_id}] hook 写入越界 '
+                                        f'0x{hook_off:X}+{item.hook_size}')
+                        log.append(result.error)
+                        return result
+                    log.append(f'[{item.patch_id}] hook 点 @ 0x{hook_off:X} '
+                               f'(RVA 0x{offset_to_rva(pe, hook_off):X})')
+                    located.append(('cave', item, hook_off, item.hook_size, -1,
                                     item.patch_id))
 
         # ── 5. 计算 .test 节布局 ──
@@ -848,6 +891,7 @@ class ExeBuilder:
                     return result
                 fl_blocks.append((fl, cursor, size))
                 cursor = align_up(cursor + size, 16)
+            fl_offset_of = {id(fl): off for fl, off, _ in fl_blocks}
 
             # cave_hook: 每个补丁只占一份 cave 代码, 多 hook 点共享
             cave_blobs = []  # (item, entry_rel)
@@ -896,10 +940,13 @@ class ExeBuilder:
                 data.extend(b'\x00' * (test_file_off - len(data)))
             data.extend(cave_section)
 
-            # 写入 jmp hook
+            # 写入 call hook（E8 rel32；与 patch_engine 运行时约定一致，
+            # cave 以 ret 回 hook+5，[esp] = 返回地址）
             for kind, owner, hook_off, hsize, entry, label in located:
                 if kind == 'fl':
-                    entry_rel = entry
+                    # hook 的 cave_entry_offset 相对所属 fixed_layout 块起点,
+                    # 多个 fixed_layout 共存时必须加上各自块偏移
+                    entry_rel = fl_offset_of.get(id(owner), 0) + entry
                 else:
                     entry_rel = cave_entry_of.get(id(owner))
                     if entry_rel is None:
@@ -909,11 +956,11 @@ class ExeBuilder:
                 hook_rva = offset_to_rva(pe, hook_off)
                 cave_target_rva = test_rva + entry_rel
                 rel32 = cave_target_rva - (hook_rva + 5)
-                jmp = b'\xE9' + struct.pack('<i', rel32)
-                patch = jmp + b'\x90' * (hsize - 5)
+                call = b'\xE8' + struct.pack('<i', rel32)
+                patch = call + b'\x90' * (hsize - 5)
                 data[hook_off:hook_off + hsize] = patch
                 log.append(f'[{owner.patch_id}/{label}] hook 0x{hook_off:X}: '
-                           f'jmp 0x{cave_target_rva:X}')
+                           f'call 0x{cave_target_rva:X}')
 
             next_va = align_up(test_rva + test_vsize, pe.section_align)
 

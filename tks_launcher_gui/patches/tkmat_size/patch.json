@@ -4,7 +4,7 @@
   "type": "patch_imm32",
   "id": "tkmat_size",
   "name": "战斗素材扩容",
-  "desc": "TKMat.dat 大小常量 2304000→实际大小",
+  "desc": "TKMat.dat 大小常量 2304000→实际大小 (含存档 fwrite 路径 @0x410F0B)。⚠仅对 ≤原版体积的文件安全: 静态缓冲 [0x51AF40,0x74D740) 后零空隙 (0x74D740 为 TKMat 索引数组), >2304000 会越界破坏且存档按新尺寸压缩越界读; 6000 条上限未改",
   "value_scan": true,
   "expect_value": "0x232800",
   "new_value": "{tkmat_actual_size}",

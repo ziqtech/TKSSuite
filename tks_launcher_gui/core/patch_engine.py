@@ -312,7 +312,49 @@ def _build_cave_layout(config: 'PatchConfig', cave_addr: int,
     cave_budget = settings.cave_total_size
     layout = CaveLayout(base_addr=cave_addr, budget=cave_budget)
 
-    # 1. 收集每个需要 cave 的补丁所需大小
+    def _fixed_layout_span(defn):
+        """探测 fixed_layout 块的实际占用区间 [used_start, used_end)。
+
+        用 cave_base=0 试建块只为取长度/非零范围 (rel32 值无效但长度正确)。
+        块内前导零区 (如 summon_extend 的 [0,0x680)) 留给自动布局槽位共享。
+        """
+        mod = _load_cave_code_module(defn.cave_code_file, log)
+        build_fn = getattr(mod, "build_cave_block", None) if mod else None
+        if not callable(build_fn):
+            return None
+        extra = getattr(defn, "_extra", {}) or {}
+        n = int(extra.get("summon_limit", 4) or 4)
+        try:
+            block = build_fn(0, n)
+        except Exception as e:
+            log(f"  [CAVE-LAYOUT-ERR] {defn.id}: build 探测失败: {e}")
+            return None
+        first = next((i for i, b in enumerate(block) if b), None)
+        if first is None:
+            return None
+        last = len(block) - 1 - next(i for i, b in enumerate(reversed(block)) if b)
+        return first, last + 1
+
+    # 1. 先为 fixed_layout 块按实际占用区间预留 (两个 pass, 避免
+    #    cave_hook 自动布局先占掉 fixed_layout 的子 cave 区间)
+    for defn in config.patches:
+        if defn.type != "fixed_layout_cave":
+            continue
+        try:
+            span = _fixed_layout_span(defn)
+            if span is None:
+                log(f"  [CAVE-LAYOUT-ERR] {defn.id}: 无法确定 cave 块占用区间")
+                defn._layout_error = "无法确定 cave 块占用区间"
+                continue
+            slot = layout.allocate(defn.id, "fixed", span[1] - span[0],
+                                   force_offset=span[0])
+            log(f"  [CAVE-LAYOUT] {defn.id}: fixed 块预留 [0x{span[0]:X}, "
+                f"0x{span[1]:X})")
+        except CaveLayoutError as e:
+            log(f"  [CAVE-LAYOUT-ERR] {e}")
+            defn._layout_error = str(e)
+
+    # 2. 收集每个需要 cave 的补丁所需大小
     #    cave_hook / patch_exp_lock: 1 个 main 槽位
     #    patch_summon_table:         3 个槽位 (table + random_cave + random2_cave)
     for defn in config.patches:
@@ -355,8 +397,10 @@ def _build_cave_layout(config: 'PatchConfig', cave_addr: int,
                     setattr(defn, f"_resolved_{off_attr}", slot.offset)
         except CaveLayoutError as e:
             log(f"  [CAVE-LAYOUT-ERR] {e}")
-            # 不抛异常, 而是标记该补丁的 _resolved 字段为 None, 让 apply_* 走默认路径
-            # 这样保证向后兼容: 硬编码模式下若冲突, 启动器仍尝试运行 (行为退化为覆盖)
+            # 标记布局失败: 主循环会跳过该补丁。冲突的 cave 若仍按硬编码偏移
+            # 写入会覆盖其它补丁的 cave (2026-09-10 黑屏事故根因),
+            # 跳过远比"退化为覆盖"安全。
+            defn._layout_error = str(e)
 
     # 启动器日志: 显示布局摘要
     log(f"  [CAVE-LAYOUT] {len(layout.slots)} 槽位, "
@@ -823,11 +867,17 @@ def _apply_fixed_layout_cave(defn: PatchDef, ctx: PatchContext) -> bool:
         log(f"  [ERROR] cave 块 {len(block)} 超出 budget={budget}")
         return False
 
-    nw = write_pm(ctx.h_proc, cave_addr, block)
-    if nw != len(block):
-        log(f"  [ERROR] cave 块写入失败 ({nw}/{len(block)})")
+    # 只写实际占用切片 (前导零区留给 cave_hook 自动布局槽位共享,
+    # 与 _build_cave_layout 的 fixed 预留口径一致)
+    first = next((i for i, b in enumerate(block) if b), 0)
+    last = len(block) - 1 - next(i for i, b in enumerate(reversed(block)) if b)
+    used = block[first:last + 1]
+    nw = write_pm(ctx.h_proc, cave_addr + first, used)
+    if nw != len(used):
+        log(f"  [ERROR] cave 块写入失败 ({nw}/{len(used)})")
         return False
-    log(f"  [OK] cave 块写入 0x{cave_addr:08X} ({len(block)} bytes, N={n})")
+    log(f"  [OK] cave 块写入 0x{cave_addr + first:08X} "
+        f"([0x{first:X},0x{last + 1:X}], {len(used)} bytes, N={n})")
 
     all_ok = True
     for hook in (defn.hooks or []):
@@ -842,9 +892,25 @@ def _apply_fixed_layout_cave(defn: PatchDef, ctx: PatchContext) -> bool:
         hits = _ps(bytes(ctx.code_buf), pat, wc)
         expect = int(hook.get("expect_count", 1) or 1)
         if expect > 0 and len(hits) != expect:
-            log(f"  [ERROR] hook {hook.get('name','?')} 匹配 {len(hits)} 次, 期望 {expect}")
-            all_ok = False
-            continue
+            # 与 patch.json hooks[].fallback_rva 回退定位 (RVA = hook 写入点);
+            # 与 trap_exp_jp_personal_fix 等同点补丁共存时, 先应用者的 E8
+            # 会破坏本补丁模式, fallback 保证后应用者仍能挂上同语义 cave
+            fb = int(hook.get("fallback_rva", 0) or 0)
+            if fb > 0:
+                fb_off = fb - 0x1000
+                if 0 <= fb_off < len(ctx.code_buf):
+                    hits = [fb_off]
+                    log(f"  [WARN] hook {hook.get('name', '?')} 模式失配, "
+                        f"使用 fallback_rva 0x{fb:X}")
+                else:
+                    log(f"  [ERROR] hook {hook.get('name', '?')} fallback "
+                        f"0x{fb:X} 越界")
+                    all_ok = False
+                    continue
+            else:
+                log(f"  [ERROR] hook {hook.get('name','?')} 匹配 {len(hits)} 次, 期望 {expect}")
+                all_ok = False
+                continue
         hsize = int(hook["hook_size"])
         entry = int(hook["cave_entry_offset"])
         ct = cave_addr + entry
@@ -965,6 +1031,37 @@ def _apply_patch_data_expand(defn: PatchDef, ctx: PatchContext) -> bool:
             all_ok = False
     log(f"  [OK] 基址引用 {patched_base}/{len(base_hits)} "
         f"(0x{old_base:X} -> 0x{new_buf:X})")
+
+    # 字段锚定引用: (old_base, old_base+span) 开区间内的立即数
+    # (如 WarPC word_757F0C[527*i]、TKKon 0x9D069E = 基址+6)，
+    # 精确基址替换覆盖不到。span 由 patch.json redirect_base_span 声明。
+    span = int((getattr(defn, "_extra", {}) or {}).get("redirect_base_span", 0) or 0)
+    if span > 0:
+        span_hits = []
+        pos = 0
+        end = len(code) - 4
+        while pos <= end:
+            val = int.from_bytes(code[pos:pos + 4], "little")
+            if old_base < val < old_base + span:
+                span_hits.append((pos, val))
+                pos += 4
+                continue
+            pos += 1
+        patched_span = 0
+        for off, val in span_hits:
+            new_val = new_buf + (val - old_base)
+            abs_addr = start + off
+            op = vp_ex(hp, abs_addr, 4, PAGE_EXECUTE_READWRITE)
+            w = write_pm(hp, abs_addr, i32b(new_val))
+            vp_ex(hp, abs_addr, 4, op)
+            if w == 4:
+                code[off:off + 4] = i32b(new_val)
+                patched_span += 1
+            else:
+                all_ok = False
+        log(f"  [OK] 字段锚定引用 (span={span}) {patched_span}/{len(span_hits)}")
+        if patched_span != len(span_hits):
+            all_ok = False
 
     size_hits = value_scan(bytes(code), old_size)
     patched_size = 0
@@ -2266,6 +2363,12 @@ def apply_config_patches(config: PatchConfig, code_buf: bytearray, code_start_ad
         # 第三方 MOD 兼容: profile skip_patches 检查
         if defn.id in _profile_skip:
             log(f"    -> [跳过] 第三方 MOD 版本自动禁用")
+            continue
+
+        # cave 布局失败的补丁必须跳过: 冲突的 cave 按硬编码偏移写入会
+        # 覆盖其它补丁的 cave (黑屏事故根因), 绝不能"退化为覆盖"
+        if getattr(defn, "_layout_error", None):
+            log(f"    -> [跳过] cave 布局冲突, 已阻止应用: {defn._layout_error}")
             continue
 
         if defn.type == "cave_hook":
