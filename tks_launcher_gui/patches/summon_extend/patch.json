@@ -1,7 +1,7 @@
 {
   "_format": 1,
   "_group": "战斗 - 召唤数量扩展补丁",
-  "_comment": "原版游戏召唤系统只支持 2 个玩家召唤物, 安全战场实体硬上限 32. 本补丁把玩家召唤物扩展到 N 个 (默认 4). 文件级: type=fixed_layout_cave, cave_code.py 的 build_cave_block(cave_base, n) 生成完整布局. 运行时: 仍走 script.py (VirtualAllocEx + apply_cave_hook). 逆向依据: sub_436BD4 / sub_444BB0 / sub_431094 / sub_43C734 / sub_444FD4 / sub_445564.",
+  "_comment": "原版游戏召唤系统只支持 2 个玩家召唤物, 安全战场实体硬上限 32. 本补丁把玩家召唤物扩展到 N 个 (默认 4). type=fixed_layout_cave, cave_code.py 的 build_cave_block(cave_base, n) 生成完整布局. 逆向依据: sub_436BD4 / sub_444BB0 / sub_431094 / sub_43C734 / sub_444FD4 / sub_445564.",
   "type": "fixed_layout_cave",
   "id": "summon_extend",
   "name": "召唤数量扩展",
@@ -9,7 +9,6 @@
   "summon_limit": 4,
   "optional": true,
   "default_checked": false,
-  "script_file": "script.py",
   "cave_code_file": "cave_code.py",
   "cave_layout_size": 2048,
   "hooks": [

@@ -208,11 +208,6 @@ class GenerateExeDialog(QDialog):
                 else:
                     unsupported.append(p)
                 continue
-            # 兼容旧类型名
-            if p.type in ('tkact_expand', 'tkkon_expand'):
-                self._add_patch_item(p, '数据段注入')
-                supported_count += 1
-                continue
             # 不支持的类型
             unsupported.append(p)
 
@@ -230,8 +225,7 @@ class GenerateExeDialog(QDialog):
         # 在日志中记录不支持的补丁
         for p in unsupported:
             reason = {
-                'script': '需要运行时内存操作，请改写为 cave_hook / patch_data_expand',
-                'patch_warpc_addr': '由 WarPC 扩展流程处理',
+                'script': '请改写为 cave_hook / fixed_layout_cave / patch_data_expand',
             }.get(p.type, f'类型 {p.type} 缺少文件级所需字段')
             self._log(f'[{p.id}] {reason}')
 
@@ -435,7 +429,7 @@ class GenerateExeDialog(QDialog):
                 ))
 
             # 数据段注入型 (参数来自 patch.json)
-            elif p.type == 'patch_data_expand' or p.type in ('tkact_expand', 'tkkon_expand'):
+            elif p.type == 'patch_data_expand':
                 item = self._build_data_section(p)
                 if item is not None:
                     data_section_patches.append(item)
@@ -518,19 +512,11 @@ class GenerateExeDialog(QDialog):
 
     def _build_data_section(self, p: PatchDef) -> DataSectionPatchItem | None:
         """从 patch_data_expand 补丁定义构建 DataSectionPatchItem。"""
-        # 兼容旧字段名 / 旧类型
         data_file = p.data_file
         old_base = p.old_base
         old_size = p.old_size
         section_name = p.section_name
         needs_lzss = p.needs_lzss
-
-        if p.type == 'tkact_expand' and not data_file:
-            data_file, old_base, old_size = 'TKAct.dat', 0x9539CA, 509600
-            section_name, needs_lzss = '.tkact', False
-        elif p.type == 'tkkon_expand' and not data_file:
-            data_file, old_base, old_size = 'TKKon.dat', 0x9D0698, 26000
-            section_name, needs_lzss = '.tkkon', True
 
         if not data_file or not old_base or not old_size:
             self._log(f'[{p.id}] patch_data_expand 字段不完整')

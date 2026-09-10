@@ -1,9 +1,8 @@
 # -*- coding: utf-8 -*-
-"""召唤数量扩展 (summon_extend) — 文件级固定布局 cave 生成器
+"""召唤数量扩展 (summon_extend) — 固定布局 cave 生成器
 
-与 runtime script.py 共用同一套布局常量与机器码逻辑。
-文件级调用: build_cave_block(cave_base, n) → 完整 cave 块字节。
-cave_base = .test 节绝对 VA (image_base + test_rva)。
+文件级: build_cave_block(cave_base, n) → 完整 cave 块字节。
+运行时: 同一函数以 ctx.cave_addr 为 cave_base 调用。
 
 布局 (n=默认 4):
   [0x000, 0x680)  预留 (自动布局补丁可能占用)
@@ -20,7 +19,7 @@ import struct
 
 IMAGE_BASE = 0x400000
 
-# === Cave 内存布局 (与 script.py 保持一致) ===
+# === Cave 内存布局 ===
 SLOTS_OFFSET = 0x7A0
 CAVE_BASE_OFFSET = 0x680
 CAVE_1_OFFSET = CAVE_BASE_OFFSET

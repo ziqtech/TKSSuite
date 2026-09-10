@@ -11,8 +11,9 @@ from .memory import (
     read_pm, write_pm, vp_ex,
     replace_addr_in_bytes,
     PROCESS_VM_READ, PROCESS_VM_WRITE, PROCESS_VM_OPERATION,
-    PAGE_EXECUTE_READWRITE,
-    _OpenProcess, _CloseHandle,
+    PAGE_EXECUTE_READWRITE, PAGE_READWRITE,
+    MEM_COMMIT, MEM_RESERVE,
+    _OpenProcess, _CloseHandle, _VirtualAllocEx,
 )
 from .scanner import parse_pattern, pattern_scan, value_scan
 from .config_loader import (
@@ -80,8 +81,9 @@ class PatchContext:
 # 特殊类型说明:
 # - "cave_hook": 两阶段提交 (pre-scan 在 dispatcher, apply 在 patch 后),
 #   由 dispatcher 显式处理, 不进入注册表。
-# - "script": 通过 run_script_patch 间接调用外部 apply(ctx), 单独保留。
-# - "patch_warpc_addr": 仅日志, 不实际应用 (由 WarPC 扩展流程处理)。
+# - "fixed_layout_cave": cave_code.py 生成布局 + 逐 hook call, 由 dispatcher 处理。
+# - "patch_data_expand": VirtualAllocEx + 基址/大小重定向, 由 dispatcher 处理。
+# - "script": 通过 run_script_patch 间接调用外部 apply(ctx), 供 .tkspatch 使用。
 # - 未知类型: 记日志并跳过, 由 dispatcher 处理。
 
 _PATCH_TYPE_HANDLERS: Dict[str, Any] = {}
@@ -776,6 +778,217 @@ def apply_patch_imm32_by_pattern(defn: PatchDef, code_buf: bytearray, code_start
 # ============================================================
 # 补丁类型: cave_hook
 # ============================================================
+
+def _load_cave_code_module(path: str, log):
+    """动态加载补丁目录下的 cave_code.py。"""
+    if not path or not os.path.isfile(path):
+        log(f"  [ERROR] cave_code_file 不存在: {path}")
+        return None
+    try:
+        spec = importlib.util.spec_from_file_location(
+            f"_cave_mod_{abs(hash(path))}", path)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+    except Exception as e:
+        log(f"  [ERROR] 加载 cave_code.py 失败: {e}")
+        return None
+
+
+def _apply_fixed_layout_cave(defn: PatchDef, ctx: PatchContext) -> bool:
+    """fixed_layout_cave 运行时应用: cave_code.py 生成布局 + 逐 hook call。"""
+    log = ctx.log
+    mod = _load_cave_code_module(defn.cave_code_file, log)
+    if mod is None:
+        return False
+    build_fn = getattr(mod, "build_cave_block", None)
+    if not callable(build_fn):
+        log("  [ERROR] cave_code.py 缺少 build_cave_block")
+        return False
+
+    extra = getattr(defn, "_extra", {}) or {}
+    n = int(extra.get("summon_limit", 4) or 4)
+    if n < 2 or n > 8:
+        log(f"  [ERROR] summon_limit={n} 超出 2..8")
+        return False
+
+    cave_addr = ctx.cave_addr
+    if not cave_addr:
+        log("  [ERROR] cave_addr 为 0")
+        return False
+
+    block = build_fn(cave_addr, n)
+    budget = ctx.settings.cave_total_size
+    if len(block) > budget:
+        log(f"  [ERROR] cave 块 {len(block)} 超出 budget={budget}")
+        return False
+
+    nw = write_pm(ctx.h_proc, cave_addr, block)
+    if nw != len(block):
+        log(f"  [ERROR] cave 块写入失败 ({nw}/{len(block)})")
+        return False
+    log(f"  [OK] cave 块写入 0x{cave_addr:08X} ({len(block)} bytes, N={n})")
+
+    all_ok = True
+    for hook in (defn.hooks or []):
+        try:
+            pattern = bytes(int(t, 16) for t in hook["pattern"].split())
+        except (ValueError, KeyError, AttributeError) as e:
+            log(f"  [ERROR] hook pattern 解析失败: {e}")
+            all_ok = False
+            continue
+        from .scanner import parse_pattern as _pp, pattern_scan as _ps
+        pat, wc = _pp(" ".join(f"{b:02X}" for b in pattern))
+        hits = _ps(bytes(ctx.code_buf), pat, wc)
+        expect = int(hook.get("expect_count", 1) or 1)
+        if expect > 0 and len(hits) != expect:
+            log(f"  [ERROR] hook {hook.get('name','?')} 匹配 {len(hits)} 次, 期望 {expect}")
+            all_ok = False
+            continue
+        hsize = int(hook["hook_size"])
+        entry = int(hook["cave_entry_offset"])
+        ct = cave_addr + entry
+        for off in hits:
+            ha = ctx.code_start_addr + off
+            rel = (ct - (ha + 5)) & 0xFFFFFFFF
+            ci = bytearray(hsize)
+            ci[0] = 0xE8
+            ci[1:5] = struct.pack("<I", rel)
+            for i in range(5, hsize):
+                ci[i] = 0x90
+            op = vp_ex(ctx.h_proc, ha, hsize, PAGE_EXECUTE_READWRITE)
+            write_pm(ctx.h_proc, ha, bytes(ci))
+            vp_ex(ctx.h_proc, ha, hsize, op)
+            for i in range(min(hsize, len(ctx.code_buf) - off)):
+                ctx.code_buf[off + i] = ci[i]
+            log(f"  [OK] hook {hook.get('name','?')} @0x{ha:08X} -> call 0x{ct:08X}")
+
+    for bp in (defn.bytes_patches or []):
+        try:
+            pat, wc = parse_pattern(bp["pattern"])
+        except (ValueError, KeyError) as e:
+            log(f"  [ERROR] bytes_patch pattern 解析失败: {e}")
+            all_ok = False
+            continue
+        hits = pattern_scan(bytes(ctx.code_buf), pat, wc)
+        expect = int(bp.get("expect_count", 0) or 0)
+        if expect > 0 and len(hits) != expect:
+            log(f"  [ERROR] bytes_patch 匹配 {len(hits)} 次, 期望 {expect}")
+            all_ok = False
+            continue
+        replace = {}
+        for k, v in (bp.get("replace") or {}).items():
+            if isinstance(v, str) and v == "$summon_limit":
+                replace[int(k)] = n
+            else:
+                replace[int(k)] = int(v)
+        for off in hits:
+            for ro, bv in replace.items():
+                idx = off + ro
+                if 0 <= idx < len(ctx.code_buf):
+                    ctx.code_buf[idx] = bv & 0xFF
+            abs_addr = ctx.code_start_addr + off
+            op = vp_ex(ctx.h_proc, abs_addr, len(pat), PAGE_EXECUTE_READWRITE)
+            write_pm(ctx.h_proc, abs_addr, bytes(ctx.code_buf[off:off + len(pat)]))
+            vp_ex(ctx.h_proc, abs_addr, len(pat), op)
+            log(f"  [OK] bytes_patch @0x{abs_addr:08X}")
+
+    return all_ok
+
+
+def _apply_patch_data_expand(defn: PatchDef, ctx: PatchContext) -> bool:
+    """patch_data_expand 运行时应用: VirtualAllocEx + 基址/大小重定向。"""
+    import ctypes
+    log = ctx.log
+
+    data_file = defn.data_file
+    old_base = defn.old_base
+    old_size = defn.old_size
+    if not data_file or not old_base or not old_size:
+        log("  [ERROR] patch_data_expand 字段不完整")
+        return False
+
+    if not os.path.isfile(data_file):
+        log(f"  [SKIP] {data_file} 不存在")
+        return True
+
+    try:
+        with open(data_file, "rb") as f:
+            raw = f.read()
+    except OSError as e:
+        log(f"  [ERROR] 读取 {data_file} 失败: {e}")
+        return False
+
+    content = raw
+    if defn.needs_lzss:
+        try:
+            from editor_utils.lzss import lzss_decompress_dat
+            content = lzss_decompress_dat(raw)
+        except Exception as e:
+            log(f"  [ERROR] LZSS 解压失败: {e}")
+            return False
+
+    new_size = len(content)
+    if new_size <= old_size:
+        log(f"  [SKIP] {data_file} 大小 {new_size} <= 原始 {old_size}")
+        return True
+
+    hp = ctx.h_proc
+    alloc = _VirtualAllocEx(hp, None, new_size,
+                            MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE)
+    new_buf = ctypes.cast(alloc, ctypes.c_void_p).value or 0 if alloc else 0
+    if not new_buf:
+        log("  [ERROR] VirtualAllocEx 失败")
+        return False
+    log(f"  [OK] 新缓冲区 0x{new_buf:08X} ({new_size} bytes)")
+
+    nw = write_pm(hp, new_buf, content)
+    if nw != new_size:
+        log(f"  [ERROR] 写入扩展数据失败 ({nw}/{new_size})")
+        return False
+
+    code = ctx.code_buf
+    start = ctx.code_start_addr
+    all_ok = True
+
+    base_hits = value_scan(bytes(code), old_base)
+    patched_base = 0
+    for off in base_hits:
+        abs_addr = start + off
+        op = vp_ex(hp, abs_addr, 4, PAGE_EXECUTE_READWRITE)
+        w = write_pm(hp, abs_addr, i32b(new_buf))
+        vp_ex(hp, abs_addr, 4, op)
+        if w == 4:
+            code[off:off + 4] = i32b(new_buf)
+            patched_base += 1
+        else:
+            all_ok = False
+    log(f"  [OK] 基址引用 {patched_base}/{len(base_hits)} "
+        f"(0x{old_base:X} -> 0x{new_buf:X})")
+
+    size_hits = value_scan(bytes(code), old_size)
+    patched_size = 0
+    new_size_le = i32b(new_size)
+    for off in size_hits:
+        abs_addr = start + off
+        op = vp_ex(hp, abs_addr, 4, PAGE_EXECUTE_READWRITE)
+        w = write_pm(hp, abs_addr, new_size_le)
+        vp_ex(hp, abs_addr, 4, op)
+        if w == 4:
+            code[off:off + 4] = new_size_le
+            patched_size += 1
+        else:
+            all_ok = False
+    log(f"  [OK] 大小引用 {patched_size}/{len(size_hits)} "
+        f"({old_size} -> {new_size})")
+
+    if not base_hits:
+        log("  [WARN] 未找到基址引用")
+        all_ok = False
+    if patched_base != len(base_hits) or patched_size != len(size_hits):
+        all_ok = False
+    return all_ok
+
 
 def apply_cave_hook(defn: PatchDef, hits: List[int], code_buf: bytearray,
                      code_start_addr: int, h_proc: int, cave_addr: int,
@@ -2116,27 +2329,11 @@ def apply_config_patches(config: PatchConfig, code_buf: bytearray, code_start_ad
             continue
 
         if defn.type == "fixed_layout_cave":
-            # 运行时仍走 script.py (VirtualAllocEx + apply_cave_hook)
-            if defn.script_path or defn.script_source:
-                all_ok &= _verdict(defn, run_script_patch(defn, ctx))
-            else:
-                log(f"    [ERROR] {tag}: fixed_layout_cave 缺少 script_file")
+            all_ok &= _verdict(defn, _apply_fixed_layout_cave(defn, ctx))
             continue
 
         if defn.type == "patch_data_expand":
-            # 运行时: 有 script 则执行 (tkact/tkkon); 无 script 则由
-            # WarPC 扩展流程处理 (warpc_base_refs), 此处仅日志。
-            if defn.script_path or defn.script_source:
-                all_ok &= _verdict(defn, run_script_patch(defn, ctx))
-            else:
-                log(f"    -> 数据扩容由 WarPC/扩展流程处理 (base=0x{warpc_base:08X})")
-                defn._applied = True
-            continue
-
-        if defn.type == "patch_warpc_addr":
-            # 兼容旧类型: WarPC 地址由 WarPC 扩展流程统一处理
-            log(f"    -> 由 WarPC 扩展流程处理 (base=0x{warpc_base:08X})")
-            defn._applied = True
+            all_ok &= _verdict(defn, _apply_patch_data_expand(defn, ctx))
             continue
 
         # 注册表查找: 普通 patch_type

@@ -1,7 +1,7 @@
 {
   "_format": 1,
   "_group": "── TKKon 数据扩容 ──",
-  "_comment": "必选补丁: TKKon.dat 解压后超过 26000 字节时, 注入扩展数据并重定向基址/大小/派生引用. 文件级: type=patch_data_expand, 将解压后数据作为新 PE 节注入. 运行时: 仍走 script.py (VirtualAllocEx). 逆向依据: 4173F8.c:22 / 45343C.c / 452B14.c.",
+  "_comment": "必选补丁: TKKon.dat 解压后超过 26000 字节时, 注入扩展数据并重定向基址/大小/派生引用. type=patch_data_expand, 将解压后数据作为新 PE 节注入. 逆向依据: 4173F8.c:22 / 45343C.c / 452B14.c.",
   "type": "patch_data_expand",
   "id": "tkkon_expand",
   "name": "TKKon 战斗效果记录扩容 (>650)",
@@ -11,7 +11,6 @@
   "old_size": 26000,
   "section_name": ".tkkon",
   "needs_lzss": true,
-  "script_file": "script.py",
   "optional": false,
   "default_checked": true,
   "format": "TKSPATCH",
