@@ -195,6 +195,8 @@ class CavePatchItem:
     expect_count: int = 1
     hook_offset: int = 0          # hook 写入点相对模式起点的字节偏移
     cave_offset: int = -1         # cave 在 .test 节内的固定偏移（-1=顺序放置）
+    warpc_cap_adjust: bool = False  # cave 内 cmp eax,200 (WarPC 索引上限) 动态调整
+    weapon_cap_adjust: bool = False  # cave 内 cmp eax,143 (武器排他上限) 动态调整
 
 
 @dataclass
@@ -337,12 +339,23 @@ class ExeBuilder:
 
     def _apply_imm32_patch(self, data: bytearray, item: Imm32PatchItem,
                            log: List[str]) -> bool:
-        """应用 patch_imm32：模式搜索 + 立即数替换。"""
+        """应用 patch_imm32：模式搜索 + 立即数替换。
+
+        只在原版可执行节 (.text) 内生效——value_scan 型 (expect_count=0)
+        全文件扫描会命中注入数据节里与立即数同值的普通数据
+        (原实现写入 36 处 "RVA 0x0"，值恰相同时是无害 no-op，
+        换值后即数据损坏)。
+        """
         pe = self._pe
         all_ok = True
+        exec_ranges = [(s.raw_offset, s.raw_offset + s.raw_size)
+                       for s in pe.sections
+                       if s.raw_size > 0 and (s.characteristics & 0x20000000)]
         for entry in item.entries:
             pat, wc = parse_pattern(entry.pattern)
-            hits = pattern_scan(bytes(data), pat, wc)
+            hits = [h for h in pattern_scan(bytes(data), pat, wc)
+                    if any(a <= h < b for a, b in exec_ranges)]
+            skipped = 0
             log.append(f'  [{item.patch_id}] 模式匹配 {len(hits)} 处 '
                        f'(预期 {entry.expect_count})')
             if entry.expect_count > 0 and len(hits) != entry.expect_count:
@@ -723,63 +736,10 @@ class ExeBuilder:
             for item in imm32_patches:
                 self._apply_imm32_patch(data, item, log)
 
-        # ── 2b. 数据段引用重定向 ──
-        if data_section_results:
-            log.append(f'── 重定向数据段引用 ({len(data_section_results)} 个) ──')
-            for item, new_base_abs, _, _ in data_section_results:
-                old_base_bytes = struct.pack('<I', item.old_base)
-                new_base_bytes = struct.pack('<I', new_base_abs)
-                hits = find_pattern(bytes(data), old_base_bytes)
-                log.append(f'  [{item.patch_id}] 基址引用: {len(hits)} 处 '
-                           f'(0x{item.old_base:X} → 0x{new_base_abs:X})')
-                for off in hits:
-                    rva = offset_to_rva(pe, off) if any(
-                        s.raw_offset <= off < s.raw_offset + s.raw_size
-                        for s in pe.sections) else 0
-                    if rva and rva < 0x100000:
-                        data[off:off + 4] = new_base_bytes
-                        log.append(f'    @ 0x{off:X} (RVA 0x{rva:X})')
-
-                old_size_bytes = struct.pack('<I', item.old_size)
-                new_size_bytes = struct.pack('<I', len(item.data))
-                size_hits = find_pattern(bytes(data), old_size_bytes)
-                log.append(f'  [{item.patch_id}] 大小引用: {len(size_hits)} 处 '
-                           f'({item.old_size} → {len(item.data)})')
-                for off in size_hits:
-                    rva = offset_to_rva(pe, off) if any(
-                        s.raw_offset <= off < s.raw_offset + s.raw_size
-                        for s in pe.sections) else 0
-                    if rva and rva < 0x100000:
-                        data[off:off + 4] = new_size_bytes
-                        log.append(f'    @ 0x{off:X} (RVA 0x{rva:X})')
-
-                # 字段锚定引用: [old_base+1, old_base+span) 内的立即数
-                # (如 WarPC word_757F0C[527*i]、TKKon 0x9D069E = 基址+6)，
-                # 精确基址替换覆盖不到，按 (old_base, old_base+span) 开区间扫描。
-                span = int(getattr(item, 'redirect_base_span', 0) or 0)
-                if span > 0:
-                    span_hits = 0
-                    text_secs = [s for s in pe.sections
-                                 if s.raw_size > 0 and (s.characteristics & 0x20000000)]
-                    for sec in text_secs:
-                        lo = sec.raw_offset
-                        hi = sec.raw_offset + sec.raw_size
-                        pos = lo
-                        while pos + 4 <= hi:
-                            val = int.from_bytes(data[pos:pos + 4], 'little')
-                            if item.old_base < val < item.old_base + span:
-                                delta = val - item.old_base
-                                new_val = new_base_abs + delta
-                                log.append(f'    字段锚定 @ 0x{pos:X} '
-                                           f'(RVA 0x{offset_to_rva(pe, pos):X}): '
-                                           f'0x{val:X} → 0x{new_val:X} (基址+{delta})')
-                                data[pos:pos + 4] = struct.pack('<I', new_val)
-                                span_hits += 1
-                                pos += 4
-                                continue
-                            pos += 1
-                    log.append(f'  [{item.patch_id}] 字段锚定引用 (span={span}): '
-                               f'{span_hits} 处')
+        # 数据段引用重定向挪到 hook 定位之后执行 (见 4b): 先让各补丁的
+        # hook_pattern 在未被重定向的字节上匹配 (如 checkmember 的模式尾部
+        # 就是 word_757F0C 字段锚, 先重定向会破坏模式), 再重定向并跳过
+        # hook 覆盖区。
 
         # ── 3. 配置驱动 ──
         if config_patches:
@@ -870,6 +830,77 @@ class ExeBuilder:
                     located.append(('cave', item, hook_off, item.hook_size, -1,
                                     item.patch_id))
 
+        # ── 4b. 数据段引用重定向 ──
+        # 在 hook 定位之后执行: hook 模式必须在未被重定向的字节上匹配
+        # (checkmember 的模式尾部就是 word_757F0C 字段锚)。重定向跳过
+        # hook 覆盖区 [hook_off, hook_off+hook_size) —— 那些字节随后会被
+        # E8+NOP 覆盖; 覆盖区之外的锚就地生效。
+        if data_section_results:
+            hook_regions = [(off, off + hsize)
+                            for kind, owner, off, hsize, _, _ in located]
+
+            def _in_hook_region(off: int, size: int = 4) -> bool:
+                return any(off < b and a < off + size for a, b in hook_regions)
+
+            log.append(f'── 重定向数据段引用 ({len(data_section_results)} 个) ──')
+            for item, new_base_abs, _, _ in data_section_results:
+                old_base_bytes = struct.pack('<I', item.old_base)
+                new_base_bytes = struct.pack('<I', new_base_abs)
+                hits = [h for h in find_pattern(bytes(data), old_base_bytes)
+                        if not _in_hook_region(h)]
+                log.append(f'  [{item.patch_id}] 基址引用: {len(hits)} 处 '
+                           f'(0x{item.old_base:X} → 0x{new_base_abs:X})')
+                for off in hits:
+                    rva = offset_to_rva(pe, off) if any(
+                        s.raw_offset <= off < s.raw_offset + s.raw_size
+                        for s in pe.sections) else 0
+                    if rva and rva < 0x100000:
+                        data[off:off + 4] = new_base_bytes
+                        log.append(f'    @ 0x{off:X} (RVA 0x{rva:X})')
+
+                old_size_bytes = struct.pack('<I', item.old_size)
+                new_size_bytes = struct.pack('<I', len(item.data))
+                size_hits = [h for h in find_pattern(bytes(data), old_size_bytes)
+                             if not _in_hook_region(h)]
+                log.append(f'  [{item.patch_id}] 大小引用: {len(size_hits)} 处 '
+                           f'({item.old_size} → {len(item.data)})')
+                for off in size_hits:
+                    rva = offset_to_rva(pe, off) if any(
+                        s.raw_offset <= off < s.raw_offset + s.raw_size
+                        for s in pe.sections) else 0
+                    if rva and rva < 0x100000:
+                        data[off:off + 4] = new_size_bytes
+                        log.append(f'    @ 0x{off:X} (RVA 0x{rva:X})')
+
+                # 字段锚定引用: [old_base+1, old_base+span) 内的立即数
+                # (如 WarPC word_757F0C[527*i]、TKKon 0x9D069E = 基址+6)，
+                # 精确基址替换覆盖不到，按 (old_base, old_base+span) 开区间扫描。
+                span = int(getattr(item, 'redirect_base_span', 0) or 0)
+                if span > 0:
+                    span_hits = 0
+                    text_secs = [s for s in pe.sections
+                                 if s.raw_size > 0 and (s.characteristics & 0x20000000)]
+                    for sec in text_secs:
+                        lo = sec.raw_offset
+                        hi = sec.raw_offset + sec.raw_size
+                        pos = lo
+                        while pos + 4 <= hi:
+                            val = int.from_bytes(data[pos:pos + 4], 'little')
+                            if (item.old_base < val < item.old_base + span
+                                    and not _in_hook_region(pos)):
+                                delta = val - item.old_base
+                                new_val = new_base_abs + delta
+                                log.append(f'    字段锚定 @ 0x{pos:X} '
+                                           f'(RVA 0x{offset_to_rva(pe, pos):X}): '
+                                           f'0x{val:X} → 0x{new_val:X} (基址+{delta})')
+                                data[pos:pos + 4] = struct.pack('<I', new_val)
+                                span_hits += 1
+                                pos += 4
+                                continue
+                            pos += 1
+                    log.append(f'  [{item.patch_id}] 字段锚定引用 (span={span}): '
+                               f'{span_hits} 处')
+
         # ── 5. 计算 .test 节布局 ──
         test_rva = 0
         test_file_off = 0
@@ -915,13 +946,54 @@ class ExeBuilder:
             log.append(f'.test 节: RVA=0x{test_rva:X}, 绝对=0x{test_abs:X}, '
                        f'大小=0x{test_raw_size:X}')
 
-            # 生成 fixed_layout 块 (build_fn 用最终 test_abs)
+            # WarPC 基址占位符与索引上限替换 (与 patch_engine.build_cave_template
+            # 的运行时语义一致)。cave 代码中的 0x757F08 是占位符: 运行时注入由
+            # replace_addr_in_bytes 换成 VirtualAlloc 基址; 文件级烧录必须换成
+            # .warpc 节基址, 否则 cave 读的是重定向后永远为 0 的旧 BSS——
+            # 自定义头像/战场形象/历史文本全部回落默认值 (头像错误事故根因)。
+            # warpc_base_refs 未勾选时游戏加载进原版 BSS (容量 150722 = 143 条),
+            # cap 上限按 143 计 (与 patch_engine 未扩容路径一致), 不能为 None
+            warpc_new_base = None
+            rec_count = 143
+            for it, new_abs, _, _ in data_section_results:
+                if it.old_base == 0x757F08:  # warpc_base_refs
+                    warpc_new_base = new_abs
+                    rec_count = max(len(it.data) // 1054, 143)
+
+            def _prepare_cave_bytes(owner, code: bytes) -> bytes:
+                c = bytearray(code)
+                if warpc_new_base is not None:
+                    old_le = struct.pack('<I', 0x757F08)
+                    pos = 0
+                    while True:
+                        pos = c.find(old_le, pos)
+                        if pos < 0:
+                            break
+                        c[pos:pos + 4] = struct.pack('<I', warpc_new_base)
+                        pos += 4
+                if getattr(owner, 'warpc_cap_adjust', False):
+                    idx_cap = max(rec_count - 1, 200)
+                    pos = c.find(bytes([0x3D]) + struct.pack('<I', 200))
+                    if pos >= 0:
+                        c[pos:pos + 5] = bytes([0x3D]) + struct.pack('<I', idx_cap)
+                if getattr(owner, 'weapon_cap_adjust', False):
+                    rc = max(rec_count, 143)
+                    pos = c.find(bytes([0x3D]) + struct.pack('<I', 143))
+                    if pos >= 0:
+                        c[pos:pos + 5] = bytes([0x3D]) + struct.pack('<I', rc)
+                return bytes(c)
+
+            # 生成 fixed_layout 块。build_fn 必须用块的【实际】基址
+            # (test_abs + 块偏移): 块内的 E9 rel32 内部跳转与 slots 等绝对
+            # 寻址都按该基址编码, 错 0x40 就会在战斗初始化时跳进垃圾指令
+            # (白屏事故根因)。
             cave_section = bytearray(test_raw_size)
             for fl, off, size in fl_blocks:
                 if fl.build_fn is not None:
-                    block = fl.build_fn(test_abs)
+                    block = fl.build_fn(test_abs + off)
                 else:
                     block = fl.cave_block or b''
+                block = _prepare_cave_bytes(fl, block)
                 if len(block) > size:
                     result.error = (f'[{fl.patch_id}] cave 块 {len(block)} 字节 '
                                     f'超出布局 {size}')
@@ -932,9 +1004,10 @@ class ExeBuilder:
                            f'({len(block)}/{size} 字节)')
 
             for item, off in cave_blobs:
-                cave_section[off:off + len(item.cave_code)] = item.cave_code
+                code = _prepare_cave_bytes(item, item.cave_code)
+                cave_section[off:off + len(code)] = code
                 log.append(f'[{item.patch_id}] cave 代码写入 .test+0x{off:X} '
-                           f'({len(item.cave_code)} 字节)')
+                           f'({len(code)} 字节)')
 
             if len(data) < test_file_off:
                 data.extend(b'\x00' * (test_file_off - len(data)))

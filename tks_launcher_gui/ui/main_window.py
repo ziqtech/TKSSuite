@@ -933,6 +933,7 @@ class MainWindow(QMainWindow):
         dialog = GenerateExeDialog(
             patches=self._patches,
             launcher_dir=_LAUNCHER_DIR,
+            patch_states=self.patch_list.get_patch_states(),
             parent=self,
         )
         dialog.exec()

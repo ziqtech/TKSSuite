@@ -25,6 +25,56 @@ from core.exe_builder import (
 from core.tkspatch_loader import get_external_cave_code
 
 
+def expansion_buffer_size(actual_size: int, cap: int = 0,
+                          align: int = 0x10000) -> int:
+    """扩容缓冲区的最终大小 = max(实际数据, buffer_cap) 的 align 对齐。
+
+    patch_data_expand 的注入节与配套 patch_imm32 的容量立即数必须用
+    同一公式，否则加载检查值与实际缓冲区不一致。
+    """
+    target = max(actual_size, cap)
+    return (target + align - 1) & ~(align - 1)
+
+
+def resolve_data_file(out_exe_path: str, src_exe_path: str, filename: str) -> str | None:
+    """数据文件解析: 优先输出 exe 所在目录, 回退原版 exe 所在目录。
+
+    游戏从自身所在目录读取 .dat 文件, 生成的 exe 将在输出目录运行——
+    部署目录里的数据文件 (可能是 MOD 合并/编辑后的扩容版) 才是运行时
+    真正被加载的。若只按"原版 TKS.exe 目录"取数据, 部署目录的扩容文件
+    会超出重定向后的缓冲区, 游戏报 FileRead ... buffer too small。
+    """
+    candidates = []
+    if out_exe_path:
+        d = os.path.dirname(out_exe_path)
+        if d:
+            candidates.append(os.path.join(d, filename))
+    if src_exe_path:
+        d = os.path.dirname(src_exe_path)
+        if d:
+            candidates.append(os.path.join(d, filename))
+    for c in candidates:
+        if os.path.isfile(c):
+            return c
+    return None
+
+
+def pad_section_data(content: bytes, min_size: int = 0,
+                     align: int = 0x10000) -> bytes:
+    """把注入数据补零到 max(原长, min_size) 的 align (默认 64KB) 对齐。
+
+    重定向后的缓冲区大小 = 注入数据长度。buffer_cap 声明的下限使缓冲区
+    与生成时的数据文件大小解耦——部署目录的数据文件 (可能在生成后才被
+    MOD 合并/编辑扩容, 或 exe 生成后另行拷贝过去) 只要不超过缓冲区即可
+    加载 (FileRead 只要求 文件大小 <= 缓冲区大小, 未覆盖尾部保持补零)。
+    """
+    target = max(len(content), min_size)
+    rounded = (target + align - 1) & ~(align - 1)
+    if rounded > len(content):
+        content = content.ljust(rounded, b'\x00')
+    return content
+
+
 class _BuildWorker(QThread):
     """后台构建线程。"""
     finished = Signal(object)  # CaveBuildResult
@@ -44,14 +94,23 @@ class _BuildWorker(QThread):
         self._output = output_path
 
     def run(self):
-        result = self._builder.build(
-            self._cave_patches, self._output,
-            bytes_patches=self._bytes_patches,
-            imm32_patches=self._imm32_patches,
-            config_patches=self._config_patches,
-            data_section_patches=self._data_section_patches,
-            fixed_layouts=self._fixed_layouts,
-        )
+        try:
+            result = self._builder.build(
+                self._cave_patches, self._output,
+                bytes_patches=self._bytes_patches,
+                imm32_patches=self._imm32_patches,
+                config_patches=self._config_patches,
+                data_section_patches=self._data_section_patches,
+                fixed_layouts=self._fixed_layouts,
+            )
+        except Exception:
+            # 线程内异常若不接住, finished 信号永不发出, 弹窗会永远停在
+            # "开始构建…" (已发生过的卡死事故); 转为失败结果在弹窗内展示
+            import traceback
+            from core.exe_builder import CaveBuildResult
+            result = CaveBuildResult(success=False, output_path=self._output,
+                                     error='构建异常: 见日志')
+            result.log.append(traceback.format_exc())
         self.finished.emit(result)
 
 
@@ -65,12 +124,16 @@ class GenerateExeDialog(QDialog):
       4. 点击生成
     """
 
-    def __init__(self, patches: list[PatchDef], launcher_dir: str, parent=None):
+    def __init__(self, patches: list[PatchDef], launcher_dir: str, parent=None,
+                 patch_states: dict[str, bool] | None = None):
         super().__init__(parent)
         self.setWindowTitle('生成启动器 — 将补丁烧录进 TKS.exe')
         self.setMinimumSize(750, 650)
         self._patches = patches
         self._launcher_dir = launcher_dir
+        # launcher 补丁列表的当前可选补丁勾选状态 (get_patch_states()),
+        # 打开时原样镜像, 与 launcher 的必选/可选语义完全一致
+        self._patch_states = patch_states or {}
         self._worker: _BuildWorker | None = None
 
         self._setup_ui()
@@ -106,6 +169,8 @@ class GenerateExeDialog(QDialog):
         btn_row = QHBoxLayout()
         btn_all = QPushButton('全选')
         btn_none = QPushButton('全不选')
+        btn_all.setToolTip('勾选全部可选补丁 (必选补丁始终勾选)')
+        btn_none.setToolTip('取消全部可选补丁 (必选补丁不受影响)')
         btn_all.clicked.connect(lambda: self._set_all(True))
         btn_none.clicked.connect(lambda: self._set_all(False))
         btn_row.addWidget(btn_all)
@@ -230,19 +295,34 @@ class GenerateExeDialog(QDialog):
             self._log(f'[{p.id}] {reason}')
 
     def _add_patch_item(self, p: PatchDef, type_label: str):
-        """添加一个补丁到列表。"""
+        """添加一个补丁到列表。
+
+        勾选语义与 launcher 补丁列表完全一致:
+          - 必选 (非 optional): 始终勾选且锁定 (复选框无 UserCheckable 标志);
+          - 可选: 镜像 launcher 当前勾选状态, 无记录时回退 default_checked。
+        """
         item = QListWidgetItem()
-        item.setText(f'{p.name}  [{type_label}]')
-        item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
-        item.setCheckState(Qt.Checked if p.default_checked else Qt.Unchecked)
+        if p.optional:
+            checked = self._patch_states.get(p.id, p.default_checked)
+            item.setText(f'{p.name}  [{type_label}]')
+            item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+            item.setCheckState(Qt.Checked if checked else Qt.Unchecked)
+        else:
+            item.setText(f'{p.name}  [必选·{type_label}]')
+            item.setFlags(item.flags() & ~Qt.ItemIsUserCheckable)
+            item.setCheckState(Qt.Checked)
         item.setData(Qt.UserRole, p)
         item.setData(Qt.UserRole + 1, type_label)
         self._patch_list.addItem(item)
 
     def _set_all(self, checked: bool):
+        """全选/全不选: 仅作用于可选补丁 (必选始终勾选, 与 launcher 一致)。"""
         state = Qt.Checked if checked else Qt.Unchecked
         for i in range(self._patch_list.count()):
             item = self._patch_list.item(i)
+            p = item.data(Qt.UserRole)
+            if p is not None and not p.optional:
+                continue
             if item.flags() & Qt.ItemIsUserCheckable:
                 item.setCheckState(state)
 
@@ -341,6 +421,8 @@ class GenerateExeDialog(QDialog):
                     fallback_rva=p.fallback_rva,
                     expect_count=p.hook_expect_count or 1,
                     hook_offset=p.hook_offset or 0,
+                    warpc_cap_adjust=bool(p.warpc_cap_adjust),
+                    weapon_cap_adjust=bool(p.weapon_cap_adjust),
                 ))
 
             # fixed_layout_cave
@@ -433,8 +515,39 @@ class GenerateExeDialog(QDialog):
                 if item is not None:
                     data_section_patches.append(item)
 
+        self._warn_unselected_expansions(data_section_patches)
+
         return (cave_patches, bytes_patches, imm32_patches, config_patches,
                 data_section_patches, fixed_layouts)
+
+    def _warn_unselected_expansions(self, selected_items):
+        """数据文件已扩容但对应 patch_data_expand 未勾选时警告。
+
+        生成的 exe 按旧容量加载部署目录的数据文件——WarPC.dat 这类已扩容
+        文件会再次触发 FileRead buffer too small。launcher 运行时由
+        warpc_expander 兜底, 生成的 exe 没有这层, 必须勾选扩容补丁。
+        """
+        selected_ids = {it.patch_id for it in selected_items}
+        for p in self._patches:
+            if p.type != 'patch_data_expand' or p.id in selected_ids:
+                continue
+            path = resolve_data_file(self._out_edit.text().strip(),
+                                     self._src_edit.text().strip(), p.data_file)
+            if not path:
+                continue
+            try:
+                with open(path, 'rb') as f:
+                    content = f.read()
+                if p.needs_lzss:
+                    from editor_utils.lzss import lzss_decompress_dat
+                    content = lzss_decompress_dat(content)
+            except Exception:
+                continue
+            if len(content) > p.old_size:
+                self._log(f'[WARN] {p.data_file} 已扩容 '
+                          f'({len(content)} > 原版 {p.old_size}) 但 '
+                          f'{p.id} 未勾选——生成的 exe 将无法加载该文件, '
+                          f'请勾选 {p.id} 后重新生成')
 
     def _build_fixed_layout(self, p: PatchDef) -> FixedLayoutCave | None:
         """从 fixed_layout_cave 补丁定义构建 FixedLayoutCave。"""
@@ -521,11 +634,13 @@ class GenerateExeDialog(QDialog):
             self._log(f'[{p.id}] patch_data_expand 字段不完整')
             return None
 
-        src_dir = os.path.dirname(self._src_edit.text().strip())
-        path = os.path.join(src_dir, data_file)
-        if not os.path.isfile(path):
-            self._log(f'[{p.id}] 数据文件不存在: {path}')
+        path = resolve_data_file(self._out_edit.text().strip(),
+                                 self._src_edit.text().strip(), data_file)
+        if not path:
+            self._log(f'[{p.id}] 数据文件不存在: '
+                      f'{data_file} (输出目录与原版目录均未找到)')
             return None
+        self._log(f'[{p.id}] 数据文件: {path}')
 
         try:
             with open(path, 'rb') as f:
@@ -542,9 +657,17 @@ class GenerateExeDialog(QDialog):
                 self._log(f'[{p.id}] LZSS 解压失败: {e}')
                 return None
 
-        if len(content) <= old_size:
+        # buffer_cap 声明后选中即注入, 缓冲区按下限建 (与生成时数据大小解耦):
+        # 部署目录的数据文件在生成后才扩容 / exe 拷贝到其它目录均不受影响,
+        # 只要运行时文件不超过缓冲区即可加载。
+        cap = int((getattr(p, '_extra', {}) or {}).get('buffer_cap', 0) or 0)
+        if not cap and len(content) <= old_size:
             self._log(f'[{p.id}] 数据大小 {len(content)} <= 原始 {old_size}，跳过')
             return None
+
+        content = pad_section_data(content, min_size=cap)
+        self._log(f'[{p.id}] 注入 {len(content)} 字节'
+                  + (f' (buffer_cap={cap}, 64KB 对齐)' if cap else ' (64KB 对齐含余量)'))
 
         return DataSectionPatchItem(
             patch_id=p.id, name=p.name,
@@ -578,7 +701,16 @@ class GenerateExeDialog(QDialog):
             var_name = expr.strip('{}')
             actual_size = self._read_data_file_size(var_name)
             if actual_size is not None:
-                self._log(f'[{p.id}] {var_name} = {actual_size} (从数据文件读取)')
+                # buffer_cap: 容量立即数与 data_expand 注入节用同一公式,
+                # 保证 加载检查值 == 实际缓冲区大小
+                cap = int((getattr(p, '_extra', {}) or {})
+                          .get('buffer_cap', 0) or 0)
+                if cap:
+                    actual_size = expansion_buffer_size(actual_size, cap)
+                    self._log(f'[{p.id}] {var_name} = {actual_size} '
+                              f'(buffer_cap={cap}, 64KB 对齐)')
+                else:
+                    self._log(f'[{p.id}] {var_name} = {actual_size} (从数据文件读取)')
                 return actual_size
             # 回退到 expect_value
             self._log(f'[{p.id}] 无法读取 {var_name}，使用 expect_value={p.expect_value}')
@@ -596,11 +728,6 @@ class GenerateExeDialog(QDialog):
           warpc_new_size → WarPC.dat 解压后大小
           tkdefunit_new_count → TKDefUnit.dat 条数
         """
-        src = self._src_edit.text().strip()
-        if not src:
-            return None
-        game_dir = os.path.dirname(src)
-
         # 变量名 → (文件名, 是否需要解压, 记录大小)
         file_map = {
             'tkitem_actual_size': ('TKItem.dat', True, 64),
@@ -615,8 +742,9 @@ class GenerateExeDialog(QDialog):
             return None
 
         filename, needs_decompress, rec_size = file_map[var_name]
-        filepath = os.path.join(game_dir, filename)
-        if not os.path.isfile(filepath):
+        filepath = resolve_data_file(self._out_edit.text().strip(),
+                                     self._src_edit.text().strip(), filename)
+        if not filepath:
             return None
 
         try:

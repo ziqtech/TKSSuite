@@ -14,5 +14,6 @@
   "optional": false,
   "default_checked": true,
   "format": "TKSPATCH",
-  "format_version": 1
+  "format_version": 1,
+  "buffer_cap": 784000
 }
