@@ -330,14 +330,12 @@ class GenerateExeDialog(QDialog):
                 if not cave_code:
                     self._log(f'[{p.id}] 无外置 cave 代码，跳过')
                     continue
-                try:
-                    hook_pattern = bytes(int(t, 16) for t in p.hook_pattern.split())
-                except (ValueError, AttributeError) as e:
-                    self._log(f'[{p.id}] hook_pattern 解析失败: {e}')
+                if not p.hook_pattern:
+                    self._log(f'[{p.id}] 无 hook_pattern，跳过')
                     continue
                 cave_patches.append(CavePatchItem(
                     patch_id=p.id, name=p.name,
-                    hook_pattern=hook_pattern,
+                    hook_pattern=p.hook_pattern,
                     hook_size=p.hook_size or 5,
                     cave_code=cave_code,
                     fallback_rva=p.fallback_rva,

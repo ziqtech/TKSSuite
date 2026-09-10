@@ -92,7 +92,7 @@ def pattern_to_bytes(pattern: str) -> bytes:
 
 
 def find_pattern(data: bytes, pattern: bytes) -> List[int]:
-    """在 data 中查找 pattern 的所有偏移。"""
+    """在 data 中查找 pattern 的所有偏移（精确匹配）。"""
     offsets = []
     start = 0
     while True:
@@ -102,6 +102,12 @@ def find_pattern(data: bytes, pattern: bytes) -> List[int]:
         offsets.append(idx)
         start = idx + 1
     return offsets
+
+
+def scan_pattern_str(data: bytes, pattern_str: str) -> List[int]:
+    """带通配符的模式串扫描。'??' 或 '**' 表示通配字节。"""
+    pat, wc = parse_pattern(pattern_str)
+    return pattern_scan(data, pat, wc)
 
 
 def parse_pattern(hex_str: str) -> Tuple[bytes, List[bool]]:
@@ -182,12 +188,12 @@ class CavePatchItem:
     """一个待烧录的 cave 补丁。"""
     patch_id: str
     name: str
-    hook_pattern: bytes          # 原始指令字节（用于定位 hook 点）
-    hook_size: int               # 被覆盖的原始指令长度（jmp rel32 = 5，需 hook_size >= 5）
-    cave_code: bytes             # cave 机器码
-    fallback_rva: int = 0        # 模式匹配失败时的回退 RVA
+    hook_pattern: str             # 模式串 (空格分隔十六进制, 支持 ??/** 通配)
+    hook_size: int                # 被覆盖的原始指令长度（jmp rel32 = 5，需 hook_size >= 5）
+    cave_code: bytes              # cave 机器码
+    fallback_rva: int = 0         # 模式匹配失败时的回退 RVA
     expect_count: int = 1
-    cave_offset: int = -1        # cave 在 .test 节内的固定偏移（-1=顺序放置）
+    cave_offset: int = -1         # cave 在 .test 节内的固定偏移（-1=顺序放置）
 
 
 @dataclass
@@ -769,10 +775,8 @@ class ExeBuilder:
             for fl in fixed_layouts:
                 for hook in fl.hooks:
                     pattern = hook['pattern']
-                    if isinstance(pattern, str):
-                        pattern = bytes(int(t, 16) for t in pattern.split())
                     expect = hook.get('expect_count', 1)
-                    offsets = find_pattern(bytes(data), pattern)
+                    offsets = scan_pattern_str(bytes(data), pattern)
                     if len(offsets) != expect:
                         if hook.get('fallback_rva'):
                             off = rva_to_offset(pe, _parse_int(hook['fallback_rva']))
@@ -798,26 +802,30 @@ class ExeBuilder:
         if cave_patches:
             log.append(f'── 定位 cave_hook ({len(cave_patches)} 个) ──')
             for item in cave_patches:
-                offsets = find_pattern(bytes(data), item.hook_pattern)
+                pat_str = item.hook_pattern
+                if isinstance(pat_str, (bytes, bytearray)):
+                    pat_str = ' '.join(f'{b:02X}' for b in pat_str)
+                offsets = scan_pattern_str(bytes(data), pat_str)
                 if len(offsets) != item.expect_count:
                     if item.fallback_rva:
-                        off = rva_to_offset(pe, item.fallback_rva)
-                        log.append(f'[{item.patch_id}] 模式匹配 {len(offsets)} 次，'
+                        offsets = [rva_to_offset(pe, item.fallback_rva)]
+                        log.append(f'[{item.patch_id}] 模式匹配失败，'
                                    f'使用回退 RVA 0x{item.fallback_rva:X}')
                     else:
                         result.error = (f'[{item.patch_id}] hook_pattern 匹配 '
                                         f'{len(offsets)} 次，期望 {item.expect_count} 次')
                         log.append(result.error)
                         return result
-                else:
-                    off = offsets[0]
-                    log.append(f'[{item.patch_id}] hook 点 @ 0x{off:X} '
-                               f'(RVA 0x{offset_to_rva(pe, off):X})')
                 if item.hook_size < 5:
                     result.error = (f'[{item.patch_id}] hook_size={item.hook_size} < 5')
                     log.append(result.error)
                     return result
-                located.append(('cave', item, off, item.hook_size, -1, item.patch_id))
+                # 同一 cave 代码可被多个 hook 点 call (expect_count>1)
+                for off in offsets:
+                    log.append(f'[{item.patch_id}] hook 点 @ 0x{off:X} '
+                               f'(RVA 0x{offset_to_rva(pe, off):X})')
+                    located.append(('cave', item, off, item.hook_size, -1,
+                                    item.patch_id))
 
         # ── 5. 计算 .test 节布局 ──
         test_rva = 0
@@ -829,7 +837,7 @@ class ExeBuilder:
 
         if need_test:
             # fixed_layout 块从偏移 0 开始; cave_hook 顺序排在其后
-            fl_blocks = []  # (fl, block_bytes)
+            fl_blocks = []  # (fl, offset, size)
             cursor = 0
             for fl in fixed_layouts:
                 size = fl.cave_layout_size or (
@@ -841,11 +849,16 @@ class ExeBuilder:
                 fl_blocks.append((fl, cursor, size))
                 cursor = align_up(cursor + size, 16)
 
+            # cave_hook: 每个补丁只占一份 cave 代码, 多 hook 点共享
             cave_blobs = []  # (item, entry_rel)
+            cave_entry_of = {}  # id(item) -> entry_rel
             for kind, owner, _, _, entry, _ in located:
                 if kind != 'cave':
                     continue
+                if id(owner) in cave_entry_of:
+                    continue
                 aligned = align_up(cursor, 16)
+                cave_entry_of[id(owner)] = aligned
                 cave_blobs.append((owner, aligned))
                 cursor = aligned + len(owner.cave_code)
 
@@ -888,7 +901,11 @@ class ExeBuilder:
                 if kind == 'fl':
                     entry_rel = entry
                 else:
-                    entry_rel = next(e for i, e in cave_blobs if i is owner)
+                    entry_rel = cave_entry_of.get(id(owner))
+                    if entry_rel is None:
+                        result.error = f'[{owner.patch_id}] 未分配 cave 偏移'
+                        log.append(result.error)
+                        return result
                 hook_rva = offset_to_rva(pe, hook_off)
                 cave_target_rva = test_rva + entry_rel
                 rel32 = cave_target_rva - (hook_rva + 5)
