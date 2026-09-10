@@ -89,9 +89,9 @@ SPECIAL_FLAG_BITS = [
 
 BASIC_FIELDS = [
     ("skill_text_id", 0, "名称文本ID", 'tkt', "技能名称 TKT 文本ID"),
-    ("skill_desc_id", 2, "说明文本ID", 'tkt', "技能说明 TKT 文本ID = skill_text_id + 400"),
+    ("skill_desc_id", 2, "说明文本ID", 'tkt', "技能说明 TKT 文本ID (独立字段; 当前数据中多数=name+400, 但引擎直接读取此值, 不做加法)"),
     ("type", 4, "技能类型", 'type', "0=指令 1=主动 2=被动 3=移动"),
-    ("jp_cost", 6, "技能点数", 'int', "学习技能所需点数 (JP)"),
+    ("jp_cost", 6, "技能点数", 'int', "学习技能基础点数; 实际消耗 = jp_cost * (250 - 角色当前悟性) / 200 (sub_41E248)"),
 ]
 
 TREE_FIELDS = []

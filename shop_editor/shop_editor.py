@@ -6,15 +6,21 @@ TKShop.dat 可视化编辑器 (PySide6 重构版)
   - sub_45343C: DAT 文件统一加载 (LZSS 解压, 8字节/条, 240条, 基址 unk_9508A0)
   - sub_452B14: LZSS 解压引擎 (4096窗口, 0x20填充, 起始位4078)
   - sub_4244CC: 商店过滤 (*(a1+56) 匹配 area_id, condition 判定逻辑)
-  - sub_4246D8: 商品信息读取 (word_77CBCC[32*item_ref] 取 TKItem ID)
-  - sub_40EBD4 case 50: Shop(a1,a2,a3) 脚本指令, a3=area_id → sub_40D804 → sub_4233C4
-  - sub_4233C4: a1[28]=a3, a2 作为缓存键
+  - sub_4246D8: 商品信息读取 (word_77CBCC[32*item_ref] 取 TKItem 分页码)
+  - sub_40EBD4 case 50 → sub_40D804 → sub_4233C4:
+    Shop 脚本指令的第2参数(param2)经调用链成为 sub_4233C4 的 a3, 即 area_id
+  - sub_4233C4: a1[28]=a3(area_id), a2 作为过滤缓存键
 
 TKShop.dat 格式 (每条 8 字节, 共 240 条):
-  [0:2] int16 area_id   — 商店库存表索引 (0=药店,1=道具,2=武器防具,3=杂货,4=饰品,9=无)
+  [0:2] int16 area_id   — 商店区域 (0=药店,1=道具,2=武器防具,3=杂货,4=饰品;
+                           area_id=9 落入 switch default, 引擎未定义, 不可依赖)
   [2:4] int16 item_ref  — TKItem 数组下标 (0-599)
-  [4:6] int16 condition — 出现条件: 1=随机, >1=等级门槛, ≤0=始终
-  [6]   byte  display   — 显示标志 (sub_4244CC: ==1 表示已显示/可购买)
+  [4:6] int16 condition — 出现条件:
+                           ==1 → 随机抽选(最多5件)
+                           !=1 → 幸运差值公式: P = clamp(基准值 - condition, 0, 100)%
+                                 area_id=0(药店)基准值=医术(word_75688A)
+                                 area_id!=0    基准值=队伍最大幸运(word_757F34)
+  [6]   byte  display   — 运行时显示标志 (sub_4244CC 写入, 非持久化业务字段)
   [7]   byte  reserved  — 保留
 
 LZSS 文件头 (sub_45343C 读取):
@@ -151,6 +157,8 @@ def load_tkitem_with_tkt(item_dat_path, tkt_dat_path):
 # TKShop 数据模型 (逆向自 sub_4244CC, sub_4246D8)
 # ============================================================
 
+# area_id → 显示名称 (sub_4233C4 switch 仅 0-4 有效; 9=无 为编辑器自定义,
+# 引擎 switch default 分支未初始化 v7/v6, 行为不可预测, 不建议使用)
 AREA_NAMES = {0: "药店", 1: "道具", 2: "武器防具", 3: "杂货", 4: "饰品", 9: "无"}
 
 def area_label(area_id):
@@ -244,13 +252,16 @@ class ShopEditorWindow(EditorMainWindow):
         "TKShop.dat 可视化编辑器\n\n"
         "1. 文件 → 加载 TKS 目录: 选择包含 TKShop.dat / TKItem.dat / TKT.dat 的目录\n"
         "2. 左侧表格: 单击行查看/编辑, 支持区域过滤和关键词搜索, 点击表头可排序\n"
-        "3. 右侧面板: 修改区域/物品/出现条件/显示标志, 点「应用修改」保存到内存\n"
+        "3. 右侧面板: 修改区域/物品/出现条件, 点「应用修改」保存到内存\n"
         "4. 文件 → 保存 (Ctrl+S): 将内存中的修改写入 TKShop.dat\n"
         "5. + 新增记录: 在240条中查找空槽位复用\n"
-        "6. 出现条件 (基于队伍最高幸运 LUK):\n"
-        "   - 随机: 每次进入商店时随机抽选 (最多5件)\n"
-        "   - 始终: 设为-100, 任意幸运值都100%出现\n"
-        "   - 幸运: 出现概率 = clamp(幸运 - 条件值, 0, 100)%\n"
+        "6. 出现条件 (引擎逻辑, 见 sub_4244CC):\n"
+        "   - 随机: condition=1, 每次进入商店随机抽选 (最多5件)\n"
+        "   - 幸运: condition≠1, 出现概率 = clamp(基准值 - 条件值, 0, 100)%\n"
+        "     · 药店(area_id=0): 基准值 = 医术(word_75688A)\n"
+        "     · 其它商店: 基准值 = 队伍最大幸运(word_757F34)\n"
+        "   - 始终: 设为-100, 使 基准值-(-100) ≥ 100, 100%出现\n"
+        "   注: condition≤0 并非无条件始终, 只是差值更大更易出现\n"
         "7. 物品与区域有兼容性限制 (由游戏代码决定):\n"
         "   选择物品后区域下方会显示是否兼容及建议放置的商店\n\n"
         "功能: 编辑《三国群侠传》商店数据\n\n"
@@ -828,20 +839,31 @@ class ShopEditorWindow(EditorMainWindow):
             )
             return
 
-        if offset > 0:
-            desc = f"队伍最大幸运 ＞ {offset} 时开始出现"
-        elif offset == 0:
-            desc = f"队伍最大幸运 ≥ 1 时开始出现"
+        # 基准值说明: 药店(area_id=0)用医术, 其它用队伍最大幸运 (sub_4244CC)
+        area_id = self.edit_area_combo.currentData() if self._editing_idx >= 0 else None
+        if area_id == 0:
+            base_name = "医术"
+            base_note = "  (药店使用医术值, 非幸运)"
         else:
-            desc = f"队伍最大幸运 ≥ 0 时已有 {min(100, -offset)}% 概率"
+            base_name = "队伍最大幸运"
+            base_note = ""
 
-        lines = [f"  {desc}", f"  每多1点幸运, 概率+1%", ""]
+        if offset > 0:
+            desc = f"{base_name} ＞ {offset} 时开始出现"
+        elif offset == 0:
+            desc = f"{base_name} ≥ 1 时开始出现"
+        else:
+            desc = f"{base_name} ≥ 0 时已有 {min(100, -offset)}% 概率"
+
+        lines = [f"  {desc}", f"  每多1点{base_name}, 概率+1%", ""]
+        if base_note:
+            lines.insert(1, base_note)
 
         for pct in [25, 50, 75, 100]:
             need_luk = offset + pct
             if need_luk >= 0:
                 label = "必定出现" if pct >= 100 else ""
-                lines.append(f"  幸运 ≥ {need_luk:>3d}  →  {pct:>3d}%  {label}")
+                lines.append(f"  {base_name} ≥ {need_luk:>3d}  →  {pct:>3d}%  {label}")
 
         header = f"  条件值: {offset:+d}"
         self.txt_cond_table.setPlainText(header + '\n' + '\n'.join(lines))

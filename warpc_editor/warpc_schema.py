@@ -71,11 +71,12 @@ IDENTITY_FIELDS = [
     ("exp_to_next", 8,  "升级所需经验","升至下一级所需经验; 绝大多数角色=100, BOSS版较高(呂布5092 張角7292)"),
 ]
 # 补丁专用字段 [260]-[263] — 配合运行时补丁使用; 0=使用原硬编码公式
+# 注: entity_link 是 field[263](字节偏移526), 勿与 field[526](字节偏移1052, 战斗精灵索引) 混淆
 PATCH_FIELDS = [
     ("awk_sprite_id", 520, "战场图集索引（补丁专用）", "战斗中Awk.JVG/Awt.JVG块号; 0=使用原硬编码公式(PATH1:WarPC索引+6, PATH2:WarPC记录号+12); 非0=补丁直接使用此值"),
     ("portrait_menu_id", 522, "队伍头像ID（补丁专用）", "队伍菜单Mu.JVG精灵块号; 0=使用原公式(portrait+211); 非0=直接使用此值"),
     ("history_text_id", 524, "历史文本ID（补丁专用）", "角色界面「历史」标签页TKT文本ID; 0=使用原公式(9050+角色序号)"),  # sub_41A080:104
-    ("entity_link", 526, "地图实体ID",  "离队后在地图上显示的NPC实体ID → TKMat.dat"),  # sub_41EEC0 → sub_40C648
+    ("entity_link", 526, "地图实体ID（补丁专用）", "离队后在地图上显示的NPC实体ID → TKMat.dat (field[263], 非field[526])"),  # sub_41EEC0 → sub_40C648
 ]
 HPMP_FIELDS = [
     ("cur_hp",    10,  "当前HP",      "当前生命值 (cap at hp_max)"),
