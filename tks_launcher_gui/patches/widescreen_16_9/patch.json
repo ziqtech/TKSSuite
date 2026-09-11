@@ -3648,6 +3648,18 @@
    "tag": "战场命令菜单命中矩形 +216 (434->650)"
   },
   {
+   "rva": "0x3c127",
+   "expect": "66 05 6E FF",
+   "replace": "66 05 DA FF",
+   "tag": "幕帘左帘 X +108 (-146->-38) 43BFE8"
+  },
+  {
+   "rva": "0x3c187",
+   "expect": "66 B9 8C 02",
+   "replace": "66 B9 F8 02",
+   "tag": "幕帘右帘 X +108 (652->760) 43BFE8"
+  },
+  {
    "rva": "0x69b7",
    "expect": "E8 64 16 05 00",
    "kind": "call",
@@ -5025,6 +5037,42 @@
    "kind": "call",
    "ref": "spr_bt445849",
    "tag": "精灵解码: bt445849 (mode 0)"
+  },
+  {
+   "rva": "0x3abc2",
+   "expect": "66 83 C0 E8",
+   "replace": "66 83 C0 54",
+   "tag": "幕帘条v9 X +108 (-24->+84) 43A8D8"
+  },
+  {
+   "rva": "0x3ac2f",
+   "expect": "66 83 C2 F6",
+   "replace": "66 83 C2 62",
+   "tag": "幕帘条v10 X +108 (-10->+98) 43A8D8"
+  },
+  {
+   "rva": "0x3ad18",
+   "expect": "66 83 C0 04",
+   "replace": "66 83 C0 70",
+   "tag": "幕帘条v12 X +108 (+4->+112) 43A8D8"
+  },
+  {
+   "rva": "0x3ac97",
+   "expect": "C1 E1 04",
+   "replace": "6B C9 22",
+   "tag": "幕帘条v11: imul ecx,ecx,34 (等长改写)"
+  },
+  {
+   "rva": "0x3ac9a",
+   "expect": "03 CA",
+   "replace": "90 90",
+   "tag": "幕帘条v11: 去掉 add ecx,edx"
+  },
+  {
+   "rva": "0x3aca3",
+   "expect": "03 C9 41",
+   "replace": "83 C1 6D",
+   "tag": "幕帘条v11 X +109 (34*v+1 -> 34*v+109)"
   }
  ],
  "format": "TKSPATCH",
