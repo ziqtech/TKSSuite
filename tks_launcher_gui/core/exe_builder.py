@@ -91,6 +91,19 @@ def pattern_to_bytes(pattern: str) -> bytes:
     return bytes(int(p, 16) for p in parts)
 
 
+def _parse_hex(hex_str: str) -> bytes:
+    """解析空格分隔的十六进制字节串 (不含通配, 供 patch_sites 用)。"""
+    return bytes.fromhex(''.join(hex_str.split()))
+
+
+def _parse_maybe_hex_int(value) -> int:
+    """patch_sites 的 rva/cave_entries 兼容 '0x31A2' 与 12706 两种写法。"""
+    if isinstance(value, int):
+        return value
+    v = str(value).strip()
+    return int(v, 16) if v.lower().startswith('0x') else int(v, 10)
+
+
 def find_pattern(data: bytes, pattern: bytes) -> List[int]:
     """在 data 中查找 pattern 的所有偏移（精确匹配）。"""
     offsets = []
@@ -216,6 +229,30 @@ class BytesPatchItem:
 
 
 @dataclass
+class SitesPatchItem:
+    """patch_sites 型补丁：逐 RVA 锚定多点字节表（16:9 宽屏等大型改造）。
+
+    每个位点 {rva, expect, tag} + 三种写法之一:
+      replace: 等长 hex 字面替换
+      kind='call', ref: 写 E8 rel32 -> .test cave 入口 ref（尾部 NOP 补齐）
+      kind='push_imm', ref, replace(含 'IIII' 占位): 占位换 cave 基址+入口偏移
+    expect 逐位点校验，任一不符即构建失败（无半应用状态）。
+
+    globals_* (可选): cave 的数据槽/scratch 区。运行时由引擎 VirtualAllocEx
+    独立分配; 文件级烧录放在 .test 节 cave 块之后, cave 字节与位点 repl 中
+    [globals_ph_base, +globals_rebase_span) 的 4 字节绝对地址统一平移。
+    """
+    patch_id: str
+    name: str
+    sites: List[Dict]
+    cave_code: bytes = b''
+    cave_entries: Dict[str, int] = field(default_factory=dict)
+    globals_ph_base: int = 0        # 占位基址 (VA, 0 = 不启用)
+    globals_rebase_span: int = 0    # 重定位窗口宽度 (字节)
+    globals_alloc_size: int = 0     # globals 区大小 (字节, 放 .test 尾部)
+
+
+@dataclass
 class FixedLayoutCave:
     """固定布局的 cave 块（多个子 cave 按预定偏移排列）。
 
@@ -336,6 +373,104 @@ class ExeBuilder:
                 log.append(f'  [{item.patch_id}] [OK] @ 文件偏移 0x{off:X} '
                            f'(RVA 0x{rva:X})')
         return all_ok
+
+    def _apply_sites_patch(self, data: bytearray, pe: PEInfo,
+                           item: SitesPatchItem, test_abs: int,
+                           blob_off: Dict[int, int], log: List[str],
+                           result: CaveBuildResult) -> None:
+        """应用 patch_sites：逐 RVA 锚定 + expect 校验 + 字面/cave 重定向写入。
+
+        与运行时 _handle_patch_sites 同语义。任一位点 expect 不符或
+        call/push_imm 引用缺失 => result.error，由调用方中止构建。
+        """
+        cave_base = 0
+        if item.cave_code:
+            off = blob_off.get(id(item))
+            if off is None:
+                result.error = f'[{item.patch_id}] sites cave 未分配布局'
+                log.append(result.error)
+                return
+            cave_base = test_abs + off
+        patched = 0
+        for i, site in enumerate(item.sites):
+            tag = site.get('tag', f'site#{i}')
+            rva = _parse_maybe_hex_int(site.get('rva', 0))
+            expect = _parse_hex(site.get('expect', ''))
+            if not expect:
+                result.error = f'[{item.patch_id}] {tag}: expect 为空'
+                log.append(result.error)
+                return
+            try:
+                off = rva_to_offset(pe, rva)
+            except ValueError:
+                off = None
+            if off is None or off + len(expect) > len(data):
+                result.error = f'[{item.patch_id}] {tag}: RVA 0x{rva:X} 无法定位'
+                log.append(result.error)
+                return
+            actual = bytes(data[off:off + len(expect)])
+            if actual != expect:
+                result.error = (f'[{item.patch_id}] {tag}: RVA 0x{rva:X} 字节不符 '
+                                f'(实际 {actual.hex(" ")} / 预期 {expect.hex(" ")})')
+                log.append(result.error)
+                return
+            kind = site.get('kind', '')
+            if kind == 'call':
+                ref = site.get('ref', '')
+                if ref not in item.cave_entries:
+                    result.error = f'[{item.patch_id}] {tag}: cave 入口 {ref!r} 未声明'
+                    log.append(result.error)
+                    return
+                target = cave_base + item.cave_entries[ref]
+                site_abs = pe.image_base + rva
+                repl = b'\xE8' + struct.pack('<i', (target - (site_abs + 5)) & 0xFFFFFFFF)
+                repl += b'\x90' * (len(expect) - len(repl))
+                if len(repl) != len(expect):
+                    result.error = (f'[{item.patch_id}] {tag}: '
+                                    f'E8+NOP 与 expect 不等长')
+                    log.append(result.error)
+                    return
+            elif kind == 'push_imm':
+                ref = site.get('ref', '')
+                if ref not in item.cave_entries:
+                    result.error = f'[{item.patch_id}] {tag}: cave 入口 {ref!r} 未声明'
+                    log.append(result.error)
+                    return
+                addr = cave_base + item.cave_entries[ref]
+                repl = _parse_hex(site.get('replace', ''))
+                if repl.count(b'I') != 4:
+                    result.error = f'[{item.patch_id}] {tag}: push_imm 需要 IIII 占位'
+                    log.append(result.error)
+                    return
+                repl = repl.replace(b'I' * 4, struct.pack('<I', addr))
+                if len(repl) != len(expect):
+                    result.error = (f'[{item.patch_id}] {tag}: '
+                                    f'replace ({len(repl)}B) 与 expect ({len(expect)}B) 不等长')
+                    log.append(result.error)
+                    return
+            else:
+                repl = _parse_hex(site.get('replace', ''))
+                if len(repl) != len(expect):
+                    result.error = (f'[{item.patch_id}] {tag}: replace '
+                                    f'({len(repl)}B) 与 expect ({len(expect)}B) 不等长')
+                    log.append(result.error)
+                    return
+            # globals 占位地址平移 (与运行时 _handle_patch_sites 同语义)
+            g_abs = getattr(item, '_globals_abs', 0)
+            if g_abs and item.globals_ph_base and item.globals_rebase_span:
+                delta = g_abs - item.globals_ph_base
+                lo = item.globals_ph_base
+                hi = lo + item.globals_rebase_span
+                reb = bytearray(repl)
+                for i in range(len(reb) - 3):
+                    v = int.from_bytes(reb[i:i + 4], 'little')
+                    if lo <= v < hi:
+                        reb[i:i + 4] = struct.pack('<I', (v + delta) & 0xFFFFFFFF)
+                repl = bytes(reb)
+            data[off:off + len(repl)] = repl
+            patched += 1
+            log.append(f'  [{item.patch_id}] [OK] {tag} @ RVA 0x{rva:X}')
+        log.append(f'  [{item.patch_id}] 共写入 {patched}/{len(item.sites)} 位点')
 
     def _apply_imm32_patch(self, data: bytearray, item: Imm32PatchItem,
                            log: List[str]) -> bool:
@@ -660,6 +795,7 @@ class ExeBuilder:
               config_patches: Optional[List[ConfigPatchItem]] = None,
               fixed_layouts: Optional[List[FixedLayoutCave]] = None,
               data_section_patches: Optional[List[DataSectionPatchItem]] = None,
+              sites_patches: Optional[List[SitesPatchItem]] = None,
               section_name: str = '.test') -> CaveBuildResult:
         """构建修改版 exe。
 
@@ -684,9 +820,11 @@ class ExeBuilder:
         config_patches = config_patches or []
         data_section_patches = data_section_patches or []
         fixed_layouts = fixed_layouts or []
+        sites_patches = sites_patches or []
 
         if not (cave_patches or bytes_patches or imm32_patches or
-                config_patches or fixed_layouts or data_section_patches):
+                config_patches or fixed_layouts or data_section_patches or
+                sites_patches):
             result.error = '未选择任何补丁'
             log.append(result.error)
             return result
@@ -761,7 +899,8 @@ class ExeBuilder:
         # cave_hook: (kind, item_or_fl, hook_off, hook_size, cave_entry_rel, name)
         # fixed_layout 的 cave_entry_rel 相对 .test 起始; cave_hook 顺序分配
         located = []  # (kind, owner, hook_off, hook_size, entry_rel, label)
-        need_test = bool(cave_patches or fixed_layouts)
+        need_test = bool(cave_patches or fixed_layouts
+                         or any(sp.cave_code for sp in sites_patches))
 
         if fixed_layouts:
             log.append(f'── 定位 fixed_layout hook ({len(fixed_layouts)} 个) ──')
@@ -938,6 +1077,20 @@ class ExeBuilder:
                 cave_blobs.append((owner, aligned))
                 cursor = aligned + len(owner.cave_code)
 
+            # patch_sites: 每个带 cave 的位点表补丁占一块; 声明了 globals 的
+            # 再在其 cave 块后追加数据区 (槽位+scratch, 零填充)
+            sites_blobs = []  # (item, off)
+            for sp in sites_patches:
+                if not sp.cave_code:
+                    continue
+                aligned = align_up(cursor, 16)
+                sites_blobs.append((sp, aligned))
+                cursor = aligned + len(sp.cave_code)
+                if sp.globals_ph_base and sp.globals_alloc_size:
+                    g_off = align_up(cursor, 16)
+                    sp._globals_off = g_off   # _globals_abs 在 test_abs 算出后回填
+                    cursor = g_off + sp.globals_alloc_size
+
             test_vsize = max(cursor, 1)
             test_raw_size = align_up(test_vsize, pe.file_align)
             test_rva = next_va
@@ -946,6 +1099,11 @@ class ExeBuilder:
 
             log.append(f'.test 节: RVA=0x{test_rva:X}, 绝对=0x{test_abs:X}, '
                        f'大小=0x{test_raw_size:X}')
+
+            # sites 补丁的 globals 区绝对地址回填 (布局阶段只知偏移)
+            for sp in sites_patches:
+                if getattr(sp, '_globals_off', None) is not None:
+                    sp._globals_abs = test_abs + sp._globals_off
 
             # WarPC 基址占位符与索引上限替换 (与 patch_engine.build_cave_template
             # 的运行时语义一致)。cave 代码中的 0x757F08 是占位符: 运行时注入由
@@ -1010,6 +1168,24 @@ class ExeBuilder:
                 log.append(f'[{item.patch_id}] cave 代码写入 .test+0x{off:X} '
                            f'({len(code)} 字节)')
 
+            for sp, off in sites_blobs:
+                code = sp.cave_code
+                g_abs = getattr(sp, '_globals_abs', 0)
+                if g_abs and sp.globals_ph_base and sp.globals_rebase_span:
+                    delta = g_abs - sp.globals_ph_base
+                    reb = bytearray(code)
+                    lo, hi = sp.globals_ph_base, sp.globals_ph_base + sp.globals_rebase_span
+                    for i in range(len(reb) - 3):
+                        v = int.from_bytes(reb[i:i + 4], 'little')
+                        if lo <= v < hi:
+                            reb[i:i + 4] = struct.pack('<I', (v + delta) & 0xFFFFFFFF)
+                    code = bytes(reb)
+                    log.append(f'[{sp.patch_id}] globals 区 .test+0x{sp._globals_off:X} '
+                               f'= 0x{g_abs:X} (占位 0x{sp.globals_ph_base:08X}+{sp.globals_rebase_span:#x})')
+                cave_section[off:off + len(code)] = code
+                log.append(f'[{sp.patch_id}] sites cave 写入 .test+0x{off:X} '
+                           f'({len(code)} 字节)')
+
             if len(data) < test_file_off:
                 data.extend(b'\x00' * (test_file_off - len(data)))
             data.extend(cave_section)
@@ -1036,7 +1212,26 @@ class ExeBuilder:
                 log.append(f'[{owner.patch_id}/{label}] hook 0x{hook_off:X}: '
                            f'call 0x{cave_target_rva:X}')
 
+            # patch_sites 位点写入 (在 hook 之后: 位点与 hook 点无重叠,
+            # 逐位点 expect 校验, 任一不符即构建失败)
+            if sites_patches:
+                log.append(f'── 应用 patch_sites ({len(sites_patches)} 个) ──')
+                for sp in sites_patches:
+                    self._apply_sites_patch(data, pe, sp, test_abs,
+                                            {id(s): o for s, o in sites_blobs},
+                                            log, result)
+                    if result.error:
+                        return result
+
             next_va = align_up(test_rva + test_vsize, pe.section_align)
+
+        # ── 5b. 无 .test 时的纯字面位点补丁 ──
+        if sites_patches and not need_test:
+            log.append(f'── 应用 patch_sites ({len(sites_patches)} 个, 无 cave) ──')
+            for sp in sites_patches:
+                self._apply_sites_patch(data, pe, sp, 0, {}, log, result)
+                if result.error:
+                    return result
 
         # ── 6. 更新 PE 头 ──
         total_new = len(data_section_results) + (1 if need_test else 0)

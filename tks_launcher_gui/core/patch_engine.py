@@ -385,6 +385,14 @@ def _build_cave_layout(config: 'PatchConfig', cave_addr: int,
                 slot = layout.allocate(defn.id, "main", size, force_offset=force_off)
                 defn._resolved_cave_offset = slot.offset
 
+            elif defn.type == "patch_sites":
+                ext_cave = getattr(defn, '_cave_code_bytes', None)
+                if not ext_cave:
+                    continue  # 纯字面位点补丁无需 cave
+                force_off = None if getattr(defn, "autolayout_cave", True) else defn.cave_offset
+                slot = layout.allocate(defn.id, "main", len(ext_cave), force_offset=force_off)
+                defn._resolved_cave_offset = slot.offset
+
             elif defn.type == "patch_summon_table":
                 _autolayout = getattr(defn, "autolayout_cave", True)
                 for purpose, size, off_attr in [
@@ -636,6 +644,178 @@ def apply_patch_bytes(defn: PatchDef, code_buf: bytearray, code_start_addr: int,
     return all_ok
 
 # ============================================================
+# 补丁类型: patch_sites (逐 RVA 锚定多点字节补丁)
+# ------------------------------------------------------------
+# 大型改造 (16:9 宽屏等) 的载体: 每个位点带原始字节校验 (expect),
+# 支持三种写法:
+#   字面        {rva, expect, replace, tag}      replace 等长 hex
+#   call 转洞   {rva, expect, kind:"call", ref}  写 E8 rel32 -> cave 入口 ref, 尾部 NOP
+#   push 转洞   {rva, expect, kind:"push_imm", ref, arg}  replace 中 'I' 以
+#               cave 基址+arg 的 4 字节小端占位 (ref 省略时 arg 为绝对地址表达式暂不支持)
+# cave 代码来自 cave_code (hex), 入口偏移表 cave_entries {name: offset}。
+# 逐位点校验失败即整补丁失败 (绝无半应用状态: 先全量校验再统一写入)。
+# ============================================================
+
+def _rebase_globals(data: bytes, ph_base: int, span: int, delta: int) -> bytes:
+    """把 data 内所有落在 [ph_base, ph_base+span) 的 4 字节小端绝对地址 +delta。
+
+    patch_sites 的 globals 重定位: cave 机器码与位点 repl 内联引用的槽位/
+    scratch 地址按占位基址生成, 应用时统一平移到独立分配的内存。
+    ⚠ span 必须只覆盖槽位区 (含 scratch 基址) — 全 0x96000 宽的窗口会对
+    指令流里恰好同值的随机 4 字节序列产生假阳性 (期望 ~0.7 处/4.7KB)。
+    """
+    if not delta or not span:
+        return data
+    out = bytearray(data)
+    hi = ph_base + span
+    for i in range(len(out) - 3):
+        v = int.from_bytes(out[i:i + 4], 'little')
+        if ph_base <= v < hi:
+            out[i:i + 4] = struct.pack('<I', (v + delta) & 0xFFFFFFFF)
+    return bytes(out)
+
+
+def _alloc_patch_globals(ctx: 'PatchContext', size: int) -> int:
+    """为 patch_sites 的 globals 区 (槽位+scratch) 分配独立内存, 返回基址 (0=失败)。
+
+    .data BSS 的"空闲区"实测被游戏经计算指针使用 (16:9 scratch 曾与游戏缓冲
+    互踩), 故整块搬进 VirtualAllocEx 的独立页 (进程退出自动释放)。分配即清零,
+    槽位由 cave 自行初始化 (DD-init wrapper 写 g_stride/g_off/g_end)。
+    """
+    size = (size + 0xFFF) & ~0xFFF
+    addr = _VirtualAllocEx(ctx.h_proc, None, size, MEM_COMMIT | MEM_RESERVE,
+                           PAGE_READWRITE)
+    if not addr:
+        ctx.log(f"    [FAIL] globals 区分配失败 ({size} 字节)")
+        return 0
+    return addr if isinstance(addr, int) else (addr.value or 0)
+
+
+def _resolve_sites_writes(defn: PatchDef, cave_base: int,
+                          code_start_addr: int = 0x401000,
+                          g_rebase: Optional[tuple] = None,
+                          ) -> List[Tuple[int, bytes, bytes, str]]:
+    """把 sites 展开为 (rva, expect, repl, tag); 校验由调用方按缓冲/内存执行。
+
+    code_start_addr: code_buf 起始绝对地址 (base+0x1000), 用于计算 E8 rel32 —
+    rel32 = cave 绝对地址 - (site 绝对地址 + 5), 漏掉模块基址会跳到 image_base
+    之外的零内存 (cave 全失效/线程异常退出)。
+    g_rebase: (ph_base, span, delta) — repl 中的 globals 占位地址平移 (可 None)。
+    """
+    from .tkspatch_loader import _parse_hex_bytes
+    sites = getattr(defn, "sites", None) or []
+    entries = getattr(defn, "cave_entries", None) or {}
+    writes: List[Tuple[int, bytes, bytes, str]] = []
+    for i, site in enumerate(sites):
+        rva_raw = site.get("rva", 0)
+        rva = (int(rva_raw, 16) if isinstance(rva_raw, str)
+               and rva_raw.strip().lower().startswith("0x") else int(rva_raw))
+        expect = _parse_hex_bytes(site.get("expect", ""))
+        tag = site.get("tag", f"site#{i}")
+        if not expect:
+            raise ValueError(f"{tag}: expect 为空")
+        kind = site.get("kind", "")
+        if kind == "call":
+            ref = site.get("ref", "")
+            if ref not in entries:
+                raise ValueError(f"{tag}: cave 入口 '{ref}' 未声明")
+            target = cave_base + int(entries[ref])
+            site_abs = code_start_addr + (rva - 0x1000)
+            rel = (target - (site_abs + 5)) & 0xFFFFFFFF
+            repl = b'\xE8' + struct.pack('<I', rel)
+            repl += b'\x90' * (len(expect) - len(repl))
+            if len(repl) != len(expect):
+                raise ValueError(f"{tag}: E8+NOP ({len(repl)}B) 与 expect ({len(expect)}B) 不等长")
+        elif kind == "push_imm":
+            tpl = _parse_hex_bytes(site.get("replace", ""))
+            if b'I' not in tpl:
+                raise ValueError(f"{tag}: push_imm 需要 replace 含 'I' 占位")
+            ref = site.get("ref", "")
+            if ref:
+                if ref not in entries:
+                    raise ValueError(f"{tag}: cave 入口 '{ref}' 未声明")
+                addr = cave_base + int(entries[ref])
+            else:
+                raise ValueError(f"{tag}: push_imm 需要 ref")
+            repl = tpl.replace(b'I' * 4, struct.pack('<I', addr))
+            if len(repl) != len(expect):
+                raise ValueError(f"{tag}: replace ({len(repl)}B) 与 expect ({len(expect)}B) 不等长")
+        else:
+            repl = _parse_hex_bytes(site.get("replace", ""))
+            if len(repl) != len(expect):
+                raise ValueError(f"{tag}: replace ({len(repl)}B) 与 expect ({len(expect)}B) 不等长")
+        if g_rebase:
+            ph, span, delta = g_rebase
+            repl = _rebase_globals(repl, ph, span, delta)
+        writes.append((rva, expect, repl, tag))
+    return writes
+
+
+@register_patch_type("patch_sites")
+def _handle_patch_sites(ctx: PatchContext) -> bool:
+    defn, log = ctx.defn, ctx.log
+    tag = defn.id
+    cave_code = getattr(defn, '_cave_code_bytes', None)
+    sites = getattr(defn, "sites", None) or []
+    cave_base = 0
+    g_rebase = None
+    if cave_code:
+        cave_offset = getattr(defn, "_resolved_cave_offset", defn.cave_offset)
+        cave_base = ctx.cave_addr + cave_offset
+        ph = int(getattr(defn, "globals_ph_base", 0) or 0)
+        span = int(getattr(defn, "globals_rebase_span", 0) or 0)
+        alloc = int(getattr(defn, "globals_alloc_size", 0) or 0)
+        if ph and span and alloc:
+            g_base = _alloc_patch_globals(ctx, alloc)
+            if not g_base:
+                return False
+            g_rebase = (ph, span, g_base - ph)
+            cave_code = _rebase_globals(bytes(cave_code), ph, span, g_base - ph)
+            log(f"    Globals 区: 0x{g_base:08X} ({alloc} 字节, 占位 0x{ph:08X}+{span:#x})")
+        write_pm(ctx.h_proc, cave_base, cave_code)
+        log(f"    Cave 写入: 0x{cave_base:08X} ({len(cave_code)} bytes)")
+    elif any(s.get("kind") in ("call", "push_imm") for s in sites):
+        log("    [FAIL] 带 call/push_imm 位点但无 cave_code")
+        return False
+    try:
+        writes = _resolve_sites_writes(defn, cave_base, ctx.code_start_addr,
+                                       g_rebase=g_rebase)
+    except ValueError as e:
+        log(f"    [FAIL] {e} — 全部位点未写入")
+        return False
+    # 校验: 在 code_buf 内的位点对缓冲校验 (并与其它补丁的 pattern 扫描保持同步);
+    # 越出 code_buf 的位点 (如 .rsrc DFM 资源) 直接对进程内存校验。
+    from .memory import read_pm
+    for rva, expect, repl, stag in writes:
+        off = rva - 0x1000
+        if 0 <= off and off + len(expect) <= len(ctx.code_buf):
+            if bytes(ctx.code_buf[off:off + len(expect)]) != expect:
+                got = bytes(ctx.code_buf[off:off + len(expect)]).hex(' ').upper()
+                log(f"    [FAIL] {stag}: RVA 0x{rva:X} 字节不符 (实际 {got} / 预期 {expect.hex(' ').upper()})")
+                return False
+        else:
+            aa = ctx.code_start_addr + off
+            buf, nr = read_pm(ctx.h_proc, aa, len(expect))
+            if nr < len(expect) or bytes(buf[:len(expect)]) != expect:
+                got = bytes(buf[:nr]).hex(' ').upper() if nr > 0 else '读取失败'
+                log(f"    [FAIL] {stag}: RVA 0x{rva:X} 内存字节不符 ({got} / 预期 {expect.hex(' ').upper()})")
+                return False
+    ok = 0
+    for rva, expect, repl, stag in writes:
+        off = rva - 0x1000
+        aa = ctx.code_start_addr + off
+        op = vp_ex(ctx.h_proc, aa, len(repl), PAGE_EXECUTE_READWRITE)
+        write_pm(ctx.h_proc, aa, repl)
+        vp_ex(ctx.h_proc, aa, len(repl), op)
+        if 0 <= off and off + len(repl) <= len(ctx.code_buf):
+            ctx.code_buf[off:off + len(repl)] = repl
+        log(f"    [OK] {stag} @ RVA 0x{rva:X}")
+        ok += 1
+    log(f"    共写入 {ok}/{len(writes)} 位点")
+    return ok == len(writes) and len(writes) > 0
+
+
+# ============================================================
 # 补丁类型: patch_extra_section (MOD 额外 PE 段字节修补)
 # ============================================================
 
@@ -710,6 +890,11 @@ def apply_patch_imm32_by_value(defn: PatchDef, code_buf: bytearray, code_start_a
     log(f"    扫描值 {ov} (0x{ov:X}) -> 匹配 {len(hits)} 处")
     expect = defn.expect_count
     if expect > 0 and len(hits) != expect:
+        # zero_hit_ok: 0 命中且期望值已不在代码段 => 语义已被其它补丁等效完成
+        # (如 warpc_base_refs 数据段扩容时连带改写大小引用), 视为幂等成功。
+        if getattr(defn, 'zero_hit_ok', False) and len(hits) == 0:
+            log("    旧值已不存在, 视为已被等效改写 (zero_hit_ok), 跳过")
+            return True
         log(f"  [FAIL] 值扫描命中 {len(hits)} 处 (预期 {expect}), 跳过")
         return False
     log(f"    替换为 {nv} (0x{nv:X})")

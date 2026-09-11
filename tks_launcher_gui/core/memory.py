@@ -174,6 +174,7 @@ SW_SHOWNOACTIVATE = 4
 PROCESS_VM_READ = 0x0010
 PROCESS_VM_WRITE = 0x0020
 PROCESS_VM_OPERATION = 0x0008
+PROCESS_QUERY_INFORMATION = 0x0400
 PAGE_EXECUTE_READWRITE = 0x40
 PAGE_READWRITE = 0x04
 MEM_COMMIT = 0x1000
@@ -253,6 +254,17 @@ def get_child_processes(parent_pid: int) -> List[PROCESSENTRY32]:
     return results
 
 def get_module_base(pid: int) -> int:
+    base = _get_module_base_toolhelp(pid)
+    if base:
+        return base
+    # CREATE_SUSPENDED 进程: Toolhelp/psapi 报 ERROR_PARTIAL_COPY(299), 模块列表
+    # 不可枚举 → 直读 PEB.ImageBaseAddress (镜像已映射, PEB 始终可读)。
+    # 该回退保证补丁在进程启动前 (挂起态) 写入, 而不是恢复后晚打
+    # (晚打会让 DD 初始化/窗体创建等已按旧值跑完 → 画面不变甚至卡死)。
+    return _get_module_base_peb(pid)
+
+
+def _get_module_base_toolhelp(pid: int) -> int:
     snap = _CreateToolhelp32Snapshot(TH32CS_SNAPMODULE | TH32CS_SNAPMODULE32, pid)
     if not snap or snap == INVALID_HANDLE_VALUE:
         return 0
@@ -264,17 +276,81 @@ def get_module_base(pid: int) -> int:
     _CloseHandle(snap)
     return result
 
+
+class _PROCESS_BASIC_INFORMATION(ctypes.Structure):
+    _fields_ = [('Reserved1', ctypes.c_void_p),
+                ('PebBaseAddress', ctypes.c_void_p),
+                ('Reserved2', ctypes.c_void_p * 2),
+                ('UniqueProcessId', ctypes.c_void_p),
+                ('Reserved3', ctypes.c_void_p)]
+
+
+def _get_module_base_peb(pid: int) -> int:
+    """直读目标进程 PEB.ImageBaseAddress (兼容挂起态与 64 位宿主查询 32 位进程)。"""
+    try:
+        ntdll = ctypes.windll.ntdll
+    except OSError:
+        return 0
+    h = _OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, False, pid)
+    if not h:
+        return 0
+    try:
+        pbi = _PROCESS_BASIC_INFORMATION()
+        ret = ctypes.c_size_t(0)
+        st = ntdll.NtQueryInformationProcess(ctypes.c_void_p(h), 0, ctypes.byref(pbi),
+                                             ctypes.sizeof(pbi), ctypes.byref(ret))
+        if (st & 0xFFFFFFFF) != 0 or not pbi.PebBaseAddress:
+            return 0
+        peb = pbi.PebBaseAddress
+        # 64 位调用方查询 WOW64 进程时拿到的 PEB.ImageBaseAddress 在 +0x10,
+        # 32 位在 +0x8; 两个偏移都试, 以镜像头 'MZ' 校验命中者。
+        for off in (0x10, 0x8):
+            raw, nr = read_pm(h, peb + off, 4)
+            if nr != 4:
+                continue
+            v = int.from_bytes(raw, 'little')
+            if not (0x10000 <= v < 0x10000000):
+                continue
+            sig, sn = read_pm(h, v, 2)
+            if sn == 2 and sig == b'MZ':
+                return v
+        return 0
+    finally:
+        _CloseHandle(h)
+
+
 def get_module_size(pid: int) -> int:
     snap = _CreateToolhelp32Snapshot(TH32CS_SNAPMODULE | TH32CS_SNAPMODULE32, pid)
-    if not snap or snap == INVALID_HANDLE_VALUE:
+    if snap and snap != INVALID_HANDLE_VALUE:
+        me = MODULEENTRY32()
+        me.dwSize = ctypes.sizeof(MODULEENTRY32)
+        result = 0
+        if kernel32.Module32First(snap, ctypes.byref(me)):
+            result = me.modBaseSize
+        _CloseHandle(snap)
+        if result:
+            return result
+    # 挂起态回退: 读镜像 PE 头 OptionalHeader.SizeOfImage
+    base = get_module_base(pid)
+    if not base:
         return 0
-    me = MODULEENTRY32()
-    me.dwSize = ctypes.sizeof(MODULEENTRY32)
-    result = 0
-    if kernel32.Module32First(snap, ctypes.byref(me)):
-        result = me.modBaseSize
-    _CloseHandle(snap)
-    return result
+    h = _OpenProcess(PROCESS_VM_READ, False, pid)
+    if not h:
+        return 0
+    try:
+        hdr, nr = read_pm(h, base, 0x400)
+        if nr < 0x40 or hdr[:2] != b'MZ':
+            return 0
+        e_lfanew = int.from_bytes(hdr[0x3C:0x40], 'little')
+        if not (0 < e_lfanew < 0x1000):
+            return 0
+        pe, pn = read_pm(h, base + e_lfanew, 0x60)
+        if pn < 0x60 or pe[:4] != b'PE\x00\x00':
+            return 0
+        return int.from_bytes(pe[0x50:0x54], 'little')  # SizeOfImage
+    finally:
+        _CloseHandle(h)
+
 
 def get_decompressed_size(path: str) -> int:
     """读取 LZSS 文件的解压大小; 非 LZSS 文件返回实际文件大小"""

@@ -86,6 +86,9 @@ _TKSPATCH_SCHEMA = {
         # cave_hook
         "hook_pattern", "hook_size", "hook_offset", "hook_expect_count",
         "cave_template", "cave_offset", "hook_verify",
+        "sites", "cave_entries", "zero_hit_ok",
+        # patch_sites globals 重定位 (16:9 宽屏: 槽位/scratch 搬离 .data)
+        "globals_ph_base", "globals_rebase_span", "globals_alloc_size",
         # patch_summon_table
         "json_file", "script_file", "script_source",
         "data_rva", "data_keys", "code_addrs",
@@ -398,6 +401,17 @@ def parse_patch_dict(raw: dict, source_path: str,
     cave_code_hex = raw.get("cave_code", "")
     cave_code_bytes = _parse_hex_bytes(cave_code_hex) if cave_code_hex else None
     d._cave_code_bytes = cave_code_bytes  # type: ignore
+
+    d.zero_hit_ok = bool(raw.get("zero_hit_ok", False))  # type: ignore
+
+    # ── patch_sites: 逐 RVA 位点表 + cave 入口偏移表 ──
+    d.sites = raw.get("sites", []) or []  # type: ignore
+    d.cave_entries = {k: _parse_maybe_hex(v) for k, v in
+                      (raw.get("cave_entries") or {}).items()}  # type: ignore
+    # patch_sites globals 重定位 (16:9 宽屏: 槽位/scratch 搬离 .data)
+    d.globals_ph_base = _parse_maybe_hex(raw.get("globals_ph_base", 0))  # type: ignore
+    d.globals_rebase_span = _parse_maybe_hex(raw.get("globals_rebase_span", 0))  # type: ignore
+    d.globals_alloc_size = _parse_maybe_hex(raw.get("globals_alloc_size", 0))  # type: ignore
 
     # 额外字段 (类型特定, 原样保存)
     d._extra = {}  # type: ignore

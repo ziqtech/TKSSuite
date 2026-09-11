@@ -106,6 +106,15 @@ class PatchDef:
     # 白名单由各补丁自己声明, 引擎动态推导 (新增数据类配置无需改引擎)。
     mod_config_overridable: bool = False
 
+    # patch_sites globals 重定位 (16:9 宽屏等大型 cave 的数据槽/scratch 搬离 .data):
+    # .data BSS "空闲区" 实测被游戏经计算指针使用, 固定地址放置会互踩。
+    # 引擎按 globals_alloc_size 独立分配内存, 并把 cave 字节与位点 repl 中落在
+    # [globals_ph_base, globals_ph_base+globals_rebase_span) 的 4 字节绝对地址
+    # 统一 +delta (与 warpc 占位符替换同一思路)。
+    globals_ph_base: int = 0        # 占位基址 (VA, 0 = 不启用)
+    globals_rebase_span: int = 0    # 重定位窗口宽度 (字节, 含 scratch 基址)
+    globals_alloc_size: int = 0     # 独立分配大小 (字节)
+
     # ── 文件级补丁类型 (生成启动器用, 参数全部声明在 patch.json) ──
     # type=fixed_layout_cave: 多 hook + 固定布局 cave, cave_code.py 提供 build_cave_block
     hooks: List[Dict] = field(default_factory=list)  # [{name,pattern,hook_size,cave_entry_offset,expect_count}]

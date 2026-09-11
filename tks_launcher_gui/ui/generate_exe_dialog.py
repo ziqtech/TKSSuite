@@ -20,7 +20,7 @@ from core.config_loader import PatchDef
 from core.exe_builder import (
     ExeBuilder, CavePatchItem, BytesPatchItem, BytesPatchEntry,
     Imm32PatchItem, Imm32PatchEntry, ConfigPatchItem, DataSectionPatchItem,
-    FixedLayoutCave,
+    FixedLayoutCave, SitesPatchItem,
 )
 from core.tkspatch_loader import get_external_cave_code
 
@@ -82,7 +82,8 @@ class _BuildWorker(QThread):
     def __init__(self, builder: ExeBuilder, cave_patches: list,
                  bytes_patches: list, imm32_patches: list,
                  config_patches: list, data_section_patches: list,
-                 fixed_layouts: list, output_path: str):
+                 fixed_layouts: list, output_path: str,
+                 sites_patches: list | None = None):
         super().__init__()
         self._builder = builder
         self._cave_patches = cave_patches
@@ -91,6 +92,7 @@ class _BuildWorker(QThread):
         self._config_patches = config_patches
         self._data_section_patches = data_section_patches
         self._fixed_layouts = fixed_layouts
+        self._sites_patches = sites_patches or []
         self._output = output_path
 
     def run(self):
@@ -102,6 +104,7 @@ class _BuildWorker(QThread):
                 config_patches=self._config_patches,
                 data_section_patches=self._data_section_patches,
                 fixed_layouts=self._fixed_layouts,
+                sites_patches=self._sites_patches,
             )
         except Exception:
             # 线程内异常若不接住, finished 信号永不发出, 弹窗会永远停在
@@ -395,6 +398,7 @@ class GenerateExeDialog(QDialog):
         config_patches = []
         data_section_patches = []
         fixed_layouts = []
+        sites_patches = []
 
         for i in range(self._patch_list.count()):
             list_item = self._patch_list.item(i)
@@ -515,10 +519,27 @@ class GenerateExeDialog(QDialog):
                 if item is not None:
                     data_section_patches.append(item)
 
+            # 逐 RVA 位点表型 (16:9 宽屏)
+            elif p.type == 'patch_sites':
+                cave_code = get_external_cave_code(p) or b''
+                entries = {k: int(v, 16) if isinstance(v, str) else int(v) for k, v in
+                           (getattr(p, 'cave_entries', {}) or {}).items()}
+                sites = list(getattr(p, 'sites', []) or [])
+                if not sites:
+                    self._log(f'[{p.id}] 无 sites 位点表，跳过')
+                    continue
+                sites_patches.append(SitesPatchItem(
+                    patch_id=p.id, name=p.name, sites=sites,
+                    cave_code=cave_code, cave_entries=entries,
+                    globals_ph_base=int(getattr(p, 'globals_ph_base', 0) or 0),
+                    globals_rebase_span=int(getattr(p, 'globals_rebase_span', 0) or 0),
+                    globals_alloc_size=int(getattr(p, 'globals_alloc_size', 0) or 0),
+                ))
+
         self._warn_unselected_expansions(data_section_patches)
 
         return (cave_patches, bytes_patches, imm32_patches, config_patches,
-                data_section_patches, fixed_layouts)
+                data_section_patches, fixed_layouts, sites_patches)
 
     def _warn_unselected_expansions(self, selected_items):
         """数据文件已扩容但对应 patch_data_expand 未勾选时警告。
@@ -782,7 +803,7 @@ class GenerateExeDialog(QDialog):
             return
 
         (cave_patches, bytes_patches, imm32_patches, config_patches,
-         data_section_patches, fixed_layouts) = self._get_selected_patches()
+         data_section_patches, fixed_layouts, sites_patches) = self._get_selected_patches()
         total = (len(cave_patches) + len(bytes_patches) + len(imm32_patches) +
                  len(config_patches) + len(data_section_patches) +
                  len(fixed_layouts))
@@ -812,7 +833,8 @@ class GenerateExeDialog(QDialog):
         self._log_text.clear()
         self._log(f'开始构建… (cave={len(cave_patches)}, bytes={len(bytes_patches)}, '
                   f'imm32={len(imm32_patches)}, config={len(config_patches)}, '
-                  f'data={len(data_section_patches)}, fixed={len(fixed_layouts)})')
+                  f'data={len(data_section_patches)}, fixed={len(fixed_layouts)}, '
+                  f'sites={len(sites_patches)})')
 
         try:
             builder = ExeBuilder(src)
@@ -825,7 +847,8 @@ class GenerateExeDialog(QDialog):
 
         self._worker = _BuildWorker(builder, cave_patches, bytes_patches,
                                     imm32_patches, config_patches,
-                                    data_section_patches, fixed_layouts, out)
+                                    data_section_patches, fixed_layouts, out,
+                                    sites_patches=sites_patches)
         self._worker.finished.connect(self._on_build_finished)
         self._worker.start()
 

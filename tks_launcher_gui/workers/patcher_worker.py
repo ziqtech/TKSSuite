@@ -165,6 +165,11 @@ class PatcherWorker(QThread):
 
         # ── GUI 特有: 辅助工具注入 ──
         self._inject_tool_files(exe_dir, self.game_dir or os.getcwd())
+        # 注入后必须确认文件真正落盘/释放再启动游戏: 复制与进程创建紧邻时,
+        # 杀软扫描/写回延迟会让游戏加载到不完整或未生效的 ddraw.dll,
+        # 表现为"cnc-ddraw 没启动"(窗口化/渲染未接管)。逐文件校验大小一致,
+        # 不一致则重试复制; 全部一致后再留短暂稳定期。
+        self._settle_tool_files(exe_dir, self.game_dir or os.getcwd())
 
         # ── 启动游戏 (CREATE_SUSPENDED: GUI 路径, Wine 走 CLI) ──
         tks_path = self.exe_path
@@ -549,6 +554,45 @@ class PatcherWorker(QThread):
                     self._log(f"  [ERROR] 复制 {rel_path} 失败: {e}")
 
         self._log(f"  共注入 {injected} 个文件")
+
+    def _settle_tool_files(self, launcher_dir: str, game_dir: str):
+        """注入后校验落盘并留出稳定期, 再允许启动游戏。
+
+        复制与进程创建紧邻时, 杀软扫描/延迟写回会让游戏加载到不完整或尚未
+        生效的 ddraw.dll, 表现为"cnc-ddraw 没启动"(窗口化/渲染未接管)。
+        逐文件比对大小, 不一致重试复制; 全部一致后等待短暂稳定期。
+        """
+        if not self.selected_tool or not self._tool_injected_files:
+            return
+        tool_src = os.path.join(launcher_dir, "tools", self.selected_tool)
+        files = list(self._tool_injected_files.keys())
+        for attempt in range(3):
+            bad = []
+            for rel_path in files:
+                src_file = os.path.join(tool_src, rel_path)
+                dst_file = os.path.join(game_dir, rel_path)
+                try:
+                    if (not os.path.isfile(dst_file)
+                            or os.path.getsize(dst_file) != os.path.getsize(src_file)):
+                        bad.append(rel_path)
+                except OSError:
+                    bad.append(rel_path)
+            if not bad:
+                break
+            self._log(f"  [WARN] {len(bad)} 个注入文件未落盘, 重试 {attempt + 1}/3: "
+                      f"{', '.join(bad[:4])}")
+            for rel_path in bad:
+                try:
+                    shutil.copy2(os.path.join(tool_src, rel_path),
+                                 os.path.join(game_dir, rel_path))
+                except Exception as e:
+                    self._log(f"  [WARN] 重试复制 {rel_path} 失败: {e}")
+            time.sleep(0.5)
+        else:
+            self._log("  [WARN] 辅助工具文件仍有个别未就绪, 继续启动（可能影响窗口化生效）")
+        # 稳定期: 让防病毒/索引服务释放刚写入的 ddraw.dll 句柄
+        time.sleep(0.6)
+        self._log(f"  辅助工具已就绪 ({len(files)} 个文件, ddraw.dll 已落盘)")
 
     def _remove_tool_files(self, game_dir: str):
         """游戏退出后，移除辅助工具注入的文件（恢复被覆盖的文件，删除新建的文件）。"""

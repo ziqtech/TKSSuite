@@ -1,0 +1,2881 @@
+{
+ "_format": 1,
+ "_group": "── 视频显示 ──",
+ "_comment": "16:9 宽屏画布 v1 (patch_sites)。参照 TKSRemake 的 16:9 方案: 高度恒 480, 地图/战场逻辑画布宽度 640->854 (+214), 非地图页面保持 640 布局左对齐+右带清零。层次: [显示] 4031A2 DD 初始化 854x480x16; [视野] dword_4E7CC8=.data 视口宽 854 (地图/战场镜头公式 viewX=clamp(x-W/2,0,bgW-W) 与边界矩形全部运行时派生, 自动跟随), 地图边界 411308 bgW-640->bgW-854, 镜头左界 320->427 (=854/2), 鼠标右缘卷屏 639->853; [绘制] 图形原语库 4544EC..45B20C+44F8B4: 640 裁剪->854 (立即数), y*640 步长 (shl9+shl7 惯用形)->imul 854 等长改写 (结果寄存器不变), 天气 405744 行偏移/右界; [UI] 战场右缘锚定 +214: 时序条 593/579/578/615/621/616, 命令菜单 709->923/收敛 434->648 (两处), 信息框 500/508; [页面] 页对象内嵌画布保持 640x480, 与视频内存的 12 处 memcpy(0x96000) 改为 call cave 逐行拷贝 (grab 9 / push 3), 视频行距运行时读 unk_A2ACC8+0x10 (lPitch), 回写时 [640,854) 像素带清零。排除: 拾取链 454944/406864/410B74 保持 640 (word_78E276 不变宽, x>=640 单位不可拾取为已知局限); 页内快照互拷两侧同为 640 步长无需改动。已知局限: ① 背景宽 bgW<854 的地图/战场 (视口矩形超出背景表面 -> Blt 失败背景缺失); ② 战斗胜负横幅/帘幕以外的居中演出仍按 640 中心 (320->427 已覆盖消息文本, 横幅位点待定位); ③ 412524 的两处全表面背景 Blt (4E7CE8) 未适配, 该页面背景可能缺失; ④ 需要 lPitch==854*2 (系统内存后备表面; 真实 VRAM 表面可能对齐到 1712+ 导致整体斜切 — 建议配合 cnc-ddraw/dgVoodoo 等窗口化/系统内存方案使用); ⑤ 全屏独占 16bpp 模式 854x480 是否可用取决于 ddraw 实现。",
+ "type": "patch_sites",
+ "id": "widescreen_16_9",
+ "name": "16:9 宽屏画布 (854x480)",
+ "desc": "参照 TKSRemake 16:9 方案: 地图/战场画布拓宽至 856x480 (视野加宽), 战场 UI 右缘锚定, 镜头/裁剪/步长/天气/鼠标全链适配; 菜单页面保持 640 布局 (两侧 108px 黑边居中)。鼠标: 保留原版软件光标 (系统光标保持隐藏), Cur.JVG 帧先解码进 640x480 虚拟屏再按真实步长 blit (RLE 流内嵌 640 平面几何); 页面态命中/点击读 PAGE_X/PAGE_REC_X (clamp(raw-108,0,639))。v2 修复: 光标解码 cdecl 压栈顺序 (旧版 a5 收到 240 越界即返回, 光标从未画出); 哨兵填充改双字复制 0xFE1FFE1F (旧版交替棋盘格被当黑色 blit 成黑块); globals 槽位+scratch 整块改为引擎独立分配 (旧版 0x660878 起的 .data \"空闲区\" 实测被游戏使用, 互踩); 12 处内联 g_end 引用 0x660830 -> 0x66083C (旧值落在 DST_RECT 内恒为 0)。optional=true, 默认不勾选。",
+ "optional": true,
+ "default_checked": false,
+ "hook_expect_count": 0,
+ "autolayout_cave": true,
+ "cave_code": "C7 05 00 08 66 00 58 03 00 00 C7 05 28 08 66 00 00 00 00 00 C7 05 3C 08 66 00 50 83 0C 00 B8 0C EC 44 00 FF E0 55 8B EC 56 57 53 FC 8B 5D 08 8B 55 0C 81 C2 D8 00 00 00 8B 75 10 81 FE 00 05 00 00 7C 27 8B FB 56 8B F2 B9 40 01 00 00 F3 A5 5E 81 C3 00 05 00 00 03 15 D8 AC A2 00 81 EE 00 05 00 00 81 FE 00 05 00 00 7D D9 8B 45 08 5B 5F 5E 5D C3 55 8B EC 56 57 53 FC 8B 5D 08 8B 55 0C 8B 75 10 81 FE 00 05 00 00 7C 3D 33 C0 8B FB B9 36 00 00 00 F3 AB 56 8B F2 8D BB D8 00 00 00 B9 40 01 00 00 F3 A5 B9 36 00 00 00 F3 AB 5E 03 1D D8 AC A2 00 81 C2 00 05 00 00 81 EE 00 05 00 00 81 FE 00 05 00 00 7D C3 8B 45 08 5B 5F 5E 5D C3 A1 A4 B9 A2 00 8B 15 A8 B9 A2 00 89 85 74 FF FF FF 89 95 70 FF FF FF C7 05 08 08 66 00 00 00 00 00 3D 80 02 00 00 75 1D 81 FA E0 01 00 00 75 15 B8 58 03 00 00 89 85 74 FF FF FF C7 05 08 08 66 00 01 00 00 00 C3 8B 0D A4 B9 A2 00 0F AF 0D A8 B9 A2 00 03 C9 51 8B 45 EC 50 8B 55 8C 52 A1 08 08 66 00 85 C0 74 25 56 57 53 8B 75 EC 8B 7D 8C BB E0 01 00 00 B9 40 01 00 00 F3 A5 33 C0 B9 6C 00 00 00 F3 AB 4B 75 ED 5B 5F 5E C3 B8 8C 00 4B 00 FF D0 C3 59 A3 0C 08 66 00 89 0D 10 08 66 00 81 EC 00 01 00 00 89 25 24 08 66 00 C7 04 24 7C 00 00 00 C7 44 24 08 00 00 00 00 C7 44 24 0C 00 00 00 00 8B 84 24 08 01 00 00 54 50 8B 10 FF 52 58 8B 15 24 08 66 00 8B 52 08 8B 05 24 08 66 00 8B 40 0C 8B 25 24 08 66 00 81 C4 00 01 00 00 85 C0 74 65 85 D2 74 61 3D 58 03 00 00 76 05 B8 58 03 00 00 C7 05 14 08 66 00 00 00 00 00 C7 05 18 08 66 00 00 00 00 00 A3 1C 08 66 00 89 15 20 08 66 00 C7 05 2C 08 66 00 6C 00 00 00 C7 05 30 08 66 00 00 00 00 00 8D 88 6C 00 00 00 89 0D 34 08 66 00 89 15 38 08 66 00 C7 44 24 04 2C 08 66 00 C7 44 24 0C 14 08 66 00 8B 14 24 8B 12 FF 52 14 8B 0D 10 08 66 00 FF E1 A3 78 42 82 00 59 8D 40 94 85 C0 79 02 31 C0 81 F8 80 02 00 00 72 05 B8 7F 02 00 00 A3 40 08 66 00 FF E1 89 0D 78 42 82 00 89 CA 59 81 EA 6C 00 00 00 79 02 31 D2 81 FA 80 02 00 00 72 05 BA 7F 02 00 00 89 15 40 08 66 00 41 FF E1 A3 5E E2 78 00 59 8D 50 94 85 D2 79 02 31 D2 81 FA 80 02 00 00 72 05 BA 7F 02 00 00 89 15 44 08 66 00 FF E1 53 56 57 55 8B 74 24 14 85 F6 0F 84 21 02 00 00 8B 7C 24 18 8B 5C 24 1C 0F B7 44 24 20 3B 46 18 0F 83 0B 02 00 00 89 C5 8B 4E 0C 0F B7 04 69 8B 4E 08 0F B7 0C 69 C1 E1 06 03 0E 3B 01 0F 83 EE 01 00 00 8B 51 28 8B 14 82 03 51 2C 0F BF 02 A3 54 08 66 00 0F BF 42 02 A3 58 08 66 00 0F B7 42 04 A3 4C 08 66 00 85 C0 0F 84 C3 01 00 00 0F B7 42 06 A3 50 08 66 00 A1 00 08 66 00 A3 5C 08 66 00 A1 3C 08 66 00 A3 60 08 66 00 C7 05 00 08 66 00 80 02 00 00 C7 05 3C 08 66 00 00 5B 09 00 FC BF 78 08 66 00 B9 00 58 02 00 B8 1F FE 1F FE F3 AB 6A FF 68 78 08 66 00 55 68 F0 00 00 00 68 40 01 00 00 56 B8 EC 44 45 00 FF D0 83 C4 18 8B 05 5C 08 66 00 A3 00 08 66 00 8B 05 60 08 66 00 A3 3C 08 66 00 8B 7C 24 18 8B 5C 24 1C 8B 05 54 08 66 00 8D 0C 07 89 CA 2B 15 4C 08 66 00 42 85 D2 0F 89 02 00 00 00 31 D2 8D 87 C0 FE FF FF 3B D0 0F 8D 02 00 00 00 89 C2 89 15 64 08 66 00 8B 05 5C 08 66 00 48 39 C1 0F 8E 02 00 00 00 89 C1 8D 87 3F 01 00 00 39 C1 0F 8E 02 00 00 00 89 C1 89 0D 68 08 66 00 8B 05 58 08 66 00 8D 0C 03 89 CA 2B 15 50 08 66 00 42 85 D2 0F 89 02 00 00 00 31 D2 8D 83 10 FF FF FF 3B D0 0F 8D 02 00 00 00 89 C2 89 15 6C 08 66 00 B8 DF 01 00 00 39 C1 0F 8E 02 00 00 00 89 C1 8D 83 EF 00 00 00 39 C1 0F 8E 02 00 00 00 89 C1 89 0D 70 08 66 00 A1 64 08 66 00 3B 05 68 08 66 00 0F 8F 84 00 00 00 A1 6C 08 66 00 3B 05 70 08 66 00 0F 8F 73 00 00 00 8B 2D 6C 08 66 00 89 E8 29 D8 05 F0 00 00 00 69 C0 80 02 00 00 8B 15 64 08 66 00 81 C2 40 01 00 00 29 FA 03 C2 8D 34 00 81 C6 78 08 66 00 89 E8 0F AF 05 5C 08 66 00 03 05 64 08 66 00 8D 14 00 03 54 24 24 8B 0D 68 08 66 00 2B 0D 64 08 66 00 41 66 8B 06 66 3D 1F FE 0F 84 03 00 00 00 66 89 02 83 C6 02 83 C2 02 49 75 E7 45 3B 2D 70 08 66 00 7E 93 5D 5F 5E 5B C3 59 3B 05 00 08 66 00 FF E1 89 0D 3C D8 4E 00 59 03 05 3C 08 66 00 8B 0D 3C D8 4E 00 FF E1 59 50 8B 45 0C 03 05 00 08 66 00 89 45 0C 58 FF E1 59 50 A1 40 D8 4E 00 2B 05 00 08 66 00 A3 40 D8 4E 00 58 FF E1 C7 05 00 08 66 00 80 02 00 00 C7 05 28 08 66 00 6C 00 00 00 C7 05 3C 08 66 00 00 5B 09 00 8B 04 24 A3 04 08 66 00 E8 00 00 00 00 58 05 10 00 00 00 89 04 24 B8 1C 13 42 00 FF E0 C7 05 00 08 66 00 58 03 00 00 C7 05 28 08 66 00 00 00 00 00 C7 05 3C 08 66 00 50 83 0C 00 A1 04 08 66 00 FF E0 C7 05 00 08 66 00 80 02 00 00 C7 05 28 08 66 00 6C 00 00 00 C7 05 3C 08 66 00 00 5B 09 00 8B 04 24 A3 04 08 66 00 E8 00 00 00 00 58 05 10 00 00 00 89 04 24 B8 B8 40 42 00 FF E0 C7 05 00 08 66 00 58 03 00 00 C7 05 28 08 66 00 00 00 00 00 C7 05 3C 08 66 00 50 83 0C 00 A1 04 08 66 00 FF E0 C7 05 00 08 66 00 80 02 00 00 C7 05 28 08 66 00 6C 00 00 00 C7 05 3C 08 66 00 00 5B 09 00 8B 04 24 A3 04 08 66 00 E8 00 00 00 00 58 05 10 00 00 00 89 04 24 B8 64 61 42 00 FF E0 C7 05 00 08 66 00 58 03 00 00 C7 05 28 08 66 00 00 00 00 00 C7 05 3C 08 66 00 50 83 0C 00 A1 04 08 66 00 FF E0",
+ "cave_entries": {
+  "init_stride": "0x0",
+  "grab_copy": "0x25",
+  "push_copy": "0x72",
+  "gxp_pad_decide": "0xcf",
+  "gxp_upload": "0x115",
+  "gxp_blt_fix": "0x163",
+  "mouse_clamp": "0x237",
+  "mouse_map_down": "0x25a",
+  "rec_map": "0x283",
+  "cursor_scratch": "0x2a7",
+  "blit_cmp_eax_w": "0x4dd",
+  "blit_end_eax": "0x4e6",
+  "blit_wrap_add": "0x4fb",
+  "blit_wrap_sub": "0x50c",
+  "wrap_page_42131C": "0x521",
+  "wrap_page_4240B8": "0x581",
+  "wrap_page_426164": "0x5e1"
+ },
+ "sites": [
+  {
+   "rva": "0x31A2",
+   "expect": "68 80 02 00 00",
+   "replace": "68 58 03 00 00",
+   "kind": null,
+   "ref": null,
+   "tag": "640->856 push 0x280 (4030F0)"
+  },
+  {
+   "rva": "0x31B5",
+   "expect": "E8 52 BA 04 00",
+   "replace": null,
+   "kind": "call",
+   "ref": "init_stride",
+   "tag": "DD 初始化 wrapper: 绘制步长全局=856"
+  },
+  {
+   "rva": "0x382D",
+   "expect": "A3 78 42 82 00",
+   "replace": null,
+   "kind": "call",
+   "ref": "mouse_clamp",
+   "tag": "鼠标X双空间映射: raw 照存 + PAGE_X=clamp(raw-108,0,639)"
+  },
+  {
+   "rva": "0x3888",
+   "expect": "81 F9 7F 02 00 00",
+   "replace": "81 F9 57 03 00 00",
+   "kind": null,
+   "ref": null,
+   "tag": "639->855 cmp ecx, 0x27f (403818)"
+  },
+  {
+   "rva": "0x581F",
+   "expect": "81 F9 74 02 00 00",
+   "replace": "81 F9 4C 03 00 00",
+   "kind": null,
+   "ref": null,
+   "tag": "天气右界 628->842"
+  },
+  {
+   "rva": "0x58C7",
+   "expect": "8B 45 F4 8B 4D F4 C1 E0 07 8B 55 F8 C1 E1 09 03 C2 03 C1",
+   "replace": "8B 45 F4 0F AF 05 00 08 66 00 8B 55 F8 03 C2 90 90 90 90",
+   "kind": null,
+   "ref": null,
+   "tag": "stride y*640->y*854 (405744)"
+  },
+  {
+   "rva": "0x5913",
+   "expect": "81 45 EC F6 04 00 00",
+   "replace": "81 45 EC A6 06 00 00",
+   "kind": null,
+   "ref": null,
+   "tag": "天气行偏移 1270->1702"
+  },
+  {
+   "rva": "0x5932",
+   "expect": "81 45 EC F6 04 00 00",
+   "replace": "81 45 EC A6 06 00 00",
+   "kind": null,
+   "ref": null,
+   "tag": "天气行偏移 1270->1702"
+  },
+  {
+   "rva": "0x5995",
+   "expect": "8B 4D F4 8B 55 F4 C1 E1 07 8B 45 F8 C1 E2 09 03 C8 03 CA",
+   "replace": "8B 4D F4 0F AF 0D 00 08 66 00 8B 45 F8 03 C8 90 90 90 90",
+   "kind": null,
+   "ref": null,
+   "tag": "stride y*640->y*854 (405744)"
+  },
+  {
+   "rva": "0x59FD",
+   "expect": "81 45 EC F0 04 00 00",
+   "replace": "81 45 EC A0 06 00 00",
+   "kind": null,
+   "ref": null,
+   "tag": "天气行偏移 1264->1696"
+  },
+  {
+   "rva": "0x5A2A",
+   "expect": "81 45 EC EA 04 00 00",
+   "replace": "81 45 EC 9A 06 00 00",
+   "kind": null,
+   "ref": null,
+   "tag": "天气行偏移 1258->1690"
+  },
+  {
+   "rva": "0x5A49",
+   "expect": "81 45 EC EA 04 00 00",
+   "replace": "81 45 EC 9A 06 00 00",
+   "kind": null,
+   "ref": null,
+   "tag": "天气行偏移 1258->1690"
+  },
+  {
+   "rva": "0x5A84",
+   "expect": "81 45 EC F0 04 00 00",
+   "replace": "81 45 EC A0 06 00 00",
+   "kind": null,
+   "ref": null,
+   "tag": "天气行偏移 1264->1696"
+  },
+  {
+   "rva": "0x5AEC",
+   "expect": "8B 55 F4 8B 45 F4 C1 E2 07 8B 4D F8 C1 E0 09 03 D1 03 D0",
+   "replace": "8B 55 F4 0F AF 15 00 08 66 00 8B 4D F8 03 D1 90 90 90 90",
+   "kind": null,
+   "ref": null,
+   "tag": "stride y*640->y*854 (405744)"
+  },
+  {
+   "rva": "0x5B0E",
+   "expect": "81 45 EC 00 05 00 00",
+   "replace": "81 45 EC B0 06 00 00",
+   "kind": null,
+   "ref": null,
+   "tag": "天气行偏移 1280->1712"
+  },
+  {
+   "rva": "0x5B1F",
+   "expect": "81 45 EC FE 04 00 00",
+   "replace": "81 45 EC AE 06 00 00",
+   "kind": null,
+   "ref": null,
+   "tag": "天气行偏移 1278->1710"
+  },
+  {
+   "rva": "0x5B30",
+   "expect": "81 45 EC 00 05 00 00",
+   "replace": "81 45 EC B0 06 00 00",
+   "kind": null,
+   "ref": null,
+   "tag": "天气行偏移 1280->1712"
+  },
+  {
+   "rva": "0x5B41",
+   "expect": "81 45 EC FE 04 00 00",
+   "replace": "81 45 EC AE 06 00 00",
+   "kind": null,
+   "ref": null,
+   "tag": "天气行偏移 1278->1710"
+  },
+  {
+   "rva": "0x5B52",
+   "expect": "81 45 EC 00 05 00 00",
+   "replace": "81 45 EC B0 06 00 00",
+   "kind": null,
+   "ref": null,
+   "tag": "天气行偏移 1280->1712"
+  },
+  {
+   "rva": "0x6432",
+   "expect": "68 80 02 00 00",
+   "replace": "68 58 03 00 00",
+   "kind": null,
+   "ref": null,
+   "tag": "640->856 push 0x280 (405CBC)"
+  },
+  {
+   "rva": "0xB3D1",
+   "expect": "BA 40 01 00 00",
+   "replace": "BA AC 01 00 00",
+   "kind": null,
+   "ref": null,
+   "tag": "320->428 mov edx, 0x140 (40B2D0)"
+  },
+  {
+   "rva": "0xC9EF",
+   "expect": "66 05 40 01",
+   "replace": "66 05 AC 01",
+   "kind": null,
+   "ref": null,
+   "tag": "320->428 add ax, 0x140 (40C9E8)"
+  },
+  {
+   "rva": "0xD414",
+   "expect": "8B 10 FF 52 14",
+   "replace": null,
+   "kind": "call",
+   "ref": "gxp_blt_fix",
+   "tag": "页面背景 Blt 矩形补全 (0xD414)"
+  },
+  {
+   "rva": "0xD624",
+   "expect": "8B 10 FF 52 14",
+   "replace": null,
+   "kind": "call",
+   "ref": "gxp_blt_fix",
+   "tag": "页面背景 Blt 矩形补全 (0xD624)"
+  },
+  {
+   "rva": "0xD644",
+   "expect": "E8 D3 3C 01 00",
+   "replace": null,
+   "kind": "call",
+   "ref": "wrap_page_42131C",
+   "tag": "页面绘制步长 wrapper (0x42131C)"
+  },
+  {
+   "rva": "0xD957",
+   "expect": "8B 10 FF 52 14",
+   "replace": null,
+   "kind": "call",
+   "ref": "gxp_blt_fix",
+   "tag": "页面背景 Blt 矩形补全 (0xD957)"
+  },
+  {
+   "rva": "0xD977",
+   "expect": "E8 3C 67 01 00",
+   "replace": null,
+   "kind": "call",
+   "ref": "wrap_page_4240B8",
+   "tag": "页面绘制步长 wrapper (0x4240B8)"
+  },
+  {
+   "rva": "0xDFD3",
+   "expect": "68 80 02 00 00",
+   "replace": "68 58 03 00 00",
+   "kind": null,
+   "ref": null,
+   "tag": "640->856 push 0x280 (40DC1C)"
+  },
+  {
+   "rva": "0x113E0",
+   "expect": "68 40 01 00 00",
+   "replace": "68 AC 01 00 00",
+   "kind": null,
+   "ref": null,
+   "tag": "320->428 push 0x140 (411308)"
+  },
+  {
+   "rva": "0x113F7",
+   "expect": "68 80 02 00 00",
+   "replace": "68 58 03 00 00",
+   "kind": null,
+   "ref": null,
+   "tag": "640->856 push 0x280 (411308)"
+  },
+  {
+   "rva": "0x117A8",
+   "expect": "68 80 02 00 00",
+   "replace": "68 58 03 00 00",
+   "kind": null,
+   "ref": null,
+   "tag": "640->856 push 0x280 (411624)"
+  },
+  {
+   "rva": "0x1182C",
+   "expect": "68 80 02 00 00",
+   "replace": "68 58 03 00 00",
+   "kind": null,
+   "ref": null,
+   "tag": "640->856 push 0x280 (411624)"
+  },
+  {
+   "rva": "0x118B0",
+   "expect": "68 80 02 00 00",
+   "replace": "68 58 03 00 00",
+   "kind": null,
+   "ref": null,
+   "tag": "640->856 push 0x280 (411624)"
+  },
+  {
+   "rva": "0x12A13",
+   "expect": "8B 10 FF 52 14",
+   "replace": null,
+   "kind": "call",
+   "ref": "gxp_blt_fix",
+   "tag": "页面背景 Blt 矩形补全 (0x12A13)"
+  },
+  {
+   "rva": "0x12D75",
+   "expect": "8B 10 FF 52 14",
+   "replace": null,
+   "kind": "call",
+   "ref": "gxp_blt_fix",
+   "tag": "页面背景 Blt 矩形补全 (0x12D75)"
+  },
+  {
+   "rva": "0x12D95",
+   "expect": "E8 CA 33 01 00",
+   "replace": null,
+   "kind": "call",
+   "ref": "wrap_page_426164",
+   "tag": "页面绘制步长 wrapper (0x426164)"
+  },
+  {
+   "rva": "0x19256",
+   "expect": "E8 31 6E 09 00",
+   "replace": null,
+   "kind": "call",
+   "ref": "grab_copy",
+   "tag": "页面抓屏 memcpy->grab_copy (418EE8)"
+  },
+  {
+   "rva": "0x1981F",
+   "expect": "E8 68 68 09 00",
+   "replace": null,
+   "kind": "call",
+   "ref": "grab_copy",
+   "tag": "页面抓屏 memcpy->grab_copy (419704)"
+  },
+  {
+   "rva": "0x19D5F",
+   "expect": "E8 28 63 09 00",
+   "replace": null,
+   "kind": "call",
+   "ref": "grab_copy",
+   "tag": "页面抓屏 memcpy->grab_copy (419B54)"
+  },
+  {
+   "rva": "0x1A79A",
+   "expect": "E8 ED 58 09 00",
+   "replace": null,
+   "kind": "call",
+   "ref": "grab_copy",
+   "tag": "页面抓屏 memcpy->grab_copy (41A080)"
+  },
+  {
+   "rva": "0x213FA",
+   "expect": "E8 8D EC 08 00",
+   "replace": null,
+   "kind": "call",
+   "ref": "grab_copy",
+   "tag": "页面抓屏 memcpy->grab_copy (42131C)"
+  },
+  {
+   "rva": "0x2174B",
+   "expect": "E8 3C E9 08 00",
+   "replace": null,
+   "kind": "call",
+   "ref": "grab_copy",
+   "tag": "页面抓屏 memcpy->grab_copy (42131C)"
+  },
+  {
+   "rva": "0x21A21",
+   "expect": "E8 66 E6 08 00",
+   "replace": null,
+   "kind": "call",
+   "ref": "push_copy",
+   "tag": "页面回写 memcpy->push_copy (42131C)"
+  },
+  {
+   "rva": "0x240EF",
+   "expect": "E8 98 BF 08 00",
+   "replace": null,
+   "kind": "call",
+   "ref": "grab_copy",
+   "tag": "页面抓屏 memcpy->grab_copy (4240B8)"
+  },
+  {
+   "rva": "0x24197",
+   "expect": "E8 F0 BE 08 00",
+   "replace": null,
+   "kind": "call",
+   "ref": "push_copy",
+   "tag": "页面回写 memcpy->push_copy (4240B8)"
+  },
+  {
+   "rva": "0x26215",
+   "expect": "E8 72 9E 08 00",
+   "replace": null,
+   "kind": "call",
+   "ref": "grab_copy",
+   "tag": "页面抓屏 memcpy->grab_copy (426164)"
+  },
+  {
+   "rva": "0x262A2",
+   "expect": "E8 E5 9D 08 00",
+   "replace": null,
+   "kind": "call",
+   "ref": "grab_copy",
+   "tag": "页面抓屏 memcpy->grab_copy (426164)"
+  },
+  {
+   "rva": "0x264D2",
+   "expect": "E8 B5 9B 08 00",
+   "replace": null,
+   "kind": "call",
+   "ref": "push_copy",
+   "tag": "页面回写 memcpy->push_copy (426164)"
+  },
+  {
+   "rva": "0x28EEB",
+   "expect": "68 80 02 00 00",
+   "replace": "68 58 03 00 00",
+   "kind": null,
+   "ref": null,
+   "tag": "640->856 push 0x280 (428E24)"
+  },
+  {
+   "rva": "0x29D53",
+   "expect": "68 80 02 00 00",
+   "replace": "68 58 03 00 00",
+   "kind": null,
+   "ref": null,
+   "tag": "640->856 push 0x280 (429C8C)"
+  },
+  {
+   "rva": "0x29F96",
+   "expect": "8B 10 FF 52 14",
+   "replace": null,
+   "kind": "call",
+   "ref": "gxp_blt_fix",
+   "tag": "页面背景 Blt 矩形补全 (0x29F96)"
+  },
+  {
+   "rva": "0x2ADDB",
+   "expect": "68 80 02 00 00",
+   "replace": "68 58 03 00 00",
+   "kind": null,
+   "ref": null,
+   "tag": "640->856 push 0x280 (42AD14)"
+  },
+  {
+   "rva": "0x2D4E3",
+   "expect": "68 80 02 00 00",
+   "replace": "68 58 03 00 00",
+   "kind": null,
+   "ref": null,
+   "tag": "640->856 push 0x280 (42D41C)"
+  },
+  {
+   "rva": "0x2DEC7",
+   "expect": "68 80 02 00 00",
+   "replace": "68 58 03 00 00",
+   "kind": null,
+   "ref": null,
+   "tag": "640->856 push 0x280 (42DE00)"
+  },
+  {
+   "rva": "0x2E553",
+   "expect": "68 80 02 00 00",
+   "replace": "68 58 03 00 00",
+   "kind": null,
+   "ref": null,
+   "tag": "640->856 push 0x280 (42E48C)"
+  },
+  {
+   "rva": "0x2EE7F",
+   "expect": "68 80 02 00 00",
+   "replace": "68 58 03 00 00",
+   "kind": null,
+   "ref": null,
+   "tag": "640->856 push 0x280 (42EDB8)"
+  },
+  {
+   "rva": "0x2FB2C",
+   "expect": "68 40 01 00 00",
+   "replace": "68 AC 01 00 00",
+   "kind": null,
+   "ref": null,
+   "tag": "320->428 push 0x140 (42FA50)"
+  },
+  {
+   "rva": "0x302A4",
+   "expect": "68 80 02 00 00",
+   "replace": "68 58 03 00 00",
+   "kind": null,
+   "ref": null,
+   "tag": "640->856 push 0x280 (42FEE0)"
+  },
+  {
+   "rva": "0x307E8",
+   "expect": "68 80 02 00 00",
+   "replace": "68 58 03 00 00",
+   "kind": null,
+   "ref": null,
+   "tag": "640->856 push 0x280 (4307CC)"
+  },
+  {
+   "rva": "0x3703C",
+   "expect": "68 80 02 00 00",
+   "replace": "68 58 03 00 00",
+   "kind": null,
+   "ref": null,
+   "tag": "640->856 push 0x280 (436F60)"
+  },
+  {
+   "rva": "0x3884D",
+   "expect": "68 F4 01 00 00",
+   "replace": "68 CC 02 00 00",
+   "kind": null,
+   "ref": null,
+   "tag": "UI 500->716 (43844C)"
+  },
+  {
+   "rva": "0x3887B",
+   "expect": "68 F4 01 00 00",
+   "replace": "68 CC 02 00 00",
+   "kind": null,
+   "ref": null,
+   "tag": "UI 500->716 (43844C)"
+  },
+  {
+   "rva": "0x388C6",
+   "expect": "68 FC 01 00 00",
+   "replace": "68 D4 02 00 00",
+   "kind": null,
+   "ref": null,
+   "tag": "UI 508->724 (43844C)"
+  },
+  {
+   "rva": "0x393D3",
+   "expect": "66 C7 05 2A 09 9E 00 C5 02",
+   "replace": "66 C7 05 2A 09 9E 00 9D 03",
+   "kind": null,
+   "ref": null,
+   "tag": "UI 709->925 (4393A8)"
+  },
+  {
+   "rva": "0x3977B",
+   "expect": "66 C7 05 30 09 9E 00 C5 02",
+   "replace": "66 C7 05 30 09 9E 00 9D 03",
+   "kind": null,
+   "ref": null,
+   "tag": "UI 709->925 (439750)"
+  },
+  {
+   "rva": "0x39D61",
+   "expect": "68 51 02 00 00",
+   "replace": "68 29 03 00 00",
+   "kind": null,
+   "ref": null,
+   "tag": "UI 593->809 (439D34)"
+  },
+  {
+   "rva": "0x39E69",
+   "expect": "68 43 02 00 00",
+   "replace": "68 1B 03 00 00",
+   "kind": null,
+   "ref": null,
+   "tag": "UI 579->795 (439D34)"
+  },
+  {
+   "rva": "0x39EB9",
+   "expect": "68 43 02 00 00",
+   "replace": "68 1B 03 00 00",
+   "kind": null,
+   "ref": null,
+   "tag": "UI 579->795 (439D34)"
+  },
+  {
+   "rva": "0x39EF8",
+   "expect": "68 43 02 00 00",
+   "replace": "68 1B 03 00 00",
+   "kind": null,
+   "ref": null,
+   "tag": "UI 579->795 (439D34)"
+  },
+  {
+   "rva": "0x39F35",
+   "expect": "68 42 02 00 00",
+   "replace": "68 1A 03 00 00",
+   "kind": null,
+   "ref": null,
+   "tag": "UI 578->794 (439D34)"
+  },
+  {
+   "rva": "0x39F7A",
+   "expect": "68 68 02 00 00",
+   "replace": "68 40 03 00 00",
+   "kind": null,
+   "ref": null,
+   "tag": "UI 616->832 (439D34)"
+  },
+  {
+   "rva": "0x39FD2",
+   "expect": "68 67 02 00 00",
+   "replace": "68 3F 03 00 00",
+   "kind": null,
+   "ref": null,
+   "tag": "UI 615->831 (439D34)"
+  },
+  {
+   "rva": "0x3A004",
+   "expect": "68 6D 02 00 00",
+   "replace": "68 45 03 00 00",
+   "kind": null,
+   "ref": null,
+   "tag": "UI 621->837 (439D34)"
+  },
+  {
+   "rva": "0x3A02C",
+   "expect": "68 42 02 00 00",
+   "replace": "68 1A 03 00 00",
+   "kind": null,
+   "ref": null,
+   "tag": "UI 578->794 (439D34)"
+  },
+  {
+   "rva": "0x3AA01",
+   "expect": "68 80 02 00 00",
+   "replace": "68 58 03 00 00",
+   "kind": null,
+   "ref": null,
+   "tag": "640->856 push 0x280 (43A8D8)"
+  },
+  {
+   "rva": "0x3AA1B",
+   "expect": "68 80 02 00 00",
+   "replace": "68 58 03 00 00",
+   "kind": null,
+   "ref": null,
+   "tag": "640->856 push 0x280 (43A8D8)"
+  },
+  {
+   "rva": "0x3AA68",
+   "expect": "68 80 02 00 00",
+   "replace": "68 58 03 00 00",
+   "kind": null,
+   "ref": null,
+   "tag": "640->856 push 0x280 (43A8D8)"
+  },
+  {
+   "rva": "0x3AA95",
+   "expect": "68 80 02 00 00",
+   "replace": "68 58 03 00 00",
+   "kind": null,
+   "ref": null,
+   "tag": "640->856 push 0x280 (43A8D8)"
+  },
+  {
+   "rva": "0x3ADBF",
+   "expect": "68 80 02 00 00",
+   "replace": "68 58 03 00 00",
+   "kind": null,
+   "ref": null,
+   "tag": "640->856 push 0x280 (43A8D8)"
+  },
+  {
+   "rva": "0x3ADD9",
+   "expect": "68 80 02 00 00",
+   "replace": "68 58 03 00 00",
+   "kind": null,
+   "ref": null,
+   "tag": "640->856 push 0x280 (43A8D8)"
+  },
+  {
+   "rva": "0x3AE26",
+   "expect": "68 80 02 00 00",
+   "replace": "68 58 03 00 00",
+   "kind": null,
+   "ref": null,
+   "tag": "640->856 push 0x280 (43A8D8)"
+  },
+  {
+   "rva": "0x3AE53",
+   "expect": "68 80 02 00 00",
+   "replace": "68 58 03 00 00",
+   "kind": null,
+   "ref": null,
+   "tag": "640->856 push 0x280 (43A8D8)"
+  },
+  {
+   "rva": "0x3AE91",
+   "expect": "68 80 02 00 00",
+   "replace": "68 58 03 00 00",
+   "kind": null,
+   "ref": null,
+   "tag": "640->856 push 0x280 (43A8D8)"
+  },
+  {
+   "rva": "0x3AECA",
+   "expect": "68 80 02 00 00",
+   "replace": "68 58 03 00 00",
+   "kind": null,
+   "ref": null,
+   "tag": "640->856 push 0x280 (43A8D8)"
+  },
+  {
+   "rva": "0x3B178",
+   "expect": "68 80 02 00 00",
+   "replace": "68 58 03 00 00",
+   "kind": null,
+   "ref": null,
+   "tag": "640->856 push 0x280 (43A8D8)"
+  },
+  {
+   "rva": "0x3B1B1",
+   "expect": "68 80 02 00 00",
+   "replace": "68 58 03 00 00",
+   "kind": null,
+   "ref": null,
+   "tag": "640->856 push 0x280 (43A8D8)"
+  },
+  {
+   "rva": "0x3B210",
+   "expect": "68 80 02 00 00",
+   "replace": "68 58 03 00 00",
+   "kind": null,
+   "ref": null,
+   "tag": "640->856 push 0x280 (43A8D8)"
+  },
+  {
+   "rva": "0x3B261",
+   "expect": "68 80 02 00 00",
+   "replace": "68 58 03 00 00",
+   "kind": null,
+   "ref": null,
+   "tag": "640->856 push 0x280 (43A8D8)"
+  },
+  {
+   "rva": "0x3C22C",
+   "expect": "68 80 02 00 00",
+   "replace": "68 58 03 00 00",
+   "kind": null,
+   "ref": null,
+   "tag": "640->856 push 0x280 (43BFE8)"
+  },
+  {
+   "rva": "0x3C242",
+   "expect": "68 80 02 00 00",
+   "replace": "68 58 03 00 00",
+   "kind": null,
+   "ref": null,
+   "tag": "640->856 push 0x280 (43BFE8)"
+  },
+  {
+   "rva": "0x3C28B",
+   "expect": "68 80 02 00 00",
+   "replace": "68 58 03 00 00",
+   "kind": null,
+   "ref": null,
+   "tag": "640->856 push 0x280 (43BFE8)"
+  },
+  {
+   "rva": "0x3C2B6",
+   "expect": "68 80 02 00 00",
+   "replace": "68 58 03 00 00",
+   "kind": null,
+   "ref": null,
+   "tag": "640->856 push 0x280 (43BFE8)"
+  },
+  {
+   "rva": "0x4F8BA",
+   "expect": "C7 45 F4 80 02 00 00",
+   "replace": "C7 45 F4 58 03 00 00",
+   "kind": null,
+   "ref": null,
+   "tag": "640->856 mov dword ptr [ebp - 0xc], 0x280 (44F8B4)"
+  },
+  {
+   "rva": "0x4F8D0",
+   "expect": "81 F9 80 02 00 00",
+   "replace": "81 F9 58 03 00 00",
+   "kind": null,
+   "ref": null,
+   "tag": "640->856 cmp ecx, 0x280 (44F8B4)"
+  },
+  {
+   "rva": "0x4F8D8",
+   "expect": "C7 45 10 80 02 00 00",
+   "replace": "C7 45 10 58 03 00 00",
+   "kind": null,
+   "ref": null,
+   "tag": "640->856 mov dword ptr [ebp + 0x10], 0x280 (44F8B4)"
+  },
+  {
+   "rva": "0x5460A",
+   "expect": "8B 55 10 8B 45 10 C1 E2 07 8B 4D 0C C1 E0 09 03 D1 03 D0",
+   "replace": "8B 55 10 0F AF 15 00 08 66 00 8B 4D 0C 03 D1 90 90 90 90",
+   "kind": null,
+   "ref": null,
+   "tag": "stride y*640->y*854 (4544EC)"
+  },
+  {
+   "rva": "0x54667",
+   "expect": "81 FA 80 02 00 00",
+   "replace": "3B 15 00 08 66 00",
+   "kind": null,
+   "ref": null,
+   "tag": "绘制器宽度 640->动态 (4544EC edx, 0x280)"
+  },
+  {
+   "rva": "0x54721",
+   "expect": "81 FA 80 02 00 00",
+   "replace": "3B 15 00 08 66 00",
+   "kind": null,
+   "ref": null,
+   "tag": "绘制器宽度 640->动态 (4544EC edx, 0x280)"
+  },
+  {
+   "rva": "0x54768",
+   "expect": "81 C2 00 5B 09 00",
+   "replace": "03 15 3C 08 66 00",
+   "kind": null,
+   "ref": null,
+   "tag": "绘制器宽度 640->动态 (4544EC edx, 0x95b00)"
+  },
+  {
+   "rva": "0x5481A",
+   "expect": "81 45 0C 80 02 00 00",
+   "replace": null,
+   "kind": "call",
+   "ref": "blit_wrap_add",
+   "tag": "绘制器宽度 640->动态 (4544EC dword ptr [ebp + 0xc], 0x280)"
+  },
+  {
+   "rva": "0x54824",
+   "expect": "81 2D 40 D8 4E 00 80 02 00 00",
+   "replace": null,
+   "kind": "call",
+   "ref": "blit_wrap_sub",
+   "tag": "绘制器宽度 640->动态 (4544EC dword ptr [0x4ed840], 0x280)"
+  },
+  {
+   "rva": "0x54833",
+   "expect": "3D 80 02 00 00",
+   "replace": null,
+   "kind": "call",
+   "ref": "blit_cmp_eax_w",
+   "tag": "绘制器宽度 640->动态 (4544EC eax, 0x280)"
+  },
+  {
+   "rva": "0x54881",
+   "expect": "3D 80 02 00 00",
+   "replace": null,
+   "kind": "call",
+   "ref": "blit_cmp_eax_w",
+   "tag": "绘制器宽度 640->动态 (4544EC eax, 0x280)"
+  },
+  {
+   "rva": "0x5488A",
+   "expect": "81 45 0C 80 02 00 00",
+   "replace": null,
+   "kind": "call",
+   "ref": "blit_wrap_add",
+   "tag": "绘制器宽度 640->动态 (4544EC dword ptr [ebp + 0xc], 0x280)"
+  },
+  {
+   "rva": "0x54894",
+   "expect": "81 2D 40 D8 4E 00 80 02 00 00",
+   "replace": null,
+   "kind": "call",
+   "ref": "blit_wrap_sub",
+   "tag": "绘制器宽度 640->动态 (4544EC dword ptr [0x4ed840], 0x280)"
+  },
+  {
+   "rva": "0x548A4",
+   "expect": "81 FA 80 02 00 00",
+   "replace": "3B 15 00 08 66 00",
+   "kind": null,
+   "ref": null,
+   "tag": "绘制器宽度 640->动态 (4544EC edx, 0x280)"
+  },
+  {
+   "rva": "0x548E6",
+   "expect": "81 FA 80 02 00 00",
+   "replace": "3B 15 00 08 66 00",
+   "kind": null,
+   "ref": null,
+   "tag": "绘制器宽度 640->动态 (4544EC edx, 0x280)"
+  },
+  {
+   "rva": "0x54A73",
+   "expect": "3D 80 02 00 00",
+   "replace": null,
+   "kind": "call",
+   "ref": "blit_cmp_eax_w",
+   "tag": "绘制器宽度 640->动态 (4544EC eax, 0x280)"
+  },
+  {
+   "rva": "0x54B1A",
+   "expect": "3D 80 02 00 00",
+   "replace": null,
+   "kind": "call",
+   "ref": "blit_cmp_eax_w",
+   "tag": "绘制器宽度 640->动态 (4544EC eax, 0x280)"
+  },
+  {
+   "rva": "0x54B60",
+   "expect": "05 00 5B 09 00",
+   "replace": null,
+   "kind": "call",
+   "ref": "blit_end_eax",
+   "tag": "绘制器宽度 640->动态 (4544EC eax, 0x95b00)"
+  },
+  {
+   "rva": "0x54C0F",
+   "expect": "81 45 0C 80 02 00 00",
+   "replace": null,
+   "kind": "call",
+   "ref": "blit_wrap_add",
+   "tag": "绘制器宽度 640->动态 (4544EC dword ptr [ebp + 0xc], 0x280)"
+  },
+  {
+   "rva": "0x54C29",
+   "expect": "81 F9 80 02 00 00",
+   "replace": "3B 0D 00 08 66 00",
+   "kind": null,
+   "ref": null,
+   "tag": "绘制器宽度 640->动态 (4544EC ecx, 0x280)"
+  },
+  {
+   "rva": "0x54C78",
+   "expect": "81 F9 80 02 00 00",
+   "replace": "3B 0D 00 08 66 00",
+   "kind": null,
+   "ref": null,
+   "tag": "绘制器宽度 640->动态 (4544EC ecx, 0x280)"
+  },
+  {
+   "rva": "0x54C82",
+   "expect": "81 45 0C 80 02 00 00",
+   "replace": null,
+   "kind": "call",
+   "ref": "blit_wrap_add",
+   "tag": "绘制器宽度 640->动态 (4544EC dword ptr [ebp + 0xc], 0x280)"
+  },
+  {
+   "rva": "0x54C9B",
+   "expect": "3D 80 02 00 00",
+   "replace": null,
+   "kind": "call",
+   "ref": "blit_cmp_eax_w",
+   "tag": "绘制器宽度 640->动态 (4544EC eax, 0x280)"
+  },
+  {
+   "rva": "0x54CD8",
+   "expect": "3D 80 02 00 00",
+   "replace": null,
+   "kind": "call",
+   "ref": "blit_cmp_eax_w",
+   "tag": "绘制器宽度 640->动态 (4544EC eax, 0x280)"
+  },
+  {
+   "rva": "0x54ECA",
+   "expect": "8B 55 10 8B 45 10 C1 E2 07 8B 4D 0C C1 E0 09 03 D1 03 D0",
+   "replace": "8B 55 10 0F AF 15 00 08 66 00 8B 4D 0C 03 D1 90 90 90 90",
+   "kind": null,
+   "ref": null,
+   "tag": "stride y*640->y*854 (454D90)"
+  },
+  {
+   "rva": "0x54F27",
+   "expect": "81 FA 80 02 00 00",
+   "replace": "3B 15 00 08 66 00",
+   "kind": null,
+   "ref": null,
+   "tag": "绘制器宽度 640->动态 (454D90 edx, 0x280)"
+  },
+  {
+   "rva": "0x550AA",
+   "expect": "81 F9 80 02 00 00",
+   "replace": "3B 0D 00 08 66 00",
+   "kind": null,
+   "ref": null,
+   "tag": "绘制器宽度 640->动态 (454D90 ecx, 0x280)"
+  },
+  {
+   "rva": "0x550F0",
+   "expect": "81 C1 00 5B 09 00",
+   "replace": "03 0D 3C 08 66 00",
+   "kind": null,
+   "ref": null,
+   "tag": "绘制器宽度 640->动态 (454D90 ecx, 0x95b00)"
+  },
+  {
+   "rva": "0x551A2",
+   "expect": "81 45 0C 80 02 00 00",
+   "replace": null,
+   "kind": "call",
+   "ref": "blit_wrap_add",
+   "tag": "绘制器宽度 640->动态 (454D90 dword ptr [ebp + 0xc], 0x280)"
+  },
+  {
+   "rva": "0x551AC",
+   "expect": "81 2D 48 D8 4E 00 80 02 00 00",
+   "replace": "81 2D 48 D8 4E 00 58 03 00 00",
+   "kind": null,
+   "ref": null,
+   "tag": "640->856 sub dword ptr [0x4ed848], 0x280 (454D90)"
+  },
+  {
+   "rva": "0x551BC",
+   "expect": "81 FA 80 02 00 00",
+   "replace": "3B 15 00 08 66 00",
+   "kind": null,
+   "ref": null,
+   "tag": "绘制器宽度 640->动态 (454D90 edx, 0x280)"
+  },
+  {
+   "rva": "0x55231",
+   "expect": "81 FA 80 02 00 00",
+   "replace": "3B 15 00 08 66 00",
+   "kind": null,
+   "ref": null,
+   "tag": "绘制器宽度 640->动态 (454D90 edx, 0x280)"
+  },
+  {
+   "rva": "0x5523B",
+   "expect": "81 45 0C 80 02 00 00",
+   "replace": null,
+   "kind": "call",
+   "ref": "blit_wrap_add",
+   "tag": "绘制器宽度 640->动态 (454D90 dword ptr [ebp + 0xc], 0x280)"
+  },
+  {
+   "rva": "0x55245",
+   "expect": "81 2D 48 D8 4E 00 80 02 00 00",
+   "replace": "81 2D 48 D8 4E 00 58 03 00 00",
+   "kind": null,
+   "ref": null,
+   "tag": "640->856 sub dword ptr [0x4ed848], 0x280 (454D90)"
+  },
+  {
+   "rva": "0x55255",
+   "expect": "81 F9 80 02 00 00",
+   "replace": "3B 0D 00 08 66 00",
+   "kind": null,
+   "ref": null,
+   "tag": "绘制器宽度 640->动态 (454D90 ecx, 0x280)"
+  },
+  {
+   "rva": "0x552AF",
+   "expect": "3D 80 02 00 00",
+   "replace": null,
+   "kind": "call",
+   "ref": "blit_cmp_eax_w",
+   "tag": "绘制器宽度 640->动态 (454D90 eax, 0x280)"
+  },
+  {
+   "rva": "0x554DE",
+   "expect": "8B 55 10 8B 45 10 C1 E2 07 8B 4D 0C C1 E0 09 03 D1 03 D0",
+   "replace": "8B 55 10 0F AF 15 00 08 66 00 8B 4D 0C 03 D1 90 90 90 90",
+   "kind": null,
+   "ref": null,
+   "tag": "stride y*640->y*854 (4553A4)"
+  },
+  {
+   "rva": "0x5553B",
+   "expect": "81 FA 80 02 00 00",
+   "replace": "3B 15 00 08 66 00",
+   "kind": null,
+   "ref": null,
+   "tag": "绘制器宽度 640->动态 (4553A4 edx, 0x280)"
+  },
+  {
+   "rva": "0x556CA",
+   "expect": "81 F9 80 02 00 00",
+   "replace": "3B 0D 00 08 66 00",
+   "kind": null,
+   "ref": null,
+   "tag": "绘制器宽度 640->动态 (4553A4 ecx, 0x280)"
+  },
+  {
+   "rva": "0x55710",
+   "expect": "81 C1 00 5B 09 00",
+   "replace": "03 0D 3C 08 66 00",
+   "kind": null,
+   "ref": null,
+   "tag": "绘制器宽度 640->动态 (4553A4 ecx, 0x95b00)"
+  },
+  {
+   "rva": "0x557C2",
+   "expect": "81 45 0C 80 02 00 00",
+   "replace": null,
+   "kind": "call",
+   "ref": "blit_wrap_add",
+   "tag": "绘制器宽度 640->动态 (4553A4 dword ptr [ebp + 0xc], 0x280)"
+  },
+  {
+   "rva": "0x557CC",
+   "expect": "81 2D 4C D8 4E 00 80 02 00 00",
+   "replace": "81 2D 4C D8 4E 00 58 03 00 00",
+   "kind": null,
+   "ref": null,
+   "tag": "640->856 sub dword ptr [0x4ed84c], 0x280 (4553A4)"
+  },
+  {
+   "rva": "0x557DC",
+   "expect": "81 FA 80 02 00 00",
+   "replace": "3B 15 00 08 66 00",
+   "kind": null,
+   "ref": null,
+   "tag": "绘制器宽度 640->动态 (4553A4 edx, 0x280)"
+  },
+  {
+   "rva": "0x55851",
+   "expect": "81 FA 80 02 00 00",
+   "replace": "3B 15 00 08 66 00",
+   "kind": null,
+   "ref": null,
+   "tag": "绘制器宽度 640->动态 (4553A4 edx, 0x280)"
+  },
+  {
+   "rva": "0x5585B",
+   "expect": "81 45 0C 80 02 00 00",
+   "replace": null,
+   "kind": "call",
+   "ref": "blit_wrap_add",
+   "tag": "绘制器宽度 640->动态 (4553A4 dword ptr [ebp + 0xc], 0x280)"
+  },
+  {
+   "rva": "0x55865",
+   "expect": "81 2D 4C D8 4E 00 80 02 00 00",
+   "replace": "81 2D 4C D8 4E 00 58 03 00 00",
+   "kind": null,
+   "ref": null,
+   "tag": "640->856 sub dword ptr [0x4ed84c], 0x280 (4553A4)"
+  },
+  {
+   "rva": "0x55875",
+   "expect": "81 F9 80 02 00 00",
+   "replace": "3B 0D 00 08 66 00",
+   "kind": null,
+   "ref": null,
+   "tag": "绘制器宽度 640->动态 (4553A4 ecx, 0x280)"
+  },
+  {
+   "rva": "0x558CF",
+   "expect": "3D 80 02 00 00",
+   "replace": null,
+   "kind": "call",
+   "ref": "blit_cmp_eax_w",
+   "tag": "绘制器宽度 640->动态 (4553A4 eax, 0x280)"
+  },
+  {
+   "rva": "0x55C8F",
+   "expect": "8B 45 10 8B 4D 10 C1 E0 07 8B 55 0C C1 E1 09 03 C2 03 C1",
+   "replace": "8B 45 10 0F AF 05 00 08 66 00 8B 55 0C 03 C2 90 90 90 90",
+   "kind": null,
+   "ref": null,
+   "tag": "stride y*640->y*854 (455B98)"
+  },
+  {
+   "rva": "0x55CE9",
+   "expect": "3D 80 02 00 00",
+   "replace": null,
+   "kind": "call",
+   "ref": "blit_cmp_eax_w",
+   "tag": "绘制器宽度 640->动态 (455B98 eax, 0x280)"
+  },
+  {
+   "rva": "0x55E69",
+   "expect": "81 F9 80 02 00 00",
+   "replace": "3B 0D 00 08 66 00",
+   "kind": null,
+   "ref": null,
+   "tag": "绘制器宽度 640->动态 (455B98 ecx, 0x280)"
+  },
+  {
+   "rva": "0x55EAF",
+   "expect": "81 C1 00 5B 09 00",
+   "replace": "03 0D 3C 08 66 00",
+   "kind": null,
+   "ref": null,
+   "tag": "绘制器宽度 640->动态 (455B98 ecx, 0x95b00)"
+  },
+  {
+   "rva": "0x55F61",
+   "expect": "81 45 0C 80 02 00 00",
+   "replace": null,
+   "kind": "call",
+   "ref": "blit_wrap_add",
+   "tag": "绘制器宽度 640->动态 (455B98 dword ptr [ebp + 0xc], 0x280)"
+  },
+  {
+   "rva": "0x55F6B",
+   "expect": "81 2D 50 D8 4E 00 80 02 00 00",
+   "replace": "81 2D 50 D8 4E 00 58 03 00 00",
+   "kind": null,
+   "ref": null,
+   "tag": "640->856 sub dword ptr [0x4ed850], 0x280 (455B98)"
+  },
+  {
+   "rva": "0x55F7B",
+   "expect": "81 FA 80 02 00 00",
+   "replace": "3B 15 00 08 66 00",
+   "kind": null,
+   "ref": null,
+   "tag": "绘制器宽度 640->动态 (455B98 edx, 0x280)"
+  },
+  {
+   "rva": "0x55FCA",
+   "expect": "81 FA 80 02 00 00",
+   "replace": "3B 15 00 08 66 00",
+   "kind": null,
+   "ref": null,
+   "tag": "绘制器宽度 640->动态 (455B98 edx, 0x280)"
+  },
+  {
+   "rva": "0x55FD4",
+   "expect": "81 45 0C 80 02 00 00",
+   "replace": null,
+   "kind": "call",
+   "ref": "blit_wrap_add",
+   "tag": "绘制器宽度 640->动态 (455B98 dword ptr [ebp + 0xc], 0x280)"
+  },
+  {
+   "rva": "0x55FDE",
+   "expect": "81 2D 50 D8 4E 00 80 02 00 00",
+   "replace": "81 2D 50 D8 4E 00 58 03 00 00",
+   "kind": null,
+   "ref": null,
+   "tag": "640->856 sub dword ptr [0x4ed850], 0x280 (455B98)"
+  },
+  {
+   "rva": "0x55FEE",
+   "expect": "81 F9 80 02 00 00",
+   "replace": "3B 0D 00 08 66 00",
+   "kind": null,
+   "ref": null,
+   "tag": "绘制器宽度 640->动态 (455B98 ecx, 0x280)"
+  },
+  {
+   "rva": "0x56038",
+   "expect": "81 F9 80 02 00 00",
+   "replace": "3B 0D 00 08 66 00",
+   "kind": null,
+   "ref": null,
+   "tag": "绘制器宽度 640->动态 (455B98 ecx, 0x280)"
+  },
+  {
+   "rva": "0x56247",
+   "expect": "8B 45 10 8B 4D 10 C1 E0 07 8B 55 0C C1 E1 09 03 C2 03 C1",
+   "replace": "8B 45 10 0F AF 05 00 08 66 00 8B 55 0C 03 C2 90 90 90 90",
+   "kind": null,
+   "ref": null,
+   "tag": "stride y*640->y*854 (456150)"
+  },
+  {
+   "rva": "0x562A1",
+   "expect": "3D 80 02 00 00",
+   "replace": null,
+   "kind": "call",
+   "ref": "blit_cmp_eax_w",
+   "tag": "绘制器宽度 640->动态 (456150 eax, 0x280)"
+  },
+  {
+   "rva": "0x5642D",
+   "expect": "81 F9 80 02 00 00",
+   "replace": "3B 0D 00 08 66 00",
+   "kind": null,
+   "ref": null,
+   "tag": "绘制器宽度 640->动态 (456150 ecx, 0x280)"
+  },
+  {
+   "rva": "0x56473",
+   "expect": "81 C1 00 5B 09 00",
+   "replace": "03 0D 3C 08 66 00",
+   "kind": null,
+   "ref": null,
+   "tag": "绘制器宽度 640->动态 (456150 ecx, 0x95b00)"
+  },
+  {
+   "rva": "0x56525",
+   "expect": "81 45 0C 80 02 00 00",
+   "replace": null,
+   "kind": "call",
+   "ref": "blit_wrap_add",
+   "tag": "绘制器宽度 640->动态 (456150 dword ptr [ebp + 0xc], 0x280)"
+  },
+  {
+   "rva": "0x5652F",
+   "expect": "81 2D 54 D8 4E 00 80 02 00 00",
+   "replace": "81 2D 54 D8 4E 00 58 03 00 00",
+   "kind": null,
+   "ref": null,
+   "tag": "640->856 sub dword ptr [0x4ed854], 0x280 (456150)"
+  },
+  {
+   "rva": "0x5653F",
+   "expect": "81 FA 80 02 00 00",
+   "replace": "3B 15 00 08 66 00",
+   "kind": null,
+   "ref": null,
+   "tag": "绘制器宽度 640->动态 (456150 edx, 0x280)"
+  },
+  {
+   "rva": "0x5658E",
+   "expect": "81 FA 80 02 00 00",
+   "replace": "3B 15 00 08 66 00",
+   "kind": null,
+   "ref": null,
+   "tag": "绘制器宽度 640->动态 (456150 edx, 0x280)"
+  },
+  {
+   "rva": "0x56598",
+   "expect": "81 45 0C 80 02 00 00",
+   "replace": null,
+   "kind": "call",
+   "ref": "blit_wrap_add",
+   "tag": "绘制器宽度 640->动态 (456150 dword ptr [ebp + 0xc], 0x280)"
+  },
+  {
+   "rva": "0x565A2",
+   "expect": "81 2D 54 D8 4E 00 80 02 00 00",
+   "replace": "81 2D 54 D8 4E 00 58 03 00 00",
+   "kind": null,
+   "ref": null,
+   "tag": "640->856 sub dword ptr [0x4ed854], 0x280 (456150)"
+  },
+  {
+   "rva": "0x565B2",
+   "expect": "81 F9 80 02 00 00",
+   "replace": "3B 0D 00 08 66 00",
+   "kind": null,
+   "ref": null,
+   "tag": "绘制器宽度 640->动态 (456150 ecx, 0x280)"
+  },
+  {
+   "rva": "0x565FC",
+   "expect": "81 F9 80 02 00 00",
+   "replace": "3B 0D 00 08 66 00",
+   "kind": null,
+   "ref": null,
+   "tag": "绘制器宽度 640->动态 (456150 ecx, 0x280)"
+  },
+  {
+   "rva": "0x56817",
+   "expect": "8B 45 10 8B 4D 10 C1 E0 07 8B 55 0C C1 E1 09 03 C2 03 C1",
+   "replace": "8B 45 10 0F AF 05 00 08 66 00 8B 55 0C 03 C2 90 90 90 90",
+   "kind": null,
+   "ref": null,
+   "tag": "stride y*640->y*854 (456720)"
+  },
+  {
+   "rva": "0x56871",
+   "expect": "3D 80 02 00 00",
+   "replace": null,
+   "kind": "call",
+   "ref": "blit_cmp_eax_w",
+   "tag": "绘制器宽度 640->动态 (456720 eax, 0x280)"
+  },
+  {
+   "rva": "0x56A2D",
+   "expect": "3D 80 02 00 00",
+   "replace": null,
+   "kind": "call",
+   "ref": "blit_cmp_eax_w",
+   "tag": "绘制器宽度 640->动态 (456720 eax, 0x280)"
+  },
+  {
+   "rva": "0x56A73",
+   "expect": "05 00 5B 09 00",
+   "replace": null,
+   "kind": "call",
+   "ref": "blit_end_eax",
+   "tag": "绘制器宽度 640->动态 (456720 eax, 0x95b00)"
+  },
+  {
+   "rva": "0x56B22",
+   "expect": "81 45 0C 80 02 00 00",
+   "replace": null,
+   "kind": "call",
+   "ref": "blit_wrap_add",
+   "tag": "绘制器宽度 640->动态 (456720 dword ptr [ebp + 0xc], 0x280)"
+  },
+  {
+   "rva": "0x56B2C",
+   "expect": "81 2D 58 D8 4E 00 80 02 00 00",
+   "replace": "81 2D 58 D8 4E 00 58 03 00 00",
+   "kind": null,
+   "ref": null,
+   "tag": "640->856 sub dword ptr [0x4ed858], 0x280 (456720)"
+  },
+  {
+   "rva": "0x56B3C",
+   "expect": "81 F9 80 02 00 00",
+   "replace": "3B 0D 00 08 66 00",
+   "kind": null,
+   "ref": null,
+   "tag": "绘制器宽度 640->动态 (456720 ecx, 0x280)"
+  },
+  {
+   "rva": "0x56B9E",
+   "expect": "81 F9 80 02 00 00",
+   "replace": "3B 0D 00 08 66 00",
+   "kind": null,
+   "ref": null,
+   "tag": "绘制器宽度 640->动态 (456720 ecx, 0x280)"
+  },
+  {
+   "rva": "0x56BA8",
+   "expect": "81 45 0C 80 02 00 00",
+   "replace": null,
+   "kind": "call",
+   "ref": "blit_wrap_add",
+   "tag": "绘制器宽度 640->动态 (456720 dword ptr [ebp + 0xc], 0x280)"
+  },
+  {
+   "rva": "0x56BB2",
+   "expect": "81 2D 58 D8 4E 00 80 02 00 00",
+   "replace": "81 2D 58 D8 4E 00 58 03 00 00",
+   "kind": null,
+   "ref": null,
+   "tag": "640->856 sub dword ptr [0x4ed858], 0x280 (456720)"
+  },
+  {
+   "rva": "0x56BC1",
+   "expect": "3D 80 02 00 00",
+   "replace": null,
+   "kind": "call",
+   "ref": "blit_cmp_eax_w",
+   "tag": "绘制器宽度 640->动态 (456720 eax, 0x280)"
+  },
+  {
+   "rva": "0x56C11",
+   "expect": "81 F9 80 02 00 00",
+   "replace": "3B 0D 00 08 66 00",
+   "kind": null,
+   "ref": null,
+   "tag": "绘制器宽度 640->动态 (456720 ecx, 0x280)"
+  },
+  {
+   "rva": "0x56E47",
+   "expect": "8B 45 10 8B 4D 10 C1 E0 07 8B 55 0C C1 E1 09 03 C2 03 C1",
+   "replace": "8B 45 10 0F AF 05 00 08 66 00 8B 55 0C 03 C2 90 90 90 90",
+   "kind": null,
+   "ref": null,
+   "tag": "stride y*640->y*854 (456D50)"
+  },
+  {
+   "rva": "0x56EA1",
+   "expect": "3D 80 02 00 00",
+   "replace": null,
+   "kind": "call",
+   "ref": "blit_cmp_eax_w",
+   "tag": "绘制器宽度 640->动态 (456D50 eax, 0x280)"
+  },
+  {
+   "rva": "0x5706D",
+   "expect": "3D 80 02 00 00",
+   "replace": null,
+   "kind": "call",
+   "ref": "blit_cmp_eax_w",
+   "tag": "绘制器宽度 640->动态 (456D50 eax, 0x280)"
+  },
+  {
+   "rva": "0x570B3",
+   "expect": "05 00 5B 09 00",
+   "replace": null,
+   "kind": "call",
+   "ref": "blit_end_eax",
+   "tag": "绘制器宽度 640->动态 (456D50 eax, 0x95b00)"
+  },
+  {
+   "rva": "0x57162",
+   "expect": "81 45 0C 80 02 00 00",
+   "replace": null,
+   "kind": "call",
+   "ref": "blit_wrap_add",
+   "tag": "绘制器宽度 640->动态 (456D50 dword ptr [ebp + 0xc], 0x280)"
+  },
+  {
+   "rva": "0x5716C",
+   "expect": "81 2D 5C D8 4E 00 80 02 00 00",
+   "replace": "81 2D 5C D8 4E 00 58 03 00 00",
+   "kind": null,
+   "ref": null,
+   "tag": "640->856 sub dword ptr [0x4ed85c], 0x280 (456D50)"
+  },
+  {
+   "rva": "0x5717C",
+   "expect": "81 F9 80 02 00 00",
+   "replace": "3B 0D 00 08 66 00",
+   "kind": null,
+   "ref": null,
+   "tag": "绘制器宽度 640->动态 (456D50 ecx, 0x280)"
+  },
+  {
+   "rva": "0x571DE",
+   "expect": "81 F9 80 02 00 00",
+   "replace": "3B 0D 00 08 66 00",
+   "kind": null,
+   "ref": null,
+   "tag": "绘制器宽度 640->动态 (456D50 ecx, 0x280)"
+  },
+  {
+   "rva": "0x571E8",
+   "expect": "81 45 0C 80 02 00 00",
+   "replace": null,
+   "kind": "call",
+   "ref": "blit_wrap_add",
+   "tag": "绘制器宽度 640->动态 (456D50 dword ptr [ebp + 0xc], 0x280)"
+  },
+  {
+   "rva": "0x571F2",
+   "expect": "81 2D 5C D8 4E 00 80 02 00 00",
+   "replace": "81 2D 5C D8 4E 00 58 03 00 00",
+   "kind": null,
+   "ref": null,
+   "tag": "640->856 sub dword ptr [0x4ed85c], 0x280 (456D50)"
+  },
+  {
+   "rva": "0x57201",
+   "expect": "3D 80 02 00 00",
+   "replace": null,
+   "kind": "call",
+   "ref": "blit_cmp_eax_w",
+   "tag": "绘制器宽度 640->动态 (456D50 eax, 0x280)"
+  },
+  {
+   "rva": "0x57251",
+   "expect": "81 F9 80 02 00 00",
+   "replace": "3B 0D 00 08 66 00",
+   "kind": null,
+   "ref": null,
+   "tag": "绘制器宽度 640->动态 (456D50 ecx, 0x280)"
+  },
+  {
+   "rva": "0x57497",
+   "expect": "8B 45 10 8B 4D 10 C1 E0 07 8B 55 0C C1 E1 09 03 C2 03 C1",
+   "replace": "8B 45 10 0F AF 05 00 08 66 00 8B 55 0C 03 C2 90 90 90 90",
+   "kind": null,
+   "ref": null,
+   "tag": "stride y*640->y*854 (4573A0)"
+  },
+  {
+   "rva": "0x574F1",
+   "expect": "3D 80 02 00 00",
+   "replace": null,
+   "kind": "call",
+   "ref": "blit_cmp_eax_w",
+   "tag": "绘制器宽度 640->动态 (4573A0 eax, 0x280)"
+  },
+  {
+   "rva": "0x576AD",
+   "expect": "3D 80 02 00 00",
+   "replace": null,
+   "kind": "call",
+   "ref": "blit_cmp_eax_w",
+   "tag": "绘制器宽度 640->动态 (4573A0 eax, 0x280)"
+  },
+  {
+   "rva": "0x576F3",
+   "expect": "05 00 5B 09 00",
+   "replace": null,
+   "kind": "call",
+   "ref": "blit_end_eax",
+   "tag": "绘制器宽度 640->动态 (4573A0 eax, 0x95b00)"
+  },
+  {
+   "rva": "0x577A2",
+   "expect": "81 45 0C 80 02 00 00",
+   "replace": null,
+   "kind": "call",
+   "ref": "blit_wrap_add",
+   "tag": "绘制器宽度 640->动态 (4573A0 dword ptr [ebp + 0xc], 0x280)"
+  },
+  {
+   "rva": "0x577AC",
+   "expect": "81 2D 60 D8 4E 00 80 02 00 00",
+   "replace": "81 2D 60 D8 4E 00 58 03 00 00",
+   "kind": null,
+   "ref": null,
+   "tag": "640->856 sub dword ptr [0x4ed860], 0x280 (4573A0)"
+  },
+  {
+   "rva": "0x577BC",
+   "expect": "81 F9 80 02 00 00",
+   "replace": "3B 0D 00 08 66 00",
+   "kind": null,
+   "ref": null,
+   "tag": "绘制器宽度 640->动态 (4573A0 ecx, 0x280)"
+  },
+  {
+   "rva": "0x5781E",
+   "expect": "81 F9 80 02 00 00",
+   "replace": "3B 0D 00 08 66 00",
+   "kind": null,
+   "ref": null,
+   "tag": "绘制器宽度 640->动态 (4573A0 ecx, 0x280)"
+  },
+  {
+   "rva": "0x57828",
+   "expect": "81 45 0C 80 02 00 00",
+   "replace": null,
+   "kind": "call",
+   "ref": "blit_wrap_add",
+   "tag": "绘制器宽度 640->动态 (4573A0 dword ptr [ebp + 0xc], 0x280)"
+  },
+  {
+   "rva": "0x57832",
+   "expect": "81 2D 60 D8 4E 00 80 02 00 00",
+   "replace": "81 2D 60 D8 4E 00 58 03 00 00",
+   "kind": null,
+   "ref": null,
+   "tag": "640->856 sub dword ptr [0x4ed860], 0x280 (4573A0)"
+  },
+  {
+   "rva": "0x57841",
+   "expect": "3D 80 02 00 00",
+   "replace": null,
+   "kind": "call",
+   "ref": "blit_cmp_eax_w",
+   "tag": "绘制器宽度 640->动态 (4573A0 eax, 0x280)"
+  },
+  {
+   "rva": "0x57891",
+   "expect": "81 F9 80 02 00 00",
+   "replace": "3B 0D 00 08 66 00",
+   "kind": null,
+   "ref": null,
+   "tag": "绘制器宽度 640->动态 (4573A0 ecx, 0x280)"
+  },
+  {
+   "rva": "0x57AC7",
+   "expect": "8B 45 10 8B 4D 10 C1 E0 07 8B 55 0C C1 E1 09 03 C2 03 C1",
+   "replace": "8B 45 10 0F AF 05 00 08 66 00 8B 55 0C 03 C2 90 90 90 90",
+   "kind": null,
+   "ref": null,
+   "tag": "stride y*640->y*854 (4579D0)"
+  },
+  {
+   "rva": "0x57B21",
+   "expect": "3D 80 02 00 00",
+   "replace": null,
+   "kind": "call",
+   "ref": "blit_cmp_eax_w",
+   "tag": "绘制器宽度 640->动态 (4579D0 eax, 0x280)"
+  },
+  {
+   "rva": "0x57CED",
+   "expect": "3D 80 02 00 00",
+   "replace": null,
+   "kind": "call",
+   "ref": "blit_cmp_eax_w",
+   "tag": "绘制器宽度 640->动态 (4579D0 eax, 0x280)"
+  },
+  {
+   "rva": "0x57D33",
+   "expect": "05 00 5B 09 00",
+   "replace": null,
+   "kind": "call",
+   "ref": "blit_end_eax",
+   "tag": "绘制器宽度 640->动态 (4579D0 eax, 0x95b00)"
+  },
+  {
+   "rva": "0x57DE2",
+   "expect": "81 45 0C 80 02 00 00",
+   "replace": null,
+   "kind": "call",
+   "ref": "blit_wrap_add",
+   "tag": "绘制器宽度 640->动态 (4579D0 dword ptr [ebp + 0xc], 0x280)"
+  },
+  {
+   "rva": "0x57DEC",
+   "expect": "81 2D 64 D8 4E 00 80 02 00 00",
+   "replace": "81 2D 64 D8 4E 00 58 03 00 00",
+   "kind": null,
+   "ref": null,
+   "tag": "640->856 sub dword ptr [0x4ed864], 0x280 (4579D0)"
+  },
+  {
+   "rva": "0x57DFC",
+   "expect": "81 F9 80 02 00 00",
+   "replace": "3B 0D 00 08 66 00",
+   "kind": null,
+   "ref": null,
+   "tag": "绘制器宽度 640->动态 (4579D0 ecx, 0x280)"
+  },
+  {
+   "rva": "0x57E5E",
+   "expect": "81 F9 80 02 00 00",
+   "replace": "3B 0D 00 08 66 00",
+   "kind": null,
+   "ref": null,
+   "tag": "绘制器宽度 640->动态 (4579D0 ecx, 0x280)"
+  },
+  {
+   "rva": "0x57E68",
+   "expect": "81 45 0C 80 02 00 00",
+   "replace": null,
+   "kind": "call",
+   "ref": "blit_wrap_add",
+   "tag": "绘制器宽度 640->动态 (4579D0 dword ptr [ebp + 0xc], 0x280)"
+  },
+  {
+   "rva": "0x57E72",
+   "expect": "81 2D 64 D8 4E 00 80 02 00 00",
+   "replace": "81 2D 64 D8 4E 00 58 03 00 00",
+   "kind": null,
+   "ref": null,
+   "tag": "640->856 sub dword ptr [0x4ed864], 0x280 (4579D0)"
+  },
+  {
+   "rva": "0x57E81",
+   "expect": "3D 80 02 00 00",
+   "replace": null,
+   "kind": "call",
+   "ref": "blit_cmp_eax_w",
+   "tag": "绘制器宽度 640->动态 (4579D0 eax, 0x280)"
+  },
+  {
+   "rva": "0x57ED1",
+   "expect": "81 F9 80 02 00 00",
+   "replace": "3B 0D 00 08 66 00",
+   "kind": null,
+   "ref": null,
+   "tag": "绘制器宽度 640->动态 (4579D0 ecx, 0x280)"
+  },
+  {
+   "rva": "0x58227",
+   "expect": "8B 45 10 8B 4D 10 C1 E0 07 8B 55 0C C1 E1 09 03 C2 03 C1",
+   "replace": "8B 45 10 0F AF 05 00 08 66 00 8B 55 0C 03 C2 90 90 90 90",
+   "kind": null,
+   "ref": null,
+   "tag": "stride y*640->y*854 (458130)"
+  },
+  {
+   "rva": "0x58281",
+   "expect": "3D 80 02 00 00",
+   "replace": null,
+   "kind": "call",
+   "ref": "blit_cmp_eax_w",
+   "tag": "绘制器宽度 640->动态 (458130 eax, 0x280)"
+  },
+  {
+   "rva": "0x5841D",
+   "expect": "81 FA 80 02 00 00",
+   "replace": "3B 15 00 08 66 00",
+   "kind": null,
+   "ref": null,
+   "tag": "绘制器宽度 640->动态 (458130 edx, 0x280)"
+  },
+  {
+   "rva": "0x58464",
+   "expect": "81 C2 00 5B 09 00",
+   "replace": "03 15 3C 08 66 00",
+   "kind": null,
+   "ref": null,
+   "tag": "绘制器宽度 640->动态 (458130 edx, 0x95b00)"
+  },
+  {
+   "rva": "0x58516",
+   "expect": "81 45 0C 80 02 00 00",
+   "replace": null,
+   "kind": "call",
+   "ref": "blit_wrap_add",
+   "tag": "绘制器宽度 640->动态 (458130 dword ptr [ebp + 0xc], 0x280)"
+  },
+  {
+   "rva": "0x58520",
+   "expect": "81 2D 68 D8 4E 00 80 02 00 00",
+   "replace": "81 2D 68 D8 4E 00 58 03 00 00",
+   "kind": null,
+   "ref": null,
+   "tag": "640->856 sub dword ptr [0x4ed868], 0x280 (458130)"
+  },
+  {
+   "rva": "0x5852F",
+   "expect": "3D 80 02 00 00",
+   "replace": null,
+   "kind": "call",
+   "ref": "blit_cmp_eax_w",
+   "tag": "绘制器宽度 640->动态 (458130 eax, 0x280)"
+  },
+  {
+   "rva": "0x5857D",
+   "expect": "3D 80 02 00 00",
+   "replace": null,
+   "kind": "call",
+   "ref": "blit_cmp_eax_w",
+   "tag": "绘制器宽度 640->动态 (458130 eax, 0x280)"
+  },
+  {
+   "rva": "0x58586",
+   "expect": "81 45 0C 80 02 00 00",
+   "replace": null,
+   "kind": "call",
+   "ref": "blit_wrap_add",
+   "tag": "绘制器宽度 640->动态 (458130 dword ptr [ebp + 0xc], 0x280)"
+  },
+  {
+   "rva": "0x58590",
+   "expect": "81 2D 68 D8 4E 00 80 02 00 00",
+   "replace": "81 2D 68 D8 4E 00 58 03 00 00",
+   "kind": null,
+   "ref": null,
+   "tag": "640->856 sub dword ptr [0x4ed868], 0x280 (458130)"
+  },
+  {
+   "rva": "0x585A0",
+   "expect": "81 FA 80 02 00 00",
+   "replace": "3B 15 00 08 66 00",
+   "kind": null,
+   "ref": null,
+   "tag": "绘制器宽度 640->动态 (458130 edx, 0x280)"
+  },
+  {
+   "rva": "0x585E9",
+   "expect": "81 FA 80 02 00 00",
+   "replace": "3B 15 00 08 66 00",
+   "kind": null,
+   "ref": null,
+   "tag": "绘制器宽度 640->动态 (458130 edx, 0x280)"
+  },
+  {
+   "rva": "0x58813",
+   "expect": "8B 45 10 8B 4D 10 C1 E0 07 8B 55 0C C1 E1 09 03 C2 03 C1",
+   "replace": "8B 45 10 0F AF 05 00 08 66 00 8B 55 0C 03 C2 90 90 90 90",
+   "kind": null,
+   "ref": null,
+   "tag": "stride y*640->y*854 (45871C)"
+  },
+  {
+   "rva": "0x5886D",
+   "expect": "3D 80 02 00 00",
+   "replace": null,
+   "kind": "call",
+   "ref": "blit_cmp_eax_w",
+   "tag": "绘制器宽度 640->动态 (45871C eax, 0x280)"
+  },
+  {
+   "rva": "0x58A09",
+   "expect": "81 FA 80 02 00 00",
+   "replace": "3B 15 00 08 66 00",
+   "kind": null,
+   "ref": null,
+   "tag": "绘制器宽度 640->动态 (45871C edx, 0x280)"
+  },
+  {
+   "rva": "0x58A50",
+   "expect": "81 C2 00 5B 09 00",
+   "replace": "03 15 3C 08 66 00",
+   "kind": null,
+   "ref": null,
+   "tag": "绘制器宽度 640->动态 (45871C edx, 0x95b00)"
+  },
+  {
+   "rva": "0x58B02",
+   "expect": "81 45 0C 80 02 00 00",
+   "replace": null,
+   "kind": "call",
+   "ref": "blit_wrap_add",
+   "tag": "绘制器宽度 640->动态 (45871C dword ptr [ebp + 0xc], 0x280)"
+  },
+  {
+   "rva": "0x58B0C",
+   "expect": "81 2D 6C D8 4E 00 80 02 00 00",
+   "replace": "81 2D 6C D8 4E 00 58 03 00 00",
+   "kind": null,
+   "ref": null,
+   "tag": "640->856 sub dword ptr [0x4ed86c], 0x280 (45871C)"
+  },
+  {
+   "rva": "0x58B1B",
+   "expect": "3D 80 02 00 00",
+   "replace": null,
+   "kind": "call",
+   "ref": "blit_cmp_eax_w",
+   "tag": "绘制器宽度 640->动态 (45871C eax, 0x280)"
+  },
+  {
+   "rva": "0x58B69",
+   "expect": "3D 80 02 00 00",
+   "replace": null,
+   "kind": "call",
+   "ref": "blit_cmp_eax_w",
+   "tag": "绘制器宽度 640->动态 (45871C eax, 0x280)"
+  },
+  {
+   "rva": "0x58B72",
+   "expect": "81 45 0C 80 02 00 00",
+   "replace": null,
+   "kind": "call",
+   "ref": "blit_wrap_add",
+   "tag": "绘制器宽度 640->动态 (45871C dword ptr [ebp + 0xc], 0x280)"
+  },
+  {
+   "rva": "0x58B7C",
+   "expect": "81 2D 6C D8 4E 00 80 02 00 00",
+   "replace": "81 2D 6C D8 4E 00 58 03 00 00",
+   "kind": null,
+   "ref": null,
+   "tag": "640->856 sub dword ptr [0x4ed86c], 0x280 (45871C)"
+  },
+  {
+   "rva": "0x58B8C",
+   "expect": "81 FA 80 02 00 00",
+   "replace": "3B 15 00 08 66 00",
+   "kind": null,
+   "ref": null,
+   "tag": "绘制器宽度 640->动态 (45871C edx, 0x280)"
+  },
+  {
+   "rva": "0x58BD5",
+   "expect": "81 FA 80 02 00 00",
+   "replace": "3B 15 00 08 66 00",
+   "kind": null,
+   "ref": null,
+   "tag": "绘制器宽度 640->动态 (45871C edx, 0x280)"
+  },
+  {
+   "rva": "0x58DFF",
+   "expect": "8B 45 10 8B 4D 10 C1 E0 07 8B 55 0C C1 E1 09 03 C2 03 C1",
+   "replace": "8B 45 10 0F AF 05 00 08 66 00 8B 55 0C 03 C2 90 90 90 90",
+   "kind": null,
+   "ref": null,
+   "tag": "stride y*640->y*854 (458D08)"
+  },
+  {
+   "rva": "0x58E59",
+   "expect": "3D 80 02 00 00",
+   "replace": null,
+   "kind": "call",
+   "ref": "blit_cmp_eax_w",
+   "tag": "绘制器宽度 640->动态 (458D08 eax, 0x280)"
+  },
+  {
+   "rva": "0x58F30",
+   "expect": "81 F9 80 02 00 00",
+   "replace": "3B 0D 00 08 66 00",
+   "kind": null,
+   "ref": null,
+   "tag": "绘制器宽度 640->动态 (458D08 ecx, 0x280)"
+  },
+  {
+   "rva": "0x58F76",
+   "expect": "81 C1 00 5B 09 00",
+   "replace": "03 0D 3C 08 66 00",
+   "kind": null,
+   "ref": null,
+   "tag": "绘制器宽度 640->动态 (458D08 ecx, 0x95b00)"
+  },
+  {
+   "rva": "0x59028",
+   "expect": "81 45 0C 80 02 00 00",
+   "replace": null,
+   "kind": "call",
+   "ref": "blit_wrap_add",
+   "tag": "绘制器宽度 640->动态 (458D08 dword ptr [ebp + 0xc], 0x280)"
+  },
+  {
+   "rva": "0x59032",
+   "expect": "81 2D 70 D8 4E 00 80 02 00 00",
+   "replace": "81 2D 70 D8 4E 00 58 03 00 00",
+   "kind": null,
+   "ref": null,
+   "tag": "640->856 sub dword ptr [0x4ed870], 0x280 (458D08)"
+  },
+  {
+   "rva": "0x59042",
+   "expect": "81 FA 80 02 00 00",
+   "replace": "3B 15 00 08 66 00",
+   "kind": null,
+   "ref": null,
+   "tag": "绘制器宽度 640->动态 (458D08 edx, 0x280)"
+  },
+  {
+   "rva": "0x59091",
+   "expect": "81 FA 80 02 00 00",
+   "replace": "3B 15 00 08 66 00",
+   "kind": null,
+   "ref": null,
+   "tag": "绘制器宽度 640->动态 (458D08 edx, 0x280)"
+  },
+  {
+   "rva": "0x5909B",
+   "expect": "81 45 0C 80 02 00 00",
+   "replace": null,
+   "kind": "call",
+   "ref": "blit_wrap_add",
+   "tag": "绘制器宽度 640->动态 (458D08 dword ptr [ebp + 0xc], 0x280)"
+  },
+  {
+   "rva": "0x590A5",
+   "expect": "81 2D 70 D8 4E 00 80 02 00 00",
+   "replace": "81 2D 70 D8 4E 00 58 03 00 00",
+   "kind": null,
+   "ref": null,
+   "tag": "640->856 sub dword ptr [0x4ed870], 0x280 (458D08)"
+  },
+  {
+   "rva": "0x590B5",
+   "expect": "81 F9 80 02 00 00",
+   "replace": "3B 0D 00 08 66 00",
+   "kind": null,
+   "ref": null,
+   "tag": "绘制器宽度 640->动态 (458D08 ecx, 0x280)"
+  },
+  {
+   "rva": "0x590F8",
+   "expect": "81 F9 80 02 00 00",
+   "replace": "3B 0D 00 08 66 00",
+   "kind": null,
+   "ref": null,
+   "tag": "绘制器宽度 640->动态 (458D08 ecx, 0x280)"
+  },
+  {
+   "rva": "0x592C3",
+   "expect": "8B 45 10 8B 4D 10 C1 E0 07 8B 55 0C C1 E1 09 03 C2 03 C1",
+   "replace": "8B 45 10 0F AF 05 00 08 66 00 8B 55 0C 03 C2 90 90 90 90",
+   "kind": null,
+   "ref": null,
+   "tag": "stride y*640->y*854 (4591CC)"
+  },
+  {
+   "rva": "0x5931D",
+   "expect": "3D 80 02 00 00",
+   "replace": null,
+   "kind": "call",
+   "ref": "blit_cmp_eax_w",
+   "tag": "绘制器宽度 640->动态 (4591CC eax, 0x280)"
+  },
+  {
+   "rva": "0x59505",
+   "expect": "81 F9 80 02 00 00",
+   "replace": "3B 0D 00 08 66 00",
+   "kind": null,
+   "ref": null,
+   "tag": "绘制器宽度 640->动态 (4591CC ecx, 0x280)"
+  },
+  {
+   "rva": "0x5954B",
+   "expect": "81 C1 00 5B 09 00",
+   "replace": "03 0D 3C 08 66 00",
+   "kind": null,
+   "ref": null,
+   "tag": "绘制器宽度 640->动态 (4591CC ecx, 0x95b00)"
+  },
+  {
+   "rva": "0x595FD",
+   "expect": "81 45 0C 80 02 00 00",
+   "replace": null,
+   "kind": "call",
+   "ref": "blit_wrap_add",
+   "tag": "绘制器宽度 640->动态 (4591CC dword ptr [ebp + 0xc], 0x280)"
+  },
+  {
+   "rva": "0x59607",
+   "expect": "81 2D 74 D8 4E 00 80 02 00 00",
+   "replace": "81 2D 74 D8 4E 00 58 03 00 00",
+   "kind": null,
+   "ref": null,
+   "tag": "640->856 sub dword ptr [0x4ed874], 0x280 (4591CC)"
+  },
+  {
+   "rva": "0x59617",
+   "expect": "81 FA 80 02 00 00",
+   "replace": "3B 15 00 08 66 00",
+   "kind": null,
+   "ref": null,
+   "tag": "绘制器宽度 640->动态 (4591CC edx, 0x280)"
+  },
+  {
+   "rva": "0x59666",
+   "expect": "81 FA 80 02 00 00",
+   "replace": "3B 15 00 08 66 00",
+   "kind": null,
+   "ref": null,
+   "tag": "绘制器宽度 640->动态 (4591CC edx, 0x280)"
+  },
+  {
+   "rva": "0x59670",
+   "expect": "81 45 0C 80 02 00 00",
+   "replace": null,
+   "kind": "call",
+   "ref": "blit_wrap_add",
+   "tag": "绘制器宽度 640->动态 (4591CC dword ptr [ebp + 0xc], 0x280)"
+  },
+  {
+   "rva": "0x5967A",
+   "expect": "81 2D 74 D8 4E 00 80 02 00 00",
+   "replace": "81 2D 74 D8 4E 00 58 03 00 00",
+   "kind": null,
+   "ref": null,
+   "tag": "640->856 sub dword ptr [0x4ed874], 0x280 (4591CC)"
+  },
+  {
+   "rva": "0x5968A",
+   "expect": "81 F9 80 02 00 00",
+   "replace": "3B 0D 00 08 66 00",
+   "kind": null,
+   "ref": null,
+   "tag": "绘制器宽度 640->动态 (4591CC ecx, 0x280)"
+  },
+  {
+   "rva": "0x596D4",
+   "expect": "81 F9 80 02 00 00",
+   "replace": "3B 0D 00 08 66 00",
+   "kind": null,
+   "ref": null,
+   "tag": "绘制器宽度 640->动态 (4591CC ecx, 0x280)"
+  },
+  {
+   "rva": "0x5994B",
+   "expect": "8B 45 10 8B 4D 10 C1 E0 07 8B 55 0C C1 E1 09 03 C2 03 C1",
+   "replace": "8B 45 10 0F AF 05 00 08 66 00 8B 55 0C 03 C2 90 90 90 90",
+   "kind": null,
+   "ref": null,
+   "tag": "stride y*640->y*854 (459854)"
+  },
+  {
+   "rva": "0x599A5",
+   "expect": "3D 80 02 00 00",
+   "replace": null,
+   "kind": "call",
+   "ref": "blit_cmp_eax_w",
+   "tag": "绘制器宽度 640->动态 (459854 eax, 0x280)"
+  },
+  {
+   "rva": "0x59B98",
+   "expect": "81 F9 80 02 00 00",
+   "replace": "3B 0D 00 08 66 00",
+   "kind": null,
+   "ref": null,
+   "tag": "绘制器宽度 640->动态 (459854 ecx, 0x280)"
+  },
+  {
+   "rva": "0x59BDE",
+   "expect": "81 C1 00 5B 09 00",
+   "replace": "03 0D 3C 08 66 00",
+   "kind": null,
+   "ref": null,
+   "tag": "绘制器宽度 640->动态 (459854 ecx, 0x95b00)"
+  },
+  {
+   "rva": "0x59C90",
+   "expect": "81 45 0C 80 02 00 00",
+   "replace": null,
+   "kind": "call",
+   "ref": "blit_wrap_add",
+   "tag": "绘制器宽度 640->动态 (459854 dword ptr [ebp + 0xc], 0x280)"
+  },
+  {
+   "rva": "0x59C9A",
+   "expect": "81 2D 78 D8 4E 00 80 02 00 00",
+   "replace": "81 2D 78 D8 4E 00 58 03 00 00",
+   "kind": null,
+   "ref": null,
+   "tag": "640->856 sub dword ptr [0x4ed878], 0x280 (459854)"
+  },
+  {
+   "rva": "0x59CAA",
+   "expect": "81 FA 80 02 00 00",
+   "replace": "3B 15 00 08 66 00",
+   "kind": null,
+   "ref": null,
+   "tag": "绘制器宽度 640->动态 (459854 edx, 0x280)"
+  },
+  {
+   "rva": "0x59CF9",
+   "expect": "81 FA 80 02 00 00",
+   "replace": "3B 15 00 08 66 00",
+   "kind": null,
+   "ref": null,
+   "tag": "绘制器宽度 640->动态 (459854 edx, 0x280)"
+  },
+  {
+   "rva": "0x59D03",
+   "expect": "81 45 0C 80 02 00 00",
+   "replace": null,
+   "kind": "call",
+   "ref": "blit_wrap_add",
+   "tag": "绘制器宽度 640->动态 (459854 dword ptr [ebp + 0xc], 0x280)"
+  },
+  {
+   "rva": "0x59D0D",
+   "expect": "81 2D 78 D8 4E 00 80 02 00 00",
+   "replace": "81 2D 78 D8 4E 00 58 03 00 00",
+   "kind": null,
+   "ref": null,
+   "tag": "640->856 sub dword ptr [0x4ed878], 0x280 (459854)"
+  },
+  {
+   "rva": "0x59D1D",
+   "expect": "81 F9 80 02 00 00",
+   "replace": "3B 0D 00 08 66 00",
+   "kind": null,
+   "ref": null,
+   "tag": "绘制器宽度 640->动态 (459854 ecx, 0x280)"
+  },
+  {
+   "rva": "0x59D67",
+   "expect": "81 F9 80 02 00 00",
+   "replace": "3B 0D 00 08 66 00",
+   "kind": null,
+   "ref": null,
+   "tag": "绘制器宽度 640->动态 (459854 ecx, 0x280)"
+  },
+  {
+   "rva": "0x5A084",
+   "expect": "8B 55 10 8B 45 10 C1 E2 07 8B 4D 0C C1 E0 09 03 D1 03 D0",
+   "replace": "8B 55 10 0F AF 15 00 08 66 00 8B 4D 0C 03 D1 90 90 90 90",
+   "kind": null,
+   "ref": null,
+   "tag": "stride y*640->y*854 (459F78)"
+  },
+  {
+   "rva": "0x5A0FA",
+   "expect": "3D 80 02 00 00",
+   "replace": null,
+   "kind": "call",
+   "ref": "blit_cmp_eax_w",
+   "tag": "绘制器宽度 640->动态 (459F78 eax, 0x280)"
+  },
+  {
+   "rva": "0x5A162",
+   "expect": "81 2D 7C D8 4E 00 80 02 00 00",
+   "replace": "81 2D 7C D8 4E 00 58 03 00 00",
+   "kind": null,
+   "ref": null,
+   "tag": "640->856 sub dword ptr [0x4ed87c], 0x280 (459F78)"
+  },
+  {
+   "rva": "0x5A183",
+   "expect": "81 FA 80 02 00 00",
+   "replace": "3B 15 00 08 66 00",
+   "kind": null,
+   "ref": null,
+   "tag": "绘制器宽度 640->动态 (459F78 edx, 0x280)"
+  },
+  {
+   "rva": "0x5A23D",
+   "expect": "81 F9 80 02 00 00",
+   "replace": "3B 0D 00 08 66 00",
+   "kind": null,
+   "ref": null,
+   "tag": "绘制器宽度 640->动态 (459F78 ecx, 0x280)"
+  },
+  {
+   "rva": "0x5A283",
+   "expect": "81 C1 00 5B 09 00",
+   "replace": "03 0D 3C 08 66 00",
+   "kind": null,
+   "ref": null,
+   "tag": "绘制器宽度 640->动态 (459F78 ecx, 0x95b00)"
+  },
+  {
+   "rva": "0x5A34F",
+   "expect": "81 45 0C 80 02 00 00",
+   "replace": null,
+   "kind": "call",
+   "ref": "blit_wrap_add",
+   "tag": "绘制器宽度 640->动态 (459F78 dword ptr [ebp + 0xc], 0x280)"
+  },
+  {
+   "rva": "0x5A359",
+   "expect": "81 2D 7C D8 4E 00 80 02 00 00",
+   "replace": "81 2D 7C D8 4E 00 58 03 00 00",
+   "kind": null,
+   "ref": null,
+   "tag": "640->856 sub dword ptr [0x4ed87c], 0x280 (459F78)"
+  },
+  {
+   "rva": "0x5A37B",
+   "expect": "81 F9 80 02 00 00",
+   "replace": "3B 0D 00 08 66 00",
+   "kind": null,
+   "ref": null,
+   "tag": "绘制器宽度 640->动态 (459F78 ecx, 0x280)"
+  },
+  {
+   "rva": "0x5A3D6",
+   "expect": "3D 80 02 00 00",
+   "replace": null,
+   "kind": "call",
+   "ref": "blit_cmp_eax_w",
+   "tag": "绘制器宽度 640->动态 (459F78 eax, 0x280)"
+  },
+  {
+   "rva": "0x5A3DF",
+   "expect": "81 45 0C 80 02 00 00",
+   "replace": null,
+   "kind": "call",
+   "ref": "blit_wrap_add",
+   "tag": "绘制器宽度 640->动态 (459F78 dword ptr [ebp + 0xc], 0x280)"
+  },
+  {
+   "rva": "0x5A3E9",
+   "expect": "81 2D 7C D8 4E 00 80 02 00 00",
+   "replace": "81 2D 7C D8 4E 00 58 03 00 00",
+   "kind": null,
+   "ref": null,
+   "tag": "640->856 sub dword ptr [0x4ed87c], 0x280 (459F78)"
+  },
+  {
+   "rva": "0x5A40A",
+   "expect": "3D 80 02 00 00",
+   "replace": null,
+   "kind": "call",
+   "ref": "blit_cmp_eax_w",
+   "tag": "绘制器宽度 640->动态 (459F78 eax, 0x280)"
+  },
+  {
+   "rva": "0x5A44B",
+   "expect": "3D 80 02 00 00",
+   "replace": null,
+   "kind": "call",
+   "ref": "blit_cmp_eax_w",
+   "tag": "绘制器宽度 640->动态 (459F78 eax, 0x280)"
+  },
+  {
+   "rva": "0x5A5CC",
+   "expect": "8B 55 10 8B 45 10 C1 E2 07 8B 4D 0C C1 E0 09 03 D1 03 D0",
+   "replace": "8B 55 10 0F AF 15 00 08 66 00 8B 4D 0C 03 D1 90 90 90 90",
+   "kind": null,
+   "ref": null,
+   "tag": "stride y*640->y*854 (45A4C0)"
+  },
+  {
+   "rva": "0x5A642",
+   "expect": "3D 80 02 00 00",
+   "replace": null,
+   "kind": "call",
+   "ref": "blit_cmp_eax_w",
+   "tag": "绘制器宽度 640->动态 (45A4C0 eax, 0x280)"
+  },
+  {
+   "rva": "0x5A6AA",
+   "expect": "81 2D 80 D8 4E 00 80 02 00 00",
+   "replace": "81 2D 80 D8 4E 00 58 03 00 00",
+   "kind": null,
+   "ref": null,
+   "tag": "640->856 sub dword ptr [0x4ed880], 0x280 (45A4C0)"
+  },
+  {
+   "rva": "0x5A6CB",
+   "expect": "81 FA 80 02 00 00",
+   "replace": "3B 15 00 08 66 00",
+   "kind": null,
+   "ref": null,
+   "tag": "绘制器宽度 640->动态 (45A4C0 edx, 0x280)"
+  },
+  {
+   "rva": "0x5A785",
+   "expect": "81 F9 80 02 00 00",
+   "replace": "3B 0D 00 08 66 00",
+   "kind": null,
+   "ref": null,
+   "tag": "绘制器宽度 640->动态 (45A4C0 ecx, 0x280)"
+  },
+  {
+   "rva": "0x5A7CB",
+   "expect": "81 C1 00 5B 09 00",
+   "replace": "03 0D 3C 08 66 00",
+   "kind": null,
+   "ref": null,
+   "tag": "绘制器宽度 640->动态 (45A4C0 ecx, 0x95b00)"
+  },
+  {
+   "rva": "0x5A897",
+   "expect": "81 45 0C 80 02 00 00",
+   "replace": null,
+   "kind": "call",
+   "ref": "blit_wrap_add",
+   "tag": "绘制器宽度 640->动态 (45A4C0 dword ptr [ebp + 0xc], 0x280)"
+  },
+  {
+   "rva": "0x5A8A1",
+   "expect": "81 2D 80 D8 4E 00 80 02 00 00",
+   "replace": "81 2D 80 D8 4E 00 58 03 00 00",
+   "kind": null,
+   "ref": null,
+   "tag": "640->856 sub dword ptr [0x4ed880], 0x280 (45A4C0)"
+  },
+  {
+   "rva": "0x5A8C3",
+   "expect": "81 F9 80 02 00 00",
+   "replace": "3B 0D 00 08 66 00",
+   "kind": null,
+   "ref": null,
+   "tag": "绘制器宽度 640->动态 (45A4C0 ecx, 0x280)"
+  },
+  {
+   "rva": "0x5A91E",
+   "expect": "3D 80 02 00 00",
+   "replace": null,
+   "kind": "call",
+   "ref": "blit_cmp_eax_w",
+   "tag": "绘制器宽度 640->动态 (45A4C0 eax, 0x280)"
+  },
+  {
+   "rva": "0x5A927",
+   "expect": "81 45 0C 80 02 00 00",
+   "replace": null,
+   "kind": "call",
+   "ref": "blit_wrap_add",
+   "tag": "绘制器宽度 640->动态 (45A4C0 dword ptr [ebp + 0xc], 0x280)"
+  },
+  {
+   "rva": "0x5A931",
+   "expect": "81 2D 80 D8 4E 00 80 02 00 00",
+   "replace": "81 2D 80 D8 4E 00 58 03 00 00",
+   "kind": null,
+   "ref": null,
+   "tag": "640->856 sub dword ptr [0x4ed880], 0x280 (45A4C0)"
+  },
+  {
+   "rva": "0x5A952",
+   "expect": "3D 80 02 00 00",
+   "replace": null,
+   "kind": "call",
+   "ref": "blit_cmp_eax_w",
+   "tag": "绘制器宽度 640->动态 (45A4C0 eax, 0x280)"
+  },
+  {
+   "rva": "0x5A993",
+   "expect": "3D 80 02 00 00",
+   "replace": null,
+   "kind": "call",
+   "ref": "blit_cmp_eax_w",
+   "tag": "绘制器宽度 640->动态 (45A4C0 eax, 0x280)"
+  },
+  {
+   "rva": "0x5AB98",
+   "expect": "8B 55 10 8B 45 10 C1 E2 07 8B 4D 0C C1 E0 09 03 D1 03 D0",
+   "replace": "8B 55 10 0F AF 15 00 08 66 00 8B 4D 0C 03 D1 90 90 90 90",
+   "kind": null,
+   "ref": null,
+   "tag": "stride y*640->y*854 (45AA8C)"
+  },
+  {
+   "rva": "0x5AC0E",
+   "expect": "3D 80 02 00 00",
+   "replace": null,
+   "kind": "call",
+   "ref": "blit_cmp_eax_w",
+   "tag": "绘制器宽度 640->动态 (45AA8C eax, 0x280)"
+  },
+  {
+   "rva": "0x5AC76",
+   "expect": "81 2D 84 D8 4E 00 80 02 00 00",
+   "replace": "81 2D 84 D8 4E 00 58 03 00 00",
+   "kind": null,
+   "ref": null,
+   "tag": "640->856 sub dword ptr [0x4ed884], 0x280 (45AA8C)"
+  },
+  {
+   "rva": "0x5AC97",
+   "expect": "81 FA 80 02 00 00",
+   "replace": "3B 15 00 08 66 00",
+   "kind": null,
+   "ref": null,
+   "tag": "绘制器宽度 640->动态 (45AA8C edx, 0x280)"
+  },
+  {
+   "rva": "0x5AE6A",
+   "expect": "3D 80 02 00 00",
+   "replace": null,
+   "kind": "call",
+   "ref": "blit_cmp_eax_w",
+   "tag": "绘制器宽度 640->动态 (45AA8C eax, 0x280)"
+  },
+  {
+   "rva": "0x5AEB0",
+   "expect": "05 00 5B 09 00",
+   "replace": null,
+   "kind": "call",
+   "ref": "blit_end_eax",
+   "tag": "绘制器宽度 640->动态 (45AA8C eax, 0x95b00)"
+  },
+  {
+   "rva": "0x5AF7A",
+   "expect": "81 45 0C 80 02 00 00",
+   "replace": null,
+   "kind": "call",
+   "ref": "blit_wrap_add",
+   "tag": "绘制器宽度 640->动态 (45AA8C dword ptr [ebp + 0xc], 0x280)"
+  },
+  {
+   "rva": "0x5AF84",
+   "expect": "81 2D 84 D8 4E 00 80 02 00 00",
+   "replace": "81 2D 84 D8 4E 00 58 03 00 00",
+   "kind": null,
+   "ref": null,
+   "tag": "640->856 sub dword ptr [0x4ed884], 0x280 (45AA8C)"
+  },
+  {
+   "rva": "0x5AFA5",
+   "expect": "3D 80 02 00 00",
+   "replace": null,
+   "kind": "call",
+   "ref": "blit_cmp_eax_w",
+   "tag": "绘制器宽度 640->动态 (45AA8C eax, 0x280)"
+  },
+  {
+   "rva": "0x5B001",
+   "expect": "81 FA 80 02 00 00",
+   "replace": "3B 15 00 08 66 00",
+   "kind": null,
+   "ref": null,
+   "tag": "绘制器宽度 640->动态 (45AA8C edx, 0x280)"
+  },
+  {
+   "rva": "0x5B00B",
+   "expect": "81 45 0C 80 02 00 00",
+   "replace": null,
+   "kind": "call",
+   "ref": "blit_wrap_add",
+   "tag": "绘制器宽度 640->动态 (45AA8C dword ptr [ebp + 0xc], 0x280)"
+  },
+  {
+   "rva": "0x5B015",
+   "expect": "81 2D 84 D8 4E 00 80 02 00 00",
+   "replace": "81 2D 84 D8 4E 00 58 03 00 00",
+   "kind": null,
+   "ref": null,
+   "tag": "640->856 sub dword ptr [0x4ed884], 0x280 (45AA8C)"
+  },
+  {
+   "rva": "0x5B036",
+   "expect": "81 FA 80 02 00 00",
+   "replace": "3B 15 00 08 66 00",
+   "kind": null,
+   "ref": null,
+   "tag": "绘制器宽度 640->动态 (45AA8C edx, 0x280)"
+  },
+  {
+   "rva": "0x5B07F",
+   "expect": "81 FA 80 02 00 00",
+   "replace": "3B 15 00 08 66 00",
+   "kind": null,
+   "ref": null,
+   "tag": "绘制器宽度 640->动态 (45AA8C edx, 0x280)"
+  },
+  {
+   "rva": "0x5B318",
+   "expect": "8B 55 10 8B 45 10 C1 E2 07 8B 4D 0C C1 E0 09 03 D1 03 D0",
+   "replace": "8B 55 10 0F AF 15 00 08 66 00 8B 4D 0C 03 D1 90 90 90 90",
+   "kind": null,
+   "ref": null,
+   "tag": "stride y*640->y*854 (45B20C)"
+  },
+  {
+   "rva": "0x5B38E",
+   "expect": "3D 80 02 00 00",
+   "replace": null,
+   "kind": "call",
+   "ref": "blit_cmp_eax_w",
+   "tag": "绘制器宽度 640->动态 (45B20C eax, 0x280)"
+  },
+  {
+   "rva": "0x5B3F6",
+   "expect": "81 2D 88 D8 4E 00 80 02 00 00",
+   "replace": "81 2D 88 D8 4E 00 58 03 00 00",
+   "kind": null,
+   "ref": null,
+   "tag": "640->856 sub dword ptr [0x4ed888], 0x280 (45B20C)"
+  },
+  {
+   "rva": "0x5B704",
+   "expect": "81 2D 88 D8 4E 00 80 02 00 00",
+   "replace": "81 2D 88 D8 4E 00 58 03 00 00",
+   "kind": null,
+   "ref": null,
+   "tag": "640->856 sub dword ptr [0x4ed888], 0x280 (45B20C)"
+  },
+  {
+   "rva": "0x5B795",
+   "expect": "81 2D 88 D8 4E 00 80 02 00 00",
+   "replace": "81 2D 88 D8 4E 00 58 03 00 00",
+   "kind": null,
+   "ref": null,
+   "tag": "640->856 sub dword ptr [0x4ed888], 0x280 (45B20C)"
+  },
+  {
+   "rva": "0xE7CC8",
+   "expect": "80 02 00 00",
+   "replace": "58 03 00 00",
+   "kind": null,
+   "ref": null,
+   "tag": "视口宽全局 dword_4E7CC8 640->854 (.data)"
+  },
+  {
+   "rva": "0x66A2F3",
+   "expect": "03 80 02",
+   "replace": "03 58 03",
+   "kind": null,
+   "ref": null,
+   "tag": "窗体 ClientWidth 640->854 (DFM, BorderStyle=bsNone)"
+  },
+  {
+   "rva": "0x3687",
+   "expect": "89 0D 78 42 82 00",
+   "kind": "call",
+   "ref": "mouse_map_down",
+   "tag": "鼠标按下写点: 存 raw + 同步 PAGE_X (0x403687)"
+  },
+  {
+   "rva": "0x11CA2",
+   "expect": "A3 5E E2 78 00",
+   "kind": "call",
+   "ref": "rec_map",
+   "tag": "点击记录 78E25E: 存 raw + 同步 PAGE_REC_X (sub_411C1C)"
+  },
+  {
+   "rva": "0x11D4A",
+   "expect": "E8 9D 27 04 00",
+   "kind": "call",
+   "ref": "cursor_scratch",
+   "tag": "软件光标改道: 640 虚拟屏幕解码 + blit (sub_411D18)"
+  },
+  {
+   "rva": "0x1DC60",
+   "expect": "A1 78 42 82 00",
+   "replace": "A1 40 08 66 00",
+   "tag": "鼠标读点改页面态空间 ['0x660840'] (41DC60)"
+  },
+  {
+   "rva": "0x1DC71",
+   "expect": "15 78 42 82 00",
+   "replace": "15 40 08 66 00",
+   "tag": "鼠标读点改页面态空间 ['0x660840'] (41DC71)"
+  },
+  {
+   "rva": "0x1DCCB",
+   "expect": "0D 78 42 82 00",
+   "replace": "0D 40 08 66 00",
+   "tag": "鼠标读点改页面态空间 ['0x660840'] (41DCCB)"
+  },
+  {
+   "rva": "0x1DCD8",
+   "expect": "A1 78 42 82 00",
+   "replace": "A1 40 08 66 00",
+   "tag": "鼠标读点改页面态空间 ['0x660840'] (41DCD8)"
+  },
+  {
+   "rva": "0x1DD05",
+   "expect": "15 78 42 82 00",
+   "replace": "15 40 08 66 00",
+   "tag": "鼠标读点改页面态空间 ['0x660840'] (41DD05)"
+  },
+  {
+   "rva": "0x1DD13",
+   "expect": "0D 78 42 82 00",
+   "replace": "0D 40 08 66 00",
+   "tag": "鼠标读点改页面态空间 ['0x660840'] (41DD13)"
+  },
+  {
+   "rva": "0x1E046",
+   "expect": "15 78 42 82 00",
+   "replace": "15 40 08 66 00",
+   "tag": "鼠标读点改页面态空间 ['0x660840'] (41E046)"
+  },
+  {
+   "rva": "0x1E054",
+   "expect": "0D 78 42 82 00",
+   "replace": "0D 40 08 66 00",
+   "tag": "鼠标读点改页面态空间 ['0x660840'] (41E054)"
+  },
+  {
+   "rva": "0x1E096",
+   "expect": "15 78 42 82 00",
+   "replace": "15 40 08 66 00",
+   "tag": "鼠标读点改页面态空间 ['0x660840'] (41E096)"
+  },
+  {
+   "rva": "0x1E0A4",
+   "expect": "0D 78 42 82 00",
+   "replace": "0D 40 08 66 00",
+   "tag": "鼠标读点改页面态空间 ['0x660840'] (41E0A4)"
+  },
+  {
+   "rva": "0x1E0E6",
+   "expect": "15 78 42 82 00",
+   "replace": "15 40 08 66 00",
+   "tag": "鼠标读点改页面态空间 ['0x660840'] (41E0E6)"
+  },
+  {
+   "rva": "0x1E0F4",
+   "expect": "0D 78 42 82 00",
+   "replace": "0D 40 08 66 00",
+   "tag": "鼠标读点改页面态空间 ['0x660840'] (41E0F4)"
+  },
+  {
+   "rva": "0x1E136",
+   "expect": "15 78 42 82 00",
+   "replace": "15 40 08 66 00",
+   "tag": "鼠标读点改页面态空间 ['0x660840'] (41E136)"
+  },
+  {
+   "rva": "0x1E144",
+   "expect": "0D 78 42 82 00",
+   "replace": "0D 40 08 66 00",
+   "tag": "鼠标读点改页面态空间 ['0x660840'] (41E144)"
+  },
+  {
+   "rva": "0x1E19C",
+   "expect": "A1 78 42 82 00",
+   "replace": "A1 40 08 66 00",
+   "tag": "鼠标读点改页面态空间 ['0x660840'] (41E19C)"
+  },
+  {
+   "rva": "0x1E1A9",
+   "expect": "15 78 42 82 00",
+   "replace": "15 40 08 66 00",
+   "tag": "鼠标读点改页面态空间 ['0x660840'] (41E1A9)"
+  },
+  {
+   "rva": "0x1E1F2",
+   "expect": "15 78 42 82 00",
+   "replace": "15 40 08 66 00",
+   "tag": "鼠标读点改页面态空间 ['0x660840'] (41E1F2)"
+  },
+  {
+   "rva": "0x1E200",
+   "expect": "0D 78 42 82 00",
+   "replace": "0D 40 08 66 00",
+   "tag": "鼠标读点改页面态空间 ['0x660840'] (41E200)"
+  },
+  {
+   "rva": "0x207D0",
+   "expect": "A1 78 42 82 00",
+   "replace": "A1 40 08 66 00",
+   "tag": "鼠标读点改页面态空间 ['0x660840'] (4207D0)"
+  },
+  {
+   "rva": "0x207DE",
+   "expect": "0D 78 42 82 00",
+   "replace": "0D 40 08 66 00",
+   "tag": "鼠标读点改页面态空间 ['0x660840'] (4207DE)"
+  },
+  {
+   "rva": "0x23FDB",
+   "expect": "15 78 42 82 00",
+   "replace": "15 40 08 66 00",
+   "tag": "鼠标读点改页面态空间 ['0x660840'] (423FDB)"
+  },
+  {
+   "rva": "0x2400E",
+   "expect": "A1 78 42 82 00",
+   "replace": "A1 40 08 66 00",
+   "tag": "鼠标读点改页面态空间 ['0x660840'] (42400E)"
+  },
+  {
+   "rva": "0x25F71",
+   "expect": "0D 78 42 82 00",
+   "replace": "0D 40 08 66 00",
+   "tag": "鼠标读点改页面态空间 ['0x660840'] (425F71)"
+  },
+  {
+   "rva": "0x25F83",
+   "expect": "15 78 42 82 00",
+   "replace": "15 40 08 66 00",
+   "tag": "鼠标读点改页面态空间 ['0x660840'] (425F83)"
+  },
+  {
+   "rva": "0x1CE6B",
+   "expect": "A1 5E E2 78 00",
+   "replace": "A1 44 08 66 00",
+   "tag": "鼠标读点改页面态空间 ['0x660844'] (41CE6B)"
+  },
+  {
+   "rva": "0x1CEE3",
+   "expect": "0D 5E E2 78 00",
+   "replace": "0D 44 08 66 00",
+   "tag": "鼠标读点改页面态空间 ['0x660844'] (41CEE3)"
+  },
+  {
+   "rva": "0x1D4CC",
+   "expect": "0D 5E E2 78 00",
+   "replace": "0D 44 08 66 00",
+   "tag": "鼠标读点改页面态空间 ['0x660844'] (41D4CC)"
+  },
+  {
+   "rva": "0x1F058",
+   "expect": "0D 5E E2 78 00",
+   "replace": "0D 44 08 66 00",
+   "tag": "鼠标读点改页面态空间 ['0x660844'] (41F058)"
+  },
+  {
+   "rva": "0x1F168",
+   "expect": "0D 5E E2 78 00",
+   "replace": "0D 44 08 66 00",
+   "tag": "鼠标读点改页面态空间 ['0x660844'] (41F168)"
+  },
+  {
+   "rva": "0x1FA5D",
+   "expect": "0D 5E E2 78 00",
+   "replace": "0D 44 08 66 00",
+   "tag": "鼠标读点改页面态空间 ['0x660844'] (41FA5D)"
+  },
+  {
+   "rva": "0x1FAE5",
+   "expect": "0D 5E E2 78 00",
+   "replace": "0D 44 08 66 00",
+   "tag": "鼠标读点改页面态空间 ['0x660844'] (41FAE5)"
+  },
+  {
+   "rva": "0x1FB9F",
+   "expect": "15 5E E2 78 00",
+   "replace": "15 44 08 66 00",
+   "tag": "鼠标读点改页面态空间 ['0x660844'] (41FB9F)"
+  },
+  {
+   "rva": "0x1FBE7",
+   "expect": "15 5E E2 78 00",
+   "replace": "15 44 08 66 00",
+   "tag": "鼠标读点改页面态空间 ['0x660844'] (41FBE7)"
+  },
+  {
+   "rva": "0x1FC44",
+   "expect": "15 5E E2 78 00",
+   "replace": "15 44 08 66 00",
+   "tag": "鼠标读点改页面态空间 ['0x660844'] (41FC44)"
+  },
+  {
+   "rva": "0x206BC",
+   "expect": "A1 5E E2 78 00",
+   "replace": "A1 44 08 66 00",
+   "tag": "鼠标读点改页面态空间 ['0x660844'] (4206BC)"
+  },
+  {
+   "rva": "0x208A2",
+   "expect": "0D 5E E2 78 00",
+   "replace": "0D 44 08 66 00",
+   "tag": "鼠标读点改页面态空间 ['0x660844'] (4208A2)"
+  },
+  {
+   "rva": "0x20AD7",
+   "expect": "15 5E E2 78 00",
+   "replace": "15 44 08 66 00",
+   "tag": "鼠标读点改页面态空间 ['0x660844'] (420AD7)"
+  },
+  {
+   "rva": "0x2362D",
+   "expect": "15 5E E2 78 00",
+   "replace": "15 44 08 66 00",
+   "tag": "鼠标读点改页面态空间 ['0x660844'] (42362D)"
+  },
+  {
+   "rva": "0x23661",
+   "expect": "15 5E E2 78 00",
+   "replace": "15 44 08 66 00",
+   "tag": "鼠标读点改页面态空间 ['0x660844'] (423661)"
+  },
+  {
+   "rva": "0x236BA",
+   "expect": "A1 5E E2 78 00",
+   "replace": "A1 44 08 66 00",
+   "tag": "鼠标读点改页面态空间 ['0x660844'] (4236BA)"
+  },
+  {
+   "rva": "0x236F7",
+   "expect": "15 5E E2 78 00",
+   "replace": "15 44 08 66 00",
+   "tag": "鼠标读点改页面态空间 ['0x660844'] (4236F7)"
+  },
+  {
+   "rva": "0x2603F",
+   "expect": "0D 5E E2 78 00",
+   "replace": "0D 44 08 66 00",
+   "tag": "鼠标读点改页面态空间 ['0x660844'] (42603F)"
+  }
+ ],
+ "format": "TKSPATCH",
+ "format_version": 1,
+ "globals_ph_base": "0x660800",
+ "globals_rebase_span": 121,
+ "globals_alloc_size": 614520
+}
