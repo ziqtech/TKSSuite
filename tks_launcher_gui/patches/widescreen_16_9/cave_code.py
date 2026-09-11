@@ -289,7 +289,7 @@ def build_page_wrapper(page_fn: int) -> bytes:
     code += b'\xC7\x05' + _g_off() + struct.pack('<I', PAGE_OFF)
     code += b'\xC7\x05' + _g_end() + struct.pack('<I', _end_of(479, W_PAGE))
     code += b'\xA1' + struct.pack('<I', FONT_OBJ_PTR_VA)          # mov eax,[fontobj]
-    code += b'\xC7\x40' + bytes([FONT_PITCH_OFF]) + struct.pack('<I', FONT_PITCH_CANVAS)  # mov [eax+0x28],320
+    code += b'\xC7\x40' + bytes([FONT_W_OFF]) + struct.pack('<I', FONT_W_CANVAS)  # mov [eax+0x28],640
     code += b'\x8B\x04\x24'                          # mov eax,[esp]
     code += b'\xA3' + _g_ret()                       # mov [g_ret],eax
     call_off = len(code)
@@ -307,7 +307,7 @@ def build_page_wrapper(page_fn: int) -> bytes:
     code += b'\xC7\x05' + _g_off() + struct.pack('<I', 0)
     code += b'\xC7\x05' + _g_end() + struct.pack('<I', _end_of(479, W_SCREEN))
     code += b'\xA1' + struct.pack('<I', FONT_OBJ_PTR_VA)          # mov eax,[fontobj]
-    code += b'\xC7\x40' + bytes([FONT_PITCH_OFF]) + struct.pack('<I', FONT_PITCH_SCREEN)  # mov [eax+0x28],428
+    code += b'\xC7\x40' + bytes([FONT_W_OFF]) + struct.pack('<I', FONT_W_SCREEN)  # mov [eax+0x28],856
     code += b'\x58'                                  # pop eax ; ⚠ 恢复返回值 (否则标题循环首帧 break)
     code += b'\xC3'                                  # ret (→ 调用者, EAX=页面返回值)
     code[add_imm_off:add_imm_off + 4] = ((stub_off - (call_off + 5)) & 0xFFFFFFFF).to_bytes(4, 'little')
@@ -402,9 +402,12 @@ DISABLE_GRAB_ERASE = False               # 二分开关: grab 前光标擦除
 DISABLE_CURSOR_ERASE = False             # 光标自擦除 (Phase A) 已启用
 DISABLE_CURSOR_SNAPSHOT = False          # 光标快照 (Phase B) 已启用
 FONT_OBJ_PTR_VA = 0x00755B08            # 字体对象指针变量 dword_755B08
-FONT_PITCH_OFF = 0x28                   # 对象内半行距字段偏移 (行距 = 2*该值)
-FONT_PITCH_CANVAS = 320                 # 页面态: 640 画布行距的一半 (渲染器内 ×2)
-FONT_PITCH_SCREEN = 428                 # 游戏态: 856 后备表面行距的一半
+# 对象 +0x28 = 字体画布宽度 (sub_44AFF4 的 a1[10], 初值 640; sub_44E290 用它做
+# 换行/裁剪判断), +0x2C = 高度。⚠ 不是"半行距"——早前误写 320/428 会让换行
+# 边界与字形定位全错 (实测菜单文字错位/重复)。
+FONT_W_OFF = 0x28
+FONT_W_CANVAS = 640                     # 页面态: 页面画布宽 640
+FONT_W_SCREEN = 856                     # 游戏态: 后备表面宽 856
 CURSOR_SENTINEL = 0xFE1F                # RGB565 品红系, 调色板色几乎不可能命中
 CURSOR_PRIM_VA = 0x004544EC             # sub_4544EC
 
