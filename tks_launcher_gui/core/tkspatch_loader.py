@@ -89,6 +89,7 @@ _TKSPATCH_SCHEMA = {
         "sites", "cave_entries", "zero_hit_ok",
         # patch_sites globals 重定位 (16:9 宽屏: 槽位/scratch 搬离 .data)
         "globals_ph_base", "globals_rebase_span", "globals_alloc_size",
+        "globals_extra_windows",
         # patch_summon_table
         "json_file", "script_file", "script_source",
         "data_rva", "data_keys", "code_addrs",
@@ -412,6 +413,10 @@ def parse_patch_dict(raw: dict, source_path: str,
     d.globals_ph_base = _parse_maybe_hex(raw.get("globals_ph_base", 0))  # type: ignore
     d.globals_rebase_span = _parse_maybe_hex(raw.get("globals_rebase_span", 0))  # type: ignore
     d.globals_alloc_size = _parse_maybe_hex(raw.get("globals_alloc_size", 0))  # type: ignore
+    d.globals_extra_windows = [
+        (_parse_maybe_hex(off), _parse_maybe_hex(span))
+        for off, span in (raw.get("globals_extra_windows") or [])
+    ]  # type: ignore
 
     # 额外字段 (类型特定, 原样保存)
     d._extra = {}  # type: ignore

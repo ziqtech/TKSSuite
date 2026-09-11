@@ -114,6 +114,7 @@ class PatchDef:
     globals_ph_base: int = 0        # 占位基址 (VA, 0 = 不启用)
     globals_rebase_span: int = 0    # 重定位窗口宽度 (字节, 含 scratch 基址)
     globals_alloc_size: int = 0     # 独立分配大小 (字节)
+    globals_extra_windows: list = field(default_factory=list)  # 附加窗口 [[占位相对偏移, 宽], ...]
 
     # ── 文件级补丁类型 (生成启动器用, 参数全部声明在 patch.json) ──
     # type=fixed_layout_cave: 多 hook + 固定布局 cave, cave_code.py 提供 build_cave_block

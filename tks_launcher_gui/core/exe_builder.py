@@ -250,6 +250,7 @@ class SitesPatchItem:
     globals_ph_base: int = 0        # 占位基址 (VA, 0 = 不启用)
     globals_rebase_span: int = 0    # 重定位窗口宽度 (字节)
     globals_alloc_size: int = 0     # globals 区大小 (字节, 放 .test 尾部)
+    globals_extra_windows: List = field(default_factory=list)  # [[占位相对偏移, 宽], ...]
 
 
 @dataclass
@@ -459,13 +460,16 @@ class ExeBuilder:
             g_abs = getattr(item, '_globals_abs', 0)
             if g_abs and item.globals_ph_base and item.globals_rebase_span:
                 delta = g_abs - item.globals_ph_base
-                lo = item.globals_ph_base
-                hi = lo + item.globals_rebase_span
+                windows = [(item.globals_ph_base, item.globals_rebase_span)]
+                for woff, wspan in (item.globals_extra_windows or []):
+                    windows.append((item.globals_ph_base + int(woff), int(wspan)))
                 reb = bytearray(repl)
                 for i in range(len(reb) - 3):
                     v = int.from_bytes(reb[i:i + 4], 'little')
-                    if lo <= v < hi:
-                        reb[i:i + 4] = struct.pack('<I', (v + delta) & 0xFFFFFFFF)
+                    for lo, wspan2 in windows:
+                        if lo <= v < lo + wspan2:
+                            reb[i:i + 4] = struct.pack('<I', (v + delta) & 0xFFFFFFFF)
+                            break
                 repl = bytes(reb)
             data[off:off + len(repl)] = repl
             patched += 1
@@ -1173,12 +1177,16 @@ class ExeBuilder:
                 g_abs = getattr(sp, '_globals_abs', 0)
                 if g_abs and sp.globals_ph_base and sp.globals_rebase_span:
                     delta = g_abs - sp.globals_ph_base
+                    windows = [(sp.globals_ph_base, sp.globals_rebase_span)]
+                    for woff, wspan in (sp.globals_extra_windows or []):
+                        windows.append((sp.globals_ph_base + int(woff), int(wspan)))
                     reb = bytearray(code)
-                    lo, hi = sp.globals_ph_base, sp.globals_ph_base + sp.globals_rebase_span
                     for i in range(len(reb) - 3):
                         v = int.from_bytes(reb[i:i + 4], 'little')
-                        if lo <= v < hi:
-                            reb[i:i + 4] = struct.pack('<I', (v + delta) & 0xFFFFFFFF)
+                        for lo, wspan2 in windows:
+                            if lo <= v < lo + wspan2:
+                                reb[i:i + 4] = struct.pack('<I', (v + delta) & 0xFFFFFFFF)
+                                break
                     code = bytes(reb)
                     log.append(f'[{sp.patch_id}] globals 区 .test+0x{sp._globals_off:X} '
                                f'= 0x{g_abs:X} (占位 0x{sp.globals_ph_base:08X}+{sp.globals_rebase_span:#x})')

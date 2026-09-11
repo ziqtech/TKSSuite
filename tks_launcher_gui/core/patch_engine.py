@@ -656,22 +656,23 @@ def apply_patch_bytes(defn: PatchDef, code_buf: bytearray, code_start_addr: int,
 # 逐位点校验失败即整补丁失败 (绝无半应用状态: 先全量校验再统一写入)。
 # ============================================================
 
-def _rebase_globals(data: bytes, ph_base: int, span: int, delta: int) -> bytes:
-    """把 data 内所有落在 [ph_base, ph_base+span) 的 4 字节小端绝对地址 +delta。
+def _rebase_globals(data: bytes, windows: List[tuple], delta: int) -> bytes:
+    """把 data 内所有落在 windows [(base, span), ...] 的 4 字节小端绝对地址 +delta。
 
     patch_sites 的 globals 重定位: cave 机器码与位点 repl 内联引用的槽位/
     scratch 地址按占位基址生成, 应用时统一平移到独立分配的内存。
-    ⚠ span 必须只覆盖槽位区 (含 scratch 基址) — 全 0x96000 宽的窗口会对
-    指令流里恰好同值的随机 4 字节序列产生假阳性 (期望 ~0.7 处/4.7KB)。
+    ⚠ 窗口必须窄 (槽位区 + 精确单值窗口) — 全 scratch 宽的窗口会对指令流里
+    恰好同值的随机 4 字节序列产生假阳性。
     """
-    if not delta or not span:
+    if not delta or not windows:
         return data
     out = bytearray(data)
-    hi = ph_base + span
     for i in range(len(out) - 3):
         v = int.from_bytes(out[i:i + 4], 'little')
-        if ph_base <= v < hi:
-            out[i:i + 4] = struct.pack('<I', (v + delta) & 0xFFFFFFFF)
+        for lo, span in windows:
+            if lo <= v < lo + span:
+                out[i:i + 4] = struct.pack('<I', (v + delta) & 0xFFFFFFFF)
+                break
     return bytes(out)
 
 
@@ -693,14 +694,15 @@ def _alloc_patch_globals(ctx: 'PatchContext', size: int) -> int:
 
 def _resolve_sites_writes(defn: PatchDef, cave_base: int,
                           code_start_addr: int = 0x401000,
-                          g_rebase: Optional[tuple] = None,
+                          g_rebase: Optional[List[tuple]] = None,
+                          g_delta: int = 0,
                           ) -> List[Tuple[int, bytes, bytes, str]]:
     """把 sites 展开为 (rva, expect, repl, tag); 校验由调用方按缓冲/内存执行。
 
     code_start_addr: code_buf 起始绝对地址 (base+0x1000), 用于计算 E8 rel32 —
     rel32 = cave 绝对地址 - (site 绝对地址 + 5), 漏掉模块基址会跳到 image_base
     之外的零内存 (cave 全失效/线程异常退出)。
-    g_rebase: (ph_base, span, delta) — repl 中的 globals 占位地址平移 (可 None)。
+    g_rebase: [(base, span), ...] 重定位窗口 — repl 中的 globals 占位地址平移。
     """
     from .tkspatch_loader import _parse_hex_bytes
     sites = getattr(defn, "sites", None) or []
@@ -744,9 +746,8 @@ def _resolve_sites_writes(defn: PatchDef, cave_base: int,
             repl = _parse_hex_bytes(site.get("replace", ""))
             if len(repl) != len(expect):
                 raise ValueError(f"{tag}: replace ({len(repl)}B) 与 expect ({len(expect)}B) 不等长")
-        if g_rebase:
-            ph, span, delta = g_rebase
-            repl = _rebase_globals(repl, ph, span, delta)
+        if g_rebase and g_delta:
+            repl = _rebase_globals(repl, g_rebase, g_delta)
         writes.append((rva, expect, repl, tag))
     return writes
 
@@ -769,9 +770,15 @@ def _handle_patch_sites(ctx: PatchContext) -> bool:
             g_base = _alloc_patch_globals(ctx, alloc)
             if not g_base:
                 return False
-            g_rebase = (ph, span, g_base - ph)
-            cave_code = _rebase_globals(bytes(cave_code), ph, span, g_base - ph)
-            log(f"    Globals 区: 0x{g_base:08X} ({alloc} 字节, 占位 0x{ph:08X}+{span:#x})")
+            delta = g_base - ph
+            windows = [(ph, span)]
+            for off, wspan in (getattr(defn, "globals_extra_windows", None) or []):
+                windows.append((ph + int(off), int(wspan)))
+            g_rebase = windows
+            g_delta = delta
+            cave_code = _rebase_globals(bytes(cave_code), windows, delta)
+            log(f"    Globals 区: 0x{g_base:08X} ({alloc} 字节, 占位 0x{ph:08X}+{span:#x})"
+                f"{' +附加窗口' if len(windows) > 1 else ''}")
         write_pm(ctx.h_proc, cave_base, cave_code)
         log(f"    Cave 写入: 0x{cave_base:08X} ({len(cave_code)} bytes)")
     elif any(s.get("kind") in ("call", "push_imm") for s in sites):
@@ -779,7 +786,8 @@ def _handle_patch_sites(ctx: PatchContext) -> bool:
         return False
     try:
         writes = _resolve_sites_writes(defn, cave_base, ctx.code_start_addr,
-                                       g_rebase=g_rebase)
+                                       g_rebase=g_rebase,
+                                       g_delta=(g_delta if g_rebase else 0))
     except ValueError as e:
         log(f"    [FAIL] {e} — 全部位点未写入")
         return False

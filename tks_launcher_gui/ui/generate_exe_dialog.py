@@ -534,6 +534,7 @@ class GenerateExeDialog(QDialog):
                     globals_ph_base=int(getattr(p, 'globals_ph_base', 0) or 0),
                     globals_rebase_span=int(getattr(p, 'globals_rebase_span', 0) or 0),
                     globals_alloc_size=int(getattr(p, 'globals_alloc_size', 0) or 0),
+                    globals_extra_windows=list(getattr(p, 'globals_extra_windows', []) or []),
                 ))
 
         self._warn_unselected_expansions(data_section_patches)
