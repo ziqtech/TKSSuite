@@ -18,10 +18,10 @@ class PatchSettings:
     tkact_base: int = 0x9539CA
     tkdefunit_orig_count: int = 5000
     # cave 区预算。2026-09-10 起 fixed_layout 块 (summon_extend/summon_exp) 由
-    # CaveLayout 按实际占用区间预留, 分配器对全部槽位可见; 全补丁启用约需 4.8KB,
-    # 预算取 8192 留足余量。VirtualAllocEx 按页(4096)提交, 8192 即两页。
-    # 可用 TKS_CAVE_BUDGET 环境变量覆盖。
-    cave_total_size: int = 8192
+    # CaveLayout 按实际占用区间预留, 分配器对全部槽位可见; 全补丁启用约需 4.8KB。
+    # 16:9 宽屏的精灵解码重写块 (18 入口 + 通用处理器) 约 3.9KB, 与既有槽位相加
+    # 需 0x12E0+3942 ≈ 8.8KB, 故预算取 16384 (四页)。可用 TKS_CAVE_BUDGET 覆盖。
+    cave_total_size: int = 16384
 
 
 @dataclass
