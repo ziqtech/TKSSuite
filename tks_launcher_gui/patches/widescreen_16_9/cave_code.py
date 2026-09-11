@@ -93,8 +93,14 @@ BK_MAX_W, BK_MAX_H = 256, 128        # 超出则该帧不做自擦除 (只画不
 # 序列产生假阳性。
 GLOBALS_PH_BASE = 0x400000 + 0x260800       # 占位基址 (= 槽位 0x660800)
 GLOBALS_REBASE_SPAN = 0x99                  # 槽位窗口: 0x660800..0x660898 (含 scratch 基址)
-GLOBALS_EXTRA_WINDOWS = ((BKBUF_RVA - 0x260800, 1),)   # BKBUF 基址精确窗口
-GLOBALS_ALLOC_SIZE = (BKBUF_RVA - 0x260800) + BKBUF_SIZE   # 0x306898 → 页对齐
+# 精灵两步解码附加区: 槽位 (0x60) + 独立 640x480 平面 (与光标 scratch 分开, 避免互踩)
+SPR_RVA = BKBUF_RVA + BKBUF_SIZE            # 0x306898
+SPR_SLOT_BYTES = 0x68
+SPR_SCRATCH_RVA = SPR_RVA + 0x100           # 0x306998
+GLOBALS_EXTRA_WINDOWS = ((BKBUF_RVA - 0x260800, 1),
+                         (SPR_RVA - 0x260800, SPR_SLOT_BYTES),
+                         (SPR_SCRATCH_RVA - 0x260800, 1))
+GLOBALS_ALLOC_SIZE = (SPR_SCRATCH_RVA - 0x260800) + SCRATCH_SIZE
 
 GXP_W_VA = 0x00A2B9A4                # gxp 头解析出的宽
 GXP_H_VA = 0x00A2B9A8                # 高
@@ -600,6 +606,7 @@ def build_cursor_scratch() -> bytes:
     # frame 之前, sub_4544EC 收到 a5(帧号)=240 ≥ 帧总数 119, 入口即返回,
     # 解码从不写入 → 光标区域只剩哨兵/黑棋盘 (实测 A5AExx 全零确认)。
     emit(b'\x6A\xFF')                                # push -1          (a7)
+    emit(b'\xC7\x05' + _sp('BYP') + b'\x01\x00\x00\x00')  # 旁路精灵壳: 本调用自管两步
     emit(b'\x68' + _g_scratch())                     # push SCRATCH     (a6 = dst)
     emit(b'\x55')                                    # push ebp         (a5 = frame)
     emit(b'\x68\xF0\x00\x00\x00')                    # push 240         (a4 = Y)
@@ -985,6 +992,287 @@ def build_gxp_blt_fix() -> bytes:
     return bytes(code)
 
 
+# ── 2d. JVG 精灵两步解码 (18 个绘制原语统一入口加壳) ────────────────────
+# 绘制原语 (4544EC..45B20C) 的 RLE 解码是"沿 640 宽平面的反向线性扫描":
+# 目标指针逐像素 -2 左移, 跨行靠 640 平面在内存里连续隐式回绕。屏幕加宽到
+# 856 后, 只改步长常量会让 x=0 再减 2 落到上一行 x=855, 而 RLE 流期望 x=639
+# → 每行漂 216px (大地图/战斗精灵成网格碎片)。常量替换无法消除。
+# 等价 TKSRemake 的两步方案: 入口把 dst 换成独立 640 平面、X/Y 换成平面内
+# 锚点、g_stride/g_end 临时切 640, 跑完原函数体后按真实 stride blit 回原 dst
+# (哨兵色透明)。18 个原语 ABI 一致:
+#   a1=obj[ebp+8] a2=X[ebp+0xC] a3=Y[ebp+0x10] a4=frame[ebp+0x14] a5=dst[ebp+0x18]
+# 锚点取 X0=max(0,w-1-xMax) 保证整帧落在 640x480 平面内; 若几何非法则回退
+# 原路径 (不重定向, 行为与补丁前一致, 绝不崩)。
+_SPR_OFF = {
+    'RET': 0x00, 'DST': 0x04, 'X': 0x08, 'Y': 0x0C, 'FRM': 0x10, 'OBJ': 0x14,
+    'X0': 0x18, 'Y0': 0x1C, 'XOFF': 0x20, 'YOFF': 0x24, 'W': 0x28, 'H': 0x2C,
+    'SX0': 0x30, 'SY0': 0x34, 'STR': 0x38, 'END': 0x3C, 'CX0': 0x40, 'CY0': 0x44,
+    'CX1': 0x48, 'CY1': 0x4C, 'SXC': 0x50, 'SYR': 0x54, 'BYP': 0x58, 'DEP': 0x5C,
+    'DX0': 0x60, 'DY0': 0x64,
+}
+
+
+def _sp(name: str) -> bytes:
+    return struct.pack('<I', 0x400000 + SPR_RVA + _SPR_OFF[name])
+
+
+def _spscratch() -> bytes:
+    return struct.pack('<I', 0x400000 + SPR_SCRATCH_RVA)
+
+
+ENABLE_SPRITE_TWO_STEP = False   # JVG 精灵两步解码外壳 (调试中; 见下方说明)
+
+
+# (名称, 函数 VA, 入口序言 hex≥5B 无相对跳转)
+_SPRITE_PRIMS_ALL = [
+    ('4544EC', 0x4544EC, '558bec66837d1400'),
+    ('454D90', 0x454D90, '558bec83c4e4'),
+    ('4553A4', 0x4553A4, '558bec83c4e4'),
+    ('455B98', 0x455B98, '558bec83c4f4'),
+    ('456150', 0x456150, '558bec83c4f4'),
+    ('456720', 0x456720, '558bec83c4ec'),
+    ('456D50', 0x456D50, '558bec83c4ec'),
+    ('4573A0', 0x4573A0, '558bec83c4ec'),
+    ('4579D0', 0x4579D0, '558bec83c4ec'),
+    ('458130', 0x458130, '558bec83c4f4'),
+    ('45871C', 0x45871C, '558bec83c4f4'),
+    ('458D08', 0x458D08, '558bec83c4f4'),
+    ('4591CC', 0x4591CC, '558bec83c4f0'),
+    ('459854', 0x459854, '558bec83c4f0'),
+    ('459F78', 0x459F78, '558bec0fbf4514'),
+    ('45A4C0', 0x45A4C0, '558bec0fbf4514'),
+    ('45AA8C', 0x45AA8C, '558bec0fbf4514'),
+    ('45B20C', 0x45B20C, '558bec0fbf4514'),
+]
+
+SPRITE_PRIMS = _SPRITE_PRIMS_ALL if ENABLE_SPRITE_TWO_STEP else []
+
+
+def _j32c(code: bytearray, cond: str) -> int:
+    op = {'je': 0x84, 'jne': 0x85, 'jae': 0x83, 'ja': 0x87, 'jg': 0x8F,
+          'jle': 0x8E, 'jge': 0x8D, 'jb': 0x82}[cond]
+    pos = len(code)
+    code += b'\x0F' + bytes([op]) + b'\x00\x00\x00\x00'
+    return pos
+
+
+def _fix32c(code: bytearray, pos: int) -> None:
+    code[pos + 2:pos + 6] = struct.pack('<i', len(code) - (pos + 6))
+
+
+def _eip_add(code: bytearray):
+    """emit `call $+5; pop eax; add eax,imm32`; 返回 (pop 偏移, imm 偏移)。"""
+    code += b'\xE8\x00\x00\x00\x00'
+    pop_off = len(code)
+    code += b'\x58'
+    code += b'\x05\x00\x00\x00\x00'
+    return pop_off, len(code) - 4
+
+
+def build_sprite_prep() -> bytes:
+    """算帧几何 + 锚点 + 裁剪, 并把目标矩形拷入 scratch。
+
+    原函数体有些是混合模式 (读目标像素再混合), 所以不能用"空 scratch + 哨兵";
+    必须先把真实目标内容拷进 scratch, 让原体在正确背景上绘制/混合。
+    EAX=1 有效 / 0 回退。读 SPR_OBJ/FRM。拷入用当前 g_stride (prep 在切 640 前)。
+    """
+    code = bytearray()
+    code += b'\x60'                                    # pushad
+    code += b'\x8B\x35' + _sp('OBJ')                   # mov esi,[OBJ]
+    code += b'\x85\xF6'
+    j1 = _j32c(code, 'je')
+    code += b'\x8B\x2D' + _sp('FRM')                   # mov ebp,[FRM]
+    code += b'\x3B\x6E\x18'                            # cmp ebp,[esi+0x18]
+    j2 = _j32c(code, 'jae')
+    code += b'\x8B\x4E\x0C'                            # mov ecx,[esi+0xC]
+    code += b'\x0F\xB7\x04\x69'                        # movzx eax,word [ecx+ebp*2]
+    code += b'\x8B\x56\x08'                            # mov edx,[esi+8]
+    code += b'\x0F\xB7\x14\x6A'                        # movzx edx,word [edx+ebp*2]
+    code += b'\xC1\xE2\x06'                            # shl edx,6
+    code += b'\x03\x16'                                # add edx,[esi]
+    code += b'\x3B\x02'                                # cmp eax,[edx]
+    j3 = _j32c(code, 'jae')
+    code += b'\x8B\x4A\x28'                            # mov ecx,[edx+0x28]
+    code += b'\x8B\x0C\x81'                            # mov ecx,[ecx+eax*4]
+    code += b'\x03\x4A\x2C'                            # add ecx,[edx+0x2C]
+    code += b'\x0F\xBF\x01' + b'\xA3' + _sp('XOFF')    # movsx eax,word[ecx]; XOFF
+    code += b'\x0F\xBF\x41\x02' + b'\xA3' + _sp('YOFF')
+    code += b'\x0F\xB7\x41\x04' + b'\xA3' + _sp('W')
+    code += b'\x85\xC0'
+    j4 = _j32c(code, 'je')
+    code += b'\x0F\xB7\x41\x06' + b'\xA3' + _sp('H')
+    code += b'\x85\xC0'
+    j5 = _j32c(code, 'je')
+    # X0 = clamp(w-xMax, 0, 639-xMax): 右缘 X=X0+xMax 落在 [w,639], 命中原体
+    # "完整绘制"分支 (原裁剪 cmp w,X / cmp X,640 的贴边路径会画错)。
+    code += b'\xA1' + _sp('W') + b'\x2B\x05' + _sp('XOFF') + b'\x79\x02\x31\xC0'
+    code += b'\xB9\x7F\x02\x00\x00' + b'\x2B\x0D' + _sp('XOFF') + b'\x39\xC8' + b'\x7E\x02' + b'\x89\xC8'
+    code += b'\xA3' + _sp('X0')
+    # Y0 = clamp(h-yMax, 0, 479-yMax)
+    code += b'\xA1' + _sp('H') + b'\x2B\x05' + _sp('YOFF') + b'\x79\x02\x31\xC0'
+    code += b'\xB9\xDF\x01\x00\x00' + b'\x2B\x0D' + _sp('YOFF') + b'\x39\xC8' + b'\x7E\x02' + b'\x89\xC8'
+    code += b'\xA3' + _sp('Y0')
+    # SX0 = X0+xMax-w+1 ; SY0 = Y0+yMax-h+1
+    code += b'\xA1' + _sp('X0') + b'\x03\x05' + _sp('XOFF') + b'\x2B\x05' + _sp('W') + b'\x40' + b'\xA3' + _sp('SX0')
+    code += b'\xA1' + _sp('Y0') + b'\x03\x05' + _sp('YOFF') + b'\x2B\x05' + _sp('H') + b'\x40' + b'\xA3' + _sp('SY0')
+    # DX0 = X+xMax-w+1 ; DY0 = Y+yMax-h+1 (屏幕目标左上)
+    code += b'\xA1' + _sp('X') + b'\x03\x05' + _sp('XOFF') + b'\x2B\x05' + _sp('W') + b'\x40' + b'\xA3' + _sp('DX0')
+    code += b'\xA1' + _sp('Y') + b'\x03\x05' + _sp('YOFF') + b'\x2B\x05' + _sp('H') + b'\x40' + b'\xA3' + _sp('DY0')
+    # CX0=max(DX0,0); CX1=min(DX0+W-1,855); 空则回退
+    code += b'\xA1' + _sp('DX0') + b'\x89\xC7\x85\xFF\x79\x02\x31\xFF' + b'\x89\x3D' + _sp('CX0')
+    code += b'\x03\x05' + _sp('W') + b'\x48' + b'\x3D\x57\x03\x00\x00' + b'\x7E\x05' + b'\xB8\x57\x03\x00\x00'
+    code += b'\xA3' + _sp('CX1')
+    code += b'\x39\xC7'
+    jc1 = _j32c(code, 'jg')
+    # CY0/CY1
+    code += b'\xA1' + _sp('DY0') + b'\x89\xC6\x85\xF6\x79\x02\x31\xF6' + b'\x89\x35' + _sp('CY0')
+    code += b'\x03\x05' + _sp('H') + b'\x48' + b'\x3D\xDF\x01\x00\x00' + b'\x7E\x05' + b'\xB8\xDF\x01\x00\x00'
+    code += b'\xA3' + _sp('CY1')
+    code += b'\x39\xC6'
+    jc2 = _j32c(code, 'jg')
+    # SXC = SX0 + (CX0-DX0) ; SYR = SY0 + (CY0-DY0)
+    code += b'\xA1' + _sp('CX0') + b'\x2B\x05' + _sp('DX0') + b'\x03\x05' + _sp('SX0') + b'\xA3' + _sp('SXC')
+    code += b'\xA1' + _sp('CY0') + b'\x2B\x05' + _sp('DY0') + b'\x03\x05' + _sp('SY0') + b'\xA3' + _sp('SYR')
+    # 拷入: DST[CX0..CY1] -> scratch[SXC..SYR] (用当前 g_stride)
+    code += b'\xFC'                                    # cld
+    code += b'\x8B\x2D' + _sp('CY0')                   # mov ebp,[CY0]
+    l_row = len(code)
+    code += b'\x89\xE8\x0F\xAF\x05' + _g_stride() + b'\x03\x05' + _sp('CX0') + b'\x8D\x34\x00' + b'\x03\x35' + _sp('DST')
+    code += b'\x89\xE8\x2B\x05' + _sp('CY0') + b'\x03\x05' + _sp('SYR')
+    code += b'\x69\xC0\x80\x02\x00\x00' + b'\x03\x05' + _sp('SXC') + b'\x8D\x04\x00' + b'\x05' + _spscratch() + b'\x89\xC7'
+    code += b'\x8B\x0D' + _sp('CX1') + b'\x2B\x0D' + _sp('CX0') + b'\x41'
+    code += b'\xF3\x66\xA5'                            # rep movsw
+    code += b'\x45'                                    # inc ebp
+    code += b'\x3B\x2D' + _sp('CY1')
+    jrow = len(code); code += b'\x7E\x00'
+    code[jrow + 1] = (l_row - (jrow + 2)) & 0xFF
+    code += b'\x61'                                    # popad
+    code += b'\xB8\x01\x00\x00\x00'                    # mov eax,1
+    code += b'\xC3'
+    a_inv = len(code)
+    code += b'\x61\x31\xC0\xC3'                        # popad; xor eax,eax; ret
+    for jj in (j1, j2, j3, j4, j5, jc1, jc2):
+        code[jj + 2:jj + 6] = struct.pack('<i', a_inv - (jj + 6))
+    return bytes(code)
+
+
+def build_sprite_blit() -> bytes:
+    """把 scratch 帧矩形拷回 SPR_DST (内容=已绘制/混合好的最终像素)。"""
+    code = bytearray()
+    code += b'\x60'                                    # pushad
+    code += b'\xFC'                                    # cld
+    code += b'\x8B\x2D' + _sp('CY0')                   # mov ebp,[CY0]
+    l_row = len(code)
+    # esi = scratch + ((SYR + ebp-CY0)*640 + SXC)*2
+    code += b'\x89\xE8\x2B\x05' + _sp('CY0') + b'\x03\x05' + _sp('SYR')
+    code += b'\x69\xC0\x80\x02\x00\x00' + b'\x03\x05' + _sp('SXC') + b'\x8D\x34\x00' + b'\x81\xC6' + _spscratch()
+    # edi = DST + (ebp*g_stride + CX0)*2
+    code += b'\x89\xE8\x0F\xAF\x05' + _g_stride() + b'\x03\x05' + _sp('CX0') + b'\x8D\x3C\x00' + b'\x03\x3D' + _sp('DST')
+    code += b'\x8B\x0D' + _sp('CX1') + b'\x2B\x0D' + _sp('CX0') + b'\x41'
+    code += b'\xF3\x66\xA5'                            # rep movsw
+    code += b'\x45'                                    # inc ebp
+    code += b'\x3B\x2D' + _sp('CY1')
+    jrow = len(code); code += b'\x7E\x00'
+    code[jrow + 1] = (l_row - (jrow + 2)) & 0xFF
+    code += b'\x61\xC3'                                # popad; ret
+    return bytes(code)
+
+
+def build_sprite_entry() -> bytes:
+    """共享入口 (由各函数跳板以 `jmp` 进入, eax=函数体地址, ebp 已由序言建立)。
+
+    栈: [ebp+4]=返回调用者地址, [ebp+8]=obj, [ebp+0xC]=X, [ebp+0x10]=Y,
+    [ebp+0x14]=frame, [ebp+0x18]=dst。重定向后用原 dst 做两步 blit。
+    """
+    code = bytearray()
+    code += b'\x50'                                    # push eax (函数体地址)
+    # 嵌套/旁路保护: 454D90/4553A4 会回调 4544EC, 内层必须走原路径
+    code += b'\x83\x3D' + _sp('BYP') + b'\x00'         # cmp [BYP],0
+    j_byp = _j32c(code, 'jne')
+    code += b'\xFF\x05' + _sp('DEP')                   # inc [DEP]
+    code += b'\x83\x3D' + _sp('DEP') + b'\x01'         # cmp [DEP],1
+    j_dep = _j32c(code, 'jne')
+    code += b'\x8B\x4D\x04' + b'\x89\x0D' + _sp('RET')
+    code += b'\x8B\x4D\x08' + b'\x89\x0D' + _sp('OBJ')
+    code += b'\x8B\x4D\x0C' + b'\x89\x0D' + _sp('X')
+    code += b'\x8B\x4D\x10' + b'\x89\x0D' + _sp('Y')
+    code += b'\x8B\x4D\x14' + b'\x89\x0D' + _sp('FRM')
+    code += b'\x8B\x4D\x18' + b'\x89\x0D' + _sp('DST')
+    # ⚠ 只在"宽屏游戏态" (g_stride==856) 走两步: 页面态 g_stride==640, 其目标
+    # (页画布/拾取缓冲/缩略图等) 本就是 640 布局, 一律回退原路径, 避免用错步长
+    # 读写非屏目标 (存档页等曾因此异常)。
+    code += b'\x81\x3D' + _g_stride() + struct.pack('<I', W_SCREEN)  # cmp [g_stride],856
+    j_nd3 = _j32c(code, 'jne')
+    code += b'\xA1' + _g_stride() + b'\xA3' + _sp('STR')
+    code += b'\xA1' + _g_end() + b'\xA3' + _sp('END')
+    p1 = _eip_add(code)                                # -> prep
+    code += b'\xFF\xD0'                                # call eax
+    code += b'\x85\xC0'
+    j_bad = _j32c(code, 'je')
+    code += b'\xA1' + _sp('X0') + b'\x89\x45\x0C'      # mov [ebp+0xC],eax
+    code += b'\xA1' + _sp('Y0') + b'\x89\x45\x10'
+    code += b'\xC7\x45\x18' + _spscratch()             # mov [ebp+0x18],SCRATCH
+    code += b'\xC7\x05' + _g_stride() + struct.pack('<I', W_PAGE)
+    code += b'\xC7\x05' + _g_end() + struct.pack('<I', _end_of(479, W_PAGE))
+    p2 = _eip_add(code)                                # -> after (共享)
+    code += b'\x89\x45\x04'                            # mov [ebp+4],eax
+    code += b'\x58\xFF\xE0'                            # pop eax; jmp eax (函数体)
+    off_bclear = len(code)
+    code += b'\xC7\x05' + _sp('BYP') + b'\x00\x00\x00\x00'
+    off_plain0 = len(code)                             # 旁路: 不改深度
+    code += b'\x58\xFF\xE0'                            # pop eax; jmp eax
+    off_plain_dec = len(code)                          # 嵌套/几何非法: 先减深度
+    code += b'\xFF\x0D' + _sp('DEP')                   # dec [DEP]
+    code += b'\x58\xFF\xE0'                            # pop eax; jmp eax
+    off_after = len(code)
+    code += b'\xFF\x0D' + _sp('DEP')                   # dec [DEP]
+    code += b'\xA1' + _sp('STR') + b'\xA3' + _g_stride()
+    code += b'\xA1' + _sp('END') + b'\xA3' + _g_end()
+    p3 = _eip_add(code)                                # -> blit
+    code += b'\xFF\xD0'                                # call eax
+    code += b'\x8B\x0D' + _sp('RET') + b'\xFF\xE1'     # mov ecx,[RET]; jmp ecx
+    code[j_byp + 2:j_byp + 6] = struct.pack('<i', off_bclear - (j_byp + 6))
+    code[j_dep + 2:j_dep + 6] = struct.pack('<i', off_plain_dec - (j_dep + 6))
+    for jj in (j_nd3, j_bad):
+        code[jj + 2:jj + 6] = struct.pack('<i', off_plain_dec - (jj + 6))
+    return bytes(code), (p1, p2, p3), off_after
+
+
+def _build_sprite_block():
+    """返回 (blob, {子入口名: 块内偏移})。开关关闭时返回空。"""
+    if not SPRITE_PRIMS:
+        return b'', {}
+    blob = bytearray()
+    sub = {}
+    jmp_fix = []       # (rel32 位置, 'entry')
+    for name, va, pro_hex in SPRITE_PRIMS:
+        sub['sprite_hook_' + name] = len(blob)
+        pro = bytes.fromhex(pro_hex)
+        body = va + len(pro)
+        blob += b'\x58'                                # pop eax (丢弃 fn+5)
+        blob += pro
+        blob += b'\xB8' + struct.pack('<I', body)      # mov eax,函数体
+        pos = len(blob)
+        blob += b'\xE9\x00\x00\x00\x00'                # jmp 共享入口
+        jmp_fix.append(pos)
+    sub['sprite_entry'] = len(blob)
+    entry, ep, off_after = build_sprite_entry()
+    blob += entry
+    sub['sprite_prep'] = len(blob); blob += build_sprite_prep()
+    sub['sprite_blit'] = len(blob); blob += build_sprite_blit()
+    for pos in jmp_fix:
+        blob[pos + 1:pos + 5] = struct.pack('<i', sub['sprite_entry'] - (pos + 5))
+    (p1, p2, p3) = ep
+    base_e = sub['sprite_entry']
+    for (pop_off, imm_pos), tgt in ((p1, 'prep'), (p2, 'after'), (p3, 'blit')):
+        target = (base_e + off_after) if tgt == 'after' else sub['sprite_' + tgt]
+        blob[base_e + imm_pos:base_e + imm_pos + 4] = struct.pack('<i', target - (base_e + pop_off))
+    return bytes(blob), sub
+
+
+_SPRITE_BLOB, _SPRITE_SUB = _build_sprite_block()
+
+
 # ── 布局与入口 ─────────────────────────────────────────────────────────
 _BLOCKS = [
     ('init_stride', build_stride_init),
@@ -1001,7 +1289,10 @@ _BLOCKS = [
     ('blit_end_eax', build_blit_end_eax),
     ('blit_wrap_add', build_blit_wrap_add),
     ('blit_wrap_sub', build_blit_wrap_sub),
-] + [(name, (lambda f: (lambda: build_page_wrapper(f)))(fn))
+]
+if _SPRITE_BLOB:
+    _BLOCKS.append(('sprite_hooks', lambda: _SPRITE_BLOB))
+_BLOCKS += [(name, (lambda f: (lambda: build_page_wrapper(f)))(fn))
      for name, fn in PAGE_FUNCS.items()]
 
 
@@ -1010,6 +1301,9 @@ def cave_entries() -> dict:
     off = 0
     for name, builder in _BLOCKS:
         entries[name] = off
+        if name == 'sprite_hooks':
+            for k, v in _SPRITE_SUB.items():
+                entries[k] = off + v
         off += len(builder())
     return entries
 
