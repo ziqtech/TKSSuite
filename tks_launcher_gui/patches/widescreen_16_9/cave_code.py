@@ -231,8 +231,11 @@ def build_grab_copy() -> bytes:
 
     cdecl: [ebp+8]=dst(画布基址), [ebp+0xC]=src(屏幕基址), [ebp+0x10]=size(字节)。
     与 push 方向互为逆: 跳过左侧 108px 黑带, 逐行取 640px。
+    入口先执行 grab 时刻的光标擦除 (烤前清除, 见 grab_erase.py)。
     """
     code = bytearray(_copy_prologue())
+    if not DISABLE_GRAB_ERASE:
+        code += _build_grab_erase()
     code += b'\x8B\x5D\x08'                          # mov ebx,[ebp+8]   ; 画布行首
     code += b'\x8B\x55\x0C'                          # mov edx,[ebp+0xC] ; 屏幕行首
     code += b'\x81\xC2' + (PAGE_OFF * 2).to_bytes(4, 'little')    # add edx,216 ; 跳过左黑带
@@ -285,6 +288,8 @@ def build_page_wrapper(page_fn: int) -> bytes:
     code += b'\xC7\x05' + _g_stride() + struct.pack('<I', W_PAGE)
     code += b'\xC7\x05' + _g_off() + struct.pack('<I', PAGE_OFF)
     code += b'\xC7\x05' + _g_end() + struct.pack('<I', _end_of(479, W_PAGE))
+    code += b'\xA1' + struct.pack('<I', FONT_OBJ_PTR_VA)          # mov eax,[fontobj]
+    code += b'\xC7\x40' + bytes([FONT_PITCH_OFF]) + struct.pack('<I', FONT_PITCH_CANVAS)  # mov [eax+0x28],320
     code += b'\x8B\x04\x24'                          # mov eax,[esp]
     code += b'\xA3' + _g_ret()                       # mov [g_ret],eax
     call_off = len(code)
@@ -297,9 +302,13 @@ def build_page_wrapper(page_fn: int) -> bytes:
     code += b'\xFF\xE0'                              # jmp eax
     stub_off = len(code)
     code += b'\xFF\x35' + _g_ret()                   # push dword [g_ret]
+    code += b'\x50'                                  # push eax ; ⚠ 保存页面函数返回值
     code += b'\xC7\x05' + _g_stride() + struct.pack('<I', W_SCREEN)
     code += b'\xC7\x05' + _g_off() + struct.pack('<I', 0)
     code += b'\xC7\x05' + _g_end() + struct.pack('<I', _end_of(479, W_SCREEN))
+    code += b'\xA1' + struct.pack('<I', FONT_OBJ_PTR_VA)          # mov eax,[fontobj]
+    code += b'\xC7\x40' + bytes([FONT_PITCH_OFF]) + struct.pack('<I', FONT_PITCH_SCREEN)  # mov [eax+0x28],428
+    code += b'\x58'                                  # pop eax ; ⚠ 恢复返回值 (否则标题循环首帧 break)
     code += b'\xC3'                                  # ret (→ 调用者, EAX=页面返回值)
     code[add_imm_off:add_imm_off + 4] = ((stub_off - (call_off + 5)) & 0xFFFFFFFF).to_bytes(4, 'little')
     return bytes(code)
@@ -389,8 +398,13 @@ def build_rec_map() -> bytes:
 # 的唯一位点改道 —— 先以步长 640 把光标帧解码进 640x480 虚拟屏幕 (右下角
 # 锚点), 再把帧矩形按真实步长 blit 到后备表面 (哨兵色跳过透明)。
 # 光标即可在任何鼠标位置 (含页面黑边) 正确显示。
-DISABLE_CURSOR_ERASE = False            # 光标自擦除 (Phase A) 已启用
-DISABLE_CURSOR_SNAPSHOT = False        # 光标快照 (Phase B) 已启用
+DISABLE_GRAB_ERASE = False               # 二分开关: grab 前光标擦除
+DISABLE_CURSOR_ERASE = False             # 光标自擦除 (Phase A) 已启用
+DISABLE_CURSOR_SNAPSHOT = False          # 光标快照 (Phase B) 已启用
+FONT_OBJ_PTR_VA = 0x00755B08            # 字体对象指针变量 dword_755B08
+FONT_PITCH_OFF = 0x28                   # 对象内半行距字段偏移 (行距 = 2*该值)
+FONT_PITCH_CANVAS = 320                 # 页面态: 640 画布行距的一半 (渲染器内 ×2)
+FONT_PITCH_SCREEN = 428                 # 游戏态: 856 后备表面行距的一半
 CURSOR_SENTINEL = 0xFE1F                # RGB565 品红系, 调色板色几乎不可能命中
 CURSOR_PRIM_VA = 0x004544EC             # sub_4544EC
 
@@ -438,19 +452,12 @@ def build_cursor_scratch() -> bytes:
     emit(b'\x53\x56\x57\x55')                        # push ebx;esi;edi;ebp
     # [esp+0x10]=ret [0x14]=obj [0x18]=X [0x1C]=Y [0x20]=frame [0x24]=dst
 
-    # ── Phase A: 上一帧光标自擦除 (backing store) ──
-    # 菜单等页面的循环不做每帧全屏重绘 (宽屏下背景 Blt 不覆盖/失败), 光标
-    # 画进后备表面会永久残留 (实测: 魔法色块跨帧不消失, 光标移动后 A 点像素
-    # 原样保留 → 一堆光标叠加)。方案: 绘制前把目标矩形快照进 BKBUF; 下一帧
-    # 先校验该矩形是否仍精确等于 "上一帧画完的样子" (scratch 此刻仍保有上一
-    # 帧解码结果: 非哨兵像素=我们写的值, 哨兵像素=应等于快照背景), 完全一致
-    # 才恢复背景 — 有任何其它绘制碰过该区域就跳过恢复, 绝不覆盖别人。
-    # 校验通过后 BK_VALID=0, Phase B 绘制成功后重新快照。
-    pa_skip = jmp32()                                # jmp A_START (越过 A_INVALID 块)
-    a_invalid_pos = len(code)
-    emit(b'\xC7\x05' + _cur('bv') + struct.pack('<I', 0))   # A_INVALID: VALID=0
-    # A_START:
-    code[pa_skip + 1:pa_skip + 5] = struct.pack('<i', len(code) - (pa_skip + 5))
+    # ── Phase A: 上一帧光标自擦除 (逐像素归属恢复) ──
+    # 不做整矩形校验: 游戏每帧只局部重绘 (动画/悬停高亮) 时, 整矩形校验会因
+    # 局部变化而整体放弃恢复 → 未被覆盖的光标像素永久残留 (实测: 鼠标快速移动
+    # 成串拖影)。改为逐像素归属判定: 仅当该像素仍精确等于本帧我们写入的值
+    # (scratch 非哨兵 且 dst == scratch) 才恢复 BKBUF 背景; 被游戏其它绘制碰过
+    # 的像素一律不动。scratch 此刻仍保有上一帧解码结果 (Phase B 才 refill)。
     emit(b'\xA1' + _cur('bv'))                       # mov eax,[BK_VALID]
     emit(b'\x85\xC0')                                # test eax,eax
     pa0 = j32('je')                                  # jz A_DONE (无效, 跳过)
@@ -458,35 +465,35 @@ def build_cursor_scratch() -> bytes:
         pa0 = jmp32()                                # 二分开关: 永远跳过擦除
     emit(b'\xA1' + _cur('bs'))                       # mov eax,[BK_STRIDE]
     emit(b'\x3B\x05' + _g_stride())                  # cmp eax,[g_stride]
-    pa1 = j32('jne')                                 # jne A_INVALID (表面/步长变了)
+    pa1 = j32('jne')                                 # jne A_DONE (表面/步长变了)
     emit(b'\x8B\x44\x24\x24')                        # mov eax,[esp+0x24] ; dst
     emit(b'\x3B\x05' + _cur('bd'))                   # cmp eax,[BK_DST]
-    pa2 = j32('jne')                                 # jne A_INVALID
+    pa2 = j32('jne')                                 # jne A_DONE
     emit(b'\xA1' + _cur('bw'))                       # mov eax,[BK_W]
     emit(b'\x85\xC0')                                # test eax,eax
-    pa3 = j32('je')                                  # jz A_INVALID
+    pa3 = j32('je')                                  # jz A_DONE
     emit(b'\x3D' + struct.pack('<I', BK_MAX_W))      # cmp eax,256
-    pa4 = j32('ja')                                  # ja A_INVALID (超快照尺寸)
+    pa4 = j32('ja')                                  # ja A_DONE
     emit(b'\x8B\x0D' + _cur('bh'))                   # mov ecx,[BK_H]
     emit(b'\x85\xC9')                                # test ecx,ecx
-    pa5 = j32('je')                                  # jz A_INVALID
+    pa5 = j32('je')                                  # jz A_DONE
     emit(b'\x81\xF9' + struct.pack('<I', BK_MAX_H))  # cmp ecx,128
-    pa6 = j32('ja')                                  # ja A_INVALID
+    pa6 = j32('ja')                                  # ja A_DONE
+    emit(b'\xFC')                                    # cld
     emit(b'\x33\xED')                                # xor ebp,ebp ; y=0
-    a_vrow = len(code)
+    a_rrow = len(code)
     # dst 行指针 edi = dst + ((by+y)*stride + bx)*2
     emit(b'\x8B\xC5')                                # mov eax,ebp
     emit(b'\x03\x05' + _cur('by'))                   # add eax,[BK_Y0]
     emit(b'\x0F\xAF\x05' + _cur('bs'))               # imul eax,[BK_STRIDE]
     emit(b'\x03\x05' + _cur('bx'))                   # add eax,[BK_X0]
     emit(b'\x8D\x3C\x00')                            # lea edi,[eax+eax]
-    emit(b'\x03\x7C\x24\x24')                            # add edi,[esp+0x24]
+    emit(b'\x03\x7C\x24\x24')                        # add edi,[esp+0x24]
     # BK 行指针 esi = BKBUF + y*512 (256px)
     emit(b'\x8B\xF5')                                # mov esi,ebp
     emit(b'\xC1\xE6\x09')                            # shl esi,9
     emit(b'\x81\xC6' + _g_bkbuf())                   # add esi,BKBUF
     # scratch 行基址 ebx = SCRATCH + ((by+y - PY + 240)*640 + (bx - PX + 320))*2
-    # (上帧裁剪已把矩形约束在锚点 ±320/±240 窗口内, 索引必在 [0,640)x[0,480))
     emit(b'\x8B\xC5')                                # mov eax,ebp
     emit(b'\x03\x05' + _cur('by'))                   # add eax,[BK_Y0]
     emit(b'\x2B\x05' + _cur('py'))                   # sub eax,[CUR_PY]
@@ -496,66 +503,39 @@ def build_cursor_scratch() -> bytes:
     emit(b'\x2B\x15' + _cur('px'))                   # sub edx,[CUR_PX]
     emit(b'\x81\xC2\x40\x01\x00\x00')                # add edx,320
     emit(b'\x03\xC2')                                # add eax,edx
-    emit(b'\x8D\x00')                                # lea eax,[eax+eax]
+    emit(b'\x8D\x04\x00')                            # lea eax,[eax+eax] ; 像素索引→字节偏移(×2)
     emit(b'\x05' + _g_scratch())                     # add eax,SCRATCH
     emit(b'\x8B\xD8')                                # mov ebx,eax
-    emit(b'\x8B\x15' + _cur('bw'))                   # mov edx,[BK_W] ; 列计数
-    a_vpx = len(code)
+    emit(b'\x8B\x0D' + _cur('bw'))                   # mov ecx,[BK_W] ; 列计数
+    a_px = len(code)
     emit(b'\x66\x8B\x03')                            # mov ax,[ebx] ; 上帧解码值
     emit(b'\x66\x3D' + struct.pack('<H', CURSOR_SENTINEL))  # cmp ax,SENTINEL
-    pa7 = j32('je')                                  # je A_TRANSP (透明位 → 期望=快照背景)
-    emit(b'\x66\x3B\x07')                            # cmp ax,[edi] ; 期望=写的值
-    pa8 = j32('jne')                                 # jne A_INVALID (被人改过)
-    pa9 = jmp32()                                    # jmp A_NEXT_PX
-    a_transp = pa9 + 5                               # A_TRANSP 紧随 jmp 之后
-    code[pa7 + 2:pa7 + 6] = struct.pack('<i', a_transp - (pa7 + 6))
-    code[pa8 + 2:pa8 + 6] = struct.pack('<i', a_invalid_pos - (pa8 + 6))
-    code[pa9 + 1:pa9 + 5] = struct.pack('<i', a_transp - (pa9 + 5))
-    # A_TRANSP:
+    pa7 = j32('je')                                  # je A_NEXT (透明位: 未写过)
+    emit(b'\x66\x3B\x07')                            # cmp ax,[edi] ; 仍是我们的值?
+    pa8 = j32('jne')                                 # jne A_NEXT (被游戏改过, 不动)
     emit(b'\x66\x8B\x06')                            # mov ax,[esi] ; 快照背景
-    emit(b'\x66\x3B\x07')                            # cmp ax,[edi]
-    pa10 = j32('jne')                                # jne A_INVALID
-    code[pa10 + 2:pa10 + 6] = struct.pack('<i', a_invalid_pos - (pa10 + 6))
-    # A_NEXT_PX:
+    emit(b'\x66\x89\x07')                            # mov [edi],ax ; 恢复
+    # A_NEXT:
+    code[pa7 + 2:pa7 + 6] = struct.pack('<i', len(code) - (pa7 + 6))
+    code[pa8 + 2:pa8 + 6] = struct.pack('<i', len(code) - (pa8 + 6))
     emit(b'\x83\xC7\x02')                            # add edi,2
     emit(b'\x83\xC6\x02')                            # add esi,2
     emit(b'\x83\xC3\x02')                            # add ebx,2
-    emit(b'\x4A')                                    # dec edx
-    pa11 = j32('jne')                                # jne A_VERIFY_PX
-    code[pa11 + 2:pa11 + 6] = struct.pack('<i', a_vpx - (pa11 + 6))
+    emit(b'\x49')                                    # dec ecx
+    pa11 = j32('jne')                                # jne A_PX
+    code[pa11 + 2:pa11 + 6] = struct.pack('<i', a_px - (pa11 + 6))
     emit(b'\x45')                                    # inc ebp
     emit(b'\x3B\x2D' + _cur('bh'))                   # cmp ebp,[BK_H]
-    pa12 = j32('jb')                                 # jb A_VERIFY_ROW
-    code[pa12 + 2:pa12 + 6] = struct.pack('<i', a_vrow - (pa12 + 6))
-    # ── 恢复: BK 矩形 → dst ──
-    emit(b'\xFC')                                    # cld
-    emit(b'\x33\xED')                                # xor ebp,ebp
-    a_rrow = len(code)
-    emit(b'\x8B\xC5')                                # mov eax,ebp
-    emit(b'\x03\x05' + _cur('by'))                   # add eax,[BK_Y0]
-    emit(b'\x0F\xAF\x05' + _cur('bs'))               # imul eax,[BK_STRIDE]
-    emit(b'\x03\x05' + _cur('bx'))                   # add eax,[BK_X0]
-    emit(b'\x8D\x3C\x00')                            # lea edi,[eax+eax]
-    emit(b'\x03\x7C\x24\x24')                            # add edi,[esp+0x24]
-    emit(b'\x8B\xF5')                                # mov esi,ebp
-    emit(b'\xC1\xE6\x09')                            # shl esi,9
-    emit(b'\x81\xC6' + _g_bkbuf())                   # add esi,BKBUF
-    emit(b'\x8B\x0D' + _cur('bw'))                   # mov ecx,[BK_W] ; 词数
-    emit(b'\xF3\x66\xA5')                            # rep movsw
-    emit(b'\x45')                                    # inc ebp
-    emit(b'\x3B\x2D' + _cur('bh'))                   # cmp ebp,[BK_H]
-    pa13 = j32('jb')                                 # jb A_REST_ROW
-    code[pa13 + 2:pa13 + 6] = struct.pack('<i', a_rrow - (pa13 + 6))
-    pa14 = jmp32()                                   # jmp A_DONE
-    # A_DONE = Phase A 结束处 (原流程入口), 此刻才能确定:
+    pa12 = j32('jb')                                 # jb A_ROW
+    code[pa12 + 2:pa12 + 6] = struct.pack('<i', a_rrow - (pa12 + 6))
+    # A_DONE = Phase A 结束处 (原流程入口):
     a_end = len(code)
-    code[pa14 + 1:pa14 + 5] = struct.pack('<i', a_end - (pa14 + 5))
     if DISABLE_CURSOR_ERASE:
         code[pa0 + 1:pa0 + 5] = struct.pack('<i', a_end - (pa0 + 5))
     else:
         code[pa0 + 2:pa0 + 6] = struct.pack('<i', a_end - (pa0 + 6))
     for pp in (pa1, pa2, pa3, pa4, pa5, pa6):
-        code[pp + 2:pp + 6] = struct.pack('<i', a_invalid_pos - (pp + 6))
+        code[pp + 2:pp + 6] = struct.pack('<i', a_end - (pp + 6))
 
     # ── 原始流程: 帧几何 ──
     emit(b'\x8B\x74\x24\x14')                        # mov esi,[esp+0x14] ; obj
@@ -968,9 +948,14 @@ def build_gxp_blt_fix() -> bytes:
     jz_fix.append(len(code) + 1); emit(b'\x74\x00')      # jz skip
     emit(b'\x85\xD2')                                    # test edx,edx
     jz_fix.append(len(code) + 1); emit(b'\x74\x00')      # jz skip
-    emit(b'\x3D' + struct.pack('<I', W_SCREEN))          # cmp eax,856
-    jbe_fix.append(len(code) + 1); emit(b'\x76\x00')     # jbe ok (不超屏宽)
-    emit(b'\xB8' + struct.pack('<I', W_SCREEN))          # mov eax,856
+    # ⚠ 宽度必须钳到 748 (= 856-108): padded gxp 源宽 856, 若 W 取 856 则
+    # dst.right = W+108 = 964 超出后备表面 → Blt 返回 DDERR_INVALIDRECT 每帧
+    # 失败 → 后备永不重涂, 上一帧光标残留 → 鼠标事件的 grab 把它烤进画布,
+    # push 每帧重放 (实测: 标题屏光标残影成串)。钳 748 后 src={0,0,748,H}
+    # (640 内容 + 108 黑带) → dst={108,0,856,H} 恰好铺满画布区+右带。
+    emit(b'\x3D' + struct.pack('<I', W_SCREEN - PAGE_OFF))   # cmp eax,748
+    jbe_fix.append(len(code) + 1); emit(b'\x76\x00')     # jbe ok (不超可 blit 宽)
+    emit(b'\xB8' + struct.pack('<I', W_SCREEN - PAGE_OFF))   # mov eax,748
     ok_off = len(code)
     emit(b'\xC7\x05' + struct.pack('<I', G_RECT_VA) + b'\x00\x00\x00\x00')          # src left=0
     emit(b'\xC7\x05' + struct.pack('<I', G_RECT_VA + 4) + b'\x00\x00\x00\x00')      # src top=0
@@ -1031,6 +1016,20 @@ def build_cave_block() -> bytes:
     for name, builder in _BLOCKS:
         block += builder()
     return bytes(block)
+
+
+def _load_grab_erase_builder():
+    """按路径加载 grab_erase.py (与 本文件 同目录), 返回 build_grab_erase。"""
+    import importlib.util
+    import os
+    _p = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'grab_erase.py')
+    _spec = importlib.util.spec_from_file_location('_ws_grab_erase', _p)
+    _m = importlib.util.module_from_spec(_spec)
+    _spec.loader.exec_module(_m)
+    return _m.build_grab_erase
+
+
+_build_grab_erase = _load_grab_erase_builder()
 
 
 CAVE_ENTRIES = cave_entries()
