@@ -804,6 +804,18 @@ def build_cursor_scratch() -> bytes:
 # 反复回卷, 表现为鼠标移动时整屏拉丝花屏 (实测: 移动 2px, y±15 行内跨全宽
 # 散点)。TKSRemake 的等价语义是"当前逻辑宽度"统一参与裁剪 (SetLogicalWidth),
 # 故此处改为与 g_stride 同步的动态宽度 (页面=640, 游戏=856)。
+def build_fade_count() -> bytes:
+    """淡变 LUT 逐像素循环的像素数: 原版硬编码 307200 (=640*480), 在 856 画布上
+    只铺 307200/856≈359 行 → 上暗下亮的分界。改为运行时 g_stride*480
+    (游戏 410880 / 页面 307200)。
+
+    替换 `mov ecx,0x4B000` (0x4054B3, 5B): E8 进 cave, 设好 ecx 后 ret 回 site+5。
+    """
+    return (b'\xB9\xE0\x01\x00\x00'          # mov ecx,480
+            + b'\x0F\xAF\x0D' + _g_stride()   # imul ecx,[g_stride]
+            + b'\xC3')                        # ret
+
+
 def build_blit_cmp_eax_w() -> bytes:
     """5B 位点 `cmp eax,640` -> `cmp eax,[g_stride]` (标志位供后续 jcc)。"""
     return b'\x59' + b'\x3B\x05' + _g_stride() + b'\xFF\xE1'
@@ -1643,6 +1655,7 @@ _BLOCKS = [
     ('blit_end_eax', build_blit_end_eax),
     ('blit_wrap_add', build_blit_wrap_add),
     ('blit_wrap_sub', build_blit_wrap_sub),
+    ('fade_count', build_fade_count),
 ]
 if _SPRITE_BLOB:
     _BLOCKS.append(('sprite_hooks', lambda: _SPRITE_BLOB))
