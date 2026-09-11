@@ -168,7 +168,7 @@ def _g_bkbuf() -> bytes:
     return struct.pack('<I', 0x400000 + BKBUF_RVA)
 
 
-SPR_DEBUG = True       # 运行期探针 (定位后置 False 并移除)
+SPR_DEBUG = False      # 运行期探针 (定位后置 False 并移除)
 
 
 def _dbg(off: int = 0) -> bytes:
