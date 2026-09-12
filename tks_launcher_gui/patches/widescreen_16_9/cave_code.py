@@ -95,11 +95,18 @@ GLOBALS_PH_BASE = 0x400000 + 0x260800       # 占位基址 (= 槽位 0x660800)
 GLOBALS_REBASE_SPAN = 0x99                  # 槽位窗口: 0x660800..0x660898 (含 scratch 基址)
 # 调试探针区 (定位"主角不显示"用; 定位后连同 SPR_DEBUG 一起移除)
 DBG_RVA = BKBUF_RVA + BKBUF_SIZE          # 0x306898
-DBG_BYTES = 0x260
+DBG_BYTES = 0x270
 PAGE_MODE_RVA = DBG_RVA + 0xB0    # 1=页面态(640 逻辑宽), 0=游戏态(856)
 CUR_TSTR_RVA = DBG_RVA + 0xB4     # 光标本次的目标行距
+MG_MOUSE_RVA = DBG_RVA + 0xB8     # 鼠标 X - 108 (未钳制): 小游戏命中判定读点
+                                  # (DBG 区内, 已在 globals_extra_windows 重定位窗口)
+MG_MAP_RVA = DBG_RVA + 0xBC        # 鼠标 X 钳 [0,639]: 拾取读点 (410B77) 专用。
+                                    # 拾取缓冲 word_78E276 为静态 BSS (614400B, 恰止于
+                                    # 0x824276, 紧邻鼠标/TK-Edit 全局) — 不可扩容 (实测扩容
+                                    # 的 -1 填充覆盖 0x8242B8 → 弹 TK-Edit 调试层且输入失效);
+                                    # x>=640 读末列值(空), 实体命中由 410B74 的 bbox 兜底。
 GLOBALS_EXTRA_WINDOWS = ((BKBUF_RVA - 0x260800, 1), (DBG_RVA - 0x260800, DBG_BYTES))
-GLOBALS_ALLOC_SIZE = (DBG_RVA - 0x260800) + DBG_BYTES
+GLOBALS_ALLOC_SIZE = (MG_MAP_RVA - 0x260800) + 4
 
 GXP_W_VA = 0x00A2B9A4                # gxp 头解析出的宽
 GXP_H_VA = 0x00A2B9A8                # 高
@@ -154,6 +161,14 @@ def _g_end() -> bytes:
 
 def _g_page_x() -> bytes:
     return struct.pack('<I', 0x400000 + PAGE_X_RVA)
+
+
+def _g_mouse_mg() -> bytes:
+    return struct.pack('<I', 0x400000 + MG_MOUSE_RVA)
+
+
+def _g_mouse_map() -> bytes:
+    return struct.pack('<I', 0x400000 + MG_MAP_RVA)
 
 
 def _g_page_rec_x() -> bytes:
@@ -353,6 +368,7 @@ def build_mouse_clamp() -> bytes:
     code += b'\xA3' + struct.pack('<I', 0x00824278)  # mov [0x824278],eax (原指令)
     code += b'\x59'                                  # pop ecx  ; 返回地址 (全程保留!)
     code += b'\x8D\x40' + struct.pack('<b', -PAGE_OFF)  # lea eax,[eax-108]
+    code += b'\xA3' + _g_mouse_mg()                  # mov [MG_MOUSE],eax (未钳制, 小游戏命中用)
     code += b'\x85\xC0'                              # test eax,eax
     code += b'\x79\x02'                              # jns +2
     code += b'\x31\xC0'                              # xor eax,eax
@@ -360,6 +376,14 @@ def build_mouse_clamp() -> bytes:
     code += b'\x72\x05'                              # jb +5 (跳过 mov eax,639 共5B)
     code += b'\xB8\x7F\x02\x00\x00'                  # mov eax,639
     code += b'\xA3' + _g_page_x()                    # mov [PAGE_X],eax
+    code += b'\xA1' + struct.pack('<I', 0x00824278)  # mov eax,[0x824278] (重载 raw)
+    code += b'\x85\xC0'                              # test eax,eax
+    code += b'\x79\x02'                              # jns +2
+    code += b'\x31\xC0'                              # xor eax,eax
+    code += b'\x3D\x80\x02\x00\x00'                  # cmp eax,640
+    code += b'\x72\x05'                              # jb +5
+    code += b'\xB8\x7F\x02\x00\x00'                  # mov eax,639
+    code += b'\xA3' + _g_mouse_map()                 # mov [MG_MAP],eax
     code += b'\xFF\xE1'                              # jmp ecx
     return bytes(code)
 
@@ -375,12 +399,21 @@ def build_mouse_map_down() -> bytes:
     code += b'\x89\xCA'                              # mov edx,ecx
     code += b'\x59'                                  # pop ecx  ; 返回地址
     code += b'\x81\xEA' + struct.pack('<I', PAGE_OFF)   # sub edx,108
+    code += b'\x89\x15' + _g_mouse_mg()              # mov [MG_MOUSE],edx (未钳制, 小游戏命中用)
     code += b'\x79\x02'                              # jns +2
     code += b'\x31\xD2'                              # xor edx,edx
     code += b'\x81\xFA\x80\x02\x00\x00'              # cmp edx,640
     code += b'\x72\x05'                              # jb +5 (跳过 mov edx,639 共5B)
     code += b'\xBA\x7F\x02\x00\x00'                  # mov edx,639
     code += b'\x89\x15' + _g_page_x()                # mov [PAGE_X],edx
+    code += b'\x8B\x15' + struct.pack('<I', 0x00824278)  # mov edx,[0x824278] (重载 raw)
+    code += b'\x85\xD2'                              # test edx,edx
+    code += b'\x79\x02'                              # jns +2
+    code += b'\x31\xD2'                              # xor edx,edx
+    code += b'\x81\xFA\x80\x02\x00\x00'              # cmp edx,640
+    code += b'\x72\x05'                              # jb +5
+    code += b'\xBA\x7F\x02\x00\x00'                  # mov edx,639
+    code += b'\x89\x15' + _g_mouse_map()             # mov [MG_MAP],edx
     code += b'\x41'                                  # inc ecx (跳过位点尾 NOP)
     code += b'\xFF\xE1'                              # jmp ecx
     return bytes(code)
@@ -1072,24 +1105,27 @@ def build_gxp_blt_left() -> bytes:
     emit(b'\x81\xF9' + struct.pack('<I', 0x1E0))     # cmp ecx,480
     emit(b'\x76\x05')                                # jbe +5
     emit(b'\xB9' + struct.pack('<I', 0x1E0))         # mov ecx,480
-    # src/dst 矩形同为 {0,0,W,H} (左对齐)
-    emit(b'\xA3' + struct.pack('<I', G_DST_RECT_VA + 8))          # dst.right=W
-    emit(b'\x89\x0D' + struct.pack('<I', G_DST_RECT_VA + 12))     # dst.bottom=H
+    # src={0,0,W,H}; dst={108,0,W+108,H} — 小游戏 UI 居中 (背景/瓷砖/文字/鼠标同步 +108)
     emit(b'\xA3' + struct.pack('<I', G_RECT_VA + 8))              # src.right=W
     emit(b'\x89\x0D' + struct.pack('<I', G_RECT_VA + 12))         # src.bottom=H
+    emit(b'\x05' + struct.pack('<I', PAGE_OFF))                   # add eax,108
+    emit(b'\xA3' + struct.pack('<I', G_DST_RECT_VA + 8))          # dst.right=W+108
+    emit(b'\x89\x0D' + struct.pack('<I', G_DST_RECT_VA + 12))     # dst.bottom=H
     emit(b'\xC7\x05' + struct.pack('<I', G_RECT_VA) + b'\x00\x00\x00\x00')
     emit(b'\xC7\x05' + struct.pack('<I', G_RECT_VA + 4) + b'\x00\x00\x00\x00')
-    emit(b'\xC7\x05' + struct.pack('<I', G_DST_RECT_VA) + b'\x00\x00\x00\x00')
+    emit(b'\xC7\x05' + struct.pack('<I', G_DST_RECT_VA) + struct.pack('<I', PAGE_OFF))
     emit(b'\xC7\x05' + struct.pack('<I', G_DST_RECT_VA + 4) + b'\x00\x00\x00\x00')
     # ── esp 回到 A, 指向新矩形参数 (skip 路径除外) ──
     emit(b'\x81\xC4' + struct.pack('<I', 0x80))      # add esp,0x80 → esp=A
     emit(b'\xC7\x44\x24\x04' + struct.pack('<I', G_DST_RECT_VA))  # [A+4]=dstRect
     emit(b'\xC7\x44\x24\x0C' + struct.pack('<I', G_RECT_VA))      # [A+C]=srcRect
     # ── 右带清黑: W<856 时先 colorfill 整面黑 (44F420 同款) ──
-    emit(b'\x3D' + struct.pack('<I', W_SCREEN))      # cmp eax,856
+    # (eax 此时 = W+108, 故阈值 964 = 856+108 等价于 W<856)
+    emit(b'\x3D' + struct.pack('<I', W_SCREEN + PAGE_OFF))  # cmp eax,964
     j32(b'\x0F\x83', 'nofill')                       # jae nofill (无带)
     emit(b'\x81\xEC' + struct.pack('<I', 0x68))      # sub esp,0x68 (fx 100B); esp=A-0x68
-    emit(b'\xC7\x04\x24' + struct.pack('<I', 100))   # fx.dwSize=100 (其余全零=黑)
+    emit(b'\xC7\x04\x24' + struct.pack('<I', 100))   # fx.dwSize=100
+    emit(b'\xC7\x44\x24\x50' + b'\x00\x00\x00\x00')  # fx.dwFillColor=0 (fx+0x50, 44F420 实证; 不清零=栈垃圾色)
     emit(b'\x8B\x94\x24' + struct.pack('<I', 0x68))  # mov edx,[esp+0x68] (this=[A])
     emit(b'\x54')                                    # push esp (fx 指针)
     emit(b'\x68' + struct.pack('<I', 0x1000400))     # push DDBLT_WAIT|DDBLT_COLORFILL
@@ -1250,7 +1286,8 @@ def build_map_bg_blt() -> bytes:
     emit(b'\xC7\x44\x24\x0C' + struct.pack('<I', G_RECT_VA))      # [A+C]=srcRect
     # ── colorfill 整面黑 (44F420 同款, 仅 clamp 路径 = 必有黑带) ──
     emit(b'\x81\xEC' + struct.pack('<I', 0x68))      # sub esp,0x68 (fx 100B)
-    emit(b'\xC7\x04\x24' + struct.pack('<I', 100))   # fx.dwSize=100 (全零=黑)
+    emit(b'\xC7\x04\x24' + struct.pack('<I', 100))   # fx.dwSize=100
+    emit(b'\xC7\x44\x24\x50' + b'\x00\x00\x00\x00')  # fx.dwFillColor=0 (fx+0x50, 44F420 实证; 不清零=栈垃圾色)
     emit(b'\x8B\x94\x24' + struct.pack('<I', 0x68))  # mov edx,[esp+0x68] (this=[A], esp=A-0x68)
     emit(b'\x54')                                    # push esp (fx)
     emit(b'\x68' + struct.pack('<I', 0x1000400))     # push WAIT|COLORFILL
@@ -1274,6 +1311,15 @@ def build_map_bg_blt() -> bytes:
         val = labels[tgt] - (pos + 4)
         code[pos:pos + 4] = struct.pack('<i', val)
     return bytes(code)
+
+
+# ── 3e. 小游戏文字位移 wrapper ─────────────────────────────────────────
+# 7 个小游戏的状态/倒计时/按钮文字 44E49C 调用点 (30 个): x (arg3) += 108 与
+# 背景图/瓷砖/鼠标命中 (+108) 同步居中。尾调 44E49C (栈上参数原样传递)。
+def build_mg_text_shift() -> bytes:
+    return (b'\xC7\x44\x24\x0C' + struct.pack('<I', PAGE_OFF)   # add dword [esp+0xC],108 (x)
+            + b'\xB8' + struct.pack('<I', 0x44E49C)             # mov eax,44E49C
+            + b'\xFF\xE0')                                      # jmp eax (尾调)
 
 
 
@@ -1387,6 +1433,16 @@ def build_handler(entity_only=False):
     a.e(b'\x85\xF6'); a.j('e', 'done')         # obj 空 → 跳过 (防野指针)
     a.e(b'\x8B\x45\x0C'); a.st(0, L_X)
     a.e(b'\x8B\x45\x10'); a.st(0, L_Y)
+    # 小游戏居中: trampoline 以 mode|0x80 标记 → X += 108 (背景/瓷砖/文字/鼠标全链同步位移)
+    a.ld(0, L_MODE)                                  # mov eax,[ebp+L_MODE]
+    a.e(b'\xA8\x80')                                 # test al,0x80
+    a.j('e', 'no_mg_shift')
+    a.e(b'\x81\x45' + bytes([L_X & 0xFF]) + struct.pack('<I', PAGE_OFF))  # add dword [ebp+L_X],108
+    a.ld(0, L_MODE)
+    a.e(b'\x25\x7F\x00\x00\x00')                     # and eax,0x7f
+    a.st(0, L_MODE)
+    a.L('no_mg_shift')
+    a.e(b'\x8B\x45\x18'); a.st(0, L_DST)
     # ⚠ 帧号按 16 位有符号读: 原版 case 分支是 `mov ax,[entity+56]` 后整体 push eax
     # (高 16 位是残留的实体指针), 被调函数只读 word[ebp+0x14]。读完整 32 位会把
     # 高 16 位垃圾当帧号 → "帧号 < 总帧数" 判断失败 → 身体整路被跳过 (只剩影子)。
@@ -1920,31 +1976,31 @@ _UI_HOOKS = [
     ('ui40AD10', 0x40AD10, 'e80fa00400', 1),
     ('ui40AD51', 0x40AD51, 'e8ce9f0400', 1),
     ('ui40AD89', 0x40AD89, 'e85e970400', 0),
-    ('ui429361', 0x429361, 'e886b10200', 0),
-    ('ui4293C6', 0x4293C6, 'e821b10200', 0),
-    ('ui429621', 0x429621, 'e8c6ae0200', 0),
-    ('ui4296BE', 0x4296BE, 'e829ae0200', 0),
-    ('ui429FD7', 0x429FD7, 'e810a50200', 0),
-    ('ui429FFC', 0x429FFC, 'e8eba40200', 0),
-    ('ui42A022', 0x42A022, 'e8c5a40200', 0),
-    ('ui42A0EC', 0x42A0EC, 'e8fba30200', 0),
-    ('ui42A161', 0x42A161, 'e886a30200', 0),
-    ('ui42A2B0', 0x42A2B0, 'e837a20200', 0),
-    ('ui42A2D3', 0x42A2D3, 'e814a20200', 0),
-    ('ui42A2F5', 0x42A2F5, 'e8f2a10200', 0),
-    ('ui42A628', 0x42A628, 'e8bf9e0200', 0),
-    ('ui42A662', 0x42A662, 'e8859e0200', 0),
-    ('ui42B167', 0x42B167, 'e880930200', 0),
-    ('ui42B3E5', 0x42B3E5, 'e802910200', 0),
-    ('ui42B421', 0x42B421, 'e8c6900200', 0),
-    ('ui42D910', 0x42D910, 'e8d76b0200', 0),
-    ('ui42DA32', 0x42DA32, 'e8b56a0200', 0),
-    ('ui42E0A5', 0x42E0A5, 'e842640200', 0),
-    ('ui42E18C', 0x42E18C, 'e85b630200', 0),
-    ('ui42E78E', 0x42E78E, 'e8595d0200', 0),
-    ('ui42E88C', 0x42E88C, 'e85b5c0200', 0),
-    ('ui42F081', 0x42F081, 'e866540200', 0),
-    ('ui42F188', 0x42F188, 'e85f530200', 0),
+    ('ui429361', 0x429361, 'e886b10200', 128),
+    ('ui4293C6', 0x4293C6, 'e821b10200', 128),
+    ('ui429621', 0x429621, 'e8c6ae0200', 128),
+    ('ui4296BE', 0x4296BE, 'e829ae0200', 128),
+    ('ui429FD7', 0x429FD7, 'e810a50200', 128),
+    ('ui429FFC', 0x429FFC, 'e8eba40200', 128),
+    ('ui42A022', 0x42A022, 'e8c5a40200', 128),
+    ('ui42A0EC', 0x42A0EC, 'e8fba30200', 128),
+    ('ui42A161', 0x42A161, 'e886a30200', 128),
+    ('ui42A2B0', 0x42A2B0, 'e837a20200', 128),
+    ('ui42A2D3', 0x42A2D3, 'e814a20200', 128),
+    ('ui42A2F5', 0x42A2F5, 'e8f2a10200', 128),
+    ('ui42A628', 0x42A628, 'e8bf9e0200', 128),
+    ('ui42A662', 0x42A662, 'e8859e0200', 128),
+    ('ui42B167', 0x42B167, 'e880930200', 128),
+    ('ui42B3E5', 0x42B3E5, 'e802910200', 128),
+    ('ui42B421', 0x42B421, 'e8c6900200', 128),
+    ('ui42D910', 0x42D910, 'e8d76b0200', 128),
+    ('ui42DA32', 0x42DA32, 'e8b56a0200', 128),
+    ('ui42E0A5', 0x42E0A5, 'e842640200', 128),
+    ('ui42E18C', 0x42E18C, 'e85b630200', 128),
+    ('ui42E78E', 0x42E78E, 'e8595d0200', 128),
+    ('ui42E88C', 0x42E88C, 'e85b5c0200', 128),
+    ('ui42F081', 0x42F081, 'e866540200', 128),
+    ('ui42F188', 0x42F188, 'e85f530200', 128),
 ]
 
 _SPRITE_HOOKS = _ENTITY_HOOKS + _BATTLE_HOOKS + _UI_HOOKS
@@ -1979,6 +2035,8 @@ _MG_BLOB = build_gxp_blt_left()          # 小游戏背景 Blt 左对齐+右带�
 _BLOCKS.append(('mg_blt_left', lambda: _MG_BLOB))
 _MAP_BLOB = build_map_bg_blt()           # 地图/战场背景 Blt 视口钳制 (窄地图)
 _BLOCKS.append(('map_bg_blt', lambda: _MAP_BLOB))
+_MGT_BLOB = build_mg_text_shift()        # 小游戏文字位移 wrapper (+108)
+_BLOCKS.append(('mg_text_shift', lambda: _MGT_BLOB))
 
 
 # 诊断: 给关键 cave 块加调用计数 (定位菜单花屏时哪条路径在跑; 定位后移除)
