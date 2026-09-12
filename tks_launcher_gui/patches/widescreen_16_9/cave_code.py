@@ -1172,23 +1172,29 @@ def build_map_bg_blt() -> bytes:
     emit(b'\x8B\x0D' + _g_ret2())                    # mov ecx,[g_ret2]
     emit(b'\xFF\xE1')                                # jmp ecx -> site+5
     clamp = len(code)
-    # ── X: vx = clamp(viewX, L, U), L=min(0,t), U=max(0,t), t = bgW-856 ──
+    # ── X: bgW>=856 → vx=clamp(viewX,0,bgW-856) 跟随;
+    #    bgW<856 → vx = -((856-bgW)>>1) 恒定居中 (4:3 信箱, 左右黑边) ──
     emit(b'\x0F\xB7\x05' + struct.pack('<I', BGW))   # movzx eax,word bgW
-    emit(b'\x2D' + struct.pack('<I', W_SCREEN))      # sub eax,856   (t)
+    emit(b'\x2D' + struct.pack('<I', W_SCREEN))      # sub eax,856   (t = bgW-856)
+    emit(b'\x85\xC0')                                # test eax,eax
+    j32(b'\x0F\x88', 'x_narrow')                     # js x_narrow (t<0 = 窄地图)
+    emit(b'\x8B\x0D' + struct.pack('<I', VXL))       # mov ecx,[8242A8] viewX
+    emit(b'\x33\xD2')                                # xor edx,edx
+    emit(b'\x3B\xCA')                                # cmp ecx,edx
+    emit(b'\x0F\x4C\xCA')                            # cmovl ecx,edx   vx=max(viewX,0)
+    emit(b'\x3B\xC8')                                # cmp ecx,eax
+    emit(b'\x0F\x4F\xC8')                            # cmovg ecx,eax   vx=min(vx,t)
+    jmp_xstore = emit(b'\xE9\x00\x00\x00\x00')       # jmp x_store
+    x_narrow = len(code)
+    emit(b'\xF7\xD8')                                # neg eax         (856-bgW > 0)
+    emit(b'\xD1\xF8')                                # sar eax,1       left=(856-bgW)/2
+    emit(b'\xF7\xD8')                                # neg eax         vx=-left
     emit(b'\x8B\xC8')                                # mov ecx,eax
-    emit(b'\x8B\xD0')                                # mov edx,eax
-    emit(b'\x33\xC0')                                # xor eax,eax
-    emit(b'\x85\xC9')                                # test ecx,ecx
-    emit(b'\x0F\x49\xC8')                            # cmovns ecx,eax  L=(t>=0)?0:t
-    emit(b'\x0F\x48\xD0')                            # cmovs edx,eax   U=(t<0)?0:t
-    emit(b'\x8B\x05' + struct.pack('<I', VXL))       # mov eax,[8242A8] viewX
-    emit(b'\x3B\xC1')                                # cmp eax,ecx
-    emit(b'\x0F\x4C\xC1')                            # cmovl eax,ecx   vx=max(viewX,L)
-    emit(b'\x3B\xC2')                                # cmp eax,edx
-    emit(b'\x0F\x4F\xC2')                            # cmovg eax,edx   vx=min(vx,U)
-    emit(b'\x89\x05' + struct.pack('<I', VXL))       # mov [8242A8],eax  vx 回写
-    emit(b'\x05' + struct.pack('<I', W_SCREEN))      # add eax,856
-    emit(b'\x89\x05' + struct.pack('<I', VXL + 8))   # mov [8242B0],eax
+    x_store = len(code)
+    code[jmp_xstore + 1: jmp_xstore + 5] = struct.pack('<i', x_store - (jmp_xstore + 5))
+    emit(b'\x89\x0D' + struct.pack('<I', VXL))       # mov [8242A8],ecx  vx 回写
+    emit(b'\x81\xC1' + struct.pack('<I', W_SCREEN))  # add ecx,856
+    emit(b'\x89\x0D' + struct.pack('<I', VXL + 8))   # mov [8242B0],ecx
     # ── Y: vy = clamp(viewY, L, U), L=min(0,t2), U=max(0,t2), t2 = bgH-480 ──
     emit(b'\x0F\xB7\x05' + struct.pack('<I', BGH))   # movzx eax,word bgH
     emit(b'\x2D' + struct.pack('<I', 0x1E0))         # sub eax,480   (t2)
@@ -1262,7 +1268,7 @@ def build_map_bg_blt() -> bytes:
     emit(b'\x8B\x0D' + _g_ret2())                    # mov ecx,[g_ret2]
     emit(b'\xFF\xE1')                                # jmp ecx -> site+5
     code[jmp_clamp + 1: jmp_clamp + 5] = struct.pack('<i', clamp - (jmp_clamp + 5))
-    labels = {'clamp': clamp, 'fast': fast,
+    labels = {'clamp': clamp, 'fast': fast, 'x_narrow': x_narrow,
               'sx0_done': sx0_done, 'sy0_done': sy0_done}
     for pos, tgt in _j32:
         val = labels[tgt] - (pos + 4)
