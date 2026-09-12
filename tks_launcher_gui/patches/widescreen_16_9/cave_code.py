@@ -1016,6 +1016,261 @@ def build_gxp_blt_fix() -> bytes:
     return bytes(code)
 
 
+# ── 3c. 小游戏背景全表面 Blt 修正 (左对齐 + 右带清黑, v2 纯 Blt) ────────
+# 7 个小游戏 (40E97C 分发) 不走页面状态机: 直接往 856 后备面画, UI 坐标全部
+# 按 640 硬编码 → 内容靠左、鼠标 raw 恒等映射, 自洽。每帧背景
+# `Blt(画布, 0, MG_*.gxp [640x480], 0, 0, 0)` 两矩形都为 NULL → cnc-ddraw 按
+# 目标行距读源 → 每行错位 216px 拖影 (与标题页同病)。本 cave 与 gxp_blt_fix
+# 的差别: ① dst/src 矩形同为 {0,0,W,H} 左对齐 (无 +108, 与 UI 一致);
+# ② 背景只铺左 640, 右带 [W,856) 会驻留进小游戏前的最后一帧 → W<856 时先用
+#    DDBLT_COLORFILL 把整个画布填黑再 blt (44F420 同款调用: vtable+0x14,
+#    flags=0x1000400, fx{dwSize=100} 全零=黑色 — 游戏自身黑幕即此调用, 实证)。
+# v1 曾用 Lock/Unlock 清带, 实机白屏 (小游戏整屏不画), v2 移除一切未实证的
+# DD 交互, 只保留 GetSurfaceDesc(+0x58, gxp_blt_fix 实证) 与 Blt(+0x14)。
+# 单一入口: 位点 expect 延伸覆盖后续 `push 1` (3B call 形态 5B
+# FF 50 14 6A 01; 5B 形态 6B 8B 10 FF 52 14 6A 01), 末尾统一
+# `push 1; jmp ecx` 补回 (返回地址=site+5, 6B 位点多出的 NOP 恰在 site+5)。
+# 只写 eax/ecx/edx/esp, 不碰 callee-saved, 不碰 ebp; 栈平衡: 让 Blt stdcall
+# 自然消费 6 参 (esp 回到压参前), 尾部 jmp 回 site+5。
+def build_gxp_blt_left() -> bytes:
+    G_RECT_VA = 0x400000 + RECT_GLOBAL_RVA
+    G_DST_RECT_VA = 0x400000 + DST_RECT_RVA
+
+    code = bytearray()
+    _j32: list = []
+
+    def emit(b: bytes) -> int:
+        off = len(code)
+        code.extend(b)
+        return off
+
+    def j32(cond: bytes, target: str) -> None:
+        _j32.append((emit(cond + b'\x00\x00\x00\x00') + 2, target))
+
+    emit(b'\x59')                                    # pop ecx (site+5); esp=A
+    emit(b'\x89\x0D' + _g_ret2())                    # mov [g_ret2],ecx
+    emit(b'\x81\xEC' + struct.pack('<I', 0x80))      # sub esp,0x80 (desc); esp=A-0x80
+    emit(b'\x89\x25' + _g_desc())                    # mov [g_desc],esp
+    emit(b'\x8B\x84\x24' + struct.pack('<I', 0x88))  # mov eax,[esp+0x88] (src=[A+8])
+    emit(b'\x85\xC0')                                # test eax,eax
+    j32(b'\x0F\x84', 'skip')
+    emit(b'\x54')                                    # push esp (desc)
+    emit(b'\x50')                                    # push eax (this=src)
+    emit(b'\x8B\x10')                                # mov edx,[eax]
+    emit(b'\xFF\x52\x58')                            # call [edx+0x58] GetSurfaceDesc
+    emit(b'\x8B\x15' + _g_desc())                    # mov edx,[g_desc]
+    emit(b'\x8B\x4A\x08')                            # mov ecx,[edx+8]  (H)
+    emit(b'\x8B\x42\x0C')                            # mov eax,[edx+0xC] (W)
+    emit(b'\x8B\x25' + _g_desc())                    # mov esp,[g_desc] (=A-0x80)
+    emit(b'\x85\xC0')                                # test eax,eax
+    j32(b'\x0F\x84', 'skip')
+    emit(b'\x85\xC9')                                # test ecx,ecx
+    j32(b'\x0F\x84', 'skip')
+    emit(b'\x3D' + struct.pack('<I', W_SCREEN))      # cmp eax,856
+    emit(b'\x76\x05')                                # jbe +5
+    emit(b'\xB8' + struct.pack('<I', W_SCREEN))      # mov eax,856
+    emit(b'\x81\xF9' + struct.pack('<I', 0x1E0))     # cmp ecx,480
+    emit(b'\x76\x05')                                # jbe +5
+    emit(b'\xB9' + struct.pack('<I', 0x1E0))         # mov ecx,480
+    # src/dst 矩形同为 {0,0,W,H} (左对齐)
+    emit(b'\xA3' + struct.pack('<I', G_DST_RECT_VA + 8))          # dst.right=W
+    emit(b'\x89\x0D' + struct.pack('<I', G_DST_RECT_VA + 12))     # dst.bottom=H
+    emit(b'\xA3' + struct.pack('<I', G_RECT_VA + 8))              # src.right=W
+    emit(b'\x89\x0D' + struct.pack('<I', G_RECT_VA + 12))         # src.bottom=H
+    emit(b'\xC7\x05' + struct.pack('<I', G_RECT_VA) + b'\x00\x00\x00\x00')
+    emit(b'\xC7\x05' + struct.pack('<I', G_RECT_VA + 4) + b'\x00\x00\x00\x00')
+    emit(b'\xC7\x05' + struct.pack('<I', G_DST_RECT_VA) + b'\x00\x00\x00\x00')
+    emit(b'\xC7\x05' + struct.pack('<I', G_DST_RECT_VA + 4) + b'\x00\x00\x00\x00')
+    # ── esp 回到 A, 指向新矩形参数 (skip 路径除外) ──
+    emit(b'\x81\xC4' + struct.pack('<I', 0x80))      # add esp,0x80 → esp=A
+    emit(b'\xC7\x44\x24\x04' + struct.pack('<I', G_DST_RECT_VA))  # [A+4]=dstRect
+    emit(b'\xC7\x44\x24\x0C' + struct.pack('<I', G_RECT_VA))      # [A+C]=srcRect
+    # ── 右带清黑: W<856 时先 colorfill 整面黑 (44F420 同款) ──
+    emit(b'\x3D' + struct.pack('<I', W_SCREEN))      # cmp eax,856
+    j32(b'\x0F\x83', 'nofill')                       # jae nofill (无带)
+    emit(b'\x81\xEC' + struct.pack('<I', 0x68))      # sub esp,0x68 (fx 100B); esp=A-0x68
+    emit(b'\xC7\x04\x24' + struct.pack('<I', 100))   # fx.dwSize=100 (其余全零=黑)
+    emit(b'\x8B\x94\x24' + struct.pack('<I', 0x68))  # mov edx,[esp+0x68] (this=[A])
+    emit(b'\x54')                                    # push esp (fx 指针)
+    emit(b'\x68' + struct.pack('<I', 0x1000400))     # push DDBLT_WAIT|DDBLT_COLORFILL
+    emit(b'\x6A\x00')                                # push 0 (srcRect)
+    emit(b'\x6A\x00')                                # push 0 (src)
+    emit(b'\x6A\x00')                                # push 0 (dstRect=整面)
+    emit(b'\x52')                                    # push edx (this)
+    emit(b'\x8B\x12')                                # mov edx,[edx]
+    emit(b'\xFF\x52\x14')                            # call [edx+0x14] colorfill
+    emit(b'\x81\xC4' + struct.pack('<I', 0x68))      # add esp,0x68 (fx 区收回)
+    jmp_blt = emit(b'\xEB\x00')                      # jmp blt (rel8 回填)
+    skip = len(code)
+    emit(b'\x81\xC4' + struct.pack('<I', 0x98))      # add esp,0x98 → esp=P (未调 DD: 弃 desc+6 参)
+    jmp_tail = emit(b'\xEB\x00')                     # jmp tail (rel8 回填)
+    nofill = len(code)                               # jae 落点 (esp=A, 无带)
+    blt = len(code)
+    emit(b'\x8B\x14\x24')                            # mov edx,[esp] (dst 对象)
+    emit(b'\x8B\x12')                                # mov edx,[edx]
+    emit(b'\xFF\x52\x14')                            # call [edx+0x14] Blt → esp=P
+    tail = len(code)
+    emit(b'\x8B\x0D' + _g_ret2())                    # mov ecx,[g_ret2]
+    emit(b'\x6A\x01')                                # push 1 (补回被 E8+NOP 覆写的 push)
+    emit(b'\xFF\xE1')                                # jmp ecx → site+5
+    for pos, tgt in _j32:
+        val = (skip if tgt == 'skip' else nofill) - (pos + 4)
+        code[pos:pos + 4] = struct.pack('<i', val)
+    code[jmp_blt + 1] = (blt - (jmp_blt + 2)) & 0xFF
+    code[jmp_tail + 1] = (tail - (jmp_tail + 2)) & 0xFF
+    return bytes(code)
+
+
+# ── 3d. 地图/战场背景 Blt 视口钳制 (窄地图信箱) ────────────────────────
+# 已知局限①的落地: bgW<856 的地图/战场 (绝大多数战斗地图原为 640 宽), 相机
+# 公式给出 viewX = bgW-856 < 0 或 viewX+856 > bgW → Blt 源矩形无效 → 背景失
+# 败 + 相机跑到地图外。本 cave 挂在 20 个 `Blt(画布,0,背景TWM,&视口[8242A8],`
+# `WAIT,0)` 调用点 (409830/4099B0/409B30/40AEF4/40B710/40C6EC/412BE8/43339C/
+# 433690/433A38/434188/434D7C/4353F8/43A8D8/43BFE8/43CA64/43DE90/4434BC/
+# 444BB0/445564), 每帧先把视口钳回合法区间再 blt:
+#   vx = clamp(viewX, min(0,bgW-856), max(0,bgW-856))   (bgW=word[824290])
+#   vy = clamp(viewY, min(0,bgH-480), max(0,bgH-480))   (bgH=word[824292])
+#   回写 8242A8/B0/AC/B4 → 同帧实体绘制 (world-viewX) 与背景对齐, 且 436F60
+#   的滚动累加从钳制值出发不再漂移;
+#   src={max(0,vx),max(0,vy),min(bgW,vx+856),min(bgH,vy+480)},
+#   dst={sx0-vx, sy0-vy, sx1-vx, sy1-vy} — 宽地图时恰等于原语义 (dst.left=0);
+#   窄地图 (有黑带) 先 colorfill 整面黑 (44F420 同款) 再 blt, 消除信箱残影。
+# 快路径 (bgW>=856 && bgH>=480): 参数原样直调 Blt, 零额外开销。
+# 位点 5 字节 `8B xx FF 5x 14` (mov reg,[this]; call [reg+0x14]) 被 E8 覆写,
+# cave 读 [esp] 取 this, 末尾 jmp site+5; 只写 eax/ecx/edx/esp, 不碰 ebp。
+def build_map_bg_blt() -> bytes:
+    G_RECT_VA = 0x400000 + RECT_GLOBAL_RVA
+    G_DST_RECT_VA = 0x400000 + DST_RECT_RVA
+    BGW, BGH = 0x00824290, 0x00824292
+    VXL, VYT = 0x008242A8, 0x008242AC
+
+    code = bytearray()
+    _j32: list = []
+
+    def emit(b: bytes) -> int:
+        off = len(code)
+        code.extend(b)
+        return off
+
+    def j32(cond: bytes, target: str) -> None:
+        _j32.append((emit(cond + b'\x00\x00\x00\x00') + 2, target))
+
+    # 入口 + 快慢路径分派 (快路径: 背景宽高都不小于视口 → 参数原样直调)
+    emit(b'\x59')                                    # pop ecx (site+5); esp=A
+    emit(b'\x89\x0D' + _g_ret2())                    # mov [g_ret2],ecx
+    emit(b'\x0F\xB7\x05' + struct.pack('<I', BGW))   # movzx eax,word[824290] bgW
+    emit(b'\x3D' + struct.pack('<I', W_SCREEN))      # cmp eax,856
+    j32(b'\x0F\x82', 'clamp')                        # jb clamp
+    emit(b'\x0F\xB7\x05' + struct.pack('<I', BGH))   # movzx eax,word[824292] bgH
+    emit(b'\x3D' + struct.pack('<I', 0x1E0))         # cmp eax,480
+    j32(b'\x0F\x83', 'fast')                         # jae fast
+    jmp_clamp = emit(b'\xE9\x00\x00\x00\x00')        # jmp clamp (rel32 手工回填)
+    fast = len(code)
+    emit(b'\x8B\x14\x24')                            # mov edx,[esp] (this)
+    emit(b'\x8B\x12')                                # mov edx,[edx]
+    emit(b'\xFF\x52\x14')                            # call [edx+0x14] Blt -> esp=P
+    emit(b'\x8B\x0D' + _g_ret2())                    # mov ecx,[g_ret2]
+    emit(b'\xFF\xE1')                                # jmp ecx -> site+5
+    clamp = len(code)
+    # ── X: vx = clamp(viewX, L, U), L=min(0,t), U=max(0,t), t = bgW-856 ──
+    emit(b'\x0F\xB7\x05' + struct.pack('<I', BGW))   # movzx eax,word bgW
+    emit(b'\x2D' + struct.pack('<I', W_SCREEN))      # sub eax,856   (t)
+    emit(b'\x8B\xC8')                                # mov ecx,eax
+    emit(b'\x8B\xD0')                                # mov edx,eax
+    emit(b'\x33\xC0')                                # xor eax,eax
+    emit(b'\x85\xC9')                                # test ecx,ecx
+    emit(b'\x0F\x49\xC8')                            # cmovns ecx,eax  L=(t>=0)?0:t
+    emit(b'\x0F\x48\xD0')                            # cmovs edx,eax   U=(t<0)?0:t
+    emit(b'\x8B\x05' + struct.pack('<I', VXL))       # mov eax,[8242A8] viewX
+    emit(b'\x3B\xC1')                                # cmp eax,ecx
+    emit(b'\x0F\x4C\xC1')                            # cmovl eax,ecx   vx=max(viewX,L)
+    emit(b'\x3B\xC2')                                # cmp eax,edx
+    emit(b'\x0F\x4F\xC2')                            # cmovg eax,edx   vx=min(vx,U)
+    emit(b'\x89\x05' + struct.pack('<I', VXL))       # mov [8242A8],eax  vx 回写
+    emit(b'\x05' + struct.pack('<I', W_SCREEN))      # add eax,856
+    emit(b'\x89\x05' + struct.pack('<I', VXL + 8))   # mov [8242B0],eax
+    # ── Y: vy = clamp(viewY, L, U), L=min(0,t2), U=max(0,t2), t2 = bgH-480 ──
+    emit(b'\x0F\xB7\x05' + struct.pack('<I', BGH))   # movzx eax,word bgH
+    emit(b'\x2D' + struct.pack('<I', 0x1E0))         # sub eax,480   (t2)
+    emit(b'\x8B\xC8')                                # mov ecx,eax
+    emit(b'\x8B\xD0')                                # mov edx,eax
+    emit(b'\x33\xC0')                                # xor eax,eax
+    emit(b'\x85\xC9')                                # test ecx,ecx
+    emit(b'\x0F\x49\xC8')                            # cmovns ecx,eax  L=(t2>=0)?0:t2
+    emit(b'\x0F\x48\xD0')                            # cmovs edx,eax   U=(t2<0)?0:t2
+    emit(b'\x8B\x05' + struct.pack('<I', VYT))       # mov eax,[8242AC] viewY
+    emit(b'\x3B\xC1')                                # cmp eax,ecx
+    emit(b'\x0F\x4C\xC1')                            # cmovl eax,ecx   vy=max(viewY,L)
+    emit(b'\x3B\xC2')                                # cmp eax,edx
+    emit(b'\x0F\x4F\xC2')                            # cmovg eax,edx   vy=min(vy,U)
+    emit(b'\x89\x05' + struct.pack('<I', VYT))       # mov [8242AC],eax  vy 回写
+    emit(b'\x05' + struct.pack('<I', 0x1E0))         # add eax,480
+    emit(b'\x89\x05' + struct.pack('<I', VYT + 8))   # mov [8242B4],eax
+    # ── src={max(0,vx),max(0,vy),min(bgW,vx+856),min(bgH,vy+480)} ──
+    emit(b'\x8B\x15' + struct.pack('<I', VXL))       # mov edx,[8242A8] vx
+    emit(b'\x85\xD2')                                # test edx,edx
+    j32(b'\x0F\x89', 'sx0_done')                     # jns sx0_done
+    emit(b'\x33\xD2')                                # xor edx,edx
+    sx0_done = len(code)
+    emit(b'\x89\x15' + struct.pack('<I', G_RECT_VA))             # src.left=sx0
+    emit(b'\x2B\x15' + struct.pack('<I', VXL))       # sub edx,[8242A8] (sx0-vx)
+    emit(b'\x89\x15' + struct.pack('<I', G_DST_RECT_VA))         # dst.left
+    emit(b'\x8B\x15' + struct.pack('<I', VYT))       # mov edx,[8242AC] vy
+    emit(b'\x85\xD2')                                # test edx,edx
+    j32(b'\x0F\x89', 'sy0_done')                     # jns sy0_done
+    emit(b'\x33\xD2')                                # xor edx,edx
+    sy0_done = len(code)
+    emit(b'\x89\x15' + struct.pack('<I', G_RECT_VA + 4))         # src.top=sy0
+    emit(b'\x2B\x15' + struct.pack('<I', VYT))       # sub edx,[8242AC]
+    emit(b'\x89\x15' + struct.pack('<I', G_DST_RECT_VA + 4))     # dst.top
+    emit(b'\x0F\xB7\x05' + struct.pack('<I', BGW))   # movzx eax,word bgW
+    emit(b'\x8B\x15' + struct.pack('<I', VXL))       # mov edx,[8242A8] vx
+    emit(b'\x81\xC2' + struct.pack('<I', W_SCREEN))  # add edx,856      (vx+856)
+    emit(b'\x39\xC2')                                # cmp edx,eax
+    emit(b'\x0F\x4F\xD0')                            # cmovg edx,eax    sx1=min(vx+856,bgW)
+    emit(b'\x89\x15' + struct.pack('<I', G_RECT_VA + 8))         # src.right=sx1
+    emit(b'\x2B\x15' + struct.pack('<I', VXL))       # sub edx,[8242A8]
+    emit(b'\x89\x15' + struct.pack('<I', G_DST_RECT_VA + 8))     # dst.right
+    emit(b'\x0F\xB7\x05' + struct.pack('<I', BGH))   # movzx eax,word bgH
+    emit(b'\x8B\x15' + struct.pack('<I', VYT))       # mov edx,[8242AC] vy
+    emit(b'\x81\xC2' + struct.pack('<I', 0x1E0))     # add edx,480      (vy+480)
+    emit(b'\x39\xC2')                                # cmp edx,eax
+    emit(b'\x0F\x4F\xD0')                            # cmovg edx,eax    sy1=min(vy+480,bgH)
+    emit(b'\x89\x15' + struct.pack('<I', G_RECT_VA + 12))        # src.bottom=sy1
+    emit(b'\x2B\x15' + struct.pack('<I', VYT))       # sub edx,[8242AC]
+    emit(b'\x89\x15' + struct.pack('<I', G_DST_RECT_VA + 12))    # dst.bottom
+    # ── 参数槽指向新矩形 ──
+    emit(b'\xC7\x44\x24\x04' + struct.pack('<I', G_DST_RECT_VA))  # [A+4]=dstRect
+    emit(b'\xC7\x44\x24\x0C' + struct.pack('<I', G_RECT_VA))      # [A+C]=srcRect
+    # ── colorfill 整面黑 (44F420 同款, 仅 clamp 路径 = 必有黑带) ──
+    emit(b'\x81\xEC' + struct.pack('<I', 0x68))      # sub esp,0x68 (fx 100B)
+    emit(b'\xC7\x04\x24' + struct.pack('<I', 100))   # fx.dwSize=100 (全零=黑)
+    emit(b'\x8B\x94\x24' + struct.pack('<I', 0x68))  # mov edx,[esp+0x68] (this=[A], esp=A-0x68)
+    emit(b'\x54')                                    # push esp (fx)
+    emit(b'\x68' + struct.pack('<I', 0x1000400))     # push WAIT|COLORFILL
+    emit(b'\x6A\x00')                                # push 0 (srcRect)
+    emit(b'\x6A\x00')                                # push 0 (src)
+    emit(b'\x6A\x00')                                # push 0 (dstRect=整面)
+    emit(b'\x52')                                    # push edx (this)
+    emit(b'\x8B\x12')                                # mov edx,[edx]
+    emit(b'\xFF\x52\x14')                            # call [edx+0x14] colorfill
+    emit(b'\x81\xC4' + struct.pack('<I', 0x68))      # add esp,0x68 (fx 收回)
+    # ── Blt 背景 (esp=A → stdcall 消费 6 参 → esp=P) ──
+    emit(b'\x8B\x14\x24')                            # mov edx,[esp]
+    emit(b'\x8B\x12')                                # mov edx,[edx]
+    emit(b'\xFF\x52\x14')                            # call [edx+0x14] Blt
+    emit(b'\x8B\x0D' + _g_ret2())                    # mov ecx,[g_ret2]
+    emit(b'\xFF\xE1')                                # jmp ecx -> site+5
+    code[jmp_clamp + 1: jmp_clamp + 5] = struct.pack('<i', clamp - (jmp_clamp + 5))
+    labels = {'clamp': clamp, 'fast': fast,
+              'sx0_done': sx0_done, 'sy0_done': sy0_done}
+    for pos, tgt in _j32:
+        val = labels[tgt] - (pos + 4)
+        code[pos:pos + 4] = struct.pack('<i', val)
+    return bytes(code)
+
+
+
 # ── 2d. JVG 精灵两步解码 (照 TKSRemake 重写: 解码与混合分离) ────────────
 # 原版绘制原语把 RLE 解码与写显存融合: 目标指针从帧右下角沿 640 宽平面
 # 反向线性行走, skip/run 内嵌 640 行几何。屏幕加宽到 856 后, 只改步长常量
@@ -1635,6 +1890,59 @@ _BATTLE_HOOKS = [
 
 _SPRITE_HOOKS = _ENTITY_HOOKS + _BATTLE_HOOKS
 
+# ── UI/小游戏 RLE 调用点 (游戏态 856 步长下, 640 平面 RLE 原语必然错位) ──
+# 对话气泡 (40A518/40A9BC: 瓷砖 454D24=mode1, 尾巴 4544EC=mode0) 与
+# 7 个小游戏 (全部 4544EC=mode0: 贴片/按钮/动画帧)。页面态函数 (41xxxx/
+# 42131C/4241B0/424A2C/426164/42539C) 在 640 步长下 RLE 本就正确, 不钩。
+# 战斗段 (43339C..4458B0) 已在 _BATTLE_HOOKS。
+_UI_HOOKS = [
+    ('ui40A65F', 0x40A65F, 'e8c0a60400', 1),
+    ('ui40A707', 0x40A707, 'e818a60400', 1),
+    ('ui40A780', 0x40A780, 'e89fa50400', 1),
+    ('ui40A7C0', 0x40A7C0, 'e85fa50400', 1),
+    ('ui40A7FD', 0x40A7FD, 'e822a50400', 1),
+    ('ui40A833', 0x40A833, 'e8eca40400', 1),
+    ('ui40A86C', 0x40A86C, 'e8b3a40400', 1),
+    ('ui40A8AD', 0x40A8AD, 'e872a40400', 1),
+    ('ui40A8E5', 0x40A8E5, 'e8029c0400', 0),
+    ('ui40AB03', 0x40AB03, 'e81ca20400', 1),
+    ('ui40ABAB', 0x40ABAB, 'e874a10400', 1),
+    ('ui40AC24', 0x40AC24, 'e8fba00400', 1),
+    ('ui40AC64', 0x40AC64, 'e8bba00400', 1),
+    ('ui40ACA1', 0x40ACA1, 'e87ea00400', 1),
+    ('ui40ACD7', 0x40ACD7, 'e848a00400', 1),
+    ('ui40AD10', 0x40AD10, 'e80fa00400', 1),
+    ('ui40AD51', 0x40AD51, 'e8ce9f0400', 1),
+    ('ui40AD89', 0x40AD89, 'e85e970400', 0),
+    ('ui429361', 0x429361, 'e886b10200', 0),
+    ('ui4293C6', 0x4293C6, 'e821b10200', 0),
+    ('ui429621', 0x429621, 'e8c6ae0200', 0),
+    ('ui4296BE', 0x4296BE, 'e829ae0200', 0),
+    ('ui429FD7', 0x429FD7, 'e810a50200', 0),
+    ('ui429FFC', 0x429FFC, 'e8eba40200', 0),
+    ('ui42A022', 0x42A022, 'e8c5a40200', 0),
+    ('ui42A0EC', 0x42A0EC, 'e8fba30200', 0),
+    ('ui42A161', 0x42A161, 'e886a30200', 0),
+    ('ui42A2B0', 0x42A2B0, 'e837a20200', 0),
+    ('ui42A2D3', 0x42A2D3, 'e814a20200', 0),
+    ('ui42A2F5', 0x42A2F5, 'e8f2a10200', 0),
+    ('ui42A628', 0x42A628, 'e8bf9e0200', 0),
+    ('ui42A662', 0x42A662, 'e8859e0200', 0),
+    ('ui42B167', 0x42B167, 'e880930200', 0),
+    ('ui42B3E5', 0x42B3E5, 'e802910200', 0),
+    ('ui42B421', 0x42B421, 'e8c6900200', 0),
+    ('ui42D910', 0x42D910, 'e8d76b0200', 0),
+    ('ui42DA32', 0x42DA32, 'e8b56a0200', 0),
+    ('ui42E0A5', 0x42E0A5, 'e842640200', 0),
+    ('ui42E18C', 0x42E18C, 'e85b630200', 0),
+    ('ui42E78E', 0x42E78E, 'e8595d0200', 0),
+    ('ui42E88C', 0x42E88C, 'e85b5c0200', 0),
+    ('ui42F081', 0x42F081, 'e866540200', 0),
+    ('ui42F188', 0x42F188, 'e85f530200', 0),
+]
+
+_SPRITE_HOOKS = _ENTITY_HOOKS + _BATTLE_HOOKS + _UI_HOOKS
+
 _SPRITE_BLOB, _SPRITE_SUB = build_block(_SPRITE_HOOKS, entity_only=True,
                                         pop_ret=False)
 
@@ -1661,6 +1969,10 @@ if _SPRITE_BLOB:
     _BLOCKS.append(('sprite_hooks', lambda: _SPRITE_BLOB))
 _BLOCKS += [(name, (lambda f: (lambda: build_page_wrapper(f)))(fn))
      for name, fn in PAGE_FUNCS.items()]
+_MG_BLOB = build_gxp_blt_left()          # 小游戏背景 Blt 左对齐+右带清黑
+_BLOCKS.append(('mg_blt_left', lambda: _MG_BLOB))
+_MAP_BLOB = build_map_bg_blt()           # 地图/战场背景 Blt 视口钳制 (窄地图)
+_BLOCKS.append(('map_bg_blt', lambda: _MAP_BLOB))
 
 
 # 诊断: 给关键 cave 块加调用计数 (定位菜单花屏时哪条路径在跑; 定位后移除)
