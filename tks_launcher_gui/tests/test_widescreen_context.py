@@ -17,7 +17,7 @@ class WidescreenContextTests(unittest.TestCase):
         self.assertIn("widescreen_16_9", patches)
         wide = patches["widescreen_16_9"]
         self.assertEqual(wide.type, "patch_sites")
-        self.assertEqual(len(getattr(wide, "sites", [])), 787)
+        self.assertEqual(len(getattr(wide, "sites", [])), 796)
         refs = {site.get("ref") for site in getattr(wide, "sites", [])}
         self.assertIn("map_camera", refs)
         self.assertIn("settle_shift", refs)
@@ -363,6 +363,36 @@ class PickupMappingTests(unittest.TestCase):
         start = module.CAVE_ENTRIES["map_camera"]
         self.assertIn(want, blob[start:start + 400],
                       "map_camera 重建视口后必须重算 824280/824284 (鼠标世界坐标)")
+
+
+class PrimitiveTwinCoverageTests(unittest.TestCase):
+    """绘制原语"孪生"覆盖: 45AA8C 与 45B20C 是同一裁剪结构的孪生体 (间距 0x780)。
+
+    45AA8C 的每个步长/宽度位点在 45B20C 都有孪生位点 (+0x780)。历史提交只补了 5 个,
+    漏了 9 个 (其中 0x5B630 是 `add eax,0x95b00` = 479*1280 这类**非 640 立即数**,
+    靠"640 立即数扫描"发现不了 —— 只能靠孪生比对) → 该原语在 856 画布上仍按 640
+    换行/裁剪, 走它的精灵会逐行漂 216px。
+    """
+
+    PAIRS = {
+        0x5AB98: 0x5B318, 0x5AC0E: 0x5B38E, 0x5AC76: 0x5B3F6, 0x5AC97: 0x5B417,
+        0x5AE6A: 0x5B5EA, 0x5AEB0: 0x5B630, 0x5AF7A: 0x5B6FA, 0x5AF84: 0x5B704,
+        0x5AFA5: 0x5B725, 0x5B001: 0x5B781, 0x5B00B: 0x5B78B, 0x5B015: 0x5B795,
+        0x5B036: 0x5B7B6, 0x5B07F: 0x5B7FF,
+    }
+
+    def test_twin_sites_all_present(self):
+        import json
+        patch_dir = ROOT / "tks_launcher_gui" / "patches" / "widescreen_16_9"
+        raw = json.loads((patch_dir / "patch.json").read_text(encoding="utf-8"))
+        got = {int(s["rva"], 0): s for s in raw["sites"]}
+        for src, twin in self.PAIRS.items():
+            self.assertIn(src, got, f"{src:#X}: 参考位点缺失")
+            self.assertIn(twin, got, f"{twin:#X}: 孪生位点缺失 (= 该原语仍按 640 步长)")
+            self.assertEqual(got[twin].get("kind"), got[src].get("kind"),
+                             f"{twin:#X}: 孪生位点的钩子类型与 {src:#X} 不一致")
+            self.assertEqual(got[twin].get("ref"), got[src].get("ref"),
+                             f"{twin:#X}: 孪生位点的 cave 入口与 {src:#X} 不一致")
 
 
 if __name__ == "__main__":
