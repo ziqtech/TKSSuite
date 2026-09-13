@@ -17,7 +17,7 @@ class WidescreenContextTests(unittest.TestCase):
         self.assertIn("widescreen_16_9", patches)
         wide = patches["widescreen_16_9"]
         self.assertEqual(wide.type, "patch_sites")
-        self.assertEqual(len(getattr(wide, "sites", [])), 785)
+        self.assertEqual(len(getattr(wide, "sites", [])), 787)
         refs = {site.get("ref") for site in getattr(wide, "sites", [])}
         self.assertIn("map_camera", refs)
         self.assertIn("settle_shift", refs)
@@ -274,6 +274,95 @@ class MiniGameSelectBoxTests(unittest.TestCase):
             got = blob[start:start + len(want)]
             self.assertEqual(got, want,
                              f"{entry}: 必须是 add [esp+{off:#x}],108 + 尾调 SelectObject")
+
+
+class PickupMappingTests(unittest.TestCase):
+    """拾取缓冲 (实体/出入口命中) 必须与 856 画布同空间。
+
+    word_78E276 是 640x480 静态 BSS (614400B, 尾部紧贴 824276 起的鼠标全局, 不可
+    扩容; 搬运方案实测读档卡死已回退)。实体渲染 sub_406864 用屏幕坐标写它、鼠标侧
+    sub_410B74 用 [0x824278] 读它; 856 画布下实体屏幕坐标整体 +108, 若不做处理,
+    原版可见区的实体一旦落到 x>=640 就没有缓冲内容、读侧读到边缘列 → 悬停闪烁、
+    点不动 (实测洛阳市集实体 #780)。
+
+    修法: 写入侧 X-=108 + 读取侧改读 PAGE_X(= clamp(raw-108,0,639)) → 缓冲列 ==
+    原版 640 视图列; 屏幕左右边带 (raw-108 ∉ [0,640)) 在读入口返回 -1, 交给引擎
+    自带的世界坐标 bbox 兜底; map_camera cave 重建视口后同步重算 824280/824284。
+    """
+
+    # (位点 -> (cave 入口, 原字节))
+    CALL_SITES = {
+        0x6CBD: ("pickup_shift", "E8 82 DC 04 00"),
+        0x123A2: ("pickup_oob", "E8 CD E7 FF FF"),
+    }
+    READ_SITE = 0x10B77
+    PAGE_X = "A1 40 08 66 00"          # 占位 0x660840, 由 globals 重定位平移
+
+    def _sites(self):
+        import json
+        patch_dir = ROOT / "tks_launcher_gui" / "patches" / "widescreen_16_9"
+        raw = json.loads((patch_dir / "patch.json").read_text(encoding="utf-8"))
+        return {int(s["rva"], 0): s for s in raw["sites"]}
+
+    def test_read_site_uses_page_x(self):
+        site = self._sites().get(self.READ_SITE)
+        self.assertIsNotNone(site, "拾取读点 X 位点缺失")
+        self.assertEqual((site.get("expect") or "").upper(), "A1 78 42 82 00")
+        self.assertEqual((site.get("replace") or "").upper(), self.PAGE_X,
+                         "拾取读点必须读 PAGE_X(=raw-108), 否则与写入侧不同空间")
+
+    def test_write_and_oob_sites_hooked(self):
+        got = self._sites()
+        for rva, (entry, expect) in self.CALL_SITES.items():
+            site = got.get(rva)
+            self.assertIsNotNone(site, f"{rva:#X}: 拾取位点缺失")
+            self.assertEqual(site.get("kind"), "call", f"{rva:#X}: 必须是 call 钩子")
+            self.assertEqual(site.get("ref"), entry, f"{rva:#X}: cave 入口不对")
+            self.assertEqual((site.get("expect") or "").upper(), expect,
+                             f"{rva:#X}: 位点原字节不符")
+
+    def test_pickup_caves_bytes(self):
+        import importlib.util
+        patch_dir = ROOT / "tks_launcher_gui" / "patches" / "widescreen_16_9"
+        spec = importlib.util.spec_from_file_location("_ws_pk", patch_dir / "cave_code.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        blob = module.build_cave_block()
+
+        shift = (b"\x81\x6C\x24\x08" + (108).to_bytes(4, "little")     # sub [esp+8],108 (X)
+                 + b"\xB8" + (0x454944).to_bytes(4, "little") + b"\xFF\xE0")
+        start = module.CAVE_ENTRIES["pickup_shift"]
+        self.assertEqual(blob[start:start + len(shift)], shift,
+                         "pickup_shift 必须是 X-=108 + 尾调 454944")
+
+        oob = (b"\xA1" + (0x824278).to_bytes(4, "little")     # mov eax,[0x824278]
+               + b"\x2D" + (108).to_bytes(4, "little")        # sub eax,108
+               + b"\x85\xC0"                                  # test eax,eax
+               + b"\x78\x0E"                                  # js  oob
+               + b"\x3D" + (640).to_bytes(4, "little")        # cmp eax,640
+               + b"\x7D\x07"                                  # jge oob
+               + b"\xB8" + (0x410B74).to_bytes(4, "little") + b"\xFF\xE0"   # 尾调
+               + b"\xB8\xFF\xFF\xFF\xFF" + b"\xC3")           # oob: eax=-1; ret
+        start = module.CAVE_ENTRIES["pickup_oob"]
+        self.assertEqual(blob[start:start + len(oob)], oob,
+                         "pickup_oob 必须: 边带返回 -1, 中心区尾调 410B74")
+
+    def test_map_camera_recomputes_mouse_world(self):
+        import importlib.util
+        patch_dir = ROOT / "tks_launcher_gui" / "patches" / "widescreen_16_9"
+        spec = importlib.util.spec_from_file_location("_ws_mc", patch_dir / "cave_code.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        blob = module.build_cave_block()
+        want = (b"\xA1" + (0x8242A8).to_bytes(4, "little")    # mov eax,[8242A8] viewX
+                + b"\x03\x05" + (0x824278).to_bytes(4, "little")   # add eax,[824278]
+                + b"\xA3" + (0x824280).to_bytes(4, "little")       # mov [824280],eax
+                + b"\xA1" + (0x8242AC).to_bytes(4, "little")
+                + b"\x03\x05" + (0x82427C).to_bytes(4, "little")
+                + b"\xA3" + (0x824284).to_bytes(4, "little"))
+        start = module.CAVE_ENTRIES["map_camera"]
+        self.assertIn(want, blob[start:start + 400],
+                      "map_camera 重建视口后必须重算 824280/824284 (鼠标世界坐标)")
 
 
 if __name__ == "__main__":

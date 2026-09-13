@@ -384,6 +384,15 @@ def build_map_camera() -> bytes:
     emit(b'\x31\xC0')
     jmp_y = emit(b'\xE9\x00\x00\x00\x00')
     done = len(code)
+    # ⚠ 视口刚被重建 → 鼠标世界坐标必须同步重算: 原函数只在 `a1[1]==当前场景`
+    # 守卫成立时才写 824280/824284, 守卫不成立时它们会滞后于新视口 → 实体的
+    # 世界坐标 bbox 兜底 / 地图掩码采样整体错位 (实测鼠标在出入点区域内闪烁)。
+    emit(b'\xA1' + struct.pack('<I', VXL))               # mov eax,[8242A8]
+    emit(b'\x03\x05' + struct.pack('<I', 0x00824278))    # add eax,[824278] raw X
+    emit(b'\xA3' + struct.pack('<I', 0x00824280))        # mov [824280],eax 世界 X
+    emit(b'\xA1' + struct.pack('<I', VYL))               # mov eax,[8242AC]
+    emit(b'\x03\x05' + struct.pack('<I', 0x0082427C))    # add eax,[82427C] raw Y
+    emit(b'\xA3' + struct.pack('<I', 0x00824284))        # mov [824284],eax 世界 Y
     emit(b'\x8B\x0D' + _g_ret())
     emit(b'\xFF\xE1')                                   # jmp ecx -> site+5
     code[jmp_done + 1:jmp_done + 5] = struct.pack('<i', done - (jmp_done + 5))
@@ -1599,6 +1608,60 @@ def build_setbox_shift(x_off: int) -> bytes:
             + b'\xFF\xE0')                                      # jmp eax (尾调)
 
 
+# ── 3f. 拾取缓冲 (实体命中) 坐标一致化 ─────────────────────────────────
+# 拾取缓冲 word_78E276 = 640x480 静态 BSS (614400B, 尾部紧贴 824276 起的鼠标
+# 全局 → 不可原地扩容; 六/七轮的"搬进 VirtualAlloc"实测读档卡死已回退)。
+# 实体渲染 sub_406864 用**屏幕坐标**写它 (454944 内部硬编码 640 平面裁剪/行距),
+# 鼠标侧 sub_410B74 用 [0x824278] 读它 —— 原版两者同为 640 屏幕坐标, 自洽。
+# 856 画布下实体屏幕坐标整体 +108 (视口原点左移 108), 于是:
+#   · 原版可见区 (现在 x∈[108,748)) 里的实体一旦落到 x≥640 就完全没写进缓冲;
+#   · 读侧又 (旧) 把 X 钳到 639 → 读到别的实体 id / -1 → 悬停闪烁、点不动
+#     (实测洛阳市集实体 #780: 原版可对话, 打补丁后不可);
+#   · 新增的左右 108px 边带同样没有缓冲内容。
+# 修法 (不搬缓冲, 零内存布局变更):
+#   ① 写入侧 (sub_406864 内 `call 454944`, RVA 0x6CBD) X -= 108 → 缓冲第 c 列
+#      恰好对应"原版 640 视图"第 c 列 (= 856 屏幕的 c+108 列), 与原版逐列等价;
+#   ② 读取侧 410B77 的 X 由 MG_MAP (clamp raw 0..639) 改读 PAGE_X
+#      (= clamp(raw-108, 0, 639)) —— 与 ① 同空间;
+#   ③ 屏幕边带 (raw-108 ∉ [0,640)) 在读入口直接返回 -1, 让引擎用它自带的
+#      世界坐标 bbox 扫描兜底 (原版 a1==2 分支本来就有该兜底), 避免读到边缘列
+#      的错误实体。
+# 配套: map_camera cave 重建视口后同步重算 824280/824284 (鼠标世界坐标), 否则
+# 守卫不成立的帧里兜底扫描会拿着滞后视口的世界坐标 (悬停闪烁的第二个成因)。
+# ⚠ 改后 MG_MAP (DBG+0xBC) 再无读点, 两处鼠标 cave 仍照旧维护 (留作诊断)。
+def build_pickup_shift() -> bytes:
+    """sub_406864 内 `call sub_454944` (拾取写原语) → X-=108 后尾调原函数。
+
+    位点时 6 个实参已压栈: [esp]=返回地址, [esp+4]=a1(sprites), [esp+8]=a2(X),
+    [esp+0xC]=a3(Y), [esp+0x10]=a4(frame), [esp+0x14]=a5(&word_78E276),
+    [esp+0x18]=a6(id) —— 只改 X, 实参/栈平衡 (调用方 `add esp,0x18`) 不变。
+    """
+    return (b'\x81\x6C\x24\x08' + struct.pack('<I', PAGE_OFF)   # sub dword [esp+8],108
+            + b'\xB8' + struct.pack('<I', 0x454944)             # mov eax,454944
+            + b'\xFF\xE0')                                      # jmp eax (尾调)
+
+
+def build_pickup_oob() -> bytes:
+    """sub_412390 内 `call sub_410B74` (拾取读) → 屏幕边带直接返回 -1。
+
+    只影响"原版 640 视图之外"的左右边带: 它们没有拾取缓冲内容, 返回 -1 让
+    sub_410B74(a1==2) 走世界坐标 bbox 兜底 (与原版同一路径)。中心区照旧进原
+    函数读缓冲。cdecl: 参数由调用方 `pop ecx` 平衡, 故返回 -1 只需 `ret`。
+    """
+    code = bytearray()
+    code += b'\xA1' + struct.pack('<I', 0x00824278)      # mov eax,[0x824278] raw X
+    code += b'\x2D' + struct.pack('<I', PAGE_OFF)        # sub eax,108 → 原版视图 X
+    code += b'\x85\xC0'                                  # test eax,eax
+    code += b'\x78\x0E'                                  # js  oob   (+14 → oob)
+    code += b'\x3D' + struct.pack('<I', 640)             # cmp eax,640
+    code += b'\x7D\x07'                                  # jge oob   (+7  → oob)
+    code += b'\xB8' + struct.pack('<I', 0x410B74)        # mov eax,410B74
+    code += b'\xFF\xE0'                                  # jmp eax (尾调, 参数原样)
+    code += b'\xB8\xFF\xFF\xFF\xFF'                      # oob: mov eax,-1
+    code += b'\xC3'                                      # ret
+    return bytes(code)
+
+
 
 # ── 2d. JVG 精灵两步解码 (照 TKSRemake 重写: 解码与混合分离) ────────────
 # 原版绘制原语把 RLE 解码与写显存融合: 目标指针从帧右下角沿 640 宽平面
@@ -2324,6 +2387,10 @@ _SBX_BLOB = build_setbox_shift(0x10)     # 小游戏选中框 (GDI 白框) X+108
 _BLOCKS.append(('setbox_shift', lambda: _SBX_BLOB))
 _SBXD_BLOB = build_setbox_shift(0x18)    # 同上, 42D234: GetDC 缓冲在帧 +8 → X 在 +0xC
 _BLOCKS.append(('setbox_shift_deep', lambda: _SBXD_BLOB))
+_PKS_BLOB = build_pickup_shift()         # 拾取写: X-=108 (对齐原版 640 视图列)
+_BLOCKS.append(('pickup_shift', lambda: _PKS_BLOB))
+_PKO_BLOB = build_pickup_oob()           # 拾取读: 屏幕边带返回 -1 (走 bbox 兜底)
+_BLOCKS.append(('pickup_oob', lambda: _PKO_BLOB))
 _CAM_BLOB = build_camrect_clamp()        # 相机 SetRect 视口钳制 (窄地图一致性)
 _BLOCKS.append(('camrect_clamp', lambda: _CAM_BLOB))
 
