@@ -69,5 +69,31 @@ class SettleShiftLayoutTests(unittest.TestCase):
         self.assertEqual(vals[108], 1000, "原 x=0 的内容必须落在 x=108")
 
 
+class SettlementSpriteModeTests(unittest.TestCase):
+    """结算页精灵不得再带 mode|0x80 的 +108 标记。
+
+    该标记是"逐个元素居中"时代的产物 (处理器入口 test al,0x80 -> X+=108)。
+    现在居中由 settle_shift 整帧完成, 若标记还在, 这些精灵会被位移两次
+    (实测: 升级头像框落在 +216 而非 +108)。
+    """
+
+    HOOKS = ("spr_bt43B3AC", "spr_bt43B3E6", "spr_bt43B436", "spr_bt43B46D",
+             "spr_bt43B5B5", "spr_bt43B6D4", "spr_bt43BDE9")
+
+    def test_no_management_marker_left(self):
+        import importlib.util
+        import struct
+        patch_dir = ROOT / "tks_launcher_gui" / "patches" / "widescreen_16_9"
+        spec = importlib.util.spec_from_file_location("_ws_modes", patch_dir / "cave_code.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        blob = module.build_cave_block()
+        for name in self.HOOKS:
+            off = module.CAVE_ENTRIES[name]
+            self.assertEqual(blob[off], 0xBA, f"{name}: 期望 mov edx,imm32 跳板")
+            mode = struct.unpack_from("<I", blob, off + 1)[0]
+            self.assertFalse(mode & 0x80, f"{name}: mode=0x{mode:X} 仍带 0x80 位移标记")
+
+
 if __name__ == "__main__":
     unittest.main()
