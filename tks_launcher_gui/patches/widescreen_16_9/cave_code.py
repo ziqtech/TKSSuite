@@ -1579,17 +1579,22 @@ def build_text_shift_a2(target_fn: int) -> bytes:
 
 
 # ── 3e3. 小游戏"选中框"(GDI 白框) 的 X 位移 wrapper ─────────────────────
-# 7 个小游戏各有一条选中框绘制函数 (4298A4/429990/42D234/42DB20/42EAA0/42F358),
-# 它们把框画在**显示表面** dword_A2B98C 的 DC 上:
+# 7 个小游戏里有 5 个带选中框绘制函数, 共 6 条 (八阵图 MG_EIGHT 两条:
+# 4298A4 下方卦阵 / 429990 上方八卦; 另 42D234 MG_WA, 42DB20 MG_rotate,
+# 42EAA0 MG_reverse, 42F358 MG_44 —— 与 _UI_HOOKS 里 6 个 GDI MoveToEx 位点
+# 一一对应)。它们把框画在**显示表面** dword_A2B98C 的 DC 上:
 #     GetDC(显示) → v2 = X数组[选中列] (640 布局原坐标) → MoveToEx/LineTo 画矩形
 # 而同一坐标的精灵/瓷砖是按 mode|0x80 → x+108 画在 856 画布上的 (第五轮居中),
 # 于是白框整体比被点选的瓷砖左偏 108px —— 玩家看到的就是"点选区域不准确"
 # (旋转拼图 MG_rotate 实测反馈)。
-# 位点选在 SelectObject 调用点: 此时函数已把 hdc/pen 压栈, 自己的帧基址在
-# [esp+0x10] 处 (+0x14 是 Y), 因此只改 X 局部再尾调原 SelectObject —— 参数、
-# 栈平衡 (stdcall ret 8) 与返回地址 (site+5) 全部保持原语义。
-def build_setbox_shift() -> bytes:
-    return (b'\x81\x44\x24\x10' + struct.pack('<I', PAGE_OFF)   # add dword [esp+0x10],108 (X)
+# 位点选在各自的 SelectObject 调用点: 此时函数已把 hdc/pen 两个实参压栈, 只改
+# 自己帧内的 X 局部再尾调原 SelectObject —— 参数、栈平衡 (stdcall ret 8) 与返回
+# 地址 (site+5) 全部保持原语义。
+#   x_off = 4 (X 在帧基址 +0x4) + 4 (pen) + 4 (hdc) + 4 (call 压入的返回地址) = 0x10
+# 6 条框函数里 5 条是 "hdc 在帧 +0" 的形态 (4298A4/429990/42DB20/42EAA0/42F358,
+# 见各自的 `mov [esp+4],X`), 42D234 的 GetDC 缓冲在帧 +8 故 X 在帧 +0xC → 0x18。
+def build_setbox_shift(x_off: int) -> bytes:
+    return (b'\x81\x44\x24' + bytes([x_off]) + struct.pack('<I', PAGE_OFF)  # add [esp+x_off],108
             + b'\xB8' + struct.pack('<I', 0x4E52FE)             # mov eax,SelectObject
             + b'\xFF\xE0')                                      # jmp eax (尾调)
 
@@ -2315,8 +2320,10 @@ _TSR_BLOB = build_text_shift_a2(0x44E8E0)  # 结算页右对齐数字 X(a2)+108
 _BLOCKS.append(('text_shift_ralign', lambda: _TSR_BLOB))
 _TSW_BLOB = build_text_shift_a2(0x44E8A8)  # 结算页页码 X(a2)+108
 _BLOCKS.append(('text_shift_wrap', lambda: _TSW_BLOB))
-_SBX_BLOB = build_setbox_shift()         # 小游戏选中框 (GDI 白框) X+108
+_SBX_BLOB = build_setbox_shift(0x10)     # 小游戏选中框 (GDI 白框) X+108 (hdc 在帧 +0)
 _BLOCKS.append(('setbox_shift', lambda: _SBX_BLOB))
+_SBXD_BLOB = build_setbox_shift(0x18)    # 同上, 42D234: GetDC 缓冲在帧 +8 → X 在 +0xC
+_BLOCKS.append(('setbox_shift_deep', lambda: _SBXD_BLOB))
 _CAM_BLOB = build_camrect_clamp()        # 相机 SetRect 视口钳制 (窄地图一致性)
 _BLOCKS.append(('camrect_clamp', lambda: _CAM_BLOB))
 

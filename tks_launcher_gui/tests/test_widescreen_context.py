@@ -17,7 +17,7 @@ class WidescreenContextTests(unittest.TestCase):
         self.assertIn("widescreen_16_9", patches)
         wide = patches["widescreen_16_9"]
         self.assertEqual(wide.type, "patch_sites")
-        self.assertEqual(len(getattr(wide, "sites", [])), 780)
+        self.assertEqual(len(getattr(wide, "sites", [])), 785)
         refs = {site.get("ref") for site in getattr(wide, "sites", [])}
         self.assertIn("map_camera", refs)
         self.assertIn("settle_shift", refs)
@@ -226,38 +226,54 @@ class MiniGameSelectBoxTests(unittest.TestCase):
     瓷砖却按 mode|0x80 → x+108 画在 856 画布上。不位移时白框整体比被点选的
     瓷砖左偏 108px (旋转拼图实测反馈)。
 
-    修法: 挂在框函数内的 `call SelectObject` 位点, 帧内 X 局部位于 [esp+0x10],
-    加 108 后尾调原 SelectObject —— 参数/栈平衡/返回地址语义不变。
+    修法: 挂在框函数内的 `call SelectObject` 位点, 帧内 X 局部位于 [esp+0x10]
+    (42D234 的 GetDC 缓冲在帧 +8, 故 X 在 +0xC → [esp+0x18]), 加 108 后尾调原
+    SelectObject —— 参数/栈平衡/返回地址语义不变。
+
+    7 个小游戏的全部 6 条框函数 (4298A4/429990 八阵图, 42D234 MG_WA, 42DB20
+    旋转拼图, 42EAA0 MG_reverse, 42F358 MG_44 — 与 `_UI_HOOKS` 的 6 个 GDI
+    MoveToEx 位点一一对应) 都必须挂上, 否则该游戏的选中框仍会左偏 108px。
     """
 
-    SITE = 0x2DB66
-    WRAPPER = (b"\x81\x44\x24\x10" + (108).to_bytes(4, "little")   # add dword [esp+0x10],108
-               + b"\xB8" + (0x4E52FE).to_bytes(4, "little")        # mov eax,SelectObject
-               + b"\xFF\xE0")                                      # jmp eax
+    # 位点 -> (cave 入口, SelectObject 调用原字节)
+    SITES = {
+        0x298E8: ("setbox_shift", "E8 11 BA 0B 00"),
+        0x299D4: ("setbox_shift", "E8 25 B9 0B 00"),
+        0x2D2E9: ("setbox_shift_deep", "E8 10 80 0B 00"),
+        0x2DB66: ("setbox_shift", "E8 93 77 0B 00"),
+        0x2EAE4: ("setbox_shift", "E8 15 68 0B 00"),
+        0x2F39C: ("setbox_shift", "E8 5D 5F 0B 00"),
+    }
+    # X 局部相对 cave 入口 esp 的偏移: [esp+0x10] / [esp+0x18]
+    WRAPPERS = {"setbox_shift": 0x10, "setbox_shift_deep": 0x18}
 
-    def test_site_hooks_select_object(self):
+    def test_all_box_sites_hooked(self):
         import json
         patch_dir = ROOT / "tks_launcher_gui" / "patches" / "widescreen_16_9"
         raw = json.loads((patch_dir / "patch.json").read_text(encoding="utf-8"))
-        site = next((s for s in raw["sites"]
-                     if int(s["rva"], 0) == self.SITE), None)
-        self.assertIsNotNone(site, f"{self.SITE:#X}: 选中框位移位点缺失")
-        self.assertEqual(site.get("kind"), "call", "选中框位点必须是 call 钩子")
-        self.assertEqual(site.get("ref"), "setbox_shift", "选中框位点未指向 setbox_shift")
-        self.assertEqual((site.get("expect") or "").upper(), "E8 93 77 0B 00",
-                         "位点必须是 42DB20 的 SelectObject 调用")
+        got = {int(s["rva"], 0): s for s in raw["sites"]}
+        for rva, (entry, expect) in self.SITES.items():
+            site = got.get(rva)
+            self.assertIsNotNone(site, f"{rva:#X}: 选中框位移位点缺失")
+            self.assertEqual(site.get("kind"), "call", f"{rva:#X}: 必须是 call 钩子")
+            self.assertEqual(site.get("ref"), entry, f"{rva:#X}: cave 入口不对")
+            self.assertEqual((site.get("expect") or "").upper(), expect,
+                             f"{rva:#X}: 位点不是该框函数的 SelectObject 调用")
 
-    def test_wrapper_adds_x_offset(self):
+    def test_wrappers_add_x_offset(self):
         import importlib.util
         patch_dir = ROOT / "tks_launcher_gui" / "patches" / "widescreen_16_9"
         spec = importlib.util.spec_from_file_location("_ws_sbx", patch_dir / "cave_code.py")
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
         blob = module.build_cave_block()
-        off = module.CAVE_ENTRIES["setbox_shift"]
-        got = blob[off:off + len(self.WRAPPER)]
-        self.assertEqual(got, self.WRAPPER,
-                         "setbox_shift 必须是 add [esp+0x10],108 + 尾调 SelectObject")
+        for entry, off in self.WRAPPERS.items():
+            want = (b"\x81\x44\x24" + bytes([off]) + (108).to_bytes(4, "little")
+                    + b"\xB8" + (0x4E52FE).to_bytes(4, "little") + b"\xFF\xE0")
+            start = module.CAVE_ENTRIES[entry]
+            got = blob[start:start + len(want)]
+            self.assertEqual(got, want,
+                             f"{entry}: 必须是 add [esp+{off:#x}],108 + 尾调 SelectObject")
 
 
 if __name__ == "__main__":
