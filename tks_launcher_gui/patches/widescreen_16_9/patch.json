@@ -1847,6 +1847,14 @@
    "tag": "小游戏背景 Blt 左对齐+右带清黑 (428F40 MG_EIGHT)"
   },
   {
+   "rva": "0x2924B",
+   "expect": "A1 78 42 82 00",
+   "replace": "A1 50 69 70 00",
+   "kind": null,
+   "ref": null,
+   "tag": "小游戏鼠标读点→MG_MOUSE(raw-108) (428F40)"
+  },
+  {
    "rva": "0x29361",
    "expect": "e8 86 b1 02 00",
    "replace": null,
@@ -1909,6 +1917,14 @@
    "kind": null,
    "ref": null,
    "tag": "小游戏字体画布宽 640->856 (429C8C)"
+  },
+  {
+   "rva": "0x29DC8",
+   "expect": "A1 78 42 82 00",
+   "replace": "A1 50 69 70 00",
+   "kind": null,
+   "ref": null,
+   "tag": "小游戏鼠标读点→MG_MOUSE(raw-108) (429DA8 骰子小游戏命中判定)"
   },
   {
    "rva": "0x29F96",
@@ -2371,6 +2387,14 @@
    "tag": "小游戏背景 Blt 左对齐+右带清黑 (42E5A8 MG_reverse)"
   },
   {
+   "rva": "0x2E72D",
+   "expect": "A1 78 42 82 00",
+   "replace": "A1 50 69 70 00",
+   "kind": null,
+   "ref": null,
+   "tag": "小游戏鼠标读点→MG_MOUSE(raw-108) (42E5A8)"
+  },
+  {
    "rva": "0x2e78e",
    "expect": "e8 59 5d 02 00",
    "replace": null,
@@ -2431,6 +2455,14 @@
    "kind": "call",
    "ref": "mg_blt_left",
    "tag": "小游戏背景 Blt 左对齐+右带清黑 (42EED4 MG_44)"
+  },
+  {
+   "rva": "0x2F020",
+   "expect": "A1 78 42 82 00",
+   "replace": "A1 50 69 70 00",
+   "kind": null,
+   "ref": null,
+   "tag": "小游戏鼠标读点→MG_MOUSE(raw-108) (42EED4)"
   },
   {
    "rva": "0x2f081",

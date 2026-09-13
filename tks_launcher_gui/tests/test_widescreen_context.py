@@ -17,7 +17,7 @@ class WidescreenContextTests(unittest.TestCase):
         self.assertIn("widescreen_16_9", patches)
         wide = patches["widescreen_16_9"]
         self.assertEqual(wide.type, "patch_sites")
-        self.assertEqual(len(getattr(wide, "sites", [])), 774)
+        self.assertEqual(len(getattr(wide, "sites", [])), 778)
         refs = {site.get("ref") for site in getattr(wide, "sites", [])}
         self.assertIn("map_camera", refs)
         self.assertIn("settle_shift", refs)
@@ -183,6 +183,26 @@ class TextShiftWrapperTests(unittest.TestCase):
             self.assertEqual(blob[off], 0x81,
                              f"{name}: 应为首字节 0x81 (add r/m32,imm32), 实际 0x{blob[off]:02X}")
             self.assertNotEqual(blob[off], 0xC7, f"{name}: 仍是 mov, 会覆盖 X")
+
+
+class MiniGameMouseTests(unittest.TestCase):
+    """小游戏命中判定必须读 MG_MOUSE(raw-108), 不能读 raw [0x824278]。
+
+    按钮是画在"原坐标+108"处的, 命中矩形仍是 640 坐标。若命中判定读到的是
+    窗口原始坐标, 可点区域就会比看到的按钮整体偏移 108px (实测骰子小游戏)。
+    """
+
+    def test_all_four_late_reads_redirected(self):
+        import json
+        patch_dir = ROOT / "tks_launcher_gui" / "patches" / "widescreen_16_9"
+        raw = json.loads((patch_dir / "patch.json").read_text(encoding="utf-8"))
+        got = {}
+        for site in raw["sites"]:
+            rva = int(site["rva"], 0) if isinstance(site.get("rva"), str) else int(site["rva"])
+            got[rva] = site.get("replace")
+        for rva in (0x29DC8, 0x2924B, 0x2E72D, 0x2F020):
+            self.assertEqual(got.get(rva), "A1 50 69 70 00",
+                             f"{rva:#X}: 仍读原始鼠标坐标, 可点区域会偏移 108px")
 
 
 if __name__ == "__main__":
