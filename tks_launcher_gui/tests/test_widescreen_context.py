@@ -17,7 +17,7 @@ class WidescreenContextTests(unittest.TestCase):
         self.assertIn("widescreen_16_9", patches)
         wide = patches["widescreen_16_9"]
         self.assertEqual(wide.type, "patch_sites")
-        self.assertEqual(len(getattr(wide, "sites", [])), 778)
+        self.assertEqual(len(getattr(wide, "sites", [])), 780)
         refs = {site.get("ref") for site in getattr(wide, "sites", [])}
         self.assertIn("map_camera", refs)
         self.assertIn("settle_shift", refs)
@@ -192,17 +192,72 @@ class MiniGameMouseTests(unittest.TestCase):
     窗口原始坐标, 可点区域就会比看到的按钮整体偏移 108px (实测骰子小游戏)。
     """
 
-    def test_all_four_late_reads_redirected(self):
+    # 7 个小游戏函数体 (428F40/429DA8/42AED4/42B330/42D538/42DF1C/42E5A8/42EED4)
+    # 里 [0x824278] 的全部读点 —— 由扫描原版 exe 的 disp32 得到, 一个都不能漏。
+    MINI_GAME_READS = (0x28F7E, 0x2924B, 0x29DC8, 0x2A064, 0x2AEF1, 0x2B378,
+                       0x2D566, 0x2D610, 0x2D653, 0x2D8AC, 0x2DF2B, 0x2E043,
+                       0x2E5C8, 0x2E650, 0x2E72D, 0x2EEE3, 0x2F020)
+
+    def test_every_mini_game_read_redirected(self):
+        """小游戏命中判定必须读 MG_MOUSE(raw-108), 不能读 raw [0x824278]。
+
+        按钮/瓷砖画在"原坐标+108"处、命中矩形仍是 640 坐标; 读到窗口原始坐标
+        时可点区域就整体偏移 108px (骰子 429DA8 实测, 旋转拼图 42D538 同病)。
+        """
         import json
         patch_dir = ROOT / "tks_launcher_gui" / "patches" / "widescreen_16_9"
         raw = json.loads((patch_dir / "patch.json").read_text(encoding="utf-8"))
         got = {}
         for site in raw["sites"]:
             rva = int(site["rva"], 0) if isinstance(site.get("rva"), str) else int(site["rva"])
-            got[rva] = site.get("replace")
-        for rva in (0x29DC8, 0x2924B, 0x2E72D, 0x2F020):
-            self.assertEqual(got.get(rva), "A1 50 69 70 00",
-                             f"{rva:#X}: 仍读原始鼠标坐标, 可点区域会偏移 108px")
+            got[rva] = (site.get("replace") or "").upper()
+        want = ("8B 0D 50 69 70 00", "8B 15 50 69 70 00", "A1 50 69 70 00")
+        for rva in self.MINI_GAME_READS:
+            self.assertIn(rva, got, f"{rva:#X}: 小游戏鼠标读点未重定向, 可点区域偏移 108px")
+            # 5B `A1` 形态只需改 disp32, 6B `8B modrm` 形态整体改
+            self.assertIn(got[rva], want,
+                          f"{rva:#X}: 仍读原始鼠标坐标 (期望 MG_MOUSE)")
+
+
+class MiniGameSelectBoxTests(unittest.TestCase):
+    """小游戏"点选高亮框"(GDI 白框) 必须与 +108 的瓷砖同源位移。
+
+    白框画在显示表面 dword_A2B98C 的 DC 上, 坐标取自 640 布局数组 (原坐标);
+    瓷砖却按 mode|0x80 → x+108 画在 856 画布上。不位移时白框整体比被点选的
+    瓷砖左偏 108px (旋转拼图实测反馈)。
+
+    修法: 挂在框函数内的 `call SelectObject` 位点, 帧内 X 局部位于 [esp+0x10],
+    加 108 后尾调原 SelectObject —— 参数/栈平衡/返回地址语义不变。
+    """
+
+    SITE = 0x2DB66
+    WRAPPER = (b"\x81\x44\x24\x10" + (108).to_bytes(4, "little")   # add dword [esp+0x10],108
+               + b"\xB8" + (0x4E52FE).to_bytes(4, "little")        # mov eax,SelectObject
+               + b"\xFF\xE0")                                      # jmp eax
+
+    def test_site_hooks_select_object(self):
+        import json
+        patch_dir = ROOT / "tks_launcher_gui" / "patches" / "widescreen_16_9"
+        raw = json.loads((patch_dir / "patch.json").read_text(encoding="utf-8"))
+        site = next((s for s in raw["sites"]
+                     if int(s["rva"], 0) == self.SITE), None)
+        self.assertIsNotNone(site, f"{self.SITE:#X}: 选中框位移位点缺失")
+        self.assertEqual(site.get("kind"), "call", "选中框位点必须是 call 钩子")
+        self.assertEqual(site.get("ref"), "setbox_shift", "选中框位点未指向 setbox_shift")
+        self.assertEqual((site.get("expect") or "").upper(), "E8 93 77 0B 00",
+                         "位点必须是 42DB20 的 SelectObject 调用")
+
+    def test_wrapper_adds_x_offset(self):
+        import importlib.util
+        patch_dir = ROOT / "tks_launcher_gui" / "patches" / "widescreen_16_9"
+        spec = importlib.util.spec_from_file_location("_ws_sbx", patch_dir / "cave_code.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        blob = module.build_cave_block()
+        off = module.CAVE_ENTRIES["setbox_shift"]
+        got = blob[off:off + len(self.WRAPPER)]
+        self.assertEqual(got, self.WRAPPER,
+                         "setbox_shift 必须是 add [esp+0x10],108 + 尾调 SelectObject")
 
 
 if __name__ == "__main__":

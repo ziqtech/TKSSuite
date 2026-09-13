@@ -1578,6 +1578,22 @@ def build_text_shift_a2(target_fn: int) -> bytes:
             + b'\xFF\xE0')                                      # jmp eax (尾调)
 
 
+# ── 3e3. 小游戏"选中框"(GDI 白框) 的 X 位移 wrapper ─────────────────────
+# 7 个小游戏各有一条选中框绘制函数 (4298A4/429990/42D234/42DB20/42EAA0/42F358),
+# 它们把框画在**显示表面** dword_A2B98C 的 DC 上:
+#     GetDC(显示) → v2 = X数组[选中列] (640 布局原坐标) → MoveToEx/LineTo 画矩形
+# 而同一坐标的精灵/瓷砖是按 mode|0x80 → x+108 画在 856 画布上的 (第五轮居中),
+# 于是白框整体比被点选的瓷砖左偏 108px —— 玩家看到的就是"点选区域不准确"
+# (旋转拼图 MG_rotate 实测反馈)。
+# 位点选在 SelectObject 调用点: 此时函数已把 hdc/pen 压栈, 自己的帧基址在
+# [esp+0x10] 处 (+0x14 是 Y), 因此只改 X 局部再尾调原 SelectObject —— 参数、
+# 栈平衡 (stdcall ret 8) 与返回地址 (site+5) 全部保持原语义。
+def build_setbox_shift() -> bytes:
+    return (b'\x81\x44\x24\x10' + struct.pack('<I', PAGE_OFF)   # add dword [esp+0x10],108 (X)
+            + b'\xB8' + struct.pack('<I', 0x4E52FE)             # mov eax,SelectObject
+            + b'\xFF\xE0')                                      # jmp eax (尾调)
+
+
 
 # ── 2d. JVG 精灵两步解码 (照 TKSRemake 重写: 解码与混合分离) ────────────
 # 原版绘制原语把 RLE 解码与写显存融合: 目标指针从帧右下角沿 640 宽平面
@@ -2299,6 +2315,8 @@ _TSR_BLOB = build_text_shift_a2(0x44E8E0)  # 结算页右对齐数字 X(a2)+108
 _BLOCKS.append(('text_shift_ralign', lambda: _TSR_BLOB))
 _TSW_BLOB = build_text_shift_a2(0x44E8A8)  # 结算页页码 X(a2)+108
 _BLOCKS.append(('text_shift_wrap', lambda: _TSW_BLOB))
+_SBX_BLOB = build_setbox_shift()         # 小游戏选中框 (GDI 白框) X+108
+_BLOCKS.append(('setbox_shift', lambda: _SBX_BLOB))
 _CAM_BLOB = build_camrect_clamp()        # 相机 SetRect 视口钳制 (窄地图一致性)
 _BLOCKS.append(('camrect_clamp', lambda: _CAM_BLOB))
 
