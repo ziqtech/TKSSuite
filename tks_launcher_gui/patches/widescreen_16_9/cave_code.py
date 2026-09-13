@@ -1642,24 +1642,35 @@ def build_pickup_shift() -> bytes:
 
 
 def build_pickup_oob() -> bytes:
-    """sub_412390 内 `call sub_410B74` (拾取读) → 屏幕边带直接返回 -1。
+    """sub_410B74 内的拾取缓冲读取指令 (RVA 0x10BAF, 8B) → 屏幕边带给出 -1 id。
 
-    只影响"原版 640 视图之外"的左右边带: 它们没有拾取缓冲内容, 返回 -1 让
-    sub_410B74(a1==2) 走世界坐标 bbox 兜底 (与原版同一路径)。中心区照旧进原
-    函数读缓冲。cdecl: 参数由调用方 `pop ecx` 平衡, 故返回 -1 只需 `ret`。
+    ⚠ 旧实现把**整个读函数**在入口 (`call sub_410B74`) 短路成 -1, 于是该函数内
+    a1==2 分支的**世界坐标 bbox 兜底根本没机会跑** —— 实测洛阳市集最右侧出入点
+    没有悬停效果 (出入点像素落在 856 屏幕的右 108px 边带里, 缓冲没有内容, 而入口
+    短路又干掉了唯一的兜底路径)。
+
+    改为只替换**读出来的 id**: 边带一律给 -1 (真实实体 id 恒 >= 0, 永不会命中),
+    原函数照常执行后续的 "id 命中可见列表 / 逐实体 bbox + 标志 + 掩码" 判定 ——
+    这与原版"缓冲没命中时"的行为完全一致, 只是把兜底范围扩大到整条边带。
+    中心区 (原版 640 视图) 照原指令读缓冲, 与原版逐列等价。
     """
-    code = bytearray()
-    code += b'\xA1' + struct.pack('<I', 0x00824278)      # mov eax,[0x824278] raw X
-    code += b'\x2D' + struct.pack('<I', PAGE_OFF)        # sub eax,108 → 原版视图 X
-    code += b'\x85\xC0'                                  # test eax,eax
-    code += b'\x78\x0E'                                  # js  oob   (+14 → oob)
-    code += b'\x3D' + struct.pack('<I', 640)             # cmp eax,640
-    code += b'\x7D\x07'                                  # jge oob   (+7  → oob)
-    code += b'\xB8' + struct.pack('<I', 0x410B74)        # mov eax,410B74
-    code += b'\xFF\xE0'                                  # jmp eax (尾调, 参数原样)
-    code += b'\xB8\xFF\xFF\xFF\xFF'                      # oob: mov eax,-1
-    code += b'\xC3'                                      # ret
-    return bytes(code)
+    a = A()
+    a.e(b'\x59')                                        # pop ecx (site+8)
+    a.e(b'\x89\x0D' + _g_ret())                          # mov [g_ret],ecx
+    a.e(b'\xA1' + struct.pack('<I', 0x00824278))         # mov eax,[0x824278] 原始 X
+    a.e(b'\x2D' + struct.pack('<I', PAGE_OFF))           # sub eax,108 → 原版视图 X
+    a.e(b'\x85\xC0')                                     # test eax,eax
+    a.j('s', 'oob')                                      # js  oob (左边带)
+    a.e(b'\x3D' + struct.pack('<I', W_PAGE))             # cmp eax,640
+    a.j('ge', 'oob')                                     # jge oob (右边带)
+    a.e(b'\x0F\xBF\x14\x55' + struct.pack('<I', 0x0078E276))  # 原指令: movsx edx,word [edx*2+buf]
+    a.jmp('out')
+    a.L('oob')
+    a.e(b'\xBA\xFF\xFF\xFF\xFF')                         # mov edx,-1 (边带: 无缓冲命中)
+    a.L('out')
+    a.e(b'\x8B\x0D' + _g_ret())                          # mov ecx,[g_ret]
+    a.e(b'\xFF\xE1')                                     # jmp ecx → site+8
+    return a.resolve()
 
 
 

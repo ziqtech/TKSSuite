@@ -286,14 +286,17 @@ class PickupMappingTests(unittest.TestCase):
     点不动 (实测洛阳市集实体 #780)。
 
     修法: 写入侧 X-=108 + 读取侧改读 PAGE_X(= clamp(raw-108,0,639)) → 缓冲列 ==
-    原版 640 视图列; 屏幕左右边带 (raw-108 ∉ [0,640)) 在读入口返回 -1, 交给引擎
-    自带的世界坐标 bbox 兜底; map_camera cave 重建视口后同步重算 824280/824284。
+    原版 640 视图列; 屏幕左右边带 (raw-108 ∉ [0,640)) 在**缓冲读取指令处**只把读出的
+    id 换成 -1 (真实实体 id 恒 >= 0), 这样 sub_410B74 内 a1==2 分支的世界坐标 bbox +
+    标志 + 掩码兜底照常执行 —— 实测: 若改成"读函数入口直接 return -1", 兜底就被跳过,
+    洛阳市集最右侧出入点会失去悬停效果。map_camera cave 重建视口后同步重算
+    824280/824284 (bbox 兜底的输入)。
     """
 
     # (位点 -> (cave 入口, 原字节))
     CALL_SITES = {
         0x6CBD: ("pickup_shift", "E8 82 DC 04 00"),
-        0x123A2: ("pickup_oob", "E8 CD E7 FF FF"),
+        0x10BAF: ("pickup_oob", "0F BF 14 55 76 E2 78 00"),
     }
     READ_SITE = 0x10B77
     PAGE_X = "A1 40 08 66 00"          # 占位 0x660840, 由 globals 重定位平移
@@ -320,6 +323,9 @@ class PickupMappingTests(unittest.TestCase):
             self.assertEqual(site.get("ref"), entry, f"{rva:#X}: cave 入口不对")
             self.assertEqual((site.get("expect") or "").upper(), expect,
                              f"{rva:#X}: 位点原字节不符")
+        # 不得再有"读函数入口短路"位点 (那会跳掉 bbox 兜底)
+        oob = [rva for rva, s in got.items() if s.get("ref") == "pickup_oob"]
+        self.assertEqual(oob, [0x10BAF], "pickup_oob 只能挂在缓冲读取指令处")
 
     def test_pickup_caves_bytes(self):
         import importlib.util
@@ -335,17 +341,20 @@ class PickupMappingTests(unittest.TestCase):
         self.assertEqual(blob[start:start + len(shift)], shift,
                          "pickup_shift 必须是 X-=108 + 尾调 454944")
 
-        oob = (b"\xA1" + (0x824278).to_bytes(4, "little")     # mov eax,[0x824278]
-               + b"\x2D" + (108).to_bytes(4, "little")        # sub eax,108
-               + b"\x85\xC0"                                  # test eax,eax
-               + b"\x78\x0E"                                  # js  oob
-               + b"\x3D" + (640).to_bytes(4, "little")        # cmp eax,640
-               + b"\x7D\x07"                                  # jge oob
-               + b"\xB8" + (0x410B74).to_bytes(4, "little") + b"\xFF\xE0"   # 尾调
-               + b"\xB8\xFF\xFF\xFF\xFF" + b"\xC3")           # oob: eax=-1; ret
+        # pickup_oob: 边带(出界) 把读出的 id 换成 -1, 中心区执行原读取指令, 再跳回 site+8
         start = module.CAVE_ENTRIES["pickup_oob"]
-        self.assertEqual(blob[start:start + len(oob)], oob,
-                         "pickup_oob 必须: 边带返回 -1, 中心区尾调 410B74")
+        oob = blob[start:start + len(module.build_pickup_oob())]
+        self.assertTrue(oob.startswith(b"\x59\x89\x0D" + module._g_ret()),
+                        "pickup_oob 必须先保存返回地址 (site+8)")
+        guard = (b"\xA1" + (0x824278).to_bytes(4, "little")     # mov eax,[0x824278] 原始 X
+                 + b"\x2D" + (108).to_bytes(4, "little")        # sub eax,108
+                 + b"\x85\xC0")                                 # test eax,eax
+        self.assertIn(guard, oob, "pickup_oob 必须按 原始X-108 判断是否在边带")
+        self.assertIn(b"\x0F\xBF\x14\x55" + (0x78E276).to_bytes(4, "little"), oob,
+                      "pickup_oob 中心区必须保留原缓冲读取指令")
+        self.assertIn(b"\xBA\xFF\xFF\xFF\xFF", oob, "pickup_oob 边带必须给出 -1 id")
+        self.assertTrue(oob.endswith(b"\x8B\x0D" + module._g_ret() + b"\xFF\xE1"),
+                        "pickup_oob 必须返回 site+8 (不能跳过 bbox 兜底)")
 
     def test_map_camera_recomputes_mouse_world(self):
         import importlib.util
