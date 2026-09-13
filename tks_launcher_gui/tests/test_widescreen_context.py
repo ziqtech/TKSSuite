@@ -17,9 +17,12 @@ class WidescreenContextTests(unittest.TestCase):
         self.assertIn("widescreen_16_9", patches)
         wide = patches["widescreen_16_9"]
         self.assertEqual(wide.type, "patch_sites")
-        self.assertEqual(len(getattr(wide, "sites", [])), 764)
+        self.assertEqual(len(getattr(wide, "sites", [])), 767)
         refs = {site.get("ref") for site in getattr(wide, "sites", [])}
         self.assertIn("map_camera", refs)
+        self.assertIn("settle_shift", refs)
+        self.assertIn("gxp_pad_decide", refs)
+        self.assertIn("gxp_upload", refs)
         self.assertIn("init_stride", refs)
 
     def test_generated_cave_matches_patch_json(self):
@@ -29,6 +32,41 @@ class WidescreenContextTests(unittest.TestCase):
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
         self.assertEqual(module.build_cave_block().hex(" "), raw["cave_code"])
+
+
+class SettleShiftLayoutTests(unittest.TestCase):
+    """settle_shift 的行内变换: 640 内容 -> 居中 [108,748), 两侧补黑。"""
+
+    W, PITCH = 856, 856 * 2
+
+    def _shift_row(self, row: bytearray) -> None:
+        for i in range(320):                     # 反向拷贝 320 dwords
+            src, dst = 1276 - 4 * i, 1492 - 4 * i
+            row[dst:dst + 4] = row[src:src + 4]
+        row[0:216] = b"\x00" * 216
+        row[1496:1712] = b"\x00" * 216
+
+    def test_row_is_centered_with_black_bands(self):
+        import struct
+        row = bytearray(self.PITCH)
+        for x in range(640):
+            struct.pack_into("<H", row, x * 2, 1000 + x)
+        self._shift_row(row)
+        vals = struct.unpack_from("<%dH" % self.W, row, 0)
+        self.assertEqual(vals[108], 1000)        # 内容左边界
+        self.assertEqual(vals[747], 1639)        # 内容右边界
+        self.assertTrue(all(v == 0 for v in vals[:108]))
+        self.assertTrue(all(v == 0 for v in vals[748:]))
+
+    def test_source_survives_until_copy_completes(self):
+        """左带必须在拷贝之后清黑, 否则源 [0,108) 会被一起抹掉 (实测裁切根因)。"""
+        import struct
+        row = bytearray(self.PITCH)
+        for x in range(640):
+            struct.pack_into("<H", row, x * 2, 1000 + x)
+        self._shift_row(row)
+        vals = struct.unpack_from("<%dH" % self.W, row, 0)
+        self.assertEqual(vals[108], 1000, "原 x=0 的内容必须落在 x=108")
 
 
 if __name__ == "__main__":

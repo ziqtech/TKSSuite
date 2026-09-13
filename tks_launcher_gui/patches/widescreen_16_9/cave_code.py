@@ -396,6 +396,73 @@ def build_map_camera() -> bytes:
     return bytes(code)
 
 
+def build_settle_shift() -> bytes:
+    """结算/奖励页 (43B7FC)：把原始 640x480 画面整体右移 108，两侧补黑。
+
+    挂在 43B7FC 主循环的 `call sub_411D18`(RVA 0x3BE13) 之前 —— 该点之后
+    只剩光标绘制与 Unlock，因此：
+      ① 每帧的 lm.gxp 背景 Blt、面板精灵、道具图标、文字全部已画在原 640
+         坐标系内（这条路径本来就正确），本 cave 一次性平移，无需再逐个位点
+         +108；
+      ② 光标随后按真实窗口坐标绘制，不会被平移。
+
+    平移 (856x480 / 1712B 行距, 16bpp):
+      [0,216)      <- 黑
+      [216,1496)   <- 原 [0,1280)（从右往左拷贝以避开重叠）
+      [1496,1712)  <- 黑
+    即内容居中于 [108,748)，左右各 108px 黑边。
+    """
+    code = bytearray()
+    row_fix = []
+
+    def emit(b: bytes) -> int:
+        off = len(code)
+        code.extend(b)
+        return off
+
+    emit(b'\x59')                                  # pop ecx (site+5)
+    emit(b'\x89\x0D' + _g_ret())                   # mov [g_ret],ecx
+    emit(b'\x53\x55\x56\x57')                     # push ebx;ebp;esi;edi
+    emit(b'\x8B\x6C\x24\x10')                     # mov ebp,[esp+0x10] ; surface
+    emit(b'\x31\xDB')                              # xor ebx,ebx ; y
+    emit(b'\xFC')                                  # cld
+    row = len(code)
+    emit(b'\x89\xD8')                              # mov eax,ebx
+    emit(b'\x69\xC0' + struct.pack('<I', 1712))    # imul eax,eax,1712
+    emit(b'\x8D\x54\x05\x00')                     # lea edx,[ebp+eax]
+    # move [0,1280) -> [216,1496) backwards
+    emit(b'\x8B\xF2')                              # mov esi,edx
+    emit(b'\x81\xC6' + struct.pack('<I', 1276))     # add esi,1276
+    emit(b'\x8B\xFA')                              # mov edi,edx
+    emit(b'\x81\xC7' + struct.pack('<I', 1492))     # add edi,1492
+    emit(b'\xB9\x40\x01\x00\x00')                 # mov ecx,320
+    emit(b'\xFD')                                  # std
+    emit(b'\xF3\xA5')                              # rep movsd
+    emit(b'\xFC')                                  # cld
+    # left band [0,216) —— 必须在拷贝之后清, 否则会把源数据一起抹掉
+    emit(b'\x8B\xFA')                              # mov edi,edx
+    emit(b'\x31\xC0')                              # xor eax,eax
+    emit(b'\xB9\x36\x00\x00\x00')                 # mov ecx,54
+    emit(b'\xF3\xAB')                              # rep stosd
+    # right band [1496,1712)
+    emit(b'\x8D\xBA' + struct.pack('<I', 1496))     # lea edi,[edx+1496]
+    emit(b'\x31\xC0')                              # xor eax,eax
+    emit(b'\xB9\x36\x00\x00\x00')                 # mov ecx,54
+    emit(b'\xF3\xAB')                              # rep stosd
+    emit(b'\x43')                                  # inc ebx
+    emit(b'\x81\xFB\xE0\x01\x00\x00')             # cmp ebx,480
+    row_fix.append((len(code) + 2, row))
+    emit(b'\x0F\x82\x00\x00\x00\x00')             # jb row
+    emit(b'\x5F\x5E\x5D\x5B')                     # pop edi;esi;ebp;ebx
+    emit(b'\xB8' + struct.pack('<I', 0x00411D18))   # mov eax,411D18
+    emit(b'\xFF\xD0')                              # call eax (原光标绘制)
+    emit(b'\x8B\x0D' + _g_ret())                   # mov ecx,[g_ret]
+    emit(b'\xFF\xE1')                              # jmp ecx -> site+5
+    for pos, tgt in row_fix:
+        code[pos:pos + 4] = struct.pack('<i', tgt - (pos + 4))
+    return bytes(code)
+
+
 def build_page_wrapper(page_fn: int) -> bytes:
     """页面状态机: 设 640/居中 108 -> 尾调用 -> 桩恢复 856/0 -> 回到调用者。
 
@@ -982,66 +1049,82 @@ def build_blit_wrap_sub() -> bytes:
 
 # ── 3. GXP 加载器适配 ──────────────────────────────────────────────────
 def build_gxp_pad_decide() -> bytes:
-    """640x480 全屏 gxp -> ddsd 宽改 856 (右带留黑); 其余尺寸原样。"""
+    """640x480 全屏 gxp 的表面按 856 宽创建 (内容靠左, 右带由 upload 清黑)。
+
+    hook 点 RVA 0x50397 (`mov [ebp-0x90],edx`, 6B)。先补回原指令, 再按需把
+    ddsd.dwWidth([ebp-0x8C]) 改成 856 并置 g_pad=1; 非 640x480 时 g_pad=0。
+    `ret` 回到 site+5 (被 NOP 覆盖的 1 字节) 后继续原流程。
+    作用: 让该表面与 856 后备面宽度一致 —— 否则 NULL 矩形的 Blt 会被 cnc-ddraw
+    按 640->856 整幅拉伸 (实测背景美术被拉成 1.3375 倍并裁掉右侧 25%)。
+    """
     code = bytearray()
-    code += b'\xA1' + struct.pack('<I', GXP_W_VA)     # mov eax,[W]
-    code += b'\x8B\x15' + struct.pack('<I', GXP_H_VA)  # mov edx,[H]
-    code += b'\x89\x85\x74\xFF\xFF\xFF'               # mov [ebp-0x8C],eax (ddsd.W)
-    code += b'\x89\x95\x70\xFF\xFF\xFF'               # mov [ebp-0x90],edx (ddsd.H)
-    code += b'\xC7\x05' + _g_pad() + struct.pack('<I', 0)
-    code += b'\x3D\x80\x02\x00\x00'                   # cmp eax,640
-    j1 = len(code); code += b'\x75\x00'
-    code += b'\x81\xFA\xE0\x01\x00\x00'               # cmp edx,480
-    j2 = len(code); code += b'\x75\x00'
-    code += b'\xB8' + struct.pack('<I', W_SCREEN)     # mov eax,856
-    code += b'\x89\x85\x74\xFF\xFF\xFF'               # mov [ebp-0x8C],eax
-    code += b'\xC7\x05' + _g_pad() + struct.pack('<I', 1)
-    out = len(code)
-    code += b'\xC3'
-    code[j1 + 1] = (out - (j1 + 2)) & 0xFF
-    code[j2 + 1] = (out - (j2 + 2)) & 0xFF
+    j = []
+
+    def emit(b: bytes) -> int:
+        off = len(code)
+        code.extend(b)
+        return off
+
+    def j32(cond: bytes, tgt: str) -> None:
+        j.append((emit(cond + b'\x00\x00\x00\x00') + 2, tgt))
+
+    emit(b'\x89\x95\x70\xFF\xFF\xFF')                          # mov [ebp-0x90],edx
+    emit(b'\x81\xBD\x74\xFF\xFF\xFF' + struct.pack('<I', 640))   # cmp dword [ebp-0x8C],640
+    j32(b'\x0F\x85', 'no')
+    emit(b'\x81\xFA' + struct.pack('<I', 480))                    # cmp edx,480
+    j32(b'\x0F\x85', 'no')
+    emit(b'\xC7\x85\x74\xFF\xFF\xFF' + struct.pack('<I', W_SCREEN))
+    emit(b'\xC7\x05' + _g_pad() + struct.pack('<I', 1))
+    emit(b'\xC3')
+    no = len(code)
+    emit(b'\xC7\x05' + _g_pad() + struct.pack('<I', 0))
+    emit(b'\xC3')
+    for pos, tgt in j:
+        code[pos:pos + 4] = struct.pack('<i', no - (pos + 4))
     return bytes(code)
 
 
 def build_gxp_upload() -> bytes:
-    """上传: padded 时逐行拷 1280B + 清 432B 右带, 否则原 memcpy。
+    """按 g_pad 决定上传方式: padded 时逐行拷 1280B + 清 432B 右带。
 
-    自身压 3 个参数, 使 hook 后原 `add esp,0xC` 平衡。
-    src 步进 1280 (640 宽), dst 步进 1712 (856x2); rep movsd + rep stosd 后
-    edi 恰落下一行行首。
+    hook 点 RVA 0x50478 (`call memcpy`, 5B)。此刻栈上已有原代码压好的 3 个参数:
+    [esp+4]=dst、[esp+8]=src、[esp+12]=size, 返回地址 [esp]=0x5047D。
+    非 padded 时直接尾调用原 memcpy (参数/返回值原样透传)。
+    padded 时逐行拷贝, 完成后 `ret` 回 0x5047D, 原 `add esp,0xC` 照常平衡。
     """
     code = bytearray()
-    code += b'\x8B\x0D' + struct.pack('<I', GXP_W_VA)     # mov ecx,[W]
-    code += b'\x0F\xAF\x0D' + struct.pack('<I', GXP_H_VA)  # imul ecx,[H]
-    code += b'\x03\xC9'                                   # add ecx,ecx
-    code += b'\x51'                                       # push size
-    code += b'\x8B\x45\xEC'                               # mov eax,[ebp-0x14] (src)
-    code += b'\x50'                                       # push src
-    code += b'\x8B\x55\x8C'                               # mov edx,[ebp-0x74] (dst)
-    code += b'\x52'                                       # push dst
-    code += b'\xA1' + _g_pad()                            # mov eax,[g_pad]
-    code += b'\x85\xC0'                                   # test eax,eax
-    jz_orig = len(code); code += b'\x74\x00'
-    code += b'\x56\x57\x53'                               # push esi;push edi;push ebx
-    code += b'\x8B\x75\xEC'                               # mov esi,[ebp-0x14]
-    code += b'\x8B\x7D\x8C'                               # mov edi,[ebp-0x74]
-    code += b'\xBB\xE0\x01\x00\x00'                       # mov ebx,480
-    l_loop = len(code)
-    code += b'\xB9\x40\x01\x00\x00'                       # mov ecx,320
-    code += b'\xF3\xA5'                                   # rep movsd
-    code += b'\x33\xC0'                                   # xor eax,eax
-    code += b'\xB9' + BAND_DWORDS.to_bytes(4, 'little')   # mov ecx,108
-    code += b'\xF3\xAB'                                   # rep stosd
-    code += b'\x4B'                                       # dec ebx
-    jnz_loop = len(code); code += b'\x75\x00'
-    code += b'\x5B\x5F\x5E'                               # pop ebx;pop edi;pop esi
-    code += b'\xC3'
+    j = []
+
+    def emit(b: bytes) -> int:
+        off = len(code)
+        code.extend(b)
+        return off
+
+    def j32(cond: bytes, tgt: str) -> None:
+        j.append((emit(cond + b'\x00\x00\x00\x00') + 2, tgt))
+
+    emit(b'\xA1' + _g_pad())                                  # mov eax,[g_pad]
+    emit(b'\x85\xC0')                                         # test eax,eax
+    j32(b'\x0F\x84', 'orig')
+    emit(b'\x56\x57\x53')                                     # push esi;edi;ebx
+    emit(b'\x8B\x74\x24\x14')                                 # mov esi,[esp+0x14] src
+    emit(b'\x8B\x7C\x24\x10')                                 # mov edi,[esp+0x10] dst
+    emit(b'\xBB\xE0\x01\x00\x00')                             # mov ebx,480
+    loop = len(code)
+    emit(b'\xB9\x40\x01\x00\x00')                             # mov ecx,320
+    emit(b'\xF3\xA5')                                         # rep movsd
+    emit(b'\x33\xC0')                                         # xor eax,eax
+    emit(b'\xB9' + struct.pack('<I', BAND_DWORDS))            # mov ecx,108
+    emit(b'\xF3\xAB')                                         # rep stosd
+    emit(b'\x4B')                                             # dec ebx
+    j32(b'\x0F\x85', 'loop')
+    emit(b'\x5B\x5F\x5E')                                     # pop ebx;edi;esi
+    emit(b'\xC3')
     orig = len(code)
-    code += b'\xB8' + struct.pack('<I', MEMCPY_VA)
-    code += b'\xFF\xD0'                                   # call eax
-    code += b'\xC3'
-    code[jz_orig + 1] = (orig - (jz_orig + 2)) & 0xFF
-    code[jnz_loop + 1] = (l_loop - (jnz_loop + 2)) & 0xFF
+    emit(b'\xB8' + struct.pack('<I', MEMCPY_VA))               # mov eax,memcpy
+    emit(b'\xFF\xE0')                                         # jmp eax (尾调用)
+    for pos, tgt in j:
+        code[pos:pos + 4] = struct.pack('<i', (loop if tgt == 'loop' else orig) - (pos + 4))
     return bytes(code)
 
 
@@ -2182,6 +2265,7 @@ _SPRITE_BLOB, _SPRITE_SUB = build_block(_SPRITE_HOOKS, entity_only=True,
 # ── 布局与入口 ─────────────────────────────────────────────────────────
 _BLOCKS = [
     ('init_stride', build_stride_init),
+    ('settle_shift', build_settle_shift),
     ('map_camera', build_map_camera),
     ('grab_copy', build_grab_copy),
     ('push_copy', build_push_copy),
