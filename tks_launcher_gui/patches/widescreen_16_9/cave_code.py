@@ -1037,6 +1037,19 @@ def build_gxp_blt_fix() -> bytes:
     emit(b'\xC7\x44\x24\x04' + struct.pack('<I', G_DST_RECT_VA))  # mov [esp+4],dstRect
     emit(b'\xC7\x44\x24\x0C' + struct.pack('<I', G_RECT_VA))      # mov [esp+0xC],srcRect
     skip_off = len(code)
+    emit(b'\x81\xEC\x68\x00\x00\x00')          # sub esp,0x68 (fx 100B)
+    emit(b'\xC7\x04\x24' + struct.pack('<I', 100))   # fx.dwSize=100
+    emit(b'\xC7\x44\x24\x50' + b'\x00\x00\x00\x00')  # fx.dwFillColor=0 (fx+0x50)
+    emit(b'\x8B\x94\x24\x68\x00\x00\x00')          # mov edx,[esp+0x68] (this=[A])
+    emit(b'\x54')                                      # push esp (fx)
+    emit(b'\x68' + struct.pack('<I', 0x1000400))      # push WAIT|COLORFILL
+    emit(b'\x6A\x00')                                  # push 0 (srcRect)
+    emit(b'\x6A\x00')                                  # push 0 (src)
+    emit(b'\x6A\x00')                                  # push 0 (dstRect)
+    emit(b'\x52')                                      # push edx (this)
+    emit(b'\x8B\x12')                                  # mov edx,[edx]
+    emit(b'\xFF\x52\x14')                            # call [edx+0x14] colorfill
+    emit(b'\x81\xC4\x68\x00\x00\x00')          # add esp,0x68 (fx 收回)
     emit(b'\x8B\x14\x24')                                # mov edx,[esp]       ; dst 对象
     emit(b'\x8B\x12')                                    # mov edx,[edx]
     emit(b'\xFF\x52\x14')                                # call [edx+0x14]     ; Blt
@@ -1123,10 +1136,10 @@ def build_gxp_blt_left() -> bytes:
     # (eax 此时 = W+108, 故阈值 964 = 856+108 等价于 W<856)
     emit(b'\x3D' + struct.pack('<I', W_SCREEN + PAGE_OFF))  # cmp eax,964
     j32(b'\x0F\x83', 'nofill')                       # jae nofill (无带)
-    emit(b'\x81\xEC' + struct.pack('<I', 0x68))      # sub esp,0x68 (fx 100B); esp=A-0x68
+    emit(b'\x81\xEC\x68\x00\x00\x00')          # sub esp,0x68 (fx 100B)
     emit(b'\xC7\x04\x24' + struct.pack('<I', 100))   # fx.dwSize=100
     emit(b'\xC7\x44\x24\x50' + b'\x00\x00\x00\x00')  # fx.dwFillColor=0 (fx+0x50, 44F420 实证; 不清零=栈垃圾色)
-    emit(b'\x8B\x94\x24' + struct.pack('<I', 0x68))  # mov edx,[esp+0x68] (this=[A])
+    emit(b'\x8B\x94\x24\x68\x00\x00\x00')          # mov edx,[esp+0x68] (this=[A])
     emit(b'\x54')                                    # push esp (fx 指针)
     emit(b'\x68' + struct.pack('<I', 0x1000400))     # push DDBLT_WAIT|DDBLT_COLORFILL
     emit(b'\x6A\x00')                                # push 0 (srcRect)
@@ -1135,7 +1148,7 @@ def build_gxp_blt_left() -> bytes:
     emit(b'\x52')                                    # push edx (this)
     emit(b'\x8B\x12')                                # mov edx,[edx]
     emit(b'\xFF\x52\x14')                            # call [edx+0x14] colorfill
-    emit(b'\x81\xC4' + struct.pack('<I', 0x68))      # add esp,0x68 (fx 区收回)
+    emit(b'\x81\xC4\x68\x00\x00\x00')          # add esp,0x68 (fx 收回)
     jmp_blt = emit(b'\xEB\x00')                      # jmp blt (rel8 回填)
     skip = len(code)
     emit(b'\x81\xC4' + struct.pack('<I', 0x98))      # add esp,0x98 → esp=P (未调 DD: 弃 desc+6 参)
@@ -1285,7 +1298,7 @@ def build_map_bg_blt() -> bytes:
     emit(b'\xC7\x44\x24\x04' + struct.pack('<I', G_DST_RECT_VA))  # [A+4]=dstRect
     emit(b'\xC7\x44\x24\x0C' + struct.pack('<I', G_RECT_VA))      # [A+C]=srcRect
     # ── colorfill 整面黑 (44F420 同款, 仅 clamp 路径 = 必有黑带) ──
-    emit(b'\x81\xEC' + struct.pack('<I', 0x68))      # sub esp,0x68 (fx 100B)
+    emit(b'\x81\xEC\x68\x00\x00\x00')          # sub esp,0x68 (fx 100B)
     emit(b'\xC7\x04\x24' + struct.pack('<I', 100))   # fx.dwSize=100
     emit(b'\xC7\x44\x24\x50' + b'\x00\x00\x00\x00')  # fx.dwFillColor=0 (fx+0x50, 44F420 实证; 不清零=栈垃圾色)
     emit(b'\x8B\x94\x24' + struct.pack('<I', 0x68))  # mov edx,[esp+0x68] (this=[A], esp=A-0x68)
@@ -1297,7 +1310,7 @@ def build_map_bg_blt() -> bytes:
     emit(b'\x52')                                    # push edx (this)
     emit(b'\x8B\x12')                                # mov edx,[edx]
     emit(b'\xFF\x52\x14')                            # call [edx+0x14] colorfill
-    emit(b'\x81\xC4' + struct.pack('<I', 0x68))      # add esp,0x68 (fx 收回)
+    emit(b'\x81\xC4\x68\x00\x00\x00')          # add esp,0x68 (fx 收回)
     # ── Blt 背景 (esp=A → stdcall 消费 6 参 → esp=P) ──
     emit(b'\x8B\x14\x24')                            # mov edx,[esp]
     emit(b'\x8B\x12')                                # mov edx,[edx]
@@ -1313,12 +1326,81 @@ def build_map_bg_blt() -> bytes:
     return bytes(code)
 
 
+# ── 3d2. 相机 SetRect 视口钳制 (窄地图相机一致性) ──────────────────────
+# 相机函数 (406CE0/40C8E0/43CE30/436F60/43CF78) 与两处加载初始化 (411308/
+# 42FA50) 用 SetRect(&8242A8, viewX, viewY, W, H) 写视口 — 窄地图 (bgW<856)
+# 时原始 viewX 超出合法区间。map_bg_blt 每帧回写钳制值, 但气泡等静态锚点在
+# 注册时烘焙当时相机值 (409F4C: entry[4]=8242A8+offset), 烘焙用原始值、绘制
+# 用回写值 → 静态气泡文字偏移 (相机差值, 实测 ~220px)。
+# 本 cave 挂 7 个 SetRect(&8242A8,...) 调用点, 入口即钳制 l/t:
+#   l = clamp(l, min(0,bgW-w), max(0,bgW-w));  t = clamp(t, min(0,bgH-h), max(0,bgH-h))
+# → 相机源头恒合法。钳制后调原 SetRect (452658 绝对地址), stdcall 消费 5 参。
+def build_camrect_clamp() -> bytes:
+    code = bytearray()
+
+    def emit(b: bytes) -> int:
+        off = len(code)
+        code.extend(b)
+        return off
+
+    emit(b'\x59')                                    # pop ecx (site+5); esp=A
+    emit(b'\x89\x0D' + _g_ret2())                    # mov [g_ret2],ecx
+    # ── X: l = clamp(l, min(0,bgW-w), max(0,bgW-w)) ── ([A+4]=l, [A+C]=w)
+    emit(b'\x0F\xB7\x05' + struct.pack('<I', 0x00824290))  # movzx eax,word bgW
+    emit(b'\x2B\x44\x24\x0C')                        # sub eax,[esp+0xC] (w)
+    emit(b'\x8B\xC8')                                # mov ecx,eax
+    emit(b'\x8B\xD0')                                # mov edx,eax
+    emit(b'\x33\xC0')                                # xor eax,eax
+    emit(b'\x85\xC9')                                # test ecx,ecx
+    emit(b'\x0F\x49\xC8')                            # cmovns ecx,eax  L=min(0,t)
+    emit(b'\x0F\x48\xD0')                            # cmovs edx,eax   U=max(0,t)
+    emit(b'\x8B\x44\x24\x04')                        # mov eax,[esp+4] (l)
+    emit(b'\x3B\xC1')                                # cmp eax,ecx
+    emit(b'\x0F\x4C\xC1')                            # cmovl eax,ecx   l=max(l,L)
+    emit(b'\x3B\xC2')                                # cmp eax,edx
+    emit(b'\x0F\x4F\xC2')                            # cmovg eax,edx   l=min(l,U)
+    emit(b'\x89\x44\x24\x04')                        # mov [esp+4],eax
+    # ── Y: t = clamp(t, min(0,bgH-h), max(0,bgH-h)) ── ([A+8]=t, [A+10]=h)
+    emit(b'\x0F\xB7\x05' + struct.pack('<I', 0x00824292))  # movzx eax,word bgH
+    emit(b'\x2B\x44\x24\x10')                        # sub eax,[esp+0x10] (h)
+    emit(b'\x8B\xC8')                                # mov ecx,eax
+    emit(b'\x8B\xD0')                                # mov edx,eax
+    emit(b'\x33\xC0')                                # xor eax,eax
+    emit(b'\x85\xC9')                                # test ecx,ecx
+    emit(b'\x0F\x49\xC8')                            # cmovns ecx,eax  L
+    emit(b'\x0F\x48\xD0')                            # cmovs edx,eax   U
+    emit(b'\x8B\x44\x24\x08')                        # mov eax,[esp+8] (t)
+    emit(b'\x3B\xC1')                                # cmp eax,ecx
+    emit(b'\x0F\x4C\xC1')                            # cmovl eax,ecx
+    emit(b'\x3B\xC2')                                # cmp eax,edx
+    emit(b'\x0F\x4F\xC2')                            # cmovg eax,edx
+    emit(b'\x89\x44\x24\x08')                        # mov [esp+8],eax
+    # ── 调原 SetRect(452658): 参数已在 [esp] (stdcall 弹 20B → esp=P) ──
+    emit(b'\xB8' + struct.pack('<I', 0x452658))      # mov eax,452658
+    emit(b'\xFF\xD0')                                # call eax
+    emit(b'\x8B\x0D' + _g_ret2())                    # mov ecx,[g_ret2]
+    emit(b'\xFF\xE1')                                # jmp ecx -> site+5
+    return bytes(code)
+
+
 # ── 3e. 小游戏文字位移 wrapper ─────────────────────────────────────────
 # 7 个小游戏的状态/倒计时/按钮文字 44E49C 调用点 (30 个): x (arg3) += 108 与
 # 背景图/瓷砖/鼠标命中 (+108) 同步居中。尾调 44E49C (栈上参数原样传递)。
 def build_mg_text_shift() -> bytes:
     return (b'\xC7\x44\x24\x0C' + struct.pack('<I', PAGE_OFF)   # add dword [esp+0xC],108 (x)
             + b'\xB8' + struct.pack('<I', 0x44E49C)             # mov eax,44E49C
+            + b'\xFF\xE0')                                      # jmp eax (尾调)
+
+
+# ── 3e2. 结算页右对齐/格式化文字位移 wrapper (X = a2) ──────────────────
+# 43B2D4/43B648 的等级/经验数字走 44E8E0 (右对齐, 逐字符从右往左画, X=a2),
+# 页码 "第x/y页" 走 44E8A8 (sprintf + 44E49C, X=a2)。两者的 X 都是第 2 参
+# ([esp+8]), 与 44E49C 直接调用点的 a3 ([esp+0xC]) 不同 —— 结算页面板精灵
+# 八轮已 +108, 这些文字位点漏钩 → 数字/页码整体左偏 108 (结算页"割裂"观感
+# 的文字成分)。尾调各自目标 (栈上参数原样传递, cdecl 由调用方平衡)。
+def build_text_shift_a2(target_fn: int) -> bytes:
+    return (b'\xC7\x44\x24\x08' + struct.pack('<I', PAGE_OFF)   # add dword [esp+8],108 (x=a2)
+            + b'\xB8' + struct.pack('<I', target_fn)            # mov eax,target
             + b'\xFF\xE0')                                      # jmp eax (尾调)
 
 
@@ -1875,13 +1957,13 @@ _BATTLE_HOOKS = [
     ('bt43B0D8', 0x43B0D8, 'e843cf0100', 3),
     ('bt43B11E', 0x43B11E, 'e8019c0100', 1),
     ('bt43B14E', 0x43B14E, 'e8cdce0100', 3),
-    ('bt43B3AC', 0x43B3AC, 'e83b910100', 0),
-    ('bt43B3E6', 0x43B3E6, 'e801910100', 0),
-    ('bt43B436', 0x43B436, 'e8cdd80100', 5),
-    ('bt43B46D', 0x43B46D, 'e896d80100', 5),
-    ('bt43B5B5', 0x43B5B5, 'e84ed70100', 5),
-    ('bt43B6D4', 0x43B6D4, 'e8138e0100', 0),
-    ('bt43BDE9', 0x43BDE9, 'e8fe860100', 0),
+    ('bt43B3AC', 0x43B3AC, 'e83b910100', 128),
+    ('bt43B3E6', 0x43B3E6, 'e801910100', 128),
+    ('bt43B436', 0x43B436, 'e8cdd80100', 133),
+    ('bt43B46D', 0x43B46D, 'e896d80100', 133),
+    ('bt43B5B5', 0x43B5B5, 'e84ed70100', 133),
+    ('bt43B6D4', 0x43B6D4, 'e8138e0100', 128),
+    ('bt43BDE9', 0x43BDE9, 'e8fe860100', 128),
     ('bt43C14D', 0x43C14D, 'e8d28b0100', 1),
     ('bt43C176', 0x43C176, 'e8a5be0100', 3),
     ('bt43C1B8', 0x43C1B8, 'e8678b0100', 1),
@@ -2037,6 +2119,12 @@ _MAP_BLOB = build_map_bg_blt()           # 地图/战场背景 Blt 视口钳制 
 _BLOCKS.append(('map_bg_blt', lambda: _MAP_BLOB))
 _MGT_BLOB = build_mg_text_shift()        # 小游戏文字位移 wrapper (+108)
 _BLOCKS.append(('mg_text_shift', lambda: _MGT_BLOB))
+_TSR_BLOB = build_text_shift_a2(0x44E8E0)  # 结算页右对齐数字 X(a2)+108
+_BLOCKS.append(('text_shift_ralign', lambda: _TSR_BLOB))
+_TSW_BLOB = build_text_shift_a2(0x44E8A8)  # 结算页页码 X(a2)+108
+_BLOCKS.append(('text_shift_wrap', lambda: _TSW_BLOB))
+_CAM_BLOB = build_camrect_clamp()        # 相机 SetRect 视口钳制 (窄地图一致性)
+_BLOCKS.append(('camrect_clamp', lambda: _CAM_BLOB))
 
 
 # 诊断: 给关键 cave 块加调用计数 (定位菜单花屏时哪条路径在跑; 定位后移除)
