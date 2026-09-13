@@ -308,6 +308,94 @@ def build_stride_init() -> bytes:
     return bytes(code)
 
 
+def build_map_camera() -> bytes:
+    """替换地图主循环 `call sub_406CE0`：按原版公式在 856 视口下重建跟随。
+
+    原版公式（dword_4E7CC8 = 视口宽, dword_4E7CCC = 视口高）:
+      viewX = clamp(actor[0x2C-4] - W/2, 0, bgW - W)
+      viewY = clamp(actor[0x2C]   - 5*(H/8), 0, bgH - H)
+    856x480 时即 actorX-428 / actorY-300。原函数内 `a1[1] == 当前场景` 的守卫
+    在部分地图不成立会让镜头停摆；这里按同一公式直接重建镜头，
+    随后仍调用原函数保留 824280/824284 与 sub_4054D8 的副作用。
+    """
+    code = bytearray()
+    jumps: list = []
+
+    def emit(b: bytes) -> int:
+        off = len(code)
+        code.extend(b)
+        return off
+
+    def j32(cond: bytes, target: str) -> None:
+        jumps.append((emit(cond + b'\x00\x00\x00\x00') + 2, target))
+
+    BGW, BGH = 0x00824290, 0x00824292
+    VXL, VYL = 0x008242A8, 0x008242AC
+    VXR, VYB = 0x008242B0, 0x008242B4
+    Y_OFF = 5 * (480 // 8)          # 300
+
+    emit(b'\x59')                                        # pop ecx (site+5)
+    emit(b'\x89\x0D' + _g_ret())                         # mov [g_ret],ecx
+    emit(b'\xB8' + struct.pack('<I', 0x406CE0))
+    emit(b'\xFF\xD0')                                   # call 406CE0 (原副作用)
+    emit(b'\x8B\x0C\x24')                               # mov ecx,[esp] a1
+    emit(b'\x85\xC9')
+    j32(b'\x0F\x84', 'done')
+    emit(b'\x8B\x11')                                    # mov edx,[ecx]
+    emit(b'\x85\xD2')
+    j32(b'\x0F\x84', 'done')
+    # ---- X ----
+    emit(b'\x8B\x41\x28')                               # mov eax,[ecx+0x28]
+    emit(b'\x2D' + struct.pack('<I', 428))
+    emit(b'\x85\xC0')
+    j32(b'\x0F\x88', 'xzero')
+    emit(b'\x0F\xB7\x15' + struct.pack('<I', BGW))
+    emit(b'\x81\xEA' + struct.pack('<I', W_SCREEN))
+    emit(b'\x85\xD2')
+    j32(b'\x0F\x88', 'xzero')
+    emit(b'\x39\xD0')
+    j32(b'\x0F\x8E', 'xdone')
+    emit(b'\x89\xD0')
+    xdone = len(code)
+    emit(b'\xA3' + struct.pack('<I', VXL))
+    emit(b'\x05' + struct.pack('<I', W_SCREEN))
+    emit(b'\xA3' + struct.pack('<I', VXR))
+    # ---- Y ----
+    emit(b'\x8B\x41\x2C')                               # mov eax,[ecx+0x2C]
+    emit(b'\x2D' + struct.pack('<I', Y_OFF))
+    emit(b'\x85\xC0')
+    j32(b'\x0F\x88', 'yzero')
+    emit(b'\x0F\xB7\x15' + struct.pack('<I', BGH))
+    emit(b'\x81\xEA' + struct.pack('<I', 480))
+    emit(b'\x85\xD2')
+    j32(b'\x0F\x88', 'yzero')
+    emit(b'\x39\xD0')
+    j32(b'\x0F\x8E', 'ydone')
+    emit(b'\x89\xD0')
+    ydone = len(code)
+    emit(b'\xA3' + struct.pack('<I', VYL))
+    emit(b'\x05' + struct.pack('<I', 480))
+    emit(b'\xA3' + struct.pack('<I', VYB))
+    jmp_done = emit(b'\xE9\x00\x00\x00\x00')
+    xzero = len(code)
+    emit(b'\x31\xC0')
+    jmp_x = emit(b'\xE9\x00\x00\x00\x00')
+    yzero = len(code)
+    emit(b'\x31\xC0')
+    jmp_y = emit(b'\xE9\x00\x00\x00\x00')
+    done = len(code)
+    emit(b'\x8B\x0D' + _g_ret())
+    emit(b'\xFF\xE1')                                   # jmp ecx -> site+5
+    code[jmp_done + 1:jmp_done + 5] = struct.pack('<i', done - (jmp_done + 5))
+    code[jmp_x + 1:jmp_x + 5] = struct.pack('<i', xdone - (jmp_x + 5))
+    code[jmp_y + 1:jmp_y + 5] = struct.pack('<i', ydone - (jmp_y + 5))
+    labels = {'done': done, 'xzero': xzero, 'yzero': yzero,
+              'xdone': xdone, 'ydone': ydone}
+    for pos, tgt in jumps:
+        code[pos:pos + 4] = struct.pack('<i', labels[tgt] - (pos + 4))
+    return bytes(code)
+
+
 def build_page_wrapper(page_fn: int) -> bytes:
     """页面状态机: 设 640/居中 108 -> 尾调用 -> 桩恢复 856/0 -> 回到调用者。
 
@@ -519,7 +607,7 @@ def build_cursor_scratch() -> bytes:
     if DISABLE_CURSOR_ERASE:
         pa0 = jmp32()                                # 二分开关: 永远跳过擦除
     emit(b'\xA1' + _cur('bs'))                       # mov eax,[BK_STRIDE]
-    emit(b'\x3B\x05' + _g_stride())                  # cmp eax,[g_stride]
+    emit(b'\x3B\x05' + _cur('ssv'))                 # cmp eax,[实际目标行距]
     pa1 = j32('jne')                                 # jne A_DONE (表面/步长变了)
     emit(b'\x8B\x44\x24\x24')                        # mov eax,[esp+0x24] ; dst
     emit(b'\x3B\x05' + _cur('bd'))                   # cmp eax,[BK_DST]
@@ -632,7 +720,7 @@ def build_cursor_scratch() -> bytes:
     emit(b'\x0F\xB7\x42\x06')                        # movzx eax,word [edx+6] ; h
     emit(b'\xA3' + _cur('h'))                        # mov [H],eax
     # 步长/末行切 640 语义, 解码完还原
-    emit(b'\xA1' + _g_stride())                      # mov eax,[STRIDE]
+    emit(b'\xB8' + struct.pack('<I', W_SCREEN))     # 目标后备表面物理行距恒为 856
     emit(b'\xA3' + _cur('ssv'))                      # mov [SSV],eax
     emit(b'\xA1' + _g_end())                         # mov eax,[GEND]
     emit(b'\xA3' + _cur('gsv'))                      # mov [GSV],eax
@@ -2094,6 +2182,7 @@ _SPRITE_BLOB, _SPRITE_SUB = build_block(_SPRITE_HOOKS, entity_only=True,
 # ── 布局与入口 ─────────────────────────────────────────────────────────
 _BLOCKS = [
     ('init_stride', build_stride_init),
+    ('map_camera', build_map_camera),
     ('grab_copy', build_grab_copy),
     ('push_copy', build_push_copy),
     ('gxp_pad_decide', build_gxp_pad_decide),

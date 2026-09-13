@@ -164,13 +164,13 @@ class PatcherWorker(QThread):
             return
 
         # ── GUI 特有: 辅助工具注入 ──
-        self._inject_tool_files(exe_dir, self.game_dir or os.getcwd())
+        game_dir = self.game_dir or os.getcwd()
+        self._inject_tool_files(exe_dir, game_dir)
         # 注入后必须确认文件真正落盘/释放再启动游戏: 复制与进程创建紧邻时,
         # 杀软扫描/写回延迟会让游戏加载到不完整或未生效的 ddraw.dll,
         # 表现为"cnc-ddraw 没启动"(窗口化/渲染未接管)。逐文件校验大小一致,
         # 不一致则重试复制; 全部一致后再留短暂稳定期。
-        self._settle_tool_files(exe_dir, self.game_dir or os.getcwd())
-
+        self._settle_tool_files(exe_dir, game_dir)
         # ── 启动游戏 (CREATE_SUSPENDED: GUI 路径, Wine 走 CLI) ──
         tks_path = self.exe_path
         self._log(f"\n启动 {tks_path}...")
