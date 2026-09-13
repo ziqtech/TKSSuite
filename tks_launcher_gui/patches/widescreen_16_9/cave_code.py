@@ -1283,9 +1283,12 @@ def build_gxp_blt_left() -> bytes:
     j32(b'\x0F\x84', 'skip')
     emit(b'\x85\xC9')                                # test ecx,ecx
     j32(b'\x0F\x84', 'skip')
-    emit(b'\x3D' + struct.pack('<I', W_SCREEN))      # cmp eax,856
+    # ⚠ 宽度必须钳到 748 (=856-108): padded gxp 源宽 856, 若 W 取 856 则
+    # dst.right = W+108 = 964 超出后备表面 → Blt 返回 DDERR_INVALIDRECT 每帧失败,
+    # 背景不落位而文字/精灵仍 +108 → 文字看起来错位 (实测小游戏页)。
+    emit(b'\x3D' + struct.pack('<I', W_SCREEN - PAGE_OFF))   # cmp eax,748
     emit(b'\x76\x05')                                # jbe +5
-    emit(b'\xB8' + struct.pack('<I', W_SCREEN))      # mov eax,856
+    emit(b'\xB8' + struct.pack('<I', W_SCREEN - PAGE_OFF))   # mov eax,748
     emit(b'\x81\xF9' + struct.pack('<I', 0x1E0))     # cmp ecx,480
     emit(b'\x76\x05')                                # jbe +5
     emit(b'\xB9' + struct.pack('<I', 0x1E0))         # mov ecx,480
@@ -1558,7 +1561,7 @@ def build_camrect_clamp() -> bytes:
 # 7 个小游戏的状态/倒计时/按钮文字 44E49C 调用点 (30 个): x (arg3) += 108 与
 # 背景图/瓷砖/鼠标命中 (+108) 同步居中。尾调 44E49C (栈上参数原样传递)。
 def build_mg_text_shift() -> bytes:
-    return (b'\xC7\x44\x24\x0C' + struct.pack('<I', PAGE_OFF)   # add dword [esp+0xC],108 (x)
+    return (b'\x81\x44\x24\x0C' + struct.pack('<I', PAGE_OFF)   # add dword [esp+0xC],108 (x)
             + b'\xB8' + struct.pack('<I', 0x44E49C)             # mov eax,44E49C
             + b'\xFF\xE0')                                      # jmp eax (尾调)
 
@@ -1570,7 +1573,7 @@ def build_mg_text_shift() -> bytes:
 # 八轮已 +108, 这些文字位点漏钩 → 数字/页码整体左偏 108 (结算页"割裂"观感
 # 的文字成分)。尾调各自目标 (栈上参数原样传递, cdecl 由调用方平衡)。
 def build_text_shift_a2(target_fn: int) -> bytes:
-    return (b'\xC7\x44\x24\x08' + struct.pack('<I', PAGE_OFF)   # add dword [esp+8],108 (x=a2)
+    return (b'\x81\x44\x24\x08' + struct.pack('<I', PAGE_OFF)   # add dword [esp+8],108 (x=a2)
             + b'\xB8' + struct.pack('<I', target_fn)            # mov eax,target
             + b'\xFF\xE0')                                      # jmp eax (尾调)
 

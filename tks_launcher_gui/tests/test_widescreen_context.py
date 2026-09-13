@@ -17,7 +17,7 @@ class WidescreenContextTests(unittest.TestCase):
         self.assertIn("widescreen_16_9", patches)
         wide = patches["widescreen_16_9"]
         self.assertEqual(wide.type, "patch_sites")
-        self.assertEqual(len(getattr(wide, "sites", [])), 767)
+        self.assertEqual(len(getattr(wide, "sites", [])), 774)
         refs = {site.get("ref") for site in getattr(wide, "sites", [])}
         self.assertIn("map_camera", refs)
         self.assertIn("settle_shift", refs)
@@ -93,6 +93,96 @@ class SettlementSpriteModeTests(unittest.TestCase):
             self.assertEqual(blob[off], 0xBA, f"{name}: 期望 mov edx,imm32 跳板")
             mode = struct.unpack_from("<I", blob, off + 1)[0]
             self.assertFalse(mode & 0x80, f"{name}: mode=0x{mode:X} 仍带 0x80 位移标记")
+
+
+class CenteredBlitClampTests(unittest.TestCase):
+    """居中类背景 Blt 必须把源宽钳到 856-108=748。
+
+    GXP 表面被 pad 到 856 后, 若仍按 856 取矩形, dst.right = 856+108 = 964
+    超出后备表面 → DDERR_INVALIDRECT, Blt 每帧失败: 背景停在错误的水平位置,
+    而文字/精灵仍是 +108 → 表现为"字体位置不正确" (实测小游戏页)。
+    """
+
+    def test_center_helpers_clamp_to_748(self):
+        import importlib.util
+        import struct
+        patch_dir = ROOT / "tks_launcher_gui" / "patches" / "widescreen_16_9"
+        spec = importlib.util.spec_from_file_location("_ws_clamp", patch_dir / "cave_code.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        blob = module.build_cave_block()
+        cmp_748 = b"\x3d" + struct.pack("<I", 748)
+        cmp_856 = b"\x3d" + struct.pack("<I", 856)
+        starts = sorted(set(module.CAVE_ENTRIES.values()))
+        for name in ("gxp_blt_fix", "mg_blt_left"):
+            off = module.CAVE_ENTRIES[name]
+            nxt = next(v for v in starts if v > off)
+            window = blob[off:nxt]          # 只看该块自身, 不越界到相邻块
+            self.assertIn(cmp_748, window, f"{name}: 缺少 748 宽度钳制")
+            self.assertNotIn(cmp_856, window, f"{name}: 仍按 856 钳制")
+
+
+class MiniGameTextTests(unittest.TestCase):
+    """小游戏文字: 画布宽必须跟随表面(856), 换行边界必须跟随文本位移(+108)。
+
+    - `sub_44AFF4(font,0,W,480)` 写的是字体对象 +0x28 = 文字画布宽, 同时是字形
+      写入的行距; 目标表面 856 宽, 若改回 640 每行步进错位 → 文字碎成像素点
+      (实测)。故这 8 个位点必须保持 856。
+    - 帮助文本画在 x=346、换行边界是另一个字段 +0x34 = 590 (见 42A32C)。
+      文本 X 被 mg_text_shift 平移 +108 后, 边界若不一起平移, 每行可用宽度会从
+      244 变成 136, 换行与位置就和原版对不上。故 7 处 590 必须变 698。
+    """
+
+    CANVAS = (0x28EEB, 0x29D53, 0x2ADDB, 0x2D4E3, 0x2DEC7, 0x2E553, 0x2EE7F, 0x302A4)
+    WRAP = (0x293F8, 0x2A337, 0x2B0B8, 0x2D984, 0x2E108, 0x2E7F8, 0x2F0F4)
+
+    def _sites(self):
+        import json
+        patch_dir = ROOT / "tks_launcher_gui" / "patches" / "widescreen_16_9"
+        raw = json.loads((patch_dir / "patch.json").read_text(encoding="utf-8"))
+        out = {}
+        for site in raw["sites"]:
+            rva = int(site["rva"], 0) if isinstance(site.get("rva"), str) else int(site["rva"])
+            out[rva] = site
+        return out
+
+    def test_font_canvas_width_follows_surface(self):
+        sites = self._sites()
+        for rva in self.CANVAS:
+            self.assertIn(rva, sites, f"{rva:#X}: 字体画布宽位点缺失 (会碎字)")
+            self.assertEqual(sites[rva].get("replace"), "68 58 03 00 00",
+                             f"{rva:#X}: 字体画布宽必须为 856")
+
+    def test_wrap_boundary_moves_with_text(self):
+        sites = self._sites()
+        for rva in self.WRAP:
+            self.assertIn(rva, sites, f"{rva:#X}: 换行边界位点缺失")
+            self.assertEqual(sites[rva].get("expect"), "4E 02 00 00", f"{rva:#X}: 期望原值 590")
+            self.assertEqual(sites[rva].get("replace"), "BA 02 00 00", f"{rva:#X}: 换行边界应为 698")
+
+
+class TextShiftWrapperTests(unittest.TestCase):
+    """位移 wrapper 必须是 ADD, 不能是 MOV。
+
+    `C7 44 24 0C imm32` 是 mov dword [esp+0xC],108 —— 会把文本 X 直接覆盖成
+    108, 导致所有被挂的文本挤到同一个左端位置 (实测小游戏页全部文字落在 x≈108)。
+    正确编码是 `81 44 24 0C imm32` = add dword [esp+0xC],108。
+    """
+
+    WRAPPERS = ("mg_text_shift", "text_shift_ralign", "text_shift_wrap")
+
+    def test_wrappers_add_offset(self):
+        import importlib.util
+        patch_dir = ROOT / "tks_launcher_gui" / "patches" / "widescreen_16_9"
+        spec = importlib.util.spec_from_file_location("_ws_shift", patch_dir / "cave_code.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        blob = module.build_cave_block()
+        for name in self.WRAPPERS:
+            off = module.CAVE_ENTRIES[name]
+            self.assertEqual(blob[off], 0x81,
+                             f"{name}: 应为首字节 0x81 (add r/m32,imm32), 实际 0x{blob[off]:02X}")
+            self.assertNotEqual(blob[off], 0xC7, f"{name}: 仍是 mov, 会覆盖 X")
 
 
 if __name__ == "__main__":
