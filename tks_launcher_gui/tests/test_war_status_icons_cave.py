@@ -269,6 +269,9 @@ def build() -> bytearray:
     ADDR_ICON_BASE_FRAME = 0x9D6F76
     ADDR_WAR_REC_BASE = 0x9D707A
     ADDR_GRID = 0x951D42
+    # 视口/画布宽 (原版 .data 初值 640; 16:9 宽屏补丁把它改成 856) ——
+    # 目的面行距 = 2*该值, 右边界 = 该值-30, 两者都必须运行时读取
+    ADDR_CANVAS_WIDTH = 0x4E7CC8
 
     # ── 序言 (v7.8: cld 移除 — 空槽填充删除后 cave 无字符串操作) ──
     r(0x60)                       # pushad
@@ -415,8 +418,12 @@ def build() -> bytearray:
     r(0x01, 0xDA)                              # add edx,ebx
     a.label("L_xx_done")
     a.mov_m_r(V_XX, RDX)
-    r(0x81, 0xFA); a.imm32(610)                # cmp edx,610 (xx+30≤640)
-    a.jcc("ja", "L_slot_inc")                  # 无符号比较同时挡负值
+    # xx+30 ≤ 画布宽 (运行时 [0x4E7CC8]: 原版 640 / 16:9 宽屏补丁 856)
+    # 无符号比较同时挡负值 (与原 `cmp edx,610; ja` 语义一致, 只是边界跟随画布)
+    r(0x8B, 0x0D); a.imm32(ADDR_CANVAS_WIDTH)            # mov ecx,[0x4E7CC8] (不碰 eax: 后面还要用)
+    r(0x83, 0xE9, 0x1E)                        # sub ecx,30
+    r(0x39, 0xCA)                              # cmp edx,ecx
+    a.jcc("ja", "L_slot_inc")
     # yy 不变 (row = slot>>2; eax = slot 仍存活)
     r(0x89, 0xC1)                              # mov ecx,eax
     r(0xC1, 0xE9, 0x02)                        # shr ecx,2
@@ -527,10 +534,13 @@ def build() -> bytearray:
     r(0x48)                                    # dec eax
     r(0x01, 0xC1)                              # add ecx,eax
     a.mov_m_r(V_PBASE, RCX)
-    # dyBytes = 1280*(yy+ty)  (v7.7: yy 为每槽 y, V_YY)
+    # dyBytes = 2*画布宽*(yy+ty)  (v7.7: yy 为每槽 y, V_YY)
+    # 画布宽取运行时 [0x4E7CC8] (原版 640 → 1280; 16:9 宽屏补丁 856 → 1712),
+    # 否则宽屏下每行按 640 换行 → 图标整体漂 216px/行 (用户实测显示异常)。
     a.mov_r_m(RAX, V_YY)
     r(0x03, 0x44, 0x24, V_TY)
-    r(0x69, 0xC0); a.imm32(1280)
+    r(0x0F, 0xAF, 0x05); a.imm32(ADDR_CANVAS_WIDTH)      # imul eax,[0x4E7CC8]  (行*宽, 像素)
+    r(0x01, 0xC0)                              # add eax,eax          (*2 → 字节)
     a.mov_m_r(V_DYBYTES, RAX)
     a.mov_m_imm(V_TX, 29)
 
@@ -891,8 +901,10 @@ def test_patch_json_matches_builder() -> None:
     norm = lambda s: [t.upper() for t in s.split()]  # noqa: E731
     assert norm(raw["cave_code"]) == norm(cave_hex()), \
         "patch.json cave_code 与构建器输出不一致"
-    # 布局不变量 (与 cave_layout.py budget / summon_extend 硬编码区一致)
-    assert raw["cave_offset"] == 2048 and raw["autolayout_cave"] is False
+    # 布局不变量: cave 偏移预算 (与 cave_layout.py / summon_extend 硬编码区一致)。
+    # 注: autolayout_cave 字段后来被移除 —— 引擎默认 True (自动分配偏移),
+    # 此时 patch.json 里保留的 cave_offset=2048 只是历史预算声明, 仍据此校验。
+    assert raw["cave_offset"] == 2048
     # v7.8: hook 点 = 面板 switch 的 bounds-ja (菜单之前, 与血条零重叠)
     assert raw["hook_pattern"] == \
         "0F 87 11 01 00 00 8A 92 B9 A7 43 00"

@@ -42,14 +42,18 @@ A_CAMX, A_CAMY = 0x8242A8, 0x8242AC
 A_POSX, A_POSY = 0x9DF802, 0x9DF804
 A_MU2, A_FBASE = 0x755AF4, 0x9D6F76
 A_GRID = 0x951D42
+A_WIDTH = 0x4E7CC8       # 视口/画布宽 (原版 640, 16:9 宽屏补丁 856)
 TOTAL_FRAMES = 107   # Mu2.JVG 总帧数 (obj+0x18)
 
 
-def run_frame(frame_idx: int, slots: dict | tuple = (0,)) -> tuple:
+def run_frame(frame_idx: int, slots: dict | tuple = (0,), *, width: int = 640,
+              pos_x: int = 320, pos_y: int = 240) -> tuple:
     """构造环境: 单位0 的状态槽表, 返回 (expect, canvas)。
 
     slots: dict {slot: statusID} 任意字节值 (含失效残留如 0xFF);
-           tuple (slot,..) 时 statusID = frame_idx - 75 (有效)。"""
+           tuple (slot,..) 时 statusID = frame_idx - 75 (有效)。
+    width: 画布宽度 = 视口宽全局 [0x4E7CC8] (原版 640 / 宽屏补丁 856);
+    pos_x/pos_y: 单位世界坐标 (cave 减去相机 → 屏幕坐标)。"""
     if isinstance(slots, tuple):
         slots = {s: frame_idx - 75 for s in slots}
     uc = Uc(UC_ARCH_X86, UC_MODE_32)
@@ -57,6 +61,7 @@ def run_frame(frame_idx: int, slots: dict | tuple = (0,)) -> tuple:
     uc.mem_map(CANVAS, 0x100000)
     uc.mem_map(SCRATCH, 0x500000)
     uc.mem_map(0x700000, 0x400000)
+    uc.mem_map(0x4E0000, 0x100000)          # [0x4E7CC8] 视口/画布宽
     uc.mem_map(STACK - 0x100000, 0x200000)
     code = bytes(cave_bytes())
     uc.mem_write(CAVE, code)
@@ -117,8 +122,9 @@ def run_frame(frame_idx: int, slots: dict | tuple = (0,)) -> tuple:
     uc.mem_write(A_CAMX, struct.pack("<i", 0))
     uc.mem_write(A_CAMY, struct.pack("<i", 0))
     uc.mem_write(A_GRID, b"\x00")
-    uc.mem_write(A_POSX, struct.pack("<h", 320))
-    uc.mem_write(A_POSY, struct.pack("<h", 240))
+    uc.mem_write(A_POSX, struct.pack("<h", pos_x))
+    uc.mem_write(A_POSY, struct.pack("<h", pos_y))
+    uc.mem_write(A_WIDTH, struct.pack("<I", width))
     uc.mem_write(0x9D707A + 0x0A, struct.pack("<h", 100))
     for s, st in slots.items():
         # 低字节 statusID + 高字节剩余回合 (回合数不参与显示判定)
@@ -160,7 +166,7 @@ def run_frame(frame_idx: int, slots: dict | tuple = (0,)) -> tuple:
         src += run
     expect = [[gt[H * ty // 30][W * tx // 30] for tx in range(30)]
               for ty in range(30)]
-    return expect, bytes(uc.mem_read(CANVAS, 640 * 480 * 2)), W, H
+    return expect, bytes(uc.mem_read(CANVAS, width * 480 * 2)), W, H
 
 
 def run_tail(edx_val: int, ret_addr: int, stop_addr: int) -> int:
@@ -172,6 +178,7 @@ def run_tail(edx_val: int, ret_addr: int, stop_addr: int) -> int:
     uc.mem_map(CANVAS, 0x100000)
     uc.mem_map(SCRATCH, 0x500000)
     uc.mem_map(0x700000, 0x400000)
+    uc.mem_map(0x4E0000, 0x100000)
     uc.mem_map(STACK - 0x100000, 0x200000)
     code = bytes(cave_bytes())
     uc.mem_write(CAVE, code)
@@ -197,13 +204,14 @@ def main() -> bool:
     #        (n1=1..4 → 46/31/15/0; k = 行内激活序号, 空槽不占位)
     #   行2: xx = x0 + k*31 (从左到右)
     #   yy = ytop+31-row*31 (row = slot>>2) 不变
-    x0, ytop = 320 - 55, 240 - 194
+    ytop = 240 - 194
     # v7.10: 有效 statusID 上限 (maxst = total - fbase + 1 = 32)
     maxst = TOTAL_FRAMES - 76 + 1
 
-    def check_set(fi: int, slots) -> bool:
+    def check_set(fi: int, slots, *, width: int = 640, pos_x: int = 320) -> bool:
         """slots: tuple (有效槽号..) 或 dict {slot: statusID 任意字节}。"""
-        expect, canvas, W, H = run_frame(fi, slots)
+        expect, canvas, W, H = run_frame(fi, slots, width=width, pos_x=pos_x)
+        x0 = pos_x - 55
         table = ({s: fi - 75 for s in slots} if isinstance(slots, tuple)
                  else slots)
         # v7.10: 有效性 = st≠0 且 st<maxst (与 cave 判定同源)
@@ -224,7 +232,7 @@ def main() -> bool:
                 for tx in range(30):
                     exp = expect[ty][tx]
                     got = struct.unpack_from(
-                        "<H", canvas, ((yy + ty) * 640 + xx + tx) * 2)[0]
+                        "<H", canvas, ((yy + ty) * width + xx + tx) * 2)[0]
                     if exp is not None and got != exp:
                         bad += 1
                     if exp is None and got != 0:
@@ -239,7 +247,7 @@ def main() -> bool:
                     if (x0 + tx, ys + ty) in covered:
                         continue
                     v = struct.unpack_from(
-                        "<H", canvas, ((ys + ty) * 640 + x0 + tx) * 2)[0]
+                        "<H", canvas, ((ys + ty) * width + x0 + tx) * 2)[0]
                     if v != 0:
                         bad += 1
         desc = ",".join(f"{s}={table[s]}" if isinstance(slots, dict)
@@ -269,6 +277,15 @@ def main() -> bool:
     ok &= check_set(90, (4, 6))          # 行2 两状态分散 → 紧凑左起
     ok &= check_set(90, (0, 4, 5))       # 混合: 行1 居中 + 行2 左起
     ok &= check_set(90, (0, 1, 2, 3, 4, 5, 6, 7))  # 满两行
+
+    # ── 16:9 宽屏 (856 画布) 回归 ─────────────────────────────
+    # 步长/右边界必须跟随 [0x4E7CC8]: 若仍硬编码 640 换行, 856 画布上
+    # 每行会漂 216px; 右边界若仍按 610 钳位, 右缘单位的图标会整块丢失。
+    ok &= check_set(76, (0,), width=856)             # 856 步长下的居中单状态
+    ok &= check_set(90, (4,), width=856)             # 856 步长下的行2 单状态
+    ok &= check_set(76, (0, 1), width=856)           # 856 步长下的两状态居中
+    ok &= check_set(76, (0,), width=856, pos_x=800)  # 右缘 (xx=791>610) 必须画出
+    ok &= check_set(90, (4,), width=856, pos_x=800)
 
     # ── v7.8 尾声双路径 (hook 0x43A7A6 = 面板 switch bounds-ja) ──
     # STOP 映射在 CANVAS 区 (已映射, 全零), 执行到即停。
