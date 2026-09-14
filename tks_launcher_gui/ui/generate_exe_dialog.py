@@ -7,12 +7,14 @@
   - patch_imm32: 立即数修改（静态值）
   - 配置驱动型: drop_probability / font_config / animation_speed / summon_table
   - patch_data_expand: 数据段注入（参数声明在 patch.json）
+  - patch_sites: 逐 RVA 位点表 + cave（16:9 宽屏；可带 globals 数据槽区）
 """
 import importlib.util
 import os
+import shutil
 from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtWidgets import (
-    QCheckBox, QDialog, QFileDialog, QGroupBox, QHBoxLayout, QLabel,
+    QCheckBox, QComboBox, QDialog, QFileDialog, QGroupBox, QHBoxLayout, QLabel,
     QLineEdit, QListWidget, QListWidgetItem, QMessageBox, QProgressBar,
     QPushButton, QTextEdit, QVBoxLayout, QWidget,
 )
@@ -23,6 +25,94 @@ from core.exe_builder import (
     FixedLayoutCave, SitesPatchItem,
 )
 from core.tkspatch_loader import get_external_cave_code
+
+
+def file_build_label(p: PatchDef) -> str | None:
+    """判断补丁能否被"生成启动器"离线烧录；可烧录时返回列表用的类型标签。
+
+    与 ExeBuilder 实际支持的补丁类型一一对应（含 patch_sites：逐 RVA 位点表，
+    即 16:9 宽屏补丁使用的类型）。返回 None 表示当前不支持或缺少必需字段。
+    """
+    t = getattr(p, 'type', '')
+    if t in ('cave_hook', 'patch_exp_lock'):
+        if p.hook_pattern and get_external_cave_code(p):
+            return '代码注入'
+        return None
+    if t == 'fixed_layout_cave':
+        if p.hooks and (p.cave_code_file or p.cave_layout_size):
+            return '固定布局注入'
+        return None
+    if t == 'patch_bytes':
+        if (p.pattern and p.replace) or p.patterns:
+            return '字节替换'
+        return None
+    if t == 'patch_imm32':
+        if p.pattern and p.new_value_expr:
+            return '立即数'
+        if p.value_scan and p.expect_value and p.new_value_expr:
+            return '立即数(值扫描)'
+        return None
+    if t in ('drop_probability', 'patch_drop_probability',
+             'font_config', 'patch_font_config',
+             'animation_speed', 'patch_animation_speed',
+             'summon_table', 'patch_summon_table'):
+        return '配置驱动' if p.json_file else None
+    if t == 'patch_data_expand':
+        if p.data_file and p.old_base and p.old_size:
+            return '数据段注入'
+        return None
+    if t == 'patch_sites':
+        sites = list(getattr(p, 'sites', None) or [])
+        if not sites:
+            return None
+        # call / push_imm 型位点需要 cave 代码（外置文件或 patch.json 内嵌）
+        need_cave = any(str(s.get('kind') or '') in ('call', 'push_imm')
+                        for s in sites)
+        if need_cave and not get_external_cave_code(p):
+            return None
+        return '位点表(宽屏)'
+    return None
+
+
+def copy_tool_dir(tool_dir: str, out_dir: str, log=print) -> int:
+    """把画面兼容工具目录按相对路径复制到输出目录（生成版部署用）。
+
+    与启动器运行时的工具注入同语义（结构保留、覆盖前备份为 *.toolbak），
+    但这里是"一次性部署"：生成的 exe 与 ddraw.dll/ddraw.ini 放在同一目录即可
+    直接运行，无需再经过启动器注入。
+    """
+    if not os.path.isdir(tool_dir) or not out_dir:
+        return 0
+    copied = 0
+    for root, _dirs, files in os.walk(tool_dir):
+        rel_root = os.path.relpath(root, tool_dir)
+        for fname in files:
+            src_file = os.path.join(root, fname)
+            rel_path = fname if rel_root == '.' else os.path.join(rel_root, fname)
+            dst_file = os.path.join(out_dir, rel_path)
+            dst_parent = os.path.dirname(dst_file)
+            if dst_parent and not os.path.isdir(dst_parent):
+                os.makedirs(dst_parent, exist_ok=True)
+            if os.path.isfile(dst_file):
+                same = False
+                try:
+                    with open(src_file, 'rb') as fa, open(dst_file, 'rb') as fb:
+                        same = fa.read() == fb.read()
+                except OSError:
+                    same = False
+                if not same:
+                    try:
+                        shutil.copy2(dst_file, dst_file + '.toolbak')
+                        log(f'  [备份] {rel_path}.toolbak')
+                    except OSError as e:
+                        log(f'  [WARN] 备份 {rel_path} 失败: {e}')
+            try:
+                shutil.copy2(src_file, dst_file)
+                copied += 1
+                log(f'  [工具] {rel_path}')
+            except OSError as e:
+                log(f'  [ERROR] 复制 {rel_path} 失败: {e}')
+    return copied
 
 
 def expansion_buffer_size(actual_size: int, cap: int = 0,
@@ -128,7 +218,8 @@ class GenerateExeDialog(QDialog):
     """
 
     def __init__(self, patches: list[PatchDef], launcher_dir: str, parent=None,
-                 patch_states: dict[str, bool] | None = None):
+                 patch_states: dict[str, bool] | None = None,
+                 selected_tool: str = ""):
         super().__init__(parent)
         self.setWindowTitle('生成启动器 — 将补丁烧录进 TKS.exe')
         self.setMinimumSize(750, 650)
@@ -137,7 +228,11 @@ class GenerateExeDialog(QDialog):
         # launcher 补丁列表的当前可选补丁勾选状态 (get_patch_states()),
         # 打开时原样镜像, 与 launcher 的必选/可选语义完全一致
         self._patch_states = patch_states or {}
+        # 画面兼容工具 (cnc-ddraw 等): 与 launcher 主界面「画面兼容工具」面板同源,
+        # 生成版可直接把工具文件一并复制到输出目录, 免去再经过启动器注入
+        self._selected_tool = selected_tool or ""
         self._worker: _BuildWorker | None = None
+        self._last_build_patch_ids: list[str] = []
 
         self._setup_ui()
         self._populate_patch_list()
@@ -195,13 +290,46 @@ class GenerateExeDialog(QDialog):
 
         # ── 输出路径 ──
         out_group = QGroupBox('输出路径')
-        out_layout = QHBoxLayout(out_group)
+        out_outer = QVBoxLayout(out_group)
+        out_layout = QHBoxLayout()
         self._out_edit = QLineEdit()
         self._out_edit.setPlaceholderText('输出修改版 exe 路径…')
         out_btn = QPushButton('浏览…')
         out_btn.clicked.connect(self._browse_out)
         out_layout.addWidget(self._out_edit, 1)
         out_layout.addWidget(out_btn)
+        out_outer.addLayout(out_layout)
+
+        # 画面兼容工具 (cnc-ddraw 等): 生成的 exe 需要与 ddraw.dll 同目录运行
+        self._copy_tool_cb = QCheckBox('同时复制画面兼容工具')
+        self._tool_combo = QComboBox()
+        tools_dir = os.path.join(self._launcher_dir, 'tools')
+        if os.path.isdir(tools_dir):
+            for name in sorted(
+                    d for d in os.listdir(tools_dir)
+                    if os.path.isdir(os.path.join(tools_dir, d))
+                    and not d.startswith(('_', '.'))):
+                self._tool_combo.addItem(name)
+        idx = self._tool_combo.findText(self._selected_tool)
+        if idx < 0:
+            idx = self._tool_combo.findText('cnc-ddraw')
+        if idx >= 0:
+            self._tool_combo.setCurrentIndex(idx)
+        has_tool = self._tool_combo.count() > 0
+        self._tool_combo.setEnabled(has_tool)
+        self._copy_tool_cb.setEnabled(has_tool)
+        # 主界面选了工具 => 默认勾选; 未选但有 cnc-ddraw 时也默认勾选(宽屏常用)
+        self._copy_tool_cb.setChecked(
+            has_tool and (bool(self._selected_tool)
+                          or self._tool_combo.currentText() == 'cnc-ddraw'))
+        self._copy_tool_cb.toggled.connect(self._tool_combo.setEnabled)
+        tool_row = QHBoxLayout()
+        tool_row.addWidget(self._copy_tool_cb)
+        tool_row.addWidget(self._tool_combo, 1)
+        tool_hint = QLabel('16:9 宽屏补丁建议一并复制 cnc-ddraw (ddraw.dll/ddraw.ini)')
+        tool_hint.setStyleSheet('color: #888; font-size: 11px;')
+        tool_row.addWidget(tool_hint)
+        out_outer.addLayout(tool_row)
         layout.addWidget(out_group)
 
         # ── 进度与日志 ──
@@ -230,54 +358,12 @@ class GenerateExeDialog(QDialog):
         unsupported = []
         supported_count = 0
         for p in self._patches:
-            # cave_hook 型：需要 hook_pattern 和外置 cave 代码
-            if p.type in ('cave_hook', 'patch_exp_lock'):
-                if p.hook_pattern and get_external_cave_code(p):
-                    self._add_patch_item(p, '代码注入')
-                    supported_count += 1
-                continue
-            # fixed_layout_cave: 多 hook 固定布局
-            if p.type == 'fixed_layout_cave':
-                if p.hooks and (p.cave_code_file or p.cave_layout_size):
-                    self._add_patch_item(p, '固定布局注入')
-                    supported_count += 1
-                else:
-                    unsupported.append(p)
-                continue
-            # patch_bytes 型：需要 pattern 和 replace
-            if p.type == 'patch_bytes':
-                if (p.pattern and p.replace) or p.patterns:
-                    self._add_patch_item(p, '字节替换')
-                    supported_count += 1
-                continue
-            # patch_imm32 型：需要 pattern 和 new_value_expr（静态值），或 value_scan 模式
-            if p.type == 'patch_imm32':
-                if p.pattern and p.new_value_expr:
-                    self._add_patch_item(p, '立即数')
-                    supported_count += 1
-                elif p.value_scan and p.expect_value and p.new_value_expr:
-                    self._add_patch_item(p, '立即数(值扫描)')
-                    supported_count += 1
-                continue
-            # 配置驱动型
-            if p.type in ('drop_probability', 'patch_drop_probability',
-                          'font_config', 'patch_font_config',
-                          'animation_speed', 'patch_animation_speed',
-                          'summon_table', 'patch_summon_table'):
-                if p.json_file:
-                    self._add_patch_item(p, '配置驱动')
-                    supported_count += 1
-                continue
-            # 数据段注入型 (参数声明在 patch.json)
-            if p.type == 'patch_data_expand':
-                if p.data_file and p.old_base and p.old_size:
-                    self._add_patch_item(p, '数据段注入')
-                    supported_count += 1
-                else:
-                    unsupported.append(p)
-                continue
-            # 不支持的类型
-            unsupported.append(p)
+            label = file_build_label(p)
+            if label:
+                self._add_patch_item(p, label)
+                supported_count += 1
+            else:
+                unsupported.append(p)
 
         if self._patch_list.count() == 0:
             self._patch_list.addItem('（未找到可烧录的补丁）')
@@ -807,7 +893,7 @@ class GenerateExeDialog(QDialog):
          data_section_patches, fixed_layouts, sites_patches) = self._get_selected_patches()
         total = (len(cave_patches) + len(bytes_patches) + len(imm32_patches) +
                  len(config_patches) + len(data_section_patches) +
-                 len(fixed_layouts))
+                 len(fixed_layouts) + len(sites_patches))
         if total == 0:
             QMessageBox.warning(self, '错误', '请至少勾选一个补丁')
             return
@@ -818,7 +904,12 @@ class GenerateExeDialog(QDialog):
                      [p.name for p in imm32_patches] +
                      [p.name for p in config_patches] +
                      [p.name for p in data_section_patches] +
-                     [p.name for p in fixed_layouts])
+                     [p.name for p in fixed_layouts] +
+                     [p.name for p in sites_patches])
+        self._last_build_patch_ids = [
+            getattr(p, 'patch_id', '') for p in (
+                cave_patches + bytes_patches + imm32_patches + config_patches +
+                data_section_patches + fixed_layouts + sites_patches)]
         patch_names = ', '.join(all_names)
         ret = QMessageBox.question(
             self, '确认生成',
@@ -862,10 +953,30 @@ class GenerateExeDialog(QDialog):
 
         if result.success:
             self._log('构建成功！')
+            tool_note = ''
+            out_dir = os.path.dirname(os.path.abspath(result.output_path)) \
+                if result.output_path else ''
+            tool = self._tool_combo.currentText().strip() \
+                if (self._copy_tool_cb.isChecked() and self._tool_combo.count()) else ''
+            if tool and out_dir:
+                tool_src = os.path.join(self._launcher_dir, 'tools', tool)
+                self._log(f'复制画面兼容工具 {tool} → {out_dir}')
+                copied = copy_tool_dir(tool_src, out_dir, log=self._log)
+                if copied:
+                    self._log(f'共复制 {copied} 个工具文件')
+                    tool_note = (f'已同时复制画面兼容工具 {tool}'
+                                 f'（{copied} 个文件）到输出目录。\n\n')
+                else:
+                    self._log(f'[WARN] 工具目录为空或复制失败: {tool_src}')
+            elif 'widescreen_16_9' in self._last_build_patch_ids:
+                tool_note = ('提示：16:9 宽屏补丁建议勾选"同时复制画面兼容工具"'
+                             '（cnc-ddraw），否则生成的 exe 需要手动放置 '
+                             'ddraw.dll/ddraw.ini。\n\n')
+                self._log('[WARN] 未复制画面兼容工具；宽屏补丁可能需要 cnc-ddraw')
             QMessageBox.information(
                 self, '成功',
                 f'修改版 exe 已生成：\n{result.output_path}\n\n'
-                f'可直接分发给玩家，无需启动器。')
+                f'{tool_note}可直接分发给玩家，无需启动器。')
         else:
             self._log(f'构建失败: {result.error}')
             QMessageBox.critical(self, '失败', f'构建失败:\n{result.error}')

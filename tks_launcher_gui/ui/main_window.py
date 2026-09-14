@@ -934,6 +934,7 @@ class MainWindow(QMainWindow):
             patches=self._patches,
             launcher_dir=_LAUNCHER_DIR,
             patch_states=self.patch_list.get_patch_states(),
+            selected_tool=self._get_selected_tool(),
             parent=self,
         )
         dialog.exec()
