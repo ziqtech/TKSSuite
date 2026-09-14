@@ -30,13 +30,18 @@ _COL_NAME = 1
 _COL_TYPE = 2
 
 # 补丁内部类型 → 玩家友好中文标签 (显示于"类型"列与详情框)
+# 维护约定: 这里必须覆盖 patch_engine 实际分发的全部 type, 否则"类型"列会漏出
+# 英文内部名 (例如 fixed_layout_cave / patch_sites / patch_data_expand)。
 _TYPE_LABELS = {
     "patch_imm32": "数值修改",
     "patch_warpc_addr": "地址重定位",
     "patch_bytes": "指令修补",
     "patch_extra_section": "额外段修补",
+    "patch_data_expand": "数据段注入",
     "patch_exp_lock": "经验锁定",
     "cave_hook": "代码注入",
+    "fixed_layout_cave": "固定布局注入",
+    "patch_sites": "位点表注入",
     "patch_summon_table": "召唤表",
     "patch_drop_probability": "掉落概率",
     "patch_font_config": "字体配置",
