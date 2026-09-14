@@ -25,6 +25,7 @@ from core.exe_builder import (
     FixedLayoutCave, SitesPatchItem,
 )
 from core.tkspatch_loader import get_external_cave_code
+from ui.patch_list import patch_type_label
 
 
 def file_build_label(p: PatchDef) -> str | None:
@@ -47,9 +48,16 @@ def file_build_label(p: PatchDef) -> str | None:
             return '字节替换'
         return None
     if t == 'patch_imm32':
-        if p.pattern and p.new_value_expr:
+        # 三种形态: 多模式表 / 单模式 / 值扫描。三种在 _get_selected_patches 里
+        # 都能生成 Imm32PatchEntry —— 早期漏判了 patterns 形态, 导致 gold_limit
+        # (三处锚定 + value_offset/value_size 各自不同) 被误报"暂不支持"。
+        if not p.new_value_expr:
+            return None
+        if p.patterns:
+            return '立即数(多模式)'
+        if p.pattern:
             return '立即数'
-        if p.value_scan and p.expect_value and p.new_value_expr:
+        if p.value_scan and p.expect_value:
             return '立即数(值扫描)'
         return None
     if t in ('drop_probability', 'patch_drop_probability',
@@ -379,8 +387,10 @@ class GenerateExeDialog(QDialog):
         # 在日志中记录不支持的补丁
         for p in unsupported:
             reason = {
-                'script': '请改写为 cave_hook / fixed_layout_cave / patch_data_expand',
-            }.get(p.type, f'类型 {p.type} 缺少文件级所需字段')
+                'script': '脚本型补丁无法离线烧录, 请改写为 代码注入(cave_hook) / '
+                          '固定布局注入(fixed_layout_cave) / 数据段注入(patch_data_expand)',
+            }.get(p.type,
+                  f'类型 {patch_type_label(p.type)} ({p.type}) 缺少文件级所需字段')
             self._log(f'[{p.id}] {reason}')
 
     def _add_patch_item(self, p: PatchDef, type_label: str):
@@ -426,7 +436,8 @@ class GenerateExeDialog(QDialog):
         lines = [
             f'名称: {p.name}',
             f'ID: {p.id}',
-            f'类型: {p.type}',
+            # 玩家友好中文标签 + 原始内部名 (后者供进阶排查, 与补丁列表悬浮提示一致)
+            f'类型: {patch_type_label(p.type)} ({p.type})',
             f'描述: {p.desc}',
         ]
         if p.type in ('cave_hook', 'patch_exp_lock'):

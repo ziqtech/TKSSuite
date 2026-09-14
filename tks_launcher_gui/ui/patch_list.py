@@ -50,6 +50,15 @@ _TYPE_LABELS = {
 }
 
 
+def patch_type_label(type_name: str) -> str:
+    """内部 type → 玩家友好中文标签 (未知 type 原样返回)。
+
+    所有面向玩家的界面 (补丁列表 / 详情框 / "生成启动器") 都走这里, 避免各处
+    自己 `get(type, type)` 而在新类型上漏出英文内部名。
+    """
+    return _TYPE_LABELS.get(type_name, type_name)
+
+
 class PatchListWidget(QWidget):
     """游戏功能面板: 可滚动扁平列表 + 选中详情。"""
 
@@ -236,14 +245,14 @@ class PatchListWidget(QWidget):
         table.setItem(row, _COL_NAME, name_item)
 
         # 类型列: 玩家友好标签 (未知类型回退原始 type)
-        type_item = QTableWidgetItem(_TYPE_LABELS.get(p.type, p.type))
+        type_item = QTableWidgetItem(patch_type_label(p.type))
         type_item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
         type_item.setTextAlignment(Qt.AlignCenter)
         table.setItem(row, _COL_TYPE, type_item)
 
         # 整行悬浮提示: 详细技术描述 + ID + 原始类型 (供进阶用户查阅)
         tip = (f"{p.desc or p.name or '(无描述)'}\n\n"
-               f"类型: {_TYPE_LABELS.get(p.type, p.type)} ({p.type})\nID: {p.id}")
+               f"类型: {patch_type_label(p.type)} ({p.type})\nID: {p.id}")
         for col in range(len(_COLUMNS)):
             it = table.item(row, col)
             if it is not None:
@@ -302,7 +311,7 @@ class PatchListWidget(QWidget):
                   else "推荐" if patch.default_checked else "可选")
         self._detail.setHtml(
             f"<b>名称：</b>{patch.name or patch.id}<br>"
-            f"<b>类型：</b>{_TYPE_LABELS.get(patch.type, patch.type)}<br>"
+            f"<b>类型：</b>{patch_type_label(patch.type)}<br>"
             f"<b>状态：</b>{status}<br>"
             f"<b>说明：</b>{patch.desc or '（无）'}")
 

@@ -25,6 +25,20 @@ from ui.generate_exe_dialog import (                            # noqa: E402
 )
 
 
+def _is_ascii_word(s: str) -> bool:
+    return s.isascii() and any(c.isalpha() for c in s)
+
+
+_QT_APP = None      # 模块级强引用: 防止 QApplication 被回收
+
+
+def _qt_app():
+    global _QT_APP
+    from PySide6.QtWidgets import QApplication
+    _QT_APP = QApplication.instance() or QApplication([])
+    return _QT_APP
+
+
 def _load_patches():
     cfg = load_patch_directory(str(ROOT / "tks_launcher_gui" / "patches"),
                                log_func=lambda *_a: None)
@@ -53,10 +67,71 @@ class GenerateExeSupportTests(unittest.TestCase):
         self.assertIsNone(file_build_label(_Dummy()),
                           "带 call 位点但没有 cave 代码时不应列为可烧录")
 
+    def test_imm32_multi_pattern_supported(self):
+        """patch_imm32 的"多模式表"形态 (patterns 数组) 也必须可离线烧录。
+
+        历史问题: `file_build_label` 只判了 `p.pattern` / `p.value_scan`, 漏了
+        `p.patterns` —— 而 `_get_selected_patches` 一直支持多模式, 于是 gold_limit
+        (三处锚定, 各自 value_offset/value_size 不同) 被误报"暂不支持"。
+        """
+        p = next(x for x in _load_patches() if x.id == "gold_limit")
+        self.assertTrue(p.patterns and not p.pattern)
+        self.assertEqual(file_build_label(p), '立即数(多模式)')
+        # 单模式 / 值扫描 两种旧形态不受影响
+        self.assertEqual(file_build_label(
+            next(x for x in _load_patches() if x.id == "tkdefunit_count")), '立即数')
+        self.assertEqual(file_build_label(
+            next(x for x in _load_patches() if x.id == "tkitem_size")),
+            '立即数(值扫描)')
+
+    def test_dialog_collects_gold_limit_and_detail_is_chinese(self):
+        """对话框: gold_limit 进列表且可收集 3 条锚定; 每行详情"类型"是中文。"""
+        from PySide6.QtCore import Qt
+        _qt_app()
+        patches = _load_patches()
+        dlg = GenerateExeDialog(patches, str(ROOT / "tks_launcher_gui"),
+                                patch_states={"gold_limit": True},
+                                selected_tool="cnc-ddraw")
+        try:
+            # 列表里能找到且标注为 多模式
+            hit = None
+            for i in range(dlg._patch_list.count()):
+                it = dlg._patch_list.item(i)
+                p = it.data(Qt.UserRole)
+                if p is not None and p.id == "gold_limit":
+                    hit = it
+                    break
+            self.assertIsNotNone(hit, "gold_limit 必须出现在可烧录列表里")
+            self.assertIn('立即数(多模式)', hit.text())
+            self.assertEqual(dlg._summary_label.text().split('（')[0].strip(),
+                             f'可烧录: {len(patches)}/{len(patches)} 个补丁')
+
+            # 逐行详情: "类型"行必须带中文标签 (不再直接打印内部英文名)
+            leaks = []
+            for i in range(dlg._patch_list.count()):
+                dlg._patch_list.setCurrentRow(i)
+                lines = [ln for ln in dlg._patch_detail.toPlainText().splitlines()
+                         if ln.startswith('类型')]
+                self.assertTrue(lines, f'第 {i} 行详情缺『类型』行')
+                label = lines[0].split(':', 1)[1].strip()
+                if label.startswith('(') or _is_ascii_word(label.split('(')[0].strip()):
+                    leaks.append((i, label))
+            self.assertEqual(leaks, [], f"详情框仍在显示英文类型: {leaks}")
+
+            # 收集结果: gold_limit 3 条锚定, value_offset/value_size 各自保留
+            (_caves, _bytes, imm32, _cfg, _data, _fixed, _sites) = \
+                dlg._get_selected_patches()
+            gold = next(x for x in imm32 if x.patch_id == "gold_limit")
+            self.assertEqual(gold.new_value, 0xFFFF)
+            self.assertEqual([(e.value_offset, e.value_size) for e in gold.entries],
+                             [(1, 4), (1, 4), (7, 2)])
+        finally:
+            dlg.close()
+            dlg.deleteLater()
+
     def test_dialog_lists_and_collects_widescreen(self):
         from PySide6.QtCore import Qt
-        from PySide6.QtWidgets import QApplication
-        app = QApplication.instance() or QApplication([])
+        _qt_app()
         patches = _load_patches()
         dlg = GenerateExeDialog(patches, str(ROOT / "tks_launcher_gui"),
                                 patch_states={"widescreen_16_9": True},
