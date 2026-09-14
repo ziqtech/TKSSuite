@@ -82,6 +82,25 @@ class PopupCornerTests(unittest.TestCase):
         self.assertIn(w, self.calls,
                       "Qt.ToolTip 窗口必须走 DWM 圆角 (否则四角露方形底色)")
 
+    def test_tooltip_is_reshaped_on_resize(self):
+        """Qt 每次 Resize 都会重设 SH_ToolTip_Mask (实测只裁 1px, 与 QSS 8px
+        圆角冲突), 所以 Resize 后必须再清一次 —— 否则拖动/文本变化后
+        方形底色又回来。"""
+        reshaped = []
+        orig = ui_helpers._shape_tooltip_window
+        ui_helpers._shape_tooltip_window = reshaped.append
+        try:
+            w = self._show(Qt.WindowType.ToolTip)
+            self.app.processEvents()
+            reshaped.clear()
+            w.resize(w.width() + 40, w.height())
+            self.app.processEvents()
+            self.app.processEvents()
+            self.assertIn(w, reshaped,
+                          "Resize 后必须重新清理 tooltip 遮罩")
+        finally:
+            ui_helpers._shape_tooltip_window = orig
+
     def test_popup_window_still_gets_dwm_rounding(self):
         w = self._show(Qt.WindowType.Popup)
         self.assertIn(w, self.calls, "既有 Qt.Popup 行为不得回退")

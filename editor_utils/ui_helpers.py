@@ -286,6 +286,23 @@ def _round_popup_win11_corners(popup) -> None:
         pass  # 非 win32 / winId 不可用 / 旧系统不支持该属性, 静默跳过
 
 
+def _shape_tooltip_window(tip) -> None:
+    """把工具提示窗口整成"无遮罩 + 系统圆角" (与 QMenu 同形态)。
+
+    为什么必须清遮罩: Qt 会给 tooltip 设置 ``SH_ToolTip_Mask`` 窗口遮罩,
+    实测只裁掉 1px 角; 而主题 QSS 画的是 radius_md=8px 圆角 —— 8px 描边被
+    1px 遮罩切断, 圆角之外那圈方形填充色就会露出来 (用户看到的"矩形背景")。
+    又因为**窗口 region 的优先级高于 DWM 圆角** (实测 region 存在时,
+    DWM 角偏好即使设成 ROUND 也不生效), 所以只设 DWM 不够, 必须先清遮罩,
+    让形状交给 DWM 系统圆角 —— 即与 QMenu (无 region + DWM ROUND) 完全同形态。
+    """
+    try:
+        tip.clearMask()
+    except Exception:
+        pass
+    _round_popup_win11_corners(tip)
+
+
 class _DialogThemeFilter(QObject):
     """全局事件过滤器: 自动为所有弹出的顶层窗口应用 DWM 标题栏主题。
 
@@ -323,41 +340,41 @@ class _DialogThemeFilter(QObject):
         return theme_manager.load_initial_theme()
 
     def eventFilter(self, obj, event):
-        if (event.type() == QEvent.Show
-                and isinstance(obj, QWidget)
-                and obj.isWindow()):
-            # 所有 Qt.Popup 弹出层 (菜单/下拉弹层/补全弹层/工具提示/自绘
-            # 弹层): QSS border-radius 只裁剪边框/背景绘制, 弹出窗口本身
-            # 仍是矩形, 角部露出直角缺口。按窗口类型统一识别 (而非逐组件
-            # 白名单), 一律由 DWM 设置系统圆角 — 此后新增弹层组件无需再
-            # 单独接入。非 Popup 顶层窗口走原生标题栏主题。
-            #
-            # ⚠ QToolTip 必须单独列出: 它的 windowType() 是 Qt.ToolTip(=13
-            # = Popup|Sheet), 而 Qt.Popup=9 —— 只判 == Popup 会把工具提示
-            # 漏掉, 实测表现就是提示框四角露出一块方形 HWND 底色 (QSS 圆角
-            # 描边内缩在方形底色里)。实测 Win11 DwmSet/GetWindowAttribute
-            # 对 Qt.ToolTip 窗口返回 S_OK 且读回 DWMWCP_ROUND=2, 即有效。
-            _wtype = obj.windowFlags() & Qt.WindowType.WindowType_Mask
-            if _wtype in (Qt.WindowType.Popup, Qt.WindowType.ToolTip):
-                if _wtype == Qt.WindowType.ToolTip:
-                    # ⚠ 工具提示必须**延迟一拍**设置: Qt 在 Show 处理过程中会把
-                    # tooltip 窗口的角偏好设回 DWMWCP_ROUNDSMALL(=3, 约 2~4px),
-                    # 同步调用会被它覆盖回去。实测同一 winId:
-                    #   同步 set(ROUND) -> 立刻回读 2, processEvents 后变 3;
-                    #   QTimer.singleShot(0) 里 set(ROUND) -> 稳定保持 2。
-                    # 只有真的设成 ROUND(≈8px) 才能和主题 QSS 的 radius_md(8px)
-                    # 对齐 —— 否则系统只裁 2~4px 圆角, QSS 8px 圆角之外的方形
-                    # 窗口底色会在四角露出来 (即用户看到的"矩形背景")。
-                    QTimer.singleShot(
-                        0, lambda w=obj: _round_popup_win11_corners(w))
-                else:
-                    _round_popup_win11_corners(obj)
-            else:
-                try:
-                    from editor_utils.window_theme import apply_titlebar_theme
-                    apply_titlebar_theme(obj, self._resolve_theme(obj))
-                except Exception:
-                    pass  # 非 win32 或 winId 不可用, 静默跳过
+        if not (isinstance(obj, QWidget) and obj.isWindow()):
+            return False
+        _wtype = obj.windowFlags() & Qt.WindowType.WindowType_Mask
+
+        # ── ① 工具提示: 清掉 Qt 自带的 1px 窗口遮罩, 让 DWM 圆角接管 ──
+        # 实测数据: Qt 给 tooltip 设的 SH_ToolTip_Mask 只裁 1px 角, 而 QSS
+        # 画的是 radius_md=8px 圆角 → 圆角描边被 1px 遮罩切断, 四角露出方形
+        # 填充色; 且窗口 region 优先级高于 DWM 圆角 (region 在时 DWM=ROUND
+        # 不生效)。清掉遮罩后 tooltip 与 QMenu 完全同形态 (无 region + DWM
+        # ROUND), 而 QMenu 的圆角是既有验收过的形态。
+        # Show 与 Resize 都要清 —— Qt 在这两个事件里都会重设遮罩; 且必须延迟
+        # 一拍 (Qt 的处理在过滤器之后, 同步清会被它覆盖: 实测同步 clearMask
+        # 后 processEvents 遮罩又回来了)。
+        if _wtype == Qt.WindowType.ToolTip:
+            if event.type() in (QEvent.Show, QEvent.Resize):
+                QTimer.singleShot(0, lambda w=obj: _shape_tooltip_window(w))
+            return False
+
+        if event.type() != QEvent.Show:
+            return False
+
+        # ── ② 其余 Qt.Popup 弹层 (菜单/下拉弹层/补全弹层/自绘弹层) ──
+        # QSS border-radius 只裁剪边框/背景绘制, 弹出窗口本身仍是矩形, 角部
+        # 露出直角缺口; 按窗口类型统一识别 (而非逐组件白名单), 一律由 DWM
+        # 设置系统圆角 — 此后新增弹层组件无需再单独接入。
+        if _wtype == Qt.WindowType.Popup:
+            _round_popup_win11_corners(obj)
+            return False
+
+        # ── ③ 非弹层顶层窗口 (QDialog/QMessageBox/...) 走原生标题栏主题 ──
+        try:
+            from editor_utils.window_theme import apply_titlebar_theme
+            apply_titlebar_theme(obj, self._resolve_theme(obj))
+        except Exception:
+            pass  # 非 win32 或 winId 不可用, 静默跳过
         return False
 
 
