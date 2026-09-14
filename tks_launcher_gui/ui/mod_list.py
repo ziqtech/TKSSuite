@@ -20,6 +20,7 @@ from ui.centered_checkbox_delegate import (
 from editor_utils.dock_components import create_dock
 from editor_utils.adaptive_table import AdaptiveTableWidget
 from editor_utils.combo_box import EditorComboBox
+from editor_utils.ui_helpers import wrap_tooltip_text
 from editor_utils.search_utils import search_match
 from editor_utils.search_input import SearchInput
 from editor_utils import theme_tokens
@@ -330,7 +331,8 @@ class ModListWidget(QWidget):
             else:
                 compat_label = "兼容模式：作者未声明"
             tag_text = ", ".join(mod.tags) if mod.tags else "无"
-            tip = (f"{mod.description or '(无说明)'}\n\n"
+            # 说明按固定像素宽度预换行 (理由同 patch_list: Qt tooltip 换行阈值随屏幕宽变化)
+            tip = (f"{wrap_tooltip_text(mod.description or '(无说明)')}\n\n"
                    f"分类: {mod.category or 'other'}{inferred}\n"
                    f"版本: {mod.version or '未知'}\n标签: {tag_text}\n"
                    f"{compat_label}\n加载顺序: {mod.load_order}\nID: {mod.mod_id}")

@@ -20,6 +20,7 @@ from ui.centered_checkbox_delegate import (
 )
 from editor_utils.dock_components import create_dock
 from editor_utils.adaptive_table import AdaptiveTableWidget
+from editor_utils.ui_helpers import wrap_tooltip_text
 
 # 可选补丁区固定默认高度（供 MOD 详情预览区同步高度参照）
 OPTIONAL_PATCH_DEFAULT_HEIGHT = 320
@@ -251,7 +252,9 @@ class PatchListWidget(QWidget):
         table.setItem(row, _COL_TYPE, type_item)
 
         # 整行悬浮提示: 详细技术描述 + ID + 原始类型 (供进阶用户查阅)
-        tip = (f"{p.desc or p.name or '(无描述)'}\n\n"
+        # 说明按固定像素宽度预换行: Qt 自带 tooltip 的换行阈值随屏幕宽度变化,
+        # 中等长度的说明在宽屏上会拉成一条横贯屏幕的宽条 (见 wrap_tooltip_text)
+        tip = (f"{wrap_tooltip_text(p.desc or p.name or '(无描述)')}\n\n"
                f"类型: {patch_type_label(p.type)} ({p.type})\nID: {p.id}")
         for col in range(len(_COLUMNS)):
             it = table.item(row, col)

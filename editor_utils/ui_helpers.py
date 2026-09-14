@@ -4,9 +4,10 @@
 """
 import os
 import sys
-from PySide6.QtCore import QObject, QEvent, Qt
+from PySide6.QtCore import QObject, QEvent, Qt, QTimer
 from PySide6.QtGui import QIcon, QFont, QImage, QPixmap
-from PySide6.QtWidgets import (QDialog, QFileDialog, QFrame, QHBoxLayout, QLabel,
+from PySide6.QtWidgets import (QApplication, QDialog, QFileDialog, QFrame,
+                               QHBoxLayout, QLabel,
                                QLineEdit, QMessageBox,
                                QPushButton, QTextEdit, QVBoxLayout, QWidget, QSpinBox)
 from editor_utils.combo_box import EditorComboBox
@@ -212,6 +213,56 @@ def show_field_ref(parent, text, size=(700, 580)):
     dlg.exec()
 
 
+TOOLTIP_WRAP_PX = 480        # 工具提示的目标阅读宽度 (像素)
+
+
+def wrap_tooltip_text(text: str, max_px: int = TOOLTIP_WRAP_PX) -> str:
+    """把长文本按像素宽度预换行, 供工具提示 (setToolTip) 使用。
+
+    为什么要手动换行: Qt 的 tooltip 只在文本宽度超过"屏幕宽度的一定比例"
+    时才软换行 (实测 800px 屏上阈值约 496px)。屏幕越宽阈值越大, 于是
+    100~200 字的说明在 2K 屏上会拉成一条横贯屏幕的宽条 —— 而更长的文本
+    反而会换行, 同一列表里两款补丁的提示表现不一致。这里按固定像素宽度
+    主动插入 '\\n', 让所有提示框保持一致的阅读宽度。
+
+    Args:
+        text:   原始文本 (可含 '\\n' 分段, 分段会被保留)
+        max_px: 每行最大像素宽度, 默认 480 (与 Qt 在小屏上的自适应宽度相近)
+
+    Returns:
+        已插入换行的文本; 未知字体/无 QApplication 时退化为原文本。
+    """
+    if not text:
+        return text
+    try:
+        from PySide6.QtGui import QFontMetrics
+        app = QApplication.instance()
+        fm = QFontMetrics(app.font() if app is not None else QFont())
+    except Exception:
+        return text
+
+    lines = []
+    for para in text.split("\n"):
+        line, width = "", 0
+        for ch in para:
+            cw = fm.horizontalAdvance(ch)
+            if line and width + cw > max_px:
+                # 断行点若落在 ASCII 单词中间, 回退到最近的空格/标点后
+                cut = line.rfind(" ")
+                if cut > 0 and len(line) - cut <= 12:
+                    # 空格保留在行尾 (渲染时不可见): 保证"只插入换行, 不改动内容"
+                    lines.append(line[:cut + 1])
+                    line = line[cut + 1:]
+                    width = fm.horizontalAdvance(line)
+                else:
+                    lines.append(line)
+                    line, width = "", 0
+            line += ch
+            width += cw
+        lines.append(line)
+    return "\n".join(lines)
+
+
 def _round_popup_win11_corners(popup) -> None:
     """给无边框弹出层窗口设置 Win11 DWM 系统圆角 (菜单/工具提示/下拉弹层)。
 
@@ -280,9 +331,27 @@ class _DialogThemeFilter(QObject):
             # 仍是矩形, 角部露出直角缺口。按窗口类型统一识别 (而非逐组件
             # 白名单), 一律由 DWM 设置系统圆角 — 此后新增弹层组件无需再
             # 单独接入。非 Popup 顶层窗口走原生标题栏主题。
-            if (obj.windowFlags() & Qt.WindowType.WindowType_Mask
-                    ) == Qt.WindowType.Popup:
-                _round_popup_win11_corners(obj)
+            #
+            # ⚠ QToolTip 必须单独列出: 它的 windowType() 是 Qt.ToolTip(=13
+            # = Popup|Sheet), 而 Qt.Popup=9 —— 只判 == Popup 会把工具提示
+            # 漏掉, 实测表现就是提示框四角露出一块方形 HWND 底色 (QSS 圆角
+            # 描边内缩在方形底色里)。实测 Win11 DwmSet/GetWindowAttribute
+            # 对 Qt.ToolTip 窗口返回 S_OK 且读回 DWMWCP_ROUND=2, 即有效。
+            _wtype = obj.windowFlags() & Qt.WindowType.WindowType_Mask
+            if _wtype in (Qt.WindowType.Popup, Qt.WindowType.ToolTip):
+                if _wtype == Qt.WindowType.ToolTip:
+                    # ⚠ 工具提示必须**延迟一拍**设置: Qt 在 Show 处理过程中会把
+                    # tooltip 窗口的角偏好设回 DWMWCP_ROUNDSMALL(=3, 约 2~4px),
+                    # 同步调用会被它覆盖回去。实测同一 winId:
+                    #   同步 set(ROUND) -> 立刻回读 2, processEvents 后变 3;
+                    #   QTimer.singleShot(0) 里 set(ROUND) -> 稳定保持 2。
+                    # 只有真的设成 ROUND(≈8px) 才能和主题 QSS 的 radius_md(8px)
+                    # 对齐 —— 否则系统只裁 2~4px 圆角, QSS 8px 圆角之外的方形
+                    # 窗口底色会在四角露出来 (即用户看到的"矩形背景")。
+                    QTimer.singleShot(
+                        0, lambda w=obj: _round_popup_win11_corners(w))
+                else:
+                    _round_popup_win11_corners(obj)
             else:
                 try:
                     from editor_utils.window_theme import apply_titlebar_theme
