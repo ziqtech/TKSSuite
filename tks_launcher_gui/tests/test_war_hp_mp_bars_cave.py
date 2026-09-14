@@ -15,6 +15,10 @@
     中段为内区内容 —— 圆角切掉的是环外的角像素, 环本身始终闭合。
   血条 52x6, x0 = sx-20 (与原 50 宽条 x0=sx-19 同一中心 sx+6), y0 = sy-132;
   内力条 52x4, x0 同, y0 = 血条底边 (y0+6) → 两条严格贴合。
+  可见性: 条必须完整落在屏幕内才绘制 —— (无符号)y0 ≤ 470 且 (无符号)x0 ≤ 宽-52,
+    越界即整条跳过 (负值被无符号比较一并挡掉)。
+    ⚠ 不做"钳到屏幕边缘": 单位滚出上方后血条会一直钉在屏幕边缘 (用户实测反馈),
+    且与 war_status_icons 的 ytop 无符号越界判定不一致 (图标消失、血条却留着)。
 
 【配色 (RGB565)】
   血条三段: ≥60% 绿 0x4ECC / ≥30% 琥珀 0xFD80 / 其余 红 0xE1C6
@@ -250,12 +254,10 @@ def build() -> bytes:
     r(0x2D); a.imm32(BAR_X_OFF)               # sub eax,20
     a.mov_m_r_bp(V_X0, RAX)
 
-    # y0 = movsx word[edx*4+POSY] - camy - 132  (负数钳 0)
+    # y0 = movsx word[edx*4+POSY] - camy - 132
     r(0x0F, 0xBF, 0x04, 0x95); a.imm32(A_POSY)
     r(0x2B, 0x05); a.imm32(A_CAMY)            # sub eax,[0x8242AC]
     r(0x2D); a.imm32(BAR_Y_OFF)               # sub eax,132
-    r(0x79, 0x02)                             # jns +2
-    r(0x31, 0xC0)                             # xor eax,eax
     a.mov_m_r_bp(V_Y0, RAX)
 
     # 水平: (unsigned)x0 <= 宽-52  (负 x0 亦被无符号比较挡掉)
@@ -264,10 +266,12 @@ def build() -> bytes:
     a.mov_r_m_bp(RAX, V_X0)
     r(0x39, 0xC8)                             # cmp eax,ecx
     a.jcc(0x87, "L_next")                     # ja
-    # 垂直: y0 <= 480-(HP_H+MP_H)
+    # 垂直: (无符号)y0 <= 480-(HP_H+MP_H) —— 负值同样被挡掉
+    # (旧版把 y0<0 钳到 0, 单位滚出屏幕上方后血条会一直钉在屏幕边缘;
+    #  改为与 war_status_icons 的 ytop 判定同一条无符号规则: 越界即不画)
     a.mov_r_m_bp(RAX, V_Y0)
     r(0x3D); a.imm32(480 - (HP_H + MP_H))     # cmp eax,470
-    a.jcc(0x87, "L_next")                     # ja
+    a.jcc(0x87, "L_next")                     # ja (无符号: 负值 → 跳过)
 
     # ════ 生命条 ════
     a.mov_r_m_bp(RAX, V_HP)
@@ -484,6 +488,8 @@ def test_key_semantics_present() -> None:
     assert text.count(f"mov ax, {C_SEP:#06x}") == 1
     assert text.count("mov edx, 4") == 1
     assert text.count(f"mov dword ptr [ebp + {V_GRP:#x}], 0xa") == 1
+    # v6.1 可见性: 越界即跳过, 不得再有 "y0<0 钳 0" 的钳位分支
+    assert "jns" not in text, "不应再有 y0<0 钳 0 (jns/xor) 的分支"
 
 
 def test_no_hardcoded_width() -> None:
@@ -562,8 +568,11 @@ PATCH_COMMENT = (
     "血条 52x6 三段配色 (≥60% 绿 0x4ECC / ≥30% 琥珀 0xFD80 / 其余红 0xE1C6); "
     "内力条 52x4 (亮蓝 0x4D5F), 顶边 = 血条底边 (y0+6), 更细且紧贴; "
     "空槽底色 0x2945, 格线 0x18E3, 描边 0x1082。"
-    "位置: x0 = sx-20 (中心 sx+6, 与原 50 宽条同一中心), 血条 y0 = sy-132, 总高 10px 与原版一致; "
-    "y0<0 钳 0, y0>470 跳过; 右边界 (无符号) x0 ≤ 宽-52 (负 x0 一并挡掉)。"
+    "位置: x0 = sx-20 (中心 sx+6, 与原 50 宽条同一中心), 血条 y0 = sy-132, 总高 10px 与原版一致。"
+    "v6.1 可见性: 条必须完整落在屏幕内才画 —— (无符号)y0 ≤ 470 且 (无符号)x0 ≤ 宽-52, 越界整条跳过。"
+    "旧版 y0<0 钳 0 会让滚出屏幕上方的单位把血条一直钉在屏幕边缘 (用户实测反馈: 角色已不可见、"
+    "血条仍贴在边界); 现改为与 war_status_icons 的 ytop 同一条无符号越界判定 (图标消失时血条同步消失), "
+    "不再有钳到边界的分支。"
     "等价性: hp>0 且 hpmax>0 才画血条, mp>0 且 mpmax>0 才画内力条 —— 与原版一致; "
     "唯一行为差异: 存活单位血条不足 1 格 (hp*40/hpmax == 0) 时保留 1 列, 原版此情形整条不画。"
     "v5.1 (16:9 兼容): 行步长与右边界改读运行时 [0x4E7CC8] (视口/画布宽: 原版 640 / 宽屏补丁 856) —— "

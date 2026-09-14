@@ -290,7 +290,30 @@ def main() -> bool:
     ok &= check("mp=0 不画内力条",
                 pixel(cnomp, 640, x0 + 21, y0 + HP_H + 1) == 0)
 
-    # ⑩ 尾声: 恢复 edx = movsx word[0x9D6C88], 栈平衡返回
+    # ⑩ 可见性: 条必须完整落在屏幕内 (不再把越界的条钳到屏幕边缘)
+    #    y0 = sy-132 → sy=132 是最上合法位置 (y0=0)
+    cy0, _ = run(640, unit_x=500, unit_y=132)
+    exp = bytearray(640 * 480 * 2)
+    draw_expected(exp, 640, x0, 0, HP_H, CAP, C_HP_HI)
+    draw_expected(exp, 640, x0, HP_H, MP_H, CAP, C_MP)
+    ok = compare("y0=0 (sy=132): 最上合法位置", cy0, exp, 640, ok)
+
+    cneg1, _ = run(640, unit_x=500, unit_y=131)      # y0 = -1
+    ok &= check("y0=-1: 不画 (旧版钳到 y=0, 会钉在屏幕顶边)",
+                pixel(cneg1, 640, x0 + 3, 0) == 0)
+    coff, _ = run(640, unit_x=500, unit_y=-500)      # 角色滚到屏幕上方外
+    ok = compare("单位滚出屏幕上方: 全屏无残留",
+                 coff, bytearray(640 * 480 * 2), 640, ok)
+
+    cbot, _ = run(640, unit_x=500, unit_y=602)       # y0 = 470
+    ok &= check("y0=470: 最下合法位置画到第 479 行 (内力条下边框)",
+                pixel(cbot, 640, x0 + 3, 479) == C_BORDER
+                and pixel(cbot, 640, x0 + 3, 477) == C_MP)
+    cbot2, _ = run(640, unit_x=500, unit_y=603)      # y0 = 471
+    ok &= check("y0=471: 越过下边界 → 不画",
+                pixel(cbot2, 640, x0 + 3, 0) == 0)
+
+    # ⑪ 尾声: 恢复 edx = movsx word[0x9D6C88], 栈平衡返回
     _, uc = run(640, unit_x=500, unit_y=400, menu=0x0012)
     ok &= check("尾声: edx 重放 = movsx word[9D6C88]",
                 uc.reg_read(UC_X86_REG_EDX) == 0x0012,
