@@ -28,9 +28,8 @@ TKItem.dat 可视化编辑器 (PySide6 — Godot 4.6 风格)
      4=枪/秘笈(18条): 枪类武器+特殊秘笈/法宝, 0b100=bit2
      8=矛(8条), 16=弓弩(12条), 32=大刀(12条), 64=戟(6条), 128=锤(6条)
      (基于 sub_41928C/sub_41F318/sub_4307CC 逆向+全600条实测验证)
- 10. 记录数硬限制: 600 条 (sub_45343C 加载 38400 字节 = 600x64; sub_42F8D4 遍历 < 600)
- 11. 空槽 (#560-#599): item_id=0 & name_id=0 时编辑器视为空槽可复用;
-     desc_id=600 仅为编辑器创建/清空时的默认模板值, 非引擎强制
+ 10. 原始记录数: 600 条 (sub_45343C 加载 38400 字节 = 600x64)
+ 11. 编辑器支持在列表末尾追加空记录; 启动器 tkitem_expand 补丁可扩容至 1023 条可用记录
 
 用法:
   python item_editor.py
@@ -235,7 +234,7 @@ def is_empty_item(rec, tkt=None):
     return False
 
 def is_pure_empty_slot(rec):
-    """真·空槽 (可作新增物品起始模板): item_id==0 AND name_id==0."""
+    """真·空槽 (供旧版“复制到空槽”兼容逻辑识别): item_id==0 AND name_id==0."""
     return rec.get('item_id', 0) == 0 and rec.get('name_id', 0) == 0
 
 def item_display_name(rec, tkt):
@@ -257,9 +256,8 @@ def load_items(fp):
     if len(raw) % ITEM_REC == 0 and (len(dec) == 0 or len(dec) % ITEM_REC != 0):
         dec = raw
     recs = []
-    for i in range(ITEM_CNT):
+    for i in range(len(dec) // ITEM_REC):
         off = i * ITEM_REC
-        if off + ITEM_REC > len(dec): break
         fields = struct.unpack_from('<' + 'h'*32, dec, off)
         rec = {'index': i}
         for k, fo, _, _, _, _ in ALL_FIELDS:
@@ -268,10 +266,10 @@ def load_items(fp):
     return recs
 
 def save_items(fp, recs):
-    buf = bytearray(ITEM_CNT * ITEM_REC)
+    buf = bytearray(max(ITEM_CNT, len(recs)) * ITEM_REC)
     # 注: 空槽模板 (#560-#599) 的 desc_id=600 是编辑器创建/清空时的默认值,
     # 非引擎强制; save_items 按记录原值写入, 不强制改写 desc_id
-    for rec in recs[:ITEM_CNT]:
+    for rec in recs:
         i = rec['index']
         off = i * ITEM_REC
         for k, fo, _, _, _, _ in ALL_FIELDS:
@@ -368,7 +366,8 @@ class ItemEditorApp(FieldUndoMixin, EditorMainWindow):
 
     HELP_TEXT = (
         "功能: 编辑《三国群侠传》物品数据\n"
-        "数据: 600 条记录 × 32 个字段 = 64 字节/条\n\n"
+        "数据: 原始 600 条记录 × 32 个字段 = 64 字节/条\n"
+        "支持在列表末尾新增空记录；启动器 tkitem_expand 可扩容至 1023 条\n\n"
         "特性:\n"
         "  · 可视化编辑物品属性 (名称/价格/效果等)\n"
         "  · 自动关联 TKT.dat 显示物品名称\n"
@@ -442,7 +441,7 @@ class ItemEditorApp(FieldUndoMixin, EditorMainWindow):
         em.addAction("撤销", QKeySequence("Ctrl+Z"), self.undo)
         em.addAction("重做", QKeySequence("Ctrl+Y"), self.redo)
         em.addSeparator()
-        em.addAction("新建物品 (填充空槽)\tCtrl+N", self._new_item)
+        em.addAction("新建物品\tCtrl+N", self._new_item)
         em.addAction("复制当前到空槽", self._copy_record)
         em.addAction("清空当前记录", self._clear_current)
         self.add_standard_menus(mb)
@@ -867,9 +866,8 @@ class ItemEditorApp(FieldUndoMixin, EditorMainWindow):
                     continue
             self.filtered_indices.append(rec['index'])
         self._refresh_table()
-        empty_cnt = sum(1 for r in self.records if is_pure_empty_slot(r))
         self.status_var.setText(
-            f"显示 {len(self.filtered_indices)}/{len(self.records)} | 真空槽剩余 {empty_cnt}/40 | Ctrl+S 保存")
+            f"显示 {len(self.filtered_indices)}/{len(self.records)} | Ctrl+S 保存")
 
     def _clear_filter(self):
         self.search_entry.clear()
@@ -1412,47 +1410,31 @@ class ItemEditorApp(FieldUndoMixin, EditorMainWindow):
         QMessageBox.warning(self, "已满", "无真·空槽 (id=0 的记录) 可复制到.\n可先使用『清空此记录』释放一个槽位.")
 
     def _new_item(self):
-        """新增物品: 在空槽 #560-#599 中找第一条 item_id=0 的记录, 填入默认值并选中.
-        游戏硬编码限制 600 条, 无法扩容; 但 #560-#599 40 条空槽可用.
-        """
+        """在列表末尾追加一条全零空记录并选中。"""
         if not self.records:
             QMessageBox.information(self, "提示", "请先加载 TKItem.dat")
             return
-        target = None
-        for rec in self.records:
-            if is_pure_empty_slot(rec):
-                target = rec
-                break
-        if target is None:
-            # sub_45343C 硬编码 38400 字节
-            QMessageBox.warning(self, "已满",
-                "600 条记录上限已满\n无空槽 (id=0) 可用.")
-            return
-        # 填入默认值 (参考 #560-599 原始模板)
+
+        target = {'index': len(self.records)}
         for fn, _, _, _, _, _ in ALL_FIELDS:
             target[fn] = 0
-        # 估算一个未占用的 item_id (避免碰撞)
-        used_ids = {r['item_id'] for r in self.records if r['item_id'] > 0}
-        new_id = 600
-        while new_id in used_ids and new_id < 9999:
-            new_id += 1
-        target['item_id'] = new_id
-        target['desc_id'] = 600  # 模板默认
-        target['price'] = 1
-        target['tab_code'] = 0
+        self.records.append(target)
         self._dirty = True
+
+        # 空记录会被“仅非空”和现有筛选条件隐藏，新建后显示它。
+        self.search_entry.clear()
+        self.filter_page.setCurrentIndex(0)
+        self.filter_right.setCurrentIndex(0)
+        self.filter_empty.setChecked(False)
         self._apply_filter()
         for r in range(self.table.rowCount()):
-            if int(self.table.item(r, 1).text()) == target['index']:
+            if self._record_index_at_row(r) == target['index']:
                 self.table.selectRow(r)
+                self.table.scrollToItem(self.table.item(r, 1))
                 break
-        # 选中新记录
         self._populate_edit(target)
-        QMessageBox.information(self, "新建物品",
-            f"已在空槽 #{target['index']} 创建新物品\n"
-            f"初始 item_id={new_id} (请改为你想要的值)\n"
-            f"请填写 名称代码/说明代码/其他属性, 然后 Ctrl+S 保存.")
-        self.status_var.setText(f"新建物品: #{target['index']} item_id={new_id}")
+        self.status_var.setText(
+            f"已新增空物品 #{target['index']} (共 {len(self.records)} 条, 未保存)")
 
     # ── 保存/导出 ──
     def _save(self):
@@ -1540,9 +1522,9 @@ class ItemEditorApp(FieldUndoMixin, EditorMainWindow):
             lines.append(f"  页面{page}({PAGE_NAMES.get(page,'?')}): {opts}")
         lines.append("")
         lines.append("【记录数硬限制】")
-        lines.append("  600 条 x 64 字节 = 38400 字节 (游戏固定加载量)")
-        lines.append("  物品数量上限为 600 条 (游戏内部限制)")
-        lines.append("  #560-#599 (40条) 为空槽位, 可用于新增物品 (item_id=0, name_id=0)")
+        lines.append("  原始 600 条 x 64 字节 = 38400 字节 (游戏固定加载量)")
+        lines.append("  编辑器支持在列表末尾追加空记录")
+        lines.append("  启动器 tkitem_expand 补丁支持 1023 条可用记录")
         dlg = QDialog(self)
         dlg.setWindowTitle("字段来源")
         dlg.resize(820, 580)

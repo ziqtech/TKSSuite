@@ -1188,18 +1188,20 @@ def _apply_patch_data_expand(defn: PatchDef, ctx: PatchContext) -> bool:
             return False
 
     new_size = len(content)
-    if new_size <= old_size:
+    cap = int((getattr(defn, "_extra", {}) or {}).get("buffer_cap", 0) or 0)
+    buffer_size = max(new_size, cap)
+    if buffer_size <= old_size:
         log(f"  [SKIP] {data_file} 大小 {new_size} <= 原始 {old_size}")
         return True
 
     hp = ctx.h_proc
-    alloc = _VirtualAllocEx(hp, None, new_size,
+    alloc = _VirtualAllocEx(hp, None, buffer_size,
                             MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE)
     new_buf = ctypes.cast(alloc, ctypes.c_void_p).value or 0 if alloc else 0
     if not new_buf:
         log("  [ERROR] VirtualAllocEx 失败")
         return False
-    log(f"  [OK] 新缓冲区 0x{new_buf:08X} ({new_size} bytes)")
+    log(f"  [OK] 新缓冲区 0x{new_buf:08X} ({buffer_size} bytes)")
 
     nw = write_pm(hp, new_buf, content)
     if nw != new_size:
@@ -1258,7 +1260,7 @@ def _apply_patch_data_expand(defn: PatchDef, ctx: PatchContext) -> bool:
 
     size_hits = value_scan(bytes(code), old_size)
     patched_size = 0
-    new_size_le = i32b(new_size)
+    new_size_le = i32b(buffer_size)
     for off in size_hits:
         abs_addr = start + off
         op = vp_ex(hp, abs_addr, 4, PAGE_EXECUTE_READWRITE)
@@ -1270,13 +1272,23 @@ def _apply_patch_data_expand(defn: PatchDef, ctx: PatchContext) -> bool:
         else:
             all_ok = False
     log(f"  [OK] 大小引用 {patched_size}/{len(size_hits)} "
-        f"({old_size} -> {new_size})")
+        f"({old_size} -> {buffer_size})")
 
     if not base_hits:
         log("  [WARN] 未找到基址引用")
         all_ok = False
     if patched_base != len(base_hits) or patched_size != len(size_hits):
         all_ok = False
+
+    if defn.bytes_patches:
+        byte_defn = PatchDef(
+            type="patch_bytes",
+            id=defn.id,
+            patterns=list(defn.bytes_patches),
+        )
+        log("  [OK] 应用数据段附带字节补丁")
+        all_ok &= apply_patch_bytes(
+            byte_defn, code, start, hp, log_func=log)
     return all_ok
 
 

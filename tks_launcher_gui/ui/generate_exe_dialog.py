@@ -788,6 +788,18 @@ class GenerateExeDialog(QDialog):
         self._log(f'[{p.id}] 注入 {len(content)} 字节'
                   + (f' (buffer_cap={cap}, 64KB 对齐)' if cap else ' (64KB 对齐含余量)'))
 
+        bytes_items = []
+        for bp in (p.bytes_patches or []):
+            replace = {
+                int(k): int(v)
+                for k, v in (bp.get('replace') or {}).items()
+            }
+            bytes_items.append(BytesPatchEntry(
+                pattern=bp.get('pattern', ''),
+                replace=replace,
+                expect_count=bp.get('expect_count', 0),
+            ))
+
         return DataSectionPatchItem(
             patch_id=p.id, name=p.name,
             data=content,
@@ -796,6 +808,9 @@ class GenerateExeDialog(QDialog):
             section_name=section_name or f'.{p.id[:6]}',
             redirect_base_span=int((getattr(p, '_extra', {}) or {})
                                    .get('redirect_base_span', 0) or 0),
+            bytes_patches=[BytesPatchItem(
+                patch_id=p.id, name=p.name, entries=bytes_items)]
+            if bytes_items else None,
         )
 
     def _resolve_imm32_value(self, p: PatchDef) -> int | None:

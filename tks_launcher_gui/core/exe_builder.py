@@ -306,6 +306,7 @@ class DataSectionPatchItem:
 
     用于 tkact_expand / tkkon_expand 等需要扩容数据缓冲区的补丁。
     将扩展数据作为新 PE 节注入，然后用 patch_imm32 重定向基址和大小引用。
+    bytes_patches 可在数据段重定向完成后附带应用记录数等字节级修正。
     """
     patch_id: str
     name: str
@@ -317,6 +318,7 @@ class DataSectionPatchItem:
     redirect_base_span: int = 0  # 基址后的字段锚定引用扫描跨度（字节），
                                  # 0=仅精确重定向基址本身（如 WarPC 记录内
                                  # word_757F0C 等字段锚定立即数需设为记录大小）
+    bytes_patches: Optional[List['BytesPatchItem']] = None
 
 
 @dataclass
@@ -1044,6 +1046,16 @@ class ExeBuilder:
                             pos += 1
                     log.append(f'  [{item.patch_id}] 字段锚定引用 (span={span}): '
                                f'{span_hits} 处')
+
+                if item.bytes_patches:
+                    log.append(f'  [{item.patch_id}] 应用数据段附带字节补丁 '
+                               f'({len(item.bytes_patches)} 个)')
+                    for bp in item.bytes_patches:
+                        if not self._apply_bytes_patch(data, bp, log):
+                            result.error = (f'[{item.patch_id}] '
+                                            f'数据段附带字节补丁应用失败')
+                            log.append(result.error)
+                            return result
 
         # ── 5. 计算 .test 节布局 ──
         test_rva = 0

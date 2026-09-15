@@ -484,7 +484,7 @@ tks_launcher_gui/patches/global_variables/patch.json
 tks_launcher_gui/patches/warpc_size_refs/patch.json
 tks_launcher_gui/patches/warpc_base_refs/patch.json
 tks_launcher_gui/patches/tkmat_size/patch.json
-tks_launcher_gui/patches/tkitem_size/patch.json
+tks_launcher_gui/patches/tkitem_expand/patch.json
 tks_launcher_gui/patches/tkskill_size/patch.json
 tks_launcher_gui/patches/tkshop_size/patch.json
 tks_launcher_gui/patches/tkdefunit_count/patch.json
