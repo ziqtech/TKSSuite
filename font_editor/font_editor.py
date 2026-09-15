@@ -29,7 +29,7 @@ from editor_utils.runtime_bootstrap import bootstrap
 bootstrap()
 
 from PySide6.QtCore import Qt, QThread, Signal, QObject, QSize
-from PySide6.QtGui import QAction, QIcon, QImage, QPixmap, QFont, QColor
+from PySide6.QtGui import QAction, QIcon, QImage, QPixmap, QFont, QColor, qRgba
 from PySide6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout,
     QFormLayout, QGridLayout, QPushButton, QLabel, QLineEdit,
@@ -161,6 +161,7 @@ class FontEditorWindow(EditorMainWindow):
         self._preview_ftype_combo: EditorComboBox | None = None
         self._preview_path_label: QLabel | None = None
         self._preview_container: QWidget | None = None
+        self._preview_glyph_bitmaps: list[tuple[QLabel, bytes]] = []
 
     def _after_build(self):
         self._build_menu()
@@ -436,9 +437,9 @@ class FontEditorWindow(EditorMainWindow):
         self.statusBar().addWidget(self._status_label)
 
     def _on_theme_applied(self, theme_id):
-        # 切换主题后刷新预览 (颜色变化); 初始化回调时 _font_path 尚未创建
-        if getattr(self, "_font_path", None):
-            self._refresh_preview()
+        # 主题只影响字形颜色, 复用已解码位图重着色, 不重建预览控件。
+        if getattr(self, "_preview_glyph_bitmaps", None):
+            self._recolor_preview()
 
     def _glyph_fg_color(self) -> str:
         """返回当前主题下字形笔画颜色 (渲染进位图像素), 与 editor_themes 文字色一致。"""
@@ -694,6 +695,7 @@ class FontEditorWindow(EditorMainWindow):
         2. TTF 直接预览 (未生成 FONT9696 时) — 用 PIL 直接渲染 TTF
         """
         # 清空现有内容
+        self._preview_glyph_bitmaps.clear()
         while self._preview_layout.count():
             item = self._preview_layout.takeAt(0)
             w = item.widget()
@@ -926,36 +928,61 @@ class FontEditorWindow(EditorMainWindow):
     def _make_glyph_label(self, stroke_bitmap: bytes,
                           fg_color: str) -> QLabel:
         """从笔画位图创建 QLabel (含 32×32 缩放预览)。"""
-        # 渲染为 96×96 RGBA → 缩放到 32×32
-        rgba = Font9696.render_glyph_from_bitmap(
-            stroke_bitmap,
-            color=self._parse_color(fg_color))
-        if rgba is None:
+        pix = self._make_glyph_pixmap(stroke_bitmap, fg_color)
+        if pix is None:
             return self._make_empty_glyph()
 
-        img = QImage(rgba, 96, 96, 96 * 4, QImage.Format_RGBA8888)
-        if img.isNull():
-            return self._make_empty_glyph()
-        pix = QPixmap.fromImage(img).scaled(32, 32, Qt.KeepAspectRatio,
-                                             Qt.SmoothTransformation)
         lbl = QLabel()
         lbl.setProperty("class", "GlyphCell")
         lbl.setPixmap(pix)
         lbl.setFixedSize(32, 32)
         lbl.setAlignment(Qt.AlignCenter)
+        self._preview_glyph_bitmaps.append((lbl, stroke_bitmap))
         return lbl
+
+    def _recolor_preview(self):
+        """按当前主题重着色既有字形, 不重新读取或解码 FONT9696。"""
+        fg_color = self._glyph_fg_color()
+        live_glyphs: list[tuple[QLabel, bytes]] = []
+        for lbl, stroke_bitmap in self._preview_glyph_bitmaps:
+            try:
+                pix = self._make_glyph_pixmap(stroke_bitmap, fg_color)
+                if pix is not None:
+                    lbl.setPixmap(pix)
+                    live_glyphs.append((lbl, stroke_bitmap))
+            except RuntimeError:
+                # _refresh_preview 使用 deleteLater, 快速连续切换时可能遇到已销毁控件。
+                continue
+        self._preview_glyph_bitmaps = live_glyphs
+
+    @staticmethod
+    def _make_glyph_pixmap(stroke_bitmap: bytes,
+                           fg_color: str) -> QPixmap | None:
+        """用 Qt 单色图着色, 避免 Python 逐像素构造 96×96 RGBA。"""
+        if len(stroke_bitmap) != Font9696.GLYPH_BUF_SIZE:
+            return None
+        bytes_per_line = (Font9696.CANVAS_SIZE + 7) // 8
+        mask = QImage(
+            stroke_bitmap,
+            Font9696.CANVAS_SIZE,
+            Font9696.CANVAS_SIZE,
+            bytes_per_line,
+            QImage.Format_Mono,
+        ).copy()
+        if mask.isNull():
+            return None
+        mask.setColorTable([
+            qRgba(0, 0, 0, 0),
+            QColor(fg_color).rgba(),
+        ])
+        return QPixmap.fromImage(mask).scaled(
+            32, 32, Qt.KeepAspectRatio, Qt.SmoothTransformation)
 
     def _make_empty_glyph(self) -> QLabel:
         lbl = QLabel()
         lbl.setProperty("class", "GlyphCell")
         lbl.setFixedSize(32, 32)
         return lbl
-
-    @staticmethod
-    def _parse_color(hex_color: str) -> tuple[int, int, int]:
-        """'#RRGGBB' → (R, G, B)"""
-        h = hex_color.lstrip('#')
-        return (int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16))
 
     # ── MOD 导入导出 ──
 

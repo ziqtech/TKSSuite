@@ -30,6 +30,7 @@ import re  # noqa: E402
 import sys  # noqa: E402
 import unittest  # noqa: E402
 from pathlib import Path  # noqa: E402
+from unittest.mock import patch  # noqa: E402
 
 _ROOT = Path(__file__).resolve().parent.parent
 if str(_ROOT) not in sys.path:
@@ -242,6 +243,32 @@ class EditorSmokeTests(unittest.TestCase):
                     self.app.processEvents()
         if failures:
             self.fail("以下入口冒烟失败:\n" + "\n".join(failures))
+
+
+class FontEditorThemeTests(unittest.TestCase):
+    """font_editor 主题切换不得重新解码或重建字体预览。"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = _ensure_app()
+
+    def test_theme_switch_recolors_in_place(self):
+        module = _load_editor_module(
+            "font_editor", "font_editor/font_editor.py")
+        window = module.FontEditorWindow()
+        try:
+            # 模拟已加载字体的预览状态; 重着色函数本身另行由冒烟测试覆盖。
+            window._font_path = "FONT9696"
+            window._preview_glyph_bitmaps = [(object(), b"bitmap")]
+            with patch.object(window, "_refresh_preview") as refresh, \
+                    patch.object(window, "_recolor_preview") as recolor:
+                apply_theme_to_window(window, "gpt-light", persist=False)
+            refresh.assert_not_called()
+            recolor.assert_called_once_with()
+        finally:
+            window.close()
+            window.deleteLater()
+            self.app.processEvents()
 
 
 if __name__ == "__main__":
