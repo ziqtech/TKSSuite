@@ -4,6 +4,7 @@ from PySide6.QtGui import (
     QPixmap, QImage, QAction, QPalette, QFontMetrics, QMouseEvent,
     QWheelEvent, QKeyEvent, QShortcut, QKeySequence, QCursor,
 )
+from PIL import Image, ImageChops
 
 # ============================================================
 # PIL ↔ QPixmap 转换

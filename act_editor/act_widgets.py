@@ -18,6 +18,8 @@ from PySide6.QtCore import (
     Qt, QTimer, QTranslator, Signal, QPoint, QRect, QSize,
 )
 
+from act_font import ActFont9696
+
 from editor_utils.theme_manager import business_colors
 
 from act_codec import (
@@ -54,10 +56,15 @@ class PreviewCanvas(QWidget):
         self._bbox = None
         self._drag_state = None
         self._entry_title = ""
+        self._float_specs = []
         self._cursor_over_sprite = False
 
     def set_entry_title(self, title):
         self._entry_title = title
+        self.update()
+
+    def set_float_specs(self, specs):
+        self._float_specs = list(specs)
         self.update()
 
     def set_frame_data(self, composite_pixmap, comp_ox, comp_oy,
@@ -123,6 +130,24 @@ class PreviewCanvas(QWidget):
         painter.drawRect(QRect(int(ex_c - 15), int(ey_c - 40), 30, 40))
         painter.setPen(QColor('#f44'))
         painter.drawText(int(ex_c - 4), int(ey_c - 22), "敌")
+
+        # 伤害飘字
+        if self._float_specs:
+            font = getattr(self.editor, '_font', None)
+            if font is None:
+                font = ActFont9696(getattr(self.editor, 'font_path', ''))
+            for spec in self._float_specs:
+                pixmap = font.text_pixmap(
+                    spec['text'], spec['color'],
+                    ftype=spec.get('ftype', 4), size=spec.get('size', 24),
+                    outline=spec.get('outline', True))
+                if pixmap is not None:
+                    painter.drawPixmap(int(spec['x']), int(spec['y']), pixmap)
+                else:
+                    painter.setPen(QColor(*spec['color']))
+                    painter.setFont(QFont("Microsoft YaHei UI", 24))
+                    painter.drawText(
+                        int(spec['x']), int(spec['y']) + 24, spec['text'])
 
         # 播放完毕标记
         if self._all_stopped:

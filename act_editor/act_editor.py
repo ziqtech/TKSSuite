@@ -28,8 +28,8 @@ TKAct.dat 多图层 2D 精灵动画编辑器 (PySide6 — Godot 4.6 风格)
   原版固定 650 条; 编辑器支持读取/保存 650 条以上的扩展文件,
   游戏侧需启用 tks_launcher_gui 的 tkact_expand 补丁。
   [0-31]    方向表: 4 方向 × 8 字节, 每字节为 1-based 图层号 (0=空)
-  [32-79]   条目级参数区 (24 int16): [18] 动画总时长, [19] 当前播放时间,
-             [20..27] 每次飘字的触发时间, 其余为预留/未知
+  [32-79]   条目级参数区 (24 int16): [2] 动画总帧数,
+             [4..11] word_9D03A2[8] 飘字/命中触发帧, 其余为预留/未知
   [80-719]  图层 × 8 (各 80 字节 = 40 int16)
   [720-783] 尾部 = 音效触发表 16 对 × (sound_id, trigger_tick) × int16
 
@@ -39,6 +39,7 @@ TKAct.dat 多图层 2D 精灵动画编辑器 (PySide6 — Godot 4.6 风格)
 
 import collections
 import os
+import random
 import struct
 import sys
 import time
@@ -51,7 +52,7 @@ from PySide6.QtWidgets import (
     QScrollArea, QDialog, QFileDialog, QMessageBox, QTextEdit,
     QFrame, QGridLayout, QAbstractItemView, QMenuBar,
     QComboBox, QSpinBox, QSlider, QRadioButton, QButtonGroup, QGroupBox,
-    QMenu,
+    QMenu, QAbstractSpinBox, QSizePolicy,
 )
 from PySide6.QtGui import (
     QColor, QFont, QPainter, QPen,
@@ -132,9 +133,9 @@ from act_codec import (
     STMT_UNKNOWN_COLOR,
     ACT_DECOMPRESSED, ACT_ENTRY_COUNT, ACT_ENTRY_SIZE, ACT_LAYER_SIZE,
     ACT_MAX_LAYER, ACT_PARAM_OFFSET, ACT_TAIL_OFFSET, ALL_FIELDS,
-    BLEND_MODE_LABELS, DIRECTION_LABELS, DIRECTION_MODE_LABELS, DIRECTION_SHORT,
+    BLEND_MODE_LABELS, DIRECTION_MODE_LABELS, DIRECTION_SHORT,
     FIELD_GROUPS, LAYER_TYPE_LABELS, LOOP_BEHAVIOR_LABELS, MOVE_MODE_LABELS,
-    PARAM_FIELD_INFO, PARAM_GRID_COLUMNS, PREVIEW_ENEMY_X, READONLY_KEYS,
+    PARAM_FIELD_INFO, PREVIEW_ENEMY_X, READONLY_KEYS,
     entry_active_layers, entry_is_empty, entry_referenced_layers, entry_summary,
     infer_jvg_layout, load_act, save_act,
 )
@@ -142,6 +143,7 @@ from act_composite import (
     _apply_blend, _composite_additive, _composite_luma_alpha, _composite_subtract,
     _compute_layer_frame, pil_to_qpixmap,
 )
+from act_font import FONT_COLORS, ActFont9696
 from act_widgets import PreviewCanvas, ThumbnailStrip, TimelineWidget
 
 
@@ -227,7 +229,22 @@ class _LazyJvgReader:
         return blk
 
 
+class _NoWheelSpinBox(QSpinBox):
+    """滚动面板时不改值的数字输入框。"""
+
+    def wheelEvent(self, event):
+        event.ignore()
+
+
 _jvg_loader = None
+
+
+# byte_4EB730[1..18]：伤害浮动 Y 曲线（逆向实证值）。
+FLOAT_Y_CURVE = (
+    0, -10, -30, -55, -35, -20, 0,
+    -13, -22, -30, -25, -15, 0,
+    -8, 0, -4, 0, -2, 0,
+)
 
 
 def _get_jvg_loader():
@@ -279,10 +296,61 @@ class ActEditorV2(EditorMainWindow):
         "  · 多图层 2D 精灵动画编辑\n"
         "  · 6 种图像混合模式\n"
         "  · 实时动画预览\n"
+        "  · 预览敌方受击飘字（按数值出现时间分段，测试总值 999）\n"
         "  · 音效触发表编辑\n"
         "  · 每行右键: 复制 / 粘贴 / 清除；扩展条目另有删除\n"
         "  · 原版条目只能清除；扩展条目可清除或删除\n"
         "  · 深色/浅色主题切换")
+
+    _LAYER_FIELD_TITLES = {
+        'jvg_block_index': '素材编号',
+        'first_frame': '开始帧',
+        'last_frame': '结束帧',
+        'tick_interval': '播放速度',
+        'start_delay': '出场等待',
+        'blend_param': '效果强度',
+        'blend_param_step': '强度每帧变化',
+        'dir_frame_offset': '朝向错开帧数',
+        'step_value': '每次移动距离',
+        'step_delta': '移动距离变化',
+        'x_off_d0': '右上 左右位置',
+        'x_off_d1': '右下 左右位置',
+        'x_off_d2': '左下 左右位置',
+        'x_off_d3': '左上 左右位置',
+        'y_off_d0': '右上 上下位置',
+        'y_off_d1': '右下 上下位置',
+        'y_off_d2': '左下 上下位置',
+        'y_off_d3': '左上 上下位置',
+        '_rt_frame_base': '内部帧起点',
+        '_rt_cur_frame': '内部当前帧',
+        '_rt_20': '内部字段 20',
+        '_rt_counter': '内部计数器',
+        '_rt_dir_sign': '内部播放方向',
+    }
+    _LAYER_FIELD_TOOLTIPS = {
+        'jvg_block_index': '从人物动作库或特效库里选择哪一组图片。',
+        'first_frame': '从素材的第几帧开始播放。',
+        'last_frame': '播放到素材的第几帧结束。',
+        'tick_interval': '数值越大，每一帧停留越久，动画越慢。',
+        'start_delay': '动画开始前先等待的时间，0 表示立即出场。',
+        'blend_param': '控制闪烁、发光或压暗的强弱。',
+        'blend_param_step': '每换一帧，效果强度增加或减少多少。',
+        'dir_frame_offset': '人物朝向改变时，素材帧号按多少帧错开。',
+        'move_mode': '让特效跟着角色走，或自动来回飘动。',
+        'step_value': '自动移动时每次移动多少像素。',
+        'step_delta': '自动移动时每次移动量怎样变化。',
+    }
+    _PARAM_FIELD_TITLES = {
+        2: '动画总时长',
+        4: '第 1 次数字出现',
+        5: '第 2 次数字出现',
+        6: '第 3 次数字出现',
+        7: '第 4 次数字出现',
+        8: '第 5 次数字出现',
+        9: '第 6 次数字出现',
+        10: '第 7 次数字出现',
+        11: '第 8 次数字出现',
+    }
 
     def _init_data(self):
         # 数据状态
@@ -290,6 +358,8 @@ class ActEditorV2(EditorMainWindow):
         self.aa_path = None
         self.af_path = None
         self.sws_grp = None
+        self.font_path = None
+        self._font = None
         self.entries = []
         self.filtered_indices = []
         self._dirty = False
@@ -326,10 +396,15 @@ class ActEditorV2(EditorMainWindow):
 
         # 图层编辑变量
         self._layer_vars = [{} for _ in range(ACT_MAX_LAYER)]
+        self._active_layer_idx = 0
+        self._layer_slot_buttons = []
+        self._layer_cards = []
         self._dir_vars = [[None]*8 for _ in range(4)]
         self._param_vars = []
+        self._param_indices = []
         self._tail_vars = []
         self._tail_file_lbls = []
+        self._float_specs = []
 
         self._auto_fill_enabled = True
         self._greenscreen_remove = True
@@ -483,7 +558,7 @@ class ActEditorV2(EditorMainWindow):
         splitter.addWidget(center)
         self._center_widget = center
 
-        # 右栏: 参数面板 (方向 / 条目级参数 / 尾部)
+        # 右栏: 玩家视角分区 (画面 / 遮挡 / 数值 / 音效)
         right = QWidget()
         rl = QVBoxLayout(right)
         rl.setContentsMargins(4, 4, 4, 4)
@@ -495,11 +570,21 @@ class ActEditorV2(EditorMainWindow):
             flat=True,
             object_name="ActEditorTabs",
         )
+        self._build_layer_cards_tab()
         self._build_direction_tab()
         self._build_param_tab()
-        self._build_layer_cards_tab()
         self._build_tail_tab()
-        self.tabs.setCurrentIndex(2)  # 默认激活「图层编辑」(按物理偏移排第3)
+        self.tabs.setCurrentIndex(0)  # 默认直接进入画面图层编辑
+
+        # 右侧面板自带“应用/重置”，避免玩家改完参数后还要去中间栏找按钮。
+        corner = QWidget()
+        corner_layout = QHBoxLayout(corner)
+        corner_layout.setContentsMargins(4, 2, 4, 2)
+        corner_layout.setSpacing(4)
+        corner_layout.addWidget(QPushButton("应用修改", clicked=self._apply_edit))
+        corner_layout.addWidget(QPushButton("重置", clicked=self._reset_edit))
+        self.tabs.setCornerWidget(corner)
+
         rl.addWidget(self.tabs, 1)
         splitter.addWidget(right)
 
@@ -529,6 +614,7 @@ class ActEditorV2(EditorMainWindow):
         inner.setLayout(QVBoxLayout())
         inner.layout().setContentsMargins(4, 4, 12, 4)
         inner.layout().setSpacing(4)
+        inner.layout().setAlignment(Qt.AlignTop)
         scroll.setWidget(inner)
         self.tabs.addTab(scroll, name)
         return inner
@@ -536,42 +622,75 @@ class ActEditorV2(EditorMainWindow):
     # ── Tab 1: 方向与绘制顺序 ──
 
     def _build_direction_tab(self):
-        inner = self._build_scroll_tab("方向与绘制顺序")
+        inner = self._build_scroll_tab("遮挡顺序")
 
         lbl = QLabel(
-            "方向表 (bytes 0-31): 每行 8 个槽 = 该方向的绘制顺序 "
-            "(从左到右: 底层 → 顶层)。单元格值 0=空, 1~8=图层号。\n"
-            "说明: 朝向不同时顺序常反转 (如下/右 = [3,4,1,2], 上/左 = [1,2,3,4]), "
-            "这就是 2.5D 身前/身后遮挡关系的数据源。")
+            "这里决定人物朝不同方向时，哪一层画面画在前面、哪一层画在后面。\n"
+            "数字 1 到 8 对应“画面图层”页的图层槽位；0 表示这一格不用。")
         lbl.setWordWrap(True)
         lbl.setProperty("class", "PropLabel")
         inner.layout().addWidget(lbl)
 
         grid = QGridLayout()
-        grid.setSpacing(2)
+        grid.setVerticalSpacing(6)
+        grid.setHorizontalSpacing(4)
 
         # 表头
-        grid.addWidget(QLabel(""), 0, 0)
+        head = QLabel("朝向")
+        head.setProperty("class", "PropLabel")
+        grid.addWidget(head, 0, 0)
         for s in range(8):
-            lbl_z = QLabel(f"z{s}")
+            lbl_z = QLabel(f"{s + 1}")
             lbl_z.setProperty("class", "PropLabel")
             lbl_z.setAlignment(Qt.AlignCenter)
             grid.addWidget(lbl_z, 0, s + 1)
 
         for d in range(4):
-            lbl_dir = QLabel(DIRECTION_LABELS[d])
+            lbl_dir = QLabel(DIRECTION_SHORT[d])
             lbl_dir.setProperty("class", "PropLabel")
-            lbl_dir.setMinimumWidth(100)
+            lbl_dir.setMinimumWidth(80)
+            lbl_dir.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
             grid.addWidget(lbl_dir, d + 1, 0)
             for i in range(8):
-                le = QLineEdit("0")
-                le.setFixedWidth(32)
-                le.setAlignment(Qt.AlignCenter)
-                self._dir_vars[d][i] = le
-                grid.addWidget(le, d + 1, i + 1)
+                spin = _NoWheelSpinBox()
+                spin.setRange(0, ACT_MAX_LAYER)
+                spin.setValue(0)
+                spin.setButtonSymbols(QAbstractSpinBox.NoButtons)
+                spin.setFixedWidth(56)
+                spin.setAlignment(Qt.AlignCenter)
+                spin.setToolTip(
+                    "0 表示不用；1~8 表示图层槽位。\n"
+                    "可直接输入数字，也可用上下方向键调整。")
+                self._dir_vars[d][i] = spin
+                grid.addWidget(spin, d + 1, i + 1)
 
-        inner.layout().addLayout(grid)
+        for c in range(9):
+            grid.setColumnStretch(c, 1 if c else 0)
+
+        grid.setContentsMargins(0, 2, 0, 0)
+        grid_container = QWidget()
+        grid_container.setLayout(grid)
+        inner.layout().addWidget(grid_container)
+
+        actions = QHBoxLayout()
+        btn_fill = QPushButton("按 1→8 排列", clicked=self._fill_direction_order)
+        btn_reverse = QPushButton("反转各行", clicked=self._reverse_direction_order)
+        actions.addWidget(btn_fill)
+        actions.addWidget(btn_reverse)
+        actions.addStretch()
+        inner.layout().addLayout(actions)
         inner.layout().addStretch()
+
+    def _fill_direction_order(self):
+        for d in range(4):
+            for i in range(8):
+                self._set_editor_text(self._dir_vars[d][i], str(i + 1))
+
+    def _reverse_direction_order(self):
+        for d in range(4):
+            for i in range(8):
+                src = self._dir_vars[d][7 - i]
+                self._set_editor_text(self._dir_vars[d][i], self._editor_text(src))
 
     # ── 中栏: 时间轴与预览 (统一视图) ──
 
@@ -717,10 +836,31 @@ class ActEditorV2(EditorMainWindow):
         inner.layout().addWidget(self.thumb_strip)
 
     def _build_layer_cards_tab(self):
-        """图层编辑 Tab: 8 个图层的紧凑参数卡片 (放在右侧参数面板)"""
-        inner = self._build_scroll_tab("图层编辑")
+        """画面图层 Tab: 8 个槽位按钮 + 当前槽位的单卡片编辑。"""
+        inner = self._build_scroll_tab("画面图层")
         self._card_inner = inner
+
+        top = QHBoxLayout()
+        top.setSpacing(6)
+        hint = QLabel("选择图层：")
+        hint.setProperty("class", "PropLabel")
+        top.addWidget(hint)
+        self._layer_slot_buttons = []
+        for layer_idx in range(ACT_MAX_LAYER):
+            btn = QPushButton(str(layer_idx + 1))
+            btn.setCheckable(True)
+            btn.setFixedWidth(38)
+            btn.setToolTip(f"编辑图层 {layer_idx + 1}")
+            btn.clicked.connect(
+                lambda checked, li=layer_idx: self._select_layer_card(li))
+            self._layer_slot_buttons.append(btn)
+            top.addWidget(btn)
+        top.addStretch()
+        inner.layout().addLayout(top)
+
         self._build_layer_cards()
+        self._select_layer_card(0)
+        inner.layout().addStretch(1)
 
     @staticmethod
     def _no_wheel_combo(items=None):
@@ -746,72 +886,120 @@ class ActEditorV2(EditorMainWindow):
         if line_edit is not None:
             line_edit.setText(str(value))
 
+    @staticmethod
+    def _editor_text(widget):
+        """统一读取 QLineEdit / QSpinBox / EditorComboBox 的显示值。"""
+        if isinstance(widget, QLineEdit):
+            return widget.text()
+        if isinstance(widget, QSpinBox):
+            return str(widget.value())
+        if isinstance(widget, EditorComboBox):
+            return widget.currentText()
+        return ""
+
+    @classmethod
+    def _set_editor_text(cls, widget, text):
+        """统一填充 QLineEdit / QSpinBox / EditorComboBox。"""
+        if isinstance(widget, QLineEdit):
+            widget.setText(text)
+        elif isinstance(widget, QSpinBox):
+            try:
+                widget.setValue(int(text))
+            except (TypeError, ValueError):
+                widget.setValue(0)
+        elif isinstance(widget, EditorComboBox):
+            widget.setCurrentText(text)
+
+    def _select_layer_card(self, layer_idx):
+        """只显示当前图层卡片，避免 8 张长卡片造成的长距离滚动。"""
+        if not 0 <= layer_idx < ACT_MAX_LAYER:
+            return
+        self._active_layer_idx = layer_idx
+        for idx, card in enumerate(self._layer_cards):
+            card.setVisible(idx == layer_idx)
+        for idx, btn in enumerate(self._layer_slot_buttons):
+            btn.setChecked(idx == layer_idx)
+
     def _build_layer_cards(self):
-        """构建 8 个图层的紧凑卡片"""
+        """构建 8 个图层卡片，由槽位按钮控制可见性。"""
+        self._layer_cards = []
         for s in range(ACT_MAX_LAYER):
             card = self._build_single_card(s)
             self._card_inner.layout().addWidget(card)
+            self._layer_cards.append(card)
+            card.setVisible(False)
 
     def _build_single_card(self, layer_idx):
-        s = layer_idx + 1
         vars_row = self._layer_vars[layer_idx]
-        COL = 4  # 每行 4 列, 等宽
+        COL = 3
 
         card = QFrame()
-        card.setObjectName("DockBody")
-        card.setFrameShape(QFrame.StyledPanel)
+        card.setFrameShape(QFrame.NoFrame)
+        card.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
         cl = QVBoxLayout(card)
-        cl.setContentsMargins(8, 6, 8, 8)
-        cl.setSpacing(6)
+        cl.setContentsMargins(10, 8, 10, 10)
+        cl.setSpacing(8)
 
-        # ── 头部: 图层号 + 类型 ──
+        # ── 头部: 图层号 + 用途 + 素材检查 ──
         head = QHBoxLayout()
         head.setSpacing(6)
-        lbl = QLabel(f"#{s}")
-        lbl.setProperty("class", "PreviewName")
+        lbl = QLabel(f"图层 {layer_idx + 1}")
+        lbl.setObjectName("DockTitle")
         head.addWidget(lbl)
         vars_row['_card_label'] = lbl
 
         type_combo = self._no_wheel_combo(list(LAYER_TYPE_LABELS.values()))
         type_combo.setCurrentIndex(0)
+        type_combo.setToolTip(
+            "人物动作来自 Aa.jvg；特效和物件来自 Af.jvg。\n"
+            "位置标记不会显示画面，只用于计算位置。")
         type_combo.currentIndexChanged.connect(
             lambda idx, li=layer_idx: self._on_layer_type_changed(li))
         head.addWidget(type_combo, 1)
         vars_row['_type_combo'] = type_combo
+
+        frame_lbl = QLabel("可用帧 0..0")
+        frame_lbl.setProperty("class", "ExtraPreviewText")
+        frame_lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        head.addWidget(frame_lbl, 1)
+        vars_row['_frame_lbl'] = frame_lbl
         cl.addLayout(head)
 
-        # ── 属性网格: 标签在上 → 输入框在下 → 4 列等宽 ──
+        # ── 常用设置: 标签在上，控件在下 ──
         grid = QGridLayout()
-        grid.setVerticalSpacing(6)
-        grid.setHorizontalSpacing(8)
+        grid.setVerticalSpacing(8)
+        grid.setHorizontalSpacing(10)
 
-        def _cell(label, widget):
-            """创建 '标签在上, 控件在下' 的 VBox 单元"""
+        def _cell(label, widget, tooltip=""):
             c = QVBoxLayout()
             c.setSpacing(2)
             lb = QLabel(label)
             lb.setProperty("class", "PropLabel")
+            if tooltip:
+                lb.setToolTip(tooltip)
+                widget.setToolTip(tooltip)
             c.addWidget(lb)
             c.addWidget(widget)
-            c.addStretch()
             return c
 
-        FW = 104  # 所有输入控件统一宽度
-
-        def _le(key, default="0", ro=False):
-            le = QLineEdit(default)
-            le.setMinimumWidth(FW)
-            if ro:
-                le.setReadOnly(True)
-            le.textChanged.connect(lambda txt, li=layer_idx, f=key: self._on_layer_field_change(li, f))
-            vars_row[key] = le
-            return le
+        def _spin(key):
+            spin = _NoWheelSpinBox()
+            spin.setRange(-32768, 32767)
+            spin.setValue(0)
+            spin.setMinimumWidth(118)
+            spin.setMaximumWidth(220)
+            spin.valueChanged.connect(
+                lambda value, li=layer_idx, f=key:
+                self._on_layer_field_change(li, f))
+            vars_row[key] = spin
+            return spin
 
         def _cb(key, labels_dict, editable=False):
             cb = self._no_wheel_combo()
             for value, label in labels_dict.items():
                 cb.addItem(label, value)
-            cb.setMinimumWidth(FW)
+            cb.setMinimumWidth(118)
+            cb.setMaximumWidth(220)
             if editable:
                 cb.setEditable(True)
                 cb.setInsertPolicy(QComboBox.NoInsert)
@@ -822,139 +1010,244 @@ class ActEditorV2(EditorMainWindow):
             vars_row[key] = cb
             return cb
 
-        # Row 0: JVG块号 | 混合模式 | 循环行为 | 方向模式
-        grid.addLayout(_cell("JVG 块号", _le("jvg_block_index")), 0, 0)
+        # 第一屏只保留玩家最容易理解、最常修改的字段。
+        grid.addLayout(_cell(
+            "素材编号", _spin("jvg_block_index"),
+            self._LAYER_FIELD_TOOLTIPS['jvg_block_index']), 0, 0)
         bc = _cb("blend_mode", BLEND_MODE_LABELS)
         vars_row['_blend_combo'] = bc
-        grid.addLayout(_cell("混合模式", bc), 0, 1)
+        grid.addLayout(_cell(
+            "画面效果", bc,
+            "选择正常显示、发光、压暗、闪烁或镜像。"), 0, 1)
         lc = _cb("loop_behavior", LOOP_BEHAVIOR_LABELS, editable=True)
         vars_row['_loop_combo'] = lc
-        grid.addLayout(_cell("循环行为", lc), 0, 2)
-        grid.addLayout(_cell("方向模式", _cb("direction_mode", DIRECTION_MODE_LABELS)), 0, 3)
+        grid.addLayout(_cell(
+            "结束方式", lc,
+            "-1 循环播放；-2 播完隐藏；数字表示播完跳回第几帧。"), 0, 2)
 
-        # Row 1: 起始帧 | 终止帧 | 方向帧偏移 | 移动模式
-        grid.addLayout(_cell("起始帧", _le("first_frame")), 1, 0)
-        grid.addLayout(_cell("终止帧", _le("last_frame")), 1, 1)
-        grid.addLayout(_cell("方向帧偏移", _le("dir_frame_offset")), 1, 2)
-        grid.addLayout(_cell("移动模式", _cb("move_mode", MOVE_MODE_LABELS)), 1, 3)
+        grid.addLayout(_cell(
+            "开始帧", _spin("first_frame"),
+            self._LAYER_FIELD_TOOLTIPS['first_frame']), 1, 0)
+        grid.addLayout(_cell(
+            "结束帧", _spin("last_frame"),
+            self._LAYER_FIELD_TOOLTIPS['last_frame']), 1, 1)
+        grid.addLayout(_cell(
+            "播放速度", _spin("tick_interval"),
+            self._LAYER_FIELD_TOOLTIPS['tick_interval']), 1, 2)
+        grid.addLayout(_cell(
+            "出场等待", _spin("start_delay"),
+            self._LAYER_FIELD_TOOLTIPS['start_delay']), 2, 0)
+        grid.addLayout(_cell(
+            "效果强度", _spin("blend_param"),
+            self._LAYER_FIELD_TOOLTIPS['blend_param']), 2, 1)
+        grid.addLayout(_cell(
+            "强度每帧变化", _spin("blend_param_step"),
+            self._LAYER_FIELD_TOOLTIPS['blend_param_step']), 2, 2)
+        dm = _cb("direction_mode", DIRECTION_MODE_LABELS)
+        grid.addLayout(_cell(
+            "朝向处理", dm,
+            "固定画面方向适合特效；跟随人物朝向适合人物动作。"), 3, 0)
 
-        # Row 2: 帧停留 tick | 启动延迟 | 混合参数 | 参数步进
-        grid.addLayout(_cell("帧停留 tick", _le("tick_interval")), 2, 0)
-        grid.addLayout(_cell("启动延迟", _le("start_delay")), 2, 1)
-        grid.addLayout(_cell("混合参数", _le("blend_param")), 2, 2)
-        grid.addLayout(_cell("参数步进", _le("blend_param_step")), 2, 3)
-
-        # Row 3: 步进值 | 步进增量 | 帧标签(只读) | —
-        grid.addLayout(_cell("步进值", _le("step_value")), 3, 0)
-        grid.addLayout(_cell("步进增量", _le("step_delta")), 3, 1)
-        fr = QLabel("[0..0]")
-        fr.setProperty("class", "ExtraPreviewText")
-        fr.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-        grid.addLayout(_cell("帧范围", fr), 3, 2)
-        vars_row['_frame_lbl'] = fr
-        grid.addLayout(_cell("", QWidget()), 3, 3)  # 占位对齐
-
-        # 四列等宽
         for c in range(COL):
             grid.setColumnStretch(c, 1)
 
         cl.addLayout(grid)
 
-        # ── 详细区域 (默认隐藏: 位移/运行时/保留字段) ──
-        detail = QWidget()
-        dl = QVBoxLayout(detail)
-        dl.setContentsMargins(2, 2, 2, 2)
-        dl.setSpacing(6)
-
-        EXCLUDE_COMPACT = {'layer_type', 'jvg_block_index', 'blend_mode',
-                          'loop_behavior', 'direction_mode', 'move_mode',
-                          'first_frame', 'last_frame', 'dir_frame_offset',
-                          'tick_interval', 'start_delay',
-                          'blend_param', 'blend_param_step',
-                          'step_value', 'step_delta'}
-        for grp_name, fields in FIELD_GROUPS:
-            rem = [(fn, idx, label, w, cmt) for (fn, idx, label, w, cmt) in fields
-                   if fn not in EXCLUDE_COMPACT]
-            if not rem:
-                continue
-            grp_w = QGroupBox(grp_name)
-            dg = QGridLayout(grp_w)
-            dg.setVerticalSpacing(6)
-            dg.setHorizontalSpacing(8)
-            for fi, (fn, idx, label, w, cmt) in enumerate(rem):
-                r, c = divmod(fi, COL)
-                dc = QVBoxLayout()
-                dc.setSpacing(2)
-                dlb = QLabel(label)
-                dlb.setProperty("class", "PropLabel")
-                dlb.setToolTip(cmt)
-                dc.addWidget(dlb)
-                ro = fn in READONLY_KEYS
-                dw = QLineEdit("0")
-                dw.setMinimumWidth(FW)
-                if ro:
-                    dw.setReadOnly(True)
-                dw.textChanged.connect(lambda txt, li=layer_idx, f=fn: self._on_layer_field_change(li, f))
-                dc.addWidget(dw)
-                vars_row[fn] = dw
-                dc.addStretch()
-                dg.addLayout(dc, r, c)
-            # 填充末行空白
-            if rem:
-                lrc = len(rem) % COL
-                if lrc != 0:
-                    lr = len(rem) // COL
-                    for cc in range(lrc, COL):
-                        dg.addWidget(QWidget(), lr, cc)
-            for cc in range(COL):
-                dg.setColumnStretch(cc, 1)
-            dl.addWidget(grp_w)
-
-        # 探针标签
+        # ── 素材检查结果 ──
         probe_lbl = QLabel("")
         probe_lbl.setProperty("class", "ExtraPreviewText")
         probe_lbl.setWordWrap(True)
-        dl.addWidget(probe_lbl)
+        cl.addWidget(probe_lbl)
         vars_row['_probe_lbl'] = probe_lbl
+
+        # ── 高级区域 (默认隐藏: 位置、自动运动、内部/保留字段) ──
+        detail = QWidget()
+        dl = QVBoxLayout(detail)
+        dl.setContentsMargins(0, 0, 0, 0)
+        dl.setSpacing(8)
+
+        SIMPLE_KEYS = {
+            'layer_type', 'jvg_block_index', 'blend_mode', 'loop_behavior',
+            'direction_mode', 'first_frame', 'last_frame', 'tick_interval',
+            'start_delay', 'blend_param', 'blend_param_step',
+        }
+        MOTION_KEYS = {
+            'dir_frame_offset', 'move_mode', 'step_value', 'step_delta',
+            'x_off_d0', 'x_off_d1', 'x_off_d2', 'x_off_d3',
+            'y_off_d0', 'y_off_d1', 'y_off_d2', 'y_off_d3',
+        }
+
+        def _detail_group(title, keys, col_count=3):
+            group = QGroupBox(title)
+            group_layout = QGridLayout(group)
+            group_layout.setVerticalSpacing(6)
+            group_layout.setHorizontalSpacing(10)
+            widgets = []
+            for fn, idx, label, width, comment in ALL_FIELDS:
+                if fn not in keys:
+                    continue
+                tooltip = self._LAYER_FIELD_TOOLTIPS.get(fn, comment)
+                title_text = self._LAYER_FIELD_TITLES.get(fn, label)
+                if fn.startswith('_res_'):
+                    title_text = "保留字段（原版未使用）"
+                if fn == 'move_mode':
+                    widget = _cb("move_mode", MOVE_MODE_LABELS)
+                else:
+                    widget = _spin(fn)
+                    if fn in READONLY_KEYS:
+                        widget.setEnabled(False)
+                        tooltip = "原版运行时使用，文件里通常保持 0。"
+                widgets.append((title_text, widget, tooltip))
+            for pos, (title_text, widget, tooltip) in enumerate(widgets):
+                r, c = divmod(pos, col_count)
+                group_layout.addLayout(
+                    _cell(title_text, widget, tooltip), r, c)
+            if widgets:
+                last_row = (len(widgets) - 1) // col_count
+                for c in range(col_count):
+                    group_layout.setColumnStretch(c, 1)
+                if len(widgets) % col_count:
+                    for c in range(len(widgets) % col_count, col_count):
+                        group_layout.addWidget(QWidget(), last_row, c)
+            return group
+
+        dl.addWidget(_detail_group("位置与自动运动", MOTION_KEYS))
+        remaining = {
+            f[0] for f in ALL_FIELDS
+            if f[0] not in SIMPLE_KEYS and f[0] not in MOTION_KEYS
+        }
+        dl.addWidget(_detail_group("底层字段（一般不用改）", remaining))
 
         detail.setVisible(False)
         cl.addWidget(detail)
         vars_row['_detail'] = detail
 
         # ── 展开/折叠 ──
-        toggle_btn = QPushButton("展开详情")
+        toggle_btn = QPushButton("高级参数")
+        toggle_btn.setCheckable(True)
         toggle_btn.setFixedWidth(100)
-        toggle_btn.clicked.connect(lambda checked, li=layer_idx: self._toggle_card_detail(li))
+        toggle_btn.toggled.connect(detail.setVisible)
+        toggle_btn.toggled.connect(
+            lambda checked: toggle_btn.setText(
+                "收起高级" if checked else "高级参数"))
         cl.addWidget(toggle_btn)
         vars_row['_toggle_btn'] = toggle_btn
-        vars_row['_detail_expanded'] = False
+        cl.addStretch(1)
 
         return card
 
     def _toggle_card_detail(self, layer_idx):
-        vr = self._layer_vars[layer_idx]
-        detail = vr.get('_detail')
-        btn = vr.get('_toggle_btn')
-        if vr.get('_detail_expanded', False):
-            detail.setVisible(False)
-            btn.setText("展开详情")
-            vr['_detail_expanded'] = False
-        else:
-            detail.setVisible(True)
-            btn.setText("收起详情")
-            vr['_detail_expanded'] = True
+        """兼容旧调用：切换当前卡片的高级区域。"""
+        btn = self._layer_vars[layer_idx].get('_toggle_btn')
+        if btn is not None:
+            btn.setChecked(not btn.isChecked())
 
-    # ── Tab 3: 条目级参数 ──
+    # ── Tab 3: 数值出现时间 ──
 
     def _build_param_tab(self):
-        inner = self._build_scroll_tab("条目级参数")
+        inner = self._build_scroll_tab("数值出现时间")
 
         lbl = QLabel(
-            "条目级参数区 (bytes 32-79, int16[16..39], 共 24 项)。\n"
-            "[18] 是动画总时长，[19] 是当前播放时间（自动）；"
-            "[20]~[27] 是第1~8次飘字对应的触发时间。\n"
-            "已填写的飘字触发时间数量，会决定伤害或恢复数值分几段显示；这些时间应按先后顺序递增，且小于[18]，最多填写8次。\n"
-            "[19] 由原版运行时自动维护，通常不需要手工配置；其余未标明字段目前按原版逆向结果保留/未知处理。")
+            "这里设置伤害或恢复数字什么时候冒出来。\n"
+            "动画总时长是整个动画的播放时间；下面 8 个时间从早到晚填写，"
+            "填几个就分几段显示。不用的时间保持 0。")
+        lbl.setWordWrap(True)
+        lbl.setProperty("class", "PropLabel")
+        inner.layout().addWidget(lbl)
+
+        grid = QGridLayout()
+        grid.setVerticalSpacing(6)
+        grid.setHorizontalSpacing(10)
+        self._param_vars = []
+        self._param_indices = []
+
+        important_indices = [2, 4, 5, 6, 7, 8, 9, 10, 11]
+        self._param_indices.extend(important_indices)
+        for pos, idx in enumerate(important_indices):
+            r, c = divmod(pos, 3)
+            cell = QVBoxLayout()
+            cell.setSpacing(2)
+
+            label = self._PARAM_FIELD_TITLES.get(idx, PARAM_FIELD_INFO[idx][0])
+            comment = PARAM_FIELD_INFO[idx][1]
+            lbl_f = QLabel(label)
+            lbl_f.setProperty("class", "PropLabel")
+            lbl_f.setToolTip(comment)
+            cell.addWidget(lbl_f)
+
+            spin = _NoWheelSpinBox()
+            spin.setRange(-32768, 32767)
+            spin.setValue(0)
+            spin.setMinimumWidth(100)
+            spin.setToolTip(comment)
+            self._param_vars.append(spin)
+            cell.addWidget(spin)
+            grid.addLayout(cell, r, c)
+
+        for c in range(3):
+            grid.setColumnStretch(c, 1)
+
+        inner.layout().addLayout(grid)
+
+        advanced = QGroupBox("高级与保留字段")
+        advanced_layout = QGridLayout(advanced)
+        advanced_layout.setVerticalSpacing(6)
+        advanced_layout.setHorizontalSpacing(10)
+        advanced_indices = [
+            idx for idx in range(24) if idx not in important_indices
+        ]
+        self._param_indices.extend(advanced_indices)
+        for pos, idx in enumerate(advanced_indices):
+            r, c = divmod(pos, 4)
+            label, comment = PARAM_FIELD_INFO[idx]
+            if idx in self._PARAM_FIELD_TITLES:
+                label = self._PARAM_FIELD_TITLES[idx]
+            elif idx not in important_indices:
+                label = "保留字段（原版未使用）"
+            cell = QVBoxLayout()
+            cell.setSpacing(2)
+            lbl_f = QLabel(label)
+            lbl_f.setProperty("class", "PropLabel")
+            lbl_f.setToolTip(comment)
+            cell.addWidget(lbl_f)
+
+            spin = _NoWheelSpinBox()
+            spin.setRange(-32768, 32767)
+            spin.setValue(0)
+            spin.setMinimumWidth(88)
+            spin.setToolTip(comment)
+            self._param_vars.append(spin)
+            cell.addWidget(spin)
+            advanced_layout.addLayout(cell, r, c)
+
+        if advanced_indices:
+            last_row = (len(advanced_indices) - 1) // 4
+            for c in range(4):
+                advanced_layout.setColumnStretch(c, 1)
+            if len(advanced_indices) % 4:
+                for c in range(len(advanced_indices) % 4, 4):
+                    advanced_layout.addWidget(QWidget(), last_row, c)
+
+        advanced.setVisible(False)
+        toggle = QPushButton("高级字段")
+        toggle.setCheckable(True)
+        toggle.setFixedWidth(100)
+        toggle.toggled.connect(advanced.setVisible)
+        toggle.toggled.connect(
+            lambda checked: toggle.setText(
+                "收起高级" if checked else "高级字段"))
+        inner.layout().addWidget(advanced)
+        inner.layout().addWidget(toggle)
+        inner.layout().addStretch()
+
+    # ── Tab 4: 音效安排 ──
+
+    def _build_tail_tab(self):
+        inner = self._build_scroll_tab("音效安排")
+
+        lbl = QLabel(
+            "动画播到指定时间时播放一个音效。最多可以安排 16 次；\n"
+            "音效编号为 0 表示这一格不用。点击“试听”可以先检查声音。")
         lbl.setWordWrap(True)
         lbl.setProperty("class", "PropLabel")
         inner.layout().addWidget(lbl)
@@ -962,88 +1255,54 @@ class ActEditorV2(EditorMainWindow):
         grid = QGridLayout()
         grid.setVerticalSpacing(6)
         grid.setHorizontalSpacing(8)
-        self._param_vars = []
-
-        for k, idx in enumerate(range(16, 40)):
-            r, c = divmod(k, PARAM_GRID_COLUMNS)
-            cell = QVBoxLayout()
-            cell.setSpacing(2)
-
-            label, comment = PARAM_FIELD_INFO[idx]
-            lbl_f = QLabel(f"[{idx}] {label}")
-            lbl_f.setProperty("class", "PropLabel")
-            lbl_f.setToolTip(comment)
-            lbl_f.setWordWrap(True)
-            cell.addWidget(lbl_f)
-
-            le = QLineEdit("0")
-            le.setMinimumWidth(70)
-            le.setToolTip(comment)
-            self._param_vars.append(le)
-            cell.addWidget(le)
-            grid.addLayout(cell, r, c)
-
-        for c in range(PARAM_GRID_COLUMNS):
-            grid.setColumnStretch(c, 1)
-
-        inner.layout().addLayout(grid)
-        inner.layout().addStretch()
-
-    # ── Tab 4: 尾部数据 (音效触发表) ──
-
-    def _build_tail_tab(self):
-        inner = self._build_scroll_tab("尾部数据")
-
-        lbl = QLabel(
-            "尾部数据（字节 720-783）= 音效触发表，共 16 对，每对包含音效ID与触发帧。\n"
-            "逆向依据：原版程序会逐对预加载音效，并在动画帧到达触发帧时播放。\n"
-            "音效ID 为 0 表示该对为空，不触发。")
-        lbl.setWordWrap(True)
-        lbl.setProperty("class", "PropLabel")
-        inner.layout().addWidget(lbl)
-
-        grid = QGridLayout()
-        grid.setSpacing(2)
-        grid.addWidget(QLabel("#"), 0, 0)
-        grid.addWidget(QLabel("音效ID"), 0, 1)
-        grid.addWidget(QLabel("触发帧"), 0, 2)
-        grid.addWidget(QLabel(""), 0, 3)
-        grid.addWidget(QLabel("文件"), 0, 4)
-        grid.addWidget(QLabel("原始值"), 0, 5)
+        headers = ["序号", "音效编号", "播放时间", "试听", "实际文件"]
+        for c, title in enumerate(headers):
+            head = QLabel(title)
+            head.setProperty("class", "PropLabel")
+            if c:
+                head.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+            grid.addWidget(head, 0, c)
 
         self._tail_vars = []
         self._tail_file_lbls = []
 
         for pair in range(16):
             r = pair + 1
-            grid.addWidget(QLabel(f"{pair:02d}"), r, 0)
+            no = QLabel(f"{pair + 1:02d}")
+            no.setAlignment(Qt.AlignCenter)
+            grid.addWidget(no, r, 0)
 
-            le_id = QLineEdit("0")
-            le_id.setFixedWidth(50)
+            le_id = _NoWheelSpinBox()
+            le_id.setRange(0, 32767)
+            le_id.setValue(0)
+            le_id.setFixedWidth(82)
+            le_id.setToolTip("0 表示不用这一格。")
             grid.addWidget(le_id, r, 1)
             self._tail_vars.append(le_id)
 
-            le_tick = QLineEdit("0")
-            le_tick.setFixedWidth(50)
+            le_tick = _NoWheelSpinBox()
+            le_tick.setRange(0, 32767)
+            le_tick.setValue(0)
+            le_tick.setFixedWidth(82)
+            le_tick.setToolTip("动画播放到这个时间时播放声音。")
             grid.addWidget(le_tick, r, 2)
             self._tail_vars.append(le_tick)
 
-            btn = QPushButton("播放")
+            btn = QPushButton("试听")
             btn.setMinimumWidth(70)
-            btn.setToolTip("试听此音效ID对应的音效文件")
+            btn.setToolTip("试听此音效编号对应的游戏声音。")
             btn.clicked.connect(lambda checked, idx=pair: self._on_tail_preview(idx))
             grid.addWidget(btn, r, 3)
 
             fl = QLabel("")
             fl.setProperty("class", "ExtraPreviewText")
             fl.setWordWrap(True)
-            fl.setMinimumWidth(150)
+            fl.setMinimumWidth(180)
             grid.addWidget(fl, r, 4)
             self._tail_file_lbls.append(fl)
 
-            grid.addWidget(QLabel(f"[{pair*2}],[{pair*2+1}]"), r, 5)
-
-            le_id.textChanged.connect(lambda txt, idx=pair: self._refresh_tail_file_lbl(idx))
+            le_id.valueChanged.connect(
+                lambda value, idx=pair: self._refresh_tail_file_lbl(idx))
 
         grid.setColumnStretch(4, 1)
         inner.layout().addLayout(grid)
@@ -1064,6 +1323,7 @@ class ActEditorV2(EditorMainWindow):
         af = _pick("Af.jvg", "Af.JVG", "af.jvg")
         sws_path = _pick("SWS.GRP", "SWS.grp", "sws.grp")
         swi_path = _pick("SWS.IDX", "SWS.idx", "sws.idx")
+        font_path = os.path.join(d, "FONT9696")
 
         sws = None
         if sws_path and swi_path:
@@ -1079,6 +1339,9 @@ class ActEditorV2(EditorMainWindow):
         self.aa_path = aa
         self.af_path = af
         self.sws_grp = sws
+        self.font_path = font_path if os.path.exists(font_path) else None
+        self._font = ActFont9696(self.font_path or "")
+        self._float_specs = []
         self._reload()
 
     def _reload(self):
@@ -1393,7 +1656,10 @@ class ActEditorV2(EditorMainWindow):
     # ── 编辑填充 ──
 
     def _populate_edit(self, entry):
-        self._editing_idx = entry['index']
+        entry_index = entry['index']
+        switched_entry = self._editing_idx != entry_index
+        self._editing_idx = entry_index
+        self._float_specs = self._make_float_specs(entry)
         active = sorted(entry_active_layers(entry))
         refd = sorted(entry_referenced_layers(entry))
         self.preview_canvas.set_entry_title(
@@ -1404,31 +1670,46 @@ class ActEditorV2(EditorMainWindow):
         for d in range(4):
             for i in range(8):
                 if self._dir_vars[d][i] is not None:
-                    self._dir_vars[d][i].setText(str(entry['dirs'][d][i]))
+                    self._set_editor_text(
+                        self._dir_vars[d][i], str(entry['dirs'][d][i]))
 
         for s in range(ACT_MAX_LAYER):
             self._populate_layer(s, entry['layers'][s])
 
-        for k in range(24):
+        for k, param_idx in enumerate(self._param_indices):
             if k < len(self._param_vars):
-                self._param_vars[k].setText(str(entry['param16'][k]))
+                self._set_editor_text(
+                    self._param_vars[k], str(entry['param16'][param_idx]))
 
-        for k in range(32):
+        for k in range(len(self._tail_vars)):
             if k < len(self._tail_vars):
-                self._tail_vars[k].setText(str(entry['tail'][k]))
+                self._set_editor_text(
+                    self._tail_vars[k], str(entry['tail'][k]))
 
         # 更新卡片标签
         for s in range(ACT_MAX_LAYER):
             t = entry['layers'][s][0]
             lbl = self._layer_vars[s].get('_card_label')
+            slot_btn = (
+                self._layer_slot_buttons[s]
+                if s < len(self._layer_slot_buttons) else None
+            )
             if lbl:
                 if t == 0:
-                    lbl.setText(f"#{s+1} (空)")
+                    lbl.setText(f"图层 {s+1}")
                 else:
                     full = LAYER_TYPE_LABELS.get(t, str(t))
                     parts = full.split(' ', 1)
                     lab = parts[1].split('(')[0].strip() if len(parts) > 1 else full
-                    lbl.setText(f"#{s+1} {lab}")
+                    lbl.setText(f"图层 {s+1}")
+            if slot_btn is not None:
+                if t == 0:
+                    slot_btn.setToolTip(f"图层 {s+1}：目前不用")
+                else:
+                    slot_btn.setToolTip(f"图层 {s+1}：{lab}")
+
+        if switched_entry:
+            self._select_layer_card(active[0] - 1 if active else 0)
 
         # 刷新尾部文件标签
         for pair in range(16):
@@ -1436,6 +1717,62 @@ class ActEditorV2(EditorMainWindow):
 
         self._preview_reload()
         self._tl_auto_zoom()
+
+    def _make_float_specs(self, entry):
+        """对应 sub_433F04：按数值出现时间登记飘字并分摊总值。"""
+        triggers = [v for v in entry['param16'][4:12] if v > 0]
+        if not triggers:
+            return []
+        rng = random.Random(entry['index'])
+        specs = []
+        rem = 999
+        segment_count = len(triggers)
+        for i, start_tick in enumerate(triggers):
+            div = segment_count - i
+            value = rem // div + rem % div
+            rem -= value
+            color_idx = 18 if i % 2 == 0 else 23
+            off_x = rng.randrange(33) - 16
+            if value >= 100:
+                off_x -= 20
+            if value >= 1000:
+                off_x -= 20
+            off_y = rng.randrange(25) - 12
+            specs.append({
+                'start_tick': start_tick,
+                'value': value,
+                'color': color_idx,
+                'off_x': off_x,
+                'off_y': off_y,
+            })
+        return specs
+
+    @staticmethod
+    def _float_end_tick(entry):
+        """返回最后一个飘字 18 帧生命周期结束后的 tick。"""
+        triggers = [v for v in entry['param16'][4:12] if v > 0]
+        return max((v + 18 for v in triggers), default=0)
+
+    def _preview_active_floats(self, tick: int, enemy_x: int, enemy_y: int):
+        """对应 sub_433D44：触发后按原版 18 帧曲线绘制。"""
+        active = []
+        for spec in self._float_specs:
+            stage = tick - spec['start_tick']
+            if stage < 0 or stage >= len(FLOAT_Y_CURVE) - 1:
+                continue
+            x = spec['off_x'] + enemy_x - 12
+            # 预览没有单独的目标 Awt 帧；假想敌标记高 40，等价于帧高 + 30。
+            y = spec['off_y'] + FLOAT_Y_CURVE[stage + 1] + enemy_y - 70
+            active.append({
+                'x': x,
+                'y': y,
+                'text': str(spec['value']),
+                'color': FONT_COLORS[spec['color']],
+                'ftype': 4,
+                'size': 24,
+                'outline': True,
+            })
+        return active
 
     def _populate_layer(self, layer_idx, vals):
         self._auto_fill_enabled = False
@@ -1458,16 +1795,7 @@ class ActEditorV2(EditorMainWindow):
             widget = vars_row[fn]
             if isinstance(widget, QLineEdit):
                 widget.blockSignals(True)
-                if fn == 'blend_mode':
-                    widget.setText(_enum_to_label(v, BLEND_MODE_LABELS))
-                elif fn == 'direction_mode':
-                    widget.setText(_enum_to_label(v, DIRECTION_MODE_LABELS))
-                elif fn == 'loop_behavior':
-                    widget.setText(_enum_to_label(v, LOOP_BEHAVIOR_LABELS))
-                elif fn == 'move_mode':
-                    widget.setText(_enum_to_label(v, MOVE_MODE_LABELS))
-                else:
-                    widget.setText(str(v))
+                widget.setText(str(v))
                 widget.blockSignals(False)
             elif isinstance(widget, EditorComboBox):
                 widget.blockSignals(True)
@@ -1486,6 +1814,10 @@ class ActEditorV2(EditorMainWindow):
                         self._sync_editable_combo_value(widget, idx_c)
                 elif widget.isEditable():
                     widget.setCurrentText(str(v))
+                widget.blockSignals(False)
+            elif isinstance(widget, QSpinBox):
+                widget.blockSignals(True)
+                widget.setValue(v)
                 widget.blockSignals(False)
 
         # 同步卡片里的 combo
@@ -1514,7 +1846,7 @@ class ActEditorV2(EditorMainWindow):
         # 帧范围标签
         fl = vars_row.get('_frame_lbl')
         if fl:
-            fl.setText(f"[{vals[17]}..{vals[18]}]")
+            fl.setText(f"可用帧 {vals[17]}..{vals[18]}")
 
         self._auto_fill_enabled = True
         self._update_layer_probe(layer_idx)
@@ -1534,6 +1866,8 @@ class ActEditorV2(EditorMainWindow):
                     return default
                 if isinstance(w, QLineEdit):
                     raw = w.text()
+                elif isinstance(w, QSpinBox):
+                    raw = str(w.value())
                 elif isinstance(w, EditorComboBox):
                     raw = w.currentText()
                 else:
@@ -1557,12 +1891,12 @@ class ActEditorV2(EditorMainWindow):
         dmode = _iv('direction_mode', 0)
 
         if ltype == 0:
-            lbl.setText("— (空图层)")
+            lbl.setText("这个图层目前不使用。")
             return
 
         if ltype >= 4:
-            name = {4: '坐标锚点', 5: '结束标记'}.get(ltype, '非渲染')
-            lbl.setText(f"— {name} (无 JVG 引用)")
+            name = {4: '位置标记', 5: '全屏特效'}.get(ltype, '不显示画面的标记')
+            lbl.setText(f"{name}：不需要选择图片素材。")
             return
 
         if ltype == 1:
@@ -1571,47 +1905,37 @@ class ActEditorV2(EditorMainWindow):
             src_name, counts = 'Af.jvg', self._af_counts
 
         if not counts:
-            lbl.setText(f"{src_name}[{blk}]  (未加载 JVG, 无法探测实际帧数)")
+            lbl.setText(f"素材 {src_name} #{blk}：尚未加载游戏资源，无法检查帧数。")
             return
         if blk < 0 or blk >= len(counts):
-            lbl.setText(f"{src_name}[{blk}]  ✗ 块号越界 (共 {len(counts)} 块)")
+            lbl.setText(
+                f"素材编号 {blk} 超出范围：{src_name} 里可用编号是 "
+                f"0~{len(counts) - 1}。")
             return
 
         n_frames = counts[blk]
-        dirs, per, is_std = infer_jvg_layout(n_frames)
-        per_dir_act = (last - first + 1) if last >= first else 0
+        _, _, is_std = infer_jvg_layout(n_frames)
 
         if dmode == 4:
             read_max = last + dfo * 3
-            span_desc = f"方向 0: {first}..{last}  方向 3: {first+dfo*3}..{read_max}"
-            used = per_dir_act * 4
+            span_desc = f"跟随朝向播放：每个朝向错开 {dfo} 帧，最后读到第 {read_max} 帧"
         else:
             read_max = last
-            span_desc = f"方向 0 (固定): {first}..{last}"
-            used = per_dir_act
-
-        pct = (used * 100 // n_frames) if n_frames > 0 else 0
-        tag = '✓' if is_std else '·'
-        layout_desc = f"{tag} 推断 {dirs}向×{per}帧"
-
+            span_desc = "固定画面方向：只读取当前这组帧"
         warn = ''
         if last >= n_frames or first < 0:
-            warn = f"  ⚠ 方向 0 切片 {first}..{last} 越出池 0..{n_frames-1}"
-
-        info = ''
-        if is_std and dfo > 0 and dfo != per and dmode == 4:
-            info = f"  (dfo={dfo} ≠ 推断 {per}, 非标准切片)"
+            warn = f"  注意：开始或结束帧超出素材可用范围 0~{n_frames-1}。"
 
         if warn:
             color = '#C33'
-        elif is_std and not info:
+        elif is_std:
             color = '#093'
         else:
             color = '#AAA'
 
         lbl.setText(
-            f"{src_name}[{blk}]  实际 {n_frames} 帧   {layout_desc}{info}\n"
-            f"    {span_desc}   切片量 {used}/{n_frames} ({pct}%){warn}")
+            f"素材 {src_name} #{blk}：共 {n_frames} 帧，当前使用 {first}~{last}。\n"
+            f"{span_desc}。{warn}")
         if color == '#C33':
             lbl.setProperty("probe", "error")
         elif color == '#093':
@@ -1636,8 +1960,8 @@ class ActEditorV2(EditorMainWindow):
 
         try:
             w = vr.get('jvg_block_index')
-            if isinstance(w, QLineEdit):
-                blk = int(w.text() or '0')
+            if isinstance(w, (QLineEdit, QSpinBox)):
+                blk = int(self._editor_text(w) or '0')
             else:
                 return
         except (ValueError, AttributeError):
@@ -1670,15 +1994,16 @@ class ActEditorV2(EditorMainWindow):
             return
 
         for key, val in [
-            ('direction_mode', f'{dirs} {"四向感知" if dirs == 4 else "双向感知" if dirs == 2 else f"{dirs}向"}'),
+            ('direction_mode', _enum_to_label(
+                4 if dirs == 4 else 0, DIRECTION_MODE_LABELS)),
             ('first_frame', '0'),
             ('last_frame', str(per - 1)),
             ('dir_frame_offset', str(per)),
             ('loop_behavior', str(per - 1)),
         ]:
             w = vr.get(key)
-            if isinstance(w, QLineEdit):
-                w.setText(val)
+            if isinstance(w, (QLineEdit, QSpinBox)):
+                self._set_editor_text(w, val)
             elif isinstance(w, EditorComboBox):
                 idx_c = w.findText(val, Qt.MatchStartsWith)
                 if idx_c >= 0:
@@ -1712,10 +2037,7 @@ class ActEditorV2(EditorMainWindow):
         for d in range(4):
             for i in range(8):
                 if self._dir_vars[d][i] is not None:
-                    try:
-                        v = int(self._dir_vars[d][i].text() or 0)
-                    except ValueError:
-                        v = 0
+                    v = int(self._editor_text(self._dir_vars[d][i]) or 0)
                     entry['dirs'][d][i] = max(0, min(255, v))
 
         for s in range(ACT_MAX_LAYER):
@@ -1731,6 +2053,8 @@ class ActEditorV2(EditorMainWindow):
                 w = vr[fn]
                 if isinstance(w, QLineEdit):
                     raw = w.text()
+                elif isinstance(w, QSpinBox):
+                    raw = str(w.value())
                 elif isinstance(w, EditorComboBox):
                     raw = w.currentText()
                 else:
@@ -1751,20 +2075,15 @@ class ActEditorV2(EditorMainWindow):
                         v = 0
                 vals[idx] = max(-32768, min(32767, v))
 
-        for k in range(24):
-            if k < len(self._param_vars):
-                try:
-                    v = int(self._param_vars[k].text() or 0)
-                except ValueError:
-                    v = 0
-                entry['param16'][k] = max(-32768, min(32767, v))
+        for k, param_idx in enumerate(self._param_indices):
+            if k >= len(self._param_vars):
+                continue
+            v = int(self._editor_text(self._param_vars[k]) or 0)
+            entry['param16'][param_idx] = max(-32768, min(32767, v))
 
-        for k in range(32):
+        for k in range(len(self._tail_vars)):
             if k < len(self._tail_vars):
-                try:
-                    v = int(self._tail_vars[k].text() or 0)
-                except ValueError:
-                    v = 0
+                v = int(self._editor_text(self._tail_vars[k]) or 0)
                 entry['tail'][k] = max(-32768, min(32767, v))
 
         self._dirty = True
@@ -2085,7 +2404,7 @@ class ActEditorV2(EditorMainWindow):
             return
         lbl = self._tail_file_lbls[pair_idx]
         try:
-            sid = int(self._tail_vars[pair_idx * 2].text() or 0)
+            sid = int(self._editor_text(self._tail_vars[pair_idx * 2]) or 0)
         except ValueError:
             sid = 0
         if sid <= 0:
@@ -2127,7 +2446,7 @@ class ActEditorV2(EditorMainWindow):
 
     def _on_tail_preview(self, pair_idx):
         try:
-            sid = int(self._tail_vars[pair_idx * 2].text() or 0)
+            sid = int(self._editor_text(self._tail_vars[pair_idx * 2]) or 0)
         except ValueError:
             sid = 0
         if sid <= 0:
@@ -2360,11 +2679,13 @@ class ActEditorV2(EditorMainWindow):
             for missed_tick in range(old_tick + 1, self._preview_tick_idx + 1):
                 self._preview_sync_sfx_for_tick(missed_tick)
 
-            all_stopped = self._preview_redraw()
+            self._preview_redraw()
             self._tl_tick_lbl.setText(f"tick: {self._preview_tick_idx}")
             self.timeline_widget.set_playhead(self._preview_tick_idx)
 
-            if all_stopped:
+            entry = self.entries[self._editing_idx]
+            end_tick = self._tl_calc_duration(entry)
+            if self._preview_tick_idx >= end_tick:
                 self._is_playing = False
                 self._play_timer.stop()
 
@@ -2404,6 +2725,7 @@ class ActEditorV2(EditorMainWindow):
 
         layers = self._preview_active_layers(direction)
         if not layers:
+            self.preview_canvas.set_float_specs([])
             self.preview_canvas.set_frame_data(
                 None, 0, 0, [], (0, 0), (0, 0),
                 [f"方向 {direction}: 无活跃图层"], False,
@@ -2476,6 +2798,7 @@ class ActEditorV2(EditorMainWindow):
                            ox, oy, spr_l, spr_t, spr_r, spr_b, False))
 
         if not sprites:
+            self.preview_canvas.set_float_specs([])
             self.preview_canvas.set_frame_data(
                 None, 0, 0, [], (0, 0), (0, 0),
                 [f"方向 {direction}: 无可渲染帧"], False,
@@ -2587,6 +2910,10 @@ class ActEditorV2(EditorMainWindow):
         for diag in _layer_diag:
             info.append(diag)
 
+        active_floats = self._preview_active_floats(tick, ex_c, ey_c)
+        if active_floats:
+            info.append("伤害飘字: 999 分段显示")
+        self.preview_canvas.set_float_specs(active_floats)
         self.preview_canvas.set_frame_data(
             comp_pixmap, comp_ox, comp_oy,
             sprite_boxes, (ox_c, oy_c), (ex_c, ey_c),
@@ -2619,7 +2946,8 @@ class ActEditorV2(EditorMainWindow):
     # ── 时间轴 ──
 
     def _tl_calc_duration(self, entry):
-        max_tick = 0
+        # 原版主循环以条目 param16[2] 为总帧数；飘字可能晚于图层结束。
+        max_tick = max(0, entry['param16'][2])
         for s in range(ACT_MAX_LAYER):
             L = entry['layers'][s]
             if L[0] == 0:
@@ -2632,7 +2960,7 @@ class ActEditorV2(EditorMainWindow):
             dur = delay + span * interval
             if dur > max_tick:
                 max_tick = dur
-        return max_tick
+        return max(max_tick, self._float_end_tick(entry))
 
     def _tl_redraw(self):
         if self._editing_idx < 0:
@@ -2885,9 +3213,9 @@ class ActEditorV2(EditorMainWindow):
                 L = entry['layers'][sel]
                 L[22] = orig_delay + delta_tick
                 sd = self._layer_vars[sel].get('start_delay')
-                if isinstance(sd, QLineEdit):
+                if isinstance(sd, (QLineEdit, QSpinBox)):
                     sd.blockSignals(True)
-                    sd.setText(str(L[22]))
+                    self._set_editor_text(sd, str(L[22]))
                     sd.blockSignals(False)
             self._dirty = True
             self.timeline_widget.update()
@@ -2915,11 +3243,11 @@ class ActEditorV2(EditorMainWindow):
         vr = self._layer_vars[dlayer_idx]
         fl = vr.get('_frame_lbl')
         if fl is not None:
-            fl.setText(f"[{L[17]}..{L[18]}]")
+            fl.setText(f"可用帧 {L[17]}..{L[18]}")
         sd = vr.get('start_delay')
-        if isinstance(sd, QLineEdit):
+        if isinstance(sd, (QLineEdit, QSpinBox)):
             sd.blockSignals(True)
-            sd.setText(str(L[22]))
+            self._set_editor_text(sd, str(L[22]))
             sd.blockSignals(False)
         self.timeline_widget.update()
 
@@ -2930,7 +3258,8 @@ class ActEditorV2(EditorMainWindow):
                 tail = entry.get('tail') or []
                 for k in range(32):
                     if k < len(self._tail_vars):
-                        self._tail_vars[k].setText(str(tail[k]))
+                        self._set_editor_text(
+                            self._tail_vars[k], str(tail[k]))
             self._populate_edit(entry)
 
     def _quick_toggle_vis(self, layer_idx):
@@ -3053,10 +3382,11 @@ class ActEditorV2(EditorMainWindow):
             "【方向表 (bytes 0-31)】",
             "  4 方向 × 8 字节, 每字节 = 1-based 图层号 (0=空)",
             "",
-            "【条目级参数 (bytes 32-79, int16[16..39])】",
-            "  [18] 动画总时长; [19] 当前播放时间（自动）; [20..27] 第1~8次飘字",
+            "【条目级参数 (bytes 32-79, int16[0..23])】",
+            "  [2] 动画总帧数（word_9D039E, byte +36）",
+            "  [4..11] 第1~8次飘字触发帧（word_9D03A2[0..7], byte +40..55）",
             "  已填写的飘字触发时间数量决定伤害或恢复数值的分段数；最多8次",
-            "  飘字触发时间应按先后顺序递增且小于[18]；[19]由原版运行时自动维护",
+            "  飘字触发时间按原版规则应与总帧数范围配合使用",
             "",
             "【图层 × 8 (各 80 字节, 40 int16)】",
         ]
