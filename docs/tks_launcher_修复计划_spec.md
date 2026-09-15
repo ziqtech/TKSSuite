@@ -76,8 +76,8 @@
 |---|---:|---|
 | **cave_hook** | 16 | archive_portrait, awk_sprite_cave, awk_sprite_cave2, checkmember_level_redirect, duel_counter_self_fix, duel_self_target_fix, exp_bonus_overflow_fix, exp_lock, history_text, portrait_cave1, portrait_cave2, skill_menu_cap, team_member_routing, war_mustchar_fallback, weapon_cause_mask_hook |
 | **patch_bytes** | 18 | attribute_char_limit_unlock, battle_treasure_reveal, battle_writeback, broke_weapon_fix, check_team, checkitem_unsigned_fix, demon_general_effect, disable_pface_jvg, enemy_info_reveal, enter_key_item_fix, exp_cap_unsigned_fix, gold_display, hp_cmp_unsigned_fix, lusu_intel_duration_x4_fix, no_enemy, save_stream_error_fix, shanhai_map_unlock, skill_scan_bound, skim_fst_dlg, team_clear_slot0, team_leave_slot0, team_member_limit |
-| **patch_imm32** | 6 | gold_limit, tkdefunit_count, tkmat_size, tkshop_size, tkskill_size, warpc_size_refs |
-| **patch_data_expand** | 4 | tkact_expand, tkkon_expand, tkitem_expand, warpc_base_refs |
+| **patch_imm32** | 5 | gold_limit, tkdefunit_count, tkmat_size, tkskill_size, warpc_size_refs |
+| **patch_data_expand** | 5 | tkact_expand, tkkon_expand, tkitem_expand, tkshop_expand, warpc_base_refs |
 | **patch_summon_table** | 1 | summon_table |
 | **patch_drop_probability** | 1 | drop_probability |
 | **patch_exp_lock** | 1 | exp_lock |

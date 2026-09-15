@@ -1258,7 +1258,17 @@ def _apply_patch_data_expand(defn: PatchDef, ctx: PatchContext) -> bool:
         if patched_span != len(span_hits):
             all_ok = False
 
-    size_hits = value_scan(bytes(code), old_size)
+    if defn.pattern:
+        pat, wc = parse_pattern(defn.pattern)
+        matches = pattern_scan(bytes(code), pat, wc)
+        if defn.expect_count > 0 and len(matches) != defn.expect_count:
+            log(f"  [FAIL] 大小引用模式匹配 {len(matches)} 处 "
+                f"(预期 {defn.expect_count})")
+            return False
+        size_hits = [off + defn.value_offset for off in matches]
+        log(f"  [OK] 大小引用模式命中 {len(matches)} 处")
+    else:
+        size_hits = value_scan(bytes(code), old_size)
     patched_size = 0
     new_size_le = i32b(buffer_size)
     for off in size_hits:

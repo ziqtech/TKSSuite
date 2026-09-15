@@ -83,6 +83,9 @@ class GenerateExeSupportTests(unittest.TestCase):
         self.assertEqual(file_build_label(
             next(x for x in _load_patches() if x.id == "tkitem_expand")),
             '数据段注入')
+        self.assertEqual(file_build_label(
+            next(x for x in _load_patches() if x.id == "tkshop_expand")),
+            '数据段注入')
 
     def test_dialog_collects_gold_limit_and_detail_is_chinese(self):
         """对话框: gold_limit 进列表且可收集 3 条锚定; 每行详情"类型"是中文。"""

@@ -808,6 +808,9 @@ class GenerateExeDialog(QDialog):
             section_name=section_name or f'.{p.id[:6]}',
             redirect_base_span=int((getattr(p, '_extra', {}) or {})
                                    .get('redirect_base_span', 0) or 0),
+            size_pattern=p.pattern,
+            size_value_offset=p.value_offset,
+            size_expect_count=p.expect_count,
             bytes_patches=[BytesPatchItem(
                 patch_id=p.id, name=p.name, entries=bytes_items)]
             if bytes_items else None,

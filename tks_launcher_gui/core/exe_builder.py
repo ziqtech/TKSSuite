@@ -318,6 +318,9 @@ class DataSectionPatchItem:
     redirect_base_span: int = 0  # 基址后的字段锚定引用扫描跨度（字节），
                                  # 0=仅精确重定向基址本身（如 WarPC 记录内
                                  # word_757F0C 等字段锚定立即数需设为记录大小）
+    size_pattern: str = ""       # 精确大小引用模式（空=按 old_size 全代码段扫描）
+    size_value_offset: int = 0   # 新缓冲区大小在 size_pattern 中的偏移
+    size_expect_count: int = 0   # size_pattern 预期命中数
     bytes_patches: Optional[List['BytesPatchItem']] = None
 
 
@@ -1004,10 +1007,28 @@ class ExeBuilder:
                         data[off:off + 4] = new_base_bytes
                         log.append(f'    @ 0x{off:X} (RVA 0x{rva:X})')
 
-                old_size_bytes = struct.pack('<I', item.old_size)
                 new_size_bytes = struct.pack('<I', len(item.data))
-                size_hits = [h for h in find_pattern(bytes(data), old_size_bytes)
-                             if not _in_hook_region(h)]
+                if item.size_pattern:
+                    pat, wildcard = parse_pattern(item.size_pattern)
+                    matches = [h for h in pattern_scan(
+                        bytes(data), pat, wildcard)
+                        if not _in_hook_region(h)]
+                    if (item.size_expect_count > 0
+                            and len(matches) != item.size_expect_count):
+                        result.error = (
+                            f'[{item.patch_id}] 大小引用模式匹配 '
+                            f'{len(matches)} 处 (预期 '
+                            f'{item.size_expect_count})')
+                        log.append(result.error)
+                        return result
+                    size_hits = [h + item.size_value_offset for h in matches]
+                    log.append(f'  [{item.patch_id}] 大小引用模式命中 '
+                               f'{len(matches)} 处')
+                else:
+                    old_size_bytes = struct.pack('<I', item.old_size)
+                    size_hits = [h for h in find_pattern(
+                        bytes(data), old_size_bytes)
+                        if not _in_hook_region(h)]
                 log.append(f'  [{item.patch_id}] 大小引用: {len(size_hits)} 处 '
                            f'({item.old_size} → {len(item.data)})')
                 for off in size_hits:
