@@ -421,8 +421,8 @@ class SummonTablePanel(ConfigPanelBase):
         self._table.setColumnCount(5)
         self._table.setHorizontalHeaderLabels(["技能", "技能名称", "主目标", "多随机池(优先)", "操作"])
         self._table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self._table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self._table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self._table.setProperty("noRowHover", True)
+        self._table.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
         self._table.doubleClicked.connect(self._on_edit_row)
         layout.addWidget(self._table)
 

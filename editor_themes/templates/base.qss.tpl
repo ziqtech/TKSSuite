@@ -47,9 +47,21 @@ QTableView::item, QTreeView::item {
     border: none;
     /* 统一编辑器表格单元格的可读空间，避免文字贴边或被裁切。 */
 }
+/* 个别配置表只需要选择态，不需要鼠标经过时额外高亮整行。 */
+QTableWidget[noRowHover="true"]::item:hover,
+QTableView[noRowHover="true"]::item:hover {
+    background-color: transparent;
+}
 QTableWidget::item:selected, QTreeWidget::item:selected,
 QTableView::item:selected, QTreeView::item:selected {
     background-color: {{sel_01}};
+    color: {{text_primary}};
+}
+QTableWidget[noRowHover="true"]::item:selected,
+QTableWidget[noRowHover="true"]::item:selected:hover,
+QTableView[noRowHover="true"]::item:selected,
+QTableView[noRowHover="true"]::item:selected:hover {
+    background-color: transparent;
     color: {{text_primary}};
 }
 QWidget#WarDataEditorRightPanel QTableWidget,
