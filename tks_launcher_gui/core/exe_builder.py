@@ -321,6 +321,9 @@ class DataSectionPatchItem:
     size_pattern: str = ""       # 精确大小引用模式（空=按 old_size 全代码段扫描）
     size_value_offset: int = 0   # 新缓冲区大小在 size_pattern 中的偏移
     size_expect_count: int = 0   # size_pattern 预期命中数
+    logical_size: int = 0        # 真实数据缓冲区大小（不含尾部辅助数组）
+    aux_size: int = 0            # 尾部辅助数组大小
+    aux_patches: Optional[List[Dict]] = None
     bytes_patches: Optional[List['BytesPatchItem']] = None
 
 
@@ -1007,7 +1010,8 @@ class ExeBuilder:
                         data[off:off + 4] = new_base_bytes
                         log.append(f'    @ 0x{off:X} (RVA 0x{rva:X})')
 
-                new_size_bytes = struct.pack('<I', len(item.data))
+                redirect_size = item.logical_size or len(item.data)
+                new_size_bytes = struct.pack('<I', redirect_size)
                 if item.size_pattern:
                     pat, wildcard = parse_pattern(item.size_pattern)
                     matches = [h for h in pattern_scan(
@@ -1030,7 +1034,7 @@ class ExeBuilder:
                         bytes(data), old_size_bytes)
                         if not _in_hook_region(h)]
                 log.append(f'  [{item.patch_id}] 大小引用: {len(size_hits)} 处 '
-                           f'({item.old_size} → {len(item.data)})')
+                           f'({item.old_size} → {redirect_size})')
                 for off in size_hits:
                     rva = offset_to_rva(pe, off) if any(
                         s.raw_offset <= off < s.raw_offset + s.raw_size
@@ -1038,6 +1042,45 @@ class ExeBuilder:
                     if rva and rva < 0x100000:
                         data[off:off + 4] = new_size_bytes
                         log.append(f'    @ 0x{off:X} (RVA 0x{rva:X})')
+
+                if item.aux_patches:
+                    aux_base_abs = new_base_abs + redirect_size
+                    log.append(f'  [{item.patch_id}] 辅助数组 0x{aux_base_abs:X} '
+                               f'({item.aux_size} bytes)')
+                    for entry in item.aux_patches:
+                        pat, wildcard = parse_pattern(entry.get('pattern', ''))
+                        matches = [h for h in pattern_scan(
+                            bytes(data), pat, wildcard)
+                            if not _in_hook_region(h, len(pat))]
+                        expect = int(entry.get('expect_count', 0) or 0)
+                        if expect > 0 and len(matches) != expect:
+                            result.error = (
+                                f'[{item.patch_id}] 辅助数组补丁匹配 '
+                                f'{len(matches)} 处 (预期 {expect})')
+                            log.append(result.error)
+                            return result
+                        aux_offset = int(entry.get('aux_offset', 0) or 0)
+                        replace = {
+                            int(k): int(v)
+                            for k, v in (entry.get('replace') or {}).items()
+                        }
+                        for off in matches:
+                            for ro, bv in replace.items():
+                                idx = off + ro
+                                if 0 <= idx < len(data):
+                                    data[idx] = bv & 0xFF
+                            value_off = off + aux_offset
+                            if not (0 <= value_off <= len(data) - 4):
+                                result.error = (
+                                    f'[{item.patch_id}] 辅助数组地址越界 '
+                                    f'@0x{value_off:X}')
+                                log.append(result.error)
+                                return result
+                            data[value_off:value_off + 4] = struct.pack(
+                                '<I', aux_base_abs)
+                            log.append(f'    [OK] 辅助数组引用 '
+                                       f'@ 0x{off:X} (RVA 0x'
+                                       f'{offset_to_rva(pe, off):X})')
 
                 # 字段锚定引用: [old_base+1, old_base+span) 内的立即数
                 # (如 WarPC word_757F0C[527*i]、TKKon 0x9D069E = 基址+6)，

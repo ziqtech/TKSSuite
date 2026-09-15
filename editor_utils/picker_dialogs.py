@@ -357,7 +357,7 @@ class ItemPickerDialog(QDialog):
     **完整模式** — *items* 为 ``list[dict]``, 每条记录::
 
         {
-            'index': int,        # 数组索引 (0-599)
+            'index': int,        # 数组索引 (原版 0-599; 扩容后可更大)
             'item_id': int,      # 物品 ID
             'tab_code': int,     # 页面号 (0-5)
             'name': str,         # 显示名称
@@ -566,9 +566,12 @@ class ItemPickerDialog(QDialog):
 
         def _is_match(rec):
             name = rec.get('name', '')
-            # 仅非空筛选
-            if ne and (not name or name.startswith("Item#") or name.startswith("(空") or name == "0"):
-                return False
+            # 仅非空筛选: item_id>0 即有效物品; 缺少 TKT 名称时仍保留 Item# 占位名。
+            if ne:
+                item_id = rec.get('item_id', 0)
+                if (item_id <= 0 or not name
+                        or name.startswith("(空") or name == "0"):
+                    return False
             # 页面筛选
             if pg and not pg.startswith("全部"):
                 if rec.get('tab_code', 0) != int(pg.split('-')[0]):

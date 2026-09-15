@@ -3,7 +3,7 @@
 TKShop.dat 可视化编辑器 (PySide6 重构版)
 
 逆向依据:
-  - sub_45343C: DAT 文件统一加载 (LZSS 解压, 8字节/条, 240条, 基址 unk_9508A0)
+  - sub_45343C: DAT 文件统一加载 (LZSS 解压, 8字节/条, 原版240条, 基址 unk_9508A0)
   - sub_452B14: LZSS 解压引擎 (4096窗口, 0x20填充, 起始位4078)
   - sub_4244CC: 商店过滤 (*(a1+56) 匹配 area_id, condition 判定逻辑)
   - sub_4246D8: 商品信息读取 (word_77CBCC[32*item_ref] 取 TKItem 分页码)
@@ -11,10 +11,10 @@ TKShop.dat 可视化编辑器 (PySide6 重构版)
     Shop 脚本指令的第2参数(param2)经调用链成为 sub_4233C4 的 a3, 即 area_id
   - sub_4233C4: a1[28]=a3(area_id), a2 作为过滤缓存键
 
-TKShop.dat 格式 (每条 8 字节, 共 240 条):
+TKShop.dat 格式 (每条 8 字节, 原版 240 条; tkshop_expand 支持扩展):
   [0:2] int16 area_id   — 商店区域 (0=药店,1=道具,2=武器防具,3=杂货,4=饰品;
                            area_id=9 落入 switch default, 引擎未定义, 不可依赖)
-  [2:4] int16 item_ref  — TKItem 数组下标 (0-599)
+  [2:4] int16 item_ref  — TKItem 数组下标 (原版 0-599; tkitem_expand 后可扩展)
   [4:6] int16 condition — 出现条件:
                            ==1 → 随机抽选(最多5件)
                            !=1 → 幸运差值公式: P = clamp(基准值 - condition, 0, 100)%
@@ -45,7 +45,7 @@ from PySide6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QSplitter,
     QTableWidget, QTableWidgetItem, QHeaderView, QPushButton, QLabel,
     QLineEdit, QSpinBox, QRadioButton, QButtonGroup, QTextEdit,
-    QFileDialog, QMessageBox, QDialog, QFrame, QAbstractItemView
+    QFileDialog, QMessageBox, QDialog, QFrame, QAbstractItemView, QMenu
 )
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
@@ -93,7 +93,7 @@ def load_tkitem_with_tkt(item_dat_path, tkt_dat_path):
         decompressed = raw
 
     items_raw = []
-    for i in range(min(600, len(decompressed) // REC_SIZE)):
+    for i in range(len(decompressed) // REC_SIZE):
         off = i * REC_SIZE
         item_id = struct.unpack_from('<h', decompressed, off)[0]
         tab_code = struct.unpack_from('<h', decompressed, off + 2)[0]
@@ -167,7 +167,7 @@ def area_label(area_id):
 REC_SIZE = 8
 
 def load_shop_data(filepath):
-    """加载 TKShop.dat (固定 240 条, sub_45343C a3=1920)"""
+    """加载 TKShop.dat (按实际记录数, 原版为 240 条)"""
     with open(filepath, 'rb') as f:
         raw = f.read()
 
@@ -175,13 +175,10 @@ def load_shop_data(filepath):
     # 兜底: LZSS 解压结果不对齐记录边界但原始文件对齐 → 未压缩 raw 数据
     if len(raw) % REC_SIZE == 0 and (len(decompressed) == 0 or len(decompressed) % REC_SIZE != 0):
         decompressed = raw
-    FIXED_COUNT = 240
     records = []
 
-    for i in range(FIXED_COUNT):
+    for i in range(len(decompressed) // REC_SIZE):
         offset = i * REC_SIZE
-        if offset + REC_SIZE > len(decompressed):
-            break
         area_id = struct.unpack_from('<h', decompressed, offset)[0]
         item_ref = struct.unpack_from('<h', decompressed, offset + 2)[0]
         condition = struct.unpack_from('<h', decompressed, offset + 4)[0]
@@ -200,15 +197,10 @@ def load_shop_data(filepath):
     return records
 
 def save_shop_data(filepath, records):
-    """保存 TKShop.dat (LZSS 压缩)
-
-    sub_45343C 调用: sub_45343C("TKShop.dat", &unk_9508A0, 1920)
-    第19行检查: if (decompressed_size <= 1920) ... else ERROR
-    必须恰好 240 条记录 (1920 字节), 否则游戏拒绝加载!
-    """
-    FIXED_COUNT = 240
-    buf = bytearray(FIXED_COUNT * REC_SIZE)
-    for rec in records[:FIXED_COUNT]:
+    """保存 TKShop.dat (LZSS 压缩, 按实际记录数写入)"""
+    count = max(240, len(records))
+    buf = bytearray(count * REC_SIZE)
+    for rec in records:
         i = rec['index']
         offset = i * REC_SIZE
         struct.pack_into('<h', buf, offset, rec['area_id'])
@@ -254,15 +246,16 @@ class ShopEditorWindow(EditorMainWindow):
         "2. 左侧表格: 单击行查看/编辑, 支持区域过滤和关键词搜索, 点击表头可排序\n"
         "3. 右侧面板: 修改区域/物品/出现条件, 点「应用修改」保存到内存\n"
         "4. 文件 → 保存 (Ctrl+S): 将内存中的修改写入 TKShop.dat\n"
-        "5. + 新增记录: 在240条中查找空槽位复用\n"
-        "6. 出现条件 (引擎逻辑, 见 sub_4244CC):\n"
+        "5. + 新增记录: 在列表末尾追加一条新的空记录\n"
+        "6. 左侧表格右键: 对当前行执行复制 / 粘贴 / 删除\n"
+        "7. 出现条件 (引擎逻辑, 见 sub_4244CC):\n"
         "   - 随机: condition=1, 每次进入商店随机抽选 (最多5件)\n"
         "   - 幸运: condition≠1, 出现概率 = clamp(基准值 - 条件值, 0, 100)%\n"
         "     · 药店(area_id=0): 基准值 = 医术(word_75688A)\n"
         "     · 其它商店: 基准值 = 队伍最大幸运(word_757F34)\n"
         "   - 始终: 设为-100, 使 基准值-(-100) ≥ 100, 100%出现\n"
         "   注: condition≤0 并非无条件始终, 只是差值更大更易出现\n"
-        "7. 物品与区域有兼容性限制 (由游戏代码决定):\n"
+        "8. 物品与区域有兼容性限制 (由游戏代码决定):\n"
         "   选择物品后区域下方会显示是否兼容及建议放置的商店\n\n"
         "功能: 编辑《三国群侠传》商店数据\n\n"
         "特性:\n"
@@ -286,6 +279,7 @@ class ShopEditorWindow(EditorMainWindow):
 
         self._dirty = False
         self._editing_idx = -1
+        self._row_clipboard = None
         self.sort_col = 0
         self.sort_reverse = False
 
@@ -415,6 +409,8 @@ class ShopEditorWindow(EditorMainWindow):
 
         self.table.itemSelectionChanged.connect(self._on_table_select)
         self.table.horizontalHeader().sectionClicked.connect(self._on_header_click)
+        self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.table.customContextMenuRequested.connect(self._show_table_context_menu)
 
         splitter.addWidget(self.table)
 
@@ -733,6 +729,106 @@ class ShopEditorWindow(EditorMainWindow):
         self.filtered_indices.sort(key=lambda i: self.records[i].get(key, 0), reverse=self.sort_reverse)
         self._refresh_table()
 
+    def _make_empty_record(self, index):
+        return {
+            'index': index,
+            'area_id': 0,
+            'item_ref': 0,
+            'condition': 0,
+            'display': 0,
+            'reserved': 0,
+        }
+
+    def _record_index_at_row(self, row):
+        item = self.table.item(row, 1)
+        if item is None:
+            return None
+        value = item.data(Qt.UserRole)
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
+    def _selected_record_index(self):
+        row = self.table.currentRow()
+        return self._record_index_at_row(row) if row >= 0 else None
+
+    def _select_record_index(self, index, scroll=False):
+        for row in range(self.table.rowCount()):
+            if self._record_index_at_row(row) == index:
+                self.table.selectRow(row)
+                if scroll:
+                    self.table.scrollToItem(self.table.item(row, 1))
+                return True
+        return False
+
+    def _show_table_context_menu(self, pos):
+        row = self.table.rowAt(pos.y())
+        if row < 0:
+            return
+        index = self._record_index_at_row(row)
+        if index is None:
+            return
+
+        self.table.selectRow(row)
+        if self._selected_record_index() != index:
+            return
+
+        menu = QMenu(self)
+        copy_action = menu.addAction("复制")
+        paste_action = menu.addAction("粘贴")
+        paste_action.setEnabled(self._row_clipboard is not None)
+        menu.addSeparator()
+        delete_action = menu.addAction("删除")
+
+        chosen = menu.exec(self.table.viewport().mapToGlobal(pos))
+        if chosen == copy_action:
+            self._copy_row(index)
+        elif chosen == paste_action:
+            self._paste_row(index)
+        elif chosen == delete_action:
+            self._delete_row(index)
+
+    def _copy_row(self, index):
+        if index is None or not (0 <= index < len(self.records)):
+            return
+        rec = self.records[index]
+        self._row_clipboard = {
+            key: rec.get(key, 0)
+            for key in ('area_id', 'item_ref', 'condition', 'display', 'reserved')
+        }
+        self.lbl_status.setText(f"已复制记录 #{index}")
+
+    def _paste_row(self, index):
+        if self._row_clipboard is None:
+            return
+        if index is None or not (0 <= index < len(self.records)):
+            return
+        rec = self.records[index]
+        rec.update(self._row_clipboard)
+        rec['index'] = index
+        self._dirty = True
+        self._apply_filter()
+        self._populate_edit(rec)
+        self._select_record_index(index)
+        self.lbl_status.setText(f"已粘贴到记录 #{index}")
+
+    def _delete_row(self, index):
+        if index is None or not (0 <= index < len(self.records)):
+            return
+        if themed_question(
+                self, "确认删除",
+                f"确定要清空记录 #{index} 吗?\n\n"
+                "记录将被重置为零值, 而非物理删除。") != QMessageBox.Yes:
+            return
+        rec = self._make_empty_record(index)
+        self.records[index] = rec
+        self._dirty = True
+        self._apply_filter()
+        self._populate_edit(rec)
+        self._select_record_index(index)
+        self.lbl_status.setText(f"记录 #{index} 已清空")
+
     # ================================================================
     # 右侧编辑面板
     # ================================================================
@@ -912,39 +1008,25 @@ class ShopEditorWindow(EditorMainWindow):
     def _delete_record(self):
         if self._editing_idx < 0:
             return
-        if themed_question(self, "确认删除", f"确定要清空记录 #{self._editing_idx} 吗?\n\n记录将被重置为零值, 而非物理删除。") != QMessageBox.Yes:
-            return
-
-        self.records[self._editing_idx] = {
-            'index': self._editing_idx, 'area_id': 0, 'item_ref': 0,
-            'condition': 0, 'display': 0, 'reserved': 0
-        }
-        self._dirty = True
-        self._apply_filter()
+        self._delete_row(self._editing_idx)
 
     def _add_record(self):
-        FIXED_COUNT = 240
-        while len(self.records) < FIXED_COUNT:
-            self.records.append({
-                'index': len(self.records), 'area_id': 0, 'item_ref': 0,
-                'condition': 0, 'display': 0, 'reserved': 0
-            })
+        if not self.records:
+            QMessageBox.information(self, "提示", "请先加载 TKShop.dat")
+            return
 
-        for rec in self.records[:FIXED_COUNT]:
-            if rec['area_id'] == 0 and rec['item_ref'] == 0 and rec['condition'] == 0:
-                self._dirty = True
-                self._apply_filter()
+        rec = self._make_empty_record(len(self.records))
+        self.records.append(rec)
+        self._dirty = True
 
-                for r in range(self.table.rowCount()):
-                    if self.table.item(r, 1) and self.table.item(r, 1).data(Qt.UserRole) == rec['index']:
-                        self.table.selectRow(r)
-                        self.table.scrollToItem(self.table.item(r, 1))
-                        break
-
-                self.lbl_status.setText(f"选中空槽 #{rec['index']}, 请在右侧编辑后应用修改")
-                return
-
-        QMessageBox.warning(self, "已满", "240 条记录全部非空, 无法新增。\n请先删除一条旧记录腾出空槽。")
+        # 新记录是空数据，清除当前筛选以便立即显示和选中。
+        self.search_input.clear()
+        self.area_filter_combo.setCurrentIndex(0)
+        self._apply_filter()
+        self._select_record_index(rec['index'], scroll=True)
+        self._populate_edit(rec)
+        self.lbl_status.setText(
+            f"已新增空记录 #{rec['index']} (共 {len(self.records)} 条, 未保存)")
 
     # ================================================================
     # 保存 & 导出

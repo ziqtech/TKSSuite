@@ -1188,8 +1188,12 @@ def _apply_patch_data_expand(defn: PatchDef, ctx: PatchContext) -> bool:
             return False
 
     new_size = len(content)
-    cap = int((getattr(defn, "_extra", {}) or {}).get("buffer_cap", 0) or 0)
+    extra = getattr(defn, "_extra", {}) or {}
+    cap = int(extra.get("buffer_cap", 0) or 0)
+    aux_size = int(extra.get("aux_size", 0) or 0)
+    aux_patches = list(extra.get("aux_patches", []) or [])
     buffer_size = max(new_size, cap)
+    total_size = buffer_size + aux_size
     if defn.activate_if_expanded and new_size <= old_size:
         log(f"  [SKIP] {data_file} 仍为原版大小 {new_size}；"
             f"保持原版逻辑，不启用扩容")
@@ -1199,13 +1203,14 @@ def _apply_patch_data_expand(defn: PatchDef, ctx: PatchContext) -> bool:
         return True
 
     hp = ctx.h_proc
-    alloc = _VirtualAllocEx(hp, None, buffer_size,
+    alloc = _VirtualAllocEx(hp, None, total_size,
                             MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE)
     new_buf = ctypes.cast(alloc, ctypes.c_void_p).value or 0 if alloc else 0
     if not new_buf:
         log("  [ERROR] VirtualAllocEx 失败")
         return False
-    log(f"  [OK] 新缓冲区 0x{new_buf:08X} ({buffer_size} bytes)")
+    log(f"  [OK] 新缓冲区 0x{new_buf:08X} "
+        f"({buffer_size}+{aux_size} bytes)")
 
     nw = write_pm(hp, new_buf, content)
     if nw != new_size:
@@ -1303,6 +1308,48 @@ def _apply_patch_data_expand(defn: PatchDef, ctx: PatchContext) -> bool:
         log("  [OK] 应用数据段附带字节补丁")
         all_ok &= apply_patch_bytes(
             byte_defn, code, start, hp, log_func=log)
+
+    if aux_patches:
+        aux_base = new_buf + buffer_size
+        log(f"  [OK] 辅助数组 0x{aux_base:08X} ({aux_size} bytes)")
+        for entry in aux_patches:
+            pat, wildcard = parse_pattern(entry.get("pattern", ""))
+            matches = pattern_scan(bytes(code), pat, wildcard)
+            expect = int(entry.get("expect_count", 0) or 0)
+            if expect > 0 and len(matches) != expect:
+                log(f"  [FAIL] 辅助数组补丁匹配 {len(matches)} 处 "
+                    f"(预期 {expect})")
+                all_ok = False
+                continue
+            aux_offset = int(entry.get("aux_offset", 0) or 0)
+            replace = entry.get("replace", {}) or {}
+            for off in matches:
+                for key, value in replace.items():
+                    idx = off + int(key)
+                    if 0 <= idx < len(code):
+                        code[idx] = int(value) & 0xFF
+                value_off = off + aux_offset
+                if not (0 <= value_off <= len(code) - 4):
+                    log(f"  [FAIL] 辅助数组地址偏移越界 @0x{value_off:X}")
+                    all_ok = False
+                    continue
+                blob = bytes(code[off:off + len(pat)])
+                payload = bytearray(blob)
+                for key, value in replace.items():
+                    ro = int(key)
+                    if 0 <= ro < len(payload):
+                        payload[ro] = int(value) & 0xFF
+                payload[aux_offset:aux_offset + 4] = i32b(aux_base)
+                abs_addr = start + off
+                op = vp_ex(hp, abs_addr, len(payload), PAGE_EXECUTE_READWRITE)
+                wr = write_pm(hp, abs_addr, bytes(payload))
+                vp_ex(hp, abs_addr, len(payload), op)
+                if wr != len(payload):
+                    log(f"  [FAIL] 辅助数组补丁写入失败 @0x{abs_addr:08X}")
+                    all_ok = False
+                    continue
+                code[off:off + len(payload)] = payload
+                log(f"    [OK] 辅助数组引用 @0x{abs_addr:08X}")
     return all_ok
 
 

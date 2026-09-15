@@ -86,7 +86,7 @@ cave 内 `cmp eax, 0x8F`（索引 ≤143）为写死值；`build_cave_template` 
 | disable_pface_jvg 5 处 | 0x40D354/40D557/40D88D/412CB4/43004E | ✅（5 个 pface.jvg 加载点） |
 | team 系列 | 0x40DA11/DA1C/DA23/DB44 | ✅（sub_40DA00 内严格相邻，见 3.2） |
 
-value_scan 类计数全部符合：warpc_size_refs（0x24CC2）5 处、tkmat_size（0x232800）3 处、tkact 基址 0x9539CA 4 处 + 大小 509600 1 处、tkkon 基址 0x9D0698 19 处 + 大小 26000 1 处 + 派生引用 1 处。`tkitem_expand` 为 `patch_data_expand`：仅在数据超过原版 600 条时启用，基址 `0x77CBCA`、大小 38400、字段引用跨度 64、64KB 数据段（1024 槽），并附带 2 处记录数上限改写（共 3 个机器码位点）。`tkshop_expand` 同样为 `patch_data_expand`：仅在数据超过原版 240 条时启用，基址 `0x9508A0`、大小 1920、字段引用跨度 8、4KB 数据段（512 槽），并附带 2 处记录数上限改写（共 4 个机器码位点）。
+value_scan 类计数全部符合：warpc_size_refs（0x24CC2）5 处、tkmat_size（0x232800）3 处、tkact 基址 0x9539CA 4 处 + 大小 509600 1 处、tkkon 基址 0x9D0698 19 处 + 大小 26000 1 处 + 派生引用 1 处。`tkitem_expand` 为 `patch_data_expand`：仅在数据超过原版 600 条时启用，基址 `0x77CBCA`、字段引用跨度 64、64KB 数据区（1024 槽）+1024 字节交易数量辅助数组，并附带记录数上限改写。`tkshop_expand` 同样为 `patch_data_expand`：仅在数据超过原版 240 条时启用，基址 `0x9508A0`、大小 1920、字段引用跨度 8、4KB 数据段（512 槽），并附带 2 处记录数上限改写（共 4 个机器码位点）。
 
 ### 3.2 写入区间冲突检测：无跨补丁重叠
 

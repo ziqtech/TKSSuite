@@ -783,14 +783,20 @@ class GenerateExeDialog(QDialog):
         # buffer_cap 声明后选中即注入, 缓冲区按下限建 (与生成时数据大小解耦):
         # 部署目录的数据文件在生成后才扩容 / exe 拷贝到其它目录均不受影响,
         # 只要运行时文件不超过缓冲区即可加载。
-        cap = int((getattr(p, '_extra', {}) or {}).get('buffer_cap', 0) or 0)
+        extra = getattr(p, '_extra', {}) or {}
+        cap = int(extra.get('buffer_cap', 0) or 0)
+        aux_size = int(extra.get('aux_size', 0) or 0)
+        aux_patches = list(extra.get('aux_patches', []) or [])
         if not cap and len(content) <= old_size:
             self._log(f'[{p.id}] 数据大小 {len(content)} <= 原始 {old_size}，跳过')
             return None
 
         content = pad_section_data(content, min_size=cap)
-        self._log(f'[{p.id}] 注入 {len(content)} 字节'
-                  + (f' (buffer_cap={cap}, 64KB 对齐)' if cap else ' (64KB 对齐含余量)'))
+        logical_size = len(content)
+        if aux_size:
+            content += b"\0" * aux_size
+        self._log(f'[{p.id}] 注入 {len(content)} 字节 '
+                  f'(数据 {logical_size} + 辅助 {aux_size})')
 
         bytes_items = []
         for bp in (p.bytes_patches or []):
@@ -815,6 +821,9 @@ class GenerateExeDialog(QDialog):
             size_pattern=p.pattern,
             size_value_offset=p.value_offset,
             size_expect_count=p.expect_count,
+            logical_size=logical_size,
+            aux_size=aux_size,
+            aux_patches=aux_patches,
             bytes_patches=[BytesPatchItem(
                 patch_id=p.id, name=p.name, entries=bytes_items)]
             if bytes_items else None,
