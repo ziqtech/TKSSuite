@@ -128,6 +128,8 @@ from sws_audio import _SWSGrp, _cleanup_sws_tempfiles, _mci_close, _mci_play_asy
 from act_codec import (
     BLOCK_SHADOW_BG, BLOCK_SHADOW_BORDER, GUIDE_BLUE, PEN_TRAJECTORY_GREEN,
     PEN_TRAJECTORY_RED, PREVIEW_CANVAS_BG, SELECT_RED, SLOT_COLORS,
+    STMT_HAS_DATA_COLOR, STMT_INCOMPLETE_COLOR, STMT_NO_DATA_COLOR,
+    STMT_UNKNOWN_COLOR,
     ACT_DECOMPRESSED, ACT_ENTRY_COUNT, ACT_ENTRY_SIZE, ACT_LAYER_SIZE,
     ACT_MAX_LAYER, ACT_PARAM_OFFSET, ACT_TAIL_OFFSET, ALL_FIELDS,
     BLEND_MODE_LABELS, DIRECTION_LABELS, DIRECTION_MODE_LABELS, DIRECTION_SHORT,
@@ -453,12 +455,12 @@ class ActEditorV2(EditorMainWindow):
 
         # 左栏: 条目列表
         self.table = AdaptiveTableWidget(
-            0, 4,
+            0, 3,
             stretch_columns={1, 2},
-            minimum_widths=[45, 90, 90, 45],
+            minimum_widths=[50, 90, 90],
             row_height=44,
         )
-        self.table.setHorizontalHeaderLabels(["序号", "名称", "图层组成", "层数"])
+        self.table.setHorizontalHeaderLabels(["序号", "名称", "图层数"])
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SingleSelection)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
@@ -486,7 +488,7 @@ class ActEditorV2(EditorMainWindow):
         rl = QVBoxLayout(right)
         rl.setContentsMargins(4, 4, 4, 4)
         rl.setSpacing(4)
-        right.setMinimumWidth(520)
+        right.setMinimumWidth(620)
 
         # 与 WarPC 主编辑区一致：标签栏和内容区共享连续的 flat Pane 边界。
         self.tabs = EditorTabWidget(
@@ -506,7 +508,7 @@ class ActEditorV2(EditorMainWindow):
         splitter.setStretchFactor(0, 1)
         splitter.setStretchFactor(1, 2)
         splitter.setStretchFactor(2, 0)
-        splitter.setSizes([300, 800, 520])
+        splitter.setSizes([300, 720, 620])
 
         # 底部路径栏
         path_layout = QHBoxLayout()
@@ -993,10 +995,9 @@ class ActEditorV2(EditorMainWindow):
         inner = self._build_scroll_tab("尾部数据")
 
         lbl = QLabel(
-            "尾部 (bytes 720-783) = 音效触发表  16 对 × (sound_id, trigger_tick)\n"
-            "逆向证据: sub_4434BC L111-119 对 &unk_9D064A 逐对 sub_451780(1) 预加载;\n"
-            "          L627-636 每 tick 检查 v5[1] == word_9D03A0 时 sub_451C38(0) 播放.\n"
-            "sound_id = 0 表示该对空位 (不触发)。")
+            "尾部数据（字节 720-783）= 音效触发表，共 16 对，每对包含音效ID与触发帧。\n"
+            "逆向依据：原版程序会逐对预加载音效，并在动画帧到达触发帧时播放。\n"
+            "音效ID 为 0 表示该对为空，不触发。")
         lbl.setWordWrap(True)
         lbl.setProperty("class", "PropLabel")
         inner.layout().addWidget(lbl)
@@ -1004,11 +1005,11 @@ class ActEditorV2(EditorMainWindow):
         grid = QGridLayout()
         grid.setSpacing(2)
         grid.addWidget(QLabel("#"), 0, 0)
-        grid.addWidget(QLabel("sound_id"), 0, 1)
-        grid.addWidget(QLabel("trigger_tick"), 0, 2)
+        grid.addWidget(QLabel("音效ID"), 0, 1)
+        grid.addWidget(QLabel("触发帧"), 0, 2)
         grid.addWidget(QLabel(""), 0, 3)
         grid.addWidget(QLabel("文件"), 0, 4)
-        grid.addWidget(QLabel("原 int16"), 0, 5)
+        grid.addWidget(QLabel("原始值"), 0, 5)
 
         self._tail_vars = []
         self._tail_file_lbls = []
@@ -1018,23 +1019,25 @@ class ActEditorV2(EditorMainWindow):
             grid.addWidget(QLabel(f"{pair:02d}"), r, 0)
 
             le_id = QLineEdit("0")
-            le_id.setFixedWidth(70)
+            le_id.setFixedWidth(50)
             grid.addWidget(le_id, r, 1)
             self._tail_vars.append(le_id)
 
             le_tick = QLineEdit("0")
-            le_tick.setFixedWidth(80)
+            le_tick.setFixedWidth(50)
             grid.addWidget(le_tick, r, 2)
             self._tail_vars.append(le_tick)
 
             btn = QPushButton("播放")
-            btn.setFixedWidth(40)
-            btn.setToolTip("试听此 sound_id 对应的音效文件")
+            btn.setMinimumWidth(70)
+            btn.setToolTip("试听此音效ID对应的音效文件")
             btn.clicked.connect(lambda checked, idx=pair: self._on_tail_preview(idx))
             grid.addWidget(btn, r, 3)
 
             fl = QLabel("")
             fl.setProperty("class", "ExtraPreviewText")
+            fl.setWordWrap(True)
+            fl.setMinimumWidth(150)
             grid.addWidget(fl, r, 4)
             self._tail_file_lbls.append(fl)
 
@@ -1042,6 +1045,7 @@ class ActEditorV2(EditorMainWindow):
 
             le_id.textChanged.connect(lambda txt, idx=pair: self._refresh_tail_file_lbl(idx))
 
+        grid.setColumnStretch(4, 1)
         inner.layout().addLayout(grid)
         inner.layout().addStretch()
 
@@ -1249,9 +1253,6 @@ class ActEditorV2(EditorMainWindow):
         rev = getattr(self, '_sort_reverse', False)
         if col == 2:
             self.filtered_indices.sort(
-                key=lambda i: entry_summary(self.entries[i]).lower(), reverse=rev)
-        elif col == 3:
-            self.filtered_indices.sort(
                 key=lambda i: len(entry_active_layers(self.entries[i])), reverse=rev)
         else:
             self.filtered_indices.sort(reverse=rev)
@@ -1275,9 +1276,8 @@ class ActEditorV2(EditorMainWindow):
             self.table.insertRow(row)
             self.table.setItem(row, 0, QTableWidgetItem(str(idx)))
             self.table.setItem(row, 1, QTableWidgetItem(nm))
-            self.table.setItem(row, 2, QTableWidgetItem(entry_summary(entry)))
             n_layer = len(entry_active_layers(entry))
-            self.table.setItem(row, 3, QTableWidgetItem(str(n_layer)))
+            self.table.setItem(row, 2, QTableWidgetItem(f"{n_layer} 个图层"))
             # 颜色标记 (名称语义优先)
             if "原版未完成" in nm:
                 color = QColor(STMT_INCOMPLETE_COLOR)
@@ -1289,7 +1289,7 @@ class ActEditorV2(EditorMainWindow):
                 color = QColor(STMT_HAS_DATA_COLOR)
             else:
                 color = QColor(STMT_NO_DATA_COLOR)
-            for ci in range(4):
+            for ci in range(3):
                 self.table.item(row, ci).setForeground(color)
         self.table.blockSignals(False)
 
@@ -2095,7 +2095,7 @@ class ActEditorV2(EditorMainWindow):
             lbl.style().polish(lbl)
             return
         if self.sws_grp is None:
-            lbl.setText(f"SWS#{sid:04d}  (未加载 TKS 目录)")
+            lbl.setText(f"音效 #{sid:04d}  (未加载游戏数据目录)")
             lbl.setProperty("probe", "warn")
             lbl.style().unpolish(lbl)
             lbl.style().polish(lbl)
@@ -2103,18 +2103,19 @@ class ActEditorV2(EditorMainWindow):
         info = self.sws_grp.wav_info(sid)
         if info is not None:
             ch, sr, bits, dur = info
-            lbl.setText(f"SWS#{sid:03d}  {ch}ch {sr}Hz {bits}bit {dur:.2f}s")
+            lbl.setText(
+                f"音效 #{sid:03d}  {ch} 声道 {sr} 赫兹 {bits} 位 {dur:.2f} 秒")
             lbl.setProperty("probe", "ok")
             lbl.style().unpolish(lbl)
             lbl.style().polish(lbl)
             return
         if sid >= self.sws_grp.section_count:
-            lbl.setText(f"SWS#{sid}  X 超出段数({self.sws_grp.section_count})")
+            lbl.setText(f"音效 #{sid}  超出段数({self.sws_grp.section_count})")
             lbl.setProperty("probe", "error")
             lbl.style().unpolish(lbl)
             lbl.style().polish(lbl)
             return
-        lbl.setText(f"SWS#{sid:03d}  (非 WAV 段)")
+        lbl.setText(f"音效 #{sid:03d}  (非音频段)")
         lbl.setProperty("probe", "warn")
         lbl.style().unpolish(lbl)
         lbl.style().polish(lbl)
@@ -2130,21 +2131,21 @@ class ActEditorV2(EditorMainWindow):
         except ValueError:
             sid = 0
         if sid <= 0:
-            self.status_var.setText(f"尾部 #{pair_idx:02d}: sound_id=0 空位, 无音效")
+            self.status_var.setText(f"尾部 #{pair_idx:02d}: 音效ID=0 空位, 无音效")
             return
         if self.sws_grp is None:
             QMessageBox.information(self, "未加载音效源",
-                                   "请先通过 文件 → 加载 TKS 目录 来定位 SWS.GRP")
+                                   "请先通过 文件 → 加载 TKS 目录 来定位音效资源")
             return
         p = self._resolve_sound_path(sid)
         if not p:
-            self.status_var.setText(f"未找到音效 sid={sid} (SWS.GRP)")
+            self.status_var.setText(f"未找到音效 音效ID={sid}")
             return
         alias = _mci_play_async(p)
         if alias is None:
-            self.status_var.setText(f"播放失败: sid={sid}")
+            self.status_var.setText(f"播放失败: 音效ID={sid}")
         else:
-            self.status_var.setText(f"> sid={sid} (SWS)")
+            self.status_var.setText(f"> 音效ID={sid}")
 
     # ============================================================
     # 动画预览
@@ -2971,9 +2972,9 @@ class ActEditorV2(EditorMainWindow):
         p = self._resolve_sound_path(sid)
         if p:
             alias = _mci_play_async(p)
-            self.status_var.setText(f"试听 sid={sid}")
+            self.status_var.setText(f"试听 音效ID={sid}")
         else:
-            self.status_var.setText(f"未找到音效 sid={sid}")
+            self.status_var.setText(f"未找到音效 音效ID={sid}")
 
     # ── NLE 快捷键 (J/K/L/Space/Up/Down) ──
 
