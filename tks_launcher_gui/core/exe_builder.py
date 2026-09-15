@@ -315,6 +315,7 @@ class DataSectionPatchItem:
     old_size: int                # 旧缓冲区大小 (如 509600)
     section_name: str = '.tks'   # 新节名称
     data_offset: int = 0         # 数据在新节内的偏移
+    front_pad: int = 0           # 数据区前的零填充，保护负索引读取
     redirect_base_span: int = 0  # 基址后的字段锚定引用扫描跨度（字节），
                                  # 0=仅精确重定向基址本身（如 WarPC 记录内
                                  # word_757F0C 等字段锚定立即数需设为记录大小）
@@ -861,12 +862,15 @@ class ExeBuilder:
             log.append(f'── 应用数据段注入 ({len(data_section_patches)} 个) ──')
             for item in data_section_patches:
                 new_va = next_va
-                new_abs = pe.image_base + new_va
+                new_abs = pe.image_base + new_va + item.front_pad
                 log.append(f'  [{item.patch_id}] 注入 {item.section_name}: '
                            f'RVA=0x{new_va:X}, 绝对=0x{new_abs:X}, '
-                           f'缓冲={len(item.data)} 字节 (BSS, 不占文件空间)')
+                           f'缓冲={item.front_pad}+{len(item.data)} 字节 '
+                           f'(BSS, 不占文件空间)')
                 data_section_results.append((item, new_abs, 0, new_va))
-                next_va = align_up(new_va + max(len(item.data), 1), pe.section_align)
+                next_va = align_up(
+                    new_va + max(item.front_pad + len(item.data), 1),
+                    pe.section_align)
 
         # ── 1. patch_bytes ──
         if bytes_patches:
@@ -1335,7 +1339,7 @@ class ExeBuilder:
                     return result
                 name_b = item.section_name.encode('ascii')[:8].ljust(8, b'\x00')
                 entry = name_b + struct.pack('<IIIIIIHHI',
-                    len(item.data), va, 0, 0,
+                    item.front_pad + len(item.data), va, 0, 0,
                     0, 0, 0, 0, self.SECTION_CHARS_DATA)
                 data[sec_entry_off:sec_entry_off + 40] = entry
 

@@ -108,6 +108,7 @@ _TKSPATCH_SCHEMA = {
         "hooks", "bytes_patches", "cave_code_file", "cave_layout_size",
         "data_file", "old_base", "old_size", "section_name", "needs_lzss",
         "redirect_base_span", "buffer_cap", "activate_if_expanded",
+        "front_pad",
         "aux_size", "aux_patches",
         # _extra
         "_group", "_comment", "_说明", "_mod_note",
@@ -174,6 +175,7 @@ _TKSPATCH_SCHEMA = {
         "redirect_base_span": int,
         "buffer_cap": int,
         "activate_if_expanded": bool,
+        "front_pad": int,
         "aux_size": int,
         "aux_patches": list,
         "_format": int,
@@ -429,7 +431,8 @@ def parse_patch_dict(raw: dict, source_path: str,
                 "original", "field_range", "new_base",
                 "cave_mask_offset", "summon_cave_code", "summon_cave2_code",
                 "redirect_base_span", "buffer_cap",
-                "activate_if_expanded", "aux_size", "aux_patches"):
+                "activate_if_expanded", "front_pad", "aux_size",
+                "aux_patches"):
         if key in raw:
             d._extra[key] = raw[key]  # type: ignore
     if "summon_limit" in raw:

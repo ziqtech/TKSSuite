@@ -1191,6 +1191,7 @@ def _apply_patch_data_expand(defn: PatchDef, ctx: PatchContext) -> bool:
     extra = getattr(defn, "_extra", {}) or {}
     cap = int(extra.get("buffer_cap", 0) or 0)
     aux_size = int(extra.get("aux_size", 0) or 0)
+    front_pad = int(extra.get("front_pad", 0) or 0)
     aux_patches = list(extra.get("aux_patches", []) or [])
     buffer_size = max(new_size, cap)
     total_size = buffer_size + aux_size
@@ -1203,14 +1204,15 @@ def _apply_patch_data_expand(defn: PatchDef, ctx: PatchContext) -> bool:
         return True
 
     hp = ctx.h_proc
-    alloc = _VirtualAllocEx(hp, None, total_size,
+    alloc = _VirtualAllocEx(hp, None, front_pad + total_size,
                             MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE)
-    new_buf = ctypes.cast(alloc, ctypes.c_void_p).value or 0 if alloc else 0
+    alloc_addr = ctypes.cast(alloc, ctypes.c_void_p).value or 0 if alloc else 0
+    new_buf = alloc_addr + front_pad if alloc_addr else 0
     if not new_buf:
         log("  [ERROR] VirtualAllocEx 失败")
         return False
     log(f"  [OK] 新缓冲区 0x{new_buf:08X} "
-        f"({buffer_size}+{aux_size} bytes)")
+        f"({front_pad}+{buffer_size}+{aux_size} bytes)")
 
     nw = write_pm(hp, new_buf, content)
     if nw != new_size:

@@ -112,7 +112,7 @@ class RecordExpandBuildTests(unittest.TestCase):
                 _apply_patch_data_expand(patch_def, ctx),
                 "\n".join(logs))
 
-        aux_base = 0x20000000 + 65536
+        aux_base = 0x20000000 + patch_def._extra["front_pad"] + 65536
         for off, entry, pattern in pattern_sites:
             patched = bytes(code[off:off + len(pattern)])
             for key, value in entry["replace"].items():
@@ -136,6 +136,7 @@ class RecordExpandBuildTests(unittest.TestCase):
         self.assertEqual(patch.old_size, 38400)
         self.assertEqual(patch._extra.get("buffer_cap"), 65536)
         self.assertEqual(patch._extra.get("aux_size"), 1024)
+        self.assertEqual(patch._extra.get("front_pad"), 64)
 
         content = lzss_decompress_dat(
             (GAME_DIR / "TKItem.dat").read_bytes())
@@ -162,6 +163,7 @@ class RecordExpandBuildTests(unittest.TestCase):
             redirect_base_span=64,
             logical_size=logical_size,
             aux_size=1024,
+            front_pad=patch._extra.get("front_pad", 0),
             aux_patches=patch._extra.get("aux_patches", []),
             bytes_patches=[BytesPatchItem(
                 patch_id=patch.id, name=patch.name, entries=entries)],
@@ -180,7 +182,9 @@ class RecordExpandBuildTests(unittest.TestCase):
             tkitem = next(s for s in pe.sections
                           if s.Name.rstrip(b"\0") == b".tkitem")
 
-            self.assertEqual(tkitem.Misc_VirtualSize, 65536 + 1024)
+            self.assertEqual(
+                tkitem.Misc_VirtualSize, 65536 + 1024
+                + patch._extra.get("front_pad", 0))
             self.assertEqual(
                 text.count(bytes.fromhex("81 FA FF 03 00 00")), 2)
             self.assertEqual(
@@ -197,7 +201,8 @@ class RecordExpandBuildTests(unittest.TestCase):
                 text.count(bytes.fromhex("68 00 00 01 00")), 1)
 
             new_base = (pe.OPTIONAL_HEADER.ImageBase
-                        + tkitem.VirtualAddress)
+                        + tkitem.VirtualAddress
+                        + patch._extra.get("front_pad", 0))
             aux_base = new_base + logical_size
             self.assertGreaterEqual(
                 text.count(new_base.to_bytes(4, "little")), 18)

@@ -786,6 +786,7 @@ class GenerateExeDialog(QDialog):
         extra = getattr(p, '_extra', {}) or {}
         cap = int(extra.get('buffer_cap', 0) or 0)
         aux_size = int(extra.get('aux_size', 0) or 0)
+        front_pad = int(extra.get('front_pad', 0) or 0)
         aux_patches = list(extra.get('aux_patches', []) or [])
         if not cap and len(content) <= old_size:
             self._log(f'[{p.id}] 数据大小 {len(content)} <= 原始 {old_size}，跳过')
@@ -796,7 +797,7 @@ class GenerateExeDialog(QDialog):
         if aux_size:
             content += b"\0" * aux_size
         self._log(f'[{p.id}] 注入 {len(content)} 字节 '
-                  f'(数据 {logical_size} + 辅助 {aux_size})')
+                  f'(前置垫 {front_pad} + 数据 {logical_size} + 辅助 {aux_size})')
 
         bytes_items = []
         for bp in (p.bytes_patches or []):
@@ -823,6 +824,7 @@ class GenerateExeDialog(QDialog):
             size_expect_count=p.expect_count,
             logical_size=logical_size,
             aux_size=aux_size,
+            front_pad=front_pad,
             aux_patches=aux_patches,
             bytes_patches=[BytesPatchItem(
                 patch_id=p.id, name=p.name, entries=bytes_items)]
