@@ -389,6 +389,7 @@ class ItemEditorApp(FieldUndoMixin, EditorMainWindow):
         self._editing_idx = None
         self._sort_reverse = False
         self._guard_right_reset = False
+        self._row_clipboard = None
         # 使用权限选项运行时副本 (启动时自动从 configs/ 加载)
         self._use_right_options = {p: list(opts) for p, opts in USE_RIGHT_OPTIONS.items()}
         # 启动时自动从 configs/ 加载 equip_type_labels.json
@@ -455,25 +456,6 @@ class ItemEditorApp(FieldUndoMixin, EditorMainWindow):
         toolbar.addWidget(self.search_entry)
         toolbar.addWidget(QPushButton("搜索", clicked=self._apply_filter))
         toolbar.addWidget(QPushButton("清除", clicked=self._clear_filter))
-        toolbar.addSpacing(10)
-        toolbar.addWidget(QLabel("页面号:"))
-        self.filter_page = EditorComboBox()
-        self.filter_page.addItems(["全部页面"] + PAGE_VALUES)
-        self.filter_page.currentIndexChanged.connect(self._apply_filter)
-        toolbar.addWidget(self.filter_page)
-        toolbar.addSpacing(6)
-        toolbar.addWidget(QLabel("权限:"))
-        self.filter_right = EditorComboBox()
-        self.filter_right.addItems(["全部权限"])
-        self.filter_right.currentIndexChanged.connect(self._apply_filter)
-        toolbar.addWidget(self.filter_right)
-        toolbar.addSpacing(6)
-        self.filter_empty = QCheckBox("仅非空")
-        self.filter_empty.setChecked(True)
-        self.filter_empty.stateChanged.connect(self._apply_filter)
-        toolbar.addWidget(self.filter_empty)
-        toolbar.addSpacing(10)
-        toolbar.addWidget(QPushButton("新建物品", clicked=self._new_item))
         toolbar.addWidget(QPushButton("重新加载", clicked=self._reload))
         toolbar.addStretch()
         toolbar.addWidget(QPushButton("切换主题", clicked=self._toggle_theme))
@@ -502,7 +484,37 @@ class ItemEditorApp(FieldUndoMixin, EditorMainWindow):
         self.table.setIconSize(QSize(36, 36))
         self.table.itemSelectionChanged.connect(self._on_table_select)
         self.table.horizontalHeader().sectionClicked.connect(self._sort_by)
-        self.splitter.addWidget(self._create_dock("物品列表", self.table))
+        self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.table.customContextMenuRequested.connect(self._show_table_context_menu)
+
+        table_panel = QWidget()
+        table_panel_layout = QVBoxLayout(table_panel)
+        table_panel_layout.setContentsMargins(0, 0, 0, 0)
+        table_panel_layout.setSpacing(6)
+
+        list_tools = QHBoxLayout()
+        self.new_item_btn = QPushButton("新建物品", clicked=self._new_item)
+        set_themed_icon(self.new_item_btn, "new")
+        self.new_item_btn.setIconSize(QSize(16, 16))
+        list_tools.addWidget(self.new_item_btn)
+        list_tools.addWidget(QLabel("页面号:"))
+        self.filter_page = EditorComboBox()
+        self.filter_page.addItems(["全部页面"] + PAGE_VALUES)
+        self.filter_page.currentIndexChanged.connect(self._apply_filter)
+        list_tools.addWidget(self.filter_page)
+        list_tools.addWidget(QLabel("权限:"))
+        self.filter_right = EditorComboBox()
+        self.filter_right.addItems(["全部权限"])
+        self.filter_right.currentIndexChanged.connect(self._apply_filter)
+        list_tools.addWidget(self.filter_right)
+        self.filter_empty = QCheckBox("仅非空")
+        self.filter_empty.setChecked(True)
+        self.filter_empty.stateChanged.connect(self._apply_filter)
+        list_tools.addWidget(self.filter_empty)
+        list_tools.addStretch()
+        table_panel_layout.addLayout(list_tools)
+        table_panel_layout.addWidget(self.table, 1)
+        self.splitter.addWidget(self._create_dock("物品列表", table_panel))
 
         # 右侧: 编辑器
         right_widget = QWidget()
@@ -516,7 +528,6 @@ class ItemEditorApp(FieldUndoMixin, EditorMainWindow):
         header_row.addWidget(self.lbl_rec_idx)
         header_row.addStretch()
         header_row.addWidget(QPushButton("应用", clicked=self._apply_edit))
-        header_row.addWidget(QPushButton("复制到空槽", clicked=self._copy_record))
         header_row.addWidget(QPushButton("重置", clicked=self._reset_edit))
         header_row.addWidget(QPushButton("清空", clicked=self._clear_current))
         right_layout.addLayout(header_row)
@@ -900,6 +911,49 @@ class ItemEditorApp(FieldUndoMixin, EditorMainWindow):
         self._refresh_table()
 
     # ── 编辑 ──
+    def _record_index_at_row(self, row):
+        item = self.table.item(row, 1)
+        if item is None:
+            return None
+        try:
+            return int(item.text())
+        except ValueError:
+            return None
+
+    def _selected_record_index(self):
+        selected = self.table.selectedItems()
+        if not selected:
+            return None
+        return self._record_index_at_row(selected[0].row())
+
+    def _show_table_context_menu(self, pos):
+        """显示物品列表的单行复制、粘贴、删除菜单。"""
+        row = self.table.rowAt(pos.y())
+        if row < 0:
+            return
+        index = self._record_index_at_row(row)
+        if index is None:
+            return
+
+        self.table.selectRow(row)
+        if self._selected_record_index() != index:
+            return
+
+        menu = QMenu(self)
+        copy_action = menu.addAction("复制")
+        paste_action = menu.addAction("粘贴")
+        paste_action.setEnabled(self._row_clipboard is not None)
+        menu.addSeparator()
+        delete_action = menu.addAction("删除")
+
+        chosen = menu.exec(self.table.viewport().mapToGlobal(pos))
+        if chosen == copy_action:
+            self._copy_row(index)
+        elif chosen == paste_action:
+            self._paste_row(index)
+        elif chosen == delete_action:
+            self._delete_row(index)
+
     def _on_table_select(self):
         sel = self.table.selectedItems()
         if not sel: return
@@ -1280,10 +1334,16 @@ class ItemEditorApp(FieldUndoMixin, EditorMainWindow):
         if self._editing_idx is None:
             QMessageBox.information(self, "提示", "请先选择一条记录")
             return
+        self._delete_row(self._editing_idx)
+
+    def _delete_row(self, index):
+        """清空指定行，保留固定槽位索引。"""
+        if index is None or not (0 <= index < len(self.records)):
+            return
         reply = themed_question(self, "确认清空",
-            f"将记录 #{self._editing_idx} 清为空槽模板 (item_id=0, name_id=0, desc_id=600).\n确定?")
+            f"将记录 #{index} 清为空槽模板 (item_id=0, name_id=0, desc_id=600).\n确定?")
         if reply != QMessageBox.Yes: return
-        rec = self.records[self._editing_idx]
+        rec = self.records[index]
         clear_before = {fn: rec[fn] for fn, _, _, _, _, _ in ALL_FIELDS}
         for fn, _, _, _, _, _ in ALL_FIELDS:
             rec[fn] = 0
@@ -1295,7 +1355,41 @@ class ItemEditorApp(FieldUndoMixin, EditorMainWindow):
         self._dirty = True
         self._apply_filter()
         self._populate_edit(rec)
-        self.status_var.setText(f"记录 #{self._editing_idx} 已清空")
+        self.status_var.setText(f"记录 #{index} 已清空")
+
+    def _copy_row(self, index):
+        """复制一条记录到编辑器内部行剪贴板。"""
+        if index is None or not (0 <= index < len(self.records)):
+            return
+        rec = self.records[index]
+        self._row_clipboard = {
+            fn: rec[fn] for fn, _, _, _, _, _ in ALL_FIELDS
+        }
+        self.status_var.setText(f"已复制记录 #{index}")
+
+    def _paste_row(self, index):
+        """将行剪贴板内容粘贴到指定记录，保留目标槽位索引。"""
+        if self._row_clipboard is None:
+            return
+        if index is None or not (0 <= index < len(self.records)):
+            return
+        rec = self.records[index]
+        paste_before = {fn: rec[fn] for fn, _, _, _, _, _ in ALL_FIELDS}
+        for fn, _, _, _, _, _ in ALL_FIELDS:
+            rec[fn] = self._row_clipboard[fn]
+        changes = self.field_diff(
+            paste_before, rec, [fn for fn, _, _, _, _, _ in ALL_FIELDS])
+        if changes:
+            self.push_field_changes(
+                rec['index'], changes, f"粘贴记录到 #{rec['index']}")
+            self._dirty = True
+        self._apply_filter()
+        self._populate_edit(rec)
+        for row in range(self.table.rowCount()):
+            if self._record_index_at_row(row) == rec['index']:
+                self.table.selectRow(row)
+                break
+        self.status_var.setText(f"已粘贴到记录 #{index}")
 
     def _copy_record(self):
         if self._editing_idx is None:
