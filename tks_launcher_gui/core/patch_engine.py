@@ -1190,6 +1190,10 @@ def _apply_patch_data_expand(defn: PatchDef, ctx: PatchContext) -> bool:
     new_size = len(content)
     cap = int((getattr(defn, "_extra", {}) or {}).get("buffer_cap", 0) or 0)
     buffer_size = max(new_size, cap)
+    if defn.activate_if_expanded and new_size <= old_size:
+        log(f"  [SKIP] {data_file} 仍为原版大小 {new_size}；"
+            f"保持原版逻辑，不启用扩容")
+        return True
     if buffer_size <= old_size:
         log(f"  [SKIP] {data_file} 大小 {new_size} <= 原始 {old_size}")
         return True

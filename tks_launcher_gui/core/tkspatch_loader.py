@@ -107,7 +107,7 @@ _TKSPATCH_SCHEMA = {
         # 文件级补丁类型 (fixed_layout_cave / patch_data_expand)
         "hooks", "bytes_patches", "cave_code_file", "cave_layout_size",
         "data_file", "old_base", "old_size", "section_name", "needs_lzss",
-        "redirect_base_span", "buffer_cap",
+        "redirect_base_span", "buffer_cap", "activate_if_expanded",
         # _extra
         "_group", "_comment", "_说明", "_mod_note",
         "original", "field_range", "new_base",
@@ -172,6 +172,7 @@ _TKSPATCH_SCHEMA = {
         "needs_lzss": bool,
         "redirect_base_span": int,
         "buffer_cap": int,
+        "activate_if_expanded": bool,
         "_format": int,
         "format": str,
         "format_version": int,
@@ -397,6 +398,7 @@ def parse_patch_dict(raw: dict, source_path: str,
     d.old_size = _parse_maybe_hex(raw.get("old_size", 0))
     d.section_name = raw.get("section_name", "")
     d.needs_lzss = bool(raw.get("needs_lzss", False))
+    d.activate_if_expanded = bool(raw.get("activate_if_expanded", False))
 
     # ── 外置 cave 机器码 (核心新特性) ──
     cave_code_hex = raw.get("cave_code", "")
@@ -423,7 +425,8 @@ def parse_patch_dict(raw: dict, source_path: str,
     for key in ("_group", "_comment", "_说明", "_mod_note", "_note",
                 "original", "field_range", "new_base",
                 "cave_mask_offset", "summon_cave_code", "summon_cave2_code",
-                "redirect_base_span", "buffer_cap"):
+                "redirect_base_span", "buffer_cap",
+                "activate_if_expanded"):
         if key in raw:
             d._extra[key] = raw[key]  # type: ignore
     if "summon_limit" in raw:

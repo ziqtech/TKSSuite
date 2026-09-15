@@ -128,6 +128,7 @@ class PatchDef:
     old_size: int = 0                             # 原缓冲区大小
     section_name: str = ""                        # 新 PE 节名
     needs_lzss: bool = False                      # 数据文件是否需 LZSS 解压
+    activate_if_expanded: bool = False            # 仅在数据大于 old_size 时应用
 
 @dataclass
 class PatchConfig:

@@ -8,6 +8,8 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import mock_open, patch
 
 import pefile
 
@@ -22,6 +24,7 @@ if str(LAUNCHER) not in sys.path:
 from core.exe_builder import (  # noqa: E402
     BytesPatchEntry, BytesPatchItem, DataSectionPatchItem, ExeBuilder,
 )
+from core.patch_engine import _apply_patch_data_expand  # noqa: E402
 from core.tkspatch_loader import load_patch_directory  # noqa: E402
 from editor_utils.lzss import lzss_decompress_dat  # noqa: E402
 
@@ -30,6 +33,32 @@ GAME_DIR = Path(os.environ.get("TKS_GAME_DIR", r"游戏目录（原版）"))
 
 
 class RecordExpandBuildTests(unittest.TestCase):
+    @unittest.skipUnless(
+        (GAME_DIR / "TKS.exe").is_file()
+        and (GAME_DIR / "TKItem.dat").is_file()
+        and (GAME_DIR / "TKShop.dat").is_file(),
+        "需要原版数据文件才能验证运行时扩容门控",
+    )
+    def test_runtime_keeps_original_data_untouched(self):
+        cfg = load_patch_directory(str(LAUNCHER / "patches"),
+                                   log_func=lambda *_a: None)
+        for patch_id, data_file in (
+            ("tkitem_expand", "TKItem.dat"),
+            ("tkshop_expand", "TKShop.dat"),
+        ):
+            patch_def = next(p for p in cfg.patches if p.id == patch_id)
+            logs = []
+            ctx = SimpleNamespace(log=logs.append)
+            with patch("core.patch_engine.os.path.isfile",
+                       return_value=True), \
+                    patch("builtins.open", mock_open(
+                        read_data=(GAME_DIR / data_file).read_bytes())), \
+                    patch("core.patch_engine._VirtualAllocEx") as alloc:
+                self.assertTrue(
+                    _apply_patch_data_expand(patch_def, ctx))
+                alloc.assert_not_called()
+            self.assertTrue(any("保持原版逻辑" in line for line in logs))
+
     @unittest.skipUnless(
         (GAME_DIR / "TKS.exe").is_file()
         and (GAME_DIR / "TKItem.dat").is_file(),
@@ -46,6 +75,7 @@ class RecordExpandBuildTests(unittest.TestCase):
 
         content = lzss_decompress_dat(
             (GAME_DIR / "TKItem.dat").read_bytes())
+        content += b"\0" * 64
         content = content.ljust(65536, b"\0")
         entries = [
             BytesPatchEntry(
@@ -122,6 +152,7 @@ class RecordExpandBuildTests(unittest.TestCase):
 
         content = lzss_decompress_dat(
             (GAME_DIR / "TKShop.dat").read_bytes())
+        content += b"\0" * 8
         content = content.ljust(4096, b"\0")
         entries = [
             BytesPatchEntry(

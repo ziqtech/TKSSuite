@@ -14,6 +14,7 @@ from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 ROOT = Path(__file__).resolve().parents[2]
+GAME_DIR = Path(os.environ.get("TKS_GAME_DIR", r"游戏目录（原版）"))
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 if str(ROOT / "tks_launcher_gui") not in sys.path:
@@ -163,6 +164,28 @@ class GenerateExeSupportTests(unittest.TestCase):
         finally:
             # 只销毁对话框: 不 processEvents()——会触发全局主题/自适应列的延迟回调,
             # 在测试里对已销毁控件重新布局 (libshiboken RuntimeError)。
+            dlg.close()
+            dlg.deleteLater()
+
+    @unittest.skipUnless(
+        (GAME_DIR / "TKItem.dat").is_file()
+        and (GAME_DIR / "TKShop.dat").is_file(),
+        "需要原版 TKItem.dat / TKShop.dat 才能验证原版数据不触发扩容",
+    )
+    def test_original_data_does_not_activate_expansion(self):
+        _qt_app()
+        patches = _load_patches()
+        dlg = GenerateExeDialog(patches, str(ROOT / "tks_launcher_gui"),
+                                selected_tool="cnc-ddraw")
+        try:
+            dlg._out_edit.setText(str(GAME_DIR))
+            dlg._src_edit.setText(str(GAME_DIR))
+            for patch_id in ("tkitem_expand", "tkshop_expand"):
+                patch = next(p for p in patches if p.id == patch_id)
+                self.assertIsNone(
+                    dlg._build_data_section(patch),
+                    f"{patch_id} 不应改动原版大小数据")
+        finally:
             dlg.close()
             dlg.deleteLater()
 

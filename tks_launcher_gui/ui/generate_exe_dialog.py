@@ -776,6 +776,10 @@ class GenerateExeDialog(QDialog):
                 self._log(f'[{p.id}] LZSS 解压失败: {e}')
                 return None
 
+        if getattr(p, 'activate_if_expanded', False) and len(content) <= old_size:
+            self._log(f'[{p.id}] 数据仍为原版大小 {len(content)}，跳过扩容')
+            return None
+
         # buffer_cap 声明后选中即注入, 缓冲区按下限建 (与生成时数据大小解耦):
         # 部署目录的数据文件在生成后才扩容 / exe 拷贝到其它目录均不受影响,
         # 只要运行时文件不超过缓冲区即可加载。
