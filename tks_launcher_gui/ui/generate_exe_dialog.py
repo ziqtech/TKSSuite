@@ -123,15 +123,14 @@ def copy_tool_dir(tool_dir: str, out_dir: str, log=print) -> int:
     return copied
 
 
-def expansion_buffer_size(actual_size: int, cap: int = 0,
-                          align: int = 0x10000) -> int:
-    """扩容缓冲区的最终大小 = max(实际数据, buffer_cap) 的 align 对齐。
+def expansion_logical_size(actual_size: int, cap: int = 0) -> int:
+    """扩容缓冲区的逻辑容量 = max(实际数据, buffer_cap)。
 
-    patch_data_expand 的注入节与配套 patch_imm32 的容量立即数必须用
-    同一公式，否则加载检查值与实际缓冲区不一致。
+    逻辑容量会写入游戏代码中的加载/存档大小常量，必须保持记录格式要求，
+    不能混入 PE 节使用的 64 KiB 后备对齐。PE 对齐由 pad_section_data 在
+    构建注入节时单独处理。
     """
-    target = max(actual_size, cap)
-    return (target + align - 1) & ~(align - 1)
+    return max(actual_size, cap)
 
 
 def resolve_data_file(out_exe_path: str, src_exe_path: str, filename: str) -> str | None:
@@ -792,12 +791,14 @@ class GenerateExeDialog(QDialog):
             self._log(f'[{p.id}] 数据大小 {len(content)} <= 原始 {old_size}，跳过')
             return None
 
-        content = pad_section_data(content, min_size=cap)
-        logical_size = len(content)
+        logical_size = expansion_logical_size(len(content), cap)
+        content = pad_section_data(content, min_size=logical_size)
+        backing_size = len(content)
         if aux_size:
             content += b"\0" * aux_size
         self._log(f'[{p.id}] 注入 {len(content)} 字节 '
-                  f'(前置垫 {front_pad} + 数据 {logical_size} + 辅助 {aux_size})')
+                  f'(前置垫 {front_pad} + 逻辑 {logical_size} + '
+                  f'后备填充 {backing_size - logical_size} + 辅助 {aux_size})')
 
         bytes_items = []
         for bp in (p.bytes_patches or []):
@@ -823,6 +824,7 @@ class GenerateExeDialog(QDialog):
             size_value_offset=p.value_offset,
             size_expect_count=p.expect_count,
             logical_size=logical_size,
+            backing_size=backing_size,
             aux_size=aux_size,
             front_pad=front_pad,
             aux_patches=aux_patches,
@@ -858,9 +860,9 @@ class GenerateExeDialog(QDialog):
                 cap = int((getattr(p, '_extra', {}) or {})
                           .get('buffer_cap', 0) or 0)
                 if cap:
-                    actual_size = expansion_buffer_size(actual_size, cap)
+                    actual_size = expansion_logical_size(actual_size, cap)
                     self._log(f'[{p.id}] {var_name} = {actual_size} '
-                              f'(buffer_cap={cap}, 64KB 对齐)')
+                              f'(buffer_cap={cap}, 逻辑容量)')
                 else:
                     self._log(f'[{p.id}] {var_name} = {actual_size} (从数据文件读取)')
                 return actual_size

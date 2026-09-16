@@ -28,6 +28,9 @@ from core.exe_builder import (  # noqa: E402
 )
 from core.patch_engine import _apply_patch_data_expand  # noqa: E402
 from core.tkspatch_loader import load_patch_directory  # noqa: E402
+from ui.generate_exe_dialog import (  # noqa: E402
+    GenerateExeDialog, expansion_logical_size,
+)
 from editor_utils.lzss import (  # noqa: E402
     lzss_compress_dat, lzss_decompress_dat,
 )
@@ -37,6 +40,109 @@ GAME_DIR = Path(os.environ.get("TKS_GAME_DIR", r"游戏目录（原版）"))
 
 
 class RecordExpandBuildTests(unittest.TestCase):
+    def test_warpc_logical_size_excludes_pe_backing_padding(self):
+        with tempfile.TemporaryDirectory() as td:
+            wardata = Path(td) / "WarPC.dat"
+            wardata.write_bytes(b"\0" * 527000)
+
+            patch_def = SimpleNamespace(
+                id="warpc_base_refs",
+                name="WarPC 数据重定位",
+                data_file="WarPC.dat",
+                old_base=0x757F08,
+                old_size=150722,
+                section_name=".warpc",
+                needs_lzss=False,
+                activate_if_expanded=False,
+                bytes_patches=[],
+                pattern="",
+                value_offset=0,
+                expect_count=0,
+                _extra={
+                    "buffer_cap": 527000,
+                    "aux_size": 0,
+                    "front_pad": 0,
+                    "aux_patches": [],
+                },
+            )
+            dialog = SimpleNamespace(
+                _out_edit=SimpleNamespace(text=lambda: str(wardata)),
+                _src_edit=SimpleNamespace(text=lambda: str(wardata)),
+                _log=lambda _msg: None,
+            )
+
+            item = GenerateExeDialog._build_data_section(dialog, patch_def)
+
+            self.assertIsNotNone(item)
+            self.assertEqual(item.logical_size, 527000)
+            self.assertEqual(item.backing_size, 589824)
+            self.assertEqual(len(item.data), 589824)
+
+            value_patch = SimpleNamespace(
+                id="warpc_size_refs",
+                new_value_expr="{warpc_new_size}",
+                expect_value=0,
+                _extra={"buffer_cap": 527000},
+            )
+            dialog._read_data_file_size = lambda _name: 527000
+            self.assertEqual(
+                GenerateExeDialog._resolve_imm32_value(dialog, value_patch),
+                527000,
+            )
+
+    def test_logical_size_helper_does_not_align(self):
+        self.assertEqual(expansion_logical_size(527000, 527000), 527000)
+
+    @unittest.skipUnless(
+        (GAME_DIR / "TKS.exe").is_file()
+        and (GAME_DIR / "WarPC.dat").is_file(),
+        "需要原版 TKS.exe / WarPC.dat 才能验证逻辑容量烧录",
+    )
+    def test_warpc_build_uses_logical_size_constant(self):
+        cfg = load_patch_directory(str(LAUNCHER / "patches"),
+                                   log_func=lambda *_a: None)
+        patch_def = next(p for p in cfg.patches
+                         if p.id == "warpc_base_refs")
+        dialog = SimpleNamespace(
+            _out_edit=SimpleNamespace(text=lambda: str(GAME_DIR / "TKS.exe")),
+            _src_edit=SimpleNamespace(text=lambda: str(GAME_DIR / "TKS.exe")),
+            _log=lambda _msg: None,
+        )
+        item = GenerateExeDialog._build_data_section(dialog, patch_def)
+        self.assertIsNotNone(item)
+        self.assertEqual(item.logical_size, 527000)
+        self.assertEqual(item.backing_size, 589824)
+
+        with tempfile.TemporaryDirectory() as td:
+            out = Path(td) / "TKS_warpc_size.exe"
+            result = ExeBuilder(str(GAME_DIR / "TKS.exe")).build(
+                [], str(out), data_section_patches=[item])
+            self.assertTrue(result.success, "\n".join(result.log))
+
+            original_pe = pefile.PE(str(GAME_DIR / "TKS.exe"),
+                                    fast_load=True)
+            original_text = next(
+                s for s in original_pe.sections
+                if s.Name.rstrip(b"\0") == b".text").get_data()
+            built_pe = pefile.PE(data=out.read_bytes(), fast_load=True)
+            built_text = next(
+                s for s in built_pe.sections
+                if s.Name.rstrip(b"\0") == b".text").get_data()
+
+            old_size = struct.pack("<I", 150722)
+            new_size = struct.pack("<I", 527000)
+            offsets = []
+            pos = 0
+            while True:
+                pos = original_text.find(old_size, pos)
+                if pos < 0:
+                    break
+                offsets.append(pos)
+                pos += 4
+            self.assertEqual(len(offsets), 5)
+            for off in offsets:
+                self.assertEqual(built_text[off:off + 4], new_size)
+
     @unittest.skipUnless(
         (GAME_DIR / "TKS.exe").is_file()
         and (GAME_DIR / "TKItem.dat").is_file()

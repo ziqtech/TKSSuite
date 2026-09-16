@@ -322,7 +322,8 @@ class DataSectionPatchItem:
     size_pattern: str = ""       # 精确大小引用模式（空=按 old_size 全代码段扫描）
     size_value_offset: int = 0   # 新缓冲区大小在 size_pattern 中的偏移
     size_expect_count: int = 0   # size_pattern 预期命中数
-    logical_size: int = 0        # 真实数据缓冲区大小（不含尾部辅助数组）
+    logical_size: int = 0        # 游戏代码使用的逻辑容量（不含尾部辅助数组）
+    backing_size: int = 0        # PE 节内实际后备区大小（可含对齐填充）
     aux_size: int = 0            # 尾部辅助数组大小
     aux_patches: Optional[List[Dict]] = None
     bytes_patches: Optional[List['BytesPatchItem']] = None
@@ -861,15 +862,21 @@ class ExeBuilder:
         if data_section_patches:
             log.append(f'── 应用数据段注入 ({len(data_section_patches)} 个) ──')
             for item in data_section_patches:
+                fallback_backing = max(
+                    item.logical_size,
+                    len(item.data) - max(item.aux_size, 0),
+                )
+                backing_size = max(item.backing_size or 0, fallback_backing)
                 new_va = next_va
                 new_abs = pe.image_base + new_va + item.front_pad
                 log.append(f'  [{item.patch_id}] 注入 {item.section_name}: '
                            f'RVA=0x{new_va:X}, 绝对=0x{new_abs:X}, '
-                           f'缓冲={item.front_pad}+{len(item.data)} 字节 '
+                           f'前置垫={item.front_pad}, 逻辑={item.logical_size or backing_size}, '
+                           f'后备={backing_size}, 辅助={item.aux_size} 字节 '
                            f'(BSS, 不占文件空间)')
                 data_section_results.append((item, new_abs, 0, new_va))
                 next_va = align_up(
-                    new_va + max(item.front_pad + len(item.data), 1),
+                    new_va + max(item.front_pad + backing_size + item.aux_size, 1),
                     pe.section_align)
 
         # ── 1. patch_bytes ──
@@ -1048,7 +1055,12 @@ class ExeBuilder:
                         log.append(f'    @ 0x{off:X} (RVA 0x{rva:X})')
 
                 if item.aux_patches:
-                    aux_base_abs = new_base_abs + redirect_size
+                    fallback_backing = max(
+                        item.logical_size,
+                        len(item.data) - max(item.aux_size, 0),
+                    )
+                    backing_size = max(item.backing_size or 0, fallback_backing)
+                    aux_base_abs = new_base_abs + backing_size
                     log.append(f'  [{item.patch_id}] 辅助数组 0x{aux_base_abs:X} '
                                f'({item.aux_size} bytes)')
                     for entry in item.aux_patches:
