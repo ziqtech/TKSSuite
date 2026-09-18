@@ -48,6 +48,7 @@ except Exception:
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from editor_utils.app_shell import EditorMainWindow, run_editor
+from editor_utils.atomic_write import atomic_write_bytes
 from editor_utils.dock_components import DockHeader
 from editor_utils.adaptive_table import AdaptiveTableWidget
 from editor_utils.jvg_loader import get_sprite_pixmap, load_mu_sprites
@@ -56,6 +57,10 @@ from editor_utils.lzss import (
     lzss_compress_save, lzss_decompress_dat, lzss_decompress_save,
 )
 from editor_utils.picker_dialogs import ItemPickerDialog
+from editor_utils.skill_extension import (
+    migrate_for_original_game,
+    parse_skill_extension,
+)
 from editor_utils.theme_switcher import (
     apply_theme_to_window, toggle_theme_in_family,
 )
@@ -396,8 +401,8 @@ PAGE_NAMES = {0: "药品", 1: "道具", 2: "武器", 3: "防具", 4: "饰品", 5
 # 数据加载/保存
 # ============================================================
 
-def load_save_data(path):
-    """加载 sav.N 数据文件. 返回 (game_state, seg1, seg2, seg3)."""
+def load_save_data(path, include_tail=False):
+    """加载 sav.N 数据文件. 返回 (game_state, seg1, seg2, seg3[, tail])."""
     with open(path, 'rb') as f:
         raw = f.read()
     offset = 0
@@ -425,11 +430,17 @@ def load_save_data(path):
     seg1 = bytearray(frame2[:SEG1_SIZE])
     seg2 = bytearray(frame2[SEG1_SIZE:WARPC_OFFSET])
     seg3 = bytearray(frame2[WARPC_OFFSET:])
+    tail = bytes(raw[offset + comp2:])
+    parse_skill_extension(tail)
+    if include_tail:
+        return bytearray(game_state), seg1, seg2, seg3, tail
     return bytearray(game_state), seg1, seg2, seg3
 
 
-def save_save_data(path, game_state, seg1, seg2, seg3):
+def save_save_data(path, game_state, seg1, seg2, seg3, extension_tail=b""):
     """保存 sav.N 数据文件. 自动备份原文件."""
+    extension_tail = bytes(extension_tail)
+    parse_skill_extension(extension_tail)
     frame2 = bytes(seg1) + bytes(seg2) + bytes(seg3)
     inner1 = lzss_compress_save(bytes(game_state))
     inner2 = lzss_compress_save(frame2)
@@ -440,17 +451,18 @@ def save_save_data(path, game_state, seg1, seg2, seg3):
                     d.write(s.read())
         except Exception:
             pass
-    with open(path, 'wb') as f:
-        f.write(struct.pack('<I', len(inner1)))
-        f.write(inner1)
-        f.write(struct.pack('<I', len(inner2)))
-        f.write(inner2)
+    output = (struct.pack('<I', len(inner1)) + inner1 +
+              struct.pack('<I', len(inner2)) + inner2 + extension_tail)
+    atomic_write_bytes(path, output)
     # 验证回读
-    gs_v, s1_v, s2_v, s3_v = load_save_data(path)
+    gs_v, s1_v, s2_v, s3_v, tail_v = load_save_data(
+        path, include_tail=True)
     if gs_v != game_state:
         raise RuntimeError("保存验证失败: Frame1 回写不匹配!")
     if s1_v != seg1 or s2_v != seg2 or s3_v != seg3:
         raise RuntimeError("保存验证失败: Frame2 回写不匹配!")
+    if tail_v != extension_tail:
+        raise RuntimeError("保存验证失败: 技能扩展块回写不匹配!")
 
 
 def load_index_file(path):
@@ -535,6 +547,7 @@ class SaveEditorApp(EditorMainWindow):
         self.seg1 = None
         self.seg2 = None
         self.seg3 = None
+        self._extension_tail = b""
         self.index_meta = None
         self._dirty = False
         self.warpc_count = 143  # default, updated on load
@@ -1234,16 +1247,28 @@ class SaveEditorApp(EditorMainWindow):
         if not os.path.exists(sav_data):
             self._status_label.setText(f"槽位 {self.slot}: 数据文件不存在")
             self.game_state = self.seg1 = self.seg2 = self.seg3 = None
+            self._extension_tail = b""
             self.index_meta = None
             self._dirty = False
             self._refresh_all()
             return
         try:
-            self.game_state, self.seg1, self.seg2, self.seg3 = load_save_data(sav_data)
+            (self.game_state, self.seg1, self.seg2, self.seg3,
+             self._extension_tail) = load_save_data(
+                 sav_data, include_tail=True)
             self.warpc_count = len(self.seg3) // WARPC_REC
+            if self._extension_tail:
+                extension = migrate_for_original_game(
+                    parse_skill_extension(self._extension_tail),
+                    actor_count=self.warpc_count,
+                    skill_count=0,
+                    mapping_version=1,
+                )
+                self._extension_tail = extension.to_bytes()
         except Exception as e:
             QMessageBox.critical(self, "加载失败", str(e))
             self.game_state = self.seg1 = self.seg2 = self.seg3 = None
+            self._extension_tail = b""
             self.index_meta = None
             self._dirty = False
             self._refresh_all()
@@ -1866,7 +1891,9 @@ class SaveEditorApp(EditorMainWindow):
         try:
             sav_data = os.path.join(self.save_dir, f'sav.{self.slot}')
             sav_idx = os.path.join(self.save_dir, f'{self.slot}.sav')
-            save_save_data(sav_data, self.game_state, self.seg1, self.seg2, self.seg3)
+            save_save_data(
+                sav_data, self.game_state, self.seg1, self.seg2, self.seg3,
+                extension_tail=self._extension_tail)
             self._sync_index_from_seg2()
             if self.index_meta:
                 save_index_file(sav_idx, self.index_meta)

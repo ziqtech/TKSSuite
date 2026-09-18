@@ -89,7 +89,7 @@ _TKSPATCH_SCHEMA = {
         "sites", "cave_entries", "zero_hit_ok",
         # patch_sites globals 重定位 (16:9 宽屏: 槽位/scratch 搬离 .data)
         "globals_ph_base", "globals_rebase_span", "globals_alloc_size",
-        "globals_extra_windows",
+        "globals_extra_windows", "globals_relocations",
         # patch_summon_table
         "json_file", "script_file", "script_source",
         "data_rva", "data_keys", "code_addrs",
@@ -117,6 +117,8 @@ _TKSPATCH_SCHEMA = {
         "summon_limit",
         # 版本
         "_format", "format", "format_version",
+        # 补丁图 / 唯一初始化责任声明
+        "requires", "supersedes", "globals_initializer",
     ],
     "types": {
         "type": str,
@@ -163,6 +165,7 @@ _TKSPATCH_SCHEMA = {
         "weapon_cap_adjust": bool,
         "mod_config_overridable": bool,
         "cave_code": str,
+        "globals_relocations": list,
         "hooks": list,
         "bytes_patches": list,
         "cave_code_file": str,
@@ -424,6 +427,10 @@ def parse_patch_dict(raw: dict, source_path: str,
         (_parse_maybe_hex(off), _parse_maybe_hex(span))
         for off, span in (raw.get("globals_extra_windows") or [])
     ]  # type: ignore
+    if "globals_relocations" in raw:
+        d.globals_relocations = [
+            _parse_maybe_hex(offset) for offset in raw["globals_relocations"]
+        ]
 
     # 额外字段 (类型特定, 原样保存)
     d._extra = {}  # type: ignore
@@ -432,7 +439,8 @@ def parse_patch_dict(raw: dict, source_path: str,
                 "cave_mask_offset", "summon_cave_code", "summon_cave2_code",
                 "redirect_base_span", "buffer_cap",
                 "activate_if_expanded", "front_pad", "aux_size",
-                "aux_patches"):
+                "aux_patches", "requires", "supersedes",
+                "globals_initializer"):
         if key in raw:
             d._extra[key] = raw[key]  # type: ignore
     if "summon_limit" in raw:

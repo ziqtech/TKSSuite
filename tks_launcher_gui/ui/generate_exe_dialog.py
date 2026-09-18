@@ -496,14 +496,31 @@ class GenerateExeDialog(QDialog):
         fixed_layouts = []
         sites_patches = []
 
+        all_patches = []
+        checked_ids = set()
         for i in range(self._patch_list.count()):
             list_item = self._patch_list.item(i)
-            if list_item.checkState() != Qt.Checked:
-                continue
             p: PatchDef = list_item.data(Qt.UserRole)
             if p is None:
                 continue
+            all_patches.append(p)
+            if list_item.checkState() == Qt.Checked:
+                checked_ids.add(p.id)
 
+        from core.config_loader import resolve_effective_patches
+        try:
+            effective = resolve_effective_patches(
+                all_patches, selected=checked_ids)
+        except ValueError as exc:
+            self._log(f'补丁依赖/替代解析失败: {exc}')
+            return (cave_patches, bytes_patches, imm32_patches,
+                    config_patches, data_section_patches, fixed_layouts)
+        if effective.superseded:
+            self._log('补丁替代: ' + ', '.join(
+                f'{old}->{new}'
+                for old, new in sorted(effective.superseded.items())))
+
+        for p in effective.patches:
             # cave_hook / patch_exp_lock
             if p.type in ('cave_hook', 'patch_exp_lock'):
                 cave_code = get_external_cave_code(p)
@@ -631,6 +648,7 @@ class GenerateExeDialog(QDialog):
                     globals_rebase_span=int(getattr(p, 'globals_rebase_span', 0) or 0),
                     globals_alloc_size=int(getattr(p, 'globals_alloc_size', 0) or 0),
                     globals_extra_windows=list(getattr(p, 'globals_extra_windows', []) or []),
+                    globals_relocations=p.globals_relocations,
                 ))
 
         self._warn_unselected_expansions(data_section_patches)
@@ -1002,6 +1020,20 @@ class GenerateExeDialog(QDialog):
             tool_note = ''
             out_dir = os.path.dirname(os.path.abspath(result.output_path)) \
                 if result.output_path else ''
+            sidecar_note = ''
+            src_dir = os.path.dirname(os.path.abspath(self._src_edit.text().strip()))
+            sidecar_src = os.path.join(src_dir, 'WarPC.dat.tksx')
+            if out_dir and os.path.isfile(sidecar_src):
+                sidecar_dst = os.path.join(out_dir, 'WarPC.dat.tksx')
+                if os.path.abspath(sidecar_src) != os.path.abspath(sidecar_dst):
+                    try:
+                        shutil.copy2(sidecar_src, sidecar_dst)
+                        self._log(f'复制技能模板 {sidecar_src} → {out_dir}')
+                        sidecar_note = '已同时复制 WarPC.dat.tksx 技能模板。\n\n'
+                    except OSError as exc:
+                        self._log(f'[WARN] 复制 WarPC.dat.tksx 失败: {exc}')
+                        sidecar_note = ('提示：WarPC.dat.tksx 未复制成功，'
+                                        '新增技能模板不会生效。\n\n')
             tool = self._tool_combo.currentText().strip() \
                 if (self._copy_tool_cb.isChecked() and self._tool_combo.count()) else ''
             if tool and out_dir:
@@ -1022,7 +1054,7 @@ class GenerateExeDialog(QDialog):
             QMessageBox.information(
                 self, '成功',
                 f'修改版 exe 已生成：\n{result.output_path}\n\n'
-                f'{tool_note}可直接分发给玩家，无需启动器。')
+                f'{sidecar_note}{tool_note}可直接分发给玩家，无需启动器。')
         else:
             self._log(f'构建失败: {result.error}')
             QMessageBox.critical(self, '失败', f'构建失败:\n{result.error}')

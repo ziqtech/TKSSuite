@@ -16,5 +16,19 @@
   "default_checked": true,
   "format": "TKSPATCH",
   "format_version": 1,
-  "buffer_cap": 527000
+  "buffer_cap": 527000,
+  "bytes_patches": [
+    {
+      "_comment": "WarPC 扩容后 sub_404024 会读取 tmp.dat 并用 sub_452B14 把未定长数据解压进启动器注入的 WarPC 缓冲区, 竞态下越界写触发访问违例。只 NOP 这一条 call 0x452B14 (E8 49 EA 04 00), 保留 fopen/fread/malloc 之后的 free/fclose 与删除 tmp.dat 的正常返回, 使异步写回/回读握手照常完成。切勿改整函数入口置空, 否则 tmp.dat 不被消费会导致进入游戏卡死。",
+      "pattern": "8B 55 C4 52 E8 49 EA 04 00",
+      "expect_count": 1,
+      "replace": {
+        "4": 144,
+        "5": 144,
+        "6": 144,
+        "7": 144,
+        "8": 144
+      }
+    }
+  ]
 }

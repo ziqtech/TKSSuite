@@ -595,6 +595,29 @@ def value_scan(data: bytes, value: int) -> List[int]:
             pos += 1
     return results
 
+
+def overlaps_rel32_jcc(data: bytes, offset: int) -> bool:
+    """判断 4 字节写入是否与 0F 80..8F rel32 条件跳转重叠。
+
+    例如 32900 (84 80 00 00) 会出现在 ``0F 84 80 00 00 00`` 的
+    操作数内部。把这种非指令立即数当成数据常量改写，会直接破坏跳转。
+    """
+    if offset < 0 or offset + 4 > len(data):
+        return False
+    for start in range(max(0, offset - 5), min(offset + 3, len(data) - 6) + 1):
+        if data[start] == 0x0F and 0x80 <= data[start + 1] <= 0x8F:
+            return True
+    return False
+
+
+def value_scan_excluding_rel32(data: bytes, value: int) -> List[int]:
+    """value_scan 的安全版本，排除嵌入条件跳转编码中的伪命中。"""
+    return [
+        offset for offset in value_scan(data, value)
+        if not overlaps_rel32_jcc(data, offset)
+    ]
+
+
 def discover_warpc_base(code_buf: bytes, code_start_addr: int, fallback: int,
                          log_func=None) -> int:
     """

@@ -231,6 +231,24 @@ def replace_addr_in_bytes(data: bytearray, old_addr: int, new_addr: int):
         else:
             pos += 1
 
+def rebase_globals(data: bytes, windows, delta: int, offsets=None) -> bytes:
+    # 宽地址窗口可能命中跨指令字节；显式偏移表只允许改写真实地址操作数。
+    if not delta or not windows:
+        return data
+    out = bytearray(data)
+    positions = range(len(data) - 3) if offsets is None else offsets
+    for offset in positions:
+        if not isinstance(offset, int) or not 0 <= offset <= len(data) - 4:
+            raise ValueError(f"globals 重定位偏移越界: {offset}")
+        source = out if offsets is None else data
+        value = int.from_bytes(source[offset:offset + 4], 'little')
+        if any(lo <= value < lo + span for lo, span in windows):
+            out[offset:offset + 4] = struct.pack('<I', (value + delta) & 0xFFFFFFFF)
+        elif offsets is not None:
+            raise ValueError(f"globals 重定位位点 {offset:#x} 不是占位地址")
+    return bytes(out)
+
+
 def get_child_processes(parent_pid: int) -> List[PROCESSENTRY32]:
     results = []
     snap = _CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)

@@ -19,15 +19,19 @@ class PatchSettings:
     tkdefunit_orig_count: int = 5000
     # cave 区预算。2026-09-10 起 fixed_layout 块 (summon_extend/summon_exp) 由
     # CaveLayout 按实际占用区间预留, 分配器对全部槽位可见; 全补丁启用约需 4.8KB。
-    # 16:9 宽屏的精灵解码重写块 (18 入口 + 通用处理器) 约 3.9KB, 与既有槽位相加
-    # 需 0x12E0+3942 ≈ 8.8KB, 故预算取 16384 (四页)。可用 TKS_CAVE_BUDGET 覆盖。
-    cave_total_size: int = 16384
+    # 16:9 宽屏的精灵解码重写块 (18 入口 + 通用处理器) 约 7.7KB，统一技能扩展
+    # cave 约 9.2KB；两者与既有槽位共存时需要超过 24KB。预算取 32768
+    # (八页)，仍只是进程内虚拟内存，可用 TKS_CAVE_BUDGET 覆盖。
+    cave_total_size: int = 32768
 
 
 @dataclass
 class PatchRuntimeState:
     """单次启动期间计算出的补丁运行时状态。"""
     target_pid: int = 0
+    game_dir: str = ""
+    skill_extension_enabled: bool = False
+    redirect_exclude_ranges: list = field(default_factory=list)
     warpc_base: int = 0
     warpc_new_base: int = 0
     warpc_new_size: int = 0
@@ -115,6 +119,7 @@ class PatchDef:
     globals_rebase_span: int = 0    # 重定位窗口宽度 (字节, 含 scratch 基址)
     globals_alloc_size: int = 0     # 独立分配大小 (字节)
     globals_extra_windows: list = field(default_factory=list)  # 附加窗口 [[占位相对偏移, 宽], ...]
+    globals_relocations: Optional[List[int]] = None
 
     # ── 文件级补丁类型 (生成启动器用, 参数全部声明在 patch.json) ──
     # type=fixed_layout_cave: 多 hook + 固定布局 cave, cave_code.py 提供 build_cave_block
@@ -133,6 +138,107 @@ class PatchDef:
 @dataclass
 class PatchConfig:
     patches: List[PatchDef] = field(default_factory=list)
+
+
+def patch_metadata(patch, key, default=None):
+    return (getattr(patch, "_extra", {}) or {}).get(key, default)
+
+
+@dataclass
+class EffectivePatches:
+    patches: List[PatchDef]
+    superseded: Dict[str, str] = field(default_factory=dict)
+    required_by: Dict[str, str] = field(default_factory=dict)
+
+    @property
+    def ids(self):
+        return {p.id for p in self.patches}
+
+
+def resolve_effective_patches(patches, selected=None, disabled=None):
+    """GUI、运行时与生成器共用：必选 + 用户选择、依赖闭包、替代、拓扑顺序。"""
+    by_id = {p.id: p for p in patches}
+    disabled = set(disabled or ())
+    enabled = {p.id for p in patches if p.id not in disabled and
+               (not p.optional or (p.default_checked if selected is None
+                                   else p.id in selected))}
+    required_by = {}
+    pending = list(enabled)
+    while pending:
+        pid = pending.pop()
+        for dep in patch_metadata(by_id[pid], "requires", []):
+            if dep not in by_id or dep in disabled:
+                raise ValueError(f"补丁 {pid} 需要 {dep}，该依赖缺失或已禁用")
+            required_by[dep] = pid
+            if dep not in enabled:
+                enabled.add(dep)
+                pending.append(dep)
+    superseded = {}
+    for p in patches:
+        if p.id not in enabled:
+            continue
+        replacements = list(patch_metadata(p, "supersedes", []))
+        # 扩容补丁是技能加载长度的唯一负责人；未激活时保留原版 350 条加载。
+        if p.id == "tkskill_expand":
+            replacements.append("tkskill_size")
+        for old in replacements:
+            if old == p.id or (old in superseded and superseded[old] != p.id):
+                raise ValueError(f"补丁替代关系冲突: {old}")
+            superseded[old] = p.id
+    enabled.difference_update(superseded)
+    ordered, visiting, visited = [], set(), set()
+
+    def visit(pid):
+        if pid in visited:
+            return
+        if pid in visiting:
+            raise ValueError(f"补丁依赖存在循环: {pid}")
+        visiting.add(pid)
+        for dep in patch_metadata(by_id[pid], "requires", []):
+            provider = superseded.get(dep, dep)
+            if provider not in enabled:
+                raise ValueError(f"补丁 {pid} 的依赖 {dep} 未启用")
+            if provider != pid:
+                visit(provider)
+        visiting.remove(pid)
+        visited.add(pid)
+        ordered.append(by_id[pid])
+
+    for p in patches:
+        if p.id in enabled:
+            visit(p.id)
+    # File/data expansions rewrite original code anchors.  Running them last
+    # keeps patch_sites/cave_hooks matching the pristine instruction bytes
+    # while their allocated buffers are already available through the
+    # launcher runtime state.
+    ordered.sort(key=lambda patch: patch.type == "patch_data_expand")
+    return EffectivePatches(ordered, superseded, required_by)
+
+
+def validate_skill_table(size, patches):
+    """扩展定义必须有完整保护，且不能越过 16 位字节偏移的 697 条边界。"""
+    if size <= 0 or size % 94:
+        raise ValueError("TKSkill.dat 技能数据长度无效，必须为 94 字节记录的整数倍")
+    count = size // 94
+    if count > 697:
+        raise ValueError(f"TKSkill.dat 有 {count} 条技能；当前最多支持 697 条")
+    unified = any(patch_metadata(p, "globals_initializer") == "skill_extension"
+                  for p in patches)
+    if count > 350 and not unified:
+        raise ValueError("TKSkill.dat 超过原版 350 条，请启用统一技能扩展补丁以保护学习状态和菜单")
+    if unified and not any(p.id == "tkskill_expand" for p in patches):
+        raise ValueError("统一技能扩展缺少技能定义表扩容补丁")
+    return unified
+
+
+def validate_globals_initial_data(seeds, alloc_size):
+    result = []
+    for offset, payload in seeds or []:
+        if (not isinstance(offset, int) or not isinstance(payload, bytes)
+                or offset < 0 or offset + len(payload) > alloc_size):
+            raise ValueError(f"技能运行时种子超出 globals 分配范围 ({alloc_size} 字节)")
+        result.append((offset, payload))
+    return result
 
 
 def resolve_config_path(base_path: str, rel: str) -> str:

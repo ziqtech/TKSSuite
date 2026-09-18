@@ -20,7 +20,9 @@ Tab 分区 (按字段索引顺序排列):
   Tab 2: 装备与技能 [69]-[87] + [260]-[272]
   Tab 3: 技能学习状态 [88]-[259]
   Tab 4: 技能效果判定 [273]+
-  Tab 5: 全部字段 (raw grid)
+  Tab 5: 附加技能 350..696 (TKSX 学习状态)
+  Tab 6: 附加技能效果判定 350..696 (角色级 TKKon 覆盖)
+  Tab 7: 全部字段 (raw grid)
 
 字段布局 (仅列出反编译已验证的字段; 未验证字段标注 "未验证"):
   [0]   name_id      — 角色名称 TKT ID
@@ -55,6 +57,7 @@ import json
 import os
 import struct
 import sys
+from pathlib import Path
 from functools import partial
 from PySide6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout,
@@ -76,6 +79,7 @@ from editor_utils.theme_switcher import (
     apply_theme_to_window, toggle_theme_in_family, current_window_theme,
 )
 from editor_utils.app_shell import EditorMainWindow, run_editor
+from editor_utils.atomic_write import atomic_write_bytes
 from editor_utils.dock_components import DockHeader
 from editor_utils.adaptive_table import AdaptiveTableWidget
 from editor_utils.picker_dialogs import (
@@ -88,6 +92,16 @@ from editor_utils.version import format_title
 from editor_utils.lzss import lzss_decompress_dat, lzss_compress_dat, lzss_decompress_save, lzss_compress_save
 from editor_utils.tkt_loader import load_tkt_simple
 from editor_utils.shared_state import pick_tks_directory
+from editor_utils.skill_extension import (
+    GAME_ACTOR_CAPACITY,
+    GAME_EXTENDED_TKKON_DEFAULT,
+    GAME_OVERRIDE_CAPACITY,
+    GAME_TKKON_CAPACITY,
+    SkillExtensionFormatError,
+    create_original_game_extension,
+    migrate_for_original_game,
+    parse_skill_extension,
+)
 from editor_utils.mod_exporter import (
     diff_records, compute_crc32, generate_mod_json,
     pack_tksmod, build_data_diff_json, ModMetadataDialog, safe_mod_filename,
@@ -231,8 +245,7 @@ def save_warpc(fp, recs):
     compressed = lzss_compress(bytes(buf))
     if lzss_decompress(compressed) != bytes(buf):
         raise RuntimeError("压缩回写验证失败!")
-    with open(fp, 'wb') as f:
-        f.write(compressed)
+    atomic_write_bytes(fp, compressed)
     return True
 
 # ── 存档文件常量 (来自 sub_410ED4 SaveTKMat / sub_41103C LoadTKMat) ──
@@ -240,9 +253,9 @@ SAVE_SEG1_SIZE = 3432    # 脚本全局变量
 SAVE_SEG2_SIZE = 5768    # 背包/队伍/金币
 SAVE_WARPC_OFFSET = 9200 # = SEG1 + SEG2
 
-def load_warpc_from_save(save_path):
+def load_warpc_from_save(save_path, include_tail=False):
     """从存档文件 sav.N 读取 WarPC 数据。
-    返回 (seg1_bytes, seg2_bytes, records) 其中 records 格式同 load_warpc()。"""
+    返回 (seg1_bytes, seg2_bytes, records[, extension_tail])。"""
     with open(save_path, 'rb') as f:
         raw = f.read()
     offset = 0
@@ -259,6 +272,8 @@ def load_warpc_from_save(save_path):
     if offset + comp2 > len(raw):
         raise ValueError("Frame2 数据不完整")
     frame2 = lzss_decompress_save(raw[offset:offset + comp2])
+    extension_tail = bytes(raw[offset + comp2:])
+    parse_skill_extension(extension_tail)
     if len(frame2) < SAVE_WARPC_OFFSET:
         raise ValueError(f"Frame2 解压大小不足: {len(frame2)} < {SAVE_WARPC_OFFSET}")
     seg1 = bytes(frame2[:SAVE_SEG1_SIZE])
@@ -272,10 +287,15 @@ def load_warpc_from_save(save_path):
         off = i * WARPC_REC
         vals = struct.unpack_from('<' + 'h' * WARPC_FIELD_COUNT, seg3, off)
         recs.append({'index': i, 'fields': list(vals)})
+    if include_tail:
+        return seg1, seg2, recs, extension_tail
     return seg1, seg2, recs
 
-def save_warpc_to_save(save_path, seg1, seg2, records):
+def save_warpc_to_save(save_path, seg1, seg2, records,
+                       extension_tail=b""):
     """将 WarPC records 写回存档文件 sav.N (保留 Frame 1 和 seg1/seg2 不变)。"""
+    extension_tail = bytes(extension_tail)
+    parse_skill_extension(extension_tail)
     # 重新读取原文件获取 Frame 1 原始压缩数据
     with open(save_path, 'rb') as f:
         raw = f.read()
@@ -294,6 +314,13 @@ def save_warpc_to_save(save_path, seg1, seg2, records):
     dec2 = lzss_decompress_save(comp2)
     if dec2 != frame2:
         raise RuntimeError("Frame2 压缩回写验证失败!")
+    output = (
+        struct.pack('<I', len(frame1_block)) +
+        frame1_block +
+        struct.pack('<I', len(comp2)) +
+        comp2 +
+        extension_tail
+    )
     # 备份
     if os.path.exists(save_path):
         try:
@@ -302,12 +329,10 @@ def save_warpc_to_save(save_path, seg1, seg2, records):
                     d.write(s.read())
         except Exception:
             pass
-    # 写入
-    with open(save_path, 'wb') as f:
-        f.write(struct.pack('<I', len(frame1_block)))
-        f.write(frame1_block)
-        f.write(struct.pack('<I', len(comp2)))
-        f.write(comp2)
+    atomic_write_bytes(save_path, output)
+    reloaded = load_warpc_from_save(save_path, include_tail=True)
+    if reloaded[3] != extension_tail:
+        raise RuntimeError("技能扩展块回读验证失败")
     return True
 
 # ═══════════════════════════════════════════════════════════════
@@ -518,6 +543,9 @@ class WarpcEditorV2(EditorMainWindow):
         self._save_slot = 0       # 当前槽位号
         self._seg1 = None         # Frame2 seg1 原始字节 (回写时需要)
         self._seg2 = None         # Frame2 seg2 原始字节 (回写时需要)
+        self._extension_tail = b""  # Frame2 之后的技能扩展块
+        self._skill_extension = None
+        self._draft_skill_extension = None
         self._game_dir = None     # 游戏资源目录 (TKT/TKItem/Fa.JVG 所在目录)
 
         self._edit_vars = {}
@@ -529,6 +557,14 @@ class WarpcEditorV2(EditorMainWindow):
         self._status_widgets = []
         self._status_resist_widgets = []
         self._skill_learn_widgets = []
+        self._ext_skill_learn_widgets = []
+        self._ext_skill_learn_labels = []
+        self._ext_skill_learn_by_idx = {}
+        self._ext_skill_effect_widgets = []
+        self._ext_skill_effect_name_labels = []
+        self._ext_skill_effect_by_idx = {}
+        self._ext_skill_effect_label_by_idx = {}
+        self._ext_effect_override_error = None
         self._suspend_overflow_check = False  # 批量填充技能学习时抑制溢出重算
         self._skill_overflow_label = None     # 技能组「学会超12」溢出提示标签
         self._skill_effect_widgets = []
@@ -860,6 +896,8 @@ class WarpcEditorV2(EditorMainWindow):
         self._build_tab2()
         self._build_tab3()
         self._build_tab4()
+        self._build_tab_extra_skill()
+        self._build_tab_extra_effect()
         self._build_tab5()
         # 页签标题右键菜单 (在标签上右键即可复制/粘贴对应标签页数据)
         self.tabs.tabBar().setContextMenuPolicy(Qt.CustomContextMenu)
@@ -1241,6 +1279,45 @@ class WarpcEditorV2(EditorMainWindow):
         gl.addWidget(body)
         p.layout().addWidget(grp)
 
+    def _build_tab_extra_skill(self):
+        """独立附加技能模板 Tab，不触碰原版技能学习页布局。"""
+        p = self._build_scroll_tab("附加技能")
+        self._register_tab_copy(p, 'learn')
+        self._extra_skill_tab_index = self.tabs.count() - 1
+        self._build_extended_learn_section(p.layout())
+        p.layout().addStretch(1)
+
+    def _build_extended_learn_section(self, parent_layout):
+        """新增技能 350..696 的角色模板学习矩阵 (WarPC 模板模式)。"""
+        self._ext_skill_group = QWidget()
+        self._ext_skill_group.setSizePolicy(
+            QSizePolicy.Preferred, QSizePolicy.Maximum)
+        outer = QVBoxLayout(self._ext_skill_group)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+        outer.setAlignment(Qt.AlignTop)
+        self._ext_skill_header = DockHeader("扩展技能学习状态 (350..696)")
+        self._ext_skill_header.setSizePolicy(
+            QSizePolicy.Preferred, QSizePolicy.Fixed)
+        outer.addWidget(self._ext_skill_header)
+        body = QWidget()
+        body.setObjectName("DockBody")
+        body.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)
+        bl = QVBoxLayout(body)
+        bl.setContentsMargins(8, 8, 8, 8)
+        self._ext_skill_hint = QLabel(
+            "编辑当前角色模板的扩展技能学习状态；"
+            "保存时写入 WarPC.dat 旁的 .tksx 配置。")
+        self._ext_skill_hint.setWordWrap(True)
+        bl.addWidget(self._ext_skill_hint)
+        self._ext_skill_learn_grid = QGridLayout()
+        self._ext_skill_learn_grid.setVerticalSpacing(2)
+        self._ext_skill_learn_grid.setHorizontalSpacing(4)
+        bl.addLayout(self._ext_skill_learn_grid)
+        outer.addWidget(body)
+        parent_layout.addWidget(self._ext_skill_group)
+        self._populate_extended_learn_grid()
+
     def _populate_learn_grid(self):
         """按当前模式重建技能学习单元格: 存档模式用数字框(手动输入原值 0~255),
         模板模式用带语义标签的下拉框。切换模式时会清空重建。"""
@@ -1274,6 +1351,180 @@ class WarpcEditorV2(EditorMainWindow):
             self._skill_learn_labels.append(lbl)
             grid.addLayout(cell, r, c, Qt.AlignTop)
         self._skill_learn_by_idx = {i: w for i, w in self._skill_learn_widgets}
+        if hasattr(self, '_ext_skill_learn_grid'):
+            self._populate_extended_learn_grid()
+
+    def _extended_skill_ids(self):
+        extension = getattr(self, '_skill_extension', None)
+        if extension is None:
+            return []
+        end = extension.skill_base + extension.skill_count
+        ids = [i for i in sorted(getattr(self, 'skill_names', {}))
+               if extension.skill_base <= i < end]
+        if ids:
+            return ids
+        return list(range(extension.skill_base, end))
+
+    def _populate_extended_learn_grid(self):
+        """重建扩展技能控件；模板模式或没有 TKSX 时隐藏该区域。"""
+        group = getattr(self, '_ext_skill_group', None)
+        grid = getattr(self, '_ext_skill_learn_grid', None)
+        if group is None or grid is None:
+            return
+        self._clear_layout(grid)
+        self._ext_skill_learn_widgets = []
+        self._ext_skill_learn_labels = []
+        self._ext_skill_learn_by_idx = {}
+        extension = getattr(self, '_skill_extension', None)
+        visible = not bool(getattr(self, '_save_mode', False))
+        group.setVisible(visible)
+        if not visible:
+            return
+        if extension is None:
+            self._ext_skill_hint.setText(
+                "未检测到扩展技能配置。请先加载含技能 350+ 的 TKSkill.dat，"
+                "或创建 WarPC.dat.tksx。")
+            return
+        save_mode = bool(getattr(self, '_save_mode', False))
+        skill_ids = self._extended_skill_ids()
+        if not skill_ids:
+            self._ext_skill_hint.setText(
+                "TKSkill.dat 中没有技能 350..696 的新增定义。")
+            return
+        self._ext_skill_hint.setText(
+            f"技能 350..696，共 {len(skill_ids)} 条；"
+            "状态值 0/1..9/10..19/20/30。")
+        for row, skill_idx in enumerate(skill_ids):
+            r, c = divmod(row, 8)
+            sname = self.skill_names.get(skill_idx, f"技能#{skill_idx}")
+            cell = QVBoxLayout()
+            cell.setSpacing(1)
+            lbl = QLabel(sname[:12])
+            lbl.setToolTip(f"TKSkill#{skill_idx} → TKSX 外部学习状态")
+            lbl.setProperty("class", "PropLabel")
+            cell.addWidget(lbl)
+            if save_mode:
+                w = NoWheelSpinBox()
+                w.setRange(0, 255)
+                w.setToolTip("0=不会 1..9=等待学 10..19=可以学 20=组学会 30=子技能学会")
+                w.valueChanged.connect(self._check_skill_group_overflow)
+            else:
+                w = EditorComboBox()
+                w.addItems(SKILL_LEARN_STATES)
+                w.currentIndexChanged.connect(self._check_skill_group_overflow)
+            cell.addWidget(w)
+
+            self._ext_skill_learn_widgets.append((skill_idx, w))
+            self._ext_skill_learn_labels.append(lbl)
+            self._ext_skill_learn_by_idx[skill_idx] = w
+            grid.addLayout(cell, r, c, Qt.AlignTop)
+
+    def _build_tab_extra_effect(self):
+        """独立附加技能效果判定 Tab。"""
+        p = self._build_scroll_tab("附加技能效果判定")
+        self._register_tab_copy(p, 'effect')
+        self._extra_effect_tab_index = self.tabs.count() - 1
+        self._extra_effect_inner = p
+        self._build_extended_effect_section(p.layout())
+
+    def _build_extended_effect_section(self, parent_layout):
+        """新增技能 350..696 的角色级 TKKon 效果覆盖。"""
+        self._ext_effect_group = QWidget()
+        self._ext_effect_group.setSizePolicy(
+            QSizePolicy.Preferred, QSizePolicy.Maximum)
+        outer = QVBoxLayout(self._ext_effect_group)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+        outer.setAlignment(Qt.AlignTop)
+        outer.addWidget(DockHeader("扩展技能效果判定 (350..696)"))
+        body = QWidget()
+        body.setObjectName("DockBody")
+        body.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)
+        bl = QVBoxLayout(body)
+        bl.setContentsMargins(8, 8, 8, 8)
+        self._ext_effect_hint = QLabel("")
+        self._ext_effect_hint.setWordWrap(True)
+        bl.addWidget(self._ext_effect_hint)
+        self._ext_skill_effect_grid = QGridLayout()
+        self._ext_skill_effect_grid.setVerticalSpacing(4)
+        self._ext_skill_effect_grid.setHorizontalSpacing(8)
+        bl.addLayout(self._ext_skill_effect_grid)
+        outer.addWidget(body)
+        parent_layout.addWidget(self._ext_effect_group)
+        parent_layout.addStretch(1)
+        self._populate_extended_effect_grid()
+
+    def _populate_extended_effect_grid(self):
+        """重建扩展技能 TKKon 效果覆盖控件。"""
+        group = getattr(self, '_ext_effect_group', None)
+        grid = getattr(self, '_ext_skill_effect_grid', None)
+        if group is None or grid is None:
+            return
+        self._clear_layout(grid)
+        self._ext_skill_effect_widgets = []
+        self._ext_skill_effect_name_labels = []
+        self._ext_skill_effect_by_idx = {}
+        self._ext_skill_effect_label_by_idx = {}
+        self._ext_effect_override_error = None
+        group.setVisible(not bool(getattr(self, '_save_mode', False)))
+        if getattr(self, '_save_mode', False):
+            return
+        extension = getattr(self, '_skill_extension', None)
+        if extension is None:
+            self._ext_effect_hint.setText(
+                "未检测到扩展技能配置。请先加载含技能 350+ 的 TKSkill.dat。")
+            return
+        skill_ids = self._extended_skill_ids()
+        if not skill_ids:
+            self._ext_effect_hint.setText(
+                "TKSkill.dat 中没有技能 350..696 的新增定义。")
+            return
+        self._ext_effect_hint.setText(
+            f"技能 350..696，共 {len(skill_ids)} 条；"
+            f"默认 TKKon {GAME_EXTENDED_TKKON_DEFAULT}，"
+            f"填写其他 {0}..{GAME_TKKON_CAPACITY - 1} 值会创建角色覆盖；"
+            f"覆盖上限 {GAME_OVERRIDE_CAPACITY} 条。")
+        for row, skill_idx in enumerate(skill_ids):
+            r, c = divmod(row, 8)
+            sname = self.skill_names.get(skill_idx, f"技能#{skill_idx}")
+            cell = QVBoxLayout()
+            cell.setSpacing(2)
+            lbl = QLabel(sname[:12])
+            lbl.setProperty("class", "PropLabel")
+            lbl.setToolTip(f"TKSkill#{skill_idx} → TKKon 效果")
+            cell.addWidget(lbl)
+            box = QFrame()
+            box.setObjectName("FakeInputBox")
+            bh = QHBoxLayout(box)
+            bh.setContentsMargins(0, 0, 0, 0)
+            bh.setSpacing(0)
+            ev = QLineEdit(str(GAME_EXTENDED_TKKON_DEFAULT))
+            ev.setValidator(QIntValidator(0, GAME_TKKON_CAPACITY - 1, ev))
+            ev.setToolTip(
+                f"默认 TKKon {GAME_EXTENDED_TKKON_DEFAULT}；"
+                "填写其他值会为该角色创建稀疏覆盖。")
+            bh.addWidget(ev, 1)
+            btn = QPushButton()
+            set_themed_icon(btn, "picker")
+            btn.setObjectName("FakeInputRightButton")
+            btn.setFixedWidth(26)
+            btn.clicked.connect(
+                lambda _, sid=skill_idx, sv=ev:
+                self._pick_extended_tkkon(sid, sv))
+            bh.addWidget(btn)
+            cell.addWidget(box)
+            name_lbl = QLabel("")
+            name_lbl.setProperty("class", "ExtraPreviewText")
+            name_lbl.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+            cell.addWidget(name_lbl)
+            ev.textChanged.connect(
+                lambda _, sid=skill_idx, sv=ev:
+                self._update_extended_kon_label(sid, sv))
+            self._ext_skill_effect_widgets.append((skill_idx, ev))
+            self._ext_skill_effect_name_labels.append(name_lbl)
+            self._ext_skill_effect_by_idx[skill_idx] = ev
+            self._ext_skill_effect_label_by_idx[skill_idx] = name_lbl
+            grid.addLayout(cell, r, c, Qt.AlignTop)
 
 
     def _build_learn_toolbar(self):
@@ -1313,8 +1564,13 @@ class WarpcEditorV2(EditorMainWindow):
         self._effect_inner = p
 
     def _build_skill_effect_section(self, parent):
-        active_indices = [i for i in range(350) if self._skill_types.get(i)==0] if self._skill_types else []
         max_slots = WARPC_FIELD_COUNT - 273
+        # Legacy mapping is addressed as 273 + skill_id. Extended command
+        # skills use the separate global-default/sparse-override layer.
+        active_indices = [
+            i for i in sorted(self._skill_types)
+            if self._skill_types.get(i) == 0 and i < max_slots
+        ] if self._skill_types else []
         count = min(len(active_indices), max_slots)
         if count == 0:
             lbl = QLabel("(需要加载 TKSkill.dat 数据)")
@@ -1344,7 +1600,7 @@ class WarpcEditorV2(EditorMainWindow):
             cell.setSpacing(2)
             lbl = QLabel(sname[:15])
             lbl.setProperty("class", "PropLabel")
-            lbl.setToolTip(f"[{273+i}] TKSkill#{skill_idx} → TKKon ID")
+            lbl.setToolTip(f"[{273+skill_idx}] TKSkill#{skill_idx} → TKKon ID")
             cell.addWidget(lbl)
             box = QFrame()
             box.setObjectName("FakeInputBox")
@@ -1365,9 +1621,10 @@ class WarpcEditorV2(EditorMainWindow):
             name_lbl.setProperty("class", "ExtraPreviewText")
             name_lbl.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)  # 不撑宽
             cell.addWidget(name_lbl)
-            self._skill_effect_widgets.append((i, ev))
+            self._skill_effect_widgets.append((skill_idx, ev))
             self._skill_effect_name_labels.append(name_lbl)
-            ev.textChanged.connect(lambda _, idx=i, sv=ev: self._update_kon_label(idx, sv))
+            ev.textChanged.connect(
+                lambda _, idx=i, sv=ev: self._update_kon_label(idx, sv))
             grid.addLayout(cell, r, c, Qt.AlignTop)
         bl.addLayout(grid)
         gl.addWidget(body)
@@ -1423,12 +1680,16 @@ class WarpcEditorV2(EditorMainWindow):
         if self._editing_idx < 0 or not self._skill_learn_widgets:
             self.status_var.setText("请先选择角色")
             return
-        clip = []
-        for skill_idx, cb in self._skill_learn_widgets:
-            clip.append(self._learn_widget_value(cb))
+        clip = {
+            'base': [(skill_idx, self._learn_widget_value(cb))
+                     for skill_idx, cb in self._skill_learn_widgets],
+            'ext': [(skill_idx, self._learn_widget_value(cb))
+                    for skill_idx, cb in self._ext_skill_learn_widgets],
+        }
         self._clip_skill_learn = clip
         self.status_var.setText(
-            f"已复制技能学习数据 (角色 #{self._editing_idx}, {len(clip)} 项)")
+            f"已复制技能学习数据 (角色 #{self._editing_idx}, "
+            f"{len(clip['base']) + len(clip['ext'])} 项)")
 
     def _paste_skill_learn(self):
         if self._editing_idx < 0:
@@ -1437,26 +1698,48 @@ class WarpcEditorV2(EditorMainWindow):
         if self._clip_skill_learn is None:
             self.status_var.setText("没有已复制的技能学习数据")
             return
-        for (skill_idx, cb), byte_val in zip(self._skill_learn_widgets,
-                                              self._clip_skill_learn):
-            self._set_learn_widget_value(cb, byte_val)
+        clip = self._clip_skill_learn
+        if isinstance(clip, dict):
+            for skill_idx, cb in self._skill_learn_widgets:
+                value = next((v for i, v in clip['base'] if i == skill_idx), None)
+                if value is not None:
+                    self._set_learn_widget_value(cb, value)
+            for skill_idx, cb in self._ext_skill_learn_widgets:
+                value = next((v for i, v in clip['ext'] if i == skill_idx), None)
+                if value is not None:
+                    self._set_learn_widget_value(cb, value)
+        else:
+            for (skill_idx, cb), byte_val in zip(
+                    self._skill_learn_widgets, clip):
+                self._set_learn_widget_value(cb, byte_val)
         self._flush_widgets_to_draft()
         self.status_var.setText(
             f"已粘贴技能学习数据 → 角色 #{self._editing_idx} (草稿, 未应用)")
 
     def _copy_skill_effect(self):
-        if self._editing_idx < 0 or not self._skill_effect_widgets:
+        if (self._editing_idx < 0
+                or (not self._skill_effect_widgets
+                    and not getattr(
+                        self, '_ext_skill_effect_widgets', []))):
             self.status_var.setText("请先选择角色")
             return
-        clip = []
+        base = []
         for i, ev in self._skill_effect_widgets:
             try:
-                clip.append(int(ev.text()))
+                base.append(int(ev.text()))
             except (ValueError, TypeError):
-                clip.append(-1)
+                base.append(-1)
+        ext = []
+        for skill_idx, ev in getattr(self, '_ext_skill_effect_widgets', []):
+            try:
+                ext.append((skill_idx, int(ev.text())))
+            except (ValueError, TypeError):
+                ext.append((skill_idx, GAME_EXTENDED_TKKON_DEFAULT))
+        clip = {'base': base, 'ext': ext}
         self._clip_skill_effect = clip
         self.status_var.setText(
-            f"已复制技能效果数据 (角色 #{self._editing_idx}, {len(clip)} 项)")
+            f"已复制技能效果数据 (角色 #{self._editing_idx}, "
+            f"{len(base) + len(ext)} 项)")
 
     def _paste_skill_effect(self):
         if self._editing_idx < 0:
@@ -1465,9 +1748,19 @@ class WarpcEditorV2(EditorMainWindow):
         if self._clip_skill_effect is None:
             self.status_var.setText("没有已复制的技能效果数据")
             return
-        for (i, ev), val in zip(self._skill_effect_widgets,
-                                self._clip_skill_effect):
-            ev.setText(str(val))
+        clip = self._clip_skill_effect
+        if isinstance(clip, dict):
+            for (i, ev), val in zip(self._skill_effect_widgets,
+                                    clip.get('base', [])):
+                ev.setText(str(val))
+            ext_values = dict(clip.get('ext', []))
+            for skill_idx, ev in getattr(
+                    self, '_ext_skill_effect_widgets', []):
+                if skill_idx in ext_values:
+                    ev.setText(str(ext_values[skill_idx]))
+        else:
+            for (i, ev), val in zip(self._skill_effect_widgets, clip):
+                ev.setText(str(val))
         self._flush_widgets_to_draft()
         self.status_var.setText(
             f"已粘贴技能效果数据 → 角色 #{self._editing_idx} (草稿, 未应用)")
@@ -1639,6 +1932,7 @@ class WarpcEditorV2(EditorMainWindow):
         self._save_path = save_path
         self._save_slot = slot_num
         self._game_dir = game_dir  # 直接存储游戏目录
+        self._extension_tail = b""
         self.warpc_path = save_path  # 用于资源路径推导
         # game_dir 就是用户选择的游戏目录
         self.tkt_path = os.path.join(game_dir, 'TKT.dat') if os.path.exists(os.path.join(game_dir, 'TKT.dat')) else None
@@ -1678,15 +1972,56 @@ class WarpcEditorV2(EditorMainWindow):
             tkt = load_tkt(tkt_path) if tkt_path else {}
             fa = load_jvg_sprites(os.path.join(tks_dir, 'Fa.JVG')) or []
             if save_mode:
-                seg1, seg2, records = load_warpc_from_save(warpc_path)
+                seg1, seg2, records, extension_tail = \
+                    load_warpc_from_save(warpc_path, include_tail=True)
             else:
                 records = load_warpc(warpc_path)
                 seg1 = seg2 = None
+                extension_tail = b""
             # 后台线程内 self.tkt 仍是上一次 (首次为空) 的值, 必须传入本次加载的 tkt
             skill_names, skill_types, skill_descs = self._load_skill_names(tkt)
+            if save_mode:
+                max_skill = max(skill_names, default=349)
+                skill_count = max(0, max_skill - 349)
+                if extension_tail:
+                    extension = migrate_for_original_game(
+                        parse_skill_extension(extension_tail),
+                        actor_count=len(records),
+                        skill_count=skill_count,
+                        mapping_version=1,
+                    )
+                elif skill_count > 0:
+                    extension = create_original_game_extension(
+                        actor_count=len(records),
+                        skill_count=skill_count,
+                    )
+                else:
+                    extension = None
+                extension_tail = (
+                    extension.to_bytes() if extension is not None else b"")
+            else:
+                max_skill = max(skill_names, default=349)
+                skill_count = max(0, max_skill - 349)
+                sidecar = Path(str(warpc_path) + ".tksx")
+                if sidecar.is_file():
+                    extension = migrate_for_original_game(
+                        parse_skill_extension(sidecar.read_bytes()),
+                        actor_count=len(records),
+                        skill_count=skill_count,
+                        mapping_version=1,
+                    )
+                elif skill_count > 0:
+                    extension = create_original_game_extension(
+                        actor_count=len(records),
+                        skill_count=skill_count,
+                    )
+                else:
+                    extension = None
+                extension_tail = b""
             tkkon_names = self._load_tkkon_names()
             item_names, item_idx_names, idx_to_id, id_to_idx = self._load_item_names(tkt)
             return (mu, tkt, fa, records, seg1, seg2,
+                    extension_tail, extension,
                     skill_names, skill_types, skill_descs, tkkon_names,
                     item_names, item_idx_names, idx_to_id, id_to_idx)
 
@@ -1696,7 +2031,7 @@ class WarpcEditorV2(EditorMainWindow):
             on_error=self._on_load_error)
 
     def _on_load_success(self, result):
-        (mu, tkt, fa, records, seg1, seg2,
+        (mu, tkt, fa, records, seg1, seg2, extension_tail, extension,
          skill_names, skill_types, skill_descs, tkkon_names,
          item_names, item_idx_names, idx_to_id, id_to_idx) = result
         self._mu_sprites = mu
@@ -1707,6 +2042,9 @@ class WarpcEditorV2(EditorMainWindow):
         self.records = records
         self._seg1 = seg1
         self._seg2 = seg2
+        self._extension_tail = extension_tail
+        self._skill_extension = extension
+        self._draft_skill_extension = extension
         self._dirty = False
         # 保存原始快照用于 MOD 导出差异比对
         self._original_records = [list(r['fields']) for r in self.records]
@@ -1795,7 +2133,8 @@ class WarpcEditorV2(EditorMainWindow):
             if len(raw) % 94 == 0 and (len(dec) == 0 or len(dec) % 94 != 0):
                 dec = raw
             names, types, descs = {}, {}, {}
-            for i in range(350):
+            count = len(dec) // 94
+            for i in range(count):
                 off = i * 94
                 if off + 6 > len(dec):
                     break
@@ -1835,7 +2174,7 @@ class WarpcEditorV2(EditorMainWindow):
             dec = lzss_decompress(raw)
             if len(raw) % 94 == 0 and (len(dec) == 0 or len(dec) % 94 != 0):
                 dec = raw
-            n = min(350, len(dec) // 94)
+            n = len(dec) // 94
             for i in range(n):
                 off = i * 94
                 if off + 94 > len(dec):
@@ -1886,16 +2225,21 @@ class WarpcEditorV2(EditorMainWindow):
     def _skill_group_members(self, head):
         """技能组成员 = 指令技能结构成员 [head, head+sub_count] + 下游进度闭包
         (沿 children 边向下传递, 不吸收其它技能组的结构成员, 不超出可学习范围)。"""
+        extension = getattr(self, '_skill_extension', None)
+        learn_limit = (
+            extension.skill_base + extension.skill_count
+            if extension is not None else SKILL_LEARN_COUNT
+        )
         sub = self._skill_sub_count.get(head, 0)
         members = {head}
         for m in range(head + 1, head + 1 + max(0, sub)):
-            if 0 <= m < SKILL_LEARN_COUNT:
+            if 0 <= m < learn_limit:
                 members.add(m)
         stack = list(members)
         while stack:
             a = stack.pop()
             for (b, w) in self._skill_children.get(a, []):
-                if b in members or b >= SKILL_LEARN_COUNT:
+                if b in members or b >= learn_limit:
                     continue
                 owner = self._skill_group_of.get(b)
                 if owner is not None and owner != head:
@@ -2028,11 +2372,23 @@ class WarpcEditorV2(EditorMainWindow):
                 hint.setVisible(True)
             else:
                 hint.setVisible(False)
+        if hasattr(self, '_ext_skill_group'):
+            self._populate_extended_learn_grid()
+        if hasattr(self, '_ext_effect_group'):
+            self._populate_extended_effect_grid()
+        extra_tab = getattr(self, '_extra_skill_tab_index', None)
+        if extra_tab is not None and hasattr(self.tabs, 'setTabVisible'):
+            self.tabs.setTabVisible(extra_tab, not save_mode)
+        extra_effect_tab = getattr(self, '_extra_effect_tab_index', None)
+        if extra_effect_tab is not None and hasattr(self.tabs, 'setTabVisible'):
+            self.tabs.setTabVisible(extra_effect_tab, not save_mode)
 
     def _set_learn_combo(self, skill_idx, state):
         """将技能学习控件设为指定状态值 (不立即写回, 需调用 _apply_edit)。
         走类型无关 helper: 下拉框选中/追加对应项, 数字框直接置数 (防御性, 通常仅模板模式可达)。"""
         w = getattr(self, '_skill_learn_by_idx', {}).get(skill_idx)
+        if w is None:
+            w = getattr(self, '_ext_skill_learn_by_idx', {}).get(skill_idx)
         if w is None:
             return False
         self._set_learn_widget_value(w, state)
@@ -2122,6 +2478,8 @@ class WarpcEditorV2(EditorMainWindow):
         cur = {}
         for skill_idx, cb in self._skill_learn_widgets:
             cur[skill_idx] = self._learn_widget_value(cb)
+        for skill_idx, cb in getattr(self, '_ext_skill_learn_widgets', []):
+            cur[skill_idx] = self._learn_widget_value(cb)
         tree = {i for i, v in cur.items() if 1 <= v < 20}
         if not tree:
             themed_messagebox(self, QMessageBox.Information, "无需精简",
@@ -2174,6 +2532,8 @@ class WarpcEditorV2(EditorMainWindow):
         states = {}
         for skill_idx, cb in self._skill_learn_widgets:
             states[skill_idx] = self._learn_widget_value(cb)
+        for skill_idx, cb in getattr(self, '_ext_skill_learn_widgets', []):
+            states[skill_idx] = self._learn_widget_value(cb)
         offenders = []
         for head in self._skill_group_heads:
             sub = self._skill_sub_count.get(head, 0)
@@ -2181,7 +2541,7 @@ class WarpcEditorV2(EditorMainWindow):
                 continue
             # 战斗子技能列表扫描范围 = [head+1, head+sub] (与 sub_438F28 一致, 不含组头)
             cnt = sum(1 for m in range(head + 1, head + 1 + sub)
-                      if 0 <= m < SKILL_LEARN_COUNT and states.get(m, 0) != 0)
+                      if states.get(m, 0) != 0)
             if cnt > 12:
                 gname = self.skill_names.get(head, f"#{head}")
                 offenders.append(f"「{gname}」#{head}: {cnt}个")
@@ -2366,6 +2726,10 @@ class WarpcEditorV2(EditorMainWindow):
         for skill_idx, cb in self._skill_learn_widgets:
             # 必须用类型无关取值: 存档模式控件是 QSpinBox, 无 currentText()
             snap[f'learn_{skill_idx}'] = self._learn_widget_value(cb)
+        for skill_idx, cb in getattr(self, '_ext_skill_learn_widgets', []):
+            snap[f'extlearn_{skill_idx}'] = self._learn_widget_value(cb)
+        for skill_idx, ev in getattr(self, '_ext_skill_effect_widgets', []):
+            snap[f'exteffect_{skill_idx}'] = ev.text()
         for i, ev in getattr(self, '_skill_effect_widgets', []):
             snap[f'effect_{i}'] = ev.text()
         return snap
@@ -2379,13 +2743,17 @@ class WarpcEditorV2(EditorMainWindow):
         """草稿重建为与 records 一致 (丢弃全部待应用修改)"""
         self._draft_records = [{'index': r['index'], 'fields': list(r['fields'])}
                                for r in self.records]
+        self._draft_skill_extension = self._skill_extension
 
     def _has_pending_draft(self):
         """草稿中是否存在尚未应用到 records 的修改"""
         if len(self._draft_records) != len(self.records):
             return False
-        return any(d['fields'] != r['fields']
-                   for d, r in zip(self._draft_records, self.records))
+        if any(d['fields'] != r['fields']
+               for d, r in zip(self._draft_records, self.records)):
+            return True
+        return (self._draft_skill_extension is not None
+                and self._draft_skill_extension != self._skill_extension)
 
     def _commit_draft(self):
         """将全部草稿修改提交到 records, 返回变更的角色编号列表"""
@@ -2398,6 +2766,10 @@ class WarpcEditorV2(EditorMainWindow):
             self._dirty = True
             for i in changed:
                 self.record_applied.emit(i)
+        if (self._draft_skill_extension is not None
+                and self._draft_skill_extension != self._skill_extension):
+            self._skill_extension = self._draft_skill_extension
+            self._dirty = True
         return changed
 
     def _ensure_draft_resolved(self):
@@ -2426,6 +2798,20 @@ class WarpcEditorV2(EditorMainWindow):
         """应用前终检: 校验待应用草稿的取值域 (仅检查用户改动过的值,
         文件自带的异常值不阻断)。返回 [(角色#, 名称, 字段, 当前值, 合法域)]"""
         violations = []
+        if getattr(self, '_ext_effect_override_error', None):
+            error = self._ext_effect_override_error
+            actor = self._editing_idx
+            name = (
+                self._char_name(self._draft_records[actor])
+                if 0 <= actor < len(self._draft_records) else '扩展技能'
+            )
+            violations.append((
+                actor,
+                name,
+                '附加技能效果覆盖',
+                '无效',
+                error,
+            ))
         enum_fields = []
         for fd in FIELD_SCHEMA.values():
             if fd.ftype == 'enum' and fd.enum_items:
@@ -2467,6 +2853,9 @@ class WarpcEditorV2(EditorMainWindow):
         """弹出未应用修改三选框, 返回 QMessageBox.Apply/Discard/Cancel"""
         pend = sum(1 for d, r in zip(self._draft_records, self.records)
                    if d['fields'] != r['fields'])
+        if (self._draft_skill_extension is not None
+                and self._draft_skill_extension != self._skill_extension):
+            pend += 1
         box = QMessageBox(self)
         box.setWindowTitle("未应用的修改")
         box.setText(f"有 {pend} 个角色的修改尚未应用。")
@@ -2480,6 +2869,7 @@ class WarpcEditorV2(EditorMainWindow):
 
     def _populate_edit(self, rec):
         self._editing_idx = rec['index']
+        self._ext_effect_override_error = None
         f = rec['fields']
         nm = self._char_name(rec)
 
@@ -2558,6 +2948,27 @@ class WarpcEditorV2(EditorMainWindow):
                     sname = self.skill_names.get(i, f"技能#{i}")
                     lbl.setText(sname[:12])
                     lbl.setToolTip(f"[{88+i//2}] {sname}")
+
+        extension = getattr(self, '_draft_skill_extension', None)
+        if extension is not None and hasattr(self, '_ext_skill_learn_widgets'):
+            try:
+                actor_states = extension.actor_learn_bytes(rec['index'])
+            except Exception:
+                actor_states = b"\0" * extension.skill_count
+            for skill_idx, cb in self._ext_skill_learn_widgets:
+                offset = skill_idx - extension.skill_base
+                value = actor_states[offset] if 0 <= offset < len(actor_states) else 0
+                self._set_learn_widget_value(cb, value)
+            for skill_idx, ev in getattr(
+                    self, '_ext_skill_effect_widgets', []):
+                override = extension.override_for(rec['index'], skill_idx)
+                value = (
+                    override.tkkon_id
+                    if override is not None
+                    else GAME_EXTENDED_TKKON_DEFAULT
+                )
+                ev.setText(str(value))
+                self._update_extended_kon_label(skill_idx, ev)
 
         # 技能效果
         # 延迟构建: 嵌入模式下 Tab4 在首次选择时才构建
@@ -2878,7 +3289,11 @@ class WarpcEditorV2(EditorMainWindow):
             cur = 0
         dlg = TkkonPickerDialog(self, self.tkkon_names, cur)
         if dlg.exec() == QDialog.Accepted and dlg.selected_id is not None:
-            ev.setText(str(dlg.selected_id))
+            value = (
+                GAME_EXTENDED_TKKON_DEFAULT
+                if dlg.selected_id < 0 else dlg.selected_id
+            )
+            ev.setText(str(value))
 
     def _update_kon_label(self, idx, ev):
         if idx >= len(self._skill_effect_name_labels): return
@@ -2891,6 +3306,37 @@ class WarpcEditorV2(EditorMainWindow):
         lbl.setToolTip(name)
         lbl.setText(name)
 
+    def _pick_extended_tkkon(self, skill_idx, ev):
+        if not self.tkkon_names:
+            return
+        try:
+            cur = int(ev.text() or GAME_EXTENDED_TKKON_DEFAULT)
+        except (ValueError, TypeError):
+            cur = GAME_EXTENDED_TKKON_DEFAULT
+        dlg = TkkonPickerDialog(self, self.tkkon_names, cur)
+        if dlg.exec() == QDialog.Accepted and dlg.selected_id is not None:
+            ev.setText(str(dlg.selected_id))
+
+    def _update_extended_kon_label(self, skill_idx, ev):
+        label = self._ext_skill_effect_label_by_idx.get(skill_idx)
+        if label is None:
+            return
+        text = ev.text().strip()
+        try:
+            kon_id = int(text) if text else GAME_EXTENDED_TKKON_DEFAULT
+        except (ValueError, TypeError):
+            label.setToolTip(
+                f"请输入 0..{GAME_TKKON_CAPACITY - 1} 的 TKKon ID")
+            label.setText("(无效)")
+            return
+        if kon_id < 0:
+            kon_id = GAME_EXTENDED_TKKON_DEFAULT
+        name = self.tkkon_names.get(kon_id, f"TKKon#{kon_id}") \
+            if kon_id >= 0 else "(未设置)"
+        prefix = "默认 " if kon_id == GAME_EXTENDED_TKKON_DEFAULT else ""
+        label.setToolTip(name)
+        label.setText(prefix + name)
+
     # ── 应用编辑 ──
     def _apply_edit(self):
         """应用修改: 表单控件→草稿, 终检取值域, 再将全部待应用草稿提交到 records"""
@@ -2901,6 +3347,9 @@ class WarpcEditorV2(EditorMainWindow):
         if violations:
             self._show_draft_violations(violations)
             return
+        extension_changed = (
+            self._draft_skill_extension is not None
+            and self._draft_skill_extension != self._skill_extension)
         changed = self._commit_draft()
         cur = self._editing_idx
         if hasattr(self, 'table') and self.table.isVisible():
@@ -2912,7 +3361,7 @@ class WarpcEditorV2(EditorMainWindow):
         if self._table_panel is not None:
             self._table_panel.model.reload()
         if hasattr(self, 'status_var'):
-            if changed:
+            if changed or extension_changed:
                 self.status_var.setText(f"已应用 {len(changed)} 个角色的修改 (内存, 未保存)")
             else:
                 self.status_var.setText("没有需要应用的修改")
@@ -3030,6 +3479,53 @@ class WarpcEditorV2(EditorMainWindow):
                 except:
                     pass
 
+        extension = getattr(self, '_draft_skill_extension', None)
+        if extension is not None and hasattr(self, '_ext_skill_learn_widgets'):
+            if rec['index'] < extension.actor_count:
+                updates = [
+                    (rec['index'], skill_idx, self._learn_widget_value(w))
+                    for skill_idx, w in self._ext_skill_learn_widgets
+                ]
+                self._draft_skill_extension = extension.with_learn_states(
+                    updates)
+
+        extension = getattr(self, '_draft_skill_extension', None)
+        if extension is not None and hasattr(self, '_ext_skill_effect_widgets'):
+            if rec['index'] < extension.actor_count:
+                updates = []
+                invalid = []
+                for skill_idx, ev in self._ext_skill_effect_widgets:
+                    raw_value = ev.text().strip()
+                    try:
+                        value = int(
+                            raw_value or GAME_EXTENDED_TKKON_DEFAULT)
+                    except (ValueError, TypeError):
+                        invalid.append(f"#{skill_idx}={raw_value or '(空)'}")
+                        continue
+                    if value == -1:
+                        value = GAME_EXTENDED_TKKON_DEFAULT
+                    if not 0 <= value < GAME_TKKON_CAPACITY:
+                        invalid.append(f"#{skill_idx}={value}")
+                        continue
+                    updates.append((
+                        rec['index'],
+                        skill_idx,
+                        None if value == GAME_EXTENDED_TKKON_DEFAULT
+                        else value,
+                    ))
+                if invalid:
+                    self._ext_effect_override_error = (
+                        "TKKon 编号无效: "
+                        + ", ".join(invalid)
+                        + f" (合法范围 0..{GAME_TKKON_CAPACITY - 1})")
+                else:
+                    try:
+                        self._draft_skill_extension = extension.with_overrides(
+                            updates)
+                        self._ext_effect_override_error = None
+                    except SkillExtensionFormatError as exc:
+                        self._ext_effect_override_error = str(exc)
+
         # 刷新快照基准 (草稿已吸收控件值)
         self._edit_snapshot = self._capture_snapshot()
 
@@ -3038,6 +3534,18 @@ class WarpcEditorV2(EditorMainWindow):
         if 0 <= self._editing_idx < len(self.records):
             self._draft_records[self._editing_idx]['fields'] = \
                 list(self.records[self._editing_idx]['fields'])
+            if (self._draft_skill_extension is not None
+                    and self._skill_extension is not None):
+                self._draft_skill_extension = \
+                    self._draft_skill_extension.with_actor_learn_bytes(
+                        self._editing_idx,
+                        self._skill_extension.actor_learn_bytes(
+                            self._editing_idx),
+                    )
+                self._draft_skill_extension = \
+                    self._draft_skill_extension.replace_actor_overrides_from(
+                        self._skill_extension, self._editing_idx)
+            self._ext_effect_override_error = None
             self._populate_edit(self._draft_records[self._editing_idx])
             if self._table_panel is not None:
                 self._table_panel.model.reload()
@@ -3047,6 +3555,11 @@ class WarpcEditorV2(EditorMainWindow):
     def _add_new(self):
         if not self.records: return
         new_idx = len(self.records)
+        if new_idx >= GAME_ACTOR_CAPACITY:
+            themed_messagebox(
+                self, QMessageBox.Warning, "角色容量已满",
+                f"原版扩展补丁最多支持 {GAME_ACTOR_CAPACITY} 条 WarPC 记录。")
+            return
         fields = [0]*WARPC_FIELD_COUNT
         fields[3] = -1
         fields[4] = 100
@@ -3065,6 +3578,14 @@ class WarpcEditorV2(EditorMainWindow):
             fields[si] = -1
         self.records.append({'index': new_idx, 'fields': fields})
         self._draft_records.append({'index': new_idx, 'fields': list(fields)})
+        if self._draft_skill_extension is not None:
+            default_state = 10 if new_idx == 0 else 1
+            self._draft_skill_extension = \
+                self._draft_skill_extension.with_actor_learn_bytes(
+                    new_idx,
+                    bytes([default_state]) *
+                    self._draft_skill_extension.skill_count,
+                ).clear_actor_overrides(new_idx)
         self._dirty = True
         self._apply_filter()
         for r in range(self.table.rowCount()):
@@ -3079,8 +3600,17 @@ class WarpcEditorV2(EditorMainWindow):
         self._flush_widgets_to_draft()
         src = self._draft_records[self._editing_idx]
         new_idx = len(self.records)
+        if new_idx >= GAME_ACTOR_CAPACITY:
+            themed_messagebox(
+                self, QMessageBox.Warning, "角色容量已满",
+                f"原版扩展补丁最多支持 {GAME_ACTOR_CAPACITY} 条 WarPC 记录。")
+            return
         self.records.append({'index': new_idx, 'fields': list(src['fields'])})
         self._draft_records.append({'index': new_idx, 'fields': list(src['fields'])})
+        if self._draft_skill_extension is not None:
+            self._draft_skill_extension = \
+                self._draft_skill_extension.copy_actor_extension(
+                    self._editing_idx, new_idx)
         self._dirty = True
         self._apply_filter()
         for r in range(self.table.rowCount()):
@@ -3122,6 +3652,20 @@ class WarpcEditorV2(EditorMainWindow):
             self.records[tgt_idx]['fields'], self.records[cur_idx]['fields']
         self._draft_records[cur_idx]['fields'], self._draft_records[tgt_idx]['fields'] = \
             self._draft_records[tgt_idx]['fields'], self._draft_records[cur_idx]['fields']
+        if self._draft_skill_extension is not None:
+            self._draft_skill_extension = \
+                self._draft_skill_extension.swap_actor_learn_states(
+                    cur_idx, tgt_idx)
+            self._draft_skill_extension = \
+                self._draft_skill_extension.swap_actor_overrides(
+                    cur_idx, tgt_idx)
+        if self._skill_extension is not None:
+            self._skill_extension = \
+                self._skill_extension.swap_actor_learn_states(
+                    cur_idx, tgt_idx)
+            self._skill_extension = \
+                self._skill_extension.swap_actor_overrides(
+                    cur_idx, tgt_idx)
         # 编辑状态跟随数据移动: 控件仍显示被移动角色的值, 槽位指向数据新位置,
         # 避免后续 flush 写错槽位
         if editing == cur_idx:
@@ -3165,8 +3709,22 @@ class WarpcEditorV2(EditorMainWindow):
                 return
             fields = list(struct.unpack_from('<' + 'h' * WARPC_FIELD_COUNT, raw, 0))
             new_idx = len(self.records)
+            if new_idx >= GAME_ACTOR_CAPACITY:
+                QMessageBox.warning(
+                    self,
+                    "角色容量已满",
+                    f"原版扩展补丁最多支持 {GAME_ACTOR_CAPACITY} 条 WarPC 记录。",
+                )
+                return
             self.records.append({'index': new_idx, 'fields': fields})
             self._draft_records.append({'index': new_idx, 'fields': list(fields)})
+            if self._draft_skill_extension is not None:
+                self._draft_skill_extension = \
+                    self._draft_skill_extension.with_actor_learn_bytes(
+                        new_idx,
+                        bytes([1]) *
+                        self._draft_skill_extension.skill_count,
+                    ).clear_actor_overrides(new_idx)
             self._dirty = True
             self._apply_filter()
             for r in range(self.table.rowCount()):
@@ -3193,11 +3751,32 @@ class WarpcEditorV2(EditorMainWindow):
         if is_running(getattr(self, '_save_worker', None)): return
         warpc_path = self.warpc_path
         records = self.records
+        extension_bytes = (
+            self._skill_extension.to_bytes()
+            if self._skill_extension is not None else None
+        )
 
         # 后台线程: .bak 备份 + 压缩写盘 (P3-3)
         def work(w):
             backup_existing_file(warpc_path)
+            sidecar = Path(str(warpc_path) + ".tksx")
+            if sidecar.is_file():
+                backup_existing_file(str(sidecar))
             save_warpc(warpc_path, records)
+            try:
+                if extension_bytes is None:
+                    if sidecar.is_file():
+                        sidecar.unlink()
+                else:
+                    atomic_write_bytes(str(sidecar), extension_bytes)
+            except Exception:
+                # Keep the main file and sidecar from diverging when the
+                # companion write fails after the main file was replaced.
+                import shutil
+                backup = warpc_path + ".bak"
+                if os.path.isfile(backup):
+                    shutil.copy2(backup, warpc_path)
+                raise
             return ("file", warpc_path)
 
         self.status_var.setText("正在保存…")
@@ -3214,12 +3793,17 @@ class WarpcEditorV2(EditorMainWindow):
         if themed_question(self, "确认保存",
             f"将 {len(self.records)} 个角色的 WarPC 数据写回存档:\n{self._save_path} (槽位 {self._save_slot})\n\n原存档将被备份为 .bak") != QMessageBox.Yes: return
         if is_running(getattr(self, '_save_worker', None)): return
-        save_path, seg1, seg2, records = (
-            self._save_path, self._seg1, self._seg2, self.records)
+        if self._skill_extension is not None:
+            self._extension_tail = self._skill_extension.to_bytes()
+        save_path, seg1, seg2, records, extension_tail = (
+            self._save_path, self._seg1, self._seg2, self.records,
+            self._extension_tail)
 
         # 后台线程: 存档重写 (P3-3)
         def work(w):
-            save_warpc_to_save(save_path, seg1, seg2, records)
+            save_warpc_to_save(
+                save_path, seg1, seg2, records,
+                extension_tail=extension_tail)
             return ("save", save_path)
 
         self.status_var.setText("正在保存到存档…")

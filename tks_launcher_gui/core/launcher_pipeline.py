@@ -213,6 +213,7 @@ class PatcherPipeline:
         if compatible_mode:
             self.log("兼容模式: 跳过 WarPC/TKAct 启动器数据扩展")
         else:
+            self._ensure_skill_extension_for_extended_table()
             # WarPC / DAT 预截断
             self._warpc_expanded, self._warpc_full_data, self._truncated_files = (
                 prepare_warpc_for_game(log_func=self.log)
@@ -222,6 +223,31 @@ class PatcherPipeline:
             self._tkact_expanded = prepare_tkact_for_game(log_func=self.log)
 
         return self.result
+
+    def _ensure_skill_extension_for_extended_table(self) -> None:
+        """Keep expanded TKSkill definitions paired with their state patch."""
+        if self.config is None:
+            return
+        size = get_decompressed_size("TKSkill.dat")
+        if size <= 350 * 94:
+            return
+
+        selected = (
+            set(self.cfg.selected_patches)
+            if self.cfg.selected_patches is not None
+            else {
+                patch.id for patch in self.config.patches
+                if patch.default_checked
+            }
+        )
+        if "skill_ext_learn_state" in selected:
+            return
+        selected.add("skill_ext_learn_state")
+        self.cfg.selected_patches = selected
+        self.log(
+            "  [SAFETY] TKSkill.dat 超过 350 条，"
+            "已自动启用统一技能扩展补丁 skill_ext_learn_state"
+        )
 
     # ═══════════════════════════════════════════════════════════════
     # 阶段 2: 应用补丁 (目标进程已挂起, code_buf 已读取)

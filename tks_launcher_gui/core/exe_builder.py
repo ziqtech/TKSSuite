@@ -17,6 +17,9 @@ import struct
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
+from .memory import rebase_globals
+from .scanner import overlaps_rel32_jcc, value_scan_excluding_rel32
+
 
 # ============================================================
 # PE 结构工具
@@ -251,6 +254,7 @@ class SitesPatchItem:
     globals_rebase_span: int = 0    # 重定位窗口宽度 (字节)
     globals_alloc_size: int = 0     # globals 区大小 (字节, 放 .test 尾部)
     globals_extra_windows: List = field(default_factory=list)  # [[占位相对偏移, 宽], ...]
+    globals_relocations: Optional[List[int]] = None
 
 
 @dataclass
@@ -468,19 +472,13 @@ class ExeBuilder:
                     return
             # globals 占位地址平移 (与运行时 _handle_patch_sites 同语义)
             g_abs = getattr(item, '_globals_abs', 0)
-            if g_abs and item.globals_ph_base and item.globals_rebase_span:
+            if (kind not in ('call', 'push_imm') and g_abs
+                    and item.globals_ph_base and item.globals_rebase_span):
                 delta = g_abs - item.globals_ph_base
                 windows = [(item.globals_ph_base, item.globals_rebase_span)]
                 for woff, wspan in (item.globals_extra_windows or []):
                     windows.append((item.globals_ph_base + int(woff), int(wspan)))
-                reb = bytearray(repl)
-                for i in range(len(reb) - 3):
-                    v = int.from_bytes(reb[i:i + 4], 'little')
-                    for lo, wspan2 in windows:
-                        if lo <= v < lo + wspan2:
-                            reb[i:i + 4] = struct.pack('<I', (v + delta) & 0xFFFFFFFF)
-                            break
-                repl = bytes(reb)
+                repl = rebase_globals(repl, windows, delta)
             data[off:off + len(repl)] = repl
             patched += 1
             log.append(f'  [{item.patch_id}] [OK] {tag} @ RVA 0x{rva:X}')
@@ -1001,15 +999,27 @@ class ExeBuilder:
         if data_section_results:
             hook_regions = [(off, off + hsize)
                             for kind, owner, off, hsize, _, _ in located]
+            # patch_sites 位点同样必须在数据段重定向前保持原字节；否则
+            # 旧 WarPC 字段锚会先被改写成新基址，sites 的 expect 校验失败。
+            for sp in sites_patches:
+                for site in sp.sites:
+                    try:
+                        site_off = rva_to_offset(
+                            pe, _parse_maybe_hex_int(site.get("rva", 0)))
+                    except (TypeError, ValueError):
+                        continue
+                    site_len = len(_parse_hex(site.get("expect", "")))
+                    if site_len > 0:
+                        hook_regions.append((site_off, site_off + site_len))
 
             def _in_hook_region(off: int, size: int = 4) -> bool:
                 return any(off < b and a < off + size for a, b in hook_regions)
 
             log.append(f'── 重定向数据段引用 ({len(data_section_results)} 个) ──')
             for item, new_base_abs, _, _ in data_section_results:
-                old_base_bytes = struct.pack('<I', item.old_base)
                 new_base_bytes = struct.pack('<I', new_base_abs)
-                hits = [h for h in find_pattern(bytes(data), old_base_bytes)
+                hits = [h for h in value_scan_excluding_rel32(
+                    bytes(data), item.old_base)
                         if not _in_hook_region(h)]
                 log.append(f'  [{item.patch_id}] 基址引用: {len(hits)} 处 '
                            f'(0x{item.old_base:X} → 0x{new_base_abs:X})')
@@ -1040,9 +1050,8 @@ class ExeBuilder:
                     log.append(f'  [{item.patch_id}] 大小引用模式命中 '
                                f'{len(matches)} 处')
                 else:
-                    old_size_bytes = struct.pack('<I', item.old_size)
-                    size_hits = [h for h in find_pattern(
-                        bytes(data), old_size_bytes)
+                    size_hits = [h for h in value_scan_excluding_rel32(
+                        bytes(data), item.old_size)
                         if not _in_hook_region(h)]
                 log.append(f'  [{item.patch_id}] 大小引用: {len(size_hits)} 处 '
                            f'({item.old_size} → {redirect_size})')
@@ -1113,6 +1122,7 @@ class ExeBuilder:
                         while pos + 4 <= hi:
                             val = int.from_bytes(data[pos:pos + 4], 'little')
                             if (item.old_base < val < item.old_base + span
+                                    and not overlaps_rel32_jcc(bytes(data), pos)
                                     and not _in_hook_region(pos)):
                                 delta = val - item.old_base
                                 new_val = new_base_abs + delta
@@ -1265,21 +1275,15 @@ class ExeBuilder:
                            f'({len(code)} 字节)')
 
             for sp, off in sites_blobs:
-                code = sp.cave_code
+                code = _prepare_cave_bytes(sp, sp.cave_code)
                 g_abs = getattr(sp, '_globals_abs', 0)
                 if g_abs and sp.globals_ph_base and sp.globals_rebase_span:
                     delta = g_abs - sp.globals_ph_base
                     windows = [(sp.globals_ph_base, sp.globals_rebase_span)]
                     for woff, wspan in (sp.globals_extra_windows or []):
                         windows.append((sp.globals_ph_base + int(woff), int(wspan)))
-                    reb = bytearray(code)
-                    for i in range(len(reb) - 3):
-                        v = int.from_bytes(reb[i:i + 4], 'little')
-                        for lo, wspan2 in windows:
-                            if lo <= v < lo + wspan2:
-                                reb[i:i + 4] = struct.pack('<I', (v + delta) & 0xFFFFFFFF)
-                                break
-                    code = bytes(reb)
+                    code = rebase_globals(
+                        code, windows, delta, offsets=sp.globals_relocations)
                     log.append(f'[{sp.patch_id}] globals 区 .test+0x{sp._globals_off:X} '
                                f'= 0x{g_abs:X} (占位 0x{sp.globals_ph_base:08X}+{sp.globals_rebase_span:#x})')
                 cave_section[off:off + len(code)] = code

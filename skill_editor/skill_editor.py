@@ -46,9 +46,13 @@ from editor_utils.theme_switcher import (
     apply_theme_to_window, toggle_theme_in_family,
 )
 from editor_utils.app_shell import EditorMainWindow, run_editor
+from editor_utils.skill_extension import (
+    GAME_SKILL_BASE,
+    GAME_SKILL_CAPACITY,
+)
 from editor_utils.tkt_loader import load_tkt_simple
 from editor_utils.ui_helpers import (
-    make_fake_input, mark_invalid,
+    backup_existing_file, make_fake_input, mark_invalid,
     form_edits_pending, themed_question, set_themed_icon,
     update_path_labels, EditorComboBox,
 )
@@ -75,7 +79,9 @@ def load_tkt_full(tkt_path):
     return load_tkt_simple(tkt_path, full_strip=True)
 
 SKILL_REC = 94
-SKILL_CNT = 350
+SKILL_ORIG_CNT = 350
+SKILL_CNT = SKILL_ORIG_CNT  # backward-compatible name
+SKILL_MAX_CNT = GAME_SKILL_BASE + GAME_SKILL_CAPACITY
 SKILL_TYPES = {0: "指令技能", 1: "主动技能", 2: "被动技能", 3: "移动技能"}
 SKILL_TYPE_VALUES = [f"{k}-{v}" for k, v in sorted(SKILL_TYPES.items())]
 ATK_TYPE_VALUES = ["-1-近战攻击", "0-物理攻击", "1-术法攻击", "10-召唤攻击"]
@@ -137,6 +143,42 @@ ADVANCED_FIELDS = [
 
 ALL_FIELDS = (BASIC_FIELDS + EFFECT_FIELDS + IMMUNE_FIELDS + list(ADVANCED_FIELDS) + TREE_FIELDS)
 
+WARPC_EXTENSION_SKILL_START = 344
+WARPC_EXTENSION_SKILL_END = SKILL_ORIG_CNT
+WARPC_EXTENSION_SKILL_MESSAGE = (
+    "编号 #344..349 已被 WarPC 补丁扩展字段占用：\n"
+    "战场图集索引、队伍头像 ID、历史文本 ID、地图实体 ID。\n\n"
+    "这些槽位不能作为技能编辑，新增技能会从 #350 开始。"
+)
+
+
+def blank_skill_record(index):
+    record = {'index': index}
+    for key, _, _, _, _ in ALL_FIELDS:
+        record[key] = 0
+    record['sub_count'] = -1
+    return record
+
+
+def is_warpc_extension_skill_index(index):
+    return WARPC_EXTENSION_SKILL_START <= index < WARPC_EXTENSION_SKILL_END
+
+
+def clear_warpc_extension_skill_slots(records):
+    """Clear protected WarPC extension slots and return the affected indices."""
+    cleared = []
+    for record in records:
+        index = record.get('index')
+        if not isinstance(index, int) or not is_warpc_extension_skill_index(index):
+            continue
+        if any(record.get(key, 0) != 0 for key, _, _, _, _ in ALL_FIELDS):
+            cleared.append(index)
+        blank = blank_skill_record(index)
+        record.clear()
+        record.update(blank)
+    return cleared
+
+
 TYPE_HINT_LABELS = {
     1: "主动技能: 百分比属性加成 → 角色战斗属性",
     2: "被动技能: 触发概率 → 角色反应系统",
@@ -162,10 +204,13 @@ def load_skills(fp):
     # 兜底: LZSS 解压结果不对齐记录边界但原始文件对齐 → 未压缩 raw 数据
     if len(raw) % SKILL_REC == 0 and (len(dec) == 0 or len(dec) % SKILL_REC != 0):
         dec = raw
+    if not dec or len(dec) % SKILL_REC:
+        raise ValueError(
+            f"解压后大小 {len(dec)} 不是技能记录大小 {SKILL_REC} 的整数倍")
     recs = []
-    for i in range(SKILL_CNT):
+    count = len(dec) // SKILL_REC
+    for i in range(count):
         off = i * SKILL_REC
-        if off + SKILL_REC > len(dec): break
         fields = struct.unpack_from('<' + 'h' * 47, dec, off)
         rec = {'index': i}
         for k, fo, _, _, _ in ALL_FIELDS:
@@ -174,9 +219,15 @@ def load_skills(fp):
     return recs
 
 def save_skills(fp, recs):
-    buf = bytearray(SKILL_CNT * SKILL_REC)
-    for rec in recs[:SKILL_CNT]:
+    count = len(recs)
+    if count > SKILL_MAX_CNT:
+        raise ValueError(
+            f"技能记录数 {count} 超过原版扩展上限 {SKILL_MAX_CNT} 条")
+    buf = bytearray(count * SKILL_REC)
+    for rec in recs:
         i = rec['index']
+        if not 0 <= i < count:
+            raise ValueError(f"技能记录索引越界: {i}")
         off = i * SKILL_REC
         for k, fo, _, _, _ in ALL_FIELDS:
             struct.pack_into('<h', buf, off + fo, rec[k])
@@ -720,7 +771,7 @@ class SkillEditorApp(FieldUndoMixin, EditorMainWindow):
 
     HELP_TEXT = (
         "功能: 编辑《三国群侠传》技能数据\n"
-        "数据: 350 条 × 94 字节 = 32,900 字节\n\n"
+        "数据: 原版 350 条 × 94 字节；支持追加扩展技能\n\n"
         "特性:\n"
         "  · Godot 4.6 级别布局与纯净控件约束\n"
         "  · 分页编辑: 基础/效果/免疫/进阶/技能树\n"
@@ -1023,8 +1074,14 @@ class SkillEditorApp(FieldUndoMixin, EditorMainWindow):
 
         elif ft == 'type' or ft == 'atk_type':
             cb = EditorComboBox()
-            if ft == 'type': cb.addItems(SKILL_TYPE_VALUES)
-            else: cb.addItems(ATK_TYPE_VALUES)
+            values = (
+                sorted(SKILL_TYPES.items())
+                if ft == 'type'
+                else [(-1, "近战攻击"), (0, "物理攻击"),
+                      (1, "术法攻击"), (10, "召唤攻击")]
+            )
+            for value, label in values:
+                cb.addItem(f"{value}-{label}", value)
             cell.addWidget(make_fake_input(combo=cb))
             self.widget_map[fn] = cb
 
@@ -1102,8 +1159,9 @@ class SkillEditorApp(FieldUndoMixin, EditorMainWindow):
             self._icon_pixmaps.clear()
         try:
             self.records = load_skills(self.skill_path)
+            cleared = clear_warpc_extension_skill_slots(self.records)
             self.clear_undo()  # 数据整体重载, 旧变更集失效 (P3-4)
-            self._dirty = False
+            self._dirty = bool(cleared)
             # MOD 导出使用原始字节序 (word index = byte_offset // 2)，与启动器 _apply_fields_to_record 一致
             self._original_records = []
             for rec in self.records:
@@ -1112,7 +1170,13 @@ class SkillEditorApp(FieldUndoMixin, EditorMainWindow):
                     row[fo // 2] = rec[k]
                 self._original_records.append(row)
             nonempty = sum(1 for r in self.records if r['skill_text_id'] != 0)
-            self.status_var.setText(f"{len(self.records)} 条 | 有效 {nonempty} | TKT {len(self.tkt)} 条")
+            status = (
+                f"{len(self.records)} 条 | 有效 {nonempty} | "
+                f"TKT {len(self.tkt)} 条"
+            )
+            if cleared:
+                status += f" | 已强制清空扩展字段冲突槽 {cleared}"
+            self.status_var.setText(status)
         except Exception as e:
             QMessageBox.critical(self, "加载失败", str(e))
             self.records = []
@@ -1132,8 +1196,8 @@ class SkillEditorApp(FieldUndoMixin, EditorMainWindow):
         self.filtered_indices = []
         ftype = self.type_filter.currentText()
         for rec in self.records:
-            if rec['skill_text_id'] == 0: continue
-            if ftype and not ftype.startswith("全部"):
+            if (ftype and not ftype.startswith("全部")
+                    and rec['skill_text_id'] != 0):
                 if rec['type'] != int(ftype.split('-')[0]): continue
             if q:
                 nm = skill_name(rec, self.tkt)
@@ -1150,14 +1214,24 @@ class SkillEditorApp(FieldUndoMixin, EditorMainWindow):
     def _refresh_table(self):
         self.table.blockSignals(True)
         self.table.setRowCount(0)
+        disabled_color = QColor(
+            business_colors("launcher", self._theme_id)["placeholder_gray"]
+        )
         for row, idx in enumerate(self.filtered_indices):
             r = self.records[idx]
+            protected = is_warpc_extension_skill_index(r['index'])
             stype = SKILL_TYPES.get(r['type'], f"#{r['type']}")
             self.table.insertRow(row)
             self.table.setItem(row, 0, QTableWidgetItem(str(r['index'])))
             self.table.setItem(row, 1, QTableWidgetItem(str(r['skill_text_id'])))
-            self.table.setItem(row, 2, QTableWidgetItem(stype))
-            self.table.setItem(row, 3, QTableWidgetItem(skill_name(r, self.tkt)))
+            self.table.setItem(
+                row, 2,
+                QTableWidgetItem("禁用" if protected else stype),
+            )
+            self.table.setItem(
+                row, 3,
+                QTableWidgetItem("禁用" if protected else skill_name(r, self.tkt)),
+            )
             self.table.setItem(row, 4, QTableWidgetItem(str(r['jp_cost'])))
             self.table.setItem(row, 5, QTableWidgetItem(str(r['mp_cost'])))
 
@@ -1167,7 +1241,15 @@ class SkillEditorApp(FieldUndoMixin, EditorMainWindow):
             color = QColor(types.get(r['type'], types["_"]))
 
             for c in range(6):
-                self.table.item(row, c).setForeground(color)
+                item = self.table.item(row, c)
+                if protected:
+                    item.setForeground(disabled_color)
+                    item.setFlags(
+                        item.flags() & ~(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
+                    )
+                    item.setToolTip(WARPC_EXTENSION_SKILL_MESSAGE)
+                else:
+                    item.setForeground(color)
 
         self.table.blockSignals(False)
         self.table.fit_columns_to_viewport()
@@ -1176,6 +1258,8 @@ class SkillEditorApp(FieldUndoMixin, EditorMainWindow):
         sel = self.table.selectedItems()
         if not sel: return
         idx = int(self.table.item(sel[0].row(), 0).text())
+        if is_warpc_extension_skill_index(idx):
+            return
         if idx == self._editing_idx:
             return  # 回到当前编辑记录 (含取消切换后的恢复), 不重填
         if self._unapplied_edits_guard(idx):
@@ -1217,6 +1301,8 @@ class SkillEditorApp(FieldUndoMixin, EditorMainWindow):
         try:
             idx = int(idx_item.text())
         except ValueError:
+            return
+        if is_warpc_extension_skill_index(idx):
             return
         menu = QMenu(self)
         act_tree = menu.addAction("查看技能树")
@@ -1275,10 +1361,16 @@ class SkillEditorApp(FieldUndoMixin, EditorMainWindow):
             if not w: continue
 
             if ft == 'type' or ft == 'atk_type':
-                for i in range(w.count()):
-                    if w.itemText(i).startswith(f"{val}-"):
-                        w.setCurrentIndex(i)
-                        break
+                unknown_role = Qt.UserRole + 1
+                for i in range(w.count() - 1, -1, -1):
+                    if w.itemData(i, unknown_role):
+                        w.removeItem(i)
+                idx = w.findData(val)
+                if idx < 0:
+                    w.addItem(f"{val}-未知", val)
+                    idx = w.count() - 1
+                    w.setItemData(idx, True, unknown_role)
+                w.setCurrentIndex(idx)
             else:
                 w.setText(str(val))
 
@@ -1384,15 +1476,16 @@ class SkillEditorApp(FieldUndoMixin, EditorMainWindow):
     def _apply_edit(self):
         if self._editing_idx is None: return
         rec = self.records[self._editing_idx]
+        if is_warpc_extension_skill_index(rec['index']):
+            return
         undo_before = {fn: rec[fn] for fn, fo, fl, ft, _ in ALL_FIELDS}
         for fn, fo, fl, ft, _ in ALL_FIELDS:
             w = self.widget_map.get(fn)
             if not w: continue
             if ft == 'type' or ft == 'atk_type':
-                v = int(w.currentText().split('-')[0])
-                continue
+                v = self._combo_field_value(w, rec.get(fn, 0))
             # 数值字段: 校验失败/越界即时红框反馈 (不再静默归零)
-            if isinstance(w, QLineEdit):
+            elif isinstance(w, QLineEdit):
                 mark_invalid(w, False)
                 try:
                     v = int(w.text() or 0)
@@ -1421,51 +1514,116 @@ class SkillEditorApp(FieldUndoMixin, EditorMainWindow):
                 break
         self.status_var.setText(f"记录 #{rec['index']} 已修改 (内存)")
 
+    @staticmethod
+    def _combo_field_value(widget, fallback=0):
+        """Read int payload from a combo without relying on display text."""
+        data = widget.currentData()
+        if data is not None:
+            try:
+                return int(data)
+            except (TypeError, ValueError):
+                pass
+        text = widget.currentText().strip()
+        if text:
+            head = text.split('-', 1)[0].strip()
+            try:
+                return int(head)
+            except ValueError:
+                pass
+        try:
+            return int(fallback)
+        except (TypeError, ValueError):
+            return 0
+
     def _reset_edit(self):
         if self._editing_idx is not None:
             self._populate_edit(self.records[self._editing_idx])
 
     def _new_skill(self):
         if not self.records: return
-        for rec in self.records:
-            if rec['skill_text_id'] == 0:
-                rec['skill_text_id'] = rec['index'] + 1
-                rec['type'] = 1
-                rec['jp_cost'] = 1
-                rec['sub_count'] = -1
-                rec['atk_type'] = -1
-                self._dirty = True
-                self._apply_filter()
-                for r in range(self.table.rowCount()):
-                    if int(self.table.item(r, 0).text()) == rec['index']:
-                        self.table.selectRow(r)
-                        break
-                self._populate_edit(rec)
-                self.status_var.setText(f"已创建新技能 → 槽位 #{rec['index']}")
-                return
-        QMessageBox.warning(self, "槽位已满", f"所有 {SKILL_CNT} 个槽位均已占用")
+        rec = next(
+            (item for item in self.records
+             if item['skill_text_id'] == 0
+             and not is_warpc_extension_skill_index(item['index'])),
+            None,
+        )
+        if rec is None and len(self.records) >= SKILL_MAX_CNT:
+            QMessageBox.warning(
+                self,
+                "技能容量已满",
+                f"原版扩展补丁最多支持 {SKILL_MAX_CNT} 条技能。",
+            )
+            return
+        if rec is None:
+            while len(self.records) < WARPC_EXTENSION_SKILL_END:
+                self.records.append(blank_skill_record(len(self.records)))
+            rec = blank_skill_record(len(self.records))
+            self.records.append(rec)
+        else:
+            index = rec['index']
+            rec.clear()
+            rec.update(blank_skill_record(index))
+        rec['skill_text_id'] = rec['index'] + 1
+        rec['type'] = 1
+        rec['jp_cost'] = 1
+        rec['sub_count'] = -1
+        rec['atk_type'] = -1
+        self._dirty = True
+        self._apply_filter()
+        for r in range(self.table.rowCount()):
+            if int(self.table.item(r, 0).text()) == rec['index']:
+                self.table.selectRow(r)
+                break
+        self._populate_edit(rec)
+        self.status_var.setText(
+            f"已创建新技能 → 槽位 #{rec['index']} (共 {len(self.records)} 条)")
 
     def _copy_record(self):
         if self._editing_idx is None: return
         src = self.records[self._editing_idx]
         if src['skill_text_id'] == 0: return
-        for rec in self.records:
-            if rec['skill_text_id'] == 0:
-                idx_bak = rec['index']
-                rec.update({k: v for k, v in src.items() if k != 'index'})
-                rec['index'] = idx_bak
-                self._dirty = True
-                self._apply_filter()
-                for r in range(self.table.rowCount()):
-                    if int(self.table.item(r, 0).text()) == rec['index']:
-                        self.table.selectRow(r)
-                        break
-                self._populate_edit(rec)
-                return
+        if is_warpc_extension_skill_index(src['index']):
+            return
+        target = next(
+            (item for item in self.records
+             if item['skill_text_id'] == 0
+             and not is_warpc_extension_skill_index(item['index'])),
+            None,
+        )
+        if target is None and len(self.records) >= SKILL_MAX_CNT:
+            QMessageBox.warning(
+                self,
+                "技能容量已满",
+                f"原版扩展补丁最多支持 {SKILL_MAX_CNT} 条技能。",
+            )
+            return
+        if target is None:
+            while len(self.records) < WARPC_EXTENSION_SKILL_END:
+                self.records.append(blank_skill_record(len(self.records)))
+            idx = len(self.records)
+            rec = {k: v for k, v in src.items() if k != 'index'}
+            rec['index'] = idx
+            self.records.append(rec)
+        else:
+            idx = target['index']
+            rec = {k: v for k, v in src.items() if k != 'index'}
+            rec['index'] = idx
+            target.clear()
+            target.update(rec)
+            rec = target
+        self._dirty = True
+        self._apply_filter()
+        for r in range(self.table.rowCount()):
+            if int(self.table.item(r, 0).text()) == idx:
+                self.table.selectRow(r)
+                break
+        self._populate_edit(rec)
 
     def _clear_current(self):
         if self._editing_idx is None: return
         rec = self.records[self._editing_idx]
+        if is_warpc_extension_skill_index(rec['index']):
+            return
         if rec['skill_text_id'] == 0: return
         reply = themed_question(self, "确认", f"确定清空记录 #{rec['index']}?")
         if reply == QMessageBox.Yes:
@@ -1478,6 +1636,9 @@ class SkillEditorApp(FieldUndoMixin, EditorMainWindow):
 
     def _save(self):
         if not self.skill_path or not self.records: return
+        cleared = clear_warpc_extension_skill_slots(self.records)
+        if cleared:
+            self._dirty = True
         reply = themed_question(self, "确认保存", f"将覆盖保存并生成.bak:\n{self.skill_path}")
         if reply == QMessageBox.Yes:
             backup_existing_file(self.skill_path)
@@ -1485,7 +1646,10 @@ class SkillEditorApp(FieldUndoMixin, EditorMainWindow):
                 save_skills(self.skill_path, self.records)
                 self._dirty = False
                 QMessageBox.information(self, "成功", "保存成功！")
-                self.status_var.setText(f"已保存 → {self.skill_path}")
+                status = f"已保存 → {self.skill_path}"
+                if cleared:
+                    status += f" | 已清空冲突槽 {cleared}"
+                self.status_var.setText(status)
             except Exception as e:
                 QMessageBox.critical(self, "保存失败", str(e))
 
@@ -1517,15 +1681,29 @@ class SkillEditorApp(FieldUndoMixin, EditorMainWindow):
 
     def _export_tksmod(self):
         """导出当前修改为 .tksmod MOD 文件"""
+        self._enforce_warpc_extension_slot_policy("导出前")
         export_records_mod(self, self._MOD_SPEC)
 
     def _export_tksmod_with_ref(self):
         """导出 MOD — 指定原始参考目录进行差异比对"""
+        self._enforce_warpc_extension_slot_policy("导出前")
         export_records_mod(self, self._MOD_SPEC, ref_mode=True)
 
     def _import_tksmod(self):
         """从 .tksmod 导入 MOD 数据到编辑器"""
         import_records_mod(self, self._MOD_SPEC)
+        self._enforce_warpc_extension_slot_policy("导入后")
+
+    def _enforce_warpc_extension_slot_policy(self, phase):
+        """Remove data occupying WarPC extension-field slots."""
+        cleared = clear_warpc_extension_skill_slots(self.records)
+        if not cleared:
+            return
+        self._dirty = True
+        self._apply_filter()
+        self.status_var.setText(
+            f"{phase}已强制清空扩展字段冲突槽：{cleared}"
+        )
 
 def main():
     run_editor(SkillEditorApp)

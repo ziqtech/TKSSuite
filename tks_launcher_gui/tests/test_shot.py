@@ -1,57 +1,61 @@
-"""视觉验证脚本: 兼容蒙板/标准浅色/标准深色 截图后恢复原模式退出
+"""Manual visual verification script for the launcher themes.
 
-注意: 程序化 setChecked 不触发 QButtonGroup.buttonClicked, 需手动调用 _on_mode_changed。
+Kept import-safe so unittest discovery does not open a GUI window.
 """
+
 import os
 import sys
+
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, _HERE)
 sys.path.insert(0, os.path.dirname(_HERE))
-os.chdir(_HERE)
-
-from PySide6.QtCore import QTimer
-from PySide6.QtWidgets import QApplication
-
-app = QApplication(sys.argv)
-
-from editor_utils.theme_switcher import apply_theme_to_window
-from ui.main_window import MainWindow
-
-w = MainWindow()
-w.show()
-_START_MODE = w._get_mode()
 
 
-def _set_mode(mode: str):
-    btn = w._compatible_mode if mode == "compatible" else w._standard_mode
-    btn.setChecked(True)
-    w._on_mode_changed(btn)  # 程序化 setChecked 不发射 buttonClicked
+def main():
+    os.chdir(_HERE)
+    from PySide6.QtCore import QTimer
+    from PySide6.QtWidgets import QApplication
+    from editor_utils.theme_switcher import apply_theme_to_window
+    from ui.main_window import MainWindow
+
+    app = QApplication(sys.argv)
+    window = MainWindow()
+    window.show()
+    start_mode = window._get_mode()
+
+    def set_mode(mode):
+        button = (
+            window._compatible_mode
+            if mode == "compatible"
+            else window._standard_mode
+        )
+        button.setChecked(True)
+        window._on_mode_changed(button)
+
+    def step4():
+        window.grab().save(os.path.join(_HERE, "_shot_dark.png"))
+        set_mode(start_mode)
+        QTimer.singleShot(200, app.quit)
+
+    def step3():
+        window.grab().save(os.path.join(_HERE, "_shot_light.png"))
+        apply_theme_to_window(window, "gpt-dark", persist=False)
+        QTimer.singleShot(300, step4)
+
+    def step2():
+        window.grab().save(os.path.join(_HERE, "_shot_compat.png"))
+        set_mode("standard")
+        QTimer.singleShot(300, step3)
+
+    def step1():
+        apply_theme_to_window(window, "gpt-light", persist=False)
+        set_mode("compatible")
+        QTimer.singleShot(300, step2)
+
+    QTimer.singleShot(1200, step1)
+    return app.exec()
 
 
-def step1_compat_light():
-    apply_theme_to_window(w, "gpt-light", persist=False)
-    _set_mode("compatible")
-    QTimer.singleShot(300, step2)
-
-
-def step2():
-    w.grab().save(os.path.join(_HERE, "_shot_compat.png"))
-    _set_mode("standard")
-    QTimer.singleShot(300, step3)
-
-
-def step3():
-    w.grab().save(os.path.join(_HERE, "_shot_light.png"))
-    apply_theme_to_window(w, "gpt-dark", persist=False)
-    QTimer.singleShot(300, step4)
-
-
-def step4():
-    w.grab().save(os.path.join(_HERE, "_shot_dark.png"))
-    _set_mode(_START_MODE)  # 恢复用户原有模式
-    QTimer.singleShot(200, app.quit)
-
-
-QTimer.singleShot(1200, step1_compat_light)
-sys.exit(app.exec())
+if __name__ == "__main__":
+    raise SystemExit(main())

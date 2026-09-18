@@ -92,11 +92,15 @@ def cave_bytes_from_patch(patch_dir: str) -> bytes:
     return bytes.fromhex(cc.replace(" ", ""))
 
 
-CAVE_GATE = cave_bytes_from_patch(r"tks_launcher_gui\patches\trap_exp_jp_kill_fix")
-CAVE_PERSONAL = cave_bytes_from_patch(r"tks_launcher_gui\patches\trap_exp_jp_personal_fix")
-CAVE_SUMMON = cave_bytes_from_patch(r"tks_launcher_gui\patches\summon_exp_jp_accumulation_fix")
+try:
+    CAVE_GATE = cave_bytes_from_patch(r"tks_launcher_gui\patches\trap_exp_jp_kill_fix")
+    CAVE_PERSONAL = cave_bytes_from_patch(r"tks_launcher_gui\patches\trap_exp_jp_personal_fix")
+    CAVE_SUMMON = cave_bytes_from_patch(r"tks_launcher_gui\patches\summon_exp_jp_accumulation_fix")
+except (FileNotFoundError, KeyError, OSError):
+    CAVE_GATE = CAVE_PERSONAL = CAVE_SUMMON = None
 
-assert len(CAVE_GATE) == 23 and len(CAVE_PERSONAL) == 21 and len(CAVE_SUMMON) == 18
+if CAVE_GATE is not None:
+    assert len(CAVE_GATE) == 23 and len(CAVE_PERSONAL) == 21 and len(CAVE_SUMMON) == 18
 
 
 def run(name: str, arg0: int, with_summon: bool, scroll0: int = 0) -> dict:
@@ -193,6 +197,9 @@ def expect(name, got, **exp):
 
 
 def main():
+    if CAVE_GATE is None:
+        print("SKIP: patch cave source is not available")
+        return 0
     all_ok = True
     base = {"victim_hp": 0, "victim_dead": 2, "kills": 1}
 

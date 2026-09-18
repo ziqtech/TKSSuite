@@ -9,13 +9,19 @@ from typing import Any, Dict, List, Optional, Tuple
 from .memory import (
     i32b, i16b, b2i32, b2u16, bhex,
     read_pm, write_pm, vp_ex,
-    replace_addr_in_bytes,
+    rebase_globals, replace_addr_in_bytes,
     PROCESS_VM_READ, PROCESS_VM_WRITE, PROCESS_VM_OPERATION,
     PAGE_EXECUTE_READWRITE, PAGE_READWRITE,
     MEM_COMMIT, MEM_RESERVE,
     _OpenProcess, _CloseHandle, _VirtualAllocEx,
 )
-from .scanner import parse_pattern, pattern_scan, value_scan
+from .scanner import (
+    overlaps_rel32_jcc,
+    parse_pattern,
+    pattern_scan,
+    value_scan,
+    value_scan_excluding_rel32,
+)
 from .config_loader import (
     PatchConfig,
     PatchDef,
@@ -289,7 +295,8 @@ def _handle_patch_animation_speed(ctx: PatchContext) -> bool:
 # ============================================================
 
 def _build_cave_layout(config: 'PatchConfig', cave_addr: int,
-                       settings: PatchSettings, log) -> Optional['CaveLayout']:
+                       settings: PatchSettings, log,
+                       active_patches=None) -> Optional['CaveLayout']:
     """在主循环之前一次性为所有需要 cave 的补丁分配偏移。
 
     Args:
@@ -337,7 +344,9 @@ def _build_cave_layout(config: 'PatchConfig', cave_addr: int,
 
     # 1. 先为 fixed_layout 块按实际占用区间预留 (两个 pass, 避免
     #    cave_hook 自动布局先占掉 fixed_layout 的子 cave 区间)
-    for defn in config.patches:
+    active_patches = list(active_patches or config.patches)
+
+    for defn in active_patches:
         if defn.type != "fixed_layout_cave":
             continue
         try:
@@ -357,7 +366,7 @@ def _build_cave_layout(config: 'PatchConfig', cave_addr: int,
     # 2. 收集每个需要 cave 的补丁所需大小
     #    cave_hook / patch_exp_lock: 1 个 main 槽位
     #    patch_summon_table:         3 个槽位 (table + random_cave + random2_cave)
-    for defn in config.patches:
+    for defn in active_patches:
         try:
             if defn.type == "cave_hook":
                 # 必须按实际模板长度预留。固定 64 字节会让较长模板互相覆盖。
@@ -656,26 +665,6 @@ def apply_patch_bytes(defn: PatchDef, code_buf: bytearray, code_start_addr: int,
 # 逐位点校验失败即整补丁失败 (绝无半应用状态: 先全量校验再统一写入)。
 # ============================================================
 
-def _rebase_globals(data: bytes, windows: List[tuple], delta: int) -> bytes:
-    """把 data 内所有落在 windows [(base, span), ...] 的 4 字节小端绝对地址 +delta。
-
-    patch_sites 的 globals 重定位: cave 机器码与位点 repl 内联引用的槽位/
-    scratch 地址按占位基址生成, 应用时统一平移到独立分配的内存。
-    ⚠ 窗口必须窄 (槽位区 + 精确单值窗口) — 全 scratch 宽的窗口会对指令流里
-    恰好同值的随机 4 字节序列产生假阳性。
-    """
-    if not delta or not windows:
-        return data
-    out = bytearray(data)
-    for i in range(len(out) - 3):
-        v = int.from_bytes(out[i:i + 4], 'little')
-        for lo, span in windows:
-            if lo <= v < lo + span:
-                out[i:i + 4] = struct.pack('<I', (v + delta) & 0xFFFFFFFF)
-                break
-    return bytes(out)
-
-
 def _alloc_patch_globals(ctx: 'PatchContext', size: int) -> int:
     """为 patch_sites 的 globals 区 (槽位+scratch) 分配独立内存, 返回基址 (0=失败)。
 
@@ -746,8 +735,8 @@ def _resolve_sites_writes(defn: PatchDef, cave_base: int,
             repl = _parse_hex_bytes(site.get("replace", ""))
             if len(repl) != len(expect):
                 raise ValueError(f"{tag}: replace ({len(repl)}B) 与 expect ({len(expect)}B) 不等长")
-        if g_rebase and g_delta:
-            repl = _rebase_globals(repl, g_rebase, g_delta)
+        if kind not in ("call", "push_imm") and g_rebase and g_delta:
+            repl = rebase_globals(repl, g_rebase, g_delta)
         writes.append((rva, expect, repl, tag))
     return writes
 
@@ -776,9 +765,16 @@ def _handle_patch_sites(ctx: PatchContext) -> bool:
                 windows.append((ph + int(off), int(wspan)))
             g_rebase = windows
             g_delta = delta
-            cave_code = _rebase_globals(bytes(cave_code), windows, delta)
+            cave_code = rebase_globals(
+                bytes(cave_code), windows, delta,
+                offsets=defn.globals_relocations)
             log(f"    Globals 区: 0x{g_base:08X} ({alloc} 字节, 占位 0x{ph:08X}+{span:#x})"
                 f"{' +附加窗口' if len(windows) > 1 else ''}")
+        if ctx.warpc_base:
+            rebased = bytearray(cave_code)
+            replace_addr_in_bytes(
+                rebased, _WARPC_BASE_PLACEHOLDER, ctx.warpc_base)
+            cave_code = bytes(rebased)
         write_pm(ctx.h_proc, cave_base, cave_code)
         log(f"    Cave 写入: 0x{cave_base:08X} ({len(cave_code)} bytes)")
     elif any(s.get("kind") in ("call", "push_imm") for s in sites):
@@ -1204,15 +1200,29 @@ def _apply_patch_data_expand(defn: PatchDef, ctx: PatchContext) -> bool:
         return True
 
     hp = ctx.h_proc
-    alloc = _VirtualAllocEx(hp, None, front_pad + total_size,
-                            MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE)
-    alloc_addr = ctypes.cast(alloc, ctypes.c_void_p).value or 0 if alloc else 0
-    new_buf = alloc_addr + front_pad if alloc_addr else 0
+    reuse_warpc = (
+        old_base == _WARPC_BASE_PLACEHOLDER
+        and ctx.warpc_base != 0
+    )
+    if reuse_warpc:
+        # The launcher already allocated the single authoritative WarPC
+        # buffer before cave injection.  Allocate a second buffer here would
+        # split the original code and the new skill cave across two copies.
+        new_buf = ctx.warpc_base
+        front_pad = 0
+        log(f"  [OK] 复用已分配 WarPC 缓冲区 0x{new_buf:08X}")
+    else:
+        alloc = _VirtualAllocEx(hp, None, front_pad + total_size,
+                                MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE)
+        alloc_addr = (ctypes.cast(alloc, ctypes.c_void_p).value or 0
+                      if alloc else 0)
+        new_buf = alloc_addr + front_pad if alloc_addr else 0
     if not new_buf:
         log("  [ERROR] VirtualAllocEx 失败")
         return False
-    log(f"  [OK] 新缓冲区 0x{new_buf:08X} "
-        f"({front_pad}+{buffer_size}+{aux_size} bytes)")
+    if not reuse_warpc:
+        log(f"  [OK] 新缓冲区 0x{new_buf:08X} "
+            f"({front_pad}+{buffer_size}+{aux_size} bytes)")
 
     nw = write_pm(hp, new_buf, content)
     if nw != new_size:
@@ -1223,7 +1233,7 @@ def _apply_patch_data_expand(defn: PatchDef, ctx: PatchContext) -> bool:
     start = ctx.code_start_addr
     all_ok = True
 
-    base_hits = value_scan(bytes(code), old_base)
+    base_hits = value_scan_excluding_rel32(bytes(code), old_base)
     patched_base = 0
     for off in base_hits:
         abs_addr = start + off
@@ -1248,7 +1258,8 @@ def _apply_patch_data_expand(defn: PatchDef, ctx: PatchContext) -> bool:
         end = len(code) - 4
         while pos <= end:
             val = int.from_bytes(code[pos:pos + 4], "little")
-            if old_base < val < old_base + span:
+            if (old_base < val < old_base + span
+                    and not overlaps_rel32_jcc(bytes(code), pos)):
                 span_hits.append((pos, val))
                 pos += 4
                 continue
@@ -1279,9 +1290,14 @@ def _apply_patch_data_expand(defn: PatchDef, ctx: PatchContext) -> bool:
         size_hits = [off + defn.value_offset for off in matches]
         log(f"  [OK] 大小引用模式命中 {len(matches)} 处")
     else:
-        size_hits = value_scan(bytes(code), old_size)
+        size_hits = value_scan_excluding_rel32(bytes(code), old_size)
     patched_size = 0
-    new_size_le = i32b(buffer_size)
+    # Reused WarPC buffer was allocated for the actual data length by
+    # _allocate_warpc_buffer.  Its buffer_cap is only a future-capacity hint;
+    # advertising that capacity to the game would make it access past the
+    # allocation and corrupt startup/title-screen state.
+    redirect_size = new_size if reuse_warpc else buffer_size
+    new_size_le = i32b(redirect_size)
     for off in size_hits:
         abs_addr = start + off
         op = vp_ex(hp, abs_addr, 4, PAGE_EXECUTE_READWRITE)
@@ -1293,7 +1309,7 @@ def _apply_patch_data_expand(defn: PatchDef, ctx: PatchContext) -> bool:
         else:
             all_ok = False
     log(f"  [OK] 大小引用 {patched_size}/{len(size_hits)} "
-        f"({old_size} -> {buffer_size})")
+        f"({old_size} -> {redirect_size})")
 
     if not base_hits:
         log("  [WARN] 未找到基址引用")
@@ -2583,6 +2599,24 @@ def apply_config_patches(config: PatchConfig, code_buf: bytearray, code_start_ad
     pch: List[PatchDef] = []
     disabled_patches = disabled_patches or set()
 
+    from .config_loader import resolve_effective_patches
+    try:
+        effective = resolve_effective_patches(
+            config.patches,
+            selected=selected_patches,
+            disabled=disabled_patches,
+        )
+    except ValueError as exc:
+        log(f"  [ERROR] 补丁依赖/替代解析失败: {exc}")
+        return False
+    if effective.superseded:
+        detail = ", ".join(
+            f"{old}->{new}" for old, new in sorted(effective.superseded.items()))
+        log(f"  补丁替代: {detail}")
+    active_patches = effective.patches
+    runtime.skill_extension_enabled = any(
+        patch.id == "skill_ext_learn_state" for patch in active_patches)
+
     # 第三方 MOD 兼容: 从 profile 获取应跳过的补丁
     _profile_skip = set()
     _profile_name = "original"
@@ -2591,7 +2625,8 @@ def apply_config_patches(config: PatchConfig, code_buf: bytearray, code_start_ad
         _profile_name = exe_profile.name
 
     # ── Phase 6: Cave 布局 (在主循环之前一次性分配所有 cave 偏移) ──
-    cave_layout = _build_cave_layout(config, cave_addr, settings, log)
+    cave_layout = _build_cave_layout(
+        config, cave_addr, settings, log, active_patches=active_patches)
 
     # ── Phase 7: Hook 占用跟踪表 (启动器内部多个 cave_hook 之间) ──
     hook_table = HookTable()
@@ -2608,7 +2643,7 @@ def apply_config_patches(config: PatchConfig, code_buf: bytearray, code_start_ad
             log(f"    [ERROR] {defn.id}: 补丁应用失败")
         return bool(ok)
 
-    for defn in config.patches:
+    for defn in active_patches:
         tag = f"[{defn.id}]"
         log(f"\n  {tag}: {defn.desc}")
 
@@ -2729,6 +2764,6 @@ def apply_config_patches(config: PatchConfig, code_buf: bytearray, code_start_ad
             log(f"    [WARN] {defn.id}: cave hook 被当前启动模式禁用, 未应用")
 
     # 汇总: 成功数仅统计真正走过应用路径的补丁 (跳过的不计为失败)
-    applied = sum(1 for p in config.patches if getattr(p, "_applied", False))
-    log(f"\n  补丁应用汇总: {applied} 个成功 / 共 {len(config.patches)} 个补丁")
+    applied = sum(1 for p in active_patches if getattr(p, "_applied", False))
+    log(f"\n  补丁应用汇总: {applied} 个成功 / 共 {len(active_patches)} 个生效补丁")
     return all_ok
