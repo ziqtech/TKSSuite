@@ -17,7 +17,7 @@ class WidescreenContextTests(unittest.TestCase):
         self.assertIn("widescreen_16_9", patches)
         wide = patches["widescreen_16_9"]
         self.assertEqual(wide.type, "patch_sites")
-        self.assertEqual(len(getattr(wide, "sites", [])), 819)
+        self.assertEqual(len(getattr(wide, "sites", [])), 825)
         refs = {site.get("ref") for site in getattr(wide, "sites", [])}
         self.assertIn("map_camera", refs)
         self.assertIn("settle_shift", refs)
@@ -413,7 +413,8 @@ class NameInputPageTests(unittest.TestCase):
     横向拉丝), 且所有 X 仍停在左侧 640 区域。正确语义是:
       - 42539C 保持游戏态 856 步长, 不做页面包装;
       - 本页 13 个绘制 X +108;
-      - 4258F0/425DB0 的 8 个点击 X 读 PAGE_REC_X(raw X-108)。
+      - 4258F0/425DB0 的 8 个点击 X 读 PAGE_REC_X(raw X-108);
+      - 头像 211、按钮 hover 207/208、按下 209/210 走 RLE 处理器。
     """
 
     X_SHIFT_SITES = {
@@ -443,10 +444,21 @@ class NameInputPageTests(unittest.TestCase):
         0x25DF9: "8B 0D 44 08 66 00",
     }
 
+    HOVER_X_SITES = {
+        0x25E31: "8B 0D 40 08 66 00",
+        0x25E3F: "A1 40 08 66 00",
+        0x25E4F: "8B 15 40 08 66 00",
+        0x25E5D: "8B 0D 40 08 66 00",
+    }
+
     AVATAR_HOOK = (0x25550, "spr_ui25550", "E8 97 EF 02 00")
     BUTTON_HOVER_HOOKS = (
-        (0x25782, "spr_ui25782", "E8 65 ED 02 00"),  # frame209, x=334
-        (0x257C5, "spr_ui257C5", "E8 22 ED 02 00"),  # frame210, x=400
+        (0x257FC, "spr_ui257FC", "E8 EB EC 02 00"),  # frame207, left hover
+        (0x2582C, "spr_ui2582C", "E8 BB EC 02 00"),  # frame208, right hover
+    )
+    BUTTON_CLICK_HOOKS = (
+        (0x25782, "spr_ui25782", "E8 65 ED 02 00"),  # frame209, left click
+        (0x257C5, "spr_ui257C5", "E8 22 ED 02 00"),  # frame210, right click
     )
 
     def _sites(self):
@@ -482,6 +494,14 @@ class NameInputPageTests(unittest.TestCase):
             self.assertEqual((site.get("replace") or "").upper(), replacement,
                              f"{rva:#X}: 姓名页点击命中仍读 raw X")
 
+    def test_hover_hit_uses_page_x(self):
+        sites = self._sites()
+        for rva, replacement in self.HOVER_X_SITES.items():
+            site = sites.get(rva)
+            self.assertIsNotNone(site, f"{rva:#X}: 姓名页 hover X 读点缺失")
+            self.assertEqual((site.get("replace") or "").upper(), replacement,
+                             f"{rva:#X}: 姓名页 hover 命中仍读 raw X")
+
     def test_avatar_uses_rle_handler(self):
         rva, entry, expect = self.AVATAR_HOOK
         site = self._sites().get(rva)
@@ -500,6 +520,16 @@ class NameInputPageTests(unittest.TestCase):
             self.assertEqual(site.get("ref"), entry, f"{rva:#X}: 悬停按钮 cave 入口不对")
             self.assertEqual((site.get("expect") or "").upper(), expect,
                              f"{rva:#X}: 位点不是悬停按钮 4544EC 调用")
+
+    def test_button_click_uses_rle_handler(self):
+        sites = self._sites()
+        for rva, entry, expect in self.BUTTON_CLICK_HOOKS:
+            site = sites.get(rva)
+            self.assertIsNotNone(site, f"{rva:#X}: 按钮点击调用位点缺失")
+            self.assertEqual(site.get("kind"), "call", f"{rva:#X}: 点击按钮必须走 cave 处理器")
+            self.assertEqual(site.get("ref"), entry, f"{rva:#X}: 点击按钮 cave 入口不对")
+            self.assertEqual((site.get("expect") or "").upper(), expect,
+                             f"{rva:#X}: 位点不是点击按钮 4544EC 调用")
 
 
 if __name__ == "__main__":
