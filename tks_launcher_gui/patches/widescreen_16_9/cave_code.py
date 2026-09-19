@@ -1649,6 +1649,19 @@ def build_pickup_shift() -> bytes:
             + b'\xFF\xE0')                                      # jmp eax (尾调)
 
 
+def build_curtain_exit_first_x() -> bytes:
+    """幕帘出场第一组 X: `add dx,0x74` + 下一句 store 整体重放。
+
+    `0x3AF94` 是 16 位 `add dx, imm8`; 目标 `116+108=224` 无法塞进有符号
+    imm8 (`0xE0` 会被扩展成 -32)。这里覆盖该 4B 加下一条 5B store, 用
+    `add dx,224` 重放, 再回到 0x3AF9D。
+    """
+    return (b'\x59'                                      # pop ecx (site+9)
+            + b'\x66\x81\xC2\xE0\x00'                    # add dx,224
+            + b'\x66\x89\x54\x24\x0A'                    # mov [esp+0xA],dx
+            + b'\xFF\xE1')                               # jmp ecx
+
+
 def build_pickup_read_sync() -> bytes:
     """拾取读点的 X 装载 + 当前鼠标世界坐标同步。
 
@@ -2445,6 +2458,8 @@ _SBXD_BLOB = build_setbox_shift(0x18)    # 同上, 42D234: GetDC 缓冲在帧 +8
 _BLOCKS.append(('setbox_shift_deep', lambda: _SBXD_BLOB))
 _PKS_BLOB = build_pickup_shift()         # 拾取写: X-=108 (对齐原版 640 视图列)
 _BLOCKS.append(('pickup_shift', lambda: _PKS_BLOB))
+_CEX_BLOB = build_curtain_exit_first_x() # 幕帘出场第一组 X 的 16 位 +224 重放
+_BLOCKS.append(('curtain_exit_first_x', lambda: _CEX_BLOB))
 _PRS_BLOB = build_pickup_read_sync()     # 拾取读: 同步当前鼠标世界坐标 + PAGE_X
 _BLOCKS.append(('pickup_read_sync', lambda: _PRS_BLOB))
 _PKO_BLOB = build_pickup_oob()           # 拾取读: 屏幕边带返回 -1 (走 bbox 兜底)

@@ -17,7 +17,7 @@ class WidescreenContextTests(unittest.TestCase):
         self.assertIn("widescreen_16_9", patches)
         wide = patches["widescreen_16_9"]
         self.assertEqual(wide.type, "patch_sites")
-        self.assertEqual(len(getattr(wide, "sites", [])), 825)
+        self.assertEqual(len(getattr(wide, "sites", [])), 829)
         refs = {site.get("ref") for site in getattr(wide, "sites", [])}
         self.assertIn("map_camera", refs)
         self.assertIn("settle_shift", refs)
@@ -544,6 +544,53 @@ class NameInputPageTests(unittest.TestCase):
             self.assertEqual(site.get("ref"), entry, f"{rva:#X}: 点击按钮 cave 入口不对")
             self.assertEqual((site.get("expect") or "").upper(), expect,
                              f"{rva:#X}: 位点不是点击按钮 4544EC 调用")
+
+
+class BattleCurtainExitTests(unittest.TestCase):
+    """43A8D8 入场末帧与出场首帧必须使用同一组 856 居中坐标。"""
+
+    EXIT_LITERAL_SITES = {
+        0x3B009: ("66 81 C1 E6 00", "66 81 C1 52 01"),  # 34*j+230 -> +338
+        0x3B07F: ("66 05 55 01", "66 05 C1 01"),  # 24*j+341 -> +449
+        0x3B0F4: ("66 81 C2 BC 01", "66 81 C2 28 02"),  # 14*j+444 -> +552
+    }
+    FIRST_X_HOOK = (
+        0x3AF94,
+        "curtain_exit_first_x",
+        "66 83 C2 74 66 89 54 24 0A",  # add dx,116 + mov [esp+0xA],dx
+    )
+
+    def test_exit_curtain_starts_where_entry_finishes(self):
+        import json
+        patch_dir = ROOT / "tks_launcher_gui" / "patches" / "widescreen_16_9"
+        raw = json.loads((patch_dir / "patch.json").read_text(encoding="utf-8"))
+        sites = {int(s["rva"], 0): s for s in raw["sites"]}
+        rva, entry, expect = self.FIRST_X_HOOK
+        site = sites.get(rva)
+        self.assertIsNotNone(site, f"{rva:#X}: 幕帘第一组 X 位点缺失")
+        self.assertEqual(site.get("kind"), "call")
+        self.assertEqual(site.get("ref"), entry)
+        self.assertEqual((site.get("expect") or "").upper(), expect)
+        for rva, (expect, replacement) in self.EXIT_LITERAL_SITES.items():
+            site = sites.get(rva)
+            self.assertIsNotNone(site, f"{rva:#X}: 幕帘出场坐标位点缺失")
+            self.assertEqual((site.get("expect") or "").upper(), expect)
+            self.assertEqual((site.get("replace") or "").upper(), replacement,
+                             f"{rva:#X}: 出场首帧未与入场末帧同加 108")
+
+    def test_first_curtain_x_cave_replays_store(self):
+        import importlib.util
+        patch_dir = ROOT / "tks_launcher_gui" / "patches" / "widescreen_16_9"
+        spec = importlib.util.spec_from_file_location("_ws_curtain_x", patch_dir / "cave_code.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        blob = module.build_cave_block()
+        want = (b"\x59"
+                + b"\x66\x81\xC2\xE0\x00"
+                + b"\x66\x89\x54\x24\x0A"
+                + b"\xFF\xE1")
+        start = module.CAVE_ENTRIES["curtain_exit_first_x"]
+        self.assertEqual(blob[start:start + len(want)], want)
 
 
 if __name__ == "__main__":
