@@ -1649,6 +1649,32 @@ def build_pickup_shift() -> bytes:
             + b'\xFF\xE0')                                      # jmp eax (尾调)
 
 
+def build_pickup_read_sync() -> bytes:
+    """拾取读点的 X 装载 + 当前鼠标世界坐标同步。
+
+    `sub_412390` 在每帧相机/拾取缓冲更新之前调用 `sub_410B74(2)`。鼠标事件
+    会立即更新 raw X/PAGE_X, 但 bbox 兜底和地图掩码使用的世界坐标
+    `824280/824284` 要等之后的 `sub_406CE0` 才刷新。只移动 1-2px 时, 同一
+    物件内会一边用新鼠标坐标读缓冲、一边用旧世界坐标走兜底, 表现为光标频繁
+    切换。这里在读取缓冲前用当前 raw X/Y 重算世界坐标, 再执行原来的
+    `mov eax,[PAGE_X]`, 使两条判定同帧同源。
+
+    位点 0x10B77 位于 `push ebp; mov ebp,esp` 之后, 替换 5B
+    `mov eax,[824278]`, 末尾跳回 0x10B7C (`mov edx,[82427C]`)。
+    """
+    code = bytearray()
+    code += b'\x59'                                      # pop ecx (site+5)
+    code += b'\xA1' + struct.pack('<I', 0x008242A8)      # mov eax,[viewX]
+    code += b'\x03\x05' + struct.pack('<I', 0x00824278)  # add eax,[raw X]
+    code += b'\xA3' + struct.pack('<I', 0x00824280)      # mov [worldX],eax
+    code += b'\x8B\x15' + struct.pack('<I', 0x008242AC)  # mov edx,[viewY]
+    code += b'\x03\x15' + struct.pack('<I', 0x0082427C)  # add edx,[raw Y]
+    code += b'\x89\x15' + struct.pack('<I', 0x00824284)  # mov [worldY],edx
+    code += b'\xA1' + _g_page_x()                        # mov eax,[PAGE_X]
+    code += b'\xFF\xE1'                                  # jmp ecx -> site+5
+    return bytes(code)
+
+
 def build_pickup_oob() -> bytes:
     """sub_410B74 内的拾取缓冲读取指令 (RVA 0x10BAF, 8B) → 屏幕边带给出 -1 id。
 
@@ -2419,6 +2445,8 @@ _SBXD_BLOB = build_setbox_shift(0x18)    # 同上, 42D234: GetDC 缓冲在帧 +8
 _BLOCKS.append(('setbox_shift_deep', lambda: _SBXD_BLOB))
 _PKS_BLOB = build_pickup_shift()         # 拾取写: X-=108 (对齐原版 640 视图列)
 _BLOCKS.append(('pickup_shift', lambda: _PKS_BLOB))
+_PRS_BLOB = build_pickup_read_sync()     # 拾取读: 同步当前鼠标世界坐标 + PAGE_X
+_BLOCKS.append(('pickup_read_sync', lambda: _PRS_BLOB))
 _PKO_BLOB = build_pickup_oob()           # 拾取读: 屏幕边带返回 -1 (走 bbox 兜底)
 _BLOCKS.append(('pickup_oob', lambda: _PKO_BLOB))
 _CAM_BLOB = build_camrect_clamp()        # 相机 SetRect 视口钳制 (窄地图一致性)

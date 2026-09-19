@@ -297,10 +297,10 @@ class PickupMappingTests(unittest.TestCase):
     # (位点 -> (cave 入口, 原字节))
     CALL_SITES = {
         0x6CBD: ("pickup_shift", "E8 82 DC 04 00"),
+        0x10B77: ("pickup_read_sync", "A1 78 42 82 00"),
         0x10BAF: ("pickup_oob", "0F BF 14 55 76 E2 78 00"),
     }
     READ_SITE = 0x10B77
-    PAGE_X = "A1 40 08 66 00"          # 占位 0x660840, 由 globals 重定位平移
 
     def _sites(self):
         import json
@@ -308,12 +308,13 @@ class PickupMappingTests(unittest.TestCase):
         raw = json.loads((patch_dir / "patch.json").read_text(encoding="utf-8"))
         return {int(s["rva"], 0): s for s in raw["sites"]}
 
-    def test_read_site_uses_page_x(self):
+    def test_read_site_uses_page_x_and_world_sync(self):
         site = self._sites().get(self.READ_SITE)
         self.assertIsNotNone(site, "拾取读点 X 位点缺失")
         self.assertEqual((site.get("expect") or "").upper(), "A1 78 42 82 00")
-        self.assertEqual((site.get("replace") or "").upper(), self.PAGE_X,
-                         "拾取读点必须读 PAGE_X(=raw-108), 否则与写入侧不同空间")
+        self.assertEqual(site.get("kind"), "call", "拾取读点必须接入同步 cave")
+        self.assertEqual(site.get("ref"), "pickup_read_sync",
+                         "拾取读点必须先同步世界坐标, 再读 PAGE_X")
 
     def test_write_and_oob_sites_hooked(self):
         got = self._sites()
@@ -341,6 +342,19 @@ class PickupMappingTests(unittest.TestCase):
         start = module.CAVE_ENTRIES["pickup_shift"]
         self.assertEqual(blob[start:start + len(shift)], shift,
                          "pickup_shift 必须是 X-=108 + 尾调 454944")
+
+        sync = (b"\x59"
+                + b"\xA1" + (0x8242A8).to_bytes(4, "little")
+                + b"\x03\x05" + (0x824278).to_bytes(4, "little")
+                + b"\xA3" + (0x824280).to_bytes(4, "little")
+                + b"\x8B\x15" + (0x8242AC).to_bytes(4, "little")
+                + b"\x03\x15" + (0x82427C).to_bytes(4, "little")
+                + b"\x89\x15" + (0x824284).to_bytes(4, "little")
+                + b"\xA1" + module._g_page_x()
+                + b"\xFF\xE1")
+        start = module.CAVE_ENTRIES["pickup_read_sync"]
+        self.assertEqual(blob[start:start + len(sync)], sync,
+                         "pickup_read_sync 必须先算当前世界坐标, 再装载 PAGE_X")
 
         # pickup_oob: 边带(出界) 把读出的 id 换成 -1, 中心区执行原读取指令, 再跳回 site+8
         start = module.CAVE_ENTRIES["pickup_oob"]
