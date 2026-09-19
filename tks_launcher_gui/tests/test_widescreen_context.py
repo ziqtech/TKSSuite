@@ -17,13 +17,14 @@ class WidescreenContextTests(unittest.TestCase):
         self.assertIn("widescreen_16_9", patches)
         wide = patches["widescreen_16_9"]
         self.assertEqual(wide.type, "patch_sites")
-        self.assertEqual(len(getattr(wide, "sites", [])), 796)
+        self.assertEqual(len(getattr(wide, "sites", [])), 819)
         refs = {site.get("ref") for site in getattr(wide, "sites", [])}
         self.assertIn("map_camera", refs)
         self.assertIn("settle_shift", refs)
         self.assertIn("gxp_pad_decide", refs)
         self.assertIn("gxp_upload", refs)
         self.assertIn("init_stride", refs)
+        self.assertNotIn("wrap_page_42539C", refs)
 
     def test_generated_cave_matches_patch_json(self):
         patch_dir = ROOT / "tks_launcher_gui" / "patches" / "widescreen_16_9"
@@ -402,6 +403,103 @@ class PrimitiveTwinCoverageTests(unittest.TestCase):
                              f"{twin:#X}: 孪生位点的钩子类型与 {src:#X} 不一致")
             self.assertEqual(got[twin].get("ref"), got[src].get("ref"),
                              f"{twin:#X}: 孪生位点的 cave 入口与 {src:#X} 不一致")
+
+
+class NameInputPageTests(unittest.TestCase):
+    """姓名输入页必须按 856 直接绘制, 且绘制/命中坐标统一居中。
+
+    42539C 不像普通页面状态机那样先 grab 到 640 缓冲再 push; 它直接把精灵和
+    文字画到 856 后备表面。若套页面 640 步长包装, 每行会按 640 回卷 (固定
+    横向拉丝), 且所有 X 仍停在左侧 640 区域。正确语义是:
+      - 42539C 保持游戏态 856 步长, 不做页面包装;
+      - 本页 13 个绘制 X +108;
+      - 4258F0/425DB0 的 8 个点击 X 读 PAGE_REC_X(raw X-108)。
+    """
+
+    X_SHIFT_SITES = {
+        0x25528: "6A 6C",             # 44E49C text x 0 -> 108 (push imm8)
+        0x2554A: "68 41 01 00 00",   # 4544EC sprite x 213 -> 321
+        0x2555F: "68 25 01 00 00",   # 4258A4 IME text x 185 -> 293
+        0x25586: "68 9C 01 00 00",   # text x 304 -> 412
+        0x255AC: "68 E0 01 00 00",   # text x 372 -> 480
+        0x255D4: "68 9C 01 00 00",
+        0x255FA: "68 E0 01 00 00",
+        0x2570B: "68 9C 01 00 00",
+        0x25733: "68 E0 01 00 00",
+        0x2577C: "68 BA 01 00 00",   # sprite x 334 -> 442
+        0x257BF: "68 FC 01 00 00",   # sprite x 400 -> 508
+        0x257F6: "68 BA 01 00 00",
+        0x25826: "68 FC 01 00 00",
+    }
+
+    HIT_X_SITES = {
+        0x25C69: "8B 0D 44 08 66 00",
+        0x25C77: "A1 44 08 66 00",
+        0x25C95: "8B 0D 44 08 66 00",
+        0x25CA7: "A1 44 08 66 00",
+        0x25DCD: "8B 0D 44 08 66 00",
+        0x25DDB: "A1 44 08 66 00",
+        0x25DEB: "8B 15 44 08 66 00",
+        0x25DF9: "8B 0D 44 08 66 00",
+    }
+
+    AVATAR_HOOK = (0x25550, "spr_ui25550", "E8 97 EF 02 00")
+    BUTTON_HOVER_HOOKS = (
+        (0x25782, "spr_ui25782", "E8 65 ED 02 00"),  # frame209, x=334
+        (0x257C5, "spr_ui257C5", "E8 22 ED 02 00"),  # frame210, x=400
+    )
+
+    def _sites(self):
+        import json
+        patch_dir = ROOT / "tks_launcher_gui" / "patches" / "widescreen_16_9"
+        raw = json.loads((patch_dir / "patch.json").read_text(encoding="utf-8"))
+        return {int(s["rva"], 0): s for s in raw["sites"]}
+
+    def test_direct_render_x_shifted(self):
+        sites = self._sites()
+        for rva, replacement in self.X_SHIFT_SITES.items():
+            site = sites.get(rva)
+            self.assertIsNotNone(site, f"{rva:#X}: 姓名页绘制 X 位点缺失")
+            self.assertEqual((site.get("replace") or "").upper(), replacement,
+                             f"{rva:#X}: 姓名页绘制 X 未加 108")
+
+    def test_page_stride_wrapper_removed(self):
+        import importlib.util
+        patch_dir = ROOT / "tks_launcher_gui" / "patches" / "widescreen_16_9"
+        spec = importlib.util.spec_from_file_location("_ws_name_page", patch_dir / "cave_code.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        self.assertNotIn("wrap_page_42539C", module.CAVE_ENTRIES,
+                         "姓名页必须保持 856 步长直接绘制, 不能再套 640 页面包装")
+        self.assertNotIn(0xD434, self._sites(),
+                         "0xD434 的页面包装 call 位点必须撤掉")
+
+    def test_hit_tests_read_page_x(self):
+        sites = self._sites()
+        for rva, replacement in self.HIT_X_SITES.items():
+            site = sites.get(rva)
+            self.assertIsNotNone(site, f"{rva:#X}: 姓名页点击 X 读点缺失")
+            self.assertEqual((site.get("replace") or "").upper(), replacement,
+                             f"{rva:#X}: 姓名页点击命中仍读 raw X")
+
+    def test_avatar_uses_rle_handler(self):
+        rva, entry, expect = self.AVATAR_HOOK
+        site = self._sites().get(rva)
+        self.assertIsNotNone(site, f"{rva:#X}: 姓名页头像调用位点缺失")
+        self.assertEqual(site.get("kind"), "call", f"{rva:#X}: 头像必须走 cave 处理器")
+        self.assertEqual(site.get("ref"), entry, f"{rva:#X}: 头像 cave 入口不对")
+        self.assertEqual((site.get("expect") or "").upper(), expect,
+                         f"{rva:#X}: 位点不是姓名页头像 4544EC 调用")
+
+    def test_button_hover_uses_rle_handler(self):
+        sites = self._sites()
+        for rva, entry, expect in self.BUTTON_HOVER_HOOKS:
+            site = sites.get(rva)
+            self.assertIsNotNone(site, f"{rva:#X}: 按钮悬停调用位点缺失")
+            self.assertEqual(site.get("kind"), "call", f"{rva:#X}: 悬停按钮必须走 cave 处理器")
+            self.assertEqual(site.get("ref"), entry, f"{rva:#X}: 悬停按钮 cave 入口不对")
+            self.assertEqual((site.get("expect") or "").upper(), expect,
+                             f"{rva:#X}: 位点不是悬停按钮 4544EC 调用")
 
 
 if __name__ == "__main__":
