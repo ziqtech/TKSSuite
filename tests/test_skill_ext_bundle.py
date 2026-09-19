@@ -39,6 +39,53 @@ GAME_DIR = Path(os.environ.get("TKS_GAME_DIR", r"游戏目录（原版）"))
 
 
 class SkillExtBundleTests(unittest.TestCase):
+    def _assert_skill_menu_pages(self, uc, warpc_base, skill_base, globals_base):
+        ui = 0x02000000
+        sp = 0x7FF08000
+        stop = 0x00100000
+        uc.mem_map(ui, 0x130000)
+        uc.mem_write(globals_base + 0x58040, struct.pack("<H", 1))
+        uc.mem_write(globals_base + 0x58044, struct.pack("<I", 351))
+        for actor, extended in ((0, False), (200, True), (499, True)):
+            for legacy_count in (0, 3, 12):
+                for mode, category, state in ((0, 0, 10), (4, 0, 20),
+                                               (6, 1, 20), (8, 2, 30), (9, 3, 30)):
+                    with self.subTest(actor=actor, legacy_count=legacy_count,
+                                      mode=mode):
+                        expected = list(range(legacy_count))
+                        if extended:
+                            expected.append(350)
+                        definitions = bytearray(65536)
+                        for skill in range(352):
+                            struct.pack_into("<h", definitions, skill * 94 + 4,
+                                             category)
+                        uc.mem_write(skill_base, bytes(definitions))
+                        learn = bytes([state]) * legacy_count + bytes(344 - legacy_count)
+                        uc.mem_write(warpc_base + actor * 1054 + 176,
+                                     learn + bytes([state]) * 6)
+                        uc.mem_write(globals_base + actor * 347,
+                                     bytes([state if extended else 0, state]) + bytes(345))
+                        uc.mem_write(ui + 0x12C3A4, struct.pack("<h", mode))
+                        uc.mem_write(ui + 0x12C3EC, b"\0\0")
+                        pages = max(1, (len(expected) + 9) // 10)
+                        for page in list(range(pages)) + [0]:
+                            uc.mem_write(ui + 0x12C3E8, struct.pack("<h", page))
+                            uc.mem_write(sp, struct.pack("<III", stop, ui, actor))
+                            uc.reg_write(UC_X86_REG_ESP, sp)
+                            uc.emu_start(0x4189BC, stop, count=100_000)
+                            self.assertEqual(uc.reg_read(UC_X86_REG_EIP), stop)
+                            self.assertEqual(uc.reg_read(UC_X86_REG_ESP), sp + 4)
+                            count = struct.unpack(
+                                "<h", uc.mem_read(ui + 0x12C3B0, 2))[0] + 1
+                            wanted = expected[page * 10:page * 10 + 10]
+                            self.assertEqual(count, len(wanted))
+                            actual = list(struct.unpack(
+                                f"<{count}h", uc.mem_read(ui + 0x12C3B2, count * 2)))
+                            self.assertEqual(actual, wanted)
+                            self.assertEqual(
+                                uc.mem_read(ui + 0x12C3AF, 1),
+                                bytes([int((page + 1) * 10 < len(expected))]))
+
     @unittest.skipUnless(
         (GAME_DIR / "TKS.exe").is_file()
         and (GAME_DIR / "TKSkill.dat").is_file(),
@@ -175,6 +222,11 @@ class SkillExtBundleTests(unittest.TestCase):
                     self.assertEqual(uc.reg_read(UC_X86_REG_ESP), sp + 4)
                     self.assertEqual(uc.mem_read(battle_map, 64), b"\0" * 64)
                     self.assertEqual(uc.mem_read(battle_map + 0x40, 8), metadata)
+
+            sections = {s.Name.rstrip(b"\0"): pe.OPTIONAL_HEADER.ImageBase
+                        + s.VirtualAddress for s in pe.sections}
+            self._assert_skill_menu_pages(
+                uc, sections[b".warpc"], sections[b".tkskill"], globals_base)
 
 
 if __name__ == "__main__":

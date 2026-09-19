@@ -208,20 +208,48 @@ class SkillLearnStateTests(unittest.TestCase):
         )
         uc.mem_write(state_addr(9, 350), bytes([20]))
         frame = STACK - 0x5000
-        uc.mem_write(frame - 4, struct.pack("<i", 0))       # start skill
-        uc.mem_write(frame + 0xC, struct.pack("<h", 9))     # character ID
+        uc.mem_write(frame - 4, struct.pack("<hh", 0, -1))
+        uc.mem_write(frame + 0xC, struct.pack("<h", 9))
         uc.reg_write(UC_X86_REG_EBP, frame)
-        uc.reg_write(UC_X86_REG_EAX, WARPC)                 # base + start
+        uc.reg_write(UC_X86_REG_EAX, WARPC)
         uc.reg_write(UC_X86_REG_EDX, 9 * 527)
 
-        uc.emu_start(CAVE + entries["scan_redirect"], STOP)
+        uc.emu_start(CAVE + entries["scan_redirect"], STOP, count=20_000)
 
+        self.assertEqual(uc.reg_read(UC_X86_REG_EIP), STOP)
         self.assertEqual(uc.reg_read(UC_X86_REG_EDX), TEMP)
-        self.assertEqual(uc.reg_read(UC_X86_REG_EAX), TEMP)
+        self.assertEqual(uc.reg_read(UC_X86_REG_EAX), WARPC)
         self.assertEqual(uc.mem_read(TEMP, 1), b"\x05")
         self.assertEqual(uc.mem_read(TEMP + 343, 1), b"\x07")
         self.assertEqual(uc.mem_read(TEMP + 344, 6), b"\0" * 6)
         self.assertEqual(uc.mem_read(TEMP + 350, 1), b"\x14")
+
+    def test_scan_hooks_use_word_cursor_and_preserve_other_registers(self):
+        raw = json.loads(PATCH_JSON.read_text(encoding="utf-8"))
+        sites = {int(site["rva"], 16): site for site in raw["sites"]}
+        for rva in (0x18AE1, 0x18C31):
+            for start, last_index in ((5, -1), (350, 0), (697, 9)):
+                with self.subTest(rva=hex(rva), start=start, last_index=last_index):
+                    uc, entries = _emu_base()
+                    frame = STACK - 0x5000
+                    uc.mem_write(frame - 4, struct.pack("<hh", start, last_index))
+                    uc.mem_write(frame + 0xC, struct.pack("<h", 9))
+                    uc.reg_write(UC_X86_REG_EBP, frame)
+                    values = ({UC_X86_REG_EAX: WARPC + start,
+                               UC_X86_REG_ECX: start, UC_X86_REG_EDX: 9 * 527}
+                              if rva == 0x18AE1 else
+                              {UC_X86_REG_EAX: 9 * 527,
+                               UC_X86_REG_ECX: WARPC + start, UC_X86_REG_EDX: start})
+                    for reg, value in values.items():
+                        uc.reg_write(reg, value)
+                    output = UC_X86_REG_EDX if rva == 0x18AE1 else UC_X86_REG_EAX
+                    uc.emu_start(CAVE + entries[sites[rva]["ref"]], STOP,
+                                 count=20_000)
+                    self.assertEqual(uc.reg_read(UC_X86_REG_EIP), STOP)
+                    self.assertEqual(uc.reg_read(output), TEMP + start)
+                    for reg, value in values.items():
+                        if reg != output:
+                            self.assertEqual(uc.reg_read(reg), value)
 
     def test_learn_write_routes_skill_350_to_external_state(self):
         uc, entries = _emu_base()
