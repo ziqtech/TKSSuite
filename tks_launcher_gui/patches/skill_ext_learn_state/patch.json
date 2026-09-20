@@ -365,7 +365,15 @@
       "expect": "B9 07 01 00 00",
       "kind": "call",
       "ref": "record_battle_map_player",
-      "tag": "sub_4307CC map copied player/enemy record"
+      "tag": "sub_4307CC map copied player record"
+    },
+    {
+      "_comment": "敌方模板拷贝 (type+35) 的 memcpy 计数指令。此前未挂钩，导致 map[unit] 保持 0，skill<350 的学习状态被 learn_reader 误读为 WarPC[0]，敌方技能组在 sub_438F28 全部判为未学会，AI 只普攻。与我方位点共用同一 cave（ebp-6=WarPC id, ebp-4=战斗槽位）。",
+      "rva": "0x30D24",
+      "expect": "B9 07 01 00 00",
+      "kind": "call",
+      "ref": "record_battle_map_player",
+      "tag": "sub_4307CC map copied enemy record"
     },
     {
       "rva": "0x310FF",
