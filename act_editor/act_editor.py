@@ -246,6 +246,104 @@ FLOAT_Y_CURVE = (
     -8, 0, -4, 0, -2, 0,
 )
 
+# 飘字效果类型（颜色索引与文案均来自原版逆向实证）。
+# kind=number：按 TKAct 触发帧分摊 total，颜色按 colors 循环；
+# kind=text：每个触发帧显示固定文案，使用 color_idx。
+FLOAT_TYPES = (
+    {
+        'id': 'hp_damage',
+        'label': '伤害飘字',
+        'kind': 'number',
+        'colors': (18, 23),
+        'total': 999,
+        'tooltip': (
+            'HP伤害数字（默认）\n'
+            '偶数段调色板18(红)、奇数段23(品红)\n'
+            '依据 sub_4400DC / sub_433F04'),
+    },
+    {
+        'id': 'mp_damage',
+        'label': '内力伤害',
+        'kind': 'number',
+        'colors': (28,),
+        'total': 999,
+        'tooltip': (
+            'MP/内力伤害数字\n'
+            '调色板28(紫蓝)\n'
+            '依据 sub_4400DC 4421A5'),
+    },
+    {
+        'id': 'hp_heal',
+        'label': '生命恢复',
+        'kind': 'number',
+        'colors': (20,),
+        'total': 999,
+        'tooltip': (
+            'HP恢复数字（道具/治疗）\n'
+            '调色板20(绿)\n'
+            '依据 sub_4400DC 44046B'),
+    },
+    {
+        'id': 'mp_heal',
+        'label': '内力恢复',
+        'kind': 'number',
+        'colors': (21,),
+        'total': 999,
+        'tooltip': (
+            'MP恢复数字（道具/治疗）\n'
+            '调色板21(青)\n'
+            '依据 sub_4400DC 4406EC'),
+    },
+    {
+        'id': 'miss',
+        'label': '未命中 Miss',
+        'kind': 'text',
+        'text': 'Miss',
+        'color_idx': 31,
+        'tooltip': (
+            '未命中/无效\n'
+            '白色调色板31，显示 Miss\n'
+            '依据 sub_433D44：value<0 时走该分支'),
+    },
+    {
+        'id': 'spell_reflect',
+        'label': '法术反弹',
+        'kind': 'text',
+        'text': '法術反彈',
+        'color_idx': 29,
+        'tooltip': (
+            '法术反弹提示\n'
+            '调色板29(天蓝)\n'
+            '依据 sub_4458B0 → sub_433A38(unk_4EBC2A, 29)'),
+    },
+    {
+        'id': 'status',
+        'label': '状态异常',
+        'kind': 'text',
+        'text': '定身',
+        'color_idx': 26,
+        'tooltip': (
+            '状态异常提示（定身/沈睡等）\n'
+            '调色板26(黄绿)\n'
+            '依据 sub_43292C → sub_433A38(color 26)'),
+    },
+    {
+        'id': 'action_fail',
+        'label': '行动失败',
+        'kind': 'text',
+        'text': '行動失敗',
+        'color_idx': 18,
+        'tooltip': (
+            '行动/指令失败提示\n'
+            '调色板18(红)\n'
+            '依据 sub_4458B0 → sub_433A38(unk_4EBBE5, 18)'),
+    },
+)
+
+FLOAT_TYPE_MAP = {ft['id']: ft for ft in FLOAT_TYPES}
+DEFAULT_FLOAT_TYPE = 'hp_damage'
+DEFAULT_FLOAT_TOTAL = 999
+
 
 def _get_jvg_loader():
     """获取 JVG 数据模块 (从 editor_utils.jvg_data 共享模块导入, 避免打包路径问题)"""
@@ -297,6 +395,7 @@ class ActEditorV2(EditorMainWindow):
         "  · 6 种图像混合模式\n"
         "  · 实时动画预览\n"
         "  · 预览敌方受击飘字（按数值出现时间分段，测试总值 999）\n"
+        "  · 飘字效果可选：伤害/内力/恢复/Miss/法术反弹/状态等，颜色对齐原版\n"
         "  · 音效触发表编辑\n"
         "  · 每行右键: 复制 / 粘贴 / 清除；扩展条目另有删除\n"
         "  · 原版条目只能清除；扩展条目可清除或删除\n"
@@ -405,6 +504,10 @@ class ActEditorV2(EditorMainWindow):
         self._tail_vars = []
         self._tail_file_lbls = []
         self._float_specs = []
+        self._float_type = DEFAULT_FLOAT_TYPE
+        self._float_type_cb = None
+        self._float_total = DEFAULT_FLOAT_TOTAL
+        self._float_total_spin = None
 
         self._auto_fill_enabled = True
         self._greenscreen_remove = True
@@ -773,6 +876,43 @@ class ActEditorV2(EditorMainWindow):
         self._edit_mode_cb.setChecked(False)
         self._edit_mode_cb.stateChanged.connect(self._toggle_edit_mode)
         edit_ctrl.addWidget(self._edit_mode_cb)
+
+        edit_ctrl.addSpacing(8)
+        edit_ctrl.addWidget(QLabel("飘字效果预览:"))
+        self._float_type_cb = QComboBox()
+        for ft in FLOAT_TYPES:
+            self._float_type_cb.addItem(ft['label'], ft['id'])
+            tip = ft.get('tooltip', '')
+            if tip:
+                self._float_type_cb.setItemData(
+                    self._float_type_cb.count() - 1, tip, Qt.ToolTipRole)
+        default_idx = self._float_type_cb.findData(DEFAULT_FLOAT_TYPE)
+        self._float_type_cb.setCurrentIndex(default_idx if default_idx >= 0 else 0)
+        self._float_type = (
+            self._float_type_cb.currentData() or DEFAULT_FLOAT_TYPE)
+        self._float_type_cb.setMinimumWidth(120)
+        self._float_type_cb.setToolTip(
+            "选择预览时使用的飘字类型；颜色与文案对应原版战斗实际效果")
+        self._float_type_cb.currentIndexChanged.connect(
+            self._on_float_type_changed)
+        edit_ctrl.addWidget(self._float_type_cb)
+
+        edit_ctrl.addSpacing(4)
+        edit_ctrl.addWidget(QLabel("数值:"))
+        self._float_total_spin = QSpinBox()
+        self._float_total_spin.setRange(1, 999999)
+        self._float_total_spin.setValue(DEFAULT_FLOAT_TOTAL)
+        self._float_total_spin.setSingleStep(1)
+        # 主题 QSS 会预留边框、内边距和右侧箭头；72px 会把 999 压没。
+        self._float_total_spin.setFixedWidth(100)
+        self._float_total = DEFAULT_FLOAT_TOTAL
+        self._float_total_spin.setToolTip(
+            "数字类飘字的预览总值，按触发帧分摊后显示；"
+            "默认 999，对应原版编辑器测试值")
+        self._float_total_spin.valueChanged.connect(
+            self._on_float_total_changed)
+        edit_ctrl.addWidget(self._float_total_spin)
+        self._sync_float_total_enabled()
 
         edit_ctrl.addStretch()
         edit_ctrl.addWidget(QPushButton("应用修改", clicked=self._apply_edit))
@@ -1718,33 +1858,114 @@ class ActEditorV2(EditorMainWindow):
         self._preview_reload()
         self._tl_auto_zoom()
 
-    def _make_float_specs(self, entry):
+    def _on_float_type_changed(self, _index=None):
+        if self._float_type_cb is None:
+            return
+        self._float_type = (
+            self._float_type_cb.currentData() or DEFAULT_FLOAT_TYPE)
+        ft = FLOAT_TYPE_MAP.get(self._float_type)
+        if ft:
+            self.status_var.setText(f"飘字效果: {ft['label']}")
+        self._sync_float_total_enabled()
+        self._refresh_float_specs()
+
+    def _on_float_total_changed(self, value=None):
+        if self._float_total_spin is None:
+            return
+        self._float_total = int(self._float_total_spin.value())
+        self._refresh_float_specs()
+
+    def _sync_float_total_enabled(self):
+        if self._float_total_spin is None:
+            return
+        ft = self._current_float_type()
+        is_number = ft.get('kind') == 'number'
+        self._float_total_spin.setEnabled(is_number)
+        self._float_total_spin.setToolTip(
+            "数字类飘字的预览总值，按触发帧分摊后显示；默认 999"
+            if is_number else
+            "当前为文字类飘字，不使用数值分摊")
+
+    def _preview_float_total(self, float_type=None):
+        """返回数字类飘字的预览总值；文字类回退到类型默认值。"""
+        if self is not None:
+            spin = getattr(self, '_float_total_spin', None)
+            if spin is not None:
+                return int(spin.value())
+            total = getattr(self, '_float_total', None)
+            if isinstance(total, int) and total > 0:
+                return total
+        ft = ActEditorV2._current_float_type(self, float_type)
+        return int(ft.get('total', DEFAULT_FLOAT_TOTAL))
+
+    def _refresh_float_specs(self):
+        if self._editing_idx >= 0 and self._editing_idx < len(self.entries):
+            self._float_specs = self._make_float_specs(
+                self.entries[self._editing_idx])
+        else:
+            self._float_specs = []
+        self._preview_redraw()
+
+    def _current_float_type(self, float_type=None):
+        if float_type:
+            return FLOAT_TYPE_MAP.get(
+                float_type, FLOAT_TYPE_MAP[DEFAULT_FLOAT_TYPE])
+        if self is not None:
+            key = getattr(self, '_float_type', DEFAULT_FLOAT_TYPE)
+        else:
+            key = DEFAULT_FLOAT_TYPE
+        return FLOAT_TYPE_MAP.get(key, FLOAT_TYPE_MAP[DEFAULT_FLOAT_TYPE])
+
+    def _make_float_specs(self, entry, float_type=None, total=None):
         """对应 sub_433F04：按数值出现时间登记飘字并分摊总值。"""
+        # 测试可能以 self=None 调用；始终经类方法解析类型。
+        ft = ActEditorV2._current_float_type(self, float_type)
         triggers = [v for v in entry['param16'][4:12] if v > 0]
         if not triggers:
             return []
         rng = random.Random(entry['index'])
         specs = []
-        rem = 999
-        segment_count = len(triggers)
-        for i, start_tick in enumerate(triggers):
-            div = segment_count - i
-            value = rem // div + rem % div
-            rem -= value
-            color_idx = 18 if i % 2 == 0 else 23
-            off_x = rng.randrange(33) - 16
-            if value >= 100:
-                off_x -= 20
-            if value >= 1000:
-                off_x -= 20
-            off_y = rng.randrange(25) - 12
-            specs.append({
-                'start_tick': start_tick,
-                'value': value,
-                'color': color_idx,
-                'off_x': off_x,
-                'off_y': off_y,
-            })
+        if ft['kind'] == 'number':
+            if total is None:
+                total = ActEditorV2._preview_float_total(self, float_type)
+            rem = int(total)
+            if rem <= 0:
+                rem = DEFAULT_FLOAT_TOTAL
+            colors = ft['colors']
+            segment_count = len(triggers)
+            for i, start_tick in enumerate(triggers):
+                div = segment_count - i
+                value = rem // div + rem % div
+                rem -= value
+                color_idx = colors[i % len(colors)]
+                off_x = rng.randrange(33) - 16
+                if value >= 100:
+                    off_x -= 20
+                if value >= 1000:
+                    off_x -= 20
+                off_y = rng.randrange(25) - 12
+                specs.append({
+                    'start_tick': start_tick,
+                    'value': value,
+                    'text': str(value),
+                    'color': color_idx,
+                    'off_x': off_x,
+                    'off_y': off_y,
+                })
+        else:
+            text = ft.get('text', '')
+            color_idx = ft['color_idx']
+            for start_tick in triggers:
+                off_x = rng.randrange(33) - 16
+                off_y = rng.randrange(25) - 12
+                specs.append({
+                    'start_tick': start_tick,
+                    'value': None,
+                    'text': text,
+                    'color': color_idx,
+                    'off_x': off_x,
+                    'off_y': off_y,
+                })
         return specs
 
     @staticmethod
@@ -1756,24 +1977,35 @@ class ActEditorV2(EditorMainWindow):
     def _preview_active_floats(self, tick: int, enemy_x: int, enemy_y: int):
         """对应 sub_433D44：触发后按原版 18 帧曲线绘制。"""
         active = []
+        ft = (
+            self._current_float_type()
+            if hasattr(self, '_current_float_type')
+            else ActEditorV2._current_float_type(self)
+        )
+        is_text = ft.get('kind') == 'text'
+        # 原版：数字偏移 -12（sub_433D44），文字偏移 -60（sub_433A38）。
+        x_base = enemy_x - (60 if is_text else 12)
         for spec in self._float_specs:
             stage = tick - spec['start_tick']
             if stage < 0 or stage >= len(FLOAT_Y_CURVE) - 1:
                 continue
-            x = spec['off_x'] + enemy_x - 12
+            x = spec['off_x'] + x_base
             # 预览没有单独的目标 Awt 帧；假想敌标记高 40，等价于帧高 + 30。
             y = spec['off_y'] + FLOAT_Y_CURVE[stage + 1] + enemy_y - 70
+            text = spec.get('text')
+            if not text and spec.get('value') is not None:
+                text = str(spec['value'])
+            color_idx = spec.get('color', 18)
             active.append({
                 'x': x,
                 'y': y,
-                'text': str(spec['value']),
-                'color': FONT_COLORS[spec['color']],
+                'text': text or '',
+                'color': FONT_COLORS.get(color_idx, (255, 0, 0)),
                 'ftype': 4,
                 'size': 24,
                 'outline': True,
             })
         return active
-
     def _populate_layer(self, layer_idx, vals):
         self._auto_fill_enabled = False
         vars_row = self._layer_vars[layer_idx]
@@ -2912,7 +3144,12 @@ class ActEditorV2(EditorMainWindow):
 
         active_floats = self._preview_active_floats(tick, ex_c, ey_c)
         if active_floats:
-            info.append("伤害飘字: 999 分段显示")
+            ft = self._current_float_type()
+            if ft.get('kind') == 'text':
+                info.append(f"{ft['label']}: {ft.get('text', '')}")
+            else:
+                total = self._preview_float_total()
+                info.append(f"{ft['label']}: {total} 分段显示")
         self.preview_canvas.set_float_specs(active_floats)
         self.preview_canvas.set_frame_data(
             comp_pixmap, comp_ox, comp_oy,
