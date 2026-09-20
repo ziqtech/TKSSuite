@@ -22,7 +22,7 @@ from PySide6.QtWidgets import (
     QAbstractItemView, QHeaderView, QLabel, QLineEdit, QPushButton,
     QCheckBox, QPlainTextEdit, QTextEdit,
     QMessageBox, QFileDialog, QColorDialog, QDialog, QGridLayout,
-    QFrame, QStackedWidget, QScrollArea, QListWidget,
+    QFrame, QStackedWidget, QScrollArea, QListWidget, QListWidgetItem,
     QInputDialog, QToolButton
 )
 from PySide6.QtGui import (
@@ -42,7 +42,7 @@ except ImportError:
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from editor_utils import theme_manager
 from editor_utils.theme_switcher import (
-    apply_theme_to_window, toggle_theme_in_family,
+    apply_theme_to_window, current_window_theme, toggle_theme_in_family,
 )
 from editor_utils.app_shell import EditorMainWindow, run_editor
 from editor_utils.dock_components import DockHeader
@@ -121,22 +121,23 @@ WORD_4EC810 = {
 }
 
 SEMANTIC_CATEGORIES = [
-    {"name": "传送点文本", "type": "single", "ranges": [(100, 288)]},
-    {"name": "剧情地图名称", "type": "single", "ranges": [(300, 513)]},
-    {"name": "剧情文本区块", "type": "single", "ranges": [(1000, 4509), (25000, 28849), (30000, 30000)]},
-    {"name": "队伍角色名称", "type": "single", "ranges": [(9000, 9030)]},
-    {"name": "历史文本", "type": "single", "ranges": [(9050, 9080)]},
-    {"name": "技能数据 (名称+说明)", "type": "paired", "name_start": 9101, "name_end": 9444, "desc_start": 9501, "desc_end": 9844},
-    {"name": "物品-药品 (名称+说明)", "type": "paired", "name_start": 10001, "name_end": 10025, "desc_start": 10601, "desc_end": 10625},
-    {"name": "物品-道具 (名称+说明)", "type": "paired", "name_start": 10051, "name_end": 10110, "desc_start": 10651, "desc_end": 10710},
-    {"name": "物品-武器 (名称+说明)", "type": "paired", "name_start": 10151, "name_end": 10242, "desc_start": 10751, "desc_end": 10842},
-    {"name": "物品-防具 (名称+说明)", "type": "paired", "name_start": 10301, "name_end": 10348, "desc_start": 10901, "desc_end": 10948},
-    {"name": "物品-饰品 (名称+说明)", "type": "paired", "name_start": 10401, "name_end": 10458, "desc_start": 11001, "desc_end": 11058},
-    {"name": "物品-特殊 (名称+说明)", "type": "paired", "name_start": 10501, "name_end": 10551, "desc_start": 11101, "desc_end": 11151},
-    {"name": "记事文本", "type": "single", "ranges": [(11201, 11260)]},
-    {"name": "功绩文本", "type": "single", "ranges": [(11401, 11467)]},
-    {"name": "战斗角色名称", "type": "single", "ranges": [(11601, 11800)]},
-    {"name": "空余槽", "type": "single", "ranges": [(11801, 24999)]},
+    # icon: 对应改造前 emoji 的 Fluent Flat 图标 (P4-1, 分类模式列表)
+    {"name": "传送点文本", "icon": "milky-way", "type": "single", "ranges": [(100, 288)]},
+    {"name": "剧情地图名称", "icon": "world-map", "type": "single", "ranges": [(300, 513)]},
+    {"name": "剧情文本区块", "icon": "log", "type": "single", "ranges": [(1000, 4509), (25000, 28849), (30000, 30000)]},
+    {"name": "队伍角色名称", "icon": "busts", "type": "single", "ranges": [(9000, 9030)]},
+    {"name": "历史文本", "icon": "books", "type": "single", "ranges": [(9050, 9080)]},
+    {"name": "技能数据 (名称+说明)", "icon": "crossed-swords", "type": "paired", "name_start": 9101, "name_end": 9444, "desc_start": 9501, "desc_end": 9844},
+    {"name": "物品-药品 (名称+说明)", "icon": "test-tube", "type": "paired", "name_start": 10001, "name_end": 10025, "desc_start": 10601, "desc_end": 10625},
+    {"name": "物品-道具 (名称+说明)", "icon": "backpack", "type": "paired", "name_start": 10051, "name_end": 10110, "desc_start": 10651, "desc_end": 10710},
+    {"name": "物品-武器 (名称+说明)", "icon": "dagger", "type": "paired", "name_start": 10151, "name_end": 10242, "desc_start": 10751, "desc_end": 10842},
+    {"name": "物品-防具 (名称+说明)", "icon": "shield", "type": "paired", "name_start": 10301, "name_end": 10348, "desc_start": 10901, "desc_end": 10948},
+    {"name": "物品-饰品 (名称+说明)", "icon": "prayer-beads", "type": "paired", "name_start": 10401, "name_end": 10458, "desc_start": 11001, "desc_end": 11058},
+    {"name": "物品-特殊 (名称+说明)", "icon": "crystal-ball", "type": "paired", "name_start": 10501, "name_end": 10551, "desc_start": 11101, "desc_end": 11151},
+    {"name": "记事文本", "icon": "memo", "type": "single", "ranges": [(11201, 11260)]},
+    {"name": "功绩文本", "icon": "trophy", "type": "single", "ranges": [(11401, 11467)]},
+    {"name": "战斗角色名称", "icon": "stadium", "type": "single", "ranges": [(11601, 11800)]},
+    {"name": "空余槽", "icon": "package", "type": "single", "ranges": [(11801, 24999)]},
 ]
 
 # ============================================================
@@ -846,6 +847,10 @@ class TktEditor(EditorMainWindow):
     EDITOR_KEY = "tkt_editor"
     TKS_DIR_PROMPT = "挂载 TKS 游戏核心环境目录"
     DEFAULT_SIZE = (1600, 850)
+    # 线性模式「全局数据表 : 右侧」默认 1:2（仅默认比例，分割条可拖动）
+    W1_SPLITTER_DEFAULT_SIZES = (500, 1000)
+    # ID 列下限：≥6 位数字 + 主题单元格边距，不出现省略号
+    ID_COL_MIN_WIDTH = 96
 
     HELP_TEXT = (
         "功能: 编辑《三国群侠传》游戏文本数据\n"
@@ -892,9 +897,70 @@ class TktEditor(EditorMainWindow):
     def _after_build(self):
         self._set_edit_enabled(False)
         self._apply_theme()
+        self._apply_comp_text_chrome()
 
         if self._initial_path and os.path.exists(self._initial_path):
             self._load_file(self._initial_path)
+
+    @staticmethod
+    def _plain_text_min_height(widget, lines=2):
+        """按字体度量计算可完整显示 N 行的最小高度（含 QSS padding/border）。"""
+        fm = widget.fontMetrics()
+        chrome = 16
+        return max(int(fm.height() * lines + chrome), 48)
+
+    def _layout_comp_text_boxes(self, paired=None):
+        """名称/说明高度：配对时名称短条、说明撑满；单栏时主文本撑满。
+
+        paired=None 时按说明区当前显隐推断。
+        """
+        if not hasattr(self, "comp_text1"):
+            return
+        if paired is None:
+            paired = bool(
+                hasattr(self, "comp_desc_container")
+                and self.comp_desc_container.isVisible()
+            )
+        for widget in (self.comp_text1, self.comp_text2):
+            widget.setFont(self.font_mono)
+        name_min = self._plain_text_min_height(self.comp_text1, lines=2)
+        desc_min = self._plain_text_min_height(self.comp_text2, lines=3)
+        self.comp_text1.setMinimumHeight(name_min)
+        self.comp_text2.setMinimumHeight(desc_min)
+
+        if paired:
+            # 名称仅短条（约 2 行），上限防止比说明框更高
+            self.comp_text1.setMaximumHeight(name_min)
+        else:
+            self.comp_text1.setMaximumHeight(16777215)
+
+        lay = getattr(self, "_comp_right_layout", None)
+        if lay is None:
+            return
+        for i in range(lay.count()):
+            item = lay.itemAt(i)
+            w = item.widget()
+            if w is self.comp_text1:
+                lay.setStretch(i, 0 if paired else 1)
+            elif w is self.comp_desc_container:
+                lay.setStretch(i, 1 if paired else 0)
+
+    def _apply_comp_text_chrome(self):
+        """主题应用后重设分类属性编辑框字体、最小高度与名称/说明比例。"""
+        self._layout_comp_text_boxes()
+
+    def showEvent(self, event):
+        """首次显示：无已保存分割条状态时补写默认 1:2（构造期 setSizes 可能被布局覆盖）。"""
+        first_show = not getattr(self, "_layout_restored", False)
+        super().showEvent(event)
+        if not first_show or not hasattr(self, "w1_splitter"):
+            return
+        from PySide6.QtCore import QSettings
+        settings = QSettings("TKSSuite", "TKSSuite")
+        key = self._persist_settings_key()
+        name = self.w1_splitter.objectName() or "w1_splitter"
+        if settings.value(f"{key}/splitter/{name}") is None:
+            self.w1_splitter.setSizes(list(self.W1_SPLITTER_DEFAULT_SIZES))
 
     def resizeEvent(self, event):
         """窗口尺寸变化后同步关联表的文本列比例。"""
@@ -1002,14 +1068,18 @@ class TktEditor(EditorMainWindow):
         w1_layout.addLayout(toolbar_layout)
 
         w1_splitter = QSplitter(Qt.Horizontal)
+        w1_splitter.setObjectName("w1_splitter")
         w1_splitter.setHandleWidth(6)
         w1_layout.addWidget(w1_splitter, 1)
+        self.w1_splitter = w1_splitter
 
         self.table = AdaptiveTableWidget(
             0, 3,
             stretch_columns={2},
-            minimum_widths=[50, 70, 120],
+            # #/ID 下限放宽: 主题单元格边距 + 6 位数字不出现省略号
+            minimum_widths=[88, 96, 120],
             row_height=44,
+            fill_viewport=True,
         )
         self.table.setHorizontalHeaderLabels(['#', 'ID', '文本内容 Preview'])
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
@@ -1090,7 +1160,8 @@ class TktEditor(EditorMainWindow):
         vp_layout.addWidget(self.preview_stack)
         w1_right_splitter.addWidget(self._create_dock("文本预览", viewport_widget, header_layout=zoom_layout))
 
-        w1_splitter.setSizes([350, 950])
+        # 默认左:右 = 1:2；Qt 按比例分配，用户拖动后由布局持久化覆盖
+        w1_splitter.setSizes(list(self.W1_SPLITTER_DEFAULT_SIZES))
         w1_right_splitter.setSizes([400, 400])
         self.main_tabs.addTab(w1_widget, "线性模式")
 
@@ -1101,8 +1172,10 @@ class TktEditor(EditorMainWindow):
 
         self.comp_cat_list = QListWidget()
         self.comp_cat_list.setFixedWidth(200)
+        self.comp_cat_list.setIconSize(QSize(18, 18))
         for cat in SEMANTIC_CATEGORIES:
-            self.comp_cat_list.addItem(cat['name'])
+            self.comp_cat_list.addItem(QListWidgetItem(cat['name']))
+        self._refresh_comp_category_icons()
         self.comp_cat_list.currentRowChanged.connect(self._on_comp_category_changed)
         w2_layout.addWidget(self.comp_cat_list)
 
@@ -1117,9 +1190,14 @@ class TktEditor(EditorMainWindow):
 
         self.comp_table = AdaptiveTableWidget(
             0, 4,
-            stretch_columns={1, 3},
-            minimum_widths=[70, 90, 70, 120],
+            # 末列拉满视口；ID 列下限保证 6 位数字完整显示
+            stretch_columns={3},
+            minimum_widths={
+                0: self.ID_COL_MIN_WIDTH, 1: 90,
+                2: self.ID_COL_MIN_WIDTH, 3: 120,
+            },
             row_height=44,
+            fill_viewport=True,
         )
         self.comp_table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.comp_table.setSelectionMode(QAbstractItemView.SingleSelection)
@@ -1137,6 +1215,7 @@ class TktEditor(EditorMainWindow):
         comp_right_widget = QWidget()
         comp_right_layout = QVBoxLayout(comp_right_widget)
         comp_right_layout.setContentsMargins(0, 0, 0, 0)
+        self._comp_right_layout = comp_right_layout
 
         # 复用工具栏，控制当前处于焦点的输入框（不显示槽位/ID信息）
         self._build_tag_toolbar(comp_right_layout, show_info=False)
@@ -1146,8 +1225,10 @@ class TktEditor(EditorMainWindow):
         comp_right_layout.addWidget(self.comp_box1_title)
         self.comp_text1 = QPlainTextEdit()
         self.comp_text1.setFont(self.font_mono)
+        self.comp_text1.setMinimumHeight(self._plain_text_min_height(self.comp_text1, lines=2))
         self.comp_text1.textChanged.connect(self._on_comp_text_modified)
-        comp_right_layout.addWidget(self.comp_text1, 1)
+        # 配对模式下名称框保持短条（见 _layout_comp_text_boxes），说明框吃剩余高度
+        comp_right_layout.addWidget(self.comp_text1, 0)
 
         self.comp_desc_container = QWidget()
         dc_layout = QVBoxLayout(self.comp_desc_container)
@@ -1157,17 +1238,15 @@ class TktEditor(EditorMainWindow):
         dc_layout.addWidget(self.comp_box2_title)
         self.comp_text2 = QPlainTextEdit()
         self.comp_text2.setFont(self.font_mono)
+        self.comp_text2.setMinimumHeight(self._plain_text_min_height(self.comp_text2, lines=3))
         self.comp_text2.textChanged.connect(self._on_comp_text_modified)
         dc_layout.addWidget(self.comp_text2, 1)
-        comp_right_layout.addWidget(self.comp_desc_container)
+        comp_right_layout.addWidget(self.comp_desc_container, 1)
 
         btn_comp_apply = QPushButton("保存修改")
         btn_comp_apply.setProperty("class", "ConfirmBtn")
         btn_comp_apply.clicked.connect(self._apply_comp_edit)
         comp_right_layout.addWidget(btn_comp_apply)
-
-        # 底部弹簧：将上方控件推向顶部，避免居中分布
-        comp_right_layout.addStretch()
 
         w2_right_splitter.addWidget(self._create_dock("属性编辑", comp_right_widget))
 
@@ -1212,7 +1291,8 @@ class TktEditor(EditorMainWindow):
         w2_right_splitter.addWidget(self._create_dock("文本预览", comp_preview_widget, header_layout=comp_preview_header))
 
         self.w2_splitter.setSizes([650, 450])
-        w2_right_splitter.setSizes([400, 400])
+        # 属性编辑略高于预览，避免名称/说明输入框在默认布局下被压扁
+        w2_right_splitter.setSizes([460, 340])
         self.main_tabs.addTab(w2_widget, "分类模式")
 
         # --- 底部统一路径状态栏 ---
@@ -1254,6 +1334,23 @@ class TktEditor(EditorMainWindow):
         self._render_comp_previews()
         self._update_paths()
 
+    def _refresh_comp_category_icons(self):
+        """分类模式列表图标随主题刷新 (P4-1, 与 set_themed_icon 同源 themed_icon)。"""
+        if not hasattr(self, "comp_cat_list"):
+            return
+        theme_id = current_window_theme(self)
+        for i, cat in enumerate(SEMANTIC_CATEGORIES):
+            item = self.comp_cat_list.item(i)
+            if item is None:
+                continue
+            icon_name = cat.get("icon")
+            if icon_name:
+                item.setIcon(theme_manager.themed_icon(icon_name, theme_id))
+
+    def _on_theme_applied(self, theme_id):
+        self._refresh_comp_category_icons()
+        self._apply_comp_text_chrome()
+
     def _apply_theme(self):
         apply_theme_to_window(self, self._theme_id, persist=False)
         if hasattr(self, 'preview_scroll_area'):
@@ -1262,6 +1359,7 @@ class TktEditor(EditorMainWindow):
             self.preview_text.setObjectName("GamePreview")
         if hasattr(self, 'comp_preview_scroll'):
             self.comp_preview_scroll.setObjectName("GamePreview")
+        self._apply_comp_text_chrome()
         self._update_paths()
 
     def _update_paths(self):
@@ -1539,9 +1637,14 @@ class TktEditor(EditorMainWindow):
 
         if cat['type'] == "single":
             self.comp_desc_container.setVisible(False)
+            self._layout_comp_text_boxes(paired=False)
             self.comp_table.setColumnCount(2)
             self.comp_table.setHorizontalHeaderLabels(['条目 ID', '文本内容'])
-            self.comp_table.setColumnWidth(0, 80)
+            # 两列时末列自适应拉满；ID 列 ≥6 位数字
+            self.comp_table.reset_column_layout(
+                stretch_columns={1},
+                minimum_widths={0: self.ID_COL_MIN_WIDTH, 1: 120},
+            )
 
             row = 0
             for rs, re in cat['ranges']:
@@ -1559,10 +1662,19 @@ class TktEditor(EditorMainWindow):
                     row += 1
         else:
             self.comp_desc_container.setVisible(True)
+            self._layout_comp_text_boxes(paired=True)
             self.comp_table.setColumnCount(4)
             self.comp_table.setHorizontalHeaderLabels(['名称 ID', '名称', '说明 ID', '说明'])
-            self.comp_table.setColumnWidth(0, 70)
-            self.comp_table.setColumnWidth(2, 70)
+            # 四列时末列（说明）拉满；两个 ID 列均 ≥6 位数字
+            self.comp_table.reset_column_layout(
+                stretch_columns={3},
+                minimum_widths={
+                    0: self.ID_COL_MIN_WIDTH,
+                    1: 90,
+                    2: self.ID_COL_MIN_WIDTH,
+                    3: 120,
+                },
+            )
 
             name_safe = self._get_safe_upper_bound(cat['name_end'], all_starts)
             desc_safe = self._get_safe_upper_bound(cat['desc_end'], all_starts)
