@@ -1,0 +1,23 @@
+{
+  "_format": 1,
+  "_group": "── TKSkill 数据扩容 ──",
+  "_comment": "TKSkill.dat 超过原版 350 条时启用完整定义表扩容。旧基址 0x7861CA 位于相邻活跃静态变量前，不能只放宽加载大小；本补丁注入独立数据段并重定位基址和全部 94 字节记录内的字段锚。学习状态、菜单遍历和效果解析仍由后续扩展补丁单独处理。",
+  "type": "patch_data_expand",
+  "id": "tkskill_expand.table",
+  "name": "技能定义表完整扩容",
+  "desc": "TKSkill.dat 超过原版 350 条时，将技能定义表重定位到独立数据段，默认容量 64KB，并随实际文件继续增长；原版 350 条时跳过",
+  "data_file": "TKSkill.dat",
+  "old_base": "0x7861CA",
+  "old_size": 32900,
+  "pattern": "68 84 80 00 00",
+  "value_offset": 1,
+  "expect_count": 1,
+  "section_name": ".tkskill",
+  "needs_lzss": true,
+  "redirect_base_span": 94,
+  "buffer_cap": 65536,
+  "activate_if_expanded": true,
+  "format": "TKSPATCH",
+  "format_version": 1,
+  "redirect_size": false
+}

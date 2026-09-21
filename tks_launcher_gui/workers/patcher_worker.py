@@ -130,8 +130,7 @@ class PatcherWorker(QThread):
             enabled_mod_ids=self.enabled_mod_ids,
             mode=self.mode,
             disabled_patches={
-                "save_entry_check_fix",
-                "save_stream_error_fix",
+                "tksave_expand",
                 "archive_portrait",
                 "gold_display",
             } if self.minimal_mode else None,
@@ -231,6 +230,12 @@ class PatcherWorker(QThread):
             need_resume_pid=_need_resume_pid,
             tks_exe_replaced=_tks_exe_replaced,
         )
+        if result.patches_status == "blocked":
+            self._log("补丁计划未完整应用，游戏进程保持挂起；请关闭该进程后使用启动器恢复快照。")
+            self._status("补丁计划失败，已阻止继续运行", False)
+            self._overlay("补丁计划失败，请关闭游戏进程后恢复快照", False)
+            self.finished.emit(False, result.as_dict())
+            return
 
         # ── 通知 UI profile 检测结果 ──
         if result.profile_name != "original":

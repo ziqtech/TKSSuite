@@ -28,6 +28,10 @@ from .config_loader import (
     PatchRuntimeState,
     PatchSettings,
     resolve_patch_value,
+    patch_metadata,
+)
+from .patch_plan import (
+    PatchPlanError, build_patch_plan, protected_operation_ids, validate_runtime_plan,
 )
 
 
@@ -325,7 +329,7 @@ def _build_cave_layout(config: 'PatchConfig', cave_addr: int,
         用 cave_base=0 试建块只为取长度/非零范围 (rel32 值无效但长度正确)。
         块内前导零区 (如 summon_extend 的 [0,0x680)) 留给自动布局槽位共享。
         """
-        mod = _load_cave_code_module(defn.cave_code_file, log)
+        mod = _load_cave_code_module(defn, log)
         build_fn = getattr(mod, "build_cave_block", None) if mod else None
         if not callable(build_fn):
             return None
@@ -642,8 +646,12 @@ def apply_patch_bytes(defn: PatchDef, code_buf: bytearray, code_start_addr: int,
                     continue
                 aa = code_start_addr + idx
                 op = vp_ex(h_proc, aa, 1, PAGE_EXECUTE_READWRITE)
-                write_pm(h_proc, aa, bytes([bv & 0xFF]))
+                written = write_pm(h_proc, aa, bytes([bv & 0xFF]))
                 vp_ex(h_proc, aa, 1, op)
+                if written != 1:
+                    log(f"  [FAIL] 字节写入失败 @0x{aa:08X}")
+                    all_ok = False
+                    break
                 code_buf[idx] = bv & 0xFF
             log(f"    [OK] RVA 0x{off:X} (abs 0x{code_start_addr + off:08X})")
             ptd += 1
@@ -775,7 +783,9 @@ def _handle_patch_sites(ctx: PatchContext) -> bool:
             replace_addr_in_bytes(
                 rebased, _WARPC_BASE_PLACEHOLDER, ctx.warpc_base)
             cave_code = bytes(rebased)
-        write_pm(ctx.h_proc, cave_base, cave_code)
+        if write_pm(ctx.h_proc, cave_base, cave_code) != len(cave_code):
+            log("    [FAIL] Cave 写入不完整")
+            return False
         log(f"    Cave 写入: 0x{cave_base:08X} ({len(cave_code)} bytes)")
     elif any(s.get("kind") in ("call", "push_imm") for s in sites):
         log("    [FAIL] 带 call/push_imm 位点但无 cave_code")
@@ -809,8 +819,11 @@ def _handle_patch_sites(ctx: PatchContext) -> bool:
         off = rva - 0x1000
         aa = ctx.code_start_addr + off
         op = vp_ex(ctx.h_proc, aa, len(repl), PAGE_EXECUTE_READWRITE)
-        write_pm(ctx.h_proc, aa, repl)
+        written = write_pm(ctx.h_proc, aa, repl)
         vp_ex(ctx.h_proc, aa, len(repl), op)
+        if written != len(repl):
+            log(f"    [FAIL] {stag}: 位点写入不完整")
+            return False
         if 0 <= off and off + len(repl) <= len(ctx.code_buf):
             ctx.code_buf[off:off + len(repl)] = repl
         log(f"    [OK] {stag} @ RVA 0x{rva:X}")
@@ -1012,17 +1025,10 @@ def apply_patch_imm32_by_pattern(defn: PatchDef, code_buf: bytearray, code_start
 # 补丁类型: cave_hook
 # ============================================================
 
-def _load_cave_code_module(path: str, log):
-    """动态加载补丁目录下的 cave_code.py。"""
-    if not path or not os.path.isfile(path):
-        log(f"  [ERROR] cave_code_file 不存在: {path}")
-        return None
+def _load_cave_code_module(defn: PatchDef, log):
+    from .tkspatch_loader import load_cave_module
     try:
-        spec = importlib.util.spec_from_file_location(
-            f"_cave_mod_{abs(hash(path))}", path)
-        mod = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(mod)
-        return mod
+        return load_cave_module(defn)
     except Exception as e:
         log(f"  [ERROR] 加载 cave_code.py 失败: {e}")
         return None
@@ -1031,7 +1037,7 @@ def _load_cave_code_module(path: str, log):
 def _apply_fixed_layout_cave(defn: PatchDef, ctx: PatchContext) -> bool:
     """fixed_layout_cave 运行时应用: cave_code.py 生成布局 + 逐 hook call。"""
     log = ctx.log
-    mod = _load_cave_code_module(defn.cave_code_file, log)
+    mod = _load_cave_code_module(defn, log)
     if mod is None:
         return False
     build_fn = getattr(mod, "build_cave_block", None)
@@ -1156,7 +1162,7 @@ def _apply_patch_data_expand(defn: PatchDef, ctx: PatchContext) -> bool:
     import ctypes
     log = ctx.log
 
-    data_file = defn.data_file
+    data_file = patch_metadata(defn, "data_path", defn.data_file)
     old_base = defn.old_base
     old_size = defn.old_size
     if not data_file or not old_base or not old_size:
@@ -1280,7 +1286,9 @@ def _apply_patch_data_expand(defn: PatchDef, ctx: PatchContext) -> bool:
         if patched_span != len(span_hits):
             all_ok = False
 
-    if defn.pattern:
+    if not extra.get("redirect_size", True):
+        size_hits = []
+    elif defn.pattern:
         pat, wc = parse_pattern(defn.pattern)
         matches = pattern_scan(bytes(code), pat, wc)
         if defn.expect_count > 0 and len(matches) != defn.expect_count:
@@ -1414,16 +1422,18 @@ def apply_cave_hook(defn: PatchDef, hits: List[int], code_buf: bytearray,
         return False
 
     ct = cave_addr + cave_offset
-    write_pm(h_proc, ct, cd)
+    if write_pm(h_proc, ct, cd) != len(cd):
+        log(f"  [FAIL] {defn.id}: Cave 写入不完整")
+        return False
     log(f"    Cave 写入: 0x{ct:08X} ({len(cd)} bytes, 模板={defn.cave_template})")
 
     ptd = 0
     for off in hits:
         hook_off = off + defn.hook_offset
-        if (hook_off < 0 or defn.hook_size <= 0 or
+        if (hook_off < 0 or defn.hook_size < 5 or
                 hook_off + defn.hook_size > len(code_buf)):
             log(f"  [FAIL] {defn.id}: hook 写入越界 (RVA 0x{hook_off:X}, size={defn.hook_size})")
-            continue
+            return False
         ha = code_start_addr + hook_off
         co = (ct - (ha + 5)) & 0xFFFFFFFF
         ci = bytearray(defn.hook_size)
@@ -1433,8 +1443,11 @@ def apply_cave_hook(defn: PatchDef, hits: List[int], code_buf: bytearray,
             ci[i] = 0x90
 
         op = vp_ex(h_proc, ha, defn.hook_size, PAGE_EXECUTE_READWRITE)
-        write_pm(h_proc, ha, bytes(ci))
+        written = write_pm(h_proc, ha, bytes(ci))
         vp_ex(h_proc, ha, defn.hook_size, op)
+        if written != len(ci):
+            log(f"  [FAIL] {defn.id}: Hook 写入不完整")
+            return False
 
         for i in range(min(defn.hook_size, len(code_buf) - hook_off)):
             code_buf[hook_off + i] = ci[i]
@@ -1442,7 +1455,7 @@ def apply_cave_hook(defn: PatchDef, hits: List[int], code_buf: bytearray,
         log(f"    [OK] Hook RVA 0x{hook_off:X} -> call 0x{ct:08X}")
         ptd += 1
 
-    return ptd > 0
+    return ptd == len(hits)
 
 # ============================================================
 # 补丁类型: patch_summon_table (召唤表自定义)
@@ -2583,7 +2596,8 @@ def apply_config_patches(config: PatchConfig, code_buf: bytearray, code_start_ad
                           selected_patches: set = None,
                           exe_profile=None,
                           disabled_patches: set = None,
-                          config_overrides: Optional[Dict[str, Any]] = None) -> bool:
+                          config_overrides: Optional[Dict[str, Any]] = None,
+                          plan=None) -> bool:
     """配置补丁编排
 
     Args:
@@ -2599,23 +2613,22 @@ def apply_config_patches(config: PatchConfig, code_buf: bytearray, code_start_ad
     pch: List[PatchDef] = []
     disabled_patches = disabled_patches or set()
 
-    from .config_loader import resolve_effective_patches
-    try:
-        effective = resolve_effective_patches(
-            config.patches,
-            selected=selected_patches,
-            disabled=disabled_patches,
-        )
-    except ValueError as exc:
-        log(f"  [ERROR] 补丁依赖/替代解析失败: {exc}")
-        return False
+    if plan is None:
+        try:
+            plan = build_patch_plan(config.patches, selected=selected_patches,
+                                    disabled=disabled_patches, log_func=log)
+        except ValueError as exc:
+            raise PatchPlanError(str(exc)) from exc
+    validate_runtime_plan(plan, code_buf, exe_profile)
+    effective = plan.effective
+    protected_ids = protected_operation_ids(plan)
     if effective.superseded:
         detail = ", ".join(
             f"{old}->{new}" for old, new in sorted(effective.superseded.items()))
         log(f"  补丁替代: {detail}")
-    active_patches = effective.patches
-    runtime.skill_extension_enabled = any(
-        patch.id == "skill_ext_learn_state" for patch in active_patches)
+    active_patches = plan.patches
+    for patch in config.patches + active_patches:
+        patch._applied = False
 
     # 第三方 MOD 兼容: 从 profile 获取应跳过的补丁
     _profile_skip = set()
@@ -2627,6 +2640,14 @@ def apply_config_patches(config: PatchConfig, code_buf: bytearray, code_start_ad
     # ── Phase 6: Cave 布局 (在主循环之前一次性分配所有 cave 偏移) ──
     cave_layout = _build_cave_layout(
         config, cave_addr, settings, log, active_patches=active_patches)
+    for operation in active_patches:
+        if operation.id not in protected_ids:
+            continue
+        if getattr(operation, "_layout_error", None):
+            raise PatchPlanError(f"{operation.id}: cave 布局失败: {operation._layout_error}")
+        if (getattr(operation, "_cave_code_bytes", None) and not cave_addr
+                or operation.type == "cave_hook" and (minimal_mode or no_cave_mode)):
+            raise PatchPlanError(f"{operation.id}: 完整补丁计划所需的代码注入不可用")
 
     # ── Phase 7: Hook 占用跟踪表 (启动器内部多个 cave_hook 之间) ──
     hook_table = HookTable()
@@ -2641,15 +2662,13 @@ def apply_config_patches(config: PatchConfig, code_buf: bytearray, code_start_ad
             log(f"    [OK] {defn.id}: 补丁已应用")
         else:
             log(f"    [ERROR] {defn.id}: 补丁应用失败")
+            if defn.id in protected_ids:
+                raise PatchPlanError(f"{defn.id}: 包内操作或依赖应用失败")
         return bool(ok)
 
     for defn in active_patches:
         tag = f"[{defn.id}]"
         log(f"\n  {tag}: {defn.desc}")
-
-        if selected_patches is not None and defn.optional and defn.id not in selected_patches:
-            log(f"    -> [跳过] 用户取消勾选")
-            continue
 
         if defn.id in disabled_patches:
             log(f"    -> [跳过] 诊断/兼容模式强制禁用")
@@ -2671,6 +2690,8 @@ def apply_config_patches(config: PatchConfig, code_buf: bytearray, code_start_ad
         # cave 布局失败的补丁必须跳过: 冲突的 cave 按硬编码偏移写入会
         # 覆盖其它补丁的 cave (黑屏事故根因), 绝不能"退化为覆盖"
         if getattr(defn, "_layout_error", None):
+            if defn.id in protected_ids:
+                raise PatchPlanError(f"{defn.id}: cave 布局失败: {defn._layout_error}")
             log(f"    -> [跳过] cave 布局冲突, 已阻止应用: {defn._layout_error}")
             continue
 
@@ -2763,6 +2784,14 @@ def apply_config_patches(config: PatchConfig, code_buf: bytearray, code_start_ad
         for defn in pch:
             log(f"    [WARN] {defn.id}: cave hook 被当前启动模式禁用, 未应用")
 
+    missing = [p.id for p in active_patches
+               if p.id in protected_ids and not getattr(p, "_applied", False)]
+    if missing:
+        raise PatchPlanError("补丁计划存在未应用的关键操作: " + ", ".join(missing))
+    for root in config.patches:
+        owned = [p for p in active_patches
+                 if p.id == root.id or root.id in patch_metadata(p, "owners", [])]
+        root._applied = bool(owned) and all(getattr(p, "_applied", False) for p in owned)
     # 汇总: 成功数仅统计真正走过应用路径的补丁 (跳过的不计为失败)
     applied = sum(1 for p in active_patches if getattr(p, "_applied", False))
     log(f"\n  补丁应用汇总: {applied} 个成功 / 共 {len(active_patches)} 个生效补丁")

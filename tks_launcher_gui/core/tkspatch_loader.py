@@ -7,6 +7,7 @@
 ZIP 格式:
   patch.json  — 补丁清单
   script.py   — type=script 时内嵌的外部脚本源码
+  prepare.py / 嵌套资源 — type=bundle 的准备脚本及包内资源（加载时不执行）
 
 补丁目录也支持开发模式的子目录结构，每个子目录包含 patch.json。
 
@@ -21,14 +22,111 @@ Cave hook 定位:
   hook_offset: hook 点相对 hook_pattern 起点的字节偏移 (默认 0)
 """
 
+import importlib.util
 import json
 import os
+import stat
+import types
 import zipfile
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from .config_loader import PatchDef, PatchConfig, resolve_config_path
 
 FORMAT_VERSION = 1
+
+
+def _package_resource_name(name: str, is_dir: bool = False) -> Optional[str]:
+    """只接受无歧义的 POSIX 包内路径；目录和 ZIP 共用过滤规则。"""
+    if (not isinstance(name, str) or not name or "\\" in name
+            or ":" in name or "\x00" in name
+            or any(part in ("", ".", "..") for part in name.split("/"))):
+        raise ValueError(f"非法包内资源路径: {name!r}")
+    parts = name.split("/")
+    directories = parts if is_dir else parts[:-1]
+    if any(part.startswith(".") or part == "__pycache__" for part in directories):
+        return None
+    if not is_dir and parts[-1].lower().endswith(".pyc"):
+        return None
+    return name
+
+
+def collect_package_files(package_dir: str) -> Dict[str, bytes]:
+    """递归读取源码资源，不允许符号链接越出包根或形成目录循环。"""
+    root = Path(package_dir).resolve(strict=True)
+    files: Dict[str, bytes] = {}
+
+    def collect(directory: Path, ancestors):
+        for item in sorted(directory.iterdir()):
+            is_dir = item.is_dir()
+            name = _package_resource_name(item.relative_to(root).as_posix(), is_dir)
+            if name is None:
+                continue
+            resolved = item.resolve(strict=True)
+            if resolved != root and root not in resolved.parents:
+                raise ValueError(f"资源符号链接越出包根: {name}")
+            if is_dir:
+                if resolved in ancestors:
+                    raise ValueError(f"资源目录存在循环链接: {name}")
+                collect(item, ancestors | {resolved})
+            elif item.is_file():
+                files[name] = resolved.read_bytes()
+            else:
+                raise ValueError(f"资源不是普通文件: {name}")
+
+    collect(root, {root})
+    return files
+
+
+def _read_zip_package_files(zf: zipfile.ZipFile) -> Dict[str, bytes]:
+    """只在内存读取 ZIP；先检查路径和重复条目，再过滤非资源文件。"""
+    files: Dict[str, bytes] = {}
+    seen = set()
+    for info in sorted(zf.infolist(), key=lambda entry: entry.filename):
+        # orig_filename 保留 NUL 等原始字符，不能使用 ZIP 截断后的名字。
+        name = info.orig_filename[:-1] if info.is_dir() else info.orig_filename
+        resource_name = _package_resource_name(name, info.is_dir())
+        if name in seen:
+            raise ValueError(f"ZIP 含重复资源: {name!r}")
+        seen.add(name)
+        if stat.S_ISLNK(info.external_attr >> 16):
+            raise ValueError(f"ZIP 不支持符号链接资源: {name!r}")
+        if resource_name is not None and not info.is_dir():
+            files[resource_name] = zf.read(info)
+    return files
+
+
+def validate_bundle_resources(raw: dict, package_files: Dict[str, bytes]) -> None:
+    """检查准备脚本存在，不执行脚本；resources 是最终数据的部署声明。"""
+    if raw.get("type") != "bundle":
+        return
+    name = raw.get("prepare_file", "prepare.py")
+    if _package_resource_name(name) is None or name not in package_files:
+        raise ValueError(f"bundle 缺少包内资源: {name!r}")
+
+
+def load_package_module(patch: PatchDef, name: str):
+    resource = _package_resource_name(name)
+    if resource is None or resource not in patch.package_files:
+        raise ValueError(f"{patch.id}: 缺少包内脚本 {name}")
+    module = types.ModuleType(f"_patch_{patch.id}_{name.replace('/', '_')}")
+    module.__file__ = f"{patch.source_path}!/{name}"
+    exec(compile(patch.package_files[resource], module.__file__, "exec"), module.__dict__)
+    return module
+
+
+def load_cave_module(patch: PatchDef):
+    path = patch.cave_code_file
+    if patch.package_files:
+        resource = os.path.relpath(path, os.path.dirname(patch.source_path)).replace("\\", "/")
+        return load_package_module(patch, resource)
+    if not path or not os.path.isfile(path):
+        raise ValueError(f"{patch.id}: cave_code_file 不存在: {path}")
+    spec = importlib.util.spec_from_file_location(f"_cave_{patch.id}", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
 
 def _parse_hex_bytes(hex_str: str) -> Optional[bytes]:
     """解析空格分隔的十六进制字符串为 bytes。
@@ -119,6 +217,9 @@ _TKSPATCH_SCHEMA = {
         "_format", "format", "format_version",
         # 补丁图 / 唯一初始化责任声明
         "requires", "supersedes", "globals_initializer",
+        # bundle 清单及通用操作链接元数据
+        "prepare_file", "baseline", "internal", "migrate_from", "options", "resources",
+        "link_group", "link_size", "cave_fragments", "owners", "redirect_size", "data_path",
     ],
     "types": {
         "type": str,
@@ -184,6 +285,20 @@ _TKSPATCH_SCHEMA = {
         "_format": int,
         "format": str,
         "format_version": int,
+        "requires": list,
+        "supersedes": list,
+        "prepare_file": str,
+        "baseline": bool,
+        "internal": bool,
+        "migrate_from": list,
+        "options": list,
+        "resources": list,
+        "link_group": str,
+        "link_size": int,
+        "cave_fragments": list,
+        "owners": list,
+        "redirect_size": bool,
+        "data_path": str,
     },
     "valid_hook_conflict_actions": {"override", "skip"},
 }
@@ -276,6 +391,58 @@ def validate_tkspatch_dict(raw: dict, source_path: str = "",
                     f"replace[{rk!r}] 必须是 int 或 str, 得到 {type(rv).__name__}"
                 )
 
+    # 8. bundle 声明及链接元数据的嵌套类型
+    for key in ("requires", "supersedes", "migrate_from", "resources", "owners"):
+        values = raw.get(key, [])
+        if isinstance(values, list) and any(not isinstance(v, str) for v in values):
+            errors.append(f"字段 {key!r} 必须是 list[str]")
+    options = raw.get("options", [])
+    if isinstance(options, list):
+        for index, option in enumerate(options):
+            label = f"options[{index}]"
+            if not isinstance(option, dict):
+                errors.append(f"{label} 必须是 object")
+                continue
+            if not isinstance(option.get("id"), str) or not option["id"]:
+                errors.append(f"{label}.id 必须是非空字符串")
+            for key, expected in (("name", str), ("desc", str), ("default", bool), ("legacy_ids", list)):
+                if key in option and not isinstance(option[key], expected):
+                    errors.append(f"{label}.{key} 必须是 {expected.__name__}")
+            legacy_ids = option.get("legacy_ids", [])
+            if isinstance(legacy_ids, list) and any(not isinstance(v, str) for v in legacy_ids):
+                errors.append(f"{label}.legacy_ids 必须是 list[str]")
+    if "link_size" in raw and (type(raw["link_size"]) is not int or raw["link_size"] < 0):
+        errors.append("link_size 必须是非负整数")
+    fragments = raw.get("cave_fragments", [])
+    if isinstance(fragments, list):
+        for index, fragment in enumerate(fragments):
+            label = f"cave_fragments[{index}]"
+            if not isinstance(fragment, dict):
+                errors.append(f"{label} 必须是 object")
+                continue
+            offset = fragment.get("offset")
+            if type(offset) is not int or offset < 0:
+                errors.append(f"{label}.offset 必须是非负整数")
+            code = fragment.get("code")
+            if not isinstance(code, str):
+                errors.append(f"{label}.code 必须是十六进制字符串")
+            else:
+                try:
+                    bytes.fromhex(code)
+                except ValueError:
+                    errors.append(f"{label}.code 含非法十六进制字节")
+    resource_names = []
+    if "prepare_file" in raw or raw.get("type") == "bundle":
+        resource_names.append(raw.get("prepare_file", "prepare.py"))
+    if isinstance(raw.get("resources"), list):
+        resource_names.extend(raw["resources"])
+    for name in resource_names:
+        try:
+            if _package_resource_name(name) is None:
+                errors.append(f"声明的资源被包内过滤规则排除: {name!r}")
+        except ValueError as e:
+            errors.append(str(e))
+
     # 报告
     for e in errors:
         log(f"  [SCHEMA-ERR] {source_path}: {e}")
@@ -295,8 +462,11 @@ def parse_patch_dict(raw: dict, source_path: str,
         script_resolve_mode:   "tkspatch_dir" — script_file 相对 .tkspatch 所在目录
     Returns:
         PatchDef 实例。raw 非 dict 时返回空的 PatchDef (避免崩溃)。
+        此函数只映射已传入的数据，不重新读取清单或执行准备脚本。
         """
     d = PatchDef()
+    d.source_path = str(source_path)
+    d.package_files = {}
     if not isinstance(raw, dict):
         return d
     d.type = raw.get("type", "")
@@ -440,11 +610,18 @@ def parse_patch_dict(raw: dict, source_path: str,
                 "redirect_base_span", "buffer_cap",
                 "activate_if_expanded", "front_pad", "aux_size",
                 "aux_patches", "requires", "supersedes",
-                "globals_initializer"):
+                "globals_initializer", "prepare_file", "baseline", "internal",
+                "migrate_from", "options", "resources", "link_group", "link_size",
+                "cave_fragments", "owners", "redirect_size", "data_path"):
         if key in raw:
             d._extra[key] = raw[key]  # type: ignore
     if "summon_limit" in raw:
         d._extra["summon_limit"] = raw["summon_limit"]  # type: ignore
+    if d.type == "bundle":
+        for key, default in (("prepare_file", "prepare.py"), ("baseline", False),
+                             ("internal", False), ("migrate_from", []),
+                             ("options", []), ("resources", [])):
+            d._extra.setdefault(key, default)
 
     return d
 
@@ -492,18 +669,21 @@ def _parse_patch_json(path: str, log_func=None,
 
 
 def _load_tkspatch_zip(path: str, log_func=None) -> Optional[PatchDef]:
-    """加载 ZIP 型 .tkspatch: patch.json + 可选 script.py。"""
+    """加载 ZIP 清单与包内资源，不解压到磁盘或执行脚本。"""
     log = log_func or (lambda x: None)
     try:
         with zipfile.ZipFile(path, 'r') as zf:
+            package_files = _read_zip_package_files(zf)
             names = set(zf.namelist())
-            if "patch.json" not in names:
+            if "patch.json" not in package_files:
                 log(f"  [WARN] .tkspatch ZIP 缺少 patch.json: {path}")
                 return None
-            raw = json.loads(zf.read("patch.json").decode('utf-8'))
+            raw = json.loads(package_files["patch.json"].decode('utf-8'))
             d = _parse_patch_json(path, log_func=log, raw=raw)
             if d is None:
                 return None
+            validate_bundle_resources(raw, package_files)
+            d.package_files = package_files
             if d.type == "script":
                 script_name = (raw.get("script_file") or "script.py").replace("\\", "/")
                 script_name = script_name.lstrip("./")
@@ -556,7 +736,7 @@ def load_tkspatch_dir(patches_dir: str, log_func=None) -> List[PatchDef]:
     source_dirs = sorted(
         f for f in entries
         if os.path.isdir(os.path.join(patches_dir, f))
-        and not f.startswith('_')
+        and not f.startswith(('_', '.'))
         and os.path.isfile(os.path.join(patches_dir, f, 'patch.json'))
     )
     files = sorted(f for f in entries if f.endswith('.tkspatch'))
@@ -568,13 +748,15 @@ def load_tkspatch_dir(patches_dir: str, log_func=None) -> List[PatchDef]:
             dir_path = os.path.join(patches_dir, dirname)
             patch_json = os.path.join(dir_path, 'patch.json')
             try:
-                with open(patch_json, 'r', encoding='utf-8') as f:
-                    raw = json.load(f)
+                package_files = collect_package_files(dir_path)
+                raw = json.loads(package_files["patch.json"].decode('utf-8'))
                 errors = validate_tkspatch_dict(raw, source_path=patch_json, log_func=log)
                 if errors:
                     log(f"  [SCHEMA-FAIL] {patch_json}: 跳过")
                     continue
+                validate_bundle_resources(raw, package_files)
                 defn = parse_patch_dict(raw, patch_json, script_resolve_mode="tkspatch_dir")
+                defn.package_files = package_files
                 if not defn.id:
                     log(f"  [WARN] 跳过无效补丁目录: {dirname}")
                     continue

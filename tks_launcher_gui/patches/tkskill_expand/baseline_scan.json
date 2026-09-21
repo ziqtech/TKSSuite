@@ -1,7 +1,7 @@
 {
   "_format": 1,
   "type": "patch_bytes",
-  "id": "skill_scan_bound",
+  "id": "tkskill_expand.baseline_scan",
   "name": "可装备技能列表修复",
   "desc": "可装备技能列表扫描上限 350→344 (排除末 6 个保留技能 ID; 344 非记录布局自然边界, 为人为选择)",
   "pattern": "66 81 ** FC 5E 01",

@@ -331,6 +331,7 @@ class DataSectionPatchItem:
     aux_size: int = 0            # 尾部辅助数组大小
     aux_patches: Optional[List[Dict]] = None
     bytes_patches: Optional[List['BytesPatchItem']] = None
+    redirect_size: bool = True   # False 时仅跳过大小立即数改写，保留其余重定向
 
 
 @dataclass
@@ -881,20 +882,29 @@ class ExeBuilder:
         if bytes_patches:
             log.append(f'── 应用 patch_bytes ({len(bytes_patches)} 个) ──')
             for item in bytes_patches:
-                self._apply_bytes_patch(data, item, log)
+                if not self._apply_bytes_patch(data, item, log):
+                    result.error = f'[{item.patch_id}] 字节补丁应用失败'
+                    log.append(result.error)
+                    return result
 
         for fl in fixed_layouts:
             if fl.bytes_patches:
                 log.append(f'── 应用 {fl.patch_id} 附带 patch_bytes '
                            f'({len(fl.bytes_patches)} 个) ──')
                 for item in fl.bytes_patches:
-                    self._apply_bytes_patch(data, item, log)
+                    if not self._apply_bytes_patch(data, item, log):
+                        result.error = f'[{fl.patch_id}/{item.patch_id}] 附带字节补丁应用失败'
+                        log.append(result.error)
+                        return result
 
         # ── 2. patch_imm32 ──
         if imm32_patches:
             log.append(f'── 应用 patch_imm32 ({len(imm32_patches)} 个) ──')
             for item in imm32_patches:
-                self._apply_imm32_patch(data, item, log)
+                if not self._apply_imm32_patch(data, item, log):
+                    result.error = f'[{item.patch_id}] 立即数补丁应用失败'
+                    log.append(result.error)
+                    return result
 
         # 数据段引用重定向挪到 hook 定位之后执行 (见 4b): 先让各补丁的
         # hook_pattern 在未被重定向的字节上匹配 (如 checkmember 的模式尾部
@@ -1031,37 +1041,40 @@ class ExeBuilder:
                         data[off:off + 4] = new_base_bytes
                         log.append(f'    @ 0x{off:X} (RVA 0x{rva:X})')
 
-                redirect_size = item.logical_size or len(item.data)
-                new_size_bytes = struct.pack('<I', redirect_size)
-                if item.size_pattern:
-                    pat, wildcard = parse_pattern(item.size_pattern)
-                    matches = [h for h in pattern_scan(
-                        bytes(data), pat, wildcard)
-                        if not _in_hook_region(h)]
-                    if (item.size_expect_count > 0
-                            and len(matches) != item.size_expect_count):
-                        result.error = (
-                            f'[{item.patch_id}] 大小引用模式匹配 '
-                            f'{len(matches)} 处 (预期 '
-                            f'{item.size_expect_count})')
-                        log.append(result.error)
-                        return result
-                    size_hits = [h + item.size_value_offset for h in matches]
-                    log.append(f'  [{item.patch_id}] 大小引用模式命中 '
-                               f'{len(matches)} 处')
+                if item.redirect_size:
+                    redirect_size = item.logical_size or len(item.data)
+                    new_size_bytes = struct.pack('<I', redirect_size)
+                    if item.size_pattern:
+                        pat, wildcard = parse_pattern(item.size_pattern)
+                        matches = [h for h in pattern_scan(
+                            bytes(data), pat, wildcard)
+                            if not _in_hook_region(h)]
+                        if (item.size_expect_count > 0
+                                and len(matches) != item.size_expect_count):
+                            result.error = (
+                                f'[{item.patch_id}] 大小引用模式匹配 '
+                                f'{len(matches)} 处 (预期 '
+                                f'{item.size_expect_count})')
+                            log.append(result.error)
+                            return result
+                        size_hits = [h + item.size_value_offset for h in matches]
+                        log.append(f'  [{item.patch_id}] 大小引用模式命中 '
+                                   f'{len(matches)} 处')
+                    else:
+                        size_hits = [h for h in value_scan_excluding_rel32(
+                            bytes(data), item.old_size)
+                            if not _in_hook_region(h)]
+                    log.append(f'  [{item.patch_id}] 大小引用: {len(size_hits)} 处 '
+                               f'({item.old_size} → {redirect_size})')
+                    for off in size_hits:
+                        rva = offset_to_rva(pe, off) if any(
+                            s.raw_offset <= off < s.raw_offset + s.raw_size
+                            for s in pe.sections) else 0
+                        if rva and rva < 0x100000:
+                            data[off:off + 4] = new_size_bytes
+                            log.append(f'    @ 0x{off:X} (RVA 0x{rva:X})')
                 else:
-                    size_hits = [h for h in value_scan_excluding_rel32(
-                        bytes(data), item.old_size)
-                        if not _in_hook_region(h)]
-                log.append(f'  [{item.patch_id}] 大小引用: {len(size_hits)} 处 '
-                           f'({item.old_size} → {redirect_size})')
-                for off in size_hits:
-                    rva = offset_to_rva(pe, off) if any(
-                        s.raw_offset <= off < s.raw_offset + s.raw_size
-                        for s in pe.sections) else 0
-                    if rva and rva < 0x100000:
-                        data[off:off + 4] = new_size_bytes
-                        log.append(f'    @ 0x{off:X} (RVA 0x{rva:X})')
+                    log.append(f'  [{item.patch_id}] redirect_size=False，保留大小立即数')
 
                 if item.aux_patches:
                     fallback_backing = max(

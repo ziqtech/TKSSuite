@@ -1,7 +1,7 @@
 {
   "_format": 1,
   "type": "patch_bytes",
-  "id": "save_entry_check_fix",
+  "id": "tksave_expand.reopen_stream",
   "name": "存档流打开守卫修复",
   "desc": "跳过 STL filebuf 重开的 is_open 守卫 (sub_4C33FC = _STL@_Filebuf_base@_M_open): byte [ebx+0Ch] 为流已打开标志, je→jmp 使已打开的流允许重新打开。全局性改动, 覆盖存/读档等全部 fstream 路径, 修复空槽存档流状态残留导致的读取错误",
   "optional": true,

@@ -8,13 +8,16 @@
 必选功能始终勾选且锁定不可改; 可选功能可勾选并持久化。
 兼容模式下面板整体置灰并显示说明, 勾选状态保留。
 """
+from html import escape
+
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QAbstractItemView, QButtonGroup, QCheckBox, QLabel, QToolButton,
     QTableWidget, QTableWidgetItem, QTextBrowser, QVBoxLayout, QWidget,
     QHBoxLayout,
 )
-from core.config_loader import PatchDef
+from core.config_loader import PatchDef, patch_metadata, resolve_effective_patches
+from core.patch_plan import migrate_patch_states
 from ui.centered_checkbox_delegate import (
     CenteredCheckBoxDelegate, position_checkbox_indicator,
 )
@@ -48,6 +51,7 @@ _TYPE_LABELS = {
     "patch_font_config": "字体配置",
     "patch_animation_speed": "动画速度",
     "script": "外部脚本",
+    "bundle": "组合补丁",
 }
 
 
@@ -70,22 +74,24 @@ class PatchListWidget(QWidget):
                  initial_states: dict[str, bool] | None = None, parent=None):
         super().__init__(parent)
 
-        # 持久化的勾选状态快照 (仅对可选补丁生效)
-        self._initial_states: dict[str, bool] = initial_states or {}
+        # 全量定义仅用于依赖解析; internal 不成为用户可切换的列表项。
+        self._patches = list(patches)
+        self._visible_patches = [
+            p for p in self._patches if not patch_metadata(p, "internal", False)]
+        self._initial_states = migrate_patch_states(
+            self._patches, initial_states or {})
         # id → row 行定位索引
         self._row_index: dict[str, int] = {}
         # row → PatchDef 行索引
         self._row_patch: dict[int, PatchDef] = {}
         # 可选(可编辑) 补丁 id 集合
-        self._optional_ids: set[str] = set()
+        self._optional_ids = {p.id for p in self._visible_patches if p.optional}
+        self._option_checks: dict[str, QCheckBox] = {}
+        self._options_by_patch: dict[str, list[QCheckBox]] = {}
         self._syncing = False   # 防表头三态与行勾选互相触发的递归
         self._loading = False   # 批量设置勾选态时抑制逐条回调
         self._view = "optional"  # Dock 右侧切换: 可选补丁 / 必选补丁
-
-        self._patches = list(patches)
-        for p in self._patches:
-            if p.optional:
-                self._optional_ids.add(p.id)
+        self._compatible_mode = False
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -110,6 +116,8 @@ class PatchListWidget(QWidget):
         self._detail.setFixedHeight(96)
         self._detail.setOpenLinks(False)
         layout.addWidget(self._detail)
+        self._options_box = self._make_options()
+        layout.addWidget(self._options_box)
 
         # body_margins 四周内收: 表格避开 DockBody 圆角, 顶部与左右间距一致
         outer.addWidget(
@@ -131,6 +139,32 @@ class PatchListWidget(QWidget):
         self._apply_view()
         self._update_header_check_state()
 
+    def _make_options(self) -> QWidget:
+        """包内高级选项独立保存, 仅在选中所属包时显示, 不参与全选。"""
+        box = QWidget()
+        box.setObjectName("TransparentBg")
+        layout = QVBoxLayout(box)
+        layout.setContentsMargins(6, 0, 6, 0)
+        layout.setSpacing(4)
+        layout.addWidget(QLabel("高级选项（不随全选改变）"))
+        for patch in self._visible_patches:
+            checks = []
+            for option in patch_metadata(patch, "options", []):
+                oid = option["id"]
+                check = QCheckBox(option.get("name") or oid)
+                check.setChecked(bool(self._initial_states.get(
+                    oid, option.get("default", False))))
+                tip = (f"{wrap_tooltip_text(option.get('desc') or '（无说明）')}"
+                       f"\n\nID: {oid}\n此选项独立保存，不随全选改变。")
+                check.setToolTip("<qt>" + escape(tip).replace("\n", "<br>") + "</qt>")
+                check.toggled.connect(self._on_option_changed)
+                layout.addWidget(check)
+                self._option_checks[oid] = check
+                checks.append(check)
+            self._options_by_patch[patch.id] = checks
+        box.hide()
+        return box
+
     def _build_header_toggle(self) -> QHBoxLayout:
         """Dock 标题栏右侧的 可选补丁 / 必选补丁 切换按钮。"""
         header_right = QHBoxLayout()
@@ -145,7 +179,8 @@ class PatchListWidget(QWidget):
         self._btn_opt.setObjectName("dockToolButton")
         self._btn_opt.setCursor(Qt.PointingHandCursor)
         self._btn_req = QToolButton()
-        self._btn_req.setText(f"必选补丁 ({len(self._patches) - len(self._optional_ids)})")
+        self._btn_req.setText(
+            f"必选补丁 ({len(self._visible_patches) - len(self._optional_ids)})")
         self._btn_req.setCheckable(True)
         self._btn_req.setAutoRaise(True)
         self._btn_req.setObjectName("dockToolButton")
@@ -168,8 +203,9 @@ class PatchListWidget(QWidget):
         for row, patch in self._row_patch.items():
             self._table.setRowHidden(row, patch.optional != show_optional)
         # 必选视图下全选框无意义, 置灰
-        self._header_check.setEnabled(show_optional)
+        self._header_check.setEnabled(show_optional and not self._compatible_mode)
         self._update_header_check_state()
+        self._on_selection_changed()
 
     @property
     def optional_default_height(self) -> int:
@@ -213,13 +249,17 @@ class PatchListWidget(QWidget):
         table = self._table
         scroll = table.verticalScrollBar().value() if table.rowCount() else 0
 
-        table.setRowCount(len(self._patches))
-        self._row_index.clear()
-        self._row_patch.clear()
-        for row, patch in enumerate(self._patches):
-            self._row_patch[row] = patch
-            self._fill_row(row, patch)
-            self._row_index[patch.id] = row
+        self._loading = True
+        try:
+            table.setRowCount(len(self._visible_patches))
+            self._row_index.clear()
+            self._row_patch.clear()
+            for row, patch in enumerate(self._visible_patches):
+                self._row_patch[row] = patch
+                self._fill_row(row, patch)
+                self._row_index[patch.id] = row
+        finally:
+            self._loading = False
 
         table.verticalScrollBar().setValue(scroll)
 
@@ -240,8 +280,11 @@ class PatchListWidget(QWidget):
         enable_item.setCheckState(Qt.Checked if checked else Qt.Unchecked)
         table.setItem(row, _COL_ENABLE, enable_item)
 
-        # 名称列: 纯中文名 (缺省回退 desc/id)
-        name_item = QTableWidgetItem(p.name or p.desc or p.id)
+        # 名称列: 纯中文名 (缺省回退 desc/id); 显式提示包内可发现的选项入口。
+        name = p.name or p.desc or p.id
+        if self._options_by_patch.get(p.id):
+            name += "（含高级选项）"
+        name_item = QTableWidgetItem(name)
         name_item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
         table.setItem(row, _COL_NAME, name_item)
 
@@ -256,6 +299,9 @@ class PatchListWidget(QWidget):
         # 中等长度的说明在宽屏上会拉成一条横贯屏幕的宽条 (见 wrap_tooltip_text)
         tip = (f"{wrap_tooltip_text(p.desc or p.name or '(无描述)')}\n\n"
                f"类型: {patch_type_label(p.type)} ({p.type})\nID: {p.id}")
+        if self._options_by_patch.get(p.id):
+            tip += "\n选中此补丁，在详情下方调整高级选项。"
+        tip = "<qt>" + escape(tip).replace("\n", "<br>") + "</qt>"
         for col in range(len(_COLUMNS)):
             it = table.item(row, col)
             if it is not None:
@@ -297,26 +343,77 @@ class PatchListWidget(QWidget):
         if self._loading or item.column() != _COL_ENABLE:
             return
         self._update_header_check_state()
+        self._on_selection_changed()
+        self.state_changed.emit()
+
+    def _on_option_changed(self, _checked: bool) -> None:
+        if self._loading:
+            return
+        self._on_selection_changed()
         self.state_changed.emit()
 
     def _on_selection_changed(self) -> None:
-        """选中行变化时刷新底部详情区。"""
+        """详情仅解析当前用户选择, 不读取游戏数据或把自动依赖写回勾选态。"""
+        if self._loading:
+            return
         rows = self._table.selectionModel().selectedRows()
         patch = None
         for index in rows:
+            if self._table.isRowHidden(index.row()):
+                continue
             patch = self._row_patch.get(index.row())
             if patch is not None:
                 break
+        for pid, checks in self._options_by_patch.items():
+            for check in checks:
+                check.setVisible(patch is not None and pid == patch.id)
+        self._options_box.setVisible(
+            patch is not None and bool(self._options_by_patch.get(patch.id)))
         if patch is None:
             self._detail.clear()
             return
         status = ("必选" if not patch.optional
                   else "推荐" if patch.default_checked else "可选")
-        self._detail.setHtml(
-            f"<b>名称：</b>{patch.name or patch.id}<br>"
-            f"<b>类型：</b>{patch_type_label(patch.type)}<br>"
+        detail = (
+            f"<b>名称：</b>{escape(patch.name or patch.id)}<br>"
+            f"<b>类型：</b>{escape(patch_type_label(patch.type))}<br>"
             f"<b>状态：</b>{status}<br>"
-            f"<b>说明：</b>{patch.desc or '（无）'}")
+            f"<b>说明：</b>{escape(patch.desc or '（无）')}")
+        selected = self.get_selected_patches()
+        try:
+            effective = resolve_effective_patches(self._patches, selected=selected)
+        except ValueError as exc:
+            detail += f"<br><b>依赖解析：</b>{escape(str(exc))}"
+        else:
+            names = {p.id: p.name or p.id for p in self._patches}
+            names.update({oid: check.text()
+                          for oid, check in self._option_checks.items()})
+
+            def display_name(pid):
+                return escape(names.get(pid, pid))
+
+            def dependency_reason(pid):
+                source = effective.required_by.get(pid)
+                return f"{display_name(source)} 的依赖" if source else "必选基础支持"
+
+            if patch.id in effective.superseded:
+                reason = f"由 {display_name(effective.superseded[patch.id])} 替代"
+            elif patch.id not in effective.ids:
+                reason = "未启用"
+            elif not patch.optional:
+                reason = "必选补丁"
+            elif patch.id in selected:
+                reason = "用户选择"
+            else:
+                reason = f"自动启用（{dependency_reason(patch.id)}）"
+            detail += f"<br><b>启用原因：</b>{reason}"
+            automatic = [
+                f"{display_name(p.id)}（{dependency_reason(p.id)}）"
+                for p in effective.patches if p.id not in selected]
+            if automatic:
+                detail += "<br><b>当前选择的自动依赖：</b><br>" + "<br>".join(automatic)
+        detail += "<br>数据文件检测由运行前计划处理。"
+        self._detail.setHtml(detail)
 
     def _on_header_check_changed(self, _state) -> None:
         """点击表头"全选"框: 可选行全部已选→全不选; 否则→全选。"""
@@ -335,6 +432,7 @@ class PatchListWidget(QWidget):
                 item.setCheckState(state)
         self._loading = False
         self._update_header_check_state()
+        self._on_selection_changed()
         self.state_changed.emit()
 
     def _update_header_check_state(self) -> None:
@@ -363,9 +461,11 @@ class PatchListWidget(QWidget):
 
     def set_compatible_mode(self, compatible: bool) -> None:
         """兼容模式下整体置灰并罩上蒙板; 勾选状态保留, 不清空。提示文案由主窗口状态栏展示。"""
-        for widget in (self._table, self._header_check,
+        self._compatible_mode = compatible
+        for widget in (self._table, self._options_box,
                        self._btn_opt, self._btn_req):
             widget.setEnabled(not compatible)
+        self._header_check.setEnabled(not compatible and self._view == "optional")
         self._compat_overlay.setVisible(compatible)
         if compatible:
             self._compat_overlay.raise_()
@@ -379,26 +479,37 @@ class PatchListWidget(QWidget):
     # ── 对外接口 (保持与原实现一致) ──
 
     def get_selected_patches(self) -> set[str]:
-        """返回所有勾选的补丁 id (必选恒选 + 已勾选的可选)。"""
-        return {pid for pid, row in self._row_index.items()
-                if self._is_checked(row)}
+        """返回用户选择 + 必选 + 已选高级选项 ID, 不把自动依赖变成手选。"""
+        return ({pid for pid, row in self._row_index.items()
+                 if self._is_checked(row)}
+                | {oid for oid, check in self._option_checks.items()
+                   if check.isChecked()})
 
     def get_patch_states(self) -> dict[str, bool]:
-        """返回所有可选补丁的勾选状态 {id: bool}（必选补丁始终启用, 不记录）。"""
-        return {pid: self._is_checked(self._row_index[pid])
-                for pid in self._optional_ids}
+        """保存普通可选项及全部高级选项, 包括明确关闭的 False。"""
+        states = {pid: self._is_checked(self._row_index[pid])
+                  for pid in self._optional_ids}
+        states.update({oid: check.isChecked()
+                       for oid, check in self._option_checks.items()})
+        return states
 
     def set_patch_states(self, states: dict[str, bool]) -> None:
-        """恢复可选补丁勾选状态 (用于存档恢复)。"""
+        """迁移并恢复可选补丁和高级选项勾选状态 (用于存档恢复)。"""
+        states = migrate_patch_states(self._patches, states)
         self._loading = True
-        for pid, val in states.items():
-            if pid in self._optional_ids:
-                row = self._row_index[pid]
-                item = self._table.item(row, _COL_ENABLE)
-                if item is not None:
-                    item.setCheckState(Qt.Checked if val else Qt.Unchecked)
-        self._loading = False
+        try:
+            for pid, val in states.items():
+                if pid in self._optional_ids:
+                    row = self._row_index[pid]
+                    item = self._table.item(row, _COL_ENABLE)
+                    if item is not None:
+                        item.setCheckState(Qt.Checked if val else Qt.Unchecked)
+                elif pid in self._option_checks:
+                    self._option_checks[pid].setChecked(bool(val))
+        finally:
+            self._loading = False
         self._update_header_check_state()
+        self._on_selection_changed()
         self.state_changed.emit()
 
     def select_all(self):

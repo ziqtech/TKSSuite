@@ -9,7 +9,6 @@ class PatchSettings:
     """固定的补丁执行参数。"""
     warpc_base_fallback: int = 0x757F08
     warpc_rec_size: int = 1054
-    save_block_ab_size: int = 9200
     tkkon_orig_size: int = 26000
     tkkon_rec_size: int = 40
     tkkon_base: int = 0x9D0698
@@ -30,12 +29,11 @@ class PatchRuntimeState:
     """单次启动期间计算出的补丁运行时状态。"""
     target_pid: int = 0
     game_dir: str = ""
-    skill_extension_enabled: bool = False
+    blocked_error: str = ""
     redirect_exclude_ranges: list = field(default_factory=list)
     warpc_base: int = 0
     warpc_new_base: int = 0
     warpc_new_size: int = 0
-    save_new_size: int = 0
     tkmat_actual_size: int = 0
     tkitem_actual_size: int = 0
     tkskill_actual_size: int = 0
@@ -78,6 +76,8 @@ class PatchDef:
     json_file: str = ""                       # 召唤表 JSON 路径 (load_config 解析为绝对路径)
     script_path: str = ""                     # 外置脚本补丁路径 (type=script, 已解析为绝对路径)
     script_source: str = ""                   # ZIP 型 .tkspatch 内嵌脚本源码 (type=script)
+    package_files: Dict[str, bytes] = field(default_factory=dict, repr=False)
+    source_path: str = ""
     data_rva: int = 0                         # .data 召唤表 8 字节的 RVA
     data_keys: List[str] = field(default_factory=list)   # .data 8 字节顺序对应的 JSON 键名
     code_addrs: List[Dict] = field(default_factory=list)  # 代码段 imm16 直接地址写入 [{rva, key}]
@@ -178,9 +178,6 @@ def resolve_effective_patches(patches, selected=None, disabled=None):
         if p.id not in enabled:
             continue
         replacements = list(patch_metadata(p, "supersedes", []))
-        # 扩容补丁是技能加载长度的唯一负责人；未激活时保留原版 350 条加载。
-        if p.id == "tkskill_expand":
-            replacements.append("tkskill_size")
         for old in replacements:
             if old == p.id or (old in superseded and superseded[old] != p.id):
                 raise ValueError(f"补丁替代关系冲突: {old}")
@@ -213,32 +210,6 @@ def resolve_effective_patches(patches, selected=None, disabled=None):
     # launcher runtime state.
     ordered.sort(key=lambda patch: patch.type == "patch_data_expand")
     return EffectivePatches(ordered, superseded, required_by)
-
-
-def validate_skill_table(size, patches):
-    """扩展定义必须有完整保护，且不能越过 16 位字节偏移的 697 条边界。"""
-    if size <= 0 or size % 94:
-        raise ValueError("TKSkill.dat 技能数据长度无效，必须为 94 字节记录的整数倍")
-    count = size // 94
-    if count > 697:
-        raise ValueError(f"TKSkill.dat 有 {count} 条技能；当前最多支持 697 条")
-    unified = any(patch_metadata(p, "globals_initializer") == "skill_extension"
-                  for p in patches)
-    if count > 350 and not unified:
-        raise ValueError("TKSkill.dat 超过原版 350 条，请启用统一技能扩展补丁以保护学习状态和菜单")
-    if unified and not any(p.id == "tkskill_expand" for p in patches):
-        raise ValueError("统一技能扩展缺少技能定义表扩容补丁")
-    return unified
-
-
-def validate_globals_initial_data(seeds, alloc_size):
-    result = []
-    for offset, payload in seeds or []:
-        if (not isinstance(offset, int) or not isinstance(payload, bytes)
-                or offset < 0 or offset + len(payload) > alloc_size):
-            raise ValueError(f"技能运行时种子超出 globals 分配范围 ({alloc_size} 字节)")
-        result.append((offset, payload))
-    return result
 
 
 def resolve_config_path(base_path: str, rel: str) -> str:

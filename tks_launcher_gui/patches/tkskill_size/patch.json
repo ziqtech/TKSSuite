@@ -1,14 +1,13 @@
 {
   "_format": 1,
-  "type": "patch_imm32",
+  "type": "bundle",
   "id": "tkskill_size",
-  "name": "技能数据扩容",
-  "desc": "TKSkill.dat 大小常量 32900→实际大小（锚定 sub_4173F8 唯一 push 引用）。完整扩容时必须与 tkskill_expand 同开，由后者重定位紧邻活跃静态变量的旧缓冲区；学习状态与菜单扩展另由技能扩展补丁处理",
-  "pattern": "68 84 80 00 00 68 CA 61 78 00",
-  "value_offset": 1,
-  "expect_value": "0x8084",
-  "new_value": "{tkskill_actual_size}",
-  "expect_count": 1,
+  "name": "技能数据加载长度（内部依赖）",
+  "desc": "技能数据加载长度只由本包写入，按实际大小与 64 KiB 的较大值设置；由扩展技能支持自动依赖，不单独启用。",
+  "internal": true,
+  "optional": true,
+  "default_checked": false,
+  "prepare_file": "prepare.py",
   "format": "TKSPATCH",
   "format_version": 1
 }

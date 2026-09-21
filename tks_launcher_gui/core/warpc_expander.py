@@ -27,7 +27,6 @@ WARPC_BASE = 0x757F08
 WARPC_REC_SIZE = 1054
 WARPC_ORIG_COUNT = 143
 WARPC_ORIG_SIZE = 150722        # 143 * 1054 = 0x24CE2
-WARPC_TOTAL_ORIG_SIZE = 159922  # 9200 + 150722 = 0x270D2
 
 DATA_FILE_ORIG_SIZES = {
     "TKMat.dat": 2304000,
@@ -85,20 +84,23 @@ def ensure_save_directory_healthy(log_func=None):
 # 游戏启动前: .dat 文件准备
 # ============================================================
 
+def restore_prepared_dats(game_dir=".", log_func=None):
+    log = log_func or (lambda x: None)
+    for name in (*DATA_FILE_ORIG_SIZES, "WarPC.dat"):
+        path = os.path.join(game_dir, name)
+        backup = path + ".orig"
+        if os.path.isfile(backup):
+            shutil.copy2(backup, path)
+            os.remove(backup)
+            log(f"  检测到上次未恢复的 {backup}, 已自动恢复")
+
+
 def prepare_warpc_for_game(log_func=None) -> Tuple[bool, Optional[bytes], Dict[str, bytes]]:
     """
     检测 .dat 文件大小，对扩展文件创建截断版本
     返回: (expanded, full_data, truncated_files)
     """
     log = log_func or (lambda x: None)
-
-    # 恢复上次残留的 .orig 备份
-    for fname in DATA_FILE_ORIG_SIZES:
-        bp = fname + ".orig"
-        if os.path.isfile(bp):
-            shutil.copy2(bp, fname)
-            os.remove(bp)
-            log(f"  检测到上次未恢复的 {bp}, 已自动恢复")
 
     expanded = False
     full_data = None
@@ -152,57 +154,6 @@ def prepare_warpc_for_game(log_func=None) -> Tuple[bool, Optional[bytes], Dict[s
 # ============================================================
 # 运行时内存操作
 # ============================================================
-
-def scan_and_patch_const(h_proc: int, scan_start: int, scan_size: int,
-                          old_val: int, new_val: int) -> Tuple[int, List[int]]:
-    """扫描并修补 4 字节常量"""
-    pr: List[int] = []
-    ole = i32b(old_val)
-    nle = i32b(new_val)
-    buf, nr = read_pm(h_proc, scan_start, scan_size)
-    if nr <= 0:
-        return 0, []
-    cnt = 0
-    pos = 0
-    end = min(nr, scan_size) - 4
-    first = ole[0:1]
-    while pos <= end:
-        pos = buf.find(first, pos)
-        if pos == -1 or pos > end:
-            break
-        if buf[pos:pos+4] == ole:
-            aa = scan_start + pos
-            op = vp_ex(h_proc, aa, 4, PAGE_EXECUTE_READWRITE)
-            nw = write_pm(h_proc, aa, nle)
-            vp_ex(h_proc, aa, 4, op)
-            if nw == 4:
-                cnt += 1
-                pr.append(aa)
-            pos += 4
-        else:
-            pos += 1
-    return cnt, pr
-
-def patch_data_file_sizes(h_proc: int, base_addr: int, scan_start: int,
-                           scan_size: int, log_func=None):
-    """补丁七: 修补 .dat 文件大小常量"""
-    log = log_func or (lambda x: None)
-    log("\n--- 数据文件大小常量修补 ---")
-    for fname, osz in DATA_FILE_ORIG_SIZES.items():
-        asz = get_decompressed_size(fname)
-        if asz <= osz:
-            continue
-        bp = fname + ".orig"
-        if not os.path.isfile(bp):
-            continue
-        shutil.copy2(bp, fname)
-        os.remove(bp)
-        log(f"  已恢复原始 {fname}")
-        patched, rvas = scan_and_patch_const(h_proc, scan_start, scan_size, osz, asz)
-        if patched > 0:
-            log(f"  [OK] {fname}: {osz} -> {asz}, 修补 {patched} 处")
-        else:
-            log(f"  [WARN] {fname}: 未找到 {osz} (0x{osz:X}) 引用")
 
 def expand_warpc_buffer(child_pid: int, base_addr: int, module_size: int,
                          cave_addr: int, code_buf: bytearray, code_start_addr: int,
@@ -323,23 +274,6 @@ def expand_warpc_buffer(child_pid: int, base_addr: int, module_size: int,
         if wok == 4: sp += 1
     log(f"  WarPC 大小常量修补: {sp} 处")
 
-    # [补丁六] 存档/读档缓冲区
-    tos = WARPC_TOTAL_ORIG_SIZE
-    tns = 9200 + ns
-    tnl = i32b(tns)
-    tp = 0
-    for off in value_scan(bytes(code_buf), tos):
-        aa = ss + off
-        op = vp_ex(hp, aa, 4, PAGE_EXECUTE_READWRITE)
-        wok = write_pm(hp, aa, tnl)
-        vp_ex(hp, aa, 4, op)
-        if wok == 4:
-            tp += 1
-            log(f"  [OK] 存档缓冲区 RVA 0x{aa - base_addr:X}: {tos} -> {tns}")
-
-    # [补丁七] 其他 .dat
-    patch_data_file_sizes(hp, base_addr, ss, ssz, log_func=log)
-
     # [补丁八] 新角色备份
     es = WARPC_ORIG_COUNT * WARPC_REC_SIZE  # 备份偏移按原始记录大小计算
     exs = ns - es
@@ -355,7 +289,7 @@ def expand_warpc_buffer(child_pid: int, base_addr: int, module_size: int,
     log(f"  已修补: {ap}个基址(08) + {a0p}个基址(0C) + {fp}个字段基址 + {sp}个大小常量")
     return {
         "addr08": ap, "addr0C": a0p, "field": fp, "size": sp,
-        "save_buf": tp, "backup_buf": bbp, "extra_size": exs
+        "backup_buf": bbp, "extra_size": exs
     }
 
 def inject_warpc_data(child_pid: int, warpc_base: int, expanded: bool, log_func=None):

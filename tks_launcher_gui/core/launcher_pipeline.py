@@ -33,15 +33,16 @@ from .mod_loader import (
     merge_mods, resolve_dependencies, restore_originals, scan_mods,
 )
 from .patch_engine import apply_config_patches
+from .patch_plan import PatchPlanError, build_patch_plan, validate_runtime_plan
 from .scanner import detect_exe_profile, discover_warpc_base
 from .tkact_expander import (
     prepare_tkact_for_game, restore_tkact_for_game,
 )
 from .warpc_expander import (
     DATA_FILE_ORIG_SIZES, WARPC_BASE, WARPC_ORIG_SIZE,
-    WARPC_REC_SIZE, WARPC_TOTAL_ORIG_SIZE,
+    WARPC_REC_SIZE,
     ensure_save_directory_healthy, expand_warpc_buffer,
-    inject_warpc_data, prepare_warpc_for_game,
+    inject_warpc_data, prepare_warpc_for_game, restore_prepared_dats,
 )
 from .memory import (
     b2i16, get_decompressed_size,
@@ -158,6 +159,7 @@ class PatcherPipeline:
 
         # 内部状态 (在 run_pre_launch / run_post_launch 中填充)
         self.config: Optional[PatchConfig] = None
+        self.patch_plan = None
         self._mod_config_overrides: Optional[Dict[str, Any]] = None
         self.loaded_mods: List = []
         self._warpc_expanded: bool = False
@@ -203,6 +205,9 @@ class PatcherPipeline:
         if compatible_mode:
             self.log("兼容模式: 跳过启动器游戏功能补丁")
 
+        if not compatible_mode:
+            restore_prepared_dats(log_func=self.log)
+
         # 存档健康检查
         ensure_save_directory_healthy(log_func=self.log)
 
@@ -213,7 +218,16 @@ class PatcherPipeline:
         if compatible_mode:
             self.log("兼容模式: 跳过 WarPC/TKAct 启动器数据扩展")
         else:
-            self._ensure_skill_extension_for_extended_table()
+            try:
+                self.patch_plan = build_patch_plan(
+                    self.config.patches, selected=self.cfg.selected_patches,
+                    disabled=self.cfg.disabled_patches, log_func=self.log)
+            except Exception as exc:
+                self.log(f"[ERROR] 补丁计划准备失败: {exc}")
+                self.result.error = str(exc)
+                self.result.patches_status = "blocked"
+                self.cleanup()
+                return self.result
             # WarPC / DAT 预截断
             self._warpc_expanded, self._warpc_full_data, self._truncated_files = (
                 prepare_warpc_for_game(log_func=self.log)
@@ -223,31 +237,6 @@ class PatcherPipeline:
             self._tkact_expanded = prepare_tkact_for_game(log_func=self.log)
 
         return self.result
-
-    def _ensure_skill_extension_for_extended_table(self) -> None:
-        """Keep expanded TKSkill definitions paired with their state patch."""
-        if self.config is None:
-            return
-        size = get_decompressed_size("TKSkill.dat")
-        if size <= 350 * 94:
-            return
-
-        selected = (
-            set(self.cfg.selected_patches)
-            if self.cfg.selected_patches is not None
-            else {
-                patch.id for patch in self.config.patches
-                if patch.default_checked
-            }
-        )
-        if "skill_ext_learn_state" in selected:
-            return
-        selected.add("skill_ext_learn_state")
-        self.cfg.selected_patches = selected
-        self.log(
-            "  [SAFETY] TKSkill.dat 超过 350 条，"
-            "已自动启用统一技能扩展补丁 skill_ext_learn_state"
-        )
 
     # ═══════════════════════════════════════════════════════════════
     # 阶段 2: 应用补丁 (目标进程已挂起, code_buf 已读取)
@@ -299,6 +288,14 @@ class PatcherPipeline:
         else:
             self.log(f"  EXE 版本: 原版")
 
+        try:
+            validate_runtime_plan(self.patch_plan, code_buf, exe_profile)
+        except ValueError as exc:
+            self.result.error = str(exc)
+            self.result.patches_status = "blocked"
+            self.log(f"[ERROR] 补丁计划预检失败，进程保持挂起: {exc}")
+            return self.result
+
         # ── 自动发现 WarPC BSS 基址 ──
         fallback_base = self.settings.warpc_base_fallback
         self._discovered_base = discover_warpc_base(
@@ -309,6 +306,10 @@ class PatcherPipeline:
 
         # ── 分配 WarPC 缓冲区 (GUARD + 数据) ──
         self._allocate_warpc_buffer(target_pid)
+        if self.runtime.blocked_error:
+            self.result.error = self.runtime.blocked_error
+            self.result.patches_status = "blocked"
+            return self.result
 
         # ── 恢复其他被截断的 .dat ──
         self._restore_truncated_dats()
@@ -330,6 +331,11 @@ class PatcherPipeline:
         self.result.applied_patch_count = sum(
             1 for p in self.config.patches if getattr(p, "_applied", False)
         )
+        if self.runtime.blocked_error:
+            self.result.error = self.runtime.blocked_error
+            self.result.patches_status = "blocked"
+            self.log("[ERROR] 完整补丁计划未能应用，进程保持挂起")
+            return self.result
 
         # ── WarPC 代码引用修补 ──
         if self._warpc_expanded and self._warpc_new_buf:
@@ -509,7 +515,8 @@ class PatcherPipeline:
             False, target_pid
         )
         if not hw:
-            self.log("  [WARN] OpenProcess 失败, WarPC 缓冲区未分配")
+            self.runtime.blocked_error = "无法取得扩展数据写入句柄"
+            self.log("  [ERROR] OpenProcess 失败，扩展数据缓冲区未分配")
             return
         try:
             GUARD_SIZE = 0x10000
@@ -521,7 +528,9 @@ class PatcherPipeline:
                 abv = ctypes.cast(ab, ctypes.c_void_p).value or 0
                 nb = abv + GUARD_SIZE
                 from .memory import write_pm
-                write_pm(hw, nb, self._warpc_full_data)
+                if write_pm(hw, nb, self._warpc_full_data) != ns:
+                    self.runtime.blocked_error = "扩展数据缓冲区写入不完整"
+                    return
                 self._warpc_new_buf = nb
                 self._warpc_base_for_caves = nb
                 self.runtime.warpc_new_base = nb
@@ -529,6 +538,8 @@ class PatcherPipeline:
                 self.result.warpc_new_base = nb
                 self.log(f"  WarPC 缓冲区: 0x{nb:08X} ({ns} 字节, "
                           f"{ns // WARPC_REC_SIZE} 角色)")
+            else:
+                self.runtime.blocked_error = "扩展数据缓冲区分配失败"
         finally:
             _CloseHandle(hw)
 
@@ -544,14 +555,11 @@ class PatcherPipeline:
                 self.log(f"  已恢复原始 {k}")
 
     def _populate_runtime_state(self) -> None:
-        """填充运行时状态 (warpc_new_size / save_new_size / *_actual_size)。"""
+        """填充运行时状态 (warpc_new_size / *_actual_size)。"""
         if self._warpc_expanded and self._warpc_full_data:
-            ns = len(self._warpc_full_data)
-            self.runtime.warpc_new_size = ns
-            self.runtime.save_new_size = self.settings.save_block_ab_size + ns
+            self.runtime.warpc_new_size = len(self._warpc_full_data)
         else:
             self.runtime.warpc_new_size = WARPC_ORIG_SIZE
-            self.runtime.save_new_size = WARPC_TOTAL_ORIG_SIZE
 
         for fname in DATA_FILE_ORIG_SIZES:
             basename = os.path.splitext(fname)[0]
@@ -623,7 +631,8 @@ class PatcherPipeline:
             False, target_pid
         )
         if not hp:
-            self.log("  [WARN] OpenProcess 失败, patches skipped")
+            self.runtime.blocked_error = "无法取得补丁写入句柄"
+            self.log("  [ERROR] OpenProcess 失败，已阻止继续执行补丁计划")
             return False
         try:
             ok = apply_config_patches(
@@ -636,9 +645,15 @@ class PatcherPipeline:
                 exe_profile=exe_profile,
                 disabled_patches=self.cfg.disabled_patches,
                 config_overrides=self._mod_config_overrides,
+                plan=self.patch_plan,
             )
             return bool(ok)
+        except PatchPlanError as ex:
+            self.runtime.blocked_error = str(ex)
+            self.log(f"[ERROR] 补丁计划已阻止继续执行: {ex}")
+            return False
         except Exception as ex:
+            self.runtime.blocked_error = str(ex)
             self.log(f"[ERROR] ApplyConfigPatches 异常: {ex}")
             self.log(traceback.format_exc())
             return False

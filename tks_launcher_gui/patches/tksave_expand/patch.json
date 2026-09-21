@@ -1,0 +1,28 @@
+{
+  "_format": 1,
+  "_group": "── 存档兼容修复 ──",
+  "type": "bundle",
+  "id": "tksave_expand",
+  "name": "存档扩展支持",
+  "desc": "自动提供存读档缓冲区扩容和存档流错误修复；启用扩展技能时接入 TKSX 存读档与完整性校验，流重开修复保留为默认关闭的高级选项。",
+  "optional": false,
+  "default_checked": true,
+  "prepare_file": "prepare.py",
+  "supersedes": [
+    "save_entry_check_fix",
+    "save_stream_error_fix"
+  ],
+  "options": [
+    {
+      "id": "tksave_expand.reopen_stream",
+      "name": "存档流重开修复（高级）",
+      "desc": "跳过 STL filebuf 的 is_open 守卫，允许已打开的流重新打开；这是影响全部 fstream 路径（包括存档和读档）的全局改动，而非仅修复某个存档槽，默认关闭。",
+      "default": false,
+      "legacy_ids": [
+        "save_entry_check_fix"
+      ]
+    }
+  ],
+  "format": "TKSPATCH",
+  "format_version": 1
+}

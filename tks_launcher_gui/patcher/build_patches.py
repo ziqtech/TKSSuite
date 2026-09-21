@@ -4,6 +4,15 @@ import zipfile
 import shutil
 from pathlib import Path
 
+if __package__ and "." in __package__:
+    from ..core import tkspatch_loader
+else:
+    # 兼容构建系统的 patcher 导入方式以及原有的直接脚本入口。
+    if not __package__:
+        import sys
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    from core import tkspatch_loader
+
 
 def _report(message: str) -> None:
     try:
@@ -28,36 +37,34 @@ def build_single_patch(src_dir: Path, output_file: Path) -> bool:
         _report(f"  [WARN] 跳过: {src_dir.name}（缺少 patch.json）")
         return False
     
-    # 读取并验证 patch.json
+    # 与源码加载共用资源规则，写 ZIP 前完成全部读取及校验。
     try:
-        with open(patch_json_path, 'r', encoding='utf-8') as f:
-            patch_data = json.load(f)
-        
-        # 基本校验
-        if "type" not in patch_data or "id" not in patch_data:
-            _report(f"  [ERROR] {src_dir.name}: patch.json 缺少必填字段（type/id）")
+        source_root = src_dir.resolve()
+        output_path = output_file.resolve()
+        if output_path == source_root or source_root in output_path.parents:
+            raise ValueError("输出文件必须位于补丁源码目录之外")
+        package_files = tkspatch_loader.collect_package_files(src_dir)
+        patch_data = json.loads(package_files["patch.json"].decode('utf-8'))
+        errors = tkspatch_loader.validate_tkspatch_dict(
+            patch_data, source_path=str(patch_json_path), log_func=_report)
+        if errors:
+            _report(f"  [ERROR] {src_dir.name}: patch.json 校验失败")
             return False
-        
+        tkspatch_loader.validate_bundle_resources(patch_data, package_files)
+
     except json.JSONDecodeError as e:
         _report(f"  [ERROR] {src_dir.name}: patch.json 格式错误 - {e}")
         return False
     except Exception as e:
         _report(f"  [ERROR] {src_dir.name}: 读取失败 - {e}")
         return False
-    
-    # 打包为 ZIP
+
+    # 保留所有资源（包括 patch.json）的原始字节，确保目录与 ZIP 一致。
     try:
         with zipfile.ZipFile(output_file, 'w', zipfile.ZIP_DEFLATED) as zf:
-            # 写入 patch.json
-            zf.writestr("patch.json", json.dumps(patch_data, ensure_ascii=False, indent=2))
-            
-            # 写入其他文件（script.py, summon_table.json 等）
-            for item in src_dir.iterdir():
-                if item.name == "patch.json":
-                    continue
-                if item.is_file():
-                    zf.write(item, item.name)
-        
+            for name, content in sorted(package_files.items()):
+                zf.writestr(name, content)
+
         _report(f"  [OK] {src_dir.name} -> {output_file.name}")
         return True
     
@@ -90,8 +97,9 @@ def build_all_patches(src_patches_dir: str, dst_patches_dir: str) -> bool:
     
     # 所有补丁均按统一 ZIP 格式构建。
     # 遍历所有补丁目录
-    patch_dirs = [d for d in src_path.iterdir() 
-                  if d.is_dir() and not d.name.startswith("_")]
+    patch_dirs = [d for d in src_path.iterdir()
+                  if d.is_dir() and not d.name.startswith(("_", "."))
+                  and (d / "patch.json").is_file()]
     
     if not patch_dirs:
         _report("[WARN] 没有找到补丁目录")

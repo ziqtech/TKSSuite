@@ -9,7 +9,6 @@
   - patch_data_expand: 数据段注入（参数声明在 patch.json）
   - patch_sites: 逐 RVA 位点表 + cave（16:9 宽屏；可带 globals 数据槽区）
 """
-import importlib.util
 import os
 import shutil
 from PySide6.QtCore import Qt, QThread, Signal
@@ -18,13 +17,14 @@ from PySide6.QtWidgets import (
     QLineEdit, QListWidget, QListWidgetItem, QMessageBox, QProgressBar,
     QPushButton, QTextEdit, QVBoxLayout, QWidget,
 )
-from core.config_loader import PatchDef
+from core.config_loader import PatchDef, patch_metadata
 from core.exe_builder import (
     ExeBuilder, CavePatchItem, BytesPatchItem, BytesPatchEntry,
     Imm32PatchItem, Imm32PatchEntry, ConfigPatchItem, DataSectionPatchItem,
     FixedLayoutCave, SitesPatchItem,
 )
-from core.tkspatch_loader import get_external_cave_code
+from core.patch_plan import build_patch_plan, migrate_patch_states
+from core.tkspatch_loader import get_external_cave_code, load_cave_module
 from ui.patch_list import patch_type_label
 
 
@@ -33,8 +33,11 @@ def file_build_label(p: PatchDef) -> str | None:
 
     与 ExeBuilder 实际支持的补丁类型一一对应（含 patch_sites：逐 RVA 位点表，
     即 16:9 宽屏补丁使用的类型）。返回 None 表示当前不支持或缺少必需字段。
+    bundle 在计划准备阶段展开为这些普通操作。
     """
     t = getattr(p, 'type', '')
+    if t == 'bundle':
+        return '组合补丁'
     if t in ('cave_hook', 'patch_exp_lock'):
         if p.hook_pattern and get_external_cave_code(p):
             return '代码注入'
@@ -232,14 +235,14 @@ class GenerateExeDialog(QDialog):
         self.setMinimumSize(750, 650)
         self._patches = patches
         self._launcher_dir = launcher_dir
-        # launcher 补丁列表的当前可选补丁勾选状态 (get_patch_states()),
-        # 打开时原样镜像, 与 launcher 的必选/可选语义完全一致
-        self._patch_states = patch_states or {}
+        # 同步主窗口普通/高级选项并迁移旧键，保留显式 False。
+        self._patch_states = migrate_patch_states(self._patches, patch_states or {})
         # 画面兼容工具 (cnc-ddraw 等): 与 launcher 主界面「画面兼容工具」面板同源,
         # 生成版可直接把工具文件一并复制到输出目录, 免去再经过启动器注入
         self._selected_tool = selected_tool or ""
         self._worker: _BuildWorker | None = None
         self._last_build_patch_ids: list[str] = []
+        self._last_build_resources: list[tuple[str, str]] = []
 
         self._setup_ui()
         self._populate_patch_list()
@@ -365,6 +368,8 @@ class GenerateExeDialog(QDialog):
         unsupported = []
         supported_count = 0
         for p in self._patches:
+            if patch_metadata(p, 'internal', False):
+                continue
             label = file_build_label(p)
             if label:
                 self._add_patch_item(p, label)
@@ -375,9 +380,9 @@ class GenerateExeDialog(QDialog):
         if self._patch_list.count() == 0:
             self._patch_list.addItem('（未找到可烧录的补丁）')
 
-        # 显示统计信息
-        total = len(self._patches)
+        # 显示统计信息（内部依赖不单独列出，但仍参与完整计划）。
         unsupported_count = len(unsupported)
+        total = supported_count + unsupported_count
         self._summary_label.setText(
             f'可烧录: {supported_count}/{total} 个补丁'
             + (f'（{unsupported_count} 个暂不支持）' if unsupported_count else '')
@@ -482,12 +487,16 @@ class GenerateExeDialog(QDialog):
             self._out_edit.setText(path)
 
     def _get_selected_patches(self) -> tuple:
-        """收集勾选的补丁，按类型分组返回。
+        """统一准备完整补丁计划，再将展开、链接后的普通操作按类型分组。
 
         Returns:
             (cave_patches, bytes_patches, imm32_patches, config_patches,
-             data_section_patches, fixed_layouts)
+             data_section_patches, fixed_layouts, sites_patches)
+
+        准备或转换失败时抛出异常，由表单中止生成并显示原因。
         """
+        self._last_build_patch_ids = []
+        self._last_build_resources = []
         cave_patches = []
         bytes_patches = []
         imm32_patches = []
@@ -496,40 +505,39 @@ class GenerateExeDialog(QDialog):
         fixed_layouts = []
         sites_patches = []
 
-        all_patches = []
         checked_ids = set()
         for i in range(self._patch_list.count()):
             list_item = self._patch_list.item(i)
             p: PatchDef = list_item.data(Qt.UserRole)
-            if p is None:
-                continue
-            all_patches.append(p)
-            if list_item.checkState() == Qt.Checked:
+            if p is not None and list_item.checkState() == Qt.Checked:
                 checked_ids.add(p.id)
+        for p in self._patches:
+            for option in patch_metadata(p, 'options', []):
+                option_id = option['id']
+                enabled = bool(self._patch_states.get(
+                    option_id, option.get('default', False)))
+                if enabled:
+                    checked_ids.add(option_id)
+                self._log(f'[{p.id}] 高级选项 {option.get("name") or option_id} '
+                          f'({option_id}): {"启用" if enabled else "关闭"}'
+                          '（沿用主窗口设置，仅在所属补丁生效时应用）')
 
-        from core.config_loader import resolve_effective_patches
-        try:
-            effective = resolve_effective_patches(
-                all_patches, selected=checked_ids)
-        except ValueError as exc:
-            self._log(f'补丁依赖/替代解析失败: {exc}')
-            return (cave_patches, bytes_patches, imm32_patches,
-                    config_patches, data_section_patches, fixed_layouts)
-        if effective.superseded:
+        plan = build_patch_plan(
+            self._patches, selected=checked_ids,
+            resolve_file=lambda filename: resolve_data_file(
+                self._out_edit.text().strip(), self._src_edit.text().strip(), filename),
+            log_func=self._log)
+        if plan.effective.superseded:
             self._log('补丁替代: ' + ', '.join(
                 f'{old}->{new}'
-                for old, new in sorted(effective.superseded.items())))
+                for old, new in sorted(plan.effective.superseded.items())))
 
-        for p in effective.patches:
+        for p in plan.patches:
+            if not file_build_label(p):
+                raise ValueError(f'[{p.id}] 无法烧录 {p.type} 操作：类型不支持或缺少必需字段/代码')
             # cave_hook / patch_exp_lock
             if p.type in ('cave_hook', 'patch_exp_lock'):
                 cave_code = get_external_cave_code(p)
-                if not cave_code:
-                    self._log(f'[{p.id}] 无外置 cave 代码，跳过')
-                    continue
-                if not p.hook_pattern:
-                    self._log(f'[{p.id}] 无 hook_pattern，跳过')
-                    continue
                 cave_patches.append(CavePatchItem(
                     patch_id=p.id, name=p.name,
                     hook_pattern=p.hook_pattern,
@@ -544,9 +552,7 @@ class GenerateExeDialog(QDialog):
 
             # fixed_layout_cave
             elif p.type == 'fixed_layout_cave':
-                fl = self._build_fixed_layout(p)
-                if fl is not None:
-                    fixed_layouts.append(fl)
+                fixed_layouts.append(self._build_fixed_layout(p))
 
             # patch_bytes
             elif p.type == 'patch_bytes':
@@ -573,8 +579,7 @@ class GenerateExeDialog(QDialog):
             elif p.type == 'patch_imm32':
                 new_value = self._resolve_imm32_value(p)
                 if new_value is None:
-                    self._log(f'[{p.id}] new_value 无法解析为静态值: {p.new_value_expr}')
-                    continue
+                    raise ValueError(f'[{p.id}] new_value 无法解析为静态值: {p.new_value_expr}')
                 entries = []
                 if p.patterns:
                     for entry in p.patterns:
@@ -612,15 +617,13 @@ class GenerateExeDialog(QDialog):
                             'animation_speed', 'patch_animation_speed',
                             'summon_table', 'patch_summon_table'):
                 if not p.json_file or not os.path.isfile(p.json_file):
-                    self._log(f'[{p.id}] JSON 配置不存在: {p.json_file}')
-                    continue
+                    raise ValueError(f'[{p.id}] JSON 配置不存在: {p.json_file}')
                 try:
                     import json
                     with open(p.json_file, 'r', encoding='utf-8') as f:
                         cfg = json.load(f)
                 except Exception as e:
-                    self._log(f'[{p.id}] 读取 JSON 失败: {e}')
-                    continue
+                    raise ValueError(f'[{p.id}] 读取 JSON 失败: {e}') from e
                 config_patches.append(ConfigPatchItem(
                     patch_id=p.id, name=p.name,
                     patch_type=p.type, config=cfg,
@@ -638,9 +641,6 @@ class GenerateExeDialog(QDialog):
                 entries = {k: int(v, 16) if isinstance(v, str) else int(v) for k, v in
                            (getattr(p, 'cave_entries', {}) or {}).items()}
                 sites = list(getattr(p, 'sites', []) or [])
-                if not sites:
-                    self._log(f'[{p.id}] 无 sites 位点表，跳过')
-                    continue
                 sites_patches.append(SitesPatchItem(
                     patch_id=p.id, name=p.name, sites=sites,
                     cave_code=cave_code, cave_entries=entries,
@@ -650,8 +650,12 @@ class GenerateExeDialog(QDialog):
                     globals_extra_windows=list(getattr(p, 'globals_extra_windows', []) or []),
                     globals_relocations=p.globals_relocations,
                 ))
+            else:
+                raise ValueError(f'[{p.id}] 计划包含未展开或不支持的操作: {p.type}')
 
         self._warn_unselected_expansions(data_section_patches)
+        self._last_build_patch_ids = sorted(plan.ids)
+        self._last_build_resources = list(plan.resources)
 
         return (cave_patches, bytes_patches, imm32_patches, config_patches,
                 data_section_patches, fixed_layouts, sites_patches)
@@ -685,12 +689,11 @@ class GenerateExeDialog(QDialog):
                           f'{p.id} 未勾选——生成的 exe 将无法加载该文件, '
                           f'请勾选 {p.id} 后重新生成')
 
-    def _build_fixed_layout(self, p: PatchDef) -> FixedLayoutCave | None:
+    def _build_fixed_layout(self, p: PatchDef) -> FixedLayoutCave:
         """从 fixed_layout_cave 补丁定义构建 FixedLayoutCave。"""
         hooks = list(p.hooks or [])
         if not hooks:
-            self._log(f'[{p.id}] 未声明 hooks')
-            return None
+            raise ValueError(f'[{p.id}] 未声明 hooks')
 
         summon_limit = 4
         extra = getattr(p, '_extra', {}) or {}
@@ -710,8 +713,7 @@ class GenerateExeDialog(QDialog):
                     if var == 'summon_limit':
                         iv = summon_limit
                     else:
-                        self._log(f'[{p.id}] 未知替换变量: {v}')
-                        continue
+                        raise ValueError(f'[{p.id}] 未知替换变量: {v}')
                 else:
                     iv = int(v)
                 replace[int(k)] = iv
@@ -725,27 +727,17 @@ class GenerateExeDialog(QDialog):
         cave_block = None
         layout_size = p.cave_layout_size or 0
 
-        if p.cave_code_file and os.path.isfile(p.cave_code_file):
-            try:
-                spec = importlib.util.spec_from_file_location(
-                    f'_cave_{p.id}', p.cave_code_file)
-                mod = importlib.util.module_from_spec(spec)
-                spec.loader.exec_module(mod)
-                raw_fn = getattr(mod, 'build_cave_block', None)
-                if raw_fn is None:
-                    self._log(f'[{p.id}] cave_code.py 缺少 build_cave_block')
-                    return None
-                n = summon_limit
-                build_fn = lambda base, _fn=raw_fn, _n=n: _fn(base, _n)
-                if not layout_size:
-                    # 用 image_base=0x400000 探测一次实际大小
-                    layout_size = max(len(raw_fn(0x400000, n)), 0x800)
-            except Exception as e:
-                self._log(f'[{p.id}] 加载 cave_code.py 失败: {e}')
-                return None
-        else:
-            self._log(f'[{p.id}] cave_code_file 不存在: {p.cave_code_file}')
-            return None
+        try:
+            mod = load_cave_module(p)
+            raw_fn = getattr(mod, 'build_cave_block', None)
+            if not callable(raw_fn):
+                raise ValueError('cave_code.py 缺少 build_cave_block')
+            n = summon_limit
+            build_fn = lambda base, _fn=raw_fn, _n=n: _fn(base, _n)
+            if not layout_size:
+                layout_size = max(len(raw_fn(0x400000, n)), 0x800)
+        except Exception as e:
+            raise ValueError(f'[{p.id}] 加载 cave_code.py 失败: {e}') from e
 
         return FixedLayoutCave(
             patch_id=p.id, name=p.name,
@@ -767,31 +759,27 @@ class GenerateExeDialog(QDialog):
         needs_lzss = p.needs_lzss
 
         if not data_file or not old_base or not old_size:
-            self._log(f'[{p.id}] patch_data_expand 字段不完整')
-            return None
+            raise ValueError(f'[{p.id}] patch_data_expand 字段不完整')
 
         path = resolve_data_file(self._out_edit.text().strip(),
                                  self._src_edit.text().strip(), data_file)
         if not path:
-            self._log(f'[{p.id}] 数据文件不存在: '
-                      f'{data_file} (输出目录与原版目录均未找到)')
-            return None
+            raise ValueError(f'[{p.id}] 数据文件不存在: '
+                             f'{data_file} (输出目录与原版目录均未找到)')
         self._log(f'[{p.id}] 数据文件: {path}')
 
         try:
             with open(path, 'rb') as f:
                 content = f.read()
         except Exception as e:
-            self._log(f'[{p.id}] 读取数据文件失败: {e}')
-            return None
+            raise ValueError(f'[{p.id}] 读取数据文件失败: {e}') from e
 
         if needs_lzss:
             try:
                 from editor_utils.lzss import lzss_decompress_dat
                 content = lzss_decompress_dat(content)
             except Exception as e:
-                self._log(f'[{p.id}] LZSS 解压失败: {e}')
-                return None
+                raise ValueError(f'[{p.id}] LZSS 解压失败: {e}') from e
 
         if getattr(p, 'activate_if_expanded', False) and len(content) <= old_size:
             self._log(f'[{p.id}] 数据仍为原版大小 {len(content)}，跳过扩容')
@@ -841,6 +829,7 @@ class GenerateExeDialog(QDialog):
             size_pattern=p.pattern,
             size_value_offset=p.value_offset,
             size_expect_count=p.expect_count,
+            redirect_size=bool(extra.get('redirect_size', True)),
             logical_size=logical_size,
             backing_size=backing_size,
             aux_size=aux_size,
@@ -884,9 +873,7 @@ class GenerateExeDialog(QDialog):
                 else:
                     self._log(f'[{p.id}] {var_name} = {actual_size} (从数据文件读取)')
                 return actual_size
-            # 回退到 expect_value
-            self._log(f'[{p.id}] 无法读取 {var_name}，使用 expect_value={p.expect_value}')
-            return p.expect_value
+            raise ValueError(f'[{p.id}] 无法读取 {var_name}，不能确定加载容量')
         return None
 
     def _read_data_file_size(self, var_name: str) -> int | None:
@@ -896,7 +883,6 @@ class GenerateExeDialog(QDialog):
           tkitem_actual_size → TKItem.dat 解压后大小
           tkmat_actual_size → TKMat.Dat 大小
           tkshop_actual_size → TKShop.dat 解压后大小
-          tkskill_actual_size → TKSkill.dat 解压后大小
           warpc_new_size → WarPC.dat 解压后大小
           tkdefunit_new_count → TKDefUnit.dat 条数
         """
@@ -905,7 +891,6 @@ class GenerateExeDialog(QDialog):
             'tkitem_actual_size': ('TKItem.dat', True, 64),
             'tkmat_actual_size': ('TKMat.Dat', False, 384),
             'tkshop_actual_size': ('TKShop.dat', True, 8),
-            'tkskill_actual_size': ('TKSkill.dat', True, 94),
             'warpc_new_size': ('WarPC.dat', True, 1054),
             'tkdefunit_new_count': ('TKDefUnit.dat', False, 16),
         }
@@ -953,8 +938,14 @@ class GenerateExeDialog(QDialog):
             QMessageBox.warning(self, '错误', '请指定输出路径')
             return
 
-        (cave_patches, bytes_patches, imm32_patches, config_patches,
-         data_section_patches, fixed_layouts, sites_patches) = self._get_selected_patches()
+        self._log_text.clear()
+        try:
+            (cave_patches, bytes_patches, imm32_patches, config_patches,
+             data_section_patches, fixed_layouts, sites_patches) = self._get_selected_patches()
+        except Exception as exc:
+            self._log(f'补丁准备失败: {exc}')
+            QMessageBox.critical(self, '错误', f'补丁准备失败，已中止生成:\n{exc}')
+            return
         total = (len(cave_patches) + len(bytes_patches) + len(imm32_patches) +
                  len(config_patches) + len(data_section_patches) +
                  len(fixed_layouts) + len(sites_patches))
@@ -970,10 +961,6 @@ class GenerateExeDialog(QDialog):
                      [p.name for p in data_section_patches] +
                      [p.name for p in fixed_layouts] +
                      [p.name for p in sites_patches])
-        self._last_build_patch_ids = [
-            getattr(p, 'patch_id', '') for p in (
-                cave_patches + bytes_patches + imm32_patches + config_patches +
-                data_section_patches + fixed_layouts + sites_patches)]
         patch_names = ', '.join(all_names)
         ret = QMessageBox.question(
             self, '确认生成',
@@ -986,7 +973,6 @@ class GenerateExeDialog(QDialog):
         self._build_btn.setEnabled(False)
         self._progress.setVisible(True)
         self._progress.setRange(0, 0)
-        self._log_text.clear()
         self._log(f'开始构建… (cave={len(cave_patches)}, bytes={len(bytes_patches)}, '
                   f'imm32={len(imm32_patches)}, config={len(config_patches)}, '
                   f'data={len(data_section_patches)}, fixed={len(fixed_layouts)}, '
@@ -1020,20 +1006,28 @@ class GenerateExeDialog(QDialog):
             tool_note = ''
             out_dir = os.path.dirname(os.path.abspath(result.output_path)) \
                 if result.output_path else ''
-            sidecar_note = ''
-            src_dir = os.path.dirname(os.path.abspath(self._src_edit.text().strip()))
-            sidecar_src = os.path.join(src_dir, 'WarPC.dat.tksx')
-            if out_dir and os.path.isfile(sidecar_src):
-                sidecar_dst = os.path.join(out_dir, 'WarPC.dat.tksx')
-                if os.path.abspath(sidecar_src) != os.path.abspath(sidecar_dst):
+            resource_note = ''
+            resource_failed = False
+            if out_dir and self._last_build_resources:
+                for name, source in self._last_build_resources:
+                    destination = os.path.abspath(os.path.join(out_dir, name))
                     try:
-                        shutil.copy2(sidecar_src, sidecar_dst)
-                        self._log(f'复制技能模板 {sidecar_src} → {out_dir}')
-                        sidecar_note = '已同时复制 WarPC.dat.tksx 技能模板。\n\n'
-                    except OSError as exc:
-                        self._log(f'[WARN] 复制 WarPC.dat.tksx 失败: {exc}')
-                        sidecar_note = ('提示：WarPC.dat.tksx 未复制成功，'
-                                        '新增技能模板不会生效。\n\n')
+                        if os.path.commonpath([out_dir, destination]) != out_dir:
+                            raise ValueError(f'资源路径越出输出目录: {name}')
+                        if os.path.lexists(destination):
+                            if not os.path.isfile(destination):
+                                raise ValueError(f'资源目标不是文件: {name}')
+                            self._log(f'  [保留资源] {name}（输出目录已有，不覆盖）')
+                            continue
+                        os.makedirs(os.path.dirname(destination), exist_ok=True)
+                        shutil.copy2(source, destination)
+                        self._log(f'  [资源] {source} → {destination}')
+                    except (OSError, ValueError) as exc:
+                        resource_failed = True
+                        self._log(f'[WARN] 部署资源 {name} 失败: {exc}')
+                resource_note = ('提示：部分补丁资源未部署成功，请查看日志并补齐。\n\n'
+                                 if resource_failed else
+                                 '已部署补丁资源，输出目录已有资源保持不变。\n\n')
             tool = self._tool_combo.currentText().strip() \
                 if (self._copy_tool_cb.isChecked() and self._tool_combo.count()) else ''
             if tool and out_dir:
@@ -1051,10 +1045,12 @@ class GenerateExeDialog(QDialog):
                              '（cnc-ddraw），否则生成的 exe 需要手动放置 '
                              'ddraw.dll/ddraw.ini。\n\n')
                 self._log('[WARN] 未复制画面兼容工具；宽屏补丁可能需要 cnc-ddraw')
+            distribution_note = ('请补齐资源后再分发。' if resource_failed else
+                                 '可直接分发给玩家，无需启动器。')
             QMessageBox.information(
                 self, '成功',
                 f'修改版 exe 已生成：\n{result.output_path}\n\n'
-                f'{sidecar_note}{tool_note}可直接分发给玩家，无需启动器。')
+                f'{resource_note}{tool_note}{distribution_note}')
         else:
             self._log(f'构建失败: {result.error}')
             QMessageBox.critical(self, '失败', f'构建失败:\n{result.error}')
