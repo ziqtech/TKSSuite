@@ -1,10 +1,4 @@
-"""TKAct.dat 扩展文件准备与恢复。
-
-原版游戏只接受 509600 字节的 TKAct.dat。为了兼容 Wine/Winlator 这类无法在
-启动早期可靠挂起进程的环境，启动前先把扩展版暂存为 TKAct.dat.expanded，
-再把游戏目录里的 TKAct.dat 临时截断到原版大小；运行时由 tkact_expand
-脚本补丁读取暂存文件并注入新缓冲区。游戏退出后再恢复扩展版文件。
-"""
+"""TKAct.dat 启动前临时截断，目标进程挂起后恢复完整数据供补丁与游戏读取。"""
 
 import os
 import shutil

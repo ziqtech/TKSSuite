@@ -207,6 +207,7 @@ class PatcherPipeline:
 
         if not compatible_mode:
             restore_prepared_dats(log_func=self.log)
+            restore_tkact_for_game(log_func=self.log)
 
         # 存档健康检查
         ensure_save_directory_healthy(log_func=self.log)
@@ -553,6 +554,8 @@ class PatcherPipeline:
                 shutil.copy2(bp, k)
                 os.remove(bp)
                 self.log(f"  已恢复原始 {k}")
+        if self._tkact_expanded:
+            restore_tkact_for_game(log_func=self.log)
 
     def _populate_runtime_state(self) -> None:
         """填充运行时状态 (warpc_new_size / *_actual_size)。"""

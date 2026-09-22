@@ -2,6 +2,8 @@
 import copy
 import hashlib
 import json
+import os
+import struct
 import tempfile
 import unittest
 from pathlib import Path
@@ -83,8 +85,52 @@ class PatchBundleChecks(unittest.TestCase):
         operations = {p.id: p for p in self.plan().patches}
         self.assertEqual(operations["tkskill_size.length"].new_value_expr, "65536")
         self.assertFalse(patch_metadata(operations["tkskill_expand.table"], "redirect_size"))
+        self.assertEqual(patch_metadata(operations["tkskill_expand.table"], "front_pad"), 94)
         self.assertEqual(operations["tksave_expand.buffer"].new_value_expr, str(9200 + 500 * 1054))
         self.assertEqual(operations["tksave_expand.buffer"].expect_count, 0)
+
+    def test_skill_table_negative_slot_is_zero_without_shifting_records(self):
+        from tks_launcher_gui.core import patch_engine
+        from tks_launcher_gui.core.config_loader import PatchRuntimeState, PatchSettings
+
+        for count in (350, 351, 697):
+            with self.subTest(count=count):
+                self.write_data(count)
+                content = b"\x12" * 94 + bytes((count - 2) * 94) + b"\xA5" * 94
+                (self.game / "TKSkill.dat").write_bytes(lzss_compress_dat(content))
+                definition = next(p for p in self.plan({"tkskill_expand"}).patches
+                                  if p.id == "tkskill_expand.table")
+                allocation = bytearray(94 + 65536)
+                base = 0x2000000
+                code = bytearray(b"\x68" + struct.pack("<I", 32900)
+                                 + b"\x68" + struct.pack("<I", 0x7861CA))
+
+                def write(_handle, address, payload):
+                    if address >= base:
+                        offset = address - base
+                        self.assertLessEqual(offset + len(payload), len(allocation))
+                        allocation[offset:offset + len(payload)] = payload
+                    return len(payload)
+
+                context = patch_engine.PatchContext(
+                    definition, 0, 0, 0x400000, code, 0x401000, 0, 0,
+                    PatchSettings(), PatchRuntimeState())
+                with patch.object(patch_engine, "_VirtualAllocEx", return_value=base) as alloc, \
+                        patch.object(patch_engine, "write_pm", side_effect=write), \
+                        patch.object(patch_engine, "vp_ex", return_value=0x40):
+                    self.assertTrue(patch_engine._apply_patch_data_expand(definition, context))
+                if count == 350:
+                    alloc.assert_not_called()
+                    self.assertEqual(struct.unpack_from("<I", code, 6)[0], 0x7861CA)
+                    continue
+                self.assertEqual(alloc.call_args.args[2], 94 + 65536)
+                table = struct.unpack_from("<I", code, 6)[0]
+                self.assertEqual(table, base + 94)
+                self.assertEqual(allocation[:94], bytes(94))
+                self.assertEqual(allocation[94:94 + len(content)], content)
+                for field in (22, 24, 30, 32):
+                    offset = table - base - 94 + 2 * field
+                    self.assertEqual(struct.unpack_from("<h", allocation, offset)[0], 0)
 
     def test_legacy_selection_and_advanced_option_migrate(self):
         self.write_data(350)
@@ -155,15 +201,55 @@ class PatchBundleChecks(unittest.TestCase):
         pipeline = launcher_pipeline.PatcherPipeline(
             launcher_pipeline.PipelineConfig("unused", str(self.game)), log=lambda _: None)
         events = []
-        with patch.object(tkspatch_loader, "load_patch_directory", return_value=PatchConfig(self.patches)), \
+        with patch.object(launcher_pipeline.os, "chdir"), \
+                patch.object(tkspatch_loader, "load_patch_directory", return_value=PatchConfig(self.patches)), \
                 patch.object(launcher_pipeline, "restore_prepared_dats", side_effect=lambda **_: events.append("restore")), \
+                patch.object(launcher_pipeline, "restore_tkact_for_game", side_effect=lambda **_: events.append("restore_tkact")), \
                 patch.object(launcher_pipeline, "ensure_save_directory_healthy"), \
                 patch.object(pipeline, "_load_mods", side_effect=lambda _: events.append("mods")), \
                 patch.object(launcher_pipeline, "build_patch_plan", side_effect=lambda *_, **__: events.append("plan")), \
                 patch.object(launcher_pipeline, "prepare_warpc_for_game", side_effect=lambda **_: (events.append("truncate") or False, None, {})), \
                 patch.object(launcher_pipeline, "prepare_tkact_for_game", return_value=False):
             self.assertFalse(pipeline.run_pre_launch().error)
-        self.assertEqual(events, ["restore", "mods", "plan", "truncate"])
+        self.assertEqual(events, ["restore", "restore_tkact", "mods", "plan", "truncate"])
+
+    def test_tkact_restored_before_runtime_data_expansion(self):
+        from tks_launcher_gui.core import launcher_pipeline, patch_engine, tkact_expander
+        from tks_launcher_gui.core.config_loader import PatchRuntimeState, PatchSettings
+
+        self.write_data()
+        self.addCleanup(os.chdir, os.getcwd())
+        os.chdir(self.game)
+        for count in (650, 654):
+            with self.subTest(count=count):
+                full = b"\x12" * (650 * 784) + b"\xA5" * ((count - 650) * 784)
+                path = self.game / "TKAct.dat"
+                path.write_bytes(full)
+                definition = next(p for p in self.plan().patches if p.id == "tkact_expand")
+                pipeline = launcher_pipeline.PatcherPipeline(
+                    launcher_pipeline.PipelineConfig("unused", str(self.game)), log=lambda _: None)
+                pipeline._tkact_expanded = tkact_expander.prepare_tkact_for_game()
+                self.assertEqual(path.stat().st_size, 650 * 784)
+                pipeline._restore_truncated_dats()
+                self.assertEqual(path.read_bytes(), full)
+                self.assertFalse((self.game / tkact_expander.TKACT_TEMP_FILE).exists())
+                code = bytearray(b"\x68" + struct.pack("<I", 509600)
+                                 + b"\x68" + struct.pack("<I", 0x9539CA))
+                writes = {}
+
+                def write(_handle, address, payload):
+                    writes[address] = bytes(payload)
+                    return len(payload)
+
+                context = patch_engine.PatchContext(
+                    definition, 0, 0, 0x400000, code, 0x401000, 0, 0,
+                    PatchSettings(), PatchRuntimeState())
+                with patch.object(patch_engine, "_VirtualAllocEx", return_value=0x2000000), \
+                        patch.object(patch_engine, "write_pm", side_effect=write), \
+                        patch.object(patch_engine, "vp_ex", return_value=0x40):
+                    self.assertTrue(patch_engine._apply_patch_data_expand(definition, context))
+                self.assertEqual(writes[0x2000000], full)
+                self.assertEqual(struct.unpack_from("<I", code, 6)[0], 0x2000000)
 
     def test_missing_write_handle_blocks_pipeline(self):
         from tks_launcher_gui.core import launcher_pipeline
