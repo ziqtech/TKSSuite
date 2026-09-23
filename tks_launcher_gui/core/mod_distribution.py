@@ -1,5 +1,6 @@
-"""离线 MOD 整合工作区：源游戏只读，暂存合并，事务发布。"""
+"""离线 MOD 整合工作区：源游戏与基准只读，暂存合并，差异事务发布。"""
 import base64
+import hashlib
 import io
 import json
 import ntpath
@@ -61,8 +62,20 @@ def _link(path):
     return os.path.islink(path) or bool(attrs & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400))
 
 
+def _no_links(path):
+    current = os.path.abspath(path)
+    while True:
+        if _link(current):
+            raise ValueError(f"不允许链接路径：{current}")
+        parent = os.path.dirname(current)
+        if parent == current:
+            return
+        current = parent
+
+
 def _join(root, name):
     """按 Windows 大小写规则定位，同时拒绝目录链接和文件链接。"""
+    _no_links(root)
     current = root
     for part in name.split("/"):
         if os.path.isdir(current):
@@ -80,8 +93,7 @@ def _join(root, name):
 
 
 def _clean_read(path):
-    if _link(path):
-        raise ValueError(f"不允许读取链接文件：{path}")
+    _no_links(path)
     if os.path.basename(path).casefold().endswith(_MARKERS):
         raise ValueError(f"不能使用恢复备份文件：{path}")
     parent = os.path.dirname(path)
@@ -90,6 +102,19 @@ def _clean_read(path):
         for name in os.listdir(parent):
             if any(name.casefold() == prefix + suffix for suffix in _RUNTIME_MARKERS):
                 raise ValueError(f"检测到运行残留，请先独立恢复游戏目录：{os.path.join(parent, name)}")
+
+
+def _fingerprint(path):
+    """完整流式读取；不依赖 mtime、大小快捷判断或跨次比较缓存。"""
+    _no_links(path)
+    if not os.path.isfile(path):
+        raise ValueError(f"比对目标不是可读文件：{path}")
+    digest, size = hashlib.sha256(), 0
+    with open(path, "rb") as stream:
+        while chunk := stream.read(1024 * 1024):
+            size += len(chunk)
+            digest.update(chunk)
+    return size, digest.digest()
 
 
 def _register(names, name):
@@ -133,14 +158,18 @@ class ModBuildWorkspace:
 
     def __init__(self, source_exe: str, output_exe: str,
                  selected_mods: list[ModInfo], allowed_configs: set[str] | None = None,
-                 log_func=None):
+                 log_func=None, *, baseline_dir: str):
         if not os.path.isabs(source_exe) or not os.path.isabs(output_exe):
             raise ValueError("输入和输出 EXE 必须使用绝对路径")
+        if not baseline_dir or not os.path.isabs(baseline_dir):
+            raise ValueError("基准目录必须使用绝对路径")
         self._original_exe = os.path.abspath(source_exe)
         self.source_exe = self._original_exe
         self.output_exe = os.path.abspath(output_exe)
         self._source_dir = os.path.dirname(self._original_exe)
         self._source_real = os.path.realpath(self._source_dir)
+        self.baseline_dir = os.path.abspath(baseline_dir)
+        self._baseline_real = os.path.realpath(self.baseline_dir)
         self._output_dir = os.path.dirname(self.output_exe)
         _relative(os.path.basename(self._original_exe))
         _relative(os.path.basename(self.output_exe))
@@ -162,6 +191,15 @@ class ModBuildWorkspace:
         self._exe_targets = {"tks.exe", os.path.basename(self._original_exe).casefold()}
 
     def _check_output(self):
+        for root, real, label in ((self._source_dir, self._source_real, "源游戏"),
+                                  (self.baseline_dir, self._baseline_real, "基准")):
+            if _key(os.path.realpath(root)) != _key(real):
+                raise ValueError(f"{label}目录的真实路径已改变")
+            _no_links(root)
+            if not os.path.isdir(root):
+                raise ValueError(f"{label}目录不存在或不是目录：{root}")
+        if not os.path.isfile(_join(self.baseline_dir, "TKS.exe")):
+            raise ValueError("基准目录缺少 TKS.exe 文件")
         for output, source in ((self._output_dir, self._source_dir),
                                (os.path.realpath(self._output_dir), self._source_real)):
             if _within(source, output):
@@ -170,13 +208,38 @@ class ModBuildWorkspace:
                 relative = os.path.relpath(output, source).replace("\\", "/")
                 if relative.split("/")[0].casefold() != "dist":
                     raise ValueError("游戏树内只允许输出到 dist 及其子目录")
+        for output, baseline in ((self._output_dir, self.baseline_dir),
+                                 (os.path.realpath(self._output_dir), self._baseline_real)):
+            if _within(baseline, output):
+                raise ValueError("输出目录不能是基准目录或其祖先")
+            if _within(output, baseline) and _key(self._baseline_real) != _key(self._source_real):
+                raise ValueError("独立基准树内不允许输出")
         if hasattr(self, "_output_real") and _key(os.path.realpath(self._output_dir)) != _key(self._output_real):
             raise ValueError("输出目录的真实路径已改变")
-        if _key(os.path.realpath(self._source_dir)) != _key(self._source_real):
-            raise ValueError("源游戏目录的真实路径已改变")
         _join(self._output_dir, os.path.basename(self.output_exe))
         if os.path.exists(self.output_exe) and not os.path.isfile(self.output_exe):
             raise ValueError("输出 EXE 目标不是文件")
+
+    def _differences(self, sources, phase):
+        self._check_output()
+        different = set()
+        counts = {"新增": 0, "变化": 0, "跳过相同": 0}
+        for name, source in sorted(sources.items()):
+            baseline = _join(self.baseline_dir, _relative(name))
+            # 即使没有同名基准或大小不同，也完整读取以验证可读性。
+            signature = _fingerprint(source)
+            if not os.path.exists(baseline):
+                kind = "新增"
+            elif signature != _fingerprint(baseline):
+                kind = "变化"
+            else:
+                kind = "跳过相同"
+            counts[kind] += 1
+            if kind != "跳过相同":
+                different.add(name)
+        self._log(f"{phase}相对基准 {self.baseline_dir}：" +
+                  "，".join(f"{kind} {count}" for kind, count in counts.items()))
+        return different
 
     def _source_file(self, name, required=False):
         name = _relative(name)
@@ -402,7 +465,7 @@ class ModBuildWorkspace:
             if conflicts:
                 self._log("普通冲突按依赖及加载顺序处理，后加载的 MOD 生效")
             copies = self._collect_game_files()
-            self._log(f"以当前游戏目录为基准：{self._source_dir}，收集 {len(copies)} 个运行文件")
+            self._log(f"从当前游戏目录读取：{self._source_dir}，收集 {len(copies)} 个运行文件")
             for name, target in (("tkdef.txt", "TKD.dat"), ("tktalk.txt", "TKT.dat")):
                 if name in self._targets:
                     self._log(f"[提示] 保留 {self._targets[name]}；与启动器运行时一致，游戏启动后会重建 {target}")
@@ -434,7 +497,7 @@ class ModBuildWorkspace:
                 destination = _join(self._data_dir, target)
                 os.makedirs(os.path.dirname(destination), exist_ok=True)
                 shutil.copyfile(source, destination)
-                self._log(f"  [基准文件] {target}")
+                self._log(f"  [游戏文件] {target}")
             self._validate_blocks(mods)
             merged = mod_loader.merge_mods(mods, self._data_dir, strict_log)
             check_errors()
@@ -446,10 +509,13 @@ class ModBuildWorkspace:
             exe_name = next((self._targets[key] for key in ("tks.exe", os.path.basename(self._original_exe).casefold())
                              if key in self._targets), None)
             self.source_exe = _join(self._data_dir, exe_name) if exe_name else self._original_exe
-            self.files = {n for n in self._targets.values() if n.casefold() not in self._exe_targets}
+            self.files = self._differences(
+                {n: _join(self._data_dir, n) for n in self._targets.values()
+                 if n.casefold() not in self._exe_targets}, "准备阶段")
             self.config_overrides = dict(merged.config_overrides)
+            self._check_output()
             self._state = "ready"
-            self._log(f"游戏数据与 MOD 暂存整合完成：{len(self.files)} 个数据及资源文件，源游戏未修改")
+            self._log(f"暂存整合完成，待输出差异（工具部署后可能调整）：{len(self.files)} 个文件；源游戏与基准未修改")
         except Exception:
             self.files.clear()
             self.config_overrides.clear()
@@ -461,6 +527,7 @@ class ModBuildWorkspace:
         name = _relative(name)
         if self._state != "ready":
             raise RuntimeError("请先成功完成 MOD 暂存整合")
+        self._check_output()
         target = self._targets.get(name.casefold())
         if target:
             path = _join(self._data_dir, target)
@@ -490,11 +557,12 @@ class ModBuildWorkspace:
             raise ValueError(f"旧构建清单无效，未修改输出目录：{exc}") from exc
 
     def publish(self, resources: list[tuple[str, str]], tool_dir: str = "") -> list[str]:
-        """发布全部成品，返回绝对路径列表（包含清单）；失败回滚旧 dist。"""
+        """发布最终内容差异及 EXE，返回绝对路径列表（包含清单）；失败回滚旧 dist。"""
         if self._state != "ready":
             raise RuntimeError("请先成功完成 MOD 暂存整合")
         self._check_output()
-        if _link(self.build_exe) or not os.path.isfile(self.build_exe) or not os.path.getsize(self.build_exe):
+        _no_links(self.build_exe)
+        if not os.path.isfile(self.build_exe) or not os.path.getsize(self.build_exe):
             raise ValueError("尚未生成可发布的 EXE")
         names, sources = {}, {}
 
@@ -505,9 +573,12 @@ class ModBuildWorkspace:
             name = _register(names, name)
             sources[name] = source
 
-        for name in sorted(self.files):
-            add(name, _join(self._data_dir, name))
-        add(os.path.basename(self.output_exe), self.build_exe)
+        # 工具/扩容可能修改任何暂存文件，不能只使用准备阶段的差异快照。
+        for name in sorted(self._targets.values()):
+            if name.casefold() not in self._exe_targets:
+                add(name, _join(self._data_dir, name))
+        exe_name = os.path.basename(self.output_exe)
+        add(exe_name, self.build_exe)
         seen_resources = set()
         for name, source in resources:
             name = _relative(name)
@@ -523,8 +594,9 @@ class ModBuildWorkspace:
             add(name, os.path.abspath(source))
         if tool_dir:
             tool_dir = os.path.abspath(tool_dir)
-            if not os.path.isdir(tool_dir) or _link(tool_dir):
-                raise ValueError(f"工具目录不存在或为链接：{tool_dir}")
+            _no_links(tool_dir)
+            if not os.path.isdir(tool_dir):
+                raise ValueError(f"工具目录不存在：{tool_dir}")
 
             def walk_error(error):
                 raise error
@@ -549,9 +621,10 @@ class ModBuildWorkspace:
             destination = _join(self._output_dir, name)
             if os.path.exists(destination) and not os.path.isfile(destination):
                 raise ValueError(f"发布目标不是文件：{name}")
-        # 所有外部资源先复制完毕，才允许创建或修改输出目录。
+        # 包括相同文件在内，全部安全读取并完成最终比对后才允许修改输出。
         with tempfile.TemporaryDirectory(prefix="publish_", dir=self.directory) as staged:
             for name, source in sources.items():
+                _no_links(source)
                 if not _within(source, self.directory):
                     _clean_read(source)
                     if _within(os.path.realpath(source), os.path.realpath(self._output_dir)):
@@ -559,10 +632,16 @@ class ModBuildWorkspace:
                 destination = _join(staged, name)
                 os.makedirs(os.path.dirname(destination), exist_ok=True)
                 shutil.copyfile(source, destination)
-            manifest = {"version": 1, "files": sorted(sources)}
+            different = self._differences(
+                {name: _join(staged, name) for name in sources if name != exe_name}, "发布阶段")
+            current = different | {exe_name}
+            manifest = {"version": 1, "files": sorted(current)}
             Path(staged, _MANIFEST).write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
-            result = self._commit(staged, set(sources), old)
-        self._log(f"发布完成：{self._output_dir}，源游戏未修改")
+            result = self._commit(staged, current, old)
+        self.files = different
+        for name in sorted(self.files):
+            self._log(f"  [最终差异] {name}")
+        self._log(f"发布完成：{self._output_dir}，源游戏与基准未修改")
         return result
 
     def _commit(self, staged, current, old):

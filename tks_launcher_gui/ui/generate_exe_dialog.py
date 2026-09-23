@@ -99,29 +99,6 @@ def expansion_logical_size(actual_size: int, cap: int = 0) -> int:
     return max(actual_size, cap)
 
 
-def resolve_data_file(out_exe_path: str, src_exe_path: str, filename: str) -> str | None:
-    """数据文件解析: 优先输出 exe 所在目录, 回退原版 exe 所在目录。
-
-    游戏从自身所在目录读取 .dat 文件, 生成的 exe 将在输出目录运行——
-    部署目录里的数据文件 (可能是 MOD 合并/编辑后的扩容版) 才是运行时
-    真正被加载的。若只按"原版 TKS.exe 目录"取数据, 部署目录的扩容文件
-    会超出重定向后的缓冲区, 游戏报 FileRead ... buffer too small。
-    """
-    candidates = []
-    if out_exe_path:
-        d = os.path.dirname(out_exe_path)
-        if d:
-            candidates.append(os.path.join(d, filename))
-    if src_exe_path:
-        d = os.path.dirname(src_exe_path)
-        if d:
-            candidates.append(os.path.join(d, filename))
-    for c in candidates:
-        if os.path.isfile(c):
-            return c
-    return None
-
-
 def pad_section_data(content: bytes, min_size: int = 0,
                      align: int = 0x10000) -> bytes:
     """把注入数据补零到 max(原长, min_size) 的 align (默认 64KB) 对齐。
@@ -227,31 +204,38 @@ class GenerateExeDialog(QDialog):
     def _setup_ui(self):
         layout = QVBoxLayout(self)
         layout.setSpacing(12)
-        hint = QLabel('以当前所选游戏目录为基准，整合已有改版数据与 MOD；源目录只读，不修改、不删除。')
+        hint = QLabel('从游戏目录提取数据并整合 MOD，与原版基准对比，仅输出新增或内容变化的文件。两个输入目录均只读。')
         hint.setWordWrap(True)
         hint.setObjectName('hintLabel')
         layout.addWidget(hint)
 
-        self._paths_group = QGroupBox('1. 当前游戏与输出位置')
+        self._paths_group = QGroupBox('1. 目录设置')
         paths = QGridLayout(self._paths_group)
-        self._src_edit = QLineEdit()
-        self._src_edit.setPlaceholderText('选择当前游戏的 TKS.exe，使用其所在目录的现有数据（支持改版）')
-        src_btn = QPushButton('选择游戏…')
-        src_btn.clicked.connect(self._browse_src)
-        paths.addWidget(QLabel('基准程序'), 0, 0)
-        paths.addWidget(self._src_edit, 0, 1)
-        paths.addWidget(src_btn, 0, 2)
+        self._baseline_edit = QLineEdit()
+        self._baseline_edit.setPlaceholderText('导出前手动选择原版游戏目录，作为差异对照')
+        baseline_btn = QPushButton('选择基准…')
+        baseline_btn.clicked.connect(self._browse_baseline)
+        paths.addWidget(QLabel('基准目录'), 0, 0)
+        paths.addWidget(self._baseline_edit, 0, 1)
+        paths.addWidget(baseline_btn, 0, 2)
+        self._game_edit = QLineEdit()
+        self._game_edit.setPlaceholderText('当前游戏目录，可为原版或改版；从此目录读取 TKS.exe 与数据')
+        game_btn = QPushButton('选择游戏…')
+        game_btn.clicked.connect(self._browse_game)
+        paths.addWidget(QLabel('游戏目录'), 1, 0)
+        paths.addWidget(self._game_edit, 1, 1)
+        paths.addWidget(game_btn, 1, 2)
         self._out_edit = QLineEdit()
-        self._out_edit.setPlaceholderText('默认：当前游戏目录 / dist / TKS_MOD.exe')
-        out_btn = QPushButton('更改输出…')
+        self._out_edit.setPlaceholderText('默认：游戏目录 / dist')
+        out_btn = QPushButton('选择输出…')
         out_btn.clicked.connect(self._browse_out)
-        paths.addWidget(QLabel('输出程序'), 1, 0)
-        paths.addWidget(self._out_edit, 1, 1)
-        paths.addWidget(out_btn, 1, 2)
-        path_hint = QLabel('完整输出当前目录的运行数据，再叠加 MOD；不自动包含存档、备份、缓存和旧输出。')
+        paths.addWidget(QLabel('输出目录'), 2, 0)
+        paths.addWidget(self._out_edit, 2, 1)
+        paths.addWidget(out_btn, 2, 2)
+        path_hint = QLabel('输出 TKS_MOD.exe 与差异文件，保持子目录结构；不包含相同文件、存档、备份和缓存。')
         path_hint.setWordWrap(True)
         path_hint.setObjectName('hintLabel')
-        paths.addWidget(path_hint, 2, 1, 1, 2)
+        paths.addWidget(path_hint, 3, 1, 1, 2)
 
         self._copy_tool_cb = QCheckBox('附带画面兼容工具')
         self._tool_combo = QComboBox()
@@ -277,14 +261,12 @@ class GenerateExeDialog(QDialog):
         tool_row = QHBoxLayout()
         tool_row.addWidget(self._copy_tool_cb)
         tool_row.addWidget(self._tool_combo, 1)
-        paths.addLayout(tool_row, 3, 1, 1, 2)
+        paths.addLayout(tool_row, 4, 1, 1, 2)
         paths.setColumnStretch(1, 1)
         layout.addWidget(self._paths_group)
-        self._src_edit.textChanged.connect(self._update_default_output)
-        default_exe = self._source_exe or os.path.join(
-            os.path.dirname(self._launcher_dir), 'TKS', 'TKS.exe')
-        if self._source_exe or os.path.isfile(default_exe):
-            self._src_edit.setText(default_exe)
+        self._game_edit.textChanged.connect(self._update_default_output)
+        if self._source_exe:
+            self._game_edit.setText(os.path.dirname(os.path.abspath(self._source_exe)))
 
         splitter = QSplitter(Qt.Vertical)
         self._selection_tabs = QTabWidget()
@@ -328,7 +310,7 @@ class GenerateExeDialog(QDialog):
             item.setToolTip('\n'.join(targets) or mod.description)
             self._mod_list.addItem(item)
         if not self._selected_mods:
-            self._mod_list.addItem('未勾选 MOD，仍会输出当前游戏目录的运行数据和已选补丁。')
+            self._mod_list.addItem('未勾选 MOD，仍会比较游戏目录与基准目录，输出差异文件和补丁 EXE。')
         mod_layout.addWidget(self._mod_list)
         self._selection_tabs.addTab(mod_page, f'已选 MOD（{len(self._selected_mods)}）')
         splitter.addWidget(self._selection_tabs)
@@ -341,7 +323,7 @@ class GenerateExeDialog(QDialog):
         self._log_text = QTextEdit()
         self._log_text.setReadOnly(True)
         self._log_text.setStyleSheet('QTextEdit { min-height: 90px; }')
-        self._log_text.setPlaceholderText('生成时先在临时目录整合，全部成功后才输出覆盖包。')
+        self._log_text.setPlaceholderText('先整合再与基准逐文件比较，全部成功后只发布差异覆盖包。')
         log_layout.addWidget(self._log_text)
         splitter.addWidget(log_group)
         splitter.setChildrenCollapsible(False)
@@ -473,30 +455,39 @@ class GenerateExeDialog(QDialog):
                 lines.append(f'value_offset: {p.value_offset}')
         self._patch_detail.setPlainText('\n'.join(lines))
 
-    def _update_default_output(self, source: str):
-        default = (os.path.join(os.path.dirname(os.path.abspath(source.strip())),
-                                'dist', 'TKS_MOD.exe') if source.strip() else '')
+    def _update_default_output(self, game_dir: str):
+        default = (os.path.join(os.path.abspath(game_dir.strip()), 'dist')
+                   if game_dir.strip() else '')
         if not self._out_edit.text().strip() or self._out_edit.text() == self._default_output:
             self._out_edit.setText(default)
         self._default_output = default
 
-    def _browse_src(self):
-        path, _ = QFileDialog.getOpenFileName(
-            self, '选择当前游戏的 TKS.exe（可为改版）', self._src_edit.text(), '可执行文件 (*.exe)')
+    def _browse_baseline(self):
+        path = QFileDialog.getExistingDirectory(
+            self, '选择原版游戏目录作为基准', self._baseline_edit.text() or self._game_edit.text())
         if path:
-            self._src_edit.setText(path)
+            self._baseline_edit.setText(path)
+
+    def _browse_game(self):
+        path = QFileDialog.getExistingDirectory(
+            self, '选择用于提取数据的游戏目录', self._game_edit.text())
+        if path:
+            self._game_edit.setText(path)
 
     def _browse_out(self):
-        path, _ = QFileDialog.getSaveFileName(
-            self, '输出修改版 EXE', self._out_edit.text(), '可执行文件 (*.exe)')
+        path = QFileDialog.getExistingDirectory(
+            self, '选择差异覆盖包输出目录', self._out_edit.text())
         if path:
             self._out_edit.setText(path)
 
     def _resolve_data_file(self, filename: str) -> str | None:
         if self._workspace is not None:
             return self._workspace.resolve_file(filename)
-        return resolve_data_file(self._out_edit.text().strip(),
-                                 self._src_edit.text().strip(), filename)
+        game_dir = self._game_edit.text().strip()
+        if not game_dir:
+            return None
+        path = os.path.join(game_dir, filename)
+        return path if os.path.isfile(path) else None
 
     def _get_selected_patches(self) -> tuple:
         """统一准备完整补丁计划，再将展开、链接后的普通操作按类型分组。
@@ -964,26 +955,33 @@ class GenerateExeDialog(QDialog):
     def _start_build(self):
         if self._busy:
             return
-        src = self._src_edit.text().strip()
+        baseline = self._baseline_edit.text().strip()
+        game = self._game_edit.text().strip()
         out = self._out_edit.text().strip()
-        if not src or not os.path.isfile(src):
-            QMessageBox.warning(self, '错误', '请选择有效的游戏 TKS.exe（支持改版目录）')
+        if not baseline or not os.path.isdir(baseline):
+            QMessageBox.warning(self, '错误', '请手动选择有效的原版游戏目录作为基准目录')
             return
-        if not out or not out.lower().endswith('.exe'):
-            QMessageBox.warning(self, '错误', '请指定以 .exe 结尾的输出路径')
+        if not game or not os.path.isdir(game) or not os.path.isfile(os.path.join(game, 'TKS.exe')):
+            QMessageBox.warning(self, '错误', '请选择包含 TKS.exe 的游戏目录（支持改版）')
+            return
+        if not out or (os.path.exists(out) and not os.path.isdir(out)):
+            QMessageBox.warning(self, '错误', '请选择或填写有效的输出目录，而不是 EXE 文件路径')
             return
         self._log_text.clear()
         try:
             self._workspace = ModBuildWorkspace(
-                os.path.abspath(src), os.path.abspath(out), self._selected_mods,
+                os.path.join(os.path.abspath(game), 'TKS.exe'),
+                os.path.join(os.path.abspath(out), 'TKS_MOD.exe'), self._selected_mods,
                 allowed_configs=allowed_mod_configs(SimpleNamespace(patches=self._patches)),
-                log_func=self.log_emitted.emit)
+                log_func=self.log_emitted.emit, baseline_dir=os.path.abspath(baseline))
         except Exception as exc:
             self._build_failed(str(exc))
             return
         self._set_build_busy(True)
-        self._status_label.setText('正在收集游戏数据并整合 MOD…')
-        self._log('以当前游戏目录为基准，在临时目录收集运行数据并整合 MOD，源文件保持不变。')
+        self._status_label.setText('正在整合并与基准目录比较…')
+        self._log(f'基准目录（只读对照）: {os.path.abspath(baseline)}')
+        self._log(f'游戏目录（提取数据）: {os.path.abspath(game)}')
+        self._log('整合 MOD 后按内容比较，仅输出差异；基准和游戏目录均不修改。')
         self._prepare_worker = _PrepareWorker(self._workspace)
         self._prepare_worker.finished.connect(self._on_mods_prepared)
         self._prepare_worker.start()
@@ -995,8 +993,6 @@ class GenerateExeDialog(QDialog):
         self._status_label.setText('正在准备补丁…')
         try:
             patch_items = self._get_selected_patches()
-            if not any(patch_items) and not self._selected_mods and not self._workspace.files:
-                raise ValueError('当前目录没有可输出的运行数据，请至少选择一个补丁或 MOD')
             builder = ExeBuilder(self._workspace.source_exe)
         except Exception as exc:
             self._build_failed(str(exc))
@@ -1005,14 +1001,16 @@ class GenerateExeDialog(QDialog):
         files = sorted(self._workspace.files)
         self._log('待烧录补丁: ' + (', '.join(names) or '无（保留当前游戏程序）'))
         for name in files:
-            self._log(f'  [输出文件] {name}')
+            self._log(f'  [待输出差异] {name}')
         ret = QMessageBox.question(
-            self, '确认生成独立覆盖包',
+            self, '确认生成差异覆盖包',
             f'将烧录 {len(names)} 个补丁操作，整合 {len(self._selected_mods)} 个 MOD / 合集。\n'
-            f'包括当前目录已有的数据，共 {len(files)} 个运行文件。\n'
-            f'输出程序：{self._workspace.output_exe}\n\n'
-            '同名输出文件会被覆盖；仅清理上次生成清单中不再需要的文件，其他文件保留。\n'
-            '建议使用专用空目录，避免混入旧版 MOD 文件。当前游戏目录中的源文件不会修改。\n\n继续？',
+            f'整合数据中有 {len(files)} 个差异文件，附带工具与补丁资源后将再次比较。\n'
+            f'基准目录：{self._workspace.baseline_dir}\n'
+            f'输出目录：{os.path.dirname(self._workspace.output_exe)}\n'
+            '输出程序固定为 TKS_MOD.exe；与基准内容相同的文件不输出。\n\n'
+            '输出目录的同名文件会被覆盖，上次清单中不再需要的文件会被清理。\n'
+            '其他已有文件保留，建议使用专用目录；基准与游戏目录均不修改。\n\n继续？',
             QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
         if ret != QMessageBox.Yes:
             self._cleanup_workspace()
@@ -1038,17 +1036,18 @@ class GenerateExeDialog(QDialog):
             self._build_failed(result.error)
             return
         count = len(self._worker.output_files)
+        differences = len(self._workspace.files)
         self._built_directory = os.path.dirname(result.output_path)
         self._cleanup_workspace()
         self._set_build_busy(False)
-        self._status_label.setText(f'生成完成，共 {count} 个文件')
-        self._log(f'覆盖包已生成: {self._built_directory}')
+        self._status_label.setText(f'生成完成：{differences} 个差异文件 + EXE')
+        self._log(f'差异覆盖包已生成: {self._built_directory}（共 {count} 个文件，含清单）')
         QMessageBox.information(
             self, '生成完成',
-            f'已生成 {count} 个文件：\n{self._built_directory}\n\n'
-            '将输出目录内的文件及子目录覆盖到原版游戏目录，'
-            f'运行 {os.path.basename(result.output_path)} 即可，无需启动器。\n'
-            '这是覆盖包，不是完整游戏；请不要仅复制 EXE。')
+            f'已输出 {differences} 个差异文件、TKS_MOD.exe 和生成清单：\n{self._built_directory}\n\n'
+            '将整套输出覆盖到与基准目录版本一致的原版游戏目录，'
+            f'运行 {os.path.basename(result.output_path)}。\n'
+            '相同文件已省略，这是差异覆盖包，不能在输出目录单独运行。')
 
     def _open_output_directory(self):
         if self._built_directory:

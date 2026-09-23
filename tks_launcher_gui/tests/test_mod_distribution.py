@@ -83,11 +83,14 @@ class ModBuildWorkspaceTests(unittest.TestCase):
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)
         self.game = self.root / "game"
+        self.baseline = self.root / "baseline"
         self.packages = self.root / "packages"
         self.game.mkdir()
+        self.baseline.mkdir()
         self.packages.mkdir()
         self.source = self.game / "TKS.exe"
         self.source.write_bytes(b"MZ-original-executable")
+        shutil.copyfile(self.source, self.baseline / "TKS.exe")
         (self.game / "WarPC.dat").write_bytes(lzss_compress_dat(bytes(1054 * 2)))
         (self.game / "TKSkill.dat").write_bytes(lzss_compress_dat(bytes(94 * 2)))
         (self.game / "TKT.dat").write_bytes(text_data({1: "Old", 2: "Keep"}))
@@ -128,11 +131,23 @@ class ModBuildWorkspaceTests(unittest.TestCase):
         path.write_bytes(zip_bytes(members))
         return ModInfo(path=str(path), mod_id="stale-cache", config_files={"stale": 1})
 
-    def workspace(self, mods=(), output=None, allowed=None):
+    def workspace(self, mods=(), output=None, allowed=None, baseline=None):
         work = ModBuildWorkspace(str(self.source), str(output or self.output), list(mods),
-                                 allowed_configs=allowed, log_func=self.logs.append)
+                                 allowed_configs=allowed, log_func=self.logs.append,
+                                 baseline_dir=str(self.baseline if baseline is None else baseline))
         self.addCleanup(work.cleanup)
         return work
+
+    def copy_baseline(self):
+        shutil.copytree(self.game, self.baseline, dirs_exist_ok=True,
+                        ignore=shutil.ignore_patterns("dist"))
+
+    def assert_products(self, work, differences):
+        directory = Path(work.output_exe).parent
+        self.assertEqual(work.files, set(differences))
+        manifest = json.loads((directory / MANIFEST).read_text(encoding="utf-8"))
+        self.assertEqual(set(manifest["files"]), set(differences) | {Path(work.output_exe).name})
+        return {str(directory / name) for name in manifest["files"] + [MANIFEST]}
 
     def build(self, work, value=b"MZ-burned-executable"):
         work.prepare()
@@ -209,6 +224,8 @@ class ModBuildWorkspaceTests(unittest.TestCase):
         self.assertEqual(tree(self.game, exclude_dist=True), before)
 
     def test_existing_edits_remain_under_mod_diff_and_editor_backups_are_ignored(self):
+        self.copy_baseline()
+        baseline_before = tree(self.baseline)
         existing = bytearray(2 * 1054)
         struct.pack_into("<h", existing, 0, 91)
         struct.pack_into("<h", existing, 4, 123)
@@ -226,8 +243,10 @@ class ModBuildWorkspaceTests(unittest.TestCase):
         result = lzss_decompress_dat((self.output.parent / "WarPC.dat").read_bytes())
         self.assertEqual(struct.unpack_from("<hhh", result), (91, 456, 123))
         self.assertEqual((self.output.parent / "WarPC.dat.tksx").read_bytes(), b"current-template")
+        self.assert_products(work, {"WarPC.dat", "WarPC.dat.tksx"})
         self.assertFalse(any(name.endswith(".bak") for name in tree(self.output.parent)))
         self.assertEqual(tree(self.game, exclude_dist=True), before)
+        self.assertEqual(tree(self.baseline), baseline_before)
 
     def test_collects_runtime_formats_but_not_saves_caches_backups_or_editor_files(self):
         included = {"TKObj.dat", "DEFCMD.LST", "Title.avi", "FONT9696.chs", "FONT9696.cht",
@@ -365,6 +384,7 @@ class ModBuildWorkspaceTests(unittest.TestCase):
         self.assert_failed_prepare([ModInfo(path=str(pak))])
 
     def test_missing_original_or_idx_is_fatal_even_with_replacement(self):
+        self.copy_baseline()
         for target in ("WarPC.dat", "TKSkill.dat", "SC.IDX"):
             with self.subTest(target=target):
                 path = self.game / target
@@ -593,9 +613,11 @@ class ModBuildWorkspaceTests(unittest.TestCase):
         self.build(old, b"MZ-before")
         old.publish([])
         (self.output.parent / "unknown.bin").write_bytes(b"unknown")
-        before = tree(self.game)
+        self.copy_baseline()
+        before, baseline_before = tree(self.game), tree(self.baseline)
         work = self.workspace([self.mod(resources={"shared.bin": b"after", "new/nested.bin": b"new"})])
         self.build(work, b"MZ-after")
+        prepared_files = set(work.files)
         replace = os.replace
         failed = []
 
@@ -610,9 +632,14 @@ class ModBuildWorkspaceTests(unittest.TestCase):
                 work.publish([])
         self.assertTrue(failed)
         self.assertEqual(tree(self.game), before)
+        self.assertEqual(work.files, prepared_files)
+        self.assertEqual(tree(self.baseline), baseline_before)
         work.publish([])
+        self.assert_products(work, {"shared.bin", "new/nested.bin"})
         self.assertEqual(self.output.read_bytes(), b"MZ-after")
         self.assertFalse((self.output.parent / "a-old.bin").exists())
+        self.assertFalse((self.output.parent / "WarPC.dat").exists())
+        self.assertEqual(tree(self.baseline), baseline_before)
 
     def test_first_publish_failure_removes_new_dist_directories(self):
         work = self.workspace(output=self.game / "dist" / "nested" / "launcher.exe")
@@ -660,7 +687,7 @@ class ModBuildWorkspaceTests(unittest.TestCase):
                 work.cleanup()
                 self.assertFalse(directory.exists())
         with self.assertRaises(ValueError):
-            ModBuildWorkspace("relative.exe", str(self.output), [])
+            ModBuildWorkspace("relative.exe", str(self.output), [], baseline_dir=str(self.baseline))
 
     def symlink(self, source, destination, is_dir=False):
         try:
@@ -762,6 +789,401 @@ class ModBuildWorkspaceTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             work.publish([])
         self.assertFalse(self.output.parent.exists())
+
+    def test_identical_baseline_keeps_full_staging_but_only_publishes_exe_and_manifest(self):
+        self.copy_baseline()
+        output = self.output.with_name("TKS_MOD.exe")
+        (self.baseline / output.name).write_bytes(self.source.read_bytes())
+        before, baseline_before = tree(self.game), tree(self.baseline)
+        work = self.workspace(output=output)
+        self.build(work, self.source.read_bytes())
+        self.assertEqual(work.baseline_dir, str(self.baseline))
+        self.assertEqual(work.files, set())
+        self.assertEqual(set(work._targets.values()), self.base_files)
+        for name in self.base_files:
+            staged = Path(work.resolve_file(name.swapcase()))
+            self.assertEqual(staged.read_bytes(), (self.game / name).read_bytes())
+            self.assertTrue(staged.is_relative_to(work.directory))
+        result = work.publish([])
+        self.assertEqual(set(result), self.assert_products(work, set()))
+        self.assertEqual(set(tree(output.parent)), {"TKS_MOD.exe", MANIFEST})
+        self.assertTrue(all(Path(name).is_absolute() and Path(name).is_file() for name in result))
+        self.assertEqual(tree(self.game, exclude_dist=True), before)
+        self.assertEqual(tree(self.baseline), baseline_before)
+        self.assertTrue(any("新增 0，变化 0，跳过相同 7" in line for line in self.logs))
+
+    def test_existing_edits_new_tksx_and_bytes_not_timestamps_determine_differences(self):
+        self.copy_baseline()
+        (self.baseline / "FONT9696").rename(self.baseline / "font9696")
+        edited = bytearray(1054 * 2)
+        struct.pack_into("<h", edited, 0, 91)
+        (self.game / "WarPC.dat").write_bytes(lzss_compress_dat(edited))
+        (self.game / "WarPC.dat.tksx").write_bytes(b"new-template")
+        font = self.game / "FONT9696"
+        baseline_stat = (self.baseline / "font9696").stat()
+        font.write_bytes(b"NEW-font")
+        os.utime(font, ns=(baseline_stat.st_atime_ns, baseline_stat.st_mtime_ns))
+        music = self.game / "Sound/theme.mp3"
+        music_stat = music.stat()
+        os.utime(music, ns=(music_stat.st_atime_ns, music_stat.st_mtime_ns + 10_000_000_000))
+        before, baseline_before = tree(self.game), tree(self.baseline)
+        work = self.workspace()
+        self.build(work)
+        expected = {"WarPC.dat", "WarPC.dat.tksx", "FONT9696"}
+        self.assertEqual(work.files, expected)
+        self.assertEqual(set(work.publish([])), self.assert_products(work, expected))
+        self.assertFalse((self.output.parent / "Sound/theme.mp3").exists())
+        for name in expected:
+            self.assertEqual((self.output.parent / name).read_bytes(), (self.game / name).read_bytes())
+            self.assertIn(f"  [最终差异] {name}", self.logs)
+        self.assertTrue(any("新增 1，变化 2，跳过相同 5" in line for line in self.logs))
+        self.assertEqual(tree(self.game, exclude_dist=True), before)
+        self.assertEqual(tree(self.baseline), baseline_before)
+
+    def test_mod_reverting_game_edit_to_baseline_is_not_output(self):
+        self.copy_baseline()
+        edited = bytearray(1054 * 2)
+        struct.pack_into("<h", edited, 0, 91)
+        (self.game / "WarPC.dat").write_bytes(lzss_compress_dat(edited))
+        before, baseline_before = tree(self.game), tree(self.baseline)
+        work = self.workspace([self.mod(diffs={"WarPC.dat": record_diff(0)})])
+        self.build(work)
+        self.assertEqual(Path(work.resolve_file("WarPC.dat")).read_bytes(),
+                         (self.baseline / "WarPC.dat").read_bytes())
+        self.assertEqual(work.files, set())
+        work.publish([])
+        self.assert_products(work, set())
+        self.assertEqual(tree(self.game, exclude_dist=True), before)
+        self.assertEqual(tree(self.baseline), baseline_before)
+
+    def test_baseline_can_be_game_but_only_mod_differences_are_output(self):
+        before = tree(self.game)
+        work = self.workspace(baseline=self.game)
+        self.build(work)
+        self.assertEqual(work.files, set())
+        work.publish([])
+        self.assert_products(work, set())
+        modded = self.workspace([self.mod(diffs={"WarPC.dat": record_diff(88)})], baseline=self.game)
+        self.build(modded)
+        self.assertEqual(modded.files, {"WarPC.dat"})
+        modded.publish([])
+        self.assert_products(modded, {"WarPC.dat"})
+        self.assertEqual(tree(self.game, exclude_dist=True), before)
+
+    def test_grp_change_does_not_emit_identical_idx(self):
+        self.copy_baseline()
+        before, baseline_before = tree(self.game), tree(self.baseline)
+        mods = [self.mod(resources={"SC.GRP": b"ccdd"}),
+                self.mod(diffs={"SC.GRP": {"patch_type": "block_diff",
+                                          "modified": [block_entry(0, b"cc")]}})]
+        for mod in mods:
+            with self.subTest(mod=mod.path):
+                work = self.workspace([mod])
+                self.build(work)
+                self.assertEqual(work.files, {"SC.GRP"})
+                self.assertEqual(Path(work.resolve_file("SC.IDX")).read_bytes(),
+                                 (self.game / "SC.IDX").read_bytes())
+                work.publish([])
+                self.assert_products(work, {"SC.GRP"})
+                self.assertFalse((self.output.parent / "SC.IDX").exists())
+        self.assertEqual(tree(self.game, exclude_dist=True), before)
+        self.assertEqual(tree(self.baseline), baseline_before)
+
+    def test_publish_recompares_all_staging_after_tools_or_expansion_edit_it(self):
+        self.copy_baseline()
+        before, baseline_before = tree(self.game), tree(self.baseline)
+        work = self.workspace([self.mod(resources={"FONT9696": b"mod-font"})])
+        self.build(work)
+        self.assertEqual(work.files, {"FONT9696"})
+        Path(work.resolve_file("FONT9696")).write_bytes((self.baseline / "FONT9696").read_bytes())
+        music = Path(work.resolve_file("Sound/theme.mp3"))
+        unchanged_stat = music.stat()
+        music.write_bytes(b"new-music")
+        os.utime(music, ns=(unchanged_stat.st_atime_ns, unchanged_stat.st_mtime_ns))
+        work.publish([])
+        self.assert_products(work, {"Sound/theme.mp3"})
+        self.assertFalse((self.output.parent / "FONT9696").exists())
+        music.write_bytes((self.baseline / "Sound/theme.mp3").read_bytes())
+        os.utime(music, ns=(unchanged_stat.st_atime_ns, unchanged_stat.st_mtime_ns))
+        work.publish([])
+        self.assert_products(work, set())
+        self.assertFalse((self.output.parent / "Sound/theme.mp3").exists())
+        self.assertEqual(tree(self.game, exclude_dist=True), before)
+        self.assertEqual(tree(self.baseline), baseline_before)
+
+    def test_resources_and_tools_are_filtered_after_final_override(self):
+        self.copy_baseline()
+        (self.baseline / "patch.bin").write_bytes(b"patch")
+        (self.baseline / "tool.bin").write_bytes(b"tool")
+        tools = self.root / "tools"
+        tools.mkdir()
+        (tools / "font9696").write_bytes((self.baseline / "FONT9696").read_bytes())
+        (tools / "tool.bin").write_bytes(b"tool")
+        (tools / "patch.bin").write_bytes(b"patch")
+        (tools / "ddraw.ini").write_bytes(b"new-config")
+        (tools / "Sound").mkdir()
+        (tools / "Sound/theme.mp3").write_bytes(b"new-music")
+        patch_source = self.root / "patch.bin"
+        patch_source.write_bytes(b"overridden-patch")
+        same_source = self.root / "same.bin"
+        same_source.write_bytes(b"patch")
+        (self.baseline / "same.bin").write_bytes(b"patch")
+        before, baseline_before = tree(self.game), tree(self.baseline)
+        work = self.workspace([self.mod(resources={"FONT9696": b"mod-font"})])
+        self.build(work)
+        self.assertEqual(work.files, {"FONT9696"})
+        result = work.publish([("patch.bin", str(patch_source)), ("same.bin", str(same_source))], str(tools))
+        self.assertEqual(set(result), self.assert_products(work, {"ddraw.ini", "Sound/theme.mp3"}))
+        self.assertEqual(set(tree(self.output.parent)),
+                         {self.output.name, MANIFEST, "ddraw.ini", "Sound", "Sound/theme.mp3"})
+        self.assertTrue(any("新增 1，变化 1，跳过相同 9" in line for line in self.logs))
+        self.assertEqual(tree(self.game, exclude_dist=True), before)
+        self.assertEqual(tree(self.baseline), baseline_before)
+
+    def test_previous_full_manifest_is_pruned_but_unknown_files_survive(self):
+        old = self.workspace()
+        self.build(old)
+        old.publish([])
+        self.assert_products(old, self.base_files)
+        unknown = self.output.parent / "unknown.dat"
+        unknown.write_bytes(b"keep-me")
+        (self.output.parent / "user-folder").mkdir()
+        self.copy_baseline()
+        before, baseline_before = tree(self.game, exclude_dist=True), tree(self.baseline)
+        work = self.workspace()
+        self.build(work)
+        result = work.publish([])
+        self.assertEqual(set(result), self.assert_products(work, set()))
+        for name in self.base_files:
+            self.assertFalse((self.output.parent / name).exists())
+        self.assertEqual(unknown.read_bytes(), b"keep-me")
+        self.assertTrue((self.output.parent / "user-folder").is_dir())
+        self.assertEqual(tree(self.game, exclude_dist=True), before)
+        self.assertEqual(tree(self.baseline), baseline_before)
+
+    def test_baseline_only_files_are_not_data_sources_or_deletion_instructions(self):
+        self.copy_baseline()
+        (self.baseline / "missing.dat").write_bytes(b"baseline-only")
+        (self.baseline / "TKS.exe.orig").write_bytes(b"not-a-purity-check")
+        before, baseline_before = tree(self.game), tree(self.baseline)
+        work = self.workspace()
+        self.build(work)
+        self.assertEqual(work.source_exe, str(self.source))
+        self.assertIsNone(work.resolve_file("missing.dat"))
+        work.publish([])
+        self.assert_products(work, set())
+        self.assertEqual(set(tree(self.output.parent)), {self.output.name, MANIFEST})
+        self.assertEqual(tree(self.game, exclude_dist=True), before)
+        self.assertEqual(tree(self.baseline), baseline_before)
+
+    def test_baseline_is_required_keyword_only_absolute_directory_with_exe(self):
+        with self.assertRaises(TypeError):
+            ModBuildWorkspace(str(self.source), str(self.output), [])
+        with self.assertRaises(TypeError):
+            ModBuildWorkspace(str(self.source), str(self.output), [], None, None, str(self.baseline))
+        empty = self.root / "empty"
+        empty.mkdir()
+        invalid = (None, "", "relative", str(self.root / "missing"), str(self.source), str(empty))
+        for baseline in invalid:
+            with self.subTest(baseline=baseline):
+                with self.assertRaises(ValueError):
+                    ModBuildWorkspace(str(self.source), str(self.output), [], baseline_dir=baseline)
+        (empty / "TKS.exe").mkdir()
+        with self.assertRaises(ValueError):
+            self.workspace(baseline=empty)
+        (self.baseline / "TKS.exe").rename(self.baseline / "tks.EXE")
+        work = self.workspace()
+        work.prepare()
+        self.assertEqual(work.baseline_dir, str(self.baseline))
+        self.assertFalse(self.output.parent.exists())
+
+    def test_output_cannot_be_in_independent_baseline_or_its_ancestors(self):
+        baseline = self.root / "reference" / "original"
+        baseline.mkdir(parents=True)
+        shutil.copyfile(self.source, baseline / "TKS.exe")
+        before = tree(self.root)
+        for directory in (baseline, baseline.parent, baseline / "dist", baseline / "dist/nested",
+                          baseline / "other"):
+            with self.subTest(directory=directory):
+                with self.assertRaisesRegex(ValueError, "基准"):
+                    self.workspace(output=directory / "new.exe", baseline=baseline)
+        self.assertEqual(tree(self.root), before)
+
+    def test_linked_baseline_source_and_output_roots_are_rejected(self):
+        baseline_alias = self.root / "baseline-alias"
+        source_alias = self.root / "game-alias"
+        self.symlink(self.baseline, baseline_alias, True)
+        self.symlink(self.game, source_alias, True)
+        with self.assertRaises(ValueError):
+            self.workspace(baseline=baseline_alias)
+        with self.assertRaises(ValueError):
+            ModBuildWorkspace(str(source_alias / "TKS.exe"), str(self.output), [],
+                              baseline_dir=str(self.baseline))
+        with self.assertRaises(ValueError):
+            self.workspace(output=baseline_alias / "dist/new.exe")
+        # 即使被链接的是基准目录的祖先也不能通过。
+        parent_alias = self.root / "parent-alias"
+        self.symlink(self.root, parent_alias, True)
+        with self.assertRaises(ValueError):
+            self.workspace(baseline=parent_alias / "baseline")
+
+    def test_baseline_exe_and_identical_data_links_are_rejected(self):
+        self.copy_baseline()
+        for name in ("TKS.exe", "FONT9696", "Sound"):
+            with self.subTest(name=name):
+                path = self.baseline / name
+                saved = self.baseline / (name + "-saved")
+                path.rename(saved)
+                self.symlink(saved, path, saved.is_dir())
+                try:
+                    if name == "TKS.exe":
+                        with self.assertRaises(ValueError):
+                            self.workspace()
+                    else:
+                        self.assert_failed_prepare([], "链接")
+                finally:
+                    path.unlink()
+                    saved.rename(path)
+
+    def test_identical_source_and_output_member_links_cannot_be_skipped(self):
+        self.copy_baseline()
+        font = self.game / "FONT9696"
+        font.unlink()
+        self.symlink(self.baseline / "FONT9696", font)
+        self.assert_failed_prepare([], "链接")
+        font.unlink()
+        shutil.copyfile(self.baseline / "FONT9696", font)
+        work = self.workspace()
+        self.build(work)
+        self.assertEqual(work.files, set())
+        self.output.parent.mkdir()
+        self.symlink(self.game / "Sound", self.output.parent / "Sound", True)
+        with self.assertRaisesRegex(ValueError, "链接"):
+            work.publish([])
+        self.assertFalse(self.output.exists())
+
+    def test_identical_patch_and_tool_links_cannot_be_skipped(self):
+        self.copy_baseline()
+        (self.baseline / "same.bin").write_bytes(b"same")
+        external = self.root / "external"
+        external.mkdir()
+        (external / "same.bin").write_bytes(b"same")
+        alias = self.root / "external-alias"
+        self.symlink(external, alias, True)
+        linked_file = self.root / "linked.bin"
+        self.symlink(external / "same.bin", linked_file)
+        work = self.workspace()
+        self.build(work)
+        for source in (linked_file, alias / "same.bin"):
+            with self.subTest(source=source):
+                with self.assertRaisesRegex(ValueError, "链接"):
+                    work.publish([("same.bin", str(source))])
+        with self.assertRaisesRegex(ValueError, "链接"):
+            work.publish([], str(alias))
+        tools = self.root / "tools"
+        tools.mkdir()
+        self.symlink(external / "same.bin", tools / "same.bin")
+        with self.assertRaisesRegex(ValueError, "链接"):
+            work.publish([], str(tools))
+        self.assertFalse(self.output.parent.exists())
+
+    def test_changed_real_roots_abort_prepare_resolve_and_publish(self):
+        old = self.workspace()
+        self.build(old)
+        old.publish([])
+        before, baseline_before = tree(self.game), tree(self.baseline)
+        realpath = os.path.realpath
+        for root in (self.game, self.baseline, self.output.parent):
+            with self.subTest(root=root):
+                fresh = self.workspace()
+
+                def changed(path, *args, **kwargs):
+                    if distribution._key(path) == distribution._key(root):
+                        return str(self.root / "changed-root")
+                    return realpath(path, *args, **kwargs)
+
+                with patch.object(distribution.os.path, "realpath", side_effect=changed):
+                    with self.assertRaisesRegex(ValueError, "真实路径已改变"):
+                        fresh.prepare()
+                    with self.assertRaisesRegex(ValueError, "真实路径已改变"):
+                        old.resolve_file("WarPC.dat")
+                    with self.assertRaisesRegex(ValueError, "真实路径已改变"):
+                        old.publish([])
+        self.assertEqual(tree(self.game), before)
+        self.assertEqual(tree(self.baseline), baseline_before)
+
+    def test_unreadable_identical_candidates_and_baseline_leave_previous_output_untouched(self):
+        old = self.workspace()
+        self.build(old)
+        old.publish([])
+        self.copy_baseline()
+        (self.baseline / "same.bin").write_bytes(b"same")
+        external = self.root / "same.bin"
+        external.write_bytes(b"same")
+        tools = self.root / "tools"
+        tools.mkdir()
+        tool = tools / "same.bin"
+        tool.write_bytes(b"same")
+        work = self.workspace()
+        self.build(work)
+        before, baseline_before = tree(self.game), tree(self.baseline)
+        real_open = open
+        unreadable_files = (self.baseline / "FONT9696", Path(work.resolve_file("FONT9696")),
+                            external, tool)
+        for unreadable in unreadable_files:
+            with self.subTest(unreadable=unreadable):
+                def fail_read(path, *args, **kwargs):
+                    if distribution._key(path) == distribution._key(unreadable):
+                        raise PermissionError("模拟相同文件不可读")
+                    return real_open(path, *args, **kwargs)
+
+                with patch("builtins.open", side_effect=fail_read):
+                    with self.assertRaisesRegex(PermissionError, "相同文件不可读"):
+                        work.publish([("same.bin", str(external))],
+                                     str(tools) if unreadable == tool else "")
+                self.assertEqual(tree(self.game), before)
+                self.assertEqual(tree(self.baseline), baseline_before)
+                self.assertEqual(work.files, set())
+        unreadable = self.baseline / "FONT9696"
+        with patch("builtins.open", side_effect=fail_read):
+            self.assert_failed_prepare([], "相同文件不可读")
+
+    def test_streaming_comparison_reads_past_first_chunk_and_propagates_late_errors(self):
+        large = self.game / "large.dat"
+        large.write_bytes(b"a" * (2 * 1024 * 1024 + 5))
+        self.copy_baseline()
+        work = self.workspace()
+        self.build(work)
+        self.assertEqual(work.files, set())
+        staged = Path(work.resolve_file("large.dat"))
+        with staged.open("r+b") as stream:
+            stream.seek(-1, os.SEEK_END)
+            stream.write(b"b")
+        work.publish([])
+        self.assert_products(work, {"large.dat"})
+        before, baseline_before = tree(self.game), tree(self.baseline)
+        real_open = open
+
+        def fail_late(path, *args, **kwargs):
+            stream = real_open(path, *args, **kwargs)
+            if distribution._key(path) == distribution._key(self.baseline / "large.dat"):
+                real_read = stream.read
+
+                def read(size=-1):
+                    self.assertLessEqual(size, 1024 * 1024)
+                    if stream.tell() >= 1024 * 1024:
+                        raise OSError("模拟基准后续块不可读")
+                    return real_read(size)
+
+                stream.read = read
+            return stream
+
+        with patch("builtins.open", side_effect=fail_late):
+            with self.assertRaisesRegex(OSError, "后续块不可读"):
+                work.publish([])
+        self.assertEqual(tree(self.game), before)
+        self.assertEqual(tree(self.baseline), baseline_before)
+        self.assertEqual(work.files, {"large.dat"})
 
 
 if __name__ == "__main__":
