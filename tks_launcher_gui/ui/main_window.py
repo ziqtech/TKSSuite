@@ -231,7 +231,7 @@ class MainWindow(QMainWindow):
         mm.addAction("模组信息编辑", self._on_edit_mod_meta)
         mm.addAction("打包 TKS.exe 为 MOD", self._on_pack_tks_exe)
         mm.addSeparator()
-        mm.addAction("生成启动器", self._on_generate_exe)
+        self._action_generate_exe = mm.addAction("生成启动器 / 独立覆盖包", self._on_generate_exe)
         mm.addSeparator()
         mm.addAction("制作头像 MOD", self._on_custom_avatar)
         mm.addAction("制作音乐 MOD", self._on_custom_music)
@@ -742,6 +742,7 @@ class MainWindow(QMainWindow):
         self._action_choose_game.setEnabled(not running)
         self._action_refresh_mods.setEnabled(not running)
         self._action_save_manager.setEnabled(not running)
+        self._action_generate_exe.setEnabled(not running)
 
     def _setup_statusbar(self):
         self.status_bar = QStatusBar()
@@ -935,6 +936,8 @@ class MainWindow(QMainWindow):
             launcher_dir=_LAUNCHER_DIR,
             patch_states=self.patch_list.get_patch_states(),
             selected_tool=self._get_selected_tool(),
+            source_exe=self._gui_state.last_game_path,
+            selected_mods=self.mod_list.get_enabled_mods(),
             parent=self,
         )
         dialog.exec()

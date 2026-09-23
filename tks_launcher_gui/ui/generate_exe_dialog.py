@@ -11,13 +11,17 @@
 """
 import os
 import shutil
-from PySide6.QtCore import Qt, QThread, Signal
+from types import SimpleNamespace
+from PySide6.QtCore import Qt, QThread, QUrl, Signal
+from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
-    QCheckBox, QComboBox, QDialog, QFileDialog, QGroupBox, QHBoxLayout, QLabel,
-    QLineEdit, QListWidget, QListWidgetItem, QMessageBox, QProgressBar,
-    QPushButton, QTextEdit, QVBoxLayout, QWidget,
+    QCheckBox, QComboBox, QDialog, QFileDialog, QGridLayout, QGroupBox,
+    QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem, QMessageBox,
+    QProgressBar, QPushButton, QSplitter, QTabWidget, QTextEdit, QVBoxLayout, QWidget,
 )
 from core.config_loader import PatchDef, patch_metadata
+from core.mod_distribution import ModBuildWorkspace
+from core.mod_loader import ModInfo, allowed_mod_configs
 from core.exe_builder import (
     ExeBuilder, CavePatchItem, BytesPatchItem, BytesPatchEntry,
     Imm32PatchItem, Imm32PatchEntry, ConfigPatchItem, DataSectionPatchItem,
@@ -85,47 +89,6 @@ def file_build_label(p: PatchDef) -> str | None:
     return None
 
 
-def copy_tool_dir(tool_dir: str, out_dir: str, log=print) -> int:
-    """把画面兼容工具目录按相对路径复制到输出目录（生成版部署用）。
-
-    与启动器运行时的工具注入同语义（结构保留、覆盖前备份为 *.toolbak），
-    但这里是"一次性部署"：生成的 exe 与 ddraw.dll/ddraw.ini 放在同一目录即可
-    直接运行，无需再经过启动器注入。
-    """
-    if not os.path.isdir(tool_dir) or not out_dir:
-        return 0
-    copied = 0
-    for root, _dirs, files in os.walk(tool_dir):
-        rel_root = os.path.relpath(root, tool_dir)
-        for fname in files:
-            src_file = os.path.join(root, fname)
-            rel_path = fname if rel_root == '.' else os.path.join(rel_root, fname)
-            dst_file = os.path.join(out_dir, rel_path)
-            dst_parent = os.path.dirname(dst_file)
-            if dst_parent and not os.path.isdir(dst_parent):
-                os.makedirs(dst_parent, exist_ok=True)
-            if os.path.isfile(dst_file):
-                same = False
-                try:
-                    with open(src_file, 'rb') as fa, open(dst_file, 'rb') as fb:
-                        same = fa.read() == fb.read()
-                except OSError:
-                    same = False
-                if not same:
-                    try:
-                        shutil.copy2(dst_file, dst_file + '.toolbak')
-                        log(f'  [备份] {rel_path}.toolbak')
-                    except OSError as e:
-                        log(f'  [WARN] 备份 {rel_path} 失败: {e}')
-            try:
-                shutil.copy2(src_file, dst_file)
-                copied += 1
-                log(f'  [工具] {rel_path}')
-            except OSError as e:
-                log(f'  [ERROR] 复制 {rel_path} 失败: {e}')
-    return copied
-
-
 def expansion_logical_size(actual_size: int, cap: int = 0) -> int:
     """扩容缓冲区的逻辑容量 = max(实际数据, buffer_cap)。
 
@@ -175,150 +138,128 @@ def pad_section_data(content: bytes, min_size: int = 0,
     return content
 
 
-class _BuildWorker(QThread):
-    """后台构建线程。"""
-    finished = Signal(object)  # CaveBuildResult
-
-    def __init__(self, builder: ExeBuilder, cave_patches: list,
-                 bytes_patches: list, imm32_patches: list,
-                 config_patches: list, data_section_patches: list,
-                 fixed_layouts: list, output_path: str,
-                 sites_patches: list | None = None):
+class _PrepareWorker(QThread):
+    def __init__(self, workspace: ModBuildWorkspace):
         super().__init__()
-        self._builder = builder
-        self._cave_patches = cave_patches
-        self._bytes_patches = bytes_patches
-        self._imm32_patches = imm32_patches
-        self._config_patches = config_patches
-        self._data_section_patches = data_section_patches
-        self._fixed_layouts = fixed_layouts
-        self._sites_patches = sites_patches or []
-        self._output = output_path
+        self.workspace = workspace
+        self.error = ''
 
     def run(self):
         try:
-            result = self._builder.build(
-                self._cave_patches, self._output,
-                bytes_patches=self._bytes_patches,
-                imm32_patches=self._imm32_patches,
-                config_patches=self._config_patches,
-                data_section_patches=self._data_section_patches,
-                fixed_layouts=self._fixed_layouts,
-                sites_patches=self._sites_patches,
-            )
-        except Exception:
-            # 线程内异常若不接住, finished 信号永不发出, 弹窗会永远停在
-            # "开始构建…" (已发生过的卡死事故); 转为失败结果在弹窗内展示
+            self.workspace.prepare()
+        except Exception as exc:
+            self.error = str(exc)
+
+
+class _BuildWorker(QThread):
+    completed = Signal(object)
+
+    def __init__(self, builder: ExeBuilder, patch_items: tuple,
+                 workspace: ModBuildWorkspace, resources: list, tool_dir: str):
+        super().__init__()
+        self._builder = builder
+        self._patch_items = patch_items
+        self._workspace = workspace
+        self._resources = resources
+        self._tool_dir = tool_dir
+        self.output_files = []
+
+    def run(self):
+        from core.exe_builder import CaveBuildResult
+        workspace = self._workspace
+        result = None
+        try:
+            cave, byte, imm32, config, data, fixed, sites = self._patch_items
+            if any(self._patch_items):
+                result = self._builder.build(
+                    cave, workspace.build_exe, bytes_patches=byte,
+                    imm32_patches=imm32, config_patches=config,
+                    data_section_patches=data, fixed_layouts=fixed,
+                    sites_patches=sites)
+            else:
+                shutil.copy2(workspace.source_exe, workspace.build_exe)
+                result = CaveBuildResult(success=True)
+            if result.success:
+                self.output_files = workspace.publish(self._resources, self._tool_dir)
+            result.output_path = workspace.output_exe
+        except Exception as exc:
             import traceback
-            from core.exe_builder import CaveBuildResult
-            result = CaveBuildResult(success=False, output_path=self._output,
-                                     error='构建异常: 见日志')
+            if result is None:
+                result = CaveBuildResult(success=False)
+            result.success = False
+            result.output_path = workspace.output_exe
+            result.error = str(exc)
             result.log.append(traceback.format_exc())
-        self.finished.emit(result)
+        self.completed.emit(result)
 
 
 class GenerateExeDialog(QDialog):
-    """生成启动器对话框。
-
-    流程：
-      1. 选择原版 TKS.exe
-      2. 勾选要烧录的 cave 型补丁
-      3. 选择输出路径
-      4. 点击生成
-    """
+    """将补丁与已选 MOD 生成为独立覆盖包。"""
+    log_emitted = Signal(str)
 
     def __init__(self, patches: list[PatchDef], launcher_dir: str, parent=None,
                  patch_states: dict[str, bool] | None = None,
-                 selected_tool: str = ""):
+                 selected_tool: str = "", source_exe: str = "",
+                 selected_mods: list[ModInfo] | None = None):
         super().__init__(parent)
-        self.setWindowTitle('生成启动器 — 将补丁烧录进 TKS.exe')
-        self.setMinimumSize(750, 650)
+        self.setWindowTitle('生成启动器 / 独立覆盖包')
+        self.setMinimumSize(760, 700)
+        self.resize(900, 760)
         self._patches = patches
         self._launcher_dir = launcher_dir
-        # 同步主窗口普通/高级选项并迁移旧键，保留显式 False。
         self._patch_states = migrate_patch_states(self._patches, patch_states or {})
-        # 画面兼容工具 (cnc-ddraw 等): 与 launcher 主界面「画面兼容工具」面板同源,
-        # 生成版可直接把工具文件一并复制到输出目录, 免去再经过启动器注入
         self._selected_tool = selected_tool or ""
+        self._source_exe = source_exe
+        self._selected_mods = list(selected_mods or [])
+        self._default_output = ''
+        self._built_directory = ''
+        self._busy = False
+        self._workspace: ModBuildWorkspace | None = None
+        self._prepare_worker: _PrepareWorker | None = None
         self._worker: _BuildWorker | None = None
         self._last_build_patch_ids: list[str] = []
         self._last_build_resources: list[tuple[str, str]] = []
 
         self._setup_ui()
+        self.log_emitted.connect(self._log)
         self._populate_patch_list()
 
     def _setup_ui(self):
         layout = QVBoxLayout(self)
+        layout.setSpacing(12)
+        hint = QLabel('生成可覆盖到原版游戏目录的文件包，无需再通过启动器运行。原版文件只读，不修改、不删除。')
+        hint.setWordWrap(True)
+        hint.setObjectName('hintLabel')
+        layout.addWidget(hint)
 
-        # ── 原版 exe 选择 ──
-        src_group = QGroupBox('原版 TKS.exe')
-        src_layout = QHBoxLayout(src_group)
+        self._paths_group = QGroupBox('1. 原版与输出位置')
+        paths = QGridLayout(self._paths_group)
         self._src_edit = QLineEdit()
-        self._src_edit.setPlaceholderText('选择原版 TKS.exe 路径…')
-        # 默认尝试常见位置
-        default_exe = os.path.join(os.path.dirname(self._launcher_dir), 'TKS', 'TKS.exe')
-        if os.path.isfile(default_exe):
-            self._src_edit.setText(default_exe)
-        src_btn = QPushButton('浏览…')
+        self._src_edit.setPlaceholderText('选择原版 TKS.exe，相关数据从此目录读取')
+        src_btn = QPushButton('选择原版…')
         src_btn.clicked.connect(self._browse_src)
-        src_layout.addWidget(self._src_edit, 1)
-        src_layout.addWidget(src_btn)
-        layout.addWidget(src_group)
-
-        # ── 补丁选择 ──
-        patch_group = QGroupBox('选择要烧录的补丁（支持代码注入/字节替换/立即数/配置驱动）')
-        patch_layout = QVBoxLayout(patch_group)
-
-        # 统计标签
-        self._summary_label = QLabel('')
-        self._summary_label.setStyleSheet('color: #888; font-size: 11px;')
-        patch_layout.addWidget(self._summary_label)
-
-        btn_row = QHBoxLayout()
-        btn_all = QPushButton('全选')
-        btn_none = QPushButton('全不选')
-        btn_all.setToolTip('勾选全部可选补丁 (必选补丁始终勾选)')
-        btn_none.setToolTip('取消全部可选补丁 (必选补丁不受影响)')
-        btn_all.clicked.connect(lambda: self._set_all(True))
-        btn_none.clicked.connect(lambda: self._set_all(False))
-        btn_row.addWidget(btn_all)
-        btn_row.addWidget(btn_none)
-        btn_row.addStretch()
-        patch_layout.addLayout(btn_row)
-
-        self._patch_list = QListWidget()
-        self._patch_list.setSelectionMode(QListWidget.NoSelection)
-        patch_layout.addWidget(self._patch_list)
-
-        self._patch_detail = QTextEdit()
-        self._patch_detail.setReadOnly(True)
-        self._patch_detail.setMaximumHeight(100)
-        patch_layout.addWidget(self._patch_detail)
-
-        self._patch_list.currentRowChanged.connect(self._on_patch_selected)
-        layout.addWidget(patch_group, 1)
-
-        # ── 输出路径 ──
-        out_group = QGroupBox('输出路径')
-        out_outer = QVBoxLayout(out_group)
-        out_layout = QHBoxLayout()
+        paths.addWidget(QLabel('原版程序'), 0, 0)
+        paths.addWidget(self._src_edit, 0, 1)
+        paths.addWidget(src_btn, 0, 2)
         self._out_edit = QLineEdit()
-        self._out_edit.setPlaceholderText('输出修改版 exe 路径…')
-        out_btn = QPushButton('浏览…')
+        self._out_edit.setPlaceholderText('默认：原版目录 / dist / TKS_MOD.exe')
+        out_btn = QPushButton('更改输出…')
         out_btn.clicked.connect(self._browse_out)
-        out_layout.addWidget(self._out_edit, 1)
-        out_layout.addWidget(out_btn)
-        out_outer.addLayout(out_layout)
+        paths.addWidget(QLabel('输出程序'), 1, 0)
+        paths.addWidget(self._out_edit, 1, 1)
+        paths.addWidget(out_btn, 1, 2)
+        path_hint = QLabel('MOD 数据、索引与资源一并输出到该 EXE 所在目录；覆盖包不包含未改动的原版文件。')
+        path_hint.setWordWrap(True)
+        path_hint.setObjectName('hintLabel')
+        paths.addWidget(path_hint, 2, 1, 1, 2)
 
-        # 画面兼容工具 (cnc-ddraw 等): 生成的 exe 需要与 ddraw.dll 同目录运行
-        self._copy_tool_cb = QCheckBox('同时复制画面兼容工具')
+        self._copy_tool_cb = QCheckBox('附带画面兼容工具')
         self._tool_combo = QComboBox()
         tools_dir = os.path.join(self._launcher_dir, 'tools')
         if os.path.isdir(tools_dir):
-            for name in sorted(
-                    d for d in os.listdir(tools_dir)
-                    if os.path.isdir(os.path.join(tools_dir, d))
-                    and not d.startswith(('_', '.'))):
+            for name in sorted(d for d in os.listdir(tools_dir)
+                               if os.path.isdir(os.path.join(tools_dir, d))
+                               and not d.startswith(('_', '.'))):
                 self._tool_combo.addItem(name)
         idx = self._tool_combo.findText(self._selected_tool)
         if idx < 0:
@@ -326,41 +267,103 @@ class GenerateExeDialog(QDialog):
         if idx >= 0:
             self._tool_combo.setCurrentIndex(idx)
         has_tool = self._tool_combo.count() > 0
-        self._tool_combo.setEnabled(has_tool)
         self._copy_tool_cb.setEnabled(has_tool)
-        # 主界面选了工具 => 默认勾选; 未选但有 cnc-ddraw 时也默认勾选(宽屏常用)
         self._copy_tool_cb.setChecked(
             has_tool and (bool(self._selected_tool)
                           or self._tool_combo.currentText() == 'cnc-ddraw'))
+        self._tool_combo.setEnabled(self._copy_tool_cb.isChecked())
         self._copy_tool_cb.toggled.connect(self._tool_combo.setEnabled)
+        self._tool_combo.setToolTip('16:9 宽屏建议附带 cnc-ddraw（ddraw.dll / ddraw.ini）')
         tool_row = QHBoxLayout()
         tool_row.addWidget(self._copy_tool_cb)
         tool_row.addWidget(self._tool_combo, 1)
-        tool_hint = QLabel('16:9 宽屏补丁建议一并复制 cnc-ddraw (ddraw.dll/ddraw.ini)')
-        tool_hint.setStyleSheet('color: #888; font-size: 11px;')
-        tool_row.addWidget(tool_hint)
-        out_outer.addLayout(tool_row)
-        layout.addWidget(out_group)
+        paths.addLayout(tool_row, 3, 1, 1, 2)
+        paths.setColumnStretch(1, 1)
+        layout.addWidget(self._paths_group)
+        self._src_edit.textChanged.connect(self._update_default_output)
+        default_exe = self._source_exe or os.path.join(
+            os.path.dirname(self._launcher_dir), 'TKS', 'TKS.exe')
+        if self._source_exe or os.path.isfile(default_exe):
+            self._src_edit.setText(default_exe)
 
-        # ── 进度与日志 ──
+        splitter = QSplitter(Qt.Vertical)
+        self._selection_tabs = QTabWidget()
+        patch_page = QWidget()
+        patch_layout = QVBoxLayout(patch_page)
+        btn_row = QHBoxLayout()
+        self._summary_label = QLabel('')
+        btn_row.addWidget(self._summary_label, 1)
+        btn_all = QPushButton('全选')
+        btn_none = QPushButton('全不选')
+        btn_all.setToolTip('勾选全部可选补丁；必选补丁始终勾选')
+        btn_none.setToolTip('取消全部可选补丁；必选补丁不受影响')
+        btn_all.clicked.connect(lambda: self._set_all(True))
+        btn_none.clicked.connect(lambda: self._set_all(False))
+        btn_row.addWidget(btn_all)
+        btn_row.addWidget(btn_none)
+        patch_layout.addLayout(btn_row)
+        self._patch_list = QListWidget()
+        self._patch_list.setSelectionMode(QListWidget.SingleSelection)
+        self._patch_list.setMinimumHeight(90)
+        patch_layout.addWidget(self._patch_list, 1)
+        self._patch_detail = QTextEdit()
+        self._patch_detail.setReadOnly(True)
+        self._patch_detail.setMaximumHeight(85)
+        self._patch_detail.setPlaceholderText('选择补丁查看说明；高级选项沿用主窗口设置。')
+        patch_layout.addWidget(self._patch_detail)
+        self._patch_list.currentRowChanged.connect(self._on_patch_selected)
+        self._selection_tabs.addTab(patch_page, '2. 烧录补丁')
+
+        mod_page = QWidget()
+        mod_layout = QVBoxLayout(mod_page)
+        mod_hint = QLabel('已同步主窗口勾选的 MOD / 合集，按依赖和加载顺序整合。若需调整，请关闭此窗口后修改主窗口勾选。')
+        mod_hint.setWordWrap(True)
+        mod_layout.addWidget(mod_hint)
+        self._mod_list = QListWidget()
+        for mod in self._selected_mods:
+            item = QListWidgetItem(f'{mod.name}  ·  v{mod.version}')
+            targets = sorted({entry.get('target', '')
+                              for entry in mod.components + mod.resources
+                              if entry.get('target')})
+            item.setToolTip('\n'.join(targets) or mod.description)
+            self._mod_list.addItem(item)
+        if not self._selected_mods:
+            self._mod_list.addItem('未勾选 MOD，本次仅生成补丁 EXE 与所需补丁资源。')
+        mod_layout.addWidget(self._mod_list)
+        self._selection_tabs.addTab(mod_page, f'已选 MOD（{len(self._selected_mods)}）')
+        splitter.addWidget(self._selection_tabs)
+
+        log_group = QGroupBox('3. 生成进度与文件清单')
+        log_layout = QVBoxLayout(log_group)
         self._progress = QProgressBar()
         self._progress.setVisible(False)
-        layout.addWidget(self._progress)
-
+        log_layout.addWidget(self._progress)
         self._log_text = QTextEdit()
         self._log_text.setReadOnly(True)
-        self._log_text.setMaximumHeight(120)
-        layout.addWidget(self._log_text)
+        self._log_text.setStyleSheet('QTextEdit { min-height: 90px; }')
+        self._log_text.setPlaceholderText('生成时先在临时目录整合，全部成功后才输出覆盖包。')
+        log_layout.addWidget(self._log_text)
+        splitter.addWidget(log_group)
+        splitter.setChildrenCollapsible(False)
+        splitter.setStretchFactor(0, 3)
+        splitter.setStretchFactor(1, 1)
+        splitter.setSizes([340, 140])
+        layout.addWidget(splitter, 1)
 
-        # ── 按钮 ──
         btn_layout = QHBoxLayout()
-        self._build_btn = QPushButton('生成')
+        self._status_label = QLabel('就绪')
+        btn_layout.addWidget(self._status_label, 1)
+        self._open_btn = QPushButton('打开输出目录')
+        self._open_btn.setEnabled(False)
+        self._open_btn.clicked.connect(self._open_output_directory)
+        self._build_btn = QPushButton('生成独立覆盖包')
+        self._build_btn.setDefault(True)
         self._build_btn.clicked.connect(self._start_build)
-        cancel_btn = QPushButton('关闭')
-        cancel_btn.clicked.connect(self.reject)
-        btn_layout.addStretch()
+        self._close_btn = QPushButton('关闭')
+        self._close_btn.clicked.connect(self.reject)
+        btn_layout.addWidget(self._open_btn)
         btn_layout.addWidget(self._build_btn)
-        btn_layout.addWidget(cancel_btn)
+        btn_layout.addWidget(self._close_btn)
         layout.addLayout(btn_layout)
 
     def _populate_patch_list(self):
@@ -470,21 +473,30 @@ class GenerateExeDialog(QDialog):
                 lines.append(f'value_offset: {p.value_offset}')
         self._patch_detail.setPlainText('\n'.join(lines))
 
+    def _update_default_output(self, source: str):
+        default = (os.path.join(os.path.dirname(os.path.abspath(source.strip())),
+                                'dist', 'TKS_MOD.exe') if source.strip() else '')
+        if not self._out_edit.text().strip() or self._out_edit.text() == self._default_output:
+            self._out_edit.setText(default)
+        self._default_output = default
+
     def _browse_src(self):
         path, _ = QFileDialog.getOpenFileName(
-            self, '选择原版 TKS.exe', '', '可执行文件 (*.exe)')
+            self, '选择原版 TKS.exe', self._src_edit.text(), '可执行文件 (*.exe)')
         if path:
             self._src_edit.setText(path)
-            # 自动填充输出路径
-            if not self._out_edit.text():
-                base, ext = os.path.splitext(path)
-                self._out_edit.setText(f'{base}_MOD{ext}')
 
     def _browse_out(self):
         path, _ = QFileDialog.getSaveFileName(
-            self, '输出修改版 exe', '', '可执行文件 (*.exe)')
+            self, '输出修改版 EXE', self._out_edit.text(), '可执行文件 (*.exe)')
         if path:
             self._out_edit.setText(path)
+
+    def _resolve_data_file(self, filename: str) -> str | None:
+        if self._workspace is not None:
+            return self._workspace.resolve_file(filename)
+        return resolve_data_file(self._out_edit.text().strip(),
+                                 self._src_edit.text().strip(), filename)
 
     def _get_selected_patches(self) -> tuple:
         """统一准备完整补丁计划，再将展开、链接后的普通操作按类型分组。
@@ -522,11 +534,11 @@ class GenerateExeDialog(QDialog):
                           f'({option_id}): {"启用" if enabled else "关闭"}'
                           '（沿用主窗口设置，仅在所属补丁生效时应用）')
 
+        overrides = self._workspace.config_overrides if self._workspace else {}
+        used_configs = set()
         plan = build_patch_plan(
             self._patches, selected=checked_ids,
-            resolve_file=lambda filename: resolve_data_file(
-                self._out_edit.text().strip(), self._src_edit.text().strip(), filename),
-            log_func=self._log)
+            resolve_file=self._resolve_data_file, log_func=self._log)
         if plan.effective.superseded:
             self._log('补丁替代: ' + ', '.join(
                 f'{old}->{new}'
@@ -616,14 +628,20 @@ class GenerateExeDialog(QDialog):
                             'font_config', 'patch_font_config',
                             'animation_speed', 'patch_animation_speed',
                             'summon_table', 'patch_summon_table'):
-                if not p.json_file or not os.path.isfile(p.json_file):
-                    raise ValueError(f'[{p.id}] JSON 配置不存在: {p.json_file}')
-                try:
-                    import json
-                    with open(p.json_file, 'r', encoding='utf-8') as f:
-                        cfg = json.load(f)
-                except Exception as e:
-                    raise ValueError(f'[{p.id}] 读取 JSON 失败: {e}') from e
+                config_name = os.path.splitext(os.path.basename(p.json_file or ''))[0]
+                if p.mod_config_overridable and config_name in overrides:
+                    cfg = overrides[config_name]
+                    used_configs.add(config_name)
+                    self._log(f'[{p.id}] 烧录 MOD 配置: {config_name}')
+                else:
+                    if not p.json_file or not os.path.isfile(p.json_file):
+                        raise ValueError(f'[{p.id}] JSON 配置不存在: {p.json_file}')
+                    try:
+                        import json
+                        with open(p.json_file, 'r', encoding='utf-8') as f:
+                            cfg = json.load(f)
+                    except Exception as e:
+                        raise ValueError(f'[{p.id}] 读取 JSON 失败: {e}') from e
                 config_patches.append(ConfigPatchItem(
                     patch_id=p.id, name=p.name,
                     patch_type=p.type, config=cfg,
@@ -653,26 +671,24 @@ class GenerateExeDialog(QDialog):
             else:
                 raise ValueError(f'[{p.id}] 计划包含未展开或不支持的操作: {p.type}')
 
-        self._warn_unselected_expansions(data_section_patches)
+        unused_configs = set(overrides) - used_configs
+        if unused_configs:
+            raise ValueError('以下 MOD 配置尚未烧录，请勾选对应配置补丁: '
+                             + ', '.join(sorted(unused_configs)))
+        self._validate_expansions(data_section_patches)
         self._last_build_patch_ids = sorted(plan.ids)
         self._last_build_resources = list(plan.resources)
 
         return (cave_patches, bytes_patches, imm32_patches, config_patches,
                 data_section_patches, fixed_layouts, sites_patches)
 
-    def _warn_unselected_expansions(self, selected_items):
-        """数据文件已扩容但对应 patch_data_expand 未勾选时警告。
-
-        生成的 exe 按旧容量加载部署目录的数据文件——WarPC.dat 这类已扩容
-        文件会再次触发 FileRead buffer too small。launcher 运行时由
-        warpc_expander 兜底, 生成的 exe 没有这层, 必须勾选扩容补丁。
-        """
+    def _validate_expansions(self, selected_items):
+        """离线包没有运行时扩容兜底，不能发布超出 EXE 容量的数据。"""
         selected_ids = {it.patch_id for it in selected_items}
         for p in self._patches:
             if p.type != 'patch_data_expand' or p.id in selected_ids:
                 continue
-            path = resolve_data_file(self._out_edit.text().strip(),
-                                     self._src_edit.text().strip(), p.data_file)
+            path = self._resolve_data_file(p.data_file)
             if not path:
                 continue
             try:
@@ -684,10 +700,9 @@ class GenerateExeDialog(QDialog):
             except Exception:
                 continue
             if len(content) > p.old_size:
-                self._log(f'[WARN] {p.data_file} 已扩容 '
-                          f'({len(content)} > 原版 {p.old_size}) 但 '
-                          f'{p.id} 未勾选——生成的 exe 将无法加载该文件, '
-                          f'请勾选 {p.id} 后重新生成')
+                raise ValueError(f'{p.data_file} 已扩容 '
+                                 f'({len(content)} > 原版 {p.old_size})，'
+                                 f'请勾选 {p.name or p.id} 后重新生成')
 
     def _build_fixed_layout(self, p: PatchDef) -> FixedLayoutCave:
         """从 fixed_layout_cave 补丁定义构建 FixedLayoutCave。"""
@@ -761,11 +776,10 @@ class GenerateExeDialog(QDialog):
         if not data_file or not old_base or not old_size:
             raise ValueError(f'[{p.id}] patch_data_expand 字段不完整')
 
-        path = resolve_data_file(self._out_edit.text().strip(),
-                                 self._src_edit.text().strip(), data_file)
+        path = self._resolve_data_file(data_file)
         if not path:
             raise ValueError(f'[{p.id}] 数据文件不存在: '
-                             f'{data_file} (输出目录与原版目录均未找到)')
+                             f'{data_file} (整合数据与原版目录均未找到)')
         self._log(f'[{p.id}] 数据文件: {path}')
 
         try:
@@ -899,8 +913,7 @@ class GenerateExeDialog(QDialog):
             return None
 
         filename, needs_decompress, rec_size = file_map[var_name]
-        filepath = resolve_data_file(self._out_edit.text().strip(),
-                                     self._src_edit.text().strip(), filename)
+        filepath = self._resolve_data_file(filename)
         if not filepath:
             return None
 
@@ -927,130 +940,125 @@ class GenerateExeDialog(QDialog):
     def _log(self, msg: str):
         self._log_text.append(msg)
 
+    def _set_build_busy(self, busy: bool):
+        self._busy = busy
+        for widget in (self._paths_group, self._selection_tabs,
+                       self._build_btn, self._close_btn):
+            widget.setEnabled(not busy)
+        self._open_btn.setEnabled(not busy and bool(self._built_directory))
+        self._progress.setVisible(busy)
+        self._progress.setRange(0, 0)
+
+    def _cleanup_workspace(self):
+        if self._workspace is not None:
+            self._workspace.cleanup()
+            self._workspace = None
+
+    def _build_failed(self, message: str):
+        self._cleanup_workspace()
+        self._set_build_busy(False)
+        self._status_label.setText('生成失败，请查看日志')
+        self._log(f'生成失败: {message}')
+        QMessageBox.critical(self, '生成失败', message)
+
     def _start_build(self):
+        if self._busy:
+            return
         src = self._src_edit.text().strip()
         out = self._out_edit.text().strip()
-
         if not src or not os.path.isfile(src):
             QMessageBox.warning(self, '错误', '请选择有效的原版 TKS.exe')
             return
-        if not out:
-            QMessageBox.warning(self, '错误', '请指定输出路径')
+        if not out or not out.lower().endswith('.exe'):
+            QMessageBox.warning(self, '错误', '请指定以 .exe 结尾的输出路径')
             return
-
         self._log_text.clear()
         try:
-            (cave_patches, bytes_patches, imm32_patches, config_patches,
-             data_section_patches, fixed_layouts, sites_patches) = self._get_selected_patches()
+            self._workspace = ModBuildWorkspace(
+                os.path.abspath(src), os.path.abspath(out), self._selected_mods,
+                allowed_configs=allowed_mod_configs(SimpleNamespace(patches=self._patches)),
+                log_func=self.log_emitted.emit)
         except Exception as exc:
-            self._log(f'补丁准备失败: {exc}')
-            QMessageBox.critical(self, '错误', f'补丁准备失败，已中止生成:\n{exc}')
+            self._build_failed(str(exc))
             return
-        total = (len(cave_patches) + len(bytes_patches) + len(imm32_patches) +
-                 len(config_patches) + len(data_section_patches) +
-                 len(fixed_layouts) + len(sites_patches))
-        if total == 0:
-            QMessageBox.warning(self, '错误', '请至少勾选一个补丁')
+        self._set_build_busy(True)
+        self._status_label.setText('正在整合 MOD…')
+        self._log('在临时目录整合已选 MOD，原版文件保持不变。')
+        self._prepare_worker = _PrepareWorker(self._workspace)
+        self._prepare_worker.finished.connect(self._on_mods_prepared)
+        self._prepare_worker.start()
+
+    def _on_mods_prepared(self):
+        if self._prepare_worker.error:
+            self._build_failed(self._prepare_worker.error)
             return
-
-        # 确认
-        all_names = ([p.name for p in cave_patches] +
-                     [p.name for p in bytes_patches] +
-                     [p.name for p in imm32_patches] +
-                     [p.name for p in config_patches] +
-                     [p.name for p in data_section_patches] +
-                     [p.name for p in fixed_layouts] +
-                     [p.name for p in sites_patches])
-        patch_names = ', '.join(all_names)
-        ret = QMessageBox.question(
-            self, '确认生成',
-            f'将以下 {total} 个补丁烧录进 TKS.exe：\n\n{patch_names}\n\n'
-            f'输出: {out}\n\n继续？',
-            QMessageBox.Yes | QMessageBox.No)
-        if ret != QMessageBox.Yes:
-            return
-
-        self._build_btn.setEnabled(False)
-        self._progress.setVisible(True)
-        self._progress.setRange(0, 0)
-        self._log(f'开始构建… (cave={len(cave_patches)}, bytes={len(bytes_patches)}, '
-                  f'imm32={len(imm32_patches)}, config={len(config_patches)}, '
-                  f'data={len(data_section_patches)}, fixed={len(fixed_layouts)}, '
-                  f'sites={len(sites_patches)})')
-
+        self._status_label.setText('正在准备补丁…')
         try:
-            builder = ExeBuilder(src)
-        except Exception as e:
-            self._log(f'读取原版 exe 失败: {e}')
-            QMessageBox.critical(self, '错误', f'读取原版 exe 失败:\n{e}')
-            self._build_btn.setEnabled(True)
-            self._progress.setVisible(False)
+            patch_items = self._get_selected_patches()
+            if not any(patch_items) and not self._selected_mods:
+                raise ValueError('请至少选择一个补丁或 MOD')
+            builder = ExeBuilder(self._workspace.source_exe)
+        except Exception as exc:
+            self._build_failed(str(exc))
             return
-
-        self._worker = _BuildWorker(builder, cave_patches, bytes_patches,
-                                    imm32_patches, config_patches,
-                                    data_section_patches, fixed_layouts, out,
-                                    sites_patches=sites_patches)
-        self._worker.finished.connect(self._on_build_finished)
+        names = [item.name for group in patch_items for item in group]
+        files = sorted(self._workspace.files)
+        self._log('待烧录补丁: ' + (', '.join(names) or '无（仅整合 MOD）'))
+        for name in files:
+            self._log(f'  [MOD 文件] {name}')
+        ret = QMessageBox.question(
+            self, '确认生成独立覆盖包',
+            f'将烧录 {len(names)} 个补丁操作，整合 {len(self._selected_mods)} 个 MOD / 合集。\n'
+            f'输出程序：{self._workspace.output_exe}\n\n'
+            '同名输出文件会被覆盖；仅清理上次生成清单中不再需要的文件，其他文件保留。\n'
+            '建议使用专用空目录，避免混入旧版 MOD 文件。原版目录中的源文件不会修改。\n\n继续？',
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        if ret != QMessageBox.Yes:
+            self._cleanup_workspace()
+            self._set_build_busy(False)
+            self._status_label.setText('已取消生成')
+            return
+        tool_dir = ''
+        if self._copy_tool_cb.isChecked():
+            tool_dir = os.path.join(self._launcher_dir, 'tools', self._tool_combo.currentText())
+        elif 'widescreen_16_9' in self._last_build_patch_ids:
+            self._log('[提示] 未附带画面兼容工具，使用宽屏时请确认游戏目录已有 cnc-ddraw。')
+        self._status_label.setText('正在烧录并输出文件…')
+        self._worker = _BuildWorker(builder, patch_items, self._workspace,
+                                    self._last_build_resources, tool_dir)
+        self._worker.completed.connect(self._on_build_finished)
         self._worker.start()
 
     def _on_build_finished(self, result):
-        self._build_btn.setEnabled(True)
-        self._progress.setVisible(False)
-
+        self._worker.wait()
         for line in result.log:
             self._log(line)
+        if not result.success:
+            self._build_failed(result.error)
+            return
+        count = len(self._worker.output_files)
+        self._built_directory = os.path.dirname(result.output_path)
+        self._cleanup_workspace()
+        self._set_build_busy(False)
+        self._status_label.setText(f'生成完成，共 {count} 个文件')
+        self._log(f'覆盖包已生成: {self._built_directory}')
+        QMessageBox.information(
+            self, '生成完成',
+            f'已生成 {count} 个文件：\n{self._built_directory}\n\n'
+            '将输出目录内的文件及子目录覆盖到原版游戏目录，'
+            f'运行 {os.path.basename(result.output_path)} 即可，无需启动器。\n'
+            '这是覆盖包，不是完整游戏；请不要仅复制 EXE。')
 
-        if result.success:
-            self._log('构建成功！')
-            tool_note = ''
-            out_dir = os.path.dirname(os.path.abspath(result.output_path)) \
-                if result.output_path else ''
-            resource_note = ''
-            resource_failed = False
-            if out_dir and self._last_build_resources:
-                for name, source in self._last_build_resources:
-                    destination = os.path.abspath(os.path.join(out_dir, name))
-                    try:
-                        if os.path.commonpath([out_dir, destination]) != out_dir:
-                            raise ValueError(f'资源路径越出输出目录: {name}')
-                        if os.path.lexists(destination):
-                            if not os.path.isfile(destination):
-                                raise ValueError(f'资源目标不是文件: {name}')
-                            self._log(f'  [保留资源] {name}（输出目录已有，不覆盖）')
-                            continue
-                        os.makedirs(os.path.dirname(destination), exist_ok=True)
-                        shutil.copy2(source, destination)
-                        self._log(f'  [资源] {source} → {destination}')
-                    except (OSError, ValueError) as exc:
-                        resource_failed = True
-                        self._log(f'[WARN] 部署资源 {name} 失败: {exc}')
-                resource_note = ('提示：部分补丁资源未部署成功，请查看日志并补齐。\n\n'
-                                 if resource_failed else
-                                 '已部署补丁资源，输出目录已有资源保持不变。\n\n')
-            tool = self._tool_combo.currentText().strip() \
-                if (self._copy_tool_cb.isChecked() and self._tool_combo.count()) else ''
-            if tool and out_dir:
-                tool_src = os.path.join(self._launcher_dir, 'tools', tool)
-                self._log(f'复制画面兼容工具 {tool} → {out_dir}')
-                copied = copy_tool_dir(tool_src, out_dir, log=self._log)
-                if copied:
-                    self._log(f'共复制 {copied} 个工具文件')
-                    tool_note = (f'已同时复制画面兼容工具 {tool}'
-                                 f'（{copied} 个文件）到输出目录。\n\n')
-                else:
-                    self._log(f'[WARN] 工具目录为空或复制失败: {tool_src}')
-            elif 'widescreen_16_9' in self._last_build_patch_ids:
-                tool_note = ('提示：16:9 宽屏补丁建议勾选"同时复制画面兼容工具"'
-                             '（cnc-ddraw），否则生成的 exe 需要手动放置 '
-                             'ddraw.dll/ddraw.ini。\n\n')
-                self._log('[WARN] 未复制画面兼容工具；宽屏补丁可能需要 cnc-ddraw')
-            distribution_note = ('请补齐资源后再分发。' if resource_failed else
-                                 '可直接分发给玩家，无需启动器。')
-            QMessageBox.information(
-                self, '成功',
-                f'修改版 exe 已生成：\n{result.output_path}\n\n'
-                f'{resource_note}{tool_note}{distribution_note}')
+    def _open_output_directory(self):
+        if self._built_directory:
+            QDesktopServices.openUrl(QUrl.fromLocalFile(self._built_directory))
+
+    def reject(self):
+        if not self._busy:
+            super().reject()
+
+    def closeEvent(self, event):
+        if self._busy:
+            event.ignore()
         else:
-            self._log(f'构建失败: {result.error}')
-            QMessageBox.critical(self, '失败', f'构建失败:\n{result.error}')
+            super().closeEvent(event)

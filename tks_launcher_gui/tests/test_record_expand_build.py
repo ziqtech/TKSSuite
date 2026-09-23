@@ -66,8 +66,7 @@ class RecordExpandBuildTests(unittest.TestCase):
                 },
             )
             dialog = SimpleNamespace(
-                _out_edit=SimpleNamespace(text=lambda: str(wardata)),
-                _src_edit=SimpleNamespace(text=lambda: str(wardata)),
+                _resolve_data_file=lambda filename: str(Path(td) / filename),
                 _log=lambda _msg: None,
             )
 
@@ -104,8 +103,7 @@ class RecordExpandBuildTests(unittest.TestCase):
         patch_def = next(p for p in cfg.patches
                          if p.id == "warpc_base_refs")
         dialog = SimpleNamespace(
-            _out_edit=SimpleNamespace(text=lambda: str(GAME_DIR / "TKS.exe")),
-            _src_edit=SimpleNamespace(text=lambda: str(GAME_DIR / "TKS.exe")),
+            _resolve_data_file=lambda filename: str(GAME_DIR / filename),
             _log=lambda _msg: None,
         )
         item = GenerateExeDialog._build_data_section(dialog, patch_def)

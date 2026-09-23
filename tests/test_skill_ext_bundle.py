@@ -124,9 +124,7 @@ class SkillExtBundleTests(unittest.TestCase):
             out_exe = temp_dir / "TKS_skill_bundle.exe"
 
             dialog = SimpleNamespace(
-                _out_edit=SimpleNamespace(text=lambda: str(out_exe)),
-                _src_edit=SimpleNamespace(
-                    text=lambda: str(GAME_DIR / "TKS.exe")),
+                _resolve_data_file=lambda name: str(temp_dir / name),
                 _log=lambda _message: None,
             )
             data_section = GenerateExeDialog._build_data_section(
