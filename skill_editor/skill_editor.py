@@ -775,7 +775,9 @@ class SkillEditorApp(FieldUndoMixin, EditorMainWindow):
         "特性:\n"
         "  · Godot 4.6 级别布局与纯净控件约束\n"
         "  · 分页编辑: 基础/效果/免疫/进阶/技能树\n"
-        "  · 自动关联 TKT.dat 显示技能名称")
+        "  · 自动关联 TKT.dat 显示技能名称\n"
+        "  · 每行右键: 复制 / 粘贴 / 清除 / 删除 / 查看技能树\n"
+        "  · 原版技能只能清除；扩展技能可删除")
 
     def _init_data(self):
         self.skill_path = self.tkt_path = None
@@ -786,6 +788,7 @@ class SkillEditorApp(FieldUndoMixin, EditorMainWindow):
         self.filtered_indices = []
         self._dirty = False
         self._editing_idx = None
+        self._clipboard = None
 
         self.mu_path = None
         self._mu_sprites = []
@@ -848,7 +851,9 @@ class SkillEditorApp(FieldUndoMixin, EditorMainWindow):
         em.addSeparator()
         em.addAction("新建技能", QKeySequence("Ctrl+N"), self._new_skill)
         em.addAction("复制当前记录", self._copy_record)
-        em.addAction("清空当前记录", self._clear_current)
+        em.addAction("粘贴到当前记录", self._paste_current)
+        em.addAction("清除当前记录", self._clear_current)
+        em.addAction("删除当前记录", self._delete_current)
 
         self.add_standard_menus(menu_bar)
 
@@ -1291,7 +1296,7 @@ class SkillEditorApp(FieldUndoMixin, EditorMainWindow):
         return True
 
     def _show_table_context_menu(self, pos):
-        """技能列表右键菜单: 任意技能均可查看其完整技能树。"""
+        """技能列表右键菜单: 行操作与技能树查看。"""
         item = self.table.itemAt(pos)
         if item is None:
             return
@@ -1304,10 +1309,34 @@ class SkillEditorApp(FieldUndoMixin, EditorMainWindow):
             return
         if is_warpc_extension_skill_index(idx):
             return
-        menu = QMenu(self)
-        act_tree = menu.addAction("查看技能树")
-        act_tree.triggered.connect(lambda: self._show_skill_tree(idx))
+
+        self.table.selectRow(item.row())
+        current_row = self.table.currentRow()
+        if current_row < 0:
+            return
+        current_item = self.table.item(current_row, 0)
+        if current_item is None or int(current_item.text()) != idx:
+            return
+        if self._editing_idx != idx:
+            self._populate_edit(self.records[idx])
+
+        menu = self._build_table_context_menu(idx)
         menu.exec(self.table.viewport().mapToGlobal(pos))
+
+    def _build_table_context_menu(self, idx):
+        """构建单行操作菜单，便于右键入口与测试共用。"""
+        menu = QMenu(self)
+        menu.addAction("复制", lambda: self._clipboard_copy(idx))
+        paste_action = menu.addAction("粘贴", lambda: self._clipboard_paste(idx))
+        paste_action.setEnabled(self._clipboard is not None)
+        menu.addAction("清除", lambda: self._clear_record(idx))
+        delete_action = menu.addAction("删除", lambda: self._delete_record(idx))
+        delete_action.setEnabled(idx >= SKILL_ORIG_CNT)
+        if idx < SKILL_ORIG_CNT:
+            delete_action.setToolTip("原版技能不能删除，请使用清除功能")
+        menu.addSeparator()
+        menu.addAction("查看技能树", lambda: self._show_skill_tree(idx))
+        return menu
 
     def _show_skill_tree(self, idx):
         """弹出技能树窗口: 以该技能为中心双向关联展开。"""
@@ -1578,61 +1607,136 @@ class SkillEditorApp(FieldUndoMixin, EditorMainWindow):
         self.status_var.setText(
             f"已创建新技能 → 槽位 #{rec['index']} (共 {len(self.records)} 条)")
 
+    def _record_is_empty(self, rec):
+        blank = blank_skill_record(rec.get('index', 0))
+        return all(rec.get(key, 0) == blank[key] for key, _, _, _, _ in ALL_FIELDS)
+
+    def _select_record(self, idx):
+        for row in range(self.table.rowCount()):
+            item = self.table.item(row, 0)
+            if item is not None and item.text() == str(idx):
+                self.table.selectRow(row)
+                self.table.scrollToItem(item)
+                return True
+        return False
+
+    def _clipboard_copy(self, idx=None):
+        if idx is None:
+            idx = self._editing_idx
+        if idx is None or idx < 0 or idx >= len(self.records):
+            return
+        if is_warpc_extension_skill_index(idx):
+            return
+        src = self.records[idx]
+        self._clipboard = {
+            key: src.get(key, 0) for key, _, _, _, _ in ALL_FIELDS
+        }
+        self.status_var.setText(f"已复制记录 #{idx} (可粘贴到任意技能记录)")
+
     def _copy_record(self):
-        if self._editing_idx is None: return
-        src = self.records[self._editing_idx]
-        if src['skill_text_id'] == 0: return
-        if is_warpc_extension_skill_index(src['index']):
+        if self._editing_idx is None:
+            QMessageBox.information(self, "提示", "请先选择一条记录")
             return
-        target = next(
-            (item for item in self.records
-             if item['skill_text_id'] == 0
-             and not is_warpc_extension_skill_index(item['index'])),
-            None,
-        )
-        if target is None and len(self.records) >= SKILL_MAX_CNT:
-            QMessageBox.warning(
-                self,
-                "技能容量已满",
-                f"原版扩展补丁最多支持 {SKILL_MAX_CNT} 条技能。",
-            )
+        self._clipboard_copy()
+
+    def _clipboard_paste(self, idx=None):
+        if idx is None:
+            idx = self._editing_idx
+        if (self._clipboard is None or idx is None
+                or idx < 0 or idx >= len(self.records)):
             return
-        if target is None:
-            while len(self.records) < WARPC_EXTENSION_SKILL_END:
-                self.records.append(blank_skill_record(len(self.records)))
-            idx = len(self.records)
-            rec = {k: v for k, v in src.items() if k != 'index'}
-            rec['index'] = idx
-            self.records.append(rec)
-        else:
-            idx = target['index']
-            rec = {k: v for k, v in src.items() if k != 'index'}
-            rec['index'] = idx
-            target.clear()
-            target.update(rec)
-            rec = target
+        if is_warpc_extension_skill_index(idx):
+            return
+        rec = self.records[idx]
+        if not self._record_is_empty(rec):
+            if themed_question(
+                    self, "确认覆盖",
+                    f"粘贴将覆盖记录 #{idx} 的现有内容，是否继续？"
+            ) != QMessageBox.Yes:
+                return
+
+        keys = [key for key, _, _, _, _ in ALL_FIELDS]
+        paste_before = {key: rec[key] for key in keys}
+        for key in keys:
+            rec[key] = self._clipboard.get(key, 0)
+        changes = self.field_diff(paste_before, rec, keys)
+        if changes:
+            self.push_field_changes(idx, changes, f"粘贴到记录 #{idx}")
+            self._dirty = True
+        self._apply_filter()
+        self._select_record(idx)
+        self._populate_edit(rec)
+        self.status_var.setText(f"已粘贴到记录 #{idx}")
+
+    def _paste_current(self):
+        self._clipboard_paste()
+
+    def _remove_record(self, idx):
+        if idx < SKILL_ORIG_CNT or idx >= len(self.records):
+            return
+        if themed_question(
+                self, "确认删除",
+                f"确定删除扩展技能 #{idx} 吗？\n"
+                "删除后后续记录序号会自动前移。") != QMessageBox.Yes:
+            return
+        self.records.pop(idx)
+        for i, rec in enumerate(self.records):
+            rec['index'] = i
+        self._dirty = True
+        self._editing_idx = None
+        self.clear_undo()
+        self._apply_filter()
+        self.status_var.setText(
+            f"已删除扩展技能 #{idx} (共 {len(self.records)} 条, 已修改)")
+
+    def _delete_record(self, idx=None):
+        if idx is None:
+            idx = self._editing_idx
+        if idx is None or idx < 0 or idx >= len(self.records):
+            return
+        if idx < SKILL_ORIG_CNT:
+            QMessageBox.information(
+                self, "提示",
+                f"原版技能 #{idx} 不能删除，只能使用清除功能。")
+            return
+        self._remove_record(idx)
+
+    def _clear_record(self, idx=None):
+        if idx is None:
+            idx = self._editing_idx
+        if idx is None or idx < 0 or idx >= len(self.records):
+            return
+        if is_warpc_extension_skill_index(idx):
+            return
+        rec = self.records[idx]
+        if self._record_is_empty(rec):
+            QMessageBox.information(self, "提示", "当前记录已经为空")
+            return
+        if themed_question(
+                self, "确认清除",
+                f"确定清除记录 #{idx} 的全部字段吗？\n"
+                "是否继续？") != QMessageBox.Yes:
+            return
+
+        keys = [key for key, _, _, _, _ in ALL_FIELDS]
+        clear_before = {key: rec[key] for key in keys}
+        blank = blank_skill_record(idx)
+        for key in keys:
+            rec[key] = blank[key]
+        changes = self.field_diff(clear_before, rec, keys)
+        if changes:
+            self.push_field_changes(idx, changes, f"清除记录 #{idx}")
         self._dirty = True
         self._apply_filter()
-        for r in range(self.table.rowCount()):
-            if int(self.table.item(r, 0).text()) == idx:
-                self.table.selectRow(r)
-                break
+        self._select_record(idx)
         self._populate_edit(rec)
+        self.status_var.setText(f"已清除记录 #{idx}")
+
+    def _delete_current(self):
+        self._delete_record()
 
     def _clear_current(self):
-        if self._editing_idx is None: return
-        rec = self.records[self._editing_idx]
-        if is_warpc_extension_skill_index(rec['index']):
-            return
-        if rec['skill_text_id'] == 0: return
-        reply = themed_question(self, "确认", f"确定清空记录 #{rec['index']}?")
-        if reply == QMessageBox.Yes:
-            for k, fo, _, _, _ in ALL_FIELDS:
-                rec[k] = 0
-            rec['sub_count'] = -1
-            self._dirty = True
-            self._apply_filter()
-            self._populate_edit(rec)
+        self._clear_record()
 
     def _save(self):
         if not self.skill_path or not self.records: return

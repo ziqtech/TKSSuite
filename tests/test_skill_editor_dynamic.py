@@ -330,6 +330,112 @@ class SkillEditorDynamicTests(unittest.TestCase):
             editor.close()
             app.processEvents()
 
+    def test_edit_menu_contains_list_operations(self):
+        from PySide6.QtWidgets import QApplication, QMenu
+
+        app = QApplication.instance() or QApplication([])
+        editor = SkillEditorApp()
+        try:
+            edit_menu = next(
+                menu for menu in editor.findChildren(QMenu)
+                if menu.title() == "编辑(E)"
+            )
+            texts = [action.text() for action in edit_menu.actions()]
+            for label in (
+                    "复制当前记录",
+                    "粘贴到当前记录",
+                    "清除当前记录",
+                    "删除当前记录"):
+                self.assertIn(label, texts)
+        finally:
+            editor.close()
+            app.processEvents()
+
+    def test_skill_context_menu_contains_row_operations(self):
+        from PySide6.QtWidgets import QApplication
+
+        app = QApplication.instance() or QApplication([])
+        editor = SkillEditorApp()
+        try:
+            editor.records = [self._make_record(i) for i in range(351)]
+            editor.tkt = {}
+            actions = editor._build_table_context_menu(350).actions()
+            self.assertEqual(
+                [action.text() for action in actions[:4]],
+                ["复制", "粘贴", "清除", "删除"],
+            )
+            self.assertFalse(actions[1].isEnabled())
+            self.assertTrue(actions[3].isEnabled())
+        finally:
+            editor._dirty = False
+            editor.close()
+            app.processEvents()
+
+    def test_clipboard_paste_overwrites_target_and_preserves_index(self):
+        from PySide6.QtWidgets import QApplication, QMessageBox
+        import skill_editor.skill_editor as skill_module
+
+        app = QApplication.instance() or QApplication([])
+        editor = skill_module.SkillEditorApp()
+        try:
+            source = self._make_record(0)
+            source["jp_cost"] = 9
+            source["ref_skill0"] = 2
+            editor.records = [source, self._make_record(1)]
+            editor.tkt = {}
+            editor._editing_idx = 0
+
+            editor._copy_record()
+            with mock.patch.object(
+                    skill_module, "themed_question",
+                    return_value=QMessageBox.Yes):
+                editor._clipboard_paste(1)
+
+            target = editor.records[1]
+            self.assertEqual(target["index"], 1)
+            self.assertEqual(target["jp_cost"], 9)
+            self.assertEqual(target["ref_skill0"], 2)
+            self.assertTrue(editor._dirty)
+            self.assertEqual(editor._undo_stack[-1][1], 1)
+        finally:
+            editor._dirty = False
+            editor.close()
+            app.processEvents()
+
+    def test_delete_rejects_original_and_removes_extension(self):
+        from PySide6.QtWidgets import QApplication, QMessageBox
+        import skill_editor.skill_editor as skill_module
+
+        app = QApplication.instance() or QApplication([])
+        editor = skill_module.SkillEditorApp()
+        try:
+            editor.records = [self._make_record(i) for i in range(352)]
+            editor.tkt = {}
+            editor._editing_idx = 100
+
+            with mock.patch.object(
+                    skill_module.QMessageBox, "information",
+                    return_value=QMessageBox.Ok) as information:
+                editor._delete_record()
+
+            information.assert_called_once()
+            self.assertEqual(len(editor.records), 352)
+
+            editor._editing_idx = 350
+            with mock.patch.object(
+                    skill_module, "themed_question",
+                    return_value=QMessageBox.Yes):
+                editor._delete_record()
+
+            self.assertEqual(len(editor.records), 351)
+            self.assertEqual(editor.records[350]["index"], 350)
+            self.assertEqual(editor.records[350]["skill_text_id"], 352)
+            self.assertTrue(editor._dirty)
+        finally:
+            editor._dirty = False
+            editor.close()
+            app.processEvents()
+
     def test_warpc_editor_loads_extended_skill_directory(self):
         root = Path(__file__).resolve().parents[1]
         warpc_dir = str(root / "warpc_editor")
