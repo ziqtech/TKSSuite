@@ -1,4 +1,4 @@
-"""离线 MOD 整合工作区：原版只读，暂存合并，事务发布。"""
+"""离线 MOD 整合工作区：源游戏只读，暂存合并，事务发布。"""
 import base64
 import io
 import json
@@ -16,12 +16,19 @@ from .mod_loader import ModInfo
 
 
 _MANIFEST = "tks_build_manifest.json"
-_MARKERS = (".orig", ".mod_orig", ".mod_new", ".toolbak", ".expanded", ".bak")
+_RUNTIME_MARKERS = (".orig", ".mod_orig", ".mod_new", ".toolbak", ".expanded")
+_MARKERS = (*_RUNTIME_MARKERS, ".bak")
 _DEVICE = re.compile(r"^(con|prn|aux|nul|clock\$|conin\$|conout\$|com[1-9¹²³]|lpt[1-9¹²³])$", re.I)
 _KNOWN_NAMES = {n.casefold(): n for n in (
     *mod_loader.DAT_FILE_INFO, *mod_loader.STRUCTURED_FILE_INFO,
     "TKS.exe", "TKD.dat", "TKT.dat",
 )}
+_GAME_SUFFIXES = {".dat", ".tksx", ".grp", ".idx", ".jvg", ".gxp", ".srp", ".pcx",
+                  ".avi", ".mp3", ".wav", ".ogg", ".mid", ".lst", ".dll", ".ini"}
+_GAME_NAMES = {"font9696", "font9696.chs", "font9696.cht", "tkdef.txt", "tktalk.txt"}
+_EXCLUDED_DIRS = {"dist", "save", "saves", "launcher_cache", "mods", "tools",
+                  "configs", "logs", "__pycache__", "backup", "backups", "备份",
+                  "cache", "tmp", "docs", "src", "source", "editor", "projects"}
 
 
 def _relative(name: str) -> str:
@@ -81,8 +88,8 @@ def _clean_read(path):
     if os.path.isdir(parent):
         prefix = os.path.basename(path).casefold()
         for name in os.listdir(parent):
-            if any(name.casefold() == prefix + suffix for suffix in _MARKERS):
-                raise ValueError(f"检测到运行残留，请先独立恢复原版：{os.path.join(parent, name)}")
+            if any(name.casefold() == prefix + suffix for suffix in _RUNTIME_MARKERS):
+                raise ValueError(f"检测到运行残留，请先独立恢复游戏目录：{os.path.join(parent, name)}")
 
 
 def _register(names, name):
@@ -158,7 +165,7 @@ class ModBuildWorkspace:
         for output, source in ((self._output_dir, self._source_dir),
                                (os.path.realpath(self._output_dir), self._source_real)):
             if _within(source, output):
-                raise ValueError("输出目录不能是原版目录或其祖先")
+                raise ValueError("输出目录不能是源游戏目录或其祖先")
             if _within(output, source):
                 relative = os.path.relpath(output, source).replace("\\", "/")
                 if relative.split("/")[0].casefold() != "dist":
@@ -166,7 +173,7 @@ class ModBuildWorkspace:
         if hasattr(self, "_output_real") and _key(os.path.realpath(self._output_dir)) != _key(self._output_real):
             raise ValueError("输出目录的真实路径已改变")
         if _key(os.path.realpath(self._source_dir)) != _key(self._source_real):
-            raise ValueError("原版目录的真实路径已改变")
+            raise ValueError("源游戏目录的真实路径已改变")
         _join(self._output_dir, os.path.basename(self.output_exe))
         if os.path.exists(self.output_exe) and not os.path.isfile(self.output_exe):
             raise ValueError("输出 EXE 目标不是文件")
@@ -174,16 +181,44 @@ class ModBuildWorkspace:
     def _source_file(self, name, required=False):
         name = _relative(name)
         if name.split("/")[0].casefold() == "dist":
-            raise ValueError("不能从已有 dist 读取原版数据")
+            raise ValueError("不能从已有 dist 读取源游戏数据")
         path = _join(self._source_dir, name)
         _clean_read(path)
         if os.path.isfile(path):
             return path
         if os.path.exists(path):
-            raise ValueError(f"原版目标不是文件：{name}")
+            raise ValueError(f"源游戏目标不是文件：{name}")
         if required:
-            raise FileNotFoundError(f"差分所需原版文件不存在：{name}")
+            raise FileNotFoundError(f"差分所需游戏文件不存在：{name}")
         return None
+
+    def _collect_game_files(self):
+        files = {}
+
+        def walk_error(error):
+            raise error
+
+        for root, dirs, names in os.walk(self._source_dir, onerror=walk_error):
+            dirs[:] = [name for name in dirs if name.casefold() not in _EXCLUDED_DIRS
+                       and not name.startswith('.')]
+            for directory in dirs:
+                if _link(os.path.join(root, directory)):
+                    raise ValueError(f"游戏资源目录不能包含链接：{directory}")
+            for filename in sorted(names):
+                folded = filename.casefold()
+                path = Path(folded)
+                if (folded.startswith(('.', 'sav.', 'tmp_')) or folded == 'tmp.dat'
+                        or folded.endswith(_MARKERS)
+                        or path.stem.endswith(('-bak', '_bak', '-backup', '_backup'))):
+                    continue
+                if folded not in _GAME_NAMES and path.suffix not in _GAME_SUFFIXES:
+                    continue
+                relative = os.path.relpath(os.path.join(root, filename), self._source_dir)
+                relative = _relative(relative)
+                source = self._source_file(relative, required=True)
+                target = _register(self._targets, _KNOWN_NAMES.get(relative.casefold(), relative))
+                files[target] = source
+        return files
 
     def _reload(self, log):
         mods = []
@@ -366,7 +401,11 @@ class ModBuildWorkspace:
                 raise ValueError("所选 MOD 存在显式互斥")
             if conflicts:
                 self._log("普通冲突按依赖及加载顺序处理，后加载的 MOD 生效")
-            copies = {}
+            copies = self._collect_game_files()
+            self._log(f"以当前游戏目录为基准：{self._source_dir}，收集 {len(copies)} 个运行文件")
+            for name, target in (("tkdef.txt", "TKD.dat"), ("tktalk.txt", "TKT.dat")):
+                if name in self._targets:
+                    self._log(f"[提示] 保留 {self._targets[name]}；与启动器运行时一致，游戏启动后会重建 {target}")
             for mod in mods:
                 for comp in mod.components:
                     target = comp["target"]
@@ -395,6 +434,7 @@ class ModBuildWorkspace:
                 destination = _join(self._data_dir, target)
                 os.makedirs(os.path.dirname(destination), exist_ok=True)
                 shutil.copyfile(source, destination)
+                self._log(f"  [基准文件] {target}")
             self._validate_blocks(mods)
             merged = mod_loader.merge_mods(mods, self._data_dir, strict_log)
             check_errors()
@@ -409,7 +449,7 @@ class ModBuildWorkspace:
             self.files = {n for n in self._targets.values() if n.casefold() not in self._exe_targets}
             self.config_overrides = dict(merged.config_overrides)
             self._state = "ready"
-            self._log(f"MOD 暂存整合完成：{len(self.files)} 个数据及资源文件，原版未修改")
+            self._log(f"游戏数据与 MOD 暂存整合完成：{len(self.files)} 个数据及资源文件，源游戏未修改")
         except Exception:
             self.files.clear()
             self.config_overrides.clear()
@@ -496,9 +536,14 @@ class ModBuildWorkspace:
                 for filename in sorted(files):
                     path = os.path.join(root, filename)
                     name = _relative(os.path.relpath(path, tool_dir))
-                    if name.casefold() in self._exe_targets:
-                        raise ValueError(f"工具不能输出未烧录的原版名称 EXE：{name}")
-                    add(name, path)
+                    key = name.casefold()
+                    if key in self._exe_targets or key == os.path.basename(self.output_exe).casefold():
+                        raise ValueError(f"工具不能覆盖烧录程序：{name}")
+                    if key in names:
+                        sources[names[key]] = path
+                        self._log(f"  [工具覆盖] {name}（与启动器最后部署工具的顺序一致）")
+                    else:
+                        add(name, path)
         old = self._old_files()
         for name in set(sources) | old:
             destination = _join(self._output_dir, name)
@@ -517,7 +562,7 @@ class ModBuildWorkspace:
             manifest = {"version": 1, "files": sorted(sources)}
             Path(staged, _MANIFEST).write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
             result = self._commit(staged, set(sources), old)
-        self._log(f"发布完成：{self._output_dir}，原版未修改")
+        self._log(f"发布完成：{self._output_dir}，源游戏未修改")
         return result
 
     def _commit(self, staged, current, old):
@@ -581,7 +626,7 @@ class ModBuildWorkspace:
                 shutil.rmtree(transaction)
             for directory in reversed(created_dirs):
                 os.rmdir(directory)
-            self._log("发布失败，已回滚输出目录，原版未修改")
+            self._log("发布失败，已回滚输出目录，源游戏未修改")
             raise
         shutil.rmtree(transaction)
         return [_join(self._output_dir, name) for name in sorted(current | {_MANIFEST})]

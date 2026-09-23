@@ -295,6 +295,18 @@ class GenerateDistributionDialogTests(unittest.TestCase):
             version=metadata["version"], components=metadata["components"],
             resources=metadata["resources"])
 
+    def _make_compatibility_tool(self):
+        current_files = {"ddraw.dll": b"CURRENT-DLL", "ddraw.ini": b"renderer=current\n"}
+        tool_files = {"ddraw.dll": b"NEW-TOOL-DLL", "ddraw.ini": b"renderer=new\n",
+                      "Shaders/new.glsl": b"new synthetic shader"}
+        for name, content in current_files.items():
+            (self.source.parent / name).write_bytes(content)
+        tool = self.launcher / "tools" / "cnc-ddraw"
+        (tool / "Shaders").mkdir(parents=True)
+        for name, content in tool_files.items():
+            (tool / name).write_bytes(content)
+        return current_files, tool_files
+
     def _dialog(self, patches=(), mods=(), **kwargs):
         kwargs.setdefault("source_exe", str(self.source))
         dialog = GenerateExeDialog(
@@ -370,6 +382,19 @@ class GenerateDistributionDialogTests(unittest.TestCase):
         self.assertIn("MOD", dialog._selection_tabs.tabText(1))
         self.assertIn("未勾选 MOD", dialog._mod_list.item(0).text())
 
+    def test_source_copy_describes_current_game_data_even_without_mods(self):
+        dialog = self._dialog()
+        paths = dialog._paths_group.layout()
+        source_copy = "\n".join((
+            dialog._paths_group.title(), dialog._src_edit.placeholderText(),
+            dialog._out_edit.placeholderText(),
+            paths.itemAtPosition(0, 0).widget().text(),
+            paths.itemAtPosition(2, 1).widget().text()))
+        self.assertIn("当前游戏", source_copy)
+        self.assertIn("现有数据", source_copy)
+        self.assertNotRegex(source_copy, "纯净|原版")
+        self.assertIn("仍会输出当前游戏目录的运行数据", dialog._mod_list.item(0).text())
+
     def test_omitted_source_uses_existing_legacy_default(self):
         legacy = self.root / "TKS" / "TKS.exe"
         legacy.parent.mkdir()
@@ -444,8 +469,14 @@ class GenerateDistributionDialogTests(unittest.TestCase):
         stale.write_bytes(b"STALE")
         self.assertEqual(Path(dialog._resolve_data_file("TKMat.Dat")), stale)
         self.assertIsNone(dialog._resolve_data_file("missing.dat"))
-        self._prepare_workspace(dialog)
-        self.assertEqual(Path(dialog._resolve_data_file("TKMat.Dat")), source_data)
+        workspace = self._prepare_workspace(dialog)
+        resolved = Path(dialog._resolve_data_file("TKMat.Dat"))
+        self.assertNotEqual(resolved, source_data)
+        self.assertNotEqual(resolved, stale)
+        self.assertTrue(resolved.is_relative_to(workspace.directory))
+        self.assertEqual(resolved.read_bytes(), b"SOURCE")
+        source_data.write_bytes(b"EDITED-AFTER-PREPARE")
+        self.assertEqual(Path(dialog._resolve_data_file("TKMat.Dat")).read_bytes(), b"SOURCE")
         (self.output.parent / "missing.dat").write_bytes(b"STALE-ONLY")
         self.assertIsNone(dialog._resolve_data_file("missing.dat"))
 
@@ -653,7 +684,7 @@ class GenerateDistributionDialogTests(unittest.TestCase):
         for name, content in tool_files.items():
             self.assertEqual((self.output.parent / name).read_bytes(), content)
         self.assertFalse((self.output.parent / "TKS.exe").exists())
-        self.assertFalse((self.output.parent / "untouched.dat").exists())
+        self.assertEqual((self.output.parent / "untouched.dat").read_bytes(), b"UNCHANGED")
         self.assertTrue(dialog._open_btn.isEnabled())
         self.assertIn("生成完成", dialog._status_label.text())
 
@@ -666,7 +697,73 @@ class GenerateDistributionDialogTests(unittest.TestCase):
         self.messages["information"].assert_called_once()
         self.assertEqual(self.output.read_bytes(), self.original_exe)
         self.assertEqual((self.output.parent / "FONT9696").read_bytes(), b"MOD-FONT")
-        self.assertFalse((self.output.parent / "untouched.dat").exists())
+        self.assertEqual((self.output.parent / "untouched.dat").read_bytes(), b"UNCHANGED")
+
+    def test_pure_export_keeps_already_edited_data_and_excludes_backups(self):
+        edited = {
+            "WarPC.dat": lzss_compress_dat(b"\x11\x00" + bytes(1052)),
+            "WarPC.dat.tksx": b"TKSX-ALREADY-EDITED\0\xff",
+        }
+        for name, content in edited.items():
+            (self.source.parent / name).write_bytes(content)
+            (self.source.parent / (name + ".bak")).write_bytes(b"BEFORE-EDIT")
+        before = {p.name: p.read_bytes() for p in self.source.parent.iterdir()}
+        dialog = self._dialog()
+        with patch.object(ExeBuilder, "build", autospec=True) as burner:
+            workspace = self._run_build(dialog)
+        burner.assert_not_called()
+        self.assertIsNotNone(dialog._worker)
+        self.assertIsNot(dialog._prepare_worker, dialog._worker)
+        self.messages["question"].assert_called_once()
+        self.messages["critical"].assert_not_called()
+        self.messages["information"].assert_called_once()
+        self.assertEqual(self.output.read_bytes(), self.original_exe)
+        self.assertEqual(workspace.files, set(edited) | {"FONT9696", "untouched.dat"})
+        for name in workspace.files:
+            self.assertEqual((self.output.parent / name).read_bytes(), before[name])
+        for name in edited:
+            self.assertFalse((self.output.parent / (name + ".bak")).exists())
+        self.assertEqual(
+            {p.name: p.read_bytes() for p in self.source.parent.iterdir() if p.name != "dist"},
+            before)
+
+    def test_pure_export_without_selected_tool_keeps_current_dll_and_ini(self):
+        current_files, _ = self._make_compatibility_tool()
+        before = {p.name: p.read_bytes() for p in self.source.parent.iterdir()}
+        dialog = self._dialog(selected_tool="")
+        self.assertTrue(dialog._copy_tool_cb.isEnabled())
+        self.assertEqual(dialog._tool_combo.currentText(), "cnc-ddraw")
+        self.assertFalse(dialog._copy_tool_cb.isChecked())
+        self.assertFalse(dialog._tool_combo.isEnabled())
+        self._run_build(dialog)
+        self.assertIsNotNone(dialog._worker)
+        self.messages["critical"].assert_not_called()
+        self.messages["information"].assert_called_once()
+        self.assertEqual(self.output.read_bytes(), self.original_exe)
+        for name, content in current_files.items():
+            self.assertEqual((self.output.parent / name).read_bytes(), content)
+        self.assertFalse((self.output.parent / "Shaders").exists())
+        self.assertEqual(
+            {p.name: p.read_bytes() for p in self.source.parent.iterdir() if p.name != "dist"},
+            before)
+
+    def test_pure_export_with_selected_tool_defaults_to_final_tool_files(self):
+        _, tool_files = self._make_compatibility_tool()
+        before = {p.name: p.read_bytes() for p in self.source.parent.iterdir()}
+        dialog = self._dialog(selected_tool="cnc-ddraw")
+        self.assertTrue(dialog._copy_tool_cb.isChecked())
+        self.assertTrue(dialog._tool_combo.isEnabled())
+        self.assertEqual(dialog._tool_combo.currentText(), "cnc-ddraw")
+        self._run_build(dialog)
+        self.assertIsNotNone(dialog._worker)
+        self.messages["critical"].assert_not_called()
+        self.messages["information"].assert_called_once()
+        self.assertEqual(self.output.read_bytes(), self.original_exe)
+        for name, content in tool_files.items():
+            self.assertEqual((self.output.parent / name).read_bytes(), content)
+        self.assertEqual(
+            {p.name: p.read_bytes() for p in self.source.parent.iterdir() if p.name != "dist"},
+            before)
 
     def test_pattern_mismatch_never_publishes_or_changes_existing_dist(self):
         bad_patch = self._byte_patch()

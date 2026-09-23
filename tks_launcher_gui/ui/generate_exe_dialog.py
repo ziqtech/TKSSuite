@@ -227,28 +227,28 @@ class GenerateExeDialog(QDialog):
     def _setup_ui(self):
         layout = QVBoxLayout(self)
         layout.setSpacing(12)
-        hint = QLabel('生成可覆盖到原版游戏目录的文件包，无需再通过启动器运行。原版文件只读，不修改、不删除。')
+        hint = QLabel('以当前所选游戏目录为基准，整合已有改版数据与 MOD；源目录只读，不修改、不删除。')
         hint.setWordWrap(True)
         hint.setObjectName('hintLabel')
         layout.addWidget(hint)
 
-        self._paths_group = QGroupBox('1. 原版与输出位置')
+        self._paths_group = QGroupBox('1. 当前游戏与输出位置')
         paths = QGridLayout(self._paths_group)
         self._src_edit = QLineEdit()
-        self._src_edit.setPlaceholderText('选择原版 TKS.exe，相关数据从此目录读取')
-        src_btn = QPushButton('选择原版…')
+        self._src_edit.setPlaceholderText('选择当前游戏的 TKS.exe，使用其所在目录的现有数据（支持改版）')
+        src_btn = QPushButton('选择游戏…')
         src_btn.clicked.connect(self._browse_src)
-        paths.addWidget(QLabel('原版程序'), 0, 0)
+        paths.addWidget(QLabel('基准程序'), 0, 0)
         paths.addWidget(self._src_edit, 0, 1)
         paths.addWidget(src_btn, 0, 2)
         self._out_edit = QLineEdit()
-        self._out_edit.setPlaceholderText('默认：原版目录 / dist / TKS_MOD.exe')
+        self._out_edit.setPlaceholderText('默认：当前游戏目录 / dist / TKS_MOD.exe')
         out_btn = QPushButton('更改输出…')
         out_btn.clicked.connect(self._browse_out)
         paths.addWidget(QLabel('输出程序'), 1, 0)
         paths.addWidget(self._out_edit, 1, 1)
         paths.addWidget(out_btn, 1, 2)
-        path_hint = QLabel('MOD 数据、索引与资源一并输出到该 EXE 所在目录；覆盖包不包含未改动的原版文件。')
+        path_hint = QLabel('完整输出当前目录的运行数据，再叠加 MOD；不自动包含存档、备份、缓存和旧输出。')
         path_hint.setWordWrap(True)
         path_hint.setObjectName('hintLabel')
         paths.addWidget(path_hint, 2, 1, 1, 2)
@@ -269,11 +269,11 @@ class GenerateExeDialog(QDialog):
         has_tool = self._tool_combo.count() > 0
         self._copy_tool_cb.setEnabled(has_tool)
         self._copy_tool_cb.setChecked(
-            has_tool and (bool(self._selected_tool)
-                          or self._tool_combo.currentText() == 'cnc-ddraw'))
+            has_tool and bool(self._selected_tool)
+            and self._tool_combo.findText(self._selected_tool) >= 0)
         self._tool_combo.setEnabled(self._copy_tool_cb.isChecked())
         self._copy_tool_cb.toggled.connect(self._tool_combo.setEnabled)
-        self._tool_combo.setToolTip('16:9 宽屏建议附带 cnc-ddraw（ddraw.dll / ddraw.ini）')
+        self._tool_combo.setToolTip('默认沿用主窗口选择；未选择时保留游戏目录已有工具文件。宽屏建议使用 cnc-ddraw。')
         tool_row = QHBoxLayout()
         tool_row.addWidget(self._copy_tool_cb)
         tool_row.addWidget(self._tool_combo, 1)
@@ -328,7 +328,7 @@ class GenerateExeDialog(QDialog):
             item.setToolTip('\n'.join(targets) or mod.description)
             self._mod_list.addItem(item)
         if not self._selected_mods:
-            self._mod_list.addItem('未勾选 MOD，本次仅生成补丁 EXE 与所需补丁资源。')
+            self._mod_list.addItem('未勾选 MOD，仍会输出当前游戏目录的运行数据和已选补丁。')
         mod_layout.addWidget(self._mod_list)
         self._selection_tabs.addTab(mod_page, f'已选 MOD（{len(self._selected_mods)}）')
         splitter.addWidget(self._selection_tabs)
@@ -482,7 +482,7 @@ class GenerateExeDialog(QDialog):
 
     def _browse_src(self):
         path, _ = QFileDialog.getOpenFileName(
-            self, '选择原版 TKS.exe', self._src_edit.text(), '可执行文件 (*.exe)')
+            self, '选择当前游戏的 TKS.exe（可为改版）', self._src_edit.text(), '可执行文件 (*.exe)')
         if path:
             self._src_edit.setText(path)
 
@@ -967,7 +967,7 @@ class GenerateExeDialog(QDialog):
         src = self._src_edit.text().strip()
         out = self._out_edit.text().strip()
         if not src or not os.path.isfile(src):
-            QMessageBox.warning(self, '错误', '请选择有效的原版 TKS.exe')
+            QMessageBox.warning(self, '错误', '请选择有效的游戏 TKS.exe（支持改版目录）')
             return
         if not out or not out.lower().endswith('.exe'):
             QMessageBox.warning(self, '错误', '请指定以 .exe 结尾的输出路径')
@@ -982,8 +982,8 @@ class GenerateExeDialog(QDialog):
             self._build_failed(str(exc))
             return
         self._set_build_busy(True)
-        self._status_label.setText('正在整合 MOD…')
-        self._log('在临时目录整合已选 MOD，原版文件保持不变。')
+        self._status_label.setText('正在收集游戏数据并整合 MOD…')
+        self._log('以当前游戏目录为基准，在临时目录收集运行数据并整合 MOD，源文件保持不变。')
         self._prepare_worker = _PrepareWorker(self._workspace)
         self._prepare_worker.finished.connect(self._on_mods_prepared)
         self._prepare_worker.start()
@@ -995,23 +995,24 @@ class GenerateExeDialog(QDialog):
         self._status_label.setText('正在准备补丁…')
         try:
             patch_items = self._get_selected_patches()
-            if not any(patch_items) and not self._selected_mods:
-                raise ValueError('请至少选择一个补丁或 MOD')
+            if not any(patch_items) and not self._selected_mods and not self._workspace.files:
+                raise ValueError('当前目录没有可输出的运行数据，请至少选择一个补丁或 MOD')
             builder = ExeBuilder(self._workspace.source_exe)
         except Exception as exc:
             self._build_failed(str(exc))
             return
         names = [item.name for group in patch_items for item in group]
         files = sorted(self._workspace.files)
-        self._log('待烧录补丁: ' + (', '.join(names) or '无（仅整合 MOD）'))
+        self._log('待烧录补丁: ' + (', '.join(names) or '无（保留当前游戏程序）'))
         for name in files:
-            self._log(f'  [MOD 文件] {name}')
+            self._log(f'  [输出文件] {name}')
         ret = QMessageBox.question(
             self, '确认生成独立覆盖包',
             f'将烧录 {len(names)} 个补丁操作，整合 {len(self._selected_mods)} 个 MOD / 合集。\n'
+            f'包括当前目录已有的数据，共 {len(files)} 个运行文件。\n'
             f'输出程序：{self._workspace.output_exe}\n\n'
             '同名输出文件会被覆盖；仅清理上次生成清单中不再需要的文件，其他文件保留。\n'
-            '建议使用专用空目录，避免混入旧版 MOD 文件。原版目录中的源文件不会修改。\n\n继续？',
+            '建议使用专用空目录，避免混入旧版 MOD 文件。当前游戏目录中的源文件不会修改。\n\n继续？',
             QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
         if ret != QMessageBox.Yes:
             self._cleanup_workspace()

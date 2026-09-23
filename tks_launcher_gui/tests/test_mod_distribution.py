@@ -97,6 +97,8 @@ class ModBuildWorkspaceTests(unittest.TestCase):
         (self.game / "Sound").mkdir()
         (self.game / "Sound" / "theme.mp3").write_bytes(b"old-music")
         (self.game / "unrelated.bin").write_bytes(b"do-not-copy")
+        self.base_files = {"WarPC.dat", "TKSkill.dat", "TKT.dat", "SC.GRP", "SC.IDX",
+                           "FONT9696", "Sound/theme.mp3"}
         self.output = self.game / "dist" / "launcher.exe"
         self.logs = []
         self.serial = 0
@@ -192,6 +194,84 @@ class ModBuildWorkspaceTests(unittest.TestCase):
         self.assertFalse(any(n.endswith((".orig", ".mod_orig", ".mod_new")) for n in tree(self.output.parent)))
         self.assertEqual(tree(self.game, exclude_dist=True), original)
 
+    def test_current_game_data_is_published_without_selected_mods(self):
+        template = self.game / "WarPC.dat.tksx"
+        template.write_bytes(b"edited-skill-state")
+        before = tree(self.game)
+        work = self.workspace()
+        self.build(work)
+        work.publish([])
+        for name in ("WarPC.dat", "WarPC.dat.tksx", "TKSkill.dat", "TKT.dat",
+                     "SC.GRP", "SC.IDX", "FONT9696", "Sound/theme.mp3"):
+            with self.subTest(name=name):
+                self.assertEqual((self.output.parent / name).read_bytes(),
+                                 (self.game / name).read_bytes())
+        self.assertEqual(tree(self.game, exclude_dist=True), before)
+
+    def test_existing_edits_remain_under_mod_diff_and_editor_backups_are_ignored(self):
+        existing = bytearray(2 * 1054)
+        struct.pack_into("<h", existing, 0, 91)
+        struct.pack_into("<h", existing, 4, 123)
+        baseline = lzss_compress_dat(existing)
+        (self.game / "WarPC.dat").write_bytes(baseline)
+        (self.game / "WarPC.dat.bak").write_bytes(b"older-editor-backup")
+        (self.game / "WarPC.dat.tksx").write_bytes(b"current-template")
+        (self.game / "WarPC.dat.tksx.bak").write_bytes(b"older-template")
+        before = tree(self.game)
+        diff = {"record_size": 1054, "field_type": "int16",
+                "modified": [{"index": 0, "fields": {"f1": 456}}]}
+        work = self.workspace([self.mod(diffs={"WarPC.dat": diff})])
+        self.build(work)
+        work.publish([])
+        result = lzss_decompress_dat((self.output.parent / "WarPC.dat").read_bytes())
+        self.assertEqual(struct.unpack_from("<hhh", result), (91, 456, 123))
+        self.assertEqual((self.output.parent / "WarPC.dat.tksx").read_bytes(), b"current-template")
+        self.assertFalse(any(name.endswith(".bak") for name in tree(self.output.parent)))
+        self.assertEqual(tree(self.game, exclude_dist=True), before)
+
+    def test_collects_runtime_formats_but_not_saves_caches_backups_or_editor_files(self):
+        included = {"TKObj.dat", "DEFCMD.LST", "Title.avi", "FONT9696.chs", "FONT9696.cht",
+                    "image.dll", "ddraw.ini", "Check.GRP", "TKDef.txt", "TKTalk.txt",
+                    "script.srp", "pic_h01.pcx", "00.gxp", "Aa.JVG", "Sound/voice.wav",
+                    "Movie/ending.avi"}
+        excluded = {"Save/1.sav", "Save/data.dat", "sav.dat", "tmp.dat", "tmp_TKD.dat",
+                    "TKAct.dat.bak", "Mu-Bak.JVG", "launcher_cache/data.dat", "cache/map.gxp",
+                    "dist/TKSkill.dat", "mods/base.dat", "tools/data.dat", "docs/TKD.dat",
+                    "backups/WarPC.dat", "备份/SC.GRP", "projects/map.gxp", "editor/work.dat",
+                    "说明.txt", "scene.json", "CFace.exe", "TKS_MOD.exe", "run.log"}
+        for name in included | excluded:
+            path = self.game / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(name.encode("utf-8"))
+        before = tree(self.game)
+        work = self.workspace(output=self.root / "package" / "launcher.exe")
+        self.build(work)
+        self.assertEqual(work.files, self.base_files | included)
+        work.publish([])
+        for name in work.files:
+            self.assertEqual((Path(work.output_exe).parent / name).read_bytes(),
+                             (self.game / name).read_bytes())
+        self.assertEqual(tree(self.game), before)
+        self.assertTrue(any("重建 TKD.dat" in line for line in self.logs))
+        self.assertTrue(any("重建 TKT.dat" in line for line in self.logs))
+
+    def test_selected_tool_overrides_baseline_and_mod_like_launcher(self):
+        (self.game / "ddraw.dll").write_bytes(b"baseline-dll")
+        (self.game / "ddraw.ini").write_bytes(b"baseline-config")
+        tools = self.root / "tools"
+        tools.mkdir()
+        (tools / "ddraw.dll").write_bytes(b"selected-dll")
+        (tools / "ddraw.ini").write_bytes(b"selected-config")
+        before = tree(self.game)
+        mod = self.mod(resources={"ddraw.ini": b"mod-config"})
+        work = self.workspace([mod])
+        self.build(work)
+        work.publish([], str(tools))
+        self.assertEqual((self.output.parent / "ddraw.dll").read_bytes(), b"selected-dll")
+        self.assertEqual((self.output.parent / "ddraw.ini").read_bytes(), b"selected-config")
+        self.assertEqual(tree(self.game, exclude_dist=True), before)
+        self.assertEqual(Path(work.resolve_file("ddraw.ini")).read_bytes(), b"mod-config")
+
     def test_full_resource_wins_after_differences_and_patch_resources(self):
         replacement = lzss_compress_dat(bytes([5]) * 1054)
         mod = self.mod(diffs={"WarPC.dat": record_diff(9)}, resources={"WarPC.dat": replacement})
@@ -251,7 +331,7 @@ class ModBuildWorkspaceTests(unittest.TestCase):
         empty = self.workspace()
         self.build(empty)
         empty.publish([])
-        self.assertFalse((self.output.parent / "FONT9696").exists())
+        self.assertEqual((self.output.parent / "FONT9696").read_bytes(), b"old-font")
         self.assertFalse((self.output.parent / "Sound/a.ogg").exists())
 
     def test_duplicate_missing_dependency_cycle_and_explicit_conflict_abort(self):
@@ -331,14 +411,17 @@ class ModBuildWorkspaceTests(unittest.TestCase):
         (self.output.parent / "WarPC.dat").write_bytes(b"stale")
         work = self.workspace([self.mod(resources={"FONT9696": b"font"})])
         work.prepare()
-        self.assertEqual(work.resolve_file("WarPC.dat"), str(self.game / "WarPC.dat"))
+        staged = Path(work.resolve_file("WarPC.dat"))
+        self.assertNotEqual(staged, self.game / "WarPC.dat")
+        self.assertEqual(staged.read_bytes(), (self.game / "WarPC.dat").read_bytes())
         self.assertIsNone(work.resolve_file("only-in-dist.bin"))
         self.assertEqual(Path(work.resolve_file("FONT9696")).read_bytes(), b"font")
         with self.assertRaises(ValueError):
             work.resolve_file("dist/WarPC.dat")
         (self.game / "WarPC.dat.orig").write_bytes(b"leftover")
+        self.assertEqual(Path(work.resolve_file("WarPC.dat")), staged)
         with self.assertRaisesRegex(ValueError, "运行残留"):
-            work.resolve_file("WarPC.dat")
+            self.workspace().prepare()
 
     def test_exe_replacement_is_build_input_not_unburned_distribution(self):
         original = tree(self.game)
@@ -357,7 +440,10 @@ class ModBuildWorkspaceTests(unittest.TestCase):
                                    output=self.game / "dist" / "named" / "tks.EXE")
         self.build(same_name)
         same_name.publish([])
-        self.assertCountEqual(os.listdir(Path(same_name.output_exe).parent), ["tks.EXE", MANIFEST])
+        directory = Path(same_name.output_exe).parent
+        self.assertEqual({p.name for p in directory.glob("*.exe")}, {"tks.EXE"})
+        self.assertEqual(set(json.loads((directory / MANIFEST).read_text())["files"]),
+                         self.base_files | {"tks.EXE"})
 
     def test_publish_patch_resources_and_recursive_tools(self):
         tool_dir = self.root / "tools"
@@ -383,7 +469,7 @@ class ModBuildWorkspaceTests(unittest.TestCase):
         tools.mkdir()
         work = self.workspace([self.mod(resources={"shared.bin": b"mod"})])
         self.build(work)
-        for name in ("shared.bin", "LAUNCHER.exe", MANIFEST, "file.orig", "TKS.exe"):
+        for name in ("LAUNCHER.exe", MANIFEST, "file.orig", "TKS.exe"):
             with self.subTest(name=name):
                 path = tools / name
                 path.write_bytes(b"tool")
@@ -410,7 +496,8 @@ class ModBuildWorkspaceTests(unittest.TestCase):
         self.assertTrue(unknown_dir.is_dir())
         self.assertEqual(unrelated.read_bytes(), b"unrelated")
         self.assertEqual(self.output.read_bytes(), b"MZ-second")
-        self.assertEqual(json.loads((self.output.parent / MANIFEST).read_text())["files"], ["launcher.exe", "new.bin"])
+        self.assertEqual(set(json.loads((self.output.parent / MANIFEST).read_text())["files"]),
+                         self.base_files | {"launcher.exe", "new.bin"})
 
     def test_republish_preserves_requested_exe_case_and_removes_old_exe_name(self):
         first = self.workspace()
@@ -646,7 +733,7 @@ class ModBuildWorkspaceTests(unittest.TestCase):
         original = tree(self.game)
         work = self.workspace([mod])
         self.build(work)
-        self.assertEqual(work.files, {"TKAct.dat", "SC.GRP", "SC.IDX"})
+        self.assertEqual(work.files, self.base_files | {"TKAct.dat"})
         self.assertEqual(Path(work.resolve_file("TKAct.dat")).read_bytes(), bytes([3]) * 784)
         work.publish([])
         self.assertEqual(tree(self.game, exclude_dist=True), original)
@@ -657,7 +744,7 @@ class ModBuildWorkspaceTests(unittest.TestCase):
         with_idx = self.mod(resources={"new.GRP": b"new", "new.IDX": struct.pack("<II", 0, 3)})
         work = self.workspace([with_idx])
         work.prepare()
-        self.assertEqual(work.files, {"new.GRP", "new.IDX"})
+        self.assertEqual(work.files, self.base_files | {"new.GRP", "new.IDX"})
 
     def test_multiple_exe_replacements_are_rejected(self):
         mods = [self.mod("exe-a", resources={"TKS.exe": b"MZ-a"}),
