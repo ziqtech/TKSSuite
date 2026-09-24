@@ -82,7 +82,7 @@ SKILL_REC = 94
 SKILL_ORIG_CNT = 350
 SKILL_CNT = SKILL_ORIG_CNT  # backward-compatible name
 SKILL_MAX_CNT = GAME_SKILL_BASE + GAME_SKILL_CAPACITY
-SKILL_TYPES = {0: "指令技能", 1: "属性技能", 2: "反应技能", 3: "移动技能"}
+SKILL_TYPES = {0: "指令技能", 1: "主动技能", 2: "被动技能", 3: "移动技能"}
 SKILL_TYPE_VALUES = [f"{k}-{v}" for k, v in sorted(SKILL_TYPES.items())]
 ATK_TYPE_VALUES = {-1: "普攻式结算", 0: "非术法指令", 1: "术法指令", 10: "召唤分支"}
 
@@ -101,7 +101,7 @@ SPECIAL_FLAG_BITS = [
 BASIC_FIELDS = [
     ("skill_text_id", 0, "名称文本ID", 'tkt', "技能名称 TKT 文本ID"),
     ("skill_desc_id", 2, "说明文本ID", 'tkt', "技能说明的独立 TKT 文本ID；原版直接读取此值，不由名称文本ID推算"),
-    ("type", 4, "技能类型", 'type', "0=指令 1=属性（装备加成，非主动施放） 2=反应（由原版技能编号选择反应） 3=移动；新增类型2不会自动生成任意反应"),
+    ("type", 4, "技能类型", 'type', "0=指令 1=主动（装备属性加成，非战斗菜单主动施放） 2=被动（由技能编号303..330等选择反应） 3=移动；新增类型2不会自动生成任意反应"),
     ("jp_cost", 6, "学习基础技点", 'int', "学习技能基础技点；实际消耗 = 基础技点 * (250 - 角色当前悟性) / 200 (sub_41E248)"),
 ]
 
@@ -141,7 +141,7 @@ ADVANCED_FIELDS = [
     ("cost_res3", 82, "耗费灵魂", 'int', "原版技能执行消耗的第三资源（暂名灵魂），不限于幻灵技能"),
     ("turn_shift", 84, "目标时序系数", 'int', "正数：本值 × (260 - 目标速度)；负数：本值 × 目标速度；伤害路径还检查实际伤害，并非仅对敌人的固定时序偏移"),
     ("mp_cost", 86, "耗费内力", 'int', "基础内力消耗；实际值受减耗及状态影响，基础非0时调整后最低为1"),
-    ("trigger_prob",88, "抗性档位／反应参数", 'int', "属性技能：将低字节写入掩码指定状态的抗性；50/75/100有特殊分支，100禁止附加，并非任意百分比。反应技能：完整WORD作为反应参数，含义依原版反应编号而异，不统一代表触发概率"),
+    ("trigger_prob",88, "抗性档位／被动参数", 'int', "主动技能：将低字节写入掩码指定状态的抗性；50/75/100有特殊分支，100禁止附加，并非任意百分比。被动技能：完整WORD作为反应参数，含义依原版反应编号而异，不统一代表触发概率"),
     ("sub_count", 90, "连续子项数／归组标记", 'int', "0=顶层直接执行；正数N=展开后续N条；-1=非组头归组/学习恢复标记，不能作为顶层独立指令（原版会空展开）；类型0不一定是组头"),
     ("atk_type", 92, "技能结算分支", 'atk_type', "原版读取低字节+1得到运行类别0/1/2/11，对应-1/0/1/10；距离由TKKon另定，物理命中/防御由TKKon执行标志0x04另定。10仅有原版编号222、224..231、251等召唤分发支持，新增技能仅改10不保证能召唤；未知16位值原样保留"),
 ]
@@ -185,8 +185,8 @@ def clear_warpc_extension_skill_slots(records):
 
 
 TYPE_HINT_LABELS = {
-    1: "属性技能: 装备后的属性加成与状态抗性，非主动施放",
-    2: "反应技能: 由原版编号303..330等选择反应；参数依编号而异，新增类型2不会自动生成任意反应",
+    1: "主动技能: 装备后的属性加成与状态抗性，不代表战斗菜单中可主动施放",
+    2: "被动技能: 由原版编号303..330等选择反应；参数依编号而异，新增类型2不会自动生成任意反应",
     3: "移动技能: 移动力增量、移动回复与特殊标志；飙行提供额外移动机会而非增加范围",
     0: "指令技能: 按连续子项数决定执行方式；类型0不一定是组头",
 }
@@ -992,9 +992,9 @@ class SkillEditorApp(FieldUndoMixin, EditorMainWindow):
 
         # Properties (No wireframes, Godot inspector grid alignment)
         self._build_field_group("基础属性", BASIC_FIELDS, 4)
-        self._build_field_group("效果加成 (属性／移动技能)", EFFECT_FIELDS, 4)
+        self._build_field_group("效果加成 (主动／移动技能)", EFFECT_FIELDS, 4)
         self._build_field_group("状态抗性／战后加成／消耗", IMMUNE_FIELDS, 4)
-        self._build_field_group("高级属性／反应参数／指令结算", ADVANCED_FIELDS, 4)
+        self._build_field_group("高级属性／被动技能参数／指令结算", ADVANCED_FIELDS, 4)
         self._build_field_group("技能树引用表 (8组: 目标/进度权重)", TREE_FIELDS, 4)
 
         self.edit_layout.addStretch()

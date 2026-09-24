@@ -592,7 +592,7 @@ class SkillEditorFieldSemanticsTests(unittest.TestCase):
     def test_type_names_filter_and_preview_agree(self):
         from PySide6.QtWidgets import QLabel
 
-        expected = {0: "指令技能", 1: "属性技能", 2: "反应技能", 3: "移动技能"}
+        expected = {0: "指令技能", 1: "主动技能", 2: "被动技能", 3: "移动技能"}
         self.editor.records = []
         for value in expected:
             rec = blank_skill_record(value)
@@ -609,10 +609,11 @@ class SkillEditorFieldSemanticsTests(unittest.TestCase):
                 self.assertIn(label, self.editor.preview_type.text())
         titles = [label.text() for label in self.editor.findChildren(QLabel)
                   if label.property("class") == "InspectorTitle"]
-        self.assertIn("效果加成 (属性／移动技能)", titles)
-        self.assertFalse(any("主动" in title or "免疫" in title for title in titles))
+        self.assertIn("效果加成 (主动／移动技能)", titles)
+        self.assertFalse(any("属性技能" in title or "反应技能" in title or "免疫" in title
+                             for title in titles))
         self.editor._populate_edit(self.editor.records[1])
-        self.assertIn("非主动施放", self.editor.preview_type.text())
+        self.assertIn("不代表战斗菜单中可主动施放", self.editor.preview_type.text())
         self.editor._populate_edit(self.editor.records[2])
         self.assertIn("303..330", self.editor.preview_type.text())
         self.assertIn("不会自动生成", self.editor.preview_type.text())
@@ -670,7 +671,7 @@ class SkillEditorFieldSemanticsTests(unittest.TestCase):
             "move_up": (60, "移动力增量"), "atk_count": (62, "普攻次数增量"),
             "immunity1": (68, "状态抗性掩码1–16"), "immunity2": (70, "状态抗性掩码17–32"),
             "magic_def": (76, "术法类伤害减免%"), "turn_shift": (84, "目标时序系数"),
-            "trigger_prob": (88, "抗性档位／反应参数"),
+            "trigger_prob": (88, "抗性档位／被动参数"),
             "sub_count": (90, "连续子项数／归组标记"), "atk_type": (92, "技能结算分支"),
         }
         for key, expected in expected_labels.items():
